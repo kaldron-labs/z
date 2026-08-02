@@ -33,8 +33,6 @@
 namespace Zhttp {
 
   inline constexpr const char Log[] = "Zhttp";
-  inline constexpr const char H3Log[] = "Zhttp.H3";
-  inline constexpr const char QPackLog[] = "Zhttp.QPack";
 
 }
 

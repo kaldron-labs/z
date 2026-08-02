@@ -521,8 +521,11 @@ struct QPack {
   }
   static int decodeEncoderInsn(ZuCSpan, QPackDecodedInsn &);
   static int decodeDecoderInsn(ZuCSpan, QPackDecodedInsn &);
+  template <unsigned Bits, uint8_t Huffman>
   static int decodeString(
-    ZuSpan<uint8_t>, ZuCSpan, unsigned &, unsigned, uint8_t, ZuCSpan &);
+    ZuSpan<uint8_t> storage, ZuCSpan in, unsigned &o, ZuCSpan &out) {
+    return Compression::decodeString<Bits, Huffman>(storage, in, o, out);
+  }
 
   template <typename L>
   static int decodeFieldSection(
@@ -564,12 +567,13 @@ struct QPack {
       return true;
     };
     auto readValue = [&valueStorage, &in, &o](ZuCSpan &value) {
-      return decodeString(
+      return decodeString<7, 0x80>(
 	ZuSpan(valueStorage.data(), valueStorage.size()),
-	in, o, 7, 0x80, value) >= 0;
+	in, o, value) >= 0;
     };
 
-    while (o < in.length()) {
+    unsigned n = in.length();
+    while (o < n) {
       uint8_t first = uint8_t(in[o]);
       ZuCSpan name;
       ZuCSpan value;
@@ -580,8 +584,8 @@ struct QPack {
       if (first & 0x80) {
 	uint64_t index = 0;
 	uint8_t indexFirst = 0;
-	if (Compression::decodePref(
-	    in, o, 6, index, &indexFirst) < 0)
+	if (Compression::decodePref<6>(
+	    in, o, index, &indexFirst) < 0)
 	  return -1;
 	if (indexFirst & 0x40) {
 	  if (!staticField(index, indexed)) return -1;
@@ -595,7 +599,7 @@ struct QPack {
 	value = indexed.value;
       } else if ((first & 0xf0) == 0x10) {
 	uint64_t index = 0;
-	if (Compression::decodePref(in, o, 4, index) < 0 ||
+	if (Compression::decodePref<4>(in, o, index) < 0 ||
 	    !table || !table->lookupPostBase(base, index, indexed))
 	  return -1;
 	name = indexed.name;
@@ -605,8 +609,8 @@ struct QPack {
       } else if ((first & 0xc0) == 0x40) {
 	uint64_t index = 0;
 	uint8_t nameFirst = 0;
-	if (Compression::decodePref(
-	    in, o, 4, index, &nameFirst) < 0)
+	if (Compression::decodePref<4>(
+	    in, o, index, &nameFirst) < 0)
 	  return -1;
 	flags.neverIndex = nameFirst & 0x20;
 	if (nameFirst & 0x10) {
@@ -622,7 +626,7 @@ struct QPack {
 	if (!readValue(value)) return -1;
       } else if ((first & 0xf0) == 0x00) {
 	uint64_t index = 0;
-	if (Compression::decodePref(in, o, 3, index) < 0 ||
+	if (Compression::decodePref<3>(in, o, index) < 0 ||
 	    !table || !table->lookupPostBase(base, index, indexed))
 	  return -1;
 	flags.neverIndex = first & 0x08;
@@ -631,12 +635,12 @@ struct QPack {
 	name = indexed.name;
 	if (!readValue(value)) return -1;
       } else if ((first & 0xe0) == 0x20) {
-	if (decodeString(
+	if (decodeString<3, 0x08>(
 	      ZuSpan(nameStorage.data(), nameStorage.size()),
-	      in, o, 3, 0x08, name) < 0 ||
-	    decodeString(
+	      in, o, name) < 0 ||
+	    decodeString<7, 0x80>(
 	      ZuSpan(valueStorage.data(), valueStorage.size()),
-	      in, o, 7, 0x80, value) < 0)
+	      in, o, value) < 0)
 	  return -1;
 	flags.neverIndex = first & 0x10;
       } else
@@ -662,17 +666,18 @@ class QPackInsnParser {
 public:
   template <typename Decode, typename Apply>
   bool parse(ZuBSpan span, Decode decode, Apply apply) {
+    unsigned length = span.length();
     if (bytes.length() != offset) {
-      for (unsigned i = 0; i < span.length(); ++i) bytes.push(span[i]);
+      for (unsigned i = 0; i < length; ++i) bytes.push(span[i]);
       return drain_(decode, apply);
     }
 
     unsigned o = 0;
-    while (o < span.length()) {
+    while (o < length) {
       QPackDecodedInsn insn;
       int n = decode(ZuCSpan{span}.offset(o), insn);
       if (n == -2) {
-	for (unsigned i = o; i < span.length(); ++i) bytes.push(span[i]);
+	for (unsigned i = o; i < length; ++i) bytes.push(span[i]);
 	offset = 0;
 	return bytes.length() <= MaxBuffered;
       }
@@ -841,37 +846,6 @@ using QPackTbl = ZhttpQPackTbl(
   ("x-forwarded-for"),
   ("x-frame-options", "deny"),
   ("x-frame-options", "sameorigin"));
-
-// evaluates QPACK static table index I given <Key, Value>
-// - use <Key, void> for entries which are Key only
-// - evaluates to -1 if <Key, Value> are not in table
-template <typename Key, typename Value,
-  bool = ZuTypeIn<StaticEntry<Key, Value>, QPackTbl>{}>
-struct QPackIndex_ {
-  using T = ZuInt<-1>;
-};
-template <typename Key, typename Value>
-struct QPackIndex_<Key, Value, true> {
-  using T = ZuTypeIndex<StaticEntry<Key, Value>, QPackTbl>;
-};
-template <typename Key, typename Value>
-using QPackIndex = typename QPackIndex_<Key, Value>::T;
-
-template <ZuString Key, ZuString Value>
-using QPackKVIndex = QPackIndex<ZuStringT<Key>, ZuStringT<Value>>;
-template <typename KV>
-using QPackKey = StaticKey<KV>;
-using QPackKeys = ZuTypeMap<QPackKey, QPackTbl>;
-template <typename Key, bool = ZuTypeIn<Key, QPackKeys>{}>
-struct QPackKeyIndex_ {
-  using T = ZuInt<-1>;
-};
-template <typename Key>
-struct QPackKeyIndex_<Key, true> {
-  using T = ZuTypeIndex<Key, QPackKeys>;
-};
-template <ZuString Key>
-using QPackKeyIndex = typename QPackKeyIndex_<ZuStringT<Key>>::T;
 
 // evaluates QPACK static table key, value given an index I
 // - undefined if I is out of range

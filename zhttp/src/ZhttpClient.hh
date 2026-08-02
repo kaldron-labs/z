@@ -72,6 +72,8 @@ struct ResponseParser {
   void contentLength(uint64_t);
   void chunked();
   template <typename Key> void header(ZuBSpan value);
+  // Synchronous queue prompt; incomplete application framing may remain
+  // queued for a later decoded-body append.
   template <typename Rx> void body(Rx &);
   void complete(bool ok);
 };
@@ -103,6 +105,7 @@ public:
     uint64_t		id = 0;
     uint64_t		bodyBytes = 0;
     uint64_t		bodyReceived = 0;
+    uint64_t		bodyPending = 0;
     uint64_t		requestBodyProduced = 0;
     uint64_t		requestBodyCommitted = 0;
     uint64_t		requestBodyReset = 0;
@@ -569,20 +572,20 @@ public:
   void body(
     Link &link, Attempt &attempt, ResponseParser &parser, Rx &rx) {
     headersDone_(link, attempt);
-    (void)rx.input();
-    uint32_t offered = rx.available();
-    attempt.bodyReceived += offered;
-    parser.body(rx);
-    uint32_t pending = rx.available();
-    if (pending > offered) {
+    uint64_t before = rx.length();
+    if (before < attempt.bodyPending) {
       attempt.failed = true;
       return;
     }
-    attempt.bodyBytes += offered - pending;
-    if (pending) {
-      attempt.responseBodyReset += pending;
-      attempt.responseBodyDiscarded += pending;
+    attempt.bodyReceived += before - attempt.bodyPending;
+    parser.body(rx);
+    uint64_t pending = rx.length();
+    if (pending > before) {
+      attempt.failed = true;
+      return;
     }
+    attempt.bodyBytes += before - pending;
+    attempt.bodyPending = pending;
     link.responseBodyBytes(&attempt);
   }
   template <typename ParserState, typename Link>
@@ -592,6 +595,9 @@ public:
     if (attempt.responseDone) return;
     headersDone_(link, attempt);
     attempt.responseDone = true;
+    attempt.responseBodyReset += attempt.bodyPending;
+    attempt.responseBodyDiscarded += attempt.bodyPending;
+    attempt.bodyPending = 0;
     bool ok = state == ParserState::Complete;
     if (!ok) attempt.failed = true;
     parser.complete(ok);
@@ -774,6 +780,7 @@ private:
     attempt.status = 0;
     attempt.bodyBytes = 0;
     attempt.bodyReceived = 0;
+    attempt.bodyPending = 0;
     attempt.requestBodyProduced = 0;
     attempt.requestBodyCommitted = 0;
     attempt.requestBodyReset = 0;

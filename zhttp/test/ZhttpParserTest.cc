@@ -445,6 +445,38 @@ void testChunkedBodyAcrossRxBuffers()
   ZuCHECK(!stream, "stream still has data after chunked response");
 }
 
+void testChunkLengthSyntax()
+{
+  ZuTestScope(testChunkLengthSyntax);
+
+  {
+    ResponseParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "HTTP/1.1 200 OK\r\n"
+      "transfer-encoding: chunked\r\n"
+      "\r\n"
+      "3;name=value\r\nabc\r\n0\r\n\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
+	parser.bodyData == "abc",
+      "chunk extension was not ignored");
+  }
+  static const char *lengths[] = {
+    "10000000000000000", "0x3", "3x"
+  };
+  for (unsigned i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
+    ResponseParser parser;
+    RxStream stream;
+    ZtString<> msg;
+    msg << "HTTP/1.1 200 OK\r\n"
+	"transfer-encoding: chunked\r\n\r\n" << lengths[i] << "\r\n";
+    stream.push(mkBuf(msg));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	!parser.bodyCalls,
+      "invalid chunk length was accepted");
+  }
+}
+
 void testCloseDelimitedResponseBody()
 {
   ZuTestScope(testCloseDelimitedResponseBody);
@@ -697,6 +729,7 @@ int main(int argc, char **argv)
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testChunkedBodyAcrossRxBuffers);
+  ZuTestCall(testChunkLengthSyntax);
   ZuTestCall(testContentLengthBodyTransactional);
   ZuTestCall(testChunkBodyTransactional);
   ZuTestCall(testAppFrameAcrossChunks);

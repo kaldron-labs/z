@@ -32,6 +32,8 @@ template <
   uint64_t MaxBody_ = DefltMaxBody>
 class Parser {
 public:
+  Parser() : m_bodyRx{MaxBody} { }
+
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
@@ -41,7 +43,7 @@ public:
   static constexpr uint64_t MaxBody = MaxBody_;
 
   void reset() {
-    m_bodyRx.reset();
+    m_bodyRx.reset(MaxBody);
     m_fields = {};
     m_state = State::Initial;
     m_contentLength = -1;
@@ -56,8 +58,7 @@ public:
   void extendedConnect(bool value) { m_extendedConnect = value; }
   void stream() {
     m_state = State::Stream;
-    (void)m_bodyRx.start(
-      [this](auto &rx) { impl()->streamRx_(rx); });
+    m_bodyRx.reset(uint64_t(-1));
   }
 
   bool beginHeaders(bool trailers = false) {
@@ -118,37 +119,58 @@ public:
     return true;
   }
 
-  bool data(ZuBSpan value, bool endStream = false) {
+  template <typename Rx>
+  bool data(
+    Rx &wire, uint64_t frameLength, unsigned headLen, unsigned tailLen,
+    bool endStream, bool &transferred)
+  {
+    transferred = false;
+    if (ZuUnlikely(
+	headLen > frameLength || tailLen > frameLength - headLen))
+      return fail_();
+    uint64_t length = frameLength - headLen - tailLen;
+    if (!dataLength(length, endStream)) return false;
+    uint64_t remaining = frameLength;
+    int64_t n = m_bodyRx.splice(
+      wire, length,
+      [&remaining](ZuBSpan span) -> int64_t {
+	if (remaining > span.length()) {
+	  remaining -= span.length();
+	  return 0;
+	}
+	return remaining;
+      }, wireAlloc_, alloc_, headLen, tailLen,
+      [this](auto &rx) {
+	if (m_state == State::Stream)
+	  impl()->streamRx_(rx);
+	else
+	  impl()->body(rx);
+      });
+    if (ZuUnlikely(n <= 0)) return fail_();
+    transferred = true;
     if (m_state == State::Stream) {
-      auto process = [this](auto &rx) { impl()->streamRx_(rx); };
-      bool ok = value ?
-	m_bodyRx.offer(value, endStream, process) :
-	(!endStream || m_bodyRx.finish(process));
-      if (!ok) {
-	(void)m_bodyRx.fail(process);
-	return fail_();
-      }
       if (endStream) {
+	impl()->streamPeerEnd_();
+	m_bodyRx.discard();
 	m_state = State::RemoteClosed;
       }
       return true;
     }
+    m_bodyLength += length;
+    if (endStream) complete_();
+    return true;
+  }
+
+  bool dataLength(uint64_t length, bool endStream) {
+    if (m_state == State::Stream) return true;
     if (m_state != State::Body || !m_bodyAllowed ||
-	m_bodyLength > MaxBody || value.length() > MaxBody - m_bodyLength)
+	m_bodyLength > MaxBody || length > MaxBody - m_bodyLength)
       return fail_();
     if (m_contentLength >= 0 &&
 	(m_bodyLength > uint64_t(m_contentLength) ||
-	 value.length() > uint64_t(m_contentLength) - m_bodyLength))
+	 length > uint64_t(m_contentLength) - m_bodyLength ||
+	 (endStream && m_bodyLength + length != uint64_t(m_contentLength))))
       return fail_();
-    bool final = endStream;
-    if (!m_bodyRx.offer(value, final,
-	[this](auto &rx) { impl()->body(rx); }))
-      return fail_();
-    m_bodyLength += value.length();
-    if (endStream) {
-      if (!bodyComplete_()) return fail_();
-      complete_();
-    }
     return true;
   }
 
@@ -159,10 +181,9 @@ public:
   }
 
   State::T state() const { return m_state; }
+  uint64_t consumed() const { return m_bodyRx.consumed(); }
   bool cancel() {
-    if (m_state == State::Stream)
-      (void)m_bodyRx.fail(
-	[this](auto &rx) { impl()->streamRx_(rx); });
+    if (m_state == State::Stream) impl()->streamError_();
     return fail_();
   }
 
@@ -171,12 +192,14 @@ public:
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { bodyDrain(rx); }
+  void streamPeerEnd_() { }
+  void streamError_() { }
 
 private:
   void header_(ZuBSpan key, ZuBSpan value) {
     if (key == "content-length") {
       uint64_t length = 0;
-      if (!parseUInt64Full_(value, length) || length > MaxBody) {
+      if (!atou(value, length) || length > MaxBody) {
 	fail_();
 	return;
       }
@@ -214,11 +237,17 @@ private:
   }
   void complete_() {
     if (m_complete) return;
-    if (m_state != State::Error && !m_bodyRx.finish())
-      m_state = State::Error;
     m_complete = true;
     if (m_state != State::Error) m_state = State::Complete;
     impl()->complete(m_state);
+    m_bodyRx.discard();
+  }
+
+  static ZmRef<ZiRxQueue::Node> alloc_() {
+    return new BodyRx::BufAlloc{};
+  }
+  static ZmRef<ZiRxQueue::Node> wireAlloc_() {
+    return new BodyRx::WireBufAlloc{};
   }
 
   Fields::Semantics<Request> m_fields;

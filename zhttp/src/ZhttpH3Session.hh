@@ -259,56 +259,6 @@ struct CxnStream : public CxnParser<Impl> {
   }
 };
 
-// Request/response transmit helpers
-template <typename Stream, typename Builder>
-bool sendReq(Stream &stream, Builder &builder, bool fin = true) {
-  auto tx = stream.txStream();
-  if (!builder.request(tx)) return false;
-  builder.finish(tx);
-  if (fin) stream.link()->send(stream.link()->findStream(stream.id()), "", true);
-  return true;
-}
-
-template <typename Stream, typename Builder>
-bool sendResp(Stream &stream, Builder &builder, bool fin = true) {
-  auto tx = stream.txStream();
-  builder.response(tx);
-  builder.finish(tx);
-  if (fin) stream.link()->send(stream.link()->findStream(stream.id()), "", true);
-  return true;
-}
-
-// Server request stream parser adapter
-template <typename Impl, typename Parser_>
-struct ServerStream {
-  using Parser = Parser_;
-  using State = typename Parser::State;
-
-  // Rx thread exclusive
-  Parser	parser;
-  bool		complete_ = false;
-
-  auto impl() const { return static_cast<const Impl *>(this); }
-  auto impl() { return static_cast<Impl *>(this); }
-
-  template <typename Stream, typename Rx>
-  int processReq(Stream &stream, Rx &rx) {
-    if (complete_) return 1;
-    auto state = parser.process(rx);
-    if (state == State::Error) return impl()->error(stream, parser);
-    if (state == State::Complete) {
-      complete_ = true;
-      return impl()->request(stream, parser);
-    }
-    return 0;
-  }
-
-  template <typename Stream>
-  int error(Stream &, Parser &) { return -1; }
-  template <typename Stream>
-  int request(Stream &, Parser &) { return 0; }
-};
-
 } // namespace H3
 
 } // namespace Zhttp

@@ -55,6 +55,8 @@ struct CxnInput : public Zhttp::H3::CxnParser<CxnInput> {
   using Base = Zhttp::H3::CxnParser<CxnInput>;
 
   RxStream &rxStream() { return rx; }
+  bool retireRx(uint64_t length) { retired += length; return true; }
+  void rescheduleDequeue() { ++reschedules; }
   bool resetReceived() const { return false; }
   bool finReceived() const { return fin; }
   bool h3Server() const { return server; }
@@ -66,6 +68,8 @@ struct CxnInput : public Zhttp::H3::CxnParser<CxnInput> {
 
   RxStream	rx;
   uint64_t	error = 0;
+  uint64_t	retired = 0;
+  unsigned	reschedules = 0;
   unsigned	errors = 0;
   bool		server = false;
   bool		fin = false;
@@ -86,6 +90,8 @@ struct MsgInput : public Zhttp::H3::Parser<MsgInput<Request>, Request> {
   }
 
   RxStream &rxStream() { return rx; }
+  bool retireRx(uint64_t length) { retired += length; return true; }
+  void rescheduleDequeue() { ++reschedules; }
   bool resetReceived() const { return false; }
   bool stopReceived() const { return false; }
   bool finReceived() const { return fin; }
@@ -97,6 +103,8 @@ struct MsgInput : public Zhttp::H3::Parser<MsgInput<Request>, Request> {
 
   RxStream	rx;
   uint64_t	error = 0;
+  uint64_t	retired = 0;
+  unsigned	reschedules = 0;
   unsigned	errors = 0;
   unsigned	completions = 0;
   bool		fin = false;

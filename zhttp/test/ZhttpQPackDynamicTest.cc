@@ -65,6 +65,36 @@ static void putSetting(
   Zhttp::H3::putVar(out, value);
 }
 
+void testVar()
+{
+  ZuTestScope(testVar);
+
+  static const uint64_t values[] = {
+    0x25, 0x1234, 0x12345678, 0x123456789abcdef
+  };
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    Zhttp::H3::HdrBytes bytes;
+    Zhttp::H3::putVar(bytes, values[i]);
+    uint64_t value = 0;
+    ZuCHECK(Zhttp::H3::var(ZuCSpan{bytes}, value) && value == values[i],
+      "contiguous QUIC varint round trip failed");
+
+    RxStream rx;
+    unsigned length = 0;
+    if (bytes.length() > 1) {
+      unsigned split = bytes.length() - 1;
+      rx.push(rxBuf(ZuBSpan{bytes.data(), split}));
+      ZuCHECK(!Zhttp::H3::rxVar(rx, 0, value, length),
+	"partial reactive QUIC varint was consumed");
+      rx.push(rxBuf(ZuBSpan{&bytes[split], 1}));
+    } else
+      rx.push(rxBuf(ZuBSpan{bytes}));
+    ZuCHECK(Zhttp::H3::rxVar(rx, 0, value, length) == 1 &&
+	value == values[i] && length == bytes.length(),
+      "reactive QUIC varint round trip failed");
+  }
+}
+
 struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   using Base = Zi::TxStream<CaptureTxStream>;
 
@@ -181,6 +211,8 @@ struct ParserStream :
   }
 
   RxStream &rxStream() { return rx; }
+  bool retireRx(uint64_t length) { retired += length; return true; }
+  void rescheduleDequeue() { ++reschedules; }
   bool resetReceived() const { return reset_; }
   bool stopReceived() const { return stop_; }
   bool finReceived() const { return fin; }
@@ -197,7 +229,10 @@ struct ParserStream :
     path << ZuCSpan{target.raw};
     protocol_.length(0);
     protocol_ << ZuCSpan{target.protocol};
-    if (protocol_ && acceptStream) Base::stream();
+    if (protocol_ && acceptStream) {
+      ++streamStarts;
+      Base::stream();
+    }
   }
   template <typename Key> void header(ZuBSpan value) {
     if constexpr (Key{}() == "x-test") {
@@ -222,7 +257,7 @@ struct ParserStream :
   template <typename Rx>
   void body(Rx &rx) {
     ++bodyCalls;
-    while (rx.input()) {
+    while (rx) {
       const uint8_t *offered = nullptr;
       if (rx.consume(
 	  [this, &offered](ZuBSpan span) -> int64_t {
@@ -239,19 +274,11 @@ struct ParserStream :
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamEvents_(Zi::RxEvent::T events) {
-    if (events & Zi::RxEvent::Start()) ++streamStarts;
-    if (events & Zi::RxEvent::Final()) ++streamEnds;
-    if (events & Zi::RxEvent::Error()) ++streamResets;
-    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
-      dispatch.disable_();
-  }
+  void streamPeerEnd_() { ++streamEnds; dispatch.disable_(); }
+  void streamError_() { ++streamResets; dispatch.disable_(); }
   template <typename Rx>
   void processStream(Rx &rx) {
-    for (;;) {
-      bool input = rx.input();
-      streamEvents_(rx.events());
-      if (!input) break;
+    while (rx) {
       const uint8_t *offered = nullptr;
       int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
@@ -262,7 +289,6 @@ struct ParserStream :
 	    streamNoCopy &= span.data() == offered;
 	    streamBody << ZuCSpan{span};
 	  });
-      streamEvents_(rx.events());
       if (n <= 0) break;
       if (partialStream) break;
     }
@@ -279,6 +305,8 @@ struct ParserStream :
   StreamConsumer		consumer;
   LogicalLink			link;
   Zhttp::Method::T		method = -1;
+  uint64_t			retired = 0;
+  unsigned			reschedules = 0;
   ZtString<>			path;
   ZtString<>			xTest;
   unsigned			xTestCalls = 0;
@@ -323,6 +351,8 @@ struct CxnStream :
   CxnStream() { qpackTxTable.init(4096, 64); }
 
   RxStream &rxStream() { return rx; }
+  bool retireRx(uint64_t length) { retired += length; return true; }
+  void rescheduleDequeue() { ++reschedules; }
   bool resetReceived() const { return false; }
   bool stopReceived() const { return false; }
   bool finReceived() const { return false; }
@@ -350,6 +380,8 @@ struct CxnStream :
 
   RxStream			rx;
   Zhttp::H3::QPackTxTable	qpackTxTable;
+  uint64_t			retired = 0;
+  unsigned			reschedules = 0;
   unsigned			settings = 0;
   int				extendedConnect = -1;
 };
@@ -358,8 +390,8 @@ static bool headersPayload(ZuCSpan bytes, ZuCSpan &payload)
 {
   unsigned o = 0;
   uint64_t type = 0, len = 0;
-  if (Zhttp::H3::decodeVar(bytes, o, type) < 0 ||
-      Zhttp::H3::decodeVar(bytes, o, len) < 0 ||
+  if (Zhttp::H3::var(bytes, o, type) < 0 ||
+      Zhttp::H3::var(bytes, o, len) < 0 ||
       type != 0x01 || bytes.length() != o + len)
     return false;
   payload = ZuCSpan{bytes.data() + o, unsigned(len)};
@@ -750,7 +782,7 @@ void testParserBodyStream()
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
 	parser.bodyCalls == 1 && parser.bodyData == "abc" &&
 	parser.bodyNoCopy,
-      "H3 DATA did not use the callback-scoped native payload");
+      "H3 DATA did not transfer native payload storage");
 
     Zhttp::H3::Header trailers[] = {{"x-test", "done"}};
     Zhttp::H3::HdrBytes trailer;
@@ -771,8 +803,8 @@ void testParserBodyStream()
     putFrame(data, 0x00, ZuBSpan{"abc"});
     appendBytes(bytes, data);
     ZuCHECK(pushSplit(parser, bytes) &&
-	parser.bodyData == "abc" && parser.bodyCalls == 3,
-      "byte-split H3 frame header/payload did not refill synchronously");
+	parser.bodyData == "abc" && parser.bodyCalls == 1,
+	"byte-split H3 DATA was exposed only after the frame completed");
     parser.fin = true;
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete,
       "byte-split H3 message did not complete on FIN");
@@ -785,10 +817,17 @@ void testParserBodyStream()
       "partial H3 body setup failed");
     Zhttp::H3::HdrBytes data;
     putFrame(data, 0x00, ZuBSpan{"abc"});
+    uint64_t retired = parser.retired;
     parser.push(data);
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
-	parser.bodyData == "a" && parser.completeCalls == 1,
-      "unconsumed H3 message DATA was not rejected exactly once");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
+	parser.bodyData == "a" && !parser.completeCalls && !parser.rx &&
+	parser.retired - retired == data.length() - 2,
+	"unconsumed H3 message DATA was not retained for the application");
+    parser.fin = true;
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete &&
+	parser.completeCalls == 1 &&
+	parser.retired - retired == data.length(),
+	"H3 FIN did not discard unread application body data");
   }
   {
     ParserStream parser;
@@ -1074,11 +1113,20 @@ void testExtendedConnectRx()
       "H3 partial-consume setup did not enter stream state");
     Zhttp::H3::HdrBytes frame;
     putFrame(frame, 0x00, ZuBSpan{"abc"});
+    uint64_t retired = parser.retired;
     parser.push(frame);
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
-	parser.streamBody == "a" && parser.streamResets == 1 &&
-	parser.completeCalls == 1,
-      "unconsumed H3 stream DATA was not rejected exactly once");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Stream &&
+	parser.streamBody == "a" && !parser.streamResets &&
+	!parser.completeCalls && !parser.rx &&
+	parser.retired - retired == frame.length() - 2,
+	"unconsumed H3 stream DATA was not retained for the application");
+    parser.fin = true;
+    ZuCHECK(parser.process(parser) ==
+	Zhttp::H3::ParserState::RemoteClosed &&
+	parser.streamEnds == 1 && !parser.streamResets &&
+	!parser.completeCalls &&
+	parser.retired - retired == frame.length(),
+	"H3 stream FIN did not discard unread application data");
   }
 }
 
@@ -2019,6 +2067,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testVar);
   ZuTestCall(testRxTable);
   ZuTestCall(testDynamicFieldSectionDecode);
   ZuTestCall(testFieldRepresentationGoldens);

@@ -230,7 +230,7 @@ void testPrefixIntegers()
   for (unsigned split = 1; split <= encoded.length(); ++split) {
     Zhttp::Compression::PrefInt decoder;
     uint64_t value = 0;
-    int state = decoder.start(encoded[0], 5, value);
+    int state = decoder.start<5>(encoded[0], value);
     unsigned offset = 1;
     if (split > 1)
       state = decoder.process(
@@ -249,16 +249,16 @@ void testPrefixIntegers()
   unsigned offset = 0;
   uint64_t value = 0;
   uint8_t truncated[] = {0x1f, 0x9a};
-  ZuCHECK(Zhttp::Compression::decodePref(
-      ZuCSpan{truncated}, offset, 5, value) == -2,
+  ZuCHECK(Zhttp::Compression::decodePref<5>(
+      ZuCSpan{truncated}, offset, value) == -2,
     "truncated prefix integer");
   uint8_t overflow[] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0x02
   };
   offset = 0;
-  ZuCHECK(Zhttp::Compression::decodePref(
-      ZuCSpan{overflow}, offset, 8, value) == -1,
+  ZuCHECK(Zhttp::Compression::decodePref<8>(
+      ZuCSpan{overflow}, offset, value) == -1,
     "overflowing prefix integer");
 }
 
@@ -268,7 +268,7 @@ static bool fragmentedString_(ZuBSpan encoded, ZuCSpan expected)
     Zhttp::Compression::StringDecoder<HdrBytes> decoder;
     HdrBytes storage;
     ZuCSpan value;
-    int state = decoder.start(encoded[0], 7, 0x80, 1024);
+    int state = decoder.start<7, 0x80>(encoded[0], 1024);
     unsigned offset = 1;
     if (split > 1)
       state = decoder.process(

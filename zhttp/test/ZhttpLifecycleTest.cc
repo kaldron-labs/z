@@ -67,11 +67,15 @@ ZiMxParams mxParams()
 template <typename Rx>
 bool consume(Rx &rx, ZuCSpan expected)
 {
+  unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [expected](ZuBSpan span) -> int64_t {
-      if (span.length() < expected.length()) return 0;
-      return expected.length();
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
     },
     [&ok, expected](ZuBSpan span) {
       ok = span.length() == expected.length() &&
@@ -361,7 +365,10 @@ struct QUICClient::Link :
 
 int QUICClient::Stream::process(Zquic::RxStream &rx)
 {
+  uint64_t before = rx.length();
   if (!consume(rx, Pong)) return 0;
+  uint64_t length = before - rx.length();
+  if (!retireRx(length)) return -1;
   auto &state = *link()->app()->state;
   state.trace.push(LifeEvt::CliProcess);
   state.closed(LifeEvt::CliDisconnected);
@@ -419,7 +426,10 @@ struct QUICServerLink :
 
 int QUICServerStream::process(Zquic::RxStream &rx)
 {
+  uint64_t before = rx.length();
   if (!consume(rx, Ping)) return 0;
+  uint64_t length = before - rx.length();
+  if (!retireRx(length)) return -1;
   auto &state = *link()->app()->state;
   state.trace.push(LifeEvt::SrvProcess);
   sendMsg(*this, state, LifeEvt::SrvSend, Pong);

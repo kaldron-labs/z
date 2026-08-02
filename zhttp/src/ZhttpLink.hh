@@ -35,6 +35,24 @@ auto process(Consumer &consumer, Stream stream, Rx &rx, int) ->
 template <typename Consumer, typename Stream, typename Rx>
 int process(Consumer &, Stream, Rx &, ...) { return 0; }
 
+template <typename Consumer, typename Stream>
+auto peerEnd(Consumer &consumer, Stream stream, int) ->
+    decltype(consumer.peerEnd(ZuMv(stream)), void())
+{
+  consumer.peerEnd(ZuMv(stream));
+}
+template <typename Consumer, typename Stream>
+void peerEnd(Consumer &, Stream, ...) { }
+
+template <typename Consumer, typename Stream>
+auto error(Consumer &consumer, Stream stream, int) ->
+    decltype(consumer.error(ZuMv(stream)), void())
+{
+  consumer.error(ZuMv(stream));
+}
+template <typename Consumer, typename Stream>
+void error(Consumer &, Stream, ...) { }
+
 } // namespace Link_
 
 template <typename App, typename Impl, typename Profile>
@@ -130,6 +148,14 @@ public:
   template <typename Stream, typename Rx>
   int process(Stream stream, Rx &rx) {
     return Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream>
+  void peerEnd(Stream stream) {
+    Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream>
+  void error(Stream stream) {
+    Link_::error(*this->app(), ZuMv(stream), 0);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {
@@ -260,6 +286,14 @@ public:
   template <typename Stream, typename Rx>
   int process(Stream stream, Rx &rx) {
     return Link_::process(m_session, ZuMv(stream), rx, 0);
+  }
+  template <typename Stream>
+  void peerEnd(Stream stream) {
+    Link_::peerEnd(m_session, ZuMv(stream), 0);
+  }
+  template <typename Stream>
+  void error(Stream stream) {
+    Link_::error(m_session, ZuMv(stream), 0);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) {

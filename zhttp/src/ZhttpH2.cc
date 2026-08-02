@@ -19,32 +19,38 @@ ZuCSpan PrefaceParser::value()
 int PrefaceParser::process(ZuBSpan input, unsigned &offset)
 {
   auto preface = value();
-  while (offset < input.length() && m_offset < preface.length()) {
+  unsigned n = input.length(), end = preface.length();
+  while (offset < n && m_offset < end) {
     if (input[offset++] != uint8_t(preface[m_offset++])) return -1;
   }
-  return m_offset == preface.length();
+  return m_offset == end;
 }
 
 int FrameHeaderParser::process(
   ZuBSpan input, unsigned &offset, FrameHeader &header)
 {
-  while (offset < input.length() && m_length < m_bytes.size())
+  unsigned n = input.length(), end = m_bytes.size();
+  while (offset < n && m_length < end)
     m_bytes[m_length++] = input[offset++];
-  if (m_length < m_bytes.size()) return 0;
-  header.length =
-    (uint32_t(m_bytes[0])<<16) |
-    (uint32_t(m_bytes[1])<<8) |
-    uint32_t(m_bytes[2]);
-  header.type = m_bytes[3];
-  header.flags = m_bytes[4];
-  header.reserved = m_bytes[5] & 0x80;
-  header.streamID =
-    (uint32_t(m_bytes[5] & 0x7f)<<24) |
-    (uint32_t(m_bytes[6])<<16) |
-    (uint32_t(m_bytes[7])<<8) |
-    uint32_t(m_bytes[8]);
+  if (m_length < end) return 0;
+  decodeHeader(ZuCSpan{m_bytes.data(), end}, header);
   m_length = 0;
   return 1;
+}
+
+bool decodeHeader(ZuCSpan input, FrameHeader &header)
+{
+  if (input.length() < FrameHeaderSize) return false;
+  auto p = reinterpret_cast<const uint8_t *>(input.data());
+  header.length =
+    (uint32_t(p[0])<<16) |
+    ZuBE(*reinterpret_cast<const uint16_t *>(&p[1]));
+  header.type = p[3];
+  header.flags = p[4];
+  uint32_t streamID = ZuBE(*reinterpret_cast<const uint32_t *>(&p[5]));
+  header.reserved = streamID>>31;
+  header.streamID = streamID & MaxWindow;
+  return true;
 }
 
 Error::T Settings::apply(

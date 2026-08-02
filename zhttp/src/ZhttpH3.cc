@@ -10,7 +10,6 @@ namespace Zhttp { namespace H3 {
 
 ZtEnumImplStruct(CxnState);
 ZtEnumImplStruct(ParserState);
-ZtEnumImplNS(FrameState);
 ZtEnumImplStruct(CxnStreamState);
 
 } } // namespace Zhttp::H3

@@ -218,19 +218,22 @@ namespace Huffman {
 
 } // namespace Huffman
 
+// incremental HPACK/QPACK prefix integer parser
 struct PrefInt {
-  int start(uint8_t first, unsigned bits, uint64_t &value) {
-    if (!bits || bits > 8) return -1;
-    uint8_t mask = uint8_t((1U << bits) - 1U);
-    m_value = first & mask;
+  template <unsigned Bits>
+  int start(uint8_t first, uint64_t &value) {
+    static_assert(Bits && Bits <= 8);
+    enum { Mask = (1U << Bits) - 1U };
+    m_value = first & Mask;
     m_shift = 0;
-    m_more = m_value == mask;
+    m_more = m_value == Mask;
     value = m_value;
     return m_more ? 0 : 1;
   }
 
   int process(ZuBSpan in, unsigned &offset, uint64_t &value) {
-    while (m_more && offset < in.length()) {
+    unsigned n = in.length();
+    while (m_more && offset < n) {
       uint8_t byte = in[offset++];
       uint64_t part = byte & 0x7fU;
       if (m_shift >= 64 ||
@@ -255,15 +258,16 @@ private:
   bool		m_more = false;
 };
 
+template <unsigned Bits>
 inline int decodePref(
-  ZuCSpan in, unsigned &offset, unsigned bits, uint64_t &value,
+  ZuCSpan in, unsigned &offset, uint64_t &value,
   uint8_t *firstByte = nullptr)
 {
   if (offset >= in.length()) return -2;
   uint8_t first = uint8_t(in[offset++]);
   if (firstByte) *firstByte = first;
   PrefInt decoder;
-  int state = decoder.start(first, bits, value);
+  int state = decoder.template start<Bits>(first, value);
   if (state < 0) return -1;
   if (state > 0) return 0;
   state = decoder.process(ZuBSpan{in}, offset, value);
@@ -327,17 +331,18 @@ int putString(
   return 0;
 }
 
+template <unsigned PrefixBits, uint8_t HuffmanMask>
 inline int decodeString(
-  ZuSpan<uint8_t> storage, ZuCSpan in, unsigned &offset, unsigned prefixBits,
-  uint8_t huffmanMask, ZuCSpan &out) {
+  ZuSpan<uint8_t> storage, ZuCSpan in, unsigned &offset, ZuCSpan &out) {
   uint64_t length = 0;
   uint8_t first = 0;
-  int n = decodePref(in, offset, prefixBits, length, &first);
+  int n = decodePref<PrefixBits>(in, offset, length, &first);
   if (n < 0) return n;
-  if (length > in.length() - offset) return -2;
-  ZuCSpan raw{in.data() + offset, unsigned(length)};
+  unsigned size = in.length();
+  if (length > size - offset) return -2;
+  ZuCSpan raw{&in[offset], unsigned(length)};
   offset += unsigned(length);
-  if (!(first & huffmanMask)) {
+  if (!(first & HuffmanMask)) {
     out = raw;
     return int(raw.length());
   }
@@ -353,16 +358,15 @@ inline int decodeString(
 template <typename Bytes>
 class StringDecoder {
 public:
-  int start(
-    uint8_t first, unsigned prefixBits, uint8_t huffmanMask,
-    uint64_t maxLength) {
+  template <unsigned PrefixBits, uint8_t HuffmanMask>
+  int start(uint8_t first, uint64_t maxLength) {
     m_bytes.length(0);
     m_length = 0;
     m_maxLength = maxLength;
-    m_huffman = first & huffmanMask;
+    m_huffman = first & HuffmanMask;
     m_lengthReady = false;
     m_complete = false;
-    int state = m_prefix.start(first, prefixBits, m_length);
+    int state = m_prefix.template start<PrefixBits>(first, m_length);
     if (state < 0) return -1;
     if (state > 0) return length_();
     return 0;

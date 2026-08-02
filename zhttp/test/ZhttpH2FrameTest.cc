@@ -77,9 +77,14 @@ struct Cxn : public Zhttp::H2::Connection<Cxn> {
     dataStream = stream;
     data << ZuCSpan{value};
   }
-  void h2DataEnd(uint32_t stream, bool endStream, uint32_t length) {
+  void h2DataEnd(
+    uint32_t stream, bool endStream, uint32_t length,
+    unsigned prefix, unsigned pad)
+  {
     dataStream = stream;
     dataFrameLength = length;
+    dataPrefix = prefix;
+    dataPad = pad;
     dataEndStream = endStream;
     ++dataEndCalls;
   }
@@ -129,6 +134,8 @@ struct Cxn : public Zhttp::H2::Connection<Cxn> {
   unsigned		pingCalls = 0;
   unsigned		pingAckCalls = 0;
   unsigned		fieldCalls = 0;
+  unsigned		dataPrefix = 0;
+  unsigned		dataPad = 0;
   bool			headerEndStream = false;
   bool			dataEndStream = false;
   bool			dataAllowed = true;
@@ -286,6 +293,7 @@ void testConnectionControl()
     "HEADERS/CONTINUATION sequencing and padding");
   ZuCHECK(cxn.data == "xy" && cxn.dataEndCalls == 1 &&
       cxn.dataFrameLength == 5 &&
+      cxn.dataPrefix == 1 && cxn.dataPad == 2 &&
       cxn.dataStream == 1 && cxn.dataEndStream,
     "DATA padding and END_STREAM");
   ZuCHECK(cxn.pingCalls == 1 && cxn.ping.length() == 8 && !cxn.errorCalls,

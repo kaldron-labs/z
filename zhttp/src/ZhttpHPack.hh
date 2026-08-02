@@ -215,15 +215,15 @@ public:
   int process(ZuBSpan input, FieldFn &&field) {
     if (m_pending)
       return resume(input, ZuFwd<FieldFn>(field));
-    unsigned offset = 0;
-    while (offset < input.length()) {
+    unsigned offset = 0, n = input.length();
+    while (offset < n) {
       unsigned before = offset;
       Field decoded;
       bool emitted = false;
       int state = decode_(input, offset, decoded, emitted);
       if (state < 0) return -1;
       if (!state) {
-	for (unsigned i = before; i < input.length(); ++i)
+	for (unsigned i = before; i < n; ++i)
 	  m_pending.push(input[i]);
 	return 0;
       }
@@ -236,7 +236,7 @@ public:
   int resume(ZuBSpan input, FieldFn &&field) {
     if (!m_pending)
       return process(input, ZuFwd<FieldFn>(field));
-    for (unsigned i = 0; i < input.length(); ++i)
+    for (unsigned i = 0, n = input.length(); i < n; ++i)
       m_pending.push(input[i]);
     while (m_pending) {
       unsigned offset = 0;
@@ -258,8 +258,10 @@ public:
 private:
   int decode_(ZuCSpan, unsigned &, Field &, bool &);
   bool indexed_(uint64_t, Field &);
-  int literal_(ZuCSpan, unsigned &, unsigned, bool, Field &);
-  int string_(ZuCSpan, unsigned &, unsigned, uint8_t, HPackString &);
+  template <unsigned Bits, bool Indexing>
+  int literal_(ZuCSpan, unsigned &, Field &);
+  template <unsigned Bits, uint8_t Huffman>
+  int string_(ZuCSpan, unsigned &, HPackString &);
   bool account_(Field);
   int fail_(HPackFailure::T);
 

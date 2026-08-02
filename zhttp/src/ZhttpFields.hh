@@ -133,7 +133,7 @@ public:
     if (name == "te" && value != "trailers") return false;
     if (name == "content-length") {
       uint64_t length;
-      if (!parseUInt64Full_(ZuBSpan{value}, length)) return false;
+      if (!atou(ZuBSpan{value}, length)) return false;
       if (m_contentLength && length != m_length) return false;
       m_contentLength = true;
       m_length = length;

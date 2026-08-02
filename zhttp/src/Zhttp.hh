@@ -66,7 +66,6 @@
 
 namespace Zhttp {
 
-constexpr unsigned DefltMaxHdr = (1<<16);	// 64K default
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 
 // HTTP engine/link application contract
@@ -117,7 +116,6 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 #include <zlib/ZhttpH2Session.hh>
 #include <zlib/ZhttpH2Message.hh>
 #include <zlib/ZhttpH3.hh>
-#include <zlib/ZhttpH1Session.hh>
 #include <zlib/ZhttpH3Session.hh>
 #include <zlib/ZhttpMessage.hh>
 #include <zlib/ZhttpStream.hh>

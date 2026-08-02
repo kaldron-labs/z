@@ -374,7 +374,7 @@ int HQServerStream::process(Zquic::RxStream &rx)
   int n = consumeRx_(rx, [this](ZuBSpan span) {
     request << span;
   });
-  if (n < 0) return -1;
+  if (n < 0 || (n && !retireRx(unsigned(n)))) return -1;
   if (!this->rxComplete()) return n ? 1 : 0;
 
   done = true;
@@ -492,7 +492,7 @@ int HQClient::Stream::process(Zquic::RxStream &rx)
 	file.write(span.data(), span.length()) != Zi::OK)
       ok = false;
   });
-  if (n < 0 || !ok) {
+  if (n < 0 || (n && !retireRx(unsigned(n))) || !ok) {
     this->link()->app()->fail();
     return -1;
   }
