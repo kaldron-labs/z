@@ -1376,7 +1376,7 @@ private:
     void field(ZuCSpan name, ZuCSpan value1, char sep, ZuCSpan value2) {
 	if (!ok) return;
 	uint64_t length = uint64_t(value1.length()) + 1 + value2.length();
-	QPackTxString value{0, length + 1};
+	QPackTxString value{length + 1};
 	value << value1 << sep << value2;
 	field(name, value);
     }
