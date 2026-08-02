@@ -185,7 +185,8 @@ public:
       case V6:
 	return
 	  ZuHash<uint8_t>::hash(V6) ^
-	  ZuHash_FNV::hash(m_addr.p<V6>().s6_addr, sizeof(in6_addr));
+	  ZuHash<uint128_t>::hash(
+	    *reinterpret_cast<const uint128_t *>(m_addr.p<V6>().s6_addr));
       default:
 	return 0;
     }
@@ -274,6 +275,7 @@ public:
 private:
   ZiAPI int resolve_(Zi::Hostname host, ZeError *e);
 
+  alignas(uint128_t)
   Addr		m_addr;
 };
 
