@@ -17,10 +17,11 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmRef.hh>
-#include <zlib/ZiRxStream.hh>
+#include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZmScheduler.hh>
 
+#include <zlib/ZhttpBody.hh>
 #include <zlib/ZhttpStream.hh>
 
 #include <zlib/ZwsProtocol.hh>
@@ -32,13 +33,16 @@ template <typename Impl, typename Link, bool Server, typename Random>
 class Codec {
 public:
   using Stream = Zhttp::Stream<Link>;
-  using RxLayer = ZiRxLayer<Codec>;
+  using Rx = ZiRxStream<ZiRxQueue>;
+  using BufAlloc = Zi::IOBufAlloc<
+    ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zws.Message.Rx">>;
+  using WireBufAlloc = Zi::IOBufAlloc<
+    ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zws.Wire.Rx">>;
 
   Codec(Link &link, Random &random, Config config = {}) :
-    m_link{&link}, m_random{&random}, m_config{config}, m_rx{*this}
-  {
-    m_rx.clean();
-  }
+    m_link{&link}, m_random{&random}, m_config{config} { }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -48,48 +52,63 @@ public:
     if (m_terminal || !m_link) return 0;
     m_stream = &stream;
     bool progressed = false;
-    bool final = false;
-    bool failed = false;
-    for (;;) {
-      bool input = httpRx.input();
-      auto events = httpRx.events();
-      if (events & Zi::RxEvent::Error()) {
-	fail_(Failure::AbnormalClose);
+    bool rejected = false;
+    uint64_t lower = httpRx.length();
+    uint64_t wire = m_wire.length();
+    uint64_t message = m_rx.length();
+    if (ZuUnlikely(wire > m_config.maxQueuedInput ||
+	message > m_config.maxQueuedInput - wire ||
+	lower > m_config.maxQueuedInput - (wire + message))) {
+      fail_(Failure::InputPressure);
+    } else if (lower) {
+      uint64_t remaining = lower;
+      int64_t n = httpRx.splice(
+	m_wire,
+	[&remaining](ZuBSpan span) mutable -> int64_t {
+	  if (remaining > span.length()) {
+	    remaining -= span.length();
+	    return 0;
+	  }
+	  return remaining;
+	}, allocHttp_, allocWire_);
+      if (ZuUnlikely(n <= 0))
+	fail_(Failure::InvalidHeader);
+      else
+	progressed = true;
+    }
+    while (m_failure == Failure::None && !m_terminal) {
+      int rc = frame_(m_wire);
+      if (rc <= 0) {
+	if (rc < 0 && m_failure == Failure::None) rejected = true;
 	break;
       }
-      final |= events & Zi::RxEvent::Final();
-      if (input) {
-	if (httpRx.available() > m_config.maxQueuedInput) {
-	  fail_(Failure::InputPressure);
-	  break;
-	}
-	int rc = 1;
-	int64_t n = httpRx.consume(
-	  [](ZuBSpan span) -> int64_t { return span.length(); },
-	  [this, &rc](ZuBSpan span) { rc = decode_(span); });
-	if (n < 0 || rc < 0) {
-	  failed = true;
-	  break;
-	}
-	if (!n) break;
-	progressed = true;
-	armPing_();
-	continue;
-      }
-      events |= httpRx.events();
-      if (events & Zi::RxEvent::Error())
-	fail_(Failure::AbnormalClose);
-      final |= events & Zi::RxEvent::Final();
-      if (final && !m_peerClosed)
-	fail_(Failure::AbnormalClose);
-      break;
+      progressed = true;
+      armPing_();
     }
     if (m_failure != Failure::None) notifyError_();
     bool ended = m_errorEnded;
     m_stream = nullptr;
     if (ended) return progressed ? 1 : 0;
-    return m_failure == Failure::None && !failed ?
+    return m_failure == Failure::None && !rejected ?
       (progressed ? 1 : 0) : -1;
+  }
+
+  void peerEnd(Stream stream) {
+    if (m_terminal || !m_link) return;
+    m_stream = &stream;
+    if (!m_peerClosed) {
+      fail_(Failure::AbnormalClose);
+      notifyError_();
+    }
+    m_stream = nullptr;
+  }
+
+  void streamError(Stream stream) {
+    if (m_terminal || !m_link) return;
+    m_stream = &stream;
+    fail_(Failure::AbnormalClose);
+    notifyError_();
+    m_stream = nullptr;
   }
 
   template <typename L>
@@ -203,6 +222,7 @@ public:
 
   Failure::T failure() const { return m_failure; }
   Opcode::T messageOpcode() const { return m_msgOpcode; }
+  uint64_t queuedInput() const { return m_wire.length() + m_rx.length(); }
   bool peerClosed() const { return m_peerClosed; }
   bool closeSent() const { return m_closeSent; }
 
@@ -210,22 +230,19 @@ public:
     if (m_link) stopTimers_();
     m_txEnabled = 0;
     m_link = &link;
+    m_wire.clean();
     m_rx.clean();
-    m_input = {};
-    m_header.reset();
     m_frame = {};
     m_utf8.reset();
     m_pingPayload.length(0);
     m_frameRemain = 0;
     m_frameOffset = 0;
     m_msgLength = 0;
-    m_controlLen = 0;
     m_msgOpcode = Opcode::Continuation;
     m_failure = Failure::None;
     m_stream = nullptr;
     m_frameReady = false;
     m_msgActive = false;
-    m_layerActive = false;
     m_closeSent = false;
     m_peerClosed = false;
     m_pingPending = false;
@@ -244,236 +261,232 @@ public:
 
   void final_() {
     disable_();
+    m_wire.clean();
     m_rx.clean();
-    m_input = {};
     m_link = nullptr;
   }
 
   // CRTP defaults
-  int message(RxLayer &rx) {
-    (void)rx.events();
-    while (rx.input()) {
-      if (rx.consume(
-	  [](ZuBSpan span) -> int64_t { return span.length(); },
-	  [](ZuBSpan) { }) <= 0)
-	break;
-    }
-    (void)rx.events();
-    return rx.failed() ? -1 : 1;
-  }
+  int messageStart(Opcode::T) { return 1; }
+  int message(Rx &rx) { return Zhttp::bodyDrain(rx) ? 1 : -1; }
+  int messageEnd() { return 1; }
   void pong(ZuBSpan) { }
   void closed(uint16_t, ZuBSpan) { }
   void error(Failure::T) { }
 
-  Zi::RxRefill rxRefill_() {
-    for (;;) {
-      if (m_failure != Failure::None) return {0, Zi::RxRefill::Error};
-      int result;
-      if (!m_frameReady) {
-	result = nextFrame_();
-	if (result == Next::Wait) return {};
-	if (result == Next::Error) return {0, Zi::RxRefill::Error};
-      } else {
-	result = control(m_frame.opcode) ? Next::Control : Next::Data;
-      }
-      if (result == Next::Control) {
-	if (!control_()) return {};
-	continue;
-      }
-      if (!m_frameRemain) {
-	bool final = m_frame.final;
-	m_frameReady = false;
-	if (!final) continue;
-	if (m_msgOpcode == Opcode::Text && !m_utf8.complete()) {
-	  fail_(Failure::InvalidUTF8);
-	  return {0, Zi::RxRefill::Error};
-	}
-	m_msgActive = false;
-	return {0, Zi::RxRefill::Final};
-      }
-      if (!m_input) return {};
-      uint32_t length = m_input.length() < m_frameRemain ?
-	m_input.length() : uint32_t(m_frameRemain);
-      auto span = mutable_({m_input.data(), length});
-      if constexpr (Server) mask(span, m_frame.key, m_frameOffset);
-      bool final = m_frame.final && uint64_t(length) == m_frameRemain;
-      if (m_msgOpcode == Opcode::Text) {
-	if (!m_utf8.update(span) || (final && !m_utf8.complete())) {
-	  fail_(Failure::InvalidUTF8);
-	  return {0, Zi::RxRefill::Error};
-	}
-      }
-      return {
-	length,
-	Zi::RxRefill::T(final ?
-	  Zi::RxRefill::Final : Zi::RxRefill::Input)
-      };
-    }
-  }
-
-  ZuBSpan rxSpan_() {
-    unsigned length = m_input.length() < m_frameRemain ?
-      m_input.length() : unsigned(m_frameRemain);
-    return {m_input.data(), length};
-  }
-
-  unsigned rxAdvance_(unsigned n) {
-    if (n > m_input.length() || n > m_frameRemain) return 0;
-    m_input.offset(n);
-    m_frameRemain -= n;
-    m_frameOffset += n;
-    if (!m_frameRemain) {
-      m_frameReady = false;
-      if (m_frame.final) m_msgActive = false;
-    }
-    return n;
-  }
-
-  void rxCancel_() {
-    if (m_layerActive) fail_(Failure::InvalidHeader);
-    m_input = {};
-    m_layerActive = false;
-  }
-
 private:
-  struct Next {
-    enum { Wait, Data, Control, Error };
-  };
-
-  static ZuSpan<uint8_t> mutable_(ZuBSpan span) {
-    // The logical Rx contract is a const view over mutable pooled I/O storage.
-    // Server-side RFC 6455 unmasking intentionally transforms it in place.
-    return {const_cast<uint8_t *>(span.data()), span.length()};
+  static ZmRef<ZiRxQueue::Node> allocHttp_() {
+    return new Zhttp::BodyRx::BufAlloc{};
   }
 
-  int decode_(ZuBSpan input) {
-    m_input = input;
-    bool appFailed = false;
-    while (m_input && m_failure == Failure::None) {
-      if (!m_msgActive) {
-	int result = nextFrame_();
-	if (result == Next::Wait) break;
-	if (result == Next::Error) break;
-	if (result == Next::Control) {
-	  if (!control_()) break;
-	  continue;
+  static ZmRef<ZiRxQueue::Node> allocMessage_() {
+    return new BufAlloc{};
+  }
+
+  static ZmRef<ZiRxQueue::Node> allocWire_() {
+    return new WireBufAlloc{};
+  }
+
+  template <typename HttpRx>
+  int frame_(HttpRx &rx) {
+    bool progressed = false;
+    if (!m_frameReady) {
+      if (rx.length() < 2) return 0;
+
+      ZuBArray<MaxHeader> header;
+      unsigned n = rx.length() < MaxHeader ?
+	unsigned(rx.length()) : unsigned(MaxHeader);
+      header.length(n);
+      if (ZuUnlikely(rx.copy(0, header.span()) != n))
+	return fail_(Failure::InvalidHeader), -1;
+      ZuBSpan input = header;
+      Failure::T failure = Failure::None;
+      HeaderParser parser;
+      int result = parser.process(input, m_frame, failure);
+      if (result == HeaderParser::Result::Wait) return 0;
+      if (result == HeaderParser::Result::Error)
+	return fail_(failure), -1;
+      unsigned headerLen = n - input.length();
+      if (ZuUnlikely(m_frame.masked != Server))
+	return fail_(Failure::MaskDirection), -1;
+
+      if (control(m_frame.opcode)) {
+	if (ZuUnlikely(!m_frame.final))
+	  return fail_(Failure::ControlFragment), -1;
+	if (ZuUnlikely(m_frame.length > MaxControl))
+	  return fail_(Failure::ControlTooLarge), -1;
+      } else {
+	bool start = m_frame.opcode != Opcode::Continuation;
+	if (!start) {
+	  if (ZuUnlikely(!m_msgActive))
+	    return fail_(Failure::UnexpectedContinuation), -1;
+	} else if (ZuUnlikely(m_msgActive))
+	  return fail_(Failure::MissingContinuation), -1;
+	uint64_t msgLength = start ? 0 : m_msgLength;
+	if (ZuUnlikely(msgLength > m_config.maxMessage ||
+	    m_frame.length > m_config.maxMessage - msgLength))
+	  return fail_(Failure::MessageTooLarge), -1;
+	if (start) {
+	  m_rx.clean();
+	  m_utf8.reset();
+	  m_msgOpcode = m_frame.opcode;
+	  m_msgActive = true;
+	  if (ZuUnlikely(impl()->messageStart(m_msgOpcode) < 0))
+	    return reject_();
 	}
-	m_rx.reset();
-	m_layerActive = true;
+	m_msgLength = msgLength + m_frame.length;
       }
-      if (m_closeSent) {
-	discardData_();
-	continue;
-      }
-      auto before = m_input.length();
-      int rc = impl()->message(m_rx);
-      if (rc < 0) {
-	appFailed = true;
-	m_txEnabled = 0;
-	m_terminal = true;
-	break;
-      }
-      if (m_rx.available()) {
-	fail_(Failure::InvalidHeader);
-	break;
-      }
-      if (m_rx.complete()) {
-	m_layerActive = false;
-	rc = impl()->message(m_rx); // deliver consumed message Final event
-	if (rc < 0) {
-	  appFailed = true;
-	  m_txEnabled = 0;
-	  m_terminal = true;
-	  break;
-	}
-      }
-      if (m_input.length() == before) break;
+      rx.advance(headerLen);
+      m_frameRemain = m_frame.length;
+      m_frameOffset = 0;
+      m_frameReady = true;
+      progressed = true;
     }
-    bool consumed = !m_input;
-    m_input = {};
-    if (!consumed && !appFailed && m_failure == Failure::None)
-      fail_(Failure::InvalidHeader);
-    return m_failure == Failure::None && !appFailed ? 1 : -1;
+
+    int rc = control(m_frame.opcode) ? control_(rx) : data_(rx);
+    return !rc && progressed ? 1 : rc;
   }
 
-  int nextFrame_() {
-    if (m_frameReady) return control(m_frame.opcode) ?
-      Next::Control : Next::Data;
-    int result = m_header.process(m_input, m_frame, m_failure);
-    if (result == HeaderParser::Result::Wait) return Next::Wait;
-    if (result == HeaderParser::Result::Error) return Next::Error;
-    if (m_frame.masked != Server)
-      return fail_(Failure::MaskDirection), Next::Error;
-    if (m_frame.length > m_config.maxFrame)
-      return fail_(Failure::FrameTooLarge), Next::Error;
-    m_frameRemain = m_frame.length;
-    m_frameOffset = 0;
-    m_frameReady = true;
-    if (control(m_frame.opcode)) {
-      if (!m_frame.final)
-	return fail_(Failure::ControlFragment), Next::Error;
-      if (m_frame.length > MaxControl)
-	return fail_(Failure::ControlTooLarge), Next::Error;
-      m_controlLen = 0;
-      return Next::Control;
+  template <typename HttpRx>
+  int data_(HttpRx &rx) {
+    uint64_t length = rx.length();
+    if (length > m_frameRemain) length = m_frameRemain;
+    if (length > uint64_t(INT64_MAX)) length = uint64_t(INT64_MAX);
+    if (m_closeSent) {
+      if (length) {
+	rx.advance(length);
+	m_frameRemain -= length;
+	m_frameOffset += length;
+      }
+      if (m_frameRemain) return length ? 1 : 0;
+      m_frameReady = false;
+      if (m_frame.final) {
+	m_rx.clean();
+	m_msgActive = false;
+	m_msgLength = 0;
+      }
+      return 1;
     }
-    if (m_frame.opcode == Opcode::Continuation) {
-      if (!m_msgActive)
-	return fail_(Failure::UnexpectedContinuation), Next::Error;
-    } else {
-      if (m_msgActive)
-	return fail_(Failure::MissingContinuation), Next::Error;
-      m_msgOpcode = m_frame.opcode;
-      m_msgLength = 0;
-      m_utf8.reset();
-      m_msgActive = true;
-    }
-    if (m_frame.length > m_config.maxMessage - m_msgLength)
-      return fail_(Failure::MessageTooLarge), Next::Error;
-    m_msgLength += m_frame.length;
-    return Next::Data;
-  }
+    uint64_t queued = m_rx.length();
+    if (ZuUnlikely(queued > m_config.maxQueuedInput ||
+	length > m_config.maxQueuedInput - queued))
+      return fail_(Failure::InputPressure), -1;
 
-  bool control_() {
-    while (m_frameRemain && m_input) {
-      unsigned n = m_input.length() < m_frameRemain ?
-	m_input.length() : unsigned(m_frameRemain);
-      auto span = mutable_({m_input.data(), n});
-      if constexpr (Server) mask(span, m_frame.key, m_frameOffset);
-      for (unsigned i = 0; i < n; ++i)
-	m_control[m_controlLen + i] = span[i];
-      m_controlLen += n;
-      m_input.offset(n);
-      m_frameRemain -= n;
-      m_frameOffset += n;
+    UTF8 utf8 = m_utf8;
+    bool final = m_frame.final && length == m_frameRemain;
+    bool text = m_msgOpcode == Opcode::Text;
+    bool valid = true;
+    if constexpr (Server) {
+      uint64_t offset = m_frameOffset;
+      uint32_t key = m_frame.key;
+      int64_t n = rx.each(
+	length,
+	[&utf8, text, key, &offset](ZuSpan<uint8_t> span) -> int64_t {
+	  mask(span, key, offset);
+	  if (text && !utf8.update(span)) return -1;
+	  offset += span.length();
+	  return span.length();
+	});
+	valid = n >= 0 && uint64_t(n) == length;
+    } else if (text) {
+      int64_t n = rx.each(length, [&utf8](ZuBSpan span) -> int64_t {
+	return utf8.update(span) ? span.length() : -1;
+	});
+	valid = n >= 0 && uint64_t(n) == length;
     }
-    if (m_frameRemain) return false;
+    if (ZuUnlikely(!valid || (text && final && !utf8.complete())))
+	return fail_(Failure::InvalidUTF8), -1;
+
+    int appRC = 1;
+    if (length) {
+      uint64_t remaining = length;
+      int64_t consumed = rx.splice(
+	m_rx,
+	[&remaining](ZuBSpan span) mutable -> int64_t {
+	  if (remaining > span.length()) {
+	    remaining -= span.length();
+	    return 0;
+	  }
+	  return remaining;
+	}, allocWire_, allocMessage_);
+      if (ZuUnlikely(consumed <= 0))
+	return fail_(Failure::InvalidHeader), -1;
+      m_utf8 = utf8;
+      m_frameRemain -= length;
+      m_frameOffset += length;
+      appRC = impl()->message(m_rx);
+    }
+    if (ZuUnlikely(appRC < 0)) return reject_();
+    if (m_frameRemain) return length ? 1 : 0;
+
     m_frameReady = false;
-    ZuBSpan payload{m_control, m_controlLen};
+    if (!m_frame.final) return 1;
+
+    m_msgActive = false;
+    int endRC = impl()->messageEnd();
+    m_rx.clean();
+    m_msgLength = 0;
+    if (ZuUnlikely(endRC < 0)) return reject_();
+    return 1;
+  }
+
+  template <typename HttpRx>
+  int control_(HttpRx &rx) {
+    uint64_t length = rx.length();
+    if (length > m_frameRemain) length = m_frameRemain;
+    if (!length && m_frameRemain) return 0;
+    uint64_t offset = m_frameOffset;
+    uint32_t key = m_frame.key;
+    int64_t n = rx.each(
+      length,
+      [this, key, &offset](ZuBSpan span) -> int64_t {
+	const unsigned length = span.length();
+	if constexpr (Server) {
+	  const uint8_t bytes[] = {
+	    uint8_t(key>>24), uint8_t(key>>16),
+	    uint8_t(key>>8), uint8_t(key)
+	  };
+	  for (unsigned i = 0; i < length; ++i)
+	    m_control[offset + i] =
+	      span[i] ^ bytes[(offset + i) & 3];
+	} else {
+	  (void)key;
+	  for (unsigned i = 0; i < length; ++i)
+	    m_control[offset + i] = span[i];
+	}
+	offset += length;
+	return length;
+      });
+    if (ZuUnlikely(n < 0 || uint64_t(n) != length))
+      return fail_(Failure::InvalidHeader), -1;
+    rx.advance(length);
+    m_frameRemain -= length;
+    m_frameOffset += length;
+    if (m_frameRemain) return 1;
+
+    m_frameReady = false;
+    ZuBSpan payload{m_control, unsigned(m_frameOffset)};
     switch (m_frame.opcode) {
       case Opcode::Ping:
 	if (!sendControl_(Opcode::Pong, payload))
-	  return fail_(Failure::Transmit), false;
+	  return fail_(Failure::Transmit), -1;
 	break;
       case Opcode::Pong:
 	pong_(payload);
 	break;
       case Opcode::Close:
-	if (!peerClose_(payload)) return false;
+	if (!peerClose_(payload)) return -1;
 	break;
     }
-    return true;
+    return 1;
   }
 
-  void discardData_() {
-    unsigned n = m_input.length() < m_frameRemain ?
-      m_input.length() : unsigned(m_frameRemain);
-    m_input.offset(n);
-    m_frameRemain -= n;
-    m_frameOffset += n;
-    if (m_frameRemain) return;
-    m_frameReady = false;
-    if (m_frame.final) m_msgActive = false;
+  int reject_() {
+    m_txEnabled = 0;
+    m_terminal = true;
+    m_wire.clean();
+    m_rx.clean();
+    return -1;
   }
 
   bool peerClose_(ZuBSpan payload) {
@@ -490,6 +503,9 @@ private:
 	return fail_(Failure::InvalidUTF8), false;
     }
     m_peerClosed = true;
+    m_wire.clean();
+    m_rx.clean();
+    m_msgActive = false;
     stopTimers_();
     impl()->closed(code, reason);
     if (!m_closeSent) {
@@ -532,13 +548,9 @@ private:
     m_errorNotified = true;
     m_txEnabled = 0;
     stopTimers_();
-    if (m_established) {
-      m_rx.reset();
-      m_layerActive = true;
-      (void)m_rx.input();
-      (void)impl()->message(m_rx);
-      m_layerActive = false;
-    }
+    m_wire.clean();
+    m_rx.clean();
+    m_msgActive = false;
     errorClose_();
     impl()->error(m_failure);
     m_terminal = true;
@@ -551,7 +563,6 @@ private:
       case Failure::InvalidUTF8:
 	code = CloseCode::InvalidData;
 	break;
-      case Failure::FrameTooLarge:
       case Failure::MessageTooLarge:
       case Failure::InputPressure:
 	code = CloseCode::TooLarge;
@@ -650,10 +661,9 @@ private:
   Random		*m_random;
   Config		m_config;
   ZmAtomic<unsigned>	m_txEnabled = 0;
-  RxLayer		m_rx;
+  Rx			m_wire;
+  Rx			m_rx;
   Stream		*m_stream = nullptr;
-  ZuBSpan		m_input;
-  HeaderParser		m_header;
   Frame			m_frame;
   UTF8			m_utf8;
   ZuBArray<MaxControl>	m_pingPayload;
@@ -665,12 +675,10 @@ private:
   uint64_t		m_frameOffset = 0;
   uint64_t		m_msgLength = 0;
   uint8_t		m_control[MaxControl];
-  unsigned		m_controlLen = 0;
   Opcode::T		m_msgOpcode = Opcode::Continuation;
   Failure::T		m_failure = Failure::None;
   bool			m_frameReady = false;
   bool			m_msgActive = false;
-  bool			m_layerActive = false;
   bool			m_closeSent = false;
   bool			m_peerClosed = false;
   bool			m_pingPending = false;

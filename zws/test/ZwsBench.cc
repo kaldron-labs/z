@@ -139,36 +139,33 @@ struct ServerApp {
     return target == "/bench";
   }
   void connected(auto &, const Zhttp::ConnectedInfo &) { }
+  int messageStart(auto &link, Zws::Opcode::T opcode) {
+    auto &linkState = link.state();
+    linkState.offset = 0;
+    linkState.opcode = opcode;
+    return 1;
+  }
   int process(auto &link, auto &rx) {
     auto &linkState = link.state();
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) {
-      linkState.offset = 0;
-      linkState.opcode = link.messageOpcode();
-    }
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this, &linkState](ZuBSpan span) {
-	  unsigned n = span.length();
-	  if (linkState.offset + n > state->payload.length() ||
-	      span != ZuBSpan{
-		state->payload.data() + linkState.offset, n})
-	    state->failed = true;
-	  linkState.offset += n;
-	  state->rxBytes += n;
-	});
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (events & Zi::RxEvent::Final()) {
-      if (linkState.offset != state->payload.length()) return -1;
-      link.txStream([this](auto &tx) {
-	tx << state->payload;
-	tx.flush();
-      }, linkState.opcode);
-    }
+    bool valid = Zhttp::bodyEach(
+      rx, [this, &linkState](ZuBSpan span) {
+	unsigned n = span.length();
+	if (linkState.offset + n > state->payload.length() ||
+	    span != ZuBSpan{
+	      state->payload.data() + linkState.offset, n})
+	  state->failed = true;
+	linkState.offset += n;
+	state->rxBytes += n;
+      });
+    return valid && !state->failed ? 1 : -1;
+  }
+  int messageEnd(auto &link) {
+    auto &linkState = link.state();
+    if (linkState.offset != state->payload.length()) return -1;
+    link.txStream([this](auto &tx) {
+      tx << state->payload;
+      tx.flush();
+    }, linkState.opcode);
     return 1;
   }
   void disconnected(auto &, bool) { }
@@ -190,27 +187,27 @@ struct ClientApp {
     send_(link);
   }
 
+  int messageStart(auto &link, Zws::Opcode::T) {
+    auto &linkState = link.state();
+    linkState.offset = 0;
+    return 1;
+  }
   int process(auto &link, auto &rx) {
     auto &linkState = link.state();
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) linkState.offset = 0;
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this, &linkState](ZuBSpan span) {
-	  unsigned n = span.length();
-	  if (linkState.offset + n > state->payload.length() ||
-	      span != ZuBSpan{
-		state->payload.data() + linkState.offset, n})
-	    state->failed = true;
-	  linkState.offset += n;
-	  state->rxBytes += n;
-	});
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (events & Zi::RxEvent::Final()) complete_(link);
+    bool valid = Zhttp::bodyEach(
+      rx, [this, &linkState](ZuBSpan span) {
+	unsigned n = span.length();
+	if (linkState.offset + n > state->payload.length() ||
+	    span != ZuBSpan{
+	      state->payload.data() + linkState.offset, n})
+	  state->failed = true;
+	linkState.offset += n;
+	state->rxBytes += n;
+      });
+    return valid && !state->failed ? 1 : -1;
+  }
+  int messageEnd(auto &link) {
+    complete_(link);
     return state->failed ? -1 : 1;
   }
 

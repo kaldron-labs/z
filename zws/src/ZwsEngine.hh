@@ -87,7 +87,7 @@ class ExtendedClientLink :
   using StateBase = AppLinkState<App>;
 
 public:
-  using RxLayer = typename CodecBase::RxLayer;
+  using Rx = typename CodecBase::Rx;
   using CodecBase::txStream;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
@@ -168,8 +168,21 @@ public:
   int process(Zhttp::Stream<ExtendedClientLink> stream, Rx &rx) {
     return CodecBase::process(ZuMv(stream), rx);
   }
-  int message(RxLayer &rx) {
+  int messageStart(Opcode::T opcode) {
+    return H1_::messageStart(
+      *this->app()->app(), *this, opcode, 0);
+  }
+  int message(Rx &rx) {
     return H1_::process(*this->app()->app(), *this, rx, 0);
+  }
+  int messageEnd() {
+    return H1_::messageEnd(*this->app()->app(), *this, 0);
+  }
+  void peerEnd(Zhttp::Stream<ExtendedClientLink> stream) {
+    CodecBase::peerEnd(ZuMv(stream));
+  }
+  void error(Zhttp::Stream<ExtendedClientLink> stream) {
+    CodecBase::streamError(ZuMv(stream));
   }
   void pong(ZuBSpan payload) {
     H1_::pong(*this->app()->app(), *this, payload, 0);
@@ -279,7 +292,7 @@ class ExtendedServerLink :
   using StateBase = AppLinkState<App>;
 
 public:
-  using RxLayer = typename CodecBase::RxLayer;
+  using Rx = typename CodecBase::Rx;
   using CodecBase::txStream;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
@@ -371,8 +384,21 @@ public:
   int process(Zhttp::Stream<ExtendedServerLink> stream, Rx &rx) {
     return CodecBase::process(ZuMv(stream), rx);
   }
-  int message(RxLayer &rx) {
+  int messageStart(Opcode::T opcode) {
+    return H1_::messageStart(
+      *this->app()->app(), *this, opcode, 0);
+  }
+  int message(Rx &rx) {
     return H1_::process(*this->app()->app(), *this, rx, 0);
+  }
+  int messageEnd() {
+    return H1_::messageEnd(*this->app()->app(), *this, 0);
+  }
+  void peerEnd(Zhttp::Stream<ExtendedServerLink> stream) {
+    CodecBase::peerEnd(ZuMv(stream));
+  }
+  void error(Zhttp::Stream<ExtendedServerLink> stream) {
+    CodecBase::streamError(ZuMv(stream));
   }
   void pong(ZuBSpan payload) {
     H1_::pong(*this->app()->app(), *this, payload, 0);

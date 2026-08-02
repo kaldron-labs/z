@@ -57,14 +57,27 @@ auto process(App &app, Link &link, Rx &rx, int) ->
 }
 template <typename App, typename Link, typename Rx>
 int process(App &, Link &, Rx &rx, ...) {
-  while (rx.input()) {
-    if (rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[](ZuBSpan) { }) <= 0)
-      break;
-  }
-  return rx.failed() ? -1 : 1;
+  return Zhttp::bodyDrain(rx) ? 1 : -1;
 }
+
+template <typename App, typename Link>
+auto messageStart(
+    App &app, Link &link, Opcode::T opcode, int) ->
+  decltype(int(app.messageStart(link, opcode)))
+{
+  return int(app.messageStart(link, opcode));
+}
+template <typename App, typename Link>
+int messageStart(App &, Link &, Opcode::T, ...) { return 1; }
+
+template <typename App, typename Link>
+auto messageEnd(App &app, Link &link, int) ->
+  decltype(int(app.messageEnd(link)))
+{
+  return int(app.messageEnd(link));
+}
+template <typename App, typename Link>
+int messageEnd(App &, Link &, ...) { return 1; }
 
 template <typename App, typename Link>
 auto pong(App &app, Link &link, ZuBSpan payload, int) ->
@@ -200,7 +213,7 @@ class H1ClientLink :
   using StateBase = AppLinkState<App>;
 
 public:
-  using RxLayer = typename CodecBase::RxLayer;
+  using Rx = typename CodecBase::Rx;
   using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
@@ -258,8 +271,21 @@ public:
   int process(Zhttp::Stream<H1ClientLink> stream, Rx &rx) {
     return CodecBase::process(ZuMv(stream), rx);
   }
-  int message(RxLayer &rx) {
+  int messageStart(Opcode::T opcode) {
+    return H1_::messageStart(
+      *this->app()->app(), *this, opcode, 0);
+  }
+  int message(Rx &rx) {
     return H1_::process(*this->app()->app(), *this, rx, 0);
+  }
+  int messageEnd() {
+    return H1_::messageEnd(*this->app()->app(), *this, 0);
+  }
+  void peerEnd(Zhttp::Stream<H1ClientLink> stream) {
+    CodecBase::peerEnd(ZuMv(stream));
+  }
+  void error(Zhttp::Stream<H1ClientLink> stream) {
+    CodecBase::streamError(ZuMv(stream));
   }
   void pong(ZuBSpan payload) {
     H1_::pong(*this->app()->app(), *this, payload, 0);
@@ -384,7 +410,7 @@ class H1ServerLink :
   using StateBase = AppLinkState<App>;
 
 public:
-  using RxLayer = typename CodecBase::RxLayer;
+  using Rx = typename CodecBase::Rx;
   using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
@@ -445,8 +471,21 @@ public:
   int process(Zhttp::Stream<H1ServerLink> stream, Rx &rx) {
     return CodecBase::process(ZuMv(stream), rx);
   }
-  int message(RxLayer &rx) {
+  int messageStart(Opcode::T opcode) {
+    return H1_::messageStart(
+      *this->app()->app(), *this, opcode, 0);
+  }
+  int message(Rx &rx) {
     return H1_::process(*this->app()->app(), *this, rx, 0);
+  }
+  int messageEnd() {
+    return H1_::messageEnd(*this->app()->app(), *this, 0);
+  }
+  void peerEnd(Zhttp::Stream<H1ServerLink> stream) {
+    CodecBase::peerEnd(ZuMv(stream));
+  }
+  void error(Zhttp::Stream<H1ServerLink> stream) {
+    CodecBase::streamError(ZuMv(stream));
   }
   void pong(ZuBSpan payload) {
     H1_::pong(*this->app()->app(), *this, payload, 0);
