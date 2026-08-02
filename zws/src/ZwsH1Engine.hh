@@ -144,9 +144,9 @@ template <typename App, typename Profile> class H1ServerLink;
 
 template <typename App, typename Profile>
 class H1Client :
-  public Zhttp::Client<H1Client<App, Profile>, Profile> {
+  public Zhttp::ClientEngine<H1Client<App, Profile>, Profile> {
   using Traits = typename Zhttp::ProfileTraits<Profile>::Transport;
-  using Base = Zhttp::Client<H1Client, Profile>;
+  using Base = Zhttp::ClientEngine<H1Client, Profile>;
 
 public:
   static_assert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
@@ -210,6 +210,8 @@ public:
     HTTPBase{engine, ZtString<>{uri.host}, uri.port},
     CodecBase{*this, engine->random(), engine->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
+
+  void up_() { HTTPBase::up_(); }
 
   void open_(Zhttp::ConnectedInfo info) {
     this->CodecBase::reopen_(*this);
@@ -392,6 +394,8 @@ public:
   H1ServerLink(Engine *engine, const ZiCxnInfo &ci) :
     HTTPBase{engine, ci},
     CodecBase{*this, engine->random(), engine->wsConfig()} { }
+
+  void up_() { HTTPBase::up_(); }
 
   void open_() {
     this->CodecBase::reopen_(*this);
