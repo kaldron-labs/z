@@ -16,7 +16,6 @@
 
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmHash.hh>
-#include <zlib/ZmList.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmPLock.hh>
@@ -35,9 +34,7 @@
 
 namespace Ztcp_ {
 
-ZuDerive(IOQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
-
+using IOQueue = ZiRxQueue;
 using RxStream = ZiRxStream<IOQueue>;
 
 template <
@@ -308,7 +305,6 @@ private:
     if (m_cxn == cxn) m_cxn = nullptr;
     m_disconnecting = 0;
     stateChanged_(oldState);
-    m_rxStream.clean();
   }
 
   void disconnected_1(bool peer) {
@@ -316,6 +312,7 @@ private:
       "TCP disconnect completion outside Rx thread", return);
     auto app = impl()->app();
     impl()->disconnected(peer);
+    m_rxStream.clean();
     app->linkDisconnected_();
   }
 

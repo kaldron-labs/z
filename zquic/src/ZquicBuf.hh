@@ -12,7 +12,6 @@
 
 #include <string.h>
 
-#include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -22,10 +21,8 @@
 
 namespace Zquic_ {
 
-ZuDerive(IOQueue,
-  // intrusive base only; Zi::IOBufAlloc supplies the role heap.
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
-
+// Intrusive base only; Zi::IOBufAlloc supplies the role heap.
+using IOQueue = ZiRxQueue;
 using RxStream = ZiRxStream<IOQueue>;
 
 template <

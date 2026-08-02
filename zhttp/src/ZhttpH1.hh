@@ -17,13 +17,17 @@ namespace Zhttp {
 
 namespace H1 {
 
+inline ZmRef<ZiRxQueue::Node> allocRxBuf()
+{
+  return new BodyRx::BufAlloc{};
+}
+
 ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Initial,		// first line - request operation or response status
   Headers,		// reading headers
   Body,		// reading body data (not chunked)
   ChunkHdr,		// chunk header (hex length + CRLF)
-  Chunk,		// reading chunk data
-  ChunkTrlr,		// chunk trailer (CRLF)
+  Chunk,		// reading chunk data + trailing CRLF
   Trailers,		// trailers after final chunk
   Complete,		// message completely read
   Error);		// invalid message
@@ -36,6 +40,8 @@ template <
   uint64_t MaxBody_ = DefltMaxBody>
 class Parser {
 public:
+  Parser() : m_bodyRx{MaxBody} { }
+
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -234,26 +240,35 @@ public:
 	    });
 	  } break;
 	  case State::Body: { // parse body
-	    consumed = stream.consume(
-	      [this](ZuBSpan span) -> int64_t {
-		auto n = span.length();
-		if (m_eofBody) {
-		  if (ZuUnlikely(m_contentLength + n > MaxBody)) {
-		    m_state = State::Error;
-		    ZiLOG(Error, "Zhttp", "oversized body");
-		    return -1;
-		  }
-		  m_contentLength += n;
-		} else {
-		  if (n > m_contentLength) n = m_contentLength;
-		  if (!(m_contentLength -= n)) m_state = State::Complete;
+	    if (m_eofBody) {
+	      m_eofStream = &stream;
+	      m_eofFn = [](Parser *parser, void *stream_) {
+		return parser->eof_(*static_cast<Stream *>(stream_));
+	      };
+	      if (ZuUnlikely(stream.length() > MaxBody)) {
+		m_state = State::Error;
+		ZiLOG(Error, "Zhttp", "oversized body");
+	      }
+	      break;
+	    }
+	    uint64_t length = uint64_t(m_contentLength);
+	    if (stream.length() < length) break;
+	    uint64_t remaining = length;
+	    consumed = m_bodyRx.splice(
+	      stream, length,
+	      [&remaining](ZuBSpan span) -> int64_t {
+		if (remaining > span.length()) {
+		  remaining -= span.length();
+		  return 0;
 		}
-		return n;
-	      }, [this](ZuBSpan span) {
-		if (!m_bodyRx.offer(span, m_state == State::Complete,
-		    [this](auto &rx) { impl()->body(rx); }))
-		  m_state = State::Error;
-	      });
+		return remaining;
+	      }, allocRxBuf, allocRxBuf, 0, 0,
+	      [this](auto &rx) { impl()->body(rx); });
+	    if (consumed > 0) {
+	      m_contentLength = 0;
+	      m_state = State::Complete;
+	    } else if (consumed < 0)
+	      m_state = State::Error;
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
 	    consumed = stream.template consume<2, "Zhttp.ChunkHdr">(
@@ -277,40 +292,32 @@ public:
 		m_state = State::Chunk;
 	      });
 	  } break;
-	  case State::Chunk: { // parse chunk data
-	    consumed = stream.consume(
-	      [this](ZuBSpan span) -> int64_t {
-		auto n = span.length();
-		if (n > m_chunkLength) n = m_chunkLength;
-		if (!(m_chunkLength -= n)) m_state = State::ChunkTrlr;
+	  case State::Chunk: { // parse chunk data + trailing CRLF
+	    uint64_t length = uint64_t(m_chunkLength);
+	    uint64_t frameLen = length + 2;
+	    if (stream.length() < frameLen) break;
+	    consumed = m_bodyRx.splice(
+	      stream, length,
+	      [remaining = frameLen, prev = uint8_t{0}](
+		  ZuBSpan span) mutable -> int64_t {
+		unsigned n = remaining < span.length() ?
+		  unsigned(remaining) : span.length();
+		uint8_t last = n > 1 ? span[n - 2] : prev;
+		prev = span[n - 1];
+		remaining -= n;
+		if (remaining) return 0;
+		if (last != '\r' || prev != '\n') return -1;
 		return n;
-	      }, [this](ZuBSpan span) {
-		if (!m_bodyRx.offer(span, false,
-		    [this](auto &rx) { impl()->body(rx); }))
-		  m_state = State::Error;
-	      });
-	  } break;
-	  case State::ChunkTrlr: { // parse trailing "\r\n"
-	    consumed = stream.template consume<2, "Zhttp.ChunkTrlr">(
-	      [this, prevCR = false](ZuBSpan span) mutable -> int64_t {
-		auto error = [this]() {
-		  m_state = State::Error;
-		  ZiLOG(Error, "Zhttp", "invalid chunk trailer");
-		  return -1;
-		};
-		if (prevCR && span[0] == '\n') {
-		  m_state = State::ChunkHdr;
-		  return 1;
-		}
-		if (span.length() == 1) {
-		  if (span[0] == '\r') { prevCR = true; return 0; }
-		  return error();
-		}
-		if (span[0] != '\r' || span[1] != '\n') return error();
-		m_state = State::ChunkHdr;
-		return 2;
-	      }, [](ZuBSpan) { });
-	  } break;
+	      }, allocRxBuf, allocRxBuf, 0, 2,
+	      [this](auto &rx) { impl()->body(rx); });
+	    if (consumed > 0) {
+	      m_chunkLength = 0;
+	      m_state = State::ChunkHdr;
+	    } else if (consumed < 0) {
+	      m_state = State::Error;
+	      ZiLOG(Error, "Zhttp", "invalid chunk trailer");
+	    }
+	    } break;
 	  case State::Trailers: { // parse trailers
 	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line)
@@ -326,8 +333,9 @@ public:
 	if (consumed > 0) m_progressed = true;
 	if (m_state == State::Complete ||
 	    m_state == State::Error) {
-	  if (m_state == State::Complete && !m_bodyRx.finish())
-	    m_state = State::Error;
+	  m_eofStream = nullptr;
+	  m_eofFn = nullptr;
+	  m_bodyRx.discard();
 	  State::T state = m_state;
 	  impl()->complete(state);
 	  return state;
@@ -342,12 +350,12 @@ public:
   State::T eof() {
     if (m_state == State::Complete || m_state == State::Error)
 	return m_state;
-    if (m_state == State::Body && m_eofBody)
-	m_state = State::Complete;
-    else
-	m_state = State::Error;
-    if (m_state == State::Complete && !m_bodyRx.finish())
-      m_state = State::Error;
+    if (m_state == State::Body && m_eofBody && m_eofFn)
+      return m_eofFn(this, m_eofStream);
+    m_state = State::Error;
+    m_eofStream = nullptr;
+    m_eofFn = nullptr;
+    m_bodyRx.discard();
     impl()->complete(m_state);
     return m_state;
   }
@@ -362,6 +370,8 @@ public:
     m_chunkLength = -1;
     m_statusCode = 0;
     m_progressed = false;
+    m_eofStream = nullptr;
+    m_eofFn = nullptr;
   }
 
   // CRTP defaults
@@ -379,6 +389,33 @@ public:
   void complete(State::T) { }
 
 private:
+  template <typename Stream>
+  State::T eof_(Stream &stream) {
+    uint64_t length = stream.length();
+    if (ZuUnlikely(length > MaxBody)) {
+      m_state = State::Error;
+    } else if (length) {
+      uint64_t remaining = length;
+      int64_t n = m_bodyRx.splice(
+	stream, length,
+	[&remaining](ZuBSpan span) -> int64_t {
+	  if (remaining > span.length()) {
+	    remaining -= span.length();
+	    return 0;
+	  }
+	  return remaining;
+	}, allocRxBuf, allocRxBuf, 0, 0,
+	[this](auto &rx) { impl()->body(rx); });
+      m_state = n > 0 ? State::Complete : State::Error;
+    } else
+      m_state = State::Complete;
+    m_eofStream = nullptr;
+    m_eofFn = nullptr;
+    m_bodyRx.discard();
+    impl()->complete(m_state);
+    return m_state;
+  }
+
   bool interimResponse_() const {
     return m_statusCode >= 100 && m_statusCode < 200 &&
       m_statusCode != 101;
@@ -389,8 +426,10 @@ private:
   }
 
   // Rx thread exclusive
-  int64_t	m_contentLength = -1;
-  int64_t	m_chunkLength = -1;
+  void		*m_eofStream = nullptr;
+  State::T	(*m_eofFn)(Parser *, void *) = nullptr;
+  uint64_t	m_contentLength = uint64_t(-1);
+  uint64_t	m_chunkLength = uint64_t(-1);
   BodyRx	m_bodyRx;
   unsigned	m_statusCode = 0;
   State::T	m_state = State::Initial;

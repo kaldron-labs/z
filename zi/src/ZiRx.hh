@@ -20,15 +20,12 @@
 #include <zlib/ZuInvoke.hh>
 
 #include <zlib/ZmRef.hh>
-#include <zlib/ZmList.hh>
 
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
-
-ZuDerive(ZiRxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+#include <zlib/ZiRxStream.hh>
 
 using ZiRxBuf = ZiRxQueue::Node;
 

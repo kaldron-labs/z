@@ -44,7 +44,7 @@ class ClientLink :
   using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ClientLink<App, Impl>;
   using StreamBinding =
-    H1::StreamBinding<Impl, Impl, typename Traits::RxStream>;
+    H1::StreamBinding<Impl, Impl>;
 
 public:
   using Base::Base;
@@ -176,7 +176,7 @@ class ServerLink :
   using Traits = typename HTTP::Transport;
   using Base = typename Traits::template ServerLink<App, Impl>;
   using StreamBinding =
-    H1::StreamBinding<Impl, Impl, typename Traits::RxStream>;
+    H1::StreamBinding<Impl, Impl>;
 
 public:
   enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };

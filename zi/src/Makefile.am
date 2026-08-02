@@ -21,7 +21,7 @@ endif
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
 	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
-	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc ZiRxStream.cc \
+	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc \
 	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiResolver.cc ZtcHub.cc \
 	ZtcLink.cc ZtcPool.cc
 if NETLINK

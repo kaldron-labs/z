@@ -6,9 +6,7 @@
 
 #include <string.h>
 
-#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmList.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
@@ -20,8 +18,7 @@ using namespace ZuTestUtil;
 
 namespace ZhttpParserTest_ {
 
-ZuDerive(RxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+using RxQueue = ZiRxQueue;
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 2048,
   ZuStringT<"ZhttpParserTest.Buf">>;
 using RxStream = ZiRxStream<RxQueue>;
@@ -69,6 +66,22 @@ struct ResponseParser :
   template <typename Rx>
   void body(Rx &rx) {
     ++bodyCalls;
+    if (recordLen) {
+      unsigned remaining = recordLen;
+      (void)rx.consume(
+	[&remaining](ZuBSpan span) -> int64_t {
+	  if (remaining > span.length()) {
+	    remaining -= span.length();
+	    return 0;
+	  }
+	  return remaining;
+	},
+	[this](ZuBSpan span) {
+	  bodyBytes += span.length();
+	  bodyData << span;
+	});
+      return;
+    }
     Zhttp::bodyEach(rx, [this](ZuBSpan span) {
       bodyBytes += span.length();
       bodyData << span;
@@ -101,6 +114,7 @@ struct ResponseParser :
   unsigned			completeCalls = 0;
   unsigned			contentLengthCalls = 0;
   unsigned			runtimeCalls = 0;
+  unsigned			recordLen = 0;
   Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
   BodyData			bodyData;
   ZtString<>			runtimeKey;
@@ -449,26 +463,91 @@ void testCloseDelimitedResponseBody()
   stream.push(mkBuf(frags[0]));
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Body,
     "close-delimited response did not enter body state");
-  ZuCHECK(parser.bodyData == "hello, ",
-    "close-delimited first body fragment mismatch");
+  ZuCHECK(!parser.bodyData && stream.length() == 7,
+    "close-delimited body was published before EOF");
   ZuCHECK(parser.completeCalls == 0,
     "close-delimited response completed before EOF");
-  ZuCHECK(!stream, "stream still has data after first body fragment");
 
   stream.push(mkBuf(frags[1]));
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Body,
     "close-delimited response left body state before EOF");
-  ZuCHECK(parser.bodyData == "hello, world",
-    "close-delimited body mismatch before EOF");
+  ZuCHECK(!parser.bodyData && stream.length() == 12,
+    "close-delimited body was published before final EOF");
   ZuCHECK(parser.completeCalls == 0,
     "close-delimited response completed before final EOF");
-  ZuCHECK(!stream, "stream still has data after second body fragment");
-
   ZuCHECK(parser.eof() == Zhttp::H1::ParserState::Complete,
     "close-delimited response did not complete on EOF");
+  ZuCHECK(parser.bodyData == "hello, world" && !stream,
+    "close-delimited body was not atomically published at EOF");
   ZuCHECK(parser.completeCalls == 1 &&
       parser.completeState == Zhttp::H1::ParserState::Complete,
     "close-delimited completion callback mismatch");
+}
+
+void testContentLengthBodyTransactional()
+{
+  ZuTestScope(testContentLengthBodyTransactional);
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 200 OK\r\n"
+    "content-length: 5\r\n"
+    "\r\n"
+    "ab"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Body &&
+      !parser.bodyCalls && stream.length() == 2,
+    "partial content-length body was consumed or published");
+
+  stream.push(mkBuf("cdeNEXT"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
+      parser.bodyCalls == 1 && parser.bodyData == "abcde",
+    "complete content-length body was not atomically published");
+  ZuCHECK(stream.length() == 4 && ZuCSpan{stream.span()} == "NEXT",
+    "content-length body consumed pipelined bytes");
+}
+
+void testChunkBodyTransactional()
+{
+  ZuTestScope(testChunkBodyTransactional);
+
+  ResponseParser parser;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 200 OK\r\n"
+    "transfer-encoding: chunked\r\n"
+    "\r\n"
+    "4\r\nab"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Chunk &&
+      !parser.bodyCalls && stream.length() == 2,
+    "partial chunk data was consumed or published");
+
+  stream.push(mkBuf("cd\r\n0\r\n\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
+      parser.bodyCalls == 1 && parser.bodyData == "abcd" && !stream,
+    "complete chunk frame was not atomically published");
+}
+
+void testAppFrameAcrossChunks()
+{
+  ZuTestScope(testAppFrameAcrossChunks);
+
+  ResponseParser parser;
+  parser.recordLen = 6;
+  RxStream stream;
+  stream.push(mkBuf(
+    "HTTP/1.1 200 OK\r\n"
+    "transfer-encoding: chunked\r\n"
+    "\r\n"
+    "3\r\nabc\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::ChunkHdr &&
+      parser.bodyCalls == 1 && !parser.bodyData,
+    "partial application frame was not retained after first chunk");
+
+  stream.push(mkBuf("3\r\ndef\r\n0\r\n\r\n"));
+  ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
+      parser.bodyCalls == 2 && parser.bodyData == "abcdef",
+    "application frame did not span complete HTTP chunks");
 }
 
 void testCloseDelimitedResponseTooLarge()
@@ -618,6 +697,9 @@ int main(int argc, char **argv)
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
   ZuTestCall(testChunkedBodyAcrossRxBuffers);
+  ZuTestCall(testContentLengthBodyTransactional);
+  ZuTestCall(testChunkBodyTransactional);
+  ZuTestCall(testAppFrameAcrossChunks);
   ZuTestCall(testCloseDelimitedResponseBody);
   ZuTestCall(testCloseDelimitedResponseTooLarge);
   ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);

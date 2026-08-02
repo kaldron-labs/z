@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z HTTP borrowed logical-stream facade
+// Z HTTP logical-stream facade
 
 #ifndef ZhttpStream_HH
 #define ZhttpStream_HH
@@ -33,6 +33,24 @@ struct Tx {
     decltype(stream.flush(), void());
 };
 
+template <typename Consumer, typename Stream>
+auto peerEnd(Consumer &consumer, Stream stream, int) ->
+  decltype(consumer.peerEnd(ZuMv(stream)), void())
+{
+  consumer.peerEnd(ZuMv(stream));
+}
+template <typename Consumer, typename Stream>
+void peerEnd(Consumer &, Stream, ...) { }
+
+template <typename Consumer, typename Stream>
+auto error(Consumer &consumer, Stream stream, int) ->
+  decltype(consumer.error(ZuMv(stream)), void())
+{
+  consumer.error(ZuMv(stream));
+}
+template <typename Consumer, typename Stream>
+void error(Consumer &, Stream, ...) { }
+
 template <typename Tx_, typename = void>
 struct IsTx : public ZuFalse { };
 template <typename Tx_>
@@ -54,13 +72,9 @@ template <typename Rx, typename = void>
 struct IsRx : public ZuFalse { };
 template <typename Rx>
 struct IsRx<Rx, decltype(
-  ZuDeclVal<Rx &>().input(),
-  ZuDeclVal<Rx &>().events(),
   ZuDeclVal<Rx &>().consume(Frame{}, Data{}),
   ZuDeclVal<Rx &>().empty(),
-  ZuDeclVal<Rx &>().complete(),
-  ZuDeclVal<Rx &>().failed(),
-  ZuDeclVal<Rx &>().available(),
+  ZuDeclVal<Rx &>().length(),
   void())> : public ZuTrue { };
 
 template <typename Link>
@@ -128,6 +142,19 @@ public:
       Stream{*link}.reset();
     }
     return rc;
+  }
+
+  void peerEnd() {
+    if (!m_link || !m_consumer) return;
+    auto link = m_link;
+    m_link = nullptr;
+    Stream_::peerEnd(*m_consumer, Stream{*link}, 0);
+  }
+  void error() {
+    if (!m_link || !m_consumer) return;
+    auto link = m_link;
+    m_link = nullptr;
+    Stream_::error(*m_consumer, Stream{*link}, 0);
   }
 
   void disable_() { m_link = nullptr; }
