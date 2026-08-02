@@ -28,7 +28,7 @@ using ServerHeaders = ZhttpHeaders(
 
 template <typename Profile>
 class Request :
-  public Zhttp::MessageTraits<Profile>::template Builder<
+  public Zhttp::MessageTraits<Profile>::template RequestBuilder<
     Request<Profile>, ServerHeaders, ZuTypeList<>, false, false> {
 public:
   Request(const URI &uri, ZuCSpan protocol = {}) :
@@ -36,7 +36,7 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, m_uri->target, ZuCSpan{});
+    l(Zhttp::Method::CONNECT, m_uri->target);
   }
   template <typename L>
   void host(L &&l) { l(m_uri->authority()); }
@@ -57,7 +57,7 @@ private:
 
 template <typename Profile>
 class Response :
-  public Zhttp::MessageTraits<Profile>::template Builder<
+  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
     Response<Profile>, ClientHeaders, ZuTypeList<>, false, false> {
 public:
   Response(ZuCSpan protocol = {}) : m_protocol{protocol} { }
@@ -75,7 +75,7 @@ private:
 
 template <typename Profile>
 class ErrorResponse :
-  public Zhttp::MessageTraits<Profile>::template Builder<
+  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
     ErrorResponse<Profile>, ZuTypeList<>, ZuTypeList<>, false, false> {
 public:
   unsigned status() const { return 400; }
@@ -83,11 +83,11 @@ public:
 
 template <typename Link, typename Profile>
 class ClientParser :
-  public Zhttp::MessageTraits<Profile>::template Parser<
-    ClientParser<Link, Profile>, false, ClientHeaders, Zhttp::DefltMaxBody> {
+  public Zhttp::MessageTraits<Profile>::template ResponseParser<
+    ClientParser<Link, Profile>, ClientHeaders, Zhttp::DefltMaxBody> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template Parser<
-    ClientParser, false, ClientHeaders, Zhttp::DefltMaxBody>;
+  using Base = typename Message::template ResponseParser<
+    ClientParser, ClientHeaders, Zhttp::DefltMaxBody>;
 
 public:
   using State = typename Base::State;
@@ -112,7 +112,7 @@ public:
     m_link = nullptr;
   }
 
-  void operation(Zhttp::Method::T, ZuBSpan) { }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { m_status = value; }
   void contentLength(uint64_t) { m_invalid = true; }
   template <typename Key>
@@ -166,11 +166,11 @@ private:
 
 template <typename Link, typename Profile>
 class ServerParser :
-  public Zhttp::MessageTraits<Profile>::template Parser<
-    ServerParser<Link, Profile>, true, ServerHeaders, Zhttp::DefltMaxBody> {
+  public Zhttp::MessageTraits<Profile>::template RequestParser<
+    ServerParser<Link, Profile>, ServerHeaders, Zhttp::DefltMaxBody> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template Parser<
-    ServerParser, true, ServerHeaders, Zhttp::DefltMaxBody>;
+  using Base = typename Message::template RequestParser<
+    ServerParser, ServerHeaders, Zhttp::DefltMaxBody>;
 
 public:
   using State = typename Base::State;
@@ -200,11 +200,14 @@ public:
     m_link = nullptr;
   }
 
-  void operation(Zhttp::Method::T method, ZuBSpan target) {
+  void operation(
+    Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
     m_method = method;
-    m_target = target;
+    m_target.length(0);
+    m_target << Zhttp::PathQuery{
+      target.path, target.query, target.hasQuery};
+    m_protocol = target.protocol;
   }
-  void protocol(ZuBSpan value) { m_protocol = value; }
   void status(unsigned) { }
   void contentLength(uint64_t) { m_invalid = true; }
   template <typename Key>

@@ -31,8 +31,8 @@ template <typename App, typename Profile> class ExtendedServerLink;
 
 template <typename App, typename Profile>
 class ExtendedClient :
-  public Zhttp::Client<ExtendedClient<App, Profile>, Profile> {
-  using Base = Zhttp::Client<ExtendedClient, Profile>;
+  public Zhttp::ClientEngine<ExtendedClient<App, Profile>, Profile> {
+  using Base = Zhttp::ClientEngine<ExtendedClient, Profile>;
 
 public:
   static_assert(Zhttp::ProfileTraits<Profile>::Multiplexed);

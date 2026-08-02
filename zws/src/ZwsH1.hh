@@ -26,9 +26,8 @@ using ClientHeaders = ZhttpHeaders(
   "sec-websocket-protocol", "sec-websocket-extensions");
 
 class ClientParser :
-  public Zhttp::H1::Parser<ClientParser, false, ClientHeaders> {
-  using Base =
-    Zhttp::H1::Parser<ClientParser, false, ClientHeaders>;
+  public Zhttp::H1RespParser<ClientParser, ClientHeaders> {
+  using Base = Zhttp::H1RespParser<ClientParser, ClientHeaders>;
 
 public:
   using State = Zhttp::H1::ParserState;
@@ -117,9 +116,8 @@ using ServerHeaders = ZhttpHeaders(
   "sec-websocket-version", "sec-websocket-protocol");
 
 class ServerParser :
-  public Zhttp::H1::Parser<ServerParser, true, ServerHeaders> {
-  using Base =
-    Zhttp::H1::Parser<ServerParser, true, ServerHeaders>;
+  public Zhttp::H1ReqParser<ServerParser, ServerHeaders> {
+  using Base = Zhttp::H1ReqParser<ServerParser, ServerHeaders>;
 
 public:
   using State = Zhttp::H1::ParserState;
@@ -145,9 +143,10 @@ public:
     m_invalid = false;
   }
 
-  void operation(Zhttp::Method::T method, ZuBSpan target) {
+  void operation(
+    Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
     m_method = method;
-    m_target = target;
+    m_target = target.raw;
   }
   void version(ZuBSpan value) { m_http11 = value == "HTTP/1.1"; }
   void contentLength(uint64_t) { m_invalid = true; }
@@ -222,8 +221,8 @@ using RequestHeaders = ZhttpHeaders(
   "sec-websocket-protocol");
 
 class Request :
-  public Zhttp::H1::Builder<Request, RequestHeaders> {
-  using Base = Zhttp::H1::Builder<Request, RequestHeaders>;
+  public Zhttp::H1ReqBuilder<Request, RequestHeaders> {
+  using Base = Zhttp::H1ReqBuilder<Request, RequestHeaders>;
 
 public:
   Request(const URI &uri, ZuCSpan key, ZuCSpan protocol = {}) :
@@ -231,7 +230,7 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::GET, m_uri->target, ZuCSpan{});
+    l(Zhttp::Method::GET, m_uri->target);
   }
   template <typename L>
   void host(L &&l) { l(m_uri->authority()); }
@@ -257,8 +256,8 @@ using ResponseHeaders = ZhttpHeaders(
   "sec-websocket-accept", "sec-websocket-protocol");
 
 class Response :
-  public Zhttp::H1::Builder<Response, ResponseHeaders> {
-  using Base = Zhttp::H1::Builder<Response, ResponseHeaders>;
+  public Zhttp::H1RespBuilder<Response, ResponseHeaders> {
+  using Base = Zhttp::H1RespBuilder<Response, ResponseHeaders>;
 
 public:
   Response(ZuCSpan accept, ZuCSpan protocol = {}) :
@@ -281,8 +280,8 @@ private:
 };
 
 class ErrorResponse :
-  public Zhttp::H1::Builder<ErrorResponse> {
-  using Base = Zhttp::H1::Builder<ErrorResponse>;
+  public Zhttp::H1RespBuilder<ErrorResponse> {
+  using Base = Zhttp::H1RespBuilder<ErrorResponse>;
 
 public:
   unsigned status() const { return 400; }
