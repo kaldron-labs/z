@@ -23,8 +23,8 @@ test: all
 	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir test || exit $$?; \
 	done
 
-ZHTTP_QIR_INSTALL_DIRS = zu/src zm/src zt/src ze/src zf/src zi/src ztls/src \
-	zquic/src zhttp/src
+ZHTTP_QIR_INSTALL_DIRS = zu/src zm/src zt/src ze/src zf/src zi/src ztcp/src \
+	ztls/src zquic/src zhttp/src
 
 .PHONY: zhttp-qir-build
 zhttp-qir-build:
@@ -34,6 +34,7 @@ zhttp-qir-build:
 	$(MAKE) $(AM_MAKEFLAGS) -C ze/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zf/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zi/src all
+	$(MAKE) $(AM_MAKEFLAGS) -C ztcp/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C ztls/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zquic/src all
 	$(MAKE) $(AM_MAKEFLAGS) -C zhttp/src all
