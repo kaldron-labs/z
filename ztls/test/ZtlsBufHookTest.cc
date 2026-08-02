@@ -128,6 +128,7 @@ struct TestState {
   ZtArray<uint8_t>	clientPayload;
   ZtArray<uint8_t>	serverPayload;
   bool			clientKeyUpdate = false;
+  bool			serverKeyUpdate = false;
   bool			serverDisconnectAfterSend = false;
   unsigned		txHeadroom = 0;
   unsigned		txTailroom = 0;
@@ -144,6 +145,13 @@ struct TestState {
   ZmAtomic<unsigned>	server_cipher{0};
   ZmAtomic<unsigned>	client_closed{0};
   ZmAtomic<unsigned>	server_replied{0};
+  ZmAtomic<unsigned>	client_tx_protected{0};
+  ZmAtomic<unsigned>	server_tx_protected{0};
+  ZmAtomic<unsigned>	client_peer_closed{0};
+  ZmAtomic<uint64_t>	client_wire_count{0};
+  ZmAtomic<uint64_t>	client_wire_bytes{0};
+  ZmAtomic<uint64_t>	server_wire_count{0};
+  ZmAtomic<uint64_t>	server_wire_bytes{0};
   ZmAtomic<Ztc::Link *>	server_link{nullptr};
   Ztc::QueueTelemetry	client_rx;
   Ztc::QueueTelemetry	client_tx;
@@ -397,8 +405,29 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       }
       send_payload(this, state.clientPayload);
     }
-    void disconnected(bool) { this->app()->state.done_one(); }
+    void disconnected(bool peer) {
+      auto &state = this->app()->state;
+      state.client_peer_closed = peer;
+      state.done_one();
+    }
     void connectFailed(bool) { this->app()->state.fail("connect failed"); }
+    void txProtected_() {
+      auto app = this->app();
+      if (!app->txInvoked() || app->rxInvoked()) {
+	app->state.fail("client record protection ran outside TLS Tx thread");
+	return;
+      }
+      app->state.client_tx_protected.xchAdd(1);
+    }
+    void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+      auto &state = this->app()->state;
+      if (!ok) {
+	state.fail("client TLS wire send failed");
+	return;
+      }
+      state.client_wire_count.xchAdd(1);
+      state.client_wire_bytes.xchAdd(buf->length);
+    }
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
       while (!rx.empty()) {
@@ -410,10 +439,11 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 	if (!consumed) return 0;
 	if (complete && !state.client_closed.xch(1)) {
 	  queue_telemetry(*this, state.client_rx, state.client_tx);
-	  if (auto serverLink = state.server_link.load_())
+	  if (auto serverLink = state.server_link.load_()) {
 	    queue_telemetry(
 	      *serverLink, state.server_rx, state.server_tx);
-	  this->disconnect_();
+	  }
+	  if (!state.serverDisconnectAfterSend) this->disconnect_();
 	}
       }
       return 1;
@@ -448,6 +478,23 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       state.server_cipher = this->tlsInfo().cipherID;
     }
     void disconnected(bool) { this->app()->state.done_one(); }
+    void txProtected_() {
+      auto app = this->app();
+      if (!app->txInvoked() || app->rxInvoked()) {
+	app->state.fail("server record protection ran outside TLS Tx thread");
+	return;
+      }
+      app->state.server_tx_protected.xchAdd(1);
+    }
+    void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+      auto &state = this->app()->state;
+      if (!ok) {
+	state.fail("server TLS wire send failed");
+	return;
+      }
+      state.server_wire_count.xchAdd(1);
+      state.server_wire_bytes.xchAdd(buf->length);
+    }
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
       while (!rx.empty()) {
@@ -458,6 +505,10 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
 	if (complete && !state.server_replied.xch(1)) {
+	  if (state.serverKeyUpdate && !this->updateKey_(true)) {
+	    state.fail("server key update failed");
+	    return -1;
+	  }
 	  send_payload(this, state.serverPayload);
 	  if (state.serverDisconnectAfterSend) this->disconnect_();
 	}
@@ -477,7 +528,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   unsigned localPort() const { return state.port; }
 
   void listening(const ZiListenInfo &info) {
-    state.port = info.port;
+    (void)info;
     state.listening.post();
   }
   void listenFailed(bool) { state.fail("listen failed"); }
@@ -507,6 +558,8 @@ void run_in_process(
     unsigned clientLen,
     unsigned serverLen,
     bool clientKeyUpdate,
+    bool serverKeyUpdate = false,
+    bool serverDisconnectAfterSend = false,
     ZiIP ip = ZiIP{"127.0.0.1"},
     const char *connectIP = "127.0.0.1",
     ptls_cipher_suite_t **cipherSuites = nullptr,
@@ -522,6 +575,8 @@ void run_in_process(
   state.ip = ip;
   state.port = reserve_loopback_port(ip);
   state.clientKeyUpdate = clientKeyUpdate;
+  state.serverKeyUpdate = serverKeyUpdate;
+  state.serverDisconnectAfterSend = serverDisconnectAfterSend;
   state.txHeadroom = txHeadroom;
   state.txTailroom = txTailroom;
   fill_payload(state.clientPayload, clientLen, 0x11);
@@ -557,6 +612,18 @@ void run_in_process(
     client.override_cipher_suites(cipherSuites);
   }
 
+  bool serverStarted = server.start();
+  bool clientStarted = client.start();
+  ZTLS_CHECK_RT(serverStarted && clientStarted, "TLS hubs failed to start");
+  if (!serverStarted || !clientStarted) {
+    if (clientStarted) client.stop();
+    if (serverStarted) server.stop();
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
+
   server.listen();
   bool listening = wait_for(state.listening);
   ZTLS_CHECK_RT(listening, "listen timed out");
@@ -571,6 +638,10 @@ void run_in_process(
   ZTLS_CHECK_RT(done, "TLS disconnect wait timed out");
 
   link = nullptr;
+  mx.stopListening(state.ip, state.port);
+  bool clientStopped = client.stop();
+  bool serverStopped = server.stop();
+  ZTLS_CHECK_RT(clientStopped && serverStopped, "TLS hubs failed to stop");
   client.final();
   server.final();
   mx.stop();
@@ -602,17 +673,29 @@ void run_in_process(
     "client serialized Tx bytes omit application payload");
   ZTLS_CHECK_RT(state.server_tx.inBytes >= serverLen,
     "server serialized Tx bytes omit application payload");
-  ZTLS_CHECK_RT(state.client_tx.outCount && state.client_tx.outBytes,
-    "client wire Tx egress is zero");
-  ZTLS_CHECK_RT(state.server_tx.outCount && state.server_tx.outBytes,
-    "server wire Tx egress is zero");
+  ZTLS_CHECK_RT(state.client_tx_protected.load_(),
+    "client application records were not protected on TLS Tx");
+  ZTLS_CHECK_RT(state.server_tx_protected.load_(),
+    "server application records were not protected on TLS Tx");
+  ZTLS_CHECK_RT(state.client_wire_count.load_() &&
+      state.client_wire_bytes.load_(),
+    "client TLS wire egress is zero");
+  ZTLS_CHECK_RT(state.server_wire_count.load_() &&
+      state.server_wire_bytes.load_(),
+    "server TLS wire egress is zero");
   ZTLS_CHECK_RT(!state.client_rx.count && !state.client_tx.count,
     "client TLS queues did not drain");
   ZTLS_CHECK_RT(!state.server_rx.count && !state.server_tx.count,
     "server TLS queues did not drain");
-  if (clientKeyUpdate)
+  if (clientKeyUpdate || serverKeyUpdate) {
+    ZTLS_CHECK_RT(state.client_rx.inCount == 1,
+      "zero-output control record incremented client plaintext Rx count");
     ZTLS_CHECK_RT(state.server_rx.inCount == 1,
-      "zero-output control record incremented plaintext Rx count");
+      "zero-output control record incremented server plaintext Rx count");
+  }
+  if (serverDisconnectAfterSend)
+    ZTLS_CHECK_RT(state.client_peer_closed.load_(),
+      "client did not receive graceful server close");
   if (expectedCipher) {
     ZTLS_CHECK_RT(state.client_cipher.load_() == expectedCipher,
       "client selected unexpected cipher");
@@ -783,6 +866,9 @@ void run_tls12_handshake_rejected(
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
   server.override_tls12_cipher_suites(suites.list);
+  bool serverStarted = server.start();
+  ZTLS_CHECK_RT(serverStarted, "TLS server failed to start");
+  if (!serverStarted) { server.final(); mx.stop(); return; }
 
   auto inPath = temp.pathOf("tls12-in.bin");
   auto outPath = temp.pathOf("tls12-out.bin");
@@ -811,6 +897,10 @@ void run_tls12_handshake_rejected(
   bool done = wait_done(state);
   ZTLS_CHECK_RT(done, "TLS server disconnect wait timed out");
 
+  mx.stopListening(state.ip, state.port);
+  bool serverStopped = server.stop();
+  ZTLS_CHECK_RT(serverStopped, "TLS server failed to stop");
+  server.final();
   mx.stop();
   ZtArray<uint8_t> err;
   bool readErr = read_bytes(errPath.data(), err);
@@ -837,7 +927,8 @@ void testTLS13IPv6Loopback(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13IPv6Loopback);
   run_in_process(
-    temp, capture, SmallPayloadSize, SmallPayloadSize, false, ZiIP{"::1"}, "::1");
+    temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, false,
+    ZiIP{"::1"}, "::1");
 }
 
 void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
@@ -849,9 +940,23 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
   if (!suite) return;
   suites.set(suite);
   run_in_process(
-    temp, capture, SmallPayloadSize, SmallPayloadSize, true,
+    temp, capture, SmallPayloadSize, SmallPayloadSize, true, false, false,
     ZiIP{"127.0.0.1"}, "127.0.0.1",
     suites.list, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
+}
+
+void testTLS13ServerKeyUpdate(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13ServerKeyUpdate);
+  run_in_process(
+    temp, capture, SmallPayloadSize, SmallPayloadSize, false, true);
+}
+
+void testTLS13QueuedClose(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13QueuedClose);
+  run_in_process(
+    temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, true);
 }
 
 void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
@@ -868,7 +973,7 @@ void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
     SuiteList selected;
     selected.set(*suites);
     run_in_process(
-      temp, capture, Payload, Payload, false,
+      temp, capture, Payload, Payload, false, false, false,
       ZiIP{"127.0.0.1"}, "127.0.0.1",
       selected.list, (*suites)->id, ExtraHeadroom, ExtraTailroom);
   }
@@ -931,6 +1036,8 @@ int main(int argc, char **argv)
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
     ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);
+    ZuTestCall(testTLS13ServerKeyUpdate, temp, capture);
+    ZuTestCall(testTLS13QueuedClose, temp, capture);
     ZuTestCall(testTLS13ComposedHeadroom, temp, capture);
     ZuTestCall(testTLS12ExplicitIV, temp, capture);
     ZuTestCall(testTLS12NoExplicitIV, temp, capture);
