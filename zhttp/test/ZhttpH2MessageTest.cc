@@ -21,9 +21,10 @@ struct Parsed :
   public Zhttp::H2::Parser<Parsed, true, TestHeaders, 1024> {
   using Base = Zhttp::H2::Parser<Parsed, true, TestHeaders, 1024>;
 
-  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
-    path = path_;
+    path = target.raw;
   }
   void status(unsigned value) { status_ = value; ++statusCalls; }
   void contentLength(uint64_t value) { contentLength_ = value; }
@@ -74,7 +75,7 @@ struct Response :
   public Zhttp::H2::Parser<Response, false, TestHeaders, 1024> {
   using Base = Zhttp::H2::Parser<Response, false, TestHeaders, 1024>;
 
-  void operation(Zhttp::Method::T, ZuBSpan) { }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; ++statusCalls; }
   void contentLength(uint64_t value) { contentLength_ = value; }
   template <typename Key> void header(ZuBSpan value) {
@@ -108,17 +109,25 @@ using CapturedFields =
   ZtArray<CapturedField,
     ZtArrayHeapID<"Zhttp.H2MessageTest.Fields">>;
 
+struct CustomTarget : public ZuPrintable {
+  template <typename S>
+  void print(S &s) const { s << "/printable?"; }
+
+  friend ZuPrintFn ZuPrintType(CustomTarget *);
+};
+
 struct CaptureStream {
   bool extendedConnect() const { return extended; }
   void beginHeaders(bool end = false) {
     ++beginCalls;
     beginEndStream = end;
   }
-  void field(ZuCSpan name, ZuCSpan value) {
-    new (fields.push()) CapturedField{
-      .name = ZtString<>{name},
-      .value = ZtString<>{value}
+  template <typename V>
+  void field(ZuCSpan name, V &&value) {
+    auto field_ = new (fields.push()) CapturedField{
+      .name = ZtString<>{name}
     };
+    field_->value << ZuFwd<V>(value);
   }
   void field(
     ZuCSpan name, ZuCSpan value1, char separator, ZuCSpan value2) {
@@ -145,27 +154,54 @@ struct CaptureStream {
   bool extended = true;
 };
 
-struct Build :
-  public Zhttp::H2::Builder<
-    Build, ZhttpHeaders("x-test"), ZhttpHeaders("x-trailer"), true> {
+struct BuildOps {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::POST, "/submit", "a=1"); }
+  void operation(L &&l) {
+    if (customTarget)
+      l(Zhttp::Method::POST, CustomTarget{});
+    else
+      l(Zhttp::Method::POST, Zhttp::PathQuery{"/submit", "a=1", true});
+  }
   template <typename L> void host(L &&l) { l("example.com"); }
   unsigned status() { return 201; }
-  uint64_t contentLength() { return 3; }
   template <typename Key, typename L>
   void header(L &&l) {
-    if constexpr (Key{}() == "x-test")
+    if constexpr (Key{}() == "content-length")
+      l("3");
+    else if constexpr (Key{}() == "x-test")
       l("request");
     else if constexpr (Key{}() == "x-trailer")
       l("done");
   }
+
+  bool customTarget = false;
+};
+
+struct RequestBuild :
+  public Zhttp::H2::RequestBuilder<
+    RequestBuild, ZhttpHeaders("content-length", "x-test"),
+    ZhttpHeaders("x-trailer"), true>,
+  public BuildOps {
+  using BuildOps::header;
+  using BuildOps::host;
+  using BuildOps::operation;
+};
+
+struct ResponseBuild :
+  public Zhttp::H2::ResponseBuilder<
+    ResponseBuild, ZhttpHeaders("content-length", "x-test"),
+    ZhttpHeaders("x-trailer"), true>,
+  public BuildOps {
+  using BuildOps::header;
+  using BuildOps::status;
 };
 
 struct ConnectBuild :
-  public Zhttp::H2::Builder<ConnectBuild> {
+  public Zhttp::H2::RequestBuilder<ConnectBuild> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::CONNECT, "/chat", "v=1"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::CONNECT, Zhttp::PathQuery{"/chat", "v=1", true});
+  }
   template <typename L> void host(L &&l) { l("example.com"); }
   template <typename L> void protocol(L &&l) { l("opaque"); }
 };
@@ -201,7 +237,7 @@ struct StreamResponse :
     dispatch.final_();
   }
 
-  void operation(Zhttp::Method::T, ZuBSpan) { }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t) { }
   template <typename Key> void header(ZuBSpan) { }
@@ -370,7 +406,7 @@ void testBuilder()
 {
   ZuTestScope(testBuilder);
 
-  Build builder;
+  RequestBuild builder;
   CaptureStream request;
   builder.request(request);
   builder.finish(request);
@@ -385,8 +421,16 @@ void testBuilder()
       find(request.fields, "x-trailer", "done"),
     "request builder emits normalized fields and trailing HEADERS");
 
+  RequestBuild customBuilder;
+  customBuilder.customTarget = true;
+  CaptureStream custom;
+  ZuCHECK(customBuilder.request(custom) &&
+      find(custom.fields, ":path", "/printable?"),
+    "custom printable target survives H2 Builder dispatch");
+
   CaptureStream response;
-  builder.response(response);
+  ResponseBuild responseBuilder;
+  responseBuilder.response(response);
   ZuCHECK(find(response.fields, ":status", "201"),
     "response builder emits status");
   ZuCHECK(find(response.fields, "content-length", "3"),

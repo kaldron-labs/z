@@ -30,9 +30,9 @@ noinst_PROGRAMS = zhttp zhttpd zhttpmatrix \
 	ZhttpdTest ZhttpDarkhttpdCompatTest ZhttpLifecycleTest \
 	ZhttpTransportContractTest ZhttpH1EngineTest ZhttpH3EngineTest \
 	ZhttpH3PushTest \
-	ZhttpEngineLifecycleTest ZhttpURLTest ZhttpDiscoveryTest \
-	ZhttpAdmissionTest ZhttpAgentCancelTest ZhttpRuntimeTest \
-	ZhttpServiceIdleTest ZhttpAgentFallbackTest
+	ZhttpEngineLifecycleTest ZhttpURLTest ZhttpAltSvcTest ZhttpDiscoveryTest \
+	ZhttpAdmissionTest ZhttpClientCancelTest ZhttpRuntimeTest \
+	ZhttpServiceIdleTest ZhttpClientFallbackTest
 dist_noinst_SCRIPTS = ZhttpBoundaryTest.sh ZhttpH2InteropTest.sh
 noinst_HEADERS = ZhttpTestUtil.hh ZhttpPut.hh Zhttpd.hh ZhttpBoundary.md
 zhttp_SOURCES = zhttp.cc
@@ -69,12 +69,13 @@ ZhttpH3EngineTest_SOURCES = ZhttpH3EngineTest.cc
 ZhttpH3PushTest_SOURCES = ZhttpH3PushTest.cc
 ZhttpEngineLifecycleTest_SOURCES = ZhttpEngineLifecycleTest.cc
 ZhttpURLTest_SOURCES = ZhttpURLTest.cc
+ZhttpAltSvcTest_SOURCES = ZhttpAltSvcTest.cc
 ZhttpDiscoveryTest_SOURCES = ZhttpDiscoveryTest.cc
 ZhttpAdmissionTest_SOURCES = ZhttpAdmissionTest.cc
-ZhttpAgentCancelTest_SOURCES = ZhttpAgentCancelTest.cc
+ZhttpClientCancelTest_SOURCES = ZhttpClientCancelTest.cc
 ZhttpRuntimeTest_SOURCES = ZhttpRuntimeTest.cc
 ZhttpServiceIdleTest_SOURCES = ZhttpServiceIdleTest.cc
-ZhttpAgentFallbackTest_SOURCES = ZhttpAgentFallbackTest.cc
+ZhttpClientFallbackTest_SOURCES = ZhttpClientFallbackTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
@@ -92,7 +93,7 @@ test: $(noinst_PROGRAMS)
 		ZhttpdTest ZhttpDarkhttpdCompatTest Zhttp3InteropTest \
 		ZhttpLifecycleTest ZhttpTransportContractTest ZhttpH1EngineTest \
 		ZhttpH3EngineTest ZhttpH3PushTest \
-		ZhttpEngineLifecycleTest ZhttpURLTest \
-		ZhttpDiscoveryTest ZhttpAdmissionTest ZhttpAgentCancelTest \
-		ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpAgentFallbackTest
+		ZhttpEngineLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
+		ZhttpDiscoveryTest ZhttpAdmissionTest ZhttpClientCancelTest \
+		ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpClientFallbackTest
 	./ZhttpBoundaryTest.sh

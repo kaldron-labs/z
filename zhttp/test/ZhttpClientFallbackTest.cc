@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Zhttp Agent HTTP/3-to-TLS fallback test
+// Zhttp Client HTTP/3-to-TLS fallback test
 
 #ifndef _WIN32
 #include <signal.h>
@@ -20,13 +20,13 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpAgent.hh>
+#include <zlib/ZhttpClient.hh>
 
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
-namespace ZhttpAgentFallbackTest_ {
+namespace ZhttpClientFallbackTest_ {
 
 struct Resolver {
   Resolver() : ops{
@@ -68,36 +68,72 @@ struct Resolver {
 };
 
 struct Request {
-  Zhttp::URL	url;
+  Zhttp::URLStorage	url;
 };
 
-struct Agent :
-  public Zhttp::Agent<
-    Agent, Request, ZuTypeList<>, ZhttpHeaders("alt-svc"), 1024> {
+struct RequestBuilder {
+  using Headers = ZuTypeList<>;
+  using BodyPolicy = Zhttp::Body::None;
+
+  Zhttp::URL url;
+
+  template <typename L>
+  void operation(L &&l) const {
+    l(Zhttp::Method::GET, url.pathQuery());
+  }
+  template <typename L>
+  void host(L &&l) const { l(url.authority()); }
+  template <typename L> void protocol(L &&) const { }
+  template <typename Key, typename L> void header(L &&) const { }
+  template <typename L> void header(L &&) const { }
+};
+
+struct ResponseParser {
+  using Headers = ZhttpHeaders("alt-svc");
+  static constexpr uint64_t BodyMax = 1024;
+
+  uint64_t	*bodyBytes = nullptr;
+  unsigned	*status_ = nullptr;
+  ZtString<>	*altSvc = nullptr;
+
+  void status(unsigned value) { *status_ = value; }
+  void contentLength(uint64_t) { }
+  void chunked() { }
+  void version(ZuBSpan) { }
+  template <typename Key>
+  void header(ZuBSpan value) {
+    if constexpr (Key{}() == "alt-svc") *altSvc = ZuCSpan{value};
+  }
+  template <typename Rx>
+  void body(Rx &rx) {
+    Zhttp::bodyEach(rx,
+      [this](ZuBSpan value) { *bodyBytes += value.length(); });
+  }
+  template <typename State> void complete(State) { }
+};
+
+struct ClientApp :
+  public Zhttp::Client<
+    ClientApp, Request, RequestBuilder, ResponseParser> {
   using Base =
-    Zhttp::Agent<
-      Agent, Request, ZuTypeList<>, ZhttpHeaders("alt-svc"), 1024>;
+    Zhttp::Client<ClientApp, Request, RequestBuilder, ResponseParser>;
+
+  RequestBuilder requestBuilder(const Request &, const Zhttp::URL &url) {
+    return {url};
+  }
+  ResponseParser responseParser(Request &) {
+    return {&bodyBytes, &status, &altSvc};
+  }
 
   void completed(Request &, const Zhttp::Result &result_) {
     result = result_;
     results.push(result_);
     done.post();
   }
-  void responseStatus(Request &, unsigned status_) { status = status_; }
-  template <typename Rx>
-  void responseBody(Request &, Rx &rx) {
-    Zhttp::bodyEach(rx,
-      [this](ZuBSpan value) { bodyBytes += value.length(); });
-  }
-  template <typename Key>
-  void responseHeader(Request &, ZuBSpan value) {
-    if constexpr (Key{}() == "alt-svc")
-      altSvc = ZuCSpan{value};
-  }
-  void observed(Request *, const Zhttp::AgentEvent &event) {
+  void observed(Request *, const Zhttp::ClientEvent &event) {
     events.push(event);
   }
-  unsigned eventCount(int8_t type) const {
+  unsigned eventCount(Zhttp::ClientEventType::T type) const {
     unsigned count = 0;
     for (unsigned i = 0; i < events.length(); ++i)
       count += events[i].type == type;
@@ -107,7 +143,7 @@ struct Agent :
   Zhttp::Result	result;
   ZtArray<Zhttp::Result,
     ZtArrayHeapID<"Zhttp.Test.Fallback.Results">> results;
-  ZtArray<Zhttp::AgentEvent,
+  ZtArray<Zhttp::ClientEvent,
     ZtArrayHeapID<"Zhttp.Test.Fallback">> events;
   ZmSemaphore	done;
   uint64_t	bodyBytes = 0;
@@ -233,10 +269,9 @@ void fallback()
   Zhttp::EngineConfig engine{&mx, "3", "4"};
 
   Resolver resolver;
-  Agent agent;
+  ClientApp agent;
   agent.discoveryResolver(&resolver.ops);
-  Zhttp::AgentConfig agentConfig;
-  agentConfig
+  auto agentConfig = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).requestTimeout(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(true)
     .tcp(true).tls(true).quic(true);
@@ -252,7 +287,7 @@ void fallback()
     Request request;
     ZtString<> url;
     url << "https://127.0.0.1:" << port << "/ok";
-    bool parsed = Zhttp::URL::parse(request.url, url).ok();
+    bool parsed = request.url.assign(url).ok();
     ZuCHECK(parsed, "parse fallback URL");
     if (parsed) {
       agent.submit(&request, 1);
@@ -270,20 +305,20 @@ void fallback()
 	      agent.status == 200 && agent.bodyBytes == expected.length(),
 	    "fallback terminal result identifies TLS/H2");
 	  ZuCHECK(agent.altSvc, "TLS response contains Alt-Svc");
-	  ZuCHECK(agent.eventCount(Zhttp::AgentEventType::Selected) == 2 &&
-	      agent.eventCount(Zhttp::AgentEventType::AttemptFailed) == 1 &&
-	      agent.eventCount(Zhttp::AgentEventType::Fallback) == 1 &&
-	      agent.eventCount(Zhttp::AgentEventType::Completed) == 1,
+	  ZuCHECK(agent.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
+	      agent.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
+	      agent.eventCount(Zhttp::ClientEventType::Fallback) == 1 &&
+	      agent.eventCount(Zhttp::ClientEventType::Completed) == 1,
 	    "typed H3-to-H2 fallback transition sequence");
 	  uint64_t requestID = 0;
 	  uint64_t failedAttempt = 0;
 	  uint64_t fallbackAttempt = 0;
 	  for (unsigned i = 0; i < agent.events.length(); ++i) {
 	    const auto &event = agent.events[i];
-	    if (event.type == Zhttp::AgentEventType::AttemptFailed) {
+	    if (event.type == Zhttp::ClientEventType::AttemptFailed) {
 	      requestID = event.request;
 	      failedAttempt = event.attempt;
-	    } else if (event.type == Zhttp::AgentEventType::Fallback) {
+	    } else if (event.type == Zhttp::ClientEventType::Fallback) {
 	      fallbackAttempt = event.attempt;
 	      ZuCHECK(event.request == requestID &&
 		  event.previousAttempt == failedAttempt,
@@ -304,19 +339,18 @@ void fallback()
   if (agentInited) agent.final();
 
   Resolver cacheResolver;
-  Agent cachedAgent;
-  cachedAgent.discoveryResolver(&cacheResolver.ops);
-  Zhttp::AgentConfig cacheConfig;
-  cacheConfig
+  ClientApp cachedClient;
+  cachedClient.discoveryResolver(&cacheResolver.ops);
+  auto cacheConfig = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).requestTimeout(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(false)
     .tcp(true).tls(true).quic(true);
-  bool cacheInited = cachedAgent.init(
+  bool cacheInited = cachedClient.init(
     engine, cacheConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
   ZuCHECK(cacheInited, "initialize cached-routing agent");
-  bool cacheUp = cacheInited && cachedAgent.start();
+  bool cacheUp = cacheInited && cachedClient.start();
   ZuCHECK(cacheUp, "start cached-routing agent");
   if (cacheUp) {
     ZtArray<Request,
@@ -325,34 +359,34 @@ void fallback()
     ZtString<> url;
     url << "https://127.0.0.1:" << port << "/ok";
     bool parsed =
-      Zhttp::URL::parse(requests[0].url, url).ok() &&
-      Zhttp::URL::parse(requests[1].url, url).ok();
+      requests[0].url.assign(url).ok() &&
+      requests[1].url.assign(url).ok();
     ZuCHECK(parsed, "parse cached-routing URLs");
     if (parsed) {
-      cachedAgent.submit(requests.data(), requests.length());
+      cachedClient.submit(requests.data(), requests.length());
       bool queried =
 	cacheResolver.queried.timedwait(Zm::now(10)) == 0;
       ZuCHECK(queried, "first cached-routing request performs discovery");
       if (queried) {
 	cacheResolver.noRecord();
 	bool completed =
-	  cachedAgent.done.timedwait(Zm::now(10)) == 0 &&
-	  cachedAgent.done.timedwait(Zm::now(10)) == 0;
+	  cachedClient.done.timedwait(Zm::now(10)) == 0 &&
+	  cachedClient.done.timedwait(Zm::now(10)) == 0;
 	ZuCHECK(completed, "TLS and cached H3 requests complete");
 	if (completed) {
-	  ZuCHECK(cachedAgent.results.length() == 2 &&
-	      cachedAgent.results[0].ok() && cachedAgent.results[1].ok() &&
-	      cachedAgent.results[0].transport == Zhttp::Transport::TLS &&
-	      cachedAgent.results[1].transport == Zhttp::Transport::QUIC &&
-	      cachedAgent.results[0].httpVersion == Zhttp::Version::H2 &&
-	      cachedAgent.results[1].httpVersion == Zhttp::Version::H3 &&
-	      cachedAgent.status == 200 &&
-	      cachedAgent.bodyBytes == expected.length() * 2,
+	  ZuCHECK(cachedClient.results.length() == 2 &&
+	      cachedClient.results[0].ok() && cachedClient.results[1].ok() &&
+	      cachedClient.results[0].transport == Zhttp::Transport::TLS &&
+	      cachedClient.results[1].transport == Zhttp::Transport::QUIC &&
+	      cachedClient.results[0].httpVersion == Zhttp::Version::H2 &&
+	      cachedClient.results[1].httpVersion == Zhttp::Version::H3 &&
+	      cachedClient.status == 200 &&
+	      cachedClient.bodyBytes == expected.length() * 2,
 	    "Alt-Svc moves the second request from TLS/H2 to QUIC/H3");
 	  bool cached = false;
-	  for (unsigned i = 0; i < cachedAgent.events.length(); ++i) {
-	    const auto &event = cachedAgent.events[i];
-	    if (event.type == Zhttp::AgentEventType::Selected &&
+	  for (unsigned i = 0; i < cachedClient.events.length(); ++i) {
+	    const auto &event = cachedClient.events[i];
+	    if (event.type == Zhttp::ClientEventType::Selected &&
 		event.transport == Zhttp::Transport::QUIC &&
 		event.endpointSource == Zhttp::EndpointSource::AltSvc)
 	      cached = true;
@@ -363,18 +397,18 @@ void fallback()
       }
     }
   }
-  if (cacheInited) cachedAgent.stop();
-  if (cacheInited) cachedAgent.final();
+  if (cacheInited) cachedClient.stop();
+  if (cacheInited) cachedClient.final();
   mx.stop();
   ZuCHECK(stopServer(server), "stop TLS fallback service");
 #endif
 }
 
-} // namespace ZhttpAgentFallbackTest_
+} // namespace ZhttpClientFallbackTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpAgentFallbackTest_;
+  using namespace ZhttpClientFallbackTest_;
 
   (void)argc;
   (void)argv;

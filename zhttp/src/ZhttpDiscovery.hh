@@ -79,8 +79,8 @@ struct Endpoint {
   ZiIP		ip;
   uint16_t	port = 0;
   uint16_t	priority = 0;
-  int8_t	source = EndpointSource::Origin;
-  int8_t	httpVersion = Version::H1;
+  EndpointSource::T source = EndpointSource::Origin;
+  Version::T	httpVersion = Version::H1;
 };
 
 using Endpoints =

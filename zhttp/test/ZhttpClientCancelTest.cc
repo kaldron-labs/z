@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// multi-protocol agent cancellation and shutdown tests
+// multi-protocol client cancellation and shutdown tests
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -17,44 +17,75 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/Zhttp.hh>
-#include <zlib/ZhttpAgent.hh>
+#include <zlib/ZhttpClient.hh>
 
 using namespace ZuTestUtil;
 
-namespace ZhttpAgentCancelTest_ {
+namespace ZhttpClientCancelTest_ {
 
 struct Request {
-  Zhttp::URL	url;
+  Zhttp::URLStorage	url;
 };
 
 int listenerAt(uint16_t);
 
-struct App :
-  public Zhttp::Agent<
-    App, Request, ZuTypeList<>,
-    ZuTypeList<ZuStringT<"location">, void>, 1024> {
-  using Base =
-    Zhttp::Agent<
-      App, Request, ZuTypeList<>,
-      ZuTypeList<ZuStringT<"location">, void>, 1024>;
+struct RequestBuilder {
+  using Headers = ZuTypeList<>;
+  using BodyPolicy = Zhttp::Body::None;
 
-  bool requestReplayable(const Request &) const { return replayable; }
+  Zhttp::URL url;
+
+  template <typename L>
+  void operation(L &&l) const {
+    l(Zhttp::Method::GET, url.pathQuery());
+  }
+  template <typename L>
+  void host(L &&l) const { l(url.authority()); }
+  template <typename L> void protocol(L &&) const { }
+  template <typename Key, typename L> void header(L &&) const { }
+  template <typename L> void header(L &&) const { }
+};
+
+struct ResponseParser {
+  using Headers = ZuTypeList<ZuStringT<"location">, void>;
+  static constexpr uint64_t BodyMax = 1024;
+
+  void status(unsigned) { }
+  void contentLength(uint64_t) { }
+  void chunked() { }
+  void version(ZuBSpan) { }
+  template <typename Key> void header(ZuBSpan) { }
+  template <typename Rx> void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  template <typename State> void complete(State) { }
+};
+
+struct App :
+  public Zhttp::Client<App, Request, RequestBuilder, ResponseParser> {
+  using Base =
+    Zhttp::Client<App, Request, RequestBuilder, ResponseParser>;
+
+  RequestBuilder requestBuilder(const Request &, const Zhttp::URL &url) {
+    return {url};
+  }
+  ResponseParser responseParser(Request &) { return {}; }
+  bool replayable(const Request &) const { return replayable_; }
+  bool reproducible(const Request &) const { return replayable_; }
 
   void completed(Request &, const Zhttp::Result &result) {
     results.push(result);
     if (results.length() == expected) done.post();
   }
 
-  void observed(Request *, const Zhttp::AgentEvent &event) {
+  void observed(Request *, const Zhttp::ClientEvent &event) {
     events.push(event);
-    if (event.type == Zhttp::AgentEventType::AttemptFailed &&
+    if (event.type == Zhttp::ClientEventType::AttemptFailed &&
 	retryPort && retryFD < 0) {
       retryFD = listenerAt(retryPort);
       serverReady.post();
     }
   }
 
-  unsigned eventCount(int8_t type) const {
+  unsigned eventCount(Zhttp::ClientEventType::T type) const {
     unsigned count = 0;
     for (unsigned i = 0; i < events.length(); ++i)
       count += events[i].type == type;
@@ -62,66 +93,13 @@ struct App :
   }
 
   ZtArray<Zhttp::Result, ZtArrayHeapID<"Zhttp.Test.Results">> results;
-  ZtArray<Zhttp::AgentEvent, ZtArrayHeapID<"Zhttp.Test.Events">> events;
+  ZtArray<Zhttp::ClientEvent, ZtArrayHeapID<"Zhttp.Test.Events">> events;
   ZmSemaphore	done;
   ZmSemaphore	serverReady;
   unsigned	expected = 0;
   uint16_t	retryPort = 0;
   int		retryFD = -1;
-  bool		replayable = true;
-};
-
-struct BodyRequest {
-  Zhttp::URL	url;
-};
-
-struct BodyCursor {
-  uint64_t	offset = 0;
-};
-
-struct BodyApp :
-  public Zhttp::Agent<
-    BodyApp, BodyRequest, ZuTypeList<>, ZuTypeList<>, 1024,
-    Zhttp::Body::Fixed<BodyCursor>> {
-  using Base =
-    Zhttp::Agent<
-      BodyApp, BodyRequest, ZuTypeList<>, ZuTypeList<>, 1024,
-      Zhttp::Body::Fixed<BodyCursor>>;
-  static constexpr uint64_t Length = 1ULL<<30;
-
-  bool requestReplayable(const BodyRequest &) const { return false; }
-  bool requestReproducible(const BodyRequest &) const { return false; }
-  uint64_t requestContentLength(const BodyRequest &) const { return Length; }
-  BodyCursor requestBodyCursor(BodyRequest &) {
-    ++cursorCalls;
-    return {};
-  }
-  template <typename Tx>
-  int requestBody(
-    BodyRequest &, BodyCursor &cursor, Tx &tx, unsigned batch) {
-    unsigned call = ++producerCalls;
-    if (call == 1) producing.post();
-    unsigned n = batch;
-    uint64_t left = Length - cursor.offset;
-    if (n > left) n = unsigned(left);
-    unsigned produced = n;
-    while (n--) tx << 'x';
-    cursor.offset += produced;
-    return cursor.offset < Length ?
-      Zhttp::BodyProduce::More : Zhttp::BodyProduce::Done;
-  }
-  void completed(BodyRequest &, const Zhttp::Result &result) {
-    terminal = result;
-    completedCalls = producerCalls.load_();
-    done.post();
-  }
-
-  ZmAtomic<unsigned> producerCalls = 0;
-  ZmSemaphore	producing;
-  ZmSemaphore	done;
-  Zhttp::Result	terminal;
-  ZmAtomic<unsigned> cursorCalls = 0;
-  unsigned	completedCalls = 0;
+  bool		replayable_ = true;
 };
 
 ZiMxParams mxParams()
@@ -259,8 +237,7 @@ void cancel()
 
   App app;
   app.expected = 2;
-  Zhttp::AgentConfig config;
-  config
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(2)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -273,7 +250,7 @@ void cancel()
   Request requests[2];
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(requests[0].url, url).ok(), "parse URL");
+  ZuCHECK(requests[0].url.assign(url).ok(), "parse URL");
   requests[1].url = requests[0].url;
 
   app.submit(requests, 2);
@@ -288,9 +265,9 @@ void cancel()
   ZuCHECK(app.results[0].code == Zhttp::ResultCode::Cancelled &&
       app.results[1].code == Zhttp::ResultCode::Cancelled,
     "cancellation result classification");
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Cancelled) == 2 &&
-      app.eventCount(Zhttp::AgentEventType::Completed) == 2 &&
-      app.eventCount(Zhttp::AgentEventType::Stopping) == 1,
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Cancelled) == 2 &&
+      app.eventCount(Zhttp::ClientEventType::Completed) == 2 &&
+      app.eventCount(Zhttp::ClientEventType::Stopping) == 1,
     "typed cancellation, completion, and shutdown events");
 
   app.final();
@@ -312,8 +289,7 @@ void timeout()
 
   App app;
   app.expected = 1;
-  Zhttp::AgentConfig config;
-  config
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).requestTimeout(1)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -326,7 +302,7 @@ void timeout()
   Request request;
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(), "parse URL");
+  ZuCHECK(request.url.assign(url).ok(), "parse URL");
 
   app.submit(&request, 1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0, "request timeout completes");
@@ -334,138 +310,10 @@ void timeout()
       app.results[0].code == Zhttp::ResultCode::TimedOut,
     "timeout result classification");
   app.stop();
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Completed) == 1 &&
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Completed) == 1 &&
       app.events[app.events.length() - 1].type ==
-	Zhttp::AgentEventType::Stopping,
+	Zhttp::ClientEventType::Stopping,
     "typed timeout completion and shutdown events");
-  app.final();
-  mx.stop();
-  ::close(fd);
-}
-
-void cancelBody()
-{
-  ZuTestScope(cancelBody);
-
-  uint16_t port;
-  int fd = listener(port);
-  ZuCHECK(fd >= 0 && port, "create body cancellation listener");
-  if (fd < 0) return;
-
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start body cancellation multiplexer");
-
-  BodyApp app;
-  Zhttp::AgentConfig config;
-  config
-    .concurrency(1).maxPending(1).bodyTxBatch(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
-    .tcp(true).tls(true).quic(false);
-  ZuCHECK(app.init(
-      Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
-    "initialize body cancellation agent");
-  ZuCHECK(app.start(), "start body cancellation agent");
-
-  BodyRequest request;
-  ZtString<> url;
-  url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
-    "parse body cancellation URL");
-  app.submit(&request, 1);
-  ZuCHECK(app.producing.timedwait(Zm::now(10)) == 0,
-    "body producer starts");
-  app.cancel(request);
-  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
-    "mid-body cancellation completes");
-  app.stop();
-
-  ZuCHECK(app.terminal.code == Zhttp::ResultCode::Cancelled &&
-      app.terminal.requestBodyProduced ==
-	app.terminal.requestBodyCommitted &&
-      app.terminal.requestBodyCommitted &&
-      app.terminal.requestBodyReset ==
-	app.terminal.requestBodyCommitted &&
-      app.terminal.requestBodyDiscarded ==
-	BodyApp::Length - app.terminal.requestBodyProduced &&
-      !app.terminal.responseBodyReceived &&
-      !app.terminal.responseBodyConsumed &&
-      app.cursorCalls.load_() == 1 && app.completedCalls,
-    "mid-body cancellation returns one typed result");
-  ZuCHECK(app.producerCalls.load_() == app.completedCalls,
-    "no body producer callback follows terminal completion");
-
-  app.final();
-  mx.stop();
-  ::close(fd);
-}
-
-void stopBody()
-{
-  ZuTestScope(stopBody);
-
-  uint16_t port;
-  int fd = listener(port);
-  ZuCHECK(fd >= 0 && port, "create body shutdown listener");
-  if (fd < 0) return;
-
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start body shutdown multiplexer");
-
-  BodyApp app;
-  Zhttp::AgentConfig config;
-  config
-    .concurrency(1).maxPending(1).bodyTxBatch(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
-    .tcp(true).tls(true).quic(false);
-  ZuCHECK(app.init(
-      Zhttp::EngineConfig{&mx, "3", "4"}, config,
-      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}),
-    "initialize body shutdown agent");
-  ZuCHECK(app.start(), "start body shutdown agent");
-
-  BodyRequest request;
-  ZtString<> url;
-  url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
-    "parse body shutdown URL");
-  app.submit(&request, 1);
-  ZuCHECK(app.producing.timedwait(Zm::now(10)) == 0,
-    "body producer starts before shutdown");
-
-  ZmSemaphore stopDone;
-  ZmAtomic<unsigned> stopReturned = 0;
-  ZmAtomic<unsigned> stopSync = 0;
-  ZmAtomic<unsigned> stopFailed = 0;
-  app.stop([
-    &stopDone, &stopReturned, &stopSync, &stopFailed
-  ](bool ok) {
-    if (!stopReturned.load_()) ++stopSync;
-    if (!ok) ++stopFailed;
-    stopDone.post();
-  });
-  stopReturned = 1;
-
-  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0 &&
-      stopDone.timedwait(Zm::now(10)) == 0,
-    "mid-body shutdown drains request and engine");
-  ZuCHECK(!stopSync.load_() && !stopFailed.load_(),
-    "mid-body shutdown continuation is asynchronous and successful");
-  ZuCHECK(app.terminal.code == Zhttp::ResultCode::Cancelled &&
-      app.terminal.requestBodyProduced ==
-	app.terminal.requestBodyCommitted &&
-      app.terminal.requestBodyCommitted &&
-      app.terminal.requestBodyReset ==
-	app.terminal.requestBodyCommitted &&
-      app.terminal.requestBodyDiscarded ==
-	BodyApp::Length - app.terminal.requestBodyProduced &&
-      !app.terminal.responseBodyReceived &&
-      !app.terminal.responseBodyConsumed &&
-      app.cursorCalls.load_() == 1 && app.completedCalls,
-    "mid-body shutdown returns one typed result");
-  ZuCHECK(app.producerCalls.load_() == app.completedCalls,
-    "no body producer callback follows shutdown completion");
-
   app.final();
   mx.stop();
   ::close(fd);
@@ -493,8 +341,7 @@ void retry()
       serverOK.store_(serve(app.retryFD));
   }};
 
-  Zhttp::AgentConfig config;
-  config
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).maxRetries(1)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -507,7 +354,7 @@ void retry()
   Request request;
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(), "parse retry URL");
+  ZuCHECK(request.url.assign(url).ok(), "parse retry URL");
   app.submit(&request, 1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "transient failure retry completes");
@@ -518,21 +365,21 @@ void retry()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].retries == 1,
     "retry produces one successful terminal result");
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Selected) == 2 &&
-      app.eventCount(Zhttp::AgentEventType::AttemptFailed) == 1 &&
-      app.eventCount(Zhttp::AgentEventType::Retried) == 1 &&
-      app.eventCount(Zhttp::AgentEventType::Completed) == 1,
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
+      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
+      app.eventCount(Zhttp::ClientEventType::Retried) == 1 &&
+      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
     "typed retry transition sequence");
   uint64_t requestID = 0;
   uint64_t firstAttempt = 0;
   uint64_t secondAttempt = 0;
   for (unsigned i = 0; i < app.events.length(); ++i) {
     const auto &event = app.events[i];
-    if (event.type == Zhttp::AgentEventType::AttemptFailed) {
+    if (event.type == Zhttp::ClientEventType::AttemptFailed) {
       requestID = event.request;
       firstAttempt = event.attempt;
       ZuCHECK(event.transient, "retry failure is classified transient");
-    } else if (event.type == Zhttp::AgentEventType::Retried) {
+    } else if (event.type == Zhttp::ClientEventType::Retried) {
       secondAttempt = event.attempt;
       ZuCHECK(event.request == requestID &&
 	  event.previousAttempt == firstAttempt,
@@ -563,8 +410,7 @@ void redirect()
   ZuCHECK(mx.start(), "start multiplexer");
   App app;
   app.expected = 1;
-  Zhttp::AgentConfig config;
-  config
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).maxRedirects(2)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -577,7 +423,7 @@ void redirect()
   Request request;
   ZtString<> url;
   url << "http://127.0.0.1:" << port << "/start";
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(), "parse redirect URL");
+  ZuCHECK(request.url.assign(url).ok(), "parse redirect URL");
   app.submit(&request, 1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0, "redirect completes");
   app.stop();
@@ -587,19 +433,19 @@ void redirect()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].redirects == 1,
     "redirect produces one successful terminal result");
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Selected) == 2 &&
-      app.eventCount(Zhttp::AgentEventType::Redirected) == 1 &&
-      app.eventCount(Zhttp::AgentEventType::Completed) == 1,
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
+      app.eventCount(Zhttp::ClientEventType::Redirected) == 1 &&
+      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
     "typed redirect transition sequence");
   uint64_t firstAttempt = 0;
   uint64_t secondAttempt = 0;
   uint64_t requestID = 0;
   for (unsigned i = 0; i < app.events.length(); ++i) {
     const auto &event = app.events[i];
-    if (event.type == Zhttp::AgentEventType::Selected && !firstAttempt) {
+    if (event.type == Zhttp::ClientEventType::Selected && !firstAttempt) {
       requestID = event.request;
       firstAttempt = event.attempt;
-    } else if (event.type == Zhttp::AgentEventType::Redirected) {
+    } else if (event.type == Zhttp::ClientEventType::Redirected) {
       secondAttempt = event.attempt;
       ZuCHECK(event.request == requestID &&
 	  event.previousAttempt == firstAttempt,
@@ -632,9 +478,8 @@ void unsafeRedirect()
   ZuCHECK(mx.start(), "start multiplexer");
   App app;
   app.expected = 1;
-  app.replayable = false;
-  Zhttp::AgentConfig config;
-  config
+  app.replayable_ = false;
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).maxRedirects(2)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -647,7 +492,7 @@ void unsafeRedirect()
   Request request;
   ZtString<> url;
   url << "http://127.0.0.1:" << port << "/start";
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
+  ZuCHECK(request.url.assign(url).ok(),
     "parse unsafe redirect URL");
   app.submit(&request, 1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -660,9 +505,9 @@ void unsafeRedirect()
       app.results[0].code == Zhttp::ResultCode::ReplayUnsafe &&
       app.results[0].redirects == 0,
     "unsafe redirect is not replayed");
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Selected) == 1 &&
-      app.eventCount(Zhttp::AgentEventType::Redirected) == 0 &&
-      app.eventCount(Zhttp::AgentEventType::Completed) == 1,
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 1 &&
+      app.eventCount(Zhttp::ClientEventType::Redirected) == 0 &&
+      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
     "unsafe redirect has no new generation");
 
   app.final();
@@ -683,8 +528,7 @@ void retryLimit()
   ZuCHECK(mx.start(), "start multiplexer");
   App app;
   app.expected = 1;
-  Zhttp::AgentConfig config;
-  config
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).maxRetries(2)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -697,7 +541,7 @@ void retryLimit()
   Request request;
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
+  ZuCHECK(request.url.assign(url).ok(),
     "parse retry-limit URL");
   app.submit(&request, 1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -708,10 +552,10 @@ void retryLimit()
       app.results[0].code == Zhttp::ResultCode::Failed &&
       app.results[0].retries == 2,
     "retry budget produces one failed result");
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Selected) == 3 &&
-      app.eventCount(Zhttp::AgentEventType::AttemptFailed) == 3 &&
-      app.eventCount(Zhttp::AgentEventType::Retried) == 2 &&
-      app.eventCount(Zhttp::AgentEventType::Completed) == 1,
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 3 &&
+      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 3 &&
+      app.eventCount(Zhttp::ClientEventType::Retried) == 2 &&
+      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
     "retry budget bounds attempts");
 
   app.final();
@@ -732,9 +576,8 @@ void unsafeRetry()
   ZuCHECK(mx.start(), "start multiplexer");
   App app;
   app.expected = 1;
-  app.replayable = false;
-  Zhttp::AgentConfig config;
-  config
+  app.replayable_ = false;
+  auto config = Zhttp::ClientConfig()
     .concurrency(1).maxPending(1).maxRetries(2)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
@@ -747,7 +590,7 @@ void unsafeRetry()
   Request request;
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(Zhttp::URL::parse(request.url, url).ok(),
+  ZuCHECK(request.url.assign(url).ok(),
     "parse unsafe retry URL");
   app.submit(&request, 1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -758,10 +601,10 @@ void unsafeRetry()
       app.results[0].code == Zhttp::ResultCode::Failed &&
       app.results[0].retries == 0,
     "unsafe request is not retried");
-  ZuCHECK(app.eventCount(Zhttp::AgentEventType::Selected) == 1 &&
-      app.eventCount(Zhttp::AgentEventType::AttemptFailed) == 1 &&
-      app.eventCount(Zhttp::AgentEventType::Retried) == 0 &&
-      app.eventCount(Zhttp::AgentEventType::Completed) == 1,
+  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 1 &&
+      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
+      app.eventCount(Zhttp::ClientEventType::Retried) == 0 &&
+      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
     "unsafe retry has no new attempt");
 
   app.final();
@@ -778,7 +621,7 @@ void resolverLifecycle()
   ZuCHECK(mxUp, "start resolver lifecycle multiplexer");
   if (!mxUp) return;
 
-  Zhttp::AgentConfig config;
+  Zhttp::ClientConfig config;
   config
     .concurrency(1).maxPending(1)
     .protocol(Zhttp::ProtocolPolicy::DisableH3)
@@ -816,18 +659,16 @@ void resolverLifecycle()
   mx.stop();
 }
 
-} // namespace ZhttpAgentCancelTest_
+} // namespace ZhttpClientCancelTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpAgentCancelTest_;
+  using namespace ZhttpClientCancelTest_;
 
   (void)argc;
   (void)argv;
   ZuTestMain();
   ZuTestCall(cancel);
-  ZuTestCall(cancelBody);
-  ZuTestCall(stopBody);
   ZuTestCall(timeout);
   ZuTestCall(retry);
   ZuTestCall(redirect);

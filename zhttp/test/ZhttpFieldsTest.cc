@@ -49,14 +49,15 @@ bool validRequest(bool extended = false)
     ok = ok && Source::field(fields, ":protocol", "websocket", header);
   bool operation = false;
   auto section = fields.finish(
-    [&operation, extended](Zhttp::Method::T method, ZuBSpan path) {
+    [&operation, extended](
+	Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
       operation =
 	method == (extended ? Zhttp::Method::CONNECT : Zhttp::Method::GET) &&
-	path == "/";
+	target.path == "/" &&
+	(!extended || target.protocol == "websocket");
     },
-    [](unsigned) { });
-  return ok && host && operation && section == Zhttp::Fields::Final &&
-    (!extended || fields.protocol() == "websocket");
+    [](unsigned) { }, header);
+  return ok && host && operation && section == Zhttp::Fields::Final;
 }
 
 template <typename Source>
@@ -65,7 +66,8 @@ bool invalidCases()
   auto header = [](ZuBSpan, ZuBSpan) { };
   auto finish = [](auto &fields) {
     return fields.finish(
-      [](Zhttp::Method::T, ZuBSpan) { }, [](unsigned) { });
+      [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
+      [](unsigned) { }, [](ZuBSpan, ZuBSpan) { });
   };
 
   Zhttp::Fields::Semantics<true> pseudoAfterRegular;
@@ -123,8 +125,8 @@ bool responses()
   bool ok = Source::field(informational, ":status", "103", header);
   unsigned status = 0;
   auto section = informational.finish(
-    [](Zhttp::Method::T, ZuBSpan) { },
-    [&status](unsigned value) { status = value; });
+    [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
+    [&status](unsigned value) { status = value; }, header);
   if (!ok || status != 103 ||
       section != Zhttp::Fields::Informational)
     return false;
@@ -133,8 +135,8 @@ bool responses()
   ok = Source::field(final, ":status", "200", header) &&
     Source::field(final, "content-length", "3", header);
   section = final.finish(
-    [](Zhttp::Method::T, ZuBSpan) { },
-    [&status](unsigned value) { status = value; });
+    [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
+    [&status](unsigned value) { status = value; }, header);
   if (!ok || status != 200 || section != Zhttp::Fields::Final ||
       !final.bodyAllowed())
     return false;
@@ -143,8 +145,8 @@ bool responses()
   head.requestMethod(Zhttp::Method::HEAD);
   ok = Source::field(head, ":status", "200", header);
   section = head.finish(
-    [](Zhttp::Method::T, ZuBSpan) { },
-    [&status](unsigned value) { status = value; });
+    [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
+    [&status](unsigned value) { status = value; }, header);
   return ok && section == Zhttp::Fields::Final && !head.bodyAllowed();
 }
 

@@ -17,7 +17,9 @@
 
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuTime.hh>
+#include <zlib/ZuPrint.hh>
 
+#include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIP.hh>
@@ -30,13 +32,8 @@ struct TCP { };
 struct TLS { };
 struct QUIC { };
 
-struct Transport {
-  enum { TCP, TLS, QUIC };
-};
-
-struct Version {
-  enum { H1, H2, H3 };
-};
+ZtEnumStruct(ZhttpAPI, Transport, int8_t, TCP, TLS, QUIC);
+ZtEnumStruct(ZhttpAPI, Version, int8_t, H1, H2, H3);
 
 template <typename Protocol_, int Version_>
 struct Profile {
@@ -58,21 +55,12 @@ template <> struct IsProfile<H1TLS> : public ZuTrue { };
 template <> struct IsProfile<H2TLS> : public ZuTrue { };
 template <> struct IsProfile<H3QUIC> : public ZuTrue { };
 
-struct Migration {
-  enum { Disabled, Passive, Active };
-};
-
-struct ProtocolPolicy {
-  enum { ForceH3, PreferH3, DisableH3 };
-};
-
-struct H2Policy {
-  enum { Force, Prefer, Disable };
-};
-
-struct EndpointSource {
-  enum { Origin, HTTPS, IPv4Hint, IPv6Hint, AltSvc };
-};
+ZtEnumStruct(ZhttpAPI, Migration, int8_t, Disabled, Passive, Active);
+ZtEnumStruct(ZhttpAPI, ProtocolPolicy, int8_t,
+  ForceH3, PreferH3, DisableH3);
+ZtEnumStruct(ZhttpAPI, H2Policy, int8_t, Force, Prefer, Disable);
+ZtEnumStruct(ZhttpAPI, EndpointSource, int8_t,
+  Origin, HTTPS, IPv4Hint, IPv6Hint, AltSvc);
 
 struct DiscoveryLimits {
   unsigned	maxRecords = 16;
@@ -81,19 +69,9 @@ struct DiscoveryLimits {
   unsigned	maxAliasDepth = 8;
 };
 
-struct ResultCode {
-  enum {
-    OK,
-    Failed,
-    Cancelled,
-    TimedOut,
-    RedirectLimit,
-    InvalidRedirect,
-    ReplayUnsafe,
-    Unprocessed,
-    Indeterminate
-  };
-};
+ZtEnumStruct(ZhttpAPI, ResultCode, int8_t,
+  OK, Failed, Cancelled, TimedOut, RedirectLimit, InvalidRedirect,
+  ReplayUnsafe, Unprocessed, Indeterminate);
 
 struct Result {
   uint64_t	request = 0;
@@ -109,35 +87,11 @@ struct Result {
   uint32_t	status = 0;
   uint16_t	redirects = 0;
   uint16_t	retries = 0;
-  int8_t	code = ResultCode::OK;
-  int8_t	transport = Transport::TCP;
-  int8_t	httpVersion = Version::H1;
+  ResultCode::T	code = ResultCode::OK;
+  Transport::T	transport = Transport::TCP;
+  Version::T	httpVersion = Version::H1;
 
   bool ok() const { return code == ResultCode::OK; }
-};
-
-namespace BodyDeflt {
-  enum {
-    // Bound one producer turn without imposing transport flow control.
-    TxBatch = 1<<16
-  };
-}
-
-struct BodyProduce {
-  enum {
-    More,		// producer made progress and has more input
-    Done,		// producer reached the source boundary
-    Failed		// source or producer failed
-  };
-};
-
-struct BodySend {
-  enum {
-    More,		// another bounded Tx turn is required
-    Complete,		// request framing and final boundary were submitted
-    Failed,		// production or framing failed
-    Cancelled		// Tx ownership was cancelled and drained
-  };
 };
 
 struct BodyCommit {
@@ -151,69 +105,67 @@ struct BodyCommit {
 
 namespace Body {
 
-struct EmptyCursor { };
-
 struct None {
-  using Cursor = EmptyCursor;
   enum { HasBody = false, Optional = false, Streaming = false };
 };
 
-template <typename Cursor_>
 struct Fixed {
-  using Cursor = Cursor_;
   enum { HasBody = true, Optional = false, Streaming = false };
 };
 
-template <typename Cursor_>
 struct OptionalFixed {
-  using Cursor = Cursor_;
   enum { HasBody = true, Optional = true, Streaming = false };
 };
 
-template <typename Cursor_>
 struct Stream {
-  using Cursor = Cursor_;
   enum { HasBody = true, Optional = false, Streaming = true };
 };
 
-template <typename Cursor_>
 struct OptionalStream {
-  using Cursor = Cursor_;
   enum { HasBody = true, Optional = true, Streaming = true };
 };
 
 } // namespace Body
 
-struct AgentEventType {
-  enum {
-    Selected,
-    AttemptFailed,
-    Redirected,
-    Retried,
-    Fallback,
-    Completed,
-    Cancelled,
-    Stopping
-  };
+struct HeaderPad : public ZuPrintable {
+  HeaderPad(unsigned length_, uint8_t fill_ = 0xff) :
+    length{length_}, fill{fill_} { }
+
+  template <typename S>
+  void print(S &s) const {
+    for (unsigned i = length; i; --i) s << char(fill);
+  }
+
+  unsigned	length;
+  uint8_t	fill;
+
+  friend ZuPrintFn ZuPrintType(HeaderPad *);
 };
 
-struct AgentEvent {
+template <typename T> struct IsHeaderPad : public ZuFalse { };
+template <> struct IsHeaderPad<HeaderPad> : public ZuTrue { };
+
+ZtEnumStruct(ZhttpAPI, ClientEventType, int8_t,
+  Selected, AttemptFailed, Redirected, Retried, Fallback, Completed,
+  Cancelled, Stopping);
+
+struct ClientEvent {
   uint64_t	request = 0;
   uint64_t	attempt = 0;
   uint64_t	previousAttempt = 0;
   uint32_t	status = 0;
   uint16_t	redirects = 0;
   uint16_t	retries = 0;
-  int8_t	type = AgentEventType::Selected;
-  int8_t	result = ResultCode::OK;
-  int8_t	transport = Transport::TCP;
-  int8_t	httpVersion = Version::H1;
-  int8_t	endpointSource = EndpointSource::Origin;
+  ClientEventType::T type = ClientEventType::Selected;
+  ResultCode::T	result = ResultCode::OK;
+  Transport::T	transport = Transport::TCP;
+  Version::T	httpVersion = Version::H1;
+  EndpointSource::T endpointSource = EndpointSource::Origin;
   bool		transient = false;
   bool		responseStarted = false;
 };
 
-class AgentConfig {
+class ClientConfig {
 public:
   unsigned concurrency() const { return m_concurrency; }
   unsigned maxPending() const { return m_maxPending; }
@@ -223,74 +175,79 @@ public:
   unsigned maxRetries() const { return m_maxRetries; }
   unsigned maxOrigins() const { return m_maxOrigins; }
   unsigned maxAltSvc() const { return m_maxAltSvc; }
-  unsigned bodyTxBatch() const { return m_bodyTxBatch; }
+  uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
+  uint64_t retainedMessageMax() const { return m_retainedMessageMax; }
   const DiscoveryLimits &discoveryLimits() const {
     return m_discoveryLimits;
   }
-  int8_t protocol() const { return m_protocol; }
-  int8_t h2Policy() const { return m_h2Policy; }
+  ProtocolPolicy::T protocol() const { return m_protocol; }
+  H2Policy::T h2Policy() const { return m_h2Policy; }
   bool blindH3() const { return m_blindH3; }
   bool altSvcCrossHost() const { return m_altSvcCrossHost; }
   bool tcp() const { return m_tcp; }
   bool tls() const { return m_tls; }
   bool quic() const { return m_quic; }
 
-  AgentConfig &concurrency(unsigned v) {
+  ClientConfig &concurrency(unsigned v) {
     m_concurrency = v;
     return *this;
   }
-  AgentConfig &maxPending(unsigned v) {
+  ClientConfig &maxPending(unsigned v) {
     m_maxPending = v;
     return *this;
   }
-  AgentConfig &admissionBatch(unsigned v) {
+  ClientConfig &admissionBatch(unsigned v) {
     m_admissionBatch = v;
     return *this;
   }
-  AgentConfig &requestTimeout(unsigned v) {
+  ClientConfig &requestTimeout(unsigned v) {
     m_requestTimeout = v;
     return *this;
   }
-  AgentConfig &maxRedirects(unsigned v) {
+  ClientConfig &maxRedirects(unsigned v) {
     m_maxRedirects = v;
     return *this;
   }
-  AgentConfig &maxRetries(unsigned v) {
+  ClientConfig &maxRetries(unsigned v) {
     m_maxRetries = v;
     return *this;
   }
-  AgentConfig &maxOrigins(unsigned v) {
+  ClientConfig &maxOrigins(unsigned v) {
     m_maxOrigins = v;
     return *this;
   }
-  AgentConfig &maxAltSvc(unsigned v) {
+  ClientConfig &maxAltSvc(unsigned v) {
     m_maxAltSvc = v;
     return *this;
   }
-  AgentConfig &bodyTxBatch(unsigned v) {
-    m_bodyTxBatch = v;
+  ClientConfig &retainedBodyMax(uint64_t v) {
+    m_retainedBodyMax = v;
     return *this;
   }
-  AgentConfig &discoveryLimits(DiscoveryLimits v) {
+  ClientConfig &retainedMessageMax(uint64_t v) {
+    m_retainedMessageMax = v;
+    return *this;
+  }
+  ClientConfig &discoveryLimits(DiscoveryLimits v) {
     m_discoveryLimits = v;
     return *this;
   }
-  AgentConfig &protocol(int8_t v) {
+  ClientConfig &protocol(ProtocolPolicy::T v) {
     m_protocol = v;
     return *this;
   }
-  AgentConfig &h2Policy(int8_t v) {
+  ClientConfig &h2Policy(H2Policy::T v) {
     m_h2Policy = v;
     return *this;
   }
-  AgentConfig &blindH3(bool v) { m_blindH3 = v; return *this; }
-  AgentConfig &altSvcCrossHost(bool v) {
+  ClientConfig &blindH3(bool v) { m_blindH3 = v; return *this; }
+  ClientConfig &altSvcCrossHost(bool v) {
     m_altSvcCrossHost = v;
     return *this;
   }
-  AgentConfig &tcp(bool v) { m_tcp = v; return *this; }
-  AgentConfig &tls(bool v) { m_tls = v; return *this; }
-  AgentConfig &quic(bool v) { m_quic = v; return *this; }
+  ClientConfig &tcp(bool v) { m_tcp = v; return *this; }
+  ClientConfig &tls(bool v) { m_tls = v; return *this; }
+  ClientConfig &quic(bool v) { m_quic = v; return *this; }
 
 private:
   unsigned	m_concurrency = 1;
@@ -301,10 +258,11 @@ private:
   unsigned	m_maxRetries = 0;
   unsigned	m_maxOrigins = 256;
   unsigned	m_maxAltSvc = 8;
-  unsigned	m_bodyTxBatch = BodyDeflt::TxBatch;
+  uint64_t	m_retainedBodyMax = uint32_t(-1);
+  uint64_t	m_retainedMessageMax = uint32_t(-1);
   DiscoveryLimits m_discoveryLimits;
-  int8_t	m_protocol = ProtocolPolicy::PreferH3;
-  int8_t	m_h2Policy = H2Policy::Prefer;
+  ProtocolPolicy::T m_protocol = ProtocolPolicy::PreferH3;
+  H2Policy::T	m_h2Policy = H2Policy::Prefer;
   bool		m_blindH3 = false;
   bool		m_altSvcCrossHost = false;
   bool		m_tcp = true;
@@ -312,8 +270,8 @@ private:
   bool		m_quic = true;
 };
 
-ZhttpAPI int8_t migrationMode(
-  ZuCSpan, int8_t deflt = Migration::Passive);
+ZhttpAPI Migration::T migrationMode(
+  ZuCSpan, Migration::T deflt = Migration::Passive);
 
 ZuDerive(ConfigString, ZtString<ZtStringHeapID<"Zhttp.Config">>);
 ZuDerive(ALPNString, ZtString<ZtStringHeapID<"Zhttp.ALPN">>);
@@ -321,8 +279,8 @@ ZuDerive(ALPNString, ZtString<ZtStringHeapID<"Zhttp.ALPN">>);
 struct ConnectedInfo {
   ALPNString	alpn;
   uint32_t	version = 0;
-  int8_t	transport = Transport::TCP;
-  int8_t	httpVersion = Version::H1;
+  Transport::T	transport = Transport::TCP;
+  Version::T	httpVersion = Version::H1;
   bool		secure = false;
   bool		multiplexed = false;
 };
@@ -400,7 +358,7 @@ public:
   uint32_t maxQueuedFrames() const { return m_maxQueuedFrames; }
   unsigned settingsTimeout() const { return m_settingsTimeout; }
   unsigned drainTimeout() const { return m_drainTimeout; }
-  int8_t policy() const { return m_policy; }
+  H2Policy::T policy() const { return m_policy; }
   bool extendedConnect() const { return m_extendedConnect; }
 
   H2Config &caPath(ZuCSpan v) {
@@ -467,7 +425,7 @@ public:
     m_drainTimeout = v;
     return *this;
   }
-  H2Config &policy(int8_t v) { m_policy = v; return *this; }
+  H2Config &policy(H2Policy::T v) { m_policy = v; return *this; }
   H2Config &extendedConnect(bool v) {
     m_extendedConnect = v;
     return *this;
@@ -485,7 +443,7 @@ private:
   uint32_t	m_maxQueuedFrames = 4096;
   unsigned	m_settingsTimeout = 10;
   unsigned	m_drainTimeout = 30;
-  int8_t	m_policy = H2Policy::Force;
+  H2Policy::T	m_policy = H2Policy::Force;
   bool		m_extendedConnect = false;
 };
 
@@ -532,7 +490,7 @@ public:
   double txDrop() const { return m_txDrop; }
   const ZiSockAddr &migrationLocal() const { return m_migrationLocal; }
   uint64_t migrateAfterBytes() const { return m_migrateAfterBytes; }
-  int8_t migration() const { return m_migration; }
+  Migration::T migration() const { return m_migration; }
   bool migrateOnOpen() const { return m_migrateOnOpen; }
   bool migrateAfterHeaders() const { return m_migrateAfterHeaders; }
   bool migrationCloseOnFailure() const {
@@ -607,7 +565,7 @@ public:
     m_migrateAfterBytes = v;
     return *this;
   }
-  QUICConfig &migration(int8_t v) { m_migration = v; return *this; }
+  QUICConfig &migration(Migration::T v) { m_migration = v; return *this; }
   QUICConfig &migrateOnOpen(bool v) {
     m_migrateOnOpen = v;
     return *this;
@@ -651,7 +609,7 @@ private:
   unsigned	m_qpackTxSections = 0;
   double	m_rxDrop = 0;
   double	m_txDrop = 0;
-  int8_t	m_migration = Migration::Passive;
+  Migration::T	m_migration = Migration::Passive;
   bool		m_migrateOnOpen = false;
   bool		m_migrateAfterHeaders = false;
   bool		m_migrationCloseOnFailure = false;

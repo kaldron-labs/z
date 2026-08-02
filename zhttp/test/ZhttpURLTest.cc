@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// HTTP URL, redirect, and Alt-Svc tests
+// HTTP URL, redirect, and request-target tests
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -50,22 +50,76 @@ void parseURL()
     {"https:///path", {}, {}, 0, false}
   };
   for (const auto &test : tests) {
-    Zhttp::URL url;
-    auto e = Zhttp::URL::parse(url, test.input);
+    Zhttp::URLStorage storage;
+    auto e = storage.assign(ZuBSpan{test.input});
     ZuCHECK(e.ok() == test.ok, test.input);
     if (!test.ok) continue;
+    auto url = storage.url();
     ZuCHECK(url.host == test.host, test.input);
-    ZuCHECK(url.target == test.target, test.input);
+    Zhttp::URLString target;
+    target << url.pathQuery();
+    ZuCHECK(target == test.target, test.input);
     ZuCHECK(url.port == test.port, test.input);
   }
+
+  Zhttp::URLString mutableURL;
+  mutableURL << "HTTP://Example.COM/a?#";
+  Zhttp::URL url{ZuSpan<uint8_t>{
+    reinterpret_cast<uint8_t *>(mutableURL.data()), mutableURL.length()}};
+  ZuCHECK(url.ok() && url.host == "example.com", "in-place host case fold");
+  ZuCHECK(url.hasQuery && !url.query && url.hasFragment && !url.fragment,
+    "empty query and fragment presence");
+  Zhttp::URLString printed;
+  printed << url;
+  ZuCHECK(printed == "http://example.com/a?#", "direct URL print");
+
+  Zhttp::URLStorage empty;
+  ZuCHECK(!empty.ok() && !empty.url().ok(), "default storage is not a URL");
+  Zhttp::URL nullURL;
+  ZuCHECK(!nullURL.ok(), "default borrowed view is not a URL");
+  Zhttp::URLStorage retained{ZuBSpan{"https://Example.COM:8443/p?"}};
+  Zhttp::URLStorage copied = retained;
+  Zhttp::URLStorage moved = ZuMv(copied);
+  Zhttp::URLString movedText;
+  movedText << moved.url();
+  ZuCHECK(moved.ok() && movedText == "https://example.com:8443/p?",
+    "owned URL offsets survive copy and move");
+  auto failed = moved.assign(ZuBSpan{"https://bad host/"});
+  movedText.length(0);
+  movedText << moved.url();
+  ZuCHECK(!failed.ok() && moved.ok() &&
+      movedText == "https://example.com:8443/p?",
+    "failed assignment preserves retained URL");
+  Zhttp::URLString adoptedText{"HTTP://Adopted.EXAMPLE/a"};
+  auto adopted = moved.adopt(ZuMv(adoptedText));
+  movedText.length(0);
+  movedText << moved.url();
+  ZuCHECK(adopted.ok() && movedText == "http://adopted.example/a",
+    "adopt transfers URL storage and normalizes in place");
+  Zhttp::URLString invalidAdopt{"https://bad host/"};
+  failed = moved.adopt(ZuMv(invalidAdopt));
+  movedText.length(0);
+  movedText << moved.url();
+  ZuCHECK(!failed.ok() && moved.ok() &&
+      movedText == "http://adopted.example/a",
+    "failed adopt preserves retained URL");
+  Zhttp::AuthorityView readOnly;
+  ZuCHECK(Zhttp::parseAuthority(
+      readOnly, ZuBSpan{"Example.COM:443"}, 0, 0, true).ok() &&
+      readOnly.host == "Example.COM" && !readOnly.normalized,
+    "read-only authority validation preserves source bytes");
+  ZuCHECK(Zhttp::parseAuthority(
+      readOnly, ZuBSpan{"127.0.0.1:0"}, 0, 0, false, true).ok() &&
+      readOnly.explicitPort && !readOnly.port,
+    "socket authority policy permits an explicit ephemeral port");
 }
 
 void redirect()
 {
   ZuTestScope(redirect);
-  Zhttp::URL base;
-  ZuCHECK(Zhttp::URL::parse(
-    base, "http://a/b/c/d;p?q").ok(), "parse base");
+  Zhttp::URLStorage baseStorage{ZuBSpan{"http://a/b/c/d;p?q"}};
+  ZuCHECK(baseStorage.ok(), "parse base");
+  auto base = baseStorage.url();
   struct Test {
     ZuCSpan	ref;
     ZuCSpan	result;
@@ -76,15 +130,15 @@ void redirect()
     {"./g", "http://a/b/c/g"},
     {"g/", "http://a/b/c/g/"},
     {"/g", "http://a/g"},
-    {"//g", "http://g/"},
+    {"//g", "http://g"},
     {"?y", "http://a/b/c/d;p?y"},
     {"g?y", "http://a/b/c/g?y"},
-    {"#s", "http://a/b/c/d;p?q"},
-    {"g#s", "http://a/b/c/g"},
-    {"g?y#s", "http://a/b/c/g?y"},
+    {"#s", "http://a/b/c/d;p?q#s"},
+    {"g#s", "http://a/b/c/g#s"},
+    {"g?y#s", "http://a/b/c/g?y#s"},
     {";x", "http://a/b/c/;x"},
     {"g;x", "http://a/b/c/g;x"},
-    {"g;x?y#s", "http://a/b/c/g;x?y"},
+    {"g;x?y#s", "http://a/b/c/g;x?y#s"},
     {"", "http://a/b/c/d;p?q"},
     {".", "http://a/b/c/"},
     {"./", "http://a/b/c/"},
@@ -98,6 +152,8 @@ void redirect()
     {"../../../../g", "http://a/g"},
     {"/./g", "http://a/g"},
     {"/../g", "http://a/g"},
+    {"//g/a/../b", "http://g/b"},
+    {"http://g/a/../b?x#s", "http://g/b?x#s"},
     {"g.", "http://a/b/c/g."},
     {".g", "http://a/b/c/.g"},
     {"g..", "http://a/b/c/g.."},
@@ -110,103 +166,87 @@ void redirect()
     {"g;x=1/../y", "http://a/b/c/y"},
     {"g?y/./x", "http://a/b/c/g?y/./x"},
     {"g?y/../x", "http://a/b/c/g?y/../x"},
-    {"g#s/./x", "http://a/b/c/g"},
-    {"g#s/../x", "http://a/b/c/g"}
+    {"g#s/./x", "http://a/b/c/g#s/./x"},
+    {"g#s/../x", "http://a/b/c/g#s/../x"}
   };
   for (const auto &test : tests) {
-    Zhttp::URL url;
-    auto e = Zhttp::URL::resolve(url, base, test.ref);
+    Zhttp::URLStorage storage;
+    auto e = storage.resolve(base, test.ref);
     if (test.ref == "g:h") {
       ZuCHECK(!e.ok(), test.ref);
       continue;
     }
     ZuCHECK(e.ok(), test.ref);
-    ZuCHECK(url.str() == test.result, test.ref);
+    Zhttp::URLString result;
+    result << storage.url();
+    ZuCHECK(result == test.result, test.ref);
   }
 }
 
-void altSvc()
+void requestTarget()
 {
-  ZuTestScope(altSvc);
-  Zhttp::Origin origin{"https", "example.com", 443};
-  Zhttp::AltSvc value;
-  auto e = Zhttp::AltSvc::parse(
-    value, "h2=\":443\", h3=\":8443\"; ma=60; persist=1", origin, 4);
-  ZuCHECK(e.ok(), "valid alternatives");
-  ZuCHECK(value.values.length() == 2, "alternative count");
-  ZuCHECK(!value.values[0].h3 && value.values[1].h3,
-    "exact ALPN classification");
-  ZuCHECK(value.values[1].host == "example.com" &&
-      value.values[1].port == 8443 &&
-      value.values[1].maxAge == 60 && value.values[1].persist,
-    "H3 alternative values");
-  ZuCHECK(Zhttp::AltSvc::parse(
-      value, "h3=\"[2001:db8::1]:443\"; ma=0; x=y; flag",
-      origin, 4).ok() &&
-      value.values.length() == 1 &&
-      value.values[0].host == "2001:db8::1" &&
-      value.values[0].ipv6Literal && !value.values[0].maxAge,
-    "IPv6 authority and extension parameters");
+  ZuTestScope(requestTarget);
 
-  Zhttp::AltSvc clear;
-  ZuCHECK(Zhttp::AltSvc::parse(clear, "clear", origin, 4).ok() &&
-      clear.clear && !clear.values.length(), "clear");
+  auto split = Zhttp::splitPathQuery("/a?");
+  ZuCHECK(split.path == "/a" && split.hasQuery && !split.query,
+    "empty query is present");
+  split = Zhttp::splitPathQuery("/a");
+  ZuCHECK(split.path == "/a" && !split.hasQuery, "absent query");
 
-  Zhttp::AltSvc malformed;
-  malformed.clear = true;
-  ZuCHECK(!Zhttp::AltSvc::parse(
-      malformed, "h3=\":bad\"", origin, 4).ok() &&
-      malformed.clear && !malformed.values.length(),
-    "failure leaves output unchanged");
+  struct Test {
+    ZuCSpan input;
+    Zhttp::Method::T method;
+    Zhttp::TargetForm::T form;
+    bool ok;
+  };
+  static const Test tests[] = {
+    {"/a?", Zhttp::Method::GET, Zhttp::TargetForm::Origin, true},
+    {"http://Example.COM/a?x", Zhttp::Method::GET,
+      Zhttp::TargetForm::Absolute, true},
+    {"example.com:443", Zhttp::Method::CONNECT,
+      Zhttp::TargetForm::Authority, true},
+    {"*", Zhttp::Method::OPTIONS, Zhttp::TargetForm::Asterisk, true},
+    {"*", Zhttp::Method::GET, Zhttp::TargetForm::Asterisk, false},
+    {"/a#x", Zhttp::Method::GET, Zhttp::TargetForm::Origin, false},
+    {"http://example.com/a#x", Zhttp::Method::GET,
+      Zhttp::TargetForm::Absolute, false},
+    {"/a%2", Zhttp::Method::GET, Zhttp::TargetForm::Origin, false},
+    {"http://example.com/a b", Zhttp::Method::GET,
+      Zhttp::TargetForm::Absolute, false},
+    {"example.com", Zhttp::Method::CONNECT,
+      Zhttp::TargetForm::Authority, false}
+  };
+  for (const auto &test : tests) {
+    Zhttp::URLString input{test.input};
+    Zhttp::RequestTarget target;
+    auto e = Zhttp::RequestTarget::parseH1(target, test.method,
+      ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(input.data()),
+	input.length()});
+    ZuCHECK(e.ok() == test.ok, test.input);
+    if (test.ok) {
+      ZuCHECK(target.form == test.form, test.input);
+      if (target.authority.host)
+	ZuCHECK(target.authority.normalized, "target authority normalized");
+    }
+  }
 
-  ZuCHECK(!Zhttp::AltSvc::parse(
-      malformed, "h3=\":443\", h3-29=\":443\"", origin, 1).ok(),
-    "explicit alternative bound");
-  ZuCHECK(!Zhttp::AltSvc::parse(
-      malformed, "clear, h3=\":443\"", origin, 4).ok(),
-    "clear cannot be combined");
-  ZuCHECK(!Zhttp::AltSvc::parse(
-      malformed, "h3=\":443\",", origin, 4).ok(),
-    "trailing comma rejected");
-  ZuCHECK(!Zhttp::AltSvc::parse(
-      malformed, "h3=\"host:443", origin, 4).ok(),
-    "unterminated authority rejected");
-  ZuCHECK(Zhttp::AltSvc::parse(
-      value, "xh3=\":443\", h3x=\":443\", h3-29=\":443\"", origin, 4).ok() &&
-      !value.values[0].h3 && !value.values[1].h3 && value.values[2].h3,
-    "no H3 substring matching");
-}
-
-void altSvcCache()
-{
-  ZuTestScope(altSvcCache);
-  Zhttp::Origin a{"https", "a.example", 443};
-  Zhttp::Origin b{"https", "b.example", 443};
-  Zhttp::AltSvc parsed;
-  ZuCHECK(Zhttp::AltSvc::parse(
-    parsed, "h3=\":443\"; ma=10", a, 2).ok(), "parse cache value");
-
-  Zhttp::AltSvcCache cache{1};
-  ZuCHECK(cache.update(a, parsed, ZuTime{100}) && cache.count() == 1,
-    "insert bounded origin");
-  Zhttp::AltSvcValues values;
-  ZuCHECK(cache.get(a, values, ZuTime{109}) &&
-      values.length() == 1 && values[0].h3,
-    "origin-scoped hit before expiry");
-  ZuCHECK(!cache.get(b, values, ZuTime{109}) && !values.length(),
-    "different origin misses");
-  ZuCHECK(!cache.update(b, parsed, ZuTime{100}) && cache.count() == 1,
-    "origin bound has deterministic rejection");
-  ZuCHECK(!cache.get(a, values, ZuTime{110}) &&
-      !values.length() && !cache.count(),
-    "access removes expired entry");
-  ZuCHECK(cache.update(b, parsed, ZuTime{110}) && cache.count() == 1,
-    "expiry releases bounded capacity");
-
-  Zhttp::AltSvc clear;
-  clear.clear = true;
-  ZuCHECK(cache.update(b, clear, ZuTime{110}) && !cache.count(),
-    "clear removes origin");
+  Zhttp::URLString authority;
+  authority << "Example.COM:443";
+  Zhttp::RequestTarget target;
+  auto e = Zhttp::RequestTarget::fromPseudo(target, Zhttp::Method::CONNECT,
+    Zhttp::Scheme::https,
+    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(authority.data()),
+      authority.length()}, "/chat?", "websocket");
+  ZuCHECK(e.ok() && target.form == Zhttp::TargetForm::ExtendedConnect &&
+      target.authority.host == "example.com" && target.hasQuery &&
+      !target.query, "extended CONNECT");
+  e = Zhttp::RequestTarget::fromPseudo(target, Zhttp::Method::GET,
+    Zhttp::Scheme::https,
+    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(authority.data()),
+      authority.length()}, "bad", {});
+  ZuCHECK(e.code == Zhttp::RequestTargetParseCode::InvalidPath &&
+      e.field == Zhttp::RequestTargetField::Path && !e.offset,
+    "pseudo-header error identifies its source field");
 }
 
 } // namespace ZhttpURLTest_
@@ -219,7 +259,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(parseURL);
   ZuTestCall(redirect);
-  ZuTestCall(altSvc);
-  ZuTestCall(altSvcCache);
+  ZuTestCall(requestTarget);
   return 0;
 }

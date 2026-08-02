@@ -15,7 +15,7 @@
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpClientEngine.hh>
 #include <zlib/ZhttpMessage.hh>
 
 namespace Zhttp {
@@ -99,23 +99,22 @@ private:
 // links and message machinery; Owner owns request policy and attempt results.
 template <
   typename Owner_, typename Profile_, typename Request_,
-  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_>
+  typename RequestBuilder_, typename ResponseParser_>
 class ClientPool :
-  public Client<
+  public ClientEngine<
     ClientPool<
       Owner_, Profile_, Request_,
-      ReqHeaders_, RespHeaders_, RespBodyMax_>,
+      RequestBuilder_, ResponseParser_>,
     Profile_> {
 public:
   using Owner = Owner_;
   using Profile = Profile_;
   using Request = Request_;
-  using ReqHeaders = ReqHeaders_;
-  using RespHeaders = RespHeaders_;
+  using RequestBuilder = RequestBuilder_;
+  using ResponseParser = ResponseParser_;
   using Pool = ClientPool;
   using Message = MessageTraits<Profile>;
-  using Base = Client<Pool, Profile>;
-  static constexpr uint64_t RespBodyMax = RespBodyMax_;
+  using Base = ClientEngine<Pool, Profile>;
 
   struct Link :
     public ClientLink<Pool, Link, Profile_> {
@@ -123,7 +122,7 @@ public:
     using Protocol = typename Profile::Protocol;
     using IO = ClientMessage<
       Owner, Request, Link, Profile,
-      ReqHeaders, RespHeaders, RespBodyMax>;
+      RequestBuilder, ResponseParser>;
 
     Link(Pool *pool, unsigned id_) :
       Base{pool}, id{id_}, message{pool->owner(), this} { }
@@ -135,7 +134,6 @@ public:
       ++m_generation;
       m_request = request;
       m_complete = false;
-      m_producerFailed = false;
       m_sent = false;
       m_stopped = false;
       m_closing = false;
@@ -155,7 +153,7 @@ public:
       auto link = ZmMkRef(this);
       unsigned generation = m_generation;
       pool()->txRun([link = ZuMv(link), generation]() mutable {
-	link->message.startTx(generation);
+	link->message.beginTx();
 	link->sendRequestTx_(generation);
       });
     }
@@ -166,13 +164,8 @@ public:
       pool()->txRun([link = ZuMv(link)]() mutable {
 	link->message.cancelTx();
 	auto pool = link->pool();
-	// Drain producer resumptions queued before cancellation, then return to
-	// Rx before disabling the native link.
-	pool->txRun([link = ZuMv(link)]() mutable {
-	  auto pool = link->pool();
-	  pool->rxRun([link = ZuMv(link)]() mutable {
-	    link->disconnect();
-	  });
+	pool->rxRun([link = ZuMv(link)]() mutable {
+	  link->disconnect();
 	});
       });
     }
@@ -247,23 +240,15 @@ public:
       pool()->txRun([link = ZuMv(link), generation, ok, sent]() mutable {
 	if (sent) link->message.cancelTx();
 	auto pool = link->pool();
-	// Drain any producer resumption queued before cancellation, then return
-	// the authoritative Tx commitment to Rx for the retry decision.
-	pool->txRun([link = ZuMv(link), generation, ok, sent]() mutable {
-	  BodyCommit commit = sent ? link->message.commit() : BodyCommit{};
-	  auto pool = link->pool();
-	  pool->rxRun([
-	    link = ZuMv(link), commit, generation, ok]() mutable {
-	    if (link->m_generation != generation) return;
-	    auto request = link->m_request;
-	    if (!request) return;
-	    if (link->m_producerFailed)
-	      link->owner()->poolTxFailed(*link, *request, commit);
-	    else
-	      link->owner()->poolTxCommitted(*link, *request, commit);
-	    bool reuse = ok && link->reusable();
-	    link->owner()->poolComplete(*link, *request, ok, reuse);
-	  });
+	BodyCommit commit = sent ? link->message.commit() : BodyCommit{};
+	pool->rxRun([
+	  link = ZuMv(link), commit, generation, ok]() mutable {
+	  if (link->m_generation != generation) return;
+	  auto request = link->m_request;
+	  if (!request) return;
+	  link->owner()->poolTxCommitted(*link, *request, commit);
+	  bool reuse = ok && link->reusable();
+	  link->owner()->poolComplete(*link, *request, ok, reuse);
 	});
       });
     }
@@ -277,41 +262,21 @@ public:
 
   private:
     void sendRequestTx_(unsigned generation) {
-      if (message.txGeneration() != generation) return;
-      unsigned batch = owner()->requestBodyBatch();
-      int state = message.send(batch);
-      switch (state) {
-	case BodySend::More: {
-	  auto link = ZmMkRef(this);
-	  pool()->txRun([link = ZuMv(link), generation]() mutable {
-	    link->sendRequestTx_(generation);
-	  });
-	  break;
+      bool ok = message.send();
+      auto link = ZmMkRef(this);
+      auto pool = this->pool();
+      BodyCommit commit = message.commit();
+      pool->rxRun([link = ZuMv(link), commit, generation, ok]() mutable {
+	if (link->m_generation != generation) return;
+	auto request = link->request();
+	if (!request) return;
+	if (ok)
+	  link->owner()->poolTxCommitted(*link, *request, commit);
+	else {
+	  link->owner()->poolTxFailed(*link, *request, commit);
+	  link->complete(false);
 	}
-	case BodySend::Complete: {
-	  auto link = ZmMkRef(this);
-	  auto pool = this->pool();
-	  BodyCommit commit = message.commit();
-	  pool->rxRun([link = ZuMv(link), commit, generation]() mutable {
-	    if (link->m_generation == generation)
-	      if (auto request = link->request())
-		link->owner()->poolTxCommitted(*link, *request, commit);
-	  });
-	  break;
-	}
-	case BodySend::Cancelled:
-	  break;
-	default: {
-	  auto link = ZmMkRef(this);
-	  auto pool = this->pool();
-	  pool->rxRun([link = ZuMv(link), generation]() mutable {
-	    if (link->m_generation != generation) return;
-	    link->m_producerFailed = true;
-	    link->complete(false);
-	  });
-	  break;
-	}
-      }
+      });
     }
 
     void notifyStopped_() {
@@ -324,7 +289,6 @@ public:
     Request	*m_next = nullptr;
     unsigned	m_generation = 0;
     bool	m_complete = false;
-    bool	m_producerFailed = false;
     bool	m_sent = false;
     bool	m_stopped = false;
     bool	m_closing = false;

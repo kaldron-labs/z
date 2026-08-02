@@ -19,7 +19,7 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmRandom.hh>
 
-#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpClientEngine.hh>
 #include <zlib/ZhttpH3Session.hh>
 #include <zlib/ZhttpServer.hh>
 
@@ -381,8 +381,7 @@ struct ClientSession :
 	  session->connectFailed(false);
 	  return;
 	}
-	H3::Params params;
-	params.qpackLimits(limits);
+	auto params = H3::Params().qpackLimits(limits);
 	if (!session->h3.openLocal(*session, params, extendedConnect)) {
 	  session->connectFailed(false);
 	  return;
@@ -754,8 +753,7 @@ struct ServerSession :
 	session = ZuMv(session), limits, extendedConnect, ok
       ]() mutable {
 	if (!ok || session->closed()) return;
-	H3::Params params;
-	params.qpackLimits(limits);
+	auto params = H3::Params().qpackLimits(limits);
 	if (!session->h3.openLocal(*session, params, extendedConnect))
 	  session->disconnect(H3::SettingsError);
       });
@@ -1064,7 +1062,7 @@ private:
 };
 
 template <typename App>
-class Client<App, H3QUIC> : public H3_::ClientEngine<App> {
+class ClientEngine<App, H3QUIC> : public H3_::ClientEngine<App> {
 public:
   using Base = H3_::ClientEngine<App>;
   using Traits = Transport_::Traits<QUIC>;

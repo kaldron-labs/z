@@ -85,10 +85,11 @@ public:
     if (!m_headers) return fail_();
     m_headers = false;
     auto section = m_fields.finish(
-      [this](Method::T method, ZuBSpan path) {
-	impl()->operation(method, path);
+      [this](Method::T method, const RequestTarget &target) {
+	impl()->operation(method, target);
       },
-      [this](unsigned status) { impl()->status(status); });
+      [this](unsigned status) { impl()->status(status); },
+      [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
     if (section == Fields::Invalid) return fail_();
     if (section == Fields::Informational) {
       if (endStream) return fail_();
@@ -101,9 +102,6 @@ public:
       complete_();
       return true;
     }
-    if constexpr (Request)
-      if (ZuCSpan protocol = m_fields.protocol())
-	impl()->protocol(protocol);
     m_bodyAllowed = m_fields.bodyAllowed();
     impl()->headers(section, endStream);
     if (m_state == State::Stream) {
@@ -168,7 +166,6 @@ public:
     return fail_();
   }
 
-  void protocol(ZuBSpan) { }
   void headers(Fields::Section, bool) { }
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
@@ -242,7 +239,7 @@ template <
   typename Trailers_ = ZuTypeList<>,
   bool HasBody_ = false,
   bool Streaming_ = false>
-class Builder {
+class Builder_ {
 public:
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -251,15 +248,15 @@ public:
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
 
+protected:
   template <typename Stream>
-  bool request(Stream &stream) {
+  bool request_(Stream &stream) {
     bool sent = false;
     bool endStream = false;
     bool streamMode = false;
     impl()->operation(
       [this, &stream, &sent, &endStream, &streamMode]
-      <typename Path, typename Query>(
-	Method::T method, Path &&path, Query &&query) {
+      <typename Target>(Method::T method, Target &&target) {
       ZuCSpan protocol;
       if (method == Method::CONNECT)
 	impl()->protocol([&protocol]<typename P>(P &&value) {
@@ -269,22 +266,17 @@ public:
       streamMode = bool(protocol);
       endStream = !HasBody && !Trailers::N && !protocol;
       stream.beginHeaders(endStream);
-      Builder::field_(stream, ":method", Method::name(method));
+      Builder_::field_(stream, ":method", Method::name(method));
       if (method != Method::CONNECT || protocol) {
-	Builder::field_(stream, ":scheme", "https");
-	ZuCSpan path_{ZuFwd<Path>(path)};
-	ZuCSpan query_{ZuFwd<Query>(query)};
-	if (!query_)
-	  Builder::field_(stream, ":path", path_);
-	else
-	  stream.field(":path", path_, '?', query_);
+      Builder_::field_(stream, ":scheme", "https");
+	Builder_::field_(stream, ":path", ZuFwd<Target>(target));
       }
-      if (protocol) Builder::field_(stream, ":protocol", protocol);
+      if (protocol) Builder_::field_(stream, ":protocol", protocol);
       sent = true;
     });
     if (!sent) return false;
     impl()->host([&stream]<typename Host>(Host &&host) {
-      Builder::field_(stream, ":authority", ZuCSpan{ZuFwd<Host>(host)});
+      Builder_::field_(stream, ":authority", ZuFwd<Host>(host));
     });
     if (streamMode)
       headers_<Headers, false>(stream);
@@ -295,7 +287,7 @@ public:
   }
 
   template <typename Stream>
-  void response(Stream &stream) {
+  void response_(Stream &stream) {
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;
     bool streamMode = impl()->streamResponse();
@@ -314,12 +306,10 @@ public:
     stream.endHeaders(endStream);
   }
 
+public:
   template <typename Stream>
   auto body(Stream &stream) {
-    if constexpr (Streaming)
-      return stream.body();
-    else
-      return stream.body(impl()->contentLength());
+    return stream.body();
   }
   template <typename Stream>
   auto body(Stream &stream, uint64_t remaining) {
@@ -342,38 +332,24 @@ public:
 
   void reset() { }
 
-  template <typename L> void operation(L &&l) {
-    l(Method::GET, "/", "");
-  }
+  template <typename L> void operation(L &&l) { l(Method::GET, "/"); }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
   unsigned status() { return 200; }
   bool streamResponse() { return false; }
   template <typename Key, typename L> void header(L &&) { }
   template <typename L> void header(L &&) { }
-  uint64_t contentLength() { return 0; }
 
 private:
-  template <typename Stream>
-  static void field_(Stream &stream, ZuCSpan name, ZuCSpan value) {
-    stream.field(name, value);
+  template <typename Stream, typename V>
+  static void field_(Stream &stream, ZuCSpan name, V &&value) {
+    stream.field(name, ZuFwd<V>(value));
   }
 
   template <
     typename KVs = Headers, bool IncludeContentLength = true,
     typename Stream>
   void headers_(Stream &stream) {
-    if constexpr (HasBody && !Streaming && IncludeContentLength) {
-      ZuCArray<UInt64BufSize> value;
-      uint64_t length = impl()->contentLength();
-      unsigned offset = value.size();
-      do {
-	value[--offset] = char('0' + (length % 10));
-	length /= 10;
-      } while (length);
-      field_(stream, "content-length",
-	ZuCSpan{value.data() + offset, value.size() - offset});
-    }
     using Keys = ZuTypeSlice<2, 0, KVs>;
     using Values = ZuTypeSlice<2, 1, KVs>;
     ZuUnroll::all<Keys>([this, &stream]<typename Key>() {
@@ -382,8 +358,7 @@ private:
 	field_(stream, Key{}(), Value{}());
       else
 	impl()->template header<Key>([&stream]<typename V>(V &&v) {
-	  ZuCSpan value{ZuFwd<V>(v)};
-	  if (value) stream.field(Key{}(), value);
+	  stream.field(Key{}(), ZuFwd<V>(v));
 	});
     });
     runtimeHeaders_(stream);
@@ -391,12 +366,44 @@ private:
 
   template <typename Stream>
   void runtimeHeaders_(Stream &stream) {
-    auto fn = [&stream](ZuCSpan name, ZuCSpan value) {
-      if (name) stream.field(name, value);
+    auto fn = [&stream]<typename K, typename V>(K &&k, V &&v) {
+      ZtString<ZtStringHeapID<"Zhttp.H2.HeaderName">> name;
+      name << ZuFwd<K>(k);
+      if (name) stream.field(ZuCSpan{name}, ZuFwd<V>(v));
     };
     if constexpr (Fields::HasRuntimeBuilder<Impl, decltype(fn)>{})
       impl()->header(ZuMv(fn));
   }
+};
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false,
+  bool Streaming = false>
+class RequestBuilder :
+  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+
+public:
+  template <typename Stream>
+  bool request(Stream &stream) { return Base::request_(stream); }
+};
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false,
+  bool Streaming = false>
+class ResponseBuilder :
+  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+
+public:
+  template <typename Stream>
+  void response(Stream &stream) { Base::response_(stream); }
 };
 
 } // namespace H2

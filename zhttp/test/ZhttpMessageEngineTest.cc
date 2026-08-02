@@ -35,18 +35,22 @@ struct State {
 
 template <typename Profile>
 struct RequestBuilder :
-  public Zhttp::MessageTraits<Profile>::template Builder<
-    RequestBuilder<Profile>, ZuTypeList<>, ZuTypeList<>, true, false> {
+  public Zhttp::MessageTraits<Profile>::template RequestBuilder<
+    RequestBuilder<Profile>, ZhttpHeaders("content-length"),
+    ZuTypeList<>, true, false> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::PUT, "/", ""); }
+  void operation(L &&l) { l(Zhttp::Method::PUT, "/"); }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
-  uint64_t contentLength() const { return 5; }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    if constexpr (Key{}() == "content-length") l("5");
+  }
 };
 
 template <typename Profile>
 struct InfoBuilder :
-  public Zhttp::MessageTraits<Profile>::template Builder<
+  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
     InfoBuilder<Profile>, ZhttpHeaders("x-test"),
     ZuTypeList<>, false, false> {
   unsigned status() { return 103; }
@@ -59,7 +63,7 @@ struct InfoBuilder :
 
 template <typename Profile>
 struct ResponseBuilder :
-  public Zhttp::MessageTraits<Profile>::template Builder<
+  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
     ResponseBuilder<Profile>, ZhttpHeaders("x-test"),
     ZhttpHeaders("x-trailer"), true, true> {
   unsigned status() { return 200; }
@@ -79,13 +83,13 @@ template <typename Profile> struct ClientLink;
 
 template <typename Profile>
 struct ClientParser :
-  public Zhttp::MessageTraits<Profile>::template Parser<
-    ClientParser<Profile>, false, TestHeaders, Zhttp::DefltMaxBody> {
-  using Base = typename Zhttp::MessageTraits<Profile>::template Parser<
-    ClientParser, false, TestHeaders, Zhttp::DefltMaxBody>;
+  public Zhttp::MessageTraits<Profile>::template ResponseParser<
+    ClientParser<Profile>, TestHeaders, Zhttp::DefltMaxBody> {
+  using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
+    ClientParser, TestHeaders, Zhttp::DefltMaxBody>;
   using State = typename Base::State;
 
-  void operation(Zhttp::Method::T, ZuBSpan) { }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) {
     status_ = value;
     ++statusCalls;
@@ -124,7 +128,7 @@ struct ClientParser :
 };
 
 template <typename Profile>
-struct Client : public Zhttp::Client<Client<Profile>, Profile> {
+struct Client : public Zhttp::ClientEngine<Client<Profile>, Profile> {
   using Link = ClientLink<Profile>;
   using HTTP = Zhttp::ProfileTraits<Profile>;
   State *state = nullptr;
@@ -142,7 +146,7 @@ struct Client : public Zhttp::Client<Client<Profile>, Profile> {
     auto tx = link.transmit(request);
     request.request(tx);
     {
-      auto body = request.body(tx);
+      auto body = request.body(tx, 5);
       body << ZuCSpan{"he"} << ZuCSpan{"llo"};
       body.flush();
       if (!body.complete()) ++state->errors;
@@ -197,15 +201,16 @@ struct ServerSession {
   using Message = Zhttp::MessageTraits<Profile>;
 
   struct Parser :
-    public Message::template Parser<
-      Parser, true, ZuTypeList<>, Zhttp::DefltMaxBody> {
-    using Base = typename Message::template Parser<
-      Parser, true, ZuTypeList<>, Zhttp::DefltMaxBody>;
+    public Message::template RequestParser<
+      Parser, ZuTypeList<>, Zhttp::DefltMaxBody> {
+    using Base = typename Message::template RequestParser<
+      Parser, ZuTypeList<>, Zhttp::DefltMaxBody>;
     using State = typename Base::State;
 
-    void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+    void operation(
+      Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
       method = method_;
-      path = path_;
+      path = target.raw;
     }
     void status(unsigned) { }
     void contentLength(uint64_t) { }

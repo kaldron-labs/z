@@ -24,6 +24,10 @@ ZuDerive(MessageString, ZtString<ZtStringHeapID<"Zhttp.Message">>);
 struct RequestInfo {
   Method::T	method = -1;
   MessageString	target;
+  MessageString	pathStorage;
+  MessageString	queryStorage;
+  MessageString	authority;
+  MessageString	protocol;
   MessageString	host;
   MessageString	authorization;
   MessageString	range;
@@ -36,10 +40,34 @@ struct RequestInfo {
   uint64_t	bodyConsumed = 0;
   uint64_t	bodyReset = 0;
   uint64_t	bodyDiscarded = 0;
-  int8_t	transport = Transport::TCP;
-  int8_t	httpVersion = Version::H1;
+  uint32_t	pathOffset = 0;
+  uint32_t	pathLength = 0;
+  uint32_t	queryOffset = 0;
+  uint32_t	queryLength = 0;
+  Scheme::T	scheme = -1;
+  TargetForm::T	form = TargetForm::Origin;
+  Transport::T	transport = Transport::TCP;
+  Version::T	httpVersion = Version::H1;
   bool		secure = false;
   bool		http10 = false;
+  bool		hasQuery = false;
+  bool		pathStored = false;
+  bool		queryStored = false;
+
+  ZuBSpan path() const {
+    if (pathStored) return pathStorage;
+    if (!target) return {};
+    return
+      ZuBSpan{reinterpret_cast<const uint8_t *>(target.data()) + pathOffset,
+	pathLength};
+  }
+  ZuBSpan query() const {
+    if (queryStored) return queryStorage;
+    if (!target) return {};
+    return
+      ZuBSpan{reinterpret_cast<const uint8_t *>(target.data()) + queryOffset,
+	queryLength};
+  }
 };
 
 class ServiceConfig {
@@ -51,6 +79,8 @@ public:
   unsigned idleTimeout() const { return m_idleTimeout; }
   unsigned maxConnections() const { return m_maxConnections; }
   unsigned altSvcMaxAge() const { return m_altSvcMaxAge; }
+  uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
+  uint64_t retainedMessageMax() const { return m_retainedMessageMax; }
   bool tcpEnabled() const { return m_tcpEnabled; }
   bool tlsEnabled() const { return m_tlsEnabled; }
   bool quicEnabled() const { return m_quicEnabled; }
@@ -80,6 +110,14 @@ public:
     m_altSvcMaxAge = v;
     return *this;
   }
+  ServiceConfig &retainedBodyMax(uint64_t v) {
+    m_retainedBodyMax = v;
+    return *this;
+  }
+  ServiceConfig &retainedMessageMax(uint64_t v) {
+    m_retainedMessageMax = v;
+    return *this;
+  }
   ServiceConfig &tcp(TCPConfig v = {}) {
     m_tcp = ZuMv(v);
     m_tcpEnabled = true;
@@ -104,23 +142,76 @@ private:
   unsigned	m_idleTimeout = 0;
   unsigned	m_maxConnections = 0;
   unsigned	m_altSvcMaxAge = 86400;
+  uint64_t	m_retainedBodyMax = uint32_t(-1);
+  uint64_t	m_retainedMessageMax = uint32_t(-1);
   uint16_t	m_port = 0;
   bool		m_tcpEnabled = false;
   bool		m_tlsEnabled = false;
   bool		m_quicEnabled = false;
 };
 
-template <
-  typename Workload_, typename ReqHeaders_, typename RespHeaders_,
-  uint64_t ReqBodyMax_>
+template <typename Completion>
+struct ServiceResponseDone : public ZmObject {
+  RequestInfo	request;
+  Completion	completion;
+
+  ServiceResponseDone(RequestInfo request_, Completion completion_) :
+    request{ZuMv(request_)}, completion{ZuMv(completion_)} { }
+};
+
+// Workload_ and its message types are plain application structs.  Service
+// wraps RequestParser and each emitted ResponseBuilder in protocol CRTP
+// adapters; application types do not inherit Zhttp bases.  response() calls
+// emit(builder, completion) at most once.  All Parser and Builder lambda calls
+// are synchronous.
+#if 0
+struct Workload {
+  struct RequestParser {
+    using Headers = ZhttpHeaders(...);
+    static constexpr uint64_t BodyMax = DefltMaxBody;
+
+    void operation(Method::T, const RequestTarget &);
+    void version(ZuBSpan);
+    void contentLength(uint64_t);
+    void chunked();
+    template <typename Key> void header(ZuBSpan value);
+    template <typename Rx> void body(Rx &);
+    void complete(bool ok);
+  };
+
+  RequestParser requestParser();
+
+  template <typename Emit>
+  void response(const RequestInfo &, RequestParser &, Emit &&emit);
+  // emit(ResponseBuilder, completion)
+};
+
+struct ResponseBuilder {
+  using Headers = ZhttpHeaders(...);
+  using Trailers = ZhttpHeaders(...);	// optional
+  using BodyPolicy = Body::None;
+
+  unsigned status();
+  template <typename L> void reason(L &&l);	// l(value), H1 only
+  template <typename Key, typename L> void header(L &&l); // l(value)
+  template <typename L> void header(L &&l);		   // l(key, value)
+  template <typename Emit> void body(Emit &&emit); // body policies only
+  // Fixed policies provision HeaderPad in header<Key>() and patch it here;
+  // there is no contentLength() callback.
+  template <typename L> void bodyHdrs(L &&l);
+  bool close() const;
+};
+#endif
+
+template <typename Workload_>
 class Service {
 public:
   using Workload = Workload_;
-  using ReqHeaders = ReqHeaders_;
-  using RespHeaders = RespHeaders_;
-  using Response = typename Workload::Response;
+  using AppRequestParser = typename Workload::RequestParser;
+  using ReqHeaders = typename AppRequestParser::Headers;
   using StopFn = Engines::DoneFn;
-  enum { ReqBodyMax = ReqBodyMax_ };
+  static constexpr uint64_t ReqBodyMax =
+    ParserBodyMax<AppRequestParser>::V;
 
 private:
   template <typename Protocol> struct Session;
@@ -130,21 +221,44 @@ private:
   struct TLSH1Link;
   struct TLSH2Link;
 
-  struct ReqSink {
-    using RequestState = typename Workload::RequestState;
-
+  struct RequestOps {
     void reset() {
       request = {};
-      requestState = {};
+      if (service) sink = service->m_workload->requestParser();
       bodyReceived = bodyConsumed = bodyReset = bodyDiscarded = 0;
       complete_ = false;
     }
-    void operation(Method::T method, ZuBSpan target) {
+    void operation(Method::T method, const RequestTarget &target) {
       request.method = method;
-      request.target = ZuCSpan{target};
+      request.target = ZuCSpan{target.raw};
+      request.authority = ZuCSpan{target.authority.raw};
+      request.protocol = ZuCSpan{target.protocol};
+      request.scheme = target.scheme;
+      request.form = target.form;
+      request.hasQuery = target.hasQuery;
+      auto offsets = [&target](ZuBSpan value, uint32_t &offset,
+	  uint32_t &length) {
+	if (!target.raw || !value) return false;
+	uintptr_t raw = reinterpret_cast<uintptr_t>(target.raw.data());
+	uintptr_t data = reinterpret_cast<uintptr_t>(value.data());
+	if (data < raw || data - raw > target.raw.length() ||
+	    value.length() > target.raw.length() - (data - raw))
+	  return false;
+	offset = uint32_t(data - raw);
+	length = uint32_t(value.length());
+	return true;
+      };
+      request.pathStored = !offsets(
+	target.path, request.pathOffset, request.pathLength);
+      if (request.pathStored) request.pathStorage = ZuCSpan{target.path};
+      request.queryStored = !offsets(
+	target.query, request.queryOffset, request.queryLength);
+      if (request.queryStored) request.queryStorage = ZuCSpan{target.query};
+      sink.operation(method, target);
     }
     void version(ZuBSpan version_) {
       request.http10 = ZuCSpan{version_} == "HTTP/1.0";
+      sink.version(version_);
     }
     template <typename Key>
     void header(ZuBSpan value) {
@@ -162,15 +276,17 @@ private:
 	request.referer = ZuCSpan{value};
       else if constexpr (Key{}() == "user-agent")
 	request.userAgent = ZuCSpan{value};
+      sink.template header<Key>(value);
     }
-    void contentLength(uint64_t) { }
+    void contentLength(uint64_t value) { sink.contentLength(value); }
+    void chunked() { sink.chunked(); }
     void status(unsigned) { }
     template <typename Rx>
     void body(Rx &rx) {
       (void)rx.input();
       uint32_t offered = rx.available();
       bodyReceived += offered;
-      service->m_workload->requestBody(request, requestState, rx);
+      sink.body(rx);
       uint32_t pending = rx.available();
       if (pending <= offered) {
 	bodyConsumed += offered - pending;
@@ -185,11 +301,12 @@ private:
     template <typename ParserState>
     void complete(typename ParserState::T state) {
       complete_ = state == ParserState::Complete;
+      sink.complete(complete_);
     }
 
     Service	*service = nullptr;
     RequestInfo	request;
-    RequestState requestState;
+    AppRequestParser sink;
     uint64_t	bodyReceived = 0;
     uint64_t	bodyConsumed = 0;
     uint64_t	bodyReset = 0;
@@ -199,65 +316,347 @@ private:
 
   template <typename Profile>
   struct Parser :
-    public MessageTraits<Profile>::template Parser<
-      Parser<Profile>, true, ReqHeaders, ReqBodyMax>,
-    public ReqSink {
-    using Base = typename MessageTraits<Profile>::template Parser<
-      Parser, true, ReqHeaders, ReqBodyMax>;
+    public MessageTraits<Profile>::template RequestParser<
+      Parser<Profile>, ReqHeaders, ReqBodyMax>,
+    public RequestOps {
+    using Base = typename MessageTraits<Profile>::template RequestParser<
+      Parser, ReqHeaders, ReqBodyMax>;
     using State = typename Base::State;
-    void reset() { Base::reset(); ReqSink::reset(); }
+    void reset() { Base::reset(); RequestOps::reset(); }
     void complete(typename State::T state) {
-      ReqSink::template complete<State>(state);
+      RequestOps::template complete<State>(state);
     }
-    using ReqSink::body;
-    using ReqSink::contentLength;
-    using ReqSink::header;
-    using ReqSink::operation;
-    using ReqSink::status;
-    using ReqSink::version;
+    using RequestOps::body;
+    using RequestOps::chunked;
+    using RequestOps::contentLength;
+    using RequestOps::header;
+    using RequestOps::operation;
+    using RequestOps::status;
+    using RequestOps::version;
   };
 
-  struct RespOps {
-    Service		*service = nullptr;
-    const Response	*plan = nullptr;
+  template <typename AppBuilder>
+  struct BuilderApp_ {
+    using Headers = typename AppBuilder::Headers;
 
-    unsigned status() const {
-      return service->m_workload->status(*plan);
-    }
+    Service	*service = nullptr;
+    AppBuilder	app;
+    HeaderPatches<Headers> patches;
+    uint64_t	produced = 0;
+
+    unsigned status() const { return app.status(); }
     template <typename L>
-    void reason(L &&l) const {
-      service->m_workload->reason(*plan, ZuFwd<L>(l));
-    }
-    uint64_t contentLength() const {
-      return service->m_workload->contentLength(*plan);
-    }
+    void reason(L &&l) const { app.reason(ZuFwd<L>(l)); }
     template <typename Key, typename L>
-    void header(L &&l) const {
-      service->m_workload->template header<Key>(*plan, ZuFwd<L>(l));
+    void header(L &&l) {
+      if constexpr (Key{}() == "content-length")
+	if (rejectContentLength) return;
+      if (suppressPads) {
+	unsigned count = 0;
+	app.template header<Key>([this, &l, &count]<typename V>(V &&v) {
+	  if (++count > 1) {
+	    patches.invalidate();
+	    return;
+	  }
+	  if constexpr (!IsHeaderPad<ZuDecay<V>>{})
+	    l(ZuFwd<V>(v));
+	});
+	return;
+      }
+      patches.template header<false, Key>(app, ZuFwd<L>(l));
     }
+    template <typename L>
+    void header(L &&l) {
+      app.header([this, &l]<typename K, typename V>(K &&k, V &&v) {
+	ZtString<ZtStringHeapID<"Zhttp.RuntimeHeader.Name">> name;
+	name << k;
+	if (!validRuntimeHeader<Headers>(ZuCSpan{name}, h1)) {
+	  headersOK = false;
+	  return;
+	}
+	l(ZuFwd<K>(k), ZuFwd<V>(v));
+      });
+      if (service->m_altSvc) l("alt-svc", service->m_altSvc);
+    }
+    bool provision() { return patches.provision(app); }
+    bool patch(uint64_t n) {
+      bool ok = true;
+      app.bodyHdrs(
+	[this, &ok]<typename Key, typename Patcher>(Patcher &&patcher) {
+	  if (!patches.template patch<Key>(ZuFwd<Patcher>(patcher)))
+	    ok = false;
+	});
+      return ok && patches.validate(n);
+    }
+    uint64_t contentLength() const { return produced; }
+    bool headersValid() const { return headersOK && patches.valid(); }
+    template <typename Emit>
+    void emitBody(Emit &&emit) { app.body(ZuFwd<Emit>(emit)); }
+
+    bool	h1 = false;
+    bool	headersOK = true;
+    bool	suppressPads = false;
+    bool	rejectContentLength = false;
   };
 
-  template <typename Profile>
+  template <
+    typename Profile, typename AppBuilder,
+    bool HasBody, bool Streaming>
   struct Builder :
-    public MessageTraits<Profile>::template Builder<
-      Builder<Profile>, RespHeaders, ZuTypeList<>, true, false>,
-    public RespOps {
-    using Base = typename MessageTraits<Profile>::template Builder<
-      Builder, RespHeaders, ZuTypeList<>, true, false>;
-    Builder(Service *service, const Response *response) :
-      RespOps{service, response} { }
-    template <typename L>
-    void header(L &&l) const {
-      if constexpr (ZuIsSame<typename Profile::Protocol, TLS>{})
-	if (this->service->m_altSvc)
-	  l("alt-svc", this->service->m_altSvc);
+    public MessageTraits<Profile>::template ResponseBuilder<
+      Builder<Profile, AppBuilder, HasBody, Streaming>,
+      typename AppBuilder::Headers,
+      typename BuilderTrailers<AppBuilder>::T, HasBody, Streaming>,
+    public BuilderApp_<AppBuilder> {
+    using Base = typename MessageTraits<Profile>::template ResponseBuilder<
+      Builder, typename AppBuilder::Headers,
+      typename BuilderTrailers<AppBuilder>::T, HasBody, Streaming>;
+    using Ops = BuilderApp_<AppBuilder>;
+    enum { Optional = AppBuilder::BodyPolicy::Optional };
+
+    Builder(
+      Service *service, AppBuilder app, bool suppressPads = false,
+      bool rejectContentLength = false) :
+      Ops{service, ZuMv(app)} {
+      this->h1 = MessageTraits<Profile>::ID == Version::H1;
+      this->suppressPads = suppressPads;
+      this->rejectContentLength = rejectContentLength;
     }
-    using Base::body;
-    using RespOps::contentLength;
-    using RespOps::header;
-    using RespOps::reason;
-    using RespOps::status;
+
+    bool streamResponse() const { return false; }
+    template <typename Key, typename L>
+    void header(L &&l) {
+      if constexpr (Key{}() == "content-length")
+	if (this->rejectContentLength) return;
+      if (this->suppressPads) {
+	unsigned count = 0;
+	this->app.template header<Key>(
+	  [this, &l, &count]<typename V>(V &&v) {
+	  if (++count > 1) {
+	    this->patches.invalidate();
+	    return;
+	  }
+	  if constexpr (!IsHeaderPad<ZuDecay<V>>{})
+	    l(ZuFwd<V>(v));
+	  });
+	return;
+      }
+      this->patches.template header<
+	MessageTraits<Profile>::ID == Version::H1, Key>(
+	this->app, ZuFwd<L>(l));
+    }
+    using Ops::contentLength;
+    using Ops::header;
+    using Ops::reason;
+    using Ops::status;
   };
+
+  static bool bodyAllowed_(Method::T method, unsigned status) {
+    if (method == Method::HEAD || (status >= 100 && status < 200) ||
+	status == 204 || status == 304)
+      return false;
+    return method != Method::CONNECT || status < 200 || status >= 300;
+  }
+
+  static bool contentLengthForbidden_(Method::T method, unsigned status) {
+    return (status >= 100 && status < 200) || status == 204 ||
+      (method == Method::CONNECT && status >= 200 && status < 300);
+  }
+
+  template <typename Profile, typename Link_, typename AppBuilder>
+  bool sendResponse_(Link_ &link, Method::T method, AppBuilder &&app_) {
+    using App = ZuDecay<AppBuilder>;
+    using Policy = typename App::BodyPolicy;
+    unsigned status = app_.status();
+    if constexpr (!Policy::HasBody) {
+      Builder<Profile, App, false, false> builder{
+	this, ZuFwd<AppBuilder>(app_), true,
+	contentLengthForbidden_(method, status)};
+      auto tx = link.transmit(builder);
+      builder.response(tx);
+      if (!builder.headersValid()) return false;
+      builder.finish(tx);
+      link.finish();
+      return true;
+    } else {
+      if (!bodyAllowed_(method, status)) {
+	Builder<Profile, App, false, false> builder{
+	  this, ZuFwd<AppBuilder>(app_), true,
+	  contentLengthForbidden_(method, status)};
+	auto tx = link.transmit(builder);
+	builder.response(tx);
+	if (!builder.headersValid()) return false;
+	builder.finish(tx);
+	link.finish();
+	return true;
+      }
+      if constexpr (Policy::Streaming)
+	return sendStreamingResponse_<Profile>(
+	  link, ZuFwd<AppBuilder>(app_));
+      else
+	return sendFixedResponse_<Profile>(
+	  link, ZuFwd<AppBuilder>(app_));
+    }
+  }
+
+  template <typename Profile, typename Link_, typename AppBuilder>
+  bool sendStreamingResponse_(Link_ &link, AppBuilder &&app_) {
+    using App = ZuDecay<AppBuilder>;
+    using Policy = typename App::BodyPolicy;
+    Builder<Profile, App, true, true> builder{
+      this, ZuFwd<AppBuilder>(app_)};
+    auto tx = link.transmit(builder);
+    bool emitted = false;
+    bool duplicate = false;
+    bool writerOK = false;
+    if constexpr (Policy::Optional) {
+      builder.emitBody([
+	&builder, &tx, &emitted, &duplicate, &writerOK](auto &&write) {
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	builder.response(tx);
+	if (!builder.headersValid()) return;
+	auto body = builder.body(tx);
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	body.flush();
+	if (!body.valid()) writerOK = false;
+	if (writerOK) builder.finish(tx);
+      });
+      if (!emitted) {
+	Builder<Profile, App, false, false> empty{
+	  this, ZuMv(builder.app), true};
+	auto emptyTx = link.transmit(empty);
+	empty.response(emptyTx);
+	if (!empty.headersValid()) return false;
+	empty.finish(emptyTx);
+	link.finish();
+	return true;
+      }
+    } else {
+      builder.response(tx);
+      if (!builder.headersValid()) return false;
+      builder.emitBody([
+	&builder, &tx, &emitted, &duplicate, &writerOK](auto &&write) {
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	auto body = builder.body(tx);
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	body.flush();
+	if (!body.valid()) writerOK = false;
+      });
+      if (emitted && writerOK) builder.finish(tx);
+    }
+    if ((!Policy::Optional && !emitted) || duplicate || !writerOK)
+      return false;
+    link.finish();
+    return true;
+  }
+
+  template <typename Profile, typename Link_, typename AppBuilder>
+  bool sendFixedResponse_(Link_ &link, AppBuilder &&app_) {
+    using App = ZuDecay<AppBuilder>;
+    using Policy = typename App::BodyPolicy;
+    Builder<Profile, App, true, false> builder{
+      this, ZuFwd<AppBuilder>(app_)};
+    auto native = link.transmit(builder);
+    if constexpr (MessageTraits<Profile>::ID == Version::H2)
+      return sendFixedResponseH2_<Profile>(link, builder, native);
+    else {
+      if constexpr (MessageTraits<Profile>::ID == Version::H3)
+	builder.deferCompression();
+      RetainedBudget budget{
+	.max = m_config.retainedMessageMax()};
+      RetainedTx headerTx{native, budget};
+      RetainedTx bodyTx{native, budget};
+      auto body = builder.body(bodyTx, fixedBodyMax_());
+      bool emitted = false;
+      bool duplicate = false;
+      bool writerOK = false;
+      bool headersOK = false;
+      builder.emitBody([
+	&builder, &headerTx, &body,
+	&emitted, &duplicate, &writerOK, &headersOK]
+	(auto &&write) {
+	(void)headerTx;
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	if (!(headersOK = builder.provision())) return;
+	if constexpr (MessageTraits<Profile>::ID == Version::H1)
+	  builder.response(headerTx);
+	if (!builder.headersValid()) headersOK = false;
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+      });
+      body.flush();
+      if (emitted) builder.produced = body.produced();
+      if ((!Policy::Optional && !emitted) || duplicate ||
+	  (emitted && (!headersOK || !writerOK || !body.valid())))
+	return false;
+      if (!emitted) {
+	Builder<Profile, App, false, false> empty{
+	  this, ZuMv(builder.app), true};
+	auto emptyTx = link.transmit(empty);
+	empty.response(emptyTx);
+	if (!empty.headersValid()) return false;
+	empty.finish(emptyTx);
+	link.finish();
+	return true;
+      }
+      if (!body.valid()) return false;
+      if (!builder.patch(builder.produced)) return false;
+      if constexpr (MessageTraits<Profile>::ID != Version::H1)
+	builder.response(headerTx);
+      if (!builder.headersValid()) return false;
+      builder.finish(bodyTx);
+      if (!headerTx.seal() || !bodyTx.seal()) return false;
+      headerTx.commit();
+      bodyTx.commit();
+      link.finish();
+      return true;
+    }
+  }
+
+  template <typename Profile, typename Link_, typename Builder_, typename Tx>
+  bool sendFixedResponseH2_(Link_ &link, Builder_ &builder, Tx &tx) {
+    tx.defer(m_config.retainedMessageMax());
+    auto body = builder.body(tx, fixedBodyMax_());
+    bool emitted = false;
+    bool duplicate = false;
+    bool writerOK = false;
+    bool headersOK = false;
+    builder.emitBody([
+      &builder, &body, &emitted, &duplicate, &writerOK, &headersOK]
+      (auto &&write) {
+      if (emitted) { duplicate = true; return; }
+      emitted = true;
+      if (!(headersOK = builder.provision())) return;
+      writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+    });
+    body.flush();
+    if (emitted) builder.produced = body.produced();
+    if ((!Builder_::Optional && !emitted) || duplicate ||
+	(emitted && (!headersOK || !writerOK || !body.valid())))
+      return false;
+    if (!emitted) {
+      using App = ZuDecay<decltype(builder.app)>;
+      Builder<Profile, App, false, false> empty{
+	this, ZuMv(builder.app), true};
+      auto emptyTx = link.transmit(empty);
+      empty.response(emptyTx);
+      if (!empty.headersValid()) return false;
+      empty.finish(emptyTx);
+      link.finish();
+      return true;
+    }
+    if (!body.valid()) return false;
+    if (!builder.patch(builder.produced)) return false;
+    builder.response(tx);
+    if (!builder.headersValid()) return false;
+    builder.finish(tx);
+    if (!tx.valid()) return false;
+    tx.commit();
+    link.finish();
+    return true;
+  }
 
   template <typename Profile>
   struct Session :
@@ -265,13 +664,15 @@ private:
       Session<Profile>, Parser<Profile>, MessageTraits<Profile>> {
     using Message = MessageTraits<Profile>;
     using Parser_ = Parser<Profile>;
-    using Builder_ = Builder<Profile>;
     using Base = ServerSession<Session, Parser_, Message>;
     using Base::parser;
 
     template <typename Link_, typename Rx>
     int process(Link_ &link, Rx &rx) {
-      parser.service = link.app()->service;
+      if (!parser.service) {
+	parser.service = link.app()->service;
+	parser.sink = parser.service->m_workload->requestParser();
+      }
       auto &request = parser.request;
       if (!request.remote) {
 	request.remote = link.remote();
@@ -292,17 +693,41 @@ private:
     int request(Link_ &link, Parser_ &parser) {
       auto service = link.app()->service;
       auto &request = parser.request;
-      Response response =
-	service->m_workload->request(request, parser.requestState);
-      Builder_ builder{service, &response};
-      auto tx = link.transmit(builder);
-      builder.response(tx);
-      service->m_workload->body(tx, builder, response);
-      builder.finish(tx);
-      link.finish();
-      service->m_workload->complete(request, response);
-      return Message::OneMessagePerLink ? 1 :
-	(service->m_workload->close(response) ? -1 : 1);
+      bool emitted = false;
+      service->m_workload->response(
+	request, parser.sink,
+	[service, &link, &request, &emitted]
+	<typename AppBuilder, typename Completion>(
+	    AppBuilder &&app, Completion &&completion) {
+	  if (emitted) return;
+	  emitted = true;
+	  using Done = ServiceResponseDone<ZuDecay<Completion>>;
+	  ZmRef<Done> done = new Done{
+	    ZuMv(request), ZuFwd<Completion>(completion)};
+	  auto hold = ZmMkRef(&link);
+	  bool close = app.close();
+	  Method::T method = done->request.method;
+	  link.app()->txRun([
+	    service, link = ZuMv(hold), app = ZuFwd<AppBuilder>(app),
+	    done = ZuMv(done), method, close]() mutable {
+	    bool sent = service->template sendResponse_<Profile>(
+	      *link, method, ZuMv(app));
+	    auto engine = link->app();
+	    engine->rxRun([
+	      service, link = ZuMv(link), done = ZuMv(done),
+	      sent, close]() mutable {
+	      service->m_workload->complete(
+		done->request, done->completion, sent);
+	      if (!sent) service->failed();
+	      if (close || !sent) link->disconnect();
+	    });
+	  });
+	});
+      if (!emitted) {
+	service->failed();
+	return -1;
+      }
+      return 1;
     }
   };
 
@@ -485,6 +910,14 @@ private:
     m_mx->run(ZuFwd<L>(l), m_rxThread);
   }
 
+  uint64_t fixedBodyMax_() const {
+    uint64_t n = m_config.retainedBodyMax();
+    if (n > m_config.retainedMessageMax())
+      n = m_config.retainedMessageMax();
+    if (n > uint32_t(-1)) n = uint32_t(-1);
+    return n;
+  }
+
   bool admit() {
     unsigned active = ++m_active;
     if (!m_config.maxConnections() ||
@@ -493,7 +926,7 @@ private:
     --m_active;
     return false;
   }
-  void release(int8_t transport) {
+  void release(Transport::T transport) {
     --m_active;
     m_workload->disconnected(transport);
   }

@@ -51,6 +51,12 @@ RequestData req(ZuCSpan target)
   RequestData r;
   r.method = Zhttp::Method::GET;
   r.target = target;
+  auto pq = Zhttp::splitPathQuery(ZuBSpan{r.target});
+  r.pathLength = pq.path.length();
+  r.queryOffset = pq.hasQuery ? pq.path.length() + 1 : 0;
+  r.queryLength = pq.query.length();
+  r.hasQuery = pq.hasQuery;
+  r.form = Zhttp::TargetForm::Origin;
   r.host = "localhost";
   return r;
 }
