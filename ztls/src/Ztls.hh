@@ -14,7 +14,6 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZmList.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmEngine.hh>
@@ -45,9 +44,7 @@
 
 namespace Ztls_ {
 
-ZuDerive(IOQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
-
+using IOQueue = ZiRxQueue;
 using RxStream = ZiRxStream<IOQueue>;
 
 template <
@@ -701,9 +698,10 @@ private:
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnect completion outside Rx thread", return);
     peer |= m_peerClosed;
-    reset_tls_();
+    reset_tls_<false>();
     auto app = impl()->app();
     impl()->disconnected(peer);
+    m_rxStream.clean();
     app->linkDisconnected_();
   }
 
@@ -1095,6 +1093,7 @@ protected:
     }
   }
 
+  template <bool CleanRx = true>
   void reset_tls_() {
     m_tlsGen.store_(m_tlsGen.load_() + 1);
     if (m_tls) {
@@ -1117,7 +1116,7 @@ protected:
     stateChanged_(oldState);
     reset_handshake_props_();
 
-    m_rxStream.clean();
+    if constexpr (CleanRx) m_rxStream.clean();
   }
 
 private:

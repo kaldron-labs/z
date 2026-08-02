@@ -157,8 +157,10 @@ struct ParserImpl : public Parser<ParserImpl, Headers, MaxBody> {
   void header(ZuBSpan key, ZuBSpan value);
   void contentLength(uint64_t);
 
-  // H2/H3 initial field section, decoded body input, message completion
+  // H2/H3 initial field section, populated decoded-body queue, completion
   void headers(Fields::Section, bool endStream);
+  // body() is a synchronous prompt; incomplete application framing remains
+  // queued and is presented again after a later complete HTTP frame append.
   template <typename Rx> void body(Rx &);
   void complete(State::T);
 

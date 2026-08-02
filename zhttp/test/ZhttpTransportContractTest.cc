@@ -6,6 +6,8 @@
 
 // HTTP native transport trait and public configuration contract
 
+#include <string.h>
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZiRxStream.hh>
@@ -34,28 +36,7 @@ struct BodyTx : public ZiTxStream<BodyTx> {
   void sendBuf_(ZmRef<ZiIOBuf>, bool);
 };
 
-struct BodyRxOwner {
-  Zi::RxRefill rxRefill_();
-  ZuSpan<uint8_t> rxSpan_();
-  unsigned rxAdvance_(unsigned);
-  void rxCancel_();
-};
-using BodyRx = ZiRxLayer<BodyRxOwner>;
-
-struct ErrorRxOwner {
-  bool	error = true;
-
-  Zi::RxRefill rxRefill_() {
-    if (error) {
-      error = false;
-      return {0, Zi::RxRefill::Error};
-    }
-    return {};
-  }
-  ZuBSpan rxSpan_() { return {}; }
-  unsigned rxAdvance_(unsigned) { return 0; }
-  void rxCancel_() { }
-};
+using BodyRx = Zhttp::BodyRx::Stream;
 
 struct Frame {
   int64_t operator ()(ZuBSpan) const;
@@ -83,10 +64,9 @@ template <typename Stream, typename = void>
 struct HasBodyRx : public ZuFalse { };
 template <typename Stream>
 struct HasBodyRx<Stream, decltype(
-  ZuDeclVal<Stream &>().input(),
-  ZuDeclVal<Stream &>().available(),
   ZuDeclVal<Stream &>().consume(Frame{}, Data{}),
-  ZuDeclVal<Stream &>().complete(),
+  ZuDeclVal<Stream &>().empty(),
+  ZuDeclVal<Stream &>().length(),
   void())> : public ZuTrue { };
 
 struct MuxTx {
@@ -242,20 +222,19 @@ struct StreamConsumer {
   template <typename Stream, typename Rx>
   int process(Stream, Rx &rx) {
     ++calls;
-    bool input = rx.input();
-    events |= rx.events();
-    if (input) {
-      (void)rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this](ZuBSpan span) { data << ZuCSpan{span}; });
-      events |= rx.events();
-    }
+    Zhttp::bodyEach(rx,
+      [this](ZuBSpan span) { data << ZuCSpan{span}; });
     return result;
   }
+  template <typename Stream>
+  void peerEnd(Stream) { ++peerEnds; }
+  template <typename Stream>
+  void error(Stream) { ++errors; }
 
   ZtString<ZtStringHeapID<"Zhttp.Contract.StreamData">> data;
-  Zi::RxEvent::T events{};
   unsigned	calls = 0;
+  unsigned	peerEnds = 0;
+  unsigned	errors = 0;
   int		result = 1;
 };
 
@@ -785,67 +764,66 @@ void testBodyRx()
 {
   ZuTestScope(testBodyRx);
 
-  uint8_t bytes[] = {'a', 'b', 'c', 'd', 'e'};
-  Zhttp::BodyRx body;
+  auto buf = [](ZuCSpan value) {
+    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{};
+    memcpy(buf->data(), value.data(), value.length());
+    buf->length = value.length();
+    return buf;
+  };
+
+  Zhttp::BodyRx body{5};
   unsigned calls = 0;
-  bool ok = body.offer({bytes, unsigned(sizeof(bytes))}, true,
-    [&calls](auto &rx) {
-      ++calls;
-      auto events = rx.events();
-      ZuCHECK(events == Zi::RxEvent::Start(),
-	"body receive layer did not begin with Start");
-      ZuCHECK(rx.input() && rx.available() == 5,
-	"body input was not admitted");
-      events = rx.events();
-      ZuCHECK(events == Zi::RxEvent::Input(),
-	"body input did not raise Input exactly once");
-      ZuCHECK(!rx.events(), "body input flags did not clear on read");
-      ZuCHECK(rx.consume(
-	  [](ZuBSpan) -> int64_t { return 2; },
-	  [](ZuBSpan span) {
-	    ZuCHECK(ZuCSpan(span) == "ab",
-	      "first partial body consume mismatch");
-	  }) == 2,
-	"first partial body consume failed");
-      ZuCHECK(!rx.events(), "partial body consume raised a terminal event");
-      ZuCHECK(rx.consume(
-	  [](ZuBSpan span) -> int64_t { return span.length(); },
-	  [](ZuBSpan span) {
-	    ZuCHECK(ZuCSpan(span) == "cde",
-	      "second partial body consume mismatch");
-	  }) == 3,
-	"second partial body consume failed");
-      events = rx.events();
-      ZuCHECK(events == Zi::RxEvent::Final(),
-	"final body consume did not raise Final exactly once");
-      ZuCHECK(!rx.events(), "body final flag did not clear on read");
-    });
-  ZuCHECK(ok && calls == 1 && body.consumed() == sizeof(bytes) &&
-      body.complete(),
-    "body receive layer did not complete exact consumption");
+  unsigned remaining = 5;
+  auto consume = [&calls, &remaining](auto &rx) {
+    ++calls;
+    (void)rx.consume(
+      [&remaining](ZuBSpan span) -> int64_t {
+	if (remaining > span.length()) {
+	  remaining -= span.length();
+	  return 0;
+	}
+	return remaining;
+      },
+      [](ZuBSpan span) {
+        ZuCHECK(ZuCSpan(span) == "abcde", "queued body mismatch");
+      });
+  };
+
+  ZuCHECK(body.push(buf("abc"), consume), "first body append failed");
+  ZuCHECK(calls == 1 && body.rx().length() == 3 &&
+      body.received() == 3 && !body.consumed(),
+    "incomplete application frame was not retained");
+  remaining = 5;
+  ZuCHECK(body.push(buf("de"), consume), "second body append failed");
+  ZuCHECK(calls == 2 && !body.rx() && body.received() == 5 &&
+      body.consumed() == 5,
+    "completed application frame was not consumed across appends");
+
+  unsigned rejectedCalls = 0;
+  ZuCHECK(!body.push(buf("x"), [&rejectedCalls](auto &) {
+      ++rejectedCalls;
+    }) && !rejectedCalls && !body.rx(),
+    "body maximum did not reject before queue mutation");
+
+  body.reset(10);
+  ZuCHECK(body.push(buf("xyz"), [&calls](auto &) { ++calls; }) &&
+      body.rx().length() == 3 && body.discard() == 3 && !body.rx() &&
+      body.received() == 3 && body.consumed() == 3,
+    "body discard accounting mismatch");
 
   body.reset();
-  ok = body.offer({bytes, unsigned(sizeof(bytes))}, false,
-    [](auto &rx) {
-      ZuCHECK(rx.input(), "body input was not admitted before cancellation");
-      (void)rx.consume(
-	[](ZuBSpan) -> int64_t { return 1; },
-	[](ZuBSpan) { });
-    });
-  ZuCHECK(!ok && body.consumed() == 1,
-    "partial callback return was not rejected");
-  body.cancel();
-  ZuCHECK(!body.consumed(), "cancelled body retained consumed state");
-
-  ErrorRxOwner owner;
-  ZiRxLayer<ErrorRxOwner> error{owner};
-  ZuCHECK(error.events() == Zi::RxEvent::Start(),
-    "error layer did not begin with Start");
-  ZuCHECK(!error.input() && error.failed(),
-    "error refill did not fail the receive layer");
-  ZuCHECK(error.events() == Zi::RxEvent::Error(),
-    "error refill did not raise Error exactly once");
-  ZuCHECK(!error.events(), "receive error flag did not clear on read");
+  body.push(buf("ab"), [](auto &) { });
+  body.push(buf("cd"), [](auto &) { });
+  ZtString<> eager;
+  ZuCHECK(Zhttp::bodyEach(body.rx(),
+      [&eager](ZuBSpan span) { eager << ZuCSpan{span}; }) &&
+      eager == "abcd" && !body.rx(),
+    "bodyEach did not eagerly consume queued spans in order");
+  unsigned emptyCalls = 0;
+  ZuCHECK(Zhttp::bodyEach(body.rx(), [&emptyCalls](ZuBSpan) {
+      ++emptyCalls;
+    }) && !emptyCalls,
+    "bodyEach did not return immediately for an empty queue");
 }
 
 void testStream()
@@ -869,69 +847,46 @@ void testStream()
   ZuCHECK(link.ends == 1 && link.resets == 1,
     "logical-stream Tx terminal forwarding mismatch");
 
+  auto buf = [](ZuCSpan value) {
+    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{};
+    memcpy(buf->data(), value.data(), value.length());
+    buf->length = value.length();
+    return buf;
+  };
   StreamConsumer consumer;
   Dispatch dispatch;
   Zhttp::BodyRx body;
   dispatch.init(link, consumer);
-  ZuCHECK(body.start(
+  ZuCHECK(body.push(buf("ef"),
       [&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      consumer.calls == 1 &&
-      consumer.events == Zi::RxEvent::Start(),
-    "stream dispatch did not deliver Start");
-  consumer.events = {};
+      consumer.calls == 1 && consumer.data == "ef",
+    "stream dispatch did not consume populated input");
 
-  uint8_t bytes[] = {'e', 'f'};
-  ZuCHECK(body.offer({bytes, unsigned(sizeof(bytes))}, false,
-      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      consumer.calls == 2 &&
-      consumer.events == Zi::RxEvent::Input() &&
-      consumer.data == "ef",
-    "stream dispatch did not deliver Input");
-  consumer.events = {};
-  ZuCHECK(body.finish(
-      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      consumer.calls == 3 &&
-      consumer.events == Zi::RxEvent::Final(),
-    "stream dispatch did not deliver empty Final");
-
-  Zhttp::BodyRx failed;
-  consumer.events = {};
-  ZuCHECK(failed.start(
-      [&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      failed.fail(
-	[&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      consumer.calls == 5 &&
-      consumer.events ==
-	(Zi::RxEvent::Start() | Zi::RxEvent::Error()),
-    "stream dispatch did not deliver Error");
-
-  Zhttp::BodyRx rejected;
   consumer.result = -1;
-  int result = 0;
-  ZuCHECK(rejected.start(
-      [&dispatch, &result](auto &rx) { result = dispatch.process(rx); }) &&
-      result == -1 && link.resets == 2,
-    "negative stream result did not reset the logical stream");
-  unsigned calls = consumer.calls;
-  uint8_t rejectedByte = 'x';
-  ZuCHECK(!rejected.offer({&rejectedByte, 1}, false,
+  ZuCHECK(body.push(buf("x"),
       [&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      consumer.calls == calls && link.resets == 2,
-    "terminal stream dispatch admitted or reset a second callback");
-  consumer.result = 1;
-  rejected.cancel();
+      consumer.calls == 2 && link.resets == 2,
+    "negative stream result did not reset the logical stream");
 
   dispatch.disable_();
-  calls = consumer.calls;
-  Zhttp::BodyRx disabled;
-  ZuCHECK(disabled.start(
+  unsigned calls = consumer.calls;
+  ZuCHECK(body.push(buf("y"),
       [&dispatch](auto &rx) { dispatch.process(rx); }) &&
-      consumer.calls == calls,
-    "disabled stream dispatch admitted a callback");
-  disabled.cancel();
-  ZuCHECK(consumer.calls == calls,
-    "silent BodyRx cancellation invoked the consumer");
+      consumer.calls == calls && body.rx().length() == 1,
+    "disabled stream dispatch consumed input");
+  body.discard();
   dispatch.final_();
+
+  Dispatch ended;
+  ended.init(link, consumer);
+  ended.peerEnd();
+  ended.final_();
+  Dispatch failed;
+  failed.init(link, consumer);
+  failed.error();
+  failed.final_();
+  ZuCHECK(consumer.peerEnds == 1 && consumer.errors == 1,
+    "logical-stream terminals were not dispatched explicitly");
 }
 
 } // namespace ZhttpTransportContractTest_

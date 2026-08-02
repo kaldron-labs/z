@@ -29,13 +29,14 @@ namespace Zhttp {
 // Application message callback contract
 //
 // Header callbacks precede the first body callback.  Body callbacks receive a
-// concrete ZiRxStream-compatible bounded layer on the owning Rx shard; the
-// layer and every span it offers are synchronous and callback-scoped.  The
-// application must consume or copy offered input before returning.
+// populated queue-backed ZiRxStream-compatible object on the owning Rx shard.
+// Each callback is a synchronous prompt to consume complete application
+// frames.  An incomplete trailing frame remains queued for the next prompt;
+// the application must not retain the stream reference outside the callback.
 //
-// Body completion follows successful framing validation and consumption of
-// all payload.  The terminal result follows body completion, is delivered
-// exactly once, and no message callback is made after that result.
+// Body completion follows successful HTTP framing.  The protocol issues the
+// last data prompt before the separate terminal result, then discards any
+// unread decoded bytes.  No message callback is made after that result.
 //
 // Application Tx producers receive a concrete ZiTxStream-compatible body
 // stream on the owning Tx shard.  The producer writes entity bytes only;

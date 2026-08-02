@@ -18,6 +18,7 @@
 //     - alloc() returns a queue-compatible pooled buffer when gathering or
 //       preserving a coalesced trailing remainder is required
 //   - empty()   - true when no readable bytes remain
+//   - length()  - maintained readable-byte count
 // - queue operations:
 //   - push(node)
 //   - clean()
@@ -31,29 +32,35 @@
 #endif
 
 #include <stdint.h>
+#include <string.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
 
+#include <zlib/ZmAssert.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZmNoLock.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtEnum.hh>
-#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
+ZuDerive(ZiRxQueue,
+  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+
 namespace Zi {
 
-struct RxRefill {
-  ZtEnum(ZiAPI, RxRefill, int8_t, Wait, Input, Final, Error);
-
-  uint32_t	length = 0;
-  T		state = Wait;
+struct RxPass {
+  template <typename Span>
+  void operator ()(Span) const { }
 };
 
-namespace RxEvent {
-  ZtFlags(ZiAPI, RxEvent, uint8_t, Start, Input, Final, Error);
-}
+struct RxFramePos {
+  uint64_t	count = 0;
+  uint64_t	total = 0;
+  unsigned	length = 0;
+};
 
 template <typename Queue>
 class RxStream {
@@ -64,18 +71,32 @@ public:
   RxStream() = default;
   ~RxStream() = default;
 
-  RxStream(RxStream &&) = default;
-  RxStream &operator =(RxStream &&) = default;
+  RxStream(RxStream &&stream) :
+    m_queue{ZuMv(stream.m_queue)}, m_length{stream.m_length}
+  {
+    stream.m_length = 0;
+  }
+  RxStream &operator =(RxStream &&stream) {
+    if (this == &stream) return *this;
+    m_queue = ZuMv(stream.m_queue);
+    m_length = stream.m_length;
+    stream.m_length = 0;
+    return *this;
+  }
 
   template <typename NodeRef>
   void push(NodeRef &&node) {
-    if (node->length) // filter out empty buffers
+    if (node->length) { // filter out empty buffers
+      ZmAssert(m_length <= UINT64_MAX - node->length);
+      m_length += node->length;
       m_queue.pushNode(ZuFwd<NodeRef>(node));
+    }
   }
 
-  void clean() { m_queue.clean(); }
+  void clean() { m_queue.clean(); m_length = 0; }
 
   auto count_() const { return m_queue.count_(); }
+  uint64_t length() const { return m_length; }
 
 private:
   enum { Locked = !ZuIsSame<ZmNoLock, typename Queue::Lock>{} };
@@ -96,15 +117,73 @@ public:
     NodeRef node = head();
     return node ? node->span() : ZuSpan<const uint8_t>{};
   }
-  unsigned advance(unsigned n) {
-    NodeRef node = head();
-    if (!node) return 0;
-    if (n > node->length) n = node->length;
-    if (n < node->length)
-      node->advance(n);
-    else
-      m_queue.shift();
-    return n;
+  uint64_t advance(uint64_t n) {
+    if (n > m_length) n = m_length;
+    uint64_t advanced = n;
+    while (n) {
+      NodeRef node = head();
+      unsigned length = n < node->length ? unsigned(n) : node->length;
+      if (length < node->length)
+	node->advance(length);
+      else
+	m_queue.shift();
+      m_length -= length;
+      n -= length;
+    }
+    return advanced;
+  }
+
+  unsigned copy(uint64_t offset, ZuSpan<uint8_t> out) const {
+    if (offset >= m_length || !out) return 0;
+    uint64_t available = m_length - offset;
+    if (out.length() > available) out.trunc(unsigned(available));
+    unsigned copied = 0;
+    auto i = m_queue.citer();
+    while (auto node = i()) {
+      auto span = node->cspan();
+      if (offset >= span.length()) {
+	offset -= span.length();
+	continue;
+      }
+      span.offset(unsigned(offset));
+      offset = 0;
+      unsigned n = out.length() - copied;
+      if (n > span.length()) n = span.length();
+      memcpy(&out[copied], span.data(), n);
+      copied += n;
+      if (copied == out.length()) break;
+    }
+    return copied;
+  }
+
+  template <typename L>
+  int64_t each(uint64_t offset, uint64_t length, L &&l) {
+    if (offset > m_length || length > m_length - offset) return 0;
+    if (length > uint64_t(INT64_MAX)) return -1;
+    uint64_t traversed = 0;
+    auto i = m_queue.citer();
+    while (length) {
+      auto node = i();
+      auto span = node->span();
+      if (offset >= span.length()) {
+	offset -= span.length();
+	continue;
+      }
+      span.offset(unsigned(offset));
+      offset = 0;
+      if (span.length() > length) span.trunc(unsigned(length));
+      int64_t n = l(span);
+      if (ZuUnlikely(n < 0)) return n;
+      if (ZuUnlikely(uint64_t(n) != span.length())) return -1;
+      traversed += uint64_t(n);
+      length -= uint64_t(n);
+    }
+    return int64_t(traversed);
+  }
+
+  template <typename L>
+  int64_t each(uint64_t length, L &&l) {
+    return each(0, length, ZuFwd<L>(l));
   }
 
   // consume(frame, data) returns the total number of bytes consumed across all spans
@@ -127,20 +206,12 @@ public:
     ZuString HeapID = typename Queue::HeapID{}(),
     typename Frame, typename Data>
   int64_t consume(Frame &&frame, Data &&data) {
-    int64_t consumed = 0;
-    uint64_t count = 0, total = 0;
-    {
-      auto i = m_queue.citer();
-      while (auto node = i()) {
-	if (consumed = frame(node->span())) goto framed;
-	++count;
-	total += node->length;
-      }
-      return 0;
-    }
-  framed:
-    if (consumed < 0) return consumed; // error
-    total += consumed;
+    RxFramePos pos;
+    int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
+    if (framed <= 0) return framed;
+    uint64_t count = pos.count;
+    uint64_t total = pos.total;
+    unsigned consumed = pos.length;
 
     {
       uint64_t dataLen = total;
@@ -188,6 +259,7 @@ public:
       head->advance(consumed);
     else
       m_queue.shift();
+    m_length -= total;
     return total;
   }
 
@@ -198,27 +270,13 @@ public:
   template <typename Frame, typename Alloc>
   int64_t extract(Frame &&frame, Alloc &&alloc, ZmRef<ZiIOBuf> &out) {
     out = nullptr;
-    unsigned consumed = 0;
-    unsigned count = 0;
-    uint64_t total = 0;
-    {
-      auto i = m_queue.citer();
-      while (auto node = i()) {
-	int64_t n = frame(node->span());
-	if (ZuUnlikely(n < 0)) return n;
-	if (n) {
-	  if (ZuUnlikely(n > int64_t(node->length))) return -1;
-	  consumed = unsigned(n);
-	  total += consumed;
-	  goto framed;
-	}
-	++count;
-	total += node->length;
-      }
-      return 0;
-    }
-  framed:
+    RxFramePos pos;
+    int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
+    if (framed <= 0) return framed;
+    uint64_t total = pos.total;
     if (ZuUnlikely(total > UINT32_MAX)) return -1;
+    unsigned consumed = pos.length;
+    unsigned count = unsigned(pos.count);
     unsigned length = unsigned(total);
     if (!count) {
       NodeRef node = head();
@@ -234,6 +292,7 @@ public:
       } else {
 	out = m_queue.shift();
       }
+      m_length -= length;
       return length;
     }
 
@@ -257,7 +316,102 @@ public:
     else
       m_queue.shift();
     out = ZuMv(buf);
+    m_length -= length;
     return length;
+  }
+
+  // Atomically consume one complete wire frame and append its decoded payload
+  // to dst.  head/tail bytes are framing.  srcAlloc/dstAlloc provision a
+  // boundary split for the queue which retains the copied side.
+  template <typename DstQueue, typename Frame,
+    typename SrcAlloc, typename DstAlloc, typename Transform = RxPass>
+  int64_t splice(
+    RxStream<DstQueue> &dst, Frame &&frame,
+    SrcAlloc &&srcAlloc, DstAlloc &&dstAlloc,
+    uint64_t headLen = 0, uint64_t tailLen = 0,
+    Transform &&transform = {})
+  {
+    RxFramePos pos;
+    int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
+    if (framed <= 0) return framed;
+    uint64_t total = pos.total;
+    if (ZuUnlikely(headLen > total || tailLen > total - headLen))
+      return -1;
+    uint64_t payloadLen = total - (headLen + tailLen);
+    if (!payloadLen) {
+      discard_(total);
+      return int64_t(total);
+    }
+
+    uint64_t payloadEnd = headLen + payloadLen;
+    ZiIOBuf *boundary = nullptr;
+    unsigned startOff = 0, endOff = 0;
+    {
+      uint64_t offset = 0;
+      auto i = m_queue.citer();
+      while (auto node = i()) {
+	uint64_t next = offset + node->length;
+	if (payloadEnd < next) {
+	  boundary = node;
+	  endOff = unsigned(payloadEnd - offset);
+	  if (headLen > offset) startOff = unsigned(headLen - offset);
+	  break;
+	}
+	offset = next;
+      }
+    }
+
+    using SrcNodeRef = typename Queue::NodeRef;
+    using DstNodeRef = typename DstQueue::NodeRef;
+    SrcNodeRef srcSplit;
+    DstNodeRef dstSplit;
+    bool copyPayload = false;
+    if (boundary) {
+      unsigned payloadPart = endOff - startOff;
+      unsigned right = boundary->length - endOff;
+      copyPayload = payloadPart <= right;
+      if (copyPayload) {
+	dstSplit = dstAlloc();
+	if (ZuUnlikely(!dstSplit || !dstSplit->ensure(payloadPart))) return -1;
+	dstSplit->append(boundary->data() + startOff, payloadPart);
+      } else {
+	srcSplit = srcAlloc();
+	if (ZuUnlikely(!srcSplit || !srcSplit->ensure(right))) return -1;
+	srcSplit->append(boundary->data() + endOff, right);
+      }
+    }
+
+    discard_(headLen);
+    uint64_t remaining = payloadLen;
+    while (remaining) {
+      NodeRef node = head();
+      if (remaining >= node->length) {
+	unsigned length = node->length;
+	transform(node->span());
+	auto moved = m_queue.shift();
+	m_length -= length;
+	dst.push(ZuMv(moved));
+	remaining -= length;
+	continue;
+      }
+
+      unsigned length = unsigned(remaining);
+      if (copyPayload) {
+	transform(dstSplit->span());
+	dst.push(ZuMv(dstSplit));
+	advance(length);
+      } else {
+	node->length = length;
+	transform(node->span());
+	auto moved = m_queue.shift();
+	m_length -= length;
+	m_queue.unshiftNode(ZuMv(srcSplit));
+	dst.push(ZuMv(moved));
+      }
+      remaining = 0;
+    }
+    discard_(tailLen);
+    return int64_t(total);
   }
 
   bool empty() const { return !head(); }
@@ -267,147 +421,64 @@ public:
 
 private:
 
+  template <typename Frame>
+  int64_t scan_(Frame &&frame, RxFramePos &pos) {
+    auto i = m_queue.citer();
+    while (auto node = i()) {
+      int64_t n = frame(node->span());
+      if (ZuUnlikely(n < 0)) return n;
+      if (n) {
+	if (ZuUnlikely(uint64_t(n) > node->length)) return -1;
+	if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - uint64_t(n)))
+	  return -1;
+	pos.length = unsigned(n);
+	pos.total += uint64_t(n);
+	return int64_t(pos.total);
+      }
+      if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - node->length))
+	return -1;
+      ++pos.count;
+      pos.total += node->length;
+    }
+    return 0;
+  }
+
+  void discard_(uint64_t length) {
+    advance(length);
+  }
+
   Queue			m_queue;
+  uint64_t		m_length = 0;
 };
 
-// Synchronous bounded view over decoder-owned native input.  Impl provides:
-//   RxRefill rxRefill_()          - expose the next payload-only region
-//   auto rxSpan_()                - current native input span
-//   unsigned rxAdvance_(unsigned) - consume payload from native input
-//   void rxCancel_()              - discard decoder state on cancellation
-// The decoder consumes all hidden framing/control input in rxRefill_().  A
-// returned length bounds the view even if rxSpan_() also contains framing or
-// bytes belonging to the next logical message.
-template <typename Impl>
+// Receive-side protocol geometry.  Each layer adds its framing head/tail room
+// to the complete requirement exposed by the layer below it.  The outermost
+// values are passed to the lowest pooled-buffer allocation boundary.
+template <typename Below>
 class RxLayer {
   RxLayer(const RxLayer &) = delete;
   RxLayer &operator =(const RxLayer &) = delete;
 
 public:
-  RxLayer(Impl &impl_) : m_impl{&impl_} { }
-  ~RxLayer() { clean(); }
-
-  RxLayer(RxLayer &&layer) :
-    m_impl{layer.m_impl},
-    m_avail{layer.m_avail},
-    m_events{layer.m_events},
-    m_final{layer.m_final},
-    m_complete{layer.m_complete},
-    m_failed{layer.m_failed}
+  RxLayer(Below &below, unsigned headRoom, unsigned tailRoom) :
+    m_below{below},
+    m_headRoom{headRoom}, m_tailRoom{tailRoom}
   {
-    layer.m_impl = nullptr;
-    layer.clear_();
+    ZmAssert(m_headRoom <= UINT_MAX - below.headRoom());
+    ZmAssert(m_tailRoom <= UINT_MAX - below.tailRoom());
+    m_headRoom += below.headRoom();
+    m_tailRoom += below.tailRoom();
+    ZmAssert(m_headRoom <= maxSize());
+    ZmAssert(m_tailRoom <= maxSize() - m_headRoom);
   }
-  RxLayer &operator =(RxLayer &&layer) {
-    if (this == &layer) return *this;
-    clean();
-    m_impl = layer.m_impl;
-    m_avail = layer.m_avail;
-    m_events = layer.m_events;
-    m_final = layer.m_final;
-    m_complete = layer.m_complete;
-    m_failed = layer.m_failed;
-    layer.m_impl = nullptr;
-    layer.clear_();
-    return *this;
-  }
-
-  void reset() {
-    clean();
-    clear_();
-  }
-  void clean() {
-    if (m_impl && !m_complete) m_impl->rxCancel_();
-    m_avail = 0;
-    m_final = false;
-    m_complete = true;
-  }
-
-  RxEvent::T events() {
-    RxEvent::T events = m_events;
-    m_events = 0;
-    return events;
-  }
-  bool complete() const { return m_complete; }
-  bool failed() const { return m_failed; }
-  uint32_t available() const { return m_avail; }
-
-  bool input() {
-    return m_avail || refill_();
-  }
-  bool empty() { return !input(); }
-
-  // Same callback shape as RxStream::consume(), bounded to the currently
-  // exposed logical-message region.  Repeated calls refill transparently;
-  // one call never crosses into hidden input or the following message.
-  template <typename Frame, typename Data>
-  int64_t consume(Frame &&frame, Data &&data) {
-    if (m_failed) return -1;
-    if (!input()) return 0;
-    auto span = m_impl->rxSpan_();
-    if (ZuUnlikely(!span.length())) return fail_();
-    if (span.length() > m_avail) span.trunc(m_avail);
-    int64_t n = frame(span);
-    if (n <= 0) return n;
-    if (ZuUnlikely(uint64_t(n) > span.length())) return fail_();
-    span.trunc(unsigned(n));
-    data(span);
-    if (ZuUnlikely(m_impl->rxAdvance_(unsigned(n)) != unsigned(n)))
-      return fail_();
-    m_avail -= unsigned(n);
-    if (!m_avail && m_final) {
-      m_complete = true;
-      m_events |= RxEvent::Final();
-    }
-    return n;
-  }
+  unsigned maxSize() const { return m_below.maxSize(); }
+  unsigned headRoom() const { return m_headRoom; }
+  unsigned tailRoom() const { return m_tailRoom; }
 
 private:
-  bool refill_() {
-    if (!m_impl || m_complete || m_failed) return false;
-    RxRefill refill = m_impl->rxRefill_();
-    switch (refill.state) {
-      case RxRefill::Wait:
-	return false;
-      case RxRefill::Input:
-      case RxRefill::Final:
-	if (ZuUnlikely(!refill.length)) {
-	  if (refill.state == RxRefill::Final) {
-	    m_final = m_complete = true;
-	    m_events |= RxEvent::Final();
-	    return false;
-	  }
-	  return fail_(), false;
-	}
-	m_avail = refill.length;
-	m_final = refill.state == RxRefill::Final;
-	m_events |= RxEvent::Input();
-	return true;
-      case RxRefill::Error:
-	return fail_(), false;
-    }
-    return fail_(), false;
-  }
-  int64_t fail_() {
-    m_avail = 0;
-    m_failed = true;
-    m_events |= RxEvent::Error();
-    return -1;
-  }
-  void clear_() {
-    m_avail = 0;
-    m_events = RxEvent::Start();
-    m_final = false;
-    m_complete = false;
-    m_failed = false;
-  }
-
-  Impl		*m_impl = nullptr;
-  uint32_t	m_avail = 0;
-  RxEvent::T	m_events = RxEvent::Start();
-  bool		m_final = false;
-  bool		m_complete = false;
-  bool		m_failed = false;
+  Below			&m_below;
+  unsigned		m_headRoom;
+  unsigned		m_tailRoom;
 };
 
 } // Zi
@@ -415,7 +486,7 @@ private:
 template <typename Queue>
 using ZiRxStream = Zi::RxStream<Queue>;
 
-template <typename Impl>
-using ZiRxLayer = Zi::RxLayer<Impl>;
+template <typename Below>
+using ZiRxLayer = Zi::RxLayer<Below>;
 
 #endif /* ZiRxStream_HH */
