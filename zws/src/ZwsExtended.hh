@@ -143,8 +143,9 @@ public:
   template <typename Rx>
   void streamRx_(Rx &rx) {
     (void)m_dispatch.process(rx);
-    if (rx.complete() || rx.failed()) m_dispatch.disable_();
   }
+  void streamPeerEnd_() { m_dispatch.peerEnd(); }
+  void streamError_() { m_dispatch.error(); }
   void complete(typename State::T state) { m_state = state; }
 
   bool established() const { return m_established; }
@@ -258,8 +259,9 @@ public:
   template <typename Rx>
   void streamRx_(Rx &rx) {
     (void)m_dispatch.process(rx);
-    if (rx.complete() || rx.failed()) m_dispatch.disable_();
   }
+  void streamPeerEnd_() { m_dispatch.peerEnd(); }
+  void streamError_() { m_dispatch.error(); }
   void complete(typename State::T state) { m_state = state; }
 
   bool established() const { return m_established; }

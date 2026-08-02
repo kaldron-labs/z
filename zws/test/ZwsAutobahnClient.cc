@@ -90,22 +90,21 @@ struct App {
 
   void connected(Link &, const Zhttp::ConnectedInfo &) { }
 
+  int messageStart(Link &link_, Zws::Opcode::T opcode) {
+    auto &state = link_.state();
+    state.message.length(0);
+    state.opcode = opcode;
+    return 1;
+  }
+
   int process(Link &link_, auto &rx) {
     auto &state = link_.state();
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) {
-      state.message.length(0);
-      state.opcode = link_.messageOpcode();
-    }
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[&state](ZuBSpan span) { state.message << span; });
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (!(events & Zi::RxEvent::Final())) return 1;
+    return Zhttp::bodyEach(
+      rx, [&state](ZuBSpan span) { state.message << span; }) ? 1 : -1;
+  }
+
+  int messageEnd(Link &link_) {
+    auto &state = link_.state();
     switch (phase) {
       case Count: {
 	ZuBox<unsigned> count{state.message.cspan()};

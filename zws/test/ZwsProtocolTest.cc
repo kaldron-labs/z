@@ -147,35 +147,11 @@ struct Link {
   }
 };
 
-struct OuterRx {
-  ZuBSpan	span;
-  Zi::RxEvent::T events_ = Zi::RxEvent::Start();
-  bool		complete_ = false;
-  bool		failed_ = false;
-
-  bool input() {
-    if (span) events_ |= Zi::RxEvent::Input();
-    return !!span;
-  }
-  Zi::RxEvent::T events() {
-    auto events = events_;
-    events_ = 0;
-    return events;
-  }
-  template <typename Frame, typename Data>
-  int64_t consume(Frame &&frame, Data &&data) {
-    int64_t n = frame(span);
-    if (n <= 0) return n;
-    ZuBSpan data_{span.data(), unsigned(n)};
-    data(data_);
-    span.offset(n);
-    return n;
-  }
-  bool empty() { return !input(); }
-  bool complete() const { return complete_; }
-  bool failed() const { return failed_; }
-  unsigned available() const { return span.length(); }
-};
+ZuDerive(OuterQueue,
+  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+using OuterRx = ZiRxStream<OuterQueue>;
+using OuterBufAlloc = Zi::IOBufAlloc<
+  OuterQueue::Node, 256, 1<<20, ZuStringT<"ZwsTest.OuterRx">>;
 
 using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Bytes">>;
 
@@ -230,33 +206,45 @@ struct App :
   App(Link &link, Random &random, Zws::Config config = {}) :
     Base{link, random, config}, link{link} { }
 
-  int message(typename Base::RxLayer &rx) {
-    auto events = rx.events();
+  int messageStart(Zws::Opcode::T opcode) {
     ++calls;
+    ++starts;
+    current = {};
+    inputData = nullptr;
+    opcodes.push(opcode);
+    return 1;
+  }
+  int message(typename Base::Rx &rx) {
+    ++calls;
+    ++inputs;
     if (reject) return -1;
-    if (events & Zi::RxEvent::Start()) {
-      ++starts;
-      current = {};
-      inputData = nullptr;
-      opcodes.push(this->messageOpcode());
+    if (recordLength) {
+      for (;;) {
+	uint64_t remaining = recordLength;
+	int64_t n = rx.consume(
+	  [&remaining](ZuBSpan span) mutable -> int64_t {
+	    if (remaining > span.length()) {
+	      remaining -= span.length();
+	      return 0;
+	    }
+	    return remaining;
+	  }, [this](ZuBSpan span) {
+	    if (!inputData) inputData = span.data();
+	    current << span;
+	  });
+	if (n <= 0) return n < 0 ? -1 : 1;
+      }
     }
-    if (events & Zi::RxEvent::Input()) ++inputs;
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this](ZuBSpan span) {
-	  if (!inputData) inputData = span.data();
-	  current << span;
-	});
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Final()) {
-      ++finals;
-      messages.push(ZuMv(current));
-    }
-    if (events & Zi::RxEvent::Error()) ++errors;
-    return rx.failed() ? -1 : 1;
+    return Zhttp::bodyEach(rx, [this](ZuBSpan span) {
+      if (!inputData) inputData = span.data();
+      current << span;
+    }) ? 1 : -1;
+  }
+  int messageEnd() {
+    ++calls;
+    ++finals;
+    messages.push(ZuMv(current));
+    return 1;
   }
   void pong(ZuBSpan payload) { pongPayload = payload; }
   void closed(uint16_t code_, ZuBSpan reason_) {
@@ -265,16 +253,21 @@ struct App :
   }
   void error(Zws::Failure::T) { ++errors; }
 
-  int feed(Bytes &wire, Zi::RxEvent::T terminal = {}) {
-    OuterRx rx;
-    rx.span = wire.span();
-    rx.events_ |= terminal;
+  int feed(Bytes &wire) {
+    if (wire) {
+      ZmRef<OuterQueue::Node> buf = new OuterBufAlloc{};
+      *buf << wire;
+      auto span = buf->span();
+      wireData = span.data();
+      rx.push(ZuMv(buf));
+    }
     return this->process(Zhttp::Stream{link}, rx);
   }
-  int events(Zi::RxEvent::T events) {
-    OuterRx rx;
-    rx.events_ = events;
-    return this->process(Zhttp::Stream{link}, rx);
+  void peerEnd() {
+    Base::peerEnd(Zhttp::Stream{link});
+  }
+  void streamError() {
+    Base::streamError(Zhttp::Stream{link});
   }
 
   Link			&link;
@@ -285,12 +278,15 @@ struct App :
   ZtString<>		closeReason;
   uint16_t		closeCode = 0;
   const uint8_t		*inputData = nullptr;
+  const uint8_t		*wireData = nullptr;
   unsigned		errors = 0;
   unsigned		calls = 0;
   unsigned		starts = 0;
   unsigned		inputs = 0;
   unsigned		finals = 0;
+  unsigned		recordLength = 0;
   bool			reject = false;
+  OuterRx		rx;
 };
 
 void uri()
@@ -864,15 +860,12 @@ void codec()
     App<false> app{link, random};
     Bytes empty;
     ZuCHECK(app.feed(empty) == 0 && !app.calls);
-    ZuCHECK(app.events(
-      Zi::RxEvent::Start() | Zi::RxEvent::Input()) == 0 && !app.calls,
-      "outer Start/Input events are not WebSocket message boundaries");
     auto wire = frame(Zws::Opcode::Text, "hello");
-    const uint8_t *payload = wire.data() + 2;
     ZuCHECK(app.feed(wire) > 0);
     ZuCHECK(app.messages.length() == 1 && app.messages[0] == "hello");
     ZuCHECK(app.starts == 1 && app.finals == 1);
-    ZuCHECK(app.inputData == payload, "borrow pooled input without copy");
+    ZuCHECK(app.inputData == app.wireData + 2,
+      "move pooled payload storage without copying");
   }
   {
     Link link;
@@ -890,11 +883,25 @@ void codec()
     Bytes first, second;
     first << ZuBSpan{wire.data(), 1};
     second << ZuBSpan{wire.data() + 1, wire.length() - 1};
-    ZuCHECK(app.feed(first) > 0 && !app.messages.length());
+    ZuCHECK(app.feed(first) > 0 && app.queuedInput() == 1 &&
+      !app.messages.length());
     ZuCHECK(app.feed(second) > 0);
     ZuCHECK(app.messages.length() == 1 && app.messages[0] == "split");
     ZuCHECK(app.starts == 1 && app.finals == 1,
       "outer Start is not a WebSocket message boundary");
+  }
+  {
+    Link link;
+    App<false> app{link, random};
+    auto wire = frame(Zws::Opcode::Binary, "abcdef");
+    Bytes first, second;
+    first << ZuBSpan{wire.data(), 5};
+    second << ZuBSpan{wire.data() + 5, wire.length() - 5};
+    ZuCHECK(app.feed(first) > 0);
+    ZuCHECK(app.current == "abc" && !app.messages.length(),
+      "deliver an incomplete frame payload as it arrives");
+    ZuCHECK(app.feed(second) > 0);
+    ZuCHECK(app.messages.length() == 1 && app.messages[0] == "abcdef");
   }
   {
     Link link;
@@ -957,6 +964,20 @@ void codec()
   {
     Link link;
     App<false> app{link, random};
+    app.recordLength = 5;
+    auto first = frame(Zws::Opcode::Binary, "abc", false);
+    auto second = frame(Zws::Opcode::Continuation, "deX");
+    auto third = frame(Zws::Opcode::Binary, "12345");
+    ZuCHECK(app.feed(first) > 0 && !app.messages.length());
+    ZuCHECK(app.feed(second) > 0 && app.messages.length() == 1 &&
+      app.messages[0] == "abcde");
+    ZuCHECK(app.feed(third) > 0 && app.messages.length() == 2 &&
+      app.messages[1] == "12345",
+      "unread final bytes are discarded before the next message");
+  }
+  {
+    Link link;
+    App<false> app{link, random};
     const uint8_t first[] = {0xe2, 0x82};
     const uint8_t second[] = {0xac};
     Bytes wire;
@@ -966,6 +987,17 @@ void codec()
     const uint8_t expected[] = {0xe2, 0x82, 0xac};
     ZuCHECK(app.messages.length() == 1 &&
       app.messages[0] == ZuBSpan{expected});
+  }
+  {
+    Link link;
+    App<false> app{link, random};
+    const uint8_t partial[] = {0xe2, 0x82};
+    Bytes wire;
+    wire << frame(Zws::Opcode::Text, partial, false) <<
+      frame(Zws::Opcode::Continuation, {});
+    ZuCHECK(app.feed(wire) < 0);
+    ZuCHECK(app.failure() == Zws::Failure::InvalidUTF8,
+      "validate UTF-8 completion on an empty final frame");
   }
   {
     Link link;
@@ -1011,16 +1043,6 @@ void codec()
   }
   {
     Link link;
-    App<false> app{link, random};
-    Zws::Config config;
-    config.maxFrame = 2;
-    App<false> limited{link, random, config};
-    auto wire = frame(Zws::Opcode::Binary, "abc");
-    ZuCHECK(limited.feed(wire) < 0);
-    ZuCHECK(limited.failure() == Zws::Failure::FrameTooLarge);
-  }
-  {
-    Link link;
     Zws::Config config;
     config.maxMessage = 4;
     App<false> app{link, random, config};
@@ -1038,6 +1060,19 @@ void codec()
     auto wire = frame(Zws::Opcode::Binary, "abc");
     ZuCHECK(app.feed(wire) < 0);
     ZuCHECK(app.failure() == Zws::Failure::InputPressure);
+  }
+  {
+    Link link;
+    Zws::Config config;
+    config.maxQueuedInput = 8;
+    App<false> app{link, random, config};
+    app.recordLength = 100;
+    auto first = frame(Zws::Opcode::Binary, "abc", false);
+    auto second = frame(Zws::Opcode::Continuation, "defghi");
+    ZuCHECK(app.feed(first) > 0 && !app.messages.length());
+    ZuCHECK(app.feed(second) < 0 &&
+      app.failure() == Zws::Failure::InputPressure,
+      "stalled application input is bounded by queued message length");
   }
   {
     Link link;
@@ -1104,14 +1139,13 @@ void codec()
       ZuCHECK(link.tx.bufs[0]->data()[0] == 0x88);
       ZuCHECK(link.tx.bufs[0]->cspan().offset(2) == ZuBSpan{close});
     }
-    Bytes empty;
     unsigned errors = app.errors;
-    ZuCHECK(app.feed(empty, Zi::RxEvent::Final()) == 0);
+    app.peerEnd();
     ZuCHECK(app.errors == errors,
-      "outer Final after valid close is not an inner terminal event");
-    ZuCHECK(app.events(Zi::RxEvent::Error()) == 0 &&
-      app.errors == errors && link.endCalls == 1,
-      "post-terminal outer Error is suppressed");
+      "peer end after valid close is not another terminal event");
+    app.streamError();
+    ZuCHECK(app.errors == errors && link.endCalls == 1,
+      "post-terminal stream error is suppressed");
   }
   {
     Link link;
@@ -1160,19 +1194,17 @@ void codec()
     Link link;
     App<false> app{link, random};
     app.up_();
-    Bytes empty;
-    ZuCHECK(app.feed(empty, Zi::RxEvent::Final()) < 0);
+    app.peerEnd();
     ZuCHECK(app.failure() == Zws::Failure::AbnormalClose);
-    ZuCHECK(app.errors == 2);
+    ZuCHECK(app.errors == 1);
   }
   {
     Link link;
     App<false> app{link, random};
     app.up_();
-    Bytes empty;
-    ZuCHECK(app.feed(empty, Zi::RxEvent::Error()) < 0);
+    app.streamError();
     ZuCHECK(app.failure() == Zws::Failure::AbnormalClose);
-    ZuCHECK(app.errors == 2);
+    ZuCHECK(app.errors == 1);
   }
   {
     Link link;
@@ -1213,7 +1245,7 @@ void codec()
     ZuCHECK(link.engine.mx_.active() == 1);
     ZuCHECK(link.engine.mx_.fire());
     ZuCHECK(app.failure() == Zws::Failure::Timeout);
-    ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 2);
+    ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 1);
   }
   {
     struct FailedRandom {
@@ -1251,7 +1283,7 @@ void codec()
     ZuCHECK(link.engine.mx_.active() == 1);
     ZuCHECK(link.engine.mx_.fire());
     ZuCHECK(app.failure() == Zws::Failure::Timeout);
-    ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 2);
+    ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 1);
   }
 }
 

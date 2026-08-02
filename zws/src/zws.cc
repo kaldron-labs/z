@@ -109,29 +109,25 @@ struct App {
     }, Zws::Opcode::Text);
   }
 
+  template <typename Link>
+  int messageStart(Link &, Zws::Opcode::T opcode) {
+    if (verbose)
+      std::cerr << "message: " << Zws::Opcode{}.name(opcode) << '\n';
+    return 1;
+  }
+
   template <typename Link, typename Rx>
-  int process(Link &link, Rx &rx) {
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) {
-      if (verbose)
-	std::cerr << "message: " <<
-	  Zws::Opcode{}.name(link.messageOpcode()) << '\n';
-    }
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[](ZuBSpan span) {
-	  std::cout.write(
-	    reinterpret_cast<const char *>(span.data()), span.length());
-	});
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (events & Zi::RxEvent::Final()) {
-      std::cout << '\n' << std::flush;
-      if (++received >= maxMessages && pongs) link.close();
-    }
+  int process(Link &, Rx &rx) {
+    return Zhttp::bodyEach(rx, [](ZuBSpan span) {
+      std::cout.write(
+	reinterpret_cast<const char *>(span.data()), span.length());
+    }) ? 1 : -1;
+  }
+
+  template <typename Link>
+  int messageEnd(Link &link) {
+    std::cout << '\n' << std::flush;
+    if (++received >= maxMessages && pongs) link.close();
     return 1;
   }
 

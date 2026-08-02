@@ -72,7 +72,7 @@ void usage(int code = 1)
     "  --target=PATH             accepted request target, default /\n"
     "  --protocol=TOKEN          required and selected subprotocol\n"
     "  --max-message=N           maximum message bytes\n"
-    "  --max-queued-input=N      maximum callback-scoped input bytes\n"
+    "  --max-queued-input=N      maximum queued message/input bytes\n"
     "  --handshake-timeout=N     opening deadline, default 10\n"
     "  --close-timeout=N         close deadline, default 5\n"
     "  --ping-interval=N         idle ping interval, 0 disables\n"
@@ -137,28 +137,28 @@ struct App {
       std::cerr << "connected: protocol=" << link.protocol() << '\n';
   }
 
+  template <typename Link>
+  int messageStart(Link &link, Zws::Opcode::T opcode) {
+    auto &state = link.state();
+    state.message.length(0);
+    state.opcode = opcode;
+    return 1;
+  }
+
   template <typename Link, typename Rx>
   int process(Link &link, Rx &rx) {
     auto &state = link.state();
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) {
-      state.message.length(0);
-      state.opcode = link.messageOpcode();
-    }
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[&state](ZuBSpan span) { state.message << span; });
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (events & Zi::RxEvent::Final()) {
-      link.txStream([&state](auto &tx) {
-	tx << state.message;
-	tx.flush();
-      }, state.opcode);
-    }
+    return Zhttp::bodyEach(
+      rx, [&state](ZuBSpan span) { state.message << span; }) ? 1 : -1;
+  }
+
+  template <typename Link>
+  int messageEnd(Link &link) {
+    auto &state = link.state();
+    link.txStream([&state](auto &tx) {
+      tx << state.message;
+      tx.flush();
+    }, state.opcode);
     return 1;
   }
 

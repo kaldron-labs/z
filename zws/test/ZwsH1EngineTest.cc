@@ -98,29 +98,25 @@ struct ServerApp {
     ++state->connected;
   }
 
+  template <typename Link>
+  int messageStart(Link &, Zws::Opcode::T opcode) {
+    if (opcode != Zws::Opcode::Text) return -1;
+    message.length(0);
+    return 1;
+  }
   template <typename Link, typename Rx>
-  int process(Link &link, Rx &rx) {
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) {
-      if (link.messageOpcode() != Zws::Opcode::Text) return -1;
-      message.length(0);
-    }
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this](ZuBSpan span) { message << span; });
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (events & Zi::RxEvent::Final()) {
-      ++state->srvMessages;
-      if (message != state->request) return -1;
-      link.txStream([this](auto &tx) {
-	tx << state->response;
-	tx.flush();
-      }, Zws::Opcode::Text);
-    }
+  int process(Link &, Rx &rx) {
+    return Zhttp::bodyEach(
+      rx, [this](ZuBSpan span) { message << span; }) ? 1 : -1;
+  }
+  template <typename Link>
+  int messageEnd(Link &link) {
+    ++state->srvMessages;
+    if (message != state->request) return -1;
+    link.txStream([this](auto &tx) {
+      tx << state->response;
+      tx.flush();
+    }, Zws::Opcode::Text);
     return 1;
   }
 
@@ -156,26 +152,22 @@ struct ClientApp {
     }, Zws::Opcode::Text);
   }
 
+  template <typename Link>
+  int messageStart(Link &, Zws::Opcode::T opcode) {
+    if (opcode != Zws::Opcode::Text) return -1;
+    message.length(0);
+    return 1;
+  }
   template <typename Link, typename Rx>
-  int process(Link &link, Rx &rx) {
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) {
-      if (link.messageOpcode() != Zws::Opcode::Text) return -1;
-      message.length(0);
-    }
-    while (rx.input()) {
-      int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this](ZuBSpan span) { message << span; });
-      if (n <= 0) break;
-    }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (events & Zi::RxEvent::Final()) {
-      ++state->cliMessages;
-      if (message != state->response) return -1;
-      link.close();
-    }
+  int process(Link &, Rx &rx) {
+    return Zhttp::bodyEach(
+      rx, [this](ZuBSpan span) { message << span; }) ? 1 : -1;
+  }
+  template <typename Link>
+  int messageEnd(Link &link) {
+    ++state->cliMessages;
+    if (message != state->response) return -1;
+    link.close();
     return 1;
   }
 
