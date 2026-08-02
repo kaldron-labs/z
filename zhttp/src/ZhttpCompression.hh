@@ -15,7 +15,6 @@
 
 #include <zlib/ZuBitStream.hh>
 #include <zlib/ZuBox.hh>
-#include <zlib/ZuHash.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuTraits.hh>
 
@@ -141,13 +140,8 @@ struct FieldView {
     return ln < rn ? -1 : ln > rn;
   }
   uint32_t valueHash() const {
-    auto h = ZuHash_FNV::initial_();
-    for (unsigned i = 0; i < value1.length(); ++i)
-      h = ZuHash_FNV::hash_(h, uint8_t(value1[i]));
-    if (split) h = ZuHash_FNV::hash_(h, uint8_t(separator));
-    for (unsigned i = 0; i < value2.length(); ++i)
-      h = ZuHash_FNV::hash_(h, uint8_t(value2[i]));
-    return uint32_t(h);
+    return value1.hash() ^ value2.hash() ^
+      (split ? uint32_t(uint8_t(separator)) : 0);
   }
   bool equals(const FieldView &v) const {
     return name == v.name && valueEquals(v);
@@ -157,11 +151,7 @@ struct FieldView {
     return valueCmp(v);
   }
   uint32_t hash() const {
-    auto h = ZuHash_FNV::initial_();
-    for (unsigned i = 0; i < name.length(); ++i)
-      h = ZuHash_FNV::hash_(h, uint8_t(name[i]));
-    h = ZuHash_FNV::hash_(h, valueHash());
-    return uint32_t(h);
+    return name.hash() ^ valueHash();
   }
 
   ZuCSpan	name;
@@ -184,12 +174,7 @@ struct NameView {
 
   bool equals(const NameView &v) const { return name == v.name; }
   int cmp(const NameView &v) const { return name.cmp(v.name); }
-  uint32_t hash() const {
-    auto h = ZuHash_FNV::initial_();
-    for (unsigned i = 0; i < name.length(); ++i)
-      h = ZuHash_FNV::hash_(h, uint8_t(name[i]));
-    return uint32_t(h);
-  }
+  uint32_t hash() const { return name.hash(); }
 
   ZuCSpan	name;
 };
