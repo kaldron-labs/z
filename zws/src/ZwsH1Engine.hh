@@ -201,6 +201,7 @@ class H1ClientLink :
 
 public:
   using RxLayer = typename CodecBase::RxLayer;
+  using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
   StateBase &state() { return *this; }
@@ -210,8 +211,6 @@ public:
     HTTPBase{engine, ZtString<>{uri.host}, uri.port},
     CodecBase{*this, engine->random(), engine->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
-
-  void up_() { HTTPBase::up_(); }
 
   void open_(Zhttp::ConnectedInfo info) {
     this->CodecBase::reopen_(*this);
@@ -386,6 +385,7 @@ class H1ServerLink :
 
 public:
   using RxLayer = typename CodecBase::RxLayer;
+  using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
   StateBase &state() { return *this; }
@@ -394,8 +394,6 @@ public:
   H1ServerLink(Engine *engine, const ZiCxnInfo &ci) :
     HTTPBase{engine, ci},
     CodecBase{*this, engine->random(), engine->wsConfig()} { }
-
-  void up_() { HTTPBase::up_(); }
 
   void open_() {
     this->CodecBase::reopen_(*this);
