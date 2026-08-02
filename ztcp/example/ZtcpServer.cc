@@ -54,9 +54,16 @@ struct App::Link :
     std::cerr << "TCP disconnected\n" << std::flush;
   }
   int process(Ztcp::RxStream &rx) {
+    unsigned remaining = 6;
     bool ok = false;
     rx.consume(
-      [](ZuBSpan span) -> int64_t { return span.length() >= 6 ? 6 : 0; },
+      [&remaining](ZuBSpan span) -> int64_t {
+	if (remaining > span.length()) {
+	  remaining -= span.length();
+	  return 0;
+	}
+	return remaining;
+      },
       [&ok](ZuBSpan span) { ok = ZuCSpan{span} == "ping\r\n"; });
     if (!ok) return 0;
     auto tx = txStream();

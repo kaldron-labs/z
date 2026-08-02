@@ -153,11 +153,15 @@ void sendBytes(Link &link, ZuCSpan s)
 
 bool consume(Ztcp::RxStream &rx, ZuCSpan expected)
 {
+  unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [expected](ZuBSpan span) -> int64_t {
-      if (span.length() < expected.length()) return 0;
-      return expected.length();
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
     },
     [&ok, expected](ZuBSpan span) {
       ok = span.length() == expected.length() &&
