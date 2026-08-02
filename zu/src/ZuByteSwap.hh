@@ -218,9 +218,13 @@ template <typename U> using ZuByteSwap = typename ZuByteSwap_<U>::T;
 #if Zu_BIGENDIAN
 template <typename T> using ZuBigEndian = T;
 template <typename T> using ZuLittleEndian = ZuByteSwap<T>;
+template <typename T> constexpr T ZuBE(T v) { return v; }
+template <typename T> constexpr T ZuLE(T v) { return ZuIntrin::bswap(v); }
 #else
 template <typename T> using ZuBigEndian = ZuByteSwap<T>;
 template <typename T> using ZuLittleEndian = T;
+template <typename T> constexpr T ZuBE(T v) { return ZuIntrin::bswap(v); }
+template <typename T> constexpr T ZuLE(T v) { return v; }
 #endif
 
 #endif /* ZuByteSwap_HH */
