@@ -975,6 +975,58 @@ void testOutOfOrderStreamDelivery()
   ZuCHECK(splitRx.empty(), "split STREAM consume failed");
 }
 
+void testRxRetirement()
+{
+  ZuTestScope(testRxRetirement);
+
+  App app;
+  Zquic::Frame frame;
+  unsigned used = 0;
+
+  ZmRef<TestLink> stalled = testLink(&app, true);
+  stalled->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
+  auto packet = streamPkt_(0, 0, "abc", false, frame, used);
+  ZuCHECK(packet && stalled->receiveFrame(frame, packet) == 0,
+    "stalled receive retirement setup failed");
+  auto stream = stalled->findStream(0);
+  ZuCHECK(stream && stream->rxStream().length() == 3 &&
+      stream->rxRetirable() == 3 && !stream->rxRetired() &&
+      stalled->rxDataCreditUsed() == 3 && !stalled->rxDataRetired(),
+    "native delivery returned QUIC receive credit prematurely");
+
+  stream->rxStream().advance(3);
+  ZuCHECK(!stream->rxStream() && stream->rxRetirable() == 3 &&
+      !stream->rxRetired() && !stalled->rxDataRetired(),
+    "native queue removal returned QUIC receive credit implicitly");
+  ZuCHECK(stream->retireRx(2) && stream->rxRetired() == 2 &&
+      stalled->rxDataRetired() == 2 &&
+      !stream->retireRx(2) && stream->retireRx(1) &&
+      stream->rxRetired() == 3 && stalled->rxDataRetired() == 3,
+    "explicit QUIC receive retirement was not exact");
+
+  ZmRef<TestLink> reset = testLink(&app, true);
+  reset->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
+  packet = streamPkt_(0, 3, "de", false, frame, used);
+  ZuCHECK(packet && reset->receiveFrame(frame, packet) == 0,
+    "out-of-order receive retirement setup failed");
+  stream = reset->findStream(0);
+  ZuCHECK(stream && stream->rxAdmitted() == 2 && !stream->rxBytes() &&
+      !stream->rxRetirable() && !stream->retireRx(1) &&
+      reset->rxDataCreditUsed() == 2 && !reset->rxDataRetired(),
+    "out-of-order QUIC bytes became retirable across a gap");
+
+  uint8_t b[32];
+  int n = Zquic::FrameCodec::writeResetStream(
+    b, sizeof(b), 0, 7, 5);
+  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(
+      ZuBSpan{b, unsigned(n)}, frame, used) &&
+      reset->receiveFrame(frame) == 0 &&
+      stream->resetReceived() && stream->finalSize() == 5 &&
+      stream->rxRetired() == 5 && reset->rxDataCreditUsed() == 5 &&
+      reset->rxDataRetired() == 5,
+    "RESET_STREAM did not admit and retire its exact final-size gap");
+}
+
 void testStreamTxRetention()
 {
   ZuTestScope(testStreamTxRetention);
@@ -3436,6 +3488,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamFrameDelivery);
   ZuTestCall(testStreamRxSliceDelivery);
   ZuTestCall(testOutOfOrderStreamDelivery);
+  ZuTestCall(testRxRetirement);
   ZuTestCall(testStreamTxRetention);
   ZuTestCall(testStreamTxUnackd);
   ZuTestCall(testStreamTxUnackdFin);
