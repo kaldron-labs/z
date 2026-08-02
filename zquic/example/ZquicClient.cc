@@ -51,7 +51,12 @@ struct App::Stream :
   using Base = Zquic::CliStream<App::Link, App::Stream>;
   using Base::Base;
 
-  int process(Zquic::RxStream &) { return 0; }
+  int process(Zquic::RxStream &rx) {
+    uint64_t length = rx.length();
+    if (!length) return 0;
+    rx.clean();
+    return retireRx(length) ? 1 : -1;
+  }
 };
 
 struct App::Link :

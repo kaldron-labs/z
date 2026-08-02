@@ -213,6 +213,7 @@ public:
   uint64_t rxDataCreditUsed() const { return m_rxDataCredit.used(); }
   uint64_t rxDataCreditLimit() const { return m_rxDataCredit.limit(); }
   uint64_t rxDataCreditAvailable() const { return m_rxDataCredit.available(); }
+  uint64_t rxDataRetired() const { return m_rxDataRetired; }
 
   void setPeerStreamLimit(Zquic::StreamType::T type, uint64_t limit) {
     m_peerLimit[type].set(limit);
@@ -330,8 +331,13 @@ public:
 	noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
 	return -1;
       }
-      uint64_t old = stream->rxCreditUsed();
-      uint64_t novel = frame.length > old ? frame.length - old : 0;
+      uint64_t admitted = stream->rxAdmitted();
+      if (frame.length < admitted) {
+	++m_rxDiag.streamDataFinalRx;
+	noteInvalidStreamActivity_(TransportError::FinalSize, true, true);
+	return -1;
+      }
+      uint64_t novel = frame.length - admitted;
       if (frame.length > stream->rxCreditLimit() ||
 	  novel > m_rxDataCredit.available()) {
 	++m_rxDiag.streamDataFinalRx;
@@ -349,10 +355,10 @@ public:
 	noteInvalidStreamActivity_(TransportError::FlowControl, false, true);
 	return -1;
       }
-      maybeExtendMaxData_();
-      maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamResetReceived(stream, frame.errorCode, frame.length);
+      stream->closeRx_();
+      if (!streamRxRetired_(stream, stream->rxRetirable())) return -1;
       reapStreamFromRx_(stream);
       return 0;
     }
@@ -390,8 +396,6 @@ public:
     if (rc >= 0) {
       if (!rc) ++m_rxDiag.streamNoDataRx;
       if ((rxClosed || !rc) && immediateAck) *immediateAck = true;
-      maybeExtendMaxData_();
-      maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       impl()->streamData(stream, frame.offset, frame.payload, frame.fin);
       if (frame.fin) reapStreamFromRx_(stream);
@@ -413,8 +417,6 @@ public:
     bool wasRxQueued = stream->rxPending() || stream->rxQueued();
     int rc = stream->processRx_();
     if (rc >= 0) {
-      maybeExtendMaxData_();
-      maybeExtendMaxStreamData_(stream);
       returnStreamCredit_(stream);
       if (wasRxQueued && !stream->rxPending() && !stream->rxQueued())
 	reapStreamFromRx_(stream);
@@ -427,6 +429,22 @@ public:
     else
       ++m_rxDiag.streamRxDeqFinalRx;
     noteInvalidStreamActivity_(error, false, true);
+  }
+
+  bool streamRxRetired_(StreamRef stream, uint64_t length) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx retirement outside Rx thread", return false);
+    uint64_t used = m_rxDataCredit.used();
+    if (ZuUnlikely(m_rxDataRetired > used)) return false;
+    uint64_t retirable = used - m_rxDataRetired;
+    if (!stream || length > stream->rxRetirable() || length > retirable ||
+	m_rxDataRetired > U64Null - length)
+      return false;
+    if (!stream->retireRx_(length)) return false;
+    m_rxDataRetired += length;
+    maybeExtendMaxData_();
+    maybeExtendMaxStreamData_(stream);
+    return true;
   }
 
   void streamWritable_(const StreamRef &stream) {
@@ -2752,6 +2770,7 @@ protected:
     m_transportParams = {};
     m_txDataCredit = {};
     m_rxDataCredit = {};
+    m_rxDataRetired = 0;
     m_lastDataBlocked = U64Null;
 	    m_lastStreamsBlocked[Zquic::StreamType::Duplex] = U64Null;
 	    m_lastStreamsBlocked[Zquic::StreamType::Simplex] = U64Null;
@@ -8690,8 +8709,8 @@ private:
     uint64_t window = m_transportParams.initialMaxData;
     if (!window || m_rxDataCredit.available() > window / 2) return;
     uint64_t maximum =
-      m_rxDataCredit.used() > U64Null - window ? U64Null :
-      m_rxDataCredit.used() + window;
+      m_rxDataRetired > U64Null - window ? U64Null :
+      m_rxDataRetired + window;
     if (maximum <= m_rxDataCredit.limit()) return;
     m_rxDataCredit.extend(maximum);
     queueFlowUpdate_(
@@ -8702,8 +8721,8 @@ private:
     uint64_t window = initialStreamRxCredit_(uint64_t(stream->id()));
     if (!window || stream->rxCreditAvailable() > window / 2) return;
     uint64_t maximum =
-      stream->rxCreditUsed() > U64Null - window ? U64Null :
-      stream->rxCreditUsed() + window;
+      stream->rxRetired() > U64Null - window ? U64Null :
+      stream->rxRetired() + window;
     if (maximum <= stream->rxCreditLimit()) return;
     stream->extendRxCredit(maximum);
     queueFlowUpdate_(FlowUpdate{
@@ -9194,6 +9213,7 @@ private:
   alignas(Zm::CacheLineSize)
   AppClose		m_appClose;
   FlowCredit		m_rxDataCredit;
+  uint64_t		m_rxDataRetired = 0;
   ZuArray<StreamLimit, Zquic::StreamType::N>
 			m_peerLimit = {
     StreamLimit(MaxStreamCount),

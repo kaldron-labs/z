@@ -1120,6 +1120,8 @@ struct App : public Zquic::Client<App> {
 
 struct App::Stream : public Zquic::CliStream<Link, Stream> {
   // Zquic Rx thread.
+  // Remove only data actually consumed from rx and call retireRx(length) for
+  // that exact length.  Returning without consuming retires no flow credit.
   // >0 consumed progress, 0 leave queued data, <0 reset/close per policy.
   int process(Zquic::RxStream &);
 };
@@ -1173,6 +1175,8 @@ struct App : public Zquic::Server<App, AppLink> {
 
 struct AppStream : public Zquic::SrvStream<AppLink, AppStream> {
   // Zquic Rx thread.
+  // Remove only data actually consumed from rx and call retireRx(length) for
+  // that exact length.  Returning without consuming retires no flow credit.
   // >0 consumed progress, 0 leave queued data, <0 reset/close per policy.
   int process(Zquic::RxStream &);
 };

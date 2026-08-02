@@ -48,9 +48,18 @@ public:
   uint64_t txBufferedBytes() const { return m_txBufferedBytes; }
   uint64_t txCreditLimit() const { return m_txCredit.limit(); }
   uint64_t txCreditAvailable() const { return m_txCredit.available(); }
+  // Initial peer stream window; upper framed protocols use it to avoid
+  // declaring a frame which cannot cross a batched-credit boundary.
+  uint64_t txFrameMax() const { return m_txFrameMax; }
   uint64_t rxCreditUsed() const { return m_rxCredit.used(); }
   uint64_t rxCreditLimit() const { return m_rxCredit.limit(); }
   uint64_t rxCreditAvailable() const { return m_rxCredit.available(); }
+  uint64_t rxAdmitted() const { return m_rxAdmitted; }
+  uint64_t rxRetired() const { return m_rxRetired; }
+  uint64_t rxRetirable() const {
+    uint64_t limit = m_resetReceived ? finalSize() : m_rxDelivered;
+    return m_rxRetired < limit ? limit - m_rxRetired : 0;
+  }
   unsigned txRangeCount() const { return m_txQueue.count_(); }
   unsigned txUnackdCount() const { return m_txUnackd.count_(); }
   uint64_t txUnackdBytes() const { return m_txUnackd.length_(); }
@@ -87,6 +96,16 @@ public:
 
   RxStream &rxStream() { return m_rx; }
 
+  bool retireRx(uint64_t n) {
+    return m_link &&
+      m_link->streamRxRetired_(ZmRef<Impl>{impl()}, n);
+  }
+  bool retireRx_(uint64_t n) {
+    if (n > rxRetirable()) return false;
+    m_rxRetired += n;
+    return true;
+  }
+
   StreamRxPQueue *rxQueue() { return &m_rxQueue; }
   void closeRx_() {
     if (m_link && m_link->app() && m_link->app()->mx())
@@ -98,8 +117,14 @@ public:
   TxDataPQueue *txQueue() { return &m_txQueue; }
   TxUnackdQueue *txUnackdQueue() { return &m_txUnackd; }
 
-  void txCredit(uint64_t limit) { m_txCredit.set(limit); }
-  void extendTxCredit(uint64_t limit) { m_txCredit.extend(limit); }
+  void txCredit(uint64_t limit) {
+    m_txCredit.set(limit);
+    if (!m_txFrameMax) m_txFrameMax = limit;
+  }
+  void extendTxCredit(uint64_t limit) {
+    m_txCredit.extend(limit);
+    if (!m_txFrameMax) m_txFrameMax = limit;
+  }
   bool consumeTxCredit(uint64_t n) { return m_txCredit.consume(n); }
   void rxCredit(uint64_t limit) { m_rxCredit.set(limit); }
   void extendRxCredit(uint64_t limit) { m_rxCredit.extend(limit); }
@@ -369,7 +394,10 @@ public:
     using Base = Zi::TxStream<TxStream_<AppThread>>;
 
   public:
-    TxStream_(Stream &stream) : Base(unsigned(BufSize), 0, 0), m_stream{&stream} { }
+    TxStream_(Stream &stream) :
+      Base(unsigned(BufSize), 0, 0), m_stream{&stream} { }
+
+    uint64_t frameMax() const { return m_stream->txFrameMax(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       ZiAssert(skip <= BufSize, "Zquic", (skip),
@@ -540,7 +568,9 @@ private:
     if (spans)
       if (!queueRxSlices_(frame, spans, ZuMv(packet), diag)) return false;
 
-    return m_rxState.receive(frame.offset, frame.length, frame.fin);
+    if (!m_rxState.receive(frame.offset, frame.length, frame.fin)) return false;
+    m_rxAdmitted += newBytes;
+    return true;
   }
 
   template <typename Spans>
@@ -722,6 +752,8 @@ private:
   alignas(Zm::CacheLineSize)
   FlowCredit		m_rxCredit;
   uint64_t		m_rxDelivered = 0;
+  uint64_t		m_rxAdmitted = 0;
+  uint64_t		m_rxRetired = 0;
   bool			m_resetReceived = false;
   bool			m_stopReceived = false;
   bool			m_creditReturned = false;
@@ -740,6 +772,7 @@ private:
   uint64_t		m_txBytes = 0;
   uint64_t		m_txBufferedBytes = 0;
   FlowCredit		m_txCredit;
+  uint64_t		m_txFrameMax = 0;
   bool			m_fin = false;
   bool			m_finDequeued = false;
   bool			m_resetSent = false;
