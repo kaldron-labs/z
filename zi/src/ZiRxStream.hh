@@ -10,6 +10,7 @@
 //   - queue type, which must support:
 //     count_(), headNode(), shift(), pushNode(node), clean()
 // - stream operations:
+//   - scan(frame, pos) recognizes a complete prefix without consuming it
 //   - consume(frame, data) returns the total number of bytes consumed across all spans
 //     - int64_t frame(span) returns the number of bytes to be consumed in span
 //     - data(span) delivers contiguous frame data to the app
@@ -186,6 +187,12 @@ public:
     return each(0, length, ZuFwd<L>(l));
   }
 
+  template <typename Frame>
+  int64_t scan(Frame &&frame, Zi::RxFramePos &pos) {
+    pos = {};
+    return scan_(ZuFwd<Frame>(frame), pos);
+  }
+
   // consume(frame, data) returns the total number of bytes consumed across all spans
   // - int64_t frame(span)
   //   - returns the number of bytes N to be consumed in span
@@ -264,9 +271,9 @@ public:
   }
 
   // Detach one complete frame.  A frame wholly occupying the head buffer is
-  // returned unchanged.  A coalesced trailing remainder is copied into one
-  // successor buffer so the original frame allocation can still be detached.
-  // A fragmented frame is copied directly into one final pooled buffer.
+  // returned unchanged.  At a coalesced boundary, copy the smaller of the
+  // frame or trailing remainder.  A fragmented frame is copied directly into
+  // one final pooled buffer.
   template <typename Frame, typename Alloc>
   int64_t extract(Frame &&frame, Alloc &&alloc, ZmRef<ZiIOBuf> &out) {
     out = nullptr;
@@ -281,14 +288,21 @@ public:
     if (!count) {
       NodeRef node = head();
       if (ZuUnlikely(consumed < node->length)) {
-	auto next = alloc();
-	if (ZuUnlikely(!next || !next->alloc(node->length - consumed)))
-	  return -1;
-	next->append(
-	  node->span().data() + consumed, node->length - consumed);
-	node->length = consumed;
-	out = m_queue.shift();
-	m_queue.unshiftNode(ZuMv(next));
+	unsigned right = node->length - consumed;
+	if (consumed <= right) {
+	  auto frame = alloc();
+	  if (ZuUnlikely(!frame || !frame->alloc(consumed))) return -1;
+	  frame->append(node->span().data(), consumed);
+	  out = ZuMv(frame);
+	  node->advance(consumed);
+	} else {
+	  auto next = alloc();
+	  if (ZuUnlikely(!next || !next->alloc(right))) return -1;
+	  next->append(node->span().data() + consumed, right);
+	  node->length = consumed;
+	  out = m_queue.shift();
+	  m_queue.unshiftNode(ZuMv(next));
+	}
       } else {
 	out = m_queue.shift();
       }
