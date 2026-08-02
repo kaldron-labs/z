@@ -240,6 +240,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Amber Flag: highly nested logic.
   Problem: state and error handling become difficult to audit.
   Fix: flatten control flow with early exits, helper functions, or clearer state transitions.
+- Red Flag: hand-rolled hash functions, particularly using `ZuHash_FNV` directly and inappropriately
+  Problem: redundant over-engineering
+  Fix: use Z's built-in hash functions, e.g. `ZuSpan::hash`; XOR the `uint32_t` hash codes to hash together multiple data members.
 
 ### Framework fit
 - Red Flag: reimplementing lower-level Z Framework capabilities.
