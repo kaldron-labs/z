@@ -79,6 +79,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - Where C and C++ offer the same facility, prefer the C form:
       - Example: `#include <string.h>`, not `<cstring>`.
       - Where C99 conflicts with C++, use the GNU C++2b form.
+- Do not use forwarding functions to base classes, use `using` declarations
 
 ### Primitive integer types
 - use `int` and plain unadorned `unsigned` as the primary local variable integers
