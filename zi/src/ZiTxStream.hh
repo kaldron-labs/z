@@ -206,8 +206,12 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   TxLayer(Below &below, unsigned headRoom, unsigned tailRoom) :
+    TxLayer(below, headRoom, tailRoom, below.maxSize()) { }
+  TxLayer(
+      Below &below, unsigned headRoom, unsigned tailRoom,
+      unsigned maxSize) :
     Base(
-      below.maxSize(),
+      maxSize < below.maxSize() ? maxSize : below.maxSize(),
       below.headRoom() + headRoom,
       below.tailRoom() + tailRoom),
     m_below(below)

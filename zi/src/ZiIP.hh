@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuTraits.hh>
+#include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuSpan.hh>
@@ -116,7 +117,7 @@ public:
   bool loopback() const {
     switch (m_addr.type()) {
       case V4:
-	return m_addr.p<V4>().s_addr == htonl(INADDR_LOOPBACK);
+	return ZuBE(m_addr.p<V4>().s_addr) == INADDR_LOOPBACK;
       case V6:
 	return !memcmp(
 	  m_addr.p<V6>().s6_addr, &in6addr_loopback,
@@ -242,7 +243,7 @@ public:
   bool multicast() const {
     switch (m_addr.type()) {
       case V4: {
-	unsigned i = ((uint32_t(ntohl(m_addr.p<V4>().s_addr)))>>24) & 0xff;
+	unsigned i = ZuBE(m_addr.p<V4>().s_addr) >> 24;
 	return i >= 224 && i < 240;
       }
       case V6:
