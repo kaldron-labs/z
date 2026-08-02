@@ -21,7 +21,7 @@
 
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZhttpTypes.hh>
+#include <zlib/ZhttpURL.hh>
 #include <zlib/ZhttpUtil.hh>
 
 namespace Zhttp {
@@ -39,7 +39,6 @@ using String = ZtString<ZtStringHeapID<"Zhttp.Fields.String">>;
 
 ZhttpAPI bool forbidden(ZuCSpan);
 ZhttpAPI int pseudo(ZuCSpan);
-ZhttpAPI bool scheme(ZuCSpan);
 
 template <typename Impl, typename = void>
 struct HasRuntime : public ZuFalse { };
@@ -122,7 +121,6 @@ public:
   void requestMethod(Method::T value) { m_requestMethod = value; }
   void extendedConnect(bool value) { m_extendedConnect = value; }
   bool bodyAllowed() const { return !m_noBody; }
-  ZuCSpan protocol() const { return m_protocol; }
 
   template <typename Header>
   bool field(ZuCSpan name, ZuCSpan value, Header &&header) {
@@ -144,8 +142,8 @@ public:
     return true;
   }
 
-  template <typename Operation, typename Status>
-  Section finish(Operation &&operation, Status &&status) {
+  template <typename Operation, typename Status, typename Header>
+  Section finish(Operation &&operation, Status &&status, Header &&header) {
     if (m_trailers) return m_seen ? Invalid : Trailers;
     if constexpr (Request) {
       if (!(m_seen & MethodSeen)) return Invalid;
@@ -163,7 +161,15 @@ public:
 	    (SchemeSeen | PathSeen) || (m_seen & ProtocolSeen))
 	  return Invalid;
       }
-      operation(m_method, ZuBSpan{m_path});
+      RequestTarget target;
+      auto e = RequestTarget::fromPseudo(
+	target, m_method, m_scheme,
+	ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(m_authority.data()),
+	  m_authority.length()},
+	ZuBSpan{m_path}, ZuBSpan{m_protocol});
+      if (!e.ok()) return Invalid;
+      operation(m_method, target);
+      header(ZuBSpan{"host"}, target.authority.raw);
       return Final;
     } else {
       if (m_seen != StatusSeen) return Invalid;
@@ -203,10 +209,11 @@ private:
 	  m_path = value;
 	  return true;
 	case 2:
-	  return scheme(value);
+	  m_scheme = Scheme::parse(value);
+	  return m_scheme >= 0;
 	case 3:
 	  if (!value) return false;
-	  header(ZuBSpan{"host"}, ZuBSpan{value});
+	  m_authority = value;
 	  return true;
 	case 4:
 	  if (!value) return false;
@@ -231,11 +238,13 @@ private:
   }
 
   String	m_path;
+  String	m_authority;
   String	m_protocol;
   uint64_t	m_length = 0;
   unsigned	m_status = 0;
   Method::T	m_method = -1;
   Method::T	m_requestMethod = -1;
+  Scheme::T	m_scheme = -1;
   uint8_t	m_seen = 0;
   bool		m_regular = false;
   bool		m_trailers = false;

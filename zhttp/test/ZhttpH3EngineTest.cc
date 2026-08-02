@@ -43,18 +43,18 @@ struct StreamState {
 };
 
 struct RequestBuilder :
-  public Zhttp::H3::Builder<RequestBuilder> {
+  public Zhttp::H3::RequestBuilder<RequestBuilder> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
+  void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
 };
 
 struct StreamRequestBuilder :
-  public Zhttp::H3::Builder<StreamRequestBuilder> {
+  public Zhttp::H3::RequestBuilder<StreamRequestBuilder> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, "/stream", "");
+    l(Zhttp::Method::CONNECT, "/stream");
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
@@ -63,14 +63,17 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H3::Builder<
-    ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true> {
+  public Zhttp::H3::ResponseBuilder<
+    ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   unsigned status() const { return 200; }
-  uint64_t contentLength() const { return 4; }
+  template <typename Key, typename L>
+  void header(L &&l) const {
+    if constexpr (Key{}() == "content-length") l("4");
+  }
 };
 
 struct StreamResponseBuilder :
-  public Zhttp::H3::Builder<StreamResponseBuilder> {
+  public Zhttp::H3::ResponseBuilder<StreamResponseBuilder> {
   unsigned status() const { return 200; }
 };
 
@@ -96,7 +99,7 @@ struct ClientParser :
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(Zhttp::Method::T, ZuBSpan) { }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t value) { length = value; }
   template <typename Key> void header(ZuBSpan) { }
@@ -166,7 +169,7 @@ int ClientStream::process(Stream, Rx &rx)
 }
 
 struct StreamClient :
-  public Zhttp::Client<StreamClient, Zhttp::H3QUIC> {
+  public Zhttp::ClientEngine<StreamClient, Zhttp::H3QUIC> {
   using Link = StreamClientLink;
 
   StreamState	*state = nullptr;
@@ -304,14 +307,15 @@ struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
-    path = path_;
-  }
-  void protocol(ZuBSpan value) {
-    protocol_ = value;
-    Base::stream();
-    ++streamEstablished;
+    path = target.raw;
+    protocol_ = target.protocol;
+    if (protocol_) {
+      Base::stream();
+      ++streamEstablished;
+    }
   }
   void headers(Zhttp::Fields::Section, bool) { }
   void contentLength(uint64_t) { }

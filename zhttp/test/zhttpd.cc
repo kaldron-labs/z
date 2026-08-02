@@ -100,7 +100,7 @@ bool parseDrop(ZuCSpan s, double &drop)
 }
 #endif
 
-int8_t migrationMode(const Options &options)
+Zhttp::Migration::T migrationMode(const Options &options)
 {
   return Zhttp::migrationMode(options.quicMigration);
 }
@@ -168,110 +168,213 @@ using RespHeaders = ZhttpHeaders(
   "allow",
   "connection");
 
-template <typename Tx, typename Builder>
-void sendBody(Tx &tx, Builder &builder, const ResponsePlan &resp) {
-  if (!resp.sendBody) return;
-  auto body = builder.body(tx);
-  if (resp.generated) {
-    sendSpanChunks(body, resp.body.data(), resp.body.length());
-    return;
+using FixedRespHeaders = ZhttpHeaders(
+  "content-type",
+  "date",
+  "server",
+  "last-modified",
+  "accept-ranges",
+  "content-range",
+  "location",
+  "www-authenticate",
+  "allow",
+  "connection",
+  "content-length");
+
+struct ResponseCompletion : public ZmObject {
+  unsigned	status = 0;
+  uint64_t	contentLength = 0;
+};
+
+template <typename Policy_, typename Headers_>
+struct ResponseBuilderBase {
+  using BodyPolicy = Policy_;
+  using Headers = Headers_;
+
+  ResponsePlan plan;
+  ZmRef<ResponseCompletion> completion;
+
+  unsigned status() const { return plan.status; }
+  template <typename L>
+  void reason(L &&l) const { l(plan.reason); }
+  template <typename Key, typename L>
+  void header(L &&l) const {
+    if constexpr (Key{}() == "content-type") {
+      if (plan.contentType) l(plan.contentType);
+    } else if constexpr (Key{}() == "date") {
+      if (plan.date) l(plan.date);
+    } else if constexpr (Key{}() == "server") {
+      if (plan.server) l(plan.server);
+    } else if constexpr (Key{}() == "last-modified") {
+      if (plan.lastModified) l(plan.lastModified);
+    } else if constexpr (Key{}() == "accept-ranges") {
+      if (plan.file) l("bytes");
+    } else if constexpr (Key{}() == "content-range") {
+      if (plan.contentRange) l(plan.contentRange);
+    } else if constexpr (Key{}() == "location") {
+      if (plan.location) l(plan.location);
+    } else if constexpr (Key{}() == "www-authenticate") {
+      if (plan.wwwAuthenticate) l(plan.wwwAuthenticate);
+    } else if constexpr (Key{}() == "allow") {
+      if (plan.allow) l(plan.allow);
+    } else if constexpr (Key{}() == "connection") {
+      if (plan.connection) l(plan.connection);
+    } else if constexpr (Key{}() == "content-length") {
+      if constexpr (ZuIsSame<Policy_, Zhttp::Body::Fixed>{})
+	l(Zhttp::HeaderPad{10, '0'});
+      else if (plan.contentLength || plan.sendBody)
+	l(ZuBoxed(plan.contentLength));
+    }
   }
-  if (!resp.file || !resp.fileLength) return;
-  ZiFile file;
-  if (file.dup(resp.fileHandle, ZiFile::GC) != Zi::OK)
-    return;
-  auto buf = ZmScratch(char, FileChunk);
-  buf.length(FileChunk);
-  if (!buf) return;
-  uint64_t offset = resp.fileOffset;
-  uint64_t left = resp.fileLength;
-  while (left) {
-    unsigned n = left > FileChunk ? FileChunk : unsigned(left);
-    int r = file.pread(offset, buf.data(), n);
-    if (r <= 0) break;
-    sendSpanChunks(body, buf.data(), unsigned(r));
-    offset += r;
-    left -= r;
+  template <typename L> void header(L &&) const { }
+  bool close() const { return plan.close; }
+};
+
+struct FixedResponse :
+  public ResponseBuilderBase<Zhttp::Body::Fixed, FixedRespHeaders> {
+  using Base = ResponseBuilderBase<Zhttp::Body::Fixed, FixedRespHeaders>;
+  using ContentLength = ZuStringT<"content-length">;
+
+  ZhttpPut::Record record;
+  unsigned contentLength = 0;
+  bool json = false;
+
+  template <typename Emit>
+  void body(Emit &&emit) {
+    emit([this](auto &body) {
+      if (json)
+	ZfJSON::save(body, record);
+      else
+	sendSpanChunks(body, plan.body.data(), plan.body.length());
+      body.flush();
+      contentLength = body.produced();
+      completion->contentLength = contentLength;
+    });
   }
-}
+  template <typename L>
+  void bodyHdrs(L &&l) const {
+    l.template operator()<ContentLength>(
+      [contentLength = this->contentLength](ZuSpan<uint8_t> span) {
+	ZuStream s{span};
+	s << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
+      });
+  }
+};
+
+struct StreamResponse :
+  public ResponseBuilderBase<Zhttp::Body::Stream, RespHeaders> {
+  template <typename Emit>
+  void body(Emit &&emit) {
+    emit([this](auto &body) -> bool {
+      ZiFile file;
+      if (file.dup(plan.fileHandle, ZiFile::GC) != Zi::OK) return false;
+      auto buf = ZmScratch(char, FileChunk);
+      buf.length(FileChunk);
+      if (!buf) return false;
+      uint64_t offset = plan.fileOffset;
+      uint64_t left = plan.fileLength;
+      while (left) {
+	unsigned n = left > FileChunk ? FileChunk : unsigned(left);
+	int r = file.pread(offset, buf.data(), n);
+	if (r <= 0) return false;
+	sendSpanChunks(body, buf.data(), unsigned(r));
+	offset += r;
+	left -= r;
+      }
+      return true;
+    });
+  }
+};
+
+struct EmptyResponse :
+  public ResponseBuilderBase<Zhttp::Body::None, FixedRespHeaders> { };
 
 struct Workload {
-  using Response = ResponsePlan;
-  struct RequestState {
-    ZhttpPut::String	body;
+  struct RequestParser {
+    using Headers = ReqHeaders;
+    static constexpr uint64_t BodyMax = ReqBodyMax;
+
+    ZhttpPut::String	bodyData;
+
+    void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+    void version(ZuBSpan) { }
+    void contentLength(uint64_t) { }
+    void chunked() { }
+    template <typename Key> void header(ZuBSpan) { }
+    template <typename Rx>
+    void bodyInput(Rx &rx) {
+      Zhttp::bodyEach(rx,
+	[this](ZuBSpan span) { bodyData << span; });
+    }
+    template <typename Rx> void body(Rx &rx) { bodyInput(rx); }
+    void complete(bool) { }
   };
 
-  template <typename Rx>
-  void requestBody(
-    const Zhttp::RequestInfo &, RequestState &state, Rx &rx) {
-    Zhttp::bodyEach(rx,
-      [&state](ZuBSpan span) { state.body << span; });
+  RequestParser requestParser() { return {}; }
+
+  template <typename Response, typename Emit>
+  static void emit_(Response &&response, Emit &emit) {
+    ZmRef<ResponseCompletion> completion = new ResponseCompletion;
+    completion->status = response.plan.status;
+    completion->contentLength = response.plan.contentLength;
+    response.completion = completion;
+    emit(ZuFwd<Response>(response), ZuMv(completion));
   }
 
-  Response request(
-    const Zhttp::RequestInfo &info, RequestState &requestState) {
+  template <typename Emit>
+  void response(
+    const Zhttp::RequestInfo &info, RequestParser &request,
+    Emit &&emit) {
     ++state->requests;
     if (info.method == Zhttp::Method::PUT) {
       ZhttpPut::Record record;
-      Response response;
-      if (info.bodyReceived != requestState.body.length() ||
-	  info.bodyConsumed != requestState.body.length() ||
+      ResponsePlan plan;
+      if (info.bodyReceived != request.bodyData.length() ||
+	  info.bodyConsumed != request.bodyData.length() ||
 	  info.bodyReset || info.bodyDiscarded ||
-	  !ZhttpPut::load(record, requestState.body)) {
-	response.status = 400;
-	response.reason = "Bad Request";
-	return response;
+	  !ZhttpPut::load(record, request.bodyData)) {
+	plan.status = 400;
+	plan.reason = "Bad Request";
+	EmptyResponse response;
+	response.plan = ZuMv(plan);
+	emit_(ZuMv(response), emit);
+	return;
       }
-      response.status = 200;
-      response.reason = "OK";
-      response.contentType = "application/json";
-      ZfJSON::save(response.body, record);
-      response.contentLength = response.body.length();
-      response.sendBody = true;
-      response.generated = true;
-      return response;
+      plan.status = 200;
+      plan.reason = "OK";
+      plan.contentType = "application/json";
+      plan.sendBody = true;
+      plan.generated = true;
+      FixedResponse response;
+      response.plan = ZuMv(plan);
+      response.record = ZuMv(record);
+      response.json = true;
+      emit_(ZuMv(response), emit);
+      return;
     }
     StaticPlanner planner{state};
-    return planner.plan(info);
+    ResponsePlan plan = planner.plan(info);
+    if (!plan.sendBody) {
+      EmptyResponse response;
+      response.plan = ZuMv(plan);
+      emit_(ZuMv(response), emit);
+    } else if (plan.file) {
+      StreamResponse response;
+      response.plan = ZuMv(plan);
+      emit_(ZuMv(response), emit);
+    } else {
+      FixedResponse response;
+      response.plan = ZuMv(plan);
+      emit_(ZuMv(response), emit);
+    }
   }
 
-  unsigned status(const Response &response) const { return response.status; }
-  template <typename L>
-  void reason(const Response &response, L &&l) const { l(response.reason); }
-  uint64_t contentLength(const Response &response) const {
-    return response.contentLength;
-  }
-  template <typename Key, typename L>
-  void header(const Response &response, L &&l) const {
-    if constexpr (Key{}() == "content-type")
-      l(response.contentType);
-    else if constexpr (Key{}() == "date")
-      l(response.date);
-    else if constexpr (Key{}() == "server")
-      l(response.server);
-    else if constexpr (Key{}() == "last-modified")
-      l(response.lastModified);
-    else if constexpr (Key{}() == "accept-ranges")
-      l(response.file ? ZuCSpan{"bytes"} : ZuCSpan{});
-    else if constexpr (Key{}() == "content-range")
-      l(response.contentRange);
-    else if constexpr (Key{}() == "location")
-      l(response.location);
-    else if constexpr (Key{}() == "www-authenticate")
-      l(response.wwwAuthenticate);
-    else if constexpr (Key{}() == "allow")
-      l(response.allow);
-    else if constexpr (Key{}() == "connection")
-      l(response.connection);
-    else
-      l("");
-  }
-  template <typename Tx, typename Builder>
-  void body(Tx &tx, Builder &builder, const Response &response) {
-    sendBody(tx, builder, response);
-  }
-  bool close(const Response &response) const { return response.close; }
-  void complete(const Zhttp::RequestInfo &info, const Response &response) {
+  void complete(
+    const Zhttp::RequestInfo &info, ZmRef<ResponseCompletion> &completion,
+    bool) {
+    ResponsePlan response;
+    response.status = completion->status;
+    response.contentLength = completion->contentLength;
     state->log.write(info, response, info.remote);
   }
   void listening(int transport, unsigned port) {
@@ -314,8 +417,7 @@ ZiMxParams mxParams(const Options &options)
   return params;
 }
 
-using Service =
-  Zhttp::Service<Workload, ReqHeaders, RespHeaders, ReqBodyMax>;
+using Service = Zhttp::Service<Workload>;
 
 int Zhttpd::run(int argc, const char *const *argv)
 {
@@ -380,8 +482,7 @@ int Zhttpd::run(int argc, const char *const *argv)
   }
   Workload workload{&state};
   Service service;
-  Zhttp::ServiceConfig serviceConfig;
-  serviceConfig
+  auto serviceConfig = Zhttp::ServiceConfig()
     .localIP(ZiIP(state.options.addr))
     .port(state.options.port)
     .idleTimeout(state.options.timeout)

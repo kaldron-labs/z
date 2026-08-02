@@ -20,7 +20,7 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmScheduler.hh>
 
-#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpClientEngine.hh>
 #include <zlib/ZhttpServer.hh>
 
 namespace Zhttp {
@@ -78,6 +78,7 @@ struct EventRx {
 
 struct CountBytes {
   void push(uint8_t) { ++m_length; }
+  void skip(uint64_t n) { m_length += unsigned(n); }
   unsigned length() const { return m_length; }
   unsigned m_length = 0;
 };
@@ -173,9 +174,38 @@ private:
   uint32_t	m_streamID = 0;
 };
 
+struct HPackStagedPlan {
+  HPackStagedPlan() = default;
+  HPackStagedPlan(const HPackPlan &plan) :
+    name{plan.field.name}, value1{plan.field.value1},
+    value2{plan.field.value2}, index{plan.index}, rep{plan.rep},
+    separator{plan.field.separator}, split{plan.field.split} { }
+
+  HPackPlan plan() const {
+    Compression::FieldView field = split ?
+      Compression::FieldView{name, value1, separator, value2} :
+      Compression::FieldView{name, value1};
+    return {.field = field, .index = index, .rep = rep};
+  }
+
+  HPackString	name;
+  HPackString	value1;
+  HPackString	value2;
+  uint64_t	index = 0;
+  HPackRep::T	rep = HPackRep::NonIndexed;
+  char		separator = 0;
+  bool		split = false;
+};
+
+using HPackStagedPlans =
+  ZtArray<HPackStagedPlan, ZtArrayHeapID<"Zhttp.H2.HPackPlans">>;
+
 template <typename Native>
 class HeaderBlock {
   using FrameTx = FrameStream<Native>;
+  using DataFrames =
+    ZtArray<ZmRef<ZiIOBuf>, ZtArrayHeapID<"Zhttp.H2.Data">>;
+
 
   class Bytes {
   public:
@@ -237,14 +267,31 @@ public:
       m_frameSize{frameSize} { }
 
   void beginHeaders(bool endStream = false) {
-    m_frames.length(0);
-    m_updates = m_encoder.updates();
+    if (m_deferred && m_initialHeaders) {
+      m_trailers.length(0);
+      m_current = &m_trailers;
+      m_updates = {};
+    } else {
+      m_frames.length(0);
+      m_current = &m_frames;
+      if (!m_deferred) {
+	m_plans.length(0);
+	m_stagedUpdates = {};
+	m_commitUpdates = false;
+      }
+      m_updates = m_encoder.updates();
+    }
     m_first = true;
     m_open = true;
     m_endStream = endStream;
   }
   void field(ZuCSpan name, ZuCSpan value) {
     field_(Compression::FieldView{name, value});
+  }
+  template <typename P>
+  ZuIfT<!Compression::IsPrintString<P>{}>
+  field(ZuCSpan name, const P &value) {
+    fieldPrint_(name, value);
   }
   void field(
     ZuCSpan name, ZuCSpan value1, char separator, ZuCSpan value2) {
@@ -257,14 +304,19 @@ public:
       if (m_encoder.emit(count, m_updates) < 0) return;
       Bytes bytes{
 	m_native, m_streamID, count.length(), m_frameSize,
-	true, m_endStream, m_frames};
+	true, m_endStream, *m_current};
       if (m_encoder.emit(bytes, m_updates) < 0) return;
       bytes.flush();
-      m_encoder.commit(m_updates);
+      if (m_deferred) {
+	m_stagedUpdates = m_updates;
+	m_commitUpdates = true;
+      }
+      else
+	m_encoder.commit(m_updates);
       m_updates = {};
       m_first = false;
     }
-    FrameTx tx{m_native, m_streamID, &m_frames};
+    FrameTx tx{m_native, m_streamID, m_current};
     StreamBytes<FrameTx> sink{tx};
     putHeader(sink, {
       .length = 0,
@@ -276,14 +328,23 @@ public:
     });
     tx.flush();
     m_open = false;
-    m_native.sendHeaders(m_streamID, ZuMv(m_frames), m_endStream);
+    if (!m_deferred)
+      m_native.sendHeaders(m_streamID, ZuMv(m_frames), m_endStream);
+    else if (!m_initialHeaders) {
+      m_initialHeaders = true;
+      m_initialEndStream = m_endStream;
+    } else
+      m_trailerEndStream = m_endStream;
   }
   auto body() { return DataStream<HeaderBlock>{*this, m_streamID}; }
   auto body(uint64_t length) {
     return DataStream<HeaderBlock>{*this, m_streamID, length};
   }
   void end() {
-    m_native.endData(m_streamID);
+    if (m_deferred)
+      m_endData = true;
+    else
+      m_native.endData(m_streamID);
   }
   bool extendedConnect() const {
     return m_native.peerExtendedConnect();
@@ -306,10 +367,92 @@ public:
     return tx.allocBuf_(headRoom);
   }
   void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-    m_native.sendData(m_streamID, ZuMv(buf));
+    if (m_deferred)
+      m_data.push(ZuMv(buf));
+    else
+      m_native.sendData(m_streamID, ZuMv(buf));
+  }
+  void defer(uint64_t max = uint64_t(-1)) {
+    m_frames.length(0);
+    m_trailers.length(0);
+    m_data.length(0);
+    m_plans.length(0);
+    m_stagedUpdates = {};
+    m_commitUpdates = false;
+    m_initialHeaders = false;
+    m_endData = false;
+    m_initialEndStream = false;
+    m_trailerEndStream = false;
+    m_retainedMax = max;
+    m_deferred = true;
+  }
+  bool valid() const {
+    uint64_t n = 0;
+    for (unsigned i = 0; i < m_frames.length(); ++i) {
+      if (m_frames[i]->length > m_retainedMax - n) return false;
+      n += m_frames[i]->length;
+    }
+    for (unsigned i = 0; i < m_data.length(); ++i) {
+      if (m_data[i]->length > m_retainedMax - n) return false;
+      n += m_data[i]->length;
+    }
+    for (unsigned i = 0; i < m_trailers.length(); ++i) {
+      if (m_trailers[i]->length > m_retainedMax - n) return false;
+      n += m_trailers[i]->length;
+    }
+    return true;
+  }
+  void commit() {
+    if (!m_deferred || !valid()) return;
+    if (m_commitUpdates) m_encoder.commit(m_stagedUpdates);
+    for (unsigned i = 0; i < m_plans.length(); ++i)
+      m_encoder.commit(m_plans[i].plan());
+    m_native.sendHeaders(
+      m_streamID, ZuMv(m_frames), m_initialEndStream);
+    for (unsigned i = 0; i < m_data.length(); ++i)
+      m_native.sendData(m_streamID, ZuMv(m_data[i]));
+    m_data.length(0);
+    if (m_trailers)
+      m_native.sendHeaders(
+	m_streamID, ZuMv(m_trailers), m_trailerEndStream);
+    else if (m_endData)
+      m_native.endData(m_streamID);
+    m_deferred = false;
   }
 
 private:
+  template <typename P>
+  void fieldPrint_(ZuCSpan name, const P &value) {
+    auto emit = [this, name, &value](auto &out) {
+      int nameIndex = HPack::staticNameIndex(name);
+      uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+      if (Compression::putPref(
+	    out, prefix, 4, nameIndex > 0 ? unsigned(nameIndex) : 0) < 0)
+	return false;
+      if (nameIndex <= 0 && Compression::putString(out, 0, 7, name) < 0)
+	return false;
+      return Compression::putPrint(out, 0, 7, value) >= 0;
+    };
+    CountBytes count;
+    if ((m_first && m_encoder.emit(count, m_updates) < 0) || !emit(count))
+      return;
+    Bytes bytes{
+      m_native, m_streamID, count.length(), m_frameSize,
+      m_first, m_endStream, *m_current};
+    if ((m_first && m_encoder.emit(bytes, m_updates) < 0) || !emit(bytes))
+      return;
+    bytes.flush();
+    if (m_first) {
+      if (m_deferred) {
+	m_stagedUpdates = m_updates;
+	m_commitUpdates = true;
+      } else
+	m_encoder.commit(m_updates);
+      m_updates = {};
+    }
+    m_first = false;
+  }
+
   void field_(Compression::FieldView field) {
     auto plan = m_encoder.plan(field);
     CountBytes count;
@@ -318,28 +461,48 @@ private:
       return;
     Bytes bytes{
       m_native, m_streamID, count.length(), m_frameSize,
-      m_first, m_endStream, m_frames};
+      m_first, m_endStream, *m_current};
     if ((m_first && m_encoder.emit(bytes, m_updates) < 0) ||
 	m_encoder.emit(bytes, plan) < 0)
       return;
     bytes.flush();
     if (m_first) {
-      m_encoder.commit(m_updates);
+      if (m_deferred) {
+	m_stagedUpdates = m_updates;
+	m_commitUpdates = true;
+      }
+      else
+	m_encoder.commit(m_updates);
       m_updates = {};
     }
-    m_encoder.commit(plan);
+    if (m_deferred)
+      new (m_plans.push()) HPackStagedPlan{plan};
+    else
+      m_encoder.commit(plan);
     m_first = false;
   }
 
   Native	&m_native;
   HPackEncoder	&m_encoder;
   HPackUpdates	m_updates;
+  HPackUpdates	m_stagedUpdates;
   uint32_t	m_streamID = 0;
   uint32_t	m_frameSize = DefltFrameSize;
+  uint64_t	m_retainedMax = uint64_t(-1);
   HeaderFrames	m_frames;
+  HeaderFrames	m_trailers;
+  HeaderFrames	*m_current = &m_frames;
+  DataFrames	m_data;
+  HPackStagedPlans m_plans;
   bool		m_first = false;
   bool		m_open = false;
   bool		m_endStream = false;
+  bool		m_endData = false;
+  bool		m_deferred = false;
+  bool		m_commitUpdates = false;
+  bool		m_initialHeaders = false;
+  bool		m_initialEndStream = false;
+  bool		m_trailerEndStream = false;
 };
 
 template <typename Logical>
@@ -2162,7 +2325,7 @@ public:
 };
 
 template <typename App>
-class Client<App, H2TLS> : public H2_::ClientEngine<App> {
+class ClientEngine<App, H2TLS> : public H2_::ClientEngine<App> {
 public:
   using Base = H2_::ClientEngine<App>;
   enum { TLS = 1, Multiplexed = 1 };

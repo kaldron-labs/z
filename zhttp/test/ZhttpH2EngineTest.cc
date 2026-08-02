@@ -32,18 +32,18 @@ struct State {
 };
 
 struct RequestBuilder :
-  public Zhttp::H2::Builder<RequestBuilder> {
+  public Zhttp::H2::RequestBuilder<RequestBuilder> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
+  void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
 };
 
 struct StreamRequestBuilder :
-  public Zhttp::H2::Builder<StreamRequestBuilder,
+  public Zhttp::H2::RequestBuilder<StreamRequestBuilder,
     ZuTypeList<>, ZuTypeList<>, true> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::CONNECT, "/stream", ""); }
+  void operation(L &&l) { l(Zhttp::Method::CONNECT, "/stream"); }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
   template <typename L>
@@ -51,14 +51,17 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H2::Builder<
-    ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true> {
+  public Zhttp::H2::ResponseBuilder<
+    ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   unsigned status() { return 200; }
-  uint64_t contentLength() { return 4; }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    if constexpr (Key{}() == "content-length") l("4");
+  }
 };
 
 struct StreamResponseBuilder :
-  public Zhttp::H2::Builder<StreamResponseBuilder> {
+  public Zhttp::H2::ResponseBuilder<StreamResponseBuilder> {
   unsigned status() { return 200; }
   bool streamResponse() { return true; }
 };
@@ -83,7 +86,7 @@ struct ClientParser :
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(Zhttp::Method::T, ZuBSpan) { }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
   void contentLength(uint64_t value) { length = value; }
   template <typename Key> void header(ZuBSpan) { }
@@ -154,7 +157,7 @@ int ClientStream::process(Stream, Rx &rx)
   return 1;
 }
 
-struct Client : public Zhttp::Client<Client, Zhttp::H2TLS> {
+struct Client : public Zhttp::ClientEngine<Client, Zhttp::H2TLS> {
   using Link = ClientLink;
   State *state = nullptr;
 
@@ -275,11 +278,12 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
-    path = path_;
+    path = target.raw;
+    protocol_ = target.protocol;
   }
-  void protocol(ZuBSpan value) { protocol_ = value; }
   void headers(Zhttp::Fields::Section section, bool endStream) {
     if (section == Zhttp::Fields::Final &&
 	method == Zhttp::Method::CONNECT && protocol_ &&
@@ -437,7 +441,7 @@ struct ServerLink :
 struct H1Client;
 struct H1ClientLink;
 
-struct H1Client : public Zhttp::Client<H1Client, Zhttp::H1TLS> {
+struct H1Client : public Zhttp::ClientEngine<H1Client, Zhttp::H1TLS> {
   using Link = H1ClientLink;
   State *state = nullptr;
 
@@ -463,7 +467,7 @@ struct MismatchClient;
 struct MismatchLink;
 
 struct MismatchClient :
-  public Zhttp::Client<MismatchClient, Zhttp::H2TLS> {
+  public Zhttp::ClientEngine<MismatchClient, Zhttp::H2TLS> {
   using Link = MismatchLink;
   State *state = nullptr;
 
@@ -694,11 +698,11 @@ void run()
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Zhttp::H2Config serverConfig;
-  serverConfig.certPath(cert.certPath).keyPath(cert.keyPath)
+  auto serverConfig = Zhttp::H2Config()
+    .certPath(cert.certPath).keyPath(cert.keyPath)
     .maxConcurrentStreams(1).maxQueuedFrames(16);
-  Zhttp::H2Config clientConfig;
-  clientConfig.caPath(cert.certPath).initialWindowSize(1)
+  auto clientConfig = Zhttp::H2Config()
+    .caPath(cert.certPath).initialWindowSize(1)
     .maxConcurrentStreams(1);
   Server server{&state};
   Client client{&state};
@@ -776,12 +780,12 @@ void runStream()
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Zhttp::H2Config serverConfig;
-  serverConfig.certPath(cert.certPath).keyPath(cert.keyPath)
+  auto serverConfig = Zhttp::H2Config()
+    .certPath(cert.certPath).keyPath(cert.keyPath)
     .extendedConnect(true).maxConcurrentStreams(4)
     .initialWindowSize(1);
-  Zhttp::H2Config clientConfig;
-  clientConfig.caPath(cert.certPath)
+  auto clientConfig = Zhttp::H2Config()
+    .caPath(cert.certPath)
     .extendedConnect(true).maxConcurrentStreams(4)
     .initialWindowSize(1);
   Server server{&state};
@@ -860,15 +864,15 @@ void runSharedTLS()
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Zhttp::H2Config serverConfig;
-  serverConfig.certPath(cert.certPath).keyPath(cert.keyPath)
+  auto serverConfig = Zhttp::H2Config()
+    .certPath(cert.certPath).keyPath(cert.keyPath)
     .policy(Zhttp::H2Policy::Prefer);
-  Zhttp::H2Config h2Config;
-  h2Config.caPath(cert.certPath).initialWindowSize(1)
+  auto h2Config = Zhttp::H2Config()
+    .caPath(cert.certPath).initialWindowSize(1)
     .maxStreamID(1)
     .policy(Zhttp::H2Policy::Prefer);
-  Zhttp::H2Config h1Config;
-  h1Config.caPath(cert.certPath)
+  auto h1Config = Zhttp::H2Config()
+    .caPath(cert.certPath)
     .policy(Zhttp::H2Policy::Disable);
   SharedServer server{&state};
   SharedClient h2Client{&state};
@@ -1002,11 +1006,10 @@ void runForceMismatch()
   if (!mx.running()) return;
 
   Zhttp::EngineConfig engine{&mx, "3", "4"};
-  Zhttp::H2Config serverConfig;
-  serverConfig.certPath(cert.certPath).keyPath(cert.keyPath)
+  auto serverConfig = Zhttp::H2Config()
+    .certPath(cert.certPath).keyPath(cert.keyPath)
     .policy(Zhttp::H2Policy::Disable);
-  Zhttp::H2Config clientConfig;
-  clientConfig.caPath(cert.certPath);
+  auto clientConfig = Zhttp::H2Config().caPath(cert.certPath);
   SharedServer server{&state};
   MismatchClient client{&state};
   bool initialized =

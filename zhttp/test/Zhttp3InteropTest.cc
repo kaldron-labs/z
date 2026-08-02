@@ -32,7 +32,7 @@ using Zquic::Test::waitCaddyReady;
 using Zquic::Test::writeCaddyfile;
 
 using RequestHeaders = ZhttpHeaders("content-length");
-using ResponseHeaders = ZhttpHeaders("content-type");
+using ResponseHeaders = ZhttpHeaders("content-type", "content-length");
 
 ZuCSpan Path = "/zhttp-interop";
 ZuCSpan Host = "localhost";
@@ -141,6 +141,8 @@ struct ResponseBuilder : public Builder_<ResponseBuilder<Builder_>> {
   void header(L &&l) const {
     if constexpr (Key{}() == "content-type")
       l("text/plain");
+    else if constexpr (Key{}() == "content-length")
+      l(ZuBoxed(content.length()));
     else
       l("");
   }
@@ -231,9 +233,10 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
     return qpackDecoderWrite_ && qpackDecoderWrite_(qpackDecoder_, span);
   }
   uint64_t streamID() const { return streamID_; }
-  void operation(Zhttp::Method::T method, ZuBSpan path) {
+  void operation(
+    Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
     seen.method = method;
-    seen.path = ZuCSpan{path};
+    seen.path = ZuCSpan{target.raw};
   }
   template <typename Rx>
   void body(Rx &rx) {
@@ -316,7 +319,7 @@ struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {
   RequestBuilder(ZuCSpan body_) : content{body_} { }
 
   template <typename L> void operation(L &&l) const {
-    l(Zhttp::Method::GET, Path, "");
+    l(Zhttp::Method::GET, Path);
   }
   template <typename L> void host(L &&l) const { l(Host); }
   uint64_t contentLength() const { return content.length(); }

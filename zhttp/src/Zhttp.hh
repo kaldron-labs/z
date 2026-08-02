@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Z http library
-// - HTTP 1.1 and HTTP/3
+// - HTTP/1.1, HTTP/2, and HTTP/3
 // - HTTP 1.1:
 //   - optionally chunked body
 //   - optional chunked trailers (rarely used feature)
@@ -32,6 +32,7 @@
 #include <zlib/ZhttpConfig.hh>
 #include <zlib/ZhttpTypes.hh>
 #include <zlib/ZhttpURL.hh>
+#include <zlib/ZhttpAltSvc.hh>
 #include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpUtil.hh>
 #include <zlib/ZhttpCompression.hh>
@@ -108,126 +109,6 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 // - peer close/reset during a response completes or fails that application
 //   link exactly once, followed by one disconnected() callback.
 
-// HTTP Parser CRTP API
-// - consistent contract for H1::Parser and H3::Parser
-// - For HTTP/1 responses framed by connection close (no Content-Length and no
-//   transfer-encoding: chunked), call parser.eof() from the connection close path
-//   after all received bytes have been passed to parser.process().
-
-// CRTP - implementation may implement the following callbacks:
-#if 0
-struct Impl : public Parser<Impl, ...> {
-  using Base = Parser<Impl, ...>;
-
-  // optional - if implemented, must call Base::reset()
-  void reset();
-
-  // optional - request callback
-  void operation(Method::T method, ZuBSpan path);
-
-  // optional - response callback
-  void status(unsigned);
-
-  // optional - header key
-  template <typename Key> void header(ZuBSpan value);
-
-  // optional - header key+value
-  template <typename Key, typename Value> void header();
-
-  // optional - run-time header key/value
-  void header(ZuBSpan key, ZuBSpan value);
-
-  // optional - content-length header
-  void contentLength(uint64_t);
-
-  // optional - decoded entity-body input; synchronous and Rx-shard-affine
-  template <typename Rx> void body(Rx &);
-
-  // optional - end of stream/message
-  void complete(ParserState::T);
-
-  // optional - stream completion predicate
-  // - default calls impl()->finReceived()
-  bool rxComplete() const;
-
-  // required only when using Base::rxComplete()
-  bool finReceived() const;
-
-  // optional - H3/QPACK parameters, defaults to default Params
-  const Params &h3Params() const;
-
-  // optional - current stream ID, used for QPACK section acknowledgements
-  uint64_t streamID() const;
-
-  // optional - write to local QPACK decoder stream for section acks
-  bool qpackDecoderWrite(ZuBSpan);
-
-  // optional - peer dynamic table; nullptr disables dynamic QPACK decoding
-  QPackRxTable *qpackRx();
-
-  // optional - post peer decoder instructions and SETTINGS capacity to Tx
-  bool qpackTxInsn(QPackInsn::T, uint64_t);
-  bool qpackTxMaxCapacity(uint64_t);
-  bool qpackTxBlocked(uint64_t);
-};
-#endif
-
-// HTTP Builder CRTP API
-// - consistent contract for H1::Builder and H3::Builder
-// - H1 chunked builders emit Trailers after finish(); H3 builders emit Trailers
-//   as a trailing HEADERS frame from finish().
-
-// CRTP - implementation may implement the following callbacks:
-#if 0
-struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
-  using Base = Builder<Impl, Headers, Trailers, HasBody, Chunked>;
-
-  // optional - if implemented, must call Base::reset()
-  void reset();
-
-  // optional - request method/path/query
-  template <typename L> void operation(L &&l);
-  // l(Method::T method, ZuCSpan path, ZuCSpan query)
-
-  // optional - request host / HTTP/3 :authority
-  template <typename L> void host(L &&l);
-  // l(ZuCSpan host)
-
-  // optional - response status
-  unsigned status();
-
-  // optional - HTTP/1 response reason
-  template <typename L> void reason(L &&l);
-  // l(ZuCSpan reason)
-
-  // optional - static header key with run-time value
-  template <typename Key, typename L> void header(L &&l);
-  // l(ZuCSpan value)
-
-  // optional - run-time header key/value pairs
-  template <typename L> void header(L &&l);
-  // l(ZuCSpan key, ZuCSpan value)
-
-  // optional - body length when HasBody && !Chunked
-  uint64_t contentLength();
-
-  // optional - H3 QPACK dynamic table
-  H3::QPackTxTable *qpackTx();
-
-  // optional - H3 QPACK encoder-stream write
-  bool qpackEncoderWrite(ZuBSpan);
-
-  // optional - H3 QPACK build failure callback
-  void qpackFailure(H3::QPackBuildFailure::T);
-
-  // optional - H3 parameters
-  const H3::Params &h3Params() const;
-
-  // optional - H3 stream ID used for QPACK section tracking
-  uint64_t streamID() const;
-};
-#endif
-
 } // namespace Zhttp
 
 #include <zlib/ZhttpFields.hh>
@@ -244,6 +125,59 @@ struct Impl : public Builder<Impl, Headers, Trailers, HasBody, Chunked> {
 #include <zlib/ZhttpTLSEngine.hh>
 
 namespace Zhttp {
+
+// Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
+// ClientMessage and Service wrap plain application Parser sinks in these
+// adapters; application sinks do not derive from them.  The protocol invokes
+// only the callbacks applicable to the selected request/response role and
+// version.  Inherited defaults are side-effect-safe; an adapter which
+// overrides reset() must call Base::reset().  All callbacks are synchronous
+// and Rx-shard-affine.  RequestTarget and received spans are borrowed for the
+// duration of the callback.  `Parser` in the API sketch denotes the selected
+// alias below.
+#if 0
+struct ParserImpl : public Parser<ParserImpl, Headers, MaxBody> {
+  using Base = Parser<ParserImpl, Headers, MaxBody>;
+  using State = typename Base::State;
+
+  void reset();
+
+  // request or response start line / pseudo-headers
+  void operation(Method::T method, const RequestTarget &target);
+  void status(unsigned);
+
+  // H1 protocol and transfer-coding notifications
+  void version(ZuBSpan);
+  void xferCompression(XferCompression::T);
+  void chunked();
+
+  // declared run-time value, declared fixed value, undeclared key/value
+  template <typename Key> void header(ZuBSpan value);
+  template <typename Key, typename Value> void header();
+  void header(ZuBSpan key, ZuBSpan value);
+  void contentLength(uint64_t);
+
+  // H2/H3 initial field section, decoded body input, message completion
+  void headers(Fields::Section, bool endStream);
+  template <typename Rx> void body(Rx &);
+  void complete(State::T);
+
+  // H3 stream/QPACK integration
+  bool rxComplete() const;		// defaults to finReceived()
+  bool finReceived() const;
+  const H3::Params &h3Params() const;
+  uint64_t streamID() const;
+  bool qpackDecoderWrite(ZuBSpan);
+  H3::QPackRxTable *qpackRx();
+  bool qpackTxInsn(H3::QPackInsn::T, uint64_t);
+  bool qpackTxMaxCapacity(uint64_t);
+  bool qpackTxBlocked(uint64_t);
+};
+#endif
+
+// For an H1 response framed by connection close (neither Content-Length nor
+// transfer-encoding: chunked), pass all received bytes to process(), then call
+// eof() from the connection-close path.
 
 template <
   typename Impl,
@@ -281,54 +215,69 @@ template <
   uint64_t MaxBody = DefltMaxBody>
 using H3RespParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
-template <
-  typename Impl,
-  typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
-  bool HasBody = false, bool Chunked = false>
-using H1ReqBuilder = H1::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
+// Low-level protocol Builder CRTP adapters used internally by ClientMessage
+// and Service.  Application Builders are plain structural types; their
+// contracts are documented beside those consuming templates.  They do not
+// derive from these aliases.  The adapters provide protocol framing, invoke
+// the application through inversion-of-control lambdas, and preserve the
+// actual types of printable targets, authorities, reasons, and header values.
+// H1 chunked builders emit Trailers from finish(); H2/H3 builders emit a
+// trailing HEADERS section.
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
-using H1RespBuilder = H1::Builder<Impl, Headers, Trailers, HasBody, Chunked>;
+using H1ReqBuilder =
+  H1::RequestBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false, bool Chunked = false>
+using H1RespBuilder =
+  H1::ResponseBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H2ReqBuilder = H2::Builder<Impl, Headers, Trailers, HasBody, false>;
+using H2ReqBuilder =
+  H2::RequestBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H2RespBuilder = H2::Builder<Impl, Headers, Trailers, HasBody, false>;
+using H2RespBuilder =
+  H2::ResponseBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H3ReqBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
+using H3ReqBuilder =
+  H3::RequestBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H3RespBuilder = H3::Builder<Impl, Headers, Trailers, HasBody, false>;
+using H3RespBuilder =
+  H3::ResponseBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 } // namespace Zhttp
 
 #ifndef Zhttp_CORE_ONLY
-#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpClientEngine.hh>
 #include <zlib/ZhttpClientPool.hh>
-#include <zlib/ZhttpAgent.hh>
+#include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpEngines.hh>
 #include <zlib/ZhttpH2Engine.hh>

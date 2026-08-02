@@ -21,13 +21,13 @@
 namespace Zhttp {
 
 template <
-  typename Owner, typename Request, typename ReqHeaders,
-  typename RespHeaders, uint64_t RespBodyMax>
+  typename Owner, typename Request,
+  typename RequestBuilder, typename ResponseParser>
 class TLSClientPool;
 
 template <
   typename Pool, typename Impl, typename Owner_, typename Request_,
-  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_,
+  typename RequestBuilder_, typename ResponseParser_,
   typename Profile>
 class TLSClientPoolLink_ {
 public:
@@ -36,7 +36,7 @@ public:
   using Message = MessageTraits<Profile>;
   using IO = ClientMessage<
     Owner, Request, Impl, Profile,
-    ReqHeaders_, RespHeaders_, RespBodyMax_>;
+    RequestBuilder_, ResponseParser_>;
 
   TLSClientPoolLink_(Pool *pool, Impl *impl, unsigned slot_) :
     m_pool{pool}, m_impl{impl}, m_slot{slot_},
@@ -51,7 +51,6 @@ public:
     ++m_generation;
     m_request = request;
     m_complete = -1;
-    m_producerFailed = false;
     m_sent = false;
     m_stopped = false;
     m_closing = false;
@@ -67,7 +66,7 @@ public:
     auto link = ZmMkRef(m_impl);
     unsigned generation = m_generation;
     m_pool->txRun([this, link = ZuMv(link), generation]() mutable {
-      m_message.startTx(generation);
+      m_message.beginTx();
       sendRequestTx_(generation);
     });
   }
@@ -77,12 +76,8 @@ public:
     auto link = ZmMkRef(m_impl);
     m_pool->txRun([this, link = ZuMv(link)]() mutable {
       m_message.cancelTx();
-      // Drain producer resumptions queued before cancellation, then return
-      // to Rx before disabling the native logical link.
-      m_pool->txRun([this, link = ZuMv(link)]() mutable {
-	m_pool->rxRun([this, link = ZuMv(link)]() mutable {
-	  m_impl->disconnect();
-	});
+      m_pool->rxRun([this, link = ZuMv(link)]() mutable {
+	m_impl->disconnect();
       });
     });
   }
@@ -142,21 +137,13 @@ public:
     m_pool->txRun([
       this, link = ZuMv(link), generation, ok, sent]() mutable {
       if (sent) m_message.cancelTx();
-      // Drain any producer resumption queued before cancellation, then return
-      // the authoritative Tx commitment to Rx for the retry decision.
-      m_pool->txRun([
-	this, link = ZuMv(link), generation, ok, sent]() mutable {
-	BodyCommit commit = sent ? m_message.commit() : BodyCommit{};
-	m_pool->rxRun([
-	  this, link = ZuMv(link), commit, generation, ok]() mutable {
-	  if (m_generation != generation || !m_request) return;
-	  if (m_producerFailed)
-	    owner()->poolTxFailed(*m_impl, *m_request, commit);
-	  else
-	    owner()->poolTxCommitted(*m_impl, *m_request, commit);
-	  bool reuse = ok && reusable();
-	  owner()->poolComplete(*m_impl, *m_request, ok, reuse);
-	});
+      BodyCommit commit = sent ? m_message.commit() : BodyCommit{};
+      m_pool->rxRun([
+	this, link = ZuMv(link), commit, generation, ok]() mutable {
+	if (m_generation != generation || !m_request) return;
+	owner()->poolTxCommitted(*m_impl, *m_request, commit);
+	bool reuse = ok && reusable();
+	owner()->poolComplete(*m_impl, *m_request, ok, reuse);
       });
     });
   }
@@ -165,38 +152,19 @@ public:
 
 private:
   void sendRequestTx_(unsigned generation) {
-    if (m_message.txGeneration() != generation) return;
-    unsigned batch = owner()->requestBodyBatch();
-    int state = m_message.send(batch);
-    switch (state) {
-      case BodySend::More: {
-	auto link = ZmMkRef(m_impl);
-	m_pool->txRun([this, link = ZuMv(link), generation]() mutable {
-	  sendRequestTx_(generation);
-	});
-	break;
+    bool ok = m_message.send();
+    auto link = ZmMkRef(m_impl);
+    BodyCommit commit = m_message.commit();
+    m_pool->rxRun([
+      this, link = ZuMv(link), commit, generation, ok]() mutable {
+      if (m_generation != generation || !m_request) return;
+      if (ok)
+	owner()->poolTxCommitted(*m_impl, *m_request, commit);
+      else {
+	owner()->poolTxFailed(*m_impl, *m_request, commit);
+	complete(false);
       }
-      case BodySend::Complete: {
-	auto link = ZmMkRef(m_impl);
-	BodyCommit commit = m_message.commit();
-	m_pool->rxRun([this, link = ZuMv(link), commit, generation]() mutable {
-	  if (m_generation == generation && m_request)
-	    owner()->poolTxCommitted(*m_impl, *m_request, commit);
-	});
-	break;
-      }
-      case BodySend::Cancelled:
-	break;
-      default: {
-	auto link = ZmMkRef(m_impl);
-	m_pool->rxRun([this, link = ZuMv(link), generation]() mutable {
-	  if (m_generation != generation) return;
-	  m_producerFailed = true;
-	  complete(false);
-	});
-	break;
-      }
-    }
+    });
   }
 
   void notifyStopped_() {
@@ -211,7 +179,6 @@ private:
   unsigned	m_generation = 0;
   unsigned	m_slot = 0;
   int8_t	m_complete = -1;
-  bool		m_producerFailed = false;
   bool		m_sent = false;
   bool		m_stopped = false;
   bool		m_closing = false;
@@ -220,39 +187,37 @@ private:
 
 template <
   typename Pool, typename Owner, typename Request,
-  typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax,
-  typename Profile>
+  typename RequestBuilder, typename ResponseParser, typename Profile>
 class TLSClientPoolLink;
 
 template <
   typename Pool, typename Owner, typename Request,
-  typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax>
+  typename RequestBuilder, typename ResponseParser>
 class TLSClientPoolLink<
-  Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS> :
+  Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS> :
   public TLS_::ClientH1Logical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS>,
+      Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
     TLS_::ClientSession<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS>,
+	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS>>>,
+	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS>,
-    Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS> {
+      Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
+    Owner, Request, RequestBuilder, ResponseParser, H1TLS> {
   using Impl = TLSClientPoolLink;
   using Native = TLS_::ClientH1Logical<
     Pool, Impl,
     TLS_::ClientSession<
       Pool, Impl,
       TLSClientPoolLink<
-	Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS>>>;
+	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>;
   using Link = TLSClientPoolLink_<
-    Pool, Impl, Owner, Request, ReqHeaders, RespHeaders,
-    RespBodyMax, H1TLS>;
+    Pool, Impl, Owner, Request, RequestBuilder, ResponseParser, H1TLS>;
 
 public:
   using Protocol = TLS;
@@ -277,34 +242,33 @@ public:
 
 template <
   typename Pool, typename Owner, typename Request,
-  typename ReqHeaders, typename RespHeaders, uint64_t RespBodyMax>
+  typename RequestBuilder, typename ResponseParser>
 class TLSClientPoolLink<
-  Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS> :
+  Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS> :
   public H2_::ClientLogical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS>,
+      Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>,
     TLS_::ClientSession<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS>,
+	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS>>>,
+	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS>,
-    Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H2TLS> {
+      Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>,
+    Owner, Request, RequestBuilder, ResponseParser, H2TLS> {
   using Impl = TLSClientPoolLink;
   using Native = H2_::ClientLogical<
     Pool, Impl,
     TLS_::ClientSession<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax, H1TLS>,
+	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
       Impl>>;
   using Link = TLSClientPoolLink_<
-    Pool, Impl, Owner, Request, ReqHeaders, RespHeaders,
-    RespBodyMax, H2TLS>;
+    Pool, Impl, Owner, Request, RequestBuilder, ResponseParser, H2TLS>;
 
 public:
   using Protocol = TLS;
@@ -329,32 +293,31 @@ public:
 
 template <
   typename Owner_, typename Request_,
-  typename ReqHeaders_, typename RespHeaders_, uint64_t RespBodyMax_>
+  typename RequestBuilder_, typename ResponseParser_>
 class TLSClientPool :
   public TLS_::ClientEngine<
     TLSClientPool<
-      Owner_, Request_, ReqHeaders_, RespHeaders_, RespBodyMax_>,
+      Owner_, Request_, RequestBuilder_, ResponseParser_>,
     TLSClientPoolLink<
       TLSClientPool<
-	Owner_, Request_, ReqHeaders_, RespHeaders_, RespBodyMax_>,
-      Owner_, Request_, ReqHeaders_, RespHeaders_, RespBodyMax_, H1TLS>,
+	Owner_, Request_, RequestBuilder_, ResponseParser_>,
+      Owner_, Request_, RequestBuilder_, ResponseParser_, H1TLS>,
     TLSClientPoolLink<
       TLSClientPool<
-	Owner_, Request_, ReqHeaders_, RespHeaders_, RespBodyMax_>,
-      Owner_, Request_, ReqHeaders_, RespHeaders_, RespBodyMax_, H2TLS>> {
+	Owner_, Request_, RequestBuilder_, ResponseParser_>,
+      Owner_, Request_, RequestBuilder_, ResponseParser_, H2TLS>> {
 public:
   using Owner = Owner_;
   using Request = Request_;
-  using ReqHeaders = ReqHeaders_;
-  using RespHeaders = RespHeaders_;
+  using RequestBuilder = RequestBuilder_;
+  using ResponseParser = ResponseParser_;
   using Pool = TLSClientPool;
   using H1Link = TLSClientPoolLink<
-    Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax_, H1TLS>;
+    Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>;
   using H2Link = TLSClientPoolLink<
-    Pool, Owner, Request, ReqHeaders, RespHeaders, RespBodyMax_, H2TLS>;
+    Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>;
   using Base = TLS_::ClientEngine<Pool, H1Link, H2Link>;
   using Base::stop;
-  static constexpr uint64_t RespBodyMax = RespBodyMax_;
 
   struct Pair {
     ZmRef<H1Link>	h1;
@@ -383,7 +346,8 @@ public:
     auto h2 = pair.h2;
     m_pairs.push(ZuMv(pair));
     ++m_live;
-    Base::connect(h1, h2, request->url.host, request->url.port);
+    auto url = request->url.url();
+    Base::connect(h1, h2, url.host, url.port);
   }
 
   bool cancel(Request *request) {

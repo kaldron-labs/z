@@ -14,12 +14,99 @@
 #endif
 
 #include <zlib/ZuBitStream.hh>
+#include <zlib/ZuBox.hh>
 #include <zlib/ZuHash.hh>
+#include <zlib/ZuPrint.hh>
 #include <zlib/ZuTraits.hh>
 
 namespace Zhttp {
 
 namespace Compression {
+
+template <typename U,
+  bool = ZuTraits<U>::IsArray || ZuTraits<U>::IsString>
+struct IsPrintString : public ZuFalse { };
+template <typename U>
+struct IsPrintString<U, true> : public ZuBool<
+  sizeof(typename ZuTraits<U>::Elem) == 1> { };
+
+struct PrintCount {
+  void push(uint8_t) { ++n; }
+  void skip(uint64_t n_) { n += n_; }
+  uint64_t length() const { return n; }
+
+  uint64_t n = 0;
+};
+
+template <typename Bytes, typename = void>
+struct HasSkip : public ZuFalse { };
+template <typename Bytes>
+struct HasSkip<Bytes, decltype(
+  ZuDeclVal<Bytes &>().skip(ZuDeclVal<uint64_t>()), void())> :
+  public ZuTrue { };
+
+template <typename Bytes>
+class PrintBytes {
+public:
+  PrintBytes(Bytes &out) : m_out{out} { }
+
+  PrintBytes &operator <<(char v) {
+    m_out.push(uint8_t(v));
+    return *this;
+  }
+
+  template <typename U>
+  ZuIfT<IsPrintString<U>{}, PrintBytes &> operator <<(const U &v) {
+    auto data = ZuTraits<U>::data(v);
+    auto n = ZuTraits<U>::length(v);
+    if constexpr (HasSkip<Bytes>{})
+      m_out.skip(n);
+    else
+      for (decltype(n) i = 0; i < n; ++i)
+	m_out.push(uint8_t(data[i]));
+    return *this;
+  }
+  template <typename U>
+  ZuIfT<!IsPrintString<U>{} && ZuPrint<U>::Delegate, PrintBytes &>
+  operator <<(const U &v) {
+    ZuPrint<U>::print(*this, v);
+    return *this;
+  }
+  template <typename U>
+  ZuIfT<!IsPrintString<U>{} && ZuPrint<U>::Buffer, PrintBytes &>
+  operator <<(const U &v) {
+    unsigned n = ZuPrint<U>::length(v);
+    auto data = static_cast<char *>(ZuAlloca(n, 1));
+    if (ZuUnlikely(!data && n)) {
+      m_ok = false;
+      return *this;
+    }
+    n = ZuPrint<U>::print(data, n, v);
+    for (unsigned i = 0; i < n; ++i) m_out.push(uint8_t(data[i]));
+    return *this;
+  }
+  template <typename U>
+  ZuIfT<
+    !ZuPrint<U>::OK && ZuTraits<U>::IsReal &&
+      ZuTraits<U>::IsPrimitive && !ZuTraits<U>::IsArray,
+    PrintBytes &>
+  operator <<(U v) {
+    return *this << ZuBoxed(v);
+  }
+
+  bool ok() const { return m_ok; }
+
+private:
+  Bytes	&m_out;
+  bool	m_ok = true;
+};
+
+template <typename P>
+uint64_t printLength(const P &v) {
+  PrintCount count;
+  PrintBytes<PrintCount>{count} << v;
+  return count.length();
+}
 
 struct FieldView {
   FieldView() = default;
@@ -208,6 +295,21 @@ int putString(
   for (unsigned i = 0; i < value.length(); ++i)
     out.push(uint8_t(value[i]));
   return 0;
+}
+
+template <typename Bytes, typename P>
+int putPrint(
+  Bytes &out, uint8_t prefix, unsigned bits, const P &value) {
+  uint64_t n = printLength(value);
+  if (putPref(out, prefix, bits, n) < 0) return -1;
+  if constexpr (HasSkip<Bytes>{}) {
+    out.skip(n);
+    return 0;
+  } else {
+    PrintBytes<Bytes> bytes{out};
+    bytes << value;
+    return bytes.ok() ? 0 : -1;
+  }
 }
 
 template <typename Bytes>

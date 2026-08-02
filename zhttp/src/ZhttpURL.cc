@@ -4,13 +4,26 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - HTTP URL, origin, redirect, and Alt-Svc values
+// Z http library - HTTP URL, origin, and request-target values
 
 #include <zlib/ZhttpURL.hh>
 
-#include <zlib/ZiPlatform.hh>
+#include <string.h>
+
+#include <zlib/ZuICmp.hh>
+
+#include <zlib/ZiIP.hh>
+
+#include <zlib/ZhttpUtil.hh>
 
 namespace Zhttp {
+
+ZtEnumImplNS(Scheme);
+ZtEnumImplNS(TargetForm);
+ZtEnumImplNS(URLParseCode);
+ZtEnumImplNS(RequestTargetParseCode);
+ZtEnumImplNS(RequestTargetField);
+
 namespace URL_ {
 
 inline bool ctl(unsigned c) { return c <= 0x20 || c == 0x7f; }
@@ -24,60 +37,36 @@ inline bool hex(unsigned c) {
   c |= 0x20;
   return digit(c) || (c >= 'a' && c <= 'f');
 }
-inline unsigned lower(unsigned c) {
-  return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+
+URLParseError error(URLParseCode::T code, unsigned offset = 0)
+{
+  return {offset, code};
 }
 
-ZuCSpan trim(ZuCSpan s)
+RequestTargetParseError targetError(
+  RequestTargetParseCode::T code, unsigned offset = 0,
+  RequestTargetField::T field = RequestTargetField::Raw)
 {
-  while (s.length() && (s[0] == ' ' || s[0] == '\t')) s.offset(1);
-  while (s.length() &&
-      (s[s.length() - 1] == ' ' || s[s.length() - 1] == '\t'))
-    s.trunc(s.length() - 1);
-  return s;
+  return {offset, code, field};
 }
 
-bool equalCI(ZuCSpan l, ZuCSpan r)
+URLParseError port(
+  ZuBSpan s, uint16_t &out, unsigned offset, bool allowZeroPort)
 {
-  if (l.length() != r.length()) return false;
-  for (unsigned i = 0; i < l.length(); ++i)
-    if (lower(l[i]) != lower(r[i])) return false;
-  return true;
-}
-
-void lowerCopy(URLString &out, ZuCSpan in)
-{
-  out.length(0);
-  for (unsigned i = 0; i < in.length(); ++i) out << char(lower(in[i]));
-}
-
-URLError error(int code, unsigned offset = 0)
-{
-  return {offset, int8_t(code)};
-}
-
-URLError port(ZuCSpan s, uint16_t &out, unsigned offset)
-{
-  if (!s.length()) return error(URLCode::InvalidPort, offset);
+  if (!s) return error(URLParseCode::InvalidPort, offset);
   unsigned n = 0;
   for (unsigned i = 0; i < s.length(); ++i) {
-    if (!digit(s[i])) return error(URLCode::InvalidPort, offset + i);
+    if (!digit(s[i])) return error(URLParseCode::InvalidPort, offset + i);
     n = n * 10 + unsigned(s[i] - '0');
-    if (n > 65535) return error(URLCode::InvalidPort, offset + i);
+    if (n > 65535) return error(URLParseCode::InvalidPort, offset + i);
   }
-  if (!n) return error(URLCode::InvalidPort, offset);
+  if (!n && !allowZeroPort)
+    return error(URLParseCode::InvalidPort, offset);
   out = uint16_t(n);
   return {};
 }
 
-struct Authority {
-  ZuCSpan	host;
-  ZuCSpan	port;
-  bool		explicitPort = false;
-  bool		ipv6Literal = false;
-};
-
-bool regName(ZuCSpan s)
+bool regName(ZuBSpan s)
 {
   for (unsigned i = 0; i < s.length(); ++i) {
     unsigned c = s[i];
@@ -86,8 +75,7 @@ bool regName(ZuCSpan s)
 	c == ')' || c == '*' || c == '+' || c == ',' || c == ';' ||
 	c == '=')
       continue;
-    if (c == '%' && i + 2 < s.length() &&
-	hex(s[i + 1]) && hex(s[i + 2])) {
+    if (c == '%' && i + 2 < s.length() && hex(s[i + 1]) && hex(s[i + 2])) {
       i += 2;
       continue;
     }
@@ -96,150 +84,83 @@ bool regName(ZuCSpan s)
   return true;
 }
 
-bool ipv6(ZuCSpan s)
+URLParseError authority(
+  AuthorityView &out, ZuBSpan in, unsigned offset,
+  uint16_t defltPort, bool requirePort, bool allowZeroPort = false)
 {
-  URLString text{s};
-  in6_addr addr;
-#ifndef _WIN32
-  return ::inet_pton(AF_INET6, text.ndata(), &addr) == 1;
-#else
-  return ::InetPtonA(AF_INET6, text.ndata(), &addr) == 1;
-#endif
-}
-
-URLError authority(Authority &out, ZuCSpan in, unsigned offset)
-{
-  if (!in.length()) return error(URLCode::MissingHost, offset);
+  AuthorityView parsed;
+  parsed.raw = in;
+  parsed.port = defltPort;
+  if (!in) return error(URLParseCode::MissingHost, offset);
   for (unsigned i = 0; i < in.length(); ++i)
     if (ctl(in[i]) || in[i] == '@')
-      return error(in[i] == '@' ?
-	URLCode::InvalidAuthority : URLCode::InvalidCharacter, offset + i);
+      return error(in[i] == '@' ? URLParseCode::InvalidAuthority :
+	URLParseCode::InvalidCharacter, offset + i);
 
+  ZuBSpan portText;
+  unsigned portOffset = 0;
   if (in[0] == '[') {
     int close = in.find([](auto c) { return c == ']'; });
-    if (close <= 1) return error(URLCode::InvalidAuthority, offset);
-    out.host = in;
-    out.host.offset(1);
-    out.host.trunc(close - 1);
-    if (!ipv6(out.host))
-      return error(URLCode::InvalidAuthority, offset + 1);
-    out.ipv6Literal = true;
-    if (unsigned(close + 1) == in.length()) return {};
-    if (in[close + 1] != ':')
-      return error(URLCode::InvalidAuthority, offset + close + 1);
-    out.port = in;
-    out.port.offset(close + 2);
-    out.explicitPort = true;
-    return out.port.length() ? URLError{} :
-      error(URLCode::InvalidPort, offset + close + 2);
+    if (close <= 1) return error(URLParseCode::InvalidAuthority, offset);
+    parsed.host = {in.data() + 1, unsigned(close - 1)};
+    ZiIP ip;
+    if (!ZiIP::parse(ip, parsed.host) || !ip.v6())
+      return error(URLParseCode::InvalidAuthority, offset + 1);
+    parsed.ipv6Literal = true;
+    if (unsigned(close + 1) < in.length()) {
+      if (in[close + 1] != ':')
+	return error(URLParseCode::InvalidAuthority, offset + close + 1);
+      portOffset = close + 2;
+      portText = {in.data() + portOffset, in.length() - portOffset};
+      parsed.explicitPort = true;
+    }
+  } else {
+    int colon = -1;
+    for (unsigned i = 0; i < in.length(); ++i) {
+      if (in[i] != ':') continue;
+      if (colon >= 0) return error(URLParseCode::InvalidAuthority, offset + i);
+      colon = i;
+    }
+    if (colon >= 0) {
+      parsed.host = {in.data(), unsigned(colon)};
+      portOffset = colon + 1;
+      portText = {in.data() + portOffset, in.length() - portOffset};
+      parsed.explicitPort = true;
+    } else
+      parsed.host = in;
+    if (!parsed.host) return error(URLParseCode::MissingHost, offset);
+    if (!regName(parsed.host))
+      return error(URLParseCode::InvalidAuthority, offset);
   }
+  if (requirePort && !parsed.explicitPort)
+    return error(URLParseCode::InvalidPort, offset + in.length());
+  if (parsed.explicitPort) {
+    auto e = port(
+      portText, parsed.port, offset + portOffset, allowZeroPort);
+    if (!e.ok()) return e;
+  }
+  out = parsed;
+  return {};
+}
 
-  int colon = -1;
-  for (unsigned i = 0; i < in.length(); ++i) {
-    if (in[i] != ':') continue;
-    if (colon >= 0) return error(URLCode::InvalidAuthority, offset + i);
-    colon = i;
-  }
-  if (colon >= 0) {
-    out.host = in;
-    out.host.trunc(colon);
-    out.port = in;
-    out.port.offset(colon + 1);
-    out.explicitPort = true;
-  } else
-    out.host = in;
-  if (!out.host.length()) return error(URLCode::MissingHost, offset);
-  if (!regName(out.host))
-    return error(URLCode::InvalidAuthority, offset);
-  if (out.explicitPort && !out.port.length())
-    return error(URLCode::InvalidPort, offset + colon + 1);
+URLParseError authority(
+  AuthorityView &out, ZuSpan<uint8_t> in, unsigned offset,
+  uint16_t defltPort, bool requirePort, bool allowZeroPort = false)
+{
+  auto e = authority(
+    out, ZuBSpan{in}, offset, defltPort, requirePort, allowZeroPort);
+  if (!e.ok()) return e;
+  unsigned hostOffset = unsigned(out.host.data() - in.data());
+  ZuSpan host{in.data() + hostOffset, out.host.length()};
+  lowerASCII(host);
+  out.host = host;
+  out.normalized = true;
   return {};
 }
 
 bool schemeChar(unsigned c)
 {
   return alnum(c) || c == '+' || c == '-' || c == '.';
-}
-
-int schemeEnd(ZuCSpan s)
-{
-  if (!s.length() || !alpha(s[0])) return -1;
-  for (unsigned i = 1; i < s.length(); ++i) {
-    if (s[i] == ':') return i;
-    if (!schemeChar(s[i])) return -1;
-  }
-  return -1;
-}
-
-void splitTarget(
-  ZuCSpan target, ZuCSpan &path, ZuCSpan &query, bool &hasQuery)
-{
-  int q = target.find([](auto c) { return c == '?'; });
-  hasQuery = q >= 0;
-  path = target;
-  query = {};
-  if (hasQuery) {
-    path.trunc(q);
-    query = target;
-    query.offset(q + 1);
-  }
-}
-
-void popSegment(URLString &out)
-{
-  while (out.length() && out[out.length() - 1] != '/')
-    out.length(out.length() - 1);
-  if (out.length()) out.length(out.length() - 1);
-}
-
-URLString removeDots(ZuCSpan input)
-{
-  ZuCSpan in{input};
-  URLString out;
-  while (in.length()) {
-    if (in.match("../")) {
-      in.offset(3);
-    } else if (in.match("./")) {
-      in.offset(2);
-    } else if (in.match("/./")) {
-      in.offset(2);
-    } else if (in.length() == 2 && in[0] == '/' && in[1] == '.') {
-      in = "/";
-    } else if (in.match("/../")) {
-      in.offset(3);
-      popSegment(out);
-    } else if (in.length() == 3 && in[0] == '/' &&
-	in[1] == '.' && in[2] == '.') {
-      in = "/";
-      popSegment(out);
-    } else if ((in.length() == 1 && in[0] == '.') ||
-	(in.length() == 2 && in[0] == '.' && in[1] == '.')) {
-      in = {};
-    } else {
-      unsigned n = 0;
-      if (in[0] == '/') {
-	n = 1;
-	while (n < in.length() && in[n] != '/') ++n;
-      } else {
-	while (n < in.length() && in[n] != '/') ++n;
-      }
-      out << ZuCSpan{in.data(), n};
-      in.offset(n);
-    }
-  }
-  return out;
-}
-
-URLString mergePath(ZuCSpan base, ZuCSpan ref)
-{
-  int slash = -1;
-  for (unsigned i = 0; i < base.length(); ++i)
-    if (base[i] == '/') slash = i;
-  URLString merged;
-  if (slash >= 0) merged << ZuCSpan{base.data(), unsigned(slash + 1)};
-  else merged << '/';
-  merged << ref;
-  return removeDots(merged);
 }
 
 bool tokenChar(unsigned c)
@@ -249,315 +170,538 @@ bool tokenChar(unsigned c)
     c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
 }
 
-bool uint32(ZuCSpan s, uint32_t &v)
+int schemeEnd(ZuBSpan s)
 {
-  if (!s.length()) return false;
-  uint64_t n = 0;
-  for (unsigned i = 0; i < s.length(); ++i) {
-    if (!digit(s[i])) return false;
-    n = n * 10 + unsigned(s[i] - '0');
-    if (n > UINT32_MAX) return false;
+  if (!s || !alpha(s[0])) return -1;
+  for (unsigned i = 1; i < s.length(); ++i) {
+    if (s[i] == ':') return i;
+    if (!schemeChar(s[i])) return -1;
   }
-  v = uint32_t(n);
-  return true;
+  return -1;
+}
+
+int invalidText(ZuBSpan s, bool fragment)
+{
+  for (unsigned i = 0; i < s.length(); ++i) {
+    unsigned c = s[i];
+    if (ctl(c) || (!fragment && c == '#')) return i;
+    if (c == '%' &&
+	(i + 2 >= s.length() || !hex(s[i + 1]) || !hex(s[i + 2])))
+      return i;
+  }
+  return -1;
+}
+
+unsigned popSegment(URLString &out, unsigned floor, unsigned write)
+{
+  while (write > floor && out[write - 1] != '/') --write;
+  if (write > floor) --write;
+  return write;
+}
+
+void removeDots(URLString &out, unsigned floor)
+{
+  unsigned read = floor;
+  unsigned write = floor;
+  unsigned length = out.length();
+  while (read < length) {
+    ZuBSpan in{reinterpret_cast<const uint8_t *>(out.data()) + read,
+	length - read};
+    if (in.match("../")) {
+      read += 3;
+    } else if (in.match("./")) {
+      read += 2;
+    } else if (in.match("/./")) {
+      read += 2;
+    } else if (in.length() == 2 && in[0] == '/' && in[1] == '.') {
+      read += 2;
+      out[write++] = '/';
+    } else if (in.match("/../")) {
+      read += 3;
+      write = popSegment(out, floor, write);
+    } else if (in.length() == 3 && in[0] == '/' &&
+	in[1] == '.' && in[2] == '.') {
+      read += 3;
+      write = popSegment(out, floor, write);
+      out[write++] = '/';
+    } else if ((in.length() == 1 && in[0] == '.') ||
+	(in.length() == 2 && in[0] == '.' && in[1] == '.')) {
+      read = length;
+    } else {
+      unsigned begin = read;
+      if (out[read] == '/') {
+	++read;
+	while (read < length && out[read] != '/') ++read;
+      } else {
+	while (read < length && out[read] != '/') ++read;
+      }
+      unsigned n = read - begin;
+      if (write != begin)
+	memmove(out.data() + write, out.data() + begin, n);
+      write += n;
+    }
+  }
+  out.length(write);
+}
+
+void appendAbsoluteReference(
+  URLString &out, ZuBSpan ref, unsigned pathStart)
+{
+  out << ZuBSpan{ref.data(), pathStart};
+  unsigned floor = out.length();
+  auto pathQuery = splitPathQuery({
+    ref.data() + pathStart, ref.length() - pathStart});
+  out << pathQuery.path;
+  removeDots(out, floor);
+  if (pathQuery.hasQuery) out << '?' << pathQuery.query;
 }
 
 } // namespace URL_
 
-bool h3ALPN(ZuCSpan s)
+URLParseError parseAuthority(
+  AuthorityView &out, ZuBSpan input, unsigned offset,
+  uint16_t defltPort, bool requirePort, bool allowZeroPort)
 {
-  if (s == "h3") return true;
-  if (!s.match("h3-") || s.length() == 3) return false;
-  for (unsigned i = 3; i < s.length(); ++i)
-    if (!URL_::digit(s[i])) return false;
-  return true;
+  return URL_::authority(
+    out, input, offset, defltPort, requirePort, allowZeroPort);
 }
 
-void URL::pathQuery(ZuCSpan &path, ZuCSpan &query) const
+URLParseError parseAuthority(
+  AuthorityView &out, ZuSpan<uint8_t> input, unsigned offset,
+  uint16_t defltPort, bool requirePort, bool allowZeroPort)
 {
-  bool hasQuery;
-  URL_::splitTarget(target, path, query, hasQuery);
-  if (!path.length()) path = "/";
+  return URL_::authority(
+    out, input, offset, defltPort, requirePort, allowZeroPort);
 }
 
-URLString URL::authority() const
+Scheme::T Scheme::parse(ZuBSpan s)
 {
-  URLString out;
-  if (ipv6Literal) out << '[' << host << ']';
-  else out << host;
-  if (explicitPort) out << ':' << port;
-  return out;
+  if (ZuICmp<ZuBSpan>::equals(s, "http")) return Scheme::http;
+  if (ZuICmp<ZuBSpan>::equals(s, "https")) return Scheme::https;
+  return -1;
 }
 
-URLString URL::str() const
+PathQuery splitPathQuery(ZuBSpan target)
 {
-  URLString out;
-  out << scheme << "://" << authority() << target;
-  return out;
+  int q = target.find([](auto c) { return c == '?'; });
+  if (q < 0) return {target, {}, false};
+  return {
+    {target.data(), unsigned(q)},
+    {target.data() + q + 1, target.length() - unsigned(q + 1)},
+    true
+  };
 }
 
-URLError URL::parse(URL &out, ZuCSpan input)
+bool OriginView::equals(const OriginView &o) const
 {
-  URL parsed;
-  for (unsigned i = 0; i < input.length(); ++i)
-    if (URL_::ctl(input[i]))
-      return URL_::error(URLCode::InvalidCharacter, i);
+  return scheme == o.scheme && host == o.host && port == o.port;
+}
 
-  int colon = URL_::schemeEnd(input);
-  if (colon < 0 || unsigned(colon + 2) >= input.length() ||
-      input[colon + 1] != '/' || input[colon + 2] != '/')
-    return URL_::error(URLCode::UnsupportedScheme);
-  ZuCSpan scheme = input;
-  scheme.trunc(colon);
-  if (URL_::equalCI(scheme, "http")) {
-    parsed.scheme = "http";
-    parsed.port = 80;
-  } else if (URL_::equalCI(scheme, "https")) {
-    parsed.scheme = "https";
-    parsed.port = 443;
-  } else
-    return URL_::error(URLCode::UnsupportedScheme);
+uint32_t OriginView::hash() const
+{
+  uint32_t h = ZuHash<Scheme::T>::hash(scheme);
+  h ^= ZuHash<ZuCSpan>::hash(ZuCSpan{host}) +
+    0x9e3779b9U + (h<<6) + (h>>2);
+  h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
+  return h;
+}
+
+Origin::Origin(const OriginView &v) :
+  host{v.host}, port{v.port}, scheme{v.scheme}, ipv6Literal{v.ipv6Literal}
+{
+}
+
+uint32_t Origin::hash() const
+{
+  uint32_t h = ZuHash<Scheme::T>::hash(scheme);
+  h ^= ZuHash<URLString>::hash(host) + 0x9e3779b9U + (h<<6) + (h>>2);
+  h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
+  return h;
+}
+
+URL::URL(ZuSpan<uint8_t> input) : raw{input}
+{
+  using namespace URL_;
+  int colon = schemeEnd(raw);
+  if (colon < 0 || unsigned(colon + 2) >= raw.length() ||
+      raw[colon + 1] != '/' || raw[colon + 2] != '/') {
+    parseError = URL_::error(URLParseCode::UnsupportedScheme);
+    return;
+  }
+  scheme = Scheme::parse({raw.data(), unsigned(colon)});
+  if (scheme < 0) {
+    parseError = URL_::error(URLParseCode::UnsupportedScheme);
+    return;
+  }
 
   unsigned authStart = colon + 3;
   unsigned authEnd = authStart;
-  while (authEnd < input.length() && input[authEnd] != '/' &&
-      input[authEnd] != '?' && input[authEnd] != '#') ++authEnd;
-  ZuCSpan auth{input.data() + authStart, authEnd - authStart};
-  URL_::Authority authority;
-  auto e = URL_::authority(authority, auth, authStart);
-  if (!e.ok()) return e;
-  URL_::lowerCopy(parsed.host, authority.host);
-  parsed.ipv6Literal = authority.ipv6Literal;
-  parsed.explicitPort = authority.explicitPort;
-  if (authority.explicitPort) {
-    e = URL_::port(
-      authority.port, parsed.port,
-      authStart + unsigned(authority.port.data() - auth.data()));
-    if (!e.ok()) return e;
-  }
+  while (authEnd < raw.length() && raw[authEnd] != '/' &&
+      raw[authEnd] != '?' && raw[authEnd] != '#') ++authEnd;
+  authorityRaw = {raw.data() + authStart, authEnd - authStart};
+  AuthorityView a;
+  parseError = parseAuthority(a,
+    ZuSpan<uint8_t>{input.data() + authStart, authEnd - authStart},
+    authStart, Scheme::defltPort(scheme), false);
+  if (!parseError.ok()) return;
+  host = a.host;
+  port = a.port;
+  explicitPort = a.explicitPort;
+  ipv6Literal = a.ipv6Literal;
 
-  unsigned targetEnd = authEnd;
-  while (targetEnd < input.length() && input[targetEnd] != '#') ++targetEnd;
-  if (authEnd == targetEnd)
-    parsed.target = "/";
-  else if (input[authEnd] == '?')
-    parsed.target << '/' <<
-      ZuCSpan{input.data() + authEnd, targetEnd - authEnd};
-  else if (input[authEnd] == '#')
-    parsed.target = "/";
-  else
-    parsed.target =
-      ZuCSpan{input.data() + authEnd, targetEnd - authEnd};
-  out = ZuMv(parsed);
-  return {};
+  unsigned queryAt = raw.length();
+  unsigned fragmentAt = raw.length();
+  for (unsigned i = authEnd; i < raw.length(); ++i) {
+    if (raw[i] == '#' && fragmentAt == raw.length()) {
+      fragmentAt = i;
+      break;
+    }
+    if (raw[i] == '?' && queryAt == raw.length()) queryAt = i;
+  }
+  unsigned pathEnd = queryAt < fragmentAt ? queryAt : fragmentAt;
+  path = {raw.data() + authEnd, pathEnd - authEnd};
+  if (path && path[0] != '/') {
+    parseError = URL_::error(URLParseCode::InvalidCharacter, authEnd);
+    return;
+  }
+  if (queryAt < fragmentAt) {
+    hasQuery = true;
+    query = {raw.data() + queryAt + 1, fragmentAt - queryAt - 1};
+  }
+  if (fragmentAt < raw.length()) {
+    hasFragment = true;
+    fragment = {
+      raw.data() + fragmentAt + 1, raw.length() - fragmentAt - 1};
+  }
+  if (int i = invalidText(path, false); i >= 0) {
+    parseError = URL_::error(URLParseCode::InvalidCharacter, authEnd + i);
+    return;
+  }
+  if (int i = invalidText(query, false); i >= 0) {
+    parseError = URL_::error(
+      URLParseCode::InvalidCharacter, queryAt + 1 + i);
+    return;
+  }
+  if (int i = invalidText(fragment, true); i >= 0) {
+    parseError = URL_::error(
+      URLParseCode::InvalidCharacter, fragmentAt + 1 + i);
+    return;
+  }
 }
 
-URLError URL::resolve(URL &out, const URL &base, ZuCSpan ref)
+AuthorityView URL::authority() const
 {
-  for (unsigned i = 0; i < ref.length(); ++i)
-    if (URL_::ctl(ref[i]))
-      return URL_::error(URLCode::InvalidCharacter, i);
+  return {
+    authorityRaw, host, port, explicitPort, ipv6Literal, true
+  };
+}
 
-  int fragment = ref.find([](auto c) { return c == '#'; });
-  if (fragment >= 0) ref.trunc(fragment);
-  int scheme = URL_::schemeEnd(ref);
-  if (scheme >= 0) return parse(out, ref);
-  if (ref.match("//")) {
-    URLString absolute;
-    absolute << base.scheme << ':' << ref;
-    return parse(out, absolute);
-  }
+OriginView URL::origin() const
+{
+  return {host, port, scheme, ipv6Literal};
+}
 
-  URL resolved = base;
-  ZuCSpan basePath, baseQuery, refPath, refQuery;
-  bool baseHasQuery, refHasQuery;
-  URL_::splitTarget(base.target, basePath, baseQuery, baseHasQuery);
-  URL_::splitTarget(ref, refPath, refQuery, refHasQuery);
+PathQuery URL::pathQuery() const
+{
+  static const uint8_t slash[] = {'/'};
+  return {path ? path : ZuBSpan{slash, 1}, query, hasQuery};
+}
 
-  URLString path;
-  URLString query;
-  bool hasQuery = false;
-  if (!refPath.length()) {
-    path = basePath;
-    if (refHasQuery) {
-      query = refQuery;
-      hasQuery = true;
-    } else if (baseHasQuery) {
-      query = baseQuery;
-      hasQuery = true;
-    }
-  } else {
-    path = refPath[0] == '/' ?
-      URL_::removeDots(refPath) : URL_::mergePath(basePath, refPath);
-    if (refHasQuery) {
-      query = refQuery;
-      hasQuery = true;
-    }
-  }
-  if (!path.length()) path = "/";
-  resolved.target = path;
-  if (hasQuery) resolved.target << '?' << query;
-  out = ZuMv(resolved);
+void URLStorage::commit_(URLString &&data, const URL &url)
+{
+  auto part = [&data](ZuBSpan s) {
+    return Part{
+      uint32_t(s.data() - reinterpret_cast<const uint8_t *>(data.data())),
+      uint32_t(s.length())
+    };
+  };
+  m_host = part(url.host);
+  m_authority = part(url.authorityRaw);
+  m_path = part(url.path);
+  m_query = url.hasQuery ? part(url.query) : Part{};
+  m_fragment = url.hasFragment ? part(url.fragment) : Part{};
+  m_port = url.port;
+  m_scheme = url.scheme;
+  m_hasQuery = url.hasQuery;
+  m_hasFragment = url.hasFragment;
+  m_explicitPort = url.explicitPort;
+  m_ipv6Literal = url.ipv6Literal;
+  m_error = {};
+  m_data = ZuMv(data);
+}
+
+URLParseError URLStorage::assign(ZuBSpan input)
+{
+  URLString candidate{input};
+  return adopt(ZuMv(candidate));
+}
+
+URLParseError URLStorage::adopt(URLString &&candidate)
+{
+  candidate.ensure(candidate.length() + 1);
+  URL parsed{ZuSpan<uint8_t>{
+    reinterpret_cast<uint8_t *>(candidate.data()), candidate.length()}};
+  if (!parsed.ok()) return parsed.error();
+  commit_(ZuMv(candidate), parsed);
   return {};
 }
 
-URLError AltSvc::parse(
-  AltSvc &out, ZuCSpan input, const Origin &origin,
-  unsigned maxAlternatives)
+URL URLStorage::url() const
+{
+  URL out;
+  if (!ok()) {
+    out.parseError = m_error;
+    return out;
+  }
+  auto data = reinterpret_cast<const uint8_t *>(m_data.data());
+  auto span = [data](Part part) {
+    return ZuBSpan{data + part.offset, part.length};
+  };
+  out.raw = {data, m_data.length()};
+  out.host = span(m_host);
+  out.authorityRaw = span(m_authority);
+  out.path = span(m_path);
+  out.query = span(m_query);
+  out.fragment = span(m_fragment);
+  out.parseError = m_error;
+  out.port = m_port;
+  out.scheme = m_scheme;
+  out.hasQuery = m_hasQuery;
+  out.hasFragment = m_hasFragment;
+  out.explicitPort = m_explicitPort;
+  out.ipv6Literal = m_ipv6Literal;
+  return out;
+}
+
+URLParseError URLStorage::resolve(const URL &base, ZuBSpan ref)
 {
   using namespace URL_;
-  AltSvc parsed;
-  input = trim(input);
-  if (input == "clear") {
-    parsed.clear = true;
-    out = ZuMv(parsed);
+  ZuBSpan fullRef = ref;
+  if (int i = invalidText(ref, true); i >= 0)
+    return URL_::error(URLParseCode::InvalidCharacter, i);
+  ZuBSpan fragmentText;
+  bool hasFragment = false;
+  int fragment = ref.find([](auto c) { return c == '#'; });
+  if (fragment >= 0) {
+    hasFragment = true;
+    fragmentText = {
+      ref.data() + fragment + 1, ref.length() - unsigned(fragment + 1)};
+    ref.trunc(fragment);
+  }
+  int colon = schemeEnd(ref);
+  if (colon >= 0) {
+    if (Scheme::parse({ref.data(), unsigned(colon)}) < 0 ||
+	unsigned(colon + 2) >= ref.length() ||
+	ref[colon + 1] != '/' || ref[colon + 2] != '/')
+      return assign(fullRef);
+    unsigned pathStart = colon + 3;
+    while (pathStart < ref.length() && ref[pathStart] != '/' &&
+	ref[pathStart] != '?') ++pathStart;
+    URLString candidate;
+    appendAbsoluteReference(candidate, ref, pathStart);
+    if (hasFragment) candidate << '#' << fragmentText;
+    return adopt(ZuMv(candidate));
+  }
+
+  if (ref.match("//")) {
+    unsigned pathStart = 2;
+    while (pathStart < ref.length() && ref[pathStart] != '/' &&
+	ref[pathStart] != '?') ++pathStart;
+    URLString candidate;
+    candidate << Scheme::name(base.scheme) << ':';
+    appendAbsoluteReference(candidate, ref, pathStart);
+    if (hasFragment) candidate << '#' << fragmentText;
+    return adopt(ZuMv(candidate));
+  }
+
+  URLString candidate;
+  candidate << Scheme::name(base.scheme) << ':';
+  candidate << "//" << base.authority();
+  unsigned pathFloor = candidate.length();
+  auto refPQ = splitPathQuery(ref);
+  auto basePQ = base.pathQuery();
+  if (!refPQ.path) {
+    candidate << base.path;
+    if (refPQ.hasQuery)
+      candidate << '?' << refPQ.query;
+    else if (base.hasQuery)
+      candidate << '?' << base.query;
+  } else {
+    if (refPQ.path[0] == '/') {
+      candidate << refPQ.path;
+    } else {
+      int slash = -1;
+      for (unsigned i = 0; i < basePQ.path.length(); ++i)
+        if (basePQ.path[i] == '/') slash = i;
+      if (slash >= 0)
+        candidate << ZuBSpan{basePQ.path.data(), unsigned(slash + 1)};
+      else
+	candidate << '/';
+      candidate << refPQ.path;
+    }
+    removeDots(candidate, pathFloor);
+    if (refPQ.hasQuery) candidate << '?' << refPQ.query;
+  }
+  if (hasFragment) candidate << '#' << fragmentText;
+  return adopt(ZuMv(candidate));
+}
+
+RequestTargetParseError RequestTarget::parseH1(
+  RequestTarget &out, Method::T method, ZuSpan<uint8_t> input)
+{
+  using namespace URL_;
+  RequestTarget parsed;
+  parsed.raw = input;
+  if (!input)
+    return targetError(RequestTargetParseCode::InvalidForm);
+  if (input.length() == 1 && input[0] == '*') {
+    if (method != Method::OPTIONS)
+      return targetError(RequestTargetParseCode::InvalidMethod);
+    parsed.form = TargetForm::Asterisk;
+    parsed.path = input;
+    out = parsed;
+    return {};
+  }
+  if (method == Method::CONNECT) {
+    URLParseError e = parseAuthority(parsed.authority, input, 0, 0, true);
+    if (!e.ok())
+      return targetError(RequestTargetParseCode::InvalidAuthority, e.offset);
+    parsed.form = TargetForm::Authority;
+    out = parsed;
+    return {};
+  }
+  if (input[0] == '/') {
+    if (int i = invalidText(input, false); i >= 0)
+      return targetError(RequestTargetParseCode::InvalidCharacter, i);
+    auto pq = splitPathQuery(input);
+    parsed.path = pq.path;
+    parsed.query = pq.query;
+    parsed.hasQuery = pq.hasQuery;
+    parsed.form = TargetForm::Origin;
+    out = parsed;
+    return {};
+  }
+  int fragment = input.find([](auto c) { return c == '#'; });
+  if (fragment >= 0)
+    return targetError(RequestTargetParseCode::InvalidCharacter, fragment);
+  URL url{input};
+  if (!url.ok())
+    switch (url.error().code) {
+      case URLParseCode::UnsupportedScheme:
+	return targetError(
+	  RequestTargetParseCode::InvalidScheme, url.error().offset);
+      case URLParseCode::MissingHost:
+      case URLParseCode::InvalidAuthority:
+      case URLParseCode::InvalidPort:
+	return targetError(
+	  RequestTargetParseCode::InvalidAuthority, url.error().offset);
+      case URLParseCode::InvalidCharacter:
+	return targetError(
+	  RequestTargetParseCode::InvalidCharacter, url.error().offset);
+      default:
+	return targetError(
+	  RequestTargetParseCode::InvalidForm, url.error().offset);
+    }
+  parsed.authority = url.authority();
+  parsed.path = url.pathQuery().path;
+  parsed.query = url.query;
+  parsed.hasQuery = url.hasQuery;
+  parsed.scheme = url.scheme;
+  parsed.form = TargetForm::Absolute;
+  out = parsed;
+  return {};
+}
+
+RequestTargetParseError RequestTarget::fromPseudo(
+  RequestTarget &out, Method::T method, Scheme::T scheme,
+  ZuSpan<uint8_t> authorityText, ZuBSpan pathText, ZuBSpan protocolText)
+{
+  using namespace URL_;
+  RequestTarget parsed;
+  if (method == Method::CONNECT) {
+    if (!protocolText) {
+      if (scheme >= 0 || pathText)
+	return targetError(RequestTargetParseCode::InvalidForm, 0,
+	  pathText ? RequestTargetField::Path : RequestTargetField::Scheme);
+      auto e = parseAuthority(
+	parsed.authority, authorityText, 0, 0, true);
+      if (!e.ok())
+	return targetError(RequestTargetParseCode::InvalidAuthority, e.offset,
+	  RequestTargetField::Authority);
+      parsed.raw = authorityText;
+      parsed.form = TargetForm::Authority;
+      out = parsed;
+      return {};
+    }
+    if (scheme < 0 || scheme >= Scheme::N)
+      return targetError(RequestTargetParseCode::InvalidScheme, 0,
+	RequestTargetField::Scheme);
+    if (!tokenChar(protocolText[0]))
+      return targetError(RequestTargetParseCode::InvalidProtocol, 0,
+	RequestTargetField::Protocol);
+    for (unsigned i = 1; i < protocolText.length(); ++i)
+      if (!tokenChar(protocolText[i]))
+	return targetError(RequestTargetParseCode::InvalidProtocol, i,
+	  RequestTargetField::Protocol);
+    auto e = parseAuthority(parsed.authority, authorityText, 0,
+      Scheme::defltPort(scheme), false);
+    if (!e.ok())
+      return targetError(RequestTargetParseCode::InvalidAuthority, e.offset,
+	RequestTargetField::Authority);
+    if (!pathText || pathText[0] != '/')
+      return targetError(RequestTargetParseCode::InvalidPath, 0,
+	RequestTargetField::Path);
+    if (int i = invalidText(pathText, false); i >= 0)
+      return targetError(RequestTargetParseCode::InvalidCharacter, i,
+	RequestTargetField::Path);
+    auto pq = splitPathQuery(pathText);
+    parsed.path = pq.path;
+    parsed.query = pq.query;
+    parsed.hasQuery = pq.hasQuery;
+    parsed.protocol = protocolText;
+    parsed.scheme = scheme;
+    parsed.form = TargetForm::ExtendedConnect;
+    out = parsed;
     return {};
   }
 
-  unsigned offset = 0;
-  while (offset < input.length()) {
-    while (offset < input.length() &&
-	(input[offset] == ' ' || input[offset] == '\t')) ++offset;
-    unsigned alpnStart = offset;
-    while (offset < input.length() && tokenChar(input[offset])) ++offset;
-    if (offset == alpnStart || offset >= input.length() ||
-	input[offset++] != '=')
-      return error(URLCode::InvalidAltSvc, offset);
-    ZuCSpan alpn{input.data() + alpnStart, offset - alpnStart - 1};
-    if (offset >= input.length() || input[offset++] != '"')
-      return error(URLCode::InvalidAltSvc, offset);
-    unsigned authStart = offset;
-    while (offset < input.length() && input[offset] != '"') {
-      if (input[offset] == '\\')
-	return error(URLCode::InvalidAltSvc, offset);
-      ++offset;
-    }
-    if (offset >= input.length())
-      return error(URLCode::InvalidAltSvc, offset);
-    ZuCSpan auth{input.data() + authStart, offset - authStart};
-    ++offset;
-
-    if (parsed.values.length() >= maxAlternatives)
-      return error(URLCode::TooManyAlternatives, alpnStart);
-    AltSvcValue value;
-    lowerCopy(value.alpn, alpn);
-    value.h3 = Zhttp::h3ALPN(value.alpn);
-    if (auth.length() && auth[0] == ':') {
-      value.host = origin.host;
-      auto e = port(
-	ZuCSpan{auth.data() + 1, auth.length() - 1},
-	value.port, authStart + 1);
-      if (!e.ok()) return e;
-    } else {
-      Authority a;
-      auto e = authority(a, auth, authStart);
-      if (!e.ok()) return e;
-      lowerCopy(value.host, a.host);
-      value.ipv6Literal = a.ipv6Literal;
-      if (!a.explicitPort)
-	return error(URLCode::InvalidAltSvc, authStart);
-      e = port(a.port, value.port,
-	authStart + unsigned(a.port.data() - auth.data()));
-      if (!e.ok()) return e;
-    }
-
-    for (;;) {
-      while (offset < input.length() &&
-	  (input[offset] == ' ' || input[offset] == '\t')) ++offset;
-      if (offset >= input.length() || input[offset] == ',') break;
-      if (input[offset++] != ';')
-	return error(URLCode::InvalidAltSvc, offset - 1);
-      while (offset < input.length() &&
-	  (input[offset] == ' ' || input[offset] == '\t')) ++offset;
-      unsigned keyStart = offset;
-      while (offset < input.length() && tokenChar(input[offset])) ++offset;
-      if (offset == keyStart)
-	return error(URLCode::InvalidAltSvc, offset);
-      ZuCSpan key{input.data() + keyStart, offset - keyStart};
-      ZuCSpan param;
-      if (offset < input.length() && input[offset] == '=') {
-	++offset;
-	unsigned valueStart = offset;
-	while (offset < input.length() && tokenChar(input[offset])) ++offset;
-	if (offset == valueStart)
-	  return error(URLCode::InvalidAltSvc, offset);
-	param = {input.data() + valueStart, offset - valueStart};
-      }
-      if (equalCI(key, "ma")) {
-	if (!uint32(param, value.maxAge))
-	  return error(URLCode::InvalidAltSvc, keyStart);
-      } else if (equalCI(key, "persist")) {
-	if (param == "1") value.persist = true;
-	else if (param != "0")
-	  return error(URLCode::InvalidAltSvc, keyStart);
-      }
-    }
-    parsed.values.push(ZuMv(value));
-    if (offset >= input.length()) break;
-    ++offset;
-    if (offset >= input.length())
-      return error(URLCode::InvalidAltSvc, offset);
+  if (protocolText)
+    return targetError(RequestTargetParseCode::InvalidProtocol, 0,
+      RequestTargetField::Protocol);
+  if (scheme < 0 || scheme >= Scheme::N)
+    return targetError(RequestTargetParseCode::InvalidScheme, 0,
+      RequestTargetField::Scheme);
+  auto e = parseAuthority(parsed.authority, authorityText, 0,
+    Scheme::defltPort(scheme), false);
+  if (!e.ok())
+    return targetError(RequestTargetParseCode::InvalidAuthority, e.offset,
+      RequestTargetField::Authority);
+  if (pathText.length() == 1 && pathText[0] == '*') {
+    if (method != Method::OPTIONS)
+      return targetError(RequestTargetParseCode::InvalidMethod, 0,
+	RequestTargetField::Path);
+    parsed.raw = pathText;
+    parsed.path = pathText;
+    parsed.scheme = scheme;
+    parsed.form = TargetForm::Asterisk;
+    out = parsed;
+    return {};
   }
-  if (!parsed.values.length())
-    return error(URLCode::InvalidAltSvc);
-  out = ZuMv(parsed);
+  if (!pathText || pathText[0] != '/')
+    return targetError(RequestTargetParseCode::InvalidPath, 0,
+      RequestTargetField::Path);
+  if (int i = invalidText(pathText, false); i >= 0)
+    return targetError(RequestTargetParseCode::InvalidCharacter, i,
+      RequestTargetField::Path);
+  auto pq = splitPathQuery(pathText);
+  parsed.raw = pathText;
+  parsed.path = pq.path;
+  parsed.query = pq.query;
+  parsed.hasQuery = pq.hasQuery;
+  parsed.scheme = scheme;
+  parsed.form = TargetForm::Origin;
+  out = parsed;
   return {};
-}
-
-bool AltSvcCache::update(
-  const Origin &origin, const AltSvc &altSvc, ZuTime now)
-{
-  if (altSvc.clear) {
-    m_entries->del(origin);
-    return true;
-  }
-
-  AltSvcEntry entry;
-  for (unsigned i = 0; i < altSvc.values.length(); ++i) {
-    const auto &value = altSvc.values[i];
-    if (!value.maxAge) continue;
-    entry.values.push(CachedAltSvc{
-      .value = value,
-      .expires = now + ZuTime{int64_t(value.maxAge)}
-    });
-  }
-
-  bool exists = !!m_entries->find(origin);
-  if (!exists && m_entries->count_() >= m_maxOrigins) return false;
-  if (exists) m_entries->del(origin);
-  if (entry.values.length())
-    m_entries->add(origin, ZuMv(entry));
-  return true;
-}
-
-bool AltSvcCache::get(
-  const Origin &origin, AltSvcValues &values, ZuTime now)
-{
-  return get_(origin, &values, now);
-}
-
-bool AltSvcCache::get_(
-  const Origin &origin, AltSvcValues *values, ZuTime now)
-{
-  if (values) values->length(0);
-  auto node = m_entries->find(origin);
-  if (!node) return false;
-  auto &cached = node->val().values;
-  bool h3 = false;
-  unsigned n = 0;
-  for (unsigned i = 0; i < cached.length(); ++i) {
-    if (cached[i].expires <= now) continue;
-    if (n != i) cached[n] = ZuMv(cached[i]);
-    if (values)
-      values->push(cached[n].value);
-    else
-      h3 |= cached[n].value.h3;
-    ++n;
-  }
-  if (n < cached.length()) cached.splice(n);
-  if (n) return values ? true : h3;
-  m_entries->del(origin);
-  return false;
 }
 
 } // namespace Zhttp

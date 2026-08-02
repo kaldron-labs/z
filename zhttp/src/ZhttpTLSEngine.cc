@@ -13,14 +13,14 @@
 namespace Zhttp {
 namespace TLS_ {
 
-int8_t version(ZuCSpan alpn, int8_t policy)
+Version::T version(ZuCSpan alpn, H2Policy::T policy)
 {
   static constexpr auto matcher = ZuMatcher<"h2", "http/1.1">();
   switch (matcher.exact(alpn)) {
     case 0:
-      return policy != H2Policy::Disable ? Version::H2 : int8_t(-1);
+      return policy != H2Policy::Disable ? Version::H2 : Version::T(-1);
     case 1:
-      return policy != H2Policy::Force ? Version::H1 : int8_t(-1);
+      return policy != H2Policy::Force ? Version::H1 : Version::T(-1);
     default:
       return -1;
   }

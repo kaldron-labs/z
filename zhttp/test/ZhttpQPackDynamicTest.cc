@@ -29,6 +29,13 @@ namespace ZhttpQPackDynamicTest_ {
 
 using StreamAlloc = ZiIOBufAlloc<256, 4096, "ZhttpQPackDynamicTest.Buf">;
 using BuilderHeaders = ZhttpHeaders("accept");
+
+struct CustomTarget : public ZuPrintable {
+  template <typename S>
+  void print(S &s) const { s << "/printable?"; }
+
+  friend ZuPrintFn ZuPrintType(CustomTarget *);
+};
 ZuDerive(RxQueue,
   (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf,
     ZmListHeapID<"">>>));
@@ -91,8 +98,8 @@ struct CaptureEncoder {
 };
 
 struct BuilderState :
-  public Zhttp::H3::Builder<BuilderState, BuilderHeaders> {
-  using Base = Zhttp::H3::Builder<BuilderState, BuilderHeaders>;
+  public Zhttp::H3::RequestBuilder<BuilderState, BuilderHeaders> {
+  using Base = Zhttp::H3::RequestBuilder<BuilderState, BuilderHeaders>;
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
@@ -102,7 +109,10 @@ struct BuilderState :
 
   template <typename L>
   void operation(L &&l) const {
-    l(method, path, query);
+    if (customTarget)
+      l(method, CustomTarget{});
+    else
+      l(method, Zhttp::PathQuery{path, query, bool(query)});
   }
   template <typename L> void host(L &&l) const { l("example.com"); }
   template <typename L>
@@ -130,6 +140,7 @@ struct BuilderState :
   ZuCSpan		query = "";
   ZuCSpan		protocol_;
   bool			runtimeHeader = false;
+  bool			customTarget = false;
   ZuCSpan		runtimeName = "server";
   ZuCSpan		runtimeValue = "zhttp-runtime";
 };
@@ -179,10 +190,14 @@ struct ParserStream :
   void push(const Zhttp::H3::HdrBytes &bytes) {
     rx.push(rxBuf(ZuBSpan{bytes}));
   }
-  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
     path.length(0);
-    path << ZuCSpan{path_};
+    path << ZuCSpan{target.raw};
+    protocol_.length(0);
+    protocol_ << ZuCSpan{target.protocol};
+    if (protocol_ && acceptStream) Base::stream();
   }
   template <typename Key> void header(ZuBSpan value) {
     if constexpr (Key{}() == "x-test") {
@@ -196,17 +211,13 @@ struct ParserStream :
   }
   void header(ZuBSpan name, ZuBSpan value) {
     ++runtimeCalls;
+    if (name == "host") return;
     runtimeName.length(0);
     runtimeValue.length(0);
     runtimeName << ZuCSpan{name};
     runtimeValue << ZuCSpan{value};
   }
   void contentLength(uint64_t v) { contentLen = v; ++contentLenCalls; }
-  void protocol(ZuBSpan value) {
-    protocol_.length(0);
-    protocol_ << ZuCSpan{value};
-    if (acceptStream) Base::stream();
-  }
   void headers(Zhttp::Fields::Section, bool) { ++headerCalls; }
   template <typename Rx>
   void body(Rx &rx) {
@@ -1746,6 +1757,20 @@ void testBuilderQueryPath()
 	if (h.name == ":path" && h.value == "/sample?q=1") sawPath = true;
       }) == int(payload.length()) && sawPath,
     "builder query path did not decode as a segmented :path value");
+
+  BuilderState custom;
+  custom.customTarget = true;
+  CaptureTxStream customStream;
+  custom.request(customStream);
+  ZuCHECK(headersPayload(customStream.bytes, payload),
+    "custom printable target did not emit a valid HEADERS frame");
+  sawPath = false;
+  ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
+      payload,
+      [&sawPath](Zhttp::H3::Header h) {
+	if (h.name == ":path" && h.value == "/printable?") sawPath = true;
+      }) == int(payload.length()) && sawPath,
+    "custom printable target did not survive QPACK count/encode");
 }
 
 void testBuilderExtendedConnect()

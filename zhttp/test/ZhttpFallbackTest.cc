@@ -81,10 +81,11 @@ struct RequestRx :
   using Base =
     Zhttp::H1::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody>;
 
-  void operation(Zhttp::Method::T method_, ZuCSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
     path.length(0);
-    path << path_;
+    path << ZuCSpan{target.raw};
   }
 
   template <typename Key>
@@ -119,15 +120,20 @@ struct ResponseRx :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H1::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true> {
+  public Zhttp::H1::ResponseBuilder<
+    ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   using Base =
-    Zhttp::H1::Builder<ResponseBuilder, ZuTypeList<>, ZuTypeList<>, true>;
+    Zhttp::H1::ResponseBuilder<
+      ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true>;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
 
   unsigned status() { return 200; }
   template <typename L> void reason(L &&l) { l("OK"); }
-  uint64_t contentLength() { return contentLength_; }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    if constexpr (Key{}() == "content-length") l(contentLength_);
+  }
 
   uint64_t contentLength_;
 };
@@ -135,11 +141,12 @@ struct ResponseBuilder :
 using RequestBuilderHeaders =
   ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
 struct RequestBuilder :
-  public Zhttp::H1::Builder<RequestBuilder, RequestBuilderHeaders> {
-  using Base = Zhttp::H1::Builder<RequestBuilder, RequestBuilderHeaders>;
+  public Zhttp::H1::RequestBuilder<RequestBuilder, RequestBuilderHeaders> {
+  using Base =
+    Zhttp::H1::RequestBuilder<RequestBuilder, RequestBuilderHeaders>;
 
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback", ""); }
+  void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback"); }
   template <typename L>
   void host(L &&l) { l("localhost"); }
 };

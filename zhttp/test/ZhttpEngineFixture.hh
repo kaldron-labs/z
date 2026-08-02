@@ -173,7 +173,7 @@ struct ServerLink :
 
 template <typename Profile>
 struct Client :
-  public Zhttp::Client<Client<Profile>, Profile> {
+  public Zhttp::ClientEngine<Client<Profile>, Profile> {
   struct Link :
     public Zhttp::ClientLink<Client, Link, Profile> {
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
@@ -210,7 +210,7 @@ struct Client :
 };
 
 struct FailClient :
-  public Zhttp::Client<FailClient, Zhttp::H1TLS> {
+  public Zhttp::ClientEngine<FailClient, Zhttp::H1TLS> {
   struct Link :
     public Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS> {
     using Base = Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS>;
@@ -259,9 +259,10 @@ struct UpgradeReq :
   using State = Zhttp::H1::ParserState;
   using Base::header;
 
-  void operation(Zhttp::Method::T method_, ZuBSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
-    path = path_ == "/stream";
+    path = target.raw == "/stream";
   }
   void header(ZuBSpan key, ZuBSpan value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
@@ -384,7 +385,7 @@ struct UpgradeSrvLink :
 
 template <typename Profile>
 struct UpgradeClient :
-  public Zhttp::Client<UpgradeClient<Profile>, Profile> {
+  public Zhttp::ClientEngine<UpgradeClient<Profile>, Profile> {
   struct Link :
     public Zhttp::ClientLink<UpgradeClient, Link, Profile> {
     using Base = Zhttp::ClientLink<UpgradeClient, Link, Profile>;

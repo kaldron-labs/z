@@ -49,49 +49,73 @@ disables HTTP/3 probing. `-2 force|prefer|disable` /
 WebTransport, DATAGRAM, and QUIC v2 discovery remain out of scope for this
 resolver path.
 
+URL syntax is centralized in `ZhttpURL.hh`. `URL` is a borrowed view over a
+mutable input span and normalizes DNS host names in place; `URLStorage` is the
+explicit owning form, with `assign()` for copying immutable input and `adopt()`
+for transferring an existing `URLString`. `RequestTarget` represents the four
+HTTP request-target forms and preserves path/query structure without reparsing.
+Alt-Svc parsing, formatting, and cache policy are separate in
+`ZhttpAltSvc.hh`.
+
 `libZhttp` is the HTTP integration layer over `libZtcp`, `libZtls`, and
 `libZquic`.  Applications configure TCP, TLS, and QUIC with public `Zhttp`
 configuration types; HTTP ALPN and mandatory H3 transport defaults are
 library-owned.  Native transport traits remain private implementation detail.
-For complete HTTP applications, `Zhttp::Agent` owns client routing,
+For complete HTTP applications, `Zhttp::Client` owns client routing,
 discovery, pools, retries, redirects, fallback, and engine lifecycle, while
 `Zhttp::Service` owns server listeners, admission, sessions, message
 selection, and engine lifecycle. Applications provide protocol configuration
-and one protocol-neutral callback contract:
+and message-typed application contracts:
 
 ```c++
+struct RequestBuilder {
+  using Headers = RequestHeaders;
+  using BodyPolicy = Zhttp::Body::OptionalFixed;
+  template <typename L> void operation(L &&);
+  template <typename L> void host(L &&);
+  template <typename Key, typename L> void header(L &&);
+  template <typename L> void header(L &&);
+  template <typename Emit> void body(Emit &&);
+  template <typename L> void bodyHdrs(L &&);
+};
+
+struct ResponseParser {
+  using Headers = ResponseHeaders;
+  static constexpr uint64_t BodyMax = ResponseBodyMax;
+  void status(unsigned);
+  template <typename Key> void header(ZuBSpan);
+  template <typename Rx> void body(Rx &);
+  template <typename State> void complete(State);
+};
+
 struct ClientApp :
-  Zhttp::Agent<
-    ClientApp, Request, RequestHeaders, ResponseHeaders, ResponseBodyMax,
-    Zhttp::Body::Fixed<BodyCursor>> {
-  uint64_t requestContentLength(const Request &) const;
-  BodyCursor requestBodyCursor(Request &);
-  template <typename Tx>
-  int requestBody(Request &, BodyCursor &, Tx &, unsigned batch);
-  template <typename Rx>
-  void responseBody(Request &, Rx &);
+  Zhttp::Client<ClientApp, Request, RequestBuilder, ResponseParser> {
+  RequestBuilder requestBuilder(const Request &, const Zhttp::URL &);
+  ResponseParser responseParser(Request &);
 };
 
 ClientApp client;
 client.init(
   Zhttp::EngineConfig{&mx, "rx", "tx"},
-  Zhttp::AgentConfig{}
+  Zhttp::ClientConfig{}
     .protocol(Zhttp::ProtocolPolicy::PreferH3)
-    .h2Policy(Zhttp::H2Policy::Prefer),
+    .h2Policy(Zhttp::H2Policy::Prefer)
+    .retainedBodyMax(uint32_t(-1))
+    .retainedMessageMax(uint32_t(-1)),
   Zhttp::TCPConfig{},
   Zhttp::H2Config{}.caPath(ca),
   Zhttp::QUICConfig{}.caPath(ca));
 client.start();
 client.submit(requests, requestCount);
-// requestBody() runs on Tx; responseBody() runs synchronously on Rx.
+// RequestBuilder::body() runs synchronously on Tx;
+// ResponseParser::body() runs synchronously on Rx.
 client.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 client.final();
 ```
 
 ```c++
-using Service = Zhttp::Service<
-  Workload, RequestHeaders, ResponseHeaders, RequestBodyMax>;
+using Service = Zhttp::Service<Workload>;
 
 Workload workload;
 Service service;
@@ -106,48 +130,60 @@ service.init(
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
   &workload);
 service.start();
-// Workload::RequestState is owned by one logical request.  requestBody()
-// receives (RequestInfo, RequestState, Rx) before request() constructs the
-// response from the completed state.
+// Workload::RequestParser is owned by one logical request. Its body(Rx &)
+// consumes request input; response(parser, emit) calls
+// emit(responseBuilder, completionToken). The Builder and token are moved to
+// Tx independently; complete(requestInfo, token, sent) returns the token to Rx.
 // disconnected(transport) observes admission release on the owning Rx shard.
 service.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 service.final();
 ```
 
-`Body::None` is allocation-free. `Body::Fixed<Cursor>` derives
-`content-length`; `Body::Stream<Cursor>` selects H1 chunked transfer and
-H2/H3 DATA without a content length. Each retry creates a fresh cursor.
-Body-bearing requests are non-replayable by default; applications must opt in
-only when they can reproduce the source from byte zero. A fixed producer
-writes entity bytes directly to its concrete `ZiTxStream`:
+`Body::None` is allocation-free. `Body::Fixed` and `Body::OptionalFixed`
+retain the complete message while `bodyHdrs()` patches body-dependent header
+values. `ClientConfig` and `ServiceConfig` bound retained entity and complete
+message sizes with `retainedBodyMax()` and `retainedMessageMax()`; the fixed
+entity limit is additionally capped at `UINT_MAX`. `Body::Stream` and
+`Body::OptionalStream` release buffers as they
+fill; H1 maps them to chunked transfer encoding and H2/H3 map them to DATA and
+their native final boundary. Each retry creates a fresh Builder. Body-bearing
+requests are non-replayable by default; applications opt in only when the
+Builder can reproduce the source from byte zero.
 
 ```c++
-template <typename Tx>
-int requestBody(
-  Request &request, Cursor &cursor, Tx &tx, unsigned batch) {
-  return produce(request, cursor, tx, batch); // no HTTP framing here
+template <typename Emit>
+void body(Emit &&emit) {
+  emit([this](auto &body) {
+    ZfJSON::save(body, record); // concrete layered ZiTxStream
+    contentLength = body.produced();
+  });
+}
+
+template <typename L>
+void bodyHdrs(L &&l) {
+  l.template operator()<ZuStringT<"content-length">>(
+    [n = contentLength](ZuSpan<uint8_t> span) {
+      ZuStream<uint8_t> s = span;
+      s << ZuBoxed(n).fmt<ZuFmt::Right<10>>();
+    });
 }
 
 template <typename Rx>
-void responseBody(Request &, Rx &rx) {
+void body(Rx &rx) {
   Zhttp::bodyEach(rx, [](ZuBSpan bytes) {
     consume(bytes);                    // span is callback-scoped
   });
 }
 ```
 
-The same producer shape implements a non-replayable streaming POST by selecting
-`Body::Stream<Cursor>`, returning `BodyProduce::More` while input remains, and
-leaving the default `requestReplayable()` and `requestReproducible()` false.
-The `batch` argument bounds one scheduler turn only. It is not transport credit:
-H1 has no flow control, H2 flow control remains in Zhttp's H2 layer, and QUIC
-flow control remains in Zquic.
-
-The same bounded `ZiRxStream` contract is used by
-`Workload::requestBody()`. The callback must consume or copy all offered
-input before returning. Headers precede body input, validated body completion
-precedes the exact-once terminal result, and no callback follows that result.
+The body emitter, writer, and late-header patchers are synchronous and
+callback-scoped. Incremental output comes from `ZiTxStream` buffer rollover,
+not a cursor or scheduler batch. A streamed file writer may read and write
+many spans inside its one call. The same bounded `ZiRxStream` contract is used
+by the server request Parser. It must consume or copy all offered input before
+returning. Headers precede body input, validated body completion precedes the
+exact-once terminal result, and no callback follows that result.
 `Result` reports request bytes produced, committed, reset, and discarded plus
 response bytes received, consumed, reset, and discarded. `RequestInfo`
 reports server-side request bytes received, consumed, reset, and discarded.
@@ -200,12 +236,12 @@ protocol-independent:
 
 ```c++
 template <typename Profile>
-struct Client : Zhttp::Client<Client<Profile>, Profile> {
+struct Client : Zhttp::ClientEngine<Client<Profile>, Profile> {
   struct RequestBuilder :
-    Zhttp::MessageTraits<Profile>::template Builder<
+    Zhttp::MessageTraits<Profile>::template RequestBuilder<
       RequestBuilder, ZuTypeList<>, ZuTypeList<>, false, false> {
     template <typename L>
-    void operation(L &&l) { l(Zhttp::Method::GET, "/", ""); }
+    void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
     template <typename L>
     void host(L &&l) { l("127.0.0.1"); }
   };
@@ -231,7 +267,7 @@ struct Client : Zhttp::Client<Client<Profile>, Profile> {
 Servers use the corresponding `Zhttp::Server`, `Zhttp::ServerLink`, and
 `Zhttp::ServerSession` templates. Profiles such as `H1TCP`, `H1TLS`, `H2TLS`,
 and `H3QUIC` instantiate the same connection/message contract; only
-initialization configuration differs. The high-level `Agent` and `Service`
+initialization configuration differs. The high-level `Client` and `Service`
 normally own these engines:
 
 ```c++

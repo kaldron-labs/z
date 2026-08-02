@@ -364,19 +364,19 @@ struct LogSink {
   bool init(const Options &) { return true; }
   void final() { }
   void write(const RequestData &req, const ResponsePlan &resp, ZuCSpan remote) {
-    auto target = escaped(req.target);
+    auto target = escapedTarget(req);
     auto referer = escaped(req.referer);
-    auto agent = escaped(req.userAgent);
+    auto userAgent = escaped(req.userAgent);
     auto date = logDate();
     ZiLOG(Info, "zhttpd.access", ([
       remote = ZeString{remote}, date = ZuMv(date), target = ZuMv(target),
-      referer = ZuMv(referer), agent = ZuMv(agent), status = resp.status,
+      referer = ZuMv(referer), userAgent = ZuMv(userAgent), status = resp.status,
       length = resp.contentLength
     ](auto &s) mutable {
       s << remote << " - - [" << date << "] \"" << target << "\" " <<
 	status << ' ' << length << " \"" <<
 	(referer ? ZuCSpan{referer} : ZuCSpan{"-"}) << "\" \"" <<
-	(agent ? ZuCSpan{agent} : ZuCSpan{"-"}) << '"';
+	(userAgent ? ZuCSpan{userAgent} : ZuCSpan{"-"}) << '"';
     }));
   }
 
@@ -390,6 +390,15 @@ struct LogSink {
       else out << c;
     }
     return out;
+  }
+
+  static ZeString escapedTarget(const RequestData &req) {
+    if (req.target) return escaped(req.target);
+    ZeString value;
+    value << "protocol=" << req.protocol << " authority=" << req.authority <<
+	" path=" << req.path();
+    if (req.hasQuery) value << '?' << req.query();
+    return escaped(value);
   }
   static ZeString logDate() {
     auto buf = ZmScratch(char, DateBufSize, HdrString::VHeap);
@@ -447,16 +456,6 @@ inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
   out = timegm(&tm_);
 #endif
   return out != time_t(-1);
-}
-
-inline void splitTarget(ZuCSpan target, ZuCSpan &path, ZuCSpan &query) {
-  int64_t q = target.find([](auto c) { return c == '?'; });
-  path = q < 0 ? target : ZuCSpan{target.data(), unsigned(q)};
-  if (q < 0)
-    query = {};
-  else
-    query = {target.data() + q + 1,
-      target.length() - unsigned(q) - 1};
 }
 
 inline ZuCSpan pathComponent(ZuCSpan path, unsigned &offset)
@@ -586,6 +585,15 @@ struct StaticPlanner {
       resp.connection = "close";
     }
 
+    switch (req.form) {
+      case Zhttp::TargetForm::Origin:
+      case Zhttp::TargetForm::Absolute:
+	break;
+      default:
+	return error(resp, 400, "Bad Request", "Unsupported request target",
+	  req.method);
+    }
+
     if (state->options.forwardAll)
       return redirect(req, state->options.forwardAll, resp);
     auto host = ZmScratch(
@@ -596,9 +604,11 @@ struct StaticPlanner {
 	return redirect(req, state->options.forwards[i].url, resp);
     if (state->options.forwardHttps && !req.secure) {
       auto url = ZmScratch(char,
-        unsigned(req.host.length() + req.target.length()) + 9,
+	unsigned(req.host.length() + req.path().length() +
+	  req.query().length()) + 10,
         HdrString::VHeap);
-      url << "https://" << req.host << req.target;
+      url << "https://" << req.host << req.path();
+      if (req.hasQuery) url << '?' << req.query();
       return redirect(req, url, resp, false);
     }
 
@@ -632,8 +642,8 @@ struct StaticPlanner {
       return resp;
     }
 
-    ZuCSpan path, query;
-    splitTarget(req.target, path, query);
+    ZuCSpan path{req.path()};
+    ZuCSpan query{req.query()};
     auto clean = ZmScratch(
       char, unsigned(path.length()) + 2, HdrString::VHeap);
     ZuCSpan err;
@@ -653,7 +663,10 @@ struct StaticPlanner {
     resp.status = 301;
     resp.reason = "Moved Permanently";
     resp.location = base;
-    if (appendTarget) resp.location << req.target;
+    if (appendTarget) {
+      resp.location << req.path();
+      if (req.hasQuery) resp.location << '?' << req.query();
+    }
     resp.contentType = "text/plain";
     resp.body = "Moved Permanently\n";
     resp.contentLength = resp.body.length();

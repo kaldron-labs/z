@@ -112,9 +112,9 @@ struct BodyLink : public LinkTx<Profile::HTTPVersion> {
 
 template <typename Message>
 struct BodyBuilder :
-  public Message::template Builder<
+  public Message::template RequestBuilder<
     BodyBuilder<Message>, ZuTypeList<>, ZuTypeList<>, true, false> {
-  using Base = typename Message::template Builder<
+  using Base = typename Message::template RequestBuilder<
     BodyBuilder, ZuTypeList<>, ZuTypeList<>, true, false>;
   using Base::body;
   uint64_t contentLength() const { return 1; }
@@ -264,84 +264,6 @@ using Dispatch = Zhttp::StreamDispatch<StreamLink, StreamConsumer>;
 static_assert(sizeof(LogicalStream) == sizeof(void *));
 static_assert(sizeof(Dispatch) == sizeof(void *) * 2);
 
-struct TxRequest {
-  ZuCSpan	body;
-  uint64_t	length = 0;
-  bool		hasBody = false;
-  bool		overproduce = false;
-};
-
-struct TxCursor {
-  unsigned	offset = 0;
-  unsigned	id = 0;
-};
-
-struct TxApp {
-  using BodyPolicy = Zhttp::Body::OptionalFixed<TxCursor>;
-
-  bool requestHasBody(const TxRequest &request) const {
-    return request.hasBody;
-  }
-  uint64_t requestContentLength(const TxRequest &request) const {
-    return request.length;
-  }
-  TxCursor requestBodyCursor(TxRequest &) {
-    return {0, ++cursorCalls};
-  }
-  unsigned requestBodyBatch() const { return 3; }
-  template <typename Tx_>
-  int requestBody(
-    TxRequest &request, TxCursor &cursor, Tx_ &tx, unsigned batch) {
-    ++producerCalls;
-    if (cursor.id != activeCursor) {
-      activeCursor = cursor.id;
-      ++cursorStarts;
-    }
-    unsigned remaining = request.body.length() - cursor.offset;
-    unsigned n = remaining > batch ? batch : remaining;
-    if (request.overproduce && remaining > n) ++n;
-    tx << ZuCSpan{request.body.data() + cursor.offset, n};
-    cursor.offset += n;
-    return cursor.offset == request.body.length() ?
-      Zhttp::BodyProduce::Done : Zhttp::BodyProduce::More;
-  }
-  template <typename L>
-  void requestOperation(TxRequest &, L &&l) {
-    l(Zhttp::Method::PUT, "/", "");
-  }
-  template <typename L>
-  void requestHost(TxRequest &, L &&l) { l("localhost"); }
-  template <typename L>
-  void requestProtocol(TxRequest &, L &&) { }
-  template <typename Key, typename L>
-  void requestHeader(TxRequest &, L &&l) { l(""); }
-
-  void responseStatus(auto &, TxRequest &, unsigned) { }
-  void responseContentLength(auto &, TxRequest &, uint64_t) { }
-  void responseChunked(auto &, TxRequest &) { }
-  void responseVersion(auto &, TxRequest &, ZuBSpan) { }
-  template <typename Key>
-  void responseHeader(auto &, TxRequest &, ZuBSpan) { }
-  void responseBody(auto &, TxRequest &, auto &) { }
-  template <typename State>
-  void responseComplete(auto &, TxRequest &, typename State::T) { }
-  bool responseFailed(const TxRequest &) const { return false; }
-
-  unsigned	cursorCalls = 0;
-  unsigned	producerCalls = 0;
-  unsigned	cursorStarts = 0;
-  unsigned	activeCursor = 0;
-};
-
-struct StreamTxApp : public TxApp {
-  using BodyPolicy = Zhttp::Body::OptionalStream<TxCursor>;
-
-  template <typename L>
-  void requestOperation(TxRequest &, L &&l) {
-    l(Zhttp::Method::POST, "/stream", "");
-  }
-};
-
 struct TxLink {
   struct Stream : public ZiTxStream<Stream> {
     using Base = ZiTxStream<Stream>;
@@ -370,118 +292,270 @@ struct TxLink {
   unsigned	finishes = 0;
 };
 
+struct H2Native {
+  using Tx = TxLink::Stream;
+
+  Tx txStream() { return Tx{link}; }
+  unsigned dataMaxSize(uint32_t) const { return 64; }
+  bool peerExtendedConnect() const { return false; }
+  bool localExtendedConnect() const { return false; }
+  void sendHeaders(
+    uint32_t, Zhttp::H2_::HeaderFrames frames, bool) {
+    ++headers;
+    headerFrames += frames.length();
+  }
+  void sendFrame(uint32_t, ZmRef<ZiIOBuf>) { ++headerFrames; }
+  void sendData(uint32_t, ZmRef<ZiIOBuf>) { ++data; }
+  void endData(uint32_t) { ++ends; }
+
+  TxLink	link;
+  unsigned headers = 0;
+  unsigned headerFrames = 0;
+  unsigned data = 0;
+  unsigned ends = 0;
+};
+
+struct CustomValue : public ZuPrintable {
+  template <typename S>
+  void print(S &s) const { s << "custom"; }
+
+  friend ZuPrintFn ZuPrintType(CustomValue *);
+};
+
+struct CustomTarget : public ZuPrintable {
+  template <typename S>
+  void print(S &s) const { s << "/printable?"; }
+
+  friend ZuPrintFn ZuPrintType(CustomTarget *);
+};
+
+using TxHeaders = ZuTypeList<ZuStringT<"x-custom">, void>;
+using ContentLength = ZuStringT<"content-length">;
+using FixedHeaders = ZuTypeList<ContentLength, void>;
+
+struct TxBuilder :
+  public Zhttp::H1::RequestBuilder<
+    TxBuilder, TxHeaders, ZuTypeList<>, true, true> {
+  template <typename L>
+  void operation(L &&l) { l(Zhttp::Method::POST, CustomTarget{}); }
+  template <typename L>
+  void host(L &&l) { l("localhost"); }
+  template <typename Key, typename L>
+  void header(L &&l) { l(CustomValue{}); }
+  template <typename L>
+  void header(L &&l) { l("x-runtime", CustomValue{}); }
+};
+
+struct FixedTxBuilder :
+  public Zhttp::H1::RequestBuilder<
+    FixedTxBuilder, FixedHeaders, ZuTypeList<>, true, false> {
+  template <typename L>
+  void operation(L &&l) { l(Zhttp::Method::PUT, "/fixed-edge"); }
+  template <typename L>
+  void host(L &&l) { l("localhost"); }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    patches.template header<true, Key>(app, ZuFwd<L>(l));
+  }
+  template <typename L> void header(L &&) { }
+
+  struct App {
+    template <typename Key, typename L>
+    void header(L &&l) {
+      ++providers;
+      l(Zhttp::HeaderPad{10, '0'});
+    }
+
+    unsigned providers = 0;
+  } app;
+
+  Zhttp::HeaderPatches<FixedHeaders> patches;
+};
+
+struct DuplicateHeaderApp {
+  template <typename Key, typename L>
+  void header(L &&l) {
+    l("one");
+    l("two");
+  }
+};
+
+template <typename T, typename = void>
+struct HasRequestStart : public ZuFalse { };
+template <typename T>
+struct HasRequestStart<T, decltype(
+  ZuDeclVal<T &>().request(ZuDeclVal<TxLink::Stream &>()), void())> :
+  public ZuTrue { };
+
+template <typename T, typename = void>
+struct HasResponseStart : public ZuFalse { };
+template <typename T>
+struct HasResponseStart<T, decltype(
+  ZuDeclVal<T &>().response(ZuDeclVal<TxLink::Stream &>()), void())> :
+  public ZuTrue { };
+
+using ReqFacade = Zhttp::H1::RequestBuilder<
+  TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
+using RespFacade = Zhttp::H1::ResponseBuilder<
+  TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
+static_assert(HasRequestStart<ReqFacade>{});
+static_assert(!HasResponseStart<ReqFacade>{});
+static_assert(!HasRequestStart<RespFacade>{});
+static_assert(HasResponseStart<RespFacade>{});
+
 void testBodyTx()
 {
   ZuTestScope(testBodyTx);
-
-  using Message = Zhttp::ClientMessage<
-    TxApp, TxRequest, TxLink, Zhttp::H1TCP,
-    ZuTypeList<>, ZuTypeList<>, 1024>;
-
-  TxApp app;
   TxLink link;
-  Message message{&app, &link};
-  TxRequest request{"abcdefgh", 8, true};
-  message.bind(&request);
-  message.startTx();
-  ZuCHECK(message.send() == Zhttp::BodySend::More,
-    "first bounded body turn did not suspend");
-  ZuCHECK(message.send() == Zhttp::BodySend::More,
-    "second bounded body turn did not suspend");
-  ZuCHECK(message.send() == Zhttp::BodySend::Complete,
-    "final bounded body turn did not complete");
-  auto commit = message.commit();
-  ZuCHECK(app.cursorCalls == 1 && app.producerCalls == 3 &&
-      commit.headers && commit.produced == 8 && commit.committed == 8 &&
-      !commit.reset && !commit.discarded && commit.final &&
-      link.finishes == 1,
-    "bounded body accounting mismatch");
-  ZuCHECK(link.wire.find("content-length: 8\r\n") >= 0 &&
-      link.wire.find("abcdefgh") >= 0,
-    "bounded body wire output mismatch");
+  TxBuilder builder;
+  auto tx = link.transmit(builder);
+  ZuCHECK(builder.request(tx), "request header construction failed");
+  auto body = builder.body(tx);
+  body << "abcdefgh";
+  body.flush();
+  builder.finish(tx);
+  link.finish();
+  ZuCHECK(body.produced() == 8 && link.finishes == 1,
+    "synchronous body accounting mismatch");
+  ZuCHECK(link.wire.find("POST /printable? HTTP/1.1\r\n") >= 0,
+    "request line mismatch");
+  ZuCHECK(link.wire.find("transfer-encoding: chunked\r\n") >= 0,
+    "streaming request is not chunked");
+  ZuCHECK(link.wire.find("x-custom: custom\r\n") >= 0,
+    "typed custom header mismatch");
+  ZuCHECK(link.wire.find("x-runtime: custom\r\n") >= 0,
+    "runtime custom header mismatch");
+  ZuCHECK(link.wire.find("abcdefgh") >= 0,
+    "body payload mismatch");
+  ZuCHECK(link.wire.find("0\r\n") >= 0,
+    "chunk terminator mismatch");
+}
 
-  unsigned wireLength = link.wire.length();
-  message.bind(&request);
-  message.startTx();
-  while (message.send() == Zhttp::BodySend::More);
-  ZuCSpan replay{
-    link.wire.data() + wireLength, link.wire.length() - wireLength};
-  ZuCHECK(app.cursorCalls == 2 && app.cursorStarts == 2 &&
-      replay.find("abcdefgh") >= 0,
-    "replayed attempt did not create a fresh byte-zero cursor");
+void testFixedPatch()
+{
+  ZuTestScope(testFixedPatch);
+  TxLink link;
+  FixedTxBuilder builder;
+  auto native = link.transmit(builder);
+  Zhttp::RetainedBudget budget{.max = 4096};
+  Zhttp::RetainedTx headerTx{native, budget};
+  Zhttp::RetainedTx bodyTx{native, budget};
 
-  wireLength = link.wire.length();
-  unsigned producerCalls = app.producerCalls;
-  TxRequest empty{{}, 0, false};
-  message.bind(&empty);
-  message.startTx();
-  ZuCHECK(message.send() == Zhttp::BodySend::Complete &&
-      app.cursorCalls == 2 && app.producerCalls == producerCalls,
-    "optional bodyless path created a cursor or producer turn");
-  ZuCSpan bodyless{
-    link.wire.data() + wireLength, link.wire.length() - wireLength};
-  ZuCHECK(bodyless.find("content-length:") < 0,
-    "bodyless request emitted body framing");
+  ZuCHECK(builder.patches.provision(builder.app),
+    "fixed header provisioning failed");
+  ZuCHECK(builder.request(headerTx), "fixed request rendering failed");
+  auto body = builder.body(bodyTx, 200);
+  for (unsigned i = 0; i < 200; ++i) body << 'x';
+  body.flush();
+  ZuCHECK(body.valid() && body.produced() == 200,
+    "fixed body accounting mismatch");
 
-  TxRequest short_{"abcdefgh", 9, true};
-  message.bind(&short_);
-  message.startTx();
-  ZuCHECK(message.send() == Zhttp::BodySend::More &&
-      message.send() == Zhttp::BodySend::More &&
-      message.send() == Zhttp::BodySend::Failed &&
-      message.commit().produced == 8 &&
-      message.commit().committed == 8 &&
-      message.commit().reset == 8 &&
-      message.commit().discarded == 1 &&
-      !message.commit().final,
-    "short fixed source was not rejected");
+  ZuSpan<uint8_t> patched;
+  ZuCHECK(builder.patches.template patch<ContentLength>(
+      [&patched](ZuSpan<uint8_t> span) {
+	patched = span;
+	ZuStream out{span};
+	out << ZuBoxed(200).fmt<ZuFmt::Right<10>>();
+      }) && builder.patches.validate(body.produced()),
+    "fixed content-length patch failed");
+  builder.finish(bodyTx);
+  ZuCHECK(headerTx.seal() && bodyTx.seal(),
+    "retained fixed message sealing failed");
+  ZuCHECK(!link.wire && builder.app.providers == 1 &&
+      patched.length() == 10,
+    "fixed message escaped before one-pass in-place patching");
+  headerTx.commit();
+  bodyTx.commit();
+  link.finish();
+  ZuCHECK(link.wire.find("content-length: 0000000200\r\n") >= 0,
+    "fixed-width H1 content-length mismatch");
+  ZuCSpan rest{link.wire};
+  int first = rest.find("content-length:");
+  rest.offset(unsigned(first + 1));
+  ZuCHECK(first >= 0 && rest.find("content-length:") < 0,
+    "fixed H1 field was rendered more than once");
+}
 
-  TxRequest over{"abcdefgh", 8, true, true};
-  message.bind(&over);
-  message.startTx();
-  ZuCHECK(message.send() == Zhttp::BodySend::Failed &&
-      message.commit().produced == 4 &&
-      message.commit().committed == 4 &&
-      message.commit().reset == 4 &&
-      message.commit().discarded == 4 &&
-      !message.commit().final,
-    "over-budget producer was not rejected");
+void testH2DeferredState()
+{
+  ZuTestScope(testH2DeferredState);
+  Zhttp::H2::HPackEncoder encoder;
+  ZuCHECK(encoder.init(4096), "HPACK encoder initialization failed");
+  uint64_t before = encoder.table().insertCount();
+  {
+    H2Native native;
+    Zhttp::H2_::HeaderBlock block{native, encoder, 1, 64};
+    block.defer(1);
+    block.beginHeaders(true);
+    block.field("x-deferred", "discarded");
+    block.endHeaders(true);
+    ZuCHECK(!block.valid() && !native.headers,
+      "oversized deferred H2 headers became visible");
+  }
+  ZuCHECK(encoder.table().insertCount() == before,
+    "discarded H2 message mutated HPACK state");
+  {
+    H2Native native;
+    Zhttp::H2_::HeaderBlock block{native, encoder, 3, 64};
+    block.defer(4096);
+    block.beginHeaders(true);
+    block.field(":path", CustomTarget{});
+    block.field("x-deferred", "committed");
+    block.endHeaders(true);
+    ZuCHECK(block.valid() && !native.headers,
+      "deferred H2 headers escaped before commit");
+    block.commit();
+    ZuCHECK(native.headers == 1 && native.headerFrames,
+      "deferred H2 headers did not commit");
+  }
+  ZuCHECK(encoder.table().insertCount() == before + 1,
+    "committed H2 message did not publish HPACK state");
+  encoder.final();
+}
 
-  request = {"abcdefgh", 8, true};
-  message.bind(&request);
-  message.startTx();
-  ZuCHECK(message.send() == Zhttp::BodySend::More,
-    "cancellation setup turn failed");
-  unsigned calls = app.producerCalls;
-  message.cancelTx();
-  ZuCHECK(message.send() == Zhttp::BodySend::Cancelled &&
-      app.producerCalls == calls &&
-      message.commit().produced == 3 &&
-      message.commit().committed == 3 &&
-      message.commit().reset == 3 &&
-      message.commit().discarded == 5,
-    "cancelled request invoked its producer again");
+void testHeaderAndRetainedLimits()
+{
+  ZuTestScope(testHeaderAndRetainedLimits);
+  ZuCHECK(!Zhttp::validRuntimeHeader<FixedHeaders>(
+      "CONTENT-LENGTH", false) &&
+      !Zhttp::validRuntimeHeader<FixedHeaders>(
+      "Content-Length", true) &&
+      !Zhttp::validRuntimeHeader<ZuTypeList<>>(
+      "Transfer-Encoding", true),
+    "runtime framing-header validation is not case-insensitive");
 
-  using StreamMessage = Zhttp::ClientMessage<
-    StreamTxApp, TxRequest, TxLink, Zhttp::H1TCP,
-    ZuTypeList<>, ZuTypeList<>, 1024>;
-  StreamTxApp streamApp;
-  TxLink streamLink;
-  StreamMessage streamMessage{&streamApp, &streamLink};
-  TxRequest streamRequest{"abcdefgh", 0, true};
-  streamMessage.bind(&streamRequest);
-  streamMessage.startTx();
-  ZuCHECK(streamMessage.send() == Zhttp::BodySend::More &&
-      streamMessage.send() == Zhttp::BodySend::More &&
-      streamMessage.send() == Zhttp::BodySend::Complete,
-    "streaming POST did not use bounded producer turns");
-  ZuCHECK(
-    streamLink.wire.find("POST /stream HTTP/1.1\r\n") >= 0 &&
-    streamLink.wire.find("transfer-encoding: chunked\r\n") >= 0 &&
-    streamLink.wire.find(
-      "00000003\r\nabc\r\n00000003\r\ndef\r\n"
-      "00000002\r\ngh\r\n0\r\n\r\n") >= 0,
-    "streaming POST chunk framing mismatch");
+  DuplicateHeaderApp duplicate;
+  Zhttp::HeaderPatches<FixedHeaders> patches;
+  unsigned values = 0;
+  patches.template header<false, ContentLength>(
+    duplicate, [&values](auto &&) { ++values; });
+  ZuCHECK(values == 1 && !patches.valid(),
+    "duplicate typed header provider was accepted");
+
+  TxLink link;
+  FixedTxBuilder builder;
+  auto native = link.transmit(builder);
+  Zhttp::RetainedBudget budget{.max = 4096};
+  Zhttp::RetainedTx headerTx{native, budget};
+  Zhttp::RetainedTx bodyTx{native, budget};
+  ZuCHECK(builder.patches.provision(builder.app) &&
+      builder.request(headerTx),
+    "limited fixed request setup failed");
+  auto body = builder.body(bodyTx, 5);
+  body << "123456";
+  body.flush();
+  ZuCHECK(!body.valid() && body.produced() == 5 && !link.wire,
+    "fixed entity crossed its configured cap or became visible");
+
+  TxLink messageLink;
+  FixedTxBuilder messageBuilder;
+  auto messageNative = messageLink.transmit(messageBuilder);
+  Zhttp::RetainedBudget messageBudget{.max = 8};
+  Zhttp::RetainedTx messageTx{messageNative, messageBudget};
+  ZuCHECK(messageBuilder.patches.provision(messageBuilder.app) &&
+      messageBuilder.request(messageTx) && !messageTx.seal() &&
+      !messageLink.wire,
+    "retained-message cap exposed a partial header block");
 }
 
 void testTraits()
@@ -550,12 +624,9 @@ void testParams()
       tlsSrv.alpn()[0] == "http/1.1",
     "TLS server defaults mismatch");
 
-  Zhttp::H2Config force;
-  force.policy(Zhttp::H2Policy::Force);
-  Zhttp::H2Config prefer;
-  prefer.policy(Zhttp::H2Policy::Prefer);
-  Zhttp::H2Config disable;
-  disable.policy(Zhttp::H2Policy::Disable);
+  auto force = Zhttp::H2Config().policy(Zhttp::H2Policy::Force);
+  auto prefer = Zhttp::H2Config().policy(Zhttp::H2Policy::Prefer);
+  auto disable = Zhttp::H2Config().policy(Zhttp::H2Policy::Disable);
   auto forceCli = Zhttp::TLS_::clientParams(engine, force);
   auto preferSrv = Zhttp::TLS_::serverParams(engine, prefer);
   auto disableCli = Zhttp::TLS_::clientParams(engine, disable);
@@ -636,23 +707,21 @@ void testParams()
   Zhttp::DiscoveryLimits limits{
     .maxRecords = 3, .maxHints = 5,
     .maxEndpoints = 7, .maxAliasDepth = 2};
-  auto agent = Zhttp::AgentConfig{}
+  auto client = Zhttp::ClientConfig{}
     .requestTimeout(13).maxAltSvc(11)
-    .bodyTxBatch(4096)
+    .retainedBodyMax(17).retainedMessageMax(23)
     .discoveryLimits(limits).altSvcCrossHost(true)
     .h2Policy(Zhttp::H2Policy::Disable);
-  ZuCHECK(agent.requestTimeout() == 13 &&
-      agent.maxAltSvc() == 11 && agent.altSvcCrossHost() &&
-      agent.bodyTxBatch() == 4096 &&
-      agent.h2Policy() == Zhttp::H2Policy::Disable &&
-      agent.discoveryLimits().maxRecords == 3 &&
-      agent.discoveryLimits().maxHints == 5 &&
-      agent.discoveryLimits().maxEndpoints == 7 &&
-      agent.discoveryLimits().maxAliasDepth == 2,
-    "agent discovery bounds mapping mismatch");
-  ZuCHECK(
-    Zhttp::AgentConfig{}.bodyTxBatch() == Zhttp::BodyDeflt::TxBatch,
-    "body stream policy defaults mismatch");
+  ZuCHECK(client.requestTimeout() == 13 &&
+      client.maxAltSvc() == 11 && client.altSvcCrossHost() &&
+      client.retainedBodyMax() == 17 &&
+      client.retainedMessageMax() == 23 &&
+      client.h2Policy() == Zhttp::H2Policy::Disable &&
+      client.discoveryLimits().maxRecords == 3 &&
+      client.discoveryLimits().maxHints == 5 &&
+      client.discoveryLimits().maxEndpoints == 7 &&
+      client.discoveryLimits().maxAliasDepth == 2,
+    "client discovery bounds mapping mismatch");
   ZuCHECK(
     Zhttp::ServiceConfig{}.tlsConfig().policy() ==
       Zhttp::H2Policy::Prefer &&
@@ -660,6 +729,11 @@ void testParams()
       .tls(Zhttp::H2Config{}.policy(Zhttp::H2Policy::Force))
       .tlsConfig().policy() == Zhttp::H2Policy::Force,
     "service H2 policy mapping mismatch");
+  auto service = Zhttp::ServiceConfig{}
+    .retainedBodyMax(29).retainedMessageMax(31);
+  ZuCHECK(service.retainedBodyMax() == 29 &&
+      service.retainedMessageMax() == 31,
+    "service retained-message bounds mapping mismatch");
 }
 
 void testMetadata()
@@ -688,6 +762,18 @@ void testMetadata()
       quic.secure && quic.multiplexed &&
       quic.httpVersion == Zhttp::Version::H3 && quic.alpn == "h3",
     "QUIC connected metadata mismatch");
+  ZuCHECK(
+    Zhttp::Transport{}.name(Zhttp::Transport::QUIC) == "QUIC" &&
+    Zhttp::Version{}.name(Zhttp::Version::H3) == "H3" &&
+    Zhttp::Migration{}.name(Zhttp::Migration::Active) == "Active" &&
+    Zhttp::ProtocolPolicy{}.name(Zhttp::ProtocolPolicy::PreferH3) ==
+      "PreferH3" &&
+    Zhttp::H2Policy{}.name(Zhttp::H2Policy::Disable) == "Disable" &&
+    Zhttp::EndpointSource{}.name(Zhttp::EndpointSource::AltSvc) == "AltSvc" &&
+    Zhttp::ResultCode{}.name(Zhttp::ResultCode::TimedOut) == "TimedOut" &&
+    Zhttp::ClientEventType{}.name(Zhttp::ClientEventType::Completed) ==
+      "Completed",
+    "configuration enum names mismatch");
   ZuCHECK(
     Zhttp::migrationMode("disabled") == Zhttp::Migration::Disabled &&
     Zhttp::migrationMode("passive") == Zhttp::Migration::Passive &&
@@ -860,6 +946,9 @@ int main(int argc, char **argv)
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
   ZuTestCall(testBodyTx);
+  ZuTestCall(testFixedPatch);
+  ZuTestCall(testH2DeferredState);
+  ZuTestCall(testHeaderAndRetainedLimits);
   ZuTestCall(testBodyRx);
   ZuTestCall(testStream);
   return 0;

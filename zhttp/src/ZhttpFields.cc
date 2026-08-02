@@ -28,11 +28,5 @@ int pseudo(ZuCSpan name)
   return matcher.exact(name);
 }
 
-bool scheme(ZuCSpan value)
-{
-  static constexpr auto matcher = ZuMatcher<"http", "https">();
-  return matcher.exact(value) >= 0;
-}
-
 } // namespace Fields
 } // namespace Zhttp

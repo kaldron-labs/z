@@ -21,7 +21,7 @@
 namespace Zhttp {
 namespace TLS_ {
 
-inline bool validPolicy(int8_t policy)
+inline bool validPolicy(H2Policy::T policy)
 {
   return policy >= H2Policy::Force && policy <= H2Policy::Disable;
 }
@@ -40,7 +40,7 @@ inline bool valid(const H2Config &config)
 }
 
 template <typename Params>
-inline void alpn(Params &params, int8_t policy)
+inline void alpn(Params &params, H2Policy::T policy)
 {
   switch (policy) {
     case H2Policy::Force:
@@ -80,7 +80,7 @@ inline Ztls::ServerParams serverParams(
   return params;
 }
 
-ZhttpAPI int8_t version(ZuCSpan alpn, int8_t policy);
+ZhttpAPI Version::T version(ZuCSpan alpn, H2Policy::T policy);
 
 } // namespace TLS_
 } // namespace Zhttp

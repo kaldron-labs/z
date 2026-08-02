@@ -120,7 +120,7 @@ inline void split(ZuBSpan data, L &&l) {
 
 // normalize key case to be consistent (mutates key in place)
 // - ZuMatcher needs consistent casing for efficient key matching
-inline void normalize(ZuSpan<uint8_t> key) {
+inline void lowerASCII(ZuSpan<uint8_t> key) {
   unsigned n = key.length();
   int c; // intentionally int
 
@@ -170,7 +170,7 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
     if (ZuUnlikely(n < 0)) return false; // should never happen
     value.trunc(n);
   }
-  normalize(key);
+  lowerASCII(key);
   kv(key, value);
   return true;
 }

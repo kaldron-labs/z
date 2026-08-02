@@ -7,12 +7,16 @@
 // Z http library - HTTPS/SVCB records and HTTP endpoint discovery
 
 #include <zlib/ZhttpDiscovery.hh>
+#include <zlib/ZhttpAltSvc.hh>
 
 #include <string.h>
 
+#include <zlib/ZuICmp.hh>
 #include <zlib/ZuSort.hh>
 
 #include <zlib/ZiResolver.hh>
+
+#include <zlib/ZhttpUtil.hh>
 
 namespace Zhttp {
 namespace Discovery_ {
@@ -27,10 +31,6 @@ enum {
   SvcIPv4Hint = 4,
   SvcIPv6Hint = 6
 };
-
-inline unsigned lower(unsigned c) {
-  return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-}
 
 inline uint16_t u16(const uint8_t *p)
 {
@@ -93,7 +93,10 @@ bool name(
     }
     if (n & 0xc0 || p + n > msgLen) return false;
     if (out.length()) out << '.';
-    for (unsigned i = 0; i < n; ++i) out << char(lower(msg[p + i]));
+    unsigned begin = out.length();
+    out << ZuBSpan{msg + p, n};
+    lowerASCII(ZuSpan<uint8_t>{
+      reinterpret_cast<uint8_t *>(out.data()) + begin, n});
     p += n;
     if (!jumped) next = p;
   }
@@ -118,10 +121,7 @@ bool sameName(ZuCSpan parsed, ZuCSpan owner)
 {
   unsigned n = owner.length();
   if (n && owner[n - 1] == '.') --n;
-  if (parsed.length() != n) return false;
-  for (unsigned i = 0; i < n; ++i)
-    if (parsed[i] != lower(owner[i])) return false;
-  return true;
+  return ZuICmp<ZuCSpan>::equals(parsed, {owner.data(), n});
 }
 
 DiscoveryError params(
@@ -166,7 +166,7 @@ DiscoveryError params(
 	  unsigned n = value[i++];
 	  if (!n || i + n > len)
 	    return error(DiscoveryCode::Malformed, off + i - 1);
-	  if (Zhttp::h3ALPN(ZuCSpan{value + i, n})) record.h3 = true;
+	  if (Zhttp::h3Protocol(ZuCSpan{value + i, n})) record.h3 = true;
 	  i += n;
 	}
 	break;
@@ -221,9 +221,10 @@ DiscoveryError rdata(
   if (!name(msg, end, off, record.target))
     return error(DiscoveryCode::Malformed, off);
   if (record.target == ".") {
-    record.target.length(0);
-    for (unsigned i = 0; i < owner.length(); ++i)
-      record.target << char(lower(owner[i]));
+    record.target = owner;
+    lowerASCII(ZuSpan<uint8_t>{
+      reinterpret_cast<uint8_t *>(record.target.data()),
+      record.target.length()});
   }
   if (!record.priority && off != end)
     return error(DiscoveryCode::Malformed, off);

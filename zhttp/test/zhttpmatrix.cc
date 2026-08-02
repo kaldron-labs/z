@@ -850,7 +850,7 @@ void appendZhttpCommand(
 #endif
   if (options.discardResponse) script << " --discard-response";
   if (c.scenario == Scenario::Put)
-    script << " --put --body-tx-batch=7";
+    script << " --put";
   if (options.memDiag) script << " --mem-diag=" << options.memDiag;
   script << " --timeout=" << c.timeout <<
     " --stall-timeout=" << c.stallTimeout <<

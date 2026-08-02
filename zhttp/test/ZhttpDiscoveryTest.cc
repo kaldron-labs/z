@@ -16,6 +16,12 @@ using namespace ZuTestUtil;
 
 namespace ZhttpDiscoveryTest_ {
 
+Zhttp::Origin origin(ZuBSpan host)
+{
+  return Zhttp::Origin{Zhttp::OriginView{
+    host, 443, Zhttp::Scheme::https, false}};
+}
+
 using Bytes =
   ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.Discovery.Test">>;
 
@@ -280,7 +286,7 @@ void cancel()
   unsigned callbacks = 0;
   int code = Zhttp::DiscoveryCode::OK;
   auto request = Zhttp::discoverH3(
-    Zhttp::Origin{"https", "cancel.invalid", 443},
+    origin("cancel.invalid"),
     "cancel.invalid", 443, false, Zhttp::DiscoveryLimits{},
     Zhttp::DiscoveryFn{[&callbacks, &code](
 	Zhttp::DiscoveryError error, Zhttp::Endpoints) {
@@ -302,7 +308,8 @@ void direct()
   int code = Zhttp::DiscoveryCode::ResolveFailure;
   Zhttp::Endpoints resolved;
   Zhttp::Endpoint endpoint{
-    .origin = {"https", "origin.example", 443},
+    .origin = Zhttp::Origin{Zhttp::OriginView{
+      "origin.example", 443, Zhttp::Scheme::https, false}},
     .target = "127.0.0.1",
     .tlsName = "origin.example",
     .port = 8443,
@@ -342,7 +349,7 @@ void traversal()
   Zhttp::DiscoveryError result{0, Zhttp::DiscoveryCode::ResolveFailure};
   Zhttp::Endpoints endpoints;
   auto request = Zhttp::discoverH3(
-    Zhttp::Origin{"https", "example.com", 443},
+    origin("example.com"),
     "example.com", 443, false, Zhttp::DiscoveryLimits{},
     Zhttp::DiscoveryFn{[&](auto error, auto value) {
       ++callbacks;
@@ -388,7 +395,7 @@ void aliasLoop()
   unsigned callbacks = 0;
   int code = Zhttp::DiscoveryCode::OK;
   auto request = Zhttp::discoverH3(
-    Zhttp::Origin{"https", "example.com", 443},
+    origin("example.com"),
     "example.com", 443, false, Zhttp::DiscoveryLimits{},
     Zhttp::DiscoveryFn{[&](auto error, auto) {
       ++callbacks;

@@ -50,10 +50,29 @@ struct State {
 };
 
 struct Workload {
-  struct Response { };
-  struct RequestState { };
+  struct Response {
+    using Headers = ZuTypeList<>;
+    using BodyPolicy = Zhttp::Body::None;
+    unsigned status() const { return 200; }
+    template <typename L> void reason(L &&l) const { l("OK"); }
+    template <typename Key, typename L> void header(L &&) const { }
+    template <typename L> void header(L &&) const { }
+    bool close() const { return false; }
+  };
+  struct RequestParser {
+    using Headers = ZuTypeList<>;
+    static constexpr uint64_t BodyMax = 1024;
+    void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+    void version(ZuBSpan) { }
+    void contentLength(uint64_t) { }
+    void chunked() { }
+    template <typename Key> void header(ZuBSpan) { }
+    template <typename Rx> void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+    void complete(bool) { }
+  };
 
   Workload(State *state_) : state{state_} { }
+  RequestParser requestParser() { return {}; }
 
   void listening(int8_t transport, uint16_t port) {
     if (transport != state->expectedTransport || port != state->port)
@@ -77,47 +96,38 @@ struct Workload {
     }
   }
 
-  Response request(const Zhttp::RequestInfo &, RequestState &) {
+  template <typename Emit>
+  void response(const Zhttp::RequestInfo &, RequestParser &, Emit &&emit) {
     state->fail();
-    return {};
+    emit(Response{}, false);
   }
-  template <typename Rx>
-  void requestBody(
-    const Zhttp::RequestInfo &, RequestState &, Rx &rx) {
-    Zhttp::bodyDrain(rx);
-  }
-  unsigned status(const Response &) const { return 200; }
-  template <typename L>
-  void reason(const Response &, L &&l) const { l("OK"); }
-  uint64_t contentLength(const Response &) const { return 0; }
-  template <typename Key, typename L>
-  void header(const Response &, L &&l) const { l(""); }
-  template <typename Tx, typename Builder>
-  void body(Tx &, Builder &, const Response &) { }
-  void complete(const Zhttp::RequestInfo &, const Response &) { }
+  void complete(const Zhttp::RequestInfo &, bool &, bool) { }
   bool close(const Response &) const { return false; }
 
   State	*state;
 };
 
-using Service = Zhttp::Service<
-  Workload, ZuTypeList<>, ZuTypeList<>, 1024>;
+using Service = Zhttp::Service<Workload>;
 
 template <typename Profile>
-struct Client : public Zhttp::Client<Client<Profile>, Profile> {
+struct Client : public Zhttp::ClientEngine<Client<Profile>, Profile> {
+  using RequestHeaders = ZuTypeList<
+    ZuStringT<"content-length">, void>;
+
   struct Builder :
-    public Zhttp::MessageTraits<Profile>::template Builder<
-      Builder, ZuTypeList<>, ZuTypeList<>, true, false> {
-    using Base = typename Zhttp::MessageTraits<Profile>::template Builder<
-      Builder, ZuTypeList<>, ZuTypeList<>, true, false>;
+    public Zhttp::MessageTraits<Profile>::template RequestBuilder<
+      Builder, RequestHeaders, ZuTypeList<>, true, false> {
+    using Base = typename Zhttp::MessageTraits<Profile>::template RequestBuilder<
+      Builder, RequestHeaders, ZuTypeList<>, true, false>;
 
     template <typename L>
-    void operation(L &&l) const { l(Zhttp::Method::POST, "/", ""); }
+    void operation(L &&l) const { l(Zhttp::Method::POST, "/"); }
     template <typename L>
     void host(L &&l) const { l("localhost"); }
-    uint64_t contentLength() const { return 1; }
     template <typename Key, typename L>
-    void header(L &&l) const { l(""); }
+    void header(L &&l) const {
+      if constexpr (Key{}() == "content-length") l("1");
+    }
   };
 
   struct Link :
@@ -189,8 +199,7 @@ void idle()
   Workload workload{&state};
   Service service;
   auto serverQUIC = Zhttp::QUICConfig{}.certPath(cert).keyPath(key);
-  Zhttp::ServiceConfig serviceConfig;
-  serviceConfig
+  auto serviceConfig = Zhttp::ServiceConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port)
     .idleTimeout(1).quic(ZuMv(serverQUIC));
   bool serviceInited =
@@ -273,8 +282,8 @@ void activeStop()
 
   Workload workload{&state};
   Service service;
-  Zhttp::ServiceConfig serviceConfig;
-  serviceConfig.localIP(ZiIP{"127.0.0.1"}).port(state.port);
+  auto serviceConfig = Zhttp::ServiceConfig()
+    .localIP(ZiIP{"127.0.0.1"}).port(state.port);
   if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
     serviceConfig.tcp();
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})

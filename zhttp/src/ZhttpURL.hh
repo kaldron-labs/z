@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - HTTP URL, origin, redirect, and Alt-Svc values
+// Z http library - HTTP URL, origin, and request-target values
 
 #ifndef ZhttpURL_HH
 #define ZhttpURL_HH
@@ -15,136 +15,226 @@
 
 #include <stdint.h>
 
+#include <zlib/ZuBox.hh>
 #include <zlib/ZuHash.hh>
+#include <zlib/ZuPrint.hh>
 #include <zlib/ZuString.hh>
-#include <zlib/ZuTime.hh>
-
-#include <zlib/ZmHash.hh>
-#include <zlib/ZmRef.hh>
-
-#include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZhttpTypes.hh>
 
 namespace Zhttp {
 
-struct URLCode {
-  enum {
-    OK,
-    UnsupportedScheme,
-    MissingHost,
-    InvalidAuthority,
-    InvalidPort,
-    InvalidCharacter,
-    InvalidReference,
-    InvalidAltSvc,
-    TooManyAlternatives
-  };
+ZtEnumNS(ZhttpAPI, Scheme, int8_t, http, https);
+
+namespace Scheme {
+ZhttpAPI T parse(ZuBSpan);
+
+inline uint16_t defltPort(T v)
+{
+  switch (v) {
+    case http: return 80;
+    case https: return 443;
+    default: return 0;
+  }
+}
+}
+
+ZtEnumNS(ZhttpAPI, TargetForm, int8_t,
+  Origin, Absolute, Authority, Asterisk, ExtendedConnect);
+
+ZtEnumNS(ZhttpAPI, URLParseCode, int8_t,
+  OK, UnsupportedScheme, MissingHost, InvalidAuthority, InvalidPort,
+  InvalidCharacter, InvalidReference);
+
+struct URLParseError {
+  uint32_t		offset = 0;
+  URLParseCode::T	code = URLParseCode::OK;
+
+  bool ok() const { return code == URLParseCode::OK; }
 };
 
-struct URLError {
-  uint32_t	offset = 0;
-  int8_t	code = URLCode::OK;
+ZtEnumNS(ZhttpAPI, RequestTargetParseCode, int8_t,
+  OK, InvalidForm, InvalidMethod, InvalidScheme, InvalidAuthority, InvalidPath,
+  InvalidProtocol, InvalidCharacter);
 
-  bool ok() const { return code == URLCode::OK; }
+ZtEnumNS(ZhttpAPI, RequestTargetField, int8_t,
+  Raw, Scheme, Authority, Path, Protocol);
+
+struct RequestTargetParseError {
+  uint32_t			offset = 0;
+  RequestTargetParseCode::T	code = RequestTargetParseCode::OK;
+  RequestTargetField::T		field = RequestTargetField::Raw;
+
+  bool ok() const { return code == RequestTargetParseCode::OK; }
 };
 
 ZuDerive(URLString, ZtString<ZtStringHeapID<"Zhttp.URL">>);
 
+struct PathQuery {
+  ZuBSpan	path;
+  ZuBSpan	query;
+  bool		hasQuery = false;
+
+  template <typename S> void print(S &s) const {
+    s << path;
+    if (hasQuery) s << '?' << query;
+  }
+  friend ZuPrintFn ZuPrintType(PathQuery *);
+};
+
+ZhttpAPI PathQuery splitPathQuery(ZuBSpan);
+
+struct AuthorityView {
+  ZuBSpan	raw;
+  ZuBSpan	host;
+  uint16_t	port = 0;
+  bool		explicitPort = false;
+  bool		ipv6Literal = false;
+  bool		normalized = false;
+
+  template <typename S> void print(S &s) const {
+    if (ipv6Literal) s << '[';
+    s << host;
+    if (ipv6Literal) s << ']';
+    if (explicitPort) s << ':' << ZuBoxed(port);
+  }
+  friend ZuPrintFn ZuPrintType(AuthorityView *);
+};
+
+ZhttpAPI URLParseError parseAuthority(
+  AuthorityView &, ZuBSpan, unsigned offset,
+  uint16_t defltPort, bool requirePort, bool allowZeroPort = false);
+ZhttpAPI URLParseError parseAuthority(
+  AuthorityView &, ZuSpan<uint8_t>, unsigned offset,
+  uint16_t defltPort, bool requirePort, bool allowZeroPort = false);
+
+struct OriginView {
+  ZuBSpan	host;
+  uint16_t	port = 0;
+  Scheme::T	scheme = -1;
+  bool		ipv6Literal = false;
+
+  bool equals(const OriginView &) const;
+  friend bool operator ==(const OriginView &l, const OriginView &r) {
+    return l.equals(r);
+  }
+  uint32_t hash() const;
+
+  template <typename S> void print(S &s) const {
+    s << Scheme::name(scheme) << "://";
+    if (ipv6Literal) s << '[';
+    s << host;
+    if (ipv6Literal) s << ']';
+    if (port != Scheme::defltPort(scheme)) s << ':' << ZuBoxed(port);
+  }
+  friend ZuPrintFn ZuPrintType(OriginView *);
+};
+
 struct Origin {
-  URLString	scheme;
   URLString	host;
   uint16_t	port = 0;
+  Scheme::T	scheme = -1;
+  bool		ipv6Literal = false;
 
+  Origin() = default;
+  explicit Origin(const OriginView &);
+
+  OriginView view() const {
+    return {ZuBSpan{host}, port, scheme, ipv6Literal};
+  }
   bool equals(const Origin &o) const {
     return scheme == o.scheme && host == o.host && port == o.port;
   }
   friend bool operator ==(const Origin &l, const Origin &r) {
     return l.equals(r);
   }
-  uint32_t hash() const {
-    uint32_t h = ZuHash<URLString>::hash(scheme);
-    h ^= ZuHash<URLString>::hash(host) + 0x9e3779b9U + (h<<6) + (h>>2);
-    h ^= ZuHash<uint16_t>::hash(port) + 0x9e3779b9U + (h<<6) + (h>>2);
-    return h;
-  }
+  uint32_t hash() const;
 };
 
 struct URL {
-  URLString	scheme;
-  URLString	host;
-  URLString	target;
+  ZuBSpan	raw;
+  ZuBSpan	authorityRaw;
+  ZuBSpan	host;
+  ZuBSpan	path;
+  ZuBSpan	query;
+  ZuBSpan	fragment;
+  URLParseError	parseError;
   uint16_t	port = 0;
+  Scheme::T	scheme = -1;
+  bool		hasQuery = false;
+  bool		hasFragment = false;
   bool		explicitPort = false;
   bool		ipv6Literal = false;
 
-  Origin origin() const { return {scheme, host, port}; }
-  bool secure() const { return scheme == "https"; }
+  URL() : parseError{0, URLParseCode::InvalidReference} { }
+  explicit URL(ZuSpan<uint8_t>);
 
-  void pathQuery(ZuCSpan &path, ZuCSpan &query) const;
-  URLString authority() const;
-  URLString str() const;
+  URLParseError error() const { return parseError; }
+  bool ok() const { return parseError.ok(); }
+  bool secure() const { return scheme == Scheme::https; }
+  AuthorityView authority() const;
+  OriginView origin() const;
+  PathQuery pathQuery() const;
 
-  static URLError parse(URL &, ZuCSpan);
-  static URLError resolve(URL &, const URL &, ZuCSpan);
-};
-
-struct AltSvcValue {
-  URLString	alpn;
-  URLString	host;
-  uint32_t	maxAge = 86400;
-  uint16_t	port = 0;
-  bool		persist = false;
-  bool		h3 = false;
-  bool		ipv6Literal = false;
-};
-
-using AltSvcValues =
-  ZtArray<AltSvcValue, ZtArrayHeapID<"Zhttp.AltSvc">>;
-
-struct AltSvc {
-  AltSvcValues	values;
-  bool		clear = false;
-
-  static URLError parse(
-    AltSvc &, ZuCSpan, const Origin &, unsigned maxAlternatives);
-};
-
-ZhttpAPI bool h3ALPN(ZuCSpan);
-
-struct CachedAltSvc {
-  AltSvcValue	value;
-  ZuTime	expires;
-};
-
-using CachedAltSvcValues =
-  ZtArray<CachedAltSvc, ZtArrayHeapID<"Zhttp.AltSvc.CacheValue">>;
-
-struct AltSvcEntry {
-  CachedAltSvcValues	values;
-};
-
-using AltSvcTable = ZmHashKV<
-  Origin, AltSvcEntry, ZmHashHeapID<"Zhttp.AltSvc.Cache">>;
-using AltSvcTableRef = ZmRef<AltSvcTable>;
-
-class AltSvcCache {
-public:
-  AltSvcCache(unsigned maxOrigins) :
-    m_entries{new AltSvcTable}, m_maxOrigins{maxOrigins} { }
-
-  bool update(const Origin &, const AltSvc &, ZuTime now);
-  bool get(const Origin &, AltSvcValues &, ZuTime now);
-  bool hasH3(const Origin &origin, ZuTime now) {
-    return get_(origin, nullptr, now);
+  template <typename S> void print(S &s) const {
+    s << Scheme::name(scheme) << "://" << authority() << path;
+    if (hasQuery) s << '?' << query;
+    if (hasFragment) s << '#' << fragment;
   }
-  void del(const Origin &origin) { m_entries->del(origin); }
-  unsigned count() const { return m_entries->count_(); }
+  friend ZuPrintFn ZuPrintType(URL *);
+};
+
+class URLStorage {
+public:
+  URLStorage() = default;
+  explicit URLStorage(ZuBSpan s) { assign(s); }
+
+  URLParseError assign(ZuBSpan);
+  URLParseError adopt(URLString &&);
+  URLParseError resolve(const URL &, ZuBSpan);
+  URL url() const;
+  bool ok() const { return m_error.ok(); }
+  URLParseError error() const { return m_error; }
 
 private:
-  bool get_(const Origin &, AltSvcValues *, ZuTime);
+  struct Part {
+    uint32_t offset = 0;
+    uint32_t length = 0;
+  };
+  void commit_(URLString &&, const URL &);
 
-  AltSvcTableRef	m_entries;
-  unsigned	m_maxOrigins = 0;
+  URLString	m_data;
+  URLParseError	m_error{0, URLParseCode::InvalidReference};
+  Part		m_host;
+  Part		m_authority;
+  Part		m_path;
+  Part		m_query;
+  Part		m_fragment;
+  uint16_t	m_port = 0;
+  Scheme::T	m_scheme = -1;
+  bool		m_hasQuery = false;
+  bool		m_hasFragment = false;
+  bool		m_explicitPort = false;
+  bool		m_ipv6Literal = false;
+};
+
+struct RequestTarget {
+  AuthorityView	authority;
+  ZuBSpan	raw;
+  ZuBSpan	path;
+  ZuBSpan	query;
+  ZuBSpan	protocol;
+  Scheme::T	scheme = -1;
+  TargetForm::T	form = TargetForm::Origin;
+  bool		hasQuery = false;
+
+  static RequestTargetParseError parseH1(
+    RequestTarget &, Method::T, ZuSpan<uint8_t>);
+  static RequestTargetParseError fromPseudo(
+    RequestTarget &, Method::T, Scheme::T, ZuSpan<uint8_t>,
+    ZuBSpan, ZuBSpan);
 };
 
 } // namespace Zhttp

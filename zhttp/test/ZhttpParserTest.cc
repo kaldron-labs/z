@@ -112,10 +112,11 @@ struct RequestParser :
   public Zhttp::H1::Parser<RequestParser, true, RequestHeaders, 1024> {
   using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders, 1024>;
 
-  void operation(Zhttp::Method::T method_, ZuCSpan path_) {
+  void operation(
+    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
     method = method_;
     path.length(0);
-    path << path_;
+    path << ZuCSpan{target.raw};
   }
 
   template <typename Key>

@@ -243,7 +243,7 @@ struct H3ReqOps {
 
   template <typename L>
   void operation(L &&l) const {
-    l(Zhttp::Method::GET, ZuCSpan{req->path}, ZuCSpan{});
+    l(Zhttp::Method::GET, ZuCSpan{req->path});
   }
   template <typename L> void host(L &&l) const { l(ZuCSpan{req->host}); }
   template <typename Key, typename L>

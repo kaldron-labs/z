@@ -21,11 +21,11 @@ if grep -En '#include <zlib/(Ztcp|Ztls|Zquic)' $files >/dev/null; then
 fi
 echo 'ok 2 - executable closure excludes native protocol headers'
 
-if grep -Eq 'Zhttp::Agent<' zhttp.cc &&
+if grep -Eq 'Zhttp::Client<' zhttp.cc &&
     grep -Eq 'Zhttp::Service<' zhttpd.cc; then
-  echo 'ok 3 - executables use public Agent and Service'
+  echo 'ok 3 - executables use public Client and Service'
 else
-  echo 'not ok 3 - executables use public Agent and Service'
+  echo 'not ok 3 - executables use public Client and Service'
   exit 1
 fi
 

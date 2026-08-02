@@ -772,14 +772,11 @@ private:
 	  return Fields::Invalid;
     }
     auto section = fields.finish(
-      [this](Method::T method, ZuBSpan path) {
-	impl()->operation(method, path);
+      [this](Method::T method, const RequestTarget &target) {
+	impl()->operation(method, target);
       },
-      [this](unsigned status) { impl()->status(status); });
-    if constexpr (Request)
-      if (section == Fields::Final)
-	if (ZuCSpan protocol = fields.protocol())
-	  impl()->protocol(protocol);
+      [this](unsigned status) { impl()->status(status); },
+      [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
     if (section != Fields::Invalid)
       impl()->headers(section, false);
     return section;
@@ -1074,13 +1071,12 @@ public:
   }
 
   // CRTP defaults
-  void operation(Method::T, ZuBSpan) { }
+  void operation(Method::T, const RequestTarget &) { }
   void status(unsigned) { }
   template <typename Key> void header(ZuBSpan) { }
   template <typename Key, typename Value> void header() { }
   void header(ZuBSpan, ZuBSpan) { }
   void contentLength(uint64_t) { }
-  void protocol(ZuBSpan) { }
   void headers(Fields::Section, bool) { }
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
@@ -1159,6 +1155,7 @@ struct CountBytes {
   uint64_t	n = 0;
 
   void push(uint8_t) { ++n; }
+  void skip(uint64_t n_) { n += n_; }
   uint64_t length() const { return n; }
 };
 
@@ -1352,7 +1349,7 @@ template <
   typename Trailers_ = ZuTypeList<>,	// ignored if not chunked
   bool HasBody_ = false,		// has a body
   bool Streaming_ = false>
-class Builder {
+class Builder_ {
 public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
 
@@ -1380,6 +1377,11 @@ public:
     m_peerExtendedConnect = peerExtendedConnect;
     m_params = params;
   }
+
+  // Retained messages must not publish encoder-stream or table state before
+  // their message commit.  Literal encoding is the transaction-safe fallback
+  // until the retained commit set has a staged QPACK transaction.
+  void deferCompression() { m_deferCompression = true; }
 
 private:
   template <typename L>
@@ -1524,6 +1526,22 @@ private:
 	if (!ok) return;
 	planInsert_(name, value);
     }
+    template <typename P>
+    ZuIfT<!Compression::IsPrintString<P>{}>
+    field(ZuCSpan name, const P &value) {
+	if (!ok) return;
+	uint64_t nameIndex = 0;
+	if (QPack::staticNameIndex(name, nameIndex)) {
+	  uint8_t prefix = uint8_t(
+	    0x50 | (params.neverIndex(name) ? 0x20 : 0));
+	  ok = putPref(out, prefix, 4, nameIndex) >= 0 &&
+	    Compression::putPrint(out, 0, 7, value) >= 0;
+	  return;
+	}
+	ok = putString(
+	  out, uint8_t(0x20 | (params.neverIndex(name) ? 0x10 : 0)),
+	  3, name) >= 0 && Compression::putPrint(out, 0, 7, value) >= 0;
+    }
     void field(ZuCSpan name, ZuCSpan value1, char sep, ZuCSpan value2) {
 	if (!ok) return;
 	uint64_t staticName = 0;
@@ -1552,39 +1570,27 @@ private:
 	  build.field(Key{}(), Value{}());
 	} else {
 	  impl()->template header<Key>([&build]<typename V>(V &&v) {
-	    ZuCSpan value{ZuFwd<V>(v)};
-	    if (value) build.field(Key{}(), value);
+	    build.field(Key{}(), ZuFwd<V>(v));
 	  });
 	}
     });
-    runtimeHeaders_([&build](ZuCSpan name, ZuCSpan value) {
-	if (name) build.field(name, value);
+    runtimeHeaders_([&build]<typename K, typename V>(K &&k, V &&v) {
+	ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">> name;
+	name << ZuFwd<K>(k);
+	if (name) build.field(ZuCSpan{name}, ZuFwd<V>(v));
     });
     return build.ok;
   }
 
   template <typename Build>
   bool contentLength_(Build &build) {
-    if constexpr (HasBody && !Streaming) {
-	ZuCArray<Decimal64Size> buf;
-	build.field("content-length", uintSpan_(impl()->contentLength(), buf));
-	return build.ok;
-    }
+    (void)build;
     return true;
   }
 
   template <typename Build>
   static void encodeMethod_(Build &build, Method::T method) {
     build.field(":method", Method::name(method));
-  }
-
-  template <typename Build>
-  static void encodePath_(Build &build, ZuCSpan path, ZuCSpan query) {
-    if (!query) {
-	build.field(":path", path);
-	return;
-    }
-    build.field(":path", path, '?', query);
   }
 
   template <typename Stream, typename Encode>
@@ -1594,7 +1600,7 @@ private:
     Build<CountBytes, true> plan{count};
     plan.tx = impl()->qpackTx();
     plan.params = impl()->h3Params();
-    if (plan.tx &&
+    if (!m_deferCompression && plan.tx &&
 	(plan.dynamic = plan.tx->sectionAdmissible(impl()->streamID()))) {
 	uint32_t desired = plan.tx->effectiveCapacity();
 	plan.plannedCapacity = plan.tx->capacity();
@@ -1725,13 +1731,13 @@ private:
   }
 
   // request
-public:
+protected:
   template <typename Stream>
-  bool request(Stream &stream) {
+  bool request_(Stream &stream) {
     bool valid = true;
     writeHeaders_(stream, [this, &valid](auto &build) {
-	impl()->operation([this, &build, &valid]<typename Path, typename Query>(
-	    Method::T method, Path &&path, Query &&query) {
+	impl()->operation([this, &build, &valid]<typename Target>(
+	    Method::T method, Target &&target) {
 	  ZuCSpan protocol;
 	  if (method == Method::CONNECT)
 	    impl()->protocol([&protocol]<typename P>(P &&value) {
@@ -1744,13 +1750,12 @@ public:
 	  encodeMethod_(build, method);
 	  if (method == Method::CONNECT && !protocol) return;
 	  build.field(":scheme", "https");
-	  encodePath_(build, ZuCSpan{ZuFwd<Path>(path)},
-	    ZuCSpan{ZuFwd<Query>(query)});
+	  build.field(":path", ZuFwd<Target>(target));
 	  if (protocol) build.field(":protocol", protocol);
 	});
 	if (!valid) return false;
 	impl()->host([&build]<typename Host>(Host &&host) {
-	  build.field(":authority", ZuCSpan{ZuFwd<Host>(host)});
+	  build.field(":authority", ZuFwd<Host>(host));
 	});
 	contentLength_(build);
 	headers_<Headers>(build);
@@ -1761,7 +1766,7 @@ public:
 
   // response
   template <typename Stream>
-  void response(Stream &stream) {
+  void response_(Stream &stream) {
     writeHeaders_(stream, [this](auto &build) {
 	unsigned status = impl()->status();
 	ZuCArray<StatusSize> buf;
@@ -1773,12 +1778,10 @@ public:
   }
 
   // body
+public:
   template <typename Stream>
   auto body(Stream &stream) {
-    if constexpr (Streaming)
-      return dataStream(stream);
-    else
-      return dataStream(stream, impl()->contentLength());
+    return dataStream(stream);
   }
   template <typename Stream>
   auto body(Stream &stream, uint64_t remaining) {
@@ -1804,8 +1807,7 @@ public:
   QPackBuildFailure::T qpackFailure() const { return m_qpackFailure; }
 
   // CRTP defaults
-  bool request() { return true; }
-  template <typename L> void operation(L &&l) { l(Method::GET, "/", ""); }
+  template <typename L> void operation(L &&l) { l(Method::GET, "/"); }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
   unsigned status() { return 200; }
@@ -1813,7 +1815,6 @@ public:
   template <typename Key, typename L>
   void header(L &&) { }
   template <typename L> void header(L &&) { }
-  uint64_t contentLength() { return 0; }
   QPackTxTable *qpackTx() {
     if (m_qpackTx) return m_qpackTx;
     if constexpr (HasH3Cxn<Impl>{})
@@ -1846,6 +1847,37 @@ private:
   uint64_t		m_streamID = 0;
   const Params		*m_params = nullptr;
   bool			m_peerExtendedConnect = false;
+  bool			m_deferCompression = false;
+};
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false,
+  bool Streaming = false>
+class RequestBuilder :
+  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+
+public:
+  template <typename Stream>
+  bool request(Stream &stream) { return Base::request_(stream); }
+};
+
+template <
+  typename Impl,
+  typename Headers = ZuTypeList<>,
+  typename Trailers = ZuTypeList<>,
+  bool HasBody = false,
+  bool Streaming = false>
+class ResponseBuilder :
+  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+
+public:
+  template <typename Stream>
+  void response(Stream &stream) { Base::response_(stream); }
 };
 
 } // namespace H3

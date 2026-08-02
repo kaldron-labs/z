@@ -13,11 +13,11 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpBody.hh \
 	ZhttpTLSEngine.hh \
-	ZhttpLink.hh ZhttpClient.hh ZhttpClientPool.hh ZhttpTLSClientPool.hh \
-	ZhttpAgent.hh ZhttpStream.hh \
+	ZhttpLink.hh ZhttpClientEngine.hh ZhttpClient.hh \
+	ZhttpClientPool.hh ZhttpTLSClientPool.hh ZhttpStream.hh \
 	ZhttpServer.hh ZhttpService.hh ZhttpEngines.hh \
 	ZhttpH2Engine.hh ZhttpH3Engine.hh \
-	ZhttpURL.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
+	ZhttpURL.hh ZhttpAltSvc.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
 	ZhttpH1.hh ZhttpH1Stream.hh ZhttpH3.hh \
 	ZhttpH2.hh ZhttpH2Session.hh ZhttpH2Message.hh \
 	ZhttpH1Session.hh ZhttpH3Session.hh ZhttpMessage.hh \
@@ -25,7 +25,8 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpQPack.hh ZhttpStaticTable.hh ZhttpUtil.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
-libZhttp_la_SOURCES = ZhttpLib.cc ZhttpURL.cc ZhttpDiscovery.cc \
+libZhttp_la_SOURCES = ZhttpLib.cc ZhttpConfig.cc ZhttpURL.cc ZhttpAltSvc.cc \
+	ZhttpDiscovery.cc \
 	ZhttpRuntime.cc \
 	ZhttpCompression.cc ZhttpFields.cc ZhttpH1.cc ZhttpH2.cc ZhttpH2Message.cc \
 	ZhttpH2Session.cc ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
