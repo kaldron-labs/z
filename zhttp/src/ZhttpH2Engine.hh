@@ -1751,7 +1751,7 @@ public:
       stopDrain_();
   }
   void final() {
-    for (auto &slot: m_slots)
+    for ([[maybe_unused]] auto &slot: m_slots)
       ZmAssert(slot.down(slot.owner.object<void>()));
     m_slots.length(0);
     ZmAssert(!m_pool->count_());
@@ -2743,7 +2743,7 @@ public:
   }
   void goaway(uint32_t) { }
   void final() {
-    for (auto &slot: m_slots) ZmAssert(slot->isDown());
+    for ([[maybe_unused]] auto &slot: m_slots) ZmAssert(slot->isDown());
     m_slots.length(0);
     ZmAssert(!m_pool->count_());
     m_pool->clean();
