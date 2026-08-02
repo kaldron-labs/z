@@ -142,27 +142,9 @@ template <> struct MessageVersion<Version::H3> {
 template <typename Profile, typename Traits>
 struct MessageTraits :
   public MessageVersion<Traits::HTTPVersion> {
-  using ProfileT = Profile;
   using Transport = typename Traits::Transport;
   enum { Multiplexed = Traits::Multiplexed };
 };
-
-template <typename Link, typename Builder>
-bool sendReq(Link &link, Builder &builder) {
-  auto tx = link.transmit(builder);
-  if (!builder.request(tx)) return false;
-  builder.finish(tx);
-  link.finish();
-  return true;
-}
-
-template <typename Link, typename Builder>
-void sendResp(Link &link, Builder &builder) {
-  auto tx = link.transmit(builder);
-  builder.response(tx);
-  builder.finish(tx);
-  link.finish();
-}
 
 template <typename U, typename = void>
 struct BuilderTrailers { using T = ZuTypeList<>; };
@@ -237,6 +219,8 @@ public:
   RetainedTx(Lower &lower_, RetainedBudget &budget_) :
     Base{lower_.maxSize(), lower_.headRoom(), lower_.tailRoom()},
     m_lower{lower_}, m_budget{budget_} { }
+
+  ~RetainedTx() { this->flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     return m_lower.allocBuf_(headRoom);

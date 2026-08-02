@@ -360,19 +360,20 @@ bool HPackDecoder::indexed_(uint64_t index, Field &field)
   return account_(field);
 }
 
+template <unsigned Bits, uint8_t Huffman>
 int HPackDecoder::string_(
-  ZuCSpan input, unsigned &offset, unsigned bits, uint8_t huffman,
-  HPackString &out)
+  ZuCSpan input, unsigned &offset, HPackString &out)
 {
   uint64_t length = 0;
   uint8_t first = 0;
-  int n = Compression::decodePref(
-    input, offset, bits, length, &first);
+  int n = Compression::decodePref<Bits>(
+    input, offset, length, &first);
   if (n < 0) return n;
-  if (length > input.length() - offset) return -2;
-  ZuCSpan raw{input.data() + offset, unsigned(length)};
+  unsigned size = input.length();
+  if (length > size - offset) return -2;
+  ZuCSpan raw{&input[offset], unsigned(length)};
   offset += unsigned(length);
-  if (!(first & huffman)) {
+  if (!(first & Huffman)) {
     out = raw;
     return int(length);
   }
@@ -385,12 +386,12 @@ int HPackDecoder::string_(
   return int(decoded);
 }
 
+template <unsigned Bits, bool Indexing>
 int HPackDecoder::literal_(
-  ZuCSpan input, unsigned &offset, unsigned bits,
-  bool indexing, Field &field)
+  ZuCSpan input, unsigned &offset, Field &field)
 {
   uint64_t index = 0;
-  int state = Compression::decodePref(input, offset, bits, index);
+  int state = Compression::decodePref<Bits>(input, offset, index);
   if (state == -2) return 0;
   if (state < 0) return fail_(HPackFailure::Integer);
   if (index) {
@@ -400,18 +401,18 @@ int HPackDecoder::literal_(
     }
     m_name = indexed.name;
   } else {
-    state = string_(input, offset, 7, 0x80, m_name);
+    state = string_<7, 0x80>(input, offset, m_name);
     if (state == -2) return 0;
     if (state < 0) return fail_(HPackFailure::String);
   }
-  state = string_(input, offset, 7, 0x80, m_value);
+  state = string_<7, 0x80>(input, offset, m_value);
   if (state == -2) return 0;
   if (state < 0) return fail_(HPackFailure::String);
   field = {m_name, m_value};
   if (!account_(field)) return -1;
-  if (indexing && !m_table.insert(field.name, field.value)) {
-    return fail_(HPackFailure::Capacity);
-  }
+  if constexpr (Indexing)
+    if (!m_table.insert(field.name, field.value))
+      return fail_(HPackFailure::Capacity);
   return 1;
 }
 
@@ -437,7 +438,7 @@ int HPackDecoder::decode_(
   uint64_t value = 0;
   emitted = false;
   if (first & 0x80) {
-    int n = Compression::decodePref(input, offset, 7, value);
+    int n = Compression::decodePref<7>(input, offset, value);
     if (n == -2) { offset = start; return 0; }
     if (n < 0) return fail_(HPackFailure::Integer);
     m_capacityAllowed = false;
@@ -447,7 +448,7 @@ int HPackDecoder::decode_(
   }
   if ((first & 0xe0) == 0x20) {
     if (!m_capacityAllowed) return fail_(HPackFailure::Capacity);
-    int n = Compression::decodePref(input, offset, 5, value);
+    int n = Compression::decodePref<5>(input, offset, value);
     if (n == -2) { offset = start; return 0; }
     if (n < 0) return fail_(HPackFailure::Integer);
     if (value > m_maxCapacity || !m_table.capacity(uint32_t(value)))
@@ -455,9 +456,9 @@ int HPackDecoder::decode_(
     return 1;
   }
   m_capacityAllowed = false;
-  bool indexing = (first & 0xc0) == 0x40;
-  unsigned bits = indexing ? 6 : 4;
-  int state = literal_(input, offset, bits, indexing, field);
+  int state = (first & 0xc0) == 0x40 ?
+    literal_<6, true>(input, offset, field) :
+    literal_<4, false>(input, offset, field);
   if (state <= 0) {
     if (state < 0) return -1;
     offset = start;

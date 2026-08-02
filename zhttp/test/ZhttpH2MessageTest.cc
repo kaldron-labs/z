@@ -17,6 +17,24 @@ namespace ZhttpH2MessageTest_ {
 
 using TestHeaders = ZhttpHeaders("x-test");
 
+template <typename Parser>
+bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
+{
+  enum { Header = 9 };
+  unsigned length = Header + payload.length();
+  ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::WireBufAlloc{};
+  if (!buf->alloc(length)) return false;
+  buf->length = length;
+  auto io = static_cast<ZiIOBuf *>(buf.ptr());
+  memset(io->data(), 0, Header);
+  if (payload) memcpy(&io->data()[Header], payload.data(), payload.length());
+  ZiRxStream<ZiRxQueue> wire;
+  wire.push(ZuMv(buf));
+  bool transferred = false;
+  return parser.data(wire, length, Header, 0, endStream, transferred) &&
+    transferred && !wire;
+}
+
 struct Parsed :
   public Zhttp::H2::Parser<Parsed, true, TestHeaders, 1024> {
   using Base = Zhttp::H2::Parser<Parsed, true, TestHeaders, 1024>;
@@ -36,7 +54,7 @@ struct Parsed :
   }
   template <typename Rx>
   void body(Rx &rx) {
-    while (rx.input()) {
+    while (rx) {
       const uint8_t *offered = nullptr;
       if (rx.consume(
 	  [&offered, this](ZuBSpan value) -> int64_t {
@@ -248,23 +266,16 @@ struct StreamResponse :
 	status_ >= 200 && status_ < 300 && !endStream) {
       stream();
       ++established;
+      ++starts;
     }
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void events_(Zi::RxEvent::T events) {
-    if (events & Zi::RxEvent::Start()) ++starts;
-    if (events & Zi::RxEvent::Final()) ++remoteEnds;
-    if (events & Zi::RxEvent::Error()) ++resets;
-    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
-      dispatch.disable_();
-  }
+  void streamPeerEnd_() { ++remoteEnds; dispatch.peerEnd(); }
+  void streamError_() { ++resets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {
-    for (;;) {
-      bool input = rx.input();
-      events_(rx.events());
-      if (!input) break;
+    while (rx) {
       const uint8_t *offered = nullptr;
       int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
@@ -275,7 +286,6 @@ struct StreamResponse :
 	    noCopy &= span.data() == offered;
 	    data_ << ZuCSpan{span};
 	  });
-      events_(rx.events());
       if (n <= 0) break;
       if (partial) break;
     }
@@ -330,7 +340,7 @@ void testRequest()
       parser.path == "/submit" && parser.host == "example.com" &&
       parser.xTest == "request" && parser.contentLength_ == 3,
     "shared request callbacks");
-  ZuCHECK(parser.data("abc", true) &&
+  ZuCHECK(data(parser, "abc", true) &&
       parser.body_ == "abc" && parser.completeCalls == 1 &&
       parser.completeState == Zhttp::H2::ParserState::Complete &&
       parser.noCopy,
@@ -345,10 +355,23 @@ void testRequest()
       partial.field(":path", "/submit") &&
       partial.field("content-length", "3") &&
       partial.endHeaders(false) &&
-      !partial.data("abc") && partial.body_ == "a" &&
+      data(partial, "abc", true) && partial.body_ == "a" &&
       partial.completeCalls == 1 &&
-      partial.completeState == Zhttp::H2::ParserState::Error,
-    "unconsumed H2 message DATA was not rejected exactly once");
+      partial.completeState == Zhttp::H2::ParserState::Complete,
+    "unconsumed H2 message DATA was not discarded at completion");
+
+  Parsed oversized;
+  ZuCHECK(oversized.beginHeaders() &&
+      oversized.field(":method", "POST") &&
+      oversized.field(":scheme", "https") &&
+      oversized.field(":authority", "example.com") &&
+      oversized.field(":path", "/submit") &&
+      oversized.field("content-length", "3") &&
+      oversized.endHeaders(false) &&
+      !oversized.dataLength(4, false) &&
+      oversized.completeCalls == 1 &&
+      oversized.completeState == Zhttp::H2::ParserState::Error,
+    "prospective H2 DATA length was not rejected before transfer");
 }
 
 void testResponses()
@@ -364,7 +387,7 @@ void testResponses()
     "informational response does not complete the stream");
   ZuCHECK(parser.beginHeaders() && parser.field(":status", "200") &&
       parser.field("content-length", "3") &&
-      parser.endHeaders(false) && parser.data("abc") &&
+      parser.endHeaders(false) && data(parser, "abc") &&
       parser.beginHeaders(true) && parser.field("x-test", "trailer") &&
       parser.endHeaders(true) && parser.statusCalls == 2 &&
       parser.body_ == "abc" && parser.xTest == "trailer" &&
@@ -376,7 +399,7 @@ void testResponses()
   head.requestMethod(Zhttp::Method::HEAD);
   ZuCHECK(head.beginHeaders() && head.field(":status", "200") &&
       head.field("content-length", "99") && head.endHeaders(true) &&
-      head.completeCalls == 1 && !head.data("x"),
+      head.completeCalls == 1 && !data(head, "x"),
     "HEAD response completes without DATA");
 
   Response cancelled;
@@ -487,10 +510,10 @@ void testExtendedConnect()
       response.field(":status", "200") &&
       response.endHeaders(false) &&
       response.state() == Zhttp::H2::ParserState::Stream &&
-      response.established == 1 && response.data("a") &&
-      response.data("bc") && response.data_ == "abc" &&
+      response.established == 1 && data(response, "a") &&
+      data(response, "bc") && response.data_ == "abc" &&
       response.starts == 1 && response.noCopy &&
-      response.data({}, true) &&
+      data(response, {}, true) &&
       response.state() == Zhttp::H2::ParserState::RemoteClosed &&
       response.remoteEnds == 1 && !response.completions,
     "successful response transitions to an unbounded ordered stream");
@@ -505,14 +528,14 @@ void testExtendedConnect()
   ZuCHECK(partial.beginHeaders() &&
       partial.field(":status", "200") &&
       partial.endHeaders(false) &&
-      !partial.data("abc") &&
+      data(partial, "abc", true) &&
       partial.data_ == "a" &&
-      partial.resets == 1 &&
-      partial.completions == 1 &&
-      partial.state() == Zhttp::H2::ParserState::Error &&
-      !partial.cancel() && partial.resets == 1 &&
+      partial.remoteEnds == 1 && !partial.resets &&
+      !partial.completions &&
+      partial.state() == Zhttp::H2::ParserState::RemoteClosed &&
+      !partial.cancel() && !partial.resets &&
       partial.completions == 1,
-    "unconsumed stream input resets and terminates exactly once");
+    "unconsumed stream input is discarded after peer end");
 
   StreamResponse rejected;
   rejected.reset();

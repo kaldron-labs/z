@@ -37,7 +37,7 @@ enum {
 
 struct EventType {
   enum T : uint8_t {
-    Begin, Field, EndHeaders, Data, Reset
+    Begin, Field, EndHeaders, DataLength, Data, Reset
   };
 };
 
@@ -45,14 +45,21 @@ struct Event {
   EventType::T	type = EventType::Begin;
   ZuCSpan	name;
   ZuCSpan	value;
+  Ztls::RxStream *wire = nullptr;
+  uint64_t	consumed = 0;
+  uint32_t	frameLength = 0;
+  unsigned	headLen = 0;
+  unsigned	tailLen = 0;
   Error::T	error = Error::NoError;
   bool		trailers = false;
   bool		endStream = false;
+  bool		transferred = false;
 };
 
 struct EventRx {
   template <typename Parser>
   auto process(Parser &parser) {
+    uint64_t before = parser.consumed();
     switch (event.type) {
       case EventType::Begin:
 	parser.beginHeaders(event.trailers);
@@ -63,17 +70,32 @@ struct EventRx {
       case EventType::EndHeaders:
 	parser.endHeaders(event.endStream);
 	break;
+      case EventType::DataLength:
+	parser.dataLength(event.frameLength, event.endStream);
+	break;
       case EventType::Data:
-	parser.data(ZuBSpan{event.value}, event.endStream);
+	parser.data(
+	  *event.wire, event.frameLength, event.headLen, event.tailLen,
+	  event.endStream, event.transferred);
 	break;
       case EventType::Reset:
 	parser.cancel();
 	break;
     }
+    event.consumed = parser.consumed() - before;
     return parser.state();
   }
 
-  Event event;
+  Event &event;
+};
+
+struct RxDataFrame {
+  uint32_t	id = 0;
+  uint32_t	length = 0;
+  unsigned	prefix = 0;
+  unsigned	pad = 0;
+  bool		endStream = false;
+  bool		ready = false;
 };
 
 struct CountBytes {
@@ -509,10 +531,13 @@ template <typename Logical>
 struct LogicalEntry {
   LogicalEntry() = default;
   LogicalEntry(uint32_t id_, ZmRef<Logical> logical_) :
-    id{id_}, logical{ZuMv(logical_)} { }
+    logical{ZuMv(logical_)}, id{id_} { }
 
-  uint32_t	id = 0;
   ZmRef<Logical> logical;
+  uint64_t	deferred = 0;
+  int64_t	rxWindow = DefltWindow;
+  int64_t	txWindowHint = DefltWindow;
+  uint32_t	id = 0;
   bool		begin = false;
   bool		finalHeaders = false;
   bool		localEnd = false;
@@ -521,8 +546,6 @@ struct LogicalEntry {
   bool		notified = false;
   bool		closing = false;
   bool		flowError = false;
-  int64_t	rxWindow = DefltWindow;
-  int64_t	txWindowHint = DefltWindow;
 };
 
 template <typename Logical>
@@ -580,6 +603,7 @@ class Wire : public H2::Connection<Wire<Impl, Logical>> {
 public:
   bool initWire(bool server, const H2Config &config) {
     m_server = server;
+    m_rxPreface = server;
     m_config = config;
     m_frameAdmission.init(config.maxQueuedFrames());
     if (!Base::init(server, config.maxFrameSize()) ||
@@ -641,8 +665,11 @@ public:
       return;
     }
     auto entry_ = m_entries->findPtr(id);
-    if (entry_) m_entries->delNode(
-      static_cast<typename Entries::Node *>(entry_));
+    if (entry_) {
+      uint64_t deferred = entry_->deferred;
+      m_entries->delNode(static_cast<typename Entries::Node *>(entry_));
+      retireConnection_(deferred);
+    }
     auto session = impl_();
     impl_()->app()->txRun([
       session, id, done = ZuFwd<Done>(done)]() mutable {
@@ -653,7 +680,13 @@ public:
   }
   template <typename Done>
   void clear(Done &&done) {
-    if (m_entries) m_entries->clean();
+    uint64_t deferred = 0;
+    if (m_entries) {
+      auto i = m_entries->iter();
+      while (auto entry_ = i()) deferred += entry_->deferred;
+      m_entries->clean();
+    }
+    settleConnection_(deferred);
     auto session = impl_();
     impl_()->app()->txRun([
       session, done = ZuFwd<Done>(done)]() mutable {
@@ -773,10 +806,63 @@ public:
   }
 
   int process(Ztls::RxStream &rx) {
-    int64_t n = rx.consume(
-      [this](ZuBSpan span) -> int64_t { return Base::process(span); },
-      [](ZuBSpan) { });
-    return int(n);
+    if (m_rxPreface) {
+      unsigned length = PrefaceParser::value().length();
+      if (rx.length() < length) return 0;
+      int64_t n = rx.each(length,
+	[this](ZuBSpan span) -> int64_t { return Base::process(span); });
+      if (ZuUnlikely(n < 0)) return -1;
+      if (ZuUnlikely(uint64_t(n) != length)) return 0;
+      rx.advance(length);
+      m_rxPreface = false;
+      return int(length);
+    }
+    if (rx.length() < FrameHeaderSize) return 0;
+    ZuBArray<FrameHeaderSize> bytes;
+    if (ZuUnlikely(rx.copy(0, bytes.span()) != FrameHeaderSize)) return 0;
+    FrameHeader header;
+    if (ZuUnlikely(!decodeHeader(
+	ZuCSpan{bytes.data(), FrameHeaderSize}, header))) return 0;
+    if (auto error = validateFrame(header, m_config.maxFrameSize())) {
+      h2Error(error);
+      return -1;
+    }
+    if (header.type == FrameType::Data && !m_rxDataValidated) {
+      unsigned prefix = (header.flags & Flag::Padded) ? 1U : 0U;
+      if (prefix > header.length) {
+	h2Error(Error::FrameSizeError);
+	return -1;
+      }
+      unsigned pad = 0;
+      if (prefix) {
+	if (rx.length() <= FrameHeaderSize) return 0;
+	ZuBArray<1> byte;
+	if (ZuUnlikely(rx.copy(FrameHeaderSize, byte.span()) != 1)) return 0;
+	pad = byte[0];
+	if (uint64_t(prefix) + pad > header.length) {
+	  h2Error(Error::ProtocolError);
+	  return -1;
+	}
+      }
+      h2DataLength(
+	header.streamID, header.length - prefix - pad,
+	bool(header.flags & Flag::EndStream));
+      m_rxDataValidated = true;
+    }
+    uint64_t length = uint64_t(FrameHeaderSize) + header.length;
+    if (rx.length() < length) return 0;
+    m_rxData = {};
+    int64_t n = rx.each(length,
+      [this](ZuBSpan span) -> int64_t { return Base::process(span); });
+    if (ZuUnlikely(n < 0)) return -1;
+    if (ZuUnlikely(uint64_t(n) != length)) return 0;
+    if (header.type == FrameType::Data) {
+      m_rxDataValidated = false;
+      return data_(rx);
+    }
+    rx.advance(length);
+    m_rxDataValidated = false;
+    return int(length);
   }
 
   void sendInitial() {
@@ -916,40 +1002,27 @@ public:
     entry_->rxWindow -= length;
     return true;
   }
-  void h2Data(uint32_t id, ZuBSpan span) {
-    auto entry_ = entry(id);
-    if (!entry_ || entry_->flowError) return;
-    dispatch_(id, Event{
-      .type = EventType::Data,
-      .value = ZuCSpan{span}
+  void h2Data(uint32_t, ZuBSpan) { }
+  void h2DataLength(uint32_t id, uint32_t length, bool endStream) {
+    if (!entry(id)) return;
+    (void)dispatch_(id, Event{
+      .type = EventType::DataLength,
+      .frameLength = length,
+      .endStream = endStream
     });
   }
-  void h2DataEnd(uint32_t id, bool endStream, uint32_t length) {
-    auto entry_ = entry(id);
-    if (!entry_) {
-      m_rxWindow += length;
-      sendWindowUpdate_(0, length);
-      if (!impl_()->h2Closed(id))
-	h2Error(Error::ProtocolError);
-      return;
-    }
-    m_rxWindow += length;
-    sendWindowUpdate_(0, length);
-    if (entry_->flowError) {
-      impl_()->h2ResetLogical(id, Error::FlowControlError);
-      return;
-    }
-    entry_->rxWindow += length;
-    sendWindowUpdate_(id, length);
-    if (!endStream) return;
-    if (!dispatch_(id, Event{
-      .type = EventType::Data,
-      .endStream = true
-    })) return;
-    entry_ = entry(id);
-    if (!entry_) return;
-    entry_->remoteEnd = true;
-    impl_()->h2RemoteEnd(id);
+  void h2DataEnd(
+    uint32_t id, bool endStream, uint32_t length,
+    unsigned prefix, unsigned pad)
+  {
+    m_rxData = {
+      .id = id,
+      .length = length,
+      .prefix = prefix,
+      .pad = pad,
+      .endStream = endStream,
+      .ready = true
+    };
   }
   void h2Reset(uint32_t id, Error::T error) {
     if (entry(id)) {
@@ -1003,11 +1076,6 @@ public:
     if (m_errorSent) return;
     m_errorSent = true;
     sendGoaway_(Error::NoError);
-  }
-
-  void resetBlock() {
-    m_decoding = false;
-    m_discardStream = 0;
   }
 
   bool peerInitialWindow(uint32_t value) {
@@ -1077,7 +1145,90 @@ private:
     EventRx rx{event};
     if (logical->process_(rx) < 0 && entry(id))
       impl_()->h2Cancel(id);
+    retireDeferred_(id, event.consumed);
+    if (event.type == EventType::Data && !event.transferred) {
+      event.wire->advance(event.frameLength);
+      retireDeferred_(
+	id, event.frameLength - event.headLen - event.tailLen);
+    }
     return entry(id);
+  }
+
+  int data_(Ztls::RxStream &rx) {
+    if (ZuUnlikely(!m_rxData.ready)) {
+      h2Error(Error::InternalError);
+      return -1;
+    }
+    RxDataFrame data = m_rxData;
+    m_rxData = {};
+    uint32_t frameLength = FrameHeaderSize + data.length;
+    auto entry_ = entry(data.id);
+    if (!entry_) {
+      rx.advance(frameLength);
+      retireConnection_(data.length);
+      if (!impl_()->h2Closed(data.id)) h2Error(Error::ProtocolError);
+      return int(frameLength);
+    }
+    if (entry_->flowError) {
+      rx.advance(frameLength);
+      retireConnection_(data.length);
+      impl_()->h2ResetLogical(data.id, Error::FlowControlError);
+      return int(frameLength);
+    }
+    unsigned protocol = data.prefix + data.pad;
+    if (ZuUnlikely(protocol > data.length)) {
+      h2Error(Error::ProtocolError);
+      return -1;
+    }
+    retire_(data.id, protocol);
+    uint32_t payload = data.length - protocol;
+    entry_->deferred += payload;
+    if (!dispatch_(data.id, Event{
+      .type = EventType::Data,
+      .wire = &rx,
+      .frameLength = frameLength,
+      .headLen = FrameHeaderSize + data.prefix,
+      .tailLen = data.pad,
+      .endStream = data.endStream
+    })) return int(frameLength);
+    entry_ = entry(data.id);
+    if (!entry_ || !data.endStream) return int(frameLength);
+    entry_->remoteEnd = true;
+    impl_()->h2RemoteEnd(data.id);
+    return int(frameLength);
+  }
+
+  void retireConnection_(uint64_t length) {
+    if (!length) return;
+    settleConnection_(length);
+    sendWindowUpdate_(0, uint32_t(length));
+  }
+  void settleConnection_(uint64_t length) {
+    if (!length) return;
+    ZmAssert(length <= uint64_t(MaxWindow));
+    ZmAssert(m_rxWindow <= int64_t(MaxWindow) - int64_t(length));
+    m_rxWindow += int64_t(length);
+  }
+  void retire_(uint32_t id, uint64_t length) {
+    if (!length) return;
+    retireConnection_(length);
+    auto entry_ = entry(id);
+    if (!entry_ || entry_->flowError) return;
+    ZmAssert(entry_->rxWindow <= int64_t(MaxWindow) - int64_t(length));
+    entry_->rxWindow += int64_t(length);
+    sendWindowUpdate_(id, uint32_t(length));
+  }
+  void retireDeferred_(uint32_t id, uint64_t length) {
+    if (!length) return;
+    auto entry_ = entry(id);
+    if (!entry_) {
+      retireConnection_(length);
+      return;
+    }
+    ZmAssert(length <= entry_->deferred);
+    if (ZuUnlikely(length > entry_->deferred)) length = entry_->deferred;
+    entry_->deferred -= length;
+    retire_(id, length);
   }
   void sendSettingsAck_() {
     auto tx = impl_()->txStream();
@@ -1422,6 +1573,7 @@ private:
   ZmRef<Entries>	m_entries;
   ZmScheduler::Timer	m_settingsTimer;
   HPackDecoder		m_decoder;
+  RxDataFrame		m_rxData;
   uint32_t		m_lastPeer = 0;
   uint32_t		m_peerInitialWindow = DefltWindow;
   uint32_t		m_discardStream = 0;
@@ -1430,6 +1582,8 @@ private:
   bool			m_decoding = false;
   bool			m_errorSent = false;
   bool			m_stopping = false;
+  bool			m_rxPreface = false;
+  bool			m_rxDataValidated = false;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)

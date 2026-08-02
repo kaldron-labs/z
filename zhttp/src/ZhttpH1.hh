@@ -22,15 +22,45 @@ inline ZmRef<ZiRxQueue::Node> allocRxBuf()
   return new BodyRx::BufAlloc{};
 }
 
+inline ZmRef<ZiRxQueue::Node> allocWireRxBuf()
+{
+  return new BodyRx::WireBufAlloc{};
+}
+
 ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
-  Initial,		// first line - request operation or response status
-  Headers,		// reading headers
+  Initial,	// first line - request operation or response status
+  Headers,	// reading headers
   Body,		// reading body data (not chunked)
-  ChunkHdr,		// chunk header (hex length + CRLF)
-  Chunk,		// reading chunk data + trailing CRLF
-  Trailers,		// trailers after final chunk
-  Complete,		// message completely read
-  Error);		// invalid message
+  ChunkHdr,	// chunk header (hex length + CRLF)
+  Chunk,	// reading chunk data + trailing CRLF
+  Trailers,	// trailers after final chunk
+  Complete,	// message completely read
+  Error);	// invalid message
+
+ZuInline constexpr uint8_t hex(uint8_t c) {
+  c |= 0x20;
+  return
+    (ZuLikely(c >= '0' && c <= '9')) ?  c - '0' :
+    (ZuLikely(c >= 'a' && c <= 'f')) ? (c - 'a') + 10 : 0xff;
+}
+
+struct ChunkHdr {
+  uint64_t length = 0;
+
+  // parse a chunk length; chunk extensions are ignored
+  bool parse(ZuBSpan data) {
+    unsigned n = data.length();
+    if (ZuUnlikely(!n ||
+	(n > 1 && data[0] == '0' && (data[1] | 0x20) == 'x')))
+      return false;
+    using Scan = Zu_nscan<ZuFmt::Hex<false, ZuFmt::Left<16>>>;
+    ZuCSpan s{data};
+    unsigned o = Scan::atou(length, s.data(), n);
+    if (ZuUnlikely(!o || (o == 16 && o < n && hex(data[o]) != 0xff)))
+      return false;
+    return o == n || data[o] == ';';
+  }
+};
 
 // HTTP/1 request/response parser
 template <
@@ -57,17 +87,15 @@ private:
   template <typename Key> void header_(ZuBSpan value) {
     if constexpr (Key{}() == "transfer-encoding") {
 	bool invalid = false;
-	split(value, [this, &invalid](unsigned i, ZuBSpan token) -> bool {
+	split(value, [this, &invalid](unsigned i, ZuBSpan token) {
 	  // chunked must come last, anything else must be first
 	  if (m_chunked) {
 	    invalid = true;
-	    return false;
 	  } else if (token == "chunked") {
 	    m_chunked = true;
 	    impl()->chunked();
 	  } else if (i) {
 	    invalid = true;
-	    return false;
 	  } else {
 	    auto xferCompression = XferCompression::lookup(token);
 	    if (xferCompression < 0)
@@ -75,7 +103,6 @@ private:
 	    else
 	      impl()->xferCompression(xferCompression);
 	  }
-	  return true;
 	});
 	if (invalid) {
 	  m_state = State::Error;
@@ -83,7 +110,7 @@ private:
 	}
     } else if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength;
-	if (!parseUInt64Full_(value, contentLength) ||
+	if (!atou(value, contentLength) ||
 	    contentLength > MaxBody) {
 	  m_state = State::Error;
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
@@ -212,7 +239,8 @@ public:
 		if (m_chunked) {
 		  m_state = State::ChunkHdr;
 		  m_contentLength = 0;
-		} else if (m_contentLength > 0)
+		} else if (m_contentLength != uint64_t(-1) &&
+		    m_contentLength > 0)
 		  m_state = State::Body;
 		else if constexpr (Request) {
 		  m_state = State::Complete;
@@ -262,7 +290,7 @@ public:
 		  return 0;
 		}
 		return remaining;
-	      }, allocRxBuf, allocRxBuf, 0, 0,
+	      }, allocWireRxBuf, allocRxBuf, 0, 0,
 	      [this](auto &rx) { impl()->body(rx); });
 	    if (consumed > 0) {
 	      m_contentLength = 0;
@@ -271,18 +299,16 @@ public:
 	      m_state = State::Error;
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
-	    consumed = stream.template consume<2, "Zhttp.ChunkHdr">(
-	      crlf<false>(), [this](ZuSpan<uint8_t> span) {
+	    consumed = parseLine<false>(
+	      stream, [this](ZuSpan<uint8_t> span) {
 		if (!span) { m_state = State::Complete; return; }
 		auto error = [this]() {
 		  m_state = State::Error;
 		  ZiLOG(Error, "Zhttp", "invalid chunk-length");
 		};
-		ZuBox<uint64_t> l;
-		auto n = l.scan<ZuFmt::Hex<>>(ZuCSpan{span});
-		if (!n) { error(); return; }
-		// span.offset(n); // chunk extensions are ignored
-		m_chunkLength = l;
+		ChunkHdr hdr;
+		if (!hdr.parse(span)) { error(); return; }
+		m_chunkLength = hdr.length;
 		if (!m_chunkLength) {
 		  m_state = State::Trailers;
 		  return;
@@ -308,7 +334,7 @@ public:
 		if (remaining) return 0;
 		if (last != '\r' || prev != '\n') return -1;
 		return n;
-	      }, allocRxBuf, allocRxBuf, 0, 2,
+	      }, allocWireRxBuf, allocRxBuf, 0, 2,
 	      [this](auto &rx) { impl()->body(rx); });
 	    if (consumed > 0) {
 	      m_chunkLength = 0;
@@ -404,7 +430,7 @@ private:
 	    return 0;
 	  }
 	  return remaining;
-	}, allocRxBuf, allocRxBuf, 0, 0,
+	}, allocWireRxBuf, allocRxBuf, 0, 0,
 	[this](auto &rx) { impl()->body(rx); });
       m_state = n > 0 ? State::Complete : State::Error;
     } else
@@ -433,9 +459,9 @@ private:
   BodyRx	m_bodyRx;
   unsigned	m_statusCode = 0;
   State::T	m_state = State::Initial;
-  bool	m_chunked = false;
-  bool	m_eofBody = false;
-  bool	m_progressed = false;
+  bool		m_chunked = false;
+  bool		m_eofBody = false;
+  bool		m_progressed = false;
 };
 
 // HTTP 1.1 non-chunked body Tx streaming

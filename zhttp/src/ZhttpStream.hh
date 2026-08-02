@@ -119,8 +119,10 @@ public:
 template <typename Link>
 Stream(Link &) -> Stream<Link>;
 
-// Rx-owner adapter.  Disable ingress on the Rx shard before disable_(), drain
-// pending Rx work, then call final_() from that drain continuation.
+// Rx-owner adapter.  process() synchronously prompts the consumer with the
+// populated queue; unread bytes remain queued.  Peer end and reset/error are
+// separate callbacks.  Disable ingress on the Rx shard before disable_(),
+// drain pending Rx work, then call final_() from that drain continuation.
 template <typename Link, typename Consumer>
 class StreamDispatch {
 public:
@@ -133,7 +135,7 @@ public:
   template <typename Rx>
   int process(Rx &rx) {
     static_assert(
-      Stream_::IsRx<Rx>{}, "invalid Zhttp logical-stream Rx layer");
+      Stream_::IsRx<Rx>{}, "invalid Zhttp logical-stream Rx queue");
     if (!m_link || !m_consumer) return 0;
     auto link = m_link;
     int rc = m_consumer->process(Stream{*link}, rx);

@@ -101,23 +101,16 @@ struct ClientParser :
 	status_ >= 200 && status_ < 300 && !endStream) {
       stream();
       ++streamEstablished;
+      ++streamStarts;
     }
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void events_(Zi::RxEvent::T events) {
-    if (events & Zi::RxEvent::Start()) ++streamStarts;
-    if (events & Zi::RxEvent::Final()) ++streamEnds;
-    if (events & Zi::RxEvent::Error()) ++streamResets;
-    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
-      dispatch.disable_();
-  }
+  void streamPeerEnd_() { ++streamEnds; dispatch.peerEnd(); }
+  void streamError_() { ++streamResets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {
-    for (;;) {
-      bool input = rx.input();
-      events_(rx.events());
-      if (!input) break;
+    while (rx) {
       const uint8_t *offered = nullptr;
       int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
@@ -128,7 +121,6 @@ struct ClientParser :
 	    streamNoCopy &= span.data() == offered;
 	    streamBody << ZuCSpan{span};
 	  });
-      events_(rx.events());
       if (n <= 0) break;
     }
   }
@@ -290,6 +282,7 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
 	!endStream) {
       stream();
       ++streamEstablished;
+      ++streamStarts;
     }
   }
   void contentLength(uint64_t) { }
@@ -299,19 +292,11 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
   void body(Rx &rx) { Zhttp::bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void events_(Zi::RxEvent::T events) {
-    if (events & Zi::RxEvent::Start()) ++streamStarts;
-    if (events & Zi::RxEvent::Final()) remoteEnded = true;
-    if (events & Zi::RxEvent::Error()) ++streamResets;
-    if (events & (Zi::RxEvent::Final() | Zi::RxEvent::Error()))
-      dispatch.disable_();
-  }
+  void streamPeerEnd_() { remoteEnded = true; dispatch.peerEnd(); }
+  void streamError_() { ++streamResets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {
-    for (;;) {
-      bool input = rx.input();
-      events_(rx.events());
-      if (!input) break;
+    while (rx) {
       const uint8_t *offered = nullptr;
       int64_t n = rx.consume(
 	  [&offered](ZuBSpan span) -> int64_t {
@@ -322,7 +307,6 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
 	    streamNoCopy &= span.data() == offered;
 	    streamData << ZuCSpan{span};
 	  });
-      events_(rx.events());
       if (n <= 0) break;
     }
   }

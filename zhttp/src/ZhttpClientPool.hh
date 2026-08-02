@@ -169,16 +169,6 @@ public:
 	});
       });
     }
-    void replace(Request *request) {
-      m_next = request;
-      if (this->active()) {
-	close();
-	return;
-      }
-      m_next = nullptr;
-      assign(request);
-      start();
-    }
     void retire() {
       m_request = nullptr;
       if (this->active())
@@ -208,13 +198,6 @@ public:
 	  message.eof();
 	}
 	if (m_request && !m_complete) complete(false);
-      }
-      if (m_next && pool()->accepting()) {
-	auto request = m_next;
-	m_next = nullptr;
-	assign(request);
-	start();
-	return;
       }
       notifyStopped_();
     }
@@ -286,7 +269,6 @@ public:
     }
 
     Request	*m_request = nullptr;
-    Request	*m_next = nullptr;
     unsigned	m_generation = 0;
     bool	m_complete = false;
     bool	m_sent = false;

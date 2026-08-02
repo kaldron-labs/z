@@ -175,6 +175,8 @@ struct Workload {
     void contentLength(uint64_t);
     void chunked();
     template <typename Key> void header(ZuBSpan value);
+    // Synchronous queue prompt; incomplete application framing may remain
+    // queued for a later decoded-body append.
     template <typename Rx> void body(Rx &);
     void complete(bool ok);
   };
@@ -225,7 +227,8 @@ private:
     void reset() {
       request = {};
       if (service) sink = service->m_workload->requestParser();
-      bodyReceived = bodyConsumed = bodyReset = bodyDiscarded = 0;
+      bodyReceived = bodyConsumed = bodyPending = 0;
+      bodyReset = bodyDiscarded = 0;
       complete_ = false;
     }
     void operation(Method::T method, const RequestTarget &target) {
@@ -283,16 +286,17 @@ private:
     void status(unsigned) { }
     template <typename Rx>
     void body(Rx &rx) {
-      (void)rx.input();
-      uint32_t offered = rx.available();
-      bodyReceived += offered;
-      sink.body(rx);
-      uint32_t pending = rx.available();
-      if (pending <= offered) {
-	bodyConsumed += offered - pending;
-	bodyReset += pending;
-	bodyDiscarded += pending;
+      uint64_t before = rx.length();
+      if (before < bodyPending) {
+	complete_ = false;
+	return;
       }
+      bodyReceived += before - bodyPending;
+      sink.body(rx);
+      uint64_t pending = rx.length();
+      if (pending > before) { complete_ = false; return; }
+      bodyConsumed += before - pending;
+      bodyPending = pending;
       request.bodyReceived = bodyReceived;
       request.bodyConsumed = bodyConsumed;
       request.bodyReset = bodyReset;
@@ -301,6 +305,13 @@ private:
     template <typename ParserState>
     void complete(typename ParserState::T state) {
       complete_ = state == ParserState::Complete;
+      bodyReset += bodyPending;
+      bodyDiscarded += bodyPending;
+      bodyPending = 0;
+      request.bodyReceived = bodyReceived;
+      request.bodyConsumed = bodyConsumed;
+      request.bodyReset = bodyReset;
+      request.bodyDiscarded = bodyDiscarded;
       sink.complete(complete_);
     }
 
@@ -309,6 +320,7 @@ private:
     AppRequestParser sink;
     uint64_t	bodyReceived = 0;
     uint64_t	bodyConsumed = 0;
+    uint64_t	bodyPending = 0;
     uint64_t	bodyReset = 0;
     uint64_t	bodyDiscarded = 0;
     bool	complete_ = false;

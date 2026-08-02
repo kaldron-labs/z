@@ -31,6 +31,9 @@ public:
   using BufAlloc = Zi::IOBufAlloc<
     Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
     ZuStringT<"Zhttp.Body.Rx">>;
+  using WireBufAlloc = Zi::IOBufAlloc<
+    Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zhttp.Wire.Rx.Split">>;
 
   BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
 

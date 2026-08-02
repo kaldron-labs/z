@@ -20,7 +20,7 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpURL.hh ZhttpAltSvc.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
 	ZhttpH1.hh ZhttpH1Stream.hh ZhttpH3.hh \
 	ZhttpH2.hh ZhttpH2Session.hh ZhttpH2Message.hh \
-	ZhttpH1Session.hh ZhttpH3Session.hh ZhttpMessage.hh \
+	ZhttpH3Session.hh ZhttpMessage.hh \
 	ZhttpCompression.hh ZhttpFields.hh ZhttpHPack.hh ZhttpTypes.hh \
 	ZhttpQPack.hh ZhttpStaticTable.hh ZhttpUtil.hh
 lib_LTLIBRARIES = libZhttp.la

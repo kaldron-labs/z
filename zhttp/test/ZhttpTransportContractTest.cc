@@ -766,7 +766,8 @@ void testBodyRx()
 
   auto buf = [](ZuCSpan value) {
     ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{};
-    memcpy(buf->data(), value.data(), value.length());
+    auto io = static_cast<ZiIOBuf *>(buf.ptr());
+    memcpy(io->data(), value.data(), value.length());
     buf->length = value.length();
     return buf;
   };
@@ -774,7 +775,8 @@ void testBodyRx()
   Zhttp::BodyRx body{5};
   unsigned calls = 0;
   unsigned remaining = 5;
-  auto consume = [&calls, &remaining](auto &rx) {
+  ZtString<> gathered;
+  auto consume = [&calls, &remaining, &gathered](auto &rx) {
     ++calls;
     (void)rx.consume(
       [&remaining](ZuBSpan span) -> int64_t {
@@ -784,9 +786,7 @@ void testBodyRx()
 	}
 	return remaining;
       },
-      [](ZuBSpan span) {
-        ZuCHECK(ZuCSpan(span) == "abcde", "queued body mismatch");
-      });
+      [&gathered](ZuBSpan span) { gathered << ZuCSpan{span}; });
   };
 
   ZuCHECK(body.push(buf("abc"), consume), "first body append failed");
@@ -796,7 +796,7 @@ void testBodyRx()
   remaining = 5;
   ZuCHECK(body.push(buf("de"), consume), "second body append failed");
   ZuCHECK(calls == 2 && !body.rx() && body.received() == 5 &&
-      body.consumed() == 5,
+      body.consumed() == 5 && gathered == "abcde",
     "completed application frame was not consumed across appends");
 
   unsigned rejectedCalls = 0;
@@ -849,7 +849,8 @@ void testStream()
 
   auto buf = [](ZuCSpan value) {
     ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{};
-    memcpy(buf->data(), value.data(), value.length());
+    auto io = static_cast<ZiIOBuf *>(buf.ptr());
+    memcpy(io->data(), value.data(), value.length());
     buf->length = value.length();
     return buf;
   };

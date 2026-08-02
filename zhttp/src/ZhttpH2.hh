@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtEnum.hh>
@@ -71,6 +72,10 @@ struct FrameHeader {
   bool		reserved = false;
 };
 
+// decode a contiguous nine-byte frame header
+bool decodeHeader(ZuCSpan, FrameHeader &);
+
+// incremental nine-byte frame header parser
 class FrameHeaderParser {
 public:
   int process(ZuBSpan, unsigned &, FrameHeader &);
@@ -81,6 +86,7 @@ private:
   unsigned	m_length = 0;
 };
 
+// incremental client connection preface parser
 class PrefaceParser {
 public:
   static ZuCSpan value();
@@ -111,9 +117,10 @@ int putHeader(Bytes &out, FrameHeader header) {
 template <typename Bytes>
 int putPreface(Bytes &out) {
   auto preface = PrefaceParser::value();
-  for (unsigned i = 0; i < preface.length(); ++i)
+  unsigned n = preface.length();
+  for (unsigned i = 0; i < n; ++i)
     out.push(uint8_t(preface[i]));
-  return int(preface.length());
+  return int(n);
 }
 
 template <typename Bytes>
@@ -182,14 +189,14 @@ public:
 
   int process(ZuBSpan input) {
     if (m_error) return -1;
-    unsigned offset = 0;
+    unsigned offset = 0, n = input.length();
     if (m_preface) {
       int state = m_prefaceParser.process(input, offset);
       if (state < 0) return fail_(Error::ProtocolError);
       if (!state) return int(offset);
       m_preface = false;
     }
-    while (offset < input.length()) {
+    while (offset < n) {
       if (!m_inFrame) {
 	int state = m_headerParser.process(input, offset, m_header);
 	if (state < 0) return fail_(Error::ProtocolError);
@@ -202,10 +209,10 @@ public:
 	  continue;
 	}
       }
-      unsigned available = input.length() - offset;
+      unsigned available = n - offset;
       uint32_t remaining = m_header.length - m_payloadOffset;
       if (available > remaining) available = remaining;
-      ZuBSpan span{input.data() + offset, available};
+      ZuBSpan span{&input[offset], available};
       if (!payload_(span)) return -1;
       offset += available;
       if (m_payloadOffset == m_header.length) {
@@ -232,12 +239,6 @@ public:
   }
 
 private:
-  static uint32_t uint32_(const uint8_t *p) {
-    return
-      (uint32_t(p[0])<<24) | (uint32_t(p[1])<<16) |
-      (uint32_t(p[2])<<8) | uint32_t(p[3]);
-  }
-
   int fail_(Error::T error) {
     if (!m_error) {
       m_error = error;
@@ -298,28 +299,32 @@ private:
     switch (m_header.type) {
       case FrameType::Headers:
       case FrameType::Continuation:
-	return headerPayload_(span);
+	return header_(span);
       case FrameType::Data:
-	return dataPayload_(span);
+	return data_(span);
       case FrameType::Settings:
-	return settingsPayload_(span);
+	return settings_(span);
       case FrameType::PushPromise:
-	return pushPayload_(span);
+	return push_(span);
       case FrameType::Priority:
+	return fixed_<5>(span);
       case FrameType::Ping:
+	return fixed_<8>(span);
       case FrameType::RSTStream:
       case FrameType::WindowUpdate:
+	return fixed_<4>(span);
       case FrameType::Goaway:
-	return fixedPayload_(span);
+	return fixed_<8>(span);
       default:
 	m_payloadOffset += span.length();
 	return true;
     }
   }
 
-  bool paddedPayload_(
-    ZuBSpan span, bool header, unsigned priority = 0) {
-    unsigned offset = 0;
+  // process a DATA or HEADERS payload without copying its content
+  template <bool Header, unsigned Priority = 0>
+  bool padded_(ZuBSpan span) {
+    unsigned offset = 0, n = span.length();
     uint32_t frameOffset = m_payloadOffset;
     if ((m_header.flags & Flag::Padded) && !frameOffset && span) {
       m_pad = span[0];
@@ -330,17 +335,17 @@ private:
     }
     unsigned skip = 0;
     unsigned prefixEnd =
-      ((m_header.flags & Flag::Padded) ? 1U : 0U) + priority;
+      ((m_header.flags & Flag::Padded) ? 1U : 0U) + Priority;
     if (frameOffset < prefixEnd) {
       skip = prefixEnd - frameOffset;
-      if (skip > span.length() - offset) skip = span.length() - offset;
-      if (header && priority) {
+      if (skip > n - offset) skip = n - offset;
+      if constexpr (Header && Priority) {
 	unsigned priorityStart =
 	  (m_header.flags & Flag::Padded) ? 1U : 0U;
 	for (unsigned i = 0; i < skip; ++i) {
 	  uint32_t position = frameOffset + i;
 	  if (position >= priorityStart &&
-	      position < priorityStart + priority)
+	      position < priorityStart + Priority)
 	    m_fixed[position - priorityStart] = span[offset + i];
 	}
       }
@@ -351,42 +356,42 @@ private:
     unsigned deliver = 0;
     if (frameOffset < dataEnd) {
       deliver = dataEnd - frameOffset;
-      if (deliver > span.length() - offset)
-	deliver = span.length() - offset;
+      if (deliver > n - offset) deliver = n - offset;
     }
     if (deliver) {
-      ZuBSpan payload{span.data() + offset, deliver};
-      if (header)
+      ZuBSpan payload{&span[offset], deliver};
+      if constexpr (Header)
 	impl()->h2Headers(m_headerStream, payload);
       else
 	impl()->h2Data(m_header.streamID, payload);
     }
-    m_payloadOffset += span.length();
+    m_payloadOffset += n;
     return true;
   }
 
-  bool headerPayload_(ZuBSpan span) {
+  bool header_(ZuBSpan span) {
     if (m_header.type == FrameType::Continuation) {
       m_headerStream = m_header.streamID;
       if (span) impl()->h2Headers(m_headerStream, span);
       m_payloadOffset += span.length();
       return true;
     }
-    return paddedPayload_(
-      span, true, (m_header.flags & Flag::Priority) ? 5U : 0U);
+    if (m_header.flags & Flag::Priority) return padded_<true, 5>(span);
+    return padded_<true>(span);
   }
 
-  bool dataPayload_(ZuBSpan span) {
-    return paddedPayload_(span, false);
+  bool data_(ZuBSpan span) {
+    return padded_<false>(span);
   }
 
-  bool settingsPayload_(ZuBSpan span) {
-    for (unsigned i = 0; i < span.length(); ++i) {
+  // process SETTINGS entries incrementally
+  bool settings_(ZuBSpan span) {
+    for (unsigned i = 0, n = span.length(); i < n; ++i) {
       m_fixed[m_fixedLength++] = span[i];
       ++m_payloadOffset;
       if (m_fixedLength == 6) {
-	uint16_t key = (uint16_t(m_fixed[0])<<8) | m_fixed[1];
-	uint32_t value = uint32_(m_fixed.data() + 2);
+	uint16_t key = ZuBE(*reinterpret_cast<const uint16_t *>(m_fixed.data()));
+	uint32_t value = ZuBE(*reinterpret_cast<const uint32_t *>(&m_fixed[2]));
 	auto error = m_peerSettings.apply(key, value, !m_server);
 	if (error) return fail_(error) >= 0;
 	impl()->h2Setting(key, value);
@@ -396,27 +401,28 @@ private:
     return true;
   }
 
-  bool pushPayload_(ZuBSpan span) {
-    unsigned offset = 0;
+  bool push_(ZuBSpan span) {
+    unsigned offset = 0, n = span.length();
     if ((m_header.flags & Flag::Padded) && !m_payloadOffset && span) {
       m_pad = span[0];
       ++offset;
       if (uint64_t(m_pad) + m_prefix > m_header.length)
 	return fail_(Error::ProtocolError) >= 0;
     }
-    while (offset < span.length() && m_fixedLength < m_prefix)
+    while (offset < n && m_fixedLength < m_prefix)
       m_fixed[m_fixedLength++] = span[offset++];
-    m_payloadOffset += span.length();
+    m_payloadOffset += n;
     return true;
   }
 
-  bool fixedPayload_(ZuBSpan span) {
-    unsigned retain = m_header.type == FrameType::Goaway ? FixedPayloadSize :
-      m_header.length;
+  // retain the fixed prefix needed when a frame ends
+  template <unsigned Retain>
+  bool fixed_(ZuBSpan span) {
     unsigned offset = 0;
-    while (offset < span.length() && m_fixedLength < retain)
+    unsigned n = span.length();
+    while (offset < n && m_fixedLength < Retain)
       m_fixed[m_fixedLength++] = span[offset++];
-    m_payloadOffset += span.length();
+    m_payloadOffset += n;
     return true;
   }
 
@@ -432,7 +438,8 @@ private:
 	break;
       case FrameType::Headers:
 	if ((m_header.flags & Flag::Priority) &&
-	    (uint32_(m_fixed.data()) & MaxWindow) == m_header.streamID)
+	    (ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data())) &
+	      MaxWindow) == m_header.streamID)
 	  return fail_(Error::ProtocolError) >= 0;
 	if (m_header.flags & Flag::EndHeaders)
 	  impl()->h2HeadersEnd(m_headerStream, m_headersEndStream);
@@ -448,7 +455,7 @@ private:
       case FrameType::Data:
 	impl()->h2DataEnd(
 	  m_header.streamID, bool(m_header.flags & Flag::EndStream),
-	  m_header.length);
+	  m_header.length, m_prefix, m_pad);
 	break;
       case FrameType::Ping:
 	if (m_header.flags & Flag::ACK)
@@ -458,22 +465,25 @@ private:
 	break;
       case FrameType::RSTStream:
 	impl()->h2Reset(
-	  m_header.streamID, Error::T(uint32_(m_fixed.data())));
+	  m_header.streamID,
+	  Error::T(ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data()))));
 	break;
       case FrameType::Priority:
-	if ((uint32_(m_fixed.data()) & MaxWindow) == m_header.streamID)
+	if ((ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data())) &
+	    MaxWindow) == m_header.streamID)
 	  return fail_(Error::ProtocolError) >= 0;
 	break;
       case FrameType::WindowUpdate: {
-	uint32_t value = uint32_(m_fixed.data()) & MaxWindow;
+	uint32_t value =
+	  ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data())) & MaxWindow;
 	if (!value) return fail_(Error::ProtocolError) >= 0;
 	impl()->h2WindowUpdate(m_header.streamID, value);
 	break;
       }
       case FrameType::Goaway:
 	impl()->h2Goaway(
-	  uint32_(m_fixed.data()) & MaxWindow,
-	  Error::T(uint32_(m_fixed.data() + 4)));
+	  ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data())) & MaxWindow,
+	  Error::T(ZuBE(*reinterpret_cast<const uint32_t *>(&m_fixed[4]))));
 	break;
       case FrameType::PushPromise:
 	return fail_(Error::ProtocolError) >= 0;

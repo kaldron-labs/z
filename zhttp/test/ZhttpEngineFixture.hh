@@ -72,11 +72,15 @@ ZiMxParams mxParams()
 template <typename Rx>
 bool consume(Rx &rx, ZuCSpan expected)
 {
+  unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [expected](ZuBSpan span) -> int64_t {
-      if (span.length() < expected.length()) return 0;
-      return expected.length();
+    [&remaining](ZuBSpan span) -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
     },
     [&ok, expected](ZuBSpan span) {
       ok = span.length() == expected.length() &&
@@ -88,9 +92,7 @@ bool consume(Rx &rx, ZuCSpan expected)
 template <typename Rx>
 bool consumeStream(Rx &rx, ZuCSpan expected, unsigned &offset)
 {
-  while (rx.input()) {
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Error()) return false;
+  while (rx) {
     int64_t n = rx.consume(
       [&expected, &offset](ZuBSpan span) -> int64_t {
 	unsigned remain = expected.length() - offset;
@@ -105,7 +107,7 @@ bool consumeStream(Rx &rx, ZuCSpan expected, unsigned &offset)
     if (n < 0 || offset > expected.length()) return false;
     if (!n) break;
   }
-  return !rx.failed();
+  return true;
 }
 
 template <typename Link>
@@ -300,6 +302,7 @@ struct UpgradeSession {
   UpgradeReq	parser;
   unsigned	offset = 0;
   bool		replied = false;
+  bool		started = false;
 
   template <typename Link>
   void connected(Link &link) {
@@ -331,14 +334,8 @@ struct UpgradeSession {
   }
   template <typename Link, typename Rx>
   int process(Zhttp::Stream<Link> stream, Rx &rx) {
-    bool input = rx.input();
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) ++state->srvStarts;
-    if (events & Zi::RxEvent::Error()) {
-      state->fail();
-      return -1;
-    }
-    if (input && !consumeStream(rx, Ping, offset)) {
+    if (!started) { started = true; ++state->srvStarts; }
+    if (!consumeStream(rx, Ping, offset)) {
       state->fail();
       return -1;
     }
@@ -349,10 +346,12 @@ struct UpgradeSession {
 	tx.flush();
       });
     }
-    events |= rx.events();
-    if (events & Zi::RxEvent::Final()) ++state->srvFinals;
     return 1;
   }
+  template <typename Link>
+  void peerEnd(Zhttp::Stream<Link>) { ++state->srvFinals; }
+  template <typename Link>
+  void error(Zhttp::Stream<Link>) { state->fail(); }
 };
 
 template <typename Profile>
@@ -396,11 +395,13 @@ struct UpgradeClient :
 
   UpgradeState	*state = nullptr;
   unsigned	offset = 0;
+  bool		started = false;
 
   UpgradeClient(UpgradeState *state_) : state{state_} { }
 
   void connected(Link &link, Zhttp::ConnectedInfo) {
     offset = 0;
+    started = false;
     if (!link.streamEnable()) {
       state->fail();
       return;
@@ -430,20 +431,18 @@ struct UpgradeClient :
   }
   template <typename Link, typename Rx>
   int process(Zhttp::Stream<Link> stream, Rx &rx) {
-    bool input = rx.input();
-    auto events = rx.events();
-    if (events & Zi::RxEvent::Start()) ++state->cliStarts;
-    if (events & Zi::RxEvent::Error()) {
-      state->fail();
-      return -1;
-    }
-    if (input && !consumeStream(rx, Pong, offset)) {
+    if (!started) { started = true; ++state->cliStarts; }
+    if (!consumeStream(rx, Pong, offset)) {
       state->fail();
       return -1;
     }
     if (offset == Pong.length()) stream.end();
     return 1;
   }
+  template <typename Link>
+  void peerEnd(Zhttp::Stream<Link>) { }
+  template <typename Link>
+  void error(Zhttp::Stream<Link>) { state->fail(); }
 };
 
 template <typename Profile> struct Config;
@@ -545,9 +544,12 @@ void runUpgrade(const TempDir &temp)
   ZuCHECK(!state.errors.load_(), "Upgrade stream application error");
   ZuCHECK(state.closed.load_() == 2,
     "Upgrade stream disconnect count mismatch");
-  ZuCHECK(state.cliStarts.load_() == 1 &&
-      state.srvStarts.load_() == 1 && state.srvFinals.load_() == 1,
-    "Upgrade stream terminal event mismatch");
+  ZuCHECK(state.cliStarts.load_() == 1,
+    "Upgrade client stream start event mismatch");
+  ZuCHECK(state.srvStarts.load_() == 1,
+    "Upgrade server stream start event mismatch");
+  ZuCHECK(state.srvFinals.load_() == 1,
+    "Upgrade server stream terminal event mismatch");
 }
 
 template <typename Profile>

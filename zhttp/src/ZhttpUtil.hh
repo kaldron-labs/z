@@ -13,6 +13,14 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/Zu_aton.hh>
+
+#include <zlib/ZmScratch.hh>
+
+#include <zlib/ZtArray.hh>
+
+#include <zlib/ZiRxStream.hh>
+
 namespace Zhttp {
 
 // hard-coded linear white space (ASCII/UTF8)
@@ -73,15 +81,16 @@ ZuInline int eok(ZuBSpan data) {
 
 // skip leading linear white space to find beginning of header value
 ZuInline int bov(ZuBSpan data) {
-  auto begin = data.data();
-  data.trim(islws);
-  return data ? int(data.data() - begin) : -1;
+  for (unsigned o = 0, n = data.length(); o < n; ++o)
+    if (!islws(data[o])) return o;
+  return -1;
 }
 
 // remove trailing linear white space to find end of header value
 ZuInline int eov(ZuBSpan data) {
-  data.chomp(islws);
-  return data ? int(data.length()) : -1;
+  for (int o = data.length(); --o >= 0; )
+    if (!islws(data[o])) return o + 1;
+  return -1;
 }
 
 // split and iterate over HTTP value delimited by \s+,\s+
@@ -110,8 +119,7 @@ inline void split(ZuBSpan data, L &&l) {
     }
     if (end < 0) end = o;
     if (ZuLikely(end > begin || count || o < n))
-      if (!l(count++, ZuBSpan(&data[begin], unsigned(end - begin))))
-	break;
+      l(count++, ZuBSpan(&data[begin], unsigned(end - begin)));
     if (o >= n) break;
     // skip trailing linear white space
     while (++o < n) if (!islws(data[o])) break;
@@ -147,8 +155,30 @@ inline auto crlf() {
 // - span is empty for the last line before the body
 template <bool CanFold = true, typename Stream, typename Line>
 inline int64_t parseLine(Stream &stream, Line &&line) {
-  return stream.template consume<2, "Zhttp.Header">(
-    crlf<CanFold>(), ZuFwd<Line>(line));
+  Zi::RxFramePos pos;
+  int64_t n = stream.scan(crlf<CanFold>(), pos);
+  if (n <= 0) return n;
+  uint64_t length = uint64_t(n) - 2;
+  auto span = stream.span();
+  if (span.length() >= length) {
+    span.trunc(unsigned(length));
+    ZuFwd<Line>(line)(span);
+  } else {
+    if (ZuUnlikely(length > UINT_MAX)) return -1;
+    using Storage = ZtArray<
+      uint8_t, ZtArrayHeapID<"Zhttp.Line.Rx">>;
+    auto storage = ZmScratch(
+      uint8_t, unsigned(length), typename Storage::VHeap);
+    int64_t copied = stream.each(length,
+      [&storage](ZuBSpan part) -> int64_t {
+	storage << part;
+	return part.length();
+      });
+    if (ZuUnlikely(copied < 0 || uint64_t(copied) != length)) return -1;
+    ZuFwd<Line>(line)(storage.span());
+  }
+  stream.advance(uint64_t(n));
+  return n;
 }
 
 // parses a key and value from a line
@@ -175,20 +205,23 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
   return true;
 }
 
-inline bool parseUInt64Full_(ZuBSpan value, uint64_t &out) {
-  ZuBox<uint64_t> box;
-  int n = box.scan(ZuCSpan{value});
-  if (ZuUnlikely(n < 0 || unsigned(n) != value.length())) return false;
-  uint64_t v = 0;
-  for (unsigned i = 0; i < value.length(); ++i) {
-    int c = value[i];
+// parse an entire unsigned decimal value in one pass
+inline bool atou(ZuBSpan value, uint64_t &out) {
+  ZuCSpan data{value};
+  unsigned n = data.length();
+  if (ZuUnlikely(!n || n > 20)) return false;
+  if (ZuUnlikely(n == 20)) {
+    unsigned o = Zu_atou(out, data.data(), n - 1);
+    if (ZuUnlikely(o != n - 1)) return false;
+    int c = data[o]; // intentionally int
     if (ZuUnlikely(c < '0' || c > '9')) return false;
     c -= '0';
-    if (ZuUnlikely(v > (uint64_t(-1) - unsigned(c)) / 10)) return false;
-    v = (v * 10) + unsigned(c);
+    if (ZuUnlikely(out > (uint64_t(-1) - unsigned(c)) / 10))
+      return false;
+    out = out * 10 + unsigned(c);
+    return true;
   }
-  out = v;
-  return true;
+  return Zu_atou(out, data.data(), n) == n;
 }
 
 } // namespace Zhttp

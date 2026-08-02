@@ -181,9 +181,12 @@ The body emitter, writer, and late-header patchers are synchronous and
 callback-scoped. Incremental output comes from `ZiTxStream` buffer rollover,
 not a cursor or scheduler batch. A streamed file writer may read and write
 many spans inside its one call. The same bounded `ZiRxStream` contract is used
-by the server request Parser. It must consume or copy all offered input before
-returning. Headers precede body input, validated body completion precedes the
-exact-once terminal result, and no callback follows that result.
+by the server request Parser. The application may leave a trailing incomplete
+application frame in that queue; later body appends prompt it again without
+copying or coalescing the retained spans. An application which needs
+contiguous storage owns that gather buffer. Headers precede body input,
+validated body completion precedes the exact-once terminal result, and no
+callback follows that result.
 `Result` reports request bytes produced, committed, reset, and discarded plus
 response bytes received, consumed, reset, and discarded. `RequestInfo`
 reports server-side request bytes received, consumed, reset, and discarded.
@@ -200,8 +203,9 @@ Extended CONNECT is opt-in with `H2Config::extendedConnect(true)` for H2 and
 independently, and refuses to emit or accept `:protocol` without the relevant
 capability. A successful 2xx handshake transitions the logical H2 or H3
 stream to `ParserState::Stream`. H1 Upgrade and H2/H3 Extended CONNECT then
-expose the same borrowed, shard-affine logical-stream contract. Rx is passed
-separately to `process()` and Tx is callback-scoped:
+expose the same queue-backed, shard-affine logical-stream contract. Rx is
+passed separately to `process()`, explicit callbacks report peer end/reset,
+and Tx is callback-scoped:
 
 ```c++
 Zhttp::Stream stream{link};
@@ -214,19 +218,21 @@ if (stream.peerCap()) {
 }
 
 int process(auto stream, auto &rx) {
-  while (rx.input()) {
-    auto events = rx.events();   // Start/Input/Final/Error, read and clear
-    if (events & Zi::RxEvent::Error()) return -1;
-    if (rx.consume(frame, consume) <= 0) return 0;
+  while (rx) {
+    int64_t n = rx.consume(frame, consume);
+    if (n < 0) return -1;
+    if (!n) break;               // incomplete application frame stays queued
   }
-  auto events = rx.events();
-  if (events & Zi::RxEvent::Final()) peerEnded();
   return 1;
 }
+
+void peerEnd(auto stream) { peerEnded(); }
+void error(auto stream) { stream.reset(); }
 ```
 
-The Rx layer and native pooled Tx layer are valid only for their respective
-callback durations. A negative `process()` result resets only the affected
+The Rx queue reference and native pooled Tx layer are valid only for their
+respective callback durations; unread Rx nodes remain owned by the logical
+stream between prompts. A negative `process()` result resets only the affected
 logical stream. The logical-stream contract contains no WebSocket fields,
 framing, masking, close codes, or subprotocol policy; those belong in a
 dependent protocol library.
