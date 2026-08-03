@@ -736,7 +736,7 @@ public:
     if (!entry_ || entry_->localEndQueued) return false;
     uint32_t length = buf->length - 9;
     if (length > peerFrameSize()) {
-      return streamTxError_(id, false, "H2 DATA frame exceeds peer maximum");
+      return streamTxError_(id, "H2 DATA frame exceeds peer maximum");
     }
     return sendFrame_(id, length, false, ZuMv(buf));
   }
@@ -761,7 +761,7 @@ public:
       ++admitted;
     if (admitted != frames.length()) {
       if (admitted) m_frameAdmission.pop(admitted);
-      streamTxError_(id, true, "H2 transmit queue limit exceeded");
+      streamTxError_(id, "H2 transmit queue limit exceeded");
       return;
     }
     if (endStream) entry_->localEndQueued = true;
@@ -1315,7 +1315,7 @@ private:
     auto entry_ = txWindow_(id);
     if (!entry_ || entry_->localEndQueued) return false;
     if (!m_frameAdmission.push()) {
-      return streamTxError_(id, true, "H2 transmit queue limit exceeded");
+      return streamTxError_(id, "H2 transmit queue limit exceeded");
     }
     if (endStream) entry_->localEndQueued = true;
     sendFrameTx_(id, length, endStream, ZuMv(buf));
@@ -1333,7 +1333,7 @@ private:
       ++admitted;
     if (admitted != frames.length()) {
       if (admitted) m_frameAdmission.pop(admitted);
-      streamTxError_(id, true, "H2 transmit queue limit exceeded");
+      streamTxError_(id, "H2 transmit queue limit exceeded");
       return;
     }
     if (endStream) entry_->localEndQueued = true;
@@ -1365,7 +1365,7 @@ private:
     uint32_t id, uint32_t length, bool endStream,
     ZmRef<ZiIOBuf> buf) {
     if (!m_frameAdmission.push()) {
-      return streamTxError_(id, true, "H2 transmit queue limit exceeded");
+      return streamTxError_(id, "H2 transmit queue limit exceeded");
     }
     auto session = impl_();
     impl_()->app()->txRun([
@@ -1557,11 +1557,10 @@ private:
       }
     });
   }
-  bool streamTxError_(uint32_t id, bool transient, ZuCSpan message) {
+  bool streamTxError_(uint32_t id, ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Zhttp", message);
     auto entry_ = entry(id);
-    if (entry_ && entry_->txErrorFn &&
-	!entry_->txErrorFn(transient, e))
+    if (entry_ && entry_->txErrorFn && !entry_->txErrorFn(e))
       impl_()->disconnectNative();
     return false;
   }

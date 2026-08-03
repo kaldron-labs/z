@@ -862,7 +862,7 @@ public:
   bool send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
     if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_() ||
 	gen != m_tlsGen.load_()))
-      return reportTxError_(false,
+      return reportTxError_(
 	"TLS session is closed for transmission");
     buf->owner = impl();
     app()->txInvoke([buf = ZuMv(buf), gen]() mutable {
@@ -885,7 +885,7 @@ protected:
       "TLS send_ outside Tx thread", return false);
     if (ZuUnlikely(!buf || !buf->length || gen != m_tlsGen.load_() ||
 	!m_txTLS || m_txTLSGen != gen || m_txClosing))
-      return reportTxError_(false,
+      return reportTxError_(
 	"TLS session is closed for transmission");
 
     ZiAssert(buf->skip >= m_txHeadroom && buf->skip <= TxRecordCapacity,
@@ -933,7 +933,7 @@ protected:
 public:
   void sent(ZmRef<ZiTxBuf>, bool ok) {
     if (ZuUnlikely(!ok))
-      reportTxError_(false, "TLS transmit failed");
+      reportTxError_("TLS transmit failed");
   }
 
 private:
@@ -1004,7 +1004,7 @@ private:
   void queueTxError_(uint64_t gen, const char *message) {
     app()->rxRun([impl = ZmMkRef(impl()), gen, message]() mutable {
       if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
-      impl->reportTxError_(false, message);
+      impl->reportTxError_(message);
     });
   }
 
@@ -1014,7 +1014,7 @@ private:
       auto e = ZeEXCEPT(Error, "Ztls", ([function, n](auto &s) {
 	s << function << ": " << strerror_(n);
       }));
-      if (impl->m_txErrorFn && !impl->m_txErrorFn(false, e))
+      if (impl->m_txErrorFn && !impl->m_txErrorFn(e))
 	impl->disconnect_(false);
     });
   }
@@ -1042,9 +1042,9 @@ private:
   }
 
 private:
-  bool reportTxError_(bool transient, ZuCSpan message) {
+  bool reportTxError_(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Ztls", message);
-    if (m_txErrorFn && !m_txErrorFn(transient, e)) disconnect();
+    if (m_txErrorFn && !m_txErrorFn(e)) disconnect();
     return false;
   }
 

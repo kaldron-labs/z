@@ -923,9 +923,9 @@ public:
 private:
   template <typename Link>
   void registerTxError_(Link &link) {
-    link.txErrorFn(ZiTxErrorFn{[this](bool transient, ZeException &e) {
+    link.txErrorFn(ZiTxErrorFn{[this](ZeException &e) {
       if (!m_txErrorFn) return true;
-      return m_txErrorFn(transient, e);
+      return m_txErrorFn(e);
     }});
   }
 

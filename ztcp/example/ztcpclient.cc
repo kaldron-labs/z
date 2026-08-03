@@ -35,9 +35,9 @@ struct App::Link :
   using Base = Ztcp::CliLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
 
   Link(App *app) : Base{app} {
-    txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
-      ZiLOG(Error, "ztcpclient", ([transient, e](auto &s) {
-	s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+    txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+      ZiLOG(Error, "ztcpclient", ([e](auto &s) {
+	s << "transmit error: " << e;
       }));
       return false;
     }});

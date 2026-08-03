@@ -627,7 +627,7 @@ private:
 
   bool send(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(!buf || !buf->length)) return false;
-    if (ZuUnlikely(!admitTx_())) return sendError_(true,
+    if (ZuUnlikely(!admitTx_())) return sendError_(
       "QUIC stream transmit queue limit exceeded");
     buf->owner = this;
     txInvoke_([buf = ZuMv(buf)]() mutable {
@@ -640,7 +640,7 @@ private:
   bool send_(ZmRef<TxMsg> buf) { // direct call from within tx thread
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send_ outside Tx thread", return false);
-    if (ZuUnlikely(!admitTx_())) return sendError_(true,
+    if (ZuUnlikely(!admitTx_())) return sendError_(
       "QUIC stream transmit queue limit exceeded");
     return sendAdmitted_(ZuMv(buf));
   }
@@ -658,7 +658,7 @@ private:
     if (ZuUnlikely(!buf)) return false;
     if (ZuUnlikely(m_resetSent || !buf->length)) {
       --m_txQueueCount;
-      return sendError_(false, "QUIC stream is closed for transmission");
+      return sendError_("QUIC stream is closed for transmission");
     }
     ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
       "stream Tx buffer range violation",
@@ -691,9 +691,9 @@ private:
     return true;
   }
 
-  bool sendError_(bool transient, ZuCSpan message) {
+  bool sendError_(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Zquic", message);
-    if (m_txErrorFn && !m_txErrorFn(transient, e) && m_link)
+    if (m_txErrorFn && !m_txErrorFn(e) && m_link)
       m_link->disconnect();
     return false;
   }

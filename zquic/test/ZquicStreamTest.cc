@@ -1095,11 +1095,9 @@ void testStreamTxQueueLimit()
   auto stream = link->stream(Zquic::StreamType::Duplex);
   stream->txQueueMax(1);
   unsigned errors = 0;
-  bool transient = false;
   stream->txErrorFn(ZiTxErrorFn{
-    [&errors, &transient](bool transient_, ZeException &) {
+    [&errors](ZeException &) {
       ++errors;
-      transient = transient_;
       return true;
     }});
 
@@ -1110,8 +1108,7 @@ void testStreamTxQueueLimit()
 
   auto tx2 = stream->txStream_();
   tx2 << "two" << Zi::flush();
-  ZuCHECK(tx2.failed() && errors == 1 && transient &&
-      stream->txQueueCount() == 1,
+  ZuCHECK(tx2.failed() && errors == 1 && stream->txQueueCount() == 1,
     "QUIC stream Tx queue overflow was not reported");
 
   Zquic::TxRange range;
