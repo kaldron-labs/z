@@ -26,9 +26,12 @@
 
 --_tabledef-C++=root
 --_tabledef-C++=ztenum_arg1
---_tabledef-C++=ztenumns_arg1
---_tabledef-C++=zfbenumns_arg1
 --_tabledef-C++=ztenum_arg2
+--_tabledef-C++=ztenumns_arg1
+--_tabledef-C++=ztenumns_arg2
+--_tabledef-C++=zfbenumns_arg1
+--_tabledef-C++=zfbenumns_arg2
+--_tabledef-C++=ztenum_arg3
 --_tabledef-C++=ztenum_vals
 
 --_mtable-regex-C++=root/ZtEnum\s*\(//{tenter=ztenum_arg1}
@@ -47,17 +50,29 @@
 --_mtable-regex-C++=ztenum_arg1/\)//{tleave}
 --_mtable-regex-C++=ztenum_arg1/[^,)]+//
 
+--_mtable-regex-C++=ztenum_arg2/,\s*//{tjump=ztenum_arg3}
+--_mtable-regex-C++=ztenum_arg2/\)//{tleave}
+--_mtable-regex-C++=ztenum_arg2/[^,)]+//
+
 --_mtable-regex-C++=ztenumns_arg1/\)//{tleave}
 --_mtable-regex-C++=ztenumns_arg1/(\w+)/\1/t,typedef/
---_mtable-regex-C++=ztenumns_arg1/\W+//{tjump=ztenum_arg2}
+--_mtable-regex-C++=ztenumns_arg1/\W+//{tjump=ztenumns_arg2}
+
+--_mtable-regex-C++=ztenumns_arg2/\)//{tleave}
+--_mtable-regex-C++=ztenumns_arg2/(\w+)/\1/t,typedef/
+--_mtable-regex-C++=ztenumns_arg2/\W+//{tjump=ztenum_arg3}
 
 --_mtable-regex-C++=zfbenumns_arg1/\)//{tleave}
 --_mtable-regex-C++=zfbenumns_arg1/(\w+)/\1/t,typedef/
---_mtable-regex-C++=zfbenumns_arg1/\W+//{tjump=ztenum_vals}
+--_mtable-regex-C++=zfbenumns_arg1/\W+//{tjump=zfbenumns_arg2}
 
---_mtable-regex-C++=ztenum_arg2/,\s*//{tjump=ztenum_vals}
---_mtable-regex-C++=ztenum_arg2/\)//{tleave}
---_mtable-regex-C++=ztenum_arg2/[^,)]+//
+--_mtable-regex-C++=zfbenumns_arg2/\)//{tleave}
+--_mtable-regex-C++=zfbenumns_arg2/(\w+)/\1/t,typedef/
+--_mtable-regex-C++=zfbenumns_arg2/\W+//{tjump=ztenum_vals}
+
+--_mtable-regex-C++=ztenum_arg3/,\s*//{tjump=ztenum_vals}
+--_mtable-regex-C++=ztenum_arg3/\)//{tleave}
+--_mtable-regex-C++=ztenum_arg3/[^,)]+//
 
 --_mtable-regex-C++=ztenum_vals/\)//{tleave}
 --_mtable-regex-C++=ztenum_vals/(\w+)/\1/t,typedef/
