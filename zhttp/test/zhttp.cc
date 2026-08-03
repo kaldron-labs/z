@@ -782,6 +782,12 @@ int main(int argc, char **argv)
     .rxDrop(rxDrop).txDrop(txDrop);
 
   ClientCallbacks app;
+  app.txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+    ZiLOG(Error, "zhttp", ([transient, e](auto &s) {
+      s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+    }));
+    return false;
+  }});
   bool appInited = app.init(
     Zhttp::EngineConfig{&mx, "3", "4"}, clientConfig,
     Zhttp::TCPConfig{},

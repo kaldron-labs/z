@@ -482,6 +482,12 @@ int Zhttpd::run(int argc, const char *const *argv)
   }
   Workload workload{&state};
   Service service;
+  service.txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+    ZiLOG(Error, "zhttpd", ([transient, e](auto &s) {
+      s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+    }));
+    return false;
+  }});
   auto serviceConfig = Zhttp::ServiceConfig()
     .localIP(ZiIP(state.options.addr))
     .port(state.options.port)

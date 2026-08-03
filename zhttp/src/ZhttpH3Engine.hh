@@ -955,6 +955,7 @@ public:
   auto txStream() { return m_stream->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
     m_txErrorFn = ZuMv(fn);
+    if (m_session) m_session->h3.txErrorFn(m_txErrorFn);
     if (m_stream) m_stream->txErrorFn(m_txErrorFn);
   }
   NativeSession *h3Native_() const { return m_session; }
@@ -1032,7 +1033,10 @@ public:
   }
   void session(ZmRef<NativeSession> session) {
     m_session = ZuMv(session);
-    if (!m_session) m_stream = nullptr;
+    if (m_session)
+      m_session->h3.txErrorFn(m_txErrorFn);
+    else
+      m_stream = nullptr;
   }
   NativeSession *session() const { return m_session; }
   void stream(NativeStream *stream) {
@@ -1136,6 +1140,7 @@ public:
   Session &session() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
+    if (m_native) m_native->h3.txErrorFn(fn);
     if (m_stream) m_stream->txErrorFn(ZuMv(fn));
   }
   NativeSession *h3Native_() const { return m_native; }

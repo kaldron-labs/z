@@ -34,7 +34,14 @@ struct App::Link :
   public Ztcp::CliLink<App, App::Link, App::RxBufAlloc, App::TxBufAlloc> {
   using Base = Ztcp::CliLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
 
-  Link(App *app) : Base{app} { }
+  Link(App *app) : Base{app} {
+    txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+      ZiLOG(Error, "ZtcpClient", ([transient, e](auto &s) {
+	s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+      }));
+      return false;
+    }});
+  }
 
   void sendPing() {
     auto tx = txStream();
