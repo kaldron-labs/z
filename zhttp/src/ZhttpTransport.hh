@@ -84,23 +84,23 @@ inline Zquic::MigrationMode::T migration(int8_t v)
 }
 
 inline Ztls::HubParams tlsParams(
-  const EngineConfig &engine, const TLSConfig &config)
+  const HubConfig &hub, const TLSConfig &config)
 {
   return Ztls::HubParams{
-    engine.mx(), engine.rxThread(), engine.txThread()}
-    .asyncThread(engine.asyncThread())
+    hub.mx(), hub.rxThread(), hub.txThread()}
+    .asyncThread(hub.asyncThread())
     .caPath(config.caPath()).certPath(config.certPath())
     .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
 }
 
 inline Zquic::HubParams quicParams(
-  const EngineConfig &engine, const QUICConfig &config,
+  const HubConfig &hub, const QUICConfig &config,
   uint64_t defltStreams)
 {
   Zquic::HubParams params{
-    engine.mx(), engine.rxThread(), engine.txThread()};
+    hub.mx(), hub.rxThread(), hub.txThread()};
   params
-    .asyncThread(engine.asyncThread())
+    .asyncThread(hub.asyncThread())
     .caPath(config.caPath()).certPath(config.certPath())
     .keyPath(config.keyPath()).keyLogPath(config.keyLogPath())
     .alpn(ZuSpan<ZuCSpan>{"h3"})
@@ -147,28 +147,28 @@ template <> struct Traits<TCP> {
     Ztcp::SrvLink<App, Link, TCPRxBufAlloc, TCPTxBufAlloc>;
 
   static ClientParams clientParams(
-    const EngineConfig &engine, const TCPConfig &)
+    const HubConfig &hub, const TCPConfig &)
   {
     return ClientParams{
-      engine.mx(), engine.rxThread(), engine.txThread()};
+      hub.mx(), hub.rxThread(), hub.txThread()};
   }
   static ServerParams serverParams(
-    const EngineConfig &engine, const TCPConfig &)
+    const HubConfig &hub, const TCPConfig &)
   {
     return ServerParams{
-      engine.mx(), engine.rxThread(), engine.txThread()};
+      hub.mx(), hub.rxThread(), hub.txThread()};
   }
   static ConnectedInfo connected(Connected) {
     return {
       .transport = Transport::TCP
     };
   }
-  template <typename Engine>
-  static bool startClient(Engine &engine) { return engine.start(); }
-  template <typename Engine>
-  static bool startServer(Engine &engine) { return engine.start(); }
-  template <typename Engine>
-  static void stopListening(Engine &engine) { engine.stopListening(); }
+  template <typename Hub>
+  static bool startClient(Hub &hub) { return hub.start(); }
+  template <typename Hub>
+  static bool startServer(Hub &hub) { return hub.start(); }
+  template <typename Hub>
+  static void stopListening(Hub &hub) { hub.stopListening(); }
   template <typename Link>
   static void disconnect(Link &link) { link.disconnect_(); }
 };
@@ -196,17 +196,17 @@ template <> struct Traits<TLS> {
     Ztls::SrvLink<App, Link, TLSRxBufAlloc, TLSTxBufAlloc>;
 
   static ClientParams clientParams(
-    const EngineConfig &engine, const TLSConfig &config)
+    const HubConfig &hub, const TLSConfig &config)
   {
-    return tlsParams(engine, config);
+    return tlsParams(hub, config);
   }
   static ServerParams serverParams(
-    const EngineConfig &engine, const TLSConfig &config)
+    const HubConfig &hub, const TLSConfig &config)
   {
     ServerParams params{
-      engine.mx(), engine.rxThread(), engine.txThread()};
+      hub.mx(), hub.rxThread(), hub.txThread()};
     params
-      .asyncThread(engine.asyncThread())
+      .asyncThread(hub.asyncThread())
       .caPath(config.caPath()).certPath(config.certPath())
       .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"})
       .mTLS(config.mTLS()).cacheTimeout(config.cacheTimeout());
@@ -220,12 +220,12 @@ template <> struct Traits<TLS> {
       .secure = true
     };
   }
-  template <typename Engine>
-  static bool startClient(Engine &engine) { return engine.start(); }
-  template <typename Engine>
-  static bool startServer(Engine &engine) { return engine.start(); }
-  template <typename Engine>
-  static void stopListening(Engine &engine) { engine.stopListening(); }
+  template <typename Hub>
+  static bool startClient(Hub &hub) { return hub.start(); }
+  template <typename Hub>
+  static bool startServer(Hub &hub) { return hub.start(); }
+  template <typename Hub>
+  static void stopListening(Hub &hub) { hub.stopListening(); }
   template <typename Link>
   static void disconnect(Link &link) { link.disconnect_(); }
 };
@@ -256,16 +256,16 @@ template <> struct Traits<QUIC> {
   using ServerStream = Zquic::SrvStream<Link, Stream>;
 
   static ClientParams clientParams(
-    const EngineConfig &engine, const QUICConfig &config)
+    const HubConfig &hub, const QUICConfig &config)
   {
     return quicParams(
-      engine, config, QUICConfig::DefltClientStreams);
+      hub, config, QUICConfig::DefltClientStreams);
   }
   static ServerParams serverParams(
-    const EngineConfig &engine, const QUICConfig &config)
+    const HubConfig &hub, const QUICConfig &config)
   {
     return quicParams(
-      engine, config, QUICConfig::DefltServerStreams);
+      hub, config, QUICConfig::DefltServerStreams);
   }
   static ConnectedInfo connected(Connected info) {
     return {
@@ -275,12 +275,12 @@ template <> struct Traits<QUIC> {
       .secure = true
     };
   }
-  template <typename Engine>
-  static bool startClient(Engine &engine) { return engine.start(); }
-  template <typename Engine>
-  static bool startServer(Engine &engine) { return engine.start(); }
-  template <typename Engine>
-  static void stopListening(Engine &) { }
+  template <typename Hub>
+  static bool startClient(Hub &hub) { return hub.start(); }
+  template <typename Hub>
+  static bool startServer(Hub &hub) { return hub.start(); }
+  template <typename Hub>
+  static void stopListening(Hub &) { }
   template <typename Link>
   static void disconnect(Link &link) { link.disconnect_(); }
 };

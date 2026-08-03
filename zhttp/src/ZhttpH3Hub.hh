@@ -6,8 +6,8 @@
 
 // Z http library - private HTTP/3 transport/link adapters
 
-#ifndef ZhttpH3Engine_HH
-#define ZhttpH3Engine_HH
+#ifndef ZhttpH3Hub_HH
+#define ZhttpH3Hub_HH
 
 #ifndef Zhttp_HH
 #define Zhttp_CORE_ONLY
@@ -19,7 +19,7 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmRandom.hh>
 
-#include <zlib/ZhttpClientEngine.hh>
+#include <zlib/ZhttpClientHub.hh>
 #include <zlib/ZhttpH3Cxn.hh>
 #include <zlib/ZhttpServer.hh>
 
@@ -97,13 +97,13 @@ private:
 };
 
 template <typename App>
-class ClientEngine;
+class ClientHub;
 template <typename App, typename Logical>
 struct CliLink;
 template <typename App, typename Logical>
 struct ClientStream;
 template <typename App>
-class ServerEngine;
+class ServerHub;
 
 struct CliLinkSlot {
   using CloseFn = void (*)(void *);
@@ -122,9 +122,9 @@ struct CliLinkSlot {
 // App is incomplete while its CRTP base is instantiated.  ZmContext pins the
 // protocol-private link; the two function pointers are control-plane only.
 template <typename App>
-class ClientEngine :
-  public Zquic::Client<ClientEngine<App>>,
-  public Faults<ClientEngine<App>> {
+class ClientHub :
+  public Zquic::Client<ClientHub<App>>,
+  public Faults<ClientHub<App>> {
 public:
   using StopFn =
     ZmFn<void(bool), ZmFnHeapID<"Zhttp.H3.ClientStop">>;
@@ -171,7 +171,7 @@ private:
 	m_links.push(CliLinkSlot{
 	  .owner = link,
 	  .close = [](void *ptr) {
-		    // Engine shutdown must not wait behind an in-flight migration;
+		    // Hub shutdown must not wait behind an in-flight migration;
 		    // abort guarantees endpointDown() and deterministic draining.
 		    static_cast<Link *>(ptr)->abort();
 	  },
@@ -227,7 +227,7 @@ public:
   void final() {
     this->clearFaults();
     m_links.length(0);
-    Zquic::Client<ClientEngine>::final();
+    Zquic::Client<ClientHub>::final();
   }
 
 private:
@@ -255,7 +255,7 @@ private:
   }
 
   void stopBase_() {
-    Zquic::Client<ClientEngine>::stop(
+    Zquic::Client<ClientHub>::stop(
       [this](bool ok) {
 	this->rxRun([this, ok]() { stopped_(ok); });
       });
@@ -309,11 +309,11 @@ struct ClientStream :
 
 template <typename App, typename Logical>
 struct CliLink :
-  public Zquic::CliLink<ClientEngine<App>, CliLink<App, Logical>,
+  public Zquic::CliLink<ClientHub<App>, CliLink<App, Logical>,
     ClientStream<App, Logical>> {
-  using Engine = ClientEngine<App>;
+  using Hub = ClientHub<App>;
   using Stream = ClientStream<App, Logical>;
-  using Base = Zquic::CliLink<Engine, CliLink, Stream>;
+  using Base = Zquic::CliLink<Hub, CliLink, Stream>;
   using StreamRef = ZmRef<Stream>;
   using H3Cxn = H3::Cxn<CliLink, StreamRef>;
   using Pending =
@@ -324,7 +324,7 @@ struct CliLink :
     ZtArray<StreamRef, ZtArrayHeapID<"Zhttp.H3.ClientStreams">>;
   using Base::Base;
 
-  CliLink(Engine *app, Zquic::Host host_, uint16_t port_) :
+  CliLink(Hub *app, Zquic::Host host_, uint16_t port_) :
     Base{app}, host{ZuMv(host_)}, port{port_} { }
 
   unsigned txQueueMax() const {
@@ -621,12 +621,12 @@ template <typename App> struct SrvLink;
 template <typename App> struct ServerStream;
 
 template <typename App>
-class ServerEngine :
-  public Zquic::Server<ServerEngine<App>, SrvLink<App>>,
-  public Faults<ServerEngine<App>> {
+class ServerHub :
+  public Zquic::Server<ServerHub<App>, SrvLink<App>>,
+  public Faults<ServerHub<App>> {
 public:
   using Link = SrvLink<App>;
-  using Base = Zquic::Server<ServerEngine, Link>;
+  using Base = Zquic::Server<ServerHub, Link>;
   using StopFn =
     ZmFn<void(bool), ZmFnHeapID<"Zhttp.H3.ServerStop">>;
 
@@ -726,10 +726,10 @@ struct ServerStream :
 template <typename App>
 struct SrvLink :
   public Zquic::SrvLink<
-    ServerEngine<App>, SrvLink<App>, ServerStream<App>> {
-  using Engine = ServerEngine<App>;
+    ServerHub<App>, SrvLink<App>, ServerStream<App>> {
+  using Hub = ServerHub<App>;
   using Stream = ServerStream<App>;
-  using Base = Zquic::SrvLink<Engine, SrvLink, Stream>;
+  using Base = Zquic::SrvLink<Hub, SrvLink, Stream>;
   using StreamRef = ZmRef<Stream>;
   using H3Cxn = H3::Cxn<SrvLink, StreamRef>;
   using Logical =
@@ -740,7 +740,7 @@ struct SrvLink :
     return this->app()->user()->quicConfig().maxQueuedFrames();
   }
 
-  SrvLink(Engine *app, EndpointString remote_) :
+  SrvLink(Hub *app, EndpointString remote_) :
     Base{app}, remote{ZuMv(remote_)} { }
 
   void connected(Zquic::Connected info) {
@@ -908,7 +908,7 @@ private:
 template <typename App, typename Impl>
 class ClientLink<App, Impl, H3QUIC> :
   public ZmObject, public H3_::LogicalStream<Impl> {
-  using Engine = H3_::ClientEngine<App>;
+  using Hub = H3_::ClientHub<App>;
   using NativeLink = H3_::CliLink<App, Impl>;
   using NativeStream = H3_::ClientStream<App, Impl>;
 
@@ -1082,19 +1082,19 @@ private:
 };
 
 template <typename App>
-class ClientEngine<App, H3QUIC> : public H3_::ClientEngine<App> {
+class ClientHub<App, H3QUIC> : public H3_::ClientHub<App> {
 public:
-  using Base = H3_::ClientEngine<App>;
+  using Base = H3_::ClientHub<App>;
   using Traits = Transport_::Traits<QUIC>;
   enum { TLS = 1, Multiplexed = 1 };
 
   using Base::connect;
   using Base::init;
 
-  bool init(const EngineConfig &engine, const QUICConfig &config) {
+  bool init(const HubConfig &hub, const QUICConfig &config) {
     if (!config.qpackValid() || !config.maxQueuedFrames()) return false;
     m_config = config;
-    if (!Base::init(Traits::clientParams(engine, config))) return false;
+    if (!Base::init(Traits::clientParams(hub, config))) return false;
     Base::faults(config);
     return true;
   }
@@ -1115,7 +1115,7 @@ private:
 template <typename App, typename Impl, typename Session>
 class ServerLink<App, Impl, H3QUIC, Session> :
   public ZmObject, public H3_::LogicalStream<Impl> {
-  using Engine = H3_::ServerEngine<App>;
+  using Hub = H3_::ServerHub<App>;
   using NativeLink = H3_::SrvLink<App>;
   using NativeStream = H3_::ServerStream<App>;
 
@@ -1204,18 +1204,18 @@ private:
 };
 
 template <typename App>
-class Server<App, H3QUIC> : public H3_::ServerEngine<App> {
+class Server<App, H3QUIC> : public H3_::ServerHub<App> {
 public:
-  using Base = H3_::ServerEngine<App>;
+  using Base = H3_::ServerHub<App>;
   using Traits = Transport_::Traits<QUIC>;
   enum { TLS = 1, Multiplexed = 1 };
 
   using Base::init;
 
-  bool init(const EngineConfig &engine, const QUICConfig &config) {
+  bool init(const HubConfig &hub, const QUICConfig &config) {
     if (!config.qpackValid() || !config.maxQueuedFrames()) return false;
     m_config = config;
-    if (!Base::init(Traits::serverParams(engine, config))) return false;
+    if (!Base::init(Traits::serverParams(hub, config))) return false;
     Base::faults(config);
     return true;
   }
@@ -1236,4 +1236,4 @@ private:
 
 } // namespace Zhttp
 
-#endif /* ZhttpH3Engine_HH */
+#endif /* ZhttpH3Hub_HH */

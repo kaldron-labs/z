@@ -8,7 +8,7 @@
 
 #include <zlib/ZuMatcher.hh>
 
-#include <zlib/ZhttpTLSEngine.hh>
+#include <zlib/ZhttpTLSHub.hh>
 
 namespace Zhttp {
 namespace TLS_ {

@@ -15,7 +15,7 @@
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZhttpClientEngine.hh>
+#include <zlib/ZhttpClientHub.hh>
 #include <zlib/ZhttpMessage.hh>
 
 namespace Zhttp {
@@ -101,7 +101,7 @@ template <
   typename Owner_, typename Profile_, typename Request_,
   typename RequestBuilder_, typename ResponseParser_>
 class ClientPool :
-  public ClientEngine<
+  public ClientHub<
     ClientPool<
       Owner_, Profile_, Request_,
       RequestBuilder_, ResponseParser_>,
@@ -114,7 +114,7 @@ public:
   using ResponseParser = ResponseParser_;
   using Pool = ClientPool;
   using Message = MessageTraits<Profile>;
-  using Base = ClientEngine<Pool, Profile>;
+  using Base = ClientHub<Pool, Profile>;
 
   struct Link :
     public ClientLink<Pool, Link, Profile_> {
@@ -361,7 +361,7 @@ public:
 
   // TCP/TLS ZmEngine hook.  The native engine retains stop(done);
   // Base::stop_() completes it only after every link is down.  QUIC uses
-  // H3_::ClientEngine::stop(done) instead and never enters this hook.
+  // H3_::ClientHub::stop(done) instead and never enters this hook.
   void stop_() {
     m_stopping = true;
     if constexpr (!Message::Multiplexed) {

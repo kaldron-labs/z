@@ -12,11 +12,11 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpBody.hh \
-	ZhttpTLSEngine.hh \
-	ZhttpLink.hh ZhttpClientEngine.hh ZhttpClient.hh \
+	ZhttpTLSHub.hh \
+	ZhttpLink.hh ZhttpClientHub.hh ZhttpClient.hh \
 	ZhttpClientPool.hh ZhttpTLSClientPool.hh ZhttpStream.hh \
-	ZhttpServer.hh ZhttpService.hh ZhttpEngines.hh \
-	ZhttpH2Engine.hh ZhttpH3Engine.hh \
+	ZhttpServer.hh ZhttpService.hh ZhttpHubs.hh \
+	ZhttpH2Hub.hh ZhttpH3Hub.hh \
 	ZhttpURL.hh ZhttpAltSvc.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
 	ZhttpH1.hh ZhttpH1Stream.hh ZhttpH3.hh \
 	ZhttpH2.hh ZhttpH2Stream.hh ZhttpH2Message.hh \
@@ -30,7 +30,7 @@ libZhttp_la_SOURCES = ZhttpLib.cc ZhttpConfig.cc ZhttpURL.cc ZhttpAltSvc.cc \
 	ZhttpRuntime.cc \
 	ZhttpCompression.cc ZhttpFields.cc ZhttpH1.cc ZhttpH2.cc ZhttpH2Message.cc \
 	ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
-	ZhttpTLSEngine.cc ZhttpTypes.cc
+	ZhttpTLSHub.cc ZhttpTypes.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/ztls/src/libZtls.la \

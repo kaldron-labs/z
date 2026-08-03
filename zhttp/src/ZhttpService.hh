@@ -87,7 +87,7 @@ public:
   const TCPConfig &tcpConfig() const { return m_tcp; }
   const H2Config &tlsConfig() const { return m_tls; }
   const QUICConfig &quicConfig() const { return m_quic; }
-  QUICConfig quicEngineConfig() const {
+  QUICConfig quicHubConfig() const {
     QUICConfig config{m_quic};
     // QUIC transport parameters use milliseconds; service idleTimeout uses
     // seconds.  An explicit QUIC value overrides the transport-neutral default.
@@ -211,15 +211,15 @@ public:
   using Workload = Workload_;
   using AppRequestParser = typename Workload::RequestParser;
   using ReqHeaders = typename AppRequestParser::Headers;
-  using StopFn = Engines::DoneFn;
+  using StopFn = Hubs::DoneFn;
   static constexpr uint64_t ReqBodyMax =
     ParserBodyMax<AppRequestParser>::V;
 
 private:
   template <typename Protocol> struct Session;
-  template <typename Protocol> struct Engine;
+  template <typename Protocol> struct Hub;
   template <typename Protocol> struct Link;
-  struct TLSEngine;
+  struct TLSHub;
   struct TLSH1Link;
   struct TLSH2Link;
 
@@ -724,8 +724,8 @@ private:
 	    done = ZuMv(done), method, close]() mutable {
 	    bool sent = service->template sendResponse_<Profile>(
 	      *link, method, ZuMv(app));
-	    auto engine = link->app();
-	    engine->rxRun([
+	    auto hub = link->app();
+	    hub->rxRun([
 	      service, link = ZuMv(link), done = ZuMv(done),
 	      sent, close]() mutable {
 	      service->m_workload->complete(
@@ -744,13 +744,13 @@ private:
   };
 
   template <typename Profile>
-  struct Engine : public Server<Engine<Profile>, Profile> {
+  struct Hub : public Server<Hub<Profile>, Profile> {
     using HTTP = ProfileTraits<Profile>;
     using Link_ = typename Service::template Link<Profile>;
     using Link = Link_;
     Service *service = nullptr;
 
-    Engine(Service *service_) : service{service_} { }
+    Hub(Service *service_) : service{service_} { }
     ZiIP localIP() const { return service->m_config.localIP(); }
     unsigned localPort() const { return service->m_config.port(); }
     unsigned idleTimeout() const { return service->m_config.idleTimeout(); }
@@ -784,18 +784,18 @@ private:
   template <typename Profile>
   struct Link :
     public ServerLink<
-      Engine<Profile>, Link<Profile>, Profile, Session<Profile>> {
+      Hub<Profile>, Link<Profile>, Profile, Session<Profile>> {
     using Base = ServerLink<
-      Engine<Profile>, Link, Profile, Session<Profile>>;
+      Hub<Profile>, Link, Profile, Session<Profile>>;
     using Base::Base;
   };
 
-  struct TLSEngine : public TLS_::ServerEngine<TLSEngine> {
+  struct TLSHub : public TLS_::ServerHub<TLSHub> {
     using H1Link = TLSH1Link;
     using H2Link = TLSH2Link;
     Service *service = nullptr;
 
-    TLSEngine(Service *service_) : service{service_} { }
+    TLSHub(Service *service_) : service{service_} { }
     ZiIP localIP() const { return service->m_config.localIP(); }
     unsigned localPort() const { return service->m_config.port(); }
     unsigned idleTimeout() const {
@@ -821,21 +821,21 @@ private:
 
   struct TLSH1Link :
     public TLS_::ServerH1Logical<
-      TLSEngine, TLSH1Link, Session<H1TLS>,
-      TLS_::SrvLink<TLSEngine>> {
+      TLSHub, TLSH1Link, Session<H1TLS>,
+      TLS_::SrvLink<TLSHub>> {
     using Base = TLS_::ServerH1Logical<
-      TLSEngine, TLSH1Link, Session<H1TLS>,
-      TLS_::SrvLink<TLSEngine>>;
+      TLSHub, TLSH1Link, Session<H1TLS>,
+      TLS_::SrvLink<TLSHub>>;
     using Base::Base;
   };
 
   struct TLSH2Link :
     public H2_::ServerLogical<
-      TLSEngine, TLSH2Link, Session<H2TLS>,
-      TLS_::SrvLink<TLSEngine>> {
+      TLSHub, TLSH2Link, Session<H2TLS>,
+      TLS_::SrvLink<TLSHub>> {
     using Base = H2_::ServerLogical<
-      TLSEngine, TLSH2Link, Session<H2TLS>,
-      TLS_::SrvLink<TLSEngine>>;
+      TLSHub, TLSH2Link, Session<H2TLS>,
+      TLS_::SrvLink<TLSHub>>;
     using Base::Base;
   };
 
@@ -849,12 +849,12 @@ public:
   // synchronous workload callback.  Message completion follows validated,
   // fully consumed input; no workload callback follows terminal completion.
   bool init(
-    const EngineConfig &engine, ServiceConfig config, Workload *workload) {
+    const HubConfig &hub, ServiceConfig config, Workload *workload) {
     if (!workload || !config.port()) return false;
-    if (!engine.mx()) return false;
-    m_mx = engine.mx();
-    m_rxThread = engine.rxThread() ?
-      m_mx->sid(engine.rxThread()) : m_mx->rxThread();
+    if (!hub.mx()) return false;
+    m_mx = hub.mx();
+    m_rxThread = hub.rxThread() ?
+      m_mx->sid(hub.rxThread()) : m_mx->rxThread();
     m_config = ZuMv(config);
     m_workload = workload;
     m_altSvc.null();
@@ -864,20 +864,20 @@ public:
 	m_config.altSvcMaxAge();
     if (!m_runtime.init()) return false;
     if (m_config.tcpEnabled() &&
-	!m_engines.init(m_tcp, engine, m_config.tcpConfig()))
+	!m_hubs.init(m_tcp, hub, m_config.tcpConfig()))
       return false;
     if (m_config.tlsEnabled() &&
-	!m_engines.init(m_tls, engine, m_config.tlsConfig()))
+	!m_hubs.init(m_tls, hub, m_config.tlsConfig()))
       return false;
     if (m_config.quicEnabled() &&
-	!m_engines.init(m_quic, engine, m_config.quicEngineConfig()))
+	!m_hubs.init(m_quic, hub, m_config.quicHubConfig()))
       return false;
-    return m_engines.count();
+    return m_hubs.count();
   }
 
-  bool start() { return m_engines.start(); }
+  bool start() { return m_hubs.start(); }
   template <typename Done>
-  void start(Done &&done) { m_engines.start(ZuFwd<Done>(done)); }
+  void start(Done &&done) { m_hubs.start(ZuFwd<Done>(done)); }
   bool stop() {
     return ZmBlock<bool>{}(
       [this](auto wake) { stop(StopFn{ZuMv(wake)}); });
@@ -885,10 +885,10 @@ public:
   template <typename Done>
   void stop(Done &&done) {
     StopFn done_{ZuFwd<Done>(done)};
-    m_engines.stop([
+    m_hubs.stop([
       this, done = ZuMv(done_)
     ](bool ok) mutable {
-      // Native engine teardown can enqueue final link notifications.  Drain
+      // Native hub teardown can enqueue final link notifications.  Drain
       // the owning Rx shard before allowing finalization to release owners.
       rxRun_([done = ZuMv(done), ok]() mutable { done(ok); });
     });
@@ -900,7 +900,7 @@ public:
   bool wait(unsigned timeout) { return m_runtime.wait(timeout); }
   void final() {
     if (m_mx) (void)stop();
-    m_engines.final();
+    m_hubs.final();
     m_runtime.final();
     m_altSvc.null();
     m_mx = nullptr;
@@ -914,7 +914,7 @@ public:
   }
   bool ok() const { return !m_failed; }
   unsigned active() const { return m_active.load_(); }
-  unsigned engineCount() const { return m_engines.count(); }
+  unsigned hubCount() const { return m_hubs.count(); }
 
 #ifdef Zquic_DEBUG
   void printQUICDiag() { m_quic.printDiag(); }
@@ -960,10 +960,10 @@ private:
   ServiceConfig	m_config;
   MessageString	m_altSvc;
   Workload	*m_workload = nullptr;
-  Engine<H1TCP>	m_tcp;
-  TLSEngine	m_tls;
-  Engine<H3QUIC>	m_quic;
-  Engines	m_engines;
+  Hub<H1TCP>	m_tcp;
+  TLSHub	m_tls;
+  Hub<H3QUIC>	m_quic;
+  Hubs	m_hubs;
   Runtime	m_runtime;
   ZiTxErrorFn	m_txErrorFn;
   ZmAtomic<unsigned> m_active = 0;

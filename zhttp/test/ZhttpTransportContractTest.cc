@@ -589,17 +589,17 @@ void testParams()
 {
   ZuTestScope(testParams);
 
-  Zhttp::EngineConfig engine{nullptr, "rx", "tx"};
-  auto tcpCli = TCP::clientParams(engine, Zhttp::TCPConfig{});
-  auto tcpSrv = TCP::serverParams(engine, Zhttp::TCPConfig{});
+  Zhttp::HubConfig hub{nullptr, "rx", "tx"};
+  auto tcpCli = TCP::clientParams(hub, Zhttp::TCPConfig{});
+  auto tcpSrv = TCP::serverParams(hub, Zhttp::TCPConfig{});
   ZuCHECK(tcpCli.rxThread == "rx" && tcpCli.txThread == "tx" &&
       tcpSrv.rxThread == "rx" && tcpSrv.txThread == "tx",
     "TCP common parameter mapping mismatch");
 
   auto tlsCli = TLS::clientParams(
-    engine, Zhttp::TLSConfig{}.caPath("ca.pem"));
+    hub, Zhttp::TLSConfig{}.caPath("ca.pem"));
   auto tlsSrv = TLS::serverParams(
-    engine, Zhttp::TLSConfig{}
+    hub, Zhttp::TLSConfig{}
       .certPath("cert.pem").keyPath("key.pem"));
   ZuCHECK(tlsCli.caPath() == "ca.pem" &&
       tlsCli.alpn().length() == 1 &&
@@ -614,9 +614,9 @@ void testParams()
   auto force = Zhttp::H2Config().policy(Zhttp::H2Policy::Force);
   auto prefer = Zhttp::H2Config().policy(Zhttp::H2Policy::Prefer);
   auto disable = Zhttp::H2Config().policy(Zhttp::H2Policy::Disable);
-  auto forceCli = Zhttp::TLS_::clientParams(engine, force);
-  auto preferSrv = Zhttp::TLS_::serverParams(engine, prefer);
-  auto disableCli = Zhttp::TLS_::clientParams(engine, disable);
+  auto forceCli = Zhttp::TLS_::clientParams(hub, force);
+  auto preferSrv = Zhttp::TLS_::serverParams(hub, prefer);
+  auto disableCli = Zhttp::TLS_::clientParams(hub, disable);
   ZuCHECK(forceCli.alpn().length() == 1 &&
       forceCli.alpn()[0] == "h2",
     "force-H2 ALPN mismatch");
@@ -655,8 +655,8 @@ void testParams()
     Zhttp::TLS_::version({}, Zhttp::H2Policy::Prefer) < 0,
     "shared TLS negotiated-profile classification mismatch");
 
-  auto quicCli = QUIC::clientParams(engine, Zhttp::QUICConfig{});
-  auto quicSrv = QUIC::serverParams(engine, Zhttp::QUICConfig{});
+  auto quicCli = QUIC::clientParams(hub, Zhttp::QUICConfig{});
+  auto quicSrv = QUIC::serverParams(hub, Zhttp::QUICConfig{});
   ZuCHECK(quicCli.alpn().length() == 1 && quicCli.alpn()[0] == "h3" &&
       quicSrv.alpn().length() == 1 && quicSrv.alpn()[0] == "h3",
     "H3 ALPN defaults mismatch");
@@ -684,9 +684,9 @@ void testParams()
     "H3 QPACK local-limit validation mismatch");
 
   auto serviceQUIC = Zhttp::ServiceConfig{}.idleTimeout(7)
-    .quic(Zhttp::QUICConfig{}).quicEngineConfig();
+    .quic(Zhttp::QUICConfig{}).quicHubConfig();
   auto explicitQUIC = Zhttp::ServiceConfig{}.idleTimeout(7)
-    .quic(Zhttp::QUICConfig{}.maxIdleTimeout(2500)).quicEngineConfig();
+    .quic(Zhttp::QUICConfig{}.maxIdleTimeout(2500)).quicHubConfig();
   ZuCHECK(serviceQUIC.maxIdleTimeout() == 7000 &&
       explicitQUIC.maxIdleTimeout() == 2500,
     "service idle timeout mapping mismatch");

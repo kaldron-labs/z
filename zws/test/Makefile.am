@@ -20,15 +20,15 @@ LDADD = $(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	ZwsProtocolTest ZwsH1EngineTest ZwsH2EngineTest ZwsH3EngineTest \
+	ZwsProtocolTest ZwsH1HubTest ZwsH2HubTest ZwsH3HubTest \
 	ZwsSourceBoundaryTest
 dist_noinst_SCRIPTS = ZwsSourceBoundaryFixture.sh
 ZwsProtocolTest_SOURCES = ZwsProtocolTest.cc
-ZwsH1EngineTest_SOURCES = ZwsH1EngineTest.cc
-ZwsH2EngineTest_SOURCES = ZwsH1EngineTest.cc
-ZwsH2EngineTest_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_H2_TEST
-ZwsH3EngineTest_SOURCES = ZwsH1EngineTest.cc
-ZwsH3EngineTest_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_H3_TEST
+ZwsH1HubTest_SOURCES = ZwsH1HubTest.cc
+ZwsH2HubTest_SOURCES = ZwsH1HubTest.cc
+ZwsH2HubTest_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_H2_TEST
+ZwsH3HubTest_SOURCES = ZwsH1HubTest.cc
+ZwsH3HubTest_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_H3_TEST
 ZwsSourceBoundaryTest_SOURCES = ZwsSourceBoundaryTest.cc
 ZwsSourceBoundaryTest_CPPFLAGS = $(AM_CPPFLAGS) \
 	-DZWS_TEST_SRCDIR='"$(abs_srcdir)"' \

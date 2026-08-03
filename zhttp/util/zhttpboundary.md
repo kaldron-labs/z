@@ -70,7 +70,7 @@ The automated `ZhttpBoundaryTest` rejects native transport headers, internal
 link calls, parser/builder selection, HPACK/H2 frame/session/wire code,
 application-local ALPN manipulation, discovery/cache/pool machinery, blocking
 coordination, old borrowed-span body callbacks, and program-local
-engine/runtime coordinators in this closure.
+hub/runtime coordinators in this closure.
 It also derives executable sources from `Makefile.am` and quoted local-header
 edges from the reviewed files, rejecting any unreviewed addition to the
 program-only closure.

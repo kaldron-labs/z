@@ -4,14 +4,14 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include "ZhttpEngineFixture.hh"
+#include "ZhttpHubFixture.hh"
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpH1EngineTest_;
+  using namespace ZhttpH1HubTest_;
 
   parse(argc, argv);
-  ZiLog::init("ZhttpH1EngineTest");
+  ZiLog::init("ZhttpH1HubTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();

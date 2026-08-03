@@ -15,7 +15,7 @@
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZhttpH2Engine.hh>
+#include <zlib/ZhttpH2Hub.hh>
 #include <zlib/ZhttpMessage.hh>
 
 namespace Zhttp {
@@ -298,7 +298,7 @@ template <
   typename Owner_, typename Request_,
   typename RequestBuilder_, typename ResponseParser_>
 class TLSClientPool :
-  public TLS_::ClientEngine<
+  public TLS_::ClientHub<
     TLSClientPool<
       Owner_, Request_, RequestBuilder_, ResponseParser_>,
     TLSClientPoolLink<
@@ -319,7 +319,7 @@ public:
     Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>;
   using H2Link = TLSClientPoolLink<
     Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>;
-  using Base = TLS_::ClientEngine<Pool, H1Link, H2Link>;
+  using Base = TLS_::ClientHub<Pool, H1Link, H2Link>;
   using Base::stop;
 
   struct Pair {

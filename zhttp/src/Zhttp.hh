@@ -68,9 +68,9 @@ namespace Zhttp {
 
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 
-// HTTP engine/link application contract
+// HTTP hub/link application contract
 //
-// Engines:
+// Hubs:
 //   init(params) -> start() -> process links -> stop(done) -> final()
 // done is called only after ingress is disabled and Rx/Tx work and links have
 // drained.  final() is only valid from done (or after the main-thread blocking
@@ -120,7 +120,7 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 #include <zlib/ZhttpMessage.hh>
 #include <zlib/ZhttpStream.hh>
 #include <zlib/ZhttpH1Stream.hh>
-#include <zlib/ZhttpTLSEngine.hh>
+#include <zlib/ZhttpTLSHub.hh>
 
 namespace Zhttp {
 
@@ -275,13 +275,13 @@ using H3RespBuilder =
 } // namespace Zhttp
 
 #ifndef Zhttp_CORE_ONLY
-#include <zlib/ZhttpClientEngine.hh>
+#include <zlib/ZhttpClientHub.hh>
 #include <zlib/ZhttpClientPool.hh>
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
-#include <zlib/ZhttpEngines.hh>
-#include <zlib/ZhttpH2Engine.hh>
-#include <zlib/ZhttpH3Engine.hh>
+#include <zlib/ZhttpHubs.hh>
+#include <zlib/ZhttpH2Hub.hh>
+#include <zlib/ZhttpH3Hub.hh>
 #endif
 
 #endif /* Zhttp_HH */

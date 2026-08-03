@@ -6,8 +6,8 @@
 
 // WebSocket-over-HTTP/1 client and server bindings
 
-#ifndef ZwsH1Engine_HH
-#define ZwsH1Engine_HH
+#ifndef ZwsH1Hub_HH
+#define ZwsH1Hub_HH
 
 #ifndef ZwsLib_HH
 #include <zlib/ZwsLib.hh>
@@ -157,9 +157,9 @@ template <typename App, typename Profile> class H1ServerLink;
 
 template <typename App, typename Profile>
 class H1Client :
-  public Zhttp::ClientEngine<H1Client<App, Profile>, Profile> {
+  public Zhttp::ClientHub<H1Client<App, Profile>, Profile> {
   using Traits = typename Zhttp::ProfileTraits<Profile>::Transport;
-  using Base = Zhttp::ClientEngine<H1Client, Profile>;
+  using Base = Zhttp::ClientHub<H1Client, Profile>;
 
 public:
   static_assert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
@@ -169,10 +169,10 @@ public:
   H1Client(App *app) : m_app{app} { }
 
   bool init(
-      const Zhttp::EngineConfig &engine, const Config &config,
+      const Zhttp::HubConfig &hub, const Config &config,
       Zws::Config wsConfig = {}) {
     m_config = wsConfig;
-    return m_random.init() && Base::init(engine, config);
+    return m_random.init() && Base::init(hub, config);
   }
 
   App *app() const { return m_app; }
@@ -205,9 +205,9 @@ class H1ClientLink :
     H1ClientLink<App, Profile>, H1ClientLink<App, Profile>, false,
     Ztls::Random>,
   public AppLinkState<App> {
-  using Engine = H1Client<App, Profile>;
+  using Hub = H1Client<App, Profile>;
   using Self = H1ClientLink<App, Profile>;
-  using HTTPBase = Zhttp::ClientLink<Engine, Self, Profile>;
+  using HTTPBase = Zhttp::ClientLink<Hub, Self, Profile>;
   using CodecBase =
     Codec<Self, Self, false, Ztls::Random>;
   using StateBase = AppLinkState<App>;
@@ -220,9 +220,9 @@ public:
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 
-  H1ClientLink(Engine *engine, const URI &uri, ZuCSpan protocol = {}) :
-    HTTPBase{engine, ZtString<>{uri.host}, uri.port},
-    CodecBase{*this, engine->random(), engine->wsConfig()},
+  H1ClientLink(Hub *hub, const URI &uri, ZuCSpan protocol = {}) :
+    HTTPBase{hub, ZtString<>{uri.host}, uri.port},
+    CodecBase{*this, hub->random(), hub->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
 
   void open_(Zhttp::ConnectedInfo info) {
@@ -358,10 +358,10 @@ public:
     m_app{app}, m_localIP{ZuMv(localIP)}, m_localPort{localPort} { }
 
   bool init(
-      const Zhttp::EngineConfig &engine, const Config &config,
+      const Zhttp::HubConfig &hub, const Config &config,
       Zws::Config wsConfig = {}) {
     m_config = wsConfig;
-    return m_random.init() && Base::init(engine, config);
+    return m_random.init() && Base::init(hub, config);
   }
 
   App *app() const { return m_app; }
@@ -401,10 +401,10 @@ class H1ServerLink :
     H1ServerLink<App, Profile>, H1ServerLink<App, Profile>, true,
     Ztls::Random>,
   public AppLinkState<App> {
-  using Engine = H1Server<App, Profile>;
+  using Hub = H1Server<App, Profile>;
   using Self = H1ServerLink<App, Profile>;
   using HTTPBase = Zhttp::ServerLink<
-    Engine, Self, Profile, H1ServerSession>;
+    Hub, Self, Profile, H1ServerSession>;
   using CodecBase =
     Codec<Self, Self, true, Ztls::Random>;
   using StateBase = AppLinkState<App>;
@@ -417,9 +417,9 @@ public:
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 
-  H1ServerLink(Engine *engine, const ZiCxnInfo &ci) :
-    HTTPBase{engine, ci},
-    CodecBase{*this, engine->random(), engine->wsConfig()} { }
+  H1ServerLink(Hub *hub, const ZiCxnInfo &ci) :
+    HTTPBase{hub, ci},
+    CodecBase{*this, hub->random(), hub->wsConfig()} { }
 
   void open_() {
     this->CodecBase::reopen_(*this);
@@ -551,4 +551,4 @@ private:
 
 } // namespace Zws
 
-#endif /* ZwsH1Engine_HH */
+#endif /* ZwsH1Hub_HH */

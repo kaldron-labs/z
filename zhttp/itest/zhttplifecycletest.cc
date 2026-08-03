@@ -133,15 +133,15 @@ void checkTrace(State &state)
   ZuCHECK(trace.count(LifeEvt::Stop) == 1, "stop event count mismatch");
   ZuCHECK(trace.count(LifeEvt::Final) == 1, "final event count mismatch");
   ZuCHECK(trace.before(LifeEvt::Init, LifeEvt::Start),
-    "engine started before initialization");
+    "hub started before initialization");
   ZuCHECK(trace.before(LifeEvt::Start, LifeEvt::CliConnected),
-    "client connected before engine start");
+    "client connected before hub start");
   ZuCHECK(trace.before(LifeEvt::Start, LifeEvt::CliConnect),
-    "client connect attempted before engine start");
+    "client connect attempted before hub start");
   ZuCHECK(trace.before(LifeEvt::CliConnect, LifeEvt::CliConnected),
     "client connected before connect attempt");
   ZuCHECK(trace.before(LifeEvt::Start, LifeEvt::SrvConnected),
-    "server connected before engine start");
+    "server connected before hub start");
   ZuCHECK(trace.before(LifeEvt::CliConnected, LifeEvt::CliTxReady),
     "client Tx stream acquired before connected");
   ZuCHECK(trace.before(LifeEvt::CliTxReady, LifeEvt::CliSend),
@@ -163,7 +163,7 @@ void checkTrace(State &state)
   ZuCHECK(trace.before(LifeEvt::SrvDisconnected, LifeEvt::Stop),
     "server connection remained live at stop");
   ZuCHECK(trace.before(LifeEvt::Stop, LifeEvt::Final),
-    "engine finalized before stop");
+    "hub finalized before stop");
 }
 
 struct TCPClient : public Ztcp::Client<TCPClient> {
@@ -455,7 +455,7 @@ void runH1(
   Server server{&state};
   bool serverInit = server.init(ZuMv(srvParams));
   bool clientInit = client.init(ZuMv(cliParams));
-  ZuCHECK(serverInit && clientInit, "engine initialization failed");
+  ZuCHECK(serverInit && clientInit, "hub initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -465,7 +465,7 @@ void runH1(
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "engine start failed");
+  ZuCHECK(serverStart && clientStart, "hub start failed");
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -490,7 +490,7 @@ void runH1(
   }
 
   server.stopListening();
-  ZuCHECK(client.stop() && server.stop(), "engine stop failed");
+  ZuCHECK(client.stop() && server.stop(), "hub stop failed");
   state.trace.push(LifeEvt::Stop);
   link = nullptr;
   client.final();
@@ -561,7 +561,7 @@ void testQUIC(const TempDir &temp)
     Zquic::ClientParams(&mx, "3", "4")
       .caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"h3"})
       .maxStreamsDuplex(4).maxStreamsSimplex(4));
-  ZuCHECK(serverInit && clientInit, "QUIC engine initialization failed");
+  ZuCHECK(serverInit && clientInit, "QUIC hub initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -572,7 +572,7 @@ void testQUIC(const TempDir &temp)
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "QUIC engine start failed");
+  ZuCHECK(serverStart && clientStart, "QUIC hub start failed");
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -598,7 +598,7 @@ void testQUIC(const TempDir &temp)
       "QUIC client close timed out");
   }
 
-  ZuCHECK(client.stop() && server.stop(), "QUIC engine stop failed");
+  ZuCHECK(client.stop() && server.stop(), "QUIC hub stop failed");
   state.trace.push(LifeEvt::Stop);
   link = nullptr;
   server.link = nullptr;

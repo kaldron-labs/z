@@ -333,9 +333,9 @@ int run(const Options &options, const TempDir &temp)
     serverConfig.certPath(temp.certPath).keyPath(temp.keyPath);
     clientConfig.caPath(temp.certPath);
   }
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
-  bool serverInit = server.init(engine, serverConfig);
-  bool clientInit = client.init(engine, clientConfig);
+  Zhttp::HubConfig hub{&mx, "3", "4"};
+  bool serverInit = server.init(hub, serverConfig);
+  bool clientInit = client.init(hub, clientConfig);
   bool serverStart = serverInit && server.start();
   bool clientStart = clientInit && client.start();
   if (!serverStart || !clientStart) {

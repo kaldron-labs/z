@@ -10,14 +10,14 @@
 
 using namespace ZuTestUtil;
 
-namespace ZhttpEngineLifecycleTest_ {
+namespace ZhttpHubLifecycleTest_ {
 
 struct Event {
   enum { Init, Start, StopAccepting, Stop, Final };
 };
 
 using Events =
-  ZtArray<unsigned, ZtArrayHeapID<"Zhttp.Test.EngineLife">>;
+  ZtArray<unsigned, ZtArrayHeapID<"Zhttp.Test.HubLife">>;
 
 inline unsigned event(unsigned id, unsigned type)
 {
@@ -27,7 +27,7 @@ inline unsigned event(unsigned id, unsigned type)
 template <unsigned ID>
 struct Fake {
   Events		*events = nullptr;
-  Zhttp::Engines	*engines = nullptr;
+  Zhttp::Hubs	*hubs = nullptr;
   bool			startOK = true;
   bool			stopOK = true;
   bool			stopOnStart = false;
@@ -49,11 +49,11 @@ struct Fake {
     ++starts;
     events->push(event(ID, Event::Start));
     if (stopOnStart)
-      engines->stop([this](bool ok) {
+      hubs->stop([this](bool ok) {
 	stopOnStartDone += ok ? 1 : 2;
       });
     if (deferStart) {
-      startDone = Zhttp::Engines::DoneFn{ZuMv(done)};
+      startDone = Zhttp::Hubs::DoneFn{ZuMv(done)};
       return;
     }
     done(startOK);
@@ -66,7 +66,7 @@ struct Fake {
     ++stops;
     events->push(event(ID, Event::Stop));
     if (deferStop) {
-      stopDone = Zhttp::Engines::DoneFn{ZuMv(done)};
+      stopDone = Zhttp::Hubs::DoneFn{ZuMv(done)};
       return;
     }
     done(stopOK);
@@ -76,8 +76,8 @@ struct Fake {
     events->push(event(ID, Event::Final));
   }
 
-  Zhttp::Engines::DoneFn	startDone;
-  Zhttp::Engines::DoneFn	stopDone;
+  Zhttp::Hubs::DoneFn	startDone;
+  Zhttp::Hubs::DoneFn	stopDone;
 };
 
 int index(const Events &events, unsigned value)
@@ -91,17 +91,17 @@ void testEmpty()
 {
   ZuTestScope(testEmpty);
 
-  Zhttp::Engines engines;
+  Zhttp::Hubs hubs;
   unsigned completed = 0;
   bool result = true;
-  engines.start([&completed, &result](bool ok) {
+  hubs.start([&completed, &result](bool ok) {
     ++completed;
     result = ok;
   });
   ZuCHECK(!result && completed == 1);
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Failed);
-  ZuCHECK(!engines.stop());
-  engines.final();
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Failed);
+  ZuCHECK(!hubs.stop());
+  hubs.final();
 }
 
 void testOneAndAll()
@@ -111,11 +111,11 @@ void testOneAndAll()
   {
     Events events;
     Fake<1> one{.events = &events};
-    Zhttp::Engines engines;
-    ZuCHECK(engines.init(one));
-    ZuCHECK(engines.start() && engines.start());
-    ZuCHECK(engines.stop());
-    engines.final();
+    Zhttp::Hubs hubs;
+    ZuCHECK(hubs.init(one));
+    ZuCHECK(hubs.start() && hubs.start());
+    ZuCHECK(hubs.stop());
+    hubs.final();
     ZuCHECK(one.inits == 1 && one.starts == 1 &&
 	one.stops == 1 && one.finals == 1);
   }
@@ -124,13 +124,13 @@ void testOneAndAll()
     Fake<1> tcp{.events = &events};
     Fake<2> tls{.events = &events};
     Fake<3> h3{.events = &events};
-    Zhttp::Engines engines;
-    ZuCHECK(engines.init(tcp) && engines.init(tls) && engines.init(h3));
-    ZuCHECK(engines.start() && engines.count() == 3);
+    Zhttp::Hubs hubs;
+    ZuCHECK(hubs.init(tcp) && hubs.init(tls) && hubs.init(h3));
+    ZuCHECK(hubs.start() && hubs.count() == 3);
     unsigned completed = 0;
-    engines.stop([&completed](bool ok) { if (ok) ++completed; });
-    engines.stop([&completed](bool ok) { if (ok) ++completed; });
-    engines.final();
+    hubs.stop([&completed](bool ok) { if (ok) ++completed; });
+    hubs.stop([&completed](bool ok) { if (ok) ++completed; });
+    hubs.final();
     ZuCHECK(completed == 2);
     ZuCHECK(index(events, event(3, Event::Stop)) <
 	index(events, event(2, Event::Stop)) &&
@@ -151,15 +151,15 @@ void testInitFailure(unsigned failure)
   Fake<1> a{.events = &events};
   Fake<2> b{.events = &events};
   Fake<3> c{.events = &events};
-  Zhttp::Engines engines;
-  bool ok = engines.init(a, failure != 0);
-  if (ok) ok = engines.init(b, failure != 1);
-  if (ok) ok = engines.init(c, failure != 2);
+  Zhttp::Hubs hubs;
+  bool ok = hubs.init(a, failure != 0);
+  if (ok) ok = hubs.init(b, failure != 1);
+  if (ok) ok = hubs.init(c, failure != 2);
   ZuCHECK(!ok);
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Failed);
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Failed);
   ZuCHECK(a.finals == (failure > 0) &&
       b.finals == (failure > 1) && c.finals == 0);
-  engines.final();
+  hubs.final();
 }
 
 void testStartFailure(unsigned failure)
@@ -170,13 +170,13 @@ void testStartFailure(unsigned failure)
   Fake<1> a{.events = &events, .startOK = failure != 0};
   Fake<2> b{.events = &events, .startOK = failure != 1};
   Fake<3> c{.events = &events, .startOK = failure != 2};
-  Zhttp::Engines engines;
-  ZuCHECK(engines.init(a) && engines.init(b) && engines.init(c));
-  ZuCHECK(!engines.start());
+  Zhttp::Hubs hubs;
+  ZuCHECK(hubs.init(a) && hubs.init(b) && hubs.init(c));
+  ZuCHECK(!hubs.start());
   ZuCHECK(a.stops == (failure > 0) &&
       b.stops == (failure > 1) && c.stops == 0);
   ZuCHECK(a.finals == 1 && b.finals == 1 && c.finals == 1);
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Failed);
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Failed);
 }
 
 void testStopDuringStart()
@@ -184,16 +184,16 @@ void testStopDuringStart()
   ZuTestScope(testStopDuringStart);
 
   Events events;
-  Zhttp::Engines engines;
+  Zhttp::Hubs hubs;
   Fake<1> a{
-    .events = &events, .engines = &engines, .stopOnStart = true};
+    .events = &events, .hubs = &hubs, .stopOnStart = true};
   Fake<2> b{.events = &events};
-  ZuCHECK(engines.init(a) && engines.init(b));
-  ZuCHECK(!engines.start());
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Stopped);
+  ZuCHECK(hubs.init(a) && hubs.init(b));
+  ZuCHECK(!hubs.start());
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Stopped);
   ZuCHECK(a.starts == 1 && a.stops == 1 && a.stopOnStartDone == 1 &&
       b.starts == 0);
-  engines.final();
+  hubs.final();
   ZuCHECK(a.finals == 1 && b.finals == 1);
 }
 
@@ -202,33 +202,33 @@ void testAsyncStopDuringStart()
   ZuTestScope(testAsyncStopDuringStart);
 
   Events events;
-  Zhttp::Engines engines;
+  Zhttp::Hubs hubs;
   Fake<1> a{
-    .events = &events, .engines = &engines,
+    .events = &events, .hubs = &hubs,
     .deferStart = true, .deferStop = true};
   unsigned starts = 0, stops = 0;
-  ZuCHECK(engines.init(a));
-  engines.start([&starts](bool ok) { starts += ok ? 1 : 2; });
-  engines.start([&starts](bool ok) { starts += ok ? 10 : 20; });
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Starting && !starts);
-  engines.stop([&stops](bool ok) { stops += ok ? 1 : 2; });
+  ZuCHECK(hubs.init(a));
+  hubs.start([&starts](bool ok) { starts += ok ? 1 : 2; });
+  hubs.start([&starts](bool ok) { starts += ok ? 10 : 20; });
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Starting && !starts);
+  hubs.stop([&stops](bool ok) { stops += ok ? 1 : 2; });
   ZuCHECK(!starts && !stops);
   auto startDone = ZuMv(a.startDone);
   startDone(true);
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Stopping);
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Stopping);
   ZuCHECK(!starts && !stops && a.stops == 1);
   auto stopDone = ZuMv(a.stopDone);
   stopDone(true);
   ZuCHECK(starts == 22 && stops == 1);
-  ZuCHECK(engines.state() == Zhttp::Engines::State::Stopped);
-  engines.final();
+  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Stopped);
+  hubs.final();
 }
 
-} // namespace ZhttpEngineLifecycleTest_
+} // namespace ZhttpHubLifecycleTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpEngineLifecycleTest_;
+  using namespace ZhttpHubLifecycleTest_;
 
   parse(argc, argv);
   ZuTestMain();

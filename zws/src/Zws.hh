@@ -17,8 +17,8 @@
 #include <zlib/ZwsTx.hh>
 #include <zlib/ZwsCodec.hh>
 #include <zlib/ZwsH1.hh>
-#include <zlib/ZwsH1Engine.hh>
+#include <zlib/ZwsH1Hub.hh>
 #include <zlib/ZwsExtended.hh>
-#include <zlib/ZwsEngine.hh>
+#include <zlib/ZwsHub.hh>
 
 #endif /* Zws_HH */

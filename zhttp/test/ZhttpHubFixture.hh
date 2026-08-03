@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Common HTTP engine/link integration fixture
+// Common HTTP hub/link integration fixture
 
-#ifndef ZhttpEngineFixture_HH
-#define ZhttpEngineFixture_HH
+#ifndef ZhttpHubFixture_HH
+#define ZhttpHubFixture_HH
 
 #include <string.h>
 
@@ -19,13 +19,13 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpH3Engine.hh>
+#include <zlib/ZhttpH3Hub.hh>
 
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
-namespace ZhttpH1EngineTest_ {
+namespace ZhttpH1HubTest_ {
 
 using namespace Zhttp::Test;
 
@@ -175,7 +175,7 @@ struct ServerLink :
 
 template <typename Profile>
 struct Client :
-  public Zhttp::ClientEngine<Client<Profile>, Profile> {
+  public Zhttp::ClientHub<Client<Profile>, Profile> {
   struct Link :
     public Zhttp::ClientLink<Client, Link, Profile> {
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
@@ -212,7 +212,7 @@ struct Client :
 };
 
 struct FailClient :
-  public Zhttp::ClientEngine<FailClient, Zhttp::H1TLS> {
+  public Zhttp::ClientHub<FailClient, Zhttp::H1TLS> {
   struct Link :
     public Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS> {
     using Base = Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS>;
@@ -384,7 +384,7 @@ struct UpgradeSrvLink :
 
 template <typename Profile>
 struct UpgradeClient :
-  public Zhttp::ClientEngine<UpgradeClient<Profile>, Profile> {
+  public Zhttp::ClientHub<UpgradeClient<Profile>, Profile> {
   struct Link :
     public Zhttp::ClientLink<UpgradeClient, Link, Profile> {
     using Base = Zhttp::ClientLink<UpgradeClient, Link, Profile>;
@@ -483,12 +483,12 @@ void runUpgrade(const TempDir &temp)
   ZuCHECK(mx.start(), "Upgrade multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   UpgradeServer<Profile> server{&state};
   UpgradeClient<Profile> client{&state};
-  bool serverInit = server.init(engine, Config<Profile>::server(temp));
-  bool clientInit = client.init(engine, Config<Profile>::client(temp));
-  ZuCHECK(serverInit && clientInit, "Upgrade engine initialization failed");
+  bool serverInit = server.init(hub, Config<Profile>::server(temp));
+  bool clientInit = client.init(hub, Config<Profile>::client(temp));
+  ZuCHECK(serverInit && clientInit, "Upgrade hub initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -498,7 +498,7 @@ void runUpgrade(const TempDir &temp)
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "Upgrade engine start failed");
+  ZuCHECK(serverStart && clientStart, "Upgrade hub start failed");
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -534,7 +534,7 @@ void runUpgrade(const TempDir &temp)
     stopDone.timedwait(Zm::now(10)) == 0 &&
     stopDone.timedwait(Zm::now(10)) == 0 &&
     !stopErrors.load_();
-  ZuCHECK(stopped, "Upgrade engine stop failed");
+  ZuCHECK(stopped, "Upgrade hub stop failed");
   link = nullptr;
   client.final();
   server.final();
@@ -570,12 +570,12 @@ void run(
   ZuCHECK(mx.start(), "H1 multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
   Client<Profile> client{&state};
-  bool serverInit = server.init(engine, Config<Profile>::server(temp));
-  bool clientInit = client.init(engine, Config<Profile>::client(temp));
-  ZuCHECK(serverInit && clientInit, "H1 engine initialization failed");
+  bool serverInit = server.init(hub, Config<Profile>::server(temp));
+  bool clientInit = client.init(hub, Config<Profile>::client(temp));
+  ZuCHECK(serverInit && clientInit, "H1 hub initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -586,7 +586,7 @@ void run(
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "H1 engine start failed");
+  ZuCHECK(serverStart && clientStart, "H1 hub start failed");
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -601,7 +601,7 @@ void run(
   ZuCHECK(listening, "H1 listen timed out");
   using Link = typename Client<Profile>::Link;
   using Links =
-    ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.Test.EngineLinks">>;
+    ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.Test.HubLinks">>;
   Links links_;
   if (listening) {
     for (unsigned i = 0; i < state.links; ++i) {
@@ -638,7 +638,7 @@ void run(
       stopped = client.stop() && server.stop();
   } else
     stopped = client.stop() && server.stop();
-  ZuCHECK(stopped, "H1 engine stop failed");
+  ZuCHECK(stopped, "H1 hub stop failed");
   if constexpr (Client<Profile>::Multiplexed) {
     bool closed = state.done.timedwait(Zm::now(10)) == 0;
     ZuCHECK(closed, "H3 disconnect lifecycle timed out");
@@ -683,13 +683,13 @@ void runServerStop(const TempDir &temp)
   ZuCHECK(mx.start(), "active-stop multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
   Client<Profile> client{&state};
-  bool serverInit = server.init(engine, Config<Profile>::server(temp));
-  bool clientInit = client.init(engine, Config<Profile>::client(temp));
+  bool serverInit = server.init(hub, Config<Profile>::server(temp));
+  bool clientInit = client.init(hub, Config<Profile>::client(temp));
   ZuCHECK(serverInit && clientInit,
-    "active-stop engine initialization failed");
+    "active-stop hub initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -699,7 +699,7 @@ void runServerStop(const TempDir &temp)
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "active-stop engine start failed");
+  ZuCHECK(serverStart && clientStart, "active-stop hub start failed");
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -777,13 +777,13 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
   ZuCHECK(mx.start(), "TLS failure multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Zhttp::H1TLS> server{&state};
   FailClient client{&state};
-  bool serverInit = server.init(engine, Config<Zhttp::H1TLS>::server(cert));
+  bool serverInit = server.init(hub, Config<Zhttp::H1TLS>::server(cert));
   bool clientInit = client.init(
-    engine, Zhttp::TLSConfig{}.caPath(otherCA.certPath.cspan()));
-  ZuCHECK(serverInit && clientInit, "TLS failure engine initialization failed");
+    hub, Zhttp::TLSConfig{}.caPath(otherCA.certPath.cspan()));
+  ZuCHECK(serverInit && clientInit, "TLS failure hub initialization failed");
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -793,7 +793,7 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "TLS failure engine start failed");
+  ZuCHECK(serverStart && clientStart, "TLS failure hub start failed");
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -828,6 +828,6 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
     "TLS failure emitted connected callback");
 }
 
-} // namespace ZhttpH1EngineTest_
+} // namespace ZhttpH1HubTest_
 
-#endif /* ZhttpEngineFixture_HH */
+#endif /* ZhttpHubFixture_HH */

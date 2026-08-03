@@ -8,7 +8,7 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZwsLib.hh Zws.hh ZwsProtocol.hh ZwsURI.hh \
 	ZwsHandshake.hh ZwsTx.hh ZwsCodec.hh \
-	ZwsH1.hh ZwsH1Engine.hh ZwsExtended.hh ZwsEngine.hh
+	ZwsH1.hh ZwsH1Hub.hh ZwsExtended.hh ZwsHub.hh
 lib_LTLIBRARIES = libZws.la
 libZws_la_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_EXPORTS 
 libZws_la_SOURCES = ZwsLib.cc ZwsProtocol.cc ZwsURI.cc ZwsHandshake.cc
