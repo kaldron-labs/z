@@ -1,7 +1,7 @@
-include "ZumPerm.fbs";
-include "ZumRole.fbs";
-include "ZumUser.fbs";
-include "ZumKey.fbs";
+include "zum_perm.fbs";
+include "zum_role.fbs";
+include "zum_user.fbs";
+include "zum_key.fbs";
 namespace Zum.fbs;
 table Ack {
 }

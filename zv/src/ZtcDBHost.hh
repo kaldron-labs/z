@@ -27,7 +27,7 @@
 #include <zlib/ZtcTypes.hh>
 #include <zlib/ZtcRAGMap.hh>
 
-#include <zlib/ZtcDB_fbs.h>
+#include <zlib/ztc_db_fbs.h>
 
 namespace Ztc {
 

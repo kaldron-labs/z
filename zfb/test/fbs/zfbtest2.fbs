@@ -1,4 +1,4 @@
-include "ZfbTypes.fbs";
+include "zfb_types.fbs";
 namespace zfbtest2.fbs;
 table Object {
   id:string;

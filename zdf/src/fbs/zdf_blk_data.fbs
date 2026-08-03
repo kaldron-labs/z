@@ -1,4 +1,4 @@
-include "ZfbTypes.fbs";
+include "zfb_types.fbs";
 namespace Zdf.DB.fbs;
 table BlkData {
   blk_offset:uint64;	// block index within series (from 0)

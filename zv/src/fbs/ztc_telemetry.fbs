@@ -1,6 +1,6 @@
-include "ZfbTypes.fbs";
-include "ZtcTypes.fbs";
-include "ZtcDB.fbs";
+include "zfb_types.fbs";
+include "ztc_types.fbs";
+include "ztc_db.fbs";
 
 namespace Ztc.fbs;
 

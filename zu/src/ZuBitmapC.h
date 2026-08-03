@@ -26,7 +26,11 @@ extern "C" {
 #pragma pack(push, 8)
 typedef struct {
   uint64_t	length; // in words
+#ifdef _MSC_VER
   uint64_t	data[1];
+#else
+  uint64_t	data[];
+#endif
 } zu_bitmap;
 #pragma pack(pop)
 

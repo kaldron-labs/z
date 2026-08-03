@@ -26,13 +26,13 @@
 
 #include <zlib/ZtcDB.hh>
 
-#include <zlib/ZtelRequest_fbs.h>
-#include <zlib/ZtelReqAck_fbs.h>
-#include <zlib/ZtelTelemetry_fbs.h>
-#include <zlib/ZtelThreadPriority_fbs.h>
-#include <zlib/ZtelEngineState_fbs.h>
-#include <zlib/ZtelLinkState_fbs.h>
-#include <zlib/ZtelQueueType_fbs.h>
+#include <zlib/ztel_request_fbs.h>
+#include <zlib/ztel_reqack_fbs.h>
+#include <zlib/ztel_telemetry_fbs.h>
+#include <zlib/ztel_thread_priority_fbs.h>
+#include <zlib/ztel_engine_state_fbs.h>
+#include <zlib/ztel_link_state_fbs.h>
+#include <zlib/ztel_queue_type_fbs.h>
 
 namespace Ztel {
 

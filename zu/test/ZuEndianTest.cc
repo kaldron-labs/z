@@ -6,6 +6,8 @@
 
 #include <iostream>
 
+#include <float.h>
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuArray.hh>
@@ -18,6 +20,10 @@ template <typename T>
 void test(T v)
 {
   ZuTestScope(test);
+  using U = ZuUnder<T>;
+  constexpr unsigned ValueBytes =
+    ZuIsSame<U, long double>{} && sizeof(U) == 16 && LDBL_MANT_DIG == 64 ?
+      10 : sizeof(T);
   char _[sizeof(T)] = { 0 };
   T &d = *(new (_) T{v});
   ZuByteSwap<T> e = d;
@@ -25,8 +31,8 @@ void test(T v)
     reinterpret_cast<const uint8_t *>(&d)[0] == 
     reinterpret_cast<const uint8_t *>(&e)[sizeof(T) - 1]);
   ZuCheck(
-    reinterpret_cast<const uint8_t *>(&e)[0] == 
-    reinterpret_cast<const uint8_t *>(&d)[sizeof(T) - 1]);
+    reinterpret_cast<const uint8_t *>(&e)[sizeof(T) - ValueBytes] ==
+    reinterpret_cast<const uint8_t *>(&d)[ValueBytes - 1]);
   ZuCheck(d == e);
   d = e;
   ++d, ++e;
@@ -34,8 +40,8 @@ void test(T v)
     reinterpret_cast<const uint8_t *>(&d)[0] == 
     reinterpret_cast<const uint8_t *>(&e)[sizeof(T) - 1]);
   ZuCheck(
-    reinterpret_cast<const uint8_t *>(&e)[0] == 
-    reinterpret_cast<const uint8_t *>(&d)[sizeof(T) - 1]);
+    reinterpret_cast<const uint8_t *>(&e)[sizeof(T) - ValueBytes] ==
+    reinterpret_cast<const uint8_t *>(&d)[ValueBytes - 1]);
   ZuCheck(d == e);
   if constexpr (ZuTraits<T>::IsComposite)
     reinterpret_cast<T *>(_)->~T();

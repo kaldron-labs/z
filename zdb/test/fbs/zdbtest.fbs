@@ -1,4 +1,4 @@
-include "ZfbTypes.fbs";
+include "zfb_types.fbs";
 namespace zdbtest.fbs;
 enum Side:int8 {
   Buy = 0,

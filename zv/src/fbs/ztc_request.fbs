@@ -1,4 +1,4 @@
-include "ZtcTypes.fbs";
+include "ztc_types.fbs";
 
 namespace Ztc.fbs;
 

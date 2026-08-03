@@ -572,6 +572,15 @@ inline ZuPtr<AnyNode> *field(ZuPtr<AnyNode> &node, ZuCSpan key) {
   return &node_->val();
 }
 
+// add an endpoint path component
+// - path components are stored as an array under an empty object key
+// - unlike query keys, generated path indices have no backing URI storage
+inline ZuPtr<AnyNode> *path(ZuPtr<AnyNode> &node, unsigned index) {
+  auto slot = field(node, {});
+  if (ZuUnlikely(!slot)) return nullptr;
+  return elem(*slot, index);
+}
+
 // coerce node to array, splitting strings using Config::Delimiter
 template <typename Config>
 bool asArray(ZuPtr<AnyNode> &node) {
@@ -1583,10 +1592,17 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
     const auto &object = node->data<AnyNode::Object>();
     using PathIndex = ZuFieldProp::URI::GetPathIndex<Props>;
     if constexpr (PathIndex{}() >= 0) {
-      auto fieldID = ZuCArray<4>() << '_' << ZuBox<uint8_t>(PathIndex{}());
-      if (auto node_ = object.find(fieldID)) {
-	auto &child = node_->val();
-	return loadValue<Facet, Filter, TypeCode, Props, T>(child);
+      if (auto paths_ = object.find(ZuCSpan{})) {
+	auto &paths = paths_->val();
+	if (paths && paths->template has<AnyNode::Array>()) {
+	  auto &array = paths->template data<AnyNode::Array>();
+	  constexpr unsigned index = uint8_t(PathIndex{}());
+	  if (index < array.length()) {
+	    auto &child = array[index];
+	    if (child)
+	      return loadValue<Facet, Filter, TypeCode, Props, T>(child);
+	  }
+	}
       }
     } else {
       ZuCSpan fieldID = ZuFieldProp::URI::GetID<Field>{}().cspan();

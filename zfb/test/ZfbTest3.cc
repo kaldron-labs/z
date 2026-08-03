@@ -21,7 +21,7 @@
 #include <flatbuffers/reflection.h>
 #include <flatbuffers/reflection_generated.h>
 
-#include "ZfbTest3_fbs.h"
+#include "zfbtest3_fbs.h"
 
 namespace zfbtest3 {
 

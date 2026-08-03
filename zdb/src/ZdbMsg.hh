@@ -22,7 +22,7 @@
 
 #include <zlib/ZdbTypes.hh>
 
-#include <zlib/Zdb_fbs.h>
+#include <zlib/zdb__fbs.h>
 
 namespace Zdb_ {
 

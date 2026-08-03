@@ -1004,13 +1004,13 @@ public:
   auto iter() { return Iter{*this}; }
   template <typename P>
   auto iter(P key) {
-    return KeyIter<P>{*this, ZuMv(key)};
+    return KeyIter<ZuRDecay<P>>{*this, ZuMv(key)};
   }
 
   auto citer() const { return CIter{*this}; }
   template <typename P>
   auto citer(P key) const {
-    return ReadKeyIter<P>{*this, ZuMv(key)};
+    return ReadKeyIter<ZuRDecay<P>>{*this, ZuMv(key)};
   }
 
 private:

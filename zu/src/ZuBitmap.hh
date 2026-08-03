@@ -131,7 +131,7 @@ struct PrintScan {
     using Log = Zu_ntoa::Log10<4>;
     if (!*impl()) return 0;
     unsigned len = 0;
-    int begin = impl()->first(), end;
+    int begin = impl()->first(), end = -1;
     bool first = true;
     while (begin >= 0) {
       if (!first)

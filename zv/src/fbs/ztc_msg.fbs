@@ -1,5 +1,5 @@
-include "ZtcTelemetry.fbs";
-include "ZtcRequest.fbs";
+include "ztc_telemetry.fbs";
+include "ztc_request.fbs";
 
 namespace Ztc.fbs;
 

@@ -680,7 +680,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
   - `Engine::stopEngine` -> `stop`: "engine" is implied by being a member function of `Engine`
 
 ### Casing and member prefixes
-- Names are generally camelCase, not snake_case.
+- Names are generally camel-case, not snake-case, but there are numerous exceptions.
 - Repository-owned library/component basenames in `src` and unit-test
   code/data basenames in `test` are CamelCase and use the module prefix, e.g.
   `ZmLib`, `ZmTest`, and `ZhttpParserTest`.
@@ -689,12 +689,15 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
   `zcmd`, `zdash`, `ztotp`, and `zwsd`.
 - Repository-owned code/data basenames in `util`, `itest`, `example`, `bench`,
   and `interop` are lowercase.
+- Flabuffers schema files are snake-case.
 - Conventional control filenames such as `Makefile.am`, `README.md`,
   `Dockerfile.*`, and `.gitignore` retain their conventional casing.
-- Native names mandated by an external tool or protocol may retain their
-  spelling; this includes PostgreSQL extension/control/SQL names, generated
-  files, imported fixtures, and FlatBuffers contract fields. Do not apply this
-  exception to ordinary repository-owned C++ files.
+- Native names mandated by an external tool or protocol retain their spelling;
+  this includes PostgreSQL extension/control/SQL names, generated files,
+  imported fixtures, and FlatBuffers schema filenames and contract fields.
+  FlatBuffers schemas use their established lowercase/underscore basenames;
+  keep the corresponding generation rules and generated-header names aligned.
+  Do not apply this exception to ordinary repository-owned C++ files.
 - `m_` is reserved for private data members of classes.
   - private data members that are intended to be accessed directly by friends should NOT have the `m_` prefix.
 
