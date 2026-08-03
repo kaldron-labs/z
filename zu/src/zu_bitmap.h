@@ -26,7 +26,7 @@ extern "C" {
 #pragma pack(push, 8)
 typedef struct {
   uint64_t	length; // in words
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || (defined(__GNUC__) && defined(__llvm__))
   uint64_t	data[1];
 #else
   uint64_t	data[];
