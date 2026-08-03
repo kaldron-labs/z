@@ -36,7 +36,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZfbTypes_fbs.h>
+#include <zlib/zfb_types_fbs.h>
 
 namespace Zfb {
 

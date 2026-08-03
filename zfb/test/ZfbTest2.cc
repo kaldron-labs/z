@@ -17,7 +17,7 @@
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
 
-#include "ZfbTest2_fbs.h"
+#include "zfbtest2_fbs.h"
 
 namespace zfbtest2 {
 

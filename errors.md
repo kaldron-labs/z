@@ -5,6 +5,45 @@ These failures were observed in a clean GCC 16 release build configured with
 they can be reproduced and investigated without obscuring the successful
 compile and path/casing audits.
 
+## Resolution
+
+All failures below were reproduced with the existing GCC 16 release build and
+are repaired as of 2026-08-03:
+
+- `ZuBitmapCTest`: `zu_bitmap::data[1]` let GCC assume the variable-sized C
+  bitmap contained only one word.  The GNU layout now uses a flexible array
+  member; MSVC retains its supported one-element tail declaration.
+- `ZuTLTest` and `ZfCfTest`: primitive objects are intentionally viewed through
+  `ZuBox`, which needs GCC's `may_alias` attribute under strict aliasing.
+- `ZuSpanTest`: the test retained a non-owning initializer-list span beyond the
+  initializer list's full expression.  It now checks the nested span while the
+  backing list is alive.
+- `ZuEndianTest`: the x86 80-bit `long double` tests compared indeterminate
+  bytes in its 16-byte ABI padding.  They now compare the ten value bytes.
+- `ZuCmpTest`: `ZuTuple` class-template deduction retained references to rvalue
+  constructor arguments.  Ordinary tuple deduction now owns decayed values;
+  `ZuFwdTuple` remains the explicit forwarding/reference form.
+- `ZmPolyHashTest`: keyed iterators retained a recursively reference-bearing
+  tuple after the key expression expired.  Their stored key is now recursively
+  decayed.
+- `ZtDemangleTest`: GCC 16 changed the spelling of structural character
+  template arguments.  The demangler accepts both the old and new cast forms.
+- `ZfURITest`: generated `_0`/`_1` path keys were stored in a non-owning map
+  after their temporary buffers expired.  Path nodes now use an indexed array
+  under a stable internal key.
+- HTTP/2 rotation and the HTTP/1 TLS matrix rows shared a TLS shard-ordering
+  race: decrypted application records could reach HTTP before detached Tx
+  state installation published `connected()`.  TLS now retains those records
+  and drains them on the Rx owner after Tx installation completes.
+
+Verification on the same build, without another clean:
+
+- each of the nine deterministic binaries passed 20 consecutive runs;
+- `ZhttpH2EngineTest` and `ZhttpMessageH2Test` each passed 12 consecutive runs;
+- `ZtlsBufHookTest` passed all ten outer subtests;
+- `zhttpmatrix` passed all 82 rows, with only its two documented prerequisite
+  skips.
+
 ## Core suites
 
 ### `zu/test`

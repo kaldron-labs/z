@@ -578,10 +578,9 @@ int main()
 {
   ZuTestMain();
 
-  {
-    auto x = ZuSpan({{{42}}}); // check nested initializers
-    ZuCheck(x[0][0][0] == 42);
-  }
+  // initializer-list spans are non-owning; inspect them within the full
+  // expression that owns the nested initializer lists
+  ZuCheck(ZuSpan({{{42}}})[0][0][0] == 42);
 
   ZuTestCall(testSpanSplice);
   ZuTestCall(testSpanSpliceRuntimePaths);

@@ -1,9 +1,9 @@
-include "ZfbTypes.fbs";
-include "ZtelThreadPriority.fbs";
-include "ZtelEngineState.fbs";
-include "ZtelLinkState.fbs";
-include "ZtelQueueType.fbs";
-include "ZtcDB.fbs";
+include "zfb_types.fbs";
+include "ztel_thread_priority.fbs";
+include "ztel_engine_state.fbs";
+include "ztel_link_state.fbs";
+include "ztel_queue_type.fbs";
+include "ztc_db.fbs";
 namespace Ztel.fbs;
 enum RAG:int8 {
   Off = 0,

@@ -1,4 +1,4 @@
-include "ZfbTypes.fbs";
+include "zfb_types.fbs";
 namespace Ztel.fbs;
 table ReqAck {
   seq_no:uint64;

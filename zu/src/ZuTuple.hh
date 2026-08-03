@@ -574,7 +574,7 @@ public:
   friend Tuple TupleType(Tuple *);
 };
 template <typename ...Args>
-Tuple(Args &&...args) -> Tuple<Args &&...>;
+Tuple(Args &&...args) -> Tuple<ZuDecay<Args>...>;
 
 // global comparison operators, carefully navigating C++20 ambiguity
 // - see https://www.open-std.org/jtc1/sc22/wg21/docs/cwg_active.html#2804

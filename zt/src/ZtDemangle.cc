@@ -49,7 +49,7 @@ static void transform(void *, ZuSpan<char> &output)
       ZuBox<unsigned> n(c[2]);
       auto buf = ZtScratch(Buf, n.val() + 8);
       buf << '"';
-      ZtREGEX("ZuElem<char>{(?:ZuElem<char>::)?{unnamed\s*type#\d+}{\.v=\(\(char\)(\d+)\)}}(?:,\s*)?").mg(
+      ZtREGEX("ZuElem<char>{(?:ZuElem<char>::)?{unnamed\s*type#\d+}{\.v=\((?:\([^)]*\))?(-?\d+)\)}}(?:,\s*)?").mg(
 	c[1], [&buf](ZtRegex::CaptureSpan c) { quote(buf, c[2]); });
       buf << '"';
       splice(buf);

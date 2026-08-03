@@ -132,7 +132,7 @@ ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span)
 	if (ZuUnlikely((o = s.p<0>()) < 0)) goto bad;
 	if (o) {
 	  ZuSpan<char> val(&span[0], unsigned(o));
-	  auto node = field(root, ZuCArray<4>() << '_' << index);
+	  auto node = path(root, index);
 	  if (!node || !string(*node, val)) goto bad;
 	}
 	span.offset(s.p<1>());

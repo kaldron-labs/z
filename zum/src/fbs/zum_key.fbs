@@ -1,4 +1,4 @@
-include "ZfbTypes.fbs";
+include "zfb_types.fbs";
 namespace Zum.fbs;
 table KeyID {
   id:[ubyte];

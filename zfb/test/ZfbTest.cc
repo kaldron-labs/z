@@ -19,7 +19,7 @@
 #include <flatbuffers/reflection.h>
 #include <flatbuffers/reflection_generated.h>
 
-#include "ZfbTest_fbs.h"
+#include "zfbtest_fbs.h"
 
 namespace zfbtest {
 

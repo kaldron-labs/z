@@ -24,7 +24,7 @@
 
 #include <zlib/Zfb.hh>
 
-#include <zlib/ZtcMsg_fbs.h>
+#include <zlib/ztc_msg_fbs.h>
 
 namespace Ztc {
 

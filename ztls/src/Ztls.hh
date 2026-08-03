@@ -578,6 +578,7 @@ private:
       .alpn = alpn ? ZuCSpan{alpn, unsigned(strlen(alpn))} : ZuCSpan{},
       .version = tlsver_(tlsver)
     });
+    if (ZuLikely(!m_disconnecting.load_())) processRx_();
   }
 
   ptls_cipher_suite_t *rxCipher_() const {
@@ -683,14 +684,9 @@ private:
       }
       while (ptls_take_key_update_request(m_tls))
 	if (ZuUnlikely(!updateKey_())) return;
-      while (m_rxStream) {
-	int n = impl()->process(m_rxStream);
-	if (ZuUnlikely(!n)) return;
-	if (ZuUnlikely(n < 0)) {
-	  disconnect_(true);
-	  return;
-	}
-      }
+      // Application data can arrive before the detached Tx state has been
+      // installed.  Retain it until txInstalled_() publishes connected().
+      if (ZuLikely(m_handshook)) processRx_();
       return;
     }
     if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
@@ -704,6 +700,17 @@ private:
     })));
     disconnect_(false);
     return;
+  }
+
+  void processRx_() {
+    while (m_rxStream) {
+      int n = impl()->process(m_rxStream);
+      if (ZuUnlikely(!n)) return;
+      if (ZuUnlikely(n < 0)) {
+	disconnect_(true);
+	return;
+      }
+    }
   }
 
   uint8_t *rxBuf(ptls_buffer_t &pbuf, ZiIOBuf *buf) {
