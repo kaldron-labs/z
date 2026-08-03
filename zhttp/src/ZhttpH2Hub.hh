@@ -6,8 +6,8 @@
 
 // Z HTTP/2 native TLS Links and application logical-link adapters
 
-#ifndef ZhttpH2Engine_HH
-#define ZhttpH2Engine_HH
+#ifndef ZhttpH2Hub_HH
+#define ZhttpH2Hub_HH
 
 #ifndef Zhttp_HH
 #define Zhttp_CORE_ONLY
@@ -22,7 +22,7 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmScheduler.hh>
 
-#include <zlib/ZhttpClientEngine.hh>
+#include <zlib/ZhttpClientHub.hh>
 #include <zlib/ZhttpServer.hh>
 
 namespace Zhttp {
@@ -1685,7 +1685,7 @@ private:
   bool			m_txExtendedConnect = false;
 };
 
-template <typename App> class ClientEngine;
+template <typename App> class ClientHub;
 template <typename App> class CliLink;
 
 struct ClientSlot {
@@ -1732,9 +1732,9 @@ ZuDerive(ClientPoolHash,
 	  ZmHashHeapID<"Zhttp.H2">>>>>));
 
 template <typename App>
-class ClientEngine : public Ztls::Client<ClientEngine<App>> {
+class ClientHub : public Ztls::Client<ClientHub<App>> {
 public:
-  using Base = Ztls::Client<ClientEngine>;
+  using Base = Ztls::Client<ClientHub>;
   using Link = CliLink<App>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using Slots = ZtArray<ClientSlot,
@@ -1744,13 +1744,13 @@ public:
 
   App *user() { return static_cast<App *>(this); }
 
-  ClientEngine() : m_pool{new ClientPoolHash} { }
+  ClientHub() : m_pool{new ClientPoolHash} { }
 
-  bool init(const EngineConfig &engine, const H2Config &config) {
+  bool init(const HubConfig &hub, const H2Config &config) {
     if (!TLS_::valid(config) || config.policy() != H2Policy::Force)
       return false;
     m_config = config;
-    auto params = TLS_::clientParams(engine, config);
+    auto params = TLS_::clientParams(hub, config);
     return Base::init(ZuMv(params));
   }
 
@@ -1876,13 +1876,13 @@ private:
 
 template <typename App>
 class CliLink :
-  public Ztls::CliLink<ClientEngine<App>, CliLink<App>,
+  public Ztls::CliLink<ClientHub<App>, CliLink<App>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public Wire<CliLink<App>, typename App::Link> {
 public:
-  using Engine = ClientEngine<App>;
+  using Hub = ClientHub<App>;
   using Logical = typename App::Link;
-  using Base = Ztls::CliLink<Engine, CliLink,
+  using Base = Ztls::CliLink<Hub, CliLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<CliLink, Logical>;
   using Pending = ZtArray<ZmRef<Logical>,
@@ -1893,7 +1893,7 @@ public:
     ZtArrayHeapID<"Zhttp.H2">>;
 
   CliLink(
-    Engine *app, Ztls::Host host_, uint16_t port_,
+    Hub *app, Ztls::Host host_, uint16_t port_,
     const H2Config &config) :
       Base{app}, m_host{ZuMv(host_)}, m_port{port_}
   {
@@ -2152,13 +2152,13 @@ private:
   bool		m_requeuePosted = false;
 };
 
-template <typename App> class ServerEngine;
+template <typename App> class ServerHub;
 template <typename App> class SrvLink;
 
 template <typename App>
-class ServerEngine : public Ztls::Server<ServerEngine<App>> {
+class ServerHub : public Ztls::Server<ServerHub<App>> {
 public:
-  using Base = Ztls::Server<ServerEngine>;
+  using Base = Ztls::Server<ServerHub>;
   using Link = SrvLink<App>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using StopFns = ZtArray<StopFn,
@@ -2167,11 +2167,11 @@ public:
   App *user() { return static_cast<App *>(this); }
   const App *user() const { return static_cast<const App *>(this); }
 
-  bool init(const EngineConfig &engine, const H2Config &config) {
+  bool init(const HubConfig &hub, const H2Config &config) {
     if (!TLS_::valid(config) || config.policy() != H2Policy::Force)
       return false;
     m_config = config;
-    auto params = TLS_::serverParams(engine, config);
+    auto params = TLS_::serverParams(hub, config);
     return Base::init(ZuMv(params));
   }
   ZiIP localIP() const { return user()->localIP(); }
@@ -2211,8 +2211,8 @@ public:
       m_stopping = true;
       this->rxRun([this]() {
 	m_stopPending = 0;
-	Base::allLinks_({this, [](ServerEngine *engine, Ztc::Link *link) {
-	  ++engine->m_stopPending;
+	Base::allLinks_({this, [](ServerHub *hub, Ztc::Link *link) {
+	  ++hub->m_stopPending;
 	  static_cast<Link *>(link)->beginStop();
 	}});
 	if (!m_stopPending) stopDrain_();
@@ -2261,13 +2261,13 @@ private:
 
 template <typename App>
 class SrvLink :
-  public Ztls::SrvLink<ServerEngine<App>, SrvLink<App>,
+  public Ztls::SrvLink<ServerHub<App>, SrvLink<App>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public Wire<SrvLink<App>, typename App::Link> {
 public:
-  using Engine = ServerEngine<App>;
+  using Hub = ServerHub<App>;
   using Logical = typename App::Link;
-  using Base = Ztls::SrvLink<Engine, SrvLink,
+  using Base = Ztls::SrvLink<Hub, SrvLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<SrvLink, Logical>;
   using Cxn = typename Base::Cxn;
@@ -2275,7 +2275,7 @@ public:
     ZtArrayHeapID<"Zhttp.H2">>;
 
   SrvLink(
-    Engine *app, const ZiCxnInfo &ci, const H2Config &config) :
+    Hub *app, const ZiCxnInfo &ci, const H2Config &config) :
       Base{app}
   {
     m_remote << ci.remoteIP;
@@ -2550,9 +2550,9 @@ public:
 };
 
 template <typename App>
-class ClientEngine<App, H2TLS> : public H2_::ClientEngine<App> {
+class ClientHub<App, H2TLS> : public H2_::ClientHub<App> {
 public:
-  using Base = H2_::ClientEngine<App>;
+  using Base = H2_::ClientHub<App>;
   enum { TLS = 1, Multiplexed = 1 };
   using Base::connect;
   using Base::init;
@@ -2635,10 +2635,10 @@ public:
 namespace TLS_ {
 
 template <typename App, typename H1Logical, typename H2Logical>
-class ClientEngine;
+class ClientHub;
 template <typename App, typename H1Logical, typename H2Logical>
 class CliLink;
-template <typename App> class ServerEngine;
+template <typename App> class ServerHub;
 template <typename App> class SrvLink;
 
 template <typename App, typename Impl, typename NativeLink>
@@ -2732,10 +2732,10 @@ struct ClientChoice {
 };
 
 template <typename App, typename H1Logical_, typename H2Logical_>
-class ClientEngine :
-  public Ztls::Client<ClientEngine<App, H1Logical_, H2Logical_>> {
+class ClientHub :
+  public Ztls::Client<ClientHub<App, H1Logical_, H2Logical_>> {
 public:
-  using Base = Ztls::Client<ClientEngine>;
+  using Base = Ztls::Client<ClientHub>;
   using Link = CliLink<App, H1Logical_, H2Logical_>;
   using H1Logical = H1Logical_;
   using H2Logical = H2Logical_;
@@ -2747,12 +2747,12 @@ public:
 
   App *user() { return static_cast<App *>(this); }
 
-  ClientEngine() : m_pool{new H2_::ClientPoolHash} { }
+  ClientHub() : m_pool{new H2_::ClientPoolHash} { }
 
-  bool init(const EngineConfig &engine, const H2Config &config) {
+  bool init(const HubConfig &hub, const H2Config &config) {
     if (!TLS_::valid(config)) return false;
     m_config = config;
-    return Base::init(TLS_::clientParams(engine, config));
+    return Base::init(TLS_::clientParams(hub, config));
   }
   void connect(
     H1Logical *h1, H2Logical *h2, Ztls::Host host, uint16_t port) {
@@ -2865,17 +2865,17 @@ private:
 template <typename App, typename H1Logical_, typename H2Logical_>
 class CliLink :
   public Ztls::CliLink<
-    ClientEngine<App, H1Logical_, H2Logical_>,
+    ClientHub<App, H1Logical_, H2Logical_>,
     CliLink<App, H1Logical_, H2Logical_>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public H2_::Wire<
     CliLink<App, H1Logical_, H2Logical_>, H2Logical_> {
 public:
-  using Engine = ClientEngine<App, H1Logical_, H2Logical_>;
+  using Hub = ClientHub<App, H1Logical_, H2Logical_>;
   using H1Logical = H1Logical_;
   using H2Logical = H2Logical_;
   using Choice = ClientChoice<H1Logical, H2Logical>;
-  using Base = Ztls::CliLink<Engine, CliLink,
+  using Base = Ztls::CliLink<Hub, CliLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<CliLink, H2Logical>;
   using Pending = ZtArray<Choice,
@@ -2886,7 +2886,7 @@ public:
     ZtArrayHeapID<"Zhttp.H2">>;
 
   CliLink(
-    Engine *app, Ztls::Host host, uint16_t port,
+    Hub *app, Ztls::Host host, uint16_t port,
     const H2Config &config) :
       Base{app}, m_host{ZuMv(host)}, m_port{port},
       m_pendingMax{config.maxPending()}, m_policy{config.policy()}
@@ -3323,9 +3323,9 @@ private:
 };
 
 template <typename App>
-class ServerEngine : public Ztls::Server<ServerEngine<App>> {
+class ServerHub : public Ztls::Server<ServerHub<App>> {
 public:
-  using Base = Ztls::Server<ServerEngine>;
+  using Base = Ztls::Server<ServerHub>;
   using Link = SrvLink<App>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using StopFns = ZtArray<StopFn,
@@ -3334,10 +3334,10 @@ public:
   App *user() { return static_cast<App *>(this); }
   const App *user() const { return static_cast<const App *>(this); }
 
-  bool init(const EngineConfig &engine, const H2Config &config) {
+  bool init(const HubConfig &hub, const H2Config &config) {
     if (!TLS_::valid(config)) return false;
     m_config = config;
-    return Base::init(TLS_::serverParams(engine, config));
+    return Base::init(TLS_::serverParams(hub, config));
   }
   ZiIP localIP() const { return user()->localIP(); }
   unsigned localPort() const { return user()->localPort(); }
@@ -3365,7 +3365,7 @@ public:
   template <typename Done>
   void drain(Done &&done) {
     this->rxRun([this, done = ZuFwd<Done>(done)]() mutable {
-      Base::allLinks_({this, [](ServerEngine *, Ztc::Link *link) {
+      Base::allLinks_({this, [](ServerHub *, Ztc::Link *link) {
 	static_cast<Link *>(link)->drain();
       }});
       done();
@@ -3385,8 +3385,8 @@ public:
       m_stopping = true;
       this->rxRun([this]() {
 	m_stopPending = 0;
-	Base::allLinks_({this, [](ServerEngine *engine, Ztc::Link *link) {
-	  ++engine->m_stopPending;
+	Base::allLinks_({this, [](ServerHub *hub, Ztc::Link *link) {
+	  ++hub->m_stopPending;
 	  static_cast<Link *>(link)->beginStop();
 	}});
 	if (!m_stopPending) stopDrain_();
@@ -3434,14 +3434,14 @@ private:
 
 template <typename App>
 class SrvLink :
-  public Ztls::SrvLink<ServerEngine<App>, SrvLink<App>,
+  public Ztls::SrvLink<ServerHub<App>, SrvLink<App>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public H2_::Wire<SrvLink<App>, typename App::H2Link> {
 public:
-  using Engine = ServerEngine<App>;
+  using Hub = ServerHub<App>;
   using H1Logical = typename App::H1Link;
   using H2Logical = typename App::H2Link;
-  using Base = Ztls::SrvLink<Engine, SrvLink,
+  using Base = Ztls::SrvLink<Hub, SrvLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<SrvLink, H2Logical>;
   using Cxn = typename Base::Cxn;
@@ -3449,7 +3449,7 @@ public:
     ZtArrayHeapID<"Zhttp.H2">>;
 
   SrvLink(
-    Engine *app, const ZiCxnInfo &ci, const H2Config &config) :
+    Hub *app, const ZiCxnInfo &ci, const H2Config &config) :
       Base{app}, m_policy{config.policy()}
   {
     m_remote = ci.remoteIP;
@@ -3629,9 +3629,9 @@ private:
 } // namespace TLS_
 
 template <typename App>
-class Server<App, H2TLS> : public H2_::ServerEngine<App> {
+class Server<App, H2TLS> : public H2_::ServerHub<App> {
 public:
-  using Base = H2_::ServerEngine<App>;
+  using Base = H2_::ServerHub<App>;
   enum { TLS = 1, Multiplexed = 1 };
   using Base::init;
   using Base::start;
@@ -3646,4 +3646,4 @@ public:
 
 } // namespace Zhttp
 
-#endif /* ZhttpH2Engine_HH */
+#endif /* ZhttpH2Hub_HH */

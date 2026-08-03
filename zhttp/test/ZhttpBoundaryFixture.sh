@@ -5,7 +5,7 @@ set -eu
 util=$1
 src=$2
 files='zhttp.cc zhttpd.cc zhttpdapp.cc zhttpdutil.cc zhttpd.hh zhttpput.hh'
-bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Engines|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
+bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Hubs|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
 
 cd "$util"
 

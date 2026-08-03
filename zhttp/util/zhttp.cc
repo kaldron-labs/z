@@ -789,7 +789,7 @@ int main(int argc, char **argv)
     return false;
   }});
   bool appInited = app.init(
-    Zhttp::EngineConfig{&mx, "3", "4"}, clientConfig,
+    Zhttp::HubConfig{&mx, "3", "4"}, clientConfig,
     Zhttp::TCPConfig{},
     Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy), quic);
   bool appUp = appInited && app.start();

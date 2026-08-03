@@ -17,7 +17,7 @@
 
 using namespace ZuTestUtil;
 
-namespace ZhttpH2EngineTest_ {
+namespace ZhttpH2HubTest_ {
 
 struct State {
   ZmSemaphore	listening;
@@ -149,7 +149,7 @@ int ClientStream::process(Stream, Rx &rx)
   return 1;
 }
 
-struct Client : public Zhttp::ClientEngine<Client, Zhttp::H2TLS> {
+struct Client : public Zhttp::ClientHub<Client, Zhttp::H2TLS> {
   using Link = ClientLink;
   State *state = nullptr;
 
@@ -425,7 +425,7 @@ struct ServerLink :
 struct H1Client;
 struct H1ClientLink;
 
-struct H1Client : public Zhttp::ClientEngine<H1Client, Zhttp::H1TLS> {
+struct H1Client : public Zhttp::ClientHub<H1Client, Zhttp::H1TLS> {
   using Link = H1ClientLink;
   State *state = nullptr;
 
@@ -451,7 +451,7 @@ struct MismatchClient;
 struct MismatchLink;
 
 struct MismatchClient :
-  public Zhttp::ClientEngine<MismatchClient, Zhttp::H2TLS> {
+  public Zhttp::ClientHub<MismatchClient, Zhttp::H2TLS> {
   using Link = MismatchLink;
   State *state = nullptr;
 
@@ -508,7 +508,7 @@ struct SharedH1Session {
   int process(Link &, Ztls::RxStream &) { return -1; }
 };
 
-struct SharedServer : public Zhttp::TLS_::ServerEngine<SharedServer> {
+struct SharedServer : public Zhttp::TLS_::ServerHub<SharedServer> {
   using H1Link = SharedH1Link;
   using H2Link = SharedH2Link;
   State *state = nullptr;
@@ -560,7 +560,7 @@ struct SharedH2Link :
 };
 
 struct SharedClient :
-  public Zhttp::TLS_::ClientEngine<
+  public Zhttp::TLS_::ClientHub<
     SharedClient, SharedClientH1Link, SharedClientH2Link> {
   using H1Link = SharedClientH1Link;
   using H2Link = SharedClientH2Link;
@@ -681,7 +681,7 @@ void run()
   ZuCHECK(mx.start(), "multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config()
     .certPath(cert.certPath).keyPath(cert.keyPath)
     .maxConcurrentStreams(1).maxQueuedFrames(16);
@@ -691,8 +691,8 @@ void run()
   Server server{&state};
   Client client{&state};
   bool initialized =
-    server.init(engine, serverConfig) && client.init(engine, clientConfig);
-  ZuCHECK(initialized, "H2 engines initialized");
+    server.init(hub, serverConfig) && client.init(hub, clientConfig);
+  ZuCHECK(initialized, "H2 hubs initialized");
   if (!initialized) {
     client.final();
     server.final();
@@ -700,7 +700,7 @@ void run()
     return;
   }
   bool started = server.start() && client.start();
-  ZuCHECK(started, "H2 engines started");
+  ZuCHECK(started, "H2 hubs started");
   bool listening =
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "H2 server listening");
@@ -763,7 +763,7 @@ void runStream()
   ZuCHECK(mx.start(), "multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config()
     .certPath(cert.certPath).keyPath(cert.keyPath)
     .extendedConnect(true).maxConcurrentStreams(4)
@@ -775,8 +775,8 @@ void runStream()
   Server server{&state};
   Client client{&state};
   bool initialized =
-    server.init(engine, serverConfig) && client.init(engine, clientConfig);
-  ZuCHECK(initialized, "Extended CONNECT engines initialized");
+    server.init(hub, serverConfig) && client.init(hub, clientConfig);
+  ZuCHECK(initialized, "Extended CONNECT hubs initialized");
   if (!initialized) {
     client.final();
     server.final();
@@ -784,7 +784,7 @@ void runStream()
     return;
   }
   bool started = server.start() && client.start();
-  ZuCHECK(started, "Extended CONNECT engines started");
+  ZuCHECK(started, "Extended CONNECT hubs started");
   bool listening =
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "Extended CONNECT server listening");
@@ -847,7 +847,7 @@ void runSharedTLS()
   ZuCHECK(mx.start(), "multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config()
     .certPath(cert.certPath).keyPath(cert.keyPath)
     .policy(Zhttp::H2Policy::Prefer);
@@ -862,10 +862,10 @@ void runSharedTLS()
   SharedClient h2Client{&state};
   SharedClient h1Client{&state};
   bool initialized =
-    server.init(engine, serverConfig) &&
-    h2Client.init(engine, h2Config) &&
-    h1Client.init(engine, h1Config);
-  ZuCHECK(initialized, "shared TLS engines initialized");
+    server.init(hub, serverConfig) &&
+    h2Client.init(hub, h2Config) &&
+    h1Client.init(hub, h1Config);
+  ZuCHECK(initialized, "shared TLS hubs initialized");
   if (!initialized) {
     h1Client.final();
     h2Client.final();
@@ -875,7 +875,7 @@ void runSharedTLS()
   }
   bool started =
     server.start() && h2Client.start() && h1Client.start();
-  ZuCHECK(started, "shared TLS engines started");
+  ZuCHECK(started, "shared TLS hubs started");
   bool listening =
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "shared TLS server listening");
@@ -989,7 +989,7 @@ void runForceMismatch()
   ZuCHECK(mx.start(), "multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config()
     .certPath(cert.certPath).keyPath(cert.keyPath)
     .policy(Zhttp::H2Policy::Disable);
@@ -997,9 +997,9 @@ void runForceMismatch()
   SharedServer server{&state};
   MismatchClient client{&state};
   bool initialized =
-    server.init(engine, serverConfig) &&
-    client.init(engine, clientConfig);
-  ZuCHECK(initialized, "mismatch engines initialized");
+    server.init(hub, serverConfig) &&
+    client.init(hub, clientConfig);
+  ZuCHECK(initialized, "mismatch hubs initialized");
   if (!initialized) {
     client.final();
     server.final();
@@ -1007,7 +1007,7 @@ void runForceMismatch()
     return;
   }
   bool started = server.start() && client.start();
-  ZuCHECK(started, "mismatch engines started");
+  ZuCHECK(started, "mismatch hubs started");
   bool listening =
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "H1-only TLS server listening");
@@ -1037,14 +1037,14 @@ void runForceMismatch()
   mx.stop();
 }
 
-} // namespace ZhttpH2EngineTest_
+} // namespace ZhttpH2HubTest_
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(ZhttpH2EngineTest_::run);
-  ZuTestCall(ZhttpH2EngineTest_::runStream);
-  ZuTestCall(ZhttpH2EngineTest_::runSharedTLS);
-  ZuTestCall(ZhttpH2EngineTest_::runForceMismatch);
+  ZuTestCall(ZhttpH2HubTest_::run);
+  ZuTestCall(ZhttpH2HubTest_::runStream);
+  ZuTestCall(ZhttpH2HubTest_::runSharedTLS);
+  ZuTestCall(ZhttpH2HubTest_::runForceMismatch);
 }

@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - engine lifecycle coordinator
+// Z http library - hub lifecycle coordinator
 
-#ifndef ZhttpEngines_HH
-#define ZhttpEngines_HH
+#ifndef ZhttpHubs_HH
+#define ZhttpHubs_HH
 
 #ifndef ZhttpLib_HH
 #include <zlib/ZhttpLib.hh>
@@ -19,15 +19,15 @@
 
 namespace Zhttp {
 
-namespace Engines_ {
+namespace Hubs_ {
 
-template <typename Engine, typename = void>
+template <typename Hub, typename = void>
 struct HasStopAccepting : public ZuFalse { };
-template <typename Engine>
-struct HasStopAccepting<Engine,
-  decltype(ZuDeclVal<Engine &>().stopAccepting(), void())> : public ZuTrue { };
+template <typename Hub>
+struct HasStopAccepting<Hub,
+  decltype(ZuDeclVal<Hub &>().stopAccepting(), void())> : public ZuTrue { };
 
-using DoneFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.Engines.Done">>;
+using DoneFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.Hubs.Done">>;
 
 struct Entry {
   using StartFn = void (*)(void *, DoneFn);
@@ -43,9 +43,9 @@ struct Entry {
   bool			started = false;
 };
 
-} // namespace Engines_
+} // namespace Hubs_
 
-class Engines {
+class Hubs {
 public:
   struct State {
     enum T : int8_t {
@@ -60,17 +60,17 @@ public:
     };
   };
 
-  using DoneFn = Engines_::DoneFn;
+  using DoneFn = Hubs_::DoneFn;
   using Entries =
-    ZtArray<Engines_::Entry, ZtArrayHeapID<"Zhttp.Engines">>;
+    ZtArray<Hubs_::Entry, ZtArrayHeapID<"Zhttp.Hubs">>;
   using DoneFns =
-    ZtArray<DoneFn, ZtArrayHeapID<"Zhttp.Engines.DoneFns">>;
+    ZtArray<DoneFn, ZtArrayHeapID<"Zhttp.Hubs.DoneFns">>;
 
   State::T state() const { return m_state; }
   unsigned count() const { return m_entries.length(); }
 
-  template <typename Engine, typename ...Args>
-  bool init(Engine &engine, Args &&...args) {
+  template <typename Hub, typename ...Args>
+  bool init(Hub &hub, Args &&...args) {
     switch (m_state) {
       case State::Empty:
       case State::Ready:
@@ -78,27 +78,27 @@ public:
       default:
 	return false;
     }
-    if (!engine.init(ZuFwd<Args>(args)...)) {
+    if (!hub.init(ZuFwd<Args>(args)...)) {
       final_();
       m_state = State::Failed;
       return false;
     }
-    m_entries.push(Engines_::Entry{
-      .ptr = &engine,
+    m_entries.push(Hubs_::Entry{
+      .ptr = &hub,
       .start = [](void *ptr, DoneFn done) {
-	static_cast<Engine *>(ptr)->start(
+	static_cast<Hub *>(ptr)->start(
 	  [done = ZuMv(done)](bool ok) mutable { done(ok); });
       },
       .stop = [](void *ptr, DoneFn done) {
-	static_cast<Engine *>(ptr)->stop(
+	static_cast<Hub *>(ptr)->stop(
 	  [done = ZuMv(done)](bool ok) mutable { done(ok); });
       },
       .final = [](void *ptr) {
-	static_cast<Engine *>(ptr)->final();
+	static_cast<Hub *>(ptr)->final();
       },
       .stopAccepting = [](void *ptr) {
-	if constexpr (Engines_::HasStopAccepting<Engine>{})
-	  static_cast<Engine *>(ptr)->stopAccepting();
+	if constexpr (Hubs_::HasStopAccepting<Hub>{})
+	  static_cast<Hub *>(ptr)->stopAccepting();
       }
     });
     m_state = State::Ready;
@@ -191,8 +191,8 @@ private:
     }
     unsigned i = m_next++;
     auto &entry = m_entries[i];
-    entry.start(entry.ptr, DoneFn{this, [i](Engines *engines, bool ok) {
-      engines->started_(i, ok);
+    entry.start(entry.ptr, DoneFn{this, [i](Hubs *hubs, bool ok) {
+      hubs->started_(i, ok);
     }});
   }
 
@@ -248,8 +248,8 @@ private:
       auto &entry = m_entries[--m_next];
       if (!entry.started) continue;
       entry.stop(entry.ptr,
-	DoneFn{this, [](Engines *engines, bool ok) {
-	  engines->stopped_(ok);
+	DoneFn{this, [](Hubs *hubs, bool ok) {
+	  hubs->stopped_(ok);
 	}});
       return;
     }
@@ -312,4 +312,4 @@ private:
 
 } // namespace Zhttp
 
-#endif /* ZhttpEngines_HH */
+#endif /* ZhttpHubs_HH */

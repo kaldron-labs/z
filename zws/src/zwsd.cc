@@ -204,7 +204,7 @@ int run(const Options &options)
   wsConfig.pongTimeout = options.pongTimeout;
 
   bool initialized =
-    server.init(Zhttp::EngineConfig{&mx, "3", "4"}, config, wsConfig);
+    server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, wsConfig);
   bool started = initialized && server.start();
   if (!started) {
     std::cerr << "server initialization/start failed\n";

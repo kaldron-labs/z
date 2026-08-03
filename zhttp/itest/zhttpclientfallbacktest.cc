@@ -265,7 +265,7 @@ void fallback()
     (void)stopServer(server);
     return;
   }
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
 
   Resolver resolver;
   ClientApp agent;
@@ -275,7 +275,7 @@ void fallback()
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(true)
     .tcp(true).tls(true).quic(true);
   bool agentInited = agent.init(
-    engine, agentConfig, Zhttp::TCPConfig{},
+    hub, agentConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(untrustedCert).maxIdleTimeout(500));
   ZuCHECK(agentInited, "initialize prefer-mode agent");
@@ -345,7 +345,7 @@ void fallback()
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(false)
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedClient.init(
-    engine, cacheConfig, Zhttp::TCPConfig{},
+    hub, cacheConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
   ZuCHECK(cacheInited, "initialize cached-routing agent");

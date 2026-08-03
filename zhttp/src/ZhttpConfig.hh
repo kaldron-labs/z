@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - transport-neutral engine configuration
+// Z http library - transport-neutral hub configuration
 
 #ifndef ZhttpConfig_HH
 #define ZhttpConfig_HH
@@ -285,9 +285,9 @@ struct ConnectedInfo {
   bool		multiplexed = false;
 };
 
-class EngineConfig {
+class HubConfig {
 public:
-  EngineConfig(
+  HubConfig(
     ZiMultiplex *mx = nullptr,
     ZuCSpan rxThread = {},
     ZuCSpan txThread = {})
@@ -301,10 +301,10 @@ public:
   ZuCSpan txThread() const { return m_txThread; }
   ZuCSpan asyncThread() const { return m_asyncThread; }
 
-  EngineConfig &mx(ZiMultiplex *v) { m_mx = v; return *this; }
-  EngineConfig &rxThread(ZuCSpan v) { m_rxThread = v; return *this; }
-  EngineConfig &txThread(ZuCSpan v) { m_txThread = v; return *this; }
-  EngineConfig &asyncThread(ZuCSpan v) { m_asyncThread = v; return *this; }
+  HubConfig &mx(ZiMultiplex *v) { m_mx = v; return *this; }
+  HubConfig &rxThread(ZuCSpan v) { m_rxThread = v; return *this; }
+  HubConfig &txThread(ZuCSpan v) { m_txThread = v; return *this; }
+  HubConfig &asyncThread(ZuCSpan v) { m_asyncThread = v; return *this; }
 
 private:
   ZiMultiplex	*m_mx = nullptr;

@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - shared TLS ALPN policy and engine configuration
+// Z http library - shared TLS ALPN policy and hub configuration
 
-#ifndef ZhttpTLSEngine_HH
-#define ZhttpTLSEngine_HH
+#ifndef ZhttpTLSHub_HH
+#define ZhttpTLSHub_HH
 
 #ifndef ZhttpLib_HH
 #include <zlib/ZhttpLib.hh>
@@ -56,11 +56,11 @@ inline void alpn(Params &params, H2Policy::T policy)
 }
 
 inline Ztls::ClientParams clientParams(
-  const EngineConfig &engine, const H2Config &config)
+  const HubConfig &hub, const H2Config &config)
 {
   Ztls::ClientParams params{
-    engine.mx(), engine.rxThread(), engine.txThread()};
-  params.asyncThread(engine.asyncThread())
+    hub.mx(), hub.rxThread(), hub.txThread()};
+  params.asyncThread(hub.asyncThread())
     .caPath(config.caPath()).certPath(config.certPath())
     .keyPath(config.keyPath());
   alpn(params, config.policy());
@@ -68,11 +68,11 @@ inline Ztls::ClientParams clientParams(
 }
 
 inline Ztls::ServerParams serverParams(
-  const EngineConfig &engine, const H2Config &config)
+  const HubConfig &hub, const H2Config &config)
 {
   Ztls::ServerParams params{
-    engine.mx(), engine.rxThread(), engine.txThread()};
-  params.asyncThread(engine.asyncThread())
+    hub.mx(), hub.rxThread(), hub.txThread()};
+  params.asyncThread(hub.asyncThread())
     .caPath(config.caPath()).certPath(config.certPath())
     .keyPath(config.keyPath())
     .mTLS(config.mTLS()).cacheTimeout(config.cacheTimeout());
@@ -85,4 +85,4 @@ ZhttpAPI Version::T version(ZuCSpan alpn, H2Policy::T policy);
 } // namespace TLS_
 } // namespace Zhttp
 
-#endif /* ZhttpTLSEngine_HH */
+#endif /* ZhttpTLSHub_HH */

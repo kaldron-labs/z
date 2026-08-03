@@ -110,7 +110,7 @@ struct Workload {
 using Service = Zhttp::Service<Workload>;
 
 template <typename Profile>
-struct Client : public Zhttp::ClientEngine<Client<Profile>, Profile> {
+struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   using RequestHeaders = ZuTypeList<
     ZuStringT<"content-length">, void>;
 
@@ -194,7 +194,7 @@ void idle()
   bool mxUp = mx.start();
   ZuCHECK(mxUp, "start multiplexer");
   if (!mxUp) return;
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
 
   Workload workload{&state};
   Service service;
@@ -203,7 +203,7 @@ void idle()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port)
     .idleTimeout(1).quic(ZuMv(serverQUIC));
   bool serviceInited =
-    service.init(engine, ZuMv(serviceConfig), &workload);
+    service.init(hub, ZuMv(serviceConfig), &workload);
   ZuCHECK(serviceInited, "initialize service");
   bool serviceUp = serviceInited && service.start();
   ZuCHECK(serviceUp, "start service");
@@ -213,7 +213,7 @@ void idle()
 
   Client<Zhttp::H3QUIC> client{&state};
   bool clientInited = listening && client.init(
-    engine, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
+    hub, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
@@ -278,7 +278,7 @@ void activeStop()
   bool mxUp = mx.start();
   ZuCHECK(mxUp, "start multiplexer");
   if (!mxUp) return;
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
 
   Workload workload{&state};
   Service service;
@@ -294,7 +294,7 @@ void activeStop()
     serviceConfig.quic(
       Zhttp::QUICConfig{}.certPath(cert).keyPath(key).maxIdleTimeout(10000));
   bool serviceInited =
-    service.init(engine, ZuMv(serviceConfig), &workload);
+    service.init(hub, ZuMv(serviceConfig), &workload);
   ZuCHECK(serviceInited, "initialize service");
   bool serviceUp = serviceInited && service.start();
   ZuCHECK(serviceUp, "start service");
@@ -305,18 +305,18 @@ void activeStop()
   Client<Profile> client{&state};
   bool clientInited = false;
   if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
-    clientInited = listening && client.init(engine, Zhttp::TCPConfig{});
+    clientInited = listening && client.init(hub, Zhttp::TCPConfig{});
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
     if constexpr (HTTP::Multiplexed)
       clientInited = listening && client.init(
-	engine, Zhttp::H2Config{}.caPath(cert)
+	hub, Zhttp::H2Config{}.caPath(cert)
 	  .policy(Zhttp::H2Policy::Force));
     else
       clientInited =
-	listening && client.init(engine, Zhttp::TLSConfig{}.caPath(cert));
+	listening && client.init(hub, Zhttp::TLSConfig{}.caPath(cert));
   else
     clientInited = listening && client.init(
-      engine, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
+      hub, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");

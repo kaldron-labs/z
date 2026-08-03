@@ -23,12 +23,12 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 noinst_PROGRAMS = \
 	ZhttpParserTest \
 	ZhttpCompressionTest ZhttpFieldsTest ZhttpH2FrameTest ZhttpH2StreamTest \
-	ZhttpH2MessageTest ZhttpH2EngineTest \
+	ZhttpH2MessageTest ZhttpH2HubTest \
 	ZhttpMessageH1TCPTest ZhttpMessageH1TLSTest \
 	ZhttpMessageH2Test ZhttpMessageH3Test \
 	ZhttpHPackTest ZhttpQPackTest ZhttpQPackDynamicTest \
-	ZhttpTransportContractTest ZhttpH1EngineTest ZhttpH3EngineTest \
-	ZhttpH3PushTest ZhttpEngineLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
+	ZhttpTransportContractTest ZhttpH1HubTest ZhttpH3HubTest \
+	ZhttpH3PushTest ZhttpHubLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
 	ZhttpDiscoveryTest ZhttpAdmissionTest ZhttpClientCancelTest \
 	ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpBoundaryTest
 dist_noinst_SCRIPTS = ZhttpBoundaryFixture.sh
@@ -41,23 +41,23 @@ ZhttpFieldsTest_SOURCES = ZhttpFieldsTest.cc
 ZhttpH2FrameTest_SOURCES = ZhttpH2FrameTest.cc
 ZhttpH2StreamTest_SOURCES = ZhttpH2StreamTest.cc
 ZhttpH2MessageTest_SOURCES = ZhttpH2MessageTest.cc
-ZhttpH2EngineTest_SOURCES = ZhttpH2EngineTest.cc
-ZhttpMessageH1TCPTest_SOURCES = ZhttpMessageEngineTest.cc
+ZhttpH2HubTest_SOURCES = ZhttpH2HubTest.cc
+ZhttpMessageH1TCPTest_SOURCES = ZhttpMessageHubTest.cc
 ZhttpMessageH1TCPTest_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_TEST_H1TCP
-ZhttpMessageH1TLSTest_SOURCES = ZhttpMessageEngineTest.cc
+ZhttpMessageH1TLSTest_SOURCES = ZhttpMessageHubTest.cc
 ZhttpMessageH1TLSTest_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_TEST_H1TLS
-ZhttpMessageH2Test_SOURCES = ZhttpMessageEngineTest.cc
+ZhttpMessageH2Test_SOURCES = ZhttpMessageHubTest.cc
 ZhttpMessageH2Test_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_TEST_H2
-ZhttpMessageH3Test_SOURCES = ZhttpMessageEngineTest.cc
+ZhttpMessageH3Test_SOURCES = ZhttpMessageHubTest.cc
 ZhttpMessageH3Test_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_TEST_H3
 ZhttpHPackTest_SOURCES = ZhttpHPackTest.cc
 ZhttpQPackTest_SOURCES = ZhttpQPackTest.cc
 ZhttpQPackDynamicTest_SOURCES = ZhttpQPackDynamicTest.cc
 ZhttpTransportContractTest_SOURCES = ZhttpTransportContractTest.cc
-ZhttpH1EngineTest_SOURCES = ZhttpH1EngineTest.cc
-ZhttpH3EngineTest_SOURCES = ZhttpH3EngineTest.cc
+ZhttpH1HubTest_SOURCES = ZhttpH1HubTest.cc
+ZhttpH3HubTest_SOURCES = ZhttpH3HubTest.cc
 ZhttpH3PushTest_SOURCES = ZhttpH3PushTest.cc
-ZhttpEngineLifecycleTest_SOURCES = ZhttpEngineLifecycleTest.cc
+ZhttpHubLifecycleTest_SOURCES = ZhttpHubLifecycleTest.cc
 ZhttpURLTest_SOURCES = ZhttpURLTest.cc
 ZhttpAltSvcTest_SOURCES = ZhttpAltSvcTest.cc
 ZhttpDiscoveryTest_SOURCES = ZhttpDiscoveryTest.cc

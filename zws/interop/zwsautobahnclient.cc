@@ -70,13 +70,13 @@ struct App {
       Zws::Opcode::Binary;
   };
 
-  using Engine = Zws::Client<App, Profile>;
-  using Link = typename Engine::Link;
+  using Hub = Zws::Client<App, Profile>;
+  using Link = typename Hub::Link;
 
   enum Phase { Count, Cases, Update, Done };
 
   Zhttp::Runtime	*runtime = nullptr;
-  Engine		*engine = nullptr;
+  Hub		*hub = nullptr;
   Zws::URI		base;
   ZmRef<Link>		link;
   ZtString<>		agent;
@@ -188,7 +188,7 @@ private:
   void connect_(ZuCSpan target) {
     Zws::URI uri = base;
     uri.target = target;
-    link = new Link{engine, uri};
+    link = new Link{hub, uri};
     link->connect();
   }
 };
@@ -208,7 +208,7 @@ int run(const Options &options, const Zws::URI &base)
   App_ app;
   Zws::Client<App_, Profile> client{&app};
   app.runtime = &runtime;
-  app.engine = &client;
+  app.hub = &client;
   app.base = base;
   app.agent = options.agent;
   app.verbose = options.verbose;
@@ -217,7 +217,7 @@ int run(const Options &options, const Zws::URI &base)
   if constexpr (ZuIsSame<Profile, Zhttp::H1TLS>{})
     config.caPath(options.ca);
   bool initialized =
-    client.init(Zhttp::EngineConfig{&mx, "3", "4"}, config);
+    client.init(Zhttp::HubConfig{&mx, "3", "4"}, config);
   bool started = initialized && client.start();
   if (!started) {
     if (initialized) client.final();

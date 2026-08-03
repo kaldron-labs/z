@@ -21,7 +21,7 @@
 
 #include <zlib/ZhttpClientPool.hh>
 #include <zlib/ZhttpDiscovery.hh>
-#include <zlib/ZhttpEngines.hh>
+#include <zlib/ZhttpHubs.hh>
 #include <zlib/ZhttpRuntime.hh>
 #include <zlib/ZhttpTLSClientPool.hh>
 #include <zlib/ZhttpURL.hh>
@@ -205,10 +205,10 @@ public:
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
   bool init(
-    const EngineConfig &engine, const ClientConfig &config,
+    const HubConfig &hub, const ClientConfig &config,
     const TCPConfig &tcp, H2Config tls, const QUICConfig &quic)
   {
-    if (!engine.mx() || !config.concurrency() || !config.maxPending() ||
+    if (!hub.mx() || !config.concurrency() || !config.maxPending() ||
 	!config.admissionBatch() ||
 	config.protocol() < ProtocolPolicy::ForceH3 ||
 	config.protocol() > ProtocolPolicy::DisableH3 ||
@@ -222,9 +222,9 @@ public:
 	(config.protocol() == ProtocolPolicy::DisableH3 && !config.tls()))
       return false;
     tls.policy(config.h2Policy());
-    m_mx = engine.mx();
-    m_rxThread = engine.rxThread() ?
-      m_mx->sid(engine.rxThread()) : m_mx->rxThread();
+    m_mx = hub.mx();
+    m_rxThread = hub.rxThread() ?
+      m_mx->sid(hub.rxThread()) : m_mx->rxThread();
     m_config = config;
     m_altSvc = AltSvcCache{config.maxOrigins()};
     m_pending.length(config.maxPending());
@@ -242,13 +242,13 @@ public:
     }
     if (!m_runtime.init()) return false;
     m_resolverOwned = !ZiResolver::instance()->initialized();
-    if (config.tcp() && !m_engines.init(m_tcp, engine, tcp)) return false;
-    if (config.tls() && !m_engines.init(m_tls, engine, tls)) return false;
-    if (config.quic() && !m_engines.init(m_quic, engine, quic)) return false;
-    return m_engines.count();
+    if (config.tcp() && !m_hubs.init(m_tcp, hub, tcp)) return false;
+    if (config.tls() && !m_hubs.init(m_tls, hub, tls)) return false;
+    if (config.quic() && !m_hubs.init(m_quic, hub, quic)) return false;
+    return m_hubs.count();
   }
 
-  bool start() { return m_engines.start(); }
+  bool start() { return m_hubs.start(); }
 
   // Submit and seal one finite workload.  Request metadata and submitted body
   // source storage must remain valid through completed().  All response
@@ -277,27 +277,27 @@ public:
 
   void stop() {
     (void)ZmBlock<bool>{}(
-      [this](auto wake) { stop(Engines::DoneFn{ZuMv(wake)}); });
+      [this](auto wake) { stop(Hubs::DoneFn{ZuMv(wake)}); });
   }
   template <typename Done>
   void stop(Done &&done) {
-    Engines::DoneFn done_{ZuFwd<Done>(done)};
+    Hubs::DoneFn done_{ZuFwd<Done>(done)};
     if (!m_mx) {
-      m_engines.stop(ZuMv(done_));
+      m_hubs.stop(ZuMv(done_));
       return;
     }
     rxRun_([this, done = ZuMv(done_)]() mutable {
       stopIngress_();
-      // Drain Rx continuations queued before engine ingress was disabled.
+      // Drain Rx continuations queued before hub ingress was disabled.
       rxRun_([this, done = ZuMv(done)]() mutable {
-	m_engines.stop(ZuMv(done));
+	m_hubs.stop(ZuMv(done));
       });
     });
   }
 
   void final() {
     if (m_mx) stop();
-    m_engines.final();
+    m_hubs.final();
     if (m_resolverOwned) {
       ZiResolver::stop();
       ZiResolver::final();
@@ -1163,7 +1163,7 @@ private:
   TCPPool	m_tcp;
   TLSPool	m_tls;
   QUICPool	m_quic;
-  Engines	m_engines;
+  Hubs	m_hubs;
   Runtime	m_runtime;
   AltSvcCache	m_altSvc;
   ZiTxErrorFn	m_txErrorFn;

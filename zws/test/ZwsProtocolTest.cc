@@ -112,7 +112,7 @@ struct FakeMx {
   unsigned		adds = 0;
 };
 
-struct FakeEngine {
+struct FakeHub {
   FakeMx *mx() { return &mx_; }
   unsigned rxThread() const { return 0; }
   template <typename L>
@@ -130,9 +130,9 @@ struct Link {
   unsigned endCalls = 0;
   unsigned resetCalls = 0;
   WireTx tx;
-  FakeEngine engine;
+  FakeHub hub;
 
-  FakeEngine *app() { return &engine; }
+  FakeHub *app() { return &hub; }
   bool streamLocalCap() const { return local; }
   bool streamPeerCap() const { return peer; }
   template <typename L>
@@ -1213,8 +1213,8 @@ void codec()
     config.handshakeTimeout = 1;
     App<false> app{link, random, config};
     app.opening_();
-    ZuCHECK(link.engine.mx_.active() == 1);
-    ZuCHECK(link.engine.mx_.fire());
+    ZuCHECK(link.hub.mx_.active() == 1);
+    ZuCHECK(link.hub.mx_.fire());
     ZuCHECK(app.failure() == Zws::Failure::Timeout);
     ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 1);
   }
@@ -1227,11 +1227,11 @@ void codec()
     app.up_();
     ZuCHECK(app.ping_("probe"));
     ZuCHECK(link.tx.bufs.length() == 1);
-    ZuCHECK(link.engine.mx_.active() == 1);
+    ZuCHECK(link.hub.mx_.active() == 1);
     auto wire = frame(Zws::Opcode::Pong, "probe");
     ZuCHECK(app.feed(wire) > 0);
     ZuCHECK(app.pongPayload == "probe");
-    ZuCHECK(link.engine.mx_.active() == 0);
+    ZuCHECK(link.hub.mx_.active() == 0);
   }
   {
     Link link;
@@ -1240,11 +1240,11 @@ void codec()
     config.pongTimeout = 1;
     App<false> app{link, random, config};
     app.up_();
-    ZuCHECK(link.engine.mx_.active() == 1);
-    ZuCHECK(link.engine.mx_.fire());
+    ZuCHECK(link.hub.mx_.active() == 1);
+    ZuCHECK(link.hub.mx_.fire());
     ZuCHECK(link.tx.bufs.length() == 1);
-    ZuCHECK(link.engine.mx_.active() == 1);
-    ZuCHECK(link.engine.mx_.fire());
+    ZuCHECK(link.hub.mx_.active() == 1);
+    ZuCHECK(link.hub.mx_.fire());
     ZuCHECK(app.failure() == Zws::Failure::Timeout);
     ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 1);
   }
@@ -1266,12 +1266,12 @@ void codec()
     config.pingInterval = 1;
     App<false> app{link, random, config};
     app.up_();
-    unsigned adds = link.engine.mx_.adds;
+    unsigned adds = link.hub.mx_.adds;
     auto wire = frame(Zws::Opcode::Binary, "activity");
     ZuCHECK(app.feed(wire) > 0);
-    ZuCHECK(link.engine.mx_.adds == adds + 1,
+    ZuCHECK(link.hub.mx_.adds == adds + 1,
       "input postpones idle ping");
-    ZuCHECK(link.engine.mx_.active() == 1);
+    ZuCHECK(link.hub.mx_.active() == 1);
   }
   {
     Link link;
@@ -1281,8 +1281,8 @@ void codec()
     app.up_();
     ZuCHECK(app.close_());
     ZuCHECK(link.tx.bufs.length() == 1);
-    ZuCHECK(link.engine.mx_.active() == 1);
-    ZuCHECK(link.engine.mx_.fire());
+    ZuCHECK(link.hub.mx_.active() == 1);
+    ZuCHECK(link.hub.mx_.fire());
     ZuCHECK(app.failure() == Zws::Failure::Timeout);
     ZuCHECK(link.reset && link.resetCalls == 1 && app.errors == 1);
   }

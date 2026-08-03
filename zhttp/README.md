@@ -62,9 +62,9 @@ Alt-Svc parsing, formatting, and cache policy are separate in
 configuration types; HTTP ALPN and mandatory H3 transport defaults are
 library-owned.  Native transport traits remain private implementation detail.
 For complete HTTP applications, `Zhttp::Client` owns client routing,
-discovery, pools, retries, redirects, fallback, and engine lifecycle, while
+discovery, pools, retries, redirects, fallback, and hub lifecycle, while
 `Zhttp::Service` owns server listeners, admission, sessions, message
-selection, and engine lifecycle. Applications provide protocol configuration
+selection, and hub lifecycle. Applications provide protocol configuration
 and message-typed application contracts:
 
 ```c++
@@ -96,7 +96,7 @@ struct ClientApp :
 
 ClientApp client;
 client.init(
-  Zhttp::EngineConfig{&mx, "rx", "tx"},
+  Zhttp::HubConfig{&mx, "rx", "tx"},
   Zhttp::ClientConfig{}
     .protocol(Zhttp::ProtocolPolicy::PreferH3)
     .h2Policy(Zhttp::H2Policy::Prefer)
@@ -120,7 +120,7 @@ using Service = Zhttp::Service<Workload>;
 Workload workload;
 Service service;
 service.init(
-  Zhttp::EngineConfig{&mx, "rx", "tx"},
+  Zhttp::HubConfig{&mx, "rx", "tx"},
   Zhttp::ServiceConfig{}
     .port(port)
     .tcp(Zhttp::TCPConfig{})
@@ -242,7 +242,7 @@ protocol-independent:
 
 ```c++
 template <typename Profile>
-struct Client : Zhttp::ClientEngine<Client<Profile>, Profile> {
+struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
   struct RequestBuilder :
     Zhttp::MessageTraits<Profile>::template RequestBuilder<
       RequestBuilder, ZuTypeList<>, ZuTypeList<>, false, false> {
@@ -274,20 +274,20 @@ Servers use the corresponding `Zhttp::Server`, `Zhttp::ServerLink`, and
 `Zhttp::ServerSession` templates. Profiles such as `H1TCP`, `H1TLS`, `H2TLS`,
 and `H3QUIC` instantiate the same connection/message contract; only
 initialization configuration differs. The high-level `Client` and `Service`
-normally own these engines:
+normally own these hubs:
 
 ```c++
-engines.init(tcp, engine, Zhttp::TCPConfig{});
-engines.init(tls, engine, Zhttp::H2Config{}
+hubs.init(tcp, hub, Zhttp::TCPConfig{});
+hubs.init(tls, hub, Zhttp::H2Config{}
   .certPath(cert).keyPath(key)
   .policy(Zhttp::H2Policy::Prefer));
-engines.init(h3, engine, Zhttp::QUICConfig{}
+hubs.init(h3, hub, Zhttp::QUICConfig{}
   .certPath(cert).keyPath(key));
-engines.start();
+hubs.start();
 // process connections and messages
-engines.stop([](bool) { /* shutdown continuation */ });
+hubs.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for the continuation before finalization.
-engines.final();
+hubs.final();
 ```
 
 QUIC configuration defaults include H3 ALPN, control streams, QPACK, flow

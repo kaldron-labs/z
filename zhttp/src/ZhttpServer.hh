@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - normalized server engine
+// Z http library - normalized server hub
 
 #ifndef ZhttpServer_HH
 #define ZhttpServer_HH
@@ -35,8 +35,8 @@ public:
   auto impl() const { return static_cast<const App *>(this); }
   auto impl() { return static_cast<App *>(this); }
 
-  bool init(const EngineConfig &engine, const typename Traits::Config &config) {
-    return Base::init(Traits::serverParams(engine, config));
+  bool init(const HubConfig &hub, const typename Traits::Config &config) {
+    return Base::init(Traits::serverParams(hub, config));
   }
   bool start() {
     if (!Base::start()) return false;

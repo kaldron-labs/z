@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// WebSocket-over-HTTP/1 engine integration tests
+// WebSocket-over-HTTP/1 hub integration tests
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -20,7 +20,7 @@
 
 using namespace ZuTestUtil;
 
-namespace ZwsH1EngineTest_ {
+namespace ZwsH1HubTest_ {
 
 using Zhttp::Test::TempDir;
 using Zhttp::Test::loopbackPort;
@@ -307,11 +307,11 @@ void run(const TempDir &temp)
   Zws::Server<ServerApp, Profile> server{
     &serverApp, ZiIP{"127.0.0.1"}, state.port};
   Zws::Client<ClientApp, Profile> client{&clientApp};
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   bool serverInit =
-    server.init(engine, ProfileConfig<Profile>::server(temp));
+    server.init(hub, ProfileConfig<Profile>::server(temp));
   bool clientInit =
-    client.init(engine, ProfileConfig<Profile>::client(temp));
+    client.init(hub, ProfileConfig<Profile>::client(temp));
   ZuCHECK(serverInit && clientInit);
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
@@ -394,14 +394,14 @@ void run(const TempDir &temp)
   }
 }
 
-} // namespace ZwsH1EngineTest_
+} // namespace ZwsH1HubTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZwsH1EngineTest_;
+  using namespace ZwsH1HubTest_;
 
   parse(argc, argv);
-  ZiLog::init("ZwsH1EngineTest");
+  ZiLog::init("ZwsH1HubTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();

@@ -530,7 +530,7 @@ int Zhttpd::run(int argc, const char *const *argv)
 #endif
   }
   bool serviceInited = service.init(
-    Zhttp::EngineConfig{&mx, "3", "4"},
+    Zhttp::HubConfig{&mx, "3", "4"},
     ZuMv(serviceConfig), &workload);
   if (!serviceInited) {
     ZiLOG(Error, "zhttpd", "HTTP service initialization failed");
@@ -541,7 +541,7 @@ int Zhttpd::run(int argc, const char *const *argv)
     return 1;
   }
   if (!service.start()) {
-    ZiLOG(Error, "zhttpd", "HTTP engine start failed");
+    ZiLOG(Error, "zhttpd", "HTTP hub start failed");
     (void)service.stop();
     service.final();
     mx.stop();

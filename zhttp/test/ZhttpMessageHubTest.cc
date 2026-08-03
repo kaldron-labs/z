@@ -17,7 +17,7 @@
 
 using namespace ZuTestUtil;
 
-namespace ZhttpMessageEngineTest_ {
+namespace ZhttpMessageHubTest_ {
 
 using TestHeaders = ZhttpHeaders("x-test", "x-trailer");
 
@@ -124,11 +124,11 @@ struct ClientParser :
   unsigned	status_ = 0;
   unsigned	statusCalls = 0;
   typename State::T complete_ = State::Initial;
-  ZhttpMessageEngineTest_::State *shared = nullptr;
+  ZhttpMessageHubTest_::State *shared = nullptr;
 };
 
 template <typename Profile>
-struct Client : public Zhttp::ClientEngine<Client<Profile>, Profile> {
+struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   using Link = ClientLink<Profile>;
   using HTTP = Zhttp::ProfileTraits<Profile>;
   State *state = nullptr;
@@ -364,14 +364,14 @@ void run(const Zhttp::Test::TempDir &cert)
   ZuCHECK(mx.start(), "multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
   Client<Profile> client{&state};
-  bool serverInit = server.init(engine, Config<Profile>::server(cert));
-  bool clientInit = client.init(engine, Config<Profile>::client(cert));
+  bool serverInit = server.init(hub, Config<Profile>::server(cert));
+  bool clientInit = client.init(hub, Config<Profile>::client(cert));
   bool initialized = serverInit && clientInit;
-  ZuCHECK(serverInit, "server engine initialized");
-  ZuCHECK(clientInit, "client engine initialized");
+  ZuCHECK(serverInit, "server hub initialized");
+  ZuCHECK(clientInit, "client hub initialized");
   if (!initialized) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -379,7 +379,7 @@ void run(const Zhttp::Test::TempDir &cert)
     return;
   }
   bool started = server.start() && client.start();
-  ZuCHECK(started, "engines started");
+  ZuCHECK(started, "hubs started");
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "server listening");
 
@@ -409,17 +409,17 @@ void run(const Zhttp::Test::TempDir &cert)
     "physical connection admissions normalized");
 
   bool stopped = client.stop() && server.stop();
-  ZuCHECK(stopped && !state.errors, "engines stopped");
+  ZuCHECK(stopped && !state.errors, "hubs stopped");
   client.final();
   server.final();
   mx.stop();
 }
 
-} // namespace ZhttpMessageEngineTest_
+} // namespace ZhttpMessageHubTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpMessageEngineTest_;
+  using namespace ZhttpMessageHubTest_;
 
   parse(argc, argv);
   ZuTestMain();

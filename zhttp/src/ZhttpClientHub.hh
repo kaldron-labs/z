@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - internal normalized client engine
+// Z http library - internal normalized client hub
 
-#ifndef ZhttpClientEngine_HH
-#define ZhttpClientEngine_HH
+#ifndef ZhttpClientHub_HH
+#define ZhttpClientHub_HH
 
 #ifndef ZhttpLib_HH
 #include <zlib/ZhttpLib.hh>
@@ -18,7 +18,7 @@
 namespace Zhttp {
 
 template <typename App, typename Profile>
-class ClientEngine :
+class ClientHub :
   public ProfileTraits<Profile>::Transport::template Client<App> {
   using HTTP = ProfileTraits<Profile>;
   using Traits = typename HTTP::Transport;
@@ -34,8 +34,8 @@ public:
   auto impl() const { return static_cast<const App *>(this); }
   auto impl() { return static_cast<App *>(this); }
 
-  bool init(const EngineConfig &engine, const typename Traits::Config &config) {
-    return Base::init(Traits::clientParams(engine, config));
+  bool init(const HubConfig &hub, const typename Traits::Config &config) {
+    return Base::init(Traits::clientParams(hub, config));
   }
 
   unsigned reconnFreq() const { return 0; }
@@ -50,4 +50,4 @@ public:
 
 } // namespace Zhttp
 
-#endif /* ZhttpClientEngine_HH */
+#endif /* ZhttpClientHub_HH */

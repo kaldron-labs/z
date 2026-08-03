@@ -4,9 +4,9 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include "ZhttpEngineFixture.hh"
+#include "ZhttpHubFixture.hh"
 
-namespace ZhttpH3EngineTest_ {
+namespace ZhttpH3HubTest_ {
 
 template <typename Link>
 void streamContract(Link &link)
@@ -23,11 +23,11 @@ void streamContract(Link &link)
 }
 
 template void streamContract<
-  ZhttpH1EngineTest_::Client<Zhttp::H3QUIC>::Link>(
-    ZhttpH1EngineTest_::Client<Zhttp::H3QUIC>::Link &);
+  ZhttpH1HubTest_::Client<Zhttp::H3QUIC>::Link>(
+    ZhttpH1HubTest_::Client<Zhttp::H3QUIC>::Link &);
 template void streamContract<
-  ZhttpH1EngineTest_::ServerLink<Zhttp::H3QUIC>>(
-    ZhttpH1EngineTest_::ServerLink<Zhttp::H3QUIC> &);
+  ZhttpH1HubTest_::ServerLink<Zhttp::H3QUIC>>(
+    ZhttpH1HubTest_::ServerLink<Zhttp::H3QUIC> &);
 
 struct StreamState {
   ZmSemaphore		listening;
@@ -161,7 +161,7 @@ int ClientStream::process(Stream, Rx &rx)
 }
 
 struct StreamClient :
-  public Zhttp::ClientEngine<StreamClient, Zhttp::H3QUIC> {
+  public Zhttp::ClientHub<StreamClient, Zhttp::H3QUIC> {
   using Link = StreamClientLink;
 
   StreamState	*state = nullptr;
@@ -454,11 +454,11 @@ void runStream(const Zhttp::Test::TempDir &temp)
   ZuCHECK(state.port, "H3 stream port allocation failed");
   if (!state.port) return;
 
-  ZiMultiplex mx{ZhttpH1EngineTest_::mxParams()};
+  ZiMultiplex mx{ZhttpH1HubTest_::mxParams()};
   ZuCHECK(mx.start(), "H3 stream multiplexer start failed");
   if (!mx.running()) return;
 
-  Zhttp::EngineConfig engine{&mx, "3", "4"};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::QUICConfig{}
     .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
     .maxStreamsDuplex(2)
@@ -468,8 +468,8 @@ void runStream(const Zhttp::Test::TempDir &temp)
   StreamServer server{&state};
   StreamClient client{&state};
   bool initialized =
-    server.init(engine, serverConfig) && client.init(engine, clientConfig);
-  ZuCHECK(initialized, "H3 stream engines initialized");
+    server.init(hub, serverConfig) && client.init(hub, clientConfig);
+  ZuCHECK(initialized, "H3 stream hubs initialized");
   if (!initialized) {
     client.final();
     server.final();
@@ -477,7 +477,7 @@ void runStream(const Zhttp::Test::TempDir &temp)
     return;
   }
   bool started = server.start() && client.start();
-  ZuCHECK(started, "H3 stream engines started");
+  ZuCHECK(started, "H3 stream hubs started");
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "H3 stream server listening");
 
@@ -525,7 +525,7 @@ void runStream(const Zhttp::Test::TempDir &temp)
     state.stopped.timedwait(Zm::now(10)) == 0 &&
     state.stopped.timedwait(Zm::now(10)) == 0;
   ZuCHECK(stopped && !state.errors && state.releases == 1,
-    "H3 stream engines drained before stop completion");
+    "H3 stream hubs drained before stop completion");
 
   stream = nullptr;
   rest = nullptr;
@@ -537,14 +537,14 @@ void runStream(const Zhttp::Test::TempDir &temp)
   mx.stop();
 }
 
-} // namespace ZhttpH3EngineTest_
+} // namespace ZhttpH3HubTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpH1EngineTest_;
+  using namespace ZhttpH1HubTest_;
 
   parse(argc, argv);
-  ZiLog::init("ZhttpH3EngineTest");
+  ZiLog::init("ZhttpH3HubTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -557,7 +557,7 @@ int main(int argc, char **argv)
     ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U);
     ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U, true);
     ZuTestCall(runServerStop<Zhttp::H3QUIC>, temp);
-    ZuTestCall(ZhttpH3EngineTest_::runStream, temp);
+    ZuTestCall(ZhttpH3HubTest_::runStream, temp);
   }
 
   ZiLog::stop();

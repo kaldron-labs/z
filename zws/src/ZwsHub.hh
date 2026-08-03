@@ -4,17 +4,17 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Generic WebSocket engines over normalized Zhttp profiles
+// Generic WebSocket hubs over normalized Zhttp profiles
 
-#ifndef ZwsEngine_HH
-#define ZwsEngine_HH
+#ifndef ZwsHub_HH
+#define ZwsHub_HH
 
 #ifndef ZwsLib_HH
 #include <zlib/ZwsLib.hh>
 #endif
 
 #include <zlib/ZwsExtended.hh>
-#include <zlib/ZwsH1Engine.hh>
+#include <zlib/ZwsH1Hub.hh>
 
 namespace Zws {
 
@@ -31,8 +31,8 @@ template <typename App, typename Profile> class ExtendedServerLink;
 
 template <typename App, typename Profile>
 class ExtendedClient :
-  public Zhttp::ClientEngine<ExtendedClient<App, Profile>, Profile> {
-  using Base = Zhttp::ClientEngine<ExtendedClient, Profile>;
+  public Zhttp::ClientHub<ExtendedClient<App, Profile>, Profile> {
+  using Base = Zhttp::ClientHub<ExtendedClient, Profile>;
 
 public:
   static_assert(Zhttp::ProfileTraits<Profile>::Multiplexed);
@@ -42,11 +42,11 @@ public:
   ExtendedClient(App *app) : m_app{app} { }
 
   bool init(
-      const Zhttp::EngineConfig &engine, Config config,
+      const Zhttp::HubConfig &hub, Config config,
       Zws::Config wsConfig = {}) {
     m_config = wsConfig;
     config.extendedConnect(true);
-    return m_random.init() && Base::init(engine, config);
+    return m_random.init() && Base::init(hub, config);
   }
 
   App *app() const { return m_app; }
@@ -79,9 +79,9 @@ class ExtendedClientLink :
     ExtendedClientLink<App, Profile>,
     ExtendedClientLink<App, Profile>, false, Ztls::Random>,
   public AppLinkState<App> {
-  using Engine = ExtendedClient<App, Profile>;
+  using Hub = ExtendedClient<App, Profile>;
   using HTTPBase =
-    Zhttp::ClientLink<Engine, ExtendedClientLink, Profile>;
+    Zhttp::ClientLink<Hub, ExtendedClientLink, Profile>;
   using CodecBase =
     Codec<ExtendedClientLink, ExtendedClientLink, false, Ztls::Random>;
   using StateBase = AppLinkState<App>;
@@ -93,9 +93,9 @@ public:
   const StateBase &state() const { return *this; }
 
   ExtendedClientLink(
-      Engine *engine, const URI &uri, ZuCSpan protocol = {}) :
-    HTTPBase{engine},
-    CodecBase{*this, engine->random(), engine->wsConfig()},
+      Hub *hub, const URI &uri, ZuCSpan protocol = {}) :
+    HTTPBase{hub},
+    CodecBase{*this, hub->random(), hub->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
 
   auto txStream() { return HTTPBase::txStream(); }
@@ -237,11 +237,11 @@ public:
     m_app{app}, m_localIP{ZuMv(localIP)}, m_localPort{localPort} { }
 
   bool init(
-      const Zhttp::EngineConfig &engine, Config config,
+      const Zhttp::HubConfig &hub, Config config,
       Zws::Config wsConfig = {}) {
     m_config = wsConfig;
     config.extendedConnect(true);
-    return m_random.init() && Base::init(engine, config);
+    return m_random.init() && Base::init(hub, config);
   }
 
   App *app() const { return m_app; }
@@ -283,10 +283,10 @@ class ExtendedServerLink :
     ExtendedServerLink<App, Profile>,
     ExtendedServerLink<App, Profile>, true, Ztls::Random>,
   public AppLinkState<App> {
-  using Engine = ExtendedServer<App, Profile>;
+  using Hub = ExtendedServer<App, Profile>;
   using Session = ExtendedServerSession<ExtendedServerLink>;
   using HTTPBase =
-    Zhttp::ServerLink<Engine, ExtendedServerLink, Profile, Session>;
+    Zhttp::ServerLink<Hub, ExtendedServerLink, Profile, Session>;
   using CodecBase =
     Codec<ExtendedServerLink, ExtendedServerLink, true, Ztls::Random>;
   using StateBase = AppLinkState<App>;
@@ -298,9 +298,9 @@ public:
   const StateBase &state() const { return *this; }
 
   template <typename ...Args>
-  ExtendedServerLink(Engine *engine, Args &&...args) :
-    HTTPBase{engine, ZuFwd<Args>(args)...},
-    CodecBase{*this, engine->random(), engine->wsConfig()} { }
+  ExtendedServerLink(Hub *hub, Args &&...args) :
+    HTTPBase{hub, ZuFwd<Args>(args)...},
+    CodecBase{*this, hub->random(), hub->wsConfig()} { }
 
   auto txStream() { return HTTPBase::txStream(); }
 
@@ -462,4 +462,4 @@ public:
 
 } // namespace Zws
 
-#endif /* ZwsEngine_HH */
+#endif /* ZwsHub_HH */
