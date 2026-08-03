@@ -1,0 +1,41 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+@ARGV or die "usage: fbscodegen [flatc options] schema.fbs\n";
+
+my $schema = $ARGV[-1];
+my $name = $schema;
+$name =~ s{.*[\\/]}{};
+$name =~ s{\.fbs\z}{}
+  or die "fbscodegen: schema must have an .fbs suffix: $schema\n";
+
+system('flatc', @ARGV);
+die "fbscodegen: flatc failed: $?\n" if $?;
+
+my $header = "${name}_fbs.h";
+my $bfbs = "${name}_bfbs.h";
+
+rename "${name}_generated.h", $header
+  or die "fbscodegen: rename ${name}_generated.h: $!\n";
+rename "${name}_bfbs_generated.h", $bfbs
+  or die "fbscodegen: rename ${name}_bfbs_generated.h: $!\n";
+
+system('clang-format', '-i', $header, $bfbs);
+die "fbscodegen: clang-format failed: $?\n" if $?;
+
+{
+  local @ARGV = ($header, $bfbs);
+  local $^I = '';
+
+  while (<>) {
+    s{^#include "(\w+)_bfbs_generated\.h"}{#include "${1}_bfbs.h"};
+    s{^#include "(\w+)_generated\.h"}{#include <zlib/${1}_fbs.h>};
+    s{^#include "flatbuffers/flatbuffers.h"}{#include <flatbuffers/flatbuffers.h>};
+    s{^(#(?:ifndef|define|endif //) )FLATBUFFERS_GENERATED_(\w+?)(?:(FBS_H)|FBS_(BFBS_H))}
+      {$1.$2.($3 // '').($4 // '')}e;
+    s{(\w+)BinarySchema}{${1}Schema};
+    print;
+  }
+}

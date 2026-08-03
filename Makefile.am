@@ -1,6 +1,7 @@
 ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
 EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
+	scripts/fbscodegen \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zf zi zrl
