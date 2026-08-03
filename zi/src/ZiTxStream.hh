@@ -84,8 +84,14 @@ public:
 private:
   void allocBuf() { m_buf = impl()->allocBuf_(m_headRoom); }
   void ensureBuf() { if (!m_buf) allocBuf(); }
-  void sendBuf() { impl()->sendBuf_(ZuMv(m_buf), false); allocBuf(); }
-  void flushBuf() { impl()->sendBuf_(ZuMv(m_buf), true); m_buf = {}; }
+  void sendBuf() {
+    impl()->sendBuf_(ZuMv(m_buf), false);
+    allocBuf();
+  }
+  void flushBuf() {
+    impl()->sendBuf_(ZuMv(m_buf), true);
+    m_buf = {};
+  }
 
 public:
   void append(const uint8_t *data, unsigned length) {
@@ -175,7 +181,10 @@ public:
   }
 
   // flush output
-  void flush() { if (m_buf && m_buf->length) flushBuf(); }
+  void flush() {
+    if (m_buf && m_buf->length)
+      flushBuf();
+  }
   TxStream &operator <<(Flush) {
     flush();
     return *this;
