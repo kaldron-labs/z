@@ -9,11 +9,11 @@ LDADD = $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_bu
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	ZiMxClient ZiMxServer ZiMxUDPClient ZiMxUDPServer \
-	ZiLogTest
-noinst_HEADERS = Global.hh HttpHeader.hh
-ZiMxClient_SOURCES = ZiMxClient.cc
-ZiMxServer_SOURCES = ZiMxServer.cc
-ZiMxUDPClient_SOURCES = ZiMxUDPClient.cc
-ZiMxUDPServer_SOURCES = ZiMxUDPServer.cc
-ZiLogTest_SOURCES = ZiLogTest.cc
+	zimxclient zimxserver zimxudpclient zimxudpserver \
+	zilogtest
+noinst_HEADERS = global.hh httpheader.hh
+zimxclient_SOURCES = zimxclient.cc
+zimxserver_SOURCES = zimxserver.cc
+zimxudpclient_SOURCES = zimxudpclient.cc
+zimxudpserver_SOURCES = zimxudpserver.cc
+zilogtest_SOURCES = zilogtest.cc

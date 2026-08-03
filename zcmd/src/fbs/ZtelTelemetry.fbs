@@ -1,0 +1,182 @@
+include "ZfbTypes.fbs";
+include "ZtelThreadPriority.fbs";
+include "ZtelEngineState.fbs";
+include "ZtelLinkState.fbs";
+include "ZtelQueueType.fbs";
+include "ZtcDB.fbs";
+namespace Ztel.fbs;
+enum RAG:int8 {
+  Off = 0,
+  Red,
+  Amber,
+  Green
+}
+table Heap {			// == Ztc::HeapTelemetry
+  id:string;
+  cache_size:uint64;
+  cpuset:Zfb.Bitmap;
+  cache_allocs:uint64;
+  heap_allocs:uint64;
+  frees:uint64;
+  size:uint32;
+  partition:uint16;
+  sharded:uint8;
+  alignment:uint8;
+}
+table HashTbl {			// == Ztc::HashTelemetry
+  id:string;
+  addr:uint64;
+  load_factor:double;
+  eff_load_factor:double;
+  node_size:uint32;
+  count:uint32;
+  resized:uint32;
+  bits:uint8;
+  c_bits:uint8;
+  linear:uint8;
+  shadow:uint8;
+}
+table Thread {			// == Ztc::ThreadTelemetry
+  name:string;
+  tid:uint64;
+  stack_size:uint64;
+  cpuset:Zfb.Bitmap;
+  cpu_usage:double;
+  alloc_stack:uint64;
+  alloc_heap:uint64;
+  sys_priority:int32;
+  sid:int16;
+  partition:uint16;
+  priority:ThreadPriority;
+  main:uint8;
+  detached:uint8;
+}
+table Mx {			// == Ztc::MxTelemetry
+  id:string;
+  stack_size:uint32;
+  queue_size:uint32;
+  spin:uint32;
+  timeout:uint32;
+  rx_buf_size:uint32;
+  tx_buf_size:uint32;
+  rx_thread:uint16;
+  tx_thread:uint16;
+  partition:uint16;
+  state:EngineState;
+  ll:uint8;
+  priority:uint8;
+  n_threads:uint8;
+}
+enum SocketFlags:int8 {		// == 1<<ZiCxnFlags
+  UDP		= 0x01,
+  Multicast	= 0x02,
+  LoopBack	= 0x04,
+  KeepAlive	= 0x08,
+  NetLink	= 0x10,
+  Nagle		= 0x20
+}
+enum SocketType:int8 {		// == ZiCxnType
+  TCPIn = 0,
+  TCPOut,
+  UDP
+}
+table Socket {			// == Ztc::CxnTelemetry
+  mx_i_d:string;
+  socket:uint64;
+  rx_buf_size:uint32;
+  rx_buf_len:uint32;
+  tx_buf_size:uint32;
+  tx_buf_len:uint32;
+  mreq_addr:Zfb.IP;
+  mreq_if:Zfb.IP;
+  mreq_if_index:uint32;
+  mif:Zfb.IP;
+  mif_index:uint32;
+  ttl:uint32;
+  local_i_p:Zfb.IP;
+  remote_i_p:Zfb.IP;
+  local_port:uint16;
+  remote_port:uint16;
+  flags:uint8;			// SocketFlags
+  type:SocketType;
+}
+table Queue {
+  id:string;
+  seq_no:uint64;
+  count:uint64;
+  in_count:uint64;
+  in_bytes:uint64;
+  out_count:uint64;
+  out_bytes:uint64;
+  size:uint32;
+  full:uint32;
+  type:QueueType;
+}
+table Link {
+  id:string;
+  engine_i_d:string;
+  rx_seq_no:uint64;
+  tx_seq_no:uint64;
+  reconnects:uint32;
+  state:LinkState;
+}
+table Engine {
+  id:string;
+  type:string;
+  mx_i_d:string;
+  down:uint16;
+  disabled:uint16;
+  transient:uint16;
+  up:uint16;
+  reconn:uint16;
+  failed:uint16;
+  n_links:uint16;
+  rx_thread:uint16;
+  tx_thread:uint16;
+  state:EngineState;
+}
+enum AppRole:int8 {
+  Dev = 0,
+  Test,
+  Prod
+}
+table App {
+  id:string;
+  version:string;
+  uptime:Zfb.DateTime;	// absolute start time
+  role:AppRole;
+  rag:RAG;
+}
+enum Severity:int8 {	// == Ze
+  Debug = 0,
+  Info,
+  Warning,
+  Error,
+  Fatal
+}
+table Alert {
+  time:Zfb.DateTime;
+  seq_no:uint64;
+  tid:uint32;
+  severity:Severity;
+  message:string;
+}
+union TelData {
+  Heap:Heap,
+  HashTbl:HashTbl,
+  Thread:Thread,
+  Mx:Mx,
+  Socket:Socket,
+  Queue:Queue,
+  Engine:Engine,
+  Link:Link,
+  DBTable:Ztc.fbs.DBTableTelemetry,
+  DBHost:Ztc.fbs.DBHostTelemetry,
+  DB:Ztc.fbs.DBTelemetry,
+  App:App,
+  Alert:Alert
+}
+table Telemetry {
+  data:TelData;
+}
+root_type Telemetry;

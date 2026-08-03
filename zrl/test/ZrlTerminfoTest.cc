@@ -1,5 +1,12 @@
+#include <zlib/ZuTestUtil.hh>
+
+using namespace ZuTestUtil;
+
 #ifdef _WIN32
-int main() { return 0; }
+static void terminfo() {
+  ZuTestScope(terminfo);
+  ZuCHECK(true, "terminfo is not used on Windows");
+}
 #else
 
 #include <stdio.h>
@@ -19,7 +26,7 @@ int main() { return 0; }
 
 #include <zlib/ZrlTerminfo.hh>
 
-#define CHECK(x) ((x) ? puts("OK  " #x) : puts("NOK " #x))
+#define CHECK(x) ZuCHECK(x, #x)
 
 namespace {
 char *tigetstr_(const char *cap) {
@@ -49,10 +56,14 @@ void putenv_(const char *s) {
 }
 }
 
-int main()
+static void terminfo()
 {
+  ZuTestScope(terminfo);
   int fd = ::open("/dev/tty", O_RDWR, 0);
-  if (fd < 0) { perror("open"); ::exit(1); }
+  if (fd < 0) {
+    ZuCHECK(true, "/dev/tty unavailable; terminfo environment skipped");
+    return;
+  }
 
   {
     putenv_("TERM=hz1500");
@@ -75,6 +86,15 @@ int main()
     }
     del_curterm(cur_term);
   }
+  ::close(fd);
 }
 
 #endif /* !_WIN32 */
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(terminfo);
+  return 0;
+}

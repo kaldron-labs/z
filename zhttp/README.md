@@ -375,8 +375,8 @@ curl against `zhttpd`, and `zhttp` against Caddy.  When `h2spec`, `nghttp`, or
 tools are reported as TAP skips and are never downloaded:
 
 ```sh
-cd zhttp/test
-./ZhttpH2InteropTest.sh
+cd zhttp/interop
+./zhttph2interoptest.sh
 ```
 
 Set `ZHTTP_H2_ARTIFACTS` to an existing artifact directory,

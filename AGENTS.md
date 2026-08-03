@@ -55,7 +55,8 @@ The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`
 
 ## Testing Guidelines
 - Tests are built as standalone binaries under each module’s `test/` directory.
-- Run specific tests directly from the build tree, for example `./zt/test/ZtArrayTest` or `./zdb/test/zdbsmoketest`.
+- Run specific tests directly from the build tree, for example
+  `./zt/test/ZtArrayTest` or `./zdb/itest/zdbsmoketest`.
 - Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
 - No top-level coverage target is defined; document any new test entry points in the module `test/` directory.
 

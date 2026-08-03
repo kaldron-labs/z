@@ -11,7 +11,7 @@
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuFixed.hh>
 
-#include <zlib/zu_decimal.h>
+#include <zlib/ZuDecimalC.h>
 
 template <typename ...Args>
 static void log_(Args &&...args) {

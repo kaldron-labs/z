@@ -6,7 +6,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 FBS = \
-	zfb_types.fbs
+	ZfbTypes.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs
 	flatc -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<
@@ -18,7 +18,7 @@ BUILT_SOURCES = ${FBS_H}
 CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZfbLib.hh Zfb.hh ZfbStruct.hh ${FBS_H}
 fbsdir = $(datarootdir)/${PACKAGE}/fbs
-dist_fbs_DATA = fbs/zfb_types.fbs
+dist_fbs_DATA = fbs/ZfbTypes.fbs
 lib_LTLIBRARIES = libZfb.la
 libZfb_la_SOURCES = ZfbLib.cc Zfb.cc
 libZfb_la_LIBADD = \

@@ -188,7 +188,7 @@ ZuInline uint128_t Zu_bswap128_(uint128_t v) {
 // due to MSVC's continuing lack of 128bit type support, no
 // attempt is made to support MSVC here; MSVC did finally add
 // full-spectrum integer overflow intrinsics in 2023 -
-// see unused reference code in msvc_intrin.cc
+// see unused reference code in ZuMSVCIntrin.cc
 
 #ifdef __GNUC__
 #define Zu_nanf() __builtin_nanf("0")

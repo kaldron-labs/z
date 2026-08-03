@@ -16,6 +16,7 @@ noinst_PROGRAMS = ZtlsPKTest ZtlsBufHookTest ZtlsAsyncTest
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
+dist_noinst_SCRIPTS = Keygen.sh
 
 .PHONY: test
 test: $(noinst_PROGRAMS)

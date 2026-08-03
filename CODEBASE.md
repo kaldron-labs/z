@@ -15,7 +15,9 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 ### Zu (core utilities)
 - Core platform and type-traits foundation, including inline/branching macros, type utilities, and RAII helpers in `zu/src/ZuLib.hh:10`.
 - Data structures and utilities for strings, arrays, spans, time, and numeric types in `zu/src/ZuString.hh:14`, `zu/src/ZuArray.hh:21`, `zu/src/ZuSpan.hh:14`, `zu/src/ZuTime.hh:12`, `zu/src/ZuDateTime.hh:72`, `zu/src/ZuDecimal.hh:11`, and encoding helpers in `zu/src/ZuBase64.hh:10`.
-- C helpers for bitmap, decimal, and time functionality in `zu/src/zu_bitmap.c:10`, `zu/src/zu_decimal.c:12`, and `zu/src/zu_time.c:10`.
+- C helpers for bitmap, decimal, and time functionality in
+  `zu/src/ZuBitmapC.cc:10`, `zu/src/ZuDecimalC.cc:12`, and
+  `zu/src/ZuTimeC.cc:10`.
 - Connections: all other modules include Zu types and macros (for example, `zm/src/ZmLib.hh:10`, `zt/src/ZtLib.hh:10`, `zdb/src/Zdb.hh:57`).
 
 ### Zm (runtime, memory, concurrency)
@@ -60,7 +62,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - HTTP parsing and header utilities in `zhttp/src/Zhttp.hh:14` and related library support in `zhttp/src/ZhttpLib.hh:10`.
 - REST request/build/link types in `zrest/src/Zrest.hh:10` and library glue in `zrest/src/ZrestLib.hh:10`.
 - WebSocket client link and state in `zws/src/Zws.hh:10` with module support in `zws/src/ZwsLib.hh:10`.
-- Entry points for CLI/test harnesses in `zhttp/src/zhttp.cc:1`, `zrest/src/zrest.cc:1`, and `zws/src/zws.cc:1`.
+- Entry points for CLI/test harnesses in `zhttp/util/zhttp.cc:1`, `zrest/src/zrest.cc:1`, and `zws/src/zws.cc:1`.
 - Connections: these modules depend on Zi for I/O buffers and Zt for parsing/string handling (e.g., `zhttp/src/Zhttp.hh:14`, `zrest/src/Zrest.hh:10`, `zws/src/Zws.hh:10`).
 
 ### Zdb (database subsystem)
@@ -129,11 +131,11 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zdb/src/Zdb.cc:68` - Top-level symbols: function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT, function ZeEXCEPT
 - `zdb/src/ZdbStore.hh:10` - Top-level symbols: define ZdbStore_HH, class Store, class StoreTbl, using Event, using FailFn, struct InitData
 - `zdb/src/ZdbLib.cc:1` - Top-level contents (no regex-matched symbols)
-- `zdb/test/zdbreptest.cc:188` - Top-level symbols: using Key
-- `zdb/test/zdbtest.hh:8` - Top-level symbols: define zdbtest_HH, struct Order
+- `zdb/itest/zdbreptest.cc:188` - Top-level symbols: using Key
+- `zdb/test/ZdbTest.hh:8` - Top-level symbols: define ZdbTest_HH, struct Order
 - `zdb/test/ZdbMockStore.hh:13` - Top-level symbols: define ZdbMockStore_HH, class Store, class StoreTbl, function count, class Store, using Base
-- `zdb/test/zdbreptest2.cc:182` - Top-level symbols: using Key, using Key, using Key
-- `zdb/test/zdbsmoketest.cc:182` - Top-level symbols: using Key, using Key
+- `zdb/itest/zdbreptest2.cc:182` - Top-level symbols: using Key, using Key, using Key
+- `zdb/itest/zdbsmoketest.cc:182` - Top-level symbols: using Key, using Key
 - `ze/src/ZeLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `ze/src/ZePlatform.cc:121` - Top-level symbols: class ZePlatform_WSAErrors, function lookup, struct ZePlatform_FMBuf, function isspace__
 - `ze/src/ZeAssert.hh:27` - Top-level symbols: define ZeAssert_HH, define ZeAssert, define ZeAssert
@@ -154,7 +156,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/src/ZuFmt.hh:10` - Top-level symbols: define ZuFmt_HH, struct Just, struct Default, struct Left, struct Right, struct Frac
 - `zu/src/ZuEquiv.hh:10` - Top-level symbols: define ZuEquiv_HH, struct ZuEquiv
 - `zu/src/ZuBase32.hh:10` - Top-level symbols: define ZuBase32_HH, function lookup, function is, function enclen, function encode, function declen
-- `zu/src/zu_lib.h:10` - Top-level symbols: define zu_lib_H, define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE
+- `zu/src/ZuLibC.h:10` - Top-level symbols: define zu_lib_H, define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE
 - `zu/src/ZuInvoke.hh:15` - Top-level symbols: define ZuInvoke_HH, struct ZuInvoke_MemberFn_, struct ZuInvoke_MemberFn_, using T, using ZuInvoke_MemberFn, struct ZuInvoke_BoundFn_
 - `zu/src/ZuPrint.hh:15` - Top-level symbols: define ZuPrint_HH, struct ZuPrintable, struct ZuPrintCannot, struct ZuPrintFn, function print, struct ZuPrintLambda
 - `zu/src/ZuStream.hh:11` - Top-level symbols: define ZuStream_HH, class ZuStream_, function reset, using Char, using Char2, using MatchString
@@ -177,13 +179,13 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/src/ZuSeq.hh:10` - Top-level symbols: define ZuSeq_HH, using T, struct ZuPushSeq_, using T, using T, struct ZuSeqBitmap_
 - `zu/src/ZuIOResult.hh:10` - Top-level symbols: define ZuIOResult_HH, function ioResult, struct IOResult
 - `zu/src/ZuHash.hh:27` - Top-level symbols: define ZuHash_HH, function ratio, function hash, function ratio, function hash, function ratio
-- `zu/src/zu_bitmap.h:10` - Top-level symbols: define zu_bitmap_H
+- `zu/src/ZuBitmapC.h:10` - Top-level symbols: define zu_bitmap_H
 - `zu/src/ZuBitmap.hh:10` - Top-level symbols: define ZuBitmap_HH, class Bit, using Bitmap, struct Traits, using Elem, struct PrintScan
 - `zu/src/Zu_aton.hh:10` - Top-level symbols: define Zu_aton_HH, using T, struct Base10, function scan, struct Base10, function scan
 - `zu/src/ZuTraits.hh:56` - Top-level symbols: define ZuTraits_HH, struct ZuTraits_Composite, struct ZuTraits_Composite, struct ZuTraits_Empty, struct ZuTraits_Empty, struct ZuTraits_Enum
 - `zu/src/ZuArray.hh:21` - Top-level symbols: define ZuArray_HH, struct Array_CanAppend, struct Array_CanAppend, struct alignas, struct Array, using T
-- `zu/src/zu_time.h:10` - Top-level symbols: define zu_time_H
-- `zu/src/zu_decimal.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/ZuTimeC.h:10` - Top-level symbols: define zu_time_H
+- `zu/src/ZuDecimalC.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/src/ZuPP.hh:10` - Top-level symbols: define ZuPP_HH, define ZuPP_Q, define ZuPP_Eval, define ZuPP_Eval128, define ZuPP_Eval64, define ZuPP_Eval32
 - `zu/src/ZuSwitch.hh:28` - Top-level symbols: define ZuSwitch_HH, function fn, function fn, function fn, function decltype, using R
 - `zu/src/ZuByteSwap.hh:28` - Top-level symbols: define ZuByteSwap_HH, using T, using U, using I, struct Traits
@@ -211,19 +213,19 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/src/ZuJoin.hh:10` - Top-level symbols: define ZuJoin_HH, struct ZuJoin
 - `zu/src/ZuVStream.hh:12` - Top-level symbols: define ZuVStream_HH, class ZuVStreamBuf, struct PrintType, function length, function print, class ZuVStream
 - `zu/src/ZuSearch.hh:10` - Top-level symbols: define ZuSearch_HH, function ZuSearchFound, function ZuSearchPos, function ZuSearch, function ZuInterSearch, function constexpr
-- `zu/src/zu_decimal.h:10` - Top-level symbols: define zu_decimal_H, typedef int128_t, typedef uint128_t, define zu_decimal_scale, define zu_decimal_null
+- `zu/src/ZuDecimalC.h:10` - Top-level symbols: define zu_decimal_H, typedef int128_t, typedef uint128_t, define zu_decimal_scale, define zu_decimal_null
 - `zu/src/ZuFixed.hh:35` - Top-level symbols: define ZuFixed_HH, define ZuFixedMin, define ZuFixedMax, define ZuFixedReset, define ZuFixedNull, using ZuFixedVal
 - `zu/src/ZuBox.hh:10` - Top-level symbols: define ZuBox_HH, struct ZuIsBoxed, using ZuMatchBoxed, using ZuNotBoxed, function ZuBox_NullAsIs, function ZuBox_NullString
 - `zu/src/ZuDecimal.hh:11` - Top-level symbols: define ZuDecimal_HH, class ZuDecimalVFmt, struct ZuDecimal, using ldouble, function minimum, function maximum
 - `zu/src/ZuHex.hh:10` - Top-level symbols: define ZuHex_HH, function lookup, function is, function enclen, function encode, function declen
 - `zu/src/ZuLargest.hh:13` - Top-level symbols: define ZuLargest_HH, struct ZuLargest_, using T, struct ZuLargest_, using T, struct ZuLargest_
-- `zu/src/zu_bitmap.cc:16` - Top-level symbols: define BitShift, define ByteShift, struct Data, function copy, function combine, function length
+- `zu/src/ZuBitmapC.cc:16` - Top-level symbols: define BitShift, define ByteShift, struct Data, function copy, function combine, function length
 - `zu/src/ZuStruct.hh:105` - Top-level symbols: define ZuStruct_HH, struct GrepValue_, using GrepValue, struct Value__, struct Value__, struct Value_
 - `zu/src/ZuLambdaTraits.hh:13` - Top-level symbols: define ZuLambdaTraits_HH, struct ArgList__, struct ArgList__, struct ArgList__, struct Return_, using T
-- `zu/src/msvc_intrin.cc:14` - Top-level symbols: define CHECK
+- `zu/src/ZuMSVCIntrin.cc:14` - Top-level symbols: define CHECK
 - `zu/src/ZuUnroll.hh:23` - Top-level symbols: define ZuUnroll_HH, struct All, function fn, function fn, struct All, function fn
 - `zu/src/ZuICmp.hh:10` - Top-level symbols: define ZuICmp_HH, struct ZuICmp, function cmp, function less, function equals
-- `zu/src/zu_time.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/ZuTimeC.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/src/ZuIntrin.hh:10` - Top-level symbols: define ZuIntrin_HH, function Zu_popcnt8, function Zu_clz8_, function Zu_ctz8_, define Zu_clz8, define Zu_ctz8
 - `zu/src/ZuBase64.hh:10` - Top-level symbols: define ZuBase64_HH, function lookup, function is, function enclen, function encode, function declen
 - `zproxy/src/zproxy.cc:39` - Top-level symbols: class IOBuf, class Connection, class Proxy, class Listener, class App, define BufSize
@@ -440,11 +442,11 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zum/src/ZumLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `zum/src/Zum.hh:12` - Top-level symbols: define Zum_HH, using IOBufAlloc, struct IOBuilder, using SeqNo, using KeyData, using KeyIDData
 - `zum/src/ZumServer.hh:10` - Top-level symbols: define ZumServer_HH, class UserDB, using OpenFn, struct BootstrapData, using BootstrapResult, function bootstrapOK
-- `zgtk/test/zgtkdemo.cc:58` - Top-level symbols: struct TreeModel, struct Iter, function get_flags, function get_n_columns, function get_column_type, function get_iter
+- `zgtk/example/zgtkdemo.cc:58` - Top-level symbols: struct TreeModel, struct Iter, function get_flags, function get_n_columns, function get_column_type, function get_iter
 - `zhttp/src/Zhttp.hh:14` - Top-level symbols: define Zhttp_HH, function islws, function eoh, function eol, function eok, function bov
 - `zhttp/src/ZhttpLib.hh:10` - Top-level symbols: define ZhttpLib_HH, define ZhttpAPI, define ZhttpExplicit, define ZhttpAPI, define ZhttpExplicit, define ZhttpExtern
 - `zhttp/src/ZhttpLib.cc:1` - Top-level contents (no regex-matched symbols)
-- `zhttp/src/zhttp.cc:1` - Top-level contents (no regex-matched symbols)
+- `zhttp/util/zhttp.cc:1` - Top-level contents (no regex-matched symbols)
 - `zm/test/ZmHeapTest.cc:35` - Top-level symbols: function doit
 - `zm/test/ZmLockTest.cc:26` - Top-level symbols: struct NoLock, function NoLock, function lock, function unlock, struct PThread, function PThread
 - `zm/test/ZmLHTest.cc:34` - Top-level symbols: function out, function fail, define CHECK, function data, struct Traits, using Elem
@@ -454,7 +456,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zm/test/ZmHashTest2.cc:22` - Top-level symbols: struct Order, function IDAccessor
 - `zm/test/ZmBTTest.cc:33` - Top-level symbols: function d, function c, function b, function a, struct A, function crash
 - `zm/test/ZmRingTest3.cc:27` - Top-level symbols: struct Msg, struct Params, class App, using Ring
-- `zm/test/libZmBTTest.cc:11` - Top-level symbols: function baz, function bar, function xfoo
+- `zm/test/ZmBTTestLib.cc:11` - Top-level symbols: function baz, function bar, function xfoo
 - `zm/test/ZmSchedTest.cc:20` - Top-level symbols: struct TLS, function ping, class Job, function operator, function timeout, class Timer
 - `zm/test/ZmHeapTest2.cc:19` - Top-level symbols: function doit
 - `zm/test/ZmPolyCacheTest.cc:9` - Top-level symbols: struct Foo_, using Foo
@@ -465,7 +467,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zm/test/ZmRWTest.cc:23` - Top-level symbols: struct C, struct T
 - `zm/test/ZmRWLockTest.cc:20` - Top-level symbols: class Thread, class Global, function stop, function started, function thread, function lock
 - `zm/test/ZmAssertTest.cc:8` - Top-level symbols: function foo, function bar
-- `zm/test/libZmBTTest2.cc:5` - Top-level symbols: function baz2, function bar2, function xfoo2
+- `zm/test/ZmBTTestLib2.cc:5` - Top-level symbols: function baz2, function bar2, function xfoo2
 - `zm/test/ZmAllocTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zm/test/ZmRingTest.cc:36` - Top-level symbols: struct alignas, struct Params, class App, using Ring
 - `zm/test/ZmPolyHashTest.cc:9` - Top-level symbols: struct Foo_, using Foo
@@ -475,10 +477,9 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zm/test/ZmHashThread.cc:14` - Top-level symbols: struct Connection, struct TestObject, function inserter, function remover, function finder, function stop
 - `zm/test/ZmPQTxTest.cc:24` - Top-level symbols: function out, define CHECK, using Msg_Data, struct Msg_, function clipHead, function clipTail
 - `zm/test/ZmDemangleTest.cc:14` - Top-level symbols: struct Foo
-- `zcmd/test/cmdtest.cc:15` - Top-level symbols: class CmdTest, struct Link, using Base, class CmdTest, function init, function wait
+- `zcmd/itest/cmdtest.cc:15` - Top-level symbols: class CmdTest, struct Link, using Base, class CmdTest, function init, function wait
 - `zum/src/ZumServer.cc:53` - Top-level symbols: using Node, using Key, using RowKey, using Row, using KeyID, using Row
-- `zhttp/test/zhttptest.cc:13` - Top-level symbols: function out, define CHECK, using IOBufAlloc, using RxMsg_
-- `zhttp/example/zhttp.cc:1` - Top-level contents for the zhttp client example
+- `zhttp/util/zhttp.cc:1` - Top-level contents for the zhttp client utility
 - `zt/test/ZtRegexTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/test/ZtStringHash.cc:1` - Top-level contents (no regex-matched symbols)
 - `zt/test/ZtDateFixTest.cc:20` - Top-level symbols: define CHECK, struct Null
@@ -506,10 +507,10 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zt/src/ZtRegex.hh:10` - Top-level symbols: define ZtRegex_HH, struct ZtAPI, define ZtRegexOVector, define ZtRegexCaptures, class ZtAPI, using Capture
 - `zf/src/ZfURI.cc:12` - Top-level symbols: function skip
 - `zf/src/ZfCLI.hh:40` - Top-level symbols: define ZfCLI_HH, define ZfCLI_MutableArgv, struct ZfCLI_DefltConfig, struct ZfCLI_ArrayFmt, using ZfCLI_Delimiter, using Config
-- `zfb/test/zfbtest.cc:27` - Top-level symbols: struct Test, using IOBuilder, using IOBuf, function out, define CHECK, function constexpr
+- `zfb/test/ZfbTest.cc:27` - Top-level symbols: struct Test, using IOBuilder, using IOBuf, function out, define CHECK, function constexpr
 - `zt/src/ZtHexDump.hh:22` - Top-level symbols: define ZtHexDump_HH, class ZtAPI, struct Print, function print, function print, class ZtHexDump
-- `zfb/test/zfbtest3.cc:30` - Top-level symbols: struct Order, function out, define CHECK, using IOBuilder, using IOBuf, using Key
-- `zfb/test/zfbtest2.cc:24` - Top-level symbols: struct Object, struct Test, using IOBuilder, using IOBuf, function constexpr
+- `zfb/test/ZfbTest3.cc:30` - Top-level symbols: struct Order, function out, define CHECK, using IOBuilder, using IOBuf, using Key
+- `zfb/test/ZfbTest2.cc:24` - Top-level symbols: struct Object, struct Test, using IOBuilder, using IOBuf, function constexpr
 - `zt/src/ZtQuote.hh:10` - Top-level symbols: define ZtQuote_HH, struct CString, function decltype, struct String, function decltype, struct Base32
 - `zt/src/ZtBuiltin.hh:13` - Top-level symbols: define ZtBuiltin_HH, class ZtBuiltin, using T
 - `zt/src/ZtHexDump.cc:1` - Top-level contents (no regex-matched symbols)
@@ -542,8 +543,8 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zrest/src/ZrestLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `zrest/src/Zrest.hh:10` - Top-level symbols: define Zrest_HH, struct Request, struct Builder, using Base, struct AnyMsgType, class Link
 - `zdash/src/zdash.cc:72` - Top-level symbols: struct Watch, function Watch_Axor, function Watch_HeapID, struct Display_, using DispList, using Display
-- `zrest/test/zrserver.cc:1` - Top-level contents (no regex-matched symbols)
-- `zrest/test/zrclient.cc:19` - Top-level symbols: struct Credentials, struct AuthResponse, struct ProtectedResponse, class Client, class Link, using Base
+- `zrest/example/zrserver.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrest/example/zrclient.cc:19` - Top-level symbols: struct Credentials, struct AuthResponse, struct ProtectedResponse, class Client, class Link, using Base
 - `zi/src/ZiPlatform.cc:17` - Top-level symbols: struct passwd, struct passwd
 - `zi/src/ZiRing.hh:22` - Top-level symbols: define ZiRing_HH, struct ParamData, function data, using Base, class Params_, using Base
 - `zi/src/ZiNetlinkMsg.hh:5` - Top-level symbols: define ZiNetlinkMsg_HH, class ZiConnection, class ZiNetlinkHdr, function hdr, struct nlmsghdr, class ZiGenericNetlinkHdr
@@ -564,7 +565,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zi/src/ZiIP.cc:25` - Top-level symbols: struct sockaddr, struct addrinfoW, class ZiIP_WSDLL, define GetAddrInfo, define FreeAddrInfo, define GetNameInfo
 - `zi/src/ZiRing.cc:26` - Top-level symbols: function Blocker, function Blocker, function open, function close, function Blocker, function Blocker
 - `zi/src/ZiMultiplex.hh:10` - Top-level symbols: define ZiMultiplex_HH, define ZiMultiplex_DEBUG, define ZiMultiplex_IOCP, define ZiMultiplex_EPoll, define ZiMultiplex_Netlink, define ZiDEBUG
-- `zi/src/zi_netlink.h:8` - Top-level symbols: define zi_netlink_H, define ZiGNLVersion, enum ZiGNLAttr, enum ZiGNLCmd
+- `zi/src/ZiNetlinkC.h:8` - Top-level symbols: define zi_netlink_H, define ZiGNLVersion, enum ZiGNLAttr, enum ZiGNLCmd
 - `zi/src/ZiIOBuf.hh:22` - Top-level symbols: define ZiIOBuf_HH, define ZiIOBuf_DefltSize, define ZiIOBuf_DefltMaxSize, struct ZiIOBuf_HeapID, struct IOBuf, function data_
 - `zi/src/ZiDir.cc:83` - Top-level symbols: struct dirent
 - `zi/src/ZiModule.cc:1` - Top-level contents (no regex-matched symbols)
@@ -580,7 +581,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zdb_pq/ext/magic.c:1` - Top-level contents (no regex-matched symbols)
 - `zdf/src/ZdfCompress.hh:23` - Top-level symbols: define ZdfCompress_HH, class Decoder, using Value, function seek, function seek, function search
 - `zdb_pq/ext/ztime.c:10` - Top-level symbols: function isspace__, function isdigit__, define ztime_in_fn, define ztime_out_fn, function ztime_recv, function ztime_send
-- `zdf/src/stats_tree.hh:42` - Top-level symbols: define PB_DS_STATS_TREE_HH, class stats_tree_node_update, typedef base_type, using cmp_fn, using allocator_type, using size_type
+- `zdf/src/ZdfStatsTree.hh:42` - Top-level symbols: define PB_DS_STATS_TREE_HH, class stats_tree_node_update, typedef base_type, using cmp_fn, using allocator_type, using size_type
 - `zdb_pq/src/ZdbPQ.cc:13` - Top-level symbols: define EPOLLRDHUP, function ZeEXCEPT, function ZeEXCEPT, function notice_, function notice, struct epoll_event
 - `zdf/src/ZdfStore.cc:27` - Top-level symbols: using Node, using Key, using Key
 - `zdb_pq/src/ZdbPQLib.hh:10` - Top-level symbols: define ZdbPQLib_HH, define ZdbPQAPI, define ZdbPQExplicit, define ZdbPQAPI, define ZdbPQExplicit, define ZdbPQExtern
@@ -596,15 +597,15 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zdf/src/ZdfStats.hh:13` - Top-level symbols: define ZdfStats_HH, class Stats, function add, function del, function clean, struct StatsTree_Defaults
 - `zdb_pq/ext/zbitmap.c:11` - Top-level symbols: define ZBITMAP_TOASTABLE, define ZBITMAP_MAX_LEN, function isspace__, define DATAVAR, define PG_GETARG_CZBITMAP_P, define PG_GETARG_ZBITMAP_P
 - `zi/test/Global.hh:11` - Top-level symbols: class Global, using TimeInterval, function wait, function post, function timeInterval, function sent
-- `zrl/test/ZrlTerminalTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/example/zrlterminal.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/Signal.hh:34` - Top-level symbols: struct sigaction
 - `zrl/test/ZrlLineTest.cc:5` - Top-level symbols: define CHECK, function ascii
 - `zi/test/rump.hh:2` - Top-level symbols: define RUMP_HH
-- `zrl/test/ZrlCLITest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/example/zrlcli.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/ZiMxUDPServer.cc:32` - Top-level symbols: class Mx, class Connection, function mx, function disconnected, function connected, function recvEcho
 - `zrl/test/ZrlTerminfoTest.cc:2` - Top-level symbols: function main, define CHECK, function tigetstr_, function tigetflag_, function tigetnum_, function tiparm_
-- `zrl/test/ZrlEditorTest.cc:1` - Top-level contents (no regex-matched symbols)
-- `zrl/test/ZrlTest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/example/zrleditor.cc:1` - Top-level contents (no regex-matched symbols)
+- `zrl/example/zrl.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/netmapserver.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/ZiRingTest2.cc:17` - Top-level symbols: class ZmRing_Breakpoint, function enable, function disable, define ZmRing_FUNCTEST, define ensure, define check
 - `zi/test/ZiMxClient.cc:25` - Top-level symbols: class Mx, class Connection, function mx, function connected, function sendRequest, function sendComplete
@@ -620,13 +621,13 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zdb_pq/ext/zdecimal.c:12` - Top-level symbols: define pg_bswap128, define pg_bswap128, function pg_bswap128, function isspace__, function zdecimal_in, function zdecimal_out
 - `zi/test/ZiFileAgeTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/ZiGlobTest.cc:1` - Top-level contents (no regex-matched symbols)
-- `zdf/test/zdffptest.cc:25` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
-- `zdf/test/zdfseriestest.cc:22` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
-- `zdf/test/zdftest.cc:24` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
-- `zdf/test/zdfstatstest.cc:11` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
-- `zdf/test/zdfcompresstest.cc:15` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
-- `zdb_pq/test/zdbpqtest.cc:26` - Top-level symbols: struct Options, using Key, using Key
-- `zdf/test/zdfstoretest.cc:1` - Top-level contents (no regex-matched symbols)
+- `zdf/itest/zdffptest.cc:25` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/ZdfSeriesTest.cc:22` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/ZdfTest.cc:24` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/ZdfStatsTest.cc:11` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdf/test/ZdfCompressTest.cc:15` - Top-level symbols: function print, function print, function ok, function ok, function fail, function fail
+- `zdb_pq/itest/zdbpqtest.cc:26` - Top-level symbols: struct Options, using Key, using Key
+- `zdf/test/ZdfStoreTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zrl/src/ZrlLine.cc:1` - Top-level contents (no regex-matched symbols)
 - `zrl/src/ZrlGlobber.cc:1` - Top-level contents (no regex-matched symbols)
 - `zrl/src/ZrlCLI.hh:27` - Top-level symbols: define ZrlCLI_HH, class ZrlAPI, using Lock, using Guard

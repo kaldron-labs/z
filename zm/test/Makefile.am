@@ -10,10 +10,10 @@ AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_MT_LIBS@ @Z_LIBS@
 lib_LTLIBRARIES = libZmBTTest.la libZmBTTest2.la
-libZmBTTest_la_SOURCES = libZmBTTest.cc
+libZmBTTest_la_SOURCES = ZmBTTestLib.cc
 libZmBTTest_la_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 libZmBTTest_la_LIBADD = libZmBTTest2.la
-libZmBTTest2_la_SOURCES = libZmBTTest2.cc
+libZmBTTest2_la_SOURCES = ZmBTTestLib2.cc
 libZmBTTest2_la_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 TESTPROGS = \
 	ZmAllocatorTest ZmCacheTest ZmCodecTest ZmConditionTest \

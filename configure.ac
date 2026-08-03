@@ -227,17 +227,22 @@ AC_CONFIG_FILES([Makefile \
 	zquic/Makefile zquic/src/Makefile zquic/test/Makefile \
 	zquic/example/Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
-	zhttp/interop/Makefile zhttp/example/Makefile \
+	zhttp/util/Makefile zhttp/itest/Makefile zhttp/interop/Makefile \
 	zrest/Makefile zrest/src/Makefile zrest/test/Makefile \
+	zrest/example/Makefile zrest/interop/Makefile \
 	zws/Makefile zws/src/Makefile zws/test/Makefile \
+	zws/bench/Makefile zws/interop/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile \
 	zv/Makefile zv/src/Makefile zv/test/Makefile \
-	zdb/Makefile zdb/src/Makefile zdb/test/Makefile \
+	zdb/Makefile zdb/src/Makefile zdb/test/Makefile zdb/itest/Makefile \
 	zdb_pq/Makefile zdb_pq/src/Makefile zdb_pq/test/Makefile \
+	zdb_pq/itest/Makefile \
 	zum/Makefile zum/src/Makefile zum/test/Makefile \
-	zdf/Makefile zdf/src/Makefile zdf/test/Makefile \
-	zrl/Makefile zrl/src/Makefile zrl/test/Makefile \
-	zcmd/Makefile zcmd/src/Makefile zcmd/test/Makefile \
-	zproxy/Makefile zproxy/src/Makefile \
-	zgtk/Makefile zgtk/src/Makefile zgtk/test/Makefile])
+	zdf/Makefile zdf/src/Makefile zdf/test/Makefile zdf/itest/Makefile \
+	zrl/Makefile zrl/src/Makefile zrl/test/Makefile zrl/example/Makefile \
+	zcmd/Makefile zcmd/src/Makefile zcmd/test/Makefile zcmd/itest/Makefile \
+	zproxy/Makefile zproxy/src/Makefile zproxy/test/Makefile \
+	zgtk/Makefile zgtk/src/Makefile zgtk/test/Makefile \
+	zgtk/example/Makefile zdash/Makefile zdash/src/Makefile \
+	zdash/test/Makefile])
 AC_OUTPUT

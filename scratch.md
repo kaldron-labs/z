@@ -76,8 +76,8 @@ audit.
   a full-capacity `ZmAlloc` plus a separately truncated `ZuSpan`.  Write into
   `span()`, set the returned live length on the scratch buffer, and pass
   `cspan()` to the callback.
-- `zm/bench/ZmCacheBench.cc:79`, `zm/bench/ZmHeapBench.cc:100`, and
-  `zm/bench/ZmRingBench.cc:167,168`: `ZmThread` objects are placement-constructed
+- `zm/bench/zmcachebench.cc:79`, `zm/bench/zmheapbench.cc:100`, and
+  `zm/bench/zmringbench.cc:167,168`: `ZmThread` objects are placement-constructed
   and explicitly destroyed.  Construct them through scratch `push()` and use
   RAII destruction.  In `ZmCacheBench`, clear the scratch array after each
   joined batch before constructing the next batch.

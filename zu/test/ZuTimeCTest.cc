@@ -7,9 +7,9 @@
 #include <cstring>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/zu_lib.h>
-#include <zlib/zu_decimal.h>
-#include <zlib/zu_time.h>
+#include <zlib/ZuLibC.h>
+#include <zlib/ZuDecimalC.h>
+#include <zlib/ZuTimeC.h>
 
 using namespace ZuTestUtil;
 

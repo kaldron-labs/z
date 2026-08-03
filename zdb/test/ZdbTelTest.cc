@@ -13,7 +13,7 @@
 #include <zlib/Zdb.hh>
 
 #include "ZdbMockStore.hh"
-#include "zdbtest.hh"
+#include "ZdbTest.hh"
 
 using namespace ZuTestUtil;
 using namespace zdbtest;

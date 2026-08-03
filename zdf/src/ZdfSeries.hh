@@ -1291,7 +1291,7 @@ inline Offset Reader<Decoder>::stop(StopFn fn)
       name << " internal error - null blkData", break);
     ZiAssert(m_decoder, "Zdf",
       (name = ZeString{m_series->name()}),
-      name << " internal error - null decoder", (void)0);
+      name << " internal error - null decoder", (static_cast<void>(0)));
     m_decoder = {};
     m_blk->blkData->unpin();
   };

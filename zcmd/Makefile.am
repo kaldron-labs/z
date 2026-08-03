@@ -1,2 +1,7 @@
 METASOURCES = AUTO
-SUBDIRS = src #  = src test
+SUBDIRS = src test itest
+
+.PHONY: test
+test: all
+	$(MAKE) $(AM_MAKEFLAGS) -C test test
+	$(MAKE) $(AM_MAKEFLAGS) -C itest test

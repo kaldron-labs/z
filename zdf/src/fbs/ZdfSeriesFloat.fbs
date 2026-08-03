@@ -1,0 +1,10 @@
+include "ZfbTypes.fbs";
+namespace Zdf.DB.fbs;
+table SeriesFloat {
+  id:uint32;		// series ID (1-based, globally unique)
+  name:string;		// field name within DF
+  first:double;		// first value in first block
+  epoch:Zfb.DateTime;	// epoch (creation time)
+  blk_offset:uint64;	// first block (initially 0)
+}
+root_type SeriesFloat;

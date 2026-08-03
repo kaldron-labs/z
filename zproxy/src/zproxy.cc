@@ -37,13 +37,13 @@
 
 #include <zlib/ZcmdHost.hh>
 
+#include "zproxyconfig.hh"
+
 class IOBuf;		// I/O buffer
 class Connection;	// ZiConnection, owns queue of IO buffers
 class Proxy;		// pair of active connections
 class Listener;		// spawns proxies
 class App;		// the app (singleton) owns mx, listeners and proxies
-
-#define BufSize (32<<10)
 
 ZuDeclTuple(Error, (const char *, op), (int, result), (ZeError, error));
 // overloaded print for various types
@@ -72,9 +72,9 @@ template <typename T> Print<T> print(const T &v) { return Print<T>{v}; }
 class IOBuf : public ZmPolymorph {
 public:
   IOBuf(Connection *connection) :
-    m_connection(connection), m_buf(BufSize) { }
+    m_connection(connection), m_buf(Zproxy::BufferSize) { }
   IOBuf(Connection *connection, const ZuTime &stamp) :
-    m_connection(connection), m_stamp(stamp), m_buf(BufSize) { }
+    m_connection(connection), m_stamp(stamp), m_buf(Zproxy::BufferSize) { }
 
   Connection *connection() const { return m_connection; }
   void connection(Connection *connection) { m_connection = connection; }

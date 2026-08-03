@@ -15,5 +15,9 @@ LDADD = $(top_builddir)/zcmd/src/libZcmd.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = cmdtest
-cmdtest_SOURCES = cmdtest.cc
+noinst_PROGRAMS = ZcmdDispatcherTest
+ZcmdDispatcherTest_SOURCES = ZcmdDispatcherTest.cc
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)

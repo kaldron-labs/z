@@ -30,7 +30,7 @@
 #include <zlib/ZtcRAGMap.hh>
 #include <zlib/ZtcTypes.hh>
 
-#include <zlib/ztc_db_fbs.h>
+#include <zlib/ZtcDB_fbs.h>
 
 namespace Ztc {
 

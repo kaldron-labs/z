@@ -17,6 +17,9 @@ LDADD = $(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zrserver zrclient
-zrserver_SOURCES = zrserver.cc
-zrclient_SOURCES = zrclient.cc
+noinst_PROGRAMS = ZrestTest
+ZrestTest_SOURCES = ZrestTest.cc
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)

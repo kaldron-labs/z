@@ -40,7 +40,7 @@
 #include <zlib/ZtcHub.hh>
 #include <zlib/ZtcMx.hh>
 #include <zlib/ZtcThread.hh>
-#include <zlib/ztc_msg_fbs.h>
+#include <zlib/ZtcMsg_fbs.h>
 
 namespace Ztc {
 

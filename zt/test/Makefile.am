@@ -16,6 +16,7 @@ noinst_PROGRAMS = \
 	ZtFmtTest ZtIconvTest ZtScratchTest ZtPlatformTest \
 	ZtQuoteTest ZtRegexTest ZtScanBoolTest \
 	ZtStringHash ZtStringTest ZtWindowTest
+dist_noinst_DATA = ZtWords
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

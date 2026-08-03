@@ -16,7 +16,7 @@ pkginclude_HEADERS = \
 	ZiResolver.hh ZiHeapCSV.hh ZiHashCSV.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 if NETLINK
-pkginclude_HEADERS += ZiNetlinkMsg.hh ZiNetlink.hh zi_netlink.h
+pkginclude_HEADERS += ZiNetlinkMsg.hh ZiNetlink.hh ZiNetlinkC.h
 endif
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \

@@ -20,11 +20,11 @@
 
 #include <zlib/ZdfTypes.hh>
 
-#include <zlib/zdf_series_fixed_fbs.h>
-#include <zlib/zdf_series_float_fbs.h>
-#include <zlib/zdf_blk_fixed_fbs.h>
-#include <zlib/zdf_blk_float_fbs.h>
-#include <zlib/zdf_blk_data_fbs.h>
+#include <zlib/ZdfSeriesFixed_fbs.h>
+#include <zlib/ZdfSeriesFloat_fbs.h>
+#include <zlib/ZdfBlkFixed_fbs.h>
+#include <zlib/ZdfBlkFloat_fbs.h>
+#include <zlib/ZdfBlkData_fbs.h>
 
 namespace Zdf::DB {
 

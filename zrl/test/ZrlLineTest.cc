@@ -1,15 +1,19 @@
 #include <stdio.h>
 
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZrlLine.hh>
 
-#define CHECK(x) ((x) ? puts("OK  " #x) : puts("NOK " #x))
+using namespace ZuTestUtil;
+
+#define CHECK(x) ZuCHECK(x, #x)
 
 char ascii(char c) {
   return (c >= 0x20 && c < 0x7f) ? c : '.';
 }
 
-int main()
+static void line()
 {
+  ZuTestScope(line);
   Zrl::Line l;
   auto &data = l.data();
 
@@ -33,13 +37,6 @@ int main()
   data = "hello "; data << j << " world(,);";
 
   l.reflow(0, 20);
-
-  puts("display width: 20");
-  fwrite(data.data(), data.length(), 1, stdout); putchar('\n');
-  for (unsigned i = 0; i < l.width(); i++)
-    printf("pos %2u -> %2u\n", i, l.position(i).mapping());
-  for (unsigned i = 0; i < l.length(); i++)
-    printf("off %2u -> %2u %c\n", i, l.byte(i).mapping(), ascii(data[i]));
 
   CHECK(l.align(7) == 6);
 
@@ -104,12 +101,13 @@ int main()
 
   l.reflow(0, 7);
 
-  puts("display width: 7");
-  fwrite(data.data(), data.length(), 1, stdout); putchar('\n');
-  for (unsigned i = 0; i < l.width(); i++) {
-    auto p = l.position(i);
-    printf("pos %2u -> %2u %c\n", i, p.mapping(), p.padding() ? 'P' : ' ');
-  }
-  for (unsigned i = 0; i < l.length(); i++)
-    printf("off %2u -> %2u %c\n", i, l.byte(i).mapping(), ascii(data[i]));
+  ZuCHECK(l.width() == 7, "narrow reflow width");
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(line);
+  return 0;
 }

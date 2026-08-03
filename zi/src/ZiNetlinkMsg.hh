@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 
-#include <zi_netlink.h>
+#include <ZiNetlinkC.h>
 
 #include <zlib/ZuAssert.hh>
 

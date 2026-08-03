@@ -9,7 +9,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-FBS = zfbtest.fbs zfbtest2.fbs zfbtest3.fbs
+FBS = ZfbTest.fbs ZfbTest2.fbs ZfbTest3.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs
 	flatc -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<
@@ -27,7 +27,11 @@ LDADD = $(top_builddir)/zfb/src/libZfb.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zfbtest zfbtest2 zfbtest3
-zfbtest_SOURCES = zfbtest.cc
-zfbtest2_SOURCES = zfbtest2.cc
-zfbtest3_SOURCES = zfbtest3.cc
+noinst_PROGRAMS = ZfbTest ZfbTest2 ZfbTest3
+ZfbTest_SOURCES = ZfbTest.cc
+ZfbTest2_SOURCES = ZfbTest2.cc
+ZfbTest3_SOURCES = ZfbTest3.cc
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)

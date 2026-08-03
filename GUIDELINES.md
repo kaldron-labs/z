@@ -53,6 +53,41 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - OS: linux, windows
 
 ## Build system
+
+### Module layout
+- The Z modules are bundles of libraries and programs
+- Every Z module is succinctly named `z*`, e.g. `zu`, `zdb`
+- Z libraries scope naming with a corresponding prefix, e.g. `Zu`, `Zdb`
+- Every Z module has these required subdirectories:
+  - `src`: library and program source code
+  - `test`: unit tests using `ZuTest`/`ZuTestUtil` and emitting TAP
+- A module may also have these optional subdirectories when it has content of
+  the corresponding role:
+  - `util`: utility programs and scripts used by `itest`, `interop`, or `bench`
+  - `itest`: integration tests using `ZuTest`/`ZuTestUtil` and emitting TAP
+  - `example`: dependent programs demonstrating use of the module
+  - `bench`: benchmark harnesses
+  - `interop`: external interoperability framework testing
+- The standard directories are not an exhaustive allow-list. Additional
+  module-specific directories are permitted as documented exceptions when a
+  distinct facility does not fit a standard role; for example, `zdb_pq/ext`
+  contains a PostgreSQL extension, follows PostgreSQL/PGXS naming, and is built
+  after the standard directories. Document each exception in the module's
+  README or `GUIDELINES.md`, including its naming and build convention.
+- `test` is for isolated unit tests. Tests which launch complete programs,
+  require multiple services, exercise persistence or networking end to end, or
+  require environment setup belong in `itest`. Tests specifically exercising a
+  third-party implementation or conformance framework belong in `interop`.
+- Repository-owned unit and integration test programs use
+  `ZuTest`/`ZuTestUtil`, emit valid TAP, and run from the corresponding
+  directory's `make test` target. Shell scripts may be fixtures invoked by a
+  ZuTest driver; external harness scripts in `interop` may remain native.
+- `util` is independently buildable. `itest` may depend on programs or scripts
+  built by `util`; `util` must not depend on `itest`.
+- Module build traversal sequence is: `src`, `test`, `util`, `itest`, other
+  directories in dependency order
+
+### Build configuration
 - use the `configure` wrapper named `z.config` to reconfigure the build
   - usage: `z.config -h`
 - this is a hierarchy of Makefiles that **intentionally** do not automatically rebuild dependencies in other directories
@@ -60,7 +95,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - add external dependencies in `configure.ac`
   - use `PKG_CHECK_MODULES` if the dependency is in pkg-config, falling back to dependency-specific `m4` if not
 - always recompile with `make -j8`
-  - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`bench`/`example`, e.g. `make -C zquic/src -j8`
+  - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`util`/`itest`/`example`/`bench`/`interop`, e.g. `make -C zquic/src -j8`
   - always build default target `all` before `make test`, e.g. `make -C zquic/test -j8 && make -C zquic/test test`
   - after build type has changed (release, debug, asan, etc.) do a top-level `make clean && make -j8` to rebuild
   - release-build verification must be configured through `z.config`; after configuring the release build, run top-level `make clean` and then top-level `make -j8` so all dependent Z libraries and tests are rebuilt consistently
@@ -646,7 +681,20 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 
 ### Casing and member prefixes
 - Names are generally camelCase, not snake_case.
-- External dependencies may keep their native naming.
+- Repository-owned library/component basenames in `src` and unit-test
+  code/data basenames in `test` are CamelCase and use the module prefix, e.g.
+  `ZmLib`, `ZmTest`, and `ZhttpParserTest`.
+- Programs built in `src` have succinct lowercase command-line names. Their
+  program-specific source and resource basenames are also lowercase, e.g.
+  `zcmd`, `zdash`, `ztotp`, and `zwsd`.
+- Repository-owned code/data basenames in `util`, `itest`, `example`, `bench`,
+  and `interop` are lowercase.
+- Conventional control filenames such as `Makefile.am`, `README.md`,
+  `Dockerfile.*`, and `.gitignore` retain their conventional casing.
+- Native names mandated by an external tool or protocol may retain their
+  spelling; this includes PostgreSQL extension/control/SQL names, generated
+  files, imported fixtures, and FlatBuffers contract fields. Do not apply this
+  exception to ordinary repository-owned C++ files.
 - `m_` is reserved for private data members of classes.
   - private data members that are intended to be accessed directly by friends should NOT have the `m_` prefix.
 
@@ -691,6 +739,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
   - valgrind: memcheck with leak checking
 
 ## Debugging
-- use `libtool exec` to run test programs under debugging tools within the source tree
+- use `libtool exec` to run programs from `src`, `test`, `util`, `itest`,
+  `example`, `bench`, or `interop` under debugging tools within the source tree
   - do not run the binaries in  `.libs` directly - library paths will be incorrect
   - `libtool exec` should be used to run `gdb`, `valgrind`, etc.

@@ -1,0 +1,17 @@
+include "ZfbTypes.fbs";
+namespace Zum.fbs;
+table KeyID {
+  id:[ubyte];
+}
+table KeyIDList {
+  list:[Zfb.Bytes];
+}
+table Key {
+  user_i_d:uint64;
+  id:[ubyte];		// 16 byte API key ID
+  secret:[ubyte];	// 32 byte HMAC-SHA256 API secret
+}
+table KeyList {
+  list:[Key];
+}
+root_type Key;

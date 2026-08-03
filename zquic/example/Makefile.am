@@ -14,6 +14,6 @@ LDADD = $(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZquicClient ZquicServer
-ZquicClient_SOURCES = ZquicClient.cc
-ZquicServer_SOURCES = ZquicServer.cc
+noinst_PROGRAMS = zquicclient zquicserver
+zquicclient_SOURCES = zquicclient.cc
+zquicserver_SOURCES = zquicserver.cc

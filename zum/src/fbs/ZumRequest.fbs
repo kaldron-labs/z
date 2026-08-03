@@ -1,0 +1,40 @@
+include "ZumPerm.fbs";
+include "ZumRole.fbs";
+include "ZumUser.fbs";
+include "ZumKey.fbs";
+namespace Zum.fbs;
+table OwnKeyReq {
+}
+union ReqData {
+  ChPass:UserChPass,
+  OwnKeyGet:OwnKeyReq,
+  OwnKeyAdd:OwnKeyReq,
+  OwnKeyClr:OwnKeyReq,
+  OwnKeyDel:KeyID,
+
+  UserGet:UserQuery,
+  UserAdd:User,
+  ResetPass:UserID,
+  UserMod:User,
+  UserDel:UserID,
+
+  RoleGet:RoleQuery,
+  RoleAdd:Role,
+  RoleMod:Role,
+  RoleDel:RoleID,
+
+  PermGet:PermQuery,
+  PermAdd:Perm,
+  PermMod:Perm,
+  PermDel:PermID,
+
+  KeyGet:UserID,
+  KeyAdd:UserID,
+  KeyClr:UserID,
+  KeyDel:KeyID
+}
+table Request {
+  seq_no:uint64;	// request ID (restarts at 0 with each session)
+  data:ReqData;
+}
+root_type Request;
