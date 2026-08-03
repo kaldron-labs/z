@@ -460,6 +460,7 @@ public:
     DefltServerStreams = 4096,
     // Three mandatory H3 streams plus bounded diagnostic/extension headroom.
     DefltControlStreams = 16,
+    DefltMaxQueuedFrames = 4096,
     DefltMigrationCIDReserve = 1,
     // Bound per-connection QPACK storage to 16MiB/1M sections.  These are
     // trusted local policy limits, not protocol limits or peer permissions.
@@ -486,6 +487,7 @@ public:
   unsigned qpackTxCapacity() const { return m_qpackTxCapacity; }
   unsigned qpackRxBlocked() const { return m_qpackRxBlocked; }
   unsigned qpackTxSections() const { return m_qpackTxSections; }
+  unsigned maxQueuedFrames() const { return m_maxQueuedFrames; }
   double rxDrop() const { return m_rxDrop; }
   double txDrop() const { return m_txDrop; }
   const ZiSockAddr &migrationLocal() const { return m_migrationLocal; }
@@ -555,6 +557,10 @@ public:
     m_qpackTxSections = v;
     return *this;
   }
+  QUICConfig &maxQueuedFrames(unsigned v) {
+    m_maxQueuedFrames = v;
+    return *this;
+  }
   QUICConfig &rxDrop(double v) { m_rxDrop = v; return *this; }
   QUICConfig &txDrop(double v) { m_txDrop = v; return *this; }
   QUICConfig &migrationLocal(const ZiSockAddr &v) {
@@ -607,6 +613,7 @@ private:
   unsigned	m_qpackTxCapacity = 0;
   unsigned	m_qpackRxBlocked = 0;
   unsigned	m_qpackTxSections = 0;
+  unsigned	m_maxQueuedFrames = DefltMaxQueuedFrames;
   double	m_rxDrop = 0;
   double	m_txDrop = 0;
   Migration::T	m_migration = Migration::Passive;

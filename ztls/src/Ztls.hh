@@ -809,13 +809,13 @@ private:
       return buf;
     }
 
-    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
-	link->send(ZuMv(buf), m_gen);
+	return link->send(ZuMv(buf), m_gen);
       else
-	link->send_(ZuMv(buf), m_gen);
+	return link->send_(ZuMv(buf), m_gen);
     }
 
   private:
@@ -825,6 +825,8 @@ private:
   };
 
 public:
+  void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
+
   auto txStream() { // App thread(s)
     return TxStream_<true>{*this};
   }
@@ -854,48 +856,51 @@ private:
   struct TxStreamAllocFailure { };
 
 public:
-  void send(ZmRef<ZiIOBuf> buf) {
-    send(ZuMv(buf), m_tlsGen.load_());
+  bool send(ZmRef<ZiIOBuf> buf) {
+    return send(ZuMv(buf), m_tlsGen.load_());
   }
-  void send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
-    if (ZuUnlikely(!buf || !buf->length)) return;
-    if (ZuUnlikely(m_disconnecting.load_())) return;
-    if (ZuUnlikely(gen != m_tlsGen.load_())) return;
+  bool send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
+    if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_() ||
+	gen != m_tlsGen.load_()))
+      return reportTxError_(false,
+	"TLS session is closed for transmission");
     buf->owner = impl();
     app()->txInvoke([buf = ZuMv(buf), gen]() mutable {
       auto link = static_cast<Impl *>(buf->owner);
       link->send_(ZuMv(buf), gen);
     });
+    return true;
   }
 
 protected:
   // Optional instrumentation at the application record-protection boundary.
   void txProtected_() { }
 
-  void send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
-    send_(ZuMv(buf), m_tlsGen.load_());
+  bool send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
+    return send_(ZuMv(buf), m_tlsGen.load_());
   }
-  void send_(ZmRef<ZiIOBuf> buf, uint64_t gen) {
+  bool send_(ZmRef<ZiIOBuf> buf, uint64_t gen) {
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
-      "TLS send_ outside Tx thread", return);
-    if (ZuUnlikely(!buf || !buf->length)) return;
-    if (ZuUnlikely(gen != m_tlsGen.load_())) return;
-    if (ZuUnlikely(!m_txTLS || m_txTLSGen != gen || m_txClosing)) return;
+      "TLS send_ outside Tx thread", return false);
+    if (ZuUnlikely(!buf || !buf->length || gen != m_tlsGen.load_() ||
+	!m_txTLS || m_txTLSGen != gen || m_txClosing))
+      return reportTxError_(false,
+	"TLS session is closed for transmission");
 
     ZiAssert(buf->skip >= m_txHeadroom && buf->skip <= TxRecordCapacity,
-      "Ztls", (), "TLS Tx buffer missing headroom", return);
+      "Ztls", (), "TLS Tx buffer missing headroom", return false);
     unsigned extraHeadroom = buf->skip - m_txHeadroom;
     ZiAssert(extraHeadroom <= TxMaxPlaintext &&
 	buf->length <= TxMaxPlaintext - extraHeadroom,
-      "Ztls", (), "TLS Tx plaintext exceeds record limit", return);
+      "Ztls", (), "TLS Tx plaintext exceeds record limit", return false);
     ZiAssert(buf->length <= buf->size - buf->skip, "Ztls", (),
-      "TLS Tx plaintext bounds exceeded", return);
+      "TLS Tx plaintext bounds exceeded", return false);
 
     if (ZuUnlikely(buf->size < TxRecordCapacity))
       if (ZuUnlikely(!buf->ensure(TxRecordCapacity - buf->skip))) {
-	txError_(gen, "TLS Tx buffer growth failed");
-	return;
+	queueTxError_(gen, "TLS Tx buffer growth failed");
+	return false;
       }
 
     ptls_buffer_t pbuf;
@@ -904,22 +909,31 @@ protected:
     auto length = buf->length;
     auto base = buf->data_();
     auto align_bits = txAlignBits_();
-    if (!aligned_(base, align_bits)) return;
+    if (!aligned_(base, align_bits)) return false;
     ptls_buffer_init_tx(&pbuf, base, TxRecordCapacity);
     pbuf.origin = buf.ptr();
     pbuf.align_bits = align_bits;
     int n = ptls_tx_send(m_txTLS, &pbuf, data, length); // in-place overwrite
     if (!assertTxBuf_(pbuf, buf.ptr())) {
-      txError_(gen, "TLS Tx buffer invariant failed");
-      return;
+      queueTxError_(gen, "TLS Tx buffer invariant failed");
+      return false;
     }
     if (n) {
-      txError_(gen, "ptls_tx_send()", n);
-      return;
+      queueTxError_(gen, "ptls_tx_send()", n);
+      return false;
     }
     impl()->txProtected_();
-    if (!finalizeTxBuf_(pbuf, ZuMv(buf)))
-      txError_(gen, "TLS Tx buffer finalization failed");
+    if (!finalizeTxBuf_(pbuf, ZuMv(buf))) {
+      queueTxError_(gen, "TLS Tx buffer finalization failed");
+      return false;
+    }
+    return true;
+  }
+
+public:
+  void sent(ZmRef<ZiTxBuf>, bool ok) {
+    if (ZuUnlikely(!ok))
+      reportTxError_(false, "TLS transmit failed");
   }
 
 private:
@@ -946,21 +960,21 @@ private:
     ptls_buffer_t pbuf;
     auto buf = txBuf_(pbuf);
     if (ZuUnlikely(!buf)) {
-      txError_(gen, "TLS KeyUpdate buffer allocation failed");
+      queueTxError_(gen, "TLS KeyUpdate buffer allocation failed");
       return;
     }
     int n = ptls_tx_update_key(
       m_txTLS, &pbuf, requestUpdate ? 1 : 0);
     if (!assertTxBuf_(pbuf, buf.ptr())) {
-      txError_(gen, "TLS KeyUpdate buffer invariant failed");
+      queueTxError_(gen, "TLS KeyUpdate buffer invariant failed");
       return;
     }
     if (ZuUnlikely(n)) {
-      txError_(gen, "ptls_tx_update_key()", n);
+      queueTxError_(gen, "ptls_tx_update_key()", n);
       return;
     }
     if (!finalizeTxBuf_(pbuf, ZuMv(buf)))
-      txError_(gen, "TLS KeyUpdate buffer finalization failed");
+      queueTxError_(gen, "TLS KeyUpdate buffer finalization failed");
   }
 
   void closeTx_(ZmRef<Cxn> cxn, uint64_t gen) {
@@ -975,11 +989,11 @@ private:
 	PTLS_ALERT_LEVEL_WARNING, PTLS_ALERT_CLOSE_NOTIFY) :
 	PTLS_ERROR_NO_MEMORY;
       if (buf && !assertTxBuf_(pbuf, buf.ptr())) {
-	txError_(gen, "TLS alert buffer invariant failed");
+	queueTxError_(gen, "TLS alert buffer invariant failed");
       } else if (ZuUnlikely(n)) {
-	txError_(gen, "ptls_tx_send_alert()", n);
+	queueTxError_(gen, "ptls_tx_send_alert()", n);
       } else if (buf && !finalizeTxBuf_(pbuf, ZuMv(buf))) {
-	txError_(gen, "TLS alert buffer finalization failed");
+	queueTxError_(gen, "TLS alert buffer finalization failed");
       }
       m_txClosing = true;
     }
@@ -987,21 +1001,21 @@ private:
     mx->txRun([cxn = ZuMv(cxn)]() { cxn->disconnect(); });
   }
 
-  void txError_(uint64_t gen, const char *message) {
+  void queueTxError_(uint64_t gen, const char *message) {
     app()->rxRun([impl = ZmMkRef(impl()), gen, message]() mutable {
       if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
-      impl->app()->error_(ZeEXCEPT(Error, "Ztls", message));
-      impl->disconnect_(false);
+      impl->reportTxError_(false, message);
     });
   }
 
-  void txError_(uint64_t gen, const char *function, int n) {
+  void queueTxError_(uint64_t gen, const char *function, int n) {
     app()->rxRun([impl = ZmMkRef(impl()), gen, function, n]() mutable {
       if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
-      impl->app()->error_(ZeEXCEPT(Error, "Ztls", ([function, n](auto &s) {
+      auto e = ZeEXCEPT(Error, "Ztls", ([function, n](auto &s) {
 	s << function << ": " << strerror_(n);
-      })));
-      impl->disconnect_(false);
+      }));
+      if (impl->m_txErrorFn && !impl->m_txErrorFn(false, e))
+	impl->disconnect_(false);
     });
   }
 
@@ -1028,6 +1042,12 @@ private:
   }
 
 private:
+  bool reportTxError_(bool transient, ZuCSpan message) {
+    auto e = ZeEXCEPT(Error, "Ztls", message);
+    if (m_txErrorFn && !m_txErrorFn(transient, e)) disconnect();
+    return false;
+  }
+
   bool asyncPending_() const {
     return m_asyncJob && m_asyncJob->tls == m_tls;
   }
@@ -1268,6 +1288,7 @@ private:
   // shared
   ZmAtomic<uint64_t>	m_tlsGen = 0;
   ZmAtomic<unsigned>	m_disconnecting = 0;
+  ZiTxErrorFn		m_txErrorFn;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)

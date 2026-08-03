@@ -327,6 +327,10 @@ struct ClientSession :
   ClientSession(Engine *app, Zquic::Host host_, uint16_t port_) :
     Base{app}, host{ZuMv(host_)}, port{port_} { }
 
+  unsigned txQueueMax() const {
+    return this->app()->user()->quicConfig().maxQueuedFrames();
+  }
+
   void add(ZmRef<Logical> logical) {
     logical->session(ZmMkRef(this));
     if (!ready) {
@@ -732,6 +736,10 @@ struct ServerSession :
     ZtArray<StreamRef, ZtArrayHeapID<"Zhttp.H3.ServerLogical">>;
   using Base::Base;
 
+  unsigned txQueueMax() const {
+    return this->app()->user()->quicConfig().maxQueuedFrames();
+  }
+
   ServerSession(Engine *app, EndpointString remote_) :
     Base{app}, remote{ZuMv(remote_)} { }
 
@@ -945,6 +953,10 @@ public:
     connect(endpoint.tlsName, endpoint.port, endpoint.ip);
   }
   auto txStream() { return m_stream->txStream(); }
+  void txErrorFn(ZiTxErrorFn fn) {
+    m_txErrorFn = ZuMv(fn);
+    if (m_stream) m_stream->txErrorFn(m_txErrorFn);
+  }
   NativeSession *h3Native_() const { return m_session; }
   NativeStream *h3Stream_() const { return m_stream; }
   template <typename Parser, typename Rx>
@@ -1023,7 +1035,10 @@ public:
     if (!m_session) m_stream = nullptr;
   }
   NativeSession *session() const { return m_session; }
-  void stream(NativeStream *stream) { m_stream = stream; }
+  void stream(NativeStream *stream) {
+    m_stream = stream;
+    if (m_stream) m_stream->txErrorFn(m_txErrorFn);
+  }
   void migrationComplete_() {
     m_migrationComplete = true;
     if (m_disconnectPending) disconnect();
@@ -1052,6 +1067,7 @@ private:
   App			*m_app = nullptr;
   ZmRef<NativeSession>	m_session;
   NativeStream		*m_stream = nullptr;
+  ZiTxErrorFn		m_txErrorFn;
   bool			m_connected = false;
   bool			m_failed = false;
   bool			m_cancelled = false;
@@ -1072,7 +1088,7 @@ public:
   using Base::init;
 
   bool init(const EngineConfig &engine, const QUICConfig &config) {
-    if (!config.qpackValid()) return false;
+    if (!config.qpackValid() || !config.maxQueuedFrames()) return false;
     m_config = config;
     if (!Base::init(Traits::clientParams(engine, config))) return false;
     Base::faults(config);
@@ -1119,6 +1135,9 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
+  void txErrorFn(ZiTxErrorFn fn) {
+    if (m_stream) m_stream->txErrorFn(ZuMv(fn));
+  }
   NativeSession *h3Native_() const { return m_native; }
   NativeStream *h3Stream_() const { return m_stream; }
   template <typename Parser, typename Rx>
@@ -1189,7 +1208,7 @@ public:
   using Base::init;
 
   bool init(const EngineConfig &engine, const QUICConfig &config) {
-    if (!config.qpackValid()) return false;
+    if (!config.qpackValid() || !config.maxQueuedFrames()) return false;
     m_config = config;
     if (!Base::init(Traits::serverParams(engine, config))) return false;
     Base::faults(config);

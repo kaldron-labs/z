@@ -33,7 +33,7 @@ struct BodyTx : public ZiTxStream<BodyTx> {
   BodyTx(unsigned, unsigned, unsigned);
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned);
-  void sendBuf_(ZmRef<ZiIOBuf>, bool);
+  bool sendBuf_(ZmRef<ZiIOBuf>, bool);
 };
 
 using BodyRx = Zhttp::BodyRx::Stream;
@@ -192,9 +192,10 @@ struct StreamLink {
       buf->length = 0;
       return buf;
     }
-    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       ++link->handoffs;
       link->wire << ZuCSpan{buf->cspan()};
+      return true;
     }
 
     StreamLink	*link;
@@ -257,8 +258,9 @@ struct TxLink {
       buf->length = 0;
       return buf;
     }
-    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       link->wire << ZuCSpan{buf->cspan()};
+      return true;
     }
 
     TxLink	*link;
@@ -283,8 +285,14 @@ struct H2Native {
     ++headers;
     headerFrames += frames.length();
   }
-  void sendFrame(uint32_t, ZmRef<ZiIOBuf>) { ++headerFrames; }
-  void sendData(uint32_t, ZmRef<ZiIOBuf>) { ++data; }
+  bool sendFrame(uint32_t, ZmRef<ZiIOBuf>) {
+    ++headerFrames;
+    return true;
+  }
+  bool sendData(uint32_t, ZmRef<ZiIOBuf>) {
+    ++data;
+    return true;
+  }
   void endData(uint32_t) { ++ends; }
 
   TxLink	link;

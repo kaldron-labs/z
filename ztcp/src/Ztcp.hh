@@ -357,13 +357,13 @@ private:
       return buf;
     }
 
-    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
-	link->send(ZuMv(buf));
+	return link->send(ZuMv(buf));
       else
-	link->send_(ZuMv(buf));
+	return link->send_(ZuMv(buf));
     }
 
   private:
@@ -374,6 +374,8 @@ private:
   struct TxStreamAllocFailure { };
 
 public:
+  void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
+
   auto txStream() { return TxStream_<true>{*this}; }
   auto txStream_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
@@ -381,28 +383,38 @@ public:
     return TxStream_<false>{*this};
   }
 
-  void send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || !buf->length)) return;
-    if (ZuUnlikely(m_disconnecting.load_())) return;
+  bool send(ZmRef<ZiIOBuf> buf) {
+    if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_()))
+      return tcpTxError_(false,
+	"TCP connection is closed for transmission");
     buf->owner = impl();
     app()->txInvoke([buf = ZuMv(buf)]() mutable {
       auto link = static_cast<Impl *>(buf->owner);
       link->send_(ZuMv(buf));
     });
+    return true;
   }
 
 protected:
-  void send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
+  bool send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
-      "TCP send_ outside Tx thread", return);
-    if (ZuUnlikely(!buf || !buf->length)) return;
-    if (ZuUnlikely(m_disconnecting.load_())) return;
-    if (ZuUnlikely(!m_cxn)) return;
+      "TCP send_ outside Tx thread", return false);
+    if (ZuUnlikely(!buf || !buf->length ||
+	m_disconnecting.load_() || !m_cxn))
+      return tcpTxError_(false,
+	"TCP connection is closed for transmission");
     buf->owner = impl();
     auto length = buf->length;
     m_txInCount.store_(m_txInCount.load_() + 1);
     m_txInBytes.store_(m_txInBytes.load_() + length);
     Tx::send(ZuMv(buf));
+    return true;
+  }
+
+public:
+  void sent(ZmRef<ZiTxBuf>, bool ok) {
+    if (ZuUnlikely(!ok))
+      tcpTxError_(false, "TCP transmit failed");
   }
 
 public:
@@ -433,6 +445,12 @@ protected:
   void up_() { }
 
 private:
+  bool tcpTxError_(bool transient, ZuCSpan message) {
+    auto e = ZeEXCEPT(Error, "Ztcp", message);
+    if (m_txErrorFn && !m_txErrorFn(transient, e)) disconnect();
+    return false;
+  }
+
   LinkState::T state_() const {
     if (m_disconnecting.load_()) return LinkState::Disconnecting;
     return m_cxn ? LinkState::Up : LinkState::Down;
@@ -477,6 +495,7 @@ private:
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
+  ZiTxErrorFn		m_txErrorFn;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)

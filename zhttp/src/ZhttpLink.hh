@@ -137,7 +137,8 @@ public:
       link->streamTxEnd_();
     });
   }
-  void sent(ZmRef<ZiTxBuf>, bool ok) {
+  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+    Base::sent(ZuMv(buf), ok);
     if (!m_streamEnd || (ok && this->txQueue.count_())) return;
     m_streamEnd = false;
     streamTxClose_();
@@ -275,7 +276,8 @@ public:
       link->streamTxEnd_();
     });
   }
-  void sent(ZmRef<ZiTxBuf>, bool ok) {
+  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+    Base::sent(ZuMv(buf), ok);
     if (!m_streamEnd || (ok && this->txQueue.count_())) return;
     m_streamEnd = false;
     streamTxClose_();

@@ -35,10 +35,11 @@ struct WireTx : public ZiTxStream<WireTx> {
     buf->skip = headRoom;
     return buf;
   }
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    if (!buf || !buf->length) return;
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+    if (!buf || !buf->length) return false;
     bufs.push(ZuMv(buf));
     finals.push(uint8_t(final));
+    return true;
   }
   void flush() {
     ++flushCalls;
