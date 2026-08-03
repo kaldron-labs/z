@@ -757,7 +757,8 @@ private:
     template <typename Info>
     bool admit(const Info &) { return service->admit(); }
     template <typename Link_>
-    void connected(Link_ &, const ConnectedInfo &) {
+    void connected(Link_ &link, const ConnectedInfo &) {
+      service->registerTxError_(link);
       service->m_workload->connected(
 	HTTP::Transport::ID);
     }
@@ -802,7 +803,8 @@ private:
     }
     bool admit(const ZiCxnInfo &) { return service->admit(); }
     template <typename Link_>
-    void connected(Link_ &, const ConnectedInfo &) {
+    void connected(Link_ &link, const ConnectedInfo &) {
+      service->registerTxError_(link);
       service->m_workload->connected(Transport::TLS);
     }
     template <typename Link_>
@@ -839,6 +841,8 @@ private:
 
 public:
   Service() : m_tcp{this}, m_tls{this}, m_quic{this} { }
+
+  void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
   // Request metadata callbacks precede request-body input.  Body input is a
   // concrete bounded stream on the Rx shard and is valid only for the
@@ -917,6 +921,14 @@ public:
 #endif
 
 private:
+  template <typename Link>
+  void registerTxError_(Link &link) {
+    link.txErrorFn(ZiTxErrorFn{[this](bool transient, ZeException &e) {
+      if (!m_txErrorFn) return true;
+      return m_txErrorFn(transient, e);
+    }});
+  }
+
   template <typename L>
   void rxRun_(L &&l) {
     m_mx->run(ZuFwd<L>(l), m_rxThread);
@@ -953,6 +965,7 @@ private:
   Engine<H3QUIC>	m_quic;
   Engines	m_engines;
   Runtime	m_runtime;
+  ZiTxErrorFn	m_txErrorFn;
   ZmAtomic<unsigned> m_active = 0;
   bool		m_failed = false;
 };

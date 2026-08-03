@@ -58,6 +58,7 @@ struct Cxn {
   QPackLimits		limits;
   Params		params;
   QPackRxTable		qpackRxTable;
+  ZiTxErrorFn		txError;
 
   bool openLocal(
     Link &link, const Params &params_ = Params{},
@@ -70,6 +71,9 @@ struct Cxn {
     enc = link.stream(StreamType::Simplex);
     dec = link.stream(StreamType::Simplex);
     if (!control || !enc || !dec) return false;
+    control->txErrorFn(txError);
+    enc->txErrorFn(txError);
+    dec->txErrorFn(txError);
 
     using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
     auto payload = ZmScratch(char, 64, Scratch::VHeap);
@@ -112,6 +116,13 @@ struct Cxn {
     localExtendedConnect = extendedConnect;
     state = State::Ready;
     return true;
+  }
+
+  void txErrorFn(ZiTxErrorFn fn) {
+    txError = ZuMv(fn);
+    if (control) control->txErrorFn(txError);
+    if (enc) enc->txErrorFn(txError);
+    if (dec) dec->txErrorFn(txError);
   }
 
   bool peerControlStream() {

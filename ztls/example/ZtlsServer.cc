@@ -35,7 +35,15 @@ const char *Response2 = "\r\n"
 
 struct App : public Ztls::Server<App> {
   struct Link : public Ztls::SrvLink<App, Link> {
-    Link(App *app) : Ztls::SrvLink<App, Link>(app) { }
+    Link(App *app) : Ztls::SrvLink<App, Link>(app) {
+      txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+	ZiLOG(Error, "ZtlsServer", ([transient, e](auto &s) {
+	  s << "transmit error" <<
+	    (transient ? " (transient): " : ": ") << e;
+	}));
+	return false;
+      }});
+    }
 
     void connected(Ztls::Connected info) {
       std::cerr << (ZuCArray<100>()

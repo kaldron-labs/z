@@ -71,6 +71,13 @@ struct App::Link :
       << " version=" << info.version
       << " alpn=" << info.alpn << '\n' << std::flush;
     auto s = stream(Zquic::StreamType::Duplex);
+    if (s) s->txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+      ZiLOG(Error, "ZquicClient", ([transient, e](auto &out) {
+	out << "transmit error" <<
+	  (transient ? " (transient): " : ": ") << e;
+      }));
+      return false;
+    }});
     if (!s || !send(s, app()->request())) {
       app()->setError("stream send failed");
       app()->done();

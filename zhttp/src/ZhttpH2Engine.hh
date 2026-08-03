@@ -2610,7 +2610,8 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
   auto txStream() { return m_native->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
-    if (m_native) m_native->txErrorFn(ZuMv(fn));
+    m_txErrorFn = ZuMv(fn);
+    if (m_native) m_native->txErrorFn(m_txErrorFn);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
@@ -2661,13 +2662,17 @@ public:
   int process_(Ztls::RxStream &rx) {
     return m_app->process(*impl(), rx);
   }
-  void session(Native *native) { m_native = native; }
+  void session(Native *native) {
+    m_native = native;
+    if (m_native) m_native->txErrorFn(m_txErrorFn);
+  }
   template <typename State> void responseHeadersParsed(State *) { }
   template <typename State> void responseBodyBytes(State *) { }
 
 private:
   App		*m_app = nullptr;
   Native	*m_native = nullptr;
+  ZiTxErrorFn	m_txErrorFn;
   bool		m_connected = false;
   bool		m_failed = false;
   bool		m_cancelled = false;

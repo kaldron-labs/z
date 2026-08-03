@@ -202,6 +202,7 @@ public:
   uint64_t retainedMessageMax() const {
     return m_config.retainedMessageMax();
   }
+  void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
   bool init(
     const EngineConfig &engine, const ClientConfig &config,
@@ -344,6 +345,11 @@ public:
 	link.connect(url.host, url.port);
     } else
       link.connect(url.host, url.port);
+  }
+  template <typename Link>
+  bool poolTxError(Link &, Attempt *attempt, bool transient, ZeException &e) {
+    if (!m_txErrorFn) return true;
+    return m_txErrorFn(transient, e);
   }
   template <typename Link>
   void poolSend(Link &, Attempt &, int) { }
@@ -1160,6 +1166,7 @@ private:
   Engines	m_engines;
   Runtime	m_runtime;
   AltSvcCache	m_altSvc;
+  ZiTxErrorFn	m_txErrorFn;
   const DiscoveryResolver *m_resolverOps = nullptr;
   Requests	m_pending;
   Attempts	m_attempts;

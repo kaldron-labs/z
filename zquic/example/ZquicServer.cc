@@ -91,6 +91,13 @@ struct AppLink :
       app()->done();
       return;
     }
+    stream->txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+      ZiLOG(Error, "ZquicServer", ([transient, e](auto &out) {
+	out << "transmit error" <<
+	  (transient ? " (transient): " : ": ") << e;
+      }));
+      return false;
+    }});
 
     ZtString<> response;
     response << "echo: " << payload;

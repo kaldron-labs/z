@@ -56,6 +56,9 @@ public:
     m_closing = false;
     m_message.bind(request);
     m_message.reset();
+    m_impl->txErrorFn(ZiTxErrorFn{[this](bool transient, ZeException &e) {
+      return owner()->poolTxError(*m_impl, m_request, transient, e);
+    }});
   }
   void sendRequest() {
     if (!m_request) return;

@@ -27,7 +27,15 @@ struct App : public Ztls::Client<App> {
   struct Link : public Ztls::CliLink<App, Link> {
     using Base = Ztls::CliLink<App, Link>;
 
-    Link(App *app) : Base{app} { }
+    Link(App *app) : Base{app} {
+      txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+	ZiLOG(Error, "ZtlsClient", ([transient, e](auto &s) {
+	  s << "transmit error" <<
+	    (transient ? " (transient): " : ": ") << e;
+	}));
+	return false;
+      }});
+    }
 
     void connected(Ztls::Connected info) {
       ++round;

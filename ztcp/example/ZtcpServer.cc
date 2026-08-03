@@ -45,7 +45,14 @@ struct App::Link :
   public Ztcp::SrvLink<App, App::Link, App::RxBufAlloc, App::TxBufAlloc> {
   using Base = Ztcp::SrvLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
 
-  Link(App *app) : Base{app} { }
+  Link(App *app) : Base{app} {
+    txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
+      ZiLOG(Error, "ZtcpServer", ([transient, e](auto &s) {
+	s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+      }));
+      return false;
+    }});
+  }
 
   void connected(Ztcp::Connected) {
     std::cerr << "TCP accepted\n" << std::flush;

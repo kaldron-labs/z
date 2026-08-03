@@ -326,6 +326,34 @@ static void testApplicationClose()
     "H3 error funnel did not preserve the first application close");
 }
 
+struct TxErrorStream {
+  void txErrorFn(ZiTxErrorFn fn_) { fn = ZuMv(fn_); }
+  ZiTxErrorFn fn;
+};
+
+static void testTxErrorPropagation()
+{
+  ZuTestScope(testTxErrorPropagation);
+
+  CloseLink link;
+  TxErrorStream control, enc, dec;
+  Zhttp::H3::Cxn<CloseLink, TxErrorStream *> cxn;
+  cxn.link_ = &link;
+  cxn.control = &control;
+  cxn.enc = &enc;
+  cxn.dec = &dec;
+  unsigned calls = 0;
+  cxn.txErrorFn(ZiTxErrorFn{[&calls](bool transient, ZeException &) {
+    if (transient) ++calls;
+    return false;
+  }});
+  auto e = ZeEXCEPT(Error, "Zhttp", "test transmit error");
+  ZuCHECK(control.fn && enc.fn && dec.fn &&
+      !control.fn(true, e) && !enc.fn(true, e) && !dec.fn(true, e) &&
+      calls == 3,
+    "H3 Tx error handler did not propagate to connection streams");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -334,4 +362,5 @@ int main(int argc, char **argv)
   ZuTestCall(testPushStreams);
   ZuTestCall(testRequestFrames);
   ZuTestCall(testApplicationClose);
+  ZuTestCall(testTxErrorPropagation);
 }
