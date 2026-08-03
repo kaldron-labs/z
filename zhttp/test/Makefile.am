@@ -22,7 +22,7 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZhttpParserTest \
-	ZhttpCompressionTest ZhttpFieldsTest ZhttpH2FrameTest ZhttpH2SessionTest \
+	ZhttpCompressionTest ZhttpFieldsTest ZhttpH2FrameTest ZhttpH2StreamTest \
 	ZhttpH2MessageTest ZhttpH2EngineTest \
 	ZhttpMessageH1TCPTest ZhttpMessageH1TLSTest \
 	ZhttpMessageH2Test ZhttpMessageH3Test \
@@ -39,7 +39,7 @@ ZhttpParserTest_SOURCES = ZhttpParserTest.cc
 ZhttpCompressionTest_SOURCES = ZhttpCompressionTest.cc
 ZhttpFieldsTest_SOURCES = ZhttpFieldsTest.cc
 ZhttpH2FrameTest_SOURCES = ZhttpH2FrameTest.cc
-ZhttpH2SessionTest_SOURCES = ZhttpH2SessionTest.cc
+ZhttpH2StreamTest_SOURCES = ZhttpH2StreamTest.cc
 ZhttpH2MessageTest_SOURCES = ZhttpH2MessageTest.cc
 ZhttpH2EngineTest_SOURCES = ZhttpH2EngineTest.cc
 ZhttpMessageH1TCPTest_SOURCES = ZhttpMessageEngineTest.cc

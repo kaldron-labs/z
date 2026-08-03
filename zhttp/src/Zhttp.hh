@@ -113,10 +113,10 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 #include <zlib/ZhttpFields.hh>
 #include <zlib/ZhttpH1.hh>
 #include <zlib/ZhttpH2.hh>
-#include <zlib/ZhttpH2Session.hh>
+#include <zlib/ZhttpH2Stream.hh>
 #include <zlib/ZhttpH2Message.hh>
 #include <zlib/ZhttpH3.hh>
-#include <zlib/ZhttpH3Session.hh>
+#include <zlib/ZhttpH3Cxn.hh>
 #include <zlib/ZhttpMessage.hh>
 #include <zlib/ZhttpStream.hh>
 #include <zlib/ZhttpH1Stream.hh>

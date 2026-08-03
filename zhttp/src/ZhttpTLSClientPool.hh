@@ -201,7 +201,7 @@ class TLSClientPoolLink<
   public TLS_::ClientH1Logical<
     Pool, TLSClientPoolLink<
       Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
-    TLS_::ClientSession<
+    TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
 	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
@@ -215,7 +215,7 @@ class TLSClientPoolLink<
   using Impl = TLSClientPoolLink;
   using Native = TLS_::ClientH1Logical<
     Pool, Impl,
-    TLS_::ClientSession<
+    TLS_::CliLink<
       Pool, Impl,
       TLSClientPoolLink<
 	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>;
@@ -251,7 +251,7 @@ class TLSClientPoolLink<
   public H2_::ClientLogical<
     Pool, TLSClientPoolLink<
       Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>,
-    TLS_::ClientSession<
+    TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
 	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
@@ -265,7 +265,7 @@ class TLSClientPoolLink<
   using Impl = TLSClientPoolLink;
   using Native = H2_::ClientLogical<
     Pool, Impl,
-    TLS_::ClientSession<
+    TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
 	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
