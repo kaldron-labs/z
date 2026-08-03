@@ -822,20 +822,20 @@ private:
   struct TLSH1Link :
     public TLS_::ServerH1Logical<
       TLSEngine, TLSH1Link, Session<H1TLS>,
-      TLS_::ServerSession<TLSEngine>> {
+      TLS_::SrvLink<TLSEngine>> {
     using Base = TLS_::ServerH1Logical<
       TLSEngine, TLSH1Link, Session<H1TLS>,
-      TLS_::ServerSession<TLSEngine>>;
+      TLS_::SrvLink<TLSEngine>>;
     using Base::Base;
   };
 
   struct TLSH2Link :
     public H2_::ServerLogical<
       TLSEngine, TLSH2Link, Session<H2TLS>,
-      TLS_::ServerSession<TLSEngine>> {
+      TLS_::SrvLink<TLSEngine>> {
     using Base = H2_::ServerLogical<
       TLSEngine, TLSH2Link, Session<H2TLS>,
-      TLS_::ServerSession<TLSEngine>>;
+      TLS_::SrvLink<TLSEngine>>;
     using Base::Base;
   };
 

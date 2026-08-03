@@ -542,20 +542,20 @@ struct SharedServer : public Zhttp::TLS_::ServerEngine<SharedServer> {
 struct SharedH1Link :
   public Zhttp::TLS_::ServerH1Logical<
     SharedServer, SharedH1Link, SharedH1Session,
-    Zhttp::TLS_::ServerSession<SharedServer>> {
+    Zhttp::TLS_::SrvLink<SharedServer>> {
   using Base = Zhttp::TLS_::ServerH1Logical<
     SharedServer, SharedH1Link, SharedH1Session,
-    Zhttp::TLS_::ServerSession<SharedServer>>;
+    Zhttp::TLS_::SrvLink<SharedServer>>;
   using Base::Base;
 };
 
 struct SharedH2Link :
   public Zhttp::H2_::ServerLogical<
     SharedServer, SharedH2Link, ServerSession,
-    Zhttp::TLS_::ServerSession<SharedServer>> {
+    Zhttp::TLS_::SrvLink<SharedServer>> {
   using Base = Zhttp::H2_::ServerLogical<
     SharedServer, SharedH2Link, ServerSession,
-    Zhttp::TLS_::ServerSession<SharedServer>>;
+    Zhttp::TLS_::SrvLink<SharedServer>>;
   using Base::Base;
 };
 
@@ -585,11 +585,11 @@ struct SharedClient :
 struct SharedClientH1Link :
   public Zhttp::TLS_::ClientH1Logical<
     SharedClient, SharedClientH1Link,
-    Zhttp::TLS_::ClientSession<
+    Zhttp::TLS_::CliLink<
       SharedClient, SharedClientH1Link, SharedClientH2Link>> {
   using Base = Zhttp::TLS_::ClientH1Logical<
     SharedClient, SharedClientH1Link,
-    Zhttp::TLS_::ClientSession<
+    Zhttp::TLS_::CliLink<
       SharedClient, SharedClientH1Link, SharedClientH2Link>>;
   using Base::Base;
 };
@@ -597,11 +597,11 @@ struct SharedClientH1Link :
 struct SharedClientH2Link :
   public Zhttp::H2_::ClientLogical<
     SharedClient, SharedClientH2Link,
-    Zhttp::TLS_::ClientSession<
+    Zhttp::TLS_::CliLink<
       SharedClient, SharedClientH1Link, SharedClientH2Link>> {
   using Base = Zhttp::H2_::ClientLogical<
     SharedClient, SharedClientH2Link,
-    Zhttp::TLS_::ClientSession<
+    Zhttp::TLS_::CliLink<
       SharedClient, SharedClientH1Link, SharedClientH2Link>>;
   using Base::Base;
 

@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - HTTP/3 session utilities
+// Z http library - HTTP/3 connection utilities
 
-#ifndef ZhttpH3Session_HH
-#define ZhttpH3Session_HH
+#ifndef ZhttpH3Cxn_HH
+#define ZhttpH3Cxn_HH
 
 #ifndef Zhttp_HH
 #include <zlib/Zhttp.hh>
@@ -274,4 +274,4 @@ struct CxnStream : public CxnParser<Impl> {
 
 } // namespace Zhttp
 
-#endif /* ZhttpH3Session_HH */
+#endif /* ZhttpH3Cxn_HH */

@@ -19,8 +19,8 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpH2Engine.hh ZhttpH3Engine.hh \
 	ZhttpURL.hh ZhttpAltSvc.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
 	ZhttpH1.hh ZhttpH1Stream.hh ZhttpH3.hh \
-	ZhttpH2.hh ZhttpH2Session.hh ZhttpH2Message.hh \
-	ZhttpH3Session.hh ZhttpMessage.hh \
+	ZhttpH2.hh ZhttpH2Stream.hh ZhttpH2Message.hh \
+	ZhttpH3Cxn.hh ZhttpMessage.hh \
 	ZhttpCompression.hh ZhttpFields.hh ZhttpHPack.hh ZhttpTypes.hh \
 	ZhttpQPack.hh ZhttpStaticTable.hh ZhttpUtil.hh
 lib_LTLIBRARIES = libZhttp.la
@@ -29,7 +29,7 @@ libZhttp_la_SOURCES = ZhttpLib.cc ZhttpConfig.cc ZhttpURL.cc ZhttpAltSvc.cc \
 	ZhttpDiscovery.cc \
 	ZhttpRuntime.cc \
 	ZhttpCompression.cc ZhttpFields.cc ZhttpH1.cc ZhttpH2.cc ZhttpH2Message.cc \
-	ZhttpH2Session.cc ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
+	ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
 	ZhttpTLSEngine.cc ZhttpTypes.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
