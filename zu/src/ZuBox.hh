@@ -370,11 +370,11 @@ struct ZuBoxNullString : public NTP {
 };
 
 template <typename T_, typename NTP>
+class
 #ifdef __GNUC__
-class __attribute__((__may_alias__)) ZuBox__ {
-#else
-class ZuBox__ {
+__attribute__((__may_alias__))
 #endif
+ZuBox__ {
 template <typename, typename> friend class ZuBox__;
 template <typename, typename> friend class ZuBoxFmt;
 template <typename> friend class ZuBoxVFmt;
