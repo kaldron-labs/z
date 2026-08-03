@@ -5,7 +5,7 @@
 #include <utils/sortsupport.h>
 #include <port/pg_bswap.h>
 
-#include <zlib/ZuDecimalC.h>
+#include <zlib/zu_decimal.h>
 
 #ifndef pg_bswap128
 #ifdef WORDS_BIGENDIAN

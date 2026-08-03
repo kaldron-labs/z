@@ -11,7 +11,7 @@
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/Zu_ntoa.hh>
 
-#include <zlib/ZuDecimalC.h>
+#include <zlib/zu_decimal.h>
 
 int zu_decimal_in(zu_decimal *v_, const char *s)
 {

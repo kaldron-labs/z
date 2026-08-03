@@ -12,7 +12,7 @@
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/Zu_ntoa.hh>
 
-#include <zlib/ZuTimeC.h>
+#include <zlib/zu_time.h>
 
 ZuAssert(sizeof(zu_time) == sizeof(ZuTime));
 

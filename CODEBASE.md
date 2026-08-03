@@ -16,8 +16,8 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Core platform and type-traits foundation, including inline/branching macros, type utilities, and RAII helpers in `zu/src/ZuLib.hh:10`.
 - Data structures and utilities for strings, arrays, spans, time, and numeric types in `zu/src/ZuString.hh:14`, `zu/src/ZuArray.hh:21`, `zu/src/ZuSpan.hh:14`, `zu/src/ZuTime.hh:12`, `zu/src/ZuDateTime.hh:72`, `zu/src/ZuDecimal.hh:11`, and encoding helpers in `zu/src/ZuBase64.hh:10`.
 - C helpers for bitmap, decimal, and time functionality in
-  `zu/src/ZuBitmapC.cc:10`, `zu/src/ZuDecimalC.cc:12`, and
-  `zu/src/ZuTimeC.cc:10`.
+  `zu/src/zu_bitmap.cc:10`, `zu/src/zu_decimal.cc:12`, and
+  `zu/src/zu_time.cc:10`.
 - Connections: all other modules include Zu types and macros (for example, `zm/src/ZmLib.hh:10`, `zt/src/ZtLib.hh:10`, `zdb/src/Zdb.hh:57`).
 
 ### Zm (runtime, memory, concurrency)
@@ -156,7 +156,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/src/ZuFmt.hh:10` - Top-level symbols: define ZuFmt_HH, struct Just, struct Default, struct Left, struct Right, struct Frac
 - `zu/src/ZuEquiv.hh:10` - Top-level symbols: define ZuEquiv_HH, struct ZuEquiv
 - `zu/src/ZuBase32.hh:10` - Top-level symbols: define ZuBase32_HH, function lookup, function is, function enclen, function encode, function declen
-- `zu/src/ZuLibC.h:10` - Top-level symbols: define zu_lib_H, define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE
+- `zu/src/zu_lib.h:10` - Top-level symbols: define zu_lib_H, define WINVER, define _WIN32_WINNT, define _WIN32_DCOM, define _WIN32_WINDOWS, define _WIN32_IE
 - `zu/src/ZuInvoke.hh:15` - Top-level symbols: define ZuInvoke_HH, struct ZuInvoke_MemberFn_, struct ZuInvoke_MemberFn_, using T, using ZuInvoke_MemberFn, struct ZuInvoke_BoundFn_
 - `zu/src/ZuPrint.hh:15` - Top-level symbols: define ZuPrint_HH, struct ZuPrintable, struct ZuPrintCannot, struct ZuPrintFn, function print, struct ZuPrintLambda
 - `zu/src/ZuStream.hh:11` - Top-level symbols: define ZuStream_HH, class ZuStream_, function reset, using Char, using Char2, using MatchString
@@ -179,13 +179,13 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/src/ZuSeq.hh:10` - Top-level symbols: define ZuSeq_HH, using T, struct ZuPushSeq_, using T, using T, struct ZuSeqBitmap_
 - `zu/src/ZuIOResult.hh:10` - Top-level symbols: define ZuIOResult_HH, function ioResult, struct IOResult
 - `zu/src/ZuHash.hh:27` - Top-level symbols: define ZuHash_HH, function ratio, function hash, function ratio, function hash, function ratio
-- `zu/src/ZuBitmapC.h:10` - Top-level symbols: define zu_bitmap_H
+- `zu/src/zu_bitmap.h:10` - Top-level symbols: define zu_bitmap_H
 - `zu/src/ZuBitmap.hh:10` - Top-level symbols: define ZuBitmap_HH, class Bit, using Bitmap, struct Traits, using Elem, struct PrintScan
 - `zu/src/Zu_aton.hh:10` - Top-level symbols: define Zu_aton_HH, using T, struct Base10, function scan, struct Base10, function scan
 - `zu/src/ZuTraits.hh:56` - Top-level symbols: define ZuTraits_HH, struct ZuTraits_Composite, struct ZuTraits_Composite, struct ZuTraits_Empty, struct ZuTraits_Empty, struct ZuTraits_Enum
 - `zu/src/ZuArray.hh:21` - Top-level symbols: define ZuArray_HH, struct Array_CanAppend, struct Array_CanAppend, struct alignas, struct Array, using T
-- `zu/src/ZuTimeC.h:10` - Top-level symbols: define zu_time_H
-- `zu/src/ZuDecimalC.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/zu_time.h:10` - Top-level symbols: define zu_time_H
+- `zu/src/zu_decimal.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/src/ZuPP.hh:10` - Top-level symbols: define ZuPP_HH, define ZuPP_Q, define ZuPP_Eval, define ZuPP_Eval128, define ZuPP_Eval64, define ZuPP_Eval32
 - `zu/src/ZuSwitch.hh:28` - Top-level symbols: define ZuSwitch_HH, function fn, function fn, function fn, function decltype, using R
 - `zu/src/ZuByteSwap.hh:28` - Top-level symbols: define ZuByteSwap_HH, using T, using U, using I, struct Traits
@@ -213,19 +213,19 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/src/ZuJoin.hh:10` - Top-level symbols: define ZuJoin_HH, struct ZuJoin
 - `zu/src/ZuVStream.hh:12` - Top-level symbols: define ZuVStream_HH, class ZuVStreamBuf, struct PrintType, function length, function print, class ZuVStream
 - `zu/src/ZuSearch.hh:10` - Top-level symbols: define ZuSearch_HH, function ZuSearchFound, function ZuSearchPos, function ZuSearch, function ZuInterSearch, function constexpr
-- `zu/src/ZuDecimalC.h:10` - Top-level symbols: define zu_decimal_H, typedef int128_t, typedef uint128_t, define zu_decimal_scale, define zu_decimal_null
+- `zu/src/zu_decimal.h:10` - Top-level symbols: define zu_decimal_H, typedef int128_t, typedef uint128_t, define zu_decimal_scale, define zu_decimal_null
 - `zu/src/ZuFixed.hh:35` - Top-level symbols: define ZuFixed_HH, define ZuFixedMin, define ZuFixedMax, define ZuFixedReset, define ZuFixedNull, using ZuFixedVal
 - `zu/src/ZuBox.hh:10` - Top-level symbols: define ZuBox_HH, struct ZuIsBoxed, using ZuMatchBoxed, using ZuNotBoxed, function ZuBox_NullAsIs, function ZuBox_NullString
 - `zu/src/ZuDecimal.hh:11` - Top-level symbols: define ZuDecimal_HH, class ZuDecimalVFmt, struct ZuDecimal, using ldouble, function minimum, function maximum
 - `zu/src/ZuHex.hh:10` - Top-level symbols: define ZuHex_HH, function lookup, function is, function enclen, function encode, function declen
 - `zu/src/ZuLargest.hh:13` - Top-level symbols: define ZuLargest_HH, struct ZuLargest_, using T, struct ZuLargest_, using T, struct ZuLargest_
-- `zu/src/ZuBitmapC.cc:16` - Top-level symbols: define BitShift, define ByteShift, struct Data, function copy, function combine, function length
+- `zu/src/zu_bitmap.cc:16` - Top-level symbols: define BitShift, define ByteShift, struct Data, function copy, function combine, function length
 - `zu/src/ZuStruct.hh:105` - Top-level symbols: define ZuStruct_HH, struct GrepValue_, using GrepValue, struct Value__, struct Value__, struct Value_
 - `zu/src/ZuLambdaTraits.hh:13` - Top-level symbols: define ZuLambdaTraits_HH, struct ArgList__, struct ArgList__, struct ArgList__, struct Return_, using T
 - `zu/src/ZuMSVCIntrin.cc:14` - Top-level symbols: define CHECK
 - `zu/src/ZuUnroll.hh:23` - Top-level symbols: define ZuUnroll_HH, struct All, function fn, function fn, struct All, function fn
 - `zu/src/ZuICmp.hh:10` - Top-level symbols: define ZuICmp_HH, struct ZuICmp, function cmp, function less, function equals
-- `zu/src/ZuTimeC.cc:1` - Top-level contents (no regex-matched symbols)
+- `zu/src/zu_time.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/src/ZuIntrin.hh:10` - Top-level symbols: define ZuIntrin_HH, function Zu_popcnt8, function Zu_clz8_, function Zu_ctz8_, define Zu_clz8, define Zu_ctz8
 - `zu/src/ZuBase64.hh:10` - Top-level symbols: define ZuBase64_HH, function lookup, function is, function enclen, function encode, function declen
 - `zproxy/src/zproxy.cc:39` - Top-level symbols: class IOBuf, class Connection, class Proxy, class Listener, class App, define BufSize

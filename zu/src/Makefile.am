@@ -21,11 +21,11 @@ pkginclude_HEADERS = \
 	ZuMatcher.hh ZuDerive.hh ZuAlt.hh ZuTest.hh ZuTestUtil.hh \
 	ZuElem.hh \
 	\
-	ZuLibC.h ZuDecimalC.h ZuTimeC.h ZuBitmapC.h
+	zu_lib.h zu_decimal.h zu_time.h zu_bitmap.h
 lib_LTLIBRARIES = libZu.la
 libZu_la_SOURCES = \
 	ZuLib.cc ZuUTF.cc ZuTime.cc ZuDateTime.cc ZuTest.cc \
 	ZuDemangle.cc \
 	\
-	ZuDecimalC.cc ZuTimeC.cc ZuBitmapC.cc
+	zu_decimal.cc zu_time.cc zu_bitmap.cc
 libZu_la_LIBADD = @Z_LIBS@

@@ -11,7 +11,7 @@
 #include <zlib/ZuBitmap.hh>
 #include <zlib/ZuDerive.hh>
 
-#include <zlib/ZuBitmapC.h>
+#include <zlib/zu_bitmap.h>
 
 #define BitShift 6
 #define ByteShift 3
