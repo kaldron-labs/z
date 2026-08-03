@@ -16,5 +16,9 @@ LDADD = $(top_builddir)/zv/src/libZum.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-#noinst_PROGRAMS = UserDBTest
-#UserDBTest_SOURCES = UserDBTest.cc
+noinst_PROGRAMS = ZumTest
+ZumTest_SOURCES = ZumTest.cc
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove -j1 $(noinst_PROGRAMS)

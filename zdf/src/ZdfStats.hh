@@ -18,7 +18,7 @@
 
 #include <math.h>
 
-#include <stats_tree.hh>
+#include <ZdfStatsTree.hh>
 
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuFP.hh>

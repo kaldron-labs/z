@@ -26,15 +26,15 @@
 #include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZtlsRandom.hh>
 
-#include <zlib/zum_key_fbs.h>
-#include <zlib/zum_perm_fbs.h>
-#include <zlib/zum_role_fbs.h>
-#include <zlib/zum_user_fbs.h>
+#include <zlib/ZumKey_fbs.h>
+#include <zlib/ZumPerm_fbs.h>
+#include <zlib/ZumRole_fbs.h>
+#include <zlib/ZumUser_fbs.h>
 
-#include <zlib/zum_loginreq_fbs.h>
-#include <zlib/zum_loginack_fbs.h>
-#include <zlib/zum_request_fbs.h>
-#include <zlib/zum_reqack_fbs.h>
+#include <zlib/ZumLoginReq_fbs.h>
+#include <zlib/ZumLoginAck_fbs.h>
+#include <zlib/ZumRequest_fbs.h>
+#include <zlib/ZumReqAck_fbs.h>
 
 namespace Zum {
 

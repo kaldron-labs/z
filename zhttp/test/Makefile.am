@@ -5,6 +5,9 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/zquic/src -I$(top_srcdir)/zquic/test \
 	-I$(top_srcdir)/zhttp/src \
+	-DZHTTP_TEST_SRCDIR='"$(abs_srcdir)"' \
+	-DZHTTP_UTIL_SRCDIR='"$(abs_top_srcdir)/zhttp/util"' \
+	-DZHTTP_LIB_SRCDIR='"$(abs_top_srcdir)/zhttp/src"' \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
@@ -17,27 +20,21 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zhttp zhttpd zhttpmatrix \
+noinst_PROGRAMS = \
 	ZhttpParserTest \
 	ZhttpCompressionTest ZhttpFieldsTest ZhttpH2FrameTest ZhttpH2SessionTest \
-	ZhttpH2MessageTest \
-	ZhttpH2EngineTest \
+	ZhttpH2MessageTest ZhttpH2EngineTest \
 	ZhttpMessageH1TCPTest ZhttpMessageH1TLSTest \
 	ZhttpMessageH2Test ZhttpMessageH3Test \
-	ZhttpHPackTest ZhttpQPackTest \
-	Zhttp3InteropTest ZhttpFallbackTest ZhttpQPackDynamicTest \
-	ZhttpAppTest ZhttpMultiRequestTest \
-	ZhttpdTest ZhttpDarkhttpdCompatTest ZhttpLifecycleTest \
+	ZhttpHPackTest ZhttpQPackTest ZhttpQPackDynamicTest \
 	ZhttpTransportContractTest ZhttpH1EngineTest ZhttpH3EngineTest \
-	ZhttpH3PushTest \
-	ZhttpEngineLifecycleTest ZhttpURLTest ZhttpAltSvcTest ZhttpDiscoveryTest \
-	ZhttpAdmissionTest ZhttpClientCancelTest ZhttpRuntimeTest \
-	ZhttpServiceIdleTest ZhttpClientFallbackTest
-dist_noinst_SCRIPTS = ZhttpBoundaryTest.sh ZhttpH2InteropTest.sh
-noinst_HEADERS = ZhttpTestUtil.hh ZhttpPut.hh Zhttpd.hh ZhttpBoundary.md
-zhttp_SOURCES = zhttp.cc
-zhttpd_SOURCES = zhttpd.cc ZhttpdUtil.cc
-zhttpmatrix_SOURCES = zhttpmatrix.cc
+	ZhttpH3PushTest ZhttpEngineLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
+	ZhttpDiscoveryTest ZhttpAdmissionTest ZhttpClientCancelTest \
+	ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpBoundaryTest
+dist_noinst_SCRIPTS = ZhttpBoundaryFixture.sh
+dist_noinst_DATA = ZhttpJ2N100000HashTune.csv \
+	ZhttpJ2N100000HeapTune.csv
+noinst_HEADERS = ZhttpTestUtil.hh
 ZhttpParserTest_SOURCES = ZhttpParserTest.cc
 ZhttpCompressionTest_SOURCES = ZhttpCompressionTest.cc
 ZhttpFieldsTest_SOURCES = ZhttpFieldsTest.cc
@@ -55,14 +52,7 @@ ZhttpMessageH3Test_SOURCES = ZhttpMessageEngineTest.cc
 ZhttpMessageH3Test_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_TEST_H3
 ZhttpHPackTest_SOURCES = ZhttpHPackTest.cc
 ZhttpQPackTest_SOURCES = ZhttpQPackTest.cc
-Zhttp3InteropTest_SOURCES = Zhttp3InteropTest.cc
-ZhttpFallbackTest_SOURCES = ZhttpFallbackTest.cc
 ZhttpQPackDynamicTest_SOURCES = ZhttpQPackDynamicTest.cc
-ZhttpAppTest_SOURCES = ZhttpAppTest.cc
-ZhttpMultiRequestTest_SOURCES = ZhttpMultiRequestTest.cc
-ZhttpdTest_SOURCES = ZhttpdTest.cc ZhttpdUtil.cc
-ZhttpDarkhttpdCompatTest_SOURCES = ZhttpDarkhttpdCompatTest.cc
-ZhttpLifecycleTest_SOURCES = ZhttpLifecycleTest.cc
 ZhttpTransportContractTest_SOURCES = ZhttpTransportContractTest.cc
 ZhttpH1EngineTest_SOURCES = ZhttpH1EngineTest.cc
 ZhttpH3EngineTest_SOURCES = ZhttpH3EngineTest.cc
@@ -75,25 +65,9 @@ ZhttpAdmissionTest_SOURCES = ZhttpAdmissionTest.cc
 ZhttpClientCancelTest_SOURCES = ZhttpClientCancelTest.cc
 ZhttpRuntimeTest_SOURCES = ZhttpRuntimeTest.cc
 ZhttpServiceIdleTest_SOURCES = ZhttpServiceIdleTest.cc
-ZhttpClientFallbackTest_SOURCES = ZhttpClientFallbackTest.cc
+ZhttpBoundaryTest_SOURCES = ZhttpBoundaryTest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	LSAN_OPTIONS="$${LSAN_OPTIONS:+$$LSAN_OPTIONS:}suppressions=$(top_builddir)/.lsan-suppressions" \
-	prove -j1 ZhttpParserTest ZhttpCompressionTest ZhttpFieldsTest \
-		ZhttpH2FrameTest \
-		ZhttpH2SessionTest \
-		ZhttpH2MessageTest \
-		ZhttpH2EngineTest \
-		ZhttpMessageH1TCPTest ZhttpMessageH1TLSTest \
-		ZhttpMessageH2Test ZhttpMessageH3Test \
-		ZhttpHPackTest ZhttpQPackTest \
-		ZhttpFallbackTest ZhttpQPackDynamicTest \
-		ZhttpAppTest ZhttpMultiRequestTest zhttpmatrix \
-		ZhttpdTest ZhttpDarkhttpdCompatTest Zhttp3InteropTest \
-		ZhttpLifecycleTest ZhttpTransportContractTest ZhttpH1EngineTest \
-		ZhttpH3EngineTest ZhttpH3PushTest \
-		ZhttpEngineLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
-		ZhttpDiscoveryTest ZhttpAdmissionTest ZhttpClientCancelTest \
-		ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpClientFallbackTest
-	./ZhttpBoundaryTest.sh
+	prove -j1 $(noinst_PROGRAMS)

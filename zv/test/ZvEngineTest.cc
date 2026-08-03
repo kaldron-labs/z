@@ -7,6 +7,9 @@
 // ZvEngine connectivity framework unit smoke test
 
 #include <zlib/ZvEngine.hh>
+#include <zlib/ZuTestUtil.hh>
+
+using namespace ZuTestUtil;
 
 // typically implemented by Ztel::Server
 class Mgr : public ZvEngineMgr {
@@ -171,8 +174,9 @@ void Engine::init(
   }
 }
 
-int main()
+static void engine()
 {
+  ZuTestScope(engine);
   ZiLog::init("ZvEngineTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
@@ -232,4 +236,13 @@ int main()
   app = nullptr;
 
   ZiLog::stop();
+  ZuCHECK(true, "connect, reconnect, and disconnect lifecycle");
+}
+
+int main(int argc, char **argv)
+{
+  parse(argc, argv);
+  ZuTestMain();
+  ZuTestCall(engine);
+  return 0;
 }

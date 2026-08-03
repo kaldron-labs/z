@@ -10,8 +10,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-DZDF_EXPORTS @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-FBS = zdf_blk_data.fbs zdf_blk_fixed.fbs zdf_blk_float.fbs \
-	zdf_series_fixed.fbs zdf_series_float.fbs
+FBS = ZdfBlkData.fbs ZdfBlkFixed.fbs ZdfBlkFloat.fbs \
+	ZdfSeriesFixed.fbs ZdfSeriesFloat.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs
 	flatc -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<
@@ -25,7 +25,7 @@ pkginclude_HEADERS = ZdfLib.hh \
 	ZdfTypes.hh ZdfCompress.hh ZdfSchema.hh ZdfBlk.hh \
 	ZdfStore.hh Zdf.hh ZdfSeries.hh ZdfStats.hh \
 	${FBS_H} \
-	stats_tree.hh
+	ZdfStatsTree.hh
 #fbsdir = $(datarootdir)/${PACKAGE}/fbs
 #dist_fbs_DATA = fbs/telemetry.fbs
 lib_LTLIBRARIES = libZdf.la

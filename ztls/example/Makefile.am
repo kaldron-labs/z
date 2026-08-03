@@ -12,6 +12,6 @@ LDADD = $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsClient ZtlsServer
-ZtlsClient_SOURCES = ZtlsClient.cc
-ZtlsServer_SOURCES = ZtlsServer.cc
+noinst_PROGRAMS = ztlsclient ztlsserver
+ztlsclient_SOURCES = ztlsclient.cc
+ztlsserver_SOURCES = ztlsserver.cc

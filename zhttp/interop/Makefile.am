@@ -8,10 +8,13 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/zquic/src -I$(top_srcdir)/zquic/test \
-	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zhttp/test @Z_CPPFLAGS@
+	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zhttp/test \
+	-I$(top_srcdir)/zhttp/util -I$(top_srcdir)/zhttp/itest \
+	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
+LDADD = $(top_builddir)/zhttp/util/libzhttputil.la \
+	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zi/src/libZi.la \
@@ -20,12 +23,16 @@ LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zhttpqir ZhttpQIRTest ZhttpQIRSmokeTest
-zhttpqir_SOURCES = zhttpqir.cc ZhttpQIR.cc ZhttpdRun.cc ../test/ZhttpdUtil.cc
-ZhttpQIRTest_SOURCES = ZhttpQIRTest.cc ZhttpQIR.cc ZhttpdRun.cc ../test/ZhttpdUtil.cc
-ZhttpQIRSmokeTest_SOURCES = ZhttpQIRSmokeTest.cc ZhttpQIR.cc ZhttpdRun.cc ../test/ZhttpdUtil.cc
-noinst_HEADERS = ZhttpQIR.hh
-dist_noinst_SCRIPTS = qir_endpoint.sh
+noinst_PROGRAMS = zhttpqir zhttpqirtest zhttpqirsmoketest \
+	zhttp3interoptest zhttpdarkhttpdcompattest zhttpfallbacktest
+zhttpqir_SOURCES = zhttpqir.cc zhttpqirimpl.cc
+zhttpqirtest_SOURCES = zhttpqirtest.cc zhttpqirimpl.cc
+zhttpqirsmoketest_SOURCES = zhttpqirsmoketest.cc
+zhttp3interoptest_SOURCES = zhttp3interoptest.cc
+zhttpdarkhttpdcompattest_SOURCES = zhttpdarkhttpdcompattest.cc
+zhttpfallbacktest_SOURCES = zhttpfallbacktest.cc
+noinst_HEADERS = zhttpqir.hh
+dist_noinst_SCRIPTS = qir_endpoint.sh zhttph2interoptest.sh
 EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh \
 	testdata/qir-results/fixture/metadata.env \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/client \
@@ -41,8 +48,13 @@ EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh \
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	LSAN_OPTIONS="$${LSAN_OPTIONS:+$$LSAN_OPTIONS:}suppressions=$(top_builddir)/.lsan-suppressions" \
-	prove -j1 ZhttpQIRTest ZhttpQIRSmokeTest
+	prove -j1 zhttpqirtest zhttpqirsmoketest zhttp3interoptest \
+		zhttpdarkhttpdcompattest zhttpfallbacktest
 	$(SHELL) "$(srcdir)/qir-script-test.sh" "$(top_srcdir)" "$(top_builddir)"
+	ZHTTP_MATRIX="$(top_builddir)/zhttp/itest/zhttpmatrix" \
+	ZHTTP_CLIENT="$(top_builddir)/zhttp/util/zhttp" \
+	ZHTTP_SERVER="$(top_builddir)/zhttp/util/zhttpd" \
+	$(SHELL) "$(srcdir)/zhttph2interoptest.sh"
 
 .PHONY: qir-stage
 qir-stage: zhttpqir

@@ -15,9 +15,9 @@ LDADD = $(top_builddir)/zgtk/src/libZGtk.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@GTK_LIBS@ @FBS_LIBS@ @PTLS_LIBS@ \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-#noinst_PROGRAMS = zgtkdemo
-bin_PROGRAMS = zgtkdemo
-if MINGW
-zgtkdemo_LDFLAGS = ${AM_LDFLAGS} -mwindows
-endif
-zgtkdemo_SOURCES = zgtkdemo.cc
+noinst_PROGRAMS = ZGtkValueTest
+ZGtkValueTest_SOURCES = ZGtkValueTest.cc
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)

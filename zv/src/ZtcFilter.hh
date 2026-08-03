@@ -22,7 +22,7 @@
 #include <zlib/ZtcLink.hh>
 #include <zlib/ZtcQueue.hh>
 
-#include <zlib/ztc_msg_fbs.h>
+#include <zlib/ZtcMsg_fbs.h>
 
 namespace Ztc {
 namespace Filter_ {

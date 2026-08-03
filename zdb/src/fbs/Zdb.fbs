@@ -1,0 +1,39 @@
+include "ZfbTypes.fbs";
+namespace Zdb_.fbs;
+table TableState {
+  table:string;
+  un:uint64;
+  shard:uint8;
+}
+table DBState {
+  sn:Zfb.UInt128;
+  table_states:[TableState];
+}
+table Heartbeat {
+  host:string;
+  state:uint32;
+  db_state:DBState;
+}
+table Record {
+  table:string;		// table ID
+  un:uint64;		// update number - secondary key
+  sn:Zfb.UInt128;	// database sequence number
+  vn:int64;		// record version number - -ve if deleted
+  shard:uint8;		// shard
+  data:[ubyte];		// nested row data - contains keys if row is deleted
+}
+table Commit {
+  table:string;
+  un:uint64;
+  shard:uint8;
+}
+union Body {
+  Heartbeat:Heartbeat,
+  Replication:Record,
+  Recovery:Record,
+  Commit:Commit
+}
+table Msg {
+  body:Body;
+}
+root_type Msg;

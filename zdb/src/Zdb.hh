@@ -1483,7 +1483,7 @@ struct HostCf {
 ZfStruct((HostCf, Cf),
   (((priority),	(Ctor<0>, (Range<0, 1<<30>))),	(Int32)),
   (((ip),	(Ctor<1>)),				(String)),
-  (((port),	(Ctor<2>, (Range<uint16_t(1), uint16_t(-1)>))),
+  (((port),	(Ctor<2>, (Range<1, 65534>))),
     (UInt16)),
   (((standalone), (Ctor<3>)),				(Bool)),
   (((up),	(Ctor<4>)),				(String)),

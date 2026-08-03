@@ -43,15 +43,16 @@ static int hpackStaticIndex_(ZuCSpan name, ZuCSpan value)
   if (i < 0) return -1;
   int index = -1;
   ZuSwitch::dispatch<HPackStatic_::Names::N>(
-    unsigned(i), [&index, &value](auto i) {
-      using Key = ZuType<i, HPackStatic_::Names>;
+    unsigned(i), [&index, &value](auto nameIndex) {
+      using Key = ZuType<nameIndex, HPackStatic_::Names>;
       using KeyEntries = HPackStatic_::Entries<Key>;
       using KeyValues = HPackStatic_::Values<Key>;
       static constexpr auto matcher = ZuMatcher<KeyValues>();
       int j = matcher.exact(value);
       if (j < 0) return;
-      ZuSwitch::dispatch<KeyEntries::N>(unsigned(j), [&index](auto j) {
-	using KV = ZuType<j, KeyEntries>;
+      ZuSwitch::dispatch<KeyEntries::N>(
+	unsigned(j), [&index, nameIndex](auto valueIndex) {
+	using KV = ZuType<valueIndex, KeyEntries>;
 	index = ZuTypeIndex<KV, HPackTbl>{};
       });
     });

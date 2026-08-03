@@ -6,7 +6,7 @@
 #include <libpq/pqformat.h>
 #include <utils/sortsupport.h>
 
-#include <zlib/zu_bitmap.h>
+#include <zlib/ZuBitmapC.h>
 
 #define ZBITMAP_TOASTABLE	// zbitmap is TOAST-enabled
 #define ZBITMAP_MAX_LEN	8192	// maximum #words in a bitmap

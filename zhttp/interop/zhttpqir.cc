@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include "ZhttpQIR.hh"
+#include "zhttpqir.hh"
 
 #include <stdio.h>
 

@@ -9,8 +9,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-FBS = ztc_db.fbs ztc_types.fbs ztc_telemetry.fbs \
-	ztc_request.fbs ztc_msg.fbs
+FBS = ZtcDB.fbs ZtcTypes.fbs ZtcTelemetry.fbs \
+	ZtcRequest.fbs ZtcMsg.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs
 	flatc -b --schema --bfbs-gen-embed --gen-mutable -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<

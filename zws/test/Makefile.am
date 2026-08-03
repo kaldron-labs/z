@@ -21,21 +21,19 @@ LDADD = $(top_builddir)/zws/src/libZws.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZwsProtocolTest ZwsH1EngineTest ZwsH2EngineTest ZwsH3EngineTest \
-	ZwsAutobahnClient
-EXTRA_PROGRAMS = ZwsBench
-EXTRA_DIST = ZwsSourceBoundaryTest.sh ZwsBinanceTest.sh \
-	autobahn/fuzzingclient.json autobahn/fuzzingserver.json \
-	autobahn/run-server.sh autobahn/run-client.sh autobahn/README.md
+	ZwsSourceBoundaryTest
+dist_noinst_SCRIPTS = ZwsSourceBoundaryFixture.sh
 ZwsProtocolTest_SOURCES = ZwsProtocolTest.cc
 ZwsH1EngineTest_SOURCES = ZwsH1EngineTest.cc
 ZwsH2EngineTest_SOURCES = ZwsH1EngineTest.cc
 ZwsH2EngineTest_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_H2_TEST
 ZwsH3EngineTest_SOURCES = ZwsH1EngineTest.cc
 ZwsH3EngineTest_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_H3_TEST
-ZwsAutobahnClient_SOURCES = ZwsAutobahnClient.cc
-ZwsBench_SOURCES = ZwsBench.cc
+ZwsSourceBoundaryTest_SOURCES = ZwsSourceBoundaryTest.cc
+ZwsSourceBoundaryTest_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DZWS_TEST_SRCDIR='"$(abs_srcdir)"' \
+	-DZWS_LIB_SRCDIR='"$(abs_top_srcdir)/zws/src"'
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
-	prove -j1 $(srcdir)/ZwsSourceBoundaryTest.sh \
-		ZwsProtocolTest ZwsH1EngineTest ZwsH2EngineTest ZwsH3EngineTest
+	prove -j1 $(noinst_PROGRAMS)

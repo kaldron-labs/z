@@ -1,0 +1,18 @@
+include "ZtcTelemetry.fbs";
+include "ZtcRequest.fbs";
+
+namespace Ztc.fbs;
+
+union Body {
+  Request,
+  Ack,
+  Telemetry,
+  SnapshotComplete,
+  Error
+}
+
+table Msg {
+  body:Body;
+}
+
+root_type Msg;

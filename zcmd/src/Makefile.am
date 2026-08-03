@@ -13,13 +13,13 @@ AM_CPPFLAGS = \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 FBS = \
-	ztel_request.fbs \
-	ztel_reqack.fbs \
-	ztel_telemetry.fbs \
-	ztel_thread_priority.fbs \
-	ztel_engine_state.fbs \
-	ztel_link_state.fbs \
-	ztel_queue_type.fbs
+	ZtelRequest.fbs \
+	ZtelReqAck.fbs \
+	ZtelTelemetry.fbs \
+	ZtelThreadPriority.fbs \
+	ZtelEngineState.fbs \
+	ZtelLinkState.fbs \
+	ZtelQueueType.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs
 	flatc -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs -I $(top_srcdir)/zv/src/fbs $<
@@ -31,8 +31,9 @@ BUILT_SOURCES = ${FBS_H}
 CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZcmdLib.hh \
 	ZcmdDispatcher.hh ZcmdHost.hh \
-	Ztel.hh ZtelClient.hh ZtelServer.hh \
-	${FBS_H}
+	Ztel.hh ZtelClient.hh ZtelServer.hh
+nodist_pkginclude_HEADERS = ${FBS_H}
+dist_noinst_DATA = $(addprefix fbs/,${FBS})
 lib_LTLIBRARIES = libZcmd.la
 libZcmd_la_CPPFLAGS = $(AM_CPPFLAGS) -DZCMD_EXPORTS
 libZcmd_la_LDFLAGS = @Z_SO_LDFLAGS@
