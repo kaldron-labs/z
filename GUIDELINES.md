@@ -687,6 +687,9 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - Programs built in `src` have succinct lowercase command-line names. Their
   program-specific source and resource basenames are also lowercase, e.g.
   `zcmd`, `zdash`, `ztotp`, and `zwsd`.
+- C compatibility-layer headers and implementations intended for direct use by
+  C applications retain their snake-case C API names, e.g. `zu_bitmap.h` and
+  `zu_bitmap.cc`.
 - Repository-owned code/data basenames in `util`, `itest`, `example`, `bench`,
   and `interop` are lowercase.
 - Flabuffers schema files are snake-case.
