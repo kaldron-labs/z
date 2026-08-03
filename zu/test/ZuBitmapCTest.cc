@@ -8,8 +8,8 @@
 #include <cstring>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZuLibC.h>
-#include <zlib/ZuBitmapC.h>
+#include <zlib/zu_lib.h>
+#include <zlib/zu_bitmap.h>
 
 using namespace ZuTestUtil;
 

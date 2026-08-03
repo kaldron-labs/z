@@ -5,7 +5,7 @@
 #include <utils/sortsupport.h>
 #include <port/pg_bswap.h>
 
-#include <zlib/ZuTimeC.h>
+#include <zlib/zu_time.h>
 
 inline static bool isspace__(char c) {
   return ((c >= '\t' && c <= '\r') || c == ' ');

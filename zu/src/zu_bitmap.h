@@ -10,7 +10,7 @@
 #define zu_bitmap_H
 
 #ifndef zu_lib_H
-#include <zlib/ZuLibC.h>
+#include <zlib/zu_lib.h>
 #endif
 
 #ifdef __cplusplus
