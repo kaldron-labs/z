@@ -638,7 +638,7 @@ public:
   }
   bool localExtendedConnect() const { return m_config.extendedConnect(); }
 
-  Stream<Logical> *stream(uint32_t id) const {
+  Stream<Logical> *h2Stream(uint32_t id) const {
     return m_streams ? m_streams->findPtr(id) : nullptr;
   }
   Stream<Logical> *openLocalStream(ZmRef<Logical> logical) {
@@ -729,7 +729,7 @@ public:
     return m_streams ? m_streams->count_() : 0;
   }
   bool streamClosed(uint32_t id) const {
-    if (!id || stream(id)) return false;
+    if (!id || h2Stream(id)) return false;
     if (recentStreamClosed(id)) return true;
     if (!(id & 1U)) return false;
     return m_server ? id <= m_lastPeerStream : id < m_nextLocalStream;
@@ -746,14 +746,14 @@ public:
     return m_recentStreamSet && m_recentStreamSet->find(id);
   }
   void logicalTxErrorFn(uint32_t id, ZiTxErrorFn fn) {
-    if (auto stream_ = stream(id)) stream_->txErrorFn = ZuMv(fn);
+    if (auto stream_ = h2Stream(id)) stream_->txErrorFn = ZuMv(fn);
   }
 
   unsigned dataMaxSize(uint32_t id) {
     if (impl_()->app()->txInvoked()) return dataMaxSizeTx_(id);
     auto tx = impl_()->txStream();
     uint32_t length = peerFrameSize();
-    if (auto entry_ = stream(id)) {
+    if (auto entry_ = h2Stream(id)) {
       uint32_t connection =
 	m_txWindowHint > 0 ? uint32_t(m_txWindowHint) : 1;
       uint32_t stream = entry_->txWindowHint > 0 ?
@@ -770,7 +770,7 @@ public:
       return sendDataTx_(id, ZuMv(buf));
     }
     if (m_stopping || !buf || buf->length < 9) return false;
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return false;
     uint32_t length = buf->length - 9;
     if (length > peerFrameSize()) {
@@ -792,7 +792,7 @@ public:
       return;
     }
     if (m_stopping || !frames) return;
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return;
     unsigned admitted = 0;
     while (admitted < frames.length() && m_frameAdmission.push())
@@ -816,7 +816,7 @@ public:
       return;
     }
     if (m_stopping) return;
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return;
     entry_->localEndQueued = true;
     sendFrame_(id, 0, true, {});
@@ -827,7 +827,7 @@ public:
       return;
     }
     if (m_stopping) return;
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return;
     entry_->localEndQueued = true;
     auto tx = impl_()->txStream();
@@ -966,7 +966,7 @@ public:
       return;
     }
     if (m_decoder.process(span, [this, id](Field field) {
-	  auto entry_ = stream(id);
+	  auto entry_ = h2Stream(id);
 	  if (!entry_) return;
 	  if (!entry_->begin) {
 	    entry_->begin = true;
@@ -974,7 +974,7 @@ public:
 	      .type = EventType::Begin,
 	      .trailers = entry_->finalHeaders
 	    })) return;
-	    entry_ = stream(id);
+	    entry_ = h2Stream(id);
 	    if (!entry_) return;
 	  }
 	  if (!m_server && field.name == ":status" && field.value &&
@@ -1009,14 +1009,14 @@ public:
 	.type = EventType::Begin,
 	.trailers = entry_->finalHeaders
       })) return;
-      entry_ = stream(id);
+      entry_ = h2Stream(id);
       if (!entry_) return;
     }
     if (!dispatch_(id, Event{
       .type = EventType::EndHeaders,
       .endStream = endStream
     })) return;
-    entry_ = stream(id);
+    entry_ = h2Stream(id);
     if (!entry_) return;
     entry_->begin = false;
     if (m_server) entry_->finalHeaders = true;
@@ -1026,7 +1026,7 @@ public:
     }
   }
   bool h2DataBegin(uint32_t id, uint32_t length) {
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (length > m_rxWindow) return false;
     m_rxWindow -= length;
     if (!entry_) {
@@ -1047,7 +1047,7 @@ public:
   }
   void h2Data(uint32_t, ZuBSpan) { }
   void h2DataLength(uint32_t id, uint32_t length, bool endStream) {
-    if (!stream(id)) return;
+    if (!h2Stream(id)) return;
     (void)dispatch_(id, Event{
       .type = EventType::DataLength,
       .frameLength = length,
@@ -1068,12 +1068,12 @@ public:
     };
   }
   void h2Reset(uint32_t id, Error::T error) {
-    if (stream(id)) {
+    if (h2Stream(id)) {
       dispatch_(id, Event{
 	.type = EventType::Reset,
 	.error = error
       });
-      if (stream(id)) impl_()->h2ResetLogical(id, error);
+      if (h2Stream(id)) impl_()->h2ResetLogical(id, error);
     } else if (!impl_()->h2Closed(id))
       h2Error(Error::ProtocolError);
   }
@@ -1085,7 +1085,7 @@ public:
       }
       m_txWindowHint += value;
     } else {
-      auto entry_ = stream(id);
+      auto entry_ = h2Stream(id);
       if (!entry_) {
 	if (!impl_()->h2Closed(id))
 	  h2Error(Error::ProtocolError);
@@ -1183,7 +1183,7 @@ private:
     m_recentStreamSet->add(id, true);
   }
   Stream<Logical> *begin_(uint32_t id) {
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_ && m_discardStream == id) return nullptr;
     if (!entry_) entry_ = impl_()->h2OpenPeer(id);
     if (!entry_) {
@@ -1206,11 +1206,11 @@ private:
     return entry_;
   }
   bool dispatch_(uint32_t id, Event event) {
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_) return false;
     auto logical = entry_->logical;
     EventRx rx{event};
-    if (logical->process_(rx) < 0 && stream(id))
+    if (logical->process_(rx) < 0 && h2Stream(id))
       impl_()->h2Cancel(id);
     retireDeferred_(id, event.consumed);
     if (event.type == EventType::Data && !event.transferred) {
@@ -1218,7 +1218,7 @@ private:
       retireDeferred_(
 	id, event.frameLength - event.headLen - event.tailLen);
     }
-    return stream(id);
+    return h2Stream(id);
   }
 
   int data_(Ztls::RxStream &rx) {
@@ -1229,7 +1229,7 @@ private:
     RxDataFrame data = m_rxData;
     m_rxData = {};
     uint32_t frameLength = FrameHeaderSize + data.length;
-    auto entry_ = stream(data.id);
+    auto entry_ = h2Stream(data.id);
     if (!entry_) {
       rx.advance(frameLength);
       retireConnection_(data.length);
@@ -1258,7 +1258,7 @@ private:
       .tailLen = data.pad,
       .endStream = data.endStream
     })) return int(frameLength);
-    entry_ = stream(data.id);
+    entry_ = h2Stream(data.id);
     if (!entry_ || !data.endStream) return int(frameLength);
     entry_->remoteEnd = true;
     impl_()->h2RemoteEnd(data.id);
@@ -1279,7 +1279,7 @@ private:
   void retire_(uint32_t id, uint64_t length) {
     if (!length) return;
     retireConnection_(length);
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_ || entry_->flowError) return;
     ZmAssert(entry_->rxWindow <= int64_t(MaxWindow) - int64_t(length));
     entry_->rxWindow += int64_t(length);
@@ -1287,7 +1287,7 @@ private:
   }
   void retireDeferred_(uint32_t id, uint64_t length) {
     if (!length) return;
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (!entry_) {
       retireConnection_(length);
       return;
@@ -1621,7 +1621,7 @@ private:
   }
   bool streamTxError_(uint32_t id, ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Zhttp", message);
-    auto entry_ = stream(id);
+    auto entry_ = h2Stream(id);
     if (entry_ && entry_->txErrorFn && !entry_->txErrorFn(e))
       impl_()->disconnectNative();
     return false;
@@ -2003,21 +2003,21 @@ public:
     this->app()->rxInvoke([
       link = this, logical = ZmMkRef(logical), id
     ]() mutable {
-      auto entry = link->stream(id);
+      auto entry = link->h2Stream(id);
       if (!entry || entry->logical.ptr() != logical.ptr()) return;
       link->rst_(id, Error::Cancel);
       link->notify_(id, false);
     });
   }
   void h2LocalEnd(uint32_t id) {
-    if (auto entry = Wire_::stream(id)) {
+    if (auto entry = Wire_::h2Stream(id)) {
       entry->localEnd = true;
       if (entry->remoteEnd) closeLater_(id, false);
     }
   }
   void h2RemoteEnd(uint32_t id) {
     Wire_::peerProcessed(id);
-    if (auto entry = Wire_::stream(id)) {
+    if (auto entry = Wire_::h2Stream(id)) {
       entry->remoteEnd = true;
       if (entry->localEnd) closeLater_(id, true);
     }
@@ -2111,7 +2111,7 @@ private:
     }
   }
   void closeLater_(uint32_t id, bool peer) {
-    auto entry = Wire_::stream(id);
+    auto entry = Wire_::h2Stream(id);
     if (!entry || entry->closing) return;
     entry->closing = true;
     this->app()->rxRun([
@@ -2129,7 +2129,7 @@ private:
     tx.flush();
   }
   void notify_(uint32_t id, bool peer) {
-    auto entry = Wire_::stream(id);
+    auto entry = Wire_::h2Stream(id);
     if (!entry || entry->notified) return;
     entry->notified = true;
     auto logical = entry->logical;
@@ -2345,14 +2345,14 @@ public:
     return Error::ProtocolError;
   }
   void h2LocalEnd(uint32_t id) {
-    if (auto entry = Wire_::stream(id)) {
+    if (auto entry = Wire_::h2Stream(id)) {
       entry->localEnd = true;
       if (entry->remoteEnd) closeLater_(id, false);
     }
   }
   void h2RemoteEnd(uint32_t id) {
     Wire_::peerProcessed(id);
-    if (auto entry = Wire_::stream(id)) {
+    if (auto entry = Wire_::h2Stream(id)) {
       entry->remoteEnd = true;
       if (entry->localEnd) closeLater_(id, true);
     }
@@ -2379,7 +2379,7 @@ public:
 
 private:
   void closeLater_(uint32_t id, bool peer) {
-    auto entry = Wire_::stream(id);
+    auto entry = Wire_::h2Stream(id);
     if (!entry || entry->closing) return;
     entry->closing = true;
     this->app()->rxRun([
@@ -2397,7 +2397,7 @@ private:
     tx.flush();
   }
   void notify_(uint32_t id, bool peer) {
-    auto entry = Wire_::stream(id);
+    auto entry = Wire_::h2Stream(id);
     if (!entry || entry->notified) return;
     entry->notified = true;
     auto logical = entry->logical;
@@ -3023,21 +3023,21 @@ public:
     this->app()->rxInvoke([
       link = this, logical = ZmMkRef(logical), id
     ]() mutable {
-      auto entry = link->stream(id);
+      auto entry = link->h2Stream(id);
       if (!entry || entry->logical.ptr() != logical.ptr()) return;
       link->rst_(id, H2::Error::Cancel);
       link->notify_(id, false);
     });
   }
   void h2LocalEnd(uint32_t id) {
-    if (auto entry = Wire::stream(id)) {
+    if (auto entry = Wire::h2Stream(id)) {
       entry->localEnd = true;
       if (entry->remoteEnd) closeLater_(id, false);
     }
   }
   void h2RemoteEnd(uint32_t id) {
     Wire::peerProcessed(id);
-    if (auto entry = Wire::stream(id)) {
+    if (auto entry = Wire::h2Stream(id)) {
       entry->remoteEnd = true;
       if (entry->localEnd) closeLater_(id, true);
     }
@@ -3210,7 +3210,7 @@ private:
     }
   }
   void closeLater_(uint32_t id, bool peer) {
-    auto entry = Wire::stream(id);
+    auto entry = Wire::h2Stream(id);
     if (!entry || entry->closing) return;
     entry->closing = true;
     this->app()->rxRun([
@@ -3228,7 +3228,7 @@ private:
     tx.flush();
   }
   void notify_(uint32_t id, bool peer) {
-    auto entry = Wire::stream(id);
+    auto entry = Wire::h2Stream(id);
     if (!entry || entry->notified) return;
     entry->notified = true;
     auto logical = entry->logical;
@@ -3550,14 +3550,14 @@ public:
     return H2::Error::ProtocolError;
   }
   void h2LocalEnd(uint32_t id) {
-    if (auto entry = Wire::stream(id)) {
+    if (auto entry = Wire::h2Stream(id)) {
       entry->localEnd = true;
       if (entry->remoteEnd) closeLater_(id, false);
     }
   }
   void h2RemoteEnd(uint32_t id) {
     Wire::peerProcessed(id);
-    if (auto entry = Wire::stream(id)) {
+    if (auto entry = Wire::h2Stream(id)) {
       entry->remoteEnd = true;
       if (entry->localEnd) closeLater_(id, true);
     }
@@ -3586,7 +3586,7 @@ public:
 
 private:
   void closeLater_(uint32_t id, bool peer) {
-    auto entry = Wire::stream(id);
+    auto entry = Wire::h2Stream(id);
     if (!entry || entry->closing) return;
     entry->closing = true;
     this->app()->rxRun([
@@ -3604,7 +3604,7 @@ private:
     tx.flush();
   }
   void notify_(uint32_t id, bool peer) {
-    auto entry = Wire::stream(id);
+    auto entry = Wire::h2Stream(id);
     if (!entry || entry->notified) return;
     entry->notified = true;
     auto logical = entry->logical;
