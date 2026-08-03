@@ -28,10 +28,9 @@ struct App : public Ztls::Client<App> {
     using Base = Ztls::CliLink<App, Link>;
 
     Link(App *app) : Base{app} {
-      txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
-	ZiLOG(Error, "ztlsclient", ([transient, e](auto &s) {
-	  s << "transmit error" <<
-	    (transient ? " (transient): " : ": ") << e;
+      txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+	ZiLOG(Error, "ztlsclient", ([e](auto &s) {
+	  s << "transmit error: " << e;
 	}));
 	return false;
       }});

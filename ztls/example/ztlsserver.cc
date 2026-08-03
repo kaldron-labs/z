@@ -36,10 +36,9 @@ const char *Response2 = "\r\n"
 struct App : public Ztls::Server<App> {
   struct Link : public Ztls::SrvLink<App, Link> {
     Link(App *app) : Ztls::SrvLink<App, Link>(app) {
-      txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
-	ZiLOG(Error, "ztlsserver", ([transient, e](auto &s) {
-	  s << "transmit error" <<
-	    (transient ? " (transient): " : ": ") << e;
+      txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+	ZiLOG(Error, "ztlsserver", ([e](auto &s) {
+	  s << "transmit error: " << e;
 	}));
 	return false;
       }});

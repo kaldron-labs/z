@@ -482,9 +482,9 @@ int Zhttpd::run(int argc, const char *const *argv)
   }
   Workload workload{&state};
   Service service;
-  service.txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
-    ZiLOG(Error, "zhttpd", ([transient, e](auto &s) {
-      s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+  service.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+    ZiLOG(Error, "zhttpd", ([e](auto &s) {
+      s << "transmit error: " << e;
     }));
     return false;
   }});

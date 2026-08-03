@@ -142,8 +142,8 @@ public:
     }
     void start() {
       if (!m_request) return;
-      this->txErrorFn(ZiTxErrorFn{[this](bool transient, ZeException &e) {
-	return owner()->poolTxError(*this, m_request, transient, e);
+      this->txErrorFn(ZiTxErrorFn{[this](ZeException &e) {
+	return owner()->poolTxError(*this, m_request, e);
       }});
       owner()->poolConnect(*this, *m_request);
     }

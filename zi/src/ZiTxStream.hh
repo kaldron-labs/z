@@ -39,7 +39,7 @@
 namespace Zi {
 
 using TxErrorFn =
-  ZmFn<bool(bool, ZeException &), ZmFnHeapID<"Zi.TxErrorFn">>;
+  ZmFn<bool(ZeException &), ZmFnHeapID<"Zi.TxErrorFn">>;
 
 struct Flush { };
 inline Flush flush() { return {}; }

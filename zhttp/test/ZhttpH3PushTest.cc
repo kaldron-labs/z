@@ -343,13 +343,13 @@ static void testTxErrorPropagation()
   cxn.enc = &enc;
   cxn.dec = &dec;
   unsigned calls = 0;
-  cxn.txErrorFn(ZiTxErrorFn{[&calls](bool transient, ZeException &) {
-    if (transient) ++calls;
+  cxn.txErrorFn(ZiTxErrorFn{[&calls](ZeException &) {
+    ++calls;
     return false;
   }});
   auto e = ZeEXCEPT(Error, "Zhttp", "test transmit error");
   ZuCHECK(control.fn && enc.fn && dec.fn &&
-      !control.fn(true, e) && !enc.fn(true, e) && !dec.fn(true, e) &&
+      !control.fn(e) && !enc.fn(e) && !dec.fn(e) &&
       calls == 3,
     "H3 Tx error handler did not propagate to connection streams");
 }

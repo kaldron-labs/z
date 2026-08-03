@@ -46,9 +46,9 @@ struct App::Link :
   using Base = Ztcp::SrvLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
 
   Link(App *app) : Base{app} {
-    txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
-      ZiLOG(Error, "ztcpserver", ([transient, e](auto &s) {
-	s << "transmit error" << (transient ? " (transient): " : ": ") << e;
+    txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+      ZiLOG(Error, "ztcpserver", ([e](auto &s) {
+	s << "transmit error: " << e;
       }));
       return false;
     }});

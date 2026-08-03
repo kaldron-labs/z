@@ -347,9 +347,9 @@ public:
       link.connect(url.host, url.port);
   }
   template <typename Link>
-  bool poolTxError(Link &, Attempt *attempt, bool transient, ZeException &e) {
+  bool poolTxError(Link &, Attempt *attempt, ZeException &e) {
     if (!m_txErrorFn) return true;
-    return m_txErrorFn(transient, e);
+    return m_txErrorFn(e);
   }
   template <typename Link>
   void poolSend(Link &, Attempt &, int) { }

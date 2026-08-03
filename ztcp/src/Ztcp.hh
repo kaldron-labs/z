@@ -385,7 +385,7 @@ public:
 
   bool send(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_()))
-      return tcpTxError_(false,
+      return tcpTxError_(
 	"TCP connection is closed for transmission");
     buf->owner = impl();
     app()->txInvoke([buf = ZuMv(buf)]() mutable {
@@ -401,7 +401,7 @@ protected:
       "TCP send_ outside Tx thread", return false);
     if (ZuUnlikely(!buf || !buf->length ||
 	m_disconnecting.load_() || !m_cxn))
-      return tcpTxError_(false,
+      return tcpTxError_(
 	"TCP connection is closed for transmission");
     buf->owner = impl();
     auto length = buf->length;
@@ -414,7 +414,7 @@ protected:
 public:
   void sent(ZmRef<ZiTxBuf>, bool ok) {
     if (ZuUnlikely(!ok))
-      tcpTxError_(false, "TCP transmit failed");
+      tcpTxError_("TCP transmit failed");
   }
 
 public:
@@ -445,9 +445,9 @@ protected:
   void up_() { }
 
 private:
-  bool tcpTxError_(bool transient, ZuCSpan message) {
+  bool tcpTxError_(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Ztcp", message);
-    if (m_txErrorFn && !m_txErrorFn(transient, e)) disconnect();
+    if (m_txErrorFn && !m_txErrorFn(e)) disconnect();
     return false;
   }
 

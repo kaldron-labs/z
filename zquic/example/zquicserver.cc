@@ -91,10 +91,9 @@ struct AppLink :
       app()->done();
       return;
     }
-    stream->txErrorFn(ZiTxErrorFn{[](bool transient, ZeException &e) {
-      ZiLOG(Error, "zquicserver", ([transient, e](auto &out) {
-	out << "transmit error" <<
-	  (transient ? " (transient): " : ": ") << e;
+    stream->txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+      ZiLOG(Error, "zquicserver", ([e](auto &out) {
+	out << "transmit error: " << e;
       }));
       return false;
     }});
