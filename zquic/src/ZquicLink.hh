@@ -88,6 +88,7 @@ public:
   static constexpr unsigned StreamClassCount = 4;
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
+  unsigned txQueueMax() const { return Stream::DefltTxQueueMax; }
 
   Link(App *app, bool isServer = false) :
     Link{app, isServer, ZuID{} << "quic:" <<
@@ -8812,6 +8813,7 @@ private:
   StreamRef newStream_(int64_t id) {
     auto node = new typename Streams::Node{impl(), id};
     StreamRef stream{node};
+    stream->txQueueMax(impl()->txQueueMax());
     stream->txCredit(initialStreamTxCredit_(uint64_t(id)));
     stream->rxCredit(initialStreamRxCredit_(uint64_t(id)));
     m_streams->addNode(node);

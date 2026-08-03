@@ -107,9 +107,10 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
     return buf;
   }
 
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-    if (!buf) return;
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    if (!buf) return false;
     for (unsigned i = 0; i < buf->length; ++i) bytes.push(buf->data()[i]);
+    return true;
   }
 
   Zhttp::H3::HdrBytes	bytes;

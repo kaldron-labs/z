@@ -185,11 +185,12 @@ public:
     auto tx = m_native->txStream();
     return tx.allocBuf_(headRoom);
   }
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-    if (m_frames)
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    if (m_frames) {
       m_frames->push(ZuMv(buf));
-    else
-      m_native->sendFrame(m_streamID, ZuMv(buf));
+      return true;
+    }
+    return m_native->sendFrame(m_streamID, ZuMv(buf));
   }
 
 private:
@@ -390,11 +391,12 @@ public:
     auto tx = m_native.txStream();
     return tx.allocBuf_(headRoom);
   }
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-    if (m_deferred)
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    if (m_deferred) {
       m_data.push(ZuMv(buf));
-    else
-      m_native.sendData(m_streamID, ZuMv(buf));
+      return true;
+    }
+    return m_native.sendData(m_streamID, ZuMv(buf));
   }
   void defer(uint64_t max = uint64_t(-1)) {
     m_frames.length(0);
@@ -536,6 +538,7 @@ struct LogicalEntry {
     logical{ZuMv(logical_)}, id{id_} { }
 
   ZmRef<Logical> logical;
+  ZiTxErrorFn	txErrorFn;
   uint64_t	deferred = 0;
   int64_t	rxWindow = DefltWindow;
   int64_t	txWindowHint = DefltWindow;
@@ -704,6 +707,9 @@ public:
     while (auto entry_ = i()) l(*entry_);
   }
   unsigned count() const { return m_entries ? m_entries->count_() : 0; }
+  void logicalTxErrorFn(uint32_t id, ZiTxErrorFn fn) {
+    if (auto entry_ = entry(id)) entry_->txErrorFn = ZuMv(fn);
+  }
 
   unsigned dataMaxSize(uint32_t id) {
     if (impl_()->app()->txInvoked()) return dataMaxSizeTx_(id);
@@ -721,28 +727,25 @@ public:
     unsigned maxSize = overhead + length;
     return maxSize < tx.maxSize() ? maxSize : tx.maxSize();
   }
-  void sendData(uint32_t id, ZmRef<ZiIOBuf> buf) {
+  bool sendData(uint32_t id, ZmRef<ZiIOBuf> buf) {
     if (impl_()->app()->txInvoked()) {
-      sendDataTx_(id, ZuMv(buf));
-      return;
+      return sendDataTx_(id, ZuMv(buf));
     }
-    if (m_stopping || !buf || buf->length < 9) return;
+    if (m_stopping || !buf || buf->length < 9) return false;
     auto entry_ = entry(id);
-    if (!entry_ || entry_->localEndQueued) return;
+    if (!entry_ || entry_->localEndQueued) return false;
     uint32_t length = buf->length - 9;
     if (length > peerFrameSize()) {
-      impl_()->h2Cancel(id);
-      return;
+      return streamTxError_(id, false, "H2 DATA frame exceeds peer maximum");
     }
-    sendFrame_(id, length, false, ZuMv(buf));
+    return sendFrame_(id, length, false, ZuMv(buf));
   }
-  void sendFrame(uint32_t id, ZmRef<ZiIOBuf> buf) {
+  bool sendFrame(uint32_t id, ZmRef<ZiIOBuf> buf) {
     if (impl_()->app()->txInvoked()) {
-      sendFrameDirectTx_(id, 0, false, ZuMv(buf));
-      return;
+      return sendFrameDirectTx_(id, 0, false, ZuMv(buf));
     }
-    if (m_stopping || !buf || !buf->length) return;
-    sendFrame_(id, 0, false, ZuMv(buf));
+    if (m_stopping || !buf || !buf->length) return false;
+    return sendFrame_(id, 0, false, ZuMv(buf));
   }
   void sendHeaders(
     uint32_t id, HeaderFrames frames, bool endStream) {
@@ -758,7 +761,7 @@ public:
       ++admitted;
     if (admitted != frames.length()) {
       if (admitted) m_frameAdmission.pop(admitted);
-      impl_()->h2Cancel(id);
+      streamTxError_(id, true, "H2 transmit queue limit exceeded");
       return;
     }
     if (endStream) entry_->localEndQueued = true;
@@ -1293,30 +1296,30 @@ private:
     unsigned maxSize = overhead + length;
     return maxSize < tx.maxSize() ? maxSize : tx.maxSize();
   }
-  void sendDataTx_(uint32_t id, ZmRef<ZiIOBuf> buf) {
+  bool sendDataTx_(uint32_t id, ZmRef<ZiIOBuf> buf) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
-      "H2 DATA queue outside Tx thread", return);
-    if (!buf || buf->length < 9) return;
+      "H2 DATA queue outside Tx thread", return false);
+    if (!buf || buf->length < 9) return false;
     uint32_t length = buf->length - 9;
     if (length > m_txFrameSize) {
       txError_(id);
-      return;
+      return false;
     }
-    sendFrameDirectTx_(id, length, false, ZuMv(buf));
+    return sendFrameDirectTx_(id, length, false, ZuMv(buf));
   }
-  void sendFrameDirectTx_(
+  bool sendFrameDirectTx_(
     uint32_t id, uint32_t length, bool endStream,
     ZmRef<ZiIOBuf> buf) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
-      "H2 direct frame queue outside Tx thread", return);
+      "H2 direct frame queue outside Tx thread", return false);
     auto entry_ = txWindow_(id);
-    if (!entry_ || entry_->localEndQueued) return;
+    if (!entry_ || entry_->localEndQueued) return false;
     if (!m_frameAdmission.push()) {
-      txError_(id);
-      return;
+      return streamTxError_(id, true, "H2 transmit queue limit exceeded");
     }
     if (endStream) entry_->localEndQueued = true;
     sendFrameTx_(id, length, endStream, ZuMv(buf));
+    return true;
   }
   void sendHeadersDirectTx_(
     uint32_t id, HeaderFrames frames, bool endStream) {
@@ -1330,7 +1333,7 @@ private:
       ++admitted;
     if (admitted != frames.length()) {
       if (admitted) m_frameAdmission.pop(admitted);
-      txError_(id);
+      streamTxError_(id, true, "H2 transmit queue limit exceeded");
       return;
     }
     if (endStream) entry_->localEndQueued = true;
@@ -1358,12 +1361,11 @@ private:
     header[8] = uint8_t(id);
     sendFrameDirectTx_(id, 0, true, ZuMv(buf));
   }
-  void sendFrame_(
+  bool sendFrame_(
     uint32_t id, uint32_t length, bool endStream,
     ZmRef<ZiIOBuf> buf) {
     if (!m_frameAdmission.push()) {
-      impl_()->h2Cancel(id);
-      return;
+      return streamTxError_(id, true, "H2 transmit queue limit exceeded");
     }
     auto session = impl_();
     impl_()->app()->txRun([
@@ -1371,6 +1373,7 @@ private:
     ]() mutable {
       session->sendFrameTx_(id, length, endStream, ZuMv(buf));
     });
+    return true;
   }
   void sendFrameTx_(
     uint32_t id, uint32_t length, bool endStream,
@@ -1553,6 +1556,14 @@ private:
 	session->h2ResetLogical(id, Error::FlowControlError);
       }
     });
+  }
+  bool streamTxError_(uint32_t id, bool transient, ZuCSpan message) {
+    auto e = ZeEXCEPT(Error, "Zhttp", message);
+    auto entry_ = entry(id);
+    if (entry_ && entry_->txErrorFn &&
+	!entry_->txErrorFn(transient, e))
+      impl_()->disconnectNative();
+    return false;
   }
 
 protected:
@@ -1903,6 +1914,7 @@ public:
   int process(Ztls::RxStream &rx) { return Wire_::process(rx); }
   auto txStream() { return Base::txStream(); }
   auto directTxStream() { return Base::txStream_(); }
+  void disconnectNative() { Base::disconnect(); }
 
   void openNow_(ZmRef<Logical> logical) {
     auto stream = m_session.openLocal();
@@ -2254,6 +2266,7 @@ public:
   int process(Ztls::RxStream &rx) { return Wire_::process(rx); }
   auto txStream() { return Base::txStream(); }
   auto directTxStream() { return Base::txStream_(); }
+  void disconnectNative() { Base::disconnect(); }
   auto logicalTx(uint32_t id) {
     return HeaderBlock<ServerSession>{
       *this, Wire_::encoder(), id, Wire_::peerFrameSize()};
@@ -2415,6 +2428,11 @@ public:
     connect(endpoint.target, endpoint.port);
   }
   auto txStream() { return m_session->logicalTx(m_streamID); }
+  void txErrorFn(ZiTxErrorFn fn) {
+    m_txErrorFn = ZuMv(fn);
+    if (m_session && m_streamID)
+      m_session->logicalTxErrorFn(m_streamID, m_txErrorFn);
+  }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
@@ -2454,13 +2472,18 @@ public:
   template <typename Rx>
   int process_(Rx &rx) { return m_app->process(*impl(), rx); }
   void session(Native *session) { m_session = session; }
-  void stream(uint32_t id) { m_streamID = id; }
+  void stream(uint32_t id) {
+    m_streamID = id;
+    if (m_session && m_streamID)
+      m_session->logicalTxErrorFn(m_streamID, m_txErrorFn);
+  }
   template <typename State> void responseHeadersParsed(State *) { }
   template <typename State> void responseBodyBytes(State *) { }
 
 private:
   App		*m_app = nullptr;
   Native	*m_session = nullptr;
+  ZiTxErrorFn	m_txErrorFn;
   uint32_t	m_streamID = 0;
   bool		m_connected = false;
   bool		m_failed = false;
@@ -2516,6 +2539,10 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_native->logicalTx(m_streamID); }
+  void txErrorFn(ZiTxErrorFn fn) {
+    if (m_native)
+      m_native->logicalTxErrorFn(m_streamID, ZuMv(fn));
+  }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
@@ -2582,6 +2609,9 @@ public:
   App *app() const { return m_app; }
   auto impl() { return static_cast<Impl *>(this); }
   auto txStream() { return m_native->txStream(); }
+  void txErrorFn(ZiTxErrorFn fn) {
+    if (m_native) m_native->txErrorFn(ZuMv(fn));
+  }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
@@ -3209,6 +3239,9 @@ public:
   ZuCSpan remote() const { return m_remote; }
   Session &session() { return m_session; }
   auto txStream() { return m_native->txStream(); }
+  void txErrorFn(ZiTxErrorFn fn) {
+    if (m_native) m_native->txErrorFn(ZuMv(fn));
+  }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>

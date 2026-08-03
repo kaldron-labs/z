@@ -119,7 +119,7 @@ private:
     auto buf = m_lower.allocBuf_(this->headRoom());
     if (ZuUnlikely(!buf)) { m_valid = false; return; }
     prepareBuf_(buf, true);
-    m_lower.sendBuf_(ZuMv(buf), true);
+    if (!m_lower.sendBuf_(ZuMv(buf), true)) m_valid = false;
   }
 
   Lower		&m_lower;

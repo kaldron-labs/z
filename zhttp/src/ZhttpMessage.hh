@@ -225,12 +225,13 @@ public:
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     return m_lower.allocBuf_(headRoom);
   }
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
     if (!m_budget.add(buf->length)) {
       m_valid = false;
-      return;
+      return false;
     }
     new (m_entries.push()) RetainedEntry{ZuMv(buf), final};
+    return true;
   }
 
   bool seal() {
@@ -241,7 +242,8 @@ public:
   void commit() {
     if (!valid()) return;
     for (unsigned i = 0; i < m_entries.length(); ++i)
-      m_lower.sendBuf_(ZuMv(m_entries[i].buf), m_entries[i].final);
+      if (!m_lower.sendBuf_(ZuMv(m_entries[i].buf), m_entries[i].final))
+	break;
     m_entries.length(0);
   }
 

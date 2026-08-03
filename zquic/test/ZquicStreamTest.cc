@@ -1086,6 +1086,44 @@ void testStreamTxRetention()
     "empty Tx range dequeue succeeded");
 }
 
+void testStreamTxQueueLimit()
+{
+  ZuTestScope(testStreamTxQueueLimit);
+
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  stream->txQueueMax(1);
+  unsigned errors = 0;
+  bool transient = false;
+  stream->txErrorFn(ZiTxErrorFn{
+    [&errors, &transient](bool transient_, ZeException &) {
+      ++errors;
+      transient = transient_;
+      return true;
+    }});
+
+  auto tx1 = stream->txStream_();
+  tx1 << "one" << Zi::flush();
+  ZuCHECK(!tx1.failed() && stream->txQueueCount() == 1,
+    "first QUIC stream Tx buffer was not admitted");
+
+  auto tx2 = stream->txStream_();
+  tx2 << "two" << Zi::flush();
+  ZuCHECK(tx2.failed() && errors == 1 && transient &&
+      stream->txQueueCount() == 1,
+    "QUIC stream Tx queue overflow was not reported");
+
+  Zquic::TxRange range;
+  ZuCHECK(stream->dequeueTxRange(range) && !stream->txQueueCount(),
+    "QUIC stream Tx admission was not released on dequeue");
+
+  auto tx3 = stream->txStream_();
+  tx3 << "three" << Zi::flush();
+  ZuCHECK(!tx3.failed() && stream->txQueueCount() == 1 && errors == 1,
+    "QUIC stream Tx queue did not reopen after dequeue");
+}
+
 void testStreamTxUnackd()
 {
   ZuTestScope(testStreamTxUnackd);
@@ -3490,6 +3528,7 @@ int main(int argc, char **argv)
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testRxRetirement);
   ZuTestCall(testStreamTxRetention);
+  ZuTestCall(testStreamTxQueueLimit);
   ZuTestCall(testStreamTxUnackd);
   ZuTestCall(testStreamTxUnackdFin);
   ZuTestCall(testLinkStreamTxUnackdAck);

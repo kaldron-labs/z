@@ -24,6 +24,8 @@ class Stream :
     Stream<Link_, Impl, TxBufAlloc_>,
     TxDataPQueue> {
 public:
+  enum { DefltTxQueueMax = 4096 };
+
   using Self = Stream<Link_, Impl, TxBufAlloc_>;
   using Link = Link_;
   using Impl_ = Impl;
@@ -61,6 +63,10 @@ public:
     return m_rxRetired < limit ? limit - m_rxRetired : 0;
   }
   unsigned txRangeCount() const { return m_txQueue.count_(); }
+  unsigned txQueueCount() const { return m_txQueueCount.load_(); }
+  unsigned txQueueMax() const { return m_txQueueMax; }
+  void txQueueMax(unsigned v) { m_txQueueMax = v; }
+  void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
   unsigned txUnackdCount() const { return m_txUnackd.count_(); }
   uint64_t txUnackdBytes() const { return m_txUnackd.length_(); }
   uint64_t rxBytes() const { return m_rxDelivered; }
@@ -350,7 +356,8 @@ public:
     if (length < data.length) {
       data.clipHead(length);
       Tx::send(ZuMv(node));
-    }
+    } else
+      --m_txQueueCount;
     return true;
   }
   bool dequeueFin(uint64_t &offset) {
@@ -408,13 +415,13 @@ public:
       return buf;
     }
 
-    void sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_stream;
       auto stream = static_cast<Stream *>(buf->owner);
       if (AppThread)
-	stream->send(ZuMv(buf));
+	return stream->send(ZuMv(buf));
       else
-	stream->send_(ZuMv(buf));
+	return stream->send_(ZuMv(buf));
     }
 
   private:
@@ -618,23 +625,44 @@ private:
     return false;
   }
 
-  void send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || !buf->length)) return;
+  bool send(ZmRef<ZiIOBuf> buf) {
+    if (ZuUnlikely(!buf || !buf->length)) return false;
+    if (ZuUnlikely(!admitTx_())) return sendError_(true,
+      "QUIC stream transmit queue limit exceeded");
     buf->owner = this;
     txInvoke_([buf = ZuMv(buf)]() mutable {
       auto stream = static_cast<Stream *>(buf->owner);
-      stream->send_(ZuMv(buf));
+      stream->sendAdmitted_(ZuMv(buf));
     });
+    return true;
   }
 
-  void send_(ZmRef<TxMsg> buf) { // direct call from within tx thread
+  bool send_(ZmRef<TxMsg> buf) { // direct call from within tx thread
     ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC stream send_ outside Tx thread", return);
-    if (ZuUnlikely(!buf)) return;
-    if (m_resetSent) return;
-    if (!buf->length) return;
+      "QUIC stream send_ outside Tx thread", return false);
+    if (ZuUnlikely(!admitTx_())) return sendError_(true,
+      "QUIC stream transmit queue limit exceeded");
+    return sendAdmitted_(ZuMv(buf));
+  }
+
+private:
+  bool admitTx_() {
+    if (++m_txQueueCount <= m_txQueueMax) return true;
+    --m_txQueueCount;
+    return false;
+  }
+  bool sendAdmitted_(ZmRef<TxMsg> buf) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream send_ outside Tx thread",
+      --m_txQueueCount; return false);
+    if (ZuUnlikely(!buf)) return false;
+    if (ZuUnlikely(m_resetSent || !buf->length)) {
+      --m_txQueueCount;
+      return sendError_(false, "QUIC stream is closed for transmission");
+    }
     ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
-      "stream Tx buffer range violation", return);
+      "stream Tx buffer range violation",
+      --m_txQueueCount; return false);
     uint32_t offset = buf->skip;
     uint32_t length = buf->length;
     buf->data().publish(offset, length, m_txBytes);
@@ -660,7 +688,17 @@ private:
     m_txBytes += length;
     m_txBufferedBytes += length;
     notifyTx_();
+    return true;
   }
+
+  bool sendError_(bool transient, ZuCSpan message) {
+    auto e = ZeEXCEPT(Error, "Zquic", message);
+    if (m_txErrorFn && !m_txErrorFn(transient, e) && m_link)
+      m_link->disconnect();
+    return false;
+  }
+
+public:
 
   bool txInvoked_() const {
     ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
@@ -773,6 +811,9 @@ private:
   uint64_t		m_txBufferedBytes = 0;
   FlowCredit		m_txCredit;
   uint64_t		m_txFrameMax = 0;
+  ZmAtomic<unsigned>	m_txQueueCount = 0;
+  unsigned		m_txQueueMax = DefltTxQueueMax;
+  ZiTxErrorFn		m_txErrorFn;
   bool			m_fin = false;
   bool			m_finDequeued = false;
   bool			m_resetSent = false;
