@@ -15,9 +15,10 @@
 //     - ZmRef<IOBuf> allocBuf_(unsigned headRoom)
 //     - return a new buffer with skip == headRoom
 //   - how buffers are sent - the sendBuf_ callback
-//     - void sendBuf_(ZmRef<IOBuf> buf, bool final)
+//     - bool sendBuf_(ZmRef<IOBuf> buf, bool final)
 //     - send buf (via lower-level protocol)
 //     - final is false for rollover and true for flush/destruction
+//     - return false on failure
 
 #ifndef ZiTxStream_HH
 #define ZiTxStream_HH
@@ -29,11 +30,15 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuPrint.hh>
 
+#include <zlib/ZmFn.hh>
+
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zi {
+
+using TxErrorFn = ZmFn<bool(bool, ZeException &)>;
 
 struct Flush { };
 inline Flush flush() { return {}; }
@@ -45,7 +50,7 @@ struct Impl : public TxStream<Impl> {
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom);
 
-  void sendBuf_(ZmRef<ZiIOBuf>, bool final);
+  bool sendBuf_(ZmRef<ZiIOBuf>, bool final);
 };
 #endif
 
@@ -66,7 +71,11 @@ public:
     m_maxSize{stream.m_maxSize},
     m_headRoom{stream.m_headRoom},
     m_tailRoom{stream.m_tailRoom},
-    m_buf{ZuMv(stream.m_buf)} { }
+    m_buf{ZuMv(stream.m_buf)},
+    m_failed{stream.m_failed}
+  {
+    stream.m_failed = false;
+  }
   TxStream &operator =(TxStream &&stream) {
     if (this == &stream) return *this;
     flush();
@@ -74,28 +83,44 @@ public:
     m_headRoom = stream.m_headRoom;
     m_tailRoom = stream.m_tailRoom;
     m_buf = ZuMv(stream.m_buf);
+    m_failed = stream.m_failed;
+    stream.m_failed = false;
     return *this;
   }
 
   unsigned maxSize() const { return m_maxSize; }
   unsigned headRoom() const { return m_headRoom; }
   unsigned tailRoom() const { return m_tailRoom; }
+  bool failed() const { return m_failed; }
+  bool operator !() const { return m_failed; }
+  ZuOpBool
 
 private:
   void allocBuf() { m_buf = impl()->allocBuf_(m_headRoom); }
-  void ensureBuf() { if (!m_buf) allocBuf(); }
-  void sendBuf() {
-    impl()->sendBuf_(ZuMv(m_buf), false);
+  void ensureBuf() { if (!m_failed && !m_buf) allocBuf(); }
+  void fail() { m_buf = {}; m_failed = true; }
+  bool sendBuf() {
+    if (ZuUnlikely(m_failed)) return false;
+    if (ZuUnlikely(!impl()->sendBuf_(ZuMv(m_buf), false))) {
+      fail();
+      return false;
+    }
     allocBuf();
+    return true;
   }
-  void flushBuf() {
-    impl()->sendBuf_(ZuMv(m_buf), true);
+  bool flushBuf() {
+    if (ZuUnlikely(m_failed)) return false;
+    if (ZuUnlikely(!impl()->sendBuf_(ZuMv(m_buf), true))) {
+      fail();
+      return false;
+    }
     m_buf = {};
+    return true;
   }
 
 public:
   void append(const uint8_t *data, unsigned length) {
-    if (!length) return;
+    if (!length || ZuUnlikely(m_failed)) return;
     ensureBuf();
     for (;;) {
       unsigned total = m_buf->length + m_headRoom + m_tailRoom;
@@ -108,7 +133,7 @@ public:
 	length -= length_;
       }
       if (!length) return;
-      sendBuf();
+      if (ZuUnlikely(!sendBuf())) return;
     }
   }
 
@@ -120,11 +145,13 @@ private:
 
   template <typename P>
   MatchPDelegate<P> append(P &&p) {
+    if (ZuUnlikely(m_failed)) return;
     ensureBuf();
     ZuPrint<P>::print(*m_buf, ZuFwd<P>(p));
   }
   template <typename P>
   MatchPBuffer<P> append(const P &p) {
+    if (ZuUnlikely(m_failed)) return;
     ensureBuf();
     unsigned length_ = ZuPrint<P>::length(p);
     unsigned bufLen = m_buf->length;
@@ -133,7 +160,7 @@ private:
     unsigned avail = m_maxSize - total;
     if (avail < length_) {
       // need new buf, unless the output itself exceeds an empty buffer
-      if (bufLen) sendBuf();
+      if (bufLen && ZuUnlikely(!sendBuf())) return;
       avail = m_maxSize - (m_headRoom + m_tailRoom);
       if (length_ > avail)
 	throw ZeEXCEPT(Fatal, "ZiTxStream", ([avail, length_](auto &s) {
@@ -195,6 +222,7 @@ private:
   unsigned		m_headRoom;
   unsigned		m_tailRoom;
   ZmRef<ZiIOBuf>	m_buf;
+  bool			m_failed = false;
 };
 
 // CRTP - implementation must conform to the following interface:
@@ -236,9 +264,9 @@ public:
     return m_below.allocBuf_(headRoom);
   }
 
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
     impl()->prepareBuf_(buf, final);
-    m_below.sendBuf_(ZuMv(buf), final);
+    return m_below.sendBuf_(ZuMv(buf), final);
   }
 
 private:
@@ -249,6 +277,8 @@ private:
 
 template <typename Impl>
 using ZiTxStream = Zi::TxStream<Impl>;
+
+using ZiTxErrorFn = Zi::TxErrorFn;
 
 template <typename Impl, typename Lower>
 using ZiTxLayer = Zi::TxLayer<Impl, Lower>;

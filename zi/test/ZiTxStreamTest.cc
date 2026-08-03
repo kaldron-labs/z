@@ -47,6 +47,7 @@ struct StreamHarness {
 
   SentBufs		sent;
   unsigned		allocCount = 0;
+  bool			sendOK = true;
 
   ZmRef<ZiIOBuf> alloc(unsigned headRoom) {
     ZmRef<ZiIOBuf> buf = new StreamAlloc{};
@@ -80,8 +81,9 @@ struct TestTxStream : public Zi::TxStream<TestTxStream> {
     return h->alloc(headRoom);
   }
 
-  void sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
     h->send(ZuMv(buf), final);
+    return h->sendOK;
   }
 
   StreamHarness	*h;
@@ -242,6 +244,35 @@ void testMove()
   ZuCheck(h2.sent[0].buf->cspan() == "two");
 }
 
+void testFailureState()
+{
+  ZuTestScope(testFailureState);
+
+  StreamHarness h;
+  h.sendOK = false;
+  TestTxStream stream{h, 6, 1, 1};
+
+  stream << "abcdefgh";
+  ZuCheck(stream.failed());
+  ZuCheck(!stream);
+  ZuCheck(h.allocCount == 1);
+  ZuCheck(h.sent.length() == 1);
+  ZuCheck(h.sent[0].length == 4);
+  ZuCheck(!h.sent[0].final);
+
+  stream << "ignored" << Zi::flush();
+  ZuCheck(h.allocCount == 1);
+  ZuCheck(h.sent.length() == 1);
+
+  StreamHarness flushHarness;
+  flushHarness.sendOK = false;
+  TestTxStream flushStream{flushHarness, 16, 1, 1};
+  flushStream << "flush" << Zi::flush();
+  ZuCheck(flushStream.failed());
+  ZuCheck(flushHarness.sent.length() == 1);
+  ZuCheck(flushHarness.sent[0].final);
+}
+
 template <typename Lower>
 struct TestLayer : public ZiTxLayer<TestLayer<Lower>, Lower> {
   using Base = ZiTxLayer<TestLayer<Lower>, Lower>;
@@ -304,6 +335,7 @@ int main(int argc, char **argv)
   ZuTestCall(testOversizePrintableThrows);
   ZuTestCall(testExactCapacityAndDestruction);
   ZuTestCall(testMove);
+  ZuTestCall(testFailureState);
   ZuTestCall(testLayerComposition);
   return 0;
 }
