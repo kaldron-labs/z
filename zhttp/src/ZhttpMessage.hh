@@ -478,6 +478,8 @@ private:
     uint64_t contentLength() const { return produced; }
     bool headersValid() const { return headersOK && patches.valid(); }
     RequestBuilder takeApp() { return ZuMv(app); }
+    template <typename Emit>
+    void emitBody(Emit &&emit) { app.body(ZuFwd<Emit>(emit)); }
 
     RequestBuilder	app;
     HeaderPatches<ReqHeaders> patches;
@@ -500,17 +502,21 @@ private:
       this->suppressPads = suppressPads;
     }
 
+    using ReqOps::contentLength;
+    using ReqOps::emitBody;
     using ReqOps::header;
     using ReqOps::host;
     using ReqOps::operation;
     using ReqOps::protocol;
-    using ReqOps::contentLength;
-
-    template <typename Emit>
-    void emitBody(Emit &&emit) { this->app.body(ZuFwd<Emit>(emit)); }
   };
 
+  struct Parser;
+
   struct ParserSink_ {
+    using Protocol = typename Message::template ResponseParser<
+      Parser, RespHeaders, RespBodyMax>;
+    using State = typename Protocol::State;
+
     void operation(Method::T, const RequestTarget &) { }
     void status(unsigned value) {
       app->status(*link, *request, sink(), value);
@@ -530,9 +536,8 @@ private:
     void body(Rx &rx) {
       app->body(*link, *request, sink(), rx);
     }
-    template <typename ParserState>
-    void complete(typename ParserState::T state) {
-      app->template complete<ParserState>(
+    void complete(typename State::T state) {
+      app->template complete<State>(
 	*link, *request, sink(), state);
     }
 
@@ -552,17 +557,12 @@ private:
       Parser, RespHeaders, RespBodyMax>;
     using State = typename Base::State;
 
-    void operation(Method::T method, const RequestTarget &target) {
-      ParserSink_::operation(method, target);
-    }
-    void complete(typename State::T state) {
-      ParserSink_::template complete<State>(state);
-    }
-
     using ParserSink_::body;
     using ParserSink_::chunked;
+    using ParserSink_::complete;
     using ParserSink_::contentLength;
     using ParserSink_::header;
+    using ParserSink_::operation;
     using ParserSink_::status;
     using ParserSink_::version;
   };

@@ -102,13 +102,20 @@ struct Response :
   using Base = Zhttp::H2::Parser<Response, false, TestHeaders, 1024>;
 
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
-  void status(unsigned value) { status_ = value; ++statusCalls; }
+  void status(unsigned value) {
+    statusOrder = ++callbackOrder;
+    headerOrder = bodyOrder = 0;
+    status_ = value;
+    ++statusCalls;
+  }
   void contentLength(uint64_t value) { contentLength_ = value; }
   template <typename Key> void header(ZuBSpan value) {
+    if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
   template <typename Rx>
   void body(Rx &rx) {
+    if (!bodyOrder) bodyOrder = ++callbackOrder;
     Zhttp::bodyEach(rx,
       [this](ZuBSpan value) { body_ << ZuCSpan{value}; });
   }
@@ -120,6 +127,10 @@ struct Response :
   unsigned status_ = 0;
   unsigned statusCalls = 0;
   uint64_t contentLength_ = 0;
+  unsigned callbackOrder = 0;
+  unsigned statusOrder = 0;
+  unsigned headerOrder = 0;
+  unsigned bodyOrder = 0;
   unsigned completeCalls = 0;
   Zhttp::H2::ParserState::T completeState =
     Zhttp::H2::ParserState::Initial;
@@ -409,7 +420,8 @@ void testResponses()
   ZuCHECK(parser.beginHeaders() && parser.field(":status", "103") &&
       parser.field("x-test", "early") && parser.endHeaders(false) &&
       parser.state() == Zhttp::H2::ParserState::Initial &&
-      parser.statusCalls == 1 && !parser.completeCalls,
+      parser.statusCalls == 1 && !parser.completeCalls &&
+      parser.statusOrder < parser.headerOrder,
     "informational response does not complete the stream");
   ZuCHECK(parser.beginHeaders() && parser.field(":status", "200") &&
       parser.field("content-length", "3") &&
@@ -417,8 +429,20 @@ void testResponses()
       parser.beginHeaders(true) && parser.field("x-test", "trailer") &&
       parser.endHeaders(true) && parser.statusCalls == 2 &&
       parser.body_ == "abc" && parser.xTest == "trailer" &&
-      parser.completeCalls == 1,
+      parser.completeCalls == 1 &&
+      parser.statusOrder < parser.bodyOrder &&
+      parser.statusOrder < parser.headerOrder,
     "final response, body, and trailers");
+
+  Response invalid;
+  ZuCHECK(invalid.beginHeaders() &&
+      invalid.field(":status", "200") &&
+      invalid.field("x-test", "response") &&
+      !invalid.field("connection", "close") &&
+      invalid.statusOrder < invalid.headerOrder &&
+      invalid.completeCalls == 1 &&
+      invalid.completeState == Zhttp::H2::ParserState::Error,
+    "post-status H2 validation failure completes with an error");
 
   Response head;
   head.reset();

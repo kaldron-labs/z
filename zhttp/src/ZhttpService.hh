@@ -189,11 +189,18 @@ private:
   template <typename Protocol> struct Session;
   template <typename Protocol> struct Hub;
   template <typename Protocol> struct Link;
+  template <typename Profile> struct Parser;
   struct TLSHub;
   struct TLSH1Link;
   struct TLSH2Link;
 
+  template <typename Profile>
   struct RequestOps {
+    using Adapter = Parser<Profile>;
+    using Protocol = typename MessageTraits<Profile>::template RequestParser<
+      Adapter, ReqHeaders, ReqBodyMax>;
+    using State = typename Protocol::State;
+
     void reset() {
       request = {};
       if (service) sink = service->m_workload->requestParser();
@@ -272,9 +279,8 @@ private:
       request.bodyReset = bodyReset;
       request.bodyDiscarded = bodyDiscarded;
     }
-    template <typename ParserState>
-    void complete(typename ParserState::T state) {
-      complete_ = state == ParserState::Complete;
+    void complete(typename State::T state) {
+      complete_ = state == State::Complete;
       bodyReset += bodyPending;
       bodyDiscarded += bodyPending;
       bodyPending = 0;
@@ -300,24 +306,23 @@ private:
   struct Parser :
     public MessageTraits<Profile>::template RequestParser<
       Parser<Profile>, ReqHeaders, ReqBodyMax>,
-    public RequestOps {
+    public RequestOps<Profile> {
     using Base = typename MessageTraits<Profile>::template RequestParser<
       Parser, ReqHeaders, ReqBodyMax>;
+    using Ops = RequestOps<Profile>;
     using State = typename Base::State;
-    void reset() { Base::reset(); RequestOps::reset(); }
-    void complete(typename State::T state) {
-      RequestOps::template complete<State>(state);
-    }
-    using RequestOps::body;
-    using RequestOps::chunked;
-    using RequestOps::contentLength;
-    using RequestOps::header;
-    using RequestOps::operation;
-    using RequestOps::status;
-    using RequestOps::version;
+    void reset() { Base::reset(); Ops::reset(); }
+    using Ops::body;
+    using Ops::chunked;
+    using Ops::complete;
+    using Ops::contentLength;
+    using Ops::header;
+    using Ops::operation;
+    using Ops::status;
+    using Ops::version;
   };
 
-  template <typename AppBuilder>
+  template <typename Profile, typename AppBuilder>
   struct BuilderApp_ {
     using Headers = typename AppBuilder::Headers;
 
@@ -345,7 +350,9 @@ private:
 	});
 	return;
       }
-      patches.template header<false, Key>(app, ZuFwd<L>(l));
+      patches.template header<
+	MessageTraits<Profile>::ID == Version::H1, Key>(
+	app, ZuFwd<L>(l));
     }
     template <typename L>
     void header(L &&l) {
@@ -389,11 +396,11 @@ private:
       Builder<Profile, AppBuilder, HasBody, Streaming>,
       typename AppBuilder::Headers,
       typename BuilderTrailers<AppBuilder>::T, HasBody, Streaming>,
-    public BuilderApp_<AppBuilder> {
+    public BuilderApp_<Profile, AppBuilder> {
     using Base = typename MessageTraits<Profile>::template ResponseBuilder<
       Builder, typename AppBuilder::Headers,
       typename BuilderTrailers<AppBuilder>::T, HasBody, Streaming>;
-    using Ops = BuilderApp_<AppBuilder>;
+    using Ops = BuilderApp_<Profile, AppBuilder>;
     enum { Optional = AppBuilder::BodyPolicy::Optional };
 
     Builder(
@@ -406,28 +413,8 @@ private:
     }
 
     bool streamResponse() const { return false; }
-    template <typename Key, typename L>
-    void header(L &&l) {
-      if constexpr (Key{}() == "content-length")
-	if (this->rejectContentLength) return;
-      if (this->suppressPads) {
-	unsigned count = 0;
-	this->app.template header<Key>(
-	  [this, &l, &count]<typename V>(V &&v) {
-	  if (++count > 1) {
-	    this->patches.invalidate();
-	    return;
-	  }
-	  if constexpr (!IsHeaderPad<ZuDecay<V>>{})
-	    l(ZuFwd<V>(v));
-	  });
-	return;
-      }
-      this->patches.template header<
-	MessageTraits<Profile>::ID == Version::H1, Key>(
-	this->app, ZuFwd<L>(l));
-    }
     using Ops::contentLength;
+    using Ops::emitBody;
     using Ops::header;
     using Ops::reason;
     using Ops::status;

@@ -634,14 +634,13 @@ private:
 
   bool qpackHeader_(
     FieldState &fields, ZuCSpan name, ZuCSpan value) {
-    if constexpr (Request)
-      if (name && name[0] != ':' && !fields.start(
-	  [this](Method::T method, const RequestTarget &target) {
-	    impl()->operation(method, target);
-	  },
-	  [this](unsigned status) { impl()->status(status); },
-	  [this](ZuBSpan key, ZuBSpan value) { header_(key, value); }))
-	return false;
+    if (name && name[0] != ':' && !fields.start(
+	[this](Method::T method, const RequestTarget &target) {
+	  impl()->operation(method, target);
+	},
+	[this](unsigned status) { impl()->status(status); },
+	[this](ZuBSpan key, ZuBSpan value) { header_(key, value); }))
+      return false;
     return fields.field(name, value,
       [this](ZuBSpan key, ZuBSpan value) {
 	header_(key, value);
