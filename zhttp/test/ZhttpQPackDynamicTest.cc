@@ -225,6 +225,7 @@ struct ParserStream :
   }
   void operation(
     Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    operationOrder = ++callbackOrder;
     method = method_;
     path.length(0);
     path << ZuCSpan{target.raw};
@@ -236,6 +237,7 @@ struct ParserStream :
     }
   }
   template <typename Key> void header(ZuBSpan value) {
+    if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") {
       ++xTestCalls;
       xTestLen = value.length();
@@ -246,6 +248,7 @@ struct ParserStream :
     }
   }
   void header(ZuBSpan name, ZuBSpan value) {
+    if (!headerOrder) headerOrder = ++callbackOrder;
     ++runtimeCalls;
     if (name == "host") return;
     runtimeName.length(0);
@@ -257,6 +260,7 @@ struct ParserStream :
   void headers(Zhttp::Fields::Section, bool) { ++headerCalls; }
   template <typename Rx>
   void body(Rx &rx) {
+    if (!bodyOrder) bodyOrder = ++callbackOrder;
     ++bodyCalls;
     while (rx) {
       const uint8_t *offered = nullptr;
@@ -306,6 +310,10 @@ struct ParserStream :
   StreamConsumer		consumer;
   LogicalLink			link;
   Zhttp::Method::T		method = -1;
+  unsigned			callbackOrder = 0;
+  unsigned			operationOrder = 0;
+  unsigned			headerOrder = 0;
+  unsigned			bodyOrder = 0;
   uint64_t			retired = 0;
   unsigned			reschedules = 0;
   ZtString<>			path;
@@ -716,7 +724,8 @@ void testParserFieldCallbacks()
       parser.xTestCalls == 1 && parser.xTest == "initial" &&
       parser.runtimeCalls == 2 &&
       parser.runtimeName == "x-runtime" &&
-      parser.runtimeValue == "plain",
+      parser.runtimeValue == "plain" && parser.operationOrder &&
+      parser.operationOrder < parser.headerOrder,
     "parser did not deliver initial pseudo/regular fields");
 
   Zhttp::H3::Header trailerHeaders[] = {
@@ -728,6 +737,27 @@ void testParserFieldCallbacks()
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Trailers &&
       parser.xTestCalls == 2 && parser.xTest == "trailer",
     "parser did not deliver trailer fields");
+
+  ParserStream invalid;
+  invalid.extendedConnect(true);
+  Zhttp::H3::Header invalidHeaders[] = {
+    {":method", "CONNECT"},
+    {":scheme", "https"},
+    {":authority", "example.com"},
+    {":path", "/chat"},
+    {":protocol", "opaque"},
+    {"x-test", "initial"},
+    {"content-length", "0"}
+  };
+  frame.length(0);
+  putHeadersFrame(frame,
+    ZuSpan<Zhttp::H3::Header>{invalidHeaders, 7});
+  invalid.push(frame);
+  ZuCHECK(invalid.process(invalid) == Zhttp::H3::ParserState::Error &&
+      invalid.operationOrder < invalid.headerOrder &&
+      invalid.completeCalls == 1 &&
+      invalid.completeState == Zhttp::H3::ParserState::Error,
+    "post-operation H3 validation failure completes with an error");
 }
 
 static Zhttp::H3::HdrBytes messageHeaders(uint64_t length)
@@ -782,7 +812,8 @@ void testParserBodyStream()
     parser.push(data);
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
 	parser.bodyCalls == 1 && parser.bodyData == "abc" &&
-	parser.bodyNoCopy,
+	parser.bodyNoCopy && parser.operationOrder < parser.headerOrder &&
+	parser.headerOrder < parser.bodyOrder,
       "H3 DATA did not transfer native payload storage");
 
     Zhttp::H3::Header trailers[] = {{"x-test", "done"}};
