@@ -1687,7 +1687,7 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class RequestBuilder :
+class ReqBuilder :
   public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
 
@@ -1702,7 +1702,7 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class ResponseBuilder :
+class ResBuilder :
   public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
 

@@ -21,41 +21,39 @@
 namespace Zhttp {
 
 template <
-  typename Owner, typename Request,
-  typename RequestBuilder, typename ResponseParser>
+  typename Owner, typename Attempt,
+  typename Request, typename ResParser>
 class TLSClientPool;
 
 template <
-  typename Pool, typename Impl, typename Owner_, typename Request_,
-  typename RequestBuilder_, typename ResponseParser_,
+  typename Pool, typename Impl, typename Owner_, typename Attempt_,
+  typename Request_, typename ResParser_,
   typename Profile>
 class TLSClientPoolLink_ {
 public:
   using Owner = Owner_;
-  using Request = Request_;
+  using Attempt = Attempt_;
   using Message = MessageTraits<Profile>;
   using IO = ClientMessage<
-    Owner, Request, Impl, Profile,
-    RequestBuilder_, ResponseParser_>;
+    Owner, Attempt, Impl, Profile,
+    Request_, ResParser_>;
 
   TLSClientPoolLink_(Pool *pool, Impl *impl, unsigned slot_) :
     m_pool{pool}, m_impl{impl}, m_slot{slot_},
     m_message{pool->owner(), impl} { }
 
-  Request *request() const { return m_request; }
+  Attempt *request() const { return m_request; }
   bool stopped() const { return m_stopped; }
   unsigned slot() const { return m_slot; }
   void slot(unsigned slot_) { m_slot = slot_; }
 
-  void assign(Request *request) {
+  void assign(Attempt *request) {
     ++m_generation;
     m_request = request;
     m_complete = -1;
     m_sent = false;
     m_stopped = false;
     m_closing = false;
-    m_message.bind(request);
-    m_message.reset();
     m_impl->txErrorFn(ZiTxErrorFn{[this](ZeException &e) {
       return owner()->poolTxError(*m_impl, m_request, e);
     }});
@@ -178,7 +176,7 @@ private:
 
   Pool		*m_pool = nullptr;
   Impl		*m_impl = nullptr;
-  Request	*m_request = nullptr;
+  Attempt	*m_request = nullptr;
   unsigned	m_generation = 0;
   unsigned	m_slot = 0;
   int8_t	m_complete = -1;
@@ -189,38 +187,38 @@ private:
 };
 
 template <
-  typename Pool, typename Owner, typename Request,
-  typename RequestBuilder, typename ResponseParser, typename Profile>
+  typename Pool, typename Owner, typename Attempt,
+  typename Request, typename ResParser, typename Profile>
 class TLSClientPoolLink;
 
 template <
-  typename Pool, typename Owner, typename Request,
-  typename RequestBuilder, typename ResponseParser>
+  typename Pool, typename Owner, typename Attempt,
+  typename Request, typename ResParser>
 class TLSClientPoolLink<
-  Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS> :
+  Pool, Owner, Attempt, Request, ResParser, H1TLS> :
   public TLS_::ClientH1Logical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
+      Pool, Owner, Attempt, Request, ResParser, H1TLS>,
     TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
+	Pool, Owner, Attempt, Request, ResParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>,
+	Pool, Owner, Attempt, Request, ResParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
-    Owner, Request, RequestBuilder, ResponseParser, H1TLS> {
+      Pool, Owner, Attempt, Request, ResParser, H1TLS>,
+    Owner, Attempt, Request, ResParser, H1TLS> {
   using Impl = TLSClientPoolLink;
   using Native = TLS_::ClientH1Logical<
     Pool, Impl,
     TLS_::CliLink<
       Pool, Impl,
       TLSClientPoolLink<
-	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>;
+	Pool, Owner, Attempt, Request, ResParser, H2TLS>>>;
   using Link = TLSClientPoolLink_<
-    Pool, Impl, Owner, Request, RequestBuilder, ResponseParser, H1TLS>;
+    Pool, Impl, Owner, Attempt, Request, ResParser, H1TLS>;
 
 public:
   using Protocol = TLS;
@@ -244,34 +242,34 @@ public:
 };
 
 template <
-  typename Pool, typename Owner, typename Request,
-  typename RequestBuilder, typename ResponseParser>
+  typename Pool, typename Owner, typename Attempt,
+  typename Request, typename ResParser>
 class TLSClientPoolLink<
-  Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS> :
+  Pool, Owner, Attempt, Request, ResParser, H2TLS> :
   public H2_::ClientLogical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>,
+      Pool, Owner, Attempt, Request, ResParser, H2TLS>,
     TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
+	Pool, Owner, Attempt, Request, ResParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>>>,
+	Pool, Owner, Attempt, Request, ResParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>,
-    Owner, Request, RequestBuilder, ResponseParser, H2TLS> {
+      Pool, Owner, Attempt, Request, ResParser, H2TLS>,
+    Owner, Attempt, Request, ResParser, H2TLS> {
   using Impl = TLSClientPoolLink;
   using Native = H2_::ClientLogical<
     Pool, Impl,
     TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>,
+	Pool, Owner, Attempt, Request, ResParser, H1TLS>,
       Impl>>;
   using Link = TLSClientPoolLink_<
-    Pool, Impl, Owner, Request, RequestBuilder, ResponseParser, H2TLS>;
+    Pool, Impl, Owner, Attempt, Request, ResParser, H2TLS>;
 
 public:
   using Protocol = TLS;
@@ -295,30 +293,30 @@ public:
 };
 
 template <
-  typename Owner_, typename Request_,
-  typename RequestBuilder_, typename ResponseParser_>
+  typename Owner_, typename Attempt_,
+  typename Request_, typename ResParser_>
 class TLSClientPool :
   public TLS_::ClientHub<
     TLSClientPool<
-      Owner_, Request_, RequestBuilder_, ResponseParser_>,
+      Owner_, Attempt_, Request_, ResParser_>,
     TLSClientPoolLink<
       TLSClientPool<
-	Owner_, Request_, RequestBuilder_, ResponseParser_>,
-      Owner_, Request_, RequestBuilder_, ResponseParser_, H1TLS>,
+	Owner_, Attempt_, Request_, ResParser_>,
+      Owner_, Attempt_, Request_, ResParser_, H1TLS>,
     TLSClientPoolLink<
       TLSClientPool<
-	Owner_, Request_, RequestBuilder_, ResponseParser_>,
-      Owner_, Request_, RequestBuilder_, ResponseParser_, H2TLS>> {
+	Owner_, Attempt_, Request_, ResParser_>,
+      Owner_, Attempt_, Request_, ResParser_, H2TLS>> {
 public:
   using Owner = Owner_;
+  using Attempt = Attempt_;
   using Request = Request_;
-  using RequestBuilder = RequestBuilder_;
-  using ResponseParser = ResponseParser_;
+  using ResParser = ResParser_;
   using Pool = TLSClientPool;
   using H1Link = TLSClientPoolLink<
-    Pool, Owner, Request, RequestBuilder, ResponseParser, H1TLS>;
+    Pool, Owner, Attempt, Request, ResParser, H1TLS>;
   using H2Link = TLSClientPoolLink<
-    Pool, Owner, Request, RequestBuilder, ResponseParser, H2TLS>;
+    Pool, Owner, Attempt, Request, ResParser, H2TLS>;
   using Base = TLS_::ClientHub<Pool, H1Link, H2Link>;
   using Base::stop;
 
@@ -336,7 +334,7 @@ public:
   bool accepting() const { return !m_stopping && this->running(); }
   unsigned live() const { return m_live; }
 
-  void open(Request *request, unsigned) {
+  void open(Attempt *request, unsigned) {
     if (!accepting() || !request) return;
     unsigned slot = m_pairs.length();
     Pair pair{
@@ -353,7 +351,7 @@ public:
     Base::connect(h1, h2, url.host, url.port);
   }
 
-  bool cancel(Request *request) {
+  bool cancel(Attempt *request) {
     for (auto &pair: m_pairs) {
       switch (pair.selected) {
 	case Version::H1:

@@ -147,7 +147,7 @@ template <> struct IsHeaderPad<HeaderPad> : public ZuTrue { };
 
 ZtEnumStruct(ZhttpAPI, ClientEventType, int8_t,
   Selected, AttemptFailed, Redirected, Retried, Fallback, Completed,
-  Cancelled, Stopping);
+  Cancelled);
 
 struct ClientEvent {
   uint64_t	request = 0;

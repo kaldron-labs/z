@@ -197,7 +197,7 @@ private:
   template <typename Profile>
   struct RequestOps {
     using Adapter = Parser<Profile>;
-    using Protocol = typename MessageTraits<Profile>::template RequestParser<
+    using Protocol = typename MessageTraits<Profile>::template ReqParser<
       Adapter, ReqHeaders, ReqBodyMax>;
     using State = typename Protocol::State;
 
@@ -304,10 +304,10 @@ private:
 
   template <typename Profile>
   struct Parser :
-    public MessageTraits<Profile>::template RequestParser<
+    public MessageTraits<Profile>::template ReqParser<
       Parser<Profile>, ReqHeaders, ReqBodyMax>,
     public RequestOps<Profile> {
-    using Base = typename MessageTraits<Profile>::template RequestParser<
+    using Base = typename MessageTraits<Profile>::template ReqParser<
       Parser, ReqHeaders, ReqBodyMax>;
     using Ops = RequestOps<Profile>;
     using State = typename Base::State;
@@ -392,12 +392,12 @@ private:
     typename Profile, typename AppBuilder,
     bool HasBody, bool Streaming>
   struct Builder :
-    public MessageTraits<Profile>::template ResponseBuilder<
+    public MessageTraits<Profile>::template ResBuilder<
       Builder<Profile, AppBuilder, HasBody, Streaming>,
       typename AppBuilder::Headers,
       typename BuilderTrailers<AppBuilder>::T, HasBody, Streaming>,
     public BuilderApp_<Profile, AppBuilder> {
-    using Base = typename MessageTraits<Profile>::template ResponseBuilder<
+    using Base = typename MessageTraits<Profile>::template ResBuilder<
       Builder, typename AppBuilder::Headers,
       typename BuilderTrailers<AppBuilder>::T, HasBody, Streaming>;
     using Ops = BuilderApp_<Profile, AppBuilder>;

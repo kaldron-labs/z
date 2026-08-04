@@ -67,28 +67,41 @@ struct Resolver {
   ZmSemaphore		queried;
 };
 
-struct Request {
-  Zhttp::URLStorage	url;
-};
+struct ClientApp;
+struct Request;
+struct ResParser;
 
-struct RequestBuilder {
+struct Request {
   using Headers = ZuTypeList<>;
   using BodyPolicy = Zhttp::Body::None;
 
-  Zhttp::URL url;
-
+  void reset() { }
   template <typename L>
   void operation(L &&l) const {
-    l(Zhttp::Method::GET, url.pathQuery());
+    auto url_ = url.url();
+    l(Zhttp::Method::GET, url_.pathQuery());
   }
   template <typename L>
-  void host(L &&l) const { l(url.authority()); }
+  void host(L &&l) const { l(url.url().authority()); }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L> void header(L &&) const { }
   template <typename L> void header(L &&) const { }
+
+  bool replayable() const { return true; }
+  bool reproducible() const { return true; }
+  void connected(const Zhttp::ConnectedInfo &) { }
+  void disconnected(bool) { }
+  void connectFailed(bool) { }
+  void selected(const Zhttp::Endpoint &) { }
+  void redirected(const Zhttp::URL &url_) { url.assign(url_.raw); }
+  void observed(const Zhttp::ClientEvent &);
+  void completed(const Zhttp::Result &);
+
+  ClientApp		*app = nullptr;
+  Zhttp::URLStorage	url;
 };
 
-struct ResponseParser {
+struct ResParser {
   using Headers = ZhttpHeaders("alt-svc");
   static constexpr uint64_t BodyMax = 1024;
 
@@ -96,6 +109,7 @@ struct ResponseParser {
   unsigned	*status_ = nullptr;
   ZtString<>	*altSvc = nullptr;
 
+  void init(const Request &);
   void status(unsigned value) { *status_ = value; }
   void contentLength(uint64_t) { }
   void chunked() { }
@@ -113,24 +127,21 @@ struct ResponseParser {
 };
 
 struct ClientApp :
-  public Zhttp::Client<
-    ClientApp, Request, RequestBuilder, ResponseParser> {
+  public Zhttp::Client<Request, ResParser> {
   using Base =
-    Zhttp::Client<ClientApp, Request, RequestBuilder, ResponseParser>;
+    Zhttp::Client<Request, ResParser>;
 
-  RequestBuilder requestBuilder(const Request &, const Zhttp::URL &url) {
-    return {url};
-  }
-  ResponseParser responseParser(Request &) {
-    return {&bodyBytes, &status, &altSvc};
+  void submit(Request *requests, unsigned count) {
+    for (unsigned i = 0; i < count; ++i) requests[i].app = this;
+    Base::submit(requests, count);
   }
 
-  void completed(Request &, const Zhttp::Result &result_) {
+  void requestCompleted(const Zhttp::Result &result_) {
     result = result_;
     results.push(result_);
     done.post();
   }
-  void observed(Request *, const Zhttp::ClientEvent &event) {
+  void requestObserved(const Zhttp::ClientEvent &event) {
     events.push(event);
   }
   unsigned eventCount(Zhttp::ClientEventType::T type) const {
@@ -150,6 +161,19 @@ struct ClientApp :
   unsigned	status = 0;
   ZtString<>	altSvc;
 };
+
+void ResParser::init(const Request &req) {
+  bodyBytes = &req.app->bodyBytes;
+  status_ = &req.app->status;
+  altSvc = &req.app->altSvc;
+}
+
+void Request::observed(const Zhttp::ClientEvent &event) {
+  app->requestObserved(event);
+}
+void Request::completed(const Zhttp::Result &result) {
+  app->requestCompleted(result);
+}
 
 ZiMxParams mxParams()
 {

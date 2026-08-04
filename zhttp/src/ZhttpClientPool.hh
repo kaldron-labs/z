@@ -98,20 +98,20 @@ private:
 // One typed pool of normalized HTTP client links.  The pool owns transport
 // links and message machinery; Owner owns request policy and attempt results.
 template <
-  typename Owner_, typename Profile_, typename Request_,
-  typename RequestBuilder_, typename ResponseParser_>
+  typename Owner_, typename Profile_, typename Attempt_,
+  typename Request_, typename ResParser_>
 class ClientPool :
   public ClientHub<
     ClientPool<
-      Owner_, Profile_, Request_,
-      RequestBuilder_, ResponseParser_>,
+      Owner_, Profile_, Attempt_,
+      Request_, ResParser_>,
     Profile_> {
 public:
   using Owner = Owner_;
   using Profile = Profile_;
+  using Attempt = Attempt_;
   using Request = Request_;
-  using RequestBuilder = RequestBuilder_;
-  using ResponseParser = ResponseParser_;
+  using ResParser = ResParser_;
   using Pool = ClientPool;
   using Message = MessageTraits<Profile>;
   using Base = ClientHub<Pool, Profile>;
@@ -121,24 +121,22 @@ public:
     using Base = ClientLink<Pool, Link, Profile_>;
     using Protocol = typename Profile::Protocol;
     using IO = ClientMessage<
-      Owner, Request, Link, Profile,
-      RequestBuilder, ResponseParser>;
+      Owner, Attempt, Link, Profile,
+      Request, ResParser>;
 
     Link(Pool *pool, unsigned id_) :
       Base{pool}, id{id_}, message{pool->owner(), this} { }
 
-    Request *request() const { return m_request; }
+    Attempt *request() const { return m_request; }
     bool stopped() const { return m_stopped; }
 
-    void assign(Request *request) {
+    void assign(Attempt *request) {
       ++m_generation;
       m_request = request;
       m_complete = false;
       m_sent = false;
       m_stopped = false;
       m_closing = false;
-      message.bind(request);
-      message.reset();
     }
     void start() {
       if (!m_request) return;
@@ -271,7 +269,7 @@ public:
       pool()->linkStopped(*this);
     }
 
-    Request	*m_request = nullptr;
+    Attempt	*m_request = nullptr;
     unsigned	m_generation = 0;
     bool	m_complete = false;
     bool	m_sent = false;
@@ -291,7 +289,7 @@ public:
   unsigned linkCount() const { return m_links.length(); }
   const Links &links() const { return m_links; }
 
-  bool cancel(Request *request) {
+  bool cancel(Attempt *request) {
     for (unsigned i = 0; i < m_links.length(); ++i)
       if (m_links[i]->request() == request) {
 	m_links[i]->close();
@@ -300,7 +298,7 @@ public:
     return false;
   }
 
-  ZmRef<Link> open(Request *request, unsigned id) {
+  ZmRef<Link> open(Attempt *request, unsigned id) {
     if (!accepting() || !request) return {};
     if constexpr (!Message::Multiplexed)
       for (unsigned i = 0; i < m_links.length(); ++i)

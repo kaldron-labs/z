@@ -48,8 +48,8 @@ template <
 struct MessageTraits;
 
 template <
-  typename App, typename Request, typename Link, typename Profile,
-  typename RequestBuilder, typename ResponseParser>
+  typename App, typename Attempt, typename Link, typename Profile,
+  typename Request, typename ResParser>
 class ClientMessage;
 
 } // namespace Zhttp
@@ -73,20 +73,20 @@ template <> struct MessageVersion<Version::H1> {
 
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using RequestParser = H1::Parser<Impl, true, Headers, MaxBody>;
+  using ReqParser = H1::Parser<Impl, true, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ResponseParser = H1::Parser<Impl, false, Headers, MaxBody>;
+  using ResParser = H1::Parser<Impl, false, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Chunked>
-  using RequestBuilder =
-    H1::RequestBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+  using ReqBuilder =
+    H1::ReqBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Chunked>
-  using ResponseBuilder =
-    H1::ResponseBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+  using ResBuilder =
+    H1::ResBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
 };
 
 template <> struct MessageVersion<Version::H2> {
@@ -98,20 +98,20 @@ template <> struct MessageVersion<Version::H2> {
 
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using RequestParser = H2::Parser<Impl, true, Headers, MaxBody>;
+  using ReqParser = H2::Parser<Impl, true, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ResponseParser = H2::Parser<Impl, false, Headers, MaxBody>;
+  using ResParser = H2::Parser<Impl, false, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using RequestBuilder =
-    H2::RequestBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using ReqBuilder =
+    H2::ReqBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using ResponseBuilder =
-    H2::ResponseBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using ResBuilder =
+    H2::ResBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
 };
 
 template <> struct MessageVersion<Version::H3> {
@@ -123,20 +123,20 @@ template <> struct MessageVersion<Version::H3> {
 
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using RequestParser = H3::Parser<Impl, true, Headers, MaxBody>;
+  using ReqParser = H3::Parser<Impl, true, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
+  using ResParser = H3::Parser<Impl, false, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using RequestBuilder =
-    H3::RequestBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using ReqBuilder =
+    H3::ReqBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using ResponseBuilder =
-    H3::ResponseBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using ResBuilder =
+    H3::ResBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
 };
 
 template <typename Profile, typename Traits>
@@ -394,28 +394,28 @@ private:
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
 // link completion remain library-owned.
 template <
-  typename App_, typename Request_, typename Link_, typename Profile_,
-  typename RequestBuilder_, typename ResponseParser_>
+  typename App_, typename Attempt_, typename Link_, typename Profile_,
+  typename Request_, typename ResParser_>
 class ClientMessage {
 public:
   using App = App_;
+  using Attempt = Attempt_;
   using Request = Request_;
   using Link = Link_;
   using Profile = Profile_;
-  using RequestBuilder = RequestBuilder_;
-  using ResponseParser = ResponseParser_;
-  using ReqHeaders = typename RequestBuilder::Headers;
-  using RespHeaders = typename ResponseParser::Headers;
-  using ReqTrailers = typename BuilderTrailers<RequestBuilder>::T;
+  using ResParser = ResParser_;
+  using ReqHeaders = typename Request::Headers;
+  using RespHeaders = typename ResParser::Headers;
+  using ReqTrailers = typename BuilderTrailers<Request>::T;
   using Message = MessageTraits<Profile>;
-  using BodyPolicy = typename RequestBuilder::BodyPolicy;
+  using BodyPolicy = typename Request::BodyPolicy;
   using ReqHeaderKeys = ZuTypeSlice<2, 0, ReqHeaders>;
   enum {
     ReqBody = BodyPolicy::HasBody,
     ReqStreaming = BodyPolicy::Streaming,
     ReqOptional = BodyPolicy::Optional
   };
-  static constexpr uint64_t RespBodyMax = ParserBodyMax<ResponseParser>::V;
+  static constexpr uint64_t RespBodyMax = ParserBodyMax<ResParser>::V;
   ZuAssert((ReqStreaming || !ReqBody ||
     ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{}),
     "fixed request body requires content-length in Headers");
@@ -428,17 +428,28 @@ public:
 
 private:
   struct ReqOps {
+    ReqOps(
+      Request &app_, bool operationCached_ = false,
+      Method::T method_ = Method::GET, ZuCSpan target_ = {}) :
+      app{&app_}, target{target_}, method{method_},
+      operationCached{operationCached_} { }
+
     template <typename L>
-    void operation(L &&l) { app.operation(ZuFwd<L>(l)); }
+    void operation(L &&l) {
+      if (operationCached)
+	l(method, target);
+      else
+	app->operation(ZuFwd<L>(l));
+    }
     template <typename L>
-    void host(L &&l) { app.host(ZuFwd<L>(l)); }
+    void host(L &&l) { app->host(ZuFwd<L>(l)); }
     template <typename L>
-    void protocol(L &&l) { app.protocol(ZuFwd<L>(l)); }
+    void protocol(L &&l) { app->protocol(ZuFwd<L>(l)); }
     template <typename Key, typename L>
     void header(L &&l) {
       if (suppressPads) {
 	unsigned count = 0;
-	app.template header<Key>([this, &l, &count]<typename V>(V &&v) {
+	app->template header<Key>([this, &l, &count]<typename V>(V &&v) {
 	  if (++count > 1) {
 	    patches.invalidate();
 	    return;
@@ -449,11 +460,11 @@ private:
 	return;
       }
       patches.template header<Message::ID == Version::H1, Key>(
-	app, ZuFwd<L>(l));
+	*app, ZuFwd<L>(l));
     }
     template <typename L>
     void header(L &&l) {
-      app.header([this, &l]<typename K, typename V>(K &&k, V &&v) {
+      app->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
 	ZtString<ZtStringHeapID<"Zhttp.RuntimeHeader.Name">> name;
 	name << k;
 	if (!validRuntimeHeader<ReqHeaders>(
@@ -465,10 +476,10 @@ private:
       });
     }
 
-    bool provision() { return patches.provision(app); }
+    bool provision() { return patches.provision(*app); }
     bool patch(uint64_t produced) {
       bool ok = true;
-      app.bodyHdrs(
+      app->bodyHdrs(
 	[this, &ok]<typename Key, typename Patcher>(Patcher &&patcher) {
 	  if (!patches.template patch<Key>(ZuFwd<Patcher>(patcher)))
 	    ok = false;
@@ -477,28 +488,34 @@ private:
     }
     uint64_t contentLength() const { return produced; }
     bool headersValid() const { return headersOK && patches.valid(); }
-    RequestBuilder takeApp() { return ZuMv(app); }
+    Request &appBuilder() { return *app; }
     template <typename Emit>
-    void emitBody(Emit &&emit) { app.body(ZuFwd<Emit>(emit)); }
+    void emitBody(Emit &&emit) { app->body(ZuFwd<Emit>(emit)); }
 
-    RequestBuilder	app;
+    Request		*app = nullptr;
     HeaderPatches<ReqHeaders> patches;
+    ZuCSpan		target;
     uint64_t		produced = 0;
+    Method::T		method = Method::GET;
     bool		headersOK = true;
     bool		suppressPads = false;
+    bool		operationCached = false;
   };
 
   template <bool HasBody, bool Streaming>
   struct Builder_ :
-    public Message::template RequestBuilder<
+    public Message::template ReqBuilder<
       Builder_<HasBody, Streaming>,
       ReqHeaders, ReqTrailers, HasBody, Streaming>,
     public ReqOps {
-    using Base = typename Message::template RequestBuilder<
+    using Base = typename Message::template ReqBuilder<
       Builder_, ReqHeaders, ReqTrailers, HasBody, Streaming>;
 
-    Builder_(RequestBuilder app_, bool suppressPads = false) :
-      ReqOps{ZuMv(app_)} {
+    Builder_(
+      Request &app_, bool suppressPads = false,
+      bool operationCached = false, Method::T method = Method::GET,
+      ZuCSpan target = {}) :
+      ReqOps{app_, operationCached, method, target} {
       this->suppressPads = suppressPads;
     }
 
@@ -513,7 +530,7 @@ private:
   struct Parser;
 
   struct ParserSink_ {
-    using Protocol = typename Message::template ResponseParser<
+    using Protocol = typename Message::template ResParser<
       Parser, RespHeaders, RespBodyMax>;
     using State = typename Protocol::State;
 
@@ -541,19 +558,19 @@ private:
 	*link, *request, sink(), state);
     }
 
-    ResponseParser &sink() { return sink_->template p<1>(); }
+    ResParser &sink() { return *sink_; }
 
     App		*app = nullptr;
     Link	*link = nullptr;
-    Request	*request = nullptr;
-    ZuUnion<void, ResponseParser> *sink_ = nullptr;
+    Attempt	*request = nullptr;
+    ResParser	*sink_ = nullptr;
   };
 
   struct Parser :
-    public Message::template ResponseParser<
+    public Message::template ResParser<
       Parser, RespHeaders, RespBodyMax>,
     public ParserSink_ {
-    using Base = typename Message::template ResponseParser<
+    using Base = typename Message::template ResParser<
       Parser, RespHeaders, RespBodyMax>;
     using State = typename Base::State;
 
@@ -573,21 +590,33 @@ public:
   ClientMessage(App *app = nullptr, Link *link = nullptr) :
     m_app{app}, m_link{link} { }
 
-  void bind(Request *request) {
+  void bind(Attempt *request) {
     m_request = request;
     if (!request) return;
-    m_response.template p<1>(m_app->responseParser(*request));
+    m_requestApp = request->request;
+    m_requestApp->reset();
+    if constexpr (Message::ID != Version::H1) {
+      m_operationOK = false;
+      m_requestTarget.length(0);
+      unsigned operations = 0;
+      m_requestApp->operation(
+	[this, &operations](Method::T method, auto &&target) {
+	  if (++operations != 1) return;
+	  m_requestMethod = method;
+	  m_requestTarget << ZuFwd<decltype(target)>(target);
+	  m_operationOK = true;
+	});
+      if (operations != 1) m_operationOK = false;
+    }
+    m_response.init(*m_requestApp);
     static_cast<ParserSink_ &>(m_parser) = {
       m_app, m_link, request, &m_response};
   }
   void reset() {
     m_parser.reset();
     if constexpr (Message::ID != Version::H1) {
-      if (!m_request) return;
-      auto app = m_app->requestBuilder(*m_request);
-      app.operation([this](Method::T method, auto &&) {
-	m_parser.requestMethod(method);
-      });
+      if (!m_request || !m_operationOK) return;
+      m_parser.requestMethod(m_requestMethod);
     }
   }
 
@@ -607,20 +636,26 @@ public:
 
   bool send() {
     if (m_txState != TxState::Active) return false;
-    auto app = m_app->requestBuilder(*m_request);
-    if constexpr (!ReqBody)
-      return send_<false, false>(ZuMv(app));
-    else if constexpr (ReqStreaming && ReqOptional)
-      return sendOptionalStreaming_(ZuMv(app));
-    else if constexpr (ReqStreaming)
-      return send_<true, true>(ZuMv(app));
-    else
-      return sendFixed_(ZuMv(app));
+    if constexpr (Message::ID != Version::H1)
+      if (!m_operationOK) return failTx_();
+    return sendApp_(*m_requestApp);
   }
 
 private:
-  bool sendOptionalStreaming_(RequestBuilder app) {
-    Builder_<true, true> builder{ZuMv(app)};
+  bool sendApp_(Request &app) {
+    if constexpr (!ReqBody)
+      return send_<false, false>(app);
+    else if constexpr (ReqStreaming && ReqOptional)
+      return sendOptionalStreaming_(app);
+    else if constexpr (ReqStreaming)
+      return send_<true, true>(app);
+    else
+      return sendFixed_(app);
+  }
+
+  bool sendOptionalStreaming_(Request &app) {
+    Builder_<true, true> builder{
+      app, false, m_operationOK, m_requestMethod, m_requestTarget};
     auto tx = m_link->transmit(builder);
     bool emitted = false;
     bool duplicate = false;
@@ -645,7 +680,7 @@ private:
     if (duplicate || (emitted && (!headersOK || !writerOK)))
       return failStreamedTx_();
     if (!emitted)
-      return send_<false, false>(builder.takeApp(), true);
+      return send_<false, false>(builder.appBuilder(), true);
     m_link->finish();
     m_commit.final = true;
     m_txState = TxState::Complete;
@@ -653,8 +688,10 @@ private:
   }
 
   template <bool HasBody, bool Streaming>
-  bool send_(RequestBuilder app, bool suppressPads = false) {
-    Builder_<HasBody, Streaming> builder{ZuMv(app), suppressPads};
+  bool send_(Request &app, bool suppressPads = false) {
+    Builder_<HasBody, Streaming> builder{
+      app, suppressPads,
+      m_operationOK, m_requestMethod, m_requestTarget};
     auto tx = m_link->transmit(builder);
     if (!builder.request(tx) || !builder.headersValid())
       return failFor_<Streaming>();
@@ -684,8 +721,9 @@ private:
     return true;
   }
 
-  bool sendFixed_(RequestBuilder app) {
-    Builder_<true, false> builder{ZuMv(app)};
+  bool sendFixed_(Request &app) {
+    Builder_<true, false> builder{
+      app, false, m_operationOK, m_requestMethod, m_requestTarget};
     auto native = m_link->transmit(builder);
     if constexpr (Message::ID == Version::H2)
       return sendFixedH2_(builder, native);
@@ -722,7 +760,7 @@ private:
 	  (emitted && (!headersOK || !writerOK || !body.valid())))
 	return failTx_();
       if (!emitted)
-	return send_<false, false>(builder.takeApp(), true);
+	return send_<false, false>(builder.appBuilder(), true);
       if (!body.valid()) return failTx_();
       if (!builder.patch(builder.produced)) return failTx_();
       if constexpr (Message::ID != Version::H1)
@@ -766,7 +804,7 @@ private:
 	(emitted && (!headersOK || !writerOK || !body.valid())))
       return failTx_();
     if (!emitted)
-	return send_<false, false>(builder.takeApp(), true);
+	return send_<false, false>(builder.appBuilder(), true);
     if (!body.valid()) return failTx_();
     if (!builder.patch(builder.produced)) return failTx_();
     if (!builder.request(tx) || !builder.headersValid()) return failTx_();
@@ -835,11 +873,15 @@ private:
 
   App		*m_app = nullptr;
   Link		*m_link = nullptr;
-  Request	*m_request = nullptr;
+  Attempt	*m_request = nullptr;
+  Request	*m_requestApp = nullptr;
   Parser	m_parser;
-  ZuUnion<void, ResponseParser> m_response;
+  ResParser	m_response;
+  ZtString<ZtStringHeapID<"Zhttp.RequestTarget">> m_requestTarget;
   BodyCommit	m_commit;
+  Method::T	m_requestMethod = Method::GET;
   int8_t	m_txState = TxState::Idle;
+  bool		m_operationOK = false;
 };
 
 template <typename Impl, typename Parser_, typename Message_>

@@ -30,27 +30,23 @@
 namespace Zhttp {
 
 template <
-  typename Owner, typename Profile, typename Request,
-  typename RequestBuilder, typename ResponseParser>
+  typename Owner, typename Profile, typename Attempt,
+  typename Request, typename ResParser>
 class ClientPool;
 
-// RequestBuilder_ and ResponseParser_ conform to the application Builder and
+// Request_ and ResParser_ conform to the extended application Builder and
 // Parser contracts documented in Zhttp.hh.
 
-template <
-  typename App_, typename Request_,
-  typename RequestBuilder_, typename ResponseParser_>
+template <typename Request_, typename ResParser_>
 class Client {
 public:
-  using App = App_;
   using Request = Request_;
-  using RequestBuilder = RequestBuilder_;
-  using ResponseParser = ResponseParser_;
-  using ReqHeaders = typename RequestBuilder::Headers;
-  using RespHeaders = typename ResponseParser::Headers;
-  using BodyPolicy = typename RequestBuilder::BodyPolicy;
+  using ResParser = ResParser_;
+  using ReqHeaders = typename Request::Headers;
+  using RespHeaders = typename ResParser::Headers;
+  using BodyPolicy = typename Request::BodyPolicy;
   using Self = Client;
-  static constexpr uint64_t RespBodyMax = ResponseParser::BodyMax;
+  static constexpr uint64_t RespBodyMax = ResParser::BodyMax;
 
   struct Attempt {
     Request		*request = nullptr;
@@ -99,11 +95,11 @@ public:
   };
 
   using TCPPool = ClientPool<
-    Self, H1TCP, Attempt, RequestBuilder, ResponseParser>;
+    Self, H1TCP, Attempt, Request, ResParser>;
   using TLSPool = TLSClientPool<
-    Self, Attempt, RequestBuilder, ResponseParser>;
+    Self, Attempt, Request, ResParser>;
   using QUICPool = ClientPool<
-    Self, H3QUIC, Attempt, RequestBuilder, ResponseParser>;
+    Self, H3QUIC, Attempt, Request, ResParser>;
 
   using Requests =
     ZtArray<Request *, ZtArrayHeapID<"Zhttp.Client.Requests">>;
@@ -152,9 +148,6 @@ private:
 public:
   Client() :
     m_tcp{this}, m_tls{this}, m_quic{this}, m_altSvc{1} { }
-
-  App *impl() { return static_cast<App *>(this); }
-  const App *impl() const { return static_cast<const App *>(this); }
 
   uint64_t retainedBodyMax() const { return m_config.retainedBodyMax(); }
   uint64_t retainedMessageMax() const {
@@ -277,22 +270,6 @@ public:
 
   void printQUICDiag() { m_quic.printDiag(); }
 
-  // Side-effect-safe application defaults.
-  URLStorage url(const Request &request) const { return request.url; }
-  bool replayable(const Request &) const {
-    return !BodyPolicy::HasBody;
-  }
-  bool reproducible(const Request &) const {
-    return !BodyPolicy::HasBody;
-  }
-  void connected(Request &, const ConnectedInfo &) { }
-  void disconnected(Request *, bool) { }
-  void connectFailed(Request *, bool) { }
-  void selected(Request &, const Endpoint &) { }
-  void redirected(Request &, const URL &) { }
-  void observed(Request *, const ClientEvent &) { }
-  void completed(Request &, const Result &) { }
-
   template <typename Link>
   void poolConnect(Link &link, Attempt &attempt) {
     URL url = attempt.url.url();
@@ -321,11 +298,11 @@ public:
       observe_(
 	attempt.request, event_(attempt, ClientEventType::Selected));
     }
-    impl()->connected(*attempt.request, info);
+    attempt.request->connected(info);
   }
   template <typename Link>
   void poolDisconnected(Link &, Attempt *attempt, bool peer) {
-    impl()->disconnected(attempt ? attempt->request : nullptr, peer);
+    if (attempt && attempt->request) attempt->request->disconnected(peer);
   }
   template <typename Link>
   void poolConnectFailed(Link &, Attempt *attempt, bool transient) {
@@ -338,7 +315,8 @@ public:
 	attempt->request, event_(*attempt, ClientEventType::AttemptFailed,
 	  ResultCode::Failed, transient));
     }
-    impl()->connectFailed(attempt ? attempt->request : nullptr, transient);
+    if (attempt && attempt->request)
+      attempt->request->connectFailed(transient);
   }
   template <typename Link>
   void poolTxCommitted(
@@ -404,7 +382,7 @@ public:
       auto event = event_(attempt, ClientEventType::Redirected);
       event.previousAttempt = previous;
       observe_(attempt.request, event);
-      impl()->redirected(*attempt.request, attempt.url.url());
+      attempt.request->redirected(attempt.url.url());
       if (reuse && same && direct_<Link>(attempt)) {
 	attempt.selectionObserved = true;
 	observe_(
@@ -483,38 +461,31 @@ public:
     idle_();
   }
 
-  RequestBuilder requestBuilder(Attempt &attempt) {
-    return impl()->requestBuilder(*attempt.request, attempt.url.url());
-  }
-  ResponseParser responseParser(Attempt &attempt) {
-    return impl()->responseParser(*attempt.request);
-  }
-
   template <typename Link>
   void status(
-    Link &, Attempt &attempt, ResponseParser &parser, unsigned value) {
+    Link &, Attempt &attempt, ResParser &parser, unsigned value) {
     attempt.status = value;
     attempt.responseStarted = true;
     parser.status(value);
   }
   template <typename Link>
   void contentLength(
-    Link &, Attempt &, ResponseParser &parser, uint64_t value) {
+    Link &, Attempt &, ResParser &parser, uint64_t value) {
     parser.contentLength(value);
   }
   template <typename Link>
-  void chunked(Link &, Attempt &, ResponseParser &parser) {
+  void chunked(Link &, Attempt &, ResParser &parser) {
     parser.chunked();
   }
   template <typename Link>
   void version(
-    Link &, Attempt &attempt, ResponseParser &parser, ZuBSpan value) {
+    Link &, Attempt &attempt, ResParser &parser, ZuBSpan value) {
     attempt.http10 = ZuCSpan(value) == "HTTP/1.0";
     parser.version(value);
   }
   template <typename Key, typename Link>
   void header(
-    Link &, Attempt &attempt, ResponseParser &parser, ZuBSpan value) {
+    Link &, Attempt &attempt, ResParser &parser, ZuBSpan value) {
     if constexpr (Key{}() == "alt-svc") {
       URL url = attempt.url.url();
       Origin origin{url.origin()};
@@ -534,7 +505,7 @@ public:
   }
   template <typename Link, typename Rx>
   void body(
-    Link &link, Attempt &attempt, ResponseParser &parser, Rx &rx) {
+    Link &link, Attempt &attempt, ResParser &parser, Rx &rx) {
     headersDone_(link, attempt);
     uint64_t before = rx.length();
     if (before < attempt.bodyPending) {
@@ -554,7 +525,7 @@ public:
   }
   template <typename ParserState, typename Link>
   void complete(
-    Link &link, Attempt &attempt, ResponseParser &parser,
+    Link &link, Attempt &attempt, ResParser &parser,
     typename ParserState::T state) {
     if (attempt.responseDone) return;
     headersDone_(link, attempt);
@@ -618,7 +589,7 @@ private:
   }
 
   void observe_(Request *request, const ClientEvent &event) {
-    impl()->observed(request, event);
+    if (request) request->observed(event);
   }
 
   Request *shift_() {
@@ -716,7 +687,7 @@ private:
 
   void prepare_(Attempt &attempt, Request *request) {
     attempt.request = request;
-    attempt.url = impl()->url(*request);
+    attempt.url = request->url;
     attempt.redirects = 0;
     attempt.retries = 0;
     attempt.endpointIndex = 0;
@@ -920,7 +891,7 @@ private:
     if (endpoint) {
       attempt.endpoint = *endpoint;
       attempt.endpointSet = true;
-      impl()->selected(*attempt.request, attempt.endpoint);
+      attempt.request->selected(attempt.endpoint);
     }
     observe_(
       attempt.request, event_(attempt, ClientEventType::Selected));
@@ -1000,8 +971,8 @@ private:
   }
 
   bool canReplay_(const Attempt &attempt) const {
-    return impl()->replayable(*attempt.request) &&
-      impl()->reproducible(*attempt.request);
+    return attempt.request->replayable() &&
+      attempt.request->reproducible();
   }
 
   template <typename Link>
@@ -1074,7 +1045,7 @@ private:
     if (result.code == ResultCode::Cancelled)
       observe_(&request, event_(result, ClientEventType::Cancelled));
     observe_(&request, event_(result, ClientEventType::Completed));
-    impl()->completed(request, result);
+    request.completed(result);
     ++m_completed;
     if (!result.ok()) ++m_failed;
   }
@@ -1094,7 +1065,6 @@ private:
   void stopIngress_() {
     if (m_stopping) return;
     m_stopping = true;
-    observe_(nullptr, ClientEvent{.type = ClientEventType::Stopping});
     while (auto request = shift_())
       complete_(*request, ResultCode::Cancelled);
     for (unsigned i = 0; i < m_attempts.length(); ++i) {

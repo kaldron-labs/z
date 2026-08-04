@@ -92,9 +92,9 @@ struct BodyLink : public LinkTx<Profile::HTTPVersion> {
 
 template <typename Message>
 struct BodyBuilder :
-  public Message::template RequestBuilder<
+  public Message::template ReqBuilder<
     BodyBuilder<Message>, ZuTypeList<>, ZuTypeList<>, true, false> {
-  using Base = typename Message::template RequestBuilder<
+  using Base = typename Message::template ReqBuilder<
     BodyBuilder, ZuTypeList<>, ZuTypeList<>, true, false>;
   using Base::body;
   uint64_t contentLength() const { return 1; }
@@ -321,7 +321,7 @@ using ContentLength = ZuStringT<"content-length">;
 using FixedHeaders = ZuTypeList<ContentLength, void>;
 
 struct TxBuilder :
-  public Zhttp::H1::RequestBuilder<
+  public Zhttp::H1::ReqBuilder<
     TxBuilder, TxHeaders, ZuTypeList<>, true, true> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::POST, CustomTarget{}); }
@@ -334,7 +334,7 @@ struct TxBuilder :
 };
 
 struct FixedTxBuilder :
-  public Zhttp::H1::RequestBuilder<
+  public Zhttp::H1::ReqBuilder<
     FixedTxBuilder, FixedHeaders, ZuTypeList<>, true, false> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::PUT, "/fixed-edge"); }
@@ -381,9 +381,9 @@ struct HasResponseStart<T, decltype(
   ZuDeclVal<T &>().response(ZuDeclVal<TxLink::Stream &>()), void())> :
   public ZuTrue { };
 
-using ReqFacade = Zhttp::H1::RequestBuilder<
+using ReqFacade = Zhttp::H1::ReqBuilder<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
-using RespFacade = Zhttp::H1::ResponseBuilder<
+using RespFacade = Zhttp::H1::ResBuilder<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
 ZuAssert(HasRequestStart<ReqFacade>{});
 ZuAssert(!HasResponseStart<ReqFacade>{});
