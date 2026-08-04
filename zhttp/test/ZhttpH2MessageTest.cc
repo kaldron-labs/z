@@ -41,19 +41,23 @@ struct Parsed :
 
   void operation(
     Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    operationOrder = ++callbackOrder;
     method = method_;
     path = target.raw;
   }
   void status(unsigned value) { status_ = value; ++statusCalls; }
   void contentLength(uint64_t value) { contentLength_ = value; }
   template <typename Key> void header(ZuBSpan value) {
+    if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
   void header(ZuBSpan name, ZuBSpan value) {
+    if (!headerOrder) headerOrder = ++callbackOrder;
     if (name == "host") host = value;
   }
   template <typename Rx>
   void body(Rx &rx) {
+    if (!bodyOrder) bodyOrder = ++callbackOrder;
     while (rx) {
       const uint8_t *offered = nullptr;
       if (rx.consume(
@@ -78,6 +82,10 @@ struct Parsed :
   unsigned status_ = 0;
   unsigned statusCalls = 0;
   uint64_t contentLength_ = 0;
+  unsigned callbackOrder = 0;
+  unsigned operationOrder = 0;
+  unsigned headerOrder = 0;
+  unsigned bodyOrder = 0;
   unsigned completeCalls = 0;
   Zhttp::H2::ParserState::T completeState =
     Zhttp::H2::ParserState::Initial;
@@ -338,13 +346,31 @@ void testRequest()
     "request headers");
   ZuCHECK(parser.method == Zhttp::Method::POST &&
       parser.path == "/submit" && parser.host == "example.com" &&
-      parser.xTest == "request" && parser.contentLength_ == 3,
+      parser.xTest == "request" && parser.contentLength_ == 3 &&
+      parser.operationOrder &&
+      parser.operationOrder < parser.headerOrder,
     "shared request callbacks");
   ZuCHECK(data(parser, "abc", true) &&
       parser.body_ == "abc" && parser.completeCalls == 1 &&
       parser.completeState == Zhttp::H2::ParserState::Complete &&
-      parser.noCopy,
+      parser.noCopy && parser.headerOrder < parser.bodyOrder,
     "streaming request body completion");
+
+  Parsed invalid;
+  invalid.extendedConnect(true);
+  ZuCHECK(invalid.beginHeaders() &&
+      invalid.field(":method", "CONNECT") &&
+      invalid.field(":scheme", "https") &&
+      invalid.field(":authority", "example.com") &&
+      invalid.field(":path", "/chat") &&
+      invalid.field(":protocol", "opaque") &&
+      invalid.field("x-test", "request") &&
+      invalid.field("content-length", "0") &&
+      !invalid.endHeaders(false) &&
+      invalid.operationOrder < invalid.headerOrder &&
+      invalid.completeCalls == 1 &&
+      invalid.completeState == Zhttp::H2::ParserState::Error,
+    "post-operation H2 validation failure completes with an error");
 
   Parsed partial;
   partial.partial = true;

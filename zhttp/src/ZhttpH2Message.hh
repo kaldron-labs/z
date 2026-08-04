@@ -76,10 +76,14 @@ public:
 
   bool field(ZuCSpan name, ZuCSpan value) {
     if (!m_headers) return fail_();
-    return m_fields.field(name, value,
+    if constexpr (Request)
+      if (name && name[0] != ':' && !start_()) return fail_();
+    if (!m_fields.field(name, value,
       [this](ZuBSpan key, ZuBSpan value_) {
 	this->header_(key, value_);
-      }) && m_state != State::Error;
+      }) || m_state == State::Error)
+      return fail_();
+    return true;
   }
 
   bool endHeaders(bool endStream) {
@@ -196,6 +200,15 @@ public:
   void streamError_() { }
 
 private:
+  bool start_() {
+    return m_fields.start(
+      [this](Method::T method, const RequestTarget &target) {
+	impl()->operation(method, target);
+      },
+      [this](unsigned status) { impl()->status(status); },
+      [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
+  }
+
   void header_(ZuBSpan key, ZuBSpan value) {
     if (key == "content-length") {
       uint64_t length = 0;

@@ -135,12 +135,15 @@ struct Parser {
   using Headers = ZhttpHeaders(...);
   static constexpr uint64_t BodyMax = DefltMaxBody;
 
+  // Called first, before any header() or body() callback.  A subsequent
+  // validation failure is reported by complete(false).
   void operation(Method::T, const RequestTarget &);	// requests only
   void status(unsigned);				// responses only
   void version(ZuBSpan);
   void contentLength(uint64_t);
   void chunked();
   template <typename Key> void header(ZuBSpan value);
+  template <typename Key, typename Value> void header();
 
   // Synchronous queue prompt; incomplete application framing may remain
   // queued for a later decoded-body append.
@@ -155,7 +158,7 @@ struct Builder {
 
   // request start line / pseudo-headers
   template <typename L> void operation(L &&l);	// l(method, target)
-  template <typename L> void host(L &&l);		// l(authority)
+  template <typename L> void host(L &&l);	// l(authority)
   template <typename L> void protocol(L &&l);	// l(value), CONNECT only
 
   // response start line / pseudo-headers

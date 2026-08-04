@@ -143,42 +143,41 @@ public:
   }
 
   template <typename Operation, typename Status, typename Header>
-  Section finish(Operation &&operation, Status &&status, Header &&header) {
-    if (m_trailers) return m_seen ? Invalid : Trailers;
+  bool start(Operation &&operation, Status &&status, Header &&header) {
+    if (m_trailers || m_started) return true;
+    if (!valid_()) return false;
     if constexpr (Request) {
-      if (!(m_seen & MethodSeen)) return Invalid;
-      if (m_method == Method::CONNECT) {
-	if (!(m_seen & AuthoritySeen)) return Invalid;
-	if (m_seen & ProtocolSeen) {
-	  if (!m_extendedConnect ||
-	      !(m_seen & SchemeSeen) || !(m_seen & PathSeen) ||
-	      m_contentLength)
-	    return Invalid;
-	} else if (m_seen & (SchemeSeen | PathSeen))
-	  return Invalid;
-      } else {
-	if ((m_seen & (SchemeSeen | PathSeen)) !=
-	    (SchemeSeen | PathSeen) || (m_seen & ProtocolSeen))
-	  return Invalid;
-      }
       RequestTarget target;
       auto e = RequestTarget::fromPseudo(
 	target, m_method, m_scheme,
 	ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(m_authority.data()),
 	  m_authority.length()},
 	ZuBSpan{m_path}, ZuBSpan{m_protocol});
-      if (!e.ok()) return Invalid;
+      if (!e.ok()) return false;
+      m_started = true;
       operation(m_method, target);
       header(ZuBSpan{"host"}, target.authority.raw);
-      return Final;
     } else {
-      if (m_seen != StatusSeen) return Invalid;
+      m_started = true;
       status(m_status);
       m_noBody =
 	m_requestMethod == Method::HEAD ||
 	m_status < 200 || m_status == 204 || m_status == 304;
-      return m_status < 200 ? Informational : Final;
     }
+    return true;
+  }
+
+  template <typename Operation, typename Status, typename Header>
+  Section finish(Operation &&operation, Status &&status, Header &&header) {
+    if (m_trailers) return m_seen ? Invalid : Trailers;
+    if (!valid_() ||
+	!start(ZuFwd<Operation>(operation), ZuFwd<Status>(status),
+	  ZuFwd<Header>(header)))
+      return Invalid;
+    if constexpr (Request)
+      return Final;
+    else
+      return m_status < 200 ? Informational : Final;
   }
 
 private:
@@ -190,6 +189,23 @@ private:
     ProtocolSeen = 1U<<4,
     StatusSeen = 1U<<0
   };
+
+  bool valid_() const {
+    if constexpr (Request) {
+      if (!(m_seen & MethodSeen)) return false;
+      if (m_method == Method::CONNECT) {
+	if (!(m_seen & AuthoritySeen)) return false;
+	if (m_seen & ProtocolSeen)
+	  return m_extendedConnect &&
+	    (m_seen & SchemeSeen) && (m_seen & PathSeen) &&
+	    !m_contentLength;
+	return !(m_seen & (SchemeSeen | PathSeen));
+      }
+      return (m_seen & (SchemeSeen | PathSeen)) ==
+	(SchemeSeen | PathSeen) && !(m_seen & ProtocolSeen);
+    } else
+      return m_seen == StatusSeen;
+  }
 
   template <typename Header>
   bool pseudo_(ZuCSpan name, ZuCSpan value, Header &&header) {
@@ -251,6 +267,7 @@ private:
   bool		m_contentLength = false;
   bool		m_noBody = false;
   bool		m_extendedConnect = false;
+  bool		m_started = false;
 };
 
 } // namespace Fields
