@@ -81,7 +81,7 @@ template <typename Link>
 class Base {
 public:
   Base(Link &link) : m_link{&link} {
-    static_assert(IsLink<Link>{}, "invalid Zhttp logical-stream link");
+    ZuAssert(IsLink<Link>{}, "invalid Zhttp logical-stream link");
   }
 
   bool localCap() const { return m_link->streamLocalCap(); }
@@ -90,7 +90,7 @@ public:
   template <typename L>
   void txStream(L &&l) {
     m_link->streamTx([&l](auto &tx) {
-      static_assert(
+      ZuAssert(
 	Stream_::IsTx<ZuDecay<decltype(tx)>>{},
 	"invalid Zhttp logical-stream Tx stream");
       ZuFwd<L>(l)(tx);
@@ -134,7 +134,7 @@ public:
 
   template <typename Rx>
   int process(Rx &rx) {
-    static_assert(
+    ZuAssert(
       Stream_::IsRx<Rx>{}, "invalid Zhttp logical-stream Rx queue");
     if (!m_link || !m_consumer) return 0;
     auto link = m_link;

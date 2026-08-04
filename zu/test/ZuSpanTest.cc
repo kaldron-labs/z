@@ -138,12 +138,12 @@ constexpr bool spliceConstevalCase1NoOp()
     s[1] == 2;
 }
 
-static_assert(spliceConstevalBasic());
-static_assert(spliceConstevalOffsetOnly());
-static_assert(spliceConstevalRemoved());
-static_assert(spliceConstevalReplaceShrink());
-static_assert(spliceConstevalRLengthClamp());
-static_assert(spliceConstevalCase1NoOp());
+ZuAssert(spliceConstevalBasic());
+ZuAssert(spliceConstevalOffsetOnly());
+ZuAssert(spliceConstevalRemoved());
+ZuAssert(spliceConstevalReplaceShrink());
+ZuAssert(spliceConstevalRLengthClamp());
+ZuAssert(spliceConstevalCase1NoOp());
 
 constexpr bool spanFindMatchConsteval()
 {
@@ -165,7 +165,7 @@ constexpr bool spanFindMatchConsteval()
     s.match<"">();
 }
 
-static_assert(spanFindMatchConsteval());
+ZuAssert(spanFindMatchConsteval());
 
 void testSpanSpliceRuntimePaths()
 {

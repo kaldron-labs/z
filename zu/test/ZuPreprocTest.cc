@@ -42,9 +42,9 @@ void testReservedWords()
   constexpr int isStruct = ZuIfReserved(struct, ZPP_TRUE, ZPP_FALSE);
   constexpr int isWidget = ZuIfReserved(widget, ZPP_TRUE, ZPP_FALSE);
 
-  static_assert(isClass == 1);
-  static_assert(isStruct == 1);
-  static_assert(isWidget == 0);
+  ZuAssert(isClass == 1);
+  ZuAssert(isStruct == 1);
+  ZuAssert(isWidget == 0);
 
   ZuCheck(isClass == 1);
   ZuCheck(isStruct == 1);

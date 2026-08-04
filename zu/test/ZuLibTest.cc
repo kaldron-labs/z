@@ -47,13 +47,13 @@ void testStaticTraits()
 {
   ZuTestScope(testStaticTraits);
 
-  static_assert(ZuIsSame<ZuAlt<char>, wchar_t>{});
-  static_assert(ZuIsSame<ZuAlt<wchar_t>, char>{});
-  static_assert(ZuEquiv<char, unsigned char>{});
-  static_assert(ZuIsSame<ZuNorm<const volatile char &>, char>{});
+  ZuAssert((ZuIsSame<ZuAlt<char>, wchar_t>{}));
+  ZuAssert((ZuIsSame<ZuAlt<wchar_t>, char>{}));
+  ZuAssert((ZuEquiv<char, unsigned char>{}));
+  ZuAssert((ZuIsSame<ZuNorm<const volatile char &>, char>{}));
 
-  static_assert(ZuIsSame<ZuLargest<uint8_t, uint16_t, uint32_t>, uint32_t>{});
-  static_assert(alignof(ZuMostAligned<char, double, int>) == alignof(double));
+  ZuAssert((ZuIsSame<ZuLargest<uint8_t, uint16_t, uint32_t>, uint32_t>{}));
+  ZuAssert((alignof(ZuMostAligned<char, double, int>) == alignof(double)));
 
   using TL = ZuTypeList<int, double, char>;
   using Head = ZuTypeHead<2, TL>;
@@ -62,25 +62,25 @@ void testStaticTraits()
   using Grep = ZuTypeGrep<IsIntegralT, TL>;
   using Sorted = ZuTypeSort<Index, A, B, C>;
 
-  static_assert(Head::N == 2);
-  static_assert(Tail::N == 2);
-  static_assert(Mapped::N == 3);
-  static_assert(Grep::N == 2);
-  static_assert(ZuType<0, Sorted>::I == 1);
-  static_assert(ZuType<1, Sorted>::I == 2);
-  static_assert(ZuType<2, Sorted>::I == 3);
+  ZuAssert(Head::N == 2);
+  ZuAssert(Tail::N == 2);
+  ZuAssert(Mapped::N == 3);
+  ZuAssert(Grep::N == 2);
+  ZuAssert((ZuType<0, Sorted>::I == 1));
+  ZuAssert((ZuType<1, Sorted>::I == 2));
+  ZuAssert((ZuType<2, Sorted>::I == 3));
 
   using From = ZuTypeList<short, int>;
   using To = ZuTypeList<int, long>;
-  static_assert(ZuTLConverts<From, To>{});
-  static_assert(ZuTLConstructs<From, To>{});
+  ZuAssert((ZuTLConverts<From, To>{}));
+  ZuAssert((ZuTLConstructs<From, To>{}));
 
   using Seq = ZuSeq<1, 3, 5>;
-  static_assert(ZuSeqBitmap<Seq>() == ((1ULL << 1) | (1ULL << 3) | (1ULL << 5)));
+  ZuAssert(ZuSeqBitmap<Seq>() == ((1ULL << 1) | (1ULL << 3) | (1ULL << 5)));
 
   using D = ZuDeduce<decltype(&freeFn)>;
-  static_assert(!D::Member);
-  static_assert(ZuIsSame<typename D::R, int>{});
+  ZuAssert(!D::Member);
+  ZuAssert((ZuIsSame<typename D::R, int>{}));
 }
 
 void testRuntimeSmokes()
@@ -89,11 +89,11 @@ void testRuntimeSmokes()
 
   struct Value { };
   Value value;
-  static_assert(ZuIsSame<decltype(ZuMvPtr(value)), Value &&>{});
+  ZuAssert((ZuIsSame<decltype(ZuMvPtr(value)), Value &&>{}));
 
   int i = 42;
   int *raw = &i;
-  static_assert(ZuIsSame<decltype(ZuMvPtr(raw)), int *>{});
+  ZuAssert((ZuIsSame<decltype(ZuMvPtr(raw)), int *>{}));
   int *moved = ZuMvPtr(raw);
   ZuCheck(!raw);
   ZuCheck(moved == &i);

@@ -162,7 +162,7 @@ class H1Client :
   using Base = Zhttp::ClientHub<H1Client, Profile>;
 
 public:
-  static_assert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
+  ZuAssert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = H1ClientLink<App, Profile>;
   using Config = typename Traits::Config;
 
@@ -350,7 +350,7 @@ class H1Server :
   using Base = Zhttp::Server<H1Server, Profile>;
 
 public:
-  static_assert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
+  ZuAssert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = H1ServerLink<App, Profile>;
   using Config = typename Traits::Config;
 

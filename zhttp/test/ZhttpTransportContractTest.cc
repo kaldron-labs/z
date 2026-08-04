@@ -128,20 +128,20 @@ using SyntheticMessage =
   Zhttp::MessageTraits<SyntheticProfile, SyntheticTraits>;
 using SyntheticBuilder = BodyBuilder<SyntheticMessage>;
 
-static_assert(HasBodyTx<BodyTx>{});
-static_assert(HasFinalSend<BodyTx>{});
-static_assert(HasBodyRx<BodyRx>{});
-static_assert(HasLinkBody<
-  BodyLink<Zhttp::H1TCP>, ProfileBuilder<Zhttp::H1TCP>>{});
-static_assert(HasLinkBody<
-  BodyLink<Zhttp::H1TLS>, ProfileBuilder<Zhttp::H1TLS>>{});
-static_assert(HasLinkBody<
-  BodyLink<Zhttp::H2TLS>, ProfileBuilder<Zhttp::H2TLS>>{});
-static_assert(HasLinkBody<
-  BodyLink<Zhttp::H3QUIC>, ProfileBuilder<Zhttp::H3QUIC>>{});
-static_assert(SyntheticMessage::Multiplexed);
-static_assert(HasLinkBody<
-  BodyLink<SyntheticProfile>, SyntheticBuilder>{});
+ZuAssert(HasBodyTx<BodyTx>{});
+ZuAssert(HasFinalSend<BodyTx>{});
+ZuAssert(HasBodyRx<BodyRx>{});
+ZuAssert((HasLinkBody<
+  BodyLink<Zhttp::H1TCP>, ProfileBuilder<Zhttp::H1TCP>>{}));
+ZuAssert((HasLinkBody<
+  BodyLink<Zhttp::H1TLS>, ProfileBuilder<Zhttp::H1TLS>>{}));
+ZuAssert((HasLinkBody<
+  BodyLink<Zhttp::H2TLS>, ProfileBuilder<Zhttp::H2TLS>>{}));
+ZuAssert((HasLinkBody<
+  BodyLink<Zhttp::H3QUIC>, ProfileBuilder<Zhttp::H3QUIC>>{}));
+ZuAssert(SyntheticMessage::Multiplexed);
+ZuAssert((HasLinkBody<
+  BodyLink<SyntheticProfile>, SyntheticBuilder>{}));
 
 template <typename Profile, typename = void>
 struct HasProfileTraits : public ZuFalse { };
@@ -151,13 +151,13 @@ struct HasProfileTraits<Profile,
 
 using Invalid =
   Zhttp::Profile<Zhttp::QUIC, Zhttp::Version::H1>;
-static_assert(Zhttp::IsProfile<Zhttp::H1TCP>{});
-static_assert(Zhttp::IsProfile<Zhttp::H1TLS>{});
-static_assert(Zhttp::IsProfile<Zhttp::H2TLS>{});
-static_assert(Zhttp::IsProfile<Zhttp::H3QUIC>{});
-static_assert(!Zhttp::IsProfile<Invalid>{});
-static_assert(HasProfileTraits<Zhttp::H1TCP>{});
-static_assert(!HasProfileTraits<Invalid>{});
+ZuAssert(Zhttp::IsProfile<Zhttp::H1TCP>{});
+ZuAssert(Zhttp::IsProfile<Zhttp::H1TLS>{});
+ZuAssert(Zhttp::IsProfile<Zhttp::H2TLS>{});
+ZuAssert(Zhttp::IsProfile<Zhttp::H3QUIC>{});
+ZuAssert(!Zhttp::IsProfile<Invalid>{});
+ZuAssert(HasProfileTraits<Zhttp::H1TCP>{});
+ZuAssert(!HasProfileTraits<Invalid>{});
 
 struct Link {
   Tx txStream() { return {}; }
@@ -166,14 +166,14 @@ struct Link {
   void disconnected(bool) { }
 };
 
-static_assert(Zhttp::Transport_::HasTxStream<Link>{});
-static_assert(Zhttp::Transport_::HasProcess<Link, Rx>{});
-static_assert(Zhttp::Transport_::HasConnected<
-  Link, Zhttp::ConnectedInfo>{});
-static_assert(Zhttp::Transport_::HasDisconnected<Link>{});
+ZuAssert(Zhttp::Transport_::HasTxStream<Link>{});
+ZuAssert((Zhttp::Transport_::HasProcess<Link, Rx>{}));
+ZuAssert((Zhttp::Transport_::HasConnected<
+  Link, Zhttp::ConnectedInfo>{}));
+ZuAssert(Zhttp::Transport_::HasDisconnected<Link>{});
 using Contract =
   Zhttp::Transport_::LinkContract<Link, Rx, Zhttp::ConnectedInfo>;
-static_assert(sizeof(Contract) == 1);
+ZuAssert(sizeof(Contract) == 1);
 
 using TxBufAlloc =
   ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
@@ -241,8 +241,8 @@ struct StreamConsumer {
 
 using LogicalStream = Zhttp::Stream<StreamLink>;
 using Dispatch = Zhttp::StreamDispatch<StreamLink, StreamConsumer>;
-static_assert(sizeof(LogicalStream) == sizeof(void *));
-static_assert(sizeof(Dispatch) == sizeof(void *) * 2);
+ZuAssert(sizeof(LogicalStream) == sizeof(void *));
+ZuAssert(sizeof(Dispatch) == sizeof(void *) * 2);
 
 struct TxLink {
   struct Stream : public ZiTxStream<Stream> {
@@ -385,10 +385,10 @@ using ReqFacade = Zhttp::H1::RequestBuilder<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
 using RespFacade = Zhttp::H1::ResponseBuilder<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
-static_assert(HasRequestStart<ReqFacade>{});
-static_assert(!HasResponseStart<ReqFacade>{});
-static_assert(!HasRequestStart<RespFacade>{});
-static_assert(HasResponseStart<RespFacade>{});
+ZuAssert(HasRequestStart<ReqFacade>{});
+ZuAssert(!HasResponseStart<ReqFacade>{});
+ZuAssert(!HasRequestStart<RespFacade>{});
+ZuAssert(HasResponseStart<RespFacade>{});
 
 void testBodyTx()
 {

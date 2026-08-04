@@ -39,15 +39,15 @@ using TLGrep = ZuTypeGrep<IsIntegralT, TL>;
 using TLHead = ZuTypeHead<2, TL>;
 using TLTail = ZuTypeTail<1, TL>;
 
-static_assert(TLMap::N == 3);
-static_assert(TLGrep::N == 2);
-static_assert(TLHead::N == 2);
-static_assert(TLTail::N == 2);
+ZuAssert(TLMap::N == 3);
+ZuAssert(TLGrep::N == 2);
+ZuAssert(TLHead::N == 2);
+ZuAssert(TLTail::N == 2);
 
 using ConvertFrom = ZuTypeList<short, int>;
 using ConvertTo = ZuTypeList<int, long>;
-static_assert(ZuTLConverts<ConvertFrom, ConvertTo>{});
-static_assert(ZuTLConstructs<ConvertFrom, ConvertTo>{});
+ZuAssert((ZuTLConverts<ConvertFrom, ConvertTo>{}));
+ZuAssert((ZuTLConstructs<ConvertFrom, ConvertTo>{}));
 
 struct X {
   X() = default;

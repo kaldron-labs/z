@@ -119,8 +119,8 @@ void testInvalidAndHelpers()
   int i = 0;
   ZuCheck(Zu_atoi(i, "--1", 3) == 0);
 
-  static_assert(ZuDecimalFn::pow10_32(3) == 1000U);
-  static_assert(ZuDecimalFn::pow10_64(4) == 10000ULL);
+  ZuAssert(ZuDecimalFn::pow10_32(3) == 1000U);
+  ZuAssert(ZuDecimalFn::pow10_64(4) == 10000ULL);
 
   ZuCheck(ZuICmp<ZuCSpan>::equals("Alpha", "aLpHa"));
   ZuCheck(ZuICmp<ZuCSpan>::cmp("abc", "ABD") < 0);

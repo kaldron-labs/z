@@ -139,7 +139,7 @@ struct HuffmanDecode_ {
     ZuArray<uint16_t, N> &table,
     uint32_t code, unsigned codeBits, unsigned bits, unsigned symbol)
   {
-    static_assert(N == (1U << TableBits));
+    ZuAssert(N == (1U << TableBits));
     uint32_t first = code << (TableBits - codeBits);
     uint32_t n = 1U << (TableBits - codeBits);
     uint16_t v = huffmanPack_(bits, symbol);

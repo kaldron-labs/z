@@ -405,7 +405,7 @@ class CliLink :
   //     despite Zdb depending on Zv
 
   // (linkID, seqNo) descending -> query and keep going
-  // if acks can occur out of order, then ackd needs to be part of index?
+  // if acks can occur out of order, then ackd needs to be part of index (it does)
   // - need to be able to rapidly query for all unackd, and iterate over them
 
   // 1] type list of messages

@@ -12,7 +12,7 @@
 
 using namespace ZuTestUtil;
 
-static_assert(ZmLockTraits<ZmRWLock>::RWLock == 1);
+ZuAssert(ZmLockTraits<ZmRWLock>::RWLock == 1);
 
 void testWriteExcludesOthers()
 {

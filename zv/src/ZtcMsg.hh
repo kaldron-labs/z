@@ -38,10 +38,10 @@ struct Hdr {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(Hdr) == 4);
+ZuAssert(sizeof(Hdr) == 4);
 
 inline ZmRef<ZiIOBuf> frameBuf(ZmRef<ZiIOBuf> buf) {
-  static_assert(sizeof(Hdr) <= Zfb::IOBuilder::Align);
+  ZuAssert(sizeof(Hdr) <= Zfb::IOBuilder::Align);
   buf->skip = Zfb::IOBuilder::Align;
   return buf;
 }
