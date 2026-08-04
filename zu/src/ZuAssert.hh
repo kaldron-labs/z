@@ -15,7 +15,18 @@
 
 #include <assert.h>
 
-#define ZuAssert(x) static_assert((x), #x)
+#include <zlib/ZuPP.hh>
+
+#define ZuAssert_1(x) static_assert((x), #x)
+#define ZuAssert_2(x, d) static_assert((x), d)
+#define ZuAssert_N(_0, _1, Fn, ...) Fn
+#define ZuAssert__(...) \
+  ZuAssert_N(__VA_ARGS__, \
+    ZuAssert_2(__VA_ARGS__), \
+    ZuAssert_1(__VA_ARGS__))
+// ZuAssert() dependents may call it using ZuPP_Eval
+#define ZuAssert(...) \
+  ZuPP_Eval__(ZuPP_Defer(ZuAssert__)(__VA_ARGS__))
 
 // compile time C assert
 #define ZuCAssert(x) switch (0) { case 0: case (x): ; }

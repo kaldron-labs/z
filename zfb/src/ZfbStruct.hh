@@ -1104,7 +1104,7 @@ inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
     typename O = O_, typename Base = ZfField(O_, ID##__), typename Under = O, \
     typename _ = void> \
   struct ZfField(O_, ID##_) { \
-    static_assert( \
+    ZuAssert( \
       ZuAlwaysFalse<_>{}(), \
       #O_ "/" #ID " - flatbuffer / C++ mismatch"); \
   }; \

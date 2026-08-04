@@ -623,10 +623,10 @@ void testNodeMvRef()
 {
   ZuTestScope(testNodeMvRef);
 
-  static_assert(
-    ZuIsSame<PlainPQueue::NodeMvRef, ZuPtr<PlainPQueue::Node>>{});
-  static_assert(
-    !ZuIsSame<PlainPQueue::NodeRef, PlainPQueue::NodeMvRef>{});
+  ZuAssert((
+    ZuIsSame<PlainPQueue::NodeMvRef, ZuPtr<PlainPQueue::Node>>{}));
+  ZuAssert((
+    !ZuIsSame<PlainPQueue::NodeRef, PlainPQueue::NodeMvRef>{}));
 
   PlainPQueue q(0);
   q.add(new PlainQMsg(ZuFwdTuple(0, 1)));

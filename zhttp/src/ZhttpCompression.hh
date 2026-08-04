@@ -146,7 +146,7 @@ namespace Huffman {
 struct PrefInt {
   template <unsigned Bits>
   int start(uint8_t first, uint64_t &value) {
-    static_assert(Bits && Bits <= 8);
+    ZuAssert(Bits && Bits <= 8);
     enum { Mask = (1U << Bits) - 1U };
     m_value = first & Mask;
     m_shift = 0;

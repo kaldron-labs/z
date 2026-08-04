@@ -74,8 +74,8 @@ struct ZmAlloc_ {
   ZmAlloc_N(__VA_ARGS__, \
     ZmAlloc_2(T, __VA_ARGS__), \
     ZmAlloc_1(T, __VA_ARGS__))
-// ZmAlloc() dependents call it using ZuPP_Eval
+// ZmAlloc() dependents may call it using ZuPP_Eval
 #define ZmAlloc(...) \
-  ZuPP_Eval_(ZuPP_Defer(ZmAlloc__)(__VA_ARGS__))
+  ZuPP_Eval__(ZuPP_Defer(ZmAlloc__)(__VA_ARGS__))
 
 #endif /* ZmAlloc_HH */

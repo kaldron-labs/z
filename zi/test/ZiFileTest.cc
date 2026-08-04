@@ -349,8 +349,8 @@ void testTxStream()
     "open failed: ", file.error());
 
   using Stream = ZiFileTxStream<ZiFileTxBufSize<8>>;
-  static_assert(Stream::maxSize == 8);
-  static_assert(
+  ZuAssert(Stream::maxSize == 8);
+  ZuAssert(
     ZiFileTxStream<ZiFileTxBufSize<(16<<10)>>::maxSize == (16<<10));
   {
     Stream stream{file};

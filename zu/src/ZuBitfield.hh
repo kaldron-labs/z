@@ -63,7 +63,7 @@ class ZuBitfield : public ZuBitfield_<Width> {
   using Base::shift;
   using Base::mask;
 
-  static_assert(N > 0);
+  ZuAssert(N > 0);
 
   static uint64_t get_(unsigned i, uint64_t w) {
     return (w>>shift(i)) & mask();

@@ -52,6 +52,7 @@ static int hpackStaticIndex_(ZuCSpan name, ZuCSpan value)
       if (j < 0) return;
       ZuSwitch::dispatch<KeyEntries::N>(
 	unsigned(j), [&index, nameIndex](auto valueIndex) {
+	(void)nameIndex; // gcc bug requires the capture; clang warns if unused
 	using KV = ZuType<valueIndex, KeyEntries>;
 	index = ZuTypeIndex<KV, HPackTbl>{};
       });
@@ -59,7 +60,7 @@ static int hpackStaticIndex_(ZuCSpan name, ZuCSpan value)
   return index;
 }
 
-static_assert(HPackTbl::N == 61);
+ZuAssert(HPackTbl::N == 61);
 
 static uint32_t entrySize_(ZuCSpan name, ZuCSpan value)
 {

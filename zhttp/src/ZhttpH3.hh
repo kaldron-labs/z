@@ -1389,7 +1389,7 @@ private:
     ZuUnroll::all<HeaderKeys>([this, &build]<typename Key>() {
 	using Value = ZuType<ZuTypeIndex<Key, HeaderKeys>{}, HeaderValues>;
 	if constexpr (!ZuIsSame<Value, void>{}) {
-	  static_assert(!IsTypeList_<Value>{},
+	  ZuAssert(!IsTypeList_<Value>{},
 	    "H3 Builder header values must be void or a single value");
 	  build.field(Key{}(), Value{}());
 	} else {

@@ -15,27 +15,27 @@
 
 using namespace ZuTestUtil;
 
-static_assert(ZuIsSame<
+ZuAssert((ZuIsSame<
   typename Ztc::HeapMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
+  typename Ztc::AllFnHeapID::HeapID>{}));
+ZuAssert((ZuIsSame<
   typename Ztc::HashMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
+  typename Ztc::AllFnHeapID::HeapID>{}));
+ZuAssert((ZuIsSame<
   typename Ztc::ThreadMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
+  typename Ztc::AllFnHeapID::HeapID>{}));
+ZuAssert((ZuIsSame<
   typename Ztc::QueueMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
+  typename Ztc::AllFnHeapID::HeapID>{}));
+ZuAssert((ZuIsSame<
   typename Ztc::HeapMgr::AddFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
+  typename Ztc::WatchFnHeapID::HeapID>{}));
+ZuAssert((ZuIsSame<
   typename Ztc::HashMgr::DelFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{});
-static_assert(ZuIsSame<
+  typename Ztc::WatchFnHeapID::HeapID>{}));
+ZuAssert((ZuIsSame<
   typename Ztc::ThreadMgr::AddFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{});
+  typename Ztc::WatchFnHeapID::HeapID>{}));
 
 template <typename Heap>
 struct WatchAlloc_ : public Heap {

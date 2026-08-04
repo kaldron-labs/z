@@ -163,7 +163,7 @@ struct ParserBodyMax<U, decltype((void)U::BodyMax, void())> {
 template <typename Write, typename Stream>
 bool invokeBodyWriter(Write &&write, Stream &stream) {
   using R = decltype(ZuFwd<Write>(write)(stream));
-  static_assert(ZuIsSame<R, void>{} || ZuIsSame<R, bool>{},
+  ZuAssert((ZuIsSame<R, void>{} || ZuIsSame<R, bool>{}),
     "body writer must return void or bool");
   if constexpr (ZuIsSame<R, void>{}) {
     ZuFwd<Write>(write)(stream);
@@ -344,9 +344,9 @@ public:
   template <typename Key, typename Patcher>
   bool patch(Patcher &&patcher) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-    static_assert(I < Keys::N, "bodyHdrs key is not declared in Headers");
+    ZuAssert(I < Keys::N, "bodyHdrs key is not declared in Headers");
     using Value = ZuType<I, Values>;
-    static_assert(ZuIsSame<Value, void>{},
+    ZuAssert((ZuIsSame<Value, void>{}),
       "bodyHdrs key must be runtime-valued");
     auto &slot = m_slots.template p<I>();
     if (!slot.provisioned || slot.patched) return false;
@@ -416,14 +416,14 @@ public:
     ReqOptional = BodyPolicy::Optional
   };
   static constexpr uint64_t RespBodyMax = ParserBodyMax<ResponseParser>::V;
-  static_assert(ReqStreaming || !ReqBody ||
-    ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{},
+  ZuAssert((ReqStreaming || !ReqBody ||
+    ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{}),
     "fixed request body requires content-length in Headers");
-  static_assert(!ReqStreaming ||
-    !ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{},
+  ZuAssert((!ReqStreaming ||
+    !ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{}),
     "streaming request body cannot declare content-length");
-  static_assert(
-    !ZuTypeIn<ZuStringT<"transfer-encoding">, ReqHeaderKeys>{},
+  ZuAssert((
+    !ZuTypeIn<ZuStringT<"transfer-encoding">, ReqHeaderKeys>{}),
     "libZhttp owns request transfer-encoding framing");
 
 private:

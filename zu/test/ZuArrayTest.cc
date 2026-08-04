@@ -159,19 +159,19 @@ constexpr bool spliceConstevalCase1Replace()
     a[4] == 8;
 }
 
-static_assert(spliceConstevalBasic());
-static_assert(spliceConstevalRemoved());
-static_assert(spliceConstevalOffsetOnly());
-static_assert(spliceConstevalReplaceShrink());
-static_assert(spliceConstevalCase1Replace());
-static_assert(HasSubFind<ZuCSpan, ZuCSpan>{});
-static_assert(HasSubFind<ZuSpan<const double>, ZuSpan<const double>>{});
-static_assert(HasFixedFind<ZuCSpan>{});
-static_assert(HasFixedFind<ZuBSpan>{});
-static_assert(!HasFixedFind<ZuSpan<const double>>{});
-static_assert(HasFixedMatch<ZuCSpan>{});
-static_assert(HasFixedMatch<ZuBSpan>{});
-static_assert(!HasFixedMatch<ZuSpan<const double>>{});
+ZuAssert(spliceConstevalBasic());
+ZuAssert(spliceConstevalRemoved());
+ZuAssert(spliceConstevalOffsetOnly());
+ZuAssert(spliceConstevalReplaceShrink());
+ZuAssert(spliceConstevalCase1Replace());
+ZuAssert((HasSubFind<ZuCSpan, ZuCSpan>{}));
+ZuAssert((HasSubFind<ZuSpan<const double>, ZuSpan<const double>>{}));
+ZuAssert(HasFixedFind<ZuCSpan>{});
+ZuAssert(HasFixedFind<ZuBSpan>{});
+ZuAssert(!HasFixedFind<ZuSpan<const double>>{});
+ZuAssert(HasFixedMatch<ZuCSpan>{});
+ZuAssert(HasFixedMatch<ZuBSpan>{});
+ZuAssert(!HasFixedMatch<ZuSpan<const double>>{});
 
 constexpr bool findMatchConsteval()
 {
@@ -205,7 +205,7 @@ constexpr bool findMatchConsteval()
     !s.match("abd");
 }
 
-static_assert(findMatchConsteval());
+ZuAssert(findMatchConsteval());
 
 void testSpliceBasicPaths()
 {

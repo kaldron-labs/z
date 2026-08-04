@@ -43,7 +43,7 @@ constexpr unsigned log2_align_(unsigned value) {
   return bits;
 }
 
-static_assert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
+ZuAssert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
   "ZiIOBuf_Align must be a power of two");
 
 constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
@@ -61,7 +61,7 @@ constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
 #endif
 
 #if Ztls_Fusion
-static_assert(IOBufAlignBits >= PTLS_X86_CACHE_LINE_ALIGN_BITS,
+ZuAssert(IOBufAlignBits >= PTLS_X86_CACHE_LINE_ALIGN_BITS,
   "ZiIOBuf_Align must satisfy zpicotls fusion alignment");
 #endif
 

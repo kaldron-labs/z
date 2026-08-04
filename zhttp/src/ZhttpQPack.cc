@@ -50,6 +50,7 @@ static int qpackStaticIndex_(ZuCSpan name, ZuCSpan value)
       if (j < 0) return;
       ZuSwitch::dispatch<KeyEntries::N>(
 	unsigned(j), [&index, nameIndex](auto valueIndex) {
+	(void)nameIndex; // gcc bug requires the capture; clang warns if unused
 	using KV = ZuType<valueIndex, KeyEntries>;
 	index = ZuTypeIndex<KV, QPackTbl>{};
       });
@@ -71,7 +72,7 @@ static uint32_t qpackEntrySize_(ZuCSpan name, ZuCSpan value)
   return n > uint32_t(-1) ? uint32_t(-1) : uint32_t(n);
 }
 
-static_assert(QPackTbl::N == 99);
+ZuAssert(QPackTbl::N == 99);
 
 template <unsigned I>
 static Header qpackStaticField_()

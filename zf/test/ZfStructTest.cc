@@ -102,18 +102,18 @@ using FloatRangeField = ZfField(Foo, float_ranged);
 using IntRange = ZuFieldProp::GetRange<typename IntRangeField::Props>;
 using FloatRange = ZuFieldProp::GetRange<typename FloatRangeField::Props>;
 
-static_assert(!ZuFieldProp::HasRange<typename IntField::Props>{});
-static_assert(ZuFieldProp::HasRange<typename IntRangeField::Props>{});
-static_assert(IntRange::minimum() == 0);
-static_assert(IntRange::maximum() == 100);
-static_assert(FloatRange::minimum() == 0.0);
-static_assert(FloatRange::maximum() == 1);
-static_assert(IntField::minimum() == ZuCmp<int>::minimum());
-static_assert(IntField::maximum() == ZuCmp<int>::maximum());
-static_assert(IntRangeField::minimum() == 0);
-static_assert(IntRangeField::maximum() == 100);
-static_assert(FloatRangeField::minimum() == 0.0);
-static_assert(FloatRangeField::maximum() == 1);
+ZuAssert(!ZuFieldProp::HasRange<typename IntField::Props>{});
+ZuAssert(ZuFieldProp::HasRange<typename IntRangeField::Props>{});
+ZuAssert(IntRange::minimum() == 0);
+ZuAssert(IntRange::maximum() == 100);
+ZuAssert(FloatRange::minimum() == 0.0);
+ZuAssert(FloatRange::maximum() == 1);
+ZuAssert(IntField::minimum() == ZuCmp<int>::minimum());
+ZuAssert(IntField::maximum() == ZuCmp<int>::maximum());
+ZuAssert(IntRangeField::minimum() == 0);
+ZuAssert(IntRangeField::maximum() == 100);
+ZuAssert(FloatRangeField::minimum() == 0.0);
+ZuAssert(FloatRangeField::maximum() == 1);
 
 using BoxInt = ZuNBox0(int);
 

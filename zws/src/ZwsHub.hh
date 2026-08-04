@@ -35,7 +35,7 @@ class ExtendedClient :
   using Base = Zhttp::ClientHub<ExtendedClient, Profile>;
 
 public:
-  static_assert(Zhttp::ProfileTraits<Profile>::Multiplexed);
+  ZuAssert(Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = ExtendedClientLink<App, Profile>;
   using Config = typename ExtendedConfig<Profile>::T;
 
@@ -229,7 +229,7 @@ class ExtendedServer :
   using Base = Zhttp::Server<ExtendedServer, Profile>;
 
 public:
-  static_assert(Zhttp::ProfileTraits<Profile>::Multiplexed);
+  ZuAssert(Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = ExtendedServerLink<App, Profile>;
   using Config = typename ExtendedConfig<Profile>::T;
 
