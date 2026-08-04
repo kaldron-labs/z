@@ -115,9 +115,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     ZuStringT<"content-length">, void>;
 
   struct Builder :
-    public Zhttp::MessageTraits<Profile>::template RequestBuilder<
+    public Zhttp::MessageTraits<Profile>::template ReqBuilder<
       Builder, RequestHeaders, ZuTypeList<>, true, false> {
-    using Base = typename Zhttp::MessageTraits<Profile>::template RequestBuilder<
+    using Base = typename Zhttp::MessageTraits<Profile>::template ReqBuilder<
       Builder, RequestHeaders, ZuTypeList<>, true, false>;
 
     template <typename L>

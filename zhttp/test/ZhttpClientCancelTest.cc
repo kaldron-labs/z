@@ -23,33 +23,49 @@ using namespace ZuTestUtil;
 
 namespace ZhttpClientCancelTest_ {
 
+struct App;
+struct Request;
+struct ResParser;
+
 struct Request {
+  using Headers = ZuTypeList<>;
+  using BodyPolicy = Zhttp::Body::None;
+
+  void reset() { ++resets; }
+  template <typename L>
+  void operation(L &&l) const {
+    auto url_ = url.url();
+    l(Zhttp::Method::GET, url_.pathQuery());
+  }
+  template <typename L>
+  void host(L &&l) const { l(url.url().authority()); }
+  template <typename L> void protocol(L &&) const { }
+  template <typename Key, typename L> void header(L &&) const { }
+  template <typename L> void header(L &&) const { }
+
+  bool replayable() const;
+  bool reproducible() const;
+  void connected(const Zhttp::ConnectedInfo &) { }
+  void disconnected(bool) { }
+  void connectFailed(bool) { }
+  void selected(const Zhttp::Endpoint &) { }
+  void redirected(const Zhttp::URL &);
+  void observed(const Zhttp::ClientEvent &);
+  void completed(const Zhttp::Result &);
+
+  App			*app = nullptr;
   Zhttp::URLStorage	url;
+  unsigned		resets = 0;
+  mutable unsigned	inits = 0;
 };
 
 int listenerAt(uint16_t);
 
-struct RequestBuilder {
-  using Headers = ZuTypeList<>;
-  using BodyPolicy = Zhttp::Body::None;
-
-  Zhttp::URL url;
-
-  template <typename L>
-  void operation(L &&l) const {
-    l(Zhttp::Method::GET, url.pathQuery());
-  }
-  template <typename L>
-  void host(L &&l) const { l(url.authority()); }
-  template <typename L> void protocol(L &&) const { }
-  template <typename Key, typename L> void header(L &&) const { }
-  template <typename L> void header(L &&) const { }
-};
-
-struct ResponseParser {
+struct ResParser {
   using Headers = ZuTypeList<ZuStringT<"location">, void>;
   static constexpr uint64_t BodyMax = 1024;
 
+  void init(const Request &req) { ++req.inits; }
   void status(unsigned) { }
   void contentLength(uint64_t) { }
   void chunked() { }
@@ -60,23 +76,21 @@ struct ResponseParser {
 };
 
 struct App :
-  public Zhttp::Client<App, Request, RequestBuilder, ResponseParser> {
+  public Zhttp::Client<Request, ResParser> {
   using Base =
-    Zhttp::Client<App, Request, RequestBuilder, ResponseParser>;
+    Zhttp::Client<Request, ResParser>;
 
-  RequestBuilder requestBuilder(const Request &, const Zhttp::URL &url) {
-    return {url};
+  void submit(Request *requests, unsigned count) {
+    for (unsigned i = 0; i < count; ++i) requests[i].app = this;
+    Base::submit(requests, count);
   }
-  ResponseParser responseParser(Request &) { return {}; }
-  bool replayable(const Request &) const { return replayable_; }
-  bool reproducible(const Request &) const { return replayable_; }
 
-  void completed(Request &, const Zhttp::Result &result) {
+  void requestCompleted(const Zhttp::Result &result) {
     results.push(result);
     if (results.length() == expected) done.post();
   }
 
-  void observed(Request *, const Zhttp::ClientEvent &event) {
+  void requestObserved(const Zhttp::ClientEvent &event) {
     events.push(event);
     if (event.type == Zhttp::ClientEventType::AttemptFailed &&
 	retryPort && retryFD < 0) {
@@ -101,6 +115,16 @@ struct App :
   int		retryFD = -1;
   bool		replayable_ = true;
 };
+
+bool Request::replayable() const { return app->replayable_; }
+bool Request::reproducible() const { return app->replayable_; }
+void Request::redirected(const Zhttp::URL &url_) { url.assign(url_.raw); }
+void Request::observed(const Zhttp::ClientEvent &event) {
+  app->requestObserved(event);
+}
+void Request::completed(const Zhttp::Result &result) {
+  app->requestCompleted(result);
+}
 
 ZiMxParams mxParams()
 {
@@ -266,9 +290,8 @@ void cancel()
       app.results[1].code == Zhttp::ResultCode::Cancelled,
     "cancellation result classification");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Cancelled) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::Stopping) == 1,
-    "typed cancellation, completion, and shutdown events");
+      app.eventCount(Zhttp::ClientEventType::Completed) == 2,
+    "typed cancellation and completion events");
 
   app.final();
   mx.stop();
@@ -312,8 +335,8 @@ void timeout()
   app.stop();
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Completed) == 1 &&
       app.events[app.events.length() - 1].type ==
-	Zhttp::ClientEventType::Stopping,
-    "typed timeout completion and shutdown events");
+	Zhttp::ClientEventType::Completed,
+    "typed timeout completion event");
   app.final();
   mx.stop();
   ::close(fd);
@@ -365,6 +388,8 @@ void retry()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].retries == 1,
     "retry produces one successful terminal result");
+  ZuCHECK(request.resets == 1 && request.inits == 1,
+    "connect retry initializes request builder and response parser once");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
       app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
       app.eventCount(Zhttp::ClientEventType::Retried) == 1 &&
@@ -433,6 +458,8 @@ void redirect()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].redirects == 1,
     "redirect produces one successful terminal result");
+  ZuCHECK(request.resets == 2 && request.inits == 2,
+    "redirect reinitializes request builder and response parser per message");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
       app.eventCount(Zhttp::ClientEventType::Redirected) == 1 &&
       app.eventCount(Zhttp::ClientEventType::Completed) == 1,

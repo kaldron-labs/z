@@ -43,7 +43,7 @@ struct StreamState {
 };
 
 struct RequestBuilder :
-  public Zhttp::H3::RequestBuilder<RequestBuilder> {
+  public Zhttp::H3::ReqBuilder<RequestBuilder> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
   template <typename L>
@@ -51,7 +51,7 @@ struct RequestBuilder :
 };
 
 struct StreamRequestBuilder :
-  public Zhttp::H3::RequestBuilder<StreamRequestBuilder> {
+  public Zhttp::H3::ReqBuilder<StreamRequestBuilder> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, "/stream");
@@ -63,7 +63,7 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H3::ResponseBuilder<
+  public Zhttp::H3::ResBuilder<
     ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   unsigned status() const { return 200; }
   template <typename Key, typename L>
@@ -73,7 +73,7 @@ struct ResponseBuilder :
 };
 
 struct StreamResponseBuilder :
-  public Zhttp::H3::ResponseBuilder<StreamResponseBuilder> {
+  public Zhttp::H3::ResBuilder<StreamResponseBuilder> {
   unsigned status() const { return 200; }
 };
 

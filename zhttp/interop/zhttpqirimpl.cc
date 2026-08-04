@@ -532,9 +532,9 @@ struct H3Client : public Zquic::Client<H3Client> {
   ZmAtomic<unsigned>	errors = 0;
 };
 
-struct H3RespParser :
-  public Zhttp::H3RespParser<H3RespParser, H3RespHeaders, H3RespBodyMax> {
-  using Base = Zhttp::H3RespParser<H3RespParser, H3RespHeaders, H3RespBodyMax>;
+struct H3ResParser :
+  public Zhttp::H3ResParser<H3ResParser, H3RespHeaders, H3RespBodyMax> {
+  using Base = Zhttp::H3ResParser<H3ResParser, H3RespHeaders, H3RespBodyMax>;
   using State = typename Base::State;
 
   void bind(H3Client::Stream *stream_) { stream = stream_; }
@@ -569,7 +569,7 @@ struct H3Client::Stream :
   bool qpackTxMaxCapacity(uint64_t);
   void complete(bool ok);
 
-  H3RespParser	parser;
+  H3ResParser	parser;
   unsigned	requestIndex = unsigned(-1);
   ZiFile	file;
   bool		done = false;
@@ -632,23 +632,23 @@ struct H3Client::Link :
   Zhttp::H3::QPackTxTable	h3Tx;
 };
 
-Zhttp::H3::QPackRxTable *H3RespParser::qpackRx() const
+Zhttp::H3::QPackRxTable *H3ResParser::qpackRx() const
 {
   return stream ? &stream->link()->h3.qpackRxTable : nullptr;
 }
 
-bool H3RespParser::qpackDecoderWrite(ZuBSpan span) const
+bool H3ResParser::qpackDecoderWrite(ZuBSpan span) const
 {
   return stream && stream->link()->h3.qpackDecoderWrite(span);
 }
 
-uint64_t H3RespParser::streamID() const
+uint64_t H3ResParser::streamID() const
 {
   return stream ? uint64_t(stream->id()) : 0;
 }
 
 template <typename Rx>
-void H3RespParser::body(Rx &rx)
+void H3ResParser::body(Rx &rx)
 {
   Zhttp::bodyEach(rx, [this](ZuBSpan body) {
     if (!stream || !body.length()) return;
@@ -657,7 +657,7 @@ void H3RespParser::body(Rx &rx)
   });
 }
 
-void H3RespParser::complete(State::T state)
+void H3ResParser::complete(State::T state)
 {
   if (!stream) return;
   bool ok = state == State::Complete && status_ >= 200 && status_ < 300;
@@ -676,12 +676,12 @@ int H3Client::Stream::process(Zquic::RxStream &rx)
     return 0;
   }
   auto s = parser.process(*this);
-  if (s == H3RespParser::State::Error ||
-      s == H3RespParser::State::Cancelled) {
+  if (s == H3ResParser::State::Error ||
+      s == H3ResParser::State::Cancelled) {
     complete(false);
     return -1;
   }
-  if (s == H3RespParser::State::Complete) return 1;
+  if (s == H3ResParser::State::Complete) return 1;
   return done ? -1 : 0;
 }
 

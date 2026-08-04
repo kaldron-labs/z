@@ -215,7 +215,7 @@ struct BuildOps {
 };
 
 struct RequestBuild :
-  public Zhttp::H2::RequestBuilder<
+  public Zhttp::H2::ReqBuilder<
     RequestBuild, ZhttpHeaders("content-length", "x-test"),
     ZhttpHeaders("x-trailer"), true>,
   public BuildOps {
@@ -225,7 +225,7 @@ struct RequestBuild :
 };
 
 struct ResponseBuild :
-  public Zhttp::H2::ResponseBuilder<
+  public Zhttp::H2::ResBuilder<
     ResponseBuild, ZhttpHeaders("content-length", "x-test"),
     ZhttpHeaders("x-trailer"), true>,
   public BuildOps {
@@ -234,7 +234,7 @@ struct ResponseBuild :
 };
 
 struct ConnectBuild :
-  public Zhttp::H2::RequestBuilder<ConnectBuild> {
+  public Zhttp::H2::ReqBuilder<ConnectBuild> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, Zhttp::PathQuery{"/chat", "v=1", true});

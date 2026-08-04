@@ -285,9 +285,64 @@ using URL = Zhttp::URL;
 constexpr unsigned MaxRedirects = 8;
 constexpr uint64_t RespBodyMax = 100<<20;
 
-struct Req {
+struct ResParser;
+
+struct Request {
+  using Headers = RequestHeaders;
+  using BodyPolicy = Zhttp::Body::OptionalFixed;
+  using ContentLength = ZuStringT<"content-length">;
+
+  void reset() { requestContentLength = 0; }
+  template <typename L>
+  void operation(L &&l) const {
+    auto url_ = url.url();
+    l(put ? Zhttp::Method::PUT : Zhttp::Method::GET, url_.pathQuery());
+  }
+  template <typename L>
+  void host(L &&l) const { l(url.url().authority()); }
+  template <typename L> void protocol(L &&) const { }
+  template <typename Key, typename L>
+  void header(L &&l) const {
+    if constexpr (Key{}() == "user-agent")
+      l("zhttp/1.0");
+    else if constexpr (Key{}() == "accept")
+      l("*/*");
+    else if constexpr (ZuIsSame<Key, ContentLength>{}) {
+      if (put) l(Zhttp::HeaderPad{10, '0'});
+    }
+  }
+  template <typename L> void header(L &&) const { }
+  template <typename Emit>
+  void body(Emit &&emit) {
+    if (!put) return;
+    emit([this](auto &body) {
+      ZfJSON::save(body, putRecord);
+      body.flush();
+      requestContentLength = body.produced();
+    });
+  }
+  template <typename L>
+  void bodyHdrs(L &&l) const {
+    l.template operator()<ContentLength>(
+      [contentLength = requestContentLength](ZuSpan<uint8_t> span) {
+	ZuStream s{span};
+	s << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
+      });
+  }
+
+  bool replayable() const { return true; }
+  bool reproducible() const { return true; }
+  void connected(const Zhttp::ConnectedInfo &);
+  void disconnected(bool) { }
+  void connectFailed(bool) { }
+  void selected(const Zhttp::Endpoint &) { }
+  void redirected(const URL &);
+  void observed(const Zhttp::ClientEvent &) { }
+  void completed(const Zhttp::Result &);
+
   unsigned	id = 0;
   unsigned	requests = 1;
+  unsigned	requestContentLength = 0;
   Zhttp::URLStorage url;
   HdrString	output;
   bool		discardResponse = false;
@@ -310,8 +365,6 @@ struct Req {
   bool		failed = false;
 };
 
-using State = Req;
-
 bool hotLog(const Options &options)
 {
   return options.verbose
@@ -326,7 +379,7 @@ struct ReqLogCtx {
   unsigned	requests = 1;
 };
 
-inline ReqLogCtx reqLogCtx(const Req &req)
+inline ReqLogCtx reqLogCtx(const Request &req)
 {
   return {req.id, req.requests};
 }
@@ -347,7 +400,7 @@ bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr)
   }
 }
 
-void closeBody(Req &req)
+void closeBody(Request &req)
 {
   if (req.bodyFileOpen) {
     req.bodyFile.close();
@@ -355,7 +408,7 @@ void closeBody(Req &req)
   }
 }
 
-void resetResponse(Req &req, bool truncateOutput)
+void resetResponse(Request &req, bool truncateOutput)
 {
   closeBody(req);
   req.status = 0;
@@ -373,7 +426,7 @@ void resetResponse(Req &req, bool truncateOutput)
 }
 
 void initReq(
-  Req &req, const Options &options, const URL &url, unsigned id)
+  Request &req, const Options &options, const URL &url, unsigned id)
 {
   req = {};
   req.id = id;
@@ -391,7 +444,7 @@ void initReq(
 }
 
 template <typename S>
-void reqLogPrefix(const Req &req, S &s)
+void reqLogPrefix(const Request &req, S &s)
 {
   if (req.requests > 1) s << "req=" << req.id << ' ';
 }
@@ -401,7 +454,7 @@ void reqLogPrefix(const ReqLogCtx &ctx, S &s)
   if (ctx.requests > 1) s << "req=" << ctx.id << ' ';
 }
 
-bool truncateOutputPath(Req &req)
+bool truncateOutputPath(Request &req)
 {
   if (req.discardResponse) return true;
   if (!req.truncateOutput) return true;
@@ -427,14 +480,14 @@ bool redirectStatus(unsigned status)
     status == 307 || status == 308;
 }
 
-void logFraming(State &state)
+void logFraming(Request &req)
 {
-  if (state.framingLogged) return;
-  state.framingLogged = true;
-  if (!state.logResponse) return;
-  auto ctx = reqLogCtx(state);
-  auto chunked = state.chunked;
-  auto contentLength = state.contentLength;
+  if (req.framingLogged) return;
+  req.framingLogged = true;
+  if (!req.logResponse) return;
+  auto ctx = reqLogCtx(req);
+  auto chunked = req.chunked;
+  auto contentLength = req.contentLength;
   ZiLOG(Info, "zhttp.response", ([ctx, chunked, contentLength](auto &s) {
     reqLogPrefix(ctx, s);
     s << "framing: ";
@@ -447,90 +500,46 @@ void logFraming(State &state)
   }));
 }
 
-void logConnected(const State &, const Zhttp::ConnectedInfo &);
+void logConnected(const Request &, const Zhttp::ConnectedInfo &);
 
-struct RequestBuilder {
-  using Headers = RequestHeaders;
-  using BodyPolicy = Zhttp::Body::OptionalFixed;
-  using ContentLength = ZuStringT<"content-length">;
-
-  URL		url;
-  const ZhttpPut::Record *record = nullptr;
-  bool		put = false;
-  unsigned	contentLength = 0;
-
-  template <typename L>
-  void operation(L &&l) const {
-    l(put ? Zhttp::Method::PUT : Zhttp::Method::GET, url.pathQuery());
-  }
-  template <typename L>
-  void host(L &&l) const {
-    l(url.authority());
-  }
-  template <typename L> void protocol(L &&) const { }
-  template <typename Key, typename L>
-  void header(L &&l) const {
-    if constexpr (Key{}() == "user-agent")
-      l("zhttp/1.0");
-    else if constexpr (Key{}() == "accept")
-      l("*/*");
-    else if constexpr (ZuIsSame<Key, ContentLength>{}) {
-      if (put) l(Zhttp::HeaderPad{10, '0'});
-    }
-  }
-  template <typename L> void header(L &&) const { }
-
-  template <typename Emit>
-  void body(Emit &&emit) {
-    if (!put) return;
-    emit([this](auto &body) {
-      ZfJSON::save(body, *record);
-      body.flush();
-      contentLength = body.produced();
-    });
-  }
-  template <typename L>
-  void bodyHdrs(L &&l) const {
-    l.template operator()<ContentLength>(
-      [contentLength = this->contentLength](ZuSpan<uint8_t> span) {
-	ZuStream s{span};
-	s << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
-      });
-  }
-};
-
-struct ResponseParser {
+struct ResParser {
   using Headers = ResponseHeaders;
   static constexpr uint64_t BodyMax = RespBodyMax;
 
-  State *state = nullptr;
+  Request *req = nullptr;
+
+  void init(const Request &req_) {
+    req = const_cast<Request *>(&req_);
+    reset();
+  }
+  void reset() { resetResponse(*req, true); }
 
   void headersDone() {
-    if (state->responseHeadersDone) return;
-    state->responseHeadersDone = true;
+    if (req->responseHeadersDone) return;
+    req->responseHeadersDone = true;
   }
 
   void status(unsigned value) {
-    state->status = value;
-    state->redirecting = redirectStatus(value);
-    if (!state->redirecting && !state->discardResponse &&
-	!truncateOutputPath(*state)) return;
-    if (!state->logResponse) return;
-    auto ctx = reqLogCtx(*state);
+    req->status = value;
+    req->redirecting = redirectStatus(value);
+    if (!req->redirecting && !req->discardResponse &&
+	!truncateOutputPath(*req)) return;
+    if (!req->logResponse) return;
+    auto ctx = reqLogCtx(*req);
     ZiLOG(Info, "zhttp.response", ([ctx, value](auto &s) {
       reqLogPrefix(ctx, s);
       s << "status: " << value;
     }));
   }
   void contentLength(uint64_t value) {
-    state->contentLength = value;
+    req->contentLength = value;
   }
-  void chunked() { state->chunked = true; }
+  void chunked() { req->chunked = true; }
   void version(ZuBSpan) { }
   template <typename Key>
   void header(ZuBSpan value) {
-    if (!state->logResponse) return;
-    auto ctx = reqLogCtx(*state);
+    if (!req->logResponse) return;
+    auto ctx = reqLogCtx(*req);
     ZeString value_;
     value_ << ZuCSpan(value);
     ZiLOG(Info, "zhttp.response", ([ctx, value = ZuMv(value_)](auto &s) {
@@ -541,56 +550,56 @@ struct ResponseParser {
 
   template <typename Rx>
   void body(Rx &rx) {
-    logFraming(*state);
+    logFraming(*req);
     headersDone();
-    Zhttp::bodyEach(rx, [state = this->state](ZuBSpan span) {
-      state->bodyBytes += span.length();
-      ++state->bodyChunks;
-      if (state->put) state->responseJSON << span;
-      if (state->redirecting || state->discardResponse) return;
-      if (!truncateOutputPath(*state)) return;
-      if (!state->bodyFileOpen) {
-	state->bodyFile = ZiFile(state->output, ZiFile::Write | ZiFile::GC);
-	if (!state->bodyFile) {
-	  auto ctx = reqLogCtx(*state);
+    Zhttp::bodyEach(rx, [req = this->req](ZuBSpan span) {
+      req->bodyBytes += span.length();
+      ++req->bodyChunks;
+      if (req->put) req->responseJSON << span;
+      if (req->redirecting || req->discardResponse) return;
+      if (!truncateOutputPath(*req)) return;
+      if (!req->bodyFileOpen) {
+	req->bodyFile = ZiFile(req->output, ZiFile::Write | ZiFile::GC);
+	if (!req->bodyFile) {
+	  auto ctx = reqLogCtx(*req);
 	  ZiLOG(Error, "zhttp", ([
-	    ctx, output = ZeString(state->output)](auto &s) {
+	    ctx, output = ZeString(req->output)](auto &s) {
 	    reqLogPrefix(ctx, s);
 	    s << "failed to open " << output;
 	  }));
-	  state->failed = true;
-	  state->done = true;
+	  req->failed = true;
+	  req->done = true;
 	  return;
 	}
-	state->bodyFileOpen = true;
+	req->bodyFileOpen = true;
       }
-      if (state->bodyFile.write(span.data(), span.length()) == Zi::OK)
+      if (req->bodyFile.write(span.data(), span.length()) == Zi::OK)
 	return;
-      auto ctx = reqLogCtx(*state);
+      auto ctx = reqLogCtx(*req);
       ZiLOG(Error, "zhttp", ([ctx](auto &s) {
 	reqLogPrefix(ctx, s);
 	s << "failed to write body chunk";
       }));
-      state->failed = true;
-      state->done = true;
+      req->failed = true;
+      req->done = true;
     });
   }
 
   void complete(bool ok) {
-    auto ctx = reqLogCtx(*state);
-    if (ok && state->put && !state->redirecting) {
+    auto ctx = reqLogCtx(*req);
+    if (ok && req->put && !req->redirecting) {
       ZhttpPut::Record record;
-      if (!ZhttpPut::load(record, state->responseJSON) ||
-	  !ZhttpPut::equals(record, state->putRecord)) {
+      if (!ZhttpPut::load(record, req->responseJSON) ||
+	  !ZhttpPut::equals(record, req->putRecord)) {
 	ok = false;
-	state->failed = true;
+	req->failed = true;
       }
     }
     if (ok) {
-      if (!state->redirecting) headersDone();
-      if (state->logResponse) {
-	auto bodyBytes = state->bodyBytes;
-	auto bodyChunks = state->bodyChunks;
+      if (!req->redirecting) headersDone();
+      if (req->logResponse) {
+	auto bodyBytes = req->bodyBytes;
+	auto bodyChunks = req->bodyChunks;
 	ZiLOG(Info, "zhttp.response", ([ctx, bodyBytes, bodyChunks](auto &s) {
 	  reqLogPrefix(ctx, s);
 	  s << "body complete: " << bodyBytes << " bytes in " << bodyChunks <<
@@ -602,53 +611,44 @@ struct ResponseParser {
 	reqLogPrefix(ctx, s);
 	s << "response failed";
       }));
-    closeBody(*state);
+    closeBody(*req);
   }
 };
 
-struct ClientCallbacks :
-  public Zhttp::Client<
-    ClientCallbacks, Req, RequestBuilder, ResponseParser> {
-  using Base = Zhttp::Client<
-    ClientCallbacks, Req, RequestBuilder, ResponseParser>;
+void Request::redirected(const URL &url_)
+{
+  url.assign(url_.raw);
+}
 
-  RequestBuilder requestBuilder(const State &state, const URL &url) {
-    return {url, &state.putRecord, state.put};
-  }
-  ResponseParser responseParser(State &state) { return {&state}; }
-  bool replayable(const State &) const { return true; }
-  bool reproducible(const State &) const { return true; }
-
-  void redirected(State &state, const URL &) {
-    resetResponse(state, true);
-  }
-
-  void completed(State &state, const Zhttp::Result &result) {
-    closeBody(state);
-    state.done = true;
-    state.failed = !result.ok() ||
-      (state.put &&
+void Request::completed(const Zhttp::Result &result)
+{
+  closeBody(*this);
+  done = true;
+  failed = !result.ok() ||
+      (put &&
 	(!result.requestBodyProduced ||
 	 result.requestBodyProduced != result.requestBodyCommitted ||
 	 result.requestBodyReset || result.requestBodyDiscarded ||
-	 result.responseBodyReceived != state.bodyBytes ||
-	 result.responseBodyConsumed != state.bodyBytes ||
+	 result.responseBodyReceived != bodyBytes ||
+	 result.responseBodyConsumed != bodyBytes ||
 	 result.responseBodyReset || result.responseBodyDiscarded));
-  }
+}
 
-  void connected(State &state, const Zhttp::ConnectedInfo &info) {
-    logConnected(state, info);
-  }
-};
+void Request::connected(const Zhttp::ConnectedInfo &info)
+{
+  logConnected(*this, info);
+}
+
+using Client = Zhttp::Client<Request, ResParser>;
 
 void logConnected_(
-  const State &state, ZuCSpan transport, ZuCSpan httpVersion,
+  const Request &req, ZuCSpan transport, ZuCSpan httpVersion,
   uint32_t version, ZuCSpan alpn)
 {
   ZiLOG(Info, "zhttp", ([
     transport,
     httpVersion,
-    host = ZeString(state.url.url().host),
+    host = ZeString(req.url.url().host),
     version,
     alpn = ZeString(alpn)
   ](auto &s) {
@@ -660,9 +660,9 @@ void logConnected_(
   }));
 }
 
-void logConnected(const State &state, const Zhttp::ConnectedInfo &info)
+void logConnected(const Request &req, const Zhttp::ConnectedInfo &info)
 {
-  logConnected_(state,
+  logConnected_(req,
     Zhttp::Transport{}.name(info.transport),
     Zhttp::Version{}.name(info.httpVersion), info.version, info.alpn);
 }
@@ -781,7 +781,7 @@ int main(int argc, char **argv)
     .migrateAfterBytes(options.quicMigrateAfterBytes)
     .rxDrop(rxDrop).txDrop(txDrop);
 
-  ClientCallbacks app;
+  Client app;
   app.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
     ZiLOG(Error, "zhttp", ([e](auto &s) {
       s << "transmit error: " << e;
@@ -808,22 +808,20 @@ int main(int argc, char **argv)
     Zhttp::DiagnosticFn{[&app]() { app.printQUICDiag(); }});
 #endif
 
-  ZtArray<Req, ZtArrayHeapID<"zhttp.Request">> requests;
+  ZtArray<Request, ZtArrayHeapID<"zhttp.Request">> requests;
   requests.length(options.requests);
-  for (unsigned i = 0; i < requests.length(); ++i) {
+  for (unsigned i = 0; i < requests.length(); ++i)
     initReq(requests[i], options, url, i);
-    resetResponse(requests[i], true);
-  }
   app.submit(requests.data(), requests.length());
 
   bool timedOut = !app.wait(options.timeout);
   if (timedOut) ZiLOG(Error, "zhttp", "timed out");
   app.stop();
-  bool incomplete = app.Base::completed() != requests.length();
+  bool incomplete = app.completed() != requests.length();
   if (incomplete)
     ZiLOG(Error, "zhttp", ([
-      completed = app.Base::completed(), expected = requests.length(),
-      active = app.Base::active(), pending = app.Base::pending()
+      completed = app.completed(), expected = requests.length(),
+      active = app.active(), pending = app.pending()
     ](auto &s) {
       s << "incomplete run (completed=" << completed <<
 	", expected=" << expected << ", active=" << active <<

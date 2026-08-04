@@ -35,7 +35,7 @@ struct State {
 
 template <typename Profile>
 struct RequestBuilder :
-  public Zhttp::MessageTraits<Profile>::template RequestBuilder<
+  public Zhttp::MessageTraits<Profile>::template ReqBuilder<
     RequestBuilder<Profile>, ZhttpHeaders("content-length"),
     ZuTypeList<>, true, false> {
   template <typename L>
@@ -50,7 +50,7 @@ struct RequestBuilder :
 
 template <typename Profile>
 struct InfoBuilder :
-  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
+  public Zhttp::MessageTraits<Profile>::template ResBuilder<
     InfoBuilder<Profile>, ZhttpHeaders("x-test"),
     ZuTypeList<>, false, false> {
   unsigned status() { return 103; }
@@ -63,7 +63,7 @@ struct InfoBuilder :
 
 template <typename Profile>
 struct ResponseBuilder :
-  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
+  public Zhttp::MessageTraits<Profile>::template ResBuilder<
     ResponseBuilder<Profile>, ZhttpHeaders("x-test"),
     ZhttpHeaders("x-trailer"), true, true> {
   unsigned status() { return 200; }
@@ -83,9 +83,9 @@ template <typename Profile> struct ClientLink;
 
 template <typename Profile>
 struct ClientParser :
-  public Zhttp::MessageTraits<Profile>::template ResponseParser<
+  public Zhttp::MessageTraits<Profile>::template ResParser<
     ClientParser<Profile>, TestHeaders, Zhttp::DefltMaxBody> {
-  using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
+  using Base = typename Zhttp::MessageTraits<Profile>::template ResParser<
     ClientParser, TestHeaders, Zhttp::DefltMaxBody>;
   using State = typename Base::State;
 
@@ -201,9 +201,9 @@ struct ServerSession {
   using Message = Zhttp::MessageTraits<Profile>;
 
   struct Parser :
-    public Message::template RequestParser<
+    public Message::template ReqParser<
       Parser, ZuTypeList<>, Zhttp::DefltMaxBody> {
-    using Base = typename Message::template RequestParser<
+    using Base = typename Message::template ReqParser<
       Parser, ZuTypeList<>, Zhttp::DefltMaxBody>;
     using State = typename Base::State;
 

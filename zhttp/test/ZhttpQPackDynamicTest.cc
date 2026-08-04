@@ -129,8 +129,8 @@ struct CaptureEncoder {
 };
 
 struct BuilderState :
-  public Zhttp::H3::RequestBuilder<BuilderState, BuilderHeaders> {
-  using Base = Zhttp::H3::RequestBuilder<BuilderState, BuilderHeaders>;
+  public Zhttp::H3::ReqBuilder<BuilderState, BuilderHeaders> {
+  using Base = Zhttp::H3::ReqBuilder<BuilderState, BuilderHeaders>;
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }

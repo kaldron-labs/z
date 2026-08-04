@@ -120,10 +120,10 @@ struct ResponseRx :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H1::ResponseBuilder<
+  public Zhttp::H1::ResBuilder<
     ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   using Base =
-    Zhttp::H1::ResponseBuilder<
+    Zhttp::H1::ResBuilder<
       ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true>;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
@@ -141,9 +141,9 @@ struct ResponseBuilder :
 using RequestBuilderHeaders =
   ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
 struct RequestBuilder :
-  public Zhttp::H1::RequestBuilder<RequestBuilder, RequestBuilderHeaders> {
+  public Zhttp::H1::ReqBuilder<RequestBuilder, RequestBuilderHeaders> {
   using Base =
-    Zhttp::H1::RequestBuilder<RequestBuilder, RequestBuilderHeaders>;
+    Zhttp::H1::ReqBuilder<RequestBuilder, RequestBuilderHeaders>;
 
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback"); }

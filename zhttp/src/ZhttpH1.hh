@@ -674,7 +674,7 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Chunked = false>
-class RequestBuilder :
+class ReqBuilder :
   public Builder_<Impl, Headers, Trailers, HasBody, Chunked> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Chunked>;
 
@@ -689,7 +689,7 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Chunked = false>
-class ResponseBuilder :
+class ResBuilder :
   public Builder_<Impl, Headers, Trailers, HasBody, Chunked> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Chunked>;
 

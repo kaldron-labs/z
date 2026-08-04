@@ -173,8 +173,14 @@ struct Builder {
   using Trailers = ZhttpHeaders(...);	// optional
   using BodyPolicy = Body::None;
 
+  // May be constructed once and retained across messages.  Called exactly
+  // once before each message, including the first, to clear per-message
+  // construction state while preserving the configured request/response.
+  void reset();
+
   // request start line / pseudo-headers
-  template <typename L> void operation(L &&l);	// l(method, target)
+  // Called exactly once per message; l(method, target).
+  template <typename L> void operation(L &&l);
   template <typename L> void host(L &&l);	// l(authority)
   template <typename L> void protocol(L &&l);	// l(value), CONNECT only
 
@@ -197,6 +203,67 @@ struct Builder {
   template <typename L> void bodyHdrs(L &&l);
 
   bool close() const;			// responses only
+};
+
+// Extended request Builder contract used by Client.  Request is both the
+// submitted request and its long-lived application Builder.  Client calls
+// reset() once for every wire request (including replay attempts and
+// redirects), then uses the Builder callbacks above.  A failed connection
+// which emits no request is not a message.  All lifecycle callbacks are
+// synchronous.
+struct Request : Builder {
+  // Absolute URL of the submitted request.  Client snapshots it on
+  // submission; redirected() receives each subsequently accepted URL.
+  Zhttp::URLStorage url;
+
+  // Whether the request semantics permit another attempt after a redirect or
+  // an unprocessed failure.  Called before Client decides to replay.
+  bool replayable() const;
+
+  // Whether another Builder pass will reproduce the same request, including
+  // identical body bytes.  Both replayable() and reproducible() must be true
+  // for Client to replay a request.
+  bool reproducible() const;
+
+  // A transport connection for the current attempt is ready.  Called before
+  // reset() and request construction; info identifies the selected transport
+  // and negotiated HTTP version.
+  void connected(const ConnectedInfo &);
+
+  // The current attempt's connection ended; peer is true when the peer
+  // initiated the disconnect.  No callback is made without a bound request.
+  void disconnected(bool peer);
+
+  // Connection establishment failed.  transient classifies whether Client
+  // may retry subject to its configured limit and the replay predicates.
+  void connectFailed(bool transient);
+
+  // Client selected a concrete endpoint for the attempt.  This precedes
+  // connection establishment and may occur more than once across attempts.
+  void selected(const Endpoint &);
+
+  // Client accepted a redirect to url.  Update any request construction state
+  // which operation(), host(), protocol(), or header() derives from the URL.
+  void redirected(const URL &);
+
+  // Reports each typed attempt/request transition.  Multiple observations may
+  // precede the single terminal completed() callback.
+  void observed(const ClientEvent &);
+
+  // Exactly one terminal result for the submitted request, after its final
+  // observed Completed or Cancelled/Completed transition.
+  void completed(const Result &);
+};
+
+// Extended response Parser contract used by Client.  One ResParser is
+// constructed for each reusable ClientMessage stream.  init() is called once
+// before every response message, including the first, and before status(),
+// header(), or body(); it clears per-response state and binds the response to
+// its submitted request.  init() calls Parser::reset() itself when that reset
+// is needed; Client does not call Parser::reset() in addition to init().  The
+// same object can therefore serve many messages.
+struct ResParser : Parser {
+  void init(const Request &request);
 };
 #endif
 
@@ -265,7 +332,7 @@ template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H1RespParser = H1::Parser<Impl, false, Headers, MaxBody>;
+using H1ResParser = H1::Parser<Impl, false, Headers, MaxBody>;
 
 template <
   typename Impl,
@@ -277,7 +344,7 @@ template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H2RespParser = H2::Parser<Impl, false, Headers, MaxBody>;
+using H2ResParser = H2::Parser<Impl, false, Headers, MaxBody>;
 
 template <
   typename Impl,
@@ -289,7 +356,7 @@ template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H3RespParser = H3::Parser<Impl, false, Headers, MaxBody>;
+using H3ResParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
 // Low-level protocol Builder CRTP adapters used internally by ClientMessage
 // and Service.  Application Builders do not derive from these aliases.  The
@@ -303,15 +370,15 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
 using H1ReqBuilder =
-  H1::RequestBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+  H1::ReqBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
-using H1RespBuilder =
-  H1::ResponseBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+using H1ResBuilder =
+  H1::ResBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
 
 template <
   typename Impl,
@@ -319,15 +386,15 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
 using H2ReqBuilder =
-  H2::RequestBuilder<Impl, Headers, Trailers, HasBody, false>;
+  H2::ReqBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H2RespBuilder =
-  H2::ResponseBuilder<Impl, Headers, Trailers, HasBody, false>;
+using H2ResBuilder =
+  H2::ResBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
@@ -335,15 +402,15 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
 using H3ReqBuilder =
-  H3::RequestBuilder<Impl, Headers, Trailers, HasBody, false>;
+  H3::ReqBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H3RespBuilder =
-  H3::ResponseBuilder<Impl, Headers, Trailers, HasBody, false>;
+using H3ResBuilder =
+  H3::ResBuilder<Impl, Headers, Trailers, HasBody, false>;
 
 } // namespace Zhttp
 

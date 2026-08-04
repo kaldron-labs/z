@@ -113,14 +113,14 @@ struct ResponseBody {
 
 template <typename Impl>
 struct H1ResponseBuilder_ :
-  public Zhttp::H1RespBuilder<Impl, ResponseHeaders, ZuTypeList<>, true> {
-  using Base = Zhttp::H1RespBuilder<Impl, ResponseHeaders, ZuTypeList<>, true>;
+  public Zhttp::H1ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true> {
+  using Base = Zhttp::H1ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true>;
 };
 
 template <typename Impl>
 struct H3ResponseBuilder_ :
-  public Zhttp::H3RespBuilder<Impl, ResponseHeaders, ZuTypeList<>, true> {
-  using Base = Zhttp::H3RespBuilder<Impl, ResponseHeaders, ZuTypeList<>, true>;
+  public Zhttp::H3ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true> {
+  using Base = Zhttp::H3ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true>;
 };
 
 template <template <typename> typename Builder_>
@@ -269,10 +269,10 @@ template <typename Impl, bool H3>
 struct ResponseParserBase_;
 template <typename Impl>
 struct ResponseParserBase_<Impl, false> :
-  public Zhttp::H1RespParser<Impl, ResponseHeaders, (4<<20)> { };
+  public Zhttp::H1ResParser<Impl, ResponseHeaders, (4<<20)> { };
 template <typename Impl>
 struct ResponseParserBase_<Impl, true> :
-  public Zhttp::H3RespParser<Impl, ResponseHeaders, (4<<20)> { };
+  public Zhttp::H3ResParser<Impl, ResponseHeaders, (4<<20)> { };
 
 template <bool H3>
 struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
