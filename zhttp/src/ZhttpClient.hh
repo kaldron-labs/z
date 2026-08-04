@@ -34,50 +34,8 @@ template <
   typename RequestBuilder, typename ResponseParser>
 class ClientPool;
 
-// RequestBuilder_ and ResponseParser_ are plain application structs.  Client
-// wraps them in the protocol CRTP adapters; neither application type inherits
-// a Zhttp base.  Every lambda call is synchronous.  Printable Builder values
-// retain their actual type.  Received spans and body Rx streams are borrowed
-// only for the duration of the callback.
-#if 0
-struct RequestBuilder {
-  using Headers = ZhttpHeaders(...);
-  using Trailers = ZhttpHeaders(...);	// optional
-  using BodyPolicy = Body::None;
-
-  template <typename L> void operation(L &&l);	// l(method, target)
-  template <typename L> void host(L &&l);		// l(authority)
-  template <typename L> void protocol(L &&l);	// l(value), CONNECT only
-  template <typename Key, typename L> void header(L &&l); // l(value)
-  template <typename L> void header(L &&l);		   // l(key, value)
-
-  // Present only for body-bearing policies.  emit(write) is called zero or
-  // one times according to BodyPolicy::Optional; write(bodyStream) returns
-  // void or bool.
-  template <typename Emit> void body(Emit &&emit);
-
-  // Present only for fixed policies; called synchronously after body output.
-  // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
-  // There is no contentLength() callback; provision Content-Length with
-  // HeaderPad from header<Key>(), then patch it here.
-  template <typename L> void bodyHdrs(L &&l);
-};
-
-struct ResponseParser {
-  using Headers = ZhttpHeaders(...);
-  static constexpr uint64_t BodyMax = DefltMaxBody;
-
-  void status(unsigned);
-  void version(ZuBSpan);
-  void contentLength(uint64_t);
-  void chunked();
-  template <typename Key> void header(ZuBSpan value);
-  // Synchronous queue prompt; incomplete application framing may remain
-  // queued for a later decoded-body append.
-  template <typename Rx> void body(Rx &);
-  void complete(bool ok);
-};
-#endif
+// RequestBuilder_ and ResponseParser_ conform to the application Builder and
+// Parser contracts documented in Zhttp.hh.
 
 template <
   typename App_, typename Request_,

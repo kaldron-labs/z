@@ -124,6 +124,62 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 
 namespace Zhttp {
 
+// Parser and Builder are plain application structs wrapped in protocol CRTP
+// adapters by ClientMessage and Service; neither inherits a Zhttp base.  The
+// protocol invokes only the callbacks applicable to the selected request or
+// response role and version.  Every lambda call is synchronous.  Printable
+// Builder values retain their actual type.  Received spans and body Rx streams
+// are borrowed only for the duration of the callback.
+#if 0
+struct Parser {
+  using Headers = ZhttpHeaders(...);
+  static constexpr uint64_t BodyMax = DefltMaxBody;
+
+  void operation(Method::T, const RequestTarget &);	// requests only
+  void status(unsigned);				// responses only
+  void version(ZuBSpan);
+  void contentLength(uint64_t);
+  void chunked();
+  template <typename Key> void header(ZuBSpan value);
+
+  // Synchronous queue prompt; incomplete application framing may remain
+  // queued for a later decoded-body append.
+  template <typename Rx> void body(Rx &);
+  void complete(bool ok);
+};
+
+struct Builder {
+  using Headers = ZhttpHeaders(...);
+  using Trailers = ZhttpHeaders(...);	// optional
+  using BodyPolicy = Body::None;
+
+  // request start line / pseudo-headers
+  template <typename L> void operation(L &&l);	// l(method, target)
+  template <typename L> void host(L &&l);		// l(authority)
+  template <typename L> void protocol(L &&l);	// l(value), CONNECT only
+
+  // response start line / pseudo-headers
+  unsigned status();
+  template <typename L> void reason(L &&l);	// l(value), H1 only
+
+  template <typename Key, typename L> void header(L &&l); // l(value)
+  template <typename L> void header(L &&l);		   // l(key, value)
+
+  // Present only for body-bearing policies.  emit(write) is called zero or
+  // one times according to BodyPolicy::Optional; write(bodyStream) returns
+  // void or bool.
+  template <typename Emit> void body(Emit &&emit);
+
+  // Present only for fixed policies; called synchronously after body output.
+  // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
+  // There is no contentLength() callback; provision Content-Length with
+  // HeaderPad from header<Key>(), then patch it here.
+  template <typename L> void bodyHdrs(L &&l);
+
+  bool close() const;			// responses only
+};
+#endif
+
 // Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
 // ClientMessage and Service wrap plain application Parser sinks in these
 // adapters; application sinks do not derive from them.  The protocol invokes
@@ -131,11 +187,11 @@ namespace Zhttp {
 // version.  Inherited defaults are side-effect-safe; an adapter which
 // overrides reset() must call Base::reset().  All callbacks are synchronous
 // and Rx-shard-affine.  RequestTarget and received spans are borrowed for the
-// duration of the callback.  `Parser` in the API sketch denotes the selected
-// alias below.
+// duration of the callback.  `ProtocolParser` in the API sketch denotes the
+// selected alias below.
 #if 0
-struct ParserImpl : public Parser<ParserImpl, Headers, MaxBody> {
-  using Base = Parser<ParserImpl, Headers, MaxBody>;
+struct ParserImpl : public ProtocolParser<ParserImpl, Headers, MaxBody> {
+  using Base = ProtocolParser<ParserImpl, Headers, MaxBody>;
   using State = typename Base::State;
 
   void reset();
@@ -216,13 +272,10 @@ template <
 using H3RespParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
 // Low-level protocol Builder CRTP adapters used internally by ClientMessage
-// and Service.  Application Builders are plain structural types; their
-// contracts are documented beside those consuming templates.  They do not
-// derive from these aliases.  The adapters provide protocol framing, invoke
-// the application through inversion-of-control lambdas, and preserve the
-// actual types of printable targets, authorities, reasons, and header values.
-// H1 chunked builders emit Trailers from finish(); H2/H3 builders emit a
-// trailing HEADERS section.
+// and Service.  Application Builders do not derive from these aliases.  The
+// adapters provide protocol framing and invoke the application through
+// inversion-of-control lambdas.  H1 chunked builders emit Trailers from
+// finish(); H2/H3 builders emit a trailing HEADERS section.
 
 template <
   typename Impl,
