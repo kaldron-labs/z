@@ -159,49 +159,19 @@ struct ServiceResponseDone : public ZmObject {
     request{ZuMv(request_)}, completion{ZuMv(completion_)} { }
 };
 
-// Workload_ and its message types are plain application structs.  Service
-// wraps RequestParser and each emitted ResponseBuilder in protocol CRTP
-// adapters; application types do not inherit Zhttp bases.  response() calls
-// emit(builder, completion) at most once.  All Parser and Builder lambda calls
-// are synchronous.
+// Workload_ is a plain application struct.  RequestParser and each emitted
+// ResponseBuilder conform to the application Parser and Builder contracts
+// documented in Zhttp.hh.  response() calls emit(builder, completion) at most
+// once.
 #if 0
 struct Workload {
-  struct RequestParser {
-    using Headers = ZhttpHeaders(...);
-    static constexpr uint64_t BodyMax = DefltMaxBody;
-
-    void operation(Method::T, const RequestTarget &);
-    void version(ZuBSpan);
-    void contentLength(uint64_t);
-    void chunked();
-    template <typename Key> void header(ZuBSpan value);
-    // Synchronous queue prompt; incomplete application framing may remain
-    // queued for a later decoded-body append.
-    template <typename Rx> void body(Rx &);
-    void complete(bool ok);
-  };
+  using RequestParser = Parser;
 
   RequestParser requestParser();
 
   template <typename Emit>
   void response(const RequestInfo &, RequestParser &, Emit &&emit);
-  // emit(ResponseBuilder, completion)
-};
-
-struct ResponseBuilder {
-  using Headers = ZhttpHeaders(...);
-  using Trailers = ZhttpHeaders(...);	// optional
-  using BodyPolicy = Body::None;
-
-  unsigned status();
-  template <typename L> void reason(L &&l);	// l(value), H1 only
-  template <typename Key, typename L> void header(L &&l); // l(value)
-  template <typename L> void header(L &&l);		   // l(key, value)
-  template <typename Emit> void body(Emit &&emit); // body policies only
-  // Fixed policies provision HeaderPad in header<Key>() and patch it here;
-  // there is no contentLength() callback.
-  template <typename L> void bodyHdrs(L &&l);
-  bool close() const;
+  // emit(Builder, completion)
 };
 #endif
 
