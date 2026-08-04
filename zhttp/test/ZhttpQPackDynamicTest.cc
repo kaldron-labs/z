@@ -346,6 +346,58 @@ struct ParserStream :
   ZtString<>			runtimeValue;
 };
 
+struct ResponseParserStream :
+  public Zhttp::H3::Parser<
+    ResponseParserStream, false, ParserHeaders, 1024> {
+  RxStream &rxStream() { return rx; }
+  bool retireRx(uint64_t length) { retired += length; return true; }
+  void rescheduleDequeue() { }
+  bool resetReceived() const { return false; }
+  bool stopReceived() const { return false; }
+  bool finReceived() const { return fin; }
+  Zhttp::H3::QPackRxTable *qpackRx() { return &qpackRxTable; }
+  const Zhttp::H3::Params &h3Params() const { return params; }
+
+  void push(const Zhttp::H3::HdrBytes &bytes) {
+    rx.push(rxBuf(ZuBSpan{bytes}));
+  }
+  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void status(unsigned value) {
+    statusOrder = ++callbackOrder;
+    status_ = value;
+  }
+  void contentLength(uint64_t value) { contentLen = value; }
+  template <typename Key> void header(ZuBSpan value) {
+    if (!headerOrder) headerOrder = ++callbackOrder;
+    if constexpr (Key{}() == "x-test") xTest = value;
+  }
+  template <typename Rx> void body(Rx &rx_) {
+    if (!bodyOrder) bodyOrder = ++callbackOrder;
+    Zhttp::bodyEach(rx_, [this](ZuBSpan value) { bodyData << value; });
+  }
+  void complete(Zhttp::H3::ParserState::T state) {
+    completeState = state;
+    ++completeCalls;
+  }
+
+  RxStream			rx;
+  Zhttp::H3::QPackRxTable	qpackRxTable;
+  Zhttp::H3::Params		params;
+  uint64_t			retired = 0;
+  uint64_t			contentLen = 0;
+  unsigned			status_ = 0;
+  unsigned			callbackOrder = 0;
+  unsigned			statusOrder = 0;
+  unsigned			headerOrder = 0;
+  unsigned			bodyOrder = 0;
+  unsigned			completeCalls = 0;
+  bool				fin = false;
+  Zhttp::H3::ParserState::T	completeState =
+    Zhttp::H3::ParserState::Initial;
+  ZtString<>			xTest;
+  ZtString<>			bodyData;
+};
+
 template <typename Stream, typename Rx>
 int StreamConsumer::process(Stream, Rx &rx)
 {
@@ -758,6 +810,45 @@ void testParserFieldCallbacks()
       invalid.completeCalls == 1 &&
       invalid.completeState == Zhttp::H3::ParserState::Error,
     "post-operation H3 validation failure completes with an error");
+
+  ResponseParserStream response;
+  Zhttp::H3::Header responseHeaders[] = {
+    {":status", "200"},
+    {"x-test", "response"},
+    {"content-length", "3"}
+  };
+  frame.length(0);
+  putHeadersFrame(frame,
+    ZuSpan<Zhttp::H3::Header>{responseHeaders, 3});
+  Zhttp::H3::HdrBytes responseData;
+  putFrame(responseData, 0x00, ZuBSpan{"abc"});
+  appendBytes(frame, responseData);
+  response.fin = true;
+  response.push(frame);
+  ZuCHECK(response.process(response) == Zhttp::H3::ParserState::Complete &&
+      response.status_ == 200 && response.xTest == "response" &&
+      response.bodyData == "abc" &&
+      response.statusOrder < response.headerOrder &&
+      response.headerOrder < response.bodyOrder &&
+      response.completeCalls == 1,
+    "H3 response status precedes headers and body");
+
+  ResponseParserStream invalidResponse;
+  Zhttp::H3::Header invalidResponseHeaders[] = {
+    {":status", "200"},
+    {"x-test", "response"},
+    {"connection", "close"}
+  };
+  frame.length(0);
+  putHeadersFrame(frame,
+    ZuSpan<Zhttp::H3::Header>{invalidResponseHeaders, 3});
+  invalidResponse.push(frame);
+  ZuCHECK(invalidResponse.process(invalidResponse) ==
+      Zhttp::H3::ParserState::Error &&
+      invalidResponse.statusOrder < invalidResponse.headerOrder &&
+      invalidResponse.completeCalls == 1 &&
+      invalidResponse.completeState == Zhttp::H3::ParserState::Error,
+    "post-status H3 validation failure completes with an error");
 }
 
 static Zhttp::H3::HdrBytes messageHeaders(uint64_t length)

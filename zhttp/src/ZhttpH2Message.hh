@@ -76,8 +76,7 @@ public:
 
   bool field(ZuCSpan name, ZuCSpan value) {
     if (!m_headers) return fail_();
-    if constexpr (Request)
-      if (name && name[0] != ':' && !start_()) return fail_();
+    if (name && name[0] != ':' && !start_()) return fail_();
     if (!m_fields.field(name, value,
       [this](ZuBSpan key, ZuBSpan value_) {
 	this->header_(key, value_);

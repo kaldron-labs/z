@@ -135,15 +135,32 @@ struct Parser {
   using Headers = ZhttpHeaders(...);
   static constexpr uint64_t BodyMax = DefltMaxBody;
 
+  // Constructed once per logical stream and destroyed once when that stream
+  // ends.  reset() is called exactly once before each message, including the
+  // first, and clears all per-message application state.
+  Parser();
+  ~Parser();
+  void reset();
+
   // Called first, before any header() or body() callback.  A subsequent
   // validation failure is reported by complete(false).
   void operation(Method::T, const RequestTarget &);	// requests only
+  // Called first, before any header() or body() callback.  A subsequent
+  // validation failure is reported by complete(false).
   void status(unsigned);				// responses only
   void version(ZuBSpan);
   void contentLength(uint64_t);
+  void xferCompression(XferCompression::T);		// H1 only
   void chunked();
+
+  // declared run-time value, declared fixed value, undeclared key/value
   template <typename Key> void header(ZuBSpan value);
   template <typename Key, typename Value> void header();
+  void header(ZuBSpan key, ZuBSpan value);
+
+  // Completed H2/H3 field section; section identifies informational, final,
+  // or trailer fields.  endStream is meaningful for the initial section.
+  void headers(Fields::Section section, bool endStream);
 
   // Synchronous queue prompt; incomplete application framing may remain
   // queued for a later decoded-body append.
@@ -193,8 +210,8 @@ struct Builder {
 // duration of the callback.  `ProtocolParser` in the API sketch denotes the
 // selected alias below.
 #if 0
-struct ParserImpl : public ProtocolParser<ParserImpl, Headers, MaxBody> {
-  using Base = ProtocolParser<ParserImpl, Headers, MaxBody>;
+struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers, MaxBody> {
+  using Base = ProtocolParser<ParserAdapter, Headers, MaxBody>;
   using State = typename Base::State;
 
   void reset();
