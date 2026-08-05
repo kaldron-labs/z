@@ -2167,6 +2167,9 @@ public:
   enum { Ordered = NTP::Ordered };
   using Lock = typename NTP::Lock;
 
+  struct _ { _(int) { } };
+  using OrderedKey = ZuIf<Ordered, Key, _>;
+
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
@@ -2231,7 +2234,8 @@ public:
 #endif
       bool alreadyRunning = m_flags & Running;
       if (!alreadyRunning) m_flags |= Running;
-      m_sendKey = m_ackdKey = key;
+      m_sendKey = key;
+      if constexpr (Ordered) m_ackdKey = key;
       if (alreadyRunning && (m_flags & SendFailed))
 	scheduleSend = true;
       else if (scheduleSend = !(m_flags & Sending) &&
@@ -2274,7 +2278,8 @@ public:
   void txReset(Key key) {
     Impl *impl = static_cast<Impl *>(this);
     Guard guard(m_lock);
-    m_sendKey = m_ackdKey = m_archiveKey = key;
+    m_sendKey = key;
+    if constexpr (Ordered) m_ackdKey = m_archiveKey = key;
     m_gap = Span();
     impl->txQueue()->reset(key);
 #if 0
@@ -2291,15 +2296,16 @@ public:
     auto key = Fn{msg->data()}.key();
     {
       Guard guard(m_lock);
-      if (ZuUnlikely(key < m_ackdKey)) {
+      if constexpr (Ordered)
+	if (ZuUnlikely(key < m_ackdKey)) {
 #if 0
-	std::cerr << (ZuCArray<200>()
-	    << "send(" << key << ") outdated "
-	    << *this << "\n  " << *(impl->txQueue()) << '\n')
-	  << std::flush;
+	  std::cerr << (ZuCArray<200>()
+	      << "send(" << key << ") outdated "
+	      << *this << "\n  " << *(impl->txQueue()) << '\n')
+	    << std::flush;
 #endif
-	return;
-      }
+	  return;
+	}
       impl->txQueue()->add(ZuMv(msg));
       if (scheduleSend = (m_flags & (Running | Sending)) == Running &&
 	  m_sendKey <= key)
@@ -2470,41 +2476,43 @@ public:
 
   // archive - called via scheduleArchive(), may reschedule itself
   void archive() {
-    Impl *impl = static_cast<Impl *>(this);
-    bool scheduleArchive;
-    ZmRef<Msg> msg;
-    {
-      Guard guard(m_lock);
-      if (!(m_flags & Running)) { m_flags &= ~Archiving; return; }
-      scheduleArchive = m_archiveKey < m_ackdKey;
-      while (scheduleArchive) {
-	msg = impl->txQueue()->find(m_archiveKey);
-	if (msg) {
-	  Fn item{msg->data()};
-	  Key end;
-	  if (!Queue::endOf(item.key(), item.length(), end)) {
-	    m_flags &= ~Archiving;
-	    return;
-	  }
-	  m_archiveKey = end;
-	} else
-	  ++m_archiveKey;
+    if constexpr (Ordered) {
+      Impl *impl = static_cast<Impl *>(this);
+      bool scheduleArchive;
+      ZmRef<Msg> msg;
+      {
+	Guard guard(m_lock);
+	if (!(m_flags & Running)) { m_flags &= ~Archiving; return; }
 	scheduleArchive = m_archiveKey < m_ackdKey;
-	if (msg) break;
-      }
-      if (!scheduleArchive) m_flags &= ~Archiving;
+	while (scheduleArchive) {
+	  msg = impl->txQueue()->find(m_archiveKey);
+	  if (msg) {
+	    Fn item{msg->data()};
+	    Key end;
+	    if (!Queue::endOf(item.key(), item.length(), end)) {
+	      m_flags &= ~Archiving;
+	      return;
+	    }
+	    m_archiveKey = end;
+	  } else
+	    ++m_archiveKey;
+	  scheduleArchive = m_archiveKey < m_ackdKey;
+	  if (msg) break;
+	}
+	if (!scheduleArchive) m_flags &= ~Archiving;
 #if 0
-      std::cerr << (ZuCArray<200>()
-	  << "archive() " << *this << "\n  " << *(impl->txQueue()) << '\n')
-	<< std::flush;
+	std::cerr << (ZuCArray<200>()
+	    << "archive() " << *this << "\n  " << *(impl->txQueue()) << '\n')
+	  << std::flush;
 #endif
+      }
+      if (msg)
+	impl->archive_(msg);
+      if (scheduleArchive)
+	impl->rescheduleArchive();
+      else
+	impl->idleArchive();
     }
-    if (msg)
-      impl->archive_(msg);
-    if (scheduleArchive)
-      impl->rescheduleArchive();
-    else
-      impl->idleArchive();
   }
 
   // completed archiving of messages up to, but not including, key
@@ -2537,8 +2545,9 @@ public:
 	    return;
 	  }
 	  length = end - m_gap.key();
-	  if (end <= m_archiveKey)
-	    while (impl->txQueue()->shift(end));
+	  if constexpr (Ordered)
+	    if (end <= m_archiveKey)
+	      while (impl->txQueue()->shift(end));
 	} else if (
 	    msg = impl->retrieve_(m_gap.key(), impl->txQueue()->head())) {
 	  Fn item{msg->data()};
@@ -2603,18 +2612,18 @@ public:
     ReadGuard guard(m_lock);
     s << "gap={" << m_gap.key() << ", " << m_gap.length()
       << "} flags=" << PrintFlags{m_flags}
-      << " send=" << m_sendKey
-      << " ackd=" << m_ackdKey
-      << " archive=" << m_archiveKey;
+      << " send=" << m_sendKey;
+    if constexpr (Ordered)
+      s << " ackd=" << m_ackdKey << " archive=" << m_archiveKey;
   }
 
 private:
   Lock		m_lock;
-  Key		  m_sendKey = 0;
-  Key		  m_ackdKey = 0;
-  Key		  m_archiveKey = 0;
-  Span		  m_gap;
-  uint8_t	  m_flags = 0;
+    Key		  m_sendKey = 0;
+    OrderedKey	  m_ackdKey = 0;
+    OrderedKey	  m_archiveKey = 0;
+    Span	  m_gap;
+    uint8_t	  m_flags = 0;
 };
 
 #endif /* ZmPQueue_HH */
