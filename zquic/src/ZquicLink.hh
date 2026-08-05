@@ -1171,11 +1171,11 @@ protected:
       case SentFrameKind::Stream: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return;
 	if (stream) {
-	  (void)stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
+	  (void)stream->discardTxUnackd(ref.offset, ref.length, ref.fin);
 	  return;
 	}
 	if (StreamRef stream_ = findStream(int64_t(ref.streamID)))
-	  (void)stream_->ackTxUnackd(ref.offset, ref.length, ref.fin);
+	  (void)stream_->discardTxUnackd(ref.offset, ref.length, ref.fin);
 	break;
       }
       case SentFrameKind::Crypto:
