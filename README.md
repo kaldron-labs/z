@@ -17,21 +17,25 @@ latency-sensitive applications and servers. Hallmarks of the library are:
     - No use of STL/Boost coroutines, threads, promise/futures, asio, etc.
 8. Prefer message-passing and shared-nothing sharding to lock-free algorithms or locking
 9. Explicitly interoperable with C
-10. Lean C dependencies: SSL (mbedtls), lock-free (ck), hardware locality (hwloc), regular expressions (pcre), serialization (flatbuffers), backtracing (bfd)
-11. Extensive use of the C pre-processor
+10. Lean C dependencies: SSL (picotls fork), lock-free (ck), hardware locality (hwloc), regular expressions (pcre), serialization (flatbuffers), backtracing (bfd)
+11. Extensive advanced use of the C macro pre-processor
 12. Use of prefixes alongside namespaces, aligning with C and pre-processor naming
 13. Brevity - short names, less typing
-14. Transparent - intentionally weak encapsulation - no engine covers
+14. Transparent - intentionally weakly encapsulated - no engine covers
 15. Modern C++ functional style and template metaprogramming
+16. No dogma
+    - No conformance to purely theoretical undefined behavior or standards
+17. Physical naming
+    - A hash table is a hash table, not a map
 
 ## FAQs
 
 1. why no Z namespace?
     - consistency with the pre-processor (macros are name-scoped with
       prefixes not namespaces)
-    - unneeded - Z uses prefixes with a low probability of collision
+    - unneeded - Z uses prefixes with a very low probability of collision
       (`Zu`, `Zt`, `Zf`, ...)
-    - a short prefix is more succinct (`Zu` vs `Zu::`)
+    - a short prefix is more succinct
     - no uncontrolled large-scale naming imports (no `using namespace std`)
     - mitigation of C++ name-mangling bloat with heavily templated code
     - intentional design preference for small focused namespaces
@@ -52,7 +56,7 @@ latency-sensitive applications and servers. Hallmarks of the library are:
         - Derived needs to be constructible/convertible from an instance of Base
 
 3. Why so much use of run() / invoke()?
-    - intentionally and tightly control thread creation within a small pool,
+    - intentionally and tightly controlled thread creation within a small pool,
       with key long-running threads performing isolated workloads and bound
       to specific isolated CPU cores for performance
     - sharding (binding data to single threads and passing messages between
