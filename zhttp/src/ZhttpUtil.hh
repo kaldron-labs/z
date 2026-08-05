@@ -154,10 +154,12 @@ inline auto crlf() {
 // - CanFold should be false for the start line
 // - span is empty for the last line before the body
 template <bool CanFold = true, typename Stream, typename Line>
-inline int64_t parseLine(Stream &stream, Line &&line) {
+inline int64_t parseLine(
+  Stream &stream, Line &&line, uint64_t max = uint64_t(-1)) {
   Zi::RxFramePos pos;
   int64_t n = stream.scan(crlf<CanFold>(), pos);
-  if (n <= 0) return n;
+  if (n <= 0) return !n && pos.total > max ? -2 : n;
+  if (uint64_t(n) > max) return -2;
   uint64_t length = uint64_t(n) - 2;
   auto span = stream.span();
   if (span.length() >= length) {

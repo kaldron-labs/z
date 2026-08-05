@@ -38,6 +38,26 @@ bool writeHTTPAppScript(
     if (f.write(body.data(), body.length()) != Zi::OK) return false;
     f.close();
   }
+  auto writeFile = [&rootPath](ZuCSpan name) {
+    ZtString<> filePath;
+    filePath << rootPath << '/' << name;
+    ZiFile f;
+    if (f.open(filePath, ZiFile::Write, 0666) != Zi::OK) return false;
+    if (f.write(name.data(), name.length()) != Zi::OK) return false;
+    f.close();
+    return true;
+  };
+  if (!writeFile("pipeline-a") || !writeFile("pipeline-b")) return false;
+  ZtString<> largePath;
+  largePath << rootPath << "/large";
+  {
+    ZiFile f;
+    ZuCSpan block{"0123456789abcdef\n"};
+    if (f.open(largePath, ZiFile::Write, 0666) != Zi::OK) return false;
+    for (unsigned i = 0; i < 4097; ++i)
+      if (f.write(block.data(), block.length()) != Zi::OK) return false;
+    f.close();
+  }
 
   ZtString<> script;
   script <<
@@ -74,7 +94,20 @@ bool writeHTTPAppScript(
   script <<
       " >" << tempPath << "/server.out 2>" << tempPath << "/server.err &\n"
     "pid=$!\n"
-    "sleep 1\n"
+    "sleep 1\n";
+  if (transport == "http" && !ipv6)
+    script <<
+      "python3 -c 'import socket,sys; s=socket.create_connection((\"127.0.0.1\"," <<
+      port << ")); s.sendall(b\"WHAT /bad HTTP/1.1\\r\\nhost: localhost\\r\\n\\r\\n\"); "
+      "d=s.recv(128); s.close(); sys.exit(0 if d.startswith(b\"HTTP/1.1 501\") else 1)'\n"
+      "kill -0 \"$pid\"\n"
+      "test \"$(grep -c 'zhttpd.access' " << tempPath << "/server.err)\" -eq 1\n"
+      "python3 -c 'import socket,sys; s=socket.create_connection((\"127.0.0.1\"," <<
+      port << ")); s.sendall(b\"GET /pipeline-a HTTP/1.1\\r\\nhost: localhost\\r\\n\\r\\nGET /pipeline-b HTTP/1.1\\r\\nhost: localhost\\r\\nconnection: close\\r\\n\\r\\n\"); "
+      "d=b\"\".join(iter(lambda:s.recv(4096),b\"\")); s.close(); "
+      "a=d.find(b\"pipeline-a\"); b=d.find(b\"pipeline-b\"); "
+      "sys.exit(0 if a>=0 and b>a else 1)'\n";
+  script <<
     "ok=0\n"
     "for i in $(seq 1 80); do\n"
     "  if \"$client\" ";
@@ -114,7 +147,30 @@ bool writeHTTPAppScript(
     "fi\n"
     "grep -qx 'zhttp-ok' " << tempPath << "/body";
   if (transport != "http") script << ".9";
-  script << '\n';
+  script << '\n' <<
+    "\"$client\" ";
+  if (transport == "http")
+    script << "-o " << tempPath << "/large-body http://" << urlHost << ':' <<
+      port << "/large";
+  else if (transport == "https" || transport == "prefer")
+    script << "-j 5 -n 10 " <<
+      (transport == "https" ? "-3 disable " : "") <<
+      "-c " << certPath << " -o " << tempPath << "/large-body https://" <<
+      urlHost << ':' << port << "/large";
+  else
+    script << "-3 force -j 5 -n 10 -c " << certPath << " -o " << tempPath <<
+      "/large-body https://" << urlHost << ':' << port << "/large";
+  script << " >" << tempPath << "/large-client.out 2>" << tempPath <<
+    "/large-client.err\n"
+    "cmp " << largePath << ' ' << tempPath << "/large-body";
+  if (transport != "http") script << ".9";
+  script << '\n' <<
+    "for i in $(seq 1 100); do\n"
+    "  grep -q '\"/large\" 200' " << tempPath <<
+      "/server.err && break\n"
+    "  sleep 0.01\n"
+    "done\n"
+    "grep -q '\"/large\" 200' " << tempPath << "/server.err\n";
   ZiFile f;
   if (f.open(path, ZiFile::Write, 0777) != Zi::OK) return false;
   if (f.write(script.data(), script.length()) != Zi::OK) return false;

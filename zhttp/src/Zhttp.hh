@@ -67,6 +67,8 @@
 namespace Zhttp {
 
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
+constexpr unsigned DefltMaxStartLine = (1<<13);	// 8K
+constexpr unsigned DefltMaxHeaderSection = (1<<16);	// 64K
 
 // HTTP hub/link application contract
 //
@@ -125,7 +127,7 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 namespace Zhttp {
 
 // Parser and Builder are plain application structs wrapped in protocol CRTP
-// adapters by ClientMessage and Service; neither inherits a Zhttp base. The
+// adapters by ClientMessage and Server; neither inherits a Zhttp base. The
 // protocol invokes only the callbacks applicable to the selected request or
 // response role and version. Every lambda call is synchronous. Printable
 // Builder values retain their actual type. Received spans and body Rx streams
@@ -276,7 +278,7 @@ struct ResParser : Parser {
 #endif
 
 // Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
-// ClientMessage and Service wrap plain application Parser sinks in these
+// ClientMessage and Server wrap plain application Parser sinks in these
 // adapters; application sinks do not derive from them. The protocol invokes
 // only the callbacks applicable to the selected request/response role and
 // version. Inherited defaults are side-effect-safe; an adapter which
@@ -334,40 +336,40 @@ template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H1ReqParser = H1::Parser<Impl, true, Headers, MaxBody>;
+using H1RequestParser = H1::Parser<Impl, true, Headers, MaxBody>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H1ResParser = H1::Parser<Impl, false, Headers, MaxBody>;
+using H1ResponseParser = H1::Parser<Impl, false, Headers, MaxBody>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H2ReqParser = H2::Parser<Impl, true, Headers, MaxBody>;
+using H2RequestParser = H2::Parser<Impl, true, Headers, MaxBody>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H2ResParser = H2::Parser<Impl, false, Headers, MaxBody>;
+using H2ResponseParser = H2::Parser<Impl, false, Headers, MaxBody>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H3ReqParser = H3::Parser<Impl, true, Headers, MaxBody>;
+using H3RequestParser = H3::Parser<Impl, true, Headers, MaxBody>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   uint64_t MaxBody = DefltMaxBody>
-using H3ResParser = H3::Parser<Impl, false, Headers, MaxBody>;
+using H3ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
 // Low-level protocol Builder CRTP adapters used internally by ClientMessage
-// and Service. Application Builders do not derive from these aliases. The
+// and Server. Application Builders do not derive from these aliases. The
 // adapters provide protocol framing and invoke the application through
 // inversion-of-control lambdas. H1 chunked builders emit Trailers from
 // finish(); H2/H3 builders emit a trailing HEADERS section.
@@ -377,48 +379,51 @@ template <
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
-using H1ReqBuilder =
-  H1::ReqBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+using H1Request =
+  H1::Request<Impl, Headers, Trailers, HasBody, Chunked>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
-using H1ResBuilder =
-  H1::ResBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+using H1Response =
+  H1::Response<Impl, Headers, Trailers, HasBody, Chunked>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H2ReqBuilder =
-  H2::ReqBuilder<Impl, Headers, Trailers, HasBody, false>;
+using H2Request =
+  H2::Request<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H2ResBuilder =
-  H2::ResBuilder<Impl, Headers, Trailers, HasBody, false>;
+using H2Response =
+  H2::Response<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H3ReqBuilder =
-  H3::ReqBuilder<Impl, Headers, Trailers, HasBody, false>;
+using H3Request =
+  H3::Request<Impl, Headers, Trailers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
   typename Trailers = ZuTypeList<>,
   bool HasBody = false>
-using H3ResBuilder =
-  H3::ResBuilder<Impl, Headers, Trailers, HasBody, false>;
+using H3Response =
+  H3::Response<Impl, Headers, Trailers, HasBody, false>;
+
+template <typename App, typename Profile>
+class ProtocolServer;
 
 } // namespace Zhttp
 
@@ -426,7 +431,6 @@ using H3ResBuilder =
 #include <zlib/ZhttpClientHub.hh>
 #include <zlib/ZhttpClientPool.hh>
 #include <zlib/ZhttpClient.hh>
-#include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpHubs.hh>
 #include <zlib/ZhttpH2Hub.hh>
 #include <zlib/ZhttpH3Hub.hh>

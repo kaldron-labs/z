@@ -15,7 +15,7 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpTLSHub.hh \
 	ZhttpLink.hh ZhttpClientHub.hh ZhttpClient.hh \
 	ZhttpClientPool.hh ZhttpTLSClientPool.hh ZhttpStream.hh \
-	ZhttpServer.hh ZhttpService.hh ZhttpHubs.hh \
+	ZhttpServer.hh ZhttpHubs.hh \
 	ZhttpH2Hub.hh ZhttpH3Hub.hh \
 	ZhttpURL.hh ZhttpAltSvc.hh ZhttpDiscovery.hh ZhttpRuntime.hh \
 	ZhttpH1.hh ZhttpH1Stream.hh ZhttpH3.hh \
@@ -25,7 +25,7 @@ pkginclude_HEADERS = ZhttpLib.hh Zhttp.hh ZhttpConfig.hh ZhttpTransport.hh \
 	ZhttpQPack.hh ZhttpStaticTable.hh ZhttpUtil.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
-libZhttp_la_SOURCES = ZhttpLib.cc ZhttpConfig.cc ZhttpClient.cc \
+libZhttp_la_SOURCES = ZhttpLib.cc ZhttpConfig.cc ZhttpClient.cc ZhttpServer.cc \
 	ZhttpURL.cc ZhttpAltSvc.cc \
 	ZhttpDiscovery.cc \
 	ZhttpRuntime.cc \

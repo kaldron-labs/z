@@ -10,5 +10,19 @@ namespace Zhttp {
 
 ZtEnumImplNS(Method);
 ZtEnumImplNS(XferCompression);
+ZtEnumImplStruct(RequestErrorCode);
+ZtEnumImplStruct(RequestErrorScope);
+
+unsigned requestErrorStatus(RequestErrorCode::T code)
+{
+  switch (code) {
+    case RequestErrorCode::ContentTooLarge: return 413;
+    case RequestErrorCode::TargetTooLong: return 414;
+    case RequestErrorCode::HeadersTooLarge: return 431;
+    case RequestErrorCode::NotImplemented: return 501;
+    case RequestErrorCode::VersionUnsupported: return 505;
+    default: return 400;
+  }
+}
 
 } // namespace Zhttp

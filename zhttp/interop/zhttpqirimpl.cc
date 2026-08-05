@@ -260,13 +260,13 @@ struct H3ReqOps {
 };
 
 template <typename H3Cxn_>
-struct H3ReqBuilder :
-  public Zhttp::H3ReqBuilder<H3ReqBuilder<H3Cxn_>, H3ReqHeaders>,
+struct H3Request :
+  public Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>,
   public H3ReqOps {
-  using Base = Zhttp::H3ReqBuilder<H3ReqBuilder<H3Cxn_>, H3ReqHeaders>;
+  using Base = Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>;
   using H3Cxn = H3Cxn_;
 
-  H3ReqBuilder(const Request &request_, H3Cxn &h3_, uint64_t streamID_) :
+  H3Request(const Request &request_, H3Cxn &h3_, uint64_t streamID_) :
     H3ReqOps{request_}, h3{&h3_}, streamID_{streamID_} { }
 
   H3Cxn &h3Cxn() const { return *h3; }
@@ -303,11 +303,11 @@ template <typename StreamRef>
 static bool sendH3Request_(const Request &request, StreamRef stream)
 {
   using H3Cxn = ZuDecay<decltype(stream->link()->h3)>;
-  H3ReqBuilder<H3Cxn> builder{
+  H3Request<H3Cxn> builder{
     request, stream->link()->h3, uint64_t(stream->id())};
   H3ReqPayload payload;
   H3ReqTx tx{payload};
-  builder.request(tx);
+  builder.begin(tx);
   builder.finish(tx);
   return payload.length() &&
     stream->link()->send(stream,
@@ -532,9 +532,11 @@ struct H3Client : public Zquic::Client<H3Client> {
   ZmAtomic<unsigned>	errors = 0;
 };
 
-struct H3ResParser :
-  public Zhttp::H3ResParser<H3ResParser, H3RespHeaders, H3RespBodyMax> {
-  using Base = Zhttp::H3ResParser<H3ResParser, H3RespHeaders, H3RespBodyMax>;
+struct H3ResponseParser :
+  public Zhttp::H3ResponseParser<
+    H3ResponseParser, H3RespHeaders, H3RespBodyMax> {
+  using Base = Zhttp::H3ResponseParser<
+    H3ResponseParser, H3RespHeaders, H3RespBodyMax>;
   using State = typename Base::State;
 
   void bind(H3Client::Stream *stream_) { stream = stream_; }
@@ -569,7 +571,7 @@ struct H3Client::Stream :
   bool qpackTxMaxCapacity(uint64_t);
   void complete(bool ok);
 
-  H3ResParser	parser;
+  H3ResponseParser	parser;
   unsigned	requestIndex = unsigned(-1);
   ZiFile	file;
   bool		done = false;
@@ -632,23 +634,23 @@ struct H3Client::Link :
   Zhttp::H3::QPackTxTable	h3Tx;
 };
 
-Zhttp::H3::QPackRxTable *H3ResParser::qpackRx() const
+Zhttp::H3::QPackRxTable *H3ResponseParser::qpackRx() const
 {
   return stream ? &stream->link()->h3.qpackRxTable : nullptr;
 }
 
-bool H3ResParser::qpackDecoderWrite(ZuBSpan span) const
+bool H3ResponseParser::qpackDecoderWrite(ZuBSpan span) const
 {
   return stream && stream->link()->h3.qpackDecoderWrite(span);
 }
 
-uint64_t H3ResParser::streamID() const
+uint64_t H3ResponseParser::streamID() const
 {
   return stream ? uint64_t(stream->id()) : 0;
 }
 
 template <typename Rx>
-void H3ResParser::body(Rx &rx)
+void H3ResponseParser::body(Rx &rx)
 {
   Zhttp::bodyEach(rx, [this](ZuBSpan body) {
     if (!stream || !body.length()) return;
@@ -657,7 +659,7 @@ void H3ResParser::body(Rx &rx)
   });
 }
 
-void H3ResParser::complete(State::T state)
+void H3ResponseParser::complete(State::T state)
 {
   if (!stream) return;
   bool ok = state == State::Complete && status_ >= 200 && status_ < 300;
@@ -676,12 +678,12 @@ int H3Client::Stream::process(Zquic::RxStream &rx)
     return 0;
   }
   auto s = parser.process(*this);
-  if (s == H3ResParser::State::Error ||
-      s == H3ResParser::State::Cancelled) {
+  if (s == H3ResponseParser::State::Error ||
+      s == H3ResponseParser::State::Cancelled) {
     complete(false);
     return -1;
   }
-  if (s == H3ResParser::State::Complete) return 1;
+  if (s == H3ResponseParser::State::Complete) return 1;
   return done ? -1 : 0;
 }
 

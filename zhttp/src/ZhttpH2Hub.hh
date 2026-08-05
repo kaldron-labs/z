@@ -20,10 +20,10 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmContext.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZmScheduler.hh>
 
 #include <zlib/ZhttpClientHub.hh>
-#include <zlib/ZhttpServer.hh>
 
 namespace Zhttp {
 
@@ -540,27 +540,23 @@ using ClosedStreamSet = ZmHashKV<
   ZmHashLock<ZmNoLock,
     ZmHashHeapID<"Zhttp.H2.ClosedStreams">>>;
 
-struct PendingFrame {
-  uint32_t	id = 0;
-  uint32_t	length = 0;
-  uint64_t	seq = 0;
-  bool		endStream = false;
-  ZmRef<ZiIOBuf>	buf;
+struct TxSchedule {
+  enum : int8_t {
+    None, Ready, Connection, Stream
+  };
 };
-
-using PendingFrameQueue =
-  ZtArray<PendingFrame, ZtArrayHeapID<"Zhttp.H2">>;
 
 struct TxWindowEntry {
   TxWindowEntry() = default;
   TxWindowEntry(uint32_t id_, int64_t window_) :
     id{id_}, window{window_} { }
 
+  ZiTxQueue	frames;
   uint32_t	id = 0;
   int64_t	window = DefltWindow;
-  uint64_t	headSeq = 0;
-  uint64_t	nextSeq = 0;
+  int8_t	scheduled = TxSchedule::None;
   bool		localEndQueued = false;
+  bool		endMarker = false;
 };
 
 inline uint32_t TxWindowEntry_IDAxor(const TxWindowEntry &entry)
@@ -568,11 +564,16 @@ inline uint32_t TxWindowEntry_IDAxor(const TxWindowEntry &entry)
   return entry.id;
 }
 
-using TxWindowHash = ZmHash<TxWindowEntry,
-  ZmHashNode<TxWindowEntry,
-    ZmHashKey<TxWindowEntry_IDAxor,
-      ZmHashLock<ZmNoLock,
-	ZmHashHeapID<"Zhttp.H2">>>>>;
+ZuDerive(TxWindowList,
+  (ZmList<TxWindowEntry,
+    ZmListNode<TxWindowEntry, ZmListShadow<>>>));
+
+ZuDerive(TxWindowHash,
+  (ZmHash<typename TxWindowList::Node,
+    ZmHashNode<typename TxWindowList::Node,
+      ZmHashKey<TxWindowEntry_IDAxor,
+	ZmHashLock<ZmNoLock,
+	  ZmHashHeapID<"Zhttp.H2">>>>>));
 
 template <typename Impl, typename Logical>
 class Wire : public H2::Connection<Wire<Impl, Logical>> {
@@ -601,8 +602,10 @@ public:
   }
   void finalWire() {
     ZmAssert(!streamCount());
-    ZmAssert(!m_pendingFrames);
     ZmAssert(!m_txWindows || !m_txWindows->count_());
+    ZmAssert(m_readyFrames.empty_());
+    ZmAssert(m_connectionFrames.empty_());
+    ZmAssert(m_streamFrames.empty_());
     ZmAssert(!m_frameAdmission.count());
     ZmAssert(!m_frameDrainPosted);
     stopWire();
@@ -747,6 +750,32 @@ public:
   }
   void logicalTxErrorFn(uint32_t id, ZiTxErrorFn fn) {
     if (auto stream_ = h2Stream(id)) stream_->txErrorFn = ZuMv(fn);
+  }
+  bool finishTx(uint32_t id, Transport_::TxCompleteFn fn) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 response fence outside Tx thread", return false);
+    auto entry_ = m_txWindows->findPtr(id);
+    if (!entry_) return false;
+    auto buf = entry_->frames.tailPtr();
+    if (!buf) return false;
+    auto frame = static_cast<ZiIOBuf *>(buf)->data();
+    if (!(frame[4] & Flag::EndStream)) return false;
+    auto node = Transport_::txBufNode(buf);
+    if (node->txComplete) return false;
+    node->txComplete = ZuMv(fn);
+    return true;
+  }
+  bool fenceTx(uint32_t id, Transport_::TxCompleteFn fn) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 response fence outside Tx thread", return false);
+    auto entry_ = m_txWindows->findPtr(id);
+    if (!entry_) return false;
+    auto buf = entry_->frames.tailPtr();
+    if (!buf) return false;
+    auto node = Transport_::txBufNode(buf);
+    if (node->txComplete) return false;
+    node->txComplete = ZuMv(fn);
+    return true;
   }
 
   unsigned dataMaxSize(uint32_t id) {
@@ -1343,11 +1372,13 @@ private:
     putUInt32(sink, value);
     tx.flush();
   }
-  TxWindowEntry *txWindow_(uint32_t id) {
+  TxWindowHash::Node *txWindow_(uint32_t id) {
     auto entry_ = m_txWindows->findPtr(id);
-    if (!entry_)
-      entry_ = m_txWindows->add(
-	TxWindowEntry{id, m_txInitialWindow});
+    if (!entry_) {
+      entry_ = new TxWindowHash::Node{
+	TxWindowEntry{id, m_txInitialWindow}};
+      m_txWindows->addNode(entry_);
+    }
     return entry_;
   }
   unsigned dataMaxSizeTx_(uint32_t id) {
@@ -1437,6 +1468,82 @@ private:
     });
     return true;
   }
+  static uint32_t frameLengthTx_(const ZiIOBuf *buf) {
+    auto frame = buf->data();
+    if (frame[3] != FrameType::Data) return 0;
+    return (uint32_t(frame[0])<<16) |
+      (uint32_t(frame[1])<<8) | uint32_t(frame[2]);
+  }
+  void detachFrameTx_(TxWindowHash::Node *entry_) {
+    switch (entry_->scheduled) {
+      case TxSchedule::Ready:
+	if (m_readyFrames.headPtr() == entry_)
+	  m_readyFrames.shift();
+	else
+	  m_readyFrames.delNode(entry_);
+	break;
+      case TxSchedule::Connection:
+	if (m_connectionFrames.headPtr() == entry_)
+	  m_connectionFrames.shift();
+	else
+	  m_connectionFrames.delNode(entry_);
+	break;
+      case TxSchedule::Stream:
+	if (m_streamFrames.headPtr() == entry_)
+	  m_streamFrames.shift();
+	else
+	  m_streamFrames.delNode(entry_);
+	break;
+      default:
+	return;
+    }
+    entry_->scheduled = TxSchedule::None;
+  }
+  void scheduleFrameTx_(TxWindowHash::Node *entry_) {
+    ZmAssert(entry_->scheduled == TxSchedule::None);
+    auto buf = entry_->frames.headPtr();
+    if (!buf) {
+      if (!entry_->endMarker) return;
+    } else {
+      uint32_t length = frameLengthTx_(buf);
+      if (length > m_txWindow) {
+	entry_->scheduled = TxSchedule::Connection;
+	m_connectionFrames.pushNode(entry_);
+	return;
+      }
+      if (length > entry_->window) {
+	entry_->scheduled = TxSchedule::Stream;
+	m_streamFrames.pushNode(entry_);
+	return;
+      }
+    }
+    entry_->scheduled = TxSchedule::Ready;
+    m_readyFrames.pushNode(entry_);
+  }
+  void queueFrameTx_(
+      TxWindowHash::Node *entry_, ZmRef<ZiIOBuf> buf, bool endStream) {
+    if (buf)
+      entry_->frames.pushNode(Transport_::txBufNode(buf.ptr()));
+    else {
+      ZmAssert(endStream && !entry_->endMarker);
+      entry_->endMarker = true;
+    }
+    if (entry_->scheduled == TxSchedule::None)
+      scheduleFrameTx_(entry_);
+  }
+  static unsigned clearFrameTx_(
+      TxWindowHash::Node *entry_, ResponseOutcome::T outcome) {
+    unsigned n = 0;
+    while (auto buf = entry_->frames.shift()) {
+      Transport_::txBufNode(buf)->complete(outcome);
+      ++n;
+    }
+    if (entry_->endMarker) {
+      entry_->endMarker = false;
+      ++n;
+    }
+    return n;
+  }
   void sendFrameTx_(
     uint32_t id, uint32_t length, bool endStream,
     ZmRef<ZiIOBuf> buf) {
@@ -1447,10 +1554,9 @@ private:
       m_frameAdmission.pop();
       return;
     }
+    (void)length;
     if (endStream) entry_->localEndQueued = true;
-    m_pendingFrames.push(
-      PendingFrame{
-	id, length, entry_->nextSeq++, endStream, ZuMv(buf)});
+    queueFrameTx_(entry_, ZuMv(buf), endStream);
     startFrameDrain_();
   }
   void sendHeadersTx_(
@@ -1465,9 +1571,7 @@ private:
     if (endStream) entry_->localEndQueued = true;
     unsigned n = frames.length();
     for (unsigned i = 0; i < n; ++i)
-      m_pendingFrames.push(PendingFrame{
-	id, 0, entry_->nextSeq++, endStream && i + 1 == n,
-	ZuMv(frames[i])});
+      queueFrameTx_(entry_, ZuMv(frames[i]), endStream && i + 1 == n);
     startFrameDrain_();
   }
   void windowUpdateTx_(uint32_t id, uint32_t value) {
@@ -1479,6 +1583,11 @@ private:
 	return;
       }
       m_txWindow += value;
+      auto blocked = ZuMv(m_connectionFrames);
+      while (auto entry_ = blocked.shift()) {
+	entry_->scheduled = TxSchedule::None;
+	scheduleFrameTx_(static_cast<TxWindowHash::Node *>(entry_));
+      }
     } else {
       auto entry_ = txWindow_(id);
       if (!entry_ || entry_->window > int64_t(MaxWindow) - value) {
@@ -1486,6 +1595,10 @@ private:
 	return;
       }
       entry_->window += value;
+      if (entry_->scheduled == TxSchedule::Stream) {
+	detachFrameTx_(entry_);
+	scheduleFrameTx_(entry_);
+      }
     }
     startFrameDrain_();
   }
@@ -1504,40 +1617,46 @@ private:
       }
     }
     auto i = m_txWindows->iter();
-    while (auto entry_ = i()) entry_->window += delta;
+    while (auto entry_ = i()) {
+      entry_->window += delta;
+      detachFrameTx_(entry_);
+      scheduleFrameTx_(entry_);
+    }
     m_txInitialWindow = value;
     startFrameDrain_();
   }
   void removeFramesTx_(uint32_t id) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 Tx stream removal outside Tx thread", return);
-    for (unsigned i = m_pendingFrames.length(); i; )
-      if (m_pendingFrames[--i].id == id) {
-	m_pendingFrames.splice(i, 1);
-	m_frameAdmission.pop();
-      }
-    if (auto entry_ = m_txWindows->findPtr(id))
+    if (auto entry_ = m_txWindows->findPtr(id)) {
+      detachFrameTx_(entry_);
+      unsigned n = clearFrameTx_(entry_, ResponseOutcome::Reset);
+      if (n) m_frameAdmission.pop(n);
       m_txWindows->delNode(
-	static_cast<typename TxWindowHash::Node *>(entry_));
+	static_cast<TxWindowHash::Node *>(entry_));
+    }
     if (m_headerStream == id) m_headerStream = 0;
-    if (m_frameCursor >= m_pendingFrames.length()) m_frameCursor = 0;
-    if (m_frameScan > m_pendingFrames.length())
-      m_frameScan = m_pendingFrames.length();
   }
   void clearFramesTx_() {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 Tx clear outside Tx thread", return);
-    m_frameAdmission.pop(m_pendingFrames.length());
-    m_pendingFrames.length(0);
-    m_txWindows->clean();
-    m_frameCursor = 0;
-    m_frameScan = 0;
+    unsigned n = 0;
+    auto i = m_txWindows->iter();
+    while (auto entry_ = i()) {
+      detachFrameTx_(entry_);
+      n += clearFrameTx_(entry_, ResponseOutcome::Reset);
+      i.del();
+    }
+    if (n) m_frameAdmission.pop(n);
+    m_readyFrames.clean();
+    m_connectionFrames.clean();
+    m_streamFrames.clean();
     m_headerStream = 0;
     m_frameDrainPosted = false;
   }
   void startFrameDrain_() {
-    m_frameScan = m_pendingFrames.length();
-    if (m_frameDrainPosted) return;
+    if (m_frameDrainPosted ||
+	(!m_headerStream && m_readyFrames.empty_())) return;
     m_frameDrainPosted = true;
     impl_()->app()->txRun([link = impl_()]() {
       link->drainFramesTx_();
@@ -1548,38 +1667,29 @@ private:
       "H2 frame drain outside Tx thread", return);
     m_frameDrainPosted = false;
     unsigned inspected = 0;
-    while (m_pendingFrames && m_frameScan &&
-	inspected < FrameDrainBatch) {
-      if (m_frameCursor >= m_pendingFrames.length()) m_frameCursor = 0;
-      auto &pending = m_pendingFrames[m_frameCursor];
-      auto entry_ = m_txWindows->findPtr(pending.id);
-      --m_frameScan;
+    while (m_headerStream || inspected < FrameDrainBatch) {
+      TxWindowHash::Node *entry_;
+      if (m_headerStream) {
+	entry_ = m_txWindows->findPtr(m_headerStream);
+	if (!entry_ || entry_->scheduled != TxSchedule::Ready) break;
+	detachFrameTx_(entry_);
+      } else {
+	auto scheduled = m_readyFrames.shift();
+	if (!scheduled) break;
+	entry_ = static_cast<TxWindowHash::Node *>(scheduled);
+	entry_->scheduled = TxSchedule::None;
+      }
       ++inspected;
-      if (m_headerStream && pending.id != m_headerStream) {
-	++m_frameCursor;
-	continue;
-      }
-      if (!entry_) {
-	m_pendingFrames.splice(m_frameCursor, 1);
-	m_frameAdmission.pop();
-	continue;
-      }
-      if (pending.seq != entry_->headSeq ||
-	  (pending.length &&
-	    (pending.length > m_txWindow ||
-	     pending.length > entry_->window))) {
-	++m_frameCursor;
-	continue;
-      }
-      if (pending.length) {
-	m_txWindow -= pending.length;
-	entry_->window -= pending.length;
-      }
-      bool endStream = pending.endStream;
-      uint32_t id = pending.id;
-      ++entry_->headSeq;
-      if (pending.buf) {
-	auto frame = pending.buf->data();
+      uint32_t id = entry_->id;
+      bool endStream;
+      if (auto pending = entry_->frames.shift()) {
+	auto frame = static_cast<ZiIOBuf *>(pending.ptr())->data();
+	uint32_t length = frameLengthTx_(pending);
+	if (length) {
+	  m_txWindow -= length;
+	  entry_->window -= length;
+	}
+	endStream = frame[4] & Flag::EndStream;
 	if (frame[3] == FrameType::Headers &&
 	    !(frame[4] & Flag::EndHeaders))
 	  m_headerStream = id;
@@ -1588,20 +1698,21 @@ private:
 	    (frame[4] & Flag::EndHeaders))
 	  m_headerStream = 0;
 	auto tx = impl_()->directTxStream();
-	tx.sendBuf_(ZuMv(pending.buf), false);
+	tx.sendBuf_(ZuMv(pending), false);
+      } else {
+	ZmAssert(entry_->endMarker);
+	entry_->endMarker = false;
+	endStream = true;
       }
-      m_pendingFrames.splice(m_frameCursor, 1);
       m_frameAdmission.pop();
-      if (m_frameScan < m_pendingFrames.length()) ++m_frameScan;
+      scheduleFrameTx_(entry_);
       if (endStream)
 	impl_()->app()->rxRun([
 	  link = impl_(), id]() {
 	  link->h2LocalEnd(id);
 	});
-      if (m_headerStream && inspected == FrameDrainBatch)
-	inspected = 0;
     }
-    if (m_frameScan && m_pendingFrames) {
+    if (m_headerStream || !m_readyFrames.empty_()) {
       m_frameDrainPosted = true;
       impl_()->app()->txRun([link = impl_()]() {
 	link->drainFramesTx_();
@@ -1674,11 +1785,11 @@ private:
   alignas(Zm::CacheLineSize)
   HPackEncoder		m_encoder;
   ZmRef<TxWindowHash>	m_txWindows;
-  PendingFrameQueue	m_pendingFrames;
+  TxWindowList		m_readyFrames;
+  TxWindowList		m_connectionFrames;
+  TxWindowList		m_streamFrames;
   uint32_t		m_txInitialWindow = DefltWindow;
   uint32_t		m_txFrameSize = DefltFrameSize;
-  uint32_t		m_frameCursor = 0;
-  uint32_t		m_frameScan = 0;
   uint32_t		m_headerStream = 0;
   int64_t		m_txWindow = DefltWindow;
   bool			m_frameDrainPosted = false;
@@ -1907,13 +2018,14 @@ public:
   const Ztls::Host &host() const { return m_host; }
   uint16_t port() const { return m_port; }
   void add(ZmRef<Logical> logical) {
-    if (m_pending.length() >= m_pendingMax &&
+    if (pendingCount_() >= m_pendingMax &&
 	(!m_ready || !Wire_::canOpenLocalStream())) {
       logical->connectFailed_(false);
       return;
     }
     logical->native(this);
-    if (!m_ready || m_pending || !Wire_::canOpenLocalStream()) {
+    if (!m_ready || pending_() || !Wire_::canOpenLocalStream()) {
+      compactPending_();
       m_pending.push(ZuMv(logical));
       return;
     }
@@ -1923,7 +2035,7 @@ public:
     return !m_down && !m_draining &&
       !Wire_::localStreamsExhausted() &&
       (m_ready && Wire_::canOpenLocalStream() ||
-	m_pending.length() < m_pendingMax);
+	pendingCount_() < m_pendingMax);
   }
   bool isDown() const { return m_down; }
   void connected(Ztls::Connected info) {
@@ -1953,12 +2065,15 @@ public:
 	  logical->result_(ResultCode::Indeterminate);
 	logical->disconnected_(peer);
       }
-      for (auto &logical: link->m_pending) {
+      for (unsigned i = link->m_pendingHead;
+	  i < link->m_pending.length(); ++i) {
+	auto &logical = link->m_pending[i];
 	if (logical->result() == ResultCode::OK)
 	  logical->result_(ResultCode::Unprocessed);
 	logical->connectFailed_(false);
       }
       link->m_pending.length(0);
+      link->m_pendingHead = 0;
       link->app()->linkDown(link);
     });
   }
@@ -1966,12 +2081,14 @@ public:
     if (m_down) return;
     m_down = true;
     Wire_::stopWire();
-    for (auto &logical: m_pending) {
+    for (unsigned i = m_pendingHead; i < m_pending.length(); ++i) {
+      auto &logical = m_pending[i];
       if (logical->result() == ResultCode::OK)
 	logical->result_(ResultCode::Unprocessed);
       logical->connectFailed_(transient);
     }
     m_pending.length(0);
+    m_pendingHead = 0;
     Base::disconnect();
     this->app()->linkDown(this);
   }
@@ -2065,36 +2182,50 @@ public:
     Wire_::allStreams([](auto &entry) {
       entry.logical->result_(ResultCode::Cancelled);
     });
-    for (auto &logical: m_pending)
-      logical->result_(ResultCode::Cancelled);
+    for (unsigned i = m_pendingHead; i < m_pending.length(); ++i)
+      m_pending[i]->result_(ResultCode::Cancelled);
     Wire_::stopWire();
     Wire_::graceful();
     Base::disconnect();
   }
 
 private:
+  bool pending_() const { return m_pendingHead < m_pending.length(); }
+  unsigned pendingCount_() const {
+    return m_pending.length() - m_pendingHead;
+  }
+  void compactPending_() {
+    if (!m_pendingHead) return;
+    unsigned n = pendingCount_();
+    for (unsigned i = 0; i < n; ++i)
+      m_pending[i] = ZuMv(m_pending[m_pendingHead + i]);
+    m_pending.length(n);
+    m_pendingHead = 0;
+  }
   void admit_() {
     if (!m_ready) return;
-    unsigned n = 0;
-    while (n < m_pending.length() && Wire_::canOpenLocalStream())
-      openNow_(ZuMv(m_pending[n++]));
-    if (n) m_pending.splice(0, n);
+    while (pending_() && Wire_::canOpenLocalStream())
+      openNow_(ZuMv(m_pending[m_pendingHead++]));
+    if (!pending_()) {
+      m_pending.length(0);
+      m_pendingHead = 0;
+    }
     if (Wire_::localStreamsExhausted()) {
       m_draining = true;
       requeue_();
     }
   }
   void requeue_() {
-    if (!m_pending || m_requeuePosted) return;
+    if (!pending_() || m_requeuePosted) return;
     m_requeuePosted = true;
     this->app()->rxRun([
       link = this]() { link->requeueNow_(); });
   }
   void requeueNow_() {
-    unsigned n = m_pending.length();
+    unsigned n = pendingCount_();
     if (n > H2_::RequeueBatch) n = H2_::RequeueBatch;
     for (unsigned i = 0; i < n; ++i) {
-      auto logical = ZuMv(m_pending[i]);
+      auto logical = ZuMv(m_pending[m_pendingHead++]);
       if (m_stopping) {
 	logical->result_(ResultCode::Cancelled);
 	logical->connectFailed_(false);
@@ -2102,11 +2233,12 @@ private:
 	logical->connect(m_host, m_port);
       }
     }
-    if (n) m_pending.splice(0, n);
-    if (m_pending) {
+    if (pending_()) {
       this->app()->rxRun([
 	link = this]() { link->requeueNow_(); });
     } else {
+      m_pending.length(0);
+      m_pendingHead = 0;
       m_requeuePosted = false;
     }
   }
@@ -2142,6 +2274,7 @@ private:
   }
 
   Pending	m_pending;
+  unsigned	m_pendingHead = 0;
   Ztls::Host	m_host;
   uint16_t	m_port = 0;
   uint32_t	m_pendingMax = 0;
@@ -2276,9 +2409,8 @@ public:
 
   SrvLink(
     Hub *app, const ZiCxnInfo &ci, const H2Config &config) :
-      Base{app}
+      Base{app}, m_remoteIP{ci.remoteIP}, m_remotePort{ci.remotePort}
   {
-    m_remote << ci.remoteIP;
     Wire_::initWire(true, config);
   }
   ~SrvLink() {
@@ -2324,7 +2456,7 @@ public:
   Stream<Logical> *h2OpenPeer(uint32_t id) {
     if (m_draining || !Wire_::canOpenPeerStream(id)) return nullptr;
     ZmRef<Logical> logical = new Logical{
-      this->app()->user(), this, id, ZuCSpan{m_remote}};
+      this->app()->user(), this, id, m_remoteIP, m_remotePort};
     auto entry = Wire_::openPeerStream(id, logical);
     if (!entry) return nullptr;
     logical->connected_(ProfileTraits<H2TLS>::apply({
@@ -2406,7 +2538,8 @@ private:
     });
   }
 
-  EndpointString m_remote;
+  ZiIP		m_remoteIP;
+  uint16_t	m_remotePort = 0;
   bool		m_draining = false;
   bool		m_down = false;
   bool		m_released = false;
@@ -2573,8 +2706,10 @@ public:
   enum { TLS = 1, Multiplexed = 1 };
 
   ServerLogical(
-    App *app, NativeLink *native, uint32_t streamID, ZuCSpan remote) :
-      m_app{app}, m_native{native}, m_streamID{streamID}, m_remote{remote}
+    App *app, NativeLink *native, uint32_t streamID,
+    const ZiIP &remoteIP, uint16_t remotePort) :
+      m_app{app}, m_native{native}, m_streamID{streamID},
+      m_remoteIP{remoteIP}, m_remotePort{remotePort}
   {
 #ifdef ZmObject_DEBUG
     this->ZmObject::debug();
@@ -2582,7 +2717,8 @@ public:
   }
   App *app() const { return m_app; }
   auto impl() { return static_cast<Impl *>(this); }
-  ZuCSpan remote() const { return m_remote; }
+  const ZiIP &remoteIP() const { return m_remoteIP; }
+  uint16_t remotePort() const { return m_remotePort; }
   Session &session() { return m_session; }
   auto txStream() { return m_native->logicalTx(m_streamID); }
   void txErrorFn(ZiTxErrorFn fn) {
@@ -2593,7 +2729,21 @@ public:
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
   auto transmit(Builder &) { return txStream(); }
-  void finish() { }
+  bool active() const { return m_native && m_streamID; }
+  void txComplete(Transport_::TxCompleteFn fn) {
+    m_txComplete = ZuMv(fn);
+  }
+  void txCancel() { m_txComplete = {}; }
+  bool txFence(Transport_::TxCompleteFn fn) {
+    return m_native && m_native->fenceTx(m_streamID, ZuMv(fn));
+  }
+  void finish() {
+    auto fn = ZuMv(m_txComplete);
+    m_txComplete = {};
+    if (!fn) return;
+    if (!m_native || !m_native->finishTx(m_streamID, ZuMv(fn)))
+      fn(ResponseOutcome::TxFailed);
+  }
   void disconnect() {
     if (m_native) m_native->h2Cancel(m_streamID);
   }
@@ -2605,18 +2755,31 @@ public:
     if (!m_native) return;
     m_session.disconnected(*impl(), peer);
     m_app->disconnected(*impl(), peer);
-    m_native = nullptr;
-    m_streamID = 0;
+    m_app->txRun([
+      logical = ZmMkRef(impl()), native = ZmMkRef(m_native)]() mutable {
+      (void)native;
+      logical->disconnectedTx_();
+    });
   }
   template <typename Rx>
   int process_(Rx &rx) { return m_session.process(*impl(), rx); }
 
 private:
+  void disconnectedTx_() {
+    auto fn = ZuMv(m_txComplete);
+    m_txComplete = {};
+    m_native = nullptr;
+    m_streamID = 0;
+    if (fn) fn(ResponseOutcome::Reset);
+  }
+
   App		*m_app = nullptr;
   NativeLink	*m_native = nullptr;
+  Transport_::TxCompleteFn m_txComplete;
   uint32_t	m_streamID = 0;
   Session	m_session;
-  EndpointString m_remote;
+  ZiIP		m_remoteIP;
+  uint16_t	m_remotePort = 0;
 };
 
 } // namespace H2_
@@ -2904,28 +3067,29 @@ public:
     if (m_down || m_stopping || m_draining) return false;
     if (!m_ready)
       return m_policy == H2Policy::Force &&
-	m_pending.length() < m_pendingMax;
+	pendingCount_() < m_pendingMax;
     switch (m_version) {
       case Version::H1:
-	return !m_h1 || m_pending.length() < m_pendingMax;
+      return !m_h1 || pendingCount_() < m_pendingMax;
       case Version::H2:
 	return !Wire::localStreamsExhausted() &&
 	  (Wire::canOpenLocalStream() ||
-	    m_pending.length() < m_pendingMax);
+	    pendingCount_() < m_pendingMax);
       default:
 	return false;
     }
   }
   void add(Choice choice) {
-    if (m_pending.length() >= m_pendingMax &&
+    if (pendingCount_() >= m_pendingMax &&
 	(!m_ready || m_version != Version::H2 ||
 	 !Wire::canOpenLocalStream())) {
       fail_(choice, false);
       return;
     }
-    if (!m_ready || m_pending ||
+    if (!m_ready || pending_() ||
 	m_version == Version::H1 && m_h1 ||
 	m_version == Version::H2 && !Wire::canOpenLocalStream()) {
+      compactPending_();
       m_pending.push(ZuMv(choice));
       return;
     }
@@ -2975,9 +3139,11 @@ public:
 	  logical->result_(ResultCode::Indeterminate);
 	logical->disconnected_(peer);
       }
-      for (auto &choice: link->m_pending)
-	link->fail_(choice, false);
+      for (unsigned i = link->m_pendingHead;
+	  i < link->m_pending.length(); ++i)
+	link->fail_(link->m_pending[i], false);
       link->m_pending.length(0);
+      link->m_pendingHead = 0;
       link->app()->linkDown(link);
     });
   }
@@ -2985,8 +3151,10 @@ public:
     if (m_down) return;
     m_down = true;
     Wire::stopWire();
-    for (auto &choice: m_pending) fail_(choice, transient);
+    for (unsigned i = m_pendingHead; i < m_pending.length(); ++i)
+      fail_(m_pending[i], transient);
     m_pending.length(0);
+    m_pendingHead = 0;
     Base::disconnect();
     this->app()->linkDown(this);
   }
@@ -3092,7 +3260,8 @@ public:
     Wire::allStreams([](auto &entry) {
       entry.logical->result_(ResultCode::Cancelled);
     });
-    for (auto &choice: m_pending)
+    for (unsigned i = m_pendingHead; i < m_pending.length(); ++i) {
+      auto &choice = m_pending[i];
       switch (m_policy) {
 	case H2Policy::Disable:
 	  choice.h1->result_(ResultCode::Cancelled);
@@ -3101,12 +3270,25 @@ public:
 	  choice.h2->result_(ResultCode::Cancelled);
 	  break;
       }
+    }
     Wire::stopWire();
     if (m_version == Version::H2) Wire::graceful();
     Base::disconnect();
   }
 
 private:
+  bool pending_() const { return m_pendingHead < m_pending.length(); }
+  unsigned pendingCount_() const {
+    return m_pending.length() - m_pendingHead;
+  }
+  void compactPending_() {
+    if (!m_pendingHead) return;
+    unsigned n = pendingCount_();
+    for (unsigned i = 0; i < n; ++i)
+      m_pending[i] = ZuMv(m_pending[m_pendingHead + i]);
+    m_pending.length(n);
+    m_pendingHead = 0;
+  }
   void open_(Choice choice) {
     switch (m_version) {
       case Version::H1:
@@ -3141,36 +3323,37 @@ private:
   }
   void admit_() {
     if (!m_ready) return;
-    unsigned n = 0;
     switch (m_version) {
       case Version::H1:
-	if (!m_h1 && m_pending) {
-	  open_(ZuMv(m_pending[0]));
-	  n = 1;
+	if (!m_h1 && pending_()) {
+	  open_(ZuMv(m_pending[m_pendingHead++]));
 	}
 	break;
       case Version::H2:
-	while (n < m_pending.length() && Wire::canOpenLocalStream())
-	  open_(ZuMv(m_pending[n++]));
+	while (pending_() && Wire::canOpenLocalStream())
+	  open_(ZuMv(m_pending[m_pendingHead++]));
 	break;
     }
-    if (n) m_pending.splice(0, n);
+    if (!pending_()) {
+      m_pending.length(0);
+      m_pendingHead = 0;
+    }
     if (m_version == Version::H2 && Wire::localStreamsExhausted()) {
       m_draining = true;
       requeue_();
     }
   }
   void requeue_() {
-    if (!m_pending || m_requeuePosted) return;
+    if (!pending_() || m_requeuePosted) return;
     m_requeuePosted = true;
     this->app()->rxRun([
       link = this]() { link->requeueNow_(); });
   }
   void requeueNow_() {
-    unsigned n = m_pending.length();
+    unsigned n = pendingCount_();
     if (n > H2_::RequeueBatch) n = H2_::RequeueBatch;
     for (unsigned i = 0; i < n; ++i) {
-      auto choice = ZuMv(m_pending[i]);
+      auto choice = ZuMv(m_pending[m_pendingHead++]);
       if (m_stopping) {
 	switch (m_policy) {
 	  case H2Policy::Disable:
@@ -3187,11 +3370,12 @@ private:
 	  choice.h1, choice.h2, m_host, m_port);
       }
     }
-    if (n) m_pending.splice(0, n);
-    if (m_pending) {
+    if (pending_()) {
       this->app()->rxRun([
 	link = this]() { link->requeueNow_(); });
     } else {
+      m_pending.length(0);
+      m_pendingHead = 0;
       m_requeuePosted = false;
     }
   }
@@ -3241,6 +3425,7 @@ private:
   }
 
   Pending		m_pending;
+  unsigned		m_pendingHead = 0;
   ZmRef<H1Logical>	m_h1;
   Ztls::Host		m_host;
   uint16_t		m_port = 0;
@@ -3261,8 +3446,11 @@ class ServerH1Logical : public ZmObject {
 public:
   enum { TLS = 1, Multiplexed = 0 };
 
-  ServerH1Logical(App *app, NativeLink *native, ZuCSpan remote) :
-    m_app{app}, m_native{native}, m_remote{remote}
+  ServerH1Logical(
+      App *app, NativeLink *native,
+      const ZiIP &remoteIP, uint16_t remotePort) :
+    m_app{app}, m_native{native},
+    m_remoteIP{remoteIP}, m_remotePort{remotePort}
   {
 #ifdef ZmObject_DEBUG
     this->ZmObject::debug();
@@ -3271,7 +3459,8 @@ public:
 
   App *app() const { return m_app; }
   auto impl() { return static_cast<Impl *>(this); }
-  ZuCSpan remote() const { return m_remote; }
+  const ZiIP &remoteIP() const { return m_remoteIP; }
+  uint16_t remotePort() const { return m_remotePort; }
   Session &session() { return m_session; }
   auto txStream() { return m_native->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
@@ -3281,7 +3470,20 @@ public:
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
   auto transmit(Builder &) { return txStream(); }
-  void finish() { }
+  bool active() const { return m_native; }
+  void txComplete(Transport_::TxCompleteFn fn) {
+    if (m_native) m_native->armH1Complete(ZuMv(fn));
+    else fn(ResponseOutcome::Cancelled);
+  }
+  void txCancel() {
+    if (m_native) m_native->cancelH1Complete();
+  }
+  bool txFence(Transport_::TxCompleteFn fn) {
+    return m_native && m_native->fenceH1(ZuMv(fn));
+  }
+  void finish() {
+    if (m_native) m_native->finishH1();
+  }
   void disconnect() {
     if (m_native) m_native->disconnectNative();
   }
@@ -3295,7 +3497,11 @@ public:
     m_app->mx()->del(&m_idleTimer);
     m_session.disconnected(*impl(), peer);
     m_app->disconnected(*impl(), peer);
-    m_native = nullptr;
+    m_app->txRun([
+      logical = ZmMkRef(impl()), native = ZmMkRef(m_native)]() mutable {
+      (void)native;
+      logical->disconnectedTx_();
+    });
   }
   int process_(Ztls::RxStream &rx) {
     int rc = m_session.process(*impl(), rx);
@@ -3304,6 +3510,11 @@ public:
   }
 
 private:
+  void disconnectedTx_() {
+    m_native->resetH1();
+    m_native = nullptr;
+  }
+
   void touch_() {
     if (!m_native) return;
     auto timeout = m_app->idleTimeout();
@@ -3319,7 +3530,8 @@ private:
   NativeLink	*m_native = nullptr;
   Session	m_session;
   ZmScheduler::Timer m_idleTimer;
-  EndpointString m_remote;
+  ZiIP		m_remoteIP;
+  uint16_t	m_remotePort = 0;
 };
 
 template <typename App>
@@ -3450,21 +3662,98 @@ public:
 
   SrvLink(
     Hub *app, const ZiCxnInfo &ci, const H2Config &config) :
-      Base{app}, m_policy{config.policy()}
+      Base{app}, m_remoteIP{ci.remoteIP}, m_remotePort{ci.remotePort},
+      m_policy{config.policy()}
   {
-    m_remote = ci.remoteIP;
     Wire::initWire(true, config);
   }
   ~SrvLink() {
     Wire::finalWire();
   }
 
+  using Base::send;
+  bool send(ZmRef<ZiIOBuf> buf) {
+    ZiIOBuf *last = buf.ptr();
+    if (m_version == Version::H1) {
+      m_h1TxLast = last;
+      m_h1TxReady = true;
+    }
+    if (!Base::send(ZuMv(buf))) {
+      if (m_h1TxLast == last) m_h1TxLast = nullptr;
+      m_h1TxOutcome = ResponseOutcome::TxFailed;
+      return false;
+    }
+    return true;
+  }
+  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+    ZiIOBuf *sent = buf.ptr();
+    auto fn = ZuMv(Transport_::txBufNode(sent)->txComplete);
+    Transport_::txBufNode(sent)->txComplete = {};
+    if (m_h1TxLast == sent) {
+      m_h1TxLast = nullptr;
+      m_h1TxOutcome = ok ?
+	ResponseOutcome::Success : ResponseOutcome::TxFailed;
+    }
+    if (!ok) {
+      auto i = this->txQueue.iter();
+      while (auto queued = i())
+	Transport_::txBufNode(queued)->complete(ResponseOutcome::TxFailed);
+    }
+    Base::sent(ZuMv(buf), ok);
+    if (fn)
+      fn(ok ? ResponseOutcome::Success : ResponseOutcome::TxFailed);
+  }
+  void armH1Complete(Transport_::TxCompleteFn fn) {
+    m_h1Complete = ZuMv(fn);
+  }
+  void cancelH1Complete() {
+    m_h1Complete = {};
+    m_h1TxLast = nullptr;
+    m_h1TxReady = false;
+  }
+  void resetH1() {
+    auto fn = ZuMv(m_h1Complete);
+    m_h1Complete = {};
+    m_h1TxLast = nullptr;
+    m_h1TxReady = false;
+    if (fn) fn(ResponseOutcome::Reset);
+  }
+  void finishH1() {
+    auto fn = ZuMv(m_h1Complete);
+    m_h1Complete = {};
+    if (!fn) return;
+    if (!m_h1TxReady) {
+      fn(ResponseOutcome::TxFailed);
+      return;
+    }
+    m_h1TxReady = false;
+    if (!m_h1TxLast) {
+      fn(m_h1TxOutcome);
+      return;
+    }
+    Transport_::txBufNode(m_h1TxLast)->txComplete = ZuMv(fn);
+    m_h1TxLast = nullptr;
+  }
+  bool fenceH1(Transport_::TxCompleteFn fn) {
+    if (!m_h1TxReady) return false;
+    m_h1TxReady = false;
+    if (!m_h1TxLast) {
+      fn(m_h1TxOutcome);
+      return true;
+    }
+    auto node = Transport_::txBufNode(m_h1TxLast);
+    if (node->txComplete) return false;
+    node->txComplete = ZuMv(fn);
+    m_h1TxLast = nullptr;
+    return true;
+  }
+
   void connected(Ztls::Connected info) {
     m_version = TLS_::version(info.alpn, m_policy);
     switch (m_version) {
-      case Version::H1:
+	case Version::H1:
 	m_h1 = new H1Logical{
-	  this->app()->user(), this, ZuCSpan{m_remote}};
+	  this->app()->user(), this, m_remoteIP, m_remotePort};
 	m_h1->connected_(ProfileTraits<H1TLS>::apply({
 	  .alpn = info.alpn,
 	  .version = uint32_t(info.version),
@@ -3529,7 +3818,7 @@ public:
   H2_::Stream<H2Logical> *h2OpenPeer(uint32_t id) {
     if (m_draining || !Wire::canOpenPeerStream(id)) return nullptr;
     ZmRef<H2Logical> logical = new H2Logical{
-      this->app()->user(), this, id, ZuCSpan{m_remote}};
+      this->app()->user(), this, id, m_remoteIP, m_remotePort};
     auto entry = Wire::openPeerStream(id, logical);
     if (!entry) return nullptr;
     logical->connected_(ProfileTraits<H2TLS>::apply({
@@ -3618,18 +3907,23 @@ private:
   }
 
   ZmRef<H1Logical>	m_h1;
-  EndpointString	m_remote;
+  ZiIP			m_remoteIP;
+  uint16_t		m_remotePort = 0;
+  Transport_::TxCompleteFn m_h1Complete;
+  ZiIOBuf		*m_h1TxLast = nullptr;
+  ResponseOutcome::T	m_h1TxOutcome = ResponseOutcome::Success;
   int8_t		m_policy = H2Policy::Force;
   int8_t		m_version = -1;
   bool			m_draining = false;
   bool			m_down = false;
   bool			m_stopping = false;
+  bool			m_h1TxReady = false;
 };
 
 } // namespace TLS_
 
 template <typename App>
-class Server<App, H2TLS> : public H2_::ServerHub<App> {
+class ProtocolServer<App, H2TLS> : public H2_::ServerHub<App> {
 public:
   using Base = H2_::ServerHub<App>;
   enum { TLS = 1, Multiplexed = 1 };

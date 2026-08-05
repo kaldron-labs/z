@@ -22,8 +22,6 @@
 
 namespace Zhttp {
 
-ZuDerive(EndpointString, ZtString<ZtStringHeapID<"Zhttp.Endpoint">>);
-
 namespace Link_ {
 
 template <typename Consumer, typename Stream, typename Rx>
@@ -207,20 +205,21 @@ class ServerLink :
 
 public:
   enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };
+  using TxCompleteFn = Transport_::TxCompleteFn;
 
   ServerLink(App *app, const ZiCxnInfo &ci) :
-    Base{app}
+    Base{app}, m_remoteIP{ci.remoteIP}, m_remotePort{ci.remotePort}
   {
 #ifdef ZmObject_DEBUG
     this->ZmPolymorph::debug();
 #endif
-    m_remote << ci.remoteIP;
   }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  ZuCSpan remote() const { return m_remote; }
+  const ZiIP &remoteIP() const { return m_remoteIP; }
+  uint16_t remotePort() const { return m_remotePort; }
   Session &session() { return m_session; }
 
   void connected(typename Traits::Connected info) {
@@ -277,7 +276,21 @@ public:
     });
   }
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+    ZiIOBuf *sent = buf.ptr();
+    auto fn = ZuMv(Transport_::txBufNode(sent)->txComplete);
+    Transport_::txBufNode(sent)->txComplete = {};
+    if (m_txLast == sent) {
+      m_txLast = nullptr;
+      m_txOutcome = ok ? ResponseOutcome::Success : ResponseOutcome::TxFailed;
+    }
+    if (!ok) {
+      auto i = this->txQueue.iter();
+      while (auto queued = i())
+        Transport_::txBufNode(queued)->complete(ResponseOutcome::TxFailed);
+    }
     Base::sent(ZuMv(buf), ok);
+    if (fn)
+      fn(ok ? ResponseOutcome::Success : ResponseOutcome::TxFailed);
     if (!m_streamEnd || (ok && this->txQueue.count_())) return;
     m_streamEnd = false;
     streamTxClose_();
@@ -305,7 +318,56 @@ public:
   auto transmit(Builder &) {
     return this->txStream();
   }
-  void finish() { }
+  bool active() const { return !!this->cxn(); }
+  using Base::send;
+  bool send(ZmRef<ZiIOBuf> buf) {
+    ZiIOBuf *last = buf.ptr();
+    m_txLast = last;
+    m_txReady = true;
+    if (!Base::send(ZuMv(buf))) {
+      if (m_txLast == last) m_txLast = nullptr;
+      m_txOutcome = ResponseOutcome::TxFailed;
+      return false;
+    }
+    return true;
+  }
+  void txComplete(TxCompleteFn fn) {
+    m_txComplete = ZuMv(fn);
+  }
+  void txCancel() {
+    m_txComplete = {};
+    m_txLast = nullptr;
+    m_txReady = false;
+  }
+  bool txFence(TxCompleteFn fn) {
+    if (!m_txReady) return false;
+    m_txReady = false;
+    if (!m_txLast) {
+      fn(m_txOutcome);
+      return true;
+    }
+    auto node = Transport_::txBufNode(m_txLast);
+    if (node->txComplete) return false;
+    node->txComplete = ZuMv(fn);
+    m_txLast = nullptr;
+    return true;
+  }
+  void finish() {
+    auto fn = ZuMv(m_txComplete);
+    m_txComplete = {};
+    if (!fn) return;
+    if (!m_txReady) {
+      fn(ResponseOutcome::TxFailed);
+      return;
+    }
+    m_txReady = false;
+    if (!m_txLast) {
+      fn(m_txOutcome);
+      return;
+    }
+    Transport_::txBufNode(m_txLast)->txComplete = ZuMv(fn);
+    m_txLast = nullptr;
+  }
   void touch() {
     if (m_disconnected) return;
     auto timeout = this->app()->idleTimeout();
@@ -335,7 +397,12 @@ private:
   Session		m_session;
   ZmScheduler::Timer	m_idleTimer;
   StreamBinding		m_stream;
-  EndpointString	m_remote;
+  ZiIP			m_remoteIP;
+  uint16_t		m_remotePort = 0;
+  TxCompleteFn		m_txComplete;
+  ZiIOBuf		*m_txLast = nullptr;
+  ResponseOutcome::T	m_txOutcome = ResponseOutcome::Success;
+  bool			m_txReady = false;
   bool			m_counted = true;
   bool			m_disconnected = false;
   bool			m_streamEnd = false;	// Tx-owned

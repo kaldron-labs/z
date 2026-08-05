@@ -215,7 +215,7 @@ struct BuildOps {
 };
 
 struct RequestBuild :
-  public Zhttp::H2::ReqBuilder<
+  public Zhttp::H2::Request<
     RequestBuild, ZhttpHeaders("content-length", "x-test"),
     ZhttpHeaders("x-trailer"), true>,
   public BuildOps {
@@ -225,7 +225,7 @@ struct RequestBuild :
 };
 
 struct ResponseBuild :
-  public Zhttp::H2::ResBuilder<
+  public Zhttp::H2::Response<
     ResponseBuild, ZhttpHeaders("content-length", "x-test"),
     ZhttpHeaders("x-trailer"), true>,
   public BuildOps {
@@ -234,7 +234,7 @@ struct ResponseBuild :
 };
 
 struct ConnectBuild :
-  public Zhttp::H2::ReqBuilder<ConnectBuild> {
+  public Zhttp::H2::Request<ConnectBuild> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, Zhttp::PathQuery{"/chat", "v=1", true});
@@ -460,6 +460,34 @@ void testResponses()
     "cancellation completes exactly once");
 }
 
+void testRequestErrors()
+{
+  ZuTestScope(testRequestErrors);
+
+  Parsed oversized;
+  ZuCHECK(oversized.beginHeaders() &&
+      oversized.field(":method", "POST") &&
+      oversized.field(":scheme", "https") &&
+      oversized.field(":authority", "example.com") &&
+      oversized.field(":path", "/submit") &&
+      !oversized.field("content-length", "1025") &&
+      oversized.error().code == Zhttp::RequestErrorCode::ContentTooLarge &&
+      oversized.error().scope == Zhttp::RequestErrorScope::Request &&
+      oversized.error().responsePossible &&
+      Zhttp::requestErrorStatus(oversized.error().code) == 413,
+    "oversized H2 request classification mismatch");
+  ZuCHECK(!oversized.beginHeaders() &&
+      oversized.error().code == Zhttp::RequestErrorCode::ContentTooLarge,
+    "first H2 request error was overwritten");
+
+  Parsed malformed;
+  ZuCHECK(!malformed.endHeaders(false) &&
+      malformed.error().code == Zhttp::RequestErrorCode::Malformed &&
+      malformed.error().scope == Zhttp::RequestErrorScope::Stream &&
+      !malformed.error().responsePossible,
+    "malformed H2 request classification mismatch");
+}
+
 void testConnect()
 {
   ZuTestScope(testConnect);
@@ -481,7 +509,7 @@ void testBuilder()
 
   RequestBuild builder;
   CaptureStream request;
-  builder.request(request);
+  builder.begin(request);
   builder.finish(request);
   ZuCHECK(request.beginCalls == 2 && request.endHeadersCalls == 2 &&
       request.endStream && request.flushCalls == 1 &&
@@ -497,13 +525,13 @@ void testBuilder()
   RequestBuild customBuilder;
   customBuilder.customTarget = true;
   CaptureStream custom;
-  ZuCHECK(customBuilder.request(custom) &&
+  ZuCHECK(customBuilder.begin(custom) &&
       find(custom.fields, ":path", "/printable?"),
     "custom printable target survives H2 Builder dispatch");
 
   CaptureStream response;
   ResponseBuild responseBuilder;
-  responseBuilder.response(response);
+  responseBuilder.begin(response);
   ZuCHECK(find(response.fields, ":status", "201"),
     "response builder emits status");
   ZuCHECK(find(response.fields, "content-length", "3"),
@@ -516,7 +544,7 @@ void testExtendedConnect()
 
   ConnectBuild builder;
   CaptureStream supported;
-  ZuCHECK(builder.request(supported) &&
+  ZuCHECK(builder.begin(supported) &&
       find(supported.fields, ":method", "CONNECT") &&
       find(supported.fields, ":scheme", "https") &&
       find(supported.fields, ":authority", "example.com") &&
@@ -527,7 +555,7 @@ void testExtendedConnect()
 
   CaptureStream unsupported;
   unsupported.extended = false;
-  ZuCHECK(!builder.request(unsupported) && !unsupported.beginCalls &&
+  ZuCHECK(!builder.begin(unsupported) && !unsupported.beginCalls &&
       !unsupported.fields,
     "Extended CONNECT is rejected before emission without capability");
 
@@ -617,6 +645,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRequest);
   ZuTestCall(testResponses);
+  ZuTestCall(testRequestErrors);
   ZuTestCall(testConnect);
   ZuTestCall(testBuilder);
   ZuTestCall(testExtendedConnect);

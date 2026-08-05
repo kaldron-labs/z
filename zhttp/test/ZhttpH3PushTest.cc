@@ -81,7 +81,7 @@ struct MsgInput : public Zhttp::H3::Parser<MsgInput<Request>, Request> {
   using State = typename Base::State;
 
   MsgInput() {
-    Base::h3(nullptr, this, nullptr,
+    Base::h3(nullptr, this, nullptr, this,
       [](void *ptr, uint64_t code) {
 	auto input = static_cast<MsgInput *>(ptr);
 	if (!input->errors) input->error = code;

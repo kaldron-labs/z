@@ -83,6 +83,7 @@ public:
     });
   }
   void retire() {
+    m_pool->detach(*m_impl, m_request);
     m_request = nullptr;
     if (!m_impl->active()) {
       notifyStopped_();
@@ -319,6 +320,7 @@ public:
     Pool, Owner, LiveReq, Request, ResParser, H2TLS>;
   using Base = TLS_::ClientHub<Pool, H1Link, H2Link>;
   using Base::stop;
+  enum : unsigned { InvalidSlot = unsigned(-1) };
 
   struct Pair {
     ZmRef<H1Link>	h1;
@@ -343,6 +345,9 @@ public:
     };
     pair.h1->assign(request);
     pair.h2->assign(request);
+    request->poolTransport = Transport::TLS;
+    request->poolSlot = slot;
+    request->poolLink = pair.h1.ptr();
     auto h1 = pair.h1;
     auto h2 = pair.h2;
     m_pairs.push(ZuMv(pair));
@@ -352,30 +357,34 @@ public:
   }
 
   bool cancel(LiveReq *request) {
-    for (auto &pair: m_pairs) {
-      switch (pair.selected) {
-	case Version::H1:
-	  if (pair.h1->request() == request) {
-	    pair.h1->close();
-	    return true;
-	  }
-	  break;
-	case Version::H2:
-	  if (pair.h2->request() == request) {
-	    pair.h2->close();
-	    return true;
-	  }
-	  break;
-	default:
-	  if (pair.h1->request() == request) {
-	    pair.h1->close();
-	    pair.h2->close();
-	    return true;
-	  }
-	  break;
-      }
+    if (!request || request->poolSlot >= m_pairs.length()) return false;
+    auto &pair = m_pairs[request->poolSlot];
+    switch (pair.selected) {
+      case Version::H1:
+	if (pair.h1->request() != request) return false;
+	pair.h1->close();
+	break;
+      case Version::H2:
+	if (pair.h2->request() != request) return false;
+	pair.h2->close();
+	break;
+      default:
+	if (pair.h1->request() != request) return false;
+	pair.h1->close();
+	pair.h2->close();
+	break;
     }
-    return false;
+    return true;
+  }
+
+  template <typename Link>
+  void detach(Link &link, LiveReq *request) {
+    if (!request || request->poolTransport != Transport::TLS ||
+	request->poolSlot != link.slot() ||
+	request->poolSlot >= m_pairs.length() ||
+	request->poolLink != m_pairs[request->poolSlot].h1.ptr()) return;
+    request->poolSlot = InvalidSlot;
+    request->poolLink = nullptr;
   }
 
   template <typename Link>
@@ -419,6 +428,11 @@ public:
 	m_pairs[i] = ZuMv(m_pairs[n]);
 	m_pairs[i].h1->slot(i);
 	m_pairs[i].h2->slot(i);
+	if (auto request = m_pairs[i].h1->request()) {
+	  request->poolTransport = Transport::TLS;
+	  request->poolSlot = i;
+	  request->poolLink = m_pairs[i].h1.ptr();
+	}
       }
       m_pairs.length(n);
     });

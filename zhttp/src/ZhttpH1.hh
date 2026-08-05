@@ -67,7 +67,9 @@ template <
   typename Impl,
   bool Request_ = false,
   typename Headers_ = ZuTypeList<>,
-  uint64_t MaxBody_ = DefltMaxBody>
+  uint64_t MaxBody_ = DefltMaxBody,
+  uint64_t MaxStartLine_ = DefltMaxStartLine,
+  uint64_t MaxHeaderSection_ = DefltMaxHeaderSection>
 class Parser {
 public:
   Parser() : m_bodyRx{MaxBody} { }
@@ -80,9 +82,22 @@ public:
     ZuStringT<"transfer-encoding">, void,
     ZuStringT<"content-length">, void>;
   static constexpr uint64_t MaxBody = MaxBody_;
+  static constexpr uint64_t MaxStartLine = MaxStartLine_;
+  static constexpr uint64_t MaxHeaderSection = MaxHeaderSection_;
   using State = ParserState;
 
 private:
+  void fail_(
+    RequestErrorCode::T code = RequestErrorCode::Malformed,
+    RequestErrorScope::T scope = RequestErrorScope::Connection,
+    bool responsePossible = false) {
+    if (!m_errorLatched) {
+      m_error = {code, scope, responsePossible};
+      m_errorLatched = true;
+    }
+    m_state = State::Error;
+  }
+
   // process header with variable value
   template <typename Key> void header_(ZuBSpan value) {
     if constexpr (Key{}() == "transfer-encoding") {
@@ -105,14 +120,16 @@ private:
 	  }
 	});
 	if (invalid) {
-	  m_state = State::Error;
+	  fail_(RequestErrorCode::NotImplemented,
+	    RequestErrorScope::Connection, Request);
 	  ZiLOG(Error, "Zhttp", "invalid transfer-encoding");
 	}
     } else if constexpr (Key{}() == "content-length") {
-	uint64_t contentLength;
-	if (!atou(value, contentLength) ||
-	    contentLength > MaxBody) {
-	  m_state = State::Error;
+	uint64_t contentLength = 0;
+	if (!atou(value, contentLength) || contentLength > MaxBody) {
+	  fail_(contentLength > MaxBody ?
+	    RequestErrorCode::ContentTooLarge : RequestErrorCode::Malformed,
+	    RequestErrorScope::Connection, Request);
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else {
 	  m_contentLength = contentLength;
@@ -159,7 +176,8 @@ private:
   // parse request operation line
   void parseOperation(ZuSpan<uint8_t> line) {
     auto error = [this]() {
-	m_state = State::Error;
+	fail_(RequestErrorCode::Malformed,
+	  RequestErrorScope::Connection, true);
 	ZiLOG(Error, "Zhttp", "invalid HTTP operation");
     };
     unsigned n = line.length();
@@ -168,7 +186,11 @@ private:
 	if (ZuUnlikely(++o > 7)) { error(); return; } // unterminated method
     if (ZuUnlikely(!o || o >= int(n))) { error(); return; } // missing method
     Method::T method = Method::lookup({&line[0], unsigned(o)});
-    if (ZuUnlikely(method < 0)) { error(); return; }
+    if (ZuUnlikely(method < 0)) {
+      fail_(RequestErrorCode::NotImplemented,
+	RequestErrorScope::Connection, true);
+      return;
+    }
     unsigned b = ++o;
     while (o < int(n) && line[o] != ' ') ++o;
     if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
@@ -176,6 +198,11 @@ private:
     b = ++o;
     if (ZuUnlikely(b >= n)) { error(); return; } // missing protocol
     ZuCSpan protocol{&line[b], n - b};
+    if (protocol != "HTTP/1.1" && protocol != "HTTP/1.0") {
+      fail_(RequestErrorCode::VersionUnsupported,
+	RequestErrorScope::Connection, true);
+      return;
+    }
     RequestTarget parsed;
     if (!RequestTarget::parseH1(parsed, method, target).ok()) {
       error();
@@ -189,7 +216,7 @@ private:
   // parse response status line
   void parseStatus(ZuCSpan line) {
     auto error = [this]() {
-	m_state = State::Error;
+	fail_();
 	ZiLOG(Error, "Zhttp", "invalid HTTP response status");
     };
     unsigned n = line.length();
@@ -231,9 +258,15 @@ public:
 		parseOperation(line);
 	      else
 		parseStatus(line);
-	    });
+	    }, MaxStartLine);
+	    if (consumed == -2)
+	      fail_(Request ? RequestErrorCode::TargetTooLong :
+		RequestErrorCode::Malformed,
+		RequestErrorScope::Connection, Request);
 	  } break;
 	  case State::Headers: { // parse headers
+	    uint64_t remaining = m_headerBytes < MaxHeaderSection ?
+	      MaxHeaderSection - m_headerBytes : 0;
 	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line) {
 		if (m_chunked) {
@@ -252,6 +285,7 @@ public:
 		    m_contentLength = -1;
 		    m_chunkLength = -1;
 		    m_statusCode = 0;
+		    m_headerBytes = 0;
 		  } else if (m_contentLength == 0 || noResponseBody_())
 		    m_state = State::Complete;
 		  else {
@@ -264,8 +298,13 @@ public:
 		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		  this->header_(key, value);
 		}))
-		  m_state = State::Error;
-	    });
+		  fail_(RequestErrorCode::Malformed,
+		    RequestErrorScope::Connection, Request);
+	    }, remaining);
+	    if (consumed > 0) m_headerBytes += uint64_t(consumed);
+	    else if (consumed == -2)
+	      fail_(RequestErrorCode::HeadersTooLarge,
+		RequestErrorScope::Connection, Request);
 	  } break;
 	  case State::Body: { // parse body
 	    if (m_eofBody) {
@@ -274,7 +313,8 @@ public:
 		return parser->eof_(*static_cast<Stream *>(stream_));
 	      };
 	      if (ZuUnlikely(stream.length() > MaxBody)) {
-		m_state = State::Error;
+		fail_(RequestErrorCode::ContentTooLarge,
+		  RequestErrorScope::Connection, Request);
 		ZiLOG(Error, "Zhttp", "oversized body");
 	      }
 	      break;
@@ -296,27 +336,39 @@ public:
 	      m_contentLength = 0;
 	      m_state = State::Complete;
 	    } else if (consumed < 0)
-	      m_state = State::Error;
+	      fail_();
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
 	    consumed = parseLine<false>(
 	      stream, [this](ZuSpan<uint8_t> span) {
 		if (!span) { m_state = State::Complete; return; }
-		auto error = [this]() {
-		  m_state = State::Error;
+		auto error = [this](RequestErrorCode::T code) {
+		  fail_(code, RequestErrorScope::Connection, Request);
 		  ZiLOG(Error, "Zhttp", "invalid chunk-length");
 		};
 		ChunkHdr hdr;
-		if (!hdr.parse(span)) { error(); return; }
+		if (!hdr.parse(span)) {
+		  error(RequestErrorCode::Malformed);
+		  return;
+		}
 		m_chunkLength = hdr.length;
 		if (!m_chunkLength) {
 		  m_state = State::Trailers;
 		  return;
 		}
-		if (m_chunkLength > MaxBody) { error(); return; }
-		if ((m_contentLength += m_chunkLength) > MaxBody) { error(); return; }
+		if (m_chunkLength > MaxBody) {
+		  error(RequestErrorCode::ContentTooLarge);
+		  return;
+		}
+		if ((m_contentLength += m_chunkLength) > MaxBody) {
+		  error(RequestErrorCode::ContentTooLarge);
+		  return;
+		}
 		m_state = State::Chunk;
-	      });
+	      }, MaxHeaderSection);
+	    if (consumed == -2)
+	      fail_(RequestErrorCode::Malformed,
+		RequestErrorScope::Connection, Request);
 	  } break;
 	  case State::Chunk: { // parse chunk data + trailing CRLF
 	    uint64_t length = uint64_t(m_chunkLength);
@@ -340,11 +392,14 @@ public:
 	      m_chunkLength = 0;
 	      m_state = State::ChunkHdr;
 	    } else if (consumed < 0) {
-	      m_state = State::Error;
+	      fail_(RequestErrorCode::Malformed,
+		RequestErrorScope::Connection, Request);
 	      ZiLOG(Error, "Zhttp", "invalid chunk trailer");
 	    }
-	    } break;
+	  } break;
 	  case State::Trailers: { // parse trailers
+	    uint64_t remaining = m_headerBytes < MaxHeaderSection ?
+	      MaxHeaderSection - m_headerBytes : 0;
 	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line)
 		m_state = State::Complete;
@@ -352,10 +407,16 @@ public:
 		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
 		  this->header_(key, value);
 		}))
-		  m_state = State::Error;
-	    });
+		  fail_(RequestErrorCode::Malformed,
+		    RequestErrorScope::Connection, Request);
+	    }, remaining);
+	    if (consumed > 0) m_headerBytes += uint64_t(consumed);
+	    else if (consumed == -2)
+	      fail_(RequestErrorCode::HeadersTooLarge,
+		RequestErrorScope::Connection, Request);
 	  } break;
 	}
+	if (consumed < 0 && m_state != State::Error) fail_();
 	if (consumed > 0) m_progressed = true;
 	if (m_state == State::Complete ||
 	    m_state == State::Error) {
@@ -371,6 +432,7 @@ public:
   }
 
   bool progressed() const { return m_progressed; }
+  const RequestError &error() const { return m_error; }
 
   // complete an EOF-framed response body when the connection closes
   State::T eof() {
@@ -378,7 +440,7 @@ public:
 	return m_state;
     if (m_state == State::Body && m_eofBody && m_eofFn)
       return m_eofFn(this, m_eofStream);
-    m_state = State::Error;
+    fail_();
     m_eofStream = nullptr;
     m_eofFn = nullptr;
     m_bodyRx.discard();
@@ -395,7 +457,10 @@ public:
     m_contentLength = -1;
     m_chunkLength = -1;
     m_statusCode = 0;
+    m_headerBytes = 0;
     m_progressed = false;
+    m_error = {};
+    m_errorLatched = false;
     m_eofStream = nullptr;
     m_eofFn = nullptr;
   }
@@ -419,7 +484,7 @@ private:
   State::T eof_(Stream &stream) {
     uint64_t length = stream.length();
     if (ZuUnlikely(length > MaxBody)) {
-      m_state = State::Error;
+	  fail_(RequestErrorCode::ContentTooLarge);
     } else if (length) {
       uint64_t remaining = length;
       int64_t n = m_bodyRx.splice(
@@ -432,7 +497,10 @@ private:
 	  return remaining;
 	}, allocWireRxBuf, allocRxBuf, 0, 0,
 	[this](auto &rx) { impl()->body(rx); });
-      m_state = n > 0 ? State::Complete : State::Error;
+      if (n > 0)
+	m_state = State::Complete;
+      else
+	fail_();
     } else
       m_state = State::Complete;
     m_eofStream = nullptr;
@@ -456,12 +524,15 @@ private:
   State::T	(*m_eofFn)(Parser *, void *) = nullptr;
   uint64_t	m_contentLength = uint64_t(-1);
   uint64_t	m_chunkLength = uint64_t(-1);
+  uint64_t	m_headerBytes = 0;
   BodyRx	m_bodyRx;
   unsigned	m_statusCode = 0;
   State::T	m_state = State::Initial;
+  RequestError	m_error;
   bool		m_chunked = false;
   bool		m_eofBody = false;
   bool		m_progressed = false;
+  bool		m_errorLatched = false;
 };
 
 // HTTP 1.1 non-chunked body Tx streaming
@@ -597,7 +668,7 @@ private:
 protected:
   // request
   template <typename Stream>
-  bool request_(Stream &stream) {
+  bool beginRequest_(Stream &stream) {
     impl()->operation([&stream]<typename Target>(
 	  Method::T method, Target &&target) {
 	stream << Method::name(method) << ' ' << ZuFwd<Target>(target);
@@ -615,7 +686,7 @@ protected:
 
   // response
   template <typename Stream>
-  void response_(Stream &stream) {
+  void beginResponse_(Stream &stream) {
     // status + reason
     stream << "HTTP/1.1 " <<
 	ZuBox<unsigned>{impl()->status()}.fmt<ZuFmt::Right<3>>() << ' ';
@@ -674,13 +745,13 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Chunked = false>
-class ReqBuilder :
+class Request :
   public Builder_<Impl, Headers, Trailers, HasBody, Chunked> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Chunked>;
 
 public:
   template <typename Stream>
-  bool request(Stream &stream) { return Base::request_(stream); }
+  bool begin(Stream &stream) { return Base::beginRequest_(stream); }
 };
 
 template <
@@ -689,13 +760,13 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Chunked = false>
-class ResBuilder :
+class Response :
   public Builder_<Impl, Headers, Trailers, HasBody, Chunked> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Chunked>;
 
 public:
   template <typename Stream>
-  void response(Stream &stream) { Base::response_(stream); }
+  void begin(Stream &stream) { Base::beginResponse_(stream); }
 };
 
 } // namespace H1

@@ -99,8 +99,8 @@ void testEmpty()
     result = ok;
   });
   ZuCHECK(!result && completed == 1);
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Failed);
-  ZuCHECK(!hubs.stop());
+  ZuCHECK(hubs.state() == ZmEngineState::Stopped);
+  ZuCHECK(hubs.stop());
   hubs.final();
 }
 
@@ -156,7 +156,7 @@ void testInitFailure(unsigned failure)
   if (ok) ok = hubs.init(b, failure != 1);
   if (ok) ok = hubs.init(c, failure != 2);
   ZuCHECK(!ok);
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Failed);
+  ZuCHECK(hubs.state() == ZmEngineState::Stopped);
   ZuCHECK(a.finals == (failure > 0) &&
       b.finals == (failure > 1) && c.finals == 0);
   hubs.final();
@@ -175,8 +175,10 @@ void testStartFailure(unsigned failure)
   ZuCHECK(!hubs.start());
   ZuCHECK(a.stops == (failure > 0) &&
       b.stops == (failure > 1) && c.stops == 0);
+  ZuCHECK(!a.finals && !b.finals && !c.finals);
+  ZuCHECK(hubs.state() == ZmEngineState::Stopped);
+  hubs.final();
   ZuCHECK(a.finals == 1 && b.finals == 1 && c.finals == 1);
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Failed);
 }
 
 void testStopDuringStart()
@@ -189,10 +191,10 @@ void testStopDuringStart()
     .events = &events, .hubs = &hubs, .stopOnStart = true};
   Fake<2> b{.events = &events};
   ZuCHECK(hubs.init(a) && hubs.init(b));
-  ZuCHECK(!hubs.start());
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Stopped);
+  ZuCHECK(hubs.start());
+  ZuCHECK(hubs.state() == ZmEngineState::Stopped);
   ZuCHECK(a.starts == 1 && a.stops == 1 && a.stopOnStartDone == 1 &&
-      b.starts == 0);
+      b.starts == 1 && b.stops == 1);
   hubs.final();
   ZuCHECK(a.finals == 1 && b.finals == 1);
 }
@@ -210,17 +212,17 @@ void testAsyncStopDuringStart()
   ZuCHECK(hubs.init(a));
   hubs.start([&starts](bool ok) { starts += ok ? 1 : 2; });
   hubs.start([&starts](bool ok) { starts += ok ? 10 : 20; });
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Starting && !starts);
+  ZuCHECK(hubs.state() == ZmEngineState::Starting && !starts);
   hubs.stop([&stops](bool ok) { stops += ok ? 1 : 2; });
   ZuCHECK(!starts && !stops);
   auto startDone = ZuMv(a.startDone);
   startDone(true);
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Stopping);
-  ZuCHECK(!starts && !stops && a.stops == 1);
+  ZuCHECK(hubs.state() == ZmEngineState::Stopping);
+  ZuCHECK(starts == 11 && !stops && a.stops == 1);
   auto stopDone = ZuMv(a.stopDone);
   stopDone(true);
-  ZuCHECK(starts == 22 && stops == 1);
-  ZuCHECK(hubs.state() == Zhttp::Hubs::State::Stopped);
+  ZuCHECK(starts == 11 && stops == 1);
+  ZuCHECK(hubs.state() == ZmEngineState::Stopped);
   hubs.final();
 }
 

@@ -602,25 +602,43 @@ public:
 
   void h3(
     QPackRxTable *rx, void *cxn, QPackWriteFn decoderWrite,
-    ErrorFn error, uint64_t streamID, const Params *params = nullptr) {
+    void *errorContext, ErrorFn error,
+    uint64_t streamID, const Params *params = nullptr) {
     m_qpackRx = rx;
     m_h3Cxn = cxn;
     m_qpackDecoderWrite = decoderWrite;
+    m_errorContext = errorContext;
     m_errorFn = error;
     m_streamID = streamID;
     m_params = params;
   }
 
 private:
-  void error_() {
+  void latchError_(
+    RequestErrorCode::T code = RequestErrorCode::Malformed,
+    RequestErrorScope::T scope = RequestErrorScope::Stream,
+    bool responsePossible = false) {
+    if (m_errorLatched) return;
+    m_error = {code, scope, responsePossible};
+    m_errorLatched = true;
+  }
+  void error_(
+    RequestErrorCode::T code = RequestErrorCode::Malformed,
+    RequestErrorScope::T scope = RequestErrorScope::Stream,
+    bool responsePossible = false) {
+    latchError_(code, scope, responsePossible);
     m_state = State::Error;
   }
-  bool fail_(uint64_t error) {
+  bool fail_(
+    uint64_t error,
+    RequestErrorCode::T code = RequestErrorCode::Malformed,
+    RequestErrorScope::T scope = RequestErrorScope::Stream,
+    bool responsePossible = false) {
     if (!m_h3Error) {
-	m_h3Error = error;
-	if (m_errorFn) m_errorFn(m_h3Cxn, error);
+	 m_h3Error = error;
+	if (m_errorFn) m_errorFn(m_errorContext, error);
     }
-    error_();
+    error_(code, scope, responsePossible);
     return false;
   }
 
@@ -664,11 +682,14 @@ private:
 
   template <typename Key> void header_(ZuBSpan value) {
     if constexpr (Key{}() == "content-length") {
-	uint64_t contentLength;
-	if (!atou(value, contentLength) ||
-	    contentLength > MaxBody) {
-	  m_state = State::Error;
+	uint64_t contentLength = 0;
+	if (!atou(value, contentLength)) {
+	  error_();
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
+	} else if (contentLength > MaxBody) {
+	  error_(RequestErrorCode::ContentTooLarge,
+	    RequestErrorScope::Request, true);
+	  ZiLOG(Error, "Zhttp", "oversized content-length");
 	} else {
 	  m_contentLen = contentLength;
 	  impl()->contentLength(contentLength);
@@ -776,7 +797,7 @@ private:
 	if (m_state == State::Stream) return true;
 	if (m_state != State::Body ||
 	    m_bodyLen > MaxBody || frame.length > MaxBody - m_bodyLen)
-	  return fail_(MessageError);
+	  return fail_(MessageError, RequestErrorCode::ContentTooLarge);
 	if (m_contentLen >= 0 &&
 	    (m_bodyLen > uint64_t(m_contentLen) ||
 	     frame.length > uint64_t(m_contentLen) - m_bodyLen))
@@ -786,7 +807,7 @@ private:
 	if (m_state != State::Initial && m_state != State::Body)
 	  return fail_(FrameUnexpected);
 	if (frame.length > impl()->h3Params().maxHeaderListSize())
-	  return fail_(ExcessiveLoad);
+	  return fail_(ExcessiveLoad, RequestErrorCode::HeadersTooLarge);
 	return true;
       case 0x03: // CANCEL_PUSH
       case 0x05: // PUSH_PROMISE
@@ -953,6 +974,7 @@ public:
   }
 
   bool progressed() const { return m_progressed; }
+  const RequestError &error() const { return m_error; }
 
   void reset() {
     m_bodyRx.reset(MaxBody);
@@ -966,6 +988,8 @@ public:
     m_complete = false;
     m_progressed = false;
     m_streamMode = false;
+    m_error = {};
+    m_errorLatched = false;
   }
 
   // CRTP defaults
@@ -1002,6 +1026,7 @@ private:
   QPackRxTable		*m_qpackRx = nullptr;
   void			*m_h3Cxn = nullptr;
   QPackWriteFn		m_qpackDecoderWrite = nullptr;
+  void			*m_errorContext = nullptr;
   ErrorFn		m_errorFn = nullptr;
   uint64_t		m_streamID = 0;
   const Params		*m_params = nullptr;
@@ -1010,6 +1035,8 @@ private:
   bool			m_extendedConnect = false;
   bool			m_progressed = false;
   bool			m_streamMode = false;
+  RequestError		m_error;
+  bool			m_errorLatched = false;
 };
 
 // QUIC variable-length integer and HTTP/3 field encoding
@@ -1300,18 +1327,19 @@ private:
 
     Build(Bytes &out_) : out{out_} { }
 
-    bool planned_(ZuCSpan name, ZuCSpan value) const {
-	for (unsigned i = 0; i < inserts.length(); ++i)
-	  if (inserts[i].name == name && inserts[i].value == value)
-	    return true;
-	return false;
-    }
     void planInsert_(ZuCSpan name, ZuCSpan value) {
 	if constexpr (Plan) {
 	  if (!tx || !dynamic || !plannedCapacity ||
 	      params.neverIndex(name))
 	    return;
-	  if (tx->find(name, value) || planned_(name, value)) return;
+	  if (tx->find(name, value)) return;
+	  unsigned namePlan = unsigned(-1);
+	  for (unsigned i = inserts.length(); i; ) {
+	    auto &prior = inserts[--i];
+	    if (prior.name != name) continue;
+	    if (prior.value == value) return;
+	    if (namePlan == unsigned(-1)) namePlan = i;
+	  }
 	  auto plan = new (inserts.push()) InsertPlan();
 	  plan->name = name;
 	  plan->value = value;
@@ -1319,14 +1347,12 @@ private:
 	    plan->nameRef = true;
 	    return;
 	  }
-	  unsigned i = inserts.length() - 1;
-	  while (i)
-	    if (inserts[--i].name == name) {
-	      plan->nameIndex = inserts.length() - i - 2;
-	      plan->nameRef = true;
-	      plan->nameDynamic = true;
-	      return;
-	    }
+	  if (namePlan != unsigned(-1)) {
+	    plan->nameIndex = inserts.length() - namePlan - 2;
+	    plan->nameRef = true;
+	    plan->nameDynamic = true;
+	    return;
+	  }
 	  if (auto entry = tx->findName(name)) {
 	    plan->nameIndex =
 	      base + inserts.length() - entry->abs - 2;
@@ -1564,7 +1590,7 @@ private:
   // request
 protected:
   template <typename Stream>
-  bool request_(Stream &stream) {
+  bool beginRequest_(Stream &stream) {
     bool valid = true;
     writeHeaders_(stream, [this, &valid](auto &build) {
 	impl()->operation([this, &build, &valid]<typename Target>(
@@ -1597,7 +1623,7 @@ protected:
 
   // response
   template <typename Stream>
-  void response_(Stream &stream) {
+  void beginResponse_(Stream &stream) {
     writeHeaders_(stream, [this](auto &build) {
 	unsigned status = impl()->status();
 	ZuCArray<StatusSize> buf;
@@ -1687,13 +1713,13 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class ReqBuilder :
+class Request :
   public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
-  bool request(Stream &stream) { return Base::request_(stream); }
+  bool begin(Stream &stream) { return Base::beginRequest_(stream); }
 };
 
 template <
@@ -1702,13 +1728,13 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class ResBuilder :
+class Response :
   public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
-  void response(Stream &stream) { Base::response_(stream); }
+  void begin(Stream &stream) { Base::beginResponse_(stream); }
 };
 
 } // namespace H3

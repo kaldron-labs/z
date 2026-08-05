@@ -291,10 +291,10 @@ void fallback()
   ZuCHECK(port, "allocate loopback port");
   if (!port) return;
   pid_t server = startServer(root, port, cert, key);
-  ZuCHECK(server > 0, "start TLS fallback service");
+  ZuCHECK(server > 0, "start TLS fallback server");
   if (server <= 0) return;
   bool ready = serverReady(port);
-  ZuCHECK(ready, "fallback service listens for TLS");
+  ZuCHECK(ready, "fallback server listens for TLS");
   if (!ready) {
     (void)stopServer(server);
     return;
@@ -443,7 +443,7 @@ void fallback()
   if (cacheInited) cachedClient.stop();
   if (cacheInited) cachedClient.final();
   mx.stop();
-  ZuCHECK(stopServer(server), "stop TLS fallback service");
+  ZuCHECK(stopServer(server), "stop TLS fallback server");
 #endif
 }
 
