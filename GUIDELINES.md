@@ -104,17 +104,20 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - they should be suppressed in the code if false-positive
 
 ## Use of C++ language
-### Language level
+### Core language
 - Compile as GNU C++2b
 - DO NOT USE:
-  - C++ concepts or `requires`.
+  - C++ concepts or `requires`
   - anonymous namespaces in `.cc` files (use file-scope `static`)
   - non-specific capture packs `[&]` or `[=]`
+  - `enum class` or `enum T`
 - Use advanced C++ where it is expressive and efficient
   - Where C and C++ offer the same facility, prefer the C form:
       - Example: `#include <string.h>`, not `<cstring>`.
       - Where C99 conflicts with C++, use the GNU C++2b form.
-- Do not use forwarding functions to base classes, use `using` declarations
+- Where possible, do not define forwarding functions to bases, use `using` declarations
+- Use `ZuLib.hh` functions in preference to STL, in particular:
+  `ZuAssert`, `ZuMv`, `ZuFwd`, `ZuDecay`, `ZuDeref`, `ZuStrip`, `ZuIfT`, `ZuIsConvertible`, `ZuIsConstructible`, `ZuLaunder`, `ZuPun`, `ZuCanOverlap`
 
 ### Primitive integer types
 - use `int` and plain unadorned `unsigned` as the primary local variable integers
@@ -652,6 +655,8 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
   - `transmit` -> `tx`
   - `reserve` -> `res`
   - `recovery` -> `rec`
+  - `request` -> `req`
+  - `receive` -> `recv`
   - `event` -> `evt`
   - `client` -> `cli`
   - `server` -> `srv`
@@ -673,11 +678,11 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - do not prefix or namespace file-scoped `static` functions in `.cc` files:
   - use short meaningful names, e.g. in `ZiIP.cc`: `pton4` not `ZiIP_pton4`
 - do not use ambiguous abbreviations:
-  - `bytesInFlight` -> `bif`: `if` is typically read as `interface`
-  - `congestionBytes` -> `congBytes`: `cong` is not a standard abbreviation
-- elide redundant context:
-  - `runtimeDiag` -> `diag`: "runtime" is implied by diagnostics
-  - `Engine::stopEngine` -> `stop`: "engine" is implied by being a member function of `Engine`
+  - bad: `bytesInFlight` -> `bif`: `if` is typically read as `interface`
+  - bad: `congestionBytes` -> `congBytes`: `cong` is a non-standard and counter-intuitive abbreviation
+- elide redundant words in names:
+  - `runtimeDiag` -> `diag`: "runtime" is implied, delete it
+  - `Engine::stopEngine` -> `stop`: "engine" is implied - this is a member function of `Engine`
 
 ### Casing and member prefixes
 - Names are generally camel-case, not snake-case, but there are numerous exceptions.
