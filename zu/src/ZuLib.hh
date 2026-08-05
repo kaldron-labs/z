@@ -710,6 +710,7 @@ using ZuUnder = typename ZuUnder_<ZuDecay<U>>::T;
 template <typename U>
 auto ZuUnderlying(U &&v) noexcept { return ZuUnder<U>(ZuFwd<U>(v)); }
 
+// generic "void" type for use where plain void cannot be used
 struct ZuVoid { };
 
 // alternative to std::is_constant_evaluated()
