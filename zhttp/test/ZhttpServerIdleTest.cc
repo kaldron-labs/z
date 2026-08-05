@@ -26,11 +26,17 @@ namespace ZhttpServerIdleTest_ {
 using ProducerDone = ZmFn<void(ZmRef<ZiIOBuf>, bool),
   ZmFnHeapID<"Zhttp.Server.BodyChunk">>;
 
+namespace ResponseKind {
+  // Synchronous Builder policies exercised by the heterogeneous workload.
+  enum { None, Fixed, OptionalFixed, Stream, OptionalStream };
+}
+
 struct State {
   ZmSemaphore	listening;
   ZmSemaphore	admitted;
   ZmSemaphore	connected;
   ZmSemaphore	requestStarted;
+  ZmSemaphore	responseStarted;
   ZmSemaphore	producerStarted;
   ZmSemaphore	disconnected;
   ZmSemaphore	released;
@@ -40,11 +46,23 @@ struct State {
   ZmAtomic<unsigned> stopCount = 0;
   ZmAtomic<unsigned> stopBeforeRelease = 0;
   ZmAtomic<unsigned> completedCount = 0;
+  ZmAtomic<unsigned> responseResetCount = 0;
   uint16_t	port = 0;
   int8_t	expectedTransport = Zhttp::Transport::QUIC;
   bool		openRequest = false;
+  bool		completeRequest = false;
   bool		asyncResponse = false;
+  bool		emitOptional = false;
+  int8_t	responseKind = ResponseKind::None;
   ProducerDone	producerDone;
+
+  void responseReset() {
+    if (++responseResetCount != 1) fail();
+    responseStarted.post();
+  }
+  void responseCallback() {
+    if (responseResetCount.load_() != 1) fail();
+  }
 
   void fail() {
     errors = 1;
@@ -52,6 +70,7 @@ struct State {
     admitted.post();
     connected.post();
     requestStarted.post();
+    responseStarted.post();
     producerStarted.post();
     disconnected.post();
     released.post();
@@ -60,14 +79,64 @@ struct State {
 };
 
 struct Workload {
-  struct Response {
+  template <typename Policy>
+  struct Response_ {
     using Headers = ZuTypeList<>;
-    using BodyPolicy = Zhttp::Body::None;
-    unsigned status() const { return 200; }
-    template <typename L> void reason(L &&l) const { l("OK"); }
-    template <typename Key, typename L> void header(L &&) const { }
-    template <typename L> void header(L &&) const { }
-    bool close() const { return false; }
+    using BodyPolicy = Policy;
+    void reset() { state->responseReset(); }
+    unsigned status() const { state->responseCallback(); return 200; }
+    template <typename L> void reason(L &&l) const {
+      state->responseCallback();
+      l("OK");
+    }
+    template <typename Key, typename L> void header(L &&) const {
+      state->responseCallback();
+    }
+    template <typename L> void header(L &&) const {
+      state->responseCallback();
+    }
+    bool close() const { state->responseCallback(); return false; }
+
+    State *state = nullptr;
+  };
+  struct Response : public Response_<Zhttp::Body::None> { };
+  struct FixedResponse : public Response_<Zhttp::Body::Fixed> {
+    template <typename Emit>
+    void body(Emit &&emit) {
+      this->state->responseCallback();
+      emit([](auto &body) { body << 'x'; });
+    }
+    template <typename L> void bodyHdrs(L &&) {
+      this->state->responseCallback();
+    }
+  };
+  struct OptionalFixedResponse :
+      public Response_<Zhttp::Body::OptionalFixed> {
+    template <typename Emit>
+    void body(Emit &&emit) {
+      this->state->responseCallback();
+      if (this->state->emitOptional)
+	emit([](auto &body) { body << 'x'; });
+    }
+    template <typename L> void bodyHdrs(L &&) {
+      this->state->responseCallback();
+    }
+  };
+  struct StreamResponse : public Response_<Zhttp::Body::Stream> {
+    template <typename Emit>
+    void body(Emit &&emit) {
+      this->state->responseCallback();
+      emit([](auto &body) { body << 'x'; });
+    }
+  };
+  struct OptionalStreamResponse :
+      public Response_<Zhttp::Body::OptionalStream> {
+    template <typename Emit>
+    void body(Emit &&emit) {
+      this->state->responseCallback();
+      if (this->state->emitOptional)
+	emit([](auto &body) { body << 'x'; });
+    }
   };
   struct Request {
     using Headers = ZuTypeList<>;
@@ -87,13 +156,22 @@ struct Workload {
   struct AsyncResponse {
     using Headers = ZuTypeList<>;
     using BodyPolicy = Zhttp::Body::Stream;
-    unsigned status() const { return 200; }
-    template <typename L> void reason(L &&l) const { l("OK"); }
-    template <typename Key, typename L> void header(L &&) const { }
-    template <typename L> void header(L &&) const { }
-    bool close() const { return false; }
+    void reset() { state->responseReset(); }
+    unsigned status() const { state->responseCallback(); return 200; }
+    template <typename L> void reason(L &&l) const {
+      state->responseCallback();
+      l("OK");
+    }
+    template <typename Key, typename L> void header(L &&) const {
+      state->responseCallback();
+    }
+    template <typename L> void header(L &&) const {
+      state->responseCallback();
+    }
+    bool close() const { state->responseCallback(); return false; }
     template <typename Done>
     void next(unsigned, Done done) {
+      state->responseCallback();
       state->producerDone = ProducerDone{ZuMv(done)};
       state->producerStarted.post();
     }
@@ -137,8 +215,23 @@ struct Workload {
       emit(AsyncResponse{state});
       return;
     }
-    state->fail();
-    emit(Response{});
+    switch (state->responseKind) {
+      case ResponseKind::Fixed:
+	emit(FixedResponse{{state}});
+	break;
+      case ResponseKind::OptionalFixed:
+	emit(OptionalFixedResponse{{state}});
+	break;
+      case ResponseKind::Stream:
+	emit(StreamResponse{{state}});
+	break;
+      case ResponseKind::OptionalStream:
+	emit(OptionalStreamResponse{{state}});
+	break;
+      default:
+	emit(Response{{state}});
+	break;
+    }
   }
   void committed(
     const Zhttp::RequestMeta &, Request &, const Zhttp::BodyCommit &) { }
@@ -147,7 +240,8 @@ struct Workload {
     const Zhttp::ResponseResult &result) {
     if (!state->openRequest) return;
     auto expected = state->asyncResponse ?
-      Zhttp::ResponseOutcome::Cancelled : Zhttp::ResponseOutcome::Reset;
+      Zhttp::ResponseOutcome::Cancelled : state->completeRequest ?
+      Zhttp::ResponseOutcome::Success : Zhttp::ResponseOutcome::Reset;
     if (result.outcome != expected) state->fail();
     ++state->completedCount;
   }
@@ -193,7 +287,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
       Builder builder;
       auto tx = link.transmit(builder);
       builder.begin(tx);
-      if (state->asyncResponse) {
+      if (state->completeRequest) {
 	auto body = builder.body(tx, 1);
 	body << 'x';
 	body.flush();
@@ -225,6 +319,52 @@ ZiMxParams mxParams()
 	.thread(4, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
+}
+
+void responseTypes()
+{
+  ZuTestScope(responseTypes);
+
+  State state;
+  Workload workload{&state};
+  Workload::Request request{&state};
+  Zhttp::RequestMeta meta;
+  bool buildersOK = true;
+  bool resetsOK = true;
+  for (unsigned kind = ResponseKind::None;
+      kind <= ResponseKind::OptionalStream; ++kind) {
+    state.responseKind = kind;
+    state.responseResetCount = 0;
+    unsigned seen = unsigned(-1);
+    workload.respond(meta, request,
+      [&seen]<typename Response>(Response &&response) {
+	using App = ZuDecay<Response>;
+	using Policy = typename App::BodyPolicy;
+	response.reset();
+	(void)response.close();
+	(void)response.status();
+	response.reason([](auto &&) { });
+	response.header([](auto &&, auto &&) { });
+	if constexpr (ZuIsSame<Policy, Zhttp::Body::None>{})
+	  seen = ResponseKind::None;
+	else if constexpr (ZuIsSame<Policy, Zhttp::Body::Fixed>{})
+	  seen = ResponseKind::Fixed;
+	else if constexpr (ZuIsSame<Policy, Zhttp::Body::OptionalFixed>{})
+	  seen = ResponseKind::OptionalFixed;
+	else if constexpr (ZuIsSame<Policy, Zhttp::Body::Stream>{})
+	  seen = ResponseKind::Stream;
+	else if constexpr (ZuIsSame<Policy, Zhttp::Body::OptionalStream>{})
+	  seen = ResponseKind::OptionalStream;
+      });
+    if (seen != kind) buildersOK = false;
+    if (state.responseResetCount.load_() != 1) resetsOK = false;
+  }
+  ZuCHECK(buildersOK,
+    "workload emits the selected concrete response Builder");
+  ZuCHECK(resetsOK,
+    "response Builder reset precedes common callbacks");
+  ZuCHECK(!state.errors.load_(),
+    "heterogeneous response Builders satisfy the common contract");
 }
 
 void idle()
@@ -308,7 +448,8 @@ void idle()
   ZuCHECK(!state.errors.load_(), "idle expiry has no transport error");
 }
 
-template <typename Profile, bool Async = false, bool Limit = false>
+template <
+  typename Profile, bool Async = false, bool Limit = false, bool Sync = false>
 void activeStop()
 {
   ZuTestScope(activeStop);
@@ -329,6 +470,7 @@ void activeStop()
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
   state.asyncResponse = Async;
+  state.completeRequest = Async || Sync;
   ZuCHECK(state.port, "allocate loopback port");
   if (!state.port) return;
 
@@ -405,14 +547,23 @@ void activeStop()
     state.requestStarted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(requestStarted, "server admits partial request");
   if (requestStarted)
-    ZuCHECK(server.activeRequests() == 1,
-	"server accounts for partial request");
+    ZuCHECK(state.completeRequest || server.activeRequests() == 1,
+	"server accounts for admitted request");
   bool producerStarted = !Async ||
     state.producerStarted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(producerStarted, "asynchronous body producer starts");
   if constexpr (Async)
     ZuCHECK(server.retainedBytes() == 17,
 	"asynchronous producer respects aggregate retained-byte limit");
+  if constexpr (Async)
+    ZuCHECK(state.responseResetCount.load_() == 1,
+	"server resets asynchronous response exactly once before use");
+  bool responseStarted = !Sync ||
+    state.responseStarted.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(responseStarted, "synchronous response construction starts");
+  if constexpr (Sync)
+    ZuCHECK(state.responseResetCount.load_() == 1,
+	"server resets synchronous response exactly once before use");
 
   ZmRef<ClientLink> overflowLink;
   if constexpr (Limit) {
@@ -473,7 +624,7 @@ void activeStop()
   ZuCHECK(!server.serverFaults() && !server.parseFailures() &&
       !server.responseBuildFailures(),
     "normal shutdown does not report server, parse, or build failures");
-  ZuCHECK(server.transportFailures() == unsigned(!Async),
+  ZuCHECK(server.transportFailures() == unsigned(!state.completeRequest),
     "partial-request reset is the only transport failure");
   if (clientInited) (void)client.stop();
   ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
@@ -500,12 +651,14 @@ int main(int argc, char **argv)
   (void)argc;
   (void)argv;
   ZuTestMain();
+  ZuTestCall(responseTypes);
   ZuTestCall(idle);
   ZuTestCall((activeStop<Zhttp::H1TCP>));
   ZuTestCall((activeStop<Zhttp::H1TLS>));
   ZuTestCall((activeStop<Zhttp::H2TLS>));
   ZuTestCall((activeStop<Zhttp::H3QUIC>));
   ZuTestCall((activeStop<Zhttp::H1TCP, true>));
+  ZuTestCall((activeStop<Zhttp::H1TCP, false, false, true>));
   ZuTestCall((activeStop<Zhttp::H1TCP, false, true>));
   return 0;
 }

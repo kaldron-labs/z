@@ -233,8 +233,19 @@ struct Workload {
   Request request();
 
   template <typename Emit>
-  void respond(const RequestMeta &, Request &, Emit &&emit);
-  // emit(Response)
+  void respond(const RequestMeta &meta, Request &request, Emit &&emit) {
+    if (meta.path() == "/health") {
+      emit(EmptyResponse{204});
+      return;
+    }
+    if (meta.path() == "/record") {
+      emit(JSONResponse{request.record});
+      return;
+    }
+    emit(FileResponse{lookup(meta.path())});
+  }
+  // EmptyResponse, JSONResponse, and FileResponse are unrelated concrete
+  // types which each conform to Response; emit() consumes the selected value.
 };
 #endif
 
@@ -450,6 +461,7 @@ private:
 
     unsigned status_ = 400;
 
+    void reset() { }
     unsigned status() const { return status_; }
     template <typename L> void reason(L &&l) const { l(""); }
     template <typename Key, typename L> void header(L &&) const { }
@@ -939,6 +951,7 @@ private:
     }
     auto emit = [this, &live, &link]<typename AppResponse>(
 	AppResponse &&response) {
+	response.reset();
 	if (live->phase != RequestPhase::Queued) {
 	  live->response.outcome = ResponseOutcome::BuildFailed;
 	  live->phase = RequestPhase::Completing;

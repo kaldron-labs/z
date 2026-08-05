@@ -180,16 +180,6 @@ struct Builder {
   // construction state while preserving the configured request/response.
   void reset();
 
-  // request start line / pseudo-headers
-  // Called exactly once per message; l(method, target).
-  template <typename L> void operation(L &&l);
-  template <typename L> void host(L &&l);	// l(authority)
-  template <typename L> void protocol(L &&l);	// l(value), CONNECT only
-
-  // response start line / pseudo-headers
-  unsigned status();
-  template <typename L> void reason(L &&l);	// l(value), H1 only
-
   template <typename Key, typename L> void header(L &&l); // l(value)
   template <typename L> void header(L &&l);		   // l(key, value)
 
@@ -203,8 +193,6 @@ struct Builder {
   // There is no contentLength() callback; provision Content-Length with
   // HeaderPad from header<Key>(), then patch it here.
   template <typename L> void bodyHdrs(L &&l);
-
-  bool close() const;			// responses only
 };
 
 // Extended request Builder contract used by Client. Request must derive from
@@ -218,6 +206,12 @@ struct Builder {
 // failed connection which emits no request is not a message. All lifecycle
 // callbacks are synchronous.
 struct Request : public ZmObject, public Builder {
+  // Request start line / pseudo-headers. operation() is called exactly once
+  // per message; l(method, target).
+  template <typename L> void operation(L &&l);
+  template <typename L> void host(L &&l);	// l(authority)
+  template <typename L> void protocol(L &&l);	// l(value), CONNECT only
+
   // Monotonic queue identity and discrete-message length.
   uint64_t key() const;
   uint64_t length() const; // returns 1
@@ -263,6 +257,32 @@ struct Request : public ZmObject, public Builder {
   // Exactly one terminal result for the submitted request, after its final
   // observed Completed or Cancelled/Completed transition.
   void completed(const Result &);
+};
+
+// Extended response Builder contract used by Server. Each call to
+// Workload::respond() emits exactly one concrete response value; different
+// calls and branches may emit unrelated response types. Headers, optional
+// Trailers, and BodyPolicy are properties of each concrete type. Server may
+// move the emitted response; applications must not retain references to it or
+// its transient state. Server calls reset() exactly once before any other
+// response callback, then retains the concrete type in its protocol adapter.
+// All calls originate on the Tx shard. Other than reset() being first,
+// callback order is protocol-dependent; in particular, fixed H2/H3 bodies can
+// be built and patched before headers.
+//
+// For synchronous body policies, body() follows the Builder contract above.
+// A streaming response may instead provide next(); Server retains that
+// response and repeatedly requests bounded pooled buffers. done() may be
+// called from another thread; Server posts it to the Tx shard before accessing
+// link-owned state. An asynchronous response does not also provide body().
+struct Response : public Builder {
+  unsigned status();
+  template <typename L> void reason(L &&l);	// l(value), H1 only
+  bool close() const;
+
+  // Optional asynchronous alternative to body(), present only when
+  // BodyPolicy::Streaming. done(ZmRef<ZiIOBuf>, final).
+  template <typename Done> void next(unsigned max, Done done);
 };
 
 // Extended response Parser contract used by Client. One ResParser is
