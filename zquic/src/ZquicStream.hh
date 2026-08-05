@@ -76,6 +76,10 @@ public:
   StreamError::T error() const { return m_error; }
   bool finSent() const { return m_fin; }
   bool finDequeued() const { return m_finDequeued; }
+  bool txCompleted() const { return m_txCompleted; }
+  bool txDrained() const {
+    return !m_txQueueCount.load_() && !m_txUnackd.count_();
+  }
   bool finReady() const {
     return !m_resetSent && m_fin && !m_finDequeued && !m_txQueue.count_();
   }
@@ -371,9 +375,20 @@ public:
     return m_txUnackd.add(new TxUnackdQueue::Node{
       TxUnackdRange{offset, length, fin}}) != ZmPQResult::Invalid;
   }
-  bool ackTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
+  bool discardTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
     uint64_t n = length + (fin ? 1 : 0);
     return n && m_txUnackd.clear(offset, n);
+  }
+  bool ackTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
+    uint64_t n = length + (fin ? 1 : 0);
+    if (!n || !m_txUnackd.clear(offset, n)) return false;
+    if (fin) m_finAckd = true;
+    if (txDrained()) impl()->txDrained_();
+    if (m_finAckd && !m_txUnackd.count_() && !m_txCompleted) {
+      m_txCompleted = true;
+      impl()->txComplete_(true);
+    }
+    return true;
   }
   bool txStillUnackd(uint64_t offset, uint64_t length, bool fin = false) const {
     uint64_t n = length + (fin ? 1 : 0);
@@ -452,6 +467,10 @@ public:
     if (m_link && m_id >= 0)
       m_link->streamResetSent_(
 	uint64_t(m_id), appError, m_txBytes);
+    if (!m_txCompleted) {
+      m_txCompleted = true;
+      impl()->txComplete_(false);
+    }
     notifyTx_();
   }
   void stop(uint64_t appError) {
@@ -533,8 +552,15 @@ public:
     m_stopReceived = true;
     m_error = StreamError::Stop;
     m_appError = frame.errorCode;
+    if (!m_txCompleted) {
+      m_txCompleted = true;
+      impl()->txComplete_(false);
+    }
     return true;
   }
+
+  void txComplete_(bool) { }
+  void txDrained_() { }
 
 private:
   bool receiveFrame_(
@@ -816,6 +842,8 @@ public:
   ZiTxErrorFn		m_txErrorFn;
   bool			m_fin = false;
   bool			m_finDequeued = false;
+  bool			m_finAckd = false;
+  bool			m_txCompleted = false;
   bool			m_resetSent = false;
   bool			m_resetAckd = false;
   bool			m_stopSent = false;
