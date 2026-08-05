@@ -23,18 +23,18 @@ namespace Zhttp {
 // One typed pool of normalized HTTP client links.  The pool owns transport
 // links and message machinery; Owner owns request policy and attempt results.
 template <
-  typename Owner_, typename Profile_, typename Attempt_,
+  typename Owner_, typename Profile_, typename LiveReq_,
   typename Request_, typename ResParser_>
 class ClientPool :
   public ClientHub<
     ClientPool<
-      Owner_, Profile_, Attempt_,
+      Owner_, Profile_, LiveReq_,
       Request_, ResParser_>,
     Profile_> {
 public:
   using Owner = Owner_;
   using Profile = Profile_;
-  using Attempt = Attempt_;
+  using LiveReq = LiveReq_;
   using Request = Request_;
   using ResParser = ResParser_;
   using Pool = ClientPool;
@@ -46,16 +46,16 @@ public:
     using Base = ClientLink<Pool, Link, Profile_>;
     using Protocol = typename Profile::Protocol;
     using IO = ClientMessage<
-      Owner, Attempt, Link, Profile,
+      Owner, LiveReq, Link, Profile,
       Request, ResParser>;
 
     Link(Pool *pool, unsigned id_) :
       Base{pool}, id{id_}, message{pool->owner(), this} { }
 
-    Attempt *request() const { return m_request; }
+    LiveReq *request() const { return m_request; }
     bool stopped() const { return m_stopped; }
 
-    void assign(Attempt *request) {
+    void assign(LiveReq *request) {
       ++m_generation;
       m_request = request;
       m_complete = false;
@@ -194,7 +194,7 @@ public:
       pool()->linkStopped(*this);
     }
 
-    Attempt	*m_request = nullptr;
+    LiveReq	*m_request = nullptr;
     unsigned	m_generation = 0;
     bool	m_complete = false;
     bool	m_sent = false;
@@ -214,7 +214,7 @@ public:
   unsigned linkCount() const { return m_links.length(); }
   const Links &links() const { return m_links; }
 
-  bool cancel(Attempt *request) {
+  bool cancel(LiveReq *request) {
     for (unsigned i = 0; i < m_links.length(); ++i)
       if (m_links[i]->request() == request) {
 	m_links[i]->close();
@@ -223,7 +223,7 @@ public:
     return false;
   }
 
-  ZmRef<Link> open(Attempt *request, unsigned id) {
+  ZmRef<Link> open(LiveReq *request, unsigned id) {
     if (!accepting() || !request) return {};
     if constexpr (!Message::Multiplexed)
       for (unsigned i = 0; i < m_links.length(); ++i)

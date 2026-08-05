@@ -48,7 +48,7 @@ template <
 struct MessageTraits;
 
 template <
-  typename App, typename Attempt, typename Link, typename Profile,
+  typename App, typename LiveReq, typename Link, typename Profile,
   typename Request, typename ResParser>
 class ClientMessage;
 
@@ -394,12 +394,12 @@ private:
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
 // link completion remain library-owned.
 template <
-  typename App_, typename Attempt_, typename Link_, typename Profile_,
+  typename App_, typename LiveReq_, typename Link_, typename Profile_,
   typename Request_, typename ResParser_>
 class ClientMessage {
 public:
   using App = App_;
-  using Attempt = Attempt_;
+  using LiveReq = LiveReq_;
   using Request = Request_;
   using Link = Link_;
   using Profile = Profile_;
@@ -562,7 +562,7 @@ private:
 
     App		*app = nullptr;
     Link	*link = nullptr;
-    Attempt	*request = nullptr;
+    LiveReq	*request = nullptr;
     ResParser	*sink_ = nullptr;
   };
 
@@ -590,10 +590,10 @@ public:
   ClientMessage(App *app = nullptr, Link *link = nullptr) :
     m_app{app}, m_link{link} { }
 
-  void bind(Attempt *request) {
+  void bind(LiveReq *request) {
     m_request = request;
     if (!request) return;
-    m_requestApp = &request->request_();
+    m_requestApp = request->request;
     m_requestApp->reset();
     if constexpr (Message::ID != Version::H1) {
       m_operationOK = false;
@@ -873,7 +873,7 @@ private:
 
   App		*m_app = nullptr;
   Link		*m_link = nullptr;
-  Attempt	*m_request = nullptr;
+  LiveReq	*m_request = nullptr;
   Request	*m_requestApp = nullptr;
   Parser	m_parser;
   ResParser	m_response;

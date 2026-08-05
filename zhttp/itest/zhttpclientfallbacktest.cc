@@ -71,7 +71,7 @@ struct ClientApp;
 struct Request_;
 struct ResParser;
 
-struct Request_ {
+struct Request_ : public ZmObject {
   using Headers = ZuTypeList<>;
   using BodyPolicy = Zhttp::Body::None;
 
@@ -132,7 +132,7 @@ struct ResParser {
 
 ZuDerive(RequestQ, (ZmPQueue<Request_,
   ZmPQueueOverlap<false,
-    ZmPQueueNode<ZmObject,
+    ZmPQueueNode<Request_,
       ZmPQueueHeapID<"Zhttp.Test.Fallback.Request">>>>));
 using Request = RequestQ::Node;
 using TxQ = ZmPQTx<ClientApp, RequestQ, ZmPQTxOrdered<false>>;
@@ -145,8 +145,8 @@ struct ClientApp : public Zhttp::Client<TxQ, ResParser> {
   ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
   ZmRef<Request> request() {
     ZmRef<Request> request = new Request;
-    request->data().app = this;
-    request->data().key_ = m_key++;
+    request->app = this;
+    request->key_ = m_key++;
     return request;
   }
 
@@ -328,7 +328,7 @@ void fallback()
     auto request = agent.request();
     ZtString<> url;
     url << "https://127.0.0.1:" << port << "/ok";
-    bool parsed = request->data().url.assign(url).ok();
+    bool parsed = request->url.assign(url).ok();
     ZuCHECK(parsed, "parse fallback URL");
     if (parsed) {
       agent.enqueue(request);
@@ -400,8 +400,8 @@ void fallback()
     ZtString<> url;
     url << "https://127.0.0.1:" << port << "/ok";
     bool parsed =
-      request0->data().url.assign(url).ok() &&
-      request1->data().url.assign(url).ok();
+      request0->url.assign(url).ok() &&
+      request1->url.assign(url).ok();
     ZuCHECK(parsed, "parse cached-routing URLs");
     if (parsed) {
       cachedClient.enqueue(request0);

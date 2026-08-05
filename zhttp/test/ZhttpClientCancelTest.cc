@@ -27,7 +27,7 @@ struct App;
 struct Request_;
 struct ResParser;
 
-struct Request_ {
+struct Request_ : public ZmObject {
   using Headers = ZuTypeList<>;
   using BodyPolicy = Zhttp::Body::None;
 
@@ -88,7 +88,7 @@ struct ResParser {
 
 ZuDerive(RequestQ, (ZmPQueue<Request_,
   ZmPQueueOverlap<false,
-    ZmPQueueNode<ZmObject,
+    ZmPQueueNode<Request_,
       ZmPQueueHeapID<"Zhttp.Test.Request">>>>));
 using Request = RequestQ::Node;
 using TxQ = ZmPQTx<App, RequestQ, ZmPQTxOrdered<false>>;
@@ -105,8 +105,8 @@ struct App : public Zhttp::Client<TxQ, ResParser> {
 
   ZmRef<Request> request() {
     ZmRef<Request> request = new Request;
-    request->data().app = this;
-    request->data().key_ = m_key++;
+    request->app = this;
+    request->key_ = m_key++;
     return request;
   }
 
@@ -175,7 +175,7 @@ void attemptState()
   ZuTestScope(attemptState);
 
   struct Link {
-    void responseHeadersParsed(App::Attempt *) { ++headers; }
+    void responseHeadersParsed(App::LiveReq *) { ++headers; }
     void complete(bool ok_) { completed = true; ok = ok_; }
 
     unsigned	headers = 0;
@@ -188,14 +188,14 @@ void attemptState()
   };
 
   App app;
-  App::Attempt attempt;
+  App::LiveReq attempt;
   ZmRef<Request> request = new Request;
-  attempt.node = request;
+  attempt.request = request;
   attempt.events = Zhttp::AttemptEvent{}.SelectionObserved() |
     Zhttp::AttemptEvent{}.FailureObserved();
 
-  ZuCHECK(&attempt.request_() == &request->data(),
-    "attempt request accessor resolves the intrusive node payload");
+  ZuCHECK(attempt.request == request,
+    "live request retains the intrusive request");
   ZuCHECK(attempt.phase == Zhttp::AttemptPhase::Idle &&
       attempt.failure.kind == Zhttp::FailureKind::None &&
       attempt.route.redirectState == Zhttp::RedirectState::None &&
@@ -227,8 +227,8 @@ void attemptState()
       parser.completed && parser.ok,
     "response completion enters closing phase exactly once");
 
-  App::Attempt failed;
-  failed.node = request;
+  App::LiveReq failed;
+  failed.request = request;
   Zhttp::BodyCommit commit{
     .produced = 9, .committed = 7, .reset = 2, .discarded = 2,
     .headers = true, .final = false};
@@ -439,8 +439,8 @@ void cancel()
   auto request1 = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(request0->data().url.assign(url).ok(), "parse URL");
-  request1->data().url = request0->data().url;
+  ZuCHECK(request0->url.assign(url).ok(), "parse URL");
+  request1->url = request0->url;
 
   app.enqueue(request0);
   app.enqueue(request1);
@@ -501,8 +501,8 @@ void outOfOrder()
   ZtString<> url1{url};
   url0 << "/0";
   url1 << "/1";
-  ZuCHECK(request0->data().url.assign(url0).ok() &&
-      request1->data().url.assign(url1).ok(),
+  ZuCHECK(request0->url.assign(url0).ok() &&
+      request1->url.assign(url1).ok(),
     "parse out-of-order URLs");
 
   app.enqueue(request0);
@@ -552,7 +552,7 @@ void timeout()
   auto request = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(request->data().url.assign(url).ok(), "parse URL");
+  ZuCHECK(request->url.assign(url).ok(), "parse URL");
 
   app.enqueue(request);
   app.seal();
@@ -605,7 +605,7 @@ void retry()
   auto request = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(request->data().url.assign(url).ok(), "parse retry URL");
+  ZuCHECK(request->url.assign(url).ok(), "parse retry URL");
   app.enqueue(request);
   app.seal();
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -617,7 +617,7 @@ void retry()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].retries == 1,
     "retry produces one successful terminal result");
-  ZuCHECK(request->data().resets == 1 && request->data().inits == 1,
+  ZuCHECK(request->resets == 1 && request->inits == 1,
     "connect retry initializes request builder and response parser once");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
       app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
@@ -677,7 +677,7 @@ void redirect()
   auto request = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << "/start";
-  ZuCHECK(request->data().url.assign(url).ok(), "parse redirect URL");
+  ZuCHECK(request->url.assign(url).ok(), "parse redirect URL");
   app.enqueue(request);
   app.seal();
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0, "redirect completes");
@@ -688,7 +688,7 @@ void redirect()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].redirects == 1,
     "redirect produces one successful terminal result");
-  ZuCHECK(request->data().resets == 2 && request->data().inits == 2,
+  ZuCHECK(request->resets == 2 && request->inits == 2,
     "redirect reinitializes request builder and response parser per message");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
       app.eventCount(Zhttp::ClientEventType::Redirected) == 1 &&
@@ -749,7 +749,7 @@ void unsafeRedirect()
   auto request = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << "/start";
-  ZuCHECK(request->data().url.assign(url).ok(),
+  ZuCHECK(request->url.assign(url).ok(),
     "parse unsafe redirect URL");
   app.enqueue(request);
   app.seal();
@@ -799,7 +799,7 @@ void retryLimit()
   auto request = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(request->data().url.assign(url).ok(),
+  ZuCHECK(request->url.assign(url).ok(),
     "parse retry-limit URL");
   app.enqueue(request);
   app.seal();
@@ -849,7 +849,7 @@ void unsafeRetry()
   auto request = app.request();
   ZtString<> url;
   url << "http://127.0.0.1:" << port << '/';
-  ZuCHECK(request->data().url.assign(url).ok(),
+  ZuCHECK(request->url.assign(url).ok(),
     "parse unsafe retry URL");
   app.enqueue(request);
   app.seal();
