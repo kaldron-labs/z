@@ -26,8 +26,8 @@ using ClientHeaders = ZhttpHeaders(
   "sec-websocket-protocol", "sec-websocket-extensions");
 
 class ClientParser :
-  public Zhttp::H1ResParser<ClientParser, ClientHeaders> {
-  using Base = Zhttp::H1ResParser<ClientParser, ClientHeaders>;
+  public Zhttp::H1ResponseParser<ClientParser, ClientHeaders> {
+  using Base = Zhttp::H1ResponseParser<ClientParser, ClientHeaders>;
 
 public:
   using State = Zhttp::H1::ParserState;
@@ -116,8 +116,8 @@ using ServerHeaders = ZhttpHeaders(
   "sec-websocket-version", "sec-websocket-protocol");
 
 class ServerParser :
-  public Zhttp::H1ReqParser<ServerParser, ServerHeaders> {
-  using Base = Zhttp::H1ReqParser<ServerParser, ServerHeaders>;
+  public Zhttp::H1RequestParser<ServerParser, ServerHeaders> {
+  using Base = Zhttp::H1RequestParser<ServerParser, ServerHeaders>;
 
 public:
   using State = Zhttp::H1::ParserState;
@@ -221,8 +221,8 @@ using RequestHeaders = ZhttpHeaders(
   "sec-websocket-protocol");
 
 class Request :
-  public Zhttp::H1ReqBuilder<Request, RequestHeaders> {
-  using Base = Zhttp::H1ReqBuilder<Request, RequestHeaders>;
+  public Zhttp::H1Request<Request, RequestHeaders> {
+  using Base = Zhttp::H1Request<Request, RequestHeaders>;
 
 public:
   Request(const URI &uri, ZuCSpan key, ZuCSpan protocol = {}) :
@@ -256,8 +256,8 @@ using ResponseHeaders = ZhttpHeaders(
   "sec-websocket-accept", "sec-websocket-protocol");
 
 class Response :
-  public Zhttp::H1ResBuilder<Response, ResponseHeaders> {
-  using Base = Zhttp::H1ResBuilder<Response, ResponseHeaders>;
+  public Zhttp::H1Response<Response, ResponseHeaders> {
+  using Base = Zhttp::H1Response<Response, ResponseHeaders>;
 
 public:
   Response(ZuCSpan accept, ZuCSpan protocol = {}) :
@@ -280,8 +280,8 @@ private:
 };
 
 class ErrorResponse :
-  public Zhttp::H1ResBuilder<ErrorResponse> {
-  using Base = Zhttp::H1ResBuilder<ErrorResponse>;
+  public Zhttp::H1Response<ErrorResponse> {
+  using Base = Zhttp::H1Response<ErrorResponse>;
 
 public:
   unsigned status() const { return 400; }
