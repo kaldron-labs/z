@@ -593,7 +593,7 @@ public:
   void bind(Attempt *request) {
     m_request = request;
     if (!request) return;
-    m_requestApp = request->request;
+    m_requestApp = &request->request_();
     m_requestApp->reset();
     if constexpr (Message::ID != Version::H1) {
       m_operationOK = false;

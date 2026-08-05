@@ -28,7 +28,7 @@ using ServerHeaders = ZhttpHeaders(
 
 template <typename Profile>
 class Request :
-  public Zhttp::MessageTraits<Profile>::template RequestBuilder<
+  public Zhttp::MessageTraits<Profile>::template ReqBuilder<
     Request<Profile>, ServerHeaders, ZuTypeList<>, false, false> {
 public:
   Request(const URI &uri, ZuCSpan protocol = {}) :
@@ -57,7 +57,7 @@ private:
 
 template <typename Profile>
 class Response :
-  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
+  public Zhttp::MessageTraits<Profile>::template ResBuilder<
     Response<Profile>, ClientHeaders, ZuTypeList<>, false, false> {
 public:
   Response(ZuCSpan protocol = {}) : m_protocol{protocol} { }
@@ -75,7 +75,7 @@ private:
 
 template <typename Profile>
 class ErrorResponse :
-  public Zhttp::MessageTraits<Profile>::template ResponseBuilder<
+  public Zhttp::MessageTraits<Profile>::template ResBuilder<
     ErrorResponse<Profile>, ZuTypeList<>, ZuTypeList<>, false, false> {
 public:
   unsigned status() const { return 400; }
@@ -83,10 +83,10 @@ public:
 
 template <typename Link, typename Profile>
 class ClientParser :
-  public Zhttp::MessageTraits<Profile>::template ResponseParser<
+  public Zhttp::MessageTraits<Profile>::template ResParser<
     ClientParser<Link, Profile>, ClientHeaders, Zhttp::DefltMaxBody> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template ResponseParser<
+  using Base = typename Message::template ResParser<
     ClientParser, ClientHeaders, Zhttp::DefltMaxBody>;
 
 public:
@@ -167,10 +167,10 @@ private:
 
 template <typename Link, typename Profile>
 class ServerParser :
-  public Zhttp::MessageTraits<Profile>::template RequestParser<
+  public Zhttp::MessageTraits<Profile>::template ReqParser<
     ServerParser<Link, Profile>, ServerHeaders, Zhttp::DefltMaxBody> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template RequestParser<
+  using Base = typename Message::template ReqParser<
     ServerParser, ServerHeaders, Zhttp::DefltMaxBody>;
 
 public:

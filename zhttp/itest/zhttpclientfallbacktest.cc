@@ -68,10 +68,10 @@ struct Resolver {
 };
 
 struct ClientApp;
-struct Request;
+struct Request_;
 struct ResParser;
 
-struct Request {
+struct Request_ {
   using Headers = ZuTypeList<>;
   using BodyPolicy = Zhttp::Body::None;
 
@@ -97,8 +97,12 @@ struct Request {
   void observed(const Zhttp::ClientEvent &);
   void completed(const Zhttp::Result &);
 
+  uint64_t key() const { return key_; }
+  uint64_t length() const { return 1; }
+
   ClientApp		*app = nullptr;
   Zhttp::URLStorage	url;
+  uint64_t		key_ = 0;
 };
 
 struct ResParser {
@@ -109,7 +113,7 @@ struct ResParser {
   unsigned	*status_ = nullptr;
   ZtString<>	*altSvc = nullptr;
 
-  void init(const Request &);
+  void init(const Request_ &);
   void status(unsigned value) { *status_ = value; }
   void contentLength(uint64_t) { }
   void chunked() { }
@@ -126,14 +130,24 @@ struct ResParser {
   template <typename State> void complete(State) { }
 };
 
-struct ClientApp :
-  public Zhttp::Client<Request, ResParser> {
-  using Base =
-    Zhttp::Client<Request, ResParser>;
+ZuDerive(RequestQ, (ZmPQueue<Request_,
+  ZmPQueueOverlap<false,
+    ZmPQueueNode<ZmObject,
+      ZmPQueueHeapID<"Zhttp.Test.Fallback.Request">>>>));
+using Request = RequestQ::Node;
+using TxQ = ZmPQTx<ClientApp, RequestQ, ZmPQTxOrdered<false>>;
 
-  void submit(Request *requests, unsigned count) {
-    for (unsigned i = 0; i < count; ++i) requests[i].app = this;
-    Base::submit(requests, count);
+struct ClientApp : public Zhttp::Client<TxQ, ResParser> {
+  using Base = Zhttp::Client<TxQ, ResParser>;
+
+  RequestQ *txQueue() { return &m_requests; }
+  void archive_(Request *) { }
+  ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
+  ZmRef<Request> request() {
+    ZmRef<Request> request = new Request;
+    request->data().app = this;
+    request->data().key_ = m_key++;
+    return request;
   }
 
   void requestCompleted(const Zhttp::Result &result_) {
@@ -160,18 +174,22 @@ struct ClientApp :
   uint64_t	bodyBytes = 0;
   unsigned	status = 0;
   ZtString<>	altSvc;
+
+private:
+  RequestQ	m_requests;
+  uint64_t	m_key = 0;
 };
 
-void ResParser::init(const Request &req) {
+void ResParser::init(const Request_ &req) {
   bodyBytes = &req.app->bodyBytes;
   status_ = &req.app->status;
   altSvc = &req.app->altSvc;
 }
 
-void Request::observed(const Zhttp::ClientEvent &event) {
+void Request_::observed(const Zhttp::ClientEvent &event) {
   app->requestObserved(event);
 }
-void Request::completed(const Zhttp::Result &result) {
+void Request_::completed(const Zhttp::Result &result) {
   app->requestCompleted(result);
 }
 
@@ -295,7 +313,7 @@ void fallback()
   ClientApp agent;
   agent.discoveryResolver(&resolver.ops);
   auto agentConfig = Zhttp::ClientConfig()
-    .concurrency(1).maxPending(1).requestTimeout(10)
+    .concurrency(1).requestTimeout(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(true)
     .tcp(true).tls(true).quic(true);
   bool agentInited = agent.init(
@@ -307,13 +325,14 @@ void fallback()
   ZuCHECK(agentUp, "start prefer-mode agent");
 
   if (agentUp) {
-    Request request;
+    auto request = agent.request();
     ZtString<> url;
     url << "https://127.0.0.1:" << port << "/ok";
-    bool parsed = request.url.assign(url).ok();
+    bool parsed = request->data().url.assign(url).ok();
     ZuCHECK(parsed, "parse fallback URL");
     if (parsed) {
-      agent.submit(&request, 1);
+      agent.enqueue(request);
+      agent.seal();
       bool queried =
 	resolver.queried.timedwait(Zm::now(10)) == 0;
       ZuCHECK(queried, "agent requests HTTPS discovery");
@@ -365,7 +384,7 @@ void fallback()
   ClientApp cachedClient;
   cachedClient.discoveryResolver(&cacheResolver.ops);
   auto cacheConfig = Zhttp::ClientConfig()
-    .concurrency(1).maxPending(1).requestTimeout(10)
+    .concurrency(1).requestTimeout(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(false)
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedClient.init(
@@ -376,17 +395,18 @@ void fallback()
   bool cacheUp = cacheInited && cachedClient.start();
   ZuCHECK(cacheUp, "start cached-routing agent");
   if (cacheUp) {
-    ZtArray<Request,
-      ZtArrayHeapID<"Zhttp.Test.Fallback.Requests">> requests;
-    requests.length(2);
+    auto request0 = cachedClient.request();
+    auto request1 = cachedClient.request();
     ZtString<> url;
     url << "https://127.0.0.1:" << port << "/ok";
     bool parsed =
-      requests[0].url.assign(url).ok() &&
-      requests[1].url.assign(url).ok();
+      request0->data().url.assign(url).ok() &&
+      request1->data().url.assign(url).ok();
     ZuCHECK(parsed, "parse cached-routing URLs");
     if (parsed) {
-      cachedClient.submit(requests.data(), requests.length());
+      cachedClient.enqueue(request0);
+      cachedClient.enqueue(request1);
+      cachedClient.seal();
       bool queried =
 	cacheResolver.queried.timedwait(Zm::now(10)) == 0;
       ZuCHECK(queried, "first cached-routing request performs discovery");

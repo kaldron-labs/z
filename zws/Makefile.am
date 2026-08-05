@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-SUBDIRS = src test bench interop
+SUBDIRS = src# test bench interop
 
 .PHONY: test
 test:

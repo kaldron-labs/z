@@ -287,7 +287,7 @@ constexpr uint64_t RespBodyMax = 100<<20;
 
 struct ResParser;
 
-struct Request {
+struct Request_ : public ZmObject {
   using Headers = RequestHeaders;
   using BodyPolicy = Zhttp::Body::OptionalFixed;
   using ContentLength = ZuStringT<"content-length">;
@@ -340,6 +340,9 @@ struct Request {
   void observed(const Zhttp::ClientEvent &) { }
   void completed(const Zhttp::Result &);
 
+  uint64_t key() const { return id; }
+  uint64_t length() const { return 1; }
+
   unsigned	id = 0;
   unsigned	requests = 1;
   unsigned	requestContentLength = 0;
@@ -379,7 +382,7 @@ struct ReqLogCtx {
   unsigned	requests = 1;
 };
 
-inline ReqLogCtx reqLogCtx(const Request &req)
+inline ReqLogCtx reqLogCtx(const Request_ &req)
 {
   return {req.id, req.requests};
 }
@@ -400,7 +403,7 @@ bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr)
   }
 }
 
-void closeBody(Request &req)
+void closeBody(Request_ &req)
 {
   if (req.bodyFileOpen) {
     req.bodyFile.close();
@@ -408,7 +411,7 @@ void closeBody(Request &req)
   }
 }
 
-void resetResponse(Request &req, bool truncateOutput)
+void resetResponse(Request_ &req, bool truncateOutput)
 {
   closeBody(req);
   req.status = 0;
@@ -426,9 +429,8 @@ void resetResponse(Request &req, bool truncateOutput)
 }
 
 void initReq(
-  Request &req, const Options &options, const URL &url, unsigned id)
+  Request_ &req, const Options &options, const URL &url, unsigned id)
 {
-  req = {};
   req.id = id;
   req.requests = options.requests;
   req.url.assign(url.raw);
@@ -444,7 +446,7 @@ void initReq(
 }
 
 template <typename S>
-void reqLogPrefix(const Request &req, S &s)
+void reqLogPrefix(const Request_ &req, S &s)
 {
   if (req.requests > 1) s << "req=" << req.id << ' ';
 }
@@ -454,7 +456,7 @@ void reqLogPrefix(const ReqLogCtx &ctx, S &s)
   if (ctx.requests > 1) s << "req=" << ctx.id << ' ';
 }
 
-bool truncateOutputPath(Request &req)
+bool truncateOutputPath(Request_ &req)
 {
   if (req.discardResponse) return true;
   if (!req.truncateOutput) return true;
@@ -480,7 +482,7 @@ bool redirectStatus(unsigned status)
     status == 307 || status == 308;
 }
 
-void logFraming(Request &req)
+void logFraming(Request_ &req)
 {
   if (req.framingLogged) return;
   req.framingLogged = true;
@@ -500,16 +502,16 @@ void logFraming(Request &req)
   }));
 }
 
-void logConnected(const Request &, const Zhttp::ConnectedInfo &);
+void logConnected(const Request_ &, const Zhttp::ConnectedInfo &);
 
 struct ResParser {
   using Headers = ResponseHeaders;
   static constexpr uint64_t BodyMax = RespBodyMax;
 
-  Request *req = nullptr;
+  Request_ *req = nullptr;
 
-  void init(const Request &req_) {
-    req = const_cast<Request *>(&req_);
+  void init(const Request_ &req_) {
+    req = const_cast<Request_ *>(&req_);
     reset();
   }
   void reset() { resetResponse(*req, true); }
@@ -615,12 +617,12 @@ struct ResParser {
   }
 };
 
-void Request::redirected(const URL &url_)
+void Request_::redirected(const URL &url_)
 {
   url.assign(url_.raw);
 }
 
-void Request::completed(const Zhttp::Result &result)
+void Request_::completed(const Zhttp::Result &result)
 {
   closeBody(*this);
   done = true;
@@ -634,15 +636,57 @@ void Request::completed(const Zhttp::Result &result)
 	 result.responseBodyReset || result.responseBodyDiscarded));
 }
 
-void Request::connected(const Zhttp::ConnectedInfo &info)
+void Request_::connected(const Zhttp::ConnectedInfo &info)
 {
   logConnected(*this, info);
 }
 
-using Client = Zhttp::Client<Request, ResParser>;
+struct Client;
+ZuDerive(RequestQ, (ZmPQueue<Request_,
+  ZmPQueueOverlap<false,
+    ZmPQueueNode<Request_,
+      ZmPQueueHeapID<"zhttp.Request">>>>));
+using Request = RequestQ::Node;
+using TxQ = ZmPQTx<Client, RequestQ, ZmPQTxOrdered<false>>;
+
+struct Client : public Zhttp::Client<TxQ, ResParser> {
+  using Base = Zhttp::Client<TxQ, ResParser>;
+
+  RequestQ *txQueue() { return &m_requests; }
+
+  void archive_(Request *) {
+    produce_();
+    if (m_generated == m_options->requests) seal_();
+  }
+  ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
+
+  void workload(const Options &options, const URL &url) {
+    txRun([this, options = &options, url = &url]() {
+      m_options = options;
+      m_url = url;
+      unsigned n = options->requests;
+      if (n > options->concurrency) n = options->concurrency;
+      while (n--) produce_();
+      if (m_generated == options->requests) seal_();
+    });
+  }
+
+private:
+  void produce_() {
+    if (!m_options || m_generated >= m_options->requests) return;
+    ZmRef<Request> request = new Request;
+    initReq(request->data(), *m_options, *m_url, m_generated++);
+    enqueue_(ZuMv(request));
+  }
+
+  const Options	*m_options = nullptr;
+  const URL	*m_url = nullptr;
+  RequestQ	m_requests;
+  unsigned	m_generated = 0;
+};
 
 void logConnected_(
-  const Request &req, ZuCSpan transport, ZuCSpan httpVersion,
+  const Request_ &req, ZuCSpan transport, ZuCSpan httpVersion,
   uint32_t version, ZuCSpan alpn)
 {
   ZiLOG(Info, "zhttp", ([
@@ -660,7 +704,7 @@ void logConnected_(
   }));
 }
 
-void logConnected(const Request &req, const Zhttp::ConnectedInfo &info)
+void logConnected(const Request_ &req, const Zhttp::ConnectedInfo &info)
 {
   logConnected_(req,
     Zhttp::Transport{}.name(info.transport),
@@ -759,7 +803,6 @@ int main(int argc, char **argv)
   }
   auto clientConfig = Zhttp::ClientConfig()
     .concurrency(options.concurrency)
-    .maxPending(options.requests)
     .requestTimeout(options.timeout)
     .maxRedirects(MaxRedirects)
     .maxRetries(options.retries)
@@ -808,24 +851,19 @@ int main(int argc, char **argv)
     Zhttp::DiagnosticFn{[&app]() { app.printQUICDiag(); }});
 #endif
 
-  ZtArray<Request, ZtArrayHeapID<"zhttp.Request">> requests;
-  requests.length(options.requests);
-  for (unsigned i = 0; i < requests.length(); ++i)
-    initReq(requests[i], options, url, i);
-  app.submit(requests.data(), requests.length());
+  app.workload(options, url);
 
   bool timedOut = !app.wait(options.timeout);
   if (timedOut) ZiLOG(Error, "zhttp", "timed out");
   app.stop();
-  bool incomplete = app.completed() != requests.length();
+  bool incomplete = app.completed() != options.requests;
   if (incomplete)
     ZiLOG(Error, "zhttp", ([
-      completed = app.completed(), expected = requests.length(),
-      active = app.active(), pending = app.pending()
+      completed = app.completed(), expected = options.requests,
+      active = app.active()
     ](auto &s) {
       s << "incomplete run (completed=" << completed <<
-	", expected=" << expected << ", active=" << active <<
-	", pending=" << pending << ')';
+	", expected=" << expected << ", active=" << active << ')';
     }));
   int rc = timedOut || incomplete || app.failed() ? 1 : 0;
   app.final();

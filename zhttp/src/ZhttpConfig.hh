@@ -168,8 +168,6 @@ struct ClientEvent {
 class ClientConfig {
 public:
   unsigned concurrency() const { return m_concurrency; }
-  unsigned maxPending() const { return m_maxPending; }
-  unsigned admissionBatch() const { return m_admissionBatch; }
   unsigned requestTimeout() const { return m_requestTimeout; }
   unsigned maxRedirects() const { return m_maxRedirects; }
   unsigned maxRetries() const { return m_maxRetries; }
@@ -190,14 +188,6 @@ public:
 
   ClientConfig &concurrency(unsigned v) {
     m_concurrency = v;
-    return *this;
-  }
-  ClientConfig &maxPending(unsigned v) {
-    m_maxPending = v;
-    return *this;
-  }
-  ClientConfig &admissionBatch(unsigned v) {
-    m_admissionBatch = v;
     return *this;
   }
   ClientConfig &requestTimeout(unsigned v) {
@@ -251,8 +241,6 @@ public:
 
 private:
   unsigned	m_concurrency = 1;
-  unsigned	m_maxPending = 1024;
-  unsigned	m_admissionBatch = 256;
   unsigned	m_requestTimeout = 0;
   unsigned	m_maxRedirects = 8;
   unsigned	m_maxRetries = 0;

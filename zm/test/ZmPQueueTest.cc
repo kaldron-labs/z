@@ -462,69 +462,6 @@ void testSpansAndGaps()
   }
 }
 
-void testSubtract()
-{
-  ZuTestScope(testSubtract);
-
-  {
-    PQueue q(0);
-    q.add(new QMsg(ZuFwdTuple(2, 4)));
-    ZuCheck(q.clear(2, 4) && !q.count_() && !q.length_() && q.verify());
-  }
-
-  {
-    PQueue q(0);
-    q.add(new QMsg(ZuFwdTuple(2, 6)));
-    ZuCheck(q.clear(2, 2));
-    ZmRef<QMsg> msg = q.find(4);
-    ZuCheck(msg && msg->data().key() == 4 && msg->data().length() == 4 &&
-      q.count_() == 1 && q.length_() == 4 && q.verify());
-  }
-
-  {
-    PQueue q(0);
-    q.add(new QMsg(ZuFwdTuple(2, 6)));
-    ZuCheck(q.clear(6, 2));
-    ZmRef<QMsg> msg = q.find(2);
-    ZuCheck(msg && msg->data().key() == 2 && msg->data().length() == 4 &&
-      q.count_() == 1 && q.length_() == 4 && q.verify());
-  }
-
-  {
-    PlainPQueue q(0);
-    q.add(new PlainQMsg(ZuFwdTuple(2, 8)));
-    ZuCheck(q.clear(5, 2));
-    auto head = q.find(2);
-    auto tail = q.find(7);
-    ZuCheck(head && tail &&
-      head->data().key() == 2 && head->data().length() == 3 &&
-      tail->data().key() == 7 && tail->data().length() == 3 &&
-      q.count_() == 2 && q.length_() == 6 && q.verify());
-  }
-
-  {
-    PQueue q(0);
-    q.add(new QMsg(ZuFwdTuple(2, 3)));
-    q.add(new QMsg(ZuFwdTuple(6, 3)));
-    q.add(new QMsg(ZuFwdTuple(10, 3)));
-    ZuCheck(q.clear(4, 7));
-    ZmRef<QMsg> head = q.find(2);
-    ZmRef<QMsg> tail = q.find(11);
-    ZuCheck(head && tail &&
-      head->data().key() == 2 && head->data().length() == 2 &&
-      tail->data().key() == 11 && tail->data().length() == 2 &&
-      !q.find(6) &&
-      q.count_() == 2 && q.length_() == 4 && q.verify());
-  }
-
-  {
-    PQueue q(0);
-    q.add(new QMsg(ZuFwdTuple(2, 3)));
-    ZuCheck(!q.clear(8, 2) &&
-      q.count_() == 1 && q.length_() == 3 && q.verify());
-  }
-}
-
 void testOverwritePolicy()
 {
   ZuTestScope(testOverwritePolicy);
@@ -630,16 +567,18 @@ void testNodeMvRef()
 
   PlainPQueue q(0);
   q.add(new PlainQMsg(ZuFwdTuple(0, 1)));
-  q.add(new PlainQMsg(ZuFwdTuple(2, 1)));
+  q.add(new PlainQMsg(ZuFwdTuple(2, 2)));
   ZuCheck(q.verify());
 
   PlainPQueue::NodeMvRef first = q.dequeue();
   ZuCheck(first && first->data().key() == 0 &&
     first->data().length() == 1);
 
-  PlainPQueue::NodeMvRef aborted = q.abort(2);
-  ZuCheck(aborted && aborted->data().key() == 2 &&
-    aborted->data().length() == 1 && !q.count_());
+  ZuCheck(!q.del(1) && !q.del(3) && !q.del(9) &&
+    q.count_() == 1 && q.length_() == 2);
+  PlainPQueue::NodeMvRef deleted = q.del(2);
+  ZuCheck(deleted && deleted->data().key() == 2 &&
+    deleted->data().length() == 2 && !q.count_());
 
   q.add(new PlainQMsg(ZuFwdTuple(5, 1)));
   PlainPQueue::NodeMvRef shifted = q.shift();
@@ -691,7 +630,6 @@ int main(int argc, char **argv)
   ZuTestCall(testItemHelpers);
   ZuTestCall(testIterators);
   ZuTestCall(testSpansAndGaps);
-  ZuTestCall(testSubtract);
   ZuTestCall(testOverwritePolicy);
   ZuTestCall(testAddResults);
   ZuTestCall(testNodeMvRef);
