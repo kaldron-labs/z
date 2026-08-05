@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/Zhttp.hh>
+#include <zlib/ZhttpServer.hh>
 
 #include <zlib/ZwsCodec.hh>
 #include <zlib/ZwsH1.hh>
@@ -240,7 +241,7 @@ public:
     m_parser.expected(m_key, m_protocol);
     auto tx = HTTPBase::txStream();
     H1::Request request{m_uri, m_key, m_protocol};
-    if (!request.request(tx)) {
+    if (!request.begin(tx)) {
       failHandshake_();
       this->disconnect();
       return;
@@ -345,9 +346,9 @@ struct H1ServerSession {
 
 template <typename App, typename Profile>
 class H1Server :
-  public Zhttp::Server<H1Server<App, Profile>, Profile> {
+  public Zhttp::ProtocolServer<H1Server<App, Profile>, Profile> {
   using Traits = typename Zhttp::ProfileTraits<Profile>::Transport;
-  using Base = Zhttp::Server<H1Server, Profile>;
+  using Base = Zhttp::ProtocolServer<H1Server, Profile>;
 
 public:
   ZuAssert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
@@ -456,7 +457,7 @@ public:
     {
       auto tx = HTTPBase::txStream();
       H1::Response response{accept_, m_protocol};
-      response.response(tx);
+      response.begin(tx);
       tx.flush();
     }
     if (!this->streamAccept()) return -1;
@@ -527,7 +528,7 @@ private:
     {
       auto tx = HTTPBase::txStream();
       H1::ErrorResponse response;
-      response.response(tx);
+      response.begin(tx);
       tx.flush();
     }
     this->CodecBase::disable_();

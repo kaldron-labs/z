@@ -28,7 +28,7 @@ using ServerHeaders = ZhttpHeaders(
 
 template <typename Profile>
 class Request :
-  public Zhttp::MessageTraits<Profile>::template ReqBuilder<
+  public Zhttp::MessageTraits<Profile>::template Request<
     Request<Profile>, ServerHeaders, ZuTypeList<>, false, false> {
 public:
   Request(const URI &uri, ZuCSpan protocol = {}) :
@@ -57,7 +57,7 @@ private:
 
 template <typename Profile>
 class Response :
-  public Zhttp::MessageTraits<Profile>::template ResBuilder<
+  public Zhttp::MessageTraits<Profile>::template Response<
     Response<Profile>, ClientHeaders, ZuTypeList<>, false, false> {
 public:
   Response(ZuCSpan protocol = {}) : m_protocol{protocol} { }
@@ -75,7 +75,7 @@ private:
 
 template <typename Profile>
 class ErrorResponse :
-  public Zhttp::MessageTraits<Profile>::template ResBuilder<
+  public Zhttp::MessageTraits<Profile>::template Response<
     ErrorResponse<Profile>, ZuTypeList<>, ZuTypeList<>, false, false> {
 public:
   unsigned status() const { return 400; }
@@ -83,10 +83,10 @@ public:
 
 template <typename Link, typename Profile>
 class ClientParser :
-  public Zhttp::MessageTraits<Profile>::template ResParser<
+  public Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser<Link, Profile>, ClientHeaders, Zhttp::DefltMaxBody> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template ResParser<
+  using Base = typename Message::template ResponseParser<
     ClientParser, ClientHeaders, Zhttp::DefltMaxBody>;
 
 public:
@@ -167,10 +167,10 @@ private:
 
 template <typename Link, typename Profile>
 class ServerParser :
-  public Zhttp::MessageTraits<Profile>::template ReqParser<
+  public Zhttp::MessageTraits<Profile>::template RequestParser<
     ServerParser<Link, Profile>, ServerHeaders, Zhttp::DefltMaxBody> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template ReqParser<
+  using Base = typename Message::template RequestParser<
     ServerParser, ServerHeaders, Zhttp::DefltMaxBody>;
 
 public:

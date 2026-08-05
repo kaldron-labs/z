@@ -390,7 +390,7 @@ void h1()
 
   WireTx requestWire{2048};
   Zws::H1::Request request{uri, key, "chat"};
-  ZuCHECK(request.request(requestWire));
+  ZuCHECK(request.begin(requestWire));
   requestWire.flush();
   ZuCHECK(requestWire.bufs.length() == 1);
   auto requestBytes = requestWire.bufs[0]->cspan();
@@ -420,7 +420,7 @@ void h1()
   ZuCHECK(Zws::accept(accept, requestParser.key()));
   WireTx responseWire{2048};
   Zws::H1::Response response{accept, "chat"};
-  response.response(responseWire);
+  response.begin(responseWire);
   responseWire.flush();
 
   H1Rx responseRx;

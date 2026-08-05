@@ -115,7 +115,7 @@ public:
     this->CodecBase::opening_();
     Extended::Request<Profile> request{m_uri, m_protocol};
     auto tx = this->transmit(request);
-    if (!request.request(tx)) {
+    if (!request.begin(tx)) {
       H1_::error(*this->app()->app(), *this, Failure::Handshake, 0);
       this->disconnect();
     }
@@ -225,8 +225,8 @@ struct ExtendedServerSession {
 
 template <typename App, typename Profile>
 class ExtendedServer :
-  public Zhttp::Server<ExtendedServer<App, Profile>, Profile> {
-  using Base = Zhttp::Server<ExtendedServer, Profile>;
+  public Zhttp::ProtocolServer<ExtendedServer<App, Profile>, Profile> {
+  using Base = Zhttp::ProtocolServer<ExtendedServer, Profile>;
 
 public:
   ZuAssert(Zhttp::ProfileTraits<Profile>::Multiplexed);
@@ -359,7 +359,7 @@ public:
     m_protocol = selected;
     Extended::Response<Profile> response{m_protocol};
     auto tx = this->transmit(response);
-    response.response(tx);
+    response.begin(tx);
   }
   void reject_() {
     if (!m_handshakeFailed) {
@@ -369,7 +369,7 @@ public:
     }
     Extended::ErrorResponse<Profile> response;
     auto tx = this->transmit(response);
-    response.response(tx);
+    response.begin(tx);
     this->finish();
   }
   void established_() {
