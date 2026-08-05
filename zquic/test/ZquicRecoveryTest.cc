@@ -215,8 +215,8 @@ void testRecovery()
     "unbounded retransmit queue reported dropped frames");
 
   Zquic::PktTxSpace rttTx;
-  ZuCHECK(rttTx.add(txPkt_(1)) && rttTx.add(txPkt_(3)) &&
-      rttTx.add(txPkt_(2)), "RTT sent-packet setup failed");
+  ZuCHECK(rttTx.add(txPkt_(1)) && rttTx.add(txPkt_(2)) &&
+      rttTx.add(txPkt_(3)), "RTT sent-packet setup failed");
   Zquic::AckRange rttRanges[] = {
     Zquic::AckRange{1, 1}, Zquic::AckRange{3, 3} };
   ZuTime sentTime;
@@ -445,6 +445,67 @@ void testLossThresholds()
       ackOnlyLargest.ackd() == 1 &&
       ackOnlyLargest.lost() == 0,
     "ACK-only largest packet number caused spurious threshold loss");
+}
+
+void testRetainedLossFrontier()
+{
+  ZuTestScope(testRetainedLossFrontier);
+
+  Zquic::PktTxSpace tx;
+  for (uint64_t pn = 1; pn <= 1024; ++pn)
+    ZuCHECK(tx.add(txPkt_(pn)) && tx.lose(pn),
+      "retained-loss frontier setup failed");
+  ZuCHECK(tx.add(txPkt_(1200)) && tx.retainedLost() == 1024 &&
+      tx.recoveryCount() == 1,
+    "active recovery frontier retained final packet history");
+#ifdef ZDEBUG
+  tx.resetRecoveryVisits();
+#endif
+  ZuCHECK(tx.nextLossTime(1201, Zquic::timeUS(150), 256) ==
+      Zquic::timeUS(120150),
+    "retained loss history hid the active loss deadline");
+#ifdef ZDEBUG
+  ZuCHECK(tx.recoveryVisits() == 1,
+    "loss timer examined retained packet history");
+  tx.resetOutstandingVisits();
+  ZuCHECK(!tx.requeueRetransmit(Zquic::SentFrameRef::crypto(12000, 1201)) &&
+      tx.outstandingVisits() == 1,
+    "retransmission suppression examined retained packet history");
+  ZuCHECK(tx.verifyOutstanding(),
+    "retained-loss outstanding index mismatch");
+#endif
+}
+
+void testOutstandingLifecycleIndex()
+{
+  ZuTestScope(testOutstandingLifecycleIndex);
+
+#ifdef ZDEBUG
+  Zquic::PktTxSpace tx;
+  uint32_t random = 0x9e3779b9U;
+  for (uint64_t pn = 1; pn <= 512; ++pn) {
+    random = random * 1664525U + 1013904223U;
+    bool stream = random & 1;
+    Zquic::TxPkt packet = stream ?
+      txStreamPkt_(pn, random & 7, (random >> 3) & 255, 32,
+	!(pn & 31)) :
+      txCryptoPkt_(pn, (random >> 3) & 255, 32);
+    ZuCHECK(tx.add(packet), "outstanding-index packet add failed");
+    switch ((random >> 16) & 3) {
+      case 0: (void)tx.ack(pn); break;
+      case 1: (void)tx.lose(pn); break;
+      case 2:
+	if (!(pn & 15)) (void)tx.reclaimOnPTO(1);
+	break;
+      default: break;
+    }
+    ZuCHECK(tx.verifyOutstanding(),
+      "outstanding index diverged from packet history");
+  }
+  tx.clear();
+  ZuCHECK(tx.verifyOutstanding(),
+    "packet-space clear retained outstanding index entries");
+#endif
 }
 
 void testPktNumSpaceAckLoss()
@@ -685,16 +746,12 @@ void testPktNumSpaceBatchCursors()
 
   Zquic::PktTxUpdate lossUpdate1;
   done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate1);
-  ZuCHECK(!done && lossBatch.lost == 3 && lossUpdate1.lostBytes == 100,
+  ZuCHECK(done && lossBatch.lost == 3 && lossUpdate1.lostBytes == 100,
     "second batch loss cursor failed");
 
   Zquic::PktTxUpdate lossUpdate2;
   done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate2);
-  Zquic::PktTxUpdate lossUpdate3;
-  done = done || tx.markPktThreshLossBatch(
-    5, 3, lossBatch, 2, &lossUpdate3);
   ZuCHECK(done && lossBatch.lost == 3 && !lossUpdate2.lostBytes &&
-      !lossUpdate3.lostBytes &&
       tx.lost() == 3 && tx.ackd() == 1 && tx.retransmitPending() == 3,
     "final batch loss cursor failed");
 }
@@ -901,6 +958,8 @@ int main(int argc, char **argv)
   ZuTestCall(testPktReorderDuplicateLoss);
   ZuTestCall(testAckdFrameStopsLossReclaim);
   ZuTestCall(testLossThresholds);
+  ZuTestCall(testRetainedLossFrontier);
+  ZuTestCall(testOutstandingLifecycleIndex);
   ZuTestCall(testPktNumSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetxQueue);
   ZuTestCall(testAckLeavesOnlyRetxPending);

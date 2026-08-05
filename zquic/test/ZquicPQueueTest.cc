@@ -438,6 +438,66 @@ void testTxUnackdBoundaries()
   ZuCHECK(q.count_() == Zquic::StreamTxPQueue::BuiltinRanges + 1 &&
       q.verify(),
     "stream range inline/heap transition lost retained ranges");
+#ifdef ZDEBUG
+  ZuCHECK(q.promotions() == 1 && q.indexed(),
+    "fragmented stream ranges did not promote exactly once");
+  ZuCHECK(q.clear(0, 1) && q.indexed() && q.promotions() == 1,
+    "indexed stream ranges demoted before full clear");
+  q.clear();
+  ZuCHECK(!q.indexed(),
+    "full stream-range clear retained indexed representation");
+#endif
+}
+
+void testTxUnackdRandomized()
+{
+  ZuTestScope(testTxUnackdRandomized);
+
+  Zquic::StreamTxPQueue q{0};
+  bool expected[512] = {};
+  uint32_t random = 0x243f6a88U;
+  for (unsigned operation = 0; operation < 4096; ++operation) {
+    random = random * 1664525U + 1013904223U;
+    unsigned offset = (random >> 8) % 480;
+    unsigned length = ((random >> 24) & 31) + 1;
+    if (random & 1) {
+      ZuCHECK(q.add(Zquic::TxUnackdRange{offset, length}) ==
+	  ZmPQResult::Inserted,
+	"randomized stream range insert failed");
+      for (unsigned i = offset; i < offset + length; ++i)
+	expected[i] = true;
+    } else {
+      bool changed = false;
+      for (unsigned i = offset; i < offset + length; ++i) {
+	changed = changed || expected[i];
+	expected[i] = false;
+      }
+      ZuCHECK(q.clear(offset, length) == changed,
+	"randomized stream range clear result mismatch");
+    }
+    if (operation & 15) continue;
+    bool observed[512] = {};
+    unsigned expectedLength = 0, expectedCount = 0;
+    bool inRange = false;
+    for (unsigned i = 0; i < 512; ++i) {
+      if (expected[i]) {
+	++expectedLength;
+	if (!inRange) ++expectedCount;
+      }
+      inRange = expected[i];
+    }
+    ZuCHECK(q.spans(0, 512, [&observed](const auto &range) {
+	for (uint64_t i = range.key(); i < range.key() + range.length(); ++i)
+	  observed[i] = true;
+	return true;
+      }), "randomized stream range traversal failed");
+    bool equal = true;
+    for (unsigned i = 0; i < 512; ++i)
+      equal = equal && observed[i] == expected[i];
+    ZuCHECK(equal && q.length_() == expectedLength &&
+	q.count_() == expectedCount && q.verify(),
+      "randomized stream range model mismatch");
+  }
 }
 
 int main(int argc, char **argv)
@@ -459,4 +519,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTxUnackdFinSentinel);
   ZuTestCall(testTxUnackdFragmentation);
   ZuTestCall(testTxUnackdBoundaries);
+  ZuTestCall(testTxUnackdRandomized);
 }

@@ -65,6 +65,7 @@ public:
     if (!id || !link) return false;
     if (auto route = m_routes->findVal(id)) {
       if (route->state == CxnState::Tombstone) return false;
+      if (route->state != CxnState::Active) addLength_(id.length());
       route->sequence = sequence;
       route->link = link;
       route->resetToken = resetToken;
@@ -72,6 +73,7 @@ public:
       return true;
     }
     m_routes->add(new Route{id, sequence, link, resetToken, CxnState::Active});
+    addLength_(id.length());
     return true;
   }
 
@@ -80,9 +82,15 @@ public:
     if (!route || route->state != CxnState::Active) return nullptr;
     return route->link;
   }
-  Link_ *matchShort(ZuBSpan packet, CxnID *id = nullptr) const {
-    const Route *route = matchShortRoute_(packet, true);
+  Link_ *matchShort(
+      ZuBSpan packet, CxnID *id = nullptr,
+      ResetToken *resetToken = nullptr) const {
+    if (resetToken) *resetToken = {};
+    const Route *route = matchShortRoute_(packet, !resetToken);
     if (!route) return nullptr;
+    if (resetToken && route->resetToken.valid())
+      *resetToken = route->resetToken;
+    if (route->state != CxnState::Active) return nullptr;
     if (id) *id = route->id;
     return route->link;
   }
@@ -104,6 +112,7 @@ public:
   bool retire(const CxnID &id) {
     auto route = m_routes->findVal(id);
     if (!route || route->state != CxnState::Active) return false;
+    delLength_(id.length());
     m_routes->del(id);
     return true;
   }
@@ -112,6 +121,7 @@ public:
     if (!id) return false;
     if (auto route = m_routes->findVal(id)) {
       if (route->state == CxnState::Tombstone) return true;
+      if (route->state == CxnState::Active) delLength_(id.length());
       route->state = CxnState::Tombstone;
       route->link = nullptr;
       route->resetToken = {};
@@ -135,6 +145,8 @@ public:
     if (!m_routes) return;
     m_routes->clean();
     m_tombstones.clean();
+    m_lengthMask = 0;
+    m_lengthCount = fixedArray<unsigned, CxnIDMax + 1>();
   }
   void final() {
     clear();
@@ -143,6 +155,10 @@ public:
 
   unsigned count() const { return m_routes->count_(); }
   unsigned tombstoneCount() const { return m_tombstones.count_(); }
+#ifdef ZDEBUG
+  uint64_t shortProbes() const { return m_shortProbes; }
+  void resetShortProbes() const { m_shortProbes = 0; }
+#endif
   unsigned active() const {
     unsigned n = 0;
     all([&n](const Route &) { ++n; });
@@ -158,6 +174,12 @@ public:
   }
 
 private:
+  void addLength_(unsigned length) {
+    if (!m_lengthCount[length]++) m_lengthMask |= uint32_t(1) << length;
+  }
+  void delLength_(unsigned length) {
+    if (!--m_lengthCount[length]) m_lengthMask &= ~(uint32_t(1) << length);
+  }
   void trimTombstones_() {
     while (m_tombstones.count_() > TombstoneMax) {
       CxnID id = m_tombstones.shift();
@@ -168,8 +190,16 @@ private:
     if (!packet || packet.length() < 2 || Pkt::isLong(packet)) return nullptr;
     unsigned max = packet.length() - 1;
     if (max > CxnIDMax) max = CxnIDMax;
+    uint32_t lengths = m_lengthMask;
     while (max) {
+      if (!(lengths & (uint32_t(1) << max))) {
+	--max;
+	continue;
+      }
       CxnID id{ZuBSpan{packet.data() + 1, max}};
+#ifdef ZDEBUG
+      ++m_shortProbes;
+#endif
       if (auto route = m_routes->findVal(id)) {
 	if (route->state != CxnState::Tombstone &&
 	    (!activeOnly || route->state == CxnState::Active))
@@ -183,6 +213,12 @@ private:
   // Rx thread exclusive
   ZmRef<Routes>	m_routes;
   Tombstones	m_tombstones{ZmQueueParams{}.initial(TombstoneMax)};
+  ZuArray<unsigned, CxnIDMax + 1>
+		m_lengthCount = fixedArray<unsigned, CxnIDMax + 1>();
+  uint32_t	m_lengthMask = 0;
+#ifdef ZDEBUG
+  mutable uint64_t m_shortProbes = 0;
+#endif
 };
 
 template <typename Link_>

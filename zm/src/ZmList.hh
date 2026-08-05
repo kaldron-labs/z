@@ -757,7 +757,8 @@ protected:
     Node *prevNode = node->NodeExt::prev;
     Node *nextNode = node->NodeExt::next;
 
-    if (!prevNode && !nextNode) return false;
+    if (!prevNode && !nextNode && (m_head != node || m_tail != node))
+      return false;
 
     ZmAssert(prevNode || nextNode || (m_head == node && m_tail == node));
 
