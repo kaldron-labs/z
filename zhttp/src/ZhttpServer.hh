@@ -492,7 +492,7 @@ private:
 	    patches.invalidate();
 	    return;
 	  }
-	  if constexpr (!IsHeaderPad<ZuDecay<V>>{})
+	  if constexpr (!IsPlaceholder<ZuDecay<V>>{})
 	    l(ZuFwd<V>(v));
 	});
 	return;

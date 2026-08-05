@@ -308,7 +308,7 @@ struct Request_ : public ZmObject {
     else if constexpr (Key{}() == "accept")
       l("*/*");
     else if constexpr (ZuIsSame<Key, ContentLength>{}) {
-      if (put) l(Zhttp::HeaderPad{10, '0'});
+      if (put) l(Zhttp::Placeholder{10, '0'});
     }
   }
   template <typename L> void header(L &&) const { }

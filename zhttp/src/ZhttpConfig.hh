@@ -135,13 +135,13 @@ struct OptionalStream {
 
 } // namespace Body
 
-struct HeaderPad {
+struct Placeholder {
   unsigned	length;
   uint8_t	fill = 0xff;
 };
 
-template <typename T> struct IsHeaderPad : public ZuFalse { };
-template <> struct IsHeaderPad<HeaderPad> : public ZuTrue { };
+template <typename T> struct IsPlaceholder : public ZuFalse { };
+template <> struct IsPlaceholder<Placeholder> : public ZuTrue { };
 
 ZtEnumStruct(ZhttpAPI, ClientEventType, int8_t,
   Selected, AttemptFailed, Redirected, Retried, Fallback, Completed,

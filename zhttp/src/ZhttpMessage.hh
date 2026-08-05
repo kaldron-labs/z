@@ -304,7 +304,7 @@ public:
 	    auto &slot = m_slots.template p<ZuTypeIndex<Key, Keys>{}>();
 	    if (count > 1) return;
 	    slot.present = true;
-	    if constexpr (IsHeaderPad<ZuDecay<V>>{}) {
+	    if constexpr (IsPlaceholder<ZuDecay<V>>{}) {
 	      slot.value.length(v.length);
 	      if (v.length)
 		memset(slot.value.data(), v.fill, v.length);
@@ -325,7 +325,7 @@ public:
       unsigned count = 0;
       app.template header<Key>([this, &l, &count]<typename V>(V &&v) {
 	if (++count != 1) { m_valid = false; return; }
-	if constexpr (IsHeaderPad<ZuDecay<V>>{})
+	if constexpr (IsPlaceholder<ZuDecay<V>>{})
 	  m_valid = false;
 	else
 	  l(ZuFwd<V>(v));
@@ -618,7 +618,7 @@ private:
 	    patches.invalidate();
 	    return;
 	  }
-	  if constexpr (!IsHeaderPad<ZuDecay<V>>{})
+	  if constexpr (!IsPlaceholder<ZuDecay<V>>{})
 	    l(ZuFwd<V>(v));
 	});
 	return;

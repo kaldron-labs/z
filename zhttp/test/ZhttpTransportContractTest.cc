@@ -350,7 +350,7 @@ struct FixedTxBuilder :
     template <typename Key, typename L>
     void header(L &&l) {
       ++providers;
-      l(Zhttp::HeaderPad{10, '0'});
+      l(Zhttp::Placeholder{10, '0'});
     }
 
     unsigned providers = 0;
