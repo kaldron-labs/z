@@ -2167,8 +2167,9 @@ public:
   enum { Ordered = NTP::Ordered };
   using Lock = typename NTP::Lock;
 
-  struct _ { _(int) { } };
-  using OrderedKey = ZuIf<Ordered, Key, _>;
+  template <unsigned> struct EmptyKey { EmptyKey(int) { } };
+  using AckdKey = ZuIf<Ordered, Key, EmptyKey<0>>;
+  using ArchiveKey = ZuIf<Ordered, Key, EmptyKey<1>>;
 
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
@@ -2618,12 +2619,12 @@ public:
   }
 
 private:
-  Lock		m_lock;
-    Key		  m_sendKey = 0;
-    OrderedKey	  m_ackdKey = 0;
-    OrderedKey	  m_archiveKey = 0;
-    Span	  m_gap;
-    uint8_t	  m_flags = 0;
+  Lock				m_lock;
+    Key				  m_sendKey = 0;
+    ZuCanOverlap AckdKey	  m_ackdKey = 0;	// unused if !Ordered
+    ZuCanOverlap ArchiveKey	  m_archiveKey = 0;	// ''
+    Span			  m_gap;
+    uint8_t			  m_flags = 0;
 };
 
 #endif /* ZmPQueue_HH */
