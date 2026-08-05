@@ -155,7 +155,9 @@ server.init(
 server.start();
 // Workload::Request is owned by one logical request. Its body(Rx &) consumes
 // request input; respond(meta, request, emit) synchronously emits one Response
-// on Tx. committed() reports local transport admission and completed() reports
+// on Tx. Server calls Response::reset() exactly once before status, headers,
+// or body construction. committed() reports local transport admission and
+// completed() reports
 // the profile's terminal Tx outcome on Rx.  H1/H2 success means the final
 // native socket/TLS buffer completed locally; H3 success means the peer
 // acknowledged the stream FIN and all response bytes.  None of these events
@@ -168,6 +170,32 @@ server.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 server.final();
 ```
+
+Responses are structural Builders, not subclasses of a runtime Zhttp type.
+One workload can select unrelated concrete response types per endpoint; each
+type supplies `reset()`, `Headers`, `BodyPolicy`, status/header operations, and
+the operations required by its body policy:
+
+```c++
+template <typename Emit>
+void Workload::respond(
+    const Zhttp::RequestMeta &meta, Request &request, Emit &&emit) {
+  if (meta.path() == "/health") {
+    emit(EmptyResponse{204});
+    return;
+  }
+  if (meta.path() == "/record") {
+    emit(JSONResponse{request.record});
+    return;
+  }
+  emit(FileResponse{lookup(meta.path())});
+}
+```
+
+`EmptyResponse`, `JSONResponse`, and `FileResponse` can have different header
+typelists and body policies. `JSONResponse` can use synchronous
+`body(emit)`/`bodyHdrs()` construction, while a streaming `FileResponse` can
+provide asynchronous `next(max, done)` production.
 
 `Body::None` is allocation-free. `Body::Fixed` and `Body::OptionalFixed`
 retain the complete message while `bodyHdrs()` patches body-dependent header

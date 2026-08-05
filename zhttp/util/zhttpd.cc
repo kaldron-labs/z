@@ -188,6 +188,7 @@ struct ResponseBase {
 
   ResponsePlan plan;
 
+  void reset() { }
   unsigned status() const { return plan.status; }
   template <typename L>
   void reason(L &&l) const { l(plan.reason); }
@@ -233,6 +234,7 @@ struct FixedResponse :
   unsigned contentLength = 0;
   bool json = false;
 
+  void reset() { contentLength = 0; }
   template <typename Emit>
   void body(Emit &&emit) {
     emit([this](auto &body) {
