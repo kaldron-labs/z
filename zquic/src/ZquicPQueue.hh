@@ -10,6 +10,8 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
+#include <zlib/ZuPtr.hh>
+
 #include <zlib/ZmPQueue.hh>
 
 #include <zlib/ZtArray.hh>
@@ -191,6 +193,12 @@ public:
     ZtArray<TxUnackdRange,
       ZtArrayHeapID<"Zquic.Stream.TxUnackdRanges">>,
     BuiltinRanges>;
+  using Indexed =
+    ZmPQueue<TxUnackdRange,
+      ZmPQueueNode<ZuObject,
+	ZmPQueueHeapID<"Zquic.Stream.TxUnackdIndex",
+	  ZmPQueueBits<2,
+	    ZmPQueueLevels<3>>>>>;
 
   class Node : public ZuObject {
   public:
@@ -219,6 +227,8 @@ public:
       return ZmPQResult::Invalid;
     uint64_t first = range.offset;
     uint64_t end = first + length;
+    if (m_index)
+      return addIndexed_(range);
     bool fin = range.fin;
     unsigned i = lowerBound_(first);
     if (i && end_(m_ranges[i - 1]) >= first)
@@ -239,6 +249,10 @@ public:
       ++i;
     }
     TxUnackdRange merged = makeRange_(first, end, fin);
+    if (m_ranges.length() - (i - begin) + 1 > BuiltinRanges) {
+      promote_();
+      return addIndexed_(range);
+    }
     m_ranges.splice(
       begin, i - begin, ZuSpan<const TxUnackdRange>{&merged, 1});
     m_length = m_length - removed + merged.length();
@@ -248,6 +262,7 @@ public:
   bool clear(uint64_t offset, uint64_t length) {
     if (!length || offset > uint64_t(-1) - length) return false;
     uint64_t end = offset + length;
+    if (m_index) return clearIndexed_(offset, end);
     unsigned i = lowerBound_(offset);
     if (i && end_(m_ranges[i - 1]) > offset) --i;
     unsigned begin = i;
@@ -279,6 +294,15 @@ public:
     if (!length) return true;
     if (offset > uint64_t(-1) - length) return false;
     uint64_t end = offset + length;
+    if (m_index) {
+      auto iter = m_index->citer(offset);
+      while (auto node = iter()) {
+	const TxUnackdRange &range = node->data();
+	if (range.offset >= end) break;
+	if (end_(range) > offset && !l(range)) return false;
+      }
+      return true;
+    }
     unsigned i = lowerBound_(offset);
     if (i && end_(m_ranges[i - 1]) > offset) --i;
     for (; i < m_ranges.length(); ++i) {
@@ -289,6 +313,12 @@ public:
     return true;
   }
   ZmRef<Node> find(uint64_t offset) const {
+    if (m_index) {
+      auto node = m_index->find(offset);
+      if (node && node->data().offset == offset)
+	return new Node{node->data()};
+      return nullptr;
+    }
     unsigned i = lowerBound_(offset);
     if (i < m_ranges.length() && m_ranges[i].offset == offset)
       return new Node{m_ranges[i]};
@@ -296,12 +326,22 @@ public:
   }
   void clear() {
     m_ranges.clear();
+    m_index = nullptr;
     m_length = 0;
   }
   void clean() { clear(); }
-  unsigned count_() const { return m_ranges.length(); }
-  uint64_t length_() const { return m_length; }
+  unsigned count_() const {
+    return m_index ? m_index->count_() : m_ranges.length();
+  }
+  uint64_t length_() const {
+    return m_index ? m_index->length_() : m_length;
+  }
+#ifdef ZDEBUG
+  unsigned promotions() const { return m_promotions; }
+  bool indexed() const { return m_index; }
+#endif
   bool verify() const {
+    if (m_index) return m_index->verify();
     uint64_t length = 0;
     for (unsigned i = 0; i < m_ranges.length(); ++i) {
       if (!m_ranges[i]) return false;
@@ -318,6 +358,68 @@ public:
   }
 
 private:
+  void promote_() {
+    m_index = new Indexed{0};
+    for (unsigned i = 0; i < m_ranges.length(); ++i)
+      m_index->add(new Indexed::Node{m_ranges[i]});
+    m_ranges.clear();
+#ifdef ZDEBUG
+    ++m_promotions;
+#endif
+  }
+  ZmPQResult::T addIndexed_(const TxUnackdRange &range) {
+    uint64_t first = range.offset;
+    uint64_t end = end_(range);
+    bool fin = range.fin;
+    if (first) {
+      auto prev = m_index->find(first - 1);
+      if (prev && end_(prev->data()) >= first) {
+	TxUnackdRange old = prev->data();
+	first = old.offset;
+	if (end_(old) > end) {
+	  end = end_(old);
+	  fin = old.fin;
+	} else if (end_(old) == end)
+	  fin = fin || old.fin;
+	(void)m_index->del(old.offset);
+      }
+    }
+    auto iter = m_index->iter(first);
+    while (auto node = iter()) {
+      const TxUnackdRange &old = node->data();
+      if (old.offset > end) break;
+      uint64_t oldEnd = end_(old);
+      if (oldEnd > end) {
+	end = oldEnd;
+	fin = old.fin;
+      } else if (oldEnd == end)
+	fin = fin || old.fin;
+      (void)iter.del();
+    }
+    m_index->add(new Indexed::Node{makeRange_(first, end, fin)});
+    return ZmPQResult::Inserted;
+  }
+  bool clearIndexed_(uint64_t offset, uint64_t end) {
+    ZuArray<TxUnackdRange, 2> survivors;
+    bool changed = false;
+    auto iter = m_index->iter(offset);
+    while (auto node = iter()) {
+      TxUnackdRange range = node->data();
+      uint64_t first = range.offset;
+      uint64_t rangeEnd = end_(range);
+      if (first >= end) break;
+      if (rangeEnd <= offset) continue;
+      changed = true;
+      (void)iter.del();
+      if (first < offset)
+	survivors.push(slice_(range, first, offset));
+      if (rangeEnd > end)
+	survivors.push(slice_(range, end, rangeEnd));
+    }
+    for (unsigned i = 0; i < survivors.length(); ++i)
+      addIndexed_(survivors[i]);
+    return changed;
+  }
   static uint64_t end_(const TxUnackdRange &range) {
     return range.offset + range.length();
   }
@@ -349,7 +451,11 @@ private:
     return TxUnackdRange{first, bytes, fin};
   }
   Ranges	m_ranges;
+  ZuPtr<Indexed>	m_index;
   uint64_t	m_length = 0;
+#ifdef ZDEBUG
+  unsigned	m_promotions = 0;
+#endif
 };
 
 using StreamRxPQueue =

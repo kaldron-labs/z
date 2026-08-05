@@ -1404,9 +1404,10 @@ private:
       return;
     }
     CxnID routedDCID;
-    Link *link = route_(d, &routedDCID);
+    ResetToken resetToken;
+    Link *link = route_(d, &routedDCID, &resetToken);
     if (!link) {
-      sendStatelessReset_(d);
+      sendStatelessReset_(d, resetToken);
       Endpoint::failure();
       return;
     }
@@ -1416,11 +1417,13 @@ private:
       link->disconnect();
   }
 
-  Link *route_(const Datagram &d, CxnID *routedDCID = nullptr) {
+  Link *route_(
+      const Datagram &d, CxnID *routedDCID = nullptr,
+      ResetToken *resetToken = nullptr) {
     if (!d.buf || !d.buf->length) return nullptr;
     auto packet = d.buf->cspan();
     if (Pkt::isLong(packet)) return routeLong_(d, packet);
-    return routeShort_(d, packet, routedDCID);
+    return routeShort_(d, packet, routedDCID, resetToken);
   }
 
   Link *routeLong_(const Datagram &d, ZuBSpan packet) {
@@ -1441,16 +1444,16 @@ private:
     return accept_(info);
   }
 
-  Link *routeShort_(const Datagram &, ZuBSpan packet, CxnID *routedDCID) {
-    return m_routes.matchShort(packet, routedDCID);
+  Link *routeShort_(
+      const Datagram &, ZuBSpan packet, CxnID *routedDCID,
+      ResetToken *resetToken) {
+    return m_routes.matchShort(packet, routedDCID, resetToken);
   }
 
-  bool sendStatelessReset_(const Datagram &d) {
+  bool sendStatelessReset_(const Datagram &d, const ResetToken &token) {
     if (!d.buf || !d.buf->length) return false;
     auto packet = d.buf->cspan();
-    if (Pkt::isLong(packet)) return false;
-    ResetToken token;
-    if (!m_routes.resetTokenForShort(packet, token)) return false;
+    if (Pkt::isLong(packet) || !token.valid()) return false;
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
     int n = StatelessReset::writeForUnknownCID(
       buf->data_(), buf->size, packet, token);

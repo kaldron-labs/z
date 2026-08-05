@@ -180,12 +180,70 @@ void testVariableShortCIDRouteMatch()
   ZuBSpan datagram{packet, sizeof(packet)};
 
   Zquic::CxnID matched;
+#ifdef ZDEBUG
+  router.resetShortProbes();
+#endif
   ZuCHECK(router.matchShort(datagram, &matched) == &longLink &&
       matched == longCID,
     "known-length short-header route did not select longest matching CID");
+#ifdef ZDEBUG
+  ZuCHECK(router.shortProbes() == 1,
+    "longest installed CID was not matched with one hash probe");
+  router.resetShortProbes();
+#endif
   Zquic::ResetToken found;
   ZuCHECK(router.resetTokenForShort(datagram, found) && found == token,
     "known-length short-header reset token lookup failed");
+#ifdef ZDEBUG
+  ZuCHECK(router.shortProbes() == 1,
+    "reset-token route lookup repeated CID-length probes");
+  packet[1] ^= 0xff;
+  router.resetShortProbes();
+  ZuCHECK(!router.matchShort(datagram) && router.shortProbes() == 2,
+    "unknown short CID did not probe exactly the installed lengths");
+  router.clear();
+  router.resetShortProbes();
+  ZuCHECK(!router.matchShort(datagram) && !router.shortProbes(),
+    "cleared router retained active CID lengths");
+#endif
+}
+
+void testAllShortCIDLengths()
+{
+  ZuTestScope(testAllShortCIDLengths);
+
+  TestRouteLink links[Zquic::CxnIDMax];
+  uint8_t cidBytes[Zquic::CxnIDMax];
+  uint8_t packet[Zquic::CxnIDMax + 8] = {};
+  packet[0] = 0x40;
+  for (unsigned i = 0; i < Zquic::CxnIDMax; ++i) {
+    cidBytes[i] = uint8_t(i + 1);
+    packet[i + 1] = cidBytes[i];
+  }
+  Zquic::CxnRouter<TestRouteLink> router;
+  for (unsigned length = 1; length <= Zquic::CxnIDMax; ++length)
+    ZuCHECK(router.add(
+	Zquic::CxnID{ZuBSpan{cidBytes, length}}, length, &links[length - 1]),
+      "CID length route add failed");
+  ZuBSpan datagram{packet, sizeof(packet)};
+  for (unsigned length = Zquic::CxnIDMax; length; --length) {
+#ifdef ZDEBUG
+    router.resetShortProbes();
+#endif
+    ZuCHECK(router.matchShort(datagram) == &links[length - 1],
+      "CID prefix routing did not choose longest installed length");
+#ifdef ZDEBUG
+    ZuCHECK(router.shortProbes() == 1,
+      "CID prefix routing probed an uninstalled length");
+#endif
+    ZuCHECK(router.retire(Zquic::CxnID{ZuBSpan{cidBytes, length}}),
+      "CID length route retire failed");
+  }
+#ifdef ZDEBUG
+  router.resetShortProbes();
+  ZuCHECK(!router.matchShort(datagram) && !router.shortProbes(),
+    "retired CID lengths remained in the active-length index");
+#endif
 }
 
 void testCxnIDGen()
@@ -288,6 +346,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCxnRouterTombstoneFIFO);
   ZuTestCall(testStatelessReset);
   ZuTestCall(testVariableShortCIDRouteMatch);
+  ZuTestCall(testAllShortCIDLengths);
   ZuTestCall(testCxnIDGen);
   ZuTestCall(testServerInitialBootstrap);
 }
