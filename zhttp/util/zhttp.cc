@@ -675,7 +675,7 @@ private:
   void produce_() {
     if (!m_options || m_generated >= m_options->requests) return;
     ZmRef<Request> request = new Request;
-    initReq(request->data(), *m_options, *m_url, m_generated++);
+    initReq(*request, *m_options, *m_url, m_generated++);
     enqueue_(ZuMv(request));
   }
 

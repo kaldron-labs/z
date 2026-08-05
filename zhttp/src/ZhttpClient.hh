@@ -50,13 +50,14 @@ ZtFlagsStruct(ZhttpAPI, AttemptEvent, int8_t,
   SelectionObserved, FailureObserved);
 
 template <
-  typename Owner, typename Profile, typename Attempt,
+  typename Owner, typename Profile, typename LiveReq,
   typename Request, typename ResParser>
 class ClientPool;
 
 // TxQ is an unordered ZmPQTx specialized on the final application type.
-// Request_ and ResParser_ conform to the extended application Builder and
-// Parser contracts documented in Zhttp.hh.
+// TxQ::Msg publicly derives from Request_; Request_ and ResParser_ conform to
+// the extended application Builder and Parser contracts documented in
+// Zhttp.hh.
 
 template <typename TxQ, typename ResParser_>
 class Client : public TxQ {
@@ -71,8 +72,12 @@ public:
   using Self = Client;
   static constexpr uint64_t RespBodyMax = ResParser::BodyMax;
 
-  static_assert(!Tx::Ordered,
+  ZuAssert(!Tx::Ordered,
     "Zhttp::Client requires unordered ZmPQTx acknowledgements");
+  ZuAssert((ZuIs_<Request, Request_>{}),
+    "Zhttp::Client requires TxQ::Msg to publicly derive from Request_");
+  ZuAssert((ZuIs_<Request_, ZmObject>{}),
+    "Zhttp::Client requires Request_ to derive from ZmObject");
 
   struct AttemptID {
     uint64_t	request = 0; // logical request; stable across wire attempts
@@ -111,12 +116,9 @@ public:
     bool		transient = false;
   };
 
-  struct Attempt {
-    // Valid while node is non-null; the Tx queue owns the node.
-    Request_ &request_() { return node->data(); }
-    const Request_ &request_() const { return node->data(); }
-
-    Request		*node = nullptr;
+  struct LiveReq {
+    // Valid while non-null; the Tx queue owns the request.
+    Request		*request = nullptr;
     DiscoveryRequestRef	discovery;
     AttemptID		identity;
     AttemptRoute	route;
@@ -133,13 +135,13 @@ public:
   };
 
   using TCPPool = ClientPool<
-    Self, H1TCP, Attempt, Request_, ResParser>;
+    Self, H1TCP, LiveReq, Request_, ResParser>;
   using TLSPool = TLSClientPool<
-    Self, Attempt, Request_, ResParser>;
+    Self, LiveReq, Request_, ResParser>;
   using QUICPool = ClientPool<
-    Self, H3QUIC, Attempt, Request_, ResParser>;
-  using Attempts =
-    ZtArray<Attempt, ZtArrayHeapID<"Zhttp.Client.Attempts">>;
+    Self, H3QUIC, LiveReq, Request_, ResParser>;
+  using LiveReqs =
+    ZtArray<LiveReq, ZtArrayHeapID<"Zhttp.Client.LiveReqs">>;
   using Free =
     ZtArray<unsigned, ZtArrayHeapID<"Zhttp.Client.Free">>;
 
@@ -214,11 +216,11 @@ public:
       m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_config = config;
     m_altSvc = AltSvcCache{config.maxOrigins()};
-    m_attempts.length(config.concurrency());
+    m_liveReqs.length(config.concurrency());
     m_timers.size(config.concurrency());
     m_free.size(config.concurrency());
     for (unsigned i = config.concurrency(); i; --i) {
-      m_attempts[i - 1].slot = i - 1;
+      m_liveReqs[i - 1].slot = i - 1;
       RequestTimerRef timer = new RequestTimer{this, i - 1};
 #ifdef ZmObject_DEBUG
       timer->ZmObject::debug();
@@ -311,7 +313,7 @@ public:
       m_resolverOwned = false;
     }
     m_runtime.final();
-    m_attempts.length(0);
+    m_liveReqs.length(0);
     m_timers.length(0);
     m_free.length(0);
     m_mx = nullptr;
@@ -355,7 +357,7 @@ public:
   void printQUICDiag() { m_quic.printDiag(); }
 
   template <typename Link>
-  void poolConnect(Link &link, Attempt &attempt) {
+  void poolConnect(Link &link, LiveReq &attempt) {
     URL url = attempt.route.url.url();
     if constexpr (ZuIsSame<typename Link::Protocol, QUIC>{}) {
       if (attempt.route.endpointSet)
@@ -366,58 +368,58 @@ public:
       link.connect(url.host, url.port);
   }
   template <typename Link>
-  bool poolTxError(Link &, Attempt *attempt, ZeException &e) {
+  bool poolTxError(Link &, LiveReq *attempt, ZeException &e) {
     if (!m_txErrorFn) return true;
     return m_txErrorFn(e);
   }
   template <typename Link>
-  void poolSend(Link &, Attempt &attempt, int) {
+  void poolSend(Link &, LiveReq &attempt, int) {
     sending_(attempt);
   }
   template <typename Link>
   void poolConnected(
-    Link &, Attempt &attempt, const ConnectedInfo &info) {
+    Link &, LiveReq &attempt, const ConnectedInfo &info) {
     attempt.protocol.transport = info.transport;
     attempt.protocol.httpVersion = info.httpVersion;
     if (!(attempt.events & Zhttp::AttemptEvent{}.SelectionObserved())) {
       attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
       observe_(
-	&attempt.request_(), event_(attempt, ClientEventType::Selected));
+	attempt.request, event_(attempt, ClientEventType::Selected));
     }
-    attempt.request_().connected(info);
+    attempt.request->connected(info);
   }
   template <typename Link>
-  void poolDisconnected(Link &, Attempt *attempt, bool peer) {
-    if (attempt && attempt->node) attempt->request_().disconnected(peer);
+  void poolDisconnected(Link &, LiveReq *attempt, bool peer) {
+    if (attempt && attempt->request) attempt->request->disconnected(peer);
   }
   template <typename Link>
-  void poolConnectFailed(Link &, Attempt *attempt, bool transient) {
+  void poolConnectFailed(Link &, LiveReq *attempt, bool transient) {
     if (attempt) {
       fail_(*attempt, FailureKind::Connect);
       attempt->failure.transient = transient;
       attempt->events |= Zhttp::AttemptEvent{}.FailureObserved();
       observe_(
-	&attempt->request_(), event_(*attempt, ClientEventType::AttemptFailed,
+	attempt->request, event_(*attempt, ClientEventType::AttemptFailed,
 	  ResultCode::Failed, transient));
     }
-    if (attempt && attempt->node)
-      attempt->request_().connectFailed(transient);
+    if (attempt && attempt->request)
+      attempt->request->connectFailed(transient);
   }
   template <typename Link>
   void poolTxCommitted(
-    Link &, Attempt &attempt, const BodyCommit &commit) {
+    Link &, LiveReq &attempt, const BodyCommit &commit) {
     attempt.requestBody = commit;
   }
   template <typename Link>
   void poolTxFailed(
-    Link &link, Attempt &attempt, const BodyCommit &commit) {
+    Link &link, LiveReq &attempt, const BodyCommit &commit) {
     poolTxCommitted(link, attempt, commit);
     fail_(attempt, FailureKind::Tx);
   }
-  void poolCloseDelimited(Attempt &attempt) {
+  void poolCloseDelimited(LiveReq &attempt) {
     attempt.protocol.closeDelimited = true;
   }
-  bool poolReusable(const Attempt &attempt) const {
+  bool poolReusable(const LiveReq &attempt) const {
     return attempt.protocol.persistence != Persistence::Close &&
       !attempt.protocol.closeDelimited &&
       (!attempt.protocol.http10 ||
@@ -427,7 +429,7 @@ public:
 
   template <typename Link>
   void poolComplete(
-    Link &link, Attempt &attempt, bool ok, bool reuse) {
+    Link &link, LiveReq &attempt, bool ok, bool reuse) {
     if (m_rxStopping || attempt.terminal >= 0) {
       finish_(link, attempt,
 	attempt.terminal >= 0 ? attempt.terminal : ResultCode::Cancelled,
@@ -438,7 +440,7 @@ public:
     if (!ok && !(attempt.events & Zhttp::AttemptEvent{}.FailureObserved())) {
       attempt.events |= Zhttp::AttemptEvent{}.FailureObserved();
       observe_(
-	&attempt.request_(), event_(attempt, ClientEventType::AttemptFailed,
+	attempt.request, event_(attempt, ClientEventType::AttemptFailed,
 	  ResultCode::Failed));
     }
     if (ok && redirectStatus_(attempt.protocol.status) &&
@@ -464,12 +466,12 @@ public:
       nextAttempt_(attempt, true);
       auto event = event_(attempt, ClientEventType::Redirected);
       event.previousAttempt = previous;
-      observe_(&attempt.request_(), event);
-      attempt.request_().redirected(attempt.route.url.url());
+      observe_(attempt.request, event);
+      attempt.request->redirected(attempt.route.url.url());
       if (reuse && same && direct_<Link>(attempt)) {
 	attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
 	observe_(
-	  &attempt.request_(), event_(attempt, ClientEventType::Selected));
+	  attempt.request, event_(attempt, ClientEventType::Selected));
 	link.assign(&attempt);
 	link.sendRequest();
       } else {
@@ -505,7 +507,7 @@ public:
 	      nextAttempt_(attempt, false);
 	      auto event = event_(attempt, ClientEventType::Retried);
 	      event.previousAttempt = previous;
-	      observe_(&attempt.request_(), event);
+	      observe_(attempt.request, event);
 	      startTLS_(attempt);
 	      link.retire();
 	    }
@@ -520,7 +522,7 @@ public:
 	nextAttempt_(attempt, false);
 	auto event = event_(attempt, ClientEventType::Fallback);
 	event.previousAttempt = previous;
-	observe_(&attempt.request_(), event);
+	observe_(attempt.request, event);
 	startTLS_(attempt);
 	link.retire();
 	return;
@@ -545,29 +547,29 @@ public:
 
   template <typename Link>
   void status(
-    Link &, Attempt &attempt, ResParser &parser, unsigned value) {
+    Link &, LiveReq &attempt, ResParser &parser, unsigned value) {
     attempt.protocol.status = value;
     receivingHeaders_(attempt);
     parser.status(value);
   }
   template <typename Link>
   void contentLength(
-    Link &, Attempt &, ResParser &parser, uint64_t value) {
+    Link &, LiveReq &, ResParser &parser, uint64_t value) {
     parser.contentLength(value);
   }
   template <typename Link>
-  void chunked(Link &, Attempt &, ResParser &parser) {
+  void chunked(Link &, LiveReq &, ResParser &parser) {
     parser.chunked();
   }
   template <typename Link>
   void version(
-    Link &, Attempt &attempt, ResParser &parser, ZuBSpan value) {
+    Link &, LiveReq &attempt, ResParser &parser, ZuBSpan value) {
     attempt.protocol.http10 = ZuCSpan(value) == "HTTP/1.0";
     parser.version(value);
   }
   template <typename Key, typename Link>
   void header(
-    Link &, Attempt &attempt, ResParser &parser, ZuBSpan value) {
+    Link &, LiveReq &attempt, ResParser &parser, ZuBSpan value) {
     if constexpr (Key{}() == "alt-svc") {
       URL url = attempt.route.url.url();
       Origin origin{url.origin()};
@@ -587,7 +589,7 @@ public:
   }
   template <typename Link, typename Rx>
   void body(
-    Link &link, Attempt &attempt, ResParser &parser, Rx &rx) {
+    Link &link, LiveReq &attempt, ResParser &parser, Rx &rx) {
     headersDone_(link, attempt);
     uint64_t before = rx.length();
     if (before < attempt.responseBody.pending) {
@@ -607,7 +609,7 @@ public:
   }
   template <typename ParserState, typename Link>
   void complete(
-    Link &link, Attempt &attempt, ResParser &parser,
+    Link &link, LiveReq &attempt, ResParser &parser,
     typename ParserState::T state) {
     if (attempt.phase == AttemptPhase::Closing) return;
     headersDone_(link, attempt);
@@ -620,7 +622,7 @@ public:
     parser.complete(ok);
     link.complete(ok);
   }
-  bool done(const Attempt &attempt) const {
+  bool done(const LiveReq &attempt) const {
     return attempt.phase == AttemptPhase::Closing;
   }
 
@@ -647,7 +649,7 @@ private:
   }
 
   ClientEvent event_(
-    const Attempt &attempt, ClientEventType::T type,
+    const LiveReq &attempt, ClientEventType::T type,
     ResultCode::T result = ResultCode::OK, bool transient = false) const {
     return {
       .request = attempt.identity.request,
@@ -693,7 +695,7 @@ private:
     assertTx_();
     if (auto request = Tx::abort(key)) {
       rxRun_([this, request = ZuMv(request)]() mutable {
-	complete_(request->data(), ResultCode::Cancelled);
+	complete_(*request, ResultCode::Cancelled);
 	txRun_([this]() { idleTx_(); });
       });
       return;
@@ -703,9 +705,9 @@ private:
 
   void cancelActive_(typename Tx::Key key) {
     assertRx_();
-    for (unsigned i = 0; i < m_attempts.length(); ++i) {
-      auto &attempt = m_attempts[i];
-      if (!attempt.node || key_(attempt.node) != key) continue;
+    for (unsigned i = 0; i < m_liveReqs.length(); ++i) {
+      auto &attempt = m_liveReqs[i];
+      if (!attempt.request || key_(attempt.request) != key) continue;
       if (attempt.discovery) {
 	auto discovery = ZuMv(attempt.discovery);
 	completeAttempt_(attempt, ResultCode::Cancelled);
@@ -727,29 +729,29 @@ private:
     assertRx_();
     if (m_rxStopping || !request) {
       if (request) {
-	complete_(request->data(), ResultCode::Cancelled);
+	complete_(*request, ResultCode::Cancelled);
 	terminal_(key_(request));
       }
       return;
     }
     if (!m_free) {
-      complete_(request->data(), ResultCode::Failed);
+      complete_(*request, ResultCode::Failed);
       terminal_(key_(request));
       return;
     }
     unsigned slot = m_free.pop();
     ++m_active;
-    begin_(m_attempts[slot], request);
+    begin_(m_liveReqs[slot], request);
   }
 
-  void begin_(Attempt &attempt, Request *request) {
+  void begin_(LiveReq &attempt, Request *request) {
     prepare_(attempt, request);
     route_(attempt);
   }
 
-  void prepare_(Attempt &attempt, Request *request) {
-    attempt.node = request;
-    attempt.route.url = attempt.request_().url;
+  void prepare_(LiveReq &attempt, Request *request) {
+    attempt.request = request;
+    attempt.route.url = attempt.request->url;
     attempt.redirects = 0;
     attempt.retries = 0;
     attempt.route.endpointIndex = 0;
@@ -760,7 +762,7 @@ private:
     armTimer_(attempt);
   }
 
-  void nextAttempt_(Attempt &attempt, bool generation) {
+  void nextAttempt_(LiveReq &attempt, bool generation) {
     attempt.identity.attempt = ++m_attemptID;
     if (generation) {
       attempt.retries = 0;
@@ -770,7 +772,7 @@ private:
     resetWire_(attempt);
   }
 
-  static void resetWire_(Attempt &attempt) {
+  static void resetWire_(LiveReq &attempt) {
     // Preserve the request node, logical identity, route URL, discovered
     // endpoints, and cumulative retry/redirect counts for the next wire
     // generation.
@@ -786,69 +788,69 @@ private:
     attempt.phase = AttemptPhase::Idle;
   }
 
-  static void resolving_(Attempt &attempt) {
-    ZmAssert(attempt.node && attempt.phase == AttemptPhase::Idle);
+  static void resolving_(LiveReq &attempt) {
+    ZmAssert(attempt.request && attempt.phase == AttemptPhase::Idle);
     attempt.phase = AttemptPhase::Resolving;
   }
 
-  static void connecting_(Attempt &attempt) {
-    ZmAssert(attempt.node &&
+  static void connecting_(LiveReq &attempt) {
+    ZmAssert(attempt.request &&
       (attempt.phase == AttemptPhase::Idle ||
 	attempt.phase == AttemptPhase::Resolving));
     attempt.phase = AttemptPhase::Connecting;
   }
 
-  static void sending_(Attempt &attempt) {
-    ZmAssert(attempt.node &&
+  static void sending_(LiveReq &attempt) {
+    ZmAssert(attempt.request &&
       (attempt.phase == AttemptPhase::Idle ||
 	attempt.phase == AttemptPhase::Connecting));
     attempt.phase = AttemptPhase::Sending;
   }
 
-  static void receivingHeaders_(Attempt &attempt) {
-    ZmAssert(attempt.node &&
+  static void receivingHeaders_(LiveReq &attempt) {
+    ZmAssert(attempt.request &&
       (attempt.phase == AttemptPhase::Sending ||
 	attempt.phase == AttemptPhase::ReceivingHeaders));
     attempt.phase = AttemptPhase::ReceivingHeaders;
   }
 
-  static void receivingBody_(Attempt &attempt) {
-    ZmAssert(attempt.node &&
+  static void receivingBody_(LiveReq &attempt) {
+    ZmAssert(attempt.request &&
       (attempt.phase == AttemptPhase::Sending ||
 	attempt.phase == AttemptPhase::ReceivingHeaders ||
 	attempt.phase == AttemptPhase::ReceivingBody));
     attempt.phase = AttemptPhase::ReceivingBody;
   }
 
-  static void closing_(Attempt &attempt) {
-    ZmAssert(attempt.node && attempt.phase != AttemptPhase::Idle);
+  static void closing_(LiveReq &attempt) {
+    ZmAssert(attempt.request && attempt.phase != AttemptPhase::Idle);
     attempt.phase = AttemptPhase::Closing;
   }
 
-  static bool responseStarted_(const Attempt &attempt) {
+  static bool responseStarted_(const LiveReq &attempt) {
     return attempt.protocol.status != 0;
   }
 
-  static void idleAttempt_(Attempt &attempt) {
-    attempt.node = nullptr;
+  static void idleAttempt_(LiveReq &attempt) {
+    attempt.request = nullptr;
     resetWire_(attempt);
     attempt.identity = {};
     attempt.route.endpointIndex = 0;
     attempt.route.endpoints.length(0);
     attempt.redirects = 0;
     attempt.retries = 0;
-    ZmAssert(!attempt.node && !attempt.discovery &&
+    ZmAssert(!attempt.request && !attempt.discovery &&
       attempt.phase == AttemptPhase::Idle);
   }
 
-  static void fail_(Attempt &attempt, FailureKind::T kind) {
+  static void fail_(LiveReq &attempt, FailureKind::T kind) {
     // The first classified failure determines result/retry precedence.
     if (attempt.failure.kind == FailureKind::None)
       attempt.failure.kind = kind;
   }
 
   template <typename Link>
-  bool direct_(Attempt &attempt) {
+  bool direct_(LiveReq &attempt) {
     using Protocol = typename Link::Protocol;
     URL url = attempt.route.url.url();
     if constexpr (ZuIsSame<Protocol, TCP>{})
@@ -864,13 +866,13 @@ private:
   }
 
   template <typename Profile>
-  static void select_(Attempt &attempt) {
+  static void select_(LiveReq &attempt) {
     using HTTP = ProfileTraits<Profile>;
     attempt.protocol.transport = HTTP::Transport::ID;
     attempt.protocol.httpVersion = HTTP::HTTPVersion;
   }
 
-  void route_(Attempt &attempt) {
+  void route_(LiveReq &attempt) {
     if (attempt.route.url.url().scheme == Scheme::http) {
       startTCP_(attempt);
       return;
@@ -888,7 +890,7 @@ private:
     }
   }
 
-  void prefer_(Attempt &attempt) {
+  void prefer_(LiveReq &attempt) {
     URL url = attempt.route.url.url();
     Origin origin{url.origin()};
     Endpoint endpoint;
@@ -918,7 +920,7 @@ private:
     discover_(attempt);
   }
 
-  void resolveAltSvc_(Attempt &attempt, Endpoint endpoint) {
+  void resolveAltSvc_(LiveReq &attempt, Endpoint endpoint) {
     unsigned slot = attempt.slot;
     uint64_t id = attempt.identity.attempt;
     resolving_(attempt);
@@ -931,8 +933,8 @@ private:
 	post->ZmObject::debug();
 #endif
 	rxRun_([this, slot, id, post = ZuMv(post)]() mutable {
-	  auto &attempt = m_attempts[slot];
-	  if (!attempt.node || attempt.identity.attempt != id) return;
+	  auto &attempt = m_liveReqs[slot];
+	  if (!attempt.request || attempt.identity.attempt != id) return;
 	  attempt.discovery = nullptr;
 	  if (post->error.ok() && post->endpoints) {
 	    attempt.route.endpoints = ZuMv(post->endpoints);
@@ -947,7 +949,7 @@ private:
       }}, m_resolverOps);
   }
 
-  void discover_(Attempt &attempt) {
+  void discover_(LiveReq &attempt) {
     URL url = attempt.route.url.url();
     unsigned slot = attempt.slot;
     uint64_t id = attempt.identity.attempt;
@@ -962,8 +964,8 @@ private:
 	post->ZmObject::debug();
 #endif
 	rxRun_([this, slot, id, post = ZuMv(post)]() mutable {
-	  auto &attempt = m_attempts[slot];
-	  if (!attempt.node || attempt.identity.attempt != id) return;
+	  auto &attempt = m_liveReqs[slot];
+	  if (!attempt.request || attempt.identity.attempt != id) return;
 	  attempt.discovery = nullptr;
 	  if (post->error.ok() && post->endpoints) {
 	    attempt.route.endpoints = ZuMv(post->endpoints);
@@ -976,15 +978,15 @@ private:
       }}, m_resolverOps);
   }
 
-  void startTCP_(Attempt &attempt) {
+  void startTCP_(LiveReq &attempt) {
     select_<H1TCP>(attempt);
     connecting_(attempt);
     attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
     observe_(
-      &attempt.request_(), event_(attempt, ClientEventType::Selected));
+      attempt.request, event_(attempt, ClientEventType::Selected));
     m_tcp.open(&attempt, attempt.slot);
   }
-  void startTLS_(Attempt &attempt) {
+  void startTLS_(LiveReq &attempt) {
     attempt.protocol.transport = Transport::TLS;
     switch (m_config.h2Policy()) {
       case H2Policy::Disable:
@@ -997,21 +999,21 @@ private:
     connecting_(attempt);
     m_tls.open(&attempt, attempt.slot);
   }
-  void startQUIC_(Attempt &attempt, const Endpoint *endpoint) {
+  void startQUIC_(LiveReq &attempt, const Endpoint *endpoint) {
     select_<H3QUIC>(attempt);
     connecting_(attempt);
     attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
     if (endpoint) {
       attempt.route.endpoint = *endpoint;
       attempt.route.endpointSet = true;
-      attempt.request_().selected(attempt.route.endpoint);
+      attempt.request->selected(attempt.route.endpoint);
     }
     observe_(
-      &attempt.request_(), event_(attempt, ClientEventType::Selected));
+      attempt.request, event_(attempt, ClientEventType::Selected));
     m_quic.open(&attempt, attempt.slot);
   }
 
-  void armTimer_(Attempt &attempt) {
+  void armTimer_(LiveReq &attempt) {
     if (!m_config.requestTimeout()) return;
     auto timer = m_timers[attempt.slot].ptr();
     timer->request = attempt.identity.request;
@@ -1024,7 +1026,7 @@ private:
       }, m_rxThread);
   }
 
-  void cancelTimer_(Attempt &attempt) {
+  void cancelTimer_(LiveReq &attempt) {
     auto timer = m_timers[attempt.slot].ptr();
     if (!timer->armed) return;
     timer->armed = false;
@@ -1032,9 +1034,9 @@ private:
   }
 
   void timeout_(unsigned slot, uint64_t requestID) {
-    if (m_rxStopping || slot >= m_attempts.length()) return;
-    auto &attempt = m_attempts[slot];
-    if (!attempt.node || attempt.identity.request != requestID) return;
+    if (m_rxStopping || slot >= m_liveReqs.length()) return;
+    auto &attempt = m_liveReqs[slot];
+    if (!attempt.request || attempt.identity.request != requestID) return;
     if (attempt.discovery) {
       auto discovery = ZuMv(attempt.discovery);
       completeAttempt_(attempt, ResultCode::TimedOut);
@@ -1050,7 +1052,7 @@ private:
   }
 
   template <typename Link>
-  bool retry_(Link &link, Attempt &attempt) {
+  bool retry_(Link &link, LiveReq &attempt) {
     if (attempt.failure.kind != FailureKind::Connect ||
 	!attempt.failure.transient || responseStarted_(attempt) ||
 	attempt.retries >= m_config.maxRetries() ||
@@ -1065,7 +1067,7 @@ private:
     nextAttempt_(attempt, false);
     auto event = event_(attempt, ClientEventType::Retried);
     event.previousAttempt = previous;
-    observe_(&attempt.request_(), event);
+    observe_(attempt.request, event);
     switch (attempt.protocol.transport) {
       case Transport::TCP:
 	startTCP_(attempt);
@@ -1083,13 +1085,13 @@ private:
     return true;
   }
 
-  bool canReplay_(const Attempt &attempt) const {
-    return attempt.request_().replayable() &&
-      attempt.request_().reproducible();
+  bool canReplay_(const LiveReq &attempt) const {
+    return attempt.request->replayable() &&
+      attempt.request->reproducible();
   }
 
   template <typename Link>
-  void headersDone_(Link &link, Attempt &attempt) {
+  void headersDone_(Link &link, LiveReq &attempt) {
     if (attempt.phase == AttemptPhase::ReceivingBody ||
 	attempt.phase == AttemptPhase::Closing)
       return;
@@ -1099,12 +1101,12 @@ private:
 
   template <typename Link>
   void finish_(
-    Link &link, Attempt &attempt, ResultCode::T code, bool reuse) {
+    Link &link, LiveReq &attempt, ResultCode::T code, bool reuse) {
     assertRx_();
     (void)reuse;
     cancelTimer_(attempt);
-    auto key = key_(attempt.node);
-    emit_(attempt.request_(), result_(attempt, code));
+    auto key = key_(attempt.request);
+    emit_(*attempt.request, result_(attempt, code));
     closing_(attempt);
     idleAttempt_(attempt);
     m_free.push(attempt.slot);
@@ -1118,7 +1120,7 @@ private:
     emit_(request, result);
   }
 
-  Result result_(const Attempt &attempt, ResultCode::T code) const {
+  Result result_(const LiveReq &attempt, ResultCode::T code) const {
     return {
       .request = attempt.identity.request,
       .attempt = attempt.identity.attempt,
@@ -1148,11 +1150,11 @@ private:
     if (!result.ok()) ++m_failed;
   }
 
-  void completeAttempt_(Attempt &attempt, ResultCode::T code) {
+  void completeAttempt_(LiveReq &attempt, ResultCode::T code) {
     assertRx_();
     cancelTimer_(attempt);
-    auto key = key_(attempt.node);
-    emit_(attempt.request_(), result_(attempt, code));
+    auto key = key_(attempt.request);
+    emit_(*attempt.request, result_(attempt, code));
     closing_(attempt);
     idleAttempt_(attempt);
     m_free.push(attempt.slot);
@@ -1164,9 +1166,9 @@ private:
     assertRx_();
     if (m_rxStopping) return;
     m_rxStopping = true;
-    for (unsigned i = 0; i < m_attempts.length(); ++i) {
-      auto &attempt = m_attempts[i];
-      if (!attempt.node) continue;
+    for (unsigned i = 0; i < m_liveReqs.length(); ++i) {
+      auto &attempt = m_liveReqs[i];
+      if (!attempt.request) continue;
       cancelTimer_(attempt);
       if (attempt.discovery) {
 	auto discovery = ZuMv(attempt.discovery);
@@ -1203,7 +1205,7 @@ private:
     while (auto request = i()) {
       auto ref = i.del();
       rxRun_([this, request = ZuMv(ref)]() mutable {
-	complete_(request->data(), ResultCode::Cancelled);
+	complete_(*request, ResultCode::Cancelled);
       });
     }
   }
@@ -1226,7 +1228,7 @@ private:
   AltSvcCache	m_altSvc;
   ZiTxErrorFn	m_txErrorFn;
   const DiscoveryResolver *m_resolverOps = nullptr;
-  Attempts	m_attempts;
+  LiveReqs	m_liveReqs;
   RequestTimers	m_timers;
   Free		m_free;
   uint64_t	m_attemptID = 0;

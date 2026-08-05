@@ -73,7 +73,7 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 // Hubs:
 //   init(params) -> start() -> process links -> stop(done) -> final()
 // done is called only after ingress is disabled and Rx/Tx work and links have
-// drained.  final() is only valid from done (or after the main-thread blocking
+// drained. final() is only valid from done (or after the main-thread blocking
 // stop() wrapper returns); no caller may infer completion from a posted stop.
 //
 // Client links:
@@ -83,8 +83,8 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 //   connected() -> txStream()/process(initial message) -> disconnected()
 //
 // The process callback is installed by CRTP composition before connected()
-// returns and before received application bytes are dispatched.  TCP and TLS
-// links represent transport connections.  An HTTP/3 application link
+// returns and before received application bytes are dispatched. TCP and TLS
+// links represent transport connections. An HTTP/3 application link
 // represents a duplex request stream; the physical QUIC connection, H3
 // control streams, and QPACK state remain library-owned.
 //
@@ -125,10 +125,10 @@ constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 namespace Zhttp {
 
 // Parser and Builder are plain application structs wrapped in protocol CRTP
-// adapters by ClientMessage and Service; neither inherits a Zhttp base.  The
+// adapters by ClientMessage and Service; neither inherits a Zhttp base. The
 // protocol invokes only the callbacks applicable to the selected request or
-// response role and version.  Every lambda call is synchronous.  Printable
-// Builder values retain their actual type.  Received spans and body Rx streams
+// response role and version. Every lambda call is synchronous. Printable
+// Builder values retain their actual type. Received spans and body Rx streams
 // are borrowed only for the duration of the callback.
 #if 0
 struct Parser {
@@ -136,16 +136,16 @@ struct Parser {
   static constexpr uint64_t BodyMax = DefltMaxBody;
 
   // Constructed once per logical stream and destroyed once when that stream
-  // ends.  reset() is called exactly once before each message, including the
+  // ends. reset() is called exactly once before each message, including the
   // first, and clears all per-message application state.
   Parser();
   ~Parser();
   void reset();
 
-  // Called first, before any header() or body() callback.  A subsequent
+  // Called first, before any header() or body() callback. A subsequent
   // validation failure is reported by complete(false).
   void operation(Method::T, const RequestTarget &);	// requests only
-  // Called first, before any header() or body() callback.  A subsequent
+  // Called first, before any header() or body() callback. A subsequent
   // validation failure is reported by complete(false).
   void status(unsigned);				// responses only
   void version(ZuBSpan);
@@ -159,7 +159,7 @@ struct Parser {
   void header(ZuBSpan key, ZuBSpan value);
 
   // Completed H2/H3 field section; section identifies informational, final,
-  // or trailer fields.  endStream is meaningful for the initial section.
+  // or trailer fields. endStream is meaningful for the initial section.
   void headers(Fields::Section section, bool endStream);
 
   // Synchronous queue prompt; incomplete application framing may remain
@@ -173,7 +173,7 @@ struct Builder {
   using Trailers = ZhttpHeaders(...);	// optional
   using BodyPolicy = Body::None;
 
-  // May be constructed once and retained across messages.  Called exactly
+  // May be constructed once and retained across messages. Called exactly
   // once before each message, including the first, to clear per-message
   // construction state while preserving the configured request/response.
   void reset();
@@ -191,7 +191,7 @@ struct Builder {
   template <typename Key, typename L> void header(L &&l); // l(value)
   template <typename L> void header(L &&l);		   // l(key, value)
 
-  // Present only for body-bearing policies.  emit(write) is called zero or
+  // Present only for body-bearing policies. emit(write) is called zero or
   // one times according to BodyPolicy::Optional; write(bodyStream) returns
   // void or bool.
   template <typename Emit> void body(Emit &&emit);
@@ -205,52 +205,56 @@ struct Builder {
   bool close() const;			// responses only
 };
 
-// Extended request Builder contract used by Client.  Request_ is the
-// application data stored in the intrusive TxQ::Msg node.  Client calls
-// reset() once for every wire request (including replay attempts and
-// redirects), then uses the Builder callbacks above.  A failed connection
-// which emits no request is not a message.  All lifecycle callbacks are
-// synchronous.
-struct Request_ : Builder {
+// Extended request Builder contract used by Client. Request must derive from
+// ZmObject, and TxQ::Msg must publicly derive from Request (normally by
+// configuring the queue with ZmPQueueNode<Request_>, then Request = TxQ::Msg);
+// containment should not be used.
+//
+// Client retains a TxQ::Msg pointer for both queue identity/lifetime and direct
+// Request access. Client calls reset() once for every wire request (including
+// replay attempts and redirects), then uses the Builder callbacks above. A
+// failed connection which emits no request is not a message. All lifecycle
+// callbacks are synchronous.
+struct Request : public ZmObject, public Builder {
   // Monotonic queue identity and discrete-message length.
   uint64_t key() const;
   uint64_t length() const; // returns 1
 
-  // Absolute URL of the submitted request.  Client snapshots it on
+  // Absolute URL of the submitted request. Client snapshots it on
   // submission; redirected() receives each subsequently accepted URL.
   Zhttp::URLStorage url;
 
   // Whether the request semantics permit another attempt after a redirect or
-  // an unprocessed failure.  Called before Client decides to replay.
+  // an unprocessed failure. Called before Client decides to replay.
   bool replayable() const;
 
   // Whether another Builder pass will reproduce the same request, including
-  // identical body bytes.  Both replayable() and reproducible() must be true
+  // identical body bytes. Both replayable() and reproducible() must be true
   // for Client to replay a request.
   bool reproducible() const;
 
-  // A transport connection for the current attempt is ready.  Called before
+  // A transport connection for the current attempt is ready. Called before
   // reset() and request construction; info identifies the selected transport
   // and negotiated HTTP version.
   void connected(const ConnectedInfo &);
 
   // The current attempt's connection ended; peer is true when the peer
-  // initiated the disconnect.  No callback is made without a bound request.
+  // initiated the disconnect. No callback is made without a bound request.
   void disconnected(bool peer);
 
-  // Connection establishment failed.  transient classifies whether Client
+  // Connection establishment failed. transient classifies whether Client
   // may retry subject to its configured limit and the replay predicates.
   void connectFailed(bool transient);
 
-  // Client selected a concrete endpoint for the attempt.  This precedes
+  // Client selected a concrete endpoint for the attempt. This precedes
   // connection establishment and may occur more than once across attempts.
   void selected(const Endpoint &);
 
-  // Client accepted a redirect to url.  Update any request construction state
+  // Client accepted a redirect to url. Update any request construction state
   // which operation(), host(), protocol(), or header() derives from the URL.
   void redirected(const URL &);
 
-  // Reports each typed attempt/request transition.  Multiple observations may
+  // Reports each typed attempt/request transition. Multiple observations may
   // precede the single terminal completed() callback.
   void observed(const ClientEvent &);
 
@@ -259,12 +263,12 @@ struct Request_ : Builder {
   void completed(const Result &);
 };
 
-// Extended response Parser contract used by Client.  One ResParser is
-// constructed for each reusable ClientMessage stream.  init() is called once
+// Extended response Parser contract used by Client. One ResParser is
+// constructed for each reusable ClientMessage stream. init() is called once
 // before every response message, including the first, and before status(),
 // header(), or body(); it clears per-response state and binds the response to
-// its submitted request.  init() calls Parser::reset() itself when that reset
-// is needed; Client does not call Parser::reset() in addition to init().  The
+// its submitted request. init() calls Parser::reset() itself when that reset
+// is needed; Client does not call Parser::reset() in addition to init(). The
 // same object can therefore serve many messages.
 struct ResParser : Parser {
   void init(const Request_ &request);
@@ -273,12 +277,12 @@ struct ResParser : Parser {
 
 // Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
 // ClientMessage and Service wrap plain application Parser sinks in these
-// adapters; application sinks do not derive from them.  The protocol invokes
+// adapters; application sinks do not derive from them. The protocol invokes
 // only the callbacks applicable to the selected request/response role and
-// version.  Inherited defaults are side-effect-safe; an adapter which
-// overrides reset() must call Base::reset().  All callbacks are synchronous
-// and Rx-shard-affine.  RequestTarget and received spans are borrowed for the
-// duration of the callback.  `ProtocolParser` in the API sketch denotes the
+// version. Inherited defaults are side-effect-safe; an adapter which
+// overrides reset() must call Base::reset(). All callbacks are synchronous
+// and Rx-shard-affine. RequestTarget and received spans are borrowed for the
+// duration of the callback. `ProtocolParser` in the API sketch denotes the
 // selected alias below.
 #if 0
 struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers, MaxBody> {
@@ -363,9 +367,9 @@ template <
 using H3ResParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
 // Low-level protocol Builder CRTP adapters used internally by ClientMessage
-// and Service.  Application Builders do not derive from these aliases.  The
+// and Service. Application Builders do not derive from these aliases. The
 // adapters provide protocol framing and invoke the application through
-// inversion-of-control lambdas.  H1 chunked builders emit Trailers from
+// inversion-of-control lambdas. H1 chunked builders emit Trailers from
 // finish(); H2/H3 builders emit a trailing HEADERS section.
 
 template <

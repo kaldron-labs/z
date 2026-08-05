@@ -21,33 +21,33 @@
 namespace Zhttp {
 
 template <
-  typename Owner, typename Attempt,
+  typename Owner, typename LiveReq,
   typename Request, typename ResParser>
 class TLSClientPool;
 
 template <
-  typename Pool, typename Impl, typename Owner_, typename Attempt_,
+  typename Pool, typename Impl, typename Owner_, typename LiveReq_,
   typename Request_, typename ResParser_,
   typename Profile>
 class TLSClientPoolLink_ {
 public:
   using Owner = Owner_;
-  using Attempt = Attempt_;
+  using LiveReq = LiveReq_;
   using Message = MessageTraits<Profile>;
   using IO = ClientMessage<
-    Owner, Attempt, Impl, Profile,
+    Owner, LiveReq, Impl, Profile,
     Request_, ResParser_>;
 
   TLSClientPoolLink_(Pool *pool, Impl *impl, unsigned slot_) :
     m_pool{pool}, m_impl{impl}, m_slot{slot_},
     m_message{pool->owner(), impl} { }
 
-  Attempt *request() const { return m_request; }
+  LiveReq *request() const { return m_request; }
   bool stopped() const { return m_stopped; }
   unsigned slot() const { return m_slot; }
   void slot(unsigned slot_) { m_slot = slot_; }
 
-  void assign(Attempt *request) {
+  void assign(LiveReq *request) {
     ++m_generation;
     m_request = request;
     m_complete = -1;
@@ -176,7 +176,7 @@ private:
 
   Pool		*m_pool = nullptr;
   Impl		*m_impl = nullptr;
-  Attempt	*m_request = nullptr;
+  LiveReq	*m_request = nullptr;
   unsigned	m_generation = 0;
   unsigned	m_slot = 0;
   int8_t	m_complete = -1;
@@ -187,38 +187,38 @@ private:
 };
 
 template <
-  typename Pool, typename Owner, typename Attempt,
+  typename Pool, typename Owner, typename LiveReq,
   typename Request, typename ResParser, typename Profile>
 class TLSClientPoolLink;
 
 template <
-  typename Pool, typename Owner, typename Attempt,
+  typename Pool, typename Owner, typename LiveReq,
   typename Request, typename ResParser>
 class TLSClientPoolLink<
-  Pool, Owner, Attempt, Request, ResParser, H1TLS> :
+  Pool, Owner, LiveReq, Request, ResParser, H1TLS> :
   public TLS_::ClientH1Logical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, Attempt, Request, ResParser, H1TLS>,
+      Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
     TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Attempt, Request, ResParser, H1TLS>,
+	Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, Attempt, Request, ResParser, H2TLS>>>,
+	Pool, Owner, LiveReq, Request, ResParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, Attempt, Request, ResParser, H1TLS>,
-    Owner, Attempt, Request, ResParser, H1TLS> {
+      Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
+    Owner, LiveReq, Request, ResParser, H1TLS> {
   using Impl = TLSClientPoolLink;
   using Native = TLS_::ClientH1Logical<
     Pool, Impl,
     TLS_::CliLink<
       Pool, Impl,
       TLSClientPoolLink<
-	Pool, Owner, Attempt, Request, ResParser, H2TLS>>>;
+	Pool, Owner, LiveReq, Request, ResParser, H2TLS>>>;
   using Link = TLSClientPoolLink_<
-    Pool, Impl, Owner, Attempt, Request, ResParser, H1TLS>;
+    Pool, Impl, Owner, LiveReq, Request, ResParser, H1TLS>;
 
 public:
   using Protocol = TLS;
@@ -242,34 +242,34 @@ public:
 };
 
 template <
-  typename Pool, typename Owner, typename Attempt,
+  typename Pool, typename Owner, typename LiveReq,
   typename Request, typename ResParser>
 class TLSClientPoolLink<
-  Pool, Owner, Attempt, Request, ResParser, H2TLS> :
+  Pool, Owner, LiveReq, Request, ResParser, H2TLS> :
   public H2_::ClientLogical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, Attempt, Request, ResParser, H2TLS>,
+      Pool, Owner, LiveReq, Request, ResParser, H2TLS>,
     TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Attempt, Request, ResParser, H1TLS>,
+	Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, Attempt, Request, ResParser, H2TLS>>>,
+	Pool, Owner, LiveReq, Request, ResParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, Attempt, Request, ResParser, H2TLS>,
-    Owner, Attempt, Request, ResParser, H2TLS> {
+      Pool, Owner, LiveReq, Request, ResParser, H2TLS>,
+    Owner, LiveReq, Request, ResParser, H2TLS> {
   using Impl = TLSClientPoolLink;
   using Native = H2_::ClientLogical<
     Pool, Impl,
     TLS_::CliLink<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, Attempt, Request, ResParser, H1TLS>,
+	Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
       Impl>>;
   using Link = TLSClientPoolLink_<
-    Pool, Impl, Owner, Attempt, Request, ResParser, H2TLS>;
+    Pool, Impl, Owner, LiveReq, Request, ResParser, H2TLS>;
 
 public:
   using Protocol = TLS;
@@ -293,30 +293,30 @@ public:
 };
 
 template <
-  typename Owner_, typename Attempt_,
+  typename Owner_, typename LiveReq_,
   typename Request_, typename ResParser_>
 class TLSClientPool :
   public TLS_::ClientHub<
     TLSClientPool<
-      Owner_, Attempt_, Request_, ResParser_>,
+      Owner_, LiveReq_, Request_, ResParser_>,
     TLSClientPoolLink<
       TLSClientPool<
-	Owner_, Attempt_, Request_, ResParser_>,
-      Owner_, Attempt_, Request_, ResParser_, H1TLS>,
+	Owner_, LiveReq_, Request_, ResParser_>,
+      Owner_, LiveReq_, Request_, ResParser_, H1TLS>,
     TLSClientPoolLink<
       TLSClientPool<
-	Owner_, Attempt_, Request_, ResParser_>,
-      Owner_, Attempt_, Request_, ResParser_, H2TLS>> {
+	Owner_, LiveReq_, Request_, ResParser_>,
+      Owner_, LiveReq_, Request_, ResParser_, H2TLS>> {
 public:
   using Owner = Owner_;
-  using Attempt = Attempt_;
+  using LiveReq = LiveReq_;
   using Request = Request_;
   using ResParser = ResParser_;
   using Pool = TLSClientPool;
   using H1Link = TLSClientPoolLink<
-    Pool, Owner, Attempt, Request, ResParser, H1TLS>;
+    Pool, Owner, LiveReq, Request, ResParser, H1TLS>;
   using H2Link = TLSClientPoolLink<
-    Pool, Owner, Attempt, Request, ResParser, H2TLS>;
+    Pool, Owner, LiveReq, Request, ResParser, H2TLS>;
   using Base = TLS_::ClientHub<Pool, H1Link, H2Link>;
   using Base::stop;
 
@@ -334,7 +334,7 @@ public:
   bool accepting() const { return !m_stopping && this->running(); }
   unsigned live() const { return m_live; }
 
-  void open(Attempt *request, unsigned) {
+  void open(LiveReq *request, unsigned) {
     if (!accepting() || !request) return;
     unsigned slot = m_pairs.length();
     Pair pair{
@@ -351,7 +351,7 @@ public:
     Base::connect(h1, h2, url.host, url.port);
   }
 
-  bool cancel(Attempt *request) {
+  bool cancel(LiveReq *request) {
     for (auto &pair: m_pairs) {
       switch (pair.selected) {
 	case Version::H1:
