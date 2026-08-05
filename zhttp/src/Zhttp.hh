@@ -191,7 +191,7 @@ struct Builder {
   // Present only for fixed policies; called synchronously after body output.
   // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
   // There is no contentLength() callback; provision Content-Length with
-  // HeaderPad from header<Key>(), then patch it here.
+  // Placeholder from header<Key>(), then patch it here.
   template <typename L> void bodyHdrs(L &&l);
 };
 

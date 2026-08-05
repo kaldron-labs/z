@@ -216,7 +216,7 @@ struct ResponseBase {
       if (plan.connection) l(plan.connection);
     } else if constexpr (Key{}() == "content-length") {
       if constexpr (ZuIsSame<Policy_, Zhttp::Body::Fixed>{})
-	l(Zhttp::HeaderPad{10, '0'});
+	l(Zhttp::Placeholder{10, '0'});
       else if (plan.contentLength || plan.sendBody)
 	l(ZuBoxed(plan.contentLength));
     }
