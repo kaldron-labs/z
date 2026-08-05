@@ -324,8 +324,11 @@ public:
     if (!m_collected) {
       unsigned count = 0;
       app.template header<Key>([this, &l, &count]<typename V>(V &&v) {
-	if (++count == 1) l(ZuFwd<V>(v));
-	else m_valid = false;
+	if (++count != 1) { m_valid = false; return; }
+	if constexpr (IsHeaderPad<ZuDecay<V>>{})
+	  m_valid = false;
+	else
+	  l(ZuFwd<V>(v));
       });
       return;
     }
