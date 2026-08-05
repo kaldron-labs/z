@@ -2167,9 +2167,9 @@ public:
   enum { Ordered = NTP::Ordered };
   using Lock = typename NTP::Lock;
 
-  template <unsigned> struct EmptyKey { EmptyKey(int) { } };
-  using AckdKey = ZuIf<Ordered, Key, EmptyKey<0>>;
-  using ArchiveKey = ZuIf<Ordered, Key, EmptyKey<1>>;
+  template <unsigned> struct VoidKey { VoidKey(int) { } };
+  using AckdKey = ZuIf<Ordered, Key, VoidKey<0>>;
+  using ArchiveKey = ZuIf<Ordered, Key, VoidKey<1>>;
 
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
