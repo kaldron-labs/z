@@ -198,6 +198,7 @@ namespace Union_ { // internal
 
   template <typename T> struct IsVoid_ : public ZuFalse { };
   template <> struct IsVoid_<void> : public ZuTrue { };
+  template <> struct IsVoid_<ZuVoid> : public ZuTrue { };
   template <typename T> using IsVoid = IsVoid_<ZuDecay<T>>;
 
 // recursive decay

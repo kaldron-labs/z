@@ -1054,7 +1054,8 @@ public:
   template <typename State>
   void responseBodyBytes(State *state) {
     auto bytes = m_app->quicConfig().migrateAfterBytes();
-    if (bytes && state && state->bodyBytes >= bytes) requestMigration_();
+    if (bytes && state && state->responseBody.consumed >= bytes)
+      requestMigration_();
   }
 
 private:

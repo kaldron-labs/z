@@ -205,13 +205,17 @@ struct Builder {
   bool close() const;			// responses only
 };
 
-// Extended request Builder contract used by Client.  Request is both the
-// submitted request and its long-lived application Builder.  Client calls
+// Extended request Builder contract used by Client.  Request_ is the
+// application data stored in the intrusive TxQ::Msg node.  Client calls
 // reset() once for every wire request (including replay attempts and
 // redirects), then uses the Builder callbacks above.  A failed connection
 // which emits no request is not a message.  All lifecycle callbacks are
 // synchronous.
-struct Request : Builder {
+struct Request_ : Builder {
+  // Monotonic queue identity and discrete-message length.
+  uint64_t key() const;
+  uint64_t length() const; // returns 1
+
   // Absolute URL of the submitted request.  Client snapshots it on
   // submission; redirected() receives each subsequently accepted URL.
   Zhttp::URLStorage url;
@@ -263,7 +267,7 @@ struct Request : Builder {
 // is needed; Client does not call Parser::reset() in addition to init().  The
 // same object can therefore serve many messages.
 struct ResParser : Parser {
-  void init(const Request &request);
+  void init(const Request_ &request);
 };
 #endif
 

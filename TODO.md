@@ -1,45 +1,82 @@
 # TODO
 
-## zrest
+## zhttp client-side
 
-## ZvEngine value
 
-- the key innovation in legacy `ZvEngine`, beyond the `Hub`/`Link`/`Pool`/`Cxn` model is:
-  - predictive flow control for pooled links, optimized for minimum latency
-  - `Link` is a `Tx`
-  - `Pool` is also a `Tx`
-  - permits "pools of pools"
-  - `pool->ready(Tx *tx, ZuTime t)`:
-    - informs `pool` that `tx` will be ready to send at future time `t`
-    - if `tx` was previously forecast to be ready at a time `q`,
-      it is removed from the pool and added back at new time `t`
-    - if `t` is `0`, it is immediately available
-    - if `t` is `null`, it is unavailable
-  - sending is always to the earliest available `tx`, i.e. `minimum`
-  - the protocol implementation can use reinforcement learning to predict when
-    it will become available for sending based on the peer's observed behavior
+## zhttp server-side
 
-- `zhttp` implements something like the above, reconcile
+- `ResBuilder::init` will call  `Builder::reset` if needed, the caller should not redundantly call `Builder::reset` if `ResBuilder::init` is called
+  - document this in `Zhttp.hh`
+  - update `zhttpd.cc` accordingly
 
-## devlayer
+## Zrest
 
-L-sized work:
-- initial plan
-- vertically slice plan
-- split out slices
-- phase slices independently
-- iterate slices individually
-  - acceptance criteria from each phase to the next, and at end
-- rework slice 2 to align with completion of slice 1, 3 with cumulative 1+2, 4 with cumulative 1+2+3, etc.
-- split out phases from slices
-  - ... then each phase within each slice is a bite-size incremental piece of work with acceptance criteria
+- key headers:
+  - accept-encoding: identity
+  - content-type: application/json
 
-- start with a new working branch
-  - commit after each phase
-
-## build system
-- factor out fbs codegen into shell script
-  - used repeatedly in multiple Makefile.am
+the basic concept is: enrich `ZtStruct` to describe how the struct is sent/rcvd for REST
+  - the struct is a wrapper containing auth, etc., with the actual payload as a nested UDT
+  - per-field possibilities:
+    - nested URI UDT (implicitly query string) (non-default facet can be specified)
+      - need optional pre- and post-processing
+        - post-processing gets the query string so it can append a signature
+    - nested JSON UDT (implicitly body) (non-default facet can be specified)
+      - need optional pre- and post-processing
+        - pre-processing can prepend a `"key":{` to nest
+        - post-processing gets the JSON payload so it can append a signature and/or a `}`
+  - overall `T Zrest_Traits(...)` object-level traits determine:
+    - path + method (request); path + method + code (response)
+    - can use typelist of NTTP pairs for all these:
+      - Zhttp uses slices for headers and values, need to reconcile with below:
+      - fixed headers <ZuStringT, ZuStringT>
+      - variable headers <ZuStringT, decltype(lambda)>
+        - callback gets the object, writes value to a stream
+      - variable body headers <ZuStringT, <decltype(lambda), decltype(lambda)>>
+        - pre- and post- callbacks
+        - pre-callback gets the object, writes placeholder to a stream
+        - post-callback gets the object and the body, mutates placeholder
+    - URL (which implies scheme (https, https), target (host, port)) is a separate concern
+  - then the `Zrest` layer becomes one that permits:
+    - send: send(object);
+      - uses `Zrest::save(txStream, object)`
+    - recv: dispatch(type, handler);
+      - handler callback is (link, object)
+        - link is CRTP-derived (can be enriched with auth, app state)
+      - dispatch uses compile-time method/path switching
+      - per-logical-stream, requests and responses are single-threaded, i.e.
+        - the Parser instance should be per-stream
+      - Note: should reverse the order of parameters to `Parser::operation`
+      - uses:
+        ```
+        // URI (query string)
+        operation(method, target) { // in per-message-type Parser
+          // switch on target.path, method to find operation
+          // based on operation, set subsequent `header`, `body` and `complete` handling
+          // - really this is a ZuUnion of many Ts:
+          //   new (u.new_<T>()) T(...);
+          //   and Parser::header forwards to u.dispatch([](auto, auto &&o) { o->header(...); });
+          // in T::header:
+          auto scan = ZfURI::scan(target.query);
+          // stash object in T (could be a ZuUnion<void, Object>, and handler...new_(u.new_<Object>())
+          auto object = ZfURI::handler<Object>(scan.tempate p<1>()).ctor(); // construct object
+        }
+        // JSON
+        operation(method, target) { // in per-message-type Parser
+          // switch on target.path, method to find operation
+          // based on operation, set `header`, `body` and `complete` handling
+        }
+        body(rx) {
+          rx.consume(...); // consume contiguous json span
+          // if consume() succeeded
+          auto scan = ZfJSON::scan(json); // scan span
+          // swtich on stashed operation to get object
+          auto object = Zrest::handler<Object>(scan.template p<1>()).ctor(); // construct object
+          // stash object
+        }
+        // Common
+        complete(bool ok) { ... if (ok) /* process stashed object */ }
+        ```
 
 ## Zum
 - all flatbuffers -> ZfStruct FB
@@ -57,31 +94,6 @@ L-sized work:
 - each command group manages it's own client, server links
   - facilitates zdash telemetry fan-in / aggregation etc.
 - command groups can be implemented using REST etc.
-
-# Z Deferred Work
-
-## io_uring
-- UDP with TOS: `io_uring_prep_sendmsg_zc_fixed` / `io_uring_prep_recvmsg_multishot`
-- TCP: `io_uring_prep_send_zc_fixed` / `io_uring_recv_multishot`
-- need a rx and tx buf allocator in Ztls (and ZiMultiplex)
-  - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
-    - but not jumbo, in that case we fallback to non-registered buffers
-    - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
-- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
-
-## ZfTOML
-- copy of `ZfCf` but TOML format
-
-# Z Candidate Work
-
-## Documentation
-- internals docs
-- doxygen + htags
-- shields.io badges (see README.md for reflect-cpp)
-
-## Integrations
-- python
-- node.js / v8
 
 ## Zdf
 - permit app to specify dataframe and/or series epoch, so
@@ -120,6 +132,110 @@ L-sized work:
 - 128bit print/scan tests
 - vector print/scan tests
 - vector ZfCf and ZvCSV tests
+
+
+## Documentation
+
+### Z I/O generic object model
+
+- Client-side:
+  - `Hub`:
+    - owns `Link`s and `Pool`s
+    - explicitly configured
+    - can be started/stopped under app control
+    - long living, typically the same lifetime as the process
+  - `Link`:
+    - explicitly instantiated by the app
+    - used as an explicitly selected outbound route
+    - specifies destination
+    - long living, typically the same lifetime as the process
+    - encapsulates application message processing
+    - sometimes termed "line" or "session" in other frameworks
+  - `Pool`:
+    - load-balancing group of `Link`s
+  - `Cxn`:
+    - instantiated by the transport when the app starts the `Link`, causing a `connect`
+    - owned by a `Link`
+    - transient and can be short-lived
+    - typically automatically re-instantiated via reconnection under `Link`/`Hub` control
+    - encapsulates transport state
+- Server-side:
+  - `Hub`:
+    - keeps track of `Link`s
+    - explicitly configured
+    - can be started/stopped under app control
+    - long living, typically the same lifetime as the process
+  - `Pool`: unused on server-side
+  - `Link`:
+    - instantiated on-demand when incoming connections are accepted
+    - encapsulates application message processing
+    - is constructed with origin, and often enriched with identity following auth
+    - the same lifetime as the incoming connection
+    - sometimes termed "line" or "session" in other frameworks
+  - `Cxn`:
+    - instantiated by the transport once the app calls `listen` and connections are accepted
+    - owns the `Link`
+    - transient and can be short-lived
+    - encapsulates transport state
+
+### Latency-optimized load balancing
+
+- the key innovation in legacy `ZvEngine`, beyond the `Hub`/`Link`/`Pool`/`Cxn` model is:
+  - predictive flow control for pooled links, optimized for minimum latency
+  - `Link` is a `Tx`
+  - `Pool` is also a `Tx`
+  - permits "pools of pools"
+  - `pool->ready(Tx *tx, ZuTime t)`:
+    - informs `pool` that `tx` will be ready to send at future time `t`
+    - if `tx` was previously forecast to be ready at a time `q`,
+      it is removed from the pool and added back at new time `t`
+    - if `t` is `0`, it is immediately available
+    - if `t` is `null`, it is unavailable
+  - sending is always to the earliest available `tx`, i.e. `minimum`
+  - the protocol implementation can use reinforcement learning to predict when
+    it will become available for sending based on the peer's observed behavior
+
+- `zhttp` implements something like the above, reconcile
+
+### Documentation organization
+
+- internals docs
+- doxygen + htags
+- shields.io badges (see README.md for reflect-cpp)
+
+## devlayer
+
+L-sized work:
+- initial plan
+- vertically slice plan
+- split out slices
+- phase slices independently
+- iterate slices individually
+  - acceptance criteria from each phase to the next, and at end
+- rework slice 2 to align with completion of slice 1, 3 with cumulative 1+2, 4 with cumulative 1+2+3, etc.
+- split out phases from slices
+  - ... then each phase within each slice is a bite-size incremental piece of work with acceptance criteria
+
+- start with a new working branch
+  - commit after each phase
+
+## Integrations
+- python
+- node.js / v8
+
+# Z Deferred Work
+
+## io_uring
+- UDP with TOS: `io_uring_prep_sendmsg_zc_fixed` / `io_uring_prep_recvmsg_multishot`
+- TCP: `io_uring_prep_send_zc_fixed` / `io_uring_recv_multishot`
+- need a rx and tx buf allocator in Ztls (and ZiMultiplex)
+  - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
+    - but not jumbo, in that case we fallback to non-registered buffers
+    - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
+- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
+
+## ZfTOML
+- copy of `ZfCf` but TOML format
 
 # Notes
 - https://verdagon.dev/blog/when-to-use-memory-safe-part-2

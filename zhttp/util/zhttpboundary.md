@@ -11,16 +11,17 @@ All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 | --- | --- | --- |
 | CLI parsing | `Http3Mode`, timeout defaults, `Options`, `usage`, `parseDrop`, `validateOptions` | Declare, parse, validate, and document command-line workload and configuration choices. |
 | Protocol-specific configuration | `Http2Mode`, `Http3Mode`, `parseMigrationLocal`, `migrationMode`, `migrationConfigured`, `migrationOnOpen`, `quicHeartbeat`, `mxParams` | Convert CLI values into multiplex, TLS, and QUIC configuration. Authority syntax is parsed by the shared `ZhttpURL` facility. |
-| Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `Req`, `State`, `initReq`, `ClientCallbacks` | Describe submitted GET and typed-JSON PUT requests and implement the single protocol-neutral response callback contract. |
+| Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `Request_`, `RequestQ`, `Request`, `TxQ`, `Client`, `initReq` | Describe GET and typed-JSON PUT requests, own the intrusive transmit queue, incrementally generate a bounded workload, and immediately retire responses without persistent archival. |
 | Workload-specific request/response handling | `redirectStatus`, `resetResponse` | Interpret response status for output policy and reset application response state after a library-managed redirect. |
 | Output-file handling | `HdrString`, `outputPath`, `closeBody`, `truncateOutputPath` | Select, open, truncate, write, and close response output files. |
 | Reporting | `printMemDiag`, `hotLog`, `ReqLogCtx`, `reqLogCtx`, `reqLogPrefix`, `logFraming`, `logConnected_`, `logConnected` | Format application, framing, connection, memory, hash, and heap diagnostics. |
-| CLI parsing | `main` | Wire logging and multiplex setup, construct public protocol configuration, submit the selected workload to `Zhttp::Client`, report completion, and select exit status. |
+| CLI parsing | `main` | Wire logging and multiplex setup, construct public protocol configuration, start the bounded client workload, report completion, and select exit status. |
 
-`ClientCallbacks` owns only application request intent and response
-consumption. It delegates output operations and reporting to the separately
-classified helpers above; it owns no routing, attempt, transport, parser,
-builder, pool, redirect, fallback, or lifecycle mechanism.
+`Client` owns only application request intent, response consumption, the
+Tx-owned request queue, incremental generation, and non-persistent archival.
+It delegates output operations and reporting to the separately classified
+helpers above; it owns no routing, attempt, transport, parser, pool, redirect,
+fallback, or protocol lifecycle mechanism.
 
 ## `zhttpput.hh`
 

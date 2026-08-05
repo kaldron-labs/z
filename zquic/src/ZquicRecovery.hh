@@ -1095,14 +1095,14 @@ public:
     if (!node) return false;
     SentPkt &p = node->data();
     if (p.inFlight) release_(p);
-    (void)m_packets.abort(pn);
+    (void)m_packets.del(pn);
     return true;
   }
 
   bool ack(uint64_t pn) {
     auto node = m_packets.find(pn);
     if (!node || !ack_(node->data())) return false;
-    (void)m_packets.abort(pn);
+    (void)m_packets.del(pn);
     return true;
   }
 
@@ -1618,7 +1618,7 @@ restart:
       if (!node) continue;
       SentPkt &p = node->data();
       if (!p.lost || p.ackd) continue;
-      (void)m_packets.abort(pn);
+      (void)m_packets.del(pn);
       --m_retainedLost;
     }
   }

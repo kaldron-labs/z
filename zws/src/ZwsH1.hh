@@ -26,8 +26,8 @@ using ClientHeaders = ZhttpHeaders(
   "sec-websocket-protocol", "sec-websocket-extensions");
 
 class ClientParser :
-  public Zhttp::H1RespParser<ClientParser, ClientHeaders> {
-  using Base = Zhttp::H1RespParser<ClientParser, ClientHeaders>;
+  public Zhttp::H1ResParser<ClientParser, ClientHeaders> {
+  using Base = Zhttp::H1ResParser<ClientParser, ClientHeaders>;
 
 public:
   using State = Zhttp::H1::ParserState;
@@ -256,8 +256,8 @@ using ResponseHeaders = ZhttpHeaders(
   "sec-websocket-accept", "sec-websocket-protocol");
 
 class Response :
-  public Zhttp::H1RespBuilder<Response, ResponseHeaders> {
-  using Base = Zhttp::H1RespBuilder<Response, ResponseHeaders>;
+  public Zhttp::H1ResBuilder<Response, ResponseHeaders> {
+  using Base = Zhttp::H1ResBuilder<Response, ResponseHeaders>;
 
 public:
   Response(ZuCSpan accept, ZuCSpan protocol = {}) :
@@ -280,8 +280,8 @@ private:
 };
 
 class ErrorResponse :
-  public Zhttp::H1RespBuilder<ErrorResponse> {
-  using Base = Zhttp::H1RespBuilder<ErrorResponse>;
+  public Zhttp::H1ResBuilder<ErrorResponse> {
+  using Base = Zhttp::H1ResBuilder<ErrorResponse>;
 
 public:
   unsigned status() const { return 400; }

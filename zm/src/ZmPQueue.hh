@@ -1268,8 +1268,8 @@ public:
     return shift_();
   }
 
-  // aborts an item (leaving a gap in the queue)
-  NodeMvRef abort(Key key) {
+  // deletes an item by exact start key, leaving a gap in the queue
+  NodeMvRef del(Key key) {
     Guard guard(m_lock);
 
     Node *next[Levels];
@@ -1291,89 +1291,6 @@ public:
     --m_count;
 
     return ret;
-  }
-
-  // clear an interval from retained items, leaving a gap in the queue
-  bool clear(Key key, Length length) {
-    Key end;
-    if (ZuUnlikely(!endOf_(key, length, end))) return false;
-    if (ZuUnlikely(!length)) return false;
-
-    Guard guard(m_lock);
-
-    if (end <= m_headKey) return false;
-    if (key < m_headKey) key = m_headKey;
-
-    bool changed = false;
-    while (key < end) {
-      Node *node = firstNode_(key);
-      if (!node) break;
-
-      Fn item{node->Node::data()};
-      Key nodeKey = item.key();
-      Length nodeLength = item.length();
-      Key nodeEnd;
-      ZmAssert(endOf_(nodeKey, nodeLength, nodeEnd), return false);
-      if (nodeKey >= end) break;
-      if (nodeEnd <= key) {
-	key = nodeEnd;
-	continue;
-      }
-
-      Key remFirst = nodeKey > key ? nodeKey : key;
-      Key remEnd = nodeEnd < end ? nodeEnd : end;
-      if (remEnd <= remFirst) {
-	key = nodeEnd;
-	continue;
-      }
-
-      if (remFirst == nodeKey && remEnd == nodeEnd) {
-	delNode_<0>(node);
-	nodeDeref(node);
-	nodeDelete(node);
-	m_length -= nodeLength;
-	--m_count;
-      } else if (remFirst == nodeKey) {
-	NodeMvRef keep{node};
-	delNode_<0>(node);
-	nodeDeref(node);
-	m_length -= nodeLength;
-	--m_count;
-	Fn keepItem{keep->Node::data()};
-	Length newLength = keepItem.clipHead(remEnd - nodeKey);
-	if (newLength) {
-	  Node *next[Levels];
-	  find_(keepItem.key(), next);
-	  addAt_<0>(ZuMv(keep).release(), next, m_addSeqNo++);
-	  m_length += newLength;
-	  ++m_count;
-	}
-      } else if (remEnd == nodeEnd) {
-	Length newLength = item.clipTail(nodeEnd - remFirst);
-	m_length -= nodeLength - newLength;
-      } else {
-	if constexpr (__is_constructible(Item, const Item &)) {
-	  NodeRef tail = new Node{node->Node::data()};
-	  Fn tailItem{tail->Node::data()};
-	  Length headLength = item.clipTail(nodeEnd - remFirst);
-	  m_length -= nodeLength - headLength;
-	  Length tailLength = tailItem.clipHead(remEnd - nodeKey);
-	  if (tailLength) {
-	    Node *next[Levels];
-	    find_(tailItem.key(), next);
-	    addAt_<0>(nodeRelease(ZuMv(tail)), next, m_addSeqNo++);
-	    m_length += tailLength;
-	    ++m_count;
-	  }
-	} else
-	  return changed;
-      }
-
-      changed = true;
-      key = remEnd;
-    }
-
-    return changed;
   }
 
   // find item containing key
@@ -1876,6 +1793,10 @@ private:
 // if the protocol has no application-level gap repair.
 
 // CRTP - application must conform to the following interface:
+// - Ordered (the default): ackd(endKey) cumulatively acknowledges all items
+//   before endKey; archive_() completes by calling archived(endKey)
+// - unordered: ackd(key) acknowledges and detaches the item beginning at key;
+//   archive_() is terminal for that node and must not call archived()
 #if 0
 using Queue = ZmPQueue<...>;
 
@@ -2186,6 +2107,12 @@ struct Impl : public ZmPQTx<Impl, Queue> {
 
 struct ZmPQTx_Defaults {
   using Lock = ZmNoLock;
+  enum { Ordered = 1 };
+};
+
+template <bool Ordered_, class NTP = ZmPQTx_Defaults>
+struct ZmPQTxOrdered : public NTP {
+  enum { Ordered = Ordered_ };
 };
 
 template <class Lock_, class NTP = ZmPQTx_Defaults>
@@ -2230,12 +2157,14 @@ public:
   };
 
 public:
+  using Impl_ = Impl;
   using Msg = typename Queue::Node;
   using Fn = typename Queue::Fn;
   using Key = typename Queue::Key;
   using Length = typename Queue::Length;
   using Span = typename Queue::Span;
 
+  enum { Ordered = NTP::Ordered };
   using Lock = typename NTP::Lock;
 
   using Guard = ZmGuard<Lock>;
@@ -2261,9 +2190,10 @@ public:
       else if (scheduleSend = !(m_flags & Sending) &&
 	  m_sendKey < impl->txQueue()->tail())
 	m_flags |= Sending;
-      if (scheduleArchive = !(m_flags & Archiving) &&
-	  m_ackdKey > m_archiveKey)
-	m_flags |= Archiving;
+      if constexpr (Ordered)
+	if (scheduleArchive = !(m_flags & Archiving) &&
+	    m_ackdKey > m_archiveKey)
+	  m_flags |= Archiving;
       if (alreadyRunning && (m_flags & ResendFailed))
 	scheduleResend = true;
       else if (scheduleResend = !(m_flags & Resending) && m_gap.length())
@@ -2307,9 +2237,10 @@ public:
       else if (scheduleSend = !(m_flags & Sending) &&
 	  key < impl->txQueue()->tail())
 	m_flags |= Sending;
-      if (scheduleArchive = !(m_flags & Archiving) &&
-	  key > m_archiveKey)
-	m_flags |= Archiving;
+      if constexpr (Ordered)
+	if (scheduleArchive = !(m_flags & Archiving) &&
+	    key > m_archiveKey)
+	  m_flags |= Archiving;
       if (alreadyRunning && (m_flags & ResendFailed))
 	scheduleResend = true;
       else if (scheduleResend = !(m_flags & Resending) && m_gap.length())
@@ -2390,37 +2321,46 @@ public:
     ZmRef<Msg> msg;
     {
       Guard guard(m_lock);
-      msg = impl->txQueue()->abort(key);
+      msg = impl->txQueue()->del(key);
     }
     return msg;
   }
 
-  // acknowlege (archive) messages up to, but not including, key
+  // acknowledge messages cumulatively (ordered) or by exact start key
   void ackd(Key key) {
     Impl *impl = static_cast<Impl *>(this);
-    bool scheduleArchive = false;
-    {
-      Guard guard(m_lock);
-      if (ZuUnlikely(key < m_ackdKey)) {
+    if constexpr (Ordered) {
+      bool scheduleArchive = false;
+      {
+	Guard guard(m_lock);
+	if (ZuUnlikely(key < m_ackdKey)) {
 #if 0
-	std::cerr << (ZuCArray<200>()
-	    << "ackd(" << key << ") outdated "
-	    << *this << "\n  " << *(impl->txQueue()) << '\n')
-	  << std::flush;
+	  std::cerr << (ZuCArray<200>()
+	      << "ackd(" << key << ") outdated "
+	      << *this << "\n  " << *(impl->txQueue()) << '\n')
+	    << std::flush;
 #endif
-	return;
+	  return;
+	}
+	m_ackdKey = key;
+	if (key > m_sendKey) m_sendKey = key;
+	if (scheduleArchive = !(m_flags & Archiving) && key > m_archiveKey)
+	  m_flags |= Archiving;
+#if 0
+	  std::cerr << (ZuCArray<200>()
+	      << "ackd(Key) " << *this << "\n  " << *(impl->txQueue()) << '\n')
+	    << std::flush;
+#endif
       }
-      m_ackdKey = key;
-      if (key > m_sendKey) m_sendKey = key;
-      if (scheduleArchive = !(m_flags & Archiving) && key > m_archiveKey)
-	m_flags |= Archiving;
-#if 0
-      std::cerr << (ZuCArray<200>()
-	  << "ackd(Key) " << *this << "\n  " << *(impl->txQueue()) << '\n')
-	<< std::flush;
-#endif
+      if (scheduleArchive) impl->scheduleArchive();
+    } else {
+      ZmRef<Msg> msg;
+      {
+	Guard guard(m_lock);
+	msg = impl->txQueue()->del(key);
+      }
+      if (msg) impl->archive_(msg);
     }
-    if (scheduleArchive) impl->scheduleArchive();
   }
 
   // resend messages (in response to a resend request)

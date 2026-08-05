@@ -347,7 +347,7 @@ public:
     auto h2 = pair.h2;
     m_pairs.push(ZuMv(pair));
     ++m_live;
-    auto url = request->url.url();
+    auto url = request->route.url.url();
     Base::connect(h1, h2, url.host, url.port);
   }
 

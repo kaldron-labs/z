@@ -68,33 +68,54 @@ selection, and hub lifecycle. Applications provide protocol configuration
 and message-typed application contracts:
 
 ```c++
-struct RequestBuilder {
+struct Request_ {
   using Headers = RequestHeaders;
   using BodyPolicy = Zhttp::Body::OptionalFixed;
+  Zhttp::URLStorage url;
+  uint64_t key() const;
+  uint64_t length() const { return 1; }
+
+  void reset();
   template <typename L> void operation(L &&);
   template <typename L> void host(L &&);
   template <typename Key, typename L> void header(L &&);
   template <typename L> void header(L &&);
   template <typename Emit> void body(Emit &&);
   template <typename L> void bodyHdrs(L &&);
+
+  bool replayable() const;
+  bool reproducible() const;
+  void connected(const Zhttp::ConnectedInfo &);
+  void disconnected(bool peer);
+  void connectFailed(bool transient);
+  void selected(const Zhttp::Endpoint &);
+  void redirected(const Zhttp::URL &);
+  void observed(const Zhttp::ClientEvent &);
+  void completed(const Zhttp::Result &);
 };
 
-struct ResponseParser {
+struct ResParser {
   using Headers = ResponseHeaders;
   static constexpr uint64_t BodyMax = ResponseBodyMax;
+  void init(const Request_ &);
   void status(unsigned);
   template <typename Key> void header(ZuBSpan);
   template <typename Rx> void body(Rx &);
-  template <typename State> void complete(State);
+  void complete(bool);
 };
 
-struct ClientApp :
-  Zhttp::Client<ClientApp, Request, RequestBuilder, ResponseParser> {
-  RequestBuilder requestBuilder(const Request &, const Zhttp::URL &);
-  ResponseParser responseParser(Request &);
+struct App;
+using RequestQ = ZmPQueue<Request_,
+  ZmPQueueOverlap<false, ZmPQueueNode<ZmObject>>>;
+using Request = RequestQ::Node;
+using TxQ = ZmPQTx<App, RequestQ, ZmPQTxOrdered<false>>;
+struct App : Zhttp::Client<TxQ, ResParser> {
+  RequestQ *txQueue() { return &requests; }
+  void archive_(Request *) { }
+  ZmRef<Request> retrieve_(uint64_t, uint64_t) { return {}; }
+  RequestQ requests;
 };
-
-ClientApp client;
+App client;
 client.init(
   Zhttp::HubConfig{&mx, "rx", "tx"},
   Zhttp::ClientConfig{}
@@ -106,9 +127,11 @@ client.init(
   Zhttp::H2Config{}.caPath(ca),
   Zhttp::QUICConfig{}.caPath(ca));
 client.start();
-client.submit(requests, requestCount);
-// RequestBuilder::body() runs synchronously on Tx;
-// ResponseParser::body() runs synchronously on Rx.
+ZmRef<Request> request = new Request;
+client.enqueue(request);
+client.seal();
+// Request_::body() runs synchronously on Tx;
+// ResParser::body() runs synchronously on Rx.
 client.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 client.final();
@@ -243,9 +266,9 @@ protocol-independent:
 ```c++
 template <typename Profile>
 struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
-  struct RequestBuilder :
-    Zhttp::MessageTraits<Profile>::template RequestBuilder<
-      RequestBuilder, ZuTypeList<>, ZuTypeList<>, false, false> {
+  struct ReqBuilder :
+    Zhttp::MessageTraits<Profile>::template ReqBuilder<
+      ReqBuilder, ZuTypeList<>, ZuTypeList<>, false, false> {
     template <typename L>
     void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
     template <typename L>
@@ -259,7 +282,7 @@ struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
   };
 
   void connected(Link &link, Zhttp::ConnectedInfo) {
-    RequestBuilder builder;
+    ReqBuilder builder;
     auto tx = link.transmit(builder);
     if (builder.request(tx)) link.finish();
   }
