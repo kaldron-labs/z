@@ -14,7 +14,7 @@
 #endif
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZmBlock.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 
 namespace Zhttp {
@@ -45,148 +45,84 @@ struct Entry {
 
 } // namespace Hubs_
 
-class Hubs {
+class Hubs : public ZmEngine<Hubs> {
 public:
-  struct State {
-    enum T : int8_t {
-      Empty,
-      Ready,
-      Starting,
-      Running,
-      Stopping,
-      Stopped,
-      Final,
-      Failed
-    };
-  };
-
+  using Engine = ZmEngine<Hubs>;
   using DoneFn = Hubs_::DoneFn;
   using Entries =
     ZtArray<Hubs_::Entry, ZtArrayHeapID<"Zhttp.Hubs">>;
-  using DoneFns =
-    ZtArray<DoneFn, ZtArrayHeapID<"Zhttp.Hubs.DoneFns">>;
-
-  State::T state() const { return m_state; }
+  using Engine::running;
+  using Engine::start;
+  using Engine::state;
+  using Engine::stop;
+  using Engine::stopping;
   unsigned count() const { return m_entries.length(); }
-
-  template <typename Hub, typename ...Args>
-  bool init(Hub &hub, Args &&...args) {
-    switch (m_state) {
-      case State::Empty:
-      case State::Ready:
-	break;
-      default:
-	return false;
-    }
-    if (!hub.init(ZuFwd<Args>(args)...)) {
-      final_();
-      m_state = State::Failed;
-      return false;
-    }
-    m_entries.push(Hubs_::Entry{
-      .ptr = &hub,
-      .start = [](void *ptr, DoneFn done) {
-	static_cast<Hub *>(ptr)->start(
-	  [done = ZuMv(done)](bool ok) mutable { done(ok); });
-      },
-      .stop = [](void *ptr, DoneFn done) {
-	static_cast<Hub *>(ptr)->stop(
-	  [done = ZuMv(done)](bool ok) mutable { done(ok); });
-      },
-      .final = [](void *ptr) {
-	static_cast<Hub *>(ptr)->final();
-      },
-      .stopAccepting = [](void *ptr) {
-	if constexpr (Hubs_::HasStopAccepting<Hub>{})
-	  static_cast<Hub *>(ptr)->stopAccepting();
-      }
-    });
-    m_state = State::Ready;
-    return true;
-  }
-
-  bool start() {
-    return ZmBlock<bool>{}(
-      [this](auto wake) { start(DoneFn{ZuMv(wake)}); });
-  }
 
   template <typename Done>
   void start(Done &&done) {
-    start_(DoneFn{ZuFwd<Done>(done)});
+    Engine::start([done = DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
+      done(ok);
+    });
   }
-
-  bool stop() {
-    return ZmBlock<bool>{}(
-      [this](auto wake) { stop(DoneFn{ZuMv(wake)}); });
-  }
-
   template <typename Done>
   void stop(Done &&done) {
-    stop_(DoneFn{ZuFwd<Done>(done)});
+    Engine::stop([done = DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
+      done(ok);
+    });
+  }
+
+  template <typename Hub, typename ...Args>
+  bool init(Hub &hub, Args &&...args) {
+    return Engine::lock(ZmEngineState::Stopped, [&]() {
+      if (!hub.init(ZuFwd<Args>(args)...)) {
+	final_();
+	return false;
+      }
+      m_entries.push(Hubs_::Entry{
+	.ptr = &hub,
+	.start = [](void *ptr, DoneFn done) {
+	  static_cast<Hub *>(ptr)->start(
+	    [done = ZuMv(done)](bool ok) mutable { done(ok); });
+	},
+	.stop = [](void *ptr, DoneFn done) {
+	  static_cast<Hub *>(ptr)->stop(
+	    [done = ZuMv(done)](bool ok) mutable { done(ok); });
+	},
+	.final = [](void *ptr) {
+	  static_cast<Hub *>(ptr)->final();
+	},
+	.stopAccepting = [](void *ptr) {
+	  if constexpr (Hubs_::HasStopAccepting<Hub>{})
+	    static_cast<Hub *>(ptr)->stopAccepting();
+	}
+      });
+      return true;
+    });
   }
 
   void final() {
-    if (m_state == State::Running || m_state == State::Starting ||
-	m_state == State::Stopping)
-      (void)stop();
-    switch (m_state) {
-      case State::Ready:
-      case State::Failed:
-      case State::Stopped:
-	if (m_entries) final_();
-	m_state = State::Final;
-	break;
-      default:
-	break;
-    }
+    (void)Engine::stop();
+    (void)Engine::lock(ZmEngineState::Stopped, [this]() {
+      final_();
+      return true;
+    });
   }
 
 private:
-  void start_(DoneFn done) {
-    switch (m_state) {
-      case State::Running:
-	done(true);
-	return;
-      case State::Starting:
-	m_startFns.push(ZuMv(done));
-	return;
-      case State::Stopping:
-	m_restartPending = true;
-	m_startFns.push(ZuMv(done));
-	return;
-      case State::Ready:
-      case State::Stopped:
-	break;
-      case State::Empty:
-	m_state = State::Failed;
-	done(false);
-	return;
-      default:
-	done(false);
-	return;
-    }
+  friend Engine;
+
+  void start_() {
     if (!m_entries) {
-      m_state = State::Failed;
-      done(false);
-      return;
+	Engine::started(false);
+	return;
     }
-    m_startFns.push(ZuMv(done));
-    m_stopPending = false;
-    m_startFailed = false;
-    m_state = State::Starting;
     m_next = 0;
     startNext_();
   }
 
   void startNext_() {
-    if (m_stopPending || m_next >= m_entries.length()) {
-      if (!m_stopPending) {
-	m_state = State::Running;
-	completeStarts_(true);
-	return;
-      }
-      m_state = State::Stopping;
-      stopBegin_();
+    if (m_next >= m_entries.length()) {
+      Engine::started(true);
       return;
     }
     unsigned i = m_next++;
@@ -197,45 +133,19 @@ private:
   }
 
   void started_(unsigned i, bool ok) {
-    if (m_state != State::Starting) return;
     if (ok) {
       m_entries[i].started = true;
       startNext_();
       return;
     }
-    m_startFailed = true;
-    m_state = State::Stopping;
-    stopBegin_();
+    m_rollback = true;
+    m_stopOK = true;
+    m_next = i;
+    stopNext_();
   }
 
-  void stop_(DoneFn done) {
-    switch (m_state) {
-      case State::Ready:
-	m_state = State::Stopped;
-	done(true);
-	return;
-      case State::Starting:
-	m_stopPending = true;
-	m_stopFns.push(ZuMv(done));
-	return;
-      case State::Running:
-	m_stopFns.push(ZuMv(done));
-	m_state = State::Stopping;
-	stopBegin_();
-	return;
-      case State::Stopping:
-	m_stopFns.push(ZuMv(done));
-	return;
-      case State::Stopped:
-	done(true);
-	return;
-      default:
-	done(false);
-	return;
-    }
-  }
-
-  void stopBegin_() {
+  void stop_() {
+    m_rollback = false;
     m_stopOK = true;
     m_next = m_entries.length();
     for (auto &entry: m_entries)
@@ -253,44 +163,17 @@ private:
 	}});
       return;
     }
-    bool failed = m_startFailed;
-    bool restart = m_restartPending && !failed;
-    if (failed) final_();
-    m_state = failed ? State::Failed : State::Stopped;
-    if (m_stopPending || failed) completeStarts_(false);
-    completeStops_(m_stopOK);
-    if (restart) {
-      m_restartPending = false;
-      m_stopPending = false;
-      m_state = State::Starting;
-      m_next = 0;
-      startNext_();
-    }
+    if (m_rollback) {
+      m_rollback = false;
+      Engine::started(false);
+    } else
+      Engine::stopped(m_stopOK);
   }
 
   void stopped_(bool ok) {
-    if (m_state != State::Stopping) return;
     if (!ok) m_stopOK = false;
     m_entries[m_next].started = false;
     stopNext_();
-  }
-
-  void completeStarts_(bool ok) {
-    auto fns = ZuMv(m_startFns);
-    m_startFns.init_();
-    for (auto &fn: fns) {
-      fn(ok);
-      fn = {};
-    }
-  }
-
-  void completeStops_(bool ok) {
-    auto fns = ZuMv(m_stopFns);
-    m_stopFns.init_();
-    for (auto &fn: fns) {
-      fn(ok);
-      fn = {};
-    }
   }
 
   void final_() {
@@ -300,14 +183,9 @@ private:
   }
 
   Entries	m_entries;
-  DoneFns	m_startFns;
-  DoneFns	m_stopFns;
-  State::T	m_state = State::Empty;
   unsigned	m_next = 0;
-  bool		m_stopPending = false;
-  bool		m_restartPending = false;
-  bool		m_startFailed = false;
   bool		m_stopOK = true;
+  bool		m_rollback = false;
 };
 
 } // namespace Zhttp

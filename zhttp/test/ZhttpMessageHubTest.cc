@@ -12,6 +12,7 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/Zhttp.hh>
+#include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
 
@@ -35,7 +36,7 @@ struct State {
 
 template <typename Profile>
 struct RequestBuilder :
-  public Zhttp::MessageTraits<Profile>::template ReqBuilder<
+  public Zhttp::MessageTraits<Profile>::template Request<
     RequestBuilder<Profile>, ZhttpHeaders("content-length"),
     ZuTypeList<>, true, false> {
   template <typename L>
@@ -50,7 +51,7 @@ struct RequestBuilder :
 
 template <typename Profile>
 struct InfoBuilder :
-  public Zhttp::MessageTraits<Profile>::template ResBuilder<
+  public Zhttp::MessageTraits<Profile>::template Response<
     InfoBuilder<Profile>, ZhttpHeaders("x-test"),
     ZuTypeList<>, false, false> {
   unsigned status() { return 103; }
@@ -63,7 +64,7 @@ struct InfoBuilder :
 
 template <typename Profile>
 struct ResponseBuilder :
-  public Zhttp::MessageTraits<Profile>::template ResBuilder<
+  public Zhttp::MessageTraits<Profile>::template Response<
     ResponseBuilder<Profile>, ZhttpHeaders("x-test"),
     ZhttpHeaders("x-trailer"), true, true> {
   unsigned status() { return 200; }
@@ -83,9 +84,9 @@ template <typename Profile> struct ClientLink;
 
 template <typename Profile>
 struct ClientParser :
-  public Zhttp::MessageTraits<Profile>::template ResParser<
+  public Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser<Profile>, TestHeaders, Zhttp::DefltMaxBody> {
-  using Base = typename Zhttp::MessageTraits<Profile>::template ResParser<
+  using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser, TestHeaders, Zhttp::DefltMaxBody>;
   using State = typename Base::State;
 
@@ -144,7 +145,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
       return;
     }
     auto tx = link.transmit(request);
-    request.request(tx);
+    request.begin(tx);
     {
       auto body = request.body(tx, 5);
       body << ZuCSpan{"he"} << ZuCSpan{"llo"};
@@ -201,9 +202,9 @@ struct ServerSession {
   using Message = Zhttp::MessageTraits<Profile>;
 
   struct Parser :
-    public Message::template ReqParser<
+    public Message::template RequestParser<
       Parser, ZuTypeList<>, Zhttp::DefltMaxBody> {
-    using Base = typename Message::template ReqParser<
+    using Base = typename Message::template RequestParser<
       Parser, ZuTypeList<>, Zhttp::DefltMaxBody>;
     using State = typename Base::State;
 
@@ -246,12 +247,12 @@ struct ServerSession {
     {
       InfoBuilder<Profile> info;
       auto infoTx = link.transmit(info);
-      info.response(infoTx);
+      info.begin(infoTx);
       info.finish(infoTx);
     }
     ResponseBuilder<Profile> response;
     auto tx = link.transmit(response);
-    response.response(tx);
+    response.begin(tx);
     {
       auto body = response.body(tx);
       body << ZuCSpan{"pong"};
@@ -267,7 +268,7 @@ struct ServerSession {
 };
 
 template <typename Profile>
-struct Server : public Zhttp::Server<Server<Profile>, Profile> {
+struct Server : public Zhttp::ProtocolServer<Server<Profile>, Profile> {
   using Link = ServerLink<Profile>;
   State *state = nullptr;
 

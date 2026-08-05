@@ -103,6 +103,14 @@ struct BodyCommit {
   bool		final = false;
 };
 
+ZtEnumStruct(ZhttpAPI, ResponseOutcome, int8_t,
+  Success, BuildFailed, TxFailed, Reset, Cancelled);
+
+struct ResponseResult {
+  BodyCommit		body;
+  ResponseOutcome::T	outcome = ResponseOutcome::BuildFailed;
+};
+
 namespace Body {
 
 struct None {

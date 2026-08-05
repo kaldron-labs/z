@@ -17,11 +17,11 @@
 
 #include <zlib/ZmContext.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmRandom.hh>
 
 #include <zlib/ZhttpClientHub.hh>
 #include <zlib/ZhttpH3Cxn.hh>
-#include <zlib/ZhttpServer.hh>
 
 namespace Zhttp {
 
@@ -105,19 +105,54 @@ struct ClientStream;
 template <typename App>
 class ServerHub;
 
-struct CliLinkSlot {
+struct QueueSlot {
+  enum Kind : uint8_t { None, Pending, Waiting };
+  enum : uint32_t { Invalid = uint32_t(-1) };
+};
+
+struct CliLinkKey {
+  Zquic::Host	host;
+  ZiIP		remote;
+  uint16_t	port = 0;
+
+  friend bool operator ==(const CliLinkKey &l, const CliLinkKey &r) {
+    return l.port == r.port && l.host == r.host && l.remote == r.remote;
+  }
+  uint32_t hash() const {
+    return ZuHash<Zquic::Host>::hash(host) ^
+      ZuHash<ZiIP>::hash(remote) ^ uint32_t(port);
+  }
+};
+
+struct CliLinkEntry {
   using CloseFn = void (*)(void *);
   using DownFn = bool (*)(void *);
   using PrintDiagFn = void (*)(void *);
 
+  CliLinkKey		key;
   ZmContext		owner;
   CloseFn		close = nullptr;
   DownFn		down = nullptr;
   PrintDiagFn		printDiag = nullptr;
-  Zquic::Host		host;
-  ZiIP			remote;
-  uint16_t		port = 0;
 };
+
+struct CliLinkRetired {
+  using SlotFn = void (*)(void *, unsigned);
+
+  ZmContext	owner;
+  SlotFn	slot = nullptr;
+};
+
+inline const CliLinkKey &CliLinkEntry_KeyAxor(const CliLinkEntry &entry) {
+  return entry.key;
+}
+
+ZuDerive(CliLinkHash,
+  (ZmHash<CliLinkEntry,
+    ZmHashNode<CliLinkEntry,
+      ZmHashKey<CliLinkEntry_KeyAxor,
+	ZmHashLock<ZmNoLock,
+	  ZmHashHeapID<"Zhttp.H3.ClientLinks">>>>>));
 
 // App is incomplete while its CRTP base is instantiated.  ZmContext pins the
 // protocol-private link; the two function pointers are control-plane only.
@@ -130,9 +165,11 @@ public:
     ZmFn<void(bool), ZmFnHeapID<"Zhttp.H3.ClientStop">>;
   using StopFns =
     ZtArray<StopFn, ZtArrayHeapID<"Zhttp.H3.ClientStopFns">>;
-  using Links =
-    ZtArray<CliLinkSlot,
-      ZtArrayHeapID<"Zhttp.H3.ClientLinks">>;
+  using Retired =
+    ZtArray<CliLinkRetired,
+      ZtArrayHeapID<"Zhttp.H3.ClientRetired">>;
+
+  ClientHub() : m_links{new CliLinkHash} { }
 
   App *user() { return static_cast<App *>(this); }
   const App *user() const { return static_cast<const App *>(this); }
@@ -157,18 +194,13 @@ private:
       remote = ZuMv(remote), port
     ]() mutable {
       ZmRef<Link> link;
-      for (unsigned i = 0; i < m_links.length(); ++i) {
-	auto &slot = m_links[i];
-	auto candidate = slot.owner.object<Link>();
-	if (!candidate->down && slot.host == host &&
-	    slot.remote == remote && slot.port == port) {
-	  link = candidate;
-	  break;
-	}
-      }
+      CliLinkKey key{host, remote, port};
+      if (auto entry = m_links->findPtr(key))
+	link = entry->owner.object<Link>();
       if (!link) {
-	link = new Link{this, host, port};
-	m_links.push(CliLinkSlot{
+	link = new Link{this, host, port, remote};
+	m_links->add(CliLinkEntry{
+	  .key = key,
 	  .owner = link,
 	  .close = [](void *ptr) {
 		    // Hub shutdown must not wait behind an in-flight migration;
@@ -186,10 +218,7 @@ private:
 #else
 	    (void)ptr;
 #endif
-	  },
-	  .host = host,
-	  .remote = remote,
-	  .port = port
+	  }
 	});
 	link->add(ZuMv(logical));
 	link->connect(ZuMv(host), port, ZuMv(remote));
@@ -203,10 +232,9 @@ public:
   unsigned reconnFreq() const { return 0; }
 
   void printDiag() {
-    for (unsigned i = 0; i < m_links.length(); ++i) {
-      auto &slot = m_links[i];
-      slot.printDiag(slot.owner.object<void>());
-    }
+    auto i = m_links->iter();
+    while (auto entry = i())
+      entry->printDiag(entry->owner.object<void>());
   }
 
   bool stop() {
@@ -220,37 +248,69 @@ public:
       stopRx_(ZuMv(fn));
     });
   }
-  void linkDown() {
+  template <typename Link>
+  void linkDown(Link *link) {
+    if (link->retiredSlot != QueueSlot::Invalid) {
+      unsigned slot = link->retiredSlot;
+      unsigned last = m_retired.length() - 1;
+      ZmAssert(slot <= last);
+      if (slot != last) {
+	m_retired[slot] = ZuMv(m_retired[last]);
+	auto &moved = m_retired[slot];
+	moved.slot(moved.owner.object<void>(), slot);
+      }
+      m_retired.length(last);
+      link->retiredSlot = QueueSlot::Invalid;
+    }
     if (m_stopping && m_stopPending && !--m_stopPending)
       stopBase_();
   }
+  template <typename Link>
+  void removeLink(Link *link) {
+    if (!link->indexed) return;
+    CliLinkKey key{link->host, link->remote, link->port};
+    auto entry = m_links->del(key);
+    ZmAssert(entry && entry->owner.object<Link>() == link);
+    link->indexed = false;
+    link->retiredSlot = m_retired.length();
+    m_retired.push(CliLinkRetired{
+      .owner = ZuMv(entry->owner),
+      .slot = [](void *ptr, unsigned slot) {
+	static_cast<Link *>(ptr)->retiredSlot = slot;
+      }
+    });
+  }
   void final() {
     this->clearFaults();
-    m_links.length(0);
+    ZmAssert(!m_links->count_());
+    ZmAssert(!m_retired.length());
     Zquic::Client<ClientHub>::final();
   }
 
 private:
-  Links	m_links;
+  ZmRef<CliLinkHash>	m_links;
+  Retired		m_retired;
 
   void stopRx_(StopFn done) {
     m_stopFns.push(ZuMv(done));
     if (m_stopping) return;
     m_stopping = true;
     m_stopPending = 0;
-    for (unsigned i = 0; i < m_links.length(); ++i) {
-      auto &slot = m_links[i];
-      if (slot.down(slot.owner.object<void>())) continue;
-      ++m_stopPending;
+    {
+      auto i = m_links->iter();
+      while (auto entry = i()) {
+	if (entry->down(entry->owner.object<void>())) continue;
+	++m_stopPending;
+      }
     }
     if (!m_stopPending) {
       stopBase_();
       return;
     }
-    for (unsigned i = 0; i < m_links.length(); ++i) {
-      auto &slot = m_links[i];
-      if (slot.down(slot.owner.object<void>())) continue;
-      slot.close(slot.owner.object<void>());
+    auto i = m_links->iter();
+    while (auto entry = i()) {
+      if (entry->down(entry->owner.object<void>())) continue;
+      entry->close(entry->owner.object<void>());
     }
   }
 
@@ -295,13 +355,15 @@ struct ClientStream :
       return CxnStream::process(*this);
     if (!logical) return -1;
     int rc = logical->process_(rx);
-    if (rc >= 0 && this->rxComplete()) this->link()->remoteEnd(this);
+    if (rc < 0) return 0; // parser has scheduled a stream-local reset
+    if (this->rxComplete()) this->link()->remoteEnd(this);
     return rc;
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
 
   ZmRef<Logical>	logical;
+  uint32_t		slot = QueueSlot::Invalid;
   bool		localEnd = false;
   bool		remoteEnd = false;
   bool		closing = false;
@@ -324,8 +386,8 @@ struct CliLink :
     ZtArray<StreamRef, ZtArrayHeapID<"Zhttp.H3.ClientStreams">>;
   using Base::Base;
 
-  CliLink(Hub *app, Zquic::Host host_, uint16_t port_) :
-    Base{app}, host{ZuMv(host_)}, port{port_} { }
+  CliLink(Hub *app, Zquic::Host host_, uint16_t port_, ZiIP remote_) :
+    Base{app}, host{ZuMv(host_)}, remote{ZuMv(remote_)}, port{port_} { }
 
   unsigned txQueueMax() const {
     return this->app()->user()->quicConfig().maxQueuedFrames();
@@ -334,13 +396,13 @@ struct CliLink :
   void add(ZmRef<Logical> logical) {
     logical->native(ZmMkRef(this));
     if (!ready) {
-      pending.push(ZuMv(logical));
+      queue_(pending, pendingLive, QueueSlot::Pending, ZuMv(logical));
       return;
     }
     open(ZuMv(logical));
   }
   void open(ZmRef<Logical> logical) {
-    waiting.push(ZuMv(logical));
+    queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(logical));
     auto link = ZmMkRef(this);
     this->app()->txRun([link]() mutable {
       auto stream = link->stream(Zquic::StreamType::Duplex);
@@ -354,6 +416,7 @@ struct CliLink :
   }
   void opened(ZmRef<Logical> logical, StreamRef stream) {
     stream->logical = logical;
+    stream->slot = streams.length();
     streams.push(stream);
     logical->stream(stream.ptr());
     logical->connected_(ProfileTraits<H3QUIC>::apply({
@@ -397,10 +460,14 @@ struct CliLink :
   void h3Ready() {
     if (ready) return;
     ready = true;
-    unsigned n = pending.length();
-    for (unsigned i = 0; i < n; ++i)
-      open(ZuMv(pending[i]));
+    for (unsigned i = pendingHead; i < pending.length(); ++i) {
+      auto logical = ZuMv(pending[i]);
+      if (!logical) continue;
+      logical->h3QueueClear();
+      open(ZuMv(logical));
+    }
     pending.length(0);
+    pendingHead = pendingLive = 0;
   }
   void disconnected(bool peer) { closePeer = peer; }
   void migrationPromoted(const Zquic::MigrationResult &) {
@@ -422,43 +489,34 @@ struct CliLink :
     if (finalizing) return;
     finalizing = true;
     down = true;
+    this->app()->removeLink(this);
     for (unsigned i = 0; i < streams.length(); ++i) {
+      streams[i]->slot = QueueSlot::Invalid;
       auto logical = ZuMv(streams[i]->logical);
       if (logical) logical->disconnected_(closePeer);
     }
     streams.length(0);
-    for (unsigned i = 0; i < pending.length(); ++i) {
-      auto logical = ZuMv(pending[i]);
-      if (logical) logical->connectFailed_(false);
-    }
-    pending.length(0);
-    for (unsigned i = 0; i < waiting.length(); ++i) {
-      auto logical = ZuMv(waiting[i]);
-      if (logical) logical->connectFailed_(false);
-    }
-    waiting.length(0);
+    clearQueue_(pending, pendingHead, pendingLive,
+      [](Logical *logical) { logical->connectFailed_(false); });
+    clearQueue_(waiting, waitingHead, waitingLive,
+      [](Logical *logical) { logical->connectFailed_(false); });
     h3.qpackRxTable.final();
     auto link = ZmMkRef(this);
     this->app()->txRun([link]() mutable {
       link->h3Tx.final();
       link->app()->rxRun([link = ZuMv(link)]() mutable {
-	link->app()->linkDown();
+	link->app()->linkDown(link.ptr());
       });
     });
   }
   void connectFailed(bool transient) {
     auto self = ZmMkRef(this);
     down = true;
-    for (unsigned i = 0; i < pending.length(); ++i) {
-      auto logical = ZuMv(pending[i]);
-      if (logical) logical->connectFailed_(transient);
-    }
-    pending.length(0);
-    for (unsigned i = 0; i < waiting.length(); ++i) {
-      auto logical = ZuMv(waiting[i]);
-      if (logical) logical->connectFailed_(transient);
-    }
-    waiting.length(0);
+    this->app()->removeLink(this);
+    clearQueue_(pending, pendingHead, pendingLive,
+      [transient](Logical *logical) { logical->connectFailed_(transient); });
+    clearQueue_(waiting, waitingHead, waitingLive,
+      [transient](Logical *logical) { logical->connectFailed_(transient); });
     Base::disconnect();
   }
   void close(Logical *logical, Stream *stream) {
@@ -518,8 +576,7 @@ struct CliLink :
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical close outside Rx thread", return);
     if (!stream) {
-      if (!remove_(pending, logical.ptr()))
-	(void)remove_(waiting, logical.ptr());
+      removeQueued_(logical.ptr());
       logical->native({});
       logical->disconnected_(false);
       return;
@@ -527,11 +584,7 @@ struct CliLink :
     if (stream->logical.ptr() != logical.ptr()) return;
     (void)this->send(stream, "", true);
     stream->logical = nullptr;
-    for (unsigned i = 0; i < streams.length(); ++i)
-      if (streams[i].ptr() == stream.ptr()) {
-	streams.splice(i, 1);
-	break;
-      }
+    removeStream_(stream);
     logical->disconnected_(false);
   }
   void streamed(StreamRef stream) {
@@ -539,19 +592,34 @@ struct CliLink :
 	Zquic::StreamID::server(uint64_t(stream->id())) ||
 	Zquic::StreamID::uni(uint64_t(stream->id())))
       return;
-    if (!waiting) {
+    auto logical = shift_(waiting, waitingHead, waitingLive);
+    if (!logical) {
       (void)this->send(stream, "", true);
       return;
     }
-    auto logical = ZuMv(waiting[0]);
-    waiting.splice(0, 1);
     opened(ZuMv(logical), ZuMv(stream));
   }
-  void streamResetReceived(StreamRef stream, uint64_t, uint64_t) {
-    if (stream) (void)stream->process(stream->rxStream());
+  void streamResetReceived(StreamRef stream, uint64_t error, uint64_t) {
+    if (!stream) return;
+    (void)stream->process(stream->rxStream());
+    closeLater_(stream, true);
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->quicReset(error);
+    });
   }
-  void streamStopSendingReceived(StreamRef stream, uint64_t) {
-    if (stream) (void)stream->process(stream->rxStream());
+  void streamStopSendingReceived(StreamRef stream, uint64_t error) {
+    if (!stream) return;
+    (void)stream->process(stream->rxStream());
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->quicReset(error);
+    });
+  }
+  void h3StreamError(StreamRef stream, uint64_t error) {
+    closeLater_(stream, false);
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->stop(error);
+      stream->quicReset(error);
+    });
   }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
 
@@ -564,23 +632,90 @@ private:
     ]() mutable {
       if (!stream->logical) return;
       auto logical = ZuMv(stream->logical);
-      for (unsigned i = 0; i < link->streams.length(); ++i)
-	if (link->streams[i].ptr() == stream.ptr()) {
-	  link->streams.splice(i, 1);
-	  break;
-	}
+      link->removeStream_(stream);
       logical->disconnected_(peer);
     });
   }
 
   template <typename List>
-  static bool remove_(List &list, Logical *logical) {
-    for (unsigned i = 0; i < list.length(); ++i)
-      if (list[i].ptr() == logical) {
-	list.splice(i, 1);
-	return true;
-      }
-    return false;
+  static void queue_(List &list, unsigned &live, QueueSlot::Kind kind,
+      ZmRef<Logical> logical) {
+    logical->h3Queue(kind, list.length());
+    list.push(ZuMv(logical));
+    ++live;
+  }
+  template <typename List>
+  static void compact_(List &list, unsigned &head, unsigned live) {
+    if (!list.length() || uint64_t(live) * 2 > list.length()) return;
+    unsigned out = 0;
+    for (unsigned i = head; i < list.length(); ++i) {
+      if (!list[i]) continue;
+      if (out != i) list[out] = ZuMv(list[i]);
+      list[out]->h3QueueSlot(out);
+      ++out;
+    }
+    list.length(out);
+    head = 0;
+  }
+  template <typename List>
+  static ZmRef<Logical> shift_(
+      List &list, unsigned &head, unsigned &live) {
+    while (head < list.length() && !list[head]) ++head;
+    if (head == list.length()) {
+      list.length(0);
+      head = live = 0;
+      return {};
+    }
+    auto logical = ZuMv(list[head++]);
+    --live;
+    logical->h3QueueClear();
+    compact_(list, head, live);
+    return logical;
+  }
+  template <typename List, typename Fn>
+  static void clearQueue_(
+      List &list, unsigned &head, unsigned &live, Fn &&fn) {
+    for (unsigned i = head; i < list.length(); ++i) {
+      auto logical = ZuMv(list[i]);
+      if (!logical) continue;
+      logical->h3QueueClear();
+      fn(logical.ptr());
+    }
+    list.length(0);
+    head = live = 0;
+  }
+  void removeQueued_(Logical *logical) {
+    auto kind = logical->h3QueueKind();
+    unsigned slot = logical->h3QueueSlot();
+    switch (kind) {
+      case QueueSlot::Pending:
+	ZmAssert(slot < pending.length() && pending[slot].ptr() == logical);
+	pending[slot] = nullptr;
+	logical->h3QueueClear();
+	--pendingLive;
+	compact_(pending, pendingHead, pendingLive);
+	break;
+      case QueueSlot::Waiting:
+	ZmAssert(slot < waiting.length() && waiting[slot].ptr() == logical);
+	waiting[slot] = nullptr;
+	logical->h3QueueClear();
+	--waitingLive;
+	compact_(waiting, waitingHead, waitingLive);
+	break;
+      default:
+	break;
+    }
+  }
+  void removeStream_(Stream *stream) {
+    unsigned slot = stream->slot;
+    ZmAssert(slot < streams.length() && streams[slot].ptr() == stream);
+    unsigned last = streams.length() - 1;
+    if (slot != last) {
+      streams[slot] = ZuMv(streams[last]);
+      streams[slot]->slot = slot;
+    }
+    streams.length(last);
+    stream->slot = QueueSlot::Invalid;
   }
 
   void migrationComplete_() {
@@ -603,9 +738,16 @@ public:
   Waiting		waiting;
   Streams		streams;
   Zquic::Host		host;
+  ZiIP			remote;
   uint16_t		port = 0;
+  unsigned		pendingHead = 0;
+  unsigned		waitingHead = 0;
+  unsigned		pendingLive = 0;
+  unsigned		waitingLive = 0;
   bool			ready = false;
   bool			down = false;
+  bool			indexed = true;
+  unsigned		retiredSlot = QueueSlot::Invalid;
   bool			closePeer = false;
   bool			migrationRequested = false;
   bool			migrationDone = false;
@@ -667,9 +809,7 @@ public:
       .secure = true
     });
     if (!user()->admit(ci)) return {};
-    EndpointString remote;
-    remote << info.peer.ip();
-    return new Link{this, ZuMv(remote)};
+    return new Link{this, info.peer.ip(), info.peer.port()};
   }
 
 private:
@@ -695,13 +835,42 @@ struct ServerStream :
   using Logical = typename App::Link;
   using Base::Base;
 
+  ~ServerStream() {
+    completeFence_(ResponseOutcome::Cancelled);
+    completeTx_(ResponseOutcome::Cancelled);
+  }
+
+  void txComplete(Transport_::TxCompleteFn fn) {
+    if (this->txCompleted()) {
+      fn(this->error() == Zquic::StreamError::None ?
+	ResponseOutcome::Success : ResponseOutcome::Reset);
+      return;
+    }
+    m_txComplete = ZuMv(fn);
+  }
+  void txCancel() { m_txComplete = {}; }
+  bool txFence(Transport_::TxCompleteFn fn) {
+    if (m_txFence) return false;
+    m_txFence = ZuMv(fn);
+    if (this->txDrained()) completeFence_(ResponseOutcome::Success);
+    return true;
+  }
+  void txDrained_() { completeFence_(ResponseOutcome::Success); }
+  void txComplete_(bool ok) {
+    if (!ok) completeFence_(ResponseOutcome::Reset);
+    completeTx_(ok ? ResponseOutcome::Success : ResponseOutcome::Reset);
+  }
+
   int process(Zquic::RxStream &rx) {
     if (Zquic::StreamID::uni(uint64_t(this->id())))
       return CxnStream::process(*this);
     if (!logical) {
+      if (this->resetReceived() || (this->rxComplete() && !rx)) return 0;
       auto link = this->link();
       logical = new Logical{
-	link->app()->user(), link, this, link->remote};
+	link->app()->user(), link, this,
+	link->remoteIP, link->remotePort};
+      slot = link->logical.length();
       link->logical.push(ZmMkRef(this));
       logical->connected_(ProfileTraits<H3QUIC>::apply({
 	.alpn = "h3",
@@ -711,16 +880,37 @@ struct ServerStream :
       }));
     }
     int rc = logical->process_(rx);
-    if (rc >= 0 && this->rxComplete()) this->link()->remoteEnd(this);
+    if (rc < 0) return 0; // parser has scheduled a stream-local reset
+    if (this->rxComplete()) this->link()->remoteEnd(this);
     return rc;
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
 
+private:
+  void completeFence_(ResponseOutcome::T outcome) {
+    auto fn = ZuMv(m_txFence);
+    m_txFence = {};
+    if (fn) fn(outcome);
+  }
+  void completeTx_(ResponseOutcome::T outcome) {
+    auto fn = ZuMv(m_txComplete);
+    m_txComplete = {};
+    if (fn) fn(outcome);
+  }
+
+  Transport_::TxCompleteFn m_txFence;
+
+public:
+
   ZmRef<Logical>	logical;
+  uint32_t		slot = QueueSlot::Invalid;
   bool		localEnd = false;
   bool		remoteEnd = false;
   bool		closing = false;
+
+private:
+  Transport_::TxCompleteFn m_txComplete;
 };
 
 template <typename App>
@@ -740,8 +930,8 @@ struct SrvLink :
     return this->app()->user()->quicConfig().maxQueuedFrames();
   }
 
-  SrvLink(Hub *app, EndpointString remote_) :
-    Base{app}, remote{ZuMv(remote_)} { }
+  SrvLink(Hub *app, const ZiIP &remoteIP_, uint16_t remotePort_) :
+    Base{app}, remoteIP{remoteIP_}, remotePort{remotePort_} { }
 
   void connected(Zquic::Connected info) {
     if (info.version != Zquic::Version1 || info.alpn != "h3") {
@@ -773,9 +963,11 @@ struct SrvLink :
   void logicalDisconnected(bool peer) {
     if (notified) return;
     notified = true;
-    for (unsigned i = 0; i < logical.length(); ++i)
-      if (logical[i]->logical)
-	logical[i]->logical->disconnected_(peer);
+    for (unsigned i = 0; i < logical.length(); ++i) {
+      logical[i]->slot = QueueSlot::Invalid;
+      auto owner = ZuMv(logical[i]->logical);
+      if (owner) owner->disconnected_(peer);
+    }
     logical.length(0);
     h3.qpackRxTable.final();
     auto link = ZmMkRef(this);
@@ -787,11 +979,27 @@ struct SrvLink :
     });
   }
   void streamed(StreamRef) { }
-  void streamResetReceived(StreamRef stream, uint64_t, uint64_t) {
-    if (stream) (void)stream->process(stream->rxStream());
+  void streamResetReceived(StreamRef stream, uint64_t error, uint64_t) {
+    if (!stream) return;
+    (void)stream->process(stream->rxStream());
+    closeLater_(stream, true);
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->quicReset(error);
+    });
   }
-  void streamStopSendingReceived(StreamRef stream, uint64_t) {
-    if (stream) (void)stream->process(stream->rxStream());
+  void streamStopSendingReceived(StreamRef stream, uint64_t error) {
+    if (!stream) return;
+    (void)stream->process(stream->rxStream());
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->quicReset(error);
+    });
+  }
+  void h3StreamError(StreamRef stream, uint64_t error) {
+    closeLater_(stream, false);
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->stop(error);
+      stream->quicReset(error);
+    });
   }
   void finish(Stream *stream) {
     auto link = this;
@@ -838,13 +1046,21 @@ private:
     ]() mutable {
       if (!stream->logical) return;
       auto logical = ZuMv(stream->logical);
-      for (unsigned i = 0; i < link->logical.length(); ++i)
-	if (link->logical[i].ptr() == stream.ptr()) {
-	  link->logical.splice(i, 1);
-	  break;
-	}
+      link->removeLogical_(stream);
       logical->disconnected_(peer);
     });
+  }
+
+  void removeLogical_(Stream *stream) {
+    unsigned slot = stream->slot;
+    ZmAssert(slot < logical.length() && logical[slot].ptr() == stream);
+    unsigned last = logical.length() - 1;
+    if (slot != last) {
+      logical[slot] = ZuMv(logical[last]);
+      logical[slot]->slot = slot;
+    }
+    logical.length(last);
+    stream->slot = QueueSlot::Invalid;
   }
 
 public:
@@ -852,7 +1068,8 @@ public:
   alignas(Zm::CacheLineSize)
   H3Cxn		h3;
   Logical		logical;
-  EndpointString	remote;
+  ZiIP			remoteIP;
+  uint16_t		remotePort = 0;
   bool			notified = false;
 
   // Tx thread exclusive
@@ -911,6 +1128,7 @@ class ClientLink<App, Impl, H3QUIC> :
   using Hub = H3_::ClientHub<App>;
   using NativeLink = H3_::CliLink<App, Impl>;
   using NativeStream = H3_::ClientStream<App, Impl>;
+  using QueueSlot = H3_::QueueSlot;
 
 public:
   enum { TLS = 1, Multiplexed = 1 };
@@ -968,8 +1186,9 @@ public:
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackDecoderWrite(span);
       },
+      m_stream,
       [](void *ptr, uint64_t error) {
-	static_cast<H3Cxn *>(ptr)->error(error);
+	static_cast<NativeStream *>(ptr)->h3StreamError(error);
       },
       uint64_t(m_stream->id()), &m_native->h3.params);
     parser.extendedConnect(m_native->h3.localExtendedConnect);
@@ -1039,6 +1258,18 @@ public:
       m_stream = nullptr;
   }
   NativeLink *native() const { return m_native; }
+  void h3Queue(QueueSlot::Kind kind, uint32_t slot) {
+    ZmAssert(m_queueKind == QueueSlot::None);
+    m_queueKind = kind;
+    m_queueSlot = slot;
+  }
+  QueueSlot::Kind h3QueueKind() const { return m_queueKind; }
+  uint32_t h3QueueSlot() const { return m_queueSlot; }
+  void h3QueueSlot(uint32_t slot) { m_queueSlot = slot; }
+  void h3QueueClear() {
+    m_queueKind = QueueSlot::None;
+    m_queueSlot = QueueSlot::Invalid;
+  }
   void stream(NativeStream *stream) {
     m_stream = stream;
     if (m_stream) m_stream->txErrorFn(m_txErrorFn);
@@ -1073,6 +1304,8 @@ private:
   ZmRef<NativeLink>	m_native;
   NativeStream		*m_stream = nullptr;
   ZiTxErrorFn		m_txErrorFn;
+  uint32_t		m_queueSlot = QueueSlot::Invalid;
+  QueueSlot::Kind	m_queueKind = QueueSlot::None;
   bool			m_connected = false;
   bool			m_failed = false;
   bool			m_cancelled = false;
@@ -1125,8 +1358,10 @@ public:
   using Protocol = QUIC;
 
   ServerLink(
-    App *app, NativeLink *native, NativeStream *stream, ZuCSpan remote) :
-      m_app{app}, m_native{native}, m_stream{stream}, m_remote{remote}
+    App *app, NativeLink *native, NativeStream *stream,
+    const ZiIP &remoteIP, uint16_t remotePort) :
+      m_app{app}, m_native{native}, m_stream{stream},
+      m_remoteIP{remoteIP}, m_remotePort{remotePort}
   {
 #ifdef ZmObject_DEBUG
     this->ZmObject::debug();
@@ -1137,7 +1372,8 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  ZuCSpan remote() const { return m_remote; }
+  const ZiIP &remoteIP() const { return m_remoteIP; }
+  uint16_t remotePort() const { return m_remotePort; }
   Session &session() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
@@ -1154,8 +1390,9 @@ public:
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackDecoderWrite(span);
       },
+      m_stream,
       [](void *ptr, uint64_t error) {
-	static_cast<H3Cxn *>(ptr)->error(error);
+	static_cast<NativeStream *>(ptr)->h3StreamError(error);
       },
       uint64_t(m_stream->id()), &m_native->h3.params);
     parser.extendedConnect(m_native->h3.localExtendedConnect);
@@ -1174,11 +1411,22 @@ public:
       &m_native->h3.params);
     return m_stream->txStream();
   }
+  bool active() const { return m_native && m_stream; }
+  void txComplete(Transport_::TxCompleteFn fn) {
+    if (m_stream) m_stream->txComplete(ZuMv(fn));
+    else fn(ResponseOutcome::Cancelled);
+  }
+  void txCancel() {
+    if (m_stream) m_stream->txCancel();
+  }
+  bool txFence(Transport_::TxCompleteFn fn) {
+    return m_stream && m_stream->txFence(ZuMv(fn));
+  }
   void finish() {
     if (m_native && m_stream) m_native->finish(m_stream);
   }
   void disconnect() {
-    if (m_native) m_native->disconnect();
+    this->streamTxReset();
   }
 
   void connected_(ConnectedInfo info) {
@@ -1188,8 +1436,13 @@ public:
   void disconnected_(bool peer) {
     m_session.disconnected(*impl(), peer);
     m_app->disconnected(*impl(), peer);
-    m_native = nullptr;
-    m_stream = nullptr;
+    m_app->txRun([
+      logical = ZmMkRef(impl()), native = ZmMkRef(m_native),
+      stream = ZmMkRef(m_stream)]() mutable {
+      (void)native;
+      (void)stream;
+      logical->disconnectedTx_();
+    });
   }
   template <typename Rx>
   int process_(Rx &rx) {
@@ -1197,15 +1450,22 @@ public:
   }
 
 private:
+  void disconnectedTx_() {
+    if (m_stream) m_stream->txComplete_(false);
+    m_native = nullptr;
+    m_stream = nullptr;
+  }
+
   App			*m_app = nullptr;
   NativeLink		*m_native = nullptr;
   NativeStream		*m_stream = nullptr;
   Session		m_session;
-  EndpointString	m_remote;
+  ZiIP			m_remoteIP;
+  uint16_t		m_remotePort = 0;
 };
 
 template <typename App>
-class Server<App, H3QUIC> : public H3_::ServerHub<App> {
+class ProtocolServer<App, H3QUIC> : public H3_::ServerHub<App> {
 public:
   using Base = H3_::ServerHub<App>;
   using Traits = Transport_::Traits<QUIC>;

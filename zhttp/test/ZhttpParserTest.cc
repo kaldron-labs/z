@@ -163,6 +163,13 @@ struct RequestParser :
   BodyData			bodyData;
 };
 
+struct LimitedRequestParser :
+  public Zhttp::H1::Parser<
+    LimitedRequestParser, true, ZuTypeList<>, 1024, 16, 32> {
+  void complete(Zhttp::H1::ParserState::T) { ++completeCalls; }
+  unsigned completeCalls = 0;
+};
+
 void testSelectedHeaderValueSplitAcrossRxBuffers()
 {
   ZuTestScope(testSelectedHeaderValueSplitAcrossRxBuffers);
@@ -342,6 +349,10 @@ void testInvalidRequestMethod()
     ZuCHECK(parser.completeCalls == 1 &&
 	parser.completeState == Zhttp::H1::ParserState::Error,
       "invalid request method completion mismatch");
+    ZuCHECK(parser.error().code == Zhttp::RequestErrorCode::NotImplemented &&
+	parser.error().scope == Zhttp::RequestErrorScope::Connection &&
+	parser.error().responsePossible,
+      "invalid request method classification mismatch");
   };
 
   test(
@@ -352,6 +363,88 @@ void testInvalidRequestMethod()
     "GETX /bad HTTP/1.1\r\n"
     "host: example.com\r\n"
     "\r\n");
+}
+
+void testRequestErrorClassification()
+{
+  ZuTestScope(testRequestErrorClassification);
+
+  {
+    RequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf("GET / HTTP/9.9\r\n\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::VersionUnsupported &&
+	parser.error().scope == Zhttp::RequestErrorScope::Connection &&
+	parser.error().responsePossible,
+      "unsupported request version classification mismatch");
+    ZuCHECK(Zhttp::requestErrorStatus(parser.error().code) == 505,
+      "unsupported request version status mismatch");
+  }
+
+  {
+    RequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "POST / HTTP/1.1\r\n"
+      "content-length: 1025\r\n\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::ContentTooLarge &&
+	parser.error().scope == Zhttp::RequestErrorScope::Connection &&
+	parser.error().responsePossible,
+      "oversized request body classification mismatch");
+    ZuCHECK(Zhttp::requestErrorStatus(parser.error().code) == 413,
+      "oversized request body status mismatch");
+  }
+
+  {
+    RequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "POST / HTTP/1.1\r\n"
+      "transfer-encoding: unknown\r\n"
+      "content-length: 1025\r\n\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::NotImplemented,
+      "first request error was overwritten");
+    parser.reset();
+    ZuCHECK(parser.error().code == Zhttp::RequestErrorCode::Malformed &&
+	!parser.error().responsePossible,
+      "request error latch was not reset");
+  }
+
+  {
+    LimitedRequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf("GET /0123456789 HTTP/1.1\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::TargetTooLong &&
+	parser.error().scope == Zhttp::RequestErrorScope::Connection &&
+	parser.error().responsePossible,
+      "oversized H1 request target classification mismatch");
+  }
+
+  {
+    LimitedRequestParser parser;
+    RxStream stream;
+    stream.push(mkBuf(
+      "GET / HTTP/1.1\r\n"
+      "x-one: 1234567890\r\n"
+      "x-two: 1234567890\r\n\r\n"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::HeadersTooLarge &&
+	parser.error().scope == Zhttp::RequestErrorScope::Connection &&
+	parser.error().responsePossible,
+      "oversized H1 header section classification mismatch");
+  }
+
+  ZuCHECK(Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::Malformed) == 400 &&
+      Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::ContentTooLarge) == 413 &&
+      Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::TargetTooLong) == 414 &&
+      Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::HeadersTooLarge) == 431 &&
+      Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::NotImplemented) == 501 &&
+      Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::VersionUnsupported) == 505,
+    "standard request error status mapping mismatch");
 }
 
 void testEmptySelectedHeaderValues()
@@ -724,6 +817,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCanonicalContentLengthHeader);
   ZuTestCall(testRuntimeHeaderCallback);
   ZuTestCall(testInvalidRequestMethod);
+  ZuTestCall(testRequestErrorClassification);
   ZuTestCall(testEmptySelectedHeaderValues);
   ZuTestCall(testInvalidContentLengthValues);
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);

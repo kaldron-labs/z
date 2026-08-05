@@ -13,7 +13,7 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 
-#include <zlib/ZhttpService.hh>
+#include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpStream.hh>
 
 using namespace ZuTestUtil;
@@ -92,9 +92,9 @@ struct BodyLink : public LinkTx<Profile::HTTPVersion> {
 
 template <typename Message>
 struct BodyBuilder :
-  public Message::template ReqBuilder<
+  public Message::template Request<
     BodyBuilder<Message>, ZuTypeList<>, ZuTypeList<>, true, false> {
-  using Base = typename Message::template ReqBuilder<
+  using Base = typename Message::template Request<
     BodyBuilder, ZuTypeList<>, ZuTypeList<>, true, false>;
   using Base::body;
   uint64_t contentLength() const { return 1; }
@@ -321,7 +321,7 @@ using ContentLength = ZuStringT<"content-length">;
 using FixedHeaders = ZuTypeList<ContentLength, void>;
 
 struct TxBuilder :
-  public Zhttp::H1::ReqBuilder<
+  public Zhttp::H1::Request<
     TxBuilder, TxHeaders, ZuTypeList<>, true, true> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::POST, CustomTarget{}); }
@@ -334,7 +334,7 @@ struct TxBuilder :
 };
 
 struct FixedTxBuilder :
-  public Zhttp::H1::ReqBuilder<
+  public Zhttp::H1::Request<
     FixedTxBuilder, FixedHeaders, ZuTypeList<>, true, false> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::PUT, "/fixed-edge"); }
@@ -368,27 +368,18 @@ struct DuplicateHeaderApp {
 };
 
 template <typename T, typename = void>
-struct HasRequestStart : public ZuFalse { };
+struct HasBegin : public ZuFalse { };
 template <typename T>
-struct HasRequestStart<T, decltype(
-  ZuDeclVal<T &>().request(ZuDeclVal<TxLink::Stream &>()), void())> :
+struct HasBegin<T, decltype(
+  ZuDeclVal<T &>().begin(ZuDeclVal<TxLink::Stream &>()), void())> :
   public ZuTrue { };
 
-template <typename T, typename = void>
-struct HasResponseStart : public ZuFalse { };
-template <typename T>
-struct HasResponseStart<T, decltype(
-  ZuDeclVal<T &>().response(ZuDeclVal<TxLink::Stream &>()), void())> :
-  public ZuTrue { };
-
-using ReqFacade = Zhttp::H1::ReqBuilder<
+using ReqFacade = Zhttp::H1::Request<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
-using RespFacade = Zhttp::H1::ResBuilder<
+using RespFacade = Zhttp::H1::Response<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
-ZuAssert(HasRequestStart<ReqFacade>{});
-ZuAssert(!HasResponseStart<ReqFacade>{});
-ZuAssert(!HasRequestStart<RespFacade>{});
-ZuAssert(HasResponseStart<RespFacade>{});
+ZuAssert(HasBegin<ReqFacade>{});
+ZuAssert(HasBegin<RespFacade>{});
 
 void testBodyTx()
 {
@@ -396,7 +387,7 @@ void testBodyTx()
   TxLink link;
   TxBuilder builder;
   auto tx = link.transmit(builder);
-  ZuCHECK(builder.request(tx), "request header construction failed");
+  ZuCHECK(builder.begin(tx), "request header construction failed");
   auto body = builder.body(tx);
   body << "abcdefgh";
   body.flush();
@@ -430,7 +421,7 @@ void testFixedPatch()
 
   ZuCHECK(builder.patches.provision(builder.app),
     "fixed header provisioning failed");
-  ZuCHECK(builder.request(headerTx), "fixed request rendering failed");
+  ZuCHECK(builder.begin(headerTx), "fixed request rendering failed");
   auto body = builder.body(bodyTx, 200);
   for (unsigned i = 0; i < 200; ++i) body << 'x';
   body.flush();
@@ -526,7 +517,7 @@ void testHeaderAndRetainedLimits()
   Zhttp::RetainedTx headerTx{native, budget};
   Zhttp::RetainedTx bodyTx{native, budget};
   ZuCHECK(builder.patches.provision(builder.app) &&
-      builder.request(headerTx),
+      builder.begin(headerTx),
     "limited fixed request setup failed");
   auto body = builder.body(bodyTx, 5);
   body << "123456";
@@ -540,7 +531,7 @@ void testHeaderAndRetainedLimits()
   Zhttp::RetainedBudget messageBudget{.max = 8};
   Zhttp::RetainedTx messageTx{messageNative, messageBudget};
   ZuCHECK(messageBuilder.patches.provision(messageBuilder.app) &&
-      messageBuilder.request(messageTx) && !messageTx.seal() &&
+      messageBuilder.begin(messageTx) && !messageTx.seal() &&
       !messageLink.wire,
     "retained-message cap exposed a partial header block");
 }
@@ -683,13 +674,13 @@ void testParams()
 	qpackValid(),
     "H3 QPACK local-limit validation mismatch");
 
-  auto serviceQUIC = Zhttp::ServiceConfig{}.idleTimeout(7)
+  auto serverQUIC = Zhttp::ServerConfig{}.idleTimeout(7)
     .quic(Zhttp::QUICConfig{}).quicHubConfig();
-  auto explicitQUIC = Zhttp::ServiceConfig{}.idleTimeout(7)
+  auto explicitQUIC = Zhttp::ServerConfig{}.idleTimeout(7)
     .quic(Zhttp::QUICConfig{}.maxIdleTimeout(2500)).quicHubConfig();
-  ZuCHECK(serviceQUIC.maxIdleTimeout() == 7000 &&
+  ZuCHECK(serverQUIC.maxIdleTimeout() == 7000 &&
       explicitQUIC.maxIdleTimeout() == 2500,
-    "service idle timeout mapping mismatch");
+    "server idle timeout mapping mismatch");
 
   Zhttp::DiscoveryLimits limits{
     .maxRecords = 3, .maxHints = 5,
@@ -710,17 +701,17 @@ void testParams()
       client.discoveryLimits().maxAliasDepth == 2,
     "client discovery bounds mapping mismatch");
   ZuCHECK(
-    Zhttp::ServiceConfig{}.tlsConfig().policy() ==
+    Zhttp::ServerConfig{}.tlsConfig().policy() ==
       Zhttp::H2Policy::Prefer &&
-    Zhttp::ServiceConfig{}
+    Zhttp::ServerConfig{}
       .tls(Zhttp::H2Config{}.policy(Zhttp::H2Policy::Force))
       .tlsConfig().policy() == Zhttp::H2Policy::Force,
-    "service H2 policy mapping mismatch");
-  auto service = Zhttp::ServiceConfig{}
+    "server H2 policy mapping mismatch");
+  auto server = Zhttp::ServerConfig{}
     .retainedBodyMax(29).retainedMessageMax(31);
-  ZuCHECK(service.retainedBodyMax() == 29 &&
-      service.retainedMessageMax() == 31,
-    "service retained-message bounds mapping mismatch");
+  ZuCHECK(server.retainedBodyMax() == 29 &&
+      server.retainedMessageMax() == 31,
+    "server retained-message bounds mapping mismatch");
 }
 
 void testMetadata()

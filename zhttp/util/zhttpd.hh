@@ -34,10 +34,11 @@
 
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
 
 #include <zlib/Zhttp.hh>
-#include <zlib/ZhttpService.hh>
+#include <zlib/ZhttpServer.hh>
 
 ZfCLIConfig(CLI,
   (ZfCLI_ArrayFmt<ZfCLI::Delimited, ZfCLI_Delimiter<';'>>));
@@ -208,7 +209,20 @@ ZfStruct((Options, CLI),
   (((memDiag),         (CLI::Long<"mem-diag">)),                 (UInt32)),
   (((help),            (CLI::Flag<'h'>, CLI::Long<"help">)),     (Bool)));
 
-using RequestData = Zhttp::RequestInfo;
+struct RequestHeaders {
+  Zhttp::MessageString	host;
+  Zhttp::MessageString	authorization;
+  Zhttp::MessageString	range;
+  Zhttp::MessageString	ifModifiedSince;
+  Zhttp::MessageString	connection;
+  Zhttp::MessageString	referer;
+  Zhttp::MessageString	userAgent;
+};
+
+// Test/planner input.  Live server requests keep these two ownership groups
+// separate: core protocol metadata in LiveReq and selected headers in the
+// workload Request.
+struct RequestData : public Zhttp::RequestMeta, public RequestHeaders { };
 
 struct ResponsePlan {
   ResponsePlan() = default;
@@ -363,13 +377,17 @@ struct MimeMap {
 struct LogSink {
   bool init(const Options &) { return true; }
   void final() { }
-  void write(const RequestData &req, const ResponsePlan &resp, ZuCSpan remote) {
+  void write(
+      const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+      const ResponsePlan &resp, const ZiIP &remoteIP) {
     auto target = escapedTarget(req);
-    auto referer = escaped(req.referer);
-    auto userAgent = escaped(req.userAgent);
+    auto referer = escaped(headers.referer);
+    auto userAgent = escaped(headers.userAgent);
     auto date = logDate();
+    ZeString remote;
+    remote << remoteIP;
     ZiLOG(Info, "zhttpd.access", ([
-      remote = ZeString{remote}, date = ZuMv(date), target = ZuMv(target),
+      remote = ZuMv(remote), date = ZuMv(date), target = ZuMv(target),
       referer = ZuMv(referer), userAgent = ZuMv(userAgent), status = resp.status,
       length = resp.contentLength
     ](auto &s) mutable {
@@ -392,7 +410,7 @@ struct LogSink {
     return out;
   }
 
-  static ZeString escapedTarget(const RequestData &req) {
+  static ZeString escapedTarget(const Zhttp::RequestMeta &req) {
     if (req.target) return escaped(req.target);
     ZeString value;
     value << "protocol=" << req.protocol << " authority=" << req.authority <<
@@ -423,6 +441,8 @@ struct State {
   ZiFile		rootDir;
   ZiFile		rootFile;
   ZiFile::Stat		rootFileStat;
+  ZiMultiplex		*mx = nullptr;
+  unsigned		fileThread = 0;
   ZmAtomic<uint64_t>	requests = 0;
   ZmAtomic<uint64_t>	errors = 0;
 };
@@ -576,11 +596,16 @@ struct StaticPlanner {
   StaticPlanner(State *state_) : state{state_} { }
 
   ResponsePlan plan(const RequestData &req) const {
+    return plan(req, req);
+  }
+
+  ResponsePlan plan(
+      const Zhttp::RequestMeta &req, const RequestHeaders &headers) const {
     ResponsePlan resp;
     httpDate(resp.date, time(nullptr));
     if (!state->options.noServerID) resp.server = "zhttpd";
-    if (state->options.noKeepalive || ieq(req.connection, "close") ||
-	(req.http10 && !ieq(req.connection, "keep-alive"))) {
+    if (state->options.noKeepalive || ieq(headers.connection, "close") ||
+	(req.http10 && !ieq(headers.connection, "keep-alive"))) {
       resp.close = true;
       resp.connection = "close";
     }
@@ -596,18 +621,18 @@ struct StaticPlanner {
 
     if (state->options.forwardAll)
       return redirect(req, state->options.forwardAll, resp);
-    auto host = ZmScratch(
-      char, unsigned(req.host.length()) + 1, HdrString::VHeap);
-    if (state->options.forwards.length()) hostName(host, req.host);
+    auto host = ZmScratch(char,
+      unsigned(headers.host.length()) + 1, HdrString::VHeap);
+    if (state->options.forwards.length()) hostName(host, headers.host);
     for (unsigned i = 0; i < state->options.forwards.length(); ++i)
       if (host == state->options.forwards[i].host)
 	return redirect(req, state->options.forwards[i].url, resp);
     if (state->options.forwardHttps && !req.secure) {
       auto url = ZmScratch(char,
-	unsigned(req.host.length() + req.path().length() +
+	unsigned(headers.host.length() + req.path().length() +
 	  req.query().length()) + 10,
         HdrString::VHeap);
-      url << "https://" << req.host << req.path();
+      url << "https://" << headers.host << req.path();
       if (req.hasQuery) url << '?' << req.query();
       return redirect(req, url, resp, false);
     }
@@ -617,7 +642,7 @@ struct StaticPlanner {
         unsigned(ZuBase64::enclen(state->options.authUser.length() +
 	  state->options.authPass.length() + 1) + 7), HdrString::VHeap);
       basicAuthValue(expect, state->options);
-      if (!constTimeEqual(req.authorization, expect)) {
+      if (!constTimeEqual(headers.authorization, expect)) {
 	resp.status = 401;
 	resp.reason = "Unauthorized";
 	resp.wwwAuthenticate = "Basic realm=\"zhttpd\"";
@@ -653,12 +678,13 @@ struct StaticPlanner {
 	clean != "/")
       clean << '/';
 
-    if (state->options.singleFile) return singleFile(req, clean, resp);
-    return fileOrDir(req, clean, query, resp);
+    if (state->options.singleFile)
+      return singleFile(req, headers, clean, resp);
+    return fileOrDir(req, headers, clean, query, resp);
   }
 
   ResponsePlan redirect(
-    const RequestData &req, ZuCSpan base, ResponsePlan resp,
+    const Zhttp::RequestMeta &req, ZuCSpan base, ResponsePlan resp,
     bool appendTarget = true) const {
     resp.status = 301;
     resp.reason = "Moved Permanently";
@@ -689,7 +715,8 @@ struct StaticPlanner {
   }
 
   ResponsePlan singleFile(
-    const RequestData &req, ZuCSpan clean, ResponsePlan resp) const {
+    const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+    ZuCSpan clean, ResponsePlan resp) const {
     auto leaf = ZmScratch(char,
       unsigned(state->options.root.length()) + 2, HdrString::VHeap);
     leaf << '/' << ZiFile::leafname(state->options.root);
@@ -697,13 +724,13 @@ struct StaticPlanner {
     ZiFile file;
     if (file.dup(state->rootFile, ZiFile::GC) != Zi::OK)
       return error(resp, 403, "Forbidden", "Forbidden", req.method);
-    return regularFile(req, ZuMv(file), state->rootFileStat,
+    return regularFile(req, headers, ZuMv(file), state->rootFileStat,
       state->options.root, resp);
   }
 
   ResponsePlan fileOrDir(
-    const RequestData &req, ZuCSpan clean, ZuCSpan query,
-    ResponsePlan resp) const {
+    const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+    ZuCSpan clean, ZuCSpan query, ResponsePlan resp) const {
     ZiFile dir;
     if (openDir(clean, dir) == Zi::OK) {
       if (!clean || clean[clean.length() - 1] != '/') {
@@ -734,7 +761,8 @@ struct StaticPlanner {
 	      state->options.index)
 	    indexPath << '/';
 	  indexPath << state->options.index;
-	  return regularFile(req, ZuMv(index), stat, indexPath, resp);
+	  return regularFile(
+	    req, headers, ZuMv(index), stat, indexPath, resp);
 	}
       }
       if (state->options.noListing)
@@ -756,7 +784,7 @@ struct StaticPlanner {
       unsigned(state->options.root.length() + clean.length()) + 1,
       Zi::Path::VHeap);
     staticPath(path, state->options, clean);
-    return regularFile(req, ZuMv(file), stat, path, resp);
+    return regularFile(req, headers, ZuMv(file), stat, path, resp);
   }
 
   ResponsePlan notFound(ResponsePlan resp, Zhttp::Method::T method) const {
@@ -764,13 +792,13 @@ struct StaticPlanner {
   }
 
   ResponsePlan regularFile(
-    const RequestData &req, ZiFile file, const ZiFile::Stat &stat,
-    ZuCSpan path,
+    const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+    ZiFile file, const ZiFile::Stat &stat, ZuCSpan path,
     ResponsePlan resp) const {
     uint64_t size = stat.size;
     time_t mtime = stat.mtime ? stat.mtime.as_time_t() : time(nullptr);
     time_t ims;
-    if (parseHTTPDate(req.ifModifiedSince, ims) && mtime <= ims) {
+    if (parseHTTPDate(headers.ifModifiedSince, ims) && mtime <= ims) {
       resp.status = 304;
       resp.reason = "Not Modified";
       httpDate(resp.lastModified, mtime);
@@ -781,7 +809,7 @@ struct StaticPlanner {
 
     uint64_t first = 0, length = size;
     bool ranged = false, unsat = false;
-    parseRange(req.range, size, first, length, ranged, unsat);
+    parseRange(headers.range, size, first, length, ranged, unsat);
     if (unsat) {
       resp.status = 416;
       resp.reason = "Range Not Satisfiable";
@@ -905,7 +933,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan listing(
-    const RequestData &req, const Zi::Path &path,
+    const Zhttp::RequestMeta &req, const Zi::Path &path,
     ZuCSpan clean, ResponsePlan resp) const {
     struct Entry {
       HdrString name;

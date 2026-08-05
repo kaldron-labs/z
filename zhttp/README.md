@@ -63,7 +63,7 @@ configuration types; HTTP ALPN and mandatory H3 transport defaults are
 library-owned.  Native transport traits remain private implementation detail.
 For complete HTTP applications, `Zhttp::Client` owns client routing,
 discovery, pools, retries, redirects, fallback, and hub lifecycle, while
-`Zhttp::Service` owns server listeners, admission, sessions, message
+`Zhttp::Server` owns server listeners, admission, sessions, message
 selection, and hub lifecycle. Applications provide protocol configuration
 and message-typed application contracts:
 
@@ -138,13 +138,13 @@ client.final();
 ```
 
 ```c++
-using Service = Zhttp::Service<Workload>;
+using Server = Zhttp::Server<Workload>;
 
 Workload workload;
-Service service;
-service.init(
+Server server;
+server.init(
   Zhttp::HubConfig{&mx, "rx", "tx"},
-  Zhttp::ServiceConfig{}
+  Zhttp::ServerConfig{}
     .port(port)
     .tcp(Zhttp::TCPConfig{})
     .tls(Zhttp::H2Config{}
@@ -152,27 +152,36 @@ service.init(
       .policy(Zhttp::H2Policy::Prefer))
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
   &workload);
-service.start();
-// Workload::RequestParser is owned by one logical request. Its body(Rx &)
-// consumes request input; response(parser, emit) calls
-// emit(responseBuilder, completionToken). The Builder and token are moved to
-// Tx independently; complete(requestInfo, token, sent) returns the token to Rx.
+server.start();
+// Workload::Request is owned by one logical request. Its body(Rx &) consumes
+// request input; respond(meta, request, emit) synchronously emits one Response
+// on Tx. committed() reports local transport admission and completed() reports
+// the profile's terminal Tx outcome on Rx.  H1/H2 success means the final
+// native socket/TLS buffer completed locally; H3 success means the peer
+// acknowledged the stream FIN and all response bytes.  None of these events
+// is an application-level acknowledgement.
+// requestError(meta, request, error) chooses Continue or Disconnect for a
+// recoverable request-scope error; protocol-mandated stream/connection errors
+// are not offered to the application.
 // disconnected(transport) observes admission release on the owning Rx shard.
-service.stop([](bool) { /* shutdown continuation */ });
+server.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
-service.final();
+server.final();
 ```
 
 `Body::None` is allocation-free. `Body::Fixed` and `Body::OptionalFixed`
 retain the complete message while `bodyHdrs()` patches body-dependent header
-values. `ClientConfig` and `ServiceConfig` bound retained entity and complete
+values. `ClientConfig` and `ServerConfig` bound retained entity and complete
 message sizes with `retainedBodyMax()` and `retainedMessageMax()`; the fixed
 entity limit is additionally capped at `UINT_MAX`. `Body::Stream` and
-`Body::OptionalStream` release buffers as they
-fill; H1 maps them to chunked transfer encoding and H2/H3 map them to DATA and
-their native final boundary. Each retry creates a fresh Builder. Body-bearing
-requests are non-replayable by default; applications opt in only when the
-Builder can reproduce the source from byte zero.
+`Body::OptionalStream` release buffers as they fill; H1 maps them to chunked
+transfer encoding and H2/H3 map them to DATA and their native final boundary.
+Client stream writers remain synchronous.  A server streaming response exposes
+`next(max, done)`: each turn produces at most one pooled `ZiIOBuf`, and the
+server asks for the next turn only after Tx capacity is released.  Each retry
+creates a fresh Builder. Body-bearing requests are non-replayable by default;
+applications opt in only when the Builder can reproduce the source from byte
+zero.
 
 ```c++
 template <typename Emit>
@@ -200,23 +209,23 @@ void body(Rx &rx) {
 }
 ```
 
-The body emitter, writer, and late-header patchers are synchronous and
-callback-scoped. Incremental output comes from `ZiTxStream` buffer rollover,
-not a cursor or scheduler batch. A streamed file writer may read and write
-many spans inside its one call. The same bounded `ZiRxStream` contract is used
-by the server request Parser. The application may leave a trailing incomplete
+Client body emitters, writers, and late-header patchers are synchronous and
+callback-scoped. Server response selection is likewise synchronous, while an
+incremental response producer retains only its own continuation state and one
+pooled buffer per turn. The same bounded `ZiRxStream` contract is used by the
+server application `Request`. The application may leave a trailing incomplete
 application frame in that queue; later body appends prompt it again without
 copying or coalescing the retained spans. An application which needs
 contiguous storage owns that gather buffer. Headers precede body input,
 validated body completion precedes the exact-once terminal result, and no
 callback follows that result.
 `Result` reports request bytes produced, committed, reset, and discarded plus
-response bytes received, consumed, reset, and discarded. `RequestInfo`
+response bytes received, consumed, reset, and discarded. `RequestMeta`
 reports server-side request bytes received, consumed, reset, and discarded.
 These owner-shard counters are diagnostics; they do not gate production,
 parsing, or transport flow control and are not stable cross-shard snapshots.
 
-When TLS and QUIC are enabled together, `Service` emits the HTTP/3 Alt-Svc
+When TLS and QUIC are enabled together, `Server` emits the HTTP/3 Alt-Svc
 header on TLS responses. `altSvcMaxAge()` controls its lifetime; zero disables
 advertising. No HTTP/3 response branch belongs in the application.
 
@@ -266,9 +275,9 @@ protocol-independent:
 ```c++
 template <typename Profile>
 struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
-  struct ReqBuilder :
-    Zhttp::MessageTraits<Profile>::template ReqBuilder<
-      ReqBuilder, ZuTypeList<>, ZuTypeList<>, false, false> {
+  struct Request :
+    Zhttp::MessageTraits<Profile>::template Request<
+      Request, ZuTypeList<>, ZuTypeList<>, false, false> {
     template <typename L>
     void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
     template <typename L>
@@ -282,9 +291,11 @@ struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
   };
 
   void connected(Link &link, Zhttp::ConnectedInfo) {
-    ReqBuilder builder;
-    auto tx = link.transmit(builder);
-    if (builder.request(tx)) link.finish();
+    Request request;
+    auto tx = link.transmit(request);
+    request.begin(tx);
+    request.finish(tx);
+    link.finish();
   }
   template <typename Rx>
   int process(Link &link, Rx &rx) {
@@ -296,7 +307,7 @@ struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
 Servers use the corresponding `Zhttp::Server`, `Zhttp::ServerLink`, and
 `Zhttp::ServerSession` templates. Profiles such as `H1TCP`, `H1TLS`, `H2TLS`,
 and `H3QUIC` instantiate the same connection/message contract; only
-initialization configuration differs. The high-level `Client` and `Service`
+initialization configuration differs. The high-level `Client` and `Server`
 normally own these hubs:
 
 ```c++

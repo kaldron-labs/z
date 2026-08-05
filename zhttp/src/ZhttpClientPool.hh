@@ -40,6 +40,7 @@ public:
   using Pool = ClientPool;
   using Message = MessageTraits<Profile>;
   using Base = ClientHub<Pool, Profile>;
+  enum : unsigned { InvalidSlot = unsigned(-1) };
 
   struct Link :
     public ClientLink<Pool, Link, Profile_> {
@@ -96,6 +97,7 @@ public:
       });
     }
     void retire() {
+      pool()->detach(*this, m_request);
       m_request = nullptr;
       if (this->active())
 	close();
@@ -215,12 +217,20 @@ public:
   const Links &links() const { return m_links; }
 
   bool cancel(LiveReq *request) {
-    for (unsigned i = 0; i < m_links.length(); ++i)
-      if (m_links[i]->request() == request) {
-	m_links[i]->close();
-	return true;
-      }
-    return false;
+    if (!request) return false;
+    unsigned slot = request->poolSlot;
+    if (slot >= m_links.length() ||
+	m_links[slot]->request() != request) return false;
+    m_links[slot]->close();
+    return true;
+  }
+
+  void detach(Link &link, LiveReq *request) {
+    if (request && request->poolTransport == Message::Transport::ID &&
+	request->poolSlot == link.slot && request->poolLink == &link) {
+      request->poolSlot = InvalidSlot;
+      request->poolLink = nullptr;
+    }
   }
 
   ZmRef<Link> open(LiveReq *request, unsigned id) {
@@ -232,6 +242,9 @@ public:
 	  ++m_live;
 	  link->id = id;
 	  link->assign(request);
+	  request->poolTransport = Message::Transport::ID;
+	  request->poolSlot = link->slot;
+	  request->poolLink = link.ptr();
 	  link->start();
 	  return link;
 	}
@@ -246,6 +259,9 @@ public:
     m_links.push(link);
     ++m_live;
     link->assign(request);
+    request->poolTransport = Message::Transport::ID;
+    request->poolSlot = link->slot;
+    request->poolLink = link.ptr();
     link->start();
     return link;
   }
@@ -277,6 +293,9 @@ public:
 	if (i != --n) {
 	  m_links[i] = ZuMv(m_links[n]);
 	  m_links[i]->slot = i;
+	  if (auto request = m_links[i]->request())
+	    if (request->poolTransport == Message::Transport::ID)
+	      request->poolSlot = i;
 	}
 	m_links.length(n);
       });

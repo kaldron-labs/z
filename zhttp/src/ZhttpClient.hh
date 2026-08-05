@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmScheduler.hh>
@@ -119,6 +120,7 @@ public:
   struct LiveReq {
     // Valid while non-null; the Tx queue owns the request.
     Request		*request = nullptr;
+    void		*poolLink = nullptr;
     DiscoveryRequestRef	discovery;
     AttemptID		identity;
     AttemptRoute	route;
@@ -129,9 +131,11 @@ public:
     AttemptEvent::T	events = 0;
     ResultCode::T	terminal = -1;
     unsigned		slot = 0;
+    unsigned		poolSlot = unsigned(-1);
     unsigned		redirects = 0;
     unsigned		retries = 0;
     AttemptPhase::T	phase = AttemptPhase::Idle;
+    Transport::T	poolTransport = -1;
   };
 
   using TCPPool = ClientPool<
@@ -144,6 +148,18 @@ public:
     ZtArray<LiveReq, ZtArrayHeapID<"Zhttp.Client.LiveReqs">>;
   using Free =
     ZtArray<unsigned, ZtArrayHeapID<"Zhttp.Client.Free">>;
+  struct ActiveEntry {
+    typename Tx::Key	key;
+    unsigned		slot = 0;
+  };
+  static const typename Tx::Key &activeEntryKey_(
+      const ActiveEntry &entry) {
+    return entry.key;
+  }
+  using ActiveHash = ZmHash<ActiveEntry,
+    ZmHashKey<activeEntryKey_,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zhttp.Client.Active">>>>;
 
 private:
   template <typename Heap>
@@ -306,6 +322,7 @@ public:
 
   void final() {
     if (m_mx) stop();
+    ZmAssert(!m_activeReqs->count_());
     m_hubs.final();
     if (m_resolverOwned) {
       ZiResolver::stop();
@@ -705,23 +722,22 @@ private:
 
   void cancelActive_(typename Tx::Key key) {
     assertRx_();
-    for (unsigned i = 0; i < m_liveReqs.length(); ++i) {
-      auto &attempt = m_liveReqs[i];
-      if (!attempt.request || key_(attempt.request) != key) continue;
-      if (attempt.discovery) {
-	auto discovery = ZuMv(attempt.discovery);
-	completeAttempt_(attempt, ResultCode::Cancelled);
-	discovery->cancel();
-	return;
-      }
-      cancelTimer_(attempt);
-      attempt.terminal = ResultCode::Cancelled;
-      switch (attempt.protocol.transport) {
-	case Transport::TCP: (void)m_tcp.cancel(&attempt); break;
-	case Transport::TLS: (void)m_tls.cancel(&attempt); break;
-	case Transport::QUIC: (void)m_quic.cancel(&attempt); break;
-      }
+    auto active = m_activeReqs->findPtr(key);
+    if (!active || active->data().slot >= m_liveReqs.length()) return;
+    auto &attempt = m_liveReqs[active->data().slot];
+    ZmAssert(attempt.request && key_(attempt.request) == key);
+    if (attempt.discovery) {
+      auto discovery = ZuMv(attempt.discovery);
+      completeAttempt_(attempt, ResultCode::Cancelled);
+      discovery->cancel();
       return;
+    }
+    cancelTimer_(attempt);
+    attempt.terminal = ResultCode::Cancelled;
+    switch (attempt.protocol.transport) {
+      case Transport::TCP: (void)m_tcp.cancel(&attempt); break;
+      case Transport::TLS: (void)m_tls.cancel(&attempt); break;
+      case Transport::QUIC: (void)m_quic.cancel(&attempt); break;
     }
   }
 
@@ -740,6 +756,9 @@ private:
       return;
     }
     unsigned slot = m_free.pop();
+    auto key = key_(request);
+    ZmAssert(!m_activeReqs->findPtr(key));
+    m_activeReqs->add(ActiveEntry{key, slot});
     ++m_active;
     begin_(m_liveReqs[slot], request);
   }
@@ -785,6 +804,9 @@ private:
     attempt.failure = {};
     attempt.events = 0;
     attempt.terminal = -1;
+    attempt.poolLink = nullptr;
+    attempt.poolSlot = unsigned(-1);
+    attempt.poolTransport = -1;
     attempt.phase = AttemptPhase::Idle;
   }
 
@@ -1108,9 +1130,7 @@ private:
     auto key = key_(attempt.request);
     emit_(*attempt.request, result_(attempt, code));
     closing_(attempt);
-    idleAttempt_(attempt);
-    m_free.push(attempt.slot);
-    --m_active;
+    releaseAttempt_(attempt, key);
     link.retire();
     terminal_(key);
   }
@@ -1156,10 +1176,17 @@ private:
     auto key = key_(attempt.request);
     emit_(*attempt.request, result_(attempt, code));
     closing_(attempt);
-    idleAttempt_(attempt);
-    m_free.push(attempt.slot);
-    --m_active;
+    releaseAttempt_(attempt, key);
     terminal_(key);
+  }
+
+  void releaseAttempt_(LiveReq &attempt, typename Tx::Key key) {
+    unsigned slot = attempt.slot;
+    idleAttempt_(attempt);
+    auto active = m_activeReqs->del(key);
+    ZmAssert(active && active->data().slot == slot);
+    m_free.push(slot);
+    --m_active;
   }
 
   void stopIngress_() {
@@ -1229,6 +1256,7 @@ private:
   ZiTxErrorFn	m_txErrorFn;
   const DiscoveryResolver *m_resolverOps = nullptr;
   LiveReqs	m_liveReqs;
+  ZmRef<ActiveHash> m_activeReqs = new ActiveHash;
   RequestTimers	m_timers;
   Free		m_free;
   uint64_t	m_attemptID = 0;

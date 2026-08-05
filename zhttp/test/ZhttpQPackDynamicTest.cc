@@ -129,8 +129,8 @@ struct CaptureEncoder {
 };
 
 struct BuilderState :
-  public Zhttp::H3::ReqBuilder<BuilderState, BuilderHeaders> {
-  using Base = Zhttp::H3::ReqBuilder<BuilderState, BuilderHeaders>;
+  public Zhttp::H3::Request<BuilderState, BuilderHeaders> {
+  using Base = Zhttp::H3::Request<BuilderState, BuilderHeaders>;
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
@@ -808,8 +808,45 @@ void testParserFieldCallbacks()
   ZuCHECK(invalid.process(invalid) == Zhttp::H3::ParserState::Error &&
       invalid.operationOrder < invalid.headerOrder &&
       invalid.completeCalls == 1 &&
-      invalid.completeState == Zhttp::H3::ParserState::Error,
+      invalid.completeState == Zhttp::H3::ParserState::Error &&
+      invalid.error().code == Zhttp::RequestErrorCode::Malformed &&
+      invalid.error().scope == Zhttp::RequestErrorScope::Stream &&
+      !invalid.error().responsePossible,
     "post-operation H3 validation failure completes with an error");
+
+  ParserStream oversized;
+  Zhttp::H3::Header oversizedHeaders[] = {
+    {":method", "POST"},
+    {":scheme", "https"},
+    {":authority", "example.com"},
+    {":path", "/body"},
+    {"content-length", "1025"}
+  };
+  frame.length(0);
+  putHeadersFrame(frame,
+    ZuSpan<Zhttp::H3::Header>{oversizedHeaders, 5});
+  oversized.push(frame);
+  ZuCHECK(oversized.process(oversized) == Zhttp::H3::ParserState::Error &&
+      oversized.error().code == Zhttp::RequestErrorCode::ContentTooLarge &&
+      oversized.error().scope == Zhttp::RequestErrorScope::Request &&
+      oversized.error().responsePossible &&
+      Zhttp::requestErrorStatus(oversized.error().code) == 413,
+    "oversized H3 request classification mismatch");
+
+  ParserStream headersTooLarge;
+  headersTooLarge.params.maxHeaderListSize(1);
+  frame.length(0);
+  putHeadersFrame(frame,
+    ZuSpan<Zhttp::H3::Header>{oversizedHeaders, 5});
+  headersTooLarge.push(frame);
+  ZuCHECK(headersTooLarge.process(headersTooLarge) ==
+      Zhttp::H3::ParserState::Error &&
+      headersTooLarge.error().code ==
+	Zhttp::RequestErrorCode::HeadersTooLarge &&
+      headersTooLarge.error().scope == Zhttp::RequestErrorScope::Stream &&
+      !headersTooLarge.error().responsePossible &&
+      Zhttp::requestErrorStatus(headersTooLarge.error().code) == 431,
+    "oversized H3 header classification mismatch");
 
   ResponseParserStream response;
   Zhttp::H3::Header responseHeaders[] = {
@@ -1798,7 +1835,7 @@ void testBuilderPeerCapacity()
   BuilderState builder;
   builder.params.qpackTxCapacity(256);
   CaptureTxStream stream;
-  builder.request(stream);
+  builder.begin(stream);
   ZuCHECK(!builder.encoder.bytes.length() && !builder.tx.capacity() &&
       !builder.tx.insertCount(),
     "builder emitted dynamic QPACK before peer capacity");
@@ -1820,7 +1857,7 @@ void testBuilderPeerCapacity()
       dynamicBuilder.tx.peerCapacity(256),
     "builder tx max capacity setup failed");
   CaptureTxStream dynamicStream;
-  dynamicBuilder.request(dynamicStream);
+  dynamicBuilder.begin(dynamicStream);
   ZuCHECK(dynamicBuilder.encoder.bytes.length() &&
       dynamicBuilder.tx.capacity() == 256 &&
       dynamicBuilder.tx.insertCount() > 0,
@@ -1838,7 +1875,7 @@ void testBuilderCommitFailureAtomic()
       "capacity failure max setup failed");
     builder.encoder.failWrite = 0;
     CaptureTxStream stream;
-    builder.request(stream);
+    builder.begin(stream);
     ZuCHECK(txUnchanged(builder.tx),
       "capacity write failure changed tx state");
     ZuCHECK(builder.qpackFailure() ==
@@ -1852,7 +1889,7 @@ void testBuilderCommitFailureAtomic()
       "insert failure max setup failed");
     builder.encoder.failWrite = 1;
     CaptureTxStream stream;
-    builder.request(stream);
+    builder.begin(stream);
     ZuCHECK(txUnchanged(builder.tx),
       "insert write failure changed tx state");
     ZuCHECK(builder.qpackFailure() ==
@@ -1865,7 +1902,7 @@ void testBuilderCommitFailureAtomic()
     ZuCHECK(builder.tx.init(256, 16) && builder.tx.peerCapacity(256),
       "success max setup failed");
     CaptureTxStream stream;
-    builder.request(stream);
+    builder.begin(stream);
     ZuCHECK(builder.qpackFailure() == Zhttp::H3::QPackBuildFailure::None &&
 	builder.tx.capacity() == 256 && builder.tx.capacitySent &&
 	builder.tx.insertCount() > 0,
@@ -1883,20 +1920,20 @@ void testBuilderSectionFallback()
     "section fallback setup failed");
 
   CaptureTxStream first;
-  builder.request(first);
+  builder.begin(first);
   ZuCHECK(builder.tx.insertCount() &&
       builder.tx.insertCountIncrement(builder.tx.insertCount()),
     "section fallback dynamic table setup failed");
 
   builder.id = 3;
   CaptureTxStream second;
-  builder.request(second);
+  builder.begin(second);
   ZuCHECK(builder.tx.sectionCount() == 1,
     "section fallback did not occupy the configured section slot");
 
   builder.id = 5;
   CaptureTxStream third;
-  builder.request(third);
+  builder.begin(third);
   ZuCSpan payload;
   Zhttp::H3::EncodedFieldSectionPrefix prefix;
   ZuCHECK(headersPayload(third.bytes, payload) &&
@@ -1916,7 +1953,7 @@ void testBuilderQueryPath()
   builder.path = "/sample";
   builder.query = "q=1";
   CaptureTxStream stream;
-  builder.request(stream);
+  builder.begin(stream);
 
   ZuCSpan payload;
   ZuCHECK(headersPayload(stream.bytes, payload),
@@ -1932,7 +1969,7 @@ void testBuilderQueryPath()
   BuilderState custom;
   custom.customTarget = true;
   CaptureTxStream customStream;
-  custom.request(customStream);
+  custom.begin(customStream);
   ZuCHECK(headersPayload(customStream.bytes, payload),
     "custom printable target did not emit a valid HEADERS frame");
   sawPath = false;
@@ -1953,7 +1990,7 @@ void testBuilderExtendedConnect()
   disabled.path = "/stream";
   disabled.protocol_ = "opaque";
   CaptureTxStream disabledStream;
-  ZuCHECK(!disabled.request(disabledStream) && !disabledStream.bytes,
+  ZuCHECK(!disabled.begin(disabledStream) && !disabledStream.bytes,
     "H3 builder accepted Extended CONNECT without peer capability");
 
   BuilderState enabled;
@@ -1962,7 +1999,7 @@ void testBuilderExtendedConnect()
   enabled.protocol_ = "opaque";
   enabled.h3(nullptr, nullptr, nullptr, enabled.id, true);
   CaptureTxStream stream;
-  ZuCHECK(enabled.request(stream),
+  ZuCHECK(enabled.begin(stream),
     "H3 builder rejected negotiated Extended CONNECT");
   ZuCSpan payload;
   bool sawMethod = false, sawProtocol = false;
@@ -1983,7 +2020,7 @@ void testBuilderRuntimeHeaders()
   BuilderState builder;
   builder.runtimeHeader = true;
   CaptureTxStream stream;
-  builder.request(stream);
+  builder.begin(stream);
 
   ZuCSpan payload;
   ZuCHECK(headersPayload(stream.bytes, payload),
@@ -2004,7 +2041,7 @@ void testBuilderRuntimeHeaders()
       dynamicBuilder.tx.peerCapacity(256),
     "runtime header builder tx max capacity setup failed");
   CaptureTxStream dynamicStream;
-  dynamicBuilder.request(dynamicStream);
+  dynamicBuilder.begin(dynamicStream);
   ZuCHECK(dynamicBuilder.tx.find("server", "zhttp-runtime"),
     "runtime header was not planned through dynamic QPACK");
 }
@@ -2086,7 +2123,7 @@ void testBuilderStaticNamePrecedence()
   builder.tx.capacitySent = true;
 
   CaptureTxStream stream;
-  builder.request(stream);
+  builder.begin(stream);
   ZuCHECK(encoderNameRef(builder.encoder.bytes, "other", false),
     "QPACK encoder insertion displaced a static name with a dynamic name");
 
@@ -2117,7 +2154,7 @@ void testBuilderDynamicNameLookup()
     "dynamic name builder setup failed");
 
   CaptureTxStream first;
-  builder.request(first);
+  builder.begin(first);
   Zhttp::H3::QPackRxTable rx;
   ZuCHECK(rx.init(512) && applyEncoder(rx, builder.encoder.bytes) &&
       builder.tx.insertCountIncrement(builder.tx.insertCount()),
@@ -2127,7 +2164,7 @@ void testBuilderDynamicNameLookup()
   builder.id = 3;
   builder.runtimeValue = "two";
   CaptureTxStream second;
-  builder.request(second);
+  builder.begin(second);
   bool encoderDynamicName = false;
   ZuCHECK(applyEncoder(
       rx, builder.encoder.bytes, &encoderDynamicName) &&
@@ -2155,7 +2192,7 @@ void testBuilderDynamicNameLookup()
   ZuCHECK(denied.tx.init(512, 1) && denied.tx.peerCapacity(512),
     "dynamic name section-denial setup failed");
   CaptureTxStream establish;
-  denied.request(establish);
+  denied.begin(establish);
   ZuCHECK(denied.tx.insertCount() &&
       denied.tx.insertCountIncrement(denied.tx.insertCount()),
     "dynamic name section-denial table setup failed");
@@ -2163,14 +2200,14 @@ void testBuilderDynamicNameLookup()
   denied.id = 3;
   denied.runtimeValue = "two";
   CaptureTxStream tracked;
-  denied.request(tracked);
+  denied.begin(tracked);
   ZuCHECK(denied.tx.sectionCount() == 1,
     "dynamic name section was not tracked");
 
   denied.id = 5;
   denied.runtimeValue = "three";
   CaptureTxStream fallback;
-  denied.request(fallback);
+  denied.begin(fallback);
   Zhttp::H3::EncodedFieldSectionPrefix prefix;
   bool literal = false;
   ZuCHECK(headersPayload(fallback.bytes, payload) &&

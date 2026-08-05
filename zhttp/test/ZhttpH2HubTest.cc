@@ -12,6 +12,7 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/Zhttp.hh>
+#include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
 
@@ -32,7 +33,7 @@ struct State {
 };
 
 struct RequestBuilder :
-  public Zhttp::H2::ReqBuilder<RequestBuilder> {
+  public Zhttp::H2::Request<RequestBuilder> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
   template <typename L>
@@ -40,7 +41,7 @@ struct RequestBuilder :
 };
 
 struct StreamRequestBuilder :
-  public Zhttp::H2::ReqBuilder<StreamRequestBuilder,
+  public Zhttp::H2::Request<StreamRequestBuilder,
     ZuTypeList<>, ZuTypeList<>, true> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::CONNECT, "/stream"); }
@@ -51,7 +52,7 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H2::ResBuilder<
+  public Zhttp::H2::Response<
     ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   unsigned status() { return 200; }
   template <typename Key, typename L>
@@ -61,7 +62,7 @@ struct ResponseBuilder :
 };
 
 struct StreamResponseBuilder :
-  public Zhttp::H2::ResBuilder<StreamResponseBuilder> {
+  public Zhttp::H2::Response<StreamResponseBuilder> {
   unsigned status() { return 200; }
   bool streamResponse() { return true; }
 };
@@ -196,14 +197,14 @@ void Client::connected(Link &link, Zhttp::ConnectedInfo info)
   auto tx = link.txStream();
   if (link.parser.streamExpected) {
     StreamRequestBuilder builder;
-    if (!builder.request(tx)) {
+    if (!builder.begin(tx)) {
       ++state->errors;
       state->response.post();
       link.disconnect();
     }
   } else {
     RequestBuilder builder;
-    builder.request(tx);
+    builder.begin(tx);
     builder.finish(tx);
   }
 }
@@ -364,7 +365,7 @@ struct ServerSession {
 	streamResponse_ = true;
 	auto tx = link.txStream();
 	StreamResponseBuilder builder;
-	builder.response(tx);
+	builder.begin(tx);
       }
       if (parser.streamData) {
 	Zhttp::Stream{link}.txStream([this](auto &body) {
@@ -380,7 +381,7 @@ struct ServerSession {
       ++link.app()->state->errors;
     auto tx = link.txStream();
     ResponseBuilder builder;
-    builder.response(tx);
+    builder.begin(tx);
     auto body = builder.body(tx);
     body << ZuCSpan{"pong"};
     body.flush();
@@ -392,7 +393,7 @@ struct ServerSession {
   bool streamResponse_ = false;
 };
 
-struct Server : public Zhttp::Server<Server, Zhttp::H2TLS> {
+struct Server : public Zhttp::ProtocolServer<Server, Zhttp::H2TLS> {
   using Link = ServerLink;
   State *state = nullptr;
 
@@ -630,7 +631,7 @@ void SharedClient::connected(
   }
   auto tx = link.txStream();
   RequestBuilder builder;
-  builder.request(tx);
+  builder.begin(tx);
   builder.finish(tx);
 }
 

@@ -30,7 +30,7 @@ noinst_PROGRAMS = \
 	ZhttpTransportContractTest ZhttpH1HubTest ZhttpH3HubTest \
 	ZhttpH3PushTest ZhttpHubLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
 	ZhttpDiscoveryTest ZhttpClientCancelTest \
-	ZhttpRuntimeTest ZhttpServiceIdleTest ZhttpBoundaryTest
+	ZhttpRuntimeTest ZhttpServerIdleTest ZhttpBoundaryTest
 dist_noinst_SCRIPTS = ZhttpBoundaryFixture.sh
 dist_noinst_DATA = ZhttpJ2N100000HashTune.csv \
 	ZhttpJ2N100000HeapTune.csv
@@ -63,7 +63,7 @@ ZhttpAltSvcTest_SOURCES = ZhttpAltSvcTest.cc
 ZhttpDiscoveryTest_SOURCES = ZhttpDiscoveryTest.cc
 ZhttpClientCancelTest_SOURCES = ZhttpClientCancelTest.cc
 ZhttpRuntimeTest_SOURCES = ZhttpRuntimeTest.cc
-ZhttpServiceIdleTest_SOURCES = ZhttpServiceIdleTest.cc
+ZhttpServerIdleTest_SOURCES = ZhttpServerIdleTest.cc
 ZhttpBoundaryTest_SOURCES = ZhttpBoundaryTest.cc
 
 .PHONY: test

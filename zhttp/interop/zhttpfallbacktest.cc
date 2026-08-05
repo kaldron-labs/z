@@ -120,10 +120,10 @@ struct ResponseRx :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H1::ResBuilder<
+  public Zhttp::H1::Response<
     ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   using Base =
-    Zhttp::H1::ResBuilder<
+    Zhttp::H1::Response<
       ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true>;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
@@ -141,9 +141,9 @@ struct ResponseBuilder :
 using RequestBuilderHeaders =
   ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
 struct RequestBuilder :
-  public Zhttp::H1::ReqBuilder<RequestBuilder, RequestBuilderHeaders> {
+  public Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders> {
   using Base =
-    Zhttp::H1::ReqBuilder<RequestBuilder, RequestBuilderHeaders>;
+    Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders>;
 
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback"); }
@@ -276,7 +276,7 @@ pid_t startZhttpH1Server_(
 
   ResponseBuilder resp{responseBody.length()};
   BufTx tx{new IOBufAlloc{}};
-  resp.response(tx);
+  resp.begin(tx);
   tx << responseBody;
   resp.finish(tx);
   bool sent = sendAll_(fd, tx.buf->data(), tx.buf->length);
@@ -385,7 +385,7 @@ void testZhttpClientHttp11Fallback()
 
   RequestBuilder req;
   BufTx tx{new IOBufAlloc{}};
-  req.request(tx);
+  req.begin(tx);
   req.finish(tx);
   ZuCHECK(sendAll_(fd, tx.buf->data(), tx.buf->length),
     "Zhttp client fallback request send failed");

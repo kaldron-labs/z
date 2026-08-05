@@ -17,6 +17,8 @@
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>
 
+#include <zlib/ZmFn.hh>
+
 #include <zlib/ZhttpConfig.hh>
 
 namespace Zhttp {
@@ -28,14 +30,47 @@ enum {
   H1BufMax = 100<<20		// maximum configured HTTP body/buffer growth
 };
 
+using TxCompleteFn = ZmFn<void(ResponseOutcome::T),
+  ZmFnHeapID<"Zhttp.TxComplete">>;
+
+// The HTTP transports already retain the final wire buffer until the native
+// socket send completes.  Keep the response fence on that buffer rather than
+// building a parallel per-buffer tracker.
+struct TxBufNode : public ZiTxQueue::Node {
+  using Base = ZiTxQueue::Node;
+  using Base::Base;
+
+  ~TxBufNode() {
+    complete(ResponseOutcome::Cancelled);
+  }
+
+  void complete(ResponseOutcome::T outcome) {
+    auto fn = ZuMv(txComplete);
+    txComplete = {};
+    if (fn) fn(outcome);
+  }
+
+  TxCompleteFn txComplete;
+};
+
+inline TxBufNode *txBufNode(ZiIOBuf *buf)
+{
+  return static_cast<TxBufNode *>(buf);
+}
+
+inline const TxBufNode *txBufNode(const ZiIOBuf *buf)
+{
+  return static_cast<const TxBufNode *>(buf);
+}
+
 using TCPRxBufAlloc = Ztcp::RxBufAlloc<
   H1BufSize, H1BufMax, "Zhttp.TCP.Rx">;
-using TCPTxBufAlloc = Ztcp::TxBufAlloc<
-  H1BufSize, H1BufMax, "Zhttp.TCP.Tx">;
+using TCPTxBufAlloc = Zi::IOBufAlloc<
+  TxBufNode, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TCP.Tx">>;
 using TLSRxBufAlloc = Ztls::RxBufAlloc<
   H1BufSize, H1BufMax, "Zhttp.TLS.Rx">;
-using TLSTxBufAlloc = Ztls::TxBufAlloc<
-  H1BufSize, H1BufMax, "Zhttp.TLS.Tx">;
+using TLSTxBufAlloc = Zi::IOBufAlloc<
+  TxBufNode, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TLS.Tx">>;
 using H3TxBufAlloc = Zquic::StreamTxBufAlloc<
   Zquic::BufSize, ZiIOBuf_DefltMaxSize, "Zhttp.H3.Tx">;
 

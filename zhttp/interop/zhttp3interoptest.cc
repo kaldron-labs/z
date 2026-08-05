@@ -113,14 +113,14 @@ struct ResponseBody {
 
 template <typename Impl>
 struct H1ResponseBuilder_ :
-  public Zhttp::H1ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true> {
-  using Base = Zhttp::H1ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true>;
+  public Zhttp::H1Response<Impl, ResponseHeaders, ZuTypeList<>, true> {
+  using Base = Zhttp::H1Response<Impl, ResponseHeaders, ZuTypeList<>, true>;
 };
 
 template <typename Impl>
 struct H3ResponseBuilder_ :
-  public Zhttp::H3ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true> {
-  using Base = Zhttp::H3ResBuilder<Impl, ResponseHeaders, ZuTypeList<>, true>;
+  public Zhttp::H3Response<Impl, ResponseHeaders, ZuTypeList<>, true> {
+  using Base = Zhttp::H3Response<Impl, ResponseHeaders, ZuTypeList<>, true>;
 };
 
 template <template <typename> typename Builder_>
@@ -162,7 +162,7 @@ void sendH1Response(Stream &stream, ZuCSpan body)
 {
   auto tx = stream.txStream();
   H1ResponseBuilder builder{body};
-  builder.response(tx);
+  builder.begin(tx);
   if (body) {
     auto bodyTx = builder.body(tx);
     bodyTx << body;
@@ -195,7 +195,7 @@ void sendH3Response(Stream &stream, ZuCSpan body)
 	qpackEncoderWrite(span);
     };
     builder.streamID_ = uint64_t(ref->id());
-    builder.response(tx);
+    builder.begin(tx);
     if (body_) {
       auto bodyTx = builder.body(tx);
       bodyTx << ZuCSpan{body_};
@@ -218,10 +218,10 @@ template <typename Impl, bool H3>
 struct RequestParserBase_;
 template <typename Impl>
 struct RequestParserBase_<Impl, false> :
-  public Zhttp::H1ReqParser<Impl, RequestHeaders, (1<<20)> { };
+  public Zhttp::H1RequestParser<Impl, RequestHeaders, (1<<20)> { };
 template <typename Impl>
 struct RequestParserBase_<Impl, true> :
-  public Zhttp::H3ReqParser<Impl, RequestHeaders, (1<<20)> { };
+  public Zhttp::H3RequestParser<Impl, RequestHeaders, (1<<20)> { };
 
 template <bool H3>
 struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
@@ -269,10 +269,10 @@ template <typename Impl, bool H3>
 struct ResponseParserBase_;
 template <typename Impl>
 struct ResponseParserBase_<Impl, false> :
-  public Zhttp::H1ResParser<Impl, ResponseHeaders, (4<<20)> { };
+  public Zhttp::H1ResponseParser<Impl, ResponseHeaders, (4<<20)> { };
 template <typename Impl>
 struct ResponseParserBase_<Impl, true> :
-  public Zhttp::H3ResParser<Impl, ResponseHeaders, (4<<20)> { };
+  public Zhttp::H3ResponseParser<Impl, ResponseHeaders, (4<<20)> { };
 
 template <bool H3>
 struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
@@ -307,10 +307,10 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
 
 template <typename Impl>
 struct RequestBuilder_ :
-  public Zhttp::H1ReqBuilder<Impl, ZuTypeList<>, ZuTypeList<>, false> { };
+  public Zhttp::H1Request<Impl, ZuTypeList<>, ZuTypeList<>, false> { };
 template <typename Impl>
 struct RequestBuilderH3_ :
-  public Zhttp::H3ReqBuilder<Impl, ZuTypeList<>, ZuTypeList<>, false> { };
+  public Zhttp::H3Request<Impl, ZuTypeList<>, ZuTypeList<>, false> { };
 
 template <template <typename> typename Builder_>
 struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {
@@ -344,7 +344,7 @@ void sendH1Request(Stream &stream, ZuCSpan body)
 {
   auto tx = stream.txStream();
   H1RequestBuilder builder{body};
-  builder.request(tx);
+  builder.begin(tx);
   builder.finish(tx);
 }
 
@@ -366,13 +366,13 @@ void sendH3Request(Stream &stream, ZuCSpan body)
 	qpackEncoderWrite(span);
     };
     builder.streamID_ = uint64_t(ref->id());
-    builder.request(tx);
+    builder.begin(tx);
     builder.finish(tx);
     link->send_(ref, "", true);
   });
 }
 
-struct ServerState {
+struct ServerTest {
   ZmSemaphore	listening;
   ZmSemaphore	done;
   ZtString<>	body{"zhttp-ok"};
@@ -399,7 +399,7 @@ struct H1ServerLinkOps {
 struct TCPServer : public Ztcp::Server<TCPServer> {
   struct Link;
 
-  TCPServer(ServerState *state_) : state{state_} { }
+  TCPServer(ServerTest *state_) : state{state_} { }
 
   ZiConnection *accepted(const ZiCxnInfo &ci);
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
@@ -410,7 +410,7 @@ struct TCPServer : public Ztcp::Server<TCPServer> {
   }
   void listenFailed(bool) { state->errors = 1; state->done.post(); }
 
-  ServerState	*state = nullptr;
+  ServerTest	*state = nullptr;
 };
 
 struct TCPServer::Link :
@@ -450,7 +450,7 @@ struct TLSServer : public Ztls::Server<TLSServer> {
   using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 4<<20>;
   struct Link;
 
-  TLSServer(ServerState *state_) : state{state_} { }
+  TLSServer(ServerTest *state_) : state{state_} { }
 
   ZiConnection *accepted(const ZiCxnInfo &ci);
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
@@ -461,7 +461,7 @@ struct TLSServer : public Ztls::Server<TLSServer> {
   }
   void listenFailed(bool) { state->errors = 1; state->done.post(); }
 
-  ServerState	*state = nullptr;
+  ServerTest	*state = nullptr;
 };
 
 struct TLSServer::Link :
@@ -504,7 +504,7 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   using Link = H3ServerLink;
   using Stream = H3ServerStream;
 
-  H3Server(ServerState *state_) : state{state_} { }
+  H3Server(ServerTest *state_) : state{state_} { }
 
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   ZmRef<Link> link() const { return link_; }
@@ -516,7 +516,7 @@ struct H3Server : public Zquic::Server<H3Server, H3ServerLink> {
   }
   void listenFailed(bool) { state->errors = 1; state->done.post(); }
 
-  ServerState	*state = nullptr;
+  ServerTest	*state = nullptr;
   ZmRef<Link>	link_;
 };
 
@@ -1159,7 +1159,7 @@ bool curlHTTPSH1(unsigned port, ZuCSpan certPath, ZuCSpan expectedBody)
   return systemOK(::system(cmd.data()));
 }
 
-void printH3ServerState(ServerState &state)
+void printH3ServerTest(ServerTest &state)
 {
   std::cout <<
     "# h3 server state:"
@@ -1180,7 +1180,7 @@ void testCurlZhttpHttpServer()
 {
   ZuTestScope(testCurlZhttpHttpServer);
 
-  ServerState state;
+  ServerTest state;
   state.body = "server-http-ok";
   state.port = loopbackPort();
   ZuCHECK(state.port, "curl->Zhttp HTTP port allocation failed");
@@ -1216,7 +1216,7 @@ void testCurlZhttpHttpsH1Server()
   ZtString<> certPath, keyPath;
   ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "curl->Zhttp HTTPS/H1 certificate generation failed");
-  ServerState state;
+  ServerTest state;
   state.body = "server-h1-ok";
   state.port = loopbackPort();
   ZuCHECK(state.port, "curl->Zhttp HTTPS/H1 port allocation failed");
@@ -1255,7 +1255,7 @@ void testCurlZhttpHttpsH3Server()
   ZtString<> certPath, keyPath;
   ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "curl->Zhttp HTTPS/H3 certificate generation failed");
-  ServerState state;
+  ServerTest state;
   state.body = "server-h3-ok";
   ZiMultiplex mx(mxParams(true));
   bool mxStarted = mx.start();
@@ -1277,7 +1277,7 @@ void testCurlZhttpHttpsH3Server()
   ZuCHECK(waitDone(state.done), "curl->Zhttp HTTPS/H3 server timed out");
   if (state.errors || !state.request.complete ||
       state.request.method != Zhttp::Method::GET || state.request.path != Path)
-    printH3ServerState(state);
+    printH3ServerTest(state);
   ZuCHECK(!state.errors && state.request.complete &&
       state.request.method == Zhttp::Method::GET &&
       state.request.path == Path,

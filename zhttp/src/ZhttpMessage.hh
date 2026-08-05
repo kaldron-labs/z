@@ -62,9 +62,9 @@ class ClientMessage;
 
 namespace Zhttp {
 
-template <int> struct MessageVersion;
+template <int> struct HttpTraits;
 
-template <> struct MessageVersion<Version::H1> {
+template <> struct HttpTraits<Version::H1> {
   enum {
     ID = Version::H1,
     OneMessagePerLink = false,
@@ -73,23 +73,23 @@ template <> struct MessageVersion<Version::H1> {
 
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ReqParser = H1::Parser<Impl, true, Headers, MaxBody>;
+  using RequestParser = H1::Parser<Impl, true, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ResParser = H1::Parser<Impl, false, Headers, MaxBody>;
+  using ResponseParser = H1::Parser<Impl, false, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Chunked>
-  using ReqBuilder =
-    H1::ReqBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+  using Request =
+    H1::Request<Impl, Headers, Trailers, HasBody, Chunked>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Chunked>
-  using ResBuilder =
-    H1::ResBuilder<Impl, Headers, Trailers, HasBody, Chunked>;
+  using Response =
+    H1::Response<Impl, Headers, Trailers, HasBody, Chunked>;
 };
 
-template <> struct MessageVersion<Version::H2> {
+template <> struct HttpTraits<Version::H2> {
   enum {
     ID = Version::H2,
     OneMessagePerLink = true,
@@ -98,23 +98,23 @@ template <> struct MessageVersion<Version::H2> {
 
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ReqParser = H2::Parser<Impl, true, Headers, MaxBody>;
+  using RequestParser = H2::Parser<Impl, true, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ResParser = H2::Parser<Impl, false, Headers, MaxBody>;
+  using ResponseParser = H2::Parser<Impl, false, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using ReqBuilder =
-    H2::ReqBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using Request =
+    H2::Request<Impl, Headers, Trailers, HasBody, Streaming>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using ResBuilder =
-    H2::ResBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using Response =
+    H2::Response<Impl, Headers, Trailers, HasBody, Streaming>;
 };
 
-template <> struct MessageVersion<Version::H3> {
+template <> struct HttpTraits<Version::H3> {
   enum {
     ID = Version::H3,
     OneMessagePerLink = true,
@@ -123,25 +123,25 @@ template <> struct MessageVersion<Version::H3> {
 
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ReqParser = H3::Parser<Impl, true, Headers, MaxBody>;
+  using RequestParser = H3::Parser<Impl, true, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, uint64_t MaxBody>
-  using ResParser = H3::Parser<Impl, false, Headers, MaxBody>;
+  using ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using ReqBuilder =
-    H3::ReqBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using Request =
+    H3::Request<Impl, Headers, Trailers, HasBody, Streaming>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
-  using ResBuilder =
-    H3::ResBuilder<Impl, Headers, Trailers, HasBody, Streaming>;
+  using Response =
+    H3::Response<Impl, Headers, Trailers, HasBody, Streaming>;
 };
 
 template <typename Profile, typename Traits>
 struct MessageTraits :
-  public MessageVersion<Traits::HTTPVersion> {
+  public HttpTraits<Traits::HTTPVersion> {
   using Transport = typename Traits::Transport;
   enum { Multiplexed = Traits::Multiplexed };
 };
@@ -390,6 +390,167 @@ private:
   bool	m_valid = true;
 };
 
+// Shared compile-time outbound message mechanics.  Ops keeps request/response
+// accounting, failure, empty-body, and budget policy in the owning component.
+template <typename Message, typename Ops>
+class MessageTx {
+public:
+  MessageTx(Ops &ops) : m_ops{&ops} { }
+
+  template <typename Builder>
+  bool streaming(Builder &builder) {
+    auto &link = m_ops->link();
+    auto tx = link.transmit(builder);
+    bool emitted = false;
+    bool duplicate = false;
+    bool writerOK = false;
+    bool headersOK = false;
+    uint64_t produced = 0;
+    if constexpr (Builder::Optional) {
+      builder.emitBody([
+	this, &builder, &tx, &emitted, &duplicate, &writerOK,
+	&headersOK, &produced](auto &&write) {
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	if (!(headersOK = begin_(builder, tx))) return;
+	m_ops->headers();
+	auto body = builder.body(tx);
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	body.flush();
+	produced = body.produced();
+	m_ops->template produced<true>(produced);
+	if (!body.valid()) writerOK = false;
+	if (writerOK) builder.finish(tx);
+      });
+      if (!emitted) return m_ops->empty(builder.appBuilder());
+    } else {
+      if (!(headersOK = begin_(builder, tx)))
+	return m_ops->template fail<true>();
+      m_ops->headers();
+      builder.emitBody([
+	this, &builder, &tx, &emitted, &duplicate, &writerOK, &produced](
+	    auto &&write) {
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	auto body = builder.body(tx);
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	body.flush();
+	produced = body.produced();
+	m_ops->template produced<true>(produced);
+	if (!body.valid()) writerOK = false;
+      });
+      if (emitted && writerOK) builder.finish(tx);
+    }
+    if ((!Builder::Optional && !emitted) || duplicate || !writerOK ||
+	!headersOK)
+      return m_ops->template fail<true>();
+    if (!m_ops->complete(produced)) return false;
+    link.finish();
+    return true;
+  }
+
+  template <typename Builder>
+  bool fixed(Builder &builder) {
+    auto &link = m_ops->link();
+    auto native = link.transmit(builder);
+    if constexpr (Message::ID == Version::H2)
+      return fixedH2_(builder, native);
+    else {
+      if constexpr (Message::ID == Version::H3) builder.deferCompression();
+      RetainedBudget budget{.max = m_ops->retainedMax()};
+      RetainedTx headerTx{native, budget};
+      RetainedTx bodyTx{native, budget};
+      auto body = builder.body(bodyTx, m_ops->fixedBodyMax());
+      bool emitted = false;
+      bool duplicate = false;
+      bool writerOK = false;
+      bool headersOK = false;
+      builder.emitBody([
+	&builder, &headerTx, &body,
+	&emitted, &duplicate, &writerOK, &headersOK](auto &&write) {
+	(void)headerTx;
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	if (!(headersOK = builder.provision())) return;
+	if constexpr (Message::ID == Version::H1)
+	  if (!(headersOK = begin_(builder, headerTx))) return;
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+      });
+      body.flush();
+      if (emitted) {
+	builder.produced = body.produced();
+	m_ops->template produced<false>(builder.produced);
+      }
+      if ((!Builder::Optional && !emitted) || duplicate ||
+	  (emitted && (!headersOK || !writerOK || !body.valid())))
+	return m_ops->template fail<false>();
+      if (!emitted) return m_ops->empty(builder.appBuilder());
+      if (!builder.patch(builder.produced))
+	return m_ops->template fail<false>();
+      if constexpr (Message::ID != Version::H1)
+	if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
+      m_ops->headers();
+      builder.finish(bodyTx);
+      if (!headerTx.seal() || !bodyTx.seal())
+	return m_ops->template fail<false>();
+      headerTx.commit();
+      bodyTx.commit();
+      if (!m_ops->complete(builder.produced)) return false;
+      link.finish();
+      return true;
+    }
+  }
+
+private:
+  template <typename Builder, typename Tx>
+  static bool begin_(Builder &builder, Tx &tx) {
+    using R = decltype(builder.begin(tx));
+    if constexpr (ZuIsSame<R, void>{})
+      builder.begin(tx);
+    else if (!builder.begin(tx))
+      return false;
+    return builder.headersValid();
+  }
+
+  template <typename Builder, typename Tx>
+  bool fixedH2_(Builder &builder, Tx &tx) {
+    tx.defer(m_ops->retainedMax());
+    auto body = builder.body(tx, m_ops->fixedBodyMax());
+    bool emitted = false;
+    bool duplicate = false;
+    bool writerOK = false;
+    bool headersOK = false;
+    builder.emitBody([
+      &builder, &body, &emitted, &duplicate, &writerOK, &headersOK](
+	  auto &&write) {
+      if (emitted) { duplicate = true; return; }
+      emitted = true;
+      if (!(headersOK = builder.provision())) return;
+      writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+    });
+    body.flush();
+    if (emitted) {
+      builder.produced = body.produced();
+      m_ops->template produced<false>(builder.produced);
+    }
+    if ((!Builder::Optional && !emitted) || duplicate ||
+	(emitted && (!headersOK || !writerOK || !body.valid())))
+      return m_ops->template fail<false>();
+    if (!emitted) return m_ops->empty(builder.appBuilder());
+    if (!builder.patch(builder.produced) || !begin_(builder, tx))
+      return m_ops->template fail<false>();
+    m_ops->headers();
+    builder.finish(tx);
+    if (!tx.valid()) return m_ops->template fail<false>();
+    tx.commit();
+    if (!m_ops->complete(builder.produced)) return false;
+    m_ops->link().finish();
+    return true;
+  }
+
+  Ops	*m_ops;
+};
+
 // Protocol-neutral client message adapter.  App supplies request intent and
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
 // link completion remain library-owned.
@@ -504,12 +665,13 @@ private:
 
   template <bool HasBody, bool Streaming>
   struct Builder_ :
-    public Message::template ReqBuilder<
+    public Message::template Request<
       Builder_<HasBody, Streaming>,
       ReqHeaders, ReqTrailers, HasBody, Streaming>,
     public ReqOps {
-    using Base = typename Message::template ReqBuilder<
+    using Base = typename Message::template Request<
       Builder_, ReqHeaders, ReqTrailers, HasBody, Streaming>;
+    enum { Optional = ReqOptional };
 
     Builder_(
       Request &app_, bool suppressPads = false,
@@ -530,7 +692,7 @@ private:
   struct Parser;
 
   struct ParserSink_ {
-    using Protocol = typename Message::template ResParser<
+    using Protocol = typename Message::template ResponseParser<
       Parser, RespHeaders, RespBodyMax>;
     using State = typename Protocol::State;
 
@@ -567,10 +729,10 @@ private:
   };
 
   struct Parser :
-    public Message::template ResParser<
+    public Message::template ResponseParser<
       Parser, RespHeaders, RespBodyMax>,
     public ParserSink_ {
-    using Base = typename Message::template ResParser<
+    using Base = typename Message::template ResponseParser<
       Parser, RespHeaders, RespBodyMax>;
     using State = typename Base::State;
 
@@ -644,76 +806,54 @@ public:
 private:
   bool sendApp_(Request &app) {
     if constexpr (!ReqBody)
-      return send_<false, false>(app);
-    else if constexpr (ReqStreaming && ReqOptional)
-      return sendOptionalStreaming_(app);
+      return sendEmpty_(app);
     else if constexpr (ReqStreaming)
-      return send_<true, true>(app);
+      return sendStreaming_(app);
     else
       return sendFixed_(app);
   }
 
-  bool sendOptionalStreaming_(Request &app) {
+  struct TxOps {
+    ClientMessage *owner;
+
+    Link &link() { return *owner->m_link; }
+    uint64_t fixedBodyMax() const { return owner->fixedBodyMax_(); }
+    uint64_t retainedMax() const {
+      return owner->m_app->retainedMessageMax();
+    }
+    void headers() { owner->m_commit.headers = true; }
+    template <bool Streaming>
+    void produced(uint64_t n) {
+      owner->m_commit.produced = n;
+      if constexpr (Streaming) owner->m_commit.committed = n;
+    }
+    bool empty(Request &app) { return owner->sendEmpty_(app, true); }
+    template <bool Streaming>
+    bool fail() { return owner->template failFor_<Streaming>(); }
+    bool complete(uint64_t n) {
+      owner->m_commit.produced = n;
+      owner->m_commit.committed = n;
+      owner->m_commit.final = true;
+      owner->m_txState = TxState::Complete;
+      return true;
+    }
+  };
+
+  bool sendStreaming_(Request &app) {
     Builder_<true, true> builder{
       app, false, m_operationOK, m_requestMethod, m_requestTarget};
-    auto tx = m_link->transmit(builder);
-    bool emitted = false;
-    bool duplicate = false;
-    bool writerOK = false;
-    bool headersOK = false;
-    builder.emitBody([
-      this, &builder, &tx, &emitted, &duplicate, &writerOK, &headersOK]
-      (auto &&write) {
-      if (emitted) { duplicate = true; return; }
-      emitted = true;
-      if (!(headersOK = builder.request(tx) && builder.headersValid()))
-	return;
-      m_commit.headers = true;
-      auto body = builder.body(tx);
-      writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-      body.flush();
-      m_commit.produced = body.produced();
-      m_commit.committed = m_commit.produced;
-      if (!body.valid()) writerOK = false;
-      if (writerOK) builder.finish(tx);
-    });
-    if (duplicate || (emitted && (!headersOK || !writerOK)))
-      return failStreamedTx_();
-    if (!emitted)
-      return send_<false, false>(builder.appBuilder(), true);
-    m_link->finish();
-    m_commit.final = true;
-    m_txState = TxState::Complete;
-    return true;
+    TxOps ops{this};
+    return MessageTx<Message, TxOps>{ops}.streaming(builder);
   }
 
-  template <bool HasBody, bool Streaming>
-  bool send_(Request &app, bool suppressPads = false) {
-    Builder_<HasBody, Streaming> builder{
+  bool sendEmpty_(Request &app, bool suppressPads = false) {
+    Builder_<false, false> builder{
       app, suppressPads,
       m_operationOK, m_requestMethod, m_requestTarget};
     auto tx = m_link->transmit(builder);
-    if (!builder.request(tx) || !builder.headersValid())
-      return failFor_<Streaming>();
+    if (!builder.begin(tx) || !builder.headersValid())
+      return failTx_();
     m_commit.headers = true;
-    if constexpr (HasBody) {
-      auto body = builder.body(tx);
-      bool emitted = false;
-      bool duplicate = false;
-      bool writerOK = false;
-      builder.emitBody([&body, &emitted, &duplicate, &writerOK](auto &&write) {
-	if (emitted) { duplicate = true; return; }
-	emitted = true;
-	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-      });
-      body.flush();
-      m_commit.produced = emitted ? body.produced() : 0;
-      m_commit.committed = m_commit.produced;
-      if ((!ReqOptional && !emitted) || duplicate ||
-	  (emitted && (!writerOK || !body.valid())))
-	return failFor_<Streaming>();
-      if (emitted && !body.valid()) return failFor_<Streaming>();
-    }
     builder.finish(tx);
     m_link->finish();
     m_commit.final = true;
@@ -724,99 +864,8 @@ private:
   bool sendFixed_(Request &app) {
     Builder_<true, false> builder{
       app, false, m_operationOK, m_requestMethod, m_requestTarget};
-    auto native = m_link->transmit(builder);
-    if constexpr (Message::ID == Version::H2)
-      return sendFixedH2_(builder, native);
-    else {
-      if constexpr (Message::ID == Version::H3)
-	builder.deferCompression();
-      RetainedBudget budget{.max = m_app->retainedMessageMax()};
-      RetainedTx headerTx{native, budget};
-      RetainedTx bodyTx{native, budget};
-      auto body = builder.body(bodyTx, fixedBodyMax_());
-      bool emitted = false;
-      bool duplicate = false;
-      bool writerOK = false;
-      bool headersOK = false;
-      builder.emitBody([
-        &builder, &headerTx, &body,
-        &emitted, &duplicate, &writerOK, &headersOK]
-        (auto &&write) {
-	(void)headerTx;
-	if (emitted) { duplicate = true; return; }
-	emitted = true;
-	if (!(headersOK = builder.provision())) return;
-	if constexpr (Message::ID == Version::H1)
-	  if (!(headersOK =
-		builder.request(headerTx) && builder.headersValid())) return;
-	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-      });
-      body.flush();
-      if (emitted) {
-	builder.produced = body.produced();
-	m_commit.produced = builder.produced;
-      }
-      if ((!ReqOptional && !emitted) || duplicate ||
-	  (emitted && (!headersOK || !writerOK || !body.valid())))
-	return failTx_();
-      if (!emitted)
-	return send_<false, false>(builder.appBuilder(), true);
-      if (!body.valid()) return failTx_();
-      if (!builder.patch(builder.produced)) return failTx_();
-      if constexpr (Message::ID != Version::H1)
-	if (!builder.request(headerTx) || !builder.headersValid())
-	  return failTx_();
-      builder.finish(bodyTx);
-      if (!headerTx.seal() || !bodyTx.seal()) return failTx_();
-      headerTx.commit();
-      bodyTx.commit();
-      m_link->finish();
-      m_commit.headers = true;
-      m_commit.committed = m_commit.produced;
-      m_commit.final = true;
-      m_txState = TxState::Complete;
-      return true;
-    }
-  }
-
-  template <typename Builder, typename Tx>
-  bool sendFixedH2_(Builder &builder, Tx &tx) {
-    tx.defer(m_app->retainedMessageMax());
-    auto body = builder.body(tx, fixedBodyMax_());
-    bool emitted = false;
-    bool duplicate = false;
-    bool writerOK = false;
-    bool headersOK = false;
-    builder.emitBody([
-      &builder, &body, &emitted, &duplicate, &writerOK, &headersOK]
-      (auto &&write) {
-      if (emitted) { duplicate = true; return; }
-      emitted = true;
-      if (!(headersOK = builder.provision())) return;
-      writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-    });
-    body.flush();
-    if (emitted) {
-      builder.produced = body.produced();
-      m_commit.produced = builder.produced;
-    }
-    if ((!ReqOptional && !emitted) || duplicate ||
-	(emitted && (!headersOK || !writerOK || !body.valid())))
-      return failTx_();
-    if (!emitted)
-	return send_<false, false>(builder.appBuilder(), true);
-    if (!body.valid()) return failTx_();
-    if (!builder.patch(builder.produced)) return failTx_();
-    if (!builder.request(tx) || !builder.headersValid()) return failTx_();
-    m_commit.headers = true;
-    builder.finish(tx);
-    if (!tx.valid()) return failTx_();
-    tx.commit();
-    m_link->finish();
-    m_commit.committed = m_commit.produced;
-    m_commit.final = true;
-    m_txState = TxState::Complete;
-    return true;
+    TxOps ops{this};
+    return MessageTx<Message, TxOps>{ops}.fixed(builder);
   }
 
 public:

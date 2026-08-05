@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Zhttp Service HTTP/3 idle-expiry test
+// Zhttp Server HTTP/3 idle-expiry test
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -15,18 +15,23 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
-#include <zlib/ZhttpService.hh>
+#include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
-namespace ZhttpServiceIdleTest_ {
+namespace ZhttpServerIdleTest_ {
+
+using ProducerDone = ZmFn<void(ZmRef<ZiIOBuf>, bool),
+  ZmFnHeapID<"Zhttp.Server.BodyChunk">>;
 
 struct State {
   ZmSemaphore	listening;
   ZmSemaphore	admitted;
   ZmSemaphore	connected;
+  ZmSemaphore	requestStarted;
+  ZmSemaphore	producerStarted;
   ZmSemaphore	disconnected;
   ZmSemaphore	released;
   ZmSemaphore	stopped;
@@ -34,15 +39,20 @@ struct State {
   ZmAtomic<unsigned> releaseCount = 0;
   ZmAtomic<unsigned> stopCount = 0;
   ZmAtomic<unsigned> stopBeforeRelease = 0;
+  ZmAtomic<unsigned> completedCount = 0;
   uint16_t	port = 0;
   int8_t	expectedTransport = Zhttp::Transport::QUIC;
   bool		openRequest = false;
+  bool		asyncResponse = false;
+  ProducerDone	producerDone;
 
   void fail() {
     errors = 1;
     listening.post();
     admitted.post();
     connected.post();
+    requestStarted.post();
+    producerStarted.post();
     disconnected.post();
     released.post();
     stopped.post();
@@ -59,20 +69,45 @@ struct Workload {
     template <typename L> void header(L &&) const { }
     bool close() const { return false; }
   };
-  struct RequestParser {
+  struct Request {
     using Headers = ZuTypeList<>;
     static constexpr uint64_t BodyMax = 1024;
-    void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+    void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) {
+      if (state) state->requestStarted.post();
+    }
     void version(ZuBSpan) { }
     void contentLength(uint64_t) { }
     void chunked() { }
     template <typename Key> void header(ZuBSpan) { }
     template <typename Rx> void body(Rx &rx) { Zhttp::bodyDrain(rx); }
     void complete(bool) { }
+
+    State *state = nullptr;
+  };
+  struct AsyncResponse {
+    using Headers = ZuTypeList<>;
+    using BodyPolicy = Zhttp::Body::Stream;
+    unsigned status() const { return 200; }
+    template <typename L> void reason(L &&l) const { l("OK"); }
+    template <typename Key, typename L> void header(L &&) const { }
+    template <typename L> void header(L &&) const { }
+    bool close() const { return false; }
+    template <typename Done>
+    void next(unsigned, Done done) {
+      state->producerDone = ProducerDone{ZuMv(done)};
+      state->producerStarted.post();
+    }
+
+    State *state = nullptr;
   };
 
   Workload(State *state_) : state{state_} { }
-  RequestParser requestParser() { return {}; }
+  Request request() { return {state}; }
+  Zhttp::RequestDisposition::T requestError(
+    const Zhttp::RequestMeta &, Request &,
+    const Zhttp::RequestError &) {
+    return Zhttp::RequestDisposition::Disconnect;
+  }
 
   void listening(int8_t transport, uint16_t port) {
     if (transport != state->expectedTransport || port != state->port)
@@ -97,17 +132,31 @@ struct Workload {
   }
 
   template <typename Emit>
-  void response(const Zhttp::RequestInfo &, RequestParser &, Emit &&emit) {
+  void respond(const Zhttp::RequestMeta &, Request &, Emit &&emit) {
+    if (state->asyncResponse) {
+      emit(AsyncResponse{state});
+      return;
+    }
     state->fail();
-    emit(Response{}, false);
+    emit(Response{});
   }
-  void complete(const Zhttp::RequestInfo &, bool &, bool) { }
+  void committed(
+    const Zhttp::RequestMeta &, Request &, const Zhttp::BodyCommit &) { }
+  void completed(
+    const Zhttp::RequestMeta &, Request &,
+    const Zhttp::ResponseResult &result) {
+    if (!state->openRequest) return;
+    auto expected = state->asyncResponse ?
+      Zhttp::ResponseOutcome::Cancelled : Zhttp::ResponseOutcome::Reset;
+    if (result.outcome != expected) state->fail();
+    ++state->completedCount;
+  }
   bool close(const Response &) const { return false; }
 
   State	*state;
 };
 
-using Service = Zhttp::Service<Workload>;
+using Server = Zhttp::Server<Workload>;
 
 template <typename Profile>
 struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
@@ -115,9 +164,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     ZuStringT<"content-length">, void>;
 
   struct Builder :
-    public Zhttp::MessageTraits<Profile>::template ReqBuilder<
+    public Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, ZuTypeList<>, true, false> {
-    using Base = typename Zhttp::MessageTraits<Profile>::template ReqBuilder<
+    using Base = typename Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, ZuTypeList<>, true, false>;
 
     template <typename L>
@@ -143,7 +192,14 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     if (state->openRequest) {
       Builder builder;
       auto tx = link.transmit(builder);
-      builder.request(tx);
+      builder.begin(tx);
+      if (state->asyncResponse) {
+	auto body = builder.body(tx, 1);
+	body << 'x';
+	body.flush();
+	builder.finish(tx);
+	link.finish();
+      }
     }
   }
   void disconnected(Link &, bool) {
@@ -176,7 +232,7 @@ void idle()
   ZuTestScope(idle);
 
   Zhttp::Test::TempDir temp;
-  bool tempOK = temp.init("ZhttpServiceIdle");
+  bool tempOK = temp.init("ZhttpServerIdle");
   ZuCHECK(tempOK, "create temporary directory");
   if (!tempOK) return;
   ZtString<> cert, key;
@@ -197,19 +253,19 @@ void idle()
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   Workload workload{&state};
-  Service service;
+  Server server;
   auto serverQUIC = Zhttp::QUICConfig{}.certPath(cert).keyPath(key);
-  auto serviceConfig = Zhttp::ServiceConfig()
+  auto serverConfig = Zhttp::ServerConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port)
     .idleTimeout(1).quic(ZuMv(serverQUIC));
-  bool serviceInited =
-    service.init(hub, ZuMv(serviceConfig), &workload);
-  ZuCHECK(serviceInited, "initialize service");
-  bool serviceUp = serviceInited && service.start();
-  ZuCHECK(serviceUp, "start service");
-  bool listening = serviceUp &&
+  bool serverInited =
+    server.init(hub, ZuMv(serverConfig), &workload);
+  ZuCHECK(serverInited, "initialize server");
+  bool serverUp = serverInited && server.start();
+  ZuCHECK(serverUp, "start server");
+  bool listening = serverUp &&
     state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "service listens for HTTP/3");
+  ZuCHECK(listening, "server listens for HTTP/3");
 
   Client<Zhttp::H3QUIC> client{&state};
   bool clientInited = listening && client.init(
@@ -228,36 +284,37 @@ void idle()
     bool connected = state.connected.timedwait(Zm::now(10)) == 0;
     ZuCHECK(connected, "establish idle HTTP/3 logical link");
     if (connected) {
-      ZuCHECK(service.active() == 1,
-	"service accounts for active H3 link");
+      ZuCHECK(server.activeConnections() == 1,
+	"server accounts for active H3 link");
       ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
 	"QUIC transport idle timeout disconnects client");
       ZuCHECK(state.released.timedwait(Zm::now(10)) == 0,
-	"service reports idle H3 admission release");
-      ZuCHECK(!service.active(), "idle H3 link releases service admission");
+	"server reports idle H3 admission release");
+      ZuCHECK(!server.activeConnections(),
+	"idle H3 link releases server admission");
     }
   }
 
   link = nullptr;
   bool clientStopped = !clientInited || client.stop();
   ZuCHECK(clientStopped, "stop client after idle expiry");
-  bool serviceStopped = !serviceInited || service.stop();
-  ZuCHECK(serviceStopped, "stop service after idle expiry");
+  bool serverStopped = !serverInited || server.stop();
+  ZuCHECK(serverStopped, "stop server after idle expiry");
   if (clientInited) client.final();
-  if (serviceInited) service.final();
+  if (serverInited) server.final();
   ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
   ZuCHECK(!state.errors.load_(), "idle expiry has no transport error");
 }
 
-template <typename Profile>
+template <typename Profile, bool Async = false, bool Limit = false>
 void activeStop()
 {
   ZuTestScope(activeStop);
 
   Zhttp::Test::TempDir temp;
-  bool tempOK = temp.init("ZhttpServiceStop");
+  bool tempOK = temp.init("ZhttpServerStop");
   ZuCHECK(tempOK, "create temporary directory");
   if (!tempOK) return;
   ZtString<> cert, key;
@@ -271,6 +328,7 @@ void activeStop()
   using Protocol = typename HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
+  state.asyncResponse = Async;
   ZuCHECK(state.port, "allocate loopback port");
   if (!state.port) return;
 
@@ -281,26 +339,27 @@ void activeStop()
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   Workload workload{&state};
-  Service service;
-  auto serviceConfig = Zhttp::ServiceConfig()
-    .localIP(ZiIP{"127.0.0.1"}).port(state.port);
+  Server server;
+  auto serverConfig = Zhttp::ServerConfig()
+    .localIP(ZiIP{"127.0.0.1"}).port(state.port)
+    .maxRequests(1).retainedBytesMax(17);
   if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
-    serviceConfig.tcp();
+    serverConfig.tcp();
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
-    serviceConfig.tls(
+    serverConfig.tls(
       Zhttp::H2Config{}.certPath(cert).keyPath(key)
 	.policy(Zhttp::H2Policy::Prefer));
   else
-    serviceConfig.quic(
+    serverConfig.quic(
       Zhttp::QUICConfig{}.certPath(cert).keyPath(key).maxIdleTimeout(10000));
-  bool serviceInited =
-    service.init(hub, ZuMv(serviceConfig), &workload);
-  ZuCHECK(serviceInited, "initialize service");
-  bool serviceUp = serviceInited && service.start();
-  ZuCHECK(serviceUp, "start service");
-  bool listening = serviceUp &&
+  bool serverInited =
+    server.init(hub, ZuMv(serverConfig), &workload);
+  ZuCHECK(serverInited, "initialize server");
+  bool serverUp = serverInited && server.start();
+  ZuCHECK(serverUp, "start server");
+  bool listening = serverUp &&
     state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "service listens for HTTP/3");
+  ZuCHECK(listening, "server listens for HTTP/3");
 
   Client<Profile> client{&state};
   bool clientInited = false;
@@ -338,49 +397,105 @@ void activeStop()
   ZuCHECK(connected, "establish active HTTP/3 logical link");
   bool admitted = connected &&
     state.admitted.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(admitted, "service admits active link");
+  ZuCHECK(admitted, "server admits active link");
   if (admitted)
-    ZuCHECK(service.active() == 1, "service accounts for active link");
+    ZuCHECK(server.activeConnections() == 1,
+	"server accounts for active link");
+  bool requestStarted = admitted &&
+    state.requestStarted.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(requestStarted, "server admits partial request");
+  if (requestStarted)
+    ZuCHECK(server.activeRequests() == 1,
+	"server accounts for partial request");
+  bool producerStarted = !Async ||
+    state.producerStarted.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(producerStarted, "asynchronous body producer starts");
+  if constexpr (Async)
+    ZuCHECK(server.retainedBytes() == 17,
+	"asynchronous producer respects aggregate retained-byte limit");
+
+  ZmRef<ClientLink> overflowLink;
+  if constexpr (Limit) {
+    overflowLink = new ClientLink{&client};
+    overflowLink->connect("localhost", state.port);
+    bool overflowConnected =
+      state.connected.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(overflowConnected, "establish request-limit connection");
+    bool overflowAdmitted = overflowConnected &&
+      state.admitted.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(overflowAdmitted, "admit request-limit connection");
+    ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
+	"request-limit connection is refused");
+    ZuCHECK(state.released.timedwait(Zm::now(10)) == 0,
+	"request-limit connection credit is released");
+    ZuCHECK(server.activeRequests() == 1 &&
+	server.activeConnections() == 1,
+	"request limit preserves the admitted request only");
+    ZuCHECK(server.rejectedRequests() == 1,
+	"request-limit refusal is accounted");
+    ZuCHECK(state.requestStarted.trywait() != 0,
+	"request-limit refusal allocates no application request");
+  }
 
   ZmAtomic<unsigned> stopReturned = 0;
-  if (serviceInited) service.stop([
+  constexpr unsigned ExpectedReleases = Limit ? 2 : 1;
+  if (serverInited) server.stop([
     &state, &stopReturned
   ](bool ok) {
     if (!ok) state.errors = 1;
     if (!stopReturned.load_()) state.errors = 1;
-    if (state.releaseCount.load_() != 1) ++state.stopBeforeRelease;
+    if (state.releaseCount.load_() != ExpectedReleases)
+      ++state.stopBeforeRelease;
     ++state.stopCount;
     state.stopped.post();
   });
   stopReturned = 1;
-  bool stopped = !serviceInited ||
+  bool stoppedEarly = false;
+  if constexpr (Async) {
+    stoppedEarly = state.stopped.trywait() == 0;
+    ZuCHECK(!stoppedEarly,
+	"server stop waits for outstanding body producer");
+    ProducerDone done{ZuMv(state.producerDone)};
+    if (done) done(ZmRef<ZiIOBuf>{}, false);
+  }
+  bool stopped = !serverInited || stoppedEarly ||
     state.stopped.timedwait(Zm::now(10)) == 0;
-  if (!stopped && serviceInited) (void)service.stop();
-  ZuCHECK(stopped, "active service stop completes");
+  if (!stopped && serverInited) (void)server.stop();
+  ZuCHECK(stopped, "active server stop completes");
   ZuCHECK(state.stopCount.load_() == 1,
-    "active service stop callback completes exactly once");
+    "active server stop callback completes exactly once");
   ZuCHECK(!state.stopBeforeRelease.load_(),
-    "active service admission releases before stop completion");
+    "active server admission releases before stop completion");
+  ZuCHECK(state.completedCount.load_() == 1,
+    "active server stop completes partial request exactly once");
+  ZuCHECK(server.activeRequests() == 0,
+	"active server stop releases request admission");
+  ZuCHECK(!server.serverFaults() && !server.parseFailures() &&
+      !server.responseBuildFailures(),
+    "normal shutdown does not report server, parse, or build failures");
+  ZuCHECK(server.transportFailures() == unsigned(!Async),
+    "partial-request reset is the only transport failure");
   if (clientInited) (void)client.stop();
   ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
     "client stop completes active disconnect");
-  ZuCHECK(service.active() == 0,
-    "active service stop drains admission");
+  ZuCHECK(server.activeConnections() == 0,
+	"active server stop drains admission");
 
   link = nullptr;
+  overflowLink = nullptr;
   if (clientInited) client.final();
-  if (serviceInited) service.final();
+  if (serverInited) server.final();
   ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
-  ZuCHECK(!state.errors.load_(), "active service stop has no error");
+  ZuCHECK(!state.errors.load_(), "active server stop has no error");
 }
 
-} // namespace ZhttpServiceIdleTest_
+} // namespace ZhttpServerIdleTest_
 
 int main(int argc, char **argv)
 {
-  using namespace ZhttpServiceIdleTest_;
+  using namespace ZhttpServerIdleTest_;
 
   (void)argc;
   (void)argv;
@@ -390,5 +505,7 @@ int main(int argc, char **argv)
   ZuTestCall((activeStop<Zhttp::H1TLS>));
   ZuTestCall((activeStop<Zhttp::H2TLS>));
   ZuTestCall((activeStop<Zhttp::H3QUIC>));
+  ZuTestCall((activeStop<Zhttp::H1TCP, true>));
+  ZuTestCall((activeStop<Zhttp::H1TCP, false, true>));
   return 0;
 }

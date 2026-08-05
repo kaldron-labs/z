@@ -246,6 +246,9 @@ struct CxnStream : public CxnParser<Impl> {
   }
   bool h3Server() const { return impl()->link()->isServer(); }
   void h3Error(uint64_t error) { impl()->h3Cxn().error(error); }
+  void h3StreamError(uint64_t error) {
+    impl()->link()->h3StreamError(ZmMkRef(impl()), error);
+  }
   bool peerControlStream() { return impl()->h3Cxn().peerControlStream(); }
   bool peerEncoderStream() { return impl()->h3Cxn().peerEncoderStream(); }
   bool peerDecoderStream() { return impl()->h3Cxn().peerDecoderStream(); }

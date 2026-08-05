@@ -40,6 +40,29 @@ inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
 // deprecated transfer-encoding compression
 ZtEnumNS(ZhttpAPI, XferCompression, int8_t, compress, deflate, gzip);
 
+ZtEnumStruct(ZhttpAPI, RequestErrorCode, int8_t,
+  Malformed, ContentTooLarge, TargetTooLong, HeadersTooLarge,
+  NotImplemented, VersionUnsupported);
+
+ZtEnumStruct(ZhttpAPI, RequestErrorScope, int8_t,
+  Request, Stream, Connection);
+
+struct RequestError {
+  RequestErrorCode::T code = RequestErrorCode::Malformed;
+  RequestErrorScope::T scope = RequestErrorScope::Request;
+  bool responsePossible = false;
+};
+
+struct RequestBody {
+  uint64_t received = 0;
+  uint64_t consumed = 0;
+  uint64_t pending = 0;
+  uint64_t reset = 0;
+  uint64_t discarded = 0;
+};
+
+ZhttpAPI unsigned requestErrorStatus(RequestErrorCode::T);
+
 } // namespace Zhttp
 
 #endif /* ZhttpTypes_HH */

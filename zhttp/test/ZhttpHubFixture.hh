@@ -19,7 +19,8 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpH3Hub.hh>
+#include <zlib/Zhttp.hh>
+#include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
 
@@ -147,7 +148,7 @@ struct ServerSession {
 
 template <typename Profile>
 struct Server :
-  public Zhttp::Server<Server<Profile>, Profile> {
+  public Zhttp::ProtocolServer<Server<Profile>, Profile> {
   using Link = ServerLink<Profile>;
 
   State	*state = nullptr;
@@ -356,7 +357,7 @@ struct UpgradeSession {
 
 template <typename Profile>
 struct UpgradeServer :
-  public Zhttp::Server<UpgradeServer<Profile>, Profile> {
+  public Zhttp::ProtocolServer<UpgradeServer<Profile>, Profile> {
   using Link = UpgradeSrvLink<Profile>;
 
   UpgradeState	*state = nullptr;

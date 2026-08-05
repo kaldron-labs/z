@@ -34,16 +34,18 @@ struct StreamState {
   ZmSemaphore		response;
   ZmSemaphore		cleanEnd;
   ZmSemaphore		reset;
+  ZmSemaphore		malformed;
   ZmSemaphore		stopped;
   ZmAtomic<unsigned>	errors = 0;
   ZmAtomic<unsigned>	admissions = 0;
   ZmAtomic<unsigned>	cleanEnds = 0;
+  ZmAtomic<unsigned>	malformedErrors = 0;
   ZmAtomic<unsigned>	releases = 0;
   uint16_t		port = 0;
 };
 
 struct RequestBuilder :
-  public Zhttp::H3::ReqBuilder<RequestBuilder> {
+  public Zhttp::H3::Request<RequestBuilder> {
   template <typename L>
   void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
   template <typename L>
@@ -51,7 +53,7 @@ struct RequestBuilder :
 };
 
 struct StreamRequestBuilder :
-  public Zhttp::H3::ReqBuilder<StreamRequestBuilder> {
+  public Zhttp::H3::Request<StreamRequestBuilder> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, "/stream");
@@ -63,7 +65,7 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
-  public Zhttp::H3::ResBuilder<
+  public Zhttp::H3::Response<
     ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
   unsigned status() const { return 200; }
   template <typename Key, typename L>
@@ -73,7 +75,7 @@ struct ResponseBuilder :
 };
 
 struct StreamResponseBuilder :
-  public Zhttp::H3::ResBuilder<StreamResponseBuilder> {
+  public Zhttp::H3::Response<StreamResponseBuilder> {
   unsigned status() const { return 200; }
 };
 
@@ -184,7 +186,7 @@ struct StreamClientLink :
     StreamClient, StreamClientLink, Zhttp::H3QUIC>;
   using Base::Base;
 
-  struct Mode { enum { REST, Echo, Reset }; };
+  struct Mode { enum { REST, Echo, Reset, Malformed }; };
 
   ClientParser	parser;
   int8_t	mode = Mode::REST;
@@ -197,6 +199,8 @@ void StreamClient::disconnected(Link &link, bool)
   if (link.mode == StreamClientLink::Mode::Echo) {
     ++state->cleanEnds;
     state->cleanEnd.post();
+  } else if (link.mode == StreamClientLink::Mode::Malformed) {
+    state->malformed.post();
   }
 }
 
@@ -211,10 +215,17 @@ void StreamClient::connected(
     return;
   }
   link.parser.bind(link);
+  if (link.mode == StreamClientLink::Mode::Malformed) {
+    static constexpr uint8_t dataBeforeHeaders[] = {0, 0};
+    auto tx = link.txStream();
+    tx << ZuCSpan{dataBeforeHeaders} << Zi::flush();
+    link.finish();
+    return;
+  }
   if (link.mode == StreamClientLink::Mode::REST) {
     RequestBuilder builder;
     auto tx = link.transmit(builder);
-    if (!builder.request(tx)) {
+    if (!builder.begin(tx)) {
       ++state->errors;
       state->response.post();
       return;
@@ -226,7 +237,7 @@ void StreamClient::connected(
   link.parser.requestMethod(Zhttp::Method::CONNECT);
   StreamRequestBuilder builder;
   auto tx = link.transmit(builder);
-  if (!builder.request(tx)) {
+  if (!builder.begin(tx)) {
     ++state->errors;
     state->response.post();
   }
@@ -372,7 +383,7 @@ struct StreamServerSession {
 	  responseSent = true;
 	  StreamResponseBuilder builder;
 	  auto tx = link.transmit(builder);
-	  builder.response(tx);
+	  builder.begin(tx);
 	}
 	if (parser.streamBody) {
 	  Zhttp::Stream{link}.txStream([this](auto &body) {
@@ -394,7 +405,7 @@ struct StreamServerSession {
 	  ++link.app()->state->errors;
 	ResponseBuilder builder;
 	auto tx = link.transmit(builder);
-	builder.response(tx);
+	builder.begin(tx);
 	auto body = builder.body(tx);
 	body << ZuCSpan{"pong"};
 	body.flush();
@@ -402,7 +413,7 @@ struct StreamServerSession {
 	return 0;
       }
       case Zhttp::H3::ParserState::Error:
-	++link.app()->state->errors;
+	link.app()->state->malformedErrors = 1;
 	return -1;
       default:
 	return 0;
@@ -413,7 +424,7 @@ struct StreamServerSession {
 };
 
 struct StreamServer :
-  public Zhttp::Server<StreamServer, Zhttp::H3QUIC> {
+  public Zhttp::ProtocolServer<StreamServer, Zhttp::H3QUIC> {
   using Link = StreamServerLink;
 
   StreamState	*state = nullptr;
@@ -507,8 +518,19 @@ void runStream(const Zhttp::Test::TempDir &temp)
     "H3 stream reset preserved its shared QUIC session");
   reset->disconnect();
 
+  ZmRef<StreamClientLink> malformed = new StreamClientLink{&client};
+  malformed->mode = StreamClientLink::Mode::Malformed;
+  if (resetSeen) malformed->connect("127.0.0.1", state.port);
+  bool malformedSeen = state.malformed.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(malformedSeen && state.malformedErrors == 1 && !state.errors &&
+      state.admissions == 1,
+    "malformed H3 request reset only its stream (seen=", malformedSeen,
+    ", parserErrors=", state.malformedErrors.load_(),
+    ", errors=", state.errors.load_(),
+    ", admissions=", state.admissions.load_(), ')');
+
   ZmRef<StreamClientLink> after = new StreamClientLink{&client};
-  if (resetSeen) after->connect("127.0.0.1", state.port);
+  if (malformedSeen) after->connect("127.0.0.1", state.port);
   bool survived = state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(survived && !state.errors && state.admissions == 1,
     "H3 request succeeded after stream reset on shared session");

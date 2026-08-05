@@ -52,6 +52,8 @@ public:
     m_headers = false;
     m_bodyAllowed = true;
     m_extendedConnect = false;
+    m_error = {};
+    m_errorLatched = false;
   }
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -166,9 +168,11 @@ public:
 
   bool dataLength(uint64_t length, bool endStream) {
     if (m_state == State::Stream) return true;
-    if (m_state != State::Body || !m_bodyAllowed ||
-	m_bodyLength > MaxBody || length > MaxBody - m_bodyLength)
+    if (m_state != State::Body || !m_bodyAllowed)
       return fail_();
+    if (m_bodyLength > MaxBody || length > MaxBody - m_bodyLength)
+      return fail_(RequestErrorCode::ContentTooLarge,
+	RequestErrorScope::Stream, false);
     if (m_contentLength >= 0 &&
 	(m_bodyLength > uint64_t(m_contentLength) ||
 	 length > uint64_t(m_contentLength) - m_bodyLength ||
@@ -184,6 +188,7 @@ public:
   }
 
   State::T state() const { return m_state; }
+  const RequestError &error() const { return m_error; }
   uint64_t consumed() const { return m_bodyRx.consumed(); }
   bool cancel() {
     if (m_state == State::Stream) impl()->streamError_();
@@ -211,8 +216,13 @@ private:
   void header_(ZuBSpan key, ZuBSpan value) {
     if (key == "content-length") {
       uint64_t length = 0;
-      if (!atou(value, length) || length > MaxBody) {
+      if (!atou(value, length)) {
 	fail_();
+	return;
+      }
+      if (length > MaxBody) {
+	fail_(RequestErrorCode::ContentTooLarge,
+	  RequestErrorScope::Request, true);
 	return;
       }
       m_contentLength = length;
@@ -242,7 +252,14 @@ private:
     return m_contentLength < 0 ||
       m_bodyLength == uint64_t(m_contentLength);
   }
-  bool fail_() {
+  bool fail_(
+    RequestErrorCode::T code = RequestErrorCode::Malformed,
+    RequestErrorScope::T scope = RequestErrorScope::Stream,
+    bool responsePossible = false) {
+    if (!m_errorLatched) {
+      m_error = {code, scope, responsePossible};
+      m_errorLatched = true;
+    }
     m_state = State::Error;
     complete_();
     return false;
@@ -272,6 +289,8 @@ private:
   bool			m_headers = false;
   bool			m_bodyAllowed = true;
   bool			m_extendedConnect = false;
+  RequestError		m_error;
+  bool			m_errorLatched = false;
 };
 
 template <
@@ -291,7 +310,7 @@ public:
 
 protected:
   template <typename Stream>
-  bool request_(Stream &stream) {
+  bool beginRequest_(Stream &stream) {
     bool sent = false;
     bool endStream = false;
     bool streamMode = false;
@@ -328,7 +347,7 @@ protected:
   }
 
   template <typename Stream>
-  void response_(Stream &stream) {
+  void beginResponse_(Stream &stream) {
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;
     bool streamMode = impl()->streamResponse();
@@ -423,13 +442,13 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class ReqBuilder :
+class Request :
   public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
-  bool request(Stream &stream) { return Base::request_(stream); }
+  bool begin(Stream &stream) { return Base::beginRequest_(stream); }
 };
 
 template <
@@ -438,13 +457,13 @@ template <
   typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class ResBuilder :
+class Response :
   public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
   using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
-  void response(Stream &stream) { Base::response_(stream); }
+  void begin(Stream &stream) { Base::beginResponse_(stream); }
 };
 
 } // namespace H2

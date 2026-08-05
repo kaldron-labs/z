@@ -2,7 +2,8 @@
 
 This manifest covers the complete program-only source closure:
 `zhttp.cc` plus `zhttpput.hh` for `zhttp`, and `zhttpd.cc` plus
-`zhttpdapp.cc`, `zhttpdutil.cc`, `zhttpd.hh`, and `zhttpput.hh` for `zhttpd`.
+`zhttpd.cc`, `zhttpdmain.cc`, `zhttpdutil.cc`, `zhttpd.hh`, and `zhttpput.hh`
+for `zhttpd`.
 All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 
 ## `zhttp.cc`
@@ -29,16 +30,16 @@ fallback, or protocol lifecycle mechanism.
 | --- | --- | --- |
 | Workload-specific request/response handling | `String`, `Record`, `Record::JSON`, `equals`, `load` | Define the shared typed JSON PUT record and its `ZfJSON` encode/decode validation. |
 
-## `zhttpdapp.cc`
+## `zhttpd.cc`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
 | CLI parsing | `usage`, `loadOptions` | Validate and document command-line choices. |
-| Protocol-specific configuration | `parseDrop`, `migrationMode`, `quicHeartbeat`, `mxParams`, `ReqBodyMax`, `ReqHeaders`, `RespHeaders`, `Service` | Convert CLI values into multiplex, TCP, TLS, QUIC, and public service configuration. |
-| Workload-specific request/response handling | `sendBody`, `Workload` | Adapt the static planner's response plan to the single protocol-neutral service callback contract. |
+| Protocol-specific configuration | `parseDrop`, `migrationMode`, `quicHeartbeat`, `mxParams`, `ReqBodyMax`, `ReqHeaders`, `RespHeaders`, `Server` | Convert CLI values into multiplex, TCP, TLS, QUIC, and public server configuration. |
+| Workload-specific request/response handling | `sendBody`, `Workload` | Adapt the static planner's response plan to the single protocol-neutral server callback contract. |
 | Reporting | `printMemDiag` | Format memory, hash, and heap diagnostics. |
 | Workload selection | `prepareProcess` | Apply the selected foreground/daemon process policy. |
-| CLI parsing | `Zhttpd::run` | Wire logging, workload state, public `Zhttp::Service`, and process exit status. |
+| CLI parsing | `Zhttpd::run` | Wire logging, workload state, public `Zhttp::Server`, and process exit status. |
 
 `Workload::listening`, `Workload::listenFailed`, `Workload::connected`, and
 `Workload::disconnected` are reporting callbacks; the `Workload` type does
@@ -63,7 +64,7 @@ not own listener state or lifecycle decisions.
 | CLI parsing | `CLI`, `Http2Mode`, `Forward`, `Options`, `parseForward`, `parseAuth`, `loadOptions`, `validate` | Define and validate static-server workload options. |
 | Workload selection | `FileChunk`, `MimeFileMax`, `DateBufSize`, `DirEntriesBuiltin`, `DirNameBuiltin`, `HdrString`, `PathOffsets`, `State`, `initFileState` | Own bounded static-workload configuration and state. |
 | Workload-specific request/response handling | `ResponsePlan`, `MimeMap`, `StaticPlanner`, `isspace__`, `lower__`, `lower`, `ieq`, `httpDate`, `parseHTTPDate`, `pathComponent`, `decodeNormalizePath`, `staticPath`, `htmlEsc`, `hostName`, `constTimeEqual`, `basicAuthValue` | Plan authorization, redirects, normalized static paths, MIME, conditional and range responses, directory listings, and response metadata. URL and request-target splitting is reusable Zhttp mechanism. |
-| Output-file handling | `fileChunks`, `sendSpanChunks` | Bound response-file and generated-body chunks presented to the public service body sink. |
+| Output-file handling | `fileChunks`, `sendSpanChunks` | Bound response-file and generated-body chunks presented to the public server body sink. |
 | Reporting | `LogSink` | Format and emit workload access records. |
 | CLI parsing | `run` declaration | Expose the executable entry point to application tests. |
 
