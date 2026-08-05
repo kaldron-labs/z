@@ -68,7 +68,7 @@ selection, and hub lifecycle. Applications provide protocol configuration
 and message-typed application contracts:
 
 ```c++
-struct Request_ {
+struct Request_ : ZmObject {
   using Headers = RequestHeaders;
   using BodyPolicy = Zhttp::Body::OptionalFixed;
   Zhttp::URLStorage url;
@@ -106,7 +106,7 @@ struct ResParser {
 
 struct App;
 using RequestQ = ZmPQueue<Request_,
-  ZmPQueueOverlap<false, ZmPQueueNode<ZmObject>>>;
+  ZmPQueueOverlap<false, ZmPQueueNode<Request_>>>;
 using Request = RequestQ::Node;
 using TxQ = ZmPQTx<App, RequestQ, ZmPQTxOrdered<false>>;
 struct App : Zhttp::Client<TxQ, ResParser> {
