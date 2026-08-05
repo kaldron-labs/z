@@ -767,4 +767,7 @@ struct ZuPun {
   };
 };
 
+// alternative name
+#define ZuCanOverlap [[no_unique_address]]
+
 #endif /* ZuLib_HH */
