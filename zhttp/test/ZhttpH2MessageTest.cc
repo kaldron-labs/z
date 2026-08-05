@@ -146,7 +146,7 @@ using CapturedFields =
   ZtArray<CapturedField,
     ZtArrayHeapID<"Zhttp.H2MessageTest.Fields">>;
 
-struct CustomTarget : public ZuPrintable {
+struct CustomTarget {
   template <typename S>
   void print(S &s) const { s << "/printable?"; }
 

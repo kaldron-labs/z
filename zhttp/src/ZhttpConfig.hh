@@ -135,19 +135,9 @@ struct OptionalStream {
 
 } // namespace Body
 
-struct HeaderPad : public ZuPrintable {
-  HeaderPad(unsigned length_, uint8_t fill_ = 0xff) :
-    length{length_}, fill{fill_} { }
-
-  template <typename S>
-  void print(S &s) const {
-    for (unsigned i = length; i; --i) s << char(fill);
-  }
-
+struct HeaderPad {
   unsigned	length;
-  uint8_t	fill;
-
-  friend ZuPrintFn ZuPrintType(HeaderPad *);
+  uint8_t	fill = 0xff;
 };
 
 template <typename T> struct IsHeaderPad : public ZuFalse { };

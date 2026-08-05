@@ -30,7 +30,7 @@ namespace ZhttpQPackDynamicTest_ {
 using StreamAlloc = ZiIOBufAlloc<256, 4096, "ZhttpQPackDynamicTest.Buf">;
 using BuilderHeaders = ZhttpHeaders("accept");
 
-struct CustomTarget : public ZuPrintable {
+struct CustomTarget {
   template <typename S>
   void print(S &s) const { s << "/printable?"; }
 

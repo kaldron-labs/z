@@ -302,14 +302,14 @@ struct H2Native {
   unsigned ends = 0;
 };
 
-struct CustomValue : public ZuPrintable {
+struct CustomValue {
   template <typename S>
   void print(S &s) const { s << "custom"; }
 
   friend ZuPrintFn ZuPrintType(CustomValue *);
 };
 
-struct CustomTarget : public ZuPrintable {
+struct CustomTarget {
   template <typename S>
   void print(S &s) const { s << "/printable?"; }
 
