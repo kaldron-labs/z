@@ -9,9 +9,30 @@
 #ifndef ZhttpH1_HH
 #define ZhttpH1_HH
 
-#ifndef Zhttp_HH
-#include <zlib/Zhttp.hh>
+#ifndef ZhttpLib_HH
+#include <zlib/ZhttpLib.hh>
 #endif
+
+#include <limits.h>
+
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuFmt.hh>
+#include <zlib/ZuPrint.hh>
+#include <zlib/ZuStream.hh>
+#include <zlib/ZuSwitch.hh>
+#include <zlib/Zu_aton.hh>
+
+#include <zlib/ZmScratch.hh>
+
+#include <zlib/ZtArray.hh>
+
+#include <zlib/ZiAssert.hh>
+#include <zlib/ZiLog.hh>
+#include <zlib/ZiRxStream.hh>
+#include <zlib/ZiTxStream.hh>
+
+#include <zlib/ZhttpCore.hh>
+#include <zlib/ZhttpFields.hh>
 
 namespace Zhttp {
 
@@ -37,13 +58,6 @@ ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Complete,	// message completely read
   Error);	// invalid message
 
-ZuInline constexpr uint8_t hex(uint8_t c) {
-  c |= 0x20;
-  return
-    (ZuLikely(c >= '0' && c <= '9')) ?  c - '0' :
-    (ZuLikely(c >= 'a' && c <= 'f')) ? (c - 'a') + 10 : 0xff;
-}
-
 struct ChunkHdr {
   uint64_t length = 0;
 
@@ -53,14 +67,85 @@ struct ChunkHdr {
     if (ZuUnlikely(!n ||
 	(n > 1 && data[0] == '0' && (data[1] | 0x20) == 'x')))
       return false;
-    using Scan = Zu_nscan<ZuFmt::Hex<false, ZuFmt::Left<16>>>;
     ZuCSpan s{data};
-    unsigned o = Scan::atou(length, s.data(), n);
-    if (ZuUnlikely(!o || (o == 16 && o < n && hex(data[o]) != 0xff)))
-      return false;
+    unsigned o = Zu_nscan<ZuFmt::Hex<>>::atou(length, s.data(), n);
+    if (ZuUnlikely(!o || o > 16)) return false;
     return o == n || data[o] == ';';
   }
 };
+
+// hard-coded Boyer-Moore to find CRLF within one contiguous span
+ZuInline int eol(ZuBSpan data) {
+  unsigned n = data.length();
+  if (ZuUnlikely(n < 2)) return -1;
+  n -= 2;
+  for (unsigned o = 0; o <= n; ) {
+    if (data[o + 1] != '\n') { ++o; continue; }
+    if (data[o] == '\r') return o;
+    o += 2;
+  }
+  return -1;
+}
+
+class LineScan {
+public:
+  void reset() {
+    m_offset = 0;
+    m_prevCR = false;
+  }
+
+  template <typename Stream>
+  int64_t scan(Stream &stream, uint64_t max) {
+    Zi::RxFramePos pos;
+    int64_t n = stream.scan(
+      [this](ZuBSpan span) -> int64_t {
+	if (m_prevCR && span[0] == '\n') return 1;
+	if (int o = eol(span); o >= 0) return o + 2;
+	m_prevCR = span[span.length() - 1] == '\r';
+	return 0;
+      }, pos, m_offset);
+    if (n > 0) return uint64_t(n) > max ? -2 : n;
+    if (n < 0) return n;
+    m_offset = pos.total;
+    return m_offset > max ? -2 : 0;
+  }
+
+private:
+  uint64_t	m_offset = 0;
+  bool		m_prevCR = false;
+};
+
+// calls line(span)
+// - span is empty for the last line before the body
+template <typename Stream, typename Line>
+inline int64_t parseLine(
+  LineScan &scan, Stream &stream, Line &&line,
+  uint64_t max = uint64_t(-1)) {
+  int64_t n = scan.scan(stream, max);
+  if (n <= 0) return n;
+  uint64_t length = uint64_t(n) - 2;
+  auto span = stream.span();
+  if (span.length() >= length) {
+    span.trunc(unsigned(length));
+    ZuFwd<Line>(line)(span);
+  } else {
+    if (ZuUnlikely(length > UINT_MAX)) return -1;
+    using Storage = ZtArray<
+      uint8_t, ZtArrayHeapID<"Zhttp.Line.Rx">>;
+    auto storage = ZmScratch(
+      uint8_t, unsigned(length), typename Storage::VHeap);
+    int64_t copied = stream.each(length,
+      [&storage](ZuBSpan part) -> int64_t {
+	storage << part;
+	return part.length();
+      });
+    if (ZuUnlikely(copied < 0 || uint64_t(copied) != length)) return -1;
+    ZuFwd<Line>(line)(storage.span());
+  }
+  scan.reset();
+  stream.advance(uint64_t(n));
+  return n;
+}
 
 // HTTP/1 request/response parser
 template <
@@ -126,7 +211,10 @@ private:
 	}
     } else if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
-	if (!atou(value, contentLength) || contentLength > MaxBody) {
+	ZuCSpan data{value};
+	if (!data ||
+	    Zu_atou(contentLength, data.data(), data.length()) != data.length() ||
+	    contentLength > MaxBody) {
 	  fail_(contentLength > MaxBody ?
 	    RequestErrorCode::ContentTooLarge : RequestErrorCode::Malformed,
 	    RequestErrorScope::Connection, Request);
@@ -253,7 +341,8 @@ public:
 	  default:
 	    break;
 	  case State::Initial: { // parse first line
-	    consumed = parseLine<false>(stream, [this](ZuSpan<uint8_t> line) {
+	    consumed = parseLine(
+	      m_lineScan, stream, [this](ZuSpan<uint8_t> line) {
 	      if constexpr (Request)
 		parseOperation(line);
 	      else
@@ -267,7 +356,8 @@ public:
 	  case State::Headers: { // parse headers
 	    uint64_t remaining = m_headerBytes < MaxHeaderSection ?
 	      MaxHeaderSection - m_headerBytes : 0;
-	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
+	    consumed = parseLine(
+	      m_lineScan, stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line) {
 		if (m_chunked) {
 		  m_state = State::ChunkHdr;
@@ -339,8 +429,8 @@ public:
 	      fail_();
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
-	    consumed = parseLine<false>(
-	      stream, [this](ZuSpan<uint8_t> span) {
+	    consumed = parseLine(
+	      m_lineScan, stream, [this](ZuSpan<uint8_t> span) {
 		if (!span) { m_state = State::Complete; return; }
 		auto error = [this](RequestErrorCode::T code) {
 		  fail_(code, RequestErrorScope::Connection, Request);
@@ -400,7 +490,8 @@ public:
 	  case State::Trailers: { // parse trailers
 	    uint64_t remaining = m_headerBytes < MaxHeaderSection ?
 	      MaxHeaderSection - m_headerBytes : 0;
-	    consumed = parseLine<true>(stream, [this](ZuSpan<uint8_t> line) {
+	    consumed = parseLine(
+	      m_lineScan, stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line)
 		m_state = State::Complete;
 	      else
@@ -458,6 +549,7 @@ public:
     m_chunkLength = -1;
     m_statusCode = 0;
     m_headerBytes = 0;
+    m_lineScan.reset();
     m_progressed = false;
     m_error = {};
     m_errorLatched = false;
@@ -526,6 +618,7 @@ private:
   uint64_t	m_chunkLength = uint64_t(-1);
   uint64_t	m_headerBytes = 0;
   BodyRx	m_bodyRx;
+  LineScan	m_lineScan;
   unsigned	m_statusCode = 0;
   State::T	m_state = State::Initial;
   RequestError	m_error;

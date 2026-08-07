@@ -9,7 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuStream.hh>
 
-#include <zlib/ZhttpAltSvc.hh>
+#include <zlib/ZhttpDiscovery.hh>
 
 using namespace ZuTestUtil;
 

@@ -1,27 +1,137 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Huw Rogers
+// (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z http library - message parsing utility functions
+// Z HTTP core types and parsing infrastructure
 
-#ifndef ZhttpUtil_HH
-#define ZhttpUtil_HH
+#ifndef ZhttpCore_HH
+#define ZhttpCore_HH
 
 #ifndef ZhttpLib_HH
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <zlib/Zu_aton.hh>
+#include <string.h>
 
-#include <zlib/ZmScratch.hh>
+#include <zlib/ZuString.hh>
+#include <zlib/ZuSwitch.hh>
+#include <zlib/ZuTL.hh>
+#include <zlib/ZuUnroll.hh>
 
-#include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
 
-#include <zlib/ZiRxStream.hh>
+// Headers typelist definition, e.g.
+// - keys (variable values):
+//   ZhttpHeaders("content-type", "server");
+// - keys + values:
+//   ZhttpHeaders(("user-agent", "zhttp"), ("accept", "*/*"));
+#define Zhttp_HdrValue(Value) ZuStringT<Value>
+#define Zhttp_HdrValues_(...) \
+  ZuPP_Eval__(ZuPP_MapComma(Zhttp_HdrValue,  __VA_ARGS__))
+#define Zhttp_HdrValues(Values) \
+  ZuPP_Defer(Zhttp_HdrValues_)(ZuPP_Strip(Values))
+#define Zhttp_Header_1(Key) \
+  ZuStringT<Key>, void
+#define Zhttp_Header_2(Key, Values) \
+  ZuStringT<Key>, ZuTypeList<Zhttp_HdrValues(Values)>
+#define Zhttp_Header_N(_0, _1, Fn, ...) Fn
+#define Zhttp_Header_(...) \
+  Zhttp_Header_N(__VA_ARGS__, \
+    Zhttp_Header_2(__VA_ARGS__), \
+    Zhttp_Header_1(__VA_ARGS__))
+#define Zhttp_Header(KV) \
+  ZuPP_Defer(Zhttp_Header_)(ZuPP_Strip(KV))
+#define ZhttpHeaders(...) \
+  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_Header,  __VA_ARGS__))>
 
 namespace Zhttp {
+
+constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
+constexpr unsigned DefltMaxStartLine = (1<<13);	// 8K
+constexpr unsigned DefltMaxHeaderSection = (1<<16);	// 64K
+
+ZtEnumStruct(ZhttpAPI, Version, int8_t, H1, H2, H3);
+
+ZtEnumNS(ZhttpAPI, Method, int8_t,
+  GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE);
+
+inline bool earlyDataSafeMethod(Method::T method)
+{
+  switch (method) {
+    case Method::GET:
+    case Method::HEAD:
+    case Method::OPTIONS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
+{
+  return !hasBody && earlyDataSafeMethod(method);
+}
+
+// deprecated transfer-encoding compression
+ZtEnumNS(ZhttpAPI, XferCompression, int8_t, compress, deflate, gzip);
+
+ZtEnumStruct(ZhttpAPI, RequestErrorCode, int8_t,
+  Malformed, ContentTooLarge, TargetTooLong, HeadersTooLarge,
+  NotImplemented, VersionUnsupported);
+
+ZtEnumStruct(ZhttpAPI, RequestErrorScope, int8_t,
+  Request, Stream, Connection);
+
+struct RequestError {
+  RequestErrorCode::T code = RequestErrorCode::Malformed;
+  RequestErrorScope::T scope = RequestErrorScope::Request;
+  bool responsePossible = false;
+};
+
+struct BodyCommit {
+  uint64_t	produced = 0;
+  uint64_t	committed = 0;
+  uint64_t	reset = 0;
+  uint64_t	discarded = 0;
+  bool		headers = false;
+  bool		final = false;
+};
+
+namespace Body {
+
+struct None {
+  enum { HasBody = false, Optional = false, Streaming = false };
+};
+
+struct Fixed {
+  enum { HasBody = true, Optional = false, Streaming = false };
+};
+
+struct OptionalFixed {
+  enum { HasBody = true, Optional = true, Streaming = false };
+};
+
+struct Stream {
+  enum { HasBody = true, Optional = false, Streaming = true };
+};
+
+struct OptionalStream {
+  enum { HasBody = true, Optional = true, Streaming = true };
+};
+
+} // namespace Body
+
+struct Placeholder {
+  unsigned	length;
+  uint8_t	fill = 0xff;
+};
+
+template <typename T> struct IsPlaceholder : public ZuFalse { };
+template <> struct IsPlaceholder<Placeholder> : public ZuTrue { };
+
+ZhttpAPI unsigned requestErrorStatus(RequestErrorCode::T);
 
 // hard-coded linear white space (ASCII/UTF8)
 ZuInline constexpr bool islws(uint8_t c) {
@@ -44,29 +154,6 @@ ZuInline int eoh(ZuBSpan data) {
     if (j < 0) return o + 4;
     j -= (c == '\r' ? 2 : c == '\n' ? 3 : -1);
     o += j < 1 ? 1 : j;
-  }
-  return -1;
-}
-
-// hard-coded Boyer-Moore to find end of line "\r\n[^\t ]" or "\r\n"
-template <bool CanFold = true> // set to false to just match "\r\n"
-ZuInline int eol(ZuBSpan data) {
-  unsigned n = data.length();
-
-  if (ZuUnlikely(n < 2)) return -1;
-  n -= 2;
-
-  uint8_t c;
-
-  for (unsigned o = 0; o <= n; ) {
-    if (ZuLikely(o < n)) {
-      c = data[o + 2];
-      if constexpr (CanFold)
-	if (o && (c == '\t' || c == ' ')) { o += 3; continue; }
-    }
-    if (data[o + 1] != '\n') { ++o; continue; }
-    if (data[o] == '\r') return o;
-    o += 2;
   }
   return -1;
 }
@@ -138,55 +225,11 @@ inline void lowerASCII(ZuSpan<uint8_t> key) {
   }
 }
 
-// CRLF framing
-template <bool CanFold = true>
-inline auto crlf() {
-  return [prevCR = false](ZuBSpan span) mutable -> int64_t {
-    if (prevCR && span[0] == '\n') return 1;
-    if (int consumed = eol<CanFold>(span); consumed >= 0)
-      return consumed + 2;
-    prevCR = span[span.length() - 1] == '\r';
-    return 0;
-  };
-}
-
-// calls line(span)
-// - CanFold should be false for the start line
-// - span is empty for the last line before the body
-template <bool CanFold = true, typename Stream, typename Line>
-inline int64_t parseLine(
-  Stream &stream, Line &&line, uint64_t max = uint64_t(-1)) {
-  Zi::RxFramePos pos;
-  int64_t n = stream.scan(crlf<CanFold>(), pos);
-  if (n <= 0) return !n && pos.total > max ? -2 : n;
-  if (uint64_t(n) > max) return -2;
-  uint64_t length = uint64_t(n) - 2;
-  auto span = stream.span();
-  if (span.length() >= length) {
-    span.trunc(unsigned(length));
-    ZuFwd<Line>(line)(span);
-  } else {
-    if (ZuUnlikely(length > UINT_MAX)) return -1;
-    using Storage = ZtArray<
-      uint8_t, ZtArrayHeapID<"Zhttp.Line.Rx">>;
-    auto storage = ZmScratch(
-      uint8_t, unsigned(length), typename Storage::VHeap);
-    int64_t copied = stream.each(length,
-      [&storage](ZuBSpan part) -> int64_t {
-	storage << part;
-	return part.length();
-      });
-    if (ZuUnlikely(copied < 0 || uint64_t(copied) != length)) return -1;
-    ZuFwd<Line>(line)(storage.span());
-  }
-  stream.advance(uint64_t(n));
-  return n;
-}
-
 // parses a key and value from a line
 // - calls kv(key, value)
 template <typename KV>
 inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
+  if (ZuUnlikely(!line || islws(line[0]))) return false;
   int n = eok(line);
   if (ZuUnlikely(n < 0)) return false;
   ZuSpan key(&line[0], unsigned(n));
@@ -207,25 +250,6 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
   return true;
 }
 
-// parse an entire unsigned decimal value in one pass
-inline bool atou(ZuBSpan value, uint64_t &out) {
-  ZuCSpan data{value};
-  unsigned n = data.length();
-  if (ZuUnlikely(!n || n > 20)) return false;
-  if (ZuUnlikely(n == 20)) {
-    unsigned o = Zu_atou(out, data.data(), n - 1);
-    if (ZuUnlikely(o != n - 1)) return false;
-    int c = data[o]; // intentionally int
-    if (ZuUnlikely(c < '0' || c > '9')) return false;
-    c -= '0';
-    if (ZuUnlikely(out > (uint64_t(-1) - unsigned(c)) / 10))
-      return false;
-    out = out * 10 + unsigned(c);
-    return true;
-  }
-  return Zu_atou(out, data.data(), n) == n;
-}
-
 } // namespace Zhttp
 
-#endif /* ZhttpUtil_HH */
+#endif /* ZhttpCore_HH */

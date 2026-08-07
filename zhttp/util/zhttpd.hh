@@ -20,6 +20,7 @@
 #include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
@@ -37,7 +38,6 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
 
-#include <zlib/Zhttp.hh>
 #include <zlib/ZhttpServer.hh>
 
 ZfCLIConfig(CLI,
@@ -445,6 +445,7 @@ struct State {
   unsigned		fileThread = 0;
   ZmAtomic<uint64_t>	requests = 0;
   ZmAtomic<uint64_t>	errors = 0;
+  ZmFn<void(), ZmFnHeapID<"zhttpd.Done">> done;
 };
 
 template <typename S>
@@ -1124,7 +1125,35 @@ inline bool validate(Options &options, S &error) {
   return true;
 }
 
-int run(int argc, const char *const *argv);
+// Reusable HTTP workload/configuration object.  Process signal, wait, logging,
+// and start/stop policy remain in each application's main path.
+class Application {
+  struct Impl;
+
+public:
+  Application();
+  ~Application();
+
+  Application(const Application &) = delete;
+  Application &operator =(const Application &) = delete;
+
+  bool init(Options, ZeString &);
+  void done(ZmFn<void(), ZmFnHeapID<"zhttpd.Done">>);
+  bool startMultiplex();
+  bool initServer();
+  bool startServer();
+  bool stopServer();
+  void finalServer();
+  void stopMultiplex();
+  void final();
+  unsigned errors() const;
+#ifdef Zquic_DEBUG
+  void printQUICDiag();
+#endif
+
+private:
+  Impl *m_impl = nullptr;
+};
 
 } // namespace Zhttpd
 

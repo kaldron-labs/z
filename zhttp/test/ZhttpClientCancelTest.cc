@@ -16,7 +16,6 @@
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiResolver.hh>
 
-#include <zlib/Zhttp.hh>
 #include <zlib/ZhttpClient.hh>
 
 using namespace ZuTestUtil;

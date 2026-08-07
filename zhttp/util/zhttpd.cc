@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <zlib/ZmBitmap.hh>
+#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
@@ -18,9 +19,9 @@
 #include <zlib/ZiHashCSV.hh>
 #include <zlib/ZiHeapCSV.hh>
 
-#include <zlib/Zhttp.hh>
 #include <zlib/ZhttpServer.hh>
 
+#include "runtime.hh"
 #include "zhttpd.hh"
 #include "zhttpput.hh"
 
@@ -424,6 +425,7 @@ struct Workload {
   }
   void listenFailed(int, bool) {
     state->errors = 1;
+    if (state->done) state->done();
   }
   void connected(int) { }
   void disconnected(int) { }
@@ -455,7 +457,166 @@ ZiMxParams mxParams(const Options &options)
 
 using Server = Zhttp::Server<Workload>;
 
-int Zhttpd::run(int argc, const char *const *argv)
+struct Zhttpd::Application::Impl {
+  Impl(Options options) :
+    mx{mxParams(options)}, workload{&state}
+  {
+    state.options = ZuMv(options);
+  }
+
+  State		state;
+  ZiMultiplex	mx;
+  Workload	workload;
+  Server	server;
+  bool		mxStarted = false;
+  bool		serverInited = false;
+  bool		serverStarted = false;
+};
+
+Zhttpd::Application::Application() = default;
+
+Zhttpd::Application::~Application()
+{
+  final();
+}
+
+bool Zhttpd::Application::init(Options options, ZeString &error)
+{
+  if (m_impl) return false;
+  m_impl = new Impl{ZuMv(options)};
+  auto &state = m_impl->state;
+  if (!initFileState(state, error)) {
+    final();
+    return false;
+  }
+  state.mime.init(state.options);
+  if (!state.log.init(state.options)) {
+    error = "failed to open access log";
+    final();
+    return false;
+  }
+  return true;
+}
+
+void Zhttpd::Application::done(
+  ZmFn<void(), ZmFnHeapID<"zhttpd.Done">> fn)
+{
+  if (m_impl) m_impl->state.done = ZuMv(fn);
+}
+
+bool Zhttpd::Application::startMultiplex()
+{
+  if (!m_impl || m_impl->mxStarted || !m_impl->mx.start()) return false;
+  m_impl->mxStarted = true;
+  m_impl->state.mx = &m_impl->mx;
+  m_impl->state.fileThread = m_impl->mx.sid("5");
+  return true;
+}
+
+bool Zhttpd::Application::initServer()
+{
+  if (!m_impl || !m_impl->mxStarted || m_impl->serverInited) return false;
+  auto &state = m_impl->state;
+  auto &options = state.options;
+  auto config = Zhttp::ServerConfig()
+    .localIP(ZiIP(options.addr))
+    .port(options.port)
+    .idleTimeout(options.timeout)
+    .maxConnections(options.maxconn);
+  if (options.http) config.tcp();
+  if (options.https) {
+    int8_t policy;
+    switch (options.http2) {
+      case Http2Mode::force: policy = Zhttp::H2Policy::Force; break;
+      case Http2Mode::disable: policy = Zhttp::H2Policy::Disable; break;
+      default: policy = Zhttp::H2Policy::Prefer; break;
+    }
+    config.tls(Zhttp::H2Config{}
+      .certPath(options.cert).keyPath(options.key).policy(policy));
+  }
+  if (options.http3) {
+    double rxDrop = 0, txDrop = 0;
+#ifdef ZiMultiplex_FILTER
+    (void)parseDrop(options.quicRxDrop, rxDrop);
+    (void)parseDrop(options.quicTxDrop, txDrop);
+#endif
+    config.quic(Zhttp::QUICConfig{}
+      .certPath(options.cert).keyPath(options.key)
+      .keyLogPath(options.keyLog)
+      .heartbeat(quicHeartbeat(options))
+      .migration(migrationMode(options))
+      .migrationCIDReserve(options.quicMigrationCIDReserve)
+      .migrationCloseOnFailure(options.quicMigrationCloseOnFailure)
+      .rxDrop(rxDrop).txDrop(txDrop));
+  }
+  m_impl->server.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+    ZiLOG(Error, "zhttpd", ([e](auto &s) {
+      s << "transmit error: " << e;
+    }));
+    return false;
+  }});
+  m_impl->serverInited = m_impl->server.init(
+    Zhttp::HubConfig{&m_impl->mx, "3", "4"},
+    ZuMv(config), &m_impl->workload);
+  return m_impl->serverInited;
+}
+
+bool Zhttpd::Application::startServer()
+{
+  if (!m_impl || !m_impl->serverInited || m_impl->serverStarted)
+    return false;
+  m_impl->serverStarted = m_impl->server.start();
+  return m_impl->serverStarted;
+}
+
+bool Zhttpd::Application::stopServer()
+{
+  if (!m_impl || !m_impl->serverInited) return true;
+  bool ok = m_impl->server.stop();
+  m_impl->serverStarted = false;
+  return ok;
+}
+
+void Zhttpd::Application::finalServer()
+{
+  if (!m_impl || !m_impl->serverInited) return;
+  m_impl->server.final();
+  m_impl->serverInited = false;
+  m_impl->serverStarted = false;
+}
+
+void Zhttpd::Application::stopMultiplex()
+{
+  if (!m_impl || !m_impl->mxStarted) return;
+  m_impl->mx.stop();
+  m_impl->mxStarted = false;
+}
+
+void Zhttpd::Application::final()
+{
+  if (!m_impl) return;
+  if (m_impl->serverStarted) (void)stopServer();
+  finalServer();
+  stopMultiplex();
+  m_impl->state.log.final();
+  delete m_impl;
+  m_impl = nullptr;
+}
+
+unsigned Zhttpd::Application::errors() const
+{
+  return m_impl ? unsigned(m_impl->state.errors.load_()) : 1;
+}
+
+#ifdef Zquic_DEBUG
+void Zhttpd::Application::printQUICDiag()
+{
+  if (m_impl && m_impl->serverInited) m_impl->server.printQUICDiag();
+}
+#endif
+
+#ifndef ZHTTPD_LIBRARY
+int main(int argc, char **argv)
 {
   ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
   ZiHashCSV::init(::getenv("Z_HASHTUNE"));
@@ -488,6 +649,9 @@ int Zhttpd::run(int argc, const char *const *argv)
     ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
+  ZmTrap::sigintFn(ZhttpUtil::Runtime::post);
+  ZmTrap::trap();
+
   if (!prepareProcess(options)) {
     ZiLog::stop();
     return 1;
@@ -495,6 +659,7 @@ int Zhttpd::run(int argc, const char *const *argv)
 
   State state;
   state.options = options;
+  state.done = []() { ZhttpUtil::Runtime::post(); };
   if (!initFileState(state, error)) {
     ZiLOG(Error, "zhttpd", ([error = ZuMv(error)](auto &s) mutable {
       s << "zhttpd: " << error;
@@ -587,14 +752,37 @@ int Zhttpd::run(int argc, const char *const *argv)
     ZiLog::stop();
     return 1;
   }
-  server.diagnostic(state.options.memDiag,
-    Zhttp::DiagnosticFn{[]() { printMemDiag(); }});
+  unsigned memElapsed = 0;
 #ifdef Zquic_DEBUG
-  if (h3Enabled)
-    server.diagnostic(state.options.quicDiag,
-      Zhttp::DiagnosticFn{[&server]() { server.printQUICDiag(); }});
+  unsigned quicElapsed = 0;
 #endif
-  server.wait();
+  for (;;) {
+    unsigned step = state.options.memDiag ?
+      state.options.memDiag - memElapsed : 0;
+#ifdef Zquic_DEBUG
+    if (h3Enabled && state.options.quicDiag) {
+      unsigned left = state.options.quicDiag - quicElapsed;
+      if (!step || left < step) step = left;
+    }
+#endif
+    if (!step) {
+      ZhttpUtil::Runtime::wait();
+      break;
+    }
+    if (ZhttpUtil::Runtime::wait(step)) break;
+    if (state.options.memDiag &&
+	(memElapsed += step) >= state.options.memDiag) {
+      memElapsed = 0;
+      printMemDiag();
+    }
+#ifdef Zquic_DEBUG
+    if (h3Enabled && state.options.quicDiag &&
+	(quicElapsed += step) >= state.options.quicDiag) {
+      quicElapsed = 0;
+      server.printQUICDiag();
+    }
+#endif
+  }
   if (!server.stop()) state.errors = 1;
   server.final();
   mx.stop();
@@ -602,3 +790,4 @@ int Zhttpd::run(int argc, const char *const *argv)
   ZiLog::stop();
   return state.errors ? 1 : 0;
 }
+#endif

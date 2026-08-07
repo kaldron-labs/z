@@ -21,8 +21,8 @@
 
 #include <zlib/ZmScheduler.hh>
 
-#include <zlib/ZhttpBody.hh>
-#include <zlib/ZhttpStream.hh>
+#include <zlib/ZhttpFields.hh>
+#include <zlib/ZhttpTransport.hh>
 
 #include <zlib/ZwsProtocol.hh>
 #include <zlib/ZwsTx.hh>

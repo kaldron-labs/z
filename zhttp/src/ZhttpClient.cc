@@ -8,6 +8,9 @@
 
 namespace Zhttp {
 
+ZtEnumImplStruct(ProtocolPolicy);
+ZtEnumImplStruct(ResultCode);
+ZtEnumImplStruct(ClientEventType);
 ZtEnumImplStruct(AttemptPhase);
 ZtEnumImplStruct(FailureKind);
 ZtEnumImplStruct(RedirectState);

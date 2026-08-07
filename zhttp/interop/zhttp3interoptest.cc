@@ -7,6 +7,7 @@
 #include <iostream>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZiResolver.hh>
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>

@@ -28,7 +28,6 @@
 #include <zlib/ZiAssert.hh>
 
 #include <zlib/ZhttpCompression.hh>
-#include <zlib/ZhttpStaticTable.hh>
 
 namespace Zhttp {
 

@@ -10,6 +10,5 @@ namespace Zhttp {
 
 ZtEnumImplStruct(RequestDisposition);
 ZtEnumImplStruct(RequestPhase);
-ZtEnumImplStruct(ResponseOutcome);
 
 } // namespace Zhttp

@@ -14,7 +14,7 @@
 
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZhttpUtil.hh>
+#include <zlib/ZhttpCore.hh>
 
 namespace Zhttp {
 

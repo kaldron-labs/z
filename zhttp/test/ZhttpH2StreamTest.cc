@@ -10,7 +10,7 @@
 
 #include <zlib/ZmObject.hh>
 
-#include <zlib/ZhttpH2Stream.hh>
+#include <zlib/ZhttpH2Hub.hh>
 
 using namespace ZuTestUtil;
 

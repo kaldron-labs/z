@@ -13,11 +13,14 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpRuntime.hh>
+#include <zlib/ZmTrap.hh>
 
 #include <zlib/Zws.hh>
 
 namespace ZwsClient_ {
+
+static ZmSemaphore *trapDone;
+static void trapped() { if (trapDone) trapDone->post(); }
 
 struct Options {
   ZuCSpan	ca;
@@ -89,7 +92,7 @@ ZiMxParams mxParams()
 }
 
 struct App {
-  Zhttp::Runtime	*runtime = nullptr;
+  ZmSemaphore		*done = nullptr;
   ZmSemaphore		down;
   ZuCSpan		message;
   unsigned		maxMessages = 1;
@@ -151,30 +154,32 @@ struct App {
   void connectFailed(Link &, bool transient) {
     std::cerr << "connect failed (transient=" << transient << ")\n";
     failed = true;
-    runtime->stop();
+    done->post();
   }
   template <typename Link>
   void disconnected(Link &, bool peer) {
     if (verbose) std::cerr << "disconnected (peer=" << peer << ")\n";
     down.post();
-    runtime->stop();
+    done->post();
   }
 };
 
 template <typename Profile>
 int run(const Options &options, const Zws::URI &uri)
 {
-  Zhttp::Runtime runtime;
-  if (!runtime.init()) return 1;
+  ZmSemaphore done;
+  trapDone = &done;
+  ZmTrap::sigintFn(trapped);
+  ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
   if (!mx.start()) {
-    runtime.final();
+    trapDone = nullptr;
     return 1;
   }
 
   App app{
-    &runtime, {}, options.message, options.messages,
+    &done, {}, options.message, options.messages,
     options.verbose, false, 0, unsigned(!options.requirePong)};
   Zws::Client<App, Profile> client{&app};
   typename Zws::Client<App, Profile>::Config config;
@@ -193,7 +198,7 @@ int run(const Options &options, const Zws::URI &uri)
     std::cerr << "client initialization/start failed\n";
     if (initialized) client.final();
     mx.stop();
-    runtime.final();
+    trapDone = nullptr;
     return 1;
   }
 
@@ -202,7 +207,7 @@ int run(const Options &options, const Zws::URI &uri)
   link->connect();
 
   bool completed = options.timeout ?
-    runtime.wait(options.timeout) : (runtime.wait(), true);
+    done.timedwait(Zm::now(options.timeout)) == 0 : (done.wait(), true);
   if (!completed) {
     std::cerr << "timed out\n";
     app.failed = true;
@@ -220,7 +225,7 @@ int run(const Options &options, const Zws::URI &uri)
   link = nullptr;
   client.final();
   mx.stop();
-  runtime.final();
+  trapDone = nullptr;
   return app.failed || !stopOK;
 }
 

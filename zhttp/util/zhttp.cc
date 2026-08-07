@@ -12,6 +12,7 @@
 #include <zlib/ZuLib.hh>
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmTime.hh>
+#include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
@@ -23,8 +24,9 @@
 #include <zlib/ZiHashCSV.hh>
 #include <zlib/ZiHeapCSV.hh>
 
-#include <zlib/Zhttp.hh>
+#include <zlib/ZhttpClient.hh>
 
+#include "runtime.hh"
 #include "zhttpput.hh"
 
 ZtEnumNS(, Http3Mode, int8_t, force, prefer, disable);
@@ -654,6 +656,8 @@ struct Client : public Zhttp::Client<TxQ, ResParser> {
 
   RequestQ *txQueue() { return &m_requests; }
 
+  void idle() { ZhttpUtil::Runtime::post(); }
+
   void archive_(Request *) {
     produce_();
     if (m_generated == m_options->requests) seal_();
@@ -771,9 +775,13 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
+  ZmTrap::sigintFn(ZhttpUtil::Runtime::post);
+  ZmTrap::trap();
+
   ZiMultiplex mx(mxParams(options));
   if (!mx.start()) {
     ZiLOG(Error, "zhttp", "ZiMultiplex start failed");
+    ZiLog::stop();
     return 1;
   }
 
@@ -844,16 +852,47 @@ int main(int argc, char **argv)
     ZiLog::stop();
     return 1;
   }
-  app.diagnostic(options.memDiag,
-    Zhttp::DiagnosticFn{[]() { printMemDiag(); }});
-#ifdef Zquic_DEBUG
-  app.diagnostic(options.quicDiag,
-    Zhttp::DiagnosticFn{[&app]() { app.printQUICDiag(); }});
-#endif
-
   app.workload(options, url);
 
-  bool timedOut = !app.wait(options.timeout);
+  unsigned elapsed = 0;
+  unsigned memElapsed = 0;
+#ifdef Zquic_DEBUG
+  unsigned quicElapsed = 0;
+#endif
+  bool timedOut = false;
+  for (;;) {
+    unsigned step = options.timeout ? options.timeout - elapsed : 0;
+    if (options.memDiag) {
+      unsigned left = options.memDiag - memElapsed;
+      if (!step || left < step) step = left;
+    }
+#ifdef Zquic_DEBUG
+    if (options.quicDiag) {
+      unsigned left = options.quicDiag - quicElapsed;
+      if (!step || left < step) step = left;
+    }
+#endif
+    if (!step) {
+      ZhttpUtil::Runtime::wait();
+      break;
+    }
+    if (ZhttpUtil::Runtime::wait(step)) break;
+    elapsed += step;
+    if (options.memDiag && (memElapsed += step) >= options.memDiag) {
+      memElapsed = 0;
+      printMemDiag();
+    }
+#ifdef Zquic_DEBUG
+    if (options.quicDiag && (quicElapsed += step) >= options.quicDiag) {
+      quicElapsed = 0;
+      app.printQUICDiag();
+    }
+#endif
+    if (options.timeout && elapsed >= options.timeout) {
+      timedOut = !ZhttpUtil::Runtime::trywait();
+      break;
+    }
+  }
   if (timedOut) ZiLOG(Error, "zhttp", "timed out");
   app.stop();
   bool incomplete = app.completed() != options.requests;

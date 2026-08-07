@@ -7,7 +7,6 @@
 // Z http library - HTTPS/SVCB records and HTTP endpoint discovery
 
 #include <zlib/ZhttpDiscovery.hh>
-#include <zlib/ZhttpAltSvc.hh>
 
 #include <string.h>
 
@@ -16,9 +15,11 @@
 
 #include <zlib/ZiResolver.hh>
 
-#include <zlib/ZhttpUtil.hh>
+#include <zlib/ZhttpCore.hh>
 
 namespace Zhttp {
+
+ZtEnumImplStruct(EndpointSource);
 namespace Discovery_ {
 
 enum {

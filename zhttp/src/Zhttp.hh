@@ -6,9 +6,6 @@
 
 // Z http library
 // - HTTP/1.1, HTTP/2, and HTTP/3
-// - HTTP 1.1:
-//   - optionally chunked body
-//   - optional chunked trailers (rarely used feature)
 // - caller is responsible for body decompression (if required)
 
 #ifndef Zhttp_HH
@@ -18,57 +15,32 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <string.h>
+
+#include <zlib/ZuICmp.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
+#include <zlib/ZuTuple.hh>
+#include <zlib/ZuUnion.hh>
 #include <zlib/ZuUnroll.hh>
 
+#include <zlib/ZtArray.hh>
 #include <zlib/ZtScratch.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiTxStream.hh>
 
-#include <zlib/ZhttpConfig.hh>
-#include <zlib/ZhttpTypes.hh>
+#include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpURL.hh>
-#include <zlib/ZhttpAltSvc.hh>
-#include <zlib/ZhttpDiscovery.hh>
-#include <zlib/ZhttpUtil.hh>
-#include <zlib/ZhttpCompression.hh>
-#include <zlib/ZhttpHPack.hh>
-#include <zlib/ZhttpQPack.hh>
-#include <zlib/ZhttpBody.hh>
-
-// Headers typelist definition, e.g.
-// - keys (variable values):
-//   ZhttpHeaders("content-type", "server");
-// - keys + values:
-//   ZhttpHeaders(("user-agent", "zhttp"), ("accept", "*/*"));
-#define Zhttp_HdrValue(Value) ZuStringT<Value>
-#define Zhttp_HdrValues_(...) \
-  ZuPP_Eval__(ZuPP_MapComma(Zhttp_HdrValue,  __VA_ARGS__))
-#define Zhttp_HdrValues(Values) \
-  ZuPP_Defer(Zhttp_HdrValues_)(ZuPP_Strip(Values))
-#define Zhttp_Header_1(Key) \
-  ZuStringT<Key>, void
-#define Zhttp_Header_2(Key, Values) \
-  ZuStringT<Key>, ZuTypeList<Zhttp_HdrValues(Values)>
-#define Zhttp_Header_N(_0, _1, Fn, ...) Fn
-#define Zhttp_Header_(...) \
-  Zhttp_Header_N(__VA_ARGS__, \
-    Zhttp_Header_2(__VA_ARGS__), \
-    Zhttp_Header_1(__VA_ARGS__))
-#define Zhttp_Header(KV) \
-  ZuPP_Defer(Zhttp_Header_)(ZuPP_Strip(KV))
-#define ZhttpHeaders(...) \
-  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zhttp_Header,  __VA_ARGS__))>
+#include <zlib/ZhttpH1.hh>
+#include <zlib/ZhttpH2.hh>
+#include <zlib/ZhttpH3.hh>
+#include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
-
-constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
-constexpr unsigned DefltMaxStartLine = (1<<13);	// 8K
-constexpr unsigned DefltMaxHeaderSection = (1<<16);	// 64K
 
 // HTTP hub/link application contract
 //
@@ -110,24 +82,8 @@ constexpr unsigned DefltMaxHeaderSection = (1<<16);	// 64K
 // - peer close/reset during a response completes or fails that application
 //   link exactly once, followed by one disconnected() callback.
 
-} // namespace Zhttp
-
-#include <zlib/ZhttpFields.hh>
-#include <zlib/ZhttpH1.hh>
-#include <zlib/ZhttpH2.hh>
-#include <zlib/ZhttpH2Stream.hh>
-#include <zlib/ZhttpH2Message.hh>
-#include <zlib/ZhttpH3.hh>
-#include <zlib/ZhttpH3Cxn.hh>
-#include <zlib/ZhttpMessage.hh>
-#include <zlib/ZhttpStream.hh>
-#include <zlib/ZhttpH1Stream.hh>
-#include <zlib/ZhttpTLSHub.hh>
-
-namespace Zhttp {
-
 // Parser and Builder are plain application structs wrapped in protocol CRTP
-// adapters by ClientMessage and Server; neither inherits a Zhttp base. The
+// adapters by the client and server facades; neither inherits a Zhttp base. The
 // protocol invokes only the callbacks applicable to the selected request or
 // response role and version. Every lambda call is synchronous. Printable
 // Builder values retain their actual type. Received spans and body Rx streams
@@ -190,115 +146,15 @@ struct Builder {
 
   // Present only for fixed policies; called synchronously after body output.
   // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
-  // There is no contentLength() callback; provision Content-Length with
-  // Placeholder from header<Key>(), then patch it here.
+  // There is no contentLength() callback; emit a Content-Length Placeholder
+  // from header<Key>(), then overwrite its mutable span here. Failing to
+  // overwrite the complete placeholder is an application error.
   template <typename L> void bodyHdrs(L &&l);
-};
-
-// Extended request Builder contract used by Client. Request must derive from
-// ZmObject, and TxQ::Msg must publicly derive from Request (normally by
-// configuring the queue with ZmPQueueNode<Request_>, then Request = TxQ::Msg);
-// containment should not be used.
-//
-// Client retains a TxQ::Msg pointer for both queue identity/lifetime and direct
-// Request access. Client calls reset() once for every wire request (including
-// replay attempts and redirects), then uses the Builder callbacks above. A
-// failed connection which emits no request is not a message. All lifecycle
-// callbacks are synchronous.
-struct Request : public ZmObject, public Builder {
-  // Request start line / pseudo-headers. operation() is called exactly once
-  // per message; l(method, target).
-  template <typename L> void operation(L &&l);
-  template <typename L> void host(L &&l);	// l(authority)
-  template <typename L> void protocol(L &&l);	// l(value), CONNECT only
-
-  // Monotonic queue identity and discrete-message length.
-  uint64_t key() const;
-  uint64_t length() const; // returns 1
-
-  // Absolute URL of the submitted request. Client snapshots it on
-  // submission; redirected() receives each subsequently accepted URL.
-  Zhttp::URLStorage url;
-
-  // Whether the request semantics permit another attempt after a redirect or
-  // an unprocessed failure. Called before Client decides to replay.
-  bool replayable() const;
-
-  // Whether another Builder pass will reproduce the same request, including
-  // identical body bytes. Both replayable() and reproducible() must be true
-  // for Client to replay a request.
-  bool reproducible() const;
-
-  // A transport connection for the current attempt is ready. Called before
-  // reset() and request construction; info identifies the selected transport
-  // and negotiated HTTP version.
-  void connected(const ConnectedInfo &);
-
-  // The current attempt's connection ended; peer is true when the peer
-  // initiated the disconnect. No callback is made without a bound request.
-  void disconnected(bool peer);
-
-  // Connection establishment failed. transient classifies whether Client
-  // may retry subject to its configured limit and the replay predicates.
-  void connectFailed(bool transient);
-
-  // Client selected a concrete endpoint for the attempt. This precedes
-  // connection establishment and may occur more than once across attempts.
-  void selected(const Endpoint &);
-
-  // Client accepted a redirect to url. Update any request construction state
-  // which operation(), host(), protocol(), or header() derives from the URL.
-  void redirected(const URL &);
-
-  // Reports each typed attempt/request transition. Multiple observations may
-  // precede the single terminal completed() callback.
-  void observed(const ClientEvent &);
-
-  // Exactly one terminal result for the submitted request, after its final
-  // observed Completed or Cancelled/Completed transition.
-  void completed(const Result &);
-};
-
-// Extended response Builder contract used by Server. Each call to
-// Workload::respond() emits exactly one concrete response value; different
-// calls and branches may emit unrelated response types. Headers, optional
-// Trailers, and BodyPolicy are properties of each concrete type. Server may
-// move the emitted response; applications must not retain references to it or
-// its transient state. Server calls reset() exactly once before any other
-// response callback, then retains the concrete type in its protocol adapter.
-// All calls originate on the Tx shard. Other than reset() being first,
-// callback order is protocol-dependent; in particular, fixed H2/H3 bodies can
-// be built and patched before headers.
-//
-// For synchronous body policies, body() follows the Builder contract above.
-// A streaming response may instead provide next(); Server retains that
-// response and repeatedly requests bounded pooled buffers. done() may be
-// called from another thread; Server posts it to the Tx shard before accessing
-// link-owned state. An asynchronous response does not also provide body().
-struct Response : public Builder {
-  unsigned status();
-  template <typename L> void reason(L &&l);	// l(value), H1 only
-  bool close() const;
-
-  // Optional asynchronous alternative to body(), present only when
-  // BodyPolicy::Streaming. done(ZmRef<ZiIOBuf>, final).
-  template <typename Done> void next(unsigned max, Done done);
-};
-
-// Extended response Parser contract used by Client. One ResParser is
-// constructed for each reusable ClientMessage stream. init() is called once
-// before every response message, including the first, and before status(),
-// header(), or body(); it clears per-response state and binds the response to
-// its submitted request. init() calls Parser::reset() itself when that reset
-// is needed; Client does not call Parser::reset() in addition to init(). The
-// same object can therefore serve many messages.
-struct ResParser : Parser {
-  void init(const Request_ &request);
 };
 #endif
 
 // Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
-// ClientMessage and Server wrap plain application Parser sinks in these
+// The role facades wrap plain application Parser sinks in these
 // adapters; application sinks do not derive from them. The protocol invokes
 // only the callbacks applicable to the selected request/response role and
 // version. Inherited defaults are side-effect-safe; an adapter which
@@ -388,8 +244,8 @@ template <
   uint64_t MaxBody = DefltMaxBody>
 using H3ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
 
-// Low-level protocol Builder CRTP adapters used internally by ClientMessage
-// and Server. Application Builders do not derive from these aliases. The
+// Low-level protocol Builder CRTP adapters used internally by the role
+// facades. Application Builders do not derive from these aliases. The
 // adapters provide protocol framing and invoke the application through
 // inversion-of-control lambdas. H1 chunked builders emit Trailers from
 // finish(); H2/H3 builders emit a trailing HEADERS section.
@@ -442,18 +298,438 @@ template <
 using H3Response =
   H3::Response<Impl, Headers, Trailers, HasBody, false>;
 
-template <typename App, typename Profile>
-class ProtocolServer;
+// Application message callback contract
+//
+// Header callbacks precede the first body callback.  Body callbacks receive a
+// populated queue-backed ZiRxStream-compatible object on the owning Rx shard.
+// Each callback is a synchronous prompt to consume complete application
+// frames.  An incomplete trailing frame remains queued for the next prompt;
+// the application must not retain the stream reference outside the callback.
+//
+// Body completion follows successful HTTP framing.  The protocol issues the
+// last data prompt before the separate terminal result, then discards any
+// unread decoded bytes.  No message callback is made after that result.
+//
+// Application Tx producers receive a concrete ZiTxStream-compatible body
+// stream on the owning Tx shard.  The producer writes entity bytes only;
+// libZhttp owns framing and final end-of-stream mapping.
+
+template <
+  typename Profile,
+  typename Traits = Zhttp::ProfileTraits<Profile>>
+struct MessageTraits;
+
+template <int> struct HttpTraits;
+
+template <> struct HttpTraits<Version::H1> {
+  enum {
+    ID = Version::H1,
+    OneMessagePerLink = false,
+    CloseDelimited = true
+  };
+
+  template <
+    typename Impl, typename Headers, uint64_t MaxBody>
+  using RequestParser = H1::Parser<Impl, true, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, uint64_t MaxBody>
+  using ResponseParser = H1::Parser<Impl, false, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool Chunked>
+  using Request =
+    H1::Request<Impl, Headers, Trailers, HasBody, Chunked>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool Chunked>
+  using Response =
+    H1::Response<Impl, Headers, Trailers, HasBody, Chunked>;
+};
+
+template <> struct HttpTraits<Version::H2> {
+  enum {
+    ID = Version::H2,
+    OneMessagePerLink = true,
+    CloseDelimited = false
+  };
+
+  template <
+    typename Impl, typename Headers, uint64_t MaxBody>
+  using RequestParser = H2::Parser<Impl, true, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, uint64_t MaxBody>
+  using ResponseParser = H2::Parser<Impl, false, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool Streaming>
+  using Request =
+    H2::Request<Impl, Headers, Trailers, HasBody, Streaming>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool Streaming>
+  using Response =
+    H2::Response<Impl, Headers, Trailers, HasBody, Streaming>;
+};
+
+template <> struct HttpTraits<Version::H3> {
+  enum {
+    ID = Version::H3,
+    OneMessagePerLink = true,
+    CloseDelimited = false
+  };
+
+  template <
+    typename Impl, typename Headers, uint64_t MaxBody>
+  using RequestParser = H3::Parser<Impl, true, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, uint64_t MaxBody>
+  using ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool Streaming>
+  using Request =
+    H3::Request<Impl, Headers, Trailers, HasBody, Streaming>;
+  template <
+    typename Impl, typename Headers, typename Trailers,
+    bool HasBody, bool Streaming>
+  using Response =
+    H3::Response<Impl, Headers, Trailers, HasBody, Streaming>;
+};
+
+template <typename Profile, typename Traits>
+struct MessageTraits :
+  public HttpTraits<Traits::HTTPVersion> {
+  using Transport = typename Traits::Transport;
+  enum { Multiplexed = Traits::Multiplexed };
+};
+
+template <typename U, typename = void>
+struct BuilderTrailers { using T = ZuTypeList<>; };
+template <typename U>
+struct BuilderTrailers<U, decltype(sizeof(typename U::Trailers), void())> {
+  using T = typename U::Trailers;
+};
+
+template <typename U, typename = void>
+struct ParserBodyMax { static constexpr uint64_t V = uint64_t(-1); };
+template <typename U>
+struct ParserBodyMax<U, decltype((void)U::BodyMax, void())> {
+  static constexpr uint64_t V = U::BodyMax;
+};
+
+template <typename Write, typename Stream>
+bool invokeBodyWriter(Write &&write, Stream &stream) {
+  using R = decltype(ZuFwd<Write>(write)(stream));
+  ZuAssert((ZuIsSame<R, void>{} || ZuIsSame<R, bool>{}),
+    "body writer must return void or bool");
+  if constexpr (ZuIsSame<R, void>{}) {
+    ZuFwd<Write>(write)(stream);
+    return true;
+  } else
+    return ZuFwd<Write>(write)(stream);
+}
+
+template <typename Headers>
+bool validRuntimeHeader(ZuCSpan name, bool h1) {
+  if (ZuICmp<ZuCSpan>::equals(name, "content-length") ||
+      (h1 && ZuICmp<ZuCSpan>::equals(name, "transfer-encoding")))
+    return false;
+  using Keys = ZuTypeSlice<2, 0, Headers>;
+  bool valid = true;
+  ZuUnroll::all<Keys>([&valid, name]<typename Key>() {
+    if (ZuICmp<ZuCSpan>::equals(name, Key{}())) valid = false;
+  });
+  return valid;
+}
+
+struct RetainedBudget {
+  bool add(uint64_t n) {
+    if (n > max - size) {
+      valid = false;
+      return false;
+    }
+    size += n;
+    return true;
+  }
+
+  uint64_t	max = uint64_t(-1);
+  uint64_t	size = 0;
+  bool		valid = true;
+};
+
+struct RetainedEntry {
+  RetainedEntry() = default;
+  RetainedEntry(ZmRef<ZiIOBuf> buf_, bool final_) :
+    buf{ZuMv(buf_)}, final{final_} { }
+
+  ZmRef<ZiIOBuf>	buf;
+  bool		final;
+};
+
+template <typename Lower>
+class RetainedTx : public ZiTxStream<RetainedTx<Lower>> {
+  using Base = ZiTxStream<RetainedTx<Lower>>;
+  using Entries =
+    ZtArray<RetainedEntry, ZtArrayHeapID<"Zhttp.RetainedTx.Entries">>;
+
+public:
+  RetainedTx(Lower &lower_, RetainedBudget &budget_) :
+    Base{lower_.maxSize(), lower_.headRoom(), lower_.tailRoom()},
+    m_lower{lower_}, m_budget{budget_} { }
+
+  ~RetainedTx() { this->flush(); }
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    return m_lower.allocBuf_(headRoom);
+  }
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+    if (!m_budget.add(buf->length)) {
+      m_valid = false;
+      return false;
+    }
+    new (m_entries.push()) RetainedEntry{ZuMv(buf), final};
+    return true;
+  }
+
+  bool seal() {
+    this->flush();
+    return valid();
+  }
+  bool valid() const { return m_valid && m_budget.valid; }
+  void commit() {
+    if (!valid()) return;
+    for (unsigned i = 0; i < m_entries.length(); ++i)
+      if (!m_lower.sendBuf_(ZuMv(m_entries[i].buf), m_entries[i].final))
+	break;
+    m_entries.length(0);
+  }
+
+private:
+  Lower		&m_lower;
+  RetainedBudget &m_budget;
+  Entries	m_entries;
+  bool		m_valid = true;
+};
+
+template <typename Headers>
+class HeaderPatches {
+  using Keys = ZuTypeSlice<2, 0, Headers>;
+  template <typename> using SlotT = ZuSpan<uint8_t>;
+  using Slots = ZuTypeApply<ZuTuple, ZuTypeMap<SlotT, Keys>>;
+
+public:
+  template <typename Key, typename App, bool Persist>
+  struct Value {
+    struct Print : public ZuPrintBuffer {
+      static unsigned length(const Value &v) {
+	return v.placeholder.length;
+      }
+      static unsigned print(char *data, unsigned, const Value &v) {
+	auto n = v.placeholder.length;
+	if (n) memset(data, v.placeholder.fill, n);
+	ZuSpan<uint8_t> span{reinterpret_cast<uint8_t *>(data), n};
+	if constexpr (Persist)
+	  *v.span = span;
+	else
+	  v.app->bodyHdrs(
+	    [&span]<typename K, typename P>(P &&patcher) {
+	      if constexpr (ZuIsSame<K, Key>{})
+		ZuFwd<P>(patcher)(span);
+	    });
+	return n;
+      }
+    };
+
+    Placeholder		placeholder;
+    ZuSpan<uint8_t>	*span = nullptr;
+    App			*app = nullptr;
+
+    friend Print ZuPrintType(Value *);
+  };
+
+  template <bool Wire, typename Key, typename App, typename L>
+  void header(App &app, L &&l) {
+    app.template header<Key>([this, &app, &l]<typename V>(V &&v) {
+      if constexpr (IsPlaceholder<ZuDecay<V>>{}) {
+	constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
+	l(Value<Key, App, Wire>{
+	  v, &m_slots.template p<I>(), &app});
+      } else
+	l(ZuFwd<V>(v));
+    });
+  }
+
+  template <typename App>
+  void patch(App &app) {
+    app.bodyHdrs([this]<typename Key, typename P>(P &&patcher) {
+      constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
+      ZuFwd<P>(patcher)(m_slots.template p<I>());
+    });
+  }
+
+private:
+  Slots	m_slots;
+};
+
+// Shared compile-time outbound message mechanics.  Ops keeps request/response
+// accounting, failure, empty-body, and budget policy in the owning component.
+template <typename Message, typename Ops>
+class MessageTx {
+public:
+  MessageTx(Ops &ops) : m_ops{&ops} { }
+
+  template <typename Builder>
+  bool streaming(Builder &builder) {
+    auto &link = m_ops->link();
+    auto tx = link.transmit(builder);
+    bool emitted = false;
+    bool duplicate = false;
+    bool writerOK = false;
+    bool headersOK = false;
+    uint64_t produced = 0;
+    if constexpr (Builder::Optional) {
+      builder.emitBody([
+	this, &builder, &tx, &emitted, &duplicate, &writerOK,
+	&headersOK, &produced](auto &&write) {
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	if (!(headersOK = begin_(builder, tx))) return;
+	m_ops->headers();
+	auto body = builder.body(tx);
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	body.flush();
+	produced = body.produced();
+	m_ops->template produced<true>(produced);
+	if (!body.valid()) writerOK = false;
+	if (writerOK) builder.finish(tx);
+      });
+      if (!emitted) return m_ops->empty(builder.appBuilder());
+    } else {
+      if (!(headersOK = begin_(builder, tx)))
+	return m_ops->template fail<true>();
+      m_ops->headers();
+      builder.emitBody([
+	this, &builder, &tx, &emitted, &duplicate, &writerOK, &produced](
+	    auto &&write) {
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	auto body = builder.body(tx);
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	body.flush();
+	produced = body.produced();
+	m_ops->template produced<true>(produced);
+	if (!body.valid()) writerOK = false;
+      });
+      if (emitted && writerOK) builder.finish(tx);
+    }
+    if ((!Builder::Optional && !emitted) || duplicate || !writerOK ||
+	!headersOK)
+      return m_ops->template fail<true>();
+    if (!m_ops->complete(produced)) return false;
+    link.finish();
+    return true;
+  }
+
+  template <typename Builder>
+  bool fixed(Builder &builder) {
+    auto &link = m_ops->link();
+    auto native = link.transmit(builder);
+    if constexpr (Message::ID == Version::H2)
+      return fixedH2_(builder, native);
+    else {
+      if constexpr (Message::ID == Version::H3) builder.deferCompression();
+      RetainedBudget budget{.max = m_ops->retainedMax()};
+      RetainedTx headerTx{native, budget};
+      RetainedTx bodyTx{native, budget};
+      auto body = builder.body(bodyTx, m_ops->fixedBodyMax());
+      bool emitted = false;
+      bool duplicate = false;
+      bool writerOK = false;
+      bool headersOK = true;
+      builder.emitBody([
+	&builder, &headerTx, &body,
+	&emitted, &duplicate, &writerOK, &headersOK](auto &&write) {
+	(void)headerTx;
+	if (emitted) { duplicate = true; return; }
+	emitted = true;
+	if constexpr (Message::ID == Version::H1)
+	  if (!(headersOK = begin_(builder, headerTx))) return;
+	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+      });
+      body.flush();
+      if (emitted) {
+	builder.produced = body.produced();
+	m_ops->template produced<false>(builder.produced);
+      }
+      if ((!Builder::Optional && !emitted) || duplicate ||
+	  (emitted && (!headersOK || !writerOK || !body.valid())))
+	return m_ops->template fail<false>();
+      if (!emitted) return m_ops->empty(builder.appBuilder());
+      if constexpr (Message::ID == Version::H1)
+	builder.patch();
+      else
+	if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
+      m_ops->headers();
+      builder.finish(bodyTx);
+      if (!headerTx.seal() || !bodyTx.seal())
+	return m_ops->template fail<false>();
+      headerTx.commit();
+      bodyTx.commit();
+      if (!m_ops->complete(builder.produced)) return false;
+      link.finish();
+      return true;
+    }
+  }
+
+private:
+  template <typename Builder, typename Tx>
+  static bool begin_(Builder &builder, Tx &tx) {
+    using R = decltype(builder.begin(tx));
+    if constexpr (ZuIsSame<R, void>{})
+      builder.begin(tx);
+    else if (!builder.begin(tx))
+      return false;
+    return builder.headersValid();
+  }
+
+  template <typename Builder, typename Tx>
+  bool fixedH2_(Builder &builder, Tx &tx) {
+    tx.defer(m_ops->retainedMax());
+    auto body = builder.body(tx, m_ops->fixedBodyMax());
+    bool emitted = false;
+    bool duplicate = false;
+    bool writerOK = false;
+    bool headersOK = true;
+    builder.emitBody([
+      &builder, &body, &emitted, &duplicate, &writerOK, &headersOK](
+	  auto &&write) {
+      if (emitted) { duplicate = true; return; }
+      emitted = true;
+      writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+    });
+    body.flush();
+    if (emitted) {
+      builder.produced = body.produced();
+      m_ops->template produced<false>(builder.produced);
+    }
+    if ((!Builder::Optional && !emitted) || duplicate ||
+	(emitted && (!headersOK || !writerOK || !body.valid())))
+      return m_ops->template fail<false>();
+    if (!emitted) return m_ops->empty(builder.appBuilder());
+    if (!begin_(builder, tx))
+      return m_ops->template fail<false>();
+    m_ops->headers();
+    builder.finish(tx);
+    if (!tx.valid()) return m_ops->template fail<false>();
+    tx.commit();
+    if (!m_ops->complete(builder.produced)) return false;
+    m_ops->link().finish();
+    return true;
+  }
+
+  Ops	*m_ops;
+};
 
 } // namespace Zhttp
-
-#ifndef Zhttp_CORE_ONLY
-#include <zlib/ZhttpClientHub.hh>
-#include <zlib/ZhttpClientPool.hh>
-#include <zlib/ZhttpClient.hh>
-#include <zlib/ZhttpHubs.hh>
-#include <zlib/ZhttpH2Hub.hh>
-#include <zlib/ZhttpH3Hub.hh>
-#endif
 
 #endif /* Zhttp_HH */

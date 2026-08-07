@@ -4,12 +4,15 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZhttpH2.hh>
+#include <zlib/ZuMatcher.hh>
+
+#include <zlib/ZhttpH2Hub.hh>
 
 namespace Zhttp { namespace H2 {
 
 ZtEnumImplNS(FrameType);
 ZtEnumImplNS(Error);
+ZtEnumImplStruct(ParserState);
 
 ZuCSpan PrefaceParser::value()
 {
@@ -139,3 +142,20 @@ Error::T validateFrame(
 }
 
 }} // namespace Zhttp::H2
+
+namespace Zhttp { namespace TLS_ {
+
+Version::T version(ZuCSpan alpn, H2Policy::T policy)
+{
+  static constexpr auto matcher = ZuMatcher<"h2", "http/1.1">();
+  switch (matcher.exact(alpn)) {
+    case 0:
+      return policy != H2Policy::Disable ? Version::H2 : Version::T(-1);
+    case 1:
+      return policy != H2Policy::Force ? Version::H1 : Version::T(-1);
+    default:
+      return -1;
+  }
+}
+
+}} // namespace Zhttp::TLS_

@@ -193,6 +193,14 @@ public:
     return scan_(ZuFwd<Frame>(frame), pos);
   }
 
+  // Scan from an absolute stream offset; the returned position and total
+  // remain relative to the stream head.
+  template <typename Frame>
+  int64_t scan(Frame &&frame, Zi::RxFramePos &pos, uint64_t offset) {
+    pos = {};
+    return scan_(ZuFwd<Frame>(frame), pos, offset);
+  }
+
   // consume(frame, data) returns the total number of bytes consumed across all spans
   // - int64_t frame(span)
   //   - returns the number of bytes N to be consumed in span
@@ -436,23 +444,37 @@ public:
 private:
 
   template <typename Frame>
-  int64_t scan_(Frame &&frame, RxFramePos &pos) {
+  int64_t scan_(Frame &&frame, RxFramePos &pos, uint64_t offset = 0) {
+    if (ZuUnlikely(offset > m_length)) return -1;
     auto i = m_queue.citer();
     while (auto node = i()) {
-      int64_t n = frame(node->span());
+      auto span = node->span();
+      if (offset >= span.length()) {
+	offset -= span.length();
+	++pos.count;
+	pos.total += span.length();
+	continue;
+      }
+      unsigned skipped = unsigned(offset);
+      if (skipped) {
+	span.offset(skipped);
+	pos.total += skipped;
+	offset = 0;
+      }
+      int64_t n = frame(span);
       if (ZuUnlikely(n < 0)) return n;
       if (n) {
-	if (ZuUnlikely(uint64_t(n) > node->length)) return -1;
+	if (ZuUnlikely(uint64_t(n) > span.length())) return -1;
 	if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - uint64_t(n)))
 	  return -1;
-	pos.length = unsigned(n);
+	pos.length = skipped + unsigned(n);
 	pos.total += uint64_t(n);
 	return int64_t(pos.total);
       }
-      if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - node->length))
+      if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - span.length()))
 	return -1;
       ++pos.count;
-      pos.total += node->length;
+      pos.total += span.length();
     }
     return 0;
   }

@@ -9,11 +9,21 @@
 #ifndef ZhttpH3_HH
 #define ZhttpH3_HH
 
-#ifndef Zhttp_HH
-#include <zlib/Zhttp.hh>
+#ifndef ZhttpLib_HH
+#include <zlib/ZhttpLib.hh>
 #endif
 
 #include <zlib/ZuByteSwap.hh>
+#include <zlib/Zu_aton.hh>
+
+#include <zlib/ZmRandom.hh>
+
+#include <zlib/ZiLog.hh>
+
+#include <zlib/ZhttpCore.hh>
+#include <zlib/ZhttpFields.hh>
+#include <zlib/ZhttpQPack.hh>
+#include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
 
@@ -683,7 +693,9 @@ private:
   template <typename Key> void header_(ZuBSpan value) {
     if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
-	if (!atou(value, contentLength)) {
+	ZuCSpan data{value};
+	if (!data ||
+	    Zu_atou(contentLength, data.data(), data.length()) != data.length()) {
 	  error_();
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else if (contentLength > MaxBody) {
@@ -1737,7 +1749,385 @@ public:
   void begin(Stream &stream) { Base::beginResponse_(stream); }
 };
 
+template <typename Link, typename StreamRef, typename = void>
+struct HasStreamSend : public ZuFalse { };
+template <typename Link, typename StreamRef>
+struct HasStreamSend<Link, StreamRef,
+  decltype(
+    ZuDeclVal<Link *>()->send(
+      ZuDeclVal<StreamRef &>(), ZuDeclVal<ZuBSpan>(), false),
+    void())> : public ZuTrue { };
+
+template <typename Link, typename = void>
+struct HasH3PeerCap : public ZuFalse { };
+template <typename Link>
+struct HasH3PeerCap<Link, decltype(
+  ZuDeclVal<Link *>()->h3PeerCap(false), void())> : public ZuTrue { };
+
+template <typename Link, typename = void>
+struct HasH3Ready : public ZuFalse { };
+template <typename Link>
+struct HasH3Ready<Link, decltype(
+  ZuDeclVal<Link *>()->h3Ready(), void())> : public ZuTrue { };
+
+// HTTP/3 connection streams and connection-level QPACK state
+template <typename Link, typename StreamRef>
+struct Cxn {
+  using State = CxnState;
+
+  // Rx thread exclusive
+  State::T		state = State::Init;
+  Link			*link_ = nullptr;
+  StreamRef		control;
+  StreamRef		enc;
+  StreamRef		dec;
+  bool			peerControl = false;
+  bool			peerEncoder = false;
+  bool			peerDecoder = false;
+  bool			localExtendedConnect = false;
+  bool			peerExtendedConnect = false;
+  uint64_t		errorCode = 0;
+  QPackLimits		limits;
+  Params		params;
+  QPackRxTable		qpackRxTable;
+  ZiTxErrorFn		txError;
+
+  bool openLocal(
+    Link &link, const Params &params_ = Params{},
+    bool extendedConnect = false) {
+    params = params_;
+    limits = params.qpackLimits();
+    if (!qpackRxTable.init(limits.rxCapacity)) return false;
+    using StreamType = typename Link::StreamType;
+    control = link.stream(StreamType::Simplex);
+    enc = link.stream(StreamType::Simplex);
+    dec = link.stream(StreamType::Simplex);
+    if (!control || !enc || !dec) return false;
+    control->txErrorFn(txError);
+    enc->txErrorFn(txError);
+    dec->txErrorFn(txError);
+
+    using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
+    auto payload = ZmScratch(char, 64, Scratch::VHeap);
+    CountBytes count;
+    if (putVar(count, 0x01) < 0 ||
+	putVar(count, params.qpackRxCapacity()) < 0 ||
+	putVar(count, 0x06) < 0 ||
+	putVar(count, params.maxHeaderListSize()) < 0 ||
+	putVar(count, 0x07) < 0 ||
+	putVar(count, params.qpackRxBlocked()) < 0 ||
+	(extendedConnect &&
+	  (putVar(count, 0x08) < 0 || putVar(count, 1) < 0)))
+      return false;
+    if (putVar(payload, 0x00) < 0 ||
+	putVar(payload, 0x04) < 0 ||
+	putVar(payload, count.length()) < 0 ||
+	putVar(payload, 0x01) < 0 ||
+	putVar(payload, params.qpackRxCapacity()) < 0 ||
+	putVar(payload, 0x06) < 0 ||
+	putVar(payload, params.maxHeaderListSize()) < 0 ||
+	putVar(payload, 0x07) < 0 ||
+	putVar(payload, params.qpackRxBlocked()) < 0 ||
+	(extendedConnect &&
+	  (putVar(payload, 0x08) < 0 || putVar(payload, 1) < 0)))
+      return false;
+    if (!link.send(control, payload, false)) return false;
+    {
+      auto tx = enc->txStream();
+      TxBytes out{tx};
+      if (putVar(out, 0x02) < 0) return false;
+      tx.flush();
+    }
+    {
+      auto tx = dec->txStream();
+      TxBytes out{tx};
+      if (putVar(out, 0x03) < 0) return false;
+      tx.flush();
+    }
+    link_ = &link;
+    localExtendedConnect = extendedConnect;
+    state = State::Ready;
+    return true;
+  }
+
+  void txErrorFn(ZiTxErrorFn fn) {
+    txError = ZuMv(fn);
+    if (control) control->txErrorFn(txError);
+    if (enc) enc->txErrorFn(txError);
+    if (dec) dec->txErrorFn(txError);
+  }
+
+  bool peerControlStream() {
+    if (peerControl) {
+      state = State::Error;
+      return false;
+    }
+    peerControl = true;
+    return true;
+  }
+  bool peerEncoderStream() {
+    if (peerEncoder) {
+      state = State::Error;
+      return false;
+    }
+    peerEncoder = true;
+    return true;
+  }
+  bool peerDecoderStream() {
+    if (peerDecoder) {
+      state = State::Error;
+      return false;
+    }
+    peerDecoder = true;
+    return true;
+  }
+  bool setting(uint64_t key, uint64_t value) {
+    if (key != 0x08) return true;
+    if (value > 1) return false;
+    peerExtendedConnect = value;
+    if constexpr (HasH3PeerCap<Link>{})
+      if (link_) link_->h3PeerCap(value);
+    return true;
+  }
+  void peerSettings() {
+    if constexpr (HasH3Ready<Link>{})
+      if (link_) link_->h3Ready();
+  }
+  QPackRxTable *qpackRx() { return &qpackRxTable; }
+  QPackTxTable *qpackTx() { return link_ ? link_->qpackTx() : nullptr; }
+  bool qpackTxInsn(QPackInsn::T type, uint64_t value) {
+    return qpackTx_(QPackDecoderError,
+      [type, value](QPackTxTable &tx) {
+	return tx.applyDecoder(type, value);
+      });
+  }
+  bool qpackTxMaxCapacity(uint64_t capacity) {
+    if (capacity > uint32_t(-1)) return false;
+    return qpackTx_(SettingsError, [capacity = uint32_t(capacity)](
+	QPackTxTable &tx) {
+      return tx.peerCapacity(capacity);
+    });
+  }
+  bool qpackTxBlocked(uint64_t blocked) {
+    if (blocked > uint32_t(-1)) return false;
+    return qpackTx_(SettingsError, [blocked = uint32_t(blocked)](
+	QPackTxTable &tx) {
+      tx.peerBlocked(blocked);
+      return true;
+    });
+  }
+  bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
+  bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
+  void error(uint64_t code) {
+    if (errorCode) return;
+    errorCode = code;
+    state = State::Error;
+    if (link_) link_->disconnect(code);
+  }
+
+  template <typename PathInfo>
+  void pathUpdate(const PathInfo &) { }
+  template <typename MigrationResult>
+  void migrationStarted(const MigrationResult &) { }
+  template <typename MigrationResult>
+  void migrationPromoted(const MigrationResult &) { }
+  template <typename MigrationResult>
+  void migrationFailed(const MigrationResult &) { }
+
+  template <typename L>
+  bool qpackTx_(uint64_t error, L &&l) {
+    if (!link_) return false;
+    auto link = link_;
+    link->app()->txRun([
+      link,
+      error,
+      l = ZuFwd<L>(l)
+    ]() mutable {
+      auto tx = link->qpackTx();
+      if (!tx || link->closed()) return;
+      if (l(*tx)) return;
+      link->disconnect(error);
+    });
+    return true;
+  }
+
+  bool writeQPack_(StreamRef &stream, ZuBSpan span) {
+    if (!link_ || !stream || !span) return false;
+    if constexpr (HasStreamSend<Link, StreamRef>{})
+      return link_->send(stream, span, false);
+    else
+      return false;
+  }
+};
+
+// Peer unidirectional connection stream adapter
+template <typename Impl, typename Cxn_>
+struct CxnStream : public CxnParser<Impl> {
+  using Cxn = Cxn_;
+  using Base = CxnParser<Impl>;
+  using State = CxnState;
+
+  auto impl() const { return static_cast<const Impl *>(this); }
+  auto impl() { return static_cast<Impl *>(this); }
+
+  State::T h3State() const { return impl()->h3Cxn().state; }
+  void h3State(State::T state) {
+    auto &cxn = impl()->h3Cxn();
+    cxn.state = state;
+    if (state == State::PeerSettingsReceived) cxn.peerSettings();
+  }
+  bool h3Server() const { return impl()->link()->isServer(); }
+  void h3Error(uint64_t error) { impl()->h3Cxn().error(error); }
+  void h3StreamError(uint64_t error) {
+    impl()->link()->h3StreamError(ZmMkRef(impl()), error);
+  }
+  bool peerControlStream() { return impl()->h3Cxn().peerControlStream(); }
+  bool peerEncoderStream() { return impl()->h3Cxn().peerEncoderStream(); }
+  bool peerDecoderStream() { return impl()->h3Cxn().peerDecoderStream(); }
+  QPackRxTable *qpackRx() { return impl()->h3Cxn().qpackRx(); }
+  QPackTxTable *qpackTx() { return impl()->h3Cxn().qpackTx(); }
+  bool qpackDecoderWrite(ZuBSpan span) {
+    return impl()->h3Cxn().qpackDecoderWrite(span);
+  }
+  bool qpackTxInsn(QPackInsn::T type, uint64_t value) {
+    return impl()->h3Cxn().qpackTxInsn(type, value);
+  }
+  bool qpackTxMaxCapacity(uint64_t capacity) {
+    return impl()->h3Cxn().qpackTxMaxCapacity(capacity);
+  }
+  bool qpackTxBlocked(uint64_t blocked) {
+    return impl()->h3Cxn().qpackTxBlocked(blocked);
+  }
+  void setting(uint64_t key, uint64_t value) {
+    Base::setting(key, value);
+    if (!impl()->h3Cxn().setting(key, value))
+      impl()->h3Cxn().error(SettingsError);
+  }
+};
+
+
 } // namespace H3
+
+namespace H3_ {
+
+struct QueueSlot {
+  enum Kind : uint8_t { None, Pending, Waiting };
+  enum : uint32_t { Invalid = uint32_t(-1) };
+};
+
+
+template <typename Diag>
+void printDiag(const Diag &diag) {
+  ZiLOG(Info, "Zhttp", ([
+    datagramsRx = diag.rx.datagramsRx,
+    datagramsTx = diag.tx.datagramsTx,
+    bytesRx = diag.rx.bytesRx,
+    bytesTx = diag.tx.bytesTx,
+    txBackPressure = diag.tx.txBackPressure,
+    failures = diag.failures()
+  ](auto &s) {
+    s << "H3 diag datagramsRx=" << datagramsRx <<
+      " datagramsTx=" << datagramsTx <<
+      " bytesRx=" << bytesRx <<
+      " bytesTx=" << bytesTx <<
+      " txBackPressure=" << txBackPressure <<
+      " failures=" << failures;
+  }));
+}
+
+template <typename Impl>
+class Faults {
+public:
+  void faults(const QUICConfig &config) {
+#ifdef ZiMultiplex_FILTER
+    m_rxDrop = config.rxDrop();
+    m_txDrop = config.txDrop();
+    auto impl = static_cast<Impl *>(this);
+    auto mx = impl->mx();
+    if (m_rxDrop)
+      mx->rxFilter(FilterFn{this, [](Faults *faults,
+	  ZiConnection *cxn, uint8_t *, unsigned) {
+	if (ZuUnlikely(!cxn->info().options.udp())) return false;
+	return faults->m_rng.rand() < faults->m_rxDrop;
+      }});
+    if (m_txDrop)
+      mx->txFilter(FilterFn{this, [](Faults *faults,
+	  ZiConnection *cxn, uint8_t *, unsigned) {
+	if (ZuUnlikely(!cxn->info().options.udp())) return false;
+	return faults->m_rng.rand() < faults->m_txDrop;
+      }});
+#else
+    (void)config;
+#endif
+  }
+  void clearFaults() {
+#ifdef ZiMultiplex_FILTER
+    auto impl = static_cast<Impl *>(this);
+    auto mx = impl->mx();
+    if (!mx) return;
+    if (m_rxDrop) mx->rxFilter({});
+    if (m_txDrop) mx->txFilter({});
+#endif
+  }
+  void printDiag() {
+#ifdef Zquic_DEBUG
+    static_cast<Impl *>(this)->endpointDiag([](const auto &diag) {
+      H3_::printDiag(diag);
+    });
+#endif
+  }
+
+private:
+#ifdef ZiMultiplex_FILTER
+  double	m_rxDrop = 0;
+  double	m_txDrop = 0;
+  ZmRandom	m_rng;
+#endif
+};
+
+template <typename Impl>
+class LogicalStream {
+public:
+  bool streamPeerCap() const {
+    auto native = streamImpl_()->h3Native_();
+    return native && native->h3PeerCap();
+  }
+  bool streamLocalCap() const {
+    auto native = streamImpl_()->h3Native_();
+    return native && native->h3.localExtendedConnect;
+  }
+  template <typename L>
+  void streamTx(L &&l) {
+    auto stream = streamImpl_()->h3Stream_();
+    if (!stream) return;
+    auto tx = stream->txStream();
+    auto body = H3::dataStream(tx);
+    ZuFwd<L>(l)(body);
+  }
+  void streamTxEnd() {
+    auto impl = streamImpl_();
+    auto native = impl->h3Native_();
+    auto stream = impl->h3Stream_();
+    if (native && stream) native->finish(stream);
+  }
+  void streamTxReset() {
+    auto stream_ = streamImpl_()->h3Stream_();
+    if (!stream_) return;
+    auto stream = ZmMkRef(stream_);
+    stream_->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
+      stream->stop(H3::RequestCancelled);
+      stream->quicReset(H3::RequestCancelled);
+    });
+  }
+
+private:
+  const Impl *streamImpl_() const {
+    return static_cast<const Impl *>(this);
+  }
+  Impl *streamImpl_() { return static_cast<Impl *>(this); }
+};
+
+} // namespace H3_
 
 } // namespace Zhttp
 

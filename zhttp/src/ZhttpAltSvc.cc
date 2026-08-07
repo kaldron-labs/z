@@ -6,11 +6,11 @@
 
 // Z HTTP Alt-Svc field values and cache
 
-#include <zlib/ZhttpAltSvc.hh>
+#include <zlib/ZhttpDiscovery.hh>
 
 #include <zlib/ZuICmp.hh>
 
-#include <zlib/ZhttpUtil.hh>
+#include <zlib/ZhttpCore.hh>
 
 namespace Zhttp {
 

@@ -1,9 +1,9 @@
 # Zhttp executable boundary manifest
 
 This manifest covers the complete program-only source closure:
-`zhttp.cc` plus `zhttpput.hh` for `zhttp`, and `zhttpd.cc` plus
-`zhttpd.cc`, `zhttpdmain.cc`, `zhttpdutil.cc`, `zhttpd.hh`, and `zhttpput.hh`
-for `zhttpd`.
+`zhttp.cc` plus `zhttpput.hh` for `zhttp`, and `zhttpd.cc`,
+`zhttpdutil.cc`, `zhttpd.hh`, and `zhttpput.hh` for `zhttpd`. Both programs
+use the adjacent, non-installed `runtime.hh` semaphore bridge.
 All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 
 ## `zhttp.cc`
@@ -39,17 +39,11 @@ fallback, or protocol lifecycle mechanism.
 | Workload-specific request/response handling | `sendBody`, `Workload` | Adapt the static planner's response plan to the single protocol-neutral server callback contract. |
 | Reporting | `printMemDiag` | Format memory, hash, and heap diagnostics. |
 | Workload selection | `prepareProcess` | Apply the selected foreground/daemon process policy. |
-| CLI parsing | `Zhttpd::run` | Wire logging, workload state, public `Zhttp::Server`, and process exit status. |
+| CLI parsing | `main` | Make trap registration, logging, workload state, public `Zhttp::Server`, wait policy, teardown, and process exit status explicit. |
 
 `Workload::listening`, `Workload::listenFailed`, `Workload::connected`, and
 `Workload::disconnected` are reporting callbacks; the `Workload` type does
 not own listener state or lifecycle decisions.
-
-## `zhttpd.cc`
-
-| Category | Top-level declarations | Application responsibility |
-| --- | --- | --- |
-| CLI parsing | `main` | Forward command-line arguments to `Zhttpd::run`. |
 
 ## `zhttpdutil.cc`
 
@@ -66,7 +60,13 @@ not own listener state or lifecycle decisions.
 | Workload-specific request/response handling | `ResponsePlan`, `MimeMap`, `StaticPlanner`, `isspace__`, `lower__`, `lower`, `ieq`, `httpDate`, `parseHTTPDate`, `pathComponent`, `decodeNormalizePath`, `staticPath`, `htmlEsc`, `hostName`, `constTimeEqual`, `basicAuthValue` | Plan authorization, redirects, normalized static paths, MIME, conditional and range responses, directory listings, and response metadata. URL and request-target splitting is reusable Zhttp mechanism. |
 | Output-file handling | `fileChunks`, `sendSpanChunks` | Bound response-file and generated-body chunks presented to the public server body sink. |
 | Reporting | `LogSink` | Format and emit workload access records. |
-| CLI parsing | `run` declaration | Expose the executable entry point to application tests. |
+| Workload selection | `Application` | Share static-file workload/configuration mechanics with QIR without owning signal, wait, logging, or process lifecycle policy. |
+
+## `runtime.hh`
+
+| Category | Top-level declarations | Application responsibility |
+| --- | --- | --- |
+| Process mechanics | `ZhttpUtil::Runtime` | Provide only the local semaphore post/wait bridge; each `main` visibly owns trap registration, timeout/diagnostic policy, and teardown. |
 
 The automated `ZhttpBoundaryTest` rejects native transport headers, internal
 link calls, parser/builder selection, HPACK/H2 frame/session/wire code,

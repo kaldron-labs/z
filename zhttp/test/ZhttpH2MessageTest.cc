@@ -9,7 +9,6 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zhttp.hh>
-#include <zlib/ZhttpMessage.hh>
 
 using namespace ZuTestUtil;
 
