@@ -22,28 +22,6 @@
 
 namespace Zhttp {
 
-template <typename U> struct StaticTail_ { using T = ZuTypeList<U>; };
-template <typename ...Us>
-struct StaticTail_<ZuTypeList<Us...>> { using T = ZuTypeList<Us...>; };
-
-template <typename U, typename List, bool = ZuTypeIn<U, List>{}>
-struct StaticUniqueAdd_ {
-  using T = typename List::template Unshift<U>;
-};
-template <typename U, typename List>
-struct StaticUniqueAdd_<U, List, true> { using T = List; };
-
-template <typename ...> struct StaticUnique_;
-template <> struct StaticUnique_<> { using T = ZuTypeList<>; };
-template <typename U> struct StaticUnique_<U> {
-  using T = ZuTypeList<U>;
-};
-template <typename U, typename V>
-struct StaticUnique_<U, V> :
-  public StaticUniqueAdd_<U, typename StaticTail_<V>::T> { };
-template <typename ...Us>
-using StaticUnique = typename StaticUnique_<Us...>::T;
-
 template <typename Key_, typename Value_ = void>
 struct StaticEntry {
   using Key = Key_;
@@ -63,7 +41,7 @@ using StaticMatchValue = typename StaticMatchValue_<KV>::T;
 template <typename Tbl>
 struct StaticTable {
   using Keys = ZuTypeMap<StaticKey, Tbl>;
-  using Names = ZuTypeReduce<StaticUnique, Keys>;
+  using Names = ZuTypeUnique<Keys>;
 
   template <typename Key>
   struct Entries_ {

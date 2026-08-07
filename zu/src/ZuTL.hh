@@ -324,6 +324,24 @@ struct ZuTypeSort_<Index, ZuTypeList<Ts...>> :
 template <template <typename> class Index, typename ...Ts>
 using ZuTypeSort = typename ZuTypeSort_<Index, Ts...>::T;
 
+// remove duplicate types, retaining the first occurrence
+template <typename, typename ...> struct ZuTypeUnique__;
+template <typename List>
+struct ZuTypeUnique__<List> { using T = List; };
+template <typename List, typename T0, typename ...Ts>
+struct ZuTypeUnique__<List, T0, Ts...> {
+  using Next = ZuIf<
+    ZuTypeIn<T0, List>{}, List, typename List::template Push<T0>>;
+  using T = typename ZuTypeUnique__<Next, Ts...>::T;
+};
+template <typename ...Ts>
+struct ZuTypeUnique_ : public ZuTypeUnique__<ZuTypeList<>, Ts...> { };
+template <typename ...Ts>
+struct ZuTypeUnique_<ZuTypeList<Ts...>> :
+  public ZuTypeUnique_<Ts...> { };
+template <typename ...Ts>
+using ZuTypeUnique = typename ZuTypeUnique_<Ts...>::T;
+
 // compile-time typelist slice
 template <
   unsigned Stride, unsigned Offset, typename Ts,
