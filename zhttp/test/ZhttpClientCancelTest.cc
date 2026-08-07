@@ -28,7 +28,9 @@ struct ResParser;
 
 struct Request_ : public ZmObject {
   using Headers = ZuTypeList<>;
-  using BodyPolicy = Zhttp::Body::None;
+  constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
+    return Zhttp::BodyPolicy::None;
+  }
 
   void reset() { ++resets; }
   template <typename L>

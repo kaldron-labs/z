@@ -129,7 +129,10 @@ struct Parser {
 struct Builder {
   using Headers = ZhttpHeaders(...);
   using Trailers = ZhttpHeaders(...);	// optional
-  using BodyPolicy = Body::None;
+
+  // May be non-constexpr for a type-erased Builder. The value is fixed from
+  // reset() until message construction completes.
+  constexpr BodyPolicy::T bodyPolicy() const { return BodyPolicy::None; }
 
   // May be constructed once and retained across messages. Called exactly
   // once before each message, including the first, to clear per-message
@@ -140,7 +143,8 @@ struct Builder {
   template <typename L> void header(L &&l);		   // l(key, value)
 
   // Present only for body-bearing policies. emit(write) is called zero or
-  // one times according to BodyPolicy::Optional; write(bodyStream) returns
+  // one times according to BodyPolicy::optional(bodyPolicy());
+  // write(bodyStream) returns
   // void or bool.
   template <typename Emit> void body(Emit &&emit);
 
@@ -410,6 +414,18 @@ struct BuilderTrailers<U, decltype(sizeof(typename U::Trailers), void())> {
   using T = typename U::Trailers;
 };
 
+template <typename U, typename Emit, typename = void>
+struct HasBuilderBody : public ZuFalse { };
+template <typename U, typename Emit>
+struct HasBuilderBody<U, Emit, decltype(
+  ZuDeclVal<U &>().body(ZuDeclVal<Emit>()), void())> : public ZuTrue { };
+
+template <typename U, typename L, typename = void>
+struct HasBuilderBodyHdrs : public ZuFalse { };
+template <typename U, typename L>
+struct HasBuilderBodyHdrs<U, L, decltype(
+  ZuDeclVal<U &>().bodyHdrs(ZuDeclVal<L>()), void())> : public ZuTrue { };
+
 template <typename U, typename = void>
 struct ParserBodyMax { static constexpr uint64_t V = uint64_t(-1); };
 template <typename U>
@@ -530,12 +546,14 @@ public:
 	ZuSpan<uint8_t> span{reinterpret_cast<uint8_t *>(data), n};
 	if constexpr (Persist)
 	  *v.span = span;
-	else
-	  v.app->bodyHdrs(
-	    [&span]<typename K, typename P>(P &&patcher) {
-	      if constexpr (ZuIsSame<K, Key>{})
-		ZuFwd<P>(patcher)(span);
-	    });
+	else {
+	  auto patch = [&span]<typename K, typename P>(P &&patcher) {
+	    if constexpr (ZuIsSame<K, Key>{})
+	      ZuFwd<P>(patcher)(span);
+	  };
+	  if constexpr (HasBuilderBodyHdrs<App, decltype(patch)>{})
+	    v.app->bodyHdrs(ZuMv(patch));
+	}
 	return n;
       }
     };
@@ -561,10 +579,12 @@ public:
 
   template <typename App>
   void patch(App &app) {
-    app.bodyHdrs([this]<typename Key, typename P>(P &&patcher) {
+    auto patch = [this]<typename Key, typename P>(P &&patcher) {
       constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
       ZuFwd<P>(patcher)(m_slots.template p<I>());
-    });
+    };
+    if constexpr (HasBuilderBodyHdrs<App, decltype(patch)>{})
+      app.bodyHdrs(ZuMv(patch));
   }
 
 private:
@@ -579,7 +599,7 @@ public:
   MessageTx(Ops &ops) : m_ops{&ops} { }
 
   template <typename Builder>
-  bool streaming(Builder &builder) {
+  bool streaming(Builder &builder, bool optional) {
     auto &link = m_ops->link();
     auto tx = link.transmit(builder);
     bool emitted = false;
@@ -587,7 +607,7 @@ public:
     bool writerOK = false;
     bool headersOK = false;
     uint64_t produced = 0;
-    if constexpr (Builder::Optional) {
+    if (optional) {
       builder.emitBody([
 	this, &builder, &tx, &emitted, &duplicate, &writerOK,
 	&headersOK, &produced](auto &&write) {
@@ -622,7 +642,7 @@ public:
       });
       if (emitted && writerOK) builder.finish(tx);
     }
-    if ((!Builder::Optional && !emitted) || duplicate || !writerOK ||
+    if ((!optional && !emitted) || duplicate || !writerOK ||
 	!headersOK)
       return m_ops->template fail<true>();
     if (!m_ops->complete(produced)) return false;
@@ -631,11 +651,11 @@ public:
   }
 
   template <typename Builder>
-  bool fixed(Builder &builder) {
+  bool fixed(Builder &builder, bool optional) {
     auto &link = m_ops->link();
     auto native = link.transmit(builder);
     if constexpr (Message::ID == Version::H2)
-      return fixedH2_(builder, native);
+      return fixedH2_(builder, native, optional);
     else {
       if constexpr (Message::ID == Version::H3) builder.deferCompression();
       RetainedBudget budget{.max = m_ops->retainedMax()};
@@ -661,7 +681,7 @@ public:
 	builder.produced = body.produced();
 	m_ops->template produced<false>(builder.produced);
       }
-      if ((!Builder::Optional && !emitted) || duplicate ||
+      if ((!optional && !emitted) || duplicate ||
 	  (emitted && (!headersOK || !writerOK || !body.valid())))
 	return m_ops->template fail<false>();
       if (!emitted) return m_ops->empty(builder.appBuilder());
@@ -693,7 +713,7 @@ private:
   }
 
   template <typename Builder, typename Tx>
-  bool fixedH2_(Builder &builder, Tx &tx) {
+  bool fixedH2_(Builder &builder, Tx &tx, bool optional) {
     tx.defer(m_ops->retainedMax());
     auto body = builder.body(tx, m_ops->fixedBodyMax());
     bool emitted = false;
@@ -712,7 +732,7 @@ private:
       builder.produced = body.produced();
       m_ops->template produced<false>(builder.produced);
     }
-    if ((!Builder::Optional && !emitted) || duplicate ||
+    if ((!optional && !emitted) || duplicate ||
 	(emitted && (!headersOK || !writerOK || !body.valid())))
       return m_ops->template fail<false>();
     if (!emitted) return m_ops->empty(builder.appBuilder());

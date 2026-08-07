@@ -182,10 +182,11 @@ using FixedRespHeaders = ZhttpHeaders(
   "connection",
   "content-length");
 
-template <typename Policy_, typename Headers_>
+template <Zhttp::BodyPolicy::T Policy_, typename Headers_>
 struct ResponseBase {
-  using BodyPolicy = Policy_;
   using Headers = Headers_;
+
+  constexpr Zhttp::BodyPolicy::T bodyPolicy() const { return Policy_; }
 
   ResponsePlan plan;
 
@@ -216,7 +217,7 @@ struct ResponseBase {
     } else if constexpr (Key{}() == "connection") {
       if (plan.connection) l(plan.connection);
     } else if constexpr (Key{}() == "content-length") {
-      if constexpr (ZuIsSame<Policy_, Zhttp::Body::Fixed>{})
+      if constexpr (Policy_ == Zhttp::BodyPolicy::Fixed)
 	l(Zhttp::Placeholder{10, '0'});
       else if (plan.contentLength || plan.sendBody)
 	l(ZuBoxed(plan.contentLength));
@@ -227,8 +228,8 @@ struct ResponseBase {
 };
 
 struct FixedResponse :
-  public ResponseBase<Zhttp::Body::Fixed, FixedRespHeaders> {
-  using Base = ResponseBase<Zhttp::Body::Fixed, FixedRespHeaders>;
+  public ResponseBase<Zhttp::BodyPolicy::Fixed, FixedRespHeaders> {
+  using Base = ResponseBase<Zhttp::BodyPolicy::Fixed, FixedRespHeaders>;
   using ContentLength = ZuStringT<"content-length">;
 
   ZhttpPut::Record record;
@@ -258,7 +259,7 @@ struct FixedResponse :
 };
 
 struct StreamResponse :
-  public ResponseBase<Zhttp::Body::Stream, RespHeaders> {
+  public ResponseBase<Zhttp::BodyPolicy::Stream, RespHeaders> {
   using FileBuf = ZiIOBufAlloc<
     FileChunk, FileChunk, "Zhttpd.FileBody">;
 
@@ -294,7 +295,7 @@ struct StreamResponse :
 };
 
 struct EmptyResponse :
-  public ResponseBase<Zhttp::Body::None, FixedRespHeaders> { };
+  public ResponseBase<Zhttp::BodyPolicy::None, FixedRespHeaders> { };
 
 struct Workload {
   struct Request : public RequestHeaders {

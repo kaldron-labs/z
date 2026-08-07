@@ -272,20 +272,10 @@ public:
   using RespHeaders = typename ResParser::Headers;
   using ReqTrailers = typename BuilderTrailers<Request>::T;
   using Message = MessageTraits<Profile>;
-  using BodyPolicy = typename Request::BodyPolicy;
   using ReqHeaderKeys = ZuTypeSlice<2, 0, ReqHeaders>;
-  enum {
-    ReqBody = BodyPolicy::HasBody,
-    ReqStreaming = BodyPolicy::Streaming,
-    ReqOptional = BodyPolicy::Optional
-  };
+  enum { ReqContentLength =
+    ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{} };
   static constexpr uint64_t RespBodyMax = ParserBodyMax<ResParser>::V;
-  ZuAssert((ReqStreaming || !ReqBody ||
-    ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{}),
-    "fixed request body requires content-length in Headers");
-  ZuAssert((!ReqStreaming ||
-    !ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{}),
-    "streaming request body cannot declare content-length");
   ZuAssert((
     !ZuTypeIn<ZuStringT<"transfer-encoding">, ReqHeaderKeys>{}),
     "libZhttp owns request transfer-encoding framing");
@@ -311,6 +301,8 @@ private:
     void protocol(L &&l) { app->protocol(ZuFwd<L>(l)); }
     template <typename Key, typename L>
     void header(L &&l) {
+      if constexpr (Key{}() == "content-length")
+	if (rejectContentLength) return;
       if (suppressPads) {
 	app->template header<Key>([&l]<typename V>(V &&v) {
 	  if constexpr (!IsPlaceholder<ZuDecay<V>>{})
@@ -340,7 +332,10 @@ private:
     bool headersValid() const { return headersOK; }
     Request &appBuilder() { return *app; }
     template <typename Emit>
-    void emitBody(Emit &&emit) { app->body(ZuFwd<Emit>(emit)); }
+    void emitBody(Emit &&emit) {
+      if constexpr (HasBuilderBody<Request, Emit &&>{})
+	app->body(ZuFwd<Emit>(emit));
+    }
 
     Request		*app = nullptr;
     HeaderPatches<ReqHeaders> patches;
@@ -349,6 +344,7 @@ private:
     Method::T		method = Method::GET;
     bool		headersOK = true;
     bool		suppressPads = false;
+    bool		rejectContentLength = false;
     bool		operationCached = false;
   };
 
@@ -360,14 +356,14 @@ private:
     public ReqOps {
     using Base = typename Message::template Request<
       Builder_, ReqHeaders, ReqTrailers, HasBody, Streaming>;
-    enum { Optional = ReqOptional };
-
     Builder_(
       Request &app_, bool suppressPads = false,
+      bool rejectContentLength = false,
       bool operationCached = false, Method::T method = Method::GET,
       ZuCSpan target = {}) :
       ReqOps{app_, operationCached, method, target} {
       this->suppressPads = suppressPads;
+      this->rejectContentLength = rejectContentLength;
     }
 
     using ReqOps::contentLength;
@@ -376,6 +372,7 @@ private:
     using ReqOps::host;
     using ReqOps::operation;
     using ReqOps::protocol;
+
   };
 
   struct Parser;
@@ -494,12 +491,13 @@ public:
 
 private:
   bool sendApp_(Request &app) {
-    if constexpr (!ReqBody)
-      return sendEmpty_(app);
-    else if constexpr (ReqStreaming)
-      return sendStreaming_(app);
-    else
-      return sendFixed_(app);
+    auto policy = app.bodyPolicy();
+    if (!BodyPolicy::hasBody(policy)) return sendEmpty_(app);
+    if (BodyPolicy::streaming(policy)) {
+      return sendStreaming_(app, BodyPolicy::optional(policy));
+    }
+    if constexpr (!ReqContentLength) return failTx_();
+    return sendFixed_(app, BodyPolicy::optional(policy));
   }
 
   struct TxOps {
@@ -528,16 +526,16 @@ private:
     }
   };
 
-  bool sendStreaming_(Request &app) {
+  bool sendStreaming_(Request &app, bool optional) {
     Builder_<true, true> builder{
-      app, false, m_operationOK, m_requestMethod, m_requestTarget};
+      app, false, true, m_operationOK, m_requestMethod, m_requestTarget};
     TxOps ops{this};
-    return MessageTx<Message, TxOps>{ops}.streaming(builder);
+    return MessageTx<Message, TxOps>{ops}.streaming(builder, optional);
   }
 
   bool sendEmpty_(Request &app, bool suppressPads = false) {
     Builder_<false, false> builder{
-      app, suppressPads,
+      app, suppressPads, true,
       m_operationOK, m_requestMethod, m_requestTarget};
     auto tx = m_link->transmit(builder);
     if (!builder.begin(tx) || !builder.headersValid())
@@ -550,11 +548,11 @@ private:
     return true;
   }
 
-  bool sendFixed_(Request &app) {
+  bool sendFixed_(Request &app, bool optional) {
     Builder_<true, false> builder{
-      app, false, m_operationOK, m_requestMethod, m_requestTarget};
+      app, false, false, m_operationOK, m_requestMethod, m_requestTarget};
     TxOps ops{this};
-    return MessageTx<Message, TxOps>{ops}.fixed(builder);
+    return MessageTx<Message, TxOps>{ops}.fixed(builder, optional);
   }
 
 public:
@@ -3584,7 +3582,6 @@ public:
   using ResParser = ResParser_;
   using ReqHeaders = typename Request_::Headers;
   using RespHeaders = typename ResParser::Headers;
-  using BodyPolicy = typename Request_::BodyPolicy;
   using Self = Client;
   static constexpr uint64_t RespBodyMax = ResParser::BodyMax;
 

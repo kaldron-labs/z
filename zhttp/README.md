@@ -70,7 +70,9 @@ and message-typed application contracts:
 ```c++
 struct Request_ : ZmObject {
   using Headers = RequestHeaders;
-  using BodyPolicy = Zhttp::Body::OptionalFixed;
+  Zhttp::BodyPolicy::T bodyPolicy() const {
+    return put ? Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
+  }
   Zhttp::URLStorage url;
   uint64_t key() const;
   uint64_t length() const { return 1; }
@@ -173,7 +175,7 @@ server.final();
 
 Responses are structural Builders, not subclasses of a runtime Zhttp type.
 One workload can select unrelated concrete response types per endpoint; each
-type supplies `reset()`, `Headers`, `BodyPolicy`, status/header operations, and
+type supplies `reset()`, `Headers`, `bodyPolicy()`, status/header operations, and
 the operations required by its body policy:
 
 ```c++
@@ -192,18 +194,24 @@ void Workload::respond(
 }
 ```
 
+`bodyPolicy()` may be `constexpr` when a Builder always uses one policy, or a
+run-time value when one type-erased Builder dispatches to different message
+implementations. Its value remains fixed for the duration of one message.
+
 `EmptyResponse`, `JSONResponse`, and `FileResponse` can have different header
 typelists and body policies. `JSONResponse` can use synchronous
 `body(emit)`/`bodyHdrs()` construction, while a streaming `FileResponse` can
 provide asynchronous `next(max, done)` production.
 
-`Body::None` is allocation-free. `Body::Fixed` and `Body::OptionalFixed`
+`BodyPolicy::None` is allocation-free. `BodyPolicy::Fixed` and
+`BodyPolicy::OptionalFixed`
 retain the complete message while `bodyHdrs()` patches body-dependent header
 values. `ClientConfig` and `ServerConfig` bound retained entity and complete
 message sizes with `retainedBodyMax()` and `retainedMessageMax()`; the fixed
-entity limit is additionally capped at `UINT_MAX`. `Body::Stream` and
-`Body::OptionalStream` release buffers as they fill; H1 maps them to chunked
-transfer encoding and H2/H3 map them to DATA and their native final boundary.
+entity limit is additionally capped at `UINT_MAX`. `BodyPolicy::Stream` and
+`BodyPolicy::OptionalStream` release buffers as they fill; H1 maps them to
+chunked transfer encoding and H2/H3 map them to DATA and their native final
+boundary.
 Client stream writers remain synchronous.  A server streaming response exposes
 `next(max, done)`: each turn produces at most one pooled `ZiIOBuf`, and the
 server asks for the next turn only after Tx capacity is released.  Each retry

@@ -50,7 +50,7 @@ struct ResponseResult {
 // Extended response Builder contract used by Server. Each call to
 // Workload::respond() emits exactly one concrete response value; different
 // calls and branches may emit unrelated response types. Headers, optional
-// Trailers, and BodyPolicy are properties of each concrete type. Server may
+// Trailers and bodyPolicy() are properties of each concrete type. Server may
 // move the emitted response; applications must not retain references to it or
 // its transient state. Server calls reset() exactly once before any other
 // response callback, then retains the concrete type in its protocol adapter.
@@ -69,7 +69,7 @@ struct Response : public Builder {
   bool close() const;
 
   // Optional asynchronous alternative to body(), present only when
-  // BodyPolicy::Streaming. done(ZmRef<ZiIOBuf>, final).
+  // BodyPolicy::Stream/OptionalStream. done(ZmRef<ZiIOBuf>, final).
   template <typename Done> void next(unsigned max, Done done);
 };
 #endif
@@ -1877,7 +1877,6 @@ private:
   };
 
   struct ErrorResponse {
-    using BodyPolicy = Body::None;
     using Headers = ZuTypeList<>;
 
     unsigned status_ = 400;
@@ -1888,6 +1887,7 @@ private:
     template <typename Key, typename L> void header(L &&) const { }
     template <typename L> void header(L &&) const { }
     bool close() const { return false; }
+    constexpr BodyPolicy::T bodyPolicy() const { return BodyPolicy::None; }
   };
 
   template <typename Profile, typename Builder>
@@ -1935,7 +1935,10 @@ private:
     bool headersValid() const { return headersOK; }
     Builder &appBuilder() { return builder; }
     template <typename Emit>
-    void emitBody(Emit &&emit) { builder.body(ZuFwd<Emit>(emit)); }
+    void emitBody(Emit &&emit) {
+      if constexpr (HasBuilderBody<Builder, Emit &&>{})
+	builder.body(ZuFwd<Emit>(emit));
+    }
 
     bool	h1 = false;
     bool	headersOK = true;
@@ -1956,8 +1959,6 @@ private:
       ResponseTx, typename Builder::Headers,
       typename BuilderTrailers<Builder>::T, HasBody, Streaming>;
     using Ops = ResponseOps<Profile, Builder>;
-    enum { Optional = Builder::BodyPolicy::Optional };
-
     ResponseTx(
       Server *server, Builder builder, bool suppressPads = false,
       bool rejectContentLength = false) :
@@ -1973,6 +1974,7 @@ private:
     using Ops::header;
     using Ops::reason;
     using Ops::status;
+
   };
 
   template <typename Profile, typename Builder, typename Heap>
@@ -2210,9 +2212,9 @@ private:
       Link_ &link, Method::T method, Builder_ &&builder_, BodyCommit &commit,
       uint64_t &retainedBytes) {
     using Builder = ZuDecay<Builder_>;
-    using Policy = typename Builder::BodyPolicy;
     unsigned status = builder_.status();
-    if constexpr (!Policy::HasBody) {
+    auto policy = builder_.bodyPolicy();
+    if (!BodyPolicy::hasBody(policy)) {
       ResponseTx<Profile, Builder, false, false> response{
 	this, ZuFwd<Builder_>(builder_), true,
 	contentLengthForbidden_(method, status)};
@@ -2236,18 +2238,20 @@ private:
 	link.finish();
 	return true;
       }
-      if constexpr (Policy::Streaming)
+      if (BodyPolicy::streaming(policy))
 	return sendStreamingResponse_<Profile>(
-	  link, ZuFwd<Builder_>(builder_), commit, retainedBytes);
+	  link, ZuFwd<Builder_>(builder_), BodyPolicy::optional(policy),
+	  commit, retainedBytes);
       else
 	return sendFixedResponse_<Profile>(
-	  link, ZuFwd<Builder_>(builder_), commit, retainedBytes);
+	  link, ZuFwd<Builder_>(builder_), BodyPolicy::optional(policy),
+	  commit, retainedBytes);
     }
   }
 
   template <typename Profile, typename Link_, typename Builder_>
   bool sendStreamingResponse_(
-      Link_ &link, Builder_ &&builder_, BodyCommit &commit,
+      Link_ &link, Builder_ &&builder_, bool optional, BodyCommit &commit,
       uint64_t &retainedBytes) {
     using Builder = ZuDecay<Builder_>;
     ResponseTx<Profile, Builder, true, true> response{
@@ -2255,12 +2259,12 @@ private:
     ServerTxOps<Profile, Link_, Builder> ops{
       this, &link, &commit, &retainedBytes};
     MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
-    return tx.streaming(response);
+    return tx.streaming(response, optional);
   }
 
   template <typename Profile, typename Link_, typename Builder_>
   bool sendFixedResponse_(
-      Link_ &link, Builder_ &&builder_, BodyCommit &commit,
+      Link_ &link, Builder_ &&builder_, bool optional, BodyCommit &commit,
       uint64_t &retainedBytes) {
     using Builder = ZuDecay<Builder_>;
     ResponseTx<Profile, Builder, true, false> response{
@@ -2268,7 +2272,7 @@ private:
     ServerTxOps<Profile, Link_, Builder> ops{
       this, &link, &commit, &retainedBytes};
     MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
-    return tx.fixed(response);
+    return tx.fixed(response, optional);
   }
 
   enum { ResponseDrainBatch = 16 };
@@ -2373,15 +2377,8 @@ private:
 	    postCompleted_<Profile>(ZuMv(live_), outcome);
 	  }});
 	using Builder = ZuDecay<Builder_>;
-	using Policy = typename Builder::BodyPolicy;
-	if constexpr (Policy::Streaming && HasAsyncBody<Builder>{}) {
-	  if (!startAsyncBody_<Profile>(
-		live, Builder{ZuFwd<Builder_>(builder_)})) {
-	    link->txCancel();
-	    live->response.outcome = ResponseOutcome::BuildFailed;
-	    live->phase = RequestPhase::Completing;
-	  }
-	} else {
+	auto policy = builder_.bodyPolicy();
+	auto send = [this, &live, &link, &builder_]() {
 	  bool sent = sendResponse_<Profile>(
 	    *link, live->meta.method, ZuFwd<Builder_>(builder_),
 	    live->response.body, live->retainedBytes);
@@ -2393,7 +2390,19 @@ private:
 	    live->response.outcome = ResponseOutcome::BuildFailed;
 	    live->phase = RequestPhase::Completing;
 	  }
-	}
+	};
+	if constexpr (HasAsyncBody<Builder>{}) {
+	  if (BodyPolicy::streaming(policy)) {
+	    if (!startAsyncBody_<Profile>(
+		  live, Builder{ZuFwd<Builder_>(builder_)})) {
+	      link->txCancel();
+	      live->response.outcome = ResponseOutcome::BuildFailed;
+	      live->phase = RequestPhase::Completing;
+	    }
+	  } else
+	    send();
+	} else
+	  send();
       };
     if (live->errorCode >= 0)
       emit(ErrorResponse{requestErrorStatus(live->errorCode)});
