@@ -86,6 +86,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   built by `util`; `util` must not depend on `itest`.
 - Module build traversal sequence is: `src`, `test`, `util`, `itest`, other
   directories in dependency order
+- Headers should be organized as a directed acyclic graph with idempotent
+  inclusion guards. Tail inclusion should NOT be used unless there is an
+  exceptional reason. Circular depndencies should be avoided by factoring
+  out common code (example: `ZmFn_.hh` is factored out from `ZmFn.hh` to
+  avoid inducing circular dependencies in dependents).
 
 ### Build configuration
 - use the `configure` wrapper named `z.config` to reconfigure the build
