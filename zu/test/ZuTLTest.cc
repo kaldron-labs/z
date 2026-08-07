@@ -38,11 +38,15 @@ using TLMap = ZuTypeMap<Wrap, TL>;
 using TLGrep = ZuTypeGrep<IsIntegralT, TL>;
 using TLHead = ZuTypeHead<2, TL>;
 using TLTail = ZuTypeTail<1, TL>;
+using TLUnique = ZuTypeUnique<int, double, int, char, double>;
+using TLUniqueList = ZuTypeUnique<ZuTypeList<int, double, int, char, double>>;
 
 ZuAssert(TLMap::N == 3);
 ZuAssert(TLGrep::N == 2);
 ZuAssert(TLHead::N == 2);
 ZuAssert(TLTail::N == 2);
+ZuAssert((ZuIsSame<TLUnique, ZuTypeList<int, double, char>>{}));
+ZuAssert((ZuIsSame<TLUniqueList, TLUnique>{}));
 
 using ConvertFrom = ZuTypeList<short, int>;
 using ConvertTo = ZuTypeList<int, long>;
