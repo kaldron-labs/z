@@ -291,8 +291,11 @@ struct ResParser;
 
 struct Request_ : public ZmObject {
   using Headers = RequestHeaders;
-  using BodyPolicy = Zhttp::Body::OptionalFixed;
   using ContentLength = ZuStringT<"content-length">;
+
+  Zhttp::BodyPolicy::T bodyPolicy() const {
+    return put ? Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
+  }
 
   void reset() { requestContentLength = 0; }
   template <typename L>

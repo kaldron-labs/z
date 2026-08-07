@@ -79,10 +79,10 @@ struct State {
 };
 
 struct Workload {
-  template <typename Policy>
+  template <Zhttp::BodyPolicy::T Policy>
   struct Response_ {
     using Headers = ZuTypeList<>;
-    using BodyPolicy = Policy;
+    constexpr Zhttp::BodyPolicy::T bodyPolicy() const { return Policy; }
     void reset() { state->responseReset(); }
     unsigned status() const { state->responseCallback(); return 200; }
     template <typename L> void reason(L &&l) const {
@@ -99,8 +99,8 @@ struct Workload {
 
     State *state = nullptr;
   };
-  struct Response : public Response_<Zhttp::Body::None> { };
-  struct FixedResponse : public Response_<Zhttp::Body::Fixed> {
+  struct Response : public Response_<Zhttp::BodyPolicy::None> { };
+  struct FixedResponse : public Response_<Zhttp::BodyPolicy::Fixed> {
     template <typename Emit>
     void body(Emit &&emit) {
       this->state->responseCallback();
@@ -111,7 +111,7 @@ struct Workload {
     }
   };
   struct OptionalFixedResponse :
-      public Response_<Zhttp::Body::OptionalFixed> {
+      public Response_<Zhttp::BodyPolicy::OptionalFixed> {
     template <typename Emit>
     void body(Emit &&emit) {
       this->state->responseCallback();
@@ -122,7 +122,7 @@ struct Workload {
       this->state->responseCallback();
     }
   };
-  struct StreamResponse : public Response_<Zhttp::Body::Stream> {
+  struct StreamResponse : public Response_<Zhttp::BodyPolicy::Stream> {
     template <typename Emit>
     void body(Emit &&emit) {
       this->state->responseCallback();
@@ -130,7 +130,7 @@ struct Workload {
     }
   };
   struct OptionalStreamResponse :
-      public Response_<Zhttp::Body::OptionalStream> {
+      public Response_<Zhttp::BodyPolicy::OptionalStream> {
     template <typename Emit>
     void body(Emit &&emit) {
       this->state->responseCallback();
@@ -155,7 +155,9 @@ struct Workload {
   };
   struct AsyncResponse {
     using Headers = ZuTypeList<>;
-    using BodyPolicy = Zhttp::Body::Stream;
+    constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
+      return Zhttp::BodyPolicy::Stream;
+    }
     void reset() { state->responseReset(); }
     unsigned status() const { state->responseCallback(); return 200; }
     template <typename L> void reason(L &&l) const {
@@ -338,22 +340,21 @@ void responseTypes()
     unsigned seen = unsigned(-1);
     workload.respond(meta, request,
       [&seen]<typename Response>(Response &&response) {
-	using App = ZuDecay<Response>;
-	using Policy = typename App::BodyPolicy;
+	auto policy = response.bodyPolicy();
 	response.reset();
 	(void)response.close();
 	(void)response.status();
 	response.reason([](auto &&) { });
 	response.header([](auto &&, auto &&) { });
-	if constexpr (ZuIsSame<Policy, Zhttp::Body::None>{})
+	if (policy == Zhttp::BodyPolicy::None)
 	  seen = ResponseKind::None;
-	else if constexpr (ZuIsSame<Policy, Zhttp::Body::Fixed>{})
+	else if (policy == Zhttp::BodyPolicy::Fixed)
 	  seen = ResponseKind::Fixed;
-	else if constexpr (ZuIsSame<Policy, Zhttp::Body::OptionalFixed>{})
+	else if (policy == Zhttp::BodyPolicy::OptionalFixed)
 	  seen = ResponseKind::OptionalFixed;
-	else if constexpr (ZuIsSame<Policy, Zhttp::Body::Stream>{})
+	else if (policy == Zhttp::BodyPolicy::Stream)
 	  seen = ResponseKind::Stream;
-	else if constexpr (ZuIsSame<Policy, Zhttp::Body::OptionalStream>{})
+	else if (policy == Zhttp::BodyPolicy::OptionalStream)
 	  seen = ResponseKind::OptionalStream;
       });
     if (seen != kind) buildersOK = false;

@@ -99,29 +99,20 @@ struct BodyCommit {
   bool		final = false;
 };
 
-namespace Body {
+ZtEnumNS(ZhttpAPI, BodyPolicy, int8_t,
+  None, Fixed, OptionalFixed, Stream, OptionalStream);
 
-struct None {
-  enum { HasBody = false, Optional = false, Streaming = false };
-};
+namespace BodyPolicy {
 
-struct Fixed {
-  enum { HasBody = true, Optional = false, Streaming = false };
-};
+ZuInline bool hasBody(T v) { return v != None; }
+ZuInline bool optional(T v) {
+  return v == OptionalFixed || v == OptionalStream;
+}
+ZuInline bool streaming(T v) {
+  return v == Stream || v == OptionalStream;
+}
 
-struct OptionalFixed {
-  enum { HasBody = true, Optional = true, Streaming = false };
-};
-
-struct Stream {
-  enum { HasBody = true, Optional = false, Streaming = true };
-};
-
-struct OptionalStream {
-  enum { HasBody = true, Optional = true, Streaming = true };
-};
-
-} // namespace Body
+} // namespace BodyPolicy
 
 struct Placeholder {
   unsigned	length;
