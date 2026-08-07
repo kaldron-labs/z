@@ -13,8 +13,9 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 
+#include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
-#include <zlib/ZhttpStream.hh>
+#include <zlib/ZhttpTransport.hh>
 
 using namespace ZuTestUtil;
 
@@ -352,7 +353,18 @@ struct FixedTxBuilder :
       ++providers;
       l(Zhttp::Placeholder{10, '0'});
     }
+    template <typename L>
+    void bodyHdrs(L &&l) {
+      l.template operator()<ContentLength>(
+	[this](ZuSpan<uint8_t> span) {
+	  patched = span;
+	  ZuStream out{span};
+	  out << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
+	});
+    }
 
+    ZuSpan<uint8_t> patched;
+    uint64_t contentLength = 0;
     unsigned providers = 0;
   } app;
 
@@ -419,8 +431,6 @@ void testFixedPatch()
   Zhttp::RetainedTx headerTx{native, budget};
   Zhttp::RetainedTx bodyTx{native, budget};
 
-  ZuCHECK(builder.patches.provision(builder.app),
-    "fixed header provisioning failed");
   ZuCHECK(builder.begin(headerTx), "fixed request rendering failed");
   auto body = builder.body(bodyTx, 200);
   for (unsigned i = 0; i < 200; ++i) body << 'x';
@@ -428,19 +438,13 @@ void testFixedPatch()
   ZuCHECK(body.valid() && body.produced() == 200,
     "fixed body accounting mismatch");
 
-  ZuSpan<uint8_t> patched;
-  ZuCHECK(builder.patches.template patch<ContentLength>(
-      [&patched](ZuSpan<uint8_t> span) {
-	patched = span;
-	ZuStream out{span};
-	out << ZuBoxed(200).fmt<ZuFmt::Right<10>>();
-      }) && builder.patches.validate(body.produced()),
-    "fixed content-length patch failed");
+  builder.app.contentLength = body.produced();
+  builder.patches.patch(builder.app);
   builder.finish(bodyTx);
   ZuCHECK(headerTx.seal() && bodyTx.seal(),
     "retained fixed message sealing failed");
   ZuCHECK(!link.wire && builder.app.providers == 1 &&
-      patched.length() == 10,
+      builder.app.patched.length() == 10,
     "fixed message escaped before one-pass in-place patching");
   headerTx.commit();
   bodyTx.commit();
@@ -507,8 +511,8 @@ void testHeaderAndRetainedLimits()
   unsigned values = 0;
   patches.template header<false, ContentLength>(
     duplicate, [&values](auto &&) { ++values; });
-  ZuCHECK(values == 1 && !patches.valid(),
-    "duplicate typed header provider was accepted");
+  ZuCHECK(values == 2,
+    "typed header values were not passed through");
 
   TxLink link;
   FixedTxBuilder builder;
@@ -516,8 +520,7 @@ void testHeaderAndRetainedLimits()
   Zhttp::RetainedBudget budget{.max = 4096};
   Zhttp::RetainedTx headerTx{native, budget};
   Zhttp::RetainedTx bodyTx{native, budget};
-  ZuCHECK(builder.patches.provision(builder.app) &&
-      builder.begin(headerTx),
+  ZuCHECK(builder.begin(headerTx),
     "limited fixed request setup failed");
   auto body = builder.body(bodyTx, 5);
   body << "123456";
@@ -530,8 +533,7 @@ void testHeaderAndRetainedLimits()
   auto messageNative = messageLink.transmit(messageBuilder);
   Zhttp::RetainedBudget messageBudget{.max = 8};
   Zhttp::RetainedTx messageTx{messageNative, messageBudget};
-  ZuCHECK(messageBuilder.patches.provision(messageBuilder.app) &&
-      messageBuilder.begin(messageTx) && !messageTx.seal() &&
+  ZuCHECK(messageBuilder.begin(messageTx) && !messageTx.seal() &&
       !messageLink.wire,
     "retained-message cap exposed a partial header block");
 }

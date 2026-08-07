@@ -16,9 +16,66 @@
 #include <zlib/ZuBitStream.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuString.hh>
+#include <zlib/ZuTL.hh>
 #include <zlib/ZuTraits.hh>
 
 namespace Zhttp {
+
+template <typename U> struct StaticTail_ { using T = ZuTypeList<U>; };
+template <typename ...Us>
+struct StaticTail_<ZuTypeList<Us...>> { using T = ZuTypeList<Us...>; };
+
+template <typename U, typename List, bool = ZuTypeIn<U, List>{}>
+struct StaticUniqueAdd_ {
+  using T = typename List::template Unshift<U>;
+};
+template <typename U, typename List>
+struct StaticUniqueAdd_<U, List, true> { using T = List; };
+
+template <typename ...> struct StaticUnique_;
+template <> struct StaticUnique_<> { using T = ZuTypeList<>; };
+template <typename U> struct StaticUnique_<U> {
+  using T = ZuTypeList<U>;
+};
+template <typename U, typename V>
+struct StaticUnique_<U, V> :
+  public StaticUniqueAdd_<U, typename StaticTail_<V>::T> { };
+template <typename ...Us>
+using StaticUnique = typename StaticUnique_<Us...>::T;
+
+template <typename Key_, typename Value_ = void>
+struct StaticEntry {
+  using Key = Key_;
+  using Value = Value_;
+};
+
+template <typename KV> using StaticKey = typename KV::Key;
+template <typename KV> using StaticValue = typename KV::Value;
+
+template <typename KV, bool = ZuIsSame<StaticValue<KV>, void>{}>
+struct StaticMatchValue_ { using T = StaticValue<KV>; };
+template <typename KV>
+struct StaticMatchValue_<KV, true> { using T = ZuStringT<"">; };
+template <typename KV>
+using StaticMatchValue = typename StaticMatchValue_<KV>::T;
+
+template <typename Tbl>
+struct StaticTable {
+  using Keys = ZuTypeMap<StaticKey, Tbl>;
+  using Names = ZuTypeReduce<StaticUnique, Keys>;
+
+  template <typename Key>
+  struct Entries_ {
+    template <typename KV>
+    using Is = ZuIsSame<Key, StaticKey<KV>>;
+    using T = ZuTypeGrep<Is, Tbl>;
+  };
+  template <typename Key>
+  using Entries = typename Entries_<Key>::T;
+  template <typename Key>
+  using Values = ZuTypeMap<StaticMatchValue, Entries<Key>>;
+};
 
 namespace Compression {
 

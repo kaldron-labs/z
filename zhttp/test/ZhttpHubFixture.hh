@@ -19,7 +19,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/Zhttp.hh>
+#include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"

@@ -22,7 +22,7 @@
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZhttpTypes.hh>
+#include <zlib/ZhttpCore.hh>
 
 namespace Zhttp {
 

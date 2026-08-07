@@ -1078,57 +1078,50 @@ static int runH3Client_(const Env &env, Requests requests)
 
 static int runH3Server_(const Env &env)
 {
-  ZtString<> port;
-  port << env.port;
-  const char *argv[] = {
-    "zhttpd",
-    env.www.data(),
-    "--http3",
-    "--addr",
-    "0.0.0.0",
-    "--port",
-    port.data(),
-    "--cert",
-    env.cert.data(),
-    "--key",
-    env.key.data(),
-    "--key-log",
-    env.keyLog.data(),
-    "--quic-migration",
-    qirMigrationModeArg(),
-    "--quic-migration-cid-reserve",
-    qirMigrationCIDReserveArg(),
-    "--no-listing",
-    "--no-server-id",
-    "--log",
-    "/dev/null"
-  };
-  enum { ArgcWithKeyLog = 21, ArgcNoKeyLog = 19 };
-  if (env.keyLog)
-    return Zhttpd::run(ArgcWithKeyLog, argv);
+  Zhttpd::Options options;
+  options.root = env.www;
+  options.addr = "0.0.0.0";
+  options.port = env.port;
+  options.cert = env.cert;
+  options.key = env.key;
+  options.keyLog = env.keyLog;
+  options.logPath = "/dev/null";
+  options.quicMigration = qirMigrationModeArg();
+  options.quicMigrationCIDReserve = qirMigrationCIDReserve();
+  options.http = false;
+  options.http3 = true;
+  options.noListing = true;
+  options.noServerID = true;
 
-  const char *argvNoKeyLog[] = {
-    "zhttpd",
-    env.www.data(),
-    "--http3",
-    "--addr",
-    "0.0.0.0",
-    "--port",
-    port.data(),
-    "--cert",
-    env.cert.data(),
-    "--key",
-    env.key.data(),
-    "--quic-migration",
-    qirMigrationModeArg(),
-    "--quic-migration-cid-reserve",
-    qirMigrationCIDReserveArg(),
-    "--no-listing",
-    "--no-server-id",
-    "--log",
-    "/dev/null"
-  };
-  return Zhttpd::run(ArgcNoKeyLog, argvNoKeyLog);
+  ZeString error;
+  if (!Zhttpd::validate(options, error)) return Usage;
+
+  ZiLog::init("zhttpqir");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
+
+  ZmSemaphore done;
+  struct sigaction oldInt{};
+  struct sigaction oldTerm{};
+  installSigHandlers_(&done, oldInt, oldTerm);
+
+  Zhttpd::Application app;
+  int rc = Error;
+  if (app.init(ZuMv(options), error)) {
+    app.done(ZmFn<void(), ZmFnHeapID<"zhttpd.Done">>{
+      [&done]() { done.post(); }});
+    if (app.startMultiplex() && app.initServer() && app.startServer()) {
+      done.wait();
+      if (app.stopServer() && !app.errors()) rc = OK;
+    }
+    app.finalServer();
+    app.stopMultiplex();
+  }
+  app.final();
+  restoreSigHandlers_(oldInt, oldTerm);
+  ZiLog::stop();
+  return rc;
 }
 
 int run(Role role)

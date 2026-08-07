@@ -21,11 +21,12 @@ ZHTTP_LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_LTLIBRARIES = libzhttputil.la
 noinst_PROGRAMS = zhttp zhttpd
-noinst_HEADERS = zhttpput.hh zhttpd.hh
+noinst_HEADERS = runtime.hh zhttpput.hh zhttpd.hh
 dist_noinst_DATA = zhttpboundary.md
+libzhttputil_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTPD_LIBRARY
 libzhttputil_la_SOURCES = zhttpd.cc zhttpdutil.cc
 libzhttputil_la_LIBADD = $(ZHTTP_LDADD)
 zhttp_SOURCES = zhttp.cc
 zhttp_LDADD = $(ZHTTP_LDADD)
-zhttpd_SOURCES = zhttpdmain.cc
+zhttpd_SOURCES = zhttpd.cc
 zhttpd_LDADD = libzhttputil.la $(ZHTTP_LDADD)

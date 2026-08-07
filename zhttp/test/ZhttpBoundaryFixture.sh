@@ -4,8 +4,8 @@ set -eu
 
 util=$1
 src=$2
-files='zhttp.cc zhttpd.cc zhttpdmain.cc zhttpdutil.cc zhttpd.hh zhttpput.hh'
-bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Hubs|Ztls::|\.alpn[[:space:]]*\(|ZmBlock|ZmSemaphore'
+files='zhttp.cc zhttpd.cc zhttpdutil.cc zhttpd.hh zhttpput.hh runtime.hh'
+bad='ZiResolver|parseHTTPS|discoverH3|AltSvcCache|ClientPool|ServerLink|ServerSession|H1ReqParser|H3ReqParser|H1RespBuilder|H3RespBuilder|HPack|H2::(Frame|Session|Wire)|H2_(Client|Server|Logical)|disconnect_|Multiplexed|Zhttp::Runtime|Zhttp::Hubs|Ztls::|\.alpn[[:space:]]*\(|ZmBlock'
 
 cd "$util"
 
@@ -29,7 +29,7 @@ sources=$(
     -e 's/^zhttpd_SOURCES[[:space:]]*=[[:space:]]*//p' \
     Makefile.am | tr '\n' ' ' | sed 's/[[:space:]]*$//'
 )
-test "$sources" = 'zhttp.cc zhttpdmain.cc'
+test "$sources" = 'zhttp.cc zhttpd.cc'
 grep -Eq \
   '^libzhttputil_la_SOURCES[[:space:]]*=[[:space:]]*zhttpd\.cc zhttpdutil\.cc$' \
   Makefile.am

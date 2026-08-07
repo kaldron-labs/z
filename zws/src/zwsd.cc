@@ -13,11 +13,14 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpRuntime.hh>
+#include <zlib/ZmTrap.hh>
 
 #include <zlib/Zws.hh>
 
 namespace ZwsServer_ {
+
+static ZmSemaphore *trapDone;
+static void trapped() { if (trapDone) trapDone->post(); }
 
 struct Options {
   ZuCSpan	address{"0.0.0.0"};
@@ -102,7 +105,7 @@ struct App {
       Zws::Opcode::Binary;
   };
 
-  Zhttp::Runtime	*runtime = nullptr;
+  ZmSemaphore		*done = nullptr;
   ZuCSpan		target;
   ZuCSpan		protocol;
   bool			verbose = false;
@@ -117,7 +120,7 @@ struct App {
   void listenFailed(bool transient) {
     std::cerr << "listen failed (transient=" << transient << ")\n";
     failed = true;
-    runtime->stop();
+    done->post();
   }
 
   template <typename Link>
@@ -180,16 +183,18 @@ struct App {
 template <typename Profile>
 int run(const Options &options)
 {
-  Zhttp::Runtime runtime;
-  if (!runtime.init()) return 1;
+  ZmSemaphore done;
+  trapDone = &done;
+  ZmTrap::sigintFn(trapped);
+  ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
   if (!mx.start()) {
-    runtime.final();
+    trapDone = nullptr;
     return 1;
   }
 
-  App app{&runtime, options.target, options.protocol, options.verbose};
+  App app{&done, options.target, options.protocol, options.verbose};
   Zws::Server<App, Profile> server{
     &app, ZiIP{options.address}, options.port};
   typename Zws::Server<App, Profile>::Config config;
@@ -210,11 +215,11 @@ int run(const Options &options)
     std::cerr << "server initialization/start failed\n";
     if (initialized) server.final();
     mx.stop();
-    runtime.final();
+    trapDone = nullptr;
     return 1;
   }
 
-  runtime.wait();
+  done.wait();
   server.stopAccepting();
   ZmSemaphore stopped;
   bool stopOK = false;
@@ -225,7 +230,7 @@ int run(const Options &options)
   stopped.wait();
   server.final();
   mx.stop();
-  runtime.final();
+  trapDone = nullptr;
   return app.failed || !stopOK;
 }
 

@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/Zhttp.hh>
+#include <zlib/ZhttpH3.hh>
 
 namespace Zhttp { namespace H3 {
 

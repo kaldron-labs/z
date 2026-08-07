@@ -54,8 +54,8 @@ mutable input span and normalizes DNS host names in place; `URLStorage` is the
 explicit owning form, with `assign()` for copying immutable input and `adopt()`
 for transferring an existing `URLString`. `RequestTarget` represents the four
 HTTP request-target forms and preserves path/query structure without reparsing.
-Alt-Svc parsing, formatting, and cache policy are separate in
-`ZhttpAltSvc.hh`.
+Alt-Svc parsing, formatting, cache policy, and HTTPS discovery are grouped in
+`ZhttpDiscovery.hh`.
 
 `libZhttp` is the HTTP integration layer over `libZtcp`, `libZtls`, and
 `libZquic`.  Applications configure TCP, TLS, and QUIC with public `Zhttp`

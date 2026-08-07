@@ -13,11 +13,14 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpRuntime.hh>
+#include <zlib/ZmTrap.hh>
 
 #include <zlib/Zws.hh>
 
 namespace ZwsAutobahn_ {
+
+static ZmSemaphore *trapDone;
+static void trapped() { if (trapDone) trapDone->post(); }
 
 struct Options {
   ZuCSpan	ca;
@@ -75,7 +78,7 @@ struct App {
 
   enum Phase { Count, Cases, Update, Done };
 
-  Zhttp::Runtime	*runtime = nullptr;
+  ZmSemaphore		*done = nullptr;
   Hub		*hub = nullptr;
   Zws::URI		base;
   ZmRef<Link>		link;
@@ -141,14 +144,14 @@ struct App {
     std::cerr << "Autobahn connection failed (transient=" <<
       transient << ")\n";
     failed = true;
-    runtime->stop();
+    done->post();
   }
 
   void disconnected(Link &, bool) {
     link = nullptr;
     if (failed) {
       phase = Done;
-      runtime->stop();
+      done->post();
       return;
     }
     switch (phase) {
@@ -169,7 +172,7 @@ struct App {
 	break;
       case Update:
 	phase = Done;
-	runtime->stop();
+      done->post();
 	break;
       case Done:
 	break;
@@ -196,18 +199,20 @@ private:
 template <typename Profile>
 int run(const Options &options, const Zws::URI &base)
 {
-  Zhttp::Runtime runtime;
-  if (!runtime.init()) return 1;
+  ZmSemaphore done;
+  trapDone = &done;
+  ZmTrap::sigintFn(trapped);
+  ZmTrap::trap();
   ZiMultiplex mx{mxParams()};
   if (!mx.start()) {
-    runtime.final();
+    trapDone = nullptr;
     return 1;
   }
 
   using App_ = App<Profile>;
   App_ app;
   Zws::Client<App_, Profile> client{&app};
-  app.runtime = &runtime;
+  app.done = &done;
   app.hub = &client;
   app.base = base;
   app.agent = options.agent;
@@ -222,12 +227,12 @@ int run(const Options &options, const Zws::URI &base)
   if (!started) {
     if (initialized) client.final();
     mx.stop();
-    runtime.final();
+    trapDone = nullptr;
     return 1;
   }
 
   app.begin();
-  if (!runtime.wait(options.timeout)) {
+  if (done.timedwait(Zm::now(options.timeout)) != 0) {
     std::cerr << "Autobahn suite timed out\n";
     app.failed = true;
   }
@@ -242,7 +247,7 @@ int run(const Options &options, const Zws::URI &base)
   app.link = nullptr;
   client.final();
   mx.stop();
-  runtime.final();
+  trapDone = nullptr;
   return app.failed || !stopOK;
 }
 

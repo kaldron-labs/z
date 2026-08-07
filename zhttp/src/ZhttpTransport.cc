@@ -6,18 +6,14 @@
 
 #include <zlib/ZuICmp.hh>
 
-#include <zlib/ZhttpConfig.hh>
+#include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
 
 ZtEnumImplStruct(Transport);
-ZtEnumImplStruct(Version);
 ZtEnumImplStruct(Migration);
-ZtEnumImplStruct(ProtocolPolicy);
 ZtEnumImplStruct(H2Policy);
-ZtEnumImplStruct(EndpointSource);
-ZtEnumImplStruct(ResultCode);
-ZtEnumImplStruct(ClientEventType);
+ZtEnumImplStruct(ResponseOutcome);
 
 Migration::T migrationMode(ZuCSpan s, Migration::T deflt)
 {

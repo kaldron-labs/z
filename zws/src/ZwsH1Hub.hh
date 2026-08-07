@@ -13,7 +13,7 @@
 #include <zlib/ZwsLib.hh>
 #endif
 
-#include <zlib/Zhttp.hh>
+#include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 
 #include <zlib/ZwsCodec.hh>

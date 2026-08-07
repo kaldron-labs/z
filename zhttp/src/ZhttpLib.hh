@@ -31,9 +31,7 @@
 #endif
 
 namespace Zhttp {
-
   inline constexpr const char Log[] = "Zhttp";
-
 }
 
 #endif /* ZhttpLib_HH */

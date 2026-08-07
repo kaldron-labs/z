@@ -18,13 +18,117 @@
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuTraits.hh>
+#include <zlib/Zu_aton.hh>
+
+#include <zlib/ZmAssert.hh>
 
 #include <zlib/ZtString.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
+
+#include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpURL.hh>
-#include <zlib/ZhttpUtil.hh>
 
 namespace Zhttp {
+
+
+class BodyRx {
+public:
+  using Queue = ZiRxQueue;
+  using Stream = ZiRxStream<Queue>;
+  using BufAlloc = Zi::IOBufAlloc<
+    Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zhttp.Body.Rx">>;
+  using WireBufAlloc = Zi::IOBufAlloc<
+    Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zhttp.Wire.Rx.Split">>;
+
+  BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
+
+  void reset() {
+    m_rx.clean();
+    m_received = m_consumed = 0;
+  }
+  void reset(uint64_t max) { m_max = max; reset(); }
+  uint64_t discard() {
+    uint64_t n = m_rx.length();
+    m_rx.clean();
+    m_consumed += n;
+    return n;
+  }
+
+  Stream &rx() { return m_rx; }
+  const Stream &rx() const { return m_rx; }
+  uint64_t received() const { return m_received; }
+  uint64_t consumed() const { return m_consumed; }
+  uint64_t max() const { return m_max; }
+
+  template <typename NodeRef, typename L>
+  bool push(NodeRef &&node, L &&l) {
+    unsigned n = node->length;
+    if (ZuUnlikely(uint64_t(n) > m_max - m_received)) return false;
+    if (!n) return true;
+    m_received += n;
+    m_rx.push(ZuFwd<NodeRef>(node));
+    prompt(ZuFwd<L>(l));
+    return true;
+  }
+
+  template <typename SrcQueue, typename Frame,
+    typename SrcAlloc, typename DstAlloc, typename L,
+    typename Transform = Zi::RxPass>
+  int64_t splice(
+    ZiRxStream<SrcQueue> &src, uint64_t length, Frame &&frame,
+    SrcAlloc &&srcAlloc, DstAlloc &&dstAlloc,
+    uint64_t headLen, uint64_t tailLen, L &&l,
+    Transform &&transform = {})
+  {
+    if (ZuUnlikely(length > m_max - m_received)) return -1;
+    int64_t n = src.splice(
+      m_rx, ZuFwd<Frame>(frame),
+      ZuFwd<SrcAlloc>(srcAlloc), ZuFwd<DstAlloc>(dstAlloc),
+      headLen, tailLen, ZuFwd<Transform>(transform));
+    if (n <= 0) return n;
+    m_received += length;
+    if (length) prompt(ZuFwd<L>(l));
+    return n;
+  }
+
+  template <typename L>
+  uint64_t prompt(L &&l) {
+    uint64_t before = m_rx.length();
+    ZuFwd<L>(l)(m_rx);
+    uint64_t after = m_rx.length();
+    ZmAssert(after <= before);
+    uint64_t n = before - after;
+    m_consumed += n;
+    return n;
+  }
+
+private:
+  Stream	m_rx;
+  uint64_t	m_max;
+  uint64_t	m_received = 0;
+  uint64_t	m_consumed = 0;
+};
+
+template <typename Rx, typename L>
+bool bodyEach(Rx &rx, L &&l) {
+  while (rx) {
+    int64_t n = rx.consume(
+      [](ZuBSpan span) -> int64_t { return span.length(); },
+      l);
+    if (ZuUnlikely(n <= 0)) return false;
+  }
+  return true;
+}
+
+template <typename Rx>
+bool bodyDrain(Rx &rx) {
+  return bodyEach(rx, [](ZuBSpan) { });
+}
+
 
 namespace Fields {
 
@@ -133,7 +237,9 @@ public:
     if (name == "te" && value != "trailers") return false;
     if (name == "content-length") {
       uint64_t length;
-      if (!atou(ZuBSpan{value}, length)) return false;
+      if (!value ||
+	  Zu_atou(length, value.data(), value.length()) != value.length())
+	return false;
       if (m_contentLength && length != m_length) return false;
       m_contentLength = true;
       m_length = length;

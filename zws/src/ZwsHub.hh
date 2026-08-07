@@ -13,6 +13,9 @@
 #include <zlib/ZwsLib.hh>
 #endif
 
+#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpServer.hh>
+
 #include <zlib/ZwsExtended.hh>
 #include <zlib/ZwsH1Hub.hh>
 

@@ -4,12 +4,13 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZhttpTypes.hh>
+#include <zlib/ZhttpCore.hh>
 
 namespace Zhttp {
 
 ZtEnumImplNS(Method);
 ZtEnumImplNS(XferCompression);
+ZtEnumImplStruct(Version);
 ZtEnumImplStruct(RequestErrorCode);
 ZtEnumImplStruct(RequestErrorScope);
 
