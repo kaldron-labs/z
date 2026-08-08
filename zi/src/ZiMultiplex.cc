@@ -2863,13 +2863,13 @@ bool ZiMultiplex::stop__()
 
   stopping.wait();
 
-  wake();
+  bool ok = ZmScheduler::stop__();
 
   stop_2();
 
   m_stopping = nullptr;
 
-  return ZmScheduler::stop__();
+  return ok;
 }
 
 void ZiMultiplex::stop_0()
