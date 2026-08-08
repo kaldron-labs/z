@@ -643,6 +643,9 @@ struct PercentEsc {
   static constexpr bool esc(uint8_t c) { return escaped(c); }
 };
 
+// plus() - should '+' be quoted?
+// spacePlus() - should ' ' be quoted as '+'?
+
 struct PercentPath : public PercentEsc {
   static constexpr bool term(uint8_t c) {
     return c == '/' || c == '?' || escaped(c);
@@ -666,10 +669,11 @@ struct PercentQuote : public PercentEsc {
 
 template <bool Body = false>
 struct URIQuote {
+  using Policy = PercentQuote<Body>;
+
   // in the body, + should be used for space
   template <typename S>
   static void quote(S &s, ZuCSpan v) {
-    using Policy = PercentQuote<Body>;
     ZuPercent::Codec<Policy>::print(s, ZuBSpan{v});
   }
 };
@@ -1176,7 +1180,16 @@ inline void saveValue_(S &s, const T &v_, L &&l)
       if (v >= 10.0) { v /= 10.0; ++e; }
     }
     s << ZuBoxed(v).fmt<typename Fmt::Fmt>();
-    if (e) { s << 'e'; if (e > 0) s << '+'; s << e; }
+    if (e) {
+      s << 'e';
+      if (e > 0) {
+	if constexpr (Quote::Policy::plus())
+	  s << "%2B";
+	else
+	  s << '+';
+      }
+      s << e;
+    }
   } else if constexpr (TypeCode == ZfFieldTC::Fixed) {
     using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
     ZuFixed v = v_;
