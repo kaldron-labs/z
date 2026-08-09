@@ -293,6 +293,18 @@ void testLoop(const char *testName, ZiIP ip, const char *connectIP)
     "server init failed");
   ZTCP_CHECK_RT(client.init(Ztcp::ClientParams(&mx, "3", "4")),
     "client init failed");
+  bool serverStarted = server.start();
+  bool clientStarted = client.start();
+  ZTCP_CHECK_RT(serverStarted && clientStarted,
+    "TCP hubs failed to start");
+  if (!serverStarted || !clientStarted) {
+    if (clientStarted) client.stop();
+    if (serverStarted) server.stop();
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
 
   server.listen();
   ZTCP_CHECK_RT(state.listening.timedwait(Zm::now(5)) == 0,
@@ -319,7 +331,9 @@ void testLoop(const char *testName, ZiIP ip, const char *connectIP)
   ZTCP_CHECK_RT(!state.clientRx.count, "Rx queue did not drain");
   ZTCP_CHECK_RT(!state.clientTx.count, "Tx queue did not drain");
 
-  server.stopListening();
+  bool clientStopped = client.stop();
+  bool serverStopped = server.stop();
+  ZTCP_CHECK_RT(clientStopped && serverStopped, "TCP hubs failed to stop");
   client.final();
   server.final();
   mx.stop();
