@@ -422,7 +422,9 @@ public:
     auto oldState = state_();
     m_disconnecting = 1;
     stateChanged_(oldState);
-    app()->rxInvoke([this]() { disconnect_(); });
+    app()->rxInvoke([impl = ZmMkRef(this->impl())]() {
+	impl->disconnect_();
+    });
   }
   void disconnect_(bool notify = true) { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
@@ -495,12 +497,14 @@ private:
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
+  // Configured before the link is used, then stable.
   ZiTxErrorFn		m_txErrorFn;
+  // Read-mostly connection reference; mutation remains Rx-owned.
+  CxnRef		m_cxn = nullptr;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
-  CxnRef		m_cxn = nullptr;	// read by Tx thread
   RxStream		m_rxStream;
 
   // Tx thread exclusive
@@ -548,9 +552,12 @@ template <typename> friend class Client;
 
   void connect() { app()->rxInvoke([this]() mutable { connect_(); }); }
   void connect(Host server, uint16_t port) {
-    m_server = ZuMv(server);
-    m_port = port;
-    app()->rxInvoke([this]() mutable { connect_(); });
+    app()->rxInvoke(
+      [this, server = ZuMv(server), port]() mutable {
+	m_server = ZuMv(server);
+	m_port = port;
+	connect_();
+      });
   }
 
   const Host &server() const { return m_server; }
@@ -573,7 +580,12 @@ template <typename> friend class Client;
 	  return new Cxn(impl, ci);
 	}},
       ZiFailFn{ZmMkRef(impl()), [](Impl *impl, bool transient) {
-	impl->connectFailed(transient);
+	auto app = impl->app();
+	app->rxRun([
+	  impl = ZmRef<Impl>{impl}, transient
+	]() mutable {
+	  impl->connectFailed(transient);
+	});
       }},
       ZiIP(), 0, ip, m_port);
   }
@@ -867,6 +879,7 @@ private:
   unsigned		m_txThread = 0;
 
   // shared
+  // Exceptional lock-guarded registry used by lifecycle and telemetry callers.
   Links			m_links;
 
   // Rx thread exclusive after init()
