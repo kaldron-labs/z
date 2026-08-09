@@ -23,6 +23,18 @@ ZtEnumStruct(ZquicAPI, CxnTimer, int8_t,
   PMTUD,
   PathValid);
 
+struct LinkCloseState {
+  uint64_t		error = 0;
+  bool			closed = false;
+  bool			application = false;
+};
+struct LinkStateSnapshot {
+  uint64_t		error = 0;
+  LinkState::T		state = LinkState::Closed;
+  bool			closed = false;
+  bool			application = false;
+};
+
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link :
   public ZmPolymorph,
@@ -119,12 +131,12 @@ public:
       });
     }
     app->linkAdded_(this);
-    linkState_(LinkState::Starting);
+    initLinkState_(LinkState::Starting);
   }
   ~Link() {
     clearCallbacks_();
     assert(!timersActive_());
-    app()->linkDeleted_(this, telState_(m_linkState));
+    app()->linkDeleted_(this, telState_(publicLinkState_()));
   }
 
   void initCryptoDelivery_() {
@@ -162,7 +174,7 @@ public:
     data.txBytes = m_txDiag.bytesTx.load_();
     data.reconnects = 0;
     data.type = Ztc::LinkType::QUIC;
-    data.state = telState_(m_linkState);
+    data.state = telState_(publicLinkState_());
   }
   unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
     TelQueue rxQueue{this, Ztc::QueueType::Rx};
@@ -175,8 +187,20 @@ public:
   void down() override { (void)impl()->disconnect(); }
 
   bool isServer() const { return m_isServer; }
-  bool closed() const { return m_appClose.closed; }
-  uint64_t closeError() const { return m_appClose.error; }
+  bool closed() const {
+    switch (publicLinkState_()) {
+      case LinkState::Closing:
+      case LinkState::Draining:
+      case LinkState::Closed:
+	return true;
+      default:
+	return false;
+    }
+  }
+  bool established() const {
+    return publicLinkState_() == LinkState::Established;
+  }
+  uint64_t closeError() const { return m_publicCloseError.load_(); }
   uint64_t streamCount() const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC Rx stream count outside Rx thread", return 0);
@@ -530,22 +554,71 @@ protected:
   void up_() { }
 
   void closeState_(uint64_t errorCode = 0, bool application = false) {
-    m_appClose.error = errorCode;
-    m_appClose.closed = true;
-    m_appClose.application = application;
-    closeLinkState_();
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC close initiation outside Rx thread", return);
+    m_rxAppClose = LinkCloseState{
+      .error = errorCode,
+      .closed = true,
+      .application = application};
+    m_publicCloseError = errorCode;
+    closeLinkStateRx_();
+    publishLinkSnapshotTx_();
     cancelTimers();
   }
+  void closeStateTx_(uint64_t errorCode = 0, bool application = false) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx close initiation outside Tx thread", return);
+    m_txAppClose = LinkCloseState{
+      .error = errorCode,
+      .closed = true,
+      .application = application};
+    m_txLinkState = LinkState::Closing;
+    LinkStateSnapshot snapshot = linkSnapshotTx_();
+    cancelTimers_();
+    app()->rxRun([link = impl(), snapshot]() mutable {
+      if (link->disconnecting_()) return;
+      link->applyCloseSnapshotRx_(snapshot);
+    });
+  }
+  void applyCloseSnapshotRx_(LinkStateSnapshot snapshot) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC close snapshot apply outside Rx thread", return);
+    if (snapshot.state < m_rxLinkState ||
+	(snapshot.state == m_rxLinkState && m_rxAppClose.closed))
+      return;
+    closeStreamsRx_();
+    m_rxAppClose = LinkCloseState{
+      .error = snapshot.error,
+      .closed = snapshot.closed,
+      .application = snapshot.application};
+    m_publicCloseError = snapshot.error;
+    switch (snapshot.state) {
+      case LinkState::Draining:
+	drainLinkStateRx_();
+	break;
+      case LinkState::Closed:
+	closedLinkStateRx_();
+	break;
+      default:
+	closeLinkStateRx_();
+	break;
+    }
+    m_crypto.resetTLS();
+  }
   bool writeCloseFrame_(PktBuild &build, bool appClose) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC close frame construction outside Tx thread", return false);
     int n = appClose ?
       FrameCodec::writeApplicationClose(
-	build.scratch(), build.scratchAvail(), m_appClose.error) :
+	build.scratch(), build.scratchAvail(), m_txAppClose.error) :
       FrameCodec::writeConnectionClose(
-	build.scratch(), build.scratchAvail(), m_appClose.error);
+	build.scratch(), build.scratchAvail(), m_txAppClose.error);
     return n > 0 && build.commitScratch(unsigned(n));
   }
   bool appCloseOnDisconnect_() const {
-    return m_appClose.application || app()->stopping();
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC close kind access outside Tx thread", return false);
+    return m_txAppClose.application || app()->stopping();
   }
   bool sendCloseFrame_(ZiSockAddr, bool = false) { return false; }
 
@@ -565,7 +638,7 @@ public:
   void closeForStreamActivity_(TransportError::T error) {
     ++m_rxDiag.suspectStreamCloses;
     m_suspiciousStreamClosed = true;
-    if (!m_appClose.closed) closeState_(error);
+    if (!m_rxAppClose.closed) closeState_(error);
   }
   void noteInvalidStreamActivity_(
     TransportError::T error, bool closedStream = false, bool immediate = false) {
@@ -611,11 +684,6 @@ protected:
     bool		closeOnFailure = false;
     bool		armTimer = true;
     bool		sendChallenge = true;
-  };
-  struct AppClose {
-    bool		closed = false;
-    bool		application = false;
-    uint64_t		error = 0;
   };
   struct AckSnapshot {
     AckSnapshot() = default;
@@ -993,11 +1061,25 @@ protected:
     return true;
   }
 
-  bool established_() const {
-    return m_linkState == LinkState::Established;
+  bool establishedRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx lifecycle access outside Rx thread", return false);
+    return m_rxLinkState == LinkState::Established;
   }
-  bool closing_() const {
-    return m_linkState == LinkState::Closing;
+  bool establishedTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx lifecycle access outside Tx thread", return false);
+    return m_txLinkState == LinkState::Established;
+  }
+  bool closingRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx lifecycle access outside Rx thread", return false);
+    return m_rxLinkState == LinkState::Closing;
+  }
+  bool closingTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx lifecycle access outside Tx thread", return false);
+    return m_txLinkState == LinkState::Closing;
   }
   bool debugLog_() const {
 #if defined(Zquic_DEBUG) && defined(ZiMultiplex_DEBUG)
@@ -1006,12 +1088,47 @@ protected:
     return false;
 #endif
   }
-  bool draining_() const {
-    return m_linkState == LinkState::Draining;
+  bool drainingRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx lifecycle access outside Rx thread", return false);
+    return m_rxLinkState == LinkState::Draining;
   }
-  bool handshakeStarted_() const {
-    return m_linkState == LinkState::Handshaking ||
-      m_linkState == LinkState::Established;
+  bool drainingTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx lifecycle access outside Tx thread", return false);
+    return m_txLinkState == LinkState::Draining;
+  }
+  bool handshakeStartedRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx lifecycle access outside Rx thread", return false);
+    return m_rxLinkState == LinkState::Handshaking ||
+      m_rxLinkState == LinkState::Established;
+  }
+  bool handshakeStartedTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx lifecycle access outside Tx thread", return false);
+    return m_txLinkState == LinkState::Handshaking ||
+      m_txLinkState == LinkState::Established;
+  }
+  bool linkClosedRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx close access outside Rx thread", return true);
+    return m_rxAppClose.closed;
+  }
+  bool linkClosedTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx close access outside Tx thread", return true);
+    return m_txAppClose.closed;
+  }
+  uint64_t closeErrorTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx close error access outside Tx thread", return 0);
+    return m_txAppClose.error;
+  }
+  uint64_t closeErrorRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx close error access outside Rx thread", return 0);
+    return m_rxAppClose.error;
   }
   LinkRxDiag rxDiagSnap_() const {
     ZiAssert(rxInvoked_(), "Zquic", (),
@@ -1139,7 +1256,7 @@ protected:
       txSecretInstalled_(spaceFromKeyLevel(level));
   }
   bool canTxZeroRTT_() const {
-    return !established_() &&
+    return !establishedTx_() &&
       txKeySecretInstalled_(PktKeyLevel::ZeroRTT);
   }
   bool rxEarlyDataAccepted_() const {
@@ -2155,7 +2272,7 @@ protected:
       "QUIC active migration preparation outside Tx thread", return false);
     reason = MigrationReason::None;
     ++m_txDiag.migration.requested;
-    if (!established_()) {
+    if (!establishedTx_()) {
       reason = MigrationReason::Validation;
       return false;
     }
@@ -2393,8 +2510,12 @@ protected:
     m_pathChallengeControl = {};
     cancelPathTimer_();
     impl()->migrationFailed(result);
-    if (closeOnFailure)
-      closeState_(TransportError::NoError);
+    if (closeOnFailure) {
+      closeStateTx_(TransportError::NoError);
+      if (ZiSockAddr addr = m_path.remote())
+	(void)impl()->sendCloseFrame_(ZuMv(addr), true);
+      enterLocalClosingTx_();
+    }
   }
   bool migrationActive_() const { return m_migration.active; }
   uint64_t activePeerSeq_() const { return m_txPeerSeq; }
@@ -2535,7 +2656,8 @@ protected:
   bool installAppDataKeys_(
     const TrafficSecret &rx, const TrafficSecret &tx, const CxnID &localCID) {
     m_localSCID = localCID;
-    linkState_(LinkState::Established);
+    linkStateRx_(LinkState::Established);
+    publishLinkSnapshotTx_();
     clearPeerKeyState_();
     return m_crypto.rxSecret(PktNumSpace::AppData, rx) &&
       txInstallSecret_(PktNumSpace::AppData, tx);
@@ -2864,12 +2986,14 @@ protected:
     m_txPN[level] = pn;
   }
   void resetLink_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC runtime reset outside Rx thread", return);
     disconnecting_(false);
     m_statelessReset = false;
     closeStreamsRx_();
     cancelTimers();
     resetAckPosts_();
-    resetLinkState_();
+    resetLinkStateRx_();
     m_initialDCID = {};
     m_origDCID = {};
     m_groupID = {};
@@ -2898,6 +3022,8 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx runtime reset outside Tx thread", return);
     ++m_txRuntimeGen;
+    m_txAppClose = {};
+    m_txLinkState = LinkState::Starting;
     m_txPeerCID = {};
     m_txPeerSeq = U64Null;
     m_txCandidatePeerCID = {};
@@ -2920,9 +3046,12 @@ protected:
   }
 
   void closeLink_(uint64_t = 0) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC link close outside Rx thread", return);
     closeStreamsRx_();
     cancelTimers();
-    closeLinkState_();
+    closeLinkStateRx_();
+    publishLinkSnapshotTx_();
     m_crypto.resetTLS();
   }
 
@@ -3023,19 +3152,27 @@ protected:
       ZiAssert(rxInvoked_(), "Zquic", (),
 	"QUIC link disconnect completion outside Rx thread", return);
       closeStreamsRx_();
-      closedLinkState_();
+      closedLinkStateRx_();
       m_crypto.resetTLS();
       app()->retireLinkRoutes_(impl());
-      app()->txRun([link = impl(), peer]() mutable {
+      LinkStateSnapshot snapshot = linkSnapshotRx_();
+      app()->txRun([link = impl(), peer, snapshot]() mutable {
+	link->applyLinkSnapshotTx_(snapshot);
 	link->app()->rxRun([link, peer]() mutable {
 	  link->Self::disconnected_(peer);
 	});
       });
       return;
-    } else {
-      closedLinkState_();
-      m_crypto.resetTLS();
     }
+    // No shard remains after multiplexer finalization.
+    auto oldState = telState_(m_rxLinkState);
+    auto newState = telState_(LinkState::Closed);
+    if (oldState != newState)
+      app()->linkState_(oldState, newState);
+    m_rxLinkState = LinkState::Closed;
+    m_txLinkState = LinkState::Closed;
+    m_publicLinkState = unsigned(LinkState::Closed);
+    m_crypto.resetTLS();
   }
   void disconnected_(bool peer) {
     app()->disconnected(impl(), peer);
@@ -3168,7 +3305,7 @@ protected:
   bool issueMigrationCIDs_() {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC migration CID issuance outside Rx thread", return false);
-    if (!established_() ||
+    if (!establishedRx_() ||
 	app()->migrationMode() != MigrationMode::Active ||
 	!app()->migCIDRes())
       return true;
@@ -3752,7 +3889,7 @@ protected:
   }
 
   bool readyToEstablish_() const {
-    return m_linkState == LinkState::Handshaking &&
+    return m_rxLinkState == LinkState::Handshaking &&
       m_crypto.oneRTTReady() &&
       m_crypto.txSecretInstalled(PktNumSpace::AppData) &&
       m_crypto.rxSecretInstalled(PktNumSpace::AppData);
@@ -4041,13 +4178,16 @@ protected:
       event.reason = SecReason::TokenMatch;
       o.logSecEvt(EvtName::StatelessReset, event, time);
     }));
-    linkState_(LinkState::Draining);
+    m_rxAppClose.closed = true;
+    drainLinkStateRx_();
     m_rxAcks.clear();
     ++m_rxDiag.failures;
     bool notifyDisconnect = notify && !m_disconnecting.xch(1);
+    LinkStateSnapshot snapshot = linkSnapshotRx_();
     app()->txRun([
-      link = ZmRef<Impl>{impl()}, notifyDisconnect
+      link = ZmRef<Impl>{impl()}, notifyDisconnect, snapshot
     ]() mutable {
+      link->applyLinkSnapshotTx_(snapshot);
       link->statelessResetTx_(notifyDisconnect);
     });
     return true;
@@ -4797,12 +4937,12 @@ protected:
     if (pn > m_rxLargestPN[level])
       m_rxLargestPN[level] = pn;
     postAckSnapshot_(level, ZuMv(addr));
-    if (level == PktNumSpace::AppData && established_())
+    if (level == PktNumSpace::AppData && establishedRx_())
       notePeerPkt_();
   }
 
   void noteDupAck_(PktNumSpace::T level, uint64_t pn, ZiSockAddr addr) {
-    if (draining_() || closing_()) return;
+    if (drainingRx_() || closingRx_()) return;
     if (!m_rxAcks.ackEliciting(
 	level, pn, nowUS_(), localMaxAckDelayUS_(), true))
       return;
@@ -5050,7 +5190,7 @@ protected:
   void scheduleLossTimer_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss timer schedule outside Tx thread", return);
-    if (closed()) return;
+    if (linkClosedTx_()) return;
     if (!lossPending_()) {
       ++m_txDiag.lossCanceled;
       cancelLossTimer_();
@@ -5123,7 +5263,6 @@ protected:
   void schedulePTO() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC PTO schedule before app initialization", return);
-    if (closed()) return;
     app()->txInvoke([link = impl()]() mutable {
       if (link->disconnecting_()) return;
       link->schedulePTO_();
@@ -5133,7 +5272,6 @@ protected:
   void schedulePMTUD() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC PMTUD schedule before app initialization", return);
-    if (closed()) return;
     app()->txInvoke([link = impl()]() mutable {
       if (link->disconnecting_()) return;
       link->schedulePMTUD_();
@@ -5145,7 +5283,7 @@ protected:
       "QUIC PTO schedule outside Tx thread", return);
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC PTO schedule before app initialization", return);
-    if (closed()) return;
+    if (linkClosedTx_()) return;
     ++m_txDiag.ptoSched;
     PktNumSpace::T level = PktNumSpace::Initial;
     if (!ptoLevel_(level)) {
@@ -5285,7 +5423,7 @@ protected:
   void scheduleIdleTimer_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC idle timer schedule outside Tx thread", return);
-    if (closed() || !established_() || !m_idleTimeout) {
+    if (linkClosedTx_() || !establishedTx_() || !m_idleTimeout) {
       cancelIdleTimer_();
       return;
     }
@@ -5337,7 +5475,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC heartbeat timer schedule outside Tx thread", return);
     ZuTime interval = app()->heartBeat();
-    if (closed() || !established_() || !*interval) {
+    if (linkClosedTx_() || !establishedTx_() || !*interval) {
       cancelHBTimer_();
       return;
     }
@@ -5378,7 +5516,7 @@ protected:
   void notePeerPktTx_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC peer activity outside Tx thread", return);
-    if (closed() || !established_()) return;
+    if (linkClosedTx_() || !establishedTx_()) return;
     if (m_idleTimeout) {
       m_idleBase = now_();
       m_idleAckElicitingSent = false;
@@ -5389,7 +5527,7 @@ protected:
   void noteAckElicitTx_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ack-eliciting send activity outside Tx thread", return);
-    if (closed() || !established_()) return;
+    if (linkClosedTx_() || !establishedTx_()) return;
     if (m_idleTimeout) {
       if (!m_idleAckElicitingSent) {
 	m_idleBase = now_();
@@ -5431,13 +5569,20 @@ protected:
     scheduleCloseTimer_(now_());
   }
   void enterPeerDraining_(uint64_t errorCode) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC peer draining outside Rx thread", return);
     closeStreamsRx_();
-    m_appClose.error = errorCode;
-    m_appClose.closed = true;
-    drainLinkState_();
+    m_rxAppClose = LinkCloseState{
+      .error = errorCode,
+      .closed = true,
+      .application = false};
+    m_publicCloseError = errorCode;
+    drainLinkStateRx_();
     m_crypto.resetTLS();
-    app()->txRun([link = impl()]() mutable {
+    LinkStateSnapshot snapshot = linkSnapshotRx_();
+    app()->txRun([link = impl(), snapshot]() mutable {
       if (link->disconnecting_()) return;
+      link->applyLinkSnapshotTx_(snapshot);
       link->enterPeerDrainingTx_();
     });
   }
@@ -5469,7 +5614,7 @@ protected:
   void sendCloseResponseTx_(ZiSockAddr addr) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC close response outside Tx thread", return);
-    if (!closing_() || !addr) return;
+    if (!closingTx_() || !addr) return;
     ZuTime now = now_();
     if (*m_closeNextResponse && now < m_closeNextResponse) return;
     m_closeNextResponse = now + RttEstimator::Granularity;
@@ -5495,7 +5640,7 @@ protected:
   void schedulePMTUD_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD schedule outside Tx thread", return);
-    if (closed() || !established_() ||
+    if (linkClosedTx_() || !establishedTx_() ||
 	m_path.probePending() || m_pmtudTimer)
       return;
     if (!m_path.nextProbeSize()) return;
@@ -5563,13 +5708,13 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK delay timer outside Tx thread", return);
     if (disconnecting_()) return;
-    if (!closed()) impl()->ackDelayExpired_();
+    if (!linkClosedTx_()) impl()->ackDelayExpired_();
   }
   void lossTime_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss timer outside Tx thread", return);
     if (disconnecting_()) return;
-    if (!closed()) impl()->lossTimeExpired_();
+    if (!linkClosedTx_()) impl()->lossTimeExpired_();
   }
   void closeTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -5582,7 +5727,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC idle timer outside Tx thread", return);
     if (disconnecting_()) return;
-    if (closed() || !established_() || !m_idleTimeout) return;
+    if (linkClosedTx_() || !establishedTx_() || !m_idleTimeout) return;
     ZuTime out = idleDeadline_();
     ZuTime now = now_();
     if (*out && out > now) {
@@ -5595,7 +5740,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC heartbeat timer outside Tx thread", return);
     if (disconnecting_()) return;
-    if (closed() || !established_() || !*app()->heartBeat()) return;
+    if (linkClosedTx_() || !establishedTx_() || !*app()->heartBeat()) return;
     ZuTime out = heartBeatDeadline_();
     ZuTime now = now_();
     if (*out && out > now) {
@@ -5609,13 +5754,13 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC key discard timer outside Tx thread", return);
     if (disconnecting_()) return;
-    if (!closed()) impl()->keyDiscardExpired_();
+    if (!linkClosedTx_()) impl()->keyDiscardExpired_();
   }
   void pmtudTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD timer outside Tx thread", return);
     if (disconnecting_()) return;
-    if (!closed()) impl()->pmtudExpired_();
+    if (!linkClosedTx_()) impl()->pmtudExpired_();
   }
   void pathTimeout_() {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -5626,7 +5771,7 @@ protected:
       schedulePathTimer_(m_migration.deadline);
       return;
     }
-    if (!closed()) impl()->pathExpired_();
+    if (!linkClosedTx_()) impl()->pathExpired_();
   }
 
   void ackDelayExpired_() {
@@ -5638,7 +5783,7 @@ protected:
   void lossTimeExpired_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC loss timer expired outside Tx thread", return);
-    if (closed()) return;
+    if (linkClosedTx_()) return;
     if (!lossPending_()) {
       ++m_txDiag.lossCanceled;
       cancelLossTimer_();
@@ -6241,7 +6386,7 @@ nextSpace:
   bool sendPMTUDProbe_(ZiSockAddr addr, SendProbe sendProbe) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PMTUD probe send outside Tx thread", return false);
-    if (!established_() || m_path.probePending()) return false;
+    if (!establishedTx_() || m_path.probePending()) return false;
     unsigned size = m_path.nextProbeSize();
     if (!size || !m_path.canSendProbe(size) || !m_congestion.canSend(size)) {
       ZquicLOG(app()->qlogTrace(), ([
@@ -7291,7 +7436,7 @@ nextSpace:
       o.logPktSent(event, time);
     }));
     if (ackEliciting) {
-      if (level == PktNumSpace::AppData && established_())
+      if (level == PktNumSpace::AppData && establishedTx_())
 	noteAckElicitTx_();
       schedulePTO();
     }
@@ -7781,7 +7926,7 @@ nextSpace:
     unsigned pmtudSize = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Short packet protection outside Tx thread", return false);
-    if (!established_() &&
+    if (!establishedTx_() &&
 			!txSecretInstalled_(PktNumSpace::AppData)) {
       ++m_txDiag.failures;
       ZquicLOG(app()->qlogTrace(), ([
@@ -8118,8 +8263,8 @@ nextSpace:
       return true;
     }
     ++m_rxDiag.packetsRx;
-    if (draining_()) return true;
-    if (closing_()) {
+    if (drainingRx_()) return true;
+    if (closingRx_()) {
       noteClosingPacket_(d.addr);
       return true;
     }
@@ -8383,8 +8528,8 @@ nextSpace:
       return true;
     }
     ++m_rxDiag.packetsRx;
-    if (draining_()) return true;
-    if (closing_()) {
+    if (drainingRx_()) return true;
+    if (closingRx_()) {
       noteClosingPacket_(d.addr);
       return true;
     }
@@ -8608,7 +8753,7 @@ private:
       case FrameType::Ack:
 	return true;
       case FrameType::Crypto:
-	return level != PktNumSpace::AppData || established_();
+	return level != PktNumSpace::AppData || establishedRx_();
       case FrameType::Stream:
       case FrameType::ResetStream:
       case FrameType::StopSending:
@@ -9257,7 +9402,7 @@ private:
   }
 
   bool fallbackProbeLevel_(PktNumSpace::T &level) const {
-    if (!handshakeStarted_() || established_()) return false;
+    if (!handshakeStartedTx_() || establishedTx_()) return false;
     bool have = false;
     ZuTime out;
     auto candidate = [this, &level, &have, &out](
@@ -9347,101 +9492,133 @@ private:
     }
   }
 
-  void linkState_(LinkState::T state) {
-    auto oldState = telState_(m_linkState);
+  LinkState::T publicLinkState_() const {
+    return LinkState::T(m_publicLinkState.load_());
+  }
+  void initLinkState_(LinkState::T state) {
+    auto oldState = telState_(m_rxLinkState);
     auto newState = telState_(state);
     if (oldState != newState)
       app()->linkState_(oldState, newState);
-    m_linkState = state;
+    m_rxLinkState = state;
+    m_txLinkState = state;
+    m_publicLinkState = unsigned(state);
   }
-
-  void resetLinkState_() {
-    linkState_(LinkState::Starting);
+  void linkStateRx_(LinkState::T state) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC lifecycle transition outside Rx thread", return);
+    auto oldState = telState_(m_rxLinkState);
+    auto newState = telState_(state);
+    if (oldState != newState)
+      app()->linkState_(oldState, newState);
+    m_rxLinkState = state;
+    m_publicLinkState = unsigned(state);
+  }
+  LinkStateSnapshot linkSnapshotRx_() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC lifecycle snapshot outside Rx thread", return {});
+    return LinkStateSnapshot{
+      .error = m_rxAppClose.error,
+      .state = m_rxLinkState,
+      .closed = m_rxAppClose.closed,
+      .application = m_rxAppClose.application};
+  }
+  LinkStateSnapshot linkSnapshotTx_() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC lifecycle snapshot outside Tx thread", return {});
+    return LinkStateSnapshot{
+      .error = m_txAppClose.error,
+      .state = m_txLinkState,
+      .closed = m_txAppClose.closed,
+      .application = m_txAppClose.application};
+  }
+  void applyLinkSnapshotTx_(LinkStateSnapshot snapshot) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC lifecycle snapshot apply outside Tx thread", return);
+    if (snapshot.state < m_txLinkState) return;
+    m_txAppClose = LinkCloseState{
+      .error = snapshot.error,
+      .closed = snapshot.closed,
+      .application = snapshot.application};
+    m_txLinkState = snapshot.state;
+  }
+  void publishLinkSnapshotTx_() {
+    LinkStateSnapshot snapshot = linkSnapshotRx_();
+    app()->txRun([link = impl(), snapshot]() mutable {
+      if (link->disconnecting_()) return;
+      link->applyLinkSnapshotTx_(snapshot);
+    });
+  }
+  void logLinkStateRx_(LinkState::T state) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC lifecycle log outside Rx thread", return);
+    ZquicLOG(app()->qlogTrace(), ([
+      oldState = m_rxLinkState,
+      newState = state,
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
+      CxnStateEvt event{
+	.linkInfo = linkInfo
+      ,
+	.oldState = oldState,
+	.newState = newState};
+      o.logCxnStateUpd(event, time);
+    }));
+  }
+  void resetLinkStateRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC lifecycle reset outside Rx thread", return);
+    m_rxAppClose = {};
+    m_publicCloseError = 0;
+    linkStateRx_(LinkState::Starting);
     m_suspiciousStreamFrames = 0;
     m_suspiciousStreamClosed = false;
   }
 
 protected:
   bool startHandshake_() {
-    if (m_linkState != LinkState::Starting) return false;
-    ZquicLOG(app()->qlogTrace(), ([
-      oldState = m_linkState,
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      CxnStateEvt event{
-	.linkInfo = linkInfo
-      ,
-	.oldState = oldState,
-	.newState = LinkState::Handshaking};
-      o.logCxnStateUpd(event, time);
-    }));
-    linkState_(LinkState::Handshaking);
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC handshake transition outside Rx thread", return false);
+    if (m_rxLinkState != LinkState::Starting) return false;
+    logLinkStateRx_(LinkState::Handshaking);
+    linkStateRx_(LinkState::Handshaking);
+    publishLinkSnapshotTx_();
     return true;
   }
 
 private:
   bool establishState_() {
-    if (m_linkState != LinkState::Handshaking) return false;
-    ZquicLOG(app()->qlogTrace(), ([
-      oldState = m_linkState,
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      CxnStateEvt event{
-	.linkInfo = linkInfo
-      ,
-	.oldState = oldState,
-	.newState = LinkState::Established};
-      o.logCxnStateUpd(event, time);
-    }));
-    linkState_(LinkState::Established);
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC establish transition outside Rx thread", return false);
+    if (m_rxLinkState != LinkState::Handshaking) return false;
+    logLinkStateRx_(LinkState::Established);
+    linkStateRx_(LinkState::Established);
+    publishLinkSnapshotTx_();
     return true;
   }
 
-  bool closeLinkState_() {
-    if (m_linkState == LinkState::Closed) return false;
-    ZquicLOG(app()->qlogTrace(), ([
-      oldState = m_linkState,
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      CxnStateEvt event{
-	.linkInfo = linkInfo
-      ,
-	.oldState = oldState,
-	.newState = LinkState::Closing};
-      o.logCxnStateUpd(event, time);
-    }));
-    linkState_(LinkState::Closing);
+  bool closeLinkStateRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC close transition outside Rx thread", return false);
+    if (m_rxLinkState >= LinkState::Closing) return false;
+    logLinkStateRx_(LinkState::Closing);
+    linkStateRx_(LinkState::Closing);
     return true;
   }
-  bool drainLinkState_() {
-    if (m_linkState == LinkState::Closed) return false;
-    ZquicLOG(app()->qlogTrace(), ([
-      oldState = m_linkState,
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      CxnStateEvt event{
-	.linkInfo = linkInfo
-      ,
-	.oldState = oldState,
-	.newState = LinkState::Draining};
-      o.logCxnStateUpd(event, time);
-    }));
-    linkState_(LinkState::Draining);
+  bool drainLinkStateRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC drain transition outside Rx thread", return false);
+    if (m_rxLinkState >= LinkState::Draining) return false;
+    logLinkStateRx_(LinkState::Draining);
+    linkStateRx_(LinkState::Draining);
     return true;
   }
-  void closedLinkState_() {
-    ZquicLOG(app()->qlogTrace(), ([
-      oldState = m_linkState,
-      linkInfo = linkInfo_()
-    ](auto &o, ZuTime time) {
-      CxnStateEvt event{
-	.linkInfo = linkInfo
-      ,
-	.oldState = oldState,
-	.newState = LinkState::Closed};
-      o.logCxnStateUpd(event, time);
-    }));
-    linkState_(LinkState::Closed);
+  void closedLinkStateRx_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC closed transition outside Rx thread", return);
+    if (m_rxLinkState == LinkState::Closed) return;
+    logLinkStateRx_(LinkState::Closed);
+    linkStateRx_(LinkState::Closed);
   }
 
 protected:
@@ -9487,10 +9664,13 @@ private:
 
   // shared
   ZmAtomic<unsigned>	m_disconnecting = 0;
+  // Advisory public/telemetry snapshot; protocol code uses owner-local state.
+  ZmAtomic<unsigned>	m_publicLinkState = unsigned(LinkState::Closed);
+  ZmAtomic<uint64_t>	m_publicCloseError = 0;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
-  AppClose		m_appClose;
+  LinkCloseState	m_rxAppClose;
   bool			m_statelessReset = false;
   FlowCredit		m_rxDataCredit;
   uint64_t		m_rxDataRetired = 0;
@@ -9550,7 +9730,7 @@ private:
   ZuArray<bool, PktNumSpace::N>
 			m_rxSpaceDiscarded =
 			  fixedArray<bool, PktNumSpace::N>();
-  LinkState::T		m_linkState = LinkState::Closed;
+  LinkState::T		m_rxLinkState = LinkState::Closed;
   uint64_t		m_peerRetirePriorTo = 0;
   unsigned		m_suspiciousStreamFrames = 0;
   bool			m_suspiciousStreamClosed = false;
@@ -9561,6 +9741,8 @@ private:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   FlowCredit		m_txDataCredit;
+  LinkCloseState	m_txAppClose;
+  LinkState::T		m_txLinkState = LinkState::Closed;
   TxStreamsRef		m_txStreams;
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;

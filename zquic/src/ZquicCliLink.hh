@@ -85,8 +85,20 @@ public:
     });
   }
   bool disconnect(uint64_t errorCode) {
-    if (!Base::closed()) Base::closeState_(errorCode, true);
-    if (Base::established_() && Endpoint::connected() &&
+    ZiAssert(app() && app()->mx(), "Zquic", (),
+      "QUIC client disconnect before app initialization", return false);
+    bool accepted = !Base::closed();
+    app()->rxInvoke(impl(), [link = impl(), errorCode]() mutable {
+      link->disconnectRx_(errorCode);
+      return link;
+    });
+    return accepted;
+  }
+  void disconnectRx_(uint64_t errorCode) {
+    ZiAssert(app()->rxInvoked(), "Zquic", (),
+      "QUIC client disconnect outside Rx thread", return);
+    if (!Base::linkClosedRx_()) Base::closeState_(errorCode, true);
+    if (Base::establishedRx_() && Endpoint::connected() &&
 	Endpoint::remote()) {
       app()->txRun([
 	link = impl(),
@@ -98,9 +110,9 @@ public:
 	link->m_closePeer = false;
 	link->enterLocalClosingTx_();
       });
-      return true;
+      return;
     }
-    return Base::disconnect(false);
+    (void)Base::disconnect(false);
   }
   template <typename L>
   void disconnect(L &&l) {
@@ -150,7 +162,7 @@ public:
   bool udpReady() const { return m_udpReady; }
   uint64_t udpReadyCount() const { return m_udpReadyCount; }
   bool ready() const { return m_udpReady; }
-  bool established() const { return Base::established_(); }
+  bool established() const { return Base::established(); }
   bool cxn() const { return Endpoint::connected(); }
   const ZiSockAddr &local() const { return Endpoint::local(); }
   const ZiSockAddr &remote() const { return Endpoint::remote(); }
@@ -254,7 +266,7 @@ public:
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client send_ outside Tx thread", return false);
-    if (Base::closed() || !stream || (!payload && !fin))
+    if (Base::linkClosedTx_() || !stream || (!payload && !fin))
       return false;
     if (payload) {
       auto tx = stream->txStream_();
@@ -269,7 +281,7 @@ public:
   void pto_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client PTO outside Tx thread", return);
-    if (Base::closed() || !Endpoint::connected())
+    if (Base::linkClosedTx_() || !Endpoint::connected())
       return;
     Base::ptoRecovery_(
       [this](
@@ -297,7 +309,7 @@ public:
   bool retransmit_(bool pto = false) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client retransmit outside Tx thread", return false);
-    if (Base::closed() || !Endpoint::connected())
+    if (Base::linkClosedTx_() || !Endpoint::connected())
       return false;
     SentFrameRef ref;
     bool sent = false;
@@ -322,7 +334,7 @@ public:
 	sent = true;
 	continue;
       }
-      if (level != PktNumSpace::AppData || !Base::established_())
+      if (level != PktNumSpace::AppData || !Base::establishedTx_())
 	continue;
       if (!pto && !Base::congestionAllowance_()) {
 	Base::requeueRetransmit_(level, ref);
@@ -450,7 +462,7 @@ private:
 
   template <typename L>
   void closeCurrent_(bool notify, bool peer, L &&l) {
-    if (notify && Base::established_() &&
+    if (notify && Base::establishedRx_() &&
 	Endpoint::connected() && Endpoint::remote()) {
       closeAfterDisconnect_(
 	notify, peer, Endpoint::remote(), CloseFn{ZuFwd<L>(l)});
@@ -561,7 +573,7 @@ private:
     m_udpReady = 0;
     m_notifyEndpointDown = false;
     if (notify) impl()->disconnected(peer);
-    if (Base::closed()) Base::clearCallbacks_();
+    if (Base::linkClosedRx_()) Base::clearCallbacks_();
     Base::disconnect(peer);
     Endpoint::disconnect([
       link = impl(), notify, l = ZuFwd<L>(l)
@@ -655,7 +667,7 @@ private:
   }
 
   bool startHandshake_() {
-    if (Base::handshakeStarted_()) return true;
+    if (Base::handshakeStartedRx_()) return true;
     resetRuntimeState_();
     Base::initClientPath_(Endpoint::local(), Endpoint::remote());
     if (!initRuntimeCrypto_()) return false;
@@ -802,7 +814,7 @@ private:
   bool flushTx_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
-    if (Base::closed() || !Endpoint::remote())
+    if (Base::linkClosedTx_() || !Endpoint::remote())
       return false;
     return flushTx_(Endpoint::remote());
   }
@@ -810,8 +822,8 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client flush outside Tx thread", return false);
     if (!addr) return flushTx_();
-    if (Base::closed()) return false;
-    if (!Base::established_()) {
+    if (Base::linkClosedTx_()) return false;
+    if (!Base::establishedTx_()) {
       bool sent = flushPendingAcks_(addr);
       if (!Base::canTxZeroRTT_()) return sent;
       return Base::flushEarlyStreams_(
@@ -1274,9 +1286,9 @@ private:
   bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client close frame outside Tx thread", return false);
-    if ((!closing && Base::closed()) ||
-	(!Base::established_() &&
-	  !(closing && Base::closing_())) ||
+    if ((!closing && Base::linkClosedTx_()) ||
+	(!Base::establishedTx_() &&
+	  !(closing && Base::closingTx_())) ||
 	!Endpoint::connected() || !addr)
       return false;
     PktBuild build;
@@ -1287,8 +1299,8 @@ private:
     if (sent) {
       ZquicLOG(app()->qlogTrace(), ([
 	      appClose,
-	      errorCode = Base::closeError(),
-	      closeError = Base::closeError() ?
+	      errorCode = Base::closeErrorTx_(),
+	      closeError = Base::closeErrorTx_() ?
 		CloseError::T(CloseError::Unknown) :
 		CloseError::T(CloseError::NoError),
 	      linkInfo = Base::linkInfo_()
@@ -1377,7 +1389,7 @@ private:
   }
 
   bool handleRetry_(const Datagram &d) {
-    if (!d.buf || !d.buf->length || Base::established_())
+    if (!d.buf || !d.buf->length || Base::establishedRx_())
       return false;
     auto packet = d.buf->cspan();
     RetryPkt retry;
@@ -1468,7 +1480,7 @@ private:
 	  level_, frame, ZuMv(addr_), local, pathBytes);
       },
       earlyData);
-    if (ok && level == PktNumSpace::AppData && Base::established_())
+    if (ok && level == PktNumSpace::AppData && Base::establishedRx_())
       Base::observePathRx_(ZuMv(local), ZuMv(peer), pathBytes);
     return ok;
   }
@@ -1492,7 +1504,7 @@ private:
 	Base::rxPathResponse_(frame.payload);
 	return true;
       case FrameType::HandshakeDone:
-	if (Base::established_())
+	if (Base::establishedRx_())
 	  Base::discardPktNumSpace_(PktNumSpace::Handshake);
 	return true;
       case FrameType::ConnectionClose:
