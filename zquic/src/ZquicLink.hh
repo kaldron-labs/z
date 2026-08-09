@@ -66,6 +66,9 @@ public:
     64>;
   using Streams = Streams_<Stream>;
   using StreamsRef = ZmRef<Streams>;
+  using TxStreams = ZmHashKV<int64_t, StreamRef,
+    ZmHashHeapID<"Zquic.Stream.TxHash">>;
+  using TxStreamsRef = ZmRef<TxStreams>;
   using ClosedStreams =
     ZmHashKV<uint64_t, bool,
       ZmHashHeapID<"Zquic.Stream.ClosedHash">>;
@@ -95,7 +98,8 @@ public:
       ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
   Link(App *app, bool isServer, ZuID id) :
     m_app{app}, m_id{ZuMv(id)}, m_isServer{isServer},
-    m_streams{new Streams}, m_closedStreams{new ClosedStreams} {
+    m_streams{new Streams}, m_closedStreams{new ClosedStreams},
+    m_txStreams{new TxStreams} {
     for (auto &pn : m_txLargestAckd) pn = U64Null;
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       CryptoStream *crypto = &m_rxCrypto[i];
@@ -173,7 +177,11 @@ public:
   bool isServer() const { return m_isServer; }
   bool closed() const { return m_appClose.closed; }
   uint64_t closeError() const { return m_appClose.error; }
-  uint64_t streamCount() const { return m_streams->count_(); }
+  uint64_t streamCount() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx stream count outside Rx thread", return 0);
+    return m_streams->count_();
+  }
   uint64_t peerStreamLimit(Zquic::StreamType::T type) const {
     return m_peerLimit[type].limit();
   }
@@ -210,9 +218,9 @@ public:
     }
     n += m_pathResponses.count_();
     n += m_newCxnIDControls.count_();
-    auto iter = m_streams->citer();
+    auto iter = m_txStreams->citer();
     while (auto node = iter())
-      n += node->data().queuedControlFrames();
+      n += node->val()->queuedControlFrames();
     return n;
   }
   uint64_t rxDataCreditUsed() const { return m_rxDataCredit.used(); }
@@ -313,8 +321,34 @@ public:
   }
 
   StreamRef findStream(int64_t id) const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC Rx stream lookup outside Rx thread", return {});
     return m_streams->find(id);
   }
+
+protected:
+  StreamRef findTxStream_(int64_t id) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC Tx stream lookup outside Tx thread", return {});
+    auto node = m_txStreams->findPtr(id);
+    return node ? node->val() : StreamRef{};
+  }
+
+  void publishStreamRx_(StreamRef stream) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx publication outside Rx thread", return);
+    if (!stream || stream->id() < 0 || m_streams->find(stream->id())) return;
+    m_streams->addNode(static_cast<typename Streams::Node *>(stream.ptr()));
+  }
+  void publishStreamTx_(StreamRef stream) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream Tx publication outside Tx thread", return);
+    if (!stream || stream->id() < 0 || m_txStreams->findPtr(stream->id()))
+      return;
+    m_txStreams->add(stream->id(), ZuMv(stream));
+  }
+
+public:
 
   int receiveFrame(const Frame &frame, BufDiag *diag = nullptr) {
     if (frame.type != FrameType::ResetStream &&
@@ -745,7 +779,7 @@ protected:
       case FrameType::ResetStream:
       case FrameType::StopSending: {
 	if (frame.streamID > uint64_t(INT64_MAX)) return false;
-	StreamRef stream = findStream(int64_t(frame.streamID));
+	StreamRef stream = findTxStream_(int64_t(frame.streamID));
 	if (!stream) return false;
 	bool queued = false;
 	switch (frame.type) {
@@ -1166,7 +1200,7 @@ protected:
 	    return true;
 	  return stream->recordTxUnackd(ref.offset, ref.length, ref.fin);
 	}
-	StreamRef stream_ = findStream(int64_t(ref.streamID));
+	StreamRef stream_ = findTxStream_(int64_t(ref.streamID));
 	return stream_ &&
 	  (stream_->txStillUnackd(ref.offset, ref.length, ref.fin) ||
 	    stream_->recordTxUnackd(ref.offset, ref.length, ref.fin));
@@ -1195,7 +1229,7 @@ protected:
 	  (void)stream->discardTxUnackd(ref.offset, ref.length, ref.fin);
 	  return;
 	}
-	if (StreamRef stream_ = findStream(int64_t(ref.streamID)))
+	if (StreamRef stream_ = findTxStream_(int64_t(ref.streamID)))
 	  (void)stream_->discardTxUnackd(ref.offset, ref.length, ref.fin);
 	break;
       }
@@ -1254,7 +1288,7 @@ protected:
       case SentFrameKind::Stream: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
 	if (stream) return stream->ackTxUnackd(ref.offset, ref.length, ref.fin);
-	StreamRef stream_ = findStream(int64_t(ref.streamID));
+	StreamRef stream_ = findTxStream_(int64_t(ref.streamID));
 	return stream_ && stream_->ackTxUnackd(ref.offset, ref.length, ref.fin);
       }
       case SentFrameKind::Crypto:
@@ -1263,7 +1297,7 @@ protected:
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
 	StreamRef stream_;
 	if (!stream) {
-	  stream_ = findStream(int64_t(ref.streamID));
+	  stream_ = findTxStream_(int64_t(ref.streamID));
 	  stream = stream_.ptr();
 	}
 	switch (ref.controlType) {
@@ -1302,7 +1336,7 @@ protected:
     switch (ref.kind) {
       case SentFrameKind::Stream: {
 	if (ref.streamID > uint64_t(INT64_MAX)) return false;
-	StreamRef stream = findStream(int64_t(ref.streamID));
+	StreamRef stream = findTxStream_(int64_t(ref.streamID));
 	return stream &&
 	  stream->txStillUnackd(ref.offset, ref.length, ref.fin);
       }
@@ -1347,7 +1381,7 @@ protected:
     if (ref.kind != SentFrameKind::Stream ||
 	ref.streamID > uint64_t(INT64_MAX))
       return false;
-    StreamRef stream = findStream(int64_t(ref.streamID));
+    StreamRef stream = findTxStream_(int64_t(ref.streamID));
     if (!stream) return false;
     uint64_t n = ref.length + (ref.fin ? 1 : 0);
     if (!n || n < ref.length) return false;
@@ -4280,12 +4314,12 @@ protected:
       case FrameType::StreamDataBlocked:
       case FrameType::StopSending:
 	if (frame.streamID <= uint64_t(INT64_MAX))
-	  if (StreamRef stream = findStream(int64_t(frame.streamID)))
+	  if (StreamRef stream = findTxStream_(int64_t(frame.streamID)))
 	    stream->controlSent(frame);
 	break;
       case FrameType::ResetStream:
 	if (frame.streamID <= uint64_t(INT64_MAX))
-	  if (StreamRef stream = findStream(int64_t(frame.streamID))) {
+	  if (StreamRef stream = findTxStream_(int64_t(frame.streamID))) {
 	    stream->controlSent(frame);
 	    notifyStreamTxClosed_(stream);
 	  }
@@ -4337,7 +4371,7 @@ protected:
       case FrameType::ResetStream:
       case FrameType::StopSending:
 	if (ref.streamID <= uint64_t(INT64_MAX))
-	  if (StreamRef stream = findStream(int64_t(ref.streamID)))
+	  if (StreamRef stream = findTxStream_(int64_t(ref.streamID)))
 	    stream->clearControl(ref);
 	break;
       default:
@@ -6402,7 +6436,7 @@ nextSpace:
       "QUIC stream reap outside Tx thread", return false);
     Stream *stream = nullptr;
     {
-      StreamRef streamRef = findStream(id);
+      StreamRef streamRef = findTxStream_(id);
       stream = streamRef.ptr();
     }
     return reapStream_(stream);
@@ -6502,7 +6536,7 @@ nextSpace:
       if ((ref.kind == SentFrameKind::Stream ||
 	  ref.kind == SentFrameKind::Control) &&
 	  ref.streamID <= uint64_t(INT64_MAX)) {
-	streamRef = findStream(int64_t(ref.streamID));
+	streamRef = findTxStream_(int64_t(ref.streamID));
 	stream = streamRef.ptr();
       }
       if (ackTxFrame_(update.level, ref, stream))
@@ -8766,7 +8800,7 @@ private:
       case FrameType::DataBlocked:
 	return m_lastDataBlocked != frame.value;
       case FrameType::StreamDataBlocked: {
-	StreamRef stream = findStream(int64_t(frame.streamID));
+	StreamRef stream = findTxStream_(int64_t(frame.streamID));
 	return !stream || stream->lastBlocked() != frame.value;
       }
       case FrameType::StreamsBlocked:
@@ -8781,7 +8815,7 @@ private:
 	m_lastDataBlocked = frame.value;
 	break;
       case FrameType::StreamDataBlocked:
-	if (StreamRef stream = findStream(int64_t(frame.streamID)))
+	if (StreamRef stream = findTxStream_(int64_t(frame.streamID)))
 	  stream->lastBlocked(frame.value);
 	break;
       case FrameType::StreamsBlocked:
@@ -8837,8 +8871,8 @@ private:
     }
     m_pathResponses.clean();
     m_newCxnIDControls.clean();
-    auto iter = m_streams->iter();
-    while (auto node = iter()) node->data().clearControls();
+    auto iter = m_txStreams->iter();
+    while (auto node = iter()) node->val()->clearControls();
   }
 
   bool controlStillValid_(const ControlFrame &frame) const {
@@ -8847,7 +8881,7 @@ private:
 	return m_maxDataControl.frame == frame &&
 	  frame.value == m_rxDataCredit.limit();
       case FrameType::MaxStreamData: {
-	StreamRef stream = findStream(int64_t(frame.streamID));
+	StreamRef stream = findTxStream_(int64_t(frame.streamID));
 	return stream && stream->controlStillValid(frame);
       }
       case FrameType::MaxStreams:
@@ -8858,7 +8892,7 @@ private:
 	  m_txDataCredit.blocked() &&
 	  frame.value == m_txDataCredit.limit();
       case FrameType::StreamDataBlocked: {
-	StreamRef stream = findStream(int64_t(frame.streamID));
+	StreamRef stream = findTxStream_(int64_t(frame.streamID));
 	return stream && stream->controlStillValid(frame);
       }
       case FrameType::StreamsBlocked:
@@ -8866,11 +8900,11 @@ private:
 	  frame && m_queued[frame.streamType] &&
 	  frame.value == m_peerLimit[frame.streamType].limit();
       case FrameType::ResetStream: {
-	StreamRef stream = findStream(int64_t(frame.streamID));
+	StreamRef stream = findTxStream_(int64_t(frame.streamID));
 	return stream && stream->controlStillValid(frame);
       }
       case FrameType::StopSending: {
-	StreamRef stream = findStream(int64_t(frame.streamID));
+	StreamRef stream = findTxStream_(int64_t(frame.streamID));
 	return stream && stream->controlStillValid(frame);
       }
       case FrameType::PathChallenge:
@@ -8960,20 +8994,44 @@ private:
     if (!canPeerSend_(uint64_t(stream->id()))) return true;
     return stream->rxComplete() || stream->resetReceived();
   }
-  bool streamReapable_(const Stream *stream) const {
+  bool streamReapableTx_(const Stream *stream) const {
     if (!stream || stream->id() < 0) return false;
     if (stream->txQueued() || stream->txRangeCount() ||
-	stream->txBufferedBytes() || stream->txUnackdCount() ||
-	stream->rxPending() || stream->rxQueued())
+	stream->txBufferedBytes() || stream->txUnackdCount())
       return false;
-    if (!rxClosed_(stream) || !txClosed_(stream)) return false;
-    if (!streamCreditSettled_(stream))
-      return false;
-    return true;
+    return txClosed_(stream);
   }
   bool reapStream_(Stream *stream) {
-    if (!streamReapable_(stream)) return false;
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream retirement outside Tx thread", return false);
+    if (!streamReapableTx_(stream) || stream->reapPending()) return false;
     int64_t id = stream->id();
+    StreamRef ref = findTxStream_(id);
+    if (!ref || ref.ptr() != stream) return false;
+    stream->reapPending(true);
+    uint64_t txBytes = stream->txBytes();
+    bool finSent = stream->finSent();
+    app()->rxRun([
+      link = impl(), stream = ZuMv(ref), txBytes, finSent
+    ]() mutable {
+      link->reapStreamRx_(ZuMv(stream), txBytes, finSent);
+    });
+    return true;
+  }
+  void reapStreamRx_(StreamRef stream, uint64_t txBytes, bool finSent) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx retirement outside Rx thread", return);
+    int64_t id = stream ? stream->id() : -1;
+    StreamRef found;
+    if (id >= 0) found = m_streams->find(id);
+    if (!found || found.ptr() != stream.ptr() ||
+	stream->rxPending() || stream->rxQueued() ||
+	!rxClosed_(stream) || !streamCreditSettled_(stream)) {
+      app()->txRun([link = impl(), stream = ZuMv(stream)]() mutable {
+	if (stream) stream->reapPending(false);
+      });
+      return;
+    }
     ZquicLOG(app()->qlogTrace(), ([
       streamID = uint64_t(id),
       streamType = StreamType::T(StreamID::uni(uint64_t(id))),
@@ -8982,9 +9040,9 @@ private:
 	StreamSide::T(StreamSide::Receiving),
       reason = StreamReason::T(StreamReason::Reaped),
       offset = stream->rxBytes(),
-      length = stream->txBytes(),
+      length = txBytes,
       errorCode = stream->appError(),
-      fin = stream->finReceived() || stream->finSent(),
+      fin = stream->finReceived() || finSent,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
       StreamEvt event{
@@ -9003,7 +9061,16 @@ private:
       o.logStreamStateUpd(event, time);
     }));
     closeStreamID_(uint64_t(id));
-    return m_streams->del(id);
+    (void)m_streams->del(id);
+    app()->txRun([link = impl(), stream = ZuMv(stream), id]() mutable {
+      link->retireStreamTx_(ZuMv(stream), id);
+    });
+  }
+  void retireStreamTx_(StreamRef stream, int64_t id) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream Tx retirement completion outside Tx thread", return);
+    auto node = m_txStreams->findPtr(id);
+    if (node && node->val().ptr() == stream.ptr()) (void)m_txStreams->del(id);
   }
   bool streamCreditSettled_(const Stream *stream) const {
     uint64_t id = uint64_t(stream->id());
@@ -9018,7 +9085,19 @@ private:
     stream->txQueueMax(impl()->txQueueMax());
     stream->txCredit(initialStreamTxCredit_(uint64_t(id)));
     stream->rxCredit(initialStreamRxCredit_(uint64_t(id)));
-    m_streams->addNode(node);
+    if (rxInvoked_()) {
+      publishStreamRx_(stream);
+      app()->txRun([link = impl(), stream]() mutable {
+	link->publishStreamTx_(ZuMv(stream));
+      });
+    } else {
+      ZiAssert(txInvoked_(), "Zquic", (),
+	"QUIC stream creation outside Rx/Tx thread", return {});
+      publishStreamTx_(stream);
+      app()->rxRun([link = impl(), stream]() mutable {
+	link->publishStreamRx_(ZuMv(stream));
+      });
+    }
     ZquicLOG(app()->qlogTrace(), ([
       streamID = uint64_t(id),
       streamType = StreamType::T(StreamID::uni(uint64_t(id))),
@@ -9482,6 +9561,7 @@ private:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   FlowCredit		m_txDataCredit;
+  TxStreamsRef		m_txStreams;
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
