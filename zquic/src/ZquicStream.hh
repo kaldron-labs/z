@@ -92,7 +92,7 @@ public:
   bool stopReceived() const { return m_stopReceived; }
   bool readOpen() const { return !m_resetReceived && !rxComplete(); }
   bool closedForStreamCredit() const {
-    return (rxComplete() || m_resetReceived) && (m_finDequeued || m_resetSent);
+    return (rxComplete() || m_resetReceived) && m_txClosedForCredit;
   }
   bool creditReturned() const { return m_creditReturned; }
   bool earlyData() const { return m_earlyData; }
@@ -142,6 +142,7 @@ public:
   uint64_t lastBlocked() const { return m_lastBlocked; }
   void lastBlocked(uint64_t n) { m_lastBlocked = n; }
   void markCreditReturned() { m_creditReturned = true; }
+  void markTxClosedForCredit() { m_txClosedForCredit = true; }
   unsigned queuedControlFrames() const {
     unsigned n = 0;
     if (m_maxStreamDataControl.queued) ++n;
@@ -552,11 +553,21 @@ public:
     m_stopReceived = true;
     m_error = StreamError::Stop;
     m_appError = frame.errorCode;
+    uint64_t appError = frame.errorCode;
+    txInvoke_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
+      stream->completeStopTx_(appError);
+    });
+    return true;
+  }
+
+  void completeStopTx_(uint64_t appError) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC STOP_SENDING completion outside Tx thread", return);
+    (void)appError;
     if (!m_txCompleted) {
       m_txCompleted = true;
       impl()->txComplete_(false);
     }
-    return true;
   }
 
   void txComplete_(bool) { }
@@ -808,6 +819,7 @@ public:
     return frame;
   }
 
+private:
   // immutable
   Link			*m_link = nullptr;
   int64_t		m_id;
@@ -821,6 +833,7 @@ public:
   bool			m_resetReceived = false;
   bool			m_stopReceived = false;
   bool			m_creditReturned = false;
+  bool			m_txClosedForCredit = false;
   bool			m_earlyData = false;
   StreamRxState		m_rxState;
   RxStream		m_rx;

@@ -10,6 +10,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiFile.hh>
@@ -86,28 +87,70 @@ struct TestStream :
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
+  void txComplete_(bool) { ++txCompleteCount; }
+
+  unsigned txCompleteCount = 0;
 };
 
 struct HubApp : public Zquic::Hub<HubApp> {
+  enum Shard { Rx, Tx };
+  using PendingQueue =
+    ZmList<ZmFn<>, ZmListHeapID<"Zquic.APITest.Pending">>;
+
   void activeMigration(bool v) {
-    m_migrationMode = v ?
+    migration = v ?
       Zquic::MigrationMode::Active : Zquic::MigrationMode::Passive;
   }
   void migrationMode(Zquic::MigrationMode::T v) {
-    m_migrationMode = v;
+    migration = v;
   }
   Zquic::MigrationMode::T migrationMode() const {
-    return m_migrationMode;
+    return migration;
   }
-  bool rxInvoked() const { return true; }
-  bool txInvoked() const { return true; }
-  template <typename L> void rxRun(L l) { l(); }
-  template <typename L> void rxInvoke(L l) { l(); }
-  template <typename L> void txRun(L l) { l(); }
-  template <typename L> void txInvoke(L l) { l(); }
-  template <typename O, typename L> void txInvoke(O *, L l) { l(); }
+  bool rxInvoked() const { return !deferMode || shard == Rx; }
+  bool txInvoked() const { return !deferMode || shard == Tx; }
+  template <typename L> void rxRun(L l) {
+    if (!deferMode) { l(); return; }
+    rxPendingQ.push(ZmFn<>::Lambda::fn(
+      [l = ZuMv(l)]() mutable { l(); }));
+  }
+  template <typename L> void rxInvoke(L l) { rxRun(ZuMv(l)); }
+  template <typename L> void txRun(L l) {
+    if (!deferMode) { l(); return; }
+    txPendingQ.push(ZmFn<>::Lambda::fn(
+      [l = ZuMv(l)]() mutable { l(); }));
+  }
+  template <typename L> void txInvoke(L l) { txRun(ZuMv(l)); }
+  template <typename O, typename L> void txInvoke(O *, L l) {
+    txRun(ZuMv(l));
+  }
 
-  Zquic::MigrationMode::T m_migrationMode = Zquic::MigrationMode::Passive;
+  void defer() {
+    deferMode = true;
+    shard = Rx;
+  }
+  void enterRx() { shard = Rx; }
+  void enterTx() { shard = Tx; }
+  bool rxPending() const { return rxPendingQ.count_(); }
+  bool txPending() const { return txPendingQ.count_(); }
+  void runRx() {
+    assert(rxPendingQ.count_());
+    shard = Rx;
+    auto fn = rxPendingQ.shiftVal();
+    fn();
+  }
+  void runTx() {
+    assert(txPendingQ.count_());
+    shard = Tx;
+    auto fn = txPendingQ.shiftVal();
+    fn();
+  }
+
+  PendingQueue rxPendingQ;
+  PendingQueue txPendingQ;
+  Zquic::MigrationMode::T migration = Zquic::MigrationMode::Passive;
+  Shard shard = Rx;
+  bool deferMode = false;
 };
 struct ClientApp : public Zquic::Client<ClientApp> { };
 struct ServerAppLink;
@@ -190,12 +233,22 @@ struct ServerShapeLink :
 
   void connected(Zquic::Connected) { }
   void streamed(ZmRef<ServerShapeStream>) { }
+  void migrationStarted(const Zquic::MigrationResult &) {
+    if (startedFn) startedFn();
+  }
+  void migrationPromoted(const Zquic::MigrationResult &) {
+    if (promotedFn) promotedFn();
+  }
+  void onStarted(ZmFn<void()> fn) { startedFn = ZuMv(fn); }
+  void onPromoted(ZmFn<void()> fn) { promotedFn = ZuMv(fn); }
   void initSrvPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
   }
 #ifdef Zquic_DEBUG
-  bool promoteObservedPath(ZiSockAddr local, ZiSockAddr remote) {
+  void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::observePathRxTx_(ZuMv(local), ZuMv(remote));
+  }
+  bool promoteObservedPath() {
     ZuBSpan challenge = Base::validatingChallenge_();
     if (challenge.length() != Zquic::PathChallenge::Length) return false;
     uint8_t response[Zquic::PathChallenge::Length];
@@ -203,6 +256,9 @@ struct ServerShapeLink :
     return Base::onPathResponse_(ZuBSpan{response, sizeof(response)});
   }
 #endif
+
+  ZmFn<void()> startedFn;
+  ZmFn<void()> promotedFn;
 };
 
 struct TestLink :
@@ -321,11 +377,10 @@ struct TestLink :
 	  bool chooseMigrationPeerCID(
 	    bool requireNewPeerCID, Zquic::CxnID &id, uint64_t &sequence,
 	    Zquic::MigrationReason::T &reason) {
-	    typename Base::PathState state;
-	    bool ok = Base::migrationPeerCID_(state, requireNewPeerCID);
-	    id = state.peerCID;
-	    sequence = state.peerSeq;
-	    reason = state.reason;
+	    bool ok = Base::selectPeerCIDRx_(
+	      requireNewPeerCID, id, sequence);
+	    reason = ok ? Zquic::MigrationReason::T(Zquic::MigrationReason::None) :
+	      Zquic::MigrationReason::T(Zquic::MigrationReason::NoPeerCID);
 	    return ok;
 	  }
 	  void setPeerTransportParams(const Zquic::TransportParams &params) {
@@ -378,6 +433,13 @@ struct TestLink :
     token = cid->resetToken;
     return true;
   }
+  bool peerCIDActive(uint64_t sequence) const {
+    auto cid = Base::peerCID_(sequence);
+    return cid && cid->state == Zquic::CxnState::Active;
+  }
+  Zquic::CxnID activeTxPeerCID() const {
+    return Base::cid_(Base::CIDSel::Peer);
+  }
   bool localCIDRetired(uint64_t sequence) const {
     auto cid = Base::localCID_(sequence);
     return cid && cid->state == Zquic::CxnState::Retired;
@@ -391,6 +453,12 @@ struct TestLink :
 	    return Base::checkStatelessReset_(datagram);
 	  }
 	  bool draining() const { return Base::draining_(); }
+  void scheduleStream(const ZmRef<TestStream> &stream) {
+    Base::streamWritable_(stream);
+  }
+  unsigned scheduledStreams() const {
+    return Base::scheduledStreamCount_();
+  }
   void dataBlockedForTest(uint64_t maximum) {
     Base::dataBlocked_(maximum);
   }
@@ -755,12 +823,19 @@ void testAlignedSurfaceShape()
   bool promoted = false;
   ZiSockAddr peerAfterPromotion;
   ZmBlock<>{}([&](auto wake) {
-    serverApp.txRun([
-      server, localAddr, promotedRemote,
-      &promoted, &peerAfterPromotion, wake = ZuMv(wake)
-    ]() mutable {
-      promoted = server->promoteObservedPath(
-	localAddr, promotedRemote);
+    server->onStarted(ZuMv(wake));
+    serverApp.txRun([server, localAddr, promotedRemote]() mutable {
+      server->observePath(localAddr, promotedRemote);
+    });
+  });
+  ZmBlock<>{}([&](auto wake) {
+    server->onPromoted(ZuMv(wake));
+    serverApp.txRun([server, &promoted]() mutable {
+      promoted = server->promoteObservedPath();
+    });
+  });
+  ZmBlock<>{}([&](auto wake) {
+    serverApp.txRun([server, &peerAfterPromotion, wake = ZuMv(wake)]() mutable {
       peerAfterPromotion = server->peer();
       wake();
     });
@@ -817,10 +892,25 @@ void testStatelessResetDetection()
   ZuCHECK(!link->checkStatelessReset(datagram) && !link->draining(),
     "link accepted stateless reset before peer token was known");
   link->setPeerResetToken(token);
-  ZuCHECK(link->checkStatelessReset(datagram) && link->draining(),
-    "link did not enter draining on matching stateless reset");
-  ZuCHECK(link->statelessResetCount == 1,
-    "stateless reset callback did not fire");
+  auto stream = link->stream();
+  link->scheduleStream(stream);
+  ZuCHECK(link->scheduledStreams() == 1,
+    "stateless reset queued-stream setup failed");
+  fixture.app.defer();
+  ZuCHECK(link->checkStatelessReset(datagram) && link->draining() &&
+      fixture.app.txPending() && !fixture.app.rxPending() &&
+      link->scheduledStreams() == 1 && !link->statelessResetCount,
+    "stateless reset did not defer Tx cleanup");
+  ZuCHECK(link->checkStatelessReset(datagram) && fixture.app.txPending() &&
+      !fixture.app.rxPending() && !link->statelessResetCount,
+    "duplicate stateless reset queued duplicate completion");
+  fixture.app.runTx();
+  ZuCHECK(!fixture.app.txPending() && fixture.app.rxPending() &&
+      !link->scheduledStreams() && !link->statelessResetCount,
+    "stateless reset Tx cleanup/completion ordering mismatch");
+  fixture.app.runRx();
+  ZuCHECK(!fixture.app.rxPending() && link->statelessResetCount == 1,
+    "stateless reset Rx completion did not fire exactly once");
 
 #ifdef Zquic_DEBUG
 	closeQLog_(fixture.app.qlogTrace());
@@ -993,6 +1083,42 @@ void testApplicationCallbacks()
       timeoutDiag.peerObserved == 0,
     "timeout migration diagnostic counters mismatch");
 #endif
+}
+
+void testStopSendingOwnership()
+{
+  ZuTestScope(testStopSendingOwnership);
+
+  HubFixture fixture;
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  auto stream = link->stream();
+  uint8_t b[128];
+  Zquic::Frame frame;
+  int n = Zquic::FrameCodec::writeStopSending(
+    b, sizeof(b), stream->id(), 9);
+  ZuCHECK(parseFrame_(b, n, frame),
+    "STOP_SENDING ownership setup failed");
+
+  fixture.app.defer();
+  ZuCHECK(link->receiveFrame(frame) == 0 && stream->stopReceived() &&
+      fixture.app.txPending() && !stream->txCompleteCount &&
+      link->stopReceivedCount == 1,
+    "STOP_SENDING did not defer completion to Tx");
+  ZuCHECK(link->receiveFrame(frame) == 0 && fixture.app.txPending() &&
+      !stream->txCompleteCount && link->stopReceivedCount == 1,
+    "duplicate STOP_SENDING queued duplicate completion");
+
+  fixture.app.enterTx();
+  stream->reset(11);
+  ZuCHECK(stream->txCompleteCount == 1,
+    "racing reset did not complete stream on Tx");
+  fixture.app.runTx();
+  ZuCHECK(stream->txCompleteCount == 1,
+    "STOP_SENDING/reset race completed Tx more than once");
+  for (unsigned i = 0; fixture.app.txPending() && i < 4; ++i)
+    fixture.app.runTx();
+  ZuCHECK(!fixture.app.txPending() && stream->txCompleteCount == 1,
+    "STOP_SENDING/reset race did not drain queued Tx work exactly once");
 }
 
 void testCxnIDFrameLifecycle()
@@ -1237,10 +1363,98 @@ void testActiveMigrationAPI()
   ZuCHECK(noSpareDiag.requested == 1 &&
       noSpareDiag.started == 1 &&
       noSpareDiag.noPeerCID == 1 &&
-      noSpareDiag.failed == 0 &&
+      noSpareDiag.failed == 1 &&
       noSpareDiag.promoted == 0,
     "no-CID migration diagnostic counters mismatch");
 #endif
+}
+
+void testCxnIDMigrationOverlap()
+{
+  ZuTestScope(testCxnIDMigrationOverlap);
+
+  HubFixture fixture;
+  fixture.app.activeMigration(true);
+  ZiSockAddr localAddr{ZiIP{"127.0.0.1"}, 4433};
+  ZiSockAddr oldRemote{ZiIP{"127.0.0.1"}, 50000};
+  ZiSockAddr newRemote{ZiIP{"127.0.0.1"}, 50001};
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  link->initClientPath(localAddr, oldRemote);
+  link->setRuntimeCIDs(
+    Zquic::CxnID{"localA00"}, Zquic::CxnID{"peerA000"});
+  Zquic::TrafficSecret rx;
+  Zquic::TrafficSecret tx;
+  link->installAppDataKeys(rx, tx, Zquic::CxnID{"localA00"});
+  Zquic::TransportParams peerParams;
+  link->setPeerTransportParams(peerParams);
+  ZuCHECK(link->addPeerCID(
+      Zquic::CxnID{"peerA001"}, 1,
+      Zquic::ResetToken{"0123456789abcdef"}),
+    "migration-overlap spare CID setup failed");
+
+  fixture.app.defer();
+  fixture.app.enterTx();
+  Zquic::MigrationParams params;
+  params.local = localAddr;
+  params.remote = newRemote;
+  Zquic::MigrationReason::T reason = Zquic::MigrationReason::None;
+  ZuCHECK(link->prepareActiveMigration(params, reason) &&
+      fixture.app.rxPending() && !fixture.app.txPending(),
+    "migration-overlap selection was not posted to Rx");
+  fixture.app.runRx();
+  ZuCHECK(!fixture.app.rxPending() && fixture.app.txPending(),
+    "migration-overlap selection was not returned to Tx");
+  fixture.app.runTx();
+  ZuCHECK(!fixture.app.txPending() &&
+      link->candidatePathInfo().peerCIDSequence == 1,
+    "migration-overlap selected the wrong peer CID");
+  ZuCHECK(link->activateActiveMigration(),
+    "migration-overlap candidate activation failed");
+  Zquic::Frame challenge;
+  ZuCHECK(link->buildActiveMigrationChallenge(challenge),
+    "migration-overlap challenge setup failed");
+
+  fixture.app.enterRx();
+  Zquic::Frame replacement;
+  replacement.type = Zquic::FrameType::NewCxnID;
+  replacement.value = 2;
+  replacement.offset = 2;
+  replacement.length = 8;
+  replacement.payload = "peerA002";
+  replacement.resetToken = Zquic::ResetToken{"1234567890abcdef"};
+  ZuCHECK(link->receiveNewCxnID(replacement) &&
+      !link->peerCIDActive(1) && link->peerCIDActive(2),
+    "migration-overlap did not retire and replace the selected CID");
+
+  uint8_t response[Zquic::PathChallenge::Length];
+  ZuBSpan challengeData = link->validatingChallenge();
+  ZuCHECK(challengeData.length() == sizeof(response),
+    "migration-overlap challenge snapshot was empty");
+  if (challengeData.length() != sizeof(response)) return;
+  memcpy(response, challengeData.data(), sizeof(response));
+  fixture.app.enterTx();
+  ZuCHECK(link->pathResponse(ZuBSpan{response, sizeof(response)}) &&
+      fixture.app.rxPending() && !link->migrationPromotedCount,
+    "migration-overlap promotion did not defer CID binding to Rx");
+  fixture.app.runRx();
+  ZuCHECK(fixture.app.txPending() && !link->migrationPromotedCount,
+    "migration-overlap CID rejection was not returned to Tx");
+  fixture.app.runTx();
+  ZuCHECK(!link->migrationActive() && link->migrationFailureCount == 1 &&
+      !link->migrationPromotedCount && !link->pathUpdateCount &&
+      link->activeTxPeerCID() == Zquic::CxnID{"peerA000"},
+    "retired migration CID was promoted or reverted the active CID");
+  ZuCHECK(fixture.app.rxPending(),
+    "retired migration CID reservation was not released on Rx");
+  fixture.app.runRx();
+
+  Zquic::CxnID selected;
+  uint64_t sequence = 0;
+  reason = Zquic::MigrationReason::None;
+  ZuCHECK(link->chooseMigrationPeerCID(
+      true, selected, sequence, reason) &&
+      selected == Zquic::CxnID{"peerA002"} && sequence == 2,
+    "replacement peer CID was not selectable after overlap failure");
 }
 
 void testMigrationQLogEvents()
@@ -1557,8 +1771,10 @@ int main(int argc, char **argv)
   ZuTestCall(testAlignedSurfaceShape);
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testApplicationCallbacks);
+  ZuTestCall(testStopSendingOwnership);
   ZuTestCall(testCxnIDFrameLifecycle);
   ZuTestCall(testActiveMigrationAPI);
+  ZuTestCall(testCxnIDMigrationOverlap);
   ZuTestCall(testMigrationQLogEvents);
   ZuTestCall(testInitValidate);
 }
