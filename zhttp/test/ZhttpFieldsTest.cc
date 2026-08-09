@@ -57,7 +57,7 @@ bool validRequest(bool extended = false)
 	(!extended || target.protocol == "websocket");
     },
     [](unsigned) { }, header);
-  return ok && host && operation && section == Zhttp::Fields::Final;
+  return ok && host && operation && section == Zhttp::HdrSection::Final;
 }
 
 template <typename Source>
@@ -89,7 +89,7 @@ bool invalidCases()
   Zhttp::Fields::Semantics<true> missing;
   bool missingPseudo =
     Source::field(missing, ":method", "GET", header) &&
-    finish(missing) == Zhttp::Fields::Invalid;
+    finish(missing) == Zhttp::HdrSection::Invalid;
 
   Zhttp::Fields::Semantics<true> connect;
   bool invalidConnect =
@@ -97,7 +97,7 @@ bool invalidCases()
     Source::field(connect, ":authority", "example.com:443", header) &&
     Source::field(connect, ":scheme", "https", header) &&
     Source::field(connect, ":path", "/", header) &&
-    finish(connect) == Zhttp::Fields::Invalid;
+    finish(connect) == Zhttp::HdrSection::Invalid;
 
   Zhttp::Fields::Semantics<true> disabledExtended;
   bool disabledConnect =
@@ -106,7 +106,7 @@ bool invalidCases()
     Source::field(disabledExtended, ":authority", "example.com", header) &&
     Source::field(disabledExtended, ":path", "/", header) &&
     Source::field(disabledExtended, ":protocol", "opaque", header) &&
-    finish(disabledExtended) == Zhttp::Fields::Invalid;
+    finish(disabledExtended) == Zhttp::HdrSection::Invalid;
 
   Zhttp::Fields::Semantics<true> trailers;
   trailers.trailers(true);
@@ -128,7 +128,7 @@ bool responses()
     [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
     [&status](unsigned value) { status = value; }, header);
   if (!ok || status != 103 ||
-      section != Zhttp::Fields::Informational)
+      section != Zhttp::HdrSection::Informational)
     return false;
 
   Zhttp::Fields::Semantics<false> final;
@@ -137,7 +137,7 @@ bool responses()
   section = final.finish(
     [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
     [&status](unsigned value) { status = value; }, header);
-  if (!ok || status != 200 || section != Zhttp::Fields::Final ||
+  if (!ok || status != 200 || section != Zhttp::HdrSection::Final ||
       !final.bodyAllowed())
     return false;
 
@@ -147,7 +147,7 @@ bool responses()
   section = head.finish(
     [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
     [&status](unsigned value) { status = value; }, header);
-  return ok && section == Zhttp::Fields::Final && !head.bodyAllowed();
+  return ok && section == Zhttp::HdrSection::Final && !head.bodyAllowed();
 }
 
 template <typename Source>

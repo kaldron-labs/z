@@ -202,10 +202,12 @@ struct StreamConsumer {
 };
 
 struct ParserStream :
-  public Zhttp::H3::Parser<ParserStream, true, ParserHeaders, 1024> {
-  using Base = Zhttp::H3::Parser<ParserStream, true, ParserHeaders, 1024>;
+  public Zhttp::H3::Parser<ParserStream, true, ParserHeaders> {
+  using Base = Zhttp::H3::Parser<ParserStream, true, ParserHeaders>;
 
-  ParserStream() : consumer{this} { dispatch.init(link, consumer); }
+  ParserStream() : Base{1024}, consumer{this} {
+    dispatch.init(link, consumer);
+  }
   ~ParserStream() {
     dispatch.disable_();
     dispatch.final_();
@@ -236,7 +238,9 @@ struct ParserStream :
       Base::stream();
     }
   }
-  template <typename Key> void header(ZuBSpan value) {
+  template <typename Key>
+  void header(Zhttp::HdrSection section, ZuBSpan value) {
+    headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") {
       ++xTestCalls;
@@ -247,7 +251,9 @@ struct ParserStream :
       }
     }
   }
-  void header(ZuBSpan name, ZuBSpan value) {
+  void header(
+      Zhttp::HdrSection section, ZuBSpan name, ZuBSpan value) {
+    headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     ++runtimeCalls;
     if (name == "host") return;
@@ -256,8 +262,15 @@ struct ParserStream :
     runtimeName << ZuCSpan{name};
     runtimeValue << ZuCSpan{value};
   }
-  void contentLength(uint64_t v) { contentLen = v; ++contentLenCalls; }
-  void headers(Zhttp::Fields::Section, bool) { ++headerCalls; }
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+    bodyType = type;
+    bodyLength = length;
+    if (type == Zhttp::BodyType::Fixed) {
+      contentLen = length;
+      ++contentLenCalls;
+    }
+    ++headerCalls;
+  }
   template <typename Rx>
   void body(Rx &rx) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
@@ -325,6 +338,9 @@ struct ParserStream :
   unsigned			contentLenCalls = 0;
   unsigned			bodyCalls = 0;
   unsigned			headerCalls = 0;
+  uint64_t			bodyLength = 0;
+  Zhttp::BodyType::T		bodyType = Zhttp::BodyType::None;
+  Zhttp::HdrSection	headerSection = Zhttp::HdrSection::Invalid;
   unsigned			streamStarts = 0;
   unsigned			streamEnds = 0;
   unsigned			streamResets = 0;
@@ -347,8 +363,11 @@ struct ParserStream :
 };
 
 struct ResponseParserStream :
-  public Zhttp::H3::Parser<
-    ResponseParserStream, false, ParserHeaders, 1024> {
+  public Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders> {
+  using Base =
+    Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders>;
+
+  ResponseParserStream() : Base{1024} { }
   RxStream &rxStream() { return rx; }
   bool retireRx(uint64_t length) { retired += length; return true; }
   void rescheduleDequeue() { }
@@ -366,8 +385,11 @@ struct ResponseParserStream :
     statusOrder = ++callbackOrder;
     status_ = value;
   }
-  void contentLength(uint64_t value) { contentLen = value; }
-  template <typename Key> void header(ZuBSpan value) {
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+    if (type == Zhttp::BodyType::Fixed) contentLen = length;
+  }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan value) {
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
@@ -777,7 +799,10 @@ void testParserFieldCallbacks()
       parser.runtimeCalls == 2 &&
       parser.runtimeName == "x-runtime" &&
       parser.runtimeValue == "plain" && parser.operationOrder &&
-      parser.operationOrder < parser.headerOrder,
+      parser.operationOrder < parser.headerOrder &&
+      parser.headerSection == Zhttp::HdrSection::Final &&
+      parser.headerCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Streamed && !parser.bodyLength,
     "parser did not deliver initial pseudo/regular fields");
 
   Zhttp::H3::Header trailerHeaders[] = {
@@ -787,7 +812,8 @@ void testParserFieldCallbacks()
   putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{trailerHeaders, 1});
   parser.push(frame);
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Trailers &&
-      parser.xTestCalls == 2 && parser.xTest == "trailer",
+      parser.xTestCalls == 2 && parser.xTest == "trailer" &&
+      parser.headerSection == Zhttp::HdrSection::Trailers,
     "parser did not deliver trailer fields");
 
   ParserStream invalid;
@@ -2065,13 +2091,13 @@ bool applyEncoder(
 	break;
       case Zhttp::H3::QPackInsn::InsertWithNameRef: {
 	Zhttp::H3::Header indexed;
+	Zhttp::H3::HeaderName name;
 	if (insn.nameRefDynamic) {
 	  if (!table.lookupRelative(
 	      table.insertCount(), insn.value, indexed))
 	    return false;
 	  if (dynamicName) *dynamicName = true;
 	} else {
-	  Zhttp::H3::HeaderName name;
 	  if (!Zhttp::H3::QPack::staticName(insn.value, name))
 	    return false;
 	  indexed.name = name;

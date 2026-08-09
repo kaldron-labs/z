@@ -32,6 +32,12 @@
 
 namespace Zhttp {
 
+enum HdrSection {
+  Invalid = -1,
+  Informational,
+  Final,
+  Trailers
+};
 
 class BodyRx {
 public:
@@ -132,13 +138,6 @@ bool bodyDrain(Rx &rx) {
 
 namespace Fields {
 
-enum Section {
-  Invalid = -1,
-  Informational,
-  Final,
-  Trailers
-};
-
 using String = ZtString<ZtStringHeapID<"Zhttp.Fields.String">>;
 
 ZhttpAPI bool forbidden(ZuCSpan);
@@ -149,7 +148,7 @@ struct HasRuntime : public ZuFalse { };
 template <typename Impl>
 struct HasRuntime<Impl,
   decltype(ZuDeclVal<Impl *>()->header(
-    ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
+    HdrSection::Final, ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
     public ZuTrue { };
 
 template <typename Impl, typename L, typename = void>
@@ -216,6 +215,18 @@ inline bool nameOK(ZuCSpan name) {
   return true;
 }
 
+inline bool uint64(ZuCSpan value, uint64_t &result) {
+  if (!value) return false;
+  uint64_t n = 0;
+  for (unsigned i = 0; i < value.length(); ++i) {
+    unsigned digit = unsigned(value[i] - '0');
+    if (digit > 9 || n > (uint64_t(-1) - digit) / 10) return false;
+    n = n * 10 + digit;
+  }
+  result = n;
+  return true;
+}
+
 template <bool Request_>
 class Semantics {
 public:
@@ -237,8 +248,7 @@ public:
     if (name == "te" && value != "trailers") return false;
     if (name == "content-length") {
       uint64_t length;
-      if (!value ||
-	  Zu_atou(length, value.data(), value.length()) != value.length())
+      if (!uint64(value, length))
 	return false;
       if (m_contentLength && length != m_length) return false;
       m_contentLength = true;
@@ -274,16 +284,24 @@ public:
   }
 
   template <typename Operation, typename Status, typename Header>
-  Section finish(Operation &&operation, Status &&status, Header &&header) {
-    if (m_trailers) return m_seen ? Invalid : Trailers;
+  HdrSection finish(
+      Operation &&operation, Status &&status, Header &&header) {
+    if (m_trailers)
+      return m_seen ? HdrSection::Invalid : HdrSection::Trailers;
     if (!valid_() ||
 	!start(ZuFwd<Operation>(operation), ZuFwd<Status>(status),
 	  ZuFwd<Header>(header)))
-      return Invalid;
+      return HdrSection::Invalid;
     if constexpr (Request)
-      return Final;
+      return HdrSection::Final;
     else
-      return m_status < 200 ? Informational : Final;
+      return m_status < 200 ? HdrSection::Informational : HdrSection::Final;
+  }
+
+  HdrSection section() const {
+    if (m_trailers) return HdrSection::Trailers;
+    if constexpr (Request) return HdrSection::Final;
+    return m_status < 200 ? HdrSection::Informational : HdrSection::Final;
   }
 
 private:

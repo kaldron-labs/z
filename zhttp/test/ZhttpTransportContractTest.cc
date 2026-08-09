@@ -687,7 +687,7 @@ void testParams()
   Zhttp::DiscoveryLimits limits{
     .maxRecords = 3, .maxHints = 5,
     .maxEndpoints = 7, .maxAliasDepth = 2};
-  auto client = Zhttp::ClientConfig{}
+  auto client = Zhttp::Config{}
     .requestTimeout(13).maxAltSvc(11)
     .retainedBodyMax(17).retainedMessageMax(23)
     .discoveryLimits(limits).altSvcCrossHost(true)

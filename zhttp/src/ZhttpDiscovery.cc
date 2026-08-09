@@ -331,19 +331,24 @@ void DiscoveryRequest::start()
 
 void DiscoveryRequest::cancel()
 {
+  ++m_resolverGeneration;
   m_resolverOps->cancel(m_resolverOps->context, ZuMv(m_resolver));
   finish({0, DiscoveryCode::Cancelled});
 }
 
 void DiscoveryRequest::query()
 {
-  m_resolver = m_resolverOps->query(
+  uint64_t generation = ++m_resolverGeneration;
+  auto resolver = m_resolverOps->query(
     m_resolverOps->context, m_query,
     ZiResolver_::DNSType::HTTPS, ZiResolver_::DNSClass::IN,
     ZiResolver_::QueryFn{[
-      request = ZmRef<DiscoveryRequest>{this}](auto result) mutable {
+      request = ZmRef<DiscoveryRequest>{this}, generation
+    ](auto result) mutable {
+      if (generation != request->m_resolverGeneration) return;
 	request->queried(ZuMv(result));
     }});
+  installResolver(generation, ZuMv(resolver));
 }
 
 void DiscoveryRequest::queried(ZiResolver_::QueryResult result)
@@ -415,22 +420,30 @@ void DiscoveryRequest::resolveNext()
 {
   if (m_done.load_()) return;
   if (m_direct) {
-    m_resolver = m_resolverOps->resolve(
+    uint64_t generation = ++m_resolverGeneration;
+    auto resolver = m_resolverOps->resolve(
       m_resolverOps->context, m_target,
       ZiResolver_::ResolveFn{[
-	request = ZmRef<DiscoveryRequest>{this}](auto result) mutable {
-	  return request->resolved(ZuMv(result));
-	}});
+	request = ZmRef<DiscoveryRequest>{this}, generation
+      ](auto result) mutable {
+	if (generation != request->m_resolverGeneration) return false;
+	return request->resolved(ZuMv(result));
+      }});
+    installResolver(generation, ZuMv(resolver));
     return;
   }
   if (m_blind) {
     m_target = m_host;
-    m_resolver = m_resolverOps->resolve(
+    uint64_t generation = ++m_resolverGeneration;
+    auto resolver = m_resolverOps->resolve(
       m_resolverOps->context, m_host,
       ZiResolver_::ResolveFn{[
-	request = ZmRef<DiscoveryRequest>{this}](auto result) mutable {
-	  return request->resolved(ZuMv(result));
-	}});
+	request = ZmRef<DiscoveryRequest>{this}, generation
+      ](auto result) mutable {
+	if (generation != request->m_resolverGeneration) return false;
+	return request->resolved(ZuMv(result));
+      }});
+    installResolver(generation, ZuMv(resolver));
     return;
   }
 
@@ -449,12 +462,16 @@ void DiscoveryRequest::resolveNext()
       if (!add({m_origin, m_target, m_host, record.ipv6Hints[i], port,
 	    record.priority, EndpointSource::IPv6Hint, Version::H3}))
 	return;
-    m_resolver = m_resolverOps->resolve(
+    uint64_t generation = ++m_resolverGeneration;
+    auto resolver = m_resolverOps->resolve(
       m_resolverOps->context, m_target,
       ZiResolver_::ResolveFn{[
-	request = ZmRef<DiscoveryRequest>{this}](auto result) mutable {
-	  return request->resolved(ZuMv(result));
-	}});
+	request = ZmRef<DiscoveryRequest>{this}, generation
+      ](auto result) mutable {
+	if (generation != request->m_resolverGeneration) return false;
+	return request->resolved(ZuMv(result));
+      }});
+    installResolver(generation, ZuMv(resolver));
     return;
   }
   finish(m_endpoints.length() ? DiscoveryError{} :
@@ -493,9 +510,19 @@ bool DiscoveryRequest::resolved(ZiResolver_::ResolveResult result)
     int8_t(source), Version::H3});
 }
 
+void DiscoveryRequest::installResolver(
+  uint64_t generation, ZmRef<ZiResolver_::Query> resolver)
+{
+  if (generation == m_resolverGeneration && !m_done.load_())
+    m_resolver = ZuMv(resolver);
+  else if (resolver)
+    m_resolverOps->cancel(m_resolverOps->context, ZuMv(resolver));
+}
+
 void DiscoveryRequest::finish(DiscoveryError error)
 {
   if (m_done.cmpXch(1, 0)) return;
+  ++m_resolverGeneration;
   m_resolver = nullptr;
   auto fn = ZuMv(m_fn);
   fn(error, ZuMv(m_endpoints));

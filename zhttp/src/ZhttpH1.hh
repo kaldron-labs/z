@@ -152,12 +152,12 @@ template <
   typename Impl,
   bool Request_ = false,
   typename Headers_ = ZuTypeList<>,
-  uint64_t MaxBody_ = DefltMaxBody,
   uint64_t MaxStartLine_ = DefltMaxStartLine,
   uint64_t MaxHeaderSection_ = DefltMaxHeaderSection>
 class Parser {
 public:
-  Parser() : m_bodyRx{MaxBody} { }
+  Parser(uint64_t bodyMax = DefltMaxBody) :
+    m_bodyMax{bodyMax}, m_bodyRx{bodyMax} { }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -166,7 +166,6 @@ public:
   using Headers = typename Headers_::template Unshift<
     ZuStringT<"transfer-encoding">, void,
     ZuStringT<"content-length">, void>;
-  static constexpr uint64_t MaxBody = MaxBody_;
   static constexpr uint64_t MaxStartLine = MaxStartLine_;
   static constexpr uint64_t MaxHeaderSection = MaxHeaderSection_;
   using State = ParserState;
@@ -188,21 +187,8 @@ private:
     if constexpr (Key{}() == "transfer-encoding") {
 	bool invalid = false;
 	split(value, [this, &invalid](unsigned i, ZuBSpan token) {
-	  // chunked must come last, anything else must be first
-	  if (m_chunked) {
-	    invalid = true;
-	  } else if (token == "chunked") {
-	    m_chunked = true;
-	    impl()->chunked();
-	  } else if (i) {
-	    invalid = true;
-	  } else {
-	    auto xferCompression = XferCompression::lookup(token);
-	    if (xferCompression < 0)
-	      invalid = true;
-	    else
-	      impl()->xferCompression(xferCompression);
-	  }
+	  if (i || m_chunked || token != "chunked") invalid = true;
+	  else m_chunked = true;
 	});
 	if (invalid) {
 	  fail_(RequestErrorCode::NotImplemented,
@@ -212,20 +198,17 @@ private:
     } else if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
 	ZuCSpan data{value};
-	if (!data ||
-	    Zu_atou(contentLength, data.data(), data.length()) != data.length() ||
-	    contentLength > MaxBody) {
-	  fail_(contentLength > MaxBody ?
+	if (!Fields::uint64(data, contentLength) ||
+	    contentLength > m_bodyMax) {
+	  fail_(contentLength > m_bodyMax ?
 	    RequestErrorCode::ContentTooLarge : RequestErrorCode::Malformed,
 	    RequestErrorScope::Connection, Request);
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else {
 	  m_contentLength = contentLength;
-	  impl()->contentLength(contentLength);
 	}
-    } else {
-	impl()->template header<Key>(value);
-    }
+    } else
+	impl()->template header<Key>(section_(), value);
   }
 
   static bool headerKey_(ZuBSpan key, ZuCSpan name) {
@@ -234,7 +217,7 @@ private:
 
   void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
     if constexpr (Fields::HasRuntime<Impl>{})
-	impl()->header(key, value);
+	impl()->header(section_(), key, value);
   }
 
   // process header key/value
@@ -250,11 +233,11 @@ private:
     Fields::dispatch<Headers>(
       key, value,
       [this](auto key, ZuBSpan value) {
-	this->template header_<ZuDecay<decltype(key)>>(value);
+	impl()->template header<ZuDecay<decltype(key)>>(section_(), value);
       },
       [this](auto key, auto value) {
 	impl()->template header<
-	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>();
+	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section_());
       },
       [this](ZuBSpan key, ZuBSpan value) {
 	runtimeHeader_(key, value);
@@ -296,8 +279,8 @@ private:
       error();
       return;
     }
+    m_http10 = protocol == "HTTP/1.0";
     impl()->operation(method, parsed);
-    impl()->version(protocol);
     m_state = State::Headers;
   }
 
@@ -313,6 +296,10 @@ private:
 	if (ZuUnlikely(++o > 8)) { error(); return; } // unterminated protocol
     if (ZuUnlikely(!o || o >= int(n))) { error(); return; } // missing protocol
     ZuCSpan protocol{&line[0], unsigned(o)};
+    if (protocol != "HTTP/1.1" && protocol != "HTTP/1.0") {
+      error();
+      return;
+    }
     unsigned b = ++o;
     int c; // intentionally int
     unsigned code = 0;
@@ -324,7 +311,7 @@ private:
     }
     if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
     m_statusCode = code;
-    impl()->version(protocol);
+    m_http10 = protocol == "HTTP/1.0";
     impl()->status(code);
     m_state = State::Headers;
   }
@@ -359,15 +346,7 @@ public:
 	    consumed = parseLine(
 	      m_lineScan, stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line) {
-		if (m_chunked) {
-		  m_state = State::ChunkHdr;
-		  m_contentLength = 0;
-		} else if (m_contentLength != uint64_t(-1) &&
-		    m_contentLength > 0)
-		  m_state = State::Body;
-		else if constexpr (Request) {
-		  m_state = State::Complete;
-		} else {
+		if constexpr (!Request) {
 		  if (interimResponse_()) {
 		    m_state = State::Initial;
 		    m_chunked = false;
@@ -376,13 +355,29 @@ public:
 		    m_chunkLength = -1;
 		    m_statusCode = 0;
 		    m_headerBytes = 0;
-		  } else if (m_contentLength == 0 || noResponseBody_())
-		    m_state = State::Complete;
-		  else {
-		    m_state = State::Body;
-		    m_eofBody = true;
-		    m_contentLength = 0;
+		    return;
 		  }
+		  if (noResponseBody_()) {
+		    impl()->bodyInfo(BodyType::None, 0);
+		    m_state = State::Complete;
+		    return;
+		  }
+		}
+		if (m_chunked) {
+		  impl()->bodyInfo(BodyType::Streamed, 0);
+		  m_state = State::ChunkHdr;
+		  m_contentLength = 0;
+		} else if (m_contentLength != uint64_t(-1)) {
+		  impl()->bodyInfo(BodyType::Fixed, m_contentLength);
+		  m_state = m_contentLength ? State::Body : State::Complete;
+		} else if constexpr (Request) {
+		  impl()->bodyInfo(BodyType::None, 0);
+		  m_state = State::Complete;
+		} else {
+		  impl()->bodyInfo(BodyType::Streamed, 0);
+		  m_state = State::Body;
+		  m_eofBody = true;
+		  m_contentLength = 0;
 		}
 	      } else
 		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
@@ -402,7 +397,7 @@ public:
 	      m_eofFn = [](Parser *parser, void *stream_) {
 		return parser->eof_(*static_cast<Stream *>(stream_));
 	      };
-	      if (ZuUnlikely(stream.length() > MaxBody)) {
+	      if (ZuUnlikely(stream.length() > m_bodyMax)) {
 		fail_(RequestErrorCode::ContentTooLarge,
 		  RequestErrorScope::Connection, Request);
 		ZiLOG(Error, "Zhttp", "oversized body");
@@ -446,11 +441,11 @@ public:
 		  m_state = State::Trailers;
 		  return;
 		}
-		if (m_chunkLength > MaxBody) {
+		if (m_chunkLength > m_bodyMax) {
 		  error(RequestErrorCode::ContentTooLarge);
 		  return;
 		}
-		if ((m_contentLength += m_chunkLength) > MaxBody) {
+		if ((m_contentLength += m_chunkLength) > m_bodyMax) {
 		  error(RequestErrorCode::ContentTooLarge);
 		  return;
 		}
@@ -524,6 +519,12 @@ public:
 
   bool progressed() const { return m_progressed; }
   const RequestError &error() const { return m_error; }
+  bool http10() const { return m_http10; }
+  uint64_t bodyMax() const { return m_bodyMax; }
+  void bodyMax(uint64_t value) {
+    m_bodyMax = value;
+    m_bodyRx.reset(value);
+  }
 
   // complete an EOF-framed response body when the connection closes
   State::T eof() {
@@ -541,7 +542,7 @@ public:
 
   // reset for next message
   void reset() {
-    m_bodyRx.reset();
+    m_bodyRx.reset(m_bodyMax);
     m_state = State::Initial;
     m_chunked = false;
     m_eofBody = false;
@@ -553,20 +554,24 @@ public:
     m_progressed = false;
     m_error = {};
     m_errorLatched = false;
+    m_http10 = false;
     m_eofStream = nullptr;
     m_eofFn = nullptr;
+  }
+  void reset(uint64_t bodyMax_) {
+    m_bodyMax = bodyMax_;
+    reset();
   }
 
   // CRTP defaults
   void operation(Method::T, const RequestTarget &) { }
-  void version(ZuBSpan) { }
   void status(unsigned) { }
-  template <typename Key> void header(ZuBSpan) { }
-  template <typename Key, typename Value> void header() { }
-  void header(ZuBSpan, ZuBSpan) { }
-  void contentLength(uint64_t) { }
-  void xferCompression(XferCompression::T) { }
-  void chunked() { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
+  template <typename Key, typename Value>
+  void header(Zhttp::HdrSection) { }
+  void header(Zhttp::HdrSection, ZuBSpan, ZuBSpan) { }
+  void bodyInfo(BodyType::T, uint64_t) { }
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   void complete(State::T) { }
@@ -575,7 +580,7 @@ private:
   template <typename Stream>
   State::T eof_(Stream &stream) {
     uint64_t length = stream.length();
-    if (ZuUnlikely(length > MaxBody)) {
+    if (ZuUnlikely(length > m_bodyMax)) {
 	  fail_(RequestErrorCode::ContentTooLarge);
     } else if (length) {
       uint64_t remaining = length;
@@ -611,9 +616,17 @@ private:
 	m_statusCode == 204 || m_statusCode == 304;
   }
 
+  Zhttp::HdrSection section_() const {
+    if (m_state == State::Trailers) return Zhttp::HdrSection::Trailers;
+    if constexpr (Request) return Zhttp::HdrSection::Final;
+    return interimResponse_() ?
+      Zhttp::HdrSection::Informational : Zhttp::HdrSection::Final;
+  }
+
   // Rx thread exclusive
   void		*m_eofStream = nullptr;
   State::T	(*m_eofFn)(Parser *, void *) = nullptr;
+  uint64_t	m_bodyMax;
   uint64_t	m_contentLength = uint64_t(-1);
   uint64_t	m_chunkLength = uint64_t(-1);
   uint64_t	m_headerBytes = 0;
@@ -624,6 +637,7 @@ private:
   RequestError	m_error;
   bool		m_chunked = false;
   bool		m_eofBody = false;
+  bool		m_http10 = false;
   bool		m_progressed = false;
   bool		m_errorLatched = false;
 };

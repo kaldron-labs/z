@@ -74,9 +74,6 @@ inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
   return !hasBody && earlyDataSafeMethod(method);
 }
 
-// deprecated transfer-encoding compression
-ZtEnumNS(ZhttpAPI, XferCompression, int8_t, compress, deflate, gzip);
-
 ZtEnumStruct(ZhttpAPI, RequestErrorCode, int8_t,
   Malformed, ContentTooLarge, TargetTooLong, HeadersTooLarge,
   NotImplemented, VersionUnsupported);
@@ -101,6 +98,8 @@ struct BodyCommit {
 
 ZtEnumNS(ZhttpAPI, BodyPolicy, int8_t,
   None, Fixed, OptionalFixed, Stream, OptionalStream);
+
+ZtEnumStruct(ZhttpAPI, BodyType, int8_t, None, Streamed, Fixed);
 
 namespace BodyPolicy {
 

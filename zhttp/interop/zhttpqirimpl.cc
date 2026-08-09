@@ -533,11 +533,11 @@ struct H3Client : public Zquic::Client<H3Client> {
 };
 
 struct H3ResponseParser :
-  public Zhttp::H3ResponseParser<
-    H3ResponseParser, H3RespHeaders, H3RespBodyMax> {
-  using Base = Zhttp::H3ResponseParser<
-    H3ResponseParser, H3RespHeaders, H3RespBodyMax>;
+  public Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders> {
+  using Base = Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders>;
   using State = typename Base::State;
+
+  H3ResponseParser() : Base{H3RespBodyMax} { }
 
   void bind(H3Client::Stream *stream_) { stream = stream_; }
   Zhttp::H3::QPackRxTable *qpackRx() const;
@@ -547,7 +547,9 @@ struct H3ResponseParser :
   template <typename Rx>
   void body(Rx &rx);
   void complete(State::T state);
-  template <typename Key> void header(ZuBSpan) { }
+  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
 
   H3Client::Stream	*stream = nullptr;
   unsigned		status_ = 0;

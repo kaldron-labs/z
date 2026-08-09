@@ -9,7 +9,7 @@
 namespace Zhttp {
 
 ZtEnumImplNS(Method);
-ZtEnumImplNS(XferCompression);
+ZtEnumImplStruct(BodyType);
 ZtEnumImplStruct(Version);
 ZtEnumImplStruct(RequestErrorCode);
 ZtEnumImplStruct(RequestErrorScope);

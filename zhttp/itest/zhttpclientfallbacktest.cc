@@ -7,10 +7,14 @@
 // Zhttp Client HTTP/3-to-TLS fallback test
 
 #ifndef _WIN32
+#include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #endif
 
 #include <zlib/ZuTestUtil.hh>
@@ -68,6 +72,7 @@ struct Resolver {
 };
 
 struct ClientApp;
+struct Pool;
 struct Request_;
 struct ResParser;
 
@@ -80,11 +85,8 @@ struct Request_ : public ZmObject {
   void reset() { }
   template <typename L>
   void operation(L &&l) const {
-    auto url_ = url.url();
-    l(Zhttp::Method::GET, url_.pathQuery());
+    l(Zhttp::Method::GET, target);
   }
-  template <typename L>
-  void host(L &&l) const { l(url.url().authority()); }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L> void header(L &&) const { }
   template <typename L> void header(L &&) const { }
@@ -95,7 +97,7 @@ struct Request_ : public ZmObject {
   void disconnected(bool) { }
   void connectFailed(bool) { }
   void selected(const Zhttp::Endpoint &) { }
-  void redirected(const Zhttp::URL &url_) { url.assign(url_.raw); }
+  void redirected(const Zhttp::URL &url_) { target = url_.pathQuery(); }
   void observed(const Zhttp::ClientEvent &);
   void completed(const Zhttp::Result &);
 
@@ -103,13 +105,12 @@ struct Request_ : public ZmObject {
   uint64_t length() const { return 1; }
 
   ClientApp		*app = nullptr;
-  Zhttp::URLStorage	url;
+  Zhttp::URLString	target{"/"};
   uint64_t		key_ = 0;
 };
 
 struct ResParser {
   using Headers = ZhttpHeaders("alt-svc");
-  static constexpr uint64_t BodyMax = 1024;
 
   uint64_t	*bodyBytes = nullptr;
   unsigned	*status_ = nullptr;
@@ -117,11 +118,9 @@ struct ResParser {
 
   void init(const Request_ &);
   void status(unsigned value) { *status_ = value; }
-  void contentLength(uint64_t) { }
-  void chunked() { }
-  void version(ZuBSpan) { }
+  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection, ZuBSpan value) {
     if constexpr (Key{}() == "alt-svc") *altSvc = ZuCSpan{value};
   }
   template <typename Rx>
@@ -137,14 +136,26 @@ ZuDerive(RequestQ, (ZmPQueue<Request_,
     ZmPQueueNode<Request_,
       ZmPQueueHeapID<"Zhttp.Test.Fallback.Request">>>>));
 using Request = RequestQ::Node;
-using TxQ = ZmPQTx<ClientApp, RequestQ, ZmPQTxOrdered<false>>;
+using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
 
-struct ClientApp : public Zhttp::Client<TxQ, ResParser> {
-  using Base = Zhttp::Client<TxQ, ResParser>;
+struct Pool : public Zhttp::Pool<ClientApp, TxQ, ResParser> {
+  using Base = Zhttp::Pool<ClientApp, TxQ, ResParser>;
+
+  Pool(ClientApp *client) : Base{client} { }
 
   RequestQ *txQueue() { return &m_requests; }
   void archive_(Request *) { }
   ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
+
+private:
+  RequestQ	m_requests;
+};
+
+struct ClientApp : public Zhttp::Client<ClientApp, Pool> {
+  using Base = Zhttp::Client<ClientApp, Pool>;
+
+  void idle() { }
+
   ZmRef<Request> request() {
     ZmRef<Request> request = new Request;
     request->app = this;
@@ -178,7 +189,6 @@ struct ClientApp : public Zhttp::Client<TxQ, ResParser> {
   ZtString<>	altSvc;
 
 private:
-  RequestQ	m_requests;
   uint64_t	m_key = 0;
 };
 
@@ -209,51 +219,88 @@ ZiMxParams mxParams()
 }
 
 #ifndef _WIN32
-pid_t startServer(
+struct ServerProcess {
+  pid_t	pid = -1;
+  int	eventFD = -1;
+};
+
+ServerProcess startServer(
   ZuCSpan root, uint16_t port, ZuCSpan cert, ZuCSpan key)
 {
+  int ready[2];
+  if (::pipe(ready) < 0) return {};
+#ifdef __linux__
+  pid_t parent = ::getpid();
+#endif
   pid_t pid = ::fork();
-  if (pid) return pid;
+  if (pid) {
+    ::close(ready[1]);
+    if (pid < 0) {
+      ::close(ready[0]);
+      return {};
+    }
+    return {pid, ready[0]};
+  }
 
-  ZtString<> port_;
+  ::close(ready[0]);
+#ifdef __linux__
+  if (::prctl(PR_SET_PDEATHSIG, SIGKILL) < 0 || ::getppid() != parent)
+    _exit(127);
+#endif
+
+  ZtString<> port_, eventFD;
   port_ << port;
+  eventFD << ready[1];
   const char *server = "../util/zhttpd";
   ::execl(
     server, server, root.data(),
     "--https", "--http3", "--addr", "127.0.0.1", "--port", port_.data(),
     "--cert", cert.data(), "--key", key.data(), "--timeout", "5",
+    "--event-fd", eventFD.data(),
     static_cast<char *>(nullptr));
   _exit(127);
 }
 
-bool serverReady(uint16_t port)
+bool serverResponses(int fd, unsigned count)
 {
-  for (unsigned i = 0; i < 100; ++i) {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd >= 0) {
-      sockaddr_in addr{};
-      addr.sin_family = AF_INET;
-      addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-      addr.sin_port = htons(port);
-      if (!::connect(
-	  fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr))) {
-	::close(fd);
-	return true;
-      }
-      ::close(fd);
-    }
-    Zhttp::Test::sleepMS(20);
+  while (count) {
+    pollfd event{fd, POLLIN, 0};
+    if (::poll(&event, 1, 10000) <= 0 || !(event.revents & POLLIN))
+      return false;
+    uint8_t value;
+    if (::read(fd, &value, 1) != 1) return false;
+    if (value != uint8_t(0x80 | Zhttp::ResponseOutcome::Success))
+      return false;
+    --count;
   }
-  return false;
+  return true;
 }
 
-bool stopServer(pid_t pid)
+bool serverReady(int fd)
 {
-  if (pid <= 0) return false;
-  ::kill(pid, SIGTERM);
+  bool tls = false, quic = false;
+  while (!tls || !quic) {
+    pollfd event{fd, POLLIN, 0};
+    if (::poll(&event, 1, 10000) <= 0 || !(event.revents & POLLIN))
+      return false;
+    uint8_t value;
+    if (::read(fd, &value, 1) != 1) return false;
+    tls |= value == Zhttp::Transport::TLS;
+    quic |= value == Zhttp::Transport::QUIC;
+  }
+  return true;
+}
+
+bool stopServer(ServerProcess &server)
+{
+  if (server.pid <= 0) return false;
+  ::kill(server.pid, SIGTERM);
   int status = 0;
-  return ::waitpid(pid, &status, 0) == pid &&
+  bool stopped = ::waitpid(server.pid, &status, 0) == server.pid &&
     (WIFEXITED(status) || WIFSIGNALED(status));
+  ::close(server.eventFD);
+  server = {};
+  return stopped;
 }
 #endif
 
@@ -292,10 +339,10 @@ void fallback()
   uint16_t port = Zhttp::Test::loopbackPort();
   ZuCHECK(port, "allocate loopback port");
   if (!port) return;
-  pid_t server = startServer(root, port, cert, key);
-  ZuCHECK(server > 0, "start TLS fallback server");
-  if (server <= 0) return;
-  bool ready = serverReady(port);
+  ServerProcess server = startServer(root, port, cert, key);
+  ZuCHECK(server.pid > 0, "start TLS fallback server");
+  if (server.pid <= 0) return;
+  bool ready = serverReady(server.eventFD);
   ZuCHECK(ready, "fallback server listens for TLS");
   if (!ready) {
     (void)stopServer(server);
@@ -313,28 +360,27 @@ void fallback()
 
   Resolver resolver;
   ClientApp agent;
-  agent.discoveryResolver(&resolver.ops);
-  auto agentConfig = Zhttp::ClientConfig()
+  auto agentConfig = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(true)
     .tcp(true).tls(true).quic(true);
   bool agentInited = agent.init(
-    hub, agentConfig, Zhttp::TCPConfig{},
+    hub, 1, agentConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(untrustedCert).maxIdleTimeout(500));
+  agentInited = agentInited && agent.pool(
+    0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
+  agent.discoveryResolver(&resolver.ops);
   ZuCHECK(agentInited, "initialize prefer-mode agent");
   bool agentUp = agentInited && agent.start();
   ZuCHECK(agentUp, "start prefer-mode agent");
 
   if (agentUp) {
     auto request = agent.request();
-    ZtString<> url;
-    url << "https://127.0.0.1:" << port << "/ok";
-    bool parsed = request->url.assign(url).ok();
-    ZuCHECK(parsed, "parse fallback URL");
-    if (parsed) {
-      agent.enqueue(request);
-      agent.seal();
+    request->target = "/ok";
+    {
+      agent.enqueue(0, request);
+      agent.seal(0);
       bool queried =
 	resolver.queried.timedwait(Zm::now(10)) == 0;
       ZuCHECK(queried, "agent requests HTTPS discovery");
@@ -379,36 +425,37 @@ void fallback()
     }
   }
 
+  ZuCHECK(!agentUp || serverResponses(server.eventFD, 1),
+    "fallback response completes before client teardown");
+
   if (agentInited) agent.stop();
   if (agentInited) agent.final();
 
   Resolver cacheResolver;
   ClientApp cachedClient;
-  cachedClient.discoveryResolver(&cacheResolver.ops);
-  auto cacheConfig = Zhttp::ClientConfig()
+  auto cacheConfig = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(false)
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedClient.init(
-    hub, cacheConfig, Zhttp::TCPConfig{},
+    hub, 1, cacheConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.caPath(cert),
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
+  cacheInited = cacheInited && cachedClient.pool(
+    0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
+  cachedClient.discoveryResolver(&cacheResolver.ops);
   ZuCHECK(cacheInited, "initialize cached-routing agent");
   bool cacheUp = cacheInited && cachedClient.start();
   ZuCHECK(cacheUp, "start cached-routing agent");
   if (cacheUp) {
     auto request0 = cachedClient.request();
     auto request1 = cachedClient.request();
-    ZtString<> url;
-    url << "https://127.0.0.1:" << port << "/ok";
-    bool parsed =
-      request0->url.assign(url).ok() &&
-      request1->url.assign(url).ok();
-    ZuCHECK(parsed, "parse cached-routing URLs");
-    if (parsed) {
-      cachedClient.enqueue(request0);
-      cachedClient.enqueue(request1);
-      cachedClient.seal();
+    request0->target = "/ok";
+    request1->target = "/ok";
+    {
+      cachedClient.enqueue(0, request0);
+      cachedClient.enqueue(0, request1);
+      cachedClient.seal(0);
       bool queried =
 	cacheResolver.queried.timedwait(Zm::now(10)) == 0;
       ZuCHECK(queried, "first cached-routing request performs discovery");
@@ -442,8 +489,83 @@ void fallback()
       }
     }
   }
+  ZuCHECK(!cacheUp || serverResponses(server.eventFD, 2),
+    "Alt-Svc response wave completes before client teardown");
   if (cacheInited) cachedClient.stop();
   if (cacheInited) cachedClient.final();
+
+  ClientApp forcedClient;
+  auto forcedDefaults = Zhttp::Config()
+    .concurrency(1).requestTimeout(10)
+    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .tcp(true).tls(true).quic(false);
+  bool forcedInited = forcedClient.init(
+    hub, 1, forcedDefaults, Zhttp::TCPConfig{}, Zhttp::H2Config{},
+    Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
+  forcedInited = forcedInited && forcedClient.pool(
+    0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port},
+    Zhttp::Config{}
+      .protocol(Zhttp::ProtocolPolicy::ForceH3).blindH3(true)
+      .tls(false).quic(true));
+  ZuCHECK(forcedInited, "initialize forced-H3 pool override");
+  bool forcedUp = forcedInited && forcedClient.start();
+  ZuCHECK(forcedUp, "start forced-H3 agent");
+  if (forcedUp) {
+    auto request = forcedClient.request();
+    request->target = "/ok";
+    forcedClient.enqueue(0, request);
+    forcedClient.seal(0);
+    bool completed = forcedClient.done.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(completed && forcedClient.result.ok() &&
+	forcedClient.result.transport == Zhttp::Transport::QUIC &&
+	forcedClient.result.httpVersion == Zhttp::Version::H3 &&
+	forcedClient.eventCount(Zhttp::ClientEventType::Fallback) == 0,
+      "forced-H3 pool completes over QUIC without TLS fallback");
+  }
+  ZuCHECK(!forcedUp || serverResponses(server.eventFD, 1),
+    "forced-H3 response completes before client teardown");
+  if (forcedInited) forcedClient.stop();
+  if (forcedInited) forcedClient.final();
+
+  ClientApp disabledClient;
+  auto disabledDefaults = Zhttp::Config()
+    .concurrency(1).requestTimeout(10)
+    .protocol(Zhttp::ProtocolPolicy::ForceH3)
+    .h2Policy(Zhttp::H2Policy::Disable)
+    .tcp(true).tls(false).quic(true);
+  bool disabledInited = disabledClient.init(
+    hub, 1, disabledDefaults, Zhttp::TCPConfig{},
+    Zhttp::H2Config{}.caPath(cert), Zhttp::QUICConfig{});
+  disabledInited = disabledInited && disabledClient.pool(
+    0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port},
+    Zhttp::Config{}
+      .protocol(Zhttp::ProtocolPolicy::DisableH3)
+      .h2Policy(Zhttp::H2Policy::Force)
+      .tls(true).quic(false));
+  ZuCHECK(disabledInited, "initialize H3-disabled pool override");
+  bool disabledUp = disabledInited && disabledClient.start();
+  ZuCHECK(disabledUp, "start H3-disabled agent");
+  if (disabledUp) {
+    auto request = disabledClient.request();
+    request->target = "/ok";
+    disabledClient.enqueue(0, request);
+    disabledClient.seal(0);
+    bool completed = disabledClient.done.timedwait(Zm::now(10)) == 0;
+    bool selectedQUIC = false;
+    for (const auto &event: disabledClient.events)
+      selectedQUIC |= event.type == Zhttp::ClientEventType::Selected &&
+	event.transport == Zhttp::Transport::QUIC;
+    ZuCHECK(completed && disabledClient.result.ok() &&
+	disabledClient.result.transport == Zhttp::Transport::TLS &&
+	disabledClient.result.httpVersion == Zhttp::Version::H2 &&
+	!selectedQUIC,
+      "H3-disabled pool remains on TLS/H2 despite advertised Alt-Svc");
+  }
+  ZuCHECK(!disabledUp || serverResponses(server.eventFD, 1),
+    "H3-disabled response completes before client teardown");
+  if (disabledInited) disabledClient.stop();
+  if (disabledInited) disabledClient.final();
+
   mx.stop();
   ZuCHECK(stopServer(server), "stop TLS fallback server");
 #endif

@@ -219,10 +219,16 @@ template <typename Impl, bool H3>
 struct RequestParserBase_;
 template <typename Impl>
 struct RequestParserBase_<Impl, false> :
-  public Zhttp::H1RequestParser<Impl, RequestHeaders, (1<<20)> { };
+  public Zhttp::H1RequestParser<Impl, RequestHeaders> {
+  using Base = Zhttp::H1RequestParser<Impl, RequestHeaders>;
+  RequestParserBase_() : Base{1<<20} { }
+};
 template <typename Impl>
 struct RequestParserBase_<Impl, true> :
-  public Zhttp::H3RequestParser<Impl, RequestHeaders, (1<<20)> { };
+  public Zhttp::H3RequestParser<Impl, RequestHeaders> {
+  using Base = Zhttp::H3RequestParser<Impl, RequestHeaders>;
+  RequestParserBase_() : Base{1<<20} { }
+};
 
 template <bool H3>
 struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
@@ -270,10 +276,16 @@ template <typename Impl, bool H3>
 struct ResponseParserBase_;
 template <typename Impl>
 struct ResponseParserBase_<Impl, false> :
-  public Zhttp::H1ResponseParser<Impl, ResponseHeaders, (4<<20)> { };
+  public Zhttp::H1ResponseParser<Impl, ResponseHeaders> {
+  using Base = Zhttp::H1ResponseParser<Impl, ResponseHeaders>;
+  ResponseParserBase_() : Base{4<<20} { }
+};
 template <typename Impl>
 struct ResponseParserBase_<Impl, true> :
-  public Zhttp::H3ResponseParser<Impl, ResponseHeaders, (4<<20)> { };
+  public Zhttp::H3ResponseParser<Impl, ResponseHeaders> {
+  using Base = Zhttp::H3ResponseParser<Impl, ResponseHeaders>;
+  ResponseParserBase_() : Base{4<<20} { }
+};
 
 template <bool H3>
 struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {

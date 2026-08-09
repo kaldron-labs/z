@@ -46,6 +46,8 @@ struct Options {
   bool		put = false;
   uint32_t	requests = 1;
   uint32_t	concurrency = 1;
+  uint32_t	links = 1;
+  uint32_t	linkConcurrency = 1;
   uint32_t	retries = 0;
   uint32_t	timeout = ClientTimeout;
   uint32_t	stallTimeout = H3StallTimeout;
@@ -88,6 +90,8 @@ ZfStruct((Options, CLI),
   (((put),       (CLI::Long<"put">)),                         (Bool, false)),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
+  (((links),      (CLI::Long<"links">)),                     (UInt32, 1)),
+  (((linkConcurrency), (CLI::Long<"link-concurrency">)),     (UInt32, 1)),
   (((retries),   (CLI::Long<"retries">)),                    (UInt32, 0)),
   (((timeout),   (CLI::Long<"timeout">)),                    (UInt32, ClientTimeout)),
   (((stallTimeout),
@@ -145,6 +149,9 @@ void usage(int code = 1)
     "  --put               PUT and validate a typed JSON record\n"
     "  -n, --requests=N    submit N GET requests, default 1\n"
     "  -j, --jobs=M        run up to M requests concurrently, default 1\n"
+    "  --links=N           persistent links in pool 0, default 1\n"
+    "  --link-concurrency=N\n"
+    "                      maximum operations per link, default 1\n"
     "  --retries=N         retry transient connection failures N times\n"
     "  --timeout=N         completion timeout in seconds, default 15, 0 disables\n"
     "  --stall-timeout=N   no-progress stall timeout in seconds, default 15,\n"
@@ -235,7 +242,8 @@ bool migrationOnOpen(const Options &options)
 bool validateOptions(Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
-  if (!options.requests || !options.concurrency)
+  if (!options.requests || !options.concurrency || !options.links ||
+      !options.linkConcurrency)
     return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
   if (options.http2 < 0 || options.http2 >= Http2Mode::N) return false;
@@ -300,11 +308,8 @@ struct Request_ : public ZmObject {
   void reset() { requestContentLength = 0; }
   template <typename L>
   void operation(L &&l) const {
-    auto url_ = url.url();
-    l(put ? Zhttp::Method::PUT : Zhttp::Method::GET, url_.pathQuery());
+    l(put ? Zhttp::Method::PUT : Zhttp::Method::GET, target);
   }
-  template <typename L>
-  void host(L &&l) const { l(url.url().authority()); }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L>
   void header(L &&l) const {
@@ -351,7 +356,7 @@ struct Request_ : public ZmObject {
   unsigned	id = 0;
   unsigned	requests = 1;
   unsigned	requestContentLength = 0;
-  Zhttp::URLStorage url;
+  HdrString	target;
   HdrString	output;
   bool		discardResponse = false;
   bool		put = false;
@@ -438,7 +443,7 @@ void initReq(
 {
   req.id = id;
   req.requests = options.requests;
-  req.url.assign(url.raw);
+  req.target = url.pathQuery();
   if (!options.discardResponse)
     req.output = outputPath(options.output, id, options.requests);
   req.discardResponse = options.discardResponse;
@@ -511,7 +516,6 @@ void logConnected(const Request_ &, const Zhttp::ConnectedInfo &);
 
 struct ResParser {
   using Headers = ResponseHeaders;
-  static constexpr uint64_t BodyMax = RespBodyMax;
 
   Request_ *req = nullptr;
 
@@ -538,13 +542,12 @@ struct ResParser {
       s << "status: " << value;
     }));
   }
-  void contentLength(uint64_t value) {
-    req->contentLength = value;
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+    req->chunked = type == Zhttp::BodyType::Streamed;
+    req->contentLength = type == Zhttp::BodyType::Fixed ? int64_t(length) : -1;
   }
-  void chunked() { req->chunked = true; }
-  void version(ZuBSpan) { }
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection, ZuBSpan value) {
     if (!req->logResponse) return;
     auto ctx = reqLogCtx(*req);
     ZeString value_;
@@ -624,7 +627,7 @@ struct ResParser {
 
 void Request_::redirected(const URL &url_)
 {
-  url.assign(url_.raw);
+  target = url_.pathQuery();
 }
 
 void Request_::completed(const Zhttp::Result &result)
@@ -647,34 +650,46 @@ void Request_::connected(const Zhttp::ConnectedInfo &info)
 }
 
 struct Client;
+struct Pool;
 ZuDerive(RequestQ, (ZmPQueue<Request_,
   ZmPQueueOverlap<false,
     ZmPQueueNode<Request_,
       ZmPQueueHeapID<"zhttp.Request">>>>));
 using Request = RequestQ::Node;
-using TxQ = ZmPQTx<Client, RequestQ, ZmPQTxOrdered<false>>;
+using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
 
-struct Client : public Zhttp::Client<TxQ, ResParser> {
-  using Base = Zhttp::Client<TxQ, ResParser>;
+struct Pool : public Zhttp::Pool<Client, TxQ, ResParser> {
+  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
+
+  Pool(Client *client) : Base{client} { }
 
   RequestQ *txQueue() { return &m_requests; }
 
-  void idle() { ZhttpUtil::Runtime::post(); }
-
-  void archive_(Request *) {
-    produce_();
-    if (m_generated == m_options->requests) seal_();
-  }
+  void archive_(Request *request);
   ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
 
+private:
+  RequestQ	m_requests;
+};
+
+struct Client : public Zhttp::Client<Client, Pool> {
+  using Base = Zhttp::Client<Client, Pool>;
+
+  void idle() { ZhttpUtil::Runtime::post(); }
+
+  void archive(Request *) {
+    produce_();
+    if (m_generated == m_options->requests) seal(0);
+  }
+
   void workload(const Options &options, const URL &url) {
-    txRun([this, options = &options, url = &url]() {
+    txRun(0, [this, options = &options, url = &url]() {
       m_options = options;
       m_url = url;
       unsigned n = options->requests;
       if (n > options->concurrency) n = options->concurrency;
       while (n--) produce_();
-      if (m_generated == options->requests) seal_();
+      if (m_generated == options->requests) seal(0);
     });
   }
 
@@ -683,14 +698,18 @@ private:
     if (!m_options || m_generated >= m_options->requests) return;
     ZmRef<Request> request = new Request;
     initReq(*request, *m_options, *m_url, m_generated++);
-    enqueue_(ZuMv(request));
+    enqueue(0, ZuMv(request));
   }
 
   const Options	*m_options = nullptr;
   const URL	*m_url = nullptr;
-  RequestQ	m_requests;
   unsigned	m_generated = 0;
 };
+
+void Pool::archive_(Request *request)
+{
+  client()->archive(request);
+}
 
 void logConnected_(
   const Request_ &req, ZuCSpan transport, ZuCSpan httpVersion,
@@ -699,15 +718,13 @@ void logConnected_(
   ZiLOG(Info, "zhttp", ([
     transport,
     httpVersion,
-    host = ZeString(req.url.url().host),
     version,
     alpn = ZeString(alpn)
   ](auto &s) {
-    s << transport << " connected (hostname: " << host;
+    s << transport << " connected";
     if (httpVersion) s << " HTTP: " << httpVersion;
     if (version) s << " transport version: " << version;
     if (alpn) s << " ALPN: " << alpn;
-    s << ')';
   }));
 }
 
@@ -812,19 +829,24 @@ int main(int argc, char **argv)
     case Http2Mode::disable: h2Policy = Zhttp::H2Policy::Disable; break;
     default: h2Policy = Zhttp::H2Policy::Prefer; break;
   }
-  auto clientConfig = Zhttp::ClientConfig()
+  bool secure = url.scheme == Zhttp::Scheme::https;
+  auto clientConfig = Zhttp::Config()
+    .links(options.links)
     .concurrency(options.concurrency)
+    .linkConcurrency(options.linkConcurrency)
     .requestTimeout(options.timeout)
     .maxRedirects(MaxRedirects)
     .maxRetries(options.retries)
+    .retainedBodyMax(RespBodyMax)
     .protocol(policy)
     .h2Policy(h2Policy)
+    .secure(secure)
     .tcp(true)
-    .tls(policy != Zhttp::ProtocolPolicy::ForceH3)
-    .quic(policy != Zhttp::ProtocolPolicy::DisableH3);
+    .tls(secure && policy != Zhttp::ProtocolPolicy::ForceH3)
+    .quic(secure && policy != Zhttp::ProtocolPolicy::DisableH3);
   auto quic = Zhttp::QUICConfig()
     .caPath(options.ca).keyLogPath(options.keyLog)
-    .maxStreamsDuplex(options.concurrency)
+    .maxStreamsDuplex(options.linkConcurrency)
     .heartbeat(quicHeartbeat(options))
     .migration(migrationMode(options))
     .migrationCIDReserve(options.quicMigrationCIDReserve)
@@ -836,17 +858,19 @@ int main(int argc, char **argv)
     .rxDrop(rxDrop).txDrop(txDrop);
 
   Client app;
+  bool appInited = app.init(
+    Zhttp::HubConfig{&mx, "3", "4"}, 1, clientConfig,
+    Zhttp::TCPConfig{},
+    Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy), quic);
+  bool poolInited = appInited && app.pool(
+    0, Zhttp::Destination{url.host, url.port, url.ipv6Literal});
   app.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
     ZiLOG(Error, "zhttp", ([e](auto &s) {
       s << "transmit error: " << e;
     }));
     return false;
   }});
-  bool appInited = app.init(
-    Zhttp::HubConfig{&mx, "3", "4"}, clientConfig,
-    Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy), quic);
-  bool appUp = appInited && app.start();
+  bool appUp = poolInited && app.start();
   if (!appUp) {
     ZiLOG(Error, "zhttp", "client initialization/start failed");
     if (appInited) app.stop();

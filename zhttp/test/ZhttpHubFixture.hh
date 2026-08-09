@@ -183,6 +183,7 @@ struct Client :
     using Base::Base;
 
     unsigned responses = 0;
+    unsigned id = 0;
   };
 
   State	*state = nullptr;
@@ -267,7 +268,8 @@ struct UpgradeReq :
     method = method_;
     path = target.raw == "/stream";
   }
-  void header(ZuBSpan key, ZuBSpan value) {
+  void header(
+      Zhttp::HdrSection, ZuBSpan key, ZuBSpan value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
@@ -285,7 +287,8 @@ struct UpgradeResp :
   using Base::header;
 
   void status(unsigned v) { statusCode = v; }
-  void header(ZuBSpan key, ZuBSpan value) {
+  void header(
+      Zhttp::HdrSection, ZuBSpan key, ZuBSpan value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
@@ -392,6 +395,7 @@ struct UpgradeClient :
     using Base::Base;
 
     UpgradeResp	parser;
+    unsigned	id = 0;
   };
 
   UpgradeState	*state = nullptr;

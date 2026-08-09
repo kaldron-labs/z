@@ -9,6 +9,10 @@
 #include <iostream>
 #include <string.h>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmTrap.hh>
 
@@ -82,6 +86,7 @@ void usage(int code = 1)
     "  --quic-diag=N              print HTTP/3 QUIC counters every N seconds\n"
 #endif
     "  --mem-diag=N               print memory counters every N seconds\n"
+    "  --event-fd=N               emit process-supervision events\n"
     "  -h, --help                 show help\n" << std::flush;
   ::exit(code);
 }
@@ -300,17 +305,15 @@ struct EmptyResponse :
 struct Workload {
   struct Request : public RequestHeaders {
     using Headers = ReqHeaders;
-    static constexpr uint64_t BodyMax = ReqBodyMax;
 
     ZhttpPut::String	bodyData;
     unsigned		status = 0;
     uint64_t		responseLength = 0;
 
     void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
-    void version(ZuBSpan) { }
-    void contentLength(uint64_t) { }
-    void chunked() { }
-    template <typename Key> void header(ZuBSpan value) {
+    void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+    template <typename Key>
+    void header(Zhttp::HdrSection, ZuBSpan value) {
       if constexpr (Key{}() == "host") host = ZuCSpan{value};
       else if constexpr (Key{}() == "authorization")
 	authorization = ZuCSpan{value};
@@ -413,6 +416,12 @@ struct Workload {
       ZiLOG(Error, "zhttpd", ([outcome = result.outcome](auto &s) {
 	s << "response failed: " << ZuBoxed(int(outcome));
       }));
+#ifndef _WIN32
+    if (state->options.eventFD >= 0) {
+      uint8_t value = uint8_t(0x80 | unsigned(result.outcome));
+      (void)::write(state->options.eventFD, &value, 1);
+    }
+#endif
   }
   void listening(int transport, unsigned port) {
     ZiLOG(Info, "zhttpd", ([transport, port](auto &s) {
@@ -423,6 +432,12 @@ struct Workload {
       }
       s << " listening: " << port;
     }));
+#ifndef _WIN32
+    if (state->options.eventFD >= 0) {
+      uint8_t value = uint8_t(transport);
+      (void)::write(state->options.eventFD, &value, 1);
+    }
+#endif
   }
   void listenFailed(int, bool) {
     state->errors = 1;
@@ -523,7 +538,8 @@ bool Zhttpd::Application::initServer()
     .localIP(ZiIP(options.addr))
     .port(options.port)
     .idleTimeout(options.timeout)
-    .maxConnections(options.maxconn);
+    .maxConnections(options.maxconn)
+    .retainedBodyMax(ReqBodyMax);
   if (options.http) config.tcp();
   if (options.https) {
     int8_t policy;
@@ -696,7 +712,8 @@ int main(int argc, char **argv)
     .localIP(ZiIP(state.options.addr))
     .port(state.options.port)
     .idleTimeout(state.options.timeout)
-    .maxConnections(state.options.maxconn);
+    .maxConnections(state.options.maxconn)
+    .retainedBodyMax(ReqBodyMax);
   if (state.options.http) {
     serverConfig.tcp();
   }

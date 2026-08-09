@@ -553,11 +553,11 @@ ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
 template <
   typename Impl,
   bool Request_ = false,
-  typename Headers_ = ZuTypeList<>,
-  uint64_t MaxBody_ = DefltMaxBody>
+  typename Headers_ = ZuTypeList<>>
 class Parser {
 public:
-  Parser() : m_bodyRx{MaxBody} { }
+  Parser(uint64_t bodyMax = DefltMaxBody) :
+    m_bodyMax{bodyMax}, m_bodyRx{bodyMax} { }
 
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -565,10 +565,9 @@ public:
   using Headers = typename Headers_::template Unshift<
     ZuStringT<"content-length">, void>;
   using State = ParserState;
-  static constexpr uint64_t MaxBody = MaxBody_;
 
   void reset() {
-    m_bodyRx.reset(MaxBody);
+    m_bodyRx.reset(m_bodyMax);
     m_fields = {};
     m_state = State::Initial;
     m_contentLength = -1;
@@ -579,6 +578,15 @@ public:
     m_extendedConnect = false;
     m_error = {};
     m_errorLatched = false;
+  }
+  void reset(uint64_t bodyMax_) {
+    m_bodyMax = bodyMax_;
+    reset();
+  }
+  uint64_t bodyMax() const { return m_bodyMax; }
+  void bodyMax(uint64_t value) {
+    m_bodyMax = value;
+    m_bodyRx.reset(value);
   }
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -621,29 +629,36 @@ public:
       },
       [this](unsigned status) { impl()->status(status); },
       [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
-    if (section == Fields::Invalid) return fail_();
-    if (section == Fields::Informational) {
+    if (section == Zhttp::HdrSection::Invalid) return fail_();
+    if (section == Zhttp::HdrSection::Informational) {
       if (endStream) return fail_();
       m_state = State::Initial;
       return true;
     }
-    if (section == Fields::Trailers) {
+    if (section == Zhttp::HdrSection::Trailers) {
       if (!endStream || !bodyComplete_()) return fail_();
       m_state = State::Trailers;
       complete_();
       return true;
     }
     m_bodyAllowed = m_fields.bodyAllowed();
-    impl()->headers(section, endStream);
+    if (endStream) {
+      if (m_bodyAllowed && !bodyComplete_()) return fail_();
+    } else if (!m_bodyAllowed)
+      return fail_();
+    impl()->bodyInfo(
+	!m_bodyAllowed ? BodyType::None :
+	m_contentLength >= 0 ? BodyType::Fixed :
+	endStream ? BodyType::None : BodyType::Streamed,
+	m_bodyAllowed && m_contentLength >= 0 ?
+	  uint64_t(m_contentLength) : 0);
     if (m_state == State::Stream) {
       if (endStream) return fail_();
       return true;
     }
     if (endStream) {
-      if (m_bodyAllowed && !bodyComplete_()) return fail_();
       complete_();
     } else {
-      if (!m_bodyAllowed) return fail_();
       m_state = State::Body;
     }
     return true;
@@ -695,7 +710,7 @@ public:
     if (m_state == State::Stream) return true;
     if (m_state != State::Body || !m_bodyAllowed)
       return fail_();
-    if (m_bodyLength > MaxBody || length > MaxBody - m_bodyLength)
+    if (m_bodyLength > m_bodyMax || length > m_bodyMax - m_bodyLength)
       return fail_(RequestErrorCode::ContentTooLarge,
 	RequestErrorScope::Stream, false);
     if (m_contentLength >= 0 &&
@@ -720,7 +735,12 @@ public:
     return fail_();
   }
 
-  void headers(Fields::Section, bool) { }
+  void bodyInfo(BodyType::T, uint64_t) { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
+  template <typename Key, typename Value>
+  void header(Zhttp::HdrSection) { }
+  void header(Zhttp::HdrSection, ZuBSpan, ZuBSpan) { }
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
@@ -742,27 +762,28 @@ private:
     if (key == "content-length") {
       uint64_t length = 0;
       ZuCSpan data{value};
-      if (!data || Zu_atou(length, data.data(), data.length()) != data.length()) {
+      if (!Fields::uint64(data, length)) {
 	fail_();
 	return;
       }
-      if (length > MaxBody) {
+      if (length > m_bodyMax) {
 	fail_(RequestErrorCode::ContentTooLarge,
 	  RequestErrorScope::Request, true);
 	return;
       }
       m_contentLength = length;
-      impl()->contentLength(length);
       return;
     }
     Fields::dispatch<Headers>(
       key, value,
       [this](auto key_, ZuBSpan value_) {
-	impl()->template header<ZuDecay<decltype(key_)>>(value_);
+	impl()->template header<ZuDecay<decltype(key_)>>(
+	  m_fields.section(), value_);
       },
       [this](auto key_, auto value_) {
 	impl()->template header<
-	  ZuDecay<decltype(key_)>, ZuDecay<decltype(value_)>>();
+	  ZuDecay<decltype(key_)>, ZuDecay<decltype(value_)>>(
+	    m_fields.section());
       },
       [this](ZuBSpan key_, ZuBSpan value_) {
 	runtimeHeader_(key_, value_);
@@ -771,7 +792,7 @@ private:
 
   void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
     if constexpr (Fields::HasRuntime<Impl>{})
-      impl()->header(key, value);
+      impl()->header(m_fields.section(), key, value);
   }
 
   bool bodyComplete_() const {
@@ -806,6 +827,7 @@ private:
   }
 
   Fields::Semantics<Request> m_fields;
+  uint64_t		m_bodyMax;
   BodyRx		m_bodyRx;
   State::T		m_state = State::Initial;
   Method::T		m_requestMethod = -1;

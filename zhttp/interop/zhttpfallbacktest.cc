@@ -77,9 +77,10 @@ struct ResponseCtx {
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
 struct RequestRx :
-  public Zhttp::H1::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody> {
-  using Base =
-    Zhttp::H1::Parser<RequestRx, true, RequestHeaders, FallbackMaxBody>;
+  public Zhttp::H1::Parser<RequestRx, true, RequestHeaders> {
+  using Base = Zhttp::H1::Parser<RequestRx, true, RequestHeaders>;
+
+  RequestRx() : Base{FallbackMaxBody} { }
 
   void operation(
     Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
@@ -89,7 +90,7 @@ struct RequestRx :
   }
 
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection, ZuBSpan value) {
     if constexpr (Key{}() == "host") {
       host.length(0);
       host << value;
@@ -102,11 +103,15 @@ struct RequestRx :
 };
 
 struct ResponseRx :
-  public Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody> {
-  using Base = Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>, FallbackMaxBody>;
+  public Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>> {
+  using Base = Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>>;
+
+  ResponseRx() : Base{FallbackMaxBody} { }
 
   void status(unsigned v) { statusSeen = v; }
-  void contentLength(uint64_t v) { contentLengthSeen = v; }
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+    if (type == Zhttp::BodyType::Fixed) contentLengthSeen = length;
+  }
   template <typename Rx>
   void body(Rx &rx) {
     Zhttp::bodyEach(rx, [this](ZuBSpan span) { bodyData << span; });
