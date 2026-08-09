@@ -2524,8 +2524,8 @@ void testResetStopFrames()
   ZuCHECK(reset &&
       server->streamedCount == 1 &&
       reset->resetReceived() &&
-      reset->error() == Zquic::StreamError::Reset &&
-      reset->appError() == 7 &&
+      reset->rxError() == Zquic::StreamError::Reset &&
+      reset->rxAppError() == 7 &&
       reset->rxComplete() &&
       !reset->finalSize(),
     "RESET_STREAM state mismatch");
@@ -2538,8 +2538,8 @@ void testResetStopFrames()
     "STOP_SENDING setup failed");
   ZuCHECK(client->receiveFrame(frame) == 0 &&
       local->stopReceived() &&
-      local->error() == Zquic::StreamError::Stop &&
-      local->appError() == 9,
+      local->txError() == Zquic::StreamError::Stop &&
+      local->txAppError() == 9,
     "STOP_SENDING state mismatch");
 
   auto delivered = client->stream(Zquic::StreamType::Duplex);
@@ -2570,8 +2570,8 @@ void testLocalResetStopSend()
   }
   reset->reset(42);
   ZuCHECK(reset->resetSent() &&
-      reset->error() == Zquic::StreamError::Reset &&
-      reset->appError() == 42 &&
+      reset->txError() == Zquic::StreamError::Reset &&
+      reset->txAppError() == 42 &&
       link->queuedControlFrames() == 1,
     "local RESET_STREAM did not queue control state");
   unsigned n = link->flushSentRefs(refs, 2);
@@ -2594,8 +2594,8 @@ void testLocalResetStopSend()
   auto stop = link->stream(Zquic::StreamType::Duplex);
   stop->stop(9);
   ZuCHECK(stop->stopSent() &&
-      stop->error() == Zquic::StreamError::Stop &&
-      stop->appError() == 9 &&
+      stop->rxError() == Zquic::StreamError::Stop &&
+      stop->rxAppError() == 9 &&
       link->queuedControlFrames() == 1,
     "local STOP_SENDING did not queue control state");
   n = link->flushSentRefs(refs, 2);

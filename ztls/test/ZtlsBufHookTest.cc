@@ -130,6 +130,7 @@ struct TestState {
   bool			clientKeyUpdate = false;
   bool			serverKeyUpdate = false;
   bool			serverDisconnectAfterSend = false;
+  bool			expectConnectFailure = false;
   unsigned		txHeadroom = 0;
   unsigned		txTailroom = 0;
 
@@ -148,6 +149,9 @@ struct TestState {
   ZmAtomic<unsigned>	client_tx_protected{0};
   ZmAtomic<unsigned>	server_tx_protected{0};
   ZmAtomic<unsigned>	client_peer_closed{0};
+  ZmAtomic<unsigned>	connect_failed{0};
+  ZmAtomic<unsigned>	connect_failed_on_rx{0};
+  ZmAtomic<unsigned>	connect_failed_transient{0};
   ZmAtomic<uint64_t>	client_wire_count{0};
   ZmAtomic<uint64_t>	client_wire_bytes{0};
   ZmAtomic<uint64_t>	server_wire_count{0};
@@ -410,7 +414,18 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       state.client_peer_closed = peer;
       state.done_one();
     }
-    void connectFailed(bool) { this->app()->state.fail("connect failed"); }
+    void connectFailed(bool transient) {
+      auto app = this->app();
+      auto &state = app->state;
+      if (!state.expectConnectFailure) {
+	state.fail("connect failed");
+	return;
+      }
+      state.connect_failed_on_rx = app->rxInvoked();
+      state.connect_failed_transient = transient;
+      state.connect_failed.xchAdd(1);
+      state.done.post();
+    }
     void txProtected_() {
       auto app = this->app();
       if (!app->txInvoked() || app->rxInvoked()) {
@@ -704,6 +719,55 @@ void run_in_process(
     ZTLS_CHECK_RT(state.server_cipher.load_() == expectedCipher,
       "server selected unexpected cipher");
   }
+}
+
+void testConnectFailureShard(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testConnectFailureShard);
+  capture.reset();
+
+  TestState state;
+  state.expectConnectFailure = true;
+  uint16_t port = reserve_loopback_port();
+  ZTLS_CHECK_RT(port, "failed to reserve refused-connect port");
+  if (!port) return;
+
+  BaseClient<TestState> client{state};
+  ZiMultiplex mx(mx_params());
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
+
+  bool clientOK = client.init(
+    Ztls::ClientParams(&mx, "3", "4").caPath(temp.certPath.data()));
+  ZTLS_CHECK_RT(clientOK, "TLS failure client init failed");
+  if (!clientOK) { mx.stop(); return; }
+
+  bool clientStarted = client.start();
+  ZTLS_CHECK_RT(clientStarted, "TLS failure client failed to start");
+  if (!clientStarted) { client.final(); mx.stop(); return; }
+
+  ZmRef<BaseClient<TestState>::Link> link =
+    new BaseClient<TestState>::Link{&client};
+  link->connect("localhost", port, ZiIP{"127.0.0.1"});
+  bool completed = wait_for(state.done);
+  ZTLS_CHECK_RT(completed, "TLS connect failure timed out");
+
+  link = nullptr;
+  bool clientStopped = client.stop();
+  ZTLS_CHECK_RT(clientStopped, "TLS failure client failed to stop");
+  client.final();
+  mx.stop();
+
+  ZTLS_CHECK_RT(!state.client_connected.load_(),
+    "refused TLS connection unexpectedly connected");
+  ZTLS_CHECK_RT(state.connect_failed.load_() == 1,
+    "TLS connect failure callback count mismatch");
+  ZTLS_CHECK_RT(state.connect_failed_on_rx.load_(),
+    "TLS connect failure callback ran outside configured Rx thread");
+  ZTLS_CHECK_RT(state.connect_failed_transient.load_(),
+    "TLS refused-connect failure lost transient status");
+  capture.reset();
 }
 
 struct ImportedTLS {
@@ -1035,6 +1099,7 @@ int main(int argc, char **argv)
   bool tempOK = temp.init();
   ZuCHECK(tempOK, "failed to generate cert/key");
   if (tempOK) {
+    ZuTestCall(testConnectFailureShard, temp, capture);
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
     ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);

@@ -1474,7 +1474,12 @@ template <typename> friend class Client;
 	  return new Cxn(impl, ci);
 	}},
       ZiFailFn{ZmMkRef(impl()), [](Impl *impl, bool transient) {
-	impl->connectFailed(transient);
+	auto app = impl->app();
+	app->rxRun([
+	  impl = ZmRef<Impl>{impl}, transient
+	]() mutable {
+	  impl->connectFailed(transient);
+	});
       }},
       ZiIP(), 0, ip, m_port);
   }
@@ -2348,9 +2353,19 @@ friend Base;
   void listen() {
     mx()->listen(
       ZiListenFn{app(),
-	[](App *app, const ZiListenInfo &info) { app->listening(info); }},
+	[](App *app, const ZiListenInfo &info) {
+	  auto server = static_cast<Server *>(app);
+	  server->rxRun([server, info = ZiListenInfo{info}]() {
+	    server->listening_(info);
+	  });
+	}},
       ZiFailFn{app(),
-	[](App *app, bool transient) { app->listenFailed(transient); }},
+	[](App *app, bool transient) {
+	  auto server = static_cast<Server *>(app);
+	  server->rxRun([server, transient]() {
+	    server->listenFailed_(transient);
+	  });
+	}},
       ZiConnectFn{app(),
 	[](App *app, const ZiCxnInfo &ci) -> ZiConnection * {
 	  return app->accepted(ci);
@@ -2376,8 +2391,19 @@ protected:
   unsigned nAccepts() const { return 8; } // default
   unsigned rebindFreq() const { return 0; } // default
 
-  void listening(const ZiListenInfo &info) { // default
+  void listening_(const ZiListenInfo &info) {
+    ZiAssert(this->rxInvoked(), "Ztls", (),
+      "TLS listen completion outside Rx thread", return);
     m_listening = true;
+    app()->listening(info);
+  }
+  void listenFailed_(bool transient) {
+    ZiAssert(this->rxInvoked(), "Ztls", (),
+      "TLS listen failure outside Rx thread", return);
+    app()->listenFailed(transient);
+  }
+
+  void listening(const ZiListenInfo &info) { // default
     ZiLOG(Info, "Ztls", ([info](auto &s) {
       s << "listening(" << info.ip << ':' << info.port << ')';
     }));
@@ -2398,20 +2424,30 @@ protected:
   // ZmEngine hook.  Public stop(done) retains done until Base::stop_1()
   // calls stopped(true) after every continuation below has drained.
   void stop_() {
+    this->rxRun([this]() { stopRx_(); });
+  }
+
+  void stopRx_() {
+    ZiAssert(this->rxInvoked(), "Ztls", (),
+      "TLS server stop initialization outside Rx thread", return);
     stopListening();
     m_stopCount = 0;
     m_stopDrained = false;
     // Drain accepted connections whose connected_1() is already queued
     // before enumerating links; down() requires the installed m_cxn.
-    this->rxRun([this]() { stop_0(); });
+    stop_0();
   }
 
   void stop_0() {
+    ZiAssert(this->rxInvoked(), "Ztls", (),
+      "TLS server stop drain outside Rx thread", return);
     m_stopCount = this->downLinks_();
     this->rxRun([this]() { stop_2(); });
   }
 
   void stop_2() {
+    ZiAssert(this->rxInvoked(), "Ztls", (),
+      "TLS server stop completion outside Rx thread", return);
     m_stopDrained = true;
     if (!m_stopCount) Base::stop_0();
   }

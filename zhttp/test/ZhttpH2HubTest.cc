@@ -37,14 +37,28 @@ struct State {
 struct FlowLogical : public ZmObject { };
 
 struct FlowApp {
+  enum { Rx, Tx };
+
   ZiMultiplex *mx() { return &multiplex; }
   unsigned rxThread() const { return 0; }
-  bool rxInvoked() const { return true; }
-  bool txInvoked() const { return true; }
-  template <typename L> void rxRun(L &&l) { ZuFwd<L>(l)(); }
-  template <typename L> void txRun(L &&l) { ZuFwd<L>(l)(); }
+  bool rxInvoked() const { return shard == Rx; }
+  bool txInvoked() const { return shard == Tx; }
+  template <typename L> void rxRun(L &&l) { run(Rx, ZuFwd<L>(l)); }
+  template <typename L> void txRun(L &&l) { run(Tx, ZuFwd<L>(l)); }
+  template <typename L> void runTx(L &&l) { run(Tx, ZuFwd<L>(l)); }
+
+private:
+  template <typename L> void run(int shard_, L &&l) {
+    int prev = shard;
+    shard = shard_;
+    ZuFwd<L>(l)();
+    shard = prev;
+  }
+
+public:
 
   ZiMultiplex multiplex;
+  int shard = Rx;
 };
 
 struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
@@ -87,12 +101,17 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
   bool h2Closed(uint32_t id) const { return streamClosed(id); }
   void h2ResetLogical(uint32_t, Zhttp::H2::Error::T) { }
   void disconnect_(bool) { }
-  void disconnectNative() { }
+  void disconnectNative() {
+    ++disconnects;
+    disconnectShard = app_->shard;
+  }
 
   FlowApp	*app_;
   unsigned	sends = 0;
   unsigned	capacityCalls = 0;
   unsigned	saturatedCalls = 0;
+  unsigned	disconnects = 0;
+  int		disconnectShard = -1;
   bool		capacity = false;
 };
 
@@ -109,6 +128,15 @@ ZmRef<ZiIOBuf> flowData(unsigned length)
   data[5] = data[6] = data[7] = 0;
   data[8] = 1;
   return buf;
+}
+
+Zhttp::H2_::HeaderFrames flowHeaders()
+{
+  Zhttp::H2_::HeaderFrames frames;
+  auto buf = flowData(0);
+  buf->data()[3] = Zhttp::H2::FrameType::Headers;
+  frames.push(ZuMv(buf));
+  return frames;
 }
 
 void runFlowCapacity()
@@ -160,6 +188,79 @@ void runFlowCapacity()
   bool cleared = false;
   wire.clearStreams([&cleared]() { cleared = true; });
   ZuCHECK(cleared, "clear H2 flow harness streams");
+  wire.finalWire();
+}
+
+void runAdmissionErrors()
+{
+  ZuTestScope(runAdmissionErrors);
+
+  FlowApp app;
+  FlowWire wire{&app};
+  auto config = Zhttp::H2Config()
+    .maxConcurrentStreams(1).maxQueuedFrames(0);
+  ZuCHECK(wire.initWire(false, config),
+    "initialize strict-shard H2 admission harness");
+  ZmRef<FlowLogical> logical = new FlowLogical;
+  auto stream = wire.openLocalStream(logical);
+  ZuCHECK(stream, "open strict-shard H2 stream");
+  if (!stream) {
+    wire.finalWire();
+    return;
+  }
+  uint32_t id = stream->id;
+
+  unsigned handled = 0;
+  wire.logicalTxErrorFn(id, ZiTxErrorFn{
+    [&app, &handled](ZeException &) {
+      ZuCHECK(app.txInvoked(), "direct-Tx error callback runs on Tx shard");
+      ++handled;
+      return true;
+    }});
+  app.runTx([&wire, id]() {
+    ZuCHECK(!wire.sendFrame(id, flowData(0)),
+      "direct-Tx admission rejects a frame at zero capacity");
+  });
+  ZuCHECK(handled == 1 && !wire.disconnects,
+    "handled direct-Tx admission error does not disconnect");
+
+  unsigned replaced = 0;
+  wire.logicalTxErrorFn(id, ZiTxErrorFn{
+    [&app, &replaced](ZeException &) {
+      ZuCHECK(app.txInvoked(), "replacement callback runs on Tx shard");
+      ++replaced;
+      return false;
+    }});
+  app.runTx([&wire, id]() {
+    wire.sendHeaders(id, flowHeaders(), false);
+  });
+  ZuCHECK(replaced == 1 && wire.disconnects == 1 &&
+      wire.disconnectShard == FlowApp::Tx,
+    "unhandled direct-Tx header rejection disconnects on Tx shard");
+
+  wire.logicalTxErrorFn(id, {});
+  app.runTx([&wire, id]() {
+    ZuCHECK(!wire.sendFrame(id, flowData(0)),
+      "cleared callback leaves direct-Tx rejection unhandled");
+  });
+  ZuCHECK(replaced == 1 && wire.disconnects == 1,
+    "callback clearing reaches the existing Tx window");
+
+  unsigned rxHandled = 0;
+  wire.logicalTxErrorFn(id, ZiTxErrorFn{
+    [&app, &rxHandled](ZeException &) {
+      ZuCHECK(app.rxInvoked(), "Rx admission callback runs on Rx shard");
+      ++rxHandled;
+      return true;
+    }});
+  ZuCHECK(!wire.sendFrame(id, flowData(0)),
+    "Rx admission rejects a frame at zero capacity");
+  ZuCHECK(rxHandled == 1 && wire.disconnects == 1,
+    "Rx rejection uses the Rx-owned callback copy");
+
+  bool cleared = false;
+  wire.clearStreams([&cleared]() { cleared = true; });
+  ZuCHECK(cleared, "clear strict-shard H2 admission harness");
   wire.finalWire();
 }
 
@@ -1195,6 +1296,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(ZhttpH2HubTest_::runFlowCapacity);
+  ZuTestCall(ZhttpH2HubTest_::runAdmissionErrors);
   ZuTestCall(ZhttpH2HubTest_::run);
   ZuTestCall(ZhttpH2HubTest_::runStream);
   ZuTestCall(ZhttpH2HubTest_::runSharedTLS);

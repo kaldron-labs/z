@@ -3037,12 +3037,17 @@ struct CliLink :
     open(ZuMv(logical));
   }
   void open(ZmRef<Logical> logical) {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 logical stream admission outside Rx thread", return);
     queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(logical));
-    auto stream = this->stream(Zquic::StreamType::Duplex);
     this->app()->txRun([link = ZmMkRef(this)]() mutable {
+      auto stream = link->stream(Zquic::StreamType::Duplex);
       link->capacityTx_();
+      if (!stream) return;
+      link->app()->rxRun([
+	link = ZuMv(link), stream = ZuMv(stream)
+      ]() mutable { link->streamed(ZuMv(stream)); });
     });
-    if (stream) streamed(ZuMv(stream));
   }
   void opened(ZmRef<Logical> logical, StreamRef stream) {
     stream->logical = logical;
@@ -3068,18 +3073,26 @@ struct CliLink :
       config.qpackRxBlocked(), config.qpackTxSections()
     };
     bool extendedConnect = config.extendedConnect();
+    ZiTxErrorFn txError = h3.txError;
     auto link = ZmMkRef(this);
-    this->app()->txRun([link, limits, extendedConnect]() mutable {
+    this->app()->txRun([
+      link, limits, extendedConnect, txError = ZuMv(txError)
+    ]() mutable {
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
+      typename H3Cxn::LocalStreams streams;
+      if (ok)
+	streams = H3Cxn::openLocalStreams(*link, txError);
       link->app()->rxRun([
-	link = ZuMv(link), limits, extendedConnect, ok
+	link = ZuMv(link), limits, extendedConnect, ok,
+	streams = ZuMv(streams)
       ]() mutable {
 	if (!ok || link->down) {
 	  link->connectFailed(false);
 	  return;
 	}
 	auto params = H3::Params().qpackLimits(limits);
-	if (!link->h3.openLocal(*link, params, extendedConnect)) {
+	if (!link->h3.openLocal(
+	    *link, ZuMv(streams), params, extendedConnect)) {
 	  link->connectFailed(false);
 	  return;
 	}
@@ -3237,6 +3250,8 @@ struct CliLink :
     logical->disconnected_(false);
   }
   void streamed(StreamRef stream) {
+    ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
+      "H3 local stream publication outside Rx thread", return);
     if (!stream || stream->id() < 0 ||
 	Zquic::StreamID::server(uint64_t(stream->id())) ||
 	Zquic::StreamID::uni(uint64_t(stream->id())))

@@ -472,6 +472,31 @@ struct TestLink :
   void scheduleStream(const ZmRef<TestStream> &stream) {
     Base::streamWritable_(stream);
   }
+  void postPeerLimits(uint64_t duplex, uint64_t simplex) {
+    Base::postPeerStreamLimitsTx_(duplex, simplex);
+  }
+  bool receiveMaxStreams(
+    Zquic::StreamType::T type, uint64_t maximum) {
+    Zquic::Frame frame;
+    frame.type = Zquic::FrameType::MaxStreams;
+    frame.streamType = type;
+    frame.value = maximum;
+    return Base::rxApplyMaxStreams_(frame);
+  }
+  bool queueMaxStreams(
+    Zquic::StreamType::T type, uint64_t maximum) {
+    return Base::txQueueControl_(Zquic::ControlFrame::flowUpdate(
+      Zquic::FlowUpdate{
+	Zquic::FrameType::MaxStreams, 0, maximum, type}));
+  }
+  bool flushControlSends() {
+    return Base::flushCtlStreams_(
+      ZiSockAddr{},
+      [](Zquic::PktBuild &) { return true; },
+      [](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &) {
+	return true;
+      });
+  }
   unsigned scheduledStreams() const {
     return Base::scheduledStreamCount_();
   }
@@ -973,6 +998,61 @@ void testLinkStateOwnership()
   }
 }
 
+void testStreamLimitOwnership()
+{
+  ZuTestScope(testStreamLimitOwnership);
+
+  HubFixture fixture;
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  link->initClientPath(ZiSockAddr{}, ZiSockAddr{});
+  fixture.app.defer();
+
+  fixture.app.enterTx();
+  link->setPeerStreamLimit(Zquic::StreamType::Duplex, 0);
+  link->setPeerStreamLimit(Zquic::StreamType::Simplex, 0);
+  fixture.app.enterRx();
+  link->postPeerLimits(1, 2);
+  ZuCHECK(fixture.app.txPending(),
+    "initial peer stream limits were not posted to Tx");
+  fixture.app.enterTx();
+  ZuCHECK(!link->peerStreamLimit(Zquic::StreamType::Duplex) &&
+      !link->peerStreamLimit(Zquic::StreamType::Simplex),
+    "Tx observed peer stream limits before applying the publication");
+  fixture.app.runTx();
+  ZuCHECK(link->peerStreamLimit(Zquic::StreamType::Duplex) == 1 &&
+      link->peerStreamLimit(Zquic::StreamType::Simplex) == 2,
+    "Tx did not apply the initial peer stream limits");
+
+  ZuCHECK(link->stream(), "initial peer stream limit did not open a stream");
+  ZuCHECK(!link->stream() &&
+      link->queuedLocalStreams(Zquic::StreamType::Duplex) == 1,
+    "saturated peer stream limit did not queue a local stream");
+  while (fixture.app.txPending()) fixture.app.runTx();
+
+  fixture.app.enterRx();
+  ZuCHECK(link->receiveMaxStreams(Zquic::StreamType::Duplex, 2) &&
+      fixture.app.txPending(),
+    "received MAX_STREAMS was not posted to Tx");
+  fixture.app.enterTx();
+  ZuCHECK(link->peerStreamLimit(Zquic::StreamType::Duplex) == 1 &&
+      link->queuedLocalStreams(Zquic::StreamType::Duplex) == 1,
+    "Tx applied MAX_STREAMS before its queued handoff");
+  fixture.app.runTx();
+  ZuCHECK(link->peerStreamLimit(Zquic::StreamType::Duplex) == 2 &&
+      link->localStreamsOpened(Zquic::StreamType::Duplex) == 2 &&
+      !link->queuedLocalStreams(Zquic::StreamType::Duplex),
+    "MAX_STREAMS did not open the queued local stream on Tx");
+  while (fixture.app.txPending()) fixture.app.runTx();
+  fixture.app.enterRx();
+  while (fixture.app.rxPending()) fixture.app.runRx();
+
+  link->setLocalStreamLimit(Zquic::StreamType::Duplex, 4);
+  fixture.app.enterTx();
+  ZuCHECK(link->queueMaxStreams(Zquic::StreamType::Duplex, 3) &&
+      link->flushControlSends(),
+    "Tx rejected its current MAX_STREAMS control using Rx-owned state");
+}
+
 void testStatelessResetDetection()
 {
   ZuTestScope(testStatelessResetDetection);
@@ -1220,6 +1300,7 @@ void testStopSendingOwnership()
   fixture.app.defer();
   ZuCHECK(link->receiveFrame(frame) == 0 && stream->stopReceived() &&
       fixture.app.txPending() && !stream->txCompleteCount &&
+      stream->rxError() == Zquic::StreamError::None &&
       link->stopReceivedCount == 1,
     "STOP_SENDING did not defer completion to Tx");
   ZuCHECK(link->receiveFrame(frame) == 0 && fixture.app.txPending() &&
@@ -1228,15 +1309,51 @@ void testStopSendingOwnership()
 
   fixture.app.enterTx();
   stream->reset(11);
-  ZuCHECK(stream->txCompleteCount == 1,
+  ZuCHECK(stream->txCompleteCount == 1 &&
+      stream->txError() == Zquic::StreamError::Reset &&
+      stream->txAppError() == 11,
     "racing reset did not complete stream on Tx");
   fixture.app.runTx();
-  ZuCHECK(stream->txCompleteCount == 1,
+  ZuCHECK(stream->txCompleteCount == 1 &&
+      stream->txError() == Zquic::StreamError::Reset &&
+      stream->txAppError() == 11,
     "STOP_SENDING/reset race completed Tx more than once");
   for (unsigned i = 0; fixture.app.txPending() && i < 4; ++i)
     fixture.app.runTx();
   ZuCHECK(!fixture.app.txPending() && stream->txCompleteCount == 1,
     "STOP_SENDING/reset race did not drain queued Tx work exactly once");
+
+  HubFixture resetFixture;
+  ZmRef<TestLink> resetLink = new TestLink{&resetFixture.app};
+  auto resetStream = resetLink->stream();
+  resetFixture.app.defer();
+  resetFixture.app.enterTx();
+  resetStream->stop(13);
+  ZuCHECK(resetFixture.app.rxPending() &&
+      resetStream->txError() == Zquic::StreamError::None,
+    "local STOP_SENDING did not defer its Rx cause");
+
+  n = Zquic::FrameCodec::writeResetStream(
+    b, sizeof(b), resetStream->id(), 17, 0);
+  ZuCHECK(parseFrame_(b, n, frame),
+    "RESET_STREAM ownership setup failed");
+  resetFixture.app.enterRx();
+  ZuCHECK(resetLink->receiveFrame(frame) == 0 &&
+      resetStream->rxError() == Zquic::StreamError::Reset &&
+      resetStream->rxAppError() == 17,
+    "racing peer reset did not establish the Rx cause");
+  resetFixture.app.runRx();
+  ZuCHECK(resetStream->rxError() == Zquic::StreamError::Reset &&
+      resetStream->rxAppError() == 17,
+    "deferred STOP_SENDING overwrote the Rx reset cause");
+  for (unsigned i = 0;
+      (resetFixture.app.rxPending() || resetFixture.app.txPending()) && i < 8;
+      ++i) {
+    if (resetFixture.app.rxPending()) resetFixture.app.runRx();
+    if (resetFixture.app.txPending()) resetFixture.app.runTx();
+  }
+  ZuCHECK(!resetFixture.app.rxPending() && !resetFixture.app.txPending(),
+    "STOP_SENDING/RESET_STREAM race did not drain deferred work");
 }
 
 void testStreamRegistryOwnership()
@@ -1928,6 +2045,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamShape);
   ZuTestCall(testAlignedSurfaceShape);
   ZuTestCall(testLinkStateOwnership);
+  ZuTestCall(testStreamLimitOwnership);
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);

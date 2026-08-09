@@ -72,8 +72,28 @@ public:
   uint64_t rxBytes() const { return m_rxDelivered; }
   uint64_t finalSize() const { return m_rxState.finalSize(); }
   unsigned rxPending() const { return m_rxQueue.count_(); }
-  uint64_t appError() const { return m_appError; }
-  StreamError::T error() const { return m_error; }
+  uint64_t rxAppError() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx error access outside Rx thread", return 0);
+    return m_rxAppError;
+  }
+  StreamError::T rxError() const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx error access outside Rx thread",
+      return StreamError::None);
+    return m_rxError;
+  }
+  uint64_t txAppError() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream Tx error access outside Tx thread", return 0);
+    return m_txAppError;
+  }
+  StreamError::T txError() const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream Tx error access outside Tx thread",
+      return StreamError::None);
+    return m_txError;
+  }
   bool finSent() const { return m_fin; }
   bool finDequeued() const { return m_finDequeued; }
   bool txCompleted() const { return m_txCompleted; }
@@ -461,10 +481,11 @@ public:
     notifyTx_();
   }
   void reset(uint64_t appError) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream reset outside Tx thread", return);
     if (m_resetSent) return;
     m_resetSent = true;
-    m_error = StreamError::Reset;
-    m_appError = appError;
+    setTxError_(StreamError::Reset, appError);
     if (m_link && m_id >= 0)
       m_link->localResetStream_(uint64_t(m_id), appError, m_txBytes);
     if (m_link && m_id >= 0)
@@ -477,10 +498,13 @@ public:
     notifyTx_();
   }
   void stop(uint64_t appError) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream stop outside Tx thread", return);
     if (m_stopSent) return;
     m_stopSent = true;
-    m_error = StreamError::Stop;
-    m_appError = appError;
+    rxRun_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
+      stream->applyStopRx_(appError);
+    });
     if (m_link && m_id >= 0)
       m_link->localStopSending_(uint64_t(m_id), appError);
     if (m_link && m_id >= 0)
@@ -525,6 +549,8 @@ public:
   int processRx_() { return impl()->process(m_rx); }
 
   bool receiveReset(const Frame &frame) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC RESET_STREAM receive outside Rx thread", return false);
     if (frame.type != FrameType::ResetStream || m_id < 0 ||
 	frame.streamID != uint64_t(m_id) ||
 	m_rxDelivered > frame.length ||
@@ -534,8 +560,7 @@ public:
     if (!next.receive(frame.length, 0, true)) return false;
     m_rxState = next;
     m_resetReceived = true;
-    m_error = StreamError::Reset;
-    m_appError = frame.errorCode;
+    setRxError_(StreamError::Reset, frame.errorCode);
     return true;
   }
 
@@ -549,12 +574,12 @@ public:
   }
 
   bool receiveStop(const Frame &frame) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC STOP_SENDING receive outside Rx thread", return false);
     if (frame.type != FrameType::StopSending || m_id < 0 ||
 	frame.streamID != uint64_t(m_id))
       return false;
     m_stopReceived = true;
-    m_error = StreamError::Stop;
-    m_appError = frame.errorCode;
     uint64_t appError = frame.errorCode;
     txInvoke_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
       stream->completeStopTx_(appError);
@@ -565,7 +590,7 @@ public:
   void completeStopTx_(uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC STOP_SENDING completion outside Tx thread", return);
-    (void)appError;
+    setTxError_(StreamError::Stop, appError);
     if (!m_txCompleted) {
       m_txCompleted = true;
       impl()->txComplete_(false);
@@ -576,6 +601,28 @@ public:
   void txDrained_() { }
 
 private:
+  static void setError_(uint64_t &appError, StreamError::T &error,
+      StreamError::T next, uint64_t nextAppError) {
+    if (error == StreamError::Reset ||
+	(error == StreamError::Stop && next != StreamError::Reset))
+      return;
+    error = next;
+    appError = nextAppError;
+  }
+  void setRxError_(StreamError::T error, uint64_t appError) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream Rx error update outside Rx thread", return);
+    setError_(m_rxAppError, m_rxError, error, appError);
+  }
+  void setTxError_(StreamError::T error, uint64_t appError) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream Tx error update outside Tx thread", return);
+    setError_(m_txAppError, m_txError, error, appError);
+  }
+  void applyStopRx_(uint64_t appError) {
+    setRxError_(StreamError::Stop, appError);
+  }
+
   bool receiveFrame_(
     const Frame &frame, ReceiveFlow *flow, BufDiag *diag,
     ZmRef<ZiIOBuf> packet) {
@@ -843,8 +890,8 @@ private:
   uint64_t		m_lastBlocked = U64Null;
   PendingControl	m_maxStreamDataControl;
   PendingControl	m_dataBlockedCtl;
-  uint64_t		m_appError = 0;
-  StreamError::T	m_error = StreamError::None;
+  uint64_t		m_rxAppError = 0;
+  StreamError::T	m_rxError = StreamError::None;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -864,6 +911,8 @@ private:
   bool			m_stopSent = false;
   bool			m_stopAckd = false;
   bool			m_reapPending = false;
+  uint64_t		m_txAppError = 0;
+  StreamError::T	m_txError = StreamError::None;
   PendingControl	m_resetStreamControl;
   PendingControl	m_stopSendingControl;
   bool			m_txQueued = false;
