@@ -932,9 +932,19 @@ friend Base;
   void listen() {
     mx()->listen(
       ZiListenFn{app(),
-	[](App *app, const ZiListenInfo &info) { app->listening(info); }},
+	[](App *app, const ZiListenInfo &info) {
+	  auto server = static_cast<Server *>(app);
+	  server->rxRun([server, info = ZiListenInfo{info}]() {
+	    server->listening_(info);
+	  });
+	}},
       ZiFailFn{app(),
-	[](App *app, bool transient) { app->listenFailed(transient); }},
+	[](App *app, bool transient) {
+	  auto server = static_cast<Server *>(app);
+	  server->rxRun([server, transient]() {
+	    server->listenFailed_(transient);
+	  });
+	}},
       ZiConnectFn{app(),
 	[](App *app, const ZiCxnInfo &ci) -> ZiConnection * {
 	  return app->accepted(ci);
@@ -960,8 +970,19 @@ protected:
   unsigned nAccepts() const { return 8; }
   unsigned rebindFreq() const { return 0; }
 
-  void listening(const ZiListenInfo &info) {
+  void listening_(const ZiListenInfo &info) {
+    ZiAssert(this->rxInvoked(), "Ztcp", (),
+      "TCP listen completion outside Rx thread", return);
     m_listening = true;
+    app()->listening(info);
+  }
+  void listenFailed_(bool transient) {
+    ZiAssert(this->rxInvoked(), "Ztcp", (),
+      "TCP listen failure outside Rx thread", return);
+    app()->listenFailed(transient);
+  }
+
+  void listening(const ZiListenInfo &info) {
     ZiLOG(Info, "Ztcp", ([info](auto &s) {
       s << "listening(" << info.ip << ':' << info.port << ')';
     }));
@@ -982,20 +1003,30 @@ protected:
   // ZmEngine hook.  Public stop(done) retains done until Base::stop_1()
   // calls stopped(true) after every continuation below has drained.
   void stop_() {
+    this->rxRun([this]() { stopRx_(); });
+  }
+
+  void stopRx_() {
+    ZiAssert(this->rxInvoked(), "Ztcp", (),
+      "TCP server stop initialization outside Rx thread", return);
     stopListening();
     m_stopCount = 0;
     m_stopDrained = false;
     // Drain accepted connections whose connected_1() is already queued
     // before enumerating links; down() requires the installed m_cxn.
-    this->rxRun([this]() { stop_0(); });
+    stop_0();
   }
 
   void stop_0() {
+    ZiAssert(this->rxInvoked(), "Ztcp", (),
+      "TCP server stop drain outside Rx thread", return);
     m_stopCount = this->downLinks_();
     this->rxRun([this]() { stop_2(); });
   }
 
   void stop_2() {
+    ZiAssert(this->rxInvoked(), "Ztcp", (),
+      "TCP server stop completion outside Rx thread", return);
     m_stopDrained = true;
     if (!m_stopCount) Base::stop_0();
   }
