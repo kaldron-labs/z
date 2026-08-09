@@ -349,14 +349,17 @@ struct QUICClient::Link :
   void connected(Zquic::Connected) {
     auto &state = *app()->state;
     state.trace.push(LifeEvt::H3CliConnected);
-    auto stream = this->stream(Zquic::StreamType::Duplex);
-    if (!stream) {
-      state.fail();
-      return;
-    }
-    state.trace.push(LifeEvt::CliConnected);
-    txReady(*stream, state, LifeEvt::CliTxReady);
-    sendMsg(*stream, state, LifeEvt::CliSend, Ping);
+    app()->txRun([link = ZmMkRef(this)]() mutable {
+      auto &state = *link->app()->state;
+      auto stream = link->stream(Zquic::StreamType::Duplex);
+      if (!stream) {
+	state.fail();
+	return;
+      }
+      state.trace.push(LifeEvt::CliConnected);
+      txReady(*stream, state, LifeEvt::CliTxReady);
+      sendMsg(*stream, state, LifeEvt::CliSend, Ping);
+    });
   }
   void disconnected(bool) { }
   void connectFailed(bool) { app()->state->fail(); }

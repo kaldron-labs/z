@@ -665,7 +665,7 @@ private:
 	[this](Method::T method, const RequestTarget &target) {
 	  impl()->operation(method, target);
 	},
-	[this](unsigned status) { impl()->status(status); },
+	[this](unsigned status) { status_(status); },
 	[this, &fields](ZuBSpan key, ZuBSpan value) {
 	  header_(fields.section(), key, value);
 	}))
@@ -692,7 +692,7 @@ private:
   }
 
   template <typename Key>
-  void header_(Zhttp::HdrSection section, ZuBSpan value) {
+  void header_(Zhttp::FieldSection::T section, ZuBSpan value) {
     if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
 	ZuCSpan data{value};
@@ -706,37 +706,42 @@ private:
 	} else {
 	  m_contentLen = contentLength;
 	}
-    } else {
+    } else if (m_deliverHeaders) {
 	impl()->template header<Key>(section, value);
     }
   }
 
   void runtimeHeader_(
-      Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
-    if constexpr (Fields::HasRuntime<Impl>{})
+      Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+    if constexpr (Fields::HasRuntime<Impl>{}) {
+      if (!m_deliverHeaders) return;
 	impl()->header(section, key, value);
+    }
   }
 
   void header_(
-      Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
     Fields::dispatch<Headers>(
       key, value,
       [this, section](auto key, ZuBSpan value) {
 	this->template header_<ZuDecay<decltype(key)>>(section, value);
       },
       [this, section](auto key, auto value) {
-	impl()->template header<
-	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section);
+	if (m_deliverHeaders)
+	  impl()->template header<
+	    ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section);
       },
       [this, section](ZuBSpan key, ZuBSpan value) {
 	runtimeHeader_(section, key, value);
       });
   }
 
-  Zhttp::HdrSection parseFields_(ZuCSpan payload, bool initial) {
+  Zhttp::FieldSection::T parseFields_(ZuCSpan payload, bool initial) {
     auto rx = impl()->qpackRx();
     FieldSectionPrefix prefix;
     FieldState fields;
+    m_deliverHeaders = true;
+    if (initial) m_contentLen = -1;
     fields.trailers(!initial);
     fields.extendedConnect(m_extendedConnect);
     if constexpr (!Request) fields.requestMethod(m_requestMethod);
@@ -749,24 +754,24 @@ private:
 	    ok = false;
 	},
 	impl()->h3Params(), 0, 0, &prefix);
-    if (used != int(n) || !ok) return Zhttp::HdrSection::Invalid;
-    if (prefix.requiredInsertCount && !rx) return Zhttp::HdrSection::Invalid;
+    if (used != int(n) || !ok) return Zhttp::FieldSection::Invalid;
+    if (prefix.requiredInsertCount && !rx) return Zhttp::FieldSection::Invalid;
     if (prefix.requiredInsertCount) {
 	HdrBytes ack;
 	if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0)
-	  return Zhttp::HdrSection::Invalid;
+	  return Zhttp::FieldSection::Invalid;
 	if (!impl()->qpackDecoderWrite(ZuBSpan{ack}))
-	  return Zhttp::HdrSection::Invalid;
+	  return Zhttp::FieldSection::Invalid;
     }
     auto section = fields.finish(
       [this](Method::T method, const RequestTarget &target) {
 	impl()->operation(method, target);
       },
-      [this](unsigned status) { impl()->status(status); },
+      [this](unsigned status) { status_(status); },
       [this, &fields](ZuBSpan key, ZuBSpan value) {
 	header_(fields.section(), key, value);
       });
-    if (section == Zhttp::HdrSection::Final) {
+    if (section == Zhttp::FieldSection::Final) {
       m_bodyAllowed = fields.bodyAllowed();
       impl()->bodyInfo(
 	m_state == State::Stream ? BodyType::Streamed :
@@ -781,19 +786,25 @@ private:
     return m_contentLen < 0 || m_bodyLen == uint64_t(m_contentLen);
   }
 
+  void status_(unsigned value) {
+    if constexpr (!Request)
+      m_deliverHeaders = value >= 200 || impl()->enable1xx();
+    if (m_deliverHeaders) impl()->status(value);
+  }
+
   bool payloadFrame_(uint64_t type, ZuCSpan payload) {
     switch (type) {
       case 0x01: // HEADERS
 	if (m_state == State::Initial) {
 	  auto section = parseFields_(payload, true);
-	  if (section == Zhttp::HdrSection::Invalid) return false;
-	  if (section == Zhttp::HdrSection::Informational) return true;
+	  if (section == Zhttp::FieldSection::Invalid) return false;
+	  if (section == Zhttp::FieldSection::Informational) return true;
 	  if (m_state != State::Stream) m_state = State::Body;
 	  return true;
 	}
 	if (m_state != State::Body) return false;
 	if (!bodyComplete_() ||
-	    parseFields_(payload, false) != Zhttp::HdrSection::Trailers)
+	    parseFields_(payload, false) != Zhttp::FieldSection::Trailers)
 	  return false;
 	m_state = State::Trailers;
 	return true;
@@ -857,6 +868,7 @@ private:
     if (ZuUnlikely(m_deferred > UINT64_MAX - frame.length))
       return fail_(ExcessiveLoad);
     uint64_t remaining = frame.total;
+    bool accepted = true;
     int64_t n = m_bodyRx.splice(
       rx, frame.length,
       [&remaining](ZuBSpan span) -> int64_t {
@@ -866,11 +878,11 @@ private:
 	}
 	return remaining;
       }, wireAlloc_, alloc_, frame.header, 0,
-      [this](auto &body) {
+      [this, &accepted](auto &body) {
 	if (m_state == State::Stream)
 	  impl()->streamRx_(body);
 	else
-	  impl()->body(body);
+	  accepted = impl()->body(body);
       });
     if (ZuUnlikely(n <= 0)) return fail_(InternalError);
     m_deferred += frame.length;
@@ -880,6 +892,9 @@ private:
     m_deferred -= consumed;
     if (!retire_(stream, frame.header + consumed)) return false;
     if (m_state != State::Stream) m_bodyLen += frame.length;
+    if (ZuUnlikely(!accepted))
+      return fail_(RequestCancelled, RequestErrorCode::BodyRejected,
+	RequestErrorScope::Request, Request);
     return true;
   }
 
@@ -1011,6 +1026,7 @@ public:
     m_progressed = false;
     m_streamMode = false;
     m_bodyAllowed = true;
+    m_deliverHeaders = true;
     m_error = {};
     m_errorLatched = false;
   }
@@ -1027,14 +1043,15 @@ public:
   // CRTP defaults
   void operation(Method::T, const RequestTarget &) { }
   void status(unsigned) { }
+  bool enable1xx() const { return false; }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Key, typename Value>
-  void header(Zhttp::HdrSection) { }
-  void header(Zhttp::HdrSection, ZuBSpan, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan, ZuBSpan) { }
   void bodyInfo(BodyType::T, uint64_t) { }
   template <typename Rx>
-  void body(Rx &rx) { bodyDrain(rx); }
+  bool body(Rx &rx) { return bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { bodyDrain(rx); }
   void streamPeerEnd_() { }
@@ -1072,6 +1089,7 @@ private:
   bool			m_bodyAllowed = true;
   RequestError		m_error;
   bool			m_errorLatched = false;
+  bool			m_deliverHeaders = true;
 };
 
 // QUIC variable-length integer and HTTP/3 field encoding
@@ -1628,8 +1646,8 @@ protected:
   bool beginRequest_(Stream &stream) {
     bool valid = true;
     writeHeaders_(stream, [this, &valid](auto &build) {
-	impl()->operation([this, &build, &valid]<typename Target>(
-	    Method::T method, Target &&target) {
+	impl()->operation([this, &build, &valid](
+	    Method::T method, auto &&path, bool hasQuery, auto &&query) {
 	  ZuCSpan protocol;
 	  if (method == Method::CONNECT)
 	    impl()->protocol([&protocol]<typename P>(P &&value) {
@@ -1642,7 +1660,8 @@ protected:
 	  encodeMethod_(build, method);
 	  if (method == Method::CONNECT && !protocol) return;
 	  build.field(":scheme", "https");
-	  build.field(":path", ZuFwd<Target>(target));
+	  auto target = Zhttp::Builder_::target(path, hasQuery, query);
+	  build.field(":path", target);
 	  if (protocol) build.field(":protocol", protocol);
 	});
 	if (!valid) return false;
@@ -1699,7 +1718,10 @@ public:
   QPackBuildFailure::T qpackFailure() const { return m_qpackFailure; }
 
   // CRTP defaults
-  template <typename L> void operation(L &&l) { l(Method::GET, "/"); }
+  template <typename L>
+  void operation(L &&l) {
+    l(Method::GET, "/", false, [](auto &) { });
+  }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
   unsigned status() { return 200; }
@@ -1807,6 +1829,7 @@ struct Cxn {
   bool			peerControl = false;
   bool			peerEncoder = false;
   bool			peerDecoder = false;
+  bool			localOpen = false;
   bool			localExtendedConnect = false;
   bool			peerExtendedConnect = false;
   uint64_t		errorCode = 0;
@@ -1886,6 +1909,7 @@ struct Cxn {
       tx.flush();
     }
     link_ = &link;
+    localOpen = true;
     localExtendedConnect = extendedConnect;
     state = State::Ready;
     return true;

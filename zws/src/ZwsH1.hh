@@ -53,14 +53,16 @@ public:
   }
 
   void status(unsigned value) { m_status = value; }
+  bool enable1xx() const { return true; }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
-    if (type != Zhttp::BodyType::None) m_invalid = true;
+    if (type != Zhttp::BodyType::None || Base::bodyFramed())
+      m_invalid = true;
   }
   void complete(State::T state) { m_state = state; }
 
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
-    if (section != Zhttp::HdrSection::Final) return;
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+    if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "upgrade") {
       if (m_upgradeSeen) m_invalid = true;
       m_upgradeSeen = true;
@@ -151,8 +153,8 @@ public:
   void complete(State::T state) { m_state = state; }
 
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
-    if (section != Zhttp::HdrSection::Final) return;
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+    if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;
       m_hostSeen = true;
@@ -226,7 +228,9 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::GET, m_uri->target);
+    auto target = Zhttp::splitPathQuery(m_uri->target);
+    l(Zhttp::Method::GET, target.path, target.hasQuery,
+      [query = target.query](auto &stream) { stream << query; });
   }
   template <typename L>
   void host(L &&l) { l(m_uri->authority()); }

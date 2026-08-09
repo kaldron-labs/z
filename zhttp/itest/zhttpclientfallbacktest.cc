@@ -85,7 +85,9 @@ struct Request_ : public ZmObject {
   void reset() { }
   template <typename L>
   void operation(L &&l) const {
-    l(Zhttp::Method::GET, target);
+    auto pathQuery = Zhttp::splitPathQuery(target);
+    l(Zhttp::Method::GET, pathQuery.path, pathQuery.hasQuery,
+      [query = pathQuery.query](auto &stream) { stream << query; });
   }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L> void header(L &&) const { }
@@ -112,6 +114,8 @@ struct Request_ : public ZmObject {
 struct ResParser {
   using Headers = ZhttpHeaders("alt-svc");
 
+  bool enable1xx() const { return false; }
+
   uint64_t	*bodyBytes = nullptr;
   unsigned	*status_ = nullptr;
   ZtString<>	*altSvc = nullptr;
@@ -120,12 +124,12 @@ struct ResParser {
   void status(unsigned value) { *status_ = value; }
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuBSpan value) {
     if constexpr (Key{}() == "alt-svc") *altSvc = ZuCSpan{value};
   }
   template <typename Rx>
-  void body(Rx &rx) {
-    Zhttp::bodyEach(rx,
+  bool body(Rx &rx) {
+    return Zhttp::bodyEach(rx,
       [this](ZuBSpan value) { *bodyBytes += value.length(); });
   }
   template <typename State> void complete(State) { }

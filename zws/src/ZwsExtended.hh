@@ -36,7 +36,9 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, m_uri->target);
+    auto target = Zhttp::splitPathQuery(m_uri->target);
+    l(Zhttp::Method::CONNECT, target.path, target.hasQuery,
+      [query = target.query](auto &stream) { stream << query; });
   }
   template <typename L>
   void host(L &&l) { l(m_uri->authority()); }
@@ -115,8 +117,8 @@ public:
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { m_status = value; }
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
-    if (section != Zhttp::HdrSection::Final) return;
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+    if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "sec-websocket-protocol") {
       if (m_protocolSeen) m_invalid = true;
       m_protocolSeen = true;
@@ -139,7 +141,7 @@ public:
     m_link->established_();
   }
   template <typename Rx>
-  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) {
     (void)m_dispatch.process(rx);
@@ -211,8 +213,8 @@ public:
   }
   void status(unsigned) { }
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
-    if (section != Zhttp::HdrSection::Final) return;
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+    if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;
       m_hostSeen = true;
@@ -254,7 +256,7 @@ public:
     m_link->established_();
   }
   template <typename Rx>
-  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) {
     (void)m_dispatch.process(rx);

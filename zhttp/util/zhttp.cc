@@ -308,7 +308,10 @@ struct Request_ : public ZmObject {
   void reset() { requestContentLength = 0; }
   template <typename L>
   void operation(L &&l) const {
-    l(put ? Zhttp::Method::PUT : Zhttp::Method::GET, target);
+    auto pathQuery = Zhttp::splitPathQuery(target);
+    l(put ? Zhttp::Method::PUT : Zhttp::Method::GET,
+      pathQuery.path, pathQuery.hasQuery,
+      [query = pathQuery.query](auto &stream) { stream << query; });
   }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L>
@@ -329,6 +332,7 @@ struct Request_ : public ZmObject {
       ZfJSON::save(body, putRecord);
       body.flush();
       requestContentLength = body.produced();
+      return true;
     });
   }
   template <typename L>
@@ -517,6 +521,8 @@ void logConnected(const Request_ &, const Zhttp::ConnectedInfo &);
 struct ResParser {
   using Headers = ResponseHeaders;
 
+  bool enable1xx() const { return false; }
+
   Request_ *req = nullptr;
 
   void init(const Request_ &req_) {
@@ -547,7 +553,7 @@ struct ResParser {
     req->contentLength = type == Zhttp::BodyType::Fixed ? int64_t(length) : -1;
   }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuBSpan value) {
     if (!req->logResponse) return;
     auto ctx = reqLogCtx(*req);
     ZeString value_;
@@ -559,10 +565,10 @@ struct ResParser {
   }
 
   template <typename Rx>
-  void body(Rx &rx) {
+  bool body(Rx &rx) {
     logFraming(*req);
     headersDone();
-    Zhttp::bodyEach(rx, [req = this->req](ZuBSpan span) {
+    return Zhttp::bodyEach(rx, [req = this->req](ZuBSpan span) {
       req->bodyBytes += span.length();
       ++req->bodyChunks;
       if (req->put) req->responseJSON << span;

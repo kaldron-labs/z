@@ -207,7 +207,7 @@ private:
 	} else {
 	  m_contentLength = contentLength;
 	}
-    } else
+    } else if (deliverHeaders_())
 	impl()->template header<Key>(section_(), value);
   }
 
@@ -216,8 +216,10 @@ private:
   }
 
   void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
-    if constexpr (Fields::HasRuntime<Impl>{})
+    if constexpr (Fields::HasRuntime<Impl>{}) {
+      if (!deliverHeaders_()) return;
 	impl()->header(section_(), key, value);
+    }
   }
 
   // process header key/value
@@ -227,9 +229,10 @@ private:
 	return;
     }
     if (headerKey_(key, "content-length")) {
-	this->template header_<ZuStringT<"content-length">>(value);
-	return;
+      this->template header_<ZuStringT<"content-length">>(value);
+      return;
     }
+    if (!deliverHeaders_()) return;
     Fields::dispatch<Headers>(
       key, value,
       [this](auto key, ZuBSpan value) {
@@ -312,7 +315,8 @@ private:
     if (ZuUnlikely(b == unsigned(o) || o >= int(n))) { error(); return; }
     m_statusCode = code;
     m_http10 = protocol == "HTTP/1.0";
-    impl()->status(code);
+    m_deliverHeaders = code >= 200 || impl()->enable1xx();
+    if (m_deliverHeaders) impl()->status(code);
     m_state = State::Headers;
   }
 
@@ -320,6 +324,8 @@ public:
   // top-level process
   template <typename Stream>
   State::T process(Stream &stream) {
+    if (m_state == State::Complete || m_state == State::Error)
+      return m_state;
     int64_t consumed = 0;
     m_progressed = false;
     do {
@@ -407,6 +413,7 @@ public:
 	    uint64_t length = uint64_t(m_contentLength);
 	    if (stream.length() < length) break;
 	    uint64_t remaining = length;
+	    bool accepted = true;
 	    consumed = m_bodyRx.splice(
 	      stream, length,
 	      [&remaining](ZuBSpan span) -> int64_t {
@@ -416,8 +423,11 @@ public:
 		}
 		return remaining;
 	      }, allocWireRxBuf, allocRxBuf, 0, 0,
-	      [this](auto &rx) { impl()->body(rx); });
-	    if (consumed > 0) {
+	      [this, &accepted](auto &rx) { accepted = impl()->body(rx); });
+	    if (ZuUnlikely(!accepted))
+	      fail_(RequestErrorCode::BodyRejected,
+		RequestErrorScope::Connection, Request);
+	    else if (consumed > 0) {
 	      m_contentLength = 0;
 	      m_state = State::Complete;
 	    } else if (consumed < 0)
@@ -459,6 +469,7 @@ public:
 	    uint64_t length = uint64_t(m_chunkLength);
 	    uint64_t frameLen = length + 2;
 	    if (stream.length() < frameLen) break;
+	    bool accepted = true;
 	    consumed = m_bodyRx.splice(
 	      stream, length,
 	      [remaining = frameLen, prev = uint8_t{0}](
@@ -472,8 +483,11 @@ public:
 		if (last != '\r' || prev != '\n') return -1;
 		return n;
 	      }, allocWireRxBuf, allocRxBuf, 0, 2,
-	      [this](auto &rx) { impl()->body(rx); });
-	    if (consumed > 0) {
+	      [this, &accepted](auto &rx) { accepted = impl()->body(rx); });
+	    if (ZuUnlikely(!accepted))
+	      fail_(RequestErrorCode::BodyRejected,
+		RequestErrorScope::Connection, Request);
+	    else if (consumed > 0) {
 	      m_chunkLength = 0;
 	      m_state = State::ChunkHdr;
 	    } else if (consumed < 0) {
@@ -520,6 +534,9 @@ public:
   bool progressed() const { return m_progressed; }
   const RequestError &error() const { return m_error; }
   bool http10() const { return m_http10; }
+  bool bodyFramed() const {
+    return m_chunked || m_contentLength != uint64_t(-1);
+  }
   uint64_t bodyMax() const { return m_bodyMax; }
   void bodyMax(uint64_t value) {
     m_bodyMax = value;
@@ -555,6 +572,7 @@ public:
     m_error = {};
     m_errorLatched = false;
     m_http10 = false;
+    m_deliverHeaders = true;
     m_eofStream = nullptr;
     m_eofFn = nullptr;
   }
@@ -566,14 +584,15 @@ public:
   // CRTP defaults
   void operation(Method::T, const RequestTarget &) { }
   void status(unsigned) { }
+  bool enable1xx() const { return false; }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Key, typename Value>
-  void header(Zhttp::HdrSection) { }
-  void header(Zhttp::HdrSection, ZuBSpan, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan, ZuBSpan) { }
   void bodyInfo(BodyType::T, uint64_t) { }
   template <typename Rx>
-  void body(Rx &rx) { bodyDrain(rx); }
+  bool body(Rx &rx) { return bodyDrain(rx); }
   void complete(State::T) { }
 
 private:
@@ -584,6 +603,7 @@ private:
 	  fail_(RequestErrorCode::ContentTooLarge);
     } else if (length) {
       uint64_t remaining = length;
+      bool accepted = true;
       int64_t n = m_bodyRx.splice(
 	stream, length,
 	[&remaining](ZuBSpan span) -> int64_t {
@@ -593,8 +613,11 @@ private:
 	  }
 	  return remaining;
 	}, allocWireRxBuf, allocRxBuf, 0, 0,
-	[this](auto &rx) { impl()->body(rx); });
-      if (n > 0)
+	[this, &accepted](auto &rx) { accepted = impl()->body(rx); });
+      if (ZuUnlikely(!accepted))
+	fail_(RequestErrorCode::BodyRejected,
+	  RequestErrorScope::Connection, Request);
+      else if (n > 0)
 	m_state = State::Complete;
       else
 	fail_();
@@ -616,11 +639,16 @@ private:
 	m_statusCode == 204 || m_statusCode == 304;
   }
 
-  Zhttp::HdrSection section_() const {
-    if (m_state == State::Trailers) return Zhttp::HdrSection::Trailers;
-    if constexpr (Request) return Zhttp::HdrSection::Final;
+  Zhttp::FieldSection::T section_() const {
+    if (m_state == State::Trailers) return Zhttp::FieldSection::Trailers;
+    if constexpr (Request) return Zhttp::FieldSection::Final;
     return interimResponse_() ?
-      Zhttp::HdrSection::Informational : Zhttp::HdrSection::Final;
+      Zhttp::FieldSection::Informational : Zhttp::FieldSection::Final;
+  }
+
+  bool deliverHeaders_() const {
+    if constexpr (Request) return true;
+    return m_deliverHeaders;
   }
 
   // Rx thread exclusive
@@ -640,6 +668,7 @@ private:
   bool		m_http10 = false;
   bool		m_progressed = false;
   bool		m_errorLatched = false;
+  bool		m_deliverHeaders = true;
 };
 
 // HTTP 1.1 non-chunked body Tx streaming
@@ -776,9 +805,13 @@ protected:
   // request
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
-    impl()->operation([&stream]<typename Target>(
-	  Method::T method, Target &&target) {
-	stream << Method::name(method) << ' ' << ZuFwd<Target>(target);
+    impl()->operation([&stream](
+	  Method::T method, auto &&path, bool hasQuery, auto &&query) {
+	stream << Method::name(method) << ' ' << path;
+	if (hasQuery) {
+	  stream << '?';
+	  query(stream);
+	}
     });
     // host
     stream << " HTTP/1.1\r\nhost: ";
@@ -836,7 +869,10 @@ public:
   void reset() { }
 
   // CRTP defaults
-  template <typename L> void operation(L &&l) { l(Method::GET, "/"); }
+  template <typename L>
+  void operation(L &&l) {
+    l(Method::GET, "/", false, [](auto &) { });
+  }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   unsigned status() { return 200; }
   template <typename L> void reason(L &&l) { l(""); }

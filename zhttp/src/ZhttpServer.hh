@@ -1244,6 +1244,7 @@ struct SrvLink :
       config.qpackRxBlocked(), config.qpackTxSections()
     };
     bool extendedConnect = config.extendedConnect();
+    h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     auto link = ZmMkRef(this);
     this->app()->txRun([
@@ -1307,6 +1308,11 @@ struct SrvLink :
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
       stream->stop(error);
       stream->quicReset(error);
+    });
+  }
+  void h3RequestRejected(StreamRef stream, uint64_t error) {
+    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
+      stream->stop(error);
     });
   }
   void finish(Stream *stream) {
@@ -1436,7 +1442,11 @@ public:
       },
       m_stream,
       [](void *ptr, uint64_t error) {
-	static_cast<NativeStream *>(ptr)->h3StreamError(error);
+	auto stream = static_cast<NativeStream *>(ptr);
+	if (error == H3::RequestCancelled)
+	  stream->link()->h3RequestRejected(ZmMkRef(stream), error);
+	else
+	  stream->h3StreamError(error);
       },
       uint64_t(m_stream->id()), &m_native->h3.params);
     parser.extendedConnect(m_native->h3.localExtendedConnect);
@@ -1800,6 +1810,7 @@ private:
     ZmAtomic<uint64_t> serverFaults = 0;
     ZmAtomic<uint64_t> rejectedRequests = 0;
     ZmAtomic<uint64_t> parseFailures = 0;
+    ZmAtomic<uint64_t> bodyFailures = 0;
     ZmAtomic<uint64_t> responseBuildFailures = 0;
     ZmAtomic<uint64_t> transportFailures = 0;
   };
@@ -1861,15 +1872,15 @@ private:
       live->request.operation(method, target);
     }
     template <typename Key>
-    void header(Zhttp::HdrSection section, ZuBSpan value) {
+    void header(Zhttp::FieldSection::T section, ZuBSpan value) {
       live->request.template header<Key>(section, value);
     }
     template <typename Key, typename Value>
-    void header(Zhttp::HdrSection section) {
+    void header(Zhttp::FieldSection::T section) {
       live->request.template header<Key, Value>(section);
     }
     void header(
-	Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
+	Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
       if constexpr (Fields::HasRuntime<AppRequest>{})
 	live->request.header(section, key, value);
     }
@@ -1878,23 +1889,24 @@ private:
     }
     void status(unsigned) { }
     template <typename Rx>
-    void body(Rx &rx) {
+    bool body(Rx &rx) {
       auto &request = live->meta;
       auto &requestBody = live->requestBody;
       uint64_t before = rx.length();
       if (before < requestBody.pending) {
-	return;
+	return false;
       }
       requestBody.received += before - requestBody.pending;
-	live->request.body(rx);
+      bool accepted = live->request.body(rx);
       uint64_t pending = rx.length();
-      if (pending > before) return;
+      if (pending > before) return false;
       requestBody.consumed += before - pending;
       requestBody.pending = pending;
       request.bodyReceived = requestBody.received;
       request.bodyConsumed = requestBody.consumed;
       request.bodyReset = requestBody.reset;
       request.bodyDiscarded = requestBody.discarded;
+      return accepted;
     }
     void complete(typename State::T state) {
       auto &request = live->meta;
@@ -2645,7 +2657,10 @@ private:
       auto server = link.app()->server;
       const RequestError &error = parser.error();
       if (!parser.live) return -1;
-      ++server->m_stats.parseFailures;
+      if (error.code == RequestErrorCode::BodyRejected)
+	++server->m_stats.bodyFailures;
+      else
+	++server->m_stats.parseFailures;
       auto live = ZuMv(parser.live);
       if (!error.responsePossible ||
 	  (error.scope != RequestErrorScope::Request &&
@@ -2658,9 +2673,13 @@ private:
 	return -1;
       }
       RequestDisposition::T disposition = RequestDisposition::Disconnect;
-      if (error.scope == RequestErrorScope::Request)
-	disposition = server->m_workload->requestError(
-	  live->meta, live->request, error);
+	if (error.scope == RequestErrorScope::Request ||
+	    error.code == RequestErrorCode::BodyRejected)
+		disposition = server->m_workload->requestError(
+		  live->meta, live->request, error);
+	if (error.code == RequestErrorCode::BodyRejected &&
+	    Message::ID == Version::H1)
+	  disposition = RequestDisposition::Disconnect;
       live->close = disposition == RequestDisposition::Disconnect;
       if (live->close || Message::OneMessagePerLink) terminal = true;
       live->errorCode = error.code;
@@ -2916,6 +2935,7 @@ public:
     return m_stats.rejectedRequests.load_();
   }
   uint64_t parseFailures() const { return m_stats.parseFailures.load_(); }
+  uint64_t bodyFailures() const { return m_stats.bodyFailures.load_(); }
   uint64_t responseBuildFailures() const {
     return m_stats.responseBuildFailures.load_();
   }

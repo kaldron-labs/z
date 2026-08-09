@@ -246,8 +246,8 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
     seen.path = ZuCSpan{target.raw};
   }
   template <typename Rx>
-  void body(Rx &rx) {
-    Zhttp::bodyEach(rx,
+  bool body(Rx &rx) {
+    return Zhttp::bodyEach(rx,
       [this](ZuBSpan body) { seen.body << ZuCSpan{body}; });
   }
   void complete(typename State::T state) {
@@ -299,8 +299,8 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
   uint64_t streamID() const { return streamID_; }
   void status(unsigned status_) { seen.status = status_; }
   template <typename Rx>
-  void body(Rx &rx) {
-    Zhttp::bodyEach(rx,
+  bool body(Rx &rx) {
+    return Zhttp::bodyEach(rx,
       [this](ZuBSpan body) { seen.body << ZuCSpan{body}; });
   }
   void complete(typename State::T state) {
@@ -332,7 +332,7 @@ struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {
   RequestBuilder(ZuCSpan body_) : content{body_} { }
 
   template <typename L> void operation(L &&l) const {
-    l(Zhttp::Method::GET, Path);
+    l(Zhttp::Method::GET, Path, false, [](auto &) { });
   }
   template <typename L> void host(L &&l) const { l(Host); }
   uint64_t contentLength() const { return content.length(); }
@@ -397,6 +397,7 @@ struct ServerTest {
   ZmAtomic<unsigned> h3BidiStreams = 0;
   ZmAtomic<int>	h3State = Zhttp::H3::CxnState::Init;
   ZmAtomic<int>	h3ParserState = RequestParser<true>::State::Initial;
+  ZmAtomic<uint64_t> h3Error = 0;
 };
 
 template <typename App>
@@ -543,6 +544,7 @@ struct H3ServerStream :
   int process(Zquic::RxStream &);
   Zhttp::H3::CxnState::T h3State() const;
   void h3State(Zhttp::H3::CxnState::T);
+  void h3Error(uint64_t);
   bool peerControlStream();
   bool peerEncoderStream();
   bool peerDecoderStream();
@@ -561,8 +563,21 @@ struct H3ServerLink :
   H3ServerLink(H3Server *app) : Base{app} { }
   void connected(Zquic::Connected info) {
     if (!validQUICInfo(info)) app()->state->errors = 1;
-    if (!h3.openLocal(*this))
-      app()->state->errors = 1;
+    h3.link_ = this;
+    ZiTxErrorFn txError = h3.txError;
+    auto link = ZmMkRef(this);
+    app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
+      auto limits = Zhttp::H3::Params{}.qpackLimits();
+      bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
+      typename H3Cxn::LocalStreams streams;
+      if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
+      link->app()->rxInvoke([
+	link = ZuMv(link), streams = ZuMv(streams), ok
+      ]() mutable {
+	if (!ok || !link->h3.openLocal(*link, ZuMv(streams)))
+	  link->app()->state->errors = 1;
+      });
+    });
   }
   void disconnected(bool) { }
   void streamed(ZmRef<Stream>) { }
@@ -634,6 +649,11 @@ Zhttp::H3::CxnState::T H3ServerStream::h3State() const
 void H3ServerStream::h3State(Zhttp::H3::CxnState::T state)
 {
   this->link()->h3.state = state;
+}
+
+void H3ServerStream::h3Error(uint64_t error)
+{
+  this->link()->app()->state->h3Error = error;
 }
 
 bool H3ServerStream::peerControlStream()
@@ -808,17 +828,32 @@ struct H3Client::Link :
       app()->state->done.post();
       return;
     }
-    if (!h3.openLocal(*this)) {
-      app()->state->errors = 1;
-      app()->state->done.post();
-      return;
-    }
-    request = this->stream(Zquic::StreamType::Duplex);
-    if (!request) {
-      app()->state->errors = 1;
-      app()->state->done.post();
-      return;
-    }
+    h3.link_ = this;
+    ZiTxErrorFn txError = h3.txError;
+    auto link = ZmMkRef(this);
+    app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
+      auto limits = Zhttp::H3::Params{}.qpackLimits();
+      bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
+      typename H3Cxn::LocalStreams streams;
+      ZmRef<Stream> request;
+      if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
+      if (ok && streams) request = link->stream(Zquic::StreamType::Duplex);
+      link->app()->rxInvoke([
+	link = ZuMv(link), streams = ZuMv(streams),
+	request = ZuMv(request), ok
+      ]() mutable {
+	if (!ok || !request ||
+	    !link->h3.openLocal(*link, ZuMv(streams))) {
+	  link->app()->state->errors = 1;
+	  link->app()->state->done.post();
+	  return;
+	}
+	link->opened(ZuMv(request));
+      });
+    });
+  }
+  void opened(ZmRef<Stream> request_) {
+    request = ZuMv(request_);
     app()->responseStreamID = request->id();
     sendH3Request(*request, app()->state->body);
   }
@@ -1186,6 +1221,7 @@ void printH3ServerTest(ServerTest &state)
     " lastStreamID=" << uint64_t(state.lastH3StreamID) <<
     " cxnState=" << int(state.h3State) <<
     " parserState=" << int(state.h3ParserState) <<
+    " h3Error=" << uint64_t(state.h3Error) <<
     '\n';
 }
 

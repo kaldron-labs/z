@@ -317,6 +317,13 @@ struct CustomTarget {
   friend ZuPrintFn ZuPrintType(CustomTarget *);
 };
 
+struct QueryPath {
+  template <typename S>
+  void print(S &s) const { s << "/printable"; }
+
+  friend ZuPrintFn ZuPrintType(QueryPath *);
+};
+
 using TxHeaders = ZuTypeList<ZuStringT<"x-custom">, void>;
 using ContentLength = ZuStringT<"content-length">;
 using FixedHeaders = ZuTypeList<ContentLength, void>;
@@ -325,20 +332,27 @@ struct TxBuilder :
   public Zhttp::H1::Request<
     TxBuilder, TxHeaders, ZuTypeList<>, true, true> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::POST, CustomTarget{}); }
+  void operation(L &&l) {
+    l(Zhttp::Method::POST, QueryPath{}, true,
+      [this](auto &stream) { stream << query; });
+  }
   template <typename L>
   void host(L &&l) { l("localhost"); }
   template <typename Key, typename L>
   void header(L &&l) { l(CustomValue{}); }
   template <typename L>
   void header(L &&l) { l("x-runtime", CustomValue{}); }
+
+  ZuCSpan query = "q=test&page=2";
 };
 
 struct FixedTxBuilder :
   public Zhttp::H1::Request<
     FixedTxBuilder, FixedHeaders, ZuTypeList<>, true, false> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::PUT, "/fixed-edge"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::PUT, "/fixed-edge", false, [](auto &) { });
+  }
   template <typename L>
   void host(L &&l) { l("localhost"); }
   template <typename Key, typename L>
@@ -407,7 +421,8 @@ void testBodyTx()
   link.finish();
   ZuCHECK(body.produced() == 8 && link.finishes == 1,
     "synchronous body accounting mismatch");
-  ZuCHECK(link.wire.find("POST /printable? HTTP/1.1\r\n") >= 0,
+  ZuCHECK(link.wire.find(
+	"POST /printable?q=test&page=2 HTTP/1.1\r\n") >= 0,
     "request line mismatch");
   ZuCHECK(link.wire.find("transfer-encoding: chunked\r\n") >= 0,
     "streaming request is not chunked");

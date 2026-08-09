@@ -90,7 +90,7 @@ struct RequestRx :
   }
 
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuBSpan value) {
     if constexpr (Key{}() == "host") {
       host.length(0);
       host << value;
@@ -113,8 +113,9 @@ struct ResponseRx :
     if (type == Zhttp::BodyType::Fixed) contentLengthSeen = length;
   }
   template <typename Rx>
-  void body(Rx &rx) {
-    Zhttp::bodyEach(rx, [this](ZuBSpan span) { bodyData << span; });
+  bool body(Rx &rx) {
+    return Zhttp::bodyEach(
+      rx, [this](ZuBSpan span) { bodyData << span; });
   }
   void complete(Zhttp::H1::ParserState::T state_) { completeState = state_; }
 
@@ -151,7 +152,9 @@ struct RequestBuilder :
     Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders>;
 
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/zhttp-fallback"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::GET, "/zhttp-fallback", false, [](auto &) { });
+  }
   template <typename L>
   void host(L &&l) { l("localhost"); }
 };

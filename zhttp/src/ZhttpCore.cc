@@ -17,6 +17,7 @@ ZtEnumImplStruct(RequestErrorScope);
 unsigned requestErrorStatus(RequestErrorCode::T code)
 {
   switch (code) {
+    case RequestErrorCode::BodyRejected: return 400;
     case RequestErrorCode::ContentTooLarge: return 413;
     case RequestErrorCode::TargetTooLong: return 414;
     case RequestErrorCode::HeadersTooLarge: return 431;

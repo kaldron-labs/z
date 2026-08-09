@@ -267,7 +267,9 @@ void runAdmissionErrors()
 struct RequestBuilder :
   public Zhttp::H2::Request<RequestBuilder> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::GET, "/", false, [](auto &) { });
+  }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
 };
@@ -276,7 +278,9 @@ struct StreamRequestBuilder :
   public Zhttp::H2::Request<StreamRequestBuilder,
     ZuTypeList<>, ZuTypeList<>, true> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::CONNECT, "/stream"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::CONNECT, "/stream", false, [](auto &) { });
+  }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
   template <typename L>
@@ -322,11 +326,12 @@ struct ClientParser :
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Rx>
-  void body(Rx &rx) {
+  bool body(Rx &rx) {
     ++bodyCalls;
-    Zhttp::bodyEach(rx, [this](ZuBSpan value) { body_ << value; });
+    return Zhttp::bodyEach(
+      rx, [this](ZuBSpan value) { body_ << value; });
   }
   void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
@@ -521,9 +526,9 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
   }
   void status(unsigned) { }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Rx>
-  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
   void streamPeerEnd_() { remoteEnded = true; dispatch.peerEnd(); }

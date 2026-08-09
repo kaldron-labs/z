@@ -251,6 +251,7 @@ struct FixedResponse :
 	sendSpanChunks(body, plan.body.data(), plan.body.length());
       body.flush();
       contentLength = body.produced();
+      return true;
     });
   }
   template <typename L>
@@ -313,7 +314,7 @@ struct Workload {
     void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
     template <typename Key>
-    void header(Zhttp::HdrSection, ZuBSpan value) {
+    void header(Zhttp::FieldSection::T, ZuBSpan value) {
       if constexpr (Key{}() == "host") host = ZuCSpan{value};
       else if constexpr (Key{}() == "authorization")
 	authorization = ZuCSpan{value};
@@ -327,11 +328,11 @@ struct Workload {
 	userAgent = ZuCSpan{value};
     }
     template <typename Rx>
-    void bodyInput(Rx &rx) {
-      Zhttp::bodyEach(rx,
+    bool bodyInput(Rx &rx) {
+      return Zhttp::bodyEach(rx,
 	[this](ZuBSpan span) { bodyData << span; });
     }
-    template <typename Rx> void body(Rx &rx) { bodyInput(rx); }
+    template <typename Rx> bool body(Rx &rx) { return bodyInput(rx); }
     void complete(bool) { }
   };
 

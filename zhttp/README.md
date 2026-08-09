@@ -82,7 +82,11 @@ struct Request_ : ZmObject {
   uint64_t length() const { return 1; }
 
   void reset();
-  template <typename L> void operation(L &&);
+  template <typename Emit>
+  void operation(Emit &&emit) const {
+    emit(Zhttp::Method::GET, "/search", true,
+      [](auto &stream) { stream << "q=test&page=2"; });
+  }
   template <typename Key, typename L> void header(L &&);
   template <typename L> void header(L &&);
   template <typename Emit> void body(Emit &&);
@@ -105,8 +109,8 @@ struct ResParser {
   void status(unsigned);
   void bodyInfo(Zhttp::BodyType::T, uint64_t);
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan);
-  void header(Zhttp::HdrSection, ZuBSpan key, ZuBSpan value);
+  void header(Zhttp::FieldSection::T, ZuBSpan);
+  void header(Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value);
   template <typename Rx> void body(Rx &);
   void complete(bool);
 };
@@ -238,7 +242,7 @@ pool, or server configuration; response/request parser types do not define a
 compile-time `BodyMax`. After the final header section,
 `bodyInfo(type, length)` reports `None`, `Streamed`, or `Fixed` framing
 (`Fixed, 0` is a valid empty body). Every selected or run-time `header`
-callback receives its `Zhttp::HdrSection`, including informational and
+callback receives its `Zhttp::FieldSection::T`, including informational and
 trailer fields.
 
 Client stream writers remain synchronous.  A server streaming response exposes
@@ -344,7 +348,9 @@ struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
     Zhttp::MessageTraits<Profile>::template Request<
       Request, ZuTypeList<>, ZuTypeList<>, false, false> {
     template <typename L>
-    void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
+    void operation(L &&l) {
+      l(Zhttp::Method::GET, "/", false, [](auto &) { });
+    }
     template <typename L>
     void host(L &&l) { l("127.0.0.1"); }
   };

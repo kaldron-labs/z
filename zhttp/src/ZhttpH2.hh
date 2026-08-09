@@ -601,6 +601,7 @@ public:
     if (trailers && m_state != State::Body) return fail_();
     if (!trailers && m_state != State::Initial) return fail_();
     if (!trailers) m_contentLength = -1;
+    m_deliverHeaders = true;
     m_fields = {};
     m_fields.trailers(trailers);
     m_fields.extendedConnect(m_extendedConnect);
@@ -627,15 +628,15 @@ public:
       [this](Method::T method, const RequestTarget &target) {
 	impl()->operation(method, target);
       },
-      [this](unsigned status) { impl()->status(status); },
+      [this](unsigned status) { status_(status); },
       [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
-    if (section == Zhttp::HdrSection::Invalid) return fail_();
-    if (section == Zhttp::HdrSection::Informational) {
+    if (section == Zhttp::FieldSection::Invalid) return fail_();
+    if (section == Zhttp::FieldSection::Informational) {
       if (endStream) return fail_();
       m_state = State::Initial;
       return true;
     }
-    if (section == Zhttp::HdrSection::Trailers) {
+    if (section == Zhttp::FieldSection::Trailers) {
       if (!endStream || !bodyComplete_()) return fail_();
       m_state = State::Trailers;
       complete_();
@@ -676,6 +677,7 @@ public:
     uint64_t length = frameLength - headLen - tailLen;
     if (!dataLength(length, endStream)) return false;
     uint64_t remaining = frameLength;
+    bool accepted = true;
     int64_t n = m_bodyRx.splice(
       wire, length,
       [&remaining](ZuBSpan span) -> int64_t {
@@ -685,12 +687,15 @@ public:
 	}
 	return remaining;
       }, wireAlloc_, alloc_, headLen, tailLen,
-      [this](auto &rx) {
+      [this, &accepted](auto &rx) {
 	if (m_state == State::Stream)
 	  impl()->streamRx_(rx);
 	else
-	  impl()->body(rx);
+	  accepted = impl()->body(rx);
       });
+    if (ZuUnlikely(!accepted))
+      return fail_(RequestErrorCode::BodyRejected,
+	RequestErrorScope::Request, Request);
     if (ZuUnlikely(n <= 0)) return fail_();
     transferred = true;
     if (m_state == State::Stream) {
@@ -735,18 +740,22 @@ public:
     return fail_();
   }
 
+  void operation(Method::T, const RequestTarget &) { }
+  void status(unsigned) { }
   void bodyInfo(BodyType::T, uint64_t) { }
+  bool enable1xx() const { return false; }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Key, typename Value>
-  void header(Zhttp::HdrSection) { }
-  void header(Zhttp::HdrSection, ZuBSpan, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan, ZuBSpan) { }
   template <typename Rx>
-  void body(Rx &rx) { bodyDrain(rx); }
+  bool body(Rx &rx) { return bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { bodyDrain(rx); }
   void streamPeerEnd_() { }
   void streamError_() { }
+  void complete(State::T) { }
 
 private:
   bool start_() {
@@ -754,7 +763,7 @@ private:
       [this](Method::T method, const RequestTarget &target) {
 	impl()->operation(method, target);
       },
-      [this](unsigned status) { impl()->status(status); },
+      [this](unsigned status) { status_(status); },
       [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
   }
 
@@ -774,6 +783,7 @@ private:
       m_contentLength = length;
       return;
     }
+    if (!m_deliverHeaders) return;
     Fields::dispatch<Headers>(
       key, value,
       [this](auto key_, ZuBSpan value_) {
@@ -791,8 +801,16 @@ private:
   }
 
   void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
-    if constexpr (Fields::HasRuntime<Impl>{})
+    if constexpr (Fields::HasRuntime<Impl>{}) {
+      if (!m_deliverHeaders) return;
       impl()->header(m_fields.section(), key, value);
+    }
+  }
+
+  void status_(unsigned value) {
+    if constexpr (!Request)
+      m_deliverHeaders = value >= 200 || impl()->enable1xx();
+    if (m_deliverHeaders) impl()->status(value);
   }
 
   bool bodyComplete_() const {
@@ -839,6 +857,7 @@ private:
   bool			m_extendedConnect = false;
   RequestError		m_error;
   bool			m_errorLatched = false;
+  bool			m_deliverHeaders = true;
 };
 
 template <
@@ -864,7 +883,7 @@ protected:
     bool streamMode = false;
     impl()->operation(
       [this, &stream, &sent, &endStream, &streamMode]
-      <typename Target>(Method::T method, Target &&target) {
+      (Method::T method, auto &&path, bool hasQuery, auto &&query) {
       ZuCSpan protocol;
       if (method == Method::CONNECT)
 	impl()->protocol([&protocol]<typename P>(P &&value) {
@@ -876,8 +895,9 @@ protected:
       stream.beginHeaders(endStream);
       Builder_::field_(stream, ":method", Method::name(method));
       if (method != Method::CONNECT || protocol) {
-      Builder_::field_(stream, ":scheme", "https");
-	Builder_::field_(stream, ":path", ZuFwd<Target>(target));
+	Builder_::field_(stream, ":scheme", "https");
+	auto target = Zhttp::Builder_::target(path, hasQuery, query);
+	Builder_::field_(stream, ":path", target);
       }
       if (protocol) Builder_::field_(stream, ":protocol", protocol);
       sent = true;
@@ -940,7 +960,10 @@ public:
 
   void reset() { }
 
-  template <typename L> void operation(L &&l) { l(Method::GET, "/"); }
+  template <typename L>
+  void operation(L &&l) {
+    l(Method::GET, "/", false, [](auto &) { });
+  }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
   unsigned status() { return 200; }

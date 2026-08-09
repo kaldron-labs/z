@@ -243,7 +243,9 @@ struct H3ReqOps {
 
   template <typename L>
   void operation(L &&l) const {
-    l(Zhttp::Method::GET, ZuCSpan{req->path});
+    auto target = Zhttp::splitPathQuery(ZuCSpan{req->path});
+    l(Zhttp::Method::GET, target.path, target.hasQuery,
+      [query = target.query](auto &stream) { stream << query; });
   }
   template <typename L> void host(L &&l) const { l(ZuCSpan{req->host}); }
   template <typename Key, typename L>
@@ -545,11 +547,11 @@ struct H3ResponseParser :
   uint64_t streamID() const;
   void status(unsigned status) { status_ = status; }
   template <typename Rx>
-  void body(Rx &rx);
+  bool body(Rx &rx);
   void complete(State::T state);
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
 
   H3Client::Stream	*stream = nullptr;
   unsigned		status_ = 0;
@@ -594,29 +596,50 @@ struct H3Client::Link :
       app()->fail();
       return;
     }
-    if (!h3.openLocal(*this)) {
+    h3.link_ = this;
+    ZiTxErrorFn txError = h3.txError;
+    unsigned requests = app()->requests.length();
+    auto link = ZmMkRef(this);
+    app()->txInvoke([link, txError = ZuMv(txError), requests]() mutable {
+      auto limits = Zhttp::H3::Params{}.qpackLimits();
+      bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
+      typename H3Cxn::LocalStreams streams;
+      if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
+      ok = ok && bool(streams);
+      link->app()->rxInvoke([
+	link, streams = ZuMv(streams), ok
+      ]() mutable {
+	if (!ok || !link->h3.openLocal(*link, ZuMv(streams))) {
+	  link->app()->fail();
+	}
+      });
+      if (!ok) return;
+      for (unsigned i = 0; i < requests; ++i) {
+	auto stream = link->stream(Zquic::StreamType::Duplex);
+	link->app()->rxInvoke([
+	  link, stream = ZuMv(stream), i
+	]() mutable { link->opened(i, ZuMv(stream)); });
+      }
+    });
+  }
+  void opened(unsigned i, ZmRef<Stream> stream) {
+    if (!h3.localOpen) return;
+    if (!stream) {
       app()->fail();
       return;
     }
-    for (unsigned i = 0, n = app()->requests.length(); i < n; ++i) {
-      auto stream = this->stream(Zquic::StreamType::Duplex);
-      if (!stream) {
-	app()->fail();
-	return;
-      }
-      stream->requestIndex = i;
-      stream->parser.bind(stream);
-      stream->parser.reset();
-      if (stream->file.open(app()->requests[i].output,
-	  ZiFile::Write | ZiFile::Create | ZiFile::Truncate | ZiFile::GC,
-	  0666) != Zi::OK) {
-	app()->fail();
-	return;
-      }
-      if (!sendH3Request_(app()->requests[i], stream)) {
-	app()->fail();
-	return;
-      }
+    stream->requestIndex = i;
+    stream->parser.bind(stream);
+    stream->parser.reset();
+    if (stream->file.open(app()->requests[i].output,
+	ZiFile::Write | ZiFile::Create | ZiFile::Truncate | ZiFile::GC,
+	0666) != Zi::OK) {
+      app()->fail();
+      return;
+    }
+    if (!sendH3Request_(app()->requests[i], stream)) {
+      app()->fail();
+      return;
     }
   }
   void disconnected(bool) {
@@ -652,13 +675,17 @@ uint64_t H3ResponseParser::streamID() const
 }
 
 template <typename Rx>
-void H3ResponseParser::body(Rx &rx)
+bool H3ResponseParser::body(Rx &rx)
 {
-  Zhttp::bodyEach(rx, [this](ZuBSpan body) {
+  bool accepted = true;
+  bool consumed = Zhttp::bodyEach(rx, [this, &accepted](ZuBSpan body) {
     if (!stream || !body.length()) return;
-    if (stream->file.write(body.data(), body.length()) != Zi::OK)
+    if (stream->file.write(body.data(), body.length()) != Zi::OK) {
+      accepted = false;
       stream->complete(false);
+    }
   });
+  return consumed && accepted;
 }
 
 void H3ResponseParser::complete(State::T state)

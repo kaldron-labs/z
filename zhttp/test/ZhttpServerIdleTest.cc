@@ -106,7 +106,7 @@ struct Workload {
     template <typename Emit>
     void body(Emit &&emit) {
       this->state->responseCallback();
-      emit([](auto &body) { body << 'x'; });
+      emit([](auto &body) { body << 'x'; return true; });
     }
     template <typename L> void bodyHdrs(L &&) {
       this->state->responseCallback();
@@ -118,7 +118,7 @@ struct Workload {
     void body(Emit &&emit) {
       this->state->responseCallback();
       if (this->state->emitOptional)
-	emit([](auto &body) { body << 'x'; });
+	emit([](auto &body) { body << 'x'; return true; });
     }
     template <typename L> void bodyHdrs(L &&) {
       this->state->responseCallback();
@@ -128,7 +128,7 @@ struct Workload {
     template <typename Emit>
     void body(Emit &&emit) {
       this->state->responseCallback();
-      emit([](auto &body) { body << 'x'; });
+      emit([](auto &body) { body << 'x'; return true; });
     }
   };
   struct OptionalStreamResponse :
@@ -137,7 +137,7 @@ struct Workload {
     void body(Emit &&emit) {
       this->state->responseCallback();
       if (this->state->emitOptional)
-	emit([](auto &body) { body << 'x'; });
+	emit([](auto &body) { body << 'x'; return true; });
     }
   };
   struct Request {
@@ -147,8 +147,9 @@ struct Workload {
     }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
     template <typename Key>
-    void header(Zhttp::HdrSection, ZuBSpan) { }
-    template <typename Rx> void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+    void header(Zhttp::FieldSection::T, ZuBSpan) { }
+    template <typename Rx>
+    bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
     void complete(bool) { }
 
     State *state = nullptr;
@@ -267,7 +268,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
       Builder, RequestHeaders, ZuTypeList<>, true, false>;
 
     template <typename L>
-    void operation(L &&l) const { l(Zhttp::Method::POST, "/"); }
+    void operation(L &&l) const {
+      l(Zhttp::Method::POST, "/", false, [](auto &) { });
+    }
     template <typename L>
     void host(L &&l) const { l("localhost"); }
     template <typename Key, typename L>
@@ -644,6 +647,7 @@ void activeStop()
   ZuCHECK(server.activeRequests() == 0,
 	"active server stop releases request admission");
   ZuCHECK(!server.serverFaults() && !server.parseFailures() &&
+      !server.bodyFailures() &&
       !server.responseBuildFailures(),
     "normal shutdown does not report server, parse, or build failures");
   ZuCHECK(server.transportFailures() == unsigned(!state.completeRequest),

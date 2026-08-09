@@ -269,7 +269,7 @@ struct UpgradeReq :
     path = target.raw == "/stream";
   }
   void header(
-      Zhttp::HdrSection, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
@@ -286,9 +286,10 @@ struct UpgradeResp :
   using State = Zhttp::H1::ParserState;
   using Base::header;
 
+  bool enable1xx() const { return true; }
   void status(unsigned v) { statusCode = v; }
   void header(
-      Zhttp::HdrSection, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
