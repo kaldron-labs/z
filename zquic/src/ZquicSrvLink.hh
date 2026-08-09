@@ -281,6 +281,11 @@ public:
     }));
     Base::disconnect(peer);
   }
+  void peerDrainingTx_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server peer-draining handoff outside Tx thread", return);
+    m_closePeer = true;
+  }
   void idleExpired_() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server idle expiry outside Tx thread", return);
@@ -1179,7 +1184,6 @@ private:
 	      CloseError::T(CloseError::None)};
 	  o.logCxnClosed(event, time);
 	}));
-	m_closePeer = true;
 	Base::enterPeerDraining_(frame.errorCode);
 	return true;
       case FrameType::HandshakeDone:
@@ -1256,7 +1260,6 @@ private:
 
   // shared
   ZmAtomic<unsigned>	m_handshakeDoneSent = 0;
-  bool			m_closePeer = false;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -1266,6 +1269,7 @@ private:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   ZiSockAddr		m_peerAddr;
+  bool			m_closePeer = false;
 };
 
 } // namespace Zquic

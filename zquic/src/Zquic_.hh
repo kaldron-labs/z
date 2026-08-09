@@ -425,12 +425,19 @@ class Endpoint_ {
     }
 
   private:
+    // shared: stable after construction
     Endpoint_		*m_endpoint = nullptr;
     unsigned		m_generation = 0;
+
+    // exceptional atomic close handoff shared by Rx and Tx
     ZmAtomic<unsigned>	m_closing = 0;
 
+    // Rx thread exclusive
+    alignas(Zm::CacheLineSize)
     ZmRef<ZiIOBuf>	m_rxBuf;
 
+    // Tx thread exclusive
+    alignas(Zm::CacheLineSize)
     ZmRef<ZiIOBuf>	m_txBuf;
     ZiSockAddr		m_txAddr;
     EcnMark::T		m_txECN = EcnMark::NotECT;
@@ -835,30 +842,36 @@ private:
   const Impl *impl() const { return static_cast<const Impl *>(this); }
   Impl *impl() { return static_cast<Impl *>(this); }
 
+  // shared: stable after init()
   ZiMultiplex		*m_mx = nullptr;
+
+  // shared read-mostly active connection identity; mutation is Rx-owned
+  CxnRef		m_cxn;
+  unsigned		m_generation = 0;
+
+  // shared telemetry
+  EndpointRxDiag	m_rxDiag;
+  EndpointTxDiag	m_txDiag;
+
+  // Shared advisory status snapshots; protocol decisions stay on Rx/Tx owners.
   PathMode::T		m_mode = PathMode::ServerUnconnected;
   ZiSockAddr		m_local;
   ZiSockAddr		m_remote;
-  SockConfig		m_sockConfig;
+  bool			m_connected = false;
+  bool			m_listening = false;
+  bool			m_open = false;
 
-  CxnRef		m_cxn;
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  SockConfig		m_sockConfig;
   CxnRef		m_rebindCxn;
   EndpointDiscFns	m_discFns;
-  unsigned		m_generation = 0;
   unsigned		m_rebindGeneration = 0;
   EndpointRebindFn	m_rebindFn;
   ZiSockAddr		m_rebindLocal;
   ZiSockAddr		m_rebindRemote;
   SockConfig		m_rebindSockConfig;
-  EndpointRxDiag	m_rxDiag;
   SockDiag		m_sockDiag;
-
-  EndpointTxDiag	m_txDiag;
-
-  // Advisory status snapshots; protocol decisions stay on Rx/Tx owners.
-  bool			m_connected = false;
-  bool			m_listening = false;
-  bool			m_open = false;
   bool			m_rebinding = false;
 };
 

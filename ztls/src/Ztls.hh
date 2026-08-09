@@ -1205,7 +1205,7 @@ public:
     auto oldState = state_();
     m_disconnecting = 1; // disconnect() might be bypassed
     stateChanged_(oldState);
-    app()->mx()->del(&m_reconnTimer);
+    impl()->cancelReconn_();
     bool asyncPending = asyncPending_();
     if (asyncPending) {
       asyncRetireTLS_();
@@ -1228,6 +1228,7 @@ public:
 
 protected:
   void up_() { }
+  void cancelReconn_() { }
 
   static int tlsver_(uint16_t v) {
     switch (v) {
@@ -1325,10 +1326,6 @@ private:
   // Read-mostly connection reference; mutation remains Rx-owned.
   CxnRef		m_cxn = nullptr;
 
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  ZmScheduler::Timer	m_reconnTimer;
-
   struct AsyncJob : public ZmPolymorph {
     AsyncJob(
 	ZmRef<Impl> link_, ptls_t *tls_, ptls_async_job_t *job_,
@@ -1354,6 +1351,8 @@ private:
     bool		retired = false;
   };
 
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ptls_t		*m_tls = nullptr;
   unsigned		m_headroom = 0;
   bool			m_txPending = false;
@@ -1521,6 +1520,8 @@ protected:
 
 public:
   void connectFailed(bool transient) {
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS connect failure outside Rx thread", return);
     unsigned reconnFreq = app()->reconnFreq();
     if (transient && reconnFreq > 0)
 	app()->mx()->add(
@@ -1536,6 +1537,12 @@ protected:
   void up_() { connect(); }
 
 private:
+  void cancelReconn_() {
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS reconnect cancellation outside Rx thread", return);
+    app()->mx()->del(&m_reconnTimer);
+  }
+
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
@@ -2158,9 +2165,16 @@ private:
     m_cipherSuites[n] = nullptr;
   }
 
-  // immutable after init()
+  // stable after init(); m_errorFn is cleared during final()
   const ZuID			m_id;
   ZiMultiplex			*m_mx = nullptr;
+  ErrorFn			m_errorFn;
+  ptls_context_t		m_ctx{};
+  ptls_cipher_suite_t		*m_cipherSuites[16]{};
+  ALPNData			m_alpnData;
+  ALPN				m_alpn;
+  Backend::CertStore		*m_cacert = nullptr;
+  Backend::VerifyCert		*m_verify = nullptr;
   unsigned			m_rxThread = 0;
   unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
@@ -2169,19 +2183,12 @@ private:
   // Exceptional lock-guarded registry used by lifecycle and telemetry callers.
   Links				m_links;
 
-  // Rx thread exclusive after init()
+  // Exceptional lifecycle/async coordinator.  Lifecycle code initializes,
+  // starts, stops, and finalizes it; internal I/O runs on m_asyncThread.
   alignas(Zm::CacheLineSize)
   ZiEventLoop			m_eventLoop;
   bool				m_eventLoopInit = false;
   bool				m_eventLoopStarted = false;
-  ErrorFn			m_errorFn;
-
-  ptls_context_t		m_ctx{};
-  ptls_cipher_suite_t		*m_cipherSuites[16]{};
-  ALPNData			m_alpnData;
-  ALPN				m_alpn;
-  Backend::CertStore		*m_cacert = nullptr;
-  Backend::VerifyCert		*m_verify = nullptr;
 };
 
 // CRTP - implementation must conform to the following interface:
@@ -2235,8 +2242,7 @@ protected:
   unsigned reconnFreq() const { return 0; } // default
 
 private:
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
+  // stable after init(); released by the destructor
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
 };
@@ -2453,11 +2459,13 @@ protected:
   }
 
 private:
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
+  // stable after init(); released by the destructor
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
   Backend::TicketKey		*m_ticketKey = nullptr;
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer		m_rebindTimer;
   unsigned			m_stopCount = 0;
   bool				m_listening = false;

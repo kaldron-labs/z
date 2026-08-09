@@ -873,6 +873,11 @@ private:
   Link			*m_link = nullptr;
   int64_t		m_id;
 
+  // shared admission state and published configuration
+  ZmAtomic<unsigned>	m_txQueueCount = 0;
+  unsigned		m_txQueueMax = DefltTxQueueMax;
+  ZiTxErrorFn		m_txErrorFn;
+
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   FlowCredit		m_rxCredit;
@@ -899,9 +904,6 @@ private:
   uint64_t		m_txBufferedBytes = 0;
   FlowCredit		m_txCredit;
   uint64_t		m_txFrameMax = 0;
-  ZmAtomic<unsigned>	m_txQueueCount = 0;
-  unsigned		m_txQueueMax = DefltTxQueueMax;
-  ZiTxErrorFn		m_txErrorFn;
   bool			m_fin = false;
   bool			m_finDequeued = false;
   bool			m_finAckd = false;

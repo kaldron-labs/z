@@ -432,7 +432,7 @@ public:
     auto oldState = state_();
     m_disconnecting = 1;
     stateChanged_(oldState);
-    app()->mx()->del(&m_reconnTimer);
+    impl()->cancelReconn_();
     auto cxn = ZmRef<Cxn>{ZuMvPtr(m_cxn)};
     if (cxn) {
       auto mx = cxn->mx();
@@ -445,6 +445,7 @@ public:
 
 protected:
   void up_() { }
+  void cancelReconn_() { }
 
 private:
   bool tcpTxError_(ZuCSpan message) {
@@ -504,7 +505,6 @@ private:
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
-  ZmScheduler::Timer	m_reconnTimer;
   RxStream		m_rxStream;
 
   // Tx thread exclusive
@@ -591,6 +591,8 @@ template <typename> friend class Client;
   }
 
   void connectFailed(bool transient) {
+    ZiAssert(app()->rxInvoked(), "Ztcp", (),
+      "TCP connect failure outside Rx thread", return);
     unsigned reconnFreq = app()->reconnFreq();
     if (transient && reconnFreq > 0)
 	app()->mx()->add(
@@ -606,6 +608,12 @@ protected:
   void up_() { connect(); }
 
 private:
+  void cancelReconn_() {
+    ZiAssert(app()->rxInvoked(), "Ztcp", (),
+      "TCP reconnect cancellation outside Rx thread", return);
+    app()->mx()->del(&m_reconnTimer);
+  }
+
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
@@ -870,21 +878,18 @@ protected:
   }
 
 private:
-  void final_() { m_errorFn = ErrorFn{}; } // direct call from within rx thread
+  void final_() { m_errorFn = ErrorFn{}; } // lifecycle finalization
 
-  // immutable after init()
+  // stable after init(); m_errorFn is cleared during final()
   const ZuID		m_id;
   ZiMultiplex		*m_mx = nullptr;
+  ErrorFn		m_errorFn;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
 
   // shared
   // Exceptional lock-guarded registry used by lifecycle and telemetry callers.
   Links			m_links;
-
-  // Rx thread exclusive after init()
-  alignas(Zm::CacheLineSize)
-  ErrorFn		m_errorFn;
 };
 
 template <typename App> class Client : public Hub<App> {
