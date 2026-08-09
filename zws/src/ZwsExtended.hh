@@ -84,10 +84,10 @@ public:
 template <typename Link, typename Profile>
 class ClientParser :
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
-    ClientParser<Link, Profile>, ClientHeaders, Zhttp::DefltMaxBody> {
+    ClientParser<Link, Profile>, ClientHeaders> {
   using Message = Zhttp::MessageTraits<Profile>;
   using Base = typename Message::template ResponseParser<
-    ClientParser, ClientHeaders, Zhttp::DefltMaxBody>;
+    ClientParser, ClientHeaders>;
 
 public:
   using State = typename Base::State;
@@ -114,9 +114,9 @@ public:
 
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { m_status = value; }
-  void contentLength(uint64_t) { m_invalid = true; }
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection section, ZuBSpan value) {
+    if (section != Zhttp::HdrSection::Final) return;
     if constexpr (Key{}() == "sec-websocket-protocol") {
       if (m_protocolSeen) m_invalid = true;
       m_protocolSeen = true;
@@ -125,9 +125,9 @@ public:
       m_invalid = true;
     }
   }
-  void headers(Zhttp::Fields::Section section, bool endStream) {
-    if (section != Zhttp::Fields::Final) return;
-    if (m_invalid || endStream || m_status < 200 || m_status >= 300 ||
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+    if (m_invalid || type != Zhttp::BodyType::Streamed ||
+	m_status < 200 || m_status >= 300 ||
 	((!m_protocol && m_protocolSeen) ||
 	 (m_protocol && (!m_protocolSeen ||
 	  !subprotocol(m_protocol, m_selected))))) {
@@ -168,10 +168,10 @@ private:
 template <typename Link, typename Profile>
 class ServerParser :
   public Zhttp::MessageTraits<Profile>::template RequestParser<
-    ServerParser<Link, Profile>, ServerHeaders, Zhttp::DefltMaxBody> {
+    ServerParser<Link, Profile>, ServerHeaders> {
   using Message = Zhttp::MessageTraits<Profile>;
   using Base = typename Message::template RequestParser<
-    ServerParser, ServerHeaders, Zhttp::DefltMaxBody>;
+    ServerParser, ServerHeaders>;
 
 public:
   using State = typename Base::State;
@@ -210,9 +210,9 @@ public:
     m_protocol = target.protocol;
   }
   void status(unsigned) { }
-  void contentLength(uint64_t) { m_invalid = true; }
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection section, ZuBSpan value) {
+    if (section != Zhttp::HdrSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;
       m_hostSeen = true;
@@ -227,9 +227,8 @@ public:
       m_protocols = value;
     }
   }
-  void headers(Zhttp::Fields::Section section, bool endStream) {
-    if (section != Zhttp::Fields::Final) return;
-    if (m_invalid || endStream ||
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+    if (m_invalid || type != Zhttp::BodyType::Streamed ||
 	m_method != Zhttp::Method::CONNECT || m_protocol != "websocket" ||
 	!m_target || !m_hostSeen || !m_host ||
 	!m_versionSeen || !m_version13) {

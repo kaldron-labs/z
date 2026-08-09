@@ -43,7 +43,6 @@ public:
     m_selected.length(0);
     m_state = State::Initial;
     m_status = 0;
-    m_http11 = false;
     m_upgradeSeen = false;
     m_connectionSeen = false;
     m_acceptSeen = false;
@@ -53,15 +52,15 @@ public:
     m_invalid = false;
   }
 
-  void version(ZuBSpan value) { m_http11 = value == "HTTP/1.1"; }
   void status(unsigned value) { m_status = value; }
-  void contentLength(uint64_t) { m_invalid = true; }
-  void chunked() { m_invalid = true; }
-  void xferCompression(Zhttp::XferCompression::T) { m_invalid = true; }
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+    if (type != Zhttp::BodyType::None) m_invalid = true;
+  }
   void complete(State::T state) { m_state = state; }
 
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection section, ZuBSpan value) {
+    if (section != Zhttp::HdrSection::Final) return;
     if constexpr (Key{}() == "upgrade") {
       if (m_upgradeSeen) m_invalid = true;
       m_upgradeSeen = true;
@@ -84,7 +83,7 @@ public:
   }
 
   bool valid() const {
-    return m_state == State::Complete && !m_invalid && m_http11 &&
+    return m_state == State::Complete && !m_invalid && !Base::http10() &&
       m_status == 101 && m_upgradeSeen && m_upgrade &&
       m_connectionSeen && m_connection && m_acceptSeen &&
       validAccept(m_accept, m_key) &&
@@ -101,7 +100,6 @@ private:
   HandshakeString	m_selected;
   State::T		m_state = State::Initial;
   unsigned		m_status = 0;
-  bool			m_http11 = false;
   bool			m_upgradeSeen = false;
   bool			m_connectionSeen = false;
   bool			m_acceptSeen = false;
@@ -130,7 +128,6 @@ public:
     m_protocols.length(0);
     m_state = State::Initial;
     m_method = -1;
-    m_http11 = false;
     m_hostSeen = false;
     m_upgradeSeen = false;
     m_connectionSeen = false;
@@ -148,14 +145,14 @@ public:
     m_method = method;
     m_target = target.raw;
   }
-  void version(ZuBSpan value) { m_http11 = value == "HTTP/1.1"; }
-  void contentLength(uint64_t) { m_invalid = true; }
-  void chunked() { m_invalid = true; }
-  void xferCompression(Zhttp::XferCompression::T) { m_invalid = true; }
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+    if (type != Zhttp::BodyType::None) m_invalid = true;
+  }
   void complete(State::T state) { m_state = state; }
 
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection section, ZuBSpan value) {
+    if (section != Zhttp::HdrSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;
       m_hostSeen = true;
@@ -184,7 +181,7 @@ public:
   }
 
   bool valid() const {
-    return m_state == State::Complete && !m_invalid && m_http11 &&
+    return m_state == State::Complete && !m_invalid && !Base::http10() &&
       m_method == Zhttp::Method::GET && m_target && m_hostSeen && m_host &&
       m_upgradeSeen && m_upgrade && m_connectionSeen && m_connection &&
       m_keySeen && validKey(m_key) && m_versionSeen && m_version13;
@@ -201,7 +198,6 @@ private:
   HandshakeString	m_protocols;
   State::T		m_state = State::Initial;
   Zhttp::Method::T	m_method = -1;
-  bool			m_http11 = false;
   bool			m_hostSeen = false;
   bool			m_upgradeSeen = false;
   bool			m_connectionSeen = false;
