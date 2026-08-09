@@ -770,13 +770,18 @@ public:
   using Base::send;
   bool send(ZmRef<ZiIOBuf> buf) {
     ZiIOBuf *last = buf.ptr();
-    if (m_version == Version::H1) {
-      m_h1TxLast = last;
-      m_h1TxReady = true;
-    }
+    sendingH1_(last);
     if (!Base::send(ZuMv(buf))) {
-      if (m_h1TxLast == last) m_h1TxLast = nullptr;
-      m_h1TxOutcome = ResponseOutcome::TxFailed;
+      failedH1_(last);
+      return false;
+    }
+    return true;
+  }
+  bool send(ZmRef<ZiIOBuf> buf, uint64_t generation) {
+    ZiIOBuf *last = buf.ptr();
+    sendingH1_(last);
+    if (!Base::send(ZuMv(buf), generation)) {
+      failedH1_(last);
       return false;
     }
     return true;
@@ -970,6 +975,16 @@ public:
   }
 
 private:
+  void sendingH1_(ZiIOBuf *last) {
+    if (m_version != Version::H1) return;
+    m_h1TxLast = last;
+    m_h1TxReady = true;
+  }
+  void failedH1_(ZiIOBuf *last) {
+    if (m_h1TxLast == last) m_h1TxLast = nullptr;
+    m_h1TxOutcome = ResponseOutcome::TxFailed;
+  }
+
   void closeLater_(uint32_t id, bool peer) {
     auto entry = Wire::h2Stream(id);
     if (!entry || entry->closing) return;
@@ -1341,12 +1356,14 @@ private:
   }
 
 public:
+  // Stable for the native connection lifetime
+  ZiIP			remoteIP;
+  uint16_t		remotePort = 0;
+
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   H3Cxn		h3;
   Logical		logical;
-  ZiIP			remoteIP;
-  uint16_t		remotePort = 0;
   bool			notified = false;
 
   // Tx thread exclusive
@@ -1462,7 +1479,6 @@ public:
 
 private:
   void disconnectedTx_() {
-    if (m_stream) m_stream->txComplete_(false);
     m_native = nullptr;
     m_stream = nullptr;
   }
@@ -1681,8 +1697,6 @@ public:
   using Engine::state;
   using Engine::stop;
   using Engine::stopping;
-  static constexpr uint64_t ReqBodyMax =
-    ParserBodyMax<AppRequest>::V;
 
 private:
   template <typename Protocol> struct Link;
@@ -1793,9 +1807,9 @@ private:
   template <typename Profile>
   struct Parser :
     public MessageTraits<Profile>::template RequestParser<
-      Parser<Profile>, ReqHeaders, ReqBodyMax> {
+      Parser<Profile>, ReqHeaders> {
     using Base = typename MessageTraits<Profile>::template RequestParser<
-      Parser, ReqHeaders, ReqBodyMax>;
+      Parser, ReqHeaders>;
     using State = typename Base::State;
 
     void reset() { Base::reset(); live = nullptr; }
@@ -1807,6 +1821,8 @@ private:
       request.protocol = ZuCSpan{target.protocol};
       request.scheme = target.scheme;
       request.form = target.form;
+      if constexpr (MessageTraits<Profile>::ID == Version::H1)
+	request.http10 = Base::http10();
       request.hasQuery = target.hasQuery;
       auto offsets = [&target](ZuBSpan value, uint32_t &offset,
 	  uint32_t &length) {
@@ -1828,17 +1844,22 @@ private:
       if (request.queryStored) request.queryStorage = ZuCSpan{target.query};
       live->request.operation(method, target);
     }
-    void version(ZuBSpan version_) {
-      auto &request = live->meta;
-      request.http10 = ZuCSpan{version_} == "HTTP/1.0";
-      live->request.version(version_);
-    }
     template <typename Key>
-    void header(ZuBSpan value) {
-      live->request.template header<Key>(value);
+    void header(Zhttp::HdrSection section, ZuBSpan value) {
+      live->request.template header<Key>(section, value);
     }
-    void contentLength(uint64_t value) { live->request.contentLength(value); }
-    void chunked() { live->request.chunked(); }
+    template <typename Key, typename Value>
+    void header(Zhttp::HdrSection section) {
+      live->request.template header<Key, Value>(section);
+    }
+    void header(
+	Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
+      if constexpr (Fields::HasRuntime<AppRequest>{})
+	live->request.header(section, key, value);
+    }
+    void bodyInfo(BodyType::T type, uint64_t length) {
+      live->request.bodyInfo(type, length);
+    }
     void status(unsigned) { }
     template <typename Rx>
     void body(Rx &rx) {
@@ -2561,6 +2582,7 @@ private:
       if (terminal) return 0;
       if (!parser.server) {
 	parser.server = link.app()->server;
+	parser.bodyMax(parser.server->m_config.retainedBodyMax());
       }
       if (!parser.live) {
 	if constexpr (Message::ID == Version::H1)

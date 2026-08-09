@@ -29,8 +29,139 @@ struct State {
   ZmAtomic<unsigned> closed = 0;
   ZmAtomic<unsigned> admissions = 0;
   ZmAtomic<unsigned> releases = 0;
+  unsigned	clientNative = 0;
+  unsigned	maxClientNative = 0;
   uint16_t	port = 0;
 };
+
+struct FlowLogical : public ZmObject { };
+
+struct FlowApp {
+  ZiMultiplex *mx() { return &multiplex; }
+  unsigned rxThread() const { return 0; }
+  bool rxInvoked() const { return true; }
+  bool txInvoked() const { return true; }
+  template <typename L> void rxRun(L &&l) { ZuFwd<L>(l)(); }
+  template <typename L> void txRun(L &&l) { ZuFwd<L>(l)(); }
+
+  ZiMultiplex multiplex;
+};
+
+struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
+  using BufAlloc = Zi::IOBufAlloc<
+    Zhttp::Transport_::TxBufNode, 65544, 65544,
+    ZuStringT<"Zhttp.H2.FlowTest">>;
+
+  struct Tx : public ZiTxStream<Tx> {
+    using Base = ZiTxStream<Tx>;
+
+    Tx(FlowWire *wire_) : Base{65544, 0, 0}, wire{wire_} { }
+
+    ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+      ZmRef<ZiIOBuf> buf = new BufAlloc{};
+      buf->skip = headRoom;
+      buf->length = 0;
+      return buf;
+    }
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+      if (!buf) return false;
+      ++wire->sends;
+      return true;
+    }
+
+    FlowWire *wire;
+  };
+
+  FlowWire(FlowApp *app_) : app_{app_} { }
+
+  FlowApp *app() const { return app_; }
+  Tx txStream() { return Tx{this}; }
+  Tx directTxStream() { return Tx{this}; }
+  void h2CapacityTx_(bool value) {
+    capacity = value;
+    ++capacityCalls;
+    if (value) ++saturatedCalls;
+  }
+  void h2LocalEnd(uint32_t) { }
+  void h2Cancel(uint32_t) { }
+  bool h2Closed(uint32_t id) const { return streamClosed(id); }
+  void h2ResetLogical(uint32_t, Zhttp::H2::Error::T) { }
+  void disconnect_(bool) { }
+  void disconnectNative() { }
+
+  FlowApp	*app_;
+  unsigned	sends = 0;
+  unsigned	capacityCalls = 0;
+  unsigned	saturatedCalls = 0;
+  bool		capacity = false;
+};
+
+ZmRef<ZiIOBuf> flowData(unsigned length)
+{
+  ZmRef<ZiIOBuf> buf = new FlowWire::BufAlloc{};
+  buf->length = length + Zhttp::H2::FrameHeaderSize;
+  uint8_t *data = buf->data();
+  data[0] = uint8_t(length>>16);
+  data[1] = uint8_t(length>>8);
+  data[2] = uint8_t(length);
+  data[3] = Zhttp::H2::FrameType::Data;
+  data[4] = 0;
+  data[5] = data[6] = data[7] = 0;
+  data[8] = 1;
+  return buf;
+}
+
+void runFlowCapacity()
+{
+  ZuTestScope(runFlowCapacity);
+
+  FlowApp app;
+  FlowWire wire{&app};
+  auto config = Zhttp::H2Config()
+    .maxConcurrentStreams(2).maxQueuedFrames(16);
+  ZuCHECK(wire.initWire(false, config), "initialize H2 flow harness");
+  ZmRef<FlowLogical> first = new FlowLogical;
+  ZmRef<FlowLogical> second = new FlowLogical;
+  auto firstStream = wire.openLocalStream(first);
+  auto secondStream = wire.openLocalStream(second);
+  ZuCHECK(firstStream && secondStream,
+    "open two independent H2 streams");
+
+  ZuCHECK(wire.peerInitialWindow(0),
+    "reduce the peer per-stream window to zero");
+  wire.capacityCalls = wire.saturatedCalls = 0;
+  wire.capacity = false;
+  ZuCHECK(wire.sendData(firstStream->id, flowData(1)) &&
+      !wire.capacity && !wire.saturatedCalls,
+    "one blocked H2 stream does not saturate its connection");
+
+  wire.h2WindowUpdate(firstStream->id, 1);
+  wire.h2WindowUpdate(secondStream->id, 65535);
+  wire.capacityCalls = wire.saturatedCalls = 0;
+  wire.capacity = false;
+  ZuCHECK(wire.sendData(secondStream->id, flowData(16384)) &&
+      wire.sendData(secondStream->id, flowData(16384)) &&
+      wire.sendData(secondStream->id, flowData(16384)) &&
+      wire.sendData(secondStream->id, flowData(16382)),
+    "consume the H2 connection window");
+  ZuCHECK(wire.sendData(secondStream->id, flowData(1)) &&
+      wire.capacity && wire.saturatedCalls == 1,
+    "connection-level H2 flow control saturates the link (capacity=",
+    wire.capacity, ", calls=", wire.capacityCalls,
+    ", saturated=", wire.saturatedCalls, ", sends=", wire.sends, ')');
+
+  wire.capacityCalls = wire.saturatedCalls = 0;
+  wire.h2WindowUpdate(0, 1);
+  ZuCHECK(!wire.capacity && wire.capacityCalls >= 1 &&
+      !wire.saturatedCalls,
+    "connection WINDOW_UPDATE restores H2 admission capacity (calls=",
+    wire.capacityCalls, ')');
+
+  bool cleared = false;
+  wire.clearStreams([&cleared]() { cleared = true; });
+  ZuCHECK(cleared, "clear H2 flow harness streams");
+  wire.finalWire();
+}
 
 struct RequestBuilder :
   public Zhttp::H2::Request<RequestBuilder> {
@@ -89,17 +220,18 @@ struct ClientParser :
   }
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
-  void contentLength(uint64_t value) { length = value; }
-  template <typename Key> void header(ZuBSpan) { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
   template <typename Rx>
   void body(Rx &rx) {
     ++bodyCalls;
     Zhttp::bodyEach(rx, [this](ZuBSpan value) { body_ << value; });
   }
   void complete(Zhttp::H2::ParserState::T value) { complete_ = value; }
-  void headers(Zhttp::Fields::Section section, bool endStream) {
-    if (streamExpected && section == Zhttp::Fields::Final &&
-	status_ >= 200 && status_ < 300 && !endStream) {
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
+    if (type == Zhttp::BodyType::Fixed) length = length_;
+    if (streamExpected && status_ >= 200 && status_ < 300 &&
+	type != Zhttp::BodyType::None) {
       stream();
       ++streamEstablished;
       ++streamStarts;
@@ -172,6 +304,7 @@ struct ClientLink :
   using Base::Base;
 
   ClientParser parser;
+  unsigned	id = 0;
   unsigned	disconnects = 0;
   bool		streamSent = false;
   bool		holdOpen = false;
@@ -277,18 +410,17 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
     path = target.raw;
     protocol_ = target.protocol;
   }
-  void headers(Zhttp::Fields::Section section, bool endStream) {
-    if (section == Zhttp::Fields::Final &&
-	method == Zhttp::Method::CONNECT && protocol_ &&
-	!endStream) {
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+    if (method == Zhttp::Method::CONNECT && protocol_ &&
+	type != Zhttp::BodyType::None) {
       stream();
       ++streamEstablished;
       ++streamStarts;
     }
   }
-  void contentLength(uint64_t) { }
   void status(unsigned) { }
-  template <typename Key> void header(ZuBSpan) { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
   template <typename Rx>
   void body(Rx &rx) { Zhttp::bodyDrain(rx); }
   template <typename Rx>
@@ -476,6 +608,8 @@ struct MismatchLink :
   using Base = Zhttp::ClientLink<
     MismatchClient, MismatchLink, Zhttp::H2TLS>;
   using Base::Base;
+
+  unsigned id = 0;
 };
 
 void MismatchClient::connectFailed(Link &link, bool)
@@ -577,6 +711,16 @@ struct SharedClient :
   void connectFailed(Link &, bool) {
     ++state->errors;
     state->response.post();
+  }
+  template <typename Native>
+  void nativeUp(
+      unsigned, uint64_t, const ZmRef<Native> &) {
+    if (++state->clientNative > state->maxClientNative)
+      state->maxClientNative = state->clientNative;
+  }
+  void nativeDown(unsigned, uint64_t) {
+    ZmAssert(state->clientNative);
+    --state->clientNative;
   }
   void goaway(uint32_t) { state->goaway.post(); }
   int process(H1Link &, Ztls::RxStream &) { return -1; }
@@ -903,7 +1047,7 @@ void runSharedTLS()
     new SharedClientH2Link{&h1Client};
   if (listening)
     h2Client.connect(
-      h2H1, h2H2, Ztls::Host{"127.0.0.1"}, state.port);
+      h2H1, h2H2, Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool firstH2 =
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(firstH2 && !state.errors,
@@ -916,34 +1060,39 @@ void runSharedTLS()
   ZuCHECK(drained, "client observed server GOAWAY drain");
   if (drained)
     h2Client.connect(
-      h2H1_2, h2H2_2, Ztls::Host{"127.0.0.1"}, state.port);
+      h2H1_2, h2H2_2, Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool secondH2 =
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(secondH2 && !state.errors && state.admissions == 2,
     "post-GOAWAY H2 request used a replacement TLS connection");
+  ZuCHECK(state.maxClientNative == 1,
+    "post-GOAWAY replacement waits for the prior connection to close");
   if (secondH2)
     h2Client.connect(
-      h2H1_3, h2H2_3, Ztls::Host{"127.0.0.1"}, state.port);
+      h2H1_3, h2H2_3, Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool thirdH2 =
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(thirdH2 && !state.errors && state.admissions == 3,
     "stream-ID exhaustion rotated the H2 TLS connection");
+  ZuCHECK(state.maxClientNative == 1,
+    "stream-ID replacement preserves one live connection per link");
   if (thirdH2)
     h1Client.connect(
-      h1H1, h1H2, Ztls::Host{"127.0.0.1"}, state.port);
-  bool h1Response =
+      h1H1, h1H2, Ztls::Host{"127.0.0.1"}, state.port, 0);
+  if (thirdH2)
+    h1Client.connect(
+      h1H1_2, h1H2_2, Ztls::Host{"127.0.0.1"}, state.port, 0);
+  bool h1Responses =
+    state.response.timedwait(Zm::now(10)) == 0 &&
     state.response.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(h1Response,
-    "one TLS listener completed the independent H1 client");
+  ZuCHECK(h1Responses,
+    "one TLS connection completed two overlapping H1 requests");
   ZuCHECK(!state.errors, "shared TLS message paths reported no errors");
   ZuCHECK(state.admissions == 4,
     "shared TLS listener admitted rotated H2 plus H1 connections");
-  h1Client.connect(
-    h1H1_2, h1H2_2, Ztls::Host{"127.0.0.1"}, state.port);
-  bool secondH1 =
-    state.response.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(secondH1 && !state.errors && state.admissions == 4,
-    "second H1 logical request reused its TLS connection");
+  ZuCHECK(!h1H1->active() && !h1H1_2->active() &&
+      !state.errors && state.admissions == 4,
+    "overlapping H1 operations retire without closing their TLS link");
 
   h1Client.stop([&state](bool ok) {
     if (!ok) ++state.errors;
@@ -963,8 +1112,9 @@ void runSharedTLS()
     state.stopped.timedwait(Zm::now(10)) == 0;
   ZuCHECK(stopped, "shared TLS stop continuations completed");
   ZuCHECK(!state.errors, "shared TLS stop reported no errors");
-  ZuCHECK(state.closed == 9,
-    "shared TLS stop disconnected every logical link");
+  ZuCHECK(state.closed == 7 &&
+      !h1H1->active() && !h1H1_2->active(),
+    "shared TLS stop disconnected H2 links and released H1 operations");
   ZuCHECK(state.releases == 4,
     "shared TLS stop released every physical admission");
   h1Client.final();
@@ -1044,6 +1194,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(ZhttpH2HubTest_::runFlowCapacity);
   ZuTestCall(ZhttpH2HubTest_::run);
   ZuTestCall(ZhttpH2HubTest_::runStream);
   ZuTestCall(ZhttpH2HubTest_::runSharedTLS);

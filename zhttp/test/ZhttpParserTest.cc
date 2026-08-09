@@ -42,19 +42,27 @@ using ResponseHeaders = ZuTypeList<
   ZuStringT<"key">, void,
   ZuStringT<"x-empty">, void>;
 struct ResponseParser :
-  public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024> {
-  using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders, 1024>;
+  public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders> {
+  using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders>;
+
+  ResponseParser() : Base{1024} { }
 
   void status(unsigned v) { statusSeen = v; ++statusCalls; }
-  void contentLength(uint64_t v) {
-    contentLengthSeen = v;
-    ++contentLengthCalls;
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+    bodyType = type;
+    bodyLength = length;
+    ++bodyInfoCalls;
+    if (type == Zhttp::BodyType::Fixed) {
+      contentLengthSeen = length;
+      ++contentLengthCalls;
+    }
+    chunkedSeen = type == Zhttp::BodyType::Streamed;
   }
-  void chunked() { chunkedSeen = true; }
 
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection section, ZuBSpan value) {
     if constexpr (Key{}() == "key") {
+      keySection = section;
       ++keyCalls;
       keyValue = spanEq(value, "Value");
     } else if constexpr (Key{}() == "x-empty") {
@@ -93,7 +101,9 @@ struct ResponseParser :
     ++completeCalls;
   }
 
-  void header(ZuBSpan key, ZuBSpan value) {
+  void header(
+      Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
+    runtimeSection = section;
     ++runtimeCalls;
     runtimeKey.length(0);
     runtimeValue.length(0);
@@ -103,6 +113,10 @@ struct ResponseParser :
 
   int				statusSeen = -1;
   int64_t			contentLengthSeen = -1;
+  uint64_t			bodyLength = 0;
+  Zhttp::BodyType::T		bodyType = Zhttp::BodyType::None;
+  Zhttp::HdrSection	keySection = Zhttp::HdrSection::Invalid;
+  Zhttp::HdrSection	runtimeSection = Zhttp::HdrSection::Invalid;
   bool				keyValue = false;
   bool				chunkedSeen = false;
   unsigned			keyCalls = 0;
@@ -113,6 +127,7 @@ struct ResponseParser :
   uint64_t			bodyBytes = 0;
   unsigned			completeCalls = 0;
   unsigned			contentLengthCalls = 0;
+  unsigned			bodyInfoCalls = 0;
   unsigned			runtimeCalls = 0;
   unsigned			recordLen = 0;
   Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
@@ -123,8 +138,10 @@ struct ResponseParser :
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
 struct RequestParser :
-  public Zhttp::H1::Parser<RequestParser, true, RequestHeaders, 1024> {
-  using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders, 1024>;
+  public Zhttp::H1::Parser<RequestParser, true, RequestHeaders> {
+  using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders>;
+
+  RequestParser() : Base{1024} { }
 
   void operation(
     Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
@@ -133,8 +150,14 @@ struct RequestParser :
     path << ZuCSpan{target.raw};
   }
 
+  void bodyInfo(Zhttp::BodyType::T type_, uint64_t length_) {
+    bodyType = type_;
+    bodyLength = length_;
+    ++bodyInfoCalls;
+  }
+
   template <typename Key>
-  void header(ZuBSpan value) {
+  void header(Zhttp::HdrSection, ZuBSpan value) {
     if constexpr (Key{}() == "host") {
       ++hostCalls;
       host.length(0);
@@ -159,13 +182,16 @@ struct RequestParser :
   unsigned			hostCalls = 0;
   unsigned			bodyCalls = 0;
   unsigned			completeCalls = 0;
+  unsigned			bodyInfoCalls = 0;
+  uint64_t			bodyLength = 0;
+  Zhttp::BodyType::T		bodyType = Zhttp::BodyType::Fixed;
   Zhttp::H1::ParserState::T		completeState = Zhttp::H1::ParserState::Initial;
   BodyData			bodyData;
 };
 
 struct LimitedRequestParser :
   public Zhttp::H1::Parser<
-    LimitedRequestParser, true, ZuTypeList<>, 1024, 16, 32> {
+    LimitedRequestParser, true, ZuTypeList<>, 16, 32> {
   void complete(Zhttp::H1::ParserState::T) { ++completeCalls; }
   unsigned completeCalls = 0;
 };
@@ -190,7 +216,8 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Headers,
     "parser did not stop at incomplete header");
   ZuCHECK(parser.statusSeen == 200, "response status not parsed");
-  ZuCHECK(parser.contentLengthSeen == 5, "content-length was not parsed");
+  ZuCHECK(parser.contentLengthSeen < 0,
+    "body metadata callback was premature");
   ZuCHECK(parser.keyCalls == 0, "selected key callback was premature");
   ZuCHECK(parser.bodyCalls == 0, "body callback was premature");
   ZuCHECK(stream.count_() == 1, "partial header buffer was dequeued");
@@ -200,6 +227,11 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
     "response did not complete after second fragment");
   ZuCHECK(parser.keyCalls == 1, "selected key callback count mismatch");
   ZuCHECK(parser.keyValue, "split selected header value mismatch");
+  ZuCHECK(parser.keySection == Zhttp::HdrSection::Final,
+    "selected header section mismatch");
+  ZuCHECK(parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Fixed && parser.bodyLength == 5,
+    "fixed positive body metadata mismatch");
   ZuCHECK(parser.bodyCalls == 1, "body callback count mismatch");
   ZuCHECK(parser.bodyData == "hello", "body data mismatch");
   ZuCHECK(parser.completeCalls == 1 &&
@@ -252,6 +284,11 @@ void testRuntimeHeaderCallback()
     "unselected header key mismatch");
   ZuCHECK(parser.runtimeValue == "varied",
     "unselected header value mismatch");
+  ZuCHECK(parser.runtimeSection == Zhttp::HdrSection::Final,
+    "unselected header section mismatch");
+  ZuCHECK(parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Fixed && !parser.bodyLength,
+    "fixed empty body metadata mismatch");
 }
 
 void testResponseStartLineFragmentedAcrossManyRxBuffers()
@@ -330,6 +367,9 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
     "request suffix did not complete");
   ZuCHECK(parser.hostCalls == 1, "host callback count mismatch");
   ZuCHECK(parser.host == "example.com", "request host not parsed");
+  ZuCHECK(parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::None && !parser.bodyLength,
+    "request without framing did not report no body");
   ZuCHECK(parser.completeCalls == 1, "request complete callback mismatch");
   ZuCHECK(!stream, "stream still has data after request");
 }
@@ -447,6 +487,34 @@ void testRequestErrorClassification()
     "standard request error status mapping mismatch");
 }
 
+void testRuntimeBodyLimit()
+{
+  ZuTestScope(testRuntimeBodyLimit);
+
+  static const char request[] =
+    "POST / HTTP/1.1\r\n"
+    "Content-Length: 5\r\n\r\n"
+    "abcde";
+  RequestParser parser;
+  parser.reset(4);
+  RxStream rejected;
+  rejected.push(mkBuf(request));
+  ZuCHECK(parser.bodyMax() == 4 &&
+      parser.process(rejected) == Zhttp::H1::ParserState::Error &&
+      parser.error().code == Zhttp::RequestErrorCode::ContentTooLarge,
+    "runtime body limit did not reject an oversized request");
+
+  parser.reset(5);
+  RxStream accepted;
+  accepted.push(mkBuf(request));
+  ZuCHECK(parser.bodyMax() == 5 &&
+      parser.process(accepted) == Zhttp::H1::ParserState::Complete &&
+      parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Fixed && parser.bodyLength == 5 &&
+      parser.bodyData == "abcde",
+    "runtime body limit did not admit an exact-size request");
+}
+
 void testEmptySelectedHeaderValues()
 {
   ZuTestScope(testEmptySelectedHeaderValues);
@@ -515,7 +583,7 @@ void testChunkedBodyAcrossRxBuffers()
     "9\r\n\"x\": 42, \r\n",
     "7\r\n\"y\": 42\r\n",
     "1\r\n}\r\n",
-    "0\r\n\r\n"
+    "0\r\nKey: Value\r\n\r\n"
   };
 
   ResponseParser parser;
@@ -532,6 +600,11 @@ void testChunkedBodyAcrossRxBuffers()
   ZuCHECK(parser.completeState == Zhttp::H1::ParserState::Complete,
     "chunked response did not complete");
   ZuCHECK(parser.chunkedSeen, "chunked transfer-encoding was not detected");
+  ZuCHECK(parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Streamed && !parser.bodyLength,
+    "chunked body metadata mismatch");
+  ZuCHECK(parser.keySection == Zhttp::HdrSection::Trailers,
+    "trailer header section mismatch");
   ZuCHECK(parser.bodyBytes == 18, "chunked body total mismatch");
   ZuCHECK(parser.bodyData == "{\"x\": 42, \"y\": 42}",
     "chunked body data mismatch");
@@ -592,6 +665,9 @@ void testCloseDelimitedResponseBody()
     "close-delimited body was published before EOF");
   ZuCHECK(parser.completeCalls == 0,
     "close-delimited response completed before EOF");
+  ZuCHECK(parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Streamed && !parser.bodyLength,
+    "close-delimited body metadata mismatch");
 
   stream.push(mkBuf(frags[1]));
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Body,
@@ -702,11 +778,16 @@ void testNoBodyStatusWithoutLengthCompletesAtHeaders()
   stream.push(mkBuf(
     "HTTP/1.1 204 No Content\r\n"
     "Key: Value\r\n"
+    "Content-Length: 99\r\n"
     "\r\n"));
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete,
     "no-body status did not complete at headers");
   ZuCHECK(parser.keyCalls == 1 && parser.keyValue,
     "no-body status header mismatch");
+  ZuCHECK(parser.keySection == Zhttp::HdrSection::Final &&
+      parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::None && !parser.bodyLength,
+    "no-body status metadata mismatch");
   ZuCHECK(parser.bodyCalls == 0, "no-body status delivered body");
   ZuCHECK(parser.completeCalls == 1 &&
       parser.completeState == Zhttp::H1::ParserState::Complete,
@@ -731,9 +812,13 @@ void testInformationalThenFinalResponse()
   ZuCHECK(parser.statusSeen == 103 && parser.statusCalls == 1 &&
       parser.completeCalls == 0 && !stream,
     "informational response preserves the final-response parse");
+  ZuCHECK(parser.keySection == Zhttp::HdrSection::Informational &&
+      !parser.bodyInfoCalls,
+    "informational header section/body metadata mismatch");
 
   stream.push(mkBuf(
     "HTTP/1.1 200 OK\r\n"
+    "Key: Value\r\n"
     "Content-Length: 4\r\n"
     "\r\n"
     "pong"));
@@ -742,6 +827,10 @@ void testInformationalThenFinalResponse()
   ZuCHECK(parser.statusSeen == 200 && parser.statusCalls == 2 &&
       parser.bodyData == "pong" && parser.completeCalls == 1,
     "final response callbacks follow informational callbacks exactly once");
+  ZuCHECK(parser.keySection == Zhttp::HdrSection::Final &&
+      parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Fixed && parser.bodyLength == 4,
+    "final header section/body metadata mismatch");
 }
 
 void testUpgradeLeavesInput()
@@ -818,6 +907,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRuntimeHeaderCallback);
   ZuTestCall(testInvalidRequestMethod);
   ZuTestCall(testRequestErrorClassification);
+  ZuTestCall(testRuntimeBodyLimit);
   ZuTestCall(testEmptySelectedHeaderValues);
   ZuTestCall(testInvalidContentLengthValues);
   ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);

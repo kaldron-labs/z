@@ -143,6 +143,7 @@ private:
   void queried(ZiResolver_::QueryResult);
   void resolveNext();
   bool resolved(ZiResolver_::ResolveResult);
+  void installResolver(uint64_t, ZmRef<ZiResolver_::Query>);
   bool add(Endpoint);
   void finish(DiscoveryError);
 
@@ -159,6 +160,7 @@ private:
   ZmRef<ZiResolver_::Query> m_resolver;
   const DiscoveryResolver *m_resolverOps = nullptr;
   DiscoveryLimits	m_limits;
+  uint64_t		m_resolverGeneration = 0;
   unsigned		m_record = 0;
   uint16_t		m_port = 0;
   ZmAtomic<unsigned>	m_done = 0;

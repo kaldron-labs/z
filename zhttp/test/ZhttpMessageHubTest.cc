@@ -85,9 +85,9 @@ template <typename Profile> struct ClientLink;
 template <typename Profile>
 struct ClientParser :
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
-    ClientParser<Profile>, TestHeaders, Zhttp::DefltMaxBody> {
+    ClientParser<Profile>, TestHeaders> {
   using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
-    ClientParser, TestHeaders, Zhttp::DefltMaxBody>;
+    ClientParser, TestHeaders>;
   using State = typename Base::State;
 
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
@@ -96,10 +96,11 @@ struct ClientParser :
     ++statusCalls;
     ++shared->statuses;
   }
-  void contentLength(uint64_t value) { length = value; }
-  void chunked() { }
-  void version(ZuBSpan) { }
-  template <typename Key> void header(ZuBSpan value) {
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
+    if (type == Zhttp::BodyType::Fixed) length = length_;
+  }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan value) {
     if constexpr (Key{}() == "x-test")
       xTest = value;
     else if constexpr (Key{}() == "x-trailer")
@@ -192,6 +193,7 @@ struct ClientLink :
   }
 
   ClientParser<Profile> parser;
+  unsigned		id = 0;
 };
 
 template <typename Profile> struct Server;
@@ -202,10 +204,9 @@ struct ServerSession {
   using Message = Zhttp::MessageTraits<Profile>;
 
   struct Parser :
-    public Message::template RequestParser<
-      Parser, ZuTypeList<>, Zhttp::DefltMaxBody> {
-    using Base = typename Message::template RequestParser<
-      Parser, ZuTypeList<>, Zhttp::DefltMaxBody>;
+    public Message::template RequestParser<Parser, ZuTypeList<>> {
+    using Base =
+      typename Message::template RequestParser<Parser, ZuTypeList<>>;
     using State = typename Base::State;
 
     void operation(
@@ -214,10 +215,9 @@ struct ServerSession {
       path = target.raw;
     }
     void status(unsigned) { }
-    void contentLength(uint64_t) { }
-    void chunked() { }
-    void version(ZuBSpan) { }
-    template <typename Key> void header(ZuBSpan) { }
+    void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+    template <typename Key>
+    void header(Zhttp::HdrSection, ZuBSpan) { }
     template <typename Rx>
     void body(Rx &rx) {
       Zhttp::bodyEach(rx, [this](ZuBSpan span) { body_ << span; });

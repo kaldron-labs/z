@@ -584,14 +584,14 @@ private:
 template <
   typename Impl,
   bool Request_ = false,
-  typename Headers_ = ZuTypeList<>,
-  uint64_t MaxBody_ = DefltMaxBody>
+  typename Headers_ = ZuTypeList<>>
 class Parser {
 public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
   using ErrorFn = void (*)(void *, uint64_t);
 
-  Parser() : m_bodyRx{MaxBody} { }
+  Parser(uint64_t bodyMax = DefltMaxBody) :
+    m_bodyMax{bodyMax}, m_bodyRx{bodyMax} { }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -599,7 +599,6 @@ public:
   enum { Request = Request_ };
   using Headers = typename Headers_::template Unshift<
     ZuStringT<"content-length">, void>;
-  static constexpr uint64_t MaxBody = MaxBody_;
   using State = ParserState;
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -667,11 +666,13 @@ private:
 	  impl()->operation(method, target);
 	},
 	[this](unsigned status) { impl()->status(status); },
-	[this](ZuBSpan key, ZuBSpan value) { header_(key, value); }))
+	[this, &fields](ZuBSpan key, ZuBSpan value) {
+	  header_(fields.section(), key, value);
+	}))
       return false;
     return fields.field(name, value,
-      [this](ZuBSpan key, ZuBSpan value) {
-	header_(key, value);
+      [this, &fields](ZuBSpan key, ZuBSpan value) {
+	header_(fields.section(), key, value);
       }) && m_state != State::Error;
   }
 
@@ -690,48 +691,49 @@ private:
 	return false;
   }
 
-  template <typename Key> void header_(ZuBSpan value) {
+  template <typename Key>
+  void header_(Zhttp::HdrSection section, ZuBSpan value) {
     if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
 	ZuCSpan data{value};
-	if (!data ||
-	    Zu_atou(contentLength, data.data(), data.length()) != data.length()) {
+	if (!Fields::uint64(data, contentLength)) {
 	  error_();
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
-	} else if (contentLength > MaxBody) {
+	} else if (contentLength > m_bodyMax) {
 	  error_(RequestErrorCode::ContentTooLarge,
 	    RequestErrorScope::Request, true);
 	  ZiLOG(Error, "Zhttp", "oversized content-length");
 	} else {
 	  m_contentLen = contentLength;
-	  impl()->contentLength(contentLength);
 	}
     } else {
-	impl()->template header<Key>(value);
+	impl()->template header<Key>(section, value);
     }
   }
 
-  void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
+  void runtimeHeader_(
+      Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
     if constexpr (Fields::HasRuntime<Impl>{})
-	impl()->header(key, value);
+	impl()->header(section, key, value);
   }
 
-  void header_(ZuBSpan key, ZuBSpan value) {
+  void header_(
+      Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
     Fields::dispatch<Headers>(
       key, value,
-      [this](auto key, ZuBSpan value) {
-	this->template header_<ZuDecay<decltype(key)>>(value);
+      [this, section](auto key, ZuBSpan value) {
+	this->template header_<ZuDecay<decltype(key)>>(section, value);
       },
-      [this](auto key, auto value) {
+      [this, section](auto key, auto value) {
 	impl()->template header<
-	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>();
+	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section);
       },
-      [this](ZuBSpan key, ZuBSpan value) {
-	runtimeHeader_(key, value);
+      [this, section](ZuBSpan key, ZuBSpan value) {
+	runtimeHeader_(section, key, value);
       });
   }
 
-  Fields::Section parseFields_(ZuCSpan payload, bool initial) {
+  Zhttp::HdrSection parseFields_(ZuCSpan payload, bool initial) {
     auto rx = impl()->qpackRx();
     FieldSectionPrefix prefix;
     FieldState fields;
@@ -747,23 +749,31 @@ private:
 	    ok = false;
 	},
 	impl()->h3Params(), 0, 0, &prefix);
-    if (used != int(n) || !ok) return Fields::Invalid;
-    if (prefix.requiredInsertCount && !rx) return Fields::Invalid;
+    if (used != int(n) || !ok) return Zhttp::HdrSection::Invalid;
+    if (prefix.requiredInsertCount && !rx) return Zhttp::HdrSection::Invalid;
     if (prefix.requiredInsertCount) {
 	HdrBytes ack;
 	if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0)
-	  return Fields::Invalid;
+	  return Zhttp::HdrSection::Invalid;
 	if (!impl()->qpackDecoderWrite(ZuBSpan{ack}))
-	  return Fields::Invalid;
+	  return Zhttp::HdrSection::Invalid;
     }
     auto section = fields.finish(
       [this](Method::T method, const RequestTarget &target) {
 	impl()->operation(method, target);
       },
       [this](unsigned status) { impl()->status(status); },
-      [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
-    if (section != Fields::Invalid)
-      impl()->headers(section, false);
+      [this, &fields](ZuBSpan key, ZuBSpan value) {
+	header_(fields.section(), key, value);
+      });
+    if (section == Zhttp::HdrSection::Final) {
+      m_bodyAllowed = fields.bodyAllowed();
+      impl()->bodyInfo(
+	m_state == State::Stream ? BodyType::Streamed :
+	  !m_bodyAllowed ? BodyType::None :
+	  m_contentLen >= 0 ? BodyType::Fixed : BodyType::Streamed,
+	m_bodyAllowed && m_contentLen >= 0 ? uint64_t(m_contentLen) : 0);
+    }
     return section;
   }
 
@@ -776,14 +786,14 @@ private:
       case 0x01: // HEADERS
 	if (m_state == State::Initial) {
 	  auto section = parseFields_(payload, true);
-	  if (section == Fields::Invalid) return false;
-	  if (section == Fields::Informational) return true;
+	  if (section == Zhttp::HdrSection::Invalid) return false;
+	  if (section == Zhttp::HdrSection::Informational) return true;
 	  if (m_state != State::Stream) m_state = State::Body;
 	  return true;
 	}
 	if (m_state != State::Body) return false;
 	if (!bodyComplete_() ||
-	    parseFields_(payload, false) != Fields::Trailers)
+	    parseFields_(payload, false) != Zhttp::HdrSection::Trailers)
 	  return false;
 	m_state = State::Trailers;
 	return true;
@@ -807,8 +817,8 @@ private:
     switch (frame.type) {
       case 0x00: // DATA
 	if (m_state == State::Stream) return true;
-	if (m_state != State::Body ||
-	    m_bodyLen > MaxBody || frame.length > MaxBody - m_bodyLen)
+	if (m_state != State::Body || !m_bodyAllowed ||
+	    m_bodyLen > m_bodyMax || frame.length > m_bodyMax - m_bodyLen)
 	  return fail_(MessageError, RequestErrorCode::ContentTooLarge);
 	if (m_contentLen >= 0 &&
 	    (m_bodyLen > uint64_t(m_contentLen) ||
@@ -989,7 +999,7 @@ public:
   const RequestError &error() const { return m_error; }
 
   void reset() {
-    m_bodyRx.reset(MaxBody);
+    m_bodyRx.reset(m_bodyMax);
     m_state = State::Initial;
     m_contentLen = -1;
     m_bodyLen = 0;
@@ -1000,18 +1010,29 @@ public:
     m_complete = false;
     m_progressed = false;
     m_streamMode = false;
+    m_bodyAllowed = true;
     m_error = {};
     m_errorLatched = false;
+  }
+  void reset(uint64_t bodyMax_) {
+    m_bodyMax = bodyMax_;
+    reset();
+  }
+  uint64_t bodyMax() const { return m_bodyMax; }
+  void bodyMax(uint64_t value) {
+    m_bodyMax = value;
+    m_bodyRx.reset(value);
   }
 
   // CRTP defaults
   void operation(Method::T, const RequestTarget &) { }
   void status(unsigned) { }
-  template <typename Key> void header(ZuBSpan) { }
-  template <typename Key, typename Value> void header() { }
-  void header(ZuBSpan, ZuBSpan) { }
-  void contentLength(uint64_t) { }
-  void headers(Fields::Section, bool) { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
+  template <typename Key, typename Value>
+  void header(Zhttp::HdrSection) { }
+  void header(Zhttp::HdrSection, ZuBSpan, ZuBSpan) { }
+  void bodyInfo(BodyType::T, uint64_t) { }
   template <typename Rx>
   void body(Rx &rx) { bodyDrain(rx); }
   template <typename Rx>
@@ -1029,6 +1050,7 @@ public:
   }
 private:
   // Rx thread exclusive
+  uint64_t		m_bodyMax;
   int64_t		m_contentLen = -1;
   uint64_t		m_bodyLen = 0;
   uint64_t		m_deferred = 0;
@@ -1047,6 +1069,7 @@ private:
   bool			m_extendedConnect = false;
   bool			m_progressed = false;
   bool			m_streamMode = false;
+  bool			m_bodyAllowed = true;
   RequestError		m_error;
   bool			m_errorLatched = false;
 };

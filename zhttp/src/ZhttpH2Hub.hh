@@ -765,6 +765,7 @@ public:
   }
 
   Impl *impl_() { return static_cast<Impl *>(this); }
+  void h2CapacityTx_(bool) { }
   HPackEncoder &encoder() { return m_encoder; }
   uint32_t peerFrameSize() {
     if (impl_()->app()->txInvoked()) return m_txFrameSize;
@@ -809,6 +810,7 @@ public:
   bool localStreamsExhausted() const {
     return m_nextLocalStream > m_localStreamIDMax;
   }
+  uint32_t nextLocalStreamID() const { return m_nextLocalStream; }
   void localStreamMax(uint32_t value) { m_localStreamMax = value; }
   template <typename Done>
   void removeStream(uint32_t id, Done &&done) {
@@ -837,14 +839,35 @@ public:
   }
   template <typename Done>
   void clearStreams(Done &&done) {
-    uint64_t deferred = 0;
+    clearStreams_([](auto &) { }, ZuFwd<Done>(done), 0);
+  }
+  template <typename L, typename Done>
+  void clearStreams(L &&l, Done &&done) {
+    clearStreams_(ZuFwd<L>(l), ZuFwd<Done>(done), 0);
+  }
+private:
+  template <typename L, typename Done>
+  void clearStreams_(L l, Done done, uint64_t deferred) {
     if (m_streams) {
       auto i = m_streams->iter();
-      while (auto stream_ = i()) {
+	unsigned n = 0;
+      while (n++ < FrameDrainBatch)
+	if (auto stream_ = i()) {
+	  l(*stream_);
 	deferred += stream_->deferred;
 	recentStream_(stream_->id);
+	  i.del();
+	} else
+	  break;
+      if (m_streams->count_()) {
+	auto link = impl_();
+	impl_()->app()->rxRun([
+	  link, l = ZuMv(l), done = ZuMv(done), deferred
+	]() mutable {
+	  link->clearStreams_(ZuMv(l), ZuMv(done), deferred);
+	});
+	return;
       }
-      m_streams->clean();
     }
     m_localStreamCount = 0;
     m_peerStreamCount = 0;
@@ -857,6 +880,7 @@ public:
 	[done = ZuMv(done)]() mutable { done(); });
     });
   }
+public:
   template <typename L>
   void allStreams(L &&l) {
     if (!m_streams) return;
@@ -1644,6 +1668,7 @@ private:
       if (length > m_txWindow) {
 	entry_->scheduled = TxSchedule::Connection;
 	m_connectionFrames.pushNode(entry_);
+	impl_()->h2CapacityTx_(true);
 	return;
       }
       if (length > entry_->window) {
@@ -1736,6 +1761,7 @@ private:
       }
     }
     startFrameDrain_();
+    impl_()->h2CapacityTx_(!m_connectionFrames.empty_());
   }
   void initialWindowTx_(uint32_t value) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
@@ -1759,6 +1785,7 @@ private:
     }
     m_txInitialWindow = value;
     startFrameDrain_();
+    impl_()->h2CapacityTx_(!m_connectionFrames.empty_());
   }
   void removeFramesTx_(uint32_t id) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
@@ -1853,6 +1880,7 @@ private:
 	link->drainFramesTx_();
       });
     }
+    impl_()->h2CapacityTx_(!m_connectionFrames.empty_());
   }
   void txError_(uint32_t id) {
     impl_()->app()->rxRun([
@@ -1885,8 +1913,7 @@ private:
   H2Config		m_config;
   bool			m_server = false;
 
-  // shared queue admission count; queued frame storage remains Tx-owned
-  alignas(Zm::CacheLineSize)
+  // Exceptional shared atomic admission count; frame storage remains Tx-owned.
   QueueAdmission	m_frameAdmission;
 
   // Rx thread exclusive

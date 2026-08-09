@@ -91,7 +91,6 @@ namespace Zhttp {
 #if 0
 struct Parser {
   using Headers = ZhttpHeaders(...);
-  static constexpr uint64_t BodyMax = DefltMaxBody;
 
   // Constructed once per logical stream and destroyed once when that stream
   // ends. reset() is called exactly once before each message, including the
@@ -106,19 +105,14 @@ struct Parser {
   // Called first, before any header() or body() callback. A subsequent
   // validation failure is reported by complete(false).
   void status(unsigned);				// responses only
-  void version(ZuBSpan);
-  void contentLength(uint64_t);
-  void xferCompression(XferCompression::T);		// H1 only
-  void chunked();
+  void bodyInfo(BodyType::T, uint64_t length);
 
   // declared run-time value, declared fixed value, undeclared key/value
-  template <typename Key> void header(ZuBSpan value);
-  template <typename Key, typename Value> void header();
-  void header(ZuBSpan key, ZuBSpan value);
-
-  // Completed H2/H3 field section; section identifies informational, final,
-  // or trailer fields. endStream is meaningful for the initial section.
-  void headers(Fields::Section section, bool endStream);
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan value);
+  template <typename Key, typename Value>
+  void header(Zhttp::HdrSection);
+  void header(Zhttp::HdrSection, ZuBSpan key, ZuBSpan value);
 
   // Synchronous queue prompt; incomplete application framing may remain
   // queued for a later decoded-body append.
@@ -167,8 +161,8 @@ struct Builder {
 // duration of the callback. `ProtocolParser` in the API sketch denotes the
 // selected alias below.
 #if 0
-struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers, MaxBody> {
-  using Base = ProtocolParser<ParserAdapter, Headers, MaxBody>;
+struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers> {
+  using Base = ProtocolParser<ParserAdapter, Headers>;
   using State = typename Base::State;
 
   void reset();
@@ -177,19 +171,15 @@ struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers, MaxBody> {
   void operation(Method::T method, const RequestTarget &target);
   void status(unsigned);
 
-  // H1 protocol and transfer-coding notifications
-  void version(ZuBSpan);
-  void xferCompression(XferCompression::T);
-  void chunked();
-
   // declared run-time value, declared fixed value, undeclared key/value
-  template <typename Key> void header(ZuBSpan value);
-  template <typename Key, typename Value> void header();
-  void header(ZuBSpan key, ZuBSpan value);
-  void contentLength(uint64_t);
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan value);
+  template <typename Key, typename Value>
+  void header(Zhttp::HdrSection);
+  void header(Zhttp::HdrSection, ZuBSpan key, ZuBSpan value);
+  void bodyInfo(BodyType::T, uint64_t length);
 
-  // H2/H3 initial field section, populated decoded-body queue, completion
-  void headers(Fields::Section, bool endStream);
+  // populated decoded-body queue and completion
   // body() is a synchronous prompt; incomplete application framing remains
   // queued and is presented again after a later complete HTTP frame append.
   template <typename Rx> void body(Rx &);
@@ -214,39 +204,33 @@ struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers, MaxBody> {
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
-  uint64_t MaxBody = DefltMaxBody>
-using H1RequestParser = H1::Parser<Impl, true, Headers, MaxBody>;
+  typename Headers = ZuTypeList<>>
+using H1RequestParser = H1::Parser<Impl, true, Headers>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
-  uint64_t MaxBody = DefltMaxBody>
-using H1ResponseParser = H1::Parser<Impl, false, Headers, MaxBody>;
+  typename Headers = ZuTypeList<>>
+using H1ResponseParser = H1::Parser<Impl, false, Headers>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
-  uint64_t MaxBody = DefltMaxBody>
-using H2RequestParser = H2::Parser<Impl, true, Headers, MaxBody>;
+  typename Headers = ZuTypeList<>>
+using H2RequestParser = H2::Parser<Impl, true, Headers>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
-  uint64_t MaxBody = DefltMaxBody>
-using H2ResponseParser = H2::Parser<Impl, false, Headers, MaxBody>;
+  typename Headers = ZuTypeList<>>
+using H2ResponseParser = H2::Parser<Impl, false, Headers>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
-  uint64_t MaxBody = DefltMaxBody>
-using H3RequestParser = H3::Parser<Impl, true, Headers, MaxBody>;
+  typename Headers = ZuTypeList<>>
+using H3RequestParser = H3::Parser<Impl, true, Headers>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
-  uint64_t MaxBody = DefltMaxBody>
-using H3ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
+  typename Headers = ZuTypeList<>>
+using H3ResponseParser = H3::Parser<Impl, false, Headers>;
 
 // Low-level protocol Builder CRTP adapters used internally by the role
 // facades. Application Builders do not derive from these aliases. The
@@ -332,12 +316,10 @@ template <> struct HttpTraits<Version::H1> {
     CloseDelimited = true
   };
 
-  template <
-    typename Impl, typename Headers, uint64_t MaxBody>
-  using RequestParser = H1::Parser<Impl, true, Headers, MaxBody>;
-  template <
-    typename Impl, typename Headers, uint64_t MaxBody>
-  using ResponseParser = H1::Parser<Impl, false, Headers, MaxBody>;
+  template <typename Impl, typename Headers>
+  using RequestParser = H1::Parser<Impl, true, Headers>;
+  template <typename Impl, typename Headers>
+  using ResponseParser = H1::Parser<Impl, false, Headers>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Chunked>
@@ -357,12 +339,10 @@ template <> struct HttpTraits<Version::H2> {
     CloseDelimited = false
   };
 
-  template <
-    typename Impl, typename Headers, uint64_t MaxBody>
-  using RequestParser = H2::Parser<Impl, true, Headers, MaxBody>;
-  template <
-    typename Impl, typename Headers, uint64_t MaxBody>
-  using ResponseParser = H2::Parser<Impl, false, Headers, MaxBody>;
+  template <typename Impl, typename Headers>
+  using RequestParser = H2::Parser<Impl, true, Headers>;
+  template <typename Impl, typename Headers>
+  using ResponseParser = H2::Parser<Impl, false, Headers>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
@@ -382,12 +362,10 @@ template <> struct HttpTraits<Version::H3> {
     CloseDelimited = false
   };
 
-  template <
-    typename Impl, typename Headers, uint64_t MaxBody>
-  using RequestParser = H3::Parser<Impl, true, Headers, MaxBody>;
-  template <
-    typename Impl, typename Headers, uint64_t MaxBody>
-  using ResponseParser = H3::Parser<Impl, false, Headers, MaxBody>;
+  template <typename Impl, typename Headers>
+  using RequestParser = H3::Parser<Impl, true, Headers>;
+  template <typename Impl, typename Headers>
+  using ResponseParser = H3::Parser<Impl, false, Headers>;
   template <
     typename Impl, typename Headers, typename Trailers,
     bool HasBody, bool Streaming>
@@ -425,13 +403,6 @@ struct HasBuilderBodyHdrs : public ZuFalse { };
 template <typename U, typename L>
 struct HasBuilderBodyHdrs<U, L, decltype(
   ZuDeclVal<U &>().bodyHdrs(ZuDeclVal<L>()), void())> : public ZuTrue { };
-
-template <typename U, typename = void>
-struct ParserBodyMax { static constexpr uint64_t V = uint64_t(-1); };
-template <typename U>
-struct ParserBodyMax<U, decltype((void)U::BodyMax, void())> {
-  static constexpr uint64_t V = U::BodyMax;
-};
 
 template <typename Write, typename Stream>
 bool invokeBodyWriter(Write &&write, Stream &stream) {
@@ -669,7 +640,9 @@ public:
       builder.emitBody([
 	&builder, &headerTx, &body,
 	&emitted, &duplicate, &writerOK, &headersOK](auto &&write) {
+	(void)builder;
 	(void)headerTx;
+	(void)headersOK;
 	if (emitted) { duplicate = true; return; }
 	emitted = true;
 	if constexpr (Message::ID == Version::H1)
@@ -719,10 +692,8 @@ private:
     bool emitted = false;
     bool duplicate = false;
     bool writerOK = false;
-    bool headersOK = true;
     builder.emitBody([
-      &builder, &body, &emitted, &duplicate, &writerOK, &headersOK](
-	  auto &&write) {
+      &body, &emitted, &duplicate, &writerOK](auto &&write) {
       if (emitted) { duplicate = true; return; }
       emitted = true;
       writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
@@ -733,7 +704,7 @@ private:
       m_ops->template produced<false>(builder.produced);
     }
     if ((!optional && !emitted) || duplicate ||
-	(emitted && (!headersOK || !writerOK || !body.valid())))
+	(emitted && (!writerOK || !body.valid())))
       return m_ops->template fail<false>();
     if (!emitted) return m_ops->empty(builder.appBuilder());
     if (!begin_(builder, tx))

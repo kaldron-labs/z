@@ -61,11 +61,15 @@ Alt-Svc parsing, formatting, cache policy, and HTTPS discovery are grouped in
 `libZquic`.  Applications configure TCP, TLS, and QUIC with public `Zhttp`
 configuration types; HTTP ALPN and mandatory H3 transport defaults are
 library-owned.  Native transport traits remain private implementation detail.
-For complete HTTP applications, `Zhttp::Client` owns client routing,
-discovery, pools, retries, redirects, fallback, and hub lifecycle, while
-`Zhttp::Server` owns server listeners, admission, sessions, message
-selection, and hub lifecycle. Applications provide protocol configuration
-and message-typed application contracts:
+For complete HTTP applications, `Zhttp::Client` coordinates an
+application-sized array of destination-specific pools. Each `Zhttp::Pool`
+owns its transmit queue, routing/discovery state, request policy, active
+requests, and stable link slots. A link owns at most one current connection,
+but a connection can carry multiple overlapping operations up to its
+configured per-link concurrency. Pool concurrency, link count, and per-link
+concurrency are independent. `Zhttp::Server` owns server listeners, admission,
+sessions, message selection, and hub lifecycle. Applications provide protocol
+configuration and message-typed application contracts:
 
 ```c++
 struct Request_ : ZmObject {
@@ -73,13 +77,12 @@ struct Request_ : ZmObject {
   Zhttp::BodyPolicy::T bodyPolicy() const {
     return put ? Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
   }
-  Zhttp::URLStorage url;
+  Zhttp::URLString target{"/"};
   uint64_t key() const;
   uint64_t length() const { return 1; }
 
   void reset();
   template <typename L> void operation(L &&);
-  template <typename L> void host(L &&);
   template <typename Key, typename L> void header(L &&);
   template <typename L> void header(L &&);
   template <typename Emit> void body(Emit &&);
@@ -98,29 +101,41 @@ struct Request_ : ZmObject {
 
 struct ResParser {
   using Headers = ResponseHeaders;
-  static constexpr uint64_t BodyMax = ResponseBodyMax;
   void init(const Request_ &);
   void status(unsigned);
-  template <typename Key> void header(ZuBSpan);
+  void bodyInfo(Zhttp::BodyType::T, uint64_t);
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan);
+  void header(Zhttp::HdrSection, ZuBSpan key, ZuBSpan value);
   template <typename Rx> void body(Rx &);
   void complete(bool);
 };
 
 struct App;
+struct Pool;
 using RequestQ = ZmPQueue<Request_,
   ZmPQueueOverlap<false, ZmPQueueNode<Request_>>>;
 using Request = RequestQ::Node;
-using TxQ = ZmPQTx<App, RequestQ, ZmPQTxOrdered<false>>;
-struct App : Zhttp::Client<TxQ, ResParser> {
+using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
+struct Pool : Zhttp::Pool<App, TxQ, ResParser> {
+  using Base = Zhttp::Pool<App, TxQ, ResParser>;
+  Pool(App *app) : Base{app} { }
   RequestQ *txQueue() { return &requests; }
   void archive_(Request *) { }
   ZmRef<Request> retrieve_(uint64_t, uint64_t) { return {}; }
   RequestQ requests;
 };
+struct App : Zhttp::Client<App, Pool> {
+  void idle() { }
+};
 App client;
 client.init(
   Zhttp::HubConfig{&mx, "rx", "tx"},
-  Zhttp::ClientConfig{}
+  1,
+  Zhttp::Config{}
+    .links(10)
+    .concurrency(100)
+    .linkConcurrency(10)
     .protocol(Zhttp::ProtocolPolicy::PreferH3)
     .h2Policy(Zhttp::H2Policy::Prefer)
     .retainedBodyMax(uint32_t(-1))
@@ -128,10 +143,15 @@ client.init(
   Zhttp::TCPConfig{},
   Zhttp::H2Config{}.caPath(ca),
   Zhttp::QUICConfig{}.caPath(ca));
+client.pool(
+  0, Zhttp::Destination{"www.example.com", 443});
 client.start();
 ZmRef<Request> request = new Request;
-client.enqueue(request);
-client.seal();
+request->target = "/resource?version=1";
+client.enqueue(0, request);
+client.seal(0);
+client.limited(0, 3, true);  // stop future assignments to link slot 3
+client.limited(0, 3, false); // make it eligible again when not saturated
 // Request_::body() runs synchronously on Tx;
 // ResParser::body() runs synchronously on Rx.
 client.stop([](bool) { /* shutdown continuation */ });
@@ -206,12 +226,21 @@ provide asynchronous `next(max, done)` production.
 `BodyPolicy::None` is allocation-free. `BodyPolicy::Fixed` and
 `BodyPolicy::OptionalFixed`
 retain the complete message while `bodyHdrs()` patches body-dependent header
-values. `ClientConfig` and `ServerConfig` bound retained entity and complete
+values. `Config` and `ServerConfig` bound retained entity and complete
 message sizes with `retainedBodyMax()` and `retainedMessageMax()`; the fixed
 entity limit is additionally capped at `UINT_MAX`. `BodyPolicy::Stream` and
 `BodyPolicy::OptionalStream` release buffers as they fill; H1 maps them to
 chunked transfer encoding and H2/H3 map them to DATA and their native final
 boundary.
+
+Receive parsers take their body limit at run time from the effective client,
+pool, or server configuration; response/request parser types do not define a
+compile-time `BodyMax`. After the final header section,
+`bodyInfo(type, length)` reports `None`, `Streamed`, or `Fixed` framing
+(`Fixed, 0` is a valid empty body). Every selected or run-time `header`
+callback receives its `Zhttp::HdrSection`, including informational and
+trailer fields.
+
 Client stream writers remain synchronous.  A server streaming response exposes
 `next(max, done)`: each turn produces at most one pooled `ZiIOBuf`, and the
 server asks for the next turn only after Tx capacity is released.  Each retry

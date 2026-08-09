@@ -124,6 +124,7 @@ struct Options {
   HdrString		authPass;
   HdrString		logPath{"-"};
   HdrString		pidfile;
+  int			eventFD = -1;
   unsigned		maxconn = 0;
   unsigned		timeout = 30;
   bool			ipv6 = false;
@@ -174,6 +175,7 @@ ZfStruct((Options, CLI),
   (((auth),            (CLI::Long<"auth">)),                     (String)),
   (((logPath),         (CLI::Long<"log">)),                      (String, "-")),
   (((pidfile),         (CLI::Long<"pidfile">)),                  (String)),
+  (((eventFD),         (CLI::Long<"event-fd">)),                 (Int32, -1)),
   (((maxconn),         (CLI::Long<"maxconn">)),                  (UInt32)),
   (((timeout),         (CLI::Long<"timeout">)),                  (UInt32, 30)),
   (((ipv6),            (CLI::Long<"ipv6">)),                     (Bool)),

@@ -162,6 +162,40 @@ struct Resolver {
   unsigned		cancels = 0;
 };
 
+struct SyncResolver {
+  SyncResolver(bool fail_) : fail{fail_}, ops{
+    .context = this,
+    .query = query_,
+    .resolve = resolve_,
+    .cancel = cancel_
+  } { }
+
+  static ZmRef<ZiResolver_::Query> query_(
+      void *, ZiResolver_::Host, uint16_t, uint16_t,
+      ZiResolver_::QueryFn) {
+    return {};
+  }
+  static ZmRef<ZiResolver_::Query> resolve_(
+      void *context, ZiResolver_::Host, ZiResolver_::ResolveFn fn) {
+    auto self = static_cast<SyncResolver *>(context);
+    ++self->resolves;
+    if (self->fail)
+      fn(ZiResolver_::ResolveResult{ZiResolver_::Event{}});
+    else if (fn(ZiResolver_::ResolveResult{ZiIP{"127.0.0.1"}}))
+      fn(ZiResolver_::ResolveResult{});
+    return new ZiResolver_::Query;
+  }
+  static void cancel_(void *context, ZmRef<ZiResolver_::Query> query) {
+    auto self = static_cast<SyncResolver *>(context);
+    if (query) ++self->cancels;
+  }
+
+  bool			fail;
+  Zhttp::DiscoveryResolver ops;
+  unsigned		resolves = 0;
+  unsigned		cancels = 0;
+};
+
 void parse()
 {
   ZuTestScope(parse);
@@ -341,6 +375,50 @@ void direct()
   ZiResolver::final();
 }
 
+void synchronous()
+{
+  ZuTestScope(synchronous);
+  Zhttp::Endpoint endpoint{
+    .origin = origin("origin.example"),
+    .target = "target.example",
+    .tlsName = "origin.example",
+    .port = 443,
+    .source = Zhttp::EndpointSource::Origin,
+    .httpVersion = Zhttp::Version::H2
+  };
+  SyncResolver success{false};
+  unsigned callbacks = 0;
+  int code = Zhttp::DiscoveryCode::ResolveFailure;
+  Zhttp::Endpoints endpoints;
+  auto request = Zhttp::resolveH3(
+    endpoint, Zhttp::DiscoveryLimits{},
+    Zhttp::DiscoveryFn{[&](auto error, auto value) {
+      ++callbacks;
+      code = error.code;
+      endpoints = ZuMv(value);
+    }}, &success.ops);
+  ZuCHECK(callbacks == 1 && code == Zhttp::DiscoveryCode::OK &&
+      endpoints.length() == 1 && success.resolves == 1,
+    "synchronous resolver success completes once");
+  ZuCHECK(success.cancels == 1,
+    "discard handle returned after synchronous success");
+
+  SyncResolver failure{true};
+  callbacks = 0;
+  code = Zhttp::DiscoveryCode::OK;
+  request = Zhttp::resolveH3(
+    endpoint, Zhttp::DiscoveryLimits{},
+    Zhttp::DiscoveryFn{[&](auto error, auto) {
+      ++callbacks;
+      code = error.code;
+    }}, &failure.ops);
+  ZuCHECK(callbacks == 1 && code == Zhttp::DiscoveryCode::ResolveFailure &&
+      failure.resolves == 1,
+    "synchronous resolver failure completes once");
+  ZuCHECK(failure.cancels == 1,
+    "discard handle returned after synchronous failure");
+}
+
 void traversal()
 {
   ZuTestScope(traversal);
@@ -425,6 +503,7 @@ int main(int argc, char **argv)
   ZuTestCall(rrset);
   ZuTestCall(cancel);
   ZuTestCall(direct);
+  ZuTestCall(synchronous);
   ZuTestCall(traversal);
   ZuTestCall(aliasLoop);
   return 0;

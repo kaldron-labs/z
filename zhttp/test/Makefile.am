@@ -29,7 +29,7 @@ noinst_PROGRAMS = \
 	ZhttpHPackTest ZhttpQPackTest ZhttpQPackDynamicTest \
 	ZhttpTransportContractTest ZhttpH1HubTest ZhttpH3HubTest \
 	ZhttpH3PushTest ZhttpHubLifecycleTest ZhttpURLTest ZhttpAltSvcTest \
-	ZhttpDiscoveryTest ZhttpClientCancelTest \
+	ZhttpDiscoveryTest ZhttpClientCancelTest ZhttpClientPoolTest \
 	ZhttpServerIdleTest ZhttpBoundaryTest
 dist_noinst_SCRIPTS = ZhttpBoundaryFixture.sh
 dist_noinst_DATA = ZhttpJ2N100000HashTune.csv \
@@ -62,6 +62,8 @@ ZhttpURLTest_SOURCES = ZhttpURLTest.cc
 ZhttpAltSvcTest_SOURCES = ZhttpAltSvcTest.cc
 ZhttpDiscoveryTest_SOURCES = ZhttpDiscoveryTest.cc
 ZhttpClientCancelTest_SOURCES = ZhttpClientCancelTest.cc
+ZhttpClientPoolTest_SOURCES = ZhttpClientCancelTest.cc
+ZhttpClientPoolTest_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_CLIENT_POOL_TEST
 ZhttpServerIdleTest_SOURCES = ZhttpServerIdleTest.cc
 ZhttpBoundaryTest_SOURCES = ZhttpBoundaryTest.cc
 

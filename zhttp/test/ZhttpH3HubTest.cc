@@ -103,11 +103,12 @@ struct ClientParser :
   }
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
-  void contentLength(uint64_t value) { length = value; }
-  template <typename Key> void header(ZuBSpan) { }
-  void headers(Zhttp::Fields::Section section, bool) {
-    if (streamExpected && section == Zhttp::Fields::Final &&
-	status_ >= 200 && status_ < 300) {
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
+    if (type == Zhttp::BodyType::Fixed) length = length_;
+    if (streamExpected && status_ >= 200 && status_ < 300 &&
+	type != Zhttp::BodyType::None) {
       Base::stream();
       ++streamEstablished;
       ++streamStarts;
@@ -189,6 +190,7 @@ struct StreamClientLink :
   struct Mode { enum { REST, Echo, Reset, Malformed }; };
 
   ClientParser	parser;
+  unsigned	id = 0;
   int8_t	mode = Mode::REST;
   bool		sent = false;
 };
@@ -321,10 +323,10 @@ struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
       ++streamStarts;
     }
   }
-  void headers(Zhttp::Fields::Section, bool) { }
-  void contentLength(uint64_t) { }
+  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   void status(unsigned) { }
-  template <typename Key> void header(ZuBSpan) { }
+  template <typename Key>
+  void header(Zhttp::HdrSection, ZuBSpan) { }
   template <typename Rx>
   void body(Rx &rx) { Zhttp::bodyDrain(rx); }
   template <typename Rx>

@@ -41,6 +41,7 @@ struct State {
   ZmSemaphore	disconnected;
   ZmSemaphore	released;
   ZmSemaphore	stopped;
+  ZmSemaphore	completed;
   ZmAtomic<unsigned> errors = 0;
   ZmAtomic<unsigned> releaseCount = 0;
   ZmAtomic<unsigned> stopCount = 0;
@@ -75,6 +76,7 @@ struct State {
     disconnected.post();
     released.post();
     stopped.post();
+    completed.post();
   }
 };
 
@@ -140,14 +142,12 @@ struct Workload {
   };
   struct Request {
     using Headers = ZuTypeList<>;
-    static constexpr uint64_t BodyMax = 1024;
     void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) {
       if (state) state->requestStarted.post();
     }
-    void version(ZuBSpan) { }
-    void contentLength(uint64_t) { }
-    void chunked() { }
-    template <typename Key> void header(ZuBSpan) { }
+    void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+    template <typename Key>
+    void header(Zhttp::HdrSection, ZuBSpan) { }
     template <typename Rx> void body(Rx &rx) { Zhttp::bodyDrain(rx); }
     void complete(bool) { }
 
@@ -246,6 +246,7 @@ struct Workload {
       Zhttp::ResponseOutcome::Success : Zhttp::ResponseOutcome::Reset;
     if (result.outcome != expected) state->fail();
     ++state->completedCount;
+    state->completed.post();
   }
   bool close(const Response &) const { return false; }
 
@@ -279,6 +280,8 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     public Zhttp::ClientLink<Client, Link, Profile> {
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
+
+    unsigned id = 0;
   };
 
   Client(State *state_) : state{state_} { }
@@ -604,14 +607,32 @@ void activeStop()
   stopReturned = 1;
   bool stoppedEarly = false;
   if constexpr (Async) {
-    stoppedEarly = state.stopped.trywait() == 0;
+    if (state.stopped.trywait() == 0)
+      stoppedEarly = state.stopCount.load_();
     ZuCHECK(!stoppedEarly,
 	"server stop waits for outstanding body producer");
+    bool cancelled = state.completedCount.load_();
+    if (!cancelled) {
+      auto timeout = Zm::now(10);
+      do {
+	cancelled = state.completedCount.load_();
+      } while (!cancelled && state.completed.timedwait(timeout) == 0);
+    }
+    ZuCHECK(cancelled,
+	"server stop cancels body production before producer release");
     ProducerDone done{ZuMv(state.producerDone)};
     if (done) done(ZmRef<ZiIOBuf>{}, false);
   }
-  bool stopped = !serverInited || stoppedEarly ||
-    state.stopped.timedwait(Zm::now(10)) == 0;
+  bool stopped = !serverInited || stoppedEarly;
+  if (!stopped) {
+    auto timeout = Zm::now(10);
+    do {
+      if (state.stopCount.load_()) {
+	stopped = true;
+	break;
+      }
+    } while (state.stopped.timedwait(timeout) == 0);
+  }
   if (!stopped && serverInited) (void)server.stop();
   ZuCHECK(stopped, "active server stop completes");
   ZuCHECK(state.stopCount.load_() == 1,
@@ -660,6 +681,7 @@ int main(int argc, char **argv)
   ZuTestCall((activeStop<Zhttp::H3QUIC>));
   ZuTestCall((activeStop<Zhttp::H1TCP, true>));
   ZuTestCall((activeStop<Zhttp::H1TCP, false, false, true>));
+  ZuTestCall((activeStop<Zhttp::H1TLS, false, false, true>));
   ZuTestCall((activeStop<Zhttp::H1TCP, false, true>));
   return 0;
 }
