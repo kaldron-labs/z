@@ -99,6 +99,8 @@ public:
   void earlyData(bool v) { m_earlyData = v; }
   bool txQueued() const { return m_txQueued; }
   void txQueued(bool v) { m_txQueued = v; }
+  bool reapPending() const { return m_reapPending; }
+  void reapPending(bool v) { m_reapPending = v; }
   bool rxComplete() const {
     return m_rxState.complete() && m_rxDelivered == m_rxState.finalSize();
   }
@@ -861,6 +863,7 @@ private:
   bool			m_resetAckd = false;
   bool			m_stopSent = false;
   bool			m_stopAckd = false;
+  bool			m_reapPending = false;
   PendingControl	m_resetStreamControl;
   PendingControl	m_stopSendingControl;
   bool			m_txQueued = false;

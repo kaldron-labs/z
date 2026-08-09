@@ -53,6 +53,38 @@ Zquic::AddrValidationDiag addrValidationDiag(Server &server)
     [&server](auto wake) { server.addrValidationDiag(ZuMv(wake)); });
 }
 
+template <typename Link>
+auto openStream(
+  const Link &link,
+  Zquic::StreamType::T type = Zquic::StreamType::Duplex)
+{
+  using StreamRef = decltype(link->stream(type));
+  StreamRef stream;
+  ZmBlock<>{}([&](auto wake) {
+    link->app()->txRun([
+      link, type, &stream, wake = ZuMv(wake)
+    ]() mutable {
+      stream = link->stream(type);
+      wake();
+    });
+  });
+  return stream;
+}
+
+template <typename Link>
+auto findStream(const Link &link, int64_t id)
+{
+  using StreamRef = decltype(link->findStream(id));
+  StreamRef stream;
+  ZmBlock<>{}([&](auto wake) {
+    link->app()->rxRun([link, id, &stream, wake = ZuMv(wake)]() mutable {
+      stream = link->findStream(id);
+      wake();
+    });
+  });
+  return stream;
+}
+
 struct TestClient : public Zquic::Client<TestClient> {
   struct Link;
   struct Stream;
@@ -538,13 +570,13 @@ void testEndpointOpen()
   ZuCHECK(!diag(serverLink).failures(),
     "runtime server failure diagnostics mismatch");
 
-  auto clientBidi = clientLink->stream(Zquic::StreamType::Duplex);
-  auto clientUni = clientLink->stream(Zquic::StreamType::Simplex);
+  auto clientBidi = openStream(clientLink, Zquic::StreamType::Duplex);
+  auto clientUni = openStream(clientLink, Zquic::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientBidi, "client-bidi") &&
       clientLink->send(clientUni, "client-uni"),
     "runtime client stream send failed");
-  auto serverBidi = serverLink->stream(Zquic::StreamType::Duplex);
-  auto serverUni = serverLink->stream(Zquic::StreamType::Simplex);
+  auto serverBidi = openStream(serverLink, Zquic::StreamType::Duplex);
+  auto serverUni = openStream(serverLink, Zquic::StreamType::Simplex);
   ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
@@ -566,10 +598,10 @@ void testEndpointOpen()
       diag(serverLink).tx.packetsTx >= 2,
     "runtime stream diagnostics mismatch");
 #endif
-  auto serverRxBidi = serverLink->findStream(0);
-  auto serverRxUni = serverLink->findStream(2);
-  auto clientRxBidi = clientLink->findStream(1);
-  auto clientRxUni = clientLink->findStream(3);
+  auto serverRxBidi = findStream(serverLink, 0);
+  auto serverRxUni = findStream(serverLink, 2);
+  auto clientRxBidi = findStream(clientLink, 1);
+  auto clientRxUni = findStream(clientLink, 3);
   ZuCHECK(serverRxBidi && serverRxBidi->link() == serverLink.ptr() &&
       serverRxBidi->processed >= 1 &&
       serverRxUni && serverRxUni->link() == serverLink.ptr() &&
@@ -880,13 +912,13 @@ void testSrvMultiCxn()
     return;
   }
 
-  auto c0s = c0->stream(Zquic::StreamType::Duplex);
-  auto c1s = c1->stream(Zquic::StreamType::Duplex);
+  auto c0s = openStream(c0, Zquic::StreamType::Duplex);
+  auto c1s = openStream(c1, Zquic::StreamType::Duplex);
   ZuCHECK(c0->send(c0s, "zero") && c1->send(c1s, "one"),
     "multi runtime client stream sends failed");
   ZuCHECK(waitUntil([&s0, &s1]() {
-      auto s0rx = s0->findStream(0);
-      auto s1rx = s1->findStream(0);
+      auto s0rx = findStream(s0, 0);
+      auto s1rx = findStream(s1, 0);
       return s0rx && s0rx->processed &&
 	s1rx && s1rx->processed;
     }), "multi runtime routed stream bytes did not arrive independently");
@@ -905,8 +937,8 @@ void testSrvMultiCxn()
       return s0->closed() && !s0->established();
     }), "multi runtime server link did not close logically");
 
-  auto c0Stale = c0->stream(Zquic::StreamType::Duplex);
-  auto c1Live = c1->stream(Zquic::StreamType::Duplex);
+  auto c0Stale = openStream(c0, Zquic::StreamType::Duplex);
+  auto c1Live = openStream(c1, Zquic::StreamType::Duplex);
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
 #ifdef Zquic_DEBUG

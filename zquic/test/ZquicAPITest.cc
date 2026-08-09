@@ -459,6 +459,9 @@ struct TestLink :
   unsigned scheduledStreams() const {
     return Base::scheduledStreamCount_();
   }
+  ZmRef<TestStream> findTxStream(int64_t id) const {
+    return Base::findTxStream_(id);
+  }
   void dataBlockedForTest(uint64_t maximum) {
     Base::dataBlocked_(maximum);
   }
@@ -739,7 +742,13 @@ void testAlignedSurfaceShape()
     return;
   }
   ZmRef<ClientShapeLink> client = new ClientShapeLink{&clientApp};
-  auto c0 = client->stream();
+  ZmRef<ClientShapeStream> c0;
+  ZmBlock<>{}([&](auto wake) {
+    clientApp.txRun([client, &c0, wake = ZuMv(wake)]() mutable {
+      c0 = client->stream();
+      wake();
+    });
+  });
   ZuCHECK(c0 && c0->id() == 0 && c0->link() == client.ptr() &&
       !client->isServer(),
     "client aligned link/stream shape mismatch");
@@ -761,7 +770,13 @@ void testAlignedSurfaceShape()
     return;
   }
   ZmRef<ServerShapeLink> server = new ServerShapeLink{&serverApp};
-  auto s0 = server->stream();
+  ZmRef<ServerShapeStream> s0;
+  ZmBlock<>{}([&](auto wake) {
+    serverApp.txRun([server, &s0, wake = ZuMv(wake)]() mutable {
+      s0 = server->stream();
+      wake();
+    });
+  });
   ZuCHECK(s0 && s0->id() == 1 && s0->link() == server.ptr() &&
       server->isServer(),
     "server aligned link/stream shape mismatch");
@@ -1119,6 +1134,46 @@ void testStopSendingOwnership()
     fixture.app.runTx();
   ZuCHECK(!fixture.app.txPending() && stream->txCompleteCount == 1,
     "STOP_SENDING/reset race did not drain queued Tx work exactly once");
+}
+
+void testStreamRegistryOwnership()
+{
+  ZuTestScope(testStreamRegistryOwnership);
+
+  HubFixture fixture;
+  ZmRef<TestLink> link = new TestLink{&fixture.app, true};
+  fixture.app.defer();
+  fixture.app.enterRx();
+
+  Zquic::Frame frame;
+  unsigned used = 0;
+  auto packet = streamPkt_(2, 0, "", true, frame, used);
+  ZuCHECK(packet && link->receiveFrame(frame, packet) == 0,
+    "peer stream ownership setup failed");
+  ZmRef<TestStream> stream = link->lastDataStream;
+  ZuCHECK(stream && link->findStream(2).ptr() == stream.ptr() &&
+      fixture.app.txPending(),
+    "Rx stream was not published locally before Tx notification");
+
+  bool txPublished = false;
+  for (unsigned i = 0;
+      fixture.app.txPending() && !fixture.app.rxPending() && i < 8; ++i) {
+    fixture.app.runTx();
+    if (link->findTxStream(2).ptr() == stream.ptr()) txPublished = true;
+  }
+  ZuCHECK(txPublished && fixture.app.rxPending() &&
+      link->findTxStream(2).ptr() == stream.ptr(),
+    "Tx stream publication or retirement request was lost");
+
+  fixture.app.runRx();
+  ZuCHECK(!link->findStream(2) && fixture.app.txPending(),
+    "Rx retirement did not remove the Rx-owned stream index");
+
+  fixture.app.enterTx();
+  for (unsigned i = 0; fixture.app.txPending() && i < 8; ++i)
+    fixture.app.runTx();
+  ZuCHECK(!fixture.app.txPending() && !link->findTxStream(2),
+    "Tx retirement did not remove the Tx-owned stream index");
 }
 
 void testCxnIDFrameLifecycle()
@@ -1772,6 +1827,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);
+  ZuTestCall(testStreamRegistryOwnership);
   ZuTestCall(testCxnIDFrameLifecycle);
   ZuTestCall(testActiveMigrationAPI);
   ZuTestCall(testCxnIDMigrationOverlap);
