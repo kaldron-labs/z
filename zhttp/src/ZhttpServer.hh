@@ -1134,7 +1134,7 @@ struct ServerStream :
 
   void txComplete(Transport_::TxCompleteFn fn) {
     if (this->txCompleted()) {
-      fn(this->error() == Zquic::StreamError::None ?
+      fn(this->txError() == Zquic::StreamError::None ?
 	ResponseOutcome::Success : ResponseOutcome::Reset);
       return;
     }
@@ -1236,15 +1236,23 @@ struct SrvLink :
       config.qpackRxBlocked(), config.qpackTxSections()
     };
     bool extendedConnect = config.extendedConnect();
+    ZiTxErrorFn txError = h3.txError;
     auto link = ZmMkRef(this);
-    this->app()->txRun([link, limits, extendedConnect]() mutable {
+    this->app()->txRun([
+      link, limits, extendedConnect, txError = ZuMv(txError)
+    ]() mutable {
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
+      typename H3Cxn::LocalStreams streams;
+      if (ok)
+	streams = H3Cxn::openLocalStreams(*link, txError);
       link->app()->rxRun([
-	link = ZuMv(link), limits, extendedConnect, ok
+	link = ZuMv(link), limits, extendedConnect, ok,
+	streams = ZuMv(streams)
       ]() mutable {
 	if (!ok || link->closed()) return;
 	auto params = H3::Params().qpackLimits(limits);
-	if (!link->h3.openLocal(*link, params, extendedConnect))
+	if (!link->h3.openLocal(
+	    *link, ZuMv(streams), params, extendedConnect))
 	  link->disconnect(H3::SettingsError);
       });
     });

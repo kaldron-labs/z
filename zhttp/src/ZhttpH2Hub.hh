@@ -687,6 +687,7 @@ struct TxWindowEntry {
     id{id_}, window{window_} { }
 
   ZiTxQueue	frames;
+  ZiTxErrorFn	txErrorFn;
   uint32_t	id = 0;
   int64_t	window = DefltWindow;
   int8_t	scheduled = TxSchedule::None;
@@ -764,6 +765,7 @@ public:
     impl_()->app()->mx()->del(&m_settingsTimer);
   }
 
+  const Impl *impl_() const { return static_cast<const Impl *>(this); }
   Impl *impl_() { return static_cast<Impl *>(this); }
   void h2CapacityTx_(bool) { }
   HPackEncoder &encoder() { return m_encoder; }
@@ -778,6 +780,8 @@ public:
   bool localExtendedConnect() const { return m_config.extendedConnect(); }
 
   Stream<Logical> *h2Stream(uint32_t id) const {
+    ZiAssert(impl_()->app()->rxInvoked(), "Zhttp", (),
+      "H2 stream lookup outside Rx thread", return nullptr);
     return m_streams ? m_streams->findPtr(id) : nullptr;
   }
   Stream<Logical> *openLocalStream(ZmRef<Logical> logical) {
@@ -908,7 +912,16 @@ public:
     return m_recentStreamSet && m_recentStreamSet->find(id);
   }
   void logicalTxErrorFn(uint32_t id, ZiTxErrorFn fn) {
-    if (auto stream_ = h2Stream(id)) stream_->txErrorFn = ZuMv(fn);
+    ZiAssert(impl_()->app()->rxInvoked(), "Zhttp", (),
+      "H2 Tx error callback outside Rx thread", return);
+    if (auto stream_ = h2Stream(id)) {
+      stream_->txErrorFn = fn;
+      auto link = impl_();
+      impl_()->app()->txRun([
+	link, id, fn = ZuMv(fn)]() mutable {
+	link->logicalTxErrorFnTx_(id, ZuMv(fn));
+      });
+    }
   }
   bool finishTx(uint32_t id, Transport_::TxCompleteFn fn) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
@@ -962,7 +975,7 @@ public:
     if (!entry_ || entry_->localEndQueued) return false;
     uint32_t length = buf->length - 9;
     if (length > peerFrameSize()) {
-      return streamTxError_(id, "H2 DATA frame exceeds peer maximum");
+      return streamTxErrorRx_(id, "H2 DATA frame exceeds peer maximum");
     }
     return sendFrame_(id, length, false, ZuMv(buf));
   }
@@ -987,7 +1000,7 @@ public:
       ++admitted;
     if (admitted != frames.length()) {
       if (admitted) m_frameAdmission.pop(admitted);
-      streamTxError_(id, "H2 transmit queue limit exceeded");
+      streamTxErrorRx_(id, "H2 transmit queue limit exceeded");
       return;
     }
     if (endStream) entry_->localEndQueued = true;
@@ -1532,6 +1545,8 @@ private:
     tx.flush();
   }
   TxWindowHash::Node *txWindow_(uint32_t id) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 Tx window lookup outside Tx thread", return nullptr);
     auto entry_ = m_txWindows->findPtr(id);
     if (!entry_) {
       entry_ = new TxWindowHash::Node{
@@ -1539,6 +1554,11 @@ private:
       m_txWindows->addNode(entry_);
     }
     return entry_;
+  }
+  void logicalTxErrorFnTx_(uint32_t id, ZiTxErrorFn fn) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 Tx error callback update outside Tx thread", return);
+    if (auto entry_ = txWindow_(id)) entry_->txErrorFn = ZuMv(fn);
   }
   unsigned dataMaxSizeTx_(uint32_t id) {
     auto tx = impl_()->directTxStream();
@@ -1567,7 +1587,7 @@ private:
     auto entry_ = txWindow_(id);
     if (!entry_ || entry_->localEndQueued) return false;
     if (!m_frameAdmission.push()) {
-      return streamTxError_(id, "H2 transmit queue limit exceeded");
+      return streamTxErrorTx_(id, "H2 transmit queue limit exceeded");
     }
     if (endStream) entry_->localEndQueued = true;
     sendFrameTx_(id, length, endStream, ZuMv(buf));
@@ -1585,7 +1605,7 @@ private:
       ++admitted;
     if (admitted != frames.length()) {
       if (admitted) m_frameAdmission.pop(admitted);
-      streamTxError_(id, "H2 transmit queue limit exceeded");
+      streamTxErrorTx_(id, "H2 transmit queue limit exceeded");
       return;
     }
     if (endStream) entry_->localEndQueued = true;
@@ -1617,7 +1637,7 @@ private:
     uint32_t id, uint32_t length, bool endStream,
     ZmRef<ZiIOBuf> buf) {
     if (!m_frameAdmission.push()) {
-      return streamTxError_(id, "H2 transmit queue limit exceeded");
+      return streamTxErrorRx_(id, "H2 transmit queue limit exceeded");
     }
     auto link = impl_();
     impl_()->app()->txRun([
@@ -1893,12 +1913,22 @@ private:
       }
     });
   }
-  bool streamTxError_(uint32_t id, ZuCSpan message) {
+  bool streamTxError_(ZiTxErrorFn *fn, ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Zhttp", message);
-    auto entry_ = h2Stream(id);
-    if (entry_ && entry_->txErrorFn && !entry_->txErrorFn(e))
-      impl_()->disconnectNative();
+    if (fn && *fn && !(*fn)(e)) impl_()->disconnectNative();
     return false;
+  }
+  bool streamTxErrorRx_(uint32_t id, ZuCSpan message) {
+    ZiAssert(impl_()->app()->rxInvoked(), "Zhttp", (),
+      "H2 Tx error handling outside Rx thread", return false);
+    auto entry_ = h2Stream(id);
+    return streamTxError_(entry_ ? &entry_->txErrorFn : nullptr, message);
+  }
+  bool streamTxErrorTx_(uint32_t id, ZuCSpan message) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 Tx error handling outside Tx thread", return false);
+    auto entry_ = txWindow_(id);
+    return streamTxError_(entry_ ? &entry_->txErrorFn : nullptr, message);
   }
 
 protected:

@@ -1815,20 +1815,38 @@ struct Cxn {
   QPackRxTable		qpackRxTable;
   ZiTxErrorFn		txError;
 
+  struct LocalStreams {
+    StreamRef	control;
+    StreamRef	enc;
+    StreamRef	dec;
+
+    explicit operator bool() const { return control && enc && dec; }
+  };
+
+  static LocalStreams openLocalStreams(
+      Link &link, const ZiTxErrorFn &txError) {
+    using StreamType = typename Link::StreamType;
+    LocalStreams streams{
+      link.stream(StreamType::Simplex),
+      link.stream(StreamType::Simplex),
+      link.stream(StreamType::Simplex)
+    };
+    if (streams.control) streams.control->txErrorFn(txError);
+    if (streams.enc) streams.enc->txErrorFn(txError);
+    if (streams.dec) streams.dec->txErrorFn(txError);
+    return streams;
+  }
+
   bool openLocal(
-    Link &link, const Params &params_ = Params{},
+    Link &link, LocalStreams streams, const Params &params_ = Params{},
     bool extendedConnect = false) {
     params = params_;
     limits = params.qpackLimits();
     if (!qpackRxTable.init(limits.rxCapacity)) return false;
-    using StreamType = typename Link::StreamType;
-    control = link.stream(StreamType::Simplex);
-    enc = link.stream(StreamType::Simplex);
-    dec = link.stream(StreamType::Simplex);
-    if (!control || !enc || !dec) return false;
-    control->txErrorFn(txError);
-    enc->txErrorFn(txError);
-    dec->txErrorFn(txError);
+    if (!streams) return false;
+    control = ZuMv(streams.control);
+    enc = ZuMv(streams.enc);
+    dec = ZuMv(streams.dec);
 
     using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
     auto payload = ZmScratch(char, 64, Scratch::VHeap);

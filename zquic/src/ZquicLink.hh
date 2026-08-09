@@ -207,12 +207,18 @@ public:
     return m_streams->count_();
   }
   uint64_t peerStreamLimit(Zquic::StreamType::T type) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC peer stream limit access outside Tx thread", return 0);
     return m_peerLimit[type].limit();
   }
   uint64_t localStreamsOpened(Zquic::StreamType::T type) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local stream count access outside Tx thread", return 0);
     return m_peerLimit[type].opened();
   }
   uint64_t queuedLocalStreams(Zquic::StreamType::T type) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC queued local stream access outside Tx thread", return 0);
     return m_queued[type];
   }
   uint64_t localStreamLimit(Zquic::StreamType::T type) const {
@@ -226,6 +232,8 @@ public:
     return m_localLimit[type].opened();
   }
   bool localStreamsBlocked(Zquic::StreamType::T type) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local stream blocked access outside Tx thread", return false);
     return m_queued[type] != 0;
   }
   unsigned queuedControlFrames() const {
@@ -253,6 +261,8 @@ public:
   uint64_t rxDataRetired() const { return m_rxDataRetired; }
 
   void setPeerStreamLimit(Zquic::StreamType::T type, uint64_t limit) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC peer stream limit update outside Tx thread", return);
     m_peerLimit[type].set(limit);
   }
   void setLocalStreamLimit(Zquic::StreamType::T type, uint64_t limit) {
@@ -262,6 +272,8 @@ public:
   }
 
   bool rxApplyMaxStreams_(const Frame &frame) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC MAX_STREAMS receipt outside Rx thread", return false);
     if (!validateMaxStreams_(frame)) return false;
     uint64_t value = frame.value;
     Zquic::StreamType::T type = frame.streamType;
@@ -315,6 +327,8 @@ public:
   }
 
   StreamRef stream(Zquic::StreamType::T type = Zquic::StreamType::Duplex) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local stream allocation outside Tx thread", return {});
     if (!m_peerLimit[type].open()) {
       ++m_queued[type];
       queueBlocked_(
@@ -326,6 +340,8 @@ public:
   }
 
   StreamRef acceptPeerStream(uint64_t id) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC peer stream acceptance outside Rx thread", return {});
     if (id > uint64_t(INT64_MAX)) return nullptr;
     if (StreamID::server(id) == m_isServer) return nullptr;
     if (auto stream = findStream(int64_t(id))) return stream;
@@ -1059,6 +1075,20 @@ protected:
     scheduleOpenQueued_(type);
     impl()->streamCredit_(type);
     return true;
+  }
+  void postPeerStreamLimitsTx_(uint64_t duplex, uint64_t simplex) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC peer stream limit publication outside Rx thread", return);
+    app()->txRun([link = impl(), duplex, simplex]() mutable {
+      if (link->disconnecting_()) return;
+      link->applyPeerStreamLimitsTx_(duplex, simplex);
+    });
+  }
+  void applyPeerStreamLimitsTx_(uint64_t duplex, uint64_t simplex) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC peer stream limit apply outside Tx thread", return);
+    m_peerLimit[Zquic::StreamType::Duplex].set(duplex);
+    m_peerLimit[Zquic::StreamType::Simplex].set(simplex);
   }
 
   bool establishedRx_() const {
@@ -3918,8 +3948,8 @@ protected:
     if (m_crypto.peerParamsSet()) {
       const auto &params = m_crypto.peerParams();
       m_txDataCredit.set(params.initialMaxData);
-      m_peerLimit[Zquic::StreamType::Duplex].set(params.initialMaxStreamsBidi);
-      m_peerLimit[Zquic::StreamType::Simplex].set(params.initialMaxStreamsUni);
+      postPeerStreamLimitsTx_(
+	params.initialMaxStreamsBidi, params.initialMaxStreamsUni);
       ZquicLOG(app()->qlogTrace(), ([
 	origDCID = params.origDCID,
 	initialSCID = params.initialSCID,
@@ -8781,10 +8811,14 @@ private:
   }
 
   StreamRef openLocalStream_(Zquic::StreamType::T type) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local stream open outside Tx thread", return {});
     return newStream_(nextStreamID_(type));
   }
 
   unsigned openQueued_(Zquic::StreamType::T type, unsigned limit) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC queued stream open outside Tx thread", return 0);
     uint64_t &queued = m_queued[type];
     unsigned opened = 0;
     while (queued && opened < limit && m_peerLimit[type].open()) {
@@ -8805,6 +8839,8 @@ private:
     });
   }
   void scheduleOpenQueued_(Zquic::StreamType::T type) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC queued stream scheduling outside Tx thread", return);
     unsigned i = type == Zquic::StreamType::Simplex ? 1 : 0;
     if (!m_queued[type] || m_peerLimit[type].blocked() ||
 	m_openQueuedPending[i])
@@ -8844,6 +8880,8 @@ private:
     return StreamID::ordinal(id) < m_localLimit[type].opened();
   }
   bool localOpenedStreamID_(uint64_t id) const {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local stream ID access outside Tx thread", return false);
     if (id > uint64_t(INT64_MAX) || !localInitiated_(id, m_isServer))
       return false;
     uint64_t opened = StreamID::uni(id) ? m_nextUniOrdinal : m_nextBidiOrdinal;
@@ -9031,7 +9069,7 @@ private:
       }
       case FrameType::MaxStreams:
 	return m_maxStreamsControl[streamTypeIndex_(frame.streamType)].frame ==
-	  frame && frame.value == m_localLimit[frame.streamType].limit();
+	  frame;
       case FrameType::DataBlocked:
 	return m_dataBlockedControl.frame == frame &&
 	  m_txDataCredit.blocked() &&
@@ -9156,14 +9194,19 @@ private:
     stream->reapPending(true);
     uint64_t txBytes = stream->txBytes();
     bool finSent = stream->finSent();
+    StreamError::T txError = stream->txError();
+    uint64_t txAppError = stream->txAppError();
     app()->rxRun([
-      link = impl(), stream = ZuMv(ref), txBytes, finSent
+      link = impl(), stream = ZuMv(ref), txBytes, finSent,
+      txError, txAppError
     ]() mutable {
-      link->reapStreamRx_(ZuMv(stream), txBytes, finSent);
+      link->reapStreamRx_(
+	ZuMv(stream), txBytes, finSent, txError, txAppError);
     });
     return true;
   }
-  void reapStreamRx_(StreamRef stream, uint64_t txBytes, bool finSent) {
+  void reapStreamRx_(StreamRef stream, uint64_t txBytes, bool finSent,
+      StreamError::T txError, uint64_t txAppError) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx retirement outside Rx thread", return);
     int64_t id = stream ? stream->id() : -1;
@@ -9186,7 +9229,9 @@ private:
       reason = StreamReason::T(StreamReason::Reaped),
       offset = stream->rxBytes(),
       length = txBytes,
-      errorCode = stream->appError(),
+      errorCode = stream->rxError() != StreamError::None ?
+	stream->rxAppError() :
+	txError != StreamError::None ? txAppError : 0,
       fin = stream->finReceived() || finSent,
       linkInfo = linkInfo_()
     ](auto &o, ZuTime time) {
@@ -9288,6 +9333,8 @@ private:
   }
 
   int64_t nextStreamID_(Zquic::StreamType::T type) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC next stream ID allocation outside Tx thread", return INT64_MAX);
     uint64_t &ordinal =
       type == Zquic::StreamType::Simplex ? m_nextUniOrdinal : m_nextBidiOrdinal;
     uint64_t id = (ordinal++ << 2) |
@@ -9679,11 +9726,6 @@ private:
     StreamLimit(MaxStreamCount),
     StreamLimit(MaxStreamCount)
   };
-  ZuArray<StreamLimit, Zquic::StreamType::N>
-			m_peerLimit = {
-    StreamLimit(MaxStreamCount),
-    StreamLimit(MaxStreamCount)
-  };
   StreamsRef		m_streams;
   ZuArray<uint64_t, StreamClassCount>
 			m_closedStreamBase =
@@ -9766,6 +9808,11 @@ private:
   ZuTime		m_closeNextResponse;
   PktNumSpace::T	m_ptoTimerLevel = PktNumSpace::Initial;
   bool			m_idleAckElicitingSent = false;
+  ZuArray<StreamLimit, Zquic::StreamType::N>
+			m_peerLimit = {
+    StreamLimit(MaxStreamCount),
+    StreamLimit(MaxStreamCount)
+  };
   uint64_t		m_nextBidiOrdinal = 0;
   uint64_t		m_nextUniOrdinal = 0;
   ZuArray<uint64_t, Zquic::StreamType::N>
