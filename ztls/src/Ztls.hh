@@ -319,6 +319,7 @@ public:
 
   App *app() const { return m_app; }
   Cxn *cxn() const { return m_cxn; }
+  bool disconnecting() const { return m_disconnecting.load_(); }
   StreamRef stream() { return impl(); }
   ZuTuple<const ZuID &, const ZuID &> telKey() const override {
     return {app()->telKey().template p<1>(), m_id};
@@ -624,8 +625,8 @@ private:
     // Publish exactly the serialized TLS record bytes.
     buf->skip = 0;
     buf->length = uint32_t(pbuf.off);
-    m_txInCount.store_(m_txInCount.load_() + 1);
-    m_txInBytes.store_(m_txInBytes.load_() + buf->length);
+    ++m_txInCount;
+    m_txInBytes += buf->length;
     Tx::send(ZuMv(buf));
     return true;
   }
@@ -678,8 +679,8 @@ private:
 	// Application plaintext becomes the active ZiIOBuf span.
 	buf->skip = m_headroom;
 	buf->length = uint32_t(pbuf.off);
-	m_rxInCount.store_(m_rxInCount.load_() + 1);
-	m_rxInBytes.store_(m_rxInBytes.load_() + buf->length);
+	++m_rxInCount;
+	m_rxInBytes += buf->length;
 	m_rxStream.push(ZuMv(buf));
       }
       while (ptls_take_key_update_request(m_tls))
@@ -783,12 +784,18 @@ private:
   }
 
 private:
-  ZmRef<ZiIOBuf> allocTxBuf_() { // App/Rx/Tx threads
+  template <bool AppThread>
+  unsigned txStreamHeadroom_() const {
+    if constexpr (AppThread) return TxMaxOverhead;
+    else return m_txHeadroom;
+  }
+
+  ZmRef<ZiIOBuf> allocTxBuf_(unsigned headroom) { // App/Tx threads
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     if (ZuUnlikely(buf->size < TxRecordCapacity))
       if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) return nullptr;
     // Application plaintext is staged after record headroom.
-    buf->skip = m_headroom;
+    buf->skip = headroom;
     buf->length = 0;
     return buf;
   }
@@ -799,17 +806,25 @@ private:
 
   public:
     TxStream_(Link &link) :
-      Base(
-	unsigned(TxRecordCapacity),
-	unsigned(link.m_headroom),
-	unsigned(TxMaxOverhead - link.m_headroom)),
-      m_link{&link},
-      m_gen{link.m_tlsGen.load_()}
+      TxStream_(link, link.template txStreamHeadroom_<AppThread>())
     {
     }
 
+  private:
+    TxStream_(Link &link, unsigned headroom) :
+      Base(
+	unsigned(TxRecordCapacity),
+	headroom,
+	unsigned(TxMaxOverhead - headroom)),
+      m_link{&link},
+      m_gen{link.m_tlsGen.load_()},
+      m_headroom{headroom}
+    {
+    }
+
+  public:
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
-      auto buf = m_link->allocTxBuf_();
+      auto buf = m_link->allocTxBuf_(m_headroom);
       if (ZuUnlikely(!buf || buf->skip > skip || skip > buf->size))
 	throw TxStreamAllocFailure{};
       buf->skip = skip;
@@ -829,6 +844,7 @@ private:
     // immutable
     Link	*m_link;
     uint64_t	m_gen = 0;
+    unsigned	m_headroom = 0;
   };
 
 public:
@@ -897,9 +913,11 @@ protected:
 
     ZiAssert(buf->skip >= m_txHeadroom && buf->skip <= TxRecordCapacity,
       "Ztls", (), "TLS Tx buffer missing headroom", return false);
-    unsigned extraHeadroom = buf->skip - m_txHeadroom;
-    ZiAssert(extraHeadroom <= TxMaxPlaintext &&
-	buf->length <= TxMaxPlaintext - extraHeadroom,
+    // App-thread streams reserve the full worst-case record overhead.  The
+    // plaintext is still bounded by that same worst-case overhead; its larger
+    // skip is staging space which ptls_tx_send() overwrites in place, not
+    // additional wire overhead.
+    ZiAssert(buf->length <= TxMaxPlaintext,
       "Ztls", (), "TLS Tx plaintext exceeds record limit", return false);
     ZiAssert(buf->length <= buf->size - buf->skip, "Ztls", (),
       "TLS Tx plaintext bounds exceeded", return false);
@@ -1175,7 +1193,9 @@ public:
     auto oldState = state_();
     m_disconnecting = 1;
     stateChanged_(oldState);
-    app()->rxInvoke([this]() { disconnect_(); });
+    app()->rxInvoke([impl = ZmMkRef(this->impl())]() {
+	impl->disconnect_();
+    });
   }
   void disconnect_(bool notify = true) { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
@@ -1263,8 +1283,8 @@ private:
   void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
     data.ownerID = app()->telKey().template p<1>();
     data.id = m_id;
-    data.inCount = m_rxInCount.load_();
-    data.inBytes = m_rxInBytes.load_();
+    data.inCount = m_rxInCount;
+    data.inBytes = m_rxInBytes;
     data.outBytes = 0;
     data.outCount = 0;
     data.count = m_rxStream.count_();
@@ -1277,8 +1297,8 @@ private:
     Cxn *cxn = m_cxn;
     data.ownerID = app()->telKey().template p<1>();
     data.id = m_id;
-    data.inCount = m_txInCount.load_();
-    data.inBytes = m_txInBytes.load_();
+    data.inCount = m_txInCount;
+    data.inBytes = m_txInBytes;
     data.outCount = cxn ? cxn->txCalls() : 0;
     data.outBytes = cxn ? cxn->txBytes() : 0;
     data.count = Tx::txQueue.count_();
@@ -1295,15 +1315,19 @@ private:
   // shared
   ZmAtomic<uint64_t>	m_tlsGen = 0;
   ZmAtomic<unsigned>	m_disconnecting = 0;
+  // Telemetry counters may be updated/read uncleanly across shards.
+  uint64_t		m_rxInCount = 0;
+  uint64_t		m_rxInBytes = 0;
+  uint64_t		m_txInCount = 0;
+  uint64_t		m_txInBytes = 0;
+  // Configured before the link is used, then stable.
   ZiTxErrorFn		m_txErrorFn;
+  // Read-mostly connection reference; mutation remains Rx-owned.
+  CxnRef		m_cxn = nullptr;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
-  ZmAtomic<uint64_t>	m_rxInCount = 0;
-  ZmAtomic<uint64_t>	m_rxInBytes = 0;
-  ZmAtomic<uint64_t>	m_txInCount = 0;
-  ZmAtomic<uint64_t>	m_txInBytes = 0;
 
   struct AsyncJob : public ZmPolymorph {
     AsyncJob(
@@ -1339,7 +1363,6 @@ private:
   bool			m_peerClosed = false;
   ptls_handshake_properties_t m_props{};
   AsyncJob		*m_asyncJob = nullptr;
-  CxnRef		m_cxn = nullptr;	// read by Tx thread
   RxStream		m_rxStream;
 
   // Tx thread exclusive
@@ -1399,9 +1422,22 @@ template <typename> friend class Client;
     app()->rxInvoke([this]() mutable { connect_(); });
   }
   void connect(Host server, uint16_t port) { // App thread(s)
-    m_server = ZuMv(server);
-    m_port = port;
-    app()->rxInvoke([this]() mutable { connect_(); });
+    app()->rxInvoke(
+      [this, server = ZuMv(server), port]() mutable {
+	m_server = ZuMv(server);
+	m_port = port;
+	m_remote = ZiIP{};
+	connect_();
+      });
+  }
+  void connect(Host server, uint16_t port, ZiIP remote) { // App thread(s)
+    app()->rxInvoke(
+      [this, server = ZuMv(server), port, remote = ZuMv(remote)]() mutable {
+	m_server = ZuMv(server);
+	m_port = port;
+	m_remote = ZuMv(remote);
+	connect_();
+      });
   }
 
   const Host &server() const { return m_server; }
@@ -1410,7 +1446,7 @@ template <typename> friend class Client;
   void connect_() { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS connect outside Rx thread", return);
-    ZiIP ip = m_server;
+    ZiIP ip = m_remote ? m_remote : ZiIP{m_server};
     if (!ip) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([server = LogMsg{m_server}](auto &s) {
 	s << '"' << server << "\": hostname lookup failure";
@@ -1501,6 +1537,7 @@ private:
   Ticket		m_ticket;
   size_t		m_maxEarlyData = 0;
   Host			m_server;
+  ZiIP			m_remote;
   uint16_t		m_port;
 };
 
@@ -2124,6 +2161,7 @@ private:
   unsigned			m_asyncThread = 0;
 
   // shared
+  // Exceptional lock-guarded registry used by lifecycle and telemetry callers.
   Links				m_links;
 
   // Rx thread exclusive after init()

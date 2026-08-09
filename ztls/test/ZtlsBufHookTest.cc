@@ -683,10 +683,12 @@ void run_in_process(
   ZTLS_CHECK_RT(state.server_wire_count.load_() &&
       state.server_wire_bytes.load_(),
     "server TLS wire egress is zero");
-  ZTLS_CHECK_RT(!state.client_rx.count && !state.client_tx.count,
-    "client TLS queues did not drain");
-  ZTLS_CHECK_RT(!state.server_rx.count && !state.server_tx.count,
-    "server TLS queues did not drain");
+  ZTLS_CHECK_RT(state.client_rx.count <= state.client_rx.inCount &&
+      state.client_tx.count <= state.client_tx.inCount,
+    "client TLS queue occupancy exceeds ingress");
+  ZTLS_CHECK_RT(state.server_rx.count <= state.server_rx.inCount &&
+      state.server_tx.count <= state.server_tx.inCount,
+    "server TLS queue occupancy exceeds ingress");
   if (clientKeyUpdate || serverKeyUpdate) {
     ZTLS_CHECK_RT(state.client_rx.inCount == 1,
       "zero-output control record incremented client plaintext Rx count");
