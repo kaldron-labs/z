@@ -948,8 +948,14 @@ private:
     MigrationReason::T reason = MigrationReason::None;
     if (!Base::prepareMig_(params, reason))
       return false;
-    if (params.rebindLocal) {
-      ZiSockAddr local = params.local;
+    return true;
+  }
+
+  void migrationCIDReady_() {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC client migration CID completion outside Tx thread", return);
+    if (Base::migLocalRebind_()) {
+      ZiSockAddr local = Base::migLocal_();
       ZiSockAddr remote = Base::migRemote_();
       Base::migRebindStart_();
       bool posted = Endpoint::rebindUDP(
@@ -976,14 +982,13 @@ private:
       if (!posted) {
 	Base::migRebindFail_(MigrationReason::Endpoint);
 	Base::failMig_(MigrationReason::Endpoint);
-	return false;
+	return;
       }
-      return true;
+      return;
     }
     if (sendMigChal_())
-      return true;
+      return;
     Base::failMig_(MigrationReason::Validation);
-    return false;
   }
 
   bool sendMigChal_() {

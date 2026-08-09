@@ -52,6 +52,12 @@ struct App : public Zquic::Hub<App> {
   template <typename L> void txRun(L l) { l(); }
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
+  void drainTx() {
+    ZmBlock<>{}([this](auto wake) {
+	m_mx.invoke([wake = ZuMv(wake)]() mutable { wake(); },
+	  m_mx.txThread());
+    });
+  }
   template <typename Link>
   bool allowEarlyStream(Link *, uint64_t streamID, bool fin) {
     ++earlyStreamChecks;
@@ -115,13 +121,13 @@ struct TestLink :
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
     Base::configLocalParams_(app);
   }
-	  void resetRuntimeForTest() {
-	    Base::resetLink_();
-	    Base::configLocalParams_(app());
-	  }
-	  void closeForTest(uint64_t errorCode = 0) {
-	    Base::closeState_(errorCode);
-	  }
+  void resetRuntimeForTest() {
+    Base::resetLink_();
+    Base::configLocalParams_(app());
+  }
+  void closeForTest(uint64_t errorCode = 0) {
+    Base::closeState_(errorCode);
+  }
   void streamed(ZmRef<TestStream> stream) {
     lastStream = ZuMv(stream);
     ++streamedCount;
@@ -351,7 +357,10 @@ struct TestLink :
       ZuBSpan{b, n}, frame, used) &&
       used == n;
   }
-  void cancelTimers() { Base::cancelTimers_(); }
+  void teardown() {
+    Base::disconnect();
+    app()->drainTx();
+  }
   void sendStreamRef(
     uint64_t pn, const ZmRef<TestStream> &stream,
     uint64_t offset, uint64_t length, bool fin = false) {
@@ -1196,7 +1205,7 @@ void testLinkStreamTxUnackdAck()
       !stream->txUnackdBytes() &&
       !stream->txStillUnackd(40, 5),
     "ACKd STREAM ref did not clear unackd state");
-  link->cancelTimers();
+  link->teardown();
 }
 
 void testStreamRetxUnackdIdempotent()
@@ -1250,7 +1259,7 @@ void testStreamRetxUnackdIdempotent()
   ZuCHECK(!stream->txUnackdCount() &&
       !stream->txUnackdBytes(),
     "late ACK of retained lost STREAM ref changed owner state");
-  link->cancelTimers();
+  link->teardown();
 }
 
 void testStreamPktizer()
@@ -1536,7 +1545,7 @@ void testStreamRetransmitClipsUnackd()
     "stream retransmit did not requeue after ACKd hole");
   ZuCHECK(!link->nextRetransmitRef(level, ref),
     "stream retransmit clipping left extra work");
-  link->cancelTimers();
+  link->teardown();
 }
 
 void testStreamRetxClipsUnackdFin()
@@ -1566,7 +1575,7 @@ void testStreamRetxClipsUnackdFin()
     "stream retransmit did not clip ACKd data before retained FIN");
   ZuCHECK(!link->nextRetransmitRef(level, ref),
     "stream FIN clipping left extra retransmit work");
-  link->cancelTimers();
+  link->teardown();
 }
 
 void testCryptoRetransmitClipsUnackd()
@@ -1616,7 +1625,7 @@ void testCryptoRetransmitClipsUnackd()
     "crypto retransmit did not requeue after ACKd hole");
   ZuCHECK(!link->nextRetransmitRef(level, ref),
     "crypto retransmit clipping left extra work");
-  link->cancelTimers();
+  link->teardown();
 }
 
 void testPktNumLength()
@@ -2440,7 +2449,60 @@ void testStreamCountLimits()
     "completed peer bidi stream did not queue MAX_STREAMS");
   ZuCHECK(bidiServer->txFlushQueued == queuedFlushes + 1,
     "completed peer bidi stream did not request MAX_STREAMS flush");
-  bidiServer->cancelTimers();
+  bidiServer->teardown();
+
+  ZmRef<TestLink> txFirstServer = testLink(&app, true);
+  txFirstServer->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
+  packet = streamPkt_(0, 0, "req", false, frame, used);
+  ZuCHECK(packet && txFirstServer->receiveFrame(frame, packet) == 0,
+    "Tx-first peer bidi stream receive setup failed");
+  auto txFirst = txFirstServer->findStream(0);
+  txFirstServer->initServerPath();
+  txFirstServer->pathReceived(1200);
+  txFirstServer->grantDataCredit(20000);
+  txFirst->txCredit(20000);
+  {
+    auto tx = txFirst->txStream_();
+    tx << "rsp" << Zi::flush();
+  }
+  txFirst->fin();
+  ZuCHECK(txFirstServer->flushCongestedStream(txFirst) &&
+      txFirst->finDequeued() &&
+      txFirstServer->localStreamLimit(Zquic::StreamType::Duplex) == 1,
+    "Tx-first peer bidi stream returned credit before Rx close");
+  queuedControls = txFirstServer->queuedControlFrames();
+  packet = streamPkt_(0, 3, {}, true, frame, used);
+  ZuCHECK(packet && txFirstServer->receiveFrame(frame, packet) == 0 &&
+      txFirstServer->localStreamLimit(Zquic::StreamType::Duplex) == 2 &&
+      txFirstServer->queuedControlFrames() == queuedControls + 1,
+    "Tx-first peer bidi stream did not return one credit on Rx close");
+  ZuCHECK(txFirstServer->receiveFrame(frame, packet) == 0 &&
+      txFirstServer->localStreamLimit(Zquic::StreamType::Duplex) == 2 &&
+      txFirstServer->queuedControlFrames() == queuedControls + 1,
+    "duplicate peer FIN returned stream-count credit twice");
+  txFirstServer->teardown();
+
+  ZmRef<TestLink> resetServer = testLink(&app, true);
+  resetServer->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
+  packet = streamPkt_(0, 0, "req", true, frame, used);
+  ZuCHECK(packet && resetServer->receiveFrame(frame, packet) == 0,
+    "peer bidi reset stream receive setup failed");
+  auto peerReset = resetServer->findStream(0);
+  ZuCHECK(peerReset &&
+      resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 1,
+    "peer bidi reset stream returned credit before local reset");
+  resetServer->initServerPath();
+  resetServer->pathReceived(1200);
+  peerReset->reset(1);
+  ZuCHECK(resetServer->flushControlSends() && peerReset->resetSent() &&
+      resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 2,
+    "completed peer bidi reset did not return stream-count credit");
+  unsigned resetControls = resetServer->queuedControlFrames();
+  peerReset->reset(1);
+  ZuCHECK(resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 2 &&
+      resetServer->queuedControlFrames() == resetControls,
+    "duplicate local reset returned stream-count credit twice");
+  resetServer->teardown();
 }
 
 void testResetStopFrames()
@@ -2558,7 +2620,7 @@ void testLocalResetStopSend()
   Zquic::PktNumSpace::T level = Zquic::PktNumSpace::Initial;
   ZuCHECK(!link->nextRetransmitRef(level, ref),
     "ACKd STOP_SENDING was retransmitted after later loss");
-  link->cancelTimers();
+  link->teardown();
 
   ZmRef<TestLink> lost = testLink(&app);
   auto lostStop = lost->stream(Zquic::StreamType::Duplex);
@@ -2577,7 +2639,7 @@ void testLocalResetStopSend()
       ref.streamID == uint64_t(lostStop->id()) &&
       !lost->nextRetransmitRef(level, ref),
     "lost STOP_SENDING did not queue one retransmit");
-  lost->cancelTimers();
+  lost->teardown();
 }
 
 void testMaxBlockedValidate()
@@ -2856,7 +2918,7 @@ void testStreamGC()
   ZuCHECK(!held->findStream(int64_t(liveID)) &&
       live && uint64_t(live->id()) == liveID,
     "terminal ACK did not remove stream from active index");
-  held->cancelTimers();
+  held->teardown();
 
   ZmRef<TestLink> maxLink = testLink(&app);
   auto local = maxLink->stream(Zquic::StreamType::Simplex);
@@ -2870,7 +2932,7 @@ void testStreamGC()
   maxLink->ackOnly(0);
   ZuCHECK(!maxLink->findStream(int64_t(localID)),
     "closed MAX_STREAM_DATA stream was not reaped");
-  maxLink->cancelTimers();
+  maxLink->teardown();
   uint8_t b[128];
   Zquic::Frame frame;
   int n = Zquic::FrameCodec::writeMaxStreamData(
@@ -2897,7 +2959,7 @@ void testStreamGC()
   ackLink->ackOnly(0);
   ZuCHECK(!ackLink->findStream(int64_t(ackdID)),
     "ACK processing did not reap terminal local stream");
-  ackLink->cancelTimers();
+  ackLink->teardown();
 
   ZmRef<TestLink> rxLink = testLink(&app, true);
   unsigned used = 0;
@@ -3062,7 +3124,7 @@ void testZeroRTTProtectedSend()
   ZuCHECK(link->diag().tx.packetsTx == 1,
     "0-RTT send did not record AppData packet accounting");
 #endif
-  link->cancelTimers();
+  link->teardown();
 }
 
 void testZeroRTTEarlyStreamPolicy()
@@ -3128,7 +3190,7 @@ void testZeroRTTEarlyStreamPolicy()
       retx.length == 5 &&
       !retx.fin,
     "0-RTT rejection did not retire packet and preserve stream retransmit");
-  link->cancelTimers();
+  link->teardown();
 }
 
 #ifdef Zquic_DEBUG
@@ -3179,8 +3241,8 @@ void testZeroRTTAcceptQLog()
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(app.qlogTrace());
-  client->cancelTimers();
-  server->cancelTimers();
+  client->teardown();
+  server->teardown();
 
   ZuCHECK(diag.recordsEnqueued >= 3, "0-RTT accept qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 4, "0-RTT accept qlog write mismatch");
@@ -3238,7 +3300,7 @@ void testZeroRTTAfterOneRTTRejected()
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(app.qlogTrace());
-  link->cancelTimers();
+  link->teardown();
 
   ZuCHECK(diag.recordsEnqueued >= 3, "0-RTT reject qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 4, "0-RTT reject qlog write mismatch");
@@ -3301,7 +3363,7 @@ void testRxQLog()
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
-  link->cancelTimers();
+  link->teardown();
 
   ZuCHECK(diag.recordsEnqueued >= 2, "runtime qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 4, "runtime qlog write mismatch");
@@ -3383,7 +3445,7 @@ void testFlowControlQLog()
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(app.qlogTrace());
-  link->cancelTimers();
+  link->teardown();
 
   ZuCHECK(diag.recordsEnqueued >= 4, "flow-control qlog enqueue mismatch");
   ZuCHECK(diag.recordsWritten >= 5, "flow-control qlog write mismatch");
@@ -3439,7 +3501,7 @@ void testPTOQLog()
   ZuCHECK(link->forcePTOReclaimQLog(level, probes) && probes,
     "PTO qlog reclaim did not fire");
   link->forcePTOProbeQLog(level, probes);
-  link->cancelTimers();
+  link->teardown();
 
 	closeQLog_(app.qlogTrace());
 	ZquicLogger::stop();
@@ -3496,7 +3558,7 @@ void testPeerKeyUpdateState()
   link->discardPeerKeys();
   Zquic::LinkDiag discardDiag = link->diag();
   bool discardedOK = link->receiveShort(shortPing_(cid, initial, 4, false));
-  link->cancelTimers();
+  link->teardown();
 
   ZuCHECK(currentOK, "current key packet was rejected");
   ZuCHECK(updateOK, "peer key update packet was rejected");

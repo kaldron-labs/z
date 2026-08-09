@@ -4,9 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <unistd.h>
-
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSemaphore.hh>
 #include <zlib/Zquic.hh>
 
 #include <zpicotls/openssl.h>
@@ -14,11 +13,6 @@
 using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
-
-enum {
-  // Idle timeout is floored at 3 * initial PTO until RTT is sampled.
-  IdleInventoryWaitUS = 4000000
-};
 
 static ZuBSpan span_(const uint8_t *data, unsigned len)
 {
@@ -102,21 +96,29 @@ struct TimerLink :
     return Base::installAppDataKeys_(secret, secret, {});
   }
 
-  void ackDelayExpired_() { ++ackDelay; }
-  void lossTimeExpired_() { ++lossTime; }
-  void pto_() { ++pto; }
-  void idleExpired_() { ++idle; }
-  void heartBeatExpired_() { ++heartBeat; }
-  void closeExpired_() { ++close; }
-  void keyDiscardExpired_() { ++keyDiscard; }
-  void pmtudExpired_() { ++pmtud; }
-  void pathExpired_() { ++path; }
+  void ackDelayExpired_() { fired_(ackDelay); }
+  void lossTimeExpired_() { fired_(lossTime); }
+  void pto_() { fired_(pto); }
+  void idleExpired_() { fired_(idle); }
+  void heartBeatExpired_() { fired_(heartBeat); }
+  void closeExpired_() { fired_(close); }
+  void keyDiscardExpired_() { fired_(keyDiscard); }
+  void pmtudExpired_() { fired_(pmtud); }
+  void pathExpired_() { fired_(path); }
 
   unsigned fired() const {
     return ackDelay + lossTime + pto + idle + close +
       heartBeat + keyDiscard + pmtud + path;
   }
 
+  bool wait() { return event.timedwait(Zm::now(10)) == 0; }
+
+  void fired_(ZmAtomic<unsigned> &counter) {
+    ++counter;
+    event.post();
+  }
+
+  ZmSemaphore		event;
   ZmAtomic<unsigned>	ackDelay = 0;
   ZmAtomic<unsigned>	lossTime = 0;
   ZmAtomic<unsigned>	pto = 0;
@@ -149,9 +151,11 @@ void testTimerInventory()
       !hubData.down && !hubData.transient,
     "established QUIC link was not reflected in hub telemetry");
   link->armAll(Zm::now() + Zquic::timeUS(10000));
-  usleep(IdleInventoryWaitUS);
+  bool fired = true;
+  for (unsigned i = 0; i < 9; ++i) fired &= link->wait();
 
-  ZuCHECK(link->ackDelay == 1, "ACK delay timer did not fire once");
+  ZuCHECK(fired && link->ackDelay == 1,
+    "timer inventory did not complete before its deadline");
   ZuCHECK(link->lossTime == 1, "loss timer did not fire once");
   ZuCHECK(link->pto == 1, "PTO timer did not fire once");
   ZuCHECK(link->idle == 1, "idle timer did not fire once");
@@ -177,11 +181,16 @@ void testTimerCancel()
 
   ZuCHECK(trafficSecret_(secret, 2) && link->installOneRTT(secret),
     "timer cancel link establish failed");
-  link->armAll(Zm::now() + Zquic::timeUS(200000));
+  ZmRef<TimerLink> sentinel = new TimerLink{&app};
+  ZuTime now = Zm::now();
+  link->armAll(now + Zquic::timeUS(20000));
   link->cancelAll();
-  usleep(80000);
+  sentinel->armAckPTO(
+    now + Zquic::timeUS(100000), now + Zquic::timeUS(1000000));
 
-  ZuCHECK(!link->fired(), "cancelled timer callback fired");
+  ZuCHECK(sentinel->wait() && !link->fired(),
+    "cancelled timer callback fired before a later sentinel");
+  sentinel->disconnect();
   link->disconnect();
 }
 
@@ -194,9 +203,9 @@ void testTimerPriority()
 
   ZuTime now = Zm::now();
   link->armAckPTO(now + Zquic::timeUS(10000), now + Zquic::timeUS(200000));
-  usleep(80000);
 
-  ZuCHECK(link->ackDelay == 1, "earlier ACK timer did not fire");
+  ZuCHECK(link->wait() && link->ackDelay == 1,
+    "earlier ACK timer did not fire");
   ZuCHECK(!link->pto, "later PTO timer fired early");
   link->disconnect();
 }
@@ -207,12 +216,17 @@ void testTimerDisconnect()
 
   TimerApp app;
   ZmRef<TimerLink> link = new TimerLink{&app};
+  ZmRef<TimerLink> sentinel = new TimerLink{&app};
 
-  link->armAll(Zm::now() + Zquic::timeUS(200000));
+  ZuTime now = Zm::now();
+  link->armAll(now + Zquic::timeUS(20000));
   link->disconnect();
-  usleep(80000);
+  sentinel->armAckPTO(
+    now + Zquic::timeUS(100000), now + Zquic::timeUS(1000000));
 
-  ZuCHECK(!link->fired(), "disconnect-disarmed timer callback fired");
+  ZuCHECK(sentinel->wait() && !link->fired(),
+    "disconnect-disarmed timer callback fired before a later sentinel");
+  sentinel->disconnect();
 }
 
 int main(int argc, char **argv)

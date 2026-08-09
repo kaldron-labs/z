@@ -184,9 +184,13 @@ public:
     return m_queued[type];
   }
   uint64_t localStreamLimit(Zquic::StreamType::T type) const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC local stream limit access outside Rx thread", return 0);
     return m_localLimit[type].limit();
   }
   uint64_t peerStreamsOpened(Zquic::StreamType::T type) const {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC peer stream count access outside Rx thread", return 0);
     return m_localLimit[type].opened();
   }
   bool localStreamsBlocked(Zquic::StreamType::T type) const {
@@ -220,6 +224,8 @@ public:
     m_peerLimit[type].set(limit);
   }
   void setLocalStreamLimit(Zquic::StreamType::T type, uint64_t limit) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC local stream limit update outside Rx thread", return);
     m_localLimit[type].set(limit);
   }
 
@@ -356,7 +362,7 @@ public:
 	noteInvalidStreamActivity_(TransportError::FlowControl, false, true);
 	return -1;
       }
-      returnStreamCredit_(stream);
+      returnStreamCreditRx_(stream);
       impl()->streamResetReceived(stream, frame.errorCode, frame.length);
       stream->closeRx_();
       if (!streamRxRetired_(stream, stream->rxRetirable())) return -1;
@@ -397,7 +403,7 @@ public:
     if (rc >= 0) {
       if (!rc) ++m_rxDiag.streamNoDataRx;
       if ((rxClosed || !rc) && immediateAck) *immediateAck = true;
-      returnStreamCredit_(stream);
+      returnStreamCreditRx_(stream);
       impl()->streamData(stream, frame.offset, frame.payload, frame.fin);
       if (frame.fin) reapStreamFromRx_(stream);
     } else {
@@ -418,7 +424,7 @@ public:
     bool wasRxQueued = stream->rxPending() || stream->rxQueued();
     int rc = stream->processRx_();
     if (rc >= 0) {
-      returnStreamCredit_(stream);
+      returnStreamCreditRx_(stream);
       if (wasRxQueued && !stream->rxPending() && !stream->rxQueued())
 	reapStreamFromRx_(stream);
       return;
@@ -569,6 +575,8 @@ protected:
     bool		active = false;
     bool		localRebind = false;
     bool		closeOnFailure = false;
+    bool		armTimer = true;
+    bool		sendChallenge = true;
   };
   struct AppClose {
     bool		closed = false;
@@ -766,6 +774,14 @@ protected:
   bool queueFlowUpdate_(const FlowUpdate &update) {
     return update.needed() && queueControl_(ControlFrame::flowUpdate(update));
   }
+  void postFlowUpdate_(FlowUpdate update) {
+    app()->txRun([
+      link = ZmRef<Impl>{impl()}, update = ZuMv(update)
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      if (link->queueFlowUpdate_(update)) link->queueTxFlush_();
+    });
+  }
   bool queueBlocked_(
     FrameType::T type, uint64_t streamID, uint64_t value,
     Zquic::StreamType::T streamType = Zquic::StreamType::Duplex) {
@@ -898,6 +914,8 @@ protected:
     }));
     m_txDataCredit.extend(value);
     m_dataBlockedControl = {};
+    impl()->flowCredit_(
+      FrameType::MaxData, 0, Zquic::StreamType::Duplex);
     return true;
   }
   bool txApplyMaxStreamData_(StreamRef stream, uint64_t value) {
@@ -927,6 +945,8 @@ protected:
       FrameType::StreamDataBlocked, streamID,
       stream->lastBlocked(), Zquic::StreamType::Duplex));
     if (streamTxPending_(stream)) streamWritable_(stream);
+    impl()->flowCredit_(
+      FrameType::MaxStreamData, streamID, Zquic::StreamType::Duplex);
     return true;
   }
   bool txApplyMaxStreams_(Zquic::StreamType::T type, uint64_t value) {
@@ -935,6 +955,7 @@ protected:
     m_peerLimit[type].extend(value);
     openQueued_(type, OpenQueuedBatch);
     scheduleOpenQueued_(type);
+    impl()->streamCredit_(type);
     return true;
   }
 
@@ -1811,30 +1832,68 @@ protected:
     state.path.configuredMaxUDP(m_path.configuredMaxUDP());
     state.path.peerMaxUDP(m_path.peerMaxUDP());
     if (rxBytes) state.path.received(rxBytes);
-    migrationPeerCID_(state, false);
     ++m_txDiag.migration.requested;
-    if (state.peerCID == m_peerCID)
-      ++m_txDiag.migration.natRebind;
     if (!state.challenge.generate())
       return false;
     state.deadline = pathValidDeadline_();
-    state.state = MigrationState::Validating;
+    state.state = MigrationState::Requested;
     state.reason = MigrationReason::Passive;
     state.attemptID = m_nextMigrationAttemptID++;
     state.active = true;
+    state.armTimer = armTimer;
+    state.sendChallenge = sendChallenge;
     m_migration = state;
+    requestPeerCID_(state.attemptID, false);
+    return true;
+  }
+  void peerCIDSelectedTx_(
+      uint64_t attemptID, CxnID id, uint64_t sequence, bool selected) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC peer CID selection completion outside Tx thread", return);
+    if (!m_migration.active || m_migration.attemptID != attemptID ||
+	m_migration.state != MigrationState::Requested) {
+      if (selected) releasePeerCID_(id, sequence);
+      return;
+    }
+    if (!selected) {
+      ++m_txDiag.migration.noPeerCID;
+      m_migration.reason = MigrationReason::NoPeerCID;
+      logMigration_(
+	ZquicLog_::MigrationAction::CIDUnavailable,
+	MigrationReason::NoPeerCID);
+      failMig_(MigrationReason::NoPeerCID);
+      return;
+    }
+    m_migration.peerCID = id;
+    m_migration.peerSeq = sequence;
+    m_txCandidatePeerCID = id;
+    m_txCandidatePeerSeq = sequence;
+    logMigration_(ZquicLog_::MigrationAction::CIDSelected);
+    if (m_migration.reason != MigrationReason::Passive) {
+      impl()->migrationCIDReady_();
+      return;
+    }
+    finishPassiveCIDSelectionTx_();
+  }
+  void finishPassiveCIDSelectionTx_() {
+    if (!m_migration.active ||
+	m_migration.state != MigrationState::Requested ||
+	m_migration.reason != MigrationReason::Passive)
+      return;
+    m_migration.state = MigrationState::Validating;
+    if (m_migration.peerCID == m_txPeerCID)
+      ++m_txDiag.migration.natRebind;
     ++m_txDiag.pathValidating;
     ++m_txDiag.migration.started;
     logMigration_(ZquicLog_::MigrationAction::Started);
-    logMigration_(ZquicLog_::MigrationAction::CIDSelected);
     impl()->migrationStarted(migrationResult_());
-    if (armTimer)
-      schedulePathTimer_(state.deadline);
+    if (m_migration.armTimer)
+      schedulePathTimer_(m_migration.deadline);
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::ChallengeTx,
       reason = PathReason::PeerAddrChange,
-      attemptID = state.attemptID,
-      deadlineUS = qlogUS_(state.deadline),
+      attemptID = m_migration.attemptID,
+      deadlineUS = qlogUS_(m_migration.deadline),
       antiAmplification = m_path.antiAmpRemaining(),
       mtu = m_path.activeMaxUDP(),
       validated = pathValidated_(),
@@ -1853,13 +1912,12 @@ protected:
 
       o.logPathValid(event, time);
     }));
-    if (sendChallenge && !impl()->sendPassiveMigChal_()) {
+    if (m_migration.sendChallenge && !impl()->sendPassiveMigChal_()) {
       txQueueControl_(ControlFrame::pathChallenge(
 	m_migration.challenge.bspan()));
       logMigration_(ZquicLog_::MigrationAction::ChallengeQueued);
       impl()->queueTxFlush_(m_migration.path.remote());
     }
-    return true;
   }
   bool onPathResponse_(ZuBSpan data) {
     ZiAssert(txInvoked_(), "Zquic", (),
@@ -1933,14 +1991,36 @@ protected:
   void promotePath_() {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path promotion outside Tx thread", return);
-    if (!m_migration.active) return;
+    if (!m_migration.active ||
+	m_migration.state != MigrationState::Validating)
+      return;
     m_migration.state = MigrationState::Promoted;
+    cancelPathTimer_();
+    requestPromotedCIDCommit_();
+  }
+  void promotedCIDCommittedTx_(
+      uint64_t attemptID, CxnID id, uint64_t sequence, bool committed) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC promoted peer CID acknowledgement outside Tx thread", return);
+    if (!m_migration.active || m_migration.attemptID != attemptID ||
+	m_migration.state != MigrationState::Promoted)
+      return;
+    if (!committed || id != m_txCandidatePeerCID ||
+	sequence != m_txCandidatePeerSeq) {
+      failMig_(MigrationReason::NoPeerCID);
+      return;
+    }
+    m_txPeerCID = id;
+    m_txPeerSeq = sequence;
+    m_txCandidatePeerCID = {};
+    m_txCandidatePeerSeq = U64Null;
+    finishPromotePath_();
+  }
+  void finishPromotePath_() {
     m_path = m_migration.path;
     m_path.validated();
-    bindPromotedCID_();
     ++m_txDiag.pathValidationPromoted;
     ++m_txDiag.migration.promoted;
-    cancelPathTimer_();
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Validated,
       reason = PathReason::Response,
@@ -1986,7 +2066,6 @@ protected:
       o.logPathUpdated(event, time);
     }));
     impl()->pathPromoted_();
-    impl()->refreshPromotedRoutes_();
     MigrationResult result = migrationResult_(true, m_migration.reason);
     logMigration_(ZquicLog_::MigrationAction::Promoted);
     m_migration = {};
@@ -2086,14 +2165,6 @@ protected:
     logMigration_(state, ZquicLog_::MigrationAction::Requested);
     logMigration_(state, ZquicLog_::MigrationAction::Started);
     ++m_txDiag.migration.started;
-    if (!migrationPeerCID_(state, params.requireNewPeerCID)) {
-      reason = state.reason;
-      ++m_txDiag.migration.noPeerCID;
-      logMigration_(
-	state, ZquicLog_::MigrationAction::CIDUnavailable, reason);
-      logMigration_(state, ZquicLog_::MigrationAction::Failed, reason);
-      return false;
-    }
     if (!state.challenge.generate()) {
       reason = MigrationReason::Validation;
       logMigration_(state, ZquicLog_::MigrationAction::Rejected, reason);
@@ -2101,9 +2172,15 @@ protected:
     }
     state.deadline = pathValidDeadline_();
     m_migration = state;
-    logMigration_(ZquicLog_::MigrationAction::CIDSelected);
-    return true;
+    requestPeerCID_(state.attemptID, params.requireNewPeerCID);
+    if (!m_migration.active) {
+      reason = MigrationReason::NoPeerCID;
+      return false;
+    }
+    return m_migration.attemptID == state.attemptID;
   }
+  ZiSockAddr migLocal_() const { return m_migration.path.local(); }
+  bool migLocalRebind_() const { return m_migration.localRebind; }
   void updateMigLocal_(ZiSockAddr local) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC active migration local update outside Tx thread", return);
@@ -2277,6 +2354,7 @@ protected:
     logMigration_(ZquicLog_::MigrationAction::Failed, reason);
     if (closeOnFailure)
       logMigration_(ZquicLog_::MigrationAction::Closed, reason);
+    releaseCandidatePeerCID_();
     m_migration = {};
     m_pathChallengeControl = {};
     cancelPathTimer_();
@@ -2285,11 +2363,7 @@ protected:
       closeState_(TransportError::NoError);
   }
   bool migrationActive_() const { return m_migration.active; }
-  uint64_t activePeerSeq_() const {
-    if (auto cid = findCID_(m_peerCIDs, m_peerCID))
-      return cid->sequence;
-    return U64Null;
-  }
+  uint64_t activePeerSeq_() const { return m_txPeerSeq; }
   static PathInfo pathInfo_(
     const Path &path, PathRole::T role,
     MigrationState::T state, MigrationReason::T reason, uint64_t peerSeq) {
@@ -2757,6 +2831,7 @@ protected:
   }
   void resetLink_() {
     disconnecting_(false);
+    m_statelessReset = false;
     closeStreamsRx_();
     cancelTimers();
     resetAckPosts_();
@@ -2789,6 +2864,10 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx runtime reset outside Tx thread", return);
     ++m_txRuntimeGen;
+    m_txPeerCID = {};
+    m_txPeerSeq = U64Null;
+    m_txCandidatePeerCID = {};
+    m_txCandidatePeerSeq = U64Null;
     m_lossTimerOut = {};
     m_ptoTimerOut = {};
     m_ptoTimerLevel = PktNumSpace::Initial;
@@ -2892,6 +2971,11 @@ protected:
   void refreshPromotedRoutes_() { }
   void localCIDsIssued_() { }
   void migrationCIDsReady_() { impl()->queueTxFlush_(); }
+  void migrationCIDReady_() { }
+  void flowCredit_(
+      FrameType::T, uint64_t, Zquic::StreamType::T) { }
+  void streamCredit_(Zquic::StreamType::T) { }
+  void queueTxFlush_() { }
   bool sendPassiveMigChal_() { return false; }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
   void disconnected(bool peer) {
@@ -2945,10 +3029,28 @@ protected:
     addPeerCID_(peerCID, 0);
     if (auto cid = findCID_(m_peerCIDs, peerCID))
       cid->associated = true;
+    publishActivePeerCID_();
   }
 
   void setPeerCIDFromHdrSCID_(const LongHdr &h) {
-    if (h.scid) m_peerCID = h.scid;
+    if (h.scid) {
+      m_peerCID = h.scid;
+      publishActivePeerCID_();
+    }
+  }
+
+  void publishActivePeerCID_() {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC active peer CID publication outside Rx thread", return);
+    uint64_t sequence = U64Null;
+    if (auto cid = findCID_(m_peerCIDs, m_peerCID))
+      sequence = cid->sequence;
+    CxnID id = m_peerCID;
+    app()->txRun([link = ZmRef<Impl>{impl()}, id, sequence]() mutable {
+      if (link->disconnecting_()) return;
+      link->m_txPeerCID = id;
+      link->m_txPeerSeq = sequence;
+    });
   }
 
   void setPeerResetToken_(const ResetToken &token) {
@@ -3075,65 +3177,124 @@ protected:
       if (link->issueMigrationCIDs_()) link->migrationCIDsReady_();
     });
   }
-  bool migrationPeerCID_(PathState &state, bool requireNewPeerCID) {
-    state.peerCID = m_peerCID;
-    state.peerSeq = U64Null;
+  void selectPeerCIDRx_(uint64_t attemptID, bool requireNewPeerCID) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC peer CID selection outside Rx thread", return);
+    CxnID id;
+    uint64_t sequence = U64Null;
+    bool selected = selectPeerCIDRx_(
+      requireNewPeerCID, id, sequence, true);
+    app()->txRun([
+      link = ZmRef<Impl>{impl()}, attemptID, id, sequence, selected
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      link->peerCIDSelectedTx_(attemptID, id, sequence, selected);
+    });
+  }
+  bool selectPeerCIDRx_(
+      bool requireNewPeerCID, CxnID &id, uint64_t &sequence,
+      bool reserve = false) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC peer CID selection outside Rx thread", return false);
+    id = m_peerCID;
+    sequence = U64Null;
     if (!m_peerCID) {
-      state.peerSeq = 0;
+      sequence = 0;
       return true;
     }
     for (auto &cid : m_peerCIDs) {
-      if (cid.state != CxnState::Active || cid.associated)
-	continue;
-      state.peerCID = cid.id;
-      state.peerSeq = cid.sequence;
+      if (cid.state != CxnState::Active || cid.associated) continue;
+      if (reserve) cid.associated = true;
+      id = cid.id;
+      sequence = cid.sequence;
       return true;
     }
     if (auto cid = findCID_(m_peerCIDs, m_peerCID)) {
-      state.peerSeq = cid->sequence;
-      if (!requireNewPeerCID || !m_peerCID.length())
-	return true;
+      sequence = cid->sequence;
+      return !requireNewPeerCID || !m_peerCID.length();
     }
-    state.reason = MigrationReason::NoPeerCID;
     return false;
   }
-  void bindPromotedCID_() {
-    for (auto &cid : m_peerCIDs)
-      cid.associated = false;
-    if (!m_migration.peerCID) return;
-    if (auto cid = findCID_(m_peerCIDs, m_migration.peerSeq)) {
-      if (cid->id == m_migration.peerCID) {
-	cid->associated = true;
-	m_peerCID = cid->id;
-	ZquicLOG(app()->qlogTrace(), ([
-	  action = CIDAction::RouteBound,
-	  reason = CIDReason::PathPromoted,
-	  cxnID = cid->id,
-	  sequence = cid->sequence,
-	  attemptID = m_migration.attemptID,
-	  length = qlogCount_(cid->id.length()),
-	  local = false,
-	  associated = cid->associated,
-	  resetToken = cid->resetToken.valid(),
-	  linkInfo = linkInfo_()
-	](auto &o, ZuTime time) {
-	  CIDEvt event{
-	    .cxnID = cxnID,
-	    .linkInfo = linkInfo,
-	    .sequence = sequence,
-	    .attemptID = attemptID,
-	    .kind = CIDKind::CxnID,
-	    .action = CIDAction::T(action),
-	    .reason = CIDReason::T(reason),
-	    .length = length,
-	    .local = local,
-	    .associated = associated,
-	    .resetToken = resetToken};
-
+  void requestPeerCID_(uint64_t attemptID, bool requireNewPeerCID) {
+    app()->rxRun([
+      link = ZmRef<Impl>{impl()}, attemptID, requireNewPeerCID
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      link->selectPeerCIDRx_(attemptID, requireNewPeerCID);
+    });
+  }
+  void commitPromotedCIDRx_(
+      uint64_t attemptID, CxnID id, uint64_t sequence) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC promoted peer CID commit outside Rx thread", return);
+    bool committed = !id && sequence == 0;
+    LinkCID *selected = id ? findCID_(m_peerCIDs, sequence) : nullptr;
+    if (selected && selected->state == CxnState::Active &&
+	selected->associated && selected->id == id) {
+      for (auto &cid : m_peerCIDs) cid.associated = false;
+      selected->associated = true;
+      m_peerCID = selected->id;
+      committed = true;
+      ZquicLOG(app()->qlogTrace(), ([
+	action = CIDAction::RouteBound,
+	reason = CIDReason::PathPromoted,
+	cxnID = selected->id,
+	sequence = selected->sequence,
+	attemptID,
+	length = qlogCount_(selected->id.length()),
+	local = false,
+	associated = selected->associated,
+	resetToken = selected->resetToken.valid(),
+	linkInfo = linkInfo_()
+      ](auto &o, ZuTime time) {
+	CIDEvt event{
+	  .cxnID = cxnID,
+	  .linkInfo = linkInfo,
+	  .sequence = sequence,
+	  .attemptID = attemptID,
+	  .kind = CIDKind::CxnID,
+	  .action = CIDAction::T(action),
+	  .reason = CIDReason::T(reason),
+	  .length = length,
+	  .local = local,
+	  .associated = associated,
+	  .resetToken = resetToken};
 	  o.logCIDUpdated(event, time);
-	}));
-      }
+      }));
     }
+    if (committed) impl()->refreshPromotedRoutes_();
+    app()->txRun([
+      link = ZmRef<Impl>{impl()}, attemptID, id, sequence, committed
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      link->promotedCIDCommittedTx_(attemptID, id, sequence, committed);
+    });
+  }
+  void requestPromotedCIDCommit_() {
+    uint64_t attemptID = m_migration.attemptID;
+    CxnID id = m_txCandidatePeerCID;
+    uint64_t sequence = m_txCandidatePeerSeq;
+    app()->rxRun([
+      link = ZmRef<Impl>{impl()}, attemptID, id, sequence
+    ]() mutable {
+      if (link->disconnecting_()) return;
+      link->commitPromotedCIDRx_(attemptID, id, sequence);
+    });
+  }
+  void releaseCandidatePeerCID_() {
+    CxnID id = m_txCandidatePeerCID;
+    uint64_t sequence = m_txCandidatePeerSeq;
+    m_txCandidatePeerCID = {};
+    m_txCandidatePeerSeq = U64Null;
+    releasePeerCID_(id, sequence);
+  }
+  void releasePeerCID_(CxnID id, uint64_t sequence) {
+    if (!id || id == m_txPeerCID) return;
+    app()->rxRun([link = ZmRef<Impl>{impl()}, id, sequence]() mutable {
+      if (auto cid = findCID_(link->m_peerCIDs, sequence))
+	if (cid->id == id && cid->id != link->m_peerCID)
+	  cid->associated = false;
+    });
   }
   ZuTime pathValidDeadline_() const {
     ZuTime timeout = ptoTimeout_();
@@ -3450,7 +3611,7 @@ protected:
     switch (cid) {
       case CIDSel::Initial: return m_initialDCID;
       case CIDSel::Local: return m_localSCID;
-      default: return m_peerCID;
+      default: return m_txPeerCID;
     }
   }
 
@@ -3830,6 +3991,8 @@ protected:
 
   bool checkStatelessReset_(ZuBSpan datagram, bool notify = false) {
     if (!StatelessReset::verify(datagram, m_peerResetToken)) return false;
+    if (m_statelessReset) return true;
+    m_statelessReset = true;
 	    ZquicLOG(app()->qlogTrace(), ([
 	      bytes = datagram.length(),
 	      linkInfo = linkInfo_()
@@ -3845,13 +4008,35 @@ protected:
       o.logSecEvt(EvtName::StatelessReset, event, time);
     }));
     linkState_(LinkState::Draining);
-    m_streamQueue.clean();
-    for (auto &p : m_txPkts) p.clear();
     m_rxAcks.clear();
     ++m_rxDiag.failures;
-    impl()->statelessReset();
-    if (notify) impl()->disconnected(true);
+    bool notifyDisconnect = notify && !m_disconnecting.xch(1);
+    app()->txRun([
+      link = ZmRef<Impl>{impl()}, notifyDisconnect
+    ]() mutable {
+      link->statelessResetTx_(notifyDisconnect);
+    });
     return true;
+  }
+
+  void statelessResetTx_(bool notifyDisconnect) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stateless-reset cleanup outside Tx thread", return);
+    m_streamQueue.clean();
+    for (auto &p : m_txPkts) p.clear();
+    delTimers_();
+    app()->rxRun([
+      link = ZmRef<Impl>{impl()}, notifyDisconnect
+    ]() mutable {
+      link->statelessResetRxDone_(notifyDisconnect);
+    });
+  }
+
+  void statelessResetRxDone_(bool notifyDisconnect) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stateless-reset completion outside Rx thread", return);
+    impl()->statelessReset();
+    if (notifyDisconnect) impl()->disconnected(true);
   }
 
   template <
@@ -4093,11 +4278,17 @@ protected:
 	break;
       case FrameType::MaxStreamData:
       case FrameType::StreamDataBlocked:
-      case FrameType::ResetStream:
       case FrameType::StopSending:
 	if (frame.streamID <= uint64_t(INT64_MAX))
 	  if (StreamRef stream = findStream(int64_t(frame.streamID)))
 	    stream->controlSent(frame);
+	break;
+      case FrameType::ResetStream:
+	if (frame.streamID <= uint64_t(INT64_MAX))
+	  if (StreamRef stream = findStream(int64_t(frame.streamID))) {
+	    stream->controlSent(frame);
+	    notifyStreamTxClosed_(stream);
+	  }
 	break;
       default:
 	break;
@@ -4222,7 +4413,6 @@ protected:
       return false;
     };
     bool blocked = false;
-    bool flushQueuedControls = false;
     while (scheduledStreamCount_() && refs.count() < SentPkt::MaxFrames) {
       StreamRef stream = nextWritableStream_();
       if (!stream || !streamTxPending_(stream)) continue;
@@ -4302,7 +4492,7 @@ protected:
 	    StreamDataInfo::T(StreamDataInfo::None)};
 	o.logStreamDataMoved(event, time);
       }));
-      flushQueuedControls |= returnStreamCredit_(stream);
+      notifyStreamTxClosed_(stream);
       if (streamTxPending_(stream) && stream->id() >= 0)
 	streamWritable_(stream);
     }
@@ -4313,7 +4503,6 @@ protected:
       }
       for (unsigned i = 0; i < sentControls.length(); ++i)
 	controlSent_(sentControls[i]);
-      if (flushQueuedControls) impl()->flushTx_();
       return true;
     }
     return blocked;
@@ -4336,7 +4525,6 @@ protected:
       return false;
     };
     bool blocked = false;
-    bool flushQueuedControls = false;
     unsigned checked = scheduledStreamCount_();
     while (checked-- && scheduledStreamCount_() &&
 	refs.count() < SentPkt::MaxFrames) {
@@ -4413,7 +4601,7 @@ protected:
 	    StreamDataInfo::T(StreamDataInfo::None)};
 	o.logStreamDataMoved(event, time);
       }));
-      flushQueuedControls |= returnStreamCredit_(stream);
+      notifyStreamTxClosed_(stream);
       if (streamEarlyTxPending_(stream))
 	streamWritable_(stream);
     }
@@ -4422,7 +4610,6 @@ protected:
 	requeueStreamRefs_(PktNumSpace::AppData, refs, false);
 	return false;
       }
-      if (flushQueuedControls) impl()->flushTx_();
       return true;
     }
     return blocked;
@@ -4506,7 +4693,7 @@ protected:
 	  StreamDataInfo::T(StreamDataInfo::None)};
       o.logStreamDataMoved(event, time);
     }));
-    if (returnStreamCredit_(stream)) impl()->flushTx_();
+    notifyStreamTxClosed_(stream);
     return true;
   }
 
@@ -8730,13 +8917,27 @@ private:
       FrameType::MaxStreamData, uint64_t(stream->id()), maximum,
       Zquic::StreamType::Duplex});
   }
-  bool returnStreamCredit_(const StreamRef &stream) {
+  void notifyStreamTxClosed_(const StreamRef &stream) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream credit notification outside Tx thread", return);
+    if (!stream || stream->id() < 0 ||
+	(!stream->finDequeued() && !stream->resetSent()))
+      return;
+    app()->rxRun([link = ZmRef<Impl>{impl()}, stream]() mutable {
+      if (link->disconnecting_()) return;
+      stream->markTxClosedForCredit();
+      link->returnStreamCreditRx_(stream);
+    });
+  }
+  bool returnStreamCreditRx_(const StreamRef &stream) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC stream credit return outside Rx thread", return false);
     if (!stream || stream->id() < 0 || stream->creditReturned())
       return false;
     uint64_t id = uint64_t(stream->id());
     if (localInitiated_(id, m_isServer)) return false;
     if (!stream->rxComplete() && !stream->resetReceived()) return false;
-    if (!StreamID::uni(id) && !stream->finDequeued() && !stream->resetSent())
+    if (!StreamID::uni(id) && !stream->closedForStreamCredit())
       return false;
     Zquic::StreamType::T type = StreamID::uni(id);
     StreamLimit &limit = m_localLimit[type];
@@ -8744,7 +8945,8 @@ private:
     uint64_t next = limit.limit() + 1;
     limit.extend(next);
     stream->markCreditReturned();
-    queueFlowUpdate_(FlowUpdate{FrameType::MaxStreams, 0, limit.limit(), type});
+    postFlowUpdate_(
+      FlowUpdate{FrameType::MaxStreams, 0, limit.limit(), type});
     return true;
   }
 
@@ -9076,7 +9278,6 @@ private:
 
   void resetLinkState_() {
     linkState_(LinkState::Starting);
-    m_drainPTOs = 0;
     m_suspiciousStreamFrames = 0;
     m_suspiciousStreamClosed = false;
   }
@@ -9131,7 +9332,6 @@ private:
       o.logCxnStateUpd(event, time);
     }));
     linkState_(LinkState::Closing);
-    m_drainPTOs = 0;
     return true;
   }
   bool drainLinkState_() {
@@ -9148,7 +9348,6 @@ private:
       o.logCxnStateUpd(event, time);
     }));
     linkState_(LinkState::Draining);
-    m_drainPTOs = 0;
     return true;
   }
   void closedLinkState_() {
@@ -9164,7 +9363,6 @@ private:
       o.logCxnStateUpd(event, time);
     }));
     linkState_(LinkState::Closed);
-    m_drainPTOs = 0;
   }
 
 protected:
@@ -9214,8 +9412,14 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   AppClose		m_appClose;
+  bool			m_statelessReset = false;
   FlowCredit		m_rxDataCredit;
   uint64_t		m_rxDataRetired = 0;
+  ZuArray<StreamLimit, Zquic::StreamType::N>
+			m_localLimit = {
+    StreamLimit(MaxStreamCount),
+    StreamLimit(MaxStreamCount)
+  };
   ZuArray<StreamLimit, Zquic::StreamType::N>
 			m_peerLimit = {
     StreamLimit(MaxStreamCount),
@@ -9264,6 +9468,20 @@ private:
 			m_ackPost =
 			  ZuArray<AckPost, PktNumSpace::N>(
 			    PktNumSpace::N);
+  ZuArray<bool, PktNumSpace::N>
+			m_rxSpaceDiscarded =
+			  fixedArray<bool, PktNumSpace::N>();
+  LinkState::T		m_linkState = LinkState::Closed;
+  uint64_t		m_peerRetirePriorTo = 0;
+  unsigned		m_suspiciousStreamFrames = 0;
+  bool			m_suspiciousStreamClosed = false;
+  bool			m_rxKeyPhase = false;
+  bool			m_rxOldKeyPhase = false;
+  uint64_t		m_rxKeyGeneration = 0;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  FlowCredit		m_txDataCredit;
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;
@@ -9286,28 +9504,8 @@ private:
   ZuTime		m_closeNextResponse;
   PktNumSpace::T	m_ptoTimerLevel = PktNumSpace::Initial;
   bool			m_idleAckElicitingSent = false;
-  ZuArray<bool, PktNumSpace::N>
-			m_rxSpaceDiscarded =
-			  fixedArray<bool, PktNumSpace::N>();
-  LinkState::T		m_linkState = LinkState::Closed;
-  unsigned		m_drainPTOs = 0;
-  uint64_t		m_peerRetirePriorTo = 0;
-  unsigned		m_suspiciousStreamFrames = 0;
-  bool			m_suspiciousStreamClosed = false;
-  bool			m_rxKeyPhase = false;
-  bool			m_rxOldKeyPhase = false;
-  uint64_t		m_rxKeyGeneration = 0;
-
-  // Tx thread exclusive
-  alignas(Zm::CacheLineSize)
-  FlowCredit		m_txDataCredit;
   uint64_t		m_nextBidiOrdinal = 0;
   uint64_t		m_nextUniOrdinal = 0;
-  ZuArray<StreamLimit, Zquic::StreamType::N>
-			m_localLimit = {
-    StreamLimit(MaxStreamCount),
-    StreamLimit(MaxStreamCount)
-  };
   ZuArray<uint64_t, Zquic::StreamType::N>
 			m_queued =
 			  fixedArray<uint64_t, Zquic::StreamType::N>();
@@ -9379,6 +9577,10 @@ private:
   bool			m_coalesceLong = false;
   bool			m_txKeyPhase = false;
   uint64_t		m_txKeyGeneration = 0;
+  CxnID			m_txPeerCID;
+  uint64_t		m_txPeerSeq = U64Null;
+  CxnID			m_txCandidatePeerCID;
+  uint64_t		m_txCandidatePeerSeq = U64Null;
 };
 
 } // namespace Zquic

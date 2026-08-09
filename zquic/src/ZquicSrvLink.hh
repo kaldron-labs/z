@@ -67,7 +67,11 @@ public:
     return Base::pathAntiAmp_();
   }
   const Crypto &crypto() const { return Base::crypto_(); }
-  const ZiSockAddr &peer() const { return m_peerAddr; }
+  ZiSockAddr peer() const {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC server peer access outside Tx thread", return {});
+    return m_peerAddr;
+  }
 
   bool send(StreamRef stream, ZuBSpan payload, bool fin = true) {
     if (Base::disconnecting_()) return false;
@@ -228,15 +232,15 @@ public:
   }
   bool disconnect(uint64_t errorCode = 0) {
     if (!Base::closed()) Base::closeState_(errorCode, true);
-    if (Base::established_() && m_peerAddr) {
-      app()->txRun([
-	link = impl(),
-	addr = m_peerAddr
-      ]() mutable {
+    if (Base::established_()) {
+      app()->txRun([link = impl()]() mutable {
 	if (link->disconnecting_()) return;
-	(void)link->sendCloseFrame_(ZuMv(addr), true);
-	link->m_closePeer = false;
-	link->enterLocalClosingTx_();
+	if (ZiSockAddr addr = link->m_peerAddr) {
+	  (void)link->sendCloseFrame_(ZuMv(addr), true);
+	  link->m_closePeer = false;
+	  link->enterLocalClosingTx_();
+	} else
+	  link->Base::disconnect(false);
       });
       return true;
     }
@@ -293,7 +297,10 @@ private:
 
   void resetRuntimeState_() {
     Base::resetLink_();
-    m_peerAddr.null();
+    app()->txInvoke(impl(), [link = impl()]() mutable {
+      link->m_peerAddr.null();
+      return link;
+    });
     m_bootstrap = {};
     m_handshakeDoneSent = 0;
   }
@@ -343,7 +350,7 @@ private:
     Base::schedulePMTUD();
     Base::scheduleMigrationCIDs_();
     if (app()->newTokenAddrValidate())
-      queueNewToken_();
+      queueNewToken_(m_bootstrap.origDCID());
     impl()->connected(Connected{
       .alpn = Base::negotiatedProtocol_(),
       .version = Version1
@@ -942,20 +949,17 @@ private:
     Base::discardTxPktNumSpace_(PktNumSpace::Handshake);
   }
 
-  void queueNewToken_() {
-    if (!m_peerAddr) return;
-    TokenBytes token;
-    if (!AddressToken::encode(
-	  token, TokenKind::NewToken, app()->addrValidationSecret(),
-	  m_peerAddr, m_bootstrap.origDCID(), {},
-	  uint64_t(Zm::now().sec()), app()->addrValidatePeerPort()))
-      return;
-    app()->txRun([
-      link = impl(),
-      addr = m_peerAddr,
-      token = ZuMv(token)
-    ]() mutable {
+  void queueNewToken_(CxnID origDCID) {
+    app()->txRun([link = impl(), origDCID = ZuMv(origDCID)]() mutable {
       if (link->disconnecting_()) return;
+      ZiSockAddr addr = link->m_peerAddr;
+      if (!addr) return;
+      TokenBytes token;
+      if (!AddressToken::encode(
+	    token, TokenKind::NewToken, link->app()->addrValidationSecret(),
+	    addr, origDCID, {}, uint64_t(Zm::now().sec()),
+	    link->app()->addrValidatePeerPort()))
+	return;
       (void)link->sendNewToken_(ZuMv(token), ZuMv(addr));
     });
   }
@@ -1061,7 +1065,11 @@ private:
       InitialKeyDir::Client, d, packetOffset, packetLen,
       [this](const LongHdr &h, Datagram &d_) {
 	if (!Base::handshakeStarted_()) {
-	  m_peerAddr = d_.addr;
+	  ZiSockAddr peerAddr = d_.addr;
+	  app()->txInvoke(impl(), [link = impl(), peerAddr]() mutable {
+	    link->m_peerAddr = ZuMv(peerAddr);
+	    return link;
+	  });
 	  if (!initRuntimeCrypto_(h, d_.buf->length)) return false;
 	  app()->refreshLinkRoutes_(impl());
 	}
@@ -1192,6 +1200,10 @@ private:
     m_peerAddr = Base::activePathRemote_();
   }
   void refreshPromotedRoutes_() {
+    if (app()->rxInvoked()) {
+      app()->refreshLinkRoutes_(impl());
+      return;
+    }
     app()->rxRun([link = impl()]() mutable {
       link->app()->refreshLinkRoutes_(link);
     });
@@ -1238,6 +1250,9 @@ private:
   alignas(Zm::CacheLineSize)
   ServerBootstrap	m_bootstrap;
   InitialInfo		m_initialInfo;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
   ZiSockAddr		m_peerAddr;
 };
 
