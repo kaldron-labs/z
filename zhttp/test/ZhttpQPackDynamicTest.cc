@@ -141,9 +141,10 @@ struct BuilderState :
   template <typename L>
   void operation(L &&l) const {
     if (customTarget)
-      l(method, CustomTarget{});
+      l(method, CustomTarget{}, false, [](auto &) { });
     else
-      l(method, Zhttp::PathQuery{path, query, bool(query)});
+      l(method, path, bool(query),
+	[this](auto &stream) { stream << query; });
   }
   template <typename L> void host(L &&l) const { l("example.com"); }
   template <typename L>
@@ -239,7 +240,7 @@ struct ParserStream :
     }
   }
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") {
@@ -252,7 +253,7 @@ struct ParserStream :
     }
   }
   void header(
-      Zhttp::HdrSection section, ZuBSpan name, ZuBSpan value) {
+      Zhttp::FieldSection::T section, ZuBSpan name, ZuBSpan value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     ++runtimeCalls;
@@ -272,9 +273,10 @@ struct ParserStream :
     ++headerCalls;
   }
   template <typename Rx>
-  void body(Rx &rx) {
+  bool body(Rx &rx) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
     ++bodyCalls;
+    if (rejectBody) return false;
     while (rx) {
       const uint8_t *offered = nullptr;
       if (rx.consume(
@@ -286,9 +288,10 @@ struct ParserStream :
 	    bodyNoCopy &= span.data() == offered;
 	    bodyData << ZuCSpan{span};
 	  }) <= 0)
-	break;
+	return false;
       if (partialBody) break;
     }
+    return true;
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
@@ -340,12 +343,13 @@ struct ParserStream :
   unsigned			headerCalls = 0;
   uint64_t			bodyLength = 0;
   Zhttp::BodyType::T		bodyType = Zhttp::BodyType::None;
-  Zhttp::HdrSection	headerSection = Zhttp::HdrSection::Invalid;
+  Zhttp::FieldSection::T	headerSection = Zhttp::FieldSection::Invalid;
   unsigned			streamStarts = 0;
   unsigned			streamEnds = 0;
   unsigned			streamResets = 0;
   unsigned			completeCalls = 0;
   bool				partialBody = false;
+  bool				rejectBody = false;
   bool				bodyNoCopy = true;
   bool				fin = false;
   bool				reset_ = false;
@@ -358,6 +362,7 @@ struct ParserStream :
   ZtString<>			protocol_;
   ZtString<>			bodyData;
   ZtString<>			streamBody;
+  uint64_t			streamError = 0;
   ZtString<>			runtimeName;
   ZtString<>			runtimeValue;
 };
@@ -376,6 +381,7 @@ struct ResponseParserStream :
   bool finReceived() const { return fin; }
   Zhttp::H3::QPackRxTable *qpackRx() { return &qpackRxTable; }
   const Zhttp::H3::Params &h3Params() const { return params; }
+  bool enable1xx() const { return informational; }
 
   void push(const Zhttp::H3::HdrBytes &bytes) {
     rx.push(rxBuf(ZuBSpan{bytes}));
@@ -384,18 +390,20 @@ struct ResponseParserStream :
   void status(unsigned value) {
     statusOrder = ++callbackOrder;
     status_ = value;
+    ++statusCalls;
   }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     if (type == Zhttp::BodyType::Fixed) contentLen = length;
   }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuBSpan value) {
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
-  template <typename Rx> void body(Rx &rx_) {
+  template <typename Rx> bool body(Rx &rx_) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
-    Zhttp::bodyEach(rx_, [this](ZuBSpan value) { bodyData << value; });
+    return Zhttp::bodyEach(
+      rx_, [this](ZuBSpan value) { bodyData << value; });
   }
   void complete(Zhttp::H3::ParserState::T state) {
     completeState = state;
@@ -408,12 +416,14 @@ struct ResponseParserStream :
   uint64_t			retired = 0;
   uint64_t			contentLen = 0;
   unsigned			status_ = 0;
+  unsigned			statusCalls = 0;
   unsigned			callbackOrder = 0;
   unsigned			statusOrder = 0;
   unsigned			headerOrder = 0;
   unsigned			bodyOrder = 0;
   unsigned			completeCalls = 0;
   bool				fin = false;
+  bool				informational = false;
   Zhttp::H3::ParserState::T	completeState =
     Zhttp::H3::ParserState::Initial;
   ZtString<>			xTest;
@@ -800,7 +810,7 @@ void testParserFieldCallbacks()
       parser.runtimeName == "x-runtime" &&
       parser.runtimeValue == "plain" && parser.operationOrder &&
       parser.operationOrder < parser.headerOrder &&
-      parser.headerSection == Zhttp::HdrSection::Final &&
+      parser.headerSection == Zhttp::FieldSection::Final &&
       parser.headerCalls == 1 &&
       parser.bodyType == Zhttp::BodyType::Streamed && !parser.bodyLength,
     "parser did not deliver initial pseudo/regular fields");
@@ -813,7 +823,7 @@ void testParserFieldCallbacks()
   parser.push(frame);
   ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Trailers &&
       parser.xTestCalls == 2 && parser.xTest == "trailer" &&
-      parser.headerSection == Zhttp::HdrSection::Trailers,
+      parser.headerSection == Zhttp::FieldSection::Trailers,
     "parser did not deliver trailer fields");
 
   ParserStream invalid;
@@ -875,21 +885,30 @@ void testParserFieldCallbacks()
     "oversized H3 header classification mismatch");
 
   ResponseParserStream response;
+  Zhttp::H3::Header informationalHeaders[] = {
+    {":status", "103"},
+    {"x-test", "early"}
+  };
+  frame.length(0);
+  putHeadersFrame(frame,
+    ZuSpan<Zhttp::H3::Header>{informationalHeaders, 2});
   Zhttp::H3::Header responseHeaders[] = {
     {":status", "200"},
     {"x-test", "response"},
     {"content-length", "3"}
   };
-  frame.length(0);
-  putHeadersFrame(frame,
+  Zhttp::H3::HdrBytes finalFrame;
+  putHeadersFrame(finalFrame,
     ZuSpan<Zhttp::H3::Header>{responseHeaders, 3});
+  appendBytes(frame, finalFrame);
   Zhttp::H3::HdrBytes responseData;
   putFrame(responseData, 0x00, ZuBSpan{"abc"});
   appendBytes(frame, responseData);
   response.fin = true;
   response.push(frame);
   ZuCHECK(response.process(response) == Zhttp::H3::ParserState::Complete &&
-      response.status_ == 200 && response.xTest == "response" &&
+      response.status_ == 200 && response.statusCalls == 1 &&
+      response.xTest == "response" &&
       response.bodyData == "abc" &&
       response.statusOrder < response.headerOrder &&
       response.headerOrder < response.bodyOrder &&
@@ -948,6 +967,41 @@ void testParserBodyStream()
 {
   ZuTestScope(testParserBodyStream);
 
+  {
+    ParserStream parser;
+    parser.rejectBody = true;
+    parser.h3(
+      &parser.qpackRxTable, nullptr, nullptr, &parser.streamError,
+      [](void *ptr, uint64_t error) {
+	*static_cast<uint64_t *>(ptr) = error;
+      }, 1, &parser.params);
+    parser.push(messageHeaders(3));
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body,
+      "H3 body rejection setup failed");
+    Zhttp::H3::HdrBytes data;
+    putFrame(data, 0x00, ZuBSpan{"abc"});
+    parser.push(data);
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::BodyRejected &&
+	parser.error().scope == Zhttp::RequestErrorScope::Request &&
+	parser.error().responsePossible &&
+	parser.streamError == Zhttp::H3::RequestCancelled &&
+	parser.bodyCalls == 1 && parser.completeCalls == 1 && !parser.rx,
+      "H3 body rejection was not a request-cancelled stream failure");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
+	parser.bodyCalls == 1 && parser.completeCalls == 1,
+      "H3 body rejection produced duplicate callbacks");
+
+    ParserStream sibling;
+    sibling.push(messageHeaders(3));
+    ZuCHECK(sibling.process(sibling) == Zhttp::H3::ParserState::Body,
+      "H3 sibling setup failed after rejection");
+    sibling.push(data);
+    sibling.fin = true;
+    ZuCHECK(sibling.process(sibling) == Zhttp::H3::ParserState::Complete &&
+	sibling.bodyData == "abc" && sibling.completeCalls == 1,
+      "independent H3 sibling did not survive body rejection");
+  }
   {
     ParserStream parser;
     parser.push(messageHeaders(3));

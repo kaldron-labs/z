@@ -14,6 +14,19 @@ using namespace ZuTestUtil;
 
 namespace {
 
+void testFieldSection()
+{
+  ZuTestScope(testFieldSection);
+  ZuCHECK(Zhttp::FieldSection::lookup("Informational") ==
+      Zhttp::FieldSection::Informational,
+    "informational section lookup");
+  ZuCHECK(Zhttp::FieldSection::name(Zhttp::FieldSection::Final) == "Final",
+    "final section name");
+  ZuCHECK(Zhttp::FieldSection::lookup("invalid") ==
+      Zhttp::FieldSection::Invalid,
+    "invalid section lookup");
+}
+
 struct H3Fields {
   template <typename Semantics, typename Header>
   static bool field(
@@ -57,7 +70,7 @@ bool validRequest(bool extended = false)
 	(!extended || target.protocol == "websocket");
     },
     [](unsigned) { }, header);
-  return ok && host && operation && section == Zhttp::HdrSection::Final;
+  return ok && host && operation && section == Zhttp::FieldSection::Final;
 }
 
 template <typename Source>
@@ -89,7 +102,7 @@ bool invalidCases()
   Zhttp::Fields::Semantics<true> missing;
   bool missingPseudo =
     Source::field(missing, ":method", "GET", header) &&
-    finish(missing) == Zhttp::HdrSection::Invalid;
+    finish(missing) == Zhttp::FieldSection::Invalid;
 
   Zhttp::Fields::Semantics<true> connect;
   bool invalidConnect =
@@ -97,7 +110,7 @@ bool invalidCases()
     Source::field(connect, ":authority", "example.com:443", header) &&
     Source::field(connect, ":scheme", "https", header) &&
     Source::field(connect, ":path", "/", header) &&
-    finish(connect) == Zhttp::HdrSection::Invalid;
+    finish(connect) == Zhttp::FieldSection::Invalid;
 
   Zhttp::Fields::Semantics<true> disabledExtended;
   bool disabledConnect =
@@ -106,7 +119,7 @@ bool invalidCases()
     Source::field(disabledExtended, ":authority", "example.com", header) &&
     Source::field(disabledExtended, ":path", "/", header) &&
     Source::field(disabledExtended, ":protocol", "opaque", header) &&
-    finish(disabledExtended) == Zhttp::HdrSection::Invalid;
+    finish(disabledExtended) == Zhttp::FieldSection::Invalid;
 
   Zhttp::Fields::Semantics<true> trailers;
   trailers.trailers(true);
@@ -128,7 +141,7 @@ bool responses()
     [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
     [&status](unsigned value) { status = value; }, header);
   if (!ok || status != 103 ||
-      section != Zhttp::HdrSection::Informational)
+      section != Zhttp::FieldSection::Informational)
     return false;
 
   Zhttp::Fields::Semantics<false> final;
@@ -137,7 +150,7 @@ bool responses()
   section = final.finish(
     [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
     [&status](unsigned value) { status = value; }, header);
-  if (!ok || status != 200 || section != Zhttp::HdrSection::Final ||
+  if (!ok || status != 200 || section != Zhttp::FieldSection::Final ||
       !final.bodyAllowed())
     return false;
 
@@ -147,7 +160,7 @@ bool responses()
   section = head.finish(
     [](Zhttp::Method::T, const Zhttp::RequestTarget &) { },
     [&status](unsigned value) { status = value; }, header);
-  return ok && section == Zhttp::HdrSection::Final && !head.bodyAllowed();
+  return ok && section == Zhttp::FieldSection::Final && !head.bodyAllowed();
 }
 
 template <typename Source>
@@ -168,6 +181,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testFieldSection);
   ZuTestCall((testSource<H3Fields>), "H3");
   ZuTestCall((testSource<H2SyntheticFields>), "H2 synthetic");
 }

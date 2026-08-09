@@ -395,7 +395,8 @@ struct Destination {
 // callbacks are synchronous.
 struct Request : public ZmObject, public Builder {
   // Request start line / pseudo-headers. operation() is called exactly once
-  // per message; l(method, target).
+  // per message; l(method, path, hasQuery, query), where query(stream) writes
+  // the query without its '?'.
   template <typename L> void operation(L &&l);
   template <typename L> void protocol(L &&l);	// l(value), CONNECT only
 
@@ -492,9 +493,11 @@ private:
 
     template <typename L>
     void operation(L &&l) {
-      if (operationCached)
-	l(method, target);
-      else
+      if (operationCached) {
+	auto pathQuery = splitPathQuery(target);
+	l(method, pathQuery.path, pathQuery.hasQuery,
+	  [query = pathQuery.query](auto &stream) { stream << query; });
+      } else
 	app->operation(ZuFwd<L>(l));
     }
     template <typename L>
@@ -593,22 +596,22 @@ private:
       app->bodyInfo(*link, *request, sink(), type, length);
     }
     template <typename Key>
-    void header(Zhttp::HdrSection section, ZuBSpan value) {
+    void header(Zhttp::FieldSection::T section, ZuBSpan value) {
       app->template header<Key>(
 	*link, *request, sink(), section, value);
     }
     template <typename Key, typename Value>
-    void header(Zhttp::HdrSection section) {
+    void header(Zhttp::FieldSection::T section) {
       app->template header<Key, Value>(
 	*link, *request, sink(), section);
     }
     void header(
-	Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
+	Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
       app->header(*link, *request, sink(), section, key, value);
     }
     template <typename Rx>
-    void body(Rx &rx) {
-      app->body(*link, *request, sink(), rx);
+    bool body(Rx &rx) {
+      return app->body(*link, *request, sink(), rx);
     }
     void complete(typename State::T state) {
       app->template complete<State>(
@@ -616,6 +619,7 @@ private:
     }
 
     ResParser &sink() { return *sink_; }
+    const ResParser &sink() const { return *sink_; }
 
     App		*app = nullptr;
     Link	*link = nullptr;
@@ -636,6 +640,7 @@ private:
     using ParserSink_::complete;
     using ParserSink_::header;
     using ParserSink_::operation;
+    bool enable1xx() const { return ParserSink_::sink().enable1xx(); }
     void status(unsigned value) {
       if constexpr (Message::ID == Version::H1)
 	ParserSink_::status(value, Base::http10());
@@ -659,10 +664,15 @@ public:
     m_requestTarget.length(0);
     unsigned operations = 0;
     m_requestApp->operation(
-      [this, &operations](Method::T method, auto &&target) {
+      [this, &operations](
+	  Method::T method, auto &&path, bool hasQuery, auto &&query) {
 	if (++operations != 1) return;
 	m_requestMethod = method;
-	m_requestTarget << ZuFwd<decltype(target)>(target);
+	m_requestTarget << path;
+	if (hasQuery) {
+	  m_requestTarget << '?';
+	  query(m_requestTarget);
+	}
 	m_operationOK = true;
       });
     if (operations != 1) m_operationOK = false;
@@ -3073,6 +3083,7 @@ struct CliLink :
       config.qpackRxBlocked(), config.qpackTxSections()
     };
     bool extendedConnect = config.extendedConnect();
+    h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     auto link = ZmMkRef(this);
     this->app()->txRun([
@@ -5953,9 +5964,9 @@ public:
   template <typename Key, typename Link>
   void header(
     Link &, LiveReq &attempt, ResParser &parser,
-    Zhttp::HdrSection section, ZuBSpan value) {
+    Zhttp::FieldSection::T section, ZuBSpan value) {
     if constexpr (Key{}() == "alt-svc") {
-      if (section != Zhttp::HdrSection::Final) {
+      if (section != Zhttp::FieldSection::Final) {
 	parser.template header<Key>(section, value);
 	return;
       }
@@ -5964,7 +5975,7 @@ public:
       m_altSvc.update(
 	origin, value, m_config.maxAltSvc(), Zm::now());
     } else if constexpr (Key{}() == "connection") {
-      if (section != Zhttp::HdrSection::Final) {
+      if (section != Zhttp::FieldSection::Final) {
 	parser.template header<Key>(section, value);
 	return;
       }
@@ -5973,7 +5984,7 @@ public:
       else if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "keep-alive"))
 	attempt.protocol.persistence = Persistence::KeepAlive;
     } else if constexpr (Key{}() == "location") {
-      if (section != Zhttp::HdrSection::Final) {
+      if (section != Zhttp::FieldSection::Final) {
 	parser.template header<Key>(section, value);
 	return;
       }
@@ -5986,35 +5997,37 @@ public:
   template <typename Key, typename Value, typename Link>
   void header(
     Link &, LiveReq &, ResParser &parser,
-    Zhttp::HdrSection section) {
+    Zhttp::FieldSection::T section) {
     parser.template header<Key, Value>(section);
   }
   template <typename Link>
   void header(
     Link &, LiveReq &, ResParser &parser,
-    Zhttp::HdrSection section, ZuBSpan key, ZuBSpan value) {
+    Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
     if constexpr (Fields::HasRuntime<ResParser>{})
       parser.header(section, key, value);
   }
   template <typename Link, typename Rx>
-  void body(
+  bool body(
     Link &link, LiveReq &attempt, ResParser &parser, Rx &rx) {
     headersDone_(link, attempt);
     uint64_t before = rx.length();
     if (before < attempt.responseBody.pending) {
       fail_(attempt, FailureKind::Body);
-      return;
+      return false;
     }
     attempt.responseBody.received += before - attempt.responseBody.pending;
-    parser.body(rx);
+    bool accepted = parser.body(rx);
     uint64_t pending = rx.length();
     if (pending > before) {
       fail_(attempt, FailureKind::Body);
-      return;
+      return false;
     }
     attempt.responseBody.consumed += before - pending;
     attempt.responseBody.pending = pending;
     link.responseBodyBytes(&attempt);
+    if (ZuUnlikely(!accepted)) fail_(attempt, FailureKind::Body);
+    return accepted;
   }
   template <typename ParserState, typename Link>
   void complete(

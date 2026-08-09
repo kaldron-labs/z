@@ -48,6 +48,32 @@
 
 namespace Zhttp {
 
+namespace Builder_ {
+
+template <typename Path, typename Query>
+struct Target {
+  Path		&path;
+  Query		&query;
+  bool		hasQuery;
+
+  template <typename S>
+  void print(S &s) const {
+    s << path;
+    if (hasQuery) {
+      s << '?';
+      query(s);
+    }
+  }
+  friend ZuPrintFn ZuPrintType(Target *);
+};
+
+template <typename Path, typename Query>
+Target<Path, Query> target(Path &path, bool hasQuery, Query &query) {
+  return {path, query, hasQuery};
+}
+
+} // namespace Builder_
+
 constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
 constexpr unsigned DefltMaxStartLine = (1<<13);	// 8K
 constexpr unsigned DefltMaxHeaderSection = (1<<16);	// 64K
@@ -76,7 +102,7 @@ inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
 
 ZtEnumStruct(ZhttpAPI, RequestErrorCode, int8_t,
   Malformed, ContentTooLarge, TargetTooLong, HeadersTooLarge,
-  NotImplemented, VersionUnsupported);
+  NotImplemented, VersionUnsupported, BodyRejected);
 
 ZtEnumStruct(ZhttpAPI, RequestErrorScope, int8_t,
   Request, Stream, Connection);

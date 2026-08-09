@@ -22,6 +22,7 @@
 
 #include <zlib/ZmAssert.hh>
 
+#include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIOBuf.hh>
@@ -32,12 +33,8 @@
 
 namespace Zhttp {
 
-enum HdrSection {
-  Invalid = -1,
-  Informational,
-  Final,
-  Trailers
-};
+ZtEnumNS(ZhttpAPI, FieldSection, int8_t, Informational, Final, Trailers);
+namespace FieldSection { enum { Invalid = -1 }; }
 
 class BodyRx {
 public:
@@ -148,7 +145,7 @@ struct HasRuntime : public ZuFalse { };
 template <typename Impl>
 struct HasRuntime<Impl,
   decltype(ZuDeclVal<Impl *>()->header(
-    HdrSection::Final, ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
+    FieldSection::Final, ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
     public ZuTrue { };
 
 template <typename Impl, typename L, typename = void>
@@ -284,24 +281,24 @@ public:
   }
 
   template <typename Operation, typename Status, typename Header>
-  HdrSection finish(
+  FieldSection::T finish(
       Operation &&operation, Status &&status, Header &&header) {
     if (m_trailers)
-      return m_seen ? HdrSection::Invalid : HdrSection::Trailers;
+      return m_seen ? FieldSection::Invalid : FieldSection::Trailers;
     if (!valid_() ||
 	!start(ZuFwd<Operation>(operation), ZuFwd<Status>(status),
 	  ZuFwd<Header>(header)))
-      return HdrSection::Invalid;
+      return FieldSection::Invalid;
     if constexpr (Request)
-      return HdrSection::Final;
+      return FieldSection::Final;
     else
-      return m_status < 200 ? HdrSection::Informational : HdrSection::Final;
+      return m_status < 200 ? FieldSection::Informational : FieldSection::Final;
   }
 
-  HdrSection section() const {
-    if (m_trailers) return HdrSection::Trailers;
-    if constexpr (Request) return HdrSection::Final;
-    return m_status < 200 ? HdrSection::Informational : HdrSection::Final;
+  FieldSection::T section() const {
+    if (m_trailers) return FieldSection::Trailers;
+    if constexpr (Request) return FieldSection::Final;
+    return m_status < 200 ? FieldSection::Informational : FieldSection::Final;
   }
 
 private:

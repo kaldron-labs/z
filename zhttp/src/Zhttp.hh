@@ -82,47 +82,58 @@ namespace Zhttp {
 // - peer close/reset during a response completes or fails that application
 //   link exactly once, followed by one disconnected() callback.
 
-// Parser and Builder are plain application structs wrapped in protocol CRTP
-// adapters by the client and server facades; neither inherits a Zhttp base. The
-// protocol invokes only the callbacks applicable to the selected request or
-// response role and version. Every lambda call is synchronous. Printable
-// Builder values retain their actual type. Received spans and body Rx streams
-// are borrowed only for the duration of the callback.
-#if 0
-struct Parser {
-  using Headers = ZhttpHeaders(...);
+// Parser and Builder are application base classes with side-effect-safe
+// defaults. Applications can derive from them and override only the types and
+// callbacks they need. The client and server facades wrap application objects
+// in protocol CRTP adapters; the protocol invokes only the callbacks applicable
+// to the selected request or response role and version. Every lambda call is
+// synchronous. Printable Builder values retain their actual type. Received
+// spans and body Rx streams are borrowed only for the duration of the callback.
+// Parser lifecycle is facade-specific rather than part of this common callback
+// contract: Server obtains a request Parser from Workload::request() for each
+// admitted request; Client calls ResParser::init() before each response message.
+struct Parser { // base class with defaulted types and member functions
+  using Headers = ZuTypeList<>; // ZhttpHeaders(...);
 
-  // Constructed once per logical stream and destroyed once when that stream
-  // ends. reset() is called exactly once before each message, including the
-  // first, and clears all per-message application state.
-  Parser();
-  ~Parser();
-  void reset();
+  // Informational response field sections are suppressed by default. Return
+  // true to receive their status() and header() callbacks.
+  constexpr bool enable1xx() const { return false; }
 
-  // Called first, before any header() or body() callback. A subsequent
-  // validation failure is reported by complete(false).
-  void operation(Method::T, const RequestTarget &);	// requests only
-  // Called first, before any header() or body() callback. A subsequent
-  // validation failure is reported by complete(false).
-  void status(unsigned);				// responses only
-  void bodyInfo(BodyType::T, uint64_t length);
+  // First protocol callback for a request, called exactly once after the
+  // start line or pseudo-headers are validated and before any header().
+  void operation(Method::T, const RequestTarget &) { }	// requests only
 
-  // declared run-time value, declared fixed value, undeclared key/value
+  // First protocol callback for each response field section, called after
+  // its :status or status line is validated and before that section's
+  // header() callbacks. Informational sections may precede the final one.
+  void status(unsigned) { }				// responses only
+
+  // Declared run-time value, declared fixed value, undeclared key/value.
+  // Initial-section callbacks follow operation()/status(); trailer callbacks
+  // follow bodyInfo() and any body() prompts.
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value);
+  void header(Zhttp::FieldSection::T, ZuBSpan value) { }
   template <typename Key, typename Value>
-  void header(Zhttp::HdrSection);
-  void header(Zhttp::HdrSection, ZuBSpan key, ZuBSpan value);
+  void header(Zhttp::FieldSection::T) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) { }
+
+  // Called once after the final initial field section and before body().
+  void bodyInfo(BodyType::T, uint64_t length) { }
 
   // Synchronous queue prompt; incomplete application framing may remain
-  // queued for a later decoded-body append.
-  template <typename Rx> void body(Rx &);
-  void complete(bool ok);
+  // queued for a later decoded-body append. Return true to continue parsing,
+  // or false to reject the message. Rejection suppresses later message
+  // callbacks except for exactly one eventual complete(false).
+  template <typename Rx> bool body(Rx &) { return false; }
+
+  // Last callback for the message. A validation or framing failure may
+  // short-circuit the successful ordering above and report false.
+  void complete(bool ok) { }
 };
 
 struct Builder {
-  using Headers = ZhttpHeaders(...);
-  using Trailers = ZhttpHeaders(...);	// optional
+  using Headers = ZuTypeList<>; // ZhttpHeaders(...);
+  using Trailers = ZuTypeList<>; // ZhttpHeaders(...);	// optional
 
   // May be non-constexpr for a type-erased Builder. The value is fixed from
   // reset() until message construction completes.
@@ -131,25 +142,33 @@ struct Builder {
   // May be constructed once and retained across messages. Called exactly
   // once before each message, including the first, to clear per-message
   // construction state while preserving the configured request/response.
-  void reset();
+  void reset() { }
 
-  template <typename Key, typename L> void header(L &&l); // l(value)
-  template <typename L> void header(L &&l);		   // l(key, value)
+  // Request start line / pseudo-headers. emit(method, path, hasQuery, query)
+  // is called exactly once; query(stream) writes the query without its '?'.
+  // query is called only when hasQuery is true, permitting run-time query
+  // construction without first materializing the complete request target.
+  template <typename Emit>
+  void operation(Emit &&emit) const {
+    emit(Method::GET, "/", false, [](auto &) { });
+  }
 
-  // Present only for body-bearing policies. emit(write) is called zero or
-  // one times according to BodyPolicy::optional(bodyPolicy());
-  // write(bodyStream) returns
-  // void or bool.
-  template <typename Emit> void body(Emit &&emit);
+  template <typename Key, typename L> void header(L &&l) const { } // l(value)
+  template <typename L> void header(L &&l) const { }		     // l(key, value)
 
-  // Present only for fixed policies; called synchronously after body output.
+  // Called only for body-bearing policies. emit(write) must be called
+  // once for required bodies, zero or one times for optional bodies.
+  // body(emit) will not be called for messages without a body.
+  // write(bodyStream) returns true on success, false on failure.
+  template <typename Emit> void body(Emit &&emit) const { }
+
+  // Called only for fixed policies, synchronously after body output.
   // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
   // There is no contentLength() callback; emit a Content-Length Placeholder
   // from header<Key>(), then overwrite its mutable span here. Failing to
   // overwrite the complete placeholder is an application error.
-  template <typename L> void bodyHdrs(L &&l);
+  template <typename L> void bodyHdrs(L &&l) const { }
 };
-#endif
 
 // Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
 // The role facades wrap plain application Parser sinks in these
@@ -165,24 +184,10 @@ struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers> {
   using Base = ProtocolParser<ParserAdapter, Headers>;
   using State = typename Base::State;
 
-  void reset();
-
-  // request or response start line / pseudo-headers
-  void operation(Method::T method, const RequestTarget &target);
-  void status(unsigned);
-
-  // declared run-time value, declared fixed value, undeclared key/value
-  template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value);
-  template <typename Key, typename Value>
-  void header(Zhttp::HdrSection);
-  void header(Zhttp::HdrSection, ZuBSpan key, ZuBSpan value);
-  void bodyInfo(BodyType::T, uint64_t length);
-
-  // populated decoded-body queue and completion
-  // body() is a synchronous prompt; incomplete application framing remains
-  // queued and is presented again after a later complete HTTP frame append.
-  template <typename Rx> void body(Rx &);
+  // identical to app-facing Parser member functions (see above):
+  // - enable1xx, operation, status, header, bodyInfo, bool body(Rx &)
+  // complete takes the protocol parser state rather than a success boolean;
+  // it is called once per parsed message
   void complete(State::T);
 
   // H3 stream/QPACK integration
@@ -406,14 +411,7 @@ struct HasBuilderBodyHdrs<U, L, decltype(
 
 template <typename Write, typename Stream>
 bool invokeBodyWriter(Write &&write, Stream &stream) {
-  using R = decltype(ZuFwd<Write>(write)(stream));
-  ZuAssert((ZuIsSame<R, void>{} || ZuIsSame<R, bool>{}),
-    "body writer must return void or bool");
-  if constexpr (ZuIsSame<R, void>{}) {
-    ZuFwd<Write>(write)(stream);
-    return true;
-  } else
-    return ZuFwd<Write>(write)(stream);
+  return ZuFwd<Write>(write)(stream);
 }
 
 template <typename Headers>

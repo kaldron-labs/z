@@ -11,6 +11,9 @@
 #include <zlib/ZhttpFields.hh>
 
 namespace Zhttp {
+
+ZtEnumImplNS(FieldSection);
+
 namespace Fields {
 
 bool forbidden(ZuCSpan name)

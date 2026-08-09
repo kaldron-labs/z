@@ -40,7 +40,9 @@ struct RequestBuilder :
     RequestBuilder<Profile>, ZhttpHeaders("content-length"),
     ZuTypeList<>, true, false> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::PUT, "/"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::PUT, "/", false, [](auto &) { });
+  }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
   template <typename Key, typename L>
@@ -90,6 +92,7 @@ struct ClientParser :
     ClientParser, TestHeaders>;
   using State = typename Base::State;
 
+  bool enable1xx() const { return true; }
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) {
     status_ = value;
@@ -100,15 +103,15 @@ struct ClientParser :
     if (type == Zhttp::BodyType::Fixed) length = length_;
   }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuBSpan value) {
     if constexpr (Key{}() == "x-test")
       xTest = value;
     else if constexpr (Key{}() == "x-trailer")
       xTrailer = value;
   }
   template <typename Rx>
-  void body(Rx &rx) {
-    Zhttp::bodyEach(rx, [this](ZuBSpan value) {
+  bool body(Rx &rx) {
+    return Zhttp::bodyEach(rx, [this](ZuBSpan value) {
       shared->bodyBytes += value.length();
       body_ << value;
     });
@@ -217,10 +220,11 @@ struct ServerSession {
     void status(unsigned) { }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
     template <typename Key>
-    void header(Zhttp::HdrSection, ZuBSpan) { }
+    void header(Zhttp::FieldSection::T, ZuBSpan) { }
     template <typename Rx>
-    void body(Rx &rx) {
-      Zhttp::bodyEach(rx, [this](ZuBSpan span) { body_ << span; });
+    bool body(Rx &rx) {
+      return Zhttp::bodyEach(
+        rx, [this](ZuBSpan span) { body_ << span; });
     }
     void complete(typename State::T value) { complete_ = value; }
     bool finReceived() const { return false; }

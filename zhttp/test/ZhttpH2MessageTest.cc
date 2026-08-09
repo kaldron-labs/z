@@ -54,19 +54,19 @@ struct Parsed :
     if (type == Zhttp::BodyType::Fixed) contentLength_ = length;
   }
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
   void header(
-      Zhttp::HdrSection section, ZuBSpan name, ZuBSpan value) {
+      Zhttp::FieldSection::T section, ZuBSpan name, ZuBSpan value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if (name == "host") host = value;
   }
   template <typename Rx>
-  void body(Rx &rx) {
+  bool body(Rx &rx) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
     while (rx) {
       const uint8_t *offered = nullptr;
@@ -79,9 +79,10 @@ struct Parsed :
 	    noCopy &= value.data() == offered;
 	    body_ << ZuCSpan{value};
 	  }) <= 0)
-	break;
+	return false;
       if (partial) break;
     }
+    return true;
   }
   void complete(Zhttp::H2::ParserState::T state) {
     completeState = state;
@@ -94,7 +95,7 @@ struct Parsed :
   uint64_t contentLength_ = 0;
   uint64_t bodyLength = 0;
   Zhttp::BodyType::T bodyType = Zhttp::BodyType::None;
-  Zhttp::HdrSection headerSection = Zhttp::HdrSection::Invalid;
+  Zhttp::FieldSection::T headerSection = Zhttp::FieldSection::Invalid;
   unsigned bodyInfoCalls = 0;
   unsigned callbackOrder = 0;
   unsigned operationOrder = 0;
@@ -117,6 +118,7 @@ struct Response :
 
   Response() : Base{1024} { }
 
+  bool enable1xx() const { return informational; }
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) {
     statusOrder = ++callbackOrder;
@@ -131,15 +133,15 @@ struct Response :
     if (type == Zhttp::BodyType::Fixed) contentLength_ = length;
   }
   template <typename Key>
-  void header(Zhttp::HdrSection section, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
   template <typename Rx>
-  void body(Rx &rx) {
+  bool body(Rx &rx) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
-    Zhttp::bodyEach(rx,
+    return Zhttp::bodyEach(rx,
       [this](ZuBSpan value) { body_ << ZuCSpan{value}; });
   }
   void complete(Zhttp::H2::ParserState::T state) {
@@ -152,7 +154,7 @@ struct Response :
   uint64_t contentLength_ = 0;
   uint64_t bodyLength = 0;
   Zhttp::BodyType::T bodyType = Zhttp::BodyType::None;
-  Zhttp::HdrSection headerSection = Zhttp::HdrSection::Invalid;
+  Zhttp::FieldSection::T headerSection = Zhttp::FieldSection::Invalid;
   unsigned bodyInfoCalls = 0;
   unsigned callbackOrder = 0;
   unsigned statusOrder = 0;
@@ -163,6 +165,27 @@ struct Response :
     Zhttp::H2::ParserState::Initial;
   ZtString<> xTest;
   ZtString<> body_;
+  bool informational = false;
+};
+
+struct RejectingRequest :
+  public Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>> {
+  using Base = Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>;
+  using Base::operation;
+
+  RejectingRequest() : Base{1024} { }
+
+  template <typename Rx>
+  bool body(Rx &) { ++bodies; return false; }
+  void complete(Zhttp::H2::ParserState::T state) {
+    completeState = state;
+    ++completions;
+  }
+
+  unsigned bodies = 0;
+  unsigned completions = 0;
+  Zhttp::H2::ParserState::T completeState =
+    Zhttp::H2::ParserState::Initial;
 };
 
 struct CapturedField {
@@ -222,9 +245,10 @@ struct BuildOps {
   template <typename L>
   void operation(L &&l) {
     if (customTarget)
-      l(Zhttp::Method::POST, CustomTarget{});
+      l(Zhttp::Method::POST, CustomTarget{}, false, [](auto &) { });
     else
-      l(Zhttp::Method::POST, Zhttp::PathQuery{"/submit", "a=1", true});
+      l(Zhttp::Method::POST, "/submit", true,
+	[](auto &stream) { stream << "a=1"; });
   }
   template <typename L> void host(L &&l) { l("example.com"); }
   unsigned status() { return 201; }
@@ -264,7 +288,8 @@ struct ConnectBuild :
   public Zhttp::H2::Request<ConnectBuild> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, Zhttp::PathQuery{"/chat", "v=1", true});
+    l(Zhttp::Method::CONNECT, "/chat", true,
+      [](auto &stream) { stream << "v=1"; });
   }
   template <typename L> void host(L &&l) { l("example.com"); }
   template <typename L> void protocol(L &&l) { l("opaque"); }
@@ -308,9 +333,9 @@ struct StreamResponse :
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Rx>
-  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (status_ >= 200 && status_ < 300 &&
 	type != Zhttp::BodyType::None) {
@@ -389,7 +414,7 @@ void testRequest()
   ZuCHECK(parser.method == Zhttp::Method::POST &&
       parser.path == "/submit" && parser.host == "example.com" &&
       parser.xTest == "request" && parser.contentLength_ == 3 &&
-      parser.headerSection == Zhttp::HdrSection::Final &&
+      parser.headerSection == Zhttp::FieldSection::Final &&
       parser.bodyInfoCalls == 1 &&
       parser.bodyType == Zhttp::BodyType::Fixed && parser.bodyLength == 3 &&
       parser.operationOrder &&
@@ -445,18 +470,70 @@ void testRequest()
     "prospective H2 DATA length was not rejected before transfer");
 }
 
+void testBodyRejection()
+{
+  ZuTestScope(testBodyRejection);
+
+  RejectingRequest rejected;
+  rejected.reset();
+  ZuCHECK(rejected.beginHeaders() &&
+      rejected.field(":method", "POST") &&
+      rejected.field(":scheme", "https") &&
+      rejected.field(":authority", "example.com") &&
+      rejected.field(":path", "/") &&
+      rejected.field("content-length", "3") &&
+      rejected.endHeaders(false),
+    "H2 body rejection setup failed");
+  ZuCHECK(!data(rejected, "abc", true) &&
+      rejected.state() == Zhttp::H2::ParserState::Error &&
+      rejected.error().code == Zhttp::RequestErrorCode::BodyRejected &&
+      rejected.error().scope == Zhttp::RequestErrorScope::Request &&
+      rejected.error().responsePossible && rejected.bodies == 1 &&
+      rejected.completions == 1 &&
+      rejected.completeState == Zhttp::H2::ParserState::Error,
+    "H2 body rejection was not a one-shot stream-local failure");
+  ZuCHECK(!data(rejected, "later") && rejected.bodies == 1 &&
+      rejected.completions == 1,
+    "H2 body rejection produced duplicate callbacks");
+
+  Parsed sibling;
+  sibling.reset();
+  ZuCHECK(sibling.beginHeaders() &&
+      sibling.field(":method", "POST") &&
+      sibling.field(":scheme", "https") &&
+      sibling.field(":authority", "example.com") &&
+      sibling.field(":path", "/sibling") &&
+      sibling.field("content-length", "2") &&
+      sibling.endHeaders(false) && data(sibling, "ok", true) &&
+      sibling.state() == Zhttp::H2::ParserState::Complete,
+    "independent H2 sibling parser did not survive body rejection");
+}
+
 void testResponses()
 {
   ZuTestScope(testResponses);
 
+  Response suppressed;
+  suppressed.reset();
+  ZuCHECK(suppressed.beginHeaders() &&
+      suppressed.field(":status", "103") &&
+      suppressed.field("x-test", "early") &&
+      suppressed.endHeaders(false) &&
+      suppressed.beginHeaders() && suppressed.field(":status", "204") &&
+      suppressed.endHeaders(true) && suppressed.statusCalls == 1 &&
+      suppressed.status_ == 204 && !suppressed.xTest &&
+      suppressed.completeCalls == 1,
+    "H2 informational callbacks were not suppressed by default");
+
   Response parser;
+  parser.informational = true;
   parser.reset();
   ZuCHECK(parser.beginHeaders() && parser.field(":status", "103") &&
       parser.field("x-test", "early") && parser.endHeaders(false) &&
       parser.state() == Zhttp::H2::ParserState::Initial &&
       parser.statusCalls == 1 && !parser.completeCalls &&
       parser.statusOrder < parser.headerOrder &&
-      parser.headerSection == Zhttp::HdrSection::Informational &&
+      parser.headerSection == Zhttp::FieldSection::Informational &&
       !parser.bodyInfoCalls,
     "informational response does not complete the stream");
   ZuCHECK(parser.beginHeaders() && parser.field(":status", "200") &&
@@ -465,7 +542,7 @@ void testResponses()
       parser.beginHeaders(true) && parser.field("x-test", "trailer") &&
       parser.endHeaders(true) && parser.statusCalls == 2 &&
       parser.body_ == "abc" && parser.xTest == "trailer" &&
-      parser.headerSection == Zhttp::HdrSection::Trailers &&
+      parser.headerSection == Zhttp::FieldSection::Trailers &&
       parser.bodyInfoCalls == 1 &&
       parser.bodyType == Zhttp::BodyType::Fixed && parser.bodyLength == 3 &&
       parser.completeCalls == 1 &&
@@ -685,6 +762,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRequest);
+  ZuTestCall(testBodyRejection);
   ZuTestCall(testResponses);
   ZuTestCall(testRequestErrors);
   ZuTestCall(testConnect);

@@ -120,7 +120,9 @@ struct Request_ : public ZmObject {
   void reset() { ++resets; bodyLength = 0; }
   template <typename L>
   void operation(L &&l) const {
-    l(Zhttp::Method::GET, target);
+    auto pathQuery = Zhttp::splitPathQuery(target);
+    l(Zhttp::Method::GET, pathQuery.path, pathQuery.hasQuery,
+      [query = pathQuery.query](auto &stream) { stream << query; });
   }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L>
@@ -136,6 +138,7 @@ struct Request_ : public ZmObject {
       body << bodyData;
       body.flush();
       bodyLength = body.produced();
+      return true;
     });
   }
   template <typename L>
@@ -176,12 +179,17 @@ int listenerAt(uint16_t);
 struct ResParser {
   using Headers = ZuTypeList<ZuStringT<"location">, void>;
 
+  bool enable1xx() const { return false; }
+
   void init(const Request_ &req) { ++req.inits; }
   void status(unsigned status__) { status_ = status__; }
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
-  template <typename Rx> void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
+  template <typename Rx>
+  bool body(Rx &rx) {
+    return !rejectBody && Zhttp::bodyDrain(rx);
+  }
   template <typename State> void complete(State ok_) {
     completed = true;
     ok = ok_;
@@ -190,6 +198,15 @@ struct ResParser {
   unsigned	status_ = 0;
   bool		completed = false;
   bool		ok = false;
+  bool		rejectBody = false;
+};
+
+struct MockBodyRx {
+  explicit operator bool() const { return pending; }
+  uint64_t length() const { return pending; }
+  template <typename Scan, typename Consume>
+  int64_t consume(Scan &&, Consume &&) { return 0; }
+  uint64_t pending = 3;
 };
 
 ZuDerive(RequestQ, (ZmPQueue<Request_,
@@ -321,9 +338,11 @@ void attemptState()
 
   struct Link {
     void responseHeadersParsed(Pool::LiveReq *) { ++headers; }
+    void responseBodyBytes(Pool::LiveReq *) { ++bodyUpdates; }
     void complete(bool ok_) { completed = true; ok = ok_; }
 
     unsigned	headers = 0;
+    unsigned	bodyUpdates = 0;
     bool	completed = false;
     bool	ok = false;
   };
@@ -372,6 +391,28 @@ void attemptState()
       link.headers == 1 && link.completed && link.ok &&
       parser.completed && parser.ok,
     "response completion enters closing phase exactly once");
+
+  MockBodyRx body;
+  Pool::LiveReq rejected;
+  rejected.request = request;
+  rejected.phase = Zhttp::AttemptPhase::ReceivingBody;
+  ResParser rejectingParser;
+  rejectingParser.rejectBody = true;
+  Link rejectingLink;
+  ZuCHECK(!pool.body(rejectingLink, rejected, rejectingParser, body) &&
+      rejected.failure.kind == Zhttp::FailureKind::Body &&
+      rejected.responseBody.received == 3 &&
+      !rejected.responseBody.consumed &&
+      rejected.responseBody.pending == 3 && rejectingLink.bodyUpdates == 1,
+    "response body rejection was classified and accounted as a body failure");
+  pool.complete<ParserState>(
+    rejectingLink, rejected, rejectingParser, ParserState::Failed);
+  ZuCHECK(rejected.failure.kind == Zhttp::FailureKind::Body &&
+      rejected.responseBody.reset == 3 &&
+      rejected.responseBody.discarded == 3 &&
+      !rejected.responseBody.pending && rejectingParser.completed &&
+      !rejectingParser.ok && rejectingLink.completed && !rejectingLink.ok,
+    "response body rejection completion preserved first-failure accounting");
 
   Pool::LiveReq failed;
   failed.request = request;

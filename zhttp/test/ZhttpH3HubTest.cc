@@ -47,7 +47,9 @@ struct StreamState {
 struct RequestBuilder :
   public Zhttp::H3::Request<RequestBuilder> {
   template <typename L>
-  void operation(L &&l) { l(Zhttp::Method::GET, "/"); }
+  void operation(L &&l) {
+    l(Zhttp::Method::GET, "/", false, [](auto &) { });
+  }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
 };
@@ -56,7 +58,7 @@ struct StreamRequestBuilder :
   public Zhttp::H3::Request<StreamRequestBuilder> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, "/stream");
+    l(Zhttp::Method::CONNECT, "/stream", false, [](auto &) { });
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
@@ -104,7 +106,7 @@ struct ClientParser :
   void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
     if (type == Zhttp::BodyType::Fixed) length = length_;
     if (streamExpected && status_ >= 200 && status_ < 300 &&
@@ -115,8 +117,9 @@ struct ClientParser :
     }
   }
   template <typename Rx>
-  void body(Rx &rx) {
-    Zhttp::bodyEach(rx, [this](ZuBSpan value) { body_ << value; });
+  bool body(Rx &rx) {
+    return Zhttp::bodyEach(
+      rx, [this](ZuBSpan value) { body_ << value; });
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
@@ -326,9 +329,9 @@ struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   void status(unsigned) { }
   template <typename Key>
-  void header(Zhttp::HdrSection, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan) { }
   template <typename Rx>
-  void body(Rx &rx) { Zhttp::bodyDrain(rx); }
+  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
   void streamPeerEnd_() { remoteEnded = true; dispatch.peerEnd(); }

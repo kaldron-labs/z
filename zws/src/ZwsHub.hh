@@ -94,6 +94,7 @@ public:
   using CodecBase::txStream;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
+  unsigned id() const { return 0; }
 
   ExtendedClientLink(
       Hub *hub, const URI &uri, ZuCSpan protocol = {}) :
