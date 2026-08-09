@@ -101,7 +101,9 @@ static void line()
 
   l.reflow(0, 7);
 
-  ZuCHECK(l.width() == 7, "narrow reflow width");
+  CHECK(l.position(6).padding());
+  // width is the total width of all display rows
+  ZuCHECK(l.width() == 19, "narrow reflow width");
 }
 
 int main(int argc, char **argv)
