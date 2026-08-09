@@ -452,7 +452,23 @@ struct TestLink :
 	  bool checkStatelessReset(ZuBSpan datagram) {
 	    return Base::checkStatelessReset_(datagram);
 	  }
-	  bool draining() const { return Base::draining_(); }
+	  bool draining() const { return Base::drainingRx_(); }
+	  bool startHandshakeForTest() { return Base::startHandshake_(); }
+	  bool handshakingRx() const {
+	    return Base::handshakeStartedRx_() && !Base::establishedRx_();
+	  }
+	  bool handshakingTx() const {
+	    return Base::handshakeStartedTx_() && !Base::establishedTx_();
+	  }
+	  bool closingRx() const { return Base::closingRx_(); }
+	  bool closingTx() const { return Base::closingTx_(); }
+	  bool linkClosedRx() const { return Base::linkClosedRx_(); }
+	  bool linkClosedTx() const { return Base::linkClosedTx_(); }
+	  uint64_t closeErrorRx() const { return Base::closeErrorRx_(); }
+	  uint64_t closeErrorTx() const { return Base::closeErrorTx_(); }
+	  void closeTxForTest(uint64_t errorCode, bool application = false) {
+	    Base::closeStateTx_(errorCode, application);
+	  }
   void scheduleStream(const ZmRef<TestStream> &stream) {
     Base::streamWritable_(stream);
   }
@@ -868,6 +884,93 @@ void testAlignedSurfaceShape()
   client = nullptr;
   serverApp.final();
   clientApp.final();
+}
+
+void testLinkStateOwnership()
+{
+  ZuTestScope(testLinkStateOwnership);
+
+  {
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    fixture.app.defer();
+    fixture.app.enterRx();
+
+    ZuCHECK(link->startHandshakeForTest() && link->handshakingRx() &&
+	fixture.app.txPending(),
+      "Rx handshake transition was not published to Tx");
+    fixture.app.enterTx();
+    ZuCHECK(!link->handshakingTx(),
+      "Tx observed handshake state before applying its snapshot");
+    fixture.app.runTx();
+    ZuCHECK(link->handshakingTx() && !fixture.app.txPending(),
+      "Tx did not apply the Rx handshake snapshot");
+  }
+
+  {
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    fixture.app.defer();
+    fixture.app.enterRx();
+
+    link->closeForTest(17);
+    ZuCHECK(link->closingRx() && link->linkClosedRx() &&
+	link->closeErrorRx() == 17 && link->closed() &&
+	link->closeError() == 17 && fixture.app.txPending(),
+      "Rx close transition did not update canonical state");
+    fixture.app.enterTx();
+    ZuCHECK(!link->closingTx() && !link->linkClosedTx(),
+      "Tx observed Rx close state before applying its snapshot");
+    fixture.app.runTx();
+    ZuCHECK(link->closingTx() && link->linkClosedTx() &&
+	link->closeErrorTx() == 17,
+      "Tx did not apply the Rx close snapshot");
+    while (fixture.app.txPending()) fixture.app.runTx();
+  }
+
+  {
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    fixture.app.defer();
+    fixture.app.enterRx();
+
+    ZuCHECK(link->startHandshakeForTest() && fixture.app.txPending(),
+      "stale-snapshot close setup failed");
+    fixture.app.enterTx();
+    link->closeTxForTest(23, true);
+    ZuCHECK(link->closingTx() && link->linkClosedTx() &&
+	link->closeErrorTx() == 23 && fixture.app.rxPending(),
+      "Tx close transition did not update Tx-owned state");
+    fixture.app.runTx();
+    ZuCHECK(link->closingTx() && link->linkClosedTx() &&
+	link->closeErrorTx() == 23,
+      "stale Rx snapshot regressed the Tx close state");
+    fixture.app.runRx();
+    ZuCHECK(link->closingRx() && link->linkClosedRx() &&
+	link->closeErrorRx() == 23 && link->closed() &&
+	link->closeError() == 23 && !fixture.app.rxPending() &&
+	!fixture.app.txPending(),
+      "Rx did not apply the Tx close snapshot exactly once");
+  }
+
+  {
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    fixture.app.defer();
+    fixture.app.enterRx();
+
+    link->closeForTest(31);
+    fixture.app.enterTx();
+    link->closeTxForTest(37);
+    fixture.app.runTx();
+    ZuCHECK(link->closingTx() && link->closeErrorTx() == 31,
+      "canonical Rx close did not supersede a racing Tx close");
+    while (fixture.app.txPending()) fixture.app.runTx();
+    fixture.app.runRx();
+    ZuCHECK(link->closingRx() && link->closeErrorRx() == 31 &&
+	link->closeError() == 31 && !fixture.app.rxPending(),
+      "racing Tx close overwrote the canonical Rx close");
+  }
 }
 
 void testStatelessResetDetection()
@@ -1824,6 +1927,7 @@ int main(int argc, char **argv)
   ZuTestCall(testParams);
   ZuTestCall(testStreamShape);
   ZuTestCall(testAlignedSurfaceShape);
+  ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);
