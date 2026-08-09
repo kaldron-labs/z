@@ -1639,9 +1639,6 @@ private:
   // shared
   ZmAtomic<uint64_t>	m_udpReadyCount = 0;
   ZmAtomic<unsigned>	m_udpReady = 0;
-  bool			m_closeNotify = false;
-  bool			m_closePeer = false;
-  CloseFn		m_closeFn;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -1652,6 +1649,12 @@ private:
   uint16_t		m_port = 0;
   bool			m_peerParamsValidated = false;
   bool			m_notifyEndpointDown = true;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  CloseFn		m_closeFn;
+  bool			m_closeNotify = false;
+  bool			m_closePeer = false;
 };
 
 } // namespace Zquic

@@ -5613,6 +5613,7 @@ protected:
     app()->txRun([link = impl(), snapshot]() mutable {
       if (link->disconnecting_()) return;
       link->applyLinkSnapshotTx_(snapshot);
+      link->peerDrainingTx_();
       link->enterPeerDrainingTx_();
     });
   }
@@ -5825,6 +5826,7 @@ protected:
     detectLossTx_(0, now, {}, false);
   }
   void closeExpired_() { }
+  void peerDrainingTx_() { }
   void idleExpired_() { impl()->closeExpired_(); }
   void heartBeatExpired_() { }
   template <typename U = Impl,
@@ -9763,8 +9765,6 @@ private:
   TrafficSecret		m_rxNextSecret;
   PktProtState		m_rxNextProt;
   ZuTime		m_rxOldKeyDiscard;
-  RttEstimator		m_rtt;
-  PTOBackoff		m_ptoBackoff;
   ZuArray<AckPost, PktNumSpace::N>
 			m_ackPost =
 			  ZuArray<AckPost, PktNumSpace::N>(
@@ -9786,6 +9786,8 @@ private:
   LinkCloseState	m_txAppClose;
   LinkState::T		m_txLinkState = LinkState::Closed;
   TxStreamsRef		m_txStreams;
+  RttEstimator		m_rtt;
+  PTOBackoff		m_ptoBackoff;
   // Connection-owned timers; callbacks run on Tx.
   ZmScheduler::Timer	m_ackDelayTimer;
   ZmScheduler::Timer	m_lossTimer;

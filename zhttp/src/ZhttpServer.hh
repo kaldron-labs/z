@@ -1017,17 +1017,25 @@ private:
     this->app()->linkDown();
   }
 
-  ZmRef<H1Logical>	m_h1;
+  // shared: stable after construction/connection setup
   ZiIP			m_remoteIP;
   uint16_t		m_remotePort = 0;
-  Transport_::TxCompleteFn m_h1Complete;
-  ZiIOBuf		*m_h1TxLast = nullptr;
-  ResponseOutcome::T	m_h1TxOutcome = ResponseOutcome::Success;
   int8_t		m_policy = H2Policy::Force;
+  // Shared published protocol selection; Rx initializes it before Tx use.
   int8_t		m_version = -1;
+
+  // Rx thread exclusive
+  alignas(Zm::CacheLineSize)
+  ZmRef<H1Logical>	m_h1;
   bool			m_draining = false;
   bool			m_down = false;
   bool			m_stopping = false;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  Transport_::TxCompleteFn m_h1Complete;
+  ZiIOBuf		*m_h1TxLast = nullptr;
+  ResponseOutcome::T	m_h1TxOutcome = ResponseOutcome::Success;
   bool			m_h1TxReady = false;
 };
 
@@ -2971,26 +2979,32 @@ private:
     m_workload->disconnected(transport);
   }
 
-  ZiMultiplex	*m_mx = nullptr;
-  unsigned	m_rxThread = 0;
-  unsigned	m_txThread = 0;
-  ServerConfig	m_config;
-  MessageString	m_altSvc;
-  Workload	*m_workload = nullptr;
-  Hub<H1TCP>	m_tcp;
-  TLSHub	m_tls;
-  Hub<H3QUIC>	m_quic;
-  ResponseQueue<H1TCP> m_h1TCPResponses;
-  ResponseQueue<H1TLS> m_h1TLSResponses;
-  ResponseQueue<H2TLS> m_h2TLSResponses;
-  ResponseQueue<H3QUIC> m_h3QUICResponses;
-  BodyTaskQ	m_bodyTasks;
-  Hubs	m_hubs;
-  ZiTxErrorFn	m_txErrorFn;
-  Stats		m_stats;
-  unsigned	m_bodyPending = 0;
+  // shared: stable/lifecycle state after init()
+  ZiMultiplex		*m_mx = nullptr;
+  ServerConfig		m_config;
+  MessageString		m_altSvc;
+  Workload		*m_workload = nullptr;
+  Hub<H1TCP>		m_tcp;
+  TLSHub		m_tls;
+  Hub<H3QUIC>		m_quic;
+  Hubs			m_hubs;
+  ZiTxErrorFn		m_txErrorFn;
+  unsigned		m_rxThread = 0;
+  unsigned		m_txThread = 0;
+
+  // shared telemetry and admission state
+  Stats			m_stats;
   ZmAtomic<unsigned>	m_admitRequests = 0;
-  ZmAtomic<unsigned> m_failed = 0;
+  ZmAtomic<unsigned>	m_failed = 0;
+
+  // Tx thread exclusive
+  alignas(Zm::CacheLineSize)
+  ResponseQueue<H1TCP>	m_h1TCPResponses;
+  ResponseQueue<H1TLS>	m_h1TLSResponses;
+  ResponseQueue<H2TLS>	m_h2TLSResponses;
+  ResponseQueue<H3QUIC>	m_h3QUICResponses;
+  BodyTaskQ		m_bodyTasks;
+  unsigned		m_bodyPending = 0;
 };
 
 } // namespace Zhttp
