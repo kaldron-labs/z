@@ -131,14 +131,15 @@ bool Link::rcvd()
     return false;
   }
   if (state() == ZvLinkState::Connecting) {
-    auto response = ZfJSON::handler<AuthResponse>(scan.p<1>()).ctor();
+    auto response = ZfJSON::handler<AuthResponse>((*scan.p<1>())[0]).ctor();
     std::cout << response << '\n';
     m_token = ZuMv(response.token);
     up();
     send(request_<"authorization">(
 	Zhttp::Method::GET, "/api/protected", m_token));
   } else {
-    std::cout << ZfJSON::handler<ProtectedResponse>(scan.p<1>()).ctor() << '\n';
+    std::cout <<
+      ZfJSON::handler<ProtectedResponse>((*scan.p<1>())[0]).ctor() << '\n';
     app()->done();
   }
 
