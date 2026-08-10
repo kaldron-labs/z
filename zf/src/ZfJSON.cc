@@ -128,6 +128,7 @@ unsigned eok(ZuCSpan span) { // no error return possible
   return o;
 }
 
+// beginning of top-level
 ZuTuple<int, int> botl(ZuCSpan span) {
   unsigned n = span.length();
 
@@ -589,8 +590,10 @@ int eov_False(ZuCSpan span) {
   return 5;
 }
 
-ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuSpan<char> span) {
-  if (ZuUnlikely(!span)) return {-1, nullptr};
+ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode> root, ZuSpan<char> span)
+{
+  if (ZuUnlikely(!span)) return {0, ZuMv(root)};
+
   auto begin = span.begin();
   auto end = span.end();
   int o;
@@ -614,10 +617,18 @@ ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuSpan<char> span) {
       } break;
     }
     if (span) end = span.begin();
-    return {int(end - begin), ZuMv(node)};
+    root->data<AnyNode::Array>().push(ZuMv(node));
+    return {int(end - begin), ZuMv(root)};
   }
 bad:
   return {-1, nullptr};
+}
+
+ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span)
+{
+  ZuPtr<AnyNode> root = newNode<AnyNode::Array>();
+
+  return scan(ZuMv(root), span);
 }
 
 } // ZfJSON

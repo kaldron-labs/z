@@ -567,9 +567,8 @@ static void loadTypes() {
     }));
 
     auto nullScan = ZfCf::scan("required: -2147483648");
-    ZuCheck(loadError([&]() {
-      ZfCf::handler<CfRequired>(nullScan.p<1>()).ctor();
-    }));
+    auto null = ZfCf::handler<CfRequired>(nullScan.p<1>()).ctor();
+    ZuCheck(ZuNull(null.required));
 
     auto validScan = ZfCf::scan("required: 0");
     auto valid = ZfCf::handler<CfRequired>(validScan.p<1>()).ctor();
@@ -582,9 +581,9 @@ static void loadTypes() {
     }));
 
     CfRequired updated{ZuCmp<int>::null(), 2};
-    ZuCheck(loadError([&]() {
-      ZfCf::handler<CfRequired>(validScan.p<1>()).update(updated);
-    }));
+    ZfCf::handler<CfRequired>(validScan.p<1>()).update(updated);
+    ZuCheck(ZuNull(updated.required));
+    ZuCheck(updated.optional == 2);
   }
   {
     auto minimumScan = ZfCf::scan("value: 0");

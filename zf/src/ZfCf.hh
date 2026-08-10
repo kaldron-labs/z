@@ -527,6 +527,10 @@ struct AsObject {
     template <typename Field>
     using Required =
       ZuTypeIn<ZuFieldProp::Required, typename Field::Props>;
+    template <typename Field>
+    using UpdReq = ZuBool<
+      ZfFieldFilter::Upd<Field>{}() &&
+      ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{}()>;
 
     using AllFields = ZuFields<O, Facet>;
     using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
@@ -536,7 +540,8 @@ struct AsObject {
     using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
     using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
     using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
-    using RequiredFields = ZuTypeGrep<Required, AllFields>;
+    using ReqFields = ZuTypeGrep<Required, AllFields>;
+    using UpdReqFields = ZuTypeGrep<UpdReq, AllFields>;
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
@@ -561,6 +566,21 @@ struct AsObject {
 	  if (j >= 0) lookup[j] = i;
 	}
       }
+    }
+
+    template <typename Field>
+    bool hasField() const {
+      enum { I = ZuTypeIndex<Field, SaveFields>{} };
+      return lookup[I] >= 0;
+    }
+
+    template <typename Fields>
+    void checkRequired() const {
+      if constexpr (Fields::N)
+	ZuUnroll::all<Fields>([this]<typename Field>() {
+	  if (!this->hasField<Field>())
+	    throw ZfCf_EXCEPT(required(node, Field::id()));
+	});
     }
 
     template <template <typename> class Filter, typename Field>
@@ -606,7 +626,8 @@ struct AsObject {
     };
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if constexpr (!InitFields::N && !RequiredFields::N)
+      checkRequired<ReqFields>();
+      if constexpr (!InitFields::N)
 	// exploit guaranteed copy elision
 	return ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       else {
@@ -614,38 +635,31 @@ struct AsObject {
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	  Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
 	});
-	validate(o);
 	return o;
       }
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
+      checkRequired<ReqFields>();
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
-      validate(o);
     }
 
     void load(O &o) const {
+      checkRequired<ReqFields>();
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
 	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
-      validate(o);
     }
     void update(O &o) const {
+      checkRequired<UpdReqFields>();
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
-      });
-      validate(o);
-    }
-
-  private:
-    void validate(const O &o) const {
-      ZuUnroll::all<RequiredFields>([this, &o]<typename Field>() {
-	if (ZuUnlikely(ZuNull(Field::get(o))))
-	  throw ZfCf_EXCEPT(required(node, Field::id()));
+	using Props = typename Field::Props;
+	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
+	  Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
     }
   };

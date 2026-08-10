@@ -172,7 +172,7 @@ struct RequiredOpt {
 };
 
 ZfStruct((RequiredOpt, CLI),
-  (((value), (Ctor<0>, Required)), (Int32)));
+  (((value), (Ctor<0>, Mutable, Required)), (Int32)));
 
 template <typename L>
 static ZeString cliError(L l)
@@ -505,6 +505,27 @@ void diagnostics()
       ZfCLI::handler<RequiredOpt>(parser.root).ctor();
     });
     ZuCheck(message.find("option '--value' is required") >= 0);
+
+    RequiredOpt loaded{7};
+    message = cliError([&parser, &loaded] {
+      ZfCLI::handler<RequiredOpt>(parser.root).load(loaded);
+    });
+    ZuCheck(message.find("option '--value' is required") >= 0);
+    ZuCheck(loaded.value == 7);
+
+    message = cliError([&parser, &loaded] {
+      ZfCLI::handler<RequiredOpt>(parser.root).update(loaded);
+    });
+    ZuCheck(message.find("option '--value' is required") >= 0);
+    ZuCheck(loaded.value == 7);
+  }
+  {
+    char cli[] = "x --value=-2147483648";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<RequiredOpt> parser;
+    parser.scanArgv(in.argv);
+    auto value = ZfCLI::handler<RequiredOpt>(parser.root).ctor();
+    ZuCheck(ZuNull(value.value));
   }
   {
     char cli[] = "x --nestedJSON=broken";

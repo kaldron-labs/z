@@ -621,8 +621,10 @@ using CNodeArray = const NodeArray;
 using NodeObject = typename AnyNode::Object;
 using CNodeObject = const NodeObject;
 
+// scan URI, build parse tree
 ZfExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key);
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode>, ZuSpan<char> span);
 
 // --- output functions
 
@@ -816,6 +818,9 @@ struct AsObject {
 
     Handler(const AnyNode *node_) : node{node_} { }
 
+    template <typename Field>
+    bool hasField() const;
+
     template <template <typename> class Filter, typename Field>
     auto loadField() const;
 
@@ -857,12 +862,14 @@ struct AsObject {
 
     void load(O &o) const {
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	Field::set(o, loadField<ZfFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
     }
     void update(O &o) const {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, loadField<ZfFieldFilter::Upd, Field>());
+	using Props = typename Field::Props;
+	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || this->hasField<Field>())
+	  Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
     }
   };
@@ -1047,15 +1054,16 @@ struct AsJSON {
     Handler(const AnyNode *node_) : node{node_} { }
 
     // resolve JSON handler
-    ZuTuple<ZuPtr<const ZfJSON::AnyNode>, Handler_> handler_() const {
+    ZuTuple<ZuPtr<ZfJSON::AnyNode>, Handler_> handler_() const {
       ZuSpan<char> span;
       if (node->has<AnyNode::String>())
 	span = node->data<AnyNode::String>();
       auto scan = ZfJSON::scan(span);
-      if (scan.template p<0>() < 0)
+      const bool valid = scan.template p<0>() >= 0;
+      if (!valid)
 	scan = ZfJSON::scan({});
-      ZuPtr<const ZfJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
-      const ZfJSON::AnyNode *ptr = node_.ptr();
+      ZuPtr<ZfJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
+      const ZfJSON::AnyNode *ptr = valid ? (*node_)[0].ptr() : node_.ptr();
       return {ZuMv(node_), Handler_(ptr)};
     }
 
@@ -1589,6 +1597,28 @@ inline auto loadValue(ZuPtr<AnyNode> &node)
     using Config = ZfURI::Config<Facet>;
     asArray<Config>(node);
     return loadValue<Facet, Filter, TypeCode, Props, T>(node.ptr());
+  }
+}
+
+template <typename O, typename Facet>
+template <typename Field>
+inline bool AsObject::Handler<O, Facet>::hasField() const
+{
+  if (ZuUnlikely(!node->has<AnyNode::Object>())) return false;
+  const auto &object = node->data<AnyNode::Object>();
+  using Props = typename Field::Props;
+  using PathIndex = ZuFieldProp::URI::GetPathIndex<Props>;
+  if constexpr (PathIndex{}() >= 0) {
+    auto paths_ = object.find(ZuCSpan{});
+    if (!paths_) return false;
+    const auto &paths = paths_->val();
+    if (!paths || !paths->template has<AnyNode::Array>()) return false;
+    const auto &array = paths->template data<AnyNode::Array>();
+    constexpr unsigned index = uint8_t(PathIndex{}());
+    return index < array.length() && array[index];
+  } else {
+    ZuCSpan fieldID = ZuFieldProp::URI::GetID<Field>{}().cspan();
+    return object.find(fieldID);
   }
 }
 

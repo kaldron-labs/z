@@ -94,6 +94,16 @@ struct ArrayOpt {
 ZfStruct((ArrayOpt, URI),
   (((values), (Ctor<0>)), (UDT)));
 
+struct URIUpdate {
+  int required;
+  int kept;
+  int reset;
+};
+ZfStruct((URIUpdate, URI),
+  (((required), (Ctor<0>, Mutable, Required)), (Int32)),
+  (((kept),     (Ctor<1>, Mutable)),           (Int32, 2)),
+  (((reset),    (Ctor<2>, Mutable, Reset)),    (Int32, 3)));
+
 struct Foo {
   const char *string = nullptr;
   ZtArray<uint8_t> bytes;
@@ -392,6 +402,33 @@ void delimitedLoad()
   ZuCheck(foo.bytesVec[2] == ZuBSpan{"zzzzz"});
 }
 
+void resetUpdate()
+{
+  ZuTestScope(resetUpdate);
+
+  char missing_[] = "?kept=5";
+  auto missingScan = ZfURI::scan(missing_);
+  const auto &missing = missingScan.p<1>();
+  auto missingValue = ZfURI::handler<URIUpdate>(missing).ctor();
+  ZuCheck(ZuNull(missingValue.required));
+  ZuCheck(missingValue.kept == 5);
+  ZuCheck(missingValue.reset == 3);
+
+  URIUpdate loaded{1, 2, 8};
+  ZfURI::handler<URIUpdate>(missing).load(loaded);
+  ZuCheck(ZuNull(loaded.required));
+  ZuCheck(loaded.kept == 5);
+  ZuCheck(loaded.reset == 3);
+
+  loaded.reset = 8;
+  char update_[] = "?required=4";
+  auto updateScan = ZfURI::scan(update_);
+  ZfURI::handler<URIUpdate>(updateScan.p<1>()).update(loaded);
+  ZuCheck(loaded.required == 4);
+  ZuCheck(loaded.kept == 5);
+  ZuCheck(loaded.reset == 3);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -406,5 +443,6 @@ int main(int argc, char **argv)
   ZuTestCall(percentPolicies);
   ZuTestCall(arrayCoercion);
   ZuTestCall(delimitedLoad);
+  ZuTestCall(resetUpdate);
   return 0;
 }

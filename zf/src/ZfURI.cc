@@ -109,10 +109,8 @@ ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key)
 
 // scan() scans endpoint parameters and query strings from a URI
 
-ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span)
+ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode> root, ZuSpan<char> span)
 {
-  ZuPtr<AnyNode> root = newNode<AnyNode::Object>();
-
   if (ZuUnlikely(!span)) return {0, ZuMv(root)};
 
   {
@@ -186,6 +184,13 @@ ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span)
 
 bad:
   return {-1, nullptr};
+}
+
+ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span)
+{
+  ZuPtr<AnyNode> root = newNode<AnyNode::Object>();
+
+  return scan(ZuMv(root), span);
 }
 
 } // ZfURI
