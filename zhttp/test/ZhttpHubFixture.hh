@@ -264,9 +264,9 @@ struct UpgradeReq :
   using Base::header;
 
   void operation(
-    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
-    path = target.raw == "/stream";
+    path = target.pathQuery == "/stream";
   }
   void header(
       Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) {

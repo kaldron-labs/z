@@ -52,8 +52,9 @@ resolver path.
 URL syntax is centralized in `ZhttpURL.hh`. `URL` is a borrowed view over a
 mutable input span and normalizes DNS host names in place; `URLStorage` is the
 explicit owning form, with `assign()` for copying immutable input and `adopt()`
-for transferring an existing `URLString`. `RequestTarget` represents the four
-HTTP request-target forms and preserves path/query structure without reparsing.
+for transferring an existing `URLString`. `Target` represents the HTTP
+request-target forms and exposes the complete path plus optional query in one
+borrowed `pathQuery` span.
 Alt-Svc parsing, formatting, cache policy, and HTTPS discovery are grouped in
 `ZhttpDiscovery.hh`.
 
@@ -82,10 +83,11 @@ struct Request_ : ZmObject {
   uint64_t length() const { return 1; }
 
   void reset();
-  template <typename Emit>
-  void operation(Emit &&emit) const {
-    emit(Zhttp::Method::GET, "/search", true,
-      [](auto &stream) { stream << "q=test&page=2"; });
+  template <typename L>
+  void operation(L &&l) const {
+    l(Zhttp::Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << "/search?q=test&page=2"; });
+    });
   }
   template <typename Key, typename L> void header(L &&);
   template <typename L> void header(L &&);
@@ -112,7 +114,7 @@ struct ResParser {
   void header(Zhttp::FieldSection::T, ZuBSpan);
   void header(Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value);
   template <typename Rx> void body(Rx &);
-  void complete(bool);
+  template <typename LinkRef> void complete(LinkRef &&, bool);
 };
 
 struct App;
@@ -164,9 +166,40 @@ client.final();
 ```
 
 ```c++
-using Server = Zhttp::Server<Workload>;
+struct Response_ : ZmObject, Zhttp::Builder {
+  using Headers = ResponseHeaders;
+  Zhttp::Method::T method() const;
+  // reset(), bodyPolicy(), status(), headers, and body production
+};
+using ResponseQ = ZmList<Response_,
+  ZmListNode<Response_, ZmListHeapID<"App.Response">>>;
+using Response = ResponseQ::Node;
 
-Workload workload;
+struct Parser {
+  using Headers = RequestHeaders;
+  void operation(Zhttp::Method::T, const Zhttp::Target &);
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuBSpan);
+  template <typename Rx> bool body(Rx &);
+  template <typename LinkRef>
+  void complete(LinkRef &&link, bool ok) {
+    if (!ok) return;
+    ZmRef<Response> response = new Response{};
+    // Populate response from application-owned request state.
+    link->send(ZuMv(response));
+  }
+};
+
+struct App {
+  using Parser = ::Parser;
+  using ResponseQ = ::ResponseQ;
+  Parser parser();
+  // listening(), listenFailed(), connected(), disconnected()
+};
+
+using Server = Zhttp::Server<App>;
+
+App app;
 Server server;
 server.init(
   Zhttp::HubConfig{&mx, "rx", "tx"},
@@ -177,44 +210,35 @@ server.init(
       .certPath(cert).keyPath(key)
       .policy(Zhttp::H2Policy::Prefer))
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
-  &workload);
+  &app);
 server.start();
-// Workload::Request is owned by one logical request. Its body(Rx &) consumes
-// request input; respond(meta, request, emit) synchronously emits one Response
-// on Tx. Server calls Response::reset() exactly once before status, headers,
-// or body construction. committed() reports local transport admission and
-// completed() reports
-// the profile's terminal Tx outcome on Rx.  H1/H2 success means the final
-// native socket/TLS buffer completed locally; H3 success means the peer
-// acknowledged the stream FIN and all response bytes.  None of these events
-// is an application-level acknowledgement.
-// requestError(meta, request, error) chooses Continue or Disconnect for a
-// recoverable request-scope error; protocol-mandated stream/connection errors
-// are not offered to the application.
+// Parser callbacks run synchronously on Rx and receive callback-scoped spans.
+// Link::send() accepts an owning response from any thread. Server queues it on
+// that link, then calls its Builder operations on Tx. Applications must submit
+// H1 responses in request order.
 // disconnected(transport) observes admission release on the owning Rx shard.
 server.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 server.final();
 ```
 
-Responses are structural Builders, not subclasses of a runtime Zhttp type.
-One workload can select unrelated concrete response types per endpoint; each
-type supplies `reset()`, `Headers`, `bodyPolicy()`, status/header operations, and
-the operations required by its body policy:
+Responses are application-owned structural Builders held in an intrusive
+`ZmList`. `ResponseQ::Node` supplies `reset()`, `Headers`, `bodyPolicy()`,
+`method()`, status/header operations, and the operations required by its body
+policy. The application Parser copies only the request data it needs while the
+callback spans are valid, and may dispatch synchronously or asynchronously.
+The server performs neither copy nor dispatch:
 
 ```c++
-template <typename Emit>
-void Workload::respond(
-    const Zhttp::RequestMeta &meta, Request &request, Emit &&emit) {
-  if (meta.path() == "/health") {
-    emit(EmptyResponse{204});
-    return;
-  }
-  if (meta.path() == "/record") {
-    emit(JSONResponse{request.record});
-    return;
-  }
-  emit(FileResponse{lookup(meta.path())});
+template <typename LinkRef>
+void Parser::complete(LinkRef &&link, bool ok) {
+  if (!ok) return;
+  auto link_ = ZuMv(link);
+  app->dispatch([link = ZuMv(link_), request = ZuMv(request)]() mutable {
+    ZmRef<Response> response = new Response{};
+    response->plan(request);
+    link->send(ZuMv(response));
+  });
 }
 ```
 
@@ -222,10 +246,9 @@ void Workload::respond(
 run-time value when one type-erased Builder dispatches to different message
 implementations. Its value remains fixed for the duration of one message.
 
-`EmptyResponse`, `JSONResponse`, and `FileResponse` can have different header
-typelists and body policies. `JSONResponse` can use synchronous
-`body(emit)`/`bodyHdrs()` construction, while a streaming `FileResponse` can
-provide asynchronous `next(max, done)` production.
+A single response type can select its body policy at run time. Fixed responses
+use synchronous `body(emit)`/`bodyHdrs()` construction, while a streaming
+response can provide asynchronous `next(max, done)` production.
 
 `BodyPolicy::None` is allocation-free. `BodyPolicy::Fixed` and
 `BodyPolicy::OptionalFixed`
@@ -279,20 +302,12 @@ void body(Rx &rx) {
 ```
 
 Client body emitters, writers, and late-header patchers are synchronous and
-callback-scoped. Server response selection is likewise synchronous, while an
-incremental response producer retains only its own continuation state and one
-pooled buffer per turn. The same bounded `ZiRxStream` contract is used by the
-server application `Request`. The application may leave a trailing incomplete
-application frame in that queue; later body appends prompt it again without
-copying or coalescing the retained spans. An application which needs
-contiguous storage owns that gather buffer. Headers precede body input,
-validated body completion precedes the exact-once terminal result, and no
-callback follows that result.
-`Result` reports request bytes produced, committed, reset, and discarded plus
-response bytes received, consumed, reset, and discarded. `RequestMeta`
-reports server-side request bytes received, consumed, reset, and discarded.
-These owner-shard counters are diagnostics; they do not gate production,
-parsing, or transport flow control and are not stable cross-shard snapshots.
+callback-scoped. Server Parser callbacks are likewise synchronous on Rx. The
+application may leave a trailing incomplete application frame in the bounded
+Rx queue; later body appends prompt it again without copying or coalescing the
+retained spans. An application which needs contiguous or asynchronous request
+state owns that copy. `Result` retains the client-side request/response byte
+diagnostics.
 
 When TLS and QUIC are enabled together, `Server` emits the HTTP/3 Alt-Svc
 header on TLS responses. `altSvcMaxAge()` controls its lifetime; zero disables
@@ -349,7 +364,9 @@ struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
       Request, ZuTypeList<>, ZuTypeList<>, false, false> {
     template <typename L>
     void operation(L &&l) {
-      l(Zhttp::Method::GET, "/", false, [](auto &) { });
+      l(Zhttp::Method::GET, [](auto &&emit) {
+	emit([](auto &tx) { tx << '/'; });
+      });
     }
     template <typename L>
     void host(L &&l) { l("127.0.0.1"); }

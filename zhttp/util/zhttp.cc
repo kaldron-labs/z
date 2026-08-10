@@ -308,10 +308,10 @@ struct Request_ : public ZmObject {
   void reset() { requestContentLength = 0; }
   template <typename L>
   void operation(L &&l) const {
-    auto pathQuery = Zhttp::splitPathQuery(target);
     l(put ? Zhttp::Method::PUT : Zhttp::Method::GET,
-      pathQuery.path, pathQuery.hasQuery,
-      [query = pathQuery.query](auto &stream) { stream << query; });
+      [this](auto &&emit) {
+	emit([this](auto &tx) { tx << target; });
+      });
   }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L>
@@ -447,7 +447,8 @@ void initReq(
 {
   req.id = id;
   req.requests = options.requests;
-  req.target = url.pathQuery();
+  req.target.length(0);
+  url.writeTarget(req.target);
   if (!options.discardResponse)
     req.output = outputPath(options.output, id, options.requests);
   req.discardResponse = options.discardResponse;
@@ -601,7 +602,8 @@ struct ResParser {
     });
   }
 
-  void complete(bool ok) {
+  template <typename LinkRef>
+  void complete(LinkRef &&, bool ok) {
     auto ctx = reqLogCtx(*req);
     if (ok && req->put && !req->redirecting) {
       ZhttpPut::Record record;
@@ -633,7 +635,8 @@ struct ResParser {
 
 void Request_::redirected(const URL &url_)
 {
-  target = url_.pathQuery();
+  target.length(0);
+  url_.writeTarget(target);
 }
 
 void Request_::completed(const Zhttp::Result &result)

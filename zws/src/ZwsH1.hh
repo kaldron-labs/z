@@ -143,9 +143,9 @@ public:
   }
 
   void operation(
-    Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method, const Zhttp::Target &target) {
     m_method = method;
-    m_target = target.raw;
+    m_target = target.pathQuery;
   }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (type != Zhttp::BodyType::None) m_invalid = true;
@@ -228,9 +228,9 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    auto target = Zhttp::splitPathQuery(m_uri->target);
-    l(Zhttp::Method::GET, target.path, target.hasQuery,
-      [query = target.query](auto &stream) { stream << query; });
+    l(Zhttp::Method::GET, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << m_uri->target; });
+    });
   }
   template <typename L>
   void host(L &&l) { l(m_uri->authority()); }

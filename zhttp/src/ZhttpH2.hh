@@ -625,7 +625,7 @@ public:
     if (!m_headers) return fail_();
     m_headers = false;
     auto section = m_fields.finish(
-      [this](Method::T method, const RequestTarget &target) {
+      [this](Method::T method, const Target &target) {
 	impl()->operation(method, target);
       },
       [this](unsigned status) { status_(status); },
@@ -740,7 +740,7 @@ public:
     return fail_();
   }
 
-  void operation(Method::T, const RequestTarget &) { }
+  void operation(Method::T, const Target &) { }
   void status(unsigned) { }
   void bodyInfo(BodyType::T, uint64_t) { }
   bool enable1xx() const { return false; }
@@ -760,7 +760,7 @@ public:
 private:
   bool start_() {
     return m_fields.start(
-      [this](Method::T method, const RequestTarget &target) {
+      [this](Method::T method, const Target &target) {
 	impl()->operation(method, target);
       },
       [this](unsigned status) { status_(status); },
@@ -883,7 +883,7 @@ protected:
     bool streamMode = false;
     impl()->operation(
       [this, &stream, &sent, &endStream, &streamMode]
-      (Method::T method, auto &&path, bool hasQuery, auto &&query) {
+      (Method::T method, auto &&emit) {
       ZuCSpan protocol;
       if (method == Method::CONNECT)
 	impl()->protocol([&protocol]<typename P>(P &&value) {
@@ -896,8 +896,10 @@ protected:
       Builder_::field_(stream, ":method", Method::name(method));
       if (method != Method::CONNECT || protocol) {
 	Builder_::field_(stream, ":scheme", "https");
-	auto target = Zhttp::Builder_::target(path, hasQuery, query);
-	Builder_::field_(stream, ":path", target);
+	emit([&stream](auto &&write) {
+	  auto writer = Zhttp::Builder_::writer(write);
+	  Builder_::field_(stream, ":path", writer);
+	});
       }
       if (protocol) Builder_::field_(stream, ":protocol", protocol);
       sent = true;
@@ -962,7 +964,9 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    l(Method::GET, "/", false, [](auto &) { });
+    l(Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << '/'; });
+    });
   }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }

@@ -50,27 +50,17 @@ namespace Zhttp {
 
 namespace Builder_ {
 
-template <typename Path, typename Query>
-struct Target {
-  Path		&path;
-  Query		&query;
-  bool		hasQuery;
+template <typename Write>
+struct Writer {
+  Write	&write;
 
   template <typename S>
-  void print(S &s) const {
-    s << path;
-    if (hasQuery) {
-      s << '?';
-      query(s);
-    }
-  }
-  friend ZuPrintFn ZuPrintType(Target *);
+  void print(S &s) const { write(s); }
+  friend ZuPrintFn ZuPrintType(Writer *);
 };
 
-template <typename Path, typename Query>
-Target<Path, Query> target(Path &path, bool hasQuery, Query &query) {
-  return {path, query, hasQuery};
-}
+template <typename Write>
+Writer<Write> writer(Write &write) { return {write}; }
 
 } // namespace Builder_
 

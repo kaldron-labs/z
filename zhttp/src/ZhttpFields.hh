@@ -260,8 +260,8 @@ public:
     if (m_trailers || m_started) return true;
     if (!valid_()) return false;
     if constexpr (Request) {
-      RequestTarget target;
-      auto e = RequestTarget::fromPseudo(
+      Target target;
+      auto e = Target::fromPseudo(
 	target, m_method, m_scheme,
 	ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(m_authority.data()),
 	  m_authority.length()},

@@ -241,9 +241,9 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
   }
   uint64_t streamID() const { return streamID_; }
   void operation(
-    Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method, const Zhttp::Target &target) {
     seen.method = method;
-    seen.path = ZuCSpan{target.raw};
+    seen.path = ZuCSpan{target.pathQuery};
   }
   template <typename Rx>
   bool body(Rx &rx) {
@@ -332,7 +332,9 @@ struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {
   RequestBuilder(ZuCSpan body_) : content{body_} { }
 
   template <typename L> void operation(L &&l) const {
-    l(Zhttp::Method::GET, Path, false, [](auto &) { });
+    l(Zhttp::Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << Path; });
+    });
   }
   template <typename L> void host(L &&l) const { l(Host); }
   uint64_t contentLength() const { return content.length(); }

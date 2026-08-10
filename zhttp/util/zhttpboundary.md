@@ -35,14 +35,14 @@ fallback, or protocol lifecycle mechanism.
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
 | CLI parsing | `usage`, `loadOptions` | Validate and document command-line choices. |
-| Protocol-specific configuration | `parseDrop`, `migrationMode`, `quicHeartbeat`, `mxParams`, `ReqBodyMax`, `ReqHeaders`, `RespHeaders`, `Server` | Convert CLI values into multiplex, TCP, TLS, QUIC, and public server configuration. |
-| Workload-specific request/response handling | `sendBody`, `Workload` | Adapt the static planner's response plan to the single protocol-neutral server callback contract. |
+| Protocol-specific configuration | `parseDrop`, `migrationMode`, `quicHeartbeat`, `mxParams`, `ReqBodyMax`, `ReqHeaders`, `FixedRespHeaders`, `Server` | Convert CLI values into multiplex, TCP, TLS, QUIC, and public server configuration. |
+| Workload-specific request/response handling | `Response_`, `ResponseQ`, `Parser`, `App` | Copy callback-scoped request data, preserve request order through the application WorkQ, plan responses, and submit intrusive response Builders with `Link::send()`. |
 | Reporting | `printMemDiag` | Format memory, hash, and heap diagnostics. |
 | Workload selection | `prepareProcess` | Apply the selected foreground/daemon process policy. |
 | CLI parsing | `main` | Make trap registration, logging, workload state, public `Zhttp::Server`, wait policy, teardown, and process exit status explicit. |
 
-`Workload::listening`, `Workload::listenFailed`, `Workload::connected`, and
-`Workload::disconnected` are reporting callbacks; the `Workload` type does
+`App::listening`, `App::listenFailed`, `App::connected`, and
+`App::disconnected` are reporting callbacks; the `App` type does
 not own listener state or lifecycle decisions.
 
 ## `zhttpdutil.cc`

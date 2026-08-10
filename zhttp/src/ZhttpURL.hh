@@ -55,36 +55,22 @@ struct URLParseError {
   bool ok() const { return code == URLParseCode::OK; }
 };
 
-ZtEnumNS(ZhttpAPI, RequestTargetParseCode, int8_t,
+ZtEnumNS(ZhttpAPI, TargetParseCode, int8_t,
   OK, InvalidForm, InvalidMethod, InvalidScheme, InvalidAuthority, InvalidPath,
   InvalidProtocol, InvalidCharacter);
 
-ZtEnumNS(ZhttpAPI, RequestTargetField, int8_t,
+ZtEnumNS(ZhttpAPI, TargetField, int8_t,
   Raw, Scheme, Authority, Path, Protocol);
 
-struct RequestTargetParseError {
+struct TargetParseError {
   uint32_t			offset = 0;
-  RequestTargetParseCode::T	code = RequestTargetParseCode::OK;
-  RequestTargetField::T		field = RequestTargetField::Raw;
+  TargetParseCode::T	code = TargetParseCode::OK;
+  TargetField::T		field = TargetField::Raw;
 
-  bool ok() const { return code == RequestTargetParseCode::OK; }
+  bool ok() const { return code == TargetParseCode::OK; }
 };
 
 ZuDerive(URLString, ZtString<ZtStringHeapID<"Zhttp.URL">>);
-
-struct PathQuery {
-  ZuBSpan	path;
-  ZuBSpan	query;
-  bool		hasQuery = false;
-
-  template <typename S> void print(S &s) const {
-    s << path;
-    if (hasQuery) s << '?' << query;
-  }
-  friend ZuPrintFn ZuPrintType(PathQuery *);
-};
-
-ZhttpAPI PathQuery splitPathQuery(ZuBSpan);
 
 struct AuthorityView {
   ZuBSpan	raw;
@@ -176,7 +162,12 @@ struct URL {
   bool secure() const { return scheme == Scheme::https; }
   AuthorityView authority() const;
   OriginView origin() const;
-  PathQuery pathQuery() const;
+
+  template <typename S> void writeTarget(S &s) const {
+    if (path) s << path;
+    else s << '/';
+    if (hasQuery) s << '?' << query;
+  }
 
   template <typename S> void print(S &s) const {
     s << Scheme::name(scheme) << "://" << authority() << path;
@@ -220,20 +211,18 @@ private:
   bool		m_ipv6Literal = false;
 };
 
-struct RequestTarget {
+struct Target {
   AuthorityView	authority;
   ZuBSpan	raw;
-  ZuBSpan	path;
-  ZuBSpan	query;
+  ZuBSpan	pathQuery;
   ZuBSpan	protocol;
   Scheme::T	scheme = -1;
   TargetForm::T	form = TargetForm::Origin;
-  bool		hasQuery = false;
 
-  static RequestTargetParseError parseH1(
-    RequestTarget &, Method::T, ZuSpan<uint8_t>);
-  static RequestTargetParseError fromPseudo(
-    RequestTarget &, Method::T, Scheme::T, ZuSpan<uint8_t>,
+  static TargetParseError parseH1(
+    Target &, Method::T, ZuSpan<uint8_t>);
+  static TargetParseError fromPseudo(
+    Target &, Method::T, Scheme::T, ZuSpan<uint8_t>,
     ZuBSpan, ZuBSpan);
 };
 

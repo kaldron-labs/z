@@ -83,10 +83,10 @@ struct RequestRx :
   RequestRx() : Base{FallbackMaxBody} { }
 
   void operation(
-    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path.length(0);
-    path << ZuCSpan{target.raw};
+    path << ZuCSpan{target.pathQuery};
   }
 
   template <typename Key>
@@ -153,7 +153,9 @@ struct RequestBuilder :
 
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::GET, "/zhttp-fallback", false, [](auto &) { });
+    l(Zhttp::Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << "/zhttp-fallback"; });
+    });
   }
   template <typename L>
   void host(L &&l) { l("localhost"); }

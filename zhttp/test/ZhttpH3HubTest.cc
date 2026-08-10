@@ -48,7 +48,9 @@ struct RequestBuilder :
   public Zhttp::H3::Request<RequestBuilder> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::GET, "/", false, [](auto &) { });
+    l(Zhttp::Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << '/'; });
+    });
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
@@ -58,7 +60,9 @@ struct StreamRequestBuilder :
   public Zhttp::H3::Request<StreamRequestBuilder> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, "/stream", false, [](auto &) { });
+    l(Zhttp::Method::CONNECT, [](auto &&emit) {
+      emit([](auto &tx) { tx << "/stream"; });
+    });
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
@@ -103,7 +107,7 @@ struct ClientParser :
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan) { }
@@ -316,9 +320,9 @@ struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
     dispatch.final_();
   }
   void operation(
-    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
-    path = target.raw;
+    path = target.pathQuery;
     protocol_ = target.protocol;
     if (protocol_) {
       Base::stream();

@@ -57,7 +57,7 @@ void parseURL()
     auto url = storage.url();
     ZuCHECK(url.host == test.host, test.input);
     Zhttp::URLString target;
-    target << url.pathQuery();
+    url.writeTarget(target);
     ZuCHECK(target == test.target, test.input);
     ZuCHECK(url.port == test.port, test.input);
   }
@@ -183,48 +183,50 @@ void redirect()
   }
 }
 
-void requestTarget()
+void target()
 {
-  ZuTestScope(requestTarget);
-
-  auto split = Zhttp::splitPathQuery("/a?");
-  ZuCHECK(split.path == "/a" && split.hasQuery && !split.query,
-    "empty query is present");
-  split = Zhttp::splitPathQuery("/a");
-  ZuCHECK(split.path == "/a" && !split.hasQuery, "absent query");
+  ZuTestScope(target);
 
   struct Test {
     ZuCSpan input;
     Zhttp::Method::T method;
     Zhttp::TargetForm::T form;
+    ZuCSpan pathQuery;
     bool ok;
   };
   static const Test tests[] = {
-    {"/a?", Zhttp::Method::GET, Zhttp::TargetForm::Origin, true},
+    {"/a?", Zhttp::Method::GET, Zhttp::TargetForm::Origin, "/a?", true},
     {"http://Example.COM/a?x", Zhttp::Method::GET,
-      Zhttp::TargetForm::Absolute, true},
+      Zhttp::TargetForm::Absolute, "/a?x", true},
     {"example.com:443", Zhttp::Method::CONNECT,
-      Zhttp::TargetForm::Authority, true},
-    {"*", Zhttp::Method::OPTIONS, Zhttp::TargetForm::Asterisk, true},
-    {"*", Zhttp::Method::GET, Zhttp::TargetForm::Asterisk, false},
-    {"/a#x", Zhttp::Method::GET, Zhttp::TargetForm::Origin, false},
+      Zhttp::TargetForm::Authority, {}, true},
+    {"*", Zhttp::Method::OPTIONS, Zhttp::TargetForm::Asterisk, "*", true},
+    {"*", Zhttp::Method::GET, Zhttp::TargetForm::Asterisk, {}, false},
+    {"/a#x", Zhttp::Method::GET, Zhttp::TargetForm::Origin, {}, false},
     {"http://example.com/a#x", Zhttp::Method::GET,
-      Zhttp::TargetForm::Absolute, false},
-    {"/a%2", Zhttp::Method::GET, Zhttp::TargetForm::Origin, false},
+      Zhttp::TargetForm::Absolute, {}, false},
+    {"/a%2", Zhttp::Method::GET, Zhttp::TargetForm::Origin, {}, false},
     {"http://example.com/a b", Zhttp::Method::GET,
-      Zhttp::TargetForm::Absolute, false},
+      Zhttp::TargetForm::Absolute, {}, false},
     {"example.com", Zhttp::Method::CONNECT,
-      Zhttp::TargetForm::Authority, false}
+      Zhttp::TargetForm::Authority, {}, false}
   };
   for (const auto &test : tests) {
     Zhttp::URLString input{test.input};
-    Zhttp::RequestTarget target;
-    auto e = Zhttp::RequestTarget::parseH1(target, test.method,
+    Zhttp::Target target;
+    auto e = Zhttp::Target::parseH1(target, test.method,
       ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(input.data()),
 	input.length()});
     ZuCHECK(e.ok() == test.ok, test.input);
     if (test.ok) {
       ZuCHECK(target.form == test.form, test.input);
+      ZuCHECK(target.pathQuery == test.pathQuery, test.input);
+      if (target.pathQuery)
+	ZuCHECK(target.pathQuery.data() >=
+	    reinterpret_cast<const uint8_t *>(input.data()) &&
+	    target.pathQuery.data() + target.pathQuery.length() <=
+	    reinterpret_cast<const uint8_t *>(input.data()) + input.length(),
+	  "path-query borrows the input target");
       if (target.authority.host)
 	ZuCHECK(target.authority.normalized, "target authority normalized");
     }
@@ -232,20 +234,20 @@ void requestTarget()
 
   Zhttp::URLString authority;
   authority << "Example.COM:443";
-  Zhttp::RequestTarget target;
-  auto e = Zhttp::RequestTarget::fromPseudo(target, Zhttp::Method::CONNECT,
+  Zhttp::Target target;
+  auto e = Zhttp::Target::fromPseudo(target, Zhttp::Method::CONNECT,
     Zhttp::Scheme::https,
     ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(authority.data()),
       authority.length()}, "/chat?", "websocket");
   ZuCHECK(e.ok() && target.form == Zhttp::TargetForm::ExtendedConnect &&
-      target.authority.host == "example.com" && target.hasQuery &&
-      !target.query, "extended CONNECT");
-  e = Zhttp::RequestTarget::fromPseudo(target, Zhttp::Method::GET,
+      target.authority.host == "example.com" &&
+      target.pathQuery == "/chat?", "extended CONNECT");
+  e = Zhttp::Target::fromPseudo(target, Zhttp::Method::GET,
     Zhttp::Scheme::https,
     ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(authority.data()),
       authority.length()}, "bad", {});
-  ZuCHECK(e.code == Zhttp::RequestTargetParseCode::InvalidPath &&
-      e.field == Zhttp::RequestTargetField::Path && !e.offset,
+  ZuCHECK(e.code == Zhttp::TargetParseCode::InvalidPath &&
+      e.field == Zhttp::TargetField::Path && !e.offset,
     "pseudo-header error identifies its source field");
 }
 
@@ -259,6 +261,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(parseURL);
   ZuTestCall(redirect);
-  ZuTestCall(requestTarget);
+  ZuTestCall(target);
   return 0;
 }

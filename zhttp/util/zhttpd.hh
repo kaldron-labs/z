@@ -40,6 +40,8 @@
 
 #include <zlib/ZhttpServer.hh>
 
+#include "zhttpput.hh"
+
 ZfCLIConfig(CLI,
   (ZfCLI_ArrayFmt<ZfCLI::Delimited, ZfCLI_Delimiter<';'>>));
 
@@ -221,10 +223,29 @@ struct RequestHeaders {
   Zhttp::MessageString	userAgent;
 };
 
-// Test/planner input.  Live server requests keep these two ownership groups
-// separate: core protocol metadata in LiveReq and selected headers in the
-// workload Request.
-struct RequestData : public Zhttp::RequestMeta, public RequestHeaders { };
+// Application-owned request copied by Parser while its callback spans are
+// valid.  The server retains none of this data after Parser::complete().
+struct RequestData : public RequestHeaders {
+  ZuCSpan path() const { return path_; }
+  ZuCSpan query() const { return query_; }
+
+  Zhttp::MessageString	target;
+  Zhttp::MessageString	authority;
+  Zhttp::MessageString	protocol;
+  Zhttp::MessageString	path_;
+  Zhttp::MessageString	query_;
+  ZhttpPut::String	bodyData;
+  ZiIP			remoteIP;
+  Zhttp::Method::T	method = -1;
+  Zhttp::TargetForm::T	form = Zhttp::TargetForm::Origin;
+  uint64_t		bodyReceived = 0;
+  uint64_t		bodyConsumed = 0;
+  uint64_t		bodyReset = 0;
+  uint64_t		bodyDiscarded = 0;
+  bool			secure = false;
+  bool			http10 = false;
+  bool			hasQuery = false;
+};
 
 struct ResponsePlan {
   ResponsePlan() = default;
@@ -380,7 +401,7 @@ struct LogSink {
   bool init(const Options &) { return true; }
   void final() { }
   void write(
-      const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+      const RequestData &req, const RequestHeaders &headers,
       const ResponsePlan &resp, const ZiIP &remoteIP) {
     auto target = escapedTarget(req);
     auto referer = escaped(headers.referer);
@@ -412,7 +433,7 @@ struct LogSink {
     return out;
   }
 
-  static ZeString escapedTarget(const Zhttp::RequestMeta &req) {
+  static ZeString escapedTarget(const RequestData &req) {
     if (req.target) return escaped(req.target);
     ZeString value;
     value << "protocol=" << req.protocol << " authority=" << req.authority <<
@@ -603,7 +624,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan plan(
-      const Zhttp::RequestMeta &req, const RequestHeaders &headers) const {
+      const RequestData &req, const RequestHeaders &headers) const {
     ResponsePlan resp;
     httpDate(resp.date, time(nullptr));
     if (!state->options.noServerID) resp.server = "zhttpd";
@@ -687,7 +708,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan redirect(
-    const Zhttp::RequestMeta &req, ZuCSpan base, ResponsePlan resp,
+    const RequestData &req, ZuCSpan base, ResponsePlan resp,
     bool appendTarget = true) const {
     resp.status = 301;
     resp.reason = "Moved Permanently";
@@ -718,7 +739,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan singleFile(
-    const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+    const RequestData &req, const RequestHeaders &headers,
     ZuCSpan clean, ResponsePlan resp) const {
     auto leaf = ZmScratch(char,
       unsigned(state->options.root.length()) + 2, HdrString::VHeap);
@@ -732,7 +753,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan fileOrDir(
-    const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+    const RequestData &req, const RequestHeaders &headers,
     ZuCSpan clean, ZuCSpan query, ResponsePlan resp) const {
     ZiFile dir;
     if (openDir(clean, dir) == Zi::OK) {
@@ -795,7 +816,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan regularFile(
-    const Zhttp::RequestMeta &req, const RequestHeaders &headers,
+    const RequestData &req, const RequestHeaders &headers,
     ZiFile file, const ZiFile::Stat &stat, ZuCSpan path,
     ResponsePlan resp) const {
     uint64_t size = stat.size;
@@ -936,7 +957,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan listing(
-    const Zhttp::RequestMeta &req, const Zi::Path &path,
+    const RequestData &req, const Zi::Path &path,
     ZuCSpan clean, ResponsePlan resp) const {
     struct Entry {
       HdrString name;

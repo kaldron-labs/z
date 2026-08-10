@@ -32,6 +32,7 @@ namespace ResponseKind {
 }
 
 struct State {
+  ZiMultiplex	*mx = nullptr;
   ZmSemaphore	listening;
   ZmSemaphore	admitted;
   ZmSemaphore	connected;
@@ -54,14 +55,24 @@ struct State {
   bool		completeRequest = false;
   bool		asyncResponse = false;
   bool		emitOptional = false;
+  bool		checkThreads = false;
   int8_t	responseKind = ResponseKind::None;
   ProducerDone	producerDone;
 
+  void rxCallback() {
+    if (checkThreads && (!mx || !mx->invoked(3))) fail();
+  }
+  void txCallback() {
+    if (checkThreads && (!mx || !mx->invoked(4))) fail();
+  }
+
   void responseReset() {
+    txCallback();
     if (++responseResetCount != 1) fail();
     responseStarted.post();
   }
   void responseCallback() {
+    txCallback();
     if (responseResetCount.load_() != 1) fail();
   }
 
@@ -80,12 +91,23 @@ struct State {
   }
 };
 
-struct Workload {
-  template <Zhttp::BodyPolicy::T Policy>
-  struct Response_ {
+struct App {
+  struct Response_ : public ZmObject, public Zhttp::Builder {
     using Headers = ZuTypeList<>;
-    constexpr Zhttp::BodyPolicy::T bodyPolicy() const { return Policy; }
+    Zhttp::BodyPolicy::T bodyPolicy() const {
+      if (state->asyncResponse) return Zhttp::BodyPolicy::Stream;
+      switch (state->responseKind) {
+        case ResponseKind::Fixed: return Zhttp::BodyPolicy::Fixed;
+        case ResponseKind::OptionalFixed:
+	  return Zhttp::BodyPolicy::OptionalFixed;
+        case ResponseKind::Stream: return Zhttp::BodyPolicy::Stream;
+        case ResponseKind::OptionalStream:
+	  return Zhttp::BodyPolicy::OptionalStream;
+        default: return Zhttp::BodyPolicy::None;
+      }
+    }
     void reset() { state->responseReset(); }
+    Zhttp::Method::T method() const { return Zhttp::Method::POST; }
     unsigned status() const { state->responseCallback(); return 200; }
     template <typename L> void reason(L &&l) const {
       state->responseCallback();
@@ -98,97 +120,76 @@ struct Workload {
       state->responseCallback();
     }
     bool close() const { state->responseCallback(); return false; }
-
-    State *state = nullptr;
-  };
-  struct Response : public Response_<Zhttp::BodyPolicy::None> { };
-  struct FixedResponse : public Response_<Zhttp::BodyPolicy::Fixed> {
     template <typename Emit>
     void body(Emit &&emit) {
-      this->state->responseCallback();
+      state->responseCallback();
+      if (bodyPolicy() == Zhttp::BodyPolicy::OptionalFixed &&
+	  !state->emitOptional)
+	return;
       emit([](auto &body) { body << 'x'; return true; });
     }
     template <typename L> void bodyHdrs(L &&) {
-      this->state->responseCallback();
-    }
-  };
-  struct OptionalFixedResponse :
-      public Response_<Zhttp::BodyPolicy::OptionalFixed> {
-    template <typename Emit>
-    void body(Emit &&emit) {
-      this->state->responseCallback();
-      if (this->state->emitOptional)
-	emit([](auto &body) { body << 'x'; return true; });
-    }
-    template <typename L> void bodyHdrs(L &&) {
-      this->state->responseCallback();
-    }
-  };
-  struct StreamResponse : public Response_<Zhttp::BodyPolicy::Stream> {
-    template <typename Emit>
-    void body(Emit &&emit) {
-      this->state->responseCallback();
-      emit([](auto &body) { body << 'x'; return true; });
-    }
-  };
-  struct OptionalStreamResponse :
-      public Response_<Zhttp::BodyPolicy::OptionalStream> {
-    template <typename Emit>
-    void body(Emit &&emit) {
-      this->state->responseCallback();
-      if (this->state->emitOptional)
-	emit([](auto &body) { body << 'x'; return true; });
-    }
-  };
-  struct Request {
-    using Headers = ZuTypeList<>;
-    void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) {
-      if (state) state->requestStarted.post();
-    }
-    void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
-    template <typename Key>
-    void header(Zhttp::FieldSection::T, ZuBSpan) { }
-    template <typename Rx>
-    bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
-    void complete(bool) { }
-
-    State *state = nullptr;
-  };
-  struct AsyncResponse {
-    using Headers = ZuTypeList<>;
-    constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
-      return Zhttp::BodyPolicy::Stream;
-    }
-    void reset() { state->responseReset(); }
-    unsigned status() const { state->responseCallback(); return 200; }
-    template <typename L> void reason(L &&l) const {
-      state->responseCallback();
-      l("OK");
-    }
-    template <typename Key, typename L> void header(L &&) const {
       state->responseCallback();
     }
-    template <typename L> void header(L &&) const {
-      state->responseCallback();
-    }
-    bool close() const { state->responseCallback(); return false; }
     template <typename Done>
     void next(unsigned, Done done) {
       state->responseCallback();
-      state->producerDone = ProducerDone{ZuMv(done)};
-      state->producerStarted.post();
+      if (state->asyncResponse) {
+	state->producerDone = ProducerDone{ZuMv(done)};
+	state->producerStarted.post();
+	return;
+      }
+      ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<1, 1, "Zhttp.Server.Idle">{};
+      buf->data()[0] = 'x';
+      buf->length = 1;
+      done(ZuMv(buf), true);
+    }
+
+    State *state = nullptr;
+  };
+  using ResponseQ = ZmList<Response_,
+    ZmListNode<Response_, ZmListHeapID<"Zhttp.Server.Idle.Response">>>;
+  using Response = ResponseQ::Node;
+
+  struct Parser {
+    using Headers = ZuTypeList<>;
+    void operation(Zhttp::Method::T, const Zhttp::Target &) {
+      if (state) {
+	state->rxCallback();
+	state->requestStarted.post();
+      }
+    }
+    void bodyInfo(Zhttp::BodyType::T, uint64_t) {
+      if (state) state->rxCallback();
+    }
+    template <typename Key>
+    void header(Zhttp::FieldSection::T, ZuBSpan) {
+      if (state) state->rxCallback();
+    }
+    template <typename Rx>
+    bool body(Rx &rx) {
+      if (state) state->rxCallback();
+      return Zhttp::bodyDrain(rx);
+    }
+    template <typename LinkRef>
+    void complete(LinkRef &&link, bool ok) {
+      if (state) state->rxCallback();
+      if (ok) {
+	ZmRef<Response> response = new Response{};
+	response->state = state;
+	link->send(ZuMv(response));
+      }
+      if (state->openRequest) {
+	++state->completedCount;
+	state->completed.post();
+      }
     }
 
     State *state = nullptr;
   };
 
-  Workload(State *state_) : state{state_} { }
-  Request request() { return {state}; }
-  Zhttp::RequestDisposition::T requestError(
-    const Zhttp::RequestMeta &, Request &,
-    const Zhttp::RequestError &) {
-    return Zhttp::RequestDisposition::Disconnect;
-  }
+  App(State *state_) : state{state_} { }
+  Parser parser() { return {state}; }
 
   void listening(int8_t transport, uint16_t port) {
     if (transport != state->expectedTransport || port != state->port)
@@ -212,49 +213,10 @@ struct Workload {
     }
   }
 
-  template <typename Emit>
-  void respond(const Zhttp::RequestMeta &, Request &, Emit &&emit) {
-    if (state->asyncResponse) {
-      emit(AsyncResponse{state});
-      return;
-    }
-    switch (state->responseKind) {
-      case ResponseKind::Fixed:
-	emit(FixedResponse{{state}});
-	break;
-      case ResponseKind::OptionalFixed:
-	emit(OptionalFixedResponse{{state}});
-	break;
-      case ResponseKind::Stream:
-	emit(StreamResponse{{state}});
-	break;
-      case ResponseKind::OptionalStream:
-	emit(OptionalStreamResponse{{state}});
-	break;
-      default:
-	emit(Response{{state}});
-	break;
-    }
-  }
-  void committed(
-    const Zhttp::RequestMeta &, Request &, const Zhttp::BodyCommit &) { }
-  void completed(
-    const Zhttp::RequestMeta &, Request &,
-    const Zhttp::ResponseResult &result) {
-    if (!state->openRequest) return;
-    auto expected = state->asyncResponse ?
-      Zhttp::ResponseOutcome::Cancelled : state->completeRequest ?
-      Zhttp::ResponseOutcome::Success : Zhttp::ResponseOutcome::Reset;
-    if (result.outcome != expected) state->fail();
-    ++state->completedCount;
-    state->completed.post();
-  }
-  bool close(const Response &) const { return false; }
-
   State	*state;
 };
 
-using Server = Zhttp::Server<Workload>;
+using Server = Zhttp::Server<App>;
 
 template <typename Profile>
 struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
@@ -269,7 +231,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 
     template <typename L>
     void operation(L &&l) const {
-      l(Zhttp::Method::POST, "/", false, [](auto &) { });
+      l(Zhttp::Method::POST, [](auto &&emit) {
+	emit([](auto &tx) { tx << '/'; });
+      });
     }
     template <typename L>
     void host(L &&l) const { l("localhost"); }
@@ -334,9 +298,6 @@ void responseTypes()
   ZuTestScope(responseTypes);
 
   State state;
-  Workload workload{&state};
-  Workload::Request request{&state};
-  Zhttp::RequestMeta meta;
   bool buildersOK = true;
   bool resetsOK = true;
   for (unsigned kind = ResponseKind::None;
@@ -344,25 +305,24 @@ void responseTypes()
     state.responseKind = kind;
     state.responseResetCount = 0;
     unsigned seen = unsigned(-1);
-    workload.respond(meta, request,
-      [&seen]<typename Response>(Response &&response) {
-	auto policy = response.bodyPolicy();
-	response.reset();
-	(void)response.close();
-	(void)response.status();
-	response.reason([](auto &&) { });
-	response.header([](auto &&, auto &&) { });
-	if (policy == Zhttp::BodyPolicy::None)
-	  seen = ResponseKind::None;
-	else if (policy == Zhttp::BodyPolicy::Fixed)
-	  seen = ResponseKind::Fixed;
-	else if (policy == Zhttp::BodyPolicy::OptionalFixed)
-	  seen = ResponseKind::OptionalFixed;
-	else if (policy == Zhttp::BodyPolicy::Stream)
-	  seen = ResponseKind::Stream;
-	else if (policy == Zhttp::BodyPolicy::OptionalStream)
-	  seen = ResponseKind::OptionalStream;
-      });
+    App::Response_ response;
+    response.state = &state;
+    auto policy = response.bodyPolicy();
+    response.reset();
+    (void)response.close();
+    (void)response.status();
+    response.reason([](auto &&) { });
+    response.header([](auto &&, auto &&) { });
+    if (policy == Zhttp::BodyPolicy::None)
+      seen = ResponseKind::None;
+    else if (policy == Zhttp::BodyPolicy::Fixed)
+      seen = ResponseKind::Fixed;
+    else if (policy == Zhttp::BodyPolicy::OptionalFixed)
+      seen = ResponseKind::OptionalFixed;
+    else if (policy == Zhttp::BodyPolicy::Stream)
+      seen = ResponseKind::Stream;
+    else if (policy == Zhttp::BodyPolicy::OptionalStream)
+      seen = ResponseKind::OptionalStream;
     if (seen != kind) buildersOK = false;
     if (state.responseResetCount.load_() != 1) resetsOK = false;
   }
@@ -394,19 +354,21 @@ void idle()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
+  state.mx = &mx;
+  state.checkThreads = true;
   bool mxUp = mx.start();
   ZuCHECK(mxUp, "start multiplexer");
   if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
-  Workload workload{&state};
+  App app{&state};
   Server server;
   auto serverQUIC = Zhttp::QUICConfig{}.certPath(cert).keyPath(key);
   auto serverConfig = Zhttp::ServerConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port)
     .idleTimeout(1).quic(ZuMv(serverQUIC));
   bool serverInited =
-    server.init(hub, ZuMv(serverConfig), &workload);
+    server.init(hub, ZuMv(serverConfig), &app);
   ZuCHECK(serverInited, "initialize server");
   bool serverUp = serverInited && server.start();
   ZuCHECK(serverUp, "start server");
@@ -482,12 +444,14 @@ void activeStop()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
+  state.mx = &mx;
+  state.checkThreads = true;
   bool mxUp = mx.start();
   ZuCHECK(mxUp, "start multiplexer");
   if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
-  Workload workload{&state};
+  App app{&state};
   Server server;
   auto serverConfig = Zhttp::ServerConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port)
@@ -502,7 +466,7 @@ void activeStop()
     serverConfig.quic(
       Zhttp::QUICConfig{}.certPath(cert).keyPath(key).maxIdleTimeout(10000));
   bool serverInited =
-    server.init(hub, ZuMv(serverConfig), &workload);
+    server.init(hub, ZuMv(serverConfig), &app);
   ZuCHECK(serverInited, "initialize server");
   bool serverUp = serverInited && server.start();
   ZuCHECK(serverUp, "start server");
@@ -650,8 +614,8 @@ void activeStop()
       !server.bodyFailures() &&
       !server.responseBuildFailures(),
     "normal shutdown does not report server, parse, or build failures");
-  ZuCHECK(server.transportFailures() == unsigned(!state.completeRequest),
-    "partial-request reset is the only transport failure");
+  ZuCHECK(!server.transportFailures(),
+    "partial request shutdown is not a response transport failure");
   if (clientInited) (void)client.stop();
   ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
     "client stop completes active disconnect");
@@ -686,6 +650,8 @@ int main(int argc, char **argv)
   ZuTestCall((activeStop<Zhttp::H1TCP, true>));
   ZuTestCall((activeStop<Zhttp::H1TCP, false, false, true>));
   ZuTestCall((activeStop<Zhttp::H1TLS, false, false, true>));
+  ZuTestCall((activeStop<Zhttp::H2TLS, false, false, true>));
+  ZuTestCall((activeStop<Zhttp::H3QUIC, false, false, true>));
   ZuTestCall((activeStop<Zhttp::H1TCP, false, true>));
   return 0;
 }

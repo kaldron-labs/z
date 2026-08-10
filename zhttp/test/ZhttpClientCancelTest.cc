@@ -120,9 +120,9 @@ struct Request_ : public ZmObject {
   void reset() { ++resets; bodyLength = 0; }
   template <typename L>
   void operation(L &&l) const {
-    auto pathQuery = Zhttp::splitPathQuery(target);
-    l(Zhttp::Method::GET, pathQuery.path, pathQuery.hasQuery,
-      [query = pathQuery.query](auto &stream) { stream << query; });
+    l(Zhttp::Method::GET, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << target; });
+    });
   }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L>
@@ -190,7 +190,8 @@ struct ResParser {
   bool body(Rx &rx) {
     return !rejectBody && Zhttp::bodyDrain(rx);
   }
-  template <typename State> void complete(State ok_) {
+  template <typename LinkRef>
+  void complete(LinkRef &&, bool ok_) {
     completed = true;
     ok = ok_;
   }
@@ -295,7 +296,8 @@ void Pool::archive_(Request *request) { client()->archived(request); }
 bool Request_::replayable() const { return app->replayable_; }
 bool Request_::reproducible() const { return app->replayable_; }
 void Request_::redirected(const Zhttp::URL &url_) {
-  target = url_.pathQuery();
+  target.length(0);
+  url_.writeTarget(target);
 }
 void Request_::observed(const Zhttp::ClientEvent &event) {
   app->requestObserved(event);
@@ -337,6 +339,8 @@ void attemptState()
   ZuTestScope(attemptState);
 
   struct Link {
+    void ref() const { }
+    bool deref() const { return false; }
     void responseHeadersParsed(Pool::LiveReq *) { ++headers; }
     void responseBodyBytes(Pool::LiveReq *) { ++bodyUpdates; }
     void complete(bool ok_) { completed = true; ok = ok_; }

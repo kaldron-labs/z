@@ -85,9 +85,9 @@ struct Request_ : public ZmObject {
   void reset() { }
   template <typename L>
   void operation(L &&l) const {
-    auto pathQuery = Zhttp::splitPathQuery(target);
-    l(Zhttp::Method::GET, pathQuery.path, pathQuery.hasQuery,
-      [query = pathQuery.query](auto &stream) { stream << query; });
+    l(Zhttp::Method::GET, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << target; });
+    });
   }
   template <typename L> void protocol(L &&) const { }
   template <typename Key, typename L> void header(L &&) const { }
@@ -99,7 +99,10 @@ struct Request_ : public ZmObject {
   void disconnected(bool) { }
   void connectFailed(bool) { }
   void selected(const Zhttp::Endpoint &) { }
-  void redirected(const Zhttp::URL &url_) { target = url_.pathQuery(); }
+  void redirected(const Zhttp::URL &url_) {
+    target.length(0);
+    url_.writeTarget(target);
+  }
   void observed(const Zhttp::ClientEvent &);
   void completed(const Zhttp::Result &);
 
@@ -132,7 +135,8 @@ struct ResParser {
     return Zhttp::bodyEach(rx,
       [this](ZuBSpan value) { *bodyBytes += value.length(); });
   }
-  template <typename State> void complete(State) { }
+  template <typename LinkRef>
+  void complete(LinkRef &&, bool) { }
 };
 
 ZuDerive(RequestQ, (ZmPQueue<Request_,

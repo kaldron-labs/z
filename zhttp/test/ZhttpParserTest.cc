@@ -146,10 +146,10 @@ struct RequestParser :
   RequestParser() : Base{1024} { }
 
   void operation(
-    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path.length(0);
-    path << ZuCSpan{target.raw};
+    path << ZuCSpan{target.pathQuery};
   }
 
   void bodyInfo(Zhttp::BodyType::T type_, uint64_t length_) {
@@ -206,7 +206,7 @@ struct RejectingParser :
 
   RejectingParser() : Base{1024} { }
 
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) {
+  void operation(Zhttp::Method::T, const Zhttp::Target &) {
     ++operations;
   }
   void status(unsigned) { ++statuses; }
