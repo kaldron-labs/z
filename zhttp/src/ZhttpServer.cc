@@ -5,10 +5,3 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZhttpServer.hh>
-
-namespace Zhttp {
-
-ZtEnumImplStruct(RequestDisposition);
-ZtEnumImplStruct(RequestPhase);
-
-} // namespace Zhttp

@@ -14,13 +14,13 @@
 #endif
 
 #include <zlib/ZmBlock.hh>
-#include <zlib/ZmContext.hh>
 #include <zlib/ZmEngine.hh>
-#include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
+
+#include <zlib/ZuUnion.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
@@ -32,53 +32,6 @@
 #include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
-
-struct RequestBody {
-  uint64_t received = 0;
-  uint64_t consumed = 0;
-  uint64_t pending = 0;
-  uint64_t reset = 0;
-  uint64_t discarded = 0;
-};
-
-struct ResponseResult {
-  BodyCommit		body;
-  ResponseOutcome::T	outcome = ResponseOutcome::BuildFailed;
-};
-
-#if 0
-// Extended response Builder contract used by Server. Each call to
-// Workload::respond() emits exactly one concrete response value; different
-// calls and branches may emit unrelated response types. Headers, optional
-// Trailers and bodyPolicy() are properties of each concrete type. Server may
-// move the emitted response; applications must not retain references to it or
-// its transient state. Server calls reset() exactly once before any other
-// response callback, then retains the concrete type in its protocol adapter.
-// All calls originate on the Tx shard. Other than reset() being first,
-// callback order is protocol-dependent; in particular, fixed H2/H3 bodies can
-// be built and patched before headers.
-//
-// For synchronous body policies, body() follows the Builder contract above.
-// A streaming response may instead provide next(); Server retains that
-// response and repeatedly requests bounded pooled buffers. done() may be
-// called from another thread; Server posts it to the Tx shard before accessing
-// link-owned state. An asynchronous response does not also provide body().
-struct Response : public Builder {
-  unsigned status();
-  template <typename L> void reason(L &&l);	// l(value), H1 only
-  bool close() const;
-
-  // Optional asynchronous alternative to body(), present only when
-  // BodyPolicy::Stream/OptionalStream. done(ZmRef<ZiIOBuf>, final).
-  template <typename Done> void next(unsigned max, Done done);
-};
-#endif
-
-ZtEnumStruct(ZhttpAPI, RequestDisposition, int8_t,
-  Continue, Disconnect);
-
-ZtEnumStruct(ZhttpAPI, RequestPhase, int8_t,
-  Receiving, Queued, Sending, Committed, Completing, Done);
 
 template <typename Impl, typename Parser_, typename Message_>
 struct ServerSession {
@@ -1550,49 +1503,6 @@ private:
 
 ZuDerive(MessageString, ZtString<ZtStringHeapID<"Zhttp.Message">>);
 
-struct RequestMeta {
-  Method::T	method = -1;
-  MessageString	target;
-  MessageString	pathStorage;
-  MessageString	queryStorage;
-  MessageString	authority;
-  MessageString	protocol;
-  ZiIP		remoteIP;
-  uint64_t	bodyReceived = 0;
-  uint64_t	bodyConsumed = 0;
-  uint64_t	bodyReset = 0;
-  uint64_t	bodyDiscarded = 0;
-  uint32_t	pathOffset = 0;
-  uint32_t	pathLength = 0;
-  uint32_t	queryOffset = 0;
-  uint32_t	queryLength = 0;
-  uint16_t	remotePort = 0;
-  Scheme::T	scheme = -1;
-  TargetForm::T	form = TargetForm::Origin;
-  Transport::T	transport = Transport::TCP;
-  Version::T	httpVersion = Version::H1;
-  bool		secure = false;
-  bool		http10 = false;
-  bool		hasQuery = false;
-  bool		pathStored = false;
-  bool		queryStored = false;
-
-  ZuBSpan path() const {
-    if (pathStored) return pathStorage;
-    if (!target) return {};
-    return
-      ZuBSpan{reinterpret_cast<const uint8_t *>(target.data()) + pathOffset,
-	pathLength};
-  }
-  ZuBSpan query() const {
-    if (queryStored) return queryStorage;
-    if (!target) return {};
-    return
-      ZuBSpan{reinterpret_cast<const uint8_t *>(target.data()) + queryOffset,
-	queryLength};
-  }
-};
-
 class ServerConfig {
 public:
   ServerConfig() { m_tls.policy(H2Policy::Prefer); }
@@ -1685,39 +1595,17 @@ private:
   bool		m_quicEnabled = false;
 };
 
-// Workload_ is a plain application struct.  Request and each emitted Response
-// conform to the application contracts documented in Zhttp.hh.  respond()
-// calls emit(response) exactly once.
-#if 0
-struct Workload {
-  using Request = AppRequest;
 
-  Request request();
-
-  template <typename Emit>
-  void respond(const RequestMeta &meta, Request &request, Emit &&emit) {
-    if (meta.path() == "/health") {
-      emit(EmptyResponse{204});
-      return;
-    }
-    if (meta.path() == "/record") {
-      emit(JSONResponse{request.record});
-      return;
-    }
-    emit(FileResponse{lookup(meta.path())});
-  }
-  // EmptyResponse, JSONResponse, and FileResponse are unrelated concrete
-  // types which each conform to Response; emit() consumes the selected value.
-};
-#endif
-
-template <typename Workload_>
-class Server : public ZmEngine<Server<Workload_>> {
+template <typename App_>
+class Server : public ZmEngine<Server<App_>> {
 public:
-  using Engine = ZmEngine<Server<Workload_>>;
-  using Workload = Workload_;
-  using AppRequest = typename Workload::Request;
-  using ReqHeaders = typename AppRequest::Headers;
+  using Engine = ZmEngine<Server<App_>>;
+  using App = App_;
+  using AppParser = typename App::Parser;
+  using ReqHeaders = typename AppParser::Headers;
+  using ResponseQ = typename App::ResponseQ;
+  using Response = typename ResponseQ::Node;
+  using ResponseData = typename ResponseQ::T;
   using Engine::running;
   using Engine::start;
   using Engine::state;
@@ -1734,68 +1622,16 @@ private:
   using ProfileLink = ZuIf<ZuIsSame<Profile, H1TLS>{}, TLSH1Link,
     ZuIf<ZuIsSame<Profile, H2TLS>{}, TLSH2Link, Link<Profile>>>;
 
-public:
-  template <typename Profile>
-  struct LiveReq_ : public ZmObject {
-    ZmRef<ProfileLink<Profile>> link;
-    RequestMeta		meta;
-    AppRequest		request;
-    RequestBody		requestBody;
-    ResponseResult	response;
-    uint64_t		retainedBytes = 0;
-    RequestErrorCode::T	errorCode = -1;
-    RequestPhase::T	phase = RequestPhase::Receiving;
-    bool		close = false;
-    bool		completionPosted = false;
-  };
-  template <typename Profile>
-  using LiveReqQ = ZmList<LiveReq_<Profile>,
-    ZmListNode<LiveReq_<Profile>,
-      ZmListHeapID<"Zhttp.Server.LiveReq">>>;
-  template <typename Profile>
-  using LiveReq = typename LiveReqQ<Profile>::Node;
-
-  template <typename Profile>
-  struct H1Ready_ : public ZmObject {
-    H1Ready_(ProfileLink<Profile> *link_) : link{link_} { }
-    ProfileLink<Profile> *link = nullptr;
-  };
-  template <typename Profile>
-  using H1ReadyQ = ZmList<H1Ready_<Profile>,
-    ZmListNode<H1Ready_<Profile>,
-      ZmListHeapID<"Zhttp.Server.H1Ready">>>;
-  template <typename Profile>
-  using H1Ready = typename H1ReadyQ<Profile>::Node;
-
-private:
   template <typename Protocol> struct Session;
   template <typename Protocol> struct Hub;
   template <typename Profile> struct Parser;
-
-  template <typename Profile>
-  struct ResponseQueue {
-    LiveReqQ<Profile> fifo;
-    H1ReadyQ<Profile> ready;
-    bool posted = false;
-  };
-
-  template <typename Profile>
-  struct H1ResponseState {
-    LiveReqQ<Profile> responses;
-    ZmRef<H1Ready<Profile>> readyNode;
-    LiveReq<Profile> *activeResponse = nullptr;
-    bool responseReady = false;
-  };
-  struct NoResponseState { };
-  template <typename Profile>
-  using LinkResponseState = ZuIf<
-    MessageTraits<Profile>::ID == Version::H1,
-    H1ResponseState<Profile>, NoResponseState>;
+  template <typename Profile, typename Link_> struct Responses;
 
   using BodyChunkFn = ZmFn<void(ZmRef<ZiIOBuf>, bool),
     ZmFnHeapID<"Zhttp.Server.BodyChunk">>;
   using BodyCancelFn = ZmFn<void(),
     ZmFnHeapID<"Zhttp.Server.BodyCancel">>;
+
   struct BodyTask {
     BodyCancelFn cancel;
   };
@@ -1824,139 +1660,107 @@ private:
       public ZuTrue { };
 
   template <typename Profile>
-  ResponseQueue<Profile> &responseQueue_() {
-    if constexpr (ZuIsSame<Profile, H1TCP>{}) return m_h1TCPResponses;
-    else if constexpr (ZuIsSame<Profile, H1TLS>{}) return m_h1TLSResponses;
-    else if constexpr (ZuIsSame<Profile, H2TLS>{}) return m_h2TLSResponses;
-    else return m_h3QUICResponses;
-  }
-
-  template <typename Profile>
   struct Parser :
     public MessageTraits<Profile>::template RequestParser<
       Parser<Profile>, ReqHeaders> {
     using Base = typename MessageTraits<Profile>::template RequestParser<
       Parser, ReqHeaders>;
     using State = typename Base::State;
+    using LinkRef = ZmRef<ProfileLink<Profile>>;
+    using ParserStorage = ZuUnion<void, AppParser>;
 
-    void reset() { Base::reset(); live = nullptr; }
-    void operation(Method::T method, const RequestTarget &target) {
-      auto &request = live->meta;
-      request.method = method;
-      request.target = ZuCSpan{target.raw};
-      request.authority = ZuCSpan{target.authority.raw};
-      request.protocol = ZuCSpan{target.protocol};
-      request.scheme = target.scheme;
-      request.form = target.form;
-      if constexpr (MessageTraits<Profile>::ID == Version::H1)
-	request.http10 = Base::http10();
-      request.hasQuery = target.hasQuery;
-      auto offsets = [&target](ZuBSpan value, uint32_t &offset,
-	  uint32_t &length) {
-	if (!target.raw || !value) return false;
-	uintptr_t raw = reinterpret_cast<uintptr_t>(target.raw.data());
-	uintptr_t data = reinterpret_cast<uintptr_t>(value.data());
-	if (data < raw || data - raw > target.raw.length() ||
-	    value.length() > target.raw.length() - (data - raw))
-	  return false;
-	offset = uint32_t(data - raw);
-	length = uint32_t(value.length());
-	return true;
-      };
-      request.pathStored = !offsets(
-	target.path, request.pathOffset, request.pathLength);
-      if (request.pathStored) request.pathStorage = ZuCSpan{target.path};
-      request.queryStored = !offsets(
-	target.query, request.queryOffset, request.queryLength);
-      if (request.queryStored) request.queryStorage = ZuCSpan{target.query};
-      live->request.operation(method, target);
+    void begin(Server *server_, LinkRef link_, AppParser parser_) {
+      server = server_;
+      link = ZuMv(link_);
+      appParser.template p<1>(ZuMv(parser_));
+      active = true;
+      notified = false;
+    }
+
+    void reset() {
+      Base::reset();
+      link = nullptr;
+      active = false;
+      notified = false;
+    }
+
+    void operation(Method::T method, const Target &target) {
+      parser_().operation(method, target);
     }
     template <typename Key>
     void header(Zhttp::FieldSection::T section, ZuBSpan value) {
-      live->request.template header<Key>(section, value);
+      parser_().template header<Key>(section, value);
     }
     template <typename Key, typename Value>
     void header(Zhttp::FieldSection::T section) {
-      live->request.template header<Key, Value>(section);
+      parser_().template header<Key, Value>(section);
     }
     void header(
 	Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
-      if constexpr (Fields::HasRuntime<AppRequest>{})
-	live->request.header(section, key, value);
+      if constexpr (Fields::HasRuntime<AppParser>{})
+	parser_().header(section, key, value);
     }
     void bodyInfo(BodyType::T type, uint64_t length) {
-      live->request.bodyInfo(type, length);
+      parser_().bodyInfo(type, length);
     }
     void status(unsigned) { }
     template <typename Rx>
     bool body(Rx &rx) {
-      auto &request = live->meta;
-      auto &requestBody = live->requestBody;
-      uint64_t before = rx.length();
-      if (before < requestBody.pending) {
-	return false;
-      }
-      requestBody.received += before - requestBody.pending;
-      bool accepted = live->request.body(rx);
-      uint64_t pending = rx.length();
-      if (pending > before) return false;
-      requestBody.consumed += before - pending;
-      requestBody.pending = pending;
-      request.bodyReceived = requestBody.received;
-      request.bodyConsumed = requestBody.consumed;
-      request.bodyReset = requestBody.reset;
-      request.bodyDiscarded = requestBody.discarded;
-      return accepted;
+      return parser_().body(rx);
     }
     void complete(typename State::T state) {
-      auto &request = live->meta;
-      auto &requestBody = live->requestBody;
-      requestBody.reset += requestBody.pending;
-      requestBody.discarded += requestBody.pending;
-      requestBody.pending = 0;
-      request.bodyReceived = requestBody.received;
-      request.bodyConsumed = requestBody.consumed;
-      request.bodyReset = requestBody.reset;
-      request.bodyDiscarded = requestBody.discarded;
-      live->request.complete(state == State::Complete);
+      notify(state == State::Complete);
+    }
+    void notify(bool ok) {
+      if (!active || notified) return;
+      notified = true;
+      parser_().complete(ZuMv(link), ok);
+      clearParser_();
+    }
+    void finish() {
+      clearParser_();
+      link = nullptr;
+      active = false;
+      notified = false;
     }
 
-    Server			*server = nullptr;
-    ZmRef<LiveReq<Profile>>	live;
-  };
+  private:
+    AppParser &parser_() { return appParser.template p<1>(); }
+    void clearParser_() {
+      if (appParser.type() != 1) return;
+      appParser.~ParserStorage();
+      new (&appParser) ParserStorage{};
+    }
 
-  struct ErrorResponse {
-    using Headers = ZuTypeList<>;
-
-    unsigned status_ = 400;
-
-    void reset() { }
-    unsigned status() const { return status_; }
-    template <typename L> void reason(L &&l) const { l(""); }
-    template <typename Key, typename L> void header(L &&) const { }
-    template <typename L> void header(L &&) const { }
-    bool close() const { return false; }
-    constexpr BodyPolicy::T bodyPolicy() const { return BodyPolicy::None; }
+  public:
+    Server		*server = nullptr;
+    LinkRef		link;
+    ParserStorage	appParser;
+    bool	active = false;
+    bool	notified = false;
   };
 
   template <typename Profile, typename Builder>
   struct ResponseOps {
     using Headers = typename Builder::Headers;
 
-    Server	*server = nullptr;
-    Builder	builder;
-    HeaderPatches<Headers> patches;
-    uint64_t	produced = 0;
+    ResponseOps(
+	Server *server_, Builder &builder_, bool suppressPads_ = false,
+	bool rejectContentLength_ = false) :
+      server{server_}, builder{&builder_},
+      h1{MessageTraits<Profile>::ID == Version::H1},
+      suppressPads{suppressPads_},
+      rejectContentLength{rejectContentLength_} { }
 
-    unsigned status() const { return builder.status(); }
+    unsigned status() const { return builder->status(); }
     template <typename L>
-    void reason(L &&l) const { builder.reason(ZuFwd<L>(l)); }
+    void reason(L &&l) const { builder->reason(ZuFwd<L>(l)); }
     template <typename Key, typename L>
     void header(L &&l) {
       if constexpr (Key{}() == "content-length")
 	if (rejectContentLength) return;
       if (suppressPads) {
-	builder.template header<Key>([&l]<typename V>(V &&v) {
+	builder->template header<Key>([&l]<typename V>(V &&v) {
 	  if constexpr (!IsPlaceholder<ZuDecay<V>>{})
 	    l(ZuFwd<V>(v));
 	});
@@ -1964,11 +1768,11 @@ private:
       }
       patches.template header<
 	MessageTraits<Profile>::ID == Version::H1, Key>(
-	builder, ZuFwd<L>(l));
+	*builder, ZuFwd<L>(l));
     }
     template <typename L>
     void header(L &&l) {
-      builder.header([this, &l]<typename K, typename V>(K &&k, V &&v) {
+      builder->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
 	ZtString<ZtStringHeapID<"Zhttp.RuntimeHeader.Name">> name;
 	name << k;
 	if (!validRuntimeHeader<Headers>(ZuCSpan{name}, h1)) {
@@ -1979,20 +1783,24 @@ private:
       });
       if (server->m_altSvc) l("alt-svc", server->m_altSvc);
     }
-    void patch() { patches.patch(builder); }
+    void patch() { patches.patch(*builder); }
     uint64_t contentLength() const { return produced; }
     bool headersValid() const { return headersOK; }
-    Builder &appBuilder() { return builder; }
+    Builder &appBuilder() { return *builder; }
     template <typename Emit>
     void emitBody(Emit &&emit) {
       if constexpr (HasBuilderBody<Builder, Emit &&>{})
-	builder.body(ZuFwd<Emit>(emit));
+	builder->body(ZuFwd<Emit>(emit));
     }
 
-    bool	h1 = false;
-    bool	headersOK = true;
-    bool	suppressPads = false;
-    bool	rejectContentLength = false;
+    Server		*server = nullptr;
+    Builder		*builder = nullptr;
+    HeaderPatches<Headers> patches;
+    uint64_t		produced = 0;
+    bool		h1 = false;
+    bool		headersOK = true;
+    bool		suppressPads = false;
+    bool		rejectContentLength = false;
   };
 
   template <
@@ -2008,14 +1816,11 @@ private:
       ResponseTx, typename Builder::Headers,
       typename BuilderTrailers<Builder>::T, HasBody, Streaming>;
     using Ops = ResponseOps<Profile, Builder>;
+
     ResponseTx(
-      Server *server, Builder builder, bool suppressPads = false,
-      bool rejectContentLength = false) :
-      Ops{server, ZuMv(builder)} {
-      this->h1 = MessageTraits<Profile>::ID == Version::H1;
-      this->suppressPads = suppressPads;
-      this->rejectContentLength = rejectContentLength;
-    }
+	Server *server, Builder &builder, bool suppressPads = false,
+	bool rejectContentLength = false) :
+      Ops{server, builder, suppressPads, rejectContentLength} { }
 
     bool streamResponse() const { return false; }
     using Ops::contentLength;
@@ -2023,144 +1828,7 @@ private:
     using Ops::header;
     using Ops::reason;
     using Ops::status;
-
   };
-
-  template <typename Profile, typename Builder, typename Heap>
-  struct AsyncBody_ : public Heap, public ZmObject {
-    using Self = AsyncBody_<Profile, Builder, Heap>;
-    using Tx = ResponseTx<Profile, Builder, true, true>;
-
-    AsyncBody_(
-      Server *server_, ZmRef<LiveReq<Profile>> live_, Builder builder) :
-      server{server_}, live{ZuMv(live_)}, response{server_, ZuMv(builder)} { }
-
-    bool start(ZmRef<Self> self) {
-      auto tx = live->link->transmit(response);
-      response.begin(tx);
-      if (!response.headersValid()) return false;
-      task = server->addBodyTask_(BodyCancelFn{
-	[self = ZuMv(self)]() mutable { self->cancel_(); }});
-      next_();
-      return true;
-    }
-
-    void next_() {
-      if (cancelled) return;
-      uint64_t available = server->retainedAvailable_();
-      if (available > server->m_config.retainedMessageMax())
-	available = server->m_config.retainedMessageMax();
-      if (available > server->m_config.retainedBodyMax())
-	available = server->m_config.retainedBodyMax();
-      if (available > ZiIOBuf_DefltSize) available = ZiIOBuf_DefltSize;
-      if (available > uint32_t(-1)) available = uint32_t(-1);
-      if (!available) { fail_(ResponseOutcome::BuildFailed); return; }
-      reserved = available;
-      server->m_stats.retainedBytes += reserved;
-      live->retainedBytes += reserved;
-      ++server->m_bodyPending;
-      response.builder.next(unsigned(available), BodyChunkFn{
-	[self = ZmRef<Self>{this}](ZmRef<ZiIOBuf> buf, bool final) mutable {
-	  self->chunk_(ZuMv(buf), final);
-	}});
-    }
-
-    void chunk_(ZmRef<ZiIOBuf> buf, bool final) {
-      server->txRun_([
-	self = ZmRef<Self>{this}, buf = ZuMv(buf), final]() mutable {
-	self->chunkTx_(ZuMv(buf), final);
-      });
-    }
-
-    void chunkTx_(ZmRef<ZiIOBuf> buf, bool final) {
-      server->bodyResolved_();
-      if (cancelled) return;
-      if (!live->link->active()) {
-	fail_(ResponseOutcome::Reset);
-	return;
-      }
-      if (!buf || !buf->length || buf->length > reserved) {
-	fail_(ResponseOutcome::BuildFailed);
-	return;
-      }
-      uint64_t unused = reserved - buf->length;
-      reserved = 0;
-      if (unused) {
-	server->m_stats.retainedBytes -= unused;
-	live->retainedBytes -= unused;
-      }
-      auto tx = live->link->transmit(response);
-      auto body = response.body(tx);
-      body << ZuBSpan{buf->data(), buf->length};
-      body.flush();
-      response.produced += buf->length;
-      if (!body.valid()) { fail_(ResponseOutcome::TxFailed); return; }
-      if (final) {
-	response.finish(tx);
-	committed_(live->response.body, response.produced);
-	live->response.outcome = ResponseOutcome::Success;
-	live->phase = RequestPhase::Committed;
-	finishTask_();
-	live->link->finish();
-	server->template postCommitted_<Profile>(live);
-	return;
-      }
-      if (!live->link->txFence(Transport_::TxCompleteFn{
-	  [self = ZmRef<Self>{this}](ResponseOutcome::T outcome) mutable {
-	    self->fenced_(outcome);
-	  }}))
-	fail_(ResponseOutcome::TxFailed);
-    }
-
-    void fenced_(ResponseOutcome::T outcome) {
-      server->txRun_([self = ZmRef<Self>{this}, outcome]() mutable {
-	if (self->cancelled) return;
-	self->release_();
-	if (outcome == ResponseOutcome::Success) self->next_();
-	else self->fail_(outcome);
-      });
-    }
-
-    void release_() {
-      if (!live->retainedBytes) return;
-      ZmAssert(
-	server->m_stats.retainedBytes.load_() >= live->retainedBytes);
-      server->m_stats.retainedBytes -= live->retainedBytes;
-      live->retainedBytes = 0;
-    }
-
-    void fail_(ResponseOutcome::T outcome) {
-      if (cancelled) return;
-      cancelled = true;
-      finishTask_();
-      live->link->txCancel();
-      live->response.outcome = outcome;
-      live->phase = RequestPhase::Completing;
-      server->template postCompleted_<Profile>(ZuMv(live), outcome);
-    }
-
-    void cancel_() {
-      task = nullptr;
-      fail_(ResponseOutcome::Cancelled);
-    }
-
-    void finishTask_() {
-      if (!task) return;
-      server->delBodyTask_(task);
-      task = nullptr;
-    }
-
-    Server			*server;
-    ZmRef<LiveReq<Profile>>	live;
-    Tx				response;
-    typename BodyTaskQ::Node	*task = nullptr;
-    uint64_t			reserved = 0;
-    bool			cancelled = false;
-  };
-
-  template <typename Profile, typename Builder>
-  using AsyncBody = AsyncBody_<Profile, Builder,
-    ZmHeap<"Zhttp.Server.AsyncBody", AsyncBody_<Profile, Builder, ZuVoid>>>;
 
   static bool bodyAllowed_(Method::T method, unsigned status) {
     if (method == Method::HEAD || (status >= 100 && status < 200) ||
@@ -2174,11 +1842,67 @@ private:
       (method == Method::CONNECT && status >= 200 && status < 300);
   }
 
-  static void committed_(BodyCommit &commit, uint64_t produced = 0) {
-    commit.produced = produced;
-    commit.committed = produced;
-    commit.headers = true;
-    commit.final = true;
+  template <typename Profile, typename Link_, typename Builder>
+  struct ServerTxOps {
+    Server	*server;
+    Link_	*link_;
+    uint64_t	*retainedBytes;
+
+    Link_ &link() { return *link_; }
+
+    uint64_t fixedBodyMax() const { return server->fixedBodyMax_(); }
+    uint64_t retainedMax() const {
+      uint64_t n = server->retainedAvailable_();
+      if (n > server->m_config.retainedMessageMax())
+	n = server->m_config.retainedMessageMax();
+      return n;
+    }
+    void headers() { }
+    template <bool> void produced(uint64_t) { }
+    bool empty(Builder &builder) {
+      ResponseTx<Profile, Builder, false, false> empty{
+	server, builder, true};
+      auto tx = link_->transmit(empty);
+      empty.begin(tx);
+      if (!empty.headersValid()) return false;
+      empty.finish(tx);
+      link_->finish();
+      return true;
+    }
+    template <bool> bool fail() { return false; }
+    bool complete(uint64_t n) {
+      return server->retainResponse_(*retainedBytes, n);
+    }
+  };
+
+  template <typename Profile, typename Link_, typename Builder>
+  bool sendResponse_(
+      Link_ &link, Builder &builder, uint64_t &retainedBytes) {
+    unsigned status = builder.status();
+    auto policy = builder.bodyPolicy();
+    Method::T method = builder.method();
+    if (!BodyPolicy::hasBody(policy) || !bodyAllowed_(method, status)) {
+      ResponseTx<Profile, Builder, false, false> response{
+	this, builder, true, contentLengthForbidden_(method, status)};
+      auto tx = link.transmit(response);
+      response.begin(tx);
+      if (!response.headersValid()) return false;
+      response.finish(tx);
+      link.finish();
+      return true;
+    }
+    if (BodyPolicy::streaming(policy)) {
+      ResponseTx<Profile, Builder, true, true> response{this, builder};
+      ServerTxOps<Profile, Link_, Builder> ops{
+	this, &link, &retainedBytes};
+      MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
+      return tx.streaming(response, BodyPolicy::optional(policy));
+    }
+    ResponseTx<Profile, Builder, true, false> response{this, builder};
+    ServerTxOps<Profile, Link_, Builder> ops{
+      this, &link, &retainedBytes};
+    MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
+    return tx.fixed(response, BodyPolicy::optional(policy));
   }
 
   typename BodyTaskQ::Node *addBodyTask_(BodyCancelFn fn) {
@@ -2204,397 +1928,281 @@ private:
     stopTransports_();
   }
 
-  template <typename Profile>
-  void postCommitted_(ZmRef<LiveReq<Profile>> live) {
-    auto hub = live->link->app();
-    hub->rxRun([this, live = ZuMv(live)]() mutable {
-      m_workload->committed(
-	live->meta, live->request, live->response.body);
-    });
-  }
+  template <typename Profile, typename Link_, typename Heap>
+  struct AsyncBody_ : public Heap, public ZmObject {
+    using Self = AsyncBody_<Profile, Link_, Heap>;
+    using Tx = ResponseTx<Profile, ResponseData, true, true>;
 
-  template <typename Profile, typename Builder>
-  bool startAsyncBody_(ZmRef<LiveReq<Profile>> live, Builder builder) {
-    using State = AsyncBody<Profile, Builder>;
-    ZmRef<State> state = new State{this, ZuMv(live), ZuMv(builder)};
-    return state->start(state);
-  }
+    AsyncBody_(
+	Server *server_, ZmRef<Link_> link_, ZmRef<Response> response_) :
+      server{server_}, link{ZuMv(link_)}, appResponse{ZuMv(response_)},
+      response{server_, appResponse->data()} { }
 
-  template <typename Profile, typename Link_, typename Builder>
-  struct ServerTxOps {
-    Server	*server;
-    Link_	*link_;
-    BodyCommit	*commit;
-    uint64_t	*retainedBytes;
-
-    Link_ &link() { return *link_; }
-    uint64_t fixedBodyMax() const { return server->fixedBodyMax_(); }
-    uint64_t retainedMax() const {
-      uint64_t n = server->retainedAvailable_();
-      if (n > server->m_config.retainedMessageMax())
-	n = server->m_config.retainedMessageMax();
-      return n;
-    }
-    void headers() { }
-    template <bool> void produced(uint64_t) { }
-    bool empty(Builder &builder) {
-      ResponseTx<Profile, Builder, false, false> empty{
-	server, ZuMv(builder), true};
-      auto tx = link_->transmit(empty);
-      empty.begin(tx);
-      if (!empty.headersValid()) return false;
-      empty.finish(tx);
-      committed_(*commit);
-      link_->finish();
-      return true;
-    }
-    template <bool> bool fail() { return false; }
-    bool complete(uint64_t n) {
-      if (!server->retainResponse_(*retainedBytes, n)) return false;
-      committed_(*commit, n);
-      return true;
-    }
-  };
-
-  template <typename Profile, typename Link_, typename Builder_>
-  bool sendResponse_(
-      Link_ &link, Method::T method, Builder_ &&builder_, BodyCommit &commit,
-      uint64_t &retainedBytes) {
-    using Builder = ZuDecay<Builder_>;
-    unsigned status = builder_.status();
-    auto policy = builder_.bodyPolicy();
-    if (!BodyPolicy::hasBody(policy)) {
-      ResponseTx<Profile, Builder, false, false> response{
-	this, ZuFwd<Builder_>(builder_), true,
-	contentLengthForbidden_(method, status)};
-      auto tx = link.transmit(response);
+    bool start(ZmRef<Self> self) {
+      auto tx = link->transmit(response);
       response.begin(tx);
       if (!response.headersValid()) return false;
-      response.finish(tx);
-      committed_(commit);
-      link.finish();
+      task = server->addBodyTask_(BodyCancelFn{
+	[self_ = self]() mutable { self_->cancel_(); }});
+      link->responseCancel_(BodyCancelFn{
+	[self = ZuMv(self)]() mutable { self->cancel_(); }});
+      next_();
       return true;
-    } else {
-      if (!bodyAllowed_(method, status)) {
-	ResponseTx<Profile, Builder, false, false> response{
-	  this, ZuFwd<Builder_>(builder_), true,
-	  contentLengthForbidden_(method, status)};
-	auto tx = link.transmit(response);
-	response.begin(tx);
-	if (!response.headersValid()) return false;
-	response.finish(tx);
-	committed_(commit);
-	link.finish();
-	return true;
-      }
-      if (BodyPolicy::streaming(policy))
-	return sendStreamingResponse_<Profile>(
-	  link, ZuFwd<Builder_>(builder_), BodyPolicy::optional(policy),
-	  commit, retainedBytes);
-      else
-	return sendFixedResponse_<Profile>(
-	  link, ZuFwd<Builder_>(builder_), BodyPolicy::optional(policy),
-	  commit, retainedBytes);
     }
-  }
 
-  template <typename Profile, typename Link_, typename Builder_>
-  bool sendStreamingResponse_(
-      Link_ &link, Builder_ &&builder_, bool optional, BodyCommit &commit,
-      uint64_t &retainedBytes) {
-    using Builder = ZuDecay<Builder_>;
-    ResponseTx<Profile, Builder, true, true> response{
-      this, ZuFwd<Builder_>(builder_)};
-    ServerTxOps<Profile, Link_, Builder> ops{
-      this, &link, &commit, &retainedBytes};
-    MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
-    return tx.streaming(response, optional);
-  }
-
-  template <typename Profile, typename Link_, typename Builder_>
-  bool sendFixedResponse_(
-      Link_ &link, Builder_ &&builder_, bool optional, BodyCommit &commit,
-      uint64_t &retainedBytes) {
-    using Builder = ZuDecay<Builder_>;
-    ResponseTx<Profile, Builder, true, false> response{
-      this, ZuFwd<Builder_>(builder_)};
-    ServerTxOps<Profile, Link_, Builder> ops{
-      this, &link, &commit, &retainedBytes};
-    MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
-    return tx.fixed(response, optional);
-  }
-
-  enum { ResponseDrainBatch = 16 };
-
-  template <typename Profile>
-  void completeLiveRx_(
-      ZmRef<LiveReq<Profile>> live, ResponseOutcome::T outcome,
-      bool disconnect = true) {
-    if (live->phase == RequestPhase::Done) return;
-    live->response.outcome = outcome;
-    switch (outcome) {
-      case ResponseOutcome::BuildFailed:
-	++m_stats.responseBuildFailures;
-	break;
-      case ResponseOutcome::TxFailed:
-      case ResponseOutcome::Reset:
-	++m_stats.transportFailures;
-	break;
-      default:
-	break;
-    }
-    live->phase = RequestPhase::Completing;
-    m_workload->completed(live->meta, live->request, live->response);
-    live->phase = RequestPhase::Done;
-    if (disconnect &&
-	(live->close || live->response.outcome != ResponseOutcome::Success))
-      live->link->disconnect();
-    --m_stats.activeRequests;
-  }
-
-  template <typename Profile>
-  void postCompletedTx_(
-      ZmRef<LiveReq<Profile>> live, ResponseOutcome::T outcome) {
-    if (live->completionPosted) return;
-    live->completionPosted = true;
-    if (live->retainedBytes) {
-      ZmAssert(m_stats.retainedBytes.load_() >= live->retainedBytes);
-      m_stats.retainedBytes -= live->retainedBytes;
-      live->retainedBytes = 0;
-    }
-    if constexpr (MessageTraits<Profile>::ID == Version::H1) {
-      if (live->link->activeResponse == live.ptr()) {
-	live->link->activeResponse = nullptr;
-	readyH1_<Profile>(live->link.ptr());
-	scheduleResponses_<Profile>(live->link->app());
-      }
-    }
-    auto hub = live->link->app();
-    hub->rxRun([
-      this, live = ZuMv(live), outcome]() mutable {
-      completeLiveRx_<Profile>(ZuMv(live), outcome);
-    });
-  }
-
-  template <typename Profile>
-  void postCompleted_(
-      ZmRef<LiveReq<Profile>> live, ResponseOutcome::T outcome) {
-    if (m_mx->invoked(m_txThread)) {
-      postCompletedTx_<Profile>(ZuMv(live), outcome);
-      return;
-    }
-    txRun_([this, live = ZuMv(live), outcome]() mutable {
-      postCompletedTx_<Profile>(ZuMv(live), outcome);
-    });
-  }
-
-  uint64_t retainedAvailable_() const {
-    uint64_t max = m_config.retainedBytesMax();
-    uint64_t used = m_stats.retainedBytes.load_();
-    return used < max ? max - used : 0;
-  }
-
-  bool retainResponse_(uint64_t &retainedBytes, uint64_t n) {
-    if (n > retainedAvailable_()) return false;
-    m_stats.retainedBytes += n;
-    retainedBytes = n;
-    return true;
-  }
-
-  template <typename Profile>
-  void sendLiveTx_(ZmRef<LiveReq<Profile>> live) {
-    auto link = live->link;
-    if (!link->active()) {
-	live->response.outcome = ResponseOutcome::Reset;
-	live->phase = RequestPhase::Completing;
-	postCompleted_<Profile>(ZuMv(live), ResponseOutcome::Reset);
+    void next_() {
+      if (cancelled) return;
+      uint64_t available = server->retainedAvailable_();
+      if (available > server->m_config.retainedMessageMax())
+	available = server->m_config.retainedMessageMax();
+      if (available > server->m_config.retainedBodyMax())
+	available = server->m_config.retainedBodyMax();
+      if (available > ZiIOBuf_DefltSize) available = ZiIOBuf_DefltSize;
+      if (available > uint32_t(-1)) available = uint32_t(-1);
+      if (!available || !link->responseRetain_(available)) {
+	fail_(ResponseOutcome::BuildFailed);
 	return;
-    }
-    auto emit = [this, &live, &link]<typename Builder_>(
-	Builder_ &&builder_) {
-	builder_.reset();
-	if (live->phase != RequestPhase::Queued) {
-	  live->response.outcome = ResponseOutcome::BuildFailed;
-	  live->phase = RequestPhase::Completing;
-	  live->close = true;
-	  return;
-	}
-	live->phase = RequestPhase::Sending;
-	live->close = live->close || builder_.close();
-	link->txComplete(Transport_::TxCompleteFn{
-	  [this, live_ = live](ResponseOutcome::T outcome) mutable {
-	    postCompleted_<Profile>(ZuMv(live_), outcome);
-	  }});
-	using Builder = ZuDecay<Builder_>;
-	auto policy = builder_.bodyPolicy();
-	auto send = [this, &live, &link, &builder_]() {
-	  bool sent = sendResponse_<Profile>(
-	    *link, live->meta.method, ZuFwd<Builder_>(builder_),
-	    live->response.body, live->retainedBytes);
-	  if (sent) {
-	    live->response.outcome = ResponseOutcome::Success;
-	    live->phase = RequestPhase::Committed;
-	  } else {
-	    link->txCancel();
-	    live->response.outcome = ResponseOutcome::BuildFailed;
-	    live->phase = RequestPhase::Completing;
-	  }
-	};
-	if constexpr (HasAsyncBody<Builder>{}) {
-	  if (BodyPolicy::streaming(policy)) {
-	    if (!startAsyncBody_<Profile>(
-		  live, Builder{ZuFwd<Builder_>(builder_)})) {
-	      link->txCancel();
-	      live->response.outcome = ResponseOutcome::BuildFailed;
-	      live->phase = RequestPhase::Completing;
-	    }
-	  } else
-	    send();
-	} else
-	  send();
-      };
-    if (live->errorCode >= 0)
-      emit(ErrorResponse{requestErrorStatus(live->errorCode)});
-    else
-      m_workload->respond(live->meta, live->request, emit);
-    if (live->phase == RequestPhase::Committed) {
-      postCommitted_<Profile>(live);
-      return;
-    }
-    if (live->phase == RequestPhase::Sending) return;
-    if (live->phase == RequestPhase::Queued) {
-      live->response.outcome = ResponseOutcome::BuildFailed;
-      live->phase = RequestPhase::Completing;
-    }
-    if (!live->response.body.final)
-      postCompleted_<Profile>(ZuMv(live), ResponseOutcome::BuildFailed);
-  }
-
-  template <typename Profile>
-  void drainResponses_() {
-    auto &queue = responseQueue_<Profile>();
-    unsigned sent = 0;
-    while (sent < ResponseDrainBatch) {
-      ZmRef<LiveReq<Profile>> live;
-      if constexpr (MessageTraits<Profile>::ID == Version::H1) {
-	auto ready = queue.ready.shift();
-	if (!ready) break;
-	auto link = ready->link;
-	ZmAssert(link && link->responseReady && !link->activeResponse);
-	link->responseReady = false;
-	live = link->responses.shift();
-	ZmAssert(live);
-	link->activeResponse = live.ptr();
-      } else {
-	live = queue.fifo.shift();
-	if (!live) break;
       }
-      --m_stats.queuedResponses;
-      sendLiveTx_<Profile>(ZuMv(live));
-      ++sent;
+      reserved = available;
+      ++server->m_bodyPending;
+      appResponse->data().next(unsigned(available), BodyChunkFn{
+	[self = ZmRef<Self>{this}](ZmRef<ZiIOBuf> buf, bool final) mutable {
+	  self->chunk_(ZuMv(buf), final);
+	}});
     }
-    bool pending;
-    if constexpr (MessageTraits<Profile>::ID == Version::H1)
-      pending = !queue.ready.empty_();
-    else
-      pending = !queue.fifo.empty_();
-    if (pending) {
-      txRun_([this]() { drainResponses_<Profile>(); });
-    } else {
-      queue.posted = false;
+
+    void chunk_(ZmRef<ZiIOBuf> buf, bool final) {
+      server->txRun_([
+	self = ZmRef<Self>{this}, buf = ZuMv(buf), final]() mutable {
+	self->chunkTx_(ZuMv(buf), final);
+      });
     }
-  }
 
-  template <typename Profile, typename Hub_>
-  void scheduleResponses_(Hub_ *hub) {
-    auto &queue = responseQueue_<Profile>();
-    bool pending;
-    if constexpr (MessageTraits<Profile>::ID == Version::H1)
-      pending = !queue.ready.empty_();
-    else
-      pending = !queue.fifo.empty_();
-    if (queue.posted || !pending) return;
-    queue.posted = true;
-    hub->txRun([this]() { drainResponses_<Profile>(); });
-  }
-
-  template <typename Profile>
-  void readyH1_(ProfileLink<Profile> *link) {
-    auto &queue = responseQueue_<Profile>();
-    if (link->activeResponse || link->responseReady ||
-	link->responses.empty_()) return;
-    if (!link->readyNode)
-      link->readyNode = new H1Ready<Profile>{link};
-    queue.ready.pushNode(link->readyNode);
-    link->responseReady = true;
-  }
-
-  template <typename Profile>
-  void enqueueResponse_(ZmRef<LiveReq<Profile>> live) {
-    auto &queue = responseQueue_<Profile>();
-    auto hub = live->link->app();
-    if constexpr (MessageTraits<Profile>::ID == Version::H1) {
-      auto link = live->link;
-      link->responses.pushNode(ZuMv(live));
-      readyH1_<Profile>(link);
-    } else {
-      queue.fifo.pushNode(ZuMv(live));
+    void chunkTx_(ZmRef<ZiIOBuf> buf, bool final) {
+      server->bodyResolved_();
+      if (cancelled) return;
+      if (!link->active()) {
+	fail_(ResponseOutcome::Reset);
+	return;
+      }
+      if (!buf || !buf->length || buf->length > reserved) {
+	fail_(ResponseOutcome::BuildFailed);
+	return;
+      }
+      uint64_t unused = reserved - buf->length;
+      reserved = 0;
+      if (unused) link->responseRelease_(unused);
+      auto tx = link->transmit(response);
+      auto body = response.body(tx);
+      body << ZuBSpan{buf->data(), buf->length};
+      body.flush();
+      response.produced += buf->length;
+      if (!body.valid()) {
+	fail_(ResponseOutcome::TxFailed);
+	return;
+      }
+      if (final) {
+	response.finish(tx);
+	finishTask_();
+	link->finish();
+	return;
+      }
+      if (!link->txFence(Transport_::TxCompleteFn{
+	  [self = ZmRef<Self>{this}](ResponseOutcome::T outcome) mutable {
+	    self->fenced_(outcome);
+	  }}))
+	fail_(ResponseOutcome::TxFailed);
     }
-    scheduleResponses_<Profile>(hub);
-  }
 
-  template <typename Profile>
-  void detachH1_(ProfileLink<Profile> *link) {
-    if (!link->responseReady) return;
-    auto &ready = responseQueue_<Profile>().ready;
-    if (ready.headPtr() == link->readyNode.ptr())
-      ready.shift();
-    else
-      ready.delNode(link->readyNode.ptr());
-    link->responseReady = false;
-  }
-
-  template <typename Profile>
-  void cancelH1Tx_(ProfileLink<Profile> *link) {
-    detachH1_<Profile>(link);
-    while (auto live = link->responses.shift()) {
-      --m_stats.queuedResponses;
-      postCompleted_<Profile>(ZuMv(live), ResponseOutcome::Cancelled);
+    void fenced_(ResponseOutcome::T outcome) {
+      server->txRun_([self = ZmRef<Self>{this}, outcome]() mutable {
+	if (self->cancelled) return;
+	if (outcome == ResponseOutcome::Success) self->next_();
+	else self->fail_(outcome);
+      });
     }
+
+    void fail_(ResponseOutcome::T outcome) {
+      if (cancelled) return;
+      cancelled = true;
+      finishTask_();
+      link->txCancel();
+      link->responseDone_(appResponse.ptr(), outcome);
+    }
+
+    void cancel_() {
+      if (cancelled) return;
+      fail_(ResponseOutcome::Cancelled);
+    }
+
+    void finishTask_() {
+      link->responseCancel_({});
+      if (!task) return;
+      server->delBodyTask_(task);
+      task = nullptr;
+    }
+
+    Server			*server;
+    ZmRef<Link_>		link;
+    ZmRef<Response>		appResponse;
+    Tx				response;
+    typename BodyTaskQ::Node	*task = nullptr;
+    uint64_t			reserved = 0;
+    bool			cancelled = false;
+  };
+
+  template <typename Profile, typename Link_>
+  using AsyncBody = AsyncBody_<Profile, Link_,
+    ZmHeap<"Zhttp.Server.AsyncBody",
+      AsyncBody_<Profile, Link_, ZuVoid>>>;
+
+  template <typename Profile, typename Link_>
+  bool startResponse_(
+      ZmRef<Link_> link, ZmRef<Response> response,
+      uint64_t &retainedBytes) {
+    auto policy = response->data().bodyPolicy();
+    if constexpr (HasAsyncBody<ResponseData>{}) {
+      if (BodyPolicy::streaming(policy)) {
+	using State = AsyncBody<Profile, Link_>;
+	ZmRef<State> state =
+	  new State{this, ZuMv(link), ZuMv(response)};
+	return state->start(state);
+      }
+    }
+    return sendResponse_<Profile>(
+      *link, response->data(), retainedBytes);
   }
 
   template <typename Profile, typename Link_>
-  void disconnectedH1_(Link_ *link) {
-    if constexpr (MessageTraits<Profile>::ID == Version::H1)
-      txRun_([this, link = ZmMkRef(link)]() {
-	cancelH1Tx_<Profile>(link);
-      });
-  }
+  struct Responses {
+    auto impl() { return static_cast<Link_ *>(this); }
+    auto impl() const { return static_cast<const Link_ *>(this); }
 
-  template <typename Profile>
-  void cancelResponses_() {
-    auto &queue = responseQueue_<Profile>();
-    if constexpr (MessageTraits<Profile>::ID == Version::H1) {
-      while (auto ready = queue.ready.shift()) {
-	auto link = ready->link;
-	link->responseReady = false;
-	cancelH1Tx_<Profile>(link);
+    void send(ZmRef<Response> response) {
+      if (!response) return;
+      auto link = ZmMkRef(impl());
+      auto server = link->app()->server;
+      ++server->m_stats.queuedResponses;
+      link->app()->txRun([
+	link = ZuMv(link), response = ZuMv(response)]() mutable {
+	link->responseSend_(ZuMv(response));
+      });
+    }
+
+    void responseDisconnected_() {
+      auto link = ZmMkRef(impl());
+      link->app()->txRun([link = ZuMv(link)]() mutable {
+	link->responseCancelAll_();
+      });
+    }
+
+  private:
+    friend Server;
+    template <typename P, typename L, typename H> friend struct AsyncBody_;
+
+    void responseSend_(ZmRef<Response> response) {
+      auto server = impl()->app()->server;
+      server->assertTx_();
+      if (!impl()->active()) {
+	--server->m_stats.queuedResponses;
+	return;
       }
-    } else {
-      while (auto live = queue.fifo.shift()) {
-	--m_stats.queuedResponses;
-	postCompleted_<Profile>(ZuMv(live), ResponseOutcome::Cancelled);
+      m_responses.pushNode(ZuMv(response));
+      responseNext_();
+    }
+
+    void responseNext_() {
+      if (m_response || !impl()->active()) return;
+      m_response = m_responses.shift();
+      if (!m_response) return;
+      auto server = impl()->app()->server;
+      --server->m_stats.queuedResponses;
+      m_response->data().reset();
+      m_close = m_response->data().close();
+      auto response = m_response;
+      auto link = ZmMkRef(impl());
+      impl()->txComplete(Transport_::TxCompleteFn{
+	[link = ZuMv(link), response_ = response.ptr()](
+	    ResponseOutcome::T outcome) mutable {
+	  link->app()->txRun([
+	    link = ZuMv(link), response_, outcome]() mutable {
+	    link->responseDone_(response_, outcome);
+	  });
+	}});
+      if (server->template startResponse_<Profile>(
+	    ZmMkRef(impl()), ZuMv(response), m_retainedBytes))
+	return;
+      impl()->txCancel();
+      responseDone_(m_response.ptr(), ResponseOutcome::BuildFailed);
+    }
+
+    void responseDone_(
+	Response *response, ResponseOutcome::T outcome) {
+      if (m_response.ptr() != response) return;
+      auto server = impl()->app()->server;
+      responseCancel_({});
+      responseRelease_(m_retainedBytes);
+      m_response = nullptr;
+      switch (outcome) {
+	case ResponseOutcome::BuildFailed:
+	  ++server->m_stats.responseBuildFailures;
+	  break;
+	case ResponseOutcome::TxFailed:
+	case ResponseOutcome::Reset:
+	  ++server->m_stats.transportFailures;
+	  break;
+	default:
+	  break;
+      }
+      if (outcome != ResponseOutcome::Success || m_close) {
+	responseCancelPending_();
+	impl()->disconnect();
+	return;
+      }
+      responseNext_();
+    }
+
+    void responseCancelPending_() {
+      auto server = impl()->app()->server;
+      while (m_responses.shift())
+	--server->m_stats.queuedResponses;
+    }
+
+    void responseCancelAll_() {
+      auto fn = ZuMv(m_cancel);
+      m_cancel = {};
+      if (fn) fn();
+      responseCancelPending_();
+      if (m_response) {
+	impl()->txCancel();
+	responseRelease_(m_retainedBytes);
+	m_response = nullptr;
       }
     }
-    queue.posted = false;
-  }
 
-  void cancelResponses_() {
-    cancelResponses_<H1TCP>();
-    cancelResponses_<H1TLS>();
-    cancelResponses_<H2TLS>();
-    cancelResponses_<H3QUIC>();
-  }
+    void responseCancel_(BodyCancelFn fn) {
+      m_cancel = ZuMv(fn);
+    }
+
+    bool responseRetain_(uint64_t n) {
+      return impl()->app()->server->retainResponse_(m_retainedBytes, n);
+    }
+
+    void responseRelease_(uint64_t n) {
+      if (!n) return;
+      auto server = impl()->app()->server;
+      ZmAssert(m_retainedBytes >= n);
+      ZmAssert(server->m_stats.retainedBytes.load_() >= n);
+      m_retainedBytes -= n;
+      server->m_stats.retainedBytes -= n;
+    }
+
+    ResponseQ		m_responses;
+    ZmRef<Response>	m_response;
+    BodyCancelFn	m_cancel;
+    uint64_t		m_retainedBytes = 0;
+    bool		m_close = false;
+  };
 
   template <typename Profile>
   struct Session :
@@ -2608,104 +2216,52 @@ private:
     template <typename Link_, typename Rx>
     int process(Link_ &link, Rx &rx) {
       if (terminal) return 0;
+      auto server = link.app()->server;
       if (!parser.server) {
-	parser.server = link.app()->server;
-	parser.bodyMax(parser.server->m_config.retainedBodyMax());
+	parser.server = server;
+	parser.bodyMax(server->m_config.retainedBodyMax());
       }
-      if (!parser.live) {
+      if (!parser.active) {
 	if constexpr (Message::ID == Version::H1)
 	  if (!rx.length()) return 0;
-	if (!parser.server->admitRequest_()) return -1;
-	parser.live = new LiveReq<Profile>;
-	parser.live->link = ZmMkRef(&link);
-	parser.live->request = parser.server->m_workload->request();
-      }
-      auto &request = parser.live->meta;
-      if (!request.remoteIP) {
-	request.remoteIP = link.remoteIP();
-	request.remotePort = link.remotePort();
-	request.transport = Message::Transport::ID;
-	request.httpVersion = Message::ID;
-	request.secure = Message::Transport::Secure;
+	if (!server->admitRequest_()) return -1;
+	parser.begin(
+	  server, ZmMkRef(&link), server->m_app->parser());
       }
       return Base::process(link, rx);
     }
 
     template <typename Link_>
-    void disconnected(Link_ &link, bool) {
-      auto server = parser.server ? parser.server : link.app()->server;
-      server->template disconnectedH1_<Profile>(&link);
-      if (parser.live) {
-	auto live = ZuMv(parser.live);
-	auto &body = live->requestBody;
-	body.reset += body.pending;
-	body.discarded += body.pending;
-	body.pending = 0;
-	live->meta.bodyReceived = body.received;
-	live->meta.bodyConsumed = body.consumed;
-	live->meta.bodyReset = body.reset;
-	live->meta.bodyDiscarded = body.discarded;
-	live->request.complete(false);
-	live->phase = RequestPhase::Completing;
-	server->template completeLiveRx_<Profile>(
-	  ZuMv(live), ResponseOutcome::Reset, false);
-      }
+    void disconnected(Link_ &, bool) {
+      if (!parser.active) return;
+      parser.notify(false);
+      finish_();
     }
 
     template <typename Link_>
-    int error(Link_ &link, Parser_ &parser) {
-      auto server = link.app()->server;
-      const RequestError &error = parser.error();
-      if (!parser.live) return -1;
+    int error(Link_ &, Parser_ &parser_) {
+      const RequestError &error = parser_.error();
       if (error.code == RequestErrorCode::BodyRejected)
-	++server->m_stats.bodyFailures;
+	++parser_.server->m_stats.bodyFailures;
       else
-	++server->m_stats.parseFailures;
-      auto live = ZuMv(parser.live);
-      if (!error.responsePossible ||
-	  (error.scope != RequestErrorScope::Request &&
-	   Message::ID != Version::H1)) {
-	terminal = true;
-	server->txRun_([server, live = ZuMv(live)]() mutable {
-	  server->template postCompleted_<Profile>(
-	    ZuMv(live), ResponseOutcome::Reset);
-	});
-	return -1;
-      }
-      RequestDisposition::T disposition = RequestDisposition::Disconnect;
-	if (error.scope == RequestErrorScope::Request ||
-	    error.code == RequestErrorCode::BodyRejected)
-		disposition = server->m_workload->requestError(
-		  live->meta, live->request, error);
-	if (error.code == RequestErrorCode::BodyRejected &&
-	    Message::ID == Version::H1)
-	  disposition = RequestDisposition::Disconnect;
-      live->close = disposition == RequestDisposition::Disconnect;
-      if (live->close || Message::OneMessagePerLink) terminal = true;
-      live->errorCode = error.code;
-      live->phase = RequestPhase::Queued;
-      ++server->m_stats.queuedResponses;
-      link.app()->txRun([server, live = ZuMv(live)]() mutable {
-	server->template enqueueResponse_<Profile>(ZuMv(live));
-      });
-      if constexpr (Message::ID == Version::H1) {
-	if (disposition == RequestDisposition::Continue) parser.reset();
-      }
-      return 1;
+	++parser_.server->m_stats.parseFailures;
+      parser_.notify(false);
+      finish_();
+      terminal = true;
+      return -1;
     }
 
     template <typename Link_>
-    int request(Link_ &link, Parser_ &parser) {
-      auto server = link.app()->server;
-      ZmAssert(parser.live);
-      auto live = ZuMv(parser.live);
-      live->phase = RequestPhase::Queued;
-      ++server->m_stats.queuedResponses;
-      link.app()->txRun([
-	server, live = ZuMv(live)]() mutable {
-	server->template enqueueResponse_<Profile>(ZuMv(live));
-      });
+    int request(Link_ &, Parser_ &) {
+      finish_();
       return 1;
+    }
+
+  private:
+    void finish_() {
+      if (!parser.active) return;
+      --parser.server->m_stats.activeRequests;
+      parser.finish();
     }
 
     bool terminal = false;
@@ -2724,27 +2280,28 @@ private:
     unsigned idleTimeout() const { return server->m_config.idleTimeout(); }
     template <typename Info>
     bool admit(const Info &) { return server->admit(); }
-    template <typename Link_>
-    void connected(Link_ &link, const ConnectedInfo &) {
+    template <typename LinkT>
+    void connected(LinkT &link, const ConnectedInfo &) {
       server->registerTxError_(link);
-      server->m_workload->connected(
-	HTTP::Transport::ID);
+      server->m_app->connected(HTTP::Transport::ID);
+    }
+    template <typename LinkT>
+    void disconnected(LinkT &link, bool) {
+      link.responseDisconnected_();
     }
     void release() {
       server->release(HTTP::Transport::ID);
     }
     template <typename Info>
     void listening(const Info &info) {
-      server->m_workload->listening(
-	HTTP::Transport::ID, info.port);
+      server->m_app->listening(HTTP::Transport::ID, info.port);
     }
     void listening() {
-      server->m_workload->listening(
+      server->m_app->listening(
 	HTTP::Transport::ID, server->m_config.port());
     }
     void listenFailed(bool transient) {
-      server->m_workload->listenFailed(
-	HTTP::Transport::ID, transient);
+      server->m_app->listenFailed(HTTP::Transport::ID, transient);
       server->failServer_();
     }
   };
@@ -2753,10 +2310,12 @@ private:
   struct Link :
     public ServerLink<
       Hub<Profile>, Link<Profile>, Profile, Session<Profile>>,
-    public LinkResponseState<Profile> {
+    public Responses<Profile, Link<Profile>> {
     using Base = ServerLink<
       Hub<Profile>, Link, Profile, Session<Profile>>;
     using Base::Base;
+    using Responses<Profile, Link>::send;
+    auto send(ZmRef<ZiIOBuf> buf) { return Base::send(ZuMv(buf)); }
   };
 
   struct TLSHub : public TLS_::ServerHub<TLSHub> {
@@ -2774,16 +2333,18 @@ private:
     template <typename Link_>
     void connected(Link_ &link, const ConnectedInfo &) {
       server->registerTxError_(link);
-      server->m_workload->connected(Transport::TLS);
+      server->m_app->connected(Transport::TLS);
     }
     template <typename Link_>
-    void disconnected(Link_ &, bool) { }
+    void disconnected(Link_ &link, bool) {
+      link.responseDisconnected_();
+    }
     void release() { server->release(Transport::TLS); }
     void listening(const ZiListenInfo &info) {
-      server->m_workload->listening(Transport::TLS, info.port);
+      server->m_app->listening(Transport::TLS, info.port);
     }
     void listenFailed(bool transient) {
-      server->m_workload->listenFailed(Transport::TLS, transient);
+      server->m_app->listenFailed(Transport::TLS, transient);
       server->failServer_();
     }
   };
@@ -2792,21 +2353,26 @@ private:
     public TLS_::ServerH1Logical<
       TLSHub, TLSH1Link, Session<H1TLS>,
       TLS_::SrvLink<TLSHub>>,
-    public H1ResponseState<H1TLS> {
+    public Responses<H1TLS, TLSH1Link> {
     using Base = TLS_::ServerH1Logical<
       TLSHub, TLSH1Link, Session<H1TLS>,
       TLS_::SrvLink<TLSHub>>;
     using Base::Base;
+    using Responses<H1TLS, TLSH1Link>::send;
+    auto send(ZmRef<ZiIOBuf> buf) { return Base::send(ZuMv(buf)); }
   };
 
   struct TLSH2Link :
     public H2_::ServerLogical<
       TLSHub, TLSH2Link, Session<H2TLS>,
-      TLS_::SrvLink<TLSHub>> {
+      TLS_::SrvLink<TLSHub>>,
+    public Responses<H2TLS, TLSH2Link> {
     using Base = H2_::ServerLogical<
       TLSHub, TLSH2Link, Session<H2TLS>,
       TLS_::SrvLink<TLSHub>>;
     using Base::Base;
+    using Responses<H2TLS, TLSH2Link>::send;
+    auto send(ZmRef<ZiIOBuf> buf) { return Base::send(ZuMv(buf)); }
   };
 
 public:
@@ -2814,14 +2380,10 @@ public:
 
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
-  // Request metadata callbacks precede request-body input.  Body input is a
-  // concrete bounded stream on the Rx shard and is valid only for the
-  // synchronous workload callback.  Message completion follows validated,
-  // fully consumed input; no workload callback follows terminal completion.
   bool init(
-    const HubConfig &hub, ServerConfig config, Workload *workload) {
+    const HubConfig &hub, ServerConfig config, App *app) {
     return Engine::lock(ZmEngineState::Stopped, [&]() {
-      return init_(hub, ZuMv(config), workload);
+      return init_(hub, ZuMv(config), app);
     });
   }
 
@@ -2829,16 +2391,15 @@ private:
   friend Engine;
 
   bool init_(
-    const HubConfig &hub, ServerConfig config, Workload *workload) {
-    if (!workload || !config.port()) return false;
-    if (!hub.mx()) return false;
+    const HubConfig &hub, ServerConfig config, App *app) {
+    if (!app || !config.port() || !hub.mx()) return false;
     m_mx = hub.mx();
     m_rxThread = hub.rxThread() ?
       m_mx->sid(hub.rxThread()) : m_mx->rxThread();
     m_txThread = hub.txThread() ?
       m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_config = ZuMv(config);
-    m_workload = workload;
+    m_app = app;
     m_failed = false;
     m_altSvc.null();
     if (m_config.tlsEnabled() && m_config.quicEnabled() &&
@@ -2864,9 +2425,9 @@ private:
       Engine::started(ok);
     });
   }
+
   void stop_() {
     m_admitRequests = false;
-    // Order every pre-stop Rx admission/enqueue post before Tx cancellation.
     rxRun_([this]() {
       txRun_([this]() {
 	cancelBodies_();
@@ -2876,10 +2437,7 @@ private:
   }
 
   void stopTransports_() {
-    cancelResponses_();
     m_hubs.stop([this](bool ok) {
-      // Native hub teardown can enqueue terminal Tx and link Rx callbacks.
-      // Drain both owners before allowing finalization to release them.
       txRun_([this, ok]() {
 	rxRun_([this, ok]() {
 	  ZmAssert(!m_stats.activeRequests.load_());
@@ -2898,12 +2456,6 @@ public:
     ZmAssert(!m_stats.activeRequests.load_());
     ZmAssert(!m_stats.queuedResponses.load_());
     ZmAssert(!m_stats.retainedBytes.load_());
-    ZmAssert(m_h1TCPResponses.fifo.empty_());
-    ZmAssert(m_h1TLSResponses.fifo.empty_());
-    ZmAssert(m_h1TCPResponses.ready.empty_());
-    ZmAssert(m_h1TLSResponses.ready.empty_());
-    ZmAssert(m_h2TLSResponses.fifo.empty_());
-    ZmAssert(m_h3QUICResponses.fifo.empty_());
     ZmAssert(m_bodyTasks.empty_());
     ZmAssert(!m_bodyPending);
     m_hubs.final();
@@ -2911,7 +2463,7 @@ public:
     m_mx = nullptr;
     m_rxThread = 0;
     m_txThread = 0;
-    m_workload = nullptr;
+    m_app = nullptr;
     m_config = {};
   }
 
@@ -2949,8 +2501,8 @@ public:
 #endif
 
 private:
-  template <typename Link>
-  void registerTxError_(Link &link) {
+  template <typename Link_>
+  void registerTxError_(Link_ &link) {
     link.txErrorFn(ZiTxErrorFn{[this](ZeException &e) {
       if (!m_txErrorFn) return true;
       return m_txErrorFn(e);
@@ -2966,12 +2518,29 @@ private:
     m_mx->run(ZuFwd<L>(l), m_txThread);
   }
 
+  void assertTx_() const {
+    ZmAssert(ZmSelf() && ZmSelf()->sid() == int(m_txThread));
+  }
+
   uint64_t fixedBodyMax_() const {
     uint64_t n = m_config.retainedBodyMax();
     if (n > m_config.retainedMessageMax())
       n = m_config.retainedMessageMax();
     if (n > uint32_t(-1)) n = uint32_t(-1);
     return n;
+  }
+
+  uint64_t retainedAvailable_() const {
+    uint64_t max = m_config.retainedBytesMax();
+    uint64_t used = m_stats.retainedBytes.load_();
+    return used < max ? max - used : 0;
+  }
+
+  bool retainResponse_(uint64_t &retainedBytes, uint64_t n) {
+    if (n > retainedAvailable_()) return false;
+    m_stats.retainedBytes += n;
+    retainedBytes += n;
+    return true;
   }
 
   bool admit() {
@@ -2983,6 +2552,7 @@ private:
     ++m_stats.rejectedRequests;
     return false;
   }
+
   bool admitRequest_() {
     if (!m_admitRequests.load_()) {
       ++m_stats.rejectedRequests;
@@ -2994,16 +2564,16 @@ private:
     ++m_stats.rejectedRequests;
     return false;
   }
+
   void release(Transport::T transport) {
     --m_stats.activeConnections;
-    m_workload->disconnected(transport);
+    m_app->disconnected(transport);
   }
 
-  // shared: stable/lifecycle state after init()
   ZiMultiplex		*m_mx = nullptr;
   ServerConfig		m_config;
   MessageString		m_altSvc;
-  Workload		*m_workload = nullptr;
+  App			*m_app = nullptr;
   Hub<H1TCP>		m_tcp;
   TLSHub		m_tls;
   Hub<H3QUIC>		m_quic;
@@ -3012,17 +2582,11 @@ private:
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
 
-  // shared telemetry and admission state
   Stats			m_stats;
   ZmAtomic<unsigned>	m_admitRequests = 0;
   ZmAtomic<unsigned>	m_failed = 0;
 
-  // Tx thread exclusive
   alignas(Zm::CacheLineSize)
-  ResponseQueue<H1TCP>	m_h1TCPResponses;
-  ResponseQueue<H1TLS>	m_h1TLSResponses;
-  ResponseQueue<H2TLS>	m_h2TLSResponses;
-  ResponseQueue<H3QUIC>	m_h3QUICResponses;
   BodyTaskQ		m_bodyTasks;
   unsigned		m_bodyPending = 0;
 };

@@ -21,8 +21,8 @@ namespace Zhttp {
 ZtEnumImplNS(Scheme);
 ZtEnumImplNS(TargetForm);
 ZtEnumImplNS(URLParseCode);
-ZtEnumImplNS(RequestTargetParseCode);
-ZtEnumImplNS(RequestTargetField);
+ZtEnumImplNS(TargetParseCode);
+ZtEnumImplNS(TargetField);
 
 namespace URL_ {
 
@@ -43,9 +43,9 @@ URLParseError error(URLParseCode::T code, unsigned offset = 0)
   return {offset, code};
 }
 
-RequestTargetParseError targetError(
-  RequestTargetParseCode::T code, unsigned offset = 0,
-  RequestTargetField::T field = RequestTargetField::Raw)
+TargetParseError targetError(
+  TargetParseCode::T code, unsigned offset = 0,
+  TargetField::T field = TargetField::Raw)
 {
   return {offset, code, field};
 }
@@ -249,11 +249,16 @@ void appendAbsoluteReference(
 {
   out << ZuBSpan{ref.data(), pathStart};
   unsigned floor = out.length();
-  auto pathQuery = splitPathQuery({
-    ref.data() + pathStart, ref.length() - pathStart});
-  out << pathQuery.path;
+  ZuBSpan target{
+    ref.data() + pathStart, ref.length() - pathStart};
+  int q = target.find([](auto c) { return c == '?'; });
+  ZuBSpan path = q < 0 ? target :
+    ZuBSpan{target.data(), unsigned(q)};
+  out << path;
   removeDots(out, floor);
-  if (pathQuery.hasQuery) out << '?' << pathQuery.query;
+  if (q >= 0)
+    out << '?' << ZuBSpan{
+      target.data() + q + 1, target.length() - unsigned(q + 1)};
 }
 
 } // namespace URL_
@@ -279,17 +284,6 @@ Scheme::T Scheme::parse(ZuBSpan s)
   if (ZuICmp<ZuBSpan>::equals(s, "http")) return Scheme::http;
   if (ZuICmp<ZuBSpan>::equals(s, "https")) return Scheme::https;
   return -1;
-}
-
-PathQuery splitPathQuery(ZuBSpan target)
-{
-  int q = target.find([](auto c) { return c == '?'; });
-  if (q < 0) return {target, {}, false};
-  return {
-    {target.data(), unsigned(q)},
-    {target.data() + q + 1, target.length() - unsigned(q + 1)},
-    true
-  };
 }
 
 bool OriginView::equals(const OriginView &o) const
@@ -394,12 +388,6 @@ AuthorityView URL::authority() const
 OriginView URL::origin() const
 {
   return {host, port, scheme, ipv6Literal};
-}
-
-PathQuery URL::pathQuery() const
-{
-  static const uint8_t slash[] = {'/'};
-  return {path ? path : ZuBSpan{slash, 1}, query, hasQuery};
 }
 
 void URLStorage::commit_(URLString &&data, const URL &url)
@@ -513,146 +501,146 @@ URLParseError URLStorage::resolve(const URL &base, ZuBSpan ref)
   candidate << Scheme::name(base.scheme) << ':';
   candidate << "//" << base.authority();
   unsigned pathFloor = candidate.length();
-  auto refPQ = splitPathQuery(ref);
-  auto basePQ = base.pathQuery();
-  if (!refPQ.path) {
+  int q = ref.find([](auto c) { return c == '?'; });
+  ZuBSpan refPath = q < 0 ? ref : ZuBSpan{ref.data(), unsigned(q)};
+  ZuBSpan refQuery = q < 0 ? ZuBSpan{} : ZuBSpan{
+    ref.data() + q + 1, ref.length() - unsigned(q + 1)};
+  if (!refPath) {
     candidate << base.path;
-    if (refPQ.hasQuery)
-      candidate << '?' << refPQ.query;
+    if (q >= 0)
+	candidate << '?' << refQuery;
     else if (base.hasQuery)
-      candidate << '?' << base.query;
+	candidate << '?' << base.query;
   } else {
-    if (refPQ.path[0] == '/') {
-      candidate << refPQ.path;
+    if (refPath[0] == '/') {
+      candidate << refPath;
     } else {
       int slash = -1;
-      for (unsigned i = 0; i < basePQ.path.length(); ++i)
-        if (basePQ.path[i] == '/') slash = i;
+      for (unsigned i = 0; i < base.path.length(); ++i)
+	if (base.path[i] == '/') slash = i;
       if (slash >= 0)
-        candidate << ZuBSpan{basePQ.path.data(), unsigned(slash + 1)};
+	candidate << ZuBSpan{base.path.data(), unsigned(slash + 1)};
       else
 	candidate << '/';
-      candidate << refPQ.path;
+      candidate << refPath;
     }
     removeDots(candidate, pathFloor);
-    if (refPQ.hasQuery) candidate << '?' << refPQ.query;
+    if (q >= 0) candidate << '?' << refQuery;
   }
   if (hasFragment) candidate << '#' << fragmentText;
   return adopt(ZuMv(candidate));
 }
 
-RequestTargetParseError RequestTarget::parseH1(
-  RequestTarget &out, Method::T method, ZuSpan<uint8_t> input)
+TargetParseError Target::parseH1(
+  Target &out, Method::T method, ZuSpan<uint8_t> input)
 {
   using namespace URL_;
-  RequestTarget parsed;
+  Target parsed;
   parsed.raw = input;
   if (!input)
-    return targetError(RequestTargetParseCode::InvalidForm);
+    return targetError(TargetParseCode::InvalidForm);
   if (input.length() == 1 && input[0] == '*') {
     if (method != Method::OPTIONS)
-      return targetError(RequestTargetParseCode::InvalidMethod);
+      return targetError(TargetParseCode::InvalidMethod);
     parsed.form = TargetForm::Asterisk;
-    parsed.path = input;
+    parsed.pathQuery = input;
     out = parsed;
     return {};
   }
   if (method == Method::CONNECT) {
     URLParseError e = parseAuthority(parsed.authority, input, 0, 0, true);
     if (!e.ok())
-      return targetError(RequestTargetParseCode::InvalidAuthority, e.offset);
+      return targetError(TargetParseCode::InvalidAuthority, e.offset);
     parsed.form = TargetForm::Authority;
     out = parsed;
     return {};
   }
   if (input[0] == '/') {
     if (int i = invalidText(input, false); i >= 0)
-      return targetError(RequestTargetParseCode::InvalidCharacter, i);
-    auto pq = splitPathQuery(input);
-    parsed.path = pq.path;
-    parsed.query = pq.query;
-    parsed.hasQuery = pq.hasQuery;
+      return targetError(TargetParseCode::InvalidCharacter, i);
+    parsed.pathQuery = input;
     parsed.form = TargetForm::Origin;
     out = parsed;
     return {};
   }
   int fragment = input.find([](auto c) { return c == '#'; });
   if (fragment >= 0)
-    return targetError(RequestTargetParseCode::InvalidCharacter, fragment);
+    return targetError(TargetParseCode::InvalidCharacter, fragment);
   URL url{input};
   if (!url.ok())
     switch (url.error().code) {
       case URLParseCode::UnsupportedScheme:
 	return targetError(
-	  RequestTargetParseCode::InvalidScheme, url.error().offset);
+	  TargetParseCode::InvalidScheme, url.error().offset);
       case URLParseCode::MissingHost:
       case URLParseCode::InvalidAuthority:
       case URLParseCode::InvalidPort:
 	return targetError(
-	  RequestTargetParseCode::InvalidAuthority, url.error().offset);
+	  TargetParseCode::InvalidAuthority, url.error().offset);
       case URLParseCode::InvalidCharacter:
 	return targetError(
-	  RequestTargetParseCode::InvalidCharacter, url.error().offset);
+	  TargetParseCode::InvalidCharacter, url.error().offset);
       default:
 	return targetError(
-	  RequestTargetParseCode::InvalidForm, url.error().offset);
+	  TargetParseCode::InvalidForm, url.error().offset);
     }
   parsed.authority = url.authority();
-  parsed.path = url.pathQuery().path;
-  parsed.query = url.query;
-  parsed.hasQuery = url.hasQuery;
+  if (url.path) {
+    unsigned length = url.path.length();
+    if (url.hasQuery) length += url.query.length() + 1;
+    parsed.pathQuery = {url.path.data(), length};
+  } else if (url.hasQuery) {
+    parsed.pathQuery = {url.query.data() - 1, url.query.length() + 1};
+  }
   parsed.scheme = url.scheme;
   parsed.form = TargetForm::Absolute;
   out = parsed;
   return {};
 }
 
-RequestTargetParseError RequestTarget::fromPseudo(
-  RequestTarget &out, Method::T method, Scheme::T scheme,
+TargetParseError Target::fromPseudo(
+  Target &out, Method::T method, Scheme::T scheme,
   ZuSpan<uint8_t> authorityText, ZuBSpan pathText, ZuBSpan protocolText)
 {
   using namespace URL_;
-  RequestTarget parsed;
+  Target parsed;
   if (method == Method::CONNECT) {
     if (!protocolText) {
       if (scheme >= 0 || pathText)
-	return targetError(RequestTargetParseCode::InvalidForm, 0,
-	  pathText ? RequestTargetField::Path : RequestTargetField::Scheme);
+	return targetError(TargetParseCode::InvalidForm, 0,
+	  pathText ? TargetField::Path : TargetField::Scheme);
       auto e = parseAuthority(
 	parsed.authority, authorityText, 0, 0, true);
       if (!e.ok())
-	return targetError(RequestTargetParseCode::InvalidAuthority, e.offset,
-	  RequestTargetField::Authority);
+	return targetError(TargetParseCode::InvalidAuthority, e.offset,
+	  TargetField::Authority);
       parsed.raw = authorityText;
       parsed.form = TargetForm::Authority;
       out = parsed;
       return {};
     }
     if (scheme < 0 || scheme >= Scheme::N)
-      return targetError(RequestTargetParseCode::InvalidScheme, 0,
-	RequestTargetField::Scheme);
+      return targetError(TargetParseCode::InvalidScheme, 0,
+	TargetField::Scheme);
     if (!tokenChar(protocolText[0]))
-      return targetError(RequestTargetParseCode::InvalidProtocol, 0,
-	RequestTargetField::Protocol);
+      return targetError(TargetParseCode::InvalidProtocol, 0,
+	TargetField::Protocol);
     for (unsigned i = 1; i < protocolText.length(); ++i)
       if (!tokenChar(protocolText[i]))
-	return targetError(RequestTargetParseCode::InvalidProtocol, i,
-	  RequestTargetField::Protocol);
+	return targetError(TargetParseCode::InvalidProtocol, i,
+	  TargetField::Protocol);
     auto e = parseAuthority(parsed.authority, authorityText, 0,
       Scheme::defltPort(scheme), false);
     if (!e.ok())
-      return targetError(RequestTargetParseCode::InvalidAuthority, e.offset,
-	RequestTargetField::Authority);
+      return targetError(TargetParseCode::InvalidAuthority, e.offset,
+	TargetField::Authority);
     if (!pathText || pathText[0] != '/')
-      return targetError(RequestTargetParseCode::InvalidPath, 0,
-	RequestTargetField::Path);
+      return targetError(TargetParseCode::InvalidPath, 0,
+	TargetField::Path);
     if (int i = invalidText(pathText, false); i >= 0)
-      return targetError(RequestTargetParseCode::InvalidCharacter, i,
-	RequestTargetField::Path);
-    auto pq = splitPathQuery(pathText);
-    parsed.path = pq.path;
-    parsed.query = pq.query;
-    parsed.hasQuery = pq.hasQuery;
+      return targetError(TargetParseCode::InvalidCharacter, i,
+	TargetField::Path);
+    parsed.pathQuery = pathText;
     parsed.protocol = protocolText;
     parsed.scheme = scheme;
     parsed.form = TargetForm::ExtendedConnect;
@@ -661,38 +649,35 @@ RequestTargetParseError RequestTarget::fromPseudo(
   }
 
   if (protocolText)
-    return targetError(RequestTargetParseCode::InvalidProtocol, 0,
-      RequestTargetField::Protocol);
+    return targetError(TargetParseCode::InvalidProtocol, 0,
+      TargetField::Protocol);
   if (scheme < 0 || scheme >= Scheme::N)
-    return targetError(RequestTargetParseCode::InvalidScheme, 0,
-      RequestTargetField::Scheme);
+    return targetError(TargetParseCode::InvalidScheme, 0,
+      TargetField::Scheme);
   auto e = parseAuthority(parsed.authority, authorityText, 0,
     Scheme::defltPort(scheme), false);
   if (!e.ok())
-    return targetError(RequestTargetParseCode::InvalidAuthority, e.offset,
-      RequestTargetField::Authority);
+    return targetError(TargetParseCode::InvalidAuthority, e.offset,
+      TargetField::Authority);
   if (pathText.length() == 1 && pathText[0] == '*') {
     if (method != Method::OPTIONS)
-      return targetError(RequestTargetParseCode::InvalidMethod, 0,
-	RequestTargetField::Path);
+      return targetError(TargetParseCode::InvalidMethod, 0,
+	TargetField::Path);
     parsed.raw = pathText;
-    parsed.path = pathText;
+    parsed.pathQuery = pathText;
     parsed.scheme = scheme;
     parsed.form = TargetForm::Asterisk;
     out = parsed;
     return {};
   }
   if (!pathText || pathText[0] != '/')
-    return targetError(RequestTargetParseCode::InvalidPath, 0,
-      RequestTargetField::Path);
+    return targetError(TargetParseCode::InvalidPath, 0,
+      TargetField::Path);
   if (int i = invalidText(pathText, false); i >= 0)
-    return targetError(RequestTargetParseCode::InvalidCharacter, i,
-      RequestTargetField::Path);
-  auto pq = splitPathQuery(pathText);
+    return targetError(TargetParseCode::InvalidCharacter, i,
+      TargetField::Path);
   parsed.raw = pathText;
-  parsed.path = pq.path;
-  parsed.query = pq.query;
-  parsed.hasQuery = pq.hasQuery;
+  parsed.pathQuery = pathText;
   parsed.scheme = scheme;
   parsed.form = TargetForm::Origin;
   out = parsed;

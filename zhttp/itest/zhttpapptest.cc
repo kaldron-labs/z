@@ -99,9 +99,9 @@ bool writeHTTPAppScript(
     script <<
       "python3 -c 'import socket,sys; s=socket.create_connection((\"127.0.0.1\"," <<
       port << ")); s.sendall(b\"WHAT /bad HTTP/1.1\\r\\nhost: localhost\\r\\n\\r\\n\"); "
-      "d=s.recv(128); s.close(); sys.exit(0 if d.startswith(b\"HTTP/1.1 501\") else 1)'\n"
+      "d=s.recv(128); s.close(); sys.exit(0 if not d else 1)'\n"
       "kill -0 \"$pid\"\n"
-      "test \"$(grep -c 'zhttpd.access' " << tempPath << "/server.err)\" -eq 1\n"
+      "test \"$(grep -c 'zhttpd.access' " << tempPath << "/server.err)\" -eq 0\n"
       "python3 -c 'import socket,sys; s=socket.create_connection((\"127.0.0.1\"," <<
       port << ")); s.sendall(b\"GET /pipeline-a HTTP/1.1\\r\\nhost: localhost\\r\\n\\r\\nGET /pipeline-b HTTP/1.1\\r\\nhost: localhost\\r\\nconnection: close\\r\\n\\r\\n\"); "
       "d=b\"\".join(iter(lambda:s.recv(4096),b\"\")); s.close(); "

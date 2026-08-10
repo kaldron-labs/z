@@ -333,8 +333,9 @@ struct TxBuilder :
     TxBuilder, TxHeaders, ZuTypeList<>, true, true> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::POST, QueryPath{}, true,
-      [this](auto &stream) { stream << query; });
+    l(Zhttp::Method::POST, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << QueryPath{} << '?' << query; });
+    });
   }
   template <typename L>
   void host(L &&l) { l("localhost"); }
@@ -351,7 +352,9 @@ struct FixedTxBuilder :
     FixedTxBuilder, FixedHeaders, ZuTypeList<>, true, false> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::PUT, "/fixed-edge", false, [](auto &) { });
+    l(Zhttp::Method::PUT, [](auto &&emit) {
+      emit([](auto &tx) { tx << "/fixed-edge"; });
+    });
   }
   template <typename L>
   void host(L &&l) { l("localhost"); }

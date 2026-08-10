@@ -44,6 +44,9 @@ struct Headers_<Impl, BodyPolicy::URI> {
 template <typename Impl>
 using Headers = typename Headers_<Impl>::T;
 
+// signing buffer
+ZuDerive(SignBuf, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf">>));
+
 // default request compile-time metadata
 struct Request {
   enum { Method = Zhttp::Method::Get };
@@ -55,6 +58,9 @@ struct Request {
   enum { Body = BodyPolicy::None };
   enum { SignBody = 0 };
   enum { UpdBody = 0 };
+
+  static constexpr unsigned SignQueryBufSize = 1<<10; // 1k
+  static constexpr unsigned SignBodyBufSize = 1<<10; // 1k
 
   using URI_Facet = ZuFacet::URI;
   using JSON_Facet = ZuFacet::JSON;
@@ -84,12 +90,11 @@ struct ReqParser : public Request, public Zhttp::Parser {
 
   const auto &bodyObject(Object *object) { return *object; }
 
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &target) {
+  void operation(Zhttp::Method::T, const Zhttp::Target &target) {
     if constexpr (Impl::Query == QueryPolicy::None) {
       return;
     } else if constexpr (Impl::Query == QueryPolicy::URI) {
-      // FIXME - URI expects path?query, is this available in H2/H3
-      ZfJSON::handler<Object, Impl::URI_Facet> handler(target.???);
+      ZfJSON::handler<Object, Impl::URI_Facet> handler(target.path);
       if constexpr (Impl::UpdQuery)
 	handler.update(impl()->queryObject());
       else
@@ -119,7 +124,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
 	      handler.update(impl()->bodyObject());
 	    else
 	      handler.load(impl()->bodyObject());
-	  } else if constexpr (Impl::Body == BodyPolicy::JSON) {
+	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
 	    ZfURI::handler<Object, Impl::URI_Facet> handler(span);
 	    if constexpr (Impl::UpdBody)
 	      handler.update(impl()->bodyObject());
@@ -133,7 +138,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
     }
   }
 
-  // Impl should implement complete
+  // Impl should implement complete(link, ok)
 };
 
 // request builder
@@ -162,7 +167,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 	ZfURI::save<typename Request::URI_Facet>(s, impl()->queryObject());
       });
     } else if constexpr (Impl::Query == QueryPolicy::URI /* && Impl::SignQuery */) {
-      auto buf = ZtLocalArray/* FIXME */;
+      auto buf = ZtScratch(SignBuf, SignQueryBufSize);
       const auto &query = impl()->queryObject();
       ZfURI::save<typename Request::URI_Facet>(buf, query);
       impl()->signQuery(buf, object, buf.cspan());
@@ -182,12 +187,21 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 	ZfJSON::save<typename Request::JSON_Facet>(s, impl()->bodyObject());
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON /* && Impl::SignBody */) {
-      auto buf = ZtLocalArray/* FIXME */;
+      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
       const auto &body = impl()->bodyObject();
       ZfJSON::save<typename Request::JSON_Facet>(buf, body);
       impl()->signBody(buf, object, buf.cspan());
       emit([&buf](auto &s) { s << buf; });
-      // FIXME - URI body
+    } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
+      emit([this](auto &s) {
+	ZfURI::save<typename Request::URI_Facet>(s, impl()->bodyObject());
+      });
+    } else if constexpr (Impl::Body == BodyPolicy::URI /* && Impl::SignBody */) {
+      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
+      const auto &body = impl()->bodyObject();
+      ZfURI::save<typename Request::URI_Facet>(buf, body);
+      impl()->signBody(buf, object, buf.cspan());
+      emit([&buf](auto &s) { s << buf; });
     } else if constexpr (Impl::Body == BodyPolicy::Raw) {
       emit([this](auto &s) { s << impl()->bodyObject(); });
     }
@@ -221,10 +235,18 @@ struct ResParser : public Response, public Zhttp::Parser {
 	  return span.length() < bodyLength ? 0U : bodyLength;
 	},
 	[this](ZuBSpan span) {
-	  // FIXME - URI
 	  if constexpr (Impl::Body == BodyPolicy::JSON) {
-	    // FIXME - update
-	    ZfJSON::handler<Object, Impl::JSON_Facet>(span).load(impl()->bodyObject());
+	    ZfJSON::handler<Object, Impl::JSON_Facet> handler(span);
+	    if constexpr (Impl::UpdBody)
+	      handler.update(impl()->bodyObject());
+	    else
+	      handler.load(impl()->bodyObject());
+	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
+	    ZfURI::handler<Object, Impl::URI_Facet> handler(span);
+	    if constexpr (Impl::UpdBody)
+	      handler.update(impl()->bodyObject());
+	    else
+	      handler.load(impl()->bodyObject());
 	  } else if constexpr (Impl::Body == BodyPolicy::Raw) {
 	    impl()->bodyObject() = span;
 	  }
@@ -233,7 +255,7 @@ struct ResParser : public Response, public Zhttp::Parser {
     }
   }
 
-  // Impl should implement complete(bool ok)
+  // Impl should implement complete(link, ok)
 };
 
 // response builder
@@ -255,19 +277,28 @@ struct ResBuilder : public Response, public Zhttp::Builder {
   template <typename Emit> void body(Emit &&emit) {
     if constexpr (Impl::Body == BodyPolicy::None) {
       return;
-    } else if constexpr (Impl::Body == BodyPolicy::JSON) {
+    } else if constexpr (Impl::Body == BodyPolicy::JSON && !Impl::SignBody) {
       emit([this](auto &s) {
 	ZfJSON::save<typename Op::JSON_Facet>(s, impl()->bodyObject());
       });
-    } else if constexpr (Impl::Body == BodyPolicy::Raw) {
-      emit([this](auto &s) { s << impl()->bodyObject(); });
-      // FIXME - URI, signed flag, update
-    } else if constexpr (Impl::Body == BodyPolicy::SignedJSON) {
-      auto buf = ZtLocalArray/* FIXME */;
+    } else if constexpr (Impl::Body == BodyPolicy::JSON /* && Impl::SignBody */) {
+      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
       const auto &body = impl()->bodyObject();
       ZfJSON::save<typename Op::JSON_Facet>(buf, body);
       impl()->signBody(buf, object, buf.cspan());
       emit([&buf](auto &s) { s << buf; });
+    } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
+      emit([this](auto &s) {
+	ZfURI::save<typename Op::URI_Facet>(s, impl()->bodyObject());
+      });
+    } else if constexpr (Impl::Body == BodyPolicy::URI /* && Impl::SignBody */) {
+      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
+      const auto &body = impl()->bodyObject();
+      ZfURI::save<typename Op::URI_Facet>(buf, body);
+      impl()->signBody(buf, object, buf.cspan());
+      emit([&buf](auto &s) { s << buf; });
+    } else if constexpr (Impl::Body == BodyPolicy::Raw) {
+      emit([this](auto &s) { s << impl()->bodyObject(); });
     }
   }
 };

@@ -41,10 +41,10 @@ struct Parsed :
   Parsed() : Base{1024} { }
 
   void operation(
-    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method_, const Zhttp::Target &target) {
     operationOrder = ++callbackOrder;
     method = method_;
-    path = target.raw;
+    path = target.pathQuery;
   }
   void status(unsigned value) { status_ = value; ++statusCalls; }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
@@ -119,7 +119,7 @@ struct Response :
   Response() : Base{1024} { }
 
   bool enable1xx() const { return informational; }
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
   void status(unsigned value) {
     statusOrder = ++callbackOrder;
     headerOrder = bodyOrder = 0;
@@ -245,10 +245,13 @@ struct BuildOps {
   template <typename L>
   void operation(L &&l) {
     if (customTarget)
-      l(Zhttp::Method::POST, CustomTarget{}, false, [](auto &) { });
+      l(Zhttp::Method::POST, [](auto &&emit) {
+	emit([](auto &tx) { tx << CustomTarget{}; });
+      });
     else
-      l(Zhttp::Method::POST, "/submit", true,
-	[](auto &stream) { stream << "a=1"; });
+      l(Zhttp::Method::POST, [](auto &&emit) {
+	emit([](auto &tx) { tx << "/submit?a=1"; });
+      });
   }
   template <typename L> void host(L &&l) { l("example.com"); }
   unsigned status() { return 201; }
@@ -288,8 +291,9 @@ struct ConnectBuild :
   public Zhttp::H2::Request<ConnectBuild> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::CONNECT, "/chat", true,
-      [](auto &stream) { stream << "v=1"; });
+    l(Zhttp::Method::CONNECT, [](auto &&emit) {
+      emit([](auto &tx) { tx << "/chat?v=1"; });
+    });
   }
   template <typename L> void host(L &&l) { l("example.com"); }
   template <typename L> void protocol(L &&l) { l("opaque"); }
@@ -330,7 +334,7 @@ struct StreamResponse :
     dispatch.final_();
   }
 
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan) { }

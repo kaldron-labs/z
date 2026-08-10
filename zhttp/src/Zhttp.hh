@@ -90,8 +90,8 @@ namespace Zhttp {
 // synchronous. Printable Builder values retain their actual type. Received
 // spans and body Rx streams are borrowed only for the duration of the callback.
 // Parser lifecycle is facade-specific rather than part of this common callback
-// contract: Server obtains a request Parser from Workload::request() for each
-// admitted request; Client calls ResParser::init() before each response message.
+// contract: Server obtains a request Parser from App::parser() for each request;
+// Client calls ResParser::init() before each response message.
 struct Parser { // base class with defaulted types and member functions
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
 
@@ -101,7 +101,7 @@ struct Parser { // base class with defaulted types and member functions
 
   // First protocol callback for a request, called exactly once after the
   // start line or pseudo-headers are validated and before any header().
-  void operation(Method::T, const RequestTarget &) { }	// requests only
+  void operation(Method::T, const Target &) { }	// requests only
 
   // First protocol callback for each response field section, called after
   // its :status or status line is validated and before that section's
@@ -127,8 +127,10 @@ struct Parser { // base class with defaulted types and member functions
   template <typename Rx> bool body(Rx &) { return false; }
 
   // Last callback for the message. A validation or framing failure may
-  // short-circuit the successful ordering above and report false.
-  void complete(bool ok) { }
+  // short-circuit the successful ordering above and report false.  LinkRef is
+  // an owning concrete-link handle and may be moved out for asynchronous work.
+  template <typename LinkRef>
+  void complete(LinkRef &&, bool ok) { }
 };
 
 struct Builder {
@@ -144,13 +146,14 @@ struct Builder {
   // construction state while preserving the configured request/response.
   void reset() { }
 
-  // Request start line / pseudo-headers. emit(method, path, hasQuery, query)
-  // is called exactly once; query(stream) writes the query without its '?'.
-  // query is called only when hasQuery is true, permitting run-time query
-  // construction without first materializing the complete request target.
+  // Request start line / pseudo-headers. l(method, emit) is called exactly
+  // once.  The protocol calls emit(write), then write(tx) writes the complete
+  // path plus any query directly to the protocol transmit sink.
   template <typename Emit>
-  void operation(Emit &&emit) const {
-    emit(Method::GET, "/", false, [](auto &) { });
+  void operation(Emit &&l) const {
+    l(Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << '/'; });
+    });
   }
 
   // Response status code; ignored for requests.
@@ -179,7 +182,7 @@ struct Builder {
 // only the callbacks applicable to the selected request/response role and
 // version. Inherited defaults are side-effect-safe; an adapter which
 // overrides reset() must call Base::reset(). All callbacks are synchronous
-// and Rx-shard-affine. RequestTarget and received spans are borrowed for the
+// and Rx-shard-affine. Target and received spans are borrowed for the
 // duration of the callback. `ProtocolParser` in the API sketch denotes the
 // selected alias below.
 #if 0

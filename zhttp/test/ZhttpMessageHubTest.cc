@@ -41,7 +41,9 @@ struct RequestBuilder :
     ZuTypeList<>, true, false> {
   template <typename L>
   void operation(L &&l) {
-    l(Zhttp::Method::PUT, "/", false, [](auto &) { });
+    l(Zhttp::Method::PUT, [](auto &&emit) {
+      emit([](auto &tx) { tx << '/'; });
+    });
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
@@ -93,7 +95,7 @@ struct ClientParser :
   using State = typename Base::State;
 
   bool enable1xx() const { return true; }
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
   void status(unsigned value) {
     status_ = value;
     ++statusCalls;
@@ -213,9 +215,9 @@ struct ServerSession {
     using State = typename Base::State;
 
     void operation(
-      Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+      Zhttp::Method::T method_, const Zhttp::Target &target) {
       method = method_;
-      path = target.raw;
+      path = target.pathQuery;
     }
     void status(unsigned) { }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }

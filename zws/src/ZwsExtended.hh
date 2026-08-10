@@ -36,9 +36,9 @@ public:
 
   template <typename L>
   void operation(L &&l) {
-    auto target = Zhttp::splitPathQuery(m_uri->target);
-    l(Zhttp::Method::CONNECT, target.path, target.hasQuery,
-      [query = target.query](auto &stream) { stream << query; });
+    l(Zhttp::Method::CONNECT, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << m_uri->target; });
+    });
   }
   template <typename L>
   void host(L &&l) { l(m_uri->authority()); }
@@ -114,7 +114,7 @@ public:
     m_link = nullptr;
   }
 
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
   void status(unsigned value) { m_status = value; }
   template <typename Key>
   void header(Zhttp::FieldSection::T section, ZuBSpan value) {
@@ -204,11 +204,10 @@ public:
   }
 
   void operation(
-    Zhttp::Method::T method, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method, const Zhttp::Target &target) {
     m_method = method;
     m_target.length(0);
-    m_target << Zhttp::PathQuery{
-      target.path, target.query, target.hasQuery};
+    m_target << target.pathQuery;
     m_protocol = target.protocol;
   }
   void status(unsigned) { }

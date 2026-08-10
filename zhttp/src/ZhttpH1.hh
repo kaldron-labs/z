@@ -277,8 +277,8 @@ private:
 	RequestErrorScope::Connection, true);
       return;
     }
-    RequestTarget parsed;
-    if (!RequestTarget::parseH1(parsed, method, target).ok()) {
+    Target parsed;
+    if (!Target::parseH1(parsed, method, target).ok()) {
       error();
       return;
     }
@@ -582,7 +582,7 @@ public:
   }
 
   // CRTP defaults
-  void operation(Method::T, const RequestTarget &) { }
+  void operation(Method::T, const Target &) { }
   void status(unsigned) { }
   bool enable1xx() const { return false; }
   template <typename Key>
@@ -806,12 +806,9 @@ protected:
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
     impl()->operation([&stream](
-	  Method::T method, auto &&path, bool hasQuery, auto &&query) {
-	stream << Method::name(method) << ' ' << path;
-	if (hasQuery) {
-	  stream << '?';
-	  query(stream);
-	}
+	  Method::T method, auto &&emit) {
+	stream << Method::name(method) << ' ';
+	emit([&stream](auto &&write) { write(stream); });
     });
     // host
     stream << " HTTP/1.1\r\nhost: ";
@@ -871,7 +868,9 @@ public:
   // CRTP defaults
   template <typename L>
   void operation(L &&l) {
-    l(Method::GET, "/", false, [](auto &) { });
+    l(Method::GET, [](auto &&emit) {
+      emit([](auto &tx) { tx << '/'; });
+    });
   }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   unsigned status() { return 200; }

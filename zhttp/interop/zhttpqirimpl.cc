@@ -243,9 +243,9 @@ struct H3ReqOps {
 
   template <typename L>
   void operation(L &&l) const {
-    auto target = Zhttp::splitPathQuery(ZuCSpan{req->path});
-    l(Zhttp::Method::GET, target.path, target.hasQuery,
-      [query = target.query](auto &stream) { stream << query; });
+    l(Zhttp::Method::GET, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << req->path; });
+    });
   }
   template <typename L> void host(L &&l) const { l(ZuCSpan{req->host}); }
   template <typename Key, typename L>

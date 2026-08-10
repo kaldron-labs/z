@@ -141,10 +141,16 @@ struct BuilderState :
   template <typename L>
   void operation(L &&l) const {
     if (customTarget)
-      l(method, CustomTarget{}, false, [](auto &) { });
+      l(method, [](auto &&emit) {
+	emit([](auto &tx) { tx << CustomTarget{}; });
+      });
     else
-      l(method, path, bool(query),
-	[this](auto &stream) { stream << query; });
+      l(method, [this](auto &&emit) {
+	emit([this](auto &tx) {
+	  tx << path;
+	  if (query) tx << '?' << query;
+	});
+      });
   }
   template <typename L> void host(L &&l) const { l("example.com"); }
   template <typename L>
@@ -227,11 +233,11 @@ struct ParserStream :
     rx.push(rxBuf(ZuBSpan{bytes}));
   }
   void operation(
-    Zhttp::Method::T method_, const Zhttp::RequestTarget &target) {
+    Zhttp::Method::T method_, const Zhttp::Target &target) {
     operationOrder = ++callbackOrder;
     method = method_;
     path.length(0);
-    path << ZuCSpan{target.raw};
+    path << ZuCSpan{target.pathQuery};
     protocol_.length(0);
     protocol_ << ZuCSpan{target.protocol};
     if (protocol_ && acceptStream) {
@@ -386,7 +392,7 @@ struct ResponseParserStream :
   void push(const Zhttp::H3::HdrBytes &bytes) {
     rx.push(rxBuf(ZuBSpan{bytes}));
   }
-  void operation(Zhttp::Method::T, const Zhttp::RequestTarget &) { }
+  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
   void status(unsigned value) {
     statusOrder = ++callbackOrder;
     status_ = value;

@@ -395,8 +395,8 @@ struct Destination {
 // callbacks are synchronous.
 struct Request : public ZmObject, public Builder {
   // Request start line / pseudo-headers. operation() is called exactly once
-  // per message; l(method, path, hasQuery, query), where query(stream) writes
-  // the query without its '?'.
+  // per message; l(method, emit), then emit(write), where write(tx) writes the
+  // complete path plus any query to tx.
   template <typename L> void operation(L &&l);
   template <typename L> void protocol(L &&l);	// l(value), CONNECT only
 
@@ -494,9 +494,9 @@ private:
     template <typename L>
     void operation(L &&l) {
       if (operationCached) {
-	auto pathQuery = splitPathQuery(target);
-	l(method, pathQuery.path, pathQuery.hasQuery,
-	  [query = pathQuery.query](auto &stream) { stream << query; });
+	l(method, [this](auto &&emit) {
+	  emit([this](auto &tx) { tx << target; });
+	});
       } else
 	app->operation(ZuFwd<L>(l));
     }
@@ -588,7 +588,7 @@ private:
       Parser, RespHeaders>;
     using State = typename Protocol::State;
 
-    void operation(Method::T, const RequestTarget &) { }
+    void operation(Method::T, const Target &) { }
     void status(unsigned value, bool http10) {
       app->status(*link, *request, sink(), value, http10);
     }
@@ -661,24 +661,20 @@ public:
     m_requestApp = request->request;
     m_requestApp->reset();
     m_operationOK = false;
-    m_requestTarget.length(0);
+    m_target.length(0);
     unsigned operations = 0;
     m_requestApp->operation(
       [this, &operations](
-	  Method::T method, auto &&path, bool hasQuery, auto &&query) {
+	  Method::T method, auto &&emit) {
 	if (++operations != 1) return;
 	m_requestMethod = method;
-	m_requestTarget << path;
-	if (hasQuery) {
-	  m_requestTarget << '?';
-	  query(m_requestTarget);
-	}
+	emit([this](auto &&write) { write(m_target); });
 	m_operationOK = true;
       });
     if (operations != 1) m_operationOK = false;
     if (m_operationOK)
       m_operationOK = m_app->poolOperation(
-	*request, m_requestMethod, m_requestTarget);
+	*request, m_requestMethod, m_target);
     m_response.init(*m_requestApp);
     static_cast<ParserSink_ &>(m_parser) = {
       m_app, m_link, request, &m_response};
@@ -751,7 +747,7 @@ private:
   bool sendStreaming_(Request &app, bool optional) {
     Builder_<true, true> builder{
       app, m_app->authority(), false, true,
-      m_operationOK, m_requestMethod, m_requestTarget};
+      m_operationOK, m_requestMethod, m_target};
     TxOps ops{this};
     return MessageTx<Message, TxOps>{ops}.streaming(builder, optional);
   }
@@ -759,7 +755,7 @@ private:
   bool sendEmpty_(Request &app, bool suppressPads = false) {
     Builder_<false, false> builder{
       app, m_app->authority(), suppressPads, true,
-      m_operationOK, m_requestMethod, m_requestTarget};
+      m_operationOK, m_requestMethod, m_target};
     auto tx = m_link->transmit(builder);
     if (!builder.begin(tx) || !builder.headersValid())
       return failTx_();
@@ -774,7 +770,7 @@ private:
   bool sendFixed_(Request &app, bool optional) {
     Builder_<true, false> builder{
       app, m_app->authority(), false, false,
-      m_operationOK, m_requestMethod, m_requestTarget};
+      m_operationOK, m_requestMethod, m_target};
     TxOps ops{this};
     return MessageTx<Message, TxOps>{ops}.fixed(builder, optional);
   }
@@ -833,7 +829,7 @@ private:
   Link		*m_link = nullptr;
   LiveReq	*m_request = nullptr;
   Request	*m_requestApp = nullptr;
-  ZtString<ZtStringHeapID<"Zhttp.RequestTarget">> m_requestTarget;
+  ZtString<ZtStringHeapID<"Zhttp.Target">> m_target;
   Method::T	m_requestMethod = Method::GET;
   bool		m_operationOK = false;
 
@@ -6042,7 +6038,7 @@ public:
     attempt.responseBody.pending = 0;
     bool ok = state == ParserState::Complete;
     if (!ok) fail_(attempt, FailureKind::Protocol);
-    parser.complete(ok);
+    parser.complete(ZmMkRef(&link), ok);
     link.complete(ok);
   }
   bool done(const LiveReq &attempt) const {
