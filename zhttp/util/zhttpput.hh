@@ -30,8 +30,8 @@ inline bool equals(const Record &a, const Record &b)
 inline bool load(Record &record, String &json)
 {
   auto scan = ZfJSON::scan(json);
-  if (scan.template p<0>() < 0) return false;
-  record = ZfJSON::handler<Record>(scan.template p<1>()).ctor();
+  if (scan.p<0>() < 0) return false;
+  record = ZfJSON::handler<Record>((*scan.p<1>())[0]).ctor();
   return true;
 }
 

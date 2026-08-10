@@ -5235,7 +5235,8 @@ class ClientPool;
 // TxQ is an unordered ZmPQTx specialized on the final application pool type.
 // TxQ::Msg publicly derives from Request_; Request_ and ResParser_ conform to
 // the extended application Builder and Parser contracts documented in
-// Zhttp.hh.
+// Zhttp.hh.  Pool::send(Request) is thread-safe ingress and intentionally
+// hides TxQ::send(Request); internal queue insertion is always Tx::send().
 
 template <typename Client_, typename TxQ, typename ResParser_>
 class Pool :
@@ -5523,12 +5524,12 @@ public:
     return true;
   }
 
-  void enqueue(ZmRef<Request> request) {
+  void send(ZmRef<Request> request) {
     txRun_([this, request = ZuMv(request)]() mutable {
-      (void)enqueue_(ZuMv(request));
+      (void)submit_(ZuMv(request));
     });
   }
-  bool enqueue_(ZmRef<Request> request) {
+  bool submit_(ZmRef<Request> request) {
     assertTx_();
     if (m_txIngressStopped || m_sealed || !request) return false;
     Tx::send(ZuMv(request));
@@ -7272,11 +7273,11 @@ public:
     return true;
   }
 
-  bool enqueue(unsigned slot, ZmRef<Request> request) {
+  bool send(unsigned slot, ZmRef<Request> request) {
     if (!m_started || !request) return false;
     auto pool = pool_(slot);
     if (!pool) return false;
-    pool->enqueue(ZuMv(request));
+    pool->send(ZuMv(request));
     return true;
   }
   bool cancel(unsigned slot, Key key) {

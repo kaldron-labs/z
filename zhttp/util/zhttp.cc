@@ -704,7 +704,7 @@ private:
     if (!m_options || m_generated >= m_options->requests) return;
     ZmRef<Request> request = new Request;
     initReq(*request, *m_options, *m_url, m_generated++);
-    enqueue(0, ZuMv(request));
+    send(0, ZuMv(request));
   }
 
   const Options	*m_options = nullptr;
