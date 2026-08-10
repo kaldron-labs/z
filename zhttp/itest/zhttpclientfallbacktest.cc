@@ -383,7 +383,7 @@ void fallback()
     auto request = agent.request();
     request->target = "/ok";
     {
-      agent.enqueue(0, request);
+      agent.send(0, request);
       agent.seal(0);
       bool queried =
 	resolver.queried.timedwait(Zm::now(10)) == 0;
@@ -457,8 +457,8 @@ void fallback()
     request0->target = "/ok";
     request1->target = "/ok";
     {
-      cachedClient.enqueue(0, request0);
-      cachedClient.enqueue(0, request1);
+      cachedClient.send(0, request0);
+      cachedClient.send(0, request1);
       cachedClient.seal(0);
       bool queried =
 	cacheResolver.queried.timedwait(Zm::now(10)) == 0;
@@ -517,7 +517,7 @@ void fallback()
   if (forcedUp) {
     auto request = forcedClient.request();
     request->target = "/ok";
-    forcedClient.enqueue(0, request);
+    forcedClient.send(0, request);
     forcedClient.seal(0);
     bool completed = forcedClient.done.timedwait(Zm::now(10)) == 0;
     ZuCHECK(completed && forcedClient.result.ok() &&
@@ -552,7 +552,7 @@ void fallback()
   if (disabledUp) {
     auto request = disabledClient.request();
     request->target = "/ok";
-    disabledClient.enqueue(0, request);
+    disabledClient.send(0, request);
     disabledClient.seal(0);
     bool completed = disabledClient.done.timedwait(Zm::now(10)) == 0;
     bool selectedQUIC = false;

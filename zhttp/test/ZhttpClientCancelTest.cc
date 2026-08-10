@@ -1032,8 +1032,8 @@ void cancel()
   request0->target = "/";
   request1->target = "/";
 
-  app.enqueue(0, request0);
-  app.enqueue(0, request1);
+  app.send(0, request0);
+  app.send(0, request1);
   app.seal(0);
   app.cancel(0, request1->key());
   app.cancel(0, request0->key());
@@ -1085,8 +1085,8 @@ void outOfOrder()
   request0->target = "/0";
   request1->target = "/1";
 
-  app.enqueue(0, request0);
-  app.enqueue(0, request1);
+  app.send(0, request0);
+  app.send(0, request1);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "out-of-order requests complete");
@@ -1135,8 +1135,8 @@ void pipeline()
   auto request1 = app.request();
   request0->target = "/0";
   request1->target = "/1";
-  app.enqueue(0, request0);
-  app.enqueue(0, request1);
+  app.send(0, request0);
+  app.send(0, request1);
   app.seal(0);
 
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -1185,8 +1185,8 @@ void pipelineTxError()
   ZuCHECK(started, "initialize/start pipeline Tx-error pool");
 
   if (started) {
-    app.enqueue(0, app.request());
-    app.enqueue(0, app.request());
+    app.send(0, app.request());
+    app.send(0, app.request());
     app.seal(0);
   }
   bool emitted = started && ready.timedwait(Zm::now(10)) == 0;
@@ -1256,7 +1256,7 @@ void pipelineCancellation(unsigned cancelAt)
   if (started)
     for (unsigned i = 0; i < Requests; ++i) {
       requests.push(app.request());
-      app.enqueue(0, requests[i]);
+      app.send(0, requests[i]);
     }
   if (started) app.seal(0);
   bool emitted = started && ready.timedwait(Zm::now(10)) == 0;
@@ -1323,7 +1323,7 @@ void limited()
     "rate limits reach the pool Rx owner");
   auto request0 = app.request();
   request0->target = "/0";
-  app.enqueue(0, request0);
+  app.send(0, request0);
   ZmSemaphore txBarrier;
   app.txRun(0, [&txBarrier]() { txBarrier.post(); });
   ZuCHECK(txBarrier.timedwait(Zm::now(10)) == 0,
@@ -1342,7 +1342,7 @@ void limited()
     "idempotently restore stable link slot 0");
   auto request1 = app.request();
   request1->target = "/1";
-  app.enqueue(0, request1);
+  app.send(0, request1);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "request completes through restored link");
@@ -1402,8 +1402,8 @@ void limitedSaturated()
   auto request1 = app.request();
   request0->target = "/0";
   request1->target = "/1";
-  app.enqueue(0, ZuMv(request0));
-  app.enqueue(0, ZuMv(request1));
+  app.send(0, ZuMv(request0));
+  app.send(0, ZuMv(request1));
   ZuCHECK(ready.timedwait(Zm::now(10)) == 0,
     "both links reach configured H1 saturation");
   ZuCHECK(app.limited(0, 0, true),
@@ -1418,7 +1418,7 @@ void limitedSaturated()
     "the saturated+limited link drains its active operation");
   auto request2 = app.request();
   request2->target = "/2";
-  app.enqueue(0, ZuMv(request2));
+  app.send(0, ZuMv(request2));
   ZmSemaphore txBarrier;
   app.txRun(0, [&txBarrier]() { txBarrier.post(); });
   ZuCHECK(txBarrier.timedwait(Zm::now(10)) == 0,
@@ -1436,7 +1436,7 @@ void limitedSaturated()
     "clearing the surviving limited gate restores the disconnected link");
   auto request3 = app.request();
   request3->target = "/3";
-  app.enqueue(0, ZuMv(request3));
+  app.send(0, ZuMv(request3));
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "the restored persistent link reconnects and completes");
@@ -1486,7 +1486,7 @@ void parallelism()
   for (unsigned i = 0; i < Requests; ++i) {
     auto request = app.request();
     request->target << i;
-    app.enqueue(0, ZuMv(request));
+    app.send(0, ZuMv(request));
   }
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(20)) == 0,
@@ -1548,10 +1548,10 @@ void waves()
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start successive-wave pool");
 
-  app.enqueue(0, app.request());
+  app.send(0, app.request());
   ZuCHECK(app.archiveDone.timedwait(Zm::now(10)) == 0,
     "first wave completes before the second is submitted");
-  app.enqueue(0, app.request());
+  app.send(0, app.request());
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "second wave completes on the reusable pool link");
@@ -1598,7 +1598,7 @@ void stopQueuedLimited()
 
   ZmRef<Request> request = app.request();
   if (started) {
-    app.enqueue(0, request);
+    app.send(0, request);
     app.seal(0);
   }
   ZmSemaphore txBarrier;
@@ -1663,7 +1663,7 @@ void stopActivePipeline()
   if (started)
     for (unsigned i = 0; i < Requests; ++i) {
       requests.push(app.request());
-      app.enqueue(0, requests[i]);
+      app.send(0, requests[i]);
     }
   bool emitted = started && ready.timedwait(Zm::now(10)) == 0;
   ZuCHECK(emitted, "emit pipelined requests before stop");
@@ -1721,7 +1721,7 @@ void stopReusableIdle()
   ZuCHECK(started, "start reusable-idle pool");
   ZmRef<Request> request = app.request();
   if (started) {
-    app.enqueue(0, request);
+    app.send(0, request);
     app.seal(0);
   }
   bool completed = app.done.timedwait(Zm::now(10)) == 0 &&
@@ -1790,7 +1790,7 @@ void boundedLinkScan()
   ZuCHECK(limited.timedwait(Zm::now(10)) == 0,
     "publish every application link limit before admission");
 
-  app.enqueue(0, app.request());
+  app.send(0, app.request());
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "bounded admission continues on a later scheduler turn");
@@ -1830,7 +1830,7 @@ void timeout()
   auto request = app.request();
   request->target = "/";
 
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0, "request timeout completes");
   ZuCHECK(app.Base::completed() == 1 && app.results.length() == 1 &&
@@ -1879,7 +1879,7 @@ void retry()
 
   auto request = app.request();
   request->target = "/";
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "transient failure retry completes");
@@ -1948,7 +1948,7 @@ void redirect()
 
   auto request = app.request();
   request->target = "/start";
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0, "redirect completes");
   app.stop();
@@ -2017,7 +2017,7 @@ void unsafeRedirect()
 
   auto request = app.request();
   request->target = "/start";
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "unsafe redirect refusal completes");
@@ -2066,7 +2066,7 @@ void crossOriginRedirect()
 
   auto request = app.request();
   request->target = "/start";
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "cross-origin redirect refusal completes");
@@ -2112,7 +2112,7 @@ void retryLimit()
 
   auto request = app.request();
   request->target = "/";
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "retry budget exhaustion completes");
@@ -2156,7 +2156,7 @@ void unsafeRetry()
 
   auto request = app.request();
   request->target = "/";
-  app.enqueue(0, request);
+  app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "unsafe retry refusal completes");
@@ -2330,7 +2330,7 @@ void stopResolving()
   ZuCHECK(inited && app.start(), "start pool with an injected resolver");
 
   for (unsigned i = 0; i < Requests; ++i)
-    app.enqueue(0, app.request());
+    app.send(0, app.request());
   app.seal(0);
   ZuCHECK(resolver.entered.timedwait(Zm::now(10)) == 0,
     "request enters pool-scoped resolution");
@@ -2395,8 +2395,8 @@ void multiplePools()
   request0->target = "/pool0";
   request1->target = "/pool1";
   request1->key_ = request0->key_;
-  app.enqueue(0, request0);
-  app.enqueue(1, request1);
+  app.send(0, request0);
+  app.send(1, request1);
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2466,8 +2466,8 @@ void sameOriginPools()
   auto request0 = app.request();
   auto request1 = app.request();
   request1->key_ = request0->key_;
-  app.enqueue(0, request0);
-  app.enqueue(1, request1);
+  app.send(0, request0);
+  app.send(1, request1);
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2526,8 +2526,8 @@ void poolTimeoutOverride()
   ZuCHECK(inited && app.start(),
     "start pools with isolated timeout policies");
 
-  app.enqueue(0, app.request());
-  app.enqueue(1, app.request());
+  app.send(0, app.request());
+  app.send(1, app.request());
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2592,8 +2592,8 @@ void poolRetryOverride()
   ZuCHECK(inited && app.start(),
     "start pools with isolated retry budgets");
 
-  app.enqueue(0, app.request());
-  app.enqueue(1, app.request());
+  app.send(0, app.request());
+  app.send(1, app.request());
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2667,8 +2667,8 @@ void poolRedirectOverride()
   auto overrideRequest = app.request();
   defaultRequest->target = "/start";
   overrideRequest->target = "/start";
-  app.enqueue(0, ZuMv(defaultRequest));
-  app.enqueue(1, ZuMv(overrideRequest));
+  app.send(0, ZuMv(defaultRequest));
+  app.send(1, ZuMv(overrideRequest));
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2744,8 +2744,8 @@ void poolRetainedBodyOverride()
   ZuCHECK(inited && app.start(),
     "start pools with isolated retained response limits");
 
-  app.enqueue(0, app.request());
-  app.enqueue(1, app.request());
+  app.send(0, app.request());
+  app.send(1, app.request());
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2819,8 +2819,8 @@ void poolRetainedMessageOverride()
   auto overrideRequest = app.request();
   defaultRequest->bodyData = Body;
   overrideRequest->bodyData = Body;
-  app.enqueue(0, ZuMv(defaultRequest));
-  app.enqueue(1, ZuMv(overrideRequest));
+  app.send(0, ZuMv(defaultRequest));
+  app.send(1, ZuMv(overrideRequest));
   app.seal(0);
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2890,7 +2890,7 @@ void poolLinkConcurrencyOverride()
 
   app.seal(0);
   for (unsigned i = 0; i < Requests; ++i)
-    app.enqueue(1, app.request());
+    app.send(1, app.request());
   app.seal(1);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
     "the overridden link emits all requests before its first response");

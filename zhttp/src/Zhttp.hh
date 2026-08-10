@@ -153,6 +153,9 @@ struct Builder {
     emit(Method::GET, "/", false, [](auto &) { });
   }
 
+  // Response status code; ignored for requests.
+  unsigned status() const { return 200; }
+
   template <typename Key, typename L> void header(L &&l) const { } // l(value)
   template <typename L> void header(L &&l) const { }		     // l(key, value)
 

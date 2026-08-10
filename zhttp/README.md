@@ -152,7 +152,7 @@ client.pool(
 client.start();
 ZmRef<Request> request = new Request;
 request->target = "/resource?version=1";
-client.enqueue(0, request);
+client.send(0, request);
 client.seal(0);
 client.limited(0, 3, true);  // stop future assignments to link slot 3
 client.limited(0, 3, false); // make it eligible again when not saturated
