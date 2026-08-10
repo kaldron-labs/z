@@ -96,13 +96,23 @@ ZfStruct((ArrayOpt, URI),
 
 struct URIUpdate {
   int required;
+  int pathKept;
+  int pathReset;
   int kept;
   int reset;
 };
-ZfStruct((URIUpdate, URI),
+ZfStruct(URIUpdate,
   (((required), (Ctor<0>, Mutable, Required)), (Int32)),
-  (((kept),     (Ctor<1>, Mutable)),           (Int32, 2)),
-  (((reset),    (Ctor<2>, Mutable, Reset)),    (Int32, 3)));
+  (((pathKept), (Ctor<1>, Mutable)),           (Int32, 2)),
+  (((pathReset), (Ctor<2>, Mutable, Reset)),   (Int32, 3)),
+  (((kept),     (Ctor<3>, Mutable)),           (Int32, 4)),
+  (((reset),    (Ctor<4>, Mutable, Reset)),    (Int32, 5)));
+ZfStructRender(URIUpdate, URI,
+  required,
+  (pathKept, URI::PathIndex<0>),
+  (pathReset, URI::PathIndex<1>),
+  kept,
+  reset);
 
 struct Foo {
   const char *string = nullptr;
@@ -406,27 +416,42 @@ void resetUpdate()
 {
   ZuTestScope(resetUpdate);
 
-  char missing_[] = "?kept=5";
+  char missing_[] = "/10?kept=11";
   auto missingScan = ZfURI::scan(missing_);
   const auto &missing = missingScan.p<1>();
   auto missingValue = ZfURI::handler<URIUpdate>(missing).ctor();
   ZuCheck(ZuNull(missingValue.required));
-  ZuCheck(missingValue.kept == 5);
-  ZuCheck(missingValue.reset == 3);
+  ZuCheck(missingValue.pathKept == 10);
+  ZuCheck(missingValue.pathReset == 3);
+  ZuCheck(missingValue.kept == 11);
+  ZuCheck(missingValue.reset == 5);
 
-  URIUpdate loaded{1, 2, 8};
+  URIUpdate loaded{1, 20, 30, 40, 50};
   ZfURI::handler<URIUpdate>(missing).load(loaded);
   ZuCheck(ZuNull(loaded.required));
-  ZuCheck(loaded.kept == 5);
-  ZuCheck(loaded.reset == 3);
+  ZuCheck(loaded.pathKept == 10);
+  ZuCheck(loaded.pathReset == 3);
+  ZuCheck(loaded.kept == 11);
+  ZuCheck(loaded.reset == 5);
 
-  loaded.reset = 8;
-  char update_[] = "?required=4";
+  loaded = {1, 20, 30, 40, 50};
+  char update_[] = "/21?kept=41";
   auto updateScan = ZfURI::scan(update_);
   ZfURI::handler<URIUpdate>(updateScan.p<1>()).update(loaded);
-  ZuCheck(loaded.required == 4);
-  ZuCheck(loaded.kept == 5);
-  ZuCheck(loaded.reset == 3);
+  ZuCheck(loaded.required == 1);
+  ZuCheck(loaded.pathKept == 21);
+  ZuCheck(loaded.pathReset == 3);
+  ZuCheck(loaded.kept == 41);
+  ZuCheck(loaded.reset == 5);
+
+  char present_[] = "/22/32?required=2&reset=52";
+  auto presentScan = ZfURI::scan(present_);
+  ZfURI::handler<URIUpdate>(presentScan.p<1>()).update(loaded);
+  ZuCheck(loaded.required == 2);
+  ZuCheck(loaded.pathKept == 22);
+  ZuCheck(loaded.pathReset == 32);
+  ZuCheck(loaded.kept == 41);
+  ZuCheck(loaded.reset == 52);
 }
 
 int main(int argc, char **argv)

@@ -446,6 +446,13 @@ int main(int argc, char **argv)
     ZuCheck(loaded.required == 4);
     ZuCheck(loaded.kept == 5);
     ZuCheck(loaded.reset == 3);
+
+    char reset_[] = "{\"reset\":6}";
+    auto resetScan = ZfJSON::scan(reset_);
+    ZfJSON::handler<JSONUpdate>((*resetScan.p<1>())[0]).update(loaded);
+    ZuCheck(loaded.required == 4);
+    ZuCheck(loaded.kept == 5);
+    ZuCheck(loaded.reset == 6);
   }
 
   {

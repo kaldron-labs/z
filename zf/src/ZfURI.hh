@@ -621,7 +621,7 @@ using CNodeArray = const NodeArray;
 using NodeObject = typename AnyNode::Object;
 using CNodeObject = const NodeObject;
 
-// scan URI, build parse tree
+// scan URI (path + query), build parse tree
 ZfExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key);
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode>, ZuSpan<char> span);
@@ -818,11 +818,8 @@ struct AsObject {
 
     Handler(const AnyNode *node_) : node{node_} { }
 
-    template <typename Field>
-    bool hasField() const;
-
-    template <template <typename> class Filter, typename Field>
-    auto loadField() const;
+    template <template <typename> class Filter, typename Field, typename L>
+    decltype(auto) loadField(L &&l) const;
 
     template <typename ...Field>
     struct Ctor {
@@ -830,13 +827,15 @@ struct AsObject {
       static O ctor(const Handler &handler, Args &&...args) {
 	return O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZfFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>(
+	    []<typename V>(V &&v, bool) { return ZuFwd<V>(v); })...);
       }
       template <typename ...Args>
       static void new_(void *o, const Handler &handler, Args &&...args) {
 	new (o) O(
 	  ZuFwd<Args>(args)...,
-	  handler.loadField<ZfFieldFilter::Load, Field>()...);
+	  handler.loadField<ZfFieldFilter::Load, Field>(
+	    []<typename V>(V &&v, bool) { return ZuFwd<V>(v); })...);
       }
     };
     template <typename ...Args>
@@ -846,7 +845,9 @@ struct AsObject {
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	  Field::set(o, loadField<ZfFieldFilter::Load, Field>());
+	  loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
+	    Field::set(o, ZuFwd<V>(v));
+	  });
 	});
 	return o;
       }
@@ -856,20 +857,26 @@ struct AsObject {
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, loadField<ZfFieldFilter::Load, Field>());
+	loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
+	  Field::set(o, ZuFwd<V>(v));
+	});
       });
     }
 
     void load(O &o) const {
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
+	this->loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
+	  Field::set(o, ZuFwd<V>(v));
+	});
       });
     }
     void update(O &o) const {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	using Props = typename Field::Props;
-	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || this->hasField<Field>())
-	  Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
+	this->loadField<ZfFieldFilter::Upd, Field>([&o]<typename V>(V &&v, bool deflt) {
+	  if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
+	    Field::set(o, ZuFwd<V>(v));
+	});
       });
     }
   };
@@ -1601,30 +1608,8 @@ inline auto loadValue(ZuPtr<AnyNode> &node)
 }
 
 template <typename O, typename Facet>
-template <typename Field>
-inline bool AsObject::Handler<O, Facet>::hasField() const
-{
-  if (ZuUnlikely(!node->has<AnyNode::Object>())) return false;
-  const auto &object = node->data<AnyNode::Object>();
-  using Props = typename Field::Props;
-  using PathIndex = ZuFieldProp::URI::GetPathIndex<Props>;
-  if constexpr (PathIndex{}() >= 0) {
-    auto paths_ = object.find(ZuCSpan{});
-    if (!paths_) return false;
-    const auto &paths = paths_->val();
-    if (!paths || !paths->template has<AnyNode::Array>()) return false;
-    const auto &array = paths->template data<AnyNode::Array>();
-    constexpr unsigned index = uint8_t(PathIndex{}());
-    return index < array.length() && array[index];
-  } else {
-    ZuCSpan fieldID = ZuFieldProp::URI::GetID<Field>{}().cspan();
-    return object.find(fieldID);
-  }
-}
-
-template <typename O, typename Facet>
-template <template <typename> class Filter, typename Field>
-inline auto AsObject::Handler<O, Facet>::loadField() const
+template <template <typename> class Filter, typename Field, typename L>
+inline decltype(auto) AsObject::Handler<O, Facet>::loadField(L &&l) const
 {
   enum { TypeCode = Field::Type::Code };
   using Props = typename Field::Props;
@@ -1643,7 +1628,7 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
 	  if (index < array.length()) {
 	    auto &child = array[index];
 	    if (child)
-	      return loadValue<Facet, Filter, TypeCode, Props, T>(child);
+	      return ZuFwd<L>(l)(loadValue<Facet, Filter, TypeCode, Props, T>(child), false);
 	  }
 	}
       }
@@ -1651,15 +1636,15 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
       ZuCSpan fieldID = ZuFieldProp::URI::GetID<Field>{}().cspan();
       if (auto node_ = object.find(fieldID)) {
 	auto &child = node_->val();
-	return loadValue<Facet, Filter, TypeCode, Props, T>(child);
+	return ZuFwd<L>(l)(loadValue<Facet, Filter, TypeCode, Props, T>(child), false);
       }
     }
   }
   if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     static const NodeArray _;
-    return R(_);
+    return ZuFwd<L>(l)(R(_), true);
   } else
-    return R{Field::deflt()};
+    return ZuFwd<L>(l)(R(Field::deflt()), true);
 }
 
 template <
