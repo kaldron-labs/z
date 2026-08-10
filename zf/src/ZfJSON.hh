@@ -258,6 +258,10 @@ public:
 
   template <typename T>
   using Index = ZuTypeIndex<T, TL>;
+
+  decltype(auto) operator[](this auto &&self, unsigned i) {
+    return ZuFwdLike<decltype(self)>((self.template data<Array>())[i]);
+  }
 };
 
 // value type enum (with same values as the AnyNode typelist indices)
@@ -318,7 +322,8 @@ using NodeArray = typename AnyNode::Array;
 using CNodeArray = const NodeArray;
 
 // scan JSON, build parse tree
-ZfExtern ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode>, ZuSpan<char> span);
 
 template <typename Data, typename ...Args>
 inline auto newNode(Args && ...args) {
@@ -540,6 +545,12 @@ struct AsObject {
       }
     }
 
+    template <typename Field>
+    bool hasField() const {
+      enum { I = ZuTypeIndex<Field, SaveFields>{} };
+      return lookup[I] >= 0;
+    }
+
     template <template <typename> class Filter, typename Field>
     auto loadField() const {
       enum { TypeCode = Field::Type::Code };
@@ -607,7 +618,9 @@ struct AsObject {
     }
     void update(O &o) const {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
+	using Props = typename Field::Props;
+	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
+	  Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
     }
   };
@@ -648,7 +661,7 @@ struct AsArray {
     const AnyNode	*node;
 
     static bool valid(const AnyNode *node) {
-      return node->has<AnyNode::Array>();
+      return node->has<NodeArray>();
     }
 
     Handler(const AnyNode *node_) : node{node_} { }
@@ -658,25 +671,25 @@ struct AsArray {
       LoadVec<Facet, ZfFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+      if (ZuUnlikely(!node->has<NodeArray>()))
 	return O(ZuFwd<Args>(args)...);
-      return O(ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
+      return O(ZuFwd<Args>(args)..., LoadVec_(node->data<NodeArray>()));
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {
-      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+      if (ZuUnlikely(!node->has<NodeArray>()))
 	new (o) O(ZuFwd<Args>(args)...);
       else
-	new (o) O(ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
+	new (o) O(ZuFwd<Args>(args)..., LoadVec_(node->data<NodeArray>()));
     }
 
     void load(O &o) const {
-      if (ZuLikely(node->has<AnyNode::Array>()))
-	o = LoadVec_(node->data<AnyNode::Array>());
+      if (ZuLikely(node->has<NodeArray>()))
+	o = LoadVec_(node->data<NodeArray>());
     }
     void update(O &o) const {
-      if (ZuUnlikely(!node->has<AnyNode::Array>())) return;
-      const auto &nodes = node->data<AnyNode::Array>();
+      if (ZuUnlikely(!node->has<NodeArray>())) return;
+      const auto &nodes = node->data<NodeArray>();
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
@@ -1283,11 +1296,11 @@ inline auto loadValue(AnyNode *node)
       ElemCode >= ZfFieldTC::Int8 && ElemCode <= ZfFieldTC::UInt128 &&
       bool(ZuIsBoxed<Actual>{}), Actual, ZfFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
-    if (!node->has<AnyNode::Array>()) {
+    if (!node->has<NodeArray>()) {
       static const NodeArray _;
       return LoadVec_(_);
     }
-    return LoadVec_(node->data<AnyNode::Array>());
+    return LoadVec_(node->data<NodeArray>());
   }
 }
 
@@ -1313,7 +1326,7 @@ ZuInline S &saveDel(S &s, const O &v) {
 }
 
 template <typename O, typename Facet = ZuFacet::JSON>
-auto handler(const ZuPtr<const AnyNode> &node) {
+auto handler(const ZuPtr<AnyNode> &node) {
   return typename As<O>::template Handler<O, Facet>{node};
 }
 

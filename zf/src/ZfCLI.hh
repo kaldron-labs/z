@@ -951,6 +951,10 @@ struct AsObject {
     template <typename Field>
     using Required =
       ZuTypeIn<ZuFieldProp::Required, typename Field::Props>;
+    template <typename Field>
+    using UpdReq = ZuBool<
+      ZfFieldFilter::Upd<Field>{}() &&
+      ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{}()>;
 
     using AllFields = ZuFields<O, Facet>;
     using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
@@ -960,7 +964,8 @@ struct AsObject {
     using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
     using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
     using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
-    using RequiredFields = ZuTypeGrep<Required, AllFields>;
+    using ReqFields = ZuTypeGrep<Required, AllFields>;
+    using UpdReqFields = ZuTypeGrep<UpdReq, AllFields>;
 
     template <
       template <typename> class Filter, typename Quote,
@@ -982,6 +987,24 @@ struct AsObject {
     template <template <typename> class Filter, typename Field>
     auto loadField() const;
 
+    template <typename Field>
+    bool hasField() const {
+      if (ZuUnlikely(!node->has<AnyNode::Object>())) return false;
+      const auto &object = node->data<AnyNode::Object>();
+      ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
+      return object.find(longOpt);
+    }
+
+    template <typename Fields>
+    void checkRequired() const {
+      if constexpr (Fields::N)
+	ZuUnroll::all<Fields>([this]<typename Field>() {
+	  if (!this->hasField<Field>())
+	    throw ZfCLI_EXCEPT(
+	      ZfCLIError::required(source<Field>(prefix.cspan())));
+	});
+    }
+
     template <typename ...Field>
     struct Ctor {
       template <typename ...Args>
@@ -999,40 +1022,39 @@ struct AsObject {
     };
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if constexpr (!InitFields::N && !RequiredFields::N)
+      checkRequired<ReqFields>();
+      if constexpr (!InitFields::N)
 	// exploit guaranteed copy elision
 	return ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
-	if constexpr (InitFields::N)
-	  ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	    Field::set(o, loadField<ZfFieldFilter::Load, Field>());
-	  });
-	validate(o);
+	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
+	  Field::set(o, loadField<ZfFieldFilter::Load, Field>());
+	});
 	return o;
       }
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
+      checkRequired<ReqFields>();
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
-      validate(o);
     }
 
     void load(O &o) const {
+      checkRequired<ReqFields>();
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
 	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
-      validate(o);
     }
     void update(O &o) const {
+      checkRequired<UpdReqFields>();
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
-      validate(o);
     }
 
   private:
@@ -1060,15 +1082,6 @@ struct AsObject {
       return s;
     }
 
-    void validate(const O &o) const {
-      if constexpr (RequiredFields::N)
-	ZuUnroll::all<RequiredFields>([&o, prefix = prefix.cspan()]<
-	    typename Field>() {
-	  if (ZuUnlikely(ZuNull(Field::get(o))))
-	    throw ZfCLI_EXCEPT(
-	      ZfCLIError::required(source<Field>(prefix)));
-	});
-    }
   };
 };
 
@@ -1236,7 +1249,7 @@ struct AsJSON {
 
     Handler(const AnyNode *node_) : node{node_} { }
 
-    ZuTuple<ZuPtr<const ZfJSON::AnyNode>, Handler_> handler_() const {
+    ZuTuple<ZuPtr<ZfJSON::AnyNode>, Handler_> handler_() const {
       if (ZuUnlikely(node->has<AnyNode::Array>()))
 	throw ZfCLI_EXCEPT(
 	  ZfCLIError::multipleValues(node->source));
@@ -1247,8 +1260,8 @@ struct AsJSON {
       if (scan.template p<0>() < 0)
 	throw ZfCLI_EXCEPT(
 	  ZfCLIError::badValue(node->source, "JSON", span));
-      ZuPtr<const ZfJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
-      const ZfJSON::AnyNode *ptr = node_.ptr();
+      ZuPtr<ZfJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
+      const ZfJSON::AnyNode *ptr = (*node_)[0].ptr();
       return {ZuMv(node_), Handler_(ptr)};
     }
 

@@ -258,6 +258,7 @@ namespace ZuFieldProp {
 
   struct Synthetic { };		// synthetic (implies read-only)
   struct Mutable { };		// include in updates (implies not read-only)
+  struct Reset { };		// reset on update if missing (implies not required)
   struct Hidden { };		// do not print
   struct Hex { };		// print hex value
   struct Required { };		// required - do not default
@@ -3922,10 +3923,10 @@ inline ZfVKeyFieldArray ZfVKeyFields() {
 }
 
 // standardized field filters
-// - Load - fields needed for constructing a new object (all non-read-only)
+// - Load - fields used for constructing a new object (all non-read-only)
 // - Ctor - fields passed to constructor (may include read-only fields)
 // - Init - fields initialized post-construction
-// - Save - fields needed to fully persist an object
+// - Save - fields used to fully persist an object
 // - Upd - mutable fields that may be present in an update, and the primary key
 // - Del - the primary key
 
