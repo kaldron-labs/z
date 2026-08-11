@@ -403,12 +403,21 @@ struct HasBegin<T, decltype(
   ZuDeclVal<T &>().begin(ZuDeclVal<TxLink::Stream &>()), void())> :
   public ZuTrue { };
 
+template <typename T, typename = void>
+struct HasReset : public ZuFalse { };
+template <typename T>
+struct HasReset<T, decltype(ZuDeclVal<T &>().reset(), void())> :
+  public ZuTrue { };
+
 using ReqFacade = Zhttp::H1::Request<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
 using RespFacade = Zhttp::H1::Response<
   TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
 ZuAssert(HasBegin<ReqFacade>{});
 ZuAssert(HasBegin<RespFacade>{});
+ZuAssert(!HasReset<Zhttp::Builder>{});
+ZuAssert(!HasReset<ReqFacade>{});
+ZuAssert(!HasReset<RespFacade>{});
 
 void testBodyTx()
 {

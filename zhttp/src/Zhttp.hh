@@ -137,14 +137,9 @@ struct Builder {
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
   using Trailers = ZuTypeList<>; // ZhttpHeaders(...);	// optional
 
-  // May be non-constexpr for a type-erased Builder. The value is fixed from
-  // reset() until message construction completes.
+  // May be non-constexpr for a type-erased Builder. The value is fixed for
+  // the lifetime of this single-message Builder.
   constexpr BodyPolicy::T bodyPolicy() const { return BodyPolicy::None; }
-
-  // May be constructed once and retained across messages. Called exactly
-  // once before each message, including the first, to clear per-message
-  // construction state while preserving the configured request/response.
-  void reset() { }
 
   // Request start line / pseudo-headers. l(method, emit) is called exactly
   // once.  The protocol calls emit(write), then write(tx) writes the complete
@@ -180,11 +175,10 @@ struct Builder {
 // The role facades wrap plain application Parser sinks in these
 // adapters; application sinks do not derive from them. The protocol invokes
 // only the callbacks applicable to the selected request/response role and
-// version. Inherited defaults are side-effect-safe; an adapter which
-// overrides reset() must call Base::reset(). All callbacks are synchronous
-// and Rx-shard-affine. Target and received spans are borrowed for the
-// duration of the callback. `ProtocolParser` in the API sketch denotes the
-// selected alias below.
+// version. Inherited defaults are side-effect-safe. All callbacks are
+// synchronous and Rx-shard-affine. Target and received spans are borrowed for
+// the duration of the callback. `ProtocolParser` in the API sketch denotes
+// the selected alias below.
 #if 0
 struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers> {
   using Base = ProtocolParser<ParserAdapter, Headers>;

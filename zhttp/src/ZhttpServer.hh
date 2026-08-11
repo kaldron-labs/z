@@ -2119,7 +2119,6 @@ private:
       if (!m_response) return;
       auto server = impl()->app()->server;
       --server->m_stats.queuedResponses;
-      m_response->data().reset();
       m_close = m_response->data().close();
       auto response = m_response;
       auto link = ZmMkRef(impl());

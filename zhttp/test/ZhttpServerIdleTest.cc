@@ -48,7 +48,6 @@ struct State {
   ZmAtomic<unsigned> stopCount = 0;
   ZmAtomic<unsigned> stopBeforeRelease = 0;
   ZmAtomic<unsigned> completedCount = 0;
-  ZmAtomic<unsigned> responseResetCount = 0;
   uint16_t	port = 0;
   int8_t	expectedTransport = Zhttp::Transport::QUIC;
   bool		openRequest = false;
@@ -56,6 +55,7 @@ struct State {
   bool		asyncResponse = false;
   bool		emitOptional = false;
   bool		checkThreads = false;
+  bool		responseNotified = false;
   int8_t	responseKind = ResponseKind::None;
   ProducerDone	producerDone;
 
@@ -66,14 +66,12 @@ struct State {
     if (checkThreads && (!mx || !mx->invoked(4))) fail();
   }
 
-  void responseReset() {
-    txCallback();
-    if (++responseResetCount != 1) fail();
-    responseStarted.post();
-  }
   void responseCallback() {
     txCallback();
-    if (responseResetCount.load_() != 1) fail();
+    if (!responseNotified) {
+      responseNotified = true;
+      responseStarted.post();
+    }
   }
 
   void fail() {
@@ -106,7 +104,6 @@ struct App {
         default: return Zhttp::BodyPolicy::None;
       }
     }
-    void reset() { state->responseReset(); }
     Zhttp::Method::T method() const { return Zhttp::Method::POST; }
     unsigned status() const { state->responseCallback(); return 200; }
     template <typename L> void reason(L &&l) const {
@@ -299,16 +296,13 @@ void responseTypes()
 
   State state;
   bool buildersOK = true;
-  bool resetsOK = true;
   for (unsigned kind = ResponseKind::None;
       kind <= ResponseKind::OptionalStream; ++kind) {
     state.responseKind = kind;
-    state.responseResetCount = 0;
     unsigned seen = unsigned(-1);
     App::Response_ response;
     response.state = &state;
     auto policy = response.bodyPolicy();
-    response.reset();
     (void)response.close();
     (void)response.status();
     response.reason([](auto &&) { });
@@ -324,12 +318,9 @@ void responseTypes()
     else if (policy == Zhttp::BodyPolicy::OptionalStream)
       seen = ResponseKind::OptionalStream;
     if (seen != kind) buildersOK = false;
-    if (state.responseResetCount.load_() != 1) resetsOK = false;
   }
   ZuCHECK(buildersOK,
     "workload emits the selected concrete response Builder");
-  ZuCHECK(resetsOK,
-    "response Builder reset precedes common callbacks");
   ZuCHECK(!state.errors.load_(),
     "heterogeneous response Builders satisfy the common contract");
 }
@@ -526,15 +517,9 @@ void activeStop()
   if constexpr (Async)
     ZuCHECK(server.retainedBytes() == 17,
 	"asynchronous producer respects aggregate retained-byte limit");
-  if constexpr (Async)
-    ZuCHECK(state.responseResetCount.load_() == 1,
-	"server resets asynchronous response exactly once before use");
   bool responseStarted = !Sync ||
     state.responseStarted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(responseStarted, "synchronous response construction starts");
-  if constexpr (Sync)
-    ZuCHECK(state.responseResetCount.load_() == 1,
-	"server resets synchronous response exactly once before use");
 
   ZmRef<ClientLink> overflowLink;
   if constexpr (Limit) {

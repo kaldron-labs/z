@@ -11,6 +11,7 @@
 
 #include <zlib/ZuLib.hh>
 #include <zlib/ZmBitmap.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmTrap.hh>
 
@@ -297,7 +298,7 @@ constexpr uint64_t RespBodyMax = 100<<20;
 
 struct ResParser;
 
-struct Request_ : public ZmObject {
+struct Request_ : public ZmObject, public Zhttp::Builder {
   using Headers = RequestHeaders;
   using ContentLength = ZuStringT<"content-length">;
 
@@ -305,7 +306,6 @@ struct Request_ : public ZmObject {
     return put ? Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
   }
 
-  void reset() { requestContentLength = 0; }
   template <typename L>
   void operation(L &&l) const {
     l(put ? Zhttp::Method::PUT : Zhttp::Method::GET,
@@ -665,6 +665,7 @@ ZuDerive(RequestQ, (ZmPQueue<Request_,
     ZmPQueueNode<Request_,
       ZmPQueueHeapID<"zhttp.Request">>>>));
 using Request = RequestQ::Node;
+ZuAssert((ZuIsSame<RequestQ::HeapID, ZuStringT<"zhttp.Request">>{}));
 using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
 
 struct Pool : public Zhttp::Pool<Client, TxQ, ResParser> {

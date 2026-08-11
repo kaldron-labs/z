@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZmBitmap.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
@@ -197,7 +198,6 @@ struct Response_ : public ZmObject, public Zhttp::Builder {
 	return Zhttp::BodyPolicy::None;
     }
   }
-  void reset() { contentLength = 0; }
   Zhttp::Method::T method() const { return method_; }
   unsigned status() const { return plan.status; }
   template <typename L>
@@ -305,6 +305,7 @@ struct Response_ : public ZmObject, public Zhttp::Builder {
 using ResponseQ = ZmList<Response_,
   ZmListNode<Response_, ZmListHeapID<"zhttpd.Response">>>;
 using Response = ResponseQ::Node;
+ZuAssert((ZuIsSame<ResponseQ::HeapID, ZuStringT<"zhttpd.Response">>{}));
 
 struct App;
 

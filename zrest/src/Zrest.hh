@@ -303,6 +303,52 @@ struct ResBuilder : public Response, public Zhttp::Builder {
   }
 };
 
+// monomorphic (type-erased) request builder
+template <typename Requests>
+struct MReqBuilder {
+  template <typename U> using ReqHdrs = typename U::Headers;
+  using Headers = ZuTypeUnique<ZuTypeApply<ZuTypeConcat, ZuTypeMap<ReqHdrs, Requests>>>;
+  using Union = ZuTypeApply<ZuUnion, Requests>;
+
+  Union		u;
+
+  BodyPolicy::T bodyPolicy() const {
+    return u.cdispatch([](auto, const auto &request) {
+      return request.bodyPolicy();
+    });
+  }
+
+  template <typename Emit> void operation(Emit &&emit) const {
+    u.cdispatch([&emit](auto, const auto &request) {
+      request.operation(ZuFwd<Emit>(emit));
+    });
+  }
+
+  template <typename Key, typename L> void header(L &&l) const {
+    u.cdispatch([&l](auto I, const auto &request) {
+      if constexpr (ZuTypeIn<Key, ZuTypeSlice<2, 0, ZuType<I, Requests>::Headers>>{})
+	request.template header<Key>(ZuFwd<L>(l));
+    });
+  }
+  template <typename L> void header(L &&l) const {
+    u.cdispatch([&l](auto, const auto &request) {
+      request.header(ZuFwd<L>(l));
+    });
+  }
+
+  template <typename Emit> void body(Emit &&emit) const {
+    u.cdispatch([&emit](auto, const auto &request) {
+      request.body(ZuFwd<Emit>(emit));
+    });
+  }
+
+  template <typename L> void bodyHdrs(L &&l) const {
+    u.cdispatch([&l](auto, const auto &request) {
+      request.bodyHdrs(ZuFwd<L>(l));
+    });
+  }
+};
+
 } // Zrest
 
 #endif /* Zrest_HH */

@@ -959,8 +959,6 @@ public:
     stream.flush();
   }
 
-  void reset() { }
-
   template <typename L>
   void operation(L &&l) {
     l(Method::GET, [](auto &&emit) {
