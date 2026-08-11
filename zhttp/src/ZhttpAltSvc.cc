@@ -249,14 +249,13 @@ AltSvcValueStorage::AltSvcValueStorage(const AltSvcValue &value) :
     data << value.host;
     host.length = data.length() - host.offset;
     data.ensure(data.length() + 1);
-    lowerASCII(ZuSpan<uint8_t>{
-      reinterpret_cast<uint8_t *>(data.data()) + host.offset, host.length});
+    lowerASCII({data.data() + host.offset, host.length});
   }
 }
 
 AltSvcValue AltSvcValueStorage::view(OriginView origin) const
 {
-  auto bytes = reinterpret_cast<const uint8_t *>(data.data());
+  auto bytes = data.data();
   auto span = [bytes](Part part) {
     return ZuBSpan{bytes + part.offset, part.length};
   };

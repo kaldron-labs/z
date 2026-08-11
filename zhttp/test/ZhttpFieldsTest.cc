@@ -27,10 +27,26 @@ void testFieldSection()
     "invalid section lookup");
 }
 
+void testByteFields()
+{
+  ZuTestScope(testByteFields);
+  const uint8_t invalidName[] = {'x', 0xff};
+  ZuCHECK(!Zhttp::Fields::nameOK(invalidName),
+    "reject non-ASCII header-name byte");
+
+  uint64_t value = 0;
+  const ZuBSpan max{"18446744073709551615"};
+  const ZuBSpan overflow{"18446744073709551616"};
+  ZuCHECK(Zhttp::Fields::uint64(max, value) && value == uint64_t(-1),
+    "parse maximum uint64 header value");
+  ZuCHECK(!Zhttp::Fields::uint64(overflow, value),
+    "reject overflowing uint64 header value");
+}
+
 struct H3Fields {
   template <typename Semantics, typename Header>
   static bool field(
-    Semantics &semantics, ZuCSpan name, ZuCSpan value, Header &&header) {
+    Semantics &semantics, ZuBSpan name, ZuBSpan value, Header &&header) {
     return semantics.field(name, value, ZuFwd<Header>(header));
   }
 };
@@ -38,7 +54,7 @@ struct H3Fields {
 struct H2SyntheticFields {
   template <typename Semantics, typename Header>
   static bool field(
-    Semantics &semantics, ZuCSpan name, ZuCSpan value, Header &&header) {
+    Semantics &semantics, ZuBSpan name, ZuBSpan value, Header &&header) {
     return semantics.field(name, value, ZuFwd<Header>(header));
   }
 };
@@ -182,6 +198,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testFieldSection);
+  ZuTestCall(testByteFields);
   ZuTestCall((testSource<H3Fields>), "H3");
   ZuTestCall((testSource<H2SyntheticFields>), "H2 synthetic");
 }

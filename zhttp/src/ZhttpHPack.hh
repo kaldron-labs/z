@@ -21,7 +21,6 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtString.hh>
 
 #include <zlib/ZhttpCompression.hh>
 
@@ -30,8 +29,8 @@ namespace Zhttp {
 namespace H2 {
 
 struct Field {
-  ZuCSpan	name;
-  ZuCSpan	value;
+  ZuBSpan	name;
+  ZuBSpan	value;
 
   bool equals(const Field &field) const {
     return name == field.name && value == field.value;
@@ -84,7 +83,7 @@ ZtEnumStruct(ZhttpAPI, HPackFailure, uint8_t,
   None, Truncated, Integer, String, Index, Capacity, HeaderList);
 
 using HPackString =
-  ZtString<ZtStringHeapID<"Zhttp.H2.HPack.String">>;
+  ZtBArray<ZtArrayHeapID<"Zhttp.H2.HPack.String">>;
 
 struct HPackEntry {
   HPackString	name;
@@ -104,7 +103,7 @@ using HPackNameSet = ZmHashKV<
 class HPackTable {
 public:
   bool capacity(uint32_t);
-  bool insert(ZuCSpan, ZuCSpan);
+  bool insert(ZuBSpan, ZuBSpan);
   bool lookup(uint64_t, Field &) const;
   void reset();
 
@@ -161,7 +160,7 @@ public:
   void final();
   bool capacity(uint32_t);
   const HPackTxEntry *find(Field) const;
-  const HPackTxEntry *findName(ZuCSpan) const;
+  const HPackTxEntry *findName(ZuBSpan) const;
   bool insert(Field);
 
   uint32_t capacity() const { return m_capacity; }
@@ -198,8 +197,8 @@ private:
 class HPack {
 public:
   static bool staticField(uint64_t, Field &);
-  static int staticIndex(ZuCSpan, ZuCSpan);
-  static int staticNameIndex(ZuCSpan);
+  static int staticIndex(ZuBSpan, ZuBSpan);
+  static int staticNameIndex(ZuBSpan);
 };
 
 ZtEnumStruct(ZhttpAPI, HPackRep, uint8_t,
@@ -269,12 +268,12 @@ public:
   const HPackTable &table() const { return m_table; }
 
 private:
-  int decode_(ZuCSpan, unsigned &, Field &, bool &);
+  int decode_(ZuBSpan, unsigned &, Field &, bool &);
   bool indexed_(uint64_t, Field &);
   template <unsigned Bits, bool Indexing>
-  int literal_(ZuCSpan, unsigned &, Field &);
+  int literal_(ZuBSpan, unsigned &, Field &);
   template <unsigned Bits, uint8_t Huffman>
-  int string_(ZuCSpan, unsigned &, HPackString &);
+  int string_(ZuBSpan, unsigned &, HPackString &);
   bool account_(Field);
   int fail_(HPackFailure::T);
 
@@ -297,8 +296,8 @@ public:
   void reset();
   void final();
   bool peerCapacity(uint32_t);
-  void neverIndex(ZuCSpan);
-  bool neverIndexed(ZuCSpan) const;
+  void neverIndex(ZuBSpan);
+  bool neverIndexed(ZuBSpan) const;
   HPackPlan plan(Field) const;
   HPackUpdates updates() const;
   void commit(const HPackPlan &);

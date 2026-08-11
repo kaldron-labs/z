@@ -64,8 +64,7 @@ void parseURL()
 
   Zhttp::URLString mutableURL;
   mutableURL << "HTTP://Example.COM/a?#";
-  Zhttp::URL url{ZuSpan<uint8_t>{
-    reinterpret_cast<uint8_t *>(mutableURL.data()), mutableURL.length()}};
+  Zhttp::URL url{mutableURL.span()};
   ZuCHECK(url.ok() && url.host == "example.com", "in-place host case fold");
   ZuCHECK(url.hasQuery && !url.query && url.hasFragment && !url.fragment,
     "empty query and fragment presence");
@@ -214,18 +213,16 @@ void target()
   for (const auto &test : tests) {
     Zhttp::URLString input{test.input};
     Zhttp::Target target;
-    auto e = Zhttp::Target::parseH1(target, test.method,
-      ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(input.data()),
-	input.length()});
+    auto e = Zhttp::Target::parseH1(target, test.method, input.span());
     ZuCHECK(e.ok() == test.ok, test.input);
     if (test.ok) {
       ZuCHECK(target.form == test.form, test.input);
       ZuCHECK(target.pathQuery == test.pathQuery, test.input);
       if (target.pathQuery)
 	ZuCHECK(target.pathQuery.data() >=
-	    reinterpret_cast<const uint8_t *>(input.data()) &&
+	    input.data() &&
 	    target.pathQuery.data() + target.pathQuery.length() <=
-	    reinterpret_cast<const uint8_t *>(input.data()) + input.length(),
+	    input.data() + input.length(),
 	  "path-query borrows the input target");
       if (target.authority.host)
 	ZuCHECK(target.authority.normalized, "target authority normalized");
@@ -236,16 +233,12 @@ void target()
   authority << "Example.COM:443";
   Zhttp::Target target;
   auto e = Zhttp::Target::fromPseudo(target, Zhttp::Method::CONNECT,
-    Zhttp::Scheme::https,
-    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(authority.data()),
-      authority.length()}, "/chat?", "websocket");
+    Zhttp::Scheme::https, authority.span(), "/chat?", "websocket");
   ZuCHECK(e.ok() && target.form == Zhttp::TargetForm::ExtendedConnect &&
       target.authority.host == "example.com" &&
       target.pathQuery == "/chat?", "extended CONNECT");
   e = Zhttp::Target::fromPseudo(target, Zhttp::Method::GET,
-    Zhttp::Scheme::https,
-    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(authority.data()),
-      authority.length()}, "bad", {});
+    Zhttp::Scheme::https, authority.span(), "bad", {});
   ZuCHECK(e.code == Zhttp::TargetParseCode::InvalidPath &&
       e.field == Zhttp::TargetField::Path && !e.offset,
     "pseudo-header error identifies its source field");

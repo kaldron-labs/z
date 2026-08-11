@@ -125,7 +125,7 @@ struct App {
 
   template <typename Link>
   bool accept(
-      Link &, ZuCSpan, ZuCSpan target_, ZuCSpan offered,
+      Link &, ZuBSpan, ZuBSpan target_, ZuBSpan offered,
       Zws::HandshakeString &selected) {
     if (target_ != target) return false;
     if (!protocol) return true;

@@ -148,10 +148,10 @@ using SettingsKeySet = ZmHashKV<
     ZmHashHeapID<"Zhttp.H3.SettingsKeys">>>;
 
 // parse a QUIC variable-length integer from a contiguous span
-ZuInline int var(ZuCSpan in, unsigned &o, uint64_t &v) {
+ZuInline int var(ZuBSpan in, unsigned &o, uint64_t &v) {
   unsigned n = in.length();
   if (o >= n) return -1;
-  auto p = reinterpret_cast<const uint8_t *>(&in[o]);
+  auto p = &in[o];
   unsigned len = 1U << (p[0] >> 6);
   if (n - o < len) return -1;
   v = var_(p, len);
@@ -159,12 +159,12 @@ ZuInline int var(ZuCSpan in, unsigned &o, uint64_t &v) {
   return 0;
 }
 
-ZuInline bool var(ZuCSpan in, uint64_t &v) {
+ZuInline bool var(ZuBSpan in, uint64_t &v) {
   unsigned o = 0;
   return var(in, o, v) >= 0 && o == in.length();
 }
 
-ZuInline bool pushPromise(ZuCSpan in, uint64_t &id) {
+ZuInline bool pushPromise(ZuBSpan in, uint64_t &id) {
   unsigned o = 0;
   unsigned n = in.length();
   return var(in, o, id) >= 0 && n >= o + 2;
@@ -294,7 +294,7 @@ private:
   }
 
   // parse SETTINGS pairs in one pass
-  bool settings_(ZuCSpan payload) {
+  bool settings_(ZuBSpan payload) {
     unsigned o = 0;
     unsigned n = payload.length();
     while (o < n) {
@@ -312,7 +312,7 @@ private:
   }
 
   // parse a complete control-stream frame
-  bool controlFrame_(ZuCSpan frameBytes) {
+  bool controlFrame_(ZuBSpan frameBytes) {
     unsigned o = 0;
     unsigned n = frameBytes.length();
     uint64_t type = 0, len = 0;
@@ -320,7 +320,8 @@ private:
 	var(frameBytes, o, len) < 0 ||
 	n != o + len)
 	return false;
-    ZuCSpan payload{&frameBytes[o], unsigned(len)};
+    ZuBSpan payload = frameBytes;
+    payload.offset(o).trunc(len);
     switch (type) {
 	case 0x04: // SETTINGS
 	  if (m_settings) return fail_(SettingsError);
@@ -400,7 +401,7 @@ private:
       }, wireAlloc_, buf);
     if (ZuUnlikely(n <= 0)) return fail_(InternalError) ? 0 : -1;
     if (!retire_(stream, frame.total)) return -1;
-    bool ok = controlFrame_(ZuCSpan{buf->span()});
+    bool ok = controlFrame_(buf->span());
     return ok ? int(frame.total > INT_MAX ? INT_MAX : frame.total) : -1;
   }
 
@@ -423,7 +424,7 @@ private:
     if (!rx) return 0;
     QPackDecodedInsn insn;
     auto span = rx.span();
-    int n = decode(ZuCSpan{span}, insn);
+    int n = decode(span, insn);
     if (n == -2 && rx.count_() > 1) {
       uint64_t available = rx.length();
       unsigned length = available < QPackInsnMax ?
@@ -432,7 +433,7 @@ private:
       bytes.length(length);
       if (ZuUnlikely(rx.copy(0, bytes.span()) != length))
 	return fail_(InternalError) ? 0 : -1;
-      n = decode(ZuCSpan{bytes}, insn);
+      n = decode(bytes, insn);
     }
     if (n == -2) {
       if (rx.length() >= QPackInsnMax)
@@ -487,7 +488,7 @@ public:
 	    break;
 	  case StreamState::QPackEncoder:
 	    consumed = qpack_(stream,
-	      [](ZuCSpan bytes, QPackDecodedInsn &i) {
+	      [](ZuBSpan bytes, QPackDecodedInsn &i) {
 		return QPack::decodeEncoderInsn(bytes, i);
 	      }, [this](const QPackDecodedInsn &i) {
 		return this->applyEncoderInstruction_(i);
@@ -496,7 +497,7 @@ public:
 	    break;
 	  case StreamState::QPackDecoder:
 	    consumed = qpack_(stream,
-	      [](ZuCSpan bytes, QPackDecodedInsn &i) {
+	      [](ZuBSpan bytes, QPackDecodedInsn &i) {
 		return QPack::decodeDecoderInsn(bytes, i);
 	      }, [this](const QPackDecodedInsn &i) {
 		return this->applyDecoderInstruction_(i);
@@ -660,7 +661,7 @@ private:
   using FieldState = Fields::Semantics<Request>;
 
   bool qpackHeader_(
-    FieldState &fields, ZuCSpan name, ZuCSpan value) {
+    FieldState &fields, ZuBSpan name, ZuBSpan value) {
     if (name && name[0] != ':' && !fields.start(
 	[this](Method::T method, const Target &target) {
 	  impl()->operation(method, target);
@@ -695,8 +696,7 @@ private:
   void header_(Zhttp::FieldSection::T section, ZuBSpan value) {
     if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
-	ZuCSpan data{value};
-	if (!Fields::uint64(data, contentLength)) {
+      if (!Fields::uint64(value, contentLength)) {
 	  error_();
 	  ZiLOG(Error, "Zhttp", "invalid content-length");
 	} else if (contentLength > m_bodyMax) {
@@ -736,7 +736,7 @@ private:
       });
   }
 
-  Zhttp::FieldSection::T parseFields_(ZuCSpan payload, bool initial) {
+  Zhttp::FieldSection::T parseFields_(ZuBSpan payload, bool initial) {
     auto rx = impl()->qpackRx();
     FieldSectionPrefix prefix;
     FieldState fields;
@@ -760,7 +760,7 @@ private:
 	HdrBytes ack;
 	if (QPack::encodeSectionAck(ack, impl()->streamID()) < 0)
 	  return Zhttp::FieldSection::Invalid;
-	if (!impl()->qpackDecoderWrite(ZuBSpan{ack}))
+	if (!impl()->qpackDecoderWrite(ack))
 	  return Zhttp::FieldSection::Invalid;
     }
     auto section = fields.finish(
@@ -792,7 +792,7 @@ private:
     if (m_deliverHeaders) impl()->status(value);
   }
 
-  bool payloadFrame_(uint64_t type, ZuCSpan payload) {
+  bool payloadFrame_(uint64_t type, ZuBSpan payload) {
     switch (type) {
       case 0x01: // HEADERS
 	if (m_state == State::Initial) {
@@ -921,7 +921,7 @@ private:
     if (!retire_(stream, frame.total)) return false;
     auto span = buf->span();
     span.offset(frame.header);
-    bool ok = payloadFrame_(frame.type, ZuCSpan{span});
+    bool ok = payloadFrame_(frame.type, span);
     if (!ok) return fail_(MessageError);
     return true;
   }
@@ -1195,7 +1195,7 @@ inline int qpackEncodeDynamicIndexed(Bytes &out, uint64_t relativeIndex) {
 
 template <typename Bytes>
 inline int qpackEncodeDynamicName(
-  Bytes &out, uint64_t relativeIndex, ZuCSpan value, bool never) {
+  Bytes &out, uint64_t relativeIndex, ZuBSpan value, bool never) {
   return putPref(out, uint8_t(0x40 | (never ? 0x20 : 0)), 4,
       relativeIndex) < 0 ||
     putString(out, 0, 7, value) < 0 ? -1 : int(out.length());
@@ -1317,11 +1317,11 @@ private:
 	impl()->header(ZuFwd<L>(l));
   }
 
-  static ZuCSpan statusSpan_(unsigned status, ZuCArray<StatusSize> &buf) {
-    buf[0] = char('0' + ((status / 100) % 10));
-    buf[1] = char('0' + ((status / 10) % 10));
-    buf[2] = char('0' + (status % 10));
-    return ZuCSpan{buf.data(), StatusSize};
+  static ZuBSpan statusSpan_(unsigned status, ZuBArray<StatusSize> &buf) {
+    buf[0] = uint8_t('0' + ((status / 100) % 10));
+    buf[1] = uint8_t('0' + ((status / 10) % 10));
+    buf[2] = uint8_t('0' + (status % 10));
+    return buf.span();
   }
 
   template <typename Stream>
@@ -1380,7 +1380,7 @@ private:
 
     Build(Bytes &out_) : out{out_} { }
 
-    void planInsert_(ZuCSpan name, ZuCSpan value) {
+    void planInsert_(ZuBSpan name, ZuBSpan value) {
 	if constexpr (Plan) {
 	  if (!tx || !dynamic || !plannedCapacity ||
 	      params.neverIndex(name))
@@ -1414,7 +1414,7 @@ private:
 	  }
 	}
     }
-    void field(ZuCSpan name, ZuCSpan value) {
+    void field(ZuBSpan name, ZuBSpan value) {
 	if (!ok) return;
 	Header h{name, value};
 	if (QPack::staticIndex(name, value) >= 0) {
@@ -1445,7 +1445,7 @@ private:
     }
     template <typename P>
     ZuIfT<!Compression::IsPrintString<P>{}>
-    field(ZuCSpan name, const P &value) {
+    field(ZuBSpan name, const P &value) {
 	if (!ok) return;
 	uint64_t nameIndex = 0;
 	if (QPack::staticNameIndex(name, nameIndex)) {
@@ -1459,10 +1459,11 @@ private:
 	  out, uint8_t(0x20 | (params.neverIndex(name) ? 0x10 : 0)),
 	  3, name) >= 0 && Compression::putPrint(out, 0, 7, value) >= 0;
     }
-    void field(ZuCSpan name, ZuCSpan value1, char sep, ZuCSpan value2) {
+    void field(ZuBSpan name, ZuBSpan value1, char sep, ZuBSpan value2) {
 	if (!ok) return;
 	uint64_t length = uint64_t(value1.length()) + 1 + value2.length();
-	QPackTxString value{length + 1};
+	QPackTxString value;
+	value.ensure(length);
 	value << value1 << sep << value2;
 	field(name, value);
     }
@@ -1485,9 +1486,9 @@ private:
 	}
     });
     runtimeHeaders_([&build]<typename K, typename V>(K &&k, V &&v) {
-	ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">> name;
+	ZtBArray<ZtArrayHeapID<"Zhttp.H3.HeaderName">> name;
 	name << ZuFwd<K>(k);
-	if (name) build.field(ZuCSpan{name}, ZuFwd<V>(v));
+	if (name) build.field(name, ZuFwd<V>(v));
     });
     return build.ok;
   }
@@ -1561,7 +1562,7 @@ private:
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK capacity");
 	    return;
 	  }
-	  if (!impl()->qpackEncoderWrite(ZuBSpan{scratch})) {
+	  if (!impl()->qpackEncoderWrite(scratch)) {
 	    impl()->qpackFailure(QPackBuildFailure::EncoderCapacityWrite);
 	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK capacity");
 	    return;
@@ -1580,7 +1581,7 @@ private:
 	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK insert");
 	    return;
 	  }
-	  if (!impl()->qpackEncoderWrite(ZuBSpan{scratch})) {
+	  if (!impl()->qpackEncoderWrite(scratch)) {
 	    impl()->qpackFailure(QPackBuildFailure::EncoderInsertWrite);
 	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK insert");
 	    return;
@@ -1595,7 +1596,7 @@ private:
 	return;
     }
     StreamBytes out{stream};
-    writeSpan_(stream, ZuBSpan{prefix});
+    writeSpan_(stream, prefix);
     out.n += prefix.length();
     uint64_t bodyStart = out.length();
     Build<StreamBytes<Stream>, false> emit{out};
@@ -1648,10 +1649,10 @@ protected:
     writeHeaders_(stream, [this, &valid](auto &build) {
 	impl()->operation([this, &build, &valid](
 	    Method::T method, auto &&emit) {
-	  ZuCSpan protocol;
+	  ZuBSpan protocol;
 	  if (method == Method::CONNECT)
 	    impl()->protocol([&protocol]<typename P>(P &&value) {
-	      protocol = ZuCSpan{ZuFwd<P>(value)};
+	      protocol = ZuFwd<P>(value);
 	    });
 	  if (protocol && !m_peerExtendedConnect) {
 	    valid = false;
@@ -1682,7 +1683,7 @@ protected:
   void beginResponse_(Stream &stream) {
     writeHeaders_(stream, [this](auto &build) {
 	unsigned status = impl()->status();
-	ZuCArray<StatusSize> buf;
+	ZuBArray<StatusSize> buf;
 	build.field(":status", statusSpan_(status, buf));
 	contentLength_(build);
 	headers_<Headers>(build);

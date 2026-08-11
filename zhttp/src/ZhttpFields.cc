@@ -16,7 +16,7 @@ ZtEnumImplNS(FieldSection);
 
 namespace Fields {
 
-bool forbidden(ZuCSpan name)
+bool forbidden(ZuBSpan name)
 {
   static constexpr auto matcher = ZuMatcher<
     "connection", "proxy-connection", "keep-alive",
@@ -24,7 +24,7 @@ bool forbidden(ZuCSpan name)
   return matcher.exact(name) >= 0;
 }
 
-int pseudo(ZuCSpan name)
+int pseudo(ZuBSpan name)
 {
   static constexpr auto matcher =
     ZuMatcher<":method", ":path", ":scheme", ":authority", ":protocol">();

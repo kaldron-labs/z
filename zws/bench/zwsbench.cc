@@ -134,7 +134,7 @@ struct ServerApp {
     state->done.post();
   }
   bool accept(
-      auto &, ZuCSpan, ZuCSpan target, ZuCSpan,
+      auto &, ZuBSpan, ZuBSpan target, ZuBSpan,
       Zws::HandshakeString &) {
     return target == "/bench";
   }

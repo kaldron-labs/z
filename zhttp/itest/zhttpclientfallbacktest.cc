@@ -128,7 +128,7 @@ struct ResParser {
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan value) {
-    if constexpr (Key{}() == "alt-svc") *altSvc = ZuCSpan{value};
+    if constexpr (Key{}() == "alt-svc") *altSvc = value;
   }
   template <typename Rx>
   bool body(Rx &rx) {

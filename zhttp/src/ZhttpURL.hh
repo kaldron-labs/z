@@ -20,7 +20,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtString.hh>
+#include <zlib/ZtArray.hh>
 
 #include <zlib/ZhttpCore.hh>
 
@@ -70,7 +70,7 @@ struct TargetParseError {
   bool ok() const { return code == TargetParseCode::OK; }
 };
 
-ZuDerive(URLString, ZtString<ZtStringHeapID<"Zhttp.URL">>);
+ZuDerive(URLString, ZtBArray<ZtArrayHeapID<"Zhttp.URL">>);
 
 struct AuthorityView {
   ZuBSpan	raw;
@@ -128,7 +128,7 @@ struct Origin {
   explicit Origin(const OriginView &);
 
   OriginView view() const {
-    return {ZuBSpan{host}, port, scheme, ipv6Literal};
+    return {host, port, scheme, ipv6Literal};
   }
   bool equals(const Origin &o) const {
     return scheme == o.scheme && host == o.host && port == o.port;

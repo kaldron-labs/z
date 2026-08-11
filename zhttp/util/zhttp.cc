@@ -405,7 +405,7 @@ bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr)
 {
   Zhttp::AuthorityView authority;
   if (!Zhttp::parseAuthority(
-      authority, ZuBSpan{s}, 0, 0, false, true).ok()) return false;
+      authority, s, 0, 0, false, true).ok()) return false;
   try {
     ZiIP ip;
     if (!ZiIP::parse(ip, authority.host)) return false;
@@ -558,7 +558,7 @@ struct ResParser {
     if (!req->logResponse) return;
     auto ctx = reqLogCtx(*req);
     ZeString value_;
-    value_ << ZuCSpan(value);
+    value_ << value;
     ZiLOG(Info, "zhttp.response", ([ctx, value = ZuMv(value_)](auto &s) {
       reqLogPrefix(ctx, s);
       s << "header " << Key{}() << ": " << value;
@@ -780,7 +780,7 @@ int main(int argc, char **argv)
   if (!validateOptions(options, argc)) usage();
 
   Zhttp::URLStorage urlStorage;
-  auto urlError = urlStorage.assign(ZuBSpan{options.url});
+  auto urlError = urlStorage.assign(options.url);
   if (!urlError.ok()) {
     auto code = urlError.code;
     auto offset = urlError.offset;

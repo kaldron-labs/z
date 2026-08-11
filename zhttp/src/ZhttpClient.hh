@@ -347,7 +347,8 @@ struct Destination {
     if (ipv6Literal) input << ']';
     input << ':' << ZuBoxed(port);
     AuthorityView parsed;
-    auto error = parseAuthority(parsed, ZuBSpan{input}, 0, 0, true);
+    ZuBSpan input_ = input;
+    auto error = parseAuthority(parsed, input_, 0, 0, true);
     if (!port || !error.ok() || parsed.port != port ||
 	parsed.ipv6Literal != ipv6Literal) {
       host.length(0);
@@ -486,8 +487,8 @@ public:
 private:
   struct ReqOps {
     ReqOps(
-      Request &app_, ZuCSpan authority_, bool operationCached_ = false,
-      Method::T method_ = Method::GET, ZuCSpan target_ = {}) :
+      Request &app_, ZuBSpan authority_, bool operationCached_ = false,
+      Method::T method_ = Method::GET, ZuBSpan target_ = {}) :
       app{&app_}, target{target_}, authority{authority_}, method{method_},
       operationCached{operationCached_} { }
 
@@ -521,10 +522,10 @@ private:
     template <typename L>
     void header(L &&l) {
       app->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
-	ZtString<ZtStringHeapID<"Zhttp.RuntimeHeader.Name">> name;
+	ZtBArray<ZtArrayHeapID<"Zhttp.RuntimeHeader.Name">> name;
 	name << k;
 	if (!validRuntimeHeader<ReqHeaders>(
-	      ZuCSpan{name}, Message::ID == Version::H1)) {
+	      name, Message::ID == Version::H1)) {
 	  headersOK = false;
 	  return;
 	}
@@ -544,8 +545,8 @@ private:
 
     Request		*app = nullptr;
     HeaderPatches<ReqHeaders> patches;
-    ZuCSpan		target;
-    ZuCSpan		authority;
+    ZuBSpan		target;
+    ZuBSpan		authority;
     uint64_t		produced = 0;
     Method::T		method = Method::GET;
     bool		headersOK = true;
@@ -563,10 +564,10 @@ private:
     using Base = typename Message::template Request<
       Builder_, ReqHeaders, ReqTrailers, HasBody, Streaming>;
     Builder_(
-      Request &app_, ZuCSpan authority, bool suppressPads = false,
+      Request &app_, ZuBSpan authority, bool suppressPads = false,
       bool rejectContentLength = false,
       bool operationCached = false, Method::T method = Method::GET,
-      ZuCSpan target = {}) :
+      ZuBSpan target = {}) :
       ReqOps{app_, authority, operationCached, method, target} {
       this->suppressPads = suppressPads;
       this->rejectContentLength = rejectContentLength;
@@ -5671,7 +5672,7 @@ public:
   Client *client() const { return m_client; }
   const Config &config() const { return m_config; }
   const Destination &destination() const { return m_dest; }
-  ZuCSpan authority() const { return m_dest.authority; }
+  ZuBSpan authority() const { return m_dest.authority; }
 
   bool send_(Request *request, bool) {
     assertTx_();
@@ -5976,9 +5977,9 @@ public:
 	parser.template header<Key>(section, value);
 	return;
       }
-      if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "close"))
+      if (ZuICmp<ZuBSpan>::equals(value, "close"))
 	attempt.protocol.persistence = Persistence::Close;
-      else if (ZuICmp<ZuCSpan>::equals(ZuCSpan(value), "keep-alive"))
+      else if (ZuICmp<ZuBSpan>::equals(value, "keep-alive"))
 	attempt.protocol.persistence = Persistence::KeepAlive;
     } else if constexpr (Key{}() == "location") {
       if (section != Zhttp::FieldSection::Final) {

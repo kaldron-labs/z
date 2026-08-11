@@ -53,7 +53,7 @@ struct Cxn : public Zhttp::H2::Connection<Cxn> {
   void h2SettingsAck() { ++settingsAckCalls; }
   void h2Headers(uint32_t stream, ZuBSpan value) {
     headerStream = stream;
-    headers << ZuCSpan{value};
+    headers << value;
     if (decodeHPack &&
 	hpack.process(value, [this](Zhttp::H2::Field field) {
 	  ++fieldCalls;
@@ -75,7 +75,7 @@ struct Cxn : public Zhttp::H2::Connection<Cxn> {
   }
   void h2Data(uint32_t stream, ZuBSpan value) {
     dataStream = stream;
-    data << ZuCSpan{value};
+    data << value;
   }
   void h2DataEnd(
     uint32_t stream, bool endStream, uint32_t length,
@@ -91,7 +91,7 @@ struct Cxn : public Zhttp::H2::Connection<Cxn> {
   void h2Ping(ZuBSpan value) {
     ++pingCalls;
     ping.length(0);
-    ping << ZuCSpan{value};
+    ping << value;
   }
   void h2PingAck(ZuBSpan) { ++pingAckCalls; }
   void h2Reset(uint32_t stream, Zhttp::H2::Error::T value) {

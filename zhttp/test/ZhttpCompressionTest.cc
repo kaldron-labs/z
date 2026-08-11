@@ -250,7 +250,7 @@ void testPrefixIntegers()
   uint64_t value = 0;
   uint8_t truncated[] = {0x1f, 0x9a};
   ZuCHECK(Zhttp::Compression::decodePref<5>(
-      ZuCSpan{truncated}, offset, value) == -2,
+      truncated, offset, value) == -2,
     "truncated prefix integer");
   uint8_t overflow[] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -258,16 +258,16 @@ void testPrefixIntegers()
   };
   offset = 0;
   ZuCHECK(Zhttp::Compression::decodePref<8>(
-      ZuCSpan{overflow}, offset, value) == -1,
+      overflow, offset, value) == -1,
     "overflowing prefix integer");
 }
 
-static bool fragmentedString_(ZuBSpan encoded, ZuCSpan expected)
+static bool fragmentedString_(ZuBSpan encoded, ZuBSpan expected)
 {
   for (unsigned split = 1; split <= encoded.length(); ++split) {
     Zhttp::Compression::StringDecoder<HdrBytes> decoder;
     HdrBytes storage;
-    ZuCSpan value;
+    ZuBSpan value;
     int state = decoder.start<7, 0x80>(encoded[0], 1024);
     unsigned offset = 1;
     if (split > 1)

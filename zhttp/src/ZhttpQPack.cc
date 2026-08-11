@@ -16,13 +16,13 @@ ZtEnumImplStruct(QPackBuildFailure);
 
 using QPackStatic_ = StaticTable<QPackTbl>;
 
-static int qpackStaticName_(ZuCSpan value)
+static int qpackStaticName_(ZuBSpan value)
 {
   static constexpr auto matcher = ZuMatcher<QPackStatic_::Names>();
   return matcher.exact(value);
 }
 
-static int qpackStaticNameIndex_(ZuCSpan value)
+static int qpackStaticNameIndex_(ZuBSpan value)
 {
   int i = qpackStaticName_(value);
   if (i < 0) return -1;
@@ -35,7 +35,7 @@ static int qpackStaticNameIndex_(ZuCSpan value)
   return index;
 }
 
-static int qpackStaticIndex_(ZuCSpan name, ZuCSpan value)
+static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
 {
   int i = qpackStaticName_(name);
   if (i < 0) return -1;
@@ -58,7 +58,7 @@ static int qpackStaticIndex_(ZuCSpan name, ZuCSpan value)
   return index;
 }
 
-bool Params::neverIndex(ZuCSpan name) const
+bool Params::neverIndex(ZuBSpan name) const
 {
   if (neverIndex_->find(name)) return true;
   static constexpr auto matcher =
@@ -66,7 +66,7 @@ bool Params::neverIndex(ZuCSpan name) const
   return matcher.exact(name) >= 0;
 }
 
-static uint32_t qpackEntrySize_(ZuCSpan name, ZuCSpan value)
+static uint32_t qpackEntrySize_(ZuBSpan name, ZuBSpan value)
 {
   uint64_t n = uint64_t(name.length()) + value.length() + 32;
   return n > uint32_t(-1) ? uint32_t(-1) : uint32_t(n);
@@ -153,7 +153,7 @@ bool QPackRxTable::insert(Header h)
   return insert(h.name, h.value);
 }
 
-bool QPackRxTable::insert(ZuCSpan name, ZuCSpan value)
+bool QPackRxTable::insert(ZuBSpan name, ZuBSpan value)
 {
   uint32_t n = qpackEntrySize_(name, value);
   if (n > capacityBytes_) return false;
@@ -298,7 +298,7 @@ bool QPackTxTable::setCapacity(uint32_t capacity)
   return false;
 }
 
-const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
+const QPackTxEntry *QPackTxTable::find(ZuBSpan name, ZuBSpan value) const
 {
   if (!exact) return nullptr;
   auto h = exact->find(QPackFieldKey{name, value});
@@ -308,7 +308,7 @@ const QPackTxEntry *QPackTxTable::find(ZuCSpan name, ZuCSpan value) const
   return e.name == name && e.value == value ? &e : nullptr;
 }
 
-const QPackTxEntry *QPackTxTable::findName(ZuCSpan name) const
+const QPackTxEntry *QPackTxTable::findName(ZuBSpan name) const
 {
   if (!names) return nullptr;
   auto indexed = names->find(Compression::NameView{name});
@@ -318,7 +318,7 @@ const QPackTxEntry *QPackTxTable::findName(ZuCSpan name) const
 }
 
 const QPackTxEntry *QPackTxTable::findName(
-  ZuCSpan name, uint64_t base) const
+  ZuBSpan name, uint64_t base) const
 {
   auto entry = findName(name);
   while (entry) {
@@ -542,7 +542,7 @@ bool QPackTxTable::applyDecoder(QPackInsn::T type, uint64_t value)
   }
 }
 
-bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
+bool QPack::staticNameIndex(ZuBSpan name, uint64_t &index)
 {
   int i = qpackStaticNameIndex_(name);
   if (i < 0) return false;
@@ -550,7 +550,7 @@ bool QPack::staticNameIndex(ZuCSpan name, uint64_t &index)
   return true;
 }
 
-int QPack::staticIndex(ZuCSpan name, ZuCSpan value)
+int QPack::staticIndex(ZuBSpan name, ZuBSpan value)
 {
   return qpackStaticIndex_(name, value);
 }
@@ -582,7 +582,7 @@ bool QPack::staticName(uint64_t index, HeaderName &name)
 }
 
 int QPack::decodeFieldSectionPrefix(
-  ZuCSpan in, EncodedFieldSectionPrefix &prefix)
+  ZuBSpan in, EncodedFieldSectionPrefix &prefix)
 {
   prefix = {};
   unsigned o = 0;
@@ -615,7 +615,7 @@ bool QPack::fieldSectionBase(
 }
 
 int QPack::decodeFieldSectionPrefix(
-  ZuCSpan in, FieldSectionPrefix &prefix, uint64_t insertCount,
+  ZuBSpan in, FieldSectionPrefix &prefix, uint64_t insertCount,
   uint64_t maxCapacity)
 {
   EncodedFieldSectionPrefix encoded;
@@ -646,7 +646,7 @@ bool QPack::validateFieldSectionPrefix(
   return prefix.requiredInsertCount <= insertCount && prefix.base <= insertCount;
 }
 
-int QPack::decodeEncoderInsn(ZuCSpan in, QPackDecodedInsn &i)
+int QPack::decodeEncoderInsn(ZuBSpan in, QPackDecodedInsn &i)
 {
   unsigned o = 0;
   uint8_t first = 0;
@@ -692,7 +692,7 @@ int QPack::decodeEncoderInsn(ZuCSpan in, QPackDecodedInsn &i)
   return -1;
 }
 
-int QPack::decodeDecoderInsn(ZuCSpan in, QPackDecodedInsn &i)
+int QPack::decodeDecoderInsn(ZuBSpan in, QPackDecodedInsn &i)
 {
   unsigned o = 0;
   if (!in.length()) return -2;

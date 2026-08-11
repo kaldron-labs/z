@@ -46,14 +46,14 @@ bool initState(State &state, const Zi::Path &root)
   return true;
 }
 
-RequestData req(ZuCSpan target)
+RequestData req(ZuBSpan target)
 {
   RequestData r;
   r.method = Zhttp::Method::GET;
   r.target = target;
   int q = target.find([](auto c) { return c == '?'; });
-  r.path_ = q < 0 ? target : ZuCSpan{target.data(), unsigned(q)};
-  r.query_ = q < 0 ? ZuCSpan{} : ZuCSpan{
+  r.path_ = q < 0 ? target : ZuBSpan{target.data(), unsigned(q)};
+  r.query_ = q < 0 ? ZuBSpan{} : ZuBSpan{
     target.data() + q + 1, target.length() - unsigned(q + 1)};
   r.hasQuery = q >= 0;
   r.form = Zhttp::TargetForm::Origin;

@@ -197,8 +197,7 @@ private:
 	}
     } else if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
-	ZuCSpan data{value};
-	if (!Fields::uint64(data, contentLength) ||
+      if (!Fields::uint64(value, contentLength) ||
 	    contentLength > m_bodyMax) {
 	  fail_(contentLength > m_bodyMax ?
 	    RequestErrorCode::ContentTooLarge : RequestErrorCode::Malformed,

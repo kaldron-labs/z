@@ -77,7 +77,7 @@ struct FrameHeader {
 };
 
 // decode a contiguous nine-byte frame header
-bool decodeHeader(ZuCSpan, FrameHeader &);
+bool decodeHeader(ZuBSpan, FrameHeader &);
 
 // incremental nine-byte frame header parser
 class FrameHeaderParser {
@@ -93,7 +93,7 @@ private:
 // incremental client connection preface parser
 class PrefaceParser {
 public:
-  static ZuCSpan value();
+  static ZuBSpan value();
 
   int process(ZuBSpan, unsigned &);
   void reset() { m_offset = 0; }
@@ -610,7 +610,7 @@ public:
     return true;
   }
 
-  bool field(ZuCSpan name, ZuCSpan value) {
+  bool field(ZuBSpan name, ZuBSpan value) {
     if (!m_headers) return fail_();
     if (name && name[0] != ':' && !start_()) return fail_();
     if (!m_fields.field(name, value,
@@ -770,8 +770,7 @@ private:
   void header_(ZuBSpan key, ZuBSpan value) {
     if (key == "content-length") {
       uint64_t length = 0;
-      ZuCSpan data{value};
-      if (!Fields::uint64(data, length)) {
+      if (!Fields::uint64(value, length)) {
 	fail_();
 	return;
       }
@@ -884,10 +883,10 @@ protected:
     impl()->operation(
       [this, &stream, &sent, &endStream, &streamMode]
       (Method::T method, auto &&emit) {
-      ZuCSpan protocol;
+      ZuBSpan protocol;
       if (method == Method::CONNECT)
 	impl()->protocol([&protocol]<typename P>(P &&value) {
-	  protocol = ZuCSpan{ZuFwd<P>(value)};
+	  protocol = ZuFwd<P>(value);
 	});
       if (protocol && !stream.extendedConnect()) return;
       streamMode = bool(protocol);
@@ -924,11 +923,11 @@ protected:
     bool endStream =
       !informational && !streamMode && !HasBody && !Trailers::N;
     stream.beginHeaders(endStream);
-    ZuCArray<StatusSize> status;
-    status[0] = char('0' + ((value / 100) % 10));
-    status[1] = char('0' + ((value / 10) % 10));
-    status[2] = char('0' + (value % 10));
-    field_(stream, ":status", ZuCSpan{status.data(), StatusSize});
+    ZuBArray<StatusSize> status;
+    status[0] = uint8_t('0' + ((value / 100) % 10));
+    status[1] = uint8_t('0' + ((value / 10) % 10));
+    status[2] = uint8_t('0' + (value % 10));
+    field_(stream, ":status", status.span());
     if (streamMode)
       headers_<Headers, false>(stream);
     else
@@ -977,7 +976,7 @@ public:
 
 private:
   template <typename Stream, typename V>
-  static void field_(Stream &stream, ZuCSpan name, V &&value) {
+  static void field_(Stream &stream, ZuBSpan name, V &&value) {
     stream.field(name, ZuFwd<V>(value));
   }
 
@@ -1002,9 +1001,9 @@ private:
   template <typename Stream>
   void runtimeHeaders_(Stream &stream) {
     auto fn = [&stream]<typename K, typename V>(K &&k, V &&v) {
-      ZtString<ZtStringHeapID<"Zhttp.H2.HeaderName">> name;
+      ZtBArray<ZtArrayHeapID<"Zhttp.H2.HeaderName">> name;
       name << ZuFwd<K>(k);
-      if (name) stream.field(ZuCSpan{name}, ZuFwd<V>(v));
+      if (name) stream.field(name, ZuFwd<V>(v));
     };
     if constexpr (Fields::HasRuntimeBuilder<Impl, decltype(fn)>{})
       impl()->header(ZuMv(fn));

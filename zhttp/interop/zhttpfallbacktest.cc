@@ -86,7 +86,7 @@ struct RequestRx :
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path.length(0);
-    path << ZuCSpan{target.pathQuery};
+    path << target.pathQuery;
   }
 
   template <typename Key>

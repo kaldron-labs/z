@@ -147,8 +147,9 @@ URLParseError authority(
   AuthorityView &out, ZuSpan<uint8_t> in, unsigned offset,
   uint16_t defltPort, bool requirePort, bool allowZeroPort = false)
 {
+  ZuBSpan input = in;
   auto e = authority(
-    out, ZuBSpan{in}, offset, defltPort, requirePort, allowZeroPort);
+    out, input, offset, defltPort, requirePort, allowZeroPort);
   if (!e.ok()) return e;
   unsigned hostOffset = unsigned(out.host.data() - in.data());
   ZuSpan host{in.data() + hostOffset, out.host.length()};
@@ -205,8 +206,7 @@ void removeDots(URLString &out, unsigned floor)
   unsigned write = floor;
   unsigned length = out.length();
   while (read < length) {
-    ZuBSpan in{reinterpret_cast<const uint8_t *>(out.data()) + read,
-	length - read};
+    ZuBSpan in{out.data() + read, length - read};
     if (in.match("../")) {
       read += 3;
     } else if (in.match("./")) {
@@ -394,7 +394,7 @@ void URLStorage::commit_(URLString &&data, const URL &url)
 {
   auto part = [&data](ZuBSpan s) {
     return Part{
-      uint32_t(s.data() - reinterpret_cast<const uint8_t *>(data.data())),
+      uint32_t(s.data() - data.data()),
       uint32_t(s.length())
     };
   };
@@ -422,8 +422,7 @@ URLParseError URLStorage::assign(ZuBSpan input)
 URLParseError URLStorage::adopt(URLString &&candidate)
 {
   candidate.ensure(candidate.length() + 1);
-  URL parsed{ZuSpan<uint8_t>{
-    reinterpret_cast<uint8_t *>(candidate.data()), candidate.length()}};
+  URL parsed{candidate.span()};
   if (!parsed.ok()) return parsed.error();
   commit_(ZuMv(candidate), parsed);
   return {};
@@ -436,7 +435,7 @@ URL URLStorage::url() const
     out.parseError = m_error;
     return out;
   }
-  auto data = reinterpret_cast<const uint8_t *>(m_data.data());
+  auto data = m_data.data();
   auto span = [data](Part part) {
     return ZuBSpan{data + part.offset, part.length};
   };

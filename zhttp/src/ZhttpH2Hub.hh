@@ -182,8 +182,8 @@ struct EventType {
 
 struct Event {
   EventType::T	type = EventType::Begin;
-  ZuCSpan	name;
-  ZuCSpan	value;
+  ZuBSpan	name;
+  ZuBSpan	value;
   Ztls::RxStream *wire = nullptr;
   uint64_t	consumed = 0;
   uint32_t	frameLength = 0;
@@ -440,16 +440,16 @@ public:
     m_open = true;
     m_endStream = endStream;
   }
-  void field(ZuCSpan name, ZuCSpan value) {
+  void field(ZuBSpan name, ZuBSpan value) {
     field_({name, value});
   }
   template <typename P>
   ZuIfT<!Compression::IsPrintString<P>{}>
-  field(ZuCSpan name, const P &value) {
+  field(ZuBSpan name, const P &value) {
     fieldPrint_(name, value);
   }
   void field(
-    ZuCSpan name, ZuCSpan value1, char separator, ZuCSpan value2) {
+    ZuBSpan name, ZuBSpan value1, char separator, ZuBSpan value2) {
     HPackString value;
     unsigned n1 = value1.length(), n2 = value2.length();
     value.length(uint64_t(n1) + 1 + n2);
@@ -585,7 +585,7 @@ public:
 
 private:
   template <typename P>
-  void fieldPrint_(ZuCSpan name, const P &value) {
+  void fieldPrint_(ZuBSpan name, const P &value) {
     auto emit = [this, name, &value](auto &out) {
       int nameIndex = HPack::staticNameIndex(name);
       uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
@@ -1065,8 +1065,7 @@ public:
     ZuBArray<FrameHeaderSize> bytes;
     if (ZuUnlikely(rx.copy(0, bytes.span()) != FrameHeaderSize)) return 0;
     FrameHeader header;
-    if (ZuUnlikely(!decodeHeader(
-	ZuCSpan{bytes.data(), FrameHeaderSize}, header))) return 0;
+    if (ZuUnlikely(!decodeHeader(bytes.span(), header))) return 0;
     if (auto error = validateFrame(header, m_config.maxFrameSize())) {
       h2Error(error);
       return -1;

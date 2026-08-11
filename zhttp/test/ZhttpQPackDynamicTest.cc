@@ -15,7 +15,7 @@
 
 using namespace ZuTestUtil;
 
-static void appendSpan(Zhttp::H3::HdrBytes &bytes, ZuCSpan s)
+static void appendSpan(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 {
   for (unsigned i = 0; i < s.length(); ++i) bytes.push(uint8_t(s[i]));
 }
@@ -76,7 +76,7 @@ void testVar()
     Zhttp::H3::HdrBytes bytes;
     Zhttp::H3::putVar(bytes, values[i]);
     uint64_t value = 0;
-    ZuCHECK(Zhttp::H3::var(ZuCSpan{bytes}, value) && value == values[i],
+    ZuCHECK(Zhttp::H3::var(bytes, value) && value == values[i],
       "contiguous QUIC varint round trip failed");
 
     RxStream rx;
@@ -174,13 +174,13 @@ struct BuilderState :
   CaptureEncoder	encoder;
   uint64_t		id = 1;
   Zhttp::Method::T	method = Zhttp::Method::GET;
-  ZuCSpan		path = "/sample";
-  ZuCSpan		query = "";
-  ZuCSpan		protocol_;
+  ZuBSpan		path = "/sample";
+  ZuBSpan		query = "";
+  ZuBSpan		protocol_;
   bool			runtimeHeader = false;
   bool			customTarget = false;
-  ZuCSpan		runtimeName = "server";
-  ZuCSpan		runtimeValue = "zhttp-runtime";
+  ZuBSpan		runtimeName = "server";
+  ZuBSpan		runtimeValue = "zhttp-runtime";
 };
 
 using ParserHeaders = ZhttpHeaders("x-test");
@@ -237,9 +237,9 @@ struct ParserStream :
     operationOrder = ++callbackOrder;
     method = method_;
     path.length(0);
-    path << ZuCSpan{target.pathQuery};
+    path << target.pathQuery;
     protocol_.length(0);
-    protocol_ << ZuCSpan{target.protocol};
+    protocol_ << target.protocol;
     if (protocol_ && acceptStream) {
       ++streamStarts;
       Base::stream();
@@ -254,7 +254,7 @@ struct ParserStream :
       xTestLen = value.length();
       if (value.length() <= 4096) {
 	xTest.length(0);
-	xTest << ZuCSpan{value};
+	xTest << value;
       }
     }
   }
@@ -266,8 +266,8 @@ struct ParserStream :
     if (name == "host") return;
     runtimeName.length(0);
     runtimeValue.length(0);
-    runtimeName << ZuCSpan{name};
-    runtimeValue << ZuCSpan{value};
+    runtimeName << name;
+    runtimeValue << value;
   }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyType = type;
@@ -292,7 +292,7 @@ struct ParserStream :
 	  },
 	  [this, &offered](ZuBSpan span) {
 	    bodyNoCopy &= span.data() == offered;
-	    bodyData << ZuCSpan{span};
+	    bodyData << span;
 	  }) <= 0)
 	return false;
       if (partialBody) break;
@@ -314,7 +314,7 @@ struct ParserStream :
 	  },
 	  [this, &offered](ZuBSpan span) {
 	    streamNoCopy &= span.data() == offered;
-	    streamBody << ZuCSpan{span};
+	    streamBody << span;
 	  });
       if (n <= 0) break;
       if (partialStream) break;
@@ -485,7 +485,7 @@ struct CxnStream :
   int				extendedConnect = -1;
 };
 
-static bool headersPayload(ZuCSpan bytes, ZuCSpan &payload)
+static bool headersPayload(ZuBSpan bytes, ZuBSpan &payload)
 {
   unsigned o = 0;
   uint64_t type = 0, len = 0;
@@ -493,7 +493,7 @@ static bool headersPayload(ZuCSpan bytes, ZuCSpan &payload)
       Zhttp::H3::var(bytes, o, len) < 0 ||
       type != 0x01 || bytes.length() != o + len)
     return false;
-  payload = ZuCSpan{bytes.data() + o, unsigned(len)};
+  payload = {bytes.data() + o, unsigned(len)};
   return true;
 }
 
@@ -507,7 +507,7 @@ static bool txUnchanged(const Zhttp::H3::QPackTxTable &tx)
 
 static void appendString(
   Zhttp::H3::HdrBytes &bytes, uint8_t prefix, unsigned prefixBits,
-  ZuCSpan s)
+  ZuBSpan s)
 {
   Zhttp::H3::putPref(bytes, prefix, prefixBits, s.length());
   appendSpan(bytes, s);
@@ -519,7 +519,7 @@ using namespace ZhttpQPackDynamicTest_;
 
 static void appendHuffmanString(
   Zhttp::H3::HdrBytes &bytes, uint8_t prefix, unsigned prefixBits,
-  ZuCSpan s)
+  ZuBSpan s)
 {
   Zhttp::H3::HdrBytes encoded;
   encoded.length(Zhttp::Compression::Huffman::enclen(s.length()));
@@ -636,7 +636,7 @@ void testFieldRepresentationGoldens()
   prefix.base = table.insertCount();
 
   auto decodeOne = [&table](
-    Zhttp::H3::HdrBytes &bytes, ZuCSpan name, ZuCSpan value, auto check) {
+    Zhttp::H3::HdrBytes &bytes, ZuBSpan name, ZuBSpan value, auto check) {
     unsigned seen = 0;
     bool matched = false;
     int n = Zhttp::H3::QPack::decodeFieldSection(
@@ -779,11 +779,11 @@ static void putHeadersFrame(
 }
 
 static void putLiteralField(
-  Zhttp::H3::HdrBytes &payload, ZuCSpan name, ZuCSpan value,
+  Zhttp::H3::HdrBytes &payload, ZuBSpan name, ZuBSpan value,
   bool huffmanValue = false, bool huffmanName = false);
 
 static void putRequestPseudos(
-  Zhttp::H3::HdrBytes &payload, ZuCSpan path = "/parser")
+  Zhttp::H3::HdrBytes &payload, ZuBSpan path = "/parser")
 {
   putLiteralField(payload, ":method", "GET");
   putLiteralField(payload, ":scheme", "https");
@@ -1190,7 +1190,7 @@ void testParserStrictContentLength()
 }
 
 static void putLiteralField(
-  Zhttp::H3::HdrBytes &payload, ZuCSpan name, ZuCSpan value,
+  Zhttp::H3::HdrBytes &payload, ZuBSpan name, ZuBSpan value,
   bool huffmanValue, bool huffmanName)
 {
   if (huffmanName)
@@ -1387,9 +1387,9 @@ void testFieldDecodeAllocationDiscipline()
     appendString(bytes, 0x20, 3, "x");
     appendString(bytes, 0x00, 7, "v");
   }
-  ZuCSpan input = bytes;
-  const char *begin = input.data();
-  const char *end = begin + bytes.length();
+  ZuBSpan input = bytes;
+  const uint8_t *begin = input.data();
+  const uint8_t *end = begin + bytes.length();
   unsigned seen = 0;
   bool inputBacked = true;
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
@@ -1536,8 +1536,7 @@ void testTxTable()
       table.used() <= table.capacity(),
     "tx insert accounting mismatch");
   ZuCHECK(table.find("accept", "application/json") &&
-      table.find(
-	ZuCSpan{"accept"}, ZuCSpan{"application/json"})->abs == abs,
+      table.find("accept", "application/json")->abs == abs,
     "tx exact lookup by temporary spans failed");
   uint32_t used = table.used();
   ZuCHECK(table.insert({"accept", "application/json"}, &abs) && !abs &&
@@ -1550,7 +1549,7 @@ void testTxTable()
     "tx absolute lookup failed");
   used = table.used();
   uint64_t count = table.insertCount();
-  ZuCSpan oversized =
+  ZuBSpan oversized =
     "012345678901234567890123456789012345678901234567890123456789"
     "012345678901234567890123456789012345678901234567890123456789";
   ZuCHECK(!table.insert({"oversized", oversized}, &abs) &&
@@ -1596,7 +1595,8 @@ void testTxNameLookup()
   for (unsigned i = 0; i < 300; ++i) {
     char value[24];
     snprintf(value, sizeof(value), "v%u", i);
-    if (!churn.insert({"x-repeat", ZuCSpan{value}})) {
+    const char *value_ = value;
+    if (!churn.insert({"x-repeat", value_})) {
       inserted = false;
       break;
     }
@@ -1636,7 +1636,7 @@ void testBoundedStorage()
     char name[24], value[24];
     snprintf(name, sizeof(name), "x-rx-bound-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(rx.insert({ZuCSpan{name}, ZuCSpan{value}}),
+    ZuCHECK(rx.insert({name, value}),
       "bounded Rx churn insert failed");
   }
   ZuCHECK(rx.slots() == rxSlots,
@@ -1660,7 +1660,7 @@ void testBoundedStorage()
     char name[24], value[24];
     snprintf(name, sizeof(name), "x-tx-bound-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(tx.insert({ZuCSpan{name}, ZuCSpan{value}}, &newest),
+    ZuCHECK(tx.insert({name, value}, &newest),
       "bounded Tx churn insert failed");
   }
   ZuCHECK(tx.orderSlots() == orderSlots &&
@@ -1734,7 +1734,7 @@ void testRxTxChurn()
     snprintf(name, sizeof(name), "x-rx-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
     const char *name_ = name, *value_ = value;
-    ZuCHECK(rx.insert({ZuCSpan(name_), ZuCSpan(value_)}),
+    ZuCHECK(rx.insert({name_, value_}),
       "rx churn insert failed");
     ZuCHECK(rx.used() <= rx.capacity(), "rx churn exceeded capacity");
   }
@@ -1755,13 +1755,13 @@ void testRxTxChurn()
     snprintf(value, sizeof(value), "v%u", i);
     const char *name_ = name, *value_ = value;
     uint64_t abs = 0;
-    ZuCHECK(tx.insert({ZuCSpan(name_), ZuCSpan(value_)}, &abs) &&
+    ZuCHECK(tx.insert({name_, value_}, &abs) &&
 	abs == i,
       "tx churn insert failed");
     ZuCHECK(tx.used() <= tx.capacity(), "tx churn exceeded capacity");
   }
-  ZuCSpan name{"x-tx-39"};
-  ZuCSpan value{"v39"};
+  ZuBSpan name{"x-tx-39"};
+  ZuBSpan value{"v39"};
   ZuCHECK(!tx.lookupAbs(0, h), "tx churn failed to evict oldest");
   ZuCHECK(tx.lookupAbs(tx.insertCount() - 1, h),
     "tx churn newest lookup failed");
@@ -1784,7 +1784,7 @@ void testTxSectionStress()
     snprintf(name, sizeof(name), "x-ref-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
     const char *name_ = name, *value_ = value;
-    ZuCHECK(table.insert({ZuCSpan(name_), ZuCSpan(value_)}, &abs[i]),
+    ZuCHECK(table.insert({name_, value_}, &abs[i]),
       "tx section stress insert failed");
   }
   for (unsigned i = 0; i < 6; ++i) {
@@ -1880,10 +1880,10 @@ void testInstructionParserSplit()
   Zhttp::H3::QPackInsnParser encoder;
   Zhttp::H3::QPackInsnParser decoder;
   unsigned encoderApplied = 0, decoderApplied = 0;
-  auto decodeEncoder = [](ZuCSpan bytes, Zhttp::H3::QPackDecodedInsn &i) {
+  auto decodeEncoder = [](ZuBSpan bytes, Zhttp::H3::QPackDecodedInsn &i) {
     return Zhttp::H3::QPack::decodeEncoderInsn(bytes, i);
   };
-  auto decodeDecoder = [](ZuCSpan bytes, Zhttp::H3::QPackDecodedInsn &i) {
+  auto decodeDecoder = [](ZuBSpan bytes, Zhttp::H3::QPackDecodedInsn &i) {
     return Zhttp::H3::QPack::decodeDecoderInsn(bytes, i);
   };
   auto applyEncoder = [&encoderApplied](
@@ -1926,7 +1926,7 @@ void testBuilderPeerCapacity()
       !builder.tx.insertCount(),
     "builder emitted dynamic QPACK before peer capacity");
 
-  ZuCSpan payload;
+  ZuBSpan payload;
   ZuCHECK(headersPayload(stream.bytes, payload),
     "builder did not emit a valid HEADERS frame");
   unsigned seen = 0;
@@ -2020,7 +2020,7 @@ void testBuilderSectionFallback()
   builder.id = 5;
   CaptureTxStream third;
   builder.begin(third);
-  ZuCSpan payload;
+  ZuBSpan payload;
   Zhttp::H3::EncodedFieldSectionPrefix prefix;
   ZuCHECK(headersPayload(third.bytes, payload) &&
       Zhttp::H3::QPack::decodeFieldSectionPrefix(payload, prefix) > 0 &&
@@ -2041,7 +2041,7 @@ void testBuilderQueryPath()
   CaptureTxStream stream;
   builder.begin(stream);
 
-  ZuCSpan payload;
+  ZuBSpan payload;
   ZuCHECK(headersPayload(stream.bytes, payload),
     "builder query path did not emit a valid HEADERS frame");
   bool sawPath = false;
@@ -2087,7 +2087,7 @@ void testBuilderExtendedConnect()
   CaptureTxStream stream;
   ZuCHECK(enabled.begin(stream),
     "H3 builder rejected negotiated Extended CONNECT");
-  ZuCSpan payload;
+  ZuBSpan payload;
   bool sawMethod = false, sawProtocol = false;
   ZuCHECK(headersPayload(stream.bytes, payload) &&
       Zhttp::H3::QPack::decodeLiteral(
@@ -2108,7 +2108,7 @@ void testBuilderRuntimeHeaders()
   CaptureTxStream stream;
   builder.begin(stream);
 
-  ZuCSpan payload;
+  ZuBSpan payload;
   ZuCHECK(headersPayload(stream.bytes, payload),
     "runtime header builder did not emit a valid HEADERS frame");
   bool sawRuntime = false;
@@ -2133,14 +2133,15 @@ void testBuilderRuntimeHeaders()
 }
 
 bool applyEncoder(
-  Zhttp::H3::QPackRxTable &table, ZuCSpan bytes,
+  Zhttp::H3::QPackRxTable &table, ZuBSpan bytes,
   bool *dynamicName = nullptr)
 {
   unsigned offset = 0;
   while (offset < bytes.length()) {
     Zhttp::H3::QPackDecodedInsn insn;
+    ZuBSpan remaining = bytes;
     int n = Zhttp::H3::QPack::decodeEncoderInsn(
-      ZuCSpan{bytes.data() + offset, bytes.length() - offset}, insn);
+      remaining.offset(offset), insn);
     if (n <= 0) return false;
     switch (insn.type) {
       case Zhttp::H3::QPackInsn::SetCapacity:
@@ -2176,13 +2177,14 @@ bool applyEncoder(
   return true;
 }
 
-bool encoderNameRef(ZuCSpan bytes, ZuCSpan value, bool dynamic)
+bool encoderNameRef(ZuBSpan bytes, ZuBSpan value, bool dynamic)
 {
   unsigned offset = 0;
   while (offset < bytes.length()) {
     Zhttp::H3::QPackDecodedInsn insn;
+    ZuBSpan remaining = bytes;
     int n = Zhttp::H3::QPack::decodeEncoderInsn(
-      ZuCSpan{bytes.data() + offset, bytes.length() - offset}, insn);
+      remaining.offset(offset), insn);
     if (n <= 0) return false;
     if (insn.type == Zhttp::H3::QPackInsn::InsertWithNameRef &&
 	insn.header.value == value)
@@ -2213,7 +2215,7 @@ void testBuilderStaticNamePrecedence()
   ZuCHECK(encoderNameRef(builder.encoder.bytes, "other", false),
     "QPACK encoder insertion displaced a static name with a dynamic name");
 
-  ZuCSpan payload;
+  ZuBSpan payload;
   bool staticName = false;
   ZuCHECK(headersPayload(stream.bytes, payload) &&
       Zhttp::H3::QPack::decodeFieldSection(
@@ -2257,7 +2259,7 @@ void testBuilderDynamicNameLookup()
       encoderDynamicName,
     "QPACK insertion did not use a dynamic name reference");
 
-  ZuCSpan payload;
+  ZuBSpan payload;
   bool fieldDynamicName = false;
   ZuCHECK(headersPayload(second.bytes, payload) &&
       Zhttp::H3::QPack::decodeFieldSection(

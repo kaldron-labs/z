@@ -23,7 +23,6 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZmScratch.hh>
-#include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
 
@@ -40,8 +39,8 @@ ZtEnumStruct(ZhttpAPI, QPackInsn, int8_t,
   SectionAck, StreamCancellation, InsertCountIncrement);
 
 struct Header {
-  ZuCSpan	name;
-  ZuCSpan	value;
+  ZuBSpan	name;
+  ZuBSpan	value;
 };
 
 struct QPackFieldFlags {
@@ -77,7 +76,7 @@ struct EncodedFieldSectionPrefix {
 };
 
 using Headers = ZtArray<Header, ZtArrayHeapID<"Zhttp.H3.Headers">>;
-using HeaderName = ZtString<ZtStringHeapID<"Zhttp.H3.HeaderName">>;
+using HeaderName = ZtBArray<ZtArrayHeapID<"Zhttp.H3.HeaderName">>;
 using QPackNameSet = ZmHashKV<
   HeaderName, bool,
   ZmHashLock<ZmNoLock,
@@ -123,7 +122,7 @@ public:
     qpackTxSections_ = v.txSections;
     return ZuMv(*this);
   }
-  Params &&qpackIndex(ZuCSpan name) {
+  Params &&qpackIndex(ZuBSpan name) {
     name = headerName_(name);
     if (!index_->find(name)) {
       detach_(index_);
@@ -131,7 +130,7 @@ public:
     }
     return ZuMv(*this);
   }
-  Params &&qpackNeverIndex(ZuCSpan name) {
+  Params &&qpackNeverIndex(ZuBSpan name) {
     name = headerName_(name);
     if (!neverIndex_->find(name)) {
       detach_(neverIndex_);
@@ -140,10 +139,10 @@ public:
     return ZuMv(*this);
   }
 
-  bool indexAllowed(ZuCSpan name) const {
+  bool indexAllowed(ZuBSpan name) const {
     return !neverIndex_->find(name) && index_->find(name);
   }
-  ZhttpAPI bool neverIndex(ZuCSpan name) const;
+  ZhttpAPI bool neverIndex(ZuBSpan name) const;
 
   unsigned maxHeaderListSize() const { return maxHeaderListSize_; }
   unsigned qpackRxCapacity() const { return qpackRxCapacity_; }
@@ -166,10 +165,10 @@ private:
     set = ZuMv(copy);
   }
 
-  static ZuCSpan headerName_(ZuCSpan name) {
+  static ZuBSpan headerName_(ZuBSpan name) {
     for (unsigned i = 0; i < name.length(); ++i)
       if (!name[i]) {
-	name = ZuCSpan{name.data(), i};
+	name = {name.data(), i};
 	break;
       }
     return name;
@@ -185,7 +184,7 @@ private:
 };
 
 using QPackRxString =
-  ZtString<ZtStringHeapID<"Zhttp.H3.QPackRx.String">>;
+  ZtBArray<ZtArrayHeapID<"Zhttp.H3.QPackRx.String">>;
 
 struct QPackRxEntry {
   uint64_t	abs = 0;
@@ -212,7 +211,7 @@ struct QPackRxTable {
   void final();
   bool setCapacity(uint32_t);
   bool insert(Header);
-  bool insert(ZuCSpan, ZuCSpan);
+  bool insert(ZuBSpan, ZuBSpan);
   bool duplicate(uint64_t);
   bool lookupAbs(uint64_t, Header &) const;
   bool lookupRelative(uint64_t, uint64_t, Header &) const;
@@ -232,11 +231,11 @@ struct QPackRxTable {
 };
 
 using QPackTxString =
-  ZtString<ZtStringHeapID<"Zhttp.H3.QPackTx.String">>;
+  ZtBArray<ZtArrayHeapID<"Zhttp.H3.QPackTx.String">>;
 
 struct QPackFieldKey {
-  ZuCSpan	name;
-  ZuCSpan	value;
+  ZuBSpan	name;
+  ZuBSpan	value;
 
   bool equals(const QPackFieldKey &k) const {
     return name == k.name && value == k.value;
@@ -341,9 +340,9 @@ struct QPackTxTable {
   bool setCapacity(uint32_t);
   bool peerCapacity(uint32_t);
   void peerBlocked(uint32_t v) { peerBlocked_ = v; }
-  const QPackTxEntry *find(ZuCSpan, ZuCSpan) const;
-  const QPackTxEntry *findName(ZuCSpan) const;
-  const QPackTxEntry *findName(ZuCSpan, uint64_t) const;
+  const QPackTxEntry *find(ZuBSpan, ZuBSpan) const;
+  const QPackTxEntry *findName(ZuBSpan) const;
+  const QPackTxEntry *findName(ZuBSpan, uint64_t) const;
   const QPackTxEntry *findAbs(uint64_t) const;
   bool insert(Header, uint64_t * = nullptr);
   bool insert(QPackTxString, QPackTxString, uint64_t * = nullptr);
@@ -410,10 +409,10 @@ struct QPackTxTable {
 };
 
 struct QPack {
-  static int staticIndex(ZuCSpan name, ZuCSpan value);
+  static int staticIndex(ZuBSpan name, ZuBSpan value);
   static bool staticField(uint64_t, Header &);
   static bool staticName(uint64_t, HeaderName &);
-  static bool staticNameIndex(ZuCSpan, uint64_t &);
+  static bool staticNameIndex(ZuBSpan, uint64_t &);
   template <typename Bytes>
   static int encodeFieldSectionPrefix(
     Bytes &out, const FieldSectionPrefix &prefix, uint64_t maxCapacity = 0) {
@@ -440,9 +439,9 @@ struct QPack {
     return out.length();
   }
   static int decodeFieldSectionPrefix(
-    ZuCSpan, FieldSectionPrefix &, uint64_t = 0, uint64_t = 0);
+    ZuBSpan, FieldSectionPrefix &, uint64_t = 0, uint64_t = 0);
   static int decodeFieldSectionPrefix(
-    ZuCSpan, EncodedFieldSectionPrefix &);
+    ZuBSpan, EncodedFieldSectionPrefix &);
   static bool fieldSectionBase(
     const EncodedFieldSectionPrefix &, uint64_t, uint64_t &);
   static bool validateFieldSectionPrefix(
@@ -495,7 +494,7 @@ struct QPack {
   }
   template <typename Bytes>
   static int encodeInsertWithNameRef(
-      Bytes &out, uint64_t index, bool dynamic, ZuCSpan value) {
+      Bytes &out, uint64_t index, bool dynamic, ZuBSpan value) {
     out.length(0);
     uint8_t prefix = uint8_t(0x80 | (dynamic ? 0x00 : 0x40));
     return Compression::putPref(out, prefix, 6, index) < 0 ||
@@ -515,17 +514,17 @@ struct QPack {
     return Compression::putPref(out, 0x80, 7, streamID) < 0 ?
       -1 : int(out.length());
   }
-  static int decodeEncoderInsn(ZuCSpan, QPackDecodedInsn &);
-  static int decodeDecoderInsn(ZuCSpan, QPackDecodedInsn &);
+  static int decodeEncoderInsn(ZuBSpan, QPackDecodedInsn &);
+  static int decodeDecoderInsn(ZuBSpan, QPackDecodedInsn &);
   template <unsigned Bits, uint8_t Huffman>
   static int decodeString(
-    ZuSpan<uint8_t> storage, ZuCSpan in, unsigned &o, ZuCSpan &out) {
+    ZuSpan<uint8_t> storage, ZuBSpan in, unsigned &o, ZuBSpan &out) {
     return Compression::decodeString<Bits, Huffman>(storage, in, o, out);
   }
 
   template <typename L>
   static int decodeFieldSection(
-    ZuCSpan in, const QPackRxTable *table, L l,
+    ZuBSpan in, const QPackRxTable *table, L l,
     const Params &params = {}, uint64_t insertCount = 0,
     uint64_t maxCapacity = 0, FieldSectionPrefix *decodedPrefix = nullptr) {
     if (table) {
@@ -553,7 +552,7 @@ struct QPack {
     auto valueStorage = ZmScratch(
       uint8_t, storageSize, HdrBytes::VHeap);
 
-    auto countHeader = [&headerBytes, &params](ZuCSpan name, ZuCSpan value) {
+    auto countHeader = [&headerBytes, &params](ZuBSpan name, ZuBSpan value) {
       if (headerBytes > params.maxHeaderListSize() - name.length())
 	return false;
       headerBytes += name.length();
@@ -562,7 +561,7 @@ struct QPack {
       headerBytes += value.length();
       return true;
     };
-    auto readValue = [&valueStorage, &in, &o](ZuCSpan &value) {
+    auto readValue = [&valueStorage, &in, &o](ZuBSpan &value) {
       return decodeString<7, 0x80>(
 	ZuSpan(valueStorage.data(), valueStorage.size()),
 	in, o, value) >= 0;
@@ -571,8 +570,8 @@ struct QPack {
     unsigned n = in.length();
     while (o < n) {
       uint8_t first = uint8_t(in[o]);
-      ZuCSpan name;
-      ZuCSpan value;
+      ZuBSpan name;
+      ZuBSpan value;
       Header indexed;
       HeaderName indexedNameStorage;
       QPackFieldFlags flags;
@@ -650,7 +649,7 @@ struct QPack {
 
   template <typename L>
   static int decodeLiteral(
-    ZuCSpan in, L l, const Params &params = {}, uint64_t insertCount = 0) {
+    ZuBSpan in, L l, const Params &params = {}, uint64_t insertCount = 0) {
     return decodeFieldSection(
       in, nullptr,
       [&l](Header h, QPackFieldFlags) { l(h); },
@@ -671,7 +670,8 @@ public:
     unsigned o = 0;
     while (o < length) {
       QPackDecodedInsn insn;
-      int n = decode(ZuCSpan{span}.offset(o), insn);
+	ZuBSpan remaining = span;
+	int n = decode(remaining.offset(o), insn);
       if (n == -2) {
 	for (unsigned i = o; i < length; ++i) bytes.push(span[i]);
 	offset = 0;
@@ -693,7 +693,7 @@ private:
   bool drain_(Decode decode, Apply apply) {
     for (;;) {
       QPackDecodedInsn insn;
-      int n = decode(ZuCSpan{bytes}.offset(offset), insn);
+      int n = decode(bytes.cspan().offset(offset), insn);
       if (n == -2) {
 	if (offset > 4096 && offset > (bytes.length()>>1)) {
 	  bytes.splice(0, offset);
@@ -717,7 +717,7 @@ private:
 
 template <typename L>
 int decodeLiteralDynamic(
-  ZuCSpan in, const QPackRxTable &table, L l,
+  ZuBSpan in, const QPackRxTable &table, L l,
   const Params &params = {})
 {
   return QPack::decodeFieldSection(

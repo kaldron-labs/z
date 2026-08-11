@@ -226,8 +226,8 @@ struct RequestHeaders {
 // Application-owned request copied by Parser while its callback spans are
 // valid.  The server retains none of this data after Parser::complete().
 struct RequestData : public RequestHeaders {
-  ZuCSpan path() const { return path_; }
-  ZuCSpan query() const { return query_; }
+  ZuBSpan path() const { return path_; }
+  ZuBSpan query() const { return query_; }
 
   Zhttp::MessageString	target;
   Zhttp::MessageString	authority;
@@ -691,8 +691,8 @@ struct StaticPlanner {
       return resp;
     }
 
-    ZuCSpan path{req.path()};
-    ZuCSpan query{req.query()};
+    ZuCSpan path = req.path();
+    ZuCSpan query = req.query();
     auto clean = ZmScratch(
       char, unsigned(path.length()) + 2, HdrString::VHeap);
     ZuCSpan err;

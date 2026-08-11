@@ -276,7 +276,7 @@ struct App :
   Opcodes		opcodes;
   Bytes			current;
   Bytes			pongPayload;
-  ZtString<>		closeReason;
+  Bytes			closeReason;
   uint16_t		closeCode = 0;
   const uint8_t		*inputData = nullptr;
   const uint8_t		*wireData = nullptr;
@@ -858,6 +858,56 @@ void codec()
   }
   {
     Link link;
+    App<true> app{link, random};
+    app.up_();
+    const uint8_t reason[] = {'h', 0xc3, 0xa9};
+    ZuCHECK(app.close_(Zws::CloseCode::Normal, reason));
+    const uint8_t payload[] = {0x03, 0xe8, 'h', 0xc3, 0xa9};
+    ZuCHECK(link.tx.bufs.length() == 1);
+    if (link.tx.bufs.length()) {
+      auto wire = link.tx.bufs[0]->cspan();
+      ZuCHECK(wire.length() == sizeof(payload) + 2 &&
+	wire[0] == 0x88 && wire[1] == sizeof(payload) &&
+	wire.offset(2) == ZuBSpan{payload},
+	"close transmits exact byte reason");
+    }
+  }
+  {
+    Link link;
+    App<true> app{link, random};
+    app.up_();
+    uint8_t reason[Zws::MaxControl - 2];
+    for (unsigned i = 0; i < sizeof(reason); ++i) reason[i] = 'x';
+    ZuCHECK(app.close_(Zws::CloseCode::Normal, reason));
+    ZuCHECK(link.tx.bufs.length() == 1);
+    if (link.tx.bufs.length()) {
+      auto wire = link.tx.bufs[0]->cspan();
+      ZuCHECK(wire.length() == Zws::MaxControl + 2 &&
+	wire[0] == 0x88 && wire[1] == Zws::MaxControl &&
+	wire.offset(4) == ZuBSpan{reason},
+	"close accepts the maximum reason length");
+    }
+  }
+  {
+    Link link;
+    App<true> app{link, random};
+    app.up_();
+    uint8_t reason[Zws::MaxControl - 1] = {};
+    ZuCHECK(!app.close_(Zws::CloseCode::Normal, reason) &&
+      !app.close_(1005) && !link.tx.bufs.length(),
+      "close rejects overlong reasons and invalid codes");
+  }
+  {
+    Link link;
+    App<true> app{link, random};
+    app.up_();
+    const uint8_t reason[] = {0xc0, 0x80};
+    ZuCHECK(app.close_(Zws::CloseCode::Normal, reason) &&
+      link.tx.bufs.length() == 1,
+      "close reason bytes are application-defined");
+  }
+  {
+    Link link;
     App<false> app{link, random};
     Bytes empty;
     ZuCHECK(app.feed(empty) == 0 && !app.calls);
@@ -996,9 +1046,9 @@ void codec()
     Bytes wire;
     wire << frame(Zws::Opcode::Text, partial, false) <<
       frame(Zws::Opcode::Continuation, {});
-    ZuCHECK(app.feed(wire) < 0);
-    ZuCHECK(app.failure() == Zws::Failure::InvalidUTF8,
-      "validate UTF-8 completion on an empty final frame");
+    ZuCHECK(app.feed(wire) > 0 && app.messages.length() == 1 &&
+      app.messages[0] == ZuBSpan{partial},
+      "text bytes are delivered without codec-level UTF-8 validation");
   }
   {
     Link link;
@@ -1019,8 +1069,8 @@ void codec()
     App<false> app{link, random};
     const uint8_t badUTF8[] = {0xc0, 0x80};
     auto wire = frame(Zws::Opcode::Text, badUTF8);
-    ZuCHECK(app.feed(wire) < 0);
-    ZuCHECK(app.failure() == Zws::Failure::InvalidUTF8);
+    ZuCHECK(app.feed(wire) > 0 && app.messages.length() == 1 &&
+      app.messages[0] == ZuBSpan{badUTF8});
   }
   {
     Link link;
@@ -1028,19 +1078,9 @@ void codec()
     app.up_();
     const uint8_t badUTF8[] = {0xce};
     auto wire = frame(Zws::Opcode::Text, badUTF8, true, true);
-    ZuCHECK(app.feed(wire) >= 0);
-    ZuCHECK(app.failure() == Zws::Failure::InvalidUTF8 &&
-      link.ended && link.endAfterFlush);
-    ZuCHECK(link.endCalls == 1 && !link.resetCalls,
-      "protocol close ends exactly once without reset");
-    ZuCHECK(link.tx.bufs.length() == 1);
-    if (link.tx.bufs.length()) {
-      auto close = link.tx.bufs[0]->cspan();
-      ZuCHECK(close.length() == 4 && close[0] == 0x88 &&
-	close[1] == 2 &&
-	close[2] == uint8_t(Zws::CloseCode::InvalidData>>8) &&
-	close[3] == uint8_t(Zws::CloseCode::InvalidData));
-    }
+    ZuCHECK(app.feed(wire) > 0 && app.messages.length() == 1 &&
+      app.messages[0] == ZuBSpan{badUTF8} && !link.ended &&
+      !link.tx.bufs.length());
   }
   {
     Link link;
@@ -1176,8 +1216,12 @@ void codec()
     App<true> app{link, random};
     const uint8_t invalid[] = {0x03, 0xe8, 0xc0, 0x80};
     auto wire = frame(Zws::Opcode::Close, invalid, true, true);
-    ZuCHECK(app.feed(wire) < 0);
-    ZuCHECK(app.failure() == Zws::Failure::InvalidUTF8);
+    ZuBSpan reason{invalid};
+    reason.offset(2);
+    ZuCHECK(app.feed(wire) > 0 && app.peerClosed() &&
+      app.closeCode == Zws::CloseCode::Normal &&
+      app.closeReason == reason,
+      "close reason bytes are delivered to the application");
   }
   {
     Link link;

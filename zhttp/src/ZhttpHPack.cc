@@ -18,13 +18,13 @@ ZtEnumImplStruct(HPackRep);
 
 using HPackStatic_ = StaticTable<HPackTbl>;
 
-static int hpackStaticName_(ZuCSpan value)
+static int hpackStaticName_(ZuBSpan value)
 {
   static constexpr auto matcher = ZuMatcher<HPackStatic_::Names>();
   return matcher.exact(value);
 }
 
-static int hpackStaticNameIndex_(ZuCSpan value)
+static int hpackStaticNameIndex_(ZuBSpan value)
 {
   int i = hpackStaticName_(value);
   if (i < 0) return -1;
@@ -37,7 +37,7 @@ static int hpackStaticNameIndex_(ZuCSpan value)
   return index;
 }
 
-static int hpackStaticIndex_(ZuCSpan name, ZuCSpan value)
+static int hpackStaticIndex_(ZuBSpan name, ZuBSpan value)
 {
   int i = hpackStaticName_(name);
   if (i < 0) return -1;
@@ -62,7 +62,7 @@ static int hpackStaticIndex_(ZuCSpan name, ZuCSpan value)
 
 ZuAssert(HPackTbl::N == 61);
 
-static uint32_t entrySize_(ZuCSpan name, ZuCSpan value)
+static uint32_t entrySize_(ZuBSpan name, ZuBSpan value)
 {
   uint64_t size = uint64_t(name.length()) + value.length() + 32;
   return size > uint32_t(-1) ? uint32_t(-1) : uint32_t(size);
@@ -75,7 +75,7 @@ bool HPackTable::capacity(uint32_t value)
   return m_used <= m_capacity;
 }
 
-bool HPackTable::insert(ZuCSpan name, ZuCSpan value)
+bool HPackTable::insert(ZuBSpan name, ZuBSpan value)
 {
   uint32_t size = entrySize_(name, value);
   if (size > m_capacity) {
@@ -187,7 +187,7 @@ const HPackTxEntry *HPackTxTable::find(Field field) const
   return Field{entry->name, entry->value} == field ? entry : nullptr;
 }
 
-const HPackTxEntry *HPackTxTable::findName(ZuCSpan name) const
+const HPackTxEntry *HPackTxTable::findName(ZuBSpan name) const
 {
   if (!m_names) return nullptr;
   auto indexed = m_names->find(Compression::NameView{name});
@@ -304,13 +304,13 @@ bool HPack::staticField(uint64_t index, Field &field)
   return true;
 }
 
-int HPack::staticIndex(ZuCSpan name, ZuCSpan value)
+int HPack::staticIndex(ZuBSpan name, ZuBSpan value)
 {
   int index = hpackStaticIndex_(name, value);
   return index < 0 ? -1 : index + 1;
 }
 
-int HPack::staticNameIndex(ZuCSpan name)
+int HPack::staticNameIndex(ZuBSpan name)
 {
   int index = hpackStaticNameIndex_(name);
   return index < 0 ? -1 : index + 1;
@@ -360,7 +360,7 @@ bool HPackDecoder::indexed_(uint64_t index, Field &field)
 
 template <unsigned Bits, uint8_t Huffman>
 int HPackDecoder::string_(
-  ZuCSpan input, unsigned &offset, HPackString &out)
+  ZuBSpan input, unsigned &offset, HPackString &out)
 {
   uint64_t length = 0;
   uint8_t first = 0;
@@ -369,7 +369,7 @@ int HPackDecoder::string_(
   if (n < 0) return n;
   unsigned size = input.length();
   if (length > size - offset) return -2;
-  ZuCSpan raw{&input[offset], unsigned(length)};
+  ZuBSpan raw{&input[offset], unsigned(length)};
   offset += unsigned(length);
   if (!(first & Huffman)) {
     out = raw;
@@ -377,7 +377,7 @@ int HPackDecoder::string_(
   }
   out.length(Compression::Huffman::declen(length));
   int64_t decoded = Compression::Huffman::decode(
-    ZuSpan<uint8_t>{out.span()},
+    out.span(),
     raw);
   if (decoded < 0) return -1;
   out.length(uint64_t(decoded));
@@ -386,7 +386,7 @@ int HPackDecoder::string_(
 
 template <unsigned Bits, bool Indexing>
 int HPackDecoder::literal_(
-  ZuCSpan input, unsigned &offset, Field &field)
+  ZuBSpan input, unsigned &offset, Field &field)
 {
   uint64_t index = 0;
   int state = Compression::decodePref<Bits>(input, offset, index);
@@ -428,7 +428,7 @@ bool HPackDecoder::account_(Field field)
 }
 
 int HPackDecoder::decode_(
-  ZuCSpan input, unsigned &offset, Field &field, bool &emitted)
+  ZuBSpan input, unsigned &offset, Field &field, bool &emitted)
 {
   if (offset >= input.length()) return 0;
   unsigned start = offset;
@@ -596,7 +596,7 @@ void HPackEncoder::pending_(uint32_t capacity)
   m_pendingFinal = capacity;
 }
 
-void HPackEncoder::neverIndex(ZuCSpan name)
+void HPackEncoder::neverIndex(ZuBSpan name)
 {
   if (!m_neverIndex->find(name)) {
     detachNeverIndex_();
@@ -604,7 +604,7 @@ void HPackEncoder::neverIndex(ZuCSpan name)
   }
 }
 
-bool HPackEncoder::neverIndexed(ZuCSpan name) const
+bool HPackEncoder::neverIndexed(ZuBSpan name) const
 {
   static constexpr auto matcher =
     ZuMatcher<"authorization", "cookie", "set-cookie">();
