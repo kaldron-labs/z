@@ -22,6 +22,8 @@
 
 #include <zlib/ZuUnion.hh>
 
+#include <zlib/ZtArray.hh>
+
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/Zhttp.hh>
@@ -1501,7 +1503,7 @@ private:
   QUICConfig	m_config;
 };
 
-ZuDerive(MessageString, ZtString<ZtStringHeapID<"Zhttp.Message">>);
+ZuDerive(MessageString, ZtBArray<ZtArrayHeapID<"Zhttp.Message">>);
 
 class ServerConfig {
 public:
@@ -1773,9 +1775,9 @@ private:
     template <typename L>
     void header(L &&l) {
       builder->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
-	ZtString<ZtStringHeapID<"Zhttp.RuntimeHeader.Name">> name;
+	ZtBArray<ZtArrayHeapID<"Zhttp.RuntimeHeader.Name">> name;
 	name << k;
-	if (!validRuntimeHeader<Headers>(ZuCSpan{name}, h1)) {
+	if (!validRuntimeHeader<Headers>(name, h1)) {
 	  headersOK = false;
 	  return;
 	}
@@ -1994,7 +1996,7 @@ private:
       if (unused) link->responseRelease_(unused);
       auto tx = link->transmit(response);
       auto body = response.body(tx);
-      body << ZuBSpan{buf->data(), buf->length};
+      body << buf->cspan();
       body.flush();
       response.produced += buf->length;
       if (!body.valid()) {

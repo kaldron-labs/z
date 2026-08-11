@@ -15,21 +15,21 @@
 
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZtString.hh>
+#include <zlib/ZtArray.hh>
 
 namespace Ztls { class Random; }
 
 namespace Zws {
 
 ZuDerive(
-  HandshakeString, ZtString<ZtStringHeapID<"Zws.Handshake">>);
+  HandshakeString, ZtBArray<ZtArrayHeapID<"Zws.Handshake">>);
 
 ZwsAPI bool nonce(Ztls::Random &, HandshakeString &);
-ZwsAPI bool accept(HandshakeString &, ZuCSpan key);
-ZwsAPI bool validKey(ZuCSpan);
-ZwsAPI bool validAccept(ZuCSpan value, ZuCSpan key);
-ZwsAPI bool token(ZuCSpan value, ZuCSpan expected);
-ZwsAPI bool subprotocol(ZuCSpan offered, ZuCSpan selected);
+ZwsAPI bool accept(HandshakeString &, ZuBSpan key);
+ZwsAPI bool validKey(ZuBSpan);
+ZwsAPI bool validAccept(ZuBSpan value, ZuBSpan key);
+ZwsAPI bool token(ZuBSpan value, ZuBSpan expected);
+ZwsAPI bool subprotocol(ZuBSpan offered, ZuBSpan selected);
 
 } // namespace Zws
 

@@ -247,7 +247,7 @@ struct H3ReqOps {
       emit([this](auto &tx) { tx << req->path; });
     });
   }
-  template <typename L> void host(L &&l) const { l(ZuCSpan{req->host}); }
+  template <typename L> void host(L &&l) const { l(req->host); }
   template <typename Key, typename L>
   void header(L &&l) const {
     if constexpr (Key{}() == "user-agent")
@@ -282,18 +282,17 @@ struct H3Request :
 };
 
 ZuDerive(H3ReqPayload,
-  (ZtArray<char, ZtArrayHeapID<"ZhttpQIR.H3ReqPayload">>));
+  (ZtBArray<ZtArrayHeapID<"ZhttpQIR.H3ReqPayload">>));
 
 struct H3ReqTx {
   H3ReqTx(H3ReqPayload &payload_) : payload{&payload_} { }
 
   H3ReqTx &operator <<(ZuBSpan span) {
-    for (unsigned i = 0; i < span.length(); ++i)
-      payload->push(char(span[i]));
+    *payload << span;
     return *this;
   }
   H3ReqTx &operator <<(char c) {
-    payload->push(c);
+    payload->push(uint8_t(c));
     return *this;
   }
   void flush() { }
@@ -312,8 +311,7 @@ static bool sendH3Request_(const Request &request, StreamRef stream)
   builder.begin(tx);
   builder.finish(tx);
   return payload.length() &&
-    stream->link()->send(stream,
-      ZuCSpan{payload.data(), payload.length()}, true);
+    stream->link()->send(stream, payload, true);
 }
 
 struct HQServerLink;
@@ -395,8 +393,7 @@ int HQServerStream::process(Zquic::RxStream &rx)
   ZtString<> data;
   if (!readFile_(path, data) ||
       !this->link()->send(
-	ZmRef<HQServerStream>{this},
-	ZuCSpan{data.data(), data.length()}, true)) {
+	ZmRef<HQServerStream>{this}, data, true)) {
     this->link()->app()->errors = 1;
     this->link()->disconnect();
     return -1;
@@ -453,6 +450,12 @@ struct HQClient::Link :
       app()->fail();
       return;
     }
+    auto link = ZmMkRef(this);
+    app()->txInvoke([link = ZuMv(link)]() mutable {
+      link->connected_();
+    });
+  }
+  void connected_() {
     for (unsigned i = 0, n = app()->requests.length(); i < n; ++i) {
       auto stream = this->stream(Zquic::StreamType::Duplex);
       if (!stream) {
@@ -468,7 +471,7 @@ struct HQClient::Link :
       }
       ZtString<> line;
       if (!buildHQRequestLine(app()->requests[i].path, line) ||
-	  !send(stream, ZuCSpan{line.data(), line.length()}, true)) {
+	  !send(stream, line, true)) {
 	app()->fail();
 	return;
       }

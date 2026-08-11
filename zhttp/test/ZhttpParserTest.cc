@@ -108,8 +108,8 @@ struct ResponseParser :
     ++runtimeCalls;
     runtimeKey.length(0);
     runtimeValue.length(0);
-    runtimeKey << ZuCSpan{key};
-    runtimeValue << ZuCSpan{value};
+    runtimeKey << key;
+    runtimeValue << value;
   }
 
   int				statusSeen = -1;
@@ -149,7 +149,7 @@ struct RequestParser :
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path.length(0);
-    path << ZuCSpan{target.pathQuery};
+    path << target.pathQuery;
   }
 
   void bodyInfo(Zhttp::BodyType::T type_, uint64_t length_) {
@@ -805,7 +805,7 @@ void testContentLengthBodyTransactional()
   ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
       parser.bodyCalls == 1 && parser.bodyData == "abcde",
     "complete content-length body was not atomically published");
-  ZuCHECK(stream.length() == 4 && ZuCSpan{stream.span()} == "NEXT",
+  ZuCHECK(stream.length() == 4 && stream.span() == "NEXT",
     "content-length body consumed pipelined bytes");
 }
 
@@ -971,7 +971,7 @@ void testUpgradeLeavesInput()
       "101 response did not complete at the header boundary");
     ZuCHECK(parser.statusSeen == 101 && parser.completeCalls == 1,
       "101 response completion callbacks mismatch");
-    ZuCHECK(ZuCSpan{stream.span()} == "first",
+    ZuCHECK(stream.span() == "first",
       "101 response consumed coalesced upgraded-stream input");
   }
 
@@ -990,7 +990,7 @@ void testUpgradeLeavesInput()
     ZuCHECK(parser.method == Zhttp::Method::GET &&
 	parser.path == "/chat" && parser.completeCalls == 1,
       "Upgrade request completion callbacks mismatch");
-    ZuCHECK(ZuCSpan{stream.span()} == "first",
+    ZuCHECK(stream.span() == "first",
       "Upgrade request consumed coalesced upgraded-stream input");
   }
 }

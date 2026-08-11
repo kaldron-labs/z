@@ -14,7 +14,7 @@ ZtEnumImplNS(FrameType);
 ZtEnumImplNS(Error);
 ZtEnumImplStruct(ParserState);
 
-ZuCSpan PrefaceParser::value()
+ZuBSpan PrefaceParser::value()
 {
   return "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 }
@@ -36,15 +36,15 @@ int FrameHeaderParser::process(
   while (offset < n && m_length < end)
     m_bytes[m_length++] = input[offset++];
   if (m_length < end) return 0;
-  decodeHeader(ZuCSpan{m_bytes.data(), end}, header);
+  decodeHeader(m_bytes.span(), header);
   m_length = 0;
   return 1;
 }
 
-bool decodeHeader(ZuCSpan input, FrameHeader &header)
+bool decodeHeader(ZuBSpan input, FrameHeader &header)
 {
   if (input.length() < FrameHeaderSize) return false;
-  auto p = reinterpret_cast<const uint8_t *>(input.data());
+  auto p = input.data();
   header.length =
     (uint32_t(p[0])<<16) |
     ZuBE(*reinterpret_cast<const uint16_t *>(&p[1]));

@@ -518,7 +518,8 @@ public:
       static unsigned print(char *data, unsigned, const Value &v) {
 	auto n = v.placeholder.length;
 	if (n) memset(data, v.placeholder.fill, n);
-	ZuSpan<uint8_t> span{reinterpret_cast<uint8_t *>(data), n};
+	ZuSpan<char> chars{data, n};
+	ZuSpan<uint8_t> span = chars;
 	if constexpr (Persist)
 	  *v.span = span;
 	else {

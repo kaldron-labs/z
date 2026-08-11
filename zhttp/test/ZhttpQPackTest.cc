@@ -57,6 +57,18 @@ void testQPackLiteral()
   ZuCHECK(used == int(bytes.length()), "QPACK literal decode length mismatch");
   ZuCHECK(n == 3, "QPACK literal header count mismatch");
 
+  const uint8_t binary[] = {0x00, 0x7f, 0xff};
+  Zhttp::H3::Header binaryHeaders[] = {{"x-bin", binary}};
+  bool binaryOK = false;
+  ZuCHECK(Zhttp::H3::QPack::encodeLiteral(
+      bytes, ZuSpan<Zhttp::H3::Header>{binaryHeaders, 1}, params) > 0 &&
+      Zhttp::H3::QPack::decodeLiteral(
+	bytes,
+	[&binaryOK, &binary](Zhttp::H3::Header h) {
+	  binaryOK = h.name == "x-bin" && h.value == ZuBSpan{binary};
+	}, params) == int(bytes.length()) && binaryOK,
+    "QPACK did not preserve binary value octets");
+
   uint8_t badHuffmanName[] = { 0x00, 0x00, 0x29, 0x00, 0x00 };
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
       ZuBSpan{badHuffmanName},

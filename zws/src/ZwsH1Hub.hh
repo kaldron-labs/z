@@ -110,15 +110,15 @@ void error(App &, Link &, Failure::T, ...) { }
 
 template <typename App, typename Link>
 auto accept(
-    App &app, Link &link, ZuCSpan host, ZuCSpan target,
-    ZuCSpan offered, HandshakeString &selected, int) ->
+    App &app, Link &link, ZuBSpan host, ZuBSpan target,
+    ZuBSpan offered, HandshakeString &selected, int) ->
   decltype(bool(app.accept(link, host, target, offered, selected)))
 {
   return bool(app.accept(link, host, target, offered, selected));
 }
 template <typename App, typename Link>
 bool accept(
-    App &, Link &, ZuCSpan, ZuCSpan, ZuCSpan,
+    App &, Link &, ZuBSpan, ZuBSpan, ZuBSpan,
     HandshakeString &, ...)
 {
   return true;
@@ -221,7 +221,7 @@ public:
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 
-  H1ClientLink(Hub *hub, const URI &uri, ZuCSpan protocol = {}) :
+  H1ClientLink(Hub *hub, const URI &uri, ZuBSpan protocol = {}) :
     HTTPBase{hub, ZtString<>{uri.host}, uri.port},
     CodecBase{*this, hub->random(), hub->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
@@ -297,7 +297,7 @@ public:
   void error(Failure::T failure) {
     H1_::error(*this->app()->app(), *this, failure, 0);
   }
-  ZuCSpan protocol() const { return m_parser.selected(); }
+  ZuBSpan protocol() const { return m_parser.selected(); }
 
   void down_(bool peer) {
     if (m_down) return;
@@ -497,7 +497,7 @@ public:
   void error(Failure::T failure) {
     H1_::error(*this->app()->app(), *this, failure, 0);
   }
-  ZuCSpan protocol() const { return m_protocol; }
+  ZuBSpan protocol() const { return m_protocol; }
   void info_(Zhttp::ConnectedInfo info) { m_info = ZuMv(info); }
 
   void down_(bool peer) {

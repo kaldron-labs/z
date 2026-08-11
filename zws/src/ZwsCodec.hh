@@ -130,16 +130,11 @@ public:
     });
   }
 
-  void close(uint16_t code = CloseCode::Normal, ZuCSpan reason = {}) {
+  void close(uint16_t code = CloseCode::Normal, ZuBSpan reason = {}) {
     if (!m_txEnabled.load_() || reason.length() > MaxControl - 2) return;
     Link *link = m_link;
     if (!link) return;
-    ZuBArray<MaxControl> reason_;
-    reason_.length(reason.length());
-    const unsigned n = reason.length();
-    const char *src = reason.data();
-    uint8_t *dst = reason_.data();
-    for (unsigned i = 0; i < n; ++i) dst[i] = src[i];
+    ZuBArray<MaxControl> reason_{reason};
     link->app()->rxRun([
       impl = ZmMkRef(this->impl()), code,
       reason = ZuMv(reason_)]() mutable {
@@ -163,13 +158,11 @@ public:
       });
   }
 
-  bool close_(uint16_t code = CloseCode::Normal, ZuCSpan reason = {}) {
+  bool close_(uint16_t code = CloseCode::Normal, ZuBSpan reason = {}) {
     if (m_terminal || !m_link || m_closeSent || !closeCode(code))
       return false;
     unsigned reasonLen = reason.length();
     if (reasonLen > MaxControl - 2) return false;
-    UTF8 utf8;
-    if (!utf8.update(reason) || !utf8.complete()) return false;
     uint8_t payload[MaxControl];
     payload[0] = uint8_t(code>>8);
     payload[1] = uint8_t(code);
@@ -233,7 +226,6 @@ public:
     m_wire.clean();
     m_rx.clean();
     m_frame = {};
-    m_utf8.reset();
     m_pingPayload.length(0);
     m_frameRemain = 0;
     m_frameOffset = 0;
@@ -328,7 +320,6 @@ private:
 	  return fail_(Failure::MessageTooLarge), -1;
 	if (start) {
 	  m_rx.clean();
-	  m_utf8.reset();
 	  m_msgOpcode = m_frame.opcode;
 	  m_msgActive = true;
 	  if (ZuUnlikely(impl()->messageStart(m_msgOpcode) < 0))
@@ -372,30 +363,17 @@ private:
 	length > m_config.maxQueuedInput - queued))
       return fail_(Failure::InputPressure), -1;
 
-    UTF8 utf8 = m_utf8;
-    bool final = m_frame.final && length == m_frameRemain;
-    bool text = m_msgOpcode == Opcode::Text;
-    bool valid = true;
     if constexpr (Server) {
       uint64_t offset = m_frameOffset;
       uint32_t key = m_frame.key;
-      int64_t n = rx.each(
+      rx.each(
 	length,
-	[&utf8, text, key, &offset](ZuSpan<uint8_t> span) -> int64_t {
+	[key, &offset](ZuSpan<uint8_t> span) -> int64_t {
 	  mask(span, key, offset);
-	  if (text && !utf8.update(span)) return -1;
 	  offset += span.length();
 	  return span.length();
 	});
-	valid = n >= 0 && uint64_t(n) == length;
-    } else if (text) {
-      int64_t n = rx.each(length, [&utf8](ZuBSpan span) -> int64_t {
-	return utf8.update(span) ? span.length() : -1;
-	});
-	valid = n >= 0 && uint64_t(n) == length;
     }
-    if (ZuUnlikely(!valid || (text && final && !utf8.complete())))
-	return fail_(Failure::InvalidUTF8), -1;
 
     int appRC = 1;
     if (length) {
@@ -411,7 +389,6 @@ private:
 	}, allocWire_, allocMessage_);
       if (ZuUnlikely(consumed <= 0))
 	return fail_(Failure::InvalidHeader), -1;
-      m_utf8 = utf8;
       m_frameRemain -= length;
       m_frameOffset += length;
       appRC = impl()->message(m_rx);
@@ -498,9 +475,6 @@ private:
       code = (uint16_t(payload[0])<<8) | payload[1];
       if (!closeCode(code)) return fail_(Failure::InvalidClose), false;
       reason = {payload.data() + 2, payload.length() - 2};
-      UTF8 utf8;
-      if (!utf8.update(reason) || !utf8.complete())
-	return fail_(Failure::InvalidUTF8), false;
     }
     m_peerClosed = true;
     m_wire.clean();
@@ -560,9 +534,6 @@ private:
     if (!m_established || !m_stream || m_closeSent) return;
     uint16_t code;
     switch (m_failure) {
-      case Failure::InvalidUTF8:
-	code = CloseCode::InvalidData;
-	break;
       case Failure::MessageTooLarge:
       case Failure::InputPressure:
 	code = CloseCode::TooLarge;
@@ -665,7 +636,6 @@ private:
   Rx			m_rx;
   Stream		*m_stream = nullptr;
   Frame			m_frame;
-  UTF8			m_utf8;
   ZuBArray<MaxControl>	m_pingPayload;
   ZmScheduler::Timer	m_closeTimer;
   ZmScheduler::Timer	m_handshakeTimer;

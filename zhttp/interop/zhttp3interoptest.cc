@@ -188,7 +188,7 @@ void sendH3Response(Stream &stream, ZuCSpan body)
     link = stream.link(), ref, body_ = ZuMv(body_)
   ]() mutable {
     auto tx = ref->txStream_();
-    H3ResponseBuilder builder{ZuCSpan{body_}};
+    H3ResponseBuilder builder{body_};
     builder.qpackTx_ = link->qpackTx();
     builder.qpackEncoder_ = &link->h3;
     builder.qpackEncoderWrite_ = [](void *ptr, ZuBSpan span) {
@@ -199,7 +199,7 @@ void sendH3Response(Stream &stream, ZuCSpan body)
     builder.begin(tx);
     if (body_) {
       auto bodyTx = builder.body(tx);
-      bodyTx << ZuCSpan{body_};
+      bodyTx << body_;
       bodyTx.flush();
     }
     builder.finish(tx);
@@ -243,12 +243,12 @@ struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
   void operation(
     Zhttp::Method::T method, const Zhttp::Target &target) {
     seen.method = method;
-    seen.path = ZuCSpan{target.pathQuery};
+    seen.path = target.pathQuery;
   }
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan body) { seen.body << ZuCSpan{body}; });
+      [this](ZuBSpan body) { seen.body << body; });
   }
   void complete(typename State::T state) {
     if (state == State::Complete) seen.complete = 1;
@@ -301,7 +301,7 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan body) { seen.body << ZuCSpan{body}; });
+      [this](ZuBSpan body) { seen.body << body; });
   }
   void complete(typename State::T state) {
     if (state == State::Complete) seen.complete = 1;
@@ -373,7 +373,7 @@ void sendH3Request(Stream &stream, ZuCSpan body)
     link = stream.link(), ref, body_ = ZuMv(body_)
   ]() mutable {
     auto tx = ref->txStream_();
-    H3RequestBuilder builder{ZuCSpan{body_}};
+    H3RequestBuilder builder{body_};
     builder.qpackTx_ = link->qpackTx();
     builder.qpackEncoder_ = &link->h3;
     builder.qpackEncoderWrite_ = [](void *ptr, ZuBSpan span) {

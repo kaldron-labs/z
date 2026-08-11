@@ -68,7 +68,7 @@ bool decode(
   return decoder.finish();
 }
 
-bool field(const Fields &fields, unsigned i, ZuCSpan name, ZuCSpan value)
+bool field(const Fields &fields, unsigned i, ZuBSpan name, ZuBSpan value)
 {
   return i < fields.length() &&
     fields[i].name == name && fields[i].value == value;
@@ -160,7 +160,7 @@ void testHuffmanRequest()
   decoder.final();
 }
 
-bool response(const Fields &fields, ZuCSpan status, ZuCSpan date)
+bool response(const Fields &fields, ZuBSpan status, ZuBSpan date)
 {
   return fields.length() >= 4 &&
     field(fields, 0, ":status", status) &&
@@ -348,6 +348,11 @@ void testDynamicEncoder()
       (encoded[0] & 0x80) && field(fields, 0, "x-split", "a?b"),
     "contiguous HPACK value matched a dynamic entry");
 
+  const uint8_t binary[] = {0x00, 0x7f, 0xff};
+  ZuCHECK(emit({"x-bin", binary}) && fields.length() == 1 &&
+      fields[0].name == "x-bin" && fields[0].value == ZuBSpan{binary},
+    "HPACK did not preserve binary value octets");
+
   unsigned before = encoder.table().count();
   ZuCHECK(emit({"authorization", "secret"}) &&
       emit({"authorization", "secret"}) &&
@@ -384,7 +389,7 @@ void testTxStorageAndUpdates()
     char name[24], value[24];
     snprintf(name, sizeof(name), "x-hpack-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    if (!table.insert({ZuCSpan{name}, ZuCSpan{value}})) {
+    if (!table.insert({name, value})) {
       inserted = false;
       break;
     }

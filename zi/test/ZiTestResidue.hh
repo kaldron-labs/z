@@ -180,7 +180,11 @@ inline void init(const char *testName)
   State::Guard guard(state.lock);
   if (state.initialized) return;
 
-  state.baseDir = ".ZiTestResidue";
+  Zi::Path rootDir = ".ZiTestResidue";
+  mkdirIfNeeded_(rootDir);
+
+  state.baseDir = {};
+  state.baseDir << rootDir << '/' << ZuBox<unsigned>(::getpid());
   mkdirIfNeeded_(state.baseDir);
   cleanupStale_();
 
@@ -264,6 +268,7 @@ inline void cleanupNow()
     ZiFile::rmdir(state.dirs[--i]);
 
   ZiFile::remove(state.manifest);
+  ZiFile::rmdir(state.baseDir);
 }
 
 } // namespace ZiTestResidue

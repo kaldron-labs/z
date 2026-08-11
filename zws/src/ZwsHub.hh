@@ -97,7 +97,7 @@ public:
   unsigned id() const { return 0; }
 
   ExtendedClientLink(
-      Hub *hub, const URI &uri, ZuCSpan protocol = {}) :
+      Hub *hub, const URI &uri, ZuBSpan protocol = {}) :
     HTTPBase{hub},
     CodecBase{*this, hub->random(), hub->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
@@ -197,7 +197,7 @@ public:
   void error(Failure::T failure) {
     H1_::error(*this->app()->app(), *this, failure, 0);
   }
-  ZuCSpan protocol() const { return m_parser.selected(); }
+  ZuBSpan protocol() const { return m_parser.selected(); }
 
 private:
   void failHandshake_() {
@@ -353,13 +353,13 @@ public:
     return 0;
   }
   bool accept_(
-      ZuCSpan host, ZuCSpan target, ZuCSpan offered,
+      ZuBSpan host, ZuBSpan target, ZuBSpan offered,
       HandshakeString &selected) {
     return H1_::accept(
       *this->app()->app(), *this,
       host, target, offered, selected, 0);
   }
-  void respond_(ZuCSpan selected) {
+  void respond_(ZuBSpan selected) {
     m_protocol = selected;
     Extended::Response<Profile> response{m_protocol};
     auto tx = this->transmit(response);
@@ -413,7 +413,7 @@ public:
   void error(Failure::T failure) {
     H1_::error(*this->app()->app(), *this, failure, 0);
   }
-  ZuCSpan protocol() const { return m_protocol; }
+  ZuBSpan protocol() const { return m_protocol; }
   void info_(Zhttp::ConnectedInfo info) { m_info = ZuMv(info); }
 
 private:

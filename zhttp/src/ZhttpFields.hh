@@ -23,7 +23,7 @@
 #include <zlib/ZmAssert.hh>
 
 #include <zlib/ZtEnum.hh>
-#include <zlib/ZtString.hh>
+#include <zlib/ZtArray.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
@@ -135,10 +135,10 @@ bool bodyDrain(Rx &rx) {
 
 namespace Fields {
 
-using String = ZtString<ZtStringHeapID<"Zhttp.Fields.String">>;
+using String = ZtBArray<ZtArrayHeapID<"Zhttp.Fields.String">>;
 
-ZhttpAPI bool forbidden(ZuCSpan);
-ZhttpAPI int pseudo(ZuCSpan);
+ZhttpAPI bool forbidden(ZuBSpan);
+ZhttpAPI int pseudo(ZuBSpan);
 
 template <typename Impl, typename = void>
 struct HasRuntime : public ZuFalse { };
@@ -192,7 +192,7 @@ void dispatch(
     unknown(key, value);
 }
 
-inline bool nameOK(ZuCSpan name) {
+inline bool nameOK(ZuBSpan name) {
   if (!name) return false;
   unsigned offset = name[0] == ':';
   if (offset == name.length()) return false;
@@ -212,7 +212,7 @@ inline bool nameOK(ZuCSpan name) {
   return true;
 }
 
-inline bool uint64(ZuCSpan value, uint64_t &result) {
+inline bool uint64(ZuBSpan value, uint64_t &result) {
   if (!value) return false;
   uint64_t n = 0;
   for (unsigned i = 0; i < value.length(); ++i) {
@@ -235,7 +235,7 @@ public:
   bool bodyAllowed() const { return !m_noBody; }
 
   template <typename Header>
-  bool field(ZuCSpan name, ZuCSpan value, Header &&header) {
+  bool field(ZuBSpan name, ZuBSpan value, Header &&header) {
     if (!nameOK(name)) return false;
     if (name[0] == ':')
       return pseudo_(name, value, ZuFwd<Header>(header));
@@ -251,7 +251,7 @@ public:
       m_contentLength = true;
       m_length = length;
     }
-    header(ZuBSpan{name}, ZuBSpan{value});
+    header(name, value);
     return true;
   }
 
@@ -263,13 +263,11 @@ public:
       Target target;
       auto e = Target::fromPseudo(
 	target, m_method, m_scheme,
-	ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(m_authority.data()),
-	  m_authority.length()},
-	ZuBSpan{m_path}, ZuBSpan{m_protocol});
+	m_authority.span(), m_path, m_protocol);
       if (!e.ok()) return false;
       m_started = true;
       operation(m_method, target);
-      header(ZuBSpan{"host"}, target.authority.raw);
+      header("host", target.authority.raw);
     } else {
       m_started = true;
       status(m_status);
@@ -329,7 +327,7 @@ private:
   }
 
   template <typename Header>
-  bool pseudo_(ZuCSpan name, ZuCSpan value, Header &&header) {
+  bool pseudo_(ZuBSpan name, ZuBSpan value, Header &&header) {
     if (m_trailers || m_regular) return false;
     if constexpr (Request) {
       int i = pseudo(name);

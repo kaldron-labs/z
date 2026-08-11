@@ -96,8 +96,7 @@ bool name(
     if (out.length()) out << '.';
     unsigned begin = out.length();
     out << ZuBSpan{msg + p, n};
-    lowerASCII(ZuSpan<uint8_t>{
-      reinterpret_cast<uint8_t *>(out.data()) + begin, n});
+    lowerASCII({out.data() + begin, n});
     p += n;
     if (!jumped) next = p;
   }
@@ -167,7 +166,7 @@ DiscoveryError params(
 	  unsigned n = value[i++];
 	  if (!n || i + n > len)
 	    return error(DiscoveryCode::Malformed, off + i - 1);
-	  if (Zhttp::h3Protocol(ZuCSpan{value + i, n})) record.h3 = true;
+	  if (Zhttp::h3Protocol(ZuBSpan{value + i, n})) record.h3 = true;
 	  i += n;
 	}
 	break;
@@ -223,9 +222,7 @@ DiscoveryError rdata(
     return error(DiscoveryCode::Malformed, off);
   if (record.target == ".") {
     record.target = owner;
-    lowerASCII(ZuSpan<uint8_t>{
-      reinterpret_cast<uint8_t *>(record.target.data()),
-      record.target.length()});
+    lowerASCII(record.target.span());
   }
   if (!record.priority && off != end)
     return error(DiscoveryCode::Malformed, off);

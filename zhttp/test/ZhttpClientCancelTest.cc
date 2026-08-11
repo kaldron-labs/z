@@ -230,6 +230,9 @@ private:
   RequestQ	m_requests;
 };
 
+static_assert(ZuIsSame<
+  decltype(ZuDeclVal<const Pool &>().authority()), ZuBSpan>{});
+
 struct App : public Zhttp::Client<App, Pool> {
   using Base = Zhttp::Client<App, Pool>;
 
@@ -1628,6 +1631,7 @@ void stopQueuedLimited()
       request->resultCode == Zhttp::ResultCode::Cancelled,
     "stop drains queued limited work exactly once");
 
+  request = nullptr;
   app.final();
   uint64_t heapFinal = zhttpClientAllocated();
   ZuCHECK(heapFinal == heapBaseline,
@@ -1748,6 +1752,7 @@ void stopReusableIdle()
   ZuCHECK(drained && stopOK && stopCalls.load_() == 1 && serverOK.load_(),
     "stop closes a reusable-idle connection exactly once");
 
+  request = nullptr;
   app.final();
   uint64_t heapFinal = zhttpClientAllocated();
   ZuCHECK(heapFinal == heapBaseline,

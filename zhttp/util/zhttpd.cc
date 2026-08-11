@@ -323,14 +323,14 @@ struct Parser : public Zhttp::Parser {
   void operation(
       Zhttp::Method::T method, const Zhttp::Target &target) {
     request.method = method;
-    request.target = ZuCSpan{target.raw};
-    request.authority = ZuCSpan{target.authority.raw};
-    request.protocol = ZuCSpan{target.protocol};
+    request.target = target.raw;
+    request.authority = target.authority.raw;
+    request.protocol = target.protocol;
     request.form = target.form;
     int q = target.pathQuery.find([](auto c) { return c == '?'; });
-    request.path_ = q < 0 ? ZuCSpan{target.pathQuery} :
-      ZuCSpan{target.pathQuery.data(), unsigned(q)};
-    request.query_ = q < 0 ? ZuCSpan{} : ZuCSpan{
+    request.path_ = q < 0 ? target.pathQuery :
+      ZuBSpan{target.pathQuery.data(), unsigned(q)};
+    request.query_ = q < 0 ? ZuBSpan{} : ZuBSpan{
       target.pathQuery.data() + q + 1,
       target.pathQuery.length() - unsigned(q + 1)};
     request.hasQuery = q >= 0;
@@ -338,18 +338,18 @@ struct Parser : public Zhttp::Parser {
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
     template <typename Key>
     void header(Zhttp::FieldSection::T, ZuBSpan value) {
-      if constexpr (Key{}() == "host") request.host = ZuCSpan{value};
+      if constexpr (Key{}() == "host") request.host = value;
       else if constexpr (Key{}() == "authorization")
-	request.authorization = ZuCSpan{value};
-      else if constexpr (Key{}() == "range") request.range = ZuCSpan{value};
+	request.authorization = value;
+      else if constexpr (Key{}() == "range") request.range = value;
       else if constexpr (Key{}() == "if-modified-since")
-	request.ifModifiedSince = ZuCSpan{value};
+	request.ifModifiedSince = value;
       else if constexpr (Key{}() == "connection")
-	request.connection = ZuCSpan{value};
+	request.connection = value;
       else if constexpr (Key{}() == "referer")
-	request.referer = ZuCSpan{value};
+	request.referer = value;
       else if constexpr (Key{}() == "user-agent")
-	request.userAgent = ZuCSpan{value};
+	request.userAgent = value;
     }
     template <typename Rx>
     bool body(Rx &rx) {

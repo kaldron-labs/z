@@ -63,7 +63,6 @@ ZtEnumStruct(ZwsAPI, Failure, uint8_t,
   MissingContinuation,
   MessageTooLarge,
   InputPressure,
-  InvalidUTF8,
   InvalidClose,
   Transmit,
   Handshake,
@@ -216,61 +215,6 @@ private:
   uint8_t	m_data[MaxHeader];
   uint8_t	m_have = 0;
   uint8_t	m_need = 2;
-};
-
-class UTF8 {
-public:
-  void reset() {
-    m_code = 0;
-    m_min = 0;
-    m_need = 0;
-    m_valid = true;
-  }
-
-  bool update(ZuBSpan span) {
-    if (!m_valid) return false;
-    for (uint8_t c : span)
-      if (!update_(c)) return false;
-    return true;
-  }
-
-  bool complete() const { return m_valid && !m_need; }
-  bool valid() const { return m_valid; }
-
-private:
-  bool update_(uint8_t c) {
-    if (!m_need) {
-      if (c < 0x80) return true;
-      if (c >= 0xc2 && c <= 0xdf) {
-	m_code = c & 0x1f;
-	m_min = 0x80;
-	m_need = 1;
-      } else if (c >= 0xe0 && c <= 0xef) {
-	m_code = c & 0x0f;
-	m_min = 0x800;
-	m_need = 2;
-      } else if (c >= 0xf0 && c <= 0xf4) {
-	m_code = c & 0x07;
-	m_min = 0x10000;
-	m_need = 3;
-      } else
-	return m_valid = false;
-      return true;
-    }
-    if ((c & 0xc0) != 0x80) return m_valid = false;
-    m_code = (m_code<<6) | (c & 0x3f);
-    --m_need;
-    if (!m_need &&
-	(m_code < m_min || m_code > 0x10ffff ||
-	 (m_code >= 0xd800 && m_code <= 0xdfff)))
-      return m_valid = false;
-    return true;
-  }
-
-  uint32_t	m_code = 0;
-  uint32_t	m_min = 0;
-  uint8_t	m_need = 0;
-  bool		m_valid = true;
 };
 
 } // namespace Zws

@@ -77,7 +77,7 @@ struct Parsed :
 	  },
 	  [this, &offered](ZuBSpan value) {
 	    noCopy &= value.data() == offered;
-	    body_ << ZuCSpan{value};
+	    body_ << value;
 	  }) <= 0)
 	return false;
       if (partial) break;
@@ -142,7 +142,7 @@ struct Response :
   bool body(Rx &rx) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan value) { body_ << ZuCSpan{value}; });
+      [this](ZuBSpan value) { body_ << value; });
   }
   void complete(Zhttp::H2::ParserState::T state) {
     completeState = state;
@@ -210,14 +210,14 @@ struct CaptureStream {
     beginEndStream = end;
   }
   template <typename V>
-  void field(ZuCSpan name, V &&value) {
+  void field(ZuBSpan name, V &&value) {
     auto field_ = new (fields.push()) CapturedField{
       .name = ZtString<>{name}
     };
     field_->value << ZuFwd<V>(value);
   }
   void field(
-    ZuCSpan name, ZuCSpan value1, char separator, ZuCSpan value2) {
+    ZuBSpan name, ZuBSpan value1, char separator, ZuBSpan value2) {
     auto field_ = new (fields.push()) CapturedField{
       .name = ZtString<>{name}
     };
@@ -363,7 +363,7 @@ struct StreamResponse :
 	  },
 	  [this, &offered](ZuBSpan span) {
 	    noCopy &= span.data() == offered;
-	    data_ << ZuCSpan{span};
+	    data_ << span;
 	  });
       if (n <= 0) break;
       if (partial) break;

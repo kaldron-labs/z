@@ -40,9 +40,7 @@ void cursor()
 
   Zhttp::URLString mutableField;
   mutableField << "h3=\"Example.COM:443\"";
-  Zhttp::AltSvcCursor mutableCursor{
-    ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(mutableField.data()),
-	mutableField.length()}, key.view(), 1};
+  Zhttp::AltSvcCursor mutableCursor{mutableField.span(), key.view(), 1};
   ZuCHECK(mutableCursor.next(value) && value.normalized &&
       value.host == "example.com", "mutable host normalized in place");
 
@@ -65,8 +63,8 @@ void printing()
   ZuCHECK(cursor.next(value), "parse printable value");
   Zhttp::URLString printed;
   printed << value;
-  ZuCHECK(ZuBSpan{printed} == field, "direct value print");
-  Zhttp::AltSvcCursor reparsed{ZuBSpan{printed}, key.view(), 1};
+  ZuCHECK(printed == field, "direct value print");
+  Zhttp::AltSvcCursor reparsed{printed.span(), key.view(), 1};
   Zhttp::AltSvcValue roundTrip;
   ZuCHECK(reparsed.next(roundTrip) && roundTrip.protocolID == value.protocolID &&
       roundTrip.host == value.host && roundTrip.port == value.port &&
@@ -81,12 +79,12 @@ void printing()
   Zhttp::AltSvcValue values[] = {value, roundTrip};
   Zhttp::URLString list;
   list << Zhttp::AltSvcValuesView{values};
-  Zhttp::AltSvcCursor listCursor{ZuBSpan{list}, key.view(), 2};
+  Zhttp::AltSvcCursor listCursor{list.span(), key.view(), 2};
   unsigned count = 0;
   while (listCursor.next(roundTrip)) ++count;
   ZuCHECK(listCursor.error().ok() && count == 2,
     "value-list print is reparsable");
-  Zhttp::AltSvcCursor inherited{ZuBSpan{"h3=\":443\""}, key.view(), 1};
+  Zhttp::AltSvcCursor inherited{"h3=\":443\"", key.view(), 1};
   ZuCHECK(inherited.next(roundTrip), "parse default max-age");
   Zhttp::URLString inheritedPrint;
   inheritedPrint << roundTrip;

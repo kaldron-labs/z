@@ -144,13 +144,13 @@ uint64_t printLength(const P &v) {
 
 struct NameView {
   NameView() = default;
-  NameView(ZuCSpan name_) : name{name_} { }
+  NameView(ZuBSpan name_) : name{name_} { }
 
   bool equals(const NameView &v) const { return name == v.name; }
   int cmp(const NameView &v) const { return name.cmp(v.name); }
   uint32_t hash() const { return name.hash(); }
 
-  ZuCSpan	name;
+  ZuBSpan	name;
 };
 
 inline bool operator ==(const NameView &l, const NameView &r) {
@@ -219,7 +219,7 @@ private:
 
 template <unsigned Bits>
 inline int decodePref(
-  ZuCSpan in, unsigned &offset, uint64_t &value,
+  ZuBSpan in, unsigned &offset, uint64_t &value,
   uint8_t *firstByte = nullptr)
 {
   if (offset >= in.length()) return -2;
@@ -229,7 +229,7 @@ inline int decodePref(
   int state = decoder.template start<Bits>(first, value);
   if (state < 0) return -1;
   if (state > 0) return 0;
-  state = decoder.process(ZuBSpan{in}, offset, value);
+  state = decoder.process(in, offset, value);
   return state > 0 ? 0 : state < 0 ? -1 : -2;
 }
 
@@ -253,7 +253,7 @@ int putPref(Bytes &out, uint8_t prefix, unsigned bits, uint64_t value) {
 
 template <typename Bytes>
 int putString(
-  Bytes &out, uint8_t prefix, unsigned bits, ZuCSpan value) {
+  Bytes &out, uint8_t prefix, unsigned bits, ZuBSpan value) {
   if (putPref(out, prefix, bits, value.length()) < 0) return -1;
   for (unsigned i = 0; i < value.length(); ++i)
     out.push(uint8_t(value[i]));
@@ -277,14 +277,14 @@ int putPrint(
 
 template <unsigned PrefixBits, uint8_t HuffmanMask>
 inline int decodeString(
-  ZuSpan<uint8_t> storage, ZuCSpan in, unsigned &offset, ZuCSpan &out) {
+  ZuSpan<uint8_t> storage, ZuBSpan in, unsigned &offset, ZuBSpan &out) {
   uint64_t length = 0;
   uint8_t first = 0;
   int n = decodePref<PrefixBits>(in, offset, length, &first);
   if (n < 0) return n;
   unsigned size = in.length();
   if (length > size - offset) return -2;
-  ZuCSpan raw{&in[offset], unsigned(length)};
+  ZuBSpan raw{&in[offset], unsigned(length)};
   offset += unsigned(length);
   if (!(first & HuffmanMask)) {
     out = raw;
@@ -295,7 +295,7 @@ inline int decodeString(
   storage.trunc(decodedMax);
   int64_t decoded = Huffman::decode(storage, raw);
   if (decoded < 0) return -1;
-  out = ZuCSpan{storage.data(), unsigned(decoded)};
+  out = {storage.data(), unsigned(decoded)};
   return int(out.length());
 }
 
@@ -337,7 +337,7 @@ public:
     return 0;
   }
 
-  int finish(Bytes &storage, ZuCSpan &out) {
+  int finish(Bytes &storage, ZuBSpan &out) {
     if (!m_complete) return -1;
     if (!m_huffman) {
       out = m_bytes;

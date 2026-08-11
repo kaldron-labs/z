@@ -362,7 +362,7 @@ struct ClientParser :
 	  },
 	  [this, &offered](ZuBSpan span) {
 	    streamNoCopy &= span.data() == offered;
-	    streamBody << ZuCSpan{span};
+	    streamBody << span;
 	  });
       if (n <= 0) break;
     }
@@ -548,7 +548,7 @@ struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
 	  },
 	  [this, &offered](ZuBSpan span) {
 	    streamNoCopy &= span.data() == offered;
-	    streamData << ZuCSpan{span};
+	    streamData << span;
 	  });
       if (n <= 0) break;
     }

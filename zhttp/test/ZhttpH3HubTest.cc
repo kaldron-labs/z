@@ -140,7 +140,7 @@ struct ClientParser :
 	  },
 	  [this, &offered](ZuBSpan span) {
 	    streamNoCopy &= span.data() == offered;
-	    streamBody << ZuCSpan{span};
+	    streamBody << span;
 	  });
       if (n <= 0) break;
     }
@@ -227,7 +227,7 @@ void StreamClient::connected(
   if (link.mode == StreamClientLink::Mode::Malformed) {
     static constexpr uint8_t dataBeforeHeaders[] = {0, 0};
     auto tx = link.txStream();
-    tx << ZuCSpan{dataBeforeHeaders} << Zi::flush();
+    tx << dataBeforeHeaders << Zi::flush();
     link.finish();
     return;
   }

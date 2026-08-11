@@ -81,7 +81,7 @@ struct ServerApp {
 
   template <typename Link>
   bool accept(
-      Link &, ZuCSpan, ZuCSpan target, ZuCSpan protocols,
+      Link &, ZuBSpan, ZuBSpan target, ZuBSpan protocols,
       Zws::HandshakeString &selected) {
     if (target != "/stream" || !Zws::token(protocols, "chat"))
       return false;

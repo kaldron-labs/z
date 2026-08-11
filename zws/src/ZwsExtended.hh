@@ -31,7 +31,7 @@ class Request :
   public Zhttp::MessageTraits<Profile>::template Request<
     Request<Profile>, ServerHeaders, ZuTypeList<>, false, false> {
 public:
-  Request(const URI &uri, ZuCSpan protocol = {}) :
+  Request(const URI &uri, ZuBSpan protocol = {}) :
     m_uri{&uri}, m_protocol{protocol} { }
 
   template <typename L>
@@ -62,7 +62,7 @@ class Response :
   public Zhttp::MessageTraits<Profile>::template Response<
     Response<Profile>, ClientHeaders, ZuTypeList<>, false, false> {
 public:
-  Response(ZuCSpan protocol = {}) : m_protocol{protocol} { }
+  Response(ZuBSpan protocol = {}) : m_protocol{protocol} { }
 
   unsigned status() const { return 200; }
   bool streamResponse() const { return true; }
@@ -94,7 +94,7 @@ class ClientParser :
 public:
   using State = typename Base::State;
 
-  void bind(Link &link, ZuCSpan protocol) {
+  void bind(Link &link, ZuBSpan protocol) {
     Base::reset();
     m_link = &link;
     m_protocol = protocol;
@@ -152,7 +152,7 @@ public:
 
   bool established() const { return m_established; }
   bool invalid() const { return m_invalid; }
-  ZuCSpan selected() const { return m_selected; }
+  ZuBSpan selected() const { return m_selected; }
   typename State::T state() const { return m_state; }
 
 private:

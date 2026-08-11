@@ -32,10 +32,10 @@ class ClientParser :
 public:
   using State = Zhttp::H1::ParserState;
 
-  ClientParser(ZuCSpan key = {}, ZuCSpan protocol = {}) :
+  ClientParser(ZuBSpan key = {}, ZuBSpan protocol = {}) :
     m_key{key}, m_protocol{protocol} { }
 
-  void expected(ZuCSpan key, ZuCSpan protocol = {}) {
+  void expected(ZuBSpan key, ZuBSpan protocol = {}) {
     Base::reset();
     m_key = key;
     m_protocol = protocol;
@@ -93,7 +93,7 @@ public:
        (m_protocol && m_protocolSeen &&
 	subprotocol(m_protocol, m_selected)));
   }
-  ZuCSpan selected() const { return m_selected; }
+  ZuBSpan selected() const { return m_selected; }
 
 private:
   HandshakeString	m_key;
@@ -188,10 +188,10 @@ public:
       m_upgradeSeen && m_upgrade && m_connectionSeen && m_connection &&
       m_keySeen && validKey(m_key) && m_versionSeen && m_version13;
   }
-  ZuCSpan host() const { return m_host; }
-  ZuCSpan target() const { return m_target; }
-  ZuCSpan key() const { return m_key; }
-  ZuCSpan protocols() const { return m_protocols; }
+  ZuBSpan host() const { return m_host; }
+  ZuBSpan target() const { return m_target; }
+  ZuBSpan key() const { return m_key; }
+  ZuBSpan protocols() const { return m_protocols; }
 
 private:
   HandshakeString	m_target;
@@ -223,7 +223,7 @@ class Request :
   using Base = Zhttp::H1Request<Request, RequestHeaders>;
 
 public:
-  Request(const URI &uri, ZuCSpan key, ZuCSpan protocol = {}) :
+  Request(const URI &uri, ZuBSpan key, ZuBSpan protocol = {}) :
     m_uri{&uri}, m_key{key}, m_protocol{protocol} { }
 
   template <typename L>
@@ -260,7 +260,7 @@ class Response :
   using Base = Zhttp::H1Response<Response, ResponseHeaders>;
 
 public:
-  Response(ZuCSpan accept, ZuCSpan protocol = {}) :
+  Response(ZuBSpan accept, ZuBSpan protocol = {}) :
     m_accept{accept}, m_protocol{protocol} { }
 
   unsigned status() const { return 101; }

@@ -195,7 +195,7 @@ struct StreamLink {
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       ++link->handoffs;
-      link->wire << ZuCSpan{buf->cspan()};
+      link->wire << buf->cspan();
       return true;
     }
 
@@ -225,7 +225,7 @@ struct StreamConsumer {
   int process(Stream, Rx &rx) {
     ++calls;
     Zhttp::bodyEach(rx,
-      [this](ZuBSpan span) { data << ZuCSpan{span}; });
+      [this](ZuBSpan span) { data << span; });
     return result;
   }
   template <typename Stream>
@@ -260,7 +260,7 @@ struct TxLink {
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      link->wire << ZuCSpan{buf->cspan()};
+      link->wire << buf->cspan();
       return true;
     }
 
@@ -805,7 +805,7 @@ void testBodyRx()
 	}
 	return remaining;
       },
-      [&gathered](ZuBSpan span) { gathered << ZuCSpan{span}; });
+      [&gathered](ZuBSpan span) { gathered << span; });
   };
 
   ZuCHECK(body.push(buf("abc"), consume), "first body append failed");
@@ -835,7 +835,7 @@ void testBodyRx()
   body.push(buf("cd"), [](auto &) { });
   ZtString<> eager;
   ZuCHECK(Zhttp::bodyEach(body.rx(),
-      [&eager](ZuBSpan span) { eager << ZuCSpan{span}; }) &&
+      [&eager](ZuBSpan span) { eager << span; }) &&
       eager == "abcd" && !body.rx(),
     "bodyEach did not eagerly consume queued spans in order");
   unsigned emptyCalls = 0;

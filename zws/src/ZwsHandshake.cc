@@ -16,14 +16,14 @@
 
 namespace Zws {
 
-static constexpr ZuCSpan GUID =
+static const ZuBSpan GUID =
   "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-static bool protocolToken(ZuCSpan value)
+static bool protocolToken(ZuBSpan value)
 {
   if (!value) return false;
   const unsigned n = value.length();
-  const char *data = value.data();
+  const uint8_t *data = value.data();
   for (unsigned i = 0; i < n; ++i) {
     const unsigned c = uint8_t(data[i]);
     if (c >= 0x21 && c <= 0x7e &&
@@ -46,7 +46,7 @@ bool nonce(Ztls::Random &random, HandshakeString &out)
   return true;
 }
 
-bool accept(HandshakeString &out, ZuCSpan key)
+bool accept(HandshakeString &out, ZuBSpan key)
 {
   if (!key) return false;
   uint8_t digest[Ztls::MD<Ztls::SHA1>::Size];
@@ -59,20 +59,20 @@ bool accept(HandshakeString &out, ZuCSpan key)
   return true;
 }
 
-bool validKey(ZuCSpan key)
+bool validKey(ZuBSpan key)
 {
   if (key.length() != ZuBase64::enclen(16)) return false;
   uint8_t raw[16];
   return ZuBase64::decode(raw, key) == sizeof(raw);
 }
 
-bool validAccept(ZuCSpan value, ZuCSpan key)
+bool validAccept(ZuBSpan value, ZuBSpan key)
 {
   HandshakeString expected;
   return accept(expected, key) && value == expected;
 }
 
-bool token(ZuCSpan value, ZuCSpan expected)
+bool token(ZuBSpan value, ZuBSpan expected)
 {
   unsigned valueLen = value.length();
   unsigned expectedLen = expected.length();
@@ -89,7 +89,7 @@ bool token(ZuCSpan value, ZuCSpan expected)
 	(value[trimmed - 1] == ' ' || value[trimmed - 1] == '\t'))
       --trimmed;
     if (trimmed - offset == expectedLen &&
-	ZuICmp<ZuCSpan>::equals(
+	ZuICmp<ZuBSpan>::equals(
 	  {value.data() + offset, expectedLen}, expected))
       return true;
     offset = end + (end < valueLen);
@@ -97,7 +97,7 @@ bool token(ZuCSpan value, ZuCSpan expected)
   return false;
 }
 
-bool subprotocol(ZuCSpan offered, ZuCSpan selected)
+bool subprotocol(ZuBSpan offered, ZuBSpan selected)
 {
   if (!protocolToken(selected)) return false;
   const unsigned offeredLen = offered.length();
@@ -114,7 +114,7 @@ bool subprotocol(ZuCSpan offered, ZuCSpan selected)
     while (trimmed > offset &&
 	(offered[trimmed - 1] == ' ' || offered[trimmed - 1] == '\t'))
       --trimmed;
-    ZuCSpan token{offered.data() + offset, trimmed - offset};
+    ZuBSpan token{offered.data() + offset, trimmed - offset};
     if (!protocolToken(token)) return false;
     found |= token == selected;
     if (end == offeredLen) return found;
