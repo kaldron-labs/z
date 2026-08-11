@@ -51,9 +51,7 @@ struct QPackFieldFlags {
 };
 
 ZtEnumStruct(ZhttpAPI, QPackBuildFailure, uint8_t,
-  None, Plan, PrefixEncode, CapacityPolicy, EncoderCapacityWrite,
-  EncoderInsertWrite, HeadersFrameHeaderWrite, HeadersPayloadEmit,
-  Flush, CapacityCommit, InsertCommit);
+  None, PrefixEncode, HeadersFrameHeaderWrite, HeadersPayloadEmit);
 
 struct QPackDecodedInsn {
   QPackInsn::T	type = QPackInsn::SetCapacity;
@@ -259,9 +257,8 @@ struct QPackTxEntry {
   uint64_t	abs = 0;
   uint64_t	prevName = uint64_t(-1);
   uint32_t	size = 0;
-  uint64_t	refcnt = 0;
-  QPackTxString	name;
-  QPackTxString	value;
+  ZuBSpan	name;
+  ZuBSpan	value;
 };
 
 struct QPackTxHashEntry {
@@ -291,20 +288,61 @@ using QPackTxNames = ZmLHash<QPackTxNameEntry,
   ZmLHashKey<QPackTxNameEntry::KeyAxor, ZmLHashLocal<>>>;
 
 struct QPackTxOrderEntry : public QPackTxEntry {
+  QPackTxOrderEntry() = default;
+  QPackTxOrderEntry(const QPackTxOrderEntry &) = delete;
+  QPackTxOrderEntry &operator =(const QPackTxOrderEntry &) = delete;
+  QPackTxOrderEntry(QPackTxOrderEntry &&entry) {
+    move_(ZuMv(entry));
+  }
+  QPackTxOrderEntry &operator =(QPackTxOrderEntry &&entry) {
+    if (this != &entry) move_(ZuMv(entry));
+    return *this;
+  }
+
   static QPackFieldKey FieldAxor(const QPackTxOrderEntry &entry) {
     return {entry.name, entry.value};
   }
+
+  void owned(QPackTxString name_, QPackTxString value_) {
+    nameStorage = ZuMv(name_);
+    valueStorage = ZuMv(value_);
+    name = nameStorage;
+    value = valueStorage;
+    owns = true;
+  }
+  void view(Header field) {
+    name = field.name;
+    value = field.value;
+    owns = false;
+  }
+
+private:
+  void move_(QPackTxOrderEntry &&entry) {
+    abs = entry.abs;
+    prevName = entry.prevName;
+    size = entry.size;
+    owns = entry.owns;
+    nameStorage = ZuMv(entry.nameStorage);
+    valueStorage = ZuMv(entry.valueStorage);
+    if (owns) {
+      name = nameStorage;
+      value = valueStorage;
+    } else {
+      name = entry.name;
+      value = entry.value;
+    }
+  }
+
+  QPackTxString nameStorage;
+  QPackTxString valueStorage;
+  bool		owns = false;
 };
 
 using QPackTxOrder =
   ZtArray<QPackTxOrderEntry, ZtArrayHeapID<"Zhttp.H3.QPackTx.Order">>;
 
-using QPackTxRefs =
-  ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.H3.QPackTx.Refs">>;
-
 struct QPackTxSection {
   uint64_t	streamID = 0;
-  QPackTxRefs	refs;
 
   static uint64_t StreamAxor(const QPackTxSection &section) {
     return section.streamID;
@@ -332,6 +370,7 @@ struct QPackTxTable {
   uint32_t		sectionCount_ = 0;
   uint32_t		usedBytes_ = 0;
   bool			capacitySent = false;
+  bool			frozen_ = false;
 
   // Connection-affine Tx state. Callers must serialize access from the owning
   // transmit path.
@@ -345,31 +384,8 @@ struct QPackTxTable {
   const QPackTxEntry *findName(ZuBSpan, uint64_t) const;
   const QPackTxEntry *findAbs(uint64_t) const;
   bool insert(Header, uint64_t * = nullptr);
+  bool insertView(Header, uint64_t * = nullptr);
   bool insert(QPackTxString, QPackTxString, uint64_t * = nullptr);
-  template <typename Inserts>
-  bool canCommit(uint32_t capacity, const Inserts &inserts) const {
-    if (capacity > effectiveCapacity()) return false;
-    uint32_t used = usedBytes_;
-    uint32_t head = orderHead_;
-    auto makeRoom = [&](uint32_t n) {
-      while (head < order.length() && used + n > capacity) {
-	if (order[head].refcnt) return false;
-	used -= order[head++].size;
-      }
-      if (used + n > capacity) used = capacity - n;
-      return true;
-    };
-    if (!makeRoom(0)) return false;
-    for (unsigned i = 0; i < inserts.length(); ++i) {
-      uint64_t n_ =
-	uint64_t(inserts[i].name.length()) + inserts[i].value.length() + 32;
-      if (n_ > capacity) return false;
-      uint32_t n = uint32_t(n_);
-      if (!makeRoom(n)) return false;
-      used += n;
-    }
-    return true;
-  }
   bool lookupAbs(uint64_t, Header &) const;
   bool evict();
   bool dropOldest();
@@ -378,8 +394,9 @@ struct QPackTxTable {
   bool streamCancellation(uint64_t);
   bool applyDecoder(QPackInsn::T, uint64_t);
   bool sectionAdmissible(uint64_t) const;
-  bool trackSection(uint64_t, ZuSpan<uint64_t>);
-  bool trackSection(uint64_t, QPackTxRefs);
+  bool registerSection(uint64_t);
+  void freeze() { frozen_ = true; }
+  bool frozen() const { return frozen_; }
   void compactOrder();
   void rebuildHashes();
 

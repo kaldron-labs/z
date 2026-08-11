@@ -19,6 +19,7 @@
 #include <zlib/Zu_aton.hh>
 
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpFields.hh>
@@ -862,26 +863,29 @@ private:
 template <
   typename Impl,
   typename Headers_ = ZuTypeList<>,
-  typename Trailers_ = ZuTypeList<>,
   bool HasBody_ = false,
   bool Streaming_ = false>
 class Builder_ {
 public:
+  enum { HeaderScratchBuiltin = 2048 };
+
   auto impl() { return static_cast<Impl *>(this); }
 
   using Headers = Headers_;
-  using Trailers = Trailers_;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
 
 protected:
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
+    using HeaderBytes = typename Stream::HeaderBytes;
+    auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
+    typename Stream::HeaderSection section{block};
     bool sent = false;
     bool endStream = false;
     bool streamMode = false;
     impl()->operation(
-      [this, &stream, &sent, &endStream, &streamMode]
+      [this, &stream, &section, &sent, &endStream, &streamMode]
       (Method::T method, auto &&emit) {
       ZuBSpan protocol;
       if (method == Method::CONNECT)
@@ -890,8 +894,8 @@ protected:
 	});
       if (protocol && !stream.extendedConnect()) return;
       streamMode = bool(protocol);
-      endStream = !HasBody && !Trailers::N && !protocol;
-      stream.beginHeaders(endStream);
+      endStream = !HasBody && !protocol;
+      stream.beginHeaders(section, endStream);
       Builder_::field_(stream, ":method", Method::name(method));
       if (method != Method::CONNECT || protocol) {
 	Builder_::field_(stream, ":scheme", "https");
@@ -911,18 +915,22 @@ protected:
       headers_<Headers, false>(stream);
     else
       headers_(stream);
+    patch_(stream);
     stream.endHeaders(endStream);
     return true;
   }
 
   template <typename Stream>
   void beginResponse_(Stream &stream) {
+    using HeaderBytes = typename Stream::HeaderBytes;
+    auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
+    typename Stream::HeaderSection section{block};
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;
     bool streamMode = impl()->streamResponse();
     bool endStream =
-      !informational && !streamMode && !HasBody && !Trailers::N;
-    stream.beginHeaders(endStream);
+      !informational && !streamMode && !HasBody;
+    stream.beginHeaders(section, endStream);
     ZuBArray<StatusSize> status;
     status[0] = uint8_t('0' + ((value / 100) % 10));
     status[1] = uint8_t('0' + ((value / 10) % 10));
@@ -932,6 +940,7 @@ protected:
       headers_<Headers, false>(stream);
     else
       headers_(stream);
+    patch_(stream);
     stream.endHeaders(endStream);
   }
 
@@ -950,11 +959,7 @@ public:
 
   template <typename Stream>
   void finish(Stream &stream) {
-    if constexpr (Trailers::N) {
-      stream.beginHeaders(true);
-      headers_<Trailers, false>(stream);
-      stream.endHeaders(true);
-    } else if constexpr (HasBody)
+    if constexpr (HasBody)
       stream.end();
     stream.flush();
   }
@@ -973,9 +978,58 @@ public:
   template <typename L> void header(L &&) { }
 
 private:
+  template <typename Key, typename I = Impl>
+  static auto headerOffset_(I *impl, uint64_t offset, unsigned length, int) ->
+      decltype(impl->template headerOffset<Key>(offset, length), void()) {
+    impl->template headerOffset<Key>(offset, length);
+  }
+  template <typename Key>
+  static void headerOffset_(Impl *, uint64_t, unsigned, ...) { }
+
   template <typename Stream, typename V>
   static void field_(Stream &stream, ZuBSpan name, V &&value) {
     stream.field(name, ZuFwd<V>(value));
+  }
+  template <typename Stream, typename V>
+  static auto fixedField_(Stream &stream, ZuBSpan name, V &&value, int) ->
+      decltype(stream.fieldFixed(name, ZuFwd<V>(value)), void()) {
+    stream.fieldFixed(name, ZuFwd<V>(value));
+  }
+  template <typename Stream, typename V>
+  static void fixedField_(Stream &stream, ZuBSpan name, V &&value, ...) {
+    stream.field(name, ZuFwd<V>(value));
+  }
+
+  template <typename Key, typename Stream, typename V>
+  static auto mutableField_(Impl *impl, Stream &stream, V &&value, int) -> decltype(
+      stream.fieldMutable(Key{}(), ZuFwd<V>(value)), void()) {
+    auto span = stream.fieldMutable(Key{}(), ZuFwd<V>(value));
+    headerOffset_<Key>(impl, span.offset, span.length, 0);
+  }
+  template <typename Key, typename Stream, typename V>
+  static void mutableField_(Impl *, Stream &stream, V &&value, ...) {
+    stream.field(Key{}(), ZuFwd<V>(value));
+  }
+
+  template <typename Stream, typename I = Impl>
+  auto patchBase_(Stream &stream, int) -> decltype(
+      stream.headerBase(),
+      ZuDeclVal<I &>().headerBase(stream.headerBase()), void()) {
+    impl()->headerBase(stream.headerBase());
+  }
+  template <typename Stream>
+  void patchBase_(Stream &, ...) { }
+  template <typename I = Impl>
+  auto patchImpl_(int) -> decltype(ZuDeclVal<I &>().patch(), void()) {
+    impl()->patch();
+  }
+  void patchImpl_(...) { }
+  template <typename Stream>
+  void patch_(Stream &stream) {
+    if constexpr (HasBody && !Streaming) {
+      patchBase_(stream, 0);
+      patchImpl_(0);
+    }
   }
 
   template <
@@ -986,12 +1040,17 @@ private:
     using Values = ZuTypeSlice<2, 1, KVs>;
     ZuUnroll::all<Keys>([this, &stream]<typename Key>() {
       using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
-      if constexpr (!ZuIsSame<Value, void>{})
-	field_(stream, Key{}(), Value{}());
-      else
+      if constexpr (!ZuIsSame<Value, void>{}) {
+	fixedField_(stream, Key{}(), HeaderValue<Value>{}(), 0);
 	impl()->template header<Key>([&stream]<typename V>(V &&v) {
 	  stream.field(Key{}(), ZuFwd<V>(v));
 	});
+      } else {
+	auto impl = this->impl();
+	impl->template header<Key>([impl, &stream]<typename V>(V &&v) {
+	  mutableField_<Key>(impl, stream, ZuFwd<V>(v), 0);
+	});
+      }
     });
     runtimeHeaders_(stream);
   }
@@ -1003,20 +1062,17 @@ private:
       name << ZuFwd<K>(k);
       if (name) stream.field(name, ZuFwd<V>(v));
     };
-    if constexpr (Fields::HasRuntimeBuilder<Impl, decltype(fn)>{})
-      impl()->header(ZuMv(fn));
+    impl()->header(ZuMv(fn));
   }
 };
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class Request :
-  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+class Request : public Builder_<Impl, Headers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1026,12 +1082,10 @@ public:
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class Response :
-  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+class Response : public Builder_<Impl, Headers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
 
 public:
   template <typename Stream>

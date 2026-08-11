@@ -18,6 +18,8 @@
 
 #include <zlib/ZmRandom.hh>
 
+#include <zlib/ZtScratch.hh>
+
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZhttpCore.hh>
@@ -1273,7 +1275,6 @@ auto dataStream(Lower &lower, uint64_t length) {
 template <
   typename Impl,
   typename Headers_ = ZuTypeList<>,
-  typename Trailers_ = ZuTypeList<>,	// ignored if not chunked
   bool HasBody_ = false,		// has a body
   bool Streaming_ = false>
 class Builder_ {
@@ -1281,15 +1282,15 @@ public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
 
   enum {
-    PrefixBuiltin = 16,
-    EncoderScratchBuiltin = 256
+    HeaderHeadroom = 32,
+    HeaderScratchBuiltin = 2048,
+    EncoderScratchBuiltin = 256,
   };
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
   using Headers = Headers_;
-  using Trailers = Trailers_;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
 
@@ -1305,18 +1306,7 @@ public:
     m_params = params;
   }
 
-  // Retained messages must not publish encoder-stream or table state before
-  // their message commit.  Literal encoding is the transaction-safe fallback
-  // until the retained commit set has a staged QPACK transaction.
-  void deferCompression() { m_deferCompression = true; }
-
 private:
-  template <typename L>
-  void runtimeHeaders_(L &&l) {
-    if constexpr (Fields::HasRuntimeBuilder<Impl, L>{})
-	impl()->header(ZuFwd<L>(l));
-  }
-
   static ZuBSpan statusSpan_(unsigned status, ZuBArray<StatusSize> &buf) {
     buf[0] = uint8_t('0' + ((status / 100) % 10));
     buf[1] = uint8_t('0' + ((status / 10) % 10));
@@ -1334,86 +1324,25 @@ private:
     stream.flush();
   }
 
-  template <typename Stream>
-  struct StreamBytes {
-    StreamBytes(Stream &stream_) : stream(stream_) { }
-
-    void push(uint8_t c) {
-	stream << char(c);
-	++n;
-    }
-    uint64_t length() const { return n; }
-
-    Stream	&stream;
-    uint64_t	n = 0;
-  };
-
-  template <typename Stream>
-  static bool writeFrameHeader_(
-    Stream &stream, uint64_t type, uint64_t length) {
-    return writeFrameHeader(stream, type, length) >= 0;
-  }
-
-  template <typename Bytes, bool Plan>
+  template <typename Bytes>
   struct Build {
-    struct InsertPlan {
-	QPackTxString	name;
-	QPackTxString	value;
-	uint64_t	nameIndex = 0;
-	bool		nameRef = false;
-	bool		nameDynamic = false;
+    struct ValueSpan {
+      uint64_t	offset = 0;
+      unsigned	length = 0;
     };
-    using InsertPlans =
-	ZtArray<InsertPlan, ZtArrayHeapID<"Zhttp.H3.QPackInsertPlan">>;
 
     Bytes		&out;
-    QPackTxRefs	refs;
-    InsertPlans	inserts;
-    QPackTxTable	*tx = nullptr;
+    Compression::FieldSectionBuffer<Bytes> *section = nullptr;
+    const QPackTxTable *tx = nullptr;
     Params		params;
     uint64_t		base = 0;
     uint64_t		required = 0;
-    uint32_t		plannedCapacity = 0;
-    bool		sendCapacity = false;
     bool		dynamic = false;
+    bool		dynamicRef = false;
     bool		ok = true;
 
     Build(Bytes &out_) : out{out_} { }
 
-    void planInsert_(ZuBSpan name, ZuBSpan value) {
-	if constexpr (Plan) {
-	  if (!tx || !dynamic || !plannedCapacity ||
-	      params.neverIndex(name))
-	    return;
-	  if (tx->find(name, value)) return;
-	  unsigned namePlan = unsigned(-1);
-	  for (unsigned i = inserts.length(); i; ) {
-	    auto &prior = inserts[--i];
-	    if (prior.name != name) continue;
-	    if (prior.value == value) return;
-	    if (namePlan == unsigned(-1)) namePlan = i;
-	  }
-	  auto plan = new (inserts.push()) InsertPlan();
-	  plan->name = name;
-	  plan->value = value;
-	  if (QPack::staticNameIndex(name, plan->nameIndex)) {
-	    plan->nameRef = true;
-	    return;
-	  }
-	  if (namePlan != unsigned(-1)) {
-	    plan->nameIndex = inserts.length() - namePlan - 2;
-	    plan->nameRef = true;
-	    plan->nameDynamic = true;
-	    return;
-	  }
-	  if (auto entry = tx->findName(name)) {
-	    plan->nameIndex =
-	      base + inserts.length() - entry->abs - 2;
-	    plan->nameRef = true;
-	    plan->nameDynamic = true;
-	  }
-	}
-    }
     void field(ZuBSpan name, ZuBSpan value) {
 	if (!ok) return;
 	Header h{name, value};
@@ -1426,7 +1355,7 @@ private:
 	    if (e->abs < base && e->abs + 1 <= tx->knownReceivedCount()) {
 	      ok = qpackEncodeDynamicIndexed(out, base - e->abs - 1) >= 0;
 	      if (required < e->abs + 1) required = e->abs + 1;
-	      if constexpr (Plan) refs.push(e->abs);
+	      dynamicRef = true;
 	      return;
 	    }
 	uint64_t staticName = 0;
@@ -1435,39 +1364,83 @@ private:
 	    ok = qpackEncodeDynamicName(
 	      out, base - e->abs - 1, value, params.neverIndex(name)) >= 0;
 	    if (required < e->abs + 1) required = e->abs + 1;
-	    if constexpr (Plan) refs.push(e->abs);
-	    if (ok) planInsert_(name, value);
+	    dynamicRef = true;
 	    return;
 	  }
 	ok = qpackEncodeFieldLine(out, h, params) >= 0;
-	if (!ok) return;
-	planInsert_(name, value);
+    }
+    void fieldFixed(ZuBSpan name, ZuBSpan value) {
+      field(name, value);
+    }
+    template <typename P>
+    ZuIfT<!Compression::IsPrintString<P>{}>
+    fieldFixed(ZuBSpan name, const P &value) {
+      if (!ok) return;
+      auto rendered = ZtScratch(HdrBytes, 256);
+      Compression::PrintBytes bytes{rendered};
+      bytes << value;
+      if (!bytes.ok()) {
+	ok = false;
+	return;
+      }
+      field(name, rendered);
     }
     template <typename P>
     ZuIfT<!Compression::IsPrintString<P>{}>
     field(ZuBSpan name, const P &value) {
-	if (!ok) return;
-	uint64_t nameIndex = 0;
-	if (QPack::staticNameIndex(name, nameIndex)) {
-	  uint8_t prefix = uint8_t(
-	    0x50 | (params.neverIndex(name) ? 0x20 : 0));
-	  ok = putPref(out, prefix, 4, nameIndex) >= 0 &&
-	    Compression::putPrint(out, 0, 7, value) >= 0;
-	  return;
-	}
-	ok = putString(
-	  out, uint8_t(0x20 | (params.neverIndex(name) ? 0x10 : 0)),
-	  3, name) >= 0 && Compression::putPrint(out, 0, 7, value) >= 0;
+	(void)fieldMutable(name, value);
     }
-    void field(ZuBSpan name, ZuBSpan value1, char sep, ZuBSpan value2) {
-	if (!ok) return;
-	uint64_t length = uint64_t(value1.length()) + 1 + value2.length();
-	QPackTxString value;
-	value.ensure(length);
-	value << value1 << sep << value2;
-	field(name, value);
+    template <typename P>
+    ValueSpan fieldMutable(ZuBSpan name, const P &value) {
+      if (!ok) return {};
+      bool never = params.neverIndex(name);
+      uint64_t nameIndex = 0;
+      if (QPack::staticNameIndex(name, nameIndex)) {
+	ok = putPref(out, uint8_t(0x50 | (never ? 0x20 : 0)),
+	    4, nameIndex) >= 0;
+      } else {
+	const QPackTxEntry *entry = nullptr;
+	if (tx && dynamic) entry = tx->findName(name, base);
+	if (entry) {
+	  ok = putPref(out, uint8_t(0x40 | (never ? 0x20 : 0)),
+	      4, base - entry->abs - 1) >= 0;
+	  if (required < entry->abs + 1) required = entry->abs + 1;
+	  dynamicRef = true;
+	} else
+	  ok = putString(out, uint8_t(0x20 | (never ? 0x10 : 0)),
+	      3, name) >= 0;
+      }
+      if (!ok) return {};
+      ValueSpan span;
+      if (!section || section->putPrint(
+	    0, 7, value, span.offset, span.length) < 0) {
+	ok = false;
+	return {};
+      }
+      return span;
     }
   };
+
+  template <typename Key, typename I = Impl>
+  auto headerOffset_(uint64_t offset, unsigned length, int) -> decltype(
+      ZuDeclVal<I &>().template headerOffset<Key>(offset, length), void()) {
+    impl()->template headerOffset<Key>(offset, length);
+  }
+  template <typename Key>
+  void headerOffset_(uint64_t, unsigned, ...) { }
+
+  template <typename I = Impl>
+  auto headerBase_(uint8_t *base, int) -> decltype(
+      ZuDeclVal<I &>().headerBase(base), void()) {
+    impl()->headerBase(base);
+  }
+  void headerBase_(uint8_t *, ...) { }
+
+  template <typename I = Impl>
+  auto patch_(int) -> decltype(ZuDeclVal<I &>().patch(), void()) {
+    impl()->patch();
+  }
+  void patch_(...) { }
 
   template <typename KVs, typename Build>
   bool headers_(Build &build) {
@@ -1476,16 +1449,19 @@ private:
     ZuUnroll::all<HeaderKeys>([this, &build]<typename Key>() {
 	using Value = ZuType<ZuTypeIndex<Key, HeaderKeys>{}, HeaderValues>;
 	if constexpr (!ZuIsSame<Value, void>{}) {
-	  ZuAssert(!IsTypeList_<Value>{},
-	    "H3 Builder header values must be void or a single value");
-	  build.field(Key{}(), Value{}());
-	} else {
+	  build.fieldFixed(Key{}(), HeaderValue<Value>{}());
 	  impl()->template header<Key>([&build]<typename V>(V &&v) {
 	    build.field(Key{}(), ZuFwd<V>(v));
 	  });
+	} else {
+	  auto self = this;
+	  impl()->template header<Key>([self, &build]<typename V>(V &&v) {
+	    auto span = build.fieldMutable(Key{}(), ZuFwd<V>(v));
+	    self->template headerOffset_<Key>(span.offset, span.length, 0);
+	  });
 	}
     });
-    runtimeHeaders_([&build]<typename K, typename V>(K &&k, V &&v) {
+    impl()->header([&build]<typename K, typename V>(K &&k, V &&v) {
 	ZtBArray<ZtArrayHeapID<"Zhttp.H3.HeaderName">> name;
 	name << ZuFwd<K>(k);
 	if (name) build.field(name, ZuFwd<V>(v));
@@ -1507,137 +1483,68 @@ private:
   template <typename Stream, typename Encode>
   void writeHeaders_(Stream &stream, Encode &&encode) {
     impl()->qpackFailure(QPackBuildFailure::None);
-    CountBytes count;
-    Build<CountBytes, true> plan{count};
-    plan.tx = impl()->qpackTx();
-    plan.params = impl()->h3Params();
-    if (!m_deferCompression && plan.tx &&
-	(plan.dynamic = plan.tx->sectionAdmissible(impl()->streamID()))) {
-	uint32_t desired = plan.tx->effectiveCapacity();
-	plan.plannedCapacity = plan.tx->capacity();
-	if (plan.plannedCapacity != desired) {
-	  plan.plannedCapacity = desired;
-	  plan.sendCapacity = true;
-	}
-	plan.base = plan.tx->insertCount();
+    auto fields = ZtScratch(
+      HdrBytes, HeaderHeadroom, HeaderScratchBuiltin);
+    Compression::FieldSectionBuffer<decltype(fields)> section{fields};
+    Build<decltype(fields)> build{fields};
+    build.section = &section;
+    auto tx = impl()->qpackTx();
+    build.tx = tx;
+    build.params = impl()->h3Params();
+    if (build.tx && build.tx->capacity() &&
+	build.tx->sectionAdmissible(impl()->streamID())) {
+      build.dynamic = true;
+      build.base = build.tx->insertCount();
     }
-    if (!encode(plan) || !plan.ok) {
-	impl()->qpackFailure(QPackBuildFailure::Plan);
-	ZiLOG(Error, "Zhttp", "failed to plan H3 headers");
-	return;
+    if (!encode(build) || !build.ok) {
+      impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
+      ZiLOG(Error, "Zhttp", "failed to emit H3 headers");
+      return;
     }
-    if (plan.tx && plan.dynamic) {
-	if (!plan.tx->canCommit(plan.plannedCapacity, plan.inserts)) {
-	  count.n = 0;
-	  plan.refs.init();
-	  plan.inserts.init();
-	  plan.required = 0;
-	  plan.plannedCapacity = plan.tx->capacity();
-	  plan.sendCapacity = false;
-	  plan.dynamic = false;
-	  plan.ok = true;
-	  if (!encode(plan) || !plan.ok) {
-	    impl()->qpackFailure(QPackBuildFailure::Plan);
-	    ZiLOG(Error, "Zhttp", "failed to re-plan literal H3 headers");
-	    return;
-	  }
-	}
+    if constexpr (HasBody && !Streaming) {
+      headerBase_(fields.data(), 0);
+      patch_(0);
     }
-    auto prefix = ZmScratch(uint8_t, PrefixBuiltin, HdrBytes::VHeap);
     FieldSectionPrefix p;
-    p.requiredInsertCount = plan.required;
-    p.base = plan.required ? plan.base : 0;
+    p.requiredInsertCount = build.required;
+    p.base = build.required ? build.base : 0;
+    CountBytes prefixCount;
     if (QPack::encodeFieldSectionPrefix(
-	    prefix, p, plan.plannedCapacity) < 0) {
+	    prefixCount, p, build.tx ? build.tx->capacity() : 0) < 0) {
 	impl()->qpackFailure(QPackBuildFailure::PrefixEncode);
 	ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK prefix");
 	return;
     }
-    bool encoderEmitted = false;
-    if (plan.sendCapacity || plan.inserts.length()) {
-	auto scratch = ZtScratch(HdrBytes, EncoderScratchBuiltin);
-	if (plan.sendCapacity) {
-	  if (QPack::encodeSetCapacity(scratch, plan.plannedCapacity) < 0) {
-	    impl()->qpackFailure(QPackBuildFailure::CapacityPolicy);
-	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK capacity");
-	    return;
-	  }
-	  if (!impl()->qpackEncoderWrite(scratch)) {
-	    impl()->qpackFailure(QPackBuildFailure::EncoderCapacityWrite);
-	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK capacity");
-	    return;
-	  }
-	  encoderEmitted = true;
-	}
-	for (unsigned i = 0; i < plan.inserts.length(); ++i) {
-	  const auto &insert = plan.inserts[i];
-	  int n = insert.nameRef ?
-	    QPack::encodeInsertWithNameRef(
-	      scratch, insert.nameIndex, insert.nameDynamic, insert.value) :
-	    QPack::encodeInsertLiteral(
-	      scratch, Header{insert.name, insert.value});
-	  if (n < 0) {
-	    impl()->qpackFailure(QPackBuildFailure::Plan);
-	    ZiLOG(Error, "Zhttp", "failed to encode H3 QPACK insert");
-	    return;
-	  }
-	  if (!impl()->qpackEncoderWrite(scratch)) {
-	    impl()->qpackFailure(QPackBuildFailure::EncoderInsertWrite);
-	    ZiLOG(Error, "Zhttp", "failed to write H3 QPACK insert");
-	    return;
-	  }
-	  encoderEmitted = true;
-	}
-    }
-    if (!writeFrameHeader_(
-	    stream, 0x01, prefix.length() + count.length())) {
+    uint64_t payloadLength =
+      prefixCount.length() + section.length(HeaderHeadroom);
+    CountBytes frameCount;
+
+    if (putVar(frameCount, 0x01) < 0 ||
+	putVar(frameCount, payloadLength) < 0 ||
+	frameCount.length() + prefixCount.length() > HeaderHeadroom) {
 	impl()->qpackFailure(QPackBuildFailure::HeadersFrameHeaderWrite);
-	ZiLOG(Error, "Zhttp", "failed to write H3 HEADERS frame header");
+	ZiLOG(Error, "Zhttp", "failed to finalize H3 HEADERS frame");
 	return;
     }
-    StreamBytes out{stream};
-    writeSpan_(stream, prefix);
-    out.n += prefix.length();
-    uint64_t bodyStart = out.length();
-    Build<StreamBytes<Stream>, false> emit{out};
-    emit.tx = plan.tx;
-    emit.params = plan.params;
-    emit.base = plan.base;
-    emit.plannedCapacity = plan.plannedCapacity;
-    emit.sendCapacity = plan.sendCapacity;
-    emit.dynamic = plan.dynamic;
-    if (!encode(emit) || !emit.ok ||
-	  out.length() - bodyStart != count.length()) {
-	impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
-	ZiLOG(Error, "Zhttp", "failed to emit H3 headers");
+    unsigned headLength = unsigned(
+      frameCount.length() + prefixCount.length());
+    unsigned start = HeaderHeadroom - headLength;
+    SpanBytes head{{fields.data() + start, headLength}};
+    if (putVar(head, 0x01) < 0 || putVar(head, payloadLength) < 0 ||
+	QPack::encodeFieldSectionPrefix(
+	  head, p, build.tx ? build.tx->capacity() : 0) < 0) {
+	impl()->qpackFailure(QPackBuildFailure::PrefixEncode);
+	ZiLOG(Error, "Zhttp", "failed to finalize H3 QPACK prefix");
 	return;
     }
+    section.each(start, [&stream](ZuBSpan span) {
+      writeSpan_(stream, span);
+    });
     flush_(stream);
-    if (plan.tx) {
-	if (encoderEmitted) {
-	  if (plan.sendCapacity) {
-	    if (!plan.tx->setCapacity(plan.plannedCapacity)) {
-	      impl()->qpackFailure(QPackBuildFailure::CapacityCommit);
-	      ZiLOG(Error, "Zhttp", "failed to commit QPACK capacity");
-	      return;
-	    }
-	    plan.tx->capacitySent = true;
-	  }
-	  for (unsigned i = 0; i < plan.inserts.length(); ++i)
-	    if (!plan.tx->insert(
-		  ZuMv(plan.inserts[i].name),
-		  ZuMv(plan.inserts[i].value))) {
-	      impl()->qpackFailure(QPackBuildFailure::InsertCommit);
-	      ZiLOG(Error, "Zhttp", "failed to commit QPACK insert");
-	      return;
-	    }
-	}
-	if (plan.refs.length()) {
-	  bool tracked =
-	    plan.tx->trackSection(impl()->streamID(), ZuMv(plan.refs));
-	  ZiAssert(tracked, "Zhttp", (),
-	    "pre-admitted QPACK section tracking failed", return);
-	}
+    if (tx && build.dynamicRef) {
+      bool tracked = tx->registerSection(impl()->streamID());
+      ZiAssert(tracked, "Zhttp", (),
+	"QPACK section tracking failed", return);
     }
   }
 
@@ -1708,12 +1615,6 @@ public:
   // finish
   template <typename Stream>
   void finish(Stream &stream) {
-    if constexpr (Trailers::N) {
-	writeHeaders_(stream, [self = this](auto &build) {
-	  self->template headers_<Trailers>(build);
-	  return build.ok;
-	});
-    }
     stream.flush();
   }
 
@@ -1765,18 +1666,15 @@ private:
   uint64_t		m_streamID = 0;
   const Params		*m_params = nullptr;
   bool			m_peerExtendedConnect = false;
-  bool			m_deferCompression = false;
 };
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class Request :
-  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+class Request : public Builder_<Impl, Headers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1786,12 +1684,10 @@ public:
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Streaming = false>
-class Response :
-  public Builder_<Impl, Headers, Trailers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, Trailers, HasBody, Streaming>;
+class Response : public Builder_<Impl, Headers, HasBody, Streaming> {
+  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1812,6 +1708,13 @@ struct HasH3PeerCap : public ZuFalse { };
 template <typename Link>
 struct HasH3PeerCap<Link, decltype(
   ZuDeclVal<Link *>()->h3PeerCap(false), void())> : public ZuTrue { };
+
+template <typename Link, typename StreamRef, typename = void>
+struct HasQPackSeed : public ZuFalse { };
+template <typename Link, typename StreamRef>
+struct HasQPackSeed<Link, StreamRef, decltype(
+  ZuDeclVal<Link *>()->qpackSeed(ZuDeclVal<StreamRef>()), void())> :
+  public ZuTrue { };
 
 template <typename Link, typename = void>
 struct HasH3Ready : public ZuFalse { };
@@ -1959,7 +1862,9 @@ struct Cxn {
     return true;
   }
   void peerSettings() {
-    if constexpr (HasH3Ready<Link>{})
+    if constexpr (HasQPackSeed<Link, StreamRef>{})
+      if (link_) link_->qpackSeed(enc);
+    else if constexpr (HasH3Ready<Link>{})
       if (link_) link_->h3Ready();
   }
   QPackRxTable *qpackRx() { return &qpackRxTable; }

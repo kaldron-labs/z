@@ -222,9 +222,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 
   struct Builder :
     public Zhttp::MessageTraits<Profile>::template Request<
-      Builder, RequestHeaders, ZuTypeList<>, true, false> {
+      Builder, RequestHeaders, true, false> {
     using Base = typename Zhttp::MessageTraits<Profile>::template Request<
-      Builder, RequestHeaders, ZuTypeList<>, true, false>;
+      Builder, RequestHeaders, true, false>;
 
     template <typename L>
     void operation(L &&l) const {
@@ -238,6 +238,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     void header(L &&l) const {
       if constexpr (Key{}() == "content-length") l("1");
     }
+    template <typename L> void header(L &&) const { }
   };
 
   struct Link :

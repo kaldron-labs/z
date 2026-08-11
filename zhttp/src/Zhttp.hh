@@ -37,6 +37,7 @@
 #include <zlib/ZhttpURL.hh>
 #include <zlib/ZhttpH1.hh>
 #include <zlib/ZhttpH2.hh>
+#include <zlib/ZhttpHPack.hh>
 #include <zlib/ZhttpH3.hh>
 #include <zlib/ZhttpTransport.hh>
 
@@ -135,7 +136,9 @@ struct Parser { // base class with defaulted types and member functions
 
 struct Builder {
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
-  using Trailers = ZuTypeList<>; // ZhttpHeaders(...);	// optional
+
+  // Builders provide only the initial field section; outbound trailers are
+  // unsupported.  A Builder instance represents exactly one message.
 
   // May be non-constexpr for a type-erased Builder. The value is fixed for
   // the lifetime of this single-message Builder.
@@ -154,8 +157,21 @@ struct Builder {
   // Response status code; ignored for requests.
   unsigned status() const { return 200; }
 
-  template <typename Key, typename L> void header(L &&l) const { } // l(value)
-  template <typename L> void header(L &&l) const { }		     // l(key, value)
+  // For each declared Key, a concrete header<Key>() provider is called exactly
+  // once per message when that overload exists.  It may synchronously call
+  // l(value) zero or one times.  A fixed (Key, Value) declaration is emitted
+  // independently; its keyed provider may emit one additional value.
+  //
+  // The non-template header(l) provider is called exactly once per message,
+  // unconditionally.  It may synchronously call l(key, value) zero or more
+  // times, with different keys and values.  This inherited fallback
+  // deliberately does nothing.
+  //
+  // Only fixed declarations seed HPACK.  Fixed declarations and the names of
+  // runtime-valued declarations may seed QPACK.  Values produced by either
+  // provider are never seed inputs; no attempt is made to compress a declared
+  // runtime value, although its name may use a static or frozen-table index.
+  template <typename L> void header(L &&l) const { }
 
   // Called only for body-bearing policies. emit(write) must be called
   // once for required bodies, zero or one times for optional bodies.
@@ -163,7 +179,9 @@ struct Builder {
   // write(bodyStream) returns true on success, false on failure.
   template <typename Emit> void body(Emit &&emit) const { }
 
-  // Called only for fixed policies, synchronously after body output.
+  // Called exactly once for a successfully produced fixed body, synchronously
+  // after body output and initial-header emission, but before those header
+  // bytes become externally visible.
   // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
   // There is no contentLength() callback; emit a Content-Length Placeholder
   // from header<Key>(), then overwrite its mutable span here. Failing to
@@ -240,56 +258,49 @@ using H3ResponseParser = H3::Parser<Impl, false, Headers>;
 // Low-level protocol Builder CRTP adapters used internally by the role
 // facades. Application Builders do not derive from these aliases. The
 // adapters provide protocol framing and invoke the application through
-// inversion-of-control lambdas. H1 chunked builders emit Trailers from
-// finish(); H2/H3 builders emit a trailing HEADERS section.
+// inversion-of-control lambdas.  Builders emit initial headers only.
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
 using H1Request =
-  H1::Request<Impl, Headers, Trailers, HasBody, Chunked>;
+  H1::Request<Impl, Headers, HasBody, Chunked>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false, bool Chunked = false>
 using H1Response =
-  H1::Response<Impl, Headers, Trailers, HasBody, Chunked>;
+  H1::Response<Impl, Headers, HasBody, Chunked>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false>
 using H2Request =
-  H2::Request<Impl, Headers, Trailers, HasBody, false>;
+  H2::Request<Impl, Headers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false>
 using H2Response =
-  H2::Response<Impl, Headers, Trailers, HasBody, false>;
+  H2::Response<Impl, Headers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false>
 using H3Request =
-  H3::Request<Impl, Headers, Trailers, HasBody, false>;
+  H3::Request<Impl, Headers, HasBody, false>;
 
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false>
 using H3Response =
-  H3::Response<Impl, Headers, Trailers, HasBody, false>;
+  H3::Response<Impl, Headers, HasBody, false>;
 
 // Application message callback contract
 //
@@ -325,16 +336,12 @@ template <> struct HttpTraits<Version::H1> {
   using RequestParser = H1::Parser<Impl, true, Headers>;
   template <typename Impl, typename Headers>
   using ResponseParser = H1::Parser<Impl, false, Headers>;
-  template <
-    typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool Chunked>
+  template <typename Impl, typename Headers, bool HasBody, bool Chunked>
   using Request =
-    H1::Request<Impl, Headers, Trailers, HasBody, Chunked>;
-  template <
-    typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool Chunked>
+    H1::Request<Impl, Headers, HasBody, Chunked>;
+  template <typename Impl, typename Headers, bool HasBody, bool Chunked>
   using Response =
-    H1::Response<Impl, Headers, Trailers, HasBody, Chunked>;
+    H1::Response<Impl, Headers, HasBody, Chunked>;
 };
 
 template <> struct HttpTraits<Version::H2> {
@@ -348,16 +355,12 @@ template <> struct HttpTraits<Version::H2> {
   using RequestParser = H2::Parser<Impl, true, Headers>;
   template <typename Impl, typename Headers>
   using ResponseParser = H2::Parser<Impl, false, Headers>;
-  template <
-    typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool Streaming>
+  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
   using Request =
-    H2::Request<Impl, Headers, Trailers, HasBody, Streaming>;
-  template <
-    typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool Streaming>
+    H2::Request<Impl, Headers, HasBody, Streaming>;
+  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
   using Response =
-    H2::Response<Impl, Headers, Trailers, HasBody, Streaming>;
+    H2::Response<Impl, Headers, HasBody, Streaming>;
 };
 
 template <> struct HttpTraits<Version::H3> {
@@ -371,16 +374,12 @@ template <> struct HttpTraits<Version::H3> {
   using RequestParser = H3::Parser<Impl, true, Headers>;
   template <typename Impl, typename Headers>
   using ResponseParser = H3::Parser<Impl, false, Headers>;
-  template <
-    typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool Streaming>
+  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
   using Request =
-    H3::Request<Impl, Headers, Trailers, HasBody, Streaming>;
-  template <
-    typename Impl, typename Headers, typename Trailers,
-    bool HasBody, bool Streaming>
+    H3::Request<Impl, Headers, HasBody, Streaming>;
+  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
   using Response =
-    H3::Response<Impl, Headers, Trailers, HasBody, Streaming>;
+    H3::Response<Impl, Headers, HasBody, Streaming>;
 };
 
 template <typename Profile, typename Traits>
@@ -390,18 +389,18 @@ struct MessageTraits :
   enum { Multiplexed = Traits::Multiplexed };
 };
 
-template <typename U, typename = void>
-struct BuilderTrailers { using T = ZuTypeList<>; };
-template <typename U>
-struct BuilderTrailers<U, decltype(sizeof(typename U::Trailers), void())> {
-  using T = typename U::Trailers;
-};
-
 template <typename U, typename Emit, typename = void>
 struct HasBuilderBody : public ZuFalse { };
 template <typename U, typename Emit>
 struct HasBuilderBody<U, Emit, decltype(
   ZuDeclVal<U &>().body(ZuDeclVal<Emit>()), void())> : public ZuTrue { };
+
+template <typename U, typename Key, typename L, typename = void>
+struct HasBuilderHeader : public ZuFalse { };
+template <typename U, typename Key, typename L>
+struct HasBuilderHeader<U, Key, L, decltype(
+  ZuDeclVal<U &>().template header<Key>(ZuDeclVal<L>()), void())> :
+  public ZuTrue { };
 
 template <typename U, typename L, typename = void>
 struct HasBuilderBodyHdrs : public ZuFalse { };
@@ -426,6 +425,253 @@ bool validRuntimeHeader(ZuCSpan name, bool h1) {
   });
   return valid;
 }
+
+struct HeaderSeed {
+  H3::QPackTxString	name;
+  H3::QPackTxString	value;
+  uint32_t		size = 0;
+  bool			exact = false;
+};
+
+using HeaderSeeds =
+  ZtArray<HeaderSeed, ZtArrayHeapID<"Zhttp.HeaderSeeds">>;
+
+// Initialization-owned immutable source for connection-local HPACK/QPACK
+// bootstrap state.  Application Builder instances are never consulted.
+class HeaderSeedCatalog {
+public:
+  template <typename Headers>
+  void add(const H3::Params &params, uint32_t capacity) {
+    using Keys = ZuTypeSlice<2, 0, Headers>;
+    using Values = ZuTypeSlice<2, 1, Headers>;
+    ZuUnroll::all<Keys>([this, &params, capacity]<typename Key>() {
+      using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
+      H3::QPackTxString name;
+      name << Key{}();
+      if (!name || name[0] == ':' || Fields::forbidden(name) ||
+	  params.neverIndex(name))
+	return;
+      if constexpr (ZuIsSame<Value, void>{}) {
+	uint64_t index = 0;
+	if (H3::QPack::staticNameIndex(name, index) || findName_(name)) return;
+	add_(ZuMv(name), {}, false, capacity);
+      } else {
+	if constexpr (ZuIsSame<Value, Placeholder>{}) return;
+	H3::QPackTxString value;
+	value << HeaderValue<Value>{}();
+	if (H3::QPack::staticIndex(name, value) >= 0 ||
+	    findExact_(name, value))
+	  return;
+	removeNameOnly_(name);
+	add_(ZuMv(name), ZuMv(value), true, capacity);
+      }
+    });
+  }
+
+  const HeaderSeeds &entries() const { return m_entries; }
+  bool operator !() const { return !m_entries; }
+  ZuOpBool
+
+private:
+  bool findName_(ZuBSpan name) const {
+    for (unsigned i = 0; i < m_entries.length(); ++i)
+      if (m_entries[i].name == name) return true;
+    return false;
+  }
+  bool findExact_(ZuBSpan name, ZuBSpan value) const {
+    for (unsigned i = 0; i < m_entries.length(); ++i)
+      if (m_entries[i].exact && m_entries[i].name == name &&
+	  m_entries[i].value == value)
+	return true;
+    return false;
+  }
+  void removeNameOnly_(ZuBSpan name) {
+    for (unsigned i = 0; i < m_entries.length(); ++i) {
+      if (m_entries[i].exact || m_entries[i].name != name) continue;
+      m_entries.splice(i, 1);
+      return;
+    }
+  }
+  void add_(H3::QPackTxString name, H3::QPackTxString value,
+      bool exact, uint32_t capacity) {
+    uint64_t size = uint64_t(name.length()) + value.length() + 32;
+    if (size > capacity) return;
+    new (m_entries.push()) HeaderSeed{
+      ZuMv(name), ZuMv(value), uint32_t(size), exact};
+  }
+
+  HeaderSeeds	m_entries;
+};
+
+struct HPackSeed {
+  H3::QPackTxString	name;
+  H3::QPackTxString	value;
+  H2::HPackBytes	incremental;
+  H2::HPackBytes	fallback;
+  uint32_t		size = 0;
+};
+
+using HPackSeeds =
+  ZtArray<HPackSeed, ZtArrayHeapID<"Zhttp.HPackSeeds">>;
+
+struct HPackSeedPlan {
+  HPackSeeds	entries;
+};
+
+using HPackSeedPlans =
+  ZtArray<HPackSeedPlan, ZtArrayHeapID<"Zhttp.HPackSeedPlans">>;
+
+class HPackSeedCatalog {
+public:
+  template <typename Headers>
+  void add(uint32_t capacity) {
+    HPackSeedPlan plan;
+    using Keys = ZuTypeSlice<2, 0, Headers>;
+    using Values = ZuTypeSlice<2, 1, Headers>;
+    ZuUnroll::all<Keys>([&plan, capacity]<typename Key>() {
+      using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
+      if constexpr (!ZuIsSame<Value, void>{}) {
+	if constexpr (ZuIsSame<Value, Placeholder>{}) return;
+	H3::QPackTxString name;
+	H3::QPackTxString value;
+	name << Key{}();
+	value << HeaderValue<Value>{}();
+	if (!name || name[0] == ':' || Fields::forbidden(name) ||
+	    H2::HPack::staticIndex(name, value) > 0 ||
+	    sensitive_(name) || find_(plan.entries, name, value))
+	  return;
+	uint64_t size = uint64_t(name.length()) + value.length() + 32;
+	if (size > capacity) return;
+	HPackSeed seed;
+	seed.name = ZuMv(name);
+	seed.value = ZuMv(value);
+	seed.size = uint32_t(size);
+	int nameIndex = H2::HPack::staticNameIndex(seed.name);
+	if (Compression::putPref(seed.incremental, 0x40, 6,
+	      nameIndex > 0 ? unsigned(nameIndex) : 0) < 0 ||
+	    (nameIndex <= 0 && Compression::putString(
+	      seed.incremental, 0, 7, seed.name) < 0) ||
+	    Compression::putString(
+	      seed.incremental, 0, 7, seed.value) < 0 ||
+	    Compression::putPref(seed.fallback, 0, 4,
+	      nameIndex > 0 ? unsigned(nameIndex) : 0) < 0 ||
+	    (nameIndex <= 0 && Compression::putString(
+	      seed.fallback, 0, 7, seed.name) < 0) ||
+	    Compression::putString(seed.fallback, 0, 7, seed.value) < 0)
+	  return;
+	new (plan.entries.push()) HPackSeed{ZuMv(seed)};
+      }
+    });
+    new (m_plans.push()) HPackSeedPlan{ZuMv(plan)};
+  }
+
+  const HPackSeedPlans &plans() const { return m_plans; }
+  const HPackSeeds &entries() const {
+    static const HPackSeeds empty;
+    return m_plans ? m_plans[0].entries : empty;
+  }
+
+private:
+  static bool sensitive_(ZuBSpan name) {
+    return name == "authorization" || name == "cookie" ||
+      name == "set-cookie";
+  }
+  static bool find_(
+      const HPackSeeds &entries, ZuBSpan name, ZuBSpan value) {
+    for (unsigned i = 0; i < entries.length(); ++i)
+      if (entries[i].name == name && entries[i].value == value)
+	return true;
+    return false;
+  }
+
+  HPackSeedPlans	m_plans;
+};
+
+ZtEnumStruct(ZhttpAPI, QPackSeedState, uint8_t,
+  Unseeded, Seeded, Disabled);
+
+ZtEnumStruct(ZhttpAPI, QPackSeedResult, int8_t,
+  Failed, Disabled, Seeded);
+
+template <typename Write>
+QPackSeedResult::T installQPackSeeds(
+    H3::QPackTxTable &tx, const HeaderSeeds &seeds, Write &&write) {
+  uint32_t capacity = tx.effectiveCapacity();
+  if (!capacity || !seeds) {
+    tx.freeze();
+    return QPackSeedResult::Disabled;
+  }
+  uint64_t used = 0;
+  unsigned count = 0;
+  while (count < seeds.length()) {
+    if (seeds[count].size > capacity - used) break;
+    used += seeds[count++].size;
+  }
+  if (!count) {
+    tx.freeze();
+    return QPackSeedResult::Disabled;
+  }
+  H3::HdrBytes bytes;
+  H3::HdrBytes insn;
+  if (H3::QPack::encodeSetCapacity(insn, capacity) < 0)
+    return QPackSeedResult::Failed;
+  Compression::putBytes(bytes, insn);
+  for (unsigned i = 0; i < count; ++i) {
+    insn.length(0);
+    uint64_t nameIndex = 0;
+    int n = H3::QPack::staticNameIndex(seeds[i].name, nameIndex) ?
+      H3::QPack::encodeInsertWithNameRef(
+	insn, nameIndex, false, seeds[i].value) :
+      H3::QPack::encodeInsertLiteral(
+	insn, {seeds[i].name, seeds[i].value});
+    if (n < 0) return QPackSeedResult::Failed;
+    Compression::putBytes(bytes, insn);
+  }
+  if (!ZuFwd<Write>(write)(bytes)) return QPackSeedResult::Failed;
+  if (!tx.setCapacity(capacity)) return QPackSeedResult::Failed;
+  tx.capacitySent = true;
+  for (unsigned i = 0; i < count; ++i)
+    if (!tx.insertView({seeds[i].name, seeds[i].value}))
+      return QPackSeedResult::Failed;
+  tx.freeze();
+  return QPackSeedResult::Seeded;
+}
+
+template <typename App, typename = void>
+struct ResponseHeaderSets { using T = ZuTypeList<>; };
+template <typename App>
+struct ResponseHeaderSets<App, decltype(
+  sizeof(typename App::ResponseHeaders), void())> {
+  using T = typename App::ResponseHeaders;
+};
+
+template <typename App, typename = void>
+struct AppHeaderSeeds {
+  static const HeaderSeeds &get(const App &) {
+    static const HeaderSeeds seeds;
+    return seeds;
+  }
+};
+template <typename App>
+struct AppHeaderSeeds<App, decltype(
+  ZuDeclVal<const App &>().qpackSeeds(), void())> {
+  static const HeaderSeeds &get(const App &app) { return app.qpackSeeds(); }
+};
+
+template <typename App, typename = void>
+struct AppHPackSeedPlans {
+  static const HPackSeedPlans &get(const App &) {
+    static const HPackSeedPlans plans;
+    return plans;
+  }
+};
+template <typename App>
+struct AppHPackSeedPlans<App, decltype(
+  ZuDeclVal<const App &>().hpackSeedPlans(), void())> {
+  static const HPackSeedPlans &get(const App &app) {
+    return app.hpackSeedPlans();
+  }
+};
 
 struct RetainedBudget {
   bool add(uint64_t n) {
@@ -496,69 +742,81 @@ private:
   bool		m_valid = true;
 };
 
-template <typename Headers>
-class HeaderPatches {
+template <typename Key, typename... Keys>
+struct HeaderKeyCount_;
+template <typename Key>
+struct HeaderKeyCount_<Key> : public ZuUnsigned<0> { };
+template <typename Key, typename First, typename... Rest>
+struct HeaderKeyCount_<Key, First, Rest...> : public ZuUnsigned<
+  unsigned(ZuIsSame<Key, First>{}) + HeaderKeyCount_<Key, Rest...>{}> { };
+template <typename Key, typename... Keys>
+struct HeaderKeyCount_<Key, ZuTypeList<Keys...>> :
+  public HeaderKeyCount_<Key, Keys...> { };
+
+template <typename Headers, unsigned N = ZuTypeSlice<2, 0, Headers>::N>
+class HeaderSpans {
   using Keys = ZuTypeSlice<2, 0, Headers>;
-  template <typename> using SlotT = ZuSpan<uint8_t>;
-  using Slots = ZuTypeApply<ZuTuple, ZuTypeMap<SlotT, Keys>>;
+  using Values = ZuTypeSlice<2, 1, Headers>;
 
 public:
-  template <typename Key, typename App, bool Persist>
-  struct Value {
-    struct Print : public ZuPrintBuffer {
-      static unsigned length(const Value &v) {
-	return v.placeholder.length;
-      }
-      static unsigned print(char *data, unsigned, const Value &v) {
-	auto n = v.placeholder.length;
-	if (n) memset(data, v.placeholder.fill, n);
-	ZuSpan<char> chars{data, n};
-	ZuSpan<uint8_t> span = chars;
-	if constexpr (Persist)
-	  *v.span = span;
-	else {
-	  auto patch = [&span]<typename K, typename P>(P &&patcher) {
-	    if constexpr (ZuIsSame<K, Key>{})
-	      ZuFwd<P>(patcher)(span);
-	  };
-	  if constexpr (HasBuilderBodyHdrs<App, decltype(patch)>{})
-	    v.app->bodyHdrs(ZuMv(patch));
-	}
-	return n;
-      }
-    };
-
-    Placeholder		placeholder;
-    ZuSpan<uint8_t>	*span = nullptr;
-    App			*app = nullptr;
-
-    friend Print ZuPrintType(Value *);
-  };
-
-  template <bool Wire, typename Key, typename App, typename L>
-  void header(App &app, L &&l) {
-    app.template header<Key>([this, &app, &l]<typename V>(V &&v) {
-      if constexpr (IsPlaceholder<ZuDecay<V>>{}) {
-	constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-	l(Value<Key, App, Wire>{
-	  v, &m_slots.template p<I>(), &app});
-      } else
-	l(ZuFwd<V>(v));
-    });
+  template <typename Key>
+  void record(ZuSpan<uint8_t> span) {
+    constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
+    using Value = ZuType<I, Values>;
+    static_assert(ZuIsSame<Value, void>{},
+      "only runtime-valued declared headers have mutable spans");
+    m_slots[I] = span;
+  }
+  template <typename Key>
+  void recordOffset(uint64_t offset, unsigned length) {
+    constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
+    using Value = ZuType<I, Values>;
+    static_assert(ZuIsSame<Value, void>{},
+      "only runtime-valued declared headers have mutable spans");
+    m_slots[I] = {reinterpret_cast<uint8_t *>(uintptr_t(offset + 1)), length};
+  }
+  void resolve(uint8_t *base) {
+    for (unsigned i = 0; i < N; ++i) {
+      auto encoded = uintptr_t(m_slots[i].data());
+      if (encoded) m_slots[i] = {base + encoded - 1, m_slots[i].length()};
+    }
   }
 
   template <typename App>
   void patch(App &app) {
     auto patch = [this]<typename Key, typename P>(P &&patcher) {
+      static_assert(HeaderKeyCount_<Key, Keys>{} == 1,
+	"bodyHdrs key must identify one declared header occurrence");
       constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-      ZuFwd<P>(patcher)(m_slots.template p<I>());
+      using Value = ZuType<I, Values>;
+      static_assert(ZuIsSame<Value, void>{},
+	"bodyHdrs cannot mutate a fixed declared header value");
+      ZuFwd<P>(patcher)(m_slots[I]);
     };
     if constexpr (HasBuilderBodyHdrs<App, decltype(patch)>{})
       app.bodyHdrs(ZuMv(patch));
   }
 
 private:
-  Slots	m_slots;
+  ZuSpan<uint8_t>	m_slots[N]{};
+};
+
+template <typename Headers>
+class HeaderSpans<Headers, 0> {
+public:
+  template <typename Key>
+  void record(ZuSpan<uint8_t>) {
+    static_assert(!ZuIsSame<Key, Key>{},
+      "header span key is not declared");
+  }
+  template <typename Key>
+  void recordOffset(uint64_t, unsigned) {
+    static_assert(!ZuIsSame<Key, Key>{},
+      "header span key is not declared");
+  }
+  void resolve(uint8_t *) { }
+  template <typename App>
+  void patch(App &) { }
 };
 
 // Shared compile-time outbound message mechanics.  Ops keeps request/response
@@ -627,7 +885,6 @@ public:
     if constexpr (Message::ID == Version::H2)
       return fixedH2_(builder, native, optional);
     else {
-      if constexpr (Message::ID == Version::H3) builder.deferCompression();
       RetainedBudget budget{.max = m_ops->retainedMax()};
       RetainedTx headerTx{native, budget};
       RetainedTx bodyTx{native, budget};
@@ -635,17 +892,10 @@ public:
       bool emitted = false;
       bool duplicate = false;
       bool writerOK = false;
-      bool headersOK = true;
       builder.emitBody([
-	&builder, &headerTx, &body,
-	&emitted, &duplicate, &writerOK, &headersOK](auto &&write) {
-	(void)builder;
-	(void)headerTx;
-	(void)headersOK;
+	&body, &emitted, &duplicate, &writerOK](auto &&write) {
 	if (emitted) { duplicate = true; return; }
 	emitted = true;
-	if constexpr (Message::ID == Version::H1)
-	  if (!(headersOK = begin_(builder, headerTx))) return;
 	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
       });
       body.flush();
@@ -654,13 +904,10 @@ public:
 	m_ops->template produced<false>(builder.produced);
       }
       if ((!optional && !emitted) || duplicate ||
-	  (emitted && (!headersOK || !writerOK || !body.valid())))
+	  (emitted && (!writerOK || !body.valid())))
 	return m_ops->template fail<false>();
       if (!emitted) return m_ops->empty(builder.appBuilder());
-      if constexpr (Message::ID == Version::H1)
-	builder.patch();
-      else
-	if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
+      if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
       m_ops->headers();
       builder.finish(bodyTx);
       if (!headerTx.seal() || !bodyTx.seal())

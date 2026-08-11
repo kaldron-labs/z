@@ -100,6 +100,21 @@ using HPackNameSet = ZmHashKV<
   ZmHashLock<ZmNoLock,
     ZmHashHeapID<"Zhttp.H2.HPack.NeverIndex">>>;
 
+enum class HPackSeedState : uint8_t {
+  Cold, Warm, Reserved, Frozen, Disabled
+};
+
+struct HPackWarmEntry {
+  ZuBSpan	name;
+  ZuBSpan	value;
+  ZuBSpan	incremental;
+  ZuBSpan	fallback;
+  uint32_t	size = 0;
+};
+
+using HPackWarmEntries =
+  ZtArray<HPackWarmEntry, ZtArrayHeapID<"Zhttp.H2.HPack.Warm">>;
+
 class HPackTable {
 public:
   bool capacity(uint32_t);
@@ -296,8 +311,80 @@ public:
   void reset();
   void final();
   bool peerCapacity(uint32_t);
+  template <typename Seeds>
+  bool bind(const Seeds &plans) {
+    using Plan = ZuDecay<decltype(plans[0])>;
+    using Seed = ZuDecay<decltype(plans[0].entries[0])>;
+    m_plans.length(0);
+    m_plans.ensure(plans.length());
+    uint32_t capacity = m_table.capacity();
+    m_seedCapacity = capacity;
+    if (!capacity || !plans.length()) {
+      m_seedState = HPackSeedState::Disabled;
+      return true;
+    }
+    for (unsigned p = 0; p < plans.length(); ++p) {
+      const Plan &plan = plans[p];
+      auto bound = new (m_plans.push()) BoundPlan();
+      bound->seedData = plan.entries.data();
+      bound->seedAt = [](const void *data, unsigned i) {
+	const auto &seed = static_cast<const Seed *>(data)[i];
+	return HPackWarmEntry{
+	  seed.name, seed.value,
+	  seed.incremental, seed.fallback, seed.size};
+      };
+      uint64_t total = 0;
+      for (unsigned i = 0; i < plan.entries.length(); ++i)
+	total += plan.entries[i].size;
+      if (total > uint32_t(-1) ||
+	  !bound->lookup.init(uint32_t(total)) ||
+	  !bound->lookup.capacity(uint32_t(total)))
+	return false;
+      for (unsigned i = 0; i < plan.entries.length(); ++i)
+	if (!bound->lookup.insert(
+	      {plan.entries[i].name, plan.entries[i].value}))
+	  return false;
+      if (!bound->table.init(m_localCapacity) ||
+	  !bound->table.capacity(capacity))
+	return false;
+      for (unsigned i = 0; i < plan.entries.length(); ++i) {
+	auto seed = bound->seed(i);
+	if (seed.size > capacity - bound->table.used()) break;
+	if (!bound->table.insert({seed.name, seed.value})) return false;
+	++bound->selected;
+      }
+    }
+    m_plan = nullptr;
+    m_seedState = HPackSeedState::Warm;
+    return true;
+  }
+  bool beginBlock(unsigned plan, bool &bootstrap);
+  void commitBlock();
+  void rollbackBlock();
+  bool reserved() const { return m_seedState == HPackSeedState::Reserved; }
+  HPackSeedState seedState() const { return m_seedState; }
+  const HPackBytes &updateBytes() const { return m_updateBytes; }
+  void commitUpdates();
+
+  template <typename Bytes>
+  int emitFixed(Bytes &out, Field field, bool bootstrap) const {
+    if (bootstrap && m_plan)
+      if (auto entry = m_plan->lookup.find(field)) {
+	auto seed = m_plan->seed(unsigned(entry->abs));
+	Compression::putBytes(
+	  out, entry->abs < m_plan->selected ?
+	    seed.incremental : seed.fallback);
+	return int(out.length());
+      }
+    return emitLookup_(out, field);
+  }
+  template <typename Bytes>
+  int emitRuntime(Bytes &out, Field field) const {
+    return emitLookup_(out, field);
+  }
   void neverIndex(ZuBSpan);
   bool neverIndexed(ZuBSpan) const;
+  uint64_t nameIndex(ZuBSpan) const;
   HPackPlan plan(Field) const;
   HPackUpdates updates() const;
   void commit(const HPackPlan &);
@@ -347,10 +434,56 @@ public:
   const HPackTxTable &table() const { return m_table; }
 
 private:
+  struct BoundPlan {
+    HPackWarmEntry seed(unsigned i) const {
+      return seedAt(seedData, i);
+    }
+
+    HPackTxTable lookup;
+    HPackTxTable table;
+    const void	*seedData = nullptr;
+    HPackWarmEntry (*seedAt)(const void *, unsigned) = nullptr;
+    unsigned	selected = 0;
+  };
+  using BoundPlans =
+    ZtArray<BoundPlan, ZtArrayHeapID<"Zhttp.H2.HPack.BoundPlans">>;
+
+  template <typename Bytes>
+  int emitLookup_(Bytes &out, Field field) const {
+    bool never = neverIndexed(field.name);
+    if (!never) {
+      int index = HPack::staticIndex(field.name, field.value);
+      if (index > 0)
+	return Compression::putPref(out, 0x80, 7, unsigned(index)) < 0 ?
+	  -1 : int(out.length());
+    }
+    const auto &lookup = m_table;
+    if (!never)
+      if (auto entry = lookup.find(field)) {
+	uint64_t index = 62 + lookup.insertCount() - entry->abs - 1;
+	return Compression::putPref(out, 0x80, 7, index) < 0 ?
+	  -1 : int(out.length());
+      }
+    uint64_t nameIndex = 0;
+    int staticName = HPack::staticNameIndex(field.name);
+    if (staticName > 0)
+      nameIndex = unsigned(staticName);
+    else if (auto entry = lookup.findName(field.name))
+      nameIndex = 62 + lookup.insertCount() - entry->abs - 1;
+    uint8_t prefix = never ? 0x10 : 0;
+    if (Compression::putPref(out, prefix, 4, nameIndex) < 0 ||
+	(!nameIndex && Compression::putString(out, 0, 7, field.name) < 0) ||
+	Compression::putString(out, 0, 7, field.value) < 0)
+      return -1;
+    return int(out.length());
+  }
+
   void detachNeverIndex_();
   void pending_(uint32_t);
+  void prepareUpdates_();
 
   HPackTxTable	m_table;
+  HPackBytes	m_updateBytes;
   ZmRef<HPackNameSet>	m_neverIndex;
   uint64_t	m_generation = 0;
   uint32_t	m_localCapacity = 0;
@@ -358,6 +491,10 @@ private:
   uint32_t	m_signalledCapacity = 4096;
   uint32_t	m_pendingMin = 0;
   uint32_t	m_pendingFinal = 0;
+  BoundPlans	m_plans;
+  BoundPlan	*m_plan = nullptr;
+  uint32_t	m_seedCapacity = 0;
+  HPackSeedState m_seedState = HPackSeedState::Cold;
   bool		m_pending = false;
 };
 

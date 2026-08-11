@@ -127,10 +127,10 @@ struct ResponseRx :
 
 struct ResponseBuilder :
   public Zhttp::H1::Response<
-    ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
+    ResponseBuilder, ZhttpHeaders("content-length"), true> {
   using Base =
     Zhttp::H1::Response<
-      ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true>;
+      ResponseBuilder, ZhttpHeaders("content-length"), true>;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
 

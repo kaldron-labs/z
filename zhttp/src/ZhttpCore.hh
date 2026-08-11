@@ -132,10 +132,21 @@ ZuInline bool streaming(T v) {
 struct Placeholder {
   unsigned	length;
   uint8_t	fill = 0xff;
+
+  struct Print : public ZuPrintBuffer {
+    static unsigned length(const Placeholder &v) { return v.length; }
+    static unsigned print(char *ptr, unsigned n, const Placeholder &v) {
+      n = n < v.length ? n : v.length;
+      memset(ptr, v.fill, n);
+      return n;
+    }
+  };
+  friend Print ZuPrintType(Placeholder *);
 };
 
-template <typename T> struct IsPlaceholder : public ZuFalse { };
-template <> struct IsPlaceholder<Placeholder> : public ZuTrue { };
+template <typename V> struct HeaderValue_ { using T = V; };
+template <typename V> struct HeaderValue_<ZuTypeList<V>> { using T = V; };
+template <typename V> using HeaderValue = typename HeaderValue_<V>::T;
 
 ZhttpAPI unsigned requestErrorStatus(RequestErrorCode::T);
 

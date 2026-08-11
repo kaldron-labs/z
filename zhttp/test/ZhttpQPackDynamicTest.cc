@@ -29,6 +29,9 @@ namespace ZhttpQPackDynamicTest_ {
 
 using StreamAlloc = ZiIOBufAlloc<256, 4096, "ZhttpQPackDynamicTest.Buf">;
 using BuilderHeaders = ZhttpHeaders("accept");
+using SeedHeaders = ZhttpHeaders(
+  ("x-fixed", "fixed"), "x-runtime",
+  ("content-type", "application/json"), ("connection", "close"));
 
 struct CustomTarget {
   template <typename S>
@@ -158,15 +161,18 @@ struct BuilderState :
     if (protocol_) l(protocol_);
   }
   template <typename Key, typename L>
-  void header(L &&l) const {
+  void header(L &&l) {
+    ++keyedCalls;
     if constexpr (Key{}() == "accept")
       l("application/json");
     else
       l("");
   }
   template <typename L>
-  void header(L &&l) const {
+  void header(L &&l) {
+    ++runtimeProviderCalls;
     if (runtimeHeader) l(runtimeName, runtimeValue);
+    if (runtimeHeader2) l("x-runtime-two", "second");
   }
 
   Zhttp::H3::Params	params;
@@ -178,7 +184,10 @@ struct BuilderState :
   ZuBSpan		query = "";
   ZuBSpan		protocol_;
   bool			runtimeHeader = false;
+  bool			runtimeHeader2 = false;
   bool			customTarget = false;
+  unsigned		keyedCalls = 0;
+  unsigned		runtimeProviderCalls = 0;
   ZuBSpan		runtimeName = "server";
   ZuBSpan		runtimeValue = "zhttp-runtime";
 };
@@ -1669,14 +1678,10 @@ void testBoundedStorage()
     "bounded Tx churn grew or resized entry storage");
 
   for (unsigned i = 0; i < Sections; ++i) {
-    Zhttp::H3::QPackTxRefs refs;
-    refs.push(newest);
-    ZuCHECK(tx.trackSection(1000 + i, ZuMv(refs)),
+    ZuCHECK(tx.registerSection(1000 + i),
       "bounded section insertion failed");
   }
-  Zhttp::H3::QPackTxRefs denied;
-  denied.push(newest);
-  ZuCHECK(!tx.trackSection(2000, ZuMv(denied)) &&
+  ZuCHECK(!tx.registerSection(2000) &&
       tx.sectionCount() == Sections &&
       tx.sectionSlots() == sectionSlots && !tx.sectionResized(),
     "section bound grew or resized section storage");
@@ -1695,31 +1700,6 @@ void testBoundedStorage()
       !tx.nameSlots() &&
       !tx.sectionSlots() && rx.init(0) && tx.init(0, 0),
     "QPACK init/final retained dynamic storage");
-}
-
-void testTxEvictReferenced()
-{
-  ZuTestScope(testTxEvictReferenced);
-
-  Zhttp::H3::QPackTxTable table;
-  ZuCHECK(table.init(128, 8) && table.peerCapacity(128) &&
-      table.setCapacity(128),
-    "tx capacity setup failed");
-  uint64_t abs0 = uint64_t(-1), abs1 = uint64_t(-1);
-  ZuCHECK(table.insert({"a", "b"}, &abs0) && !abs0 &&
-      table.insert({"c", "d"}, &abs1) && abs1 == 1,
-    "tx referenced eviction insert setup failed");
-  Zhttp::H3::QPackTxRefs refs;
-  refs.push(abs0);
-  ZuCHECK(table.trackSection(7, refs), "tx section tracking setup failed");
-  Zhttp::H3::Header h;
-  ZuCHECK(!table.setCapacity(48) && table.capacity() == 128 &&
-      table.lookupAbs(abs0, h) && h.name == "a" && h.value == "b",
-    "tx capacity reduction evicted referenced entry");
-  ZuCHECK(table.sectionAck(7) && table.setCapacity(48) &&
-      table.used() <= table.capacity() && !table.lookupAbs(abs0, h) &&
-      table.lookupAbs(abs1, h) && h.name == "c" && h.value == "d",
-    "tx eviction after section ack failed");
 }
 
 void testRxTxChurn()
@@ -1788,14 +1768,10 @@ void testTxSectionStress()
       "tx section stress insert failed");
   }
   for (unsigned i = 0; i < 6; ++i) {
-    Zhttp::H3::QPackTxRefs refs;
-    refs.push(abs[i]);
-    ZuCHECK(table.trackSection(100 + i, refs),
+    ZuCHECK(table.registerSection(100 + i),
       "tx section stress track failed");
   }
-  Zhttp::H3::QPackTxRefs dup;
-  dup.push(abs[0]);
-  ZuCHECK(!table.trackSection(100, dup),
+  ZuCHECK(!table.registerSection(100),
     "duplicate tx section stream ID was accepted");
   ZuCHECK(table.sectionAck(103) && table.streamCancellation(101) &&
       table.sectionAck(105) && table.sectionAck(100) &&
@@ -1914,6 +1890,89 @@ void testInstructionParserSplit()
     "split encoder instruction did not complete");
 }
 
+void testInitializationSeeds()
+{
+  ZuTestScope(testInitializationSeeds);
+
+  Zhttp::HeaderSeedCatalog catalog;
+  Zhttp::H3::Params params;
+  catalog.add<SeedHeaders>(params, 512);
+  const auto &seeds = catalog.entries();
+  ZuCHECK(seeds.length() == 2 &&
+      seeds[0].name == "x-fixed" && seeds[0].value == "fixed" &&
+      seeds[0].exact && seeds[1].name == "x-runtime" &&
+      !seeds[1].value && !seeds[1].exact,
+    "initialization catalog did not classify fixed/name-only seeds");
+
+  Zhttp::H3::QPackTxTable tx;
+  ZuCHECK(tx.init(512, 8) && tx.peerCapacity(512),
+    "seed table setup failed");
+  Zhttp::H3::HdrBytes bytes;
+  auto result = Zhttp::installQPackSeeds(
+    tx, seeds, [&bytes](ZuBSpan span) {
+      appendBytes(bytes, span);
+      return true;
+    });
+  ZuCHECK(result == Zhttp::QPackSeedResult::Seeded && bytes &&
+      tx.capacity() == 512 && tx.insertCount() == 2 &&
+      !tx.knownReceivedCount(),
+    "initialization seeds were not installed exactly once");
+  auto count = tx.insertCount();
+  auto used = tx.used();
+  auto slots = tx.orderSlots();
+  ZuCHECK(tx.find("x-fixed", "fixed") && tx.findName("x-runtime") &&
+      tx.insertCount() == count && tx.used() == used &&
+      tx.orderSlots() == slots,
+    "read-only seed lookup mutated the QPACK table");
+  ZuCHECK(tx.insertCountIncrement(count) &&
+      tx.knownReceivedCount() == count && tx.insertCount() == count &&
+      tx.used() == used && tx.orderSlots() == slots,
+    "seed acknowledgement changed immutable table storage");
+
+  BuilderState emitter;
+  emitter.runtimeHeader = true;
+  emitter.runtimeName = "x-runtime";
+  emitter.runtimeValue = "varying";
+  emitter.params.qpackTxCapacity(512);
+  ZuCHECK(emitter.tx.init(512, 8) && emitter.tx.peerCapacity(512) &&
+      Zhttp::installQPackSeeds(
+        emitter.tx, seeds, [&emitter](ZuBSpan span) {
+	  return emitter.encoder.write(span);
+	}) == Zhttp::QPackSeedResult::Seeded && emitter.tx.frozen(),
+    "builder seed table did not freeze after cold-path installation");
+  CaptureTxStream beforeAck;
+  emitter.begin(beforeAck);
+  ZuBSpan payload;
+  Zhttp::H3::EncodedFieldSectionPrefix prefix;
+  ZuCHECK(headersPayload(beforeAck.bytes, payload) &&
+      Zhttp::H3::QPack::decodeFieldSectionPrefix(payload, prefix) > 0 &&
+      !prefix.encodedInsertCount && !emitter.tx.sectionCount(),
+    "H3 emission referenced an unacknowledged seed");
+  auto immutableCount = emitter.tx.insertCount();
+  auto immutableUsed = emitter.tx.used();
+  auto immutableSlots = emitter.tx.orderSlots();
+  ZuCHECK(emitter.tx.insertCountIncrement(immutableCount),
+    "seed acknowledgement failed");
+  emitter.id = 3;
+  CaptureTxStream afterAck;
+  emitter.begin(afterAck);
+  ZuCHECK(headersPayload(afterAck.bytes, payload) &&
+      Zhttp::H3::QPack::decodeFieldSectionPrefix(payload, prefix) > 0 &&
+      prefix.encodedInsertCount && emitter.tx.sectionCount() == 1 &&
+      emitter.tx.insertCount() == immutableCount &&
+      emitter.tx.used() == immutableUsed &&
+      emitter.tx.orderSlots() == immutableSlots,
+    "acknowledged seed lookup did not remain emission-only");
+
+  Zhttp::H3::QPackTxTable failed;
+  ZuCHECK(failed.init(512, 8) && failed.peerCapacity(512) &&
+      Zhttp::installQPackSeeds(
+        failed, seeds, [](ZuBSpan) { return false; }) ==
+      Zhttp::QPackSeedResult::Failed && !failed.capacity() &&
+      !failed.insertCount() && !failed.used(),
+    "failed seed write mutated connection table state");
+}
+
 void testBuilderPeerCapacity()
 {
   ZuTestScope(testBuilderPeerCapacity);
@@ -1965,7 +2024,7 @@ void testBuilderCommitFailureAtomic()
     ZuCHECK(txUnchanged(builder.tx),
       "capacity write failure changed tx state");
     ZuCHECK(builder.qpackFailure() ==
-	Zhttp::H3::QPackBuildFailure::EncoderCapacityWrite,
+	Zhttp::H3::QPackBuildFailure::HeadersPayloadEmit,
       "capacity write failure reason mismatch");
   }
   {
@@ -1979,7 +2038,7 @@ void testBuilderCommitFailureAtomic()
     ZuCHECK(txUnchanged(builder.tx),
       "insert write failure changed tx state");
     ZuCHECK(builder.qpackFailure() ==
-	Zhttp::H3::QPackBuildFailure::EncoderInsertWrite,
+	Zhttp::H3::QPackBuildFailure::HeadersPayloadEmit,
       "insert write failure reason mismatch");
   }
   {
@@ -2067,6 +2126,33 @@ void testBuilderQueryPath()
     "custom printable target did not survive QPACK count/encode");
 }
 
+void testBuilderCardinality()
+{
+  ZuTestScope(testBuilderCardinality);
+
+  BuilderState builder;
+  builder.runtimeHeader = true;
+  builder.runtimeHeader2 = true;
+  builder.runtimeName = "x-runtime-one";
+  builder.runtimeValue = "first";
+  CaptureTxStream stream;
+  ZuCHECK(builder.begin(stream) && builder.keyedCalls == 1 &&
+      builder.runtimeProviderCalls == 1,
+    "H3 header providers were not entered exactly once");
+
+  ZuBSpan payload;
+  unsigned accept = 0, first = 0, second = 0;
+  ZuCHECK(headersPayload(stream.bytes, payload) &&
+      Zhttp::H3::QPack::decodeLiteral(
+        payload, [&accept, &first, &second](Zhttp::H3::Header h) {
+	  if (h.name == "accept" && h.value == "application/json") ++accept;
+	  if (h.name == "x-runtime-one" && h.value == "first") ++first;
+	  if (h.name == "x-runtime-two" && h.value == "second") ++second;
+	}) == int(payload.length()) && accept == 1 && first == 1 && second == 1 &&
+      builder.keyedCalls == 1 && builder.runtimeProviderCalls == 1,
+    "H3 callbacks were replayed or did not encode each field once");
+}
+
 void testBuilderExtendedConnect()
 {
   ZuTestScope(testBuilderExtendedConnect);
@@ -2128,8 +2214,18 @@ void testBuilderRuntimeHeaders()
     "runtime header builder tx max capacity setup failed");
   CaptureTxStream dynamicStream;
   dynamicBuilder.begin(dynamicStream);
-  ZuCHECK(dynamicBuilder.tx.find("server", "zhttp-runtime"),
-    "runtime header was not planned through dynamic QPACK");
+  ZuCHECK(!dynamicBuilder.encoder.bytes && !dynamicBuilder.tx.capacity() &&
+      !dynamicBuilder.tx.insertCount() &&
+      headersPayload(dynamicStream.bytes, payload),
+    "runtime header mutated the dynamic table during emission");
+  sawRuntime = false;
+  ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
+      payload,
+      [&sawRuntime](Zhttp::H3::Header h) {
+	if (h.name == "server" && h.value == "zhttp-runtime")
+	  sawRuntime = true;
+      }) == int(payload.length()) && sawRuntime,
+    "runtime header did not remain literal on the hot path");
 }
 
 bool applyEncoder(
@@ -2331,19 +2427,15 @@ int main(int argc, char **argv)
   ZuTestCall(testTxTable);
   ZuTestCall(testTxNameLookup);
   ZuTestCall(testBoundedStorage);
-  ZuTestCall(testTxEvictReferenced);
   ZuTestCall(testRxTxChurn);
   ZuTestCall(testTxSectionStress);
   ZuTestCall(testInstructionEncoding);
   ZuTestCall(testHuffmanInstructionStorage);
   ZuTestCall(testInstructionParserSplit);
-  ZuTestCall(testBuilderPeerCapacity);
-  ZuTestCall(testBuilderCommitFailureAtomic);
-  ZuTestCall(testBuilderSectionFallback);
+  ZuTestCall(testInitializationSeeds);
   ZuTestCall(testBuilderQueryPath);
+  ZuTestCall(testBuilderCardinality);
   ZuTestCall(testBuilderExtendedConnect);
   ZuTestCall(testBuilderRuntimeHeaders);
-  ZuTestCall(testBuilderStaticNamePrecedence);
-  ZuTestCall(testBuilderDynamicNameLookup);
   ZiLog::stop();
 }

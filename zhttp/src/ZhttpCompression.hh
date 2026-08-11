@@ -13,6 +13,9 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <limits.h>
+#include <string.h>
+
 #include <zlib/ZuBitStream.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuPrint.hh>
@@ -64,19 +67,13 @@ template <typename U>
 struct IsPrintString<U, true> : public ZuBool<
   sizeof(typename ZuTraits<U>::Elem) == 1> { };
 
-struct PrintCount {
-  void push(uint8_t) { ++n; }
-  void skip(uint64_t n_) { n += n_; }
-  uint64_t length() const { return n; }
-
-  uint64_t n = 0;
-};
-
 template <typename Bytes, typename = void>
-struct HasSkip : public ZuFalse { };
+struct HasBuffer : public ZuFalse { };
 template <typename Bytes>
-struct HasSkip<Bytes, decltype(
-  ZuDeclVal<Bytes &>().skip(ZuDeclVal<uint64_t>()), void())> :
+struct HasBuffer<Bytes, decltype(
+  ZuDeclVal<Bytes &>().length(),
+  ZuDeclVal<Bytes &>().length(ZuDeclVal<uint64_t>()),
+  ZuDeclVal<Bytes &>().ensure(ZuDeclVal<uint64_t>()), void())> :
   public ZuTrue { };
 
 template <typename Bytes>
@@ -93,8 +90,12 @@ public:
   ZuIfT<IsPrintString<U>{}, PrintBytes &> operator <<(const U &v) {
     auto data = ZuTraits<U>::data(v);
     auto n = ZuTraits<U>::length(v);
-    if constexpr (HasSkip<Bytes>{})
-      m_out.skip(n);
+    if constexpr (HasBuffer<Bytes>{}) {
+      uint64_t offset = m_out.length();
+      auto ptr = m_out.ensure(offset + n) + offset;
+      if (n) memcpy(ptr, data, n);
+      m_out.length(offset + n);
+    }
     else
       for (decltype(n) i = 0; i < n; ++i)
 	m_out.push(uint8_t(data[i]));
@@ -110,13 +111,20 @@ public:
   ZuIfT<!IsPrintString<U>{} && ZuPrint<U>::Buffer, PrintBytes &>
   operator <<(const U &v) {
     unsigned n = ZuPrint<U>::length(v);
-    auto data = static_cast<char *>(ZuAlloca(n, 1));
-    if (ZuUnlikely(!data && n)) {
-      m_ok = false;
-      return *this;
+    if constexpr (HasBuffer<Bytes>{}) {
+      uint64_t offset = m_out.length();
+      auto ptr = reinterpret_cast<char *>(m_out.ensure(offset + n) + offset);
+      n = ZuPrint<U>::print(ptr, n, v);
+      m_out.length(offset + n);
+    } else {
+      auto data = static_cast<char *>(ZuAlloca(n, 1));
+      if (ZuUnlikely(!data && n)) {
+	m_ok = false;
+	return *this;
+      }
+      n = ZuPrint<U>::print(data, n, v);
+      for (unsigned i = 0; i < n; ++i) m_out.push(uint8_t(data[i]));
     }
-    n = ZuPrint<U>::print(data, n, v);
-    for (unsigned i = 0; i < n; ++i) m_out.push(uint8_t(data[i]));
     return *this;
   }
   template <typename U>
@@ -135,12 +143,102 @@ private:
   bool	m_ok = true;
 };
 
-template <typename P>
-uint64_t printLength(const P &v) {
-  PrintCount count;
-  PrintBytes<PrintCount>{count} << v;
-  return count.length();
-}
+template <typename Bytes>
+int putPref(Bytes &, uint8_t, unsigned, uint64_t);
+
+template <typename Bytes>
+class FieldSectionBuffer {
+public:
+  enum { PrefixReserve = 16 };
+
+  FieldSectionBuffer(Bytes &bytes) : m_bytes{bytes} { }
+
+  Bytes &bytes() { return m_bytes; }
+  const Bytes &bytes() const { return m_bytes; }
+
+  template <typename P>
+  int putPrint(
+      uint8_t prefix, unsigned bits, const P &value,
+      uint64_t &offset, unsigned &length) {
+    if constexpr (ZuPrint<P>::Buffer) {
+      length = ZuPrint<P>::length(value);
+      if (Compression::putPref(m_bytes, prefix, bits, length) < 0)
+	return -1;
+      offset = m_bytes.length();
+      PrintBytes<Bytes> out{m_bytes};
+      out << value;
+      return out.ok() && m_bytes.length() - offset == length ? 0 : -1;
+    } else {
+      uint64_t start_ = m_bytes.length();
+      if (start_ > UINT32_MAX - PrefixReserve) return -1;
+      m_bytes.length(start_ + PrefixReserve);
+      offset = m_bytes.length();
+      PrintBytes<Bytes> out{m_bytes};
+      out << value;
+      uint64_t length_ = m_bytes.length() - offset;
+      if (!out.ok() || length_ > UINT_MAX) return -1;
+      length = unsigned(length_);
+
+      Prefix encoded;
+      if (Compression::putPref(encoded, prefix, bits, length) < 0)
+	return -1;
+      unsigned gap = PrefixReserve - encoded.length;
+      memcpy(m_bytes.data() + start_ + gap,
+	encoded.data, encoded.length);
+      record_(uint32_t(start_), uint8_t(gap));
+      return 0;
+    }
+  }
+
+  uint64_t length(uint64_t start = 0) const {
+    return m_bytes.length() - start - m_gapLength;
+  }
+
+  template <typename L>
+  void each(uint64_t start, L &&l) const {
+    uint64_t offset = start;
+    uint32_t link = m_head;
+    while (link) {
+      uint32_t gap = link - 1;
+      uint32_t next;
+      memcpy(&next, m_bytes.data() + gap, sizeof(next));
+      unsigned length = m_bytes[gap + sizeof(next)];
+      if (gap > offset)
+	l(ZuBSpan{m_bytes.data() + offset, unsigned(gap - offset)});
+      offset = uint64_t(gap) + length;
+      link = next;
+    }
+    if (offset < m_bytes.length())
+      l(ZuBSpan{
+	m_bytes.data() + offset, unsigned(m_bytes.length() - offset)});
+  }
+
+private:
+  struct Prefix {
+    void push(uint8_t c) { data[length++] = c; }
+
+    uint8_t	data[11];
+    unsigned	length = 0;
+  };
+
+  void record_(uint32_t offset, uint8_t length) {
+    uint32_t link = offset + 1;
+    uint32_t end = 0;
+    memcpy(m_bytes.data() + offset, &end, sizeof(end));
+    m_bytes[offset + sizeof(end)] = length;
+    if (m_tail)
+      memcpy(m_bytes.data() + m_tail - 1, &link, sizeof(link));
+    else
+      m_head = link;
+    m_tail = link;
+    m_gapLength += length;
+  }
+
+  Bytes		&m_bytes;
+  uint64_t	m_gapLength = 0;
+  uint32_t	m_head = 0;
+  uint32_t	m_tail = 0;
+};
 
 struct NameView {
   NameView() = default;
@@ -252,27 +350,24 @@ int putPref(Bytes &out, uint8_t prefix, unsigned bits, uint64_t value) {
 }
 
 template <typename Bytes>
+void putBytes(Bytes &out, ZuBSpan value) {
+  if constexpr (HasBuffer<Bytes>{}) {
+    uint64_t offset = out.length();
+    auto ptr = out.ensure(offset + value.length()) + offset;
+    if (value) memcpy(ptr, value.data(), value.length());
+    out.length(offset + value.length());
+  } else {
+    for (unsigned i = 0; i < value.length(); ++i)
+      out.push(uint8_t(value[i]));
+  }
+}
+
+template <typename Bytes>
 int putString(
   Bytes &out, uint8_t prefix, unsigned bits, ZuBSpan value) {
   if (putPref(out, prefix, bits, value.length()) < 0) return -1;
-  for (unsigned i = 0; i < value.length(); ++i)
-    out.push(uint8_t(value[i]));
+  putBytes(out, value);
   return 0;
-}
-
-template <typename Bytes, typename P>
-int putPrint(
-  Bytes &out, uint8_t prefix, unsigned bits, const P &value) {
-  uint64_t n = printLength(value);
-  if (putPref(out, prefix, bits, n) < 0) return -1;
-  if constexpr (HasSkip<Bytes>{}) {
-    out.skip(n);
-    return 0;
-  } else {
-    PrintBytes<Bytes> bytes{out};
-    bytes << value;
-    return bytes.ok() ? 0 : -1;
-  }
 }
 
 template <unsigned PrefixBits, uint8_t HuffmanMask>

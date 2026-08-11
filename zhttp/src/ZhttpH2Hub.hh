@@ -23,6 +23,8 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 
+#include <zlib/ZtScratch.hh>
+
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZhttpCore.hh>
@@ -57,6 +59,21 @@ private:
 } // namespace H2
 
 namespace H2_ {
+
+template <typename Link>
+auto hpackSeedPlans_(Link *link, int) -> decltype(link->hpackSeedPlans()) {
+  return link->hpackSeedPlans();
+}
+struct EmptyHPackPlan {
+  H2::HPackWarmEntries entries;
+};
+using EmptyHPackPlans =
+  ZtArray<EmptyHPackPlan, ZtArrayHeapID<"Zhttp.H2.EmptyHPackPlans">>;
+template <typename Link>
+const EmptyHPackPlans &hpackSeedPlans_(Link *, ...) {
+  static const EmptyHPackPlans plans;
+  return plans;
+}
 
 template <typename Logical>
 struct Stream {
@@ -237,13 +254,6 @@ struct RxDataFrame {
   bool		ready = false;
 };
 
-struct CountBytes {
-  void push(uint8_t) { ++m_length; }
-  void skip(uint64_t n) { m_length += unsigned(n); }
-  unsigned length() const { return m_length; }
-  unsigned m_length = 0;
-};
-
 template <typename Tx>
 struct StreamBytes {
   void push(uint8_t value) { tx << char(value); ++m_length; }
@@ -336,25 +346,6 @@ private:
   uint32_t	m_streamID = 0;
 };
 
-struct HPackStagedPlan {
-  HPackStagedPlan() = default;
-  HPackStagedPlan(const HPackPlan &plan) :
-    name{plan.field.name}, value{plan.field.value},
-    index{plan.index}, rep{plan.rep} { }
-
-  HPackPlan plan() const {
-    return {.field = {name, value}, .index = index, .rep = rep};
-  }
-
-  HPackString	name;
-  HPackString	value;
-  uint64_t	index = 0;
-  HPackRep::T	rep = HPackRep::NonIndexed;
-};
-
-using HPackStagedPlans =
-  ZtArray<HPackStagedPlan, ZtArrayHeapID<"Zhttp.H2.HPackPlans">>;
-
 template <typename Native>
 class HeaderBlock {
   using FrameTx = FrameStream<Native>;
@@ -380,6 +371,17 @@ class HeaderBlock {
       ++m_length;
       if (!--m_frameLeft && m_left) next_();
     }
+    void write(ZuBSpan data) {
+      while (data) {
+	unsigned n = data.length() < m_frameLeft ?
+	  data.length() : m_frameLeft;
+	m_tx << ZuBSpan{data.data(), n};
+	m_length += n;
+	m_frameLeft -= n;
+	data.offset(n);
+	if (!m_frameLeft && m_left) next_();
+      }
+    }
     unsigned length() const { return m_length; }
     void flush() { m_tx.flush(); }
 
@@ -397,7 +399,8 @@ class HeaderBlock {
 	.type = uint8_t(m_first ? FrameType::Headers :
 	  FrameType::Continuation),
 	.flags = uint8_t(
-	  m_first && m_endStream ? Flag::EndStream : 0)
+	  (m_first && m_endStream ? Flag::EndStream : 0) |
+	  (!m_left ? Flag::EndHeaders : 0))
       });
       m_first = false;
     }
@@ -415,88 +418,98 @@ class HeaderBlock {
   };
 
 public:
+  using HeaderBytes = HPackBytes;
+  using HeaderSection = Compression::FieldSectionBuffer<HeaderBytes>;
+
+  struct ValueSpan {
+    uint64_t	offset = 0;
+    unsigned	length = 0;
+  };
+
   HeaderBlock(
     Native &native, HPackEncoder &encoder, uint32_t streamID,
     uint32_t frameSize) :
       m_native{native}, m_encoder{encoder}, m_streamID{streamID},
       m_frameSize{frameSize} { }
+  ~HeaderBlock() {
+    if (m_reserved) m_encoder.rollbackBlock();
+  }
 
-  void beginHeaders(bool endStream = false) {
-    if (m_deferred && m_initialHeaders) {
-      m_trailers.length(0);
-      m_current = &m_trailers;
-      m_updates = {};
-    } else {
-      m_frames.length(0);
-      m_current = &m_frames;
-      if (!m_deferred) {
-	m_plans.length(0);
-	m_stagedUpdates = {};
-	m_commitUpdates = false;
-      }
-      m_updates = m_encoder.updates();
+  void beginHeaders(HeaderSection &section, bool endStream = false) {
+    m_frames.length(0);
+    m_section = &section;
+    m_block = &section.bytes();
+    m_block->length(0);
+    if (!m_encoder.beginBlock(m_plan, m_reserved)) {
+      m_valid = false;
+      return;
     }
-    m_first = true;
+    Compression::putBytes(*m_block, m_encoder.updateBytes());
     m_open = true;
     m_endStream = endStream;
   }
+  void plan(unsigned plan) { m_plan = plan; }
   void field(ZuBSpan name, ZuBSpan value) {
     field_({name, value});
+  }
+  void fieldFixed(ZuBSpan name, ZuBSpan value) {
+    if (!m_valid ||
+	m_encoder.emitFixed(*m_block, {name, value}, m_reserved) < 0)
+      m_valid = false;
+  }
+  template <typename P>
+  ZuIfT<!Compression::IsPrintString<P>{}>
+  fieldFixed(ZuBSpan name, const P &value) {
+    if (!m_valid) return;
+    auto rendered = ZtScratch(HPackBytes, 256);
+    Compression::PrintBytes out{rendered};
+    out << value;
+    if (!out.ok() ||
+	m_encoder.emitFixed(
+	  *m_block, {name, rendered}, m_reserved) < 0)
+      m_valid = false;
   }
   template <typename P>
   ZuIfT<!Compression::IsPrintString<P>{}>
   field(ZuBSpan name, const P &value) {
     fieldPrint_(name, value);
   }
-  void field(
-    ZuBSpan name, ZuBSpan value1, char separator, ZuBSpan value2) {
-    HPackString value;
-    unsigned n1 = value1.length(), n2 = value2.length();
-    value.length(uint64_t(n1) + 1 + n2);
-    auto data = value.data();
-    if (n1) memcpy(data, value1.data(), n1);
-    data[n1] = separator;
-    if (n2) memcpy(data + n1 + 1, value2.data(), n2);
-    field_({name, value});
-  }
-  void endHeaders(bool) {
-    if (!m_open) return;
-    if (m_first && m_updates.count) {
-      CountBytes count;
-      if (m_encoder.emit(count, m_updates) < 0) return;
-      Bytes bytes{
-	m_native, m_streamID, count.length(), m_frameSize,
-	true, m_endStream, *m_current};
-      if (m_encoder.emit(bytes, m_updates) < 0) return;
-      bytes.flush();
-      if (m_deferred) {
-	m_stagedUpdates = m_updates;
-	m_commitUpdates = true;
-      }
-      else
-	m_encoder.commit(m_updates);
-      m_updates = {};
-      m_first = false;
+  template <typename P>
+  ValueSpan fieldMutable(ZuBSpan name, const P &value) {
+    if (!m_valid) return {};
+    uint64_t nameIndex = m_encoder.nameIndex(name);
+    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    if (Compression::putPref(*m_block, prefix, 4, nameIndex) < 0 ||
+	(!nameIndex && Compression::putString(*m_block, 0, 7, name) < 0)) {
+      m_valid = false;
+      return {};
     }
-    FrameTx tx{m_native, m_streamID, m_current};
-    StreamBytes<FrameTx> sink{tx};
-    putHeader(sink, {
-      .length = 0,
-      .streamID = m_streamID,
-      .type = uint8_t(m_first ? FrameType::Headers :
-	FrameType::Continuation),
-      .flags = uint8_t(Flag::EndHeaders |
-	(m_first && m_endStream ? Flag::EndStream : 0))
-    });
-    tx.flush();
+    ValueSpan span;
+    if (m_section->putPrint(
+	  0, 7, value, span.offset, span.length) < 0) {
+      m_valid = false;
+      return {};
+    }
+    return span;
+  }
+  uint8_t *headerBase() { return m_block->data(); }
+  void endHeaders(bool) {
+    if (!m_open || !m_valid) return;
+    Bytes bytes{
+      m_native, m_streamID, uint32_t(m_section->length()), m_frameSize,
+      true, m_endStream, m_frames};
+    m_section->each(0, [&bytes](ZuBSpan span) { bytes.write(span); });
+    bytes.flush();
     m_open = false;
-    if (!m_deferred)
+    m_block = nullptr;
+    m_section = nullptr;
+    if (!m_deferred) {
+      commitHPack_();
       m_native.sendHeaders(m_streamID, ZuMv(m_frames), m_endStream);
-    else if (!m_initialHeaders) {
+    } else {
       m_initialHeaders = true;
       m_initialEndStream = m_endStream;
-    } else
-      m_trailerEndStream = m_endStream;
+    }
   }
   auto body() { return DataStream<HeaderBlock>{*this, m_streamID}; }
   auto body(uint64_t length) {
@@ -537,15 +550,11 @@ public:
   }
   void defer(uint64_t max = uint64_t(-1)) {
     m_frames.length(0);
-    m_trailers.length(0);
     m_data.length(0);
-    m_plans.length(0);
-    m_stagedUpdates = {};
-    m_commitUpdates = false;
+    m_valid = true;
     m_initialHeaders = false;
     m_endData = false;
     m_initialEndStream = false;
-    m_trailerEndStream = false;
     m_retainedMax = max;
     m_deferred = true;
   }
@@ -559,113 +568,67 @@ public:
       if (m_data[i]->length > m_retainedMax - n) return false;
       n += m_data[i]->length;
     }
-    for (unsigned i = 0; i < m_trailers.length(); ++i) {
-      if (m_trailers[i]->length > m_retainedMax - n) return false;
-      n += m_trailers[i]->length;
-    }
-    return true;
+    return m_valid;
   }
   void commit() {
     if (!m_deferred || !valid()) return;
-    if (m_commitUpdates) m_encoder.commit(m_stagedUpdates);
-    for (unsigned i = 0; i < m_plans.length(); ++i)
-      m_encoder.commit(m_plans[i].plan());
+    commitHPack_();
     m_native.sendHeaders(
       m_streamID, ZuMv(m_frames), m_initialEndStream);
     for (unsigned i = 0; i < m_data.length(); ++i)
       m_native.sendData(m_streamID, ZuMv(m_data[i]));
     m_data.length(0);
-    if (m_trailers)
-      m_native.sendHeaders(
-	m_streamID, ZuMv(m_trailers), m_trailerEndStream);
-    else if (m_endData)
+    if (m_endData)
       m_native.endData(m_streamID);
     m_deferred = false;
   }
 
 private:
+  void commitHPack_() {
+    m_encoder.commitUpdates();
+    if (m_reserved) m_encoder.commitBlock();
+    m_reserved = false;
+  }
+
   template <typename P>
   void fieldPrint_(ZuBSpan name, const P &value) {
-    auto emit = [this, name, &value](auto &out) {
-      int nameIndex = HPack::staticNameIndex(name);
-      uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
-      if (Compression::putPref(
-	    out, prefix, 4, nameIndex > 0 ? unsigned(nameIndex) : 0) < 0)
-	return false;
-      if (nameIndex <= 0 && Compression::putString(out, 0, 7, name) < 0)
-	return false;
-      return Compression::putPrint(out, 0, 7, value) >= 0;
-    };
-    CountBytes count;
-    if ((m_first && m_encoder.emit(count, m_updates) < 0) || !emit(count))
-      return;
-    Bytes bytes{
-      m_native, m_streamID, count.length(), m_frameSize,
-      m_first, m_endStream, *m_current};
-    if ((m_first && m_encoder.emit(bytes, m_updates) < 0) || !emit(bytes))
-      return;
-    bytes.flush();
-    if (m_first) {
-      if (m_deferred) {
-	m_stagedUpdates = m_updates;
-	m_commitUpdates = true;
-      } else
-	m_encoder.commit(m_updates);
-      m_updates = {};
+    if (!m_valid) return;
+    uint64_t nameIndex = m_encoder.nameIndex(name);
+    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    uint64_t offset;
+    unsigned length;
+    if (Compression::putPref(*m_block, prefix, 4, nameIndex) < 0 ||
+	(!nameIndex && Compression::putString(*m_block, 0, 7, name) < 0) ||
+	m_section->putPrint(0, 7, value, offset, length) < 0) {
+      m_valid = false;
     }
-    m_first = false;
   }
 
   void field_(Field field) {
-    auto plan = m_encoder.plan(field);
-    CountBytes count;
-    if ((m_first && m_encoder.emit(count, m_updates) < 0) ||
-	m_encoder.emit(count, plan) < 0)
-      return;
-    Bytes bytes{
-      m_native, m_streamID, count.length(), m_frameSize,
-      m_first, m_endStream, *m_current};
-    if ((m_first && m_encoder.emit(bytes, m_updates) < 0) ||
-	m_encoder.emit(bytes, plan) < 0)
-      return;
-    bytes.flush();
-    if (m_first) {
-      if (m_deferred) {
-	m_stagedUpdates = m_updates;
-	m_commitUpdates = true;
-      }
-      else
-	m_encoder.commit(m_updates);
-      m_updates = {};
+    if (!m_valid) return;
+    if (m_encoder.emitRuntime(*m_block, field) < 0) {
+      m_valid = false;
     }
-    if (m_deferred)
-      new (m_plans.push()) HPackStagedPlan{plan};
-    else
-      m_encoder.commit(plan);
-    m_first = false;
   }
 
   Native	&m_native;
   HPackEncoder	&m_encoder;
-  HPackUpdates	m_updates;
-  HPackUpdates	m_stagedUpdates;
   uint32_t	m_streamID = 0;
   uint32_t	m_frameSize = DefltFrameSize;
+  unsigned	m_plan = unsigned(-1);
   uint64_t	m_retainedMax = uint64_t(-1);
   HeaderFrames	m_frames;
-  HeaderFrames	m_trailers;
-  HeaderFrames	*m_current = &m_frames;
+  HPackBytes	*m_block = nullptr;
+  HeaderSection	*m_section = nullptr;
   DataFrames	m_data;
-  HPackStagedPlans m_plans;
-  bool		m_first = false;
   bool		m_open = false;
   bool		m_endStream = false;
   bool		m_endData = false;
   bool		m_deferred = false;
-  bool		m_commitUpdates = false;
+  bool		m_valid = true;
+  bool		m_reserved = false;
   bool		m_initialHeaders = false;
   bool		m_initialEndStream = false;
-  bool		m_trailerEndStream = false;
 };
 
 using ClosedStreams =
@@ -1348,6 +1311,16 @@ public:
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 peer settings outside Tx thread", return);
     if (!m_encoder.peerCapacity(hpackCapacity)) {
+      auto link = impl_();
+      impl_()->app()->rxRun([link]() {
+	link->h2Error(Error::CompressionError);
+      });
+      return;
+    }
+    auto seedState = m_encoder.seedState();
+    if ((seedState == H2::HPackSeedState::Cold ||
+	 seedState == H2::HPackSeedState::Warm) &&
+	!m_encoder.bind(hpackSeedPlans_(impl_(), 0))) {
       auto link = impl_();
       impl_()->app()->rxRun([link]() {
 	link->h2Error(Error::CompressionError);

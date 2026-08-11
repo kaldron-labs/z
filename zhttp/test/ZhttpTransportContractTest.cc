@@ -94,9 +94,9 @@ struct BodyLink : public LinkTx<Profile::HTTPVersion> {
 template <typename Message>
 struct BodyBuilder :
   public Message::template Request<
-    BodyBuilder<Message>, ZuTypeList<>, ZuTypeList<>, true, false> {
+    BodyBuilder<Message>, ZuTypeList<>, true, false> {
   using Base = typename Message::template Request<
-    BodyBuilder, ZuTypeList<>, ZuTypeList<>, true, false>;
+    BodyBuilder, ZuTypeList<>, true, false>;
   using Base::body;
   uint64_t contentLength() const { return 1; }
 };
@@ -326,11 +326,12 @@ struct QueryPath {
 
 using TxHeaders = ZuTypeList<ZuStringT<"x-custom">, void>;
 using ContentLength = ZuStringT<"content-length">;
-using FixedHeaders = ZuTypeList<ContentLength, void>;
+using BodySize = ZuStringT<"x-body-size">;
+using FixedHeaders = ZuTypeList<ContentLength, void, BodySize, void>;
 
 struct TxBuilder :
   public Zhttp::H1::Request<
-    TxBuilder, TxHeaders, ZuTypeList<>, true, true> {
+    TxBuilder, TxHeaders, true, true> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::POST, [this](auto &&emit) {
@@ -349,7 +350,7 @@ struct TxBuilder :
 
 struct FixedTxBuilder :
   public Zhttp::H1::Request<
-    FixedTxBuilder, FixedHeaders, ZuTypeList<>, true, false> {
+    FixedTxBuilder, FixedHeaders, true, false> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::PUT, [](auto &&emit) {
@@ -360,40 +361,47 @@ struct FixedTxBuilder :
   void host(L &&l) { l("localhost"); }
   template <typename Key, typename L>
   void header(L &&l) {
-    patches.template header<true, Key>(app, ZuFwd<L>(l));
+    app.template header<Key>(ZuFwd<L>(l));
   }
   template <typename L> void header(L &&) { }
+  template <typename Key>
+  void headerOffset(uint64_t offset, unsigned length) {
+    spans.template recordOffset<Key>(offset, length);
+  }
+  void headerBase(uint8_t *base) { spans.resolve(base); }
+  void patch() { spans.patch(app); }
 
   struct App {
     template <typename Key, typename L>
     void header(L &&l) {
       ++providers;
-      l(Zhttp::Placeholder{10, '0'});
+      if constexpr (ZuIsSame<Key, ContentLength>{})
+	l(Zhttp::Placeholder{10, '0'});
+      else
+	l(CustomValue{});
     }
     template <typename L>
     void bodyHdrs(L &&l) {
       l.template operator()<ContentLength>(
 	[this](ZuSpan<uint8_t> span) {
-	  patched = span;
+	  contentSpan = span;
 	  ZuStream out{span};
 	  out << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
 	});
+      l.template operator()<BodySize>(
+	[this](ZuSpan<uint8_t> span) {
+	  bodySpan = span;
+	  memcpy(span.data(), "000200", 6);
+	});
     }
 
-    ZuSpan<uint8_t> patched;
+    ZuSpan<uint8_t> contentSpan;
+    ZuSpan<uint8_t> bodySpan;
     uint64_t contentLength = 0;
     unsigned providers = 0;
   } app;
 
-  Zhttp::HeaderPatches<FixedHeaders> patches;
-};
-
-struct DuplicateHeaderApp {
-  template <typename Key, typename L>
-  void header(L &&l) {
-    l("one");
-    l("two");
-  }
+  Zhttp::HeaderSpans<FixedHeaders> spans;
 };
 
 template <typename T, typename = void>
@@ -410,9 +418,9 @@ struct HasReset<T, decltype(ZuDeclVal<T &>().reset(), void())> :
   public ZuTrue { };
 
 using ReqFacade = Zhttp::H1::Request<
-  TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
+  TxBuilder, TxHeaders, true, true>;
 using RespFacade = Zhttp::H1::Response<
-  TxBuilder, TxHeaders, ZuTypeList<>, true, true>;
+  TxBuilder, TxHeaders, true, true>;
 ZuAssert(HasBegin<ReqFacade>{});
 ZuAssert(HasBegin<RespFacade>{});
 ZuAssert(!HasReset<Zhttp::Builder>{});
@@ -458,7 +466,6 @@ void testFixedPatch()
   Zhttp::RetainedTx headerTx{native, budget};
   Zhttp::RetainedTx bodyTx{native, budget};
 
-  ZuCHECK(builder.begin(headerTx), "fixed request rendering failed");
   auto body = builder.body(bodyTx, 200);
   for (unsigned i = 0; i < 200; ++i) body << 'x';
   body.flush();
@@ -466,18 +473,21 @@ void testFixedPatch()
     "fixed body accounting mismatch");
 
   builder.app.contentLength = body.produced();
-  builder.patches.patch(builder.app);
+  ZuCHECK(builder.begin(headerTx), "fixed request rendering failed");
   builder.finish(bodyTx);
   ZuCHECK(headerTx.seal() && bodyTx.seal(),
     "retained fixed message sealing failed");
-  ZuCHECK(!link.wire && builder.app.providers == 1 &&
-      builder.app.patched.length() == 10,
+  ZuCHECK(!link.wire && builder.app.providers == 2 &&
+      builder.app.contentSpan.length() == 10 &&
+      builder.app.bodySpan.length() == 6,
     "fixed message escaped before one-pass in-place patching");
   headerTx.commit();
   bodyTx.commit();
   link.finish();
   ZuCHECK(link.wire.find("content-length: 0000000200\r\n") >= 0,
     "fixed-width H1 content-length mismatch");
+  ZuCHECK(link.wire.find("x-body-size: 000200\r\n") >= 0,
+    "ordinary printable H1 patch mismatch");
   ZuCSpan rest{link.wire};
   int first = rest.find("content-length:");
   rest.offset(unsigned(first + 1));
@@ -490,12 +500,16 @@ void testH2DeferredState()
   ZuTestScope(testH2DeferredState);
   Zhttp::H2::HPackEncoder encoder;
   ZuCHECK(encoder.init(4096), "HPACK encoder initialization failed");
+  Zhttp::HPackSeedPlans seeds;
+  ZuCHECK(encoder.bind(seeds), "empty HPACK warm-plan binding failed");
   uint64_t before = encoder.table().insertCount();
   {
     H2Native native;
     Zhttp::H2_::HeaderBlock block{native, encoder, 1, 64};
+    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderSection section{bytes};
     block.defer(1);
-    block.beginHeaders(true);
+    block.beginHeaders(section, true);
     block.field("x-deferred", "discarded");
     block.endHeaders(true);
     ZuCHECK(!block.valid() && !native.headers,
@@ -506,8 +520,10 @@ void testH2DeferredState()
   {
     H2Native native;
     Zhttp::H2_::HeaderBlock block{native, encoder, 3, 64};
+    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderSection section{bytes};
     block.defer(4096);
-    block.beginHeaders(true);
+    block.beginHeaders(section, true);
     block.field(":path", CustomTarget{});
     block.field("x-deferred", "committed");
     block.endHeaders(true);
@@ -517,8 +533,8 @@ void testH2DeferredState()
     ZuCHECK(native.headers == 1 && native.headerFrames,
       "deferred H2 headers did not commit");
   }
-  ZuCHECK(encoder.table().insertCount() == before + 1,
-    "committed H2 message did not publish HPACK state");
+  ZuCHECK(encoder.table().insertCount() == before,
+    "committed H2 message mutated frozen HPACK state");
   encoder.final();
 }
 
@@ -533,22 +549,12 @@ void testHeaderAndRetainedLimits()
       "Transfer-Encoding", true),
     "runtime framing-header validation is not case-insensitive");
 
-  DuplicateHeaderApp duplicate;
-  Zhttp::HeaderPatches<FixedHeaders> patches;
-  unsigned values = 0;
-  patches.template header<false, ContentLength>(
-    duplicate, [&values](auto &&) { ++values; });
-  ZuCHECK(values == 2,
-    "typed header values were not passed through");
-
   TxLink link;
   FixedTxBuilder builder;
   auto native = link.transmit(builder);
   Zhttp::RetainedBudget budget{.max = 4096};
   Zhttp::RetainedTx headerTx{native, budget};
   Zhttp::RetainedTx bodyTx{native, budget};
-  ZuCHECK(builder.begin(headerTx),
-    "limited fixed request setup failed");
   auto body = builder.body(bodyTx, 5);
   body << "123456";
   body.flush();

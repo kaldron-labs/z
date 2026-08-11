@@ -29,7 +29,7 @@ using ServerHeaders = ZhttpHeaders(
 template <typename Profile>
 class Request :
   public Zhttp::MessageTraits<Profile>::template Request<
-    Request<Profile>, ServerHeaders, ZuTypeList<>, false, false> {
+    Request<Profile>, ServerHeaders, false, false> {
 public:
   Request(const URI &uri, ZuBSpan protocol = {}) :
     m_uri{&uri}, m_protocol{protocol} { }
@@ -51,6 +51,7 @@ public:
     else if constexpr (Key{}() == "sec-websocket-protocol")
       l(m_protocol);
   }
+  template <typename L> void header(L &&) { }
 
 private:
   const URI		*m_uri;
@@ -60,7 +61,7 @@ private:
 template <typename Profile>
 class Response :
   public Zhttp::MessageTraits<Profile>::template Response<
-    Response<Profile>, ClientHeaders, ZuTypeList<>, false, false> {
+    Response<Profile>, ClientHeaders, false, false> {
 public:
   Response(ZuBSpan protocol = {}) : m_protocol{protocol} { }
 
@@ -70,6 +71,7 @@ public:
   void header(L &&l) {
     if constexpr (Key{}() == "sec-websocket-protocol") l(m_protocol);
   }
+  template <typename L> void header(L &&) { }
 
 private:
   HandshakeString	m_protocol;
@@ -78,7 +80,7 @@ private:
 template <typename Profile>
 class ErrorResponse :
   public Zhttp::MessageTraits<Profile>::template Response<
-    ErrorResponse<Profile>, ZuTypeList<>, ZuTypeList<>, false, false> {
+    ErrorResponse<Profile>, ZuTypeList<>, false, false> {
 public:
   unsigned status() const { return 400; }
 };

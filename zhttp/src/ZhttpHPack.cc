@@ -482,6 +482,7 @@ bool HPackEncoder::init(uint32_t capacity)
   m_peerCapacity = 4096;
   m_signalledCapacity = 4096;
   if (!m_table.init(capacity)) return false;
+  m_seedState = HPackSeedState::Cold;
   uint32_t effective = capacity < 4096 ? capacity : 4096;
   if (effective != m_signalledCapacity) pending_(effective);
   return true;
@@ -494,6 +495,7 @@ void HPackEncoder::reset()
 void HPackEncoder::final()
 {
   m_table.final();
+  m_updateBytes.length(0);
   detachNeverIndex_();
   m_neverIndex->clean();
   m_generation = 0;
@@ -502,6 +504,10 @@ void HPackEncoder::final()
   m_signalledCapacity = 4096;
   m_pendingMin = 0;
   m_pendingFinal = 0;
+  m_plans.length(0);
+  m_plan = nullptr;
+  m_seedCapacity = 0;
+  m_seedState = HPackSeedState::Cold;
   m_pending = false;
 }
 
@@ -511,6 +517,8 @@ bool HPackEncoder::peerCapacity(uint32_t capacity)
   uint32_t effective =
     m_localCapacity < capacity ? m_localCapacity : capacity;
   if (!m_table.capacity(effective)) return false;
+  if (m_seedState == HPackSeedState::Frozen && effective < m_seedCapacity)
+    m_seedCapacity = effective;
   if (effective != m_signalledCapacity || m_pending) pending_(effective);
   return true;
 }
@@ -590,10 +598,61 @@ void HPackEncoder::pending_(uint32_t capacity)
   if (!m_pending) {
     m_pendingMin = m_pendingFinal = capacity;
     m_pending = true;
+    prepareUpdates_();
     return;
   }
   if (capacity < m_pendingMin) m_pendingMin = capacity;
   m_pendingFinal = capacity;
+  prepareUpdates_();
+}
+
+void HPackEncoder::prepareUpdates_()
+{
+  m_updateBytes.length(0);
+  if (!m_pending) return;
+  (void)Compression::putPref(m_updateBytes, 0x20, 5, m_pendingMin);
+  if (m_pendingFinal != m_pendingMin)
+    (void)Compression::putPref(m_updateBytes, 0x20, 5, m_pendingFinal);
+}
+
+bool HPackEncoder::beginBlock(unsigned plan, bool &bootstrap)
+{
+  bootstrap = false;
+  switch (m_seedState) {
+    case HPackSeedState::Warm:
+      m_plan = plan < m_plans.length() ? &m_plans[plan] : nullptr;
+      m_seedState = HPackSeedState::Reserved;
+      bootstrap = true;
+      return true;
+    case HPackSeedState::Frozen:
+    case HPackSeedState::Disabled:
+      return true;
+    case HPackSeedState::Cold:
+    case HPackSeedState::Reserved:
+      return false;
+  }
+  return false;
+}
+
+void HPackEncoder::commitBlock()
+{
+  if (m_seedState == HPackSeedState::Reserved) {
+    if (m_plan) m_table = ZuMv(m_plan->table);
+    m_seedState = HPackSeedState::Frozen;
+  }
+}
+
+void HPackEncoder::rollbackBlock()
+{
+  if (m_seedState == HPackSeedState::Reserved)
+    m_seedState = HPackSeedState::Warm;
+}
+
+void HPackEncoder::commitUpdates()
+{
+  auto updates_ = updates();
+  commit(updates_);
+  m_updateBytes.length(0);
 }
 
 void HPackEncoder::neverIndex(ZuBSpan name)
@@ -610,6 +669,16 @@ bool HPackEncoder::neverIndexed(ZuBSpan name) const
     ZuMatcher<"authorization", "cookie", "set-cookie">();
   if (matcher.exact(name) >= 0) return true;
   return m_neverIndex->find(name);
+}
+
+uint64_t HPackEncoder::nameIndex(ZuBSpan name) const
+{
+  int index = HPack::staticNameIndex(name);
+  if (index > 0) return unsigned(index);
+  const auto &lookup = m_table;
+  if (auto entry = lookup.findName(name))
+    return 62 + lookup.insertCount() - entry->abs - 1;
+  return 0;
 }
 
 void HPackEncoder::detachNeverIndex_()
