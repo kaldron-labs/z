@@ -44,8 +44,7 @@ namespace Zhttp {
 enum : unsigned {
   // Measured scheduler-turn bound: amortizes cross-shard publication without
   // allowing large client pools or sparse queues to monopolize an I/O shard.
-  ClientWorkBatch = 64,
-  ClientInvalidSlot = unsigned(-1)
+  ClientWorkBatch = 64
 };
 
 struct ClientMessageTxState {
@@ -93,7 +92,7 @@ struct Result {
   uint64_t	responseBodyDiscarded = 0;
   uint32_t	status = 0;
   unsigned	pool = 0;
-  unsigned	link = unsigned(-1);
+  unsigned	link = NullSlot;
   uint16_t	redirects = 0;
   uint16_t	retries = 0;
   ResultCode::T	code = ResultCode::OK;
@@ -101,27 +100,6 @@ struct Result {
   Version::T	httpVersion = Version::H1;
 
   bool ok() const { return code == ResultCode::OK; }
-};
-ZtEnumStruct(ZhttpAPI, ClientEventType, int8_t,
-  Selected, AttemptFailed, Redirected, Retried, Fallback, Completed,
-  Cancelled);
-
-struct ClientEvent {
-  uint64_t	request = 0;
-  uint64_t	attempt = 0;
-  uint64_t	previousAttempt = 0;
-  uint32_t	status = 0;
-  unsigned	pool = 0;
-  unsigned	link = unsigned(-1);
-  uint16_t	redirects = 0;
-  uint16_t	retries = 0;
-  ClientEventType::T type = ClientEventType::Selected;
-  ResultCode::T	result = ResultCode::OK;
-  Transport::T	transport = Transport::TCP;
-  Version::T	httpVersion = Version::H1;
-  EndpointSource::T endpointSource = EndpointSource::Origin;
-  bool		transient = false;
-  bool		responseStarted = false;
 };
 
 class Config {
@@ -383,82 +361,105 @@ struct Destination {
   bool valid() const { return host && authority && port; }
 };
 
-#if 0
-// Extended request Builder contract used by Pool. Request must derive from
-// ZmObject, and TxQ::Msg must publicly derive from Request (normally by
-// configuring the queue with ZmPQueueNode<Request_>, then Request = TxQ::Msg);
-// containment should not be used.
-//
-// Pool retains a TxQ::Msg pointer for both queue identity/lifetime and direct
-// Request access. Each queued TxQ::Msg is one Builder instance for one logical
-// request and is never reset or repurposed for another request. Replay attempts
-// and redirects may invoke its reproducible callbacks again. A failed
-// connection which emits no request is not a wire attempt. All lifecycle
-// callbacks are synchronous.
-struct Request : public ZmObject, public Builder {
-  // Request start line / pseudo-headers. operation() is called exactly once
-  // per message; l(method, emit), then emit(write), where write(tx) writes the
-  // complete path plus any query to tx.
-  template <typename L> void operation(L &&l);
-  template <typename L> void protocol(L &&l);	// l(value), CONNECT only
+// Application request Builder base.  The application ReqBuilder_ derives from
+// ReqBuilder and ZmObject.  The final application ReqBuilder is TxQ::Msg, an
+// intrusive ZmPQueue::Node which publicly derives the application data type.
+// Each node represents one logical request and is never reset or repurposed.
+// Replay and redirect attempts may call its Builder callbacks again; every
+// Builder must reproduce the same message each time.
+struct ReqBuilder : public Builder {
+  // l(value), for extended CONNECT only.
+  template <typename L> void protocol(L &&) const { }
 
-  // Monotonic queue identity and discrete-message length.
-  uint64_t key() const;
-  uint64_t length() const; // returns 1
+  // A priority-queue item represents one discrete request.  key() remains an
+  // application requirement because it supplies the monotonic queue identity.
+  uint64_t length() const { return 1; }
 
-  // operation() supplies only the request target.  The selected pool supplies
-  // the immutable scheme, authority, and destination for every attempt.
+  // Synchronous attempt lifecycle notifications.  completed() is called once
+  // for the submitted ReqBuilder; the other callbacks may repeat by attempt.
+  void connected(const ConnectedInfo &) { }
+  void disconnected(bool) { }
+  void connectFailed(bool) { }
 
-  // Whether the request semantics permit another attempt after a redirect or
-  // an unprocessed failure. Called before Client decides to replay.
-  bool replayable() const;
-
-  // Whether another Builder pass will reproduce the same request, including
-  // identical body bytes. Both replayable() and reproducible() must be true
-  // for Client to replay a request.
-  bool reproducible() const;
-
-  // A transport connection for the current attempt is ready. Called before
-  // request construction; info identifies the selected transport and
-  // negotiated HTTP version.
-  void connected(const ConnectedInfo &);
-
-  // The current attempt's connection ended; peer is true when the peer
-  // initiated the disconnect. No callback is made without a bound request.
-  void disconnected(bool peer);
-
-  // Connection establishment failed. transient classifies whether Client
-  // may retry subject to its configured limit and the replay predicates.
-  void connectFailed(bool transient);
-
-  // Client selected a concrete endpoint for the attempt. This precedes
-  // connection establishment and may occur more than once across attempts.
-  void selected(const Endpoint &);
-
-  // Pool accepted a relative or same-origin redirect.  Update the target used
-  // by operation(); cross-origin redirects are terminal and never arrive here.
-  void redirected(const URL &);
-
-  // Reports each typed attempt/request transition. Multiple observations may
-  // precede the single terminal completed() callback.
-  void observed(const ClientEvent &);
-
-  // Exactly one terminal result for the submitted request, after its final
-  // observed Completed or Cancelled/Completed transition.
-  void completed(const Result &);
+  // Optional synchronous event callbacks, detected on the concrete
+  // ReqBuilder; intentionally commented declarations only, not base
+  // implementations:
+  //
+  // void selected(
+  //   const Endpoint *, uint64_t request, uint64_t attempt,
+  //   unsigned pool, unsigned link, Transport::T, Version::T);
+  // void attemptFailed(
+  //   uint64_t request, uint64_t attempt, unsigned pool, unsigned link,
+  //   unsigned status, Transport::T, Version::T,
+  //   bool transient, bool responseStarted);
+  // void redirected(
+  //   const URL &, uint64_t request, uint64_t attempt,
+  //   uint64_t previousAttempt, unsigned status, uint16_t redirects);
+  // void retried(
+  //   uint64_t request, uint64_t attempt,
+  //   uint64_t previousAttempt, uint16_t retries);
+  // void fallback(
+  //   uint64_t request, uint64_t attempt, uint64_t previousAttempt,
+  //   Transport::T fromTransport, Version::T fromVersion);
+  // void cancelled(const Result &);
+  // void completed(const Result &);
 };
 
-// Extended response Parser contract used by Client. One ResParser is
-// constructed for each reusable ClientMessage stream. init() is called once
-// before every response message, including the first, and before status(),
-// header(), or body(); it clears per-response state and binds the response to
-// its submitted request. init() calls Parser::reset() itself when that reset
-// is needed; Client does not call Parser::reset() in addition to init(). The
-// same object can therefore serve many messages.
-struct ResParser : Parser {
-  void init(const Request_ &request);
-};
-#endif
+template <typename U, typename = void>
+struct HasReqSelected : public ZuFalse { };
+template <typename U>
+struct HasReqSelected<U, decltype(
+  ZuDeclVal<U &>().selected(
+    ZuDeclVal<const Endpoint *>(), uint64_t{}, uint64_t{},
+    unsigned{}, unsigned{}, Transport::T{}, Version::T{}), void())> :
+  public ZuTrue { };
+
+template <typename U, typename = void>
+struct HasReqAttemptFailed : public ZuFalse { };
+template <typename U>
+struct HasReqAttemptFailed<U, decltype(
+  ZuDeclVal<U &>().attemptFailed(
+    uint64_t{}, uint64_t{}, unsigned{}, unsigned{}, unsigned{},
+    Transport::T{}, Version::T{}, bool{}, bool{}), void())> :
+  public ZuTrue { };
+
+template <typename U, typename = void>
+struct HasReqRedirected : public ZuFalse { };
+template <typename U>
+struct HasReqRedirected<U, decltype(
+  ZuDeclVal<U &>().redirected(
+    ZuDeclVal<const URL &>(), uint64_t{}, uint64_t{}, uint64_t{},
+    unsigned{}, uint16_t{}), void())> : public ZuTrue { };
+
+template <typename U, typename = void>
+struct HasReqRetried : public ZuFalse { };
+template <typename U>
+struct HasReqRetried<U, decltype(
+  ZuDeclVal<U &>().retried(
+    uint64_t{}, uint64_t{}, uint64_t{}, uint16_t{}), void())> :
+  public ZuTrue { };
+
+template <typename U, typename = void>
+struct HasReqFallback : public ZuFalse { };
+template <typename U>
+struct HasReqFallback<U, decltype(
+  ZuDeclVal<U &>().fallback(
+    uint64_t{}, uint64_t{}, uint64_t{}, Transport::T{}, Version::T{}),
+  void())> : public ZuTrue { };
+
+template <typename U, typename = void>
+struct HasReqCancelled : public ZuFalse { };
+template <typename U>
+struct HasReqCancelled<U, decltype(
+  ZuDeclVal<U &>().cancelled(ZuDeclVal<const Result &>()), void())> :
+  public ZuTrue { };
+
+template <typename U, typename = void>
+struct HasReqCompleted : public ZuFalse { };
+template <typename U>
+struct HasReqCompleted<U, decltype(
+  ZuDeclVal<U &>().completed(ZuDeclVal<const Result &>()), void())> :
+  public ZuTrue { };
 
 // Protocol-neutral client message adapter.  App supplies request intent and
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
@@ -564,6 +565,8 @@ private:
     public ReqOps {
     using Base = typename Message::template Request<
       Builder_, ReqHeaders, HasBody, Streaming>;
+    static constexpr unsigned HdrBufSize = Request::HdrBufSize;
+
     Builder_(
       Request &app_, ZuBSpan authority,
       bool rejectContentLength = false,
@@ -1057,7 +1060,7 @@ public:
 	m_slots[i].owner.object<CliLink<App>>()->hubSlot(i);
       }
       m_slots.length(last);
-      link->hubSlot(ClientInvalidSlot);
+      link->hubSlot(NullSlot);
       if (m_stopping && i < m_stopScan && last >= m_stopScan)
 	m_stopScan = i;
     }
@@ -1512,7 +1515,7 @@ private:
   alignas(Zm::CacheLineSize)
   Pending	m_pending;
   unsigned	m_pendingHead = 0;
-  unsigned	m_hubSlot = ClientInvalidSlot;
+  unsigned	m_hubSlot = NullSlot;
   uint32_t	m_goawayNext = 0;
   uint32_t	m_goawayLast = 0;
   bool		m_ready = false;
@@ -1687,7 +1690,7 @@ public:
   }
   bool active() const { return m_native; }
   void prepare_() {
-    m_nativeSlot = ClientInvalidSlot;
+    m_nativeSlot = NullSlot;
     m_connected = false;
     m_failed = false;
     m_cancelled = false;
@@ -1707,7 +1710,7 @@ public:
   }
   void disconnected_(bool peer) {
     m_native = nullptr;
-    m_nativeSlot = ClientInvalidSlot;
+    m_nativeSlot = NullSlot;
     if (m_connected)
       m_app->disconnected(*impl(), peer);
     else if (!m_failed)
@@ -1715,14 +1718,14 @@ public:
   }
   void released_() {
     m_native = nullptr;
-    m_nativeSlot = ClientInvalidSlot;
+    m_nativeSlot = NullSlot;
     m_connected = false;
   }
   void connectFailed_(bool transient) {
     if (m_failed) return;
     m_failed = true;
     m_native = nullptr;
-    m_nativeSlot = ClientInvalidSlot;
+    m_nativeSlot = NullSlot;
     m_app->connectFailed(*impl(), transient);
   }
   int8_t result() const { return m_result; }
@@ -1741,7 +1744,7 @@ public:
 private:
   App		*m_app = nullptr;
   NativeLink	*m_native = nullptr;
-  unsigned	m_nativeSlot = ClientInvalidSlot;
+  unsigned	m_nativeSlot = NullSlot;
   bool		m_connected = false;
   bool		m_failed = false;
   bool		m_cancelled = false;
@@ -1868,7 +1871,7 @@ public:
 	m_slots[i]->hubSlot(i);
       }
       m_slots.length(last);
-      link->hubSlot(ClientInvalidSlot);
+      link->hubSlot(NullSlot);
       if (m_stopping && i < m_stopScan && last >= m_stopScan)
 	m_stopScan = i;
     }
@@ -2561,7 +2564,7 @@ private:
   Pending		m_pending;
   H1Active		m_h1;
   unsigned		m_pendingHead = 0;
-  unsigned		m_hubSlot = ClientInvalidSlot;
+  unsigned		m_hubSlot = NullSlot;
   uint32_t		m_goawayNext = 0;
   uint32_t		m_goawayLast = 0;
   int			m_tlsVersion = 0;
@@ -4027,7 +4030,7 @@ public:
 	request->poolSlot == link.slot() &&
 	request->poolSlot < m_links.length() &&
 	m_links[request->poolSlot].ptr() == &link) {
-      request->poolSlot = ClientInvalidSlot;
+      request->poolSlot = NullSlot;
     }
   }
 
@@ -4618,7 +4621,7 @@ public:
     if (!request || request->poolTransport != Transport::TCP ||
 	this->operation(request) != &operation) return;
     this->operation(request, nullptr);
-    request->poolSlot = ClientInvalidSlot;
+    request->poolSlot = NullSlot;
   }
   void connected(Link &link, const ConnectedInfo &info) {
     link.onConnected(info);
@@ -5093,7 +5096,7 @@ public:
 	request->poolSlot != link.slot() ||
 	request->poolSlot >= m_pairs.length() ||
 	m_pairs[request->poolSlot].h1->request() != request) return;
-    request->poolSlot = ClientInvalidSlot;
+    request->poolSlot = NullSlot;
   }
 
   template <typename Link>
@@ -5263,10 +5266,11 @@ template <
 class ClientPool;
 
 // TxQ is an unordered ZmPQTx specialized on the final application pool type.
-// TxQ::Msg publicly derives from Request_; Request_ and ResParser_ conform to
-// the extended application Builder and Parser contracts documented in
-// Zhttp.hh.  Pool::send(Request) is thread-safe ingress and intentionally
-// hides TxQ::send(Request); internal queue insertion is always Tx::send().
+// TxQ::Msg is the final ReqBuilder and publicly derives from ReqBuilder_;
+// ReqBuilder_ and ResParser_ conform to the application contracts documented
+// here and in Zhttp.hh.  Pool::send(ReqBuilder) is thread-safe ingress and
+// intentionally hides TxQ::send(ReqBuilder); internal queue insertion is
+// always Tx::send().
 
 template <typename Client_, typename TxQ, typename ResParser_>
 class Pool :
@@ -5276,10 +5280,10 @@ class Pool :
 public:
   using Client = Client_;
   using Tx = TxQ;
-  using Request = typename Tx::Msg;
-  using Request_ = typename Request::T;
+  using ReqBuilder = typename Tx::Msg;
+  using ReqBuilder_ = typename ReqBuilder::T;
   using ResParser = ResParser_;
-  using ReqHeaders = typename Request_::Headers;
+  using ReqHeaders = typename ReqBuilder_::Headers;
   using RespHeaders = typename ResParser::Headers;
   using Self = Pool;
 
@@ -5287,10 +5291,12 @@ public:
 
   ZuAssert(!Tx::Ordered,
     "Zhttp::Pool requires unordered ZmPQTx acknowledgements");
-  ZuAssert((ZuIs_<Request, Request_>{}),
-    "Zhttp::Pool requires TxQ::Msg to publicly derive from Request_");
-  ZuAssert((ZuIs_<Request_, ZmObject>{}),
-    "Zhttp::Pool requires Request_ to derive from ZmObject");
+  ZuAssert((ZuIs_<ReqBuilder, ReqBuilder_>{}),
+    "Zhttp::Pool requires TxQ::Msg to derive from ReqBuilder_");
+  ZuAssert((ZuIs_<ReqBuilder_, ZmObject>{}),
+    "Zhttp::Pool requires ReqBuilder_ to derive from ZmObject");
+  ZuAssert((ZuIs_<ReqBuilder_, Zhttp::ReqBuilder>{}),
+    "Zhttp::Pool requires ReqBuilder_ to derive from Zhttp::ReqBuilder");
 
   using AttemptID = ClientAttemptID;
   using ResponseBody = ClientResponseBody;
@@ -5392,7 +5398,7 @@ public:
 
   struct LiveReq {
     // Valid while non-null; the Tx queue owns the request.
-    Request		*request = nullptr;
+    ReqBuilder		*request = nullptr;
     PoolLink		*link = nullptr;
     DiscoveryRequestRef	discovery;
     AttemptID		identity;
@@ -5404,8 +5410,8 @@ public:
     AttemptEvent::T	events = 0;
     ResultCode::T	terminal = -1;
     unsigned		slot = 0;
-    unsigned		poolSlot = unsigned(-1);
-    unsigned		linkSlot = unsigned(-1);
+    unsigned		poolSlot = NullSlot;
+    unsigned		linkSlot = NullSlot;
     unsigned		redirects = 0;
     unsigned		retries = 0;
     unsigned		routeGeneration = 0;
@@ -5418,11 +5424,11 @@ public:
   };
 
   using TCPPool = ClientPool<
-    Self, H1TCP, LiveReq, Request_, ResParser>;
+    Self, H1TCP, LiveReq, ReqBuilder_, ResParser>;
   using TLSPool = TLSClientPool<
-    Self, LiveReq, Request_, ResParser>;
+    Self, LiveReq, ReqBuilder_, ResParser>;
   using QUICPool = ClientPool<
-    Self, H3QUIC, LiveReq, Request_, ResParser>;
+    Self, H3QUIC, LiveReq, ReqBuilder_, ResParser>;
 private:
   template <typename Heap>
   class RequestSlot_ : public Heap, public ZmObject, public LiveReq {
@@ -5567,12 +5573,12 @@ public:
     return true;
   }
 
-  void send(ZmRef<Request> request) {
+  void send(ZmRef<ReqBuilder> request) {
     txRun_([this, request = ZuMv(request)]() mutable {
       (void)submit_(ZuMv(request));
     });
   }
-  bool submit_(ZmRef<Request> request) {
+  bool submit_(ZmRef<ReqBuilder> request) {
     assertTx_();
     if (m_txIngressStopped || m_sealed || !request) return false;
     Tx::send(ZuMv(request));
@@ -5720,7 +5726,7 @@ public:
   const Destination &destination() const { return m_dest; }
   ZuBSpan authority() const { return m_dest.authority; }
 
-  bool send_(Request *request, bool) {
+  bool send_(ReqBuilder *request, bool) {
     assertTx_();
     if (m_txIngressStopped || m_txActive >= m_config.concurrency())
       return false;
@@ -5728,7 +5734,7 @@ public:
     rxRun_([this, request]() { admit_(request); });
     return true;
   }
-  bool resend_(Request *request, bool more) {
+  bool resend_(ReqBuilder *request, bool more) {
     return send_(request, more);
   }
   bool sendGap_(const typename Tx::Span &, bool) {
@@ -5819,8 +5825,7 @@ public:
     attempt.protocol.httpVersion = info.httpVersion;
     if (!(attempt.events & Zhttp::AttemptEvent{}.SelectionObserved())) {
       attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
-      observe_(
-	attempt.request, event_(attempt, ClientEventType::Selected));
+      selected_(attempt);
     }
     attempt.request->connected(info);
   }
@@ -5834,9 +5839,7 @@ public:
       fail_(*attempt, FailureKind::Connect);
       attempt->failure.transient = transient;
       attempt->events |= Zhttp::AttemptEvent{}.FailureObserved();
-      observe_(
-	attempt->request, event_(*attempt, ClientEventType::AttemptFailed,
-	  ResultCode::Failed, transient));
+      attemptFailed_(*attempt, transient);
     }
     if (attempt && attempt->request)
       attempt->request->connectFailed(transient);
@@ -5874,11 +5877,11 @@ public:
     }
     if (attempt.routeTransition) {
       uint64_t previous = attempt.identity.attempt;
+      Transport::T fromTransport = attempt.protocol.transport;
+      Version::T fromVersion = attempt.protocol.httpVersion;
       link.retire();
       nextAttempt_(attempt, false);
-      auto event = event_(attempt, ClientEventType::Fallback);
-      event.previousAttempt = previous;
-      observe_(attempt.request, event);
+      fallback_(attempt, previous, fromTransport, fromVersion);
       attempt.routeTransition = false;
       m_transitionPending.push(attempt.slot);
       routeTransitionReady_();
@@ -5887,16 +5890,10 @@ public:
     ok = ok && attempt.failure.kind == FailureKind::None;
     if (!ok && !(attempt.events & Zhttp::AttemptEvent{}.FailureObserved())) {
       attempt.events |= Zhttp::AttemptEvent{}.FailureObserved();
-      observe_(
-	attempt.request, event_(attempt, ClientEventType::AttemptFailed,
-	  ResultCode::Failed));
+      attemptFailed_(attempt);
     }
     if (ok && redirectStatus_(attempt.protocol.status) &&
 	attempt.route.redirectState != RedirectState::None) {
-      if (!canReplay_(attempt)) {
-	finish_(link, attempt, ResultCode::ReplayUnsafe, reuse);
-	return;
-      }
       if (attempt.redirects >= m_config.maxRedirects()) {
 	finish_(link, attempt, ResultCode::RedirectLimit, reuse);
 	return;
@@ -5915,15 +5912,12 @@ public:
       ++attempt.redirects;
       attempt.route.url = ZuMv(attempt.route.redirect);
       uint64_t previous = attempt.identity.attempt;
+      unsigned status = attempt.protocol.status;
       nextAttempt_(attempt, true);
-      auto event = event_(attempt, ClientEventType::Redirected);
-      event.previousAttempt = previous;
-      observe_(attempt.request, event);
-      attempt.request->redirected(attempt.route.url.url());
+      redirected_(attempt, attempt.route.url.url(), previous, status);
       if (reuse && same && direct_<Link>(attempt)) {
 	attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
-	observe_(
-	  attempt.request, event_(attempt, ClientEventType::Selected));
+	selected_(attempt);
 	link.assign(&attempt);
 	link.sendRequest();
       } else {
@@ -5933,11 +5927,7 @@ public:
       return;
     }
     if (!ok && attempt.failure.kind == FailureKind::Tx) {
-      finish_(link, attempt,
-	(attempt.requestBody.headers &&
-	  !canReplay_(attempt)) ?
-	  ResultCode::Indeterminate : ResultCode::Failed,
-	false);
+      finish_(link, attempt, ResultCode::Failed, false);
       return;
     }
     if constexpr (ZuIsSame<typename Link::Protocol, TLS>{})
@@ -5950,16 +5940,14 @@ public:
 	    finish_(link, attempt, ResultCode::Indeterminate, false);
 	    return;
 	  case ResultCode::Unprocessed:
-	    if (responseStarted_(attempt) || !canReplay_(attempt)) {
+	    if (responseStarted_(attempt)) {
 	      finish_(link, attempt, ResultCode::ReplayUnsafe, false);
 	      return;
 	    }
 	    {
 	      uint64_t previous = attempt.identity.attempt;
 	      nextAttempt_(attempt, false);
-	      auto event = event_(attempt, ClientEventType::Retried);
-	      event.previousAttempt = previous;
-	      observe_(attempt.request, event);
+	      retried_(attempt, previous);
 	      startTLS_(attempt);
 	      link.retire();
 	    }
@@ -5969,22 +5957,14 @@ public:
     if (!ok && retry_(link, attempt)) return;
     if (!ok && attempt.protocol.transport == Transport::QUIC &&
 	m_config.protocol() == ProtocolPolicy::PreferH3) {
-      if (!responseStarted_(attempt) && canReplay_(attempt)) {
+      if (!responseStarted_(attempt)) {
 	beginRouteTransition_(link, attempt);
 	return;
       }
-      finish_(link, attempt,
-	(responseStarted_(attempt) || attempt.requestBody.headers) ?
-	  ResultCode::Indeterminate :
-	  ResultCode::ReplayUnsafe, false);
+      finish_(link, attempt, ResultCode::Indeterminate, false);
       return;
     }
-    finish_(link, attempt,
-      ok ? ResultCode::OK :
-	((responseStarted_(attempt) || attempt.requestBody.headers) &&
-	  !canReplay_(attempt) ?
-	  ResultCode::Indeterminate : ResultCode::Failed),
-      reuse);
+    finish_(link, attempt, ok ? ResultCode::OK : ResultCode::Failed, reuse);
   }
 
   template <typename Link>
@@ -6114,50 +6094,60 @@ private:
       status == 307 || status == 308;
   }
 
-  ClientEvent event_(
-    const LiveReq &attempt, ClientEventType::T type,
-    ResultCode::T result = ResultCode::OK, bool transient = false) const {
-    return {
-      .request = attempt.identity.request,
-      .attempt = attempt.identity.attempt,
-      .status = attempt.protocol.status,
-      .pool = m_slot,
-      .link = attempt.linkSlot,
-      .redirects = uint16_t(attempt.redirects),
-      .retries = uint16_t(attempt.retries),
-      .type = type,
-      .result = result,
-      .transport = attempt.protocol.transport,
-      .httpVersion = attempt.protocol.httpVersion,
-      .endpointSource = EndpointSource::T(attempt.route.endpointSet ?
-	attempt.route.endpoint.source : EndpointSource::Origin),
-      .transient = transient,
-      .responseStarted = responseStarted_(attempt)
-    };
+  ZuInline void selected_(LiveReq &attempt) {
+    if constexpr (HasReqSelected<ReqBuilder>{})
+      attempt.request->selected(
+	attempt.route.endpointSet ? &attempt.route.endpoint : nullptr,
+	attempt.identity.request, attempt.identity.attempt,
+	m_slot, attempt.linkSlot,
+	attempt.protocol.transport, attempt.protocol.httpVersion);
   }
 
-  static ClientEvent event_(
-    const Result &result, ClientEventType::T type) {
-    return {
-      .request = result.request,
-      .attempt = result.attempt,
-      .status = result.status,
-      .pool = result.pool,
-      .link = result.link,
-      .redirects = result.redirects,
-      .retries = result.retries,
-      .type = type,
-      .result = result.code,
-      .transport = result.transport,
-      .httpVersion = result.httpVersion
-    };
+  ZuInline void attemptFailed_(LiveReq &attempt, bool transient = false) {
+    if constexpr (HasReqAttemptFailed<ReqBuilder>{})
+      attempt.request->attemptFailed(
+	attempt.identity.request, attempt.identity.attempt,
+	m_slot, attempt.linkSlot, attempt.protocol.status,
+	attempt.protocol.transport, attempt.protocol.httpVersion,
+	transient, responseStarted_(attempt));
   }
 
-  void observe_(Request_ *request, const ClientEvent &event) {
-    if (request) request->observed(event);
+  ZuInline void redirected_(
+      LiveReq &attempt, const URL &url,
+      uint64_t previousAttempt, unsigned status) {
+    if constexpr (HasReqRedirected<ReqBuilder>{})
+      attempt.request->redirected(
+	url, attempt.identity.request, attempt.identity.attempt,
+	previousAttempt, status, uint16_t(attempt.redirects));
   }
 
-  static typename Tx::Key key_(const Request *request) {
+  ZuInline void retried_(LiveReq &attempt, uint64_t previousAttempt) {
+    if constexpr (HasReqRetried<ReqBuilder>{})
+      attempt.request->retried(
+	attempt.identity.request, attempt.identity.attempt,
+	previousAttempt, uint16_t(attempt.retries));
+  }
+
+  ZuInline void fallback_(
+      LiveReq &attempt, uint64_t previousAttempt,
+      Transport::T fromTransport, Version::T fromVersion) {
+    if constexpr (HasReqFallback<ReqBuilder>{})
+      attempt.request->fallback(
+	attempt.identity.request, attempt.identity.attempt, previousAttempt,
+	fromTransport, fromVersion);
+  }
+
+  static ZuInline void cancelled_(
+      ReqBuilder &request, const Result &result) {
+    if constexpr (HasReqCancelled<ReqBuilder>{}) request.cancelled(result);
+  }
+
+  static ZuInline void completed_(
+      ReqBuilder &request, const Result &result) {
+    if constexpr (HasReqCompleted<ReqBuilder>{}) request.completed(result);
+  }
+
+  static typename Tx::Key key_(const ReqBuilder *request) {
     return request->key();
   }
 
@@ -6189,7 +6179,7 @@ private:
       completeAttempt_(attempt, ResultCode::Cancelled);
       return;
     }
-    if (attempt.linkSlot == ClientInvalidSlot) {
+    if (attempt.linkSlot == NullSlot) {
       completeAttempt_(attempt, ResultCode::Cancelled);
       return;
     }
@@ -6202,7 +6192,7 @@ private:
     }
   }
 
-  void admit_(Request *request) {
+  void admit_(ReqBuilder *request) {
     assertRx_();
     if (m_rxStopping || !request) {
       if (request) {
@@ -6225,7 +6215,7 @@ private:
     begin_(*m_liveReqs[slot], request);
   }
 
-  void begin_(LiveReq &attempt, Request *request) {
+  void begin_(LiveReq &attempt, ReqBuilder *request) {
     prepare_(attempt, request);
     m_pending.push(attempt.slot);
     dispatchPending_();
@@ -6264,7 +6254,7 @@ private:
 	work < ClientWorkBatch) {
       unsigned slot = m_pending[m_pendingHead];
       auto &attempt = *m_liveReqs[slot];
-      if (!attempt.request || attempt.linkSlot != unsigned(-1) ||
+      if (!attempt.request || attempt.linkSlot != NullSlot ||
 	  attempt.phase != AttemptPhase::Idle) {
 	++m_pendingHead;
 	++work;
@@ -6296,14 +6286,14 @@ private:
 
   void releaseLink_(LiveReq &attempt) {
     unsigned slot = attempt.linkSlot;
-    if (slot == unsigned(-1)) return;
+    if (slot == NullSlot) return;
     ZmAssert(slot < m_links.length() && attempt.link == m_links[slot].ptr());
     attempt.link->release();
     attempt.link = nullptr;
-    attempt.linkSlot = unsigned(-1);
+    attempt.linkSlot = NullSlot;
   }
 
-  void prepare_(LiveReq &attempt, Request *request) {
+  void prepare_(LiveReq &attempt, ReqBuilder *request) {
     attempt.request = request;
     attempt.route.url = m_origin;
     attempt.redirects = 0;
@@ -6339,7 +6329,7 @@ private:
     attempt.failure = {};
     attempt.events = 0;
     attempt.terminal = -1;
-    attempt.poolSlot = unsigned(-1);
+    attempt.poolSlot = NullSlot;
     attempt.poolTransport = -1;
     attempt.admissionStart = 0;
     attempt.admissionScanned = 0;
@@ -6394,7 +6384,7 @@ private:
   static void idleAttempt_(LiveReq &attempt) {
     attempt.request = nullptr;
     resetWire_(attempt);
-    attempt.linkSlot = unsigned(-1);
+    attempt.linkSlot = NullSlot;
     attempt.identity = {};
     attempt.route.endpointIndex = 0;
     attempt.route.endpoints = nullptr;
@@ -6442,11 +6432,11 @@ private:
     m_routeEndpoints = nullptr;
 
     uint64_t previous = attempt.identity.attempt;
+    Transport::T fromTransport = attempt.protocol.transport;
+    Version::T fromVersion = attempt.protocol.httpVersion;
     link.retire();
     nextAttempt_(attempt, false);
-    auto event = event_(attempt, ClientEventType::Fallback);
-    event.previousAttempt = previous;
-    observe_(attempt.request, event);
+    fallback_(attempt, previous, fromTransport, fromVersion);
     m_transitionPending.push(attempt.slot);
     m_routeTransitionScan = 0;
     m_routeTransitionClose = 0;
@@ -6464,20 +6454,18 @@ private:
 	  other.protocol.transport != Transport::QUIC ||
 	  other.phase == AttemptPhase::Closing)
 	continue;
-      if (!responseStarted_(other) && canReplay_(other)) {
+      if (!responseStarted_(other)) {
 	other.routeTransition = true;
 	if (!m_quic.cancel(&other)) {
 	  uint64_t prior = other.identity.attempt;
+	  Transport::T fromTransport = other.protocol.transport;
+	  Version::T fromVersion = other.protocol.httpVersion;
 	  nextAttempt_(other, false);
-	  auto fallback = event_(other, ClientEventType::Fallback);
-	  fallback.previousAttempt = prior;
-	  observe_(other.request, fallback);
+	  fallback_(other, prior, fromTransport, fromVersion);
 	  m_transitionPending.push(other.slot);
 	}
       } else {
-	other.terminal =
-	  (responseStarted_(other) || other.requestBody.headers) ?
-	    ResultCode::Indeterminate : ResultCode::ReplayUnsafe;
+	other.terminal = ResultCode::Indeterminate;
 	if (!m_quic.cancel(&other))
 	  completeAttempt_(other, other.terminal);
       }
@@ -6810,12 +6798,10 @@ private:
       attempt.route.endpointIndex = 0;
       attempt.route.endpoint = attempt.route.endpoints->endpoints()[0];
       attempt.route.endpointSet = true;
-      attempt.request->selected(attempt.route.endpoint);
     }
     connecting_(attempt);
     attempt.events |= Zhttp::AttemptEvent{}.SelectionObserved();
-    observe_(
-      attempt.request, event_(attempt, ClientEventType::Selected));
+    selected_(attempt);
     m_tcp.open(&attempt, attempt.linkSlot);
   }
   void startTLS_(LiveReq &attempt) {
@@ -6835,7 +6821,6 @@ private:
       attempt.route.endpointIndex = 0;
       attempt.route.endpoint = attempt.route.endpoints->endpoints()[0];
       attempt.route.endpointSet = true;
-      attempt.request->selected(attempt.route.endpoint);
     }
     connecting_(attempt);
     m_tls.open(&attempt, attempt.linkSlot);
@@ -6849,10 +6834,8 @@ private:
     if (endpoint) {
       attempt.route.endpoint = *endpoint;
       attempt.route.endpointSet = true;
-      attempt.request->selected(attempt.route.endpoint);
     }
-    observe_(
-      attempt.request, event_(attempt, ClientEventType::Selected));
+    selected_(attempt);
     m_quic.open(&attempt, attempt.linkSlot);
   }
 
@@ -6889,7 +6872,7 @@ private:
       completeAttempt_(attempt, ResultCode::TimedOut);
       return;
     }
-    if (attempt.linkSlot == ClientInvalidSlot) {
+    if (attempt.linkSlot == NullSlot) {
       completeAttempt_(attempt, ResultCode::TimedOut);
       return;
     }
@@ -6905,8 +6888,7 @@ private:
   bool retry_(Link &link, LiveReq &attempt) {
     if (attempt.failure.kind != FailureKind::Connect ||
 	!attempt.failure.transient || responseStarted_(attempt) ||
-	attempt.retries >= m_config.maxRetries() ||
-	!canReplay_(attempt))
+	attempt.retries >= m_config.maxRetries())
       return false;
 
     uint64_t previous = attempt.identity.attempt;
@@ -6916,9 +6898,7 @@ private:
 	  attempt.route.endpoints->endpoints().length())
       ++attempt.route.endpointIndex;
     nextAttempt_(attempt, false);
-    auto event = event_(attempt, ClientEventType::Retried);
-    event.previousAttempt = previous;
-    observe_(attempt.request, event);
+    retried_(attempt, previous);
     switch (attempt.protocol.transport) {
       case Transport::TCP:
 	startTCP_(attempt);
@@ -6935,11 +6915,6 @@ private:
     }
     link.retire();
     return true;
-  }
-
-  bool canReplay_(const LiveReq &attempt) const {
-    return attempt.request->replayable() &&
-      attempt.request->reproducible();
   }
 
   template <typename Link>
@@ -6964,7 +6939,7 @@ private:
     terminal_(key);
   }
 
-  void complete_(Request_ &request, ResultCode::T code) {
+  void complete_(ReqBuilder &request, ResultCode::T code) {
     Result result{
       .request = ++m_requestID, .pool = m_slot, .code = code};
     emit_(request, result);
@@ -6993,11 +6968,10 @@ private:
     };
   }
 
-  void emit_(Request_ &request, const Result &result) {
+  void emit_(ReqBuilder &request, const Result &result) {
     if (result.code == ResultCode::Cancelled)
-      observe_(&request, event_(result, ClientEventType::Cancelled));
-    observe_(&request, event_(result, ClientEventType::Completed));
-    request.completed(result);
+      cancelled_(request, result);
+    completed_(request, result);
     ++m_completed;
     if (!result.ok()) ++m_failed;
     m_client->poolResult_(!result.ok());
@@ -7073,7 +7047,7 @@ private:
 	discovery->cancel();
       } else if (attempt.routePending)
 	completeAttempt_(attempt, ResultCode::Cancelled);
-      else if (attempt.linkSlot == ClientInvalidSlot)
+      else if (attempt.linkSlot == NullSlot)
 	completeAttempt_(attempt, ResultCode::Cancelled);
       else
 	attempt.terminal = ResultCode::Cancelled;
@@ -7246,7 +7220,7 @@ class Client {
 public:
   using App = App_;
   using Pool = Pool_;
-  using Request = typename Pool::Request;
+  using ReqBuilder = typename Pool::ReqBuilder;
   using Key = typename Pool::Tx::Key;
   using DoneFn = Hubs::DoneFn;
   using Pools =
@@ -7318,7 +7292,7 @@ public:
     return true;
   }
 
-  bool send(unsigned slot, ZmRef<Request> request) {
+  bool send(unsigned slot, ZmRef<ReqBuilder> request) {
     if (!m_started || !request) return false;
     auto pool = pool_(slot);
     if (!pool) return false;

@@ -132,8 +132,10 @@ struct CaptureEncoder {
 };
 
 struct BuilderState :
+  public Zhttp::Builder,
   public Zhttp::H3::Request<BuilderState, BuilderHeaders> {
   using Base = Zhttp::H3::Request<BuilderState, BuilderHeaders>;
+  using Headers = BuilderHeaders;
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
@@ -218,8 +220,10 @@ struct StreamConsumer {
 };
 
 struct ParserStream :
+  public Zhttp::Parser,
   public Zhttp::H3::Parser<ParserStream, true, ParserHeaders> {
   using Base = Zhttp::H3::Parser<ParserStream, true, ParserHeaders>;
+  using Headers = ParserHeaders;
 
   ParserStream() : Base{1024}, consumer{this} {
     dispatch.init(link, consumer);
@@ -383,9 +387,11 @@ struct ParserStream :
 };
 
 struct ResponseParserStream :
+  public Zhttp::Parser,
   public Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders> {
   using Base =
     Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders>;
+  using Headers = ParserHeaders;
 
   ResponseParserStream() : Base{1024} { }
   RxStream &rxStream() { return rx; }

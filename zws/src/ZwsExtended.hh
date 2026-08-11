@@ -28,9 +28,13 @@ using ServerHeaders = ZhttpHeaders(
 
 template <typename Profile>
 class Request :
+  public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Request<
     Request<Profile>, ServerHeaders, false, false> {
 public:
+  using Headers = ServerHeaders;
+  using Zhttp::Builder::header;
+
   Request(const URI &uri, ZuBSpan protocol = {}) :
     m_uri{&uri}, m_protocol{protocol} { }
 
@@ -51,8 +55,6 @@ public:
     else if constexpr (Key{}() == "sec-websocket-protocol")
       l(m_protocol);
   }
-  template <typename L> void header(L &&) { }
-
 private:
   const URI		*m_uri;
   HandshakeString	m_protocol;
@@ -60,9 +62,13 @@ private:
 
 template <typename Profile>
 class Response :
+  public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
     Response<Profile>, ClientHeaders, false, false> {
 public:
+  using Headers = ClientHeaders;
+  using Zhttp::Builder::header;
+
   Response(ZuBSpan protocol = {}) : m_protocol{protocol} { }
 
   unsigned status() const { return 200; }
@@ -71,22 +77,23 @@ public:
   void header(L &&l) {
     if constexpr (Key{}() == "sec-websocket-protocol") l(m_protocol);
   }
-  template <typename L> void header(L &&) { }
-
 private:
   HandshakeString	m_protocol;
 };
 
 template <typename Profile>
 class ErrorResponse :
+  public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
     ErrorResponse<Profile>, ZuTypeList<>, false, false> {
 public:
+  using Headers = ZuTypeList<>;
   unsigned status() const { return 400; }
 };
 
 template <typename Link, typename Profile>
 class ClientParser :
+  public Zhttp::Parser,
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser<Link, Profile>, ClientHeaders> {
   using Message = Zhttp::MessageTraits<Profile>;
@@ -94,7 +101,9 @@ class ClientParser :
     ClientParser, ClientHeaders>;
 
 public:
+  using Headers = ClientHeaders;
   using State = typename Base::State;
+  using Zhttp::Parser::header;
 
   void bind(Link &link, ZuBSpan protocol) {
     Base::reset();
@@ -171,6 +180,7 @@ private:
 
 template <typename Link, typename Profile>
 class ServerParser :
+  public Zhttp::Parser,
   public Zhttp::MessageTraits<Profile>::template RequestParser<
     ServerParser<Link, Profile>, ServerHeaders> {
   using Message = Zhttp::MessageTraits<Profile>;
@@ -178,7 +188,9 @@ class ServerParser :
     ServerParser, ServerHeaders>;
 
 public:
+  using Headers = ServerHeaders;
   using State = typename Base::State;
+  using Zhttp::Parser::header;
 
   void bind(Link &link) {
     Base::reset();

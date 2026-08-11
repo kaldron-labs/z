@@ -35,8 +35,10 @@ bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
 }
 
 struct Parsed :
+  public Zhttp::Parser,
   public Zhttp::H2::Parser<Parsed, true, TestHeaders> {
   using Base = Zhttp::H2::Parser<Parsed, true, TestHeaders>;
+  using Headers = TestHeaders;
 
   Parsed() : Base{1024} { }
 
@@ -113,8 +115,10 @@ struct Parsed :
 };
 
 struct Response :
+  public Zhttp::Parser,
   public Zhttp::H2::Parser<Response, false, TestHeaders> {
   using Base = Zhttp::H2::Parser<Response, false, TestHeaders>;
+  using Headers = TestHeaders;
 
   Response() : Base{1024} { }
 
@@ -169,9 +173,10 @@ struct Response :
 };
 
 struct RejectingRequest :
+  public Zhttp::Parser,
   public Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>> {
   using Base = Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>;
-  using Base::operation;
+  using Headers = ZuTypeList<>;
 
   RejectingRequest() : Base{1024} { }
 
@@ -245,7 +250,7 @@ struct CaptureStream {
   bool extended = true;
 };
 
-struct BuildOps {
+struct BuildOps : public Zhttp::Builder {
   template <typename L>
   void operation(L &&l) {
     if (customTarget)
@@ -278,6 +283,7 @@ struct RequestBuild :
     RequestBuild, ZhttpHeaders("content-length", "x-test"),
     true>,
   public BuildOps {
+  using Headers = ZhttpHeaders("content-length", "x-test");
   using BuildOps::header;
   using BuildOps::host;
   using BuildOps::operation;
@@ -288,12 +294,15 @@ struct ResponseBuild :
     ResponseBuild, ZhttpHeaders("content-length", "x-test"),
     true>,
   public BuildOps {
+  using Headers = ZhttpHeaders("content-length", "x-test");
   using BuildOps::header;
   using BuildOps::status;
 };
 
 struct ConnectBuild :
+  public Zhttp::Builder,
   public Zhttp::H2::Request<ConnectBuild> {
+  using Headers = ZuTypeList<>;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -328,8 +337,10 @@ struct StreamConsumer {
 };
 
 struct StreamResponse :
+  public Zhttp::Parser,
   public Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>> {
   using Base = Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>>;
+  using Headers = ZuTypeList<>;
 
   StreamResponse() : Base{1}, consumer{this} {
     dispatch.init(link, consumer);

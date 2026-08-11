@@ -36,10 +36,16 @@ struct State {
 
 template <typename Profile>
 struct RequestBuilder :
+  public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Request<
     RequestBuilder<Profile>,
     ZhttpHeaders(("x-fixed", "fixed"), "content-length"),
     true, false> {
+  using Headers =
+    ZhttpHeaders(("x-fixed", "fixed"), "content-length");
+  using Base = typename Zhttp::MessageTraits<Profile>::template Request<
+    RequestBuilder, Headers, true, false>;
+  using Base::body;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::PUT, [](auto &&emit) {
@@ -66,11 +72,12 @@ struct RequestBuilder :
 
 template <typename Profile>
 struct InfoBuilder :
+  public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
     InfoBuilder<Profile>, ZhttpHeaders("x-test"),
     false, false> {
+  using Headers = ZhttpHeaders("x-test");
   unsigned status() { return 103; }
-  template <typename L> void reason(L &&l) { l("Early Hints"); }
   template <typename Key, typename L>
   void header(L &&l) {
     ++keyedCalls;
@@ -84,11 +91,15 @@ struct InfoBuilder :
 
 template <typename Profile>
 struct ResponseBuilder :
+  public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
     ResponseBuilder<Profile>, ZhttpHeaders("x-test"),
     true, true> {
+  using Headers = ZhttpHeaders("x-test");
+  using Base = typename Zhttp::MessageTraits<Profile>::template Response<
+    ResponseBuilder, Headers, true, true>;
+  using Base::body;
   unsigned status() { return 200; }
-  template <typename L> void reason(L &&l) { l("OK"); }
   uint64_t contentLength() { return 4; }
   template <typename Key, typename L>
   void header(L &&l) {
@@ -107,11 +118,13 @@ template <typename Profile> struct ClientLink;
 
 template <typename Profile>
 struct ClientParser :
+  public Zhttp::Parser,
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser<Profile>, TestHeaders> {
   using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser, TestHeaders>;
   using State = typename Base::State;
+  using Headers = TestHeaders;
 
   bool enable1xx() const { return true; }
   void operation(Zhttp::Method::T, const Zhttp::Target &) { }
@@ -229,10 +242,12 @@ struct ServerSession {
   using Message = Zhttp::MessageTraits<Profile>;
 
   struct Parser :
+    public Zhttp::Parser,
     public Message::template RequestParser<Parser, ZuTypeList<>> {
     using Base =
       typename Message::template RequestParser<Parser, ZuTypeList<>>;
     using State = typename Base::State;
+    using Headers = ZuTypeList<>;
 
     void operation(
       Zhttp::Method::T method_, const Zhttp::Target &target) {

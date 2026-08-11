@@ -161,13 +161,24 @@ public:
       uint8_t prefix, unsigned bits, const P &value,
       uint64_t &offset, unsigned &length) {
     if constexpr (ZuPrint<P>::Buffer) {
-      length = ZuPrint<P>::length(value);
-      if (Compression::putPref(m_bytes, prefix, bits, length) < 0)
-	return -1;
+      uint64_t start_ = m_bytes.length();
+      if (start_ > UINT32_MAX - PrefixReserve) return -1;
+      unsigned size = ZuPrint<P>::length(value);
+      m_bytes.length(start_ + PrefixReserve);
       offset = m_bytes.length();
-      PrintBytes<Bytes> out{m_bytes};
-      out << value;
-      return out.ok() && m_bytes.length() - offset == length ? 0 : -1;
+      auto ptr = reinterpret_cast<char *>(m_bytes.ensure(offset + size) + offset);
+      length = ZuPrint<P>::print(ptr, size, value);
+      if (length > size) return -1;
+      m_bytes.length(offset + length);
+
+      Prefix encoded;
+      if (Compression::putPref(encoded, prefix, bits, length) < 0)
+	return -1;
+      unsigned gap = PrefixReserve - encoded.length;
+      memcpy(m_bytes.data() + start_ + gap,
+	encoded.data, encoded.length);
+      record_(uint32_t(start_), uint8_t(gap));
+      return 0;
     } else {
       uint64_t start_ = m_bytes.length();
       if (start_ > UINT32_MAX - PrefixReserve) return -1;

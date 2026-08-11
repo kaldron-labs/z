@@ -581,20 +581,6 @@ public:
     reset();
   }
 
-  // CRTP defaults
-  void operation(Method::T, const Target &) { }
-  void status(unsigned) { }
-  bool enable1xx() const { return false; }
-  template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
-  template <typename Key, typename Value>
-  void header(Zhttp::FieldSection::T) { }
-  void header(Zhttp::FieldSection::T, ZuBSpan, ZuBSpan) { }
-  void bodyInfo(BodyType::T, uint64_t) { }
-  template <typename Rx>
-  bool body(Rx &rx) { return bodyDrain(rx); }
-  void complete(State::T) { }
-
 private:
   template <typename Stream>
   State::T eof_(Stream &stream) {
@@ -852,12 +838,9 @@ protected:
   // response
   template <typename Stream>
   void beginResponse_(Stream &stream) {
-    // status + reason
+    // status
     stream << "HTTP/1.1 " <<
 	ZuBox<unsigned>{impl()->status()}.fmt<ZuFmt::Right<3>>() << ' ';
-    impl()->reason([&stream]<typename Reason>(Reason &&reason) {
-	stream << ZuFwd<Reason>(reason);
-    });
     stream << "\r\n";
     // remaining headers
     headers(stream);
@@ -890,19 +873,7 @@ public:
     stream.flush();
   }
 
-  // CRTP defaults
-  template <typename L>
-  void operation(L &&l) {
-    l(Method::GET, [](auto &&emit) {
-      emit([](auto &tx) { tx << '/'; });
-    });
-  }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
-  unsigned status() { return 200; }
-  template <typename L> void reason(L &&l) { l(""); }
-  template <typename Key, typename L>
-  void header(L &&) { }
-  template <typename L> void header(L &&) { }
   // H3::QPackTxTable *qpackTx() { return nullptr; }
 };
 

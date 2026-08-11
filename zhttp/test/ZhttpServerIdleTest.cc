@@ -90,7 +90,7 @@ struct State {
 };
 
 struct App {
-  struct Response_ : public ZmObject, public Zhttp::Builder {
+  struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     using Headers = ZuTypeList<>;
     Zhttp::BodyPolicy::T bodyPolicy() const {
       if (state->asyncResponse) return Zhttp::BodyPolicy::Stream;
@@ -106,10 +106,6 @@ struct App {
     }
     Zhttp::Method::T method() const { return Zhttp::Method::POST; }
     unsigned status() const { state->responseCallback(); return 200; }
-    template <typename L> void reason(L &&l) const {
-      state->responseCallback();
-      l("OK");
-    }
     template <typename Key, typename L> void header(L &&) const {
       state->responseCallback();
     }
@@ -144,12 +140,15 @@ struct App {
 
     State *state = nullptr;
   };
-  using ResponseQ = ZmList<Response_,
-    ZmListNode<Response_, ZmListHeapID<"Zhttp.Server.Idle.Response">>>;
-  using Response = ResponseQ::Node;
+  using ResBuilderQ = ZmList<ResBuilder_,
+    ZmListNode<ResBuilder_, ZmListHeapID<"Zhttp.Server.Idle.ResBuilder">>>;
+  using ResBuilder = ResBuilderQ::Node;
 
-  struct Parser {
+  struct Parser : public Zhttp::Parser {
     using Headers = ZuTypeList<>;
+
+    Parser(State *state_) : state{state_} { }
+
     void operation(Zhttp::Method::T, const Zhttp::Target &) {
       if (state) {
 	state->rxCallback();
@@ -172,7 +171,7 @@ struct App {
     void complete(LinkRef &&link, bool ok) {
       if (state) state->rxCallback();
       if (ok) {
-	ZmRef<Response> response = new Response{};
+	ZmRef<ResBuilder> response = new ResBuilder{};
 	response->state = state;
 	link->send(ZuMv(response));
       }
@@ -221,10 +220,13 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     ZuStringT<"content-length">, void>;
 
   struct Builder :
+    public Zhttp::Builder,
     public Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false> {
     using Base = typename Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false>;
+    using Headers = RequestHeaders;
+    using Base::body;
 
     template <typename L>
     void operation(L &&l) const {
@@ -301,12 +303,11 @@ void responseTypes()
       kind <= ResponseKind::OptionalStream; ++kind) {
     state.responseKind = kind;
     unsigned seen = unsigned(-1);
-    App::Response_ response;
+    App::ResBuilder_ response;
     response.state = &state;
     auto policy = response.bodyPolicy();
     (void)response.close();
     (void)response.status();
-    response.reason([](auto &&) { });
     response.header([](auto &&, auto &&) { });
     if (policy == Zhttp::BodyPolicy::None)
       seen = ResponseKind::None;

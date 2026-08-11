@@ -45,7 +45,9 @@ struct StreamState {
 };
 
 struct RequestBuilder :
+  public Zhttp::Builder,
   public Zhttp::H3::Request<RequestBuilder> {
+  using Headers = ZuTypeList<>;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::GET, [](auto &&emit) {
@@ -57,7 +59,9 @@ struct RequestBuilder :
 };
 
 struct StreamRequestBuilder :
+  public Zhttp::Builder,
   public Zhttp::H3::Request<StreamRequestBuilder> {
+  using Headers = ZuTypeList<>;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -71,8 +75,12 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
+  public Zhttp::Builder,
   public Zhttp::H3::Response<
     ResponseBuilder, ZhttpHeaders("content-length"), true> {
+  using Headers = ZhttpHeaders("content-length");
+  using Base = Zhttp::H3::Response<ResponseBuilder, Headers, true>;
+  using Base::body;
   unsigned status() const { return 200; }
   template <typename Key, typename L>
   void header(L &&l) const {
@@ -82,7 +90,11 @@ struct ResponseBuilder :
 };
 
 struct StreamResponseBuilder :
+  public Zhttp::Builder,
   public Zhttp::H3::Response<StreamResponseBuilder> {
+  using Headers = ZuTypeList<>;
+  using Base = Zhttp::H3::Response<StreamResponseBuilder>;
+  using Base::body;
   unsigned status() const { return 200; }
 };
 
@@ -98,8 +110,10 @@ struct ClientStream {
 };
 
 struct ClientParser :
+  public Zhttp::Parser,
   public Zhttp::H3::Parser<ClientParser, false> {
   using Base = Zhttp::H3::Parser<ClientParser, false>;
+  using Headers = ZuTypeList<>;
 
   ClientParser() : consumer{this} { }
 
@@ -310,8 +324,11 @@ struct ServerStream {
   ServerParser	*parser = nullptr;
 };
 
-struct ServerParser : public Zhttp::H3::Parser<ServerParser, true> {
+struct ServerParser :
+  public Zhttp::Parser,
+  public Zhttp::H3::Parser<ServerParser, true> {
   using Base = Zhttp::H3::Parser<ServerParser, true>;
+  using Headers = ZuTypeList<>;
 
   ServerParser() : consumer{this} { }
 

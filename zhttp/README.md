@@ -73,7 +73,7 @@ sessions, message selection, and hub lifecycle. Applications provide protocol
 configuration and message-typed application contracts:
 
 ```c++
-struct Request_ : ZmObject {
+struct ReqBuilder_ : ZmObject, Zhttp::ReqBuilder {
   using Headers = RequestHeaders;
   Zhttp::BodyPolicy::T bodyPolicy() const {
     return put ? Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
@@ -82,7 +82,6 @@ struct Request_ : ZmObject {
   uint64_t key() const;
   uint64_t length() const { return 1; }
 
-  void reset();
   template <typename L>
   void operation(L &&l) const {
     l(Zhttp::Method::GET, [](auto &&emit) {
@@ -94,20 +93,33 @@ struct Request_ : ZmObject {
   template <typename Emit> void body(Emit &&);
   template <typename L> void bodyHdrs(L &&);
 
-  bool replayable() const;
-  bool reproducible() const;
   void connected(const Zhttp::ConnectedInfo &);
   void disconnected(bool peer);
   void connectFailed(bool transient);
-  void selected(const Zhttp::Endpoint &);
-  void redirected(const Zhttp::URL &);
-  void observed(const Zhttp::ClientEvent &);
+  void selected(
+    const Zhttp::Endpoint *, uint64_t request, uint64_t attempt,
+    unsigned pool, unsigned link,
+    Zhttp::Transport::T, Zhttp::Version::T);
+  void attemptFailed(
+    uint64_t request, uint64_t attempt, unsigned pool, unsigned link,
+    unsigned status, Zhttp::Transport::T, Zhttp::Version::T,
+    bool transient, bool responseStarted);
+  void redirected(
+    const Zhttp::URL &, uint64_t request, uint64_t attempt,
+    uint64_t previousAttempt, unsigned status, uint16_t redirects);
+  void retried(
+    uint64_t request, uint64_t attempt,
+    uint64_t previousAttempt, uint16_t retries);
+  void fallback(
+    uint64_t request, uint64_t attempt, uint64_t previousAttempt,
+    Zhttp::Transport::T fromTransport, Zhttp::Version::T fromVersion);
+  void cancelled(const Zhttp::Result &);
   void completed(const Zhttp::Result &);
 };
 
-struct ResParser {
+struct ResParser : Zhttp::Parser {
   using Headers = ResponseHeaders;
-  void init(const Request_ &);
+  void init(const ReqBuilder_ &);
   void status(unsigned);
   void bodyInfo(Zhttp::BodyType::T, uint64_t);
   template <typename Key>
@@ -119,17 +131,17 @@ struct ResParser {
 
 struct App;
 struct Pool;
-using RequestQ = ZmPQueue<Request_,
-  ZmPQueueOverlap<false, ZmPQueueNode<Request_>>>;
-using Request = RequestQ::Node;
-using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
+using ReqBuilderQ = ZmPQueue<ReqBuilder_,
+  ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_>>>;
+using ReqBuilder = ReqBuilderQ::Node;
+using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 struct Pool : Zhttp::Pool<App, TxQ, ResParser> {
   using Base = Zhttp::Pool<App, TxQ, ResParser>;
   Pool(App *app) : Base{app} { }
-  RequestQ *txQueue() { return &requests; }
-  void archive_(Request *) { }
-  ZmRef<Request> retrieve_(uint64_t, uint64_t) { return {}; }
-  RequestQ requests;
+  ReqBuilderQ *txQueue() { return &requests; }
+  void archive_(ReqBuilder *) { }
+  ZmRef<ReqBuilder> retrieve_(uint64_t, uint64_t) { return {}; }
+  ReqBuilderQ requests;
 };
 struct App : Zhttp::Client<App, Pool> {
   void idle() { }
@@ -152,30 +164,35 @@ client.init(
 client.pool(
   0, Zhttp::Destination{"www.example.com", 443});
 client.start();
-ZmRef<Request> request = new Request;
+ZmRef<ReqBuilder> request = new ReqBuilder;
 request->target = "/resource?version=1";
 client.send(0, request);
 client.seal(0);
 client.limited(0, 3, true);  // stop future assignments to link slot 3
 client.limited(0, 3, false); // make it eligible again when not saturated
-// Request_::body() runs synchronously on Tx;
+// ReqBuilder_::body() runs synchronously on Tx;
 // ResParser::body() runs synchronously on Rx.
 client.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 client.final();
 ```
 
+The seven request-event callbacks shown above are optional. `Zhttp::Pool`
+detects each exact signature on the final `ReqBuilder` type and prepares its
+arguments only when that callback exists. `Zhttp::ReqBuilder` does not provide
+no-op implementations for them.
+
 ```c++
-struct Response_ : ZmObject, Zhttp::Builder {
+struct ResBuilder_ : ZmObject, Zhttp::ResBuilder {
   using Headers = ResponseHeaders;
   Zhttp::Method::T method() const;
-  // reset(), bodyPolicy(), status(), headers, and body production
+  // bodyPolicy(), status(), headers, and body production
 };
-using ResponseQ = ZmList<Response_,
-  ZmListNode<Response_, ZmListHeapID<"App.Response">>>;
-using Response = ResponseQ::Node;
+using ResBuilderQ = ZmList<ResBuilder_,
+  ZmListNode<ResBuilder_, ZmListHeapID<"App.ResBuilder">>>;
+using ResBuilder = ResBuilderQ::Node;
 
-struct Parser {
+struct Parser : Zhttp::Parser {
   using Headers = RequestHeaders;
   void operation(Zhttp::Method::T, const Zhttp::Target &);
   template <typename Key>
@@ -184,7 +201,7 @@ struct Parser {
   template <typename LinkRef>
   void complete(LinkRef &&link, bool ok) {
     if (!ok) return;
-    ZmRef<Response> response = new Response{};
+    ZmRef<ResBuilder> response = new ResBuilder{};
     // Populate response from application-owned request state.
     link->send(ZuMv(response));
   }
@@ -192,7 +209,7 @@ struct Parser {
 
 struct App {
   using Parser = ::Parser;
-  using ResponseQ = ::ResponseQ;
+  using ResBuilderQ = ::ResBuilderQ;
   Parser parser();
   // listening(), listenFailed(), connected(), disconnected()
 };
@@ -223,11 +240,11 @@ server.final();
 ```
 
 Responses are application-owned structural Builders held in an intrusive
-`ZmList`. `ResponseQ::Node` supplies `reset()`, `Headers`, `bodyPolicy()`,
-`method()`, status/header operations, and the operations required by its body
-policy. The application Parser copies only the request data it needs while the
-callback spans are valid, and may dispatch synchronously or asynchronously.
-The server performs neither copy nor dispatch:
+`ZmList`. The final `ResBuilder` is `ResBuilderQ::Node` and publicly derives
+the application `ResBuilder_`; each node represents one response. The
+application Parser copies only the request data it needs while the callback
+spans are valid, and may dispatch synchronously or asynchronously. The server
+performs neither copy nor dispatch:
 
 ```c++
 template <typename LinkRef>
@@ -235,7 +252,7 @@ void Parser::complete(LinkRef &&link, bool ok) {
   if (!ok) return;
   auto link_ = ZuMv(link);
   app->dispatch([link = ZuMv(link_), request = ZuMv(request)]() mutable {
-    ZmRef<Response> response = new Response{};
+    ZmRef<ResBuilder> response = new ResBuilder{};
     response->plan(request);
     link->send(ZuMv(response));
   });
@@ -268,12 +285,12 @@ compile-time `BodyMax`. After the final header section,
 callback receives its `Zhttp::FieldSection::T`, including informational and
 trailer fields.
 
-Client stream writers remain synchronous.  A server streaming response exposes
-`next(max, done)`: each turn produces at most one pooled `ZiIOBuf`, and the
-server asks for the next turn only after Tx capacity is released.  Each retry
-creates a fresh Builder. Body-bearing requests are non-replayable by default;
-applications opt in only when the Builder can reproduce the source from byte
-zero.
+Client stream writers remain synchronous.  Every Builder must reproduce the
+same message when a retry or redirect traverses it again.  A server streaming
+response exposes `next(max, done)`: each turn produces at most one pooled
+`ZiIOBuf`, and the server asks for the next turn only after Tx capacity is
+released.  Each retry reuses the request's Builder and reproduces the source
+from byte zero.
 
 ```c++
 template <typename Emit>

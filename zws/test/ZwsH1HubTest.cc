@@ -229,7 +229,7 @@ struct RejectClient::Link : public Ztcp::CliLink<RejectClient, Link> {
     return 1;
   }
   void disconnected(bool) {
-    if (app()->state->response.find("HTTP/1.1 400 Bad Request\r\n") != 0)
+    if (app()->state->response.find("HTTP/1.1 400 \r\n") != 0)
       app()->state->failed = true;
     app()->state->done.post();
   }

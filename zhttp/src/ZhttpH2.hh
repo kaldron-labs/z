@@ -741,22 +741,10 @@ public:
     return fail_();
   }
 
-  void operation(Method::T, const Target &) { }
-  void status(unsigned) { }
-  void bodyInfo(BodyType::T, uint64_t) { }
-  bool enable1xx() const { return false; }
-  template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
-  template <typename Key, typename Value>
-  void header(Zhttp::FieldSection::T) { }
-  void header(Zhttp::FieldSection::T, ZuBSpan, ZuBSpan) { }
-  template <typename Rx>
-  bool body(Rx &rx) { return bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { bodyDrain(rx); }
   void streamPeerEnd_() { }
   void streamError_() { }
-  void complete(State::T) { }
 
 private:
   bool start_() {
@@ -867,8 +855,6 @@ template <
   bool Streaming_ = false>
 class Builder_ {
 public:
-  enum { HeaderScratchBuiltin = 2048 };
-
   auto impl() { return static_cast<Impl *>(this); }
 
   using Headers = Headers_;
@@ -879,7 +865,7 @@ protected:
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
     using HeaderBytes = typename Stream::HeaderBytes;
-    auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
+    auto block = ZtScratch(HeaderBytes, Impl::HdrBufSize);
     typename Stream::HeaderSection section{block};
     bool sent = false;
     bool endStream = false;
@@ -923,7 +909,7 @@ protected:
   template <typename Stream>
   void beginResponse_(Stream &stream) {
     using HeaderBytes = typename Stream::HeaderBytes;
-    auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
+    auto block = ZtScratch(HeaderBytes, Impl::HdrBufSize);
     typename Stream::HeaderSection section{block};
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;
@@ -964,18 +950,9 @@ public:
     stream.flush();
   }
 
-  template <typename L>
-  void operation(L &&l) {
-    l(Method::GET, [](auto &&emit) {
-      emit([](auto &tx) { tx << '/'; });
-    });
-  }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
-  unsigned status() { return 200; }
   bool streamResponse() { return false; }
-  template <typename Key, typename L> void header(L &&) { }
-  template <typename L> void header(L &&) { }
 
 private:
   template <typename Key, typename I = Impl>

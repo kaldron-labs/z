@@ -42,8 +42,10 @@ using ResponseHeaders = ZuTypeList<
   ZuStringT<"key">, void,
   ZuStringT<"x-empty">, void>;
 struct ResponseParser :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders> {
   using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders>;
+  using Headers = ResponseHeaders;
 
   ResponseParser() : Base{1024} { }
 
@@ -140,8 +142,10 @@ struct ResponseParser :
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
 struct RequestParser :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestParser, true, RequestHeaders> {
   using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders>;
+  using Headers = RequestHeaders;
 
   RequestParser() : Base{1024} { }
 
@@ -193,16 +197,20 @@ struct RequestParser :
 };
 
 struct LimitedRequestParser :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<
     LimitedRequestParser, true, ZuTypeList<>, 16, 32> {
+  using Headers = ZuTypeList<>;
   void complete(Zhttp::H1::ParserState::T) { ++completeCalls; }
   unsigned completeCalls = 0;
 };
 
 template <bool Request>
 struct RejectingParser :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<RejectingParser<Request>, Request> {
   using Base = Zhttp::H1::Parser<RejectingParser<Request>, Request>;
+  using Headers = ZuTypeList<>;
 
   RejectingParser() : Base{1024} { }
 

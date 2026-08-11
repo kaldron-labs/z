@@ -77,8 +77,10 @@ struct ResponseCtx {
 
 using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
 struct RequestRx :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestRx, true, RequestHeaders> {
   using Base = Zhttp::H1::Parser<RequestRx, true, RequestHeaders>;
+  using Headers = RequestHeaders;
 
   RequestRx() : Base{FallbackMaxBody} { }
 
@@ -96,6 +98,7 @@ struct RequestRx :
       host << value;
     }
   }
+  void complete(Zhttp::H1::ParserState::T) { }
 
   Zhttp::Method::T	method = -1;
   ZtString<>		path;
@@ -103,8 +106,10 @@ struct RequestRx :
 };
 
 struct ResponseRx :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>> {
   using Base = Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>>;
+  using Headers = ZuTypeList<>;
 
   ResponseRx() : Base{FallbackMaxBody} { }
 
@@ -126,16 +131,18 @@ struct ResponseRx :
 };
 
 struct ResponseBuilder :
+  public Zhttp::Builder,
   public Zhttp::H1::Response<
     ResponseBuilder, ZhttpHeaders("content-length"), true> {
   using Base =
     Zhttp::H1::Response<
       ResponseBuilder, ZhttpHeaders("content-length"), true>;
+  using Headers = ZhttpHeaders("content-length");
+  using Zhttp::Builder::header;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
 
   unsigned status() { return 200; }
-  template <typename L> void reason(L &&l) { l("OK"); }
   template <typename Key, typename L>
   void header(L &&l) {
     if constexpr (Key{}() == "content-length") l(contentLength_);
@@ -147,9 +154,12 @@ struct ResponseBuilder :
 using RequestBuilderHeaders =
   ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
 struct RequestBuilder :
+  public Zhttp::Builder,
   public Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders> {
   using Base =
     Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders>;
+  using Headers = RequestBuilderHeaders;
+  using Zhttp::Builder::header;
 
   template <typename L>
   void operation(L &&l) {
@@ -159,6 +169,8 @@ struct RequestBuilder :
   }
   template <typename L>
   void host(L &&l) { l("localhost"); }
+  template <typename Key, typename L>
+  void header(L &&) { }
 };
 
 #ifndef _WIN32

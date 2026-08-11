@@ -263,10 +263,12 @@ struct H3ReqOps {
 
 template <typename H3Cxn_>
 struct H3Request :
+  public Zhttp::Builder,
   public Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>,
   public H3ReqOps {
   using Base = Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>;
   using H3Cxn = H3Cxn_;
+  using Headers = H3ReqHeaders;
 
   H3Request(const Request &request_, H3Cxn &h3_, uint64_t streamID_) :
     H3ReqOps{request_}, h3{&h3_}, streamID_{streamID_} { }
@@ -276,6 +278,7 @@ struct H3Request :
   using H3ReqOps::header;
   using H3ReqOps::host;
   using H3ReqOps::operation;
+  using Zhttp::Builder::header;
 
   H3Cxn		*h3 = nullptr;
   uint64_t	streamID_ = 0;
@@ -538,9 +541,11 @@ struct H3Client : public Zquic::Client<H3Client> {
 };
 
 struct H3ResponseParser :
+  public Zhttp::Parser,
   public Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders> {
   using Base = Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders>;
   using State = typename Base::State;
+  using Headers = H3RespHeaders;
 
   H3ResponseParser() : Base{H3RespBodyMax} { }
 

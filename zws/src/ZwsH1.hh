@@ -26,11 +26,14 @@ using ClientHeaders = ZhttpHeaders(
   "sec-websocket-protocol", "sec-websocket-extensions");
 
 class ClientParser :
+  public Zhttp::Parser,
   public Zhttp::H1ResponseParser<ClientParser, ClientHeaders> {
   using Base = Zhttp::H1ResponseParser<ClientParser, ClientHeaders>;
 
 public:
+  using Headers = ClientHeaders;
   using State = Zhttp::H1::ParserState;
+  using Zhttp::Parser::header;
 
   ClientParser(ZuBSpan key = {}, ZuBSpan protocol = {}) :
     m_key{key}, m_protocol{protocol} { }
@@ -116,11 +119,14 @@ using ServerHeaders = ZhttpHeaders(
   "sec-websocket-version", "sec-websocket-protocol");
 
 class ServerParser :
+  public Zhttp::Parser,
   public Zhttp::H1RequestParser<ServerParser, ServerHeaders> {
   using Base = Zhttp::H1RequestParser<ServerParser, ServerHeaders>;
 
 public:
+  using Headers = ServerHeaders;
   using State = Zhttp::H1::ParserState;
+  using Zhttp::Parser::header;
 
   void reset() {
     Base::reset();
@@ -219,10 +225,14 @@ using RequestHeaders = ZhttpHeaders(
   "sec-websocket-protocol");
 
 class Request :
+  public Zhttp::Builder,
   public Zhttp::H1Request<Request, RequestHeaders> {
   using Base = Zhttp::H1Request<Request, RequestHeaders>;
 
 public:
+  using Headers = RequestHeaders;
+  using Zhttp::Builder::header;
+
   Request(const URI &uri, ZuBSpan key, ZuBSpan protocol = {}) :
     m_uri{&uri}, m_key{key}, m_protocol{protocol} { }
 
@@ -256,16 +266,18 @@ using ResponseHeaders = ZhttpHeaders(
   "sec-websocket-accept", "sec-websocket-protocol");
 
 class Response :
+  public Zhttp::Builder,
   public Zhttp::H1Response<Response, ResponseHeaders> {
   using Base = Zhttp::H1Response<Response, ResponseHeaders>;
 
 public:
+  using Headers = ResponseHeaders;
+  using Zhttp::Builder::header;
+
   Response(ZuBSpan accept, ZuBSpan protocol = {}) :
     m_accept{accept}, m_protocol{protocol} { }
 
   unsigned status() const { return 101; }
-  template <typename L>
-  void reason(L &&l) { l("Switching Protocols"); }
   template <typename Key, typename L>
   void header(L &&l) {
     if constexpr (Key{}() == "sec-websocket-accept")
@@ -280,13 +292,13 @@ private:
 };
 
 class ErrorResponse :
+  public Zhttp::Builder,
   public Zhttp::H1Response<ErrorResponse> {
   using Base = Zhttp::H1Response<ErrorResponse>;
 
 public:
+  using Headers = ZuTypeList<>;
   unsigned status() const { return 400; }
-  template <typename L>
-  void reason(L &&l) { l("Bad Request"); }
 };
 
 } // namespace H1

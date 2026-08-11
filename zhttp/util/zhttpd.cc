@@ -177,7 +177,7 @@ using FixedRespHeaders = ZhttpHeaders(
   "connection",
   "content-length");
 
-struct Response_ : public ZmObject, public Zhttp::Builder {
+struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   struct Mode { enum { Empty, Fixed, Generated, JSON, File }; };
 
   using Headers = FixedRespHeaders;
@@ -200,8 +200,6 @@ struct Response_ : public ZmObject, public Zhttp::Builder {
   }
   Zhttp::Method::T method() const { return method_; }
   unsigned status() const { return plan.status; }
-  template <typename L>
-  void reason(L &&l) const { l(plan.reason); }
   template <typename Key, typename L>
   void header(L &&l) const {
     if constexpr (Key{}() == "content-type") {
@@ -302,10 +300,10 @@ struct Response_ : public ZmObject, public Zhttp::Builder {
   int8_t		mode = Mode::Empty;
 };
 
-using ResponseQ = ZmList<Response_,
-  ZmListNode<Response_, ZmListHeapID<"zhttpd.Response">>>;
-using Response = ResponseQ::Node;
-ZuAssert((ZuIsSame<ResponseQ::HeapID, ZuStringT<"zhttpd.Response">>{}));
+using ResBuilderQ = ZmList<ResBuilder_,
+  ZmListNode<ResBuilder_, ZmListHeapID<"zhttpd.ResBuilder">>>;
+using ResBuilder = ResBuilderQ::Node;
+ZuAssert((ZuIsSame<ResBuilderQ::HeapID, ZuStringT<"zhttpd.ResBuilder">>{}));
 
 struct App;
 
@@ -371,7 +369,7 @@ struct Parser : public Zhttp::Parser {
 
 struct App {
   using Parser = ::Parser;
-  using ResponseQ = ::ResponseQ;
+  using ResBuilderQ = ::ResBuilderQ;
   using WorkFn = ZmFn<void(), ZmFnHeapID<"zhttpd.WorkFn">>;
 
   struct Work_ : public ZmObject {
@@ -404,7 +402,7 @@ struct App {
   template <typename LinkRef>
   void respond(LinkRef link, RequestData request) {
     ++state->requests;
-    ZmRef<Response> response = new Response{};
+    ZmRef<ResBuilder> response = new ResBuilder{};
     response->state = state;
     response->method_ = request.method;
     if (request.method == Zhttp::Method::PUT) {
@@ -414,27 +412,25 @@ struct App {
 	  request.bodyReset || request.bodyDiscarded ||
 	  !ZhttpPut::load(record, request.bodyData)) {
 	response->plan.status = 400;
-	response->plan.reason = "Bad Request";
       } else {
 	response->plan.status = 200;
-	response->plan.reason = "OK";
 	response->plan.contentType = "application/json";
 	response->plan.sendBody = true;
 	response->plan.generated = true;
 	response->record = ZuMv(record);
-	response->mode = Response::Mode::JSON;
+	response->mode = ResBuilder::Mode::JSON;
       }
     } else {
       StaticPlanner planner{state};
       response->plan = planner.plan(request);
     }
-    if (response->mode != Response::Mode::JSON) {
+    if (response->mode != ResBuilder::Mode::JSON) {
       if (response->plan.file)
-	response->mode = Response::Mode::File;
+	response->mode = ResBuilder::Mode::File;
       else if (response->plan.generated)
-	response->mode = Response::Mode::Generated;
+	response->mode = ResBuilder::Mode::Generated;
       else if (response->plan.sendBody)
-	response->mode = Response::Mode::Fixed;
+	response->mode = ResBuilder::Mode::Fixed;
     }
     state->log.write(request, request, response->plan, request.remoteIP);
     link->send(ZuMv(response));
