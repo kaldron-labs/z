@@ -114,14 +114,14 @@ struct ResponseBody {
 
 template <typename Impl>
 struct H1ResponseBuilder_ :
-  public Zhttp::H1Response<Impl, ResponseHeaders, ZuTypeList<>, true> {
-  using Base = Zhttp::H1Response<Impl, ResponseHeaders, ZuTypeList<>, true>;
+  public Zhttp::H1Response<Impl, ResponseHeaders, true> {
+  using Base = Zhttp::H1Response<Impl, ResponseHeaders, true>;
 };
 
 template <typename Impl>
 struct H3ResponseBuilder_ :
-  public Zhttp::H3Response<Impl, ResponseHeaders, ZuTypeList<>, true> {
-  using Base = Zhttp::H3Response<Impl, ResponseHeaders, ZuTypeList<>, true>;
+  public Zhttp::H3Response<Impl, ResponseHeaders, true> {
+  using Base = Zhttp::H3Response<Impl, ResponseHeaders, true>;
 };
 
 template <template <typename> typename Builder_>
@@ -320,10 +320,10 @@ struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
 
 template <typename Impl>
 struct RequestBuilder_ :
-  public Zhttp::H1Request<Impl, ZuTypeList<>, ZuTypeList<>, false> { };
+  public Zhttp::H1Request<Impl, ZuTypeList<>, false> { };
 template <typename Impl>
 struct RequestBuilderH3_ :
-  public Zhttp::H3Request<Impl, ZuTypeList<>, ZuTypeList<>, false> { };
+  public Zhttp::H3Request<Impl, ZuTypeList<>, false> { };
 
 template <template <typename> typename Builder_>
 struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {

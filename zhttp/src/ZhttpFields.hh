@@ -148,13 +148,6 @@ struct HasRuntime<Impl,
     FieldSection::Final, ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
     public ZuTrue { };
 
-template <typename Impl, typename L, typename = void>
-struct HasRuntimeBuilder : public ZuFalse { };
-template <typename Impl, typename L>
-struct HasRuntimeBuilder<Impl, L,
-  decltype(ZuDeclVal<Impl *>()->header(ZuDeclVal<L &&>()), void())> :
-    public ZuTrue { };
-
 template <
   typename Headers, typename Header, typename Static, typename Unknown>
 void dispatch(

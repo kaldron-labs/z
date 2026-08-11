@@ -204,8 +204,12 @@ struct CustomTarget {
 };
 
 struct CaptureStream {
+  using HeaderBytes = Zhttp::H2::HPackBytes;
+  using HeaderSection =
+    Zhttp::Compression::FieldSectionBuffer<HeaderBytes>;
+
   bool extendedConnect() const { return extended; }
-  void beginHeaders(bool end = false) {
+  void beginHeaders(HeaderSection &, bool end = false) {
     ++beginCalls;
     beginEndStream = end;
   }
@@ -264,6 +268,7 @@ struct BuildOps {
     else if constexpr (Key{}() == "x-trailer")
       l("done");
   }
+  template <typename L> void header(L &&) { }
 
   bool customTarget = false;
 };
@@ -271,7 +276,7 @@ struct BuildOps {
 struct RequestBuild :
   public Zhttp::H2::Request<
     RequestBuild, ZhttpHeaders("content-length", "x-test"),
-    ZhttpHeaders("x-trailer"), true>,
+    true>,
   public BuildOps {
   using BuildOps::header;
   using BuildOps::host;
@@ -281,7 +286,7 @@ struct RequestBuild :
 struct ResponseBuild :
   public Zhttp::H2::Response<
     ResponseBuild, ZhttpHeaders("content-length", "x-test"),
-    ZhttpHeaders("x-trailer"), true>,
+    true>,
   public BuildOps {
   using BuildOps::header;
   using BuildOps::status;
@@ -633,7 +638,7 @@ void testBuilder()
   CaptureStream request;
   builder.begin(request);
   builder.finish(request);
-  ZuCHECK(request.beginCalls == 2 && request.endHeadersCalls == 2 &&
+  ZuCHECK(request.beginCalls == 1 && request.endHeadersCalls == 1 &&
       request.endStream && request.flushCalls == 1 &&
       find(request.fields, ":method", "POST") &&
       find(request.fields, ":scheme", "https") &&
@@ -641,8 +646,8 @@ void testBuilder()
       find(request.fields, ":path", "/submit?a=1") &&
       find(request.fields, "content-length", "3") &&
       find(request.fields, "x-test", "request") &&
-      find(request.fields, "x-trailer", "done"),
-    "request builder emits normalized fields and trailing HEADERS");
+      !find(request.fields, "x-trailer", "done"),
+    "request builder emits one initial field section");
 
   RequestBuild customBuilder;
   customBuilder.customTarget = true;

@@ -278,7 +278,7 @@ struct RequestBuilder :
 
 struct StreamRequestBuilder :
   public Zhttp::H2::Request<StreamRequestBuilder,
-    ZuTypeList<>, ZuTypeList<>, true> {
+    ZuTypeList<>, true> {
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -293,12 +293,13 @@ struct StreamRequestBuilder :
 
 struct ResponseBuilder :
   public Zhttp::H2::Response<
-    ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
+    ResponseBuilder, ZhttpHeaders("content-length"), true> {
   unsigned status() { return 200; }
   template <typename Key, typename L>
   void header(L &&l) {
     if constexpr (Key{}() == "content-length") l("4");
   }
+  template <typename L> void header(L &&) { }
 };
 
 struct StreamResponseBuilder :

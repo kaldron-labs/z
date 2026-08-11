@@ -476,7 +476,6 @@ public:
   using ResParser = ResParser_;
   using ReqHeaders = typename Request::Headers;
   using RespHeaders = typename ResParser::Headers;
-  using ReqTrailers = typename BuilderTrailers<Request>::T;
   using Message = MessageTraits<Profile>;
   using ReqHeaderKeys = ZuTypeSlice<2, 0, ReqHeaders>;
   enum { ReqContentLength =
@@ -510,15 +509,8 @@ private:
     void header(L &&l) {
       if constexpr (Key{}() == "content-length")
 	if (rejectContentLength) return;
-      if (suppressPads) {
-	app->template header<Key>([&l]<typename V>(V &&v) {
-	  if constexpr (!IsPlaceholder<ZuDecay<V>>{})
-	    l(ZuFwd<V>(v));
-	});
-	return;
-      }
-      patches.template header<Message::ID == Version::H1, Key>(
-	*app, ZuFwd<L>(l));
+      if constexpr (HasBuilderHeader<Request, Key, L &&>{})
+	app->template header<Key>(ZuFwd<L>(l));
     }
     template <typename L>
     void header(L &&l) {
@@ -534,7 +526,16 @@ private:
       });
     }
 
-    void patch() { patches.patch(*app); }
+    template <typename Key>
+    void headerSpan(ZuSpan<uint8_t> span) {
+      spans.template record<Key>(span);
+    }
+    template <typename Key>
+    void headerOffset(uint64_t offset, unsigned length) {
+      spans.template recordOffset<Key>(offset, length);
+    }
+    void headerBase(uint8_t *base) { spans.resolve(base); }
+    void patch() { spans.patch(*app); }
     uint64_t contentLength() const { return produced; }
     bool headersValid() const { return headersOK; }
     Request &appBuilder() { return *app; }
@@ -545,13 +546,12 @@ private:
     }
 
     Request		*app = nullptr;
-    HeaderPatches<ReqHeaders> patches;
+    HeaderSpans<ReqHeaders> spans;
     ZuBSpan		target;
     ZuBSpan		authority;
     uint64_t		produced = 0;
     Method::T		method = Method::GET;
     bool		headersOK = true;
-    bool		suppressPads = false;
     bool		rejectContentLength = false;
     bool		operationCached = false;
   };
@@ -560,17 +560,16 @@ private:
   struct Builder_ :
     public Message::template Request<
       Builder_<HasBody, Streaming>,
-      ReqHeaders, ReqTrailers, HasBody, Streaming>,
+      ReqHeaders, HasBody, Streaming>,
     public ReqOps {
     using Base = typename Message::template Request<
-      Builder_, ReqHeaders, ReqTrailers, HasBody, Streaming>;
+      Builder_, ReqHeaders, HasBody, Streaming>;
     Builder_(
-      Request &app_, ZuBSpan authority, bool suppressPads = false,
+      Request &app_, ZuBSpan authority,
       bool rejectContentLength = false,
       bool operationCached = false, Method::T method = Method::GET,
       ZuBSpan target = {}) :
       ReqOps{app_, authority, operationCached, method, target} {
-      this->suppressPads = suppressPads;
       this->rejectContentLength = rejectContentLength;
     }
 
@@ -733,7 +732,7 @@ private:
       owner->m_commit.produced = n;
       if constexpr (Streaming) owner->m_commit.committed = n;
     }
-    bool empty(Request &app) { return owner->sendEmpty_(app, true); }
+    bool empty(Request &app) { return owner->sendEmpty_(app); }
     template <bool Streaming>
     bool fail() { return owner->template failFor_<Streaming>(); }
     bool complete(uint64_t n) {
@@ -747,15 +746,15 @@ private:
 
   bool sendStreaming_(Request &app, bool optional) {
     Builder_<true, true> builder{
-      app, m_app->authority(), false, true,
+      app, m_app->authority(), true,
       m_operationOK, m_requestMethod, m_target};
     TxOps ops{this};
     return MessageTx<Message, TxOps>{ops}.streaming(builder, optional);
   }
 
-  bool sendEmpty_(Request &app, bool suppressPads = false) {
+  bool sendEmpty_(Request &app) {
     Builder_<false, false> builder{
-      app, m_app->authority(), suppressPads, true,
+      app, m_app->authority(), true,
       m_operationOK, m_requestMethod, m_target};
     auto tx = m_link->transmit(builder);
     if (!builder.begin(tx) || !builder.headersValid())
@@ -770,7 +769,7 @@ private:
 
   bool sendFixed_(Request &app, bool optional) {
     Builder_<true, false> builder{
-      app, m_app->authority(), false, false,
+      app, m_app->authority(), false,
       m_operationOK, m_requestMethod, m_target};
     TxOps ops{this};
     return MessageTx<Message, TxOps>{ops}.fixed(builder, optional);
@@ -1264,6 +1263,10 @@ public:
     return HeaderBlock<CliLink>{
       *this, Wire_::encoder(), id, Wire_::peerFrameSize()};
   }
+  const HPackSeedPlans &hpackSeedPlans() const {
+    const auto &user = *this->app()->user();
+    return AppHPackSeedPlans<ZuDecay<decltype(user)>>::get(user);
+  }
   void close(Logical *logical, uint32_t id) {
     this->app()->rxInvoke([
       link = this, logical = ZmMkRef(logical), id
@@ -1558,7 +1561,11 @@ public:
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
-  auto transmit(Builder &) { return txStream(); }
+  auto transmit(Builder &) {
+    auto tx = txStream();
+    tx.plan(0);
+    return tx;
+  }
   void finish() { }
   bool active() const { return m_native && m_streamID; }
   void disconnect() {
@@ -2176,6 +2183,10 @@ public:
   auto logicalTx(uint32_t id) {
     return H2_::HeaderBlock<CliLink>{
       *this, this->encoder(), id, this->peerFrameSize()};
+  }
+  const HPackSeedPlans &hpackSeedPlans() const {
+    const auto &user = *this->app()->user();
+    return AppHPackSeedPlans<ZuDecay<decltype(user)>>::get(user);
   }
   void disconnectNative() {
     m_draining = true;
@@ -3104,7 +3115,6 @@ struct CliLink :
 	  link->connectFailed(false);
 	  return;
 	}
-	if (!link->h3.localExtendedConnect) link->h3Ready();
       });
     });
   }
@@ -3300,6 +3310,28 @@ struct CliLink :
     });
   }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
+  void qpackSeed(StreamRef encoder) {
+    auto link = ZmMkRef(this);
+    this->app()->txRun([link = ZuMv(link), encoder = ZuMv(encoder)]() mutable {
+      if (link->h3SeedStateTx != QPackSeedState::Unseeded) return;
+      auto result = installQPackSeeds(
+	link->h3Tx, AppHeaderSeeds<ZuDecay<
+	  decltype(*link->app()->user())>>::get(*link->app()->user()),
+	[link, &encoder](ZuBSpan bytes) {
+	  return link->send(encoder, bytes, false);
+	});
+      if (result != QPackSeedResult::Failed)
+	link->h3SeedStateTx = result == QPackSeedResult::Seeded ?
+	  QPackSeedState::Seeded : QPackSeedState::Disabled;
+      link->app()->rxRun([link = ZuMv(link), result]() mutable {
+	if (result == QPackSeedResult::Failed || link->down) {
+	  link->disconnect();
+	  return;
+	}
+	link->h3Ready();
+      });
+    });
+  }
 
 public:
   void h3ReadyBatch_() {
@@ -3499,6 +3531,7 @@ public:
   alignas(Zm::CacheLineSize)
   H3::QPackTxTable	h3Tx;
   bool			h3PeerCapTx = false;
+  QPackSeedState::T	h3SeedStateTx = QPackSeedState::Unseeded;
   bool			dataBlockedTx = false;
   bool			streamsBlockedTx = false;
 };
@@ -5460,6 +5493,10 @@ public:
   uint64_t retainedMessageMax() const {
     return m_config.retainedMessageMax();
   }
+  const HeaderSeeds &qpackSeeds() const { return m_qpackSeeds.entries(); }
+  const HPackSeedPlans &hpackSeedPlans() const {
+    return m_hpackSeeds.plans();
+  }
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
   bool init(
@@ -5481,6 +5518,15 @@ public:
     m_txThread = hub.txThread() ?
       m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_config = config;
+    if (config.secure() && config.tls())
+      m_hpackSeeds.template add<ReqHeaders>(tls.hpackTxCapacity());
+    if (config.secure() && config.quic()) {
+      auto params = H3::Params().qpackLimits({
+	quic.qpackRxCapacity(), quic.qpackTxCapacity(),
+	quic.qpackRxBlocked(), quic.qpackTxSections()});
+      m_qpackSeeds.template add<ReqHeaders>(
+	params, quic.qpackTxCapacity());
+    }
     URLString origin;
     origin << (config.secure() ? "https://" : "http://") <<
       m_dest.authority << '/';
@@ -7122,6 +7168,8 @@ private:
   TCPPool	m_tcp;
   TLSPool	m_tls;
   QUICPool	m_quic;
+  HeaderSeedCatalog m_qpackSeeds;
+  HPackSeedCatalog m_hpackSeeds;
   Hubs		m_hubs;
   ZiTxErrorFn	m_txErrorFn;
   const DiscoveryResolver *m_resolverOps = nullptr;

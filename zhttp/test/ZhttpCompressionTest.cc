@@ -13,6 +13,18 @@ using namespace ZuTestUtil;
 using HdrBytes =
   ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.CompressionTest.Bytes">>;
 
+struct StreamValue {
+  template <typename S>
+  void print(S &s) const {
+    ++*calls;
+    s << "foo" << "bar";
+  }
+
+  friend ZuPrintFn ZuPrintType(StreamValue *);
+
+  unsigned *calls = nullptr;
+};
+
 static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
 {
   HdrBytes encoded;
@@ -305,6 +317,36 @@ void testStrings()
     "decode Huffman string at every byte split");
 }
 
+void testFieldSectionBuffer()
+{
+  ZuTestScope(testFieldSectionBuffer);
+
+  HdrBytes bytes;
+  Zhttp::Compression::FieldSectionBuffer section{bytes};
+  bytes.push(0xaa);
+  uint64_t offset = 0;
+  unsigned length = 0;
+  unsigned calls = 0;
+  ZuCHECK(section.putPrint(
+      0, 7, StreamValue{&calls}, offset, length) == 0,
+    "stream printable emission failed");
+  bytes.push(0xbb);
+
+  HdrBytes wire;
+  section.each(0, [&wire](ZuBSpan span) {
+    Zhttp::Compression::putBytes(wire, span);
+  });
+  const uint8_t expected[] = {
+    0xaa, 0x06, 'f', 'o', 'o', 'b', 'a', 'r', 0xbb
+  };
+  ZuBSpan value{bytes.data() + offset, length};
+  ZuCHECK(calls == 1 && length == 6 &&
+      value == "foobar" &&
+      section.length() == sizeof(expected) &&
+      wire == ZuBSpan{expected},
+    "stream printable was copied, replayed, or mis-finalized");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -315,4 +357,5 @@ int main(int argc, char **argv)
   ZuTestCall(testHPackHuffmanMalformed);
   ZuTestCall(testPrefixIntegers);
   ZuTestCall(testStrings);
+  ZuTestCall(testFieldSectionBuffer);
 }

@@ -278,10 +278,12 @@ void QPackTxTable::final()
   sectionCount_ = 0;
   usedBytes_ = 0;
   capacitySent = false;
+  frozen_ = false;
 }
 
 bool QPackTxTable::peerCapacity(uint32_t capacity)
 {
+  if (frozen_) return false;
   peerCapacityBytes_ = capacity;
   uint32_t effective = effectiveCapacity();
   if (capacityBytes_ <= effective) return true;
@@ -290,6 +292,7 @@ bool QPackTxTable::peerCapacity(uint32_t capacity)
 
 bool QPackTxTable::setCapacity(uint32_t capacity)
 {
+  if (frozen_) return false;
   if (capacity > effectiveCapacity()) return false;
   uint32_t old = capacityBytes_;
   capacityBytes_ = capacity;
@@ -356,6 +359,7 @@ bool QPackTxTable::lookupAbs(uint64_t abs, Header &h) const
 
 bool QPackTxTable::insert(Header h, uint64_t *abs)
 {
+  if (frozen_) return false;
   return insert(QPackTxString{h.name}, QPackTxString{h.value}, abs);
 }
 
@@ -380,8 +384,56 @@ bool QPackTxTable::insert(
   entry->abs = nextAbs;
   entry->prevName = prevName;
   entry->size = n;
-  entry->name = ZuMv(name);
-  entry->value = ZuMv(value);
+  entry->owned(ZuMv(name), ZuMv(value));
+  QPackTxHashEntry hashEntry;
+  hashEntry.index = uint32_t(order.length() - 1);
+  hashEntry.key = {entry->name, entry->value};
+  if (!exact->add(hashEntry)) {
+    order.length(order.length() - 1);
+    return false;
+  }
+  auto nameEntry = const_cast<QPackTxNameEntry *>(
+      names->find(Compression::NameView{entry->name}));
+  if (nameEntry) {
+    nameEntry->abs = nextAbs;
+    nameEntry->key = Compression::NameView{entry->name};
+  } else if (!names->add(QPackTxNameEntry{
+      nextAbs, Compression::NameView{entry->name}})) {
+    exact->del(hashEntry.key);
+    order.length(order.length() - 1);
+    return false;
+  }
+  ZmAssert(!exact->resized());
+  ZmAssert(!names->resized());
+  ZmAssert(order.length() - orderHead_ <= order.size());
+  usedBytes_ += n;
+  insertCount_ = nextAbs + 1;
+  if (abs) *abs = nextAbs;
+  return true;
+}
+
+bool QPackTxTable::insertView(Header field, uint64_t *abs)
+{
+  if (frozen_) return false;
+  if (auto e = find(field.name, field.value)) {
+    if (abs) *abs = e->abs;
+    return true;
+  }
+  uint32_t n = qpackEntrySize_(field.name, field.value);
+  if (n > capacityBytes_) return false;
+  while (orderHead_ < order.length() && usedBytes_ + n > capacityBytes_)
+    if (!dropOldest()) return false;
+  if (usedBytes_ + n > capacityBytes_) return false;
+  uint64_t nextAbs = insertCount_;
+  if (orderHead_ && order.length() == order.size()) compactOrder();
+  if (!exact || !names || order.length() >= order.size()) return false;
+  uint64_t prevName = uint64_t(-1);
+  if (auto prior = findName(field.name)) prevName = prior->abs;
+  auto entry = new (order.push()) QPackTxOrderEntry();
+  entry->abs = nextAbs;
+  entry->prevName = prevName;
+  entry->size = n;
+  entry->view(field);
   QPackTxHashEntry hashEntry;
   hashEntry.index = uint32_t(order.length() - 1);
   hashEntry.key = {entry->name, entry->value};
@@ -420,7 +472,6 @@ bool QPackTxTable::dropOldest()
 {
   if (orderHead_ >= order.length()) return false;
   const auto &old = order[orderHead_];
-  if (old.refcnt) return false;
   usedBytes_ -= old.size;
   exact->del(QPackFieldKey{old.name, old.value});
   auto name = names->find(Compression::NameView{old.name});
@@ -479,30 +530,14 @@ bool QPackTxTable::insertCountIncrement(uint64_t n)
   return knownReceivedCount_ <= insertCount_;
 }
 
-bool QPackTxTable::trackSection(uint64_t streamID, ZuSpan<uint64_t> refs)
+bool QPackTxTable::registerSection(uint64_t streamID)
 {
-  QPackTxRefs refs_;
-  refs_.length(refs.length());
-  for (unsigned i = 0; i < refs.length(); ++i) refs_[i] = refs[i];
-  return trackSection(streamID, ZuMv(refs_));
-}
-
-bool QPackTxTable::trackSection(uint64_t streamID, QPackTxRefs refs)
-{
-  if (!refs.length()) return true;
   if (!sectionAdmissible(streamID)) return false;
-  QPackTxSection section_;
-  section_.streamID = streamID;
-  section_.refs = ZuMv(refs);
-  auto section = const_cast<QPackTxSection *>(sections->add(ZuMv(section_)));
+  auto section = sections->add(QPackTxSection{streamID});
   if (!section) return false;
   ZmAssert(!sections->resized());
   ZmAssert(sectionCount_ < maxSections_);
   ++sectionCount_;
-  for (unsigned i = 0; i < section->refs.length(); ++i) {
-    if (auto e = findAbs(section->refs[i]))
-      const_cast<QPackTxEntry *>(e)->refcnt++;
-  }
   return true;
 }
 
@@ -511,10 +546,6 @@ bool QPackTxTable::sectionAck(uint64_t streamID)
   if (!sections) return false;
   auto section = sections->find(streamID);
   if (!section) return false;
-  for (unsigned i = 0; i < section->refs.length(); ++i) {
-    if (auto e = findAbs(section->refs[i]))
-      if (e->refcnt) const_cast<QPackTxEntry *>(e)->refcnt--;
-  }
   sections->del(streamID);
   --sectionCount_;
   return true;

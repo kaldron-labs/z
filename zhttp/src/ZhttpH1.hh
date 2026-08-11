@@ -25,6 +25,7 @@
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiLog.hh>
@@ -743,25 +744,40 @@ auto chunkedStream(Lower &lower) {
 template <
   typename Impl,
   typename Headers_ = ZuTypeList<>,
-  typename Trailers_ = ZuTypeList<>,	// ignored if not chunked
   bool HasBody_ = false,		// has a body
   bool Chunked_ = false>		// body is chunked
 class Builder_ {
 public:
+  enum { HeaderScratchBuiltin = 1024 };
+
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
   using Headers = Headers_;
-  using Trailers = Trailers_;
   enum { HasBody = HasBody_ };
   enum { Chunked = Chunked_ };
 
 private:
-  template <typename L>
-  void runtimeHeaders_(L &&l) {
-    if constexpr (Fields::HasRuntimeBuilder<Impl, L>{})
-	impl()->header(ZuFwd<L>(l));
+  template <typename Key, typename I = Impl>
+  auto headerOffset_(uint64_t offset, unsigned length, int) -> decltype(
+      ZuDeclVal<I &>().template headerOffset<Key>(offset, length), void()) {
+    impl()->template headerOffset<Key>(offset, length);
   }
+  template <typename Key>
+  void headerOffset_(uint64_t, unsigned, ...) { }
+
+  template <typename I = Impl>
+  auto headerBase_(uint8_t *base, int) -> decltype(
+      ZuDeclVal<I &>().headerBase(base), void()) {
+    impl()->headerBase(base);
+  }
+  void headerBase_(uint8_t *, ...) { }
+
+  template <typename I = Impl>
+  auto patch_(int) -> decltype(ZuDeclVal<I &>().patch(), void()) {
+    impl()->patch();
+  }
+  void patch_(...) { }
 
   template <typename KVs = Headers, typename Stream>
   void headers_(Stream &stream) {
@@ -771,35 +787,48 @@ private:
 	using Values = ZuTypeSlice<2, 1, KVs>;
 	ZuUnroll::all<Keys>([this, &stream]<typename Key>() {
 	  using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
-	  if constexpr (!ZuIsSame<Value, void>{})
-	    stream << Key{}() << ": " << Value{}() << "\r\n";
-	  else {
-	    impl()->template header<Key>([&stream]<typename Value>(Value &&value) {
-	      stream << Key{}() << ": " << ZuFwd<Value>(value) << "\r\n";
+	  if constexpr (!ZuIsSame<Value, void>{}) {
+	    stream << Key{}() << ": " << HeaderValue<Value>{}() << "\r\n";
+	    impl()->template header<Key>([&stream]<typename V>(V &&value) {
+	      stream << Key{}() << ": " << ZuFwd<V>(value) << "\r\n";
 	    });
+	  } else {
+	    if constexpr (HasBody && !Chunked)
+	      impl()->template header<Key>([this, &stream]<typename V>(V &&value) {
+		stream << Key{}() << ": ";
+		auto offset = stream.length();
+		stream << ZuFwd<V>(value);
+		this->template headerOffset_<Key>(
+		  offset, unsigned(stream.length() - offset), 0);
+		stream << "\r\n";
+	      });
+	    else
+	      impl()->template header<Key>([&stream]<typename V>(V &&value) {
+		stream << Key{}() << ": " << ZuFwd<V>(value) << "\r\n";
+	      });
 	  }
 	});
     }
     if constexpr (ZuIsSame<KVs, Headers>{})
-      runtimeHeaders_([&stream]<typename Key, typename Value>(
+      impl()->header([&stream]<typename Key, typename Value>(
 	    Key &&key, Value &&value) {
 	  stream << ZuFwd<Key>(key) << ": " << ZuFwd<Value>(value) << "\r\n";
       });
-    // end of headers
-    stream << "\r\n";
   }
   template <typename Stream>
   void headers(Stream &stream) {
+    using HeaderBytes = ZtBArray<ZtArrayHeapID<"Zhttp.H1.Headers">>;
+    auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
     if constexpr (HasBody && Chunked)
-      stream << "transfer-encoding: chunked\r\n";
-    headers_<Headers>(stream);
+      block << "transfer-encoding: chunked\r\n";
+    headers_<Headers>(block);
+    if constexpr (HasBody && !Chunked) {
+      headerBase_(block.data(), 0);
+      patch_(0);
+    }
+    block << "\r\n";
+    stream << block;
   }
-  // chunked trailers
-  template <typename Stream>
-  void trailers(Stream &stream) {
-    headers_<Trailers>(stream);
-  }
-
 protected:
   // request
   template <typename Stream>
@@ -856,8 +885,7 @@ public:
   template <typename Stream>
   void finish(Stream &stream) {
     if constexpr (Chunked) {
-	stream << "0\r\n";
-	trailers(stream);
+	stream << "0\r\n\r\n";
     }
     stream.flush();
   }
@@ -881,12 +909,10 @@ public:
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Chunked = false>
-class Request :
-  public Builder_<Impl, Headers, Trailers, HasBody, Chunked> {
-  using Base = Builder_<Impl, Headers, Trailers, HasBody, Chunked>;
+class Request : public Builder_<Impl, Headers, HasBody, Chunked> {
+  using Base = Builder_<Impl, Headers, HasBody, Chunked>;
 
 public:
   template <typename Stream>
@@ -896,12 +922,10 @@ public:
 template <
   typename Impl,
   typename Headers = ZuTypeList<>,
-  typename Trailers = ZuTypeList<>,
   bool HasBody = false,
   bool Chunked = false>
-class Response :
-  public Builder_<Impl, Headers, Trailers, HasBody, Chunked> {
-  using Base = Builder_<Impl, Headers, Trailers, HasBody, Chunked>;
+class Response : public Builder_<Impl, Headers, HasBody, Chunked> {
+  using Base = Builder_<Impl, Headers, HasBody, Chunked>;
 
 public:
   template <typename Stream>

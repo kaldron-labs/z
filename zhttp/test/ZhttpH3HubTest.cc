@@ -72,12 +72,13 @@ struct StreamRequestBuilder :
 
 struct ResponseBuilder :
   public Zhttp::H3::Response<
-    ResponseBuilder, ZhttpHeaders("content-length"), ZuTypeList<>, true> {
+    ResponseBuilder, ZhttpHeaders("content-length"), true> {
   unsigned status() const { return 200; }
   template <typename Key, typename L>
   void header(L &&l) const {
     if constexpr (Key{}() == "content-length") l("4");
   }
+  template <typename L> void header(L &&) const { }
 };
 
 struct StreamResponseBuilder :

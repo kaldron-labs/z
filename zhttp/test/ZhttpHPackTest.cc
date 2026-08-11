@@ -10,7 +10,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZhttpHPack.hh>
+#include <zlib/Zhttp.hh>
 
 using namespace ZuTestUtil;
 
@@ -423,6 +423,93 @@ void testTxStorageAndUpdates()
     "HPACK capacity update remained pending after commit");
 }
 
+void testWarmPlan()
+{
+  ZuTestScope(testWarmPlan);
+
+  using Headers = ZhttpHeaders(("x-fixed", "fixed"), "x-runtime");
+  Zhttp::HPackSeedCatalog catalog;
+  catalog.add<Headers>(512);
+  ZuCHECK(catalog.entries().length() == 1 &&
+      catalog.entries()[0].name == "x-fixed" &&
+      catalog.entries()[0].value == "fixed" &&
+      catalog.entries()[0].incremental &&
+      catalog.entries()[0].fallback,
+    "initialization did not prebuild the fixed-only HPACK warm plan");
+
+  Zhttp::H2::HPackEncoder encoder;
+  ZuCHECK(encoder.init(512) && encoder.peerCapacity(512) &&
+      encoder.bind(catalog.plans()) &&
+      encoder.seedState() == Zhttp::H2::HPackSeedState::Warm &&
+      !encoder.table().count(),
+    "connection did not bind the prebuilt warm plan without publication");
+
+  bool bootstrap = false;
+  Bytes first;
+  ZuCHECK(encoder.beginBlock(0, bootstrap) && bootstrap &&
+      encoder.emitFixed(first, {"x-fixed", "fixed"}, bootstrap) >= 0 &&
+      first == catalog.entries()[0].incremental &&
+      !encoder.table().count(),
+    "reserved first block did not append the prebuilt indexing fragment");
+  encoder.rollbackBlock();
+  ZuCHECK(encoder.seedState() == Zhttp::H2::HPackSeedState::Warm,
+    "discarded first block did not restore the prebuilt warm plan");
+
+  first.length(0);
+  ZuCHECK(encoder.beginBlock(0, bootstrap) && bootstrap &&
+      encoder.emitFixed(first, {"x-fixed", "fixed"}, bootstrap) >= 0,
+    "warm plan was rebuilt or lost after rollback");
+  encoder.commitBlock();
+  Bytes frozen;
+  ZuCHECK(encoder.seedState() == Zhttp::H2::HPackSeedState::Frozen &&
+      encoder.emitFixed(
+        frozen, {"x-fixed", "fixed"}, false) >= 0 &&
+      frozen.length() == 1 && frozen[0] == 0xbe &&
+      encoder.table().count() == 1,
+    "HPACK publication was not an immutable frozen-view transition");
+
+  Bytes runtime;
+  ZuCHECK(encoder.emitRuntime(runtime, {"x-runtime", "varying"}) >= 0 &&
+      encoder.table().count() == 1,
+    "runtime HPACK field mutated the frozen table");
+}
+
+void testWarmPlans()
+{
+  ZuTestScope(testWarmPlans);
+
+  using First = ZhttpHeaders(("x-first", "one"));
+  using Second = ZhttpHeaders(("x-second", "two"));
+  Zhttp::HPackSeedCatalog catalog;
+  catalog.add<First>(512);
+  catalog.add<Second>(512);
+  ZuCHECK(catalog.plans().length() == 2 &&
+      catalog.plans()[0].entries.length() == 1 &&
+      catalog.plans()[1].entries.length() == 1,
+    "server HPACK response plans were flattened");
+
+  Zhttp::H2::HPackEncoder encoder;
+  bool bootstrap = false;
+  Bytes first;
+  ZuCHECK(encoder.init(512) && encoder.peerCapacity(512) &&
+      encoder.bind(catalog.plans()) &&
+      encoder.beginBlock(1, bootstrap) && bootstrap &&
+      encoder.emitFixed(first, {"x-second", "two"}, bootstrap) >= 0 &&
+      first == catalog.plans()[1].entries[0].incremental,
+    "selected HPACK response plan was not ready before emission");
+  encoder.commitBlock();
+
+  Bytes second;
+  Bytes other;
+  ZuCHECK(encoder.emitFixed(
+        second, {"x-second", "two"}, false) >= 0 &&
+      second.length() == 1 && second[0] == 0xbe &&
+      encoder.emitFixed(other, {"x-first", "one"}, false) >= 0 &&
+      !(other.length() == 1 && other[0] == 0xbe) &&
+      encoder.table().count() == 1,
+    "frozen HPACK lookup did not match the selected response plan");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -438,4 +525,6 @@ int main(int argc, char **argv)
   ZuTestCall(testEncoder);
   ZuTestCall(testDynamicEncoder);
   ZuTestCall(testTxStorageAndUpdates);
+  ZuTestCall(testWarmPlan);
+  ZuTestCall(testWarmPlans);
 }
