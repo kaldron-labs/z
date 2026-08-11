@@ -1717,7 +1717,6 @@ public:
     stream.flush();
   }
 
-  void reset() { }
   QPackBuildFailure::T qpackFailure() const { return m_qpackFailure; }
 
   // CRTP defaults

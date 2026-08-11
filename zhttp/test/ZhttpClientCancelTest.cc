@@ -117,7 +117,6 @@ struct Request_ : public ZmObject {
       Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
   }
 
-  void reset() { ++resets; bodyLength = 0; }
   template <typename L>
   void operation(L &&l) const {
     l(Zhttp::Method::GET, [this](auto &&emit) {
@@ -168,7 +167,6 @@ struct Request_ : public ZmObject {
   ZtString<>		bodyData;
   uint64_t		key_ = 0;
   unsigned		bodyLength = 0;
-  unsigned		resets = 0;
   unsigned		completions = 0;
   mutable unsigned	inits = 0;
   Zhttp::ResultCode::T resultCode = Zhttp::ResultCode::OK;
@@ -1900,8 +1898,8 @@ void retry()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].retries == 1,
     "retry produces one successful terminal result");
-  ZuCHECK(request->resets == 1 && request->inits == 1,
-    "connect retry initializes request builder and response parser once");
+  ZuCHECK(request->inits == 1,
+    "connect retry initializes the response parser once");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
       app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
       app.eventCount(Zhttp::ClientEventType::Retried) == 1 &&
@@ -1968,8 +1966,8 @@ void redirect()
   ZuCHECK(app.results.length() == 1 && app.results[0].ok() &&
       app.results[0].redirects == 1,
     "redirect produces one successful terminal result");
-  ZuCHECK(request->resets == 2 && request->inits == 2,
-    "redirect reinitializes request builder and response parser per message");
+  ZuCHECK(request->inits == 2,
+    "redirect reinitializes the response parser per wire response");
   ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
       app.eventCount(Zhttp::ClientEventType::Redirected) == 1 &&
       app.eventCount(Zhttp::ClientEventType::Completed) == 1,

@@ -390,9 +390,10 @@ struct Destination {
 // containment should not be used.
 //
 // Pool retains a TxQ::Msg pointer for both queue identity/lifetime and direct
-// Request access. Pool calls reset() once for every wire request (including
-// replay attempts and redirects), then uses the Builder callbacks above. A
-// failed connection which emits no request is not a message. All lifecycle
+// Request access. Each queued TxQ::Msg is one Builder instance for one logical
+// request and is never reset or repurposed for another request. Replay attempts
+// and redirects may invoke its reproducible callbacks again. A failed
+// connection which emits no request is not a wire attempt. All lifecycle
 // callbacks are synchronous.
 struct Request : public ZmObject, public Builder {
   // Request start line / pseudo-headers. operation() is called exactly once
@@ -418,8 +419,8 @@ struct Request : public ZmObject, public Builder {
   bool reproducible() const;
 
   // A transport connection for the current attempt is ready. Called before
-  // reset() and request construction; info identifies the selected transport
-  // and negotiated HTTP version.
+  // request construction; info identifies the selected transport and
+  // negotiated HTTP version.
   void connected(const ConnectedInfo &);
 
   // The current attempt's connection ended; peer is true when the peer
@@ -660,7 +661,6 @@ public:
     m_request = request;
     if (!request) return;
     m_requestApp = request->request;
-    m_requestApp->reset();
     m_operationOK = false;
     m_target.length(0);
     unsigned operations = 0;

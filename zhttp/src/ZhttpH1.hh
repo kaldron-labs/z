@@ -862,8 +862,6 @@ public:
     stream.flush();
   }
 
-  void reset() { }
-
   // CRTP defaults
   template <typename L>
   void operation(L &&l) {

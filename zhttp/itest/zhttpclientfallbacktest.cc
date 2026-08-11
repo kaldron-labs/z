@@ -82,7 +82,6 @@ struct Request_ : public ZmObject {
     return Zhttp::BodyPolicy::None;
   }
 
-  void reset() { }
   template <typename L>
   void operation(L &&l) const {
     l(Zhttp::Method::GET, [this](auto &&emit) {
