@@ -1192,7 +1192,8 @@ private:
     uint64_t o = ZuPrint<P>::length(p);
     if (!o) return *this;
     if constexpr (ZuEquiv<Char, char>{}) {
-      return add__([&p](T *ptr, uint64_t length) {
+      return add__([&p](T *ptr_, uint64_t length) {
+	auto ptr = reinterpret_cast<char *>(ptr_);
 	return ZuPrint<P>::print(ptr, length, p);
       }, ZuPrint<P>::length(p));
     } else {
@@ -1316,7 +1317,8 @@ private:
     uint64_t o = ZuPrint<P>::length(p);
     if (!o) return;
     if constexpr (ZuEquiv<Char, char>{}) {
-      append__([&p](Char *ptr, uint64_t length) {
+      append__([&p](Char *ptr_, uint64_t length) {
+	auto ptr = reinterpret_cast<char *>(ptr_);
 	return ZuPrint<P>::print(ptr, length, p);
       }, o);
     } else {
