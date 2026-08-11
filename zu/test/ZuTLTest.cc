@@ -38,6 +38,10 @@ using TLMap = ZuTypeMap<Wrap, TL>;
 using TLGrep = ZuTypeGrep<IsIntegralT, TL>;
 using TLHead = ZuTypeHead<2, TL>;
 using TLTail = ZuTypeTail<1, TL>;
+using TLConcat = ZuTypeConcat<
+  ZuTypeList<int, double>, ZuTypeList<char, long>>;
+using TLConcatNested = ZuTypeConcat<
+  ZuTypeList<ZuTypeList<int, double>>, ZuTypeList<char, long>>;
 using TLUnique = ZuTypeUnique<int, double, int, char, double>;
 using TLUniqueList = ZuTypeUnique<ZuTypeList<int, double, int, char, double>>;
 
@@ -45,6 +49,9 @@ ZuAssert(TLMap::N == 3);
 ZuAssert(TLGrep::N == 2);
 ZuAssert(TLHead::N == 2);
 ZuAssert(TLTail::N == 2);
+ZuAssert((ZuIsSame<TLConcat, ZuTypeList<int, double, char, long>>{}));
+ZuAssert((ZuIsSame<TLConcatNested,
+  ZuTypeList<ZuTypeList<int, double>, char, long>>{}));
 ZuAssert((ZuIsSame<TLUnique, ZuTypeList<int, double, char>>{}));
 ZuAssert((ZuIsSame<TLUniqueList, TLUnique>{}));
 

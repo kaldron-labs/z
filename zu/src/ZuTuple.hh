@@ -461,13 +461,13 @@ public:
 
   // dispatching
   template <typename L>
-  constexpr auto dispatch(unsigned i, L &&l) {
+  constexpr decltype(auto) dispatch(unsigned i, L &&l) {
     return ZuSwitch::dispatch<N>(i, [this, &l](auto I) mutable {
       return ZuFwd<L>(l)(I, this->p<I>());
     });
   }
   template <typename L>
-  constexpr auto cdispatch(unsigned i, L &&l) const {
+  constexpr decltype(auto) cdispatch(unsigned i, L &&l) const {
     return ZuSwitch::dispatch<N>(i, [this, &l](auto I) mutable {
       return ZuFwd<L>(l)(I, this->p<I>());
     });

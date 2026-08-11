@@ -621,14 +621,14 @@ public:
   }
 
   template <typename L>
-  auto dispatch(this auto &&self, L &&l) {
+  decltype(auto) dispatch(this auto &&self, L &&l) {
     return ZuSwitch::dispatch<N>(self.m_type, [&self, &l](auto I) mutable {
       if constexpr (!Union_::IsVoid<Type<I>>{})
 	return ZuFwd<L>(l)(I, ZuFwdLike<decltype(self)>(self).template p<I>());
     });
   }
   template <typename L>
-  auto cdispatch(L &&l) const & { return dispatch(ZuFwd<L>(l)); }
+  decltype(auto) cdispatch(L &&l) const & { return dispatch(ZuFwd<L>(l)); }
 
   // traits
   using Traits = Union_::Traits<ZuBaseTraits<Union>, Ts...>;

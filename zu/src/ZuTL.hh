@@ -324,6 +324,18 @@ struct ZuTypeSort_<Index, ZuTypeList<Ts...>> :
 template <template <typename> class Index, typename ...Ts>
 using ZuTypeSort = typename ZuTypeSort_<Index, Ts...>::T;
 
+// concatenate typelists
+template <typename ...> struct ZuTypeConcat_;
+template <>
+struct ZuTypeConcat_<> { using T = ZuTypeList<>; };
+template <typename ...Ts, typename ...TLs>
+struct ZuTypeConcat_<ZuTypeList<Ts...>, TLs...> {
+  using T = typename ZuTypeList<Ts...>::template Push<
+    typename ZuTypeConcat_<TLs...>::T>;
+};
+template <typename ...TLs>
+using ZuTypeConcat = typename ZuTypeConcat_<TLs...>::T;
+
 // remove duplicate types, retaining the first occurrence
 template <typename, typename ...> struct ZuTypeUnique__;
 template <typename List>
