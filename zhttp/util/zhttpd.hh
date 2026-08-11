@@ -251,7 +251,6 @@ struct ResponsePlan {
   ResponsePlan() = default;
   ResponsePlan(const ResponsePlan &resp) :
     status{resp.status},
-    reason{resp.reason},
     contentType{resp.contentType},
     location{resp.location},
     wwwAuthenticate{resp.wwwAuthenticate},
@@ -286,7 +285,6 @@ struct ResponsePlan {
   ResponsePlan &operator =(ResponsePlan &&) = default;
 
   unsigned		status = 500;
-  HdrString		reason{"Internal Server Error"};
   HdrString		contentType;
   HdrString		location;
   HdrString		wwwAuthenticate;
@@ -639,7 +637,7 @@ struct StaticPlanner {
       case Zhttp::TargetForm::Absolute:
 	break;
       default:
-	return error(resp, 400, "Bad Request", "Unsupported request target",
+	return error(resp, 400, "Unsupported request target",
 	  req.method);
     }
 
@@ -668,7 +666,6 @@ struct StaticPlanner {
       basicAuthValue(expect, state->options);
       if (!constTimeEqual(headers.authorization, expect)) {
 	resp.status = 401;
-	resp.reason = "Unauthorized";
 	resp.wwwAuthenticate = "Basic realm=\"zhttpd\"";
 	resp.contentType = "text/plain";
 	resp.body = "Unauthorized\n";
@@ -681,7 +678,6 @@ struct StaticPlanner {
 
     if (req.method != Zhttp::Method::GET && req.method != Zhttp::Method::HEAD) {
       resp.status = 405;
-      resp.reason = "Method Not Allowed";
       resp.allow = "GET, HEAD";
       resp.contentType = "text/plain";
       resp.body = "Method Not Allowed\n";
@@ -697,7 +693,7 @@ struct StaticPlanner {
       char, unsigned(path.length()) + 2, HdrString::VHeap);
     ZuCSpan err;
     if (!decodeNormalizePath(path, state->options.hideDotfiles, clean, err))
-      return error(resp, 400, "Bad Request", err, req.method);
+      return error(resp, 400, err, req.method);
     if (path.length() > 1 && path[path.length() - 1] == '/' &&
 	clean != "/")
       clean << '/';
@@ -711,7 +707,6 @@ struct StaticPlanner {
     const RequestData &req, ZuCSpan base, ResponsePlan resp,
     bool appendTarget = true) const {
     resp.status = 301;
-    resp.reason = "Moved Permanently";
     resp.location = base;
     if (appendTarget) {
       resp.location << req.path();
@@ -726,10 +721,9 @@ struct StaticPlanner {
   }
 
   ResponsePlan error(
-    ResponsePlan resp, unsigned status, ZuCSpan reason, ZuCSpan text,
+    ResponsePlan resp, unsigned status, ZuCSpan text,
     Zhttp::Method::T method) const {
     resp.status = status;
-    resp.reason = reason;
     resp.contentType = "text/plain";
     resp.body << text << "\n";
     resp.contentLength = resp.body.length();
@@ -747,7 +741,7 @@ struct StaticPlanner {
     if (clean != "/" && clean != leaf) return notFound(resp, req.method);
     ZiFile file;
     if (file.dup(state->rootFile, ZiFile::GC) != Zi::OK)
-      return error(resp, 403, "Forbidden", "Forbidden", req.method);
+      return error(resp, 403, "Forbidden", req.method);
     return regularFile(req, headers, ZuMv(file), state->rootFileStat,
       state->options.root, resp);
   }
@@ -764,7 +758,6 @@ struct StaticPlanner {
 	  resp.location << '?' << query;
 	}
 	resp.status = 301;
-	resp.reason = "Moved Permanently";
 	resp.contentType = "text/plain";
 	resp.body = "Moved Permanently\n";
 	resp.contentLength = resp.body.length();
@@ -790,7 +783,7 @@ struct StaticPlanner {
 	}
       }
       if (state->options.noListing)
-	return error(resp, 403, "Forbidden", "Forbidden", req.method);
+	return error(resp, 403, "Forbidden", req.method);
       auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
 	unsigned(state->options.root.length() + clean.length()) + 1,
 	Zi::Path::VHeap);
@@ -803,7 +796,7 @@ struct StaticPlanner {
     int rc = openFile(clean, file, stat);
     if (rc != Zi::OK) return notFound(resp, req.method);
     if (!stat.regular)
-      return error(resp, 403, "Forbidden", "Forbidden", req.method);
+      return error(resp, 403, "Forbidden", req.method);
     auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
       unsigned(state->options.root.length() + clean.length()) + 1,
       Zi::Path::VHeap);
@@ -812,7 +805,7 @@ struct StaticPlanner {
   }
 
   ResponsePlan notFound(ResponsePlan resp, Zhttp::Method::T method) const {
-    return error(resp, 404, "Not Found", "Not Found", method);
+    return error(resp, 404, "Not Found", method);
   }
 
   ResponsePlan regularFile(
@@ -824,7 +817,6 @@ struct StaticPlanner {
     time_t ims;
     if (parseHTTPDate(headers.ifModifiedSince, ims) && mtime <= ims) {
       resp.status = 304;
-      resp.reason = "Not Modified";
       httpDate(resp.lastModified, mtime);
       resp.contentLength = 0;
       resp.sendBody = false;
@@ -836,7 +828,6 @@ struct StaticPlanner {
     parseRange(headers.range, size, first, length, ranged, unsat);
     if (unsat) {
       resp.status = 416;
-      resp.reason = "Range Not Satisfiable";
       resp.contentRange << "bytes */" << size;
       resp.contentLength = 0;
       resp.sendBody = false;
@@ -844,7 +835,6 @@ struct StaticPlanner {
     }
 
     resp.status = ranged ? 206 : 200;
-    resp.reason = ranged ? "Partial Content" : "OK";
     resp.contentType = state->mime.lookup(state->options, path);
     httpDate(resp.lastModified, mtime);
     resp.fileHandle = ZuMv(file);
@@ -1037,7 +1027,6 @@ struct StaticPlanner {
       html += "<hr><address>zhttpd</address>";
     html += "</body></html>\n";
     resp.status = 200;
-    resp.reason = "OK";
     resp.contentType = "text/html";
     resp.contentLength = resp.body.length();
     resp.generated = true;

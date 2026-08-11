@@ -298,7 +298,7 @@ constexpr uint64_t RespBodyMax = 100<<20;
 
 struct ResParser;
 
-struct Request_ : public ZmObject, public Zhttp::Builder {
+struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   using Headers = RequestHeaders;
   using ContentLength = ZuStringT<"content-length">;
 
@@ -344,14 +344,11 @@ struct Request_ : public ZmObject, public Zhttp::Builder {
       });
   }
 
-  bool replayable() const { return true; }
-  bool reproducible() const { return true; }
   void connected(const Zhttp::ConnectedInfo &);
   void disconnected(bool) { }
   void connectFailed(bool) { }
-  void selected(const Zhttp::Endpoint &) { }
-  void redirected(const URL &);
-  void observed(const Zhttp::ClientEvent &) { }
+  void redirected(
+    const URL &, uint64_t, uint64_t, uint64_t, unsigned, uint16_t);
   void completed(const Zhttp::Result &);
 
   uint64_t key() const { return id; }
@@ -396,7 +393,7 @@ struct ReqLogCtx {
   unsigned	requests = 1;
 };
 
-inline ReqLogCtx reqLogCtx(const Request_ &req)
+inline ReqLogCtx reqLogCtx(const ReqBuilder_ &req)
 {
   return {req.id, req.requests};
 }
@@ -417,7 +414,7 @@ bool parseMigrationLocal(ZuCSpan s, ZiSockAddr &addr)
   }
 }
 
-void closeBody(Request_ &req)
+void closeBody(ReqBuilder_ &req)
 {
   if (req.bodyFileOpen) {
     req.bodyFile.close();
@@ -425,7 +422,7 @@ void closeBody(Request_ &req)
   }
 }
 
-void resetResponse(Request_ &req, bool truncateOutput)
+void resetResponse(ReqBuilder_ &req, bool truncateOutput)
 {
   closeBody(req);
   req.status = 0;
@@ -443,7 +440,7 @@ void resetResponse(Request_ &req, bool truncateOutput)
 }
 
 void initReq(
-  Request_ &req, const Options &options, const URL &url, unsigned id)
+  ReqBuilder_ &req, const Options &options, const URL &url, unsigned id)
 {
   req.id = id;
   req.requests = options.requests;
@@ -461,7 +458,7 @@ void initReq(
 }
 
 template <typename S>
-void reqLogPrefix(const Request_ &req, S &s)
+void reqLogPrefix(const ReqBuilder_ &req, S &s)
 {
   if (req.requests > 1) s << "req=" << req.id << ' ';
 }
@@ -471,7 +468,7 @@ void reqLogPrefix(const ReqLogCtx &ctx, S &s)
   if (ctx.requests > 1) s << "req=" << ctx.id << ' ';
 }
 
-bool truncateOutputPath(Request_ &req)
+bool truncateOutputPath(ReqBuilder_ &req)
 {
   if (req.discardResponse) return true;
   if (!req.truncateOutput) return true;
@@ -497,7 +494,7 @@ bool redirectStatus(unsigned status)
     status == 307 || status == 308;
 }
 
-void logFraming(Request_ &req)
+void logFraming(ReqBuilder_ &req)
 {
   if (req.framingLogged) return;
   req.framingLogged = true;
@@ -517,17 +514,17 @@ void logFraming(Request_ &req)
   }));
 }
 
-void logConnected(const Request_ &, const Zhttp::ConnectedInfo &);
+void logConnected(const ReqBuilder_ &, const Zhttp::ConnectedInfo &);
 
 struct ResParser {
   using Headers = ResponseHeaders;
 
   bool enable1xx() const { return false; }
 
-  Request_ *req = nullptr;
+  ReqBuilder_ *req = nullptr;
 
-  void init(const Request_ &req_) {
-    req = const_cast<Request_ *>(&req_);
+  void init(const ReqBuilder_ &req_) {
+    req = const_cast<ReqBuilder_ *>(&req_);
     reset();
   }
   void reset() { resetResponse(*req, true); }
@@ -633,13 +630,14 @@ struct ResParser {
   }
 };
 
-void Request_::redirected(const URL &url_)
+void ReqBuilder_::redirected(
+    const URL &url_, uint64_t, uint64_t, uint64_t, unsigned, uint16_t)
 {
   target.length(0);
   url_.writeTarget(target);
 }
 
-void Request_::completed(const Zhttp::Result &result)
+void ReqBuilder_::completed(const Zhttp::Result &result)
 {
   closeBody(*this);
   done = true;
@@ -653,33 +651,33 @@ void Request_::completed(const Zhttp::Result &result)
 	 result.responseBodyReset || result.responseBodyDiscarded));
 }
 
-void Request_::connected(const Zhttp::ConnectedInfo &info)
+void ReqBuilder_::connected(const Zhttp::ConnectedInfo &info)
 {
   logConnected(*this, info);
 }
 
 struct Client;
 struct Pool;
-ZuDerive(RequestQ, (ZmPQueue<Request_,
+ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
   ZmPQueueOverlap<false,
-    ZmPQueueNode<Request_,
-      ZmPQueueHeapID<"zhttp.Request">>>>));
-using Request = RequestQ::Node;
-ZuAssert((ZuIsSame<RequestQ::HeapID, ZuStringT<"zhttp.Request">>{}));
-using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
+    ZmPQueueNode<ReqBuilder_,
+      ZmPQueueHeapID<"zhttp.ReqBuilder">>>>));
+using ReqBuilder = ReqBuilderQ::Node;
+ZuAssert((ZuIsSame<ReqBuilderQ::HeapID, ZuStringT<"zhttp.ReqBuilder">>{}));
+using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
 struct Pool : public Zhttp::Pool<Client, TxQ, ResParser> {
   using Base = Zhttp::Pool<Client, TxQ, ResParser>;
 
   Pool(Client *client) : Base{client} { }
 
-  RequestQ *txQueue() { return &m_requests; }
+  ReqBuilderQ *txQueue() { return &m_requests; }
 
-  void archive_(Request *request);
-  ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
+  void archive_(ReqBuilder *request);
+  ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
 
 private:
-  RequestQ	m_requests;
+  ReqBuilderQ	m_requests;
 };
 
 struct Client : public Zhttp::Client<Client, Pool> {
@@ -687,7 +685,7 @@ struct Client : public Zhttp::Client<Client, Pool> {
 
   void idle() { ZhttpUtil::Runtime::post(); }
 
-  void archive(Request *) {
+  void archive(ReqBuilder *) {
     produce_();
     if (m_generated == m_options->requests) seal(0);
   }
@@ -706,7 +704,7 @@ struct Client : public Zhttp::Client<Client, Pool> {
 private:
   void produce_() {
     if (!m_options || m_generated >= m_options->requests) return;
-    ZmRef<Request> request = new Request;
+    ZmRef<ReqBuilder> request = new ReqBuilder;
     initReq(*request, *m_options, *m_url, m_generated++);
     send(0, ZuMv(request));
   }
@@ -716,13 +714,13 @@ private:
   unsigned	m_generated = 0;
 };
 
-void Pool::archive_(Request *request)
+void Pool::archive_(ReqBuilder *request)
 {
   client()->archive(request);
 }
 
 void logConnected_(
-  const Request_ &req, ZuCSpan transport, ZuCSpan httpVersion,
+  const ReqBuilder_ &req, ZuCSpan transport, ZuCSpan httpVersion,
   uint32_t version, ZuCSpan alpn)
 {
   ZiLOG(Info, "zhttp", ([
@@ -738,7 +736,7 @@ void logConnected_(
   }));
 }
 
-void logConnected(const Request_ &req, const Zhttp::ConnectedInfo &info)
+void logConnected(const ReqBuilder_ &req, const Zhttp::ConnectedInfo &info)
 {
   logConnected_(req,
     Zhttp::Transport{}.name(info.transport),

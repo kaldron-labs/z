@@ -12,7 +12,7 @@ All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 | --- | --- | --- |
 | CLI parsing | `Http3Mode`, timeout defaults, `Options`, `usage`, `parseDrop`, `validateOptions` | Declare, parse, validate, and document command-line workload and configuration choices. |
 | Protocol-specific configuration | `Http2Mode`, `Http3Mode`, `parseMigrationLocal`, `migrationMode`, `migrationConfigured`, `migrationOnOpen`, `quicHeartbeat`, `mxParams` | Convert CLI values into multiplex, TLS, and QUIC configuration. Authority syntax is parsed by the shared `ZhttpURL` facility. |
-| Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `Request_`, `RequestQ`, `Request`, `TxQ`, `Client`, `initReq` | Describe GET and typed-JSON PUT requests, own the intrusive transmit queue, incrementally generate a bounded workload, and immediately retire responses without persistent archival. |
+| Workload selection | `RequestHeaders`, `ResponseHeaders`, `URL`, `MaxRedirects`, `RespBodyMax`, `ReqBuilder_`, `ReqBuilderQ`, `ReqBuilder`, `TxQ`, `Client`, `initReq` | Describe GET and typed-JSON PUT requests, own the intrusive transmit queue, incrementally generate a bounded workload, and immediately retire responses without persistent archival. |
 | Workload-specific request/response handling | `redirectStatus`, `resetResponse` | Interpret response status for output policy and reset application response state after a library-managed redirect. |
 | Output-file handling | `HdrString`, `outputPath`, `closeBody`, `truncateOutputPath` | Select, open, truncate, write, and close response output files. |
 | Reporting | `printMemDiag`, `hotLog`, `ReqLogCtx`, `reqLogCtx`, `reqLogPrefix`, `logFraming`, `logConnected_`, `logConnected` | Format application, framing, connection, memory, hash, and heap diagnostics. |
@@ -36,7 +36,7 @@ fallback, or protocol lifecycle mechanism.
 | --- | --- | --- |
 | CLI parsing | `usage`, `loadOptions` | Validate and document command-line choices. |
 | Protocol-specific configuration | `parseDrop`, `migrationMode`, `quicHeartbeat`, `mxParams`, `ReqBodyMax`, `ReqHeaders`, `FixedRespHeaders`, `Server` | Convert CLI values into multiplex, TCP, TLS, QUIC, and public server configuration. |
-| Workload-specific request/response handling | `Response_`, `ResponseQ`, `Parser`, `App` | Copy callback-scoped request data, preserve request order through the application WorkQ, plan responses, and submit intrusive response Builders with `Link::send()`. |
+| Workload-specific request/response handling | `ResBuilder_`, `ResBuilderQ`, `ResBuilder`, `Parser`, `App` | Copy callback-scoped request data, preserve request order through the application WorkQ, plan responses, and submit intrusive response Builders with `Link::send()`. |
 | Reporting | `printMemDiag` | Format memory, hash, and heap diagnostics. |
 | Workload selection | `prepareProcess` | Apply the selected foreground/daemon process policy. |
 | CLI parsing | `main` | Make trap registration, logging, workload state, public `Zhttp::Server`, wait policy, teardown, and process exit status explicit. |

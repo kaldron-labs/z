@@ -17,6 +17,7 @@
 
 #include <string.h>
 
+#include <zlib/ZuCmp.hh>
 #include <zlib/ZuICmp.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
@@ -42,6 +43,8 @@
 #include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
+
+constexpr unsigned NullSlot = ZuCmp<unsigned>::null();
 
 // HTTP hub/link application contract
 //
@@ -136,6 +139,9 @@ struct Parser { // base class with defaulted types and member functions
 
 struct Builder {
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
+
+  // default header section scratch buffer size for H2/H3
+  static constexpr unsigned HdrBufSize = 1<<10; // 1k scratch buffer
 
   // Builders provide only the initial field section; outbound trailers are
   // unsupported.  A Builder instance represents exactly one message.

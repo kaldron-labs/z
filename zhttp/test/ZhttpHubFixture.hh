@@ -258,10 +258,12 @@ struct UpgradeState {
 };
 
 struct UpgradeReq :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<UpgradeReq, true> {
   using Base = Zhttp::H1::Parser<UpgradeReq, true>;
   using State = Zhttp::H1::ParserState;
-  using Base::header;
+  using Headers = ZuTypeList<>;
+  using Zhttp::Parser::header;
 
   void operation(
     Zhttp::Method::T method_, const Zhttp::Target &target) {
@@ -273,6 +275,7 @@ struct UpgradeReq :
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
+  void complete(State::T) { }
 
   Zhttp::Method::T	method = -1;
   bool			path = false;
@@ -281,10 +284,12 @@ struct UpgradeReq :
 };
 
 struct UpgradeResp :
+  public Zhttp::Parser,
   public Zhttp::H1::Parser<UpgradeResp, false> {
   using Base = Zhttp::H1::Parser<UpgradeResp, false>;
   using State = Zhttp::H1::ParserState;
-  using Base::header;
+  using Headers = ZuTypeList<>;
+  using Zhttp::Parser::header;
 
   bool enable1xx() const { return true; }
   void status(unsigned v) { statusCode = v; }
@@ -293,6 +298,7 @@ struct UpgradeResp :
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
+  void complete(State::T) { }
 
   unsigned	statusCode = 0;
   bool		upgrade = false;

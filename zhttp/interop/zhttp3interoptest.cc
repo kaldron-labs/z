@@ -125,13 +125,17 @@ struct H3ResponseBuilder_ :
 };
 
 template <template <typename> typename Builder_>
-struct ResponseBuilder : public Builder_<ResponseBuilder<Builder_>> {
+struct ResponseBuilder :
+  public Zhttp::Builder,
+  public Builder_<ResponseBuilder<Builder_>> {
   using Base = Builder_<ResponseBuilder<Builder_>>;
+  using Headers = ResponseHeaders;
+  using Base::body;
+  using Zhttp::Builder::header;
 
   ResponseBuilder(ZuCSpan body_) : content{body_} { }
 
   unsigned status() const { return 200; }
-  template <typename L> void reason(L &&l) const { l("OK"); }
   uint64_t contentLength() const { return content.length(); }
   Zhttp::H3::QPackTxTable *qpackTx() const { return qpackTx_; }
   bool qpackEncoderWrite(ZuBSpan span) const {
@@ -231,9 +235,12 @@ struct RequestParserBase_<Impl, true> :
 };
 
 template <bool H3>
-struct RequestParser : public RequestParserBase_<RequestParser<H3>, H3> {
+struct RequestParser :
+  public Zhttp::Parser,
+  public RequestParserBase_<RequestParser<H3>, H3> {
   using Base = RequestParserBase_<RequestParser<H3>, H3>;
   using State = typename Base::State;
+  using Headers = RequestHeaders;
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
   bool qpackDecoderWrite(ZuBSpan span) const {
@@ -288,9 +295,12 @@ struct ResponseParserBase_<Impl, true> :
 };
 
 template <bool H3>
-struct ResponseParser : public ResponseParserBase_<ResponseParser<H3>, H3> {
+struct ResponseParser :
+  public Zhttp::Parser,
+  public ResponseParserBase_<ResponseParser<H3>, H3> {
   using Base = ResponseParserBase_<ResponseParser<H3>, H3>;
   using State = typename Base::State;
+  using Headers = ResponseHeaders;
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
   bool qpackDecoderWrite(ZuBSpan span) const {
@@ -326,8 +336,11 @@ struct RequestBuilderH3_ :
   public Zhttp::H3Request<Impl, ZuTypeList<>, false> { };
 
 template <template <typename> typename Builder_>
-struct RequestBuilder : public Builder_<RequestBuilder<Builder_>> {
+struct RequestBuilder :
+  public Zhttp::Builder,
+  public Builder_<RequestBuilder<Builder_>> {
   using Base = Builder_<RequestBuilder<Builder_>>;
+  using Headers = ZuTypeList<>;
 
   RequestBuilder(ZuCSpan body_) : content{body_} { }
 

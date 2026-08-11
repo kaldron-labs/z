@@ -1649,6 +1649,18 @@ private:
 };
 
 
+// Application response Builder base.  The application ResBuilder_ derives from
+// ResBuilder and ZmObject.  The final application ResBuilder is
+// ResBuilderQ::Node, an intrusive ZmList::Node which publicly derives the
+// application data type.
+// Each node represents exactly one response and is never reset or repurposed.
+struct ResBuilder : public Builder {
+  // Original request method, used to suppress forbidden response bodies.
+  Method::T method() const { return Method::GET; }
+  // Disconnect after successful transmission when true.
+  bool close() const { return false; }
+};
+
 template <typename App_>
 class Server : public ZmEngine<Server<App_>> {
 public:
@@ -1656,9 +1668,15 @@ public:
   using App = App_;
   using AppParser = typename App::Parser;
   using ReqHeaders = typename AppParser::Headers;
-  using ResponseQ = typename App::ResponseQ;
-  using Response = typename ResponseQ::Node;
-  using ResponseData = typename ResponseQ::T;
+  using ResBuilderQ = typename App::ResBuilderQ;
+  using ResBuilder = typename ResBuilderQ::Node;
+  using ResBuilder_ = typename ResBuilderQ::T;
+  ZuAssert((ZuIs_<ResBuilder, ResBuilder_>{}),
+    "Zhttp::Server requires ResBuilderQ::Node to derive from ResBuilder_");
+  ZuAssert((ZuIs_<ResBuilder_, ZmObject>{}),
+    "Zhttp::Server requires ResBuilder_ to derive from ZmObject");
+  ZuAssert((ZuIs_<ResBuilder_, Zhttp::ResBuilder>{}),
+    "Zhttp::Server requires ResBuilder_ to derive from Zhttp::ResBuilder");
   using Engine::running;
   using Engine::start;
   using Engine::state;
@@ -1805,8 +1823,6 @@ private:
       rejectContentLength{rejectContentLength_} { }
 
     unsigned status() const { return builder->status(); }
-    template <typename L>
-    void reason(L &&l) const { builder->reason(ZuFwd<L>(l)); }
     template <typename Key, typename L>
     void header(L &&l) {
       if constexpr (Key{}() == "content-length")
@@ -1866,6 +1882,7 @@ private:
     using Base = typename MessageTraits<Profile>::template Response<
       ResponseTx, typename Builder::Headers, HasBody, Streaming>;
     using Ops = ResponseOps<Profile, Builder>;
+    static constexpr unsigned HdrBufSize = Builder::HdrBufSize;
 
     ResponseTx(
 	Server *server, Builder &builder,
@@ -1876,7 +1893,6 @@ private:
     using Ops::contentLength;
     using Ops::emitBody;
     using Ops::header;
-    using Ops::reason;
     using Ops::status;
   };
 
@@ -1981,10 +1997,10 @@ private:
   template <typename Profile, typename Link_, typename Heap>
   struct AsyncBody_ : public Heap, public ZmObject {
     using Self = AsyncBody_<Profile, Link_, Heap>;
-    using Tx = ResponseTx<Profile, ResponseData, true, true>;
+    using Tx = ResponseTx<Profile, ResBuilder_, true, true>;
 
     AsyncBody_(
-	Server *server_, ZmRef<Link_> link_, ZmRef<Response> response_) :
+	Server *server_, ZmRef<Link_> link_, ZmRef<ResBuilder> response_) :
       server{server_}, link{ZuMv(link_)}, appResponse{ZuMv(response_)},
       response{server_, appResponse->data()} { }
 
@@ -2094,7 +2110,7 @@ private:
 
     Server			*server;
     ZmRef<Link_>		link;
-    ZmRef<Response>		appResponse;
+    ZmRef<ResBuilder>		appResponse;
     Tx				response;
     typename BodyTaskQ::Node	*task = nullptr;
     uint64_t			reserved = 0;
@@ -2108,10 +2124,10 @@ private:
 
   template <typename Profile, typename Link_>
   bool startResponse_(
-      ZmRef<Link_> link, ZmRef<Response> response,
+      ZmRef<Link_> link, ZmRef<ResBuilder> response,
       uint64_t &retainedBytes) {
     auto policy = response->data().bodyPolicy();
-    if constexpr (HasAsyncBody<ResponseData>{}) {
+    if constexpr (HasAsyncBody<ResBuilder_>{}) {
       if (BodyPolicy::streaming(policy)) {
 	using State = AsyncBody<Profile, Link_>;
 	ZmRef<State> state =
@@ -2128,7 +2144,7 @@ private:
     auto impl() { return static_cast<Link_ *>(this); }
     auto impl() const { return static_cast<const Link_ *>(this); }
 
-    void send(ZmRef<Response> response) {
+    void send(ZmRef<ResBuilder> response) {
       if (!response) return;
       auto link = ZmMkRef(impl());
       auto server = link->app()->server;
@@ -2150,7 +2166,7 @@ private:
     friend Server;
     template <typename P, typename L, typename H> friend struct AsyncBody_;
 
-    void responseSend_(ZmRef<Response> response) {
+    void responseSend_(ZmRef<ResBuilder> response) {
       auto server = impl()->app()->server;
       server->assertTx_();
       if (!impl()->active()) {
@@ -2186,7 +2202,7 @@ private:
     }
 
     void responseDone_(
-	Response *response, ResponseOutcome::T outcome) {
+	ResBuilder *response, ResponseOutcome::T outcome) {
       if (m_response.ptr() != response) return;
       auto server = impl()->app()->server;
       responseCancel_({});
@@ -2246,8 +2262,8 @@ private:
       server->m_stats.retainedBytes -= n;
     }
 
-    ResponseQ		m_responses;
-    ZmRef<Response>	m_response;
+    ResBuilderQ		m_responses;
+    ZmRef<ResBuilder>	m_response;
     BodyCancelFn	m_cancel;
     uint64_t		m_retainedBytes = 0;
     bool		m_close = false;

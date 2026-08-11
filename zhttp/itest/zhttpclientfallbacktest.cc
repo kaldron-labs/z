@@ -73,10 +73,10 @@ struct Resolver {
 
 struct ClientApp;
 struct Pool;
-struct Request_;
+struct ReqBuilder_;
 struct ResParser;
 
-struct Request_ : public ZmObject {
+struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   using Headers = ZuTypeList<>;
   constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
     return Zhttp::BodyPolicy::None;
@@ -92,17 +92,18 @@ struct Request_ : public ZmObject {
   template <typename Key, typename L> void header(L &&) const { }
   template <typename L> void header(L &&) const { }
 
-  bool replayable() const { return true; }
-  bool reproducible() const { return true; }
   void connected(const Zhttp::ConnectedInfo &) { }
   void disconnected(bool) { }
   void connectFailed(bool) { }
-  void selected(const Zhttp::Endpoint &) { }
-  void redirected(const Zhttp::URL &url_) {
-    target.length(0);
-    url_.writeTarget(target);
-  }
-  void observed(const Zhttp::ClientEvent &);
+  void selected(
+    const Zhttp::Endpoint *, uint64_t, uint64_t,
+    unsigned, unsigned, Zhttp::Transport::T, Zhttp::Version::T);
+  void attemptFailed(
+    uint64_t, uint64_t, unsigned, unsigned, unsigned,
+    Zhttp::Transport::T, Zhttp::Version::T, bool, bool);
+  void fallback(
+    uint64_t, uint64_t, uint64_t,
+    Zhttp::Transport::T, Zhttp::Version::T);
   void completed(const Zhttp::Result &);
 
   uint64_t key() const { return key_; }
@@ -113,7 +114,7 @@ struct Request_ : public ZmObject {
   uint64_t		key_ = 0;
 };
 
-struct ResParser {
+struct ResParser : public Zhttp::Parser {
   using Headers = ZhttpHeaders("alt-svc");
 
   bool enable1xx() const { return false; }
@@ -122,7 +123,7 @@ struct ResParser {
   unsigned	*status_ = nullptr;
   ZtString<>	*altSvc = nullptr;
 
-  void init(const Request_ &);
+  void init(const ReqBuilder_ &);
   void status(unsigned value) { *status_ = value; }
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
@@ -138,24 +139,24 @@ struct ResParser {
   void complete(LinkRef &&, bool) { }
 };
 
-ZuDerive(RequestQ, (ZmPQueue<Request_,
+ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
   ZmPQueueOverlap<false,
-    ZmPQueueNode<Request_,
-      ZmPQueueHeapID<"Zhttp.Test.Fallback.Request">>>>));
-using Request = RequestQ::Node;
-using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
+    ZmPQueueNode<ReqBuilder_,
+      ZmPQueueHeapID<"Zhttp.Test.Fallback.ReqBuilder">>>>));
+using ReqBuilder = ReqBuilderQ::Node;
+using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
 struct Pool : public Zhttp::Pool<ClientApp, TxQ, ResParser> {
   using Base = Zhttp::Pool<ClientApp, TxQ, ResParser>;
 
   Pool(ClientApp *client) : Base{client} { }
 
-  RequestQ *txQueue() { return &m_requests; }
-  void archive_(Request *) { }
-  ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
+  ReqBuilderQ *txQueue() { return &m_requests; }
+  void archive_(ReqBuilder *) { }
+  ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
 
 private:
-  RequestQ	m_requests;
+  ReqBuilderQ	m_requests;
 };
 
 struct ClientApp : public Zhttp::Client<ClientApp, Pool> {
@@ -163,8 +164,8 @@ struct ClientApp : public Zhttp::Client<ClientApp, Pool> {
 
   void idle() { }
 
-  ZmRef<Request> request() {
-    ZmRef<Request> request = new Request;
+  ZmRef<ReqBuilder> request() {
+    ZmRef<ReqBuilder> request = new ReqBuilder;
     request->app = this;
     request->key_ = m_key++;
     return request;
@@ -175,40 +176,64 @@ struct ClientApp : public Zhttp::Client<ClientApp, Pool> {
     results.push(result_);
     done.post();
   }
-  void requestObserved(const Zhttp::ClientEvent &event) {
-    events.push(event);
-  }
-  unsigned eventCount(Zhttp::ClientEventType::T type) const {
-    unsigned count = 0;
-    for (unsigned i = 0; i < events.length(); ++i)
-      count += events[i].type == type;
-    return count;
-  }
-
   Zhttp::Result	result;
   ZtArray<Zhttp::Result,
     ZtArrayHeapID<"Zhttp.Test.Fallback.Results">> results;
-  ZtArray<Zhttp::ClientEvent,
-    ZtArrayHeapID<"Zhttp.Test.Fallback">> events;
   ZmSemaphore	done;
   uint64_t	bodyBytes = 0;
+  uint64_t	failedRequest = 0;
+  uint64_t	failedAttempt = 0;
+  uint64_t	fallbackRequest = 0;
+  uint64_t	fallbackAttempt = 0;
+  uint64_t	fallbackPreviousAttempt = 0;
   unsigned	status = 0;
+  unsigned	selectedEvents = 0;
+  unsigned	attemptFailedEvents = 0;
+  unsigned	fallbackEvents = 0;
+  unsigned	completedEvents = 0;
+  bool		selectedAltSvcH3 = false;
+  bool		selectedQUIC = false;
   ZtString<>	altSvc;
 
 private:
   uint64_t	m_key = 0;
 };
 
-void ResParser::init(const Request_ &req) {
+void ResParser::init(const ReqBuilder_ &req) {
   bodyBytes = &req.app->bodyBytes;
   status_ = &req.app->status;
   altSvc = &req.app->altSvc;
 }
 
-void Request_::observed(const Zhttp::ClientEvent &event) {
-  app->requestObserved(event);
+void ReqBuilder_::selected(
+    const Zhttp::Endpoint *endpoint,
+    uint64_t, uint64_t,
+    unsigned, unsigned, Zhttp::Transport::T transport,
+    Zhttp::Version::T) {
+  ++app->selectedEvents;
+  app->selectedQUIC |= transport == Zhttp::Transport::QUIC;
+  app->selectedAltSvcH3 |= transport == Zhttp::Transport::QUIC && endpoint &&
+    endpoint->source == Zhttp::EndpointSource::AltSvc;
 }
-void Request_::completed(const Zhttp::Result &result) {
+void ReqBuilder_::attemptFailed(
+    uint64_t request, uint64_t attempt,
+    unsigned, unsigned, unsigned,
+    Zhttp::Transport::T, Zhttp::Version::T,
+    bool, bool) {
+  ++app->attemptFailedEvents;
+  app->failedRequest = request;
+  app->failedAttempt = attempt;
+}
+void ReqBuilder_::fallback(
+    uint64_t request, uint64_t attempt, uint64_t previousAttempt,
+    Zhttp::Transport::T, Zhttp::Version::T) {
+  ++app->fallbackEvents;
+  app->fallbackRequest = request;
+  app->fallbackAttempt = attempt;
+  app->fallbackPreviousAttempt = previousAttempt;
+}
+void ReqBuilder_::completed(const Zhttp::Result &result) {
+  ++app->completedEvents;
   app->requestCompleted(result);
 }
 
@@ -402,30 +427,18 @@ void fallback()
 	      agent.status == 200 && agent.bodyBytes == expected.length(),
 	    "fallback terminal result identifies TLS/H2");
 	  ZuCHECK(agent.altSvc, "TLS response contains Alt-Svc");
-	  ZuCHECK(agent.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
-	      agent.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
-	      agent.eventCount(Zhttp::ClientEventType::Fallback) == 1 &&
-	      agent.eventCount(Zhttp::ClientEventType::Completed) == 1,
+	  ZuCHECK(agent.selectedEvents == 2 &&
+	      agent.attemptFailedEvents == 1 &&
+	      agent.fallbackEvents == 1 &&
+	      agent.completedEvents == 1,
 	    "typed H3-to-H2 fallback transition sequence");
-	  uint64_t requestID = 0;
-	  uint64_t failedAttempt = 0;
-	  uint64_t fallbackAttempt = 0;
-	  for (unsigned i = 0; i < agent.events.length(); ++i) {
-	    const auto &event = agent.events[i];
-	    if (event.type == Zhttp::ClientEventType::AttemptFailed) {
-	      requestID = event.request;
-	      failedAttempt = event.attempt;
-	    } else if (event.type == Zhttp::ClientEventType::Fallback) {
-	      fallbackAttempt = event.attempt;
-	      ZuCHECK(event.request == requestID &&
-		  event.previousAttempt == failedAttempt,
-		"fallback retains request ID and links distinct attempts");
-	    }
-	  }
-	  ZuCHECK(failedAttempt && fallbackAttempt &&
-	      failedAttempt != fallbackAttempt &&
-	      agent.result.request == requestID &&
-	      agent.result.attempt == fallbackAttempt,
+	  ZuCHECK(agent.fallbackRequest == agent.failedRequest &&
+	      agent.fallbackPreviousAttempt == agent.failedAttempt,
+	    "fallback retains request ID and links distinct attempts");
+	  ZuCHECK(agent.failedAttempt && agent.fallbackAttempt &&
+	      agent.failedAttempt != agent.fallbackAttempt &&
+	      agent.result.request == agent.failedRequest &&
+	      agent.result.attempt == agent.fallbackAttempt,
 	    "fallback terminal identity uses the TLS attempt");
 	}
       }
@@ -482,15 +495,7 @@ void fallback()
 	      cachedClient.status == 200 &&
 	      cachedClient.bodyBytes == expected.length() * 2,
 	    "Alt-Svc moves the second request from TLS/H2 to QUIC/H3");
-	  bool cached = false;
-	  for (unsigned i = 0; i < cachedClient.events.length(); ++i) {
-	    const auto &event = cachedClient.events[i];
-	    if (event.type == Zhttp::ClientEventType::Selected &&
-		event.transport == Zhttp::Transport::QUIC &&
-		event.endpointSource == Zhttp::EndpointSource::AltSvc)
-	      cached = true;
-	  }
-	  ZuCHECK(cached,
+	  ZuCHECK(cachedClient.selectedAltSvcH3,
 	    "second request selects H3 from library-managed Alt-Svc cache");
 	}
       }
@@ -526,7 +531,7 @@ void fallback()
     ZuCHECK(completed && forcedClient.result.ok() &&
 	forcedClient.result.transport == Zhttp::Transport::QUIC &&
 	forcedClient.result.httpVersion == Zhttp::Version::H3 &&
-	forcedClient.eventCount(Zhttp::ClientEventType::Fallback) == 0,
+	forcedClient.fallbackEvents == 0,
       "forced-H3 pool completes over QUIC without TLS fallback");
   }
   ZuCHECK(!forcedUp || serverResponses(server.eventFD, 1),
@@ -558,14 +563,10 @@ void fallback()
     disabledClient.send(0, request);
     disabledClient.seal(0);
     bool completed = disabledClient.done.timedwait(Zm::now(10)) == 0;
-    bool selectedQUIC = false;
-    for (const auto &event: disabledClient.events)
-      selectedQUIC |= event.type == Zhttp::ClientEventType::Selected &&
-	event.transport == Zhttp::Transport::QUIC;
     ZuCHECK(completed && disabledClient.result.ok() &&
 	disabledClient.result.transport == Zhttp::Transport::TLS &&
 	disabledClient.result.httpVersion == Zhttp::Version::H2 &&
-	!selectedQUIC,
+	!disabledClient.selectedQUIC,
       "H3-disabled pool remains on TLS/H2 despite advertised Alt-Svc");
   }
   ZuCHECK(!disabledUp || serverResponses(server.eventFD, 1),

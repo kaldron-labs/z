@@ -76,9 +76,12 @@ struct CxnInput : public Zhttp::H3::CxnParser<CxnInput> {
 };
 
 template <bool Request>
-struct MsgInput : public Zhttp::H3::Parser<MsgInput<Request>, Request> {
+struct MsgInput :
+  public Zhttp::Parser,
+  public Zhttp::H3::Parser<MsgInput<Request>, Request> {
   using Base = Zhttp::H3::Parser<MsgInput<Request>, Request>;
   using State = typename Base::State;
+  using Headers = ZuTypeList<>;
 
   MsgInput() {
     Base::h3(nullptr, this, nullptr, this,

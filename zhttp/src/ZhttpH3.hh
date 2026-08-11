@@ -1042,23 +1042,10 @@ public:
     m_bodyRx.reset(value);
   }
 
-  // CRTP defaults
-  void operation(Method::T, const Target &) { }
-  void status(unsigned) { }
-  bool enable1xx() const { return false; }
-  template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
-  template <typename Key, typename Value>
-  void header(Zhttp::FieldSection::T) { }
-  void header(Zhttp::FieldSection::T, ZuBSpan, ZuBSpan) { }
-  void bodyInfo(BodyType::T, uint64_t) { }
-  template <typename Rx>
-  bool body(Rx &rx) { return bodyDrain(rx); }
   template <typename Rx>
   void streamRx_(Rx &rx) { bodyDrain(rx); }
   void streamPeerEnd_() { }
   void streamError_() { }
-  void complete(State::T) { }
   bool rxComplete() const { return impl()->finReceived(); }
   QPackRxTable *qpackRx() {
     if (m_qpackRx) return m_qpackRx;
@@ -1283,10 +1270,8 @@ public:
 
   enum {
     HeaderHeadroom = 32,
-    HeaderScratchBuiltin = 2048,
     EncoderScratchBuiltin = 256,
   };
-
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -1366,7 +1351,7 @@ private:
 	    if (required < e->abs + 1) required = e->abs + 1;
 	    dynamicRef = true;
 	    return;
-	  }
+	}
 	ok = qpackEncodeFieldLine(out, h, params) >= 0;
     }
     void fieldFixed(ZuBSpan name, ZuBSpan value) {
@@ -1484,7 +1469,7 @@ private:
   void writeHeaders_(Stream &stream, Encode &&encode) {
     impl()->qpackFailure(QPackBuildFailure::None);
     auto fields = ZtScratch(
-      HdrBytes, HeaderHeadroom, HeaderScratchBuiltin);
+      HdrBytes, HeaderHeadroom, Impl::HdrBufSize);
     Compression::FieldSectionBuffer<decltype(fields)> section{fields};
     Build<decltype(fields)> build{fields};
     build.section = &section;
@@ -1620,20 +1605,8 @@ public:
 
   QPackBuildFailure::T qpackFailure() const { return m_qpackFailure; }
 
-  // CRTP defaults
-  template <typename L>
-  void operation(L &&l) {
-    l(Method::GET, [](auto &&emit) {
-      emit([](auto &tx) { tx << '/'; });
-    });
-  }
   template <typename L> void host(L &&l) { l("127.0.0.1"); }
   template <typename L> void protocol(L &&) { }
-  unsigned status() { return 200; }
-  template <typename L> void reason(L &&l) { l(""); }
-  template <typename Key, typename L>
-  void header(L &&) { }
-  template <typename L> void header(L &&) { }
   QPackTxTable *qpackTx() {
     if (m_qpackTx) return m_qpackTx;
     if constexpr (HasH3Cxn<Impl>{})

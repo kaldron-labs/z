@@ -93,10 +93,12 @@ struct BodyLink : public LinkTx<Profile::HTTPVersion> {
 
 template <typename Message>
 struct BodyBuilder :
+  public Zhttp::Builder,
   public Message::template Request<
     BodyBuilder<Message>, ZuTypeList<>, true, false> {
   using Base = typename Message::template Request<
     BodyBuilder, ZuTypeList<>, true, false>;
+  using Headers = ZuTypeList<>;
   using Base::body;
   uint64_t contentLength() const { return 1; }
 };
@@ -128,6 +130,18 @@ struct SyntheticTraits {
 using SyntheticMessage =
   Zhttp::MessageTraits<SyntheticProfile, SyntheticTraits>;
 using SyntheticBuilder = BodyBuilder<SyntheticMessage>;
+
+struct ReqWithoutEvents : public Zhttp::ReqBuilder { };
+struct ReqWithSelected : public Zhttp::ReqBuilder {
+  void selected(
+    const Zhttp::Endpoint *, uint64_t, uint64_t, unsigned, unsigned,
+    Zhttp::Transport::T, Zhttp::Version::T);
+};
+
+ZuAssert(!Zhttp::HasReqSelected<ReqWithoutEvents>{});
+ZuAssert(!Zhttp::HasReqCompleted<ReqWithoutEvents>{});
+ZuAssert(Zhttp::HasReqSelected<ReqWithSelected>{});
+ZuAssert(!Zhttp::HasReqCompleted<ReqWithSelected>{});
 
 ZuAssert(HasBodyTx<BodyTx>{});
 ZuAssert(HasFinalSend<BodyTx>{});
@@ -330,8 +344,12 @@ using BodySize = ZuStringT<"x-body-size">;
 using FixedHeaders = ZuTypeList<ContentLength, void, BodySize, void>;
 
 struct TxBuilder :
+  public Zhttp::Builder,
   public Zhttp::H1::Request<
     TxBuilder, TxHeaders, true, true> {
+  using Headers = TxHeaders;
+  using Base = Zhttp::H1::Request<TxBuilder, Headers, true, true>;
+  using Base::body;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::POST, [this](auto &&emit) {
@@ -348,9 +366,21 @@ struct TxBuilder :
   ZuCSpan query = "q=test&page=2";
 };
 
+struct ResponseTxBuilder :
+  public Zhttp::Builder,
+  public Zhttp::H1::Response<ResponseTxBuilder> {
+  using Headers = ZuTypeList<>;
+
+  unsigned status() const { return 204; }
+};
+
 struct FixedTxBuilder :
+  public Zhttp::Builder,
   public Zhttp::H1::Request<
     FixedTxBuilder, FixedHeaders, true, false> {
+  using Headers = FixedHeaders;
+  using Base = Zhttp::H1::Request<FixedTxBuilder, Headers, true, false>;
+  using Base::body;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::PUT, [](auto &&emit) {
@@ -454,6 +484,19 @@ void testBodyTx()
     "body payload mismatch");
   ZuCHECK(link.wire.find("0\r\n") >= 0,
     "chunk terminator mismatch");
+}
+
+void testResponseStatusLine()
+{
+  ZuTestScope(testResponseStatusLine);
+  TxLink link;
+  ResponseTxBuilder builder;
+  auto tx = link.transmit(builder);
+  builder.begin(tx);
+  builder.finish(tx);
+  link.finish();
+  ZuCHECK(link.wire.find("HTTP/1.1 204 \r\n\r\n") >= 0,
+    "response status line contains a reason phrase");
 }
 
 void testFixedPatch()
@@ -783,9 +826,7 @@ void testMetadata()
       "PreferH3" &&
     Zhttp::H2Policy{}.name(Zhttp::H2Policy::Disable) == "Disable" &&
     Zhttp::EndpointSource{}.name(Zhttp::EndpointSource::AltSvc) == "AltSvc" &&
-    Zhttp::ResultCode{}.name(Zhttp::ResultCode::TimedOut) == "TimedOut" &&
-    Zhttp::ClientEventType{}.name(Zhttp::ClientEventType::Completed) ==
-      "Completed",
+    Zhttp::ResultCode{}.name(Zhttp::ResultCode::TimedOut) == "TimedOut",
     "configuration enum names mismatch");
   ZuCHECK(
     Zhttp::migrationMode("disabled") == Zhttp::Migration::Disabled &&
@@ -936,6 +977,7 @@ int main(int argc, char **argv)
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
   ZuTestCall(testBodyTx);
+  ZuTestCall(testResponseStatusLine);
   ZuTestCall(testFixedPatch);
   ZuTestCall(testH2DeferredState);
   ZuTestCall(testHeaderAndRetainedLimits);

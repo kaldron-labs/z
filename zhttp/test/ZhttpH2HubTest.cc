@@ -265,7 +265,9 @@ void runAdmissionErrors()
 }
 
 struct RequestBuilder :
+  public Zhttp::Builder,
   public Zhttp::H2::Request<RequestBuilder> {
+  using Headers = ZuTypeList<>;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::GET, [](auto &&emit) {
@@ -277,8 +279,10 @@ struct RequestBuilder :
 };
 
 struct StreamRequestBuilder :
+  public Zhttp::Builder,
   public Zhttp::H2::Request<StreamRequestBuilder,
     ZuTypeList<>, true> {
+  using Headers = ZuTypeList<>;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -292,8 +296,12 @@ struct StreamRequestBuilder :
 };
 
 struct ResponseBuilder :
+  public Zhttp::Builder,
   public Zhttp::H2::Response<
     ResponseBuilder, ZhttpHeaders("content-length"), true> {
+  using Headers = ZhttpHeaders("content-length");
+  using Base = Zhttp::H2::Response<ResponseBuilder, Headers, true>;
+  using Base::body;
   unsigned status() { return 200; }
   template <typename Key, typename L>
   void header(L &&l) {
@@ -303,7 +311,11 @@ struct ResponseBuilder :
 };
 
 struct StreamResponseBuilder :
+  public Zhttp::Builder,
   public Zhttp::H2::Response<StreamResponseBuilder> {
+  using Headers = ZuTypeList<>;
+  using Base = Zhttp::H2::Response<StreamResponseBuilder>;
+  using Base::body;
   unsigned status() { return 200; }
   bool streamResponse() { return true; }
 };
@@ -320,7 +332,9 @@ struct ClientStream {
 };
 
 struct ClientParser :
+  public Zhttp::Parser,
   public Zhttp::H2::Parser<ClientParser, false> {
+  using Headers = ZuTypeList<>;
   ClientParser() : consumer{this} { }
 
   void bind(ClientLink &link) { dispatch.init(link, consumer); }
@@ -507,7 +521,10 @@ struct ServerStream {
   ServerParser	*parser = nullptr;
 };
 
-struct ServerParser : public Zhttp::H2::Parser<ServerParser, true> {
+struct ServerParser :
+  public Zhttp::Parser,
+  public Zhttp::H2::Parser<ServerParser, true> {
+  using Headers = ZuTypeList<>;
   ServerParser() : consumer{this} { }
 
   void bind(ServerLink &link) { dispatch.init(link, consumer); }

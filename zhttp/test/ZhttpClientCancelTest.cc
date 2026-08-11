@@ -106,10 +106,10 @@ struct HoldingResolver {
 
 struct App;
 struct Pool;
-struct Request_;
+struct ReqBuilder_;
 struct ResParser;
 
-struct Request_ : public ZmObject {
+struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   using ContentLength = ZuStringT<"content-length">;
   using Headers = ZuTypeList<ContentLength, void>;
   Zhttp::BodyPolicy::T bodyPolicy() const {
@@ -149,14 +149,23 @@ struct Request_ : public ZmObject {
       });
   }
 
-  bool replayable() const;
-  bool reproducible() const;
   void connected(const Zhttp::ConnectedInfo &) { }
   void disconnected(bool) { }
   void connectFailed(bool) { }
-  void selected(const Zhttp::Endpoint &) { }
-  void redirected(const Zhttp::URL &);
-  void observed(const Zhttp::ClientEvent &);
+  void selected(
+    const Zhttp::Endpoint *, uint64_t, uint64_t,
+    unsigned, unsigned, Zhttp::Transport::T, Zhttp::Version::T);
+  void attemptFailed(
+    uint64_t, uint64_t, unsigned, unsigned, unsigned,
+    Zhttp::Transport::T, Zhttp::Version::T, bool, bool);
+  void redirected(
+    const Zhttp::URL &, uint64_t, uint64_t, uint64_t,
+    unsigned, uint16_t);
+  void retried(uint64_t, uint64_t, uint64_t, uint16_t);
+  void fallback(
+    uint64_t, uint64_t, uint64_t,
+    Zhttp::Transport::T, Zhttp::Version::T);
+  void cancelled(const Zhttp::Result &);
   void completed(const Zhttp::Result &);
 
   uint64_t key() const { return key_; }
@@ -174,12 +183,12 @@ struct Request_ : public ZmObject {
 
 int listenerAt(uint16_t);
 
-struct ResParser {
+struct ResParser : public Zhttp::Parser {
   using Headers = ZuTypeList<ZuStringT<"location">, void>;
 
   bool enable1xx() const { return false; }
 
-  void init(const Request_ &req) { ++req.inits; }
+  void init(const ReqBuilder_ &req) { ++req.inits; }
   void status(unsigned status__) { status_ = status__; }
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   template <typename Key>
@@ -208,24 +217,24 @@ struct MockBodyRx {
   uint64_t pending = 3;
 };
 
-ZuDerive(RequestQ, (ZmPQueue<Request_,
+ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
   ZmPQueueOverlap<false,
-    ZmPQueueNode<Request_,
-      ZmPQueueHeapID<"Zhttp.Test.Request">>>>));
-using Request = RequestQ::Node;
-using TxQ = ZmPQTx<Pool, RequestQ, ZmPQTxOrdered<false>>;
+    ZmPQueueNode<ReqBuilder_,
+      ZmPQueueHeapID<"Zhttp.Test.ReqBuilder">>>>));
+using ReqBuilder = ReqBuilderQ::Node;
+using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
 struct Pool : public Zhttp::Pool<App, TxQ, ResParser> {
   using Base = Zhttp::Pool<App, TxQ, ResParser>;
 
   Pool(App *);
 
-  RequestQ *txQueue() { return &m_requests; }
-  void archive_(Request *request);
-  ZmRef<Request> retrieve_(RequestQ::Key, RequestQ::Key) { return {}; }
+  ReqBuilderQ *txQueue() { return &m_requests; }
+  void archive_(ReqBuilder *request);
+  ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
 
 private:
-  RequestQ	m_requests;
+  ReqBuilderQ	m_requests;
 };
 
 static_assert(ZuIsSame<
@@ -239,13 +248,13 @@ struct App : public Zhttp::Client<App, Pool> {
     idleDone.post();
   }
 
-  void archived(Request *request) {
+  void archived(ReqBuilder *request) {
     archives.push(request->key());
     archiveDone.post();
   }
 
-  ZmRef<Request> request() {
-    ZmRef<Request> request = new Request;
+  ZmRef<ReqBuilder> request() {
+    ZmRef<ReqBuilder> request = new ReqBuilder;
     request->app = this;
     request->key_ = m_key++;
     return request;
@@ -256,24 +265,7 @@ struct App : public Zhttp::Client<App, Pool> {
     if (results.length() == expected) done.post();
   }
 
-  void requestObserved(const Zhttp::ClientEvent &event) {
-    events.push(event);
-    if (event.type == Zhttp::ClientEventType::AttemptFailed &&
-	retryPort && retryFD < 0) {
-      retryFD = listenerAt(retryPort);
-      serverReady.post();
-    }
-  }
-
-  unsigned eventCount(Zhttp::ClientEventType::T type) const {
-    unsigned count = 0;
-    for (unsigned i = 0; i < events.length(); ++i)
-      count += events[i].type == type;
-    return count;
-  }
-
   ZtArray<Zhttp::Result, ZtArrayHeapID<"Zhttp.Test.Results">> results;
-  ZtArray<Zhttp::ClientEvent, ZtArrayHeapID<"Zhttp.Test.Events">> events;
   ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.Test.Archives">> archives;
   ZmSemaphore	done;
   ZmSemaphore	archiveDone;
@@ -281,9 +273,26 @@ struct App : public Zhttp::Client<App, Pool> {
   ZmSemaphore	idleDone;
   unsigned	expected = 0;
   unsigned	idleCount = 0;
+  unsigned	selectedEvents = 0;
+  unsigned	attemptFailedEvents = 0;
+  unsigned	redirectedEvents = 0;
+  unsigned	retriedEvents = 0;
+  unsigned	fallbackEvents = 0;
+  unsigned	cancelledEvents = 0;
+  unsigned	completedEvents = 0;
+  uint64_t	firstSelectedRequest = 0;
+  uint64_t	firstSelectedAttempt = 0;
+  uint64_t	failedRequest = 0;
+  uint64_t	failedAttempt = 0;
+  uint64_t	redirectedRequest = 0;
+  uint64_t	redirectedAttempt = 0;
+  uint64_t	redirectedPreviousAttempt = 0;
+  uint64_t	retriedRequest = 0;
+  uint64_t	retriedAttempt = 0;
+  uint64_t	retriedPreviousAttempt = 0;
+  bool		failureTransient = false;
   uint16_t	retryPort = 0;
   int		retryFD = -1;
-  bool		replayable_ = true;
   Pool		*poolImpl = nullptr;
 
 private:
@@ -292,18 +301,61 @@ private:
 
 Pool::Pool(App *app) : Base{app} { app->poolImpl = this; }
 
-void Pool::archive_(Request *request) { client()->archived(request); }
+void Pool::archive_(ReqBuilder *request) { client()->archived(request); }
 
-bool Request_::replayable() const { return app->replayable_; }
-bool Request_::reproducible() const { return app->replayable_; }
-void Request_::redirected(const Zhttp::URL &url_) {
+void ReqBuilder_::selected(
+    const Zhttp::Endpoint *,
+    uint64_t request, uint64_t attempt,
+    unsigned, unsigned, Zhttp::Transport::T, Zhttp::Version::T) {
+  if (!app->selectedEvents) {
+    app->firstSelectedRequest = request;
+    app->firstSelectedAttempt = attempt;
+  }
+  ++app->selectedEvents;
+}
+void ReqBuilder_::attemptFailed(
+    uint64_t request, uint64_t attempt,
+    unsigned, unsigned, unsigned,
+    Zhttp::Transport::T, Zhttp::Version::T,
+    bool transient, bool) {
+  ++app->attemptFailedEvents;
+  app->failedRequest = request;
+  app->failedAttempt = attempt;
+  app->failureTransient = transient;
+  if (app->retryPort && app->retryFD < 0) {
+    app->retryFD = listenerAt(app->retryPort);
+    app->serverReady.post();
+  }
+}
+void ReqBuilder_::redirected(
+    const Zhttp::URL &url_,
+    uint64_t request, uint64_t attempt, uint64_t previousAttempt,
+    unsigned, uint16_t) {
   target.length(0);
   url_.writeTarget(target);
+  ++app->redirectedEvents;
+  app->redirectedRequest = request;
+  app->redirectedAttempt = attempt;
+  app->redirectedPreviousAttempt = previousAttempt;
 }
-void Request_::observed(const Zhttp::ClientEvent &event) {
-  app->requestObserved(event);
+void ReqBuilder_::retried(
+    uint64_t request, uint64_t attempt,
+    uint64_t previousAttempt, uint16_t) {
+  ++app->retriedEvents;
+  app->retriedRequest = request;
+  app->retriedAttempt = attempt;
+  app->retriedPreviousAttempt = previousAttempt;
 }
-void Request_::completed(const Zhttp::Result &result) {
+void ReqBuilder_::fallback(
+    uint64_t, uint64_t, uint64_t,
+    Zhttp::Transport::T, Zhttp::Version::T) {
+  ++app->fallbackEvents;
+}
+void ReqBuilder_::cancelled(const Zhttp::Result &) {
+  ++app->cancelledEvents;
+}
+void ReqBuilder_::completed(const Zhttp::Result &result) {
+  ++app->completedEvents;
   ++completions;
   resultCode = result.code;
   app->requestCompleted(result);
@@ -359,7 +411,7 @@ void attemptState()
   App app;
   Pool pool{&app};
   Pool::LiveReq attempt;
-  ZmRef<Request> request = new Request;
+  ZmRef<ReqBuilder> request = new ReqBuilder;
   attempt.request = request;
   attempt.events = Zhttp::AttemptEvent{}.SelectionObserved() |
     Zhttp::AttemptEvent{}.FailureObserved();
@@ -1051,8 +1103,8 @@ void cancel()
   ZuCHECK(app.results[0].code == Zhttp::ResultCode::Cancelled &&
       app.results[1].code == Zhttp::ResultCode::Cancelled,
     "cancellation result classification");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Cancelled) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 2,
+  ZuCHECK(app.cancelledEvents == 2 &&
+      app.completedEvents == 2,
     "typed cancellation and completion events");
 
   app.final();
@@ -1211,8 +1263,8 @@ void pipelineTxError()
   ZuCHECK(serverOK.load_(), "Tx failure closes the pipelined connection");
   ZuCHECK(app.results.length() == 2 && app.completed() == 2 &&
       app.failed() == 2 &&
-      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 2,
+      app.attemptFailedEvents == 2 &&
+      app.completedEvents == 2,
     "Tx failure completes each pipelined operation exactly once");
 
   app.final();
@@ -1256,7 +1308,7 @@ void pipelineCancellation(unsigned cancelAt)
   ZuCHECK(started,
     "start FIFO-cancellation pool for position ", cancelAt);
 
-  ZtArray<ZmRef<Request>,
+  ZtArray<ZmRef<ReqBuilder>,
     ZtArrayHeapID<"Zhttp.Test.CancelFIFO">> requests;
   if (started)
     for (unsigned i = 0; i < Requests; ++i) {
@@ -1285,8 +1337,8 @@ void pipelineCancellation(unsigned cancelAt)
       requests[i]->resultCode == (i == cancelAt ?
 	Zhttp::ResultCode::Cancelled : Zhttp::ResultCode::Failed);
   ZuCHECK(resultsOK &&
-      app.eventCount(Zhttp::ClientEventType::Cancelled) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == Requests,
+      app.cancelledEvents == 1 &&
+      app.completedEvents == Requests,
     "FIFO cancellation completes each position exactly once at ",
     cancelAt);
 
@@ -1601,7 +1653,7 @@ void stopQueuedLimited()
   limited &= rxBarrier.timedwait(Zm::now(10)) == 0;
   ZuCHECK(limited, "publish application limit before queueing");
 
-  ZmRef<Request> request = app.request();
+  ZmRef<ReqBuilder> request = app.request();
   if (started) {
     app.send(0, request);
     app.seal(0);
@@ -1664,7 +1716,7 @@ void stopActivePipeline()
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, port, config);
   ZuCHECK(started, "start active-stop pool");
-  ZtArray<ZmRef<Request>,
+  ZtArray<ZmRef<ReqBuilder>,
     ZtArrayHeapID<"Zhttp.Test.StopActive">> requests;
   if (started)
     for (unsigned i = 0; i < Requests; ++i) {
@@ -1725,7 +1777,7 @@ void stopReusableIdle()
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, port, config);
   ZuCHECK(started, "start reusable-idle pool");
-  ZmRef<Request> request = app.request();
+  ZmRef<ReqBuilder> request = app.request();
   if (started) {
     app.send(0, request);
     app.seal(0);
@@ -1844,9 +1896,7 @@ void timeout()
       app.results[0].code == Zhttp::ResultCode::TimedOut,
     "timeout result classification");
   app.stop();
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Completed) == 1 &&
-      app.events[app.events.length() - 1].type ==
-	Zhttp::ClientEventType::Completed,
+  ZuCHECK(app.completedEvents == 1,
     "typed timeout completion event");
   app.final();
   mx.stop();
@@ -1900,28 +1950,17 @@ void retry()
     "retry produces one successful terminal result");
   ZuCHECK(request->inits == 1,
     "connect retry initializes the response parser once");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Retried) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
+  ZuCHECK(app.selectedEvents == 2 &&
+      app.attemptFailedEvents == 1 &&
+      app.retriedEvents == 1 &&
+      app.completedEvents == 1,
     "typed retry transition sequence");
-  uint64_t requestID = 0;
-  uint64_t firstAttempt = 0;
-  uint64_t secondAttempt = 0;
-  for (unsigned i = 0; i < app.events.length(); ++i) {
-    const auto &event = app.events[i];
-    if (event.type == Zhttp::ClientEventType::AttemptFailed) {
-      requestID = event.request;
-      firstAttempt = event.attempt;
-      ZuCHECK(event.transient, "retry failure is classified transient");
-    } else if (event.type == Zhttp::ClientEventType::Retried) {
-      secondAttempt = event.attempt;
-      ZuCHECK(event.request == requestID &&
-	  event.previousAttempt == firstAttempt,
-	"retry retains request ID and links distinct attempts");
-    }
-  }
-  ZuCHECK(firstAttempt && secondAttempt && firstAttempt != secondAttempt,
+  ZuCHECK(app.failureTransient, "retry failure is classified transient");
+  ZuCHECK(app.retriedRequest == app.failedRequest &&
+      app.retriedPreviousAttempt == app.failedAttempt,
+    "retry retains request ID and links distinct attempts");
+  ZuCHECK(app.failedAttempt && app.retriedAttempt &&
+      app.failedAttempt != app.retriedAttempt,
     "retry attempt IDs are distinct");
 
   app.final();
@@ -1968,79 +2007,18 @@ void redirect()
     "redirect produces one successful terminal result");
   ZuCHECK(request->inits == 2,
     "redirect reinitializes the response parser per wire response");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::Redirected) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
+  ZuCHECK(app.selectedEvents == 2 &&
+      app.redirectedEvents == 1 &&
+      app.completedEvents == 1,
     "typed redirect transition sequence");
-  uint64_t firstAttempt = 0;
-  uint64_t secondAttempt = 0;
-  uint64_t requestID = 0;
-  for (unsigned i = 0; i < app.events.length(); ++i) {
-    const auto &event = app.events[i];
-    if (event.type == Zhttp::ClientEventType::Selected && !firstAttempt) {
-      requestID = event.request;
-      firstAttempt = event.attempt;
-    } else if (event.type == Zhttp::ClientEventType::Redirected) {
-      secondAttempt = event.attempt;
-      ZuCHECK(event.request == requestID &&
-	  event.previousAttempt == firstAttempt,
-	"redirect retains request ID and links distinct attempts");
-    }
-  }
-  ZuCHECK(firstAttempt && secondAttempt && firstAttempt != secondAttempt &&
-      app.results[0].request == requestID &&
-      app.results[0].attempt == secondAttempt,
+  ZuCHECK(app.redirectedRequest == app.firstSelectedRequest &&
+      app.redirectedPreviousAttempt == app.firstSelectedAttempt,
+    "redirect retains request ID and links distinct attempts");
+  ZuCHECK(app.firstSelectedAttempt && app.redirectedAttempt &&
+      app.firstSelectedAttempt != app.redirectedAttempt &&
+      app.results[0].request == app.firstSelectedRequest &&
+      app.results[0].attempt == app.redirectedAttempt,
     "redirect terminal identity uses the new attempt");
-
-  app.final();
-  mx.stop();
-}
-
-void unsafeRedirect()
-{
-  ZuTestScope(unsafeRedirect);
-
-  uint16_t port;
-  int fd = listener(port);
-  ZuCHECK(fd >= 0 && port, "create unsafe redirect listener");
-  if (fd < 0) return;
-  ZmAtomic<unsigned> serverOK = 0;
-  ServerSockets sockets{fd};
-  ZmThread server{[&sockets, &serverOK]() {
-    serverOK.store_(serveRedirect(sockets, false));
-  }};
-
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
-  App app;
-  app.expected = 1;
-  app.replayable_ = false;
-  auto config = Zhttp::Config()
-    .concurrency(1).maxRedirects(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
-    .tcp(true).tls(true).quic(false);
-  ZuCHECK(startApp(app, mx, port, config),
-    "initialize/start unsafe redirect agent");
-
-  auto request = app.request();
-  request->target = "/start";
-  app.send(0, request);
-  app.seal(0);
-  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
-    "unsafe redirect refusal completes");
-  app.stop();
-  sockets.stop();
-  server.join();
-
-  ZuCHECK(serverOK.load_(), "unsafe redirect server receives one request");
-  ZuCHECK(app.results.length() == 1 &&
-      app.results[0].code == Zhttp::ResultCode::ReplayUnsafe &&
-      app.results[0].redirects == 0,
-    "unsafe redirect is not replayed");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Redirected) == 0 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
-    "unsafe redirect has no new generation");
 
   app.final();
   mx.stop();
@@ -2087,9 +2065,9 @@ void crossOriginRedirect()
       app.results[0].code == Zhttp::ResultCode::InvalidRedirect &&
       app.results[0].redirects == 0,
     "cross-origin redirect is rejected without replay");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Redirected) == 0 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
+  ZuCHECK(app.selectedEvents == 1 &&
+      app.redirectedEvents == 0 &&
+      app.completedEvents == 1,
     "cross-origin redirect has no new attempt");
 
   app.final();
@@ -2129,55 +2107,11 @@ void retryLimit()
       app.results[0].code == Zhttp::ResultCode::Failed &&
       app.results[0].retries == 2,
     "retry budget produces one failed result");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 3 &&
-      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 3 &&
-      app.eventCount(Zhttp::ClientEventType::Retried) == 2 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
+  ZuCHECK(app.selectedEvents == 3 &&
+      app.attemptFailedEvents == 3 &&
+      app.retriedEvents == 2 &&
+      app.completedEvents == 1,
     "retry budget bounds attempts");
-
-  app.final();
-  mx.stop();
-}
-
-void unsafeRetry()
-{
-  ZuTestScope(unsafeRetry);
-
-  uint16_t port;
-  int reserve = listener(port);
-  ZuCHECK(reserve >= 0 && port, "reserve unsafe retry port");
-  if (reserve < 0) return;
-  ::close(reserve);
-
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
-  App app;
-  app.expected = 1;
-  app.replayable_ = false;
-  auto config = Zhttp::Config()
-    .concurrency(1).maxRetries(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
-    .tcp(true).tls(true).quic(false);
-  ZuCHECK(startApp(app, mx, port, config),
-    "initialize/start unsafe retry agent");
-
-  auto request = app.request();
-  request->target = "/";
-  app.send(0, request);
-  app.seal(0);
-  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
-    "unsafe retry refusal completes");
-  app.stop();
-
-  ZuCHECK(app.results.length() == 1 &&
-      app.results[0].code == Zhttp::ResultCode::Failed &&
-      app.results[0].retries == 0,
-    "unsafe request is not retried");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Selected) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::AttemptFailed) == 1 &&
-      app.eventCount(Zhttp::ClientEventType::Retried) == 0 &&
-      app.eventCount(Zhttp::ClientEventType::Completed) == 1,
-    "unsafe retry has no new attempt");
 
   app.final();
   mx.stop();
@@ -2618,7 +2552,7 @@ void poolRetryOverride()
       overridden && overridden->code == Zhttp::ResultCode::Failed &&
       overridden->retries == 2,
     "the retry override changes attempts only in its pool");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Retried) == 2,
+  ZuCHECK(app.retriedEvents == 2,
     "only the overridden pool emits retry transitions");
 
   app.final();
@@ -2699,7 +2633,7 @@ void poolRedirectOverride()
       !defaulted->redirects && overridden && overridden->ok() &&
       overridden->redirects == 1,
     "the redirect override changes behavior only in its pool");
-  ZuCHECK(app.eventCount(Zhttp::ClientEventType::Redirected) == 1,
+  ZuCHECK(app.redirectedEvents == 1,
     "only the overridden pool emits a redirect transition");
 
   app.final();
@@ -3003,10 +2937,8 @@ int main(int argc, char **argv)
   ZuTestCall(timeout);
   ZuTestCall(retry);
   ZuTestCall(redirect);
-  ZuTestCall(unsafeRedirect);
   ZuTestCall(crossOriginRedirect);
   ZuTestCall(retryLimit);
-  ZuTestCall(unsafeRetry);
   ZuTestCall(resolverLifecycle);
 #endif
   return 0;

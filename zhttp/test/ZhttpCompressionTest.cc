@@ -345,6 +345,23 @@ void testFieldSectionBuffer()
       section.length() == sizeof(expected) &&
       wire == ZuBSpan{expected},
     "stream printable was copied, replayed, or mis-finalized");
+
+  bytes.length(0);
+  Zhttp::Compression::FieldSectionBuffer boundedSection{bytes};
+  auto bounded = ZuBoxed(uint64_t(3));
+  ZuCHECK(boundedSection.putPrint(
+      0, 7, bounded, offset, length) == 0,
+    "bounded printable emission failed");
+  wire.length(0);
+  boundedSection.each(0, [&wire](ZuBSpan span) {
+    Zhttp::Compression::putBytes(wire, span);
+  });
+  const uint8_t boundedExpected[] = {0x01, '3'};
+  value = {bytes.data() + offset, length};
+  ZuCHECK(length == 1 && value == "3" &&
+      boundedSection.length() == sizeof(boundedExpected) &&
+      wire == ZuBSpan{boundedExpected},
+    "bounded printable used its capacity instead of rendered length");
 }
 
 int main(int argc, char **argv)
