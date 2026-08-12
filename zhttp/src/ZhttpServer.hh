@@ -20,8 +20,6 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 
-#include <zlib/ZuUnion.hh>
-
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZiIOBuf.hh>
@@ -1668,6 +1666,8 @@ public:
   using App = App_;
   using AppParser = typename App::Parser;
   using ReqHeaders = typename AppParser::Headers;
+  ZuAssert((ZuIs_<AppParser, Zhttp::Parser>{}),
+    "Zhttp::Server requires App::Parser to derive from Zhttp::Parser");
   using ResBuilderQ = typename App::ResBuilderQ;
   using ResBuilder = typename ResBuilderQ::Node;
   using ResBuilder_ = typename ResBuilderQ::T;
@@ -1737,26 +1737,27 @@ private:
     using Base = typename MessageTraits<Profile>::template RequestParser<
       Parser, ReqHeaders>;
     using State = typename Base::State;
-    using LinkRef = ZmRef<ProfileLink<Profile>>;
-    using ParserStorage = ZuUnion<void, AppParser>;
 
-    void begin(Server *server_, LinkRef link_, AppParser parser_) {
+    void bind(Server *server_, ProfileLink<Profile> *link_) {
       server = server_;
-      link = ZuMv(link_);
-      appParser.template p<1>(ZuMv(parser_));
+      link = link_;
+      Base::bodyMax(server->m_config.retainedBodyMax());
+    }
+
+    void begin() {
+      appParser.init(*server->m_app);
       active = true;
       notified = false;
     }
 
     void reset() {
       Base::reset();
-      link = nullptr;
       active = false;
       notified = false;
     }
 
-    void operation(Method::T method, const Target &target) {
-      parser_().operation(method, target);
+    bool operation(Method::T method, const Target &target) {
+      return parser_().operation(method, target);
     }
     template <typename Key>
     void header(Zhttp::FieldSection::T section, ZuBSpan value) {
@@ -1785,28 +1786,21 @@ private:
     void notify(bool ok) {
       if (!active || notified) return;
       notified = true;
-      parser_().complete(ZuMv(link), ok);
-      clearParser_();
+      parser_().complete(link, ok);
+      parser_().reset();
     }
     void finish() {
-      clearParser_();
-      link = nullptr;
       active = false;
       notified = false;
     }
 
   private:
-    AppParser &parser_() { return appParser.template p<1>(); }
-    void clearParser_() {
-      if (appParser.type() != 1) return;
-      appParser.~ParserStorage();
-      new (&appParser) ParserStorage{};
-    }
+    AppParser &parser_() { return appParser; }
 
   public:
     Server		*server = nullptr;
-    LinkRef		link;
-    ParserStorage	appParser;
+    ProfileLink<Profile>	*link = nullptr;
+    AppParser	appParser;
     bool	active = false;
     bool	notified = false;
   };
@@ -2282,16 +2276,12 @@ private:
     int process(Link_ &link, Rx &rx) {
       if (terminal) return 0;
       auto server = link.app()->server;
-      if (!parser.server) {
-	parser.server = server;
-	parser.bodyMax(server->m_config.retainedBodyMax());
-      }
+      if (!parser.link) parser.bind(server, &link);
       if (!parser.active) {
 	if constexpr (Message::ID == Version::H1)
 	  if (!rx.length()) return 0;
 	if (!server->admitRequest_()) return -1;
-	parser.begin(
-	  server, ZmMkRef(&link), server->m_app->parser());
+	parser.begin();
       }
       return Base::process(link, rx);
     }

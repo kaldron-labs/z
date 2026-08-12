@@ -626,6 +626,15 @@ public:
   }
 
 private:
+  bool operation_(Method::T method, const Target &target) {
+    if constexpr (Request)
+      if (ZuUnlikely(!impl()->operation(method, target)))
+	return fail_(RequestCancelled,
+	  RequestErrorCode::OperationRejected,
+	  RequestErrorScope::Request, true);
+    return true;
+  }
+
   void latchError_(
     RequestErrorCode::T code = RequestErrorCode::Malformed,
     RequestErrorScope::T scope = RequestErrorScope::Stream,
@@ -666,16 +675,18 @@ private:
     FieldState &fields, ZuBSpan name, ZuBSpan value) {
     if (name && name[0] != ':' && !fields.start(
 	[this](Method::T method, const Target &target) {
-	  impl()->operation(method, target);
+	  (void)operation_(method, target);
 	},
 	[this](unsigned status) { status_(status); },
 	[this, &fields](ZuBSpan key, ZuBSpan value) {
-	  header_(fields.section(), key, value);
+	  if (m_state != State::Error)
+	    header_(fields.section(), key, value);
 	}))
       return false;
     return fields.field(name, value,
       [this, &fields](ZuBSpan key, ZuBSpan value) {
-	header_(fields.section(), key, value);
+	if (m_state != State::Error)
+	  header_(fields.section(), key, value);
       }) && m_state != State::Error;
   }
 
@@ -767,12 +778,14 @@ private:
     }
     auto section = fields.finish(
       [this](Method::T method, const Target &target) {
-	impl()->operation(method, target);
+	(void)operation_(method, target);
       },
       [this](unsigned status) { status_(status); },
       [this, &fields](ZuBSpan key, ZuBSpan value) {
-	header_(fields.section(), key, value);
+	if (m_state != State::Error)
+	  header_(fields.section(), key, value);
       });
+    if (m_state == State::Error) return Zhttp::FieldSection::Invalid;
     if (section == Zhttp::FieldSection::Final) {
       m_bodyAllowed = fields.bodyAllowed();
       impl()->bodyInfo(

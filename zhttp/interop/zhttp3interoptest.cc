@@ -247,10 +247,11 @@ struct RequestParser :
     return qpackDecoderWrite_ && qpackDecoderWrite_(qpackDecoder_, span);
   }
   uint64_t streamID() const { return streamID_; }
-  void operation(
+  bool operation(
     Zhttp::Method::T method, const Zhttp::Target &target) {
     seen.method = method;
     seen.path = target.pathQuery;
+    return true;
   }
   template <typename Rx>
   bool body(Rx &rx) {

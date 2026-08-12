@@ -93,11 +93,23 @@ constexpr unsigned NullSlot = ZuCmp<unsigned>::null();
 // to the selected request or response role and version. Every lambda call is
 // synchronous. Printable Builder values retain their actual type. Received
 // spans and body Rx streams are borrowed only for the duration of the callback.
-// Parser lifecycle is facade-specific rather than part of this common callback
-// contract: Server obtains a request Parser from App::parser() for each request;
-// Client calls ResParser::init() before each response message.
+//
+// An application Parser is default-constructed, with no constructor arguments,
+// and retained for the lifetime of its Session (or the equivalent H1
+// operation).  It is serially reused for messages and is never reconstructed
+// between them.  Before each message the facade calls init(context), where the
+// context is the client request Builder or server application.  Every message
+// completion calls complete(...) followed immediately by reset().  reset()
+// must restore exactly the same application Parser state as immediately after
+// default construction.  The default init() and reset() are suitable for
+// stateless Parsers.
 struct Parser { // base class with defaulted types and member functions
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
+
+  Parser() = default;
+
+  template <typename Context>
+  void init(Context &) { }
 
   // Informational response field sections are suppressed by default. Return
   // true to receive their status() and header() callbacks.
@@ -105,7 +117,9 @@ struct Parser { // base class with defaulted types and member functions
 
   // First protocol callback for a request, called exactly once after the
   // start line or pseudo-headers are validated and before any header().
-  void operation(Method::T, const Target &) { }	// requests only
+  // Return true to accept the operation or false to reject the message.
+  // Rejection suppresses all later callbacks except complete(false).
+  bool operation(Method::T, const Target &) { return true; }	// requests only
 
   // First protocol callback for each response field section, called after
   // its :status or status line is validated and before that section's
@@ -130,11 +144,15 @@ struct Parser { // base class with defaulted types and member functions
   // callbacks except for exactly one eventual complete(false).
   template <typename Rx> bool body(Rx &) { return false; }
 
-  // Last callback for the message. A validation or framing failure may
-  // short-circuit the successful ordering above and report false.  LinkRef is
-  // an owning concrete-link handle and may be moved out for asynchronous work.
-  template <typename LinkRef>
-  void complete(LinkRef &&, bool ok) { }
+  // Last callback for the message, called exactly once.  This includes
+  // rejection by operation() or body().  A validation or framing failure may
+  // short-circuit the successful ordering above and report false.  Link is a
+  // borrowed concrete-link pointer valid for the callback.  An application
+  // that retains it for asynchronous work must explicitly acquire ownership.
+  template <typename Link>
+  void complete(Link *, bool ok) { }
+
+  void reset() { }
 };
 
 struct Builder {

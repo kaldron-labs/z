@@ -45,6 +45,7 @@ struct ResponseParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders> {
   using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders>;
+  using Base::reset;
   using Headers = ResponseHeaders;
 
   ResponseParser() : Base{1024} { }
@@ -145,15 +146,17 @@ struct RequestParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestParser, true, RequestHeaders> {
   using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders>;
+  using Base::reset;
   using Headers = RequestHeaders;
 
   RequestParser() : Base{1024} { }
 
-  void operation(
+  bool operation(
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path.length(0);
     path << target.pathQuery;
+    return true;
   }
 
   void bodyInfo(Zhttp::BodyType::T type_, uint64_t length_) {
@@ -200,6 +203,9 @@ struct LimitedRequestParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<
     LimitedRequestParser, true, ZuTypeList<>, 16, 32> {
+  using Base = Zhttp::H1::Parser<
+    LimitedRequestParser, true, ZuTypeList<>, 16, 32>;
+  using Base::reset;
   using Headers = ZuTypeList<>;
   void complete(Zhttp::H1::ParserState::T) { ++completeCalls; }
   unsigned completeCalls = 0;
@@ -210,12 +216,14 @@ struct RejectingParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RejectingParser<Request>, Request> {
   using Base = Zhttp::H1::Parser<RejectingParser<Request>, Request>;
+  using Base::reset;
   using Headers = ZuTypeList<>;
 
   RejectingParser() : Base{1024} { }
 
-  void operation(Zhttp::Method::T, const Zhttp::Target &) {
+  bool operation(Zhttp::Method::T, const Zhttp::Target &) {
     ++operations;
+    return !rejectOperation;
   }
   void status(unsigned) { ++statuses; }
   template <typename Rx>
@@ -241,6 +249,7 @@ struct RejectingParser :
   unsigned trailers = 0;
   unsigned completions = 0;
   bool consume = false;
+  bool rejectOperation = false;
   Zhttp::H1::ParserState::T completeState =
     Zhttp::H1::ParserState::Initial;
 };
@@ -248,6 +257,23 @@ struct RejectingParser :
 void testBodyRejection()
 {
   ZuTestScope(testBodyRejection);
+
+  {
+    RejectingParser<true> parser;
+    parser.rejectOperation = true;
+    RxStream stream;
+    stream.push(mkBuf(
+      "POST / HTTP/1.1\r\ncontent-length: 3\r\n\r\nabc"));
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::OperationRejected &&
+	parser.operations == 1 && !parser.bodies &&
+	parser.completions == 1 &&
+	parser.completeState == Zhttp::H1::ParserState::Error,
+      "H1 operation rejection did not complete exactly once");
+    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	parser.operations == 1 && parser.completions == 1,
+      "H1 operation rejection produced duplicate callbacks");
+  }
 
   {
     Zhttp::Parser parser;
@@ -303,6 +329,9 @@ void testBodyRejection()
 
   ZuCHECK(Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::BodyRejected) == 400,
     "body rejection status mapping mismatch");
+  ZuCHECK(
+    Zhttp::requestErrorStatus(Zhttp::RequestErrorCode::OperationRejected) == 400,
+    "operation rejection status mapping mismatch");
 }
 
 void testSelectedHeaderValueSplitAcrossRxBuffers()

@@ -123,11 +123,12 @@ struct ClientParser :
     ClientParser<Profile>, TestHeaders> {
   using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser, TestHeaders>;
+  using Base::reset;
   using State = typename Base::State;
   using Headers = TestHeaders;
 
   bool enable1xx() const { return true; }
-  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
+  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
   void status(unsigned value) {
     status_ = value;
     ++statusCalls;
@@ -246,13 +247,15 @@ struct ServerSession {
     public Message::template RequestParser<Parser, ZuTypeList<>> {
     using Base =
       typename Message::template RequestParser<Parser, ZuTypeList<>>;
+    using Base::reset;
     using State = typename Base::State;
     using Headers = ZuTypeList<>;
 
-    void operation(
+    bool operation(
       Zhttp::Method::T method_, const Zhttp::Target &target) {
       method = method_;
       path = target.pathQuery;
+      return true;
     }
     void status(unsigned) { }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }

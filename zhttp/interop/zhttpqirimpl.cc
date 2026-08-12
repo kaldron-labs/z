@@ -544,6 +544,7 @@ struct H3ResponseParser :
   public Zhttp::Parser,
   public Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders> {
   using Base = Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders>;
+  using Base::reset;
   using State = typename Base::State;
   using Headers = H3RespHeaders;
 

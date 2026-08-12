@@ -316,10 +316,9 @@ struct HasHttp10<T, decltype(ZuDeclVal<const T &>().http10(), void())> :
 struct Parser : public Zhttp::Parser {
   using Headers = ReqHeaders;
 
-  Parser() = default;
-  Parser(App *app_) : app{app_} { }
+  void init(App &app_) { app = &app_; }
 
-  void operation(
+  bool operation(
       Zhttp::Method::T method, const Zhttp::Target &target) {
     request.method = method;
     request.target = target.raw;
@@ -333,6 +332,7 @@ struct Parser : public Zhttp::Parser {
       target.pathQuery.data() + q + 1,
       target.pathQuery.length() - unsigned(q + 1)};
     request.hasQuery = q >= 0;
+    return true;
   }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
     template <typename Key>
@@ -360,8 +360,13 @@ struct Parser : public Zhttp::Parser {
 	});
     }
 
-  template <typename LinkRef>
-  void complete(LinkRef &&link, bool ok);
+  template <typename Link>
+  void complete(Link *link, bool ok);
+
+  void reset() {
+    app = nullptr;
+    request = {};
+  }
 
   App		*app = nullptr;
   RequestData	request;
@@ -381,8 +386,6 @@ struct App {
     ZmListNode<Work_, ZmListHeapID<"zhttpd.Work">>>;
 
   App(State *state_) : state{state_} { }
-
-  Parser parser() { return {this}; }
 
   void enqueue(WorkFn fn) {
     ++m_pending;
@@ -500,8 +503,8 @@ private:
   bool		m_working = false;
 };
 
-template <typename LinkRef>
-void Parser::complete(LinkRef &&link, bool ok)
+template <typename Link>
+void Parser::complete(Link *link, bool ok)
 {
   if (!ok) {
     ZiLOG(Error, "zhttpd", ([target = ZuMv(request.target)](auto &s) {
@@ -510,13 +513,12 @@ void Parser::complete(LinkRef &&link, bool ok)
     }));
     return;
   }
-  using Link = ZuDecay<decltype(*link)>;
   request.remoteIP = link->remoteIP();
   request.secure = Link::TLS;
   using ServerParser = ZuDecay<decltype(link->session().parser)>;
   if constexpr (HasHttp10<ServerParser>{})
     request.http10 = link->session().parser.http10();
-  auto link_ = ZuMv(link);
+  auto link_ = ZmMkRef(link);
   auto request_ = ZuMv(request);
   app->enqueue(App::WorkFn{
     [app = app, link = ZuMv(link_), request = ZuMv(request_)]() mutable {

@@ -453,6 +453,7 @@ using RespFacade = Zhttp::H1::Response<
   TxBuilder, TxHeaders, true, true>;
 ZuAssert(HasBegin<ReqFacade>{});
 ZuAssert(HasBegin<RespFacade>{});
+ZuAssert(HasReset<Zhttp::Parser>{});
 ZuAssert(!HasReset<Zhttp::Builder>{});
 ZuAssert(!HasReset<ReqFacade>{});
 ZuAssert(!HasReset<RespFacade>{});
