@@ -76,7 +76,13 @@
 // a[]=1|2|3	true,     false,  '|'
 // a=[1,2,3]	false,    true,   ','
 //
-// finally, both arrays and nested objects can also be embedded as JSON
+// both arrays and nested objects can also be embedded as JSON
+//
+// IncrementalURI permits loading from a path query then enriching
+// the same object from a x-www-form-urlencoded body without overwriting
+// already-loaded data
+//
+// finally, Zrest permits appending a signature to a query or body
 //
 // recap: the top-level is always an object whose fields are ZfStruct-defined;
 // individual fields are one of:
@@ -134,6 +140,7 @@
 #include <zlib/ZfJSON.hh>
 
 ZuStructFacet(URI); // canonical URI facet, others can be defined
+ZuStructFacet(IncrementalURI); // variant with Incremental = true
 
 // --- configuration (per-mapping)
 
@@ -154,7 +161,8 @@ struct ZfURI_DefltConfig {
     ArrayFmt = ZfURI::Array,
     Annotated = 0,
     Wrapped = 0,
-    Delimiter = ','
+    Delimiter = ',',
+    Incremental = false
   };
 };
 
@@ -178,6 +186,12 @@ struct ZfURI_Wrapped : public NTP { enum { Wrapped = _ }; };
 template <char _, typename NTP = ZfURI_DefltConfig>
 struct ZfURI_Delimiter : public NTP { enum { Delimiter = _ }; };
 
+// ZfURI_Incremental<...> - incrementally load fields
+template <bool _, typename NTP = ZfURI_DefltConfig>
+struct ZfURI_Incremental_ : public NTP { enum { Incremental = _ }; };
+template <typename NTP = ZfURI_DefltConfig>
+using ZfURI_Incremental = ZfURI_Incremental_<true, NTP>;
+
 ZfURI_DefltConfig ZfURI_Config(...); // default
 
 namespace ZfURI {
@@ -192,8 +206,12 @@ using Config = decltype(ZfURI_Config(ZuDeclVal<Facet *>()));
 // ZfURIConfig(Facet, Config)
 // - configure URI for facet
 // - must be used in top-level namespace
+// - to further modify a Base facet pass tail NTP as:
+//   ZfURI::Config<ZuFacet::Base>
 #define ZfURIConfig(Facet, Config) \
   ZuPP_Strip(Config) ZfURI_Config(ZuFacet::Facet *);
+
+ZfURIConfig(IncrementalURI, ZfURI::Incremental<true>);
 
 namespace ZfURI {
 
@@ -806,6 +824,8 @@ struct AsObject {
     using UpdFields = ZuTypeGrep<ZfFieldFilter::Upd, AllFields>;
     using DelFields = ZuTypeGrep<ZfFieldFilter::Del, AllFields>;
 
+    enum { Incremental = Config<Facet>::Incremental };
+
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
       using Fields = ZuTypeGrep<Filter, AllFields>;
@@ -846,7 +866,8 @@ struct AsObject {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	  loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	    Field::set(o, ZuFwd<V>(v));
+	    if (!Incremental || !deflt)
+	      Field::set(o, ZuFwd<V>(v));
 	  });
 	});
 	return o;
@@ -858,7 +879,8 @@ struct AsObject {
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  Field::set(o, ZuFwd<V>(v));
+	  if (!Incremental || !deflt)
+	    Field::set(o, ZuFwd<V>(v));
 	});
       });
     }
@@ -866,7 +888,8 @@ struct AsObject {
     void load(O &o) const {
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
 	this->loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  Field::set(o, ZuFwd<V>(v));
+	  if (!Incremental || !deflt)
+	    Field::set(o, ZuFwd<V>(v));
 	});
       });
     }
@@ -874,7 +897,7 @@ struct AsObject {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	using Props = typename Field::Props;
 	this->loadField<ZfFieldFilter::Upd, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
+	  if (!Incremental || ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
 	    Field::set(o, ZuFwd<V>(v));
 	});
       });
