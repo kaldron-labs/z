@@ -1646,15 +1646,15 @@ private:
   bool		m_quicEnabled = false;
 };
 
-
-// Application response Builder base.  The application ResBuilder_ derives from
-// ResBuilder and ZmObject.  The final application ResBuilder is
+// Application response Builder base. The application ResBuilder_ derives from
+// ResBuilder and ZmObject. The final application ResBuilder is
 // ResBuilderQ::Node, an intrusive ZmList::Node which publicly derives the
 // application data type.
 // Each node represents exactly one response and is never reset or repurposed.
 struct ResBuilder : public Builder {
   // Original request method, used to suppress forbidden response bodies.
   Method::T method() const { return Method::GET; }
+
   // Disconnect after successful transmission when true.
   bool close() const { return false; }
 };
