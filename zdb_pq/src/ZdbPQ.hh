@@ -21,6 +21,7 @@
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuTime.hh>
 #include <zlib/ZuDateTime.hh>
+#include <zlib/ZuIntrin.hh>
 
 #include <zlib/ZmLHash.hh>
 #include <zlib/ZmScratch.hh>
@@ -752,10 +753,11 @@ varBufSize(const reflection::Field *field, const Zfb::Table *fbo) {
 
 class OIDs {
   using OIDs_ = ZuArray<unsigned, Value::N - 1>;
+  enum { Bits = ZuIntrin::log2(Value::N) };
   ZuDerive(Types,
-    (ZmLHashKV<unsigned, int8_t, ZmLHashStatic<6, ZmLHashLocal<>>>));
+    (ZmLHashKV<unsigned, int8_t, ZmLHashStatic<Bits, ZmLHashLocal<>>>));
   ZuDerive(Lookup,
-    (ZmLHashKV<ZuCSpan, int8_t, ZmLHashStatic<6, ZmLHashLocal<>>>));
+    (ZmLHashKV<ZuCSpan, int8_t, ZmLHashStatic<Bits, ZmLHashLocal<>>>));
 
 public:
   OIDs();
