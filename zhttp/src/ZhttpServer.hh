@@ -1813,7 +1813,6 @@ private:
 	Server *server_, Builder &builder_,
 	bool rejectContentLength_ = false) :
       server{server_}, builder{&builder_},
-      h1{MessageTraits<Profile>::ID == Version::H1},
       rejectContentLength{rejectContentLength_} { }
 
     unsigned status() const { return builder->status(); }
@@ -1826,13 +1825,7 @@ private:
     }
     template <typename L>
     void header(L &&l) {
-      builder->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
-	ZtBArray<ZtArrayHeapID<"Zhttp.RuntimeHeader.Name">> name;
-	name << k;
-	if (!validRuntimeHeader<Headers>(name, h1)) {
-	  headersOK = false;
-	  return;
-	}
+      builder->header([&l]<typename K, typename V>(K &&k, V &&v) {
 	l(ZuFwd<K>(k), ZuFwd<V>(v));
       });
       if (server->m_altSvc) l("alt-svc", server->m_altSvc);
@@ -1848,7 +1841,6 @@ private:
     void headerBase(uint8_t *base) { spans.resolve(base); }
     void patch() { spans.patch(*builder); }
     uint64_t contentLength() const { return produced; }
-    bool headersValid() const { return headersOK; }
     Builder &appBuilder() { return *builder; }
     template <typename Emit>
     void emitBody(Emit &&emit) {
@@ -1860,8 +1852,6 @@ private:
     Builder		*builder = nullptr;
     HeaderSpans<Headers> spans;
     uint64_t		produced = 0;
-    bool		h1 = false;
-    bool		headersOK = true;
     bool		rejectContentLength = false;
   };
 
@@ -1924,7 +1914,6 @@ private:
 	server, builder};
       auto tx = link_->transmit(empty);
       empty.begin(tx);
-      if (!empty.headersValid()) return false;
       empty.finish(tx);
       link_->finish();
       return true;
@@ -1946,7 +1935,6 @@ private:
 	this, builder, contentLengthForbidden_(method, status)};
       auto tx = link.transmit(response);
       response.begin(tx);
-      if (!response.headersValid()) return false;
       response.finish(tx);
       link.finish();
       return true;
@@ -2001,7 +1989,6 @@ private:
     bool start(ZmRef<Self> self) {
       auto tx = link->transmit(response);
       response.begin(tx);
-      if (!response.headersValid()) return false;
       task = server->addBodyTask_(BodyCancelFn{
 	[self_ = self]() mutable { self_->cancel_(); }});
       link->responseCancel_(BodyCancelFn{

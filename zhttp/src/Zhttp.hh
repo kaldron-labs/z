@@ -18,7 +18,6 @@
 #include <string.h>
 
 #include <zlib/ZuCmp.hh>
-#include <zlib/ZuICmp.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
@@ -435,19 +434,6 @@ struct HasBuilderBodyHdrs<U, L, decltype(
 template <typename Write, typename Stream>
 bool invokeBodyWriter(Write &&write, Stream &stream) {
   return ZuFwd<Write>(write)(stream);
-}
-
-template <typename Headers>
-bool validRuntimeHeader(ZuCSpan name, bool h1) {
-  if (ZuICmp<ZuCSpan>::equals(name, "content-length") ||
-      (h1 && ZuICmp<ZuCSpan>::equals(name, "transfer-encoding")))
-    return false;
-  using Keys = ZuTypeSlice<2, 0, Headers>;
-  bool valid = true;
-  ZuUnroll::all<Keys>([&valid, name]<typename Key>() {
-    if (ZuICmp<ZuCSpan>::equals(name, Key{}())) valid = false;
-  });
-  return valid;
 }
 
 struct HeaderSeed {
@@ -952,7 +938,7 @@ private:
       builder.begin(tx);
     else if (!builder.begin(tx))
       return false;
-    return builder.headersValid();
+    return true;
   }
 
   template <typename Builder, typename Tx>

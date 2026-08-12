@@ -585,14 +585,6 @@ void testH2DeferredState()
 void testHeaderAndRetainedLimits()
 {
   ZuTestScope(testHeaderAndRetainedLimits);
-  ZuCHECK(!Zhttp::validRuntimeHeader<FixedHeaders>(
-      "CONTENT-LENGTH", false) &&
-      !Zhttp::validRuntimeHeader<FixedHeaders>(
-      "Content-Length", true) &&
-      !Zhttp::validRuntimeHeader<ZuTypeList<>>(
-      "Transfer-Encoding", true),
-    "runtime framing-header validation is not case-insensitive");
-
   TxLink link;
   FixedTxBuilder builder;
   auto native = link.transmit(builder);
