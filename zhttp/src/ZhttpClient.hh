@@ -517,14 +517,7 @@ private:
     }
     template <typename L>
     void header(L &&l) {
-      app->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
-	ZtBArray<ZtArrayHeapID<"Zhttp.RuntimeHeader.Name">> name;
-	name << k;
-	if (!validRuntimeHeader<ReqHeaders>(
-	      name, Message::ID == Version::H1)) {
-	  headersOK = false;
-	  return;
-	}
+      app->header([&l]<typename K, typename V>(K &&k, V &&v) {
 	l(ZuFwd<K>(k), ZuFwd<V>(v));
       });
     }
@@ -540,7 +533,6 @@ private:
     void headerBase(uint8_t *base) { spans.resolve(base); }
     void patch() { spans.patch(*app); }
     uint64_t contentLength() const { return produced; }
-    bool headersValid() const { return headersOK; }
     Request &appBuilder() { return *app; }
     template <typename Emit>
     void emitBody(Emit &&emit) {
@@ -554,7 +546,6 @@ private:
     ZuBSpan		authority;
     uint64_t		produced = 0;
     Method::T		method = Method::GET;
-    bool		headersOK = true;
     bool		rejectContentLength = false;
     bool		operationCached = false;
   };
@@ -776,7 +767,7 @@ private:
       app, m_app->authority(), true,
       m_operationOK, m_requestMethod, m_target};
     auto tx = m_link->transmit(builder);
-    if (!builder.begin(tx) || !builder.headersValid())
+    if (!builder.begin(tx))
       return failTx_();
     m_commit.headers = true;
     builder.finish(tx);
