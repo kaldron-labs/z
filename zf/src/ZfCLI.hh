@@ -2004,8 +2004,7 @@ constexpr unsigned nOptions_() {
 }
 template <typename O, typename Facet>
 constexpr unsigned nOptions() {
-  unsigned n = nOptions_<O, Facet>();
-  return n <= 1 ? 1 : ((sizeof(n)<<3) - ZuIntrin::clz(n - 1));
+  return ZuIntrin::log2(nOptions_<O, Facet>());
 }
 template <typename O, typename Facet, typename Hash>
 void initOptions(Hash &hash, ZuCSpan prefix = {}) {
