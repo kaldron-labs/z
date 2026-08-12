@@ -261,6 +261,13 @@ ZuInline constexpr bool isnan(T v) { return Zu_isnan(v); }
 template <typename T, ZuSame<long double, T, int> = 0>
 ZuInline constexpr bool isnan(T v) { return Zu_isnan(v); }
 
+// compile-time binary log (rounded up)
+// - used for statically sizing hash tables
+template <typename T>
+constexpr unsigned log2(T v) {
+  return v <= 1 ? 1 : ((sizeof(v)<<3) - ZuIntrin::clz(v - 1));
+}
+
 } // ZuIntrin
 
 #endif /* ZuIntrin_HH */
