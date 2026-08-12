@@ -8,6 +8,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuUTF.hh>
+#include <zlib/ZuIntrin.hh>
 
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmLock.hh>
@@ -120,9 +121,11 @@ static constexpr struct {
 };
 class ZePlatform_WSAErrors {
 public:
+  enum { N = sizeof(ZePlatform_WSAErrors_) / sizeof(ZePlatform_WSAErrors_[0]) };
+  enum { Bits = ZuIntrin::log2(N) };
   ZuDerive(Hash,
     (ZmLHashKV<DWORD, const char *,
-      ZmLHashStatic<6,
+      ZmLHashStatic<Bits,
 	ZmLHashLock<ZmNoLock>>>));
 
   ZePlatform_WSAErrors() {
