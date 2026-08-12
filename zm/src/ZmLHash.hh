@@ -26,6 +26,7 @@
 #include <zlib/ZuID.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuArrayFn.hh>
+#include <zlib/ZuAssert.hh>
 
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmAtomic.hh>
@@ -101,6 +102,7 @@ struct ZmLHashID : public NTP {
 template <unsigned Static_, typename NTP = ZmLHash_Defaults>
 struct ZmLHashStatic : public NTP {
   enum { Static = Static_ };
+  ZuAssert(Static <= 13); // do not permit static hash tables >8192 wide
 };
 
 // ZmLHashLocal<> - local hash table
