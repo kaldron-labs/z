@@ -11,14 +11,11 @@
 
 #include <zlib/ZrestLib.hh>
 
-#include <zlib/ZuDerive.hh>
+#include <zlib/ZtEnum.hh>
 
-#include <zlib/ZiRx.hh>
-
-#include <zlib/Ztls.hh>
-
-#include <zlib/ZfCf.hh>
-#include <zlib/ZvEngine.hh>
+#include <zlib/ZfStruct.hh>
+#include <zlib/ZfURI.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/Zhttp.hh>
 
@@ -47,15 +44,7 @@ using Headers = typename Headers_<Impl>::T;
 // signing buffer
 ZuDerive(SignBuf, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf">>));
 
-#define Zrest_Response_(Status, Response) \
-  ZuUnsigned<Status>, Response
-#define Zrest_Response(SR) \
-  ZuPP_Defer(Zrest_Response_)(ZuPP_Strip(SR))
-#define ZrestResponses(...) \
-  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(Zrest_Response,  __VA_ARGS__))>
-
 // default request compile-time metadata
-// - implementation must define Responses
 struct Request {
   enum { Method = Zhttp::Method::Get };
   using Path = ZtStringT<"/">;
@@ -71,8 +60,6 @@ struct Request {
   using Query_URI_Facet = ZuFacet::URI;
   using Body_URI_Facet = ZuFacet::IncrementalURI;
   using Body_JSON_Facet = ZuFacet::JSON;
-
-  // using Responses = ZrestResponses(...);
 };
 
 // default response compile-time metadata
@@ -85,6 +72,12 @@ struct Response {
 };
 
 // request parser
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public ReqParser<Impl, Object> {
+   using ResponseMap = ZrestResponseMap(...);
+};
+#endif
 template <typename Impl, typename Object>
 struct ReqParser : public Request, public Zhttp::Parser {
   auto impl() { return static_cast<Impl *>(this); }
@@ -95,14 +88,15 @@ struct ReqParser : public Request, public Zhttp::Parser {
   ZmRef<Object> 	object;
   unsigned		bodyLength = 0;
 
+  void init() { object = new Object(); }
+
   const auto &queryObject(Object *object) { return *object; }
 
   const auto &bodyObject(Object *object) { return *object; }
 
   bool operation(Zhttp::Method::T, const Zhttp::Target &target) {
-    if constexpr (Impl::Query == QueryPolicy::None) {
-      return true;
-    } else if constexpr (Impl::Query == QueryPolicy::URI) {
+    impl()->init();
+    if constexpr (Impl::Query == QueryPolicy::URI) {
       auto span = target.pathQuery;
       span.offset(Impl::Path{}().length());
       ZfJSON::handler<Object, typename Impl::Query_URI_Facet> handler(span);
@@ -152,6 +146,12 @@ struct ReqParser : public Request, public Zhttp::Parser {
 };
 
 // request builder
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public ReqBuilder<Impl, Object> {
+  using Responses = ZuTypeList<...>;
+};
+#endif
 template <typename Impl, typename Object>
 struct ReqBuilder : public Request, public Zhttp::Builder {
   auto impl() { return static_cast<Impl *>(this); }
@@ -160,6 +160,8 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
   using Headers = Zrest::Headers<Impl>;
 
   ZmRef<const Object>	object;
+
+  void init(const Object *object_) { object = object_; }
 
   const auto &queryObject(const Object *object) { return *object; }
   template <typename S>
@@ -171,7 +173,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 
   template <typename Emit> void operation(Emit &&emit) {
     if constexpr (Impl::Query == QueryPolicy::None) {
-      emit(Impl::Method, [](auto &s) { s << Impl::Path{}(); }});
+      emit(Impl::Method, [](auto &s) { s << Impl::Path{}(); });
     } else if constexpr (Impl::Query == QueryPolicy::URI && !Impl::SignQuery) {
       emit(Impl::Method, [this](auto &s) {
 	s << Impl::Path{}();
@@ -217,6 +219,14 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       emit([this](auto &s) { s << impl()->bodyObject(); });
     }
   }
+
+  template <typename Link, typename Response>
+  void process(Link *link, const Response &response) {
+    object->process(link, response.object.ptr());
+  }
+
+  template <typename Link>
+  void failed(Link *link) { object->failed(link); }
 };
 
 // response parser
@@ -229,6 +239,8 @@ struct ResParser : public Response, public Zhttp::Parser {
 
   ZmRef<Object>	object;
   unsigned	bodyLength = 0;
+
+  void init() { object = new Object(); }
 
   const auto &bodyObject(const Object *object) { return *object; }
 
@@ -278,6 +290,8 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 
   ZmRef<const Object>	object;
 
+  void init(const Object *object_) { object = object_; }
+
   const auto &bodyObject(const Object *object) { return *object; }
   template <typename S>
   void signBody(S &, const Object *, ZuCSpan) { }
@@ -319,26 +333,68 @@ struct HdrBufSizeAxor_ { using T = ZuUnsigned<Req::HdrBufSize>; };
 template <unsigned I>
 struct HdrBufSizeAxor_<ZuUnsigned<I>> { using T = ZuUnsigned<I>; };
 template <typename U> using HdrBufSizeAxor = typename Value_<U>::T;
-template <typename ...Reqs> struct MaxReqHdrBufSize__;
+template <typename ...Reqs> struct MaxHdrBufSize__;
 template <>
-struct MaxReqHdrBufSize__<> {
+struct MaxHdrBufSize__<> {
   using T = ZuUnsigned<0>;
 };
 template <typename U>
-struct MaxReqHdrBufSize__<U> {
+struct MaxHdrBufSize__<U> {
   using T = HdrBufSizeAxor<U>;
 };
 template <typename L, typename R>
-struct MaxReqHdrBufSize__<L, R> {
+struct MaxHdrBufSize__<L, R> {
   constexpr unsigned L_ = HdrBufSizeAxor<L>{};
   constexpr unsigned R_ = HdrBufSizeAxor<R>{};
   constexpr unsigned M = L_ > R_ ? L_ : R_;
   using T = ZuUnsigned<M>;
 };
 template <typename ...Reqs>
-using MaxReqHdrBufSize_ = typename MaxReqHdrBufSize__<Reqs...>::T;
+using MaxHdrBufSize_ = typename MaxHdrBufSize__<Reqs...>::T;
 template <typename ...Reqs>
-using MaxReqHdrBufSize = ZuTypeReduce<MaxReqHdrBufSize_, Reqs>;
+using MaxHdrBufSize = ZuTypeReduce<MaxHdrBufSize_, Reqs>;
+
+// compile-time processing of REST API metadata
+template <typename U> using GetHdrs = typename U::Headers;
+template <typename Req> using GetResponses = typename Req::Responses;
+template <typename Res> using GetStatus = ZuUnsigned<Res::Status>;
+template <typename Req> using GetStatuses = ZuTypeMap<GetStatus, GetResponses<Req>>;
+template <typename Reqs>
+using GetAllResponses = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>;
+template <typename List>
+using GetUniqueHdrs = ZuTypeUnique<ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetHdrs, List>>>;
+template <typename Req, typename Res> struct ReqRes { };
+template <typename Req> struct GetReqRes_ {
+  template <typename Res> using ReqRes_ = ReqRes<Req, Res>;
+  using T = ZuTypeMap<ReqRes_, GetResponses<Req>>;
+};
+template <typename Req> using GetReqRes = typename GetReqRes_<Req>::T;
+template <typename Reqs>
+using GetAllReqRes = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetReqRes, Reqs>>;
+template <typename Reqs, typename Req, typename Res>
+using GetResIndex = ZuTypeIndex<ReqRes<Req, Res>, GetAllReqRes<Reqs>>;
+template <typename List>
+using GetUnion = ZuTypeApply<ZuUnion, List::template Unshift<void>>;
+template <typename Req> struct GetResLookup_ {
+  using Statuses = GetStatuses<Req>;
+  using Responses = GetResponses<Req>;
+  enum { N = Responses::N }; // == Statuses::N
+  enum { Bits = ZuIntrin::log2(N); }
+  using Hash_ = ZmLHashKV<unsigned, unsigned, ZmLHashStatic<Bits, ZmLHashLocal<>>>;
+  struct Hash : public Hash_ {
+    using Hash_::add;
+    Hash() {
+      for (unsigned i = 0; i < N; i++)
+	ZuSwitch::dispatch<N>(i, [this](auto I) {
+	  add(ZuType<I, Statuses>{}(), I);
+	});
+    }
+  };
+};
+template <typename Req>
+using GetResLookup = typename GetResLookup_<Req>::T;
+template <typename Reqs>
+using GetReqLookup = ZuTypeApply<ZuTuple, ZuTypeMap<GetResLookup, Reqs>>;
 
 // monomorphic (type-erased) request builder base
 // - takes a typelist of Reqs, each a ReqBuilder<Impl, Object>
@@ -349,16 +405,23 @@ using MaxReqHdrBufSize = ZuTypeReduce<MaxReqHdrBufSize_, Reqs>;
 // - ReqBuilder event callbacks (if any are implemented) are handled by
 //   the application's centralized callbacks defined in `ReqBuilder_`,
 //   in the usual way - they are not forwarded to Reqs
-template <typename Reqs>
+template <typename Reqs_>
 struct MReqBuilder : public Zhttp::ReqBuilder {
-  template <typename U> using ReqHdrs = typename U::Headers;
-  using Headers = ZuTypeUnique<ZuTypeApply<ZuTypeConcat, ZuTypeMap<ReqHdrs, Reqs>>>;
+  using Reqs = Reqs_;
 
-  static constexpr unsigned HdrBufSize = ZuTypeApply<MaxReqHdrBufSize, Reqs>{};
+  using Headers = GetUniqueHdrs<Reqs>;
+
+  static constexpr unsigned HdrBufSize = ZuTypeApply<MaxHdrBufSize, Reqs>{};
 
   using Union = ZuTypeApply<ZuUnion, Reqs>;
 
   Union		u;
+
+  template <typename Builder, typename Object>
+  init(Object *object) {
+    auto builder = new (u.new_<Builder>()) Builder();
+    builder->init(object);
+  }
 
   BodyPolicy::T bodyPolicy() const {
     return u.cdispatch([](auto, const auto &request) {
@@ -397,6 +460,7 @@ struct MReqBuilder : public Zhttp::ReqBuilder {
   }
 
   // see ZhttpClient.hh ReqBuilder contract for optional callbacks
+
 };
 
 template <unsigned Method>
@@ -413,68 +477,203 @@ using ReqPath = typename Req::Path;
 // - contains a union of all request parsers to be used with a specific Server
 // - Parser callbacks are forwarded to the right instance
 // - application will `struct ReqParser : public MReqParser<Reqs> { ... };`
-template <typename Reqs>
-struct MReqParser : public Request, public Zhttp::Parser {
-  template <typename U> using ParserHdrs = typename U::Headers;
-  using Headers = ZuTypeUnique<ZuTypeApply<ZuTypeConcat, ZuTypeMap<ParserHdrs, Reqs>>>;
+template <typename Reqs_>
+struct MReqParser : public Zhttp::Parser {
+  using Reqs = Reqs_;
 
-  using Union = ZuTypeApply<ZuUnion, Reqs::template Unshift<void>>;
+  using Headers = GetUniqueHdrs<Reqs>;
+
+  using Union = GetUnion<Reqs>;
 
   Union		u;
 
+  template <typename Server>
+  void init(Server &) { } // can be overridden
+
   bool operation(Method::T method, const Target &target) {
-    bool accepted = false;
-    ZuSwitch::dispatch<Method::N>(method,
-      [this, method, &target, &accepted](auto I) {
+    return ZuSwitch::dispatch<Method::N>(method, [this, method, &target](auto I) -> bool {
       using Reqs = ZuTypeGrep<MethodFilter<I>::template Filter, Reqs>;
       using Paths = ZuTypeMap<ReqPath, Reqs>;
       constexpr auto matcher = ZuMatcher<Paths>();
       auto j = matcher.match(target.path);
-      if (j >= 0) {
-	ZuSwitch::dispatch<Reqs::N>(j,
-	    [this, method, &target, &accepted](auto J) {
-	  using Req = ZuType<J, Reqs>;
-	  auto parser = new (u.new_<Req, true>()) Req();
-	  accepted = parser->operation(method, target);
-	});
-      }
+      if (j < 0) return false;
+      return ZuSwitch::dispatch<Reqs::N>(j, [this, method, &target](auto J) -> bool {
+	using Req = ZuType<J, Reqs>;
+	auto request = new (u.new_<Req, true>()) Req();
+	request->init();
+	if (!request->operation(method, target)) {
+	  u = {};
+	  return false;
+	}
+	return true;
+      });
     });
-    return accepted;
   }
 
   void bodyInfo(BodyType::T type, uint64_t length) {
-    u.dispatch([type, length](auto, auto &parser) {
-      parser.bodyInfo(type, length);
+    u.dispatch([type, length](auto, auto &request) {
+      request.bodyInfo(type, length);
     });
   }
 
   template <typename Rx> bool body(Rx &rx) {
-    return u.dispatch([&rx](auto, auto &parser) {
-      return parser.body(rx);
+    return u.dispatch([&rx](auto, auto &request) {
+      return request.body(rx);
     });
   }
 
   template <typename Link>
   void complete(Link *link, bool ok) {
-    u.dispatch([&link, ok](auto, auto &parser) {
-      parser.complete(link, ok);
+    u.dispatch([&link, ok](auto, auto &request) {
+      request.complete(link, ok);
     });
   }
 
   void reset() { u.null(); }
 };
 
-// FIXME - MResBuilder<Responses>
+// monomorphic (type-erased) response builder base
+// - contains a union of all response types for all requests
+// - Builder callbacks are forwarded to the right instance
+// - application will `struct ResBuilder_ : public MResBuilder<Responses> { ... };`
+//   and then define `ResBuilder` as the queue node, in the usual way
+// - ResBuilder event callbacks (if any are implemented) are handled by
+//   the application's centralized callbacks defined in `ResBuilder_`,
+//   in the usual way - they are not forwarded
+template <typename Parser_> // pass MReqParser
+struct MResBuilder : public Zhttp::ResBuilder {
+  using Parser = Parser_;
 
-// FIXME - MResParser<Reqs>
-// - Client needs to call response parser with current request to permit
-//   double-dispatch based on request->u.type, then status
-//   - this is naturally a TL of TLs, and a ZuUnion of ZuUnions
-// - `Parser::status(unsigned)` -> `Parser::status(request *, unsigned)`
+  using Reqs = typename Parser::Reqs;
 
-// need: ZrestResponses(200, OK, 201, ...) macro to convert to:
-// ZuTypeList<ZuUnsigned<200>, OK, ZuUnsigned<201>, ...>
-// use a Static LHash to map from status to response type (which is unsigned->unsigned, i.e. just the index within the responses typelist), then regular ZuSwitch
+  using AllResponses = GetAllResponses<Reqs>;
+
+  using Headers = GetUniqueHdrs<AllResponses>;
+
+  static constexpr unsigned HdrBufSize = ZuTypeApply<MaxHdrBufSize, AllResponses>{};
+
+  using Union = GetUnion<AllResponses>;
+
+  Union		u;
+
+  // app should call init<Response>(parser)
+  template <typename Response, typename Object>
+  void init(const Parser &parser, Object *object) {
+    ZuSwitch::dispatch<Reqs::N>(parser.u.type, [this](auto I) {
+      using Req = ZuType<I, Reqs>;
+      constexpr unsigned J = GetResIndex<Reqs, Req, Response>{};
+      auto response = new (u.new_<J, true>()) Response();
+      response->init(object);
+    });
+  }
+
+  BodyPolicy::T bodyPolicy() const {
+    return u.cdispatch([](auto, const auto &response) {
+      return response.bodyPolicy();
+    });
+  }
+
+  unsigned status() const {
+    return u.cdispatch([](auto, const auto &response) {
+      return response.status();
+    });
+  }
+
+  template <typename Key, typename L> void header(L &&l) const {
+    u.cdispatch([&l](auto I, const auto &response) {
+      using ResHdrs = ZuType<I, AllResponses>::typename Headers;
+      if constexpr (ZuTypeIn<Key, ZuTypeSlice<2, 0, ResHdrs>>{})
+	response.template header<Key>(ZuFwd<L>(l));
+    });
+  }
+  template <typename L> void header(L &&l) const {
+    u.cdispatch([&l](auto, const auto &response) {
+      response.header(ZuFwd<L>(l));
+    });
+  }
+
+  template <typename Emit> void body(Emit &&emit) const {
+    u.cdispatch([&emit](auto, const auto &response) {
+      response.body(ZuFwd<Emit>(emit));
+    });
+  }
+
+  template <typename L> void bodyHdrs(L &&l) const {
+    u.cdispatch([&l](auto, const auto &response) {
+      response.bodyHdrs(ZuFwd<L>(l));
+    });
+  }
+
+  // see ZhttpServer.hh ResBuilder contract for optional callbacks
+};
+
+// monomorphic (type-erased) response parser base
+template <typename Builder_> // pass MReqBuilder
+struct MResParser : public Zhttp::Parser {
+  using Builder = Builder_;
+
+  using Reqs = typename Builder::Reqs;
+
+  using AllResponses = GetAllResponses<Reqs>;
+
+  using Headers = GetUniqueHdrs<AllResponses>;
+
+  using Union = GetUnion<AllResponses>;
+
+  using Lookup = GetReqLookup<Reqs>;
+
+  static Lookup lookup;
+
+  Union		u;
+  const Builder	*builder = nullptr;
+
+  void init(const Builder &builder_) {
+    builder = &builder_;
+  }
+
+  bool status(unsigned code) {
+    auto i = builder->u.type;
+    return ZuSwitch::dispatch<Reqs::N>(i, [this, code](auto I) -> bool {
+      unsigned j = lookup.template p<I>().findVal(code);
+      if (ZuCmp<unsigned>::null(j)) return false;
+      using Req = ZuType<I, Reqs>;
+      using Responses = GetResponses<Req>;
+      ZuSwitch::dispatch<Responses::N>(j, [this](auto J) {
+	using Res = ZuType<J, Responses>;
+	constexpr unsigned K = GetResIndex<Reqs, Req, Res>{};
+	auto response = new (u.new_<K, true>()) Res();
+	response->init();
+      });
+      return true;
+    });
+  }
+
+  void bodyInfo(BodyType::T type, uint64_t length) {
+    u.dispatch([type, length](auto, auto &response) {
+      response.bodyInfo(type, length);
+    });
+  }
+
+  template <typename Rx> bool body(Rx &rx) {
+    return u.dispatch([&rx](auto, auto &response) {
+      return response.body(rx);
+    });
+  }
+
+  template <typename Link>
+  void complete(Link *link, bool ok) {
+    builder->u.dispatch([this, &link, ok](auto, auto &builder) {
+      if (!ok || !u.type)
+	builder.failed();
+      else
+	u.cdispatch([&link](auto, const auto &response) {
+	  builder.process(link, response);
+	});
+    });
+  }
+
+  void reset() { u.null(); }
+};
 
 } // Zrest
 

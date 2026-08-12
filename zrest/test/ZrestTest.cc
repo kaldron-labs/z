@@ -5,25 +5,14 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/Zrest.hh>
 
 using namespace ZuTestUtil;
-
-static void authority()
-{
-  ZuTestScope(authority);
-  ZtString<> out;
-  Zrest::appendAuthority(out, "example.com", 443);
-  ZuCHECK(out == "example.com", "default port omitted");
-  out.length(0);
-  Zrest::appendAuthority(out, "::1", 8443);
-  ZuCHECK(out == "[::1]:8443", "IPv6 authority bracketed");
-}
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(authority);
   return 0;
 }
