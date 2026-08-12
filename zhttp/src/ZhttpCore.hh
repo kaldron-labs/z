@@ -92,7 +92,7 @@ inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
 
 ZtEnumStruct(ZhttpAPI, RequestErrorCode, int8_t,
   Malformed, ContentTooLarge, TargetTooLong, HeadersTooLarge,
-  NotImplemented, VersionUnsupported, BodyRejected);
+  NotImplemented, VersionUnsupported, OperationRejected, BodyRejected);
 
 ZtEnumStruct(ZhttpAPI, RequestErrorScope, int8_t,
   Request, Stream, Connection);

@@ -125,8 +125,9 @@ struct ResParser : Zhttp::Parser {
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan);
   void header(Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value);
-  template <typename Rx> void body(Rx &);
-  template <typename LinkRef> void complete(LinkRef &&, bool);
+  template <typename Rx> bool body(Rx &);
+  template <typename Link> void complete(Link *, bool);
+  void reset();
 };
 
 struct App;
@@ -194,17 +195,18 @@ using ResBuilder = ResBuilderQ::Node;
 
 struct Parser : Zhttp::Parser {
   using Headers = RequestHeaders;
-  void operation(Zhttp::Method::T, const Zhttp::Target &);
+  bool operation(Zhttp::Method::T, const Zhttp::Target &);
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan);
   template <typename Rx> bool body(Rx &);
-  template <typename LinkRef>
-  void complete(LinkRef &&link, bool ok) {
+  template <typename Link>
+  void complete(Link *link, bool ok) {
     if (!ok) return;
     ZmRef<ResBuilder> response = new ResBuilder{};
     // Populate response from application-owned request state.
     link->send(ZuMv(response));
   }
+  void reset();
 };
 
 struct App {
@@ -247,10 +249,10 @@ spans are valid, and may dispatch synchronously or asynchronously. The server
 performs neither copy nor dispatch:
 
 ```c++
-template <typename LinkRef>
-void Parser::complete(LinkRef &&link, bool ok) {
+template <typename Link>
+void Parser::complete(Link *link, bool ok) {
   if (!ok) return;
-  auto link_ = ZuMv(link);
+  auto link_ = ZmMkRef(link);
   app->dispatch([link = ZuMv(link_), request = ZuMv(request)]() mutable {
     ZmRef<ResBuilder> response = new ResBuilder{};
     response->plan(request);

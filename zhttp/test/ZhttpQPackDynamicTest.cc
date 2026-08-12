@@ -245,7 +245,7 @@ struct ParserStream :
   void push(const Zhttp::H3::HdrBytes &bytes) {
     rx.push(rxBuf(ZuBSpan{bytes}));
   }
-  void operation(
+  bool operation(
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     operationOrder = ++callbackOrder;
     method = method_;
@@ -257,6 +257,7 @@ struct ParserStream :
       ++streamStarts;
       Base::stream();
     }
+    return !rejectOperation;
   }
   template <typename Key>
   void header(Zhttp::FieldSection::T section, ZuBSpan value) {
@@ -369,6 +370,7 @@ struct ParserStream :
   unsigned			completeCalls = 0;
   bool				partialBody = false;
   bool				rejectBody = false;
+  bool				rejectOperation = false;
   bool				bodyNoCopy = true;
   bool				fin = false;
   bool				reset_ = false;
@@ -407,7 +409,7 @@ struct ResponseParserStream :
   void push(const Zhttp::H3::HdrBytes &bytes) {
     rx.push(rxBuf(ZuBSpan{bytes}));
   }
-  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
+  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
   void status(unsigned value) {
     statusOrder = ++callbackOrder;
     status_ = value;
@@ -988,6 +990,27 @@ void testParserBodyStream()
 {
   ZuTestScope(testParserBodyStream);
 
+  {
+    ParserStream parser;
+    parser.rejectOperation = true;
+    parser.h3(
+      &parser.qpackRxTable, nullptr, nullptr, &parser.streamError,
+      [](void *ptr, uint64_t error) {
+	*static_cast<uint64_t *>(ptr) = error;
+      }, 1, &parser.params);
+    parser.push(messageHeaders(3));
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
+	parser.error().code == Zhttp::RequestErrorCode::OperationRejected &&
+	parser.error().scope == Zhttp::RequestErrorScope::Request &&
+	parser.error().responsePossible &&
+	parser.streamError == Zhttp::H3::RequestCancelled &&
+	parser.operationOrder && !parser.headerOrder && !parser.bodyCalls &&
+	parser.completeCalls == 1,
+      "H3 operation rejection did not complete exactly once");
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error &&
+	parser.completeCalls == 1,
+      "H3 operation rejection produced duplicate callbacks");
+  }
   {
     ParserStream parser;
     parser.rejectBody = true;

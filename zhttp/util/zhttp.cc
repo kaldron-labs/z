@@ -516,7 +516,7 @@ void logFraming(ReqBuilder_ &req)
 
 void logConnected(const ReqBuilder_ &, const Zhttp::ConnectedInfo &);
 
-struct ResParser {
+struct ResParser : public Zhttp::Parser {
   using Headers = ResponseHeaders;
 
   bool enable1xx() const { return false; }
@@ -525,9 +525,9 @@ struct ResParser {
 
   void init(const ReqBuilder_ &req_) {
     req = const_cast<ReqBuilder_ *>(&req_);
-    reset();
+    resetResponse(*req, true);
   }
-  void reset() { resetResponse(*req, true); }
+  void reset() { req = nullptr; }
 
   void headersDone() {
     if (req->responseHeadersDone) return;
@@ -599,8 +599,8 @@ struct ResParser {
     });
   }
 
-  template <typename LinkRef>
-  void complete(LinkRef &&, bool ok) {
+  template <typename Link>
+  void complete(Link *, bool ok) {
     auto ctx = reqLogCtx(*req);
     if (ok && req->put && !req->redirecting) {
       ZhttpPut::Record record;

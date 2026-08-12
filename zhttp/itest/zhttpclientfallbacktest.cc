@@ -135,8 +135,14 @@ struct ResParser : public Zhttp::Parser {
     return Zhttp::bodyEach(rx,
       [this](ZuBSpan value) { *bodyBytes += value.length(); });
   }
-  template <typename LinkRef>
-  void complete(LinkRef &&, bool) { }
+  template <typename Link>
+  void complete(Link *, bool) { }
+
+  void reset() {
+    bodyBytes = nullptr;
+    status_ = nullptr;
+    altSvc = nullptr;
+  }
 };
 
 ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,

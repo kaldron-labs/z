@@ -147,13 +147,14 @@ struct App {
   struct Parser : public Zhttp::Parser {
     using Headers = ZuTypeList<>;
 
-    Parser(State *state_) : state{state_} { }
+    void init(App &app) { state = app.state; }
 
-    void operation(Zhttp::Method::T, const Zhttp::Target &) {
+    bool operation(Zhttp::Method::T, const Zhttp::Target &) {
       if (state) {
 	state->rxCallback();
 	state->requestStarted.post();
       }
+      return true;
     }
     void bodyInfo(Zhttp::BodyType::T, uint64_t) {
       if (state) state->rxCallback();
@@ -167,8 +168,8 @@ struct App {
       if (state) state->rxCallback();
       return Zhttp::bodyDrain(rx);
     }
-    template <typename LinkRef>
-    void complete(LinkRef &&link, bool ok) {
+    template <typename Link>
+    void complete(Link *link, bool ok) {
       if (state) state->rxCallback();
       if (ok) {
 	ZmRef<ResBuilder> response = new ResBuilder{};
@@ -181,11 +182,12 @@ struct App {
       }
     }
 
+    void reset() { state = nullptr; }
+
     State *state = nullptr;
   };
 
   App(State *state_) : state{state_} { }
-  Parser parser() { return {state}; }
 
   void listening(int8_t transport, uint16_t port) {
     if (transport != state->expectedTransport || port != state->port)

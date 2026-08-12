@@ -125,7 +125,7 @@ public:
     m_link = nullptr;
   }
 
-  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
+  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
   void status(unsigned value) { m_status = value; }
   template <typename Key>
   void header(Zhttp::FieldSection::T section, ZuBSpan value) {
@@ -217,12 +217,13 @@ public:
     m_link = nullptr;
   }
 
-  void operation(
+  bool operation(
     Zhttp::Method::T method, const Zhttp::Target &target) {
     m_method = method;
     m_target.length(0);
     m_target << target.pathQuery;
     m_protocol = target.protocol;
+    return true;
   }
   void status(unsigned) { }
   template <typename Key>

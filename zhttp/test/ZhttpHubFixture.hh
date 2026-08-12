@@ -265,10 +265,11 @@ struct UpgradeReq :
   using Headers = ZuTypeList<>;
   using Zhttp::Parser::header;
 
-  void operation(
+  bool operation(
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path = target.pathQuery == "/stream";
+    return true;
   }
   void header(
       Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) {

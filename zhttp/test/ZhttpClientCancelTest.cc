@@ -197,10 +197,16 @@ struct ResParser : public Zhttp::Parser {
   bool body(Rx &rx) {
     return !rejectBody && Zhttp::bodyDrain(rx);
   }
-  template <typename LinkRef>
-  void complete(LinkRef &&, bool ok_) {
+  template <typename Link>
+  void complete(Link *, bool ok_) {
     completed = true;
     ok = ok_;
+  }
+  void reset() {
+    status_ = 0;
+    completed = false;
+    ok = false;
+    rejectBody = false;
   }
 
   unsigned	status_ = 0;
@@ -446,8 +452,8 @@ void attemptState()
     link, attempt, parser, ParserState::Complete);
   ZuCHECK(attempt.phase == Zhttp::AttemptPhase::Closing &&
       link.headers == 1 && link.completed && link.ok &&
-      parser.completed && parser.ok,
-    "response completion enters closing phase exactly once");
+      !parser.status_ && !parser.completed && !parser.ok,
+    "response completion enters closing phase and resets the parser");
 
   MockBodyRx body;
   Pool::LiveReq rejected;
@@ -467,9 +473,10 @@ void attemptState()
   ZuCHECK(rejected.failure.kind == Zhttp::FailureKind::Body &&
       rejected.responseBody.reset == 3 &&
       rejected.responseBody.discarded == 3 &&
-      !rejected.responseBody.pending && rejectingParser.completed &&
-      !rejectingParser.ok && rejectingLink.completed && !rejectingLink.ok,
-    "response body rejection completion preserved first-failure accounting");
+      !rejected.responseBody.pending && !rejectingParser.completed &&
+      !rejectingParser.ok && !rejectingParser.rejectBody &&
+      rejectingLink.completed && !rejectingLink.ok,
+    "body rejection preserves accounting and resets the parser");
 
   Pool::LiveReq failed;
   failed.request = request;

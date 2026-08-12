@@ -122,7 +122,7 @@ struct ClientParser :
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(Zhttp::Method::T, const Zhttp::Target &) { }
+  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan) { }
@@ -337,7 +337,7 @@ struct ServerParser :
     dispatch.disable_();
     dispatch.final_();
   }
-  void operation(
+  bool operation(
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path = target.pathQuery;
@@ -347,6 +347,7 @@ struct ServerParser :
       ++streamEstablished;
       ++streamStarts;
     }
+    return true;
   }
   void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
   void status(unsigned) { }

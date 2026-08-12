@@ -627,10 +627,13 @@ public:
     m_headers = false;
     auto section = m_fields.finish(
       [this](Method::T method, const Target &target) {
-	impl()->operation(method, target);
+	(void)operation_(method, target);
       },
       [this](unsigned status) { status_(status); },
-      [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
+      [this](ZuBSpan key, ZuBSpan value) {
+	if (m_state != State::Error) header_(key, value);
+      });
+    if (m_state == State::Error) return false;
     if (section == Zhttp::FieldSection::Invalid) return fail_();
     if (section == Zhttp::FieldSection::Informational) {
       if (endStream) return fail_();
@@ -747,13 +750,24 @@ public:
   void streamError_() { }
 
 private:
+  bool operation_(Method::T method, const Target &target) {
+    if constexpr (Request)
+      if (ZuUnlikely(!impl()->operation(method, target)))
+	return fail_(RequestErrorCode::OperationRejected,
+	  RequestErrorScope::Request, true);
+    return true;
+  }
+
   bool start_() {
-    return m_fields.start(
+    bool ok = m_fields.start(
       [this](Method::T method, const Target &target) {
-	impl()->operation(method, target);
+	(void)operation_(method, target);
       },
       [this](unsigned status) { status_(status); },
-      [this](ZuBSpan key, ZuBSpan value) { header_(key, value); });
+      [this](ZuBSpan key, ZuBSpan value) {
+	if (m_state != State::Error) header_(key, value);
+      });
+    return ok && m_state != State::Error;
   }
 
   void header_(ZuBSpan key, ZuBSpan value) {

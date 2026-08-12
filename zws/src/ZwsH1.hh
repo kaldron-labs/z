@@ -148,10 +148,11 @@ public:
     m_invalid = false;
   }
 
-  void operation(
+  bool operation(
     Zhttp::Method::T method, const Zhttp::Target &target) {
     m_method = method;
     m_target = target.pathQuery;
+    return true;
   }
   void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (type != Zhttp::BodyType::None) m_invalid = true;

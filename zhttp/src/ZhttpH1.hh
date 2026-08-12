@@ -283,7 +283,11 @@ private:
       return;
     }
     m_http10 = protocol == "HTTP/1.0";
-    impl()->operation(method, parsed);
+    if (ZuUnlikely(!impl()->operation(method, parsed))) {
+      fail_(RequestErrorCode::OperationRejected,
+	RequestErrorScope::Connection, true);
+      return;
+    }
     m_state = State::Headers;
   }
 

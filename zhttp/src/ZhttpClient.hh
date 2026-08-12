@@ -47,7 +47,7 @@ enum : unsigned {
   ClientWorkBatch = 64
 };
 
-struct ClientMessageTxState {
+struct ClientSessionTxState {
   enum { Idle, Active, Complete, Failed, Cancelled };
 };
 
@@ -461,13 +461,13 @@ struct HasReqCompleted<U, decltype(
   ZuDeclVal<U &>().completed(ZuDeclVal<const Result &>()), void())> :
   public ZuTrue { };
 
-// Protocol-neutral client message adapter.  App supplies request intent and
+// Protocol-neutral client session.  App supplies request intent and
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
 // link completion remain library-owned.
 template <
   typename App_, typename LiveReq_, typename Link_, typename Profile_,
   typename Request_, typename ResParser_>
-class ClientMessage {
+class ClientSession {
 public:
   using App = App_;
   using LiveReq = LiveReq_;
@@ -478,6 +478,8 @@ public:
   using ReqHeaders = typename Request::Headers;
   using RespHeaders = typename ResParser::Headers;
   using Message = MessageTraits<Profile>;
+  ZuAssert((ZuIs_<ResParser, Zhttp::Parser>{}),
+    "Zhttp::Client requires ResParser to derive from Zhttp::Parser");
   using ReqHeaderKeys = ZuTypeSlice<2, 0, ReqHeaders>;
   enum { ReqContentLength =
     ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{} };
@@ -592,7 +594,7 @@ private:
       Parser, RespHeaders>;
     using State = typename Protocol::State;
 
-    void operation(Method::T, const Target &) { }
+    bool operation(Method::T, const Target &) { return true; }
     void status(unsigned value, bool http10) {
       app->status(*link, *request, sink(), value, http10);
     }
@@ -618,6 +620,8 @@ private:
       return app->body(*link, *request, sink(), rx);
     }
     void complete(typename State::T state) {
+      if (!*active) return;
+      *active = false;
       app->template complete<State>(
 	*link, *request, sink(), state);
     }
@@ -629,6 +633,7 @@ private:
     Link	*link = nullptr;
     LiveReq	*request = nullptr;
     ResParser	*sink_ = nullptr;
+    bool	*active = nullptr;
   };
 
   struct Parser :
@@ -656,10 +661,11 @@ private:
 public:
   using ParserState = typename Parser::State;
 
-  ClientMessage(App *app = nullptr, Link *link = nullptr) :
+  ClientSession(App *app = nullptr, Link *link = nullptr) :
     m_app{app}, m_link{link} { }
 
   void bind(LiveReq *request) {
+    ZmAssert(!m_responseActive);
     m_request = request;
     if (!request) return;
     m_requestApp = request->request;
@@ -679,8 +685,9 @@ public:
       m_operationOK = m_app->poolOperation(
 	*request, m_requestMethod, m_target);
     m_response.init(*m_requestApp);
+    m_responseActive = true;
     static_cast<ParserSink_ &>(m_parser) = {
-      m_app, m_link, request, &m_response};
+      m_app, m_link, request, &m_response, &m_responseActive};
   }
   void reset() {
     m_parser.reset(m_app->retainedBodyMax());
@@ -689,23 +696,32 @@ public:
       m_parser.requestMethod(m_requestMethod);
     }
   }
+  void fail() {
+    if (!m_responseActive) {
+      m_link->complete(false);
+      return;
+    }
+    m_responseActive = false;
+    m_app->template complete<ParserState>(
+      *m_link, *m_request, m_response, ParserState::Error);
+  }
 
   // Tx-owned synchronous request construction.
   void beginTx() {
     m_commit = {};
-    m_txState = ClientMessageTxState::Active;
+    m_txState = ClientSessionTxState::Active;
   }
 
   void cancelTx() {
-    if (m_txState != ClientMessageTxState::Active) return;
+    if (m_txState != ClientSessionTxState::Active) return;
     m_commit.reset = m_commit.committed;
-    m_txState = ClientMessageTxState::Cancelled;
+    m_txState = ClientSessionTxState::Cancelled;
   }
 
   BodyCommit commit() const { return m_commit; }
 
   bool send() {
-    if (m_txState != ClientMessageTxState::Active) return false;
+    if (m_txState != ClientSessionTxState::Active) return false;
     if (!m_operationOK) return failTx_();
     return sendApp_(*m_requestApp);
   }
@@ -722,7 +738,7 @@ private:
   }
 
   struct TxOps {
-    ClientMessage *owner;
+    ClientSession *owner;
 
     Link &link() { return *owner->m_link; }
     uint64_t fixedBodyMax() const { return owner->fixedBodyMax_(); }
@@ -742,7 +758,7 @@ private:
       owner->m_commit.produced = n;
       owner->m_commit.committed = n;
       owner->m_commit.final = true;
-      owner->m_txState = ClientMessageTxState::Complete;
+      owner->m_txState = ClientSessionTxState::Complete;
       return true;
     }
   };
@@ -766,7 +782,7 @@ private:
     builder.finish(tx);
     m_link->finish();
     m_commit.final = true;
-    m_txState = ClientMessageTxState::Complete;
+    m_txState = ClientSessionTxState::Complete;
     return true;
   }
 
@@ -805,7 +821,7 @@ private:
 
   bool failTx_() {
     m_commit.discarded = m_commit.produced;
-    m_txState = ClientMessageTxState::Failed;
+    m_txState = ClientSessionTxState::Failed;
     return false;
   }
 
@@ -814,7 +830,7 @@ private:
       m_commit.produced - m_commit.committed : 0;
     m_commit.reset = m_commit.committed;
     m_link->disconnect();
-    m_txState = ClientMessageTxState::Failed;
+    m_txState = ClientSessionTxState::Failed;
     return false;
   }
 
@@ -835,6 +851,7 @@ private:
   ZtString<ZtStringHeapID<"Zhttp.Target">> m_target;
   Method::T	m_requestMethod = Method::GET;
   bool		m_operationOK = false;
+  bool		m_responseActive = false;
 
   // Rx thread exclusive after bind publication.
   alignas(Zm::CacheLineSize)
@@ -844,7 +861,7 @@ private:
   // Tx thread exclusive.
   alignas(Zm::CacheLineSize)
   BodyCommit	m_commit;
-  int8_t	m_txState = ClientMessageTxState::Idle;
+  int8_t	m_txState = ClientSessionTxState::Idle;
 };
 
 
@@ -3785,12 +3802,12 @@ public:
   public:
     using Base = ClientLink<Pool, Link, Profile_>;
     using Protocol = typename Profile::Protocol;
-    using IO = ClientMessage<
+    using Session = ClientSession<
       Owner, LiveReq, Link, Profile,
       Request, ResParser>;
 
     Link(Pool *pool, unsigned id_) :
-      Base{pool}, m_id{id_}, m_message{pool->owner(), this} { }
+      Base{pool}, m_id{id_}, m_session{pool->owner(), this} { }
 
     LiveReq *request() const { return m_request; }
     bool stopped() const { return m_stopped; }
@@ -3817,14 +3834,14 @@ public:
     }
     void sendRequest() {
       if (!m_request) return;
-      m_message.bind(m_request);
-      m_message.reset();
+      m_session.bind(m_request);
+      m_session.reset();
       m_sent = true;
       owner()->poolSend(*this, *m_request, Message::ID);
       auto link = ZmMkRef(this);
       unsigned generation = m_generation;
       pool()->txRun([link = ZuMv(link), generation]() mutable {
-	link->m_message.beginTx();
+	link->m_session.beginTx();
 	link->sendRequestTx_(generation);
       });
     }
@@ -3833,7 +3850,7 @@ public:
       m_closing = true;
       auto link = ZmMkRef(this);
       pool()->txRun([link = ZuMv(link)]() mutable {
-	link->m_message.cancelTx();
+	link->m_session.cancelTx();
 	auto pool = link->pool();
 	pool->rxRun([link = ZuMv(link)]() mutable {
 	  link->disconnect();
@@ -3884,19 +3901,19 @@ public:
       if (m_request && !m_complete) {
 	if constexpr (Message::CloseDelimited) {
 	  owner()->poolCloseDelimited(*m_request);
-	  m_message.eof();
+	  m_session.eof();
 	}
-	if (m_request && !m_complete) complete(false);
+	if (m_request && !m_complete) m_session.fail();
       }
       notifyStopped_();
     }
     void onConnectFailed(bool transient) {
       owner()->poolConnectFailed(*this, m_request, transient);
-      if (m_request && !m_complete) complete(false);
+      if (m_request && !m_complete) m_session.fail();
     }
     template <typename Rx>
     int process(Rx &rx) {
-      return m_request ? m_message.process(rx) : -1;
+      return m_request ? m_session.process(rx) : -1;
     }
     template <
       typename Stream, typename Rx, int ID = Message::ID,
@@ -3911,9 +3928,9 @@ public:
       unsigned generation = m_generation;
       bool sent = m_sent;
       pool()->txRun([link = ZuMv(link), generation, ok, sent]() mutable {
-	if (sent) link->m_message.cancelTx();
+	if (sent) link->m_session.cancelTx();
 	auto pool = link->pool();
-	BodyCommit commit = sent ? link->m_message.commit() : BodyCommit{};
+	BodyCommit commit = sent ? link->m_session.commit() : BodyCommit{};
 	pool->rxRun([
 	  link = ZuMv(link), commit, generation, ok]() mutable {
 	  if (link->m_generation != generation) return;
@@ -3931,10 +3948,10 @@ public:
 
   private:
     void sendRequestTx_(unsigned generation) {
-      bool ok = m_message.send();
+      bool ok = m_session.send();
       auto link = ZmMkRef(this);
       auto pool = this->pool();
-      BodyCommit commit = m_message.commit();
+      BodyCommit commit = m_session.commit();
       pool->rxRun([link = ZuMv(link), commit, generation, ok]() mutable {
 	if (link->m_generation != generation) return;
 	auto request = link->request();
@@ -3943,7 +3960,7 @@ public:
 	  link->owner()->poolTxCommitted(*link, *request, commit);
 	else {
 	  link->owner()->poolTxFailed(*link, *request, commit);
-	  link->complete(false);
+	  link->m_session.fail();
 	}
       });
     }
@@ -3957,7 +3974,7 @@ public:
     // Stable for the logical link lifetime.
     unsigned	m_id = 0;
     unsigned	m_slot = 0;
-    IO		m_message;
+    Session	m_session;
 
     // Rx thread exclusive.
     alignas(Zm::CacheLineSize)
@@ -4210,11 +4227,11 @@ public:
   class Operation_ : public Heap, public ZmObject {
   public:
     using Protocol = TCP;
-    using IO = ClientMessage<
+    using Session = ClientSession<
       Owner, LiveReq, Operation_, H1TCP, Request, ResParser>;
 
     Operation_(Link *link_, LiveReq *request_) :
-      m_link{link_}, m_message{link_->pool()->owner(), this},
+      m_link{link_}, m_session{link_->pool()->owner(), this},
       m_request{request_}, m_generation{1} {
 #ifdef ZmObject_DEBUG
       this->ZmObject::debug();
@@ -4246,14 +4263,14 @@ public:
     }
     void sendRequest() {
       if (!m_request || m_sent) return;
-      m_message.bind(m_request);
-      m_message.reset();
+      m_session.bind(m_request);
+      m_session.reset();
       m_sent = true;
       owner()->poolSend(*this, *m_request, Version::H1);
       auto op = ZmMkRef(this);
       unsigned generation = m_generation;
       pool()->txRun([op = ZuMv(op), generation]() mutable {
-	op->m_message.beginTx();
+	op->m_session.beginTx();
 	op->sendRequestTx_(generation);
       });
     }
@@ -4266,7 +4283,7 @@ public:
     void cancelTx() {
       auto op = ZmMkRef(this);
       pool()->txRun([op = ZuMv(op)]() mutable {
-	op->m_message.cancelTx();
+	op->m_session.cancelTx();
       });
     }
     void retire(bool reuse = false) {
@@ -4283,8 +4300,8 @@ public:
       bool sent = m_sent;
       pool()->txRun([
 	op = ZuMv(op), generation, ok, sent]() mutable {
-	if (sent) op->m_message.cancelTx();
-	BodyCommit commit = sent ? op->m_message.commit() : BodyCommit{};
+	if (sent) op->m_session.cancelTx();
+	BodyCommit commit = sent ? op->m_session.commit() : BodyCommit{};
 	op->pool()->rxRun([
 	  op = ZuMv(op), commit, generation, ok]() mutable {
 	  if (op->m_generation != generation || !op->m_request) return;
@@ -4305,9 +4322,9 @@ public:
 
   private:
     void sendRequestTx_(unsigned generation) {
-      bool ok = m_message.send();
+      bool ok = m_session.send();
       auto op = ZmMkRef(this);
-      BodyCommit commit = m_message.commit();
+      BodyCommit commit = m_session.commit();
       pool()->rxRun([
 	op = ZuMv(op), commit, generation, ok]() mutable {
 	if (op->m_generation != generation || !op->m_request) return;
@@ -4315,14 +4332,14 @@ public:
 	  op->owner()->poolTxCommitted(*op, *op->m_request, commit);
 	else {
 	  op->owner()->poolTxFailed(*op, *op->m_request, commit);
-	  op->complete(false);
+	  op->m_session.fail();
 	}
       });
     }
 
     // Stable for the operation lifetime.
     Link	*m_link = nullptr;
-    IO	m_message;
+    Session	m_session;
 
     // Rx thread exclusive.
     alignas(Zm::CacheLineSize)
@@ -4423,7 +4440,7 @@ public:
     int process(Rx &rx) {
       auto op = m_head;
       if (!op || !op->request()) return -1;
-      int rc = op->m_message.process(rx);
+      int rc = op->m_session.process(rx);
       if (op->completed() && op->m_linked) unlink_(*op);
       return rc;
     }
@@ -4510,11 +4527,11 @@ public:
 	  pool()->owner()->poolDisconnected(*op, op->request(), value);
 	  if (first) {
 	    pool()->owner()->poolCloseDelimited(*op->request());
-	    op->m_message.eof();
+	    op->m_session.eof();
 	  }
 	}
 	first = false;
-	if (op->request()) op->complete(false);
+	if (op->request()) op->m_session.fail();
       }
       if (operations) {
 	auto link = ZmMkRef(this);
@@ -4704,14 +4721,14 @@ public:
   using Owner = Owner_;
   using LiveReq = LiveReq_;
   using Message = MessageTraits<Profile>;
-  using IO = ClientMessage<
+  using Session = ClientSession<
     Owner, LiveReq, Impl, Profile,
     Request_, ResParser_>;
 
   TLSClientPoolLink_(
       Pool *pool, Impl *impl, unsigned slot_, unsigned id_) :
     m_pool{pool}, m_impl{impl}, m_id{id_},
-    m_message{pool->owner(), impl}, m_slot{slot_} { }
+    m_session{pool->owner(), impl}, m_slot{slot_} { }
 
   LiveReq *request() const { return m_request; }
   bool stopped() const { return m_stopped; }
@@ -4729,14 +4746,14 @@ public:
   }
   void sendRequest() {
     if (!m_request) return;
-    m_message.bind(m_request);
-    m_message.reset();
+    m_session.bind(m_request);
+    m_session.reset();
     m_sent = true;
     owner()->poolSend(*m_impl, *m_request, Message::ID);
     auto link = ZmMkRef(m_impl);
     unsigned generation = m_generation;
     m_pool->txRun([this, link = ZuMv(link), generation]() mutable {
-      m_message.beginTx();
+      m_session.beginTx();
       sendRequestTx_(generation);
     });
   }
@@ -4745,7 +4762,7 @@ public:
     m_closing = true;
     auto link = ZmMkRef(m_impl);
     m_pool->txRun([this, link = ZuMv(link)]() mutable {
-      m_message.cancelTx();
+      m_session.cancelTx();
       m_pool->rxRun([this, link = ZuMv(link)]() mutable {
 	m_impl->disconnect();
       });
@@ -4791,20 +4808,20 @@ public:
     if (m_request && m_complete < 0) {
       if constexpr (Message::CloseDelimited) {
 	owner()->poolCloseDelimited(*m_request);
-	m_message.eof();
+	m_session.eof();
       }
-      if (m_request && m_complete < 0) complete(false);
+      if (m_request && m_complete < 0) m_session.fail();
     }
     notifyStopped_();
   }
   void onConnectFailed(bool transient) {
     owner()->poolConnectFailed(*m_impl, m_request, transient);
-    if (m_request && m_complete < 0) complete(false);
+    if (m_request && m_complete < 0) m_session.fail();
     notifyStopped_();
   }
   template <typename Rx>
   int process(Rx &rx) {
-    return m_request ? m_message.process(rx) : -1;
+    return m_request ? m_session.process(rx) : -1;
   }
 
   void complete(bool ok) {
@@ -4815,8 +4832,8 @@ public:
     bool sent = m_sent;
     m_pool->txRun([
       this, link = ZuMv(link), generation, ok, sent]() mutable {
-      if (sent) m_message.cancelTx();
-      BodyCommit commit = sent ? m_message.commit() : BodyCommit{};
+      if (sent) m_session.cancelTx();
+      BodyCommit commit = sent ? m_session.commit() : BodyCommit{};
       m_pool->rxRun([
 	this, link = ZuMv(link), commit, generation, ok]() mutable {
 	if (m_generation != generation || !m_request) return;
@@ -4831,9 +4848,9 @@ public:
 
 private:
   void sendRequestTx_(unsigned generation) {
-    bool ok = m_message.send();
+    bool ok = m_session.send();
     auto link = ZmMkRef(m_impl);
-    BodyCommit commit = m_message.commit();
+    BodyCommit commit = m_session.commit();
     m_pool->rxRun([
       this, link = ZuMv(link), commit, generation, ok]() mutable {
       if (m_generation != generation || !m_request) return;
@@ -4841,7 +4858,7 @@ private:
 	owner()->poolTxCommitted(*m_impl, *m_request, commit);
       else {
 	owner()->poolTxFailed(*m_impl, *m_request, commit);
-	complete(false);
+	m_session.fail();
       }
     });
   }
@@ -4852,12 +4869,12 @@ private:
     m_pool->linkStopped(*m_impl);
   }
 
-  // Stable for the logical TLS link lifetime.  IO internally partitions its
-  // Rx and Tx state with cache-line boundaries.
+  // Stable for the logical TLS link lifetime.  Session internally partitions
+  // its Rx and Tx state with cache-line boundaries.
   Pool		*m_pool = nullptr;
   Impl		*m_impl = nullptr;
   unsigned	m_id = 0;
-  IO		m_message;
+  Session	m_session;
 
   // Rx thread exclusive.
   alignas(Zm::CacheLineSize)
@@ -6057,7 +6074,6 @@ public:
   void complete(
     Link &link, LiveReq &attempt, ResParser &parser,
     typename ParserState::T state) {
-    if (attempt.phase == AttemptPhase::Closing) return;
     headersDone_(link, attempt);
     closing_(attempt);
     attempt.responseBody.reset += attempt.responseBody.pending;
@@ -6065,7 +6081,8 @@ public:
     attempt.responseBody.pending = 0;
     bool ok = state == ParserState::Complete;
     if (!ok) fail_(attempt, FailureKind::Protocol);
-    parser.complete(ZmMkRef(&link), ok);
+    parser.complete(&link, ok);
+    parser.reset();
     link.complete(ok);
   }
   bool done(const LiveReq &attempt) const {

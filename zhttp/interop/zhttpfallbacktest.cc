@@ -84,11 +84,12 @@ struct RequestRx :
 
   RequestRx() : Base{FallbackMaxBody} { }
 
-  void operation(
+  bool operation(
     Zhttp::Method::T method_, const Zhttp::Target &target) {
     method = method_;
     path.length(0);
     path << target.pathQuery;
+    return true;
   }
 
   template <typename Key>
