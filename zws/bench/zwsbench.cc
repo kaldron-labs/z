@@ -148,7 +148,7 @@ struct ServerApp {
   int process(auto &link, auto &rx) {
     auto &linkState = link.state();
     bool valid = Zhttp::bodyEach(
-      rx, [this, &linkState](ZuBSpan span) {
+      rx, [this, &linkState](ZuSpan<uint8_t> span) {
 	unsigned n = span.length();
 	if (linkState.offset + n > state->payload.length() ||
 	    span != ZuBSpan{
@@ -195,7 +195,7 @@ struct ClientApp {
   int process(auto &link, auto &rx) {
     auto &linkState = link.state();
     bool valid = Zhttp::bodyEach(
-      rx, [this, &linkState](ZuBSpan span) {
+      rx, [this, &linkState](ZuSpan<uint8_t> span) {
 	unsigned n = span.length();
 	if (linkState.offset + n > state->payload.length() ||
 	    span != ZuBSpan{

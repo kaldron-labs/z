@@ -121,7 +121,7 @@ struct App {
 
   template <typename Link, typename Rx>
   int process(Link &, Rx &rx) {
-    return Zhttp::bodyEach(rx, [](ZuBSpan span) {
+    return Zhttp::bodyEach(rx, [](ZuSpan<uint8_t> span) {
       ZuCSpan text = span;
       std::cout.write(text.data(), text.length());
     }) ? 1 : -1;

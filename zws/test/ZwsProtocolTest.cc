@@ -223,20 +223,20 @@ struct App :
       for (;;) {
 	uint64_t remaining = recordLength;
 	int64_t n = rx.consume(
-	  [&remaining](ZuBSpan span) mutable -> int64_t {
+	  [&remaining](ZuSpan<uint8_t> span) mutable -> int64_t {
 	    if (remaining > span.length()) {
 	      remaining -= span.length();
 	      return 0;
 	    }
 	    return remaining;
-	  }, [this](ZuBSpan span) {
+	  }, [this](ZuSpan<uint8_t> span) {
 	    if (!inputData) inputData = span.data();
 	    current << span;
 	  });
 	if (n <= 0) return n < 0 ? -1 : 1;
       }
     }
-    return Zhttp::bodyEach(rx, [this](ZuBSpan span) {
+    return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> span) {
       if (!inputData) inputData = span.data();
       current << span;
     }) ? 1 : -1;

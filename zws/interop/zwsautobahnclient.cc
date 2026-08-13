@@ -103,7 +103,7 @@ struct App {
   int process(Link &link_, auto &rx) {
     auto &state = link_.state();
     return Zhttp::bodyEach(
-      rx, [&state](ZuBSpan span) { state.message << span; }) ? 1 : -1;
+      rx, [&state](ZuSpan<uint8_t> span) { state.message << span; }) ? 1 : -1;
   }
 
   int messageEnd(Link &link_) {

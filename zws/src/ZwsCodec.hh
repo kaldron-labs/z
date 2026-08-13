@@ -416,7 +416,7 @@ private:
     uint32_t key = m_frame.key;
     int64_t n = rx.each(
       length,
-      [this, key, &offset](ZuBSpan span) -> int64_t {
+      [this, key, &offset](ZuSpan<uint8_t> span) -> int64_t {
 	const unsigned length = span.length();
 	if constexpr (Server) {
 	  const uint8_t bytes[] = {
