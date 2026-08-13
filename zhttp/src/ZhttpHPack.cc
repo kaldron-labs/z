@@ -328,7 +328,6 @@ void HPackDecoder::reset()
 {
   m_pending.length(0);
   m_name.length(0);
-  m_value.length(0);
   m_headerListSize = 0;
   m_failure = HPackFailure::None;
   m_capacityAllowed = true;
@@ -349,13 +348,17 @@ int HPackDecoder::fail_(HPackFailure::T failure)
   return -1;
 }
 
-bool HPackDecoder::indexed_(uint64_t index, Field &field)
+bool HPackDecoder::indexed_(uint64_t index, Decoded &decoded)
 {
+  Field field;
   if (!m_table.lookup(index, field)) {
     fail_(HPackFailure::Index);
     return false;
   }
-  return account_(field);
+  decoded.name = field.name;
+  decoded.indexedValue = field.value;
+  decoded.indexed = true;
+  return true;
 }
 
 template <unsigned Bits, uint8_t Huffman>
@@ -384,9 +387,27 @@ int HPackDecoder::string_(
   return int(decoded);
 }
 
+template <unsigned Bits, uint8_t Huffman>
+int HPackDecoder::value_(
+  ZuSpan<uint8_t> input, unsigned &offset,
+  ZuSpan<uint8_t> &out, bool &huffman)
+{
+  uint64_t length = 0;
+  uint8_t first = 0;
+  int n = Compression::decodePref<Bits>(
+    input, offset, length, &first);
+  if (n < 0) return n;
+  unsigned size = input.length();
+  if (length > size - offset) return -2;
+  out = {&input[offset], unsigned(length)};
+  offset += unsigned(length);
+  huffman = first & Huffman;
+  return int(length);
+}
+
 template <unsigned Bits, bool Indexing>
 int HPackDecoder::literal_(
-  ZuBSpan input, unsigned &offset, Field &field)
+  ZuSpan<uint8_t> input, unsigned &offset, Decoded &decoded)
 {
   uint64_t index = 0;
   int state = Compression::decodePref<Bits>(input, offset, index);
@@ -397,20 +418,18 @@ int HPackDecoder::literal_(
     if (!m_table.lookup(index, indexed)) {
       return fail_(HPackFailure::Index);
     }
-    m_name = indexed.name;
+    decoded.name = indexed.name;
   } else {
     state = string_<7, 0x80>(input, offset, m_name);
     if (state == -2) return 0;
     if (state < 0) return fail_(HPackFailure::String);
+    decoded.name = m_name;
   }
-  state = string_<7, 0x80>(input, offset, m_value);
+  state = value_<7, 0x80>(
+    input, offset, decoded.value, decoded.huffman);
   if (state == -2) return 0;
   if (state < 0) return fail_(HPackFailure::String);
-  field = {m_name, m_value};
-  if (!account_(field)) return -1;
-  if constexpr (Indexing)
-    if (!m_table.insert(field.name, field.value))
-      return fail_(HPackFailure::Capacity);
+  decoded.indexing = Indexing;
   return 1;
 }
 
@@ -428,7 +447,8 @@ bool HPackDecoder::account_(Field field)
 }
 
 int HPackDecoder::decode_(
-  ZuBSpan input, unsigned &offset, Field &field, bool &emitted)
+  ZuSpan<uint8_t> input,
+  unsigned &offset, Decoded &decoded, bool &emitted)
 {
   if (offset >= input.length()) return 0;
   unsigned start = offset;
@@ -440,7 +460,7 @@ int HPackDecoder::decode_(
     if (n == -2) { offset = start; return 0; }
     if (n < 0) return fail_(HPackFailure::Integer);
     m_capacityAllowed = false;
-    if (!indexed_(value, field)) return -1;
+    if (!indexed_(value, decoded)) return -1;
     emitted = true;
     return 1;
   }
@@ -455,8 +475,8 @@ int HPackDecoder::decode_(
   }
   m_capacityAllowed = false;
   int state = (first & 0xc0) == 0x40 ?
-    literal_<6, true>(input, offset, field) :
-    literal_<4, false>(input, offset, field);
+    literal_<6, true>(input, offset, decoded) :
+    literal_<4, false>(input, offset, decoded);
   if (state <= 0) {
     if (state < 0) return -1;
     offset = start;

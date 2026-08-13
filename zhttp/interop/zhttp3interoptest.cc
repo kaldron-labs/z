@@ -248,15 +248,15 @@ struct RequestParser :
   }
   uint64_t streamID() const { return streamID_; }
   bool operation(
-    Zhttp::Method::T method, const Zhttp::Target &target) {
+    Zhttp::Method::T method, Zhttp::Target &target) {
     seen.method = method;
-    seen.path = target.pathQuery;
+    seen.path = target.path;
     return true;
   }
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan body) { seen.body << body; });
+      [this](ZuSpan<uint8_t> body) { seen.body << body; });
   }
   void complete(typename State::T state) {
     if (state == State::Complete) seen.complete = 1;
@@ -312,7 +312,7 @@ struct ResponseParser :
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan body) { seen.body << body; });
+      [this](ZuSpan<uint8_t> body) { seen.body << body; });
   }
   void complete(typename State::T state) {
     if (state == State::Complete) seen.complete = 1;

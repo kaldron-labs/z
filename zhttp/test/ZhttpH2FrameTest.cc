@@ -51,11 +51,11 @@ struct Cxn : public Zhttp::H2::Connection<Cxn> {
   }
   void h2Settings() { ++settingsCalls; }
   void h2SettingsAck() { ++settingsAckCalls; }
-  void h2Headers(uint32_t stream, ZuBSpan value) {
+  void h2Headers(uint32_t stream, ZuSpan<uint8_t> value) {
     headerStream = stream;
     headers << value;
     if (decodeHPack &&
-	hpack.process(value, [this](Zhttp::H2::Field field) {
+	hpack.process(value, [this](Zhttp::H2::DecodedField field) {
 	  ++fieldCalls;
 	  lastName = field.name;
 	  lastValue_ = field.value;
@@ -151,7 +151,7 @@ void initial(Bytes &bytes)
 bool fragmented(Cxn &cxn, ZuBSpan input)
 {
   for (unsigned i = 0; i < input.length(); ++i)
-    if (cxn.process(ZuBSpan{input.data() + i, 1}) < 0)
+    if (cxn.process(ZuSpan<uint8_t>{input.data() + i, 1}) < 0)
       return false;
   return true;
 }
@@ -191,7 +191,7 @@ void testHeaderAndPreface()
   Cxn bad;
   bad.init(true);
   uint8_t mismatch = 'X';
-  ZuCHECK(bad.process(ZuBSpan{&mismatch, 1}) < 0 &&
+  ZuCHECK(bad.process(ZuSpan<uint8_t>{&mismatch, 1}) < 0 &&
       bad.error() == Zhttp::H2::Error::ProtocolError &&
       bad.errorCalls == 1,
     "preface fails at first mismatching byte");

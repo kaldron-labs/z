@@ -40,7 +40,7 @@ struct BodyTx : public ZiTxStream<BodyTx> {
 using BodyRx = Zhttp::BodyRx::Stream;
 
 struct Frame {
-  int64_t operator ()(ZuBSpan) const;
+  int64_t operator ()(ZuSpan<uint8_t>) const;
 };
 struct Data {
   void operator ()(ZuSpan<uint8_t>) const;
@@ -239,7 +239,7 @@ struct StreamConsumer {
   int process(Stream, Rx &rx) {
     ++calls;
     Zhttp::bodyEach(rx,
-      [this](ZuBSpan span) { data << span; });
+      [this](ZuSpan<uint8_t> span) { data << span; });
     return result;
   }
   template <typename Stream>
@@ -338,10 +338,11 @@ struct QueryPath {
   friend ZuPrintFn ZuPrintType(QueryPath *);
 };
 
-using TxHeaders = ZuTypeList<ZuStringT<"x-custom">, void>;
+using TxHeaders = ZuTypeList<ZuStringT<"x-custom">, ZuTypeList<>>;
 using ContentLength = ZuStringT<"content-length">;
 using BodySize = ZuStringT<"x-body-size">;
-using FixedHeaders = ZuTypeList<ContentLength, void, BodySize, void>;
+using FixedHeaders = ZuTypeList<
+  ContentLength, ZuTypeList<>, BodySize, ZuTypeList<>>;
 
 struct TxBuilder :
   public Zhttp::Builder,
@@ -406,7 +407,7 @@ struct FixedTxBuilder :
     void header(L &&l) {
       ++providers;
       if constexpr (ZuIsSame<Key, ContentLength>{})
-	l(Zhttp::Placeholder{10, '0'});
+	l("0000000000");
       else
 	l(CustomValue{});
     }
@@ -847,14 +848,14 @@ void testBodyRx()
   auto consume = [&calls, &remaining, &gathered](auto &rx) {
     ++calls;
     (void)rx.consume(
-      [&remaining](ZuBSpan span) -> int64_t {
+      [&remaining](ZuSpan<uint8_t> span) -> int64_t {
 	if (remaining > span.length()) {
 	  remaining -= span.length();
 	  return 0;
 	}
 	return remaining;
       },
-      [&gathered](ZuBSpan span) { gathered << span; });
+      [&gathered](ZuSpan<uint8_t> span) { gathered << span; });
   };
 
   ZuCHECK(body.push(buf("abc"), consume), "first body append failed");
@@ -884,11 +885,11 @@ void testBodyRx()
   body.push(buf("cd"), [](auto &) { });
   ZtString<> eager;
   ZuCHECK(Zhttp::bodyEach(body.rx(),
-      [&eager](ZuBSpan span) { eager << span; }) &&
+      [&eager](ZuSpan<uint8_t> span) { eager << span; }) &&
       eager == "abcd" && !body.rx(),
     "bodyEach did not eagerly consume queued spans in order");
   unsigned emptyCalls = 0;
-  ZuCHECK(Zhttp::bodyEach(body.rx(), [&emptyCalls](ZuBSpan) {
+  ZuCHECK(Zhttp::bodyEach(body.rx(), [&emptyCalls](ZuSpan<uint8_t>) {
       ++emptyCalls;
     }) && !emptyCalls,
     "bodyEach did not return immediately for an empty queue");

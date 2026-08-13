@@ -224,7 +224,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       if (plan.connection) l(plan.connection);
     } else if constexpr (Key{}() == "content-length") {
       if (bodyPolicy() == Zhttp::BodyPolicy::Fixed)
-	l(Zhttp::Placeholder{10, '0'});
+	l("0000000000");
       else if (plan.contentLength || plan.sendBody)
 	l(ZuBoxed(plan.contentLength));
     }
@@ -319,24 +319,24 @@ struct Parser : public Zhttp::Parser {
   void init(App &app_) { app = &app_; }
 
   bool operation(
-      Zhttp::Method::T method, const Zhttp::Target &target) {
+      Zhttp::Method::T method, Zhttp::Target &target) {
     request.method = method;
     request.target = target.raw;
     request.authority = target.authority.raw;
     request.protocol = target.protocol;
     request.form = target.form;
-    int q = target.pathQuery.find([](auto c) { return c == '?'; });
-    request.path_ = q < 0 ? target.pathQuery :
-      ZuBSpan{target.pathQuery.data(), unsigned(q)};
+    int q = target.path.find([](auto c) { return c == '?'; });
+    request.path_ = q < 0 ? target.path :
+      ZuBSpan{target.path.data(), unsigned(q)};
     request.query_ = q < 0 ? ZuBSpan{} : ZuBSpan{
-      target.pathQuery.data() + q + 1,
-      target.pathQuery.length() - unsigned(q + 1)};
+      target.path.data() + q + 1,
+      target.path.length() - unsigned(q + 1)};
     request.hasQuery = q >= 0;
     return true;
   }
-    void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+    bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
     template <typename Key>
-    void header(Zhttp::FieldSection::T, ZuBSpan value) {
+    void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
       if constexpr (Key{}() == "host") request.host = value;
       else if constexpr (Key{}() == "authorization")
 	request.authorization = value;
@@ -353,7 +353,7 @@ struct Parser : public Zhttp::Parser {
     template <typename Rx>
     bool body(Rx &rx) {
       return Zhttp::bodyEach(rx,
-	[this](ZuBSpan span) {
+	[this](ZuSpan<uint8_t> span) {
 	  request.bodyData << span;
 	  request.bodyReceived += span.length();
 	  request.bodyConsumed += span.length();

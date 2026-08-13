@@ -103,6 +103,8 @@ constexpr unsigned NullSlot = ZuCmp<unsigned>::null();
 // default construction.  The default init() and reset() are suitable for
 // stateless Parsers.
 struct Parser { // base class with defaulted types and member functions
+  // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
+  // value, or a non-empty list of values eligible for static dispatch.
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
 
   Parser() = default;
@@ -118,7 +120,7 @@ struct Parser { // base class with defaulted types and member functions
   // start line or pseudo-headers are validated and before any header().
   // Return true to accept the operation or false to reject the message.
   // Rejection suppresses all later callbacks except complete(false).
-  bool operation(Method::T, const Target &) { return true; }	// requests only
+  bool operation(Method::T, Target &) { return true; }		// requests only
 
   // First protocol callback for each response field section, called after
   // its :status or status line is validated and before that section's
@@ -128,14 +130,16 @@ struct Parser { // base class with defaulted types and member functions
   // Declared run-time value, declared fixed value, undeclared key/value.
   // Initial-section callbacks follow operation()/status(); trailer callbacks
   // follow bodyInfo() and any body() prompts.
-  template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan value) { }
   template <typename Key, typename Value>
   void header(Zhttp::FieldSection::T) { }
-  void header(Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) { }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) { }
+  void header(Zhttp::FieldSection::T, ZuBSpan key, ZuSpan<uint8_t> value) { }
 
   // Called once after the final initial field section and before body().
-  void bodyInfo(BodyType::T, uint64_t length) { }
+  // Return true to accept the body framing or false to reject the message.
+  // Rejection has the same consequences as body() returning false.
+  bool bodyInfo(BodyType::T, uint64_t) { return true; }
 
   // Synchronous queue prompt; incomplete application framing may remain
   // queued for a later decoded-body append. Return true to continue parsing,
@@ -144,10 +148,11 @@ struct Parser { // base class with defaulted types and member functions
   template <typename Rx> bool body(Rx &) { return false; }
 
   // Last callback for the message, called exactly once.  This includes
-  // rejection by operation() or body().  A validation or framing failure may
-  // short-circuit the successful ordering above and report false.  Link is a
-  // borrowed concrete-link pointer valid for the callback.  An application
-  // that retains it for asynchronous work must explicitly acquire ownership.
+  // rejection by operation(), bodyInfo(), or body().  A validation or framing
+  // failure may short-circuit the successful ordering above and report false.
+  // Link is a borrowed concrete-link pointer valid for the callback.  An
+  // application that retains it for asynchronous work must explicitly acquire
+  // ownership.
   template <typename Link>
   void complete(Link *, bool ok) { }
 
@@ -155,6 +160,8 @@ struct Parser { // base class with defaulted types and member functions
 };
 
 struct Builder {
+  // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
+  // value, or a singleton list containing the fixed value.
   using Headers = ZuTypeList<>; // ZhttpHeaders(...);
 
   // default header section scratch buffer size for H2/H3
@@ -180,10 +187,12 @@ struct Builder {
   // Response status code; ignored for requests.
   unsigned status() const { return 200; }
 
-  // For each declared Key, a concrete header<Key>() provider is called exactly
-  // once per message when that overload exists.  It may synchronously call
-  // l(value) zero or one times.  A fixed (Key, Value) declaration is emitted
-  // independently; its keyed provider may emit one additional value.
+  // For each declared Key, header<Key>(l) is called exactly once per message;
+  // it may synchronously call l(value) zero or one times.  For each fixed
+  // (Key, Value) declaration,
+  // header<Key, Value>(l) is called; it may synchronously call l() zero or one
+  // times to control emission.  Its keyed provider may emit one additional
+  // value.
   //
   // The non-template header(l) provider is called exactly once per message,
   // unconditionally.  It may synchronously call l(key, value) zero or more
@@ -194,6 +203,10 @@ struct Builder {
   // runtime-valued declarations may seed QPACK.  Values produced by either
   // provider are never seed inputs; no attempt is made to compress a declared
   // runtime value, although its name may use a static or frozen-table index.
+  template <typename Key, typename Value, typename L>
+  constexpr void header(L &&l) const { l(); }
+  template <typename Key, typename L>
+  void header(L &&) const { }
   template <typename L> void header(L &&l) const { }
 
   // Called only for body-bearing policies. emit(write) must be called
@@ -206,11 +219,19 @@ struct Builder {
   // after body output and initial-header emission, but before those header
   // bytes become externally visible.
   // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
-  // There is no contentLength() callback; emit a Content-Length Placeholder
-  // from header<Key>(), then overwrite its mutable span here. Failing to
-  // overwrite the complete placeholder is an application error.
+  // There is no contentLength() callback; emit mutable Content-Length data
+  // from header<Key>(), then overwrite its span here. Failing to overwrite
+  // the complete value is an application error.
   template <typename L> void bodyHdrs(L &&l) const { }
 };
+
+template <typename Key, typename Value, typename B, typename L>
+auto builderFixedHeader(B *builder, L &&l, int) -> decltype(
+  builder->template header<Key, Value>(ZuFwd<L>(l)), void()) {
+  builder->template header<Key, Value>(ZuFwd<L>(l));
+}
+template <typename Key, typename Value, typename B, typename L>
+void builderFixedHeader(B *, L &&l, ...) { ZuFwd<L>(l)(); }
 
 // Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
 // The role facades wrap plain application Parser sinks in these
@@ -452,21 +473,20 @@ class HeaderSeedCatalog {
 public:
   template <typename Headers>
   void add(const H3::Params &params, uint32_t capacity) {
-    using Keys = ZuTypeSlice<2, 0, Headers>;
-    using Values = ZuTypeSlice<2, 1, Headers>;
-    ZuUnroll::all<Keys>([this, &params, capacity]<typename Key>() {
-      using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
+    using List = HeaderList<Headers>;
+    ZuUnroll::all<List::N>([this, &params, capacity](auto I) {
+      using Key = typename List::template Key<I>;
+      using Value = typename List::template Value<I>;
       H3::QPackTxString name;
       name << Key{}();
       if (!name || name[0] == ':' || Fields::forbidden(name) ||
 	  params.neverIndex(name))
 	return;
-      if constexpr (ZuIsSame<Value, void>{}) {
+      if constexpr (!Value::N) {
 	uint64_t index = 0;
 	if (H3::QPack::staticNameIndex(name, index) || findName_(name)) return;
 	add_(ZuMv(name), {}, false, capacity);
       } else {
-	if constexpr (ZuIsSame<Value, Placeholder>{}) return;
 	H3::QPackTxString value;
 	value << HeaderValue<Value>{}();
 	if (H3::QPack::staticIndex(name, value) >= 0 ||
@@ -536,12 +556,11 @@ public:
   template <typename Headers>
   void add(uint32_t capacity) {
     HPackSeedPlan plan;
-    using Keys = ZuTypeSlice<2, 0, Headers>;
-    using Values = ZuTypeSlice<2, 1, Headers>;
-    ZuUnroll::all<Keys>([&plan, capacity]<typename Key>() {
-      using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
-      if constexpr (!ZuIsSame<Value, void>{}) {
-	if constexpr (ZuIsSame<Value, Placeholder>{}) return;
+    using List = HeaderList<Headers>;
+    ZuUnroll::all<List::N>([&plan, capacity](auto I) {
+      using Key = typename List::template Key<I>;
+      using Value = typename List::template Value<I>;
+      if constexpr (Value::N) {
 	H3::QPackTxString name;
 	H3::QPackTxString value;
 	name << Key{}();
@@ -752,36 +771,30 @@ private:
   bool		m_valid = true;
 };
 
-template <typename Key, typename... Keys>
-struct HeaderKeyCount_;
-template <typename Key>
-struct HeaderKeyCount_<Key> : public ZuUnsigned<0> { };
-template <typename Key, typename First, typename... Rest>
-struct HeaderKeyCount_<Key, First, Rest...> : public ZuUnsigned<
-  unsigned(ZuIsSame<Key, First>{}) + HeaderKeyCount_<Key, Rest...>{}> { };
-template <typename Key, typename... Keys>
-struct HeaderKeyCount_<Key, ZuTypeList<Keys...>> :
-  public HeaderKeyCount_<Key, Keys...> { };
-
-template <typename Headers, unsigned N = ZuTypeSlice<2, 0, Headers>::N>
+template <
+  typename Headers,
+  unsigned N = HeaderList<Headers>::N>
 class HeaderSpans {
-  using Keys = ZuTypeSlice<2, 0, Headers>;
-  using Values = ZuTypeSlice<2, 1, Headers>;
+  using List = HeaderList<Headers>;
+  using Keys = typename List::Keys;
+
+  static_assert(ZuTypeUnique<Keys>::N == Keys::N,
+    "mutable header spans require unique keys");
 
 public:
   template <typename Key>
   void record(ZuSpan<uint8_t> span) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-    using Value = ZuType<I, Values>;
-    static_assert(ZuIsSame<Value, void>{},
+    using Value = typename List::template Value<I>;
+    static_assert(!Value::N,
       "only runtime-valued declared headers have mutable spans");
     m_slots[I] = span;
   }
   template <typename Key>
   void recordOffset(uint64_t offset, unsigned length) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-    using Value = ZuType<I, Values>;
-    static_assert(ZuIsSame<Value, void>{},
+    using Value = typename List::template Value<I>;
+    static_assert(!Value::N,
       "only runtime-valued declared headers have mutable spans");
     m_slots[I] = {reinterpret_cast<uint8_t *>(uintptr_t(offset + 1)), length};
   }
@@ -795,11 +808,9 @@ public:
   template <typename App>
   void patch(App &app) {
     auto patch = [this]<typename Key, typename P>(P &&patcher) {
-      static_assert(HeaderKeyCount_<Key, Keys>{} == 1,
-	"bodyHdrs key must identify one declared header occurrence");
       constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-      using Value = ZuType<I, Values>;
-      static_assert(ZuIsSame<Value, void>{},
+      using Value = typename List::template Value<I>;
+      static_assert(!Value::N,
 	"bodyHdrs cannot mutate a fixed declared header value");
       ZuFwd<P>(patcher)(m_slots[I]);
     };

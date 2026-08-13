@@ -76,14 +76,14 @@ bool consume(Rx &rx, ZuCSpan expected)
   unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [&remaining](ZuBSpan span) -> int64_t {
+    [&remaining](ZuSpan<uint8_t> span) -> int64_t {
       if (remaining > span.length()) {
 	remaining -= span.length();
 	return 0;
       }
       return remaining;
     },
-    [&ok, expected](ZuBSpan span) {
+    [&ok, expected](ZuSpan<uint8_t> span) {
       ok = span.length() == expected.length() &&
 	!memcmp(span.data(), expected.data(), expected.length());
     });
@@ -95,11 +95,11 @@ bool consumeStream(Rx &rx, ZuCSpan expected, unsigned &offset)
 {
   while (rx) {
     int64_t n = rx.consume(
-      [&expected, &offset](ZuBSpan span) -> int64_t {
+      [&expected, &offset](ZuSpan<uint8_t> span) -> int64_t {
 	unsigned remain = expected.length() - offset;
 	return span.length() < remain ? span.length() : remain;
       },
-      [&expected, &offset](ZuBSpan span) {
+      [&expected, &offset](ZuSpan<uint8_t> span) {
 	if (::memcmp(span.data(), expected.data() + offset, span.length()))
 	  offset = expected.length() + 1;
 	else
@@ -266,13 +266,13 @@ struct UpgradeReq :
   using Zhttp::Parser::header;
 
   bool operation(
-    Zhttp::Method::T method_, const Zhttp::Target &target) {
+    Zhttp::Method::T method_, Zhttp::Target &target) {
     method = method_;
-    path = target.pathQuery == "/stream";
+    path = target.path == "/stream";
     return true;
   }
   void header(
-      Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T, ZuBSpan key, ZuSpan<uint8_t> value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }
@@ -295,7 +295,7 @@ struct UpgradeResp :
   bool enable1xx() const { return true; }
   void status(unsigned v) { statusCode = v; }
   void header(
-      Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T, ZuBSpan key, ZuSpan<uint8_t> value) {
     if (key == "upgrade" && value == "opaque") upgrade = true;
     if (key == "connection" && value == "Upgrade") connection = true;
   }

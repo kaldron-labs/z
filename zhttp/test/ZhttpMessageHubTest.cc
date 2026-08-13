@@ -54,6 +54,11 @@ struct RequestBuilder :
   }
   template <typename L>
   void host(L &&l) { l("127.0.0.1"); }
+  template <typename Key, typename Value, typename L>
+  void header(L &&l) {
+    ++fixedCalls;
+    if (emitFixed) l();
+  }
   template <typename Key, typename L>
   void header(L &&l) {
     ++keyedCalls;
@@ -68,6 +73,8 @@ struct RequestBuilder :
 
   unsigned keyedCalls = 0;
   unsigned runtimeCalls = 0;
+  unsigned fixedCalls = 0;
+  bool emitFixed = true;
 };
 
 template <typename Profile>
@@ -128,17 +135,18 @@ struct ClientParser :
   using Headers = TestHeaders;
 
   bool enable1xx() const { return true; }
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
+  bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) {
     status_ = value;
     ++statusCalls;
     ++shared->statuses;
   }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
     if (type == Zhttp::BodyType::Fixed) length = length_;
+    return true;
   }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "x-test")
       xTest = value;
     else if constexpr (Key{}() == "x-trailer")
@@ -146,7 +154,7 @@ struct ClientParser :
   }
   template <typename Rx>
   bool body(Rx &rx) {
-    return Zhttp::bodyEach(rx, [this](ZuBSpan value) {
+    return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> value) {
       shared->bodyBytes += value.length();
       body_ << value;
     });
@@ -211,7 +219,8 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     if (link.parser.status_ != 200 || link.parser.statusCalls != 2 ||
 	link.parser.body_ != "pong" ||
 	link.parser.xTest != "final" || link.parser.xTrailer ||
-	link.request.keyedCalls != 2 || link.request.runtimeCalls != 1)
+	link.request.keyedCalls != 2 || link.request.runtimeCalls != 1 ||
+	link.request.fixedCalls != 1)
       ++state->errors;
     state->response.post();
     link.disconnect();
@@ -252,17 +261,18 @@ struct ServerSession {
     using Headers = ZuTypeList<>;
 
     bool operation(
-      Zhttp::Method::T method_, const Zhttp::Target &target) {
+      Zhttp::Method::T method_, Zhttp::Target &target) {
       method = method_;
-      path = target.pathQuery;
+      path = target.path;
       return true;
     }
     void status(unsigned) { }
-    void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+    bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
     template <typename Key>
-    void header(Zhttp::FieldSection::T, ZuBSpan) { }
+    void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
     void header(
-        Zhttp::FieldSection::T, ZuBSpan name, ZuBSpan value) {
+        Zhttp::FieldSection::T,
+        ZuBSpan name, ZuSpan<uint8_t> value) {
       if (name == "x-fixed" && value == "fixed") fixed = true;
       if (name == "x-runtime-one" && value == "one") runtimeOne = true;
       if (name == "x-runtime-two" && value == "two") runtimeTwo = true;
@@ -270,7 +280,7 @@ struct ServerSession {
     template <typename Rx>
     bool body(Rx &rx) {
       return Zhttp::bodyEach(
-        rx, [this](ZuBSpan span) { body_ << span; });
+        rx, [this](ZuSpan<uint8_t> span) { body_ << span; });
     }
     void complete(typename State::T value) { complete_ = value; }
     bool finReceived() const { return false; }

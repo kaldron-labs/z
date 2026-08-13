@@ -125,15 +125,15 @@ struct ResParser : public Zhttp::Parser {
 
   void init(const ReqBuilder_ &);
   void status(unsigned value) { *status_ = value; }
-  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "alt-svc") *altSvc = value;
   }
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan value) { *bodyBytes += value.length(); });
+      [this](ZuSpan<uint8_t> value) { *bodyBytes += value.length(); });
   }
   template <typename Link>
   void complete(Link *, bool) { }

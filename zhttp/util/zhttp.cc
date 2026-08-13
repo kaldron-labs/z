@@ -321,7 +321,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
     else if constexpr (Key{}() == "accept")
       l("*/*");
     else if constexpr (ZuIsSame<Key, ContentLength>{}) {
-      if (put) l(Zhttp::Placeholder{10, '0'});
+      if (put) l("0000000000");
     }
   }
   template <typename L> void header(L &&) const { }
@@ -546,12 +546,13 @@ struct ResParser : public Zhttp::Parser {
       s << "status: " << value;
     }));
   }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     req->chunked = type == Zhttp::BodyType::Streamed;
     req->contentLength = type == Zhttp::BodyType::Fixed ? int64_t(length) : -1;
+    return true;
   }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if (!req->logResponse) return;
     auto ctx = reqLogCtx(*req);
     ZeString value_;
@@ -566,7 +567,7 @@ struct ResParser : public Zhttp::Parser {
   bool body(Rx &rx) {
     logFraming(*req);
     headersDone();
-    return Zhttp::bodyEach(rx, [req = this->req](ZuBSpan span) {
+    return Zhttp::bodyEach(rx, [req = this->req](ZuSpan<uint8_t> span) {
       req->bodyBytes += span.length();
       ++req->bodyChunks;
       if (req->put) req->responseJSON << span;

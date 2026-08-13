@@ -212,18 +212,18 @@ private:
 };
 
 struct Target {
-  AuthorityView	authority;
-  ZuBSpan	raw;
-  ZuBSpan	pathQuery;
-  ZuBSpan	protocol;
-  Scheme::T	scheme = -1;
-  TargetForm::T	form = TargetForm::Origin;
+  AuthorityView		authority;
+  ZuSpan<uint8_t>	raw;
+  ZuSpan<uint8_t>	path;
+  ZuSpan<uint8_t>	protocol;
+  Scheme::T		scheme = -1;
+  TargetForm::T		form = TargetForm::Origin;
 
   static TargetParseError parseH1(
     Target &, Method::T, ZuSpan<uint8_t>);
   static TargetParseError fromPseudo(
     Target &, Method::T, Scheme::T, ZuSpan<uint8_t>,
-    ZuBSpan, ZuBSpan);
+    ZuSpan<uint8_t>, ZuSpan<uint8_t>);
 };
 
 } // namespace Zhttp

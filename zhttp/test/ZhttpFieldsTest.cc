@@ -47,7 +47,8 @@ struct H3Fields {
   template <typename Semantics, typename Header>
   static bool field(
     Semantics &semantics, ZuBSpan name, ZuBSpan value, Header &&header) {
-    return semantics.field(name, value, ZuFwd<Header>(header));
+    ZtBArray<ZtArrayHeapID<"ZhttpFieldsTest.Value">> storage{value};
+    return semantics.field(name, storage.span(), ZuFwd<Header>(header));
   }
 };
 
@@ -55,7 +56,8 @@ struct H2SyntheticFields {
   template <typename Semantics, typename Header>
   static bool field(
     Semantics &semantics, ZuBSpan name, ZuBSpan value, Header &&header) {
-    return semantics.field(name, value, ZuFwd<Header>(header));
+    ZtBArray<ZtArrayHeapID<"ZhttpFieldsTest.Value">> storage{value};
+    return semantics.field(name, storage.span(), ZuFwd<Header>(header));
   }
 };
 
@@ -79,10 +81,10 @@ bool validRequest(bool extended = false)
   bool operation = false;
   auto section = fields.finish(
     [&operation, extended](
-	Zhttp::Method::T method, const Zhttp::Target &target) {
+	Zhttp::Method::T method, Zhttp::Target &target) {
       operation =
 	method == (extended ? Zhttp::Method::CONNECT : Zhttp::Method::GET) &&
-	target.pathQuery == "/" &&
+	target.path == "/" &&
 	(!extended || target.protocol == "websocket");
     },
     [](unsigned) { }, header);
@@ -95,7 +97,7 @@ bool invalidCases()
   auto header = [](ZuBSpan, ZuBSpan) { };
   auto finish = [](auto &fields) {
     return fields.finish(
-      [](Zhttp::Method::T, const Zhttp::Target &) { },
+      [](Zhttp::Method::T, Zhttp::Target &) { },
       [](unsigned) { }, [](ZuBSpan, ZuBSpan) { });
   };
 
@@ -154,7 +156,7 @@ bool responses()
   bool ok = Source::field(informational, ":status", "103", header);
   unsigned status = 0;
   auto section = informational.finish(
-    [](Zhttp::Method::T, const Zhttp::Target &) { },
+    [](Zhttp::Method::T, Zhttp::Target &) { },
     [&status](unsigned value) { status = value; }, header);
   if (!ok || status != 103 ||
       section != Zhttp::FieldSection::Informational)
@@ -164,7 +166,7 @@ bool responses()
   ok = Source::field(final, ":status", "200", header) &&
     Source::field(final, "content-length", "3", header);
   section = final.finish(
-    [](Zhttp::Method::T, const Zhttp::Target &) { },
+    [](Zhttp::Method::T, Zhttp::Target &) { },
     [&status](unsigned value) { status = value; }, header);
   if (!ok || status != 200 || section != Zhttp::FieldSection::Final ||
       !final.bodyAllowed())
@@ -174,7 +176,7 @@ bool responses()
   head.requestMethod(Zhttp::Method::HEAD);
   ok = Source::field(head, ":status", "200", header);
   section = head.finish(
-    [](Zhttp::Method::T, const Zhttp::Target &) { },
+    [](Zhttp::Method::T, Zhttp::Target &) { },
     [&status](unsigned value) { status = value; }, header);
   return ok && section == Zhttp::FieldSection::Final && !head.bodyAllowed();
 }

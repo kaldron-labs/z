@@ -22,7 +22,8 @@
 
 #include <zlib/ZtEnum.hh>
 
-// Headers typelist definition, e.g.
+// Headers typelist definition.  Each key is followed by a value typelist;
+// headers without fixed values use ZuTypeList<>.  For example:
 // - keys (variable values):
 //   ZhttpHeaders("content-type", "server");
 // - keys + values:
@@ -33,7 +34,7 @@
 #define Zhttp_HdrValues(Values) \
   ZuPP_Defer(Zhttp_HdrValues_)(ZuPP_Strip(Values))
 #define Zhttp_Header_1(Key) \
-  ZuStringT<Key>, void
+  ZuStringT<Key>, ZuTypeList<>
 #define Zhttp_Header_2(Key, Values) \
   ZuStringT<Key>, ZuTypeList<Zhttp_HdrValues(Values)>
 #define Zhttp_Header_N(_0, _1, Fn, ...) Fn
@@ -129,24 +130,24 @@ ZuInline bool streaming(T v) {
 
 } // namespace BodyPolicy
 
-struct Placeholder {
-  unsigned	length;
-  uint8_t	fill = 0xff;
-
-  struct Print : public ZuPrintBuffer {
-    static unsigned length(const Placeholder &v) { return v.length; }
-    static unsigned print(char *ptr, unsigned n, const Placeholder &v) {
-      n = n < v.length ? n : v.length;
-      memset(ptr, v.fill, n);
-      return n;
-    }
-  };
-  friend Print ZuPrintType(Placeholder *);
+template <typename Headers>
+struct HeaderList {
+  static_assert(!(Headers::N & 1), "header list must contain key/value pairs");
+  enum { N = Headers::N >> 1 };
+  template <unsigned I> using Key = ZuType<I << 1, Headers>;
+  template <unsigned I> using Value = ZuType<(I << 1) + 1, Headers>;
+  using Keys = ZuTypeSlice<2, 0, Headers>;
+  using Values = ZuTypeSlice<2, 1, Headers>;
 };
 
-template <typename V> struct HeaderValue_ { using T = V; };
-template <typename V> struct HeaderValue_<ZuTypeList<V>> { using T = V; };
-template <typename V> using HeaderValue = typename HeaderValue_<V>::T;
+template <typename Values>
+struct HeaderValue_ {
+  static_assert(Values::N == 1,
+    "builder header must have exactly one fixed value");
+  using T = ZuType<0, Values>;
+};
+template <typename Values>
+using HeaderValue = typename HeaderValue_<Values>::T;
 
 ZhttpAPI unsigned requestErrorStatus(RequestErrorCode::T);
 

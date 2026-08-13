@@ -200,7 +200,7 @@ struct EventType {
 struct Event {
   EventType::T	type = EventType::Begin;
   ZuBSpan	name;
-  ZuBSpan	value;
+  ZuSpan<uint8_t> value;
   Ztls::RxStream *wire = nullptr;
   uint64_t	consumed = 0;
   uint32_t	frameLength = 0;
@@ -452,6 +452,12 @@ public:
   void field(ZuBSpan name, ZuBSpan value) {
     field_({name, value});
   }
+  void fieldName(ZuBSpan name, ZuBSpan value) {
+    fieldName_(name, value);
+  }
+  void fieldLiteral(ZuBSpan name, ZuBSpan value) {
+    fieldLiteral_(name, value);
+  }
   void fieldFixed(ZuBSpan name, ZuBSpan value) {
     if (!m_valid ||
 	m_encoder.emitFixed(*m_block, {name, value}, m_reserved) < 0)
@@ -473,6 +479,16 @@ public:
   ZuIfT<!Compression::IsPrintString<P>{}>
   field(ZuBSpan name, const P &value) {
     fieldPrint_(name, value);
+  }
+  template <typename P>
+  ZuIfT<!Compression::IsPrintString<P>{}>
+  fieldName(ZuBSpan name, const P &value) {
+    fieldNamePrint_(name, value);
+  }
+  template <typename P>
+  ZuIfT<!Compression::IsPrintString<P>{}>
+  fieldLiteral(ZuBSpan name, const P &value) {
+    fieldLiteralPrint_(name, value);
   }
   template <typename P>
   ValueSpan fieldMutable(ZuBSpan name, const P &value) {
@@ -593,6 +609,17 @@ private:
   template <typename P>
   void fieldPrint_(ZuBSpan name, const P &value) {
     if (!m_valid) return;
+    auto rendered = ZtScratch(HPackBytes, 256);
+    Compression::PrintBytes out{rendered};
+    out << value;
+    if (!out.ok() || m_encoder.emitRuntime(
+	*m_block, {name, rendered}) < 0)
+      m_valid = false;
+  }
+
+  template <typename P>
+  void fieldNamePrint_(ZuBSpan name, const P &value) {
+    if (!m_valid) return;
     uint64_t nameIndex = m_encoder.nameIndex(name);
     uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
     uint64_t offset;
@@ -604,11 +631,41 @@ private:
     }
   }
 
+  template <typename P>
+  void fieldLiteralPrint_(ZuBSpan name, const P &value) {
+    if (!m_valid) return;
+    uint64_t offset;
+    unsigned length;
+    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    if (Compression::putPref(*m_block, prefix, 4, 0) < 0 ||
+	Compression::putString(*m_block, 0, 7, name) < 0 ||
+	m_section->putPrint(0, 7, value, offset, length) < 0)
+      m_valid = false;
+  }
+
+  void fieldName_(ZuBSpan name, ZuBSpan value) {
+    if (!m_valid) return;
+    uint64_t nameIndex = m_encoder.nameIndex(name);
+    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    if (Compression::putPref(*m_block, prefix, 4, nameIndex) < 0 ||
+	(!nameIndex && Compression::putString(*m_block, 0, 7, name) < 0) ||
+	Compression::putString(*m_block, 0, 7, value) < 0)
+      m_valid = false;
+  }
+
+  void fieldLiteral_(ZuBSpan name, ZuBSpan value) {
+    if (!m_valid) return;
+    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    if (Compression::putPref(*m_block, prefix, 4, 0) < 0 ||
+	Compression::putString(*m_block, 0, 7, name) < 0 ||
+	Compression::putString(*m_block, 0, 7, value) < 0)
+      m_valid = false;
+  }
+
   void field_(Field field) {
     if (!m_valid) return;
-    if (m_encoder.emitRuntime(*m_block, field) < 0) {
+    if (m_encoder.emitRuntime(*m_block, field) < 0)
       m_valid = false;
-    }
   }
 
   Native	&m_native;
@@ -1017,7 +1074,7 @@ public:
       unsigned length = PrefaceParser::value().length();
       if (rx.length() < length) return 0;
       int64_t n = rx.each(length,
-	[this](ZuBSpan span) -> int64_t { return Base::process(span); });
+	[this](ZuSpan<uint8_t> span) -> int64_t { return Base::process(span); });
       if (ZuUnlikely(n < 0)) return -1;
       if (ZuUnlikely(uint64_t(n) != length)) return 0;
       rx.advance(length);
@@ -1059,7 +1116,7 @@ public:
     if (rx.length() < length) return 0;
     m_rxData = {};
     int64_t n = rx.each(length,
-      [this](ZuBSpan span) -> int64_t { return Base::process(span); });
+      [this](ZuSpan<uint8_t> span) -> int64_t { return Base::process(span); });
     if (ZuUnlikely(n < 0)) return -1;
     if (ZuUnlikely(uint64_t(n) != length)) return 0;
     if (header.type == FrameType::Data) {
@@ -1120,15 +1177,15 @@ public:
   void h2Setting(uint16_t key, uint32_t value) {
     impl_()->h2PeerSetting(key, value);
   }
-  void h2Headers(uint32_t id, ZuBSpan span) {
+  void h2Headers(uint32_t id, ZuSpan<uint8_t> span) {
     auto entry_ = begin_(id);
     if (!entry_) {
       if (m_discardStream == id &&
-	  m_decoder.process(span, [](Field) { }) < 0)
+	  m_decoder.process(span, [](DecodedField) { }) < 0)
 	h2Error(Error::CompressionError);
       return;
     }
-    if (m_decoder.process(span, [this, id](Field field) {
+    if (m_decoder.process(span, [this, id](DecodedField field) {
 	  auto entry_ = h2Stream(id);
 	  if (!entry_) return;
 	  if (!entry_->begin) {

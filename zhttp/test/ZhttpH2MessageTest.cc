@@ -16,6 +16,17 @@ namespace ZhttpH2MessageTest_ {
 
 using TestHeaders = ZhttpHeaders("x-test");
 
+template <typename Base_>
+struct SyntheticParser : public Base_ {
+  using Base_::Base_;
+  using Base_::field;
+
+  bool field(ZuBSpan name, ZuBSpan value) {
+    ZtBArray<ZtArrayHeapID<"ZhttpH2MessageTest.Value">> storage{value};
+    return Base_::field(name, storage.span());
+  }
+};
+
 template <typename Parser>
 bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
 {
@@ -36,35 +47,38 @@ bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
 
 struct Parsed :
   public Zhttp::Parser,
-  public Zhttp::H2::Parser<Parsed, true, TestHeaders> {
-  using Base = Zhttp::H2::Parser<Parsed, true, TestHeaders>;
+  public SyntheticParser<Zhttp::H2::Parser<Parsed, true, TestHeaders>> {
+  using Base = SyntheticParser<Zhttp::H2::Parser<Parsed, true, TestHeaders>>;
   using Base::reset;
   using Headers = TestHeaders;
 
   Parsed() : Base{1024} { }
 
   bool operation(
-    Zhttp::Method::T method_, const Zhttp::Target &target) {
+    Zhttp::Method::T method_, Zhttp::Target &target) {
     operationOrder = ++callbackOrder;
     method = method_;
-    path = target.pathQuery;
+    path = target.path;
     return true;
   }
   void status(unsigned value) { status_ = value; ++statusCalls; }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyType = type;
     bodyLength = length;
     ++bodyInfoCalls;
     if (type == Zhttp::BodyType::Fixed) contentLength_ = length;
+    return true;
   }
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
   }
   void header(
-      Zhttp::FieldSection::T section, ZuBSpan name, ZuBSpan value) {
+      Zhttp::FieldSection::T section,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if (name == "host") host = value;
@@ -75,11 +89,11 @@ struct Parsed :
     while (rx) {
       const uint8_t *offered = nullptr;
       if (rx.consume(
-	  [&offered, this](ZuBSpan value) -> int64_t {
+	  [&offered, this](ZuSpan<uint8_t> value) -> int64_t {
 	    offered = value.data();
 	    return partial ? 1 : value.length();
 	  },
-	  [this, &offered](ZuBSpan value) {
+	  [this, &offered](ZuSpan<uint8_t> value) {
 	    noCopy &= value.data() == offered;
 	    body_ << value;
 	  }) <= 0)
@@ -118,29 +132,31 @@ struct Parsed :
 
 struct Response :
   public Zhttp::Parser,
-  public Zhttp::H2::Parser<Response, false, TestHeaders> {
-  using Base = Zhttp::H2::Parser<Response, false, TestHeaders>;
+  public SyntheticParser<Zhttp::H2::Parser<Response, false, TestHeaders>> {
+  using Base = SyntheticParser<Zhttp::H2::Parser<Response, false, TestHeaders>>;
   using Base::reset;
   using Headers = TestHeaders;
 
   Response() : Base{1024} { }
 
   bool enable1xx() const { return informational; }
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
+  bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) {
     statusOrder = ++callbackOrder;
     headerOrder = bodyOrder = 0;
     status_ = value;
     ++statusCalls;
   }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyType = type;
     bodyLength = length;
     ++bodyInfoCalls;
     if (type == Zhttp::BodyType::Fixed) contentLength_ = length;
+    return true;
   }
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     headerSection = section;
     if (!headerOrder) headerOrder = ++callbackOrder;
     if constexpr (Key{}() == "x-test") xTest = value;
@@ -149,7 +165,7 @@ struct Response :
   bool body(Rx &rx) {
     if (!bodyOrder) bodyOrder = ++callbackOrder;
     return Zhttp::bodyEach(rx,
-      [this](ZuBSpan value) { body_ << value; });
+      [this](ZuSpan<uint8_t> value) { body_ << value; });
   }
   void complete(Zhttp::H2::ParserState::T state) {
     completeState = state;
@@ -177,14 +193,16 @@ struct Response :
 
 struct RejectingRequest :
   public Zhttp::Parser,
-  public Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>> {
-  using Base = Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>;
+  public SyntheticParser<
+    Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>> {
+  using Base = SyntheticParser<
+    Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>>;
   using Base::reset;
   using Headers = ZuTypeList<>;
 
   RejectingRequest() : Base{1024} { }
 
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) {
+  bool operation(Zhttp::Method::T, Zhttp::Target &) {
     ++operations;
     return !rejectOperation;
   }
@@ -348,8 +366,10 @@ struct StreamConsumer {
 
 struct StreamResponse :
   public Zhttp::Parser,
-  public Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>> {
-  using Base = Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>>;
+  public SyntheticParser<
+    Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>>> {
+  using Base = SyntheticParser<
+    Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>>>;
   using Base::reset;
   using Headers = ZuTypeList<>;
 
@@ -361,19 +381,20 @@ struct StreamResponse :
     dispatch.final_();
   }
 
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
+  bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
   template <typename Rx>
   bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (status_ >= 200 && status_ < 300 &&
 	type != Zhttp::BodyType::None) {
       stream();
       ++established;
       ++starts;
     }
+    return true;
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
@@ -384,11 +405,11 @@ struct StreamResponse :
     while (rx) {
       const uint8_t *offered = nullptr;
       int64_t n = rx.consume(
-	  [&offered](ZuBSpan span) -> int64_t {
+	  [&offered](ZuSpan<uint8_t> span) -> int64_t {
 	    offered = span.data();
 	    return 1;
 	  },
-	  [this, &offered](ZuBSpan span) {
+	  [this, &offered](ZuSpan<uint8_t> span) {
 	    noCopy &= span.data() == offered;
 	    data_ << span;
 	  });

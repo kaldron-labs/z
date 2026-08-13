@@ -111,7 +111,7 @@ struct ResParser;
 
 struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   using ContentLength = ZuStringT<"content-length">;
-  using Headers = ZuTypeList<ContentLength, void>;
+  using Headers = ZuTypeList<ContentLength, ZuTypeList<>>;
   Zhttp::BodyPolicy::T bodyPolicy() const {
     return bodyData ?
       Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
@@ -127,7 +127,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   template <typename Key, typename L>
   void header(L &&l) const {
     if constexpr (ZuIsSame<Key, ContentLength>{})
-      if (bodyData) l(Zhttp::Placeholder{10, '0'});
+      if (bodyData) l("0000000000");
   }
   template <typename L> void header(L &&) const { }
   template <typename Emit>
@@ -184,15 +184,15 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 int listenerAt(uint16_t);
 
 struct ResParser : public Zhttp::Parser {
-  using Headers = ZuTypeList<ZuStringT<"location">, void>;
+  using Headers = ZuTypeList<ZuStringT<"location">, ZuTypeList<>>;
 
   bool enable1xx() const { return false; }
 
   void init(const ReqBuilder_ &req) { ++req.inits; }
   void status(unsigned status__) { status_ = status__; }
-  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
   template <typename Rx>
   bool body(Rx &rx) {
     return !rejectBody && Zhttp::bodyDrain(rx);

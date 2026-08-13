@@ -480,7 +480,7 @@ public:
   using Message = MessageTraits<Profile>;
   ZuAssert((ZuIs_<ResParser, Zhttp::Parser>{}),
     "Zhttp::Client requires ResParser to derive from Zhttp::Parser");
-  using ReqHeaderKeys = ZuTypeSlice<2, 0, ReqHeaders>;
+  using ReqHeaderKeys = typename HeaderList<ReqHeaders>::Keys;
   enum { ReqContentLength =
     ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{} };
   ZuAssert((
@@ -508,6 +508,12 @@ private:
     void host(L &&l) { l(authority); }
     template <typename L>
     void protocol(L &&l) { app->protocol(ZuFwd<L>(l)); }
+    template <typename Key, typename Value, typename L>
+    void header(L &&l) {
+      if constexpr (Key{}() == "content-length")
+	if (rejectContentLength) return;
+      builderFixedHeader<Key, Value>(app, ZuFwd<L>(l), 0);
+    }
     template <typename Key, typename L>
     void header(L &&l) {
       if constexpr (Key{}() == "content-length")
@@ -585,15 +591,16 @@ private:
       Parser, RespHeaders>;
     using State = typename Protocol::State;
 
-    bool operation(Method::T, const Target &) { return true; }
+    bool operation(Method::T, Target &) { return true; }
     void status(unsigned value, bool http10) {
       app->status(*link, *request, sink(), value, http10);
     }
-    void bodyInfo(BodyType::T type, uint64_t length) {
-      app->bodyInfo(*link, *request, sink(), type, length);
+    bool bodyInfo(BodyType::T type, uint64_t length) {
+      return app->bodyInfo(*link, *request, sink(), type, length);
     }
     template <typename Key>
-    void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+    void header(
+        Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
       app->template header<Key>(
 	*link, *request, sink(), section, value);
     }
@@ -603,7 +610,8 @@ private:
 	*link, *request, sink(), section);
     }
     void header(
-	Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+	Zhttp::FieldSection::T section,
+	ZuBSpan key, ZuSpan<uint8_t> value) {
       app->header(*link, *request, sink(), section, key, value);
     }
     template <typename Rx>
@@ -5988,15 +5996,15 @@ public:
     parser.status(value);
   }
   template <typename Link>
-  void bodyInfo(
+  bool bodyInfo(
     Link &, LiveReq &, ResParser &parser,
     BodyType::T type, uint64_t length) {
-    parser.bodyInfo(type, length);
+    return parser.bodyInfo(type, length);
   }
   template <typename Key, typename Link>
   void header(
     Link &, LiveReq &attempt, ResParser &parser,
-    Zhttp::FieldSection::T section, ZuBSpan value) {
+    Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "alt-svc") {
       if (section != Zhttp::FieldSection::Final) {
 	parser.template header<Key>(section, value);
@@ -6035,7 +6043,8 @@ public:
   template <typename Link>
   void header(
     Link &, LiveReq &, ResParser &parser,
-    Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+    Zhttp::FieldSection::T section,
+    ZuBSpan key, ZuSpan<uint8_t> value) {
     if constexpr (Fields::HasRuntime<ResParser>{})
       parser.header(section, key, value);
   }

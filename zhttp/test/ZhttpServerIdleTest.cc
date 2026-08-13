@@ -149,18 +149,19 @@ struct App {
 
     void init(App &app) { state = app.state; }
 
-    bool operation(Zhttp::Method::T, const Zhttp::Target &) {
+    bool operation(Zhttp::Method::T, Zhttp::Target &) {
       if (state) {
 	state->rxCallback();
 	state->requestStarted.post();
       }
       return true;
     }
-    void bodyInfo(Zhttp::BodyType::T, uint64_t) {
+    bool bodyInfo(Zhttp::BodyType::T, uint64_t) {
       if (state) state->rxCallback();
+      return true;
     }
     template <typename Key>
-    void header(Zhttp::FieldSection::T, ZuBSpan) {
+    void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) {
       if (state) state->rxCallback();
     }
     template <typename Rx>
@@ -219,7 +220,7 @@ using Server = Zhttp::Server<App>;
 template <typename Profile>
 struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   using RequestHeaders = ZuTypeList<
-    ZuStringT<"content-length">, void>;
+    ZuStringT<"content-length">, ZuTypeList<>>;
 
   struct Builder :
     public Zhttp::Builder,
