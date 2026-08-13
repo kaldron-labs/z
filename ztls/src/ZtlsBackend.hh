@@ -28,6 +28,11 @@
 #endif
 #endif
 
+#if Ztls_OpenSSL
+#include <openssl/crypto.h>
+#define Ztls_memcmp CRYPTO_memcmp
+#endif
+
 #include <zpicotls.h>
 #if Ztls_Fusion
 #include <zpicotls/fusion.h>

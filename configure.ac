@@ -11,6 +11,9 @@ AC_LANG([C++])
 AC_PROG_CXX
 AC_PROG_CC
 
+AC_PATH_PROG([GO], [go])
+AM_CONDITIONAL([HAVE_GO], [test -n "$GO"])
+
 # Autoconf may append a standard-mode probe to the compiler command.
 # This project manages language modes explicitly.
 for z_var in CC CXX; do
@@ -229,7 +232,7 @@ AC_CONFIG_FILES([Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
 	zhttp/util/Makefile zhttp/itest/Makefile zhttp/interop/Makefile \
 	zrest/Makefile zrest/src/Makefile zrest/test/Makefile \
-	zrest/example/Makefile zrest/interop/Makefile \
+	zrest/itest/Makefile zrest/example/Makefile zrest/interop/Makefile \
 	zws/Makefile zws/src/Makefile zws/test/Makefile \
 	zws/bench/Makefile zws/interop/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile \

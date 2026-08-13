@@ -543,8 +543,6 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zrest/src/ZrestLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `zrest/src/Zrest.hh:10` - Top-level symbols: define Zrest_HH, struct Request, struct Builder, using Base, struct AnyMsgType, class Link
 - `zdash/src/zdash.cc:72` - Top-level symbols: struct Watch, function Watch_Axor, function Watch_HeapID, struct Display_, using DispList, using Display
-- `zrest/example/zrserver.cc:1` - Top-level contents (no regex-matched symbols)
-- `zrest/example/zrclient.cc:19` - Top-level symbols: struct Credentials, struct AuthResponse, struct ProtectedResponse, class Client, class Link, using Base
 - `zi/src/ZiPlatform.cc:17` - Top-level symbols: struct passwd, struct passwd
 - `zi/src/ZiRing.hh:22` - Top-level symbols: define ZiRing_HH, struct ParamData, function data, using Base, class Params_, using Base
 - `zi/src/ZiNetlinkMsg.hh:5` - Top-level symbols: define ZiNetlinkMsg_HH, class ZiConnection, class ZiNetlinkHdr, function hdr, struct nlmsghdr, class ZiGenericNetlinkHdr

@@ -17,6 +17,8 @@ namespace Zrest {
 
 template <typename Impl, typename Object>
 struct ReqBuilder : public Request, public Zhttp::Builder {
+  using Request::Headers;
+
   using Zhttp::Builder::header;
   using ContentLength = ZuStringT<"content-length">;
 
@@ -24,7 +26,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
   auto impl() const { return static_cast<const Impl *>(this); }
 
   constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
-    return Impl::Body == BodyPolicy::None ?
+    return Impl::Body == BodyPolicy::None || Impl::Body == BodyPolicy::Zero ?
       Zhttp::BodyPolicy::None : Zhttp::BodyPolicy::Fixed;
   }
 
@@ -78,7 +80,8 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
   }
 
   template <typename Emit> void body(Emit &&emit) const {
-    if constexpr (Impl::Body == BodyPolicy::None) {
+    if constexpr (Impl::Body == BodyPolicy::None ||
+	Impl::Body == BodyPolicy::Zero) {
       return;
     } else if constexpr (Impl::Body == BodyPolicy::JSON && !Impl::SignBody) {
       emit([this](auto &s) {
@@ -132,15 +135,17 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 
   template <typename Key, typename L>
   void header(L &&l) const {
-    if constexpr (ZuIsSame<Key, ContentLength>{} &&
-	Impl::Body != BodyPolicy::None)
-      l("0000000000");
+    if constexpr (ZuIsSame<Key, ContentLength>{}) {
+      if constexpr (Impl::Body == BodyPolicy::Zero) l("0");
+      else if constexpr (Impl::Body != BodyPolicy::None) l("0000000000");
+    }
   }
   template <typename L> void header(L &&) const { }
 
   template <typename L>
   void bodyHdrs(L &&l) const {
-    if constexpr (Impl::Body != BodyPolicy::None)
+    if constexpr (Impl::Body != BodyPolicy::None &&
+	Impl::Body != BodyPolicy::Zero)
       l.template operator()<ContentLength>(
 	[bodyLength = bodyLength](ZuSpan<uint8_t> span) {
 	  ZuStream s{span};
@@ -159,6 +164,8 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 
 template <typename Impl, typename Object>
 struct ResParser : public Response, public Zhttp::Parser {
+  using Response::Headers;
+
   auto impl() { return static_cast<Impl *>(this); }
   auto impl() const { return static_cast<const Impl *>(this); }
 
@@ -171,11 +178,13 @@ struct ResParser : public Response, public Zhttp::Parser {
 
   bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyLength = length;
-    return type != Zhttp::BodyType::Streamed;
+    return type != Zhttp::BodyType::Streamed &&
+      (Impl::Body != BodyPolicy::Zero || !length);
   }
 
   template <typename Rx> bool body(Rx &rx) {
-    if constexpr (Impl::Body == BodyPolicy::None)
+    if constexpr (Impl::Body == BodyPolicy::None ||
+	Impl::Body == BodyPolicy::Zero)
       return false;
     else {
       rx.consume(

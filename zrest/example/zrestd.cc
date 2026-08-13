@@ -29,10 +29,10 @@
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestServer.hh>
 
+#include "zrestjwt.hh"
+
 ZtEnumNS(, Http2Mode, int8_t, force, prefer, disable);
 ZtEnumImplNS(Http2Mode);
-
-constexpr uint64_t ReqBodyMax = 1<<20;
 
 struct Options {
   ZuCSpan	addr{"0.0.0.0"};
@@ -43,7 +43,14 @@ struct Options {
   ZuCSpan	logPath{"-"};
   ZuCSpan	pidfile;
   int		eventFD = -1;
-  uint32_t	requests = 1;
+  ZuCSpan	user{DefaultUser{}()};
+  ZuCSpan	pass{DefaultPass{}()};
+  ZuCSpan	jwtSecret{DefaultJWTSecret{}()};
+  ZuCSpan	accessTokenLifetime{DefaultAccessLifetime{}()};
+  ZuCSpan	refreshTokenLifetime{DefaultRefreshLifetime{}()};
+  uint64_t	accessSecs = AccessLifetimeDefault;
+  uint64_t	refreshSecs = RefreshLifetimeDefault;
+  unsigned	requests = 1;
   unsigned	maxconn = 0;
   unsigned	timeout = 30;
   bool		ipv6 = false;
@@ -54,6 +61,7 @@ struct Options {
   bool		http = true;
   bool		https = false;
   bool		http3 = false;
+  bool		verbose = false;
   Http2Mode::T	http2 = Http2Mode::prefer;
   uint32_t	quicHeartbeat = 0;
 #ifdef ZiMultiplex_DEBUG
@@ -81,6 +89,14 @@ ZfStruct((Options, CLI),
   (((logPath),    (CLI::Long<"log">)),                        (String, "-")),
   (((pidfile),    (CLI::Long<"pidfile">)),                    (String)),
   (((eventFD),    (CLI::Long<"event-fd">)),                   (Int32, -1)),
+  (((user),       (CLI::Long<"user">)),                       (String, "test")),
+  (((pass),       (CLI::Long<"pass">)),                       (String, "test123")),
+  (((jwtSecret),  (CLI::Long<"jwt-secret">)),                 (String,
+							 "your_secret_key")),
+  (((accessTokenLifetime),
+    (CLI::Long<"access-token-lifetime">)),                    (String, "5m")),
+  (((refreshTokenLifetime),
+    (CLI::Long<"refresh-token-lifetime">)),                   (String, "24h")),
   (((requests),   (CLI::Opt<'n'>, CLI::Long<"requests">)),    (UInt32, 1)),
   (((maxconn),    (CLI::Long<"maxconn">)),                    (UInt32)),
   (((timeout),    (CLI::Long<"timeout">)),                    (UInt32, 30)),
@@ -92,6 +108,7 @@ ZfStruct((Options, CLI),
   (((http),       (CLI::Long<"http">)),                       (Bool, true)),
   (((https),      (CLI::Long<"https">)),                      (Bool)),
   (((http3),      (CLI::Long<"http3">)),                      (Bool)),
+  (((verbose),    (CLI::Flag<'v'>, CLI::Long<"verbose">)),    (Bool)),
   (((http2),      (Enum<Http2Mode::Map>, CLI::Long<"http2">)),
 								 (Int8, Http2Mode::prefer)),
   (((quicHeartbeat),
@@ -152,6 +169,14 @@ static void usage(int code = 1)
 #endif
     "  --mem-diag=N       print memory counters every N seconds\n"
     "  --event-fd=N       emit process-supervision events\n"
+    "  --user=USER        accepted username, default test\n"
+    "  --pass=PASS        accepted password, default test123\n"
+    "  --jwt-secret=TEXT  HS256 secret, default your_secret_key\n"
+    "  --access-token-lifetime=Ns|Nm|Nh\n"
+    "                     access lifetime, default 5m\n"
+    "  --refresh-token-lifetime=Ns|Nm|Nh\n"
+    "                     refresh lifetime, default 24h\n"
+    "  -v, --verbose      emit stable auth/refresh/pong events\n"
     "  -h, --help         show help\n" << std::flush;
   ::exit(code);
 }
@@ -181,6 +206,10 @@ static bool loadOptions(Options &options, int argc, char **argv)
   if (argc_ != 1 || !options.requests || options.port > 65535 ||
       options.http2 < 0 || options.http2 >= Http2Mode::N)
     return false;
+  if (!options.user || !options.pass || !options.jwtSecret ||
+      !parseDuration(options.accessTokenLifetime, false, options.accessSecs) ||
+      !parseDuration(options.refreshTokenLifetime, false, options.refreshSecs) ||
+      options.refreshSecs <= options.accessSecs) return false;
   if (!httpSet && (options.https || options.http3)) options.http = false;
   if ((options.https || options.http3) && (!options.cert || !options.key))
     return false;
@@ -212,120 +241,272 @@ static bool prepareProcess(const Options &options)
   return rc == ZiDaemon::OK;
 }
 
-struct Pong;
-struct Ping : public ZmObject {
-  bool ping = true;
-};
-struct Pong : public ZmObject {
-  bool pong = true;
+struct AuthOK;
+struct AuthUnauthorized;
+struct AuthInternalError;
+struct RefreshOK;
+struct RefreshUnauthorized;
+struct RefreshInternalError;
+struct PingOK;
+struct PingUnauthorized;
+class App;
+struct Parser;
+
+struct AuthParser : public Zrest::ReqParser<AuthParser, Credentials> {
+  enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+  using Path = AuthPath;
+  using Responses = ZuTypeList<AuthOK, AuthUnauthorized, AuthInternalError>;
+  App *app = nullptr;
+  void init() { Zrest::ReqParser<AuthParser, Credentials>::init(); }
+  template <typename Link> void complete(Link *, bool);
 };
 
-ZfStruct((Ping, URI),
-  (((ping)),	(Bool)));
-ZfStruct((Pong, JSON),
-  (((pong)),	(Bool)));
-
-struct PongBuilder;
-struct App;
+struct RefreshParser : public Zrest::ReqParser<RefreshParser, RefreshRequest> {
+  enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+  using Path = RefreshPath;
+  using Responses = ZuTypeList<
+    RefreshOK, RefreshUnauthorized, RefreshInternalError>;
+  App *app = nullptr;
+  void init() { Zrest::ReqParser<RefreshParser, RefreshRequest>::init(); }
+  template <typename Link> void complete(Link *, bool);
+};
 
 struct PingParser : public Zrest::ReqParser<PingParser, Ping> {
-  enum { Query = Zrest::QueryPolicy::URI };
-  using Headers = ZuTypeList<>;
-  using Responses = ZuTypeList<PongBuilder>;
+  using Base = Zrest::ReqParser<PingParser, Ping>;
+  using Base::header;
+  enum { Method = Zhttp::Method::GET, Query = Zrest::QueryPolicy::URI };
+  using Path = PingPath;
+  using Headers = ZhttpHeaders("authorization");
+  using Responses = ZuTypeList<PingOK, PingUnauthorized>;
+
+  App *app = nullptr;
+  TokenString authorization;
+  unsigned authorizationCount = 0;
+
+  void init() { Base::init(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "authorization") {
+      ++authorizationCount;
+      if (value.length() <= sizeof("Bearer ") - 1 + JWTMax)
+	authorization = value;
+    }
+  }
+  template <typename Link> void complete(Link *, bool);
 };
 
-struct PongBuilder : public Zrest::ResBuilder<PongBuilder, Pong> {
+struct AuthOK : public Zrest::ResBuilder<AuthOK, TokenResponse> {
   enum { Body = Zrest::BodyPolicy::JSON };
-  using Headers = ZhttpHeaders(
-    ("content-type", "application/json"), "content-length");
+};
+struct AuthUnauthorized : public Zrest::ResBuilder<
+    AuthUnauthorized, Unauthorized> {
+  enum { Status = 401, Body = Zrest::BodyPolicy::Zero };
+};
+struct AuthInternalError : public Zrest::ResBuilder<
+    AuthInternalError, InternalError> {
+  enum { Status = 500, Body = Zrest::BodyPolicy::Zero };
+};
+struct RefreshOK : public Zrest::ResBuilder<RefreshOK, TokenResponse> {
+  enum { Body = Zrest::BodyPolicy::JSON };
+};
+struct RefreshUnauthorized : public Zrest::ResBuilder<
+    RefreshUnauthorized, Unauthorized> {
+  enum { Status = 401, Body = Zrest::BodyPolicy::Zero };
+};
+struct RefreshInternalError : public Zrest::ResBuilder<
+    RefreshInternalError, InternalError> {
+  enum { Status = 500, Body = Zrest::BodyPolicy::Zero };
+};
+struct PingOK : public Zrest::ResBuilder<PingOK, Pong> {
+  enum { Body = Zrest::BodyPolicy::JSON };
+};
+struct PingUnauthorized : public Zrest::ResBuilder<
+    PingUnauthorized, Unauthorized> {
+  enum { Status = 401, Body = Zrest::BodyPolicy::Zero };
 };
 
-using Requests = ZuTypeList<PingParser>;
+using Requests = ZuTypeList<AuthParser, RefreshParser, PingParser>;
 struct Parser : public Zrest::MReqParser<Requests> {
   using Reqs = Requests;
-
-  void init(App &app_) { app = &app_; }
-
-  template <typename Link>
-  void complete(Link *, bool);
-
+  void init(App &app_);
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    if (!Zrest::MReqParser<Requests>::operation(method, target)) return false;
+    u.dispatch([this](auto, auto &request) {
+      request.app = app;
+    });
+    return true;
+  }
   App *app = nullptr;
 };
 using Builder = Zrest::MResBuilder<Parser>;
 
 struct ResBuilder_ : public ZmObject, public Builder {
-  bool close() const { return close_; }
   bool close_ = false;
+  bool close() const { return close_; }
 };
-
-using ResBuilderQ = ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"zrestd.ResBuilder">>>;
+ZuDerive(ResBuilderQ, (ZmList<ResBuilder_,
+  ZmListNode<ResBuilder_, ZmListHeapID<"zrestd.ResBuilder">>>));
 using ResBuilder = ResBuilderQ::Node;
 
-struct App {
+class App {
+public:
   using Parser = ::Parser;
   using ResBuilderQ = ::ResBuilderQ;
 
-  App(const Options *options_) : options{options_} { }
+  App(const Options *options) : m_options{options} { }
+  bool init() { return m_rng.init(); }
 
   template <typename Link>
-  void respond(Link *link, const Parser &parser, bool ok) {
-    if (!ok) {
-      ++errors;
-      finish_();
+  void auth(Link *link, const AuthParser &parser, bool ok) {
+    if (!ok) { fail_(); return; }
+    const auto &credentials = *parser.object;
+    if (!credentials.username || !credentials.password ||
+	credentials.username != m_options->user ||
+	credentials.password != m_options->pass) {
+      send_<AuthUnauthorized>(link, parser, new Unauthorized{});
       return;
     }
-    ZmRef<ResBuilder> response = new ResBuilder{};
-    response->close_ = options->noKeepalive;
-    response->template init<PongBuilder>(parser, new Pong{});
-    link->send(ZuMv(response));
-    finish_();
+    ZmRef<TokenResponse> tokens = new TokenResponse{};
+    if (!jwtIssuePair(m_rng, m_options->jwtSecret, credentials.username,
+	  Zm::now().sec(), m_options->accessSecs, m_options->refreshSecs,
+	  *tokens)) {
+      send_<AuthInternalError>(link, parser, new InternalError{});
+      fail_();
+      return;
+    }
+    send_<AuthOK>(link, parser, tokens.ptr());
+    ++m_auth;
+    event_("auth");
+  }
+
+  template <typename Link>
+  void refresh(Link *link, const RefreshParser &parser, bool ok) {
+    if (!ok) { fail_(); return; }
+    CredString subject;
+    if (!parser.object->refreshToken ||
+	!jwtValidate(m_options->jwtSecret, parser.object->refreshToken,
+	  TokenType::refresh, Zm::now().sec(), subject)) {
+      send_<RefreshUnauthorized>(link, parser, new Unauthorized{});
+      return;
+    }
+    ZmRef<TokenResponse> tokens = new TokenResponse{};
+    if (!jwtIssuePair(m_rng, m_options->jwtSecret, subject, Zm::now().sec(),
+	  m_options->accessSecs, m_options->refreshSecs, *tokens)) {
+      send_<RefreshInternalError>(link, parser, new InternalError{});
+      fail_();
+      return;
+    }
+    send_<RefreshOK>(link, parser, tokens.ptr());
+    ++m_refresh;
+    event_("refresh");
+  }
+
+  template <typename Link>
+  void ping(Link *link, const PingParser &parser, bool ok) {
+    auto authorization = ZuCSpan{parser.authorization};
+    auto prefix = authorization;
+    prefix.trunc(7);
+    auto token = authorization;
+    token.offset(7);
+    bool bearer = authorization.length() > 7 && prefix == "Bearer " &&
+	token.find([](char c) { return c == ' '; }) < 0;
+    CredString subject;
+    if (!ok || !parser.object->ping || parser.authorizationCount != 1 ||
+	!bearer || !jwtValidate(m_options->jwtSecret, token,
+	  TokenType::access, Zm::now().sec(), subject)) {
+      send_<PingUnauthorized>(link, parser, new Unauthorized{});
+      return;
+    }
+    auto pong = new Pong{};
+    pong->pong = true;
+    send_<PingOK>(link, parser, pong);
+    ++m_pong;
+    event_("pong");
+    if (m_pong >= m_options->requests) {
+      ZiLOG(Info, "zrestd", ([auth = m_auth, refresh = m_refresh,
+	  pong = m_pong](auto &s) {
+	s << "event=summary auth=" << auth << " refresh=" << refresh <<
+	  " pong=" << pong;
+      }));
+      signal_(Zhttp::ResponseOutcome::Success);
+    }
   }
 
   void listening(int transport, unsigned port) {
     ZiLOG(Info, "zrestd", ([transport, port](auto &s) {
+      s << "event=listening transport=";
       switch (transport) {
 	case Zhttp::Transport::QUIC: s << "h3"; break;
 	case Zhttp::Transport::TLS: s << "https"; break;
 	default: s << "http"; break;
       }
-      s << " listening: " << port;
+      s << " port=" << port;
     }));
 #ifndef _WIN32
-    if (options->eventFD >= 0) {
+    if (m_options->eventFD >= 0) {
       uint8_t value = uint8_t(transport);
-      (void)::write(options->eventFD, &value, 1);
+      (void)::write(m_options->eventFD, &value, 1);
     }
 #endif
   }
-  void listenFailed(int, bool) { ++errors; done.post(); }
+  void listenFailed(int, bool) { fail_(); }
   void connected(int) { }
   void disconnected(int) { }
-
-  const Options *options;
-  ZmAtomic<unsigned> processed = 0;
-  ZmAtomic<unsigned> errors = 0;
+  unsigned errors() const { return m_errors; }
+  unsigned processed() const { return m_pong; }
+  void transportFailed() { ++m_errors; }
 
 private:
-  void finish_() {
-    unsigned n = ++processed;
-#ifndef _WIN32
-    if (options->eventFD >= 0) {
-      uint8_t value = uint8_t(0x80 | unsigned(
-	errors ? Zhttp::ResponseOutcome::BuildFailed :
-	  Zhttp::ResponseOutcome::Success));
-      (void)::write(options->eventFD, &value, 1);
-    }
-#endif
-    if (n >= options->requests) done.post();
+  template <typename Response, typename Link, typename Request, typename Object>
+  void send_(Link *link, const Request &, Object *object) {
+    ZmRef<ResBuilder> response = new ResBuilder{};
+    response->close_ = m_options->noKeepalive;
+    response->template init<Response, Request>(object);
+    link->send(ZuMv(response));
   }
+
+  void event_(ZuCSpan event) {
+    if (!m_options->verbose) return;
+    ZeString value{event};
+    ZiLOG(Info, "zrestd", ([value = ZuMv(value)](auto &s) {
+      s << "event=" << value;
+    }));
+  }
+  void fail_() { ++m_errors; signal_(Zhttp::ResponseOutcome::BuildFailed); }
+  void signal_(Zhttp::ResponseOutcome::T outcome) {
+#ifndef _WIN32
+    if (m_options->eventFD >= 0) {
+      uint8_t value = uint8_t(0x80 | unsigned(outcome));
+      (void)::write(m_options->eventFD, &value, 1);
+    }
+#else
+    (void)outcome;
+#endif
+    done.post();
+  }
+
+  const Options	*m_options;
+  Ztls::Random	m_rng;
+  unsigned	m_auth = 0;
+  unsigned	m_refresh = 0;
+  unsigned	m_pong = 0;
+  unsigned	m_errors = 0;
 };
 
-template <typename Link>
-void Parser::complete(Link *link, bool ok)
+void Parser::init(App &app_)
 {
-  app->respond(link, *this, ok);
+  app = &app_;
+  Zrest::MReqParser<Requests>::init(app_);
 }
+
+template <typename Link>
+void AuthParser::complete(Link *link, bool ok) { app->auth(link, *this, ok); }
+template <typename Link>
+void RefreshParser::complete(Link *link, bool ok) {
+  app->refresh(link, *this, ok);
+}
+template <typename Link>
+void PingParser::complete(Link *link, bool ok) { app->ping(link, *this, ok); }
 
 static ZiMxParams mxParams(const Options &options)
 {
@@ -395,6 +576,12 @@ int main(int argc, char **argv)
   }
 
   App app{&options};
+  if (!app.init()) {
+    ZiLOG(Error, "zrestd", "random source initialization failed");
+    mx.stop();
+    ZiLog::stop();
+    return 1;
+  }
   Zhttp::Server<App> server;
   server.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
     ZiLOG(Error, "zrestd", ([e](auto &s) { s << "transmit error: " << e; }));
@@ -473,9 +660,9 @@ int main(int argc, char **argv)
     }
 #endif
   }
-  if (!server.stop()) ++app.errors;
+  if (!server.stop()) app.transportFailed();
   server.final();
   mx.stop();
   ZiLog::stop();
-  return app.errors || app.processed < options.requests ? 1 : 0;
+  return app.errors() || app.processed() < options.requests ? 1 : 0;
 }

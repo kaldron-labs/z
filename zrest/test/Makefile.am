@@ -4,6 +4,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zrest/src \
+	-I$(top_srcdir)/zrest/example \
 	-I$(top_srcdir)/zfb/src -I$(top_srcdir)/zv/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
@@ -20,8 +21,13 @@ LDADD = $(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZrestTest
+noinst_PROGRAMS = ZrestTest ZrestExampleTest
 ZrestTest_SOURCES = ZrestTest.cc
+ZrestExampleTest_SOURCES = ZrestExampleTest.cc \
+	$(top_srcdir)/zrest/example/zrestproto.cc \
+	$(top_srcdir)/zrest/example/zrestjwt.cc
+
+EXTRA_DIST = README.md
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
