@@ -1053,7 +1053,7 @@ private:
       using Value = typename List::template Value<I>;
       if constexpr (Value::N) {
 	using Fixed = HeaderValue<Value>;
-	builderFixedHeader<Key, Fixed>(impl(), [this, &stream]() {
+	builderFixedHeader<Key, Fixed>(impl(), [&stream]() {
 	  fixedField_(stream, Key{}(), Fixed{}(), 0);
 	}, 0);
 	impl()->template header<Key>([&stream]<typename V>(V &&v) {
