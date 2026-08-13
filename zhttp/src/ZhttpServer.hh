@@ -13,6 +13,8 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuObjectTraits.hh>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmHeap.hh>
@@ -1647,9 +1649,9 @@ private:
 };
 
 // Application response Builder base. The application ResBuilder_ derives from
-// ResBuilder and ZmObject. The final application ResBuilder is
-// ResBuilderQ::Node, an intrusive ZmList::Node which publicly derives the
-// application data type.
+// an intrusive object base followed by ResBuilder. The final application
+// ResBuilder is ResBuilderQ::Node, an intrusive ZmList::Node which adds the
+// heap base ahead of, and publicly derives from, the application data type.
 // Each node represents exactly one response and is never reset or repurposed.
 struct ResBuilder : public Builder {
   // Original request method, used to suppress forbidden response bodies.
@@ -1673,8 +1675,8 @@ public:
   using ResBuilder_ = typename ResBuilderQ::T;
   ZuAssert((ZuIs_<ResBuilder, ResBuilder_>{}),
     "Zhttp::Server requires ResBuilderQ::Node to derive from ResBuilder_");
-  ZuAssert((ZuIs_<ResBuilder_, ZmObject>{}),
-    "Zhttp::Server requires ResBuilder_ to derive from ZmObject");
+  ZuAssert(ZuIsObject<ResBuilder_>{},
+    "Zhttp::Server requires ResBuilder_ to be intrusively reference-counted");
   ZuAssert((ZuIs_<ResBuilder_, Zhttp::ResBuilder>{}),
     "Zhttp::Server requires ResBuilder_ to derive from Zhttp::ResBuilder");
   using Engine::running;

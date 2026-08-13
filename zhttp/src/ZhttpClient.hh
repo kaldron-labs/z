@@ -15,6 +15,8 @@
 
 #include <new>
 
+#include <zlib/ZuObjectTraits.hh>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmContext.hh>
 #include <zlib/ZmHash.hh>
@@ -362,8 +364,9 @@ struct Destination {
 };
 
 // Application request Builder base.  The application ReqBuilder_ derives from
-// ReqBuilder and ZmObject.  The final application ReqBuilder is TxQ::Msg, an
-// intrusive ZmPQueue::Node which publicly derives the application data type.
+// an intrusive object base followed by ReqBuilder.  The final application
+// ReqBuilder is TxQ::Msg, an intrusive ZmPQueue::Node which adds the heap base
+// ahead of, and publicly derives from, the application data type.
 // Each node represents one logical request and is never reset or repurposed.
 // Replay and redirect attempts may call its Builder callbacks again; every
 // Builder must reproduce the same message each time.
@@ -5309,8 +5312,8 @@ public:
     "Zhttp::Pool requires unordered ZmPQTx acknowledgements");
   ZuAssert((ZuIs_<ReqBuilder, ReqBuilder_>{}),
     "Zhttp::Pool requires TxQ::Msg to derive from ReqBuilder_");
-  ZuAssert((ZuIs_<ReqBuilder_, ZmObject>{}),
-    "Zhttp::Pool requires ReqBuilder_ to derive from ZmObject");
+  ZuAssert(ZuIsObject<ReqBuilder_>{},
+    "Zhttp::Pool requires ReqBuilder_ to be intrusively reference-counted");
   ZuAssert((ZuIs_<ReqBuilder_, Zhttp::ReqBuilder>{}),
     "Zhttp::Pool requires ReqBuilder_ to derive from Zhttp::ReqBuilder");
 
