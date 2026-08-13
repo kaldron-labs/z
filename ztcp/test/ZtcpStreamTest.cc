@@ -53,14 +53,14 @@ bool consumeExact(Ztcp::RxStream &rx, ZuBSpan expected)
   unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [&remaining](ZuBSpan span) -> int64_t {
+    [&remaining](ZuSpan<uint8_t> span) -> int64_t {
       if (remaining > span.length()) {
 	remaining -= span.length();
 	return 0;
       }
       return remaining;
     },
-    [&ok, expected](ZuBSpan span) {
+    [&ok, expected](ZuSpan<uint8_t> span) {
       ok = span.length() == expected.length() &&
 	!memcmp(span.data(), expected.data(), expected.length());
     });
@@ -77,12 +77,12 @@ void testBoundary()
 
   bool ok = false;
   int64_t n = rx.consume(
-    [total = 0U](ZuBSpan span) mutable -> int64_t {
+    [total = 0U](ZuSpan<uint8_t> span) mutable -> int64_t {
       total += span.length();
       if (total < 80) return 0;
       return span.length() - (total - 80);
     },
-    [&ok, &p](ZuBSpan span) {
+    [&ok, &p](ZuSpan<uint8_t> span) {
       ok = span.length() == p.length() &&
 	!memcmp(span.data(), p.data(), p.length());
     });
@@ -115,8 +115,8 @@ void testPauseAndEmpty()
 
   rx.push(buf("abc"));
   int64_t n = rx.consume(
-    [](ZuBSpan) -> int64_t { return 0; },
-    [](ZuBSpan) { });
+    [](ZuSpan<uint8_t>) -> int64_t { return 0; },
+    [](ZuSpan<uint8_t>) { });
   ZTCP_CHECK_RT(!n, "paused consume should report no bytes");
   ZTCP_CHECK_RT(!!rx, "paused consume should leave queued data intact");
 }

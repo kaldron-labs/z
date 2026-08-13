@@ -276,7 +276,7 @@ bool consume_payload(
     TestState &state,
     ZmAtomic<unsigned> &offset,
     const ZtArray<uint8_t> &expected,
-    ZuBSpan span,
+    ZuSpan<uint8_t> span,
     const char *msg)
 {
   unsigned len = unsigned(span.length());
@@ -309,12 +309,12 @@ int consume_payload_frame(
   uint64_t need = expected.length() - off;
   uint64_t seen = 0;
   int64_t consumed = rx.consume(
-    [&seen, need](ZuBSpan span) -> int64_t {
+    [&seen, need](ZuSpan<uint8_t> span) -> int64_t {
       seen += span.length();
       if (seen < need) return 0;
       return span.length() - (seen - need);
     },
-    [&state, &offset, &expected, msg, &complete](ZuBSpan span) {
+    [&state, &offset, &expected, msg, &complete](ZuSpan<uint8_t> span) {
       complete = consume_payload(state, offset, expected, span, msg);
     });
 
