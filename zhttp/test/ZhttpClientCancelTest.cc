@@ -159,7 +159,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
     uint64_t, uint64_t, unsigned, unsigned, unsigned,
     Zhttp::Transport::T, Zhttp::Version::T, bool, bool);
   void redirected(
-    const Zhttp::URL &, uint64_t, uint64_t, uint64_t,
+    const Zhttp::URLView &, uint64_t, uint64_t, uint64_t,
     unsigned, uint16_t);
   void retried(uint64_t, uint64_t, uint64_t, uint16_t);
   void fallback(
@@ -334,7 +334,7 @@ void ReqBuilder_::attemptFailed(
   }
 }
 void ReqBuilder_::redirected(
-    const Zhttp::URL &url_,
+    const Zhttp::URLView &url_,
     uint64_t request, uint64_t attempt, uint64_t previousAttempt,
     unsigned, uint16_t) {
   target.length(0);
