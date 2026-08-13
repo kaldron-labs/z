@@ -26,13 +26,13 @@ ZfStruct((Pong, JSON));
 struct PongBuilder;
 
 struct PingParser : public Zrest::ResParser<PingParser, Ping> {
-  enum { Query = BodyPolicy::URI };
+  enum { Query = Zrest::BodyPolicy::URI };
 
   using Responses = ZuTypeList<PongBuilder>;
 };
 
 struct PongBuilder : public Zrest::ReqBuilder<PongBuilder, Pong> {
-  enum { Body = BodyPolicy::JSON };
+  enum { Body = Zrest::BodyPolicy::JSON };
 };
 
 using Parser = Zrest::MReqParser<PingParser>;
