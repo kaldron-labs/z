@@ -400,7 +400,7 @@ void fallback()
   ClientApp agent;
   auto agentConfig = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
-    .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(true)
+    .protocol(Zhttp::ProtoPolicy::PreferH3).blindH3(true)
     .tcp(true).tls(true).quic(true);
   bool agentInited = agent.init(
     hub, 1, agentConfig, Zhttp::TCPConfig{},
@@ -461,7 +461,7 @@ void fallback()
   ClientApp cachedClient;
   auto cacheConfig = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
-    .protocol(Zhttp::ProtocolPolicy::PreferH3).blindH3(false)
+    .protocol(Zhttp::ProtoPolicy::PreferH3).blindH3(false)
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedClient.init(
     hub, 1, cacheConfig, Zhttp::TCPConfig{},
@@ -515,7 +515,7 @@ void fallback()
   ClientApp forcedClient;
   auto forcedDefaults = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   bool forcedInited = forcedClient.init(
     hub, 1, forcedDefaults, Zhttp::TCPConfig{}, Zhttp::H2Config{},
@@ -523,7 +523,7 @@ void fallback()
   forcedInited = forcedInited && forcedClient.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port},
     Zhttp::Config{}
-      .protocol(Zhttp::ProtocolPolicy::ForceH3).blindH3(true)
+      .protocol(Zhttp::ProtoPolicy::ForceH3).blindH3(true)
       .tls(false).quic(true));
   ZuCHECK(forcedInited, "initialize forced-H3 pool override");
   bool forcedUp = forcedInited && forcedClient.start();
@@ -548,7 +548,7 @@ void fallback()
   ClientApp disabledClient;
   auto disabledDefaults = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
-    .protocol(Zhttp::ProtocolPolicy::ForceH3)
+    .protocol(Zhttp::ProtoPolicy::ForceH3)
     .h2Policy(Zhttp::H2Policy::Disable)
     .tcp(true).tls(false).quic(true);
   bool disabledInited = disabledClient.init(
@@ -557,7 +557,7 @@ void fallback()
   disabledInited = disabledInited && disabledClient.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port},
     Zhttp::Config{}
-      .protocol(Zhttp::ProtocolPolicy::DisableH3)
+      .protocol(Zhttp::ProtoPolicy::DisableH3)
       .h2Policy(Zhttp::H2Policy::Force)
       .tls(true).quic(false));
   ZuCHECK(disabledInited, "initialize H3-disabled pool override");
