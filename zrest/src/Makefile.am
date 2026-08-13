@@ -7,7 +7,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-pkginclude_HEADERS = ZrestLib.hh Zrest.hh
+pkginclude_HEADERS = ZrestLib.hh Zrest.hh ZrestClient.hh ZrestServer.hh
 lib_LTLIBRARIES = libZrest.la
 libZrest_la_CPPFLAGS = $(AM_CPPFLAGS) -DZREST_EXPORTS 
 libZrest_la_SOURCES = ZrestLib.cc

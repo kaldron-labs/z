@@ -13,7 +13,7 @@
 
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/Zrest.hh>
+#include <zlib/ZrestClient.hh>
 
 // FIXME - ZtString<>
 struct Credentials {
