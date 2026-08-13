@@ -180,7 +180,7 @@ void roundTrip()
 
   char empty[] = "";
   auto scan = ZfURI::scan(empty);
-  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
   foo.int_ = 42;
   foo.float_ = 42.01;
   foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
@@ -204,7 +204,7 @@ void roundTrip()
   ZuCheck(scan.p<1>());
   if (!scan.p<1>()) return;
 
-  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
   if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&bar]<typename T>() mutable {
       std::cerr
@@ -301,7 +301,7 @@ void reservedCharRoundTrip()
 
   char empty[] = "";
   auto scan = ZfURI::scan(empty);
-  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
 
   foo.string = "a/b?c#d";
   foo.id = "x y%z";
@@ -316,7 +316,7 @@ void reservedCharRoundTrip()
   ZuCheck(scan2.p<1>());
   if (!scan2.p<1>()) return;
 
-  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan2.template p<1>()).ctor();
+  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan2.p<1>()).ctor();
   ZtString<> uri2;
   ZfURI::save<ZuFacet::Bah>(uri2, bar);
   ZuCheck(uri2.length() > 0);
@@ -357,7 +357,7 @@ void percentPolicies()
   {
     char empty[] = "";
     auto scan = ZfURI::scan(empty);
-    Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.template p<1>()).ctor();
+    Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
     foo.string = "a<c";
 
     ZtString<> uri;
