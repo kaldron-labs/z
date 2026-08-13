@@ -1756,11 +1756,12 @@ private:
       notified = false;
     }
 
-    bool operation(Method::T method, const Target &target) {
+    bool operation(Method::T method, Target &target) {
       return parser_().operation(method, target);
     }
     template <typename Key>
-    void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+    void header(
+        Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
       parser_().template header<Key>(section, value);
     }
     template <typename Key, typename Value>
@@ -1768,12 +1769,13 @@ private:
       parser_().template header<Key, Value>(section);
     }
     void header(
-	Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+	Zhttp::FieldSection::T section,
+	ZuBSpan key, ZuSpan<uint8_t> value) {
       if constexpr (Fields::HasRuntime<AppParser>{})
 	parser_().header(section, key, value);
     }
-    void bodyInfo(BodyType::T type, uint64_t length) {
-      parser_().bodyInfo(type, length);
+    bool bodyInfo(BodyType::T type, uint64_t length) {
+      return parser_().bodyInfo(type, length);
     }
     void status(unsigned) { }
     template <typename Rx>
@@ -1816,6 +1818,12 @@ private:
       rejectContentLength{rejectContentLength_} { }
 
     unsigned status() const { return builder->status(); }
+    template <typename Key, typename Value, typename L>
+    void header(L &&l) {
+      if constexpr (Key{}() == "content-length")
+	if (rejectContentLength) return;
+      builderFixedHeader<Key, Value>(builder, ZuFwd<L>(l), 0);
+    }
     template <typename Key, typename L>
     void header(L &&l) {
       if constexpr (Key{}() == "content-length")

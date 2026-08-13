@@ -190,7 +190,7 @@ void target()
     ZuCSpan input;
     Zhttp::Method::T method;
     Zhttp::TargetForm::T form;
-    ZuCSpan pathQuery;
+    ZuCSpan path;
     bool ok;
   };
   static const Test tests[] = {
@@ -217,11 +217,11 @@ void target()
     ZuCHECK(e.ok() == test.ok, test.input);
     if (test.ok) {
       ZuCHECK(target.form == test.form, test.input);
-      ZuCHECK(target.pathQuery == test.pathQuery, test.input);
-      if (target.pathQuery)
-	ZuCHECK(target.pathQuery.data() >=
+      ZuCHECK(target.path == test.path, test.input);
+      if (target.path)
+	ZuCHECK(target.path.data() >=
 	    input.data() &&
-	    target.pathQuery.data() + target.pathQuery.length() <=
+	    target.path.data() + target.path.length() <=
 	    input.data() + input.length(),
 	  "path-query borrows the input target");
       if (target.authority.host)
@@ -231,14 +231,17 @@ void target()
 
   Zhttp::URLString authority;
   authority << "Example.COM:443";
+  Zhttp::URLString path{"/chat?"};
+  Zhttp::URLString protocol{"websocket"};
   Zhttp::Target target;
   auto e = Zhttp::Target::fromPseudo(target, Zhttp::Method::CONNECT,
-    Zhttp::Scheme::https, authority.span(), "/chat?", "websocket");
+    Zhttp::Scheme::https, authority.span(), path.span(), protocol.span());
   ZuCHECK(e.ok() && target.form == Zhttp::TargetForm::ExtendedConnect &&
       target.authority.host == "example.com" &&
-      target.pathQuery == "/chat?", "extended CONNECT");
+      target.path == "/chat?", "extended CONNECT");
+  path = "bad";
   e = Zhttp::Target::fromPseudo(target, Zhttp::Method::GET,
-    Zhttp::Scheme::https, authority.span(), "bad", {});
+    Zhttp::Scheme::https, authority.span(), path.span(), {});
   ZuCHECK(e.code == Zhttp::TargetParseCode::InvalidPath &&
       e.field == Zhttp::TargetField::Path && !e.offset,
     "pseudo-header error identifies its source field");

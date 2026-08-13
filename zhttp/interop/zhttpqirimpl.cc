@@ -229,8 +229,8 @@ static int consumeRx_(Zquic::RxStream &rx, L l)
   int n = 0;
   while (!rx.empty()) {
     int64_t r = rx.consume(
-      [](ZuBSpan span) -> int64_t { return span.length(); },
-      [&l](ZuBSpan span) { l(span); });
+      [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+      [&l](ZuSpan<uint8_t> span) { l(span); });
     if (r < 0) return -1;
     if (!r) break;
     n += int(r);
@@ -374,7 +374,7 @@ ZmRef<HQServer::Link> HQServer::accepted(const Zquic::InitialInfo &)
 int HQServerStream::process(Zquic::RxStream &rx)
 {
   if (done) return -1;
-  int n = consumeRx_(rx, [this](ZuBSpan span) {
+  int n = consumeRx_(rx, [this](ZuSpan<uint8_t> span) {
     request << span;
   });
   if (n < 0 || (n && !retireRx(unsigned(n)))) return -1;
@@ -495,7 +495,7 @@ int HQClient::Stream::process(Zquic::RxStream &rx)
     return -1;
   }
   bool ok = true;
-  int n = consumeRx_(rx, [this, &ok](ZuBSpan span) {
+  int n = consumeRx_(rx, [this, &ok](ZuSpan<uint8_t> span) {
     if (span.length() &&
 	file.write(span.data(), span.length()) != Zi::OK)
       ok = false;
@@ -558,9 +558,9 @@ struct H3ResponseParser :
   template <typename Rx>
   bool body(Rx &rx);
   void complete(State::T state);
-  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
 
   H3Client::Stream	*stream = nullptr;
   unsigned		status_ = 0;
@@ -687,13 +687,14 @@ template <typename Rx>
 bool H3ResponseParser::body(Rx &rx)
 {
   bool accepted = true;
-  bool consumed = Zhttp::bodyEach(rx, [this, &accepted](ZuBSpan body) {
-    if (!stream || !body.length()) return;
-    if (stream->file.write(body.data(), body.length()) != Zi::OK) {
-      accepted = false;
-      stream->complete(false);
-    }
-  });
+  bool consumed = Zhttp::bodyEach(
+    rx, [this, &accepted](ZuSpan<uint8_t> body) {
+      if (!stream || !body.length()) return;
+      if (stream->file.write(body.data(), body.length()) != Zi::OK) {
+	accepted = false;
+	stream->complete(false);
+      }
+    });
   return consumed && accepted;
 }
 

@@ -743,10 +743,10 @@ struct ProfileTraits {
 namespace Stream_ {
 
 struct Frame {
-  int64_t operator ()(ZuBSpan) const;
+  int64_t operator ()(ZuSpan<uint8_t>) const;
 };
 struct Data {
-  void operator ()(ZuBSpan) const;
+  void operator ()(ZuSpan<uint8_t>) const;
 };
 struct Tx {
   template <typename Stream>

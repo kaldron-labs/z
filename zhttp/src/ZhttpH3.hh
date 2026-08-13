@@ -601,7 +601,7 @@ public:
 
   enum { Request = Request_ };
   using Headers = typename Headers_::template Unshift<
-    ZuStringT<"content-length">, void>;
+    ZuStringT<"content-length">, ZuTypeList<>>;
   using State = ParserState;
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -626,7 +626,7 @@ public:
   }
 
 private:
-  bool operation_(Method::T method, const Target &target) {
+  bool operation_(Method::T method, Target &target) {
     if constexpr (Request)
       if (ZuUnlikely(!impl()->operation(method, target)))
 	return fail_(RequestCancelled,
@@ -672,19 +672,19 @@ private:
   using FieldState = Fields::Semantics<Request>;
 
   bool qpackHeader_(
-    FieldState &fields, ZuBSpan name, ZuBSpan value) {
+    FieldState &fields, ZuBSpan name, ZuSpan<uint8_t> value) {
     if (name && name[0] != ':' && !fields.start(
-	[this](Method::T method, const Target &target) {
+	[this](Method::T method, Target &target) {
 	  (void)operation_(method, target);
 	},
 	[this](unsigned status) { status_(status); },
-	[this, &fields](ZuBSpan key, ZuBSpan value) {
+	[this, &fields](ZuBSpan key, ZuSpan<uint8_t> value) {
 	  if (m_state != State::Error)
 	    header_(fields.section(), key, value);
 	}))
       return false;
     return fields.field(name, value,
-      [this, &fields](ZuBSpan key, ZuBSpan value) {
+      [this, &fields](ZuBSpan key, ZuSpan<uint8_t> value) {
 	if (m_state != State::Error)
 	  header_(fields.section(), key, value);
       }) && m_state != State::Error;
@@ -706,7 +706,7 @@ private:
   }
 
   template <typename Key>
-  void header_(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header_(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "content-length") {
 	uint64_t contentLength = 0;
       if (!Fields::uint64(value, contentLength)) {
@@ -725,7 +725,8 @@ private:
   }
 
   void runtimeHeader_(
-      Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T section,
+      ZuBSpan key, ZuSpan<uint8_t> value) {
     if constexpr (Fields::HasRuntime<Impl>{}) {
       if (!m_deliverHeaders) return;
 	impl()->header(section, key, value);
@@ -733,10 +734,11 @@ private:
   }
 
   void header_(
-      Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T section,
+      ZuBSpan key, ZuSpan<uint8_t> value) {
     Fields::dispatch<Headers>(
       key, value,
-      [this, section](auto key, ZuBSpan value) {
+      [this, section](auto key, ZuSpan<uint8_t> value) {
 	this->template header_<ZuDecay<decltype(key)>>(section, value);
       },
       [this, section](auto key, auto value) {
@@ -744,12 +746,13 @@ private:
 	  impl()->template header<
 	    ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section);
       },
-      [this, section](ZuBSpan key, ZuBSpan value) {
+      [this, section](ZuBSpan key, ZuSpan<uint8_t> value) {
 	runtimeHeader_(section, key, value);
       });
   }
 
-  Zhttp::FieldSection::T parseFields_(ZuBSpan payload, bool initial) {
+  Zhttp::FieldSection::T parseFields_(
+      ZuSpan<uint8_t> payload, bool initial) {
     auto rx = impl()->qpackRx();
     FieldSectionPrefix prefix;
     FieldState fields;
@@ -762,9 +765,8 @@ private:
     unsigned n = payload.length();
     int used = QPack::decodeFieldSection(
 	payload, rx,
-	[this, &fields, &ok](Header h, QPackFieldFlags) {
-	  if (!this->qpackHeader_(fields, h.name, h.value))
-	    ok = false;
+	[this, &fields, &ok](DecodedHeader h, QPackFieldFlags) {
+	  if (!this->qpackHeader_(fields, h.name, h.value)) ok = false;
 	},
 	impl()->h3Params(), 0, 0, &prefix);
     if (used != int(n) || !ok) return Zhttp::FieldSection::Invalid;
@@ -777,22 +779,26 @@ private:
 	  return Zhttp::FieldSection::Invalid;
     }
     auto section = fields.finish(
-      [this](Method::T method, const Target &target) {
+      [this](Method::T method, Target &target) {
 	(void)operation_(method, target);
       },
       [this](unsigned status) { status_(status); },
-      [this, &fields](ZuBSpan key, ZuBSpan value) {
+      [this, &fields](ZuBSpan key, ZuSpan<uint8_t> value) {
 	if (m_state != State::Error)
 	  header_(fields.section(), key, value);
       });
     if (m_state == State::Error) return Zhttp::FieldSection::Invalid;
     if (section == Zhttp::FieldSection::Final) {
       m_bodyAllowed = fields.bodyAllowed();
-      impl()->bodyInfo(
+      if (ZuUnlikely(!impl()->bodyInfo(
 	m_state == State::Stream ? BodyType::Streamed :
 	  !m_bodyAllowed ? BodyType::None :
 	  m_contentLen >= 0 ? BodyType::Fixed : BodyType::Streamed,
-	m_bodyAllowed && m_contentLen >= 0 ? uint64_t(m_contentLen) : 0);
+	m_bodyAllowed && m_contentLen >= 0 ? uint64_t(m_contentLen) : 0))) {
+	fail_(RequestCancelled, RequestErrorCode::BodyRejected,
+	  RequestErrorScope::Request, Request);
+	return Zhttp::FieldSection::Invalid;
+      }
     }
     return section;
   }
@@ -807,7 +813,7 @@ private:
     if (m_deliverHeaders) impl()->status(value);
   }
 
-  bool payloadFrame_(uint64_t type, ZuBSpan payload) {
+  bool payloadFrame_(uint64_t type, ZuSpan<uint8_t> payload) {
     switch (type) {
       case 0x01: // HEADERS
 	if (m_state == State::Initial) {
@@ -1370,6 +1376,16 @@ private:
     void fieldFixed(ZuBSpan name, ZuBSpan value) {
       field(name, value);
     }
+    void fieldName(ZuBSpan name, ZuBSpan value) {
+      if (!name_(name) || putString(out, 0, 7, value) < 0) ok = false;
+    }
+    void fieldLiteral(ZuBSpan name, ZuBSpan value) {
+      if (!ok) return;
+      bool never = params.neverIndex(name);
+      if (putString(out, uint8_t(0x20 | (never ? 0x10 : 0)),
+            3, name) < 0 || putString(out, 0, 7, value) < 0)
+	ok = false;
+    }
     template <typename P>
     ZuIfT<!Compression::IsPrintString<P>{}>
     fieldFixed(ZuBSpan name, const P &value) {
@@ -1385,12 +1401,51 @@ private:
     }
     template <typename P>
     ZuIfT<!Compression::IsPrintString<P>{}>
+    fieldName(ZuBSpan name, const P &value) {
+      if (!ok) return;
+      auto rendered = ZtScratch(HdrBytes, 256);
+      Compression::PrintBytes bytes{rendered};
+      bytes << value;
+      if (!bytes.ok()) {
+	ok = false;
+	return;
+      }
+      fieldName(name, rendered);
+    }
+    template <typename P>
+    ZuIfT<!Compression::IsPrintString<P>{}>
+    fieldLiteral(ZuBSpan name, const P &value) {
+      if (!ok) return;
+      auto rendered = ZtScratch(HdrBytes, 256);
+      Compression::PrintBytes bytes{rendered};
+      bytes << value;
+      if (!bytes.ok()) {
+	ok = false;
+	return;
+      }
+      fieldLiteral(name, rendered);
+    }
+    template <typename P>
+    ZuIfT<!Compression::IsPrintString<P>{}>
     field(ZuBSpan name, const P &value) {
 	(void)fieldMutable(name, value);
     }
     template <typename P>
     ValueSpan fieldMutable(ZuBSpan name, const P &value) {
       if (!ok) return {};
+      if (!name_(name)) return {};
+      ValueSpan span;
+      if (!section || section->putPrint(
+	    0, 7, value, span.offset, span.length) < 0) {
+	ok = false;
+	return {};
+      }
+      return span;
+    }
+
+  private:
+    bool name_(ZuBSpan name) {
+      if (!ok) return false;
       bool never = params.neverIndex(name);
       uint64_t nameIndex = 0;
       if (QPack::staticNameIndex(name, nameIndex)) {
@@ -1408,14 +1463,7 @@ private:
 	  ok = putString(out, uint8_t(0x20 | (never ? 0x10 : 0)),
 	      3, name) >= 0;
       }
-      if (!ok) return {};
-      ValueSpan span;
-      if (!section || section->putPrint(
-	    0, 7, value, span.offset, span.length) < 0) {
-	ok = false;
-	return {};
-      }
-      return span;
+      return ok;
     }
   };
 
@@ -1442,14 +1490,17 @@ private:
 
   template <typename KVs, typename Build>
   bool headers_(Build &build) {
-    using HeaderKeys = ZuTypeSlice<2, 0, KVs>;
-    using HeaderValues = ZuTypeSlice<2, 1, KVs>;
-    ZuUnroll::all<HeaderKeys>([this, &build]<typename Key>() {
-	using Value = ZuType<ZuTypeIndex<Key, HeaderKeys>{}, HeaderValues>;
-	if constexpr (!ZuIsSame<Value, void>{}) {
-	  build.fieldFixed(Key{}(), HeaderValue<Value>{}());
+    using List = HeaderList<KVs>;
+    ZuUnroll::all<List::N>([this, &build](auto I) {
+	using Key = typename List::template Key<I>;
+	using Value = typename List::template Value<I>;
+	if constexpr (Value::N) {
+	  using Fixed = HeaderValue<Value>;
+	  builderFixedHeader<Key, Fixed>(impl(), [&build]() {
+	    build.fieldFixed(Key{}(), Fixed{}());
+	  }, 0);
 	  impl()->template header<Key>([&build]<typename V>(V &&v) {
-	    build.field(Key{}(), ZuFwd<V>(v));
+	    build.fieldName(Key{}(), ZuFwd<V>(v));
 	  });
 	} else {
 	  auto self = this;
@@ -1462,7 +1513,7 @@ private:
     impl()->header([&build]<typename K, typename V>(K &&k, V &&v) {
 	ZtBArray<ZtArrayHeapID<"Zhttp.H3.HeaderName">> name;
 	name << ZuFwd<K>(k);
-	if (name) build.field(name, ZuFwd<V>(v));
+	if (name) build.fieldLiteral(name, ZuFwd<V>(v));
     });
     return build.ok;
   }

@@ -53,8 +53,8 @@ URL syntax is centralized in `ZhttpURL.hh`. `URL` is a borrowed view over a
 mutable input span and normalizes DNS host names in place; `URLStorage` is the
 explicit owning form, with `assign()` for copying immutable input and `adopt()`
 for transferring an existing `URLString`. `Target` represents the HTTP
-request-target forms and exposes the complete path plus optional query in one
-borrowed `pathQuery` span.
+request-target forms and exposes mutable borrowed `raw`, `path`, and `protocol`
+spans; `path` contains the complete path plus optional query.
 Alt-Svc parsing, formatting, cache policy, and HTTPS discovery are grouped in
 `ZhttpDiscovery.hh`.
 
@@ -71,6 +71,12 @@ configured per-link concurrency. Pool concurrency, link count, and per-link
 concurrency are independent. `Zhttp::Server` owns server listeners, admission,
 sessions, message selection, and hub lifecycle. Applications provide protocol
 configuration and message-typed application contracts:
+
+`ZhttpHeaders(...)` expands to alternating key and value-list types. A header
+without a fixed value has an empty `ZuTypeList<>`; a Parser may declare several
+fixed values for static dispatch, while a Builder fixed-value list is a
+singleton. For each Builder fixed pair, `header<Key, Value>(emit)` controls
+whether it is present by calling `emit()` zero or one times.
 
 ```c++
 struct ReqBuilder_ : ZmObject, Zhttp::ReqBuilder {
@@ -121,7 +127,7 @@ struct ResParser : Zhttp::Parser {
   using Headers = ResponseHeaders;
   void init(const ReqBuilder_ &);
   void status(unsigned);
-  void bodyInfo(Zhttp::BodyType::T, uint64_t);
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t);
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan);
   void header(Zhttp::FieldSection::T, ZuBSpan key, ZuBSpan value);
@@ -195,7 +201,7 @@ using ResBuilder = ResBuilderQ::Node;
 
 struct Parser : Zhttp::Parser {
   using Headers = RequestHeaders;
-  bool operation(Zhttp::Method::T, const Zhttp::Target &);
+  bool operation(Zhttp::Method::T, Zhttp::Target &);
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan);
   template <typename Rx> bool body(Rx &);
@@ -283,9 +289,11 @@ Receive parsers take their body limit at run time from the effective client,
 pool, or server configuration; response/request parser types do not define a
 compile-time `BodyMax`. After the final header section,
 `bodyInfo(type, length)` reports `None`, `Streamed`, or `Fixed` framing
-(`Fixed, 0` is a valid empty body). Every selected or run-time `header`
-callback receives its `Zhttp::FieldSection::T`, including informational and
-trailer fields.
+(`Fixed, 0` is a valid empty body). It returns `true` to accept that body type
+and length, or `false` to reject the message with the same consequences as
+`body()` returning `false`. Every selected or run-time `header` callback
+receives its `Zhttp::FieldSection::T`, including informational and trailer
+fields.
 
 Client stream writers remain synchronous.  Every Builder must reproduce the
 same message when a retry or redirect traverses it again.  A server streaming

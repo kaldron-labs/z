@@ -542,7 +542,7 @@ TargetParseError Target::parseH1(
     if (method != Method::OPTIONS)
       return targetError(TargetParseCode::InvalidMethod);
     parsed.form = TargetForm::Asterisk;
-    parsed.pathQuery = input;
+    parsed.path = input;
     out = parsed;
     return {};
   }
@@ -557,7 +557,7 @@ TargetParseError Target::parseH1(
   if (input[0] == '/') {
     if (int i = invalidText(input, false); i >= 0)
       return targetError(TargetParseCode::InvalidCharacter, i);
-    parsed.pathQuery = input;
+    parsed.path = input;
     parsed.form = TargetForm::Origin;
     out = parsed;
     return {};
@@ -587,9 +587,12 @@ TargetParseError Target::parseH1(
   if (url.path) {
     unsigned length = url.path.length();
     if (url.hasQuery) length += url.query.length() + 1;
-    parsed.pathQuery = {url.path.data(), length};
+    parsed.path = {
+      input.data() + (url.path.data() - input.data()), length};
   } else if (url.hasQuery) {
-    parsed.pathQuery = {url.query.data() - 1, url.query.length() + 1};
+    parsed.path = {
+      input.data() + (url.query.data() - input.data()) - 1,
+      url.query.length() + 1};
   }
   parsed.scheme = url.scheme;
   parsed.form = TargetForm::Absolute;
@@ -599,7 +602,8 @@ TargetParseError Target::parseH1(
 
 TargetParseError Target::fromPseudo(
   Target &out, Method::T method, Scheme::T scheme,
-  ZuSpan<uint8_t> authorityText, ZuBSpan pathText, ZuBSpan protocolText)
+  ZuSpan<uint8_t> authorityText, ZuSpan<uint8_t> pathText,
+  ZuSpan<uint8_t> protocolText)
 {
   using namespace URL_;
   Target parsed;
@@ -639,7 +643,7 @@ TargetParseError Target::fromPseudo(
     if (int i = invalidText(pathText, false); i >= 0)
       return targetError(TargetParseCode::InvalidCharacter, i,
 	TargetField::Path);
-    parsed.pathQuery = pathText;
+    parsed.path = pathText;
     parsed.protocol = protocolText;
     parsed.scheme = scheme;
     parsed.form = TargetForm::ExtendedConnect;
@@ -663,7 +667,7 @@ TargetParseError Target::fromPseudo(
       return targetError(TargetParseCode::InvalidMethod, 0,
 	TargetField::Path);
     parsed.raw = pathText;
-    parsed.pathQuery = pathText;
+    parsed.path = pathText;
     parsed.scheme = scheme;
     parsed.form = TargetForm::Asterisk;
     out = parsed;
@@ -676,7 +680,7 @@ TargetParseError Target::fromPseudo(
     return targetError(TargetParseCode::InvalidCharacter, i,
       TargetField::Path);
   parsed.raw = pathText;
-  parsed.pathQuery = pathText;
+  parsed.path = pathText;
   parsed.scheme = scheme;
   parsed.form = TargetForm::Origin;
   out = parsed;

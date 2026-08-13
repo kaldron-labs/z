@@ -20,6 +20,7 @@
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtEnum.hh>
 
 #include <zlib/ZhttpCompression.hh>
@@ -46,6 +47,11 @@ struct Field {
     return l.cmp(r);
   }
   uint32_t hash() const { return name.hash() ^ value.hash(); }
+};
+
+struct DecodedField {
+  ZuBSpan	name;
+  ZuSpan<uint8_t> value;
 };
 
 #define Zhttp_HPack_(Key, Value) \
@@ -239,13 +245,13 @@ public:
   void final();
 
   template <typename FieldFn>
-  int process(ZuBSpan input, FieldFn &&field) {
+  int process(ZuSpan<uint8_t> input, FieldFn &&field) {
     if (m_pending)
       return resume(input, ZuFwd<FieldFn>(field));
     unsigned offset = 0, n = input.length();
     while (offset < n) {
       unsigned before = offset;
-      Field decoded;
+      Decoded decoded;
       bool emitted = false;
       int state = decode_(input, offset, decoded, emitted);
       if (state < 0) return -1;
@@ -254,25 +260,25 @@ public:
 	  m_pending.push(input[i]);
 	return 0;
       }
-      if (emitted) field(decoded);
+      if (emitted && !emit_(decoded, field)) return -1;
     }
     return 1;
   }
 
   template <typename FieldFn>
-  int resume(ZuBSpan input, FieldFn &&field) {
+  int resume(ZuSpan<uint8_t> input, FieldFn &&field) {
     if (!m_pending)
       return process(input, ZuFwd<FieldFn>(field));
     for (unsigned i = 0, n = input.length(); i < n; ++i)
       m_pending.push(input[i]);
     while (m_pending) {
       unsigned offset = 0;
-      Field decoded;
+      Decoded decoded;
       bool emitted = false;
       int state = decode_(m_pending, offset, decoded, emitted);
       if (state < 0) return -1;
       if (!state) return 0;
-      if (emitted) field(decoded);
+      if (emitted && !emit_(decoded, field)) return -1;
       m_pending.shift(offset);
     }
     return 1;
@@ -283,19 +289,63 @@ public:
   const HPackTable &table() const { return m_table; }
 
 private:
-  int decode_(ZuBSpan, unsigned &, Field &, bool &);
-  bool indexed_(uint64_t, Field &);
+  struct Decoded {
+    ZuBSpan	name;
+    ZuSpan<uint8_t> value;
+    ZuBSpan	indexedValue;
+    bool	huffman = false;
+    bool	indexed = false;
+    bool	indexing = false;
+  };
+
+  template <typename FieldFn>
+  bool emit_(const Decoded &decoded, FieldFn &field) {
+    if (!decoded.huffman && !decoded.indexed) {
+      DecodedField value{decoded.name, decoded.value};
+      if (!account_({value.name, value.value})) return false;
+      if (decoded.indexing && !m_table.insert(value.name, value.value)) {
+	fail_(HPackFailure::Capacity);
+	return false;
+      }
+      field(value);
+      return true;
+    }
+    ZuBSpan source = decoded.indexed ? decoded.indexedValue : decoded.value;
+    uint64_t length_ = decoded.huffman ?
+      Compression::Huffman::declen(source.length()) : source.length();
+    if (length_ > UINT_MAX) return fail_(HPackFailure::String) >= 0;
+    unsigned length = unsigned(length_);
+    auto storage = ZtScratch(HPackBytes, length, length);
+    if (decoded.huffman) {
+      int64_t n = Compression::Huffman::decode(storage.span(), source);
+      if (n < 0) return fail_(HPackFailure::String) >= 0;
+      storage.length(uint64_t(n));
+    } else
+      storage = source;
+    DecodedField value{decoded.name, storage.span()};
+    if (!account_({value.name, value.value})) return false;
+    if (decoded.indexing && !m_table.insert(value.name, value.value)) {
+      fail_(HPackFailure::Capacity);
+      return false;
+    }
+    field(value);
+    return true;
+  }
+
+  int decode_(ZuSpan<uint8_t>, unsigned &, Decoded &, bool &);
+  bool indexed_(uint64_t, Decoded &);
   template <unsigned Bits, bool Indexing>
-  int literal_(ZuBSpan, unsigned &, Field &);
+  int literal_(ZuSpan<uint8_t>, unsigned &, Decoded &);
   template <unsigned Bits, uint8_t Huffman>
   int string_(ZuBSpan, unsigned &, HPackString &);
+  template <unsigned Bits, uint8_t Huffman>
+  int value_(ZuSpan<uint8_t>, unsigned &, ZuSpan<uint8_t> &, bool &);
   bool account_(Field);
   int fail_(HPackFailure::T);
 
   HPackTable	m_table;
   HPackBytes	m_pending;
   HPackString	m_name;
-  HPackString	m_value;
   uint64_t	m_maxHeaderListSize = 0;
   uint64_t	m_headerListSize = 0;
   uint32_t	m_maxCapacity = 0;

@@ -122,11 +122,11 @@ struct ClientParser :
     dispatch.disable_();
     dispatch.final_();
   }
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
+  bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
     if (type == Zhttp::BodyType::Fixed) length = length_;
     if (streamExpected && status_ >= 200 && status_ < 300 &&
 	type != Zhttp::BodyType::None) {
@@ -134,11 +134,12 @@ struct ClientParser :
       ++streamEstablished;
       ++streamStarts;
     }
+    return true;
   }
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(
-      rx, [this](ZuBSpan value) { body_ << value; });
+      rx, [this](ZuSpan<uint8_t> value) { body_ << value; });
   }
   template <typename Rx>
   void streamRx_(Rx &rx) { dispatch.process(rx); }
@@ -149,11 +150,11 @@ struct ClientParser :
     while (rx) {
       const uint8_t *offered = nullptr;
       int64_t n = rx.consume(
-	  [&offered](ZuBSpan span) -> int64_t {
+	  [&offered](ZuSpan<uint8_t> span) -> int64_t {
 	    offered = span.data();
 	    return 1;
 	  },
-	  [this, &offered](ZuBSpan span) {
+	  [this, &offered](ZuSpan<uint8_t> span) {
 	    streamNoCopy &= span.data() == offered;
 	    streamBody << span;
 	  });
@@ -338,9 +339,9 @@ struct ServerParser :
     dispatch.final_();
   }
   bool operation(
-    Zhttp::Method::T method_, const Zhttp::Target &target) {
+    Zhttp::Method::T method_, Zhttp::Target &target) {
     method = method_;
-    path = target.pathQuery;
+    path = target.path;
     protocol_ = target.protocol;
     if (protocol_) {
       Base::stream();
@@ -349,10 +350,10 @@ struct ServerParser :
     }
     return true;
   }
-  void bodyInfo(Zhttp::BodyType::T, uint64_t) { }
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
   void status(unsigned) { }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan) { }
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
   template <typename Rx>
   bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
@@ -363,8 +364,8 @@ struct ServerParser :
   void processStream(Rx &rx) {
     while (rx) {
       int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this](ZuBSpan value) { streamBody << value; });
+	[](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+	[this](ZuSpan<uint8_t> value) { streamBody << value; });
       if (n <= 0) break;
     }
   }

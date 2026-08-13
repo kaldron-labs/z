@@ -120,7 +120,7 @@ template <typename Rx, typename L>
 bool bodyEach(Rx &rx, L &&l) {
   while (rx) {
     int64_t n = rx.consume(
-      [](ZuBSpan span) -> int64_t { return span.length(); },
+      [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
       l);
     if (ZuUnlikely(n <= 0)) return false;
   }
@@ -129,7 +129,7 @@ bool bodyEach(Rx &rx, L &&l) {
 
 template <typename Rx>
 bool bodyDrain(Rx &rx) {
-  return bodyEach(rx, [](ZuBSpan) { });
+  return bodyEach(rx, [](ZuSpan<uint8_t>) { });
 }
 
 
@@ -145,16 +145,18 @@ struct HasRuntime : public ZuFalse { };
 template <typename Impl>
 struct HasRuntime<Impl,
   decltype(ZuDeclVal<Impl *>()->header(
-    FieldSection::Final, ZuDeclVal<ZuBSpan>(), ZuDeclVal<ZuBSpan>()), void())> :
+    FieldSection::Final, ZuDeclVal<ZuBSpan>(),
+    ZuDeclVal<ZuSpan<uint8_t>>()), void())> :
     public ZuTrue { };
 
 template <
   typename Headers, typename Header, typename Static, typename Unknown>
 void dispatch(
-  ZuBSpan key, ZuBSpan value,
+  ZuBSpan key, ZuSpan<uint8_t> value,
   Header &&header, Static &&static_, Unknown &&unknown) {
-  using Keys = ZuTypeSlice<2, 0, Headers>;
-  using Values = ZuTypeSlice<2, 1, Headers>;
+  using List = HeaderList<Headers>;
+  using Keys = typename List::Keys;
+  using Values = typename List::Values;
   if constexpr (Keys::N) {
     static constexpr auto matcher = ZuMatcher<Keys>();
     auto i = matcher.exact(key);
@@ -166,19 +168,17 @@ void dispatch(
       i, [&value, &header, &static_](auto i) {
 	using Key = ZuType<i, Keys>;
 	using KeyValues = ZuType<i, Values>;
-	if constexpr (!ZuIsSame<KeyValues, void>{})
-	  if constexpr (KeyValues::N) {
-	    static constexpr auto matcher = ZuMatcher<KeyValues>();
-	    auto j = matcher.exact(value);
-	    enum { I = i };
-	    if (j >= 0) {
-	      ZuSwitch::dispatch<KeyValues::N>(
-		j, [&static_](auto j) {
-		  static_(Key{}, ZuType<j, KeyValues>{});
-		});
-	      return;
-	    }
+	if constexpr (KeyValues::N) {
+	  static constexpr auto matcher = ZuMatcher<KeyValues>();
+	  auto j = matcher.exact(value);
+	  if (j >= 0) {
+	    ZuSwitch::dispatch<KeyValues::N>(
+	      j, [&static_](auto j) {
+		static_(Key{}, ZuType<j, KeyValues>{});
+	      });
+	    return;
 	  }
+	}
 	header(Key{}, value);
       });
   } else
@@ -228,7 +228,7 @@ public:
   bool bodyAllowed() const { return !m_noBody; }
 
   template <typename Header>
-  bool field(ZuBSpan name, ZuBSpan value, Header &&header) {
+  bool field(ZuBSpan name, ZuSpan<uint8_t> value, Header &&header) {
     if (!nameOK(name)) return false;
     if (name[0] == ':')
       return pseudo_(name, value, ZuFwd<Header>(header));
@@ -256,7 +256,7 @@ public:
       Target target;
       auto e = Target::fromPseudo(
 	target, m_method, m_scheme,
-	m_authority.span(), m_path, m_protocol);
+	m_authority.span(), m_path.span(), m_protocol.span());
       if (!e.ok()) return false;
       m_started = true;
       operation(m_method, target);

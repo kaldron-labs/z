@@ -22,6 +22,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -41,6 +42,11 @@ ZtEnumStruct(ZhttpAPI, QPackInsn, int8_t,
 struct Header {
   ZuBSpan	name;
   ZuBSpan	value;
+};
+
+struct DecodedHeader {
+  ZuBSpan	name;
+  ZuSpan<uint8_t> value;
 };
 
 struct QPackFieldFlags {
@@ -539,9 +545,33 @@ struct QPack {
     return Compression::decodeString<Bits, Huffman>(storage, in, o, out);
   }
 
+  template <unsigned Bits, uint8_t Huffman, typename L>
+  static int decodeString(ZuSpan<uint8_t> in, unsigned &o, L &&l) {
+    uint64_t length = 0;
+    uint8_t first = 0;
+    int n = Compression::decodePref<Bits>(in, o, length, &first);
+    if (n < 0) return n;
+    if (length > in.length() - o) return -2;
+    ZuSpan<uint8_t> raw{&in[o], unsigned(length)};
+    o += unsigned(length);
+    if (!(first & Huffman)) {
+      ZuFwd<L>(l)(raw);
+      return int(length);
+    }
+    uint64_t decodedLength_ = Compression::Huffman::declen(length);
+    if (decodedLength_ > UINT_MAX) return -1;
+    unsigned decodedLength = unsigned(decodedLength_);
+    auto storage = ZtScratch(HdrBytes, decodedLength, decodedLength);
+    int64_t decoded = Compression::Huffman::decode(storage.span(), raw);
+    if (decoded < 0) return -1;
+    storage.length(uint64_t(decoded));
+    ZuFwd<L>(l)(storage.span());
+    return int(decoded);
+  }
+
   template <typename L>
   static int decodeFieldSection(
-    ZuBSpan in, const QPackRxTable *table, L l,
+    ZuSpan<uint8_t> in, const QPackRxTable *table, L l,
     const Params &params = {}, uint64_t insertCount = 0,
     uint64_t maxCapacity = 0, FieldSectionPrefix *decodedPrefix = nullptr) {
     if (table) {
@@ -558,37 +588,23 @@ struct QPack {
     unsigned o = unsigned(prefixLen);
     uint64_t base = prefix.base;
     uint64_t headerBytes = 0;
-    // Non-Huffman strings are returned as spans into the input section.
-    // Huffman strings use these per-section scratch buffers, reused for each
-    // field rather than allocated inside the representation loop.
-    uint64_t storageSize_ = Compression::Huffman::declen(in.length());
-    if (storageSize_ > UINT_MAX) return -1;
-    unsigned storageSize = unsigned(storageSize_);
-    auto nameStorage = ZmScratch(
-      uint8_t, storageSize, HdrBytes::VHeap);
-    auto valueStorage = ZmScratch(
-      uint8_t, storageSize, HdrBytes::VHeap);
 
-    auto countHeader = [&headerBytes, &params](ZuBSpan name, ZuBSpan value) {
-      if (headerBytes > params.maxHeaderListSize() - name.length())
+    auto emit = [&headerBytes, &params, &l](
+        ZuBSpan name, ZuSpan<uint8_t> value, QPackFieldFlags flags) {
+      uint64_t max = params.maxHeaderListSize();
+      if (headerBytes > max || name.length() > max - headerBytes)
 	return false;
       headerBytes += name.length();
-      if (headerBytes > params.maxHeaderListSize() - value.length())
+      if (value.length() > max - headerBytes)
 	return false;
       headerBytes += value.length();
+      l(DecodedHeader{name, value}, flags);
       return true;
-    };
-    auto readValue = [&valueStorage, &in, &o](ZuBSpan &value) {
-      return decodeString<7, 0x80>(
-	ZuSpan(valueStorage.data(), valueStorage.size()),
-	in, o, value) >= 0;
     };
 
     unsigned n = in.length();
     while (o < n) {
       uint8_t first = uint8_t(in[o]);
-      ZuBSpan name;
-      ZuBSpan value;
       Header indexed;
       HeaderName indexedNameStorage;
       QPackFieldFlags flags;
@@ -607,17 +623,21 @@ struct QPack {
 	    return -1;
 	  flags.dynamicRef = true;
 	}
-	name = indexed.name;
+	auto value = ZtScratch(
+	  HdrBytes, indexed.value.length(), indexed.value.length());
 	value = indexed.value;
+	if (!emit(indexed.name, value.span(), flags)) return -1;
       } else if ((first & 0xf0) == 0x10) {
 	uint64_t index = 0;
 	if (Compression::decodePref<4>(in, o, index) < 0 ||
 	    !table || !table->lookupPostBase(base, index, indexed))
 	  return -1;
-	name = indexed.name;
-	value = indexed.value;
 	flags.dynamicRef = true;
 	flags.postBase = true;
+	auto value = ZtScratch(
+	  HdrBytes, indexed.value.length(), indexed.value.length());
+	value = indexed.value;
+	if (!emit(indexed.name, value.span(), flags)) return -1;
       } else if ((first & 0xc0) == 0x40) {
 	uint64_t index = 0;
 	uint8_t nameFirst = 0;
@@ -625,6 +645,7 @@ struct QPack {
 	    in, o, index, &nameFirst) < 0)
 	  return -1;
 	flags.neverIndex = nameFirst & 0x20;
+	ZuBSpan name;
 	if (nameFirst & 0x10) {
 	  if (!staticName(index, indexedNameStorage)) return -1;
 	  name = indexedNameStorage;
@@ -635,7 +656,11 @@ struct QPack {
 	  name = indexed.name;
 	  flags.dynamicRef = true;
 	}
-	if (!readValue(value)) return -1;
+	bool emitted = false;
+	if (decodeString<7, 0x80>(in, o, [&](ZuSpan<uint8_t> value) {
+	      emitted = emit(name, value, flags);
+	    }) < 0 || !emitted)
+	  return -1;
       } else if ((first & 0xf0) == 0x00) {
 	uint64_t index = 0;
 	if (Compression::decodePref<3>(in, o, index) < 0 ||
@@ -644,32 +669,37 @@ struct QPack {
 	flags.neverIndex = first & 0x08;
 	flags.dynamicRef = true;
 	flags.postBase = true;
-	name = indexed.name;
-	if (!readValue(value)) return -1;
-      } else if ((first & 0xe0) == 0x20) {
-	if (decodeString<3, 0x08>(
-	      ZuSpan(nameStorage.data(), nameStorage.size()),
-	      in, o, name) < 0 ||
-	    decodeString<7, 0x80>(
-	      ZuSpan(valueStorage.data(), valueStorage.size()),
-	      in, o, value) < 0)
+	bool emitted = false;
+	if (decodeString<7, 0x80>(in, o, [&](ZuSpan<uint8_t> value) {
+	      emitted = emit(indexed.name, value, flags);
+	    }) < 0 || !emitted)
 	  return -1;
+      } else if ((first & 0xe0) == 0x20) {
 	flags.neverIndex = first & 0x10;
+	bool emitted = false;
+	if (decodeString<3, 0x08>(in, o, [&](ZuSpan<uint8_t> name) {
+	      if (decodeString<7, 0x80>(
+		    in, o, [&](ZuSpan<uint8_t> value) {
+		      emitted = emit(name, value, flags);
+		    }) < 0)
+		emitted = false;
+	    }) < 0 || !emitted)
+	  return -1;
       } else
 	return -1;
-
-      if (!countHeader(name, value)) return -1;
-      l(Header{name, value}, flags);
     }
     return int(o);
   }
 
   template <typename L>
   static int decodeLiteral(
-    ZuBSpan in, L l, const Params &params = {}, uint64_t insertCount = 0) {
+    ZuSpan<uint8_t> in, L l,
+    const Params &params = {}, uint64_t insertCount = 0) {
     return decodeFieldSection(
       in, nullptr,
-      [&l](Header h, QPackFieldFlags) { l(h); },
+      [&l](DecodedHeader h, QPackFieldFlags) {
+	l(Header{h.name, h.value});
+      },
       params, insertCount, params.qpackRxCapacity());
   }
 };
@@ -734,12 +764,14 @@ private:
 
 template <typename L>
 int decodeLiteralDynamic(
-  ZuBSpan in, const QPackRxTable &table, L l,
+  ZuSpan<uint8_t> in, const QPackRxTable &table, L l,
   const Params &params = {})
 {
   return QPack::decodeFieldSection(
     in, &table,
-    [&l](Header h, QPackFieldFlags) { l(h); },
+    [&l](DecodedHeader h, QPackFieldFlags) {
+      l(Header{h.name, h.value});
+    },
     params);
 }
 

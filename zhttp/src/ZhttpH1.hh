@@ -136,7 +136,7 @@ inline int64_t parseLine(
     auto storage = ZmScratch(
       uint8_t, unsigned(length), typename Storage::VHeap);
     int64_t copied = stream.each(length,
-      [&storage](ZuBSpan part) -> int64_t {
+      [&storage](ZuSpan<uint8_t> part) -> int64_t {
 	storage << part;
 	return part.length();
       });
@@ -165,8 +165,8 @@ public:
 
   enum { Request = Request_ };
   using Headers = typename Headers_::template Unshift<
-    ZuStringT<"transfer-encoding">, void,
-    ZuStringT<"content-length">, void>;
+    ZuStringT<"transfer-encoding">, ZuTypeList<>,
+    ZuStringT<"content-length">, ZuTypeList<>>;
   static constexpr uint64_t MaxStartLine = MaxStartLine_;
   static constexpr uint64_t MaxHeaderSection = MaxHeaderSection_;
   using State = ParserState;
@@ -183,8 +183,15 @@ private:
     m_state = State::Error;
   }
 
+  bool bodyInfo_(BodyType::T type, uint64_t length) {
+    if (ZuLikely(impl()->bodyInfo(type, length))) return true;
+    fail_(RequestErrorCode::BodyRejected,
+      RequestErrorScope::Connection, Request);
+    return false;
+  }
+
   // process header with variable value
-  template <typename Key> void header_(ZuBSpan value) {
+  template <typename Key> void header_(ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "transfer-encoding") {
 	bool invalid = false;
 	split(value, [this, &invalid](unsigned i, ZuBSpan token) {
@@ -215,7 +222,7 @@ private:
     return key == name;
   }
 
-  void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
+  void runtimeHeader_(ZuBSpan key, ZuSpan<uint8_t> value) {
     if constexpr (Fields::HasRuntime<Impl>{}) {
       if (!deliverHeaders_()) return;
 	impl()->header(section_(), key, value);
@@ -223,7 +230,7 @@ private:
   }
 
   // process header key/value
-  void header_(ZuBSpan key, ZuBSpan value) {
+  void header_(ZuBSpan key, ZuSpan<uint8_t> value) {
     if (headerKey_(key, "transfer-encoding")) {
 	this->template header_<ZuStringT<"transfer-encoding">>(value);
 	return;
@@ -235,14 +242,14 @@ private:
     if (!deliverHeaders_()) return;
     Fields::dispatch<Headers>(
       key, value,
-      [this](auto key, ZuBSpan value) {
+      [this](auto key, ZuSpan<uint8_t> value) {
 	impl()->template header<ZuDecay<decltype(key)>>(section_(), value);
       },
       [this](auto key, auto value) {
 	impl()->template header<
 	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section_());
       },
-      [this](ZuBSpan key, ZuBSpan value) {
+	[this](ZuBSpan key, ZuSpan<uint8_t> value) {
 	runtimeHeader_(key, value);
       });
   }
@@ -368,29 +375,29 @@ public:
 		    return;
 		  }
 		  if (noResponseBody_()) {
-		    impl()->bodyInfo(BodyType::None, 0);
+		    if (!bodyInfo_(BodyType::None, 0)) return;
 		    m_state = State::Complete;
 		    return;
 		  }
 		}
 		if (m_chunked) {
-		  impl()->bodyInfo(BodyType::Streamed, 0);
+		  if (!bodyInfo_(BodyType::Streamed, 0)) return;
 		  m_state = State::ChunkHdr;
 		  m_contentLength = 0;
 		} else if (m_contentLength != uint64_t(-1)) {
-		  impl()->bodyInfo(BodyType::Fixed, m_contentLength);
+		  if (!bodyInfo_(BodyType::Fixed, m_contentLength)) return;
 		  m_state = m_contentLength ? State::Body : State::Complete;
 		} else if constexpr (Request) {
-		  impl()->bodyInfo(BodyType::None, 0);
+		  if (!bodyInfo_(BodyType::None, 0)) return;
 		  m_state = State::Complete;
 		} else {
-		  impl()->bodyInfo(BodyType::Streamed, 0);
+		  if (!bodyInfo_(BodyType::Streamed, 0)) return;
 		  m_state = State::Body;
 		  m_eofBody = true;
 		  m_contentLength = 0;
 		}
 	      } else
-		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
+		if (!parseKV(line, [this](ZuBSpan key, ZuSpan<uint8_t> value) {
 		  this->header_(key, value);
 		}))
 		  fail_(RequestErrorCode::Malformed,
@@ -508,7 +515,7 @@ public:
 	      if (!line)
 		m_state = State::Complete;
 	      else
-		if (!parseKV(line, [this](ZuBSpan key, ZuBSpan value) {
+		if (!parseKV(line, [this](ZuBSpan key, ZuSpan<uint8_t> value) {
 		  this->header_(key, value);
 		}))
 		  fail_(RequestErrorCode::Malformed,
@@ -773,12 +780,15 @@ private:
   void headers_(Stream &stream) {
     // header key/values
     {
-	using Keys = ZuTypeSlice<2, 0, KVs>;
-	using Values = ZuTypeSlice<2, 1, KVs>;
-	ZuUnroll::all<Keys>([this, &stream]<typename Key>() {
-	  using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
-	  if constexpr (!ZuIsSame<Value, void>{}) {
-	    stream << Key{}() << ": " << HeaderValue<Value>{}() << "\r\n";
+	using List = HeaderList<KVs>;
+	ZuUnroll::all<List::N>([this, &stream](auto I) {
+	  using Key = typename List::template Key<I>;
+	  using Value = typename List::template Value<I>;
+	  if constexpr (Value::N) {
+	    using Fixed = HeaderValue<Value>;
+	    builderFixedHeader<Key, Fixed>(impl(), [&stream]() {
+	      stream << Key{}() << ": " << Fixed{}() << "\r\n";
+	    }, 0);
 	    impl()->template header<Key>([&stream]<typename V>(V &&value) {
 	      stream << Key{}() << ": " << ZuFwd<V>(value) << "\r\n";
 	    });

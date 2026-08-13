@@ -51,14 +51,15 @@ Bytes hex(ZuCSpan value)
 }
 
 bool decode(
-  Zhttp::H2::HPackDecoder &decoder, ZuBSpan encoded, Fields &fields)
+  Zhttp::H2::HPackDecoder &decoder,
+  ZuSpan<uint8_t> encoded, Fields &fields)
 {
   decoder.reset();
   fields.length(0);
   for (unsigned i = 0; i < encoded.length(); ++i)
     if (decoder.process(
-	ZuBSpan{encoded.data() + i, 1},
-	[&fields](Zhttp::H2::Field field) {
+	ZuSpan<uint8_t>{encoded.data() + i, 1},
+	[&fields](Zhttp::H2::DecodedField field) {
 	  new (fields.push()) OwnedField{
 	    Zhttp::H2::HPackString{field.name},
 	    Zhttp::H2::HPackString{field.value}
@@ -256,7 +257,7 @@ void testRepresentationsAndFailures()
   auto truncated = hex("40 03 6162");
   decoder.reset();
   ZuCHECK(decoder.process(
-      truncated, [](Zhttp::H2::Field) { }) == 0 && !decoder.finish() &&
+      truncated, [](Zhttp::H2::DecodedField) { }) == 0 && !decoder.finish() &&
       decoder.failure() == Zhttp::H2::HPackFailure::Truncated,
     "truncated literal fails at block completion");
   decoder.final();

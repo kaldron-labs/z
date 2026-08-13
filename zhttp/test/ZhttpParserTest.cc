@@ -39,8 +39,8 @@ bool spanEq(ZuBSpan span, const char *s)
 }
 
 using ResponseHeaders = ZuTypeList<
-  ZuStringT<"key">, void,
-  ZuStringT<"x-empty">, void>;
+  ZuStringT<"key">, ZuTypeList<>,
+  ZuStringT<"x-empty">, ZuTypeList<>>;
 struct ResponseParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders> {
@@ -52,7 +52,7 @@ struct ResponseParser :
 
   bool enable1xx() const { return informational; }
   void status(unsigned v) { statusSeen = v; ++statusCalls; }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyType = type;
     bodyLength = length;
     ++bodyInfoCalls;
@@ -61,10 +61,12 @@ struct ResponseParser :
       ++contentLengthCalls;
     }
     chunkedSeen = type == Zhttp::BodyType::Streamed;
+    return true;
   }
 
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "key") {
       keySection = section;
       ++keyCalls;
@@ -81,20 +83,20 @@ struct ResponseParser :
     if (recordLen) {
       unsigned remaining = recordLen;
       (void)rx.consume(
-	[&remaining](ZuBSpan span) -> int64_t {
+	[&remaining](ZuSpan<uint8_t> span) -> int64_t {
 	  if (remaining > span.length()) {
 	    remaining -= span.length();
 	    return 0;
 	  }
 	  return remaining;
 	},
-	[this](ZuBSpan span) {
+	[this](ZuSpan<uint8_t> span) {
 	  bodyBytes += span.length();
 	  bodyData << span;
 	});
       return true;
     }
-    return Zhttp::bodyEach(rx, [this](ZuBSpan span) {
+    return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> span) {
       bodyBytes += span.length();
       bodyData << span;
     });
@@ -106,7 +108,8 @@ struct ResponseParser :
   }
 
   void header(
-      Zhttp::FieldSection::T section, ZuBSpan key, ZuBSpan value) {
+      Zhttp::FieldSection::T section,
+      ZuBSpan key, ZuSpan<uint8_t> value) {
     runtimeSection = section;
     ++runtimeCalls;
     runtimeKey.length(0);
@@ -141,7 +144,7 @@ struct ResponseParser :
   ZtString<>			runtimeValue;
 };
 
-using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
+using RequestHeaders = ZuTypeList<ZuStringT<"host">, ZuTypeList<>>;
 struct RequestParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestParser, true, RequestHeaders> {
@@ -152,21 +155,22 @@ struct RequestParser :
   RequestParser() : Base{1024} { }
 
   bool operation(
-    Zhttp::Method::T method_, const Zhttp::Target &target) {
+    Zhttp::Method::T method_, Zhttp::Target &target) {
     method = method_;
     path.length(0);
-    path << target.pathQuery;
+    path << target.path;
     return true;
   }
 
-  void bodyInfo(Zhttp::BodyType::T type_, uint64_t length_) {
+  bool bodyInfo(Zhttp::BodyType::T type_, uint64_t length_) {
     bodyType = type_;
     bodyLength = length_;
     ++bodyInfoCalls;
+    return true;
   }
 
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "host") {
       ++hostCalls;
       host.length(0);
@@ -178,7 +182,7 @@ struct RequestParser :
   bool body(Rx &rx) {
     ++bodyCalls;
     return Zhttp::bodyEach(
-      rx, [this](ZuBSpan span) { bodyData << span; });
+      rx, [this](ZuSpan<uint8_t> span) { bodyData << span; });
   }
 
   void complete(Zhttp::H1::ParserState::T state_) {
@@ -221,7 +225,7 @@ struct RejectingParser :
 
   RejectingParser() : Base{1024} { }
 
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) {
+  bool operation(Zhttp::Method::T, Zhttp::Target &) {
     ++operations;
     return !rejectOperation;
   }
@@ -231,11 +235,12 @@ struct RejectingParser :
     ++bodies;
     if (consume)
       (void)rx.consume(
-	[](ZuBSpan) -> int64_t { return 1; }, [](ZuBSpan) { });
+	[](ZuSpan<uint8_t>) -> int64_t { return 1; },
+	[](ZuSpan<uint8_t>) { });
     return false;
   }
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan) {
+  void header(Zhttp::FieldSection::T section, ZuSpan<uint8_t>) {
     if (section == Zhttp::FieldSection::Trailers) ++trailers;
   }
   void complete(Zhttp::H1::ParserState::T state) {

@@ -70,14 +70,14 @@ bool consume(Rx &rx, ZuCSpan expected)
   unsigned remaining = expected.length();
   bool ok = false;
   rx.consume(
-    [&remaining](ZuBSpan span) -> int64_t {
+    [&remaining](ZuSpan<uint8_t> span) -> int64_t {
       if (remaining > span.length()) {
 	remaining -= span.length();
 	return 0;
       }
       return remaining;
     },
-    [&ok, expected](ZuBSpan span) {
+    [&ok, expected](ZuSpan<uint8_t> span) {
       ok = span.length() == expected.length() &&
 	!memcmp(span.data(), expected.data(), expected.length());
     });

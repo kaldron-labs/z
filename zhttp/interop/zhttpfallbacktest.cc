@@ -75,7 +75,7 @@ struct ResponseCtx {
   int			status = -1;
 };
 
-using RequestHeaders = ZuTypeList<ZuStringT<"host">, void>;
+using RequestHeaders = ZuTypeList<ZuStringT<"host">, ZuTypeList<>>;
 struct RequestRx :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestRx, true, RequestHeaders> {
@@ -85,15 +85,15 @@ struct RequestRx :
   RequestRx() : Base{FallbackMaxBody} { }
 
   bool operation(
-    Zhttp::Method::T method_, const Zhttp::Target &target) {
+    Zhttp::Method::T method_, Zhttp::Target &target) {
     method = method_;
     path.length(0);
-    path << target.pathQuery;
+    path << target.path;
     return true;
   }
 
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuBSpan value) {
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "host") {
       host.length(0);
       host << value;
@@ -115,13 +115,14 @@ struct ResponseRx :
   ResponseRx() : Base{FallbackMaxBody} { }
 
   void status(unsigned v) { statusSeen = v; }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     if (type == Zhttp::BodyType::Fixed) contentLengthSeen = length;
+    return true;
   }
   template <typename Rx>
   bool body(Rx &rx) {
     return Zhttp::bodyEach(
-      rx, [this](ZuBSpan span) { bodyData << span; });
+      rx, [this](ZuSpan<uint8_t> span) { bodyData << span; });
   }
   void complete(Zhttp::H1::ParserState::T state_) { completeState = state_; }
 
@@ -153,7 +154,7 @@ struct ResponseBuilder :
 };
 
 using RequestBuilderHeaders =
-  ZuTypeList<ZuStringT<"user-agent">, ZuStringT<"ZhttpFallbackTest/1.0">>;
+  ZhttpHeaders(("user-agent", "ZhttpFallbackTest/1.0"));
 struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders> {

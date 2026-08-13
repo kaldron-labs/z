@@ -192,7 +192,7 @@ public:
     m_inFrame = false;
   }
 
-  int process(ZuBSpan input) {
+  int process(ZuSpan<uint8_t> input) {
     if (m_error) return -1;
     unsigned offset = 0, n = input.length();
     if (m_preface) {
@@ -217,7 +217,7 @@ public:
       unsigned available = n - offset;
       uint32_t remaining = m_header.length - m_payloadOffset;
       if (available > remaining) available = remaining;
-      ZuBSpan span{&input[offset], available};
+      ZuSpan<uint8_t> span{&input[offset], available};
       if (!payload_(span)) return -1;
       offset += available;
       if (m_payloadOffset == m_header.length) {
@@ -300,7 +300,7 @@ private:
     return true;
   }
 
-  bool payload_(ZuBSpan span) {
+  bool payload_(ZuSpan<uint8_t> span) {
     switch (m_header.type) {
       case FrameType::Headers:
       case FrameType::Continuation:
@@ -328,7 +328,7 @@ private:
 
   // process a DATA or HEADERS payload without copying its content
   template <bool Header, unsigned Priority = 0>
-  bool padded_(ZuBSpan span) {
+  bool padded_(ZuSpan<uint8_t> span) {
     unsigned offset = 0, n = span.length();
     uint32_t frameOffset = m_payloadOffset;
     if ((m_header.flags & Flag::Padded) && !frameOffset && span) {
@@ -364,7 +364,7 @@ private:
       if (deliver > n - offset) deliver = n - offset;
     }
     if (deliver) {
-      ZuBSpan payload{&span[offset], deliver};
+      ZuSpan<uint8_t> payload{&span[offset], deliver};
       if constexpr (Header)
 	impl()->h2Headers(m_headerStream, payload);
       else
@@ -374,7 +374,7 @@ private:
     return true;
   }
 
-  bool header_(ZuBSpan span) {
+  bool header_(ZuSpan<uint8_t> span) {
     if (m_header.type == FrameType::Continuation) {
       m_headerStream = m_header.streamID;
       if (span) impl()->h2Headers(m_headerStream, span);
@@ -385,7 +385,7 @@ private:
     return padded_<true>(span);
   }
 
-  bool data_(ZuBSpan span) {
+  bool data_(ZuSpan<uint8_t> span) {
     return padded_<false>(span);
   }
 
@@ -564,7 +564,7 @@ public:
 
   enum { Request = Request_ };
   using Headers = typename Headers_::template Unshift<
-    ZuStringT<"content-length">, void>;
+    ZuStringT<"content-length">, ZuTypeList<>>;
   using State = ParserState;
 
   void reset() {
@@ -611,11 +611,11 @@ public:
     return true;
   }
 
-  bool field(ZuBSpan name, ZuBSpan value) {
+  bool field(ZuBSpan name, ZuSpan<uint8_t> value) {
     if (!m_headers) return fail_();
     if (name && name[0] != ':' && !start_()) return fail_();
     if (!m_fields.field(name, value,
-      [this](ZuBSpan key, ZuBSpan value_) {
+      [this](ZuBSpan key, ZuSpan<uint8_t> value_) {
 	this->header_(key, value_);
       }) || m_state == State::Error)
       return fail_();
@@ -626,11 +626,11 @@ public:
     if (!m_headers) return fail_();
     m_headers = false;
     auto section = m_fields.finish(
-      [this](Method::T method, const Target &target) {
+      [this](Method::T method, Target &target) {
 	(void)operation_(method, target);
       },
       [this](unsigned status) { status_(status); },
-      [this](ZuBSpan key, ZuBSpan value) {
+      [this](ZuBSpan key, ZuSpan<uint8_t> value) {
 	if (m_state != State::Error) header_(key, value);
       });
     if (m_state == State::Error) return false;
@@ -651,12 +651,14 @@ public:
       if (m_bodyAllowed && !bodyComplete_()) return fail_();
     } else if (!m_bodyAllowed)
       return fail_();
-    impl()->bodyInfo(
+    if (ZuUnlikely(!impl()->bodyInfo(
 	!m_bodyAllowed ? BodyType::None :
 	m_contentLength >= 0 ? BodyType::Fixed :
 	endStream ? BodyType::None : BodyType::Streamed,
 	m_bodyAllowed && m_contentLength >= 0 ?
-	  uint64_t(m_contentLength) : 0);
+	  uint64_t(m_contentLength) : 0)))
+      return fail_(RequestErrorCode::BodyRejected,
+	RequestErrorScope::Request, Request);
     if (m_state == State::Stream) {
       if (endStream) return fail_();
       return true;
@@ -750,7 +752,7 @@ public:
   void streamError_() { }
 
 private:
-  bool operation_(Method::T method, const Target &target) {
+  bool operation_(Method::T method, Target &target) {
     if constexpr (Request)
       if (ZuUnlikely(!impl()->operation(method, target)))
 	return fail_(RequestErrorCode::OperationRejected,
@@ -760,17 +762,17 @@ private:
 
   bool start_() {
     bool ok = m_fields.start(
-      [this](Method::T method, const Target &target) {
+      [this](Method::T method, Target &target) {
 	(void)operation_(method, target);
       },
       [this](unsigned status) { status_(status); },
-      [this](ZuBSpan key, ZuBSpan value) {
+      [this](ZuBSpan key, ZuSpan<uint8_t> value) {
 	if (m_state != State::Error) header_(key, value);
       });
     return ok && m_state != State::Error;
   }
 
-  void header_(ZuBSpan key, ZuBSpan value) {
+  void header_(ZuBSpan key, ZuSpan<uint8_t> value) {
     if (key == "content-length") {
       uint64_t length = 0;
       if (!Fields::uint64(value, length)) {
@@ -788,7 +790,7 @@ private:
     if (!m_deliverHeaders) return;
     Fields::dispatch<Headers>(
       key, value,
-      [this](auto key_, ZuBSpan value_) {
+      [this](auto key_, ZuSpan<uint8_t> value_) {
 	impl()->template header<ZuDecay<decltype(key_)>>(
 	  m_fields.section(), value_);
       },
@@ -797,12 +799,12 @@ private:
 	  ZuDecay<decltype(key_)>, ZuDecay<decltype(value_)>>(
 	    m_fields.section());
       },
-      [this](ZuBSpan key_, ZuBSpan value_) {
+      [this](ZuBSpan key_, ZuSpan<uint8_t> value_) {
 	runtimeHeader_(key_, value_);
       });
   }
 
-  void runtimeHeader_(ZuBSpan key, ZuBSpan value) {
+  void runtimeHeader_(ZuBSpan key, ZuSpan<uint8_t> value) {
     if constexpr (Fields::HasRuntime<Impl>{}) {
       if (!m_deliverHeaders) return;
       impl()->header(m_fields.section(), key, value);
@@ -982,6 +984,24 @@ private:
     stream.field(name, ZuFwd<V>(value));
   }
   template <typename Stream, typename V>
+  static auto nameField_(Stream &stream, ZuBSpan name, V &&value, int) ->
+      decltype(stream.fieldName(name, ZuFwd<V>(value)), void()) {
+    stream.fieldName(name, ZuFwd<V>(value));
+  }
+  template <typename Stream, typename V>
+  static void nameField_(Stream &stream, ZuBSpan name, V &&value, ...) {
+    stream.field(name, ZuFwd<V>(value));
+  }
+  template <typename Stream, typename V>
+  static auto literalField_(Stream &stream, ZuBSpan name, V &&value, int) ->
+      decltype(stream.fieldLiteral(name, ZuFwd<V>(value)), void()) {
+    stream.fieldLiteral(name, ZuFwd<V>(value));
+  }
+  template <typename Stream, typename V>
+  static void literalField_(Stream &stream, ZuBSpan name, V &&value, ...) {
+    stream.field(name, ZuFwd<V>(value));
+  }
+  template <typename Stream, typename V>
   static auto fixedField_(Stream &stream, ZuBSpan name, V &&value, int) ->
       decltype(stream.fieldFixed(name, ZuFwd<V>(value)), void()) {
     stream.fieldFixed(name, ZuFwd<V>(value));
@@ -1027,14 +1047,17 @@ private:
     typename KVs = Headers, bool IncludeContentLength = true,
     typename Stream>
   void headers_(Stream &stream) {
-    using Keys = ZuTypeSlice<2, 0, KVs>;
-    using Values = ZuTypeSlice<2, 1, KVs>;
-    ZuUnroll::all<Keys>([this, &stream]<typename Key>() {
-      using Value = ZuType<ZuTypeIndex<Key, Keys>{}, Values>;
-      if constexpr (!ZuIsSame<Value, void>{}) {
-	fixedField_(stream, Key{}(), HeaderValue<Value>{}(), 0);
+    using List = HeaderList<KVs>;
+    ZuUnroll::all<List::N>([this, &stream](auto I) {
+      using Key = typename List::template Key<I>;
+      using Value = typename List::template Value<I>;
+      if constexpr (Value::N) {
+	using Fixed = HeaderValue<Value>;
+	builderFixedHeader<Key, Fixed>(impl(), [this, &stream]() {
+	  fixedField_(stream, Key{}(), Fixed{}(), 0);
+	}, 0);
 	impl()->template header<Key>([&stream]<typename V>(V &&v) {
-	  stream.field(Key{}(), ZuFwd<V>(v));
+	  nameField_(stream, Key{}(), ZuFwd<V>(v), 0);
 	});
       } else {
 	auto impl = this->impl();
@@ -1051,7 +1074,7 @@ private:
     auto fn = [&stream]<typename K, typename V>(K &&k, V &&v) {
       ZtBArray<ZtArrayHeapID<"Zhttp.H2.HeaderName">> name;
       name << ZuFwd<K>(k);
-      if (name) stream.field(name, ZuFwd<V>(v));
+      if (name) literalField_(stream, name, ZuFwd<V>(v), 0);
     };
     impl()->header(ZuMv(fn));
   }
