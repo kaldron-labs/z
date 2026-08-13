@@ -160,8 +160,8 @@ client.init(
   Zhttp::Config{}
     .links(10)
     .concurrency(100)
-    .linkConcurrency(10)
-    .protocol(Zhttp::ProtocolPolicy::PreferH3)
+    .linkMax(10)
+    .protocol(Zhttp::ProtoPolicy::PreferH3)
     .h2Policy(Zhttp::H2Policy::Prefer)
     .retainedBodyMax(uint32_t(-1))
     .retainedMessageMax(uint32_t(-1)),

@@ -1087,7 +1087,7 @@ void cancel()
   app.expected = 2;
   auto config = Zhttp::Config()
     .concurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config), "initialize/start agent");
 
@@ -1140,7 +1140,7 @@ void outOfOrder()
   }};
   auto config = Zhttp::Config()
     .links(2).concurrency(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config), "initialize/start agent");
 
@@ -1190,8 +1190,8 @@ void pipeline()
     serverOK.store_(servePipeline(sockets));
   }};
   auto config = Zhttp::Config()
-    .links(1).concurrency(2).linkConcurrency(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(2).linkMax(2)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   ZuCHECK(startApp(app, mx, port, config), "initialize/start agent");
 
@@ -1241,9 +1241,9 @@ void pipelineTxError()
     serverOK.store_(servePipelineStall(sockets, ready, 2));
   }};
   auto config = Zhttp::Config()
-    .links(1).concurrency(2).linkConcurrency(2)
+    .links(1).concurrency(2).linkMax(2)
     .maxRetries(0)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, port, config);
   ZuCHECK(started, "initialize/start pipeline Tx-error pool");
@@ -1307,9 +1307,9 @@ void pipelineCancellation(unsigned cancelAt)
     serverOK.store_(servePipelineStall(sockets, ready, Requests));
   }};
   auto config = Zhttp::Config()
-    .links(1).concurrency(Requests).linkConcurrency(Requests)
+    .links(1).concurrency(Requests).linkMax(Requests)
     .maxRetries(0)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, port, config);
   ZuCHECK(started,
@@ -1373,8 +1373,8 @@ void limited()
     serverOK.store_(serveTwo(sockets));
   }};
   auto config = Zhttp::Config()
-    .links(2).concurrency(2).linkConcurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(2).concurrency(2).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   ZuCHECK(startApp(app, mx, port, config), "initialize/start agent");
 
@@ -1456,8 +1456,8 @@ void limitedSaturated()
       sockets, ready, release0, release1));
   }};
   auto config = Zhttp::Config()
-    .links(2).concurrency(4).linkConcurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(2).concurrency(4).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start combined capacity-gate agent");
@@ -1540,8 +1540,8 @@ void parallelism()
     serverOK.store_(serveParallel(sockets, Links, PerLink));
   }};
   auto config = Zhttp::Config()
-    .links(Links).concurrency(Requests).linkConcurrency(PerLink)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(Links).concurrency(Requests).linkMax(PerLink)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   ZuCHECK(startApp(app, mx, port, config), "initialize/start parallel pool");
   ResolveCounter resolver;
@@ -1606,8 +1606,8 @@ void waves()
     serverOK.store_(serveWaves(sockets));
   }};
   auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start successive-wave pool");
@@ -1649,8 +1649,8 @@ void stopQueuedLimited()
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, 1, config);
   ZuCHECK(started, "start queued-stop pool");
@@ -1718,8 +1718,8 @@ void stopActivePipeline()
     serverOK.store_(servePipelineStall(sockets, ready, Requests));
   }};
   auto config = Zhttp::Config()
-    .links(1).concurrency(Requests).linkConcurrency(Requests)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(Requests).linkMax(Requests)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, port, config);
   ZuCHECK(started, "start active-stop pool");
@@ -1779,8 +1779,8 @@ void stopReusableIdle()
     serverOK.store_(serveIdleStop(sockets, idle));
   }};
   auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   bool started = startApp(app, mx, port, config);
   ZuCHECK(started, "start reusable-idle pool");
@@ -1842,8 +1842,8 @@ void boundedLinkScan()
     serverOK.store_(serveParallel(sockets, 1, 1));
   }};
   auto config = Zhttp::Config()
-    .links(Links).concurrency(1).linkConcurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(Links).concurrency(1).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start a pool larger than one scheduler batch");
@@ -1889,7 +1889,7 @@ void timeout()
   app.expected = 1;
   auto config = Zhttp::Config()
     .concurrency(1).requestTimeout(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config), "initialize/start agent");
 
@@ -1936,7 +1936,7 @@ void retry()
 
   auto config = Zhttp::Config()
     .concurrency(1).maxRetries(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start retry agent");
@@ -1994,7 +1994,7 @@ void redirect()
   app.expected = 1;
   auto config = Zhttp::Config()
     .concurrency(1).maxRedirects(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start redirect agent");
@@ -2051,7 +2051,7 @@ void crossOriginRedirect()
   app.expected = 1;
   auto config = Zhttp::Config()
     .concurrency(1).maxRedirects(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start cross-origin redirect agent");
@@ -2097,7 +2097,7 @@ void retryLimit()
   app.expected = 1;
   auto config = Zhttp::Config()
     .concurrency(1).maxRetries(2)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
     "initialize/start retry-limit agent");
@@ -2132,12 +2132,12 @@ void configuration()
   ZuCHECK(mx.start(), "start configuration multiplexer");
 
   auto defaults = Zhttp::Config()
-    .links(2).concurrency(4).linkConcurrency(2).secure(false)
+    .links(2).concurrency(4).linkMax(2).secure(false)
     .requestTimeout(17).maxRetries(3).maxRedirects(5)
     .maxOrigins(41).maxAltSvc(7)
     .retainedBodyMax(700).retainedMessageMax(900)
     .discoveryLimits({3, 4, 5, 6})
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .h2Policy(Zhttp::H2Policy::Disable)
     .blindH3(true).altSvcCrossHost(true)
     .tcp(true).tls(false).quic(false);
@@ -2173,14 +2173,14 @@ void configuration()
   ZuCHECK(!app.pool(
       1, Zhttp::Destination{ZuBSpan{"localhost"}, 2},
       Zhttp::Config{}
-	.secure(true).protocol(Zhttp::ProtocolPolicy::ForceH3).quic(false)),
+	.secure(true).protocol(Zhttp::ProtoPolicy::ForceH3).quic(false)),
     "reject a forced-H3 policy without QUIC");
   auto overrides = Zhttp::Config()
-    .links(1).concurrency(2).linkConcurrency(1).requestTimeout(0)
+    .links(1).concurrency(2).linkMax(1).requestTimeout(0)
     .maxRetries(1).maxRedirects(2).maxOrigins(19).maxAltSvc(3)
     .retainedBodyMax(70).retainedMessageMax(90)
     .discoveryLimits({8, 9, 10, 11})
-    .protocol(Zhttp::ProtocolPolicy::PreferH3)
+    .protocol(Zhttp::ProtoPolicy::PreferH3)
     .h2Policy(Zhttp::H2Policy::Prefer)
     .blindH3(false).altSvcCrossHost(false)
     .secure(true).tcp(true).tls(true).quic(true);
@@ -2194,7 +2194,7 @@ void configuration()
   const auto *config0 = app.config(0);
   const auto *config1 = app.config(1);
   ZuCHECK(config0 && config0->links() == 2 &&
-      config0->concurrency() == 4 && config0->linkConcurrency() == 2 &&
+      config0->concurrency() == 4 && config0->linkMax() == 2 &&
       config0->requestTimeout() == 17 && config0->maxRetries() == 3 &&
       config0->maxRedirects() == 5 && config0->retainedBodyMax() == 700 &&
       config0->retainedMessageMax() == 900 &&
@@ -2203,14 +2203,14 @@ void configuration()
       config0->discoveryLimits().maxHints == 4 &&
       config0->discoveryLimits().maxEndpoints == 5 &&
       config0->discoveryLimits().maxAliasDepth == 6 &&
-      config0->protocol() == Zhttp::ProtocolPolicy::DisableH3 &&
+      config0->protocol() == Zhttp::ProtoPolicy::DisableH3 &&
       config0->h2Policy() == Zhttp::H2Policy::Disable &&
       config0->blindH3() && config0->altSvcCrossHost() &&
       !config0->secure() && config0->tcp() &&
       !config0->tls() && !config0->quic(),
     "pool without overrides inherits the complete client policy");
   ZuCHECK(config1 && config1->links() == 1 &&
-      config1->concurrency() == 2 && config1->linkConcurrency() == 1 &&
+      config1->concurrency() == 2 && config1->linkMax() == 1 &&
       config1->requestTimeout() == 0 && config1->maxRetries() == 1 &&
       config1->maxRedirects() == 2 && config1->retainedBodyMax() == 70 &&
       config1->retainedMessageMax() == 90 &&
@@ -2219,7 +2219,7 @@ void configuration()
       config1->discoveryLimits().maxHints == 9 &&
       config1->discoveryLimits().maxEndpoints == 10 &&
       config1->discoveryLimits().maxAliasDepth == 11 &&
-      config1->protocol() == Zhttp::ProtocolPolicy::PreferH3 &&
+      config1->protocol() == Zhttp::ProtoPolicy::PreferH3 &&
       config1->h2Policy() == Zhttp::H2Policy::Prefer &&
       !config1->blindH3() && !config1->altSvcCrossHost() &&
       config1->secure() && config1->tcp() &&
@@ -2263,8 +2263,8 @@ void stopResolving()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start resolving-stop multiplexer");
   auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1).secure(false)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1).secure(false)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = Requests;
@@ -2327,8 +2327,8 @@ void multiplePools()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start multi-pool multiplexer");
   auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1).secure(false)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1).secure(false)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2396,8 +2396,8 @@ void sameOriginPools()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start same-origin multiplexer");
   auto defaults = Zhttp::Config()
-    .links(2).concurrency(2).linkConcurrency(2).secure(false)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(2).concurrency(2).linkMax(2).secure(false)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2406,7 +2406,7 @@ void sameOriginPools()
     Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
   Zhttp::Destination dest{ZuBSpan{"127.0.0.1"}, port};
   auto override = Zhttp::Config().links(1).concurrency(1)
-    .linkConcurrency(1);
+    .linkMax(1);
   inited = inited && app.pool(0, dest) && app.pool(1, dest, override);
   ZuCHECK(inited && app.start(),
     "configure independent policies for two same-origin pools");
@@ -2458,8 +2458,8 @@ void poolTimeoutOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start policy-override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1).requestTimeout(1)
-    .secure(false).protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1).requestTimeout(1)
+    .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2524,8 +2524,8 @@ void poolRetryOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start retry-override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1).maxRetries(0)
-    .secure(false).protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1).maxRetries(0)
+    .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2595,8 +2595,8 @@ void poolRedirectOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start redirect-override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1).maxRedirects(0)
-    .secure(false).protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1).maxRedirects(0)
+    .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2676,8 +2676,8 @@ void poolRetainedBodyOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start retained-body override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1).retainedBodyMax(4)
-    .secure(false).protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(1).linkMax(1).retainedBodyMax(4)
+    .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2746,9 +2746,9 @@ void poolRetainedMessageOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start retained-message override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(1).linkConcurrency(1)
+    .links(1).concurrency(1).linkMax(1)
     .retainedBodyMax(Body.length()).retainedMessageMax(Body.length() - 1)
-    .secure(false).protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = 2;
@@ -2795,9 +2795,9 @@ void poolRetainedMessageOverride()
   mx.stop();
 }
 
-void poolLinkConcurrencyOverride()
+void poolLinkMaxOverride()
 {
-  ZuTestScope(poolLinkConcurrencyOverride);
+  ZuTestScope(poolLinkMaxOverride);
 
   enum { Requests = 3 };
   uint16_t defaultPort, overridePort;
@@ -2820,8 +2820,8 @@ void poolLinkConcurrencyOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start per-link override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(Requests).linkConcurrency(1)
-    .secure(false).protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .links(1).concurrency(Requests).linkMax(1)
+    .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
   app.expected = Requests;
@@ -2832,7 +2832,7 @@ void poolLinkConcurrencyOverride()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, defaultPort});
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
-    Zhttp::Config{}.linkConcurrency(Requests));
+    Zhttp::Config{}.linkMax(Requests));
   ZuCHECK(inited && app.start(),
     "start pools with distinct per-link concurrency");
 
@@ -2872,7 +2872,7 @@ void resolverLifecycle()
   Zhttp::Config config;
   config
     .concurrency(1)
-    .protocol(Zhttp::ProtocolPolicy::DisableH3)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
 
   {
@@ -2923,7 +2923,7 @@ int main(int argc, char **argv)
   ZuTestCall(poolRedirectOverride);
   ZuTestCall(poolRetainedBodyOverride);
   ZuTestCall(poolRetainedMessageOverride);
-  ZuTestCall(poolLinkConcurrencyOverride);
+  ZuTestCall(poolLinkMaxOverride);
   ZuTestCall(pipeline);
   ZuTestCall(pipelineTxError);
   ZuTestCall(pipelineCancellation, 0U);

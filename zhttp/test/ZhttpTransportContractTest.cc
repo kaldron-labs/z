@@ -816,7 +816,7 @@ void testMetadata()
     Zhttp::Transport{}.name(Zhttp::Transport::QUIC) == "QUIC" &&
     Zhttp::Version{}.name(Zhttp::Version::H3) == "H3" &&
     Zhttp::Migration{}.name(Zhttp::Migration::Active) == "Active" &&
-    Zhttp::ProtocolPolicy{}.name(Zhttp::ProtocolPolicy::PreferH3) ==
+    Zhttp::ProtoPolicy{}.name(Zhttp::ProtoPolicy::PreferH3) ==
       "PreferH3" &&
     Zhttp::H2Policy{}.name(Zhttp::H2Policy::Disable) == "Disable" &&
     Zhttp::EndpointSource{}.name(Zhttp::EndpointSource::AltSvc) == "AltSvc" &&

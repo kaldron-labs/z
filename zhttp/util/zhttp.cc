@@ -48,7 +48,7 @@ struct Options {
   uint32_t	requests = 1;
   uint32_t	concurrency = 1;
   uint32_t	links = 1;
-  uint32_t	linkConcurrency = 1;
+  uint32_t	linkMax = 1;
   uint32_t	retries = 0;
   uint32_t	timeout = ClientTimeout;
   uint32_t	stallTimeout = H3StallTimeout;
@@ -92,7 +92,7 @@ ZfStruct((Options, CLI),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
   (((links),      (CLI::Long<"links">)),                     (UInt32, 1)),
-  (((linkConcurrency), (CLI::Long<"link-concurrency">)),     (UInt32, 1)),
+  (((linkMax),    (CLI::Long<"link-max">)),                  (UInt32, 1)),
   (((retries),   (CLI::Long<"retries">)),                    (UInt32, 0)),
   (((timeout),   (CLI::Long<"timeout">)),                    (UInt32, ClientTimeout)),
   (((stallTimeout),
@@ -151,8 +151,8 @@ void usage(int code = 1)
     "  -n, --requests=N    submit N GET requests, default 1\n"
     "  -j, --jobs=M        run up to M requests concurrently, default 1\n"
     "  --links=N           persistent links in pool 0, default 1\n"
-    "  --link-concurrency=N\n"
-    "                      maximum operations per link, default 1\n"
+    "  --link-max=N\n"
+    "                      H1 pipeline/H2-H3 stream limit per link, default 1\n"
     "  --retries=N         retry transient connection failures N times\n"
     "  --timeout=N         completion timeout in seconds, default 15, 0 disables\n"
     "  --stall-timeout=N   no-progress stall timeout in seconds, default 15,\n"
@@ -244,7 +244,7 @@ bool validateOptions(Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
   if (!options.requests || !options.concurrency || !options.links ||
-      !options.linkConcurrency)
+      !options.linkMax)
     return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N) return false;
   if (options.http2 < 0 || options.http2 >= Http2Mode::N) return false;
@@ -814,16 +814,16 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  Zhttp::ProtocolPolicy::T policy;
+  Zhttp::ProtoPolicy::T policy;
   switch (options.http3) {
     case Http3Mode::force:
-      policy = Zhttp::ProtocolPolicy::ForceH3;
+      policy = Zhttp::ProtoPolicy::ForceH3;
       break;
     case Http3Mode::disable:
-      policy = Zhttp::ProtocolPolicy::DisableH3;
+      policy = Zhttp::ProtoPolicy::DisableH3;
       break;
     default:
-      policy = Zhttp::ProtocolPolicy::PreferH3;
+      policy = Zhttp::ProtoPolicy::PreferH3;
       break;
   }
 
@@ -842,7 +842,7 @@ int main(int argc, char **argv)
   auto clientConfig = Zhttp::Config()
     .links(options.links)
     .concurrency(options.concurrency)
-    .linkConcurrency(options.linkConcurrency)
+    .linkMax(options.linkMax)
     .requestTimeout(options.timeout)
     .maxRedirects(MaxRedirects)
     .maxRetries(options.retries)
@@ -851,11 +851,10 @@ int main(int argc, char **argv)
     .h2Policy(h2Policy)
     .secure(secure)
     .tcp(true)
-    .tls(secure && policy != Zhttp::ProtocolPolicy::ForceH3)
-    .quic(secure && policy != Zhttp::ProtocolPolicy::DisableH3);
+    .tls(secure && policy != Zhttp::ProtoPolicy::ForceH3)
+    .quic(secure && policy != Zhttp::ProtoPolicy::DisableH3);
   auto quic = Zhttp::QUICConfig()
     .caPath(options.ca).keyLogPath(options.keyLog)
-    .maxStreamsDuplex(options.linkConcurrency)
     .heartbeat(quicHeartbeat(options))
     .migration(migrationMode(options))
     .migrationCIDReserve(options.quicMigrationCIDReserve)

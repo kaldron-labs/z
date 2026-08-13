@@ -75,7 +75,7 @@ struct ClientH2ClearState :
   ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H2.ClearState">> active;
 };
 
-ZtEnumStruct(ZhttpAPI, ProtocolPolicy, int8_t,
+ZtEnumStruct(ZhttpAPI, ProtoPolicy, int8_t,
   ForceH3, PreferH3, DisableH3);
 ZtEnumStruct(ZhttpAPI, ResultCode, int8_t,
   OK, Failed, Cancelled, TimedOut, RedirectLimit, InvalidRedirect,
@@ -110,7 +110,7 @@ public:
     enum {
       Links = 1U<<0,
       Concurrency = 1U<<1,
-      LinkConcurrency = 1U<<2,
+      LinkMax = 1U<<2,
       RequestTimeout = 1U<<3,
       MaxRedirects = 1U<<4,
       MaxRetries = 1U<<5,
@@ -132,7 +132,8 @@ public:
 
   unsigned links() const { return m_links; }
   unsigned concurrency() const { return m_concurrency; }
-  unsigned linkConcurrency() const { return m_linkConcurrency; }
+  // Per-link in-flight operation ceiling: H1 pipeline depth or H2/H3 streams.
+  unsigned linkMax() const { return m_linkMax; }
   unsigned requestTimeout() const { return m_requestTimeout; }
   unsigned maxRedirects() const { return m_maxRedirects; }
   unsigned maxRetries() const { return m_maxRetries; }
@@ -143,7 +144,7 @@ public:
   const DiscoveryLimits &discoveryLimits() const {
     return m_discoveryLimits;
   }
-  ProtocolPolicy::T protocol() const { return m_protocol; }
+  ProtoPolicy::T protocol() const { return m_protocol; }
   H2Policy::T h2Policy() const { return m_h2Policy; }
   bool blindH3() const { return m_blindH3; }
   bool altSvcCrossHost() const { return m_altSvcCrossHost; }
@@ -153,16 +154,16 @@ public:
   bool quic() const { return m_quic; }
 
   bool valid() const {
-    if (!m_links || !m_concurrency || !m_linkConcurrency ||
-	m_protocol < ProtocolPolicy::ForceH3 ||
-	m_protocol > ProtocolPolicy::DisableH3 ||
+    if (!m_links || !m_concurrency || !m_linkMax ||
+	m_protocol < ProtoPolicy::ForceH3 ||
+	m_protocol > ProtoPolicy::DisableH3 ||
 	m_h2Policy < H2Policy::Force || m_h2Policy > H2Policy::Disable)
       return false;
     if (!m_secure) return m_tcp;
     switch (m_protocol) {
-      case ProtocolPolicy::ForceH3: return m_quic;
-      case ProtocolPolicy::PreferH3: return m_tls && m_quic;
-      case ProtocolPolicy::DisableH3: return m_tls;
+      case ProtoPolicy::ForceH3: return m_quic;
+      case ProtoPolicy::PreferH3: return m_tls && m_quic;
+      case ProtoPolicy::DisableH3: return m_tls;
       default: return false;
     }
   }
@@ -177,9 +178,9 @@ public:
     m_set |= Field::Concurrency;
     return *this;
   }
-  Config &linkConcurrency(unsigned v) {
-    m_linkConcurrency = v;
-    m_set |= Field::LinkConcurrency;
+  Config &linkMax(unsigned v) {
+    m_linkMax = v;
+    m_set |= Field::LinkMax;
     return *this;
   }
   Config &requestTimeout(unsigned v) {
@@ -222,7 +223,7 @@ public:
     m_set |= Field::DiscoveryLimits;
     return *this;
   }
-  Config &protocol(ProtocolPolicy::T v) {
+  Config &protocol(ProtoPolicy::T v) {
     m_protocol = v;
     m_set |= Field::Protocol;
     return *this;
@@ -263,7 +264,7 @@ public:
     if (o.m_set & bit) v.member = o.member
     Zhttp_Config_Overlay(Field::Links, m_links);
     Zhttp_Config_Overlay(Field::Concurrency, m_concurrency);
-    Zhttp_Config_Overlay(Field::LinkConcurrency, m_linkConcurrency);
+    Zhttp_Config_Overlay(Field::LinkMax, m_linkMax);
     Zhttp_Config_Overlay(Field::RequestTimeout, m_requestTimeout);
     Zhttp_Config_Overlay(Field::MaxRedirects, m_maxRedirects);
     Zhttp_Config_Overlay(Field::MaxRetries, m_maxRetries);
@@ -288,7 +289,7 @@ public:
 private:
   unsigned	m_links = 1;
   unsigned	m_concurrency = 1;
-  unsigned	m_linkConcurrency = 1;
+  unsigned	m_linkMax = 1;
   unsigned	m_requestTimeout = 0;
   unsigned	m_maxRedirects = 8;
   unsigned	m_maxRetries = 0;
@@ -297,7 +298,7 @@ private:
   uint64_t	m_retainedBodyMax = uint32_t(-1);
   uint64_t	m_retainedMessageMax = uint32_t(-1);
   DiscoveryLimits m_discoveryLimits;
-  ProtocolPolicy::T m_protocol = ProtocolPolicy::PreferH3;
+  ProtoPolicy::T m_protocol = ProtoPolicy::PreferH3;
   H2Policy::T	m_h2Policy = H2Policy::Prefer;
   bool		m_blindH3 = false;
   bool		m_altSvcCrossHost = false;
@@ -5975,7 +5976,7 @@ public:
       }
     if (!ok && retry_(link, attempt)) return;
     if (!ok && attempt.protocol.transport == Transport::QUIC &&
-	m_config.protocol() == ProtocolPolicy::PreferH3) {
+	m_config.protocol() == ProtoPolicy::PreferH3) {
       if (!responseStarted_(attempt)) {
 	beginRouteTransition_(link, attempt);
 	return;
@@ -6253,7 +6254,7 @@ private:
       auto link = m_links[slot].ptr();
       link->selectRoute(m_routeGeneration);
       if (link->stopping() || link->limited() ||
-          link->saturated(m_config.linkConcurrency())) continue;
+          link->saturated(m_config.linkMax())) continue;
       attempt.admissionScanned = 0;
       attempt.linkSlot = slot;
       attempt.link = link;
@@ -6428,8 +6429,8 @@ private:
       return url.scheme == Scheme::http;
     if constexpr (ZuIsSame<Protocol, TLS>{})
       if (url.scheme == Scheme::https) {
-	if (m_config.protocol() == ProtocolPolicy::DisableH3) return true;
-	if (m_config.protocol() == ProtocolPolicy::PreferH3 &&
+	if (m_config.protocol() == ProtoPolicy::DisableH3) return true;
+	if (m_config.protocol() == ProtoPolicy::PreferH3 &&
 	    attempt.protocol.transport == Transport::TLS)
 	  return !m_altSvc.hasH3(Origin{url.origin()}, Zm::now());
       }
@@ -6582,10 +6583,10 @@ private:
       return;
     }
     switch (m_config.protocol()) {
-      case ProtocolPolicy::ForceH3:
+      case ProtoPolicy::ForceH3:
 	resolveRoute_(attempt, RouteState::H3, Version::H3);
 	break;
-      case ProtocolPolicy::DisableH3:
+      case ProtoPolicy::DisableH3:
 	resolveRoute_(attempt, RouteState::TLS,
 	  m_config.h2Policy() == H2Policy::Disable ? Version::H1 : Version::H2);
 	break;
@@ -7284,9 +7285,9 @@ public:
     Config effective = m_config.overlay(config);
     H2Config h2{m_h2};
     QUICConfig quic{m_quic};
-    h2.maxConcurrentStreams(effective.linkConcurrency());
-    h2.maxPending(effective.linkConcurrency());
-    quic.maxStreamsDuplex(effective.linkConcurrency());
+    h2.maxConcurrentStreams(effective.linkMax());
+    h2.maxPending(effective.linkMax());
+    quic.maxStreamsDuplex(effective.linkMax());
     ZmRef<Pool> pool = new Pool{app_()};
 #ifdef ZmObject_DEBUG
     pool->ZmObject::debug();

@@ -8,7 +8,7 @@
 
 namespace Zhttp {
 
-ZtEnumImplStruct(ProtocolPolicy);
+ZtEnumImplStruct(ProtoPolicy);
 ZtEnumImplStruct(ResultCode);
 ZtEnumImplStruct(AttemptPhase);
 ZtEnumImplStruct(FailureKind);
