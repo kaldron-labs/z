@@ -64,14 +64,14 @@ struct App::Link :
     unsigned remaining = 6;
     bool ok = false;
     rx.consume(
-      [&remaining](ZuBSpan span) -> int64_t {
+      [&remaining](ZuSpan<uint8_t> span) -> int64_t {
 	if (remaining > span.length()) {
 	  remaining -= span.length();
 	  return 0;
 	}
 	return remaining;
       },
-      [&ok](ZuBSpan span) { ok = ZuCSpan{span} == "ping\r\n"; });
+      [&ok](ZuSpan<uint8_t> span) { ok = ZuCSpan{span} == "ping\r\n"; });
     if (!ok) return 0;
     auto tx = txStream();
     tx << "pong\r\n" << Zi::flush();

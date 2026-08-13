@@ -12,8 +12,8 @@
 // - stream operations:
 //   - scan(frame, pos) recognizes a complete prefix without consuming it
 //   - consume(frame, data) returns the total number of bytes consumed across all spans
-//     - int64_t frame(span) returns the number of bytes to be consumed in span
-//     - data(span) delivers contiguous frame data to the app
+//     - int64_t frame(mutableSpan) returns the number of bytes to be consumed
+//     - data(mutableSpan) delivers contiguous frame data to the app
 //   - extract(frame, alloc, out) detaches one complete frame into out
 //     - frame(span) has the same boundary contract as consume()
 //     - alloc() returns a queue-compatible pooled buffer when gathering or
@@ -202,7 +202,7 @@ public:
   }
 
   // consume(frame, data) returns the total number of bytes consumed across all spans
-  // - int64_t frame(span)
+  // - int64_t frame(mutableSpan)
   //   - returns the number of bytes N to be consumed in span
   //   - N < 0 indicates an error:
   //     - iteration ends
@@ -214,7 +214,8 @@ public:
   //     - prior spans will be consumed entirely
   //     - the current span is consumed by N
   //     - the current span will be included in the data if N > Padding
-  // - data(span) delivers contiguous frame data to the app (length == total - Padding)
+  // - data(mutableSpan) delivers contiguous frame data to the app
+  //   (length == total - Padding)
   // - iteration may complete without any consumption having occurred (will return 0)
   template <
     unsigned Padding = 0,
@@ -264,7 +265,7 @@ public:
 	  scratch << span;
 	  dataLen -= span.length();
 	}
-	data(scratch.cspan());
+	data(scratch.span());
       }
     }
 

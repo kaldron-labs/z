@@ -745,14 +745,14 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
   bool called = false;
   bool ok = false;
   int64_t consumed = rx.consume(
-    [&remaining](ZuBSpan span) -> int64_t {
+    [&remaining](ZuSpan<uint8_t> span) -> int64_t {
       if (remaining > span.length()) {
 	remaining -= span.length();
 	return 0;
       }
       return remaining;
     },
-    [&called, &ok, &expected](ZuBSpan span) {
+    [&called, &ok, &expected](ZuSpan<uint8_t> span) {
       called = true;
       ok = span.length() == expected.length() &&
 	!memcmp(span.data(), expected.data(), expected.length());

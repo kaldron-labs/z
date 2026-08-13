@@ -90,8 +90,8 @@ struct App : public Ztls::Client<App> {
       while (!rx.empty()) {
 	int n = 0;
 	int64_t consumed = rx.consume(
-	  [](ZuBSpan span) -> int64_t { return span.length(); },
-	  [this, &n](ZuBSpan span) { n = process_span_(span); });
+	  [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+	  [this, &n](ZuSpan<uint8_t> span) { n = process_span_(span); });
 	if (n < 0) return -1;
 	if (consumed < 0) return -1;
 	if (!consumed) return 0;
@@ -99,7 +99,7 @@ struct App : public Ztls::Client<App> {
       return 1;
     }
 
-    int process_span_(ZuBSpan rcvd) {
+    int process_span_(ZuSpan<uint8_t> rcvd) {
       if (!file) {
 	header << ZuCSpan(rcvd);
 	ZtRegexCaptures(c, 0);

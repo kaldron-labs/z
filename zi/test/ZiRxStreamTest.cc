@@ -48,21 +48,21 @@ bool consumeExact(Stream &stream, unsigned n, const char *expected)
 {
   if (!n)
     return !stream.consume(
-      [](ZuBSpan) -> int64_t { return 0; },
-      [](ZuBSpan) { });
+      [](ZuSpan<uint8_t>) -> int64_t { return 0; },
+      [](ZuSpan<uint8_t>) { });
 
   unsigned remaining = n;
   bool called = false;
   bool ok = false;
   int64_t consumed = stream.consume(
-    [&remaining](ZuBSpan span) -> int64_t {
+    [&remaining](ZuSpan<uint8_t> span) -> int64_t {
       if (remaining > span.length()) {
 	remaining -= span.length();
 	return 0;
       }
       return remaining;
     },
-    [&called, &ok, &expected](ZuBSpan span) {
+    [&called, &ok, &expected](ZuSpan<uint8_t> span) {
       called = true;
       ok = spanEq(span, expected);
     });
@@ -142,8 +142,8 @@ void testConsumeGathersFragmentedFrame()
 
   bool called = false;
   int64_t consumed = stream.consume(
-    [](ZuBSpan) -> int64_t { return 0; },
-    [&called](ZuBSpan) { called = true; });
+    [](ZuSpan<uint8_t>) -> int64_t { return 0; },
+    [&called](ZuSpan<uint8_t>) { called = true; });
 
   ZuCheck(!consumed);
   ZuCheck(!called);
@@ -152,11 +152,11 @@ void testConsumeGathersFragmentedFrame()
 
   unsigned seen = 0;
   consumed = stream.consume(
-    [&seen](ZuBSpan span) -> int64_t {
+    [&seen](ZuSpan<uint8_t> span) -> int64_t {
       seen += span.length();
       return seen >= 5 ? span.length() : 0;
     },
-    [&called](ZuBSpan span) {
+    [&called](ZuSpan<uint8_t> span) {
       called = true;
       ZuCheck(spanEq(span, "abcde"));
     });
@@ -177,7 +177,7 @@ void testConsumePaddingAcrossQueuedBuffers()
 
   bool called = false;
   int64_t consumed = stream.consume<2>(
-    [prevCR = false](ZuBSpan span) mutable -> int64_t {
+    [prevCR = false](ZuSpan<uint8_t> span) mutable -> int64_t {
       if (prevCR && span[0] == '\n') return 1;
       for (unsigned i = 1; i < span.length(); ++i)
 	if (span[i - 1] == '\r' && span[i] == '\n')
@@ -185,7 +185,7 @@ void testConsumePaddingAcrossQueuedBuffers()
       prevCR = span[span.length() - 1] == '\r';
       return 0;
     },
-    [&called](ZuBSpan span) {
+    [&called](ZuSpan<uint8_t> span) {
       called = true;
       ZuCheck(spanEq(span, "abc"));
     });
@@ -500,7 +500,7 @@ void testCopyAndEach()
   ZuCheck(!memcmp(copy.data(), "bcde", 4));
 
   ZtString<> visited;
-  int64_t n = stream.each(2, 4, [&visited](ZuBSpan span) -> int64_t {
+  int64_t n = stream.each(2, 4, [&visited](ZuSpan<uint8_t> span) -> int64_t {
     visited << ZuCSpan{span};
     return span.length();
   });
@@ -550,8 +550,8 @@ void testEmptyIsPassive()
   ZuCheck(!stream.length());
   ZuCheck(!stream.span().length());
   ZuCheck(!stream.consume(
-    [&calls](ZuBSpan) -> int64_t { ++calls; return 1; },
-    [&calls](ZuBSpan) { ++calls; }));
+    [&calls](ZuSpan<uint8_t>) -> int64_t { ++calls; return 1; },
+    [&calls](ZuSpan<uint8_t>) { ++calls; }));
   ZuCheck(!calls);
 }
 

@@ -69,8 +69,8 @@ struct App : public Ztls::Server<App> {
 	  tx << content << Zi::flush();
 	}
 	int64_t consumed = rx.consume(
-	  [](ZuBSpan span) -> int64_t { return span.length(); },
-	  [](ZuBSpan) { });
+	  [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+	  [](ZuSpan<uint8_t>) { });
 	if (consumed < 0) return -1;
 	if (!consumed) return 0;
       }
