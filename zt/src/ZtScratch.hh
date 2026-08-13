@@ -43,6 +43,7 @@ private:
   using VAlloc = ZmAlloc_<T, VHeap>;
 public:
   using Array::data;
+  using Array::operator =;
   using Array::operator [];
   using Array::operator !;
   ZuOpBool
