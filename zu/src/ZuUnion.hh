@@ -466,7 +466,7 @@ public:
     using namespace Union_;
     ZuSwitch::dispatch<N>(m_type, [this](auto I) {
       using T = Type<I>;
-      if constexpr (!IsVoid<T>{}) Ops<T>::dtor(m_u);
+      if constexpr (!IsVoid<T>{}) Ops<T>::dtor(ZuAddr(p_<I>(m_u)));
     });
     m_type = 0;
   }
