@@ -291,7 +291,7 @@ using ResponseHeaders = ZhttpHeaders(
   "connection",
   "location");
 
-using URL = Zhttp::URL;
+using URLView = Zhttp::URLView;
 
 constexpr unsigned MaxRedirects = 8;
 constexpr uint64_t RespBodyMax = 100<<20;
@@ -348,7 +348,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   void disconnected(bool) { }
   void connectFailed(bool) { }
   void redirected(
-    const URL &, uint64_t, uint64_t, uint64_t, unsigned, uint16_t);
+    const URLView &, uint64_t, uint64_t, uint64_t, unsigned, uint16_t);
   void completed(const Zhttp::Result &);
 
   uint64_t key() const { return id; }
@@ -440,7 +440,7 @@ void resetResponse(ReqBuilder_ &req, bool truncateOutput)
 }
 
 void initReq(
-  ReqBuilder_ &req, const Options &options, const URL &url, unsigned id)
+  ReqBuilder_ &req, const Options &options, const URLView &url, unsigned id)
 {
   req.id = id;
   req.requests = options.requests;
@@ -632,7 +632,7 @@ struct ResParser : public Zhttp::Parser {
 };
 
 void ReqBuilder_::redirected(
-    const URL &url_, uint64_t, uint64_t, uint64_t, unsigned, uint16_t)
+    const URLView &url_, uint64_t, uint64_t, uint64_t, unsigned, uint16_t)
 {
   target.length(0);
   url_.writeTarget(target);
@@ -691,7 +691,7 @@ struct Client : public Zhttp::Client<Client, Pool> {
     if (m_generated == m_options->requests) seal(0);
   }
 
-  void workload(const Options &options, const URL &url) {
+  void workload(const Options &options, const URLView &url) {
     txRun(0, [this, options = &options, url = &url]() {
       m_options = options;
       m_url = url;
@@ -711,7 +711,7 @@ private:
   }
 
   const Options	*m_options = nullptr;
-  const URL	*m_url = nullptr;
+  const URLView	*m_url = nullptr;
   unsigned	m_generated = 0;
 };
 
@@ -779,7 +779,7 @@ int main(int argc, char **argv)
   if (options.help) usage(0);
   if (!validateOptions(options, argc)) usage();
 
-  Zhttp::URLStorage urlStorage;
+  Zhttp::URL urlStorage;
   auto urlError = urlStorage.assign(options.url);
   if (!urlError.ok()) {
     auto code = urlError.code;
@@ -789,7 +789,7 @@ int main(int argc, char **argv)
     }));
     usage();
   }
-  URL url = urlStorage.url();
+  URLView url = urlStorage.url();
 
   ZiLog::init("zhttp");
   ZiLog::level(

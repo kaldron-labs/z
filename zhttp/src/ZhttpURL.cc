@@ -308,7 +308,7 @@ uint32_t Origin::hash() const
     ZuHash<uint16_t>::hash(port);
 }
 
-URL::URL(ZuSpan<uint8_t> input) : raw{input}
+URLView::URLView(ZuSpan<uint8_t> input) : raw{input}
 {
   using namespace URL_;
   int colon = schemeEnd(raw);
@@ -378,19 +378,19 @@ URL::URL(ZuSpan<uint8_t> input) : raw{input}
   }
 }
 
-AuthorityView URL::authority() const
+AuthorityView URLView::authority() const
 {
   return {
     authorityRaw, host, port, explicitPort, ipv6Literal, true
   };
 }
 
-OriginView URL::origin() const
+OriginView URLView::origin() const
 {
   return {host, port, scheme, ipv6Literal};
 }
 
-void URLStorage::commit_(URLString &&data, const URL &url)
+void URL::commit_(URLString &&data, const URLView &url)
 {
   auto part = [&data](ZuBSpan s) {
     return Part{
@@ -413,24 +413,24 @@ void URLStorage::commit_(URLString &&data, const URL &url)
   m_data = ZuMv(data);
 }
 
-URLParseError URLStorage::assign(ZuBSpan input)
+URLParseError URL::assign(ZuBSpan input)
 {
   URLString candidate{input};
   return adopt(ZuMv(candidate));
 }
 
-URLParseError URLStorage::adopt(URLString &&candidate)
+URLParseError URL::adopt(URLString &&candidate)
 {
   candidate.ensure(candidate.length() + 1);
-  URL parsed{candidate.span()};
+  URLView parsed{candidate.span()};
   if (!parsed.ok()) return parsed.error();
   commit_(ZuMv(candidate), parsed);
   return {};
 }
 
-URL URLStorage::url() const
+URLView URL::url() const
 {
-  URL out;
+  URLView out;
   if (!ok()) {
     out.parseError = m_error;
     return out;
@@ -455,7 +455,7 @@ URL URLStorage::url() const
   return out;
 }
 
-URLParseError URLStorage::resolve(const URL &base, ZuBSpan ref)
+URLParseError URL::resolve(const URLView &base, ZuBSpan ref)
 {
   using namespace URL_;
   ZuBSpan fullRef = ref;
@@ -565,7 +565,7 @@ TargetParseError Target::parseH1(
   int fragment = input.find([](auto c) { return c == '#'; });
   if (fragment >= 0)
     return targetError(TargetParseCode::InvalidCharacter, fragment);
-  URL url{input};
+  URLView url{input};
   if (!url.ok())
     switch (url.error().code) {
       case URLParseCode::UnsupportedScheme:

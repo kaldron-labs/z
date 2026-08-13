@@ -49,9 +49,9 @@ disables HTTP/3 probing. `-2 force|prefer|disable` /
 WebTransport, DATAGRAM, and QUIC v2 discovery remain out of scope for this
 resolver path.
 
-URL syntax is centralized in `ZhttpURL.hh`. `URL` is a borrowed view over a
-mutable input span and normalizes DNS host names in place; `URLStorage` is the
-explicit owning form, with `assign()` for copying immutable input and `adopt()`
+URL syntax is centralized in `ZhttpURL.hh`. `URLView` is a borrowed view over a
+mutable input span and normalizes DNS host names in place; `URL` is the explicit
+owning form, with `assign()` for copying immutable input and `adopt()`
 for transferring an existing `URLString`. `Target` represents the HTTP
 request-target forms and exposes mutable borrowed `raw`, `path`, and `protocol`
 spans; `path` contains the complete path plus optional query.
@@ -111,7 +111,7 @@ struct ReqBuilder_ : ZmObject, Zhttp::ReqBuilder {
     unsigned status, Zhttp::Transport::T, Zhttp::Version::T,
     bool transient, bool responseStarted);
   void redirected(
-    const Zhttp::URL &, uint64_t request, uint64_t attempt,
+    const Zhttp::URLView &, uint64_t request, uint64_t attempt,
     uint64_t previousAttempt, unsigned status, uint16_t redirects);
   void retried(
     uint64_t request, uint64_t attempt,

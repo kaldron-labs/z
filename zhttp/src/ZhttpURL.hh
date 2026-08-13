@@ -139,7 +139,7 @@ struct Origin {
   uint32_t hash() const;
 };
 
-struct URL {
+struct URLView {
   ZuBSpan	raw;
   ZuBSpan	authorityRaw;
   ZuBSpan	host;
@@ -154,8 +154,8 @@ struct URL {
   bool		explicitPort = false;
   bool		ipv6Literal = false;
 
-  URL() : parseError{0, URLParseCode::InvalidReference} { }
-  explicit URL(ZuSpan<uint8_t>);
+  URLView() : parseError{0, URLParseCode::InvalidReference} { }
+  explicit URLView(ZuSpan<uint8_t>);
 
   URLParseError error() const { return parseError; }
   bool ok() const { return parseError.ok(); }
@@ -174,18 +174,18 @@ struct URL {
     if (hasQuery) s << '?' << query;
     if (hasFragment) s << '#' << fragment;
   }
-  friend ZuPrintFn ZuPrintType(URL *);
+  friend ZuPrintFn ZuPrintType(URLView *);
 };
 
-class URLStorage {
+class URL {
 public:
-  URLStorage() = default;
-  explicit URLStorage(ZuBSpan s) { assign(s); }
+  URL() = default;
+  explicit URL(ZuBSpan s) { assign(s); }
 
   URLParseError assign(ZuBSpan);
   URLParseError adopt(URLString &&);
-  URLParseError resolve(const URL &, ZuBSpan);
-  URL url() const;
+  URLParseError resolve(const URLView &, ZuBSpan);
+  URLView url() const;
   bool ok() const { return m_error.ok(); }
   URLParseError error() const { return m_error; }
 
@@ -194,7 +194,7 @@ private:
     uint32_t offset = 0;
     uint32_t length = 0;
   };
-  void commit_(URLString &&, const URL &);
+  void commit_(URLString &&, const URLView &);
 
   URLString	m_data;
   URLParseError	m_error{0, URLParseCode::InvalidReference};

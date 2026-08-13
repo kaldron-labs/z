@@ -50,7 +50,7 @@ void parseURL()
     {"https:///path", {}, {}, 0, false}
   };
   for (const auto &test : tests) {
-    Zhttp::URLStorage storage;
+    Zhttp::URL storage;
     auto e = storage.assign(ZuBSpan{test.input});
     ZuCHECK(e.ok() == test.ok, test.input);
     if (!test.ok) continue;
@@ -64,7 +64,7 @@ void parseURL()
 
   Zhttp::URLString mutableURL;
   mutableURL << "HTTP://Example.COM/a?#";
-  Zhttp::URL url{mutableURL.span()};
+  Zhttp::URLView url{mutableURL.span()};
   ZuCHECK(url.ok() && url.host == "example.com", "in-place host case fold");
   ZuCHECK(url.hasQuery && !url.query && url.hasFragment && !url.fragment,
     "empty query and fragment presence");
@@ -72,13 +72,13 @@ void parseURL()
   printed << url;
   ZuCHECK(printed == "http://example.com/a?#", "direct URL print");
 
-  Zhttp::URLStorage empty;
+  Zhttp::URL empty;
   ZuCHECK(!empty.ok() && !empty.url().ok(), "default storage is not a URL");
-  Zhttp::URL nullURL;
+  Zhttp::URLView nullURL;
   ZuCHECK(!nullURL.ok(), "default borrowed view is not a URL");
-  Zhttp::URLStorage retained{ZuBSpan{"https://Example.COM:8443/p?"}};
-  Zhttp::URLStorage copied = retained;
-  Zhttp::URLStorage moved = ZuMv(copied);
+  Zhttp::URL retained{ZuBSpan{"https://Example.COM:8443/p?"}};
+  Zhttp::URL copied = retained;
+  Zhttp::URL moved = ZuMv(copied);
   Zhttp::URLString movedText;
   movedText << moved.url();
   ZuCHECK(moved.ok() && movedText == "https://example.com:8443/p?",
@@ -116,7 +116,7 @@ void parseURL()
 void redirect()
 {
   ZuTestScope(redirect);
-  Zhttp::URLStorage baseStorage{ZuBSpan{"http://a/b/c/d;p?q"}};
+  Zhttp::URL baseStorage{ZuBSpan{"http://a/b/c/d;p?q"}};
   ZuCHECK(baseStorage.ok(), "parse base");
   auto base = baseStorage.url();
   struct Test {
@@ -169,7 +169,7 @@ void redirect()
     {"g#s/../x", "http://a/b/c/g#s/../x"}
   };
   for (const auto &test : tests) {
-    Zhttp::URLStorage storage;
+    Zhttp::URL storage;
     auto e = storage.resolve(base, test.ref);
     if (test.ref == "g:h") {
       ZuCHECK(!e.ok(), test.ref);

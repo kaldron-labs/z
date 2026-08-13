@@ -393,7 +393,7 @@ struct ReqBuilder : public Builder {
   //   unsigned status, Transport::T, Version::T,
   //   bool transient, bool responseStarted);
   // void redirected(
-  //   const URL &, uint64_t request, uint64_t attempt,
+  //   const URLView &, uint64_t request, uint64_t attempt,
   //   uint64_t previousAttempt, unsigned status, uint16_t redirects);
   // void retried(
   //   uint64_t request, uint64_t attempt,
@@ -428,7 +428,7 @@ struct HasReqRedirected : public ZuFalse { };
 template <typename U>
 struct HasReqRedirected<U, decltype(
   ZuDeclVal<U &>().redirected(
-    ZuDeclVal<const URL &>(), uint64_t{}, uint64_t{}, uint64_t{},
+    ZuDeclVal<const URLView &>(), uint64_t{}, uint64_t{}, uint64_t{},
     unsigned{}, uint16_t{}), void())> : public ZuTrue { };
 
 template <typename U, typename = void>
@@ -5241,8 +5241,8 @@ struct ClientResponseBody {
 };
 
 struct ClientAttemptRoute {
-  URLStorage		url;
-  URLStorage		redirect;
+  URL			url;
+  URL			redirect;
   Endpoint		endpoint;
   ClientRouteRef	endpoints;
   unsigned		endpointIndex = 0;
@@ -5780,7 +5780,7 @@ public:
 
   template <typename Link>
   void poolConnect(Link &link, LiveReq &attempt) {
-    URL url = attempt.route.url.url();
+    URLView url = attempt.route.url.url();
     if constexpr (ZuIsSame<typename Link::Protocol, QUIC>{}) {
       if (attempt.route.endpointSet)
 	link.connectEndpoint(attempt.route.endpoint);
@@ -5918,8 +5918,8 @@ public:
 	finish_(link, attempt, ResultCode::InvalidRedirect, reuse);
 	return;
       }
-      URL current = attempt.route.url.url();
-      URL next = attempt.route.redirect.url();
+      URLView current = attempt.route.url.url();
+      URLView next = attempt.route.redirect.url();
       bool same = current.origin() == next.origin();
       if (!same) {
 	finish_(link, attempt, ResultCode::InvalidRedirect, reuse);
@@ -6010,7 +6010,7 @@ public:
 	parser.template header<Key>(section, value);
 	return;
       }
-      URL url = attempt.route.url.url();
+      URLView url = attempt.route.url.url();
       Origin origin{url.origin()};
       m_altSvc.update(
 	origin, value, m_config.maxAltSvc(), Zm::now());
@@ -6130,7 +6130,7 @@ private:
   }
 
   ZuInline void redirected_(
-      LiveReq &attempt, const URL &url,
+      LiveReq &attempt, const URLView &url,
       uint64_t previousAttempt, unsigned status) {
     if constexpr (HasReqRedirected<ReqBuilder>{})
       attempt.request->redirected(
@@ -6420,7 +6420,7 @@ private:
   template <typename Link>
   bool direct_(LiveReq &attempt) {
     using Protocol = typename Link::Protocol;
-    URL url = attempt.route.url.url();
+    URLView url = attempt.route.url.url();
     if constexpr (ZuIsSame<Protocol, TCP>{})
       return url.scheme == Scheme::http;
     if constexpr (ZuIsSame<Protocol, TLS>{})
@@ -6672,7 +6672,7 @@ private:
   }
 
   void prefer_(LiveReq &attempt) {
-    URL url = attempt.route.url.url();
+    URLView url = attempt.route.url.url();
     Origin origin{url.origin()};
     Endpoint endpoint;
     bool found = false;
@@ -6717,7 +6717,7 @@ private:
       default:
 	break;
     }
-    URL url = attempt.route.url.url();
+    URLView url = attempt.route.url.url();
     m_routeState = RouteState::Resolving;
     waitRoute_(attempt);
     ZmAssert(!m_routeDiscovery);
@@ -6742,7 +6742,7 @@ private:
 	    routeReady_();
 	    return;
 	  }
-	  URL url = m_origin.url();
+	  URLView url = m_origin.url();
 	  resolveRouteStart_(RouteState::TLS, Endpoint{
 	    .origin = Origin{url.origin()},
 	    .target = m_dest.host,
@@ -7155,7 +7155,7 @@ private:
   unsigned	m_slot = 0;
   Config	m_config;
   Destination	m_dest;
-  URLStorage	m_origin;
+  URL		m_origin;
   TCPPool	m_tcp;
   TLSPool	m_tls;
   QUICPool	m_quic;
