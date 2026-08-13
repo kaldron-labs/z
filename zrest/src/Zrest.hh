@@ -12,6 +12,7 @@
 #include <zlib/ZrestLib.hh>
 
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfURI.hh>
@@ -21,9 +22,9 @@
 
 namespace Zrest {
 
-ZtEnumNS(ZrestAPI, QueryPolicy, None, URI, Raw);
+ZtEnumNS(ZrestAPI, QueryPolicy, int8_t, None, URI, Raw);
 
-ZtEnumNS(ZrestAPI, BodyPolicy, None, JSON, URI, Raw);
+ZtEnumNS(ZrestAPI, BodyPolicy, int8_t, None, JSON, URI, Raw);
 
 // default headers based on body policy
 template <typename Impl, unsigned = Impl::BodyPolicy>
@@ -46,8 +47,8 @@ ZuDerive(SignBuf, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf">>));
 
 // default request compile-time metadata
 struct Request {
-  enum { Method = Zhttp::Method::Get };
-  using Path = ZtStringT<"/">;
+  enum { Method = Zhttp::Method::GET };
+  using Path = ZuStringT<"/">;
 
   enum { Query = QueryPolicy::None };
   enum { SignQuery = 0 };
@@ -75,7 +76,11 @@ struct Response {
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct Impl : public ReqParser<Impl, Object> {
-   using ResponseMap = ZrestResponseMap(...);
+  using Responses = ZuTypeList<...>;
+
+  const auto &queryObject(Object *object); // optional
+
+  const auto &bodyObject(Object *object); // optional
 };
 #endif
 template <typename Impl, typename Object>
@@ -94,40 +99,48 @@ struct ReqParser : public Request, public Zhttp::Parser {
 
   const auto &bodyObject(Object *object) { return *object; }
 
-  bool operation(Zhttp::Method::T, const Zhttp::Target &target) {
+  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
     impl()->init();
     if constexpr (Impl::Query == QueryPolicy::URI) {
-      auto span = target.pathQuery;
-      span.offset(Impl::Path{}().length());
-      ZfJSON::handler<Object, typename Impl::Query_URI_Facet> handler(span);
+      using Path = Impl::Path;
+      using Query_URI_Facet = Impl::Query_URI_Facet;
+      auto span = target.path;
+      span.offset(Path{}().length());
+      auto scan = ZfURI::scan(span);
+      auto handler = ZfURI::handler<Object, Query_URI_Facet>(scan.p<1>());
       handler.load(impl()->queryObject());
     } else if constexpr (Impl::Query == QueryPolicy::Raw) {
-      auto span = target.pathQuery;
-      span.offset(Impl::Path{}().length());
+      using Path = Impl::Path;
+      auto span = target.path;
+      span.offset(Path{}().length());
       impl()->queryObject() = span;
     }
     return true;
   }
 
-  void bodyInfo(BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyLength = length;
+    return type != Zhttp::BodyType::Streamed;
   }
 
   template <typename Rx> bool body(Rx &rx) {
     if constexpr (Impl::Body == BodyPolicy::None)
       return false;
     else {
-      if (type == BodyType::Streamed) return false;
       rx.consume(
-	[this](ZuBSpan span) {
+	[this](ZuSpan<uint8_t> span) {
 	  return span.length() < bodyLength ? 0U : bodyLength;
 	},
-	[this](ZuBSpan span) {
+	[this](ZuSpan<uint8_t> span) {
 	  if constexpr (Impl::Body == BodyPolicy::JSON) {
-	    ZfJSON::handler<Object, typename Impl::Body_JSON_Facet> handler(span);
+	    using Body_JSON_Facet = Impl::Body_JSON_Facet;
+	    auto scan = ZfJSON::scan(span);
+	    auto handler = ZfJSON::handler<Object, Body_JSON_Facet>((*scan.p<1>())[0]);
 	    handler.load(impl()->bodyObject());
 	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
-	    ZfURI::handler<Object, typename Impl::Body_URI_Facet> handler(span);
+	    using Body_URI_Facet = Impl::Body_URI_Facet;
+	    auto scan = ZfURI::scan(span);
+	    auto handler = ZfURI::handler<Object, Body_URI_Facet>(scan.p<1>());
 	    handler.load(impl()->bodyObject());
 	  } else if constexpr (Impl::Body == BodyPolicy::Raw) {
 	    impl()->bodyObject() = span;
@@ -150,6 +163,14 @@ struct ReqParser : public Request, public Zhttp::Parser {
 #if 0
 struct Impl : public ReqBuilder<Impl, Object> {
   using Responses = ZuTypeList<...>;
+
+  const auto &queryObject(const Object *); // optional
+  template <typename S>
+  void signQuery(S &, const Object *, ZuCSpan); // optional
+
+  const auto &bodyObject(const Object *); // optional
+  template <typename S>
+  void signBody(S &, const Object *, ZuCSpan); // optional
 };
 #endif
 template <typename Impl, typename Object>
@@ -161,7 +182,8 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 
   ZmRef<const Object>	object;
 
-  void init(const Object *object_) { object = object_; }
+  template <typename ObjectRef>
+  void init(ObjectRef &&object_) { object = ZuFwd<ObjectRef>(object_); }
 
   const auto &queryObject(const Object *object) { return *object; }
   template <typename S>
@@ -173,21 +195,28 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 
   template <typename Emit> void operation(Emit &&emit) {
     if constexpr (Impl::Query == QueryPolicy::None) {
-      emit(Impl::Method, [](auto &s) { s << Impl::Path{}(); });
+      using Path = Impl::Path;
+      emit(Impl::Method, [](auto &s) { s << Path{}(); });
     } else if constexpr (Impl::Query == QueryPolicy::URI && !Impl::SignQuery) {
       emit(Impl::Method, [this](auto &s) {
-	s << Impl::Path{}();
-	ZfURI::save<typename Impl::Body_URI_Facet>(s, impl()->queryObject());
+	using Path = Impl::Path;
+	using Query_URI_Facet = Impl::Query_URI_Facet;
+	s << Path{}();
+	ZfURI::save<Query_URI_Facet>(s, impl()->queryObject());
       });
     } else if constexpr (Impl::Query == QueryPolicy::URI /* && Impl::SignQuery */) {
-      auto buf = ZtScratch(SignBuf, SignQueryBufSize);
+      using Path = Impl::Path;
+      using Query_URI_Facet = Impl::Query_URI_Facet;
+      auto buf = ZtScratch(SignBuf, Impl::SignQueryBufSize);
       const auto &query = impl()->queryObject();
-      ZfURI::save<typename Impl::Body_URI_Facet>(buf, query);
+      buf << Path{}();
+      ZfURI::save<Query_URI_Facet>(buf, query);
       impl()->signQuery(buf, object, buf.cspan());
-      emit(Impl::Method, Impl::Path{}(), true, [&buf](auto &s) { s << buf; });
+      emit(Impl::Method, [&buf](auto &s) { s << buf; });
     } else if constexpr (Impl::Query == QueryPolicy::Raw) {
-      emit(Impl::Method, Impl::Path{}(), true, [this](auto &s) {
-	s << impl()->queryObject();
+      emit(Impl::Method, [this](auto &s) {
+	using Path = Impl::Path;
+	s << Path{}() << impl()->queryObject();
       });
     }
   }
@@ -197,22 +226,26 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       return;
     } else if constexpr (Impl::Body == BodyPolicy::JSON && !Impl::SignBody) {
       emit([this](auto &s) {
-	ZfJSON::save<typename Impl::Body_JSON_Facet>(s, impl()->bodyObject());
+	using Body_JSON_Facet = Impl::Body_JSON_Facet;
+	ZfJSON::save<Body_JSON_Facet>(s, impl()->bodyObject());
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON /* && Impl::SignBody */) {
-      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
+      using Body_JSON_Facet = Impl::Body_JSON_Facet;
+      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject();
-      ZfJSON::save<typename Impl::Body_JSON_Facet>(buf, body);
+      ZfJSON::save<Body_JSON_Facet>(buf, body);
       impl()->signBody(buf, object, buf.cspan());
       emit([&buf](auto &s) { s << buf; });
     } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
       emit([this](auto &s) {
-	ZfURI::saveBody<typename Impl::Body_URI_Facet>(s, impl()->bodyObject());
+	using Body_URI_Facet = Impl::Body_URI_Facet;
+	ZfURI::saveBody<Body_URI_Facet>(s, impl()->bodyObject());
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI /* && Impl::SignBody */) {
-      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
+      using Body_URI_Facet = Impl::Body_URI_Facet;
+      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject();
-      ZfURI::saveBody<typename Impl::Body_URI_Facet>(buf, body);
+      ZfURI::saveBody<Body_URI_Facet>(buf, body);
       impl()->signBody(buf, object, buf.cspan());
       emit([&buf](auto &s) { s << buf; });
     } else if constexpr (Impl::Body == BodyPolicy::Raw) {
@@ -230,6 +263,12 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 };
 
 // response parser
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public ReqParser<Impl, Object> {
+  const auto &bodyObject(const Object *object); // optional
+};
+#endif
 template <typename Impl, typename Object>
 struct ResParser : public Response, public Zhttp::Parser {
   auto impl() { return static_cast<Impl *>(this); }
@@ -244,25 +283,29 @@ struct ResParser : public Response, public Zhttp::Parser {
 
   const auto &bodyObject(const Object *object) { return *object; }
 
-  void bodyInfo(BodyType::T type, uint64_t length) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyLength = length;
+    return type != Zhttp::BodyType::Streamed;
   }
 
   template <typename Rx> bool body(Rx &rx) {
     if constexpr (Impl::Body == BodyPolicy::None)
       return false;
     else {
-      if (type == BodyType::Streamed) return false;
       rx.consume(
-	[this](ZuBSpan span) {
+	[this](ZuSpan<uint8_t> span) {
 	  return span.length() < bodyLength ? 0U : bodyLength;
 	},
-	[this](ZuBSpan span) {
+	[this](ZuSpan<uint8_t> span) {
 	  if constexpr (Impl::Body == BodyPolicy::JSON) {
-	    ZfJSON::handler<Object, typename Impl::Body_JSON_Facet> handler(span);
+	    using Body_JSON_Facet = Impl::Body_JSON_Facet;
+	    auto scan = ZfJSON::scan(span);
+	    auto handler = ZfJSON::handler<Object, Body_JSON_Facet>((*scan.p<1>())[0]);
 	    handler.load(impl()->bodyObject());
 	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
-	    ZfURI::handler<Object, Impl::Body_URI_Facet> handler(span);
+	    using Body_URI_Facet = Impl::Body_URI_Facet;
+	    auto scan = ZfURI::scan(span);
+	    auto handler = ZfURI::handler<Object, Body_URI_Facet>(scan.p<1>());
 	    handler.load(impl()->bodyObject());
 	  } else if constexpr (Impl::Body == BodyPolicy::Raw) {
 	    impl()->bodyObject() = span;
@@ -281,6 +324,14 @@ struct ResParser : public Response, public Zhttp::Parser {
 };
 
 // response builder
+// CRTP - implementation must conform to the following interface:
+#if 0
+struct Impl : public ReqParser<Impl, Object> {
+  const auto &bodyObject(const Object *); // optional
+  template <typename S>
+  void signBody(S &, const Object *, ZuCSpan); // optional
+};
+#endif
 template <typename Impl, typename Object>
 struct ResBuilder : public Response, public Zhttp::Builder {
   auto impl() { return static_cast<Impl *>(this); }
@@ -290,7 +341,8 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 
   ZmRef<const Object>	object;
 
-  void init(const Object *object_) { object = object_; }
+  template <typename ObjectRef>
+  void init(ObjectRef &&object_) { object = ZuFwd<ObjectRef>(object_); }
 
   const auto &bodyObject(const Object *object) { return *object; }
   template <typename S>
@@ -303,22 +355,26 @@ struct ResBuilder : public Response, public Zhttp::Builder {
       return;
     } else if constexpr (Impl::Body == BodyPolicy::JSON && !Impl::SignBody) {
       emit([this](auto &s) {
-	ZfJSON::save<typename Impl::Body_JSON_Facet>(s, impl()->bodyObject());
+	using Body_JSON_Facet = Impl::Body_JSON_Facet;
+	ZfJSON::save<Body_JSON_Facet>(s, impl()->bodyObject());
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON /* && Impl::SignBody */) {
-      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
+      using Body_JSON_Facet = Impl::Body_JSON_Facet;
+      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject();
-      ZfJSON::save<typename Impl::Body_JSON_Facet>(buf, body);
+      ZfJSON::save<Body_JSON_Facet>(buf, body);
       impl()->signBody(buf, object, buf.cspan());
       emit([&buf](auto &s) { s << buf; });
     } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
       emit([this](auto &s) {
-	ZfURI::save<typename Impl::Body_URI_Facet>(s, impl()->bodyObject());
+	using Body_URI_Facet = Impl::Body_URI_Facet;
+	ZfURI::save<Body_URI_Facet>(s, impl()->bodyObject());
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI /* && Impl::SignBody */) {
-      auto buf = ZtScratch(SignBuf, SignBodyBufSize);
+      using Body_URI_Facet = Impl::Body_URI_Facet;
+      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject();
-      ZfURI::save<typename Impl::Body_URI_Facet>(buf, body);
+      ZfURI::save<Body_URI_Facet>(buf, body);
       impl()->signBody(buf, object, buf.cspan());
       emit([&buf](auto &s) { s << buf; });
     } else if constexpr (Impl::Body == BodyPolicy::Raw) {
@@ -332,7 +388,7 @@ template <typename Req>
 struct HdrBufSizeAxor_ { using T = ZuUnsigned<Req::HdrBufSize>; };
 template <unsigned I>
 struct HdrBufSizeAxor_<ZuUnsigned<I>> { using T = ZuUnsigned<I>; };
-template <typename U> using HdrBufSizeAxor = typename Value_<U>::T;
+template <typename U> using HdrBufSizeAxor = typename HdrBufSizeAxor_<U>::T;
 template <typename ...Reqs> struct MaxHdrBufSize__;
 template <>
 struct MaxHdrBufSize__<> {
@@ -344,25 +400,69 @@ struct MaxHdrBufSize__<U> {
 };
 template <typename L, typename R>
 struct MaxHdrBufSize__<L, R> {
-  constexpr unsigned L_ = HdrBufSizeAxor<L>{};
-  constexpr unsigned R_ = HdrBufSizeAxor<R>{};
-  constexpr unsigned M = L_ > R_ ? L_ : R_;
+  static constexpr unsigned L_ = HdrBufSizeAxor<L>{};
+  static constexpr unsigned R_ = HdrBufSizeAxor<R>{};
+  static constexpr unsigned M = L_ > R_ ? L_ : R_;
   using T = ZuUnsigned<M>;
 };
 template <typename ...Reqs>
 using MaxHdrBufSize_ = typename MaxHdrBufSize__<Reqs...>::T;
 template <typename ...Reqs>
-using MaxHdrBufSize = ZuTypeReduce<MaxHdrBufSize_, Reqs>;
+using MaxHdrBufSize = ZuTypeReduce<MaxHdrBufSize_, Reqs...>;
 
 // compile-time processing of REST API metadata
 template <typename U> using GetHdrs = typename U::Headers;
+template <typename U> using GetHdrKeys = ZuTypeSlice<2, 0, GetHdrs<U>>;
+template <typename U> using GetHdrValues = ZuTypeSlice<2, 1, GetHdrs<U>>;
+
+template <typename List>
+using GetAllHdrKeys = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetHdrKeys, List>>;
+template <typename List>
+using GetUniqueHdrKeys = ZuTypeUnique<GetAllHdrKeys<List>>;
+
+template <typename U>
+struct GetHdrKVs_ {
+  using Keys = GetHdrKeys<U>;
+  using Values = GetHdrValues<U>;
+  template <typename Key>
+  using Pair = ZuTypeList<Key, ZuType<ZuTypeIndex<Key, Keys>{}, Values>>;
+  using T = ZuTypeMap<Pair, Keys>;
+};
+template <typename U>
+using GetHdrKVs = typename GetHdrKVs_<U>::T;
+template <typename List>
+using GetAllHdrKVs = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetHdrKVs, List>>;
+
+template <typename KV> using GetKValues = ZuType<1, KV>;
+
+template <typename K>
+struct MatchHdrKV {
+  template <typename KV, typename = ZuType<0, KV>>
+  struct Match_ { using T = ZuFalse; };
+  template <typename KV>
+  struct Match_<KV, K> { using T = ZuTrue; };
+  template <typename KV>
+  using Match = typename Match_<KV>::T;
+};
+template <typename List>
+struct MergeHdrs_ {
+  template <typename K>
+  using HdrKVs = ZuTypeGrep<MatchHdrKV<K>::template Match, GetAllHdrKVs<List>>;
+  template <typename K>
+  using Values = ZuTypeUnique<ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetKValues, HdrKVs<K>>>>;
+  template <typename K>
+  using KV = ZuTypeList<K, Values<K>>;
+  using T = ZuTypeMap<KV, GetUniqueHdrKeys<List>>;
+};
+template <typename List>
+using MergeHdrs = typename MergeHdrs_<List>::T;
+
 template <typename Req> using GetResponses = typename Req::Responses;
 template <typename Res> using GetStatus = ZuUnsigned<Res::Status>;
 template <typename Req> using GetStatuses = ZuTypeMap<GetStatus, GetResponses<Req>>;
 template <typename Reqs>
 using GetAllResponses = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>;
-template <typename List>
-using GetUniqueHdrs = ZuTypeUnique<ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetHdrs, List>>>;
+
 template <typename Req, typename Res> struct ReqRes { };
 template <typename Req> struct GetReqRes_ {
   template <typename Res> using ReqRes_ = ReqRes<Req, Res>;
@@ -373,13 +473,11 @@ template <typename Reqs>
 using GetAllReqRes = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetReqRes, Reqs>>;
 template <typename Reqs, typename Req, typename Res>
 using GetResIndex = ZuTypeIndex<ReqRes<Req, Res>, GetAllReqRes<Reqs>>;
-template <typename List>
-using GetUnion = ZuTypeApply<ZuUnion, List::template Unshift<void>>;
 template <typename Req> struct GetResLookup_ {
   using Statuses = GetStatuses<Req>;
   using Responses = GetResponses<Req>;
   enum { N = Responses::N }; // == Statuses::N
-  enum { Bits = ZuIntrin::log2(N); }
+  enum { Bits = ZuIntrin::log2(N) };
   using Hash_ = ZmLHashKV<unsigned, unsigned, ZmLHashStatic<Bits, ZmLHashLocal<>>>;
   struct Hash : public Hash_ {
     using Hash_::add;
@@ -396,6 +494,9 @@ using GetResLookup = typename GetResLookup_<Req>::T;
 template <typename Reqs>
 using GetReqLookup = ZuTypeApply<ZuTuple, ZuTypeMap<GetResLookup, Reqs>>;
 
+template <typename List>
+using GetUnion = ZuTypeApply<ZuUnion, typename List::template Unshift<void>>;
+
 // monomorphic (type-erased) request builder base
 // - takes a typelist of Reqs, each a ReqBuilder<Impl, Object>
 // - contains a union of all request types to be used with a specific Client
@@ -409,18 +510,18 @@ template <typename Reqs_>
 struct MReqBuilder : public Zhttp::ReqBuilder {
   using Reqs = Reqs_;
 
-  using Headers = GetUniqueHdrs<Reqs>;
+  using Headers = MergeHdrs<Reqs>;
 
   static constexpr unsigned HdrBufSize = ZuTypeApply<MaxHdrBufSize, Reqs>{};
 
-  using Union = ZuTypeApply<ZuUnion, Reqs>;
+  using Union = GetUnion<Reqs>;
 
   Union		u;
 
-  template <typename Builder, typename Object>
-  init(Object *object) {
-    auto builder = new (u.new_<Builder>()) Builder();
-    builder->init(object);
+  template <typename Builder, typename ObjectRef>
+  void init(ObjectRef &&object) {
+    auto builder = new (u.template new_<Builder>()) Builder();
+    builder->init(ZuFwd<ObjectRef>(object));
   }
 
   BodyPolicy::T bodyPolicy() const {
@@ -435,9 +536,23 @@ struct MReqBuilder : public Zhttp::ReqBuilder {
     });
   }
 
+  template <typename Key, typename Value, typename L> void header(L &&l) const {
+    u.cdispatch([&l](auto I, const auto &request) {
+      using ReqHdrs = typename Union::template Type<I>::Headers;
+      using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
+      using ReqHdrValues = GetHdrValues<ReqHdrs>;
+      if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
+	using Values = ZuType<ZuTypeIndex<Key, ReqHdrKeys>{}, ReqHdrValues>;
+	if constexpr (ZuTypeIn<Value, Values>{})
+	  request.template header<Key, Value>(ZuFwd<L>(l));
+      }
+    });
+  }
   template <typename Key, typename L> void header(L &&l) const {
     u.cdispatch([&l](auto I, const auto &request) {
-      if constexpr (ZuTypeIn<Key, ZuTypeSlice<2, 0, ZuType<I, Reqs>::Headers>>{})
+      using ReqHdrs = typename Union::template Type<I>::Headers;
+      using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
+      if constexpr (ZuTypeIn<Key, ReqHdrKeys>{})
 	request.template header<Key>(ZuFwd<L>(l));
     });
   }
@@ -481,7 +596,7 @@ template <typename Reqs_>
 struct MReqParser : public Zhttp::Parser {
   using Reqs = Reqs_;
 
-  using Headers = GetUniqueHdrs<Reqs>;
+  using Headers = MergeHdrs<Reqs>;
 
   using Union = GetUnion<Reqs>;
 
@@ -490,8 +605,8 @@ struct MReqParser : public Zhttp::Parser {
   template <typename Server>
   void init(Server &) { } // can be overridden
 
-  bool operation(Method::T method, const Target &target) {
-    return ZuSwitch::dispatch<Method::N>(method, [this, method, &target](auto I) -> bool {
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    return ZuSwitch::dispatch<Zhttp::Method::N>(method, [this, method, &target](auto I) -> bool {
       using Reqs = ZuTypeGrep<MethodFilter<I>::template Filter, Reqs>;
       using Paths = ZuTypeMap<ReqPath, Reqs>;
       constexpr auto matcher = ZuMatcher<Paths>();
@@ -499,7 +614,7 @@ struct MReqParser : public Zhttp::Parser {
       if (j < 0) return false;
       return ZuSwitch::dispatch<Reqs::N>(j, [this, method, &target](auto J) -> bool {
 	using Req = ZuType<J, Reqs>;
-	auto request = new (u.new_<Req, true>()) Req();
+	auto request = new (u.template new_<Req, true>()) Req();
 	request->init();
 	if (!request->operation(method, target)) {
 	  u = {};
@@ -510,7 +625,58 @@ struct MReqParser : public Zhttp::Parser {
     });
   }
 
-  void bodyInfo(BodyType::T type, uint64_t length) {
+  template <typename Key, typename Value>
+  bool header(Zhttp::FieldSection::T section) {
+    u.dispatch([section](auto I, auto &request) {
+      using ReqHdrs = typename Union::template Type<I>::Headers;
+      using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
+      using ReqHdrValues = GetHdrValues<ReqHdrs>;
+      if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
+	using Values = ZuType<ZuTypeIndex<Key, ReqHdrKeys>{}, ReqHdrValues>;
+	if constexpr (ZuTypeIn<Value, Values>{})
+	  request.template header<Key, Value>(section);
+	else {
+	  using Storage =
+	    ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
+	  auto fixed = Value{}();
+	  auto value = ZtScratch(
+	    Storage, fixed.length(), fixed.length());
+	  value = fixed;
+	  request.template header<Key>(section, value.span());
+	}
+      } else {
+	using Storage =
+	  ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
+	auto fixed = Value{}();
+	auto value = ZtScratch(
+	  Storage, fixed.length(), fixed.length());
+	value = fixed;
+	request.header(section, Key{}(), value.span());
+      }
+    });
+  }
+  template <typename Key>
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
+    u.dispatch([section, &value](auto I, auto &request) {
+      using ReqHdrs = typename Union::template Type<I>::Headers;
+      using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
+      if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
+	request.template header<Key>(section, value);
+      } else {
+	request.header(section, Key{}(), value);
+      }
+    });
+  }
+  void header(
+      Zhttp::FieldSection::T section,
+      ZuBSpan key, ZuSpan<uint8_t> value) {
+    u.dispatch([section, &key, &value](auto I, auto &request) {
+      request.header(section, key, value);
+    });
+  }
+
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     u.dispatch([type, length](auto, auto &request) {
       request.bodyInfo(type, length);
     });
@@ -541,14 +707,14 @@ struct MReqParser : public Zhttp::Parser {
 //   the application's centralized callbacks defined in `ResBuilder_`,
 //   in the usual way - they are not forwarded
 template <typename Parser_> // pass MReqParser
-struct MResBuilder : public Zhttp::ResBuilder {
+struct MResBuilder : public Zhttp::Builder {
   using Parser = Parser_;
 
   using Reqs = typename Parser::Reqs;
 
   using AllResponses = GetAllResponses<Reqs>;
 
-  using Headers = GetUniqueHdrs<AllResponses>;
+  using Headers = MergeHdrs<AllResponses>;
 
   static constexpr unsigned HdrBufSize = ZuTypeApply<MaxHdrBufSize, AllResponses>{};
 
@@ -557,12 +723,12 @@ struct MResBuilder : public Zhttp::ResBuilder {
   Union		u;
 
   // app should call init<Response>(parser)
-  template <typename Response, typename Object>
+  template <typename Res, typename Object>
   void init(const Parser &parser, Object *object) {
-    ZuSwitch::dispatch<Reqs::N>(parser.u.type, [this](auto I) {
+    ZuSwitch::dispatch<Reqs::N>(parser.u.type, [this, object](auto I) {
       using Req = ZuType<I, Reqs>;
-      constexpr unsigned J = GetResIndex<Reqs, Req, Response>{};
-      auto response = new (u.new_<J, true>()) Response();
+      constexpr unsigned J = GetResIndex<Reqs, Req, Res>{};
+      auto response = new (u.template new_<J, true>()) Res();
       response->init(object);
     });
   }
@@ -579,10 +745,23 @@ struct MResBuilder : public Zhttp::ResBuilder {
     });
   }
 
+  template <typename Key, typename Value, typename L> void header(L &&l) const {
+    u.cdispatch([&l](auto I, const auto &response) {
+      using ResHdrs = typename Union::template Type<I>::Headers;
+      using ResHdrKeys = GetHdrKeys<ResHdrs>;
+      using ResHdrValues = GetHdrValues<ResHdrs>;
+      if constexpr (ZuTypeIn<Key, ResHdrKeys>{}) {
+	using Values = ZuType<ZuTypeIndex<Key, ResHdrKeys>{}, ResHdrValues>;
+	if constexpr (ZuTypeIn<Value, Values>{})
+	  response.template header<Key, Value>(ZuFwd<L>(l));
+      }
+    });
+  }
   template <typename Key, typename L> void header(L &&l) const {
     u.cdispatch([&l](auto I, const auto &response) {
-      using ResHdrs = ZuType<I, AllResponses>::typename Headers;
-      if constexpr (ZuTypeIn<Key, ZuTypeSlice<2, 0, ResHdrs>>{})
+      using ResHdrs = typename Union::template Type<I>::Headers;
+      using ResHdrKeys = GetHdrKeys<ResHdrs>;
+      if constexpr (ZuTypeIn<Key, ResHdrKeys>{})
 	response.template header<Key>(ZuFwd<L>(l));
     });
   }
@@ -616,7 +795,7 @@ struct MResParser : public Zhttp::Parser {
 
   using AllResponses = GetAllResponses<Reqs>;
 
-  using Headers = GetUniqueHdrs<AllResponses>;
+  using Headers = MergeHdrs<AllResponses>;
 
   using Union = GetUnion<AllResponses>;
 
@@ -636,19 +815,70 @@ struct MResParser : public Zhttp::Parser {
     return ZuSwitch::dispatch<Reqs::N>(i, [this, code](auto I) -> bool {
       unsigned j = lookup.template p<I>().findVal(code);
       if (ZuCmp<unsigned>::null(j)) return false;
-      using Req = ZuType<I, Reqs>;
+      using Req = typename Union::template Type<I>;
       using Responses = GetResponses<Req>;
       ZuSwitch::dispatch<Responses::N>(j, [this](auto J) {
 	using Res = ZuType<J, Responses>;
 	constexpr unsigned K = GetResIndex<Reqs, Req, Res>{};
-	auto response = new (u.new_<K, true>()) Res();
+	auto response = new (u.template new_<K, true>()) Res();
 	response->init();
       });
       return true;
     });
   }
 
-  void bodyInfo(BodyType::T type, uint64_t length) {
+  template <typename Key, typename Value>
+  bool header(Zhttp::FieldSection::T section) {
+    u.dispatch([section](auto I, auto &response) {
+      using ResHdrs = typename Union::template Type<I>::Headers;
+      using ResHdrKeys = GetHdrKeys<ResHdrs>;
+      using ResHdrValues = GetHdrValues<ResHdrs>;
+      if constexpr (ZuTypeIn<Key, ResHdrKeys>{}) {
+	using Values = ZuType<ZuTypeIndex<Key, ResHdrKeys>{}, ResHdrValues>;
+	if constexpr (ZuTypeIn<Value, Values>{})
+	  response.template header<Key, Value>(section);
+	else {
+	  using Storage =
+	    ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
+	  auto fixed = Value{}();
+	  auto value = ZtScratch(
+	    Storage, fixed.length(), fixed.length());
+	  value = fixed;
+	  response.template header<Key>(section, value.span());
+	}
+      } else {
+	using Storage =
+	  ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
+	auto fixed = Value{}();
+	auto value = ZtScratch(
+	  Storage, fixed.length(), fixed.length());
+	value = fixed;
+	response.header(section, Key{}(), value.span());
+      }
+    });
+  }
+  template <typename Key>
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
+    u.dispatch([section, &value](auto I, auto &response) {
+      using ResHdrs = typename Union::template Type<I>::Headers;
+      using ResHdrKeys = GetHdrKeys<ResHdrs>;
+      if constexpr (ZuTypeIn<Key, ResHdrKeys>{}) {
+	response.template header<Key>(section, value);
+      } else {
+	response.header(section, Key{}(), value);
+      }
+    });
+  }
+  void header(
+      Zhttp::FieldSection::T section,
+      ZuBSpan key, ZuSpan<uint8_t> value) {
+    u.dispatch([section, &key, &value](auto I, auto &response) {
+      response.header(section, key, value);
+    });
+  }
+
+  void bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     u.dispatch([type, length](auto, auto &response) {
       response.bodyInfo(type, length);
     });
@@ -666,7 +896,7 @@ struct MResParser : public Zhttp::Parser {
       if (!ok || !u.type)
 	builder.failed();
       else
-	u.cdispatch([&link](auto, const auto &response) {
+	u.cdispatch([&builder, &link](auto, const auto &response) {
 	  builder.process(link, response);
 	});
     });
