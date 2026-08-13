@@ -897,7 +897,7 @@ struct AsObject {
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	using Props = typename Field::Props;
 	this->loadField<ZfFieldFilter::Upd, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  if (!Incremental || ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
+	  if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
 	    Field::set(o, ZuFwd<V>(v));
 	});
       });

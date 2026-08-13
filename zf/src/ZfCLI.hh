@@ -1652,7 +1652,7 @@ inline T loadValue_(const AnyNode *node)
 	if constexpr (ZuTypeIn<ZuFieldProp::Hex, Props>{})
 	  return B::template eov<ZuFmt::Hex<false, typename Fmt::Fmt>>(span);
 	else
-	  return B::eov(span);
+	  return B::template eov<typename Fmt::Fmt>(span);
       }();
       if (ZuUnlikely(r.template p<0>() < 0 ||
           unsigned(r.template p<0>()) != span.length()))

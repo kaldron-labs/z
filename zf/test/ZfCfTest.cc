@@ -136,6 +136,13 @@ ZfStruct((CfRequired, Cf),
   (((required), (Ctor<0>, Required)), (Int32)),
   (((optional), (Ctor<1>)), (Int32)));
 
+struct CfFormatInt {
+  unsigned value = 0;
+};
+using CfIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
+ZfStruct((CfFormatInt, Cf),
+  (((value), (Ctor<0>, Cf::Number<CfIntFormat>)), (UInt32)));
+
 static const ZfCf::AnyNode *field(
     const ZfCf::AnyNode *node, ZuCSpan id) {
   if (!node || !node->has<ZfCf::AnyNode::Object>()) return nullptr;
@@ -809,6 +816,14 @@ static void loadSave() {
   ZuCheck(roundTrip.nested.value == value.nested.value);
 }
 
+static void formattedInteger()
+{
+  ZuTestScope(formattedInteger);
+  auto scan = ZfCf::scan("value: 00abcdef");
+  auto loaded = ZfCf::handler<CfFormatInt>(scan.p<1>()).ctor();
+  ZuCheck(loaded.value == 0xabcdef);
+}
+
 int main(int argc, char **argv) {
   parse(argc, argv);
   ZuTestMain();
@@ -824,4 +839,5 @@ int main(int argc, char **argv) {
   ZuTestCall(duplicates);
   ZuTestCall(loadTypes);
   ZuTestCall(loadSave);
+  ZuTestCall(formattedInteger);
 }

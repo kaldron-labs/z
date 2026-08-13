@@ -174,6 +174,14 @@ struct RequiredOpt {
 ZfStruct((RequiredOpt, CLI),
   (((value), (Ctor<0>, Mutable, Required)), (Int32)));
 
+struct CLIFormatInt {
+  unsigned value = 0;
+};
+using CLIIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
+ZfStruct((CLIFormatInt, CLI),
+  (((value), (Ctor<0>, CLI::Long<"value">,
+    CLI::Number<CLIIntFormat>)), (UInt32)));
+
 template <typename L>
 static ZeString cliError(L l)
 {
@@ -569,6 +577,17 @@ void delimitedLoad()
   ZuCheck(args.values[1] == "b");
 }
 
+void formattedInteger()
+{
+  ZuTestScope(formattedInteger);
+  char cli[] = "x --value=00abcdef";
+  ZfCLI::InCLI in(cli);
+  ZfCLI::Parser<CLIFormatInt> parser;
+  parser.scanArgv(in.argv);
+  auto loaded = ZfCLI::handler<CLIFormatInt>(parser.root).ctor();
+  ZuCheck(loaded.value == 0xabcdef);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -585,5 +604,6 @@ int main(int argc, char **argv)
   ZuTestCall(realRange);
   ZuTestCall(diagnostics);
   ZuTestCall(delimitedLoad);
+  ZuTestCall(formattedInteger);
   return 0;
 }

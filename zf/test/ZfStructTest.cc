@@ -194,6 +194,13 @@ ZfStruct((JSONUpdate, JSON),
   (((kept),     (Ctor<1>, Mutable)),           (Int32, 2)),
   (((reset),    (Ctor<2>, Mutable, Reset)),    (Int32, 3)));
 
+struct FmtInt {
+  uint128_t value = 0;
+};
+using FmtIntFormat = ZuFmt::Hex<false, ZuFmt::Right<32>>;
+ZfStruct((FmtInt, JSON),
+  (((value), (Ctor<0>, JSON::String<FmtIntFormat>)), (UInt128)));
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -510,6 +517,18 @@ int main(int argc, char **argv)
       ZuCheck(copy.values[0].val() == 0);
       ZuCheck(copy.values[1].val() == 7);
     }
+  }
+
+  {
+    FmtInt value{uint128_t{0xabcdef}};
+    ZtString<> json;
+    ZfJSON::save(json, value);
+    ZuCheck(json ==
+      "{\"value\":\"00000000000000000000000000abcdef\"}");
+    auto scan = ZfJSON::scan(json);
+    FmtInt loaded;
+    ZfJSON::handler<FmtInt>((*scan.p<1>())[0]).load(loaded);
+    ZuCheck(loaded.value == value.value);
   }
 
   return 0;

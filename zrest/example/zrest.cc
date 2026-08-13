@@ -7,7 +7,9 @@
 // REST/HTTP Ping client
 
 #include <iostream>
+#include <math.h>
 
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
@@ -25,28 +27,33 @@
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZrestClient.hh>
 
+#include "zrestproto.hh"
+
 ZtEnumNS(, Http3Mode, int8_t, force, prefer, disable);
 ZtEnumNS(, Http2Mode, int8_t, force, prefer, disable);
 
 ZtEnumImplNS(Http3Mode);
 ZtEnumImplNS(Http2Mode);
 
-constexpr unsigned ClientTimeout = 15;
-constexpr unsigned H3StallTimeout = 15;
-constexpr unsigned H3QuietTimeout = 2;
-constexpr unsigned MaxRedirects = 8;
-constexpr uint64_t RespBodyMax = 1<<20;
+enum { ClientTimeout = 15, H3StallTimeout = 15, H3QuietTimeout = 2,
+  MaxRedirects = 8, WorkBatch = 64 };
+
+enum ClientState { Idle, Authenticating, Ready, Refreshing, Complete, Failed };
 
 struct Options {
   ZuCSpan	ca;
-  uint32_t	requests = 1;
-  uint32_t	concurrency = 1;
-  uint32_t	links = 1;
-  uint32_t	linkConcurrency = 1;
-  uint32_t	retries = 0;
-  uint32_t	timeout = ClientTimeout;
-  uint32_t	stallTimeout = H3StallTimeout;
-  uint32_t	quietTimeout = H3QuietTimeout;
+  ZuCSpan	user{DefaultUser{}()};
+  ZuCSpan	pass{DefaultPass{}()};
+  unsigned	requests = 1;
+  unsigned	concurrency = 1;
+  unsigned	links = 1;
+  unsigned	linkMax = 1;
+  unsigned	retries = 0;
+  unsigned	timeout = ClientTimeout;
+  unsigned	stallTimeout = H3StallTimeout;
+  unsigned	quietTimeout = H3QuietTimeout;
+  double	interval = 0;
+  ZuTime	intervalTime;
   ZuCSpan	keyLog;
   ZuCSpan	url{"http://localhost:8080/"};
   Http3Mode::T	http3 = Http3Mode::prefer;
@@ -71,16 +78,19 @@ struct Options {
 
 ZfStruct((Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
+  (((user),      (CLI::Long<"user">)),                       (String, "test")),
+  (((pass),      (CLI::Long<"pass">)),                       (String, "test123")),
   (((requests),  (CLI::Opt<'n'>,  CLI::Long<"requests">)),   (UInt32, 1)),
   (((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),       (UInt32, 1)),
   (((links),      (CLI::Long<"links">)),                     (UInt32, 1)),
-  (((linkConcurrency), (CLI::Long<"link-concurrency">)),     (UInt32, 1)),
+  (((linkMax),   (CLI::Long<"link-max">)),                  (UInt32, 1)),
   (((retries),   (CLI::Long<"retries">)),                    (UInt32, 0)),
   (((timeout),   (CLI::Long<"timeout">)),                    (UInt32, ClientTimeout)),
   (((stallTimeout),
     (CLI::Long<"stall-timeout">)),                            (UInt32, H3StallTimeout)),
   (((quietTimeout),
     (CLI::Long<"quiet-timeout">)),                            (UInt32, H3QuietTimeout)),
+  (((interval),  (CLI::Opt<'i'>, CLI::Long<"interval">)),    (Float, 0)),
   (((keyLog),    (CLI::Long<"key-log">)),                    (String)),
   (((http3),     (Enum<Http3Mode::Map>,
 		  CLI::Opt<'3'>, CLI::Long<"http3">)),       (Int8,
@@ -116,15 +126,19 @@ static void usage(int code = 1)
     "Usage: zrest [OPTION]... [URL]\n\n"
     "Options:\n"
     "  -c, --ca=PATH       CA path for https:\n"
+    "  --user=USER         authentication username, default test\n"
+    "  --pass=PASS         authentication password, default test123\n"
     "  -n, --requests=N    submit N Ping requests, default 1\n"
     "  -j, --jobs=M        run up to M requests concurrently, default 1\n"
     "  --links=N           persistent links in pool 0, default 1\n"
-    "  --link-concurrency=N\n"
-    "                      maximum operations per link, default 1\n"
+    "  --link-max=N\n"
+    "                      H1 pipeline/H2-H3 stream limit per link, default 1\n"
     "  --retries=N         retry transient connection failures N times\n"
     "  --timeout=N         completion timeout in seconds, default 15, 0 disables\n"
     "  --stall-timeout=N   no-progress stall timeout in seconds, default 15\n"
     "  --quiet-timeout=N   quiet transport timeout in seconds, default 2\n"
+    "  -i, --interval=N    non-negative seconds between ping waves; fractional\n"
+    "                      values such as 0.01 use the Tx scheduler\n"
     "  --key-log=PATH      append HTTP/3 TLS secrets\n"
     "  -3, --http3=MODE    HTTP/3 mode: force, prefer, disable\n"
     "  -2, --http2=MODE    HTTP/2 mode: force, prefer, disable\n"
@@ -163,11 +177,15 @@ static bool parseDrop(ZuCSpan s, double &drop)
 }
 #endif
 
-static bool validateOptions(const Options &options, int argc)
+static bool validateOptions(Options &options, int argc)
 {
   if (argc < 1 || argc > 2 || !options.requests || !options.concurrency ||
-      !options.links || !options.linkConcurrency)
+      !options.links || !options.linkMax || !options.user ||
+      !options.pass || !::isfinite(options.interval) || options.interval < 0)
     return false;
+  options.intervalTime = ZuTime{options.interval};
+  if (options.interval > 0 &&
+      (!*options.intervalTime || !options.intervalTime)) return false;
   if (options.http3 < 0 || options.http3 >= Http3Mode::N ||
       options.http2 < 0 || options.http2 >= Http2Mode::N)
     return false;
@@ -187,68 +205,139 @@ static void printMemDiag()
   }));
 }
 
-struct Pong;
-struct Ping : public ZmObject {
-  bool ping = true;
+class Client;
 
-  template <typename Link>
-  void process(Link *, const Pong *) const { }
-
-  template <typename Link>
-  void failed(Link *) const { }
-};
-struct Pong : public ZmObject {
-  bool pong = true;
+struct TokenState : public RefreshRequest {
+  TokenString bearer;
+  int64_t deadline = 0;
 };
 
-ZfStruct((Ping, URI),
-  (((ping)),	(Bool)));
-ZfStruct((Pong, JSON),
-  (((pong)),	(Bool)));
+struct AuthReq : public Credentials {
+  Client *client = nullptr;
+  template <typename Link, typename Response>
+  void process(Link *, const Response *) const;
+  template <typename Link> void failed(Link *) const;
+};
 
+struct RefreshReq : public ExampleObject, public ZmObject {
+  Client *client = nullptr;
+  ZmRef<const TokenState> state;
+  template <typename Link, typename Response>
+  void process(Link *, const Response *) const;
+  template <typename Link> void failed(Link *) const;
+};
+
+struct PingReq : public Ping {
+  Client *client = nullptr;
+  ZmRef<const TokenState> state;
+  uint64_t logicalID = 0;
+  bool replayed = false;
+  template <typename Link, typename Response>
+  void process(Link *, const Response *) const;
+  template <typename Link> void failed(Link *) const;
+};
+
+struct AuthTokensParser;
+struct AuthUnauthorizedParser;
+struct AuthInternalParser;
+struct RefreshTokensParser;
+struct RefreshUnauthorizedParser;
+struct RefreshInternalParser;
 struct PongParser;
+struct PingUnauthorizedParser;
 
-struct PingBuilder : public Zrest::ReqBuilder<PingBuilder, Ping> {
+struct AuthBuilder : public Zrest::ReqBuilder<AuthBuilder, AuthReq> {
+  enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+  using Path = AuthPath;
+  using Responses = ZuTypeList<
+    AuthTokensParser, AuthUnauthorizedParser, AuthInternalParser>;
+  const Credentials &bodyObject(const AuthReq *request) const {
+    return *request;
+  }
+};
+struct RefreshBuilder : public Zrest::ReqBuilder<RefreshBuilder, RefreshReq> {
+  enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+  using Path = RefreshPath;
+  using Responses = ZuTypeList<
+    RefreshTokensParser, RefreshUnauthorizedParser, RefreshInternalParser>;
+  const RefreshRequest &bodyObject(const RefreshReq *request) const {
+    return *request->state;
+  }
+};
+struct PingBuilder : public Zrest::ReqBuilder<PingBuilder, PingReq> {
+  using Base = Zrest::ReqBuilder<PingBuilder, PingReq>;
+  using Base::header;
   enum { Query = Zrest::QueryPolicy::URI };
-  using Headers = ZuTypeList<>;
-  using Responses = ZuTypeList<PongParser>;
+  using Path = PingPath;
+  using Headers = ZhttpHeaders("authorization");
+  using Responses = ZuTypeList<PongParser, PingUnauthorizedParser>;
+  const Ping &queryObject(const PingReq *request) const { return *request; }
+  template <typename Key, typename L> void header(L &&l) const {
+    if constexpr (Key{}() == "authorization") l(object->state->bearer);
+    else Base::template header<Key>(ZuFwd<L>(l));
+  }
 };
 
+struct AuthTokensParser : public Zrest::ResParser<
+    AuthTokensParser, TokenResponse> {
+  enum { Body = Zrest::BodyPolicy::JSON };
+};
+struct AuthUnauthorizedParser : public Zrest::ResParser<
+    AuthUnauthorizedParser, Unauthorized> {
+  enum { Status = 401, Body = Zrest::BodyPolicy::Zero };
+};
+struct AuthInternalParser : public Zrest::ResParser<
+    AuthInternalParser, InternalError> {
+  enum { Status = 500, Body = Zrest::BodyPolicy::Zero };
+};
+struct RefreshTokensParser : public Zrest::ResParser<
+    RefreshTokensParser, TokenResponse> {
+  enum { Body = Zrest::BodyPolicy::JSON };
+};
+struct RefreshUnauthorizedParser : public Zrest::ResParser<
+    RefreshUnauthorizedParser, Unauthorized> {
+  enum { Status = 401, Body = Zrest::BodyPolicy::Zero };
+};
+struct RefreshInternalParser : public Zrest::ResParser<
+    RefreshInternalParser, InternalError> {
+  enum { Status = 500, Body = Zrest::BodyPolicy::Zero };
+};
 struct PongParser : public Zrest::ResParser<PongParser, Pong> {
   enum { Body = Zrest::BodyPolicy::JSON };
-  using Headers = ZhttpHeaders(
-    ("content-type", "application/json"), "content-length");
+};
+struct PingUnauthorizedParser : public Zrest::ResParser<
+    PingUnauthorizedParser, Unauthorized> {
+  enum { Status = 401, Body = Zrest::BodyPolicy::Zero };
 };
 
-using Requests = ZuTypeList<PingBuilder>;
+using Requests = ZuTypeList<AuthBuilder, RefreshBuilder, PingBuilder>;
 
 struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Requests> {
   using Base = Zrest::MReqBuilder<Requests>;
   using Reqs = Requests;
   using Base::init;
 
+  uint64_t id = 0;
+
   uint64_t key() const { return id; }
   uint64_t length() const { return 1; }
-
-  unsigned id = 0;
 };
 
 struct ResParser : public Zrest::MResParser<ReqBuilder_> { };
 
-struct Client;
-struct Pool;
+class Pool;
 ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
   ZmPQueueOverlap<false,
     ZmPQueueNode<ReqBuilder_,
       ZmPQueueHeapID<"zrest.ReqBuilder">>>>));
 using ReqBuilder = ReqBuilderQ::Node;
-using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
+ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-struct Pool : public Zhttp::Pool<Client, TxQ, ResParser> {
+class Pool : public Zhttp::Pool<Client, TxQ, ResParser> {
   using Base = Zhttp::Pool<Client, TxQ, ResParser>;
 
+public:
   Pool(Client *client) : Base{client} { }
-
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *);
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
@@ -257,41 +346,371 @@ private:
   ReqBuilderQ m_requests;
 };
 
-struct Client : public Zhttp::Client<Client, Pool> {
-  void idle() { done.post(); }
+struct Pending {
+  uint64_t logicalID = 0;
+  bool replayed = false;
+};
+ZuDerive(PendingQ, (ZtArray<Pending, ZtArrayHeapID<"zrest.Pending">>));
 
-  void archive(ReqBuilder *) {
-    produce_();
-    if (m_generated == m_options->requests) seal(0);
+class Client : public Zhttp::Client<Client, Pool> {
+public:
+  void idle() {
+    terminalReady_();
   }
 
-  void workload(const Options &options) {
-    txRun(0, [this, options = &options]() {
-      m_options = options;
-      unsigned n = options->requests;
-      if (n > options->concurrency) n = options->concurrency;
-      while (n--) produce_();
-      if (m_generated == options->requests) seal(0);
+  void workload(const Options &options, ZiMultiplex *mx) {
+    txRun(0, [this, options = &options, mx]() {
+      workload_(options, mx);
+    });
+  }
+
+  void quiesce() {
+    ZmBlock<>{}([this](auto wake) mutable {
+      txRun(0, [this, wake = ZuMv(wake)]() mutable {
+	m_stopping = true;
+	cancelTimer_();
+	quiesceClean_(ZuMv(wake));
+      });
+    });
+  }
+
+  unsigned logicalCompleted() const { return m_completed; }
+  unsigned logicalFailed() const { return m_logicalFailed; }
+
+  void tokens(const TokenResponse *tokens, bool refresh) {
+    ZmRef<TokenState> state;
+    auto receipt = Zm::now();
+    if (tokens && tokens->accessToken && tokens->refreshToken &&
+	tokens->accessToken.length() <= JWTMax &&
+	tokens->refreshToken.length() <= JWTMax && tokens->expiresIn &&
+	receipt.sec() > 0 &&
+	tokens->expiresIn <= uint64_t(INT64_MAX - receipt.sec())) {
+      state = new TokenState{};
+      state->refreshToken = tokens->refreshToken;
+      state->bearer << "Bearer " << tokens->accessToken;
+      state->deadline = receipt.sec() + int64_t(tokens->expiresIn);
+    }
+    txRun(0, [this, state = ZuMv(state), refresh]() mutable {
+      retire_();
+      if (m_state == Failed || m_state == Complete) return;
+      if (!state) { fail_(); return; }
+      m_tokens = ZuMv(state).constRef();
+      m_state = Ready;
+      if (m_options->verbose) {
+        auto now = Zm::now();
+        uint64_t ns = uint64_t(now.sec()) * 1000000000ULL + now.nsec();
+        ZiLOG(Info, "zrest", ([refresh, ns](auto &s) {
+          s << "event=" << (refresh ? "refresh" : "auth") <<
+	    " time_ns=" << ns;
+        }));
+      }
+      if (!refresh && m_interval) {
+	m_next = Zm::now() + m_interval;
+	armTimer_();
+      } else drive_();
+    });
+  }
+
+  void unauthorized(bool ping, uint64_t logicalID, bool replayed,
+      ZmRef<const TokenState> state) {
+    txRun(0, [this, ping, logicalID, replayed, state = ZuMv(state)]() mutable {
+      retire_();
+      if (m_state == Failed || m_state == Complete) return;
+      if (!ping || replayed) { fail_(); return; }
+      m_pending.unshift(Pending{logicalID, true});
+      if (state.ptr() == m_tokens.ptr()) refresh_();
+      else drive_();
+    });
+  }
+
+  void pong(uint64_t logicalID, bool value) {
+    txRun(0, [this, logicalID, value]() {
+      retire_();
+      if (m_state == Failed || m_state == Complete) return;
+      if (!value) { fail_(); return; }
+      ++m_completed;
+      if (m_options->verbose)
+	ZiLOG(Info, "zrest", ([logicalID](auto &s) {
+	  s << "event=pong id=" << logicalID;
+	}));
+      drive_();
+    });
+  }
+
+  void requestFailed() {
+    txRun(0, [this]() {
+      retire_();
+      if (m_state == Failed || m_state == Complete) terminalReady_();
+      else fail_();
     });
   }
 
 private:
-  void produce_() {
-    if (!m_options || m_generated >= m_options->requests) return;
+  void workload_(const Options *options, ZiMultiplex *mx) {
+    m_options = options;
+    m_mx = mx;
+    m_interval = options->intervalTime;
+    m_txSID = ZmSelf()->sid();
+    ZiAssert(ZmSelf()->sid() == m_txSID, "zrest", (),
+	"workload outside Tx shard", return);
+    authenticate_();
+  }
+
+  void authenticate_() {
+    m_state = Authenticating;
+    auto request = new AuthReq{};
+    request->client = this;
+    request->username = m_options->user;
+    request->password = m_options->pass;
+    send_<AuthBuilder>(request);
+  }
+
+  void refresh_() {
+    if (m_state == Refreshing) return;
+    if (!m_tokens) { fail_(); return; }
+    m_state = Refreshing;
+    auto request = new RefreshReq{};
+    request->client = this;
+    request->state = m_tokens;
+    send_<RefreshBuilder>(request);
+  }
+
+  template <typename Builder, typename Request>
+  void send_(Request *object) {
     ZmRef<ReqBuilder> request = new ReqBuilder{};
-    request->id = m_generated++;
-    request->template init<PingBuilder>(new Ping{});
+    request->id = m_attempt++;
+    request->template init<Builder>(object);
+    ++m_active;
     send(0, ZuMv(request));
   }
 
-  const Options *m_options = nullptr;
-  unsigned m_generated = 0;
+  void ping_(Pending pending, ZmRef<const TokenState> state) {
+    auto request = new PingReq{};
+    request->client = this;
+    request->state = ZuMv(state);
+    request->logicalID = pending.logicalID;
+    request->replayed = pending.replayed;
+    request->ping = true;
+    send_<PingBuilder>(request);
+  }
+
+  void retire_() {
+    ZmAssert(m_active);
+    --m_active;
+  }
+
+  void drive_() {
+    ZiAssert(ZmSelf()->sid() == m_txSID, "zrest", (),
+	"state transition outside Tx shard", return);
+    if (m_state == Failed || m_state == Complete || m_state == Authenticating ||
+	m_state == Refreshing || !m_options) return;
+    if (m_waveRemaining) return;
+    if (m_pending) {
+      dispatchPending_();
+      return;
+    }
+    if (m_completed == m_options->requests && !m_active) {
+      m_state = Complete;
+      cancelTimer_();
+      if (m_options->verbose)
+	ZiLOG(Info, "zrest", ([completed = m_completed](auto &s) {
+	  s << "event=summary completed=" << completed << " failed=0";
+	}));
+      seal(0);
+      return;
+    }
+    if (m_generated >= m_options->requests) return;
+    if (!m_interval) {
+      unsigned n = m_options->concurrency - m_active;
+      unsigned left = m_options->requests - m_generated;
+      if (n > left) n = left;
+      if (!n) return;
+      auto now = Zm::now();
+      if (m_tokens->deadline <= now.sec()) { refresh_(); return; }
+      startWave_(n, false);
+      return;
+    }
+    auto now = Zm::now();
+    if (m_next > now) { armTimer_(); return; }
+    unsigned wave = m_options->requests - m_generated;
+    if (wave > m_options->concurrency) wave = m_options->concurrency;
+    if (m_options->concurrency - m_active < wave) return;
+    if (m_tokens->deadline <= now.sec()) { refresh_(); return; }
+    startWave_(wave, true);
+  }
+
+  void startWave_(unsigned count, bool paced) {
+    m_waveState = m_tokens;
+    m_waveRemaining = count;
+    m_waveCount = count;
+    m_wavePaced = paced;
+    issueWave_();
+  }
+
+  void issueWave_() {
+    if (m_state != Ready || !m_waveRemaining) return;
+    unsigned n = m_waveRemaining;
+    if (n > WorkBatch) n = WorkBatch;
+    m_waveRemaining -= n;
+    while (n--)
+      ping_(Pending{m_generated++, false}, m_waveState);
+    if (m_waveRemaining) {
+      txRun(0, [this]() { issueWave_(); });
+      return;
+    }
+    unsigned count = m_waveCount;
+    bool paced = m_wavePaced;
+    m_waveState = nullptr;
+    m_waveCount = 0;
+    m_wavePaced = false;
+    if (!paced) { drive_(); return; }
+    auto now = Zm::now();
+    m_next = now + m_interval;
+    ++m_tick;
+    if (m_options->verbose) {
+      uint64_t ns = uint64_t(now.sec()) * 1000000000ULL + now.nsec();
+      ZiLOG(Info, "zrest", ([tick = m_tick, count, ns](auto &s) {
+	s << "event=ping-wave tick=" << tick << " count=" << count <<
+	  " time_ns=" << ns;
+      }));
+    }
+    if (m_generated < m_options->requests) armTimer_();
+  }
+
+  void dispatchPending_() {
+    if (!m_pending || m_active >= m_options->concurrency) return;
+    auto now = Zm::now();
+    if (m_tokens->deadline <= now.sec()) { refresh_(); return; }
+    ZmRef<const TokenState> state = m_tokens;
+    unsigned n = m_options->concurrency - m_active;
+    if (n > WorkBatch) n = WorkBatch;
+    while (n-- && m_pending) ping_(m_pending.shift(), state);
+    if (m_pending && m_active < m_options->concurrency)
+      txRun(0, [this]() { dispatchPending_(); });
+  }
+
+  void armTimer_() {
+    if (m_timerArmed || m_stopping || !m_mx || !m_interval ||
+	m_generated >= m_options->requests) return;
+    m_timerArmed = true;
+    m_mx->add(&m_timer, m_next, ZmScheduler::Update,
+      [this](auto &&arm) {
+	return arm([this]() {
+	  m_timerArmed = false;
+	  drive_();
+	});
+      }, m_txSID);
+  }
+
+  void cancelTimer_() {
+    if (m_mx) m_mx->del(&m_timer);
+    m_timerArmed = false;
+  }
+
+  void fail_() {
+    if (m_state == Failed || m_state == Complete) return;
+    m_state = Failed;
+    m_logicalFailed = 1;
+    cancelTimer_();
+    m_waveState = nullptr;
+    m_waveRemaining = 0;
+    m_waveCount = 0;
+    m_cleaning = true;
+    seal(0);
+    cleanPending_();
+  }
+
+  void cleanPending_() {
+    unsigned n = WorkBatch;
+    while (n-- && m_pending) (void)m_pending.shift();
+    if (m_pending) {
+      txRun(0, [this]() { cleanPending_(); });
+      return;
+    }
+    m_cleaning = false;
+    terminalReady_();
+  }
+
+  void terminalReady_() {
+    if (!m_notified && !m_active && !m_cleaning &&
+	(m_state == Complete || m_state == Failed)) {
+      m_notified = true;
+      done.post();
+    }
+  }
+
+  template <typename Wake>
+  void quiesceClean_(Wake wake) {
+    unsigned n = WorkBatch;
+    while (n-- && m_pending) (void)m_pending.shift();
+    if (m_pending) {
+      txRun(0, [this, wake = ZuMv(wake)]() mutable {
+	quiesceClean_(ZuMv(wake));
+      });
+      return;
+    }
+    m_waveState = nullptr;
+    m_waveRemaining = 0;
+    m_waveCount = 0;
+    m_tokens = nullptr;
+    m_mx = nullptr;
+    txRun(0, [wake = ZuMv(wake)]() mutable { wake(); });
+  }
+
+  const Options		*m_options = nullptr;
+  ZiMultiplex		*m_mx = nullptr;
+  ZmRef<const TokenState> m_tokens;
+  ZmRef<const TokenState> m_waveState;
+  PendingQ		m_pending;
+  ZmScheduler::Timer	m_timer;
+  ZuTime		m_interval;
+  ZuTime		m_next;
+  uint64_t		m_attempt = 0;
+  unsigned		m_generated = 0;
+  unsigned		m_completed = 0;
+  unsigned		m_active = 0;
+  unsigned		m_tick = 0;
+  unsigned		m_waveRemaining = 0;
+  unsigned		m_waveCount = 0;
+  int			m_txSID = 0;
+  ClientState		m_state = Idle;
+  unsigned		m_logicalFailed = 0;
+  bool			m_timerArmed = false;
+  bool			m_stopping = false;
+  bool			m_wavePaced = false;
+  bool			m_cleaning = false;
+  bool			m_notified = false;
 };
 
-void Pool::archive_(ReqBuilder *request)
+template <typename Link, typename Response>
+void AuthReq::process(Link *, const Response *response) const
 {
-  client()->archive(request);
+  if constexpr (ZuIsSame<Response, TokenResponse>{}) client->tokens(response, false);
+  else client->unauthorized(false, 0, false, {});
 }
+template <typename Link> void AuthReq::failed(Link *) const {
+  client->requestFailed();
+}
+template <typename Link, typename Response>
+void RefreshReq::process(Link *, const Response *response) const
+{
+  if constexpr (ZuIsSame<Response, TokenResponse>{}) client->tokens(response, true);
+  else client->unauthorized(false, 0, false, state);
+}
+template <typename Link> void RefreshReq::failed(Link *) const {
+  client->requestFailed();
+}
+template <typename Link, typename Response>
+void PingReq::process(Link *, const Response *response) const
+{
+  if constexpr (ZuIsSame<Response, Pong>{}) client->pong(logicalID, response->pong);
+  else client->unauthorized(true, logicalID, replayed, state);
+}
+template <typename Link> void PingReq::failed(Link *) const {
+  client->requestFailed();
+}
+
+void Pool::archive_(ReqBuilder *) { }
 
 static ZiMxParams mxParams(const Options &options)
 {
@@ -338,6 +757,11 @@ int main(int argc, char **argv)
     return 1;
   }
   Zhttp::URLView url = urlStorage.url();
+  if (!url.host || (url.path && url.path != "/") ||
+      url.hasQuery || url.hasFragment) {
+    std::cerr << "zrest: URL must be an HTTP(S) origin\n";
+    return 1;
+  }
 
   ZiLog::init("zrest");
   ZiLog::level(
@@ -362,11 +786,11 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  Zhttp::ProtocolPolicy::T policy;
+  Zhttp::ProtoPolicy::T policy;
   switch (options.http3) {
-    case Http3Mode::force: policy = Zhttp::ProtocolPolicy::ForceH3; break;
-    case Http3Mode::disable: policy = Zhttp::ProtocolPolicy::DisableH3; break;
-    default: policy = Zhttp::ProtocolPolicy::PreferH3; break;
+    case Http3Mode::force: policy = Zhttp::ProtoPolicy::ForceH3; break;
+    case Http3Mode::disable: policy = Zhttp::ProtoPolicy::DisableH3; break;
+    default: policy = Zhttp::ProtoPolicy::PreferH3; break;
   }
   Zhttp::H2Policy::T h2Policy;
   switch (options.http2) {
@@ -383,7 +807,7 @@ int main(int argc, char **argv)
   auto config = Zhttp::Config()
     .links(options.links)
     .concurrency(options.concurrency)
-    .linkConcurrency(options.linkConcurrency)
+    .linkMax(options.linkMax)
     .requestTimeout(options.timeout)
     .maxRedirects(MaxRedirects)
     .maxRetries(options.retries)
@@ -392,11 +816,10 @@ int main(int argc, char **argv)
     .h2Policy(h2Policy)
     .secure(secure)
     .tcp(true)
-    .tls(secure && policy != Zhttp::ProtocolPolicy::ForceH3)
-    .quic(secure && policy != Zhttp::ProtocolPolicy::DisableH3);
+    .tls(secure && policy != Zhttp::ProtoPolicy::ForceH3)
+    .quic(secure && policy != Zhttp::ProtoPolicy::DisableH3);
   auto quic = Zhttp::QUICConfig()
     .caPath(options.ca).keyLogPath(options.keyLog)
-    .maxStreamsDuplex(options.linkConcurrency)
     .heartbeat(options.quicHeartbeat ?
       ZuTime{options.quicHeartbeat} : ZuTime{})
     .rxDrop(rxDrop).txDrop(txDrop);
@@ -420,7 +843,7 @@ int main(int argc, char **argv)
     ZiLog::stop();
     return 1;
   }
-  app.workload(options);
+  app.workload(options, &mx);
 
   unsigned elapsed = 0;
   unsigned memElapsed = 0;
@@ -459,17 +882,18 @@ int main(int argc, char **argv)
     }
   }
   if (timedOut) ZiLOG(Error, "zrest", "timed out");
+  app.quiesce();
   app.stop();
-  bool incomplete = app.completed() != options.requests;
+  bool incomplete = app.logicalCompleted() != options.requests;
   if (incomplete)
     ZiLOG(Error, "zrest", ([
-      completed = app.completed(), expected = options.requests,
+      completed = app.logicalCompleted(), expected = options.requests,
       active = app.active()
     ](auto &s) {
       s << "incomplete run (completed=" << completed <<
 	", expected=" << expected << ", active=" << active << ')';
     }));
-  int rc = timedOut || incomplete || app.failed() ? 1 : 0;
+  int rc = timedOut || incomplete || app.logicalFailed() ? 1 : 0;
   app.final();
   mx.stop();
   ZiLog::stop();

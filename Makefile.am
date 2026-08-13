@@ -6,6 +6,7 @@ EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zf zi zrl
 SUBDIRS += ztcp ztls zquic zhttp
+SUBDIRS += zrest
 SUBDIRS += zfb
 SUBDIRS += zv
 SUBDIRS += zdb
@@ -17,7 +18,6 @@ SUBDIRS += zdf
 if GTK
 # SUBDIRS += zgtk
 endif
-# SUBDIRS += zrest
 
 DIST_SUBDIRS = zu zm zt ze zf zi zrl ztcp ztls zquic zhttp zfb zv zdb \
 	zdb_pq zdf zum zcmd zproxy zgtk zrest zdash zws

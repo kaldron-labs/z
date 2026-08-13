@@ -2067,7 +2067,7 @@ struct ZfFieldScanInt {
       // hex case is immaterial in scanning
       return validate(B::template eov<ZuFmt::Hex<false, Fmt>>(s));
     } else {
-      return validate(B::eov(s));
+      return validate(B::template eov<Fmt>(s));
     }
   }
   static Result validate(Result r) {

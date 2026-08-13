@@ -94,6 +94,13 @@ struct ArrayOpt {
 ZfStruct((ArrayOpt, URI),
   (((values), (Ctor<0>)), (UDT)));
 
+struct URIFormatInt {
+  unsigned value = 0;
+};
+using URIIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
+ZfStruct((URIFormatInt, URI),
+  (((value), (Ctor<0>, URI::Number<URIIntFormat>)), (UInt32)));
+
 struct URIUpdate {
   int required;
   int pathKept;
@@ -454,6 +461,18 @@ void resetUpdate()
   ZuCheck(loaded.reset == 52);
 }
 
+void formattedInteger()
+{
+  ZuTestScope(formattedInteger);
+  URIFormatInt value{0xabcdef};
+  ZtString<> uri;
+  ZfURI::save(uri, value);
+  ZuCheck(uri == "?value=00abcdef");
+  auto scan = ZfURI::scan(uri.span());
+  auto loaded = ZfURI::handler<URIFormatInt>(scan.p<1>()).ctor();
+  ZuCheck(loaded.value == value.value);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -469,5 +488,6 @@ int main(int argc, char **argv)
   ZuTestCall(arrayCoercion);
   ZuTestCall(delimitedLoad);
   ZuTestCall(resetUpdate);
+  ZuTestCall(formattedInteger);
   return 0;
 }

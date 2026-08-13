@@ -24,11 +24,15 @@ namespace Zrest {
 
 ZtEnumNS(ZrestAPI, QueryPolicy, int8_t, None, URI, Raw);
 
-ZtEnumNS(ZrestAPI, BodyPolicy, int8_t, None, JSON, URI, Raw);
+ZtEnumNS(ZrestAPI, BodyPolicy, int8_t, None, Zero, JSON, URI, Raw);
 
 template <typename Impl, unsigned = Impl::Body>
 struct Headers_ {
   using T = ZuTypeList<>;
+};
+template <typename Impl>
+struct Headers_<Impl, BodyPolicy::Zero> {
+  using T = ZhttpHeaders("content-length");
 };
 template <typename Impl>
 struct Headers_<Impl, BodyPolicy::JSON> {
@@ -46,7 +50,11 @@ using Headers = typename Headers_<Impl>::T;
 
 ZuDerive(SignBuf, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf">>));
 
+struct DefltHdrs { };
+
 struct Request {
+  using Headers = DefltHdrs;
+
   enum { Method = Zhttp::Method::GET };
   using Path = ZuStringT<"/">;
 
@@ -64,6 +72,8 @@ struct Request {
 };
 
 struct Response {
+  using Headers = DefltHdrs;
+
   enum { Status = 200 };
 
   enum { Body = BodyPolicy::None };
@@ -101,7 +111,9 @@ template <typename U, typename = void>
 struct GetHdrs_ { using T = Zrest::Headers<U>; };
 template <typename U>
 struct GetHdrs_<U, decltype(sizeof(typename U::Headers), void())> {
-  using T = typename U::Headers;
+  using Declared = typename U::Headers;
+  using T = ZuIf<ZuIsSame<Declared, DefltHdrs>{},
+    Zrest::Headers<U>, Declared>;
 };
 template <typename U> using GetHdrs = typename GetHdrs_<U>::T;
 template <typename Hdrs> using GetHdrKeys = ZuTypeSlice<2, 0, Hdrs>;
