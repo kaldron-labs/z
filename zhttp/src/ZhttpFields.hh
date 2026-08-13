@@ -156,7 +156,6 @@ void dispatch(
   Header &&header, Static &&static_, Unknown &&unknown) {
   using List = HeaderList<Headers>;
   using Keys = typename List::Keys;
-  using Values = typename List::Values;
   if constexpr (Keys::N) {
     static constexpr auto matcher = ZuMatcher<Keys>();
     auto i = matcher.exact(key);
@@ -167,7 +166,7 @@ void dispatch(
     ZuSwitch::dispatch<Keys::N>(
       i, [&value, &header, &static_](auto i) {
 	using Key = ZuType<i, Keys>;
-	using KeyValues = ZuType<i, Values>;
+	using KeyValues = typename List::template Value<i>;
 	if constexpr (KeyValues::N) {
 	  static constexpr auto matcher = ZuMatcher<KeyValues>();
 	  auto j = matcher.exact(value);
@@ -260,7 +259,7 @@ public:
       if (!e.ok()) return false;
       m_started = true;
       operation(m_method, target);
-      header("host", target.authority.raw);
+      header("host", m_authority.span());
     } else {
       m_started = true;
       status(m_status);

@@ -71,12 +71,12 @@ void testQPackLiteral()
 
   uint8_t badHuffmanName[] = { 0x00, 0x00, 0x29, 0x00, 0x00 };
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
-      ZuBSpan{badHuffmanName},
+      ZuSpan<uint8_t>{badHuffmanName},
       [](Zhttp::H3::Header) { }) < 0,
     "QPACK accepted malformed Huffman-coded literal name");
   uint8_t badHuffmanValue[] = { 0x00, 0x00, 0x21, 'x', 0x81, 0x00 };
   ZuCHECK(Zhttp::H3::QPack::decodeLiteral(
-      ZuBSpan{badHuffmanValue},
+      ZuSpan<uint8_t>{badHuffmanValue},
       [](Zhttp::H3::Header) { }) < 0,
     "QPACK accepted malformed Huffman-coded literal value");
 }
