@@ -275,10 +275,20 @@ struct H3Request :
 
   H3Cxn &h3Cxn() const { return *h3; }
   uint64_t streamID() const { return streamID_; }
-  using H3ReqOps::header;
   using H3ReqOps::host;
   using H3ReqOps::operation;
-  using Zhttp::Builder::header;
+  template <typename Key, typename Value, typename L>
+  constexpr void header(L &&l) const {
+    Zhttp::Builder::template header<Key, Value>(ZuFwd<L>(l));
+  }
+  template <typename Key, typename L>
+  void header(L &&l) const {
+    H3ReqOps::template header<Key>(ZuFwd<L>(l));
+  }
+  template <typename L>
+  void header(L &&l) const {
+    Zhttp::Builder::header(ZuFwd<L>(l));
+  }
 
   H3Cxn		*h3 = nullptr;
   uint64_t	streamID_ = 0;

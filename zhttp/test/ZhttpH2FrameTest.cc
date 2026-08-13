@@ -148,7 +148,7 @@ void initial(Bytes &bytes)
   Zhttp::H2::putSettingsHeader(bytes);
 }
 
-bool fragmented(Cxn &cxn, ZuBSpan input)
+bool fragmented(Cxn &cxn, ZuSpan<uint8_t> input)
 {
   for (unsigned i = 0; i < input.length(); ++i)
     if (cxn.process(ZuSpan<uint8_t>{input.data() + i, 1}) < 0)
