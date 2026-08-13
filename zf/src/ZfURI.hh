@@ -211,7 +211,7 @@ using Config = decltype(ZfURI_Config(ZuDeclVal<Facet *>()));
 #define ZfURIConfig(Facet, Config) \
   ZuPP_Strip(Config) ZfURI_Config(ZuFacet::Facet *);
 
-ZfURIConfig(IncrementalURI, ZfURI::Incremental<true>);
+ZfURIConfig(IncrementalURI, ZfURI_Incremental<>);
 
 namespace ZfURI {
 
