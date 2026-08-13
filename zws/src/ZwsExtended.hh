@@ -125,10 +125,11 @@ public:
     m_link = nullptr;
   }
 
-  bool operation(Zhttp::Method::T, const Zhttp::Target &) { return true; }
+  bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) { m_status = value; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "sec-websocket-protocol") {
       if (m_protocolSeen) m_invalid = true;
@@ -138,18 +139,19 @@ public:
       m_invalid = true;
     }
   }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (m_invalid || type != Zhttp::BodyType::Streamed ||
 	m_status < 200 || m_status >= 300 ||
 	((!m_protocol && m_protocolSeen) ||
 	 (m_protocol && (!m_protocolSeen ||
 	  !subprotocol(m_protocol, m_selected))))) {
       m_invalid = true;
-      return;
+      return true;
     }
     Base::stream();
     m_established = true;
     m_link->established_();
+    return true;
   }
   template <typename Rx>
   bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
@@ -218,16 +220,17 @@ public:
   }
 
   bool operation(
-    Zhttp::Method::T method, const Zhttp::Target &target) {
+    Zhttp::Method::T method, Zhttp::Target &target) {
     m_method = method;
     m_target.length(0);
-    m_target << target.pathQuery;
+    m_target << target.path;
     m_protocol = target.protocol;
     return true;
   }
   void status(unsigned) { }
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;
@@ -243,31 +246,32 @@ public:
       m_protocols = value;
     }
   }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (m_invalid || type != Zhttp::BodyType::Streamed ||
 	m_method != Zhttp::Method::CONNECT || m_protocol != "websocket" ||
 	!m_target || !m_hostSeen || !m_host ||
 	!m_versionSeen || !m_version13) {
       m_invalid = true;
       m_link->reject_();
-      return;
+      return true;
     }
     HandshakeString selected;
     if (!m_link->accept_(
 	  m_host, m_target, m_protocols, selected)) {
       m_invalid = true;
       m_link->reject_();
-      return;
+      return true;
     }
     if (selected && !subprotocol(m_protocols, selected)) {
       m_invalid = true;
       m_link->reject_();
-      return;
+      return true;
     }
     m_link->respond_(selected);
     Base::stream();
     m_established = true;
     m_link->established_();
+    return true;
   }
   template <typename Rx>
   bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }

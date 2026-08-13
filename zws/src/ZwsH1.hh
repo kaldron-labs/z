@@ -57,14 +57,16 @@ public:
 
   void status(unsigned value) { m_status = value; }
   bool enable1xx() const { return true; }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (type != Zhttp::BodyType::None || Base::bodyFramed())
       m_invalid = true;
+    return true;
   }
   void complete(State::T state) { m_state = state; }
 
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "upgrade") {
       if (m_upgradeSeen) m_invalid = true;
@@ -149,18 +151,20 @@ public:
   }
 
   bool operation(
-    Zhttp::Method::T method, const Zhttp::Target &target) {
+    Zhttp::Method::T method, Zhttp::Target &target) {
     m_method = method;
-    m_target = target.pathQuery;
+    m_target = target.path;
     return true;
   }
-  void bodyInfo(Zhttp::BodyType::T type, uint64_t) {
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
     if (type != Zhttp::BodyType::None) m_invalid = true;
+    return true;
   }
   void complete(State::T state) { m_state = state; }
 
   template <typename Key>
-  void header(Zhttp::FieldSection::T section, ZuBSpan value) {
+  void header(
+      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;

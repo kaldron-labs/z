@@ -107,7 +107,7 @@ struct ServerApp {
   template <typename Link, typename Rx>
   int process(Link &, Rx &rx) {
     return Zhttp::bodyEach(
-      rx, [this](ZuBSpan span) { message << span; }) ? 1 : -1;
+      rx, [this](ZuSpan<uint8_t> span) { message << span; }) ? 1 : -1;
   }
   template <typename Link>
   int messageEnd(Link &link) {
@@ -161,7 +161,7 @@ struct ClientApp {
   template <typename Link, typename Rx>
   int process(Link &, Rx &rx) {
     return Zhttp::bodyEach(
-      rx, [this](ZuBSpan span) { message << span; }) ? 1 : -1;
+      rx, [this](ZuSpan<uint8_t> span) { message << span; }) ? 1 : -1;
   }
   template <typename Link>
   int messageEnd(Link &link) {
@@ -222,8 +222,8 @@ struct RejectClient::Link : public Ztcp::CliLink<RejectClient, Link> {
   int process(Ztcp::RxStream &rx) {
     while (!rx.empty()) {
       int64_t n = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this](ZuBSpan span) { app()->state->response << span; });
+	[](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+	[this](ZuSpan<uint8_t> span) { app()->state->response << span; });
       if (n <= 0) break;
     }
     return 1;
