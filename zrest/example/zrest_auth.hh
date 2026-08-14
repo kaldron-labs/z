@@ -7,9 +7,12 @@
 #ifndef zrest_auth_HH
 #define zrest_auth_HH
 
-#include "zrestauth.hh"
+#include "zrestjwt.hh"
 
 class Client;
+
+using ClientDefaultUser = ZuStringT<"test">;
+using ClientDefaultPass = ZuStringT<"test123">;
 
 template <typename Heap>
 struct TokenState_ : public Heap, public ZmObject {
@@ -51,7 +54,12 @@ ZfStruct((AuthReq, JSON),
 
 #include "zrestauth_cli.hh"
 
-using AuthBuilder = AuthBuilder_<AuthReq>;
-using RefreshBuilder = RefreshBuilder_<RefreshReq>;
+struct AuthBuilder : public AuthBuilder_<AuthBuilder, AuthReq> { };
+
+struct RefreshBuilder : public RefreshBuilder_<RefreshBuilder, RefreshReq> {
+  const auto &bodyObject(const RefreshReq *request) const {
+    return *request->state;
+  }
+};
 
 #endif /* zrest_auth_HH */

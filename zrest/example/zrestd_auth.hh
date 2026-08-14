@@ -12,6 +12,32 @@
 #include "zrestauth_srv.hh"
 #include "zrestjwt.hh"
 
+class App;
+
+struct AuthParser : public AuthParser_<AuthParser> {
+  App *app = nullptr;
+
+  template <typename Link> void complete(Link *, bool);
+};
+
+struct RefreshParser : public RefreshParser_<RefreshParser> {
+  App *app = nullptr;
+
+  template <typename Link> void complete(Link *, bool);
+};
+
+enum {
+  ReqBodyMax = 1U<<20,
+  AccessLifetimeDefault = 5 * 60,
+  RefreshLifetimeDefault = 24 * 60 * 60
+};
+
+using ServerDefaultUser = ZuStringT<"test">;
+using ServerDefaultPass = ZuStringT<"test123">;
+using DefaultJWTSecret = ZuStringT<"your_secret_key">;
+using DefaultAccessLifetime = ZuStringT<"5m">;
+using DefaultRefreshLifetime = ZuStringT<"24h">;
+
 ZtEnumNS(, Http2Mode, int8_t, force, prefer, disable);
 
 struct Options {
@@ -23,8 +49,8 @@ struct Options {
   ZuCSpan	logPath{"-"};
   ZuCSpan	pidfile;
   int		eventFD = -1;
-  ZuCSpan	user{DefaultUser{}()};
-  ZuCSpan	pass{DefaultPass{}()};
+  ZuCSpan	user{ServerDefaultUser{}()};
+  ZuCSpan	pass{ServerDefaultPass{}()};
   ZuCSpan	jwtSecret{DefaultJWTSecret{}()};
   ZuCSpan	accessTokenLifetime{DefaultAccessLifetime{}()};
   ZuCSpan	refreshTokenLifetime{DefaultRefreshLifetime{}()};

@@ -14,28 +14,28 @@
 struct PongParser;
 struct PingUnauthorizedParser;
 
-template <typename Request>
-struct PingBuilder_ : public Zrest::ReqBuilder<PingBuilder_<Request>, Request> {
-  using Base = Zrest::ReqBuilder<PingBuilder_<Request>, Request>;
-  using Base::header;
-
+template <typename Impl, typename Request>
+struct PingBuilder_ : public Zrest::ReqBuilder<Impl, Request> {
   enum { Query = Zrest::QueryPolicy::URI };
 
   using Path = PingPath;
 
-  using Headers = ZhttpHeaders("authorization");
-
   using Responses = ZuTypeList<PongParser, PingUnauthorizedParser>;
 
   const Request &queryObject(const Request *request) const { return *request; }
-
-  template <typename Key, typename L> void header(L &&l) const {
-    if constexpr (Key{}() == "authorization")
-      l(this->object->state->bearer);
-    else
-      header<Key>(ZuFwd<L>(l));
-  }
 };
+
+// Application implementation skeleton:
+//
+// template <typename Request>
+// struct PingBuilder : public PingBuilder_<PingBuilder<Request>, Request> {
+//   using Base = PingBuilder_<PingBuilder<Request>, Request>;
+//   using Base::header;
+//
+//   using Headers = ZhttpHeaders("authorization");
+//
+//   template <typename Key, typename L> void header(L &&) const;
+// };
 
 struct PongParser : public Zrest::ResParser<PongParser, Pong> {
   enum { Body = Zrest::BodyPolicy::JSON };

@@ -27,15 +27,16 @@ enum {
   H3StallTimeout = 15,
   H3QuietTimeout = 2,
   MaxRedirects = 8,
-  WorkBatch = 64
+  WorkBatch = 64,
+  RespBodyMax = 1U<<20
 };
 
 enum ClientState { Idle, Authenticating, Ready, Refreshing, Complete, Failed };
 
 struct Options {
   ZuCSpan	ca;
-  ZuCSpan	user{DefaultUser{}()};
-  ZuCSpan	pass{DefaultPass{}()};
+  ZuCSpan	user{ClientDefaultUser{}()};
+  ZuCSpan	pass{ClientDefaultPass{}()};
   unsigned	requests = 1;
   unsigned	concurrency = 1;
   unsigned	links = 1;
@@ -88,7 +89,19 @@ ZfStruct((PingReq, URI), (((ping), (Required)), (Bool)));
 
 #include "zrestproto_cli.hh"
 
-using PingBuilder = PingBuilder_<PingReq>;
+struct PingBuilder : public PingBuilder_<PingBuilder, PingReq> {
+  using Base = PingBuilder_<PingBuilder, PingReq>;
+  using Base::header;
+
+  using Headers = ZhttpHeaders("authorization");
+
+  template <typename Key, typename L> void header(L &&l) const {
+    if constexpr (Key{}() == "authorization")
+      l(this->object->state->bearer);
+    else
+      Base::template header<Key>(ZuFwd<L>(l));
+  }
+};
 
 using Requests = ZuTypeList<AuthBuilder, RefreshBuilder, PingBuilder>;
 

@@ -15,6 +15,28 @@
 #include "zrestd_auth.hh"
 #include "zrestproto_srv.hh"
 
+struct PingParser : public PingParser_<PingParser> {
+  using Base = PingParser_<PingParser>;
+  using Base::header;
+
+  using Headers = ZhttpHeaders("authorization");
+
+  App *app = nullptr;
+  TokenString authorization;
+  unsigned authorizationCount = 0;
+
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "authorization") {
+      ++authorizationCount;
+      if (value.length() <= sizeof("Bearer ") - 1 + JWTMax)
+	authorization = value;
+    }
+  }
+
+  template <typename Link> void complete(Link *, bool);
+};
+
 namespace PingResult {
   enum { Unauthorized, OK };
 }

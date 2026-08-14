@@ -7,6 +7,8 @@
 #ifndef zrestproto_HH
 #define zrestproto_HH
 
+#include <zlib/ZfURI.hh>
+
 #include "zrestauth.hh"
 
 using PingPath = ZuStringT<"/">;

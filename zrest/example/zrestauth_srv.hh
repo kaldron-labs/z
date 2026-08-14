@@ -17,32 +17,39 @@ struct AuthInternalError;
 struct RefreshOK;
 struct RefreshUnauthorized;
 struct RefreshInternalError;
-class App;
 
-struct AuthParser : public Zrest::ReqParser<AuthParser, Credentials> {
+template <typename Impl>
+struct AuthParser_ : public Zrest::ReqParser<Impl, Credentials> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
 
   using Path = AuthPath;
 
   using Responses = ZuTypeList<AuthOK, AuthUnauthorized, AuthInternalError>;
-
-  App *app = nullptr;
-
-  template <typename Link> void complete(Link *, bool);
 };
 
-struct RefreshParser : public Zrest::ReqParser<RefreshParser, RefreshRequest> {
+template <typename Impl>
+struct RefreshParser_ : public Zrest::ReqParser<Impl, RefreshRequest> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
 
   using Path = RefreshPath;
 
   using Responses = ZuTypeList<
     RefreshOK, RefreshUnauthorized, RefreshInternalError>;
-
-  App *app = nullptr;
-
-  template <typename Link> void complete(Link *, bool);
 };
+
+// Application implementation skeleton:
+//
+// struct AuthParser : public AuthParser_<AuthParser> {
+//   // application state
+//
+//   template <typename Link> void complete(Link *, bool);
+// };
+//
+// struct RefreshParser : public RefreshParser_<RefreshParser> {
+//   // application state
+//
+//   template <typename Link> void complete(Link *, bool);
+// };
 
 struct AuthOK : public Zrest::ResBuilder<AuthOK, TokenResponse> {
   enum { Body = Zrest::BodyPolicy::JSON };
