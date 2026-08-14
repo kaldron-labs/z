@@ -778,7 +778,7 @@ private:
     Builder_<false, false> builder{
       app, m_app->authority(), true,
       m_operationOK, m_requestMethod, m_target};
-    auto tx = m_link->transmit(builder);
+    auto tx = m_link->transmitTx_(builder);
     if (!builder.begin(tx))
       return failTx_();
     m_commit.headers = true;
@@ -1589,6 +1589,8 @@ public:
     tx.plan(0);
     return tx;
   }
+  template <typename Builder>
+  auto transmitTx_(Builder &builder) { return transmit(builder); }
   void finish() { }
   bool active() const { return m_native && m_streamID; }
   void disconnect() {
@@ -1700,6 +1702,8 @@ public:
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
   auto transmit(Builder &) { return txStream(); }
+  template <typename Builder>
+  auto transmitTx_(Builder &) { return m_native->txStream_(); }
   void finish() { }
   template <typename Done>
   void complete(Done &&done) {
@@ -3631,6 +3635,14 @@ public:
   }
   template <typename Builder>
   auto transmit(Builder &builder) {
+    return transmit_(builder, m_stream->txStream());
+  }
+  template <typename Builder>
+  auto transmitTx_(Builder &builder) {
+    return transmit_(builder, m_stream->txStream_());
+  }
+  template <typename Builder, typename Tx>
+  auto transmit_(Builder &builder, Tx tx) {
     using H3Cxn = ZuDecay<decltype(m_native->h3)>;
     builder.h3(
       m_native->qpackTx(), &m_native->h3,
@@ -3639,7 +3651,7 @@ public:
       },
       uint64_t(m_stream->id()), m_native->h3PeerCap(),
       &m_native->h3.params);
-    return m_stream->txStream();
+    return tx;
   }
   void finish() {
     if (m_native && m_stream) m_native->finish(m_stream);
@@ -4319,6 +4331,8 @@ public:
     auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
     template <typename Builder>
     auto transmit(Builder &builder) { return m_link->transmit(builder); }
+    template <typename Builder>
+    auto transmitTx_(Builder &builder) { return m_link->transmitTx_(builder); }
     void finish() { }
     template <typename State> void responseHeadersParsed(State *) { }
     template <typename State> void responseBodyBytes(State *) { }
