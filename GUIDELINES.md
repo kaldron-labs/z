@@ -389,6 +389,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use `ZuMatcher` for token matching among multiple possibilities; use `==` for a single possibility.
 
 ### Storage and lifetime
+- Use `ZmHeap` and `ZmVHeap` to adopt a recycling zero-overhead block allocator, with heap identification, telemetry and configurable tuning
+  - Use `ZmHeap` for fixed-size concrete types
+  - Use `ZmVHeap` for variable-sized dynamic allocations (strings, etc.)
 - Use `ZtScratch` for stack scratch with heap fallback; ensure the underlying array has appropriate heap identification.
 - Use `ZtBuiltin` for builtin arrays with heap-allocation fallback.
 - Use `ZmAlloc` for large single-object stack allocations with heap fallback.
