@@ -68,15 +68,23 @@ struct Options {
   bool		help = false;
 };
 
-struct PingReq : public Ping {
-  Client *client = nullptr;
-  ZmRef<const TokenState> state;
-  uint64_t logicalID = 0;
-  bool replayed = false;
+template <typename Heap>
+struct PingReq_ : public Heap, public ZmObject {
+  bool				ping = false;
+  Client			*client = nullptr;
+  ZmRef<const TokenState>	state;
+  uint64_t			logicalID = 0;
+  bool				replayed = false;
+
   template <typename Link, typename Response>
   void process(Link *, const Response *) const;
+
   template <typename Link> void failed(Link *) const;
 };
+using PingReq_Heap = ZmHeap<"zrest.PingReq", PingReq_<ZuVoid>>;
+ZuDerive(PingReq, (PingReq_<PingReq_Heap>));
+
+ZfStruct((PingReq, URI), (((ping), (Required)), (Bool)));
 
 #include "zrestproto_cli.hh"
 
@@ -193,37 +201,43 @@ private:
   bool			m_notified = false;
 };
 
+template <typename Heap>
 template <typename Link, typename Response>
-void AuthReq::process(Link *, const Response *response) const
+void AuthReq_<Heap>::process(Link *, const Response *response) const
 {
   if constexpr (ZuIsSame<Response, TokenResponse>{})
     client->tokens(response, false);
   else
     client->unauthorized(false, 0, false, {});
 }
-template <typename Link> void AuthReq::failed(Link *) const {
+template <typename Heap>
+template <typename Link> void AuthReq_<Heap>::failed(Link *) const {
   client->requestFailed();
 }
+template <typename Heap>
 template <typename Link, typename Response>
-void RefreshReq::process(Link *, const Response *response) const
+void RefreshReq_<Heap>::process(Link *, const Response *response) const
 {
   if constexpr (ZuIsSame<Response, TokenResponse>{})
     client->tokens(response, true);
   else
     client->unauthorized(false, 0, false, state);
 }
-template <typename Link> void RefreshReq::failed(Link *) const {
+template <typename Heap>
+template <typename Link> void RefreshReq_<Heap>::failed(Link *) const {
   client->requestFailed();
 }
+template <typename Heap>
 template <typename Link, typename Response>
-void PingReq::process(Link *, const Response *response) const
+void PingReq_<Heap>::process(Link *, const Response *response) const
 {
   if constexpr (ZuIsSame<Response, Pong>{})
     client->pong(logicalID, response->pong);
   else
     client->unauthorized(true, logicalID, replayed, state);
 }
-template <typename Link> void PingReq::failed(Link *) const {
+template <typename Heap>
+template <typename Link> void PingReq_<Heap>::failed(Link *) const {
   client->requestFailed();
 }
 

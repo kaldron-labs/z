@@ -18,9 +18,13 @@ class App;
 struct PingParser : public Zrest::ReqParser<PingParser, Ping> {
   using Base = Zrest::ReqParser<PingParser, Ping>;
   using Base::header;
+
   enum { Method = Zhttp::Method::GET, Query = Zrest::QueryPolicy::URI };
+
   using Path = PingPath;
+
   using Headers = ZhttpHeaders("authorization");
+
   using Responses = ZuTypeList<PingOK, PingUnauthorized>;
 
   App *app = nullptr;
@@ -35,6 +39,7 @@ struct PingParser : public Zrest::ReqParser<PingParser, Ping> {
 	authorization = value;
     }
   }
+
   template <typename Link> void complete(Link *, bool);
 };
 

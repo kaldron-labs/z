@@ -21,20 +21,28 @@ struct RefreshInternalParser;
 template <typename Request>
 struct AuthBuilder_ : public Zrest::ReqBuilder<AuthBuilder_<Request>, Request> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+
   using Path = AuthPath;
+
   using Responses = ZuTypeList<
     AuthTokensParser, AuthUnauthorizedParser, AuthInternalParser>;
-  const Credentials &bodyObject(const Request *request) const {
+
+  const Request &bodyObject(const Request *request) const {
     return *request;
   }
 };
+
 template <typename Request>
-struct RefreshBuilder_ : public Zrest::ReqBuilder<RefreshBuilder_<Request>, Request> {
+struct RefreshBuilder_ : public Zrest::ReqBuilder<
+    RefreshBuilder_<Request>, Request> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+
   using Path = RefreshPath;
+
   using Responses = ZuTypeList<
     RefreshTokensParser, RefreshUnauthorizedParser, RefreshInternalParser>;
-  const RefreshRequest &bodyObject(const Request *request) const {
+
+  const auto &bodyObject(const Request *request) const {
     return *request->state;
   }
 };

@@ -11,25 +11,43 @@
 
 class Client;
 
-struct TokenState : public RefreshRequest {
+template <typename Heap>
+struct TokenState_ : public Heap, public ZmObject {
+  TokenString refreshToken;
   TokenString bearer;
   int64_t deadline = 0;
 };
+using TokenState_Heap = ZmHeap<"zrest.TokenState", TokenState_<ZuVoid>>;
+ZuDerive(TokenState, (TokenState_<TokenState_Heap>));
 
-struct AuthReq : public Credentials {
+template <typename Heap>
+struct AuthReq_ : public Heap, public ZmObject {
+  CredString username;
+  CredString password;
   Client *client = nullptr;
   template <typename Link, typename Response>
   void process(Link *, const Response *) const;
   template <typename Link> void failed(Link *) const;
 };
+using AuthReq_Heap = ZmHeap<"zrest.AuthReq", AuthReq_<ZuVoid>>;
+ZuDerive(AuthReq, (AuthReq_<AuthReq_Heap>));
 
-struct RefreshReq : public ExampleObject, public ZmObject {
+template <typename Heap>
+struct RefreshReq_ : public Heap, public ZmObject {
   Client *client = nullptr;
   ZmRef<const TokenState> state;
   template <typename Link, typename Response>
   void process(Link *, const Response *) const;
   template <typename Link> void failed(Link *) const;
 };
+using RefreshReq_Heap = ZmHeap<"zrest.RefreshReq", RefreshReq_<ZuVoid>>;
+ZuDerive(RefreshReq, (RefreshReq_<RefreshReq_Heap>));
+
+ZfStruct((TokenState, JSON),
+  (((refreshToken), (JSON::ID<"refresh_token">, Required)), (String)));
+ZfStruct((AuthReq, JSON),
+  (((username), (Required)), (String)),
+  (((password), (Required)), (String)));
 
 #include "zrestauth_cli.hh"
 

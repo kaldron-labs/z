@@ -11,12 +11,19 @@
 
 using PingPath = ZuStringT<"/">;
 
-struct Ping : public ExampleObject, public ZmObject {
+template <typename Heap>
+struct Ping_ : public Heap, public ZmObject {
   bool ping = false;
 };
-struct Pong : public ExampleObject, public ZmObject {
+using Ping_Heap = ZmHeap<"zrest.Ping", Ping_<ZuVoid>>;
+ZuDerive(Ping, (Ping_<Ping_Heap>));
+
+template <typename Heap>
+struct Pong_ : public Heap, public ZmObject {
   bool pong = false;
 };
+using Pong_Heap = ZmHeap<"zrest.Pong", Pong_<ZuVoid>>;
+ZuDerive(Pong, (Pong_<Pong_Heap>));
 
 ZfStruct((Ping, URI), (((ping), (Required)), (Bool)));
 ZfStruct((Pong, JSON), (((pong), (Required)), (Bool)));
