@@ -13,35 +13,31 @@
 
 struct PingOK;
 struct PingUnauthorized;
-class App;
 
-struct PingParser : public Zrest::ReqParser<PingParser, Ping> {
-  using Base = Zrest::ReqParser<PingParser, Ping>;
-  using Base::header;
-
+template <typename Impl>
+struct PingParser_ : public Zrest::ReqParser<Impl, Ping> {
   enum { Method = Zhttp::Method::GET, Query = Zrest::QueryPolicy::URI };
 
   using Path = PingPath;
 
-  using Headers = ZhttpHeaders("authorization");
-
   using Responses = ZuTypeList<PingOK, PingUnauthorized>;
-
-  App *app = nullptr;
-  TokenString authorization;
-  unsigned authorizationCount = 0;
-
-  template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
-    if constexpr (Key{}() == "authorization") {
-      ++authorizationCount;
-      if (value.length() <= sizeof("Bearer ") - 1 + JWTMax)
-	authorization = value;
-    }
-  }
-
-  template <typename Link> void complete(Link *, bool);
 };
+
+// Application implementation skeleton:
+//
+// struct PingParser : public PingParser_<PingParser> {
+//   using Base = PingParser_<PingParser>;
+//   using Base::header;
+//
+//   using Headers = ZhttpHeaders("authorization");
+//
+//   // application state
+//
+//   template <typename Key>
+//   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>);
+//
+//   template <typename Link> void complete(Link *, bool);
+// };
 
 struct PingOK : public Zrest::ResBuilder<PingOK, Pong> {
   enum { Body = Zrest::BodyPolicy::JSON };

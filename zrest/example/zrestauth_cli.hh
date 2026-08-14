@@ -18,34 +18,36 @@ struct RefreshTokensParser;
 struct RefreshUnauthorizedParser;
 struct RefreshInternalParser;
 
-template <typename Request>
-struct AuthBuilder_ : public Zrest::ReqBuilder<AuthBuilder_<Request>, Request> {
+template <typename Impl, typename Request>
+struct AuthBuilder_ : public Zrest::ReqBuilder<Impl, Request> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
 
   using Path = AuthPath;
 
   using Responses = ZuTypeList<
     AuthTokensParser, AuthUnauthorizedParser, AuthInternalParser>;
-
-  const Request &bodyObject(const Request *request) const {
-    return *request;
-  }
 };
 
-template <typename Request>
-struct RefreshBuilder_ : public Zrest::ReqBuilder<
-    RefreshBuilder_<Request>, Request> {
+template <typename Impl, typename Request>
+struct RefreshBuilder_ : public Zrest::ReqBuilder<Impl, Request> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
 
   using Path = RefreshPath;
 
   using Responses = ZuTypeList<
     RefreshTokensParser, RefreshUnauthorizedParser, RefreshInternalParser>;
-
-  const auto &bodyObject(const Request *request) const {
-    return *request->state;
-  }
 };
+
+// Application implementation skeleton:
+//
+// template <typename Request>
+// struct AuthBuilder : public AuthBuilder_<AuthBuilder<Request>, Request> { };
+//
+// template <typename Request>
+// struct RefreshBuilder : public RefreshBuilder_<
+//     RefreshBuilder<Request>, Request> {
+//   const auto &bodyObject(const Request *) const;
+// };
 
 struct AuthTokensParser : public Zrest::ResParser<
     AuthTokensParser, TokenResponse> {
