@@ -15,6 +15,7 @@
 #include <zlib/ZtlsHMAC.hh>
 
 #include "zrestjwt.hh"
+#include "zrestproto.hh"
 
 using namespace ZuTestUtil;
 

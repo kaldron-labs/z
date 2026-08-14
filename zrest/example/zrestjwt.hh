@@ -11,7 +11,7 @@
 
 #include <zlib/ZtlsRandom.hh>
 
-#include "zrestproto.hh"
+#include "zrestauth.hh"
 
 struct TokenType {
   using T = int8_t;
