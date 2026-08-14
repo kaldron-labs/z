@@ -1114,6 +1114,10 @@ public:
   auto transmit(Builder &) {
     return this->txStream();
   }
+  template <typename Builder>
+  auto transmitTx_(Builder &) {
+    return this->txStream_();
+  }
   void finish() { }
   bool active() const { return !!this->cxn(); }
   template <typename State>
