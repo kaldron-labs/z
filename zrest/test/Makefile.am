@@ -24,7 +24,6 @@ LDADD = $(top_builddir)/zrest/src/libZrest.la \
 noinst_PROGRAMS = ZrestTest ZrestExampleTest
 ZrestTest_SOURCES = ZrestTest.cc
 ZrestExampleTest_SOURCES = ZrestExampleTest.cc \
-	$(top_srcdir)/zrest/example/zrestproto.cc \
 	$(top_srcdir)/zrest/example/zrestjwt.cc
 
 EXTRA_DIST = README.md
