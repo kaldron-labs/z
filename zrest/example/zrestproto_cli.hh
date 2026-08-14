@@ -18,14 +18,22 @@ template <typename Request>
 struct PingBuilder_ : public Zrest::ReqBuilder<PingBuilder_<Request>, Request> {
   using Base = Zrest::ReqBuilder<PingBuilder_<Request>, Request>;
   using Base::header;
+
   enum { Query = Zrest::QueryPolicy::URI };
+
   using Path = PingPath;
+
   using Headers = ZhttpHeaders("authorization");
+
   using Responses = ZuTypeList<PongParser, PingUnauthorizedParser>;
-  const Ping &queryObject(const Request *request) const { return *request; }
+
+  const Request &queryObject(const Request *request) const { return *request; }
+
   template <typename Key, typename L> void header(L &&l) const {
-    if constexpr (Key{}() == "authorization") l(this->object->state->bearer);
-    else Base::template header<Key>(ZuFwd<L>(l));
+    if constexpr (Key{}() == "authorization")
+      l(this->object->state->bearer);
+    else
+      header<Key>(ZuFwd<L>(l));
   }
 };
 

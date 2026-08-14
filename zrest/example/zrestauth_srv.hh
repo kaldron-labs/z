@@ -21,18 +21,26 @@ class App;
 
 struct AuthParser : public Zrest::ReqParser<AuthParser, Credentials> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+
   using Path = AuthPath;
+
   using Responses = ZuTypeList<AuthOK, AuthUnauthorized, AuthInternalError>;
+
   App *app = nullptr;
+
   template <typename Link> void complete(Link *, bool);
 };
 
 struct RefreshParser : public Zrest::ReqParser<RefreshParser, RefreshRequest> {
   enum { Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::JSON };
+
   using Path = RefreshPath;
+
   using Responses = ZuTypeList<
     RefreshOK, RefreshUnauthorized, RefreshInternalError>;
+
   App *app = nullptr;
+
   template <typename Link> void complete(Link *, bool);
 };
 

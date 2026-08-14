@@ -7,10 +7,8 @@
 #ifndef zrestauth_HH
 #define zrestauth_HH
 
-#include <new>
-
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
-#include <zlib/ZmVHeap.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
@@ -39,33 +37,43 @@ using DefaultRefreshLifetime = ZuStringT<"24h">;
 ZuDerive(CredString, (ZtString<ZtStringHeapID<"zrest.CredString">>));
 ZuDerive(TokenString, (ZtString<ZtStringHeapID<"zrest.TokenString">>));
 
-class ExampleObject {
-  using Heap = ZmVHeap<"zrest.Object", Zm::CacheLineSize,
-    ZmVHeap_DefltMax, Zm::CacheLineSize>;
-
-public:
-  static void *operator new(size_t size) {
-    if (void *ptr = Heap::valloc(size)) return ptr;
-    throw std::bad_alloc{};
-  }
-  static void operator delete(void *ptr) noexcept { Heap::vfree(ptr); }
-  static void operator delete(void *ptr, size_t) noexcept { Heap::vfree(ptr); }
-};
-
-struct Credentials : public ExampleObject, public ZmObject {
+template <typename Heap>
+struct Credentials_ : public Heap, public ZmObject {
   CredString username;
   CredString password;
 };
-struct RefreshRequest : public ExampleObject, public ZmObject {
+using Credentials_Heap = ZmHeap<"zrest.Credentials", Credentials_<ZuVoid>>;
+ZuDerive(Credentials, (Credentials_<Credentials_Heap>));
+
+template <typename Heap>
+struct RefreshRequest_ : public Heap, public ZmObject {
   TokenString refreshToken;
 };
-struct TokenResponse : public ExampleObject, public ZmObject {
+using RefreshRequest_Heap =
+  ZmHeap<"zrest.RefreshRequest", RefreshRequest_<ZuVoid>>;
+ZuDerive(RefreshRequest, (RefreshRequest_<RefreshRequest_Heap>));
+
+template <typename Heap>
+struct TokenResponse_ : public Heap, public ZmObject {
   TokenString accessToken;
   TokenString refreshToken;
   uint64_t expiresIn = 0;
 };
-struct Unauthorized : public ExampleObject, public ZmObject { };
-struct InternalError : public ExampleObject, public ZmObject { };
+using TokenResponse_Heap =
+  ZmHeap<"zrest.TokenResponse", TokenResponse_<ZuVoid>>;
+ZuDerive(TokenResponse, (TokenResponse_<TokenResponse_Heap>));
+
+template <typename Heap>
+struct Unauthorized_ : public Heap, public ZmObject { };
+using Unauthorized_Heap =
+  ZmHeap<"zrest.Unauthorized", Unauthorized_<ZuVoid>>;
+ZuDerive(Unauthorized, (Unauthorized_<Unauthorized_Heap>));
+
+template <typename Heap>
+struct InternalError_ : public Heap, public ZmObject { };
+using InternalError_Heap =
+  ZmHeap<"zrest.InternalError", InternalError_<ZuVoid>>;
+ZuDerive(InternalError, (InternalError_<InternalError_Heap>));
 
 ZfStruct((Credentials, JSON),
   (((username), (Required)), (String)),
