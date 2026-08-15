@@ -25,7 +25,7 @@ ZtEnumImplNS(UserDBState);
 
 UserDB::UserDB(Ztls::Random *rng) : m_rng{rng}
 {
-  for (unsigned i = 0; i < nPerms(); i++)
+  for (unsigned i = 0, n = nPerms(); i < n; i++)
     m_perms[i] = ZuCmp<PermID>::null();
 }
 
