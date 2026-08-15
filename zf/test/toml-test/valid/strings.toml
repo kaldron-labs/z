@@ -1,0 +1,8 @@
+basic = "tab\tunicode \u263A escape \e"
+literal = 'C:\Users\nodejs\templates'
+multiline = """
+one \
+  two"""
+multiline-literal = '''
+one
+two'''

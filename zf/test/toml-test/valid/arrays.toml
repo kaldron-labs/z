@@ -1,0 +1,6 @@
+mixed = [1, "two", true, 1979-05-27]
+multiline = [
+  1,
+  # comments and a trailing comma are accepted
+  {name = "two", value = 2},
+]

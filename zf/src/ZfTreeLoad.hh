@@ -64,6 +64,20 @@ inline auto intEOV(ZuCSpan span)
     return B::template eov<typename Fmt::Fmt>(span);
 }
 
+template <typename Policy, typename = void>
+struct NumberScan {
+  static auto decimal(ZuCSpan span) { return ZfJSON::eov_Decimal(span); }
+  static auto floating(ZuCSpan span) { return ZfJSON::eov_Float(span); }
+};
+
+template <typename Policy>
+struct NumberScan<Policy, decltype(
+  Policy::decimalEOV(ZuDeclVal<ZuCSpan>()),
+  Policy::floatEOV(ZuDeclVal<ZuCSpan>()), void())> {
+  static auto decimal(ZuCSpan span) { return Policy::decimalEOV(span); }
+  static auto floating(ZuCSpan span) { return Policy::floatEOV(span); }
+};
+
 template <
   typename Policy, typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
@@ -419,7 +433,7 @@ inline T loadValue_(const ZfTree::AnyNode *node)
     if constexpr (
 	TypeCode == ZfFieldTC::Decimal ||
 	TypeCode == ZfFieldTC::Fixed) {
-      auto r = ZfJSON::eov_Decimal(span);
+      auto r = NumberScan<Policy>::decimal(span);
       if (ZuUnlikely(r.template p<0>() < 0 ||
           unsigned(r.template p<0>()) != span.length()))
 	Policy::badValue(node, "decimal", span);
@@ -442,10 +456,11 @@ inline T loadValue_(const ZfTree::AnyNode *node)
 	  return ZuFixed{d};
       }
     } else {
-      auto d = ZfJSON::eov_Float(span);
-      if (ZuUnlikely(d.p<0>() < 0 || unsigned(d.p<0>()) != span.length()))
+      auto d = NumberScan<Policy>::floating(span);
+      if (ZuUnlikely(d.template p<0>() < 0 ||
+          unsigned(d.template p<0>()) != span.length()))
 	Policy::badValue(node, "floating point number", span);
-      auto v = d.p<1>();
+      auto v = d.template p<1>();
       if constexpr (ZuFieldProp::HasRange<Props>{}) {
 	auto v_ = v;
 	if (ZuUnlikely(!ZfFieldLimit<Props>(v))) {
@@ -459,6 +474,13 @@ inline T loadValue_(const ZfTree::AnyNode *node)
   } else if constexpr (
       TypeCode == ZfFieldTC::Time ||
       TypeCode == ZfFieldTC::DateTime) {
+    if (node && node->has<ZfTree::AnyNode::DateTime>()) {
+      const auto &v = node->data<ZfTree::AnyNode::DateTime>();
+      if constexpr (ZuIs_<T, ZuTime>{})
+	return v.as_time();
+      else
+	return v;
+    }
     using Fmt = typename Policy::template GetTimeFmt<Props>;
     ZuCSpan span = scalar<Policy>(
       node, ScalarMask::String() | ScalarMask::Number(), "date/time");

@@ -19,6 +19,7 @@ static_assert(ZuIs_<ZfCf::AnyNode, ZfTree::AnyNode>{});
 static_assert(ZfTree::ValueTC::Array == 0);
 static_assert(ZfTree::ValueTC::Object == 1);
 static_assert(ZfTree::ValueTC::String == 2);
+static_assert(ZfTree::ValueTC::DateTime == 3);
 static_assert(sizeof(AnyNode) == 3 * sizeof(void *));
 static_assert(AnyNode::StringSize > 0);
 static_assert(AnyNode::ArraySize > 0);
@@ -45,8 +46,15 @@ struct Policy {
     }
   }
 
+  template <typename Props>
+  using GetTimeFmt = ZuFieldProp::JSON::GetTimeFmt<Props>;
+
   [[noreturn]] static void badType(const AnyNode *, ZuCSpan) {
     ++badTypes;
+    throw BadType{};
+  }
+
+  [[noreturn]] static void badValue(const AnyNode *, ZuCSpan, ZuCSpan) {
     throw BadType{};
   }
 };
@@ -60,16 +68,28 @@ static void representation()
   auto array = ZfTree::newNode<AnyNode::Array>(nullptr);
   auto object = ZfTree::newNode<AnyNode::Object>(nullptr);
   auto string = ZfTree::newNode<AnyNode::String>(nullptr, "value");
+  ZuDateTime value{2024, 2, 29, 12, 34, 56, 123456789};
+  auto dateTime = ZfTree::newNode<AnyNode::DateTime>(nullptr, value);
 
   ZuCheck(array->has<AnyNode::Array>());
   ZuCheck(object->has<AnyNode::Object>());
   ZuCheck(string->has<AnyNode::String>());
+  ZuCheck(dateTime->has<AnyNode::DateTime>());
   ZuCheck(array->type == ZfTree::ValueTC::Array);
   ZuCheck(object->type == ZfTree::ValueTC::Object);
   ZuCheck(string->type == ZfTree::ValueTC::String);
+  ZuCheck(dateTime->type == ZfTree::ValueTC::DateTime);
   ZuCheck(array->scalarType == ZfTree::ScalarTC::None);
   ZuCheck(object->scalarType == ZfTree::ScalarTC::None);
   ZuCheck(string->scalarType == ZfTree::ScalarTC::String);
+  ZuCheck(dateTime->scalarType == ZfTree::ScalarTC::None);
+  ZuCheck(dateTime->data == value);
+  ZuCheck((ZfTreeLoad::loadValue<
+    Policy, ZuFacet::Cf, ZfFieldFilter::Load,
+    ZfFieldTC::DateTime, ZuTypeList<>, ZuDateTime>(dateTime)) == value);
+  ZuCheck((ZfTreeLoad::loadValue<
+    Policy, ZuFacet::Cf, ZfFieldFilter::Load,
+    ZfFieldTC::Time, ZuTypeList<>, ZuTime>(dateTime)) == value.as_time());
   ZuCheck(sizeof(AnyNode::String) == AnyNode::SNodeSize);
   ZuCheck(sizeof(AnyNode::Array) <= AnyNode::LNodeSize);
   ZuCheck(sizeof(AnyNode::Object) <= AnyNode::LNodeSize);
@@ -97,15 +117,25 @@ static void ancestry()
   auto array = ZfTree::newNode<AnyNode::Array>(root);
   auto leaf = ZfTree::newNode<AnyNode::String>(array, "leaf");
   auto leafPtr = leaf.ptr();
+  ZuDateTime value{2024, 2, 29, 12, 34, 56, 123456789};
+  auto dateTime = ZfTree::newNode<AnyNode::DateTime>(array, value);
+  auto dateTimePtr = dateTime.ptr();
   leafPtr->scalarType = ZfTree::ScalarTC::True;
   array->data.push(ZuMv(leaf));
+  array->data.push(ZuMv(dateTime));
   root->data.push(AnyNode::Field{"items", ZuMv(array)});
 
   ZtString<> path;
   leafPtr->path(path);
   ZuCheck(path == "items[0]");
   ZuCheck(root->resolve("items[0]") == leafPtr);
-  ZuCheck(!root->resolve("items[1]"));
+  path.null();
+  dateTimePtr->path(path);
+  ZuCheck(path == "items[1]");
+  ZuCheck(root->resolve("items[1]") == dateTimePtr);
+  ZuCheck(dateTimePtr->parent == leafPtr->parent);
+  ZuCheck(dateTimePtr->data == value);
+  ZuCheck(!root->resolve("items[2]"));
   ZuCheck(!root->resolve("items[-1]"));
   ZuCheck(!root->resolve("items[42949672960]"));
   ZuCheck(!root->resolve("items.[0]"));
