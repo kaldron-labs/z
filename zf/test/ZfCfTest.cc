@@ -77,9 +77,9 @@ struct CfBytes {
 };
 
 ZfStruct((CfBytes, Cf),
-  (((base64),		(Ctor<0>, Cf::Base64)),	(Bytes)),
+  (((base64),		(Ctor<0>, Cf::Base64)),		(Bytes)),
   (((base64URL),	(Ctor<1>, Cf::Base64URL)),	(Bytes)),
-  (((base32),		(Ctor<2>, Cf::Base32)),	(Bytes)),
+  (((base32),		(Ctor<2>, Cf::Base32)),		(Bytes)),
   (((hex),		(Ctor<3>, Cf::Hex)),		(Bytes)),
   (((raw),		(Ctor<4>, Cf::Raw)),		(Bytes)),
   (((vec),		(Ctor<5>)),			(BytesVec)));
@@ -97,17 +97,17 @@ struct CfNumbers {
 };
 
 ZfStruct((CfNumbers, Cf),
-  (((i),		(Ctor<0>, Mutable)),		(Int32)),
-  (((hex),	(Ctor<1>, Hex)),		(UInt32)),
-  (((enum_),	(Ctor<2>, Enum<CfValues::Map>)),	(Int32)),
-  (((flags),	(Ctor<3>, Flags<CfFlags::Map>)),	(UInt128)),
-  (((float_),	(Ctor<4>, (Range<-1000.0, 1000.0>))),	(Float)),
-  (((fixed),	(Ctor<5>,
-      (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	(Fixed)),
-  (((decimal),	(Ctor<6>,
-      (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	(Decimal)),
-  (((time),	(Ctor<7>, Cf::Unix9)),		(Time)),
-  (((ints),	(Ctor<8>)),			(Int32Vec)));
+  (((i),		(Ctor<0>, Mutable)),			(Int32)),
+  (((hex),		(Ctor<1>, Hex)),			(UInt32)),
+  (((enum_),		(Ctor<2>, Enum<CfValues::Map>)),	(Int32)),
+  (((flags),		(Ctor<3>, Flags<CfFlags::Map>)),	(UInt128)),
+  (((float_),		(Ctor<4>, (Range<-1000.0, 1000.0>))),	(Float)),
+  (((fixed),		(Ctor<5>,
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),		(Fixed)),
+  (((decimal),		(Ctor<6>,
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),		(Decimal)),
+  (((time),		(Ctor<7>, Cf::Unix9)),			(Time)),
+  (((ints),		(Ctor<8>)),				(Int32Vec)));
 
 struct CfOptional {
   const char *head = nullptr;
