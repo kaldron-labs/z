@@ -427,13 +427,14 @@ int VKey_parse(int32_t &vkey_, ZuCSpan s, int off)
     if (s[off] == '"') return -off;
     ZuArray<uint8_t, 4> utf;
     uint32_t u;
+    unsigned n = s.length();
     do {
       uint8_t byte;
       off = VKey_parse_char(byte, s, off);
       if (off < 0) return off;
       utf << byte;
-    } while (off < s.length() && s[off] != '"');
-    if (off >= s.length()) return -off;
+    } while (off < n && s[off] != '"');
+    if (off >= n) return -off;
     if (!ZuUTF8::in(utf.data(), utf.length(), u)) return -off;
     ++off;
     vkey = u;
