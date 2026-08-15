@@ -1,82 +1,23 @@
 # TODO
 
-## zhttp client-side
-
-
-## zhttp server-side
-
-- `ResBuilder::init` will call  `Builder::reset` if needed, the caller should not redundantly call `Builder::reset` if `ResBuilder::init` is called
-  - document this in `Zhttp.hh`
-  - update `zhttpd.cc` accordingly
+## ZfCf/ZfYAML/ZfTOML/ZfJSON/ZfURI
+- need `AsMap` below and in alignment with `AsArray`
+  - alternative to `AsObject` for situations where keys and values are not known at compile-time and cannot be mapped to C++ structs using `ZfStruct` metadata
+  - by default, the UDT is assumed to be a Z associative container (`ZmRBTree`, `ZmHash`, `ZmLHash`, ...):
+    - uses `add(k, v)` to load
+    - uses `citer()` to save
+  - can use compile-time probing to determine if STL equivalents should be used
 
 ## Zrest
-
-- key headers:
-  - accept-encoding: identity
-  - content-type: application/json
-
-the basic concept is: enrich `ZtStruct` to describe how the struct is sent/rcvd for REST
-  - the struct is a wrapper containing auth, etc., with the actual payload as a nested UDT
-  - per-field possibilities:
-    - nested URI UDT (implicitly query string) (non-default facet can be specified)
-      - need optional pre- and post-processing
-        - post-processing gets the query string so it can append a signature
-    - nested JSON UDT (implicitly body) (non-default facet can be specified)
-      - need optional pre- and post-processing
-        - pre-processing can prepend a `"key":{` to nest
-        - post-processing gets the JSON payload so it can append a signature and/or a `}`
-  - overall `T Zrest_Traits(...)` object-level traits determine:
-    - path + method (request); path + method + code (response)
-    - can use typelist of NTTP pairs for all these:
-      - Zhttp uses slices for headers and values, need to reconcile with below:
-      - fixed headers <ZuStringT, ZuStringT>
-      - variable headers <ZuStringT, decltype(lambda)>
-        - callback gets the object, writes value to a stream
-      - variable body headers <ZuStringT, <decltype(lambda), decltype(lambda)>>
-        - pre- and post- callbacks
-        - pre-callback gets the object, writes placeholder to a stream
-        - post-callback gets the object and the body, mutates placeholder
-    - URL (which implies scheme (https, https), target (host, port)) is a separate concern
-  - then the `Zrest` layer becomes one that permits:
-    - send: send(object);
-      - uses `Zrest::save(txStream, object)`
-    - recv: dispatch(type, handler);
-      - handler callback is (link, object)
-        - link is CRTP-derived (can be enriched with auth, app state)
-      - dispatch uses compile-time method/path switching
-      - per-logical-stream, requests and responses are single-threaded, i.e.
-        - the Parser instance should be per-stream
-      - Note: should reverse the order of parameters to `Parser::operation`
-      - uses:
-        ```
-        // URI (query string)
-        operation(method, target) { // in per-message-type Parser
-          // switch on target.path, method to find operation
-          // based on operation, set subsequent `header`, `body` and `complete` handling
-          // - really this is a ZuUnion of many Ts:
-          //   new (u.new_<T>()) T(...);
-          //   and Parser::header forwards to u.dispatch([](auto, auto &&o) { o->header(...); });
-          // in T::header:
-          auto scan = ZfURI::scan(target.query);
-          // stash object in T (could be a ZuUnion<void, Object>, and handler...new_(u.new_<Object>())
-          auto object = ZfURI::handler<Object>(scan.tempate p<1>()).ctor(); // construct object
-        }
-        // JSON
-        operation(method, target) { // in per-message-type Parser
-          // switch on target.path, method to find operation
-          // based on operation, set `header`, `body` and `complete` handling
-        }
-        body(rx) {
-          rx.consume(...); // consume contiguous json span
-          // if consume() succeeded
-          auto scan = ZfJSON::scan(json); // scan span
-          // swtich on stashed operation to get object
-          auto object = Zrest::handler<Object>(scan.template p<1>()).ctor(); // construct object
-          // stash object
-        }
-        // Common
-        complete(bool ok) { ... if (ok) /* process stashed object */ }
-        ```
+- clean up file naming in `zrest/example`
+  - codegen tool takes an optional 
+  - implementation harness (2x - cli/srv)
+    - `zrest.cc`, `zrestd.cc`
+  - REST implementations - (2x - cli/srv)
+    - `xxx_impl.{hh,cc}` - skeleton implementation files
+  - REST interfaces (can be codegen) (3x - core/cli/srv)
+    - `xxx{,_cli,_srv}.{hh,cc}` - interface files
+- re-usable JWT handling?
 
 ## Zum
 - all flatbuffers -> ZfStruct FB
@@ -132,7 +73,6 @@ the basic concept is: enrich `ZtStruct` to describe how the struct is sent/rcvd 
 - 128bit print/scan tests
 - vector print/scan tests
 - vector ZfCf and ZvCSV tests
-
 
 ## Documentation
 
@@ -197,6 +137,8 @@ the basic concept is: enrich `ZtStruct` to describe how the struct is sent/rcvd 
 
 - `zhttp` implements something like the above, reconcile
 
+- original motivation for this was to elide the thread-contention on pulling from a shared queue, but this is no longer true for a sharded architecture
+
 ### Documentation organization
 
 - internals docs
@@ -241,26 +183,6 @@ L-sized work:
 - https://verdagon.dev/blog/when-to-use-memory-safe-part-2
 
 ## I/O
-- call sequence to start sending:
-
-  app must call Link::start() via txInvoke() from connected()
-  - HTTP keep alives?
-
-  CliLink::ZvLink::ZvIOQueueTx::ZmPQTx::start()
-  CliLink::ZvLink::ZvIOQueueTx::ZvTx::scheduleSend()
-  CliLink::ZvLink::ZvIOQueueTx::send()
-  CliLink::ZvLink::ZvIOQueueTx::ZmPQTx::send()
-  CliLink::ZvLink::ZvIOQueueTx::ZvTx::rescheduleSend()
-
-- consider market data vs order/execution in terms of persistency
-  of queues (see below)
-- there is an underlying requirement here for persistent queuing
-  - the old technique of reconstruct the queues on startup by querying
-    the table is ok actually, as long as the sequence key is indexed...
-  - is Zrest a queue of Zdb-persisted objects, with associated functions
-    to load, unload, send, etc?
-    - which is a pattern repeated for other protocols (WS, etc.)
-
 https://www.youtube.com/watch?v=w61NXrYIx6Y
 
 ## Sagas
