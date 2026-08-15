@@ -22,7 +22,7 @@ void testBase64()
     ZuCheck(enc.length() <= ZmBase64::enclen(sizeof(data)));
     ZmBase64::dec(enc, [&decoded](ZuSpan<uint8_t> dec) {
       decoded.length(dec.length());
-      for (unsigned i = 0; i < dec.length(); i++) decoded[i] = dec[i];
+      for (unsigned i = 0, n = dec.length(); i < n; i++) decoded[i] = dec[i];
     });
   });
 
