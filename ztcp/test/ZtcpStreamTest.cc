@@ -37,9 +37,9 @@ ZtArray<uint8_t> payload(unsigned n)
 
 void pushPayload(Ztcp::RxStream &rx, const ZtArray<uint8_t> &p)
 {
-  unsigned off = 0;
-  while (off < p.length()) {
-    unsigned n = p.length() - off;
+  unsigned off = 0, l = p.length();
+  while (off < l) {
+    unsigned n = l - off;
     if (n > 13) n = 13;
     ZmRef<ZiIOBuf> b = new Buf{};
     b->append(p.data() + off, n);
