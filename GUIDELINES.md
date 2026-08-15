@@ -38,14 +38,19 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - type punning and undefined behavior
   - avoiding UB that is entirely theoretical or only relevant to non-targeted systems is a non-goal
   - UB and type punning are endorsed unless they actually create a **tangible correctness or security risk** for targeted systems (compilers: gcc, clang; architectures: x64, ARM64)
-- header-only
+- not header-only
   - intentionally not header-only
-  - Z libraries are hybrid builds
+  - Z libraries are traditional hybrid builds
     - headers with accompanying binary versioned shared libraries / DLLs
 - intrusive + intrinsic
   - non-intrusive or extrinsic storage is a non-goal (no STL containers)
 - sentinel values
   - sentinel values for logical null or false, not extrinsic booleans
+- unabashed alignment with Postel's Law
+  - “Be conservative in what you send, be liberal in what you accept.”
+  - conformance policing is a non-goal
+  - elide all excessive correctness and validation in favor of performance
+  - this principle applied to all protocols and formats for maximum resilience
 
 ## Target systems
 - compilers: current gcc, clang
@@ -190,6 +195,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: invariant function call in a loop conditional
   Problem: inefficient repeated calling of a function that returns an invariant value
   Fix: use a local variable to cache the value before the loop
+- Red Flag: repeated invariant array operator use, e.g. `if (x[i] == 'y' || x[i] == 'z') ...`
+  Problem: inefficient repeated calling of `operator []`, potential memory contention
+  Fix: use a local variable to cache the value: `auto c = x[i]; if (c == 'y' || c == 'z') ...`
 
 ### Storage and capacity
 - Red Flag: hard-coded capacities such as `16`.
