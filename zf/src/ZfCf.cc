@@ -46,8 +46,8 @@ void Scan::fail(ZuCSpan at, unsigned offset)
 
 static unsigned nonSpace(ZuCSpan span)
 {
-  unsigned i = 0;
-  while (i < span.length() && isspace__(span[i])) ++i;
+  unsigned i = 0, n = span.length();
+  while (i < n && isspace__(span[i])) ++i;
   return i;
 }
 
@@ -290,8 +290,8 @@ static ZuTuple<int, char> eod(ZuCSpan span)
 
 ZuTuple<int, int> Scan::bov(ZuCSpan span)
 {
-  unsigned o = 0;
-  while (o < span.length() && isspace__(span[o])) ++o;
+  unsigned o = 0, n = span.length();
+  while (o < n && isspace__(span[o])) ++o;
   if (o >= span.length()) return {-1, -1};
   switch (span[o]) {
     case '[': return {int(o + 1), ValueTC::Array};
@@ -440,7 +440,7 @@ int Scan::eod(ZuCSpan span, AnyNode *node)
   unsigned nArgs = args.length();
   auto argSpans = ZmScratch(ZuCSpan, nArgs, ArgSpans::VHeap);
   argSpans.length(nArgs);
-  for (unsigned j = 0; j < args.length(); j++) argSpans[j] = args[j];
+  for (unsigned j = 0, n = args.length(); j < n; j++) argSpans[j] = args[j];
   ZuSpan<const ZuCSpan> argSpan{argSpans.data(), argSpans.length()};
   if (!m_pctFn(*this, directive, argSpan,
     [this, node](ZuCSpan span) {
