@@ -55,6 +55,15 @@ inline ZuCSpan scalar(
   return node->data<ZfTree::AnyNode::String>();
 }
 
+template <typename B, typename Fmt, typename Props>
+inline auto intEOV(ZuCSpan span)
+{
+  if constexpr (ZuTypeIn<ZuFieldProp::Hex, Props>{})
+    return B::template eov<ZuFmt::Hex<false, typename Fmt::Fmt>>(span);
+  else
+    return B::template eov<typename Fmt::Fmt>(span);
+}
+
 template <
   typename Policy, typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
@@ -351,7 +360,7 @@ inline T loadValue_(const ZfTree::AnyNode *node)
       return out;
     }
   } else if constexpr (TypeCode == ZfFieldTC::Bool) {
-    return Policy::template boolean<T>(node);
+    return Policy::template boolean<T, Props>(node);
   } else if constexpr (
       TypeCode == ZfFieldTC::Int8 ||
       TypeCode == ZfFieldTC::Int16 ||
@@ -382,12 +391,8 @@ inline T loadValue_(const ZfTree::AnyNode *node)
 	Policy::template badEnum<Map>(node, {}, span);
       v = B{r.template p<1>().val()};
     } else {
-      auto r = [&]() {
-	if constexpr (ZuTypeIn<ZuFieldProp::Hex, Props>{})
-	  return B::template eov<ZuFmt::Hex<false, typename Fmt::Fmt>>(span);
-	else
-	  return B::template eov<typename Fmt::Fmt>(span);
-      }();
+      auto r = Policy::template intEOV<B, Fmt, Props>(
+	node->scalarType, span);
       if (ZuUnlikely(r.template p<0>() < 0 ||
           unsigned(r.template p<0>()) != span.length()))
 	Policy::badValue(node, "integer", span);

@@ -19,7 +19,7 @@ CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZvLib.hh \
 	ZtcRAGMap.hh ZtcAppTypes.hh ZtcFB.hh ZtcMsg.hh ZtcApp.hh \
 	ZtcDBTable.hh ZtcDBHost.hh ZtcDB.hh \
-	ZvCf.hh \
+	ZvCf.hh ZvYAML.hh \
 	ZvRingParams.hh ZvThreadParams.hh \
 	ZvMxParams.hh \
 	${FBS_H}
@@ -29,7 +29,7 @@ libZv_la_CPPFLAGS = $(AM_CPPFLAGS) -DZV_EXPORTS
 libZv_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZv_la_SOURCES = ZvLib.cc \
 	ZtcDB.cc ZtcDBHost.cc ZtcDBTable.cc ZtcApp.cc ZtcFB.cc ZtcRAGMap.cc \
-	ZvCf.cc ZvThreadParams.cc
+	ZvCf.cc ZvYAML.cc ZvThreadParams.cc
 libZv_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la \

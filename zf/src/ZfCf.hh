@@ -348,7 +348,12 @@ struct CfPolicy {
     return type == ScalarTC::String;
   }
 
-  template <typename T>
+  template <typename B, typename Fmt, typename Props>
+  static auto intEOV(int, ZuCSpan span) {
+    return ZfTreeLoad::intEOV<B, Fmt, Props>(span);
+  }
+
+  template <typename T, typename>
   static T boolean(const AnyNode *node) {
     auto span = ZfTreeLoad::scalar<CfPolicy>(
       node, ZfTreeLoad::ScalarMask::String(), "boolean");
