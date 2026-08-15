@@ -167,6 +167,18 @@ static bool loadError(L l) {
   return false;
 }
 
+template <typename L>
+static ZeString loadException(L l) {
+  try {
+    l();
+  } catch (const ZeException &e) {
+    ZeString message;
+    message << e;
+    return message;
+  }
+  return {};
+}
+
 static ZeString syntaxError(ZuCSpan input, ZfCf::PctFn pctFn = {}) {
   try {
     ZfCf::scan(input, ZuMv(pctFn));
@@ -565,8 +577,30 @@ static void duplicates() {
   ZuCheck(string(expandedFields[2].p<1>()) == "3");
 }
 
+static bool checkScalarTypes(const ZfCf::AnyNode *node)
+{
+  if (node->has<ZfCf::AnyNode::String>()) {
+    return node->scalarType == ZfCf::ScalarTC::String;
+  } else if (node->has<ZfCf::AnyNode::Array>()) {
+    if (node->scalarType != ZfCf::ScalarTC::None) return false;
+    for (auto &child: node->data<ZfCf::AnyNode::Array>())
+      if (!checkScalarTypes(child)) return false;
+  } else {
+    if (node->scalarType != ZfCf::ScalarTC::None) return false;
+    for (auto &field: node->data<ZfCf::AnyNode::Object>())
+      if (!checkScalarTypes(field.p<1>())) return false;
+  }
+  return true;
+}
+
 static void loadTypes() {
   ZuTestScope(loadTypes);
+  {
+    auto scan = ZfCf::scan(
+      "bool_: true, i: 1, float_: 1.5, enum_: Normal, "
+      "flags: Bit0|Bit1, time: 1.25");
+    ZuCheck(checkScalarTypes(scan.p<1>()));
+  }
   {
     auto missingScan = ZfCf::scan("optional: 1");
     ZuCheck(loadError([&]() {
@@ -816,6 +850,90 @@ static void loadSave() {
   ZuCheck(roundTrip.nested.value == value.nested.value);
 }
 
+static void compatibility()
+{
+  ZuTestScope(compatibility);
+
+  {
+    auto scan = ZfCf::scan("optional: 1");
+    auto message = loadException([&]() {
+      ZfCf::handler<CfRequired>(scan.p<1>()).ctor();
+    });
+    constexpr ZuCSpan prefix = "\"required\" missing at:\n";
+    ZuCheck(ZuCSpan{message}.prefix(prefix) == prefix.length());
+    ZuCheck(message.length() > prefix.length());
+  }
+  {
+    auto scan = ZfCf::scan("nested: 42");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfData>(scan.p<1>()).ctor();
+    }) == "\"nested\": expected UDT");
+  }
+  {
+    auto scan = ZfCf::scan("bool_: maybe");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfData>(scan.p<1>()).ctor();
+    }) == "\"bool_\": invalid boolean \"maybe\"");
+  }
+  {
+    auto scan = ZfCf::scan("enum_: unknown");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
+    }) == "\"enum_\" did not match { High = 0, Low = 1, Normal = 2 }");
+  }
+  {
+    auto scan = ZfCf::scan("value: 101");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfRange>(scan.p<1>()).ctor();
+    }) == "\"value\" out of range min(0) <= 101 <= max(100)");
+  }
+  {
+    auto scan = ZfCf::scan("base64: 'eA==junk'");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfBytes>(scan.p<1>()).ctor();
+    }) == "\"base64\": invalid encoded bytes \"eA==junk\"");
+  }
+  {
+    auto scan = ZfCf::scan("i: 1x");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
+    }) == "\"i\": invalid integer \"1x\"");
+  }
+  {
+    auto scan = ZfCf::scan("time: 1.0x");
+    ZuCheck(loadException([&]() {
+      ZfCf::handler<CfNumbers>(scan.p<1>()).ctor();
+    }) == "\"time\": invalid date/time \"1.0x\"");
+  }
+
+  CfNumbers value;
+  value.i = -42;
+  value.hex = 0xdeadbeef;
+  value.enum_ = CfValues::Low;
+  value.flags = CfFlags::Bit0() | CfFlags::Bit2();
+  value.float_ = 125;
+  value.fixed = ZuFixed{ZuDecimal{"12.5"}};
+  value.decimal = ZuDecimal{"-0.125"};
+  value.time = ZuTime{1700000000, 250000000};
+  value.ints = ZtArray<int>{1, -2, 3};
+
+  ZtString<> saved;
+  ZfCf::save(saved, value);
+  ZuCheck(saved ==
+    "{\"i\":-42,\"hex\":\"deadbeef\",\"enum_\":\"Low\","
+    "\"flags\":\"Bit0|Bit2\",\"float_\":125,\"fixed\":12.5,"
+    "\"decimal\":-0.125,\"time\":\"1700000000.25\","
+    "\"ints\":[1,-2,3]}");
+
+  saved.null();
+  ZfCf::saveUpd(saved, value);
+  ZuCheck(saved == "{\"i\":-42}");
+
+  saved.null();
+  ZfCf::saveDel(saved, value);
+  ZuCheck(saved == "{}");
+}
+
 static void formattedInteger()
 {
   ZuTestScope(formattedInteger);
@@ -839,5 +957,6 @@ int main(int argc, char **argv) {
   ZuTestCall(duplicates);
   ZuTestCall(loadTypes);
   ZuTestCall(loadSave);
+  ZuTestCall(compatibility);
   ZuTestCall(formattedInteger);
 }
