@@ -49,14 +49,14 @@ static ZtString<> readFile_(const Zi::Path &path)
 static unsigned parseJSONSeq_(ZuCSpan data)
 {
   unsigned n = 0;
-  unsigned i = 0;
-  while (i < data.length()) {
-    ZuCSpan rest{data.data() + i, data.length() - i};
+  unsigned i = 0, l = data.length();
+  while (i < l) {
+    ZuCSpan rest{data.data() + i, l - i};
     if (!rest.match<"\x1e">()) return 0;
     ++i;
     unsigned start = i;
-    while (i < data.length() && data[i] != '\n') ++i;
-    if (i >= data.length()) return 0;
+    while (i < l && data[i] != '\n') ++i;
+    if (i >= l) return 0;
     ZtString<> json;
     json << ZuCSpan{data.data() + start, i - start};
     auto scan = ZfJSON::scan(json);

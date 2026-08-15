@@ -156,7 +156,7 @@ public:
     if (!ranges || !max) return 0;
     if (max > Max) max = Max;
     Frame::AckRanges retained = snapshot_(max);
-    for (unsigned i = 0; i < retained.length(); ++i)
+    for (unsigned i = 0, n = retained.length(); i < n; ++i)
       ranges[i] = retained[i];
     return int(retained.length());
   }
@@ -211,7 +211,8 @@ private:
 	range.largest = m_sparse[begin].largest;
     }
     unsigned end = i;
-    while (end < m_sparse.length() &&
+    unsigned n = m_sparse.length();
+    while (end < n &&
 	!before_(range.largest, m_sparse[end].first)) {
       if (m_sparse[end].largest > range.largest)
 	range.largest = m_sparse[end].largest;
@@ -229,8 +230,8 @@ private:
 
   void advanceHead_(uint64_t head) {
     m_ackHead = head;
-    unsigned consumed = 0;
-    while (consumed < m_sparse.length() &&
+    unsigned consumed = 0, n = m_sparse.length();
+    while (consumed < n &&
 	m_sparse[consumed].first <= m_ackHead) {
       if (m_sparse[consumed].largest >= m_ackHead)
 	m_ackHead = m_sparse[consumed].largest + 1;
@@ -266,7 +267,7 @@ private:
   bool ranges_(L &&l) const {
     if (m_ackHead > m_ackBase)
       if (!l(AckRange{m_ackHead - 1, m_ackBase})) return false;
-    for (unsigned i = 0; i < m_sparse.length(); ++i)
+    for (unsigned i = 0, n = m_sparse.length(); i < n; ++i)
       if (!l(m_sparse[i])) return false;
     return true;
   }
@@ -914,10 +915,10 @@ class OutstandingFrames {
 
 public:
   void add(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed(); ++i) add_(p.frame(i));
+    for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) add_(p.frame(i));
   }
   void del(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed(); ++i) del_(p.frame(i));
+    for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) del_(p.frame(i));
   }
   void clear() {
     if (m_flows) m_flows->clean();
@@ -1266,14 +1267,14 @@ struct PktTxUpdate {
   }
   void ackdFrames_(const SentPkt &p) {
     unsigned n = ackdFrames.length();
-    for (unsigned i = 0; i < p.framesUsed(); ++i)
+    for (unsigned i = 0, l = p.framesUsed(); i < l; ++i)
       ackdFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
     ZiAssert(ackdFrames.length() - n == p.framesUsed(), "Zquic", (),
       "ACK frame update truncation", return);
   }
   void lostFrames_(const SentPkt &p) {
     unsigned n = lostFrames.length();
-    for (unsigned i = 0; i < p.framesUsed(); ++i)
+    for (unsigned i = 0, l = p.framesUsed(); i < l; ++i)
       lostFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
     ZiAssert(lostFrames.length() - n == p.framesUsed(), "Zquic", (),
       "lost frame update truncation", return);
@@ -1903,7 +1904,7 @@ private:
   }
 
   void enqueueRetransmit_(const SentPkt &p) {
-    for (unsigned i = 0; i < p.framesUsed(); ++i) {
+    for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) {
       const SentFrameRef &frame = p.frame(i);
       if (m_outstanding.outstanding(frame)) continue;
       m_retransmit.push(frame);

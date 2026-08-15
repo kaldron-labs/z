@@ -2275,7 +2275,7 @@ bool ZquicLogger::writeAckEvt_(
   EvtName::T name, const AckEvt &event, ZuTime time)
 {
   QLogPktNumArray packetNumbers;
-  for (unsigned i = 0; i < event.packetNumbers.length(); ++i)
+  for (unsigned i = 0, n = event.packetNumbers.length(); i < n; ++i)
     new (packetNumbers.push()) uint64_t(event.packetNumbers[i]);
   if (!packetNumbers)
     return true;

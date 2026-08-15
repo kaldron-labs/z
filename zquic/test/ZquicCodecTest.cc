@@ -864,7 +864,7 @@ void testAddressTokenCodec()
 
   Zquic::TokenSecret secret;
   secret.length(Zquic::AddressToken::SecretLength);
-  for (unsigned i = 0; i < secret.length(); ++i) secret[i] = uint8_t(i + 1);
+  for (unsigned i = 0, n = secret.length(); i < n; ++i) secret[i] = uint8_t(i + 1);
   ZiSockAddr addr{ZiIP("127.0.0.1"), 12345};
   ZiSockAddr other{ZiIP("127.0.0.2"), 12345};
   ZiSockAddr otherPort{ZiIP("127.0.0.1"), 12346};

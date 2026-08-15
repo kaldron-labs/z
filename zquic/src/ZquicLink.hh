@@ -1364,7 +1364,7 @@ protected:
     }
   }
   void recordTxUnackd_(PktNumSpace::T level, const TxPktRefs &refs) {
-    for (unsigned i = 0; i < refs.count(); ++i)
+    for (unsigned i = 0, n = refs.count(); i < n; ++i)
       (void)recordTxUnackd_(level, refs[i], refs.stream(i));
   }
   void discardTxUnackd_(
@@ -1388,7 +1388,7 @@ protected:
     }
   }
   void discardTxUnackd_(PktNumSpace::T level, const TxPktRefs &refs) {
-    for (unsigned i = 0; i < refs.count(); ++i)
+    for (unsigned i = 0, n = refs.count(); i < n; ++i)
       discardTxUnackd_(level, refs[i], refs.stream(i));
   }
   bool requeueStreamRef_(
@@ -1404,7 +1404,7 @@ protected:
     PktNumSpace::T level, const TxPktRefs &refs, bool consumeCredit,
     bool queueTx = true) {
     bool queued = false;
-    for (unsigned i = 0; i < refs.count(); ++i) {
+    for (unsigned i = 0, n = refs.count(); i < n; ++i) {
       const SentFrameRef &ref = refs[i];
       queued |=
 	requeueStreamRef_(level, ref, refs.stream(i), consumeCredit);
@@ -4570,7 +4570,7 @@ protected:
       return false;
     if (refs.count()) {
       if (!sendPkt(build, ZuMv(addr), refs)) return false;
-      for (unsigned i = 0; i < sentControls.length(); ++i)
+      for (unsigned i = 0, n = sentControls.length(); i < n; ++i)
 	controlSent_(sentControls[i]);
       return true;
     }
@@ -4705,7 +4705,7 @@ protected:
 	requeueStreamRefs_(PktNumSpace::AppData, refs, false);
 	return false;
       }
-      for (unsigned i = 0; i < sentControls.length(); ++i)
+      for (unsigned i = 0, n = sentControls.length(); i < n; ++i)
 	controlSent_(sentControls[i]);
       return true;
     }
@@ -6559,7 +6559,7 @@ nextSpace:
     packet.pmtudSize = pmtudSize;
     packet.ackLevel = ackLevel;
     packet.ackLargest = ackLargest;
-    for (unsigned i = 0; i < refs.count(); ++i)
+    for (unsigned i = 0, n = refs.count(); i < n; ++i)
       packet.addFrame(refs[i], refs.stream(i));
     if (!m_txPkts[level].add(packet)) return false;
     if (ackEliciting) m_path.sentECN(level, ecn);
@@ -6591,13 +6591,13 @@ nextSpace:
   void queueAckReap_(
     ReapStreams &streams, Stream *stream) {
     if (!stream) return;
-    for (unsigned i = 0; i < streams.length(); ++i)
+    for (unsigned i = 0, n = streams.length(); i < n; ++i)
       if (streams[i] == stream) return;
     streams.push(stream);
   }
   void reapAckedStreams_(PktTxUpdate &update, ReapStreams &streams) {
     update.clearAckdFrames();
-    for (unsigned i = 0; i < streams.length(); ++i)
+    for (unsigned i = 0, n = streams.length(); i < n; ++i)
       reapStream_(streams[i]);
   }
   void reapStreamFromRx_(const StreamRef &stream) {
@@ -6705,7 +6705,7 @@ nextSpace:
     const AckSnapshot *ack = nullptr, bool *ecnValid = nullptr,
     uint64_t *ceDelta = nullptr) {
     applyAckOfAckTx_(update);
-    for (unsigned i = 0; i < update.ackdFrames.length(); ++i) {
+    for (unsigned i = 0, n = update.ackdFrames.length(); i < n; ++i) {
       const SentFrameUpdate &frame = update.ackdFrames[i];
       const SentFrameRef &ref = frame.ref;
       StreamRef streamRef;
@@ -6865,7 +6865,7 @@ nextSpace:
     }
     if (!work.ecnValidated) {
       work.ecnValid = validateAckECN_(ack, &work.ceDelta);
-      for (unsigned i = 0; i < ack.ranges.length(); ++i) {
+      for (unsigned i = 0, n = ack.ranges.length(); i < n; ++i) {
 	uint64_t largest = ack.ranges[i].largest;
 	if (ZuNull(m_txLargestAckd[ack.level]) ||
 	    largest > m_txLargestAckd[ack.level])
@@ -7083,7 +7083,7 @@ nextSpace:
   }
 
   bool ackFrameValidTx_(const AckSnapshot &ack) const {
-    for (unsigned i = 0; i < ack.ranges.length(); ++i)
+    for (unsigned i = 0, n = ack.ranges.length(); i < n; ++i)
       if (ack.ranges[i].largest >= m_txPN[ack.level]) return false;
     return true;
   }
@@ -8618,10 +8618,11 @@ nextSpace:
     bool ackEliciting = false;
     bool immediateAck = false;
 
-    while (offset < frames.length()) {
+    unsigned n = frames.length();
+    while (offset < n) {
       unsigned used = 0;
       if (FrameCodec::parse(
-	  ZuBSpan{frames.data() + offset, frames.length() - offset},
+	  ZuBSpan{frames.data() + offset, n - offset},
 	  frame, used) < 0 || !used) {
 	return false;
       }

@@ -487,7 +487,7 @@ void testTxUnackdRandomized()
       inRange = expected[i];
     }
     ZuCHECK(q.spans(0, 512, [&observed](const auto &range) {
-	for (uint64_t i = range.key(); i < range.key() + range.length(); ++i)
+	for (uint64_t i = range.key(), n = i + range.length(); i < n; ++i)
 	  observed[i] = true;
 	return true;
       }), "randomized stream range traversal failed");
