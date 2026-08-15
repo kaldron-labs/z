@@ -1,0 +1,13 @@
+title = "fruit"
+
+[[fruits]]
+name = "apple"
+[fruits.physical]
+color = "red"
+[[fruits.varieties]]
+name = "red delicious"
+
+[[fruits]]
+name = "banana"
+[[fruits.varieties]]
+name = "plantain"

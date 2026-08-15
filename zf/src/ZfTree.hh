@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include <zlib/ZuDateTime.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuDerive.hh>
 
@@ -83,7 +84,9 @@ public:
   ZuDerive(Object, (ZtBuiltin<
       ZtArray<Field, ZtArrayHeapID_<Node_HeapID>>, ObjectSize>));
 
-  using TL = ZuTypeList<Array, Object, String>;
+  using DateTime = ZuDateTime;
+
+  using TL = ZuTypeList<Array, Object, String, DateTime>;
 
   template <typename T>
   using Index = ZuTypeIndex<T, TL>;
@@ -94,7 +97,8 @@ namespace ValueTC {
   enum {
     Array = AnyNode::Index<AnyNode::Array>{},
     Object = AnyNode::Index<AnyNode::Object>{},
-    String = AnyNode::Index<AnyNode::String>{}
+    String = AnyNode::Index<AnyNode::String>{},
+    DateTime = AnyNode::Index<AnyNode::DateTime>{}
   };
 }
 
