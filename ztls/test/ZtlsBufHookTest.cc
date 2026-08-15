@@ -106,7 +106,7 @@ struct LogCapture {
   static bool contains(ZuCSpan haystack, ZuCSpan needle) {
     if (!needle.length()) return true;
     if (needle.length() > haystack.length()) return false;
-    for (unsigned i = 0; i <= haystack.length() - needle.length(); ++i)
+    for (unsigned i = 0, n = haystack.length() - needle.length(); i <= n; ++i)
       if (!memcmp(haystack.data() + i, needle.data(), needle.length()))
 	return true;
     return false;
