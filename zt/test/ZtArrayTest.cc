@@ -531,17 +531,17 @@ void testNonStringArrays()
   {
     ZuArray<ZmRef<RefObj>, 64> owners;
     ZtArray<ZmRef<RefObj>> array;
-    for (unsigned i = 0; i < owners.length(); ++i) {
+    for (unsigned i = 0, n = owners.length(); i < n; ++i) {
       owners[i] = new RefObj;
       array.push(owners[i]);
     }
     bool valid = true;
-    for (unsigned i = 0; i < owners.length(); ++i)
+    for (unsigned i = 0, n = owners.length(); i < n; ++i)
       valid &= owners[i]->refCount() == 2 && array[i] == owners[i];
     ZuCheck(valid);
     array.length(0);
     valid = true;
-    for (unsigned i = 0; i < owners.length(); ++i)
+    for (unsigned i = 0, n = owners.length(); i < n; ++i)
       valid &= owners[i]->refCount() == 1;
     ZuCheck(valid);
   }
@@ -645,7 +645,7 @@ void testNonStringArrays()
     }
     ZuCheck(array.length() == 16);
     bool valid = true;
-    for (unsigned i = 0; i < array.length(); i++)
+    for (unsigned i = 0, n = array.length(); i < n; i++)
       valid &= array[i] == "12345678";
     ZuCheck(valid);
   }
