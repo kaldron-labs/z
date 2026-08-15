@@ -304,8 +304,10 @@ public:
     while (!rx.empty()) {
       int n = 0;
       int64_t consumed = rx.consume(
-	[](ZuBSpan span) -> int64_t { return span.length(); },
-	[this, &n](ZuBSpan span) { n = process(span.data(), span.length()); });
+	[](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+	[this, &n](ZuSpan<uint8_t> span) {
+	  n = process(span.data(), span.length());
+	});
       if (ZuUnlikely(n < 0)) return -1;
       if (ZuUnlikely(consumed < 0)) return -1;
       if (!consumed) return 0;
