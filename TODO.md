@@ -1,5 +1,11 @@
 # TODO
 
+## Zm associative containers
+- consider probing for STL compatibility (`begin`, etc. for associative containers)
+  - `insert` / `emplace`
+  - `iterator_category` is bidirectional
+    - `begin`, `end`
+
 ## ZfCf/ZfYAML/ZfTOML/ZfJSON/ZfURI
 - need `AsMap` below and in alignment with `AsArray`
   - alternative to `AsObject` for situations where keys and values are not known at compile-time and cannot be mapped to C++ structs using `ZfStruct` metadata
