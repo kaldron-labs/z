@@ -422,7 +422,7 @@ struct LogSink {
   static ZeString escaped(ZuCSpan s) {
     ZeString out;
     out.ensure(s.length());
-    for (unsigned i = 0; i < s.length(); ++i) {
+    for (unsigned i = 0, n = s.length(); i < n; ++i) {
       char c = s[i];
       if (c == '"' || c == '\\') { out << '\\' << c; }
       else if (uint8_t(c) < 32) out << '?';
@@ -502,9 +502,10 @@ inline bool parseHTTPDate(ZuCSpan s, time_t &out) {
 
 inline ZuCSpan pathComponent(ZuCSpan path, unsigned &offset)
 {
-  while (offset < path.length() && path[offset] == '/') ++offset;
+  unsigned n = path.length();
+  while (offset < n && path[offset] == '/') ++offset;
   unsigned begin = offset;
-  while (offset < path.length() && path[offset] != '/') ++offset;
+  while (offset < n && path[offset] != '/') ++offset;
   return {path.data() + begin, offset - begin};
 }
 
@@ -541,7 +542,7 @@ inline bool decodeNormalizePath(
     int n = scan.template p<0>();
     if (n < 0) { err = "bad percent escape"; return false; }
     ZuCSpan part{input.data(), unsigned(n)};
-    for (unsigned i = 0; i < part.length(); ++i)
+    for (unsigned i = 0, n = part.length(); i < n; ++i)
       if (!part[i]) { err = "NUL in path"; return false; }
     input.offset(scan.template p<1>());
     unsigned offset = 0;
@@ -597,7 +598,7 @@ inline void hostName(S &host, ZuCSpan host_) {
 inline bool constTimeEqual(ZuCSpan a, ZuCSpan b) {
   if (a.length() != b.length()) return false;
   unsigned char d = 0;
-  for (unsigned i = 0; i < a.length(); ++i) d |= a[i] ^ b[i];
+  for (unsigned i = 0, n = a.length(); i < n; ++i) d |= a[i] ^ b[i];
   return !d;
 }
 
@@ -646,7 +647,7 @@ struct StaticPlanner {
     auto host = ZmScratch(char,
       unsigned(headers.host.length()) + 1, HdrString::VHeap);
     if (state->options.forwards.length()) hostName(host, headers.host);
-    for (unsigned i = 0; i < state->options.forwards.length(); ++i)
+    for (unsigned i = 0, n = state->options.forwards.length(); i < n; ++i)
       if (host == state->options.forwards[i].host)
 	return redirect(req, state->options.forwards[i].url, resp);
     if (state->options.forwardHttps && !req.secure) {
@@ -913,7 +914,7 @@ struct StaticPlanner {
     };
     auto toU64 = [](ZuCSpan s, uint64_t &v) {
       v = 0;
-      for (unsigned i = 0; i < s.length(); ++i) {
+      for (unsigned i = 0, n = s.length(); i < n; ++i) {
 	unsigned digit = unsigned(s[i] - '0');
 	if (v > (UINT64_MAX - digit) / 10) return false;
 	v = v * 10 + digit;

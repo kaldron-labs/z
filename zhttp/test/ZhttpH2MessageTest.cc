@@ -443,7 +443,7 @@ int StreamConsumer::process(Stream, Rx &rx)
 bool find(
   const CapturedFields &fields, ZuCSpan name, ZuCSpan value)
 {
-  for (unsigned i = 0; i < fields.length(); ++i)
+  for (unsigned i = 0, n = fields.length(); i < n; ++i)
     if (fields[i].name == name && fields[i].value == value) return true;
   return false;
 }

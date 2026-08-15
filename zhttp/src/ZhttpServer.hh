@@ -1259,7 +1259,7 @@ struct SrvLink :
   void logicalDisconnected(bool peer) {
     if (notified) return;
     notified = true;
-    for (unsigned i = 0; i < logical.length(); ++i) {
+    for (unsigned i = 0, n = logical.length(); i < n; ++i) {
       logical[i]->slot = QueueSlot::Invalid;
       auto owner = ZuMv(logical[i]->logical);
       if (owner) owner->disconnected_(peer);

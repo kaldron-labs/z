@@ -595,7 +595,7 @@ public:
     bool owned = false;
     {
       ZmGuard<ZmLock> guard(m_lock);
-      for (unsigned i = 0; i < m_fds.length(); ++i)
+      for (unsigned i = 0, n = m_fds.length(); i < n; ++i)
 	if (m_fds[i] == fd) {
 	  m_fds.splice(i, 1);
 	  owned = true;
@@ -645,9 +645,10 @@ bool readRequest(int fd)
 {
   RequestReadBuf buf;
   buf.size(RequestReadMax);
+  unsigned l = buf.size();
   unsigned length = 0;
-  while (length < buf.size()) {
-    ssize_t n = ::recv(fd, buf.data() + length, buf.size() - length, 0);
+  while (length < l) {
+    ssize_t n = ::recv(fd, buf.data() + length, l - length, 0);
     if (n <= 0) return false;
     length += unsigned(n);
     if (length >= 4 && ::memmem(buf.data(), length, "\r\n\r\n", 4))
@@ -660,12 +661,13 @@ bool readRequest(int fd, ZuCSpan target, ZuCSpan authority)
 {
   RequestReadBuf buf;
   buf.size(RequestReadMax);
+  unsigned l = buf.size();
   unsigned length = 0;
   ZtString<> requestLine, authorityLine;
   requestLine << "GET " << target << " HTTP/1.1\r\n";
   authorityLine << authority << "\r\n";
-  while (length < buf.size()) {
-    ssize_t n = ::recv(fd, buf.data() + length, buf.size() - length, 0);
+  while (length < l) {
+    ssize_t n = ::recv(fd, buf.data() + length, l - length, 0);
     if (n <= 0) return false;
     length += unsigned(n);
     if (length >= 4 && ::memmem(buf.data(), length, "\r\n\r\n", 4))
@@ -681,9 +683,10 @@ bool readRequests(int fd, unsigned count)
 {
   RequestReadBuf buf;
   buf.size(RequestReadMax);
+  unsigned l = buf.size();
   unsigned length = 0;
-  while (length < buf.size()) {
-    ssize_t n = ::recv(fd, buf.data() + length, buf.size() - length, 0);
+  while (length < l) {
+    ssize_t n = ::recv(fd, buf.data() + length, l - length, 0);
     if (n <= 0) return false;
     length += unsigned(n);
     unsigned found = 0;
@@ -707,9 +710,10 @@ bool readRequestBody(int fd, ZuCSpan body)
 {
   RequestReadBuf buf;
   buf.size(RequestReadMax);
+  unsigned l = buf.size();
   unsigned length = 0;
-  while (length < buf.size()) {
-    ssize_t n = ::recv(fd, buf.data() + length, buf.size() - length, 0);
+  while (length < l) {
+    ssize_t n = ::recv(fd, buf.data() + length, l - length, 0);
     if (n <= 0) return false;
     length += unsigned(n);
     auto end = static_cast<const uint8_t *>(
@@ -724,10 +728,10 @@ bool readRequestBody(int fd, ZuCSpan body)
 
 bool sendResponse(int fd, ZuCSpan response)
 {
-  unsigned offset = 0;
-  while (offset < response.length()) {
+  unsigned offset = 0, l = response.length();
+  while (offset < l) {
     ssize_t n = ::send(
-      fd, response.data() + offset, response.length() - offset, 0);
+      fd, response.data() + offset, l - offset, 0);
     if (n <= 0) return false;
     offset += unsigned(n);
   }
@@ -738,9 +742,10 @@ bool readRequestKey(int fd, unsigned &key)
 {
   RequestReadBuf buf;
   buf.size(RequestReadMax);
+  unsigned l = buf.size();
   unsigned length = 0;
-  while (length < buf.size()) {
-    ssize_t n = ::recv(fd, buf.data() + length, buf.size() - length, 0);
+  while (length < l) {
+    ssize_t n = ::recv(fd, buf.data() + length, l - length, 0);
     if (n <= 0) return false;
     length += unsigned(n);
     if (length >= 4 && ::memmem(buf.data(), length, "\r\n\r\n", 4)) {
@@ -1339,7 +1344,7 @@ void pipelineCancellation(unsigned cancelAt)
     cancelAt);
   bool resultsOK = app.results.length() == Requests &&
     app.completed() == Requests && requests.length() == Requests;
-  for (unsigned i = 0; i < requests.length(); ++i)
+  for (unsigned i = 0, n = requests.length(); i < n; ++i)
     resultsOK &= requests[i]->completions == 1 &&
       requests[i]->resultCode == (i == cancelAt ?
 	Zhttp::ResultCode::Cancelled : Zhttp::ResultCode::Failed);
@@ -1564,7 +1569,7 @@ void parallelism()
   distribution.length(Links);
   for (unsigned i = 0; i < Links; ++i) distribution[i] = 0;
   bool valid = app.results.length() == Requests;
-  for (unsigned i = 0; i < app.results.length(); ++i) {
+  for (unsigned i = 0, n = app.results.length(); i < n; ++i) {
     const auto &result = app.results[i];
     valid &= result.ok() && result.link < Links;
     if (result.link < Links) ++distribution[result.link];
@@ -2361,7 +2366,7 @@ void multiplePools()
     "each pool supplies its own target and Host authority");
   bool pool0 = false;
   bool pool1 = false;
-  for (unsigned i = 0; i < app.results.length(); ++i) {
+  for (unsigned i = 0, n = app.results.length(); i < n; ++i) {
     pool0 |= app.results[i].ok() && app.results[i].pool == 0;
     pool1 |= app.results[i].ok() && app.results[i].pool == 1;
   }

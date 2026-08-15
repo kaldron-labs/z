@@ -31,7 +31,7 @@ Bytes hex(ZuCSpan value)
   Bytes out;
   unsigned high = 0;
   bool haveHigh = false;
-  for (unsigned i = 0; i < value.length(); ++i) {
+  for (unsigned i = 0, n = value.length(); i < n; ++i) {
     int c = value[i];
     if (c == ' ') continue;
     unsigned digit =
@@ -56,7 +56,7 @@ bool decode(
 {
   decoder.reset();
   fields.length(0);
-  for (unsigned i = 0; i < encoded.length(); ++i)
+  for (unsigned i = 0, n = encoded.length(); i < n; ++i)
     if (decoder.process(
 	ZuSpan<uint8_t>{encoded.data() + i, 1},
 	[&fields](Zhttp::H2::DecodedField field) {

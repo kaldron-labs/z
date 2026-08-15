@@ -576,11 +576,11 @@ public:
   }
   bool valid() const {
     uint64_t n = 0;
-    for (unsigned i = 0; i < m_frames.length(); ++i) {
+    for (unsigned i = 0, l = m_frames.length(); i < l; ++i) {
       if (m_frames[i]->length > m_retainedMax - n) return false;
       n += m_frames[i]->length;
     }
-    for (unsigned i = 0; i < m_data.length(); ++i) {
+    for (unsigned i = 0, l = m_data.length(); i < l; ++i) {
       if (m_data[i]->length > m_retainedMax - n) return false;
       n += m_data[i]->length;
     }
@@ -591,7 +591,7 @@ public:
     commitHPack_();
     m_native.sendHeaders(
       m_streamID, ZuMv(m_frames), m_initialEndStream);
-    for (unsigned i = 0; i < m_data.length(); ++i)
+    for (unsigned i = 0, n = m_data.length(); i < n; ++i)
       m_native.sendData(m_streamID, ZuMv(m_data[i]));
     m_data.length(0);
     if (m_endData)
@@ -1015,10 +1015,10 @@ public:
     if (m_stopping || !frames) return;
     auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return;
-    unsigned admitted = 0;
-    while (admitted < frames.length() && m_frameAdmission.push())
+    unsigned admitted = 0, n = frames.length();
+    while (admitted < n && m_frameAdmission.push())
       ++admitted;
-    if (admitted != frames.length()) {
+    if (admitted != n) {
       if (admitted) m_frameAdmission.pop(admitted);
       streamTxErrorRx_(id, "H2 transmit queue limit exceeded");
       return;
@@ -1629,10 +1629,10 @@ private:
     if (!frames) return;
     auto entry_ = txWindow_(id);
     if (!entry_ || entry_->localEndQueued) return;
-    unsigned admitted = 0;
-    while (admitted < frames.length() && m_frameAdmission.push())
+    unsigned admitted = 0, n = frames.length();
+    while (admitted < n && m_frameAdmission.push())
       ++admitted;
-    if (admitted != frames.length()) {
+    if (admitted != n) {
       if (admitted) m_frameAdmission.pop(admitted);
       streamTxErrorTx_(id, "H2 transmit queue limit exceeded");
       return;

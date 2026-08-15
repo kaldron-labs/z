@@ -63,14 +63,14 @@ struct LifeTrace {
   unsigned count(int event) {
     ZmGuard<ZmLock> guard(lock);
     unsigned n = 0;
-    for (unsigned i = 0; i < events.length(); ++i)
+    for (unsigned i = 0, l = events.length(); i < l; ++i)
       if (events[i] == event) ++n;
     return n;
   }
 
   int index(int event) {
     ZmGuard<ZmLock> guard(lock);
-    for (unsigned i = 0; i < events.length(); ++i)
+    for (unsigned i = 0, n = events.length(); i < n; ++i)
       if (events[i] == event) return int(i);
     return -1;
   }

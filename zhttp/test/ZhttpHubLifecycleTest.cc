@@ -82,7 +82,7 @@ struct Fake {
 
 int index(const Events &events, unsigned value)
 {
-  for (unsigned i = 0; i < events.length(); ++i)
+  for (unsigned i = 0, n = events.length(); i < n; ++i)
     if (events[i] == value) return int(i);
   return -1;
 }

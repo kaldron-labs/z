@@ -239,7 +239,7 @@ void testPrefixIntegers()
     "encode RFC multi-byte prefix integer");
 
   bool splits = true;
-  for (unsigned split = 1; split <= encoded.length(); ++split) {
+  for (unsigned split = 1, n = encoded.length(); split <= n; ++split) {
     Zhttp::Compression::PrefInt decoder;
     uint64_t value = 0;
     int state = decoder.start<5>(encoded[0], value);
@@ -276,7 +276,7 @@ void testPrefixIntegers()
 
 static bool fragmentedString_(ZuBSpan encoded, ZuBSpan expected)
 {
-  for (unsigned split = 1; split <= encoded.length(); ++split) {
+  for (unsigned split = 1, n = encoded.length(); split <= n; ++split) {
     Zhttp::Compression::StringDecoder<HdrBytes> decoder;
     HdrBytes storage;
     ZuBSpan value;
@@ -311,7 +311,7 @@ void testStrings()
   huffman.length(Zhttp::Compression::Huffman::encode(
     huffman.span(), ZuBSpan{"www.example.com"}));
   Zhttp::Compression::putPref(encoded, 0x80, 7, huffman.length());
-  for (unsigned i = 0; i < huffman.length(); ++i)
+  for (unsigned i = 0, n = huffman.length(); i < n; ++i)
     encoded.push(huffman[i]);
   ZuCHECK(fragmentedString_(encoded, "www.example.com"),
     "decode Huffman string at every byte split");

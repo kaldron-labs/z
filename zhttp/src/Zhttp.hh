@@ -504,19 +504,19 @@ public:
 
 private:
   bool findName_(ZuBSpan name) const {
-    for (unsigned i = 0; i < m_entries.length(); ++i)
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i)
       if (m_entries[i].name == name) return true;
     return false;
   }
   bool findExact_(ZuBSpan name, ZuBSpan value) const {
-    for (unsigned i = 0; i < m_entries.length(); ++i)
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i)
       if (m_entries[i].exact && m_entries[i].name == name &&
 	  m_entries[i].value == value)
 	return true;
     return false;
   }
   void removeNameOnly_(ZuBSpan name) {
-    for (unsigned i = 0; i < m_entries.length(); ++i) {
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
       if (m_entries[i].exact || m_entries[i].name != name) continue;
       m_entries.splice(i, 1);
       return;
@@ -607,7 +607,7 @@ private:
   }
   static bool find_(
       const HPackSeeds &entries, ZuBSpan name, ZuBSpan value) {
-    for (unsigned i = 0; i < entries.length(); ++i)
+    for (unsigned i = 0, n = entries.length(); i < n; ++i)
       if (entries[i].name == name && entries[i].value == value)
 	return true;
     return false;
@@ -631,8 +631,8 @@ QPackSeedResult::T installQPackSeeds(
     return QPackSeedResult::Disabled;
   }
   uint64_t used = 0;
-  unsigned count = 0;
-  while (count < seeds.length()) {
+  unsigned count = 0, n = seeds.length();
+  while (count < n) {
     if (seeds[count].size > capacity - used) break;
     used += seeds[count++].size;
   }
@@ -758,7 +758,7 @@ public:
   bool valid() const { return m_valid && m_budget.valid; }
   void commit() {
     if (!valid()) return;
-    for (unsigned i = 0; i < m_entries.length(); ++i)
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i)
       if (!m_lower.sendBuf_(ZuMv(m_entries[i].buf), m_entries[i].final))
 	break;
     m_entries.length(0);

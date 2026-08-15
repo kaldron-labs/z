@@ -914,26 +914,26 @@ PathStatus mapURL(ZuCSpan url, ZuCSpan downloads, Request &request)
   if (!url.match(Scheme)) return PathBadScheme;
   setString_(request.url, url);
 
-  unsigned i = Scheme.length();
+  unsigned i = Scheme.length(), n = url.length();
   unsigned hostStart = i;
-  while (i < url.length() && url[i] != '/' && url[i] != ':' &&
+  while (i < n && url[i] != '/' && url[i] != ':' &&
       url[i] != '?' && url[i] != '#')
     ++i;
   if (i <= hostStart) return PathEmpty;
   setString_(request.host, ZuCSpan{url.data() + hostStart, i - hostStart});
   request.port = DefaultPort;
-  if (i < url.length() && url[i] == ':') {
+  if (i < n && url[i] == ':') {
     unsigned portStart = ++i;
-    while (i < url.length() && url[i] >= '0' && url[i] <= '9') ++i;
+    while (i < n && url[i] >= '0' && url[i] <= '9') ++i;
     if (i <= portStart ||
 	!scanPort_(ZuCSpan{url.data() + portStart, i - portStart},
 	  request.port))
       return PathEmpty;
   }
-  if (i >= url.length()) return PathEmpty;
+  if (i >= n) return PathEmpty;
   if (url[i] != '/') return PathEmpty;
   unsigned pathStart = i;
-  while (i < url.length() && url[i] != '?' && url[i] != '#') ++i;
+  while (i < n && url[i] != '?' && url[i] != '#') ++i;
   ZuCSpan path{url.data() + pathStart, i - pathStart};
   if (!path.length() || path == "/") return PathEmpty;
   setString_(request.path, path);

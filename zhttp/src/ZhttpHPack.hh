@@ -373,7 +373,7 @@ public:
       m_seedState = HPackSeedState::Disabled;
       return true;
     }
-    for (unsigned p = 0; p < plans.length(); ++p) {
+    for (unsigned p = 0, n = plans.length(); p < n; ++p) {
       const Plan &plan = plans[p];
       auto bound = new (m_plans.push()) BoundPlan();
       bound->seedData = plan.entries.data();
@@ -384,20 +384,20 @@ public:
 	  seed.incremental, seed.fallback, seed.size};
       };
       uint64_t total = 0;
-      for (unsigned i = 0; i < plan.entries.length(); ++i)
+      for (unsigned i = 0, l = plan.entries.length(); i < l; ++i)
 	total += plan.entries[i].size;
       if (total > uint32_t(-1) ||
 	  !bound->lookup.init(uint32_t(total)) ||
 	  !bound->lookup.capacity(uint32_t(total)))
 	return false;
-      for (unsigned i = 0; i < plan.entries.length(); ++i)
+      for (unsigned i = 0, l = plan.entries.length(); i < l; ++i)
 	if (!bound->lookup.insert(
 	      {plan.entries[i].name, plan.entries[i].value}))
 	  return false;
       if (!bound->table.init(m_localCapacity) ||
 	  !bound->table.capacity(capacity))
 	return false;
-      for (unsigned i = 0; i < plan.entries.length(); ++i) {
+      for (unsigned i = 0, l = plan.entries.length(); i < l; ++i) {
 	auto seed = bound->seed(i);
 	if (seed.size > capacity - bound->table.used()) break;
 	if (!bound->table.insert({seed.name, seed.value})) return false;

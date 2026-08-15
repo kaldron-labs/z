@@ -188,7 +188,7 @@ inline bool nameOK(ZuBSpan name) {
   if (!name) return false;
   unsigned offset = name[0] == ':';
   if (offset == name.length()) return false;
-  for (unsigned i = offset; i < name.length(); ++i) {
+  for (unsigned i = offset, n = name.length(); i < n; ++i) {
     int c = name[i];
     if (c >= 'A' && c <= 'Z') return false;
     if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
@@ -207,7 +207,7 @@ inline bool nameOK(ZuBSpan name) {
 inline bool uint64(ZuBSpan value, uint64_t &result) {
   if (!value) return false;
   uint64_t n = 0;
-  for (unsigned i = 0; i < value.length(); ++i) {
+  for (unsigned i = 0, l = value.length(); i < l; ++i) {
     unsigned digit = unsigned(value[i] - '0');
     if (digit > 9 || n > (uint64_t(-1) - digit) / 10) return false;
     n = n * 10 + digit;

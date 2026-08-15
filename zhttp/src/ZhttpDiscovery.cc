@@ -282,7 +282,7 @@ DiscoveryError parseHTTPS(
   if (!records.length())
     return error(DiscoveryCode::NoRecord, off);
   unsigned aliases = 0;
-  for (unsigned i = 0; i < records.length(); ++i)
+  for (unsigned i = 0, n = records.length(); i < n; ++i)
     aliases += records[i].alias();
   if (aliases && (aliases != 1 || records.length() != 1))
     return error(DiscoveryCode::Malformed, off);
@@ -375,13 +375,13 @@ void DiscoveryRequest::queried(ZiResolver_::QueryResult result)
     return;
   }
 
-  for (unsigned i = 0; i < records.length(); ++i) {
+  for (unsigned i = 0, n = records.length(); i < n; ++i) {
     if (!records[i].alias()) continue;
     if (m_aliases.length() > m_limits.maxAliasDepth) {
       finish({0, DiscoveryCode::AliasLimit});
       return;
     }
-    for (unsigned j = 0; j < m_aliases.length(); ++j)
+    for (unsigned j = 0, l = m_aliases.length(); j < l; ++j)
       if (m_aliases[j] == records[i].target) {
 	finish({0, DiscoveryCode::AliasLoop});
 	return;
@@ -400,7 +400,7 @@ void DiscoveryRequest::queried(ZiResolver_::QueryResult result)
 
 bool DiscoveryRequest::add(Endpoint endpoint)
 {
-  for (unsigned i = 0; i < m_endpoints.length(); ++i)
+  for (unsigned i = 0, n = m_endpoints.length(); i < n; ++i)
     if (m_endpoints[i].ip == endpoint.ip &&
 	m_endpoints[i].port == endpoint.port &&
 	m_endpoints[i].target == endpoint.target)
@@ -444,18 +444,19 @@ void DiscoveryRequest::resolveNext()
     return;
   }
 
-  while (m_record < m_records.length()) {
+  unsigned n = m_records.length();
+  while (m_record < n) {
     auto &record = m_records[m_record++];
     if (record.unsupportedMandatory || !record.h3 ||
 	(record.noDefaultALPN && !record.hasALPN))
       continue;
     m_target = record.target;
     uint16_t port = record.port ? record.port : m_port;
-    for (unsigned i = 0; i < record.ipv4Hints.length(); ++i)
+    for (unsigned i = 0, n = record.ipv4Hints.length(); i < n; ++i)
       if (!add({m_origin, m_target, m_host, record.ipv4Hints[i], port,
 	    record.priority, EndpointSource::IPv4Hint, Version::H3}))
 	return;
-    for (unsigned i = 0; i < record.ipv6Hints.length(); ++i)
+    for (unsigned i = 0, n = record.ipv6Hints.length(); i < n; ++i)
       if (!add({m_origin, m_target, m_host, record.ipv6Hints[i], port,
 	    record.priority, EndpointSource::IPv6Hint, Version::H3}))
 	return;

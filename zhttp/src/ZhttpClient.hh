@@ -351,7 +351,7 @@ struct Destination {
       host << ip;
     } else {
       host = parsed.host;
-      for (unsigned i = 0; i < host.length(); ++i)
+      for (unsigned i = 0, n = host.length(); i < n; ++i)
 	if (host[i] >= 'A' && host[i] <= 'Z')
 	  host[i] += 'a' - 'A';
     }
@@ -1101,8 +1101,8 @@ public:
 private:
   void stopLinksBatch_() {
     Slots close;
-    unsigned inspected = 0;
-    while (m_stopScan < m_slots.length() &&
+    unsigned inspected = 0, n = m_slots.length();
+    while (m_stopScan < n &&
 	inspected++ < ClientWorkBatch) {
       auto &slot = m_slots[m_stopScan++];
       auto owner = slot.owner.object<void>();
@@ -1111,7 +1111,7 @@ private:
       close.push(slot);
     }
     for (auto &slot: close) slot.close(slot.owner.object<void>());
-    if (m_stopScan < m_slots.length()) {
+    if (m_stopScan < n) {
       this->rxRun([this]() { stopLinksBatch_(); });
       return;
     }
@@ -1362,8 +1362,8 @@ private:
   void disconnectBatch_(
       Active active, unsigned activei, Pending pending, unsigned pendingi,
       bool cancelled, bool peer) {
-    unsigned n = 0;
-    while (n < ClientWorkBatch && activei < active.length()) {
+    unsigned n = 0, l = active.length(), m = pending.length();
+    while (n < ClientWorkBatch && activei < l) {
       auto logical = ZuMv(active[activei++]);
       ++n;
       if (logical->result() == ResultCode::OK)
@@ -1371,7 +1371,7 @@ private:
 	  ResultCode::Cancelled : ResultCode::Indeterminate);
       logical->disconnected_(peer);
     }
-    while (n < ClientWorkBatch && pendingi < pending.length()) {
+    while (n < ClientWorkBatch && pendingi < m) {
       auto logical = ZuMv(pending[pendingi++]);
       ++n;
       if (logical->result() == ResultCode::OK)
@@ -1379,7 +1379,7 @@ private:
 	  ResultCode::Cancelled : ResultCode::Unprocessed);
       logical->connectFailed_(false);
     }
-    if (activei < active.length() || pendingi < pending.length()) {
+    if (activei < l || pendingi < m) {
       this->app()->rxRun([
 	link = ZmMkRef(this), active = ZuMv(active), activei,
 	pending = ZuMv(pending), pendingi, cancelled, peer]() mutable {
@@ -1922,8 +1922,8 @@ public:
 private:
   void stopLinksBatch_() {
     Slots close;
-    unsigned inspected = 0;
-    while (m_stopScan < m_slots.length() &&
+    unsigned inspected = 0, n = m_slots.length();
+    while (m_stopScan < n &&
 	inspected++ < ClientWorkBatch) {
       auto &slot = m_slots[m_stopScan++];
       if (!slot->isUp() || slot->stopping())
@@ -1932,7 +1932,7 @@ private:
       close.push(slot);
     }
     for (auto &link: close) link->beginStop();
-    if (m_stopScan < m_slots.length()) {
+    if (m_stopScan < n) {
       this->rxRun([this]() { stopLinksBatch_(); });
       return;
     }
@@ -2342,8 +2342,9 @@ private:
       H1Active h1, unsigned h1i, Active active, unsigned activei,
       Pending pending, unsigned pendingi, unsigned reconnectHead,
       bool replacing, bool cancelled, bool peer) {
-    unsigned n = 0;
-    while (n < ClientWorkBatch && h1i < h1.length()) {
+    unsigned n = 0, l = h1.length(), m = active.length(),
+      k = pending.length();
+    while (n < ClientWorkBatch && h1i < l) {
       auto logical = ZuMv(h1[h1i++]);
       ++n;
       if (logical->result() == ResultCode::OK)
@@ -2351,7 +2352,7 @@ private:
 	  ResultCode::Cancelled : ResultCode::Indeterminate);
       logical->disconnected_(peer);
     }
-    while (n < ClientWorkBatch && activei < active.length()) {
+    while (n < ClientWorkBatch && activei < m) {
       auto logical = ZuMv(active[activei++]);
       ++n;
       if (logical->result() == ResultCode::OK)
@@ -2360,9 +2361,9 @@ private:
       logical->disconnected_(peer);
     }
     if (replacing)
-      pendingi = pending.length();
+      pendingi = k;
     else
-      while (n < ClientWorkBatch && pendingi < pending.length()) {
+      while (n < ClientWorkBatch && pendingi < k) {
 	auto &choice = pending[pendingi++];
 	++n;
 	if (cancelled)
@@ -2370,8 +2371,7 @@ private:
 	else
 	  fail_(choice, false);
       }
-    if (h1i < h1.length() || activei < active.length() ||
-	pendingi < pending.length()) {
+    if (h1i < l || activei < m || pendingi < k) {
       this->app()->rxRun([
 	link = ZmMkRef(this), h1 = ZuMv(h1), h1i,
 	active = ZuMv(active), activei, pending = ZuMv(pending), pendingi,
@@ -5575,7 +5575,7 @@ public:
     m_liveReqs.size(config.concurrency());
     m_links.size(config.links());
     m_free.size(config.concurrency());
-    for (unsigned i = 0; i < config.concurrency(); ++i) {
+    for (unsigned i = 0, n = config.concurrency(); i < n; ++i) {
       RequestSlotRef request = new RequestSlot{this, i};
 #ifdef ZmObject_DEBUG
       request->ZmObject::debug();
@@ -5583,7 +5583,7 @@ public:
       m_liveReqs.push(ZuMv(request));
       m_free.push(config.concurrency() - i - 1);
     }
-    for (unsigned i = 0; i < config.links(); ++i) {
+    for (unsigned i = 0, n = config.links(); i < n; ++i) {
       PoolLinkRef link = new PoolLink{this, i};
 #ifdef ZmObject_DEBUG
       link->ZmObject::debug();
@@ -6284,8 +6284,8 @@ private:
   }
 
   void dispatchPending_() {
-    unsigned work = 0;
-    while (m_pendingHead < m_pending.length() &&
+    unsigned work = 0, n = m_pending.length();
+    while (m_pendingHead < n &&
 	work < ClientWorkBatch) {
       unsigned slot = m_pending[m_pendingHead];
       auto &attempt = *m_liveReqs[slot];
@@ -6481,8 +6481,8 @@ private:
 
   void routeTransitionBatch_(LiveReq *origin) {
     if (!m_routeTransition) return;
-    unsigned n = 0;
-    while (m_routeTransitionScan < m_liveReqs.length() &&
+    unsigned n = 0, l = m_liveReqs.length();
+    while (m_routeTransitionScan < l &&
 	++n <= ClientWorkBatch) {
       auto &other = *m_liveReqs[m_routeTransitionScan++];
       if (&other == origin || !other.request ||
@@ -6505,19 +6505,19 @@ private:
 	  completeAttempt_(other, other.terminal);
       }
     }
-    if (m_routeTransitionScan < m_liveReqs.length()) {
+    if (m_routeTransitionScan < l) {
       rxRun_([this, origin]() { routeTransitionBatch_(origin); });
       return;
     }
-    n = 0;
-    while (m_routeTransitionClose < m_links.length() &&
+    n = 0, l = m_links.length();
+    while (m_routeTransitionClose < l &&
 	++n <= ClientWorkBatch) {
       auto &poolLink = m_links[m_routeTransitionClose++];
       if (poolLink->native() &&
 	  poolLink->transport() == Transport::QUIC)
 	m_quic.txFailed(poolLink->slot(), poolLink->nativeGeneration());
     }
-    if (m_routeTransitionClose < m_links.length()) {
+    if (m_routeTransitionClose < l) {
       rxRun_([this, origin]() { routeTransitionBatch_(origin); });
       return;
     }
@@ -7315,10 +7315,10 @@ public:
 
   bool start() {
     if (!m_inited || m_started) return false;
-    for (unsigned i = 0; i < m_pools.length(); ++i)
+    for (unsigned i = 0, n = m_pools.length(); i < n; ++i)
       if (!m_pools[i]) return false;
     ZiResolver::start();
-    for (unsigned i = 0; i < m_pools.length(); ++i)
+    for (unsigned i = 0, n = m_pools.length(); i < n; ++i)
       if (!m_pools[i]->start()) {
 	for (unsigned j = 0; j < i; ++j) m_pools[j]->stop();
 	return false;

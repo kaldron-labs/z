@@ -223,7 +223,7 @@ struct AltSvcValuesView {
   ZuSpan<const AltSvcValue>	values;
 
   template <typename S> void print(S &s) const {
-    for (unsigned i = 0; i < values.length(); ++i) {
+    for (unsigned i = 0, n = values.length(); i < n; ++i) {
       if (i) s << ", ";
       s << values[i];
     }
@@ -316,7 +316,7 @@ public:
     if (!node) return false;
     auto &cached = node->val().values;
     unsigned n = 0;
-    for (unsigned i = 0; i < cached.length(); ++i) {
+    for (unsigned i = 0, m = cached.length(); i < m; ++i) {
       if (cached[i].expires <= now) continue;
       if (n != i) cached[n] = ZuMv(cached[i]);
       l(cached[n].value.view(origin.view()));
