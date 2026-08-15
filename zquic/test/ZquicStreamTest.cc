@@ -347,7 +347,7 @@ struct TestLink :
     Zquic::PktBuild build;
     if (!Base::buildRetxCrypto_(level, build, ref)) return false;
     unsigned n = 0;
-    for (unsigned i = 0; i < build.count(); ++i) {
+    for (unsigned i = 0, l = build.count(); i < l; ++i) {
       if (build.data()[i].len > size - n) return false;
       memcpy(b + n, build.data()[i].base, build.data()[i].len);
       n += unsigned(build.data()[i].len);
@@ -799,14 +799,14 @@ static void removeTestLog_(const Zi::Path &path)
 static unsigned parseJSONSeq_(ZuCSpan data)
 {
   unsigned n = 0;
-  unsigned i = 0;
-  while (i < data.length()) {
-    ZuCSpan rest{data.data() + i, data.length() - i};
+  unsigned i = 0, l = data.length();
+  while (i < l) {
+    ZuCSpan rest{data.data() + i, l - i};
     if (!rest.match<"\x1e">()) return 0;
     ++i;
     unsigned start = i;
-    while (i < data.length() && data[i] != '\n') ++i;
-    if (i >= data.length()) return 0;
+    while (i < l && data[i] != '\n') ++i;
+    if (i >= l) return 0;
     ZtString<> json;
     json << ZuCSpan{data.data() + start, i - start};
     auto scan = ZfJSON::scan(json);
@@ -2876,7 +2876,7 @@ void testInvalidClosedStreamActivity()
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(noisy->id()), 4096);
   ZuCHECK(parseFrame_(b, n, frame), "threshold frame setup failed");
-  for (unsigned i = 0; i < TestLink::suspiciousStreamThreshold(); ++i)
+  for (unsigned i = 0, n = TestLink::suspiciousStreamThreshold(); i < n; ++i)
     ZuCHECK(threshold->applyMaxStreamData(frame),
       "closed-stream threshold frame was rejected");
 #ifdef Zquic_DEBUG

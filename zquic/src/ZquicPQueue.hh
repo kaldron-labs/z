@@ -235,7 +235,8 @@ public:
       --i;
     unsigned begin = i;
     uint64_t removed = 0;
-    while (i < m_ranges.length()) {
+    unsigned n = m_ranges.length();
+    while (i < n) {
       uint64_t rangeFirst = m_ranges[i].offset;
       uint64_t rangeEnd = end_(m_ranges[i]);
       if (end < rangeFirst) break;
@@ -268,7 +269,8 @@ public:
     unsigned begin = i;
     uint64_t removed = 0;
     ZuArray<TxUnackdRange, 2> survivors;
-    while (i < m_ranges.length()) {
+    unsigned n = m_ranges.length();
+    while (i < n) {
       const TxUnackdRange &range = m_ranges[i];
       uint64_t first = range.offset;
       uint64_t rangeEnd = end_(range);
@@ -282,7 +284,7 @@ public:
     }
     if (i == begin) return false;
     uint64_t retained = 0;
-    for (unsigned j = 0; j < survivors.length(); ++j)
+    for (unsigned j = 0, n = survivors.length(); j < n; ++j)
       retained += survivors[j].length();
     m_ranges.splice(begin, i - begin, survivors.cspan());
     m_length = m_length - removed + retained;
@@ -305,7 +307,7 @@ public:
     }
     unsigned i = lowerBound_(offset);
     if (i && end_(m_ranges[i - 1]) > offset) --i;
-    for (; i < m_ranges.length(); ++i) {
+    for (unsigned n = m_ranges.length(); i < n; ++i) {
       uint64_t first = m_ranges[i].offset;
       if (first >= end) break;
       if (!l(m_ranges[i])) return false;
@@ -343,7 +345,7 @@ public:
   bool verify() const {
     if (m_index) return m_index->verify();
     uint64_t length = 0;
-    for (unsigned i = 0; i < m_ranges.length(); ++i) {
+    for (unsigned i = 0, n = m_ranges.length(); i < n; ++i) {
       if (!m_ranges[i]) return false;
       if (m_ranges[i].offset > uint64_t(-1) - m_ranges[i].length())
 	return false;
@@ -360,7 +362,7 @@ public:
 private:
   void promote_() {
     m_index = new Indexed{0};
-    for (unsigned i = 0; i < m_ranges.length(); ++i)
+    for (unsigned i = 0, n = m_ranges.length(); i < n; ++i)
       m_index->add(new Indexed::Node{m_ranges[i]});
     m_ranges.clear();
 #ifdef ZDEBUG
@@ -416,7 +418,7 @@ private:
       if (rangeEnd > end)
 	survivors.push(slice_(range, end, rangeEnd));
     }
-    for (unsigned i = 0; i < survivors.length(); ++i)
+    for (unsigned i = 0, n = survivors.length(); i < n; ++i)
       addIndexed_(survivors[i]);
     return changed;
   }
@@ -518,7 +520,7 @@ template <typename Spans>
 inline uint64_t rxSpanBytes(const Spans &spans)
 {
   uint64_t bytes = 0;
-  for (unsigned i = 0; i < spans.length(); ++i) bytes += spans[i].length();
+  for (unsigned i = 0, n = spans.length(); i < n; ++i) bytes += spans[i].length();
   return bytes;
 }
 
@@ -527,7 +529,7 @@ inline bool queueRxSpans(
   const Spans &spans, uint64_t srcOffset, ZuBSpan payload,
   Alloc alloc, Enqueue enqueue)
 {
-  for (unsigned i = 0; i < spans.length(); ++i) {
+  for (unsigned i = 0, n = spans.length(); i < n; ++i) {
     uint64_t payloadOffset = spans[i].first - srcOffset;
     uint64_t length64 = spans[i].length();
     if (payloadOffset > payload.length() ||

@@ -685,7 +685,7 @@ private:
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx queue outside Rx thread", return false);
     if (!packet) return false;
-    for (unsigned i = 0; i < spans.length(); ++i) {
+    for (unsigned i = 0, n = spans.length(); i < n; ++i) {
       uint64_t payloadOffset = spans[i].first - frame.offset;
       uint64_t length64 = spans[i].length();
       if (payloadOffset > frame.payload.length() ||

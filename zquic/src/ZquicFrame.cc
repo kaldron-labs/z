@@ -31,11 +31,13 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
   f.reset();
 
   switch (t) {
-    case 0x00:
+    case 0x00: {
       f.type = FrameType::Padding;
-      while (o < in.length() && !in[o]) ++o;
+      unsigned n = in.length();
+      while (o < n && !in[o]) ++o;
       used = o;
       return 0;
+    }
     case 0x01:
       f.type = FrameType::Ping;
       used = o;

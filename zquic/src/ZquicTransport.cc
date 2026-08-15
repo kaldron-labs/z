@@ -186,7 +186,8 @@ int TransportParams::decode(ZuBSpan in)
 {
   *this = {};
   unsigned o = 0;
-  while (o < in.length()) {
+  unsigned n = in.length();
+  while (o < n) {
     uint64_t id = 0, len = 0;
     unsigned n = 0;
     if (VarInt::decode(ZuBSpan{in.data() + o, in.length() - o}, id, n) < 0)

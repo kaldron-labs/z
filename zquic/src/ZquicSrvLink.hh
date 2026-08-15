@@ -650,7 +650,7 @@ private:
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server frame gating outside Tx thread", return false);
     if (!recordRefs) return true;
-    for (unsigned i = 0; i < recordRefs->count(); ++i)
+    for (unsigned i = 0, n = recordRefs->count(); i < n; ++i)
       if (!app()->sendFrame((*recordRefs)[i])) return false;
     return true;
   }

@@ -1188,7 +1188,7 @@ void testRejectedTokenQLog()
 
   Zquic::TokenSecret secret;
   secret.length(Zquic::AddressToken::SecretLength);
-  for (unsigned i = 0; i < secret.length(); ++i) secret[i] = uint8_t(i + 1);
+  for (unsigned i = 0, n = secret.length(); i < n; ++i) secret[i] = uint8_t(i + 1);
 
   ZiMultiplex mx(
       ZiMxParams()

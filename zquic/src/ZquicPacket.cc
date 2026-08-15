@@ -251,7 +251,7 @@ int Pkt::parseVerNeg(
   LongHdr h;
   int o = parseLong(p, h);
   if (o < 0 || ((p.length() - unsigned(o)) % 4)) return -1;
-  for (unsigned i = unsigned(o); i < p.length(); i += 4) {
+  for (unsigned i = unsigned(o), n = p.length(); i < n; i += 4) {
     if (nVersions >= capacity) return -1;
     versions[nVersions++] = load32_(p.data() + i);
   }
