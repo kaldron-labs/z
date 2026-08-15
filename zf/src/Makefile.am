@@ -10,7 +10,7 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZfLib.hh ZfStruct.hh ZfJSON.hh ZfURI.hh ZfCLI.hh ZfASN1.hh ZfCSV.hh \
-	ZfCf.hh
+	ZfTree.hh ZfTreeLoad.hh ZfCf.hh
 lib_LTLIBRARIES = libZf.la
 libZf_la_SOURCES = \
 	ZfLib.cc ZfStruct.cc ZfJSON.cc ZfURI.cc ZfCLI.cc ZfCSV.cc ZfCf.cc
