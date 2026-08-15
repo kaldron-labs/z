@@ -38,7 +38,7 @@ bool parseEndpoint(ZuCSpan s, ZiIP &ip, unsigned &port)
   } else {
     int colon = -1;
     bool multiColon = false;
-    for (unsigned i = 0; i < s.length(); ++i) {
+    for (unsigned i = 0, n = s.length(); i < n; ++i) {
       if (s[i] != ':') continue;
       if (colon >= 0) multiColon = true;
       colon = i;

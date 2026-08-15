@@ -86,7 +86,7 @@ private:
   }
 
   static void put(uint8_t *&ptr, ZuBSpan data) {
-    for (unsigned i = 0; i < data.length(); i++) *ptr++ = data[i];
+    for (unsigned i = 0, n = data.length(); i < n; i++) *ptr++ = data[i];
   }
 
   bool question(

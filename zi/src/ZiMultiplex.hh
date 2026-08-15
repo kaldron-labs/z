@@ -353,7 +353,7 @@ public:
     if (type == ZiIPType::V4 && !!m_mif && m_mif.type() != ZiIPType::V4)
       return false;
     if (type == ZiIPType::V6 && !!m_mif) return false;
-    for (unsigned i = 0; i < m_mreqs.length(); i++)
+    for (unsigned i = 0, n = m_mreqs.length(); i < n; i++)
       if (m_mreqs[i].type() != type || !m_mreqs[i].addr().multicast())
 	return false;
     return true;
@@ -435,7 +435,7 @@ public:
     s << "flags=" << Map::Print{m_flags};
     if (m_flags & Multicast()) {
       s << " mreqs={";
-      for (unsigned i = 0; i < m_mreqs.length(); i++) {
+      for (unsigned i = 0, n = m_mreqs.length(); i < n; i++) {
 	if (i) s << ',';
 	s << m_mreqs[i];
       }
