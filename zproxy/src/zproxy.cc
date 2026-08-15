@@ -449,7 +449,7 @@ void parseAddr(const S &s, ZiIP &ip, uint16_t &port) {
   } else {
     int colon = -1;
     bool multiColon = false;
-    for (unsigned i = 0; i < a.length(); ++i) {
+    for (unsigned i = 0, n = a.length(); i < n; ++i) {
       if (a[i] != ':') continue;
       if (colon >= 0) multiColon = true;
       colon = i;
@@ -1846,7 +1846,8 @@ int main(int argc_, char **argv)
     ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
     ZiLog::start();
     ZtString<> cmd(1024);
-    while (fgets(cmd.data(), cmd.size() - 1, stdin)) {
+    unsigned n = cmd.size() - 1;
+    while (fgets(cmd.data(), n, stdin)) {
       cmd.calcLength();
       cmd.chomp();
       if (app->exec(cmd)) break;
