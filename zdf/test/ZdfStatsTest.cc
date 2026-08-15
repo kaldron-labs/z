@@ -13,7 +13,7 @@ using namespace ZuTestUtil;
 
 void describe(const Zdf::StatsTree<> &w) {
   std::cerr << "iteration\n";
-  for (auto i = w.begin(); i != w.end(); ++i)
+  for (auto i = w.begin(), n = w.end(); i != n; ++i)
     std::cerr << i->first << ' ' << i->second << '\n';
   std::cerr << "\norder\n";
   for (unsigned i = 0,n = w.count(); i < n; i++) {
