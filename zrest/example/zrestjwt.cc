@@ -182,7 +182,7 @@ bool jwtValidate(
 {
   if (!secret || !token || token.length() > JWTMax || now <= 0) return false;
   int first = -1, second = -1;
-  for (unsigned i = 0; i < token.length(); ++i) {
+  for (unsigned i = 0, n = token.length(); i < n; ++i) {
     if (token[i] != '.') continue;
     if (first < 0) first = i;
     else if (second < 0) second = i;

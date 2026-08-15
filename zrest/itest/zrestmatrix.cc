@@ -76,7 +76,7 @@ static bool spawn(Child &child, ZuCSpan name, Command &command)
   int fds[2];
   if (pipe(fds)) return false;
   MatrixArgv argv;
-  for (unsigned i = 0; i < command.args.length(); ++i)
+  for (unsigned i = 0, n = command.args.length(); i < n; ++i)
     argv.push(command.args[i].data());
   argv.push(nullptr);
   pid_t pid = fork();
@@ -180,14 +180,14 @@ static bool pongIDs(ZuCSpan log, unsigned expected)
 {
   static constexpr ZuCSpan prefix{"event=pong id="};
   ZmBitmap seen;
-  unsigned offset = 0, count = 0;
-  while (offset < log.length()) {
+  unsigned offset = 0, count = 0, l = log.length();
+  while (offset < l) {
     int found = findAfter(log, prefix, offset);
     if (found < 0) break;
     unsigned valueOffset = unsigned(found) + prefix.length();
     ZuBox<unsigned> value;
     int n = value.scan(log.data() + valueOffset,
-      log.length() - valueOffset);
+      l - valueOffset);
     if (n <= 0 || value >= expected || seen.get(value)) return false;
     seen.set(value);
     ++count;
