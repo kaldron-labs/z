@@ -210,9 +210,10 @@ void Globber::init(
   }
   auto quoteFn = this->quoteFn();
   off = pqoff;
-  while (off < path.length()) {
+  unsigned l = path.length();
+  while (off < l) {
     uint32_t c;
-    unsigned n = ZuUTF8::in(&path[off], path.length() - off, c);
+    unsigned n = ZuUTF8::in(&path[off], l - off, c);
     if (!n) break;
     if (quoteFn(c)) { replace << '\\'; ++rspan; ++m_lspan; }
     replace << ZuBSpan(&path[off], n);
@@ -278,9 +279,10 @@ skip:
     }
   unsigned off = 0;
   auto quoteFn = this->quoteFn();
-  while (off < leaf.length()) {
+  unsigned l = leaf.length();
+  while (off < l) {
     uint32_t c;
-    unsigned n = ZuUTF8::in(&leaf[off], leaf.length() - off, c);
+    unsigned n = ZuUTF8::in(&leaf[off], l - off, c);
     if (!n) break;
     if (quoteFn(c)) { replace << '\\'; ++rspan; }
     replace << ZuBSpan(&leaf[off], n);
