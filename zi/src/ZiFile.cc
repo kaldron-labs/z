@@ -332,7 +332,7 @@ static bool ZiFile_relativeLeaf(const ZiFile::Path &name)
 {
   if (!name) return false;
   if (ZiFile::absolute(name)) return false;
-  for (unsigned i = 0; i < name.length(); ++i) {
+  for (unsigned i = 0, n = name.length(); i < n; ++i) {
 #ifndef _WIN32
     if (name[i] == '/') return false;
 #else

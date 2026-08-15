@@ -83,7 +83,7 @@ static uint32_t u32(const uint8_t *ptr)
 static void setBuf(DNSBuf &buf, ZuBSpan data)
 {
   buf.length(data.length());
-  for (unsigned i = 0; i < data.length(); i++) buf[i] = data[i];
+  for (unsigned i = 0, n = data.length(); i < n; i++) buf[i] = data[i];
 }
 
 static bool dnsName(

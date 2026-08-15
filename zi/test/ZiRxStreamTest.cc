@@ -179,7 +179,7 @@ void testConsumePaddingAcrossQueuedBuffers()
   int64_t consumed = stream.consume<2>(
     [prevCR = false](ZuSpan<uint8_t> span) mutable -> int64_t {
       if (prevCR && span[0] == '\n') return 1;
-      for (unsigned i = 1; i < span.length(); ++i)
+      for (unsigned i = 1, n = span.length(); i < n; ++i)
 	if (span[i - 1] == '\r' && span[i] == '\n')
 	  return i + 1;
       prevCR = span[span.length() - 1] == '\r';

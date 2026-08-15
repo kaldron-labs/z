@@ -100,14 +100,14 @@ private:
   }
 
   static void put(uint8_t *&ptr, ZuBSpan data) {
-    for (unsigned i = 0; i < data.length(); i++) *ptr++ = data[i];
+    for (unsigned i = 0, n = data.length(); i < n; i++) *ptr++ = data[i];
   }
 
   static void putName(uint8_t *&ptr, ZuCSpan name) {
-    unsigned off = 0;
-    while (off < name.length()) {
+    unsigned off = 0, n = name.length();
+    while (off < n) {
       unsigned end = off;
-      while (end < name.length() && name[end] != '.') ++end;
+      while (end < n && name[end] != '.') ++end;
       *ptr++ = uint8_t(end - off);
       for (unsigned i = off; i < end; i++) *ptr++ = name[i];
       off = end + 1;
