@@ -170,7 +170,7 @@ private:
   }
 
   static ZuBSpan headerName_(ZuBSpan name) {
-    for (unsigned i = 0; i < name.length(); ++i)
+    for (unsigned i = 0, n = name.length(); i < n; ++i)
       if (!name[i]) {
 	name = {name.data(), i};
 	break;

@@ -368,7 +368,7 @@ void putBytes(Bytes &out, ZuBSpan value) {
     if (value) memcpy(ptr, value.data(), value.length());
     out.length(offset + value.length());
   } else {
-    for (unsigned i = 0; i < value.length(); ++i)
+    for (unsigned i = 0, n = value.length(); i < n; ++i)
       out.push(uint8_t(value[i]));
   }
 }

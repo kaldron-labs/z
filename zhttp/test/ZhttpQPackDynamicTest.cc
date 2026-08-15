@@ -17,12 +17,12 @@ using namespace ZuTestUtil;
 
 static void appendSpan(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 {
-  for (unsigned i = 0; i < s.length(); ++i) bytes.push(uint8_t(s[i]));
+  for (unsigned i = 0, n = s.length(); i < n; ++i) bytes.push(uint8_t(s[i]));
 }
 
 static void appendBytes(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 {
-  for (unsigned i = 0; i < s.length(); ++i) bytes.push(s[i]);
+  for (unsigned i = 0, n = s.length(); i < n; ++i) bytes.push(s[i]);
 }
 
 namespace ZhttpQPackDynamicTest_ {
@@ -980,7 +980,7 @@ static Zhttp::H3::HdrBytes messageHeaders(uint64_t length)
 static bool pushSplit(
   ParserStream &parser, const Zhttp::H3::HdrBytes &bytes)
 {
-  for (unsigned i = 0; i < bytes.length(); ++i) {
+  for (unsigned i = 0, n = bytes.length(); i < n; ++i) {
     Zhttp::H3::HdrBytes byte;
     byte.push(bytes[i]);
     parser.push(byte);

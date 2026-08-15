@@ -180,7 +180,7 @@ bool QPackRxTable::duplicate(uint64_t relativeIndex)
 
   bool evictsSrc = false;
   uint32_t used = usedBytes_;
-  for (uint32_t head = head_; head < entries.length() &&
+  for (uint32_t head = head_, l = entries.length(); head < l &&
       used + n > capacityBytes_; ++head) {
     if (head == src) {
       evictsSrc = true;
@@ -372,7 +372,8 @@ bool QPackTxTable::insert(
   }
   uint32_t n = qpackEntrySize_(name, value);
   if (n > capacityBytes_) return false;
-  while (orderHead_ < order.length() && usedBytes_ + n > capacityBytes_)
+  unsigned l = order.length();
+  while (orderHead_ < l && usedBytes_ + n > capacityBytes_)
     if (!dropOldest()) return false;
   if (usedBytes_ + n > capacityBytes_) return false;
   uint64_t nextAbs = insertCount_;
@@ -421,7 +422,8 @@ bool QPackTxTable::insertView(Header field, uint64_t *abs)
   }
   uint32_t n = qpackEntrySize_(field.name, field.value);
   if (n > capacityBytes_) return false;
-  while (orderHead_ < order.length() && usedBytes_ + n > capacityBytes_)
+  unsigned l = order.length();
+  while (orderHead_ < l && usedBytes_ + n > capacityBytes_)
     if (!dropOldest()) return false;
   if (usedBytes_ + n > capacityBytes_) return false;
   uint64_t nextAbs = insertCount_;
@@ -463,7 +465,8 @@ bool QPackTxTable::insertView(Header field, uint64_t *abs)
 
 bool QPackTxTable::evict()
 {
-  while (orderHead_ < order.length() && usedBytes_ > capacityBytes_)
+  unsigned n = order.length();
+  while (orderHead_ < n && usedBytes_ > capacityBytes_)
     if (!dropOldest()) return false;
   return usedBytes_ <= capacityBytes_;
 }
@@ -499,7 +502,7 @@ void QPackTxTable::rebuildHashes()
   if (!exact || !names) return;
   exact->clean();
   names->clean();
-  for (unsigned i = orderHead_; i < order.length(); ++i) {
+  for (unsigned i = orderHead_, n = order.length(); i < n; ++i) {
     QPackTxHashEntry h;
     h.index = i;
     h.key = {order[i].name, order[i].value};

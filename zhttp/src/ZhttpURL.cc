@@ -55,7 +55,7 @@ URLParseError port(
 {
   if (!s) return error(URLParseCode::InvalidPort, offset);
   unsigned n = 0;
-  for (unsigned i = 0; i < s.length(); ++i) {
+  for (unsigned i = 0, l = s.length(); i < l; ++i) {
     if (!digit(s[i])) return error(URLParseCode::InvalidPort, offset + i);
     n = n * 10 + unsigned(s[i] - '0');
     if (n > 65535) return error(URLParseCode::InvalidPort, offset + i);
@@ -68,7 +68,7 @@ URLParseError port(
 
 bool regName(ZuBSpan s)
 {
-  for (unsigned i = 0; i < s.length(); ++i) {
+  for (unsigned i = 0, n = s.length(); i < n; ++i) {
     unsigned c = s[i];
     if (alnum(c) || c == '-' || c == '.' || c == '_' || c == '~' ||
 	c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' ||
@@ -92,7 +92,7 @@ URLParseError authority(
   parsed.raw = in;
   parsed.port = defltPort;
   if (!in) return error(URLParseCode::MissingHost, offset);
-  for (unsigned i = 0; i < in.length(); ++i)
+  for (unsigned i = 0, n = in.length(); i < n; ++i)
     if (ctl(in[i]) || in[i] == '@')
       return error(in[i] == '@' ? URLParseCode::InvalidAuthority :
 	URLParseCode::InvalidCharacter, offset + i);
@@ -116,7 +116,7 @@ URLParseError authority(
     }
   } else {
     int colon = -1;
-    for (unsigned i = 0; i < in.length(); ++i) {
+    for (unsigned i = 0, n = in.length(); i < n; ++i) {
       if (in[i] != ':') continue;
       if (colon >= 0) return error(URLParseCode::InvalidAuthority, offset + i);
       colon = i;
@@ -174,7 +174,7 @@ bool tokenChar(unsigned c)
 int schemeEnd(ZuBSpan s)
 {
   if (!s || !alpha(s[0])) return -1;
-  for (unsigned i = 1; i < s.length(); ++i) {
+  for (unsigned i = 1, n = s.length(); i < n; ++i) {
     if (s[i] == ':') return i;
     if (!schemeChar(s[i])) return -1;
   }
@@ -183,7 +183,7 @@ int schemeEnd(ZuBSpan s)
 
 int invalidText(ZuBSpan s, bool fragment)
 {
-  for (unsigned i = 0; i < s.length(); ++i) {
+  for (unsigned i = 0, n = s.length(); i < n; ++i) {
     unsigned c = s[i];
     if (ctl(c) || (!fragment && c == '#')) return i;
     if (c == '%' &&
@@ -324,8 +324,8 @@ URLView::URLView(ZuSpan<uint8_t> input) : raw{input}
   }
 
   unsigned authStart = colon + 3;
-  unsigned authEnd = authStart;
-  while (authEnd < raw.length() && raw[authEnd] != '/' &&
+  unsigned authEnd = authStart, n = raw.length();
+  while (authEnd < n && raw[authEnd] != '/' &&
       raw[authEnd] != '?' && raw[authEnd] != '#') ++authEnd;
   authorityRaw = {raw.data() + authStart, authEnd - authStart};
   AuthorityView a;
@@ -340,7 +340,7 @@ URLView::URLView(ZuSpan<uint8_t> input) : raw{input}
 
   unsigned queryAt = raw.length();
   unsigned fragmentAt = raw.length();
-  for (unsigned i = authEnd; i < raw.length(); ++i) {
+  for (unsigned i = authEnd; i < n; ++i) {
     if (raw[i] == '#' && fragmentAt == raw.length()) {
       fragmentAt = i;
       break;
@@ -476,8 +476,8 @@ URLParseError URL::resolve(const URLView &base, ZuBSpan ref)
 	unsigned(colon + 2) >= ref.length() ||
 	ref[colon + 1] != '/' || ref[colon + 2] != '/')
       return assign(fullRef);
-    unsigned pathStart = colon + 3;
-    while (pathStart < ref.length() && ref[pathStart] != '/' &&
+    unsigned pathStart = colon + 3, n = ref.length();
+    while (pathStart < n && ref[pathStart] != '/' &&
 	ref[pathStart] != '?') ++pathStart;
     URLString candidate;
     appendAbsoluteReference(candidate, ref, pathStart);
@@ -486,8 +486,8 @@ URLParseError URL::resolve(const URLView &base, ZuBSpan ref)
   }
 
   if (ref.match("//")) {
-    unsigned pathStart = 2;
-    while (pathStart < ref.length() && ref[pathStart] != '/' &&
+    unsigned pathStart = 2, n = ref.length();
+    while (pathStart < n && ref[pathStart] != '/' &&
 	ref[pathStart] != '?') ++pathStart;
     URLString candidate;
     candidate << Scheme::name(base.scheme) << ':';
@@ -515,7 +515,7 @@ URLParseError URL::resolve(const URLView &base, ZuBSpan ref)
       candidate << refPath;
     } else {
       int slash = -1;
-      for (unsigned i = 0; i < base.path.length(); ++i)
+      for (unsigned i = 0, n = base.path.length(); i < n; ++i)
 	if (base.path[i] == '/') slash = i;
       if (slash >= 0)
 	candidate << ZuBSpan{base.path.data(), unsigned(slash + 1)};
@@ -628,7 +628,7 @@ TargetParseError Target::fromPseudo(
     if (!tokenChar(protocolText[0]))
       return targetError(TargetParseCode::InvalidProtocol, 0,
 	TargetField::Protocol);
-    for (unsigned i = 1; i < protocolText.length(); ++i)
+    for (unsigned i = 1, n = protocolText.length(); i < n; ++i)
       if (!tokenChar(protocolText[i]))
 	return targetError(TargetParseCode::InvalidProtocol, i,
 	  TargetField::Protocol);

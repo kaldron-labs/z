@@ -23,7 +23,7 @@ using Bytes =
 
 void append(Bytes &out, ZuBSpan value)
 {
-  for (unsigned i = 0; i < value.length(); ++i) out.push(value[i]);
+  for (unsigned i = 0, n = value.length(); i < n; ++i) out.push(value[i]);
 }
 
 void frame(
@@ -150,7 +150,7 @@ void initial(Bytes &bytes)
 
 bool fragmented(Cxn &cxn, ZuSpan<uint8_t> input)
 {
-  for (unsigned i = 0; i < input.length(); ++i)
+  for (unsigned i = 0, n = input.length(); i < n; ++i)
     if (cxn.process(ZuSpan<uint8_t>{input.data() + i, 1}) < 0)
       return false;
   return true;

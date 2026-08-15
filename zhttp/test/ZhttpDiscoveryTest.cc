@@ -33,10 +33,10 @@ void u16(Bytes &out, unsigned v)
 
 void name(Bytes &out, ZuCSpan value)
 {
-  unsigned start = 0;
-  while (start < value.length()) {
+  unsigned start = 0, n = value.length();
+  while (start < n) {
     unsigned end = start;
-    while (end < value.length() && value[end] != '.') ++end;
+    while (end < n && value[end] != '.') ++end;
     out.push(uint8_t(end - start));
     while (start < end) out.push(uint8_t(value[start++]));
     ++start;
@@ -60,7 +60,7 @@ Bytes rdata(
   }
   u16(rdata, 1); u16(rdata, alpn.length() + 1);	// alpn
   rdata.push(uint8_t(alpn.length()));
-  for (unsigned i = 0; i < alpn.length(); ++i) rdata.push(alpn[i]);
+  for (unsigned i = 0, n = alpn.length(); i < n; ++i) rdata.push(alpn[i]);
   if (port) {
     u16(rdata, 3); u16(rdata, 2); u16(rdata, 8443);
   }
@@ -82,7 +82,7 @@ Bytes message(
     u16(msg, 65); u16(msg, 1);
     msg.push(0); msg.push(0); msg.push(0); msg.push(60);
     u16(msg, records[record].length());
-    for (unsigned i = 0; i < records[record].length(); ++i)
+    for (unsigned i = 0, n = records[record].length(); i < n; ++i)
       msg.push(records[record][i]);
   }
   return msg;
@@ -134,7 +134,7 @@ struct Resolver {
   void answer(Bytes bytes)
   {
     ZiResolver_::DNSMsg msg;
-    for (unsigned i = 0; i < bytes.length(); ++i)
+    for (unsigned i = 0, n = bytes.length(); i < n; ++i)
       msg.buf.push(bytes[i]);
     auto fn = ZuMv(queryFn);
     fn(ZiResolver_::QueryResult{ZuMv(msg)});
@@ -457,7 +457,7 @@ void traversal()
       endpoints[2].ip == ZiIP{"::1"},
     "preserve hint then resolver response order");
   bool identity = true;
-  for (unsigned i = 0; i < endpoints.length(); ++i)
+  for (unsigned i = 0, n = endpoints.length(); i < n; ++i)
     identity &= endpoints[i].target == "svc.example" &&
       endpoints[i].tlsName == "example.com" &&
       endpoints[i].port == 8443 && endpoints[i].priority == 2;

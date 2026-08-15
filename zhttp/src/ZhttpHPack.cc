@@ -118,7 +118,8 @@ void HPackTable::reset()
 
 void HPackTable::evict_()
 {
-  while (m_used > m_capacity && m_head < m_entries.length())
+  unsigned n = m_entries.length();
+  while (m_used > m_capacity && m_head < n)
     m_used -= m_entries[m_head++].size;
   compact_();
 }
@@ -162,7 +163,8 @@ bool HPackTxTable::capacity(uint32_t capacity)
 {
   if (capacity > m_localCapacity) return false;
   m_capacity = capacity;
-  while (m_head < m_entries.length() && m_used > m_capacity)
+  unsigned n = m_entries.length();
+  while (m_head < n && m_used > m_capacity)
     if (!dropOldest_()) return false;
   return m_used <= m_capacity;
 }
@@ -202,7 +204,8 @@ bool HPackTxTable::insert(Field field)
     uint64_t(field.name.length()) + field.value.length() + 32;
   if (n_ > m_capacity) return false;
   uint32_t n = uint32_t(n_);
-  while (m_head < m_entries.length() && m_used + n > m_capacity)
+  unsigned l = m_entries.length();
+  while (m_head < l && m_used + n > m_capacity)
     if (!dropOldest_()) return false;
   if (m_head && m_entries.length() == m_entries.size()) compact_();
   if (!m_exact || !m_names || m_entries.length() >= m_entries.size())
@@ -270,7 +273,7 @@ void HPackTxTable::rebuild_()
   if (!m_exact || !m_names) return;
   m_exact->clean();
   m_names->clean();
-  for (unsigned i = m_head; i < m_entries.length(); ++i) {
+  for (unsigned i = m_head, n = m_entries.length(); i < n; ++i) {
     auto &entry = m_entries[i];
     if (!m_exact->add(HPackTxExactEntry{
 	  entry.abs, {entry.name, entry.value}})) {

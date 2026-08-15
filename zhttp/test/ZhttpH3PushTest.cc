@@ -31,7 +31,7 @@ static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 static void append(
   Zhttp::H3::HdrBytes &out, ZuBSpan bytes)
 {
-  for (unsigned i = 0; i < bytes.length(); ++i) out.push(bytes[i]);
+  for (unsigned i = 0, n = bytes.length(); i < n; ++i) out.push(bytes[i]);
 }
 
 static void frame(

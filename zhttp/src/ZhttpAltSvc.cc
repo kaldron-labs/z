@@ -36,7 +36,7 @@ bool uint32(ZuBSpan s, uint32_t &v)
 {
   if (!s) return false;
   uint64_t n = 0;
-  for (unsigned i = 0; i < s.length(); ++i) {
+  for (unsigned i = 0, l = s.length(); i < l; ++i) {
     if (!digit(s[i])) return false;
     n = n * 10 + unsigned(s[i] - '0');
     if (n > UINT32_MAX) return false;
@@ -63,7 +63,7 @@ bool h3Protocol(ZuBSpan s)
 {
   if (s == "h3") return true;
   if (!s.match("h3-") || s.length() == 3) return false;
-  for (unsigned i = 3; i < s.length(); ++i)
+  for (unsigned i = 3, n = s.length(); i < n; ++i)
     if (!AltSvc_::digit(s[i])) return false;
   return true;
 }
@@ -104,10 +104,11 @@ bool AltSvcCursor::next(AltSvcValue &out)
     m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax);
     return false;
   }
+  unsigned l = m_input.length();
   if (m_more) {
-    while (m_offset < m_input.length() &&
+    while (m_offset < l &&
 	(m_input[m_offset] == ' ' || m_input[m_offset] == '\t')) ++m_offset;
-    if (m_offset >= m_input.length()) {
+    if (m_offset >= l) {
       m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
       return false;
     }
@@ -115,9 +116,9 @@ bool AltSvcCursor::next(AltSvcValue &out)
   }
 
   unsigned protocolStart = m_offset;
-  while (m_offset < m_input.length() && tokenChar(m_input[m_offset]))
+  while (m_offset < l && tokenChar(m_input[m_offset]))
     ++m_offset;
-  if (m_offset == protocolStart || m_offset >= m_input.length() ||
+  if (m_offset == protocolStart || m_offset >= l ||
       m_input[m_offset++] != '=') {
     m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
     return false;
@@ -131,19 +132,19 @@ bool AltSvcCursor::next(AltSvcValue &out)
   value.protocolID = {
     m_input.data() + protocolStart, m_offset - protocolStart - 1};
   value.h3 = h3Protocol(value.protocolID);
-  if (m_offset >= m_input.length() || m_input[m_offset++] != '"') {
+  if (m_offset >= l || m_input[m_offset++] != '"') {
     m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
     return false;
   }
   unsigned authStart = m_offset;
-  while (m_offset < m_input.length() && m_input[m_offset] != '"') {
+  while (m_offset < l && m_input[m_offset] != '"') {
     if (m_input[m_offset] == '\\') {
       m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
       return false;
     }
     ++m_offset;
   }
-  if (m_offset >= m_input.length()) {
+  if (m_offset >= l) {
     m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
     return false;
   }
@@ -185,18 +186,18 @@ bool AltSvcCursor::next(AltSvcValue &out)
   }
 
   for (;;) {
-    while (m_offset < m_input.length() &&
+    while (m_offset < l &&
 	(m_input[m_offset] == ' ' || m_input[m_offset] == '\t')) ++m_offset;
-    if (m_offset >= m_input.length() || m_input[m_offset] == ',') break;
+    if (m_offset >= l || m_input[m_offset] == ',') break;
     if (m_input[m_offset++] != ';') {
       m_error = AltSvc_::error(
 	AltSvcParseCode::InvalidSyntax, m_offset - 1);
       return false;
     }
-    while (m_offset < m_input.length() &&
+    while (m_offset < l &&
 	(m_input[m_offset] == ' ' || m_input[m_offset] == '\t')) ++m_offset;
     unsigned keyStart = m_offset;
-    while (m_offset < m_input.length() && tokenChar(m_input[m_offset]))
+    while (m_offset < l && tokenChar(m_input[m_offset]))
       ++m_offset;
     if (m_offset == keyStart) {
       m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
@@ -204,10 +205,10 @@ bool AltSvcCursor::next(AltSvcValue &out)
     }
     ZuBSpan key{m_input.data() + keyStart, m_offset - keyStart};
     ZuBSpan param;
-    if (m_offset < m_input.length() && m_input[m_offset] == '=') {
+    if (m_offset < l && m_input[m_offset] == '=') {
       ++m_offset;
       unsigned valueStart = m_offset;
-      while (m_offset < m_input.length() && tokenChar(m_input[m_offset]))
+      while (m_offset < l && tokenChar(m_input[m_offset]))
 	++m_offset;
       if (m_offset == valueStart) {
 	m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
