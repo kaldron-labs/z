@@ -87,7 +87,7 @@ private:
 
   ZeString chain(const Zi::Path *tail = nullptr) const {
     ZeString s;
-    for (unsigned i = 0; i < m_paths.length(); ++i) {
+    for (unsigned i = 0, n = m_paths.length(); i < n; ++i) {
       if (i) s << " -> ";
       s << m_paths[i];
     }
@@ -137,7 +137,7 @@ private:
       throw ZvCf_EXCEPT(
 	ZvCfError::fileError<"open">(path, ZeLastError, chain(&path)));
 
-    for (unsigned i = 0; i < m_paths.length(); ++i)
+    for (unsigned i = 0, n = m_paths.length(); i < n; ++i)
       if (m_paths[i] == resolved)
 	throw ZvCf_EXCEPT(
 	  ZvCfError::includeCycle(chain(&resolved)));
