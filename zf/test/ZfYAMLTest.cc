@@ -467,6 +467,33 @@ static void invalid()
     find("invalid Unicode") >= 0);
 }
 
+static void scalarFormats()
+{
+  ZuTestScope(scalarFormats);
+  YAMLScalars scalars{
+    "hello world", "it's quoted", "a\nb", "one\ntwo", "one\ntwo", true, 42};
+  ZtString<> saved;
+  ZfYAML::save(saved, scalars);
+  ZuCheck(saved ==
+    "plain: hello world\nsingle: 'it''s quoted'\n"
+    "double_: \"a\\nb\"\nliteral: |-\n  one\n  two\n"
+    "folded: >-\n  one\n  two\nquotedBool: 'true'\nquotedInt: \"42\"");
+  auto tree = ZfYAML::scan(saved).p<1>();
+  auto round = ZfYAML::handler<YAMLScalars>(tree).ctor();
+  ZuCheck(round.plain == scalars.plain);
+  ZuCheck(round.single == scalars.single);
+  ZuCheck(round.double_ == scalars.double_);
+  ZuCheck(round.literal == scalars.literal);
+  ZuCheck(round.folded == "one two");
+  ZuCheck(round.quotedBool && round.quotedInt == 42);
+
+  ZtString<> facetYAML, facetJSON;
+  ZfYAML::save(facetYAML, YAMLFacet{7});
+  ZfJSON::save(facetJSON, YAMLFacet{7});
+  ZuCheck(facetYAML == "yaml-value: \"7\"" &&
+    facetJSON == "{\"json-value\":7}");
+}
+
 static void handlers()
 {
   ZuTestScope(handlers);
@@ -527,27 +554,6 @@ static void handlers()
   keySaved << ' ';
   ZfYAML::saveKey(keySaved, "yes");
   ZuCheck(keySaved == "ordinary-key \"yes\"");
-  YAMLScalars scalars{
-    "hello world", "it's quoted", "a\nb", "one\ntwo", "one\ntwo", true, 42};
-  ZtString<> scalarsSaved;
-  ZfYAML::save(scalarsSaved, scalars);
-  ZuCheck(scalarsSaved ==
-    "plain: hello world\nsingle: 'it''s quoted'\n"
-    "double_: \"a\\nb\"\nliteral: |-\n  one\n  two\n"
-    "folded: >-\n  one\n  two\nquotedBool: 'true'\nquotedInt: \"42\"");
-  auto scalarTree = ZfYAML::scan(scalarsSaved).p<1>();
-  auto scalarRound = ZfYAML::handler<YAMLScalars>(scalarTree).ctor();
-  ZuCheck(scalarRound.plain == scalars.plain &&
-    scalarRound.single == scalars.single &&
-    scalarRound.double_ == scalars.double_ &&
-    scalarRound.literal == scalars.literal &&
-    scalarRound.folded == "one two" && scalarRound.quotedBool &&
-    scalarRound.quotedInt == 42);
-  ZtString<> facetYAML, facetJSON;
-  ZfYAML::save(facetYAML, YAMLFacet{7});
-  ZfJSON::save(facetJSON, YAMLFacet{7});
-  ZuCheck(facetYAML == "yaml-value: \"7\"" &&
-    facetJSON == "{\"json-value\":7}");
   YAMLNumbers updated;
   ZfYAML::handler<YAMLNumbers>(numberTree).load(updated);
   auto update = ZfYAML::scan("i: 7\n");
@@ -761,6 +767,7 @@ int main(int argc, char **argv)
   ZuTestCall(scalars);
   ZuTestCall(blockScalars);
   ZuTestCall(invalid);
+  ZuTestCall(scalarFormats);
   ZuTestCall(handlers);
   ZuTestCall(transformEdges);
   ZuTestCall(transformGolden);
