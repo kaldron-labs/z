@@ -284,6 +284,8 @@ using namespace ZfYAMLError;
 struct AsObject;
 template <unsigned ElemCode, typename ElemProps = ZuTypeList<>>
 struct AsArray;
+template <unsigned ValCode, typename ValProps = ZuTypeList<>>
+struct AsMap;
 struct AsString;
 struct AsJSON;
 
@@ -752,6 +754,49 @@ struct AsArray {
     static void save(S &s, const O &o) {
       save_<Filter>(s, o, 0);
     }
+  };
+};
+
+template <unsigned ValCode, typename ValProps>
+struct AsMap {
+  template <typename O_, typename Facet>
+  struct Handler : public
+      ZfTreeLoad::Map<YAMLPolicy, ValCode, ValProps, O_, Facet> {
+    using O = O_;
+    using Base = ZfTreeLoad::Map<YAMLPolicy, ValCode, ValProps, O, Facet>;
+    using Base::Base;
+
+    enum { Block = 1, Scalar = 0 };
+
+    template <template <typename> class Filter, typename S>
+    static void save_(S &s, const O &o, unsigned indent_)
+    {
+      if (ZuUnlikely(!o)) {
+	indent(s, indent_);
+	s << "null";
+	return;
+      }
+      bool first = true;
+      {
+	auto i = o->citer();
+	while (auto node = i()) {
+	  if (!first) s << '\n';
+	  first = false;
+	  indent(s, indent_);
+	  saveKey(s, Base::key(node));
+	  s << ':';
+	  saveFieldValue<Facet, Filter, ValCode, ValProps>(
+	    s, Base::val(node), indent_ + 2);
+	}
+      }
+      if (first) {
+	indent(s, indent_);
+	s << "{}";
+      }
+    }
+
+    template <template <typename> class Filter, typename S>
+    static void save(S &s, const O &o) { save_<Filter>(s, o, 0); }
   };
 };
 

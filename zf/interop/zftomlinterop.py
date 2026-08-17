@@ -21,6 +21,8 @@ assert doc["enabled"] is True
 assert doc["values"] == ["one", "two"]
 assert doc["nested"] == {"value": 7}
 assert doc["when"].isoformat() == "2024-02-29T12:34:56+00:00"
+assert doc["inlineMap"] == {"a.b": 11}
+assert doc["tableMap"] == {"beta": 12}
 assert doc["products"] == [
     {"name": "hammer", "count": 1},
     {"name": "nail", "count": 20},

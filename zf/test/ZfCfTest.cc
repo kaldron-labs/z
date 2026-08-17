@@ -8,7 +8,11 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmHash.hh>
+
 #include <zlib/ZfCf.hh>
+
+#include "ZfMapTest.hh"
 
 using namespace ZuTestUtil;
 
@@ -31,6 +35,29 @@ struct CfNested {
 
 ZfStruct((CfNested, Cf),
   (((value), (Ctor<0>)), (Int32)));
+
+using CfMapKey = ZtString<>;
+
+using CfIntMap =
+  ZfMapTest<"ZfTest.Cf.IntMap", ZmHashKV<CfMapKey, int>>;
+using CfIntMapRef = ZmRef<CfIntMap>;
+inline ZfCf::AsMap<ZfFieldTC::Int32> ZfCf_Fmt(CfIntMapRef *);
+
+using CfObjMap =
+  ZfMapTest<"ZfTest.Cf.ObjMap", ZmHashKV<CfMapKey, CfNested>>;
+using CfObjMapRef = ZmRef<CfObjMap>;
+inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(CfObjMapRef *);
+
+struct CfMapHolder {
+  CfIntMapRef map;
+};
+ZfStruct((CfMapHolder, Cf),
+  (((map), (Ctor<0>, Mutable)), (UDT)));
+
+ZuAssert((ZuIsSame<CfIntMap::Key, CfMapKey>{}));
+ZuAssert((ZuIsSame<CfIntMap::Val, int>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<CfIntMap>, ZuStringT<"ZfTest.Cf.IntMap">>{}));
 
 struct CfText {
   CfText() = default;
@@ -942,6 +969,68 @@ static void formattedInteger()
   ZuCheck(loaded.value == 0xabcdef);
 }
 
+static void maps()
+{
+  ZuTestScope(maps);
+
+  auto scan = ZfCf::scan("{a: 1, b: 2, 'a.b': 3}");
+  auto map = ZfCf::handler<CfIntMapRef>(scan.p<1>()).ctor();
+  ZuCheck(map);
+  ZuCheck(map->count_() == 3);
+  ZuCheck(map->findVal("a") == 1);
+  ZuCheck(map->findVal("b") == 2);
+  ZuCheck(map->findVal("a.b") == 3);
+
+  ZtString<> saved;
+  ZfCf::save(saved, map);
+  auto roundScan = ZfCf::scan(saved);
+  auto round = ZfCf::handler<CfIntMapRef>(roundScan.p<1>()).ctor();
+  ZuCheck(round->count_() == 3);
+  ZuCheck(round->findVal("a.b") == 3);
+
+  auto ptr = map.ptr();
+  auto loadScan = ZfCf::scan("{loaded: 4}");
+  ZfCf::handler<CfIntMapRef>(loadScan.p<1>()).load(map);
+  ZuCheck(map.ptr() == ptr);
+  ZuCheck(map->count_() == 1);
+  ZuCheck(map->findVal("loaded") == 4);
+
+  map->add("kept", 5);
+  auto updateScan = ZfCf::scan("{loaded: 6, added: 7}");
+  ZfCf::handler<CfIntMapRef>(updateScan.p<1>()).update(map);
+  ZuCheck(map.ptr() == ptr);
+  ZuCheck(map->count_() == 3);
+  ZuCheck(map->findVal("loaded") == 6);
+  ZuCheck(map->findVal("kept") == 5);
+  ZuCheck(map->findVal("added") == 7);
+
+  alignas(CfIntMapRef) uint8_t storage[sizeof(CfIntMapRef)];
+  ZfCf::handler<CfIntMapRef>(loadScan.p<1>()).new_(storage);
+  auto &placed = *reinterpret_cast<CfIntMapRef *>(storage);
+  ZuCheck(placed->findVal("loaded") == 4);
+  placed.~CfIntMapRef();
+
+  auto objectScan = ZfCf::scan("{one: {value: 8}}");
+  auto objects = ZfCf::handler<CfObjMapRef>(objectScan.p<1>()).ctor();
+  ZuCheck(objects->findVal("one").value == 8);
+  saved.null();
+  ZfCf::save(saved, objects);
+  ZuCheck(saved.find("\"one\":{\"value\":8}") >= 0);
+
+  auto holderScan = ZfCf::scan("map: {nested: 9}");
+  auto holder = ZfCf::handler<CfMapHolder>(holderScan.p<1>()).ctor();
+  ZuCheck(holder.map->findVal("nested") == 9);
+
+  CfIntMapRef empty = new CfIntMap{};
+  saved.null();
+  ZfCf::save(saved, empty);
+  ZuCheck(saved == "{}");
+  CfIntMapRef null;
+  saved.null();
+  ZfCf::save(saved, null);
+  ZuCheck(saved == "null");
+}
+
 int main(int argc, char **argv) {
   parse(argc, argv);
   ZuTestMain();
@@ -959,4 +1048,5 @@ int main(int argc, char **argv) {
   ZuTestCall(loadSave);
   ZuTestCall(compatibility);
   ZuTestCall(formattedInteger);
+  ZuTestCall(maps);
 }

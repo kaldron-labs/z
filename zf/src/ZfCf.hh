@@ -307,6 +307,8 @@ using namespace ZfCfError;
 struct AsObject;	// as Cf object {...}
 template <unsigned ElemCode, typename ElemProps = ZuTypeList<>>
 struct AsArray;		// as Cf array [...]
+template <unsigned ValCode, typename ValProps = ZuTypeList<>>
+struct AsMap;		// as Cf object {...} with homogeneous values
 struct AsString;	// as Cf string
 
 // if fields are defined, default to AsObject
@@ -432,6 +434,59 @@ struct AsArray {
     static void save(S &s, const O &o) {
       ZfJSON::AsArray<ElemCode, ElemProps>::
 	template Handler<O, Facet>::template save<Filter>(s, o);
+    }
+  };
+};
+
+template <
+  typename Facet, template <typename> class Filter,
+  unsigned TypeCode, typename Props, typename S, typename T>
+void saveMapValue(S &s, const T &v)
+{
+  if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
+    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
+    unsigned n = ZuTraits<T>::length(v);
+    s << '[';
+    for (unsigned i = 0; i < n; i++) {
+      if (i) s << ',';
+      saveMapValue<Facet, Filter, ElemCode, Props>(s, v[i]);
+    }
+    s << ']';
+  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
+    using O = ZuDecay<T>;
+    using Handler = typename As<O>::template Handler<O, Facet>;
+    Handler::template save<Filter>(s, v);
+  } else {
+    ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(s, v);
+  }
+}
+
+template <unsigned ValCode, typename ValProps>
+struct AsMap {
+  template <typename O_, typename Facet>
+  struct Handler : public
+      ZfTreeLoad::Map<CfPolicy, ValCode, ValProps, O_, Facet> {
+    using O = O_;
+    using Base = ZfTreeLoad::Map<CfPolicy, ValCode, ValProps, O, Facet>;
+    using Base::Base;
+
+    template <template <typename> class Filter, typename S>
+    static void save(S &s, const O &o)
+    {
+      if (ZuUnlikely(!o)) { s << "null"; return; }
+      s << '{';
+      bool first = true;
+      {
+	auto i = o->citer();
+	while (auto node = i()) {
+	  if (!first) s << ',';
+	  first = false;
+	  ZfJSON::quote(s, Base::key(node));
+	  s << ':';
+	  saveMapValue<Facet, Filter, ValCode, ValProps>(s, Base::val(node));
+	}
+      }
+      s << '}';
     }
   };
 };

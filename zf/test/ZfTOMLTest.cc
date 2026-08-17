@@ -8,8 +8,12 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmRBTree.hh>
+
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfTOML.hh>
+
+#include "ZfMapTest.hh"
 
 using namespace ZuTestUtil;
 
@@ -50,6 +54,10 @@ static_assert(ZuFieldProp::TOML::GetArrayFmt<ZuTypeList<>>{} ==
   ZfTOML::InlineArray);
 static_assert(ZuFieldProp::TOML::GetArrayFmt<
   ZuTypeList<ZuFieldProp::TOML::Tables>>{} == ZfTOML::TableArray);
+static_assert(ZuFieldProp::TOML::GetMapFmt<ZuTypeList<>>{} ==
+  ZfTOML::InlineMap);
+static_assert(ZuFieldProp::TOML::GetMapFmt<
+  ZuTypeList<ZuFieldProp::TOML::TableMap>>{} == ZfTOML::TableMap);
 static_assert(ZuFieldProp::TOML::GetBytesFmt<ZuTypeList<>>{} ==
   ZfTOML::Base64);
 static_assert(ZuFieldProp::TOML::GetBytesFmt<
@@ -107,6 +115,37 @@ static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
 struct TOMLNested { int value = 0; };
 ZfStruct((TOMLNested, TOML),
   (((value), (Ctor<0>)), (Int32)));
+
+using TOMLMapKey = ZtString<>;
+
+using TOMLIntMap_ =
+  ZmRBTreeKV<TOMLMapKey, int, ZmRBTreeUnique<true>>;
+using TOMLIntMap = ZfMapTest<
+  "ZfTest.TOML.IntMap", ZfRefMapTest<TOMLIntMap_>>;
+using TOMLIntMapRef = ZmRef<TOMLIntMap>;
+inline ZfTOML::AsMap<ZfFieldTC::Int32> ZfTOML_Fmt(TOMLIntMapRef *);
+
+using TOMLObjMap_ =
+  ZmRBTreeKV<TOMLMapKey, TOMLNested, ZmRBTreeUnique<true>>;
+using TOMLObjMap = ZfMapTest<
+  "ZfTest.TOML.ObjMap", ZfRefMapTest<TOMLObjMap_>>;
+using TOMLObjMapRef = ZmRef<TOMLObjMap>;
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLObjMapRef *);
+
+struct TOMLMapHolder {
+  TOMLIntMapRef inline_;
+  TOMLIntMapRef table;
+  TOMLObjMapRef objects;
+};
+ZfStruct((TOMLMapHolder, TOML),
+  (((inline_), (Ctor<0>)), (UDT)),
+  (((table), (Ctor<1>, TOML::TableMap)), (UDT)),
+  (((objects), (Ctor<2>)), (UDT)));
+
+static_assert(ZfTOML::InlineMapValid<TOMLIntMapRef>{});
+static_assert(ZfTOML::InlineMapValid<TOMLObjMapRef>{});
+ZuAssert((ZuIsSame<
+  ZmHeapID<TOMLIntMap>, ZuStringT<"ZfTest.TOML.IntMap">>{}));
 
 struct TOMLData {
   ZtString<> name;
@@ -190,6 +229,8 @@ struct TOMLInterop {
   ZtArray<ZtString<>> values;
   TOMLNested nested;
   ZuDateTime when;
+  TOMLIntMapRef inlineMap;
+  TOMLIntMapRef tableMap;
   TOMLProducts products;
 };
 ZfStruct((TOMLInterop, TOML),
@@ -198,7 +239,9 @@ ZfStruct((TOMLInterop, TOML),
   (((values), (Ctor<2>)), (StringVec)),
   (((nested), (Ctor<3>)), (UDT)),
   (((when), (Ctor<4>)), (DateTime)),
-  (((products), (Ctor<5>, TOML::Tables)), (UDT)));
+  (((inlineMap), (Ctor<5>)), (UDT)),
+  (((tableMap), (Ctor<6>, TOML::TableMap)), (UDT)),
+  (((products), (Ctor<7>, TOML::Tables)), (UDT)));
 struct TOMLSiblingTables { TOMLProducts tools; TOMLProducts supplies; };
 ZfStruct((TOMLSiblingTables, TOML),
   (((tools), (Ctor<0>, TOML::Tables)), (UDT)),
@@ -245,10 +288,37 @@ struct TOMLParents : public ZtArray<TOMLParent> {
   using ZtArray<TOMLParent>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLParents *);
 };
+
+using TOMLParentMap_ =
+  ZmRBTreeKV<TOMLMapKey, TOMLParent, ZmRBTreeUnique<true>>;
+using TOMLParentMap = ZfMapTest<
+  "ZfTest.TOML.ParentMap", ZfRefMapTest<TOMLParentMap_>>;
+using TOMLParentMapRef = ZmRef<TOMLParentMap>;
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLParentMapRef *);
+
+using TOMLMapMap_ =
+  ZmRBTreeKV<TOMLMapKey, TOMLParentMapRef, ZmRBTreeUnique<true>>;
+using TOMLMapMap = ZfMapTest<
+  "ZfTest.TOML.MapMap", ZfRefMapTest<TOMLMapMap_>>;
+using TOMLMapMapRef = ZmRef<TOMLMapMap>;
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLMapMapRef *);
+
+struct TOMLMapArray : public ZtArray<TOMLParentMapRef> {
+  using ZtArray<TOMLParentMapRef>::ZtArray;
+  friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLMapArray *);
+};
+
+struct TOMLParentMapHolder { TOMLParentMapRef parents; };
+ZfStruct((TOMLParentMapHolder, TOML),
+  (((parents), (Ctor<0>, TOML::TableMap)), (UDT)));
+
 static_assert(ZfTOML::TableArrayValid<TOMLProducts>{});
 static_assert(!ZfTOML::TableArrayValid<TOMLStrings>{});
 static_assert(ZfTOML::InlineArrayValid<TOMLProducts>{});
 static_assert(!ZfTOML::InlineArrayValid<TOMLParents>{});
+static_assert(!ZfTOML::InlineArrayValid<TOMLMapArray>{});
+static_assert(!ZfTOML::InlineMapValid<TOMLParentMapRef>{});
+static_assert(!ZfTOML::InlineMapValid<TOMLMapMapRef>{});
 struct TOMLNestedTables { TOMLParents parents; };
 ZfStruct((TOMLNestedTables, TOML),
   (((parents), (Ctor<0>, TOML::Tables)), (UDT)));
@@ -1588,6 +1658,100 @@ static void facetsNestedTables()
   ZuCheck(groupedRound.group.parents.length() == 1);
 }
 
+static void maps()
+{
+  ZuTestScope(maps);
+
+  auto root = ZfTOML::scan(
+    "alpha = 1\n"
+    "\"a.b\" = 2\n").p<1>();
+  auto map = ZfTOML::handler<TOMLIntMapRef>(root).ctor();
+  ZuCheck(map);
+  ZuCheck(map->count_() == 2);
+  ZuCheck(map->findVal("alpha") == 1);
+  ZuCheck(map->findVal("a.b") == 2);
+
+  ZtString<> out;
+  ZfTOML::save(out, map);
+  ZuCheck(out == "\"a.b\" = 2\nalpha = 1\n");
+  auto round = ZfTOML::handler<TOMLIntMapRef>(
+    ZfTOML::scan(out).p<1>()).ctor();
+  ZuCheck(round->findVal("a.b") == 2);
+
+  auto ptr = map.ptr();
+  auto load = ZfTOML::scan("loaded = 3\n").p<1>();
+  ZfTOML::handler<TOMLIntMapRef>(load).load(map);
+  ZuCheck(map.ptr() == ptr);
+  ZuCheck(map->count_() == 1);
+  ZuCheck(map->findVal("loaded") == 3);
+
+  map->add("kept", 4);
+  auto update = ZfTOML::scan("loaded = 5\nadded = 6\n").p<1>();
+  ZfTOML::handler<TOMLIntMapRef>(update).update(map);
+  ZuCheck(map.ptr() == ptr);
+  ZuCheck(map->count_() == 3);
+  ZuCheck(map->findVal("loaded") == 5);
+  ZuCheck(map->findVal("kept") == 4);
+  ZuCheck(map->findVal("added") == 6);
+
+  alignas(TOMLIntMapRef) uint8_t storage[sizeof(TOMLIntMapRef)];
+  ZfTOML::handler<TOMLIntMapRef>(load).new_(storage);
+  auto &placed = *reinterpret_cast<TOMLIntMapRef *>(storage);
+  ZuCheck(placed->findVal("loaded") == 3);
+  placed.~TOMLIntMapRef();
+
+  TOMLMapHolder holder;
+  holder.inline_ = new TOMLIntMap{};
+  holder.inline_->add("a.b", 7);
+  holder.table = new TOMLIntMap{};
+  holder.table->add("beta", 8);
+  holder.objects = new TOMLObjMap{};
+  holder.objects->add("one", TOMLNested{9});
+  out.null();
+  ZfTOML::save(out, holder);
+  ZuCheck(out ==
+    "inline_ = {\"a.b\" = 7}\n"
+    "objects = {one = {value = 9}}\n"
+    "[table]\nbeta = 8\n");
+  auto holderRound = ZfTOML::handler<TOMLMapHolder>(
+    ZfTOML::scan(out).p<1>()).ctor();
+  ZuCheck(holderRound.inline_->findVal("a.b") == 7);
+  ZuCheck(holderRound.table->findVal("beta") == 8);
+  ZuCheck(holderRound.objects->findVal("one").value == 9);
+
+  TOMLParentMapHolder nested;
+  nested.parents = new TOMLParentMap{};
+  TOMLParent parent{"parent", {}};
+  parent.children.push(TOMLChild{"child"});
+  nested.parents->add("a.b", ZuMv(parent));
+  out.null();
+  ZfTOML::save(out, nested);
+  ZuCheck(out ==
+    "[parents]\n"
+    "\n[parents.\"a.b\"]\nname = \"parent\"\n"
+    "[[parents.\"a.b\".children]]\nname = \"child\"\n");
+  auto nestedRound = ZfTOML::handler<TOMLParentMapHolder>(
+    ZfTOML::scan(out).p<1>()).ctor();
+  auto nestedParent = nestedRound.parents->findVal("a.b");
+  ZuCheck(nestedParent.name == "parent");
+  ZuCheck(nestedParent.children.length() == 1);
+  ZuCheck(nestedParent.children[0].name == "child");
+
+  TOMLIntMapRef empty = new TOMLIntMap{};
+  out.null();
+  ZfTOML::save(out, empty);
+  ZuCheck(!out);
+  auto emptyRound = ZfTOML::handler<TOMLIntMapRef>(
+    ZfTOML::scan("\n").p<1>()).ctor();
+  ZuCheck(emptyRound && !emptyRound->count_());
+
+  TOMLIntMapRef null;
+  ZuCheck(loadError([&out, &null] {
+    out.null();
+    ZfTOML::save(out, null);
+  }));
+}
+
 static ZtString<> interopText()
 {
   TOMLInterop value;
@@ -1597,6 +1761,10 @@ static ZtString<> interopText()
   value.values.push("two");
   value.nested.value = 7;
   value.when = ZuDateTime{2024, 2, 29, 12, 34, 56};
+  value.inlineMap = new TOMLIntMap{};
+  value.inlineMap->add("a.b", 11);
+  value.tableMap = new TOMLIntMap{};
+  value.tableMap->add("beta", 12);
   value.products.push(TOMLProduct{"hammer", 1});
   value.products.push(TOMLProduct{"nail", 20});
   ZtString<> out;
@@ -1611,6 +1779,8 @@ static void interoperabilityOutput()
   ZuCheck(out ==
     "title = \"tools\"\nenabled = true\nvalues = [\"one\", \"two\"]\n"
     "nested = {value = 7}\nwhen = 2024-02-29T12:34:56Z\n"
+    "inlineMap = {\"a.b\" = 11}\n"
+    "[tableMap]\nbeta = 12\n"
     "[[products]]\nname = \"hammer\"\ncount = 1\n"
     "[[products]]\nname = \"nail\"\ncount = 20\n");
 }
@@ -1643,5 +1813,6 @@ int main(int argc, char **argv)
   ZuTestCall(curatedFixtures);
   ZuTestCall(scalarFormatEdges);
   ZuTestCall(facetsNestedTables);
+  ZuTestCall(maps);
   ZuTestCall(interoperabilityOutput);
 }
