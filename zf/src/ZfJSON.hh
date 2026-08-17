@@ -35,6 +35,7 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
 #include <zlib/ZfStruct.hh>
+#include <zlib/ZfMap.hh>
 #include <zlib/ZtBytesFmt.hh>
 
 ZuStructFacet(JSON); // canonical JSON facet, others can be defined
@@ -450,6 +451,8 @@ inline void quote(S &s, ZuCSpan v) {
 struct AsObject;	// as JSON object {...}
 template <unsigned ElemCode, typename ElemProps = ZuTypeList<>>
 struct AsArray;		// as JSON array [...]
+template <unsigned ValCode, typename ValProps = ZuTypeList<>>
+struct AsMap;		// as JSON object {...} with homogeneous values
 struct AsString;	// as JSON string "..."
 
 // if fields are defined, default to AsObject
@@ -702,6 +705,81 @@ struct AsArray {
 	  o[i] = loadValue<
 	    Facet, ZfFieldFilter::Upd, ElemCode, ElemProps, Elem>(nodes[i]);
       }
+    }
+  };
+};
+
+// save/load handler for map-formatted types {...}
+template <unsigned ValCode, typename ValProps>
+struct AsMap {
+  template <typename O_, typename Facet>
+  struct Handler : public ZfMap::Traits<O_> {
+    using O = O_;
+    using Traits = ZfMap::Traits<O>;
+    using Map = typename Traits::Container;
+    using Key = typename Traits::Key;
+    using Val = typename Traits::Val;
+
+    template <template <typename> class Filter, typename S>
+    static void save(S &s, const O &o) {
+      if (ZuUnlikely(!o)) { s << "null"; return; }
+      s << '{';
+      bool first = true;
+      {
+	auto i = o->citer();
+	while (auto node = i()) {
+	  if (!first) s << ',';
+	  first = false;
+	  quote(s, Traits::key(node));
+	  s << ':';
+	  saveValue<Facet, Filter, ValCode, ValProps>(s, Traits::val(node));
+	}
+      }
+      s << '}';
+    }
+
+    const AnyNode	*node;
+
+    static bool valid(const AnyNode *node) {
+      return node->has<AnyNode::Object>();
+    }
+
+    Handler(const AnyNode *node_) : node{node_} { }
+
+    template <template <typename> class Filter, bool Update = false>
+    void load_(Map &map) const {
+      const auto &fields = node->data<AnyNode::Object>();
+      for (unsigned i = 0, n = fields.length(); i < n; i++) {
+	const auto &field = fields[i];
+	Key key{field.template p<0>()};
+	if constexpr (Update) map.del(key);
+	map.add(
+	  ZuMv(key),
+	  loadValue<Facet, Filter, ValCode, ValProps, Val>(
+	    field.template p<1>()));
+      }
+    }
+
+    O ctor() const {
+      if (ZuUnlikely(!valid(node))) return {};
+      O o{new Map{}};
+      load_<ZfFieldFilter::Load>(*o);
+      return o;
+    }
+    void new_(void *o) const { new (o) O{ctor()}; }
+
+    void load(O &o) const {
+      if (ZuUnlikely(!valid(node))) { o = nullptr; return; }
+      if (ZuUnlikely(!o))
+	o = new Map{};
+      else
+	o->clean();
+      load_<ZfFieldFilter::Load>(*o);
+    }
+    void update(O &o) const {
+      if (ZuUnlikely(!valid(node))) { o = nullptr; return; }
+      if (ZuUnlikely(!o)) o = new Map{};
+      load_<ZfFieldFilter::Upd, true>(*o);
     }
   };
 };

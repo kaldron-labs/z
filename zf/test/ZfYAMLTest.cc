@@ -6,7 +6,11 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmLHash.hh>
+
 #include <zlib/ZfYAML.hh>
+
+#include "ZfMapTest.hh"
 
 using namespace ZuTestUtil;
 
@@ -24,6 +28,25 @@ namespace ZuFieldProp::YAML {
 struct YAMLNested { int value = 0; };
 ZfStruct((YAMLNested, YAML),
   (((value), (Ctor<0>)), (Int32)));
+
+using YAMLMapKey = ZtString<>;
+
+using YAMLIntMap =
+  ZfMapTest<"ZfTest.YAML.IntMap", ZmLHashKV<YAMLMapKey, int>>;
+using YAMLIntMapRef = ZmRef<YAMLIntMap>;
+inline ZfYAML::AsMap<ZfFieldTC::Int32> ZfYAML_Fmt(YAMLIntMapRef *);
+
+using YAMLObjMap =
+  ZfMapTest<"ZfTest.YAML.ObjMap", ZmLHashKV<YAMLMapKey, YAMLNested>>;
+using YAMLObjMapRef = ZmRef<YAMLObjMap>;
+inline ZfYAML::AsMap<ZfFieldTC::UDT> ZfYAML_Fmt(YAMLObjMapRef *);
+
+struct YAMLMapHolder { YAMLIntMapRef map; };
+ZfStruct((YAMLMapHolder, YAML),
+  (((map), (Ctor<0>, Mutable)), (UDT)));
+
+ZuAssert((ZuIsSame<
+  ZmHeapID<YAMLIntMap>, ZuStringT<"ZfTest.YAML.IntMap">>{}));
 
 struct YAMLJSON {
   int value = 0;
@@ -753,6 +776,69 @@ static void blockScalars()
   ZuCheck(root->resolve("fold")->scalarType == ZfYAML::ScalarTC::String);
 }
 
+static void maps()
+{
+  ZuTestScope(maps);
+
+  auto scan = ZfYAML::scan(
+    "a: 1\n"
+    "b: 2\n"
+    "\"a.b\": 3\n"
+    "\"true\": 4\n");
+  auto map = ZfYAML::handler<YAMLIntMapRef>(scan.p<1>()).ctor();
+  ZuCheck(map);
+  ZuCheck(map->count_() == 4);
+  ZuCheck(map->findVal("a") == 1);
+  ZuCheck(map->findVal("a.b") == 3);
+  ZuCheck(map->findVal("true") == 4);
+
+  ZtString<> saved;
+  ZfYAML::save(saved, map);
+  auto roundScan = ZfYAML::scan(saved);
+  auto round = ZfYAML::handler<YAMLIntMapRef>(roundScan.p<1>()).ctor();
+  ZuCheck(round->count_() == 4);
+  ZuCheck(round->findVal("a.b") == 3);
+  ZuCheck(round->findVal("true") == 4);
+
+  auto ptr = map.ptr();
+  auto loadScan = ZfYAML::scan("loaded: 5\n");
+  ZfYAML::handler<YAMLIntMapRef>(loadScan.p<1>()).load(map);
+  ZuCheck(map.ptr() == ptr);
+  ZuCheck(map->count_() == 1);
+  ZuCheck(map->findVal("loaded") == 5);
+
+  map->add("kept", 6);
+  auto updateScan = ZfYAML::scan("loaded: 7\nadded: 8\n");
+  ZfYAML::handler<YAMLIntMapRef>(updateScan.p<1>()).update(map);
+  ZuCheck(map.ptr() == ptr);
+  ZuCheck(map->count_() == 3);
+  ZuCheck(map->findVal("loaded") == 7);
+  ZuCheck(map->findVal("kept") == 6);
+  ZuCheck(map->findVal("added") == 8);
+
+  auto objectScan = ZfYAML::scan("one:\n  value: 9\n");
+  auto objects = ZfYAML::handler<YAMLObjMapRef>(objectScan.p<1>()).ctor();
+  ZuCheck(objects->findVal("one").value == 9);
+  saved.null();
+  ZfYAML::save(saved, objects);
+  auto objectsRound = ZfYAML::handler<YAMLObjMapRef>(
+    ZfYAML::scan(saved).p<1>()).ctor();
+  ZuCheck(objectsRound->findVal("one").value == 9);
+
+  auto holderScan = ZfYAML::scan("map:\n  nested: 10\n");
+  auto holder = ZfYAML::handler<YAMLMapHolder>(holderScan.p<1>()).ctor();
+  ZuCheck(holder.map->findVal("nested") == 10);
+
+  YAMLIntMapRef empty = new YAMLIntMap{};
+  saved.null();
+  ZfYAML::save(saved, empty);
+  ZuCheck(saved == "{}");
+  YAMLIntMapRef null;
+  saved.null();
+  ZfYAML::save(saved, null);
+  ZuCheck(saved == "null");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -771,4 +857,5 @@ int main(int argc, char **argv)
   ZuTestCall(handlers);
   ZuTestCall(transformEdges);
   ZuTestCall(transformGolden);
+  ZuTestCall(maps);
 }

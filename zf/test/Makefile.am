@@ -12,11 +12,10 @@ LDADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 noinst_PROGRAMS = \
 	ZfASN1Test ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest \
 	ZfURITest ZfYAMLTest ZfTOMLTest
+noinst_HEADERS = ZfMapTest.hh
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
-	sh $(srcdir)/ZfTOMLInteropTest ./ZfTOMLTest \
-		$(srcdir)/ZfTOMLInterop.py
 ZfASN1Test_SOURCES = ZfASN1Test.cc
 ZfCfTest_SOURCES = ZfCfTest.cc
 ZfCLITest_SOURCES = ZfCLITest.cc
@@ -28,8 +27,6 @@ ZfYAMLTest_SOURCES = ZfYAMLTest.cc
 ZfTOMLTest_SOURCES = ZfTOMLTest.cc
 EXTRA_DIST = \
 	TOML-AUDIT.md \
-	ZfTOMLInterop.py \
-	ZfTOMLInteropTest \
 	toml-test/README.md \
 	toml-test/valid/arrays.toml \
 	toml-test/valid/datetime.toml \

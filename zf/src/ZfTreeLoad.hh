@@ -22,6 +22,7 @@
 #include <zlib/ZuBase64URL.hh>
 
 #include <zlib/ZfStruct.hh>
+#include <zlib/ZfMap.hh>
 #include <zlib/ZtBytesFmt.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZfJSON.hh>
@@ -315,6 +316,69 @@ struct Array {
 	  Policy, Facet, ZfFieldFilter::Upd,
 	  ElemCode, ElemProps, Elem>(nodes[i]);
     }
+  }
+};
+
+template <
+  typename Policy, unsigned ValCode, typename ValProps,
+  typename O_, typename Facet>
+struct Map : public ZfMap::Traits<O_> {
+  using O = O_;
+  using AnyNode = ZfTree::AnyNode;
+  using Traits = ZfMap::Traits<O>;
+  using Container = typename Traits::Container;
+  using Key = typename Traits::Key;
+  using Val = typename Traits::Val;
+
+  const AnyNode	*node;
+
+  static bool valid(const AnyNode *node)
+  {
+    return node->has<AnyNode::Object>();
+  }
+
+  Map(const AnyNode *node_) : node{node_} { }
+
+  template <template <typename> class Filter, bool Update = false>
+  void load_(Container &map) const
+  {
+    const auto &fields = node->data<AnyNode::Object>();
+    for (unsigned i = 0, n = fields.length(); i < n; i++) {
+      const auto &field = fields[i];
+      Key key{field.template p<0>()};
+      if constexpr (Update) map.del(key);
+      map.add(
+	ZuMv(key),
+	loadValue<Policy, Facet, Filter, ValCode, ValProps, Val>(
+	  field.template p<1>()));
+    }
+  }
+
+  O ctor() const
+  {
+    if (ZuUnlikely(!valid(node))) return {};
+    O o{new Container{}};
+    load_<ZfFieldFilter::Load>(*o);
+    return o;
+  }
+
+  void new_(void *o) const { new (o) O{ctor()}; }
+
+  void load(O &o) const
+  {
+    if (ZuUnlikely(!valid(node))) { o = nullptr; return; }
+    if (ZuUnlikely(!o))
+      o = new Container{};
+    else
+      o->clean();
+    load_<ZfFieldFilter::Load>(*o);
+  }
+
+  void update(O &o) const
+  {
+    if (ZuUnlikely(!valid(node))) { o = nullptr; return; }
+    if (ZuUnlikely(!o)) o = new Container{};
+    load_<ZfFieldFilter::Upd, true>(*o);
   }
 };
 
