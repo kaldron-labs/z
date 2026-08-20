@@ -117,6 +117,7 @@ ZtEnumNS(ZhttpAPI, BodyPolicy, int8_t,
   None, Fixed, OptionalFixed, Stream, OptionalStream);
 
 ZtEnumStruct(ZhttpAPI, BodyType, int8_t, None, Streamed, Fixed);
+ZtEnumStruct(ZhttpAPI, WriteOutcome, int8_t, End, Stream, Abort, Failed);
 
 namespace BodyPolicy {
 

@@ -463,6 +463,7 @@ struct State {
   ZiFile		rootFile;
   ZiFile::Stat		rootFileStat;
   ZiMultiplex		*mx = nullptr;
+  unsigned		txThread = 0;
   unsigned		fileThread = 0;
   ZmAtomic<uint64_t>	requests = 0;
   ZmAtomic<uint64_t>	errors = 0;

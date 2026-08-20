@@ -300,9 +300,9 @@ public:
     out[8] = uint8_t(m_streamID);
   }
   uint64_t produced() const { return m_produced; }
-  bool valid() const { return m_valid; }
+  bool valid() const { return m_valid && !Base::operator !(); }
   bool complete() const {
-    return m_valid &&
+    return valid() &&
       (m_remaining == uint64_t(-1) || !m_remaining);
   }
 
@@ -1741,10 +1741,10 @@ private:
       scheduleFrameTx_(entry_);
   }
   static unsigned clearFrameTx_(
-      TxWindowHash::Node *entry_, ResponseOutcome::T outcome) {
+      TxWindowHash::Node *entry_, bool ok) {
     unsigned n = 0;
     while (auto buf = entry_->frames.shift()) {
-      Transport_::txBufNode(buf)->complete(outcome);
+      Transport_::txBufNode(buf)->complete(ok);
       ++n;
     }
     if (entry_->endMarker) {
@@ -1841,7 +1841,7 @@ private:
       "H2 Tx stream removal outside Tx thread", return);
     if (auto entry_ = m_txWindows->findPtr(id)) {
       detachFrameTx_(entry_);
-      unsigned n = clearFrameTx_(entry_, ResponseOutcome::Reset);
+      unsigned n = clearFrameTx_(entry_, false);
       if (n) m_frameAdmission.pop(n);
       m_txWindows->delNode(
 	static_cast<TxWindowHash::Node *>(entry_));
@@ -1855,7 +1855,7 @@ private:
     auto i = m_txWindows->iter();
     while (auto entry_ = i()) {
       detachFrameTx_(entry_);
-      n += clearFrameTx_(entry_, ResponseOutcome::Reset);
+      n += clearFrameTx_(entry_, false);
       i.del();
     }
     if (n) m_frameAdmission.pop(n);

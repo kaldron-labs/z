@@ -61,8 +61,6 @@ template <> struct IsProfile<H3QUIC> : public ZuTrue { };
 
 ZtEnumStruct(ZhttpAPI, Migration, int8_t, Disabled, Passive, Active);
 ZtEnumStruct(ZhttpAPI, H2Policy, int8_t, Force, Prefer, Disable);
-ZtEnumStruct(ZhttpAPI, ResponseOutcome, int8_t,
-  Success, BuildFailed, TxFailed, Reset, Cancelled);
 ZhttpAPI Migration::T migrationMode(
   ZuCSpan, Migration::T deflt = Migration::Passive);
 
@@ -425,7 +423,7 @@ enum {
   H1BufMax = 100<<20		// maximum configured HTTP body/buffer growth
 };
 
-using TxCompleteFn = ZmFn<void(ResponseOutcome::T),
+using TxCompleteFn = ZmFn<void(bool),
   ZmFnHeapID<"Zhttp.TxComplete">>;
 
 // The HTTP transports already retain the final wire buffer until the native
@@ -435,14 +433,12 @@ struct TxBufNode : public ZiTxQueue::Node {
   using Base = ZiTxQueue::Node;
   using Base::Base;
 
-  ~TxBufNode() {
-    complete(ResponseOutcome::Cancelled);
-  }
+  ~TxBufNode() { txComplete = {}; }
 
-  void complete(ResponseOutcome::T outcome) {
+  void complete(bool ok) {
     auto fn = ZuMv(txComplete);
     txComplete = {};
-    if (fn) fn(outcome);
+    if (fn) fn(ok);
   }
 
   TxCompleteFn txComplete;
@@ -1235,16 +1231,16 @@ public:
     Transport_::txBufNode(sent)->txComplete = {};
     if (m_txLast == sent) {
       m_txLast = nullptr;
-      m_txOutcome = ok ? ResponseOutcome::Success : ResponseOutcome::TxFailed;
+      m_txOK = ok;
     }
     if (!ok) {
       auto i = this->txQueue.iter();
       while (auto queued = i())
-        Transport_::txBufNode(queued)->complete(ResponseOutcome::TxFailed);
+        Transport_::txBufNode(queued)->complete(false);
     }
     Base::sent(ZuMv(buf), ok);
     if (fn)
-      fn(ok ? ResponseOutcome::Success : ResponseOutcome::TxFailed);
+      fn(ok);
     if (!m_streamEnd || (ok && this->txQueue.count_())) return;
     m_streamEnd = false;
     streamTxClose_();
@@ -1280,7 +1276,7 @@ public:
     m_txReady = true;
     if (!Base::send(ZuMv(buf))) {
       if (m_txLast == last) m_txLast = nullptr;
-      m_txOutcome = ResponseOutcome::TxFailed;
+      m_txOK = false;
       return false;
     }
     return true;
@@ -1297,7 +1293,7 @@ public:
     if (!m_txReady) return false;
     m_txReady = false;
     if (!m_txLast) {
-      fn(m_txOutcome);
+      fn(m_txOK);
       return true;
     }
     auto node = Transport_::txBufNode(m_txLast);
@@ -1311,12 +1307,12 @@ public:
     m_txComplete = {};
     if (!fn) return;
     if (!m_txReady) {
-      fn(ResponseOutcome::TxFailed);
+      fn(false);
       return;
     }
     m_txReady = false;
     if (!m_txLast) {
-      fn(m_txOutcome);
+      fn(m_txOK);
       return;
     }
     Transport_::txBufNode(m_txLast)->txComplete = ZuMv(fn);
@@ -1355,7 +1351,7 @@ private:
   uint16_t		m_remotePort = 0;
   TxCompleteFn		m_txComplete;
   ZiIOBuf		*m_txLast = nullptr;
-  ResponseOutcome::T	m_txOutcome = ResponseOutcome::Success;
+  bool			m_txOK = true;
   bool			m_txReady = false;
   bool			m_counted = true;
   bool			m_disconnected = false;

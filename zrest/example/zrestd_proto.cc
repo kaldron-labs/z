@@ -35,5 +35,5 @@ void App::pong_()
     s << "event=summary auth=" << auth << " refresh=" << refresh <<
       " pong=" << pong;
   }));
-  signal_(Zhttp::ResponseOutcome::Success);
+  signal_(true);
 }

@@ -332,7 +332,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
       ZfJSON::save(body, putRecord);
       body.flush();
       requestContentLength = body.produced();
-      return true;
+      return Zhttp::WriteOutcome::End;
     });
   }
   template <typename L>

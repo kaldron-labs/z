@@ -23,9 +23,6 @@ using namespace ZuTestUtil;
 
 namespace ZhttpServerIdleTest_ {
 
-using ProducerDone = ZmFn<void(ZmRef<ZiIOBuf>, bool),
-  ZmFnHeapID<"Zhttp.Server.BodyChunk">>;
-
 namespace ResponseKind {
   // Synchronous Builder policies exercised by the heterogeneous workload.
   enum { None, Fixed, OptionalFixed, Stream, OptionalStream };
@@ -38,7 +35,6 @@ struct State {
   ZmSemaphore	connected;
   ZmSemaphore	requestStarted;
   ZmSemaphore	responseStarted;
-  ZmSemaphore	producerStarted;
   ZmSemaphore	disconnected;
   ZmSemaphore	released;
   ZmSemaphore	stopped;
@@ -52,12 +48,10 @@ struct State {
   int8_t	expectedTransport = Zhttp::Transport::QUIC;
   bool		openRequest = false;
   bool		completeRequest = false;
-  bool		asyncResponse = false;
   bool		emitOptional = false;
   bool		checkThreads = false;
   bool		responseNotified = false;
   int8_t	responseKind = ResponseKind::None;
-  ProducerDone	producerDone;
 
   void rxCallback() {
     if (checkThreads && (!mx || !mx->invoked(3))) fail();
@@ -81,7 +75,6 @@ struct State {
     connected.post();
     requestStarted.post();
     responseStarted.post();
-    producerStarted.post();
     disconnected.post();
     released.post();
     stopped.post();
@@ -93,7 +86,6 @@ struct App {
   struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     using Headers = ZuTypeList<>;
     Zhttp::BodyPolicy::T bodyPolicy() const {
-      if (state->asyncResponse) return Zhttp::BodyPolicy::Stream;
       switch (state->responseKind) {
         case ResponseKind::Fixed: return Zhttp::BodyPolicy::Fixed;
         case ResponseKind::OptionalFixed:
@@ -112,30 +104,17 @@ struct App {
     template <typename L> void header(L &&) const {
       state->responseCallback();
     }
-    bool close() const { state->responseCallback(); return false; }
+    bool disconnect() const { state->responseCallback(); return false; }
     template <typename Emit>
     void body(Emit &&emit) {
       state->responseCallback();
       if (bodyPolicy() == Zhttp::BodyPolicy::OptionalFixed &&
 	  !state->emitOptional)
 	return;
-      emit([](auto &body) { body << 'x'; return true; });
-    }
-    template <typename L> void bodyHdrs(L &&) {
-      state->responseCallback();
-    }
-    template <typename Done>
-    void next(unsigned, Done done) {
-      state->responseCallback();
-      if (state->asyncResponse) {
-	state->producerDone = ProducerDone{ZuMv(done)};
-	state->producerStarted.post();
-	return;
-      }
-      ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<1, 1, "Zhttp.Server.Idle">{};
-      buf->data()[0] = 'x';
-      buf->length = 1;
-      done(ZuMv(buf), true);
+      emit([](auto &body) {
+	body << 'x';
+	return Zhttp::WriteOutcome::End;
+      });
     }
 
     State *state = nullptr;
@@ -413,8 +392,7 @@ void idle()
   ZuCHECK(!state.errors.load_(), "idle expiry has no transport error");
 }
 
-template <
-  typename Profile, bool Async = false, bool Limit = false, bool Sync = false>
+template <typename Profile, bool Limit = false, bool Sync = false>
 void activeStop()
 {
   ZuTestScope(activeStop);
@@ -434,8 +412,7 @@ void activeStop()
   using Protocol = typename HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
-  state.asyncResponse = Async;
-  state.completeRequest = Async || Sync;
+  state.completeRequest = Sync;
   ZuCHECK(state.port, "allocate loopback port");
   if (!state.port) return;
 
@@ -516,12 +493,6 @@ void activeStop()
   if (requestStarted)
     ZuCHECK(state.completeRequest || server.activeRequests() == 1,
 	"server accounts for admitted request");
-  bool producerStarted = !Async ||
-    state.producerStarted.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(producerStarted, "asynchronous body producer starts");
-  if constexpr (Async)
-    ZuCHECK(server.retainedBytes() == 17,
-	"asynchronous producer respects aggregate retained-byte limit");
   bool responseStarted = !Sync ||
     state.responseStarted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(responseStarted, "synchronous response construction starts");
@@ -562,25 +533,7 @@ void activeStop()
     state.stopped.post();
   });
   stopReturned = 1;
-  bool stoppedEarly = false;
-  if constexpr (Async) {
-    if (state.stopped.trywait() == 0)
-      stoppedEarly = state.stopCount.load_();
-    ZuCHECK(!stoppedEarly,
-	"server stop waits for outstanding body producer");
-    bool cancelled = state.completedCount.load_();
-    if (!cancelled) {
-      auto timeout = Zm::now(10);
-      do {
-	cancelled = state.completedCount.load_();
-      } while (!cancelled && state.completed.timedwait(timeout) == 0);
-    }
-    ZuCHECK(cancelled,
-	"server stop cancels body production before producer release");
-    ProducerDone done{ZuMv(state.producerDone)};
-    if (done) done(ZmRef<ZiIOBuf>{}, false);
-  }
-  bool stopped = !serverInited || stoppedEarly;
+  bool stopped = !serverInited;
   if (!stopped) {
     auto timeout = Zm::now(10);
     do {
@@ -637,11 +590,10 @@ int main(int argc, char **argv)
   ZuTestCall((activeStop<Zhttp::H1TLS>));
   ZuTestCall((activeStop<Zhttp::H2TLS>));
   ZuTestCall((activeStop<Zhttp::H3QUIC>));
-  ZuTestCall((activeStop<Zhttp::H1TCP, true>));
-  ZuTestCall((activeStop<Zhttp::H1TCP, false, false, true>));
-  ZuTestCall((activeStop<Zhttp::H1TLS, false, false, true>));
-  ZuTestCall((activeStop<Zhttp::H2TLS, false, false, true>));
-  ZuTestCall((activeStop<Zhttp::H3QUIC, false, false, true>));
   ZuTestCall((activeStop<Zhttp::H1TCP, false, true>));
+  ZuTestCall((activeStop<Zhttp::H1TLS, false, true>));
+  ZuTestCall((activeStop<Zhttp::H2TLS, false, true>));
+  ZuTestCall((activeStop<Zhttp::H3QUIC, false, true>));
+  ZuTestCall((activeStop<Zhttp::H1TCP, true>));
   return 0;
 }

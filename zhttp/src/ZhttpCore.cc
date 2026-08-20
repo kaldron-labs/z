@@ -10,6 +10,7 @@ namespace Zhttp {
 
 ZtEnumImplNS(Method);
 ZtEnumImplStruct(BodyType);
+ZtEnumImplStruct(WriteOutcome);
 ZtEnumImplStruct(Version);
 ZtEnumImplStruct(RequestErrorCode);
 ZtEnumImplStruct(RequestErrorScope);

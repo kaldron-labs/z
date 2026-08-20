@@ -13,7 +13,6 @@ namespace Zhttp {
 ZtEnumImplStruct(Transport);
 ZtEnumImplStruct(Migration);
 ZtEnumImplStruct(H2Policy);
-ZtEnumImplStruct(ResponseOutcome);
 
 Migration::T migrationMode(ZuCSpan s, Migration::T deflt)
 {
