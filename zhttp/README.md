@@ -16,8 +16,8 @@ logical streams:
   prefix integers, static indexed fields, static-name references, and
   literal-name field lines;
 - DATA frames carry streaming bodies without hidden full-body buffering;
-- receive-side trailers are decoded as regular-field HEADERS, with send-side
-  trailer emission available for the same profile;
+- receive-side trailers are decoded as regular-field HEADERS; application
+  Builders emit only the initial field section and do not support trailers;
 - cancellation maps to QUIC reset and stop-sending behavior;
 - GOAWAY is emitted and parsed as HTTP/3 graceful-shutdown state distinct from
   QUIC transport close.
@@ -271,9 +271,8 @@ void Parser::complete(Link *link, bool ok) {
 run-time value when one type-erased Builder dispatches to different message
 implementations. Its value remains fixed for the duration of one message.
 
-A single response type can select its body policy at run time. Fixed responses
-use synchronous `body(emit)`/`bodyHdrs()` construction, while a streaming
-response can provide asynchronous `next(max, done)` production.
+A single response type can select its body policy at run time. Fixed and
+streaming responses both use synchronous `body(emit)` production turns.
 
 `BodyPolicy::None` is allocation-free. `BodyPolicy::Fixed` and
 `BodyPolicy::OptionalFixed`
@@ -295,12 +294,24 @@ and length, or `false` to reject the message with the same consequences as
 receives its `Zhttp::FieldSection::T`, including informational and trailer
 fields.
 
-Client stream writers remain synchronous.  Every Builder must reproduce the
-same message when a retry or redirect traverses it again.  A server streaming
-response exposes `next(max, done)`: each turn produces at most one pooled
-`ZiIOBuf`, and the server asks for the next turn only after Tx capacity is
-released.  Each retry reuses the request's Builder and reproduces the source
-from byte zero.
+Every writer is invoked synchronously with a queue-backed Tx stream and returns
+`WriteOutcome::End`, `Stream`, `Abort`, or `Failed`. The library never retains
+the writer. A server producer returning `Stream` may retain the `emit` callable
+and invoke it again when ready; the application must dispatch retained calls to
+the response Tx shard itself. Immediate sequential turns and zero-byte turns
+are valid. Queue refusal or an invalid Tx stream fails the response.
+
+`End` emits the native final boundary. `Abort` intentionally terminates the
+stream: H1 closes the connection without draining, while H2 and H3 reset only
+the logical stream. A streaming Builder must not emit `content-length`.
+`ResBuilder::close()` invalidates application producer state and requires the
+Builder to destroy its retained emitter. A later call through another queued
+copy returns `false` without invoking its writer. `disconnect() const` is the
+separate query for closing a connection after a successful response.
+
+Client request writers remain single-turn and accept only `End` as success.
+Every client Builder must reproduce the same message when a retry or redirect
+traverses it again. Multi-turn streaming request bodies are unsupported.
 
 ```c++
 template <typename Emit>
@@ -308,6 +319,8 @@ void body(Emit &&emit) {
   emit([this](auto &body) {
     ZfJSON::save(body, record); // concrete layered ZiTxStream
     contentLength = body.produced();
+    return body ? Zhttp::WriteOutcome::End :
+      Zhttp::WriteOutcome::Failed;
   });
 }
 
@@ -318,6 +331,34 @@ void bodyHdrs(L &&l) {
       ZuStream<uint8_t> s = span;
       s << ZuBoxed(n).fmt<ZuFmt::Right<10>>();
     });
+}
+
+// Streaming Builder alternative:
+template <typename Emit>
+void body(Emit &&emit) {
+  retainedEmit = emit;
+  emit([this](auto &body) {
+    body << initialBytes;
+    return Zhttp::WriteOutcome::Stream;
+  });
+}
+
+// Dispatched by the application to the response Tx shard.
+void nextTurn() {
+  retainedEmit([this](auto &body) {
+    body << laterBytes;
+    return finalTurn ? Zhttp::WriteOutcome::End :
+      Zhttp::WriteOutcome::Stream;
+  });
+}
+
+void abortTurn() {
+  retainedEmit([](auto &) { return Zhttp::WriteOutcome::Abort; });
+}
+
+void close() {
+  unsubscribeProducer();
+  retainedEmit = {};
 }
 
 template <typename Rx>

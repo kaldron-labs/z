@@ -126,7 +126,7 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 	ZfJSON::save<Body_JSON_Facet>(s, impl()->bodyObject(object.ptr()));
 	s.flush();
 	bodyLength = s.produced();
-	return true;
+	return Zhttp::WriteOutcome::End;
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON) {
       using Body_JSON_Facet = Impl::Body_JSON_Facet;
@@ -138,7 +138,7 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 	s << buf;
 	s.flush();
 	bodyLength = s.produced();
-	return true;
+	return Zhttp::WriteOutcome::End;
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
       emit([this](auto &s) {
@@ -146,7 +146,7 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 	ZfURI::save<Body_URI_Facet>(s, impl()->bodyObject(object.ptr()));
 	s.flush();
 	bodyLength = s.produced();
-	return true;
+	return Zhttp::WriteOutcome::End;
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI) {
       using Body_URI_Facet = Impl::Body_URI_Facet;
@@ -158,14 +158,14 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 	s << buf;
 	s.flush();
 	bodyLength = s.produced();
-	return true;
+	return Zhttp::WriteOutcome::End;
       });
     } else if constexpr (Impl::Body == BodyPolicy::Raw) {
       emit([this](auto &s) {
 	s << impl()->bodyObject(object.ptr());
 	s.flush();
 	bodyLength = s.produced();
-	return true;
+	return Zhttp::WriteOutcome::End;
       });
     }
   }

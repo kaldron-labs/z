@@ -1258,9 +1258,9 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
     putVar(frameHdr, length);
   }
   uint64_t produced() const { return m_produced; }
-  bool valid() const { return m_valid; }
+  bool valid() const { return m_valid && !Base::operator !(); }
   bool complete() const {
-    return m_valid &&
+    return valid() &&
       (m_remaining == uint64_t(-1) || !m_remaining);
   }
 

@@ -13,6 +13,9 @@
 #include <unistd.h>
 #endif
 
+#include <zlib/ZuAssert.hh>
+#include <zlib/ZuUnion.hh>
+
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -179,11 +182,93 @@ using FixedRespHeaders = ZhttpHeaders(
 
 struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   struct Mode { enum { Empty, Fixed, Generated, JSON, File }; };
+  struct EmitProbe {
+    template <typename Body>
+    Zhttp::WriteOutcome::T operator ()(Body &) const;
+  };
 
   using Headers = FixedRespHeaders;
   using ContentLength = ZuStringT<"content-length">;
   using FileBuf = ZiIOBufAlloc<
     FileChunk, FileChunk, "Zhttpd.FileBody">;
+  using ProducerClose = ZmFn<void(),
+    ZmFnHeapID<"zhttpd.FileProducerClose">>;
+
+  template <typename Emit, typename Heap>
+  struct FileProducer_ : public Heap, public ZmPolymorph {
+    using Self = FileProducer_;
+    using Emitter = ZuUnion<void, Emit>;
+
+    FileProducer_(
+      State *state_, Emit emit_, const ZiFile &handle_,
+      uint64_t offset_, uint64_t length_) :
+      state{state_}, emitter{ZuMv(emit_)}, offset{offset_}, length{length_} {
+      (void)handle.dup(handle_, ZiFile::GC);
+    }
+
+    bool start_() { return read_(); }
+    void close_() { emitter = {}; }
+
+    bool read_() {
+      if (!emitter.template ptr<Emit>()) return false;
+      unsigned n = length > FileChunk ? FileChunk : unsigned(length);
+      if (!n) return false;
+      ZiFile file;
+      if (file.dup(handle, ZiFile::GC) != Zi::OK) return false;
+      uint64_t offset_ = offset;
+      bool final = n == length;
+      offset += n;
+      length -= n;
+      state->mx->run([
+	self = ZmRef<Self>{this}, file = ZuMv(file),
+	offset_, n, final]() mutable {
+	ZmRef<ZiIOBuf> buf = new FileBuf{};
+	int r = file.pread(offset_, buf->data(), n);
+	if (r == int(n)) buf->length = n;
+	State *state_ = self->state;
+	unsigned txThread = state_->txThread;
+	state_->mx->run([
+	  self = ZuMv(self), buf = ZuMv(buf), final]() mutable {
+	  self->write_(ZuMv(buf), final);
+	}, txThread);
+      }, state->fileThread);
+      return true;
+    }
+
+    void write_(ZmRef<ZiIOBuf> buf, bool final) {
+      if (!emitter.template ptr<Emit>()) return;
+      if (!buf || !buf->length) {
+	(void)emit_([](auto &) { return Zhttp::WriteOutcome::Failed; });
+	return;
+      }
+
+      (void)emit_([self = ZmRef<Self>{this}, buf = ZuMv(buf), final](
+	  auto &body) mutable {
+	body << buf->cspan();
+	if (final) return Zhttp::WriteOutcome::End;
+	if (!self->read_()) return Zhttp::WriteOutcome::Failed;
+	return Zhttp::WriteOutcome::Stream;
+      });
+    }
+
+    template <typename Write>
+    bool emit_(Write &&write) {
+      auto emitter_ = emitter.template ptr<Emit>();
+      if (!emitter_) return false;
+      Emit local{*emitter_};
+      return local(ZuFwd<Write>(write));
+    }
+
+    State	*state;
+    Emitter	emitter;
+    ZiFile	handle;
+    uint64_t	offset;
+    uint64_t	length;
+  };
+
+  template <typename Emit>
+  using FileProducer = FileProducer_<Emit,
+    ZmHeap<"zhttpd.FileProducer", FileProducer_<Emit, ZuVoid>>>;
 
   Zhttp::BodyPolicy::T bodyPolicy() const {
     if (!plan.sendBody) return Zhttp::BodyPolicy::None;
@@ -225,15 +310,41 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     } else if constexpr (Key{}() == "content-length") {
       if (bodyPolicy() == Zhttp::BodyPolicy::Fixed)
 	l("0000000000");
-      else if (plan.contentLength || plan.sendBody)
+      else if (!Zhttp::BodyPolicy::streaming(bodyPolicy()) &&
+	  (plan.contentLength || plan.sendBody))
 	l(ZuBoxed(plan.contentLength));
     }
   }
   template <typename L> void header(L &&) const { }
-  bool close() const { return plan.close; }
+  bool disconnect() const { return plan.close; }
 
   template <typename Emit>
   void body(Emit &&emit) {
+    if (mode == Mode::File) {
+      using EmitResult = decltype(
+	ZuDeclVal<Emit &>()(ZuDeclVal<EmitProbe>()));
+      if constexpr (ZuIsSame<EmitResult, bool>{}) {
+	if (!plan.fileLength) {
+	  emit([](auto &) { return Zhttp::WriteOutcome::End; });
+	  return;
+	}
+	using Producer = FileProducer<ZuDecay<Emit>>;
+	ZmRef<Producer> producer = new Producer{
+	  state, emit, plan.fileHandle, plan.fileOffset, plan.fileLength};
+	ZmRef<Producer> start{producer};
+	producerClose = ProducerClose{ProducerClose::mvFn(
+	  ZuMv(producer), [](ZmRef<Producer> producer_) {
+	    producer_->close_();
+	  })};
+	emit([start = ZuMv(start)](auto &) mutable {
+	  return start->start_() ? Zhttp::WriteOutcome::Stream :
+	    Zhttp::WriteOutcome::Failed;
+	});
+      } else {
+	emit([](auto &) { return Zhttp::WriteOutcome::Failed; });
+      }
+      return;
+    }
     emit([this](auto &body) {
       switch (mode) {
 	case Mode::JSON:
@@ -248,8 +359,14 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       }
       body.flush();
       contentLength = body.produced();
-      return true;
+      return Zhttp::WriteOutcome::End;
     });
+  }
+
+  void close() {
+    auto fn = ZuMv(producerClose);
+    producerClose = {};
+    if (fn) fn();
   }
   template <typename L>
   void bodyHdrs(L &&l) const {
@@ -260,44 +377,13 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       });
   }
 
-  template <typename Done>
-  void next(unsigned max, Done done) {
-    if (mode != Mode::File) {
-      done(ZmRef<ZiIOBuf>{}, false);
-      return;
-    }
-    unsigned n = plan.fileLength > FileChunk ?
-      FileChunk : unsigned(plan.fileLength);
-    if (n > max) n = max;
-    if (!n) { done(ZmRef<ZiIOBuf>{}, false); return; }
-    ZiFile file;
-    if (file.dup(plan.fileHandle, ZiFile::GC) != Zi::OK) {
-      done(ZmRef<ZiIOBuf>{}, false);
-      return;
-    }
-    uint64_t offset = plan.fileOffset;
-    bool final = n == plan.fileLength;
-    plan.fileOffset += n;
-    plan.fileLength -= n;
-    state->mx->run([
-      file = ZuMv(file), offset, n, final, done = ZuMv(done)]() mutable {
-      ZmRef<ZiIOBuf> buf = new FileBuf{};
-      int r = file.pread(offset, buf->data(), n);
-      if (r != int(n)) {
-	done(ZmRef<ZiIOBuf>{}, false);
-	return;
-      }
-      buf->length = n;
-      done(ZuMv(buf), final);
-    }, state->fileThread);
-  }
-
   ResponsePlan		plan;
   ZhttpPut::Record	record;
   State			*state = nullptr;
   Zhttp::Method::T	method_ = -1;
   unsigned		contentLength = 0;
   int8_t		mode = Mode::Empty;
+  ProducerClose		producerClose;
 };
 
 using ResBuilderQ = ZmList<ResBuilder_,
@@ -443,8 +529,7 @@ struct App {
   void completed_() {
 #ifndef _WIN32
     if (state->options.eventFD >= 0) {
-      uint8_t value = uint8_t(
-	0x80 | unsigned(Zhttp::ResponseOutcome::Success));
+      uint8_t value = 0x80;
       (void)::write(state->options.eventFD, &value, 1);
     }
 #endif
@@ -602,6 +687,7 @@ bool Zhttpd::Application::startMultiplex()
   if (!m_impl || m_impl->mxStarted || !m_impl->mx.start()) return false;
   m_impl->mxStarted = true;
   m_impl->state.mx = &m_impl->mx;
+  m_impl->state.txThread = m_impl->mx.sid("4");
   m_impl->state.fileThread = m_impl->mx.sid("5");
   return true;
 }
@@ -777,6 +863,7 @@ int main(int argc, char **argv)
     return 1;
   }
   state.mx = &mx;
+  state.txThread = mx.sid("4");
   state.fileThread = mx.sid("5");
   App app{&state};
   Server server;

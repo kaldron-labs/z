@@ -137,7 +137,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
       body << bodyData;
       body.flush();
       bodyLength = body.produced();
-      return true;
+      return Zhttp::WriteOutcome::End;
     });
   }
   template <typename L>

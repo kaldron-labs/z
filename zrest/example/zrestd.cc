@@ -230,18 +230,18 @@ void App::event_(ZuCSpan event)
 void App::fail_()
 {
   ++m_errors;
-  signal_(Zhttp::ResponseOutcome::BuildFailed);
+  signal_(false);
 }
 
-void App::signal_(Zhttp::ResponseOutcome::T outcome)
+void App::signal_(bool ok)
 {
 #ifndef _WIN32
   if (m_options->eventFD >= 0) {
-    uint8_t value = uint8_t(0x80 | unsigned(outcome));
+    uint8_t value = uint8_t(ok ? 0x80 : 0x81);
     (void)::write(m_options->eventFD, &value, 1);
   }
 #else
-  (void)outcome;
+  (void)ok;
 #endif
   done.post();
 }

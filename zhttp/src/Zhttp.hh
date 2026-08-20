@@ -209,11 +209,31 @@ struct Builder {
   void header(L &&) const { }
   template <typename L> void header(L &&l) const { }
 
-  // Called only for body-bearing policies. emit(write) must be called
-  // once for required bodies, zero or one times for optional bodies.
-  // body(emit) will not be called for messages without a body.
-  // write(bodyStream) returns true on success, false on failure.
+  // Called only for body-bearing policies. During body(emit), emit(write) must
+  // initially be called once for required bodies and zero or one times for
+  // optional bodies. A streaming writer which returns Stream permits later
+  // sequential calls through a retained emitter. body(emit) is not called for
+  // messages without a body.
+  //
+  // emit(write) invokes write(bodyStream) synchronously on the caller's
+  // current shard; the library never retains write. write returns End when
+  // the body is complete, Stream when a streaming response remains open,
+  // Abort to intentionally abort it, or Failed on application failure.
+  // Stream and Abort are valid only for streaming server responses. After a
+  // Stream result the application may retain emit and invoke it again, but is
+  // responsible for dispatching every invocation to the response Tx shard.
+  // Immediate sequential turns are permitted after Stream; zero-byte Stream
+  // turns are valid and the initial one commits the response headers. A
+  // streaming response must not supply Content-Length.
+  // The emitter is invalidated by close() or by destruction of the response
+  // Builder implementation; invoking an invalid emitter returns false without
+  // invoking its writer. The transmit queue is bounded, and queue refusal
+  // fails the stream.
   template <typename Emit> void body(Emit &&emit) const { }
+
+  // The server ResBuilder base adds close(), called exactly once when a
+  // streaming response producer becomes unusable. The application must
+  // destroy any retained emitter there and must not invoke it from close().
 
   // Called exactly once for a successfully produced fixed body, synchronously
   // after body output and initial-header emission, but before those header
@@ -453,7 +473,7 @@ struct HasBuilderBodyHdrs<U, L, decltype(
   ZuDeclVal<U &>().bodyHdrs(ZuDeclVal<L>()), void())> : public ZuTrue { };
 
 template <typename Write, typename Stream>
-bool invokeBodyWriter(Write &&write, Stream &stream) {
+WriteOutcome::T invokeBodyWriter(Write &&write, Stream &stream) {
   return ZuFwd<Write>(write)(stream);
 }
 
@@ -853,24 +873,24 @@ public:
     auto tx = link.transmit(builder);
     bool emitted = false;
     bool duplicate = false;
-    bool writerOK = false;
+    WriteOutcome::T outcome = WriteOutcome::Failed;
     bool headersOK = false;
     uint64_t produced = 0;
     if (optional) {
       builder.emitBody([
-	this, &builder, &tx, &emitted, &duplicate, &writerOK,
+	this, &builder, &tx, &emitted, &duplicate, &outcome,
 	&headersOK, &produced](auto &&write) {
 	if (emitted) { duplicate = true; return; }
 	emitted = true;
 	if (!(headersOK = begin_(builder, tx))) return;
 	m_ops->headers();
 	auto body = builder.body(tx);
-	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
 	body.flush();
 	produced = body.produced();
 	m_ops->template produced<true>(produced);
-	if (!body.valid()) writerOK = false;
-	if (writerOK) builder.finish(tx);
+	if (!body.valid()) outcome = WriteOutcome::Failed;
+	if (outcome == WriteOutcome::End) builder.finish(tx);
       });
       if (!emitted) return m_ops->empty(builder.appBuilder());
     } else {
@@ -878,20 +898,21 @@ public:
 	return m_ops->template fail<true>();
       m_ops->headers();
       builder.emitBody([
-	this, &builder, &tx, &emitted, &duplicate, &writerOK, &produced](
+	this, &builder, &tx, &emitted, &duplicate, &outcome, &produced](
 	    auto &&write) {
 	if (emitted) { duplicate = true; return; }
 	emitted = true;
 	auto body = builder.body(tx);
-	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
 	body.flush();
 	produced = body.produced();
 	m_ops->template produced<true>(produced);
-	if (!body.valid()) writerOK = false;
+	if (!body.valid()) outcome = WriteOutcome::Failed;
       });
-      if (emitted && writerOK) builder.finish(tx);
+      if (emitted && outcome == WriteOutcome::End) builder.finish(tx);
     }
-    if ((!optional && !emitted) || duplicate || !writerOK ||
+    if (!validCardinality_(optional, emitted, duplicate) ||
+	!writerEnded_(outcome) ||
 	!headersOK)
       return m_ops->template fail<true>();
     if (!m_ops->complete(produced)) return false;
@@ -912,20 +933,20 @@ public:
       auto body = builder.body(bodyTx, m_ops->fixedBodyMax());
       bool emitted = false;
       bool duplicate = false;
-      bool writerOK = false;
+      WriteOutcome::T outcome = WriteOutcome::Failed;
       builder.emitBody([
-	&body, &emitted, &duplicate, &writerOK](auto &&write) {
+	&body, &emitted, &duplicate, &outcome](auto &&write) {
 	if (emitted) { duplicate = true; return; }
 	emitted = true;
-	writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
       });
       body.flush();
       if (emitted) {
 	builder.produced = body.produced();
 	m_ops->template produced<false>(builder.produced);
       }
-      if ((!optional && !emitted) || duplicate ||
-	  (emitted && (!writerOK || !body.valid())))
+      if (!validCardinality_(optional, emitted, duplicate) ||
+	  (emitted && (!writerEnded_(outcome) || !body.valid())))
 	return m_ops->template fail<false>();
       if (!emitted) return m_ops->empty(builder.appBuilder());
       if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
@@ -942,6 +963,30 @@ public:
   }
 
 private:
+  static bool validCardinality_(
+      bool optional, bool emitted, bool duplicate) {
+    ZiAssert(optional || emitted, "Zhttp", (),
+      "required body emitted no writer", return false);
+    ZiAssert(!duplicate, "Zhttp", (),
+      "body emitted more than one writer", return false);
+    return (optional || emitted) && !duplicate;
+  }
+
+  static bool writerEnded_(WriteOutcome::T outcome) {
+    switch (outcome) {
+      case WriteOutcome::End: return true;
+      case WriteOutcome::Failed: return false;
+      case WriteOutcome::Stream:
+      case WriteOutcome::Abort:
+	ZiAssert(false, "Zhttp", (),
+	  "streaming outcome returned from a single-turn writer", return false);
+	return false;
+      default:
+	ZiAssert(false, "Zhttp", (), "invalid body writer outcome", return false);
+	return false;
+    }
+  }
+
   template <typename Builder, typename Tx>
   static bool begin_(Builder &builder, Tx &tx) {
     using R = decltype(builder.begin(tx));
@@ -958,20 +1003,20 @@ private:
     auto body = builder.body(tx, m_ops->fixedBodyMax());
     bool emitted = false;
     bool duplicate = false;
-    bool writerOK = false;
+    WriteOutcome::T outcome = WriteOutcome::Failed;
     builder.emitBody([
-      &body, &emitted, &duplicate, &writerOK](auto &&write) {
+      &body, &emitted, &duplicate, &outcome](auto &&write) {
       if (emitted) { duplicate = true; return; }
       emitted = true;
-      writerOK = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
+      outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
     });
     body.flush();
     if (emitted) {
       builder.produced = body.produced();
       m_ops->template produced<false>(builder.produced);
     }
-    if ((!optional && !emitted) || duplicate ||
-	(emitted && (!writerOK || !body.valid())))
+    if (!validCardinality_(optional, emitted, duplicate) ||
+	(emitted && (!writerEnded_(outcome) || !body.valid())))
       return m_ops->template fail<false>();
     if (!emitted) return m_ops->empty(builder.appBuilder());
     if (!begin_(builder, tx))

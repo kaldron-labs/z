@@ -8,6 +8,11 @@
 
 #include <string.h>
 
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZiRxStream.hh>
@@ -288,6 +293,90 @@ struct TxLink {
   unsigned	finishes = 0;
 };
 
+struct ContractMessage { enum { ID = Zhttp::Version::H1 }; };
+
+template <typename Tx_>
+struct ContractBody {
+  template <typename V>
+  ContractBody &operator <<(V &&v) {
+    *tx << ZuFwd<V>(v);
+    ++produced_;
+    return *this;
+  }
+  void flush() { tx->flush(); }
+  uint64_t produced() const { return produced_; }
+  bool valid() const { return tx->valid(); }
+
+  Tx_	*tx;
+  uint64_t	produced_ = 0;
+};
+
+struct ContractBuilder {
+  template <typename Emit>
+  void emitBody(Emit &&emit) {
+    for (unsigned i = 0; i < emissions; ++i)
+      emit([this](auto &body) {
+	++writerCalls;
+	if (writeByte) body << 'x';
+	return outcome;
+      });
+  }
+  template <typename Tx_>
+  bool begin(Tx_ &tx) {
+    ++beginCalls;
+    tx << 'h';
+    return true;
+  }
+  template <typename Tx_>
+  ContractBody<Tx_> body(Tx_ &tx, uint64_t) { return {&tx}; }
+  template <typename Tx_>
+  void finish(Tx_ &) { ++finishCalls; }
+  ContractBuilder &appBuilder() { return *this; }
+
+  uint64_t	produced = 0;
+  unsigned	emissions = 1;
+  unsigned	writerCalls = 0;
+  unsigned	beginCalls = 0;
+  unsigned	finishCalls = 0;
+  Zhttp::WriteOutcome::T outcome = Zhttp::WriteOutcome::End;
+  bool		writeByte = true;
+};
+
+struct ContractOps {
+  TxLink &link() { return link_; }
+  uint64_t fixedBodyMax() const { return 64; }
+  uint64_t retainedMax() const { return 4096; }
+  void headers() { ++headerCalls; }
+  template <bool> void produced(uint64_t n) { producedBytes = n; }
+  bool empty(ContractBuilder &) { ++emptyCalls; return true; }
+  template <bool> bool fail() { ++failCalls; return false; }
+  bool complete(uint64_t) { ++completeCalls; return true; }
+
+  TxLink	link_;
+  uint64_t producedBytes = 0;
+  unsigned headerCalls = 0;
+  unsigned emptyCalls = 0;
+  unsigned failCalls = 0;
+  unsigned completeCalls = 0;
+};
+
+#ifndef _WIN32
+template <typename L>
+bool assertionFails(L &&l)
+{
+  pid_t pid = ::fork();
+  if (pid < 0) return false;
+  if (!pid) {
+    (void)::close(STDERR_FILENO);
+    ZuFwd<L>(l)();
+    ::_exit(0);
+  }
+  int status = 0;
+  return ::waitpid(pid, &status, 0) == pid &&
+    (!WIFEXITED(status) || WEXITSTATUS(status));
+}
+#endif
+
 struct H2Native {
   using Tx = TxLink::Stream;
 
@@ -486,6 +575,159 @@ void testBodyTx()
     "body payload mismatch");
   ZuCHECK(link.wire.find("0\r\n") >= 0,
     "chunk terminator mismatch");
+  ZuCSpan terminal{"0\r\n\r\n"};
+  ZuCSpan wire{link.wire};
+  int first = wire.find(terminal);
+  if (first >= 0) wire.offset(unsigned(first) + terminal.length());
+  ZuCHECK(first >= 0 && wire.find(terminal) < 0,
+    "H1 emitted the final chunk boundary more than once");
+}
+
+void testTxCompletion()
+{
+  ZuTestScope(testTxCompletion);
+  bool called = false;
+  bool outcome = false;
+  uint8_t byte = 0;
+  {
+    Zhttp::Transport_::TxBufNode node{&byte, 1};
+    node.txComplete = Zhttp::Transport_::TxCompleteFn{
+      [&called, &outcome](bool ok) {
+	called = true;
+	outcome = ok;
+      }};
+    node.complete(true);
+    node.complete(false);
+  }
+  ZuCHECK(called && outcome,
+    "transport completion reports success exactly once");
+  called = false;
+  {
+    Zhttp::Transport_::TxBufNode node{&byte, 1};
+    node.txComplete = Zhttp::Transport_::TxCompleteFn{
+      [&called](bool) { called = true; }};
+  }
+  ZuCHECK(!called,
+    "local transport-node destruction clears completion silently");
+  outcome = true;
+  {
+    Zhttp::Transport_::TxBufNode node{&byte, 1};
+    node.txComplete = Zhttp::Transport_::TxCompleteFn{
+      [&called, &outcome](bool ok) {
+	called = true;
+	outcome = ok;
+      }};
+    node.complete(false);
+  }
+  ZuCHECK(called && !outcome,
+    "asynchronous transport failure reports false exactly once");
+}
+
+void testBodyContract()
+{
+  ZuTestScope(testBodyContract);
+  auto run = [](ContractBuilder &builder, ContractOps &ops, bool optional) {
+    return Zhttp::MessageTx<ContractMessage, ContractOps>{ops}.fixed(
+      builder, optional);
+  };
+  {
+    ContractBuilder builder;
+    ContractOps ops;
+    ZuCHECK(run(builder, ops, false) && builder.writerCalls == 1 &&
+	builder.beginCalls == 1 && builder.finishCalls == 1 &&
+	ops.completeCalls == 1 && ops.producedBytes == 1,
+      "fixed End writer completes exactly once");
+  }
+  {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.outcome = Zhttp::WriteOutcome::Failed;
+    ZuCHECK(!run(builder, ops, false) && builder.writerCalls == 1 &&
+	ops.failCalls == 1 && !ops.completeCalls,
+      "fixed Failed writer rejects the message");
+  }
+  {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.emissions = 0;
+    ZuCHECK(run(builder, ops, true) && ops.emptyCalls == 1 &&
+	!builder.writerCalls && !ops.failCalls,
+      "optional fixed body may emit no writer");
+  }
+
+#ifdef ZDEBUG
+#ifndef _WIN32
+  ZuCHECK(assertionFails([run]() {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.emissions = 0;
+    (void)run(builder, ops, false);
+  }), "required fixed body omission asserts");
+  ZuCHECK(assertionFails([run]() {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.emissions = 2;
+    (void)run(builder, ops, false);
+  }), "duplicate fixed-body emission asserts");
+  ZuCHECK(assertionFails([run]() {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.outcome = Zhttp::WriteOutcome::Stream;
+    (void)run(builder, ops, false);
+  }), "fixed Stream outcome asserts");
+  ZuCHECK(assertionFails([run]() {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.outcome = Zhttp::WriteOutcome::Abort;
+    (void)run(builder, ops, false);
+  }), "fixed Abort outcome asserts");
+  ZuCHECK(assertionFails([]() {
+    int8_t state = Zhttp::StreamState::Writing;
+    bool beginHeaders = false;
+    (void)Zhttp::Server_::streamEnter(state, beginHeaders);
+  }), "reentrant stream emission asserts");
+  ZuCHECK(assertionFails([]() {
+    int8_t state = int8_t(-1);
+    bool beginHeaders = false;
+    (void)Zhttp::Server_::streamEnter(state, beginHeaders);
+  }), "malformed stream state asserts");
+  ZuCHECK(assertionFails([]() {
+    int txThread = ZmSelf() ? ZmSelf()->sid() + 1 : 0;
+    (void)Zhttp::Server_::streamTxThread(txThread);
+  }), "wrong-shard stream emission asserts");
+  ZuCHECK(assertionFails([]() {
+    (void)Zhttp::Server_::streamContentLength();
+  }), "streaming Content-Length asserts");
+  ZuCHECK(assertionFails([]() {
+    (void)Zhttp::Server_::streamBodyAbsent(false);
+  }), "required streaming body omission asserts");
+#endif
+#else
+  {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.emissions = 0;
+    ZuCHECK(!run(builder, ops, false),
+      "required fixed body omission fails in release");
+  }
+  {
+    ContractBuilder builder;
+    ContractOps ops;
+    builder.emissions = 2;
+    ZuCHECK(!run(builder, ops, false),
+      "duplicate fixed-body emission fails in release");
+  }
+  {
+    int8_t state = Zhttp::StreamState::Terminal;
+    bool beginHeaders = false;
+    ZuCHECK(!Zhttp::Server_::streamEnter(state, beginHeaders),
+      "terminal stream emission returns false");
+  }
+#endif
+  int8_t state = Zhttp::StreamState::Terminal;
+  bool beginHeaders = false;
+  ZuCHECK(!Zhttp::Server_::streamEnter(state, beginHeaders),
+    "late terminal stream emission returns false");
 }
 
 void testResponseStatusLine()
@@ -971,6 +1213,8 @@ int main(int argc, char **argv)
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
   ZuTestCall(testBodyTx);
+  ZuTestCall(testTxCompletion);
+  ZuTestCall(testBodyContract);
   ZuTestCall(testResponseStatusLine);
   ZuTestCall(testFixedPatch);
   ZuTestCall(testH2DeferredState);

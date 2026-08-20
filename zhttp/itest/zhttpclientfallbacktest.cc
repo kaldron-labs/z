@@ -307,7 +307,7 @@ bool serverResponses(int fd, unsigned count)
       return false;
     uint8_t value;
     if (::read(fd, &value, 1) != 1) return false;
-    if (value != uint8_t(0x80 | Zhttp::ResponseOutcome::Success))
+    if (value != uint8_t(0x80))
       return false;
     --count;
   }

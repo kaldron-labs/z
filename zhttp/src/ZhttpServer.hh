@@ -13,7 +13,9 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuObject.hh>
 #include <zlib/ZuObjectTraits.hh>
+#include <zlib/ZuRef.hh>
 
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmEngine.hh>
@@ -34,6 +36,112 @@
 #include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
+
+struct StreamState {
+  enum {
+    Initial, InitialWriting, InitialOpen, InitialTerminal,
+    Writing, Open, Terminal
+  };
+};
+
+namespace Server_ {
+
+inline bool streamTxThread(int txThread)
+{
+  bool valid = ZmSelf() && ZmSelf()->sid() == txThread;
+  ZiAssert(valid, "Zhttp", (), "response stream called outside its Tx shard",
+    return false);
+  return valid;
+}
+
+inline bool streamEnter(int8_t &state, bool &beginHeaders)
+{
+  switch (state) {
+    case StreamState::Initial:
+      state = StreamState::InitialWriting;
+      beginHeaders = true;
+      return true;
+    case StreamState::InitialOpen:
+      state = StreamState::InitialWriting;
+      beginHeaders = false;
+      return true;
+    case StreamState::Open:
+      state = StreamState::Writing;
+      beginHeaders = false;
+      return true;
+    case StreamState::InitialWriting:
+    case StreamState::Writing:
+      ZiAssert(false, "Zhttp", (), "reentrant stream emission", return false);
+      return false;
+    case StreamState::InitialTerminal:
+    case StreamState::Terminal:
+      return false;
+    default:
+      ZiAssert(false, "Zhttp", (), "invalid stream state", return false);
+      return false;
+  }
+}
+
+inline bool streamContentLength()
+{
+  ZiAssert(false, "Zhttp", (),
+    "streaming response supplied Content-Length", return false);
+  return false;
+}
+
+inline bool streamBodyAbsent(bool optional)
+{
+  ZiAssert(optional, "Zhttp", (),
+    "required streaming body emitted no writer", return false);
+  return optional;
+}
+
+} // namespace Server_
+
+using StreamCancelFn = ZmFn<void(), ZmFnHeapID<"Zhttp.StreamCancel">>;
+struct StreamTask {
+  StreamTask() = default;
+  StreamTask(const StreamTask &) = delete;
+  StreamTask &operator =(const StreamTask &) = delete;
+  StreamTask(StreamTask &&task) :
+    driver{task.driver}, stopFn{task.stopFn}, releaseFn{task.releaseFn} {
+    task.driver = nullptr;
+  }
+  StreamTask &operator =(StreamTask &&task) {
+    if (this == &task) return *this;
+    release_();
+    driver = task.driver;
+    stopFn = task.stopFn;
+    releaseFn = task.releaseFn;
+    task.driver = nullptr;
+    return *this;
+  }
+  template <typename Driver>
+  StreamTask(ZuRef<Driver> driver_) :
+    driver{ZuMv(driver_).release()},
+    stopFn{[](void *ptr) { static_cast<Driver *>(ptr)->stopTask_(); }},
+    releaseFn{[](void *ptr) {
+      auto driver_ = static_cast<Driver *>(ptr);
+      if (driver_->deref()) delete driver_;
+    }} { }
+  ~StreamTask() { release_(); }
+
+  void stop_() { if (driver) stopFn(driver); }
+  void release_() {
+    if (!driver) return;
+    auto driver_ = driver;
+    driver = nullptr;
+    releaseFn(driver_);
+  }
+
+  void	*driver = nullptr;
+  void	(*stopFn)(void *) = nullptr;
+  void	(*releaseFn)(void *) = nullptr;
+};
+ZuDerive(StreamTaskQ, (ZmList<StreamTask,
+  ZmListNode<StreamTask, ZmListHeapID<"Zhttp.StreamTask">>>));
+
+enum { StreamStopBatch = 64 };
 
 template <typename Impl, typename Parser_, typename Message_>
 struct ServerSession {
@@ -356,6 +464,16 @@ public:
       if (entry->localEnd) closeLater_(id, true);
     }
   }
+  void close(Logical *logical, uint32_t id) {
+    this->app()->rxInvoke([
+      link = this, logical = ZmMkRef(logical), id
+    ]() mutable {
+      auto entry = link->h2Stream(id);
+      if (!entry || entry->logical.ptr() != logical.ptr()) return;
+      link->rst_(id, Error::Cancel);
+      link->notify_(id, false);
+    });
+  }
   void h2ResetLogical(uint32_t id, Error::T) { notify_(id, true); }
   void h2Cancel(uint32_t id) {
     rst_(id, Error::Cancel);
@@ -462,10 +580,10 @@ public:
     m_txComplete = {};
     if (!fn) return;
     if (!m_native || !m_native->finishTx(m_streamID, ZuMv(fn)))
-      fn(ResponseOutcome::TxFailed);
+      fn(false);
   }
   void disconnect() {
-    if (m_native) m_native->h2Cancel(m_streamID);
+    if (m_native) m_native->close(impl(), m_streamID);
   }
   void connected_(ConnectedInfo info) {
     m_session.connected(*impl());
@@ -490,7 +608,7 @@ private:
     m_txComplete = {};
     m_native = nullptr;
     m_streamID = 0;
-    if (fn) fn(ResponseOutcome::Reset);
+    if (fn) fn(false);
   }
 
   App		*m_app = nullptr;
@@ -552,7 +670,7 @@ public:
   bool active() const { return m_native; }
   void txComplete(Transport_::TxCompleteFn fn) {
     if (m_native) m_native->armH1Complete(ZuMv(fn));
-    else fn(ResponseOutcome::Cancelled);
+    else fn(false);
   }
   void txCancel() {
     if (m_native) m_native->cancelH1Complete();
@@ -775,17 +893,16 @@ public:
     Transport_::txBufNode(sent)->txComplete = {};
     if (m_h1TxLast == sent) {
       m_h1TxLast = nullptr;
-      m_h1TxOutcome = ok ?
-	ResponseOutcome::Success : ResponseOutcome::TxFailed;
+      m_h1TxOK = ok;
     }
     if (!ok) {
       auto i = this->txQueue.iter();
       while (auto queued = i())
-	Transport_::txBufNode(queued)->complete(ResponseOutcome::TxFailed);
+	Transport_::txBufNode(queued)->complete(false);
     }
     Base::sent(ZuMv(buf), ok);
     if (fn)
-      fn(ok ? ResponseOutcome::Success : ResponseOutcome::TxFailed);
+      fn(ok);
   }
   void armH1Complete(Transport_::TxCompleteFn fn) {
     m_h1Complete = ZuMv(fn);
@@ -800,19 +917,19 @@ public:
     m_h1Complete = {};
     m_h1TxLast = nullptr;
     m_h1TxReady = false;
-    if (fn) fn(ResponseOutcome::Reset);
+    if (fn) fn(false);
   }
   void finishH1() {
     auto fn = ZuMv(m_h1Complete);
     m_h1Complete = {};
     if (!fn) return;
     if (!m_h1TxReady) {
-      fn(ResponseOutcome::TxFailed);
+      fn(false);
       return;
     }
     m_h1TxReady = false;
     if (!m_h1TxLast) {
-      fn(m_h1TxOutcome);
+      fn(m_h1TxOK);
       return;
     }
     Transport_::txBufNode(m_h1TxLast)->txComplete = ZuMv(fn);
@@ -822,7 +939,7 @@ public:
     if (!m_h1TxReady) return false;
     m_h1TxReady = false;
     if (!m_h1TxLast) {
-      fn(m_h1TxOutcome);
+      fn(m_h1TxOK);
       return true;
     }
     auto node = Transport_::txBufNode(m_h1TxLast);
@@ -939,6 +1056,16 @@ public:
       if (entry->localEnd) closeLater_(id, true);
     }
   }
+  void close(H2Logical *logical, uint32_t id) {
+    this->app()->rxInvoke([
+      link = this, logical = ZmMkRef(logical), id
+    ]() mutable {
+      auto entry = link->h2Stream(id);
+      if (!entry || entry->logical.ptr() != logical.ptr()) return;
+      link->rst_(id, H2::Error::Cancel);
+      link->notify_(id, false);
+    });
+  }
   void h2ResetLogical(uint32_t id, H2::Error::T) {
     notify_(id, true);
   }
@@ -969,7 +1096,7 @@ private:
   }
   void failedH1_(ZiIOBuf *last) {
     if (m_h1TxLast == last) m_h1TxLast = nullptr;
-    m_h1TxOutcome = ResponseOutcome::TxFailed;
+    m_h1TxOK = false;
   }
 
   void closeLater_(uint32_t id, bool peer) {
@@ -1022,7 +1149,7 @@ private:
   alignas(Zm::CacheLineSize)
   Transport_::TxCompleteFn m_h1Complete;
   ZiIOBuf		*m_h1TxLast = nullptr;
-  ResponseOutcome::T	m_h1TxOutcome = ResponseOutcome::Success;
+  bool			m_h1TxOK = true;
   bool			m_h1TxReady = false;
 };
 
@@ -1123,14 +1250,13 @@ struct ServerStream :
   using Base::Base;
 
   ~ServerStream() {
-    completeFence_(ResponseOutcome::Cancelled);
-    completeTx_(ResponseOutcome::Cancelled);
+    m_txFence = {};
+    m_txComplete = {};
   }
 
   void txComplete(Transport_::TxCompleteFn fn) {
     if (this->txCompleted()) {
-      fn(this->txError() == Zquic::StreamError::None ?
-	ResponseOutcome::Success : ResponseOutcome::Reset);
+      fn(this->txError() == Zquic::StreamError::None);
       return;
     }
     m_txComplete = ZuMv(fn);
@@ -1139,13 +1265,13 @@ struct ServerStream :
   bool txFence(Transport_::TxCompleteFn fn) {
     if (m_txFence) return false;
     m_txFence = ZuMv(fn);
-    if (this->txDrained()) completeFence_(ResponseOutcome::Success);
+    if (this->txDrained()) completeFence_(true);
     return true;
   }
-  void txDrained_() { completeFence_(ResponseOutcome::Success); }
+  void txDrained_() { completeFence_(true); }
   void txComplete_(bool ok) {
-    if (!ok) completeFence_(ResponseOutcome::Reset);
-    completeTx_(ok ? ResponseOutcome::Success : ResponseOutcome::Reset);
+    if (!ok) completeFence_(false);
+    completeTx_(ok);
   }
 
   int process(Zquic::RxStream &rx) {
@@ -1175,15 +1301,15 @@ struct ServerStream :
   void quicReset(uint64_t error) { Base::reset(error); }
 
 private:
-  void completeFence_(ResponseOutcome::T outcome) {
+  void completeFence_(bool ok) {
     auto fn = ZuMv(m_txFence);
     m_txFence = {};
-    if (fn) fn(outcome);
+    if (fn) fn(ok);
   }
-  void completeTx_(ResponseOutcome::T outcome) {
+  void completeTx_(bool ok) {
     auto fn = ZuMv(m_txComplete);
     m_txComplete = {};
-    if (fn) fn(outcome);
+    if (fn) fn(ok);
   }
 
   Transport_::TxCompleteFn m_txFence;
@@ -1474,7 +1600,7 @@ public:
   bool active() const { return m_native && m_stream; }
   void txComplete(Transport_::TxCompleteFn fn) {
     if (m_stream) m_stream->txComplete(ZuMv(fn));
-    else fn(ResponseOutcome::Cancelled);
+    else fn(false);
   }
   void txCancel() {
     if (m_stream) m_stream->txCancel();
@@ -1658,7 +1784,10 @@ struct ResBuilder : public Builder {
   Method::T method() const { return Method::GET; }
 
   // Disconnect after successful transmission when true.
-  bool close() const { return false; }
+  bool disconnect() const { return false; }
+
+  // Called exactly once when an active streaming producer becomes unusable.
+  void close() { }
 };
 
 template <typename App_>
@@ -1700,17 +1829,6 @@ private:
   template <typename Profile> struct Parser;
   template <typename Profile, typename Link_> struct Responses;
 
-  using BodyChunkFn = ZmFn<void(ZmRef<ZiIOBuf>, bool),
-    ZmFnHeapID<"Zhttp.Server.BodyChunk">>;
-  using BodyCancelFn = ZmFn<void(),
-    ZmFnHeapID<"Zhttp.Server.BodyCancel">>;
-
-  struct BodyTask {
-    BodyCancelFn cancel;
-  };
-  using BodyTaskQ = ZmList<BodyTask,
-    ZmListNode<BodyTask, ZmListHeapID<"Zhttp.Server.BodyTask">>>;
-
   struct Stats {
     ZmAtomic<unsigned> activeConnections = 0;
     ZmAtomic<unsigned> activeRequests = 0;
@@ -1723,14 +1841,6 @@ private:
     ZmAtomic<uint64_t> responseBuildFailures = 0;
     ZmAtomic<uint64_t> transportFailures = 0;
   };
-
-  template <typename Builder, typename = void>
-  struct HasAsyncBody : public ZuFalse { };
-  template <typename Builder>
-  struct HasAsyncBody<Builder, decltype(
-    ZuDeclVal<Builder &>().next(
-      unsigned{}, ZuDeclVal<BodyChunkFn>()), void())> :
-      public ZuTrue { };
 
   template <typename Profile>
   struct Parser :
@@ -1822,20 +1932,37 @@ private:
     unsigned status() const { return builder->status(); }
     template <typename Key, typename Value, typename L>
     void header(L &&l) {
-      if constexpr (Key{}() == "content-length")
-	if (rejectContentLength) return;
+      if constexpr (Key{}() == "content-length") {
+	if (rejectContentLength) {
+	  builderFixedHeader<Key, Value>(builder, [this]() {
+	    rejectContentLength_();
+	  }, 0);
+	  return;
+	}
+      }
       builderFixedHeader<Key, Value>(builder, ZuFwd<L>(l), 0);
     }
     template <typename Key, typename L>
     void header(L &&l) {
-      if constexpr (Key{}() == "content-length")
-	if (rejectContentLength) return;
+      if constexpr (Key{}() == "content-length") {
+	if (rejectContentLength) {
+	  if constexpr (HasBuilderHeader<Builder, Key, L &&>{})
+	    builder->template header<Key>([this](auto &&) {
+	      rejectContentLength_();
+	    });
+	  return;
+	}
+      }
       if constexpr (HasBuilderHeader<Builder, Key, L &&>{})
 	builder->template header<Key>(ZuFwd<L>(l));
     }
     template <typename L>
     void header(L &&l) {
-      builder->header([&l]<typename K, typename V>(K &&k, V &&v) {
+      builder->header([this, &l]<typename K, typename V>(K &&k, V &&v) {
+	if (rejectContentLength && ZuBSpan{k} == "content-length") {
+	  rejectContentLength_();
+	  return;
+	}
 	l(ZuFwd<K>(k), ZuFwd<V>(v));
       });
       if (server->m_altSvc) l("alt-svc", server->m_altSvc);
@@ -1850,6 +1977,7 @@ private:
     }
     void headerBase(uint8_t *base) { spans.resolve(base); }
     void patch() { spans.patch(*builder); }
+    bool validHeaders() const { return !invalidHeader; }
     uint64_t contentLength() const { return produced; }
     Builder &appBuilder() { return *builder; }
     template <typename Emit>
@@ -1858,11 +1986,20 @@ private:
 	builder->body(ZuFwd<Emit>(emit));
     }
 
+  private:
+    void rejectContentLength_() {
+      invalidHeader = true;
+      (void)Server_::streamContentLength();
+    }
+
+  public:
+
     Server		*server = nullptr;
     Builder		*builder = nullptr;
     HeaderSpans<Headers> spans;
     uint64_t		produced = 0;
     bool		rejectContentLength = false;
+    bool		invalidHeader = false;
   };
 
   template <
@@ -1935,6 +2072,17 @@ private:
   };
 
   template <typename Profile, typename Link_, typename Builder>
+  bool sendEmptyResponse_(Link_ &link, Builder &builder) {
+    ResponseTx<Profile, Builder, true, true> response{
+      this, builder, true};
+    auto tx = link.transmit(response);
+    response.begin(tx);
+    response.finish(tx);
+    link.finish();
+    return true;
+  }
+
+  template <typename Profile, typename Link_, typename Builder>
   bool sendResponse_(
       Link_ &link, Builder &builder, uint64_t &retainedBytes) {
     unsigned status = builder.status();
@@ -1949,13 +2097,8 @@ private:
       link.finish();
       return true;
     }
-    if (BodyPolicy::streaming(policy)) {
-      ResponseTx<Profile, Builder, true, true> response{this, builder};
-      ServerTxOps<Profile, Link_, Builder> ops{
-	this, &link, &retainedBytes};
-      MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
-      return tx.streaming(response, BodyPolicy::optional(policy));
-    }
+    ZiAssert(!BodyPolicy::streaming(policy), "Zhttp", (),
+      "streaming response reached fixed response path", return false);
     ResponseTx<Profile, Builder, true, false> response{this, builder};
     ServerTxOps<Profile, Link_, Builder> ops{
       this, &link, &retainedBytes};
@@ -1963,168 +2106,235 @@ private:
     return tx.fixed(response, BodyPolicy::optional(policy));
   }
 
-  typename BodyTaskQ::Node *addBodyTask_(BodyCancelFn fn) {
-    return m_bodyTasks.push(BodyTask{ZuMv(fn)});
-  }
+  template <typename Driver, typename Heap>
+  struct BodyEmit_ : public Heap, public ZmObject {
+    BodyEmit_(Driver *driver_, int txThread_) :
+      driver{driver_}, txThread{txThread_} { }
 
-  void delBodyTask_(typename BodyTaskQ::Node *task) {
-    auto node = m_bodyTasks.delNode(task);
-    if (node) node->cancel = {};
-  }
-
-  void cancelBodies_() {
-    while (auto task = m_bodyTasks.shift()) {
-      auto fn = ZuMv(task->cancel);
-      task->cancel = {};
-      if (fn) fn();
+    ~BodyEmit_() {
+      ZiAssert(!driver, "Zhttp", (),
+	"active stream emitter destroyed", return);
     }
-  }
 
-  void bodyResolved_() {
-    ZmAssert(m_bodyPending);
-    if (--m_bodyPending || !Engine::stopping()) return;
-    stopTransports_();
-  }
+    template <typename Write>
+    bool emit_(Write &&write) {
+      if (!Server_::streamTxThread(txThread)) return false;
+      Driver *driver_ = driver;
+      if (!driver_) return false;
+      return driver_->turn_(ZuFwd<Write>(write));
+    }
+
+    void close_(Driver *driver_) {
+      if (!Server_::streamTxThread(txThread)) return;
+      if (!driver) return;
+      ZiAssert(driver == driver_, "Zhttp", (),
+	"stream emitter driver mismatch", return);
+      driver = nullptr;
+    }
+
+    Driver	*driver;
+    const int	txThread;
+  };
+
+  template <typename Driver>
+  ZuDerive(BodyEmit, (BodyEmit_<Driver,
+    ZmHeap<"Zhttp.Server.BodyEmit", BodyEmit_<Driver, ZuVoid>>>));
+
+  template <typename Profile, typename Link_> struct StreamBody;
 
   template <typename Profile, typename Link_, typename Heap>
-  struct AsyncBody_ : public Heap, public ZmObject {
-    using Self = AsyncBody_<Profile, Link_, Heap>;
+  struct StreamBody_ : public Heap, public ZuObject {
+    using Self = StreamBody<Profile, Link_>;
+    using Emit = BodyEmit<Self>;
     using Tx = ResponseTx<Profile, ResBuilder_, true, true>;
 
-    AsyncBody_(
-	Server *server_, ZmRef<Link_> link_, ZmRef<ResBuilder> response_) :
-      server{server_}, link{ZuMv(link_)}, appResponse{ZuMv(response_)},
-      response{server_, appResponse->data()} { }
+    StreamBody_(Server *server_, Link_ *link_, ResBuilder *appResponse_) :
+      server{server_}, link{link_}, appResponse{appResponse_},
+      response{server_, appResponse_->data(), true} { }
 
-    bool start(ZmRef<Self> self) {
+    ~StreamBody_() {
+      ZiAssert(!emit && !task, "Zhttp", (),
+	"active response stream driver destroyed", return);
+    }
+
+    bool start_(ZuRef<Self> self, bool optional) {
+      constexpr bool handled = true;
+      if (!Server_::streamTxThread(int(server->m_txThread))) return false;
+      task = server->m_streamTasks.push(StreamTask{ZuMv(self)});
+      link->responseCancel_(StreamCancelFn{static_cast<Self *>(this),
+	[](Self *self_) {
+	self_->stop_();
+      }});
+      emit = new Emit{static_cast<Self *>(this), int(server->m_txThread)};
+      auto emit_ = [control = emit](auto &&write) mutable {
+	return control->emit_(ZuFwd<decltype(write)>(write));
+      };
+      appResponse->data().body(emit_);
+      switch (state) {
+	case StreamState::Initial:
+	  if (Server_::streamBodyAbsent(optional)) {
+	    closeProducer_();
+	    finishTask_();
+	    appResponse->data().close();
+	    return server->template sendEmptyResponse_<Profile>(
+	      *link, appResponse->data());
+	  }
+	  failed_(server->m_stats.responseBuildFailures);
+	  if (state == StreamState::InitialTerminal)
+	    appResponse->data().close();
+	  return handled;
+	case StreamState::InitialOpen:
+	  state = StreamState::Open;
+	  return handled;
+	case StreamState::InitialTerminal:
+	  appResponse->data().close();
+	  return handled;
+	default:
+	  ZiAssert(false, "Zhttp", (), "invalid initial stream state", );
+	  failed_(server->m_stats.responseBuildFailures);
+	  if (state == StreamState::InitialTerminal)
+	    appResponse->data().close();
+	  return handled;
+      }
+    }
+
+    template <typename Write>
+    bool turn_(Write &&write) {
+      ZuRef<Self> self{static_cast<Self *>(this)};
+      bool beginHeaders;
+      if (!Server_::streamEnter(state, beginHeaders)) return false;
       auto tx = link->transmit(response);
-      response.begin(tx);
-      task = server->addBodyTask_(BodyCancelFn{
-	[self_ = self]() mutable { self_->cancel_(); }});
-      link->responseCancel_(BodyCancelFn{
-	[self = ZuMv(self)]() mutable { self->cancel_(); }});
-      next_();
+      if (beginHeaders) response.begin(tx);
+      if (beginHeaders && !response.validHeaders()) {
+	failed_(server->m_stats.responseBuildFailures);
+	return true;
+      }
+      auto body = response.body(tx);
+      WriteOutcome::T outcome = invokeBodyWriter(
+	ZuFwd<Write>(write), body);
+      body.flush();
+      bool txOK = body.valid();
+      if (!txOK) outcome = WriteOutcome::Failed;
+	switch (outcome) {
+	case WriteOutcome::End:
+	  end_(tx);
+	  return true;
+	case WriteOutcome::Stream:
+	  state = state == StreamState::InitialWriting ?
+	    StreamState::InitialOpen : StreamState::Open;
+	  return true;
+	case WriteOutcome::Abort:
+	  abort_();
+	  return true;
+	case WriteOutcome::Failed:
+	default:
+	  if (txOK)
+	    failed_(server->m_stats.responseBuildFailures);
+	  else
+	    failed_(server->m_stats.transportFailures);
+	  return true;
+      }
+    }
+
+    void stop_() {
+      ZuRef<Self> self{static_cast<Self *>(this)};
+      if (!closeProducer_()) return;
+      if (task) finishTask_();
+      link->txCancel();
+    }
+
+    void stopTask_() {
+      task = nullptr;
+      stop_();
+    }
+
+    template <typename Tx_>
+    void end_(Tx_ &tx) {
+      if (!closeProducer_()) return;
+      finishTask_();
+      response.finish(tx);
+      link->finish();
+    }
+
+    void abort_() {
+      if (!closeProducer_()) return;
+      finishTask_();
+      link->responseAbort_(appResponse);
+    }
+
+    void failed_(ZmAtomic<uint64_t> &counter) {
+      if (!closeProducer_()) return;
+      finishTask_();
+      ++counter;
+      link->responseAbort_(appResponse);
+    }
+
+    bool closeProducer_() {
+      bool deferClose;
+      switch (state) {
+	case StreamState::Initial:
+	case StreamState::InitialWriting:
+	case StreamState::InitialOpen:
+	  state = StreamState::InitialTerminal;
+	  deferClose = true;
+	  break;
+	case StreamState::Writing:
+	case StreamState::Open:
+	  state = StreamState::Terminal;
+	  deferClose = false;
+	  break;
+	case StreamState::InitialTerminal:
+	case StreamState::Terminal:
+	  return false;
+	default:
+	  ZiAssert(false, "Zhttp", (), "invalid terminal stream state", );
+	  state = StreamState::Terminal;
+	  deferClose = false;
+	  break;
+      }
+      emit->close_(static_cast<Self *>(this));
+      emit = nullptr;
+      link->responseCancel_({});
+      if (!deferClose) appResponse->data().close();
       return true;
     }
 
-    void next_() {
-      if (cancelled) return;
-      uint64_t available = server->retainedAvailable_();
-      if (available > server->m_config.retainedMessageMax())
-	available = server->m_config.retainedMessageMax();
-      if (available > server->m_config.retainedBodyMax())
-	available = server->m_config.retainedBodyMax();
-      if (available > ZiIOBuf_DefltSize) available = ZiIOBuf_DefltSize;
-      if (available > uint32_t(-1)) available = uint32_t(-1);
-      if (!available || !link->responseRetain_(available)) {
-	fail_(ResponseOutcome::BuildFailed);
-	return;
-      }
-      reserved = available;
-      ++server->m_bodyPending;
-      appResponse->data().next(unsigned(available), BodyChunkFn{
-	[self = ZmRef<Self>{this}](ZmRef<ZiIOBuf> buf, bool final) mutable {
-	  self->chunk_(ZuMv(buf), final);
-	}});
-    }
-
-    void chunk_(ZmRef<ZiIOBuf> buf, bool final) {
-      server->txRun_([
-	self = ZmRef<Self>{this}, buf = ZuMv(buf), final]() mutable {
-	self->chunkTx_(ZuMv(buf), final);
-      });
-    }
-
-    void chunkTx_(ZmRef<ZiIOBuf> buf, bool final) {
-      server->bodyResolved_();
-      if (cancelled) return;
-      if (!link->active()) {
-	fail_(ResponseOutcome::Reset);
-	return;
-      }
-      if (!buf || !buf->length || buf->length > reserved) {
-	fail_(ResponseOutcome::BuildFailed);
-	return;
-      }
-      uint64_t unused = reserved - buf->length;
-      reserved = 0;
-      if (unused) link->responseRelease_(unused);
-      auto tx = link->transmit(response);
-      auto body = response.body(tx);
-      body << buf->cspan();
-      body.flush();
-      response.produced += buf->length;
-      if (!body.valid()) {
-	fail_(ResponseOutcome::TxFailed);
-	return;
-      }
-      if (final) {
-	response.finish(tx);
-	finishTask_();
-	link->finish();
-	return;
-      }
-      if (!link->txFence(Transport_::TxCompleteFn{
-	  [self = ZmRef<Self>{this}](ResponseOutcome::T outcome) mutable {
-	    self->fenced_(outcome);
-	  }}))
-	fail_(ResponseOutcome::TxFailed);
-    }
-
-    void fenced_(ResponseOutcome::T outcome) {
-      server->txRun_([self = ZmRef<Self>{this}, outcome]() mutable {
-	if (self->cancelled) return;
-	if (outcome == ResponseOutcome::Success) self->next_();
-	else self->fail_(outcome);
-      });
-    }
-
-    void fail_(ResponseOutcome::T outcome) {
-      if (cancelled) return;
-      cancelled = true;
-      finishTask_();
-      link->txCancel();
-      link->responseDone_(appResponse.ptr(), outcome);
-    }
-
-    void cancel_() {
-      if (cancelled) return;
-      fail_(ResponseOutcome::Cancelled);
-    }
-
     void finishTask_() {
-      link->responseCancel_({});
       if (!task) return;
-      server->delBodyTask_(task);
+      auto task_ = task;
       task = nullptr;
+      auto node = server->m_streamTasks.delNode(task_);
+      if (node) node->release_();
     }
 
     Server			*server;
-    ZmRef<Link_>		link;
-    ZmRef<ResBuilder>		appResponse;
+    Link_			*link;
+    ResBuilder			*appResponse;
     Tx				response;
-    typename BodyTaskQ::Node	*task = nullptr;
-    uint64_t			reserved = 0;
-    bool			cancelled = false;
+    ZmRef<Emit>			emit;
+    typename StreamTaskQ::Node	*task = nullptr;
+    int8_t			state = StreamState::Initial;
   };
 
   template <typename Profile, typename Link_>
-  using AsyncBody = AsyncBody_<Profile, Link_,
-    ZmHeap<"Zhttp.Server.AsyncBody",
-      AsyncBody_<Profile, Link_, ZuVoid>>>;
+  struct StreamBody : public StreamBody_<Profile, Link_,
+      ZmHeap<"Zhttp.Server.StreamBody",
+        StreamBody_<Profile, Link_, ZuVoid>>> {
+    using Base = StreamBody_<Profile, Link_,
+      ZmHeap<"Zhttp.Server.StreamBody",
+        StreamBody_<Profile, Link_, ZuVoid>>>;
+    using Base::Base;
+  };
 
   template <typename Profile, typename Link_>
   bool startResponse_(
       ZmRef<Link_> link, ZmRef<ResBuilder> response,
       uint64_t &retainedBytes) {
     auto policy = response->data().bodyPolicy();
-    if constexpr (HasAsyncBody<ResBuilder_>{}) {
-      if (BodyPolicy::streaming(policy)) {
-	using State = AsyncBody<Profile, Link_>;
-	ZmRef<State> state =
-	  new State{this, ZuMv(link), ZuMv(response)};
-	return state->start(state);
-      }
+    if (BodyPolicy::streaming(policy)) {
+      using State = StreamBody<Profile, Link_>;
+      ZuRef<State> state = new State{this, link.ptr(), response.ptr()};
+      return state->start_(state, BodyPolicy::optional(policy));
     }
     return sendResponse_<Profile>(
       *link, response->data(), retainedBytes);
@@ -2155,7 +2365,7 @@ private:
 
   private:
     friend Server;
-    template <typename P, typename L, typename H> friend struct AsyncBody_;
+    template <typename P, typename L, typename H> friend struct StreamBody_;
 
     void responseSend_(ZmRef<ResBuilder> response) {
       auto server = impl()->app()->server;
@@ -2174,48 +2384,57 @@ private:
       if (!m_response) return;
       auto server = impl()->app()->server;
       --server->m_stats.queuedResponses;
-      m_close = m_response->data().close();
+      m_disconnect = m_response->data().disconnect();
       auto response = m_response;
       auto link = ZmMkRef(impl());
       impl()->txComplete(Transport_::TxCompleteFn{
-	[link = ZuMv(link), response_ = response.ptr()](
-	    ResponseOutcome::T outcome) mutable {
+	[link = ZuMv(link), response_ = response.ptr()](bool ok) mutable {
 	  link->app()->txRun([
-	    link = ZuMv(link), response_, outcome]() mutable {
-	    link->responseDone_(response_, outcome);
+	    link = ZuMv(link), response_, ok]() mutable {
+	    link->responseDone_(response_, ok);
 	  });
 	}});
       if (server->template startResponse_<Profile>(
 	    ZmMkRef(impl()), ZuMv(response), m_retainedBytes))
 	return;
-      impl()->txCancel();
-      responseDone_(m_response.ptr(), ResponseOutcome::BuildFailed);
+      responseBuildFailed_(m_response.ptr());
     }
 
-    void responseDone_(
-	ResBuilder *response, ResponseOutcome::T outcome) {
+    void responseDone_(ResBuilder *response, bool ok) {
       if (m_response.ptr() != response) return;
       auto server = impl()->app()->server;
       responseCancel_({});
       responseRelease_(m_retainedBytes);
       m_response = nullptr;
-      switch (outcome) {
-	case ResponseOutcome::BuildFailed:
-	  ++server->m_stats.responseBuildFailures;
-	  break;
-	case ResponseOutcome::TxFailed:
-	case ResponseOutcome::Reset:
-	  ++server->m_stats.transportFailures;
-	  break;
-	default:
-	  break;
-      }
-      if (outcome != ResponseOutcome::Success || m_close) {
+      if (!ok) ++server->m_stats.transportFailures;
+      if (!ok || m_disconnect) {
 	responseCancelPending_();
 	impl()->disconnect();
 	return;
       }
       responseNext_();
+    }
+
+    void responseBuildFailed_(ResBuilder *response) {
+      if (m_response.ptr() != response) return;
+      impl()->txComplete({});
+      ++impl()->app()->server->m_stats.responseBuildFailures;
+      responseFailed_(response);
+    }
+
+    void responseAbort_(ResBuilder *response) {
+      if (m_response.ptr() != response) return;
+      impl()->txComplete({});
+      responseFailed_(response);
+    }
+
+    void responseFailed_(ResBuilder *response) {
+      if (m_response.ptr() != response) return;
+      responseCancel_({});
+      responseRelease_(m_retainedBytes);
+      m_response = nullptr;
+      responseCancelPending_();
+      impl()->disconnect();
     }
 
     void responseCancelPending_() {
@@ -2236,7 +2455,7 @@ private:
       }
     }
 
-    void responseCancel_(BodyCancelFn fn) {
+    void responseCancel_(StreamCancelFn fn) {
       m_cancel = ZuMv(fn);
     }
 
@@ -2255,9 +2474,9 @@ private:
 
     ResBuilderQ		m_responses;
     ZmRef<ResBuilder>	m_response;
-    BodyCancelFn	m_cancel;
+    StreamCancelFn	m_cancel;
     uint64_t		m_retainedBytes = 0;
-    bool		m_close = false;
+    bool		m_disconnect = false;
   };
 
   template <typename Profile>
@@ -2504,10 +2723,23 @@ private:
     m_admitRequests = false;
     rxRun_([this]() {
       txRun_([this]() {
-	cancelBodies_();
-	if (!m_bodyPending) stopTransports_();
+	stopStreams_();
       });
     });
+  }
+
+  void stopStreams_() {
+    unsigned n = StreamStopBatch;
+    while (n--) {
+      auto task = m_streamTasks.shift();
+      if (!task) break;
+      task->stop_();
+    }
+    if (!m_streamTasks.empty_()) {
+      txRun_([this]() { stopStreams_(); });
+      return;
+    }
+    stopTransports_();
   }
 
   void stopTransports_() {
@@ -2530,8 +2762,7 @@ public:
     ZmAssert(!m_stats.activeRequests.load_());
     ZmAssert(!m_stats.queuedResponses.load_());
     ZmAssert(!m_stats.retainedBytes.load_());
-    ZmAssert(m_bodyTasks.empty_());
-    ZmAssert(!m_bodyPending);
+    ZmAssert(m_streamTasks.empty_());
     m_hubs.final();
     m_altSvc.null();
     m_mx = nullptr;
@@ -2667,8 +2898,7 @@ private:
   ZmAtomic<unsigned>	m_failed = 0;
 
   alignas(Zm::CacheLineSize)
-  BodyTaskQ		m_bodyTasks;
-  unsigned		m_bodyPending = 0;
+  StreamTaskQ		m_streamTasks;
 };
 
 } // namespace Zhttp

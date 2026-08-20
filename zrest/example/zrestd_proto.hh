@@ -57,7 +57,7 @@ using Builder = Zrest::MResBuilder<Parser>;
 
 struct ResBuilder_ : public ZmObject, public Builder {
   bool close_ = false;
-  bool close() const { return close_; }
+  bool disconnect() const { return close_; }
 };
 ZuDerive(ResBuilderQ, (ZmList<ResBuilder_,
   ZmListNode<ResBuilder_, ZmListHeapID<"zrestd.ResBuilder">>>));
@@ -147,7 +147,7 @@ private:
 
   void event_(ZuCSpan);
   void fail_();
-  void signal_(Zhttp::ResponseOutcome::T);
+  void signal_(bool);
 
   const Options	*m_options;
   Ztls::Random	m_rng;

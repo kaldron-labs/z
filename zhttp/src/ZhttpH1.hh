@@ -686,8 +686,8 @@ public:
     m_produced += buf->length;
   }
   uint64_t produced() const { return m_produced; }
-  bool valid() const { return m_valid; }
-  bool complete() const { return m_valid && !m_contentLength; }
+  bool valid() const { return m_valid && !Base::operator !(); }
+  bool complete() const { return valid() && !m_contentLength; }
 
 private:
   // Tx thread exclusive
@@ -727,7 +727,7 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
   }
 
   uint64_t produced() const { return m_produced; }
-  bool valid() const { return true; }
+  bool valid() const { return !Base::operator !(); }
 
 private:
   uint64_t	m_produced = 0;

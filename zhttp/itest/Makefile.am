@@ -22,13 +22,15 @@ LDADD = $(top_builddir)/zhttp/util/libzhttputil.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zhttpmatrix zhttpapptest zhttpmultirequesttest \
-	zhttpdtest zhttplifecycletest zhttpclientfallbacktest
+	zhttpdtest zhttplifecycletest zhttpclientfallbacktest \
+	zhttpserverstreamtest
 zhttpmatrix_SOURCES = zhttpmatrix.cc
 zhttpapptest_SOURCES = zhttpapptest.cc
 zhttpmultirequesttest_SOURCES = zhttpmultirequesttest.cc
 zhttpdtest_SOURCES = zhttpdtest.cc
 zhttplifecycletest_SOURCES = zhttplifecycletest.cc
 zhttpclientfallbacktest_SOURCES = zhttpclientfallbacktest.cc
+zhttpserverstreamtest_SOURCES = zhttpserverstreamtest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
