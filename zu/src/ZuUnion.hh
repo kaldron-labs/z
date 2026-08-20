@@ -326,8 +326,14 @@ public:
     ZuSwitch::dispatch<N>(m_type, [this, &u](auto I) {
       using namespace Union_;
       using T = Type<I>;
-      if constexpr (!IsVoid<T>{})
-	p_<I>(m_u) = p_<I>(u.m_u);
+      if constexpr (!IsVoid<T>{}) {
+	if constexpr (CanCpAssign<T>{})
+	  p_<I>(m_u) = p_<I>(u.m_u);
+	else {
+	  Ops<T>::dtor(ZuAddr(p_<I>(m_u)));
+	  Ops<T>::ctor(ZuAddr(p_<I>(m_u)), p_<I>(u.m_u));
+	}
+      }
     });
     return *this;
   }
@@ -356,8 +362,14 @@ public:
     ZuSwitch::dispatch<N>(m_type, [this, &u](auto I) {
       using namespace Union_;
       using T = Type<I>;
-      if constexpr (!IsVoid<T>{})
-	p_<I>(m_u) = ZuMv(p_<I>(ZuMv(u.m_u)));
+      if constexpr (!IsVoid<T>{}) {
+	if constexpr (CanMvAssign<T>{})
+	  p_<I>(m_u) = ZuMv(p_<I>(ZuMv(u.m_u)));
+	else if (this != &u) {
+	  Ops<T>::dtor(ZuAddr(p_<I>(m_u)));
+	  Ops<T>::ctor(ZuAddr(p_<I>(m_u)), ZuMv(p_<I>(ZuMv(u.m_u))));
+	}
+      }
     });
     return *this;
   }
