@@ -250,14 +250,14 @@ struct MReqParser : public Zhttp::Parser {
 	else {
 	  using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	  auto fixed = Value{}();
-	  auto value = ZtScratch(Storage, fixed.length(), fixed.length());
+	  auto value = ZtScratch(Storage, fixed.length());
 	  value = fixed;
 	  request.template header<Key>(section, value.span());
 	}
       } else {
 	using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	auto fixed = Value{}();
-	auto value = ZtScratch(Storage, fixed.length(), fixed.length());
+	auto value = ZtScratch(Storage, fixed.length());
 	value = fixed;
 	request.header(section, Key{}(), value.span());
       }
@@ -283,19 +283,15 @@ struct MReqParser : public Zhttp::Parser {
   }
 
   bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
-    bool accepted = false;
-    u.dispatch([type, length, &accepted](auto, auto &request) {
-      accepted = request.bodyInfo(type, length);
+    return u.dispatch([type, length](auto, auto &request) {
+      return request.bodyInfo(type, length);
     });
-    return accepted;
   }
 
   template <typename Rx> bool body(Rx &rx) {
-    bool accepted = false;
-    u.dispatch([&rx, &accepted](auto, auto &request) {
-      accepted = request.body(rx);
+    return u.dispatch([&rx](auto, auto &request) {
+      return request.body(rx);
     });
-    return accepted;
   }
 
   template <typename Link>
@@ -338,19 +334,16 @@ struct MResBuilder : public Zhttp::ResBuilder {
   }
 
   BodyPolicy::T bodyPolicy() const {
-    BodyPolicy::T policy = BodyPolicy::None;
-    u.cdispatch([&policy](auto, const auto &response) {
-      policy = response.bodyPolicy();
+    return u.cdispatch([](auto, const auto &response) {
+      return response.bodyPolicy();
     });
-    return policy;
   }
 
   unsigned status() const {
-    unsigned status = 500;
-    u.cdispatch([&status](auto, const auto &response) {
-      status = response.status();
+    if (!u.type()) return 500;
+    return u.cdispatch([](auto, const auto &response) {
+      return response.status();
     });
-    return status;
   }
 
   template <typename Key, typename Value, typename L> void header(L &&l) const {
