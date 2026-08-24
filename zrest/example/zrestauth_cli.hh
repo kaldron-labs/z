@@ -41,11 +41,10 @@ struct RefreshBuilder_ : public Zrest::ReqBuilder<Impl, Request> {
 // Application implementation skeleton:
 //
 // template <typename Request>
-// struct AuthBuilder : public AuthBuilder_<AuthBuilder<Request>, Request> { };
+// struct AuthBuilder : public AuthBuilder_<AuthBuilder, Request> { };
 //
 // template <typename Request>
-// struct RefreshBuilder : public RefreshBuilder_<
-//     RefreshBuilder<Request>, Request> {
+// struct RefreshBuilder : public RefreshBuilder_<RefreshBuilder, Request> {
 //   const auto &bodyObject(const Request *) const;
 // };
 
