@@ -27,6 +27,7 @@
 #include <zlib/ZhttpClient.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpITestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -374,7 +375,7 @@ void fallback()
     "create fallback response body");
   file.close();
 
-  uint16_t port = Zhttp::Test::loopbackPort();
+  uint16_t port = Zhttp::Test::loopbackPort(ZhttpITestPort::ClientFallback);
   ZuCHECK(port, "allocate loopback port");
   if (!port) return;
   ServerProcess server = startServer(root, port, cert, key);

@@ -21,6 +21,8 @@
 
 #include <zlib/Ztcp.hh>
 
+#include "ZtcpTestPorts.hh"
+
 using namespace ZuTestUtil;
 
 #define ZTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
@@ -170,21 +172,6 @@ bool consume(Ztcp::RxStream &rx, ZuCSpan expected)
   return ok;
 }
 
-uint16_t reserveLoopbackPort(ZiIP ip)
-{
-  int s = ::socket(ip.v6() ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (s < 0) return 0;
-  ZiSockAddr addr{ip, 0};
-  uint16_t port = 0;
-  if (!::bind(s, addr.sa(), addr.len())) {
-    socklen_t len = addr.len();
-    if (!::getsockname(s, addr.sa(), &len))
-      port = addr.port();
-  }
-  ::close(s);
-  return port;
-}
-
 struct ClientApp : public Ztcp::Client<ClientApp> {
   struct Link;
 
@@ -268,19 +255,14 @@ ZiConnection *ServerApp::accepted(const ZiCxnInfo &ci)
   return new Link::Cxn(new Link(this), ci);
 }
 
-void testLoop(const char *testName, ZiIP ip, const char *connectIP)
+void testLoop(
+  const char *testName, ZiIP ip, const char *connectIP, unsigned port)
 {
   ZuTestScopeRT(testName);
 
   State state;
   state.ip = ip;
-  state.port = reserveLoopbackPort(ip);
-  if (ip.v6() && !state.port) {
-    std::cout << "# IPv6 loopback unavailable; skipping " << testName << '\n';
-    return;
-  }
-  ZTCP_CHECK_RT(state.port, "failed to reserve loopback port");
-  if (!state.port) return;
+  state.port = port;
 
   ServerApp server(&state);
   ClientApp client(&state);
@@ -350,8 +332,10 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
-  ZuTestCall(testLoop, "testLoopIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1");
-  ZuTestCall(testLoop, "testLoopIPv6", ZiIP{"::1"}, "::1");
+  ZuTestCall(testLoop, "testLoopIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1",
+    ZtcpTestPort::Loop4);
+  ZuTestCall(testLoop, "testLoopIPv6", ZiIP{"::1"}, "::1",
+    ZtcpTestPort::Loop6);
   ZiLog::stop();
   return 0;
 }

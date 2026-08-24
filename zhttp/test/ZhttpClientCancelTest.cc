@@ -23,9 +23,19 @@
 
 #include <zlib/ZhttpClient.hh>
 
+#include "ZhttpTestPorts.hh"
+
 using namespace ZuTestUtil;
 
 namespace ZhttpClientCancelTest_ {
+
+#ifdef ZHTTP_CLIENT_POOL_TEST
+enum { TestPortBegin = ZhttpTestPort::ClientPool };
+enum { TestPortEnd = ZhttpTestPort::ClientPoolEnd };
+#else
+enum { TestPortBegin = ZhttpTestPort::ClientCancel };
+enum { TestPortEnd = ZhttpTestPort::ClientCancelEnd };
+#endif
 
 uint64_t zhttpClientAllocated()
 {
@@ -504,24 +514,22 @@ void attemptState()
 
 int listener(uint16_t &port)
 {
-  port = 0;
+  static uint16_t nextPort = TestPortBegin;
+  if (nextPort > TestPortEnd) { port = 0; return -1; }
+  port = nextPort++;
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
+  int one = 1;
+  ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
   if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0 ||
       ::listen(fd, 32) < 0) {
     ::close(fd);
     return -1;
   }
-  socklen_t len = sizeof(addr);
-  if (::getsockname(
-      fd, reinterpret_cast<sockaddr *>(&addr), &len) < 0) {
-    ::close(fd);
-    return -1;
-  }
-  port = ntohs(addr.sin_port);
   return fd;
 }
 

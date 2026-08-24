@@ -13,6 +13,7 @@ LDADD = $(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZtcpInitTest ZtcpLoopTest ZtcpStreamTest
+noinst_HEADERS = ZtcpTestPorts.hh
 ZtcpInitTest_SOURCES = ZtcpInitTest.cc
 ZtcpLoopTest_SOURCES = ZtcpLoopTest.cc
 ZtcpStreamTest_SOURCES = ZtcpStreamTest.cc

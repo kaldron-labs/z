@@ -23,6 +23,12 @@ using namespace ZuTestUtil;
 
 namespace ZhttpServerIdleTest_ {
 
+unsigned testPort()
+{
+  static unsigned port = ZhttpTestPort::ServerIdle;
+  return Zhttp::Test::loopbackPort(port++);
+}
+
 namespace ResponseKind {
   // Synchronous Builder policies exercised by the heterogeneous workload.
   enum { None, Fixed, OptionalFixed, Stream, OptionalStream };
@@ -323,7 +329,7 @@ void idle()
   if (!certOK) return;
 
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = testPort();
   state.expectedTransport = Zhttp::Transport::QUIC;
   ZuCHECK(state.port, "allocate loopback port");
   if (!state.port) return;
@@ -407,7 +413,7 @@ void activeStop()
   if (!certOK) return;
 
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = testPort();
   using HTTP = Zhttp::ProfileTraits<Profile>;
   using Protocol = typename HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;

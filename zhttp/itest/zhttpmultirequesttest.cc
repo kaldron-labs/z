@@ -8,6 +8,7 @@
 #include <zlib/ZiFile.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpITestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -115,7 +116,7 @@ void testMultiRequestCLIAndOutput()
   TempDir temp;
   ZuCHECK(temp.init("ZhttpMultiRequest"),
     "Zhttp multi-request temporary directory failed");
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpITestPort::MultiRequest);
   if (!port) {
     ZuCHECK(true, "Zhttp multi-request integration skipped");
     return;

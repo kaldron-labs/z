@@ -15,7 +15,7 @@ noinst_PROGRAMS = \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
 	ZiDaemonTest ZiResolverTest
-noinst_HEADERS = ZiTestResidue.hh
+noinst_HEADERS = ZiTestPorts.hh ZiTestResidue.hh
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

@@ -27,6 +27,8 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Ztls.hh>
+
+#include "ZtlsTestPorts.hh"
 #include <zlib/ZtlsPico.hh>
 
 using namespace ZuTestUtil;
@@ -336,15 +338,14 @@ bool wait_done(TestState &state)
 
 uint16_t reserve_loopback_port(ZiIP ip = ZiIP{"127.0.0.1"})
 {
+  static uint16_t nextPort = ZtlsTestPort::BufHook;
+  uint16_t port = nextPort++;
   int s = ::socket(ip.v6() ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (s < 0) return 0;
-  ZiSockAddr addr{ip, 0};
-  uint16_t port = 0;
-  if (!::bind(s, addr.sa(), addr.len())) {
-    socklen_t len = addr.len();
-    if (!::getsockname(s, addr.sa(), &len))
-      port = addr.port();
-  }
+  int one = 1;
+  ::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+  ZiSockAddr addr{ip, port};
+  if (::bind(s, addr.sa(), addr.len())) port = 0;
   ::close(s);
   return port;
 }

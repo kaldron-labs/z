@@ -181,44 +181,34 @@ inline bool runCurlH3(
 }
 
 #ifndef _WIN32
-inline unsigned loopbackPort()
+inline unsigned loopbackPort(unsigned port)
 {
-  for (unsigned attempt = 0; attempt < 32; ++attempt) {
-    int tcp = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (tcp < 0) return 0;
+  int tcp = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (tcp < 0) return 0;
+  int one = 1;
+  ::setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = 0;
-    if (::bind(tcp, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-      ::close(tcp);
-      return 0;
-    }
-
-    socklen_t len = sizeof(addr);
-    if (::getsockname(tcp, reinterpret_cast<sockaddr *>(&addr), &len) < 0) {
-      ::close(tcp);
-      return 0;
-    }
-
-    unsigned port = ntohs(addr.sin_port);
-    int udp = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (udp >= 0) {
-      addr.sin_port = htons(port);
-      if (::bind(udp, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) >= 0) {
-	::close(udp);
-	::close(tcp);
-	return port;
-      }
-      ::close(udp);
-    }
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(port);
+  if (::bind(tcp, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
     ::close(tcp);
+    return 0;
   }
-  return 0;
+  int udp = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (udp < 0 ||
+      ::bind(udp, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
+    if (udp >= 0) ::close(udp);
+    ::close(tcp);
+    return 0;
+  }
+  ::close(udp);
+  ::close(tcp);
+  return port;
 }
 #else
-inline unsigned loopbackPort() { return 0; }
+inline unsigned loopbackPort(unsigned port) { return port; }
 #endif
 
 inline bool writeCaddyfile(

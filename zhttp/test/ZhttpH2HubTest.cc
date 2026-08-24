@@ -949,7 +949,7 @@ void run()
   ZuCHECK(certOK, "certificate fixture failed");
   if (!certOK) return;
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = Zhttp::Test::loopbackPort(ZhttpTestPort::H2Hub);
   ZuCHECK(state.port, "port allocation failed");
   if (!state.port) return;
 
@@ -1031,7 +1031,7 @@ void runStream()
   ZuCHECK(certOK, "certificate fixture failed");
   if (!certOK) return;
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = Zhttp::Test::loopbackPort(ZhttpTestPort::H2Hub + 1);
   ZuCHECK(state.port, "port allocation failed");
   if (!state.port) return;
 
@@ -1115,7 +1115,7 @@ void runSharedTLS()
   ZuCHECK(certOK, "certificate fixture failed");
   if (!certOK) return;
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = Zhttp::Test::loopbackPort(ZhttpTestPort::H2Hub + 2);
   ZuCHECK(state.port, "port allocation failed");
   if (!state.port) return;
 
@@ -1263,7 +1263,7 @@ void runForceMismatch()
   ZuCHECK(certOK, "certificate fixture failed");
   if (!certOK) return;
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = Zhttp::Test::loopbackPort(ZhttpTestPort::H2Hub + 3);
   ZuCHECK(state.port, "port allocation failed");
   if (!state.port) return;
 

@@ -490,7 +490,7 @@ void runStream(const Zhttp::Test::TempDir &temp)
   ZuTestScope(runStream);
 
   StreamState state;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = ZhttpH1HubTest_::testPort();
   ZuCHECK(state.port, "H3 stream port allocation failed");
   if (!state.port) return;
 

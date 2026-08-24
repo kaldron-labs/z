@@ -28,6 +28,16 @@ using namespace ZuTestUtil;
 
 namespace ZhttpH1HubTest_ {
 
+inline unsigned testPort()
+{
+#ifdef ZHTTP_H3_HUB_TEST
+  static unsigned port = ZhttpTestPort::H3Hub;
+#else
+  static unsigned port = ZhttpTestPort::H1Hub;
+#endif
+  return Zhttp::Test::loopbackPort(port++);
+}
+
 using namespace Zhttp::Test;
 
 constexpr ZuString Ping{"ping"};
@@ -488,7 +498,7 @@ void runUpgrade(const TempDir &temp)
   ZuTestScope(runUpgrade);
 
   UpgradeState state;
-  state.port = loopbackPort();
+  state.port = testPort();
   ZuCHECK(state.port, "Upgrade loopback port allocation failed");
   if (!state.port) return;
 
@@ -575,7 +585,7 @@ void run(
   State state;
   state.rounds = rounds;
   state.links = links;
-  state.port = loopbackPort();
+  state.port = testPort();
   ZuCHECK(state.port, "H1 loopback port allocation failed");
   if (!state.port) return;
 
@@ -688,7 +698,7 @@ void runServerStop(const TempDir &temp)
   State state;
   state.rounds = 1;
   state.keepAlive = true;
-  state.port = loopbackPort();
+  state.port = testPort();
   ZuCHECK(state.port, "active-stop loopback port allocation failed");
   if (!state.port) return;
 
@@ -782,7 +792,7 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
   ZuTestScope(testTLSFailure);
 
   State state;
-  state.port = loopbackPort();
+  state.port = testPort();
   ZuCHECK(state.port, "TLS failure loopback port allocation failed");
   if (!state.port) return;
 
