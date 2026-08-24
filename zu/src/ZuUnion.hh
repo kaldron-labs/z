@@ -200,6 +200,7 @@ namespace Union_ { // internal
   template <> struct IsVoid_<void> : public ZuTrue { };
   template <> struct IsVoid_<ZuVoid> : public ZuTrue { };
   template <typename T> using IsVoid = IsVoid_<ZuDecay<T>>;
+  template <typename T> using NotVoid = ZuBool<!IsVoid_<ZuDecay<T>>{}>;
 
 // recursive decay
   struct RDecayer {
@@ -266,6 +267,32 @@ namespace Union_ { // internal
     };
     template <typename TL> using Reduce = typename Reduce_<TL>::T;
   };
+
+  // evaluate precise index and result type of u.p<V>()
+  template <typename U, typename V>
+  struct Result {
+    using U_ = ZuDecay<U>;
+    using I = typename U_::template Index<V>;
+    using T = decltype(ZuDeclVal<U>().template p<I{}>());
+  };
+
+  // evaluate lambda return type
+  template <typename U, typename L>
+  struct Eval__ {
+    using U_ = ZuDecay<U>;
+    template <typename V> using Result_ = Result<U, V>;
+    template <typename V> using Index = typename Result_<V>::I;
+    template <typename V> using Type_ = typename Result_<V>::T;
+    template <typename V>
+    using Type = decltype(ZuDeclVal<L>()(Index<V>{}, ZuDeclVal<Type_<V>>()));
+    using Types = ZuTypeMap<Type, ZuTypeGrep<NotVoid, typename U_::Types>>;
+  };
+  template <typename U, typename L, typename Types = typename Eval__<U, L>::Types>
+  struct Eval_ { using T = ZuDecay<ZuType<0, Types>>; };
+  template <typename U, typename L>
+  struct Eval_<U, L, ZuTypeList<>> { using T = void; };
+  template <typename U, typename L>
+  using Eval = typename Eval_<U, L>::T;
 
 } // Union_
 
@@ -633,12 +660,8 @@ public:
   }
 
   template <typename L>
-  decltype(auto) dispatch(this auto &&self, L &&l) {
-    return ZuSwitch::dispatch<N>(self.m_type, [&self, &l](auto I) mutable {
-      if constexpr (!Union_::IsVoid<Type<I>>{})
-	return ZuFwd<L>(l)(I, ZuFwdLike<decltype(self)>(self).template p<I>());
-    });
-  }
+  decltype(auto) dispatch(this auto &&self, L &&l);
+
   template <typename L>
   decltype(auto) cdispatch(L &&l) const & { return dispatch(ZuFwd<L>(l)); }
 
@@ -653,6 +676,26 @@ private:
   Data		m_u;
   uint8_t	m_type = 0;
 };
+
+template <typename ...Ts>
+template <typename L>
+inline decltype(auto) Union<Ts...>::dispatch(this auto &&self, L &&l)
+{
+  using R = Union_::Eval<decltype(self), decltype(l)>;
+  if constexpr (Union_::IsVoid<R>{}) {
+    ZuSwitch::dispatch<N>(self.m_type, [&self, &l](auto I) mutable {
+      if constexpr (!Union_::IsVoid<Type<I>>{})
+	ZuFwd<L>(l)(I, ZuFwdLike<decltype(self)>(self).template p<I>());
+    });
+  } else {
+    return ZuSwitch::dispatch<N>(self.m_type, [&self, &l](auto I) mutable -> R {
+      if constexpr (!Union_::IsVoid<Type<I>>{})
+	return ZuFwd<L>(l)(I, ZuFwdLike<decltype(self)>(self).template p<I>());
+      else
+	return R{};
+    });
+  }
+}
 
 } // namespace Zu_
 
