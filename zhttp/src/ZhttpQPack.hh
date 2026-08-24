@@ -623,8 +623,7 @@ struct QPack {
 	    return -1;
 	  flags.dynamicRef = true;
 	}
-	auto value = ZtScratch(
-	  HdrBytes, indexed.value.length(), indexed.value.length());
+	auto value = ZtScratch(HdrBytes, indexed.value.length());
 	value = indexed.value;
 	if (!emit(indexed.name, value.span(), flags)) return -1;
       } else if ((first & 0xf0) == 0x10) {
@@ -634,8 +633,7 @@ struct QPack {
 	  return -1;
 	flags.dynamicRef = true;
 	flags.postBase = true;
-	auto value = ZtScratch(
-	  HdrBytes, indexed.value.length(), indexed.value.length());
+	auto value = ZtScratch(HdrBytes, indexed.value.length());
 	value = indexed.value;
 	if (!emit(indexed.name, value.span(), flags)) return -1;
       } else if ((first & 0xc0) == 0x40) {

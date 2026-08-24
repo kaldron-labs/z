@@ -233,11 +233,9 @@ struct MReqBuilder : public Zhttp::ReqBuilder {
   }
 
   BodyPolicy::T bodyPolicy() const {
-    BodyPolicy::T policy = BodyPolicy::None;
-    u.cdispatch([&policy](auto, const auto &request) {
-      policy = request.bodyPolicy();
+    return u.cdispatch([](auto, const auto &request) {
+      return request.bodyPolicy();
     });
-    return policy;
   }
 
   template <typename Emit> void operation(Emit &&emit) const {
@@ -358,14 +356,14 @@ struct MResParser : public Zhttp::Parser {
 	else {
 	  using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	  auto fixed = Value{}();
-	  auto value = ZtScratch(Storage, fixed.length(), fixed.length());
+	  auto value = ZtScratch(Storage, fixed.length());
 	  value = fixed;
 	  response.template header<Key>(section, value.span());
 	}
       } else {
 	using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	auto fixed = Value{}();
-	auto value = ZtScratch(Storage, fixed.length(), fixed.length());
+	auto value = ZtScratch(Storage, fixed.length());
 	value = fixed;
 	response.header(section, Key{}(), value.span());
       }
@@ -391,19 +389,15 @@ struct MResParser : public Zhttp::Parser {
   }
 
   bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
-    bool accepted = false;
-    u.dispatch([type, length, &accepted](auto, auto &response) {
-      accepted = response.bodyInfo(type, length);
+    return u.dispatch([type, length](auto, auto &response) {
+      return response.bodyInfo(type, length);
     });
-    return accepted;
   }
 
   template <typename Rx> bool body(Rx &rx) {
-    bool accepted = false;
-    u.dispatch([&rx, &accepted](auto, auto &response) {
-      accepted = response.body(rx);
+    return u.dispatch([&rx](auto, auto &response) {
+      return response.body(rx);
     });
-    return accepted;
   }
 
   template <typename Link>
