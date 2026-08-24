@@ -28,8 +28,8 @@ struct PingBuilder_ : public Zrest::ReqBuilder<Impl, Request> {
 // Application implementation skeleton:
 //
 // template <typename Request>
-// struct PingBuilder : public PingBuilder_<PingBuilder<Request>, Request> {
-//   using Base = PingBuilder_<PingBuilder<Request>, Request>;
+// struct PingBuilder : public PingBuilder_<PingBuilder, Request> {
+//   using Base = PingBuilder_<PingBuilder, Request>;
 //   using Base::header;
 //
 //   using Headers = ZhttpHeaders("authorization");
