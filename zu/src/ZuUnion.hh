@@ -276,7 +276,7 @@ namespace Union_ { // internal
     using T = decltype(ZuDeclVal<U>().template p<I{}>());
   };
 
-  // evaluate lambda return type
+  // evaluate union-dispatched lambda return type
   template <typename U, typename L>
   struct Eval__ {
     using U_ = ZuDecay<U>;
