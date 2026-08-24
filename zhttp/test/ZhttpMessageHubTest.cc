@@ -20,6 +20,16 @@ using namespace ZuTestUtil;
 
 namespace ZhttpMessageHubTest_ {
 
+#if defined(ZHTTP_TEST_H1TCP)
+enum { TestPort = ZhttpTestPort::MsgH1TCP };
+#elif defined(ZHTTP_TEST_H1TLS)
+enum { TestPort = ZhttpTestPort::MsgH1TLS };
+#elif defined(ZHTTP_TEST_H2)
+enum { TestPort = ZhttpTestPort::MsgH2 };
+#elif defined(ZHTTP_TEST_H3)
+enum { TestPort = ZhttpTestPort::MsgH3 };
+#endif
+
 using TestHeaders = ZhttpHeaders("x-test", "x-trailer");
 
 struct State {
@@ -425,7 +435,7 @@ void run(const Zhttp::Test::TempDir &cert)
 
   State state;
   state.expected = Zhttp::ProfileTraits<Profile>::Multiplexed ? 2 : 1;
-  state.port = Zhttp::Test::loopbackPort();
+  state.port = Zhttp::Test::loopbackPort(TestPort);
   ZuCHECK(state.port, "port allocation failed");
   if (!state.port) return;
 

@@ -22,6 +22,7 @@ LDADD = $(top_builddir)/zws/src/libZws.la \
 noinst_PROGRAMS = \
 	ZwsProtocolTest ZwsH1HubTest ZwsH2HubTest ZwsH3HubTest \
 	ZwsSourceBoundaryTest
+noinst_HEADERS = ZwsTestPorts.hh
 dist_noinst_SCRIPTS = ZwsSourceBoundaryFixture.sh
 ZwsProtocolTest_SOURCES = ZwsProtocolTest.cc
 ZwsH1HubTest_SOURCES = ZwsH1HubTest.cc

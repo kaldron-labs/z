@@ -20,6 +20,7 @@ LDADD = $(top_builddir)/zrest/src/libZrest.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 noinst_PROGRAMS = zrestmatrix
+noinst_HEADERS = ZrestITestPorts.hh
 zrestmatrix_SOURCES = zrestmatrix.cc
 
 if HAVE_GO

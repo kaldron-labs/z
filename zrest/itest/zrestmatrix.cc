@@ -21,6 +21,7 @@
 #include <zlib/ZtString.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZrestITestPorts.hh"
 
 enum { CaseTimeout = 15, ReadyTimeout = 5 };
 
@@ -285,7 +286,8 @@ static bool runPair(bool goClient, bool goServer, unsigned requests,
   Zhttp::Test::TempDir temp;
   if (!temp.init("zrestmatrix") || !Zhttp::Test::writeLocalhostCert(
 	temp, temp.certPath, temp.keyPath)) return false;
-  unsigned port = Zhttp::Test::loopbackPort();
+  static unsigned nextPort = ZrestITestPort::Matrix;
+  unsigned port = Zhttp::Test::loopbackPort(nextPort++);
   if (!port) return false;
   Command serverCmd = serverCommand(
     goServer, port, temp, requests, accessLifetime);
@@ -329,7 +331,8 @@ static bool runProbe(bool goServer)
   Zhttp::Test::TempDir temp;
   if (!temp.init("zrestprobe") || !Zhttp::Test::writeLocalhostCert(
 	temp, temp.certPath, temp.keyPath)) return false;
-  unsigned port = Zhttp::Test::loopbackPort();
+  static unsigned nextPort = ZrestITestPort::MatrixEnd - 1;
+  unsigned port = Zhttp::Test::loopbackPort(nextPort++);
   Command serverCmd = serverCommand(goServer, port, temp, 1000000, "1s");
   MatrixString url;
   url << "https://localhost:" << port;

@@ -13,6 +13,8 @@
 
 #include <zlib/ZiEventLoop.hh>
 
+#include "ZiTestPorts.hh"
+
 using namespace ZuTestUtil;
 
 namespace {
@@ -87,7 +89,7 @@ bool makeSocketPair(Zi::Socket &loopSocket, Zi::Socket &peerSocket)
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = 0;
+  addr.sin_port = htons(ZiTestPort::EventLoop);
 
   if (::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) ||
       ::listen(listener, 1)) {

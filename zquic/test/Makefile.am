@@ -21,6 +21,7 @@ noinst_PROGRAMS = ZquicAPITest ZquicSockTest \
 	ZquicStreamTest ZquicFlowTest ZquicBufferTest \
 	ZquicCongestionTest ZquicPQueueTest ZquicLoopTest ZquicRuntimeTest \
 	ZquicTimerTest ZquicLogTest
+noinst_HEADERS = ZquicInteropTest.hh ZquicTestPorts.hh
 ZquicAPITest_SOURCES = ZquicAPITest.cc
 ZquicSockTest_SOURCES = ZquicSockTest.cc
 ZquicCodecTest_SOURCES = ZquicCodecTest.cc

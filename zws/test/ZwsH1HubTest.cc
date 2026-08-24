@@ -17,6 +17,7 @@
 #include <zlib/Zws.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZwsTestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -24,6 +25,14 @@ namespace ZwsH1HubTest_ {
 
 using Zhttp::Test::TempDir;
 using Zhttp::Test::loopbackPort;
+
+#if defined(ZWS_H2_TEST)
+enum { TestPort = ZwsTestPort::H2Hub };
+#elif defined(ZWS_H3_TEST)
+enum { TestPort = ZwsTestPort::H3Hub };
+#else
+enum { TestPort = ZwsTestPort::H1Hub };
+#endif
 
 struct State {
   ZmSemaphore		listening;
@@ -294,7 +303,8 @@ void run(const TempDir &temp)
     request[i] = 'a' + (i % 26);
     response[i] = 'A' + (i % 26);
   }
-  state.port = loopbackPort();
+  static unsigned nextPort = TestPort;
+  state.port = loopbackPort(nextPort++);
   ZuCHECK(state.port);
   if (!state.port) return;
 

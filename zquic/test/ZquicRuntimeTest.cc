@@ -18,6 +18,8 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
+#include "ZquicTestPorts.hh"
+
 using namespace ZuTestUtil;
 
 namespace {
@@ -152,6 +154,7 @@ struct TestServer :
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   void clearLinks();
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
+  unsigned localPort() const { return ZquicTestPort::Runtime; }
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (!buf || !buf->length) return true;
     auto packet = buf->cspan();

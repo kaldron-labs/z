@@ -21,6 +21,7 @@
 #include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpITestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -446,7 +447,8 @@ void activeStop()
   if (!certOK) return;
 
   State state;
-  state.port = Zhttp::Test::loopbackPort();
+  static unsigned nextPort = ZhttpITestPort::ServerStream;
+  state.port = Zhttp::Test::loopbackPort(nextPort++);
   using HTTP = Zhttp::ProfileTraits<Profile>;
   using Protocol = typename HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;

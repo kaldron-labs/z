@@ -24,6 +24,7 @@ LDADD = $(top_builddir)/zhttp/util/libzhttputil.la \
 noinst_PROGRAMS = zhttpmatrix zhttpapptest zhttpmultirequesttest \
 	zhttpdtest zhttplifecycletest zhttpclientfallbacktest \
 	zhttpserverstreamtest
+noinst_HEADERS = ZhttpITestPorts.hh
 zhttpmatrix_SOURCES = zhttpmatrix.cc
 zhttpapptest_SOURCES = zhttpapptest.cc
 zhttpmultirequesttest_SOURCES = zhttpmultirequesttest.cc

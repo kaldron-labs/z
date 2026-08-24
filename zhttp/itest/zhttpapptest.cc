@@ -8,6 +8,7 @@
 #include <zlib/ZiFile.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpITestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -189,7 +190,8 @@ void testAppTransport(ZuCSpan transport, bool ipv6 = false)
   if (transport != "http")
     ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
       "Zhttp app certificate generation failed");
-  unsigned port = loopbackPort();
+  static unsigned nextPort = ZhttpITestPort::App;
+  unsigned port = loopbackPort(nextPort++);
   ZuCHECK(port, "Zhttp app port allocation failed");
   if (!port) return;
   auto script = temp.pathOf("client-server.sh");

@@ -8,6 +8,8 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
+#include "ZquicTestPorts.hh"
+
 using namespace ZuTestUtil;
 
 namespace {
@@ -120,7 +122,7 @@ void testEndpointRebind()
     };
     if (!endpoint.openUDP(
 	Zquic::PathMode::ServerUnconnected,
-	localIP, 0)) {
+	localIP, ZquicTestPort::Sock)) {
       auto fn = ZuMv(endpoint.readyFn);
       if (fn) fn(false);
     }
@@ -135,7 +137,7 @@ void testEndpointRebind()
   bool rebindOK = ZmBlock<bool>{}([&](auto wake) {
     mx.rxRun([&endpoint, wake = ZuMv(wake)]() mutable {
       endpoint.rebindUDP(
-	ZiIP{"127.0.0.1"}, 0, ZiIP{}, 0,
+	ZiIP{"127.0.0.1"}, ZquicTestPort::SockRebind, ZiIP{}, 0,
 	[&endpoint, wake = ZuMv(wake)](
 	  bool ok, ZiSockAddr local, bool) mutable {
 	  const ZiSockAddr &now = endpoint.local();

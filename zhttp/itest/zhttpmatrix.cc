@@ -18,6 +18,7 @@
 #include <zlib/Zquic.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpITestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -1180,7 +1181,7 @@ bool runCase_(const Case &c, uint64_t &duration)
     preserveTemp(temp);
     return false;
   }
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpITestPort::Matrix);
   if (!port) {
     std::cout << "# failed to allocate loopback port\n";
     preserveTemp(temp);

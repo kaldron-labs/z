@@ -21,6 +21,7 @@
 #include <zlib/Zquic.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpITestPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -507,7 +508,7 @@ void testTCP()
   ZuTestScope(testTCP);
 
   State state;
-  state.port = loopbackPort();
+  state.port = loopbackPort(ZhttpITestPort::Lifecycle);
   ZuCHECK(state.port, "TCP loopback port allocation failed");
   if (!state.port) return;
 
@@ -525,7 +526,7 @@ void testTLS(const TempDir &temp)
   ZuTestScope(testTLS);
 
   State state;
-  state.port = loopbackPort();
+  state.port = loopbackPort(ZhttpITestPort::Lifecycle + 1);
   ZuCHECK(state.port, "TLS loopback port allocation failed");
   if (!state.port) return;
 
@@ -545,7 +546,7 @@ void testQUIC(const TempDir &temp)
   ZuTestScope(testQUIC);
 
   State state;
-  state.port = loopbackPort();
+  state.port = loopbackPort(ZhttpITestPort::Lifecycle + 2);
   ZuCHECK(state.port, "QUIC loopback port allocation failed");
   if (!state.port) return;
 

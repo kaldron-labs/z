@@ -13,6 +13,7 @@
 #include <zlib/ZtArray.hh>
 
 #include "ZquicInteropTest.hh"
+#include "ZhttpTestPorts.hh"
 
 namespace Zhttp::Test {
 

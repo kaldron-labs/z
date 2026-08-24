@@ -12,6 +12,8 @@
 
 #include <zlib/ZiMultiplex.hh>
 
+#include "ZiTestPorts.hh"
+
 using namespace ZuTestUtil;
 
 namespace {
@@ -67,7 +69,8 @@ private:
 
 class LoopMx : public ZiMultiplex {
 public:
-  LoopMx(ZiIP loopIP) : m_loopIP{loopIP} { }
+  LoopMx(ZiIP loopIP, unsigned port) :
+    m_loopIP{loopIP}, m_listenPort{port} { }
   ~LoopMx() = default;
 
   ZiConnection *connected(const ZiCxnInfo &ci)
@@ -107,7 +110,7 @@ public:
       ZiListenFn{this, ZmFnPtr<&LoopMx::listening>{}},
       ZiFailFn{this, ZmFnPtr<&LoopMx::failed>{}},
       ZiConnectFn{this, ZmFnPtr<&LoopMx::connected>{}},
-      m_loopIP, 0, 1,
+      m_loopIP, m_listenPort, 1,
       ZiCxnOptions());
   }
 
@@ -228,7 +231,8 @@ private:
 
 class UdpTOSMx : public ZiMultiplex {
 public:
-  UdpTOSMx(ZiIP loopIP) : m_loopIP{loopIP} { }
+  UdpTOSMx(ZiIP loopIP, unsigned port) :
+    m_loopIP{loopIP}, m_serverPort{uint16_t(port)} { }
   ~UdpTOSMx() = default;
 
   ZiConnection *connected(const ZiCxnInfo &ci)
@@ -254,7 +258,7 @@ public:
     udp(
       ZiConnectFn{this, ZmFnPtr<&UdpTOSMx::connected>{}},
       ZiFailFn{this, ZmFnPtr<&UdpTOSMx::failed>{}},
-      m_loopIP, 0, ZiIP{}, 0, options);
+      m_loopIP, m_serverPort, ZiIP{}, 0, options);
   }
 
   void serverReady(ZiConnection *cxn)
@@ -554,10 +558,10 @@ struct MxCheck {
   unsigned	visited = 0;
 };
 
-LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP)
+LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
 {
   LoopResult result;
-  LoopMx mx{loopIP};
+  LoopMx mx{loopIP, port};
   unsigned cxns = 0;
   result.emptyCxns =
     !static_cast<const LoopMx &>(mx).allCxns(
@@ -623,7 +627,8 @@ void testTcpLoopbackIPv4()
 {
   ZuTestScope(testTcpLoopbackIPv4);
 
-  auto result = runTcpLoopbackAndTelemetry(ZiIP{"127.0.0.1"});
+  auto result = runTcpLoopbackAndTelemetry(
+    ZiIP{"127.0.0.1"}, ZiTestPort::MxLoopTCP4);
   CheckTcpLoopback(result);
 }
 
@@ -631,7 +636,8 @@ void testTcpLoopbackIPv6()
 {
   ZuTestScope(testTcpLoopbackIPv6);
 
-  auto result = runTcpLoopbackAndTelemetry(ZiIP{"::1"});
+  auto result = runTcpLoopbackAndTelemetry(
+    ZiIP{"::1"}, ZiTestPort::MxLoopTCP6);
   CheckTcpLoopback(result);
 }
 
@@ -639,7 +645,7 @@ void testUdpTOSIPv4()
 {
   ZuTestScope(testUdpTOSIPv4);
 
-  UdpTOSMx mx{ZiIP{"127.0.0.1"}};
+  UdpTOSMx mx{ZiIP{"127.0.0.1"}, ZiTestPort::MxLoopUDP4};
   ZuCheck(mx.start());
   mx.startServer();
   ZuCheck(mx.waitDone(5));
@@ -674,7 +680,7 @@ void testMxWatch()
       ++state.rootDels;
     }});
   {
-    LoopMx mx{ZiIP{"127.0.0.1"}};
+    LoopMx mx{ZiIP{"127.0.0.1"}, ZiTestPort::MxLoopTCP4};
     ZuCheck(state.mx == &mx);
     ZuCheck(mx.start());
     ZuCheck(state.rootAdds == 1);
