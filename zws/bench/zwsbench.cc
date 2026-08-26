@@ -260,7 +260,7 @@ private:
       return;
     }
     link.app()->txRun([
-      link = ZmMkRef(&link), send = ZuMv(send)]() mutable {
+      link = ZmRef(&link), send = ZuMv(send)]() mutable {
       send(*link);
     });
   }

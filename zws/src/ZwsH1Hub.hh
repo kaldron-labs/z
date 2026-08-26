@@ -304,7 +304,7 @@ public:
     m_down = true;
     m_up = false;
     this->CodecBase::disable_();
-    this->app()->rxRun([link = ZmMkRef(this), peer]() mutable {
+    this->app()->rxRun([link = ZmRef(this), peer]() mutable {
       link->CodecBase::final_();
       auto app = link->app();
       app->txRun([link = ZuMv(link), peer]() mutable {
@@ -505,7 +505,7 @@ public:
     m_down = true;
     m_up = false;
     this->CodecBase::disable_();
-    this->app()->rxRun([link = ZmMkRef(this), peer]() mutable {
+    this->app()->rxRun([link = ZmRef(this), peer]() mutable {
       link->CodecBase::final_();
       auto app = link->app();
       app->txRun([link = ZuMv(link), peer]() mutable {
@@ -533,7 +533,7 @@ private:
     }
     this->CodecBase::disable_();
     auto app = this->app();
-    app->txRun([link = ZmMkRef(this)]() mutable {
+    app->txRun([link = ZmRef(this)]() mutable {
       auto app = link->app();
       app->rxRun([link = ZuMv(link)]() mutable {
 	link->disconnect();

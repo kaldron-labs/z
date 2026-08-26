@@ -151,7 +151,7 @@ public:
       m_parser.disable_();
     }
     this->CodecBase::disable_();
-    this->app()->rxRun([link = ZmMkRef(this), peer]() mutable {
+    this->app()->rxRun([link = ZmRef(this), peer]() mutable {
       if (link->m_bound) {
 	link->m_parser.final_();
 	link->m_bound = false;
@@ -326,7 +326,7 @@ public:
       m_parser.disable_();
     }
     this->CodecBase::disable_();
-    this->app()->rxRun([link = ZmMkRef(this), peer]() mutable {
+    this->app()->rxRun([link = ZmRef(this), peer]() mutable {
       if (link->m_bound) {
 	link->m_parser.final_();
 	link->m_bound = false;

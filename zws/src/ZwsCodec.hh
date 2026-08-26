@@ -125,7 +125,7 @@ public:
       });
     if (valid) return;
     auto app = link->app();
-    app->rxRun([impl = ZmMkRef(this->impl())]() mutable {
+    app->rxRun([impl = ZmRef(this->impl())]() mutable {
       impl->transmitFailed_();
     });
   }
@@ -136,7 +136,7 @@ public:
     if (!link) return;
     ZuBArray<MaxControl> reason_{reason};
     link->app()->rxRun([
-      impl = ZmMkRef(this->impl()), code,
+      impl = ZmRef(this->impl()), code,
       reason = ZuMv(reason_)]() mutable {
 	impl->close_(code, reason);
       });
@@ -153,7 +153,7 @@ public:
     uint8_t *dst = payload_.data();
     for (unsigned i = 0; i < n; ++i) dst[i] = src[i];
     link->app()->rxRun([
-      impl = ZmMkRef(this->impl()), payload = ZuMv(payload_)]() mutable {
+      impl = ZmRef(this->impl()), payload = ZuMv(payload_)]() mutable {
 	impl->ping_(payload);
       });
   }
