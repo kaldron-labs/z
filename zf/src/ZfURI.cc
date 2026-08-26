@@ -91,7 +91,11 @@ ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key)
     unsigned i = 0;
     while (++i < e) {
       c = key[i];
-      if (c == ']') return {i + 1, ZuCSpan(&key[1], i - 1)};
+      if (c == ']') {
+	unsigned offset = i + 1;
+	if (offset < e && key[offset] == '.') ++offset;
+	return {offset, ZuCSpan(&key[1], i - 1)};
+      }
     }
     return {-1};
   }

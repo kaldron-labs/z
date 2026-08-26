@@ -17,6 +17,43 @@ struct ZfMapTest_ : public Heap, public Base_ {
   using Base = Base_;
   using Base::Base;
   using Base::operator =;
+
+  class CIter {
+    using Iter = decltype(ZuDeclVal<const Base &>().citer());
+    using NodePtr = decltype(ZuDeclVal<Iter &>()());
+    struct CNode {
+      NodePtr node = nullptr;
+
+      template <typename P>
+      static auto key_(P node, int) -> decltype(node->key()) {
+	return node->key();
+      }
+      template <typename P>
+      static auto key_(P node, ...) -> decltype(node->template p<0>()) {
+	return node->template p<0>();
+      }
+      template <typename P>
+      static auto val_(P node, int) -> decltype(node->val()) {
+	return node->val();
+      }
+      template <typename P>
+      static auto val_(P node, ...) -> decltype(node->template p<1>()) {
+	return node->template p<1>();
+      }
+      decltype(auto) key() const { return key_(node, 0); }
+      decltype(auto) val() const { return val_(node, 0); }
+    };
+  public:
+    CIter(const Base &base) : m_i{base.citer()} { }
+    CNode *operator ()() {
+      if (auto node = m_i()) { m_node.node = node; return &m_node; }
+      return nullptr;
+    }
+  private:
+    Iter	m_i;
+    CNode	m_node;
+  };
+  CIter citer() const { return CIter{*this}; }
 };
 
 template <ZuString ID, typename Base>
@@ -28,6 +65,13 @@ struct ZfRefMapTest : public ZmObject, public Base_ {
   using Base = Base_;
   using Base::Base;
   using Base::operator =;
+
+  ZfRefMapTest() = default;
+  ZfRefMapTest(ZfRefMapTest &&o) : Base{ZuMv(o)} { }
+  ZfRefMapTest &operator =(ZfRefMapTest &&o) {
+    Base::operator =(ZuMv(o));
+    return *this;
+  }
 };
 
 #endif /* ZfMapTest_HH */

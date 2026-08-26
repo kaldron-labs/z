@@ -14,6 +14,8 @@
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfURI.hh>
 
+#include "ZfHeapTest.hh"
+
 using namespace ZuTestUtil;
 
 namespace ZfURI {
@@ -93,6 +95,80 @@ struct ArrayOpt {
 
 ZfStruct((ArrayOpt, URI),
   (((values), (Ctor<0>)), (UDT)));
+
+struct URIPtrObj_ : public ZmObject {
+  int value = 0;
+  URIPtrObj_(int value_ = 0) : value{value_} { }
+};
+using URIPtrObj = ZfHeapTest<"ZfTest.URI.PtrObj", URIPtrObj_>;
+ZfStruct((URIPtrObj, URI),
+  (((value), (Ctor<0>, Mutable)), (Int32)));
+
+struct URIFmtOpt : public ZmObject { };
+inline ZfURI::AsString ZfURI_Fmt(ZmRef<URIFmtOpt> *);
+ZuAssert((!ZfURI::IsObjPtr<ZmRef<URIFmtOpt>>{}));
+
+struct URIPtrText_ : public ZmObject {
+  ZtString<> value;
+  URIPtrText_() = default;
+  URIPtrText_(ZuCSpan value_) : value{value_} { }
+  template <typename S>
+  friend S &operator <<(S &s, const URIPtrText_ &v) {
+    s << v.value;
+    return s;
+  }
+};
+using URIPtrText = ZfHeapTest<"ZfTest.URI.PtrText", URIPtrText_>;
+
+struct URIPtrJSON_ : public ZmObject {
+  int value = 0;
+  URIPtrJSON_(int value_ = 0) : value{value_} { }
+};
+using URIPtrJSON = ZfHeapTest<"ZfTest.URI.PtrJSON", URIPtrJSON_>;
+inline ZfURI::AsJSON ZfURI_Fmt(URIPtrJSON *);
+ZfStruct((URIPtrJSON, URI),
+  (((value), (Ctor<0>, Mutable)), (Int32)));
+
+struct URIPtrArray_ : public ZmObject, public ZtArray<ZmRef<URIPtrObj>> {
+  using Base = ZtArray<ZmRef<URIPtrObj>>;
+  using Base::Base;
+  using Base::operator =;
+};
+using URIPtrArray = ZfHeapTest<"ZfTest.URI.PtrArray", URIPtrArray_>;
+inline ZfURI::AsArray<ZfFieldTC::UDT> ZfURI_Fmt(URIPtrArray *);
+
+struct URIPtrHolder {
+  ZmRef<URIPtrObj> object;
+  ZmRef<URIPtrArray> objects;
+  ZmRef<URIPtrText> text;
+  ZmRef<URIPtrJSON> json;
+};
+ZfStruct((URIPtrHolder, URI),
+  (((object), (Mutable)), (UDT)),
+  (((objects), (Mutable)), (UDT)),
+  (((text), (Mutable)), (UDT)),
+  (((json), (Mutable)), (UDT)));
+
+struct URIPathPtr { ZmRef<URIPtrText> value; };
+ZfStruct((URIPathPtr, URI),
+  (((value), (Mutable, URI::PathIndex<0>)), (UDT)));
+
+struct URIUnionA { int foo = 0; };
+struct URIUnionB { int bar = 0; };
+ZfStruct((URIUnionA, URI), (((foo), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct((URIUnionB, URI), (((bar), (Ctor<0>, Mutable)), (Int32)));
+struct URIUnionHolder { ZfURI::Union<URIUnionA, URIUnionB> value; };
+ZfStruct((URIUnionHolder, URI),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+
+ZuAssert((ZuIsSame<
+  ZmHeapID<URIPtrObj>, ZuStringT<"ZfTest.URI.PtrObj">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<URIPtrText>, ZuStringT<"ZfTest.URI.PtrText">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<URIPtrJSON>, ZuStringT<"ZfTest.URI.PtrJSON">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<URIPtrArray>, ZuStringT<"ZfTest.URI.PtrArray">>{}));
 
 struct URIFormatInt {
   unsigned value = 0;
@@ -174,6 +250,25 @@ ZfStructRender(Foo, Bah,
   (id,		URI::PathIndex<1>),
   int_ranged, hex, flags, float_ranged, fixed, decimal,
   time_, nested, nestedJSON, bytesVec);
+
+static const ZfURI::AnyNode *uriField(
+    const ZfURI::AnyNode *node, ZuCSpan id)
+{
+  if (!node || !node->has<ZfURI::AnyNode::Object>()) return nullptr;
+  auto field = node->data<ZfURI::AnyNode::Object>().find(id);
+  return field ? field->val().ptr() : nullptr;
+}
+
+template <typename L>
+static bool uriError(L l)
+{
+  try {
+    l();
+  } catch (const ZeException &) {
+    return true;
+  }
+  return false;
+}
 
 ZfURIConfig(Bah, (
   ZfURI_ObjectFmt<ZfURI::Array,
@@ -473,6 +568,142 @@ void formattedInteger()
   ZuCheck(loaded.value == value.value);
 }
 
+void pointers()
+{
+  ZuTestScope(pointers);
+
+  char objectInput[] = "?object.value=1";
+  auto objectTree = ZfURI::scan(objectInput);
+  auto value = ZfURI::handler<URIPtrHolder>(objectTree.p<1>()).ctor();
+  char arrayInput[] = "?objects[0].value=2";
+  auto arrayTree = ZfURI::scan(arrayInput);
+  value.objects = ZfURI::handler<URIPtrHolder>(arrayTree.p<1>()).ctor().objects;
+  char textInput[] = "?text=hello";
+  auto textTree = ZfURI::scan(textInput);
+  value.text = ZfURI::handler<URIPtrHolder>(textTree.p<1>()).ctor().text;
+  char jsonInput[] = "?json={%22value%22:8}";
+  auto jsonTree = ZfURI::scan(jsonInput);
+  value.json = ZfURI::handler<URIPtrHolder>(jsonTree.p<1>()).ctor().json;
+  ZuCheck(value.object && value.object->value == 1);
+  ZuCheck(value.objects && value.objects->length() == 1);
+  ZuCheck((*value.objects)[0] && (*value.objects)[0]->value == 2);
+  ZuCheck(value.text && value.text->value == "hello");
+  ZuCheck(value.json && value.json->value == 8);
+
+  ZtString<> saved;
+  ZfURI::save(saved, value);
+  ZuCheck(saved.find("object.value=1") >= 0);
+  ZuCheck(saved.find("objects[0].value=2") >= 0);
+  ZuCheck(saved.find("text=hello") >= 0);
+  ZuCheck(saved.find("json={%22value%22:8}") >= 0);
+
+  auto first = (*value.objects)[0].ptr();
+  value.objects->push(ZmRef<URIPtrObj>{});
+  char updateInput[] = "?v[0].value=4";
+  auto update = ZfURI::scan(updateInput);
+  ZfURI::handler<URIPtrArray>(
+    uriField(update.p<1>(), "v")).update(*value.objects);
+  ZuCheck((*value.objects)[0].ptr() == first && first->value == 4);
+
+  char allocateInput[] = "?v[1].value=5";
+  auto allocate = ZfURI::scan(allocateInput);
+  ZfURI::handler<URIPtrArray>(
+    uriField(allocate.p<1>(), "v")).update(*value.objects);
+  ZuCheck((*value.objects)[1] && (*value.objects)[1]->value == 5);
+
+  char badInput[] = "?v[0]=wrong";
+  auto bad = ZfURI::scan(badInput);
+  ZfURI::handler<URIPtrArray>(
+    uriField(bad.p<1>(), "v")).update(*value.objects);
+  ZuCheck(first->value == 4);
+
+  saved.null();
+  ZfURI::save(saved, value.object);
+  ZuCheck(saved == "?value=1");
+  ZmRef<URIPtrObj> null;
+  saved.null();
+  ZfURI::save(saved, null);
+  ZuCheck(!saved);
+  ZfURI::saveUpd(saved, null);
+  ZuCheck(!saved);
+  ZfURI::saveDel(saved, null);
+  ZuCheck(!saved);
+  ZfURI::savePath(saved, null);
+  ZuCheck(!saved);
+  ZfURI::savePathUpd(saved, null);
+  ZuCheck(!saved);
+  ZfURI::savePathDel(saved, null);
+  ZuCheck(!saved);
+  ZfURI::saveBody(saved, null);
+  ZuCheck(!saved);
+  ZfURI::saveBodyUpd(saved, null);
+  ZuCheck(!saved);
+  ZfURI::saveBodyDel(saved, null);
+  ZuCheck(!saved);
+
+  URIPtrHolder omitted;
+  saved.null();
+  ZfURI::save(saved, omitted);
+  ZuCheck(!saved);
+
+  char mismatchInput[] = "?object=wrong";
+  auto mismatch = ZfURI::handler<URIPtrHolder>(
+    ZfURI::scan(mismatchInput).p<1>()).ctor();
+  ZuCheck(!mismatch.object);
+
+  URIPathPtr path;
+  ZuCheck(uriError([&saved, &path] {
+    saved.null();
+    ZfURI::savePath(saved, path);
+  }));
+  ZuCheck(!saved);
+  path.value = new URIPtrText{"hello world"};
+  ZfURI::savePath(saved, path);
+  ZuCheck(saved == "/hello%20world");
+
+  char rawInput[] = "?value=7";
+  auto raw = ZfURI::handler<URIPtrObj>(
+    ZfURI::scan(rawInput).p<1>()).alloc();
+  ZuCheck(raw && raw->value == 7);
+  delete raw;
+}
+
+void unions()
+{
+  ZuTestScope(unions);
+
+  URIUnionHolder value;
+  value.value = URIUnionA{42};
+  ZtString<> saved;
+  ZfURI::save(saved, value);
+  ZtString<> input = saved;
+  auto tree = ZfURI::scan(input.span());
+  auto loaded = ZfURI::handler<URIUnionHolder>(tree.p<1>()).ctor();
+  auto node = loaded.value.p<const ZfURI::AnyNode *>();
+  loaded.value = ZfURI::handler<URIUnionA>(node).ctor();
+  ZtString<> round;
+  ZfURI::save(round, loaded);
+  ZuCheck(round == saved);
+
+  URIUnionHolder empty;
+  saved.null();
+  ZfURI::save(saved, empty);
+  ZuCheck(!saved);
+  ZfURI::Union<URIUnionA, URIUnionB> unresolved;
+  saved.null();
+  ZfURI::save(saved, unresolved);
+  ZuCheck(!saved);
+
+  ZfURI::Union<URIUnionA, ZmRef<URIPtrObj>> pointer;
+  pointer = ZmRef<URIPtrObj>{new URIPtrObj{9}};
+  ZfURI::save(saved, pointer);
+  ZuCheck(saved == "?value=9");
+  pointer = ZmRef<URIPtrObj>{};
+  saved.null();
+  ZfURI::save(saved, pointer);
+  ZuCheck(!saved);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -489,5 +720,7 @@ int main(int argc, char **argv)
   ZuTestCall(delimitedLoad);
   ZuTestCall(resetUpdate);
   ZuTestCall(formattedInteger);
+  ZuTestCall(pointers);
+  ZuTestCall(unions);
   return 0;
 }

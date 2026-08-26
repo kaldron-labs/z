@@ -8,11 +8,13 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfTOML.hh>
 
+#include "ZfHeapTest.hh"
 #include "ZfMapTest.hh"
 
 using namespace ZuTestUtil;
@@ -123,14 +125,14 @@ using TOMLIntMap_ =
 using TOMLIntMap = ZfMapTest<
   "ZfTest.TOML.IntMap", ZfRefMapTest<TOMLIntMap_>>;
 using TOMLIntMapRef = ZmRef<TOMLIntMap>;
-inline ZfTOML::AsMap<ZfFieldTC::Int32> ZfTOML_Fmt(TOMLIntMapRef *);
+inline ZfTOML::AsMap<ZfFieldTC::Int32> ZfTOML_Fmt(TOMLIntMap *);
 
 using TOMLObjMap_ =
   ZmRBTreeKV<TOMLMapKey, TOMLNested, ZmRBTreeUnique<true>>;
 using TOMLObjMap = ZfMapTest<
   "ZfTest.TOML.ObjMap", ZfRefMapTest<TOMLObjMap_>>;
 using TOMLObjMapRef = ZmRef<TOMLObjMap>;
-inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLObjMapRef *);
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLObjMap *);
 
 struct TOMLMapHolder {
   TOMLIntMapRef inline_;
@@ -142,10 +144,82 @@ ZfStruct((TOMLMapHolder, TOML),
   (((table), (Ctor<1>, TOML::TableMap)), (UDT)),
   (((objects), (Ctor<2>)), (UDT)));
 
+struct TOMLUnionA { int foo = 0; };
+struct TOMLUnionB { int bar = 0; };
+ZfStruct((TOMLUnionA, TOML), (((foo), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct((TOMLUnionB, TOML), (((bar), (Ctor<0>, Mutable)), (Int32)));
+struct TOMLUnionHolder { ZfTOML::Union<TOMLUnionA, TOMLUnionB> value; };
+ZfStruct((TOMLUnionHolder, TOML),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+
+struct TOMLTableUnionHolder {
+  ZfTOML::Union<TOMLUnionA, TOMLMapHolder> value;
+};
+ZfStruct((TOMLTableUnionHolder, TOML),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+
+struct TOMLPtrObj_ : public ZmObject {
+  int value = 0;
+  TOMLPtrObj_(int value_ = 0) : value{value_} { }
+};
+using TOMLPtrObj = ZfHeapTest<"ZfTest.TOML.PtrObj", TOMLPtrObj_>;
+ZfStruct((TOMLPtrObj, TOML),
+  (((value), (Ctor<0>, Mutable)), (Int32)));
+
+struct TOMLFmtOpt : public ZmObject { };
+inline ZfTOML::AsString ZfTOML_Fmt(ZmRef<TOMLFmtOpt> *);
+ZuAssert((!ZfTOML::IsObjPtr<ZmRef<TOMLFmtOpt>>{}));
+
+struct TOMLPtrText_ : public ZmObject {
+  ZtString<> value;
+  TOMLPtrText_() = default;
+  TOMLPtrText_(ZuCSpan value_) : value{value_} { }
+  template <typename S>
+  friend S &operator <<(S &s, const TOMLPtrText_ &v) {
+    s << v.value;
+    return s;
+  }
+};
+using TOMLPtrText = ZfHeapTest<"ZfTest.TOML.PtrText", TOMLPtrText_>;
+
+struct TOMLPtrArray_ : public ZmObject, public ZtArray<ZmRef<TOMLPtrObj>> {
+  using Base = ZtArray<ZmRef<TOMLPtrObj>>;
+  using Base::Base;
+  using Base::operator =;
+};
+using TOMLPtrArray = ZfHeapTest<"ZfTest.TOML.PtrArray", TOMLPtrArray_>;
+inline ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLPtrArray *);
+
+using TOMLPtrMap_ =
+  ZmRBTreeKV<TOMLMapKey, ZmRef<TOMLPtrObj>, ZmRBTreeUnique<true>>;
+using TOMLPtrMap = ZfMapTest<
+  "ZfTest.TOML.PtrMap", ZfRefMapTest<TOMLPtrMap_>>;
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLPtrMap *);
+
+struct TOMLPtrHolder {
+  ZmRef<TOMLPtrObj> object;
+  ZmRef<TOMLPtrArray> objects;
+  ZmRef<TOMLPtrText> text;
+};
+ZfStruct((TOMLPtrHolder, TOML),
+  (((object), (Mutable)), (UDT)),
+  (((objects), (Mutable)), (UDT)),
+  (((text), (Mutable, TOML::Opt)), (UDT)));
+
+struct TOMLPtrTables { ZmRef<TOMLPtrArray> values; };
+ZfStruct((TOMLPtrTables, TOML),
+  (((values), (Mutable, TOML::Tables)), (UDT)));
+
 static_assert(ZfTOML::InlineMapValid<TOMLIntMapRef>{});
 static_assert(ZfTOML::InlineMapValid<TOMLObjMapRef>{});
 ZuAssert((ZuIsSame<
   ZmHeapID<TOMLIntMap>, ZuStringT<"ZfTest.TOML.IntMap">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<TOMLPtrObj>, ZuStringT<"ZfTest.TOML.PtrObj">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<TOMLPtrText>, ZuStringT<"ZfTest.TOML.PtrText">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<TOMLPtrArray>, ZuStringT<"ZfTest.TOML.PtrArray">>{}));
 
 struct TOMLData {
   ZtString<> name;
@@ -294,14 +368,14 @@ using TOMLParentMap_ =
 using TOMLParentMap = ZfMapTest<
   "ZfTest.TOML.ParentMap", ZfRefMapTest<TOMLParentMap_>>;
 using TOMLParentMapRef = ZmRef<TOMLParentMap>;
-inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLParentMapRef *);
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLParentMap *);
 
 using TOMLMapMap_ =
   ZmRBTreeKV<TOMLMapKey, TOMLParentMapRef, ZmRBTreeUnique<true>>;
 using TOMLMapMap = ZfMapTest<
   "ZfTest.TOML.MapMap", ZfRefMapTest<TOMLMapMap_>>;
 using TOMLMapMapRef = ZmRef<TOMLMapMap>;
-inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLMapMapRef *);
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLMapMap *);
 
 struct TOMLMapArray : public ZtArray<TOMLParentMapRef> {
   using ZtArray<TOMLParentMapRef>::ZtArray;
@@ -1665,7 +1739,7 @@ static void maps()
   auto root = ZfTOML::scan(
     "alpha = 1\n"
     "\"a.b\" = 2\n").p<1>();
-  auto map = ZfTOML::handler<TOMLIntMapRef>(root).ctor();
+  auto map = ZmRef(ZfTOML::handler<TOMLIntMap>(root).alloc());
   ZuCheck(map);
   ZuCheck(map->count_() == 2);
   ZuCheck(map->findVal("alpha") == 1);
@@ -1674,31 +1748,37 @@ static void maps()
   ZtString<> out;
   ZfTOML::save(out, map);
   ZuCheck(out == "\"a.b\" = 2\nalpha = 1\n");
-  auto round = ZfTOML::handler<TOMLIntMapRef>(
-    ZfTOML::scan(out).p<1>()).ctor();
+  ZtString<> direct;
+  ZfTOML::save(direct, *map);
+  ZuCheck(direct == out);
+  direct.null();
+  ZfTOML::save(direct, map.ptr());
+  ZuCheck(direct == out);
+  auto round = ZmRef(ZfTOML::handler<TOMLIntMap>(
+    ZfTOML::scan(out).p<1>()).alloc());
   ZuCheck(round->findVal("a.b") == 2);
 
   auto ptr = map.ptr();
   auto load = ZfTOML::scan("loaded = 3\n").p<1>();
-  ZfTOML::handler<TOMLIntMapRef>(load).load(map);
+  ZfTOML::handler<TOMLIntMap>(load).load(*map);
   ZuCheck(map.ptr() == ptr);
   ZuCheck(map->count_() == 1);
   ZuCheck(map->findVal("loaded") == 3);
 
   map->add("kept", 4);
   auto update = ZfTOML::scan("loaded = 5\nadded = 6\n").p<1>();
-  ZfTOML::handler<TOMLIntMapRef>(update).update(map);
+  ZfTOML::handler<TOMLIntMap>(update).update(*map);
   ZuCheck(map.ptr() == ptr);
   ZuCheck(map->count_() == 3);
   ZuCheck(map->findVal("loaded") == 5);
   ZuCheck(map->findVal("kept") == 4);
   ZuCheck(map->findVal("added") == 6);
 
-  alignas(TOMLIntMapRef) uint8_t storage[sizeof(TOMLIntMapRef)];
-  ZfTOML::handler<TOMLIntMapRef>(load).new_(storage);
-  auto &placed = *reinterpret_cast<TOMLIntMapRef *>(storage);
-  ZuCheck(placed->findVal("loaded") == 3);
-  placed.~TOMLIntMapRef();
+  auto storage = ZmAlloc(TOMLIntMap, 1);
+  ZfTOML::handler<TOMLIntMap>(load).new_(storage.data);
+  auto &placed = storage[0];
+  ZuCheck(placed.findVal("loaded") == 3);
+  placed.~TOMLIntMap();
 
   TOMLMapHolder holder;
   holder.inline_ = new TOMLIntMap{};
@@ -1741,9 +1821,9 @@ static void maps()
   out.null();
   ZfTOML::save(out, empty);
   ZuCheck(!out);
-  auto emptyRound = ZfTOML::handler<TOMLIntMapRef>(
+  auto emptyRound = ZfTOML::handler<TOMLIntMap>(
     ZfTOML::scan("\n").p<1>()).ctor();
-  ZuCheck(emptyRound && !emptyRound->count_());
+  ZuCheck(!emptyRound.count_());
 
   TOMLIntMapRef null;
   ZuCheck(loadError([&out, &null] {
@@ -1785,6 +1865,136 @@ static void interoperabilityOutput()
     "[[products]]\nname = \"nail\"\ncount = 20\n");
 }
 
+static void unions()
+{
+  ZuTestScope(unions);
+
+  TOMLUnionHolder value;
+  value.value = TOMLUnionA{42};
+  ZtString<> saved;
+  ZfTOML::save(saved, value);
+  auto tree = ZfTOML::scan(saved);
+  auto loaded = ZfTOML::handler<TOMLUnionHolder>(tree.p<1>()).ctor();
+  auto node = loaded.value.p<const ZfTOML::AnyNode *>();
+  loaded.value = ZfTOML::handler<TOMLUnionA>(node).ctor();
+  ZtString<> round;
+  ZfTOML::save(round, loaded);
+  ZuCheck(round == saved);
+
+  TOMLUnionHolder empty;
+  ZuCheck(loadError([&saved, &empty] {
+    saved.null();
+    ZfTOML::save(saved, empty);
+  }));
+
+  ZfTOML::Union<TOMLUnionA, ZmRef<TOMLPtrObj>> pointer;
+  pointer = ZmRef<TOMLPtrObj>{new TOMLPtrObj{9}};
+  saved.null();
+  ZfTOML::save(saved, pointer);
+  ZuCheck(saved == "value = 9\n");
+  pointer = ZmRef<TOMLPtrObj>{};
+  ZuCheck(loadError([&saved, &pointer] {
+    saved.null();
+    ZfTOML::save(saved, pointer);
+  }));
+
+  TOMLTableUnionHolder table;
+  table.value = TOMLUnionA{10};
+  saved.null();
+  ZfTOML::save(saved, table);
+  ZuCheck(saved == "[value]\nfoo = 10\n");
+  auto tableTree = ZfTOML::scan(saved);
+  auto tableRound =
+    ZfTOML::handler<TOMLTableUnionHolder>(tableTree.p<1>()).ctor();
+  auto tableNode = tableRound.value.p<const ZfTOML::AnyNode *>();
+  tableRound.value = ZfTOML::handler<TOMLUnionA>(tableNode).ctor();
+  ZtString<> tableSaved;
+  ZfTOML::save(tableSaved, tableRound);
+  ZuCheck(tableSaved == saved);
+}
+
+static void pointers()
+{
+  ZuTestScope(pointers);
+
+  auto tree = ZfTOML::scan(
+    "object = {value = 1}\n"
+    "objects = [{value = 2}, {value = 3}]\n"
+    "text = \"hello\"\n");
+  auto value = ZfTOML::handler<TOMLPtrHolder>(tree.p<1>()).ctor();
+  ZuCheck(value.object && value.object->value == 1);
+  ZuCheck(value.objects && value.objects->length() == 2);
+  ZuCheck((*value.objects)[0] && (*value.objects)[0]->value == 2);
+  ZuCheck(value.text && value.text->value == "hello");
+
+  ZtString<> saved;
+  ZfTOML::save(saved, value);
+  ZuCheck(saved.find("text = \"hello\"") >= 0);
+  ZuCheck(saved.find("objects = [{value = 2}, {value = 3}]") >= 0);
+
+  auto first = (*value.objects)[0].ptr();
+  (*value.objects)[1] = nullptr;
+  auto update = ZfTOML::scan(
+    "v = [{value = 4}, {value = 5}]\n");
+  ZfTOML::handler<TOMLPtrArray>(
+    field(update.p<1>(), "v")).update(*value.objects);
+  ZuCheck((*value.objects)[0].ptr() == first && first->value == 4);
+  ZuCheck((*value.objects)[1] && (*value.objects)[1]->value == 5);
+
+  auto bad = ZfTOML::scan("v = [\"wrong\", {value = 6}]\n");
+  ZuCheck(loadError([&bad, &value] {
+    ZfTOML::handler<TOMLPtrArray>(
+      field(bad.p<1>(), "v")).update(*value.objects);
+  }));
+  ZuCheck(first->value == 4);
+
+  TOMLPtrTables tables{value.objects};
+  saved.null();
+  ZfTOML::save(saved, tables);
+  ZuCheck(saved ==
+    "[[values]]\nvalue = 4\n"
+    "[[values]]\nvalue = 5\n");
+  auto tableRound = ZfTOML::handler<TOMLPtrTables>(
+    ZfTOML::scan(saved).p<1>()).ctor();
+  ZuCheck(tableRound.values && tableRound.values->length() == 2);
+  ZuCheck((*tableRound.values)[1] &&
+    (*tableRound.values)[1]->value == 5);
+
+  saved.null();
+  ZfTOML::save(saved, value.object);
+  ZuCheck(saved == "value = 1\n");
+  ZmRef<TOMLPtrObj> null;
+  ZuCheck(loadError([&saved, &null] {
+    saved.null();
+    ZfTOML::save(saved, null);
+  }));
+  ZuCheck(loadError([&saved, &null] {
+    saved.null();
+    ZfTOML::saveUpd(saved, null);
+  }));
+  ZuCheck(loadError([&saved, &null] {
+    saved.null();
+    ZfTOML::saveDel(saved, null);
+  }));
+
+  value.text = nullptr;
+  saved.null();
+  ZfTOML::save(saved, value);
+  ZuCheck(saved.find("text") < 0);
+
+  auto raw = ZfTOML::handler<TOMLPtrObj>(
+    ZfTOML::scan("value = 7\n").p<1>()).alloc();
+  ZuCheck(raw && raw->value == 7);
+  delete raw;
+
+  auto mapTree = ZfTOML::scan("one = {value = 8}\n");
+  auto map = ZmRef(ZfTOML::handler<TOMLPtrMap>(mapTree.p<1>()).alloc());
+  ZuCheck(map->findVal("one") && map->findVal("one")->value == 8);
+  saved.null();
+  ZfTOML::save(saved, map);
+  ZuCheck(saved == "one = {value = 8}\n");
+}
+
 int main(int argc, char **argv)
 {
   if (argc == 2 && ZuCSpan{argv[1]} == "--interop") {
@@ -1815,4 +2025,6 @@ int main(int argc, char **argv)
   ZuTestCall(facetsNestedTables);
   ZuTestCall(maps);
   ZuTestCall(interoperabilityOutput);
+  ZuTestCall(unions);
+  ZuTestCall(pointers);
 }

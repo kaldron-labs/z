@@ -20,8 +20,10 @@
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuString.hh>
+#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuTuple.hh>
+#include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmBackTrace.hh>
 
@@ -283,6 +285,18 @@ template <unsigned ValCode, typename ValProps = ZuTypeList<>>
 struct AsMap;
 struct AsString;
 
+template <typename ...Ts>
+struct Union : public ZuUnion<void, const AnyNode *, Ts...> {
+friend inline AsObject ZfTOML_Fmt(Union *);
+  ZuDerive_(Union, (ZuUnion<void, const AnyNode *, Ts...>));
+};
+
+template <typename T> struct IsUnion_ : public ZuFalse { };
+template <typename ...Ts>
+struct IsUnion_<Union<Ts...>> : public ZuTrue { };
+template <typename T>
+using IsUnion = IsUnion_<ZuDecay<T>>;
+
 template <typename O, typename Facet, typename = ZuFields<O, Facet>>
 struct AsDeflt_ { using T = AsObject; };
 template <typename O, typename Facet>
@@ -301,6 +315,35 @@ namespace ZfTOML {
 template <typename O>
 using As = decltype(ZfTOML_Fmt(ZuDeclVal<O *>()));
 
+template <typename U, bool IsPtr = ZuTraits<U>::IsPointer>
+struct IsObjPtr__ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr__<U, true> {
+  using T = ZuBool<ZuTraits<decltype(*(ZuDeclVal<const U &>()))>::IsComposite>;
+};
+template <typename U, typename = As<U>>
+struct IsObjPtr_ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+template <typename U>
+using IsObjPtr = typename IsObjPtr_<U>::T;
+
+template <typename T, bool = IsObjPtr<ZuDecay<T>>{}>
+struct ObjType_ { using T_ = ZuDecay<T>; };
+template <typename T>
+struct ObjType_<T, true> {
+  using T_ = ZuDecay<decltype(*(ZuDeclVal<const ZuDecay<T> &>()))>;
+};
+template <typename T>
+using ObjType = typename ObjType_<T>::T_;
+template <typename T>
+ZuInline decltype(auto) obj_(const T &v) {
+  if constexpr (IsObjPtr<ZuDecay<T>>{}) return *v;
+  else return v;
+}
+template <typename T, typename Facet>
+using ObjHandler = typename As<ObjType<T>>::template Handler<ObjType<T>, Facet>;
+
 template <typename O, typename Facet>
 auto handler_(const AnyNode *);
 
@@ -315,6 +358,8 @@ struct ZfAPI TOMLPolicy {
   using GetTimeFmt = ZuFieldProp::TOML::GetTimeFmt<Props>;
   template <typename O, typename Facet>
   using Handler = typename As<O>::template Handler<O, Facet>;
+  template <typename O>
+  using IsObjPtr = ZfTOML::IsObjPtr<O>;
 
   static bool scalar(int type, ZfTreeLoad::ScalarMask::T mask) {
     switch (type) {
@@ -803,32 +848,40 @@ void saveValue(S &s, const T &v, ZuCSpan key)
     }
     s << ']';
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using O = ZuDecay<T>;
-    using Handler = typename As<O>::template Handler<O, Facet>;
+    using O = ObjType<T>;
+    using Handler = ObjHandler<T, Facet>;
+    if constexpr (IsObjPtr<ZuDecay<T>>{})
+      if (ZuUnlikely(!v))
+	throw ZfTOML_EXCEPT(
+	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
+    const auto &v_ = obj_(v);
     if constexpr (Handler::Object) {
       static_assert(inlineObjectValid<O, Facet>(),
 	"TOML inline objects cannot require table context");
-      saveInlineObject<Facet, Filter>(s, v);
+      if constexpr (IsUnion<O>{})
+	Handler::template saveInline<Filter>(s, v_);
+      else
+	saveInlineObject<Facet, Filter>(s, v_);
     } else if constexpr (Handler::Array) {
       static_assert(inlineArrayValid<O, Facet>(),
 	"TOML inline object arrays cannot require table context");
-      Handler::template save<Filter>(s, v);
+      Handler::template save<Filter>(s, v_);
     } else if constexpr (Handler::Map) {
       static_assert(
 	ZuFieldProp::TOML::GetMapFmt<Props>{} == InlineMap,
 	"TOML table maps require table context");
       static_assert(inlineMapValid<O, Facet>(),
 	"TOML inline maps cannot require table context");
-      Handler::template saveInline<Filter>(s, v);
+      Handler::template saveInline<Filter>(s, v_);
     } else {
       constexpr unsigned Style =
         ZuFieldProp::TOML::GetScalarFmt<Props>{};
       if constexpr (Style == NativeScalar || Style == BasicScalar) {
 	BasicOut<S> out{s};
-	Handler::template save<Filter>(out, v);
+	Handler::template save<Filter>(out, v_);
       } else {
 	auto buf = ZtScratch(ScalarBuf, ScalarScratchSize);
-	Handler::template save<Filter>(buf, v);
+	Handler::template save<Filter>(buf, v_);
 	saveText<Props>(s, unquote(buf), key);
       }
     }
@@ -848,14 +901,20 @@ struct IsTableMap : public ZuBool<
 template <typename O, typename Facet>
 consteval bool needsTableContext();
 
+template <typename T, typename Facet>
+struct UnionNeedsTable_ : public ZuFalse { };
+template <typename ...Ts, typename Facet>
+struct UnionNeedsTable_<Union<Ts...>, Facet> : public ZuBool<(
+  needsTableContext<ObjType<Ts>, Facet>() || ...)> { };
+
 template <unsigned TypeCode, typename Props, typename T, typename Facet>
 consteval bool valueNeedsTableContext()
 {
   if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     return IsTableArray<Props, TypeCode>{};
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using O = ZuDecay<T>;
-    using Handler = typename As<O>::template Handler<O, Facet>;
+    using O = ObjType<T>;
+    using Handler = ObjHandler<T, Facet>;
     if constexpr (Handler::Object)
       return needsTableContext<O, Facet>();
     else if constexpr (Handler::Array)
@@ -878,10 +937,13 @@ consteval bool fieldNeedsTableContext()
 template <typename O, typename Facet>
 consteval bool needsTableContext()
 {
-  using Handler = typename As<O>::template Handler<O, Facet>;
-  if constexpr (Handler::Object) {
+  using T = ObjType<O>;
+  using Handler = ObjHandler<O, Facet>;
+  if constexpr (IsUnion<T>{}) {
+    return UnionNeedsTable_<T, Facet>{};
+  } else if constexpr (Handler::Object) {
     bool result = false;
-    ZuUnroll::all<ZuFields<O, Facet>>([&result]<typename Field>() {
+    ZuUnroll::all<ZuFields<T, Facet>>([&result]<typename Field>() {
       if constexpr (fieldNeedsTableContext<Field, Facet>()) result = true;
     });
     return result;
@@ -896,12 +958,15 @@ consteval bool needsTableContext()
 template <typename T, typename Facet>
 consteval bool inlineObjectValid()
 {
-  using Handler = typename As<T>::template Handler<T, Facet>;
+  using O = ObjType<T>;
+  using Handler = ObjHandler<T, Facet>;
   if constexpr (!Handler::Object) {
     return false;
+  } else if constexpr (IsUnion<O>{}) {
+    return !needsTableContext<O, Facet>();
   } else {
     bool result = true;
-    ZuUnroll::all<ZuFields<T, Facet>>([&result]<typename Field>() {
+    ZuUnroll::all<ZuFields<O, Facet>>([&result]<typename Field>() {
       if constexpr (!inlineValueValid<
 	  Field::Type::Code, typename Field::Props,
 	  typename Field::T, Facet>()) result = false;
@@ -913,7 +978,7 @@ consteval bool inlineObjectValid()
 template <typename T, typename Facet>
 consteval bool tableArrayValid()
 {
-  using Handler = typename As<T>::template Handler<T, Facet>;
+  using Handler = ObjHandler<T, Facet>;
   if constexpr (!Handler::Array) return false;
   else return Handler::ElemCode == ZfFieldTC::UDT;
 }
@@ -921,13 +986,14 @@ consteval bool tableArrayValid()
 template <typename T, typename Facet>
 consteval bool inlineArrayValid()
 {
-  using Handler = typename As<T>::template Handler<T, Facet>;
+  using O = ObjType<T>;
+  using Handler = ObjHandler<T, Facet>;
   if constexpr (!Handler::Array) {
     return false;
   } else if constexpr (Handler::ElemCode != ZfFieldTC::UDT) {
     return true;
   } else {
-    using Elem = ZuDecay<decltype(ZuDeclVal<T &>()[0])>;
+    using Elem = ZuDecay<decltype(ZuDeclVal<O &>()[0])>;
     return inlineValueValid<
       ZfFieldTC::UDT, typename Handler::ElemProps, Elem, Facet>();
   }
@@ -936,7 +1002,7 @@ consteval bool inlineArrayValid()
 template <typename T, typename Facet>
 consteval bool inlineMapValid()
 {
-  using Handler = typename As<T>::template Handler<T, Facet>;
+  using Handler = ObjHandler<T, Facet>;
   if constexpr (!Handler::Map) {
     return false;
   } else {
@@ -952,8 +1018,8 @@ consteval bool inlineValueValid()
   if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     return !IsTableArray<Props, TypeCode>{};
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using O = ZuDecay<T>;
-    using Handler = typename As<O>::template Handler<O, Facet>;
+    using O = ObjType<T>;
+    using Handler = ObjHandler<T, Facet>;
     if constexpr (Handler::Object)
       return inlineObjectValid<O, Facet>();
     else if constexpr (Handler::Array)
@@ -1018,18 +1084,29 @@ template <
 void saveTblArray(
     S &s, ZuCSpan key, const T &v, bool &output, ZuCSpan prefix = {})
 {
-  using Vec = ZuDecay<T>;
+  using Vec = ObjType<T>;
   static_assert(TableArrayValid<Vec, Facet>{},
     "TOML Tables ArrayFmt requires an object-vector handler");
-  unsigned n = ZuTraits<Vec>::length(v);
+  if constexpr (IsObjPtr<ZuDecay<T>>{})
+    if (ZuUnlikely(!v))
+      throw ZfTOML_EXCEPT(
+	ZfTOMLError::badValue(nullptr, "non-null", "null"));
+  const auto &vec = obj_(v);
+  unsigned n = ZuTraits<Vec>::length(vec);
+  using Elem = ZuDecay<decltype(vec[0])>;
   auto path = ZtScratch(PathBuf, PathScratchSize);
   if (prefix) path << prefix << '.';
   saveKey(path, key);
   for (unsigned i = 0; i < n; ++i) {
+    const auto &elem = vec[i];
+    if constexpr (IsObjPtr<Elem>{})
+      if (ZuUnlikely(!elem))
+	throw ZfTOML_EXCEPT(
+	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
     if (output) s << '\n';
     s << "[[" << path << "]]\n";
     output = true;
-    saveTblBody<Facet, Filter>(s, v[i], output, path);
+    saveTblBody<Facet, Filter>(s, obj_(elem), output, path);
   }
 }
 
@@ -1043,20 +1120,18 @@ void saveTblValue(
     saveTblArray<Facet, Filter>(s, key, v, output, prefix);
   } else if constexpr (
       valueNeedsTableContext<TypeCode, Props, T, Facet>()) {
-    using O = ZuDecay<T>;
-    using Handler = typename As<O>::template Handler<O, Facet>;
-    if constexpr (Handler::Map) {
+    if constexpr (IsObjPtr<ZuDecay<T>>{})
       if (ZuUnlikely(!v))
 	throw ZfTOML_EXCEPT(
 	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
-    }
+    const auto &v_ = obj_(v);
     auto path = ZtScratch(PathBuf, PathScratchSize);
     if (prefix) path << prefix << '.';
     saveKey(path, key);
     if (output) s << '\n';
     s << '[' << path << "]\n";
     output = true;
-    saveTblBody<Facet, Filter>(s, v, output, path);
+    saveTblBody<Facet, Filter>(s, v_, output, path);
   }
 }
 
@@ -1069,6 +1144,9 @@ void saveTblField(
   enum { TypeCode = Field::Type::Code };
   using Props = typename Field::Props;
   if constexpr (fieldNeedsTableContext<Field, Facet>()) {
+    if constexpr (ZuFieldProp::TOML::GetOptional<Props>{} &&
+	IsObjPtr<typename Field::T>{})
+      if (!Field::get(o)) return;
     auto key = ZuFieldProp::TOML::GetID<Field>{}().cspan();
     saveTblValue<Facet, Filter, TypeCode, Props>(
       s, key, Field::get(o), output, prefix);
@@ -1099,25 +1177,22 @@ template <
   typename S, typename O>
 void saveTblMap(S &s, const O &o, bool &output, ZuCSpan prefix)
 {
-  if (ZuUnlikely(!o))
-    throw ZfTOML_EXCEPT(
-      ZfTOMLError::badValue(nullptr, "non-null", "null"));
   using Handler = typename As<O>::template Handler<O, Facet>;
   if constexpr (valueNeedsTableContext<
       Handler::ValCode, typename Handler::ValProps,
       typename Handler::Val, Facet>()) {
-    auto i = o->citer();
+    auto i = o.citer();
     while (auto node = i())
       saveTblValue<
 	Facet, Filter, Handler::ValCode, typename Handler::ValProps>(
-	  s, Handler::key(node), Handler::val(node), output, prefix);
+	  s, node->key(), node->val(), output, prefix);
   } else {
     bool first = true;
-    auto i = o->citer();
+    auto i = o.citer();
     while (auto node = i()) {
       saveMapAssignment<
 	Facet, Filter, Handler::ValCode, typename Handler::ValProps>(
-	  s, Handler::key(node), Handler::val(node), first);
+	  s, node->key(), node->val(), first);
       first = false;
       output = true;
     }
@@ -1130,8 +1205,12 @@ template <
 void saveTblBody(S &s, const O &o, bool &output, ZuCSpan prefix)
 {
   using Handler = typename As<O>::template Handler<O, Facet>;
-  if constexpr (Handler::Object)
-    saveTblObject<Facet, Filter>(s, o, output, prefix);
+  if constexpr (Handler::Object) {
+    if constexpr (IsUnion<O>{})
+      Handler::template saveTbl<Filter>(s, o, output, prefix);
+    else
+      saveTblObject<Facet, Filter>(s, o, output, prefix);
+  }
   else if constexpr (Handler::Map)
     saveTblMap<Facet, Filter>(s, o, output, prefix);
   else
@@ -1155,6 +1234,75 @@ struct AsObject {
       saveTblObject<Facet, Filter>(s, o, output, {});
       if (output) s << '\n';
     }
+  };
+
+  // Callers must retain the parse tree and resolve the raw-node state before
+  // saving.  TOML has no null value, so unresolved and null alternatives fail.
+  template <typename ...Ts, typename Facet>
+  struct Handler<Union<Ts...>, Facet> {
+    using O = Union<Ts...>;
+
+    enum { Object = 1, Array = 0, Map = 0, Root = 1 };
+
+    const AnyNode *node;
+
+    template <typename L>
+    static void dispatch_(const O &o, L &&l) {
+      auto type = o.type();
+      if (ZuUnlikely(type < 2))
+	throw ZfTOML_EXCEPT(
+	  ZfTOMLError::badValue(nullptr, "resolved union", "unresolved"));
+      ZuSwitch::dispatch<O::N - 2>(type - 2, [&o, &l](auto I_) {
+	enum { I = I_ + 2 };
+	using V = typename O::template Type<I>;
+	const auto &v = o.template p<I>();
+	if constexpr (!IsObjPtr<V>{}) {
+	  ZuAssert((ObjHandler<V, Facet>::Object));
+	  l(v);
+	} else {
+	  using U = ZuDecay<decltype(*v)>;
+	  ZuAssert((ObjHandler<U, Facet>::Object));
+	  if (ZuUnlikely(!v))
+	    throw ZfTOML_EXCEPT(
+	      ZfTOMLError::badValue(nullptr, "non-null", "null"));
+	  l(*v);
+	}
+      });
+    }
+
+    template <template <typename> class Filter, typename S>
+    static void save(S &s, const O &o) {
+      dispatch_(o, [&s]<typename V>(const V &v) {
+	using MemberHandler = typename As<V>::template Handler<V, Facet>;
+	MemberHandler::template save<Filter>(s, v);
+      });
+    }
+
+    template <template <typename> class Filter, typename S>
+    static void saveInline(S &s, const O &o) {
+      dispatch_(o, [&s]<typename V>(const V &v) {
+	ZuAssert((inlineObjectValid<V, Facet>()));
+	saveInlineObject<Facet, Filter>(s, v);
+      });
+    }
+
+    template <template <typename> class Filter, typename S>
+    static void saveTbl(
+	S &s, const O &o, bool &output, ZuCSpan prefix) {
+      dispatch_(o, [&s, &output, prefix]<typename V>(const V &v) {
+	saveTblObject<Facet, Filter>(s, v, output, prefix);
+      });
+    }
+
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::Object>();
+    }
+    Handler(const AnyNode *node_) : node{node_} { }
+    O ctor() const { return O(node); }
+    O *alloc() const { return new O(node); }
+    void new_(void *o) const { new (o) O(node); }
+    void load(O &o) const { o = node; }
+    void update(O &o) const { o = node; }
   };
 };
 
@@ -1207,18 +1355,15 @@ struct AsMap {
     template <template <typename> class Filter, typename S>
     static void saveInline(S &s, const O &o)
     {
-      if (ZuUnlikely(!o))
-	throw ZfTOML_EXCEPT(
-	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
       s << '{';
       bool first = true;
       {
-	auto i = o->citer();
+	auto i = o.citer();
 	while (auto node = i()) {
 	  if (!first) s << ", ";
 	  first = false;
-	  auto &&key = Base::key(node);
-	  auto &&val = Base::val(node);
+	  auto &&key = node->key();
+	  auto &&val = node->val();
 	  saveKey(s, key);
 	  s << " = ";
 	  saveValue<Facet, Filter, ValCode_, ValProps_>(
@@ -1299,10 +1444,13 @@ template <
   template <typename> class Filter = ZfFieldFilter::Save,
   typename S, typename O>
 inline S &save(S &s, const O &v) {
-  using Handler = typename As<O>::template Handler<O, Facet>;
-  static_assert(Handler::Root,
-    "a TOML document root must be formatted as an object or map");
-  Handler::template save<Filter>(s, v);
+  using Handler = ObjHandler<O, Facet>;
+  ZuAssert((Handler::Root));
+  if constexpr (IsObjPtr<O>{})
+    if (ZuUnlikely(!v))
+      throw ZfTOML_EXCEPT(
+	ZfTOMLError::badValue(nullptr, "non-null", "null"));
+  Handler::template save<Filter>(s, obj_(v));
   return s;
 }
 
