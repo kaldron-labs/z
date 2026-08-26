@@ -274,7 +274,7 @@ class Endpoint_ {
     void disconnected(bool) override {
       auto impl = m_endpoint->impl();
       if constexpr (Impl::EndpointRef)
-	m_endpoint->disconnected_0(this, ZmMkRef(impl));
+	m_endpoint->disconnected_0(this, ZmRef(impl));
       else
 	m_endpoint->disconnected_0(this, impl);
     }
@@ -348,7 +348,7 @@ class Endpoint_ {
     }
 
     void scheduleTx_() {
-      m_endpoint->m_mx->txRun([cxn = ZmMkRef(this)]() mutable {
+      m_endpoint->m_mx->txRun([cxn = ZmRef(this)]() mutable {
 	if (cxn->m_closing.load_() || !cxn->m_txBuf) return;
 	cxn->send(ZiIOFn{cxn.ptr(), ZmFnPtr<&Cxn_::sendStart_>{}});
       });
@@ -701,7 +701,7 @@ private:
 
   template <typename ImplRef_>
   void disconnected_0(Cxn_ *cxn, ImplRef_ impl_) {
-    m_mx->rxRun([impl = ZuMvPtr(impl_), cxn = ZmMkRef(cxn)]() mutable {
+    m_mx->rxRun([impl = ZuMvPtr(impl_), cxn = ZmRef(cxn)]() mutable {
       auto fns = static_cast<Impl *>(impl)->
 	Endpoint_::disconnected_(cxn.ptr());
       auto mx = cxn->mx();
