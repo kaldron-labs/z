@@ -135,8 +135,13 @@ public:
   friend Traits ZuTraitsType(ZuPtr *) { return {}; } // unused
 
 protected:
-  T		*m_object;
+  T	*m_object;
 };
+
+// deduction guides
+
+template <typename T>
+ZuPtr(T *) -> ZuPtr<T>;
 
 template <typename T> struct ZuCmp;
 template <typename T>
@@ -148,7 +153,5 @@ struct ZuCmp<ZuPtr<T> > : public ZuCmp<T *> {
 template <typename T> struct ZuHash;
 template <typename T>
 struct ZuHash<ZuPtr<T> > : public ZuHash<T *> { };
-
-template <typename T> ZuPtr<T> ZuMkPtr(T *p) { return ZuPtr<T>{p}; }
 
 #endif /* ZuPtr_HH */

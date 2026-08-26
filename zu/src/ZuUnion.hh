@@ -40,7 +40,7 @@
 //   void print(int i) const { printf("%d\n", i); }
 //   void print(double d) const { printf("%g\n", d); }
 // };
-// u.cdispatch([]<typename I>(I &&i) { print(ZuFwd<I>(i)); });
+// u.cdispatch([]<typename V>(auto, V &&v) { print(ZuFwd<V>(v)); });
 // ZuSwitch::dispatch<U::N>(u.type(), [&u](auto I) { print(u.p<I>()); });
 
 #ifndef ZuUnion_HH
@@ -335,7 +335,8 @@ public:
     ZuSwitch::dispatch<N>(m_type, [this, &u](auto I) {
       using T = Type<I>;
       if constexpr (!IsVoid<T>{})
-	Ops<T>::ctor(ZuAddr(p_<I>(m_u)), p_<I>(u.m_u));
+	if constexpr (CanCpConstruct<T>{})
+	  Ops<T>::ctor(ZuAddr(p_<I>(m_u)), p_<I>(u.m_u));
     });
   }
   constexpr Union &operator =(const Union &u)
@@ -356,7 +357,7 @@ public:
       if constexpr (!IsVoid<T>{}) {
 	if constexpr (CanCpAssign<T>{})
 	  p_<I>(m_u) = p_<I>(u.m_u);
-	else {
+	else if constexpr (CanCpConstruct<T>{}) {
 	  Ops<T>::dtor(ZuAddr(p_<I>(m_u)));
 	  Ops<T>::ctor(ZuAddr(p_<I>(m_u)), p_<I>(u.m_u));
 	}
@@ -372,7 +373,8 @@ public:
     ZuSwitch::dispatch<N>(m_type, [this, &u](auto I) {
       using T = Type<I>;
       if constexpr (!IsVoid<T>{})
-	Ops<T>::ctor(ZuAddr(p_<I>(m_u)), ZuMv(p_<I>(ZuMv(u.m_u))));
+	if constexpr (CanMvConstruct<T>{})
+	  Ops<T>::ctor(ZuAddr(p_<I>(m_u)), ZuMv(p_<I>(ZuMv(u.m_u))));
     });
   }
   constexpr Union &operator =(Union &&u)
@@ -392,9 +394,11 @@ public:
       if constexpr (!IsVoid<T>{}) {
 	if constexpr (CanMvAssign<T>{})
 	  p_<I>(m_u) = ZuMv(p_<I>(ZuMv(u.m_u)));
-	else if (this != &u) {
-	  Ops<T>::dtor(ZuAddr(p_<I>(m_u)));
-	  Ops<T>::ctor(ZuAddr(p_<I>(m_u)), ZuMv(p_<I>(ZuMv(u.m_u))));
+	else if constexpr (CanMvConstruct<T>{}) {
+	  if (this != &u) {
+	    Ops<T>::dtor(ZuAddr(p_<I>(m_u)));
+	    Ops<T>::ctor(ZuAddr(p_<I>(m_u)), ZuMv(p_<I>(ZuMv(u.m_u))));
+	  }
 	}
       }
     });
