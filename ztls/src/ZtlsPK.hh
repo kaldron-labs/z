@@ -252,7 +252,7 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
     auto data = ZfASN1::handler<PK_X509_RSA>(buf).ctor();
     try {
-      return ZmMkRef(new PK{data.rsa});
+      return ZmRef(new PK{data.rsa});
     } catch (const ZeException &e) {
       return e;
     }
@@ -384,7 +384,7 @@ struct SK_EC_ : public PK_EC_<Heap> {
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
     auto data = ZfASN1::handler<PK_X509_EC>(buf).ctor();
     try {
-      return ZmMkRef(new PK{data.id2, data.pubKey});
+      return ZmRef(new PK{data.id2, data.pubKey});
     } catch (const ZeException &e) {
       return e;
     }
@@ -508,7 +508,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
     auto data = ZfASN1::handler<PK_X509_ED25519>(buf).ctor();
     try {
-      return ZmMkRef(new PK{data.pubKey});
+      return ZmRef(new PK{data.pubKey});
     } catch (const ZeException &e) {
       return e;
     }
