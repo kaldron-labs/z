@@ -379,7 +379,7 @@ private:
   // this is the internal TCP-level connected; once handshake is completed,
   // the application's connected_() will be called
   void connected_0(Cxn *cxn, ZiIOContext &io) { // runs on I/O Rx thread
-    app()->rxRun([impl = ZmMkRef(this->impl()), cxn = ZmMkRef(cxn)]() {
+    app()->rxRun([impl = ZmRef(this->impl()), cxn = ZmRef(cxn)]() {
       impl->connected_1(ZuMv(cxn));
     });
     Rx::template recv<parseHdr<RxBufAlloc>, &Impl::recvRecord>(io);
@@ -406,8 +406,8 @@ private:
     auto n = int(buf->length);
     auto cxn = static_cast<Cxn *>(io.cxn);
     app()->rxRun([
-      impl = ZmMkRef(this->impl()),
-      cxn = ZmMkRef(cxn),
+      impl = ZmRef(this->impl()),
+      cxn = ZmRef(cxn),
       buf = ZuMv(buf)
     ]() mutable {
       if (ZuUnlikely(impl->m_cxn != cxn.ptr())) return;
@@ -525,7 +525,7 @@ private:
     m_txDeferred = false;
     m_txPending = true;
     app()->txRun([
-      impl = ZmMkRef(impl()), txTLS, gen, headroom = m_headroom
+      impl = ZmRef(impl()), txTLS, gen, headroom = m_headroom
     ]() mutable {
       impl->installTx_(txTLS, gen, headroom);
     });
@@ -550,7 +550,7 @@ private:
       }
     }
     ptls_tx_free(txTLS);
-    app()->rxRun([impl = ZmMkRef(impl()), gen, installed]() mutable {
+    app()->rxRun([impl = ZmRef(impl()), gen, installed]() mutable {
       impl->txInstalled_(gen, installed);
     });
   }
@@ -743,7 +743,7 @@ private:
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMvPtr(impl_)};
-    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() mutable {
+    app()->rxRun([impl = ZuMv(impl), cxn = ZmRef(cxn), peer]() mutable {
       if (!impl->disconnected_(cxn)) return;
       auto app = impl->app();
       // drain Tx while keeping cxn/impl referenced
@@ -869,7 +869,7 @@ protected:
       "Ztls", (),
       "TLS KeyUpdate requires TLS 1.3", return false);
     uint64_t gen = m_tlsGen.load_();
-    app()->txRun([impl = ZmMkRef(impl()), gen, requestUpdate]() mutable {
+    app()->txRun([impl = ZmRef(impl()), gen, requestUpdate]() mutable {
       impl->updateKeyTx_(gen, requestUpdate);
     });
     return true;
@@ -1027,14 +1027,14 @@ private:
   }
 
   void queueTxError_(uint64_t gen, const char *message) {
-    app()->rxRun([impl = ZmMkRef(impl()), gen, message]() mutable {
+    app()->rxRun([impl = ZmRef(impl()), gen, message]() mutable {
       if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
       impl->reportTxError_(message);
     });
   }
 
   void queueTxError_(uint64_t gen, const char *function, int n) {
-    app()->rxRun([impl = ZmMkRef(impl()), gen, function, n]() mutable {
+    app()->rxRun([impl = ZmRef(impl()), gen, function, n]() mutable {
       if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
       auto e = ZeEXCEPT(Error, "Ztls", ([function, n](auto &s) {
 	s << function << ": " << strerror_(n);
@@ -1125,7 +1125,7 @@ private:
     asyncCleanup_();
 
     AsyncJobRef async = new AsyncJob{
-      ZmMkRef(impl()), tls(), job, handle, m_tlsGen.load_()};
+      ZmRef(impl()), tls(), job, handle, m_tlsGen.load_()};
     m_asyncJob = async.ptr();
 
     if (ZuUnlikely(!app()->asyncAddHandle_(
@@ -1169,7 +1169,7 @@ private:
 
   void asyncCleanup_() {
     AsyncJobRef async;
-    if (m_asyncJob) async = ZmMkRef(m_asyncJob);
+    if (m_asyncJob) async = ZmRef(m_asyncJob);
     clearAsync_();
     if (!async) return;
     Zi::Handle handle = async->handle;
@@ -1193,7 +1193,7 @@ public:
     auto oldState = state_();
     m_disconnecting = 1;
     stateChanged_(oldState);
-    app()->rxInvoke([impl = ZmMkRef(this->impl())]() {
+    app()->rxInvoke([impl = ZmRef(this->impl())]() {
 	impl->disconnect_();
     });
   }
@@ -1212,12 +1212,12 @@ public:
       m_tls = nullptr;
     }
     ZmRef<Cxn> cxn;
-    if (m_cxn) cxn = ZmMkRef(static_cast<Cxn *>(m_cxn));
+    if (m_cxn) cxn = ZmRef(static_cast<Cxn *>(m_cxn));
     if (cxn) {
       if (notify) {
 	uint64_t gen = m_tlsGen.load_();
 	app()->txRun([
-	  impl = ZmMkRef(impl()), cxn = ZuMv(cxn), gen
+	  impl = ZmRef(impl()), cxn = ZuMv(cxn), gen
 	]() mutable {
 	  impl->closeTx_(ZuMv(cxn), gen);
 	});
@@ -1242,7 +1242,7 @@ protected:
   void reset_tls_() {
     uint64_t gen = m_tlsGen.load_() + 1;
     m_tlsGen.store_(gen);
-    app()->txRun([impl = ZmMkRef(impl()), gen]() mutable {
+    app()->txRun([impl = ZmRef(impl()), gen]() mutable {
       impl->retireTx_(gen);
     });
     if (m_tls) {
@@ -1339,7 +1339,7 @@ private:
 	  "TLS async job destroyed while still pending"));
     }
     void ready(Zi::Handle handle_) {
-      link->asyncReady_(ZmMkRef(this), handle_);
+      link->asyncReady_(ZmRef(this), handle_);
     }
 
     ZmRef<Impl>		link;
@@ -1468,11 +1468,11 @@ template <typename> friend class Client;
     }
 
     app()->mx()->connect(
-      ZiConnectFn{ZmMkRef(impl()),
+      ZiConnectFn{ZmRef(impl()),
 	[](Impl *impl, const ZiCxnInfo &ci) -> ZiConnection * {
 	  return new Cxn(impl, ci);
 	}},
-      ZiFailFn{ZmMkRef(impl()), [](Impl *impl, bool transient) {
+      ZiFailFn{ZmRef(impl()), [](Impl *impl, bool transient) {
 	auto app = impl->app();
 	app->rxRun([
 	  impl = ZmRef<Impl>{impl}, transient
