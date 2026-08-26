@@ -6,10 +6,12 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmLHash.hh>
 
 #include <zlib/ZfYAML.hh>
 
+#include "ZfHeapTest.hh"
 #include "ZfMapTest.hh"
 
 using namespace ZuTestUtil;
@@ -34,19 +36,79 @@ using YAMLMapKey = ZtString<>;
 using YAMLIntMap =
   ZfMapTest<"ZfTest.YAML.IntMap", ZmLHashKV<YAMLMapKey, int>>;
 using YAMLIntMapRef = ZmRef<YAMLIntMap>;
-inline ZfYAML::AsMap<ZfFieldTC::Int32> ZfYAML_Fmt(YAMLIntMapRef *);
+inline ZfYAML::AsMap<ZfFieldTC::Int32> ZfYAML_Fmt(YAMLIntMap *);
 
 using YAMLObjMap =
   ZfMapTest<"ZfTest.YAML.ObjMap", ZmLHashKV<YAMLMapKey, YAMLNested>>;
 using YAMLObjMapRef = ZmRef<YAMLObjMap>;
-inline ZfYAML::AsMap<ZfFieldTC::UDT> ZfYAML_Fmt(YAMLObjMapRef *);
+inline ZfYAML::AsMap<ZfFieldTC::UDT> ZfYAML_Fmt(YAMLObjMap *);
 
 struct YAMLMapHolder { YAMLIntMapRef map; };
 ZfStruct((YAMLMapHolder, YAML),
   (((map), (Ctor<0>, Mutable)), (UDT)));
 
+struct YAMLUnionA { int foo = 0; };
+struct YAMLUnionB { int bar = 0; };
+ZfStruct((YAMLUnionA, YAML), (((foo), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct((YAMLUnionB, YAML), (((bar), (Ctor<0>, Mutable)), (Int32)));
+struct YAMLUnionHolder { ZfYAML::Union<YAMLUnionA, YAMLUnionB> value; };
+ZfStruct((YAMLUnionHolder, YAML),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+
+struct YAMLPtrObj_ : public ZmObject {
+  int value = 0;
+  YAMLPtrObj_(int value_ = 0) : value{value_} { }
+};
+using YAMLPtrObj = ZfHeapTest<"ZfTest.YAML.PtrObj", YAMLPtrObj_>;
+ZfStruct((YAMLPtrObj, YAML),
+  (((value), (Ctor<0>, Mutable)), (Int32)));
+
+struct YAMLFmtOpt : public ZmObject { };
+inline ZfYAML::AsString ZfYAML_Fmt(ZmRef<YAMLFmtOpt> *);
+ZuAssert((!ZfYAML::IsObjPtr<ZmRef<YAMLFmtOpt>>{}));
+
+struct YAMLPtrText_ : public ZmObject {
+  ZtString<> value;
+  YAMLPtrText_() = default;
+  YAMLPtrText_(ZuCSpan value_) : value{value_} { }
+  template <typename S>
+  friend S &operator <<(S &s, const YAMLPtrText_ &v) {
+    s << v.value;
+    return s;
+  }
+};
+using YAMLPtrText = ZfHeapTest<"ZfTest.YAML.PtrText", YAMLPtrText_>;
+
+struct YAMLPtrArray_ : public ZmObject, public ZtArray<ZmRef<YAMLPtrObj>> {
+  using Base = ZtArray<ZmRef<YAMLPtrObj>>;
+  using Base::Base;
+  using Base::operator =;
+};
+using YAMLPtrArray = ZfHeapTest<"ZfTest.YAML.PtrArray", YAMLPtrArray_>;
+inline ZfYAML::AsArray<ZfFieldTC::UDT> ZfYAML_Fmt(YAMLPtrArray *);
+
+using YAMLPtrMap = ZfMapTest<
+  "ZfTest.YAML.PtrMap", ZmLHashKV<YAMLMapKey, ZmRef<YAMLPtrObj>>>;
+inline ZfYAML::AsMap<ZfFieldTC::UDT> ZfYAML_Fmt(YAMLPtrMap *);
+
+struct YAMLPtrHolder {
+  ZmRef<YAMLPtrObj> object;
+  ZmRef<YAMLPtrArray> objects;
+  ZmRef<YAMLPtrText> text;
+};
+ZfStruct((YAMLPtrHolder, YAML),
+  (((object), (Mutable)), (UDT)),
+  (((objects), (Mutable)), (UDT)),
+  (((text), (Mutable)), (UDT)));
+
 ZuAssert((ZuIsSame<
   ZmHeapID<YAMLIntMap>, ZuStringT<"ZfTest.YAML.IntMap">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<YAMLPtrObj>, ZuStringT<"ZfTest.YAML.PtrObj">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<YAMLPtrText>, ZuStringT<"ZfTest.YAML.PtrText">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<YAMLPtrArray>, ZuStringT<"ZfTest.YAML.PtrArray">>{}));
 
 struct YAMLJSON {
   int value = 0;
@@ -785,7 +847,7 @@ static void maps()
     "b: 2\n"
     "\"a.b\": 3\n"
     "\"true\": 4\n");
-  auto map = ZfYAML::handler<YAMLIntMapRef>(scan.p<1>()).ctor();
+  auto map = ZmRef(ZfYAML::handler<YAMLIntMap>(scan.p<1>()).alloc());
   ZuCheck(map);
   ZuCheck(map->count_() == 4);
   ZuCheck(map->findVal("a") == 1);
@@ -794,35 +856,47 @@ static void maps()
 
   ZtString<> saved;
   ZfYAML::save(saved, map);
+  ZtString<> direct;
+  ZfYAML::save(direct, *map);
+  ZuCheck(direct == saved);
+  direct.null();
+  ZfYAML::save(direct, map.ptr());
+  ZuCheck(direct == saved);
   auto roundScan = ZfYAML::scan(saved);
-  auto round = ZfYAML::handler<YAMLIntMapRef>(roundScan.p<1>()).ctor();
+  auto round = ZmRef(ZfYAML::handler<YAMLIntMap>(roundScan.p<1>()).alloc());
   ZuCheck(round->count_() == 4);
   ZuCheck(round->findVal("a.b") == 3);
   ZuCheck(round->findVal("true") == 4);
 
   auto ptr = map.ptr();
   auto loadScan = ZfYAML::scan("loaded: 5\n");
-  ZfYAML::handler<YAMLIntMapRef>(loadScan.p<1>()).load(map);
+  ZfYAML::handler<YAMLIntMap>(loadScan.p<1>()).load(*map);
   ZuCheck(map.ptr() == ptr);
   ZuCheck(map->count_() == 1);
   ZuCheck(map->findVal("loaded") == 5);
 
   map->add("kept", 6);
   auto updateScan = ZfYAML::scan("loaded: 7\nadded: 8\n");
-  ZfYAML::handler<YAMLIntMapRef>(updateScan.p<1>()).update(map);
+  ZfYAML::handler<YAMLIntMap>(updateScan.p<1>()).update(*map);
   ZuCheck(map.ptr() == ptr);
   ZuCheck(map->count_() == 3);
   ZuCheck(map->findVal("loaded") == 7);
   ZuCheck(map->findVal("kept") == 6);
   ZuCheck(map->findVal("added") == 8);
 
+  auto storage = ZmAlloc(YAMLIntMap, 1);
+  ZfYAML::handler<YAMLIntMap>(loadScan.p<1>()).new_(storage.data);
+  auto &placed = storage[0];
+  ZuCheck(placed.findVal("loaded") == 5);
+  placed.~YAMLIntMap();
+
   auto objectScan = ZfYAML::scan("one:\n  value: 9\n");
-  auto objects = ZfYAML::handler<YAMLObjMapRef>(objectScan.p<1>()).ctor();
+  auto objects = ZmRef(ZfYAML::handler<YAMLObjMap>(objectScan.p<1>()).alloc());
   ZuCheck(objects->findVal("one").value == 9);
   saved.null();
   ZfYAML::save(saved, objects);
-  auto objectsRound = ZfYAML::handler<YAMLObjMapRef>(
-    ZfYAML::scan(saved).p<1>()).ctor();
+  auto objectsRound = ZmRef(ZfYAML::handler<YAMLObjMap>(
+    ZfYAML::scan(saved).p<1>()).alloc());
   ZuCheck(objectsRound->findVal("one").value == 9);
 
   auto holderScan = ZfYAML::scan("map:\n  nested: 10\n");
@@ -837,6 +911,95 @@ static void maps()
   saved.null();
   ZfYAML::save(saved, null);
   ZuCheck(saved == "null");
+  saved.null();
+  ZfYAML::saveUpd(saved, null);
+  ZuCheck(saved == "null");
+  saved.null();
+  ZfYAML::saveDel(saved, null);
+  ZuCheck(saved == "null");
+}
+
+static void unions()
+{
+  ZuTestScope(unions);
+
+  YAMLUnionHolder value;
+  value.value = YAMLUnionA{42};
+  ZtString<> saved;
+  ZfYAML::save(saved, value);
+  auto tree = ZfYAML::scan(saved);
+  auto loaded = ZfYAML::handler<YAMLUnionHolder>(tree.p<1>()).ctor();
+  auto node = loaded.value.p<const ZfYAML::AnyNode *>();
+  loaded.value = ZfYAML::handler<YAMLUnionA>(node).ctor();
+  ZtString<> round;
+  ZfYAML::save(round, loaded);
+  ZuCheck(round == saved);
+
+  YAMLUnionHolder empty;
+  saved.null();
+  ZfYAML::save(saved, empty);
+  ZuCheck(saved == "value:\n  null");
+
+  ZfYAML::Union<YAMLUnionA, ZmRef<YAMLPtrObj>> pointer;
+  pointer = ZmRef<YAMLPtrObj>{new YAMLPtrObj{9}};
+  saved.null();
+  ZfYAML::save(saved, pointer);
+  ZuCheck(saved == "value: 9");
+  pointer = ZmRef<YAMLPtrObj>{};
+  saved.null();
+  ZfYAML::save(saved, pointer);
+  ZuCheck(saved == "null");
+}
+
+static void pointers()
+{
+  ZuTestScope(pointers);
+
+  auto tree = ZfYAML::scan(
+    "object: {value: 1}\nobjects: [{value: 2}, {value: 3}]\ntext: hello\n");
+  auto value = ZfYAML::handler<YAMLPtrHolder>(tree.p<1>()).ctor();
+  ZuCheck(value.object && value.object->value == 1);
+  ZuCheck(value.objects && value.objects->length() == 2);
+  ZuCheck((*value.objects)[0] && (*value.objects)[0]->value == 2);
+  ZuCheck(value.text && value.text->value == "hello");
+
+  ZtString<> saved;
+  ZfYAML::save(saved, value);
+  ZuCheck(saved.find("text: hello") >= 0);
+  ZuCheck(saved.find("objects:\n  -\n    value: 2") >= 0);
+
+  auto first = (*value.objects)[0].ptr();
+  (*value.objects)[1] = nullptr;
+  auto update = ZfYAML::scan("[{value: 4}, {value: 5}]\n");
+  ZfYAML::handler<YAMLPtrArray>(update.p<1>()).update(*value.objects);
+  ZuCheck((*value.objects)[0].ptr() == first && first->value == 4);
+  ZuCheck((*value.objects)[1] && (*value.objects)[1]->value == 5);
+
+  auto bad = ZfYAML::scan("[wrong, {value: 6}]\n");
+  ZuCheck(loadError([&bad, &value] {
+    ZfYAML::handler<YAMLPtrArray>(bad.p<1>()).update(*value.objects);
+  }));
+  ZuCheck(first->value == 4);
+
+  saved.null();
+  ZfYAML::save(saved, value.object);
+  ZuCheck(saved == "value: 1");
+  ZmRef<YAMLPtrObj> null;
+  saved.null();
+  ZfYAML::save(saved, null);
+  ZuCheck(saved == "null");
+
+  auto raw = ZfYAML::handler<YAMLPtrObj>(
+    ZfYAML::scan("value: 7\n").p<1>()).alloc();
+  ZuCheck(raw && raw->value == 7);
+  delete raw;
+
+  auto mapTree = ZfYAML::scan("one: {value: 8}\n");
+  auto map = ZmRef(ZfYAML::handler<YAMLPtrMap>(mapTree.p<1>()).alloc());
+  ZuCheck(map->findVal("one") && map->findVal("one")->value == 8);
+  saved.null();
+  ZfYAML::save(saved, map);
+  ZuCheck(saved.find("one:\n  value: 8") >= 0);
 }
 
 int main(int argc, char **argv)
@@ -858,4 +1021,6 @@ int main(int argc, char **argv)
   ZuTestCall(transformEdges);
   ZuTestCall(transformGolden);
   ZuTestCall(maps);
+  ZuTestCall(unions);
+  ZuTestCall(pointers);
 }

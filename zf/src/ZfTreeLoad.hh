@@ -16,13 +16,13 @@
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuMArray.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
 
 #include <zlib/ZfStruct.hh>
-#include <zlib/ZfMap.hh>
 #include <zlib/ZtBytesFmt.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZfJSON.hh>
@@ -114,13 +114,13 @@ struct Object {
 
   static bool valid(const AnyNode *node)
   {
-    return node->has<AnyNode::Object>();
+    return node && node->has<AnyNode::Object>();
   }
 
   Object(const AnyNode *node_) : node{node_}
   {
     for (unsigned i = 0; i < SaveFields::N; i++) lookup[i] = -1;
-    if (node->has<AnyNode::Object>()) {
+    if (valid(node)) {
       constexpr auto matcher =
 	ZuMatcher<typename Policy::template GetIDs<SaveFields>>();
       const auto &fields = node->data<AnyNode::Object>();
@@ -183,6 +183,13 @@ struct Object {
 	handler.template loadField<ZfFieldFilter::Load, Field>()...);
     }
     template <typename ...Args>
+    static O *alloc(const Object &handler, Args &&...args)
+    {
+      return new O(
+	ZuFwd<Args>(args)...,
+	handler.template loadField<ZfFieldFilter::Load, Field>()...);
+    }
+    template <typename ...Args>
     static void new_(void *o, const Object &handler, Args &&...args)
     {
       new (o) O(
@@ -204,6 +211,23 @@ struct Object {
 	  this->template loadField<ZfFieldFilter::Load, Field>());
       });
       return o;
+    }
+  }
+
+  template <typename ...Args>
+  O *alloc(Args &&...args) const
+  {
+    checkRequired<ReqFields>();
+    O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+      *this, ZuFwd<Args>(args)...);
+    try {
+      ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+	Field::set(*o, this->template loadField<ZfFieldFilter::Load, Field>());
+      });
+      return o;
+    } catch (...) {
+      delete o;
+      throw;
     }
   }
 
@@ -267,7 +291,7 @@ struct Array {
 
   static bool valid(const AnyNode *node)
   {
-    return node->has<AnyNode::Array>();
+    return node && node->has<AnyNode::Array>();
   }
 
   Array(const AnyNode *node_) : node{node_} { }
@@ -279,15 +303,24 @@ struct Array {
   template <typename ...Args>
   O ctor(Args &&...args) const
   {
-    if (ZuUnlikely(!node->has<AnyNode::Array>()))
+    if (ZuUnlikely(!valid(node)))
       return O(ZuFwd<Args>(args)...);
     return O(ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
   }
 
   template <typename ...Args>
+  O *alloc(Args &&...args) const
+  {
+    if (ZuUnlikely(!valid(node)))
+      return new O(ZuFwd<Args>(args)...);
+    return new O(
+      ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
+  }
+
+  template <typename ...Args>
   void new_(void *o, Args &&...args) const
   {
-    if (ZuUnlikely(!node->has<AnyNode::Array>()))
+    if (ZuUnlikely(!valid(node)))
       new (o) O(ZuFwd<Args>(args)...);
     else
       new (o) O(
@@ -296,20 +329,33 @@ struct Array {
 
   void load(O &o) const
   {
-    if (ZuLikely(node->has<AnyNode::Array>()))
+    if (ZuLikely(valid(node)))
       o = LoadVec_(node->data<AnyNode::Array>());
   }
 
   void update(O &o) const
   {
-    if (ZuUnlikely(!node->has<AnyNode::Array>())) return;
+    if (ZuUnlikely(!valid(node))) return;
     const auto &nodes = node->data<AnyNode::Array>();
     unsigned n = ZuTraits<O>::length(o);
     unsigned m = nodes.length();
     if (n > m) n = m;
     if constexpr (ElemCode == ZfFieldTC::UDT) {
-      using ElemHandler = typename Policy::template Handler<Elem, Facet>;
-      for (unsigned i = 0; i < n; i++) ElemHandler{nodes[i]}.update(o[i]);
+      using IsPtr = typename Policy::template IsObjPtr<Elem>;
+      if constexpr (!IsPtr{}) {
+	for (unsigned i = 0; i < n; i++)
+	  Policy::template handler<Elem, Facet>(nodes[i]).update(o[i]);
+      } else {
+	using U = ZuDecay<decltype(*(ZuDeclVal<const Elem &>()))>;
+	for (unsigned i = 0; i < n; i++) {
+	  auto handler = Policy::template handler<U, Facet>(nodes[i]);
+	  auto &p = o[i];
+	  if (ZuLikely(p))
+	    handler.update(*p);
+	  else
+	    p = handler.alloc();
+	}
+      }
     } else {
       for (unsigned i = 0; i < n; i++)
 	o[i] = loadValue<
@@ -322,32 +368,31 @@ struct Array {
 template <
   typename Policy, unsigned ValCode, typename ValProps,
   typename O_, typename Facet>
-struct Map : public ZfMap::Traits<O_> {
+struct Map {
   using O = O_;
   using AnyNode = ZfTree::AnyNode;
-  using Traits = ZfMap::Traits<O>;
-  using Container = typename Traits::Container;
-  using Key = typename Traits::Key;
-  using Val = typename Traits::Val;
+  using Key = typename O::Key;
+  using Val = typename O::Val;
 
   const AnyNode	*node;
 
   static bool valid(const AnyNode *node)
   {
-    return node->has<AnyNode::Object>();
+    return node && node->has<AnyNode::Object>();
   }
 
   Map(const AnyNode *node_) : node{node_} { }
 
   template <template <typename> class Filter, bool Update = false>
-  void load_(Container &map) const
+  void load_(O &o) const
   {
+    if (ZuUnlikely(!valid(node))) return;
     const auto &fields = node->data<AnyNode::Object>();
     for (unsigned i = 0, n = fields.length(); i < n; i++) {
       const auto &field = fields[i];
       Key key{field.template p<0>()};
-      if constexpr (Update) map.del(key);
-      map.add(
+      if constexpr (Update) o.del(key);
+      o.add(
 	ZuMv(key),
 	loadValue<Policy, Facet, Filter, ValCode, ValProps, Val>(
 	  field.template p<1>()));
@@ -356,29 +401,33 @@ struct Map : public ZfMap::Traits<O_> {
 
   O ctor() const
   {
-    if (ZuUnlikely(!valid(node))) return {};
-    O o{new Container{}};
-    load_<ZfFieldFilter::Load>(*o);
+    O o;
+    load_<ZfFieldFilter::Load>(o);
     return o;
   }
 
-  void new_(void *o) const { new (o) O{ctor()}; }
+  O *alloc() const
+  {
+    ZuPtr<O> o{new O()};
+    load_<ZfFieldFilter::Load>(*o.ptr());
+    return ZuMv(o).release();
+  }
+
+  void new_(void *p_) const
+  {
+    auto p = new (p_) O();
+    load_<ZfFieldFilter::Load>(*p);
+  }
 
   void load(O &o) const
   {
-    if (ZuUnlikely(!valid(node))) { o = nullptr; return; }
-    if (ZuUnlikely(!o))
-      o = new Container{};
-    else
-      o->clean();
-    load_<ZfFieldFilter::Load>(*o);
+    o.clean();
+    load_<ZfFieldFilter::Load>(o);
   }
 
   void update(O &o) const
   {
-    if (ZuUnlikely(!valid(node))) { o = nullptr; return; }
-    if (ZuUnlikely(!o)) o = new Container{};
-    load_<ZfFieldFilter::Upd, true>(*o);
+    load_<ZfFieldFilter::Upd, true>(o);
   }
 };
 
@@ -402,6 +451,7 @@ struct String {
   }
 
   O ctor() const { return StringHandler::load(span()); }
+  O *alloc() const { return new O(StringHandler::load(span())); }
   void new_(void *o) const { new (o) O(StringHandler::load(span())); }
   void load(O &o) const { o = StringHandler::load(span()); }
   void update(O &o) const { o = StringHandler::load(span()); }
@@ -597,7 +647,13 @@ inline T loadValue_(const ZfTree::AnyNode *node)
 	return v;
     }
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    return Policy::template handler<T, Facet>(node).ctor();
+    using IsPtr = typename Policy::template IsObjPtr<T>;
+    if constexpr (!IsPtr{}) {
+      return Policy::template handler<T, Facet>(node).ctor();
+    } else {
+      using U = ZuDecay<decltype(*(ZuDeclVal<const T &>()))>;
+      return Policy::template handler<U, Facet>(node).alloc();
+    }
   }
 }
 
@@ -614,7 +670,7 @@ inline auto loadValue(const ZfTree::AnyNode *node)
     enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     if constexpr (ElemCode == ZfFieldTC::Bytes) {
       T out;
-      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+      if (ZuUnlikely(!node || !node->has<AnyNode::Array>()))
 	Policy::badType(node, "array");
       using Elem = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
       const auto &nodes = node->data<AnyNode::Array>();
@@ -629,7 +685,7 @@ inline auto loadValue(const ZfTree::AnyNode *node)
 	bool(ZuIsBoxed<Actual>{}), Actual, ZfFieldTC::Type<ElemCode>>;
       using LoadVec_ = LoadVec<
 	Policy, Facet, Filter, ElemCode, Props, Elem>;
-      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+      if (ZuUnlikely(!node || !node->has<AnyNode::Array>()))
 	Policy::badType(node, "array");
       return LoadVec_(node->data<AnyNode::Array>());
     }

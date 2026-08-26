@@ -129,6 +129,9 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuPercent.hh>
+#include <zlib/ZuPtr.hh>
+#include <zlib/ZuSwitch.hh>
+#include <zlib/ZuUnion.hh>
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
@@ -138,6 +141,7 @@
 
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
+#include <zlib/ZePlatform.hh>
 
 ZuStructFacet(URI); // canonical URI facet, others can be defined
 ZuStructFacet(IncrementalURI); // variant with Incremental = true
@@ -202,6 +206,20 @@ template <typename Facet>
 using Config = decltype(ZfURI_Config(ZuDeclVal<Facet *>()));
 
 }
+
+namespace ZfURIError {
+
+  constexpr auto Component = "ZfURI"_Zu;
+
+  inline auto nullPath() {
+    return [](auto &s) { s << "null URI path component"; };
+  }
+
+}
+
+#define ZfURI_EXCEPT(...) \
+  ZeMkException(Ze::Error, __FILE__, __LINE__, ZuFnName, \
+    ZfURIError::Component, __VA_ARGS__)
 
 // ZfURIConfig(Facet, Config)
 // - configure URI for facet
@@ -573,7 +591,7 @@ inline ZuPtr<AnyNode> *elem(ZuPtr<AnyNode> &node, unsigned index) {
   if (ZuLikely(!node)) node = newNode<AnyNode::Array>();
   auto &array = node->data<AnyNode::Array>();
   array.ensure(index + 1);
-  if (index >= array.length()) array.length(index + 1);
+  while (index >= array.length()) array.push(ZuPtr<AnyNode>{});
   return &array[index];
 }
 
@@ -719,6 +737,7 @@ template <typename S, char Delimiter>
 struct OutStream {
   S	&stream;
   bool	first = true;
+  char	initial = 0;
 
   template <typename U, decltype(ZuDeclVal<S &>().S::operator <<(
       ZuDeclVal<const U &>()), int()) = 0>
@@ -728,7 +747,11 @@ struct OutStream {
   }
 
   void delimit() {
-    if (first) { first = false; return; }
+    if (first) {
+      first = false;
+      if (initial) stream << initial;
+      return;
+    }
     stream << Delimiter;
   }
 };
@@ -741,6 +764,12 @@ template <unsigned ElemCode, typename ElemProps = ZuTypeList<>>
 struct AsArray;		// as array
 struct AsString;	// as string
 struct AsJSON;		// as embedded JSON
+
+template <typename ...Ts>
+struct Union : public ZuUnion<void, const AnyNode *, Ts...> {
+friend inline AsObject ZfURI_Fmt(Union *);
+  ZuDerive_(Union, (ZuUnion<void, const AnyNode *, Ts...>));
+};
 
 // if fields are defined, default to AsObject
 template <typename O, typename Facet, typename = ZuFields<O, Facet>>
@@ -781,6 +810,39 @@ struct QueryFilter {
 template <typename O>
 using As = decltype(ZfURI_Fmt(ZuDeclVal<O *>()));
 
+template <typename U, bool IsPtr = ZuTraits<U>::IsPointer>
+struct IsObjPtr__ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr__<U, true> {
+  using T = ZuBool<ZuTraits<decltype(*(ZuDeclVal<const U &>()))>::IsComposite>;
+};
+template <typename U, typename = As<U>>
+struct IsObjPtr_ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+template <typename U>
+using IsObjPtr = typename IsObjPtr_<U>::T;
+
+template <typename T, bool = IsObjPtr<ZuDecay<T>>{}>
+struct ObjType_ { using T_ = ZuDecay<T>; };
+template <typename T>
+struct ObjType_<T, true> {
+  using T_ = ZuDecay<decltype(*(ZuDeclVal<const ZuDecay<T> &>()))>;
+};
+template <typename T>
+using ObjType = typename ObjType_<T>::T_;
+template <typename T>
+ZuInline decltype(auto) obj_(const T &v) {
+  if constexpr (IsObjPtr<ZuDecay<T>>{}) return *v;
+  else return v;
+}
+
+template <typename T> struct IsUnion_ : public ZuFalse { };
+template <typename ...Ts>
+struct IsUnion_<Union<Ts...>> : public ZuTrue { };
+template <typename T>
+using IsUnion = IsUnion_<ZuDecay<T>>;
+
 // save an individual field
 template <
   typename Facet, template <typename> class Filter, typename Quote,
@@ -799,7 +861,7 @@ void saveValue(S &s, const T &v, ZuCSpan prefix);
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
-auto loadValue(AnyNode *);
+auto loadValue(const AnyNode *);
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
@@ -836,6 +898,10 @@ struct AsObject {
 
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::Object>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     template <template <typename> class Filter, typename Field, typename L>
@@ -846,6 +912,13 @@ struct AsObject {
       template <typename ...Args>
       static O ctor(const Handler &handler, Args &&...args) {
 	return O(
+	  ZuFwd<Args>(args)...,
+	  handler.loadField<ZfFieldFilter::Load, Field>(
+	    []<typename V>(V &&v, bool) { return ZuFwd<V>(v); })...);
+      }
+      template <typename ...Args>
+      static O *alloc(const Handler &handler, Args &&...args) {
+	return new O(
 	  ZuFwd<Args>(args)...,
 	  handler.loadField<ZfFieldFilter::Load, Field>(
 	    []<typename V>(V &&v, bool) { return ZuFwd<V>(v); })...);
@@ -865,13 +938,28 @@ struct AsObject {
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	  loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
+	  this->template loadField<ZfFieldFilter::Load, Field>(
+	      [&o]<typename V>(V &&v, bool deflt) {
 	    if (!Incremental || !deflt)
 	      Field::set(o, ZuFwd<V>(v));
 	  });
 	});
 	return o;
       }
+    }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      ZuPtr<O> owner{ZuTypeApply<Ctor, CtorFields>::alloc(
+	*this, ZuFwd<Args>(args)...)};
+      auto o = owner.ptr();
+      ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+	this->template loadField<ZfFieldFilter::Load, Field>(
+	    [o]<typename V>(V &&v, bool deflt) {
+	  if (!Incremental || !deflt)
+	    Field::set(*o, ZuFwd<V>(v));
+	});
+      });
+      return ZuMv(owner).release();
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
@@ -902,6 +990,60 @@ struct AsObject {
 	});
       });
     }
+  };
+
+  // The raw-node state is non-owning; retain the scan tree until resolving it.
+  // Empty, unresolved, and null alternatives are omitted when saving.
+  template <typename ...Ts, typename Facet>
+  struct Handler<Union<Ts...>, Facet> {
+    using O = Union<Ts...>;
+
+    const AnyNode *node;
+
+    template <typename L>
+    static bool dispatch_(const O &o, L &&l) {
+      auto type = o.type();
+      if (ZuUnlikely(type < 2)) return false;
+      bool output = false;
+      ZuSwitch::dispatch<O::N - 2>(type - 2, [&o, &l, &output](auto I_) {
+	enum { I = I_ + 2 };
+	using V = typename O::template Type<I>;
+	const auto &v = o.template p<I>();
+	if constexpr (!IsObjPtr<V>{}) {
+	  ZuAssert((ZuIsSame<As<V>, AsObject>{} ||
+	      (ZuIsSame<As<V>, AsDeflt>{} && ZuFields<V, Facet>::N)));
+	  l(v);
+	  output = true;
+	} else {
+	  using U = ZuDecay<decltype(*v)>;
+	  ZuAssert((ZuIsSame<As<U>, AsObject>{} ||
+	      (ZuIsSame<As<U>, AsDeflt>{} && ZuFields<U, Facet>::N)));
+	  if (ZuLikely(v)) {
+	    l(*v);
+	    output = true;
+	  }
+	}
+      });
+      return output;
+    }
+
+    template <template <typename> class Filter, typename Quote, typename S>
+    static void save(S &s, const O &o, ZuCSpan prefix) {
+      dispatch_(o, [&s, prefix]<typename V>(const V &v) {
+	using MemberHandler = typename As<V>::template Handler<V, Facet>;
+	MemberHandler::template save<Filter, Quote>(s, v, prefix);
+      });
+    }
+
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::Object>();
+    }
+    Handler(const AnyNode *node_) : node{node_} { }
+    O ctor() const { return O(node); }
+    O *alloc() const { return new O(node); }
+    void new_(void *o) const { new (o) O(node); }
+    void load(O &o) const { o = node; }
+    void update(O &o) const { o = node; }
   };
 };
 
@@ -968,39 +1110,61 @@ struct AsArray {
 	}
       } else { // Delimited - no nesting is possible, use AsString
 	using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
-	using AsString_ = decltype(ZfURI_StringFmt(ZuDeclVal<Elem *>()));
-	using Handler_ = typename AsString_::template Handler<Quote, Elem>;
+	using U = ObjType<Elem>;
+	using AsString_ = decltype(ZfURI_StringFmt(ZuDeclVal<U *>()));
+	using Handler_ = typename AsString_::template Handler<Quote, U>;
+	unsigned first = 0;
+	if constexpr (IsObjPtr<Elem>{}) {
+	  while (first < n && !o[first]) ++first;
+	  if (first >= n) return;
+	}
 	s.delimit();
 	if constexpr (Config::Annotated)
 	  s << prefix << "[]=";
 	else 
 	  s << prefix << '=';
 	if constexpr (Config::Wrapped) s << '[';
-	for (unsigned i = 0; i < n; i++) {
-	  if (i) s << Config::Delimiter;
-	  Handler_::save(s, o[i]);
+	bool delimiter = false;
+	for (unsigned i = first; i < n; i++) {
+	  const auto &v = o[i];
+	  if constexpr (IsObjPtr<Elem>{})
+	    if (!v) continue;
+	  if (delimiter) s << Config::Delimiter;
+	  delimiter = true;
+	  Handler_::save(s, obj_(v));
 	}
 	if constexpr (Config::Wrapped) s << ']';
       }
     }
 
-    AnyNode	*node;
+    const AnyNode	*node;
 
-    Handler(AnyNode *node_) : node{node_} { }
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::Array>();
+    }
+
+    Handler(const AnyNode *node_) : node{node_} { }
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
       LoadVec<Facet, ZfFieldFilter::Load, ElemCode, ElemProps, Elem>;
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+      if (ZuUnlikely(!valid(node)))
 	return O(ZuFwd<Args>(args)...);
       return O(
 	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
     template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      if (ZuUnlikely(!valid(node)))
+	return new O(ZuFwd<Args>(args)...);
+      return new O(
+	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
+    }
+    template <typename ...Args>
     void new_(void *o, Args &&...args) const {
-      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+      if (ZuUnlikely(!valid(node)))
 	new (o) O(ZuFwd<Args>(args)...);
       else
 	new (o) O(
@@ -1008,19 +1172,34 @@ struct AsArray {
     }
 
     void load(O &o) const {
-      if (ZuLikely(node->has<AnyNode::Array>()))
+      if (ZuLikely(valid(node)))
 	o = LoadVec_(node->data<AnyNode::Array>());
     }
     void update(O &o) const {
-      if (ZuUnlikely(!node->has<AnyNode::Array>())) return;
+      if (ZuUnlikely(!valid(node))) return;
       const auto &nodes = node->data<AnyNode::Array>();
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
       if (n > m) n = m;
       if constexpr (ElemCode == ZfFieldTC::UDT) {
-	using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
-	for (unsigned i = 0; i < n; i++)
-	  ElemHandler{nodes[i]}.update(o[i]);
+	if constexpr (!IsObjPtr<Elem>{}) {
+	  using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
+	  for (unsigned i = 0; i < n; i++)
+	    ElemHandler{nodes[i]}.update(o[i]);
+	} else {
+	  using U = ZuDecay<decltype(*(ZuDeclVal<const Elem &>()))>;
+	  using ElemHandler = typename As<U>::template Handler<U, Facet>;
+	  for (unsigned i = 0; i < n; i++) {
+	    auto &p = o[i];
+	    auto &child = nodes[i];
+	    if (!ElemHandler::valid(child)) continue;
+	    auto handler = ElemHandler{child};
+	    if (ZuLikely(p))
+	      handler.update(*p);
+	    else
+	      p = handler.alloc();
+	  }
+	}
       } else {
 	for (unsigned i = 0; i < n; i++)
 	  o[i] = loadValue<
@@ -1042,20 +1221,26 @@ struct AsString {
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
       using Handler_ = typename AsString_::template Handler<Quote, O>;
+      s.delimit();
       s << prefix << '=';
       Handler_::save(s, o);
     }
  
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::String>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     ZuCSpan span() const {
-      if (!node->has<AnyNode::String>()) return {};
+      if (!valid(node)) return {};
       return node->data<AnyNode::String>();
     }
 
     ZuInline O ctor() const { return Handler_::load(span()); }
+    ZuInline O *alloc() const { return new O(Handler_::load(span())); }
     ZuInline void new_(void *o) const { new (o) O(Handler_::load(span())); }
     ZuInline void load(O &o) const { o = Handler_::load(span()); }
     ZuInline void update(O &o) const { o = Handler_::load(span()); }
@@ -1081,6 +1266,10 @@ struct AsJSON {
 
     const AnyNode	*node;
 
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::String>();
+    }
+
     Handler(const AnyNode *node_) : node{node_} { }
 
     // resolve JSON handler
@@ -1100,6 +1289,10 @@ struct AsJSON {
     template <typename ...Args>
     O ctor(Args &&...args) const {
       return handler_().template p<1>().ctor(ZuFwd<Args>(args)...);
+    }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      return handler_().template p<1>().alloc(ZuFwd<Args>(args)...);
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {
@@ -1306,8 +1499,15 @@ inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
   if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
-      using Handler = typename As<T>::template Handler<T, Facet>;
-      Handler::template save<Filter, Quote>(s, v, prefix);
+      if constexpr (!IsObjPtr<T>{}) {
+	using Handler = typename As<T>::template Handler<T, Facet>;
+	Handler::template save<Filter, Quote>(s, v, prefix);
+      } else {
+	if (ZuUnlikely(!v)) return;
+	using U = ObjType<T>;
+	using Handler = typename As<U>::template Handler<U, Facet>;
+	Handler::template save<Filter, Quote>(s, *v, prefix);
+      }
     } else {
       // leaf type - output it
       saveValue_<Facet, Filter, Quote, TypeCode, Props>(s, v,
@@ -1589,15 +1789,24 @@ inline T loadValue_(ZuSpan<char> span)
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
-inline auto loadValue(AnyNode *node)
+inline auto loadValue(const AnyNode *node)
 {
   if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
-      return typename As<T>::template Handler<T, Facet>{node}.ctor();
+      if constexpr (!IsObjPtr<T>{}) {
+	using Handler = typename As<T>::template Handler<T, Facet>;
+	if (ZuUnlikely(!Handler::valid(node))) return ZuCmp<T>::null();
+	return Handler{node}.ctor();
+      } else {
+	using U = ObjType<T>;
+	using Handler = typename As<U>::template Handler<U, Facet>;
+	if (ZuUnlikely(!Handler::valid(node))) return T{};
+	return T{Handler{node}.alloc()};
+      }
     } else {
       ZuSpan<char> span;
-      if (ZuLikely(node->has<AnyNode::String>()))
+      if (ZuLikely(node && node->has<AnyNode::String>()))
 	span = node->data<AnyNode::String>();
       return loadValue_<Facet, Filter, TypeCode, Props, T>(span);
     }
@@ -1608,7 +1817,7 @@ inline auto loadValue(AnyNode *node)
       ElemCode >= ZfFieldTC::Int8 && ElemCode <= ZfFieldTC::UInt128 &&
       bool(ZuIsBoxed<Actual>{}), Actual, ZfFieldTC::Type<ElemCode>>;
     using LoadVec_ = LoadVec<Facet, Filter, ElemCode, Props, Elem>;
-    if (!node->has<AnyNode::Array>()) {
+    if (!node || !node->has<AnyNode::Array>()) {
       static const NodeArray _;
       return LoadVec_(_);
     }
@@ -1638,8 +1847,9 @@ inline decltype(auto) AsObject::Handler<O, Facet>::loadField(L &&l) const
   using Props = typename Field::Props;
   using T = typename Field::T;
   using R = decltype(
-    loadValue<Facet, Filter, TypeCode, Props, T>(ZuDeclVal<AnyNode *>()));
-  if (ZuLikely(node->has<AnyNode::Object>())) {
+    loadValue<Facet, Filter, TypeCode, Props, T>(
+	ZuDeclVal<const AnyNode *>()));
+  if (ZuLikely(node && node->has<AnyNode::Object>())) {
     const auto &object = node->data<AnyNode::Object>();
     using PathIndex = ZuFieldProp::URI::GetPathIndex<Props>;
     if constexpr (PathIndex{}() >= 0) {
@@ -1674,26 +1884,42 @@ template <
   typename Facet, template <typename> class Filter,
   typename S, typename O>
 inline S &savePath_(S &s, const O &o) {
-  using PathFields_ = PathFields<ZuTypeGrep<Filter, ZuFields<O, Facet>>>;
-  if constexpr (PathFields_::N > 0) {
-    ZuUnroll::all<PathFields_>([&s, &o]<typename Field>() {
-      using Type = typename Field::Type;
-      using Props = typename Field::Props;
-      s << '/';
-      if constexpr (Type::Code == ZfFieldTC::UDT) {
-	// UDT type in the path - process as string
-	using T = typename Field::T;
-	using AsString = decltype(ZfURI_StringFmt(ZuDeclVal<T *>()));
-	using Handler =
-	  typename AsString::template Handler<URIQuote<false>, T>;
-	Handler::save(s, Field::get(o));
-      } else {
-	// leaf type
-	// - Note: vectors in the path are always in bare list format
-	saveValue_<Facet, Filter, URIQuote<false>, Type::Code, Props>(
-	  s, Field::get(o), [](auto &s) { });
-      }
+  using T = ZuDecay<O>;
+  if constexpr (IsObjPtr<T>{}) {
+    if (ZuLikely(o)) savePath_<Facet, Filter>(s, *o);
+  } else if constexpr (IsUnion<T>{}) {
+    using Handler = typename As<T>::template Handler<T, Facet>;
+    Handler::dispatch_(o, [&s]<typename V>(const V &v) {
+      savePath_<Facet, Filter>(s, v);
     });
+  } else {
+    using PathFields_ = PathFields<ZuTypeGrep<Filter, ZuFields<T, Facet>>>;
+    if constexpr (PathFields_::N > 0) {
+      ZuUnroll::all<PathFields_>([&s, &o]<typename Field>() {
+	using Type = typename Field::Type;
+	using Props = typename Field::Props;
+	if constexpr (Type::Code == ZfFieldTC::UDT) {
+	  // UDT type in the path - process as string
+	  using FieldT = typename Field::T;
+	  using U = ObjType<FieldT>;
+	  const auto &v = Field::get(o);
+	  if constexpr (IsObjPtr<FieldT>{})
+	    if (ZuUnlikely(!v))
+	      throw ZfURI_EXCEPT(ZfURIError::nullPath());
+	  s << '/';
+	  using AsString = decltype(ZfURI_StringFmt(ZuDeclVal<U *>()));
+	  using StringHandler =
+	    typename AsString::template Handler<URIQuote<false>, U>;
+	  StringHandler::save(s, obj_(v));
+	} else {
+	  // leaf type
+	  // - Note: vectors in the path are always in bare list format
+	  s << '/';
+	  saveValue_<Facet, Filter, URIQuote<false>, Type::Code, Props>(
+	    s, Field::get(o), [](auto &s) { });
+	}
+      });
+    }
   }
   return s;
 }
@@ -1702,13 +1928,26 @@ template <
   typename Facet, template <typename> class Filter_,
   typename S, typename O>
 inline S &save_(S &s_, const O &o) {
-  savePath_<Facet, Filter_>(s_, o);
-  s_ << '?';
-  {
+  using T = ZuDecay<O>;
+  using U = ObjType<T>;
+  if constexpr (IsObjPtr<T>{})
+    if (ZuUnlikely(!o)) return s_;
+  const auto &v = obj_(o);
+  using Handler = typename As<U>::template Handler<U, Facet>;
+  if constexpr (IsUnion<U>{}) {
+    Handler::dispatch_(v, [&s_]<typename V>(const V &member) {
+      savePath_<Facet, Filter_>(s_, member);
+      using Filter = QueryFilter<Filter_>;
+      OutQuery<S> s{s_, true, '?'};
+      using MemberHandler = typename As<V>::template Handler<V, Facet>;
+      MemberHandler::template save<
+	Filter::template Filter, URIQuote<false>>(s, member, {});
+    });
+  } else {
+    savePath_<Facet, Filter_>(s_, v);
     using Filter = QueryFilter<Filter_>;
-    OutQuery<S> s{s_};
-    using Handler = As<O>::template Handler<O, Facet>;
-    Handler::template save<Filter::template Filter, URIQuote<false>>(s, o, {});
+    OutQuery<S> s{s_, true, '?'};
+    Handler::template save<Filter::template Filter, URIQuote<false>>(s, v, {});
   }
   return s_;
 }
@@ -1717,10 +1956,25 @@ template <
   typename Facet, template <typename> class Filter_,
   typename S, typename O>
 inline S &saveBody_(S &s_, const O &o) {
-  using Filter = QueryFilter<Filter_>;
-  OutQuery<S> s{s_};
-  using Handler = As<O>::template Handler<O, Facet>;
-  Handler::template save<Filter::template Filter, URIQuote<true>>(s, o, {});
+  using T = ZuDecay<O>;
+  using U = ObjType<T>;
+  if constexpr (IsObjPtr<T>{})
+    if (ZuUnlikely(!o)) return s_;
+  const auto &v = obj_(o);
+  using Handler = typename As<U>::template Handler<U, Facet>;
+  if constexpr (IsUnion<U>{}) {
+    Handler::dispatch_(v, [&s_]<typename V>(const V &member) {
+      using Filter = QueryFilter<Filter_>;
+      OutQuery<S> s{s_};
+      using MemberHandler = typename As<V>::template Handler<V, Facet>;
+      MemberHandler::template save<
+	Filter::template Filter, URIQuote<true>>(s, member, {});
+    });
+  } else {
+    using Filter = QueryFilter<Filter_>;
+    OutQuery<S> s{s_};
+    Handler::template save<Filter::template Filter, URIQuote<true>>(s, v, {});
+  }
   return s_;
 }
 

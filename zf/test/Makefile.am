@@ -12,7 +12,7 @@ LDADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 noinst_PROGRAMS = \
 	ZfASN1Test ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest \
 	ZfURITest ZfYAMLTest ZfTOMLTest
-noinst_HEADERS = ZfMapTest.hh
+noinst_HEADERS = ZfHeapTest.hh ZfMapTest.hh
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

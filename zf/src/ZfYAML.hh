@@ -21,8 +21,10 @@
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuString.hh>
+#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuTuple.hh>
+#include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmBackTrace.hh>
 
@@ -289,6 +291,12 @@ struct AsMap;
 struct AsString;
 struct AsJSON;
 
+template <typename ...Ts>
+struct Union : public ZuUnion<void, const AnyNode *, Ts...> {
+friend inline AsObject ZfYAML_Fmt(Union *);
+  ZuDerive_(Union, (ZuUnion<void, const AnyNode *, Ts...>));
+};
+
 template <typename O, typename Facet, typename = ZuFields<O, Facet>>
 struct AsDeflt_ { using T = AsObject; };
 template <typename O, typename Facet>
@@ -307,6 +315,33 @@ namespace ZfYAML {
 template <typename O>
 using As = decltype(ZfYAML_Fmt(ZuDeclVal<O *>()));
 
+template <typename U, bool IsPtr = ZuTraits<U>::IsPointer>
+struct IsObjPtr__ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr__<U, true> {
+  using T = ZuBool<ZuTraits<decltype(*(ZuDeclVal<const U &>()))>::IsComposite>;
+};
+template <typename U, typename = As<U>>
+struct IsObjPtr_ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+template <typename U>
+using IsObjPtr = typename IsObjPtr_<U>::T;
+
+template <typename T, bool = IsObjPtr<ZuDecay<T>>{}>
+struct ObjType_ { using T_ = ZuDecay<T>; };
+template <typename T>
+struct ObjType_<T, true> {
+  using T_ = ZuDecay<decltype(*(ZuDeclVal<const ZuDecay<T> &>()))>;
+};
+template <typename T>
+using ObjType = typename ObjType_<T>::T_;
+template <typename T>
+ZuInline decltype(auto) obj_(const T &v) {
+  if constexpr (IsObjPtr<ZuDecay<T>>{}) return *v;
+  else return v;
+}
+
 template <typename O, typename Facet>
 auto handler_(const AnyNode *);
 
@@ -321,6 +356,8 @@ struct ZfAPI YAMLPolicy {
   using GetTimeFmt = ZuFieldProp::YAML::GetTimeFmt<Props>;
   template <typename O, typename Facet>
   using Handler = typename As<O>::template Handler<O, Facet>;
+  template <typename O>
+  using IsObjPtr = ZfYAML::IsObjPtr<O>;
 
   static int intBase(ZuCSpan span);
   static bool implicit(ZuCSpan span);
@@ -588,10 +625,32 @@ void saveScalar(S &s, const T &v, unsigned indent_)
 
 template <
   typename Facet, template <typename> class Filter,
+  typename Props, typename S, typename T>
+void saveUDT(S &s, const T &v, unsigned indent_)
+{
+  using O = ObjType<T>;
+  if constexpr (IsObjPtr<ZuDecay<T>>{})
+    if (ZuUnlikely(!v)) { s << " null"; return; }
+  using Handler = typename As<O>::template Handler<O, Facet>;
+  const auto &o = obj_(v);
+  if constexpr (Handler::Block) {
+    s << '\n';
+    Handler::template save_<Filter>(s, o, indent_);
+  } else if constexpr (Handler::Scalar) {
+    ScalarBuf buf;
+    Handler::template save<Filter>(buf, o);
+    saveText<Props>(s, scalarSpan(buf), indent_);
+  } else {
+    s << ' ';
+    Handler::template save<Filter>(s, o);
+  }
+}
+
+template <
+  typename Facet, template <typename> class Filter,
   unsigned ElemCode, typename Props, typename S, typename O>
 void saveArray(S &s, const O &o, unsigned indent_)
 {
-  using Elem = ZuDecay<decltype(o[0])>;
   unsigned n = ZuTraits<O>::length(o);
   if (!n) {
     indent(s, indent_);
@@ -599,25 +658,14 @@ void saveArray(S &s, const O &o, unsigned indent_)
     return;
   }
   for (unsigned i = 0; i < n; ++i) {
+    const auto &v = o[i];
     if (i) s << '\n';
     indent(s, indent_);
     s << '-';
-    if constexpr (ElemCode == ZfFieldTC::UDT) {
-      using Handler = typename As<Elem>::template Handler<Elem, Facet>;
-      if constexpr (Handler::Block) {
-	s << '\n';
-	Handler::template save_<Filter>(s, o[i], indent_ + 2);
-      } else if constexpr (Handler::Scalar) {
-	ScalarBuf buf;
-	Handler::template save<Filter>(buf, o[i]);
-	saveText<Props>(s, scalarSpan(buf), indent_ + 2);
-      } else {
-	s << ' ';
-	Handler::template save<Filter>(s, o[i]);
-      }
-    } else {
-      saveScalar<Facet, Filter, ElemCode, Props>(s, o[i], indent_ + 2);
-    }
+    if constexpr (ElemCode == ZfFieldTC::UDT)
+      saveUDT<Facet, Filter, Props>(s, v, indent_ + 2);
+    else
+      saveScalar<Facet, Filter, ElemCode, Props>(s, v, indent_ + 2);
   }
 }
 
@@ -631,19 +679,7 @@ void saveFieldValue(S &s, const T &v, unsigned indent_)
     s << '\n';
     saveArray<Facet, Filter, ElemCode, Props>(s, v, indent_);
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using O = ZuDecay<T>;
-    using Handler = typename As<O>::template Handler<O, Facet>;
-    if constexpr (Handler::Block) {
-      s << '\n';
-      Handler::template save_<Filter>(s, v, indent_);
-    } else if constexpr (Handler::Scalar) {
-      ScalarBuf buf;
-      Handler::template save<Filter>(buf, v);
-      saveText<Props>(s, scalarSpan(buf), indent_);
-    } else {
-      s << ' ';
-      Handler::template save<Filter>(s, v);
-    }
+    saveUDT<Facet, Filter, Props>(s, v, indent_);
   } else {
     saveScalar<Facet, Filter, TypeCode, Props>(s, v, indent_);
   }
@@ -731,6 +767,60 @@ struct AsObject {
       save_<Filter>(s, o, 0);
     }
   };
+
+  // Callers must resolve the non-owning raw-node state before saving.
+  template <typename ...Ts, typename Facet>
+  struct Handler<Union<Ts...>, Facet> {
+    using O = Union<Ts...>;
+    enum { Block = 1, Scalar = 0 };
+
+    const AnyNode *node;
+
+    template <template <typename> class Filter, typename S>
+    static void save_(S &s, const O &o, unsigned indent_) {
+      auto type = o.type();
+      if (ZuUnlikely(type < 2)) {
+	indent(s, indent_);
+	s << "null";
+	return;
+      }
+      ZuSwitch::dispatch<O::N - 2>(type - 2,
+	[&s, &o, indent_](auto I_) {
+	  enum { I = I_ + 2 };
+	  using V = typename O::template Type<I>;
+	  const auto &v = o.template p<I>();
+	  if constexpr (!IsObjPtr<V>{}) {
+	    using Handler = typename As<V>::template Handler<V, Facet>;
+	    ZuAssert((ZuIsSame<As<V>, AsObject>{} ||
+		(ZuIsSame<As<V>, AsDeflt>{} && ZuFields<V, Facet>::N)));
+	    Handler::template save_<Filter>(s, v, indent_);
+	  } else {
+	    using U = ZuDecay<decltype(*v)>;
+	    using Handler = typename As<U>::template Handler<U, Facet>;
+	    ZuAssert((ZuIsSame<As<U>, AsObject>{} ||
+		(ZuIsSame<As<U>, AsDeflt>{} && ZuFields<U, Facet>::N)));
+	    if (ZuLikely(v))
+	      Handler::template save_<Filter>(s, *v, indent_);
+	    else {
+	      indent(s, indent_);
+	      s << "null";
+	    }
+	  }
+	});
+    }
+    template <template <typename> class Filter, typename S>
+    static void save(S &s, const O &o) { save_<Filter>(s, o, 0); }
+
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::Object>();
+    }
+    Handler(const AnyNode *node_) : node{node_} { }
+    O ctor() const { return O(node); }
+    O *alloc() const { return new O(node); }
+    void new_(void *o) const { new (o) O(node); }
+    void load(O &o) const { o = node; }
+    void update(O &o) const { o = node; }
+  };
 };
 
 template <unsigned ElemCode, typename ElemProps>
@@ -771,22 +861,17 @@ struct AsMap {
     template <template <typename> class Filter, typename S>
     static void save_(S &s, const O &o, unsigned indent_)
     {
-      if (ZuUnlikely(!o)) {
-	indent(s, indent_);
-	s << "null";
-	return;
-      }
       bool first = true;
       {
-	auto i = o->citer();
+	auto i = o.citer();
 	while (auto node = i()) {
 	  if (!first) s << '\n';
 	  first = false;
 	  indent(s, indent_);
-	  saveKey(s, Base::key(node));
+	  saveKey(s, node->key());
 	  s << ':';
 	  saveFieldValue<Facet, Filter, ValCode, ValProps>(
-	    s, Base::val(node), indent_ + 2);
+	    s, node->val(), indent_ + 2);
 	}
       }
       if (first) {
@@ -874,7 +959,13 @@ template <
   template <typename> class Filter = ZfFieldFilter::Save,
   typename S, typename O>
 inline S &save(S &s, const O &v) {
-  As<O>::template Handler<O, Facet>::template save<Filter>(s, v);
+  if constexpr (!IsObjPtr<O>{})
+    As<O>::template Handler<O, Facet>::template save<Filter>(s, v);
+  else if (ZuLikely(v)) {
+    using U = ZuDecay<decltype(*v)>;
+    As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
+  } else
+    s << "null";
   return s;
 }
 template <typename Facet = ZuFacet::YAML, typename S, typename O>

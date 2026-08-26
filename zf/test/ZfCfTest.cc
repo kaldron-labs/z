@@ -8,10 +8,12 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmAlloc.hh>
 #include <zlib/ZmHash.hh>
 
 #include <zlib/ZfCf.hh>
 
+#include "ZfHeapTest.hh"
 #include "ZfMapTest.hh"
 
 using namespace ZuTestUtil;
@@ -41,12 +43,12 @@ using CfMapKey = ZtString<>;
 using CfIntMap =
   ZfMapTest<"ZfTest.Cf.IntMap", ZmHashKV<CfMapKey, int>>;
 using CfIntMapRef = ZmRef<CfIntMap>;
-inline ZfCf::AsMap<ZfFieldTC::Int32> ZfCf_Fmt(CfIntMapRef *);
+inline ZfCf::AsMap<ZfFieldTC::Int32> ZfCf_Fmt(CfIntMap *);
 
 using CfObjMap =
   ZfMapTest<"ZfTest.Cf.ObjMap", ZmHashKV<CfMapKey, CfNested>>;
 using CfObjMapRef = ZmRef<CfObjMap>;
-inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(CfObjMapRef *);
+inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(CfObjMap *);
 
 struct CfMapHolder {
   CfIntMapRef map;
@@ -54,10 +56,70 @@ struct CfMapHolder {
 ZfStruct((CfMapHolder, Cf),
   (((map), (Ctor<0>, Mutable)), (UDT)));
 
+struct CfUnionA { int foo = 0; };
+struct CfUnionB { int bar = 0; };
+ZfStruct((CfUnionA, Cf), (((foo), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct((CfUnionB, Cf), (((bar), (Ctor<0>, Mutable)), (Int32)));
+struct CfUnionHolder { ZfCf::Union<CfUnionA, CfUnionB> value; };
+ZfStruct((CfUnionHolder, Cf),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+
+struct CfPtrObj_ : public ZmObject {
+  int value = 0;
+  CfPtrObj_(int value_ = 0) : value{value_} { }
+};
+using CfPtrObj = ZfHeapTest<"ZfTest.Cf.PtrObj", CfPtrObj_>;
+ZfStruct((CfPtrObj, Cf),
+  (((value), (Ctor<0>, Mutable)), (Int32)));
+
+struct CfFmtOpt : public ZmObject { };
+inline ZfCf::AsString ZfCf_Fmt(ZmRef<CfFmtOpt> *);
+ZuAssert((!ZfCf::IsObjPtr<ZmRef<CfFmtOpt>>{}));
+
+struct CfPtrText_ : public ZmObject {
+  ZtString<> value;
+  CfPtrText_() = default;
+  CfPtrText_(ZuCSpan value_) : value{value_} { }
+  template <typename S>
+  friend S &operator <<(S &s, const CfPtrText_ &v) {
+    s << v.value;
+    return s;
+  }
+};
+using CfPtrText = ZfHeapTest<"ZfTest.Cf.PtrText", CfPtrText_>;
+
+struct CfPtrArray_ : public ZmObject, public ZtArray<ZmRef<CfPtrObj>> {
+  using Base = ZtArray<ZmRef<CfPtrObj>>;
+  using Base::Base;
+  using Base::operator =;
+};
+using CfPtrArray = ZfHeapTest<"ZfTest.Cf.PtrArray", CfPtrArray_>;
+inline ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(CfPtrArray *);
+
+using CfPtrMap = ZfMapTest<
+  "ZfTest.Cf.PtrMap", ZmHashKV<CfMapKey, ZmRef<CfPtrObj>>>;
+inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(CfPtrMap *);
+
+struct CfPtrHolder {
+  ZmRef<CfPtrObj> object;
+  ZmRef<CfPtrArray> objects;
+  ZmRef<CfPtrText> text;
+};
+ZfStruct((CfPtrHolder, Cf),
+  (((object), (Mutable)), (UDT)),
+  (((objects), (Mutable)), (UDT)),
+  (((text), (Mutable)), (UDT)));
+
 ZuAssert((ZuIsSame<CfIntMap::Key, CfMapKey>{}));
 ZuAssert((ZuIsSame<CfIntMap::Val, int>{}));
 ZuAssert((ZuIsSame<
   ZmHeapID<CfIntMap>, ZuStringT<"ZfTest.Cf.IntMap">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<CfPtrObj>, ZuStringT<"ZfTest.Cf.PtrObj">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<CfPtrText>, ZuStringT<"ZfTest.Cf.PtrText">>{}));
+ZuAssert((ZuIsSame<
+  ZmHeapID<CfPtrArray>, ZuStringT<"ZfTest.Cf.PtrArray">>{}));
 
 struct CfText {
   CfText() = default;
@@ -974,7 +1036,7 @@ static void maps()
   ZuTestScope(maps);
 
   auto scan = ZfCf::scan("{a: 1, b: 2, 'a.b': 3}");
-  auto map = ZfCf::handler<CfIntMapRef>(scan.p<1>()).ctor();
+  auto map = ZmRef(ZfCf::handler<CfIntMap>(scan.p<1>()).alloc());
   ZuCheck(map);
   ZuCheck(map->count_() == 3);
   ZuCheck(map->findVal("a") == 1);
@@ -983,35 +1045,41 @@ static void maps()
 
   ZtString<> saved;
   ZfCf::save(saved, map);
+  ZtString<> direct;
+  ZfCf::save(direct, *map);
+  ZuCheck(direct == saved);
+  direct.null();
+  ZfCf::save(direct, map.ptr());
+  ZuCheck(direct == saved);
   auto roundScan = ZfCf::scan(saved);
-  auto round = ZfCf::handler<CfIntMapRef>(roundScan.p<1>()).ctor();
+  auto round = ZmRef(ZfCf::handler<CfIntMap>(roundScan.p<1>()).alloc());
   ZuCheck(round->count_() == 3);
   ZuCheck(round->findVal("a.b") == 3);
 
   auto ptr = map.ptr();
   auto loadScan = ZfCf::scan("{loaded: 4}");
-  ZfCf::handler<CfIntMapRef>(loadScan.p<1>()).load(map);
+  ZfCf::handler<CfIntMap>(loadScan.p<1>()).load(*map);
   ZuCheck(map.ptr() == ptr);
   ZuCheck(map->count_() == 1);
   ZuCheck(map->findVal("loaded") == 4);
 
   map->add("kept", 5);
   auto updateScan = ZfCf::scan("{loaded: 6, added: 7}");
-  ZfCf::handler<CfIntMapRef>(updateScan.p<1>()).update(map);
+  ZfCf::handler<CfIntMap>(updateScan.p<1>()).update(*map);
   ZuCheck(map.ptr() == ptr);
   ZuCheck(map->count_() == 3);
   ZuCheck(map->findVal("loaded") == 6);
   ZuCheck(map->findVal("kept") == 5);
   ZuCheck(map->findVal("added") == 7);
 
-  alignas(CfIntMapRef) uint8_t storage[sizeof(CfIntMapRef)];
-  ZfCf::handler<CfIntMapRef>(loadScan.p<1>()).new_(storage);
-  auto &placed = *reinterpret_cast<CfIntMapRef *>(storage);
-  ZuCheck(placed->findVal("loaded") == 4);
-  placed.~CfIntMapRef();
+  auto storage = ZmAlloc(CfIntMap, 1);
+  ZfCf::handler<CfIntMap>(loadScan.p<1>()).new_(storage.data);
+  auto &placed = storage[0];
+  ZuCheck(placed.findVal("loaded") == 4);
+  placed.~CfIntMap();
 
   auto objectScan = ZfCf::scan("{one: {value: 8}}");
-  auto objects = ZfCf::handler<CfObjMapRef>(objectScan.p<1>()).ctor();
+  auto objects = ZmRef(ZfCf::handler<CfObjMap>(objectScan.p<1>()).alloc());
   ZuCheck(objects->findVal("one").value == 8);
   saved.null();
   ZfCf::save(saved, objects);
@@ -1029,6 +1097,95 @@ static void maps()
   saved.null();
   ZfCf::save(saved, null);
   ZuCheck(saved == "null");
+  saved.null();
+  ZfCf::saveUpd(saved, null);
+  ZuCheck(saved == "null");
+  saved.null();
+  ZfCf::saveDel(saved, null);
+  ZuCheck(saved == "null");
+}
+
+static void unions()
+{
+  ZuTestScope(unions);
+
+  CfUnionHolder value;
+  value.value = CfUnionA{42};
+  ZtString<> saved;
+  ZfCf::save(saved, value);
+  auto tree = ZfCf::scan(saved);
+  auto loaded = ZfCf::handler<CfUnionHolder>(tree.p<1>()).ctor();
+  auto node = loaded.value.p<const ZfCf::AnyNode *>();
+  loaded.value = ZfCf::handler<CfUnionA>(node).ctor();
+  ZtString<> round;
+  ZfCf::save(round, loaded);
+  ZuCheck(round == saved);
+
+  CfUnionHolder empty;
+  saved.null();
+  ZfCf::save(saved, empty);
+  ZuCheck(saved == "{\"value\":null}");
+
+  ZfCf::Union<CfUnionA, ZmRef<CfPtrObj>> pointer;
+  pointer = ZmRef<CfPtrObj>{new CfPtrObj{9}};
+  saved.null();
+  ZfCf::save(saved, pointer);
+  ZuCheck(saved == "{\"value\":9}");
+  pointer = ZmRef<CfPtrObj>{};
+  saved.null();
+  ZfCf::save(saved, pointer);
+  ZuCheck(saved == "null");
+}
+
+static void pointers()
+{
+  ZuTestScope(pointers);
+
+  auto tree = ZfCf::scan(
+    "object: {value: 1}, objects: [{value: 2}, {value: 3}], text: hello");
+  auto value = ZfCf::handler<CfPtrHolder>(tree.p<1>()).ctor();
+  ZuCheck(value.object && value.object->value == 1);
+  ZuCheck(value.objects && value.objects->length() == 2);
+  ZuCheck((*value.objects)[0] && (*value.objects)[0]->value == 2);
+  ZuCheck(value.text && value.text->value == "hello");
+
+  ZtString<> saved;
+  ZfCf::save(saved, value);
+  ZuCheck(saved.find("\"text\":\"hello\"") >= 0);
+  ZuCheck(saved.find("\"objects\":[{\"value\":2},{\"value\":3}]") >= 0);
+
+  auto first = (*value.objects)[0].ptr();
+  (*value.objects)[1] = nullptr;
+  auto update = ZfCf::scan("v: [{value: 4}, {value: 5}]");
+  ZfCf::handler<CfPtrArray>(field(update.p<1>(), "v")).update(*value.objects);
+  ZuCheck((*value.objects)[0].ptr() == first && first->value == 4);
+  ZuCheck((*value.objects)[1] && (*value.objects)[1]->value == 5);
+
+  auto bad = ZfCf::scan("v: [wrong, {value: 6}]");
+  ZuCheck(loadError([&bad, &value] {
+    ZfCf::handler<CfPtrArray>(field(bad.p<1>(), "v")).update(*value.objects);
+  }));
+  ZuCheck(first->value == 4);
+
+  saved.null();
+  ZfCf::save(saved, value.object);
+  ZuCheck(saved == "{\"value\":1}");
+  ZmRef<CfPtrObj> null;
+  saved.null();
+  ZfCf::save(saved, null);
+  ZuCheck(saved == "null");
+
+  auto raw = ZfCf::handler<CfPtrObj>(
+    ZfCf::scan("{value: 7}").p<1>()).alloc();
+  ZuCheck(raw && raw->value == 7);
+  delete raw;
+
+  auto mapTree = ZfCf::scan("one: {value: 8}");
+  auto map = ZmRef(ZfCf::handler<CfPtrMap>(mapTree.p<1>()).alloc());
+  ZuCheck(map->findVal("one") && map->findVal("one")->value == 8);
+  saved.null();
+  ZfCf::save(saved, map);
+  ZuCheck(saved.find("\"one\":{\"value\":8}") >= 0);
 }
 
 int main(int argc, char **argv) {
@@ -1049,4 +1206,6 @@ int main(int argc, char **argv) {
   ZuTestCall(compatibility);
   ZuTestCall(formattedInteger);
   ZuTestCall(maps);
+  ZuTestCall(unions);
+  ZuTestCall(pointers);
 }

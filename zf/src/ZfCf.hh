@@ -20,6 +20,8 @@
 #include <zlib/ZuUTF.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuSwitch.hh>
+#include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmBackTrace.hh>
@@ -192,7 +194,7 @@ constexpr auto Component = "ZfCf"_Zu;
 
 inline ZeString fullKey(const AnyNode *node, ZuCSpan key = {}) {
   ZeString s;
-  node->path(s);
+  if (node) node->path(s);
   if (key) {
     if (s) s << '.';
     s << key;
@@ -311,6 +313,12 @@ template <unsigned ValCode, typename ValProps = ZuTypeList<>>
 struct AsMap;		// as Cf object {...} with homogeneous values
 struct AsString;	// as Cf string
 
+template <typename ...Ts>
+struct Union : public ZuUnion<void, const AnyNode *, Ts...> {
+friend inline AsObject ZfCf_Fmt(Union *);
+  ZuDerive_(Union, (ZuUnion<void, const AnyNode *, Ts...>));
+};
+
 // if fields are defined, default to AsObject
 template <typename O, typename Facet, typename = ZuFields<O, Facet>>
 struct AsDeflt_ { using T = AsObject; };
@@ -331,6 +339,19 @@ namespace ZfCf {
 template <typename O>
 using As = decltype(ZfCf_Fmt(ZuDeclVal<O *>()));
 
+template <typename U, bool IsPtr = ZuTraits<U>::IsPointer>
+struct IsObjPtr__ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr__<U, true> {
+  using T = ZuBool<ZuTraits<decltype(*(ZuDeclVal<const U &>()))>::IsComposite>;
+};
+template <typename U, typename = As<U>>
+struct IsObjPtr_ { using T = ZuFalse; };
+template <typename U>
+struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+template <typename U>
+using IsObjPtr = typename IsObjPtr_<U>::T;
+
 template <typename O, typename Facet>
 auto handler_(const AnyNode *);
 
@@ -345,6 +366,8 @@ struct CfPolicy {
   using GetTimeFmt = ZuFieldProp::Cf::GetTimeFmt<Props>;
   template <typename O, typename Facet>
   using Handler = typename As<O>::template Handler<O, Facet>;
+  template <typename O>
+  using IsObjPtr = ZfCf::IsObjPtr<O>;
 
   static bool scalar(int type, ZfTreeLoad::ScalarMask::T) {
     return type == ScalarTC::String;
@@ -404,6 +427,16 @@ template <
   unsigned TypeCode, typename Props, typename T>
 auto loadValue(const AnyNode *);
 
+template <
+  typename Facet, template <typename> class Filter, typename Field,
+  typename S, typename O>
+bool saveField(S &, const O &, bool);
+
+template <
+  typename Facet, template <typename> class Filter,
+  unsigned TypeCode, typename Props, typename S, typename T>
+void saveValue(S &, const T &);
+
 // save/load handler for object-formatted types {...}
 struct AsObject {
   template <typename O_, typename Facet>
@@ -414,8 +447,56 @@ struct AsObject {
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
-      ZfJSON::AsObject::Handler<O, Facet>::template save<Filter>(s, o);
+      using Fields = ZuTypeGrep<Filter, ZuFields<O, Facet>>;
+      s << '{';
+      bool first = true;
+      ZuUnroll::all<Fields>([&s, &o, &first]<typename Field>() {
+	if (saveField<Facet, Filter, Field>(s, o, first)) first = false;
+      });
+      s << '}';
     }
+  };
+
+  // Callers must resolve the non-owning raw-node state before saving.
+  template <typename ...Ts, typename Facet>
+  struct Handler<Union<Ts...>, Facet> {
+    using O = Union<Ts...>;
+
+    const AnyNode *node;
+
+    template <template <typename> class Filter, typename S>
+    static void save(S &s, const O &o) {
+      auto type = o.type();
+      if (ZuUnlikely(type < 2)) { s << "null"; return; }
+      ZuSwitch::dispatch<O::N - 2>(type - 2, [&s, &o](auto I_) {
+	enum { I = I_ + 2 };
+	using V = typename O::template Type<I>;
+	const auto &v = o.template p<I>();
+	if constexpr (!IsObjPtr<V>{}) {
+	  ZuAssert((ZuIsSame<As<V>, AsObject>{} ||
+	      (ZuIsSame<As<V>, AsDeflt>{} && ZuFields<V, Facet>::N)));
+	  As<V>::template Handler<V, Facet>::template save<Filter>(s, v);
+	} else {
+	  using U = ZuDecay<decltype(*v)>;
+	  ZuAssert((ZuIsSame<As<U>, AsObject>{} ||
+	      (ZuIsSame<As<U>, AsDeflt>{} && ZuFields<U, Facet>::N)));
+	  if (ZuLikely(v))
+	    As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
+	  else
+	    s << "null";
+	}
+      });
+    }
+
+    static bool valid(const AnyNode *node) {
+      return node && node->has<AnyNode::Object>();
+    }
+    Handler(const AnyNode *node_) : node{node_} { }
+    O ctor() const { return O(node); }
+    O *alloc() const { return new O(node); }
+    void new_(void *o) const { new (o) O(node); }
+    void load(O &o) const { o = node; }
+    void update(O &o) const { o = node; }
   };
 };
 
@@ -432,8 +513,12 @@ struct AsArray {
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
-      ZfJSON::AsArray<ElemCode, ElemProps>::
-	template Handler<O, Facet>::template save<Filter>(s, o);
+      s << '[';
+      for (unsigned i = 0, n = ZuTraits<O>::length(o); i < n; ++i) {
+	if (i) s << ',';
+	saveValue<Facet, Filter, ElemCode, ElemProps>(s, o[i]);
+      }
+      s << ']';
     }
   };
 };
@@ -441,7 +526,7 @@ struct AsArray {
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename S, typename T>
-void saveMapValue(S &s, const T &v)
+void saveValue(S &s, const T &v)
 {
   if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
@@ -449,15 +534,70 @@ void saveMapValue(S &s, const T &v)
     s << '[';
     for (unsigned i = 0; i < n; i++) {
       if (i) s << ',';
-      saveMapValue<Facet, Filter, ElemCode, Props>(s, v[i]);
+      saveValue<Facet, Filter, ElemCode, Props>(s, v[i]);
     }
     s << ']';
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     using O = ZuDecay<T>;
-    using Handler = typename As<O>::template Handler<O, Facet>;
-    Handler::template save<Filter>(s, v);
+    if constexpr (!IsObjPtr<O>{})
+      As<O>::template Handler<O, Facet>::template save<Filter>(s, v);
+    else if (ZuLikely(v)) {
+      using U = ZuDecay<decltype(*v)>;
+      As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
+    } else
+      s << "null";
   } else {
     ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(s, v);
+  }
+}
+
+template <
+  typename Facet, template <typename> class Filter, typename Field,
+  typename S, typename O>
+bool saveField(S &s, const O &o, bool first)
+{
+  enum { TypeCode = Field::Type::Code };
+  using Props = typename Field::Props;
+  auto save = [&s, first](const auto &v) {
+    if (!first) s << ',';
+    ZfJSON::quote(s, ZuFieldProp::Cf::GetID<Field>{}().cspan());
+    s << ':';
+    saveValue<Facet, Filter, TypeCode, Props>(s, v);
+    return true;
+  };
+  if constexpr (ZuFieldProp::Cf::GetOptional<Props>{}) {
+    if constexpr (
+	TypeCode == ZfFieldTC::CString || TypeCode == ZfFieldTC::String) {
+      ZuCSpan v = Field::get(o);
+      if (!v) return false;
+      return save(v);
+    } else if constexpr (TypeCode == ZfFieldTC::Bytes) {
+      ZuBSpan v = Field::get(o);
+      if (!v) return false;
+      return save(v);
+    } else if constexpr (
+	TypeCode == ZfFieldTC::Int8 || TypeCode == ZfFieldTC::Int16 ||
+	TypeCode == ZfFieldTC::Int32 || TypeCode == ZfFieldTC::Int64 ||
+	TypeCode == ZfFieldTC::Int128 || TypeCode == ZfFieldTC::UInt8 ||
+	TypeCode == ZfFieldTC::UInt16 || TypeCode == ZfFieldTC::UInt32 ||
+	TypeCode == ZfFieldTC::UInt64 || TypeCode == ZfFieldTC::UInt128) {
+      auto &&v = Field::get(o);
+      if constexpr (ZuFieldProp::HasEnum<Props>{}) {
+	if (v < 0) return false;
+      } else if (ZuNull(v)) return false;
+      return save(v);
+    } else if constexpr (
+	TypeCode == ZfFieldTC::Float || TypeCode == ZfFieldTC::Fixed ||
+	TypeCode == ZfFieldTC::Decimal || TypeCode == ZfFieldTC::Time ||
+	TypeCode == ZfFieldTC::DateTime || TypeCode == ZfFieldTC::UDT) {
+      auto &&v = Field::get(o);
+      if (ZuNull(v)) return false;
+      return save(v);
+    } else {
+      return save(Field::get(o));
+    }
+  } else {
+    return save(Field::get(o));
   }
 }
 
@@ -473,17 +613,16 @@ struct AsMap {
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o)
     {
-      if (ZuUnlikely(!o)) { s << "null"; return; }
       s << '{';
       bool first = true;
       {
-	auto i = o->citer();
+	auto i = o.citer();
 	while (auto node = i()) {
 	  if (!first) s << ',';
 	  first = false;
-	  ZfJSON::quote(s, Base::key(node));
+	  ZfJSON::quote(s, node->key());
 	  s << ':';
-	  saveMapValue<Facet, Filter, ValCode, ValProps>(s, Base::val(node));
+	  saveValue<Facet, Filter, ValCode, ValProps>(s, node->val());
 	}
       }
       s << '}';
@@ -564,7 +703,13 @@ template <
   template <typename> class Filter = ZfFieldFilter::Save,
   typename S, typename O>
 inline S &save(S &s, const O &v) {
-  As<O>::template Handler<O, Facet>::template save<Filter>(s, v);
+  if constexpr (!IsObjPtr<O>{})
+    As<O>::template Handler<O, Facet>::template save<Filter>(s, v);
+  else if (ZuLikely(v)) {
+    using U = ZuDecay<decltype(*v)>;
+    As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
+  } else
+    s << "null";
   return s;
 }
 template <
