@@ -770,7 +770,7 @@ void Cxn_::connected(ZiIOContext &io)
 {
   if (!m_db->running()) { io.disconnect(); return; }
 
-  m_db->run([self = ZmMkRef(this)]() mutable {
+  m_db->run([self = ZmRef(this)]() mutable {
     auto db = self->db();
     db->connected(ZuMv(self));
   });
@@ -778,7 +778,7 @@ void Cxn_::connected(ZiIOContext &io)
   m_db->mx()->add(&m_hbTimer, Zm::now(int(m_db->config().heartbeatTimeout)),
       ZmScheduler::Defer,
       [this](auto &&arm) {
-	return arm([self = ZmMkRef(this)]() mutable { self->hbTimeout(); });
+	return arm([self = ZmRef(this)]() mutable { self->hbTimeout(); });
       }, m_db->sid());
 
   msgRead(io);
@@ -886,7 +886,7 @@ void Cxn_::disconnected(bool)
 
   mx()->del(&m_hbTimer);
 
-  m_db->run([self = ZmMkRef(this)]() mutable {
+  m_db->run([self = ZmRef(this)]() mutable {
     auto db = self->db();
     db->disconnected(ZuMv(self));
   });
@@ -1265,7 +1265,7 @@ int Cxn_::msgRead2(ZmRef<IOBuf> buf)
       case fbs::Body::Recovery:
       case fbs::Body::Commit:
 	if (ZuLikely(buf->length))
-	  m_db->run([cxn = ZmMkRef(this), buf = ZuMv(buf)]() mutable {
+	  m_db->run([cxn = ZmRef(this), buf = ZuMv(buf)]() mutable {
 	    cxn->msgRead3(ZuMv(buf));
 	  });
 	break;
