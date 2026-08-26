@@ -221,7 +221,7 @@ friend Cxn;
 
 private:
   void connected_0(Cxn *cxn, ZiIOContext &io) {
-    app()->rxRun([impl = ZmMkRef(this->impl()), cxn = ZmMkRef(cxn)]() {
+    app()->rxRun([impl = ZmRef(this->impl()), cxn = ZmRef(cxn)]() {
       impl->connected_1(ZuMv(cxn));
     });
     recvRaw_(io);
@@ -243,8 +243,8 @@ private:
 	  io.length = 0;
 	  auto cxn = static_cast<Cxn *>(io.cxn);
 	  link->app()->rxRun([
-	    impl = ZmMkRef(link),
-	    cxn = ZmMkRef(cxn),
+	    impl = ZmRef(link),
+	    cxn = ZmRef(cxn),
 	    buf = ZuMv(buf)
 	  ]() mutable {
 	    impl->rcvd_(cxn.ptr(), ZuMv(buf));
@@ -283,7 +283,7 @@ private:
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMvPtr(impl_)};
-    app()->rxRun([impl = ZuMv(impl), cxn = ZmMkRef(cxn), peer]() mutable {
+    app()->rxRun([impl = ZuMv(impl), cxn = ZmRef(cxn), peer]() mutable {
       impl->disconnected_(cxn.ptr());
       auto app = impl->app();
       app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
@@ -422,7 +422,7 @@ public:
     auto oldState = state_();
     m_disconnecting = 1;
     stateChanged_(oldState);
-    app()->rxInvoke([impl = ZmMkRef(this->impl())]() {
+    app()->rxInvoke([impl = ZmRef(this->impl())]() {
 	impl->disconnect_();
     });
   }
@@ -575,11 +575,11 @@ template <typename> friend class Client;
       return;
     }
     app()->mx()->connect(
-      ZiConnectFn{ZmMkRef(impl()),
+      ZiConnectFn{ZmRef(impl()),
 	[](Impl *impl, const ZiCxnInfo &ci) -> ZiConnection * {
 	  return new Cxn(impl, ci);
 	}},
-      ZiFailFn{ZmMkRef(impl()), [](Impl *impl, bool transient) {
+      ZiFailFn{ZmRef(impl()), [](Impl *impl, bool transient) {
 	auto app = impl->app();
 	app->rxRun([
 	  impl = ZmRef<Impl>{impl}, transient
