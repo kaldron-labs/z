@@ -630,7 +630,7 @@ private:
     blkTbl()->template nextRows<0>(
       ZuFwdTuple(data.id, data.blkOffset), true, IndexBlkSize,
       ZuLambda{[
-	this_ = ZmMkRef(this), fn = ZuMv(fn), rowRcvd = false
+	this_ = ZmRef(this), fn = ZuMv(fn), rowRcvd = false
       ](auto &&self, auto result, unsigned) mutable {
 	if (this_->m_opened) return; // index already filled
 	using Row = ZuStructTuple<DBBlk>;
@@ -801,7 +801,7 @@ private:
     if constexpr (Fixed) m_lastBlk->ndp(ndp...);
     m_writer->encoder([this]{ return m_lastBlk->encoder<Decoder>(this); });
     // call async to constrain stack depth
-    run([this_ = ZmMkRef(this), fn = ZuMv(fn)]() mutable {
+    run([this_ = ZmRef(this), fn = ZuMv(fn)]() mutable {
       ZuMv(fn)(ZmRef<Writer>{this_->m_writer});
     });
   }
@@ -930,7 +930,7 @@ private:
       if constexpr (Fixed) dbBlk->ptr()->ndp = m_lastBlk->ndp();
 
       blkTbl()->insert(
-	ZuMv(dbBlk), [this_ = ZmMkRef(this)](ZdbObject<DBBlk> *dbBlk) {
+	ZuMv(dbBlk), [this_ = ZmRef(this)](ZdbObject<DBBlk> *dbBlk) {
 	  ZiAssert(dbBlk, "Zdf", (name = this_->name()),
 	    name << "internal error - insert - null dbBlk", return);
 
@@ -951,7 +951,7 @@ private:
     } else {
       blkTbl()->template findUpd<0>(
 	shard(), ZuFwdTuple(id(), m_lastBlkOffset),
-	[this_ = ZmMkRef(this)](ZdbObject<DBBlk> *dbBlk) {
+	[this_ = ZmRef(this)](ZdbObject<DBBlk> *dbBlk) {
 	  ZiAssert(dbBlk, "Zdf", (name = this_->name()),
 	    name << "internal error - update - null dbBlk", return);
 	  ZiAssert(this_->m_lastBlk, "Zdf", (name = this_->name()),
@@ -1270,7 +1270,7 @@ inline void Reader<Decoder>::resume()
   m_paused = false;
 
   if (m_state == Reading)
-    m_series->run([this_ = ZmMkRef(node(this))]() { this_->nextValue(); });
+    m_series->run([this_ = ZmRef(node(this))]() { this_->nextValue(); });
 }
 
 template <typename Decoder>
@@ -1328,7 +1328,7 @@ inline Offset Reader<Decoder>::stop(StopFn fn)
   m_stopFn = ZuMv(fn);
   m_fn = Fn{};
   m_errorFn = ErrorFn{};
-  m_series->run([this_ = ZmMkRef(node(this))]() mutable {
+  m_series->run([this_ = ZmRef(node(this))]() mutable {
     this_->stopped();
   });
 
@@ -1381,7 +1381,7 @@ inline void Reader<Decoder>::loadBlk()
 
   if (m_blk->blkData) {
     m_series->run([
-      this_ = ZmMkRef(node(this))
+      this_ = ZmRef(node(this))
     ]() {
       this_->loaded(this_->m_blk);
     });
@@ -1390,7 +1390,7 @@ inline void Reader<Decoder>::loadBlk()
 
   m_state = Loading;
   m_series->loadBlkData(m_blkOffset, [
-    this_ = ZmMkRef(node(this))
+    this_ = ZmRef(node(this))
   ](Blk *blk) mutable {
     this_->loaded(blk);
   });
@@ -1482,7 +1482,7 @@ inline bool Reader<Decoder>::nextBlk()
     m_decoder = m_blk->decoder<Decoder>();
     return true;
   }
-  m_series->run([this_ = ZmMkRef(node(this))]() mutable {
+  m_series->run([this_ = ZmRef(node(this))]() mutable {
     this_->loadBlk();
   });
   return false;
