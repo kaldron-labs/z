@@ -199,7 +199,7 @@ int main(int argc, char **argv)
     ZuTime out = t + ZuTime(((double)j) / 10.0);
     s.add(&timers[j - 1], out, ZmScheduler::Update,
       [buf, out](auto &&arm) {
-	return arm([job = ZmMkRef(new Job(buf, out))](this const auto &self) {
+	return arm([job = ZmRef(new Job(buf, out))](this const auto &self) {
 	  log("operator()() this=", ZuBoxPtr(&self).hex());
 	  (*job)();
 	});
@@ -232,7 +232,7 @@ int main(int argc, char **argv)
     ZuTime out = t + ZuTime(((double)j) / 10.0);
     s.add(&timers[j - 1], out, ZmScheduler::Update,
       [buf, out](auto &&arm) {
-	return arm([job = ZmMkRef(new Job(buf, out))]() { (*job)(); });
+	return arm([job = ZmRef(new Job(buf, out))]() { (*job)(); });
       });
     log("Hello World ", j);
     if (j == 2) breakpoint(&timers[j - 1]);

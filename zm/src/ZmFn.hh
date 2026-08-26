@@ -38,7 +38,7 @@
 //
 // class G2 : public ZmPolymorph, public G { };	// call G::bar via G2
 // G2 g2;
-// ZmThread t(ZmMkRef(&g2), ZmFnPtr<&G::bar>); // capture ZmRef to g2
+// ZmThread t(ZmRef(&g2), ZmFnPtr<&G::bar>); // capture ZmRef to g2
 //
 // class H { static int bah() { ... } };	// static member function
 // ZmThread t{ZmFn<>::Ptr<&H::bah>::fn()};

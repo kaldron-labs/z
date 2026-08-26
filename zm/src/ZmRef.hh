@@ -242,6 +242,10 @@ protected:
   T		*m_object = nullptr;
 };
 
+// deduction guide
+template <typename T>
+ZmRef(T *) -> ZmRef<T>;
+
 template <typename T> struct ZuCmp;
 template <typename T>
 struct ZuCmp<ZmRef<T> > : public ZuCmp<T *> {
@@ -252,7 +256,5 @@ struct ZuCmp<ZmRef<T> > : public ZuCmp<T *> {
 template <typename T> struct ZuHash;
 template <typename T>
 struct ZuHash<ZmRef<T> > : public ZuHash<T *> { };
-
-template <typename T> ZmRef<T> ZmMkRef(T *p) { return ZmRef<T>{p}; }
 
 #endif /* ZmRef_HH */

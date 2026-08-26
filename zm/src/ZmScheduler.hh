@@ -448,7 +448,7 @@ public:
   //     // until foo() completes, whether synchronously or asynchronously
   //
   //     // less efficient
-  //     sched->invoke([self = ZmMkRef(this)]() { self->foo(); }, sid);
+  //     sched->invoke([self = ZmRef(this)]() { self->foo(); }, sid);
   //
   //     // more efficient, with more natural capture of this
   //     sched->invoke(this, [this]() { foo(); return this; }, sid);

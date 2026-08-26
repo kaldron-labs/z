@@ -174,7 +174,7 @@ int main(int argc, char **argv)
     auto fap = ZmFn<>{a, ZmFnPtr<&A::operator()>{}};
     auto fbp = ZmFn<int()>{b, ZmFnPtr<&B::operator()>{}};
     // ZmFn<> fe1p = ZmFn<>{e1.ptr(, ZmFnPtr<&E::foo>{}});
-    // ZmFn<> fe2p = ZmFn<>{ZmMkRef(e2c, ZmFnPtr<&E::bar>{}});
+    // ZmFn<> fe2p = ZmFn<>{ZmRef(e2c, ZmFnPtr<&E::bar>{}});
 
     fap();
     log("fbp(new B(48)) returned ", int(fbp()));
@@ -262,7 +262,7 @@ int main(int argc, char **argv)
 
     {
       auto fe1p(ZmFn<void(int, int)>{e1.ptr(), ZmFnPtr<&E2::foo>{}});
-      auto fe2p(ZmFn<int(int, int)>{ZmMkRef(e2c), ZmFnPtr<&E2::bar>{}});
+      auto fe2p(ZmFn<int(int, int)>{ZmRef(e2c), ZmFnPtr<&E2::bar>{}});
 
       ZuCheck(e1->refCount() == 1);
       ZuCheck(e2->refCount() == 2);
