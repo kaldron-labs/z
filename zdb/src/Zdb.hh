@@ -2019,7 +2019,7 @@ inline void Table<T>::count(GroupKey<KeyID> key, L &&l)
 {
   using Context = Count;
 
-  auto context = ZmMkRef(new Context{ZuFwd<L>(l)});
+  auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
   // using Key = GroupKey<KeyID>;
 
@@ -2054,7 +2054,7 @@ inline void Table<T>::select_(
 {
   using Context = Select<Tuple_>;
 
-  auto context = ZmMkRef(new Context{ZuFwd<L>(l)});
+  auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
   Zfb::IOBuilder fbb{allocBuf()};
   fbb.Finish(ZfbStruct::save(fbb, selectKey).Union());
@@ -2125,7 +2125,7 @@ inline void Table<T>::retrieve(
   using Key_ = Key<KeyID>;
   using Context = Find<T, Key_>;
 
-  auto context = ZmMkRef(new Context{
+  auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
   retrieve_<KeyID>(ZuMv(context));
@@ -2160,7 +2160,7 @@ inline void Table<T>::retrieve_(
 	auto buf = ZuMv(ZuMv(result).p<RowData>().buf);
 	table->run(shard, [
 	  table,
-	  context = ZmMkRef(context),
+	  context = ZmRef(context),
 	  buf = ZuMv(buf)
 	]() mutable {
 	  auto shard = context->shard;
