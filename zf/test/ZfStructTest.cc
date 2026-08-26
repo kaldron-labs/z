@@ -211,19 +211,19 @@ using MapKey = ZtString<>;
 using IntHash =
   ZfMapTest<"ZfTest.JSON.IntHash", ZmHashKV<MapKey, int>>;
 using IntHashRef = ZmRef<IntHash>;
-inline ZfJSON::AsMap<ZfFieldTC::Int32> ZfJSON_Fmt(IntHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::Int32> ZfJSON_Fmt(IntHash *);
 
 using IntLHash =
   ZfMapTest<"ZfTest.JSON.IntLHash", ZmLHashKV<MapKey, int>>;
 using IntLHashRef = ZmRef<IntLHash>;
-inline ZfJSON::AsMap<ZfFieldTC::Int32> ZfJSON_Fmt(IntLHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::Int32> ZfJSON_Fmt(IntLHash *);
 
 using IntTree_ =
   ZmRBTreeKV<MapKey, int, ZmRBTreeUnique<true>>;
 using IntTree = ZfMapTest<
   "ZfTest.JSON.IntTree", ZfRefMapTest<IntTree_>>;
 using IntTreeRef = ZmRef<IntTree>;
-inline ZfJSON::AsMap<ZfFieldTC::Int32> ZfJSON_Fmt(IntTreeRef *);
+inline ZfJSON::AsMap<ZfFieldTC::Int32> ZfJSON_Fmt(IntTree *);
 
 struct MapObj {
   int fixed = 0;
@@ -236,7 +236,7 @@ ZfStruct((MapObj, JSON, Bah),
 using ObjHash =
   ZfMapTest<"ZfTest.JSON.ObjHash", ZmHashKV<MapKey, MapObj>>;
 using ObjHashRef = ZmRef<ObjHash>;
-inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(ObjHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(ObjHash *);
 
 struct IntArray : public ZtArray<int> {
   ZuDerive_(IntArray, ZtArray<int>);
@@ -245,7 +245,7 @@ struct IntArray : public ZtArray<int> {
 using ArrayHash =
   ZfMapTest<"ZfTest.JSON.ArrayHash", ZmHashKV<MapKey, IntArray>>;
 using ArrayHashRef = ZmRef<ArrayHash>;
-inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(ArrayHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(ArrayHash *);
 
 struct MapText {
   ZtString<> value;
@@ -262,34 +262,34 @@ struct MapText {
 using TextHash =
   ZfMapTest<"ZfTest.JSON.TextHash", ZmHashKV<MapKey, MapText>>;
 using TextHashRef = ZmRef<TextHash>;
-inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(TextHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(TextHash *);
 
 using MapHash =
   ZfMapTest<"ZfTest.JSON.MapHash", ZmHashKV<MapKey, IntTreeRef>>;
 using MapHashRef = ZmRef<MapHash>;
-inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(MapHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(MapHash *);
 
 using HexMapProps = ZuTypeList<ZuFieldProp::Hex>;
 using HexHash =
   ZfMapTest<"ZfTest.JSON.HexHash", ZmHashKV<MapKey, unsigned>>;
 using HexHashRef = ZmRef<HexHash>;
 inline ZfJSON::AsMap<ZfFieldTC::UInt32, HexMapProps>
-  ZfJSON_Fmt(HexHashRef *);
+  ZfJSON_Fmt(HexHash *);
 
 using BoolHash =
   ZfMapTest<"ZfTest.JSON.BoolHash", ZmHashKV<MapKey, bool>>;
 using BoolHashRef = ZmRef<BoolHash>;
-inline ZfJSON::AsMap<ZfFieldTC::Bool> ZfJSON_Fmt(BoolHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::Bool> ZfJSON_Fmt(BoolHash *);
 
 using StringHash = ZfMapTest<
   "ZfTest.JSON.StringHash", ZmHashKV<MapKey, ZtString<>>>;
 using StringHashRef = ZmRef<StringHash>;
-inline ZfJSON::AsMap<ZfFieldTC::String> ZfJSON_Fmt(StringHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::String> ZfJSON_Fmt(StringHash *);
 
 using BytesHash = ZfMapTest<
   "ZfTest.JSON.BytesHash", ZmHashKV<MapKey, ZtArray<uint8_t>>>;
 using BytesHashRef = ZmRef<BytesHash>;
-inline ZfJSON::AsMap<ZfFieldTC::Bytes> ZfJSON_Fmt(BytesHashRef *);
+inline ZfJSON::AsMap<ZfFieldTC::Bytes> ZfJSON_Fmt(BytesHash *);
 
 struct MapHolder {
   IntTreeRef map;
@@ -302,6 +302,15 @@ ZuAssert((ZuIsSame<IntHash::Val, int>{}));
 ZuAssert(ZuTraits<typename IntHash::Key>::IsString);
 ZuAssert((ZuIsSame<
   ZmHeapID<IntHash>, ZuStringT<"ZfTest.JSON.IntHash">>{}));
+
+struct UnionA { int foo; };
+struct UnionB { int bar; };
+ZfStruct((UnionA, JSON), (((foo), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct((UnionB, JSON), (((bar), (Ctor<0>, Mutable)), (Int32)));
+struct UnionHolder {
+  ZfJSON::Union<UnionA, UnionB>	u;
+};
+ZfStruct((UnionHolder, JSON), (((u), (Ctor<0>, Mutable)), (UDT)));
 
 int main(int argc, char **argv)
 {
@@ -638,7 +647,7 @@ int main(int argc, char **argv)
     ZuCSpan expected{"{\"q\\\"\\\\\\ud83d\\udc04\":7}"};
     auto scan = ZfJSON::scan(json_);
     ZuCheck(scan.p<0>() >= 0);
-    auto map = ZfJSON::handler<IntTreeRef>((*scan.p<1>())[0]).ctor();
+    auto map = ZmRef(ZfJSON::handler<IntTree>((*scan.p<1>())[0]).alloc());
     ZuCheck(map);
     ZuCheck(map->count_() == 1);
     ZuCheck(map->findVal("q\"\\\xf0\x9f\x90\x84") == 7);
@@ -647,12 +656,12 @@ int main(int argc, char **argv)
     ZfJSON::save(json, map);
     ZuCheck(json == expected);
 
-    alignas(IntTreeRef) uint8_t storage[sizeof(IntTreeRef)];
-    ZfJSON::handler<IntTreeRef>((*scan.p<1>())[0]).new_(storage);
-    auto &placed = *reinterpret_cast<IntTreeRef *>(storage);
+    alignas(IntTree) uint8_t storage[sizeof(IntTree)];
+    ZfJSON::handler<IntTree>((*scan.p<1>())[0]).new_(storage);
+    auto placed = reinterpret_cast<IntTree *>(storage);
     ZuCheck(placed);
     ZuCheck(placed->findVal("q\"\\\xf0\x9f\x90\x84") == 7);
-    placed.~IntTreeRef();
+    placed->~IntTree();
   }
 
   {
@@ -662,7 +671,7 @@ int main(int argc, char **argv)
 
     char load_[] = "{\"loaded\":2}";
     auto loadScan = ZfJSON::scan(load_);
-    ZfJSON::handler<IntTreeRef>((*loadScan.p<1>())[0]).load(map);
+    ZfJSON::handler<IntTree>((*loadScan.p<1>())[0]).load(*map);
     ZuCheck(map.ptr() == ptr);
     ZuCheck(map->count_() == 1);
     ZuCheck(map->findVal("loaded") == 2);
@@ -671,37 +680,37 @@ int main(int argc, char **argv)
     map->add("kept", 3);
     char update_[] = "{\"loaded\":4,\"added\":5}";
     auto updateScan = ZfJSON::scan(update_);
-    ZfJSON::handler<IntTreeRef>((*updateScan.p<1>())[0]).update(map);
+    ZfJSON::handler<IntTree>((*updateScan.p<1>())[0]).update(*map);
     ZuCheck(map.ptr() == ptr);
     ZuCheck(map->count_() == 3);
     ZuCheck(map->findVal("loaded") == 4);
     ZuCheck(map->findVal("kept") == 3);
     ZuCheck(map->findVal("added") == 5);
 
-    IntTreeRef loadedNull;
-    ZfJSON::handler<IntTreeRef>((*loadScan.p<1>())[0]).load(loadedNull);
+    auto loadedNull = ZmRef(new IntTree());
+    ZfJSON::handler<IntTree>((*loadScan.p<1>())[0]).load(*loadedNull);
     ZuCheck(loadedNull);
     ZuCheck(loadedNull->findVal("loaded") == 2);
-    IntTreeRef updatedNull;
-    ZfJSON::handler<IntTreeRef>((*updateScan.p<1>())[0]).update(updatedNull);
+    auto updatedNull = ZmRef(new IntTree());
+    ZfJSON::handler<IntTree>((*updateScan.p<1>())[0]).update(*updatedNull);
     ZuCheck(updatedNull);
     ZuCheck(updatedNull->findVal("loaded") == 4);
     ZuCheck(updatedNull->findVal("added") == 5);
 
     char wrong_[] = "[1]";
     auto wrongScan = ZfJSON::scan(wrong_);
-    ZfJSON::handler<IntTreeRef>((*wrongScan.p<1>())[0]).load(map);
-    ZuCheck(!map);
+    ZfJSON::handler<IntTree>((*wrongScan.p<1>())[0]).load(*map);
+    ZuCheck(!map->count_());
 
     ZtString<> json;
     ZfJSON::save(json, map);
-    ZuCheck(json == "null");
+    ZuCheck(json == "{}");
   }
 
   {
     char hash_[] = "{\"a\":1,\"b\":2}";
     auto hashScan = ZfJSON::scan(hash_);
-    auto hash = ZfJSON::handler<IntHashRef>((*hashScan.p<1>())[0]).ctor();
+    auto hash = ZmRef(ZfJSON::handler<IntHash>((*hashScan.p<1>())[0]).alloc());
     ZuCheck(hash);
     ZuCheck(hash->count_() == 2);
     ZuCheck(hash->findVal("a") == 1);
@@ -710,7 +719,7 @@ int main(int argc, char **argv)
     auto hashPtr = hash.ptr();
     char hashUpdate_[] = "{\"a\":3,\"c\":4}";
     auto hashUpdateScan = ZfJSON::scan(hashUpdate_);
-    ZfJSON::handler<IntHashRef>((*hashUpdateScan.p<1>())[0]).update(hash);
+    ZfJSON::handler<IntHash>((*hashUpdateScan.p<1>())[0]).update(*hash);
     ZuCheck(hash.ptr() == hashPtr);
     ZuCheck(hash->findVal("a") == 3);
     ZuCheck(hash->findVal("b") == 2);
@@ -718,8 +727,7 @@ int main(int argc, char **argv)
 
     char lhash_[] = "{\"a\":1,\"b\":2}";
     auto lhashScan = ZfJSON::scan(lhash_);
-    auto lhash =
-      ZfJSON::handler<IntLHashRef>((*lhashScan.p<1>())[0]).ctor();
+    auto lhash = ZmRef(ZfJSON::handler<IntLHash>((*lhashScan.p<1>())[0]).alloc());
     ZuCheck(lhash);
     ZuCheck(lhash->count_() == 2);
     ZuCheck(lhash->findVal("a") == 1);
@@ -728,15 +736,14 @@ int main(int argc, char **argv)
     auto lhashPtr = lhash.ptr();
     char lhashLoad_[] = "{\"c\":4}";
     auto lhashLoadScan = ZfJSON::scan(lhashLoad_);
-    ZfJSON::handler<IntLHashRef>((*lhashLoadScan.p<1>())[0]).load(lhash);
+    ZfJSON::handler<IntLHash>((*lhashLoadScan.p<1>())[0]).load(*lhash);
     ZuCheck(lhash.ptr() == lhashPtr);
     ZuCheck(lhash->count_() == 1);
     ZuCheck(lhash->findVal("c") == 4);
 
     char duplicate_[] = "{\"a\":1,\"a\":2}";
     auto duplicateScan = ZfJSON::scan(duplicate_);
-    auto duplicate =
-      ZfJSON::handler<IntHashRef>((*duplicateScan.p<1>())[0]).ctor();
+    auto duplicate = ZmRef(ZfJSON::handler<IntHash>((*duplicateScan.p<1>())[0]).alloc());
     ZuCheck(duplicate->count_() == 2);
   }
 
@@ -765,8 +772,7 @@ int main(int argc, char **argv)
 
     char wrong_[] = "{\"bad\":\"x\"}";
     auto wrongScan = ZfJSON::scan(wrong_);
-    auto wrong =
-      ZfJSON::handler<IntHashRef>((*wrongScan.p<1>())[0]).ctor();
+    auto wrong = ZmRef(ZfJSON::handler<IntHash>((*wrongScan.p<1>())[0]).alloc());
     ZuCheck(ZuNull(wrong->findVal("bad")));
   }
 
@@ -806,16 +812,14 @@ int main(int argc, char **argv)
     char object_[] =
       "{\"object\":{\"fixed\":3,\"mutable_\":4}}";
     auto objectScan = ZfJSON::scan(object_);
-    auto loadedObjects =
-      ZfJSON::handler<ObjHashRef>((*objectScan.p<1>())[0]).ctor();
+    auto loadedObjects = ZmRef(ZfJSON::handler<ObjHash>((*objectScan.p<1>())[0]).alloc());
     auto object = loadedObjects->findVal("object");
     ZuCheck(object.fixed == 3);
     ZuCheck(object.mutable_ == 4);
 
     char array_[] = "{\"array\":[3,4]}";
     auto arrayScan = ZfJSON::scan(array_);
-    auto loadedArrays =
-      ZfJSON::handler<ArrayHashRef>((*arrayScan.p<1>())[0]).ctor();
+    auto loadedArrays = ZmRef(ZfJSON::handler<ArrayHash>((*arrayScan.p<1>())[0]).alloc());
     auto array = loadedArrays->findVal("array");
     ZuCheck(array.length() == 2);
     ZuCheck(array[0] == 3);
@@ -823,14 +827,12 @@ int main(int argc, char **argv)
 
     char string_[] = "{\"string\":\"world\"}";
     auto stringScan = ZfJSON::scan(string_);
-    auto loadedStrings =
-      ZfJSON::handler<TextHashRef>((*stringScan.p<1>())[0]).ctor();
+    auto loadedStrings = ZmRef(ZfJSON::handler<TextHash>((*stringScan.p<1>())[0]).alloc());
     ZuCheck(loadedStrings->findVal("string").value == "world");
 
     char map_[] = "{\"map\":{\"value\":9}}";
     auto mapScan = ZfJSON::scan(map_);
-    auto loadedMaps =
-      ZfJSON::handler<MapHashRef>((*mapScan.p<1>())[0]).ctor();
+    auto loadedMaps = ZmRef(ZfJSON::handler<MapHash>((*mapScan.p<1>())[0]).alloc());
     ZuCheck(loadedMaps->findVal("map")->findVal("value") == 9);
   }
 
@@ -844,8 +846,7 @@ int main(int argc, char **argv)
 
     char holder_[] = "{\"map\":{\"value\":8}}";
     auto holderScan = ZfJSON::scan(holder_);
-    auto loaded =
-      ZfJSON::handler<MapHolder>((*holderScan.p<1>())[0]).ctor();
+    auto loaded = ZfJSON::handler<MapHolder>((*holderScan.p<1>())[0]).ctor();
     ZuCheck(loaded.map);
     ZuCheck(loaded.map->findVal("value") == 8);
 
@@ -853,6 +854,20 @@ int main(int argc, char **argv)
     auto nullScan = ZfJSON::scan(null_);
     auto null = ZfJSON::handler<MapHolder>((*nullScan.p<1>())[0]).ctor();
     ZuCheck(!null.map);
+  }
+
+  {
+    ZtString<> json, json2, json3;
+    UnionHolder holder;
+    holder.u = UnionA{ .foo = 42 };
+    ZfJSON::save(json, holder);
+    json3 = json;
+    auto scan = ZuMv((*(ZfJSON::scan(json3).p<1>()))[0]);
+    auto loaded = ZfJSON::handler<UnionHolder>(scan).ctor();
+    auto node = loaded.u.p<const ZfJSON::AnyNode *>();
+    loaded.u = ZfJSON::handler<UnionA>(node).ctor();
+    ZfJSON::save(json2, loaded);
+    ZuCheck(json == json2);
   }
 
   return 0;
