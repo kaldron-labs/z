@@ -148,7 +148,7 @@ void Loop::stop(StopFn fn)
     stop_0();
     StopFn stopFn = ZuMv(m_stopFn);
     m_stopFn = StopFn{};
-    if (stopFn) stopFn(StopResult{});
+    stopFn(StopResult{});
   }, m_sid);
   wake_();
 }
@@ -357,7 +357,9 @@ bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
   {
     struct epoll_event ev;
     memset(&ev, 0, sizeof(struct epoll_event));
-    ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
+    ev.events = EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
+    if (handle->read) ev.events |= EPOLLIN;
+    if (handle->write) ev.events |= EPOLLOUT;
     ev.data.u64 = u64_handle(handle.ptr());
     if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, handle_, &ev) < 0) {
       failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
@@ -375,12 +377,19 @@ bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
 
 #endif /* !_WIN32 */
 
-  // "prime the pump" to ensure that read- and write-readiness is
-  // correctly signalled via epoll / WFMO
-  handle->write(handle_);
-  handle->read(handle_);
-
   m_handles.addNode(ZuMv(handle));
+
+  // "prime the pump" to ensure that read- and write-readiness is
+  // correctly signalled via epoll / WFMO.  Publish the handle first because
+  // either callback may complete its work and remove the registration.
+  {
+    auto handle = m_handles.find(handle_);
+    if (handle) handle->write(handle_);
+  }
+  {
+    auto handle = m_handles.find(handle_);
+    if (handle) handle->read(handle_);
+  }
 
   return true;
 }
@@ -559,8 +568,8 @@ again:
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
 	auto handle = u64_ptr<Handle>(u64);
-	if (handle->write) handle->write(handle->handle);
-	if (handle->read) handle->read(handle->handle);
+	handle->write(handle->handle);
+	handle->read(handle->handle);
       } else { // u64_is_wake(u64)
 	// LATER WFMO should have decremented the semaphore, but test this,
 	// we may need to:
@@ -585,7 +594,7 @@ void Loop::started()
 
   m_startFn = StartFn{};
 
-  if (startFn) startFn(StartResult{});
+  startFn(StartResult{});
 }
 
 void Loop::start_failed(ZeException e)
@@ -598,7 +607,7 @@ void Loop::start_failed(ZeException e)
 
   m_startFn = StartFn{};
 
-  if (startFn) startFn(StartResult{ZuMv(e)});
+  startFn(StartResult{ZuMv(e)});
 }
 
 void Loop::failed(Exception e)

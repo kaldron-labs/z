@@ -119,6 +119,7 @@ public:
   void stop(StopFn);
 
   bool stopping() const { return m_stopping; }
+  bool invoked() const { return m_sched && m_sched->invoked(m_sid); }
 
   template <typename ...Args> void run(Args &&...args) {
     m_sched->run(ZuFwd<Args>(args)..., m_sid);
