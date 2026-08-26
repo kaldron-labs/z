@@ -42,6 +42,9 @@ using TLConcat = ZuTypeConcat<
   ZuTypeList<int, double>, ZuTypeList<char, long>>;
 using TLConcatNested = ZuTypeConcat<
   ZuTypeList<ZuTypeList<int, double>>, ZuTypeList<char, long>>;
+using TLApply = ZuTypeApply<ZuTypeList, TL>;
+using TLApplyNested = ZuTypeApply<
+  ZuTypeList, ZuTypeList<ZuTypeList<int, double>>>;
 using TLUnique = ZuTypeUnique<int, double, int, char, double>;
 using TLUniqueList = ZuTypeUnique<ZuTypeList<int, double, int, char, double>>;
 
@@ -52,6 +55,9 @@ ZuAssert(TLTail::N == 2);
 ZuAssert((ZuIsSame<TLConcat, ZuTypeList<int, double, char, long>>{}));
 ZuAssert((ZuIsSame<TLConcatNested,
   ZuTypeList<ZuTypeList<int, double>, char, long>>{}));
+ZuAssert((ZuIsSame<TLApply, TL>{}));
+ZuAssert((ZuIsSame<TLApplyNested,
+  ZuTypeList<ZuTypeList<int, double>>>{}));
 ZuAssert((ZuIsSame<TLUnique, ZuTypeList<int, double, char>>{}));
 ZuAssert((ZuIsSame<TLUniqueList, TLUnique>{}));
 
