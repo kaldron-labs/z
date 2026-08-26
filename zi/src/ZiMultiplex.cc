@@ -1952,7 +1952,7 @@ retry:
     socket = m_info.socket,
     len,
     n,
-    buf = ZmMkRef(new ZiDebugBuf(buf, n))
+    buf = ZmRef(new ZiDebugBuf(buf, n))
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " recv(" << len << "): " << n << '\n'
@@ -2005,7 +2005,7 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
   ZiDEBUG(m_mx, ([
     socket = m_info.socket,
     n,
-    buf = ZmMkRef(new ZiDebugBuf(
+    buf = ZmRef(new ZiDebugBuf(
       m_rxContext.ptr + m_rxContext.offset, n))
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
@@ -2132,7 +2132,7 @@ retry:
     socket = m_info.socket,
     size = m_txContext.size,
     offset = m_txContext.offset,
-    buf = ZmMkRef(new ZiDebugBuf(wsaBuf.buf, wsaBuf.len))
+    buf = ZmRef(new ZiDebugBuf(wsaBuf.buf, wsaBuf.len))
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " WSASend(" << buf->length << ") size: " << size
@@ -2203,7 +2203,7 @@ retry:
     socket = m_info.socket,
     size = m_txContext.size,
     offset = m_txContext.offset,
-    buf = ZmMkRef(new ZiDebugBuf(buf, len))
+    buf = ZmRef(new ZiDebugBuf(buf, len))
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " send(" << buf->length << ") size: " << size
@@ -2568,7 +2568,7 @@ void ZiConnection::disconnect(bool peer)
 void ZiConnection::disconnect_1(bool peer)
 {
   if (!m_txUp.load_()) {
-    m_mx->rxRun([cxn = ZmMkRef(this), peer]() {
+    m_mx->rxRun([cxn = ZmRef(this), peer]() {
       cxn->notifyDisconnected(peer);
     });
     return;
@@ -2576,7 +2576,7 @@ void ZiConnection::disconnect_1(bool peer)
   
   m_txUp = false;
 
-  m_mx->rxRun([cxn = ZmMkRef(this), peer]() { cxn->disconnect_2(peer); });
+  m_mx->rxRun([cxn = ZmRef(this), peer]() { cxn->disconnect_2(peer); });
 }
 
 void ZiConnection::disconnect_2(bool peer)
@@ -2698,7 +2698,7 @@ void ZiConnection::close(bool peer)
 void ZiConnection::close_1(bool peer)
 {
   if (!m_txUp.load_()) {
-    m_mx->rxRun([cxn = ZmMkRef(this), peer]() {
+    m_mx->rxRun([cxn = ZmRef(this), peer]() {
       cxn->notifyDisconnected(peer);
     });
     return;
@@ -2706,7 +2706,7 @@ void ZiConnection::close_1(bool peer)
   
   m_txUp = false;
 
-  m_mx->rxRun([cxn = ZmMkRef(this), peer]() { cxn->close_2(peer); });
+  m_mx->rxRun([cxn = ZmRef(this), peer]() { cxn->close_2(peer); });
 }
 
 void ZiConnection::close_2(bool peer)
@@ -3051,7 +3051,7 @@ void ZiMultiplex::rx()
 	  if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
 	    if (ZuUnlikely(!cxn->recv())) continue;
 	  if (events & EPOLLOUT)
-	    txRun([cxn = ZmMkRef(cxn)]() { cxn->send(); });
+	    txRun([cxn = ZmRef(cxn)]() { cxn->send(); });
 	  continue;
 	}
 
