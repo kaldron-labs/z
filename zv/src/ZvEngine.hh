@@ -479,7 +479,7 @@ public:
 
   template <typename L>
   void txRun(this auto &&self, L l) {
-    self.engine()->txRun([self = ZmMkRef(&self), l = ZuMv(l)]() mutable {
+    self.engine()->txRun([self = ZmRef(&self), l = ZuMv(l)]() mutable {
       l(self->tx());
     });
   }
@@ -621,7 +621,7 @@ public:
 
   template <typename L>
   void rxRun(this auto &&self, L l) {
-    self.engine()->rxRun([self = ZmMkRef(&self), l = ZuMv(l)]() mutable {
+    self.engine()->rxRun([self = ZmRef(&self), l = ZuMv(l)]() mutable {
       l(self->rx());
     });
   }

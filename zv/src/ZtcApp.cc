@@ -810,14 +810,14 @@ public:
     auto app_ = app();
     if (ZuUnlikely(!Ztc::msg(buf->ptr<Hdr>()))) {
       app_->mx()->run([
-	app_, link = ZmMkRef(this)
+	app_, link = ZmRef(this)
       ]() mutable {
 	app_->invalid_(ZuMv(link));
       }, app_->m_cf.workerThread);
       return int(n);
     }
     app_->mx()->run([
-      app_, link = ZmMkRef(this), buf = ZuMv(buf)
+      app_, link = ZmRef(this), buf = ZuMv(buf)
     ]() mutable {
       app_->request_(ZuMv(link), ZuMv(buf));
     }, app_->m_cf.workerThread);
