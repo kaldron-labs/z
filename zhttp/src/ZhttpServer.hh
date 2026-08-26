@@ -405,7 +405,7 @@ public:
       if (!entry.notified) active.push(entry.logical);
     });
     Wire_::clearStreams([
-      link = ZmMkRef(this), active = ZuMv(active), peer
+      link = ZmRef(this), active = ZuMv(active), peer
     ]() mutable {
       for (auto &logical: active) logical->disconnected_(peer);
       if (!link->m_released) {
@@ -466,7 +466,7 @@ public:
   }
   void close(Logical *logical, uint32_t id) {
     this->app()->rxInvoke([
-      link = this, logical = ZmMkRef(logical), id
+      link = this, logical = ZmRef(logical), id
     ]() mutable {
       auto entry = link->h2Stream(id);
       if (!entry || entry->logical.ptr() != logical.ptr()) return;
@@ -594,7 +594,7 @@ public:
     m_session.disconnected(*impl(), peer);
     m_app->disconnected(*impl(), peer);
     m_app->txRun([
-      logical = ZmMkRef(impl()), native = ZmMkRef(m_native)]() mutable {
+      logical = ZmRef(impl()), native = ZmRef(m_native)]() mutable {
       (void)native;
       logical->disconnectedTx_();
     });
@@ -695,7 +695,7 @@ public:
     m_session.disconnected(*impl(), peer);
     m_app->disconnected(*impl(), peer);
     m_app->txRun([
-      logical = ZmMkRef(impl()), native = ZmMkRef(m_native)]() mutable {
+      logical = ZmRef(impl()), native = ZmRef(m_native)]() mutable {
       (void)native;
       logical->disconnectedTx_();
     });
@@ -990,7 +990,7 @@ public:
       if (!entry.notified) active.push(entry.logical);
     });
     Wire::clearStreams([
-      link = ZmMkRef(this), active = ZuMv(active), peer
+      link = ZmRef(this), active = ZuMv(active), peer
     ]() mutable {
       for (auto &logical: active) logical->disconnected_(peer);
       link->down_();
@@ -1058,7 +1058,7 @@ public:
   }
   void close(H2Logical *logical, uint32_t id) {
     this->app()->rxInvoke([
-      link = this, logical = ZmMkRef(logical), id
+      link = this, logical = ZmRef(logical), id
     ]() mutable {
       auto entry = link->h2Stream(id);
       if (!entry || entry->logical.ptr() != logical.ptr()) return;
@@ -1284,7 +1284,7 @@ struct ServerStream :
 	link->app()->user(), link, this,
 	link->remoteIP, link->remotePort};
       slot = link->logical.length();
-      link->logical.push(ZmMkRef(this));
+      link->logical.push(ZmRef(this));
       logical->connected_(ProfileTraits<H3QUIC>::apply({
 	.alpn = "h3",
 	.version = Zquic::Version1,
@@ -1359,7 +1359,7 @@ struct SrvLink :
     bool extendedConnect = config.extendedConnect();
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     this->app()->txRun([
       link, limits, extendedConnect, txError = ZuMv(txError)
     ]() mutable {
@@ -1392,7 +1392,7 @@ struct SrvLink :
     }
     logical.length(0);
     h3.qpackRxTable.final();
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     this->app()->txRun([link]() mutable {
       link->h3Tx.final();
       link->app()->rxRun([link = ZuMv(link)]() mutable {
@@ -1431,7 +1431,7 @@ struct SrvLink :
   void finish(Stream *stream) {
     auto link = this;
     this->app()->rxInvoke(link, [
-      link, stream = ZmMkRef(stream)
+      link, stream = ZmRef(stream)
     ]() mutable {
       link->finish_(ZuMv(stream));
       return link;
@@ -1464,7 +1464,7 @@ struct SrvLink :
   }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
   void qpackSeed(StreamRef encoder) {
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     this->app()->txRun([link = ZuMv(link), encoder = ZuMv(encoder)]() mutable {
       if (link->h3SeedStateTx != QPackSeedState::Unseeded) return;
       auto result = installQPackSeeds(
@@ -1487,7 +1487,7 @@ private:
     if (!stream || stream->closing) return;
     stream->closing = true;
     this->app()->rxRun([
-      link = ZmMkRef(this), stream = ZmMkRef(stream), peer
+      link = ZmRef(this), stream = ZmRef(stream), peer
     ]() mutable {
       if (!stream->logical) return;
       auto logical = ZuMv(stream->logical);
@@ -1576,7 +1576,7 @@ public:
       [](void *ptr, uint64_t error) {
 	auto stream = static_cast<NativeStream *>(ptr);
 	if (error == H3::RequestCancelled)
-	  stream->link()->h3RequestRejected(ZmMkRef(stream), error);
+	  stream->link()->h3RequestRejected(ZmRef(stream), error);
 	else
 	  stream->h3StreamError(error);
       },
@@ -1623,8 +1623,8 @@ public:
     m_session.disconnected(*impl(), peer);
     m_app->disconnected(*impl(), peer);
     m_app->txRun([
-      logical = ZmMkRef(impl()), native = ZmMkRef(m_native),
-      stream = ZmMkRef(m_stream)]() mutable {
+      logical = ZmRef(impl()), native = ZmRef(m_native),
+      stream = ZmRef(m_stream)]() mutable {
       (void)native;
       (void)stream;
       logical->disconnectedTx_();
@@ -2347,7 +2347,7 @@ private:
 
     void send(ZmRef<ResBuilder> response) {
       if (!response) return;
-      auto link = ZmMkRef(impl());
+      auto link = ZmRef(impl());
       auto server = link->app()->server;
       ++server->m_stats.queuedResponses;
       link->app()->txRun([
@@ -2357,7 +2357,7 @@ private:
     }
 
     void responseDisconnected_() {
-      auto link = ZmMkRef(impl());
+      auto link = ZmRef(impl());
       link->app()->txRun([link = ZuMv(link)]() mutable {
 	link->responseCancelAll_();
       });
@@ -2386,7 +2386,7 @@ private:
       --server->m_stats.queuedResponses;
       m_disconnect = m_response->data().disconnect();
       auto response = m_response;
-      auto link = ZmMkRef(impl());
+      auto link = ZmRef(impl());
       impl()->txComplete(Transport_::TxCompleteFn{
 	[link = ZuMv(link), response_ = response.ptr()](bool ok) mutable {
 	  link->app()->txRun([
@@ -2395,7 +2395,7 @@ private:
 	  });
 	}});
       if (server->template startResponse_<Profile>(
-	    ZmMkRef(impl()), ZuMv(response), m_retainedBytes))
+	    ZmRef(impl()), ZuMv(response), m_retainedBytes))
 	return;
       responseBuildFailed_(m_response.ptr());
     }

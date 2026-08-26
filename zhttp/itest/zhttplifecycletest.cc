@@ -350,7 +350,7 @@ struct QUICClient::Link :
   void connected(Zquic::Connected) {
     auto &state = *app()->state;
     state.trace.push(LifeEvt::H3CliConnected);
-    app()->txRun([link = ZmMkRef(this)]() mutable {
+    app()->txRun([link = ZmRef(this)]() mutable {
       auto &state = *link->app()->state;
       auto stream = link->stream(Zquic::StreamType::Duplex);
       if (!stream) {

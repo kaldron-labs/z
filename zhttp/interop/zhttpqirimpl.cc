@@ -463,7 +463,7 @@ struct HQClient::Link :
       app()->fail();
       return;
     }
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     app()->txInvoke([link = ZuMv(link)]() mutable {
       link->connected_();
     });
@@ -618,7 +618,7 @@ struct H3Client::Link :
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     unsigned requests = app()->requests.length();
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     app()->txInvoke([link, txError = ZuMv(txError), requests]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);

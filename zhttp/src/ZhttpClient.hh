@@ -1003,7 +1003,7 @@ public:
 
   template <typename Logical>
   void connect(Logical *logical, Ztls::Host host, uint16_t port) {
-    ZmRef<Logical> logical_ = ZmMkRef(logical);
+    ZmRef<Logical> logical_ = ZmRef(logical);
     this->rxInvoke([
       this, logical = ZuMv(logical_), host = ZuMv(host), port
     ]() mutable {
@@ -1243,7 +1243,7 @@ public:
       [clear](auto &entry) {
 	if (!entry.notified) clear->active.push(entry.logical);
       }, [
-      link = ZmMkRef(this), clear = ZuMv(clear),
+      link = ZmRef(this), clear = ZuMv(clear),
       pending = ZuMv(pending), pendingHead, cancelled, peer
     ]() mutable {
       link->disconnectBatch_(
@@ -1292,7 +1292,7 @@ public:
   }
   void close(Logical *logical, uint32_t id) {
     this->app()->rxInvoke([
-      link = this, logical = ZmMkRef(logical), id
+      link = this, logical = ZmRef(logical), id
     ]() mutable {
       auto entry = link->h2Stream(id);
       if (!entry || entry->logical.ptr() != logical.ptr()) return;
@@ -1381,7 +1381,7 @@ private:
     }
     if (activei < l || pendingi < m) {
       this->app()->rxRun([
-	link = ZmMkRef(this), active = ZuMv(active), activei,
+	link = ZmRef(this), active = ZuMv(active), activei,
 	pending = ZuMv(pending), pendingi, cancelled, peer]() mutable {
 	link->disconnectBatch_(
 	  ZuMv(active), activei, ZuMv(pending), pendingi, cancelled, peer);
@@ -1403,7 +1403,7 @@ private:
     }
     if (i < pending.length()) {
       this->app()->rxRun([
-	link = ZmMkRef(this), pending = ZuMv(pending), i, transient
+	link = ZmRef(this), pending = ZuMv(pending), i, transient
       ]() mutable {
 	link->connectFailedBatch_(ZuMv(pending), i, transient);
       });
@@ -1432,7 +1432,7 @@ private:
       openNow_(ZuMv(m_pending[m_pendingHead++]));
     if (pending_() && Wire_::canOpenLocalStream()) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->admitBatch_(); });
+	link = ZmRef(this)]() mutable { link->admitBatch_(); });
       return;
     }
     m_admitPosted = false;
@@ -1519,7 +1519,7 @@ private:
     }
     if (m_goawayNext > m_goawayLast) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->goawayBatch_(); });
+	link = ZmRef(this)]() mutable { link->goawayBatch_(); });
       return;
     }
     m_goawayPosted = false;
@@ -1825,8 +1825,8 @@ public:
   void connect(
     H1Logical *h1, H2Logical *h2, Ztls::Host host, uint16_t port,
     unsigned id, ZiIP remote = {}) {
-    ZmRef<H1Logical> h1_ = ZmMkRef(h1);
-    ZmRef<H2Logical> h2_ = ZmMkRef(h2);
+    ZmRef<H1Logical> h1_ = ZmRef(h1);
+    ZmRef<H2Logical> h2_ = ZmRef(h2);
     this->rxInvoke([
       this, h1 = ZuMv(h1_), h2 = ZuMv(h2_),
       host = ZuMv(host), remote = ZuMv(remote), port, id
@@ -2176,7 +2176,7 @@ public:
       [clear](auto &entry) {
 	if (!entry.notified) clear->active.push(entry.logical);
       }, [
-      link = ZmMkRef(this), h1 = ZuMv(h1), clear = ZuMv(clear),
+      link = ZmRef(this), h1 = ZuMv(h1), clear = ZuMv(clear),
       pending = ZuMv(pending), pendingHead, replacing, cancelled, peer
     ]() mutable {
       link->disconnectBatch_(
@@ -2222,7 +2222,7 @@ public:
   template <typename Done>
   void releaseH1(H1Logical *logical, Done &&done) {
     this->app()->rxRun([
-      link = this, logical = ZmMkRef(logical),
+      link = this, logical = ZmRef(logical),
       done = ZuFwd<Done>(done)
     ]() mutable {
       bool released = false;
@@ -2254,7 +2254,7 @@ public:
 
   void close(H2Logical *logical, uint32_t id) {
     this->app()->rxInvoke([
-      link = this, logical = ZmMkRef(logical), id
+      link = this, logical = ZmRef(logical), id
     ]() mutable {
       auto entry = link->h2Stream(id);
       if (!entry || entry->logical.ptr() != logical.ptr()) return;
@@ -2319,7 +2319,7 @@ public:
   }
   void h2CapacityTx_(bool saturated) {
     this->app()->rxRun([
-      link = ZmMkRef(this), saturated]() mutable {
+      link = ZmRef(this), saturated]() mutable {
       if (link->m_down) return;
       link->m_flowSaturated = saturated;
       link->capacity_();
@@ -2373,7 +2373,7 @@ private:
       }
     if (h1i < l || activei < m || pendingi < k) {
       this->app()->rxRun([
-	link = ZmMkRef(this), h1 = ZuMv(h1), h1i,
+	link = ZmRef(this), h1 = ZuMv(h1), h1i,
 	active = ZuMv(active), activei, pending = ZuMv(pending), pendingi,
 	reconnectHead, replacing, cancelled, peer]() mutable {
 	link->disconnectBatch_(
@@ -2395,7 +2395,7 @@ private:
     while (i < end) fail_(pending[i++], transient);
     if (i < pending.length()) {
       this->app()->rxRun([
-	link = ZmMkRef(this), pending = ZuMv(pending), i, transient
+	link = ZmRef(this), pending = ZuMv(pending), i, transient
       ]() mutable {
 	link->connectFailedBatch_(ZuMv(pending), i, transient);
       });
@@ -2469,7 +2469,7 @@ private:
 	m_version == Version::H2 && Wire::canOpenLocalStream());
     if (more) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->admitBatch_(); });
+	link = ZmRef(this)]() mutable { link->admitBatch_(); });
       capacity_();
       return;
     }
@@ -2568,7 +2568,7 @@ private:
     }
     if (m_goawayNext > m_goawayLast) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->goawayBatch_(); });
+	link = ZmRef(this)]() mutable { link->goawayBatch_(); });
       return;
     }
     m_goawayPosted = false;
@@ -2774,7 +2774,7 @@ private:
   void connect_(
     Logical *logical_, Zquic::Host host, uint16_t port, ZiIP remote) {
     using Link = CliLink<App, Logical>;
-    ZmRef<Logical> logical = ZmMkRef(logical_);
+    ZmRef<Logical> logical = ZmRef(logical_);
     this->rxInvoke([
       this, logical = ZuMv(logical), host = ZuMv(host),
       remote = ZuMv(remote), port
@@ -3074,7 +3074,7 @@ struct CliLink :
   }
 
   void add(ZmRef<Logical> logical) {
-    logical->native(ZmMkRef(this));
+    logical->native(ZmRef(this));
     if (!ready || readyDraining) {
       queue_(pending, pendingLive, QueueSlot::Pending, ZuMv(logical));
       return;
@@ -3085,7 +3085,7 @@ struct CliLink :
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical stream admission outside Rx thread", return);
     queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(logical));
-    this->app()->txRun([link = ZmMkRef(this)]() mutable {
+    this->app()->txRun([link = ZmRef(this)]() mutable {
       auto stream = link->stream(Zquic::StreamType::Duplex);
       link->capacityTx_();
       if (!stream) return;
@@ -3120,7 +3120,7 @@ struct CliLink :
     bool extendedConnect = config.extendedConnect();
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     this->app()->txRun([
       link, limits, extendedConnect, txError = ZuMv(txError)
     ]() mutable {
@@ -3153,17 +3153,17 @@ struct CliLink :
   }
   void disconnected(bool peer) { closePeer = peer; }
   void migrationPromoted(const Zquic::MigrationResult &) {
-    this->app()->rxRun([link = ZmMkRef(this)]() mutable {
+    this->app()->rxRun([link = ZmRef(this)]() mutable {
       link->migrationComplete_();
     });
   }
   void migrationFailed(const Zquic::MigrationResult &) {
-    this->app()->rxRun([link = ZmMkRef(this)]() mutable {
+    this->app()->rxRun([link = ZmRef(this)]() mutable {
       link->migrationComplete_();
     });
   }
   void endpointDown() {
-    this->app()->rxRun([link = ZmMkRef(this)]() mutable {
+    this->app()->rxRun([link = ZmRef(this)]() mutable {
       link->endpointDown_();
     });
   }
@@ -3186,7 +3186,7 @@ struct CliLink :
     }
     if (teardownStream < streams.length()) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->endpointDownStreams_(); });
+	link = ZmRef(this)]() mutable { link->endpointDownStreams_(); });
       return;
     }
     streams.length(0);
@@ -3196,7 +3196,7 @@ struct CliLink :
     if (!clearQueueBatch_(pending, pendingHead, pendingLive,
 	[](Logical *logical) { logical->connectFailed_(false); })) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->endpointDownPending_(); });
+	link = ZmRef(this)]() mutable { link->endpointDownPending_(); });
       return;
     }
     endpointDownWaiting_();
@@ -3205,11 +3205,11 @@ struct CliLink :
     if (!clearQueueBatch_(waiting, waitingHead, waitingLive,
 	[](Logical *logical) { logical->connectFailed_(false); })) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->endpointDownWaiting_(); });
+	link = ZmRef(this)]() mutable { link->endpointDownWaiting_(); });
       return;
     }
     h3.qpackRxTable.final();
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     this->app()->txRun([link]() mutable {
       link->h3Tx.final();
       link->app()->rxRun([link = ZuMv(link)]() mutable {
@@ -3219,7 +3219,7 @@ struct CliLink :
   }
   void connectFailed(bool transient) {
     if (connectFailing || finalizing) return;
-    auto self = ZmMkRef(this);
+    auto self = ZmRef(this);
     connectFailing = true;
     failTransient = transient;
     down = true;
@@ -3230,8 +3230,8 @@ struct CliLink :
     auto link = this;
     this->app()->rxInvoke(link, [
       link,
-      logical = ZmMkRef(logical),
-      stream = ZmMkRef(stream)
+      logical = ZmRef(logical),
+      stream = ZmRef(stream)
     ]() mutable {
       link->close_(ZuMv(logical), ZuMv(stream));
       return link;
@@ -3240,7 +3240,7 @@ struct CliLink :
   void finish(Stream *stream) {
     auto link = this;
     this->app()->rxInvoke(link, [
-      link, stream = ZmMkRef(stream)
+      link, stream = ZmRef(stream)
     ]() mutable {
       link->finish_(ZuMv(stream));
       return link;
@@ -3305,7 +3305,7 @@ struct CliLink :
     if (!logical) {
       if (waitingLive) {
 	this->app()->rxRun([
-	  link = ZmMkRef(this), stream = ZuMv(stream)
+	  link = ZmRef(this), stream = ZuMv(stream)
 	]() mutable { link->streamed(ZuMv(stream)); });
 	return;
       }
@@ -3338,7 +3338,7 @@ struct CliLink :
   }
   H3::QPackTxTable *qpackTx() { return &h3Tx; }
   void qpackSeed(StreamRef encoder) {
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     this->app()->txRun([link = ZuMv(link), encoder = ZuMv(encoder)]() mutable {
       if (link->h3SeedStateTx != QPackSeedState::Unseeded) return;
       auto result = installQPackSeeds(
@@ -3370,7 +3370,7 @@ public:
     }
     if (pendingLive) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->h3ReadyBatch_(); });
+	link = ZmRef(this)]() mutable { link->h3ReadyBatch_(); });
       return;
     }
     readyDraining = false;
@@ -3382,7 +3382,7 @@ public:
 	  logical->connectFailed_(failTransient);
 	})) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->connectFailedPending_(); });
+	link = ZmRef(this)]() mutable { link->connectFailedPending_(); });
       return;
     }
     connectFailedWaiting_();
@@ -3393,7 +3393,7 @@ public:
 	  logical->connectFailed_(failTransient);
 	})) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->connectFailedWaiting_(); });
+	link = ZmRef(this)]() mutable { link->connectFailedWaiting_(); });
       return;
     }
     Base::disconnect();
@@ -3402,7 +3402,7 @@ public:
   void capacityTx_() {
     bool saturated = dataBlockedTx || streamsBlockedTx;
     this->app()->rxRun([
-      link = ZmMkRef(this), saturated]() mutable {
+      link = ZmRef(this), saturated]() mutable {
       link->app()->capacity(link->id, link->generation, saturated);
     });
   }
@@ -3411,7 +3411,7 @@ public:
     if (!stream || stream->closing) return;
     stream->closing = true;
     this->app()->rxRun([
-      link = ZmMkRef(this), stream = ZmMkRef(stream), peer
+      link = ZmRef(this), stream = ZmRef(stream), peer
     ]() mutable {
       if (!stream->logical) return;
       auto logical = ZuMv(stream->logical);
@@ -3514,7 +3514,7 @@ public:
     for (auto &entry: logical) entry->migrationComplete_();
     if (migrationStream < streams.length()) {
       this->app()->rxRun([
-	link = ZmMkRef(this)]() mutable { link->migrationCompleteBatch_(); });
+	link = ZmRef(this)]() mutable { link->migrationCompleteBatch_(); });
       return;
     }
     migrationNotifying = false;
@@ -3853,7 +3853,7 @@ public:
       m_session.reset();
       m_sent = true;
       owner()->poolSend(*this, *m_request, Message::ID);
-      auto link = ZmMkRef(this);
+      auto link = ZmRef(this);
       unsigned generation = m_generation;
       pool()->txRun([link = ZuMv(link), generation]() mutable {
 	link->m_session.beginTx();
@@ -3863,7 +3863,7 @@ public:
     void close() {
       if (m_closing) return;
       m_closing = true;
-      auto link = ZmMkRef(this);
+      auto link = ZmRef(this);
       pool()->txRun([link = ZuMv(link)]() mutable {
 	link->m_session.cancelTx();
 	auto pool = link->pool();
@@ -3939,7 +3939,7 @@ public:
       if (!m_request || m_complete) return;
       m_complete = true;
       m_success = ok;
-      auto link = ZmMkRef(this);
+      auto link = ZmRef(this);
       unsigned generation = m_generation;
       bool sent = m_sent;
       pool()->txRun([link = ZuMv(link), generation, ok, sent]() mutable {
@@ -3964,7 +3964,7 @@ public:
   private:
     void sendRequestTx_(unsigned generation) {
       bool ok = m_session.send();
-      auto link = ZmMkRef(this);
+      auto link = ZmRef(this);
       auto pool = this->pool();
       BodyCommit commit = m_session.commit();
       pool->rxRun([link = ZuMv(link), commit, generation, ok]() mutable {
@@ -4071,7 +4071,7 @@ public:
     if constexpr (!Message::OneMessagePerLink)
 	if (id < m_reusable.length())
 	  if (auto reuse = m_reusable[id]) {
-	    auto link = ZmMkRef(reuse);
+	    auto link = ZmRef(reuse);
 	    reuseDel_(*link);
 	    ZmAssert(!link->request());
 	    bool active = link->active();
@@ -4125,7 +4125,7 @@ public:
     if (m_stopping && !m_live)
       if constexpr (!Message::Multiplexed) Base::stop_();
     if constexpr (Message::Multiplexed)
-      this->rxRun([this, hold = ZmMkRef(&link)]() mutable {
+      this->rxRun([this, hold = ZmRef(&link)]() mutable {
 	unsigned i = hold->slot();
 	unsigned n = m_links.length();
 	if (i >= n || m_links[i].ptr() != hold.ptr()) return;
@@ -4282,7 +4282,7 @@ public:
       m_session.reset();
       m_sent = true;
       owner()->poolSend(*this, *m_request, Version::H1);
-      auto op = ZmMkRef(this);
+      auto op = ZmRef(this);
       unsigned generation = m_generation;
       pool()->txRun([op = ZuMv(op), generation]() mutable {
 	op->m_session.beginTx();
@@ -4296,7 +4296,7 @@ public:
     }
     void disconnect() { close(); }
     void cancelTx() {
-      auto op = ZmMkRef(this);
+      auto op = ZmRef(this);
       pool()->txRun([op = ZuMv(op)]() mutable {
 	op->m_session.cancelTx();
       });
@@ -4310,7 +4310,7 @@ public:
     void complete(bool ok) {
       if (!m_request || m_complete) return;
       m_complete = true;
-      auto op = ZmMkRef(this);
+      auto op = ZmRef(this);
       unsigned generation = m_generation;
       bool sent = m_sent;
       pool()->txRun([
@@ -4340,7 +4340,7 @@ public:
   private:
     void sendRequestTx_(unsigned generation) {
       bool ok = m_session.send();
-      auto op = ZmMkRef(this);
+      auto op = ZmRef(this);
       BodyCommit commit = m_session.commit();
       pool()->rxRun([
 	op = ZuMv(op), commit, generation, ok]() mutable {
@@ -4427,7 +4427,7 @@ public:
       m_connected = true;
       m_info = info;
       pool()->owner()->nativeUp(
-	Transport::TCP, m_id, m_generation, ZmMkRef(this));
+	Transport::TCP, m_id, m_generation, ZmRef(this));
       connectedBatch_(m_head, m_generation);
     }
     void onDisconnected(bool peer) {
@@ -4497,7 +4497,7 @@ public:
       }
       if (operations)
 	pool()->rxRun([
-	  link = ZmMkRef(this), operations = ZuMv(operations), generation
+	  link = ZmRef(this), operations = ZuMv(operations), generation
 	]() mutable {
 	  link->connectedBatch_(ZuMv(operations), generation);
 	});
@@ -4512,14 +4512,14 @@ public:
       }
       if (operations) {
 	pool()->rxRun([
-	  link = ZmMkRef(this), operations = ZuMv(operations), generation
+	  link = ZmRef(this), operations = ZuMv(operations), generation
 	]() mutable {
 	  if (link->m_closing && generation == link->m_generation)
 	    link->closeBatch_(ZuMv(operations), generation);
 	});
 	return;
       }
-      auto link = ZmMkRef(this);
+      auto link = ZmRef(this);
       pool()->txRun([link = ZuMv(link), generation]() mutable {
 	auto pool = link->pool();
 	pool->rxRun([link = ZuMv(link), generation]() mutable {
@@ -4551,7 +4551,7 @@ public:
 	if (op->request()) op->m_session.fail();
       }
       if (operations) {
-	auto link = ZmMkRef(this);
+	auto link = ZmRef(this);
 	pool()->rxRun([
 	  link = ZuMv(link), operations = ZuMv(operations),
 	  value, first, connectFailed
@@ -4767,7 +4767,7 @@ public:
     m_session.reset();
     m_sent = true;
     owner()->poolSend(*m_impl, *m_request, Message::ID);
-    auto link = ZmMkRef(m_impl);
+    auto link = ZmRef(m_impl);
     unsigned generation = m_generation;
     m_pool->txRun([this, link = ZuMv(link), generation]() mutable {
       m_session.beginTx();
@@ -4777,7 +4777,7 @@ public:
   void close() {
     if (m_closing) return;
     m_closing = true;
-    auto link = ZmMkRef(m_impl);
+    auto link = ZmRef(m_impl);
     m_pool->txRun([this, link = ZuMv(link)]() mutable {
       m_session.cancelTx();
       m_pool->rxRun([this, link = ZuMv(link)]() mutable {
@@ -4799,7 +4799,7 @@ public:
 	close();
 	return;
       }
-      auto link = ZmMkRef(m_impl);
+      auto link = ZmRef(m_impl);
       m_impl->release([this, link = ZuMv(link)]() mutable {
 	notifyStopped_();
       });
@@ -4844,7 +4844,7 @@ public:
   void complete(bool ok) {
     if (!m_request || m_complete >= 0) return;
     m_complete = int8_t(ok);
-    auto link = ZmMkRef(m_impl);
+    auto link = ZmRef(m_impl);
     unsigned generation = m_generation;
     bool sent = m_sent;
     m_pool->txRun([
@@ -4866,7 +4866,7 @@ public:
 private:
   void sendRequestTx_(unsigned generation) {
     bool ok = m_session.send();
-    auto link = ZmMkRef(m_impl);
+    auto link = ZmRef(m_impl);
     BodyCommit commit = m_session.commit();
     m_pool->rxRun([
       this, link = ZuMv(link), commit, generation, ok]() mutable {
@@ -5160,7 +5160,7 @@ public:
   void linkStopped(Link &link) {
     if (m_live) --m_live;
     m_owner->poolStopped(link);
-    this->rxRun([this, hold = ZmMkRef(&link)]() mutable {
+    this->rxRun([this, hold = ZmRef(&link)]() mutable {
       unsigned i = hold->slot();
       unsigned n = m_pairs.length();
       if (i >= n) return;

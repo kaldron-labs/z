@@ -581,7 +581,7 @@ struct H3ServerLink :
     if (!validQUICInfo(info)) app()->state->errors = 1;
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
@@ -846,7 +846,7 @@ struct H3Client::Link :
     }
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
-    auto link = ZmMkRef(this);
+    auto link = ZmRef(this);
     app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);

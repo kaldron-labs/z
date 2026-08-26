@@ -1990,7 +1990,7 @@ struct CxnStream : public CxnParser<Impl> {
   bool h3Server() const { return impl()->link()->isServer(); }
   void h3Error(uint64_t error) { impl()->h3Cxn().error(error); }
   void h3StreamError(uint64_t error) {
-    impl()->link()->h3StreamError(ZmMkRef(impl()), error);
+    impl()->link()->h3StreamError(ZmRef(impl()), error);
   }
   bool peerControlStream() { return impl()->h3Cxn().peerControlStream(); }
   bool peerEncoderStream() { return impl()->h3Cxn().peerEncoderStream(); }
@@ -2124,7 +2124,7 @@ public:
   void streamTxReset() {
     auto stream_ = streamImpl_()->h3Stream_();
     if (!stream_) return;
-    auto stream = ZmMkRef(stream_);
+    auto stream = ZmRef(stream_);
     stream_->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
       stream->stop(H3::RequestCancelled);
       stream->quicReset(H3::RequestCancelled);

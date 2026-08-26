@@ -1077,7 +1077,7 @@ public:
   }
   void streamTxEnd() {
     if (!m_stream.end()) return;
-    this->app()->txRun([link = ZmMkRef(impl())]() mutable {
+    this->app()->txRun([link = ZmRef(impl())]() mutable {
       link->streamTxEnd_();
     });
   }
@@ -1131,7 +1131,7 @@ private:
   }
   void streamTxClose_() {
     auto app = this->app();
-    app->rxRun([link = ZmMkRef(impl())]() mutable {
+    app->rxRun([link = ZmRef(impl())]() mutable {
       Traits::disconnect(*link);
     });
   }
@@ -1182,7 +1182,7 @@ public:
     m_disconnected = true;
     this->app()->mx()->del(&m_idleTimer);
     this->app()->mx()->run([
-      link = ZmMkRef(impl()), peer]() mutable {
+      link = ZmRef(impl()), peer]() mutable {
 	link->notifyDisconnected_(peer);
       }, this->app()->rxThread());
   }
@@ -1221,7 +1221,7 @@ public:
   }
   void streamTxEnd() {
     if (!m_stream.end()) return;
-    this->app()->txRun([link = ZmMkRef(impl())]() mutable {
+    this->app()->txRun([link = ZmRef(impl())]() mutable {
       link->streamTxEnd_();
     });
   }
@@ -1339,7 +1339,7 @@ private:
   }
   void streamTxClose_() {
     auto app = this->app();
-    app->rxRun([link = ZmMkRef(impl())]() mutable {
+    app->rxRun([link = ZmRef(impl())]() mutable {
       Traits::disconnect(*link);
     });
   }
