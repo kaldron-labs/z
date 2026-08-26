@@ -380,8 +380,9 @@ using ZuTypeSlice = typename ZuTypeSlice_<Stride, Offset, Ts...>::T;
 template <template <typename...> class Type, typename ...Ts>
 struct ZuTypeApply_ { using T = Type<Ts...>; };
 template <template <typename...> class Type, typename ...Ts>
-struct ZuTypeApply_<Type, ZuTypeList<Ts...>> :
-  public ZuTypeApply_<Type, Ts...> { };
+struct ZuTypeApply_<Type, ZuTypeList<Ts...>> {
+  using T = Type<Ts...>;
+};
 template <template <typename...> class Type, typename ...Ts>
 using ZuTypeApply = typename ZuTypeApply_<Type, Ts...>::T;
 
