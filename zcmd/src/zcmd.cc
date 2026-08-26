@@ -587,7 +587,7 @@ Zcmd::Fn passwdCmd() {
     auto checkpw = zcmd->getpass("Re-type new password: ", 100);
     if (checkpw != newpw) {
       *out << "passwords do not match\npassword unchanged!\n";
-      Zcmd::executed(ZmMkRef(ctx), ZmMkRef(out), 1);
+      Zcmd::executed(ZmRef(ctx), ZmRef(out), 1);
       return;
     }
     using namespace Zum;
@@ -604,7 +604,7 @@ Zcmd::Fn passwdCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-	ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+	ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -666,7 +666,7 @@ Zcmd::Fn usersCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -722,7 +722,7 @@ Zcmd::Fn userAddCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -763,7 +763,7 @@ Zcmd::Fn resetPassCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -826,7 +826,7 @@ Zcmd::Fn userModCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -863,7 +863,7 @@ Zcmd::Fn userDelCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -912,7 +912,7 @@ Zcmd::Fn rolesCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -962,7 +962,7 @@ Zcmd::Fn roleAddCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1023,7 +1023,7 @@ Zcmd::Fn roleModCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1061,7 +1061,7 @@ Zcmd::Fn roleDelCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1121,7 +1121,7 @@ Zcmd::Fn permsCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1164,7 +1164,7 @@ Zcmd::Fn permAddCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1205,7 +1205,7 @@ Zcmd::Fn permModCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1244,7 +1244,7 @@ Zcmd::Fn permDelCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1288,7 +1288,7 @@ Zcmd::Fn keysCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1335,7 +1335,7 @@ Zcmd::Fn keyAddCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1380,7 +1380,7 @@ Zcmd::Fn keyClrCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1419,7 +1419,7 @@ Zcmd::Fn keyDelCmd() {
     }
     zcmd->sendUserDB(
       ZuMv(buf), seqNo, [
-        ctx = ZmMkRef(ctx), out = ZmMkRef(out)
+        ctx = ZmRef(ctx), out = ZmRef(out)
       ](const fbs::ReqAck *ack) mutable {
 	auto zcmd = static_cast<ZCmd *>(ctx->host);
 	if (int code = zcmd->filterAck(
@@ -1500,7 +1500,7 @@ Zcmd::Fn telcapCmd() {
       }
     }
     zcmd->run([
-      ctx = ZmMkRef(ctx), out = ZmMkRef(out),
+      ctx = ZmRef(ctx), out = ZmRef(out),
       types = ZuMv(types), filters = ZuMv(filters),
       interval = options.interval, subscribe, dir = ZuMv(dir)
     ]() {
