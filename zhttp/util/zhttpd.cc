@@ -603,7 +603,7 @@ void Parser::complete(Link *link, bool ok)
   using ServerParser = ZuDecay<decltype(link->session().parser)>;
   if constexpr (HasHttp10<ServerParser>{})
     request.http10 = link->session().parser.http10();
-  auto link_ = ZmMkRef(link);
+  auto link_ = ZmRef(link);
   auto request_ = ZuMv(request);
   app->enqueue(App::WorkFn{
     [app = app, link = ZuMv(link_), request = ZuMv(request_)]() mutable {
