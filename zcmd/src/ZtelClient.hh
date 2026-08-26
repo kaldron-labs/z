@@ -387,7 +387,7 @@ private:
       app()->mx()->add(&m_timer, Zm::now(app()->timeout()),
 	  ZmScheduler::Update,
 	  [this](auto &&arm) {
-	    return arm([link = ZmMkRef(impl())]() {
+	    return arm([link = ZmRef(impl())]() {
 	      link->disconnect();
 	    });
 	  });

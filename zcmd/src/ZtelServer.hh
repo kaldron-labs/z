@@ -301,7 +301,7 @@ private:
 public:
   void process(Link *link, ZmRef<ZiIOBuf> buf) {
     invoke([
-      this, link = ZmMkRef(link), buf = ZuMv(buf)
+      this, link = ZmRef(link), buf = ZuMv(buf)
     ]() mutable { process_(ZuMv(link), ZuMv(buf)); });
   }
   void process_(ZmRef<Link> link, ZmRef<ZiIOBuf> buf) {
@@ -323,20 +323,20 @@ public:
   }
 
   void disconnected(Link *link) {
-    invoke([this, link = ZmMkRef(link)]() { disconnected_(link); });
+    invoke([this, link = ZmRef(link)]() { disconnected_(link); });
   }
 
   // EngineMgr functions
 
   void updEngine(ZvEngine *engine) {
-    invoke([this, engine = ZmMkRef(engine)]() { engineScan(engine); });
+    invoke([this, engine = ZmRef(engine)]() { engineScan(engine); });
   }
   void updLink(ZvAnyLink *link) {
-    invoke([this, link = ZmMkRef(link)]() { linkScan(link); });
+    invoke([this, link = ZmRef(link)]() { linkScan(link); });
   }
 
   void addEngine(ZvEngine *engine) {
-    invoke([this, engine = ZmMkRef(engine)]() mutable {
+    invoke([this, engine = ZmRef(engine)]() mutable {
       if (!m_engines.find(engine->id())) m_engines.add(ZuMv(engine));
     });
   }
@@ -361,7 +361,7 @@ public:
   // DB registration
  
   void addDB(Zdb *db) {
-    invoke([this, db = ZmMkRef(db)]() { m_db = ZuMv(db); });
+    invoke([this, db = ZmRef(db)]() { m_db = ZuMv(db); });
   }
   void delDB() {
     invoke([this]() { m_db = nullptr; });
@@ -906,7 +906,7 @@ private:
     if (!m_db) return;
     // these callbacks can execute async
     m_db->invoke([
-      db = m_db, link = ZmMkRef(watch->link), update
+      db = m_db, link = ZmRef(watch->link), update
     ]() mutable {
       Zfb::IOBuilder fbb;
       Ztc::DBTelemetry data;

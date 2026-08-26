@@ -1357,13 +1357,13 @@ private:
 void IOBuf::recv(ZiIOContext *io) {
   if (!io)
     m_connection->ZiConnection::recv(
-	ZiIOFn{ZmMkRef(this), ZmFnPtr<&IOBuf::recv_>{}});
+	ZiIOFn{ZmRef(this), ZmFnPtr<&IOBuf::recv_>{}});
   else
     recv_(*io);
 }
 bool IOBuf::recv_(ZiIOContext &io)
 {
-  io.init(ZiIOFn{ZmMkRef(this), ZmFnPtr<&IOBuf::rcvd_>{}},
+  io.init(ZiIOFn{ZmRef(this), ZmFnPtr<&IOBuf::rcvd_>{}},
       m_buf.data(), m_buf.size(), 0);
   return true;
 }
@@ -1379,13 +1379,13 @@ void IOBuf::send(ZiIOContext *io)
 {
   if (!io)
     m_connection->ZiConnection::send(
-	ZiIOFn{ZmMkRef(this), ZmFnPtr<&IOBuf::send_>{}});
+	ZiIOFn{ZmRef(this), ZmFnPtr<&IOBuf::send_>{}});
   else
     send_(*io);
 }
 bool IOBuf::send_(ZiIOContext &io)
 {
-  io.init(ZiIOFn{ZmMkRef(this), ZmFnPtr<&IOBuf::sent_>{}},
+  io.init(ZiIOFn{ZmRef(this), ZmFnPtr<&IOBuf::sent_>{}},
       m_buf.data(), m_buf.length(), 0);
   return true;
 }
@@ -1425,7 +1425,7 @@ void Connection::disconnected(bool)
       ZuTime next = Zm::now(m_latency * ZuDecimal{2});
       m_mx->add(&m_discTimer, next, ZmScheduler::Update,
 	  [this](auto &&arm) {
-	    return arm([peer = ZmMkRef(m_peer)]() { peer->disconnect(); });
+	    return arm([peer = ZmRef(m_peer)]() { peer->disconnect(); });
 	  });
     } else
       m_peer->disconnect();
