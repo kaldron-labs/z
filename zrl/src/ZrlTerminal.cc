@@ -17,9 +17,9 @@
 #include <linux/unistd.h>
 #endif
 
-#include <zlib/ZiLib.hh>
-
 #include <zlib/ZmScratch.hh>
+
+#include <zlib/ZiLib.hh>
 
 #include <zlib/ZrlTerminal.hh>
 
@@ -706,6 +706,7 @@ bool Terminal::start_()
   m_running = true;
 
 #ifndef _WIN32
+
   memcpy(&m_ntermios, &m_otermios, sizeof(termios));
 
   // Note: do not interfere with old dial-up modem settings here
