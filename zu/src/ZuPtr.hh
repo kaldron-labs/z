@@ -139,7 +139,6 @@ protected:
 };
 
 // deduction guides
-
 template <typename T>
 ZuPtr(T *) -> ZuPtr<T>;
 
