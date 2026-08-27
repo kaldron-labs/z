@@ -20,6 +20,7 @@
 #include <zlib/Zws.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZwsTestPorts.hh"
 
 namespace ZwsBench_ {
 
@@ -306,7 +307,7 @@ template <typename Profile>
 int run(const Options &options, const TempDir &temp)
 {
   State state;
-  state.port = loopbackPort();
+  state.port = loopbackPort(ZwsTestPort::Bench);
   state.count = options.count;
   state.warmup = options.warmup;
   state.control = options.control;
