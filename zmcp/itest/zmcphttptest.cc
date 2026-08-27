@@ -4,13 +4,6 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef _WIN32
-#include <errno.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
-
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuRef.hh>
@@ -25,9 +18,7 @@
 #include <zlib/ZmcpClient.hh>
 #include <zlib/ZmcpServer.hh>
 
-#ifndef _WIN32
 #include "../../zquic/test/ZquicInteropTest.hh"
-#endif
 
 #include "ZmcpITestPorts.hh"
 
@@ -135,10 +126,10 @@ struct App {
   void connected(int) { }
   void disconnected(int) { }
 
-  template <typename Req, typename Token>
+  template <typename Req, typename Completion>
   void tool(
       Req *, const EchoReq &request, const auto &headers,
-      const Zmcp::Context &context, Token token) {
+      const Zmcp::Context &context, Completion completion) {
     auto authorization = headers.template get<Authorization>();
     if (authorization.count == 1 && authorization.value == "Bearer test")
       ++authorizedCalls;
@@ -148,9 +139,10 @@ struct App {
       else ++modernContexts;
     }
     if (request.value == 65) {
-      (void)token->log("debug", "hidden", "echo");
-      (void)token->log("warning", "visible", "echo");
-      (*token)(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+      (void)completion->log("debug", "hidden", "echo");
+      (void)completion->log("warning", "visible", "echo");
+      completion->complete(
+	Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
       return;
     }
     ZmFn<bool()> complete;
@@ -161,12 +153,14 @@ struct App {
       case 66:
       case 73:
       case 74:
-	complete = [token = ZuMv(token), request]() mutable {
-	  return (*token)(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	complete = [completion = ZuMv(completion), request]() mutable {
+	  return completion->complete(
+	    Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
 	};
 	break;
       default:
-	(*token)(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	completion->complete(
+	  Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
 	return;
     }
     switch (request.value) {
@@ -177,8 +171,8 @@ struct App {
     called_.post();
   }
 
-  template <typename Req, typename Token>
-  void cancelled(Req *, Token *, ZuCSpan) {
+  template <typename Req, typename Completion>
+  void cancelled(Req *, Completion *, ZuCSpan) {
     ++cancellations;
     cancelled_.post();
   }
@@ -284,76 +278,167 @@ using ClientCallHeap =
   ZmHeap<"ZmcpITest.ClientCall", ClientCall_<ZuVoid>>;
 ZuDerive(ClientCall, (ClientCall_<ClientCallHeap>));
 
-#ifndef _WIN32
-static int connectLoopback(unsigned port)
-{
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) return -1;
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = htons(port);
-  if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-    ::close(fd);
-    return -1;
-  }
-  return fd;
-}
+class RawHTTP;
 
-static bool sendAll(int fd, ZuCSpan data)
-{
-  while (data) {
-    ssize_t n = ::send(fd, data.data(), data.length(), 0);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) return false;
-    data.offset(unsigned(n));
-  }
-  return true;
-}
+class RawHTTPCxn : public ZiConnection {
+public:
+  RawHTTPCxn(RawHTTP *, ZiMultiplex *, const ZiCxnInfo &);
 
-static bool receiveAll(int fd, ZtString<> &out)
-{
-  ZmRef<ZiIOBuf> buf = new Zmcp::HTTPBodyBuf{};
-  if (!buf->alloc(ZiIOBuf_DefltSize)) return false;
-  for (;;) {
-    ssize_t n = ::recv(fd, buf->data(), buf->size, 0);
-    if (n < 0 && errno == EINTR) continue;
-    if (n < 0) return false;
-    if (!n) return true;
-    buf->length = unsigned(n);
-    out << ZuCSpan{buf->cspan()};
-    if (out.length() >
+  void connected(ZiIOContext &) override;
+  void disconnected(bool) override;
+
+private:
+  bool recv_(ZiIOContext &);
+  bool send_(ZiIOContext &);
+  bool sent_(ZiIOContext &);
+
+  RawHTTP		*m_owner;
+  ZmRef<ZiIOBuf>	m_rxBuf;
+};
+
+class RawHTTP {
+public:
+  RawHTTP(ZiMultiplex &mx, unsigned port, ZuCSpan request) :
+      m_mx{mx}, m_request{request} {
+    m_mx.connect(
+      ZiConnectFn{this, ZmFnPtr<&RawHTTP::connected>{}},
+      ZiFailFn{this, ZmFnPtr<&RawHTTP::failed>{}},
+      ZiIP{}, 0, ZiIP{"127.0.0.1"}, uint16_t(port));
+  }
+
+  ZiConnection *connected(const ZiCxnInfo &ci) {
+    auto cxn = new RawHTTPCxn{this, &m_mx, ci};
+    m_cxn = cxn;
+    return cxn;
+  }
+  void failed(bool) { m_done.post(); }
+  void disconnected(bool peer) {
+    m_peerClosed = peer;
+    m_done.post();
+  }
+
+  bool wait(ZtString<> &response, bool emptyOK = false) {
+    m_done.wait();
+    response = ZuMv(m_response);
+    m_cxn = nullptr;
+    return m_ok || (emptyOK && m_peerClosed);
+  }
+
+  ZuCSpan request() const { return m_request; }
+
+  bool received(ZuCSpan data) {
+    m_response << data;
+    if (m_response.length() >
 	Zmcp::Default::MaxJSONBytes + Zmcp::Default::MaxLineBytes)
-      return false;
-    int64_t headerEnd = out.find("\r\n\r\n");
-    if (headerEnd < 0) continue;
-    ZuCSpan headers{out.data(), unsigned(headerEnd)};
+      return true;
+    int64_t headerEnd = m_response.find("\r\n\r\n");
+    if (headerEnd < 0) return false;
+    ZuCSpan headers{m_response.data(), unsigned(headerEnd)};
     int64_t statusEnd = headers.find("\r\n");
     ZuCSpan status = statusEnd >= 0 ?
 	ZuCSpan{headers.data(), unsigned(statusEnd)} : headers;
-    if (status.find(" 202 ") >= 0 || status.find(" 204 ") >= 0)
+    if (status.find(" 202 ") >= 0 || status.find(" 204 ") >= 0) {
+      m_ok = true;
       return true;
+    }
     int64_t lengthOff = headers.find("content-length:");
     if (lengthOff < 0) lengthOff = headers.find("Content-Length:");
     if (lengthOff < 0) {
       int64_t chunked = headers.find("transfer-encoding: chunked");
       if (chunked < 0)
 	chunked = headers.find("Transfer-Encoding: chunked");
-      if (chunked >= 0 && out.find("\r\n0\r\n\r\n") >= 0)
+      if (chunked >= 0 && m_response.find("\r\n0\r\n\r\n") >= 0) {
+	m_ok = true;
 	return true;
-      continue;
+      }
+      return false;
     }
     unsigned begin = unsigned(lengthOff) + sizeof("content-length:") - 1;
     while (begin < headers.length() && headers[begin] == ' ') ++begin;
     unsigned end = begin;
     while (end < headers.length() &&
 	headers[end] >= '0' && headers[end] <= '9') ++end;
-    if (end == begin) return false;
+    if (end == begin) return true;
     unsigned length = ZuBox<unsigned>{
       ZuCSpan{headers.data() + begin, end - begin}};
     unsigned bodyOff = unsigned(headerEnd) + 4;
-    if (out.length() - bodyOff >= length) return true;
+    if (m_response.length() - bodyOff < length) return false;
+    m_ok = true;
+    return true;
   }
+
+private:
+  ZiMultiplex		&m_mx;
+  ZtString<>		m_request;
+  ZtString<>		m_response;
+  ZmRef<RawHTTPCxn>	m_cxn;
+  ZmSemaphore		m_done;
+  bool			m_ok = false;
+  bool			m_peerClosed = false;
+};
+
+RawHTTPCxn::RawHTTPCxn(
+    RawHTTP *owner, ZiMultiplex *mx, const ZiCxnInfo &ci) :
+    ZiConnection{mx, ci}, m_owner{owner},
+    m_rxBuf{new Zmcp::HTTPBodyBuf{}}
+{
+}
+
+void RawHTTPCxn::connected(ZiIOContext &io)
+{
+  if (!m_rxBuf->alloc(ZiIOBuf_DefltSize)) {
+    io.disconnect();
+    return;
+  }
+  io.init(
+    ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}},
+    m_rxBuf->data(), m_rxBuf->size, 0);
+  send(ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::send_>{}});
+}
+
+void RawHTTPCxn::disconnected(bool peer)
+{
+  m_owner->disconnected(peer);
+}
+
+bool RawHTTPCxn::recv_(ZiIOContext &io)
+{
+  if (io.length < 0) {
+    io.disconnect();
+    return true;
+  }
+  bool complete = m_owner->received(
+    ZuCSpan{io.ptr + io.offset, unsigned(io.length)});
+  io.offset = 0;
+  if (complete) io.disconnect();
+  return true;
+}
+
+bool RawHTTPCxn::send_(ZiIOContext &io)
+{
+  auto request = m_owner->request();
+  io.init(
+    ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::sent_>{}},
+    request.data(), request.length(), 0);
+  return true;
+}
+
+bool RawHTTPCxn::sent_(ZiIOContext &io)
+{
+  if (io.length < 0) {
+    io.disconnect();
+    return true;
+  }
+  if ((io.offset += io.length) < io.size) return true;
+  io.complete();
+  return true;
+}
+
+static bool rawHTTP(
+    ZiMultiplex &mx, unsigned port, ZuCSpan request, ZtString<> &response)
+{
+  RawHTTP call{mx, port, request};
+  return call.wait(response);
 }
 
 static ZtString<> headerValue(const ZtString<> &response, ZuCSpan name)
@@ -368,7 +453,6 @@ static ZtString<> headerValue(const ZtString<> &response, ZuCSpan name)
   if (end < 0) return {};
   return ZuCSpan{response.data() + begin, unsigned(end)};
 }
-#endif
 
 struct LegacyApp {
   using ResBuilderQ = Zmcp::HTTPBuilderQ<Catalog>;
@@ -491,9 +575,6 @@ struct LegacyApp {
 static void httpTest()
 {
   ZuTestScope(http);
-#ifdef _WIN32
-  ZuCheck(true);
-#else
   unsigned port = Zquic::Test::loopbackPort(ZmcpITestPort::HTTP);
   ZuCheck(port);
   if (!port) return;
@@ -519,8 +600,6 @@ static void httpTest()
   ZuCheck(started);
   if (started) app.listening_.wait();
 
-  int fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   ZtString<> body;
   body << "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":42}}}";
@@ -529,10 +608,8 @@ static void httpTest()
     "Content-Type: application/json\r\nAccept: application/json\r\n"
     "Connection: close\r\nContent-Length: " << body.length()
     << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   ZtString<> response;
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(started && rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 200") >= 0);
   ZuCheck(response.find(
     "{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":{"
@@ -542,8 +619,6 @@ static void httpTest()
     "\"structuredContent\":{\"code\":200,\"data\":{\"value\":42}},"
     "\"isError\":false}}") >= 0);
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   body.length_(0);
   body << "{\"jsonrpc\":\"2.0\",\"id\":44,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":44}}}";
@@ -553,16 +628,12 @@ static void httpTest()
     "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
     << ZuBoxed(body.length()).hex<false>() << "\r\n" << body
     << "\r\n0\r\n\r\n";
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 200") >= 0);
   ZuCheck(response.find("\"id\":44") >= 0);
   ZuCheck(response.find("\"value\":44") >= 0);
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   body.length_(0);
   body << "{\"jsonrpc\":\"2.0\",\"id\":43,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo_stream\","
@@ -572,10 +643,8 @@ static void httpTest()
     "Content-Type: application/json\r\nAccept: text/event-stream\r\n"
     "Connection: close\r\nContent-Length: " << body.length()
     << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 200") >= 0);
   ZuCheck(response.find("text/event-stream") >= 0);
   ZuCheck(response.find("data: {\"jsonrpc\":\"2.0\",\"id\":43,"
@@ -585,113 +654,87 @@ static void httpTest()
     "\"structuredContent\":{\"code\":200,"
     "\"data\":{\"value\":43}},\"isError\":false}}") >= 0);
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"id\":50,\"method\":\"initialize\","
     "\"params\":{\"protocolVersion\":\"2025-11-25\"}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "Connection: close\r\nContent-Length: " << body.length()
     << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   auto sessionID = headerValue(response, "mcp-session-id:");
   if (!sessionID)
     sessionID = headerValue(response, "Mcp-Session-Id:");
   ZuCheck(sessionID.length() == Zmcp::Default::SessionIDBytes * 2);
   ZuCheck(response.find("\"protocolVersion\":\"2025-11-25\"") >= 0);
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   body = "{\"jsonrpc\":\"2.0\","
     "\"method\":\"notifications/initialized\"}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"id\":51,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":51}}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("\"id\":51") >= 0);
   ZuCheck(response.find("\"value\":51") >= 0);
 
-  int callFD = started ? connectLoopback(port) : -1;
-  ZuCheck(callFD >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"id\":52,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":52}}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(callFD >= 0 && sendAll(callFD, request));
+  RawHTTP call52{mx, port, request};
   app.called_.wait();
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\","
     "\"params\":{\"requestId\":52,\"reason\":\"superseded\"}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
   app.cancelled_.wait();
   ZuCheck(app.cancellations == 1);
   ZuCheck(bool(app.complete_));
   ZuCheck(app.complete_ && !app.complete_());
   response.length_(0);
-  ZuCheck(callFD >= 0 && receiveAll(callFD, response));
-  if (callFD >= 0) ::close(callFD);
+  ZuCheck(call52.wait(response, true));
   ZuCheck(response.find("\"id\":52") < 0);
 
-  callFD = started ? connectLoopback(port) : -1;
-  ZuCheck(callFD >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"id\":53,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":53}}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(callFD >= 0 && sendAll(callFD, request));
+  RawHTTP call53{mx, port, request};
   app.called_.wait();
   app.sessionClosed_.wait();
   ZuCheck(app.complete_ && !app.complete_());
   response.length_(0);
-  ZuCheck(callFD >= 0 && receiveAll(callFD, response));
-  if (callFD >= 0) ::close(callFD);
+  ZuCheck(call53.wait(response, true));
   ZuCheck(response.find("\"id\":53") < 0);
 
-  fd = started ? connectLoopback(port) : -1;
-  ZuCheck(fd >= 0);
   request.length_(0);
   request << "DELETE /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID
     << "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
   ZuCheck(!app.failures);
 
@@ -916,34 +959,27 @@ static void httpTest()
   ZuCheck(statelessStarted);
   if (statelessStarted) statelessApp.listening_.wait();
 
-  fd = statelessStarted ? connectLoopback(statelessPort) : -1;
-  ZuCheck(fd >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"id\":80,\"method\":\"initialize\","
     "\"params\":{\"protocolVersion\":\"2025-11-25\"}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Protocol-Version: 2025-11-25\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(statelessStarted &&
+    rawHTTP(mx, statelessPort, request, response));
   ZuCheck(response.find("\"protocolVersion\":\"2025-11-25\"") >= 0);
   ZuCheck(!headerValue(response, "mcp-session-id:") &&
     !headerValue(response, "Mcp-Session-Id:"));
 
-  fd = statelessStarted ? connectLoopback(statelessPort) : -1;
-  ZuCheck(fd >= 0);
   body = "{\"jsonrpc\":\"2.0\",\"id\":81,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":81}}}";
   request.length_(0);
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Protocol-Version: 2025-11-25\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  ZuCheck(fd >= 0 && sendAll(fd, request));
   response.length_(0);
-  ZuCheck(fd >= 0 && receiveAll(fd, response));
-  if (fd >= 0) ::close(fd);
+  ZuCheck(rawHTTP(mx, statelessPort, request, response));
   ZuCheck(response.find("\"id\":81") >= 0);
   ZuCheck(response.find("\"value\":81") >= 0);
   ZuCheck(response.find("\"resultType\"") < 0);
@@ -962,10 +998,8 @@ static void httpTest()
   ZuCheck(app.legacyContexts == 3);
   server.final();
   mx.stop();
-#endif
 }
 
-#ifndef _WIN32
 namespace Secure {
   enum { H1, H2, H3, N };
 }
@@ -1112,14 +1146,11 @@ static void secureTest()
     mx.stop();
   }
 }
-#endif
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(httpTest);
-#ifndef _WIN32
   ZuTestCall(secureTest);
-#endif
 }

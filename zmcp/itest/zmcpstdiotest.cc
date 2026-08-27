@@ -157,15 +157,15 @@ struct ServerApp {
     ++calls;
     if (async) {
       complete = [completion = ZuMv(completion), request]() mutable {
-	(*completion)(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	completion->complete(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
       };
       return;
     }
-    (*completion)(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+    completion->complete(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
   }
 
-  template <typename Req, typename Token>
-  void cancelled(Req *, Token *, ZuCSpan) {
+  template <typename Req, typename Completion>
+  void cancelled(Req *, Completion *, ZuCSpan) {
     ++cancellations;
     cancelled_.post();
   }

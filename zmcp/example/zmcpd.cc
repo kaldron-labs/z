@@ -58,7 +58,7 @@ static ZiMxParams mxParams()
 	.thread(4, [](auto &thread) {
 	  thread.isolated(1).name("stdioTx");
 	});
-    }).rxThread(1).txThread(2);
+    });
 }
 
 struct App {
@@ -83,24 +83,25 @@ struct App {
   void closed() { done.post(); }
   void failed() { done.post(); }
 
-  template <typename Req, typename Token>
+  template <typename Req, typename Completion>
   void tool(
       Req *, const AddRequest &request, const auto &headers,
-      const Zmcp::Context &context, Token token) {
+      const Zmcp::Context &context, Completion completion) {
     if (context.transport() && options->token) {
       auto authorization = headers.template get<Authorization>();
       ZtString<> expected;
       expected << "Bearer " << options->token;
       if (authorization.count != 1 || authorization.value != expected) {
-	(*token)(Zmcp::ToolReply<AddUnauthorized>{});
+	completion->complete(Zmcp::ToolReply<AddUnauthorized>{});
 	return;
       }
     }
-    (*token)(Zmcp::ToolReply<AddOK>{AddResult{request.lhs + request.rhs}});
+    completion->complete(
+      Zmcp::ToolReply<AddOK>{AddResult{request.lhs + request.rhs}});
   }
 
-  template <typename Req, typename Token>
-  void cancelled(Req *, Token *, ZuCSpan) { }
+  template <typename Req, typename Completion>
+  void cancelled(Req *, Completion *, ZuCSpan) { }
 };
 
 static void interrupted() { done.post(); }
@@ -138,7 +139,7 @@ int main(int argc, char **argv)
     config.localIP(ZiIP{"127.0.0.1"}).port(options.port).tcp();
     config.absentOrigin(true);
     initialized = server.init(
-      Zhttp::HubConfig{&mx, "1", "2"}, ZuMv(config), &app);
+      Zhttp::HubConfig{&mx}, ZuMv(config), &app);
   }
   bool started = initialized && server.start();
   if (!started) {

@@ -24,13 +24,13 @@ namespace Private {
 
 #ifndef _WIN32
 
-static void stdioInterrupt_(int) { }
+static void stdioInterrupt(int) { }
 
-static bool stdioSignal_()
+static bool stdioSignal()
 {
   static bool initialized = []() {
     struct sigaction action{};
-    action.sa_handler = stdioInterrupt_;
+    action.sa_handler = stdioInterrupt;
     sigemptyset(&action.sa_mask);
     return !sigaction(SIGURG, &action, nullptr);
   }();
@@ -39,7 +39,7 @@ static bool stdioSignal_()
 
 uintptr_t stdioThread()
 {
-  if (!stdioSignal_()) return 0;
+  if (!stdioSignal()) return 0;
   sigset_t signals;
   sigemptyset(&signals);
   sigaddset(&signals, SIGURG);
@@ -62,20 +62,20 @@ uintptr_t stdioThread()
   if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(),
 	GetCurrentProcess(), &thread, 0, FALSE, DUPLICATE_SAME_ACCESS))
     return 0;
-  return reinterpret_cast<uintptr_t>(thread);
+  return uintptr_t(thread);
 }
 
 void interruptStdio(uintptr_t thread)
 {
-  if (thread) CancelSynchronousIo(reinterpret_cast<HANDLE>(thread));
+  if (thread) CancelSynchronousIo(HANDLE(thread));
 }
 
 void closeStdioThread(uintptr_t thread)
 {
-  if (thread) CloseHandle(reinterpret_cast<HANDLE>(thread));
+  if (thread) CloseHandle(HANDLE(thread));
 }
 
 #endif
 
-}
-}
+} // Private
+} // Zmcp

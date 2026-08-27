@@ -39,8 +39,8 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 
-#include <zlib/ZtEnum.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZfJSON.hh>
@@ -131,6 +131,9 @@ namespace Default {
     MaxPending = 1U << 12,
     MaxSessions = 1U << 12,
     SessionIDBytes = 16, // 128 bits from the TLS CSPRNG
+    // SSE framing plus the decimal event sequence; 64 exceeds the 33-byte
+    // maximum currently emitted around one JSON payload.
+    SSEFrameOverhead = 64,
     MaxQueue = 1U << 10,
     MaxQueueBytes = 64U << 20,
     WorkBatch = 64
@@ -247,15 +250,15 @@ struct IDFmt {
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &id) {
       switch (id.type()) {
-        case O::Integer:
+	case O::Integer:
 	  ZfJSON::saveValue<Facet, Filter,
 	    ZfFieldTC::Int64, ZuTypeList<>>(s, id.template p<int64_t>());
 	  break;
-        case O::String:
+	case O::String:
 	  ZfJSON::saveValue<Facet, Filter,
 	    ZfFieldTC::String, ZuTypeList<>>(s, id.template p<IDString>());
 	  break;
-        default: s << "null"; break;
+	default: s << "null"; break;
       }
     }
 
@@ -683,10 +686,10 @@ ZfStruct((StructuredEmpty, JSON),
 template <typename Body>
 struct StructuredResult :
     public ZuStructShim<StructuredResult<Body>, StructuredResultShape> {
-  int code_;
   const Body &data_;
+  int code_;
 
-  StructuredResult(int code, const Body &data) : code_{code}, data_{data} { }
+  StructuredResult(int code, const Body &data) : data_{data}, code_{code} { }
 
   int code() const { return code_; }
   const Body &data() const { return data_; }
@@ -707,7 +710,8 @@ ZfStruct((CallResultShape, JSON),
   (((isError), (Mutable)), (Bool)));
 
 template <typename Structured>
-struct CallResult : public ZuStructShim<CallResult<Structured>, CallResultShape> {
+struct CallResult :
+    public ZuStructShim<CallResult<Structured>, CallResultShape> {
   ServerMetaOpt meta_;
   ZuCSpan resultType_;
   const Structured &structured_;
@@ -1294,23 +1298,55 @@ struct EmptyNames {
   unsigned length() const { return 0; }
   ZuCSpan operator [](unsigned) const { return {}; }
   explicit operator bool() const { return false; }
+
+  struct Traits : public ZuBaseTraits<EmptyNames> {
+    using Elem = ZuCSpan;
+    enum { IsArray = 1, IsSpan = 0 };
+    static unsigned length(const EmptyNames &v) { return v.length(); }
+  };
+  friend Traits ZuTraitsType(EmptyNames *);
+
   friend inline ZfJSON::AsArray<ZfFieldTC::String>
     ZfJSON_Fmt(EmptyNames *) { return {}; }
 };
 
 template <typename Desc>
-struct EnumNames : public ZtArray<
-    ZuCSpan, ZtArrayHeapID<"Zmcp.Schema.Enum">> {
-  using Base = ZtArray<ZuCSpan, ZtArrayHeapID<"Zmcp.Schema.Enum">>;
+struct EnumNames {
+  struct Iterator {
+    unsigned i;
+    int operator -(Iterator r) const { return int(i) - int(r.i); }
+    ZuCSpan operator *() const { return EnumNames{}[i]; }
+  };
 
-  EnumNames() {
+  unsigned length() const {
     if constexpr (ZuFieldProp::HasEnum<typename Desc::Props>{}) {
       using Map = ZuFieldProp::GetEnum<typename Desc::Props>;
-      Map::all([this](ZuCSpan name, unsigned) { this->push(name); });
+      using Names = typename Map::Names;
+      return Names::N;
+    } else {
+      return 0;
     }
   }
+  ZuCSpan operator [](unsigned i) const {
+    if constexpr (ZuFieldProp::HasEnum<typename Desc::Props>{}) {
+      using Map = ZuFieldProp::GetEnum<typename Desc::Props>;
+      return Map::v2s(int(i));
+    } else {
+      return {};
+    }
+  }
+  Iterator begin() const { return {0}; }
+  Iterator end() const { return {length()}; }
 
-  explicit operator bool() const { return this->length(); }
+  explicit operator bool() const { return length(); }
+
+  struct Traits : public ZuBaseTraits<EnumNames> {
+    using Elem = ZuCSpan;
+    enum { IsArray = 1, IsSpan = 0 };
+    static unsigned length(const EnumNames &v) { return v.length(); }
+  };
+  friend Traits ZuTraitsType(EnumNames *);
+
   friend inline ZfJSON::AsArray<ZfFieldTC::String>
     ZfJSON_Fmt(EnumNames *) { return {}; }
 };
@@ -1477,8 +1513,8 @@ struct Properties_<ZuTypeList<Field...>> {
     const Val &val() const { return val_; }
   };
   struct Iterator {
-    unsigned i = 0;
     Node node;
+    unsigned i = 0;
     Node *operator ()() {
       if (i >= sizeof...(Field)) return nullptr;
       if constexpr (sizeof...(Field))
@@ -1651,16 +1687,21 @@ struct ResponseProperties :
   ResponseData<Res> data() const { return {}; }
 };
 
+struct ResponseRequiredIterator {
+  unsigned i;
+  int operator -(ResponseRequiredIterator r) const {
+    return int(i) - int(r.i);
+  }
+  ZuCSpan operator *() const {
+    return i ? ZuCSpan{"data"} : ZuCSpan{"code"};
+  }
+};
+
 template <typename Res>
 struct ResponseRequired {
-  struct Iterator {
-    unsigned i;
-    int operator -(Iterator r) const { return int(i) - int(r.i); }
-    ZuCSpan operator *() const { return i ? ZuCSpan{"data"} : ZuCSpan{"code"}; }
-  };
   enum { N = ZuIsSame<void, typename Res::Body>{} ? 1 : 2 };
-  Iterator begin() const { return {0}; }
-  Iterator end() const { return {N}; }
+  ResponseRequiredIterator begin() const { return {0}; }
+  ResponseRequiredIterator end() const { return {N}; }
   ZuCSpan operator [](unsigned i) const { return i ? "data" : "code"; }
   friend inline ZfJSON::AsArray<ZfFieldTC::String>
     ZfJSON_Fmt(ResponseRequired *) { return {}; }
@@ -1912,7 +1953,7 @@ public:
   }
 
   template <typename Res>
-  bool operator ()(ToolReply<Res> reply) {
+  bool complete(ToolReply<Res> reply) {
     ZuAssert((ZuTypeIn<Res, GetResponses<Req>>{}));
     auto owner = m_owner;
     if (!owner) return false;
@@ -2023,11 +2064,13 @@ ZuDerive(CompletionHash,
 	ZmHashLock<ZmNoLock,
 	  ZmHashHeapID<"Zmcp.Completions">>>>>));
 
+namespace CompletionState {
+  enum { Open, Closing, Closed };
+}
+
 template <typename Impl>
 class CompletionSet {
 public:
-  enum { Open, Closing, Closed };
-
   CompletionSet(unsigned maxPending = Default::MaxPending) :
     m_maxPending{maxPending} { }
   ~CompletionSet() { drain(); }
@@ -2042,7 +2085,7 @@ public:
       const ID &id, const ID &progressToken = {},
       int logLevel = LogLevel::Disabled) {
     using Token = Completion<Req, CompletionSet>;
-    if (m_state != Open || id.absent() ||
+    if (m_state != CompletionState::Open || id.absent() ||
 	m_hash.count_() >= m_maxPending ||
 	m_hash.findPtr(id)) return {};
     uint64_t generation = m_generation++;
@@ -2095,9 +2138,12 @@ public:
   }
 
   void cancelAll(ZuCSpan reason = {}) {
-    auto i = m_hash.iter();
-    auto node = i();
-    if (node) node->data().cancel(reason);
+    CompletionEntry *entry = nullptr;
+    {
+      auto i = m_hash.iter();
+      if (auto node = i()) entry = &node->data();
+    }
+    if (entry) entry->cancel(reason);
     ZiAssert(m_hash.count_() <= 1, "Zmcp", (),
 	"more than one completion for one request", return);
   }
@@ -2110,19 +2156,19 @@ public:
   }
 
   bool close(unsigned limit) {
-    if (m_state == Open) m_state = Closing;
+    if (m_state == CompletionState::Open) m_state = CompletionState::Closing;
     unsigned visited = 0;
     while (visited < limit) {
       auto entry = take_();
       if (!entry) {
-	m_state = Closed;
+	m_state = CompletionState::Closed;
 	return true;
       }
       ++visited;
       entry->invalidate();
     }
     if (m_hash.count_()) return false;
-    m_state = Closed;
+    m_state = CompletionState::Closed;
     return true;
   }
 
@@ -2188,7 +2234,7 @@ private:
   CompletionHash	m_hash;
   uint64_t	m_generation = 1;
   unsigned	m_maxPending;
-  int		m_state = Open;
+  int		m_state = CompletionState::Open;
 };
 
 
@@ -2226,7 +2272,7 @@ struct SupportedVersions {
   struct Iterator {
     unsigned i;
 
-    int operator -(Iterator r) const { return int(i - r.i); }
+    int operator -(Iterator r) const { return int(i) - int(r.i); }
     ZuCSpan operator *() const {
       return i ? LegacyVersion{}() : ModernVersion{}();
     }
@@ -2699,22 +2745,24 @@ public:
   template <typename L>
   bool feed(ZuCSpan input, L &&l) {
     if (m_state == Closed) return false;
+    unsigned n = input.length();
     unsigned begin = 0;
-    for (unsigned i = 0, n = input.length(); i < n; ++i) {
+    for (unsigned i = 0; i < n; ++i) {
       if (input[i] != '\n') continue;
       if (!append_(ZuCSpan(input.data() + begin, i - begin))) return false;
       line_(l);
       if (m_state == Closed) return false;
       begin = i + 1;
     }
-    if (begin == input.length()) return true;
-    return append_(ZuCSpan(input.data() + begin, input.length() - begin));
+    if (begin == n) return true;
+    return append_(ZuCSpan(input.data() + begin, n - begin));
   }
 
 private:
   bool append_(ZuCSpan span) {
-    if (ZuUnlikely(m_line.length() > m_maxLine ||
-	span.length() > m_maxLine - m_line.length())) {
+    unsigned lineLength = m_line.length();
+    if (ZuUnlikely(lineLength > m_maxLine ||
+	span.length() > m_maxLine - lineLength)) {
       close();
       return false;
     }
@@ -2742,24 +2790,27 @@ private:
       m_line.length_(0);
       return;
     }
+    unsigned lineLength = line.length();
     unsigned colon = 0;
-    while (colon < line.length() && line[colon] != ':') ++colon;
+    while (colon < lineLength && line[colon] != ':') ++colon;
     ZuCSpan field{line.data(), colon};
     ZuCSpan value;
-    if (colon < line.length()) {
+    if (colon < lineLength) {
       value = ZuCSpan(line.data() + colon + 1,
-	  line.length() - colon - 1);
+	  lineLength - colon - 1);
       if (value && value[0] == ' ') value.offset(1);
     }
     if (field == "data") {
-      unsigned separator = bool(m_data.length());
+      unsigned dataLength = m_data.length();
+      unsigned valueLength = value.length();
+      unsigned separator = bool(dataLength);
       if (ZuUnlikely(separator > m_maxData ||
-	  value.length() > m_maxData - separator ||
-	  m_data.length() > m_maxData - separator - value.length())) {
+	  valueLength > m_maxData - separator ||
+	  dataLength > m_maxData - separator - valueLength)) {
 	close();
 	return;
       }
-      if (m_data.length()) m_data << '\n';
+      if (dataLength) m_data << '\n';
       m_data << value;
     } else if (field == "id") {
       m_id = value;
@@ -2845,6 +2896,10 @@ struct HTTPMeta {
   HTTPValue name;
 };
 
+namespace ParserState {
+  enum { Empty, Receiving, OriginRejected, Accepted, OverLimit };
+}
+
 template <typename Impl>
 class HTTPParser : public Zhttp::Parser {
 public:
@@ -2854,8 +2909,6 @@ public:
   using Version = ProtocolVersion;
   using Method = MethodHeader;
   using Name = NameHeader;
-
-  enum { Empty, Receiving, OriginRejected, OverLimit };
 
   Impl *impl() { return static_cast<Impl *>(this); }
   const Impl *impl() const { return static_cast<const Impl *>(this); }
@@ -2868,7 +2921,7 @@ public:
     if (method != Zhttp::Method::POST && method != Zhttp::Method::DELETE)
       return false;
     m_method = method;
-    m_state = Receiving;
+    m_state = ParserState::Receiving;
     return true;
   }
 
@@ -2893,16 +2946,16 @@ public:
 
   bool bodyInfo(Zhttp::BodyType::T, uint64_t length) {
     if (!impl()->origin(m_meta.origin)) {
-      m_state = OriginRejected;
+      m_state = ParserState::OriginRejected;
       return false;
     }
     if (ZuUnlikely(length > impl()->limits().maxJSONBytes)) {
-      m_state = OverLimit;
+      m_state = ParserState::OverLimit;
       return false;
     }
     m_body = new HTTPBodyBuf{};
     if (length && !m_body->alloc(length)) {
-      m_state = OverLimit;
+      m_state = ParserState::OverLimit;
       return false;
     }
     return true;
@@ -2910,29 +2963,30 @@ public:
 
   template <typename Rx>
   bool body(Rx &rx) {
-    if (m_state != Receiving || !m_body) return false;
+    if (m_state != ParserState::Receiving || !m_body) return false;
     rx.consume(
       [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-      [this](ZuSpan<uint8_t> span) {
-	unsigned max = impl()->limits().maxJSONBytes;
-	if (ZuUnlikely(m_body->length > max ||
-	    span.length() > max - m_body->length)) {
-	  m_state = OverLimit;
-	  m_body = nullptr;
-	  return;
-	}
-	m_body->append(span);
-      });
-    return m_state == Receiving;
+	[this](ZuSpan<uint8_t> span) {
+	  unsigned max = impl()->limits().maxJSONBytes;
+	  unsigned bodyLength = m_body->length;
+	  if (ZuUnlikely(bodyLength > max ||
+	      span.length() > max - bodyLength)) {
+	    m_state = ParserState::OverLimit;
+	    m_body = nullptr;
+	    return;
+	  }
+	  m_body->append(span);
+	});
+    return m_state == ParserState::Receiving;
   }
 
   template <typename Link>
   void complete(Link *link, bool ok) {
-    if (m_state == OriginRejected) {
+    if (m_state == ParserState::OriginRejected) {
       impl()->originHTTP(link);
       return;
     }
-    if (m_state == OverLimit) {
+    if (m_state == ParserState::OverLimit) {
       impl()->corruptHTTP(link);
       return;
     }
@@ -2948,14 +3002,14 @@ public:
     m_body = nullptr;
     m_meta = {};
     m_method = {};
-    m_state = Empty;
+    m_state = ParserState::Empty;
   }
 
 private:
   ZmRef<ZiIOBuf>	m_body;
   HTTPMeta	m_meta;
   Zhttp::Method::T m_method{};
-  int		m_state = Empty;
+  int		m_state = ParserState::Empty;
 
 };
 
@@ -2976,21 +3030,19 @@ public:
   using Session = SessionID;
   using Version = ProtocolVersion;
 
-  enum { Empty, Receiving, Accepted, OverLimit };
-  enum { Unspecified, JSON, SSE };
-
   Impl *impl() { return static_cast<Impl *>(this); }
   const Impl *impl() const { return static_cast<const Impl *>(this); }
 
+  void streaming(bool v) { m_streaming = v; }
   void status(unsigned status) { m_status = status; }
 
   template <typename Key, typename Value>
   void header(Zhttp::FieldSection::T) {
     if constexpr (ZuIsSame<Key, ContentType>{}) {
       if constexpr (ZuIsSame<Value, JSONContent>{})
-	m_representation = JSON;
+	m_streaming = false;
       else if constexpr (ZuIsSame<Value, SSEContent>{})
-	m_representation = SSE;
+	m_streaming = true;
     }
   }
 
@@ -3006,12 +3058,10 @@ public:
 
   bool bodyInfo(Zhttp::BodyType::T, uint64_t length) {
     if (m_status == 202 && !length) {
-      m_state = Accepted;
+      m_state = ParserState::Accepted;
       return true;
     }
-    m_state = Receiving;
-    m_streaming = m_representation == SSE ||
-      (m_representation == Unspecified && impl()->streaming());
+    m_state = ParserState::Receiving;
     if (m_streaming) {
       m_sse.reset(
 	impl()->limits().maxSSELineBytes,
@@ -3019,12 +3069,12 @@ public:
       return true;
     }
     if (ZuUnlikely(length > impl()->limits().maxJSONBytes)) {
-      m_state = OverLimit;
+      m_state = ParserState::OverLimit;
       return false;
     }
     m_body = new HTTPBodyBuf{};
     if (length && !m_body->alloc(length)) {
-      m_state = OverLimit;
+      m_state = ParserState::OverLimit;
       return false;
     }
     return true;
@@ -3032,35 +3082,36 @@ public:
 
   template <typename Rx>
   bool body(Rx &rx) {
-    if (m_state != Receiving) return false;
+    if (m_state != ParserState::Receiving) return false;
     rx.consume(
       [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
       [this](ZuSpan<uint8_t> span) {
 	if (m_streaming) {
 	  bool ok = m_sse.feed(span, [this](const SSEEvent &event) {
 	    if (!impl()->receiveSSE(event, m_meta)) {
-	      m_state = OverLimit;
+	      m_state = ParserState::OverLimit;
 	      m_sse.close();
 	    }
 	  });
-	  if (ZuUnlikely(!ok)) m_state = OverLimit;
+	  if (ZuUnlikely(!ok)) m_state = ParserState::OverLimit;
 	  return;
 	}
 	unsigned max = impl()->limits().maxJSONBytes;
-	if (ZuUnlikely(m_body->length > max ||
-	    span.length() > max - m_body->length)) {
-	  m_state = OverLimit;
+	unsigned bodyLength = m_body->length;
+	if (ZuUnlikely(bodyLength > max ||
+	    span.length() > max - bodyLength)) {
+	  m_state = ParserState::OverLimit;
 	  m_body = nullptr;
 	  return;
 	}
 	m_body->append(span);
       });
-    return m_state == Receiving;
+    return m_state == ParserState::Receiving;
   }
 
   template <typename Link>
   void complete(Link *link, bool ok) {
-    if (m_state == OverLimit) {
+    if (m_state == ParserState::OverLimit) {
       impl()->corruptHTTPResponse(link);
       return;
     }
@@ -3069,7 +3120,8 @@ public:
       return;
     }
     if (m_status == 202 &&
-	(m_state == Empty || m_state == Accepted)) {
+	(m_state == ParserState::Empty ||
+	  m_state == ParserState::Accepted)) {
       impl()->acceptedHTTPResponse(link, m_status, m_meta);
       return;
     }
@@ -3084,8 +3136,7 @@ public:
     m_meta = {};
     m_status = 0;
     m_streaming = false;
-    m_representation = Unspecified;
-    m_state = Empty;
+    m_state = ParserState::Empty;
     m_sse.close();
   }
 
@@ -3095,8 +3146,7 @@ private:
   SSEDecoder		m_sse;
   unsigned		m_status = 0;
   bool			m_streaming = false;
-  int			m_representation = Unspecified;
-  int			m_state = Empty;
+  int			m_state = ParserState::Empty;
 
 };
 
@@ -3114,12 +3164,13 @@ public:
 
   HTTPOutput &operator <<(ZuBSpan value) {
     if (m_overflow) return *this;
-    if (ZuUnlikely(value.length() > m_max - m_produced)) {
+    unsigned length = value.length();
+    if (ZuUnlikely(length > m_max - m_produced)) {
       m_overflow = true;
       return *this;
     }
     m_out << value;
-    m_produced += value.length();
+    m_produced += length;
     return *this;
   }
 
@@ -3210,12 +3261,13 @@ public:
 
   StdioOutput &operator <<(ZuBSpan value) {
     if (m_overflow) return *this;
-    if (ZuUnlikely(value.length() > m_max - m_buf.length)) {
+    unsigned length = value.length();
+    unsigned offset = m_buf.length;
+    if (ZuUnlikely(offset > m_max || length > m_max - offset)) {
       m_overflow = true;
       return *this;
     }
     m_buf.append(value);
-    if (ZuUnlikely(m_buf.length > m_max)) m_overflow = true;
     return *this;
   }
 
@@ -3248,17 +3300,18 @@ private:
   ZuIfT<ZuPrint<P>::Buffer, StdioOutput &> append_(const P &value) {
     if (m_overflow) return *this;
     unsigned length = ZuPrint<P>::length(value);
-    if (ZuUnlikely(length > m_max - m_buf.length)) {
+    unsigned offset = m_buf.length;
+    if (ZuUnlikely(offset > m_max || length > m_max - offset)) {
       m_overflow = true;
       return *this;
     }
-    auto data = m_buf.ensure(m_buf.length + length);
+    auto data = m_buf.ensure(offset + length);
     if (ZuUnlikely(!data)) {
       m_overflow = true;
       return *this;
     }
-    m_buf.length += ZuPrint<P>::print(
-      reinterpret_cast<char *>(data + m_buf.length), length, value);
+    ZuSpan<char> span{data + offset, length};
+    m_buf.length += ZuPrint<P>::print(span.data(), length, value);
     return *this;
   }
 
@@ -3283,8 +3336,9 @@ public:
   template <typename L>
   bool feed(ZuCSpan input, L &&l) {
     if (m_state == Closed) return false;
+    unsigned n = input.length();
     unsigned begin = 0;
-    for (unsigned i = 0, n = input.length(); i < n; ++i) {
+    for (unsigned i = 0; i < n; ++i) {
       if (input[i] != '\n') continue;
       unsigned length = i - begin;
       unsigned tail = m_tail ? m_tail->length : 0;
@@ -3300,8 +3354,8 @@ public:
       l(ZuMv(frame));
       begin = i + 1;
     }
-    if (begin == input.length()) return true;
-    unsigned length = input.length() - begin;
+    if (begin == n) return true;
+    unsigned length = n - begin;
     unsigned tail = m_tail ? m_tail->length : 0;
     if (ZuUnlikely(tail > m_maxLine || length > m_maxLine - tail)) {
       close();
@@ -3484,11 +3538,17 @@ using StdioQueue_ = ZmList<StdioRecord,
 ZuDerive(StdioRxQueue, (StdioQueue_<"Zmcp.Stdio.RxQueue">));
 ZuDerive(StdioTxQueue, (StdioQueue_<"Zmcp.Stdio.TxQueue">));
 
+namespace StdioState {
+  enum { Initial, Open, Closing, Failed, Closed };
+}
+
+namespace StdioOutcome {
+  enum { None, EOF_, Failed, Stopped };
+}
+
 template <typename Impl>
 class StdioIO {
 public:
-  enum { Fresh, Open, Closing, Failed, Closed };
-
   StdioIO(
       Impl *impl_, ZiMultiplex *mx_,
       unsigned ownerThread_, StdioConfig config) :
@@ -3502,7 +3562,8 @@ public:
   }
 
   ~StdioIO() {
-    ZiAssert(m_state == Fresh || m_state == Closed, "Zmcp", (),
+    ZiAssert(m_state == StdioState::Initial || m_state == StdioState::Closed,
+	"Zmcp", (),
 	"destroying active stdio transport", ());
   }
 
@@ -3519,7 +3580,8 @@ public:
   bool start_() {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio start outside owner shard", return false);
-    if (m_state != Fresh || !m_impl || !m_mx || !m_ownerThread ||
+    if (m_state != StdioState::Initial || !m_impl || !m_mx ||
+	!m_ownerThread ||
 	!m_rxThread || !m_txThread || m_rxThread == m_txThread ||
 	m_ownerThread == m_rxThread || m_ownerThread == m_txThread ||
 	m_ownerThread > m_mx->params().nThreads() ||
@@ -3534,7 +3596,7 @@ public:
 	!m_limits.maxQueue || !m_limits.maxQueueBytes ||
 	!m_limits.workBatch)
       return false;
-    m_state = Open;
+    m_state = StdioState::Open;
     m_mx->wakeFn(m_rxThread,
       ZmScheduler::WakeFn{this, [](StdioIO *io) { io->wakeRx_(); }});
     m_mx->run([this]() { rxWork_(); }, m_rxThread);
@@ -3557,7 +3619,7 @@ public:
   bool send_(ZmRef<ZiIOBuf> frame) {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio send outside owner shard", return false);
-    if (m_state != Open || !frame || !frame->length ||
+    if (m_state != StdioState::Open || !frame || !frame->length ||
 	frame->end()[-1] != '\n' ||
 	frame->length - 1 > m_limits.maxLineBytes)
       return false;
@@ -3585,8 +3647,9 @@ public:
   void stop_() {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio stop outside owner shard", return);
-    if (m_state == Closed || m_state == Closing) return;
-    if (m_state != Failed) m_state = Closing;
+    if (m_state == StdioState::Closed ||
+	m_state == StdioState::Closing) return;
+    if (m_state != StdioState::Failed) m_state = StdioState::Closing;
     stopRx_();
   }
 
@@ -3612,26 +3675,27 @@ private:
     try {
       for (;;) {
 	if (!native) {
-	  rxTerminal_(RxFailed);
+	  rxOutcome_(StdioOutcome::Failed);
 	  break;
 	}
 	ZmRef<ZiIOBuf> buf = new StdioBuf{};
 	int n = input.read(buf->data(), buf->size, false);
 	if (m_rxStopping) break;
 	if (n <= 0) {
-	  rxTerminal_(n == Zi::EndOfFile ? RxEOF : RxFailed);
+	  rxOutcome_(n == Zi::EndOfFile ?
+	    StdioOutcome::EOF_ : StdioOutcome::Failed);
 	  break;
 	}
 	buf->length = unsigned(n);
 	if (!rxEnqueue_(ZuMv(buf))) {
-	  rxTerminal_(RxFailed);
+	  rxOutcome_(StdioOutcome::Failed);
 	  break;
 	}
       }
     } catch (...) {
-      rxTerminal_(RxFailed);
+      rxOutcome_(StdioOutcome::Failed);
     }
-    if (m_rxStopping) rxTerminal_(RxStopped);
+    if (m_rxStopping) rxOutcome_(StdioOutcome::Stopped);
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
       m_rxNative = 0;
@@ -3677,7 +3741,7 @@ private:
     bool post = false;
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
-      if (m_rxStopping || m_rxTerminal ||
+      if (m_rxStopping || m_rxOutcome ||
 	  m_rxQueued >= m_limits.maxQueue ||
 	  m_rxQueuedBytes > m_limits.maxQueueBytes ||
 	  buf->length > m_limits.maxQueueBytes - m_rxQueuedBytes)
@@ -3692,13 +3756,11 @@ private:
     return true;
   }
 
-  enum { RxNone, RxEOF, RxFailed, RxStopped };
-
-  void rxTerminal_(int terminal) {
+  void rxOutcome_(int outcome) {
     bool post = false;
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
-      if (!m_rxTerminal) m_rxTerminal = terminal;
+      if (!m_rxOutcome) m_rxOutcome = outcome;
       if (!m_rxDequeuing) post = m_rxDequeuing = true;
     }
     if (post) m_mx->run([this]() { drainRx_(); }, m_ownerThread);
@@ -3707,7 +3769,7 @@ private:
   void drainRx_() {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio drain outside owner shard", return);
-    if (m_state == Failed) {
+    if (m_state == StdioState::Failed) {
       drainFailedRx_();
       return;
     }
@@ -3744,14 +3806,14 @@ private:
       }
     }
 
-    int terminal = RxNone;
+    int outcome = StdioOutcome::None;
     bool repost = false;
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
       if (m_rxQueued) {
 	repost = true;
-      } else if (m_rxTerminal) {
-	terminal = m_rxTerminal;
+      } else if (m_rxOutcome) {
+	outcome = m_rxOutcome;
 	m_rxDequeuing = false;
       } else {
 	m_rxDequeuing = false;
@@ -3761,17 +3823,17 @@ private:
       m_mx->run([this]() { drainRx_(); }, m_ownerThread);
       return;
     }
-    if (!terminal) return;
-    if (terminal == RxFailed ||
-	(terminal == RxEOF && !m_framer.eof()))
+    if (!outcome) return;
+    if (outcome == StdioOutcome::Failed ||
+	(outcome == StdioOutcome::EOF_ && !m_framer.eof()))
       fail_();
     else
-      rxDrained_(terminal == RxEOF);
+      rxDrained_(outcome == StdioOutcome::EOF_);
   }
 
   void fail_() {
-    if (m_state == Closed) return;
-    m_state = Failed;
+    if (m_state == StdioState::Closed) return;
+    m_state = StdioState::Failed;
     m_framer.close();
     stopRx_();
     drainFailedRx_();
@@ -3811,7 +3873,7 @@ private:
     if (m_rxDrained) return;
     m_rxDrained = true;
     m_framer.close();
-    if (m_state == Open) m_state = Closing;
+    if (m_state == StdioState::Open) m_state = StdioState::Closing;
     stopTx_(flush);
     closed_();
   }
@@ -3830,7 +3892,7 @@ private:
   void txFailed_() {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio failure outside owner shard", return);
-    if (m_state != Closed) m_state = Failed;
+    if (m_state != StdioState::Closed) m_state = StdioState::Failed;
     stopRx_();
     stopTx_();
   }
@@ -3873,13 +3935,13 @@ private:
   }
 
   void closed_() {
-    if (m_state == Closed || !m_rxDrained || !m_rxExited ||
+    if (m_state == StdioState::Closed || !m_rxDrained || !m_rxExited ||
 	!m_txExited || !m_txDrained)
       return;
-    bool failed = m_state == Failed;
+    bool failed = m_state == StdioState::Failed;
     m_input.close();
     m_output.close();
-    m_state = Closed;
+    m_state = StdioState::Closed;
     if (failed) {
       try { m_impl->stdioFailed(); } catch (...) { }
     } else {
@@ -3897,24 +3959,26 @@ private:
   unsigned		m_rxThread;
   unsigned		m_txThread;
 
+  alignas(Zm::CacheLineSize)
   mutable ZmPLock	m_rxLock;
   StdioRxQueue		m_rxQueue;
   uintptr_t		m_rxNative = 0;
   uint64_t		m_rxQueuedBytes = 0;
   unsigned		m_rxQueued = 0;
-  int			m_rxTerminal = RxNone;
+  int			m_rxOutcome = StdioOutcome::None;
   bool			m_rxDequeuing = false;
+  ZmAtomic<unsigned>	m_rxStopping = 0;
 
+  alignas(Zm::CacheLineSize)
   mutable ZmPLock	m_txLock;
   StdioTxQueue		m_txQueue;
   ZmSemaphore		m_txSem;
   uint64_t		m_txQueuedBytes = 0;
   unsigned		m_txQueued = 0;
-
-  ZmAtomic<unsigned>	m_rxStopping = 0;
   ZmAtomic<unsigned>	m_txStopping = 0;
   ZmAtomic<unsigned>	m_txClosing = 0;
-  int			m_state = Fresh;
+
+  int			m_state = StdioState::Initial;
   bool			m_rxDrained = false;
   bool			m_rxFailDraining = false;
   bool			m_rxExited = false;

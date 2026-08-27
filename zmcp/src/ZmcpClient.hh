@@ -23,8 +23,8 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmFn.hh>
-#include <zlib/ZmHeap.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmPQueue.hh>
@@ -36,6 +36,10 @@
 #include <zlib/ZhttpClient.hh>
 
 namespace Zmcp {
+
+using HeaderEncodingPrefix = ZuStringT<"=?base64?">;
+using HeaderEncodingSuffix = ZuStringT<"?=">;
+using ParameterHeaderPrefix = ZuStringT<"Mcp-Param-">;
 
 inline bool plainHeaderValue(ZuCSpan value)
 {
@@ -50,9 +54,13 @@ inline bool plainHeaderValue(ZuCSpan value)
     auto c = uint8_t(value[i]);
     if (c != '\t' && (c < 0x20 || c > 0x7e)) return false;
   }
-  return n < 11 ||
-    ZuCSpan{value.data(), 9} != "=?base64?" ||
-    ZuCSpan{value.data() + n - 2, 2} != "?=";
+  auto prefix = HeaderEncodingPrefix{}();
+  auto suffix = HeaderEncodingSuffix{}();
+  unsigned prefixLength = prefix.length();
+  unsigned suffixLength = suffix.length();
+  return n < prefixLength + suffixLength ||
+    ZuCSpan{value.data(), prefixLength} != prefix ||
+    ZuCSpan{value.data() + n - suffixLength, suffixLength} != suffix;
 }
 
 inline bool validHeaderName(ZuCSpan name)
@@ -80,17 +88,20 @@ inline void headerValue(ZuCSpan value, L &&l)
     return;
   }
   using Buffer = ZtBArray<ZtArrayHeapID<"Zmcp.Header.Value">>;
+  auto prefix = HeaderEncodingPrefix{}();
+  auto suffix = HeaderEncodingSuffix{}();
+  unsigned overhead = prefix.length() + suffix.length();
   uint64_t encoded_ = ZuBase64::enclen(value.length());
-  if (encoded_ > UINT_MAX - 11) return;
+  if (encoded_ > UINT_MAX - overhead) return;
   unsigned encoded = encoded_;
-  auto buffer = ZtScratch(Buffer, encoded + 11);
-  buffer << "=?base64?";
+  auto buffer = ZtScratch(Buffer, encoded + overhead);
+  buffer << prefix;
   unsigned offset = buffer.length();
   buffer.length(offset + encoded);
   encoded = ZuBase64::encode(
     ZuSpan<uint8_t>{buffer}.offset(offset), ZuBSpan{value});
   buffer.length(offset + encoded);
-  buffer << "?=";
+  buffer << suffix;
   l(ZuBSpan{buffer});
 }
 
@@ -99,8 +110,9 @@ inline void parameterHeader(ZuCSpan name, const V &value, L &&l)
 {
   if (!validHeaderName(name)) return;
   using Name = ZtBArray<ZtArrayHeapID<"Zmcp.Header.Name">>;
-  auto header = ZtScratch(Name, name.length() + 10);
-  header << "Mcp-Param-" << name;
+  auto prefix = ParameterHeaderPrefix{}();
+  auto header = ZtScratch(Name, name.length() + prefix.length());
+  header << prefix << name;
   auto emit = [&header, &l](ZuCSpan rendered) {
     headerValue(rendered, [&header, &l](const auto &encoded) {
       l(ZuBSpan{header}, encoded);
@@ -122,8 +134,9 @@ inline void parameterHeader(ZuCSpan name, const V &value, L &&l)
       if (uint64_t(value) > SafeInteger) return;
     }
     using Value = ZtBArray<ZtArrayHeapID<"Zmcp.Header.Integer">>;
-    auto rendered = ZtScratch(Value, 32);
-    rendered << ZuBoxed(value);
+    auto boxed = ZuBoxed(value);
+    auto rendered = ZtScratch(Value, ZuPrint<decltype(boxed)>::length(boxed));
+    rendered << boxed;
     emit(rendered);
   }
 }
@@ -167,8 +180,8 @@ public:
   }
 
 private:
-  Limits	m_limits;
   HTTPValue	m_endpoint{"/mcp"};
+  Limits	m_limits;
   bool		m_legacySessions = true;
 };
 
@@ -214,7 +227,8 @@ struct HTTPRequestBuilder : public Zhttp::ReqBuilder {
     } else if constexpr (ZuIsSame<Key, Accept>{}) {
       if (!empty_(message, 0)) l("application/json, text/event-stream");
     } else if constexpr (ZuIsSame<Key, ContentLength>{})
-      l(empty_(message, 0) ? "0" : "0000000000");
+      l(empty_(message, 0) ?
+	ZuCSpan{"0"} : Zhttp::contentLengthPad());
     else if constexpr (ZuIsSame<Key, Version>{})
       l(era == Era::Legacy ? LegacyVersion{}() : ModernVersion{}());
     else if constexpr (ZuIsSame<Key, Session>{}) {
@@ -252,14 +266,9 @@ struct HTTPRequestBuilder : public Zhttp::ReqBuilder {
   template <typename L>
   void bodyHdrs(L &&l) const {
     if (empty_(message, 0)) return;
-    l.template operator()<ContentLength>(
-      [length = bodyLength](ZuSpan<uint8_t> span) {
-	ZuStream s{span};
-	s << ZuBoxed(length).fmt<ZuFmt::Right<10>>();
-      });
+    Zhttp::contentLengthSet(l, bodyLength);
   }
 
-private:
   template <typename M>
   static auto empty_(const M &message_, int) ->
       decltype(message_.empty(), bool()) {
@@ -482,16 +491,8 @@ struct PendingEntry {
 	});
 	return true;
       }},
-      errorFn{[](void *object_, const Error &error) {
-	static_cast<Call *>(object_)->failed(error);
-      }},
-      failedFn{[](void *object_) {
-	static_cast<Call *>(object_)->failed();
-      }},
-      releaseFn{[](void *object_) {
-	auto call_ = static_cast<Call *>(object_);
-	if (call_->deref()) delete call_;
-      }} { }
+      errorFn{error_<Call>}, failedFn{failed_<Call>},
+      releaseFn{release_<Call>} { }
 
   template <typename Call>
   PendingEntry(ID id_, ZmRef<Call> call) :
@@ -500,16 +501,8 @@ struct PendingEntry {
 	static_cast<Call *>(object_)->process();
 	return true;
       }},
-      errorFn{[](void *object_, const Error &error) {
-	static_cast<Call *>(object_)->failed(error);
-      }},
-      failedFn{[](void *object_) {
-	static_cast<Call *>(object_)->failed();
-      }},
-      releaseFn{[](void *object_) {
-	auto call_ = static_cast<Call *>(object_);
-	if (call_->deref()) delete call_;
-      }} { }
+      errorFn{error_<Call>}, failedFn{failed_<Call>},
+      releaseFn{release_<Call>} { }
 
   ~PendingEntry() { release_(); }
 
@@ -521,6 +514,20 @@ struct PendingEntry {
   }
   void failed() {
     if (object) failedFn(object);
+  }
+
+  template <typename Call>
+  static void error_(void *object, const Error &error) {
+    static_cast<Call *>(object)->failed(error);
+  }
+  template <typename Call>
+  static void failed_(void *object) {
+    static_cast<Call *>(object)->failed();
+  }
+  template <typename Call>
+  static void release_(void *object) {
+    auto call = static_cast<Call *>(object);
+    if (call->deref()) delete call;
   }
 
   void release_() {
@@ -929,12 +936,12 @@ private:
     return m_nextID++;
   }
 
-  Limits	m_limits;
   ID		m_probeID;
   ID		m_initializeID;
   ID		m_toolsID;
   CatalogCache	m_cache;
   int64_t	m_nextID = 1;
+  Limits	m_limits;
   int		m_state = ClientState::Fresh;
   int		m_era = Era::Unknown;
 };
@@ -965,10 +972,12 @@ struct ControlAction : public ControlAction_<Call, ControlHeap<Call>> {
 
 namespace HTTPClient_ {
 
-enum RequestKind {
-  Discover, Initialize, Initialized, Ping, SetLevel, ToolsList, ToolCall,
-  Cancelled, Delete
-};
+namespace ReqType {
+  enum {
+    Discover, Initialize, Initialized, Ping, SetLevel, ToolsList, ToolCall,
+    Cancelled, Delete
+  };
+}
 
 template <typename Catalog>
 class Message {
@@ -983,23 +992,23 @@ public:
   void init(M message) {
     m_data.template p<M>(ZuMv(message));
     if constexpr (ZuIsSame<M, DiscoverRequestMessage>{})
-      m_kind = Discover;
+      m_kind = ReqType::Discover;
     else if constexpr (ZuIsSame<M, InitializeRequestMessage>{})
-      m_kind = Initialize;
+      m_kind = ReqType::Initialize;
     else if constexpr (ZuIsSame<M, InitializedMessage>{})
-      m_kind = Initialized;
+      m_kind = ReqType::Initialized;
     else if constexpr (ZuIsSame<M, PingRequestMessage>{})
-      m_kind = Ping;
+      m_kind = ReqType::Ping;
     else if constexpr (ZuIsSame<M, SetLevelRequestMessage>{})
-      m_kind = SetLevel;
+      m_kind = ReqType::SetLevel;
     else if constexpr (ZuIsSame<M, ToolsListRequestMessage>{})
-      m_kind = ToolsList;
+      m_kind = ReqType::ToolsList;
     else if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
-      m_kind = ToolCall;
+      m_kind = ReqType::ToolCall;
     else if constexpr (ZuIsSame<M, CancelledRequestMessage>{})
-      m_kind = Cancelled;
+      m_kind = ReqType::Cancelled;
     else
-      m_kind = Delete;
+      m_kind = ReqType::Delete;
   }
 
   int kind() const { return m_kind; }
@@ -1032,7 +1041,7 @@ public:
     return out;
   }
 
-  bool empty() const { return m_kind == Delete; }
+  bool empty() const { return m_kind == ReqType::Delete; }
 
   bool streaming() const {
     bool out = false;
@@ -1046,14 +1055,14 @@ public:
 
   bool idempotent() const {
     switch (m_kind) {
-      case Discover:
-      case Ping:
-      case SetLevel:
-      case ToolsList:
-      case Cancelled:
-      case Delete:
+      case ReqType::Discover:
+      case ReqType::Ping:
+      case ReqType::SetLevel:
+      case ReqType::ToolsList:
+      case ReqType::Cancelled:
+      case ReqType::Delete:
 	return true;
-      case ToolCall:
+      case ReqType::ToolCall:
 	return m_data.template p<ToolCallRequestMessage<Catalog>>()
 	  .idempotent();
       default:
@@ -1079,7 +1088,7 @@ public:
 
 private:
   Data	m_data;
-  int	m_kind = Discover;
+  int	m_kind = ReqType::Discover;
 };
 
 template <typename Impl, typename Catalog> class Client;
@@ -1165,12 +1174,9 @@ class ResponseParser :
   using Request = Request_<Impl, Catalog>;
 
 public:
-  void init(const Request &request) {
-    m_request = const_cast<Request *>(&request);
-  }
-
-  bool streaming() const {
-    return m_request && m_request->streaming();
+  void init(Request &request) {
+    m_request = &request;
+    Base::streaming(request.streaming());
   }
 
   const Limits &limits() const { return m_request->client->limits(); }
@@ -1377,7 +1383,7 @@ public:
   }
 
   bool start() {
-    if (!m_mx || m_started || m_done || !Base::start()) return false;
+    if (!m_mx || m_started || m_done.load_() || !Base::start()) return false;
     m_started = true;
     m_up = true;
     ownerRun_([this]() {
@@ -1392,7 +1398,7 @@ public:
 
   bool stop() {
     if (!m_mx) return false;
-    if (m_done) return !m_failure;
+    if (m_done.load_()) return !m_failure;
     m_up = false;
     if (m_started) Base::stop();
     m_started = false;
@@ -1589,27 +1595,31 @@ public:
     if (!request) return;
     bool ok = result.ok() && !result.retries && request->responseOK;
     int kind = request->kind();
-    if (kind == ToolCall) {
-      if (const ID *id = request->id())
-	{
+    switch (kind) {
+      case ReqType::ToolCall:
+	if (const ID *id = request->id()) {
 	  (void)m_active.del(*id);
 	  if (m_pending.fail(*id)) ok = false;
 	}
-    } else if (kind == Ping || kind == SetLevel) {
-      if (const ID *id = request->id())
-	if (m_pending.fail(*id)) ok = false;
-    } else if (kind == Delete) {
-      if (ok) {
-	m_sessionID.null();
-	m_peer.close();
-	m_ready = false;
-      }
-      app_([this, ok]() { terminated_(m_impl, ok, 0); });
+	break;
+      case ReqType::Ping:
+      case ReqType::SetLevel:
+	if (const ID *id = request->id())
+	  if (m_pending.fail(*id)) ok = false;
+	break;
+      case ReqType::Delete:
+	if (ok) {
+	  m_sessionID.null();
+	  m_peer.close();
+	  m_ready = false;
+	}
+	app_([this, ok]() { terminated_(m_impl, ok, 0); });
+	break;
     }
     if (request->serial && request->Base::sequence == m_current)
       m_current = 0;
     if (!ok) {
-      if (kind == Discover && result.ok() &&
+      if (kind == ReqType::Discover && result.ok() &&
 	  result.status >= 400 && result.status < 500) {
 	bool sent = false;
 	bool initialized = m_peer.fallback(
@@ -1619,7 +1629,7 @@ public:
 	if (!initialized || !sent) fail_();
 	return;
 	}
-      if (kind != Delete && m_peer.era() == Era::Legacy &&
+      if (kind != ReqType::Delete && m_peer.era() == Era::Legacy &&
 	  !request->cancelled &&
 	  (result.status == 404 || result.status == 410)) {
 	m_sessionID.null();
@@ -1633,8 +1643,15 @@ public:
 	  if (!initialized || !sent) fail_();
 	}
       }
-      if (kind != ToolCall && kind != Ping && kind != SetLevel &&
-	  kind != Delete) fail_();
+      switch (kind) {
+	case ReqType::ToolCall:
+	case ReqType::Ping:
+	case ReqType::SetLevel:
+	case ReqType::Delete:
+	  break;
+	default:
+	  fail_();
+      }
     }
     if (!m_up.load_()) return;
     if (!m_current) sendNext_();
@@ -1705,7 +1722,7 @@ private:
     if (request_) *request_ = request.ptr();
     if (serial && (m_current || m_drainingSerial)) {
       if (m_serial.count_() >= m_limits.maxQueue) return false;
-      if (request->kind() == Initialized)
+      if (request->kind() == ReqType::Initialized)
 	m_serial.unshift(SerialRecord<Impl, Catalog>{ZuMv(request)});
       else
 	m_serial.push(SerialRecord<Impl, Catalog>{ZuMv(request)});
@@ -1748,7 +1765,8 @@ private:
   static void toolsFailed_(App *, long) { }
 
   void session_(ReqBase *request, const HTTPResponseMeta &meta) {
-    if (request->kind() == Initialize && m_legacySessions && meta.sessionID)
+    if (request->kind() == ReqType::Initialize &&
+	m_legacySessions && meta.sessionID)
       m_sessionID = meta.sessionID;
   }
 
@@ -1862,7 +1880,7 @@ private:
   static void terminated_(App *, bool, long) { }
 
   void fail_() {
-    if (m_failure || m_done) return;
+    if (m_failure || m_done.load_()) return;
     m_failure = true;
     m_up = false;
     m_peer.close();
@@ -1900,13 +1918,12 @@ private:
     switch (m_stopPhase) {
       case 0:
 	while (visited < m_limits.workBatch) {
-	  auto i = m_active.iter();
-	  if (!i()) {
+	  auto entry = takeActive_();
+	  if (!entry) {
 	    m_stopPhase = 1;
 	    break;
 	  }
 	  ++visited;
-	  (void)i.del();
 	}
 	break;
       case 1:
@@ -1932,6 +1949,12 @@ private:
     if (stopFn) stopFn(!m_failure);
   }
 
+  ActiveHash::NodeMvRef takeActive_() {
+    auto i = m_active.iter();
+    if (!i()) return decltype(i.del()){};
+    return i.del();
+  }
+
   Impl			*m_impl = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   PendingCalls		m_pending;
@@ -1946,15 +1969,17 @@ private:
   uint64_t		m_current = 0;
   unsigned		m_ownerThread = 0;
   int			m_stopPhase = 0;
-  ZmAtomic<unsigned>	m_up = 0;
-  ZmAtomic<unsigned>	m_ingress = 0;
-  ZmAtomic<unsigned>	m_terminating = 0;
   bool			m_legacySessions = true;
   bool			m_started = false;
   bool			m_drainingSerial = false;
   bool			m_ready = false;
-  bool			m_done = false;
   bool			m_failure = false;
+
+  ZmAtomic<unsigned>	m_up = 0;
+  ZmAtomic<unsigned>	m_terminating = 0;
+  ZmAtomic<unsigned>	m_done = 0;
+
+  ZmAtomic<unsigned>	m_ingress = 0;
 };
 
 } // HTTPClient_
@@ -2016,7 +2041,7 @@ public:
   }
 
   bool start() {
-    if (!m_mx || !m_stdio || !m_up.load_() || m_started || m_done)
+    if (!m_mx || !m_stdio || !m_up.load_() || m_started || m_done.load_())
       return false;
     return ZmBlock<bool>{}([this](auto wake) mutable {
       m_mx->run([this, wake = ZuMv(wake)]() mutable {
@@ -2042,10 +2067,10 @@ public:
 
   bool stop() {
     if (!m_mx) return false;
-    if (m_done) return !m_failure;
+    if (m_done.load_()) return !m_failure;
     return ZmBlock<bool>{}([this](auto wake) mutable {
       m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	if (m_done) {
+	if (m_done.load_()) {
 	  wake(!m_failure);
 	  return;
 	}
@@ -2318,7 +2343,7 @@ private:
   void fail_() {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio client failure outside owner shard", return);
-    if (m_done || m_failure) return;
+    if (m_done.load_() || m_failure) return;
     m_failure = true;
     m_up = false;
     m_peer.close();
@@ -2360,7 +2385,7 @@ private:
   void done_(bool failed) {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio client completion outside owner shard", return);
-    if (m_done) return;
+    if (m_done.load_()) return;
     m_failure |= failed;
     m_up = false;
     m_peer.close();
@@ -2391,11 +2416,13 @@ private:
   ZmFn<void(bool)>	m_stopFn;
   Limits		m_limits;
   unsigned		m_ownerThread = 0;
-  ZmAtomic<unsigned>	m_up = 0;
-  ZmAtomic<unsigned>	m_ingress = 0;
   bool			m_started = false;
-  bool			m_done = false;
   bool			m_failure = false;
+
+  ZmAtomic<unsigned>	m_up = 0;
+  ZmAtomic<unsigned>	m_done = 0;
+
+  ZmAtomic<unsigned>	m_ingress = 0;
 };
 
 } // Zmcp
