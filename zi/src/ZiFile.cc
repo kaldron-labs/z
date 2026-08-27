@@ -929,7 +929,7 @@ error:
   return Zi::IOError;
 }
 
-int ZiFile::read(void *ptr, unsigned len)
+int ZiFile::read(void *ptr, unsigned len, bool all)
 {
   if (!len) return 0;
 
@@ -967,7 +967,7 @@ retry:
 
   total += r;
 
-  if ((unsigned)r < len) {
+  if (all && (unsigned)r < len) {
     ptr = static_cast<void *>(static_cast<uint8_t *>(ptr) + r);
     len -= r;
     goto retry;

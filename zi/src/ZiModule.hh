@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZmLock.hh>
+#include <zlib/ZmTopology.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -54,7 +55,7 @@ public:
 #endif
   };
 
-  ZiModule() : m_handle(0), m_flags(0) { }
+  ZiModule() : m_handle(0), m_flags(0) { ZmTopology::hwloc(); }
   ~ZiModule() { finalize(); }
 
   ZiModule(const ZiModule &) = delete;

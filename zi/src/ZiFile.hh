@@ -202,7 +202,8 @@ public:
 
   int sync();
 
-  int read(void *ptr, unsigned len);
+  // all=false returns after the first successful underlying read
+  int read(void *ptr, unsigned len, bool all = true);
   int readv(const ZiVec *vecs, unsigned nVecs);
 
   int write(const void *ptr, unsigned len);

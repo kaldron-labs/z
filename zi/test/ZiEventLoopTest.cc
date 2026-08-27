@@ -12,6 +12,7 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiEventLoop.hh>
+#include <zlib/ZiIOBuf.hh>
 
 #include "ZiTestPorts.hh"
 
@@ -401,6 +402,102 @@ void testHandleDispatch()
   ZuCHECK(!state.failed.load_(), "handle path hit fail callback");
 }
 
+void testHandleWriteReady()
+{
+  ZuTestScope(testHandleWriteReady);
+
+#ifdef _WIN32
+  ZuCheck(true);
+#else
+  HandleSignal pipe;
+  ZuCHECK(makeHandleSignal(pipe), "makeHandleSignal() failed");
+  if (Zi::nullHandle(pipe.loopHandle)) return;
+
+  int flags = ::fcntl(pipe.triggerHandle, F_GETFL, 0);
+  bool unblocked = flags >= 0 &&
+    !::fcntl(pipe.triggerHandle, F_SETFL, flags | O_NONBLOCK);
+  ZuCHECK(unblocked, "unblock write handle failed");
+  if (!unblocked) {
+    closeHandleSignal(pipe);
+    return;
+  }
+
+  ZmRef<ZiIOBuf> fill = new ZiIOBufAlloc<ZiIOBuf_DefltSize>{};
+  memset(fill->data(), 'F', fill->size);
+  unsigned filled = 0;
+  for (;;) {
+    int n = int(::write(pipe.triggerHandle, fill->data(), fill->size));
+    if (n > 0) {
+      filled += unsigned(n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) continue;
+    ZuCHECK(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK),
+	"fill pipe failed");
+    break;
+  }
+
+  ZmScheduler sched{ZmSchedParams().id("ZiEventLoopWriteTest")};
+  ZiEventLoop loop;
+  ZmSemaphore started, written, stopped;
+  ZmAtomic<unsigned> failed = 0, loopStarted = 0;
+
+  sched.start();
+  loop.init(&sched, 1, [&failed, &started, &written, &stopped](ZeException e) {
+    log_("handle write fail: ", e);
+    failed.store_(1);
+    started.post();
+    written.post();
+    stopped.post();
+  });
+  loop.start([&loop, &pipe, &started, &written, &failed, &loopStarted](
+      ZiEvent::StartResult result) {
+    if (result.is<ZiEvent::Exception>()) {
+      failed.store_(1);
+      started.post();
+      return;
+    }
+    loopStarted.store_(1);
+    bool added = loop.addHandle(pipe.triggerHandle,
+      [&loop, &written, &failed](Zi::Handle handle) {
+	char byte = 'W';
+	int n = int(::write(handle, &byte, 1));
+	if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
+	if (n != 1) failed.store_(1);
+	loop.delHandle(handle);
+	written.post();
+      }, {});
+    if (!added) failed.store_(1);
+    started.post();
+  });
+
+  ZuCHECK(waitFor(started), "handle write start timed out");
+  while (filled) {
+    unsigned length = filled < fill->size ? filled : fill->size;
+    int n = int(::read(pipe.loopHandle, fill->data(), length));
+    if (n > 0) {
+      filled -= unsigned(n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) continue;
+    break;
+  }
+  ZuCHECK(waitFor(written), "handle write readiness timed out");
+  ZuCHECK(!failed.load_(), "handle write path failed");
+
+  if (loopStarted.load_()) {
+    loop.stop([&failed, &stopped](ZiEvent::StopResult result) {
+      if (result.is<ZiEvent::Exception>()) failed.store_(1);
+      stopped.post();
+    });
+    ZuCHECK(waitFor(stopped), "handle write stop timed out");
+  }
+  sched.stop();
+  loop.final();
+  closeHandleSignal(pipe);
+#endif
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -418,5 +515,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testSocketSendRecv);
   ZuTestCall(testHandleDispatch);
+  ZuTestCall(testHandleWriteReady);
   return 0;
 }
