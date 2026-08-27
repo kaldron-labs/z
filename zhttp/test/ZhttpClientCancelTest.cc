@@ -129,7 +129,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 
   template <typename L>
   void operation(L &&l) const {
-    l(Zhttp::Method::GET, [this](auto &&emit) {
+    l(method, [this](auto &&emit) {
       emit([this](auto &tx) { tx << target; });
     });
   }
@@ -180,6 +180,9 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 
   uint64_t key() const { return key_; }
   uint64_t length() const { return 1; }
+  bool idempotent(Zhttp::Method::T method_) const {
+    return idempotent_ || Zhttp::idempotentMethod(method_);
+  }
 
   App			*app = nullptr;
   Zhttp::URLString	target{"/"};
@@ -189,6 +192,8 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   unsigned		completions = 0;
   mutable unsigned	inits = 0;
   Zhttp::ResultCode::T resultCode = Zhttp::ResultCode::OK;
+  Zhttp::Method::T	method = Zhttp::Method::GET;
+  bool			idempotent_ = false;
 };
 
 int listenerAt(uint16_t);
@@ -253,8 +258,8 @@ private:
   ReqBuilderQ	m_requests;
 };
 
-static_assert(ZuIsSame<
-  decltype(ZuDeclVal<const Pool &>().authority()), ZuBSpan>{});
+ZuAssert((ZuIsSame<
+  decltype(ZuDeclVal<const Pool &>().authority()), ZuBSpan>{}));
 
 struct App : public Zhttp::Client<App, Pool> {
   using Base = Zhttp::Client<App, Pool>;
@@ -1956,6 +1961,7 @@ void retry()
 
   auto request = app.request();
   request->target = "/";
+  request->method = Zhttp::Method::POST;
   app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -1987,6 +1993,56 @@ void retry()
   mx.stop();
 }
 
+void redirectUnsafe()
+{
+  ZuTestScope(redirectUnsafe);
+
+  uint16_t port;
+  int fd = listener(port);
+  ZuCHECK(fd >= 0 && port, "create non-idempotent redirect listener");
+  if (fd < 0) return;
+  ZmAtomic<unsigned> serverOK = 0;
+  ServerSockets sockets{fd};
+  ZmThread server{[&sockets, &serverOK]() {
+    serverOK.store_(serveRedirect(sockets, false));
+  }};
+
+  ZiMultiplex mx{mxParams()};
+  ZuCHECK(mx.start(), "start non-idempotent redirect multiplexer");
+  App app;
+  app.expected = 1;
+  auto config = Zhttp::Config()
+    .concurrency(1).maxRedirects(2)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
+    .tcp(true).tls(true).quic(false);
+  ZuCHECK(startApp(app, mx, port, config),
+    "initialize/start non-idempotent redirect agent");
+
+  auto request = app.request();
+  request->method = Zhttp::Method::POST;
+  request->target = "/start";
+  app.send(0, request);
+  app.seal(0);
+  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
+    "non-idempotent redirect completes without replay");
+  app.stop();
+  sockets.stop();
+  server.join();
+
+  ZuCHECK(serverOK.load_(),
+    "non-idempotent redirect server receives one request");
+  ZuCHECK(app.results.length() == 1 &&
+      app.results[0].code == Zhttp::ResultCode::ReplayUnsafe &&
+      app.results[0].redirects == 0,
+    "non-idempotent redirect is not replayed");
+  ZuCHECK(app.selectedEvents == 1 && !app.redirectedEvents &&
+      app.completedEvents == 1,
+    "non-idempotent redirect has one terminal attempt");
+
+  app.final();
+  mx.stop();
+}
+
 void redirect()
 {
   ZuTestScope(redirect);
@@ -2013,6 +2069,8 @@ void redirect()
     "initialize/start redirect agent");
 
   auto request = app.request();
+  request->method = Zhttp::Method::POST;
+  request->idempotent_ = true;
   request->target = "/start";
   app.send(0, request);
   app.seal(0);
@@ -2957,6 +3015,7 @@ int main(int argc, char **argv)
   ZuTestCall(timeout);
   ZuTestCall(retry);
   ZuTestCall(redirect);
+  ZuTestCall(redirectUnsafe);
   ZuTestCall(crossOriginRedirect);
   ZuTestCall(retryLimit);
   ZuTestCall(resolverLifecycle);

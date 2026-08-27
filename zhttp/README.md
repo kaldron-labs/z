@@ -87,6 +87,7 @@ struct ReqBuilder_ : ZmObject, Zhttp::ReqBuilder {
   Zhttp::URLString target{"/"};
   uint64_t key() const;
   uint64_t length() const { return 1; }
+  bool idempotent(Zhttp::Method::T method) const;
 
   template <typename L>
   void operation(L &&l) const {
@@ -312,6 +313,12 @@ separate query for closing a connection after a successful response.
 Client request writers remain single-turn and accept only `End` as success.
 Every client Builder must reproduce the same message when a retry or redirect
 traverses it again. Multi-turn streaming request bodies are unsupported.
+`ReqBuilder::idempotent(method)` defaults to the standard HTTP method
+semantics.  Override it when application semantics make a normally
+non-idempotent method, such as `POST`, idempotent.  Zhttp may repeat any
+attempt known not to have been applied; after possible application it repeats
+only an idempotent request.  Redirects which repeat the method and body use the
+same rule.
 
 ```c++
 template <typename Emit>

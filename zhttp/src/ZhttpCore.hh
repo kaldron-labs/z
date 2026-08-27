@@ -15,6 +15,7 @@
 
 #include <string.h>
 
+#include <zlib/ZuAssert.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
@@ -86,6 +87,21 @@ inline bool earlyDataSafeMethod(Method::T method)
   }
 }
 
+inline bool idempotentMethod(Method::T method)
+{
+  switch (method) {
+    case Method::GET:
+    case Method::PUT:
+    case Method::DELETE:
+    case Method::HEAD:
+    case Method::OPTIONS:
+    case Method::TRACE:
+      return true;
+    default:
+      return false;
+  }
+}
+
 inline bool earlyDataSafeRequest(Method::T method, bool hasBody)
 {
   return !hasBody && earlyDataSafeMethod(method);
@@ -133,7 +149,7 @@ ZuInline bool streaming(T v) {
 
 template <typename Headers>
 struct HeaderList {
-  static_assert(!(Headers::N & 1), "header list must contain key/value pairs");
+  ZuAssert(!(Headers::N & 1), "header list must contain key/value pairs");
   enum { N = Headers::N >> 1 };
   template <unsigned I> using Key = ZuType<I << 1, Headers>;
   template <unsigned I> using Value = ZuType<(I << 1) + 1, Headers>;
@@ -143,7 +159,7 @@ struct HeaderList {
 
 template <typename Values>
 struct HeaderValue_ {
-  static_assert(Values::N == 1,
+  ZuAssert(Values::N == 1,
     "builder header must have exactly one fixed value");
   using T = ZuType<0, Values>;
 };

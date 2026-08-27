@@ -12,6 +12,7 @@
 #endif
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpInteropPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -103,8 +104,8 @@ void testDarkhttpdCompat()
   TempDir temp;
   ZuCHECK(temp.init("ZhttpDarkhttpd"),
     "Zhttp darkhttpd temporary directory failed");
-  unsigned zport = loopbackPort();
-  unsigned dport = loopbackPort();
+  unsigned zport = loopbackPort(ZhttpInteropPort::DarkZ);
+  unsigned dport = loopbackPort(ZhttpInteropPort::DarkD);
   ZuCHECK(zport && dport && zport != dport,
     "Zhttp darkhttpd port allocation failed");
   if (!zport || !dport || zport == dport) return;

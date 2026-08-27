@@ -14,6 +14,7 @@
 #include <zlib/Zhttp.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpInteropPorts.hh"
 
 using namespace ZuTestUtil;
 
@@ -1030,7 +1031,7 @@ void testZhttpClientCaddyHttp()
   TempDir temp;
   ZuCHECK(temp.init("ZhttpClientCaddyHttp"),
     "Zhttp client->Caddy HTTP temporary directory failed");
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::ClientCaddyHTTP);
   ZuCHECK(port, "Zhttp client->Caddy HTTP port allocation failed");
   if (!port) return;
   auto caddyfile = temp.pathOf("Caddyfile");
@@ -1077,7 +1078,7 @@ void testZhttpClientCaddyHttpsH1()
   ZtString<> certPath, keyPath;
   ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "Zhttp client->Caddy HTTPS/H1 certificate generation failed");
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::ClientCaddyH1);
   ZuCHECK(port, "Zhttp client->Caddy HTTPS/H1 port allocation failed");
   if (!port) return;
   auto caddyfile = temp.pathOf("Caddyfile");
@@ -1127,7 +1128,7 @@ void testZhttpClientCaddyHttpsH3()
   ZtString<> certPath, keyPath;
   ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
     "Zhttp client->Caddy HTTPS/H3 certificate generation failed");
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::ClientCaddyH3);
   ZuCHECK(port, "Zhttp client->Caddy HTTPS/H3 port allocation failed");
   if (!port) return;
   auto caddyfile = temp.pathOf("Caddyfile");
@@ -1247,7 +1248,7 @@ void testCurlZhttpHttpServer()
 
   ServerTest state;
   state.body = "server-http-ok";
-  state.port = loopbackPort();
+  state.port = loopbackPort(ZhttpInteropPort::ServerHTTP);
   ZuCHECK(state.port, "curl->Zhttp HTTP port allocation failed");
   if (!state.port) return;
   ZiMultiplex mx(mxParams());
@@ -1283,7 +1284,7 @@ void testCurlZhttpHttpsH1Server()
     "curl->Zhttp HTTPS/H1 certificate generation failed");
   ServerTest state;
   state.body = "server-h1-ok";
-  state.port = loopbackPort();
+  state.port = loopbackPort(ZhttpInteropPort::ServerH1);
   ZuCHECK(state.port, "curl->Zhttp HTTPS/H1 port allocation failed");
   if (!state.port) return;
   ZiMultiplex mx(mxParams());

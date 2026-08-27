@@ -46,6 +46,24 @@ struct StreamState {
 
 namespace Server_ {
 
+template <typename App>
+auto connected(App *app, Session session, int) ->
+    decltype(app->connected(session), void())
+{
+  app->connected(session);
+}
+template <typename App>
+void connected(App *, Session, ...) { }
+
+template <typename App>
+auto disconnected(App *app, Session session, int) ->
+    decltype(app->disconnected(session), void())
+{
+  app->disconnected(session);
+}
+template <typename App>
+void disconnected(App *, Session, ...) { }
+
 inline bool streamTxThread(int txThread)
 {
   bool valid = ZmSelf() && ZmSelf()->sid() == txThread;
@@ -550,7 +568,10 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
   const ZiIP &remoteIP() const { return m_remoteIP; }
   uint16_t remotePort() const { return m_remotePort; }
-  Session &session() { return m_session; }
+  Zhttp::Session session() const {
+    return {uintptr_t(m_native), Transport::TLS};
+  }
+  Session &rxState() { return m_session; }
   auto txStream() { return m_native->logicalTx(m_streamID); }
   void txErrorFn(ZiTxErrorFn fn) {
     if (m_native)
@@ -658,7 +679,10 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
   const ZiIP &remoteIP() const { return m_remoteIP; }
   uint16_t remotePort() const { return m_remotePort; }
-  Session &session() { return m_session; }
+  Zhttp::Session session() const {
+    return {uintptr_t(m_native), Transport::TLS};
+  }
+  Session &rxState() { return m_session; }
   auto txStream() { return m_native->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
     if (m_native) m_native->txErrorFn(ZuMv(fn));
@@ -951,6 +975,9 @@ public:
 
   void connected(Ztls::Connected info) {
     m_version = TLS_::version(info.alpn, m_policy);
+    if (m_version == Version::H1 || m_version == Version::H2)
+      Server_::connected(
+        this->app()->user(), {uintptr_t(this), Transport::TLS}, 0);
     switch (m_version) {
 	case Version::H1:
 	m_h1 = new H1Logical{
@@ -1127,6 +1154,8 @@ private:
     });
   }
   void down_() {
+    Server_::disconnected(
+      this->app()->user(), {uintptr_t(this), Transport::TLS}, 0);
     this->app()->user()->release();
     this->app()->linkDown();
   }
@@ -1351,6 +1380,8 @@ struct SrvLink :
       Base::disconnect(H3::SettingsError);
       return;
     }
+    Server_::connected(
+      this->app()->user(), {uintptr_t(this), Transport::QUIC}, 0);
     const auto &config = this->app()->user()->quicConfig();
     H3::QPackLimits limits{
       config.qpackRxCapacity(), config.qpackTxCapacity(),
@@ -1391,6 +1422,8 @@ struct SrvLink :
       if (owner) owner->disconnected_(peer);
     }
     logical.length(0);
+    Server_::disconnected(
+      this->app()->user(), {uintptr_t(this), Transport::QUIC}, 0);
     h3.qpackRxTable.final();
     auto link = ZmRef(this);
     this->app()->txRun([link]() mutable {
@@ -1556,7 +1589,10 @@ public:
 
   const ZiIP &remoteIP() const { return m_remoteIP; }
   uint16_t remotePort() const { return m_remotePort; }
-  Session &session() { return m_session; }
+  Zhttp::Session session() const {
+    return {uintptr_t(m_native), Transport::QUIC};
+  }
+  Session &rxState() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
   void txErrorFn(ZiTxErrorFn fn) {
     if (m_native) m_native->h3.txErrorFn(fn);
@@ -2363,6 +2399,12 @@ private:
       });
     }
 
+    void responseCancel(StreamCancelFn fn) {
+      auto server = impl()->app()->server;
+      server->assertTx_();
+      responseCancel_(ZuMv(fn));
+    }
+
   private:
     friend Server;
     template <typename P, typename L, typename H> friend struct StreamBody_;
@@ -2554,11 +2596,21 @@ private:
     template <typename LinkT>
     void connected(LinkT &link, const ConnectedInfo &) {
       server->registerTxError_(link);
+      if constexpr (!HTTP::Multiplexed)
+	server->connected(&link, HTTP::Transport::ID);
       server->m_app->connected(HTTP::Transport::ID);
     }
     template <typename LinkT>
     void disconnected(LinkT &link, bool) {
       link.responseDisconnected_();
+      if constexpr (!HTTP::Multiplexed)
+	server->disconnected(&link, HTTP::Transport::ID);
+    }
+    void connected(Zhttp::Session session) {
+      server->connected(session);
+    }
+    void disconnected(Zhttp::Session session) {
+      server->disconnected(session);
     }
     void release() {
       server->release(HTTP::Transport::ID);
@@ -2613,6 +2665,12 @@ private:
     template <typename Link_>
     void disconnected(Link_ &link, bool) {
       link.responseDisconnected_();
+    }
+    void connected(Zhttp::Session session) {
+      server->connected(session);
+    }
+    void disconnected(Zhttp::Session session) {
+      server->disconnected(session);
     }
     void release() { server->release(Transport::TLS); }
     void listening(const ZiListenInfo &info) {
@@ -2877,6 +2935,24 @@ private:
   void release(Transport::T transport) {
     --m_stats.activeConnections;
     m_app->disconnected(transport);
+  }
+
+  void connected(const void *id, Transport::T transport) {
+    connected(Zhttp::Session{uintptr_t(id), transport});
+  }
+
+  void connected(Zhttp::Session session) {
+    Server_::connected(
+      m_app, session, 0);
+  }
+
+  void disconnected(const void *id, Transport::T transport) {
+    disconnected(Zhttp::Session{uintptr_t(id), transport});
+  }
+
+  void disconnected(Zhttp::Session session) {
+    Server_::disconnected(
+      m_app, session, 0);
   }
 
   ZiMultiplex		*m_mx = nullptr;

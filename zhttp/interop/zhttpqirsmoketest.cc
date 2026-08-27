@@ -15,6 +15,7 @@
 #include <zlib/ZtString.hh>
 
 #include "ZhttpTestUtil.hh"
+#include "ZhttpInteropPorts.hh"
 
 using namespace ZuTestUtil;
 using Zhttp::Test::TempDir;
@@ -167,7 +168,7 @@ static bool runHQSingleFile_(ZuCSpan testCase)
   src << www << "/file.bin";
   if (!writeFile_(src, "hq-body")) return false;
 
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::QIRHQSingle);
   pid_t server = startServer_(testCase, www, certPath, keyPath, port);
   if (server <= 0) return false;
 
@@ -236,7 +237,7 @@ static void testH3SingleFile()
   src << www << "/file.bin";
   ZuCHECK(writeFile_(src, "h3-body"), "source file written");
 
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::QIRH3Single);
   pid_t server = startServer_("http3", www, certPath, keyPath, port);
   ZuCHECK(server > 0, "H3 server forked");
 
@@ -286,7 +287,7 @@ static void testHQMultiFile()
   ZuCHECK(writeFile_(src1, "bravo"), "source b written");
   ZuCHECK(writeFile_(src2, "charlie"), "source c written");
 
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::QIRHQMulti);
   pid_t server = startServer_("transfer", www, certPath, keyPath, port);
   ZuCHECK(server > 0, "HQ server forked");
 
@@ -342,7 +343,7 @@ static void testH3MultiFile()
   ZuCHECK(writeFile_(src1, "bravo-h3"), "source b written");
   ZuCHECK(writeFile_(src2, "charlie-h3"), "source c written");
 
-  unsigned port = loopbackPort();
+  unsigned port = loopbackPort(ZhttpInteropPort::QIRH3Multi);
   pid_t server = startServer_("http3", www, certPath, keyPath, port);
   ZuCHECK(server > 0, "H3 server forked");
 

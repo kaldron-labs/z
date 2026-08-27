@@ -31,7 +31,7 @@ zhttpqirsmoketest_SOURCES = zhttpqirsmoketest.cc
 zhttp3interoptest_SOURCES = zhttp3interoptest.cc
 zhttpdarkhttpdcompattest_SOURCES = zhttpdarkhttpdcompattest.cc
 zhttpfallbacktest_SOURCES = zhttpfallbacktest.cc
-noinst_HEADERS = zhttpqir.hh
+noinst_HEADERS = zhttpqir.hh ZhttpInteropPorts.hh
 dist_noinst_SCRIPTS = qir_endpoint.sh zhttph2interoptest.sh
 EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh \
 	testdata/qir-results/fixture/metadata.env \
