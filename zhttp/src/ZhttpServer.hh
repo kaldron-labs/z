@@ -2893,7 +2893,7 @@ private:
     uint64_t n = m_config.retainedBodyMax();
     if (n > m_config.retainedMessageMax())
       n = m_config.retainedMessageMax();
-    if (n > uint32_t(-1)) n = uint32_t(-1);
+    if (n > FixedBodyMax) n = FixedBodyMax;
     return n;
   }
 

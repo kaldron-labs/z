@@ -137,7 +137,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   template <typename Key, typename L>
   void header(L &&l) const {
     if constexpr (ZuIsSame<Key, ContentLength>{})
-      if (bodyData) l("0000000000");
+      if (bodyData) l(Zhttp::contentLengthPad());
   }
   template <typename L> void header(L &&) const { }
   template <typename Emit>
@@ -152,11 +152,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   }
   template <typename L>
   void bodyHdrs(L &&l) const {
-    l.template operator()<ContentLength>(
-      [length = bodyLength](ZuSpan<uint8_t> span) {
-	ZuStream s{span};
-	s << ZuBoxed(length).fmt<ZuFmt::Right<10>>();
-      });
+    Zhttp::contentLengthSet(l, bodyLength);
   }
 
   void connected(const Zhttp::ConnectedInfo &) { }
