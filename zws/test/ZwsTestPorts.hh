@@ -8,7 +8,7 @@
 #define ZwsTestPorts_HH
 
 namespace ZwsTestPort {
-  enum { H1Hub = 20800, H2Hub = 20810, H3Hub = 20820 };
+  enum { H1Hub = 20800, H2Hub = 20810, H3Hub = 20820, Bench = 20830 };
 }
 
 #endif /* ZwsTestPorts_HH */
