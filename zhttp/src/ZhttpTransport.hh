@@ -13,6 +13,8 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <stdint.h>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
@@ -74,6 +76,16 @@ struct ConnectedInfo {
   Version::T	httpVersion = Version::H1;
   bool		secure = false;
   bool		multiplexed = false;
+};
+
+// Stable opaque identity for one native transport connection.  Multiplexed
+// logical streams on the same connection expose the same value.
+struct Session {
+  uintptr_t	id = 0;
+  Transport::T	transport = Transport::TCP;
+
+  explicit operator bool() const { return id; }
+  bool operator ==(const Session &v) const { return id == v.id; }
 };
 
 class HubConfig {
@@ -1170,7 +1182,10 @@ public:
 
   const ZiIP &remoteIP() const { return m_remoteIP; }
   uint16_t remotePort() const { return m_remotePort; }
-  Session &session() { return m_session; }
+  Zhttp::Session session() const {
+    return {uintptr_t(impl()), HTTP::Transport::ID};
+  }
+  Session &rxState() { return m_session; }
 
   void connected(typename Traits::Connected info) {
     m_session.connected(*impl());

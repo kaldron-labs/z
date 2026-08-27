@@ -369,8 +369,10 @@ struct Destination {
 // ReqBuilder is TxQ::Msg, an intrusive ZmPQueue::Node which adds the heap base
 // ahead of, and publicly derives from, the application data type.
 // Each node represents one logical request and is never reset or repurposed.
-// Replay and redirect attempts may call its Builder callbacks again; every
-// Builder must reproduce the same message each time.
+// Retry and redirect attempts may call its Builder callbacks again; every
+// Builder must reproduce the same message each time.  idempotent() controls
+// attempts made after the peer might have applied the request; an attempt
+// known not to have been applied can be repeated independently.
 struct ReqBuilder : public Builder {
   // l(value), for extended CONNECT only.
   template <typename L> void protocol(L &&) const { }
@@ -378,6 +380,10 @@ struct ReqBuilder : public Builder {
   // A priority-queue item represents one discrete request.  key() remains an
   // application requirement because it supplies the monotonic queue identity.
   uint64_t length() const { return 1; }
+
+  bool idempotent(Method::T method) const {
+    return idempotentMethod(method);
+  }
 
   // Synchronous attempt lifecycle notifications.  completed() is called once
   // for the submitted ReqBuilder; the other callbacks may repeat by attempt.
@@ -5272,6 +5278,7 @@ struct ClientAttemptProtocol {
   unsigned		status = 0;
   Transport::T		transport = Transport::TCP;
   Version::T		httpVersion = Version::H1;
+  Method::T		method = Method::GET;
   Persistence::T	persistence = Persistence::Default;
   bool			http10 = false;
   bool			closeDelimited = false;
@@ -5848,7 +5855,8 @@ public:
     sending_(attempt);
   }
   bool poolOperation(
-    LiveReq &attempt, Method::T, ZuBSpan target) {
+    LiveReq &attempt, Method::T method, ZuBSpan target) {
+    attempt.protocol.method = method;
     return attempt.route.url.resolve(m_origin.url(), target).ok() &&
       attempt.route.url.url().origin() == m_origin.url().origin();
   }
@@ -5910,6 +5918,10 @@ public:
       return;
     }
     if (attempt.routeTransition) {
+      if (!retrySafe_(attempt)) {
+	finish_(link, attempt, ResultCode::ReplayUnsafe, false);
+	return;
+      }
       uint64_t previous = attempt.identity.attempt;
       Transport::T fromTransport = attempt.protocol.transport;
       Version::T fromVersion = attempt.protocol.httpVersion;
@@ -5941,6 +5953,10 @@ public:
       bool same = current.origin() == next.origin();
       if (!same) {
 	finish_(link, attempt, ResultCode::InvalidRedirect, reuse);
+	return;
+      }
+      if (!attempt.request->idempotent(attempt.protocol.method)) {
+	finish_(link, attempt, ResultCode::ReplayUnsafe, reuse);
 	return;
       }
       ++attempt.redirects;
@@ -5992,6 +6008,10 @@ public:
     if (!ok && attempt.protocol.transport == Transport::QUIC &&
 	m_config.protocol() == ProtoPolicy::PreferH3) {
       if (!responseStarted_(attempt)) {
+	if (!retrySafe_(attempt)) {
+	  finish_(link, attempt, ResultCode::ReplayUnsafe, false);
+	  return;
+	}
 	beginRouteTransition_(link, attempt);
 	return;
       }
@@ -6950,6 +6970,12 @@ private:
     }
     link.retire();
     return true;
+  }
+
+  static bool retrySafe_(const LiveReq &attempt) {
+    return (!attempt.requestBody.headers &&
+	!attempt.requestBody.committed) ||
+      attempt.request->idempotent(attempt.protocol.method);
   }
 
   template <typename Link>

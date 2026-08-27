@@ -600,9 +600,9 @@ void Parser::complete(Link *link, bool ok)
   }
   request.remoteIP = link->remoteIP();
   request.secure = Link::TLS;
-  using ServerParser = ZuDecay<decltype(link->session().parser)>;
+  using ServerParser = ZuDecay<decltype(link->rxState().parser)>;
   if constexpr (HasHttp10<ServerParser>{})
-    request.http10 = link->session().parser.http10();
+    request.http10 = link->rxState().parser.http10();
   auto link_ = ZmRef(link);
   auto request_ = ZuMv(request);
   app->enqueue(App::WorkFn{
