@@ -120,19 +120,13 @@ template <typename Hdrs> using GetHdrKeys = ZuTypeSlice<2, 0, Hdrs>;
 template <typename Hdrs> using GetHdrValues = ZuTypeSlice<2, 1, Hdrs>;
 template <typename U> using GetTypeHdrKeys = GetHdrKeys<GetHdrs<U>>;
 
-template <typename> struct Flatten_;
-template <typename ...Lists>
-struct Flatten_<ZuTypeList<Lists...>> {
-  using T = ZuTypeConcat<Lists...>;
-};
-template <typename Lists> using Flatten = typename Flatten_<Lists>::T;
-
 template <typename List>
-using GetAllHdrKeys = Flatten<ZuTypeMap<GetTypeHdrKeys, List>>;
+using GetAllHdrKeys = ZuTypeApply<
+  ZuTypeConcat, ZuTypeMap<GetTypeHdrKeys, List>>;
 template <typename List>
 using GetUniqueHdrKeys = ZuTypeUnique<GetAllHdrKeys<List>>;
 template <typename List>
-using GetAllHdrs = Flatten<ZuTypeMap<GetHdrs, List>>;
+using GetAllHdrs = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetHdrs, List>>;
 
 template <typename K, typename ...Ts> struct GetKValues_;
 template <typename K>
@@ -169,7 +163,8 @@ using MergeHdrs = typename MergeHdrs_<List>::T;
 
 template <typename Req> using GetResponses = typename Req::Responses;
 template <typename Reqs>
-using GetAllResponses = Flatten<ZuTypeMap<GetResponses, Reqs>>;
+using GetAllResponses = ZuTypeApply<
+  ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>;
 
 template <typename Req, typename Res> struct ReqRes { };
 template <typename Req> struct GetReqRes_ {
@@ -178,7 +173,7 @@ template <typename Req> struct GetReqRes_ {
 };
 template <typename Req> using GetReqRes = typename GetReqRes_<Req>::T;
 template <typename Reqs>
-using GetAllReqRes = Flatten<ZuTypeMap<GetReqRes, Reqs>>;
+using GetAllReqRes = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetReqRes, Reqs>>;
 template <typename Reqs, typename Req, typename Res>
 using GetResIndex = ZuTypeIndex<ReqRes<Req, Res>, GetAllReqRes<Reqs>>;
 

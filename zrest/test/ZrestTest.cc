@@ -28,6 +28,31 @@ struct ZeroReqParser : public Zrest::ReqParser<ZeroReqParser, TestObject> {
   enum { Body = Zrest::BodyPolicy::Zero };
 };
 
+struct ReplyA { };
+struct ReplyB { };
+struct RequestA : public Zrest::Request {
+  using Headers = ZhttpHeaders("x-a");
+  using Responses = ZuTypeList<ReplyA>;
+};
+struct RequestB : public Zrest::Request {
+  using Headers = ZhttpHeaders("x-b");
+  using Responses = ZuTypeList<ReplyB>;
+};
+
+using OneRequest = ZuTypeList<RequestA>;
+using TwoRequests = ZuTypeList<RequestA, RequestB>;
+using OneHeader = ZuTypeList<ZuStringT<"x-a">>;
+using TwoHeaders = ZuTypeList<ZuStringT<"x-a">, ZuStringT<"x-b">>;
+
+ZuAssert((ZuIsSame<Zrest::GetAllHdrKeys<OneRequest>, OneHeader>{}));
+ZuAssert((ZuIsSame<Zrest::GetAllHdrKeys<TwoRequests>, TwoHeaders>{}));
+ZuAssert((ZuIsSame<Zrest::GetAllResponses<OneRequest>,
+  ZuTypeList<ReplyA>>{}));
+ZuAssert((ZuIsSame<Zrest::GetAllResponses<TwoRequests>,
+  ZuTypeList<ReplyA, ReplyB>>{}));
+ZuAssert((ZuIsSame<Zrest::GetAllReqRes<OneRequest>,
+  ZuTypeList<Zrest::ReqRes<RequestA, ReplyA>>>{}));
+
 static void zeroBodyTest()
 {
   ZuTestScope(zeroBody);

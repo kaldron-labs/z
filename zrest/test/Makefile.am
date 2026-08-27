@@ -5,12 +5,10 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zrest/src \
 	-I$(top_srcdir)/zrest/example \
-	-I$(top_srcdir)/zfb/src -I$(top_srcdir)/zv/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zrest/src/libZrest.la \
-	$(top_builddir)/zv/src/libZv.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztls/src/libZtls.la \
