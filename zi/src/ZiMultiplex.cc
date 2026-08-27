@@ -130,10 +130,10 @@ private:
 
   Map				m_map;
   mutable Lock			m_watchLock;
-  Ztc::MxMgr::AddFn		m_addFn;
-  Ztc::MxMgr::DelFn		m_delFn;
-  Ztc::Mx::AddCxnFn		m_addCxnFn;
-  Ztc::Mx::DelCxnFn		m_delCxnFn;
+    Ztc::MxMgr::AddFn		  m_addFn;
+    Ztc::MxMgr::DelFn		  m_delFn;
+    Ztc::Mx::AddCxnFn		  m_addCxnFn;
+    Ztc::Mx::DelCxnFn		  m_delCxnFn;
 };
 
 #ifndef _WIN32
