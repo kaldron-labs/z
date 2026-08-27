@@ -7,6 +7,7 @@ EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
 SUBDIRS = zu zm zt ze zf zi zrl
 SUBDIRS += ztcp ztls zquic zhttp
 SUBDIRS += zrest
+SUBDIRS += zmcp
 SUBDIRS += zfb
 SUBDIRS += zv
 SUBDIRS += zdb
@@ -19,8 +20,8 @@ if GTK
 # SUBDIRS += zgtk
 endif
 
-DIST_SUBDIRS = zu zm zt ze zf zi zrl ztcp ztls zquic zhttp zfb zv zdb \
-	zdb_pq zdf zum zcmd zproxy zgtk zrest zdash zws
+DIST_SUBDIRS = zu zm zt ze zf zi zrl ztcp ztls zquic zhttp zrest zmcp zfb zv zdb \
+	zdb_pq zdf zum zcmd zproxy zgtk zdash zws
 
 .PHONY: test
 test: all
