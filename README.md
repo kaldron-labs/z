@@ -46,6 +46,8 @@ directory; tests which do not open a listening socket do not consume a port.
 | `zrest/test` | 20600-20699 |
 | `zrest/itest` | 20700-20799 |
 | `zws/test` | 20800-20899 |
+| `zhttp/interop` | 20900-20999 |
+| `zmcp/itest` | 21000-21099 |
 
 Subsidiary allocations within those blocks are:
 
@@ -80,6 +82,12 @@ Subsidiary allocations within those blocks are:
 | `zws/test` | `ZwsH1HubTest` | 20800-20809 |
 | `zws/test` | `ZwsH2HubTest` | 20810-20819 |
 | `zws/test` | `ZwsH3HubTest` | 20820-20829 |
+| `zws/bench` | `zwsbench` | 20830 |
+| `zhttp/interop` | QIR smoke tests | 20900-20903 |
+| `zhttp/interop` | HTTP/3 interoperability | 20910-20914 |
+| `zhttp/interop` | darkhttpd compatibility | 20920-20921 |
+| `zmcp/itest` | plain and legacy HTTP | 21000-21002 |
+| `zmcp/itest` | secure H1/H2/H3 | 21010-21012 |
 
 ## FAQs
 
