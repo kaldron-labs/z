@@ -496,7 +496,7 @@ struct FixedTxBuilder :
     void header(L &&l) {
       ++providers;
       if constexpr (ZuIsSame<Key, ContentLength>{})
-	l("0000000000");
+	l(Zhttp::contentLengthPad());
       else
 	l(CustomValue{});
     }
@@ -505,8 +505,7 @@ struct FixedTxBuilder :
       l.template operator()<ContentLength>(
 	[this](ZuSpan<uint8_t> span) {
 	  contentSpan = span;
-	  ZuStream out{span};
-	  out << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
+	  Zhttp::contentLengthSet(span, contentLength);
 	});
       l.template operator()<BodySize>(
 	[this](ZuSpan<uint8_t> span) {

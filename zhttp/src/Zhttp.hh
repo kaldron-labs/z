@@ -17,7 +17,10 @@
 
 #include <string.h>
 
+#include <zlib/ZuBox.hh>
 #include <zlib/ZuCmp.hh>
+#include <zlib/ZuFmt.hh>
+#include <zlib/ZuStream.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
@@ -44,6 +47,37 @@
 namespace Zhttp {
 
 constexpr unsigned NullSlot = ZuCmp<unsigned>::null();
+
+using ContentLengthPlaceholder =
+  ZuStringT<"0000000000">;
+// Fixed bodies are retained until their Content-Length has been patched.
+// Larger bodies must use a streaming body policy.
+constexpr uint64_t FixedBodyMax = uint32_t(-1);
+
+inline ZuCSpan contentLengthPad()
+{
+  return ContentLengthPlaceholder{}();
+}
+
+inline void contentLengthSet(ZuSpan<uint8_t> span, uint64_t length)
+{
+  ZiAssert(span.length() == ContentLengthPlaceholder{}().length(),
+    "Zhttp", (), "invalid Content-Length placeholder", return);
+  ZiAssert(length <= FixedBodyMax, "Zhttp", (),
+    "fixed body exceeds 32-bit Content-Length", return);
+  ZuStream out{span};
+  out << ZuBoxed(length).fmt<
+    ZuFmt::Right<ContentLengthPlaceholder{}().length()>>();
+}
+
+template <typename L>
+inline void contentLengthSet(L &&l, uint64_t length)
+{
+  l.template operator()<ZuStringT<"content-length">>(
+    [length](ZuSpan<uint8_t> span) {
+      contentLengthSet(span, length);
+    });
+}
 
 // HTTP hub/link application contract
 //
@@ -228,7 +262,8 @@ struct Builder {
   // The emitter is invalidated by close() or by destruction of the response
   // Builder implementation; invoking an invalid emitter returns false without
   // invoking its writer. The transmit queue is bounded, and queue refusal
-  // fails the stream.
+  // fails the stream. Fixed bodies are limited to FixedBodyMax; larger bodies
+  // must stream.
   template <typename Emit> void body(Emit &&emit) const { }
 
   // The server ResBuilder base adds close(), called exactly once when a
@@ -240,8 +275,9 @@ struct Builder {
   // bytes become externally visible.
   // l.template operator()<Key>(patcher), patcher(ZuSpan<uint8_t> value).
   // There is no contentLength() callback; emit mutable Content-Length data
-  // from header<Key>(), then overwrite its span here. Failing to overwrite
-  // the complete value is an application error.
+  // from header<Key>() with contentLengthPad(), then overwrite its
+  // span here with contentLengthSet(). Failing to overwrite the complete
+  // value is an application error.
   template <typename L> void bodyHdrs(L &&l) const { }
 };
 

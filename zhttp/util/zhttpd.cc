@@ -309,7 +309,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       if (plan.connection) l(plan.connection);
     } else if constexpr (Key{}() == "content-length") {
       if (bodyPolicy() == Zhttp::BodyPolicy::Fixed)
-	l("0000000000");
+	l(Zhttp::contentLengthPad());
       else if (!Zhttp::BodyPolicy::streaming(bodyPolicy()) &&
 	  (plan.contentLength || plan.sendBody))
 	l(ZuBoxed(plan.contentLength));
@@ -370,11 +370,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   }
   template <typename L>
   void bodyHdrs(L &&l) const {
-    l.template operator()<ContentLength>(
-      [contentLength = this->contentLength](ZuSpan<uint8_t> span) {
-	ZuStream s{span};
-	s << ZuBoxed(contentLength).fmt<ZuFmt::Right<10>>();
-      });
+    Zhttp::contentLengthSet(l, contentLength);
   }
 
   ResponsePlan		plan;
