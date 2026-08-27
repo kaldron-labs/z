@@ -69,7 +69,7 @@ static ZiMxParams mxParams()
 	.thread(4, [](auto &thread) {
 	  thread.isolated(1).name("stdioTx");
 	});
-    }).rxThread(1).txThread(2);
+    });
 }
 
 struct App {
@@ -172,11 +172,9 @@ int main(int argc, char **argv)
   } else {
     Zmcp::HTTPClient<App, ExampleCatalog> client;
     Zmcp::ClientConfig config;
-    config.secure(false).tcp(true).tls(false).quic(false)
-      .protocol(Zhttp::ProtoPolicy::DisableH3)
-      .h2Policy(Zhttp::H2Policy::Disable);
+    config.secure(false);
     if (client.init(
-        Zhttp::HubConfig{&mx, "1", "2"},
+        Zhttp::HubConfig{&mx},
         Zhttp::Destination{options.host, uint16_t(options.port)},
         ZuMv(config), &app))
       ok = run(client, options, app);

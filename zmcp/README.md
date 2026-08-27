@@ -93,20 +93,20 @@ ordinary field metadata, not a second request or reflection model.
 A server application handles both transports with the same signature:
 
 ```cpp
-template <typename Req, typename Token>
+template <typename Req, typename Completion>
 void tool(Req *, const AddRequest &request, const auto &headers,
-    const Zmcp::Context &context, Token complete) {
-  (*complete)(Zmcp::ToolReply<AddOK>{
+    const Zmcp::Context &context, Completion completion) {
+  completion->complete(Zmcp::ToolReply<AddOK>{
     AddResult{request.lhs + request.rhs}});
 }
 ```
 
-Completion is synchronous by default.  The application may retain the token
+Completion is synchronous by default.  The application may retain the handle
 and complete asynchronously, emit progress/log records where supported, or
-handle `cancelled(Req *, Token *, ZuCSpan reason)`.  It must preserve response
-order for a stream when it retains tokens; `zmcp` does not reorder application
-completions.  Tokens are invalidated during disconnect and shutdown and do not
-retain their stream/session owner.
+handle `cancelled(Req *, Completion *, ZuCSpan reason)`.  It must preserve
+response order for a stream when it retains completion handles; `zmcp` does not
+reorder application completions.  Handles are invalidated during disconnect
+and shutdown and do not retain their stream/session owner.
 
 `Context` contains borrowed transport-session, legacy MCP-session and request-
 stream application pointers.  Its pointers are valid only during the handler

@@ -17,14 +17,14 @@
 
 #include <zlib/Zmcp.hh>
 
-#include <zlib/ZuPtr.hh>
 #include <zlib/ZuObject.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuRef.hh>
 #include <zlib/ZuUnion.hh>
 
-#include <zlib/ZmFn.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
@@ -65,8 +65,8 @@ public:
   }
 
 private:
-  Limits	m_limits;
   HTTPValue	m_endpoint = "/mcp";
+  Limits	m_limits;
   unsigned	m_legacyLifetime = 0;
   bool		m_legacySessions = true;
   bool		m_absentOrigin = false;
@@ -91,7 +91,8 @@ struct HTTPFixedBuilder : public Zhttp::ResBuilder {
 
   template <typename Key, typename L>
   void header(L &&l) const {
-    if constexpr (ZuIsSame<Key, ContentLength>{}) l("0000000000");
+    if constexpr (ZuIsSame<Key, ContentLength>{})
+      l(Zhttp::contentLengthPad());
   }
   template <typename L> void header(L &&) const { }
 
@@ -112,11 +113,7 @@ struct HTTPFixedBuilder : public Zhttp::ResBuilder {
 
   template <typename L>
   void bodyHdrs(L &&l) const {
-    l.template operator()<ContentLength>(
-      [length = bodyLength](ZuSpan<uint8_t> span) {
-	ZuStream s{span};
-	s << ZuBoxed(length).fmt<ZuFmt::Right<10>>();
-      });
+    Zhttp::contentLengthSet(l, bodyLength);
   }
 };
 
@@ -527,10 +524,13 @@ public:
     beginClose();
     unsigned visited = 0;
     while (visited < limit) {
-      auto i = pending.iter();
-      if (!i()) return true;
+      PendingHash::NodeMvRef entry;
+      {
+	auto i = pending.iter();
+	if (!i()) return true;
+	entry = i.del();
+      }
       ++visited;
-      auto entry = i.del();
       entry->close();
     }
     return !pending.count_();
@@ -586,6 +586,28 @@ struct WriteProbe {
     return Zhttp::WriteOutcome::End;
   }
 };
+
+struct SSEProducerRef {
+  void *ptr = nullptr;
+  void (*invalidateFn)(void *) = nullptr;
+
+  template <typename P> SSEProducerRef &operator =(P *p) {
+    ptr = p;
+    invalidateFn = [](void *ptr_) { static_cast<P *>(ptr_)->invalidate(); };
+    return *this;
+  }
+  explicit operator bool() const { return ptr; }
+  void invalidate() { if (ptr) invalidateFn(ptr); }
+  void clear() { ptr = nullptr; invalidateFn = nullptr; }
+};
+
+namespace SSEState {
+  enum { Open, TerminalQueued, Failed, Closed };
+}
+
+namespace ServerMode {
+  enum { None, HTTP, Stdio };
+}
 
 template <typename Owner, typename Emit, typename Heap>
 class SSEProducer_ : public Heap, public ZmPolymorph {
@@ -668,7 +690,8 @@ public:
     if constexpr (ZuIsSame<Key, ContentType>{}) {
       if (m_message.type()) l("application/json");
     } else if constexpr (ZuIsSame<Key, ContentLength>{}) {
-      l(m_message.type() ? "0000000000" : "0");
+      l(m_message.type() ?
+	Zhttp::contentLengthPad() : ZuCSpan{"0"});
     } else if constexpr (ZuIsSame<Key, Session>{}) {
       if (m_sessionID) l(m_sessionID);
     }
@@ -696,11 +719,7 @@ public:
   template <typename L>
   void bodyHdrs(L &&l) const {
     if (!m_message.type()) return;
-    l.template operator()<ContentLength>(
-      [length = m_bodyLength](ZuSpan<uint8_t> span) {
-	ZuStream out{span};
-	out << ZuBoxed(length).fmt<ZuFmt::Right<10>>();
-      });
+    Zhttp::contentLengthSet(l, m_bodyLength);
   }
 
   void close() { m_message.null(); }
@@ -725,8 +744,6 @@ public:
   using Session = SessionID;
   using Messages = typename Server_::ResponseMessages<Catalog>::T;
   using Zhttp::ResBuilder::header;
-
-  enum { Open, TerminalQueued, Failed, Closed };
 
   HTTPSSEBuilder() = default;
   explicit HTTPSSEBuilder(Limits limits_) : m_limits{limits_} { }
@@ -763,7 +780,7 @@ public:
   }
   Zhttp::Method::T method() const { return Zhttp::Method::POST; }
   unsigned status() const { return 200; }
-  bool disconnect() const { return m_state == Failed; }
+  bool disconnect() const { return m_state == Server_::SSEState::Failed; }
 
   template <typename Key, typename L>
   void header(L &&l) const {
@@ -802,7 +819,7 @@ public:
 	  fail_();
 	  break;
 	}
-      } while (m_queued && m_state != Closed);
+      } while (m_queued && m_state != Server_::SSEState::Closed);
       return;
     }
     {
@@ -812,12 +829,12 @@ public:
 	return;
       }
     }
-    if (m_queued && m_state != Closed) post_();
+    if (m_queued && m_state != Server_::SSEState::Closed) post_();
   }
 
   void resume_() {
     m_posted = false;
-    if (!m_resume || m_state == Closed) return;
+    if (!m_resume || m_state == Server_::SSEState::Closed) return;
     unsigned visited = 0;
     do {
       auto resume = m_resume;
@@ -827,8 +844,8 @@ public:
       }
       ++visited;
     } while (visited < m_limits.workBatch && m_queued &&
-	m_state != Closed);
-    if (m_queued && m_state != Closed) post_();
+	m_state != Server_::SSEState::Closed);
+    if (m_queued && m_state != Server_::SSEState::Closed) post_();
   }
 
   void close() {
@@ -838,7 +855,7 @@ public:
     Server_::SSEQueue queue{ZuMv(m_queue)};
     m_queued = 0;
     m_queuedBytes = 0;
-    m_state = Closed;
+    m_state = Server_::SSEState::Closed;
     bool discarded = m_owner && m_discardFn &&
       m_discardFn(m_owner, ZuMv(queue));
     disown();
@@ -848,7 +865,8 @@ public:
 
   template <typename Out>
   Zhttp::WriteOutcome::T write_(Out &out) {
-    if (m_state == Failed) return Zhttp::WriteOutcome::Abort;
+    if (m_state == Server_::SSEState::Failed)
+      return Zhttp::WriteOutcome::Abort;
     auto record = m_queue.shift();
     if (!record) {
       return Zhttp::WriteOutcome::Stream;
@@ -863,7 +881,7 @@ public:
 private:
   template <typename M>
   bool enqueue_(M message, bool terminal) {
-    if (m_state != Open) return false;
+    if (m_state != Server_::SSEState::Open) return false;
     if (m_queued >= m_limits.maxQueue) {
       abort_();
       return false;
@@ -895,7 +913,7 @@ private:
     m_queuedBytes += buf->length;
     ++m_queued;
     m_queue.push(Server_::SSERecord{ZuMv(buf), terminal});
-    if (terminal) m_state = TerminalQueued;
+    if (terminal) m_state = Server_::SSEState::TerminalQueued;
     if (m_resume &&
 	(m_owner ? !post_() : !m_resume())) {
       fail_();
@@ -905,7 +923,8 @@ private:
   }
 
   void fail_() {
-    if (m_state != Closed) m_state = Failed;
+    if (m_state != Server_::SSEState::Closed)
+      m_state = Server_::SSEState::Failed;
   }
 
   void abort_() {
@@ -934,23 +953,11 @@ private:
   void			*m_owner = nullptr;
   bool			(*m_postFn)(void *) = nullptr;
   bool			(*m_discardFn)(void *, Server_::SSEQueue) = nullptr;
-  struct ProducerRef {
-    void *ptr = nullptr;
-    void (*invalidateFn)(void *) = nullptr;
-
-    template <typename P> ProducerRef &operator =(P *p) {
-      ptr = p;
-      invalidateFn = [](void *ptr_) { static_cast<P *>(ptr_)->invalidate(); };
-      return *this;
-    }
-    explicit operator bool() const { return ptr; }
-    void invalidate() { if (ptr) invalidateFn(ptr); }
-    void clear() { ptr = nullptr; invalidateFn = nullptr; }
-  } m_producer;
+  Server_::SSEProducerRef m_producer;
   uint64_t		m_sequence = 1;
   uint64_t		m_queuedBytes = 0;
   unsigned		m_queued = 0;
-  int			m_state = Open;
+  int			m_state = Server_::SSEState::Open;
   bool			m_posted = false;
 };
 
@@ -963,8 +970,6 @@ public:
   using Stream = HTTPSSEBuilder<Catalog>;
   using Builder = ZuUnion<void, Fixed, Stream>;
   using Zhttp::ResBuilder::header;
-
-  enum { Empty, FixedBody, StreamBody };
 
   ~HTTPBuilder() { close(); }
 
@@ -1011,15 +1016,14 @@ public:
     return new (m_builder.template new_<Stream, true>()) Stream{limits};
   }
 
-  int type() const { return m_builder.type(); }
   Fixed *fixedPtr() { return m_builder.template ptr<Fixed>(); }
   const Fixed *fixedPtr() const {
-    return m_builder.type() == FixedBody ?
+    return m_builder.template is<Fixed>() ?
       ZuAddr(m_builder.template p<Fixed>()) : nullptr;
   }
   Stream *streamPtr() { return m_builder.template ptr<Stream>(); }
   const Stream *streamPtr() const {
-    return m_builder.type() == StreamBody ?
+    return m_builder.template is<Stream>() ?
       ZuAddr(m_builder.template p<Stream>()) : nullptr;
   }
 
@@ -1296,7 +1300,7 @@ private:
   void send_() {
     if (m_sent || !m_builder) return;
     m_sent = true;
-    bool fixed = m_builder->data().type() == HTTPBuilder<Catalog>::FixedBody;
+    bool fixed = m_builder->data().fixedPtr();
     m_impl->send(m_builder);
     if (fixed) {
       m_sentBuilder = m_builder.ptr();
@@ -1433,7 +1437,8 @@ public:
 
   bool init(
       const Zhttp::HubConfig &hub, ServerConfig config, Impl *impl) {
-    if (m_mode != NoMode || !impl || !hub.mx() || !config.endpoint())
+    if (m_mode != Server_::ServerMode::None || !impl || !hub.mx() ||
+	!config.endpoint())
       return false;
     m_impl = impl;
     m_mx = hub.mx();
@@ -1448,7 +1453,8 @@ public:
     if (!valid(m_limits)) return false;
     if (m_legacySessions && !m_rng.init()) return false;
     {
-      uint64_t messageMax = uint64_t(m_limits.maxSSEEventBytes) + 64;
+      uint64_t messageMax = uint64_t(m_limits.maxSSEEventBytes) +
+	Default::SSEFrameOverhead;
       if (messageMax < m_limits.maxJSONBytes)
 	messageMax = m_limits.maxJSONBytes;
       config.retainedBodyMax(m_limits.maxJSONBytes)
@@ -1456,7 +1462,7 @@ public:
     }
     m_up = true;
     if (m_http.init(hub, ZuMv(config), this)) {
-      m_mode = HTTPMode;
+      m_mode = Server_::ServerMode::HTTP;
       return true;
     }
     m_up = false;
@@ -1467,7 +1473,8 @@ public:
 
   bool init(
       ZiMultiplex *mx, StdioConfig config, Impl *impl) {
-    if (m_mode != NoMode || !impl || !mx || !mx->txThread()) return false;
+    if (m_mode != Server_::ServerMode::None || !impl || !mx ||
+	!mx->txThread()) return false;
     m_impl = impl;
     m_mx = mx;
     m_txThread = mx->txThread();
@@ -1476,7 +1483,7 @@ public:
     m_stdio = new StdioIOObj<Server>{
       this, m_mx, m_txThread, ZuMv(config)};
     m_stdioPeer = Peer<Catalog>{m_limits};
-    m_mode = StdioMode;
+    m_mode = Server_::ServerMode::Stdio;
     m_stdioStarted = false;
     m_stdioClosing = false;
     m_stdioDone = false;
@@ -1492,9 +1499,9 @@ public:
   }
 
   bool start() {
-    if (m_mode == HTTPMode) return m_http.start();
-    if (m_mode != StdioMode || !m_stdio || !m_up.load_() ||
-	m_stdioStarted || m_stdioDone) return false;
+    if (m_mode == Server_::ServerMode::HTTP) return m_http.start();
+    if (m_mode != Server_::ServerMode::Stdio || !m_stdio || !m_up.load_() ||
+	m_stdioStarted || m_stdioDone.load_()) return false;
     return ZmBlock<bool>{}([this](auto wake) mutable {
       m_mx->run([this, wake = ZuMv(wake)]() mutable {
 	bool ok = false;
@@ -1515,7 +1522,7 @@ public:
     });
   }
   bool stop() {
-    if (m_mode == StdioMode) return stopStdio_();
+    if (m_mode == Server_::ServerMode::Stdio) return stopStdio_();
     if (m_httpDone) return true;
     m_up = false;
     bool ok = m_http.stop();
@@ -1526,14 +1533,14 @@ public:
 
   void final() {
     if (!m_mx) return;
-    if (m_mode == StdioMode) {
+    if (m_mode == Server_::ServerMode::Stdio) {
       (void)stopStdio_();
       m_stdio = nullptr;
       m_stdioPeer.close();
       m_impl = nullptr;
       m_mx = nullptr;
       m_txThread = 0;
-      m_mode = NoMode;
+      m_mode = Server_::ServerMode::None;
       return;
     }
     m_up = false;
@@ -1547,7 +1554,7 @@ public:
     m_mx = nullptr;
     m_txThread = 0;
     m_endpoint.null();
-    m_mode = NoMode;
+    m_mode = Server_::ServerMode::None;
   }
 
   HTTP &http() { return m_http; }
@@ -1610,7 +1617,7 @@ public:
   }
 
   bool expireSession(ZuCSpan id) {
-    if (m_mode != HTTPMode || !id) return false;
+    if (m_mode != Server_::ServerMode::HTTP || !id) return false;
     HTTPValue owned{id};
     return txRun([this, owned = ZuMv(owned)]() mutable {
       auto entry = m_sessions.findPtr(owned);
@@ -1688,8 +1695,6 @@ public:
   }
 
 private:
-  enum { NoMode, HTTPMode, StdioMode };
-
   Session *session_(ZuCSpan id) {
     auto node = m_sessions.findPtr(id);
     return node ? node->data().ptr() : nullptr;
@@ -1791,8 +1796,8 @@ private:
   }
 
   bool stopStdio_() {
-    if (!m_mx || m_mode != StdioMode) return false;
-    if (m_stdioDone) return !m_stdioFailure;
+    if (!m_mx || m_mode != Server_::ServerMode::Stdio) return false;
+    if (m_stdioDone.load_()) return !m_stdioFailure;
     return ZmBlock<bool>{}([this](auto wake) mutable {
       m_mx->run([this, wake = ZuMv(wake)]() mutable {
 	m_stdioStopFn = ZuMv(wake);
@@ -1816,7 +1821,7 @@ private:
   void failStdio_() {
     ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
 	"stdio failure outside owner shard", return);
-    if (m_stdioDone || m_stdioClosing) return;
+    if (m_stdioDone.load_() || m_stdioClosing) return;
     m_stdioFailure = true;
     m_stdioClosing = true;
     m_up = false;
@@ -1826,7 +1831,7 @@ private:
   void stdioDone_(bool failed) {
     ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
 	"stdio completion outside owner shard", return);
-    if (m_stdioDone) return;
+    if (m_stdioDone.load_()) return;
     m_stdioFailure |= failed;
     m_stdioClosing = true;
     m_up = false;
@@ -2336,7 +2341,7 @@ private:
       if (m_requestID.absent()) return;
       auto entry = m_server->m_stdioPending.findPtr(m_requestID);
       if (entry && entry->object == this)
-        (void)m_server->m_stdioPending.delNode(entry);
+	(void)m_server->m_stdioPending.delNode(entry);
       m_requestID.null();
     }
 
@@ -2428,17 +2433,22 @@ private:
   void closeTransportContexts_(Done done) {
     unsigned visited = 0;
     while (visited < m_limits.workBatch) {
-      auto i = m_transportContexts.iter();
-      if (!i()) {
+      auto entry = takeTransportContext_();
+      if (!entry) {
 	done();
 	return;
       }
       ++visited;
-      (void)i.del();
     }
     m_mx->run([this, done = ZuMv(done)]() mutable {
       closeTransportContexts_(ZuMv(done));
     }, m_txThread);
+  }
+
+  Server_::TransportContextHash::NodeMvRef takeTransportContext_() {
+    auto i = m_transportContexts.iter();
+    if (!i()) return decltype(i.del()){};
+    return i.del();
   }
 
   template <typename Done>
@@ -2494,17 +2504,18 @@ private:
   HTTPValue		m_endpoint;
   uint64_t		m_generation = 1;
   unsigned		m_txThread = 0;
-  ZmAtomic<unsigned>	m_up = 0;
-  int			m_mode = NoMode;
-  bool			m_absentOrigin = false;
+  int			m_mode = Server_::ServerMode::None;
   unsigned		m_legacyLifetime = 0;
+  bool			m_absentOrigin = false;
   bool			m_legacySessions = true;
   bool			m_httpDone = false;
   bool			m_stdioStarted = false;
   bool			m_stdioClosing = false;
-  bool			m_stdioDone = false;
   bool			m_stdioFailure = false;
   bool			m_ssePosted = false;
+
+  ZmAtomic<unsigned>	m_up = 0;
+  ZmAtomic<unsigned>	m_stdioDone = 0;
 };
 
 } // Zmcp
