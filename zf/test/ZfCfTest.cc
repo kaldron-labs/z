@@ -406,7 +406,7 @@ static void expansion() {
   ZuTestCall(checkToken, "'${x}'", "${x}");
   ZuTestCall(checkToken,
     "foo'bar'\"baz${x}bah\"'bam'", "foobarbazXbahbam");
-  ZuTestCall(checkToken, "${ZTCF_TEST_UNSET}", "");
+  ZuTestCall(checkToken, "${ZFCF_TEST_UNSET}", "");
 
   {
     auto result = ZfCf::scan("${x}: value");
@@ -500,7 +500,7 @@ static void comments() {
 
 static void percent() {
   ZuTestScope(percent);
-  const char *id = "ZTCF_PCT_DEFINE_1";
+  const char *id = "ZFCF_PCT_DEFINE_1";
   const char *old = ::getenv(id);
   ZtString<> saved;
   if (old) saved = old;
@@ -513,20 +513,20 @@ static void percent() {
   {
     ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
     auto scan = ZfCf::scan(
-      "%define(ZTCF_PCT_DEFINE_1, first)\n"
-      "one: ${ZTCF_PCT_DEFINE_1},\n"
-      "%define(ZTCF_PCT_DEFINE_1, 'second,value') # replace\n"
-      "two: ${ZTCF_PCT_DEFINE_1}", {}, defines);
+      "%define(ZFCF_PCT_DEFINE_1, first)\n"
+      "one: ${ZFCF_PCT_DEFINE_1},\n"
+      "%define(ZFCF_PCT_DEFINE_1, 'second,value') # replace\n"
+      "two: ${ZFCF_PCT_DEFINE_1}", {}, defines);
     ZuCheck(scan.p<0>() >= 0);
     ZuCheck(string(field(scan.p<1>(), "one")) == "first");
     ZuCheck(string(field(scan.p<1>(), "two")) == "second,value");
 
     auto next = ZfCf::scan(
-      "value: ${ZTCF_PCT_DEFINE_1}", {}, defines);
+      "value: ${ZFCF_PCT_DEFINE_1}", {}, defines);
     ZuCheck(next.p<0>() >= 0);
     ZuCheck(string(field(next.p<1>(), "value")) == "second,value");
 
-    auto isolated = ZfCf::scan("value: ${ZTCF_PCT_DEFINE_1}");
+    auto isolated = ZfCf::scan("value: ${ZFCF_PCT_DEFINE_1}");
     ZuCheck(isolated.p<0>() >= 0);
     ZuCheck(string(field(isolated.p<1>(), "value")) == "environment");
   }
@@ -544,12 +544,12 @@ static void percent() {
       if (valid) {
 	valid = context.defines();
 	context.defines()->add(
-	  ZfCf::DefKey{"ZTCF_PCT_CONTEXT"}, ZfCf::DefVal{"context"});
+	  ZfCf::DefKey{"ZFCF_PCT_CONTEXT"}, ZfCf::DefVal{"context"});
       }
       callbackOK &= valid;
       return expand(
-        "%define(ZTCF_PCT_NESTED, yes)\n"
-        "included: ${ZTCF_PCT_NESTED}, fromContext: ${ZTCF_PCT_CONTEXT},\n"
+        "%define(ZFCF_PCT_NESTED, yes)\n"
+        "included: ${ZFCF_PCT_NESTED}, fromContext: ${ZFCF_PCT_CONTEXT},\n"
 	"%inner()\n"
 	"deep: {value: 9}");
     } else if (directive == "inner") {
@@ -576,7 +576,7 @@ static void percent() {
     auto scan = ZfCf::scan(
       "before: 1,\n"
       "%outer('first,arg', \"second value\")\n"
-      "%many(one, 'two value', three, four, ${ZTCF_PCT_CONTEXT}) # five\n"
+      "%many(one, 'two value', three, four, ${ZFCF_PCT_CONTEXT}) # five\n"
       "nested: {\n"
       "%none(ignored)\n"
       "retained: true},\n"
