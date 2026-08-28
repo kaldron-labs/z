@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -27,14 +28,14 @@ ZuDerive(Paths, (
   ZtArray<Zi::Path, ZtArrayHeapID<"ZiTestResidue.Paths">>));
 
 void init(const char *testName);
-Zi::Path path(const Zi::Name &name);
-Zi::Path file(const Zi::Name &name);
-Zi::Path dir(const Zi::Name &name);
+Zi::Path path(ZuCSpan name);
+Zi::Path file(ZuCSpan name);
+Zi::Path dir(ZuCSpan name);
 void add(const Zi::Path &path);
-Paths glob(const Zi::Path &dir, const Zi::Name &prefix);
-void del(const Zi::Path &dir, const Zi::Name &prefix);
+Paths glob(const Zi::Path &dir, ZuCSpan prefix);
+void del(const Zi::Path &dir, ZuCSpan prefix);
 Zi::Name uniqueName(const char *tag = nullptr);
-void addShm(const Zi::Name &name);
+void addShm(Zi::Name name);
 void final(bool passed);
 void cleanup();
 

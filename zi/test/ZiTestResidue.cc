@@ -60,8 +60,7 @@ static bool separator_(char c)
 #endif
 }
 
-template <typename S>
-static bool hasSeparator_(const S &s)
+static bool hasSeparator_(ZuCSpan s)
 {
   unsigned n = s.length();
   for (unsigned i = 0; i < n; ++i)
@@ -69,8 +68,7 @@ static bool hasSeparator_(const S &s)
   return false;
 }
 
-template <typename S>
-static bool hasDotDot_(const S &s)
+static bool hasDotDot_(ZuCSpan s)
 {
   unsigned n = s.length();
   for (unsigned i = 1; i < n; ++i)
@@ -78,7 +76,7 @@ static bool hasDotDot_(const S &s)
   return false;
 }
 
-static void validateName_(const Zi::Name &name)
+static void validateName_(ZuCSpan name)
 {
   ZiAssert(name.length(), "ZiTestResidue", (), "empty name", ::abort());
   ZiAssert(!hasSeparator_(name), "ZiTestResidue", (),
@@ -210,7 +208,7 @@ void init(const char *testName)
   ZuTestMgr::finalFn(&final);
 }
 
-Zi::Path path(const Zi::Name &name)
+Zi::Path path(ZuCSpan name)
 {
   validateName_(name);
   State &state = state_();
@@ -222,7 +220,7 @@ Zi::Path path(const Zi::Name &name)
   return path;
 }
 
-Zi::Path file(const Zi::Name &name)
+Zi::Path file(ZuCSpan name)
 {
   Zi::Path result = path(name);
   ZiFile::age(result, Age);
@@ -230,7 +228,7 @@ Zi::Path file(const Zi::Name &name)
   return result;
 }
 
-Zi::Path dir(const Zi::Name &name)
+Zi::Path dir(ZuCSpan name)
 {
   Zi::Path result = path(name);
   ZiFile::ageTree(result, Age);
@@ -253,7 +251,7 @@ void add(const Zi::Path &path)
   registerFile_(state, path);
 }
 
-Paths glob(const Zi::Path &dir, const Zi::Name &prefix)
+Paths glob(const Zi::Path &dir, ZuCSpan prefix)
 {
   validateName_(prefix);
   {
@@ -277,7 +275,7 @@ Paths glob(const Zi::Path &dir, const Zi::Name &prefix)
   return paths;
 }
 
-void del(const Zi::Path &dir, const Zi::Name &prefix)
+void del(const Zi::Path &dir, ZuCSpan prefix)
 {
   Paths paths = glob(dir, prefix);
   for (const auto &path : paths)
@@ -298,7 +296,7 @@ Zi::Name uniqueName(const char *tag)
   return name;
 }
 
-void addShm(const Zi::Name &name)
+void addShm(Zi::Name name)
 {
   State &state = state_();
   State::Guard guard(state.lock);
@@ -307,7 +305,7 @@ void addShm(const Zi::Name &name)
   for (const auto &base : state.shmBases)
     ZiAssert(base != name, "ZiTestResidue", (name),
         "duplicate shared-memory name: " << name, ::abort());
-  state.shmBases.push(name);
+  state.shmBases.push(ZuMv(name));
 }
 
 void final(bool passed)
