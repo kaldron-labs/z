@@ -1077,6 +1077,9 @@ private:
 
   // mutable shared
   ZmSemaphore		*m_stopping = nullptr;
+  ZmRWLock		m_cxnWatchLock;
+  Ztc::Mx::AddCxnFn	m_addCxnFn;
+  Ztc::Mx::DelCxnFn	m_delCxnFn;
 #ifdef ZiMultiplex_DEBUG
   bool			m_trace = false;
   bool			m_debug = false;

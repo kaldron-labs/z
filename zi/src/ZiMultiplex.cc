@@ -42,8 +42,6 @@ public:
   ~ZiMxMgr_() {
     m_addFn = {};
     m_delFn = {};
-    m_addCxnFn = {};
-    m_delCxnFn = {};
   }
 
   static ZiMxMgr_ *instance() {
@@ -101,39 +99,13 @@ public:
     m_delFn = {};
   }
 
-  void watch(
-      Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn) {
-    Guard guard(m_watchLock);
-    ZmAssert(!m_addCxnFn && !m_delCxnFn, return);
-    m_addCxnFn = ZuMv(addCxnFn);
-    m_delCxnFn = ZuMv(delCxnFn);
-  }
-
-  void unwatchMx() {
-    Guard guard(m_watchLock);
-    m_addCxnFn = {};
-    m_delCxnFn = {};
-  }
-
-  void cxnAdded_(ZiConnection *cxn) {
-    Guard guard(m_watchLock);
-    if (m_addCxnFn) m_addCxnFn(cxn);
-  }
-
-  void cxnDeleted_(ZiConnection *cxn) {
-    Guard guard(m_watchLock);
-    if (m_delCxnFn) m_delCxnFn(cxn);
-  }
-
 private:
   Lock &watchLock() { return m_watchLock; }
 
   Map				m_map;
   mutable Lock			m_watchLock;
-    Ztc::MxMgr::AddFn		  m_addFn;
-    Ztc::MxMgr::DelFn		  m_delFn;
-    Ztc::Mx::AddCxnFn		  m_addCxnFn;
-    Ztc::Mx::DelCxnFn		  m_delCxnFn;
+  Ztc::MxMgr::AddFn		m_addFn;
+  Ztc::MxMgr::DelFn		m_delFn;
 };
 
 #ifndef _WIN32
@@ -2464,7 +2436,10 @@ bool ZiMultiplex::cxnAdd(ZiConnection *cxn, Socket s)
   }
 #endif
 
-  ZiMxMgr_::instance()->cxnAdded_(cxn);
+  {
+    ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
+    if (m_addCxnFn) m_addCxnFn(cxn);
+  }
   return true;
 }
 
@@ -2474,19 +2449,26 @@ void ZiMultiplex::cxnDel(Socket s)
   epoll_ctl(m_epollFD, EPOLL_CTL_DEL, s, 0);
 #endif
 
-  if (ZmRef<ZiConnection> cxn = m_cxns->delVal(s))
-    ZiMxMgr_::instance()->cxnDeleted_(cxn);
+  if (ZmRef<ZiConnection> cxn = m_cxns->delVal(s)) {
+    ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
+    if (m_delCxnFn) m_delCxnFn(cxn);
+  }
 }
 
 void ZiMultiplex::watch(
     Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn)
 {
-  ZiMxMgr_::instance()->watch(ZuMv(addCxnFn), ZuMv(delCxnFn));
+  ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
+  ZmAssert(!m_addCxnFn && !m_delCxnFn, return);
+  m_addCxnFn = ZuMv(addCxnFn);
+  m_delCxnFn = ZuMv(delCxnFn);
 }
 
 void ZiMultiplex::unwatch()
 {
-  ZiMxMgr_::instance()->unwatchMx();
+  ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
+  m_addCxnFn = {};
+  m_delCxnFn = {};
 }
 
 bool ZiMultiplex::listenerAdd(Listener *listener, Socket s)

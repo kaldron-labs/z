@@ -414,7 +414,9 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     }
     void txProtected_() {
       auto app = this->app();
-      if (!app->txInvoked() || app->rxInvoked()) {
+      auto tid = Zm::getTID();
+      if (!app->mx()->invoked_(tid, app->txThread()) ||
+	  app->mx()->invoked_(tid, app->rxThread())) {
 	app->state.fail("client record protection ran outside TLS Tx thread");
 	return;
       }
@@ -481,7 +483,9 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     void disconnected(bool) { this->app()->state.done_one(); }
     void txProtected_() {
       auto app = this->app();
-      if (!app->txInvoked() || app->rxInvoked()) {
+      auto tid = Zm::getTID();
+      if (!app->mx()->invoked_(tid, app->txThread()) ||
+	  app->mx()->invoked_(tid, app->rxThread())) {
 	app->state.fail("server record protection ran outside TLS Tx thread");
 	return;
       }

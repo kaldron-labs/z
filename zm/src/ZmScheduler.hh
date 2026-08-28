@@ -392,10 +392,13 @@ public:
   bool del(Timer *);		// cancel and disarm timer (clears timer->fn)
 
   // returns true if caller is running on thread slot sid
-  bool invoked(unsigned sid) const {
+  bool invoked_(Zm::ThreadID tid, unsigned sid) const {
     ZmAssert(sid && sid <= m_params.nThreads());
     Thread *thread = &m_threads[sid - 1];
-    return Zm::getTID() == thread->tid;
+    return tid == thread->tid;
+  }
+  bool invoked(unsigned sid) const {
+    return invoked_(Zm::getTID(), sid);
   }
 
   // run and wake any available thread

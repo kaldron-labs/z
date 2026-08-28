@@ -195,6 +195,7 @@ struct MockHub final : public Ztc::Hub {
 struct WatchState {
   enum {
     DBAdd = 1, DBDel,
+    HubAdd, HubDel,
     LinkAdd, RxAdd, TxAdd, TxDel, RxDel, LinkDel,
     PoolAdd, PoolTxAdd, PoolTxDel, PoolDel
   };
@@ -231,7 +232,8 @@ void dbRoot()
       db_->telemetry(data);
       ZuCheck(data.self == "db");
       state.push(WatchState::DBDel);
-  }});
+    }},
+    {}, {}, {}, {});
   Ztc::DBMgr::add(&db);
   unsigned seen = 0;
   unsigned count = Ztc::DBMgr::all({[&db, &seen](Ztc::DB *db_) {
@@ -260,16 +262,9 @@ void hubChildren()
   WatchState state;
   MockHub hub;
   auto &link = hub.link;
-  Ztc::HubMgr::add(&hub);
-  Ztc::HubMgr::capture([](const auto &captures) {
-    unsigned guarded = 0;
-    Ztc::HubMgr::guard([&guarded]() { ++guarded; });
-    ZuCheck(guarded == 1);
-    ZuCheck(captures.length() == 1);
-    ZuCheck(captures[0].id == "hub");
-  });
-  Ztc::HubMgr::del(&hub);
   Ztc::HubMgr::watch(
+    {[&state](Ztc::Hub *) { state.push(WatchState::HubAdd); }},
+    {[&state](Ztc::Hub *) { state.push(WatchState::HubDel); }},
     {[&state](Ztc::Link *) { state.push(WatchState::LinkAdd); }},
     {[&state](Ztc::Link *) { state.push(WatchState::LinkDel); }},
     {[&state](Ztc::Pool *) { state.push(WatchState::PoolAdd); }},
@@ -294,24 +289,34 @@ void hubChildren()
       else
 	state.push(WatchState::PoolTxDel);
     }});
-
+  Ztc::HubMgr::add(&hub);
+  Ztc::HubMgr::capture([](const auto &captures) {
+    unsigned guarded = 0;
+    Ztc::HubMgr::guard([&guarded]() { ++guarded; });
+    ZuCheck(guarded == 1);
+    ZuCheck(captures.length() == 1);
+    ZuCheck(captures[0].id == "hub");
+  });
   hub.linkAdd();
   hub.linkDel();
   hub.poolAdd();
   hub.poolDel();
+  Ztc::HubMgr::del(&hub);
   Ztc::HubMgr::unwatch();
 
-  ZuCheck(state.events.length() == 10);
-  ZuCheck(state.events[0] == WatchState::LinkAdd);
-  ZuCheck(state.events[1] == WatchState::RxAdd);
-  ZuCheck(state.events[2] == WatchState::TxAdd);
-  ZuCheck(state.events[3] == WatchState::RxDel);
-  ZuCheck(state.events[4] == WatchState::TxDel);
-  ZuCheck(state.events[5] == WatchState::LinkDel);
-  ZuCheck(state.events[6] == WatchState::PoolAdd);
-  ZuCheck(state.events[7] == WatchState::PoolTxAdd);
-  ZuCheck(state.events[8] == WatchState::PoolTxDel);
-  ZuCheck(state.events[9] == WatchState::PoolDel);
+  ZuCheck(state.events.length() == 12);
+  ZuCheck(state.events[0] == WatchState::HubAdd);
+  ZuCheck(state.events[1] == WatchState::LinkAdd);
+  ZuCheck(state.events[2] == WatchState::RxAdd);
+  ZuCheck(state.events[3] == WatchState::TxAdd);
+  ZuCheck(state.events[4] == WatchState::RxDel);
+  ZuCheck(state.events[5] == WatchState::TxDel);
+  ZuCheck(state.events[6] == WatchState::LinkDel);
+  ZuCheck(state.events[7] == WatchState::PoolAdd);
+  ZuCheck(state.events[8] == WatchState::PoolTxAdd);
+  ZuCheck(state.events[9] == WatchState::PoolTxDel);
+  ZuCheck(state.events[10] == WatchState::PoolDel);
+  ZuCheck(state.events[11] == WatchState::HubDel);
 }
 
 void dbChildren()
@@ -321,6 +326,8 @@ void dbChildren()
   unsigned hostAdds = 0, hostDels = 0;
   unsigned tableAdds = 0, tableDels = 0;
   Ztc::DBMgr::watch(
+    {},
+    {},
     {[&hostAdds](Ztc::DBHost *host) {
       ZuCheck(host->telKey().p<1>() == "host");
       ++hostAdds;
@@ -372,7 +379,8 @@ void deleteBlocksOnConsumer()
       entered.post();
       ZmGuard<ZmPLock> guard(indexLock);
       removed.post();
-    }});
+    }},
+    {}, {}, {}, {});
   Ztc::DBMgr::add(&db);
   indexLock.lock();
   ZmThread deleter{[&db]() { Ztc::DBMgr::del(&db); }};
