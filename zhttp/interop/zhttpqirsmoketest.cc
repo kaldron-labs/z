@@ -51,7 +51,7 @@ static void setenv_(const char *name, unsigned value)
 
 static pid_t startServer_(
   ZuCSpan testCase, const ZtString<> &www, const ZtString<> &cert,
-  const ZtString<> &key, unsigned port)
+  const ZtString<> &key, const char *qlogDir, unsigned port)
 {
   int ready[2];
   if (::pipe(ready) != 0) return -1;
@@ -77,6 +77,7 @@ static pid_t startServer_(
   setenv_("ZHTTP_QIR_CERT", cert);
   setenv_("ZHTTP_QIR_KEY", key);
   setenv_("ZHTTP_QIR_PORT", port);
+  ::setenv("QLOGDIR", qlogDir, 1);
   char b = 1;
   (void)::write(ready[1], &b, 1);
   ::close(ready[1]);
@@ -169,7 +170,9 @@ static bool runHQSingleFile_(ZuCSpan testCase)
   if (!writeFile_(src, "hq-body")) return false;
 
   unsigned port = loopbackPort(ZhttpInteropPort::QIRHQSingle);
-  pid_t server = startServer_(testCase, www, certPath, keyPath, port);
+  const char *qlogDir = static_cast<const char *>(temp.path);
+  pid_t server = startServer_(
+    testCase, www, certPath, keyPath, qlogDir, port);
   if (server <= 0) return false;
 
   ZtString<> cmd;
@@ -177,6 +180,7 @@ static bool runHQSingleFile_(ZuCSpan testCase)
     " REQUESTS=https://127.0.0.1:" << port <<
     "/file.bin ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
+    " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
   bool ok = runStatus_(cmd, 0);
@@ -238,13 +242,16 @@ static void testH3SingleFile()
   ZuCHECK(writeFile_(src, "h3-body"), "source file written");
 
   unsigned port = loopbackPort(ZhttpInteropPort::QIRH3Single);
-  pid_t server = startServer_("http3", www, certPath, keyPath, port);
+  const char *qlogDir = static_cast<const char *>(temp.path);
+  pid_t server = startServer_(
+    "http3", www, certPath, keyPath, qlogDir, port);
   ZuCHECK(server > 0, "H3 server forked");
 
   ZtString<> cmd;
   cmd << "TESTCASE=http3 REQUESTS=https://127.0.0.1:" << port <<
     "/file.bin ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
+    " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
   bool ok = runStatus_(cmd, 0);
@@ -288,7 +295,9 @@ static void testHQMultiFile()
   ZuCHECK(writeFile_(src2, "charlie"), "source c written");
 
   unsigned port = loopbackPort(ZhttpInteropPort::QIRHQMulti);
-  pid_t server = startServer_("transfer", www, certPath, keyPath, port);
+  const char *qlogDir = static_cast<const char *>(temp.path);
+  pid_t server = startServer_(
+    "transfer", www, certPath, keyPath, qlogDir, port);
   ZuCHECK(server > 0, "HQ server forked");
 
   ZtString<> cmd;
@@ -297,6 +306,7 @@ static void testHQMultiFile()
     "/nested/b.bin https://127.0.0.1:" << port <<
     "/c.bin' ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
+    " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
   bool ok = runStatus_(cmd, 0);
@@ -344,7 +354,9 @@ static void testH3MultiFile()
   ZuCHECK(writeFile_(src2, "charlie-h3"), "source c written");
 
   unsigned port = loopbackPort(ZhttpInteropPort::QIRH3Multi);
-  pid_t server = startServer_("http3", www, certPath, keyPath, port);
+  const char *qlogDir = static_cast<const char *>(temp.path);
+  pid_t server = startServer_(
+    "http3", www, certPath, keyPath, qlogDir, port);
   ZuCHECK(server > 0, "H3 server forked");
 
   ZtString<> cmd;
@@ -353,6 +365,7 @@ static void testH3MultiFile()
     "/nested/b.bin https://127.0.0.1:" << port <<
     "/c.bin' ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
+    " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
   bool ok = runStatus_(cmd, 0);

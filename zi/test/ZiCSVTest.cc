@@ -40,16 +40,12 @@ bool contains(const ZtString<> &s, const char *needle)
 
 void initPaths()
 {
-  auto root = ZiTestResidue::tempRoot();
+  auto root = ZiTestResidue::dir("csv");
   g_csv = ZiFile::append(root, "rows.csv");
   g_filtered = ZiFile::append(root, "filtered.csv");
   g_overflow = ZiFile::append(root, "overflow.csv");
   g_append = ZiFile::append(root, "append.csv");
 
-  ZiTestResidue::addFile(g_csv);
-  ZiTestResidue::addFile(g_filtered);
-  ZiTestResidue::addFile(g_overflow);
-  ZiTestResidue::addFile(g_append);
 }
 
 ZtString<> readFile(const Zi::Path &path)
@@ -163,7 +159,7 @@ void testOverflowAndMissingFileErrors()
   ZuCheck(w.template is<ZeException>());
 
   auto reader = ZiCSV::reader<CSVRow>();
-  auto r = reader.readFile(ZiFile::append(ZiTestResidue::tempRoot(), "missing.csv"),
+  auto r = reader.readFile(ZiFile::append(ZiFile::dirname(g_csv), "missing.csv"),
       [](const auto &) {
       });
   ZuCheck(r.template is<ZeException>());
@@ -210,9 +206,8 @@ void testAppend()
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiCSVTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   initPaths();
   parse(argc, argv);

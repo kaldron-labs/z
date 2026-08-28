@@ -10,6 +10,7 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiLog.hh>
 
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
@@ -1324,6 +1325,10 @@ void runForceMismatch()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("ZhttpH2HubTest");
+  ZiLog::init("ZhttpH2HubTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
   ZuTestCall(ZhttpH2HubTest_::runFlowCapacity);
   ZuTestCall(ZhttpH2HubTest_::runAdmissionErrors);
@@ -1331,4 +1336,5 @@ int main(int argc, char **argv)
   ZuTestCall(ZhttpH2HubTest_::runStream);
   ZuTestCall(ZhttpH2HubTest_::runSharedTLS);
   ZuTestCall(ZhttpH2HubTest_::runForceMismatch);
+  ZiLog::stop();
 }

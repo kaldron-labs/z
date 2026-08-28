@@ -66,8 +66,12 @@ class ZuAPI ZuTestMgr {
   ZuTestMgr &operator =(const ZuTestMgr &) = delete;
 
 public:
+  using FinalFn = void (*)(bool);
+
   static void start() { instance().start_(); }
   static void indent() { instance().indent_(); }
+
+  static void finalFn(FinalFn fn) { instance().finalFn_(fn); }
 
   static void begin(ZuTest_Scope *scope) {
     instance().begin_(scope);
@@ -101,6 +105,7 @@ friend void ZuTest_::addImage_();
 
   void init();
 
+  void finalFn_(FinalFn fn);
   void start_();
 
   void indent_();
@@ -112,9 +117,12 @@ friend void ZuTest_::addImage_();
 
   Section	*m_head = nullptr;
   Section	*m_tail = nullptr;
+  FinalFn	m_finalFn = nullptr;
   RunContext	m_root;
   RunContext	*m_context = nullptr;
   unsigned	m_indent = 0;
+  enum { Idle, Running, Ended };
+  int		m_runState = Idle;
   bool		m_finalized = false;
 };
 

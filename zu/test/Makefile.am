@@ -20,6 +20,7 @@ noinst_PROGRAMS = \
 	ZuNumConvTest ZuNXTest ZuFPTest ZuIntrinTest ZuPreprocTest \
 	ZuTimeCTest ZuTokenizerTest ZuTest ZuDemangleTest
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZuInspectTest_SOURCES = ZuInspectTest.cc

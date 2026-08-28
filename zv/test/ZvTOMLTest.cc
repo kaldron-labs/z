@@ -10,6 +10,8 @@
 
 #include <zlib/ZvTOML.hh>
 
+#include "ZiTestResidue.hh"
+
 using namespace ZuTestUtil;
 
 struct FileTOML { ZtString<> value; int number = 0; };
@@ -161,11 +163,9 @@ static void errorsSave()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  g_dir << ZiFile::cwd() << "/ZvTOMLTest." << ZuBoxed(Zm::getPID());
-  ZiFile::rmdir(g_dir);
-  if (ZiFile::mkdir(g_dir) != Zi::OK) return 1;
+  ZiTestResidue::init("ZvTOMLTest");
+  g_dir = ZiTestResidue::dir("fixtures");
   ZuTestMain();
   ZuTestCall(files);
   ZuTestCall(errorsSave);
-  ZiFile::rmdir(g_dir);
 }

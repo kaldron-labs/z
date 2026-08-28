@@ -26,5 +26,6 @@ ZdfTest_LDADD = $(top_builddir)/zdb/src/libZdbMem.la ${LDADD}
 ZdfStatsTest_SOURCES = ZdfStatsTest.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove -j1 $(noinst_PROGRAMS)

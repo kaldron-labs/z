@@ -51,6 +51,7 @@ void testInitValidation()
 
   ZiLog::init("ZtlsAsyncTest");
   ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
   ZuCSpan alpn[] = { "ztls-test" };

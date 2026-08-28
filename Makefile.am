@@ -5,7 +5,7 @@ EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zf zi zrl
-SUBDIRS += ztcp ztls zquic zhttp
+SUBDIRS += ztcp ztls zquic zhttp zws
 SUBDIRS += zrest
 SUBDIRS += zmcp
 SUBDIRS += zfb
@@ -15,7 +15,7 @@ if LIBPQ
 SUBDIRS += zdb_pq
 endif
 SUBDIRS += zdf
-# SUBDIRS += zum zcmd zproxy
+# SUBDIRS += zum zcmd zproxy zdash
 if GTK
 # SUBDIRS += zgtk
 endif
@@ -24,6 +24,7 @@ DIST_SUBDIRS = zu zm zt ze zf zi zrl ztcp ztls zquic zhttp zrest zmcp zfb zv zdb
 	zdb_pq zdf zum zcmd zproxy zgtk zdash zws
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: all
 	@for subdir in $(SUBDIRS); do \
 	  $(MAKE) $(AM_MAKEFLAGS) -C $$subdir test || exit $$?; \

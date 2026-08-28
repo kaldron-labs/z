@@ -230,6 +230,7 @@ public:
       const Path &oldName, const Path &newName, ZeError *e = nullptr);
   static int mkdir(const Path &name, ZeError *e = nullptr);
   static int rmdir(const Path &name, ZeError *e = nullptr);
+  static int removeTree(const Path &name, ZeError *e = nullptr);
 
   static Path cwd();
   static Path canonical(const Path &name);
@@ -240,9 +241,8 @@ public:
   static Path dirname(const Path &name);
   static Path append(const Path &dir, const Path &name);
 
-  // age() takes a Name because Path is UCS2 on Windows
-  // and the implementation needs to append from ZuBox
-  static void age(const Name &name, unsigned max);
+  static void age(const Path &name, unsigned max);
+  static void ageTree(const Path &name, unsigned max);
 
 protected:
   int open_(const Path &name, unsigned flags, unsigned mode, Offset length);

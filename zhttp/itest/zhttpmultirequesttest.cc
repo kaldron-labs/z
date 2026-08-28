@@ -142,6 +142,7 @@ void testMultiRequestCLIAndOutput()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zhttpmultirequesttest");
   ZuTestMain();
   ZuTestCall(testMultiRequestCLIAndOutput);
 }

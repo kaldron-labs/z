@@ -16,6 +16,8 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
 
+#include "ZiTestResidue.hh"
+
 using namespace ZuTestUtil;
 
 namespace {
@@ -23,11 +25,11 @@ namespace {
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
 #ifdef Zquic_DEBUG
+static Zi::Path g_residue;
+
 static Zi::Path testPath_(ZuCSpan name)
 {
-  Zi::Path path;
-  path << name;
-  return path;
+  return ZiFile::append(g_residue, name);
 }
 
 static ZtString<> readFile_(const Zi::Path &path)
@@ -65,11 +67,6 @@ static unsigned parseJSONSeq_(ZuCSpan data)
     ++i;
   }
   return n;
-}
-
-static void removeTestLog_(const Zi::Path &path)
-{
-  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
 }
 
 static void closeQLog_(ZquicLogger::Trace &trace)
@@ -1129,7 +1126,6 @@ void testStatelessResetDetection()
     "stateless reset qlog trigger missing");
   ZuCHECK(qlog.find<"\"reason\":\"token_match\"">() >= 0,
     "stateless reset qlog reason missing");
-  removeTestLog_(qlogPath);
 #endif
 }
 
@@ -1917,7 +1913,6 @@ void testMigrationQLogEvents()
       "\"action\":\"rebind_start\"", "\"action\":\"rebind_fail\"",
       "\"action\":\"failed\"", "\"action\":\"closed\""),
     "rebind failure qlog stream order mismatch");
-  removeTestLog_(qlogPath);
 #endif
 }
 
@@ -1927,6 +1922,7 @@ void testInitValidate()
 
   ZiLog::init("ZquicAPITest");
   ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
   {
@@ -2039,6 +2035,11 @@ void testInitValidate()
 int main(int argc, char **argv)
 {
   ZuTestUtil::parse(argc, argv);
+
+  ZiTestResidue::init("ZquicAPITest");
+#ifdef Zquic_DEBUG
+  g_residue = ZiTestResidue::dir("qlog");
+#endif
 
   ZuTestMain();
   ZuTestCall(testParams);

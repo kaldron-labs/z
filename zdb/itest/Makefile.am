@@ -23,5 +23,6 @@ dist_noinst_SCRIPTS = 1.sh 2.sh 3.sh clean.sh
 dist_noinst_DATA = 3.cf db.cf zdbbtreetest.cf zdbqueuetest.cf zdbreptest.cf
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove -j1 $(noinst_PROGRAMS)

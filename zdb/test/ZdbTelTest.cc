@@ -10,6 +10,8 @@
 
 #include <zlib/ZvMxParams.hh>
 
+#include <zlib/ZiLog.hh>
+
 #include <zlib/Zdb.hh>
 
 #include "ZdbMockStore.hh"
@@ -234,6 +236,10 @@ void run()
 
 int main()
 {
+  ZiLog::init("ZdbTelTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
   ZuTestCall(run);
+  ZiLog::stop();
 }

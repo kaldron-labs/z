@@ -222,6 +222,7 @@ void testH3AppIPv6() { testAppTransport("h3", true); }
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zhttpapptest");
   ZuTestMain();
   ZuTestCall(testHTTPApp);
   ZuTestCall(testHTTPSApp);

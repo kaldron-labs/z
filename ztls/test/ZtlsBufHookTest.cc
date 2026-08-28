@@ -28,6 +28,8 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Ztls.hh>
 
+#include "ZiTestResidue.hh"
+
 #include "ZtlsTestPorts.hh"
 #include <zlib/ZtlsPico.hh>
 
@@ -44,19 +46,16 @@ constexpr unsigned SmallPayloadSize = 4u * 1024u;
 constexpr unsigned TimeoutSeconds = 15;
 
 struct TempDir {
-  char		path[PATH_MAX]{};
+  Zi::Path	path;
   ZtString<>	certPath;
   ZtString<>	keyPath;
 
-  ~TempDir() { cleanup(); }
-
   bool init()
   {
-    strcpy(path, "/tmp/ZtlsBufHookTest.XXXXXX");
-    if (!mkdtemp(path)) return false;
+    path = ZiTestResidue::dir("fixtures");
 
-    certPath << static_cast<const char *>(path) << "/cert.pem";
-    keyPath << static_cast<const char *>(path) << "/key.pem";
+    certPath << path << "/cert.pem";
+    keyPath << path << "/key.pem";
 
     ZtString<> cmd;
     cmd <<
@@ -73,7 +72,7 @@ struct TempDir {
   ZtString<> pathOf(const char *name) const
   {
     ZtString<> s;
-    s << static_cast<const char *>(path) << '/' << name;
+    s << path << '/' << name;
     return s;
   }
 
@@ -82,20 +81,6 @@ struct TempDir {
     return status != -1 && WIFEXITED(status) && !WEXITSTATUS(status);
   }
 
-  void cleanup()
-  {
-    if (!path[0]) return;
-    const char *names[] = {
-      "cert.pem", "key.pem", "tls12-in.bin", "tls12-out.bin",
-      "tls12-err.log", nullptr
-    };
-    for (auto name = names; *name; ++name) {
-      auto p = pathOf(*name);
-      unlink(p.data());
-    }
-    rmdir(path);
-    path[0] = 0;
-  }
 };
 
 struct LogCapture {
@@ -1085,6 +1070,8 @@ void testTLS12HandshakeRejected(TempDir &temp, LogCapture &capture)
 int main(int argc, char **argv)
 {
   ZuTestUtil::parse(argc, argv);
+
+  ZiTestResidue::init("ZtlsBufHookTest");
 
   ZiLog::init("ZtlsBufHookTest");
   ZiLog::level(0);

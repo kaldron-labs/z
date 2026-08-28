@@ -133,9 +133,8 @@ int main(int argc, char **argv)
   params.defaultUnit = argc == 1;
 
   ZiTestResidue::init("ZiRingTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   verbose = !::getenv("HARNESS_ACTIVE");
   for (int i = 1; i < argc; i++) {
@@ -226,7 +225,7 @@ int main(int argc, char **argv)
     }
   }
   if (generatedName || !::getenv("HARNESS_ACTIVE"))
-    ZiTestResidue::addShmBase(params.name);
+    ZiTestResidue::addShm(params.name);
 
   ZiLog::init("ZiRingTest");
   ZiLog::level(0);

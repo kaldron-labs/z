@@ -10,6 +10,8 @@
 
 #include <zlib/ZvCf.hh>
 
+#include "ZiTestResidue.hh"
+
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
@@ -335,12 +337,8 @@ void includeErrors()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  g_dir << ZiFile::cwd() << "/ZvCfTest." << ZuBoxed(Zm::getPID());
-  ZiFile::rmdir(g_dir);
-  if (ZiFile::mkdir(g_dir) != Zi::OK) {
-    log_("mkdir failed: ", g_dir);
-    return 1;
-  }
+  ZiTestResidue::init("ZvCfTest");
+  g_dir = ZiTestResidue::dir("fixtures");
 
   ZuTestMain();
   ZuTestCall(files);
@@ -348,6 +346,4 @@ int main(int argc, char **argv)
   ZuTestCall(nestedObjectAndDuplicates);
   ZuTestCall(saveLoad);
   ZuTestCall(includeErrors);
-
-  ZiFile::rmdir(g_dir);
 }

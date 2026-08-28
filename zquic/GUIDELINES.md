@@ -83,9 +83,8 @@ subdirectory rebuilds.
 
 Qlog file output should follow the `ZiLog` file-sink precedent: when a qlog
 path already exists, age it through the configured archive depth before opening
-the new log file.  Automated tests may use `ZQUIC_TEST_KEEP` to preserve their
-temporary qlog files for external tooling checks; this is a test artifact
-retention switch, not a generic library/runtime qlog control.
+the new log file.  Automated tests must place qlogs in a `ZiTestResidue`-owned
+directory family so successful runs remove them and failed runs retain them.
 
 ## Lifecycle and gating
 

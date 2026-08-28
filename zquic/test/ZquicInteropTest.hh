@@ -24,7 +24,15 @@
 #include <windows.h>
 #endif
 
+#include <zlib/ZuBox.hh>
+
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZiFile.hh>
+
+#ifdef Z_TEST_RESIDUE
+#include "ZiTestResidue.hh"
+#endif
 
 namespace Zquic::Test {
 
@@ -88,16 +96,29 @@ inline bool writeLocalhostCert_(
 }
 
 struct TempDir {
+#ifdef Z_TEST_RESIDUE
+  Zi::Path	path;
+#else
   char		path[PATH_MAX]{};
+#endif
   ZtString<>	certPath;
   ZtString<>	keyPath;
 
+#ifndef Z_TEST_RESIDUE
   ~TempDir() { cleanup(); }
+#endif
 
   bool init(const char *prefix)
   {
+#ifdef Z_TEST_RESIDUE
+    static unsigned counter;
+    Zi::Name name;
+    name << prefix << '-' << ZuBox<unsigned>{++counter};
+    path = ZiTestResidue::dir(name);
+#else
     snprintf(path, sizeof(path), "/tmp/%s.XXXXXX", prefix);
     if (!mkdtemp(path)) return false;
+#endif
     certPath = pathOf("cert.pem");
     keyPath = pathOf("key.pem");
     return true;
@@ -112,10 +133,15 @@ struct TempDir {
   ZtString<> pathOf(const char *name) const
   {
     ZtString<> s;
+#ifdef Z_TEST_RESIDUE
+    s << path << '/' << name;
+#else
     s << static_cast<const char *>(path) << '/' << name;
+#endif
     return s;
   }
 
+#ifndef Z_TEST_RESIDUE
   void cleanup()
   {
     if (!path[0]) return;
@@ -124,6 +150,7 @@ struct TempDir {
     ::system(cmd.data());
     path[0] = 0;
   }
+#endif
 };
 
 inline bool writeLocalhostCert(

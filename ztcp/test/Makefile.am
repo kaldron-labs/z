@@ -19,5 +19,6 @@ ZtcpLoopTest_SOURCES = ZtcpLoopTest.cc
 ZtcpStreamTest_SOURCES = ZtcpStreamTest.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

@@ -16,5 +16,6 @@ ZrlLineTest_SOURCES = ZrlLineTest.cc
 ZrlTerminfoTest_SOURCES = ZrlTerminfoTest.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

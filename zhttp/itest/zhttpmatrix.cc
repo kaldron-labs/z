@@ -229,10 +229,10 @@ void usage(int code = 1)
     "                    0 disables; zhttp only\n"
     "  --quiet-timeout=N quiet transport timeout in seconds, default 5,\n"
     "                    0 disables; zhttp only\n"
-    "  --debug           debug zhttp/zhttpd and preserve case directories\n"
+    "  --debug           debug zhttp/zhttpd\n"
     "  --frag            fragment zhttp/zhttpd ZiMultiplex\n"
     "  --yield           yield in zhttp/zhttpd ZiMultiplex\n"
-    "  --pcap            capture H3 UDP traffic and preserve case directories\n"
+    "  --pcap            capture H3 UDP traffic\n"
     "  --discard-response discard zhttp response bodies\n"
     "  --quic-rx-drop=N% pass QUIC receive packet drop rate to zhttp/zhttpd\n"
     "  --quic-tx-drop=N% pass QUIC transmit packet drop rate to zhttp/zhttpd\n"
@@ -260,13 +260,6 @@ void usage(int code = 1)
     "  -h, --help        show help\n" <<
     std::flush;
   ::exit(code);
-}
-
-bool preserveLogs()
-{
-  return options.debug || options.memDiag
-    || options.quicDiag
-    ;
 }
 
 bool selected(const Case &c)
@@ -1152,15 +1145,6 @@ bool writeScript(
   return writeFile(path, script.cspan(), 0777);
 }
 
-void preserveTemp(TempDir &temp, bool force = false)
-{
-  if ((!force && !preserveLogs() && !options.pcap) || !temp.path[0])
-    return;
-  std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
-    '\n';
-  temp.path[0] = 0;
-}
-
 bool runCase_(const Case &c, uint64_t &duration)
 {
   duration = 0;
@@ -1172,19 +1156,16 @@ bool runCase_(const Case &c, uint64_t &duration)
   ZtString<> rootPath;
   if (!writeRoot(temp, c, rootPath)) {
     std::cout << "# failed to create static root\n";
-    preserveTemp(temp);
     return false;
   }
   ZtString<> certPath, keyPath;
   if (!writeLocalhostCert(temp, certPath, keyPath)) {
     std::cout << "# failed to create TLS certificate\n";
-    preserveTemp(temp);
     return false;
   }
   unsigned port = loopbackPort(ZhttpITestPort::Matrix);
   if (!port) {
     std::cout << "# failed to allocate loopback port\n";
-    preserveTemp(temp);
     return false;
   }
   auto caddyfile = temp.pathOf("Caddyfile");
@@ -1192,7 +1173,6 @@ bool runCase_(const Case &c, uint64_t &duration)
       !writeCaddyfile(caddyfile, c.proto, port, rootPath.cspan(),
 	certPath.cspan(), keyPath.cspan())) {
     std::cout << "# failed to write Caddyfile\n";
-    preserveTemp(temp);
     return false;
   }
   auto script = temp.pathOf("matrix.sh");
@@ -1200,7 +1180,6 @@ bool runCase_(const Case &c, uint64_t &duration)
       rootPath.cspan(), certPath.cspan(), keyPath.cspan(), caddyfile.cspan(),
       matrixDir.cspan())) {
     std::cout << "# failed to write matrix script\n";
-    preserveTemp(temp);
     return false;
   }
 
@@ -1211,7 +1190,6 @@ bool runCase_(const Case &c, uint64_t &duration)
   duration = nowMS() - runStart;
   if (pcapEnabled(c)) analyzePcap(port, temp);
   if (ok) {
-    preserveTemp(temp, c.timeout && duration > uint64_t(c.timeout) * 1000);
     return true;
   }
 
@@ -1223,7 +1201,6 @@ bool runCase_(const Case &c, uint64_t &duration)
   printFile("pcap summary", temp.pathOf("pcap.summary"));
   printFile("pcap stderr", temp.pathOf("pcap.err"));
   printFile("script", script);
-  preserveTemp(temp);
   return false;
 }
 
@@ -1296,6 +1273,8 @@ int main(int argc, char **argv)
   if (argc != 1) usage();
   if (!validMigrationOptions()) usage();
   verbose = !options.quiet && !::getenv("HARNESS_ACTIVE");
+
+  ZiTestResidue::init("zhttpmatrix");
 
   ZuTestMain();
   ZuTestCall(runMatrix);

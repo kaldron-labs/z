@@ -501,6 +501,15 @@ int main(int argc, char **argv)
   using namespace ZhttpMessageHubTest_;
 
   parse(argc, argv);
+#if defined(ZHTTP_TEST_H1TCP)
+  ZiTestResidue::init("ZhttpH1MessageTest");
+#elif defined(ZHTTP_TEST_H1TLS)
+  ZiTestResidue::init("ZhttpH1TLSMessageTest");
+#elif defined(ZHTTP_TEST_H2)
+  ZiTestResidue::init("ZhttpH2MessageTest");
+#elif defined(ZHTTP_TEST_H3)
+  ZiTestResidue::init("ZhttpH3MessageTest");
+#endif
   ZuTestMain();
   Zhttp::Test::TempDir cert;
   if (!cert.init()) return 1;

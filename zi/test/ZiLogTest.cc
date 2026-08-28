@@ -44,7 +44,7 @@ bool contains(const ZtString<> &s, const char *needle)
 
 void initPaths()
 {
-  g_root = ZiFile::append(ZiTestResidue::tempRoot(), "log");
+  g_root = ZiTestResidue::dir("log");
   g_log = ZiFile::append(g_root, "ZiLogTest.log");
   g_csv = ZiFile::append(g_root, "ZiLogTest.csv");
 
@@ -56,14 +56,6 @@ void initPaths()
   g_csv1 = {};
   g_csv1 << g_csv << ".1";
 
-  ZiFile::mkdir(g_root);
-  ZiTestResidue::addDir(g_root);
-
-  ZiTestResidue::addFile(g_log);
-  ZiTestResidue::addFile(g_log1);
-  ZiTestResidue::addFile(g_log2);
-  ZiTestResidue::addFile(g_csv);
-  ZiTestResidue::addFile(g_csv1);
 }
 
 void resetArtifacts()
@@ -195,9 +187,8 @@ void testLambdaSinkReceivesEvents()
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiLogTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   initPaths();
   parse(argc, argv);

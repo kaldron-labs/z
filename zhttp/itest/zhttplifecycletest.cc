@@ -627,6 +627,8 @@ int main(int argc, char **argv)
 
   parse(argc, argv);
 
+  ZiTestResidue::init("zhttplifecycletest");
+
   ZiLog::init("zhttplifecycletest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));

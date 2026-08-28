@@ -30,7 +30,7 @@ Zi::Path g_link;
 
 void initPaths()
 {
-  g_root = ZiTestResidue::tempRoot();
+  g_root = ZiTestResidue::dir("files");
 
   g_foo = ZiFile::append(g_root, "foo");
   g_bar = ZiFile::append(g_root, "bar");
@@ -41,13 +41,6 @@ void initPaths()
   g_child = ZiFile::append(g_dir, "child.txt");
   g_link = ZiFile::append(g_dir, "link.txt");
 
-  ZiTestResidue::addFile(g_foo);
-  ZiTestResidue::addFile(g_bar);
-  ZiTestResidue::addFile(g_baz);
-  ZiTestResidue::addFile(g_copy);
-  ZiTestResidue::addFile(g_renamed);
-  ZiTestResidue::addFile(g_child);
-  ZiTestResidue::addDir(g_dir);
 }
 
 void cleanupFiles()
@@ -320,7 +313,7 @@ void testMetadataAndPathHelpers()
   Zi::Path joined = ZiFile::append(g_dir, "joined.txt");
   ZuCheck(ZiFile::leafname(joined) == "joined.txt");
   ZuCheck(ZiFile::dirname(joined) == g_dir);
-  ZuCheck(!ZiFile::absolute(joined));
+  ZuCheck(ZiFile::absolute(joined));
 
   Zi::Path absPath = ZiFile::append(cwd, "ZiFileTest.abs");
   ZuCheck(ZiFile::absolute(absPath));
@@ -442,9 +435,8 @@ void testOpenAtNoFollowAndStat()
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiFileTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   initPaths();
   parse(argc, argv);
@@ -458,6 +450,5 @@ int main(int argc, char **argv)
   ZuTestCall(testNegativeOpen);
   ZuTestCall(testTxStream);
   ZuTestCall(testOpenAtNoFollowAndStat);
-  cleanupFiles();
   return 0;
 }

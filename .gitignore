@@ -29,7 +29,7 @@ m4/lt~obsolete.m4
 missing
 stamp-*
 tags
-/log/
+/logs/
 *.tmp
 *.o
 *.s

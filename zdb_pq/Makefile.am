@@ -1,6 +1,6 @@
 METASOURCES = AUTO
-SUBDIRS = src# test itest ext
-DIST_SUBDIRS = src# test itest
+SUBDIRS = src test itest ext
+DIST_SUBDIRS = src test itest
 
 EXTRA_DIST = ext/Makefile ext/libz--0.sql ext/libz.control ext/libz.so \
 	ext/magic.bc ext/magic.c ext/zbitmap.bc ext/zbitmap.c ext/zbitmap.sql \
@@ -11,6 +11,7 @@ EXTRA_DIST = ext/Makefile ext/libz--0.sql ext/libz.control ext/libz.so \
 	ext/test/sql/zbitmap.sql ext/test/sql/zdecimal.sql ext/test/sql/ztime.sql
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: all
 	$(MAKE) $(AM_MAKEFLAGS) -C test test
 	$(MAKE) $(AM_MAKEFLAGS) -C itest test

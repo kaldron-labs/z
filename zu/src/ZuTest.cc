@@ -88,13 +88,21 @@ void ZuTestMgr::init()
   m_finalized = true;
 }
 
+void ZuTestMgr::finalFn_(FinalFn fn)
+{
+  assert(m_runState != Ended);
+  assert(!m_finalFn || m_finalFn == fn);
+  m_finalFn = fn;
+}
+
 void ZuTestMgr::start_()
 {
-  if (m_context) return;
+  if (m_runState != Idle) return;
   init();
   m_root = {};
   m_context = &m_root;
   m_indent = 0;
+  m_runState = Running;
   std::cout << "TAP version 14\n" << std::flush;
 }
 
@@ -140,8 +148,12 @@ void ZuTestMgr::end_(ZuTest_Scope *scope)
     assert(m_context->step);
     check_(m_context->step, ok, m_context->step->name);
   } else {
-    if (int code = m_context->failed)
-      ::exit(code);
+    int code = m_context->failed;
+    m_runState = Ended;
+    auto fn = m_finalFn;
+    m_finalFn = nullptr;
+    if (fn) fn(!code);
+    if (code) ::exit(code);
   }
 }
 

@@ -11,6 +11,7 @@ int main(int argc, char **argv)
   using namespace ZhttpH1HubTest_;
 
   parse(argc, argv);
+  ZiTestResidue::init("ZhttpH1HubTest");
   ZiLog::init("ZhttpH1HubTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));

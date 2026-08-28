@@ -29,5 +29,6 @@ ZfbTest2_SOURCES = ZfbTest2.cc
 ZfbTest3_SOURCES = ZfbTest3.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

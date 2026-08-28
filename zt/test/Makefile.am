@@ -18,6 +18,7 @@ noinst_PROGRAMS = \
 	ZtStringHash ZtStringTest ZtWindowTest
 dist_noinst_DATA = ZtWords
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZtArrayTest_SOURCES = ZtArrayTest.cc

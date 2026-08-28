@@ -22,11 +22,8 @@ Zi::Path g_file;
 
 void initPaths()
 {
-  g_root = ZiFile::append(ZiTestResidue::tempRoot(), "dir");
+  g_root = ZiTestResidue::dir("dir");
   g_file = ZiFile::append(g_root, "entry.txt");
-
-  ZiTestResidue::addDir(g_root);
-  ZiTestResidue::addFile(g_file);
 }
 
 void cleanupDir()
@@ -114,9 +111,8 @@ void testOpenNondirectoryFails()
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiDirTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   initPaths();
   parse(argc, argv);
@@ -124,6 +120,5 @@ int main(int argc, char **argv)
   ZuTestCall(testOpenReadAndEOF);
   ZuTestCall(testReadBeforeOpenFails);
   ZuTestCall(testOpenNondirectoryFails);
-  cleanupDir();
   return 0;
 }

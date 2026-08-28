@@ -589,6 +589,7 @@ int main(int argc, char **argv)
 
   (void)argc;
   (void)argv;
+  ZiTestResidue::init("ZhttpServerIdleTest");
   ZuTestMain();
   ZuTestCall(responseTypes);
   ZuTestCall(idle);

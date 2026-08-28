@@ -9,13 +9,20 @@
 
 #include <zlib/Zfb.hh>
 
+#include <zlib/ZiFile.hh>
+#include <zlib/ZiLog.hh>
+
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcAlert.hh>
 #include <zlib/ZtcMsg.hh>
 
+#include "ZiTestResidue.hh"
+
 #include "ZtcTestClient.hh"
 
 using namespace ZuTestUtil;
+
+static Zi::Path g_residue;
 
 struct FakeRecover {
   using Offsets = ZtArray<uint64_t,
@@ -308,15 +315,11 @@ void liveAlerts()
 
   ZuTime time = Zm::now();
   uint32_t date = uint32_t(ZuDateTime{time}.yyyymmdd());
-  Zi::Path prefix;
-  prefix << "/tmp/ZtcAlertTest." << uint64_t(::getpid());
+  Zi::Path prefix = ZiFile::append(g_residue, "live");
   Zi::Path dataPath{prefix};
   dataPath << '.' << date << ".data";
   Zi::Path indexPath{prefix};
   indexPath << '.' << date << ".index";
-  ZeError removeError;
-  ZiFile::remove(dataPath, &removeError);
-  ZiFile::remove(indexPath, &removeError);
 
   Ztc::App app;
   Ztc::AppCf cf;
@@ -447,8 +450,6 @@ void liveAlerts()
   ZuCheck(replay.stop());
   replay.final();
 
-  ZiFile::remove(dataPath, &removeError);
-  ZiFile::remove(indexPath, &removeError);
 }
 
 void crossDateReplay()
@@ -463,8 +464,7 @@ void crossDateReplay()
   Ztc::AppCf cf;
   uint32_t expiredID = Ztc::Alert_::addDays(
     todayID, -int(cf.alertRetention) - 10);
-  Zi::Path prefix;
-  prefix << "/tmp/ZtcAlertCross." << uint64_t(::getpid());
+  Zi::Path prefix = ZiFile::append(g_residue, "cross");
   Zi::Path todayData{prefix};
   Zi::Path todayIndex{prefix};
   Zi::Path yesterdayData{prefix};
@@ -477,13 +477,6 @@ void crossDateReplay()
   yesterdayIndex << '.' << yesterdayID << ".index";
   expiredData << '.' << expiredID << ".data";
   expiredIndex << '.' << expiredID << ".index";
-  ZeError e;
-  ZiFile::remove(todayData, &e);
-  ZiFile::remove(todayIndex, &e);
-  ZiFile::remove(yesterdayData, &e);
-  ZiFile::remove(yesterdayIndex, &e);
-  ZiFile::remove(expiredData, &e);
-  ZiFile::remove(expiredIndex, &e);
   {
     ZiFile expiredDataFile{
       expiredData, ZiFile::Create | ZiFile::GC};
@@ -620,12 +613,6 @@ void crossDateReplay()
   ZuCheck(identity.stop());
   identity.final();
 
-  ZiFile::remove(todayData, &e);
-  ZiFile::remove(todayIndex, &e);
-  ZiFile::remove(yesterdayData, &e);
-  ZiFile::remove(yesterdayIndex, &e);
-  ZiFile::remove(expiredData, &e);
-  ZiFile::remove(expiredIndex, &e);
 }
 
 #else
@@ -646,8 +633,14 @@ void crossDateReplay()
 
 int main()
 {
+  ZiTestResidue::init("ZtcAlertTest");
+  g_residue = ZiTestResidue::dir("alerts");
+  ZiLog::init("ZtcAlertTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
   ZuTestCall(recoveryCore);
   ZuTestCall(liveAlerts);
   ZuTestCall(crossDateReplay);
+  ZiLog::stop();
 }
