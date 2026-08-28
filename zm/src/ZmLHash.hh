@@ -34,6 +34,7 @@
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmHeap.hh>
 
 #include <zlib/ZmHashMgr.hh>
 
@@ -118,10 +119,12 @@ struct ZmLHashLocal : public NTP {
 template <typename T>
 struct ZmLHash_Ops : public ZuArrayFn<T, ZuCmp<T> > {
   static T *alloc(unsigned size) {
-    auto ptr = static_cast<T *>(
-      Zm::alignedAlloc<Zm::CacheLineSize>(size * sizeof(T)));
-    if (!ptr) throw std::bad_alloc{};
-    return ptr;
+    T *ptr;
+  retry:
+    if (ZuLikely(ptr = static_cast<T *>(
+	  Zm::alignedAlloc<Zm::CacheLineSize>(size * sizeof(T))))) return ptr;
+    if (ZmHeapFail()) goto retry;
+    ZuUnreachable();
   }
   static void free(T *ptr) {
     Zm::alignedFree(ptr);

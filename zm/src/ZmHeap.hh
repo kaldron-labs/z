@@ -49,6 +49,13 @@
 #define ZmHeap_DEBUG
 #endif
 
+// ZmHeapFailFn() should only return true
+// - it should call ::abort() if no emergency reserve is available
+typedef bool (*ZmHeapFailFn)();
+ZmExtern void ZmHeapOnFail(ZmHeapFailFn);
+
+ZmExtern bool ZmHeapFail(); // should only return true, or ::abort()
+
 class ZmHeapMgr;
 class ZmHeapMgr_;
 class ZmHeapCache;
@@ -164,10 +171,13 @@ private:
       ++stats.cacheAllocs;
       return ptr;
     }
-    ptr = Zm::alignedAlloc<Align>(m_info.size);
-    if (ZuUnlikely(!ptr)) throw std::bad_alloc{};
-    ++stats.heapAllocs;
-    return ptr;
+  retry:
+    if (ZuLikely(ptr = Zm::alignedAlloc<Align>(m_info.size))) {
+      ++stats.heapAllocs;
+      return ptr;
+    }
+    if (ZmHeapFail()) goto retry;
+    ZuUnreachable();
   }
 
   void free(ZmHeapStats &stats, void *p);

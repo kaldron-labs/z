@@ -19,9 +19,12 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmScratch.hh>
+#include <zlib/ZmVHeap.hh>
 
 namespace ZmBlock_ {
   inline ZmSemaphore &sem() { return ZmTLS<ZmSemaphore, sem>(); }
+
+  using VHeap = ZmVHeap<"ZmBlock">;
 }
 
 template <typename ...Args> struct ZmBlock {
@@ -39,8 +42,7 @@ template <typename ...Args> struct ZmBlock {
   }
   template <typename L, typename Reduce>
   R operator ()(unsigned n, L l, Reduce reduce) const {
-    auto r = ZmScratch(R, n);
-    if (n && !r.data()) throw std::bad_alloc{};
+    auto r = ZmScratch(R, n, ZmBlock_::VHeap);
     auto &sem = ZmBlock_::sem();
     for (unsigned i = 0; i < n; i++) {
       auto ptr = r.push();
@@ -69,8 +71,7 @@ template <typename Arg> struct ZmBlock<Arg> {
   }
   template <typename L, typename Reduce>
   R operator ()(unsigned n, L l, Reduce reduce) const {
-    auto r = ZmScratch(R, n);
-    if (n && !r.data()) throw std::bad_alloc{};
+    auto r = ZmScratch(R, n, ZmBlock_::VHeap);
     auto &sem = ZmBlock_::sem();
     for (unsigned i = 0; i < n; i++) {
       auto ptr = r.push();

@@ -205,7 +205,6 @@ private:
     if (ZuLikely(onHeap())) return; // idempotent
     if (auto stackPtr = ptr()) {
       auto heapPtr = reinterpret_cast<void *>(m_allocFn(1)); // heap allocates
-      if (ZuUnlikely(!heapPtr)) throw std::bad_alloc{};
       m_moveFn(heapPtr, stackPtr, false);
       m_ptr = reinterpret_cast<uintptr_t>(heapPtr) | OnHeap;
     }
