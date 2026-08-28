@@ -8,6 +8,7 @@
 #define zrest_proto_HH
 
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
@@ -119,6 +120,7 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Requests> {
 struct ResParser : public Zrest::MResParser<ReqBuilder_> { };
 
 class Pool;
+template <typename Heap = ZuVoid> class Pool_;
 ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
   ZmPQueueOverlap<false,
     ZmPQueueNode<ReqBuilder_,
@@ -126,17 +128,23 @@ ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-class Pool : public Zhttp::Pool<Client, TxQ, ResParser> {
+template <typename Heap>
+class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
   using Base = Zhttp::Pool<Client, TxQ, ResParser>;
 
 public:
-  Pool(Client *client) : Base{client} { }
+  Pool_(Client *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *);
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
 
 private:
   ReqBuilderQ m_requests;
+};
+using PoolHeap = ZmHeap<"zrest.Pool", Pool_<>>;
+class Pool : public Pool_<PoolHeap> {
+public:
+  using Pool_<PoolHeap>::Pool_;
 };
 
 struct Pending {

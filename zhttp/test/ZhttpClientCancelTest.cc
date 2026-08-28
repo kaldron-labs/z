@@ -11,6 +11,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
@@ -117,6 +118,7 @@ struct HoldingResolver {
 
 struct App;
 struct Pool;
+template <typename Heap = ZuVoid> struct Pool_;
 struct ReqBuilder_;
 struct ResParser;
 
@@ -242,10 +244,11 @@ ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-struct Pool : public Zhttp::Pool<App, TxQ, ResParser> {
+template <typename Heap>
+struct Pool_ : public Heap, public Zhttp::Pool<App, TxQ, ResParser> {
   using Base = Zhttp::Pool<App, TxQ, ResParser>;
 
-  Pool(App *);
+  Pool_(App *);
 
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *request);
@@ -253,6 +256,10 @@ struct Pool : public Zhttp::Pool<App, TxQ, ResParser> {
 
 private:
   ReqBuilderQ	m_requests;
+};
+using PoolHeap = ZmHeap<"Zhttp.Test.Pool", Pool_<>>;
+struct Pool : public Pool_<PoolHeap> {
+  Pool(App *);
 };
 
 ZuAssert((ZuIsSame<
@@ -317,9 +324,12 @@ private:
   uint64_t	m_key = 0;
 };
 
-Pool::Pool(App *app) : Base{app} { app->poolImpl = this; }
+template <typename Heap>
+Pool_<Heap>::Pool_(App *app) : Base{app} { }
+Pool::Pool(App *app) : Pool_<PoolHeap>{app} { app->poolImpl = this; }
 
-void Pool::archive_(ReqBuilder *request) { client()->archived(request); }
+template <typename Heap>
+void Pool_<Heap>::archive_(ReqBuilder *request) { client()->archived(request); }
 
 void ReqBuilder_::selected(
     const Zhttp::Endpoint *,
