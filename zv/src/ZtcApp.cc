@@ -1332,8 +1332,10 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     fbb.Finish(
       fbs::CreateMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
     ZmRef<ZiIOBuf> canonical = saveHdr(fbb);
-    if (ZuUnlikely(!canonical || canonical->length > m_cf.maxFrame))
-      throw std::bad_alloc{};
+    if (ZuUnlikely(!canonical || canonical->length > m_cf.maxFrame)) {
+      m_state->degraded = true;
+      return;
+    }
 
     if (!m_state->store.append(canonical.ptr(), alertSeqNo))
       m_state->degraded = true;

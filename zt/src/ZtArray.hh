@@ -585,7 +585,6 @@ private:
   template <typename R> MatchCtorElem<R> ctor(R &&r) {
     uint64_t z = grow_(0, 1);
     m_data = alloc__(z);
-    if (!m_data) throw std::bad_alloc{};
     size_mutable(z, 1);
     length_vallocd(1, 1);
     initElem(m_data, ZuFwd<R>(r));
@@ -868,7 +867,6 @@ protected:
   void alloc_(uint64_t size, uint64_t length) {
     if (!size) { null_(); return; }
     m_data = alloc__(size);
-    if (!m_data) throw std::bad_alloc{};
     size_mutable(size, 1);
     length_vallocd(length, 1);
   }
@@ -882,7 +880,6 @@ protected:
   template <typename U> void copy__(const U *data, uint64_t length) {
     if (!length) { null_(); return; }
     m_data = alloc__(length);
-    if (!m_data) throw std::bad_alloc{};
     copy___(data, length);
   }
   template <typename U> void copy___(const U *data, uint64_t length) {
@@ -894,7 +891,6 @@ protected:
   template <typename U> void move__(U *data, uint64_t length) {
     if (!length) { null_(); return; }
     m_data = alloc__(length);
-    if (!m_data) throw std::bad_alloc{};
     move___(data, length);
   }
   template <typename U> void move___(U *data, uint64_t length) {
@@ -931,7 +927,6 @@ public:
     size(n);
     if (!m_data || size() <= n) return;
     T *newData = alloc__(n);
-    if (!newData) throw std::bad_alloc{};
     this->template moveElems<false>(newData, m_data, n);
     free_();
     m_data = newData;
@@ -1069,7 +1064,6 @@ public:
     if (!z) { null(); return 0; }
     if (mutable_() && z == size()) return m_data;
     T *newData = alloc__(z);
-    if (!newData) throw std::bad_alloc{};
     uint64_t n = z;
     if (n > length()) n = length();
     if (m_data) {
@@ -1093,7 +1087,6 @@ public:
     if (!mutable_() || i + 1 > z) {
       z = grow_(z, i + 1);
       T *newData = alloc__(z);
-      if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData, m_data, n);
       free_();
       m_data = newData;
@@ -1213,7 +1206,6 @@ private:
     uint64_t n = length();
     uint64_t z = grow_(n, n + 1);
     T *newData = alloc__(z);
-    if (!newData) throw std::bad_alloc{};
     if (n) copyElems(newData, m_data, n);
     initElem(newData + n, ZuFwd<R>(r));
     return ZtArray(newData, n + 1, z, true);
@@ -1238,7 +1230,6 @@ private:
     uint64_t z = n + length;
     if (ZuUnlikely(!z)) return ZtArray{};
     T *newData = alloc__(z);
-    if (!newData) throw std::bad_alloc{};
     if (n) copyElems(newData, m_data, n);
     length = add(newData + n, length);
     return ZtArray(newData, n + length, z, true);
@@ -1377,7 +1368,6 @@ public:
     if (!mutable_() || n + 1 > z) {
       z = grow_(z, n + 1);
       T *newData = alloc__(z);
-      if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData, m_data, n);
       free_();
       m_data = newData;
@@ -1437,7 +1427,6 @@ public:
     if (!mutable_() || n + 1 > z) {
       z = grow_(z, n + 1);
       T *newData = alloc__(z);
-      if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData + 1, m_data, n);
       free_();
       m_data = newData;
@@ -1510,7 +1499,6 @@ public:
 	removed = ZuSpan(m_data + offset, length);
       if (!z) { null(); return; }
       T *newData = alloc__(z);
-      if (!newData) throw std::bad_alloc{};
       this->template moveElems<false>(newData, m_data, offset);
       if (rlength)
 	rlength = replace(ZuSpan(newData + offset, rlength));

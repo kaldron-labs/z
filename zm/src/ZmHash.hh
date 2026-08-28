@@ -75,8 +75,11 @@ protected:
     if (m_cBits > m_bits) m_cBits = m_bits;
     unsigned n = 1U<<m_cBits;
     unsigned size = n * CacheLineSize;
-    m_locks = Zm::alignedAlloc<CacheLineSize>(size);
-    if (!m_locks) throw std::bad_alloc{};
+  retry:
+    if (ZuUnlikely(!(m_locks = Zm::alignedAlloc<CacheLineSize>(size)))) {
+      if (ZmHeapFail()) goto retry;
+      ZuUnreachable();
+    }
     for (unsigned i = 0; i < n; ++i) new (&lock_(i)) Lock();
   }
 

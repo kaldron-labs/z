@@ -225,8 +225,6 @@ private:
 
   void extend(unsigned size) {
     T *data = static_cast<T *>(valloc(size * sizeof(T)));
-    ZmAssert(data);
-    if (ZuUnlikely(!data)) throw std::bad_alloc{};
     if (m_data) {
       Ops::moveElems(data, m_data, m_length);
       vfree(m_data);

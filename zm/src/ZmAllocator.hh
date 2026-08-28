@@ -83,6 +83,8 @@ ZmAllocator_<T, ID, Min, Max, Sharded>::allocate(std::size_t n) {
   using Cache =
     ZmHeapCacheT<ID, ZmHeapAllocSize<sizeof(T)>{}, alignof(T), Sharded>;
 
+  if (ZuLikely(n == 1)) return static_cast<T *>(Cache::alloc());
+
   using VHeap = ZmVHeap_<
     ID,
     sizeof(T) * Min,
@@ -90,11 +92,7 @@ ZmAllocator_<T, ID, Min, Max, Sharded>::allocate(std::size_t n) {
     alignof(T),
     Sharded>;
 
-  if (ZuLikely(n == 1)) return static_cast<T *>(Cache::alloc());
-
-  if (auto ptr = static_cast<T *>(VHeap::valloc(n * sizeof(T)))) return ptr;
-
-  throw std::bad_alloc{};
+  return static_cast<T *>(VHeap::valloc(n * sizeof(T)));
 }
 
 template <typename T, typename ID, unsigned Min, unsigned Max, bool Sharded>

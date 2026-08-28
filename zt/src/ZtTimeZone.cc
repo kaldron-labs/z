@@ -10,6 +10,7 @@
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmGuard.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmSingleton.hh>
 
@@ -40,12 +41,14 @@ Zt_TzGuard::Zt_TzGuard(const char *tz) :
   if (tz) {
     if (m_oldTz = ::getenv("TZ")) m_oldTz -= 3; // potentially non-portable
 
-    m_tz = static_cast<char *>(malloc(strlen(tz) + 4));
-    ZmAssert(m_tz);
-    if (!m_tz) throw std::bad_alloc();
+    auto size = strlen(tz) + 4;
+retry:
+    if (ZuUnlikely(!(m_tz = static_cast<char *>(::malloc(size))))) { // must be malloc
+      if (ZmHeapFail()) goto retry;
+      ZuUnreachable();
+    }
     strcpy(m_tz, "TZ=");
     strcpy(m_tz + 3, tz);
-
     Zt::putenv(m_tz);
   }
 

@@ -80,6 +80,8 @@ class ZmHeapMgr_ : public ZmObject {
 friend ZmHeapMgr;
 friend ZmHeapCache;
 friend Ztc::HeapMgr;
+friend void ZmHeapOnFail(ZmHeapFailFn);
+friend bool ZmHeapFail();
 
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
@@ -280,6 +282,14 @@ private:
     return c;
   }
 
+  bool fail() {
+    if (m_failFn && m_failFn()) return true;
+    ::abort();
+  }
+
+  void failFn(ZmHeapFailFn fn) { m_failFn = fn; }
+
+  ZmHeapFailFn		m_failFn = nullptr;
   ZmPLock		m_lock;
     IDPart2Config	  m_configs;
     ID2Cache		  m_id2Cache;
@@ -288,6 +298,16 @@ private:
   Ztc::HeapMgr::AddFn	m_addFn;
   Ztc::HeapMgr::DelFn	m_delFn;
 };
+
+void ZmHeapOnFail(ZmHeapFailFn fn)
+{
+  ZmHeapMgr_::instance()->failFn(fn);
+}
+
+bool ZmHeapFail()
+{
+  return ZmHeapMgr_::instance()->fail();
+}
 
 void ZmHeapMgr::init(
   ZuCSpan id, unsigned partition, const ZmHeapConfig &config)
@@ -311,9 +331,11 @@ ZmHeapCache *ZmHeapMgr::cache(
 }
 
 void *ZmHeapCache::operator new(size_t size) {
-  void *ptr = Zm::alignedAlloc<512>(size);
-  if (ZuUnlikely(!ptr)) throw std::bad_alloc{};
-  return ptr;
+  void *ptr;
+retry:
+  if (ZuLikely(ptr = Zm::alignedAlloc<512>(size))) return ptr;
+  if (ZmHeapFail()) goto retry;
+  ZuUnreachable();
 }
 void *ZmHeapCache::operator new(size_t, void *ptr)
 {

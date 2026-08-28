@@ -83,14 +83,17 @@ public:
     size += Align;
     uint8_t i = cacheI(size);
     if (!NCaches || ZuUnlikely(i >= NCaches)) { // jumbo
-      auto ptr = static_cast<uint8_t *>(Zm::alignedAlloc<Align>(size));
-      if (ZuUnlikely(!ptr)) return nullptr;
-      *ptr = i;
-      return ptr + Align;
+      uint8_t *ptr;
+  retry:
+      if (ZuLikely(ptr = static_cast<uint8_t *>(Zm::alignedAlloc<Align>(size)))) {
+	*ptr = i;
+	return ptr + Align;
+      }
+      if (ZmHeapFail()) goto retry;
+      ZuUnreachable();
     } else if constexpr (NCaches) {
       return ZuSwitch::dispatch<NCaches>(i, [](auto I) -> void * {
 	auto ptr = static_cast<uint8_t *>(Cache<I>::alloc());
-	if (ZuUnlikely(!ptr)) return nullptr;
 	*ptr = I;
 	return ptr + Align;
       });

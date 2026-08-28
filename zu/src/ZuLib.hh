@@ -131,7 +131,11 @@ static_assert(sizeof(unsigned) >= sizeof(uint32_t));
 #define ZuNoInline inline __attribute__((noinline))
 #endif
 
+#ifdef ZDEBUG
+#define ZuUnreachable() do { ::abort(); __builtin_unreachable(); } while (0)
+#else
 #define ZuUnreachable() __builtin_unreachable()
+#endif
 
 #else /* __GNUC__ */
 

@@ -617,7 +617,6 @@ protected:
       return data__();
     }
     Char *newData = static_cast<Char *>(valloc(size * sizeof(Char)));
-    if (!newData) throw std::bad_alloc{};
     ptr__(newData);
     size_mutable_null(size, 1, 0);
     length_vallocd_builtin(length, 1, 0);
@@ -634,7 +633,6 @@ protected:
       return;
     }
     Char *newData = static_cast<Char *>(valloc((length + 1) * sizeof(Char)));
-    if (!newData) throw std::bad_alloc{};
     memcpy(newData, copyData, length * sizeof(Char));
     newData[length] = 0;
     ptr__(newData);
@@ -781,7 +779,6 @@ public:
     if (null__()) return nullptr;
     if (builtin()) {
       Char *newData = static_cast<Char *>(valloc(BuiltinSize * sizeof(Char)));
-      if (!newData) throw std::bad_alloc{};
       memcpy(newData, m_data, (length() + 1) * sizeof(Char));
       return newData;
     } else {
@@ -838,7 +835,6 @@ public:
       newData = data__();
     else {
       newData = static_cast<Char *>(valloc(z * sizeof(Char)));
-      if (!newData) throw std::bad_alloc{};
     }
     uint64_t n = z - 1;
     if (n > length()) n = length();
@@ -1192,7 +1188,6 @@ public:
 	newData = data__();
       else {
 	newData = static_cast<Char *>(valloc(z * sizeof(Char)));
-	if (!newData) throw std::bad_alloc{};
       }
       if (oldData != newData && offset)
 	memcpy(newData, oldData, offset * sizeof(Char));
