@@ -5,11 +5,13 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmHash.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmSpinLock.hh>
@@ -37,7 +39,8 @@ void usage_()
     "  -x\t\t- read and write in same process\n"
     "  -X\t\t- reset buffer (overrides -r -w -x)\n"
     "  -W\t\t- multiple writers (default: single writer)\n"
-    "  -R\t\t- multiple readers (default: single reader)\n"
+    "  -R\t\t- multiple readers (no-op for intrinsically MR ZiRing)\n"
+    "  --no-eof\t- do not send/wait for EOF\n"
     "  -l N\t\t- loop N times\n"
     "  -b BUFSIZE\t- set buffer size to BUFSIZE (default: 8192)\n"
     "  -n COUNT\t- set number of messages to COUNT (default: 1)\n"
@@ -52,32 +55,44 @@ void usage_()
 
 struct Msg {
   static constexpr uintptr_t magic() { return 0x8040201080402010ULL; }
-  Msg() :
+  Msg(uint64_t seq_, uint32_t writer_) :
       m_p{reinterpret_cast<uintptr_t>(this)},
-      m_q{m_p ^ magic()} { }
+      m_q{m_p ^ magic() ^ seq_ ^ writer_},
+      m_seq{seq_}, m_writer{writer_} { }
   ~Msg() { m_p = 0; }
-  bool ok() const { return (m_p ^ m_q) == magic(); }
+  bool ok() const {
+    return (m_p ^ m_q ^ m_seq ^ m_writer) == magic();
+  }
+  uint64_t seq() const { return m_seq; }
+  uint32_t writer() const { return m_writer; }
   uintptr_t m_p;
   uintptr_t m_q;
+  uint64_t m_seq;
+  uint32_t m_writer;
 };
 
+ZuDerive(WriterSeqs, (ZmHashKV<uint32_t, uint64_t,
+  ZmHashLock<ZmNoLock, ZmHashHeapID<"ZiRingTest.WriterSeqs">>>));
+
 struct Params {
-  ZtString<>			name;
-  bool				write = true;
-  bool				read = false;
-  bool				modeSet = false;
-  bool				reset = false;
-  bool				mw = false;
-  bool				mr = false;
-  unsigned			bufsize = 8192;
-  bool				ll = false;
-  unsigned			spin = 1000;
-  unsigned			timeout = 1;
-  unsigned			loop = 1;
-  unsigned			count = 1;
-  ZuTime			interval;
-  bool				slow = false;
-  ZmBitmap			cpuset;
+  ZtString<>		name;
+  bool			write = true;
+  bool			read = false;
+  bool			modeSet = false;
+  bool			reset = false;
+  bool			mw = false;
+  bool			mr = false;
+  bool			noEOF = false;
+  bool			defaultUnit = false;
+  unsigned		bufsize = 8192;
+  bool			ll = false;
+  unsigned		spin = 1000;
+  unsigned		timeout = 1;
+  unsigned		loop = 1;
+  unsigned		count = 1;
+  ZuTime		interval;
+  bool			slow = false;
+  ZmBitmap		cpuset;
 };
 
 template <typename Ring>
@@ -98,6 +113,8 @@ private:
   void reader();
   void writer();
 
+  bool validate(WriterSeqs &, const Msg *);
+
   template <typename ...Args>
   void fail(Args &&...args) {
     ++m_errors;
@@ -113,6 +130,7 @@ private:
 int main(int argc, char **argv)
 {
   Params params;
+  params.defaultUnit = argc == 1;
 
   ZiTestResidue::init("ZiRingTest");
   ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
@@ -121,6 +139,10 @@ int main(int argc, char **argv)
 
   verbose = !::getenv("HARNESS_ACTIVE");
   for (int i = 1; i < argc; i++) {
+    if (!::strcmp(argv[i], "--no-eof")) {
+      params.noEOF = true;
+      continue;
+    }
     if (argv[i][0] != '-') {
       if (params.name) usage_();
       params.name = argv[i];
@@ -195,14 +217,16 @@ int main(int argc, char **argv)
     }
   }
 
-  if (!params.name) {
+  bool generatedName = !params.name;
+  if (generatedName) {
     params.name = ZiTestResidue::uniqueName("ring");
     if (!params.modeSet) {
       params.write = true;
       params.read = true;
     }
   }
-  ZiTestResidue::addShmBase(params.name);
+  if (generatedName || !::getenv("HARNESS_ACTIVE"))
+    ZiTestResidue::addShmBase(params.name);
 
   ZiLog::init("ZiRingTest");
   ZiLog::level(0);
@@ -211,13 +235,13 @@ int main(int argc, char **argv)
 
   ZuTestMain();
   bool ok = ZuSwitch::dispatch<4>(
-      (static_cast<unsigned>(params.mw)<<1) |
-       static_cast<unsigned>(params.mr),
-      [params = ZuMv(params)](auto i) mutable {
-	using Ring =
-	  ZiRing<ZmRingT<Msg, ZmRingMW<(i>>1) & 1, ZmRingMR<i & 1>>>>;
-	return App<Ring>{ZuMv(params)}.main();
-      });
+    (static_cast<unsigned>(params.mw)<<1) |
+    static_cast<unsigned>(params.mr),
+    [params = ZuMv(params)](auto i) mutable {
+      using Ring =
+	ZiRing<ZmRingT<Msg, ZmRingMW<(i>>1) & 1, ZmRingMR<i & 1>>>>;
+      return App<Ring>{ZuMv(params)}.main();
+    });
   ZuCheck(ok);
 
   ZiLog::stop();
@@ -254,6 +278,7 @@ bool App<Ring>::run()
     fail("open failed: ", name);
     return false;
   }
+  if (defaultUnit) count = (ring.size() / Ring::MsgSize) + 1;
 
   log("address: 0x", ZuBoxPtr(ring.data()).hex(),
       "  ctrlSize: ", ZuBoxed(ring.ctrlSize()),
@@ -267,12 +292,14 @@ bool App<Ring>::run()
     if (write) w = ZmThread{[this]() { writer(); }};
     if (w) {
       w.join();
-      Ring writer{ring};
-      if (writer.open(Ring::Write) != Zu::OK)
-	fail("writer open failed while sending eof: ", name);
-      else {
-	writer.eof();
-	writer.close();
+      if (!noEOF) {
+	Ring writer{ring};
+	if (writer.open(Ring::Write) != Zu::OK)
+	  fail("writer open failed while sending eof: ", name);
+	else {
+	  writer.eof();
+	  writer.close();
+	}
       }
     }
     if (r) r.join();
@@ -311,11 +338,11 @@ void App<Ring>::reader()
     reader.close();
     return;
   }
+  WriterSeqs seqs;
   for (unsigned j = 0, n = count; j < n; j++) {
     ZuTime readStart = Zm::now();
     if (const Msg *msg = reader.shift()) {
-      if (ZuUnlikely(!msg->ok())) {
-	fail("reader msg validation failed");
+      if (ZuUnlikely(!validate(seqs, msg))) {
 	break;
       }
       reader.shift2();
@@ -324,7 +351,7 @@ void App<Ring>::reader()
     } else {
       int k = reader.readStatus();
       if (k == Zu::EndOfFile) {
-	log("reader EOF");
+	log("reader EOF before message ", ZuBoxed(j));
       } else if (!k)
 	log("ring empty");
       else {
@@ -338,15 +365,62 @@ void App<Ring>::reader()
     }
     if (slow && !!interval) Zm::sleep(interval);
   }
+  if (!noEOF && !m_errors) {
+    for (;;) {
+      if (const Msg *msg = reader.shift()) {
+	fail("reader received unexpected message after count: writer ",
+	    ZuBoxed(msg->writer()), " sequence ", ZuBoxed(msg->seq()));
+	reader.shift2();
+	break;
+      }
+      int k = reader.readStatus();
+      if (k == Zu::EndOfFile) {
+	log("reader EOF");
+	break;
+      }
+      if (k && k != Zu::NotReady) {
+	fail("reader status while waiting for EOF: ", ZuBoxed(k));
+	break;
+      }
+    }
+  }
   end = Zm::now();
   reader.detach();
   reader.close();
 }
 
 template <typename Ring>
+bool App<Ring>::validate(WriterSeqs &seqs, const Msg *msg)
+{
+  if (ZuUnlikely(!msg->ok())) {
+    fail("reader msg corruption: writer ", ZuBoxed(msg->writer()),
+	" sequence ", ZuBoxed(msg->seq()));
+    return false;
+  }
+  auto seq = msg->seq();
+  if (auto node = seqs.findPtr(msg->writer())) {
+    if (ZuUnlikely(node->val() != seq)) {
+      fail("reader msg sequence: writer ", ZuBoxed(msg->writer()),
+	  " expected ", ZuBoxed(node->val()), " received ", ZuBoxed(seq));
+      return false;
+    }
+    node->val() = seq + 1;
+  } else {
+    if (ZuUnlikely(!noEOF && seq)) {
+      fail("reader initial msg sequence: writer ", ZuBoxed(msg->writer()),
+	  " expected 0 received ", ZuBoxed(seq));
+      return false;
+    }
+    seqs.add(msg->writer(), seq + 1);
+  }
+  return true;
+}
+
+template <typename Ring>
 void App<Ring>::writer()
 {
   unsigned failed = 0;
+  uint32_t writerID = uint32_t(Zm::getPID());
   log("writer started");
   start = Zm::now();
   Ring writer{ring};
@@ -358,7 +432,7 @@ void App<Ring>::writer()
   for (unsigned j = 0; j < count; j++) {
     ZuTime writeStart = Zm::now();
     if (void *ptr = writer.push()) {
-      new (ptr) Msg{};
+      new (ptr) Msg{j, writerID};
       if constexpr (Ring::MW)
 	writer.push2(ptr);
       else
