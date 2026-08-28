@@ -388,7 +388,7 @@ void ZiCSVSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 
 void ZiCSVSink::age()
 {
-  m_writer.new_<void>();
+  m_writer = {};
   ZiFile::age(m_path, m_age);
   new (m_writer.new_<Writer>()) Writer(m_path, ZiCSV::Create);
 }
