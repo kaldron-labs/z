@@ -61,10 +61,6 @@
 #define ZiMultiplex_EPoll	// Linux epoll
 #endif
 
-#ifdef NETLINK
-#define ZiMultiplex_Netlink	// netlink
-#endif
-
 #ifdef ZiMultiplex_DEBUG
 using ZiDebugBuf_ = ZiIOBufAlloc<
   ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zi.DebugBuf">;
@@ -268,18 +264,14 @@ namespace ZiCxnFlags {
   // L - combine with M and U for multicast loopback
   // K - set SO_KEEPALIVE socket option
   // D - enable Nagle algorithm (no TCP_NODELAY)
-  // N - NetLink socket
 
   ZtFlags_(ZiCxnFlags, uint8_t,
-    UDP, Multicast, LoopBack, KeepAlive, Nagle, NetLink);
-  ZtFlagsMap(ZiAPI, ZiCxnFlags, Map, "U", "M", "L", "K", "D", "N");
+    UDP, Multicast, LoopBack, KeepAlive, Nagle);
+  ZtFlagsMap(ZiAPI, ZiCxnFlags, Map, "U", "M", "L", "K", "D");
 }
 
 class ZiCxnOptions {
   using MReqs = ZuArray<ZiMReq, ZiCxnOptions_NMReq>;
-#ifdef ZiMultiplex_Netlink
-  using FamilyName = ZuCArray<GENL_NAMSIZ>;
-#endif
 
 public:
   ZiCxnOptions() = default;
@@ -358,27 +350,6 @@ public:
 	return false;
     return true;
   }
-#ifdef ZiMultiplex_Netlink
-  bool netlink() const {
-    using namespace ZiCxnFlags;
-    return m_flags & NetLink;
-  }
-  ZiCxnOptions &netlink(bool b) {
-    using namespace ZiCxnFlags;
-    b ? (m_flags |= NetLink) : (m_flags &= ~NetLink);
-    return *this;
-  }
-  const ZuCArray &familyName() const { return m_familyName; }
-  ZiCxnOptions &familyName(ZuCSpan s) {
-    m_familyName = s;
-    return *this;
-  }
-#else
-  bool netlink() const { return false; }
-  ZiCxnOptions &netlink(bool) { return *this; }
-  ZuCSpan familyName() const { return ZuCSpan(); }
-  ZiCxnOptions &familyName(ZuCSpan) { return *this; }
-#endif
   bool nagle() const {
     using namespace ZiCxnFlags;
     return m_flags & Nagle();
@@ -392,9 +363,6 @@ public:
   bool equals(const ZiCxnOptions &o) const {
     using namespace ZiCxnFlags;
     if (m_flags != o.m_flags) return false;
-#ifdef ZiMultiplex_Netlink
-    if ((m_flags & NetLink())) return m_familyName == o.m_familyName;
-#endif
     if (!(m_flags & Multicast())) return true;
     return m_mreqs == o.m_mreqs &&
       m_mif == o.m_mif && m_mifIndex == o.m_mifIndex && m_ttl == o.m_ttl;
@@ -403,9 +371,6 @@ public:
     using namespace ZiCxnFlags;
     int i;
     if (i = ZuCompare(m_flags, o.m_flags)) return i;
-#ifdef ZiMultiplex_Netlink
-    if ((m_flags & NetLink())) return m_familyName.cmp(o.m_familyName);
-#endif
     if (!(m_flags & Multicast())) return i;
     if (i = m_mreqs.cmp(o.m_mreqs)) return i;
     if (i = m_mif.cmp(o.m_mif)) return i;
@@ -422,9 +387,6 @@ public:
   uint32_t hash() const {
     using namespace ZiCxnFlags;
     uint32_t code = ZuHash<uint32_t>::hash(m_flags);
-#ifdef ZiMultiplex_Netlink
-    if (m_flags & NetLink()) return code ^ m_familyName.hash();
-#endif
     if (!(m_flags & Multicast())) return code;
     return code ^ m_mreqs.hash() ^ m_mif.hash() ^
       ZuBoxed(m_mifIndex).hash() ^ ZuBoxed(m_ttl).hash();
@@ -443,9 +405,6 @@ public:
 	" mifIndex=" << ZuBoxed(m_mifIndex) <<
 	" TTL=" << ZuBoxed(m_ttl);
     }
-#ifdef ZiMultiplex_Netlink
-    if (m_flags & NetLink()) s << " familyName=" << m_familyName;
-#endif
   }
 
   friend ZuPrintFn ZuPrintType(ZiCxnOptions *);
@@ -455,9 +414,6 @@ private:
   ZiIP			m_mif;
   unsigned		m_mifIndex = 0;
   unsigned		m_ttl = 0;
-#ifdef ZiMultiplex_Netlink
-  FamilyName		m_familyName; // Generic Netlink Family Name
-#endif
   ZiCxnFlags::T		m_flags = 0;
 };
 
@@ -489,11 +445,6 @@ struct ZiCxnInfo { // pure aggregate, no ctor
   uint16_t		localPort = 0;
   ZiIP			remoteIP;
   uint16_t		remotePort = 0;
-#ifdef ZiMultiplex_Netlink
-  uint32_t		familyID = 0; // non-zero for connected netlink sockets
-  uint32_t		portID = 0; // only valid when familyID is valid
-#endif
-
   bool operator !() const { return type != ZiCxnType::T(-1); }
   ZuOpBool
 
@@ -501,15 +452,8 @@ struct ZiCxnInfo { // pure aggregate, no ctor
     s << "type=" << ZiCxnType::name(type) <<
       " socket=" << ZuBoxed(socket) <<
       " options={" << options << "} ";
-    if (!options.netlink()) {
-      s << "localAddr=" << localIP << ':' << localPort <<
-	" remoteAddr=" << remoteIP << ':' << remotePort;
-    } else {
-#ifdef ZiMultiplex_Netlink
-      s << "familyID=" << familyID;
-      if (familyID) s << " portID=" << portID;
-#endif
-    }
+    s << "localAddr=" << localIP << ':' << localPort <<
+      " remoteAddr=" << remoteIP << ':' << remotePort;
   }
   friend ZuPrintFn ZuPrintType(ZiCxnInfo *);
 };

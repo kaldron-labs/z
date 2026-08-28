@@ -170,12 +170,6 @@ PKG_CHECK_MODULES([FBS], [flatbuffers >= 24], [], [dnl
 AC_SUBST(FBS_LIBS)
 CPPFLAGS="$FBS_CFLAGS $CPPFLAGS"
 
-# netlink (non-MinGW only) (optional)
-AS_IF([test ".$mingw" != ".yes"], [
-  AC_ARG_WITH([netlink], AS_HELP_STRING([--with-netlink], [Build with NetLink]))
-])
-AM_CONDITIONAL([NETLINK], [test ".$with_netlink" = ".yes"])
-
 # postgres libpq (optional)
 AC_ARG_WITH([pq], AS_HELP_STRING([--with-pq], [Build with PostgreSQL]))
 AS_IF([test ".$with_pq" = ".yes"], [

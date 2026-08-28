@@ -43,7 +43,3 @@ ZiRxStreamTest_SOURCES = ZiRxStreamTest.cc
 ZiLogTest_SOURCES = ZiLogTest.cc
 ZiMxLoopTest_SOURCES = ZiMxLoopTest.cc
 ZiDaemonTest_SOURCES = ZiDaemonTest.cc
-if NETLINK
-noinst_PROGRAMS += ZiNetlinkMsgTest
-ZiNetlinkMsgTest_SOURCES = ZiNetlinkMsgTest.cc
-endif
