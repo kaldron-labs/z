@@ -68,8 +68,8 @@ struct PendingAlert {
   explicit operator bool() const { return bool(frame); }
 
   ZmRef<ZiIOBuf>	frame;
-  uint64_t	seqNo = 0;
-  uint32_t	date = 0;
+  uint64_t		seqNo = 0;
+  uint32_t		date = 0;
 };
 
 using AlertFrames = ZmQueue<PendingAlert,
@@ -111,7 +111,6 @@ public:
   ZiFile		replayIndex;
   bool			running = false;
   bool			dirty = false;
-  bool			inDue = false;
   bool			replaying = false;
   bool			oneShot = false;
   bool			replayFailed = false;
@@ -1724,9 +1723,9 @@ void App::subscribe_(
     return;
   }
   if (sub) {
-    if (sub->inDue) {
+    if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
-      sub->inDue = false;
+      sub->due.null();
     }
     sub->seqNo = seqNo;
     sub->interval = interval;
@@ -1771,9 +1770,10 @@ void App::unsubscribe_(
   App_::SubKey key{
     link->generation(), uint8_t(group), filter.key()};
   if (App_::Subscription *sub = m_state->subs.findPtr(key)) {
-    if (sub->inDue)
+    if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
-    sub->inDue = false;
+      sub->due.null();
+    }
     if (auto pending = sub->snapshot) {
       App_::indexDel(m_state->pending,
 	App_::PendingKey{pending->generation, pending->seqNo}, pending);
@@ -1804,13 +1804,11 @@ void App::runSubscription_(App_::Subscription_ *sub_)
     sub->dirty = true;
     sub->due = Zm::now() + App_::interval(sub->interval);
     m_state->due[unsigned(sub->group)].addNode(sub);
-    sub->inDue = true;
     return;
   }
   if (sub->interval) {
     sub->due = Zm::now() + App_::interval(sub->interval);
     m_state->due[unsigned(sub->group)].addNode(sub);
-    sub->inDue = true;
   }
 }
 
@@ -1985,7 +1983,7 @@ void App::timerFired_(uint64_t generation, ZuTime)
     App_::Subscription *sub = App_::earliest(m_state);
     if (!sub || sub->due > now) break;
     m_state->due[unsigned(sub->group)].delNode(sub);
-    sub->inDue = false;
+    sub->due.null();
     if (sub->running)
       sub->dirty = true;
     else
@@ -2002,9 +2000,10 @@ void App::disconnected_(uint64_t generation)
   auto i = m_state->subs.iter();
   while (App_::Subscription *sub = i()) {
     if (sub->generation != generation) continue;
-    if (sub->inDue)
+    if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
-    sub->inDue = false;
+      sub->due.null();
+    }
     --sub->client->subs;
     i.del(sub);
   }
@@ -2023,9 +2022,10 @@ void App::clearSubscriptions_()
   }
   auto i = m_state->subs.iter();
   while (App_::Subscription *sub = i()) {
-    if (sub->inDue)
+    if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
-    sub->inDue = false;
+      sub->due.null();
+    }
     --sub->client->subs;
     i.del(sub);
   }
@@ -2456,9 +2456,9 @@ void App::snapshotDone_(App_::Pending_ *pending)
 
   if (sub && sub->dirty) {
     sub->dirty = false;
-    if (sub->inDue) {
+    if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
-      sub->inDue = false;
+      sub->due.null();
     }
     runSubscription_(sub);
   }
