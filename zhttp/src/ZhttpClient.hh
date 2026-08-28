@@ -13,8 +13,6 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <new>
-
 #include <zlib/ZuObjectTraits.hh>
 
 #include <zlib/ZmBlock.hh>
@@ -26,7 +24,6 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmThread.hh>
-#include <zlib/ZmVHeap.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
@@ -53,27 +50,17 @@ struct ClientSessionTxState {
   enum { Idle, Active, Complete, Failed, Cancelled };
 };
 
-template <ZuString ID>
-class ClientVHeap_ {
-  using Heap = ZmVHeap<
-    ID, Zm::CacheLineSize, ZmVHeap_DefltMax, Zm::CacheLineSize>;
-
-public:
-  static void *operator new(size_t size) {
-    if (void *ptr = Heap::valloc(size)) return ptr;
-    throw std::bad_alloc{};
-  }
-  static void operator delete(void *ptr) noexcept { Heap::vfree(ptr); }
-  static void operator delete(void *ptr, size_t) noexcept {
-    Heap::vfree(ptr);
-  }
-};
-
-template <typename Logical>
-struct ClientH2ClearState :
-    ClientVHeap_<"Zhttp.H2.ClearState">, ZmObject {
+template <typename Logical, typename Heap = ZuVoid>
+struct ClientH2ClearState_ :
+    Heap, ZmObject {
   ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H2.ClearState">> active;
 };
+template <typename Logical>
+using ClientH2ClearStateHeap = ZmHeap<"Zhttp.H2.ClearState",
+  ClientH2ClearState_<Logical>>;
+template <typename Logical>
+using ClientH2ClearState =
+  ClientH2ClearState_<Logical, ClientH2ClearStateHeap<Logical>>;
 
 ZtEnumStruct(ZhttpAPI, ProtoPolicy, int8_t,
   ForceH3, PreferH3, DisableH3);
@@ -920,7 +907,11 @@ inline auto ClientLogicalID_(const Link *link, long) -> decltype(link->id) {
 namespace H2_ {
 
 template <typename App> class ClientHub;
-template <typename App> class CliLink;
+template <typename App, typename Heap = ZuVoid> class CliLink;
+template <typename App>
+using CliLinkHeap = ZmHeap<"Zhttp.H2.Link", CliLink<App>>;
+template <typename App>
+using CliLinkT = CliLink<App, CliLinkHeap<App>>;
 
 struct ClientSlot {
   ZmContext	owner;
@@ -988,7 +979,7 @@ template <typename App>
 class ClientHub : public Ztls::Client<ClientHub<App>> {
 public:
   using Base = Ztls::Client<ClientHub>;
-  using Link = CliLink<App>;
+  using Link = CliLinkT<App>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using Slots = ZtArray<ClientSlot,
     ZtArrayHeapID<"Zhttp.H2">>;
@@ -1071,19 +1062,19 @@ public:
       stopLinksBatch_();
     });
   }
-  void linkDown(CliLink<App> *link) {
+  void linkDown(Link *link) {
     if (auto entry = m_pool->findPtr(
 	ClientPoolKey{link->host(), link->port(), link->id()}))
-      if (entry->owner.object<CliLink<App>>() == link)
+      if (entry->owner.object<Link>() == link)
 	m_pool->delNode(
 	  static_cast<ClientPoolHash::Node *>(entry));
     unsigned i = link->hubSlot();
     if (i < m_slots.length() &&
-	m_slots[i].owner.object<CliLink<App>>() == link) {
+	m_slots[i].owner.object<Link>() == link) {
       unsigned last = m_slots.length() - 1;
       if (i != last) {
 	m_slots[i] = ZuMv(m_slots[last]);
-	m_slots[i].owner.object<CliLink<App>>()->hubSlot(i);
+	m_slots[i].owner.object<Link>()->hubSlot(i);
       }
       m_slots.length(last);
       link->hubSlot(NullSlot);
@@ -1162,12 +1153,12 @@ private:
   bool		m_stopScanning = false;
 };
 
-template <typename App>
+template <typename App, typename Heap>
 class CliLink :
-  public ClientVHeap_<"Zhttp.H2.Link">,
-  public Ztls::CliLink<ClientHub<App>, CliLink<App>,
+  public Heap,
+  public Ztls::CliLink<ClientHub<App>, CliLink<App, Heap>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
-  public Wire<CliLink<App>, typename App::Link> {
+  public Wire<CliLink<App, Heap>, typename App::Link> {
 public:
   using Hub = ClientHub<App>;
   using Logical = typename App::Link;
@@ -1659,9 +1650,9 @@ private:
 
 template <typename App, typename Impl>
 class ClientLink<App, Impl, H2TLS> :
-  public H2_::ClientLogical<App, Impl, H2_::CliLink<App>> {
+  public H2_::ClientLogical<App, Impl, H2_::CliLinkT<App>> {
   using Base =
-    H2_::ClientLogical<App, Impl, H2_::CliLink<App>>;
+    H2_::ClientLogical<App, Impl, H2_::CliLinkT<App>>;
 
 public:
   using Base::Base;
@@ -1687,8 +1678,16 @@ namespace TLS_ {
 
 template <typename App, typename H1Logical, typename H2Logical>
 class ClientHub;
-template <typename App, typename H1Logical, typename H2Logical>
+template <
+  typename App, typename H1Logical, typename H2Logical,
+  typename Heap = ZuVoid>
 class CliLink;
+template <typename App, typename H1Logical, typename H2Logical>
+using CliLinkHeap = ZmHeap<"Zhttp.TLS.Link",
+  CliLink<App, H1Logical, H2Logical>>;
+template <typename App, typename H1Logical, typename H2Logical>
+using CliLinkT = CliLink<App, H1Logical, H2Logical,
+  CliLinkHeap<App, H1Logical, H2Logical>>;
 
 template <typename App, typename Impl, typename NativeLink>
 class ClientH1Logical : public ZmObject {
@@ -1792,7 +1791,7 @@ class ClientHub :
   public Ztls::Client<ClientHub<App, H1Logical_, H2Logical_>> {
 public:
   using Base = Ztls::Client<ClientHub>;
-  using Link = CliLink<App, H1Logical_, H2Logical_>;
+  using Link = CliLinkT<App, H1Logical_, H2Logical_>;
   using H1Logical = H1Logical_;
   using H2Logical = H2Logical_;
   using Choice = ClientChoice<H1Logical, H2Logical>;
@@ -2044,15 +2043,16 @@ private:
   bool		m_stopScanning = false;
 };
 
-template <typename App, typename H1Logical_, typename H2Logical_>
+template <
+  typename App, typename H1Logical_, typename H2Logical_, typename Heap>
 class CliLink :
-  public ClientVHeap_<"Zhttp.TLS.Link">,
+  public Heap,
   public Ztls::CliLink<
     ClientHub<App, H1Logical_, H2Logical_>,
-    CliLink<App, H1Logical_, H2Logical_>,
+    CliLink<App, H1Logical_, H2Logical_, Heap>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public H2_::Wire<
-    CliLink<App, H1Logical_, H2Logical_>, H2Logical_> {
+    CliLink<App, H1Logical_, H2Logical_, Heap>, H2Logical_> {
 public:
   using Hub = ClientHub<App, H1Logical_, H2Logical_>;
   using H1Logical = H1Logical_;
@@ -2616,8 +2616,13 @@ namespace H3_ {
 
 template <typename App>
 class ClientHub;
-template <typename App, typename Logical>
+template <typename App, typename Logical, typename Heap = ZuVoid>
 struct CliLink;
+template <typename App, typename Logical>
+using CliLinkHeap = ZmHeap<"Zhttp.H3.Link", CliLink<App, Logical>>;
+template <typename App, typename Logical>
+using CliLinkT =
+  CliLink<App, Logical, CliLinkHeap<App, Logical>>;
 template <typename App, typename Logical>
 struct ClientStream;
 struct CliLinkKey {
@@ -2779,7 +2784,7 @@ private:
   template <typename Logical>
   void connect_(
     Logical *logical_, Zquic::Host host, uint16_t port, ZiIP remote) {
-    using Link = CliLink<App, Logical>;
+    using Link = CliLinkT<App, Logical>;
     ZmRef<Logical> logical = ZmRef(logical_);
     this->rxInvoke([
       this, logical = ZuMv(logical), host = ZuMv(host),
@@ -2979,11 +2984,11 @@ private:
 template <typename App, typename Logical>
 struct ClientStream :
   public Zquic::CliStream<
-    CliLink<App, Logical>, ClientStream<App, Logical>>,
+    CliLinkT<App, Logical>, ClientStream<App, Logical>>,
   public H3::CxnStream<ClientStream<App, Logical>,
-    H3::Cxn<CliLink<App, Logical>,
+    H3::Cxn<CliLinkT<App, Logical>,
       ZmRef<ClientStream<App, Logical>>>> {
-  using Link = CliLink<App, Logical>;
+  using Link = CliLinkT<App, Logical>;
   using Base = Zquic::CliStream<Link, ClientStream>;
   using H3Cxn = H3::Cxn<Link, ZmRef<ClientStream>>;
   using CxnStream = H3::CxnStream<ClientStream, H3Cxn>;
@@ -3008,10 +3013,10 @@ struct ClientStream :
   bool		closing = false;
 };
 
-template <typename App, typename Logical>
+template <typename App, typename Logical, typename Heap>
 struct CliLink :
-  public ClientVHeap_<"Zhttp.H3.Link">,
-  public Zquic::CliLink<ClientHub<App>, CliLink<App, Logical>,
+  public Heap,
+  public Zquic::CliLink<ClientHub<App>, CliLink<App, Logical, Heap>,
     ClientStream<App, Logical>> {
   using Hub = ClientHub<App>;
   using Stream = ClientStream<App, Logical>;
@@ -3575,7 +3580,7 @@ template <typename App, typename Impl>
 class ClientLink<App, Impl, H3QUIC> :
   public ZmObject, public H3_::LogicalStream<Impl> {
   using Hub = H3_::ClientHub<App>;
-  using NativeLink = H3_::CliLink<App, Impl>;
+  using NativeLink = H3_::CliLinkT<App, Impl>;
   using NativeStream = H3_::ClientStream<App, Impl>;
   using QueueSlot = H3_::QueueSlot;
 
@@ -3817,17 +3822,18 @@ public:
   using Message = MessageTraits<Profile>;
   using Base = ClientHub<Pool, Profile>;
 
-  class Link :
-    public ClientVHeap_<"Zhttp.ClientPool.Link">,
-    public ClientLink<Pool, Link, Profile_> {
+  template <typename Heap = ZuVoid>
+  class Link_ :
+    public Heap,
+    public ClientLink<Pool, Link_<Heap>, Profile_> {
   public:
-    using Base = ClientLink<Pool, Link, Profile_>;
+    using Base = ClientLink<Pool, Link_, Profile_>;
     using Protocol = typename Profile::Protocol;
     using Session = ClientSession<
-      Owner, LiveReq, Link, Profile,
+      Owner, LiveReq, Link_, Profile,
       Request, ResParser>;
 
-    Link(Pool *pool, unsigned id_) :
+    Link_(Pool *pool, unsigned id_) :
       Base{pool}, m_id{id_}, m_session{pool->owner(), this} { }
 
     LiveReq *request() const { return m_request; }
@@ -4006,14 +4012,16 @@ public:
     bool	m_sent = false;
     bool	m_stopped = false;
     bool	m_closing = false;
-    Link	*m_reusePrev = nullptr;
-    Link	*m_reuseNext = nullptr;
+    Link_	*m_reusePrev = nullptr;
+    Link_	*m_reuseNext = nullptr;
     bool	m_reuseListed = false;
     ConnectedInfo m_info;
 
     friend Pool;
   };
 
+  using LinkHeap = ZmHeap<"Zhttp.ClientPool.Link", Link_<>>;
+  using Link = Link_<LinkHeap>;
   using Links =
     ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.ClientPool.Links">>;
   using Reusable =
@@ -4242,7 +4250,9 @@ public:
   using Pool = ClientPool;
   using Base = ClientHub<Pool, H1TCP>;
 
-  class Link;
+  template <typename Heap = ZuVoid> class Link_;
+  using LinkHeap = ZmHeap<"Zhttp.H1.Link", Link_<>>;
+  using Link = Link_<LinkHeap>;
 
   template <typename Heap>
   class Operation_ : public Heap, public ZmObject {
@@ -4384,14 +4394,15 @@ public:
   using OperationRef = ZmRef<Operation>;
   using OperationSlots =
     ZtArray<Operation *, ZtArrayHeapID<"Zhttp.H1.OperationSlots">>;
-  class Link :
-    public ClientVHeap_<"Zhttp.H1.Link">,
-    public ClientLink<Pool, Link, H1TCP> {
+  template <typename Heap>
+  class Link_ :
+    public Heap,
+    public ClientLink<Pool, Link_<Heap>, H1TCP> {
   public:
-    using LinkBase = ClientLink<Pool, Link, H1TCP>;
+    using LinkBase = ClientLink<Pool, Link_, H1TCP>;
     using Protocol = TCP;
 
-    Link(Pool *pool_, unsigned id_) : LinkBase{pool_}, m_id{id_} { }
+    Link_(Pool *pool_, unsigned id_) : LinkBase{pool_}, m_id{id_} { }
 
     Pool *pool() const { return this->app(); }
     bool stopped() const { return m_stopped; }
@@ -4738,8 +4749,7 @@ template <
   typename Pool, typename Impl, typename Owner_, typename LiveReq_,
   typename Request_, typename ResParser_,
   typename Profile>
-class TLSClientPoolLink_ :
-  public ClientVHeap_<"Zhttp.TLS.Logical"> {
+class TLSClientPoolLink_ {
 public:
   using Owner = Owner_;
   using LiveReq = LiveReq_;
@@ -4912,34 +4922,49 @@ private:
 
 template <
   typename Pool, typename Owner, typename LiveReq,
-  typename Request, typename ResParser, typename Profile>
+  typename Request, typename ResParser, typename Profile,
+  typename Heap = ZuVoid>
 class TLSClientPoolLink;
+template <
+  typename Pool, typename Owner, typename LiveReq,
+  typename Request, typename ResParser, typename Profile>
+using TLSClientPoolLinkHeap = ZmHeap<"Zhttp.TLS.Logical",
+  TLSClientPoolLink<
+    Pool, Owner, LiveReq, Request, ResParser, Profile>>;
+template <
+  typename Pool, typename Owner, typename LiveReq,
+  typename Request, typename ResParser, typename Profile>
+using TLSClientPoolLinkT = TLSClientPoolLink<
+  Pool, Owner, LiveReq, Request, ResParser, Profile,
+  TLSClientPoolLinkHeap<
+    Pool, Owner, LiveReq, Request, ResParser, Profile>>;
 
 template <
   typename Pool, typename Owner, typename LiveReq,
-  typename Request, typename ResParser>
+  typename Request, typename ResParser, typename Heap>
 class TLSClientPoolLink<
-  Pool, Owner, LiveReq, Request, ResParser, H1TLS> :
+  Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap> :
+  public Heap,
   public TLS_::ClientH1Logical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
-    TLS_::CliLink<
+      Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap>,
+    TLS_::CliLinkT<
       Pool,
       TLSClientPoolLink<
-	Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
-      TLSClientPoolLink<
+	Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap>,
+      TLSClientPoolLinkT<
 	Pool, Owner, LiveReq, Request, ResParser, H2TLS>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
+      Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap>,
     Owner, LiveReq, Request, ResParser, H1TLS> {
   using Impl = TLSClientPoolLink;
   using Native = TLS_::ClientH1Logical<
     Pool, Impl,
-    TLS_::CliLink<
+    TLS_::CliLinkT<
       Pool, Impl,
-      TLSClientPoolLink<
+      TLSClientPoolLinkT<
 	Pool, Owner, LiveReq, Request, ResParser, H2TLS>>>;
   using Link = TLSClientPoolLink_<
     Pool, Impl, Owner, LiveReq, Request, ResParser, H1TLS>;
@@ -4972,29 +4997,30 @@ public:
 
 template <
   typename Pool, typename Owner, typename LiveReq,
-  typename Request, typename ResParser>
+  typename Request, typename ResParser, typename Heap>
 class TLSClientPoolLink<
-  Pool, Owner, LiveReq, Request, ResParser, H2TLS> :
+  Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap> :
+  public Heap,
   public H2_::ClientLogical<
     Pool, TLSClientPoolLink<
-      Pool, Owner, LiveReq, Request, ResParser, H2TLS>,
-    TLS_::CliLink<
+      Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap>,
+    TLS_::CliLinkT<
       Pool,
-      TLSClientPoolLink<
+      TLSClientPoolLinkT<
 	Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
       TLSClientPoolLink<
-	Pool, Owner, LiveReq, Request, ResParser, H2TLS>>>,
+	Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap>>>,
   public TLSClientPoolLink_<
     Pool,
     TLSClientPoolLink<
-      Pool, Owner, LiveReq, Request, ResParser, H2TLS>,
+      Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap>,
     Owner, LiveReq, Request, ResParser, H2TLS> {
   using Impl = TLSClientPoolLink;
   using Native = H2_::ClientLogical<
     Pool, Impl,
-    TLS_::CliLink<
+    TLS_::CliLinkT<
       Pool,
-      TLSClientPoolLink<
+      TLSClientPoolLinkT<
 	Pool, Owner, LiveReq, Request, ResParser, H1TLS>,
       Impl>>;
   using Link = TLSClientPoolLink_<
@@ -5029,11 +5055,11 @@ class TLSClientPool :
   public TLS_::ClientHub<
     TLSClientPool<
       Owner_, LiveReq_, Request_, ResParser_>,
-    TLSClientPoolLink<
+    TLSClientPoolLinkT<
       TLSClientPool<
 	Owner_, LiveReq_, Request_, ResParser_>,
       Owner_, LiveReq_, Request_, ResParser_, H1TLS>,
-    TLSClientPoolLink<
+    TLSClientPoolLinkT<
       TLSClientPool<
 	Owner_, LiveReq_, Request_, ResParser_>,
       Owner_, LiveReq_, Request_, ResParser_, H2TLS>> {
@@ -5043,9 +5069,9 @@ public:
   using Request = Request_;
   using ResParser = ResParser_;
   using Pool = TLSClientPool;
-  using H1Link = TLSClientPoolLink<
+  using H1Link = TLSClientPoolLinkT<
     Pool, Owner, LiveReq, Request, ResParser, H1TLS>;
-  using H2Link = TLSClientPoolLink<
+  using H2Link = TLSClientPoolLinkT<
     Pool, Owner, LiveReq, Request, ResParser, H2TLS>;
   using Base = TLS_::ClientHub<Pool, H1Link, H2Link>;
   using Base::stop;
@@ -5315,7 +5341,6 @@ class ClientPool;
 
 template <typename Client_, typename TxQ, typename ResParser_>
 class Pool :
-  public ClientVHeap_<"Zhttp.Pool">,
   public ZmObject,
   public TxQ {
 public:

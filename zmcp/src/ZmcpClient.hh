@@ -1231,6 +1231,7 @@ private:
 };
 
 template <typename Impl, typename Catalog> class Pool;
+template <typename Impl, typename Catalog, typename Heap = ZuVoid> class Pool_;
 
 template <typename Impl, typename Catalog>
 using RequestQ = ZmPQueue<Request_<Impl, Catalog>,
@@ -1255,8 +1256,8 @@ template <typename Impl, typename Catalog>
 using TxQ = ZmPQTx<Pool<Impl, Catalog>, RequestQ<Impl, Catalog>,
   ZmPQTxOrdered<false>>;
 
-template <typename Impl, typename Catalog>
-class Pool : public Zhttp::Pool<
+template <typename Impl, typename Catalog, typename Heap>
+class Pool_ : public Heap, public Zhttp::Pool<
     Client<Impl, Catalog>, TxQ<Impl, Catalog>,
     ResponseParser<Impl, Catalog>> {
   using Base = Zhttp::Pool<
@@ -1264,7 +1265,7 @@ class Pool : public Zhttp::Pool<
     ResponseParser<Impl, Catalog>>;
 
 public:
-  Pool(Client<Impl, Catalog> *client) : Base{client} { }
+  Pool_(Client<Impl, Catalog> *client) : Base{client} { }
 
   RequestQ<Impl, Catalog> *txQueue() { return &m_requests; }
   void archive_(Request<Impl, Catalog> *) { }
@@ -1274,6 +1275,15 @@ public:
 
 private:
   RequestQ<Impl, Catalog> m_requests;
+};
+template <typename Impl, typename Catalog>
+using PoolHeap = ZmHeap<"Zmcp.HTTP.Pool", Pool_<Impl, Catalog>>;
+template <typename Impl, typename Catalog>
+class Pool : public Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>> {
+  using Base = Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>>;
+
+public:
+  using Base::Base;
 };
 
 template <typename Req, typename Call, typename Heap>

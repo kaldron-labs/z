@@ -251,4 +251,5 @@ void Client::quiesceClean_(Wake wake)
   txRun(0, [wake = ZuMv(wake)]() mutable { wake(); });
 }
 
-void Pool::archive_(ReqBuilder *) { }
+template <typename Heap>
+void Pool_<Heap>::archive_(ReqBuilder *) { }

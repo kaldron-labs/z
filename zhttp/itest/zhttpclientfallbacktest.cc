@@ -19,6 +19,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiFile.hh>
@@ -74,6 +75,7 @@ struct Resolver {
 
 struct ClientApp;
 struct Pool;
+template <typename Heap = ZuVoid> struct Pool_;
 struct ReqBuilder_;
 struct ResParser;
 
@@ -153,10 +155,11 @@ ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-struct Pool : public Zhttp::Pool<ClientApp, TxQ, ResParser> {
+template <typename Heap>
+struct Pool_ : public Heap, public Zhttp::Pool<ClientApp, TxQ, ResParser> {
   using Base = Zhttp::Pool<ClientApp, TxQ, ResParser>;
 
-  Pool(ClientApp *client) : Base{client} { }
+  Pool_(ClientApp *client) : Base{client} { }
 
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
@@ -164,6 +167,10 @@ struct Pool : public Zhttp::Pool<ClientApp, TxQ, ResParser> {
 
 private:
   ReqBuilderQ	m_requests;
+};
+using PoolHeap = ZmHeap<"Zhttp.Test.Fallback.Pool", Pool_<>>;
+struct Pool : public Pool_<PoolHeap> {
+  using Pool_<PoolHeap>::Pool_;
 };
 
 struct ClientApp : public Zhttp::Client<ClientApp, Pool> {
