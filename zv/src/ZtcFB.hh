@@ -13,8 +13,6 @@
 #include <zlib/ZvLib.hh>
 #endif
 
-#include <zlib/ZuAssert.hh>
-
 #include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZiMultiplex.hh>
@@ -32,56 +30,35 @@
 
 #include <zlib/ztc_msg_fbs.h>
 
+namespace ZmThreadPriority {
+ZfbEnumMatch_(Ztc::fbs::ThreadPriority,
+  Unset, RealTime, High, Normal, Low);
+}
+
 namespace Ztc {
 
-ZuAssert(int(RAG::Off) == int(fbs::RAG::Off));
-ZuAssert(int(RAG::Red) == int(fbs::RAG::Red));
-ZuAssert(int(RAG::Amber) == int(fbs::RAG::Amber));
-ZuAssert(int(RAG::Green) == int(fbs::RAG::Green));
+namespace RAG {
+ZfbEnumMatch_(fbs::RAG, Off, Red, Amber, Green);
+}
 
-ZuAssert(int(ZmThreadPriority::Unset) ==
-  int(fbs::ThreadPriority::Unset));
-ZuAssert(int(ZmThreadPriority::RealTime) ==
-  int(fbs::ThreadPriority::RealTime));
-ZuAssert(int(ZmThreadPriority::High) ==
-  int(fbs::ThreadPriority::High));
-ZuAssert(int(ZmThreadPriority::Normal) ==
-  int(fbs::ThreadPriority::Normal));
-ZuAssert(int(ZmThreadPriority::Low) ==
-  int(fbs::ThreadPriority::Low));
 ZfbEnumMatchNS(ZvAPI, EngineState, ZmEngineState,
   Stopped, Starting, Running, Stopping, StartPending, StopPending);
 ZfbEnumMatchNS(ZvAPI, CxnType, ZiCxnType, TCPIn, TCPOut, UDP);
 
-ZuAssert(int(QueueType::Thread) == int(fbs::QueueType::Thread));
-ZuAssert(int(QueueType::IPC) == int(fbs::QueueType::IPC));
-ZuAssert(int(QueueType::Rx) == int(fbs::QueueType::Rx));
-ZuAssert(int(QueueType::Tx) == int(fbs::QueueType::Tx));
-ZuAssert(int(LinkType::TCP) == int(fbs::LinkType::TCP));
-ZuAssert(int(LinkType::TLS) == int(fbs::LinkType::TLS));
-ZuAssert(int(LinkType::QUIC) == int(fbs::LinkType::QUIC));
-ZuAssert(int(LinkType::H1) == int(fbs::LinkType::H1));
-ZuAssert(int(LinkType::H3) == int(fbs::LinkType::H3));
-ZuAssert(int(LinkType::WS) == int(fbs::LinkType::WS));
-ZuAssert(int(LinkType::FIX) == int(fbs::LinkType::FIX));
-ZuAssert(int(LinkState::Down) == int(fbs::LinkState::Down));
-ZuAssert(int(LinkState::Disabled) == int(fbs::LinkState::Disabled));
-ZuAssert(int(LinkState::Deleted) == int(fbs::LinkState::Deleted));
-ZuAssert(int(LinkState::Connecting) == int(fbs::LinkState::Connecting));
-ZuAssert(int(LinkState::Up) == int(fbs::LinkState::Up));
-ZuAssert(int(LinkState::ReconnectPending) ==
-  int(fbs::LinkState::ReconnectPending));
-ZuAssert(int(LinkState::Reconnecting) == int(fbs::LinkState::Reconnecting));
-ZuAssert(int(LinkState::Failed) == int(fbs::LinkState::Failed));
-ZuAssert(int(LinkState::Disconnecting) ==
-  int(fbs::LinkState::Disconnecting));
-ZuAssert(int(LinkState::ConnectPending) ==
-  int(fbs::LinkState::ConnectPending));
-ZuAssert(int(LinkState::DisconnectPending) ==
-  int(fbs::LinkState::DisconnectPending));
-ZuAssert(int(PoolState::Down) == int(fbs::PoolState::Down));
-ZuAssert(int(PoolState::Up) == int(fbs::PoolState::Up));
-ZuAssert(int(PoolState::Failed) == int(fbs::PoolState::Failed));
+namespace QueueType {
+ZfbEnumMatch_(fbs::QueueType, Thread, IPC, Rx, Tx);
+}
+namespace LinkType {
+ZfbEnumMatch_(fbs::LinkType, TCP, TLS, QUIC, H1, H3, WS, FIX);
+}
+namespace LinkState {
+ZfbEnumMatch_(fbs::LinkState,
+  Down, Disabled, Deleted, Connecting, Up, ReconnectPending, Reconnecting,
+  Failed, Disconnecting, ConnectPending, DisconnectPending);
+}
+namespace PoolState {
+ZfbEnumMatch_(fbs::PoolState, Down, Up, Failed);
+}
 
 ZfbStruct(HeapTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
