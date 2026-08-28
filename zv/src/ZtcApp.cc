@@ -1079,7 +1079,7 @@ bool App::init(const AppCf &cf)
     unwatch_();
     clearIndices_();
     if (mxConstructed)
-      m_mx.new_<void>();
+      m_mx = {};
     else
       m_mx.new_<void, true>();
     delete m_state;
@@ -1239,7 +1239,7 @@ void App::final()
     "final() called from an owned scheduler thread", return);
   unwatch_();
   clearIndices_();
-  m_mx.new_<void>();
+  m_mx = {};
   delete m_state;
   m_state = nullptr;
   m_initialized = false;
