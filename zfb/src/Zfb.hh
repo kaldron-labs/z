@@ -363,10 +363,14 @@ namespace Load {
   struct ID { ZfbEnum(API, ID, __VA_ARGS__); }
 
 #define ZfbEnumMatch_Assert(Namespace, Value) \
-  ZuAssert(Value == Namespace::Value);
+  ZuAssert(int(Value) == int(Namespace::Value));
+
+#define ZfbEnumMatch_(Namespace, ...) \
+  ZuPP_Eval(ZuPP_MapArg(ZfbEnumMatch_Assert, Namespace, __VA_ARGS__))
+
 #define ZfbEnumMatch(API, ID, Namespace, ...) \
   ZfbEnum(API, ID, __VA_ARGS__) \
-  ZuPP_Eval(ZuPP_MapArg(ZfbEnumMatch_Assert, Namespace, __VA_ARGS__))
+  ZfbEnumMatch_(Namespace, __VA_ARGS__)
 
 #define ZfbEnumMatchNS(API, ID, Namespace, ...) \
   namespace ID { ZfbEnumMatch(API, ID, Namespace, __VA_ARGS__); }
