@@ -121,14 +121,9 @@ public:
     fn(captures.cspan());
   }
 
-  void watch(Ztc::HubMgr::AddFn addFn, Ztc::HubMgr::DelFn delFn) {
-    Guard guard(m_watchLock);
-    ZmAssert(!m_addFn && !m_delFn, return);
-    m_addFn = ZuMv(addFn);
-    m_delFn = ZuMv(delFn);
-  }
-
   void watch(
+      Ztc::HubMgr::AddFn addFn,
+      Ztc::HubMgr::DelFn delFn,
       Ztc::HubMgr::AddLinkFn addLinkFn,
       Ztc::HubMgr::DelLinkFn delLinkFn,
       Ztc::HubMgr::AddPoolFn addPoolFn,
@@ -137,9 +132,12 @@ public:
       Ztc::HubMgr::DelQueueFn delQueueFn) {
     Guard guard(m_watchLock);
     ZmAssert(
+      !m_addFn && !m_delFn &&
       !m_addLinkFn && !m_delLinkFn &&
       !m_addPoolFn && !m_delPoolFn &&
       !m_addQueueFn && !m_delQueueFn, return);
+    m_addFn = ZuMv(addFn);
+    m_delFn = ZuMv(delFn);
     m_addLinkFn = ZuMv(addLinkFn);
     m_delLinkFn = ZuMv(delLinkFn);
     m_addPoolFn = ZuMv(addPoolFn);
@@ -243,17 +241,14 @@ void Ztc::HubMgr::capture(CaptureFn fn)
   ZtcHubMgr_::instance()->capture(ZuMv(fn));
 }
 
-void Ztc::HubMgr::watch(AddFn addFn, DelFn delFn)
-{
-  ZtcHubMgr_::instance()->watch(ZuMv(addFn), ZuMv(delFn));
-}
-
 void Ztc::HubMgr::watch(
+    AddFn addFn, DelFn delFn,
     AddLinkFn addLinkFn, DelLinkFn delLinkFn,
     AddPoolFn addPoolFn, DelPoolFn delPoolFn,
     AddQueueFn addQueueFn, DelQueueFn delQueueFn)
 {
   ZtcHubMgr_::instance()->watch(
+    ZuMv(addFn), ZuMv(delFn),
     ZuMv(addLinkFn), ZuMv(delLinkFn),
     ZuMv(addPoolFn), ZuMv(delPoolFn),
     ZuMv(addQueueFn), ZuMv(delQueueFn));

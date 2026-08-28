@@ -131,8 +131,8 @@ public:
     WatchGuard guard(watchLock_());
     ZuFwd<L>(l)();
   }
-  static void watch(AddFn, DelFn);
   static void watch(
+    AddFn, DelFn,
     AddLinkFn, DelLinkFn,
     AddPoolFn, DelPoolFn,
     AddQueueFn, DelQueueFn);

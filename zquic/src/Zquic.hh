@@ -897,11 +897,12 @@ protected:
   }
 
   void warmup_() {
-    if (rxInvoked())
+    auto tid = Zm::getTID();
+    if (m_mx && m_rxThread && m_mx->invoked_(tid, m_rxThread))
       Zquic::warmup();
     else
       rxInvoke([]() { Zquic::warmup(); });
-    if (txInvoked())
+    if (m_mx && m_txThread && m_mx->invoked_(tid, m_txThread))
       Zquic::warmup();
     else
       txInvoke([]() { Zquic::warmup(); });

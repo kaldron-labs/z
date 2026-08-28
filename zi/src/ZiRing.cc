@@ -94,7 +94,7 @@ bool Blocker::open(bool head, const Params &params)
 {
   if (m_sem) return true;
   Zi::Path path(params.name.length() + 21);
-  path << L"Global\\" << params.name;
+  path << L"Local\\" << params.name;
   if (head)
     path << L"_head";
   else

@@ -138,13 +138,12 @@ void run()
 
   Watch watch;
   Ztc::DBMgr::watch(
+    {&watch, ZmFnPtr<&Watch::addDB>{}},
+    {&watch, ZmFnPtr<&Watch::delDB>{}},
     {&watch, ZmFnPtr<&Watch::addHost>{}},
     {&watch, ZmFnPtr<&Watch::delHost>{}},
     {&watch, ZmFnPtr<&Watch::addTable>{}},
     {&watch, ZmFnPtr<&Watch::delTable>{}});
-  Ztc::DBMgr::watch(
-    {&watch, ZmFnPtr<&Watch::addDB>{}},
-    {&watch, ZmFnPtr<&Watch::delDB>{}});
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<Zdb> db = new Zdb{};

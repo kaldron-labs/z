@@ -82,13 +82,6 @@ public:
     fn(captures.cspan());
   }
 
-  void watch(Ztc::DBMgr::AddFn addFn, Ztc::DBMgr::DelFn delFn) {
-    Guard guard(m_watchLock);
-    ZmAssert(!m_addFn && !m_delFn, return);
-    m_addFn = ZuMv(addFn);
-    m_delFn = ZuMv(delFn);
-  }
-
   void unwatch() {
     Guard guard(m_watchLock);
     m_addFn = {};
@@ -100,14 +93,19 @@ public:
   }
 
   void watch(
+      Ztc::DBMgr::AddFn addFn,
+      Ztc::DBMgr::DelFn delFn,
       Ztc::DBMgr::AddHostFn addHostFn,
       Ztc::DBMgr::DelHostFn delHostFn,
       Ztc::DBMgr::AddTableFn addTableFn,
       Ztc::DBMgr::DelTableFn delTableFn) {
     Guard guard(m_watchLock);
     ZmAssert(
+      !m_addFn && !m_delFn &&
       !m_addHostFn && !m_delHostFn &&
       !m_addTableFn && !m_delTableFn, return);
+    m_addFn = ZuMv(addFn);
+    m_delFn = ZuMv(delFn);
     m_addHostFn = ZuMv(addHostFn);
     m_delHostFn = ZuMv(delHostFn);
     m_addTableFn = ZuMv(addTableFn);
@@ -189,16 +187,13 @@ void Ztc::DBMgr::capture(CaptureFn fn)
   ZtcDBMgr_::instance()->capture(ZuMv(fn));
 }
 
-void Ztc::DBMgr::watch(AddFn addFn, DelFn delFn)
-{
-  ZtcDBMgr_::instance()->watch(ZuMv(addFn), ZuMv(delFn));
-}
-
 void Ztc::DBMgr::watch(
+    AddFn addFn, DelFn delFn,
     AddHostFn addHostFn, DelHostFn delHostFn,
     AddTableFn addTableFn, DelTableFn delTableFn)
 {
   ZtcDBMgr_::instance()->watch(
+    ZuMv(addFn), ZuMv(delFn),
     ZuMv(addHostFn), ZuMv(delHostFn),
     ZuMv(addTableFn), ZuMv(delTableFn));
 }

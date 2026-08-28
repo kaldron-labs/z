@@ -4,16 +4,15 @@
 
 Task Steps:
 1. Read `goal.md` in full
-2. Research the goal described in `goal.md` using online web search
-3. Formulate detailed product requirements
-4. Save the requirements in markdown as `requirements.md`.
+2. Formulate detailed product requirements
+3. Save the requirements in markdown as `requirements.md`.
 
 ## CRITICAL: DO NO MORE THAN RESEARCH AND FORMULATE REQUIREMENTS
 
 IMPORTANT
 - MAKE REQUIREMENTS, DO NOT IMPLEMENT THEM
 - Read `goal.md` in full
-- Research the goal, including online using web search, and understand it
+- Research the goal and understand it
   - Use web search as needed to research how comparable goals were achieved in comparable projects
 - Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase, dependencies and underlying technology stack
 - Read and align with `GUIDELINES.md`

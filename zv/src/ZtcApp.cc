@@ -609,7 +609,7 @@ public:
   using Ingress__<IngressHeap>::Ingress__;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AlertSink__ : public Heap, public ZiSink {
 public:
   AlertSink__(ZmRef<Ingress> ingress) :
@@ -624,7 +624,7 @@ public:
 private:
   ZmRef<Ingress>	m_ingress;
 };
-using AlertSinkHeap = ZmHeap<"Ztc.App.AlertSink", AlertSink__<ZuVoid>>;
+using AlertSinkHeap = ZmHeap<"Ztc.App.AlertSink", AlertSink__<>>;
 class AlertSink final : public AlertSink__<AlertSinkHeap> {
 public:
   using AlertSink__<AlertSinkHeap>::AlertSink__;
@@ -1153,12 +1153,14 @@ void App::start(CtrlFn fn)
 bool App::start()
 {
   ZiMultiplex *mx_ = serviceMx_();
-  if (mx_ && mx_->running() &&
-      (mx_->invoked(m_cf.timerThread) ||
-       mx_->invoked(m_cf.rxThread) ||
-       mx_->invoked(m_cf.txThread) ||
-       mx_->invoked(m_cf.workerThread)))
-    return false;
+  if (mx_ && mx_->running()) {
+    auto tid = Zm::getTID();
+    if (mx_->invoked_(tid, m_cf.timerThread) ||
+	mx_->invoked_(tid, m_cf.rxThread) ||
+	mx_->invoked_(tid, m_cf.txThread) ||
+	mx_->invoked_(tid, m_cf.workerThread))
+      return false;
+  }
   bool ok = ZmBlock<bool>{}(
     [this](auto wake) { start(CtrlFn{ZuMv(wake)}); });
   if (!ok) stop();
@@ -1189,10 +1191,11 @@ bool App::stop()
   ZiMultiplex *mx_ = serviceMx_();
   bool mxRunning = mx_ && mx_->running();
   if (mxRunning) {
-    if (mx_->invoked(m_cf.timerThread) ||
-	mx_->invoked(m_cf.rxThread) ||
-	mx_->invoked(m_cf.txThread) ||
-	mx_->invoked(m_cf.workerThread))
+    auto tid = Zm::getTID();
+    if (mx_->invoked_(tid, m_cf.timerThread) ||
+	mx_->invoked_(tid, m_cf.rxThread) ||
+	mx_->invoked_(tid, m_cf.txThread) ||
+	mx_->invoked_(tid, m_cf.workerThread))
       return false;
   }
   startDone_(false);
@@ -1429,13 +1432,9 @@ void App::watch_()
   MxMgr::watch(
     {[this](Ztc::Mx *mx_) { mxAdded_(mx_); }},
     {[this](Ztc::Mx *mx_) { mxDeleted_(mx_); }});
-  serviceMx_()->watch(
-    {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }},
-    {[this](Ztc::Connection *cxn) { cxnDeleted_(cxn); }});
   HubMgr::watch(
     {[this](Ztc::Hub *hub) { hubAdded_(hub); }},
-    {[this](Ztc::Hub *hub) { hubDeleted_(hub); }});
-  HubMgr::watch(
+    {[this](Ztc::Hub *hub) { hubDeleted_(hub); }},
     {[this](Ztc::Link *link) { idxLinkAdded_(link); }},
     {[this](Ztc::Link *link) { idxLinkDeleted_(link); }},
     {[this](Ztc::Pool *pool) { poolAdded_(pool); }},
@@ -1444,8 +1443,7 @@ void App::watch_()
     {[this](Ztc::Queue *queue) { hubQueueDeleted_(queue); }});
   DBMgr::watch(
     {[this](DB *db) { dbAdded_(db); }},
-    {[this](DB *db) { dbDeleted_(db); }});
-  DBMgr::watch(
+    {[this](DB *db) { dbDeleted_(db); }},
     {[this](DBHost *host) { dbHostAdded_(host); }},
     {[this](DBHost *host) { dbHostDeleted_(host); }},
     {[this](DBTable *table) { dbTableAdded_(table); }},
@@ -1461,7 +1459,9 @@ void App::unwatch_()
   if (!m_watching) return;
   DBMgr::unwatch();
   HubMgr::unwatch();
-  if (auto mx_ = serviceMx_()) mx_->unwatch();
+  MxMgr::all({[this](Ztc::Mx *mx_) {
+    if (mx_ != serviceMx_()) mx_->unwatch();
+  }});
   MxMgr::unwatch();
   m_watching = false;
 }
@@ -1469,14 +1469,20 @@ void App::unwatch_()
 void App::mxAdded_(Ztc::Mx *mx_)
 {
   App_::indexAdd(m_mxIdx, ZuID{mx_->telKey()}, mx_);
-  mx_->allCxns(
-    {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }});
+  if (mx_ != serviceMx_()) {
+    mx_->watch(
+      {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }},
+      {[this](Ztc::Connection *cxn) { cxnDeleted_(cxn); }});
+    mx_->allCxns(
+      {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }});
+  }
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueAdded_(queue); }});
 }
 
 void App::mxDeleted_(Ztc::Mx *mx_)
 {
+  if (mx_ != serviceMx_()) mx_->unwatch();
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueDeleted_(queue); }});
   App_::indexDel(m_mxIdx, ZuID{mx_->telKey()}, mx_);
