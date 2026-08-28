@@ -18,6 +18,7 @@
 #include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiResolver.hh>
 
@@ -2978,6 +2979,15 @@ int main(int argc, char **argv)
 
   (void)argc;
   (void)argv;
+  ZiLog::init(
+#ifdef ZHTTP_CLIENT_POOL_TEST
+      "ZhttpClientPoolTest"
+#else
+      "ZhttpClientCancelTest"
+#endif
+      );
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
 #ifdef ZHTTP_CLIENT_POOL_TEST
   ZuTestCall(destination);
@@ -3016,5 +3026,6 @@ int main(int argc, char **argv)
   ZuTestCall(retryLimit);
   ZuTestCall(resolverLifecycle);
 #endif
+  ZiLog::stop();
   return 0;
 }

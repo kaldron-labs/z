@@ -2,13 +2,16 @@ METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztcp/src \
+	-I$(top_srcdir)/zi/test \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zhttp/test \
 	-I$(top_srcdir)/zquic/test -I$(top_srcdir)/zws/src \
+	-DZ_TEST_RESIDUE \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-LDADD = $(top_builddir)/zws/src/libZws.la \
+LDADD = $(top_builddir)/zi/test/libZiTest.la \
+	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztcp/src/libZtcp.la \
@@ -36,5 +39,6 @@ ZwsSourceBoundaryTest_CPPFLAGS = $(AM_CPPFLAGS) \
 	-DZWS_LIB_SRCDIR='"$(abs_top_srcdir)/zws/src"'
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove -j1 $(noinst_PROGRAMS)

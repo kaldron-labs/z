@@ -4,10 +4,12 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-LDADD = $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
+LDADD = libZiTest.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+noinst_LTLIBRARIES = libZiTest.la
+libZiTest_la_SOURCES = ZiTestResidue.cc
 noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
@@ -17,6 +19,7 @@ noinst_PROGRAMS = \
 	ZiDaemonTest ZiResolverTest
 noinst_HEADERS = ZiTestPorts.hh ZiTestResidue.hh
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZiFileTest_SOURCES = ZiFileTest.cc

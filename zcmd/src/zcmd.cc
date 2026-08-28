@@ -1491,7 +1491,7 @@ Zcmd::Fn telcapCmd() {
     Zi::Path dir;
     if (subscribe) {
       dir = ZuMv(options.path);
-      ZiFile::age(dir, 10);
+      ZiFile::ageTree(dir, 10);
       ZeError e;
       if (ZiFile::mkdir(dir, &e) != Zi::OK) {
 	*out << dir << ": " << e << '\n';

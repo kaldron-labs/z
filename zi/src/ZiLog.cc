@@ -318,38 +318,12 @@ void ZiSysSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 #endif
 }
 
-static void ageFile(const Zi::Path &path, unsigned age)
-{
-  unsigned size = path.length() + ZuBoxed(age).length() + 4;
-
-  Zi::Path prevName_(size), nextName_(size), sideName_(size);
-  Zi::Path *prevName = &prevName_;
-  Zi::Path *nextName = &nextName_;
-  Zi::Path *sideName = &sideName_;
-
-  *prevName << path;
-  bool last = false;
-  unsigned i;
-  for (i = 0; i < age && !last; i++) {
-    nextName->length(0);
-    *nextName << path << '.' << ZuBoxed(i + 1);
-    sideName->length(0);
-    *sideName << *nextName << '_';
-    last = (ZiFile::rename(*nextName, *sideName) != Zi::OK);
-    ZiFile::rename(*prevName, *nextName);
-    Zi::Path *oldName = prevName;
-    prevName = sideName;
-    sideName = oldName;
-  }
-  if (i == age) ZiFile::remove(*prevName);
-}
-
 void ZiFileSink::init()
 {
   if (!m_path) m_path << ZiLog::program() << ".log";
 
   if (m_path != "&2") {
-    ageFile(m_path, m_age);
+    ZiFile::age(m_path, m_age);
     m_file.open(m_path, ZiFile::Write | ZiFile::GC);
   }
 
@@ -389,7 +363,7 @@ void ZiFileSink::age()
   if (m_path == "&2") return;
 
   m_file.close();
-  ageFile(m_path, m_age);
+  ZiFile::age(m_path, m_age);
   m_file.open(m_path, ZiFile::Write | ZiFile::GC);
 }
 
@@ -397,7 +371,7 @@ void ZiCSVSink::init()
 {
   if (!m_path) m_path << ZiLog::program() << ".csv";
 
-  ageFile(m_path, m_age);
+  ZiFile::age(m_path, m_age);
 
   new (m_writer.new_<Writer>()) Writer(m_path, ZiCSV::Create);
 }
@@ -415,7 +389,7 @@ void ZiCSVSink::post(ZeLogBuf &buf, const ZeEventInfo &info)
 void ZiCSVSink::age()
 {
   m_writer.new_<void>();
-  ageFile(m_path, m_age);
+  ZiFile::age(m_path, m_age);
   new (m_writer.new_<Writer>()) Writer(m_path, ZiCSV::Create);
 }
 

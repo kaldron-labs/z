@@ -18,5 +18,6 @@ noinst_PROGRAMS = ZdbPQTest
 ZdbPQTest_SOURCES = ZdbPQTest.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

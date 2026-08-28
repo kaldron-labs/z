@@ -14,6 +14,7 @@ noinst_PROGRAMS = \
 	ZfURITest ZfYAMLTest ZfTOMLTest
 noinst_HEADERS = ZfHeapTest.hh ZfMapTest.hh
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZfASN1Test_SOURCES = ZfASN1Test.cc

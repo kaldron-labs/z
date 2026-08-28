@@ -10,6 +10,8 @@
 
 #include <zlib/ZvYAML.hh>
 
+#include "ZiTestResidue.hh"
+
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
@@ -170,17 +172,11 @@ static void emptyErrorsSave()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  g_dir << ZiFile::cwd() << "/ZvYAMLTest." << ZuBoxed(Zm::getPID());
-  ZiFile::rmdir(g_dir);
-  if (ZiFile::mkdir(g_dir) != Zi::OK) {
-    log_("mkdir failed: ", g_dir);
-    return 1;
-  }
+  ZiTestResidue::init("ZvYAMLTest");
+  g_dir = ZiTestResidue::dir("fixtures");
 
   ZuTestMain();
   ZuTestCall(files);
   ZuTestCall(transforms);
   ZuTestCall(emptyErrorsSave);
-
-  ZiFile::rmdir(g_dir);
 }

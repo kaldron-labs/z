@@ -718,6 +718,7 @@ int main(int argc, char **argv)
 
   (void)argc;
   (void)argv;
+  ZiTestResidue::init("zhttpserverstreamtest");
   ZuTestMain();
   // One normal multi-turn stream and one abort per wire protocol.
   ZuTestCall((activeStop<Zhttp::H1TCP, StreamTurn::StreamEnd>));

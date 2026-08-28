@@ -11,5 +11,6 @@ noinst_PROGRAMS = ZeTest
 ZeTest_SOURCES = ZeTest.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove -j1 $(noinst_PROGRAMS)

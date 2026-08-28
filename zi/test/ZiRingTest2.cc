@@ -627,9 +627,8 @@ int main(int argc, char **argv)
   unsigned nargs = 0;
 
   ZiTestResidue::init("ZiRingTest2");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   verbose = !::getenv("HARNESS_ACTIVE");
   for (int i = 1; i < argc; i++)
@@ -650,8 +649,11 @@ int main(int argc, char **argv)
 	    }
 
   g_ringName = ZiTestResidue::uniqueName("ring");
-  ZiTestResidue::addShmBase(g_ringName);
+  ZiTestResidue::addShm(g_ringName);
 
+  ZiLog::init("ZiRingTest2");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
 
   bool ok = ZuUnroll::all<4>(true, [size](auto i, bool b) {
@@ -659,5 +661,6 @@ int main(int argc, char **argv)
   });
   ZuCheck(ok);
 
+  ZiLog::stop();
   return 0;
 }

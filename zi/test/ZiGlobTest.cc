@@ -22,15 +22,11 @@ Zi::Path g_beta;
 
 void initPaths()
 {
-  g_root = ZiFile::append(ZiTestResidue::tempRoot(), "glob");
+  g_root = ZiTestResidue::dir("glob");
   g_subdir = ZiFile::append(g_root, "subdir");
   g_alpha = ZiFile::append(g_root, "alpha.txt");
   g_beta = ZiFile::append(g_root, "beta.log");
 
-  ZiTestResidue::addDir(g_subdir);
-  ZiTestResidue::addDir(g_root);
-  ZiTestResidue::addFile(g_alpha);
-  ZiTestResidue::addFile(g_beta);
 }
 
 void cleanupTmpDir()
@@ -145,15 +141,13 @@ void testPrefixResetWrapAndReverse()
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiGlobTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   initPaths();
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testGlobIterate);
   ZuTestCall(testPrefixResetWrapAndReverse);
-  cleanupTmpDir();
   return 0;
 }

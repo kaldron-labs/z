@@ -12,9 +12,13 @@
 
 #include <zlib/Zfb.hh>
 
+#include <zlib/ZiLog.hh>
+
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFilter.hh>
 #include <zlib/ZtcMsg.hh>
+
+#include "ZiTestResidue.hh"
 
 #include "ZtcTestClient.hh"
 
@@ -606,8 +610,13 @@ void appBoundedSnapshot()
 
 int main()
 {
+  ZiTestResidue::init("ZtcAppTest");
+  ZiLog::init("ZtcAppTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
   ZuTestCall(appSnapshot);
   ZuTestCall(appIPv6);
   ZuTestCall(appBoundedSnapshot);
+  ZiLog::stop();
 }

@@ -594,6 +594,7 @@ int main(int argc, char **argv)
 
   (void)argc;
   (void)argv;
+  ZiTestResidue::init("zhttpclientfallbacktest");
   ZuTestMain();
   ZuTestCall(fallback);
   return 0;

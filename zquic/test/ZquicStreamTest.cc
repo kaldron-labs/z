@@ -10,6 +10,8 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
 
+#include "ZiTestResidue.hh"
+
 #include <zpicotls/openssl.h>
 
 using namespace ZuTestUtil;
@@ -22,6 +24,8 @@ static ZuBSpan span_(const uint8_t *data, unsigned len)
 }
 
 #ifdef Zquic_DEBUG
+static Zi::Path g_residue;
+
 static void closeQLog_(ZquicLogger::Trace &trace)
 {
   ZmBlock<>{}([&trace](auto wake) {
@@ -770,9 +774,7 @@ static ZiIP ip4_(uint32_t n)
 
 static Zi::Path testPath_(ZuCSpan name)
 {
-  Zi::Path path;
-  path << name;
-  return path;
+  return ZiFile::append(g_residue, name);
 }
 
 static ZtString<> readFile_(const Zi::Path &path)
@@ -789,11 +791,6 @@ static ZtString<> readFile_(const Zi::Path &path)
   else
     data.length(unsigned(n));
   return data;
-}
-
-static void removeTestLog_(const Zi::Path &path)
-{
-  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
 }
 
 static unsigned parseJSONSeq_(ZuCSpan data)
@@ -1892,7 +1889,6 @@ void testPathValidationStateMachine()
     "path-validation qlog failure missing");
   ZuCHECK(qlog.find<"\"vantage\":\"unknown\"">() >= 0,
     "path-validation qlog vantage point missing");
-  removeTestLog_(path);
 #endif
 }
 
@@ -1948,7 +1944,6 @@ void testPMTUDQLog()
     "PMTUD qlog missing lost probe MTU");
   ZuCHECK(qlog.find<"\"done\":true">() >= 0,
     "PMTUD qlog missing completion flag");
-  removeTestLog_(path);
 #endif
 }
 
@@ -2031,7 +2026,6 @@ void testCIDQLog()
       qlog.find<"\"old\":\"7065657263696430\"">() >= 0 &&
       qlog.find<"\"new\":\"7065657263696431\"">() >= 0,
     "CID qlog missing peer issue/retire sequence");
-  removeTestLog_(path);
 }
 
 void testAckECNValidateDisable()
@@ -2162,7 +2156,6 @@ void testAckECNValidateDisable()
     "ECN qlog missing failed state");
   ZuCHECK(qlog.find<"counter_exceeds_ack">() < 0,
     "ECN qlog leaked private validation reason");
-  removeTestLog_(path);
 }
 #endif
 
@@ -3256,7 +3249,6 @@ void testZeroRTTAcceptQLog()
       qlog.find<"\"reason\":\"0rtt\"">() >= 0 &&
       qlog.find<"\"success\":true">() >= 0,
     "0-RTT accept qlog event missing");
-  removeTestLog_(path);
 }
 
 void testZeroRTTAfterOneRTTRejected()
@@ -3317,7 +3309,6 @@ void testZeroRTTAfterOneRTTRejected()
   ZuCHECK(qlog.find<"quic:packet_dropped">() >= 0 &&
       qlog.find<"0rtt_after_1rtt">() >= 0,
     "late 0-RTT packet drop qlog event missing");
-  removeTestLog_(path);
 }
 
 void testRxQLog()
@@ -3527,7 +3518,6 @@ void testPTOQLog()
     "PTO qlog missing timer type");
   ZuCHECK(data.find<"\"event_type\":\"expired\"">() >= 0,
     "PTO qlog missing expired event type");
-  removeTestLog_(path);
 }
 
 void testPeerKeyUpdateState()
@@ -3580,6 +3570,10 @@ void testPeerKeyUpdateState()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("ZquicStreamTest");
+#ifdef Zquic_DEBUG
+  g_residue = ZiTestResidue::dir("qlog");
+#endif
   ZuTestMain();
   ZuTestCall(testStreamIDs);
   ZuTestCall(testStreamFrameDelivery);

@@ -366,6 +366,7 @@ int main()
     fputs("1..0 # SKIP Go interoperability fixtures unavailable\n", stdout);
     return 0;
   }
+  ZiTestResidue::init("zrestmatrix");
   fputs("1..9\n", stdout);
   unsigned test = 0, failed = 0;
 #define RUN(name, expression) do { \
@@ -383,7 +384,9 @@ int main()
   RUN("zrestd negative authentication", runProbe(false));
   RUN("Go negative authentication", runProbe(true));
 #undef RUN
+  bool passed = !interrupted && !failed;
+  ZiTestResidue::final(passed);
   if (interrupted) return 128 + interrupted;
-  return failed ? 1 : 0;
+  return passed ? 0 : 1;
 #endif
 }

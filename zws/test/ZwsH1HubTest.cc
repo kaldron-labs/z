@@ -411,6 +411,13 @@ int main(int argc, char **argv)
   using namespace ZwsH1HubTest_;
 
   parse(argc, argv);
+#ifdef ZWS_H2_TEST
+  ZiTestResidue::init("ZwsH2HubTest");
+#elif defined(ZWS_H3_TEST)
+  ZiTestResidue::init("ZwsH3HubTest");
+#else
+  ZiTestResidue::init("ZwsH1HubTest");
+#endif
   ZiLog::init("ZwsH1HubTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));

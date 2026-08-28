@@ -5,8 +5,22 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdlib.h>
+#include <assert.h>
 
 #include <zlib/ZuTestUtil.hh>
+
+static bool finalized;
+
+static void final_(bool passed)
+{
+  assert(passed);
+  finalized = true;
+}
+
+static void verify_()
+{
+  assert(finalized);
+}
 
 // static nested sub-test in a function
 void foo() {
@@ -33,6 +47,8 @@ void bar(unsigned n) {
 
 int main()
 {
+  assert(!::atexit(&verify_));
+  ZuTestMgr::finalFn(&final_);
   ZuTestMain();
 
   // bool harnessed = ::getenv("HARNESS_ACTIVE");

@@ -402,6 +402,7 @@ void testFileChunks()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zhttpdtest");
   ZuTestMain();
   ZuTestCall(testPathNormalize);
   ZuTestCall(testCLI);

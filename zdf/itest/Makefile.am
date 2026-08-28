@@ -19,6 +19,7 @@ noinst_PROGRAMS = zdffptest
 zdffptest_SOURCES = zdffptest.cc
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	@if test -n "$$ZDB_MODULE" && test -n "$$ZDB_CONNECT"; then \
 	  prove ./zdffptest; \

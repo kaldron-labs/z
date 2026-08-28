@@ -13,10 +13,13 @@
 
 #include <iostream>
 
+#include <zlib/ZuBox.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
+
+#include "ZiTestResidue.hh"
 
 #include "ZquicTestPorts.hh"
 
@@ -378,23 +381,18 @@ void dumpDiag(
 }
 
 struct TempDir {
-  char		path[PATH_MAX]{};
+  Zi::Path	path;
   ZtString<>	certPath;
   ZtString<>	keyPath;
 
-  ~TempDir() { cleanup(); }
-
-  static bool keep()
-  {
-    return !!getenv("ZQUIC_TEST_KEEP");
-  }
-
   bool init()
   {
-    strcpy(path, "/tmp/ZquicRuntimeTest.XXXXXX");
-    if (!mkdtemp(path)) return false;
-    certPath << static_cast<const char *>(path) << "/cert.pem";
-    keyPath << static_cast<const char *>(path) << "/key.pem";
+    static unsigned counter;
+    Zi::Name name;
+    name << "case" << ZuBox<unsigned>{++counter};
+    path = ZiTestResidue::dir(name);
+    certPath << path << "/cert.pem";
+    keyPath << path << "/key.pem";
 
     ZtString<> cmd;
     cmd <<
@@ -411,7 +409,7 @@ struct TempDir {
   ZtString<> pathOf(const char *name) const
   {
     ZtString<> s;
-    s << static_cast<const char *>(path) << '/' << name;
+    s << path << '/' << name;
     return s;
   }
 
@@ -420,21 +418,6 @@ struct TempDir {
     return status != -1 && WIFEXITED(status) && !WEXITSTATUS(status);
   }
 
-  void cleanup()
-  {
-    if (!path[0]) return;
-    if (keep()) return;
-    const char *names[] = {
-      "cert.pem", "key.pem", "endpoint.sqlog", "retry.sqlog",
-      "rejected-token.sqlog", "policy-token.sqlog",
-      "idle.sqlog", nullptr };
-    for (auto name = names; *name; ++name) {
-      auto p = pathOf(*name);
-      unlink(p.data());
-    }
-    rmdir(path);
-    path[0] = 0;
-  }
 };
 
 } // namespace
@@ -701,7 +684,6 @@ void testEndpointOpen()
   ZuCHECK(qlog.find<"drain_expired">() >= 0 &&
       qlog.find<"aborted">() >= 0,
     "endpoint runtime qlog missing close/drain expiry");
-  if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
   mx.stop();
@@ -1172,7 +1154,6 @@ void testRetryAddrValidate()
 	    "retry runtime qlog missing NEW_TOKEN reason");
 	  ZuCHECK(qlog.find<"coalescing">() < 0,
 	    "retry runtime qlog leaked private coalescing reason");
-  if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
   mx.stop();
@@ -1389,10 +1370,6 @@ void testRejectedTokenQLog()
     "rejected-token runtime qlog missing kind reason");
   ZuCHECK(policyQlog.find<"new_token_policy">() >= 0,
     "rejected-token runtime qlog missing NEW_TOKEN policy reason");
-  if (!TempDir::keep()) {
-    unlink(qlogPath.data());
-    unlink(policyQlogPath.data());
-  }
 #endif
 
   mx.stop();
@@ -1505,7 +1482,6 @@ void testIdleTimeoutQLog()
     "idle runtime qlog missing idle reason");
   ZuCHECK(qlog.find<"no_error">() >= 0,
     "idle runtime qlog missing no_error close code");
-  if (!TempDir::keep()) unlink(qlogPath.data());
 #endif
 
   mx.stop();
@@ -1514,6 +1490,7 @@ void testIdleTimeoutQLog()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("ZquicRuntimeTest");
   ZuTestMain();
   ZuTestCall(testEndpointOpen);
   ZuTestCall(testSrvMultiCxn);

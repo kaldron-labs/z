@@ -10,6 +10,8 @@
 
 #include <zlib/ZiFile.hh>
 
+#include <zlib/ZiDir.hh>
+
 #include <zlib/ZtArray.hh>
 #include <zlib/ZmScratch.hh>
 
@@ -1710,14 +1712,70 @@ error:
   return Zi::IOError;
 }
 
-void ZiFile::age(const Name &name, unsigned max)
-{
-  unsigned size = name.size() + ZuBoxed(max).length() + 4;
+using ZiFile_RemovePaths = ZtArray<Zi::Path,
+  ZtArrayHeapID<"ZiFile.RemoveTree">>;
 
-  Name prevName_(size), nextName_(size), sideName_(size);
-  Name *prevName = &prevName_;
-  Name *nextName = &nextName_;
-  Name *sideName = &sideName_;
+static int removeTree_(const Zi::Path &name, ZeError *e)
+{
+#ifndef _WIN32
+  struct stat stat;
+  if (::lstat(name, &stat) < 0) {
+    if (errno == ENOENT) return Zi::OK;
+    if (e) *e = errno;
+    return Zi::IOError;
+  }
+  if (!S_ISDIR(stat.st_mode) || S_ISLNK(stat.st_mode))
+    return ZiFile::remove(name, e);
+#else
+  DWORD attrs = GetFileAttributes(name);
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    DWORD error = GetLastError();
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+      return Zi::OK;
+    if (e) *e = error;
+    return Zi::IOError;
+  }
+  if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY)
+      return ZiFile::rmdir(name, e);
+    return ZiFile::remove(name, e);
+  }
+  if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return ZiFile::remove(name, e);
+#endif
+
+  ZiFile_RemovePaths entries;
+  {
+    ZiDir dir;
+    if (dir.open(name, e) != Zi::OK) return Zi::IOError;
+
+    Zi::Path entry;
+    for (;;) {
+      int result = dir.read(entry, e);
+      if (result == Zi::EndOfFile) break;
+      if (result != Zi::OK) return Zi::IOError;
+      if (entry == "." || entry == "..") continue;
+      entries.push(ZiFile::append(name, entry));
+    }
+    dir.close();
+  }
+  for (const auto &entry : entries)
+    if (removeTree_(entry, e) != Zi::OK) return Zi::IOError;
+  return ZiFile::rmdir(name, e);
+}
+
+int ZiFile::removeTree(const Path &name, ZeError *e)
+{
+  return removeTree_(name, e);
+}
+
+static void age_(const Zi::Path &name, unsigned max, bool tree)
+{
+  unsigned size = name.length() + ZuBoxed(max).length() + 4;
+
+  Zi::Path prevName_(size), nextName_(size), sideName_(size);
+  Zi::Path *prevName = &prevName_;
+  Zi::Path *nextName = &nextName_;
+  Zi::Path *sideName = &sideName_;
 
   *prevName << name;
   bool last = false;
@@ -1727,13 +1785,28 @@ void ZiFile::age(const Name &name, unsigned max)
     *nextName << name << '.' << ZuBoxed(i + 1);
     sideName->length(0);
     *sideName << *nextName << '_';
-    last = (rename(*nextName, *sideName) == Zi::IOError);
-    rename(*prevName, *nextName);
-    Name *oldName = prevName;
+    last = (ZiFile::rename(*nextName, *sideName) == Zi::IOError);
+    ZiFile::rename(*prevName, *nextName);
+    Zi::Path *oldName = prevName;
     prevName = sideName;
     sideName = oldName;
   }
-  if (i == max) remove(*prevName);
+  if (i == max) {
+    if (tree)
+      ZiFile::removeTree(*prevName);
+    else
+      ZiFile::remove(*prevName);
+  }
+}
+
+void ZiFile::age(const Path &name, unsigned max)
+{
+  age_(name, max, false);
+}
+
+void ZiFile::ageTree(const Path &name, unsigned max)
+{
+  age_(name, max, true);
 }
 
 ZiFile::Path ZiFile::cwd()

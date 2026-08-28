@@ -12,16 +12,18 @@
 
 #include <zlib/Zquic.hh>
 
+#include "ZiTestResidue.hh"
+
 using namespace ZuTestUtil;
 using namespace Zquic;
 using namespace ZquicLog_;
 
 #ifdef Zquic_DEBUG
+static Zi::Path g_residue;
+
 static Zi::Path testPath_(ZuCSpan name)
 {
-  Zi::Path path;
-  path << name;
-  return path;
+  return ZiFile::append(g_residue, name);
 }
 
 static ZtString<> readFile_(const Zi::Path &path)
@@ -38,11 +40,6 @@ static ZtString<> readFile_(const Zi::Path &path)
   else
     data.length(unsigned(n));
   return data;
-}
-
-static void removeTestLog_(const Zi::Path &path)
-{
-  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(path);
 }
 
 static unsigned parseJSONSeq_(ZuCSpan data)
@@ -411,8 +408,6 @@ void testQLogFileOutput()
 
   ZtString<> aged = readFile_(agedPath);
   ZuCHECK(aged.find<"old-qlog">() >= 0, "qlog output was not aged");
-  removeTestLog_(path);
-  removeTestLog_(agedPath);
 #else
   ZquicLogParams params;
   params.enabled(true).path("ZquicLogTest.sqlog");
@@ -459,7 +454,6 @@ void testQLogBackPressure()
 
   ZuCHECK(diag.recordsDropped || diag.ringBackPressure,
     "qlog tiny-ring event was not dropped");
-  removeTestLog_(path);
 #endif
 }
 
@@ -499,7 +493,6 @@ void testQLogAppTrace()
   ZuCHECK(hasQLogVantage_(data, "client"),
     "app trace qlog missing client vantage");
   ZuCHECK(hasPacketSent_(data), "app trace qlog missing packet_sent");
-  removeTestLog_(path);
 #endif
 }
 
@@ -590,8 +583,6 @@ void testQLogMultiTraceGroups()
   ZuCHECK(data2.find<"10111213">() < 0 &&
       data2.find<"20212223">() < 0,
     "multi trace 2 leaked trace 1 group IDs");
-  removeTestLog_(path1);
-  removeTestLog_(path2);
 #endif
 }
 
@@ -840,7 +831,6 @@ void testQLogTypedTransportEvents()
 	    "private coalescing reason leaked into packet event");
 	  ZuCHECK(data.find<"parse_long">() < 0,
 	    "private parse_long reason leaked into packet event");
-  removeTestLog_(path);
 #endif
 }
 
@@ -1040,7 +1030,6 @@ void testQLogTypedRecoveryEvents()
 	  ZuCHECK(data.find<"\"name\":\"quic:marked_for_retransmit\","
 	    "\"data\":{\"kind\"">() < 0,
 	    "generic recovery fields leaked into retransmit event");
-  removeTestLog_(path);
 #endif
 }
 
@@ -1303,7 +1292,6 @@ void testQLogTypedSecEvents()
 	    "security qlog emitted empty alpn");
 	  ZuCHECK(data.find<"\"packet_space\"">() < 0,
 	    "old security packet_space field leaked");
-	  removeTestLog_(path);
 #endif
 }
 
@@ -1433,7 +1421,6 @@ void testQLogTypedPathCIDEvents()
   ZuCHECK(data.find<"\"name\":\"quic:mtu_updated\","
     "\"data\":{\"kind\"">() < 0,
     "generic path fields leaked into mtu_updated");
-  removeTestLog_(path);
 #endif
 }
 
@@ -1530,7 +1517,6 @@ void testQLogTypedStreamEvents()
     "stream qlog emitted empty reason");
   ZuCHECK(data.find<"\"additional_info\":\"\"">() < 0,
     "stream qlog emitted empty additional_info");
-  removeTestLog_(path);
 #endif
 }
 
@@ -1795,7 +1781,6 @@ void testQLogTypedMigrationEvents()
       "\"action\":\"response_matched\"",
       "\"action\":\"promoted\""),
     "passive peer-address migration qlog stream was not ordered");
-  removeTestLog_(path);
 #endif
 }
 
@@ -1868,13 +1853,16 @@ void testQLogTypedCloseEvents()
     "close event leaked local application flag");
   ZuCHECK(data.find<"\"frame\":">() < 0,
     "close event leaked local frame flag");
-  removeTestLog_(path);
 #endif
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("ZquicLogTest");
+#ifdef Zquic_DEBUG
+  g_residue = ZiTestResidue::dir("qlog");
+#endif
   ZuTestMain();
   ZuTestCall(testQLogFileOutput);
   ZuTestCall(testQLogBackPressure);

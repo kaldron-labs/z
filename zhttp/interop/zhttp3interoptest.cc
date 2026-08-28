@@ -1153,6 +1153,7 @@ void testZhttpClientCaddyHttpsH3()
   ZuCSpan alpn[] = { "h3" };
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4").caPath(certPath.cspan()).alpn(alpn)
+	.qlog(false)
 	.maxData(32768).maxStreamData(8192)
 	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "Zhttp client->Caddy HTTPS/H3 client init failed");
@@ -1332,6 +1333,7 @@ void testCurlZhttpHttpsH3Server()
   ZuCHECK(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn)
+	.qlog(false)
 	.maxData(32768).maxStreamData(8192)
 	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "curl->Zhttp HTTPS/H3 server init failed");

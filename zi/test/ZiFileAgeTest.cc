@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZiFile.hh>
@@ -16,7 +21,10 @@
 using namespace ZuTestUtil;
 
 namespace {
-Zi::Name g_base;
+enum { TestAge = 3 }; // exercise bounded rotation with a short history
+
+Zi::Path g_base;
+Zi::Path g_root;
 
 Zi::Path rotated(unsigned i)
 {
@@ -27,11 +35,8 @@ Zi::Path rotated(unsigned i)
 
 void initPaths()
 {
-  g_base = {};
-  g_base << ZiTestResidue::tempRoot() << "/age";
-  ZiTestResidue::addFile(g_base);
-  for (unsigned i = 1; i <= 8; i++)
-    ZiTestResidue::addFile(rotated(i));
+  g_root = ZiTestResidue::dir("age");
+  g_base = ZiFile::append(g_root, "file");
 }
 
 void cleanupAge()
@@ -53,6 +58,13 @@ void writeBase(const char *s)
     Zm::exit(1);
   }
   f.close();
+}
+
+bool writePath(const Zi::Path &path, const char *s)
+{
+  ZiFile f;
+  if (f.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) return false;
+  return f.write(s, static_cast<unsigned>(::strlen(s))) == Zi::OK;
 }
 
 ZtString<> readPath(const Zi::Path &path)
@@ -81,16 +93,16 @@ void testAgeRotationBounded()
   cleanupAge();
 
   writeBase("A");
-  ZiFile::age(g_base, 3);
+  ZiFile::age(g_base, TestAge);
 
   writeBase("B");
-  ZiFile::age(g_base, 3);
+  ZiFile::age(g_base, TestAge);
 
   writeBase("C");
-  ZiFile::age(g_base, 3);
+  ZiFile::age(g_base, TestAge);
 
   writeBase("D");
-  ZiFile::age(g_base, 3);
+  ZiFile::age(g_base, TestAge);
 
   ZuCheck(!ZiStat{g_base}.exists());
   ZuCheck(ZiStat{rotated(1)}.exists());
@@ -105,18 +117,83 @@ void testAgeRotationBounded()
   cleanupAge();
 }
 
+void testTreeAgeAndRemoval()
+{
+  ZuTestScope(testTreeAgeAndRemoval);
+
+  Zi::Path tree = ZiFile::append(g_root, "tree");
+  Zi::Path child = ZiFile::append(tree, "child");
+  Zi::Path archived;
+  archived << tree << ".1";
+
+  ZuCheck(ZiFile::mkdir(tree) == Zi::OK);
+  ZuCheck(writePath(child, "old"));
+  ZiFile::ageTree(tree, TestAge);
+  ZuCheck(!ZiStat{tree}.exists());
+  ZuCheck(ZiStat{ZiFile::append(archived, "child")}.exists());
+
+  ZuCheck(ZiFile::mkdir(tree) == Zi::OK);
+  ZuCheck(writePath(child, "new"));
+  ZiFile::ageTree(tree, TestAge);
+  ZuCheck(readPath(ZiFile::append(archived, "child")) == "new");
+  ZuCheck(ZiFile::removeTree(archived) == Zi::OK);
+  ZuCheck(!ZiStat{archived}.exists());
+  Zi::Path archived2;
+  archived2 << tree << ".2";
+  ZuCheck(ZiFile::removeTree(archived2) == Zi::OK);
+}
+
+void testTreeDoesNotFollowSymlink()
+{
+  ZuTestScope(testTreeDoesNotFollowSymlink);
+#ifndef _WIN32
+  Zi::Path tree = ZiFile::append(g_root, "links");
+  Zi::Path target = ZiFile::append(g_root, "target");
+  Zi::Path link = ZiFile::append(tree, "link");
+  ZuCheck(ZiFile::mkdir(tree) == Zi::OK);
+  ZuCheck(writePath(target, "target"));
+  ZuCheck(!::symlink(target, link));
+  ZuCheck(ZiFile::removeTree(tree) == Zi::OK);
+  ZuCheck(ZiStat{target}.exists());
+  ZuCheck(ZiFile::remove(target) == Zi::OK);
+#else
+  ZuCheck(true);
+#endif
+}
+
+void testTreeRemovalError()
+{
+  ZuTestScope(testTreeRemovalError);
+#ifndef _WIN32
+  Zi::Path tree = ZiFile::append(g_root, "unreadable");
+  Zi::Path child = ZiFile::append(tree, "child");
+  ZuCheck(ZiFile::mkdir(tree) == Zi::OK);
+  ZuCheck(writePath(child, "child"));
+  ZuCheck(!::chmod(tree, 0));
+  ZeError error;
+  ZuCheck(ZiFile::removeTree(tree, &error) == Zi::IOError);
+  ZuCheck(!!error);
+  ZuCheck(!::chmod(tree, 0700));
+  ZuCheck(ZiFile::removeTree(tree) == Zi::OK);
+#else
+  ZuCheck(true);
+#endif
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiFileAgeTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanupNow);
+  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
-  ::atexit(&ZiTestResidue::cleanupNow);
 
   initPaths();
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testAgeRotationBounded);
+  ZuTestCall(testTreeAgeAndRemoval);
+  ZuTestCall(testTreeDoesNotFollowSymlink);
+  ZuTestCall(testTreeRemovalError);
   return 0;
 }

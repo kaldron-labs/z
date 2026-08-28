@@ -32,6 +32,7 @@ struct Options {
   bool		daemonize;
   ZuCSpan	pidFile;
   ZuCSpan	marker;
+  ZuCSpan	logPath;
   bool		help;
 };
 
@@ -42,13 +43,17 @@ ZfStruct(Options,
   (((pidFile),		(Ctor<3>, CLI::Opt<'p'>)),		(String)),
   (((marker),		(Ctor<4>, CLI::ID<"marker">,
 			  CLI::Opt<'m'>)),			(String)),
-  (((help),		(Ctor<5>, CLI::Flag<'h'>)),		(Bool)));
+  (((logPath),		(Ctor<5>, CLI::ID<"log-path">,
+			  CLI::Opt<'l'>)),			(String)),
+  (((help),		(Ctor<6>, CLI::Flag<'h'>)),		(Bool)));
 
 namespace {
 
+Zi::Path g_root;
+
 Zi::Path path(const char *name)
 {
-  return ZiFile::append(ZiTestResidue::tempRoot(), name);
+  return ZiFile::append(g_root, name);
 }
 
 bool writeFile(const Zi::Path &path, ZuCSpan text)
@@ -138,7 +143,8 @@ int childMain(const Options &options)
 {
   ZiLog::init("ZiDaemonTest.child");
   ZiLog::level(0);
-  ZiLog::sink(ZiLog::debugSink());
+  ZiLog::sink(ZiLog::debugSink(
+      ZiSinkOptions{}.path(options.logPath ? options.logPath : "&2")));
 
   int r = ZiDaemon::init(
     nullptr, nullptr, -1, options.daemonize,
@@ -198,7 +204,6 @@ void testPIDFileCreateAndRewrite()
   ZuTestScope(testPIDFileCreateAndRewrite);
 
   auto pidFile = path("daemon.pid");
-  ZiTestResidue::addFile(pidFile);
   ZiFile::remove(pidFile);
 
   ZuCheck(ZiDaemon::init(nullptr, nullptr, -1, false, pidFile) == ZiDaemon::OK);
@@ -216,7 +221,6 @@ void testRunningPID()
   ZuTestScope(testRunningPID);
 
   auto pidFile = path("running.pid");
-  ZiTestResidue::addFile(pidFile);
   ZuCheck(writePID(pidFile, static_cast<int>(Zm::getPID())));
 
   ZuCheck(
@@ -228,7 +232,6 @@ void testBadUserDoesNotBypassPIDChecks()
   ZuTestScope(testBadUserDoesNotBypassPIDChecks);
 
   auto pidFile = path("bad-user.pid");
-  ZiTestResidue::addFile(pidFile);
   ZiFile::remove(pidFile);
 
   ZuCheck(
@@ -242,7 +245,6 @@ void testPIDFileOpenError()
   ZuTestScope(testPIDFileOpenError);
 
   auto dir = path("pid-dir");
-  ZiTestResidue::addDir(dir);
   ZiFile::rmdir(dir);
   ZuCheck(ZiFile::mkdir(dir) == Zi::OK);
 
@@ -280,21 +282,21 @@ void testChildAndDaemonize(const char *self)
   auto marker = path("child.marker");
   auto daemonPIDFile = path("daemonized.pid");
   auto daemonMarker = path("daemonized.marker");
-  ZiTestResidue::addFile(pidFile);
-  ZiTestResidue::addFile(marker);
-  ZiTestResidue::addFile(daemonPIDFile);
-  ZiTestResidue::addFile(daemonMarker);
+  auto childLog = path("child.log");
+  auto daemonLog = path("daemonized.log");
   ZiFile::remove(pidFile);
   ZiFile::remove(marker);
   ZiFile::remove(daemonPIDFile);
   ZiFile::remove(daemonMarker);
 
-  ZuCheck(runSelf(self, "-c", "-p", pidFile, "-m", marker) == 0);
+  ZuCheck(runSelf(
+      self, "-c", "-p", pidFile, "-m", marker, "-l", childLog) == 0);
   ZuCheck(waitForFile(marker));
   ZuCheck(readPID(pidFile) > 0);
 
   ZuCheck(
-    runSelf(self, "-cd", "-p", daemonPIDFile, "-m", daemonMarker) == 0);
+    runSelf(self, "-cd", "-p", daemonPIDFile, "-m", daemonMarker,
+      "-l", daemonLog) == 0);
   ZuCheck(waitForFile(daemonMarker));
   int daemonPID = readPID(daemonPIDFile);
   ZuCheck(daemonPID > 0);
@@ -308,7 +310,8 @@ void testChildAndDaemonize(const char *self)
 void usage(const char *self)
 {
   std::cerr <<
-    "Usage: " << self << " [-q] [-c] [-d] [-p pid-file] [-m marker]\n";
+    "Usage: " << self <<
+      " [-q] [-c] [-d] [-p pid-file] [-m marker] [-l log-path]\n";
   ::exit(1);
 }
 
@@ -330,6 +333,10 @@ int main(int argc, char **argv)
   if (options.child) return childMain(options);
 
   ZiTestResidue::init("ZiDaemonTest");
+  g_root = ZiTestResidue::dir("daemon");
+  ZiLog::init("ZiDaemonTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
 
   ZuTestMain();
   ZuTestCall(testNoPIDFile);
@@ -339,6 +346,6 @@ int main(int argc, char **argv)
   ZuTestCall(testPIDFileOpenError);
   ZuTestCall(testCLIParsing);
   ZuTestCall(testChildAndDaemonize, argv[0]);
-  ZiTestResidue::cleanupNow();
+  ZiLog::stop();
   return 0;
 }

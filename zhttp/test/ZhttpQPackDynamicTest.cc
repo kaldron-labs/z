@@ -2264,6 +2264,9 @@ void testBuilderRuntimeHeaders()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiLog::init("ZhttpQPackDynamicTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
   ZuTestCall(testVar);
   ZuTestCall(testRxTable);

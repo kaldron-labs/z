@@ -16,6 +16,8 @@
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
+#include "ZiTestResidue.hh"
+
 using namespace ZuTestUtil;
 
 namespace {
@@ -435,9 +437,8 @@ void testZeroRTTPktDrop()
 
   Zquic::Crypto server;
 #ifdef Zquic_DEBUG
-  Zi::Path qlogPath;
-  qlogPath << "ZquicHandshakeZeroRTT.sqlog";
-  ZiFile::remove(qlogPath);
+  Zi::Path qlogPath = ZiFile::append(
+    ZiTestResidue::dir("qlog"), "ZquicHandshakeZeroRTT.sqlog");
 	ZquicLogParams params;
 	params.enabled(true).path(qlogPath);
 	ZquicLogger::Trace trace;
@@ -469,13 +470,13 @@ void testZeroRTTPktDrop()
       qlog.find<"\"reason\":\"0rtt\"">() >= 0 &&
       qlog.find<"\"success\":false">() >= 0,
     "0-RTT rejection qlog output missing");
-  if (!::getenv("ZQUIC_TEST_KEEP")) ZiFile::remove(qlogPath);
 #endif
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("ZquicHandshakeTest");
   ZuTestMain();
   ZuTestCall(testDeterministicHSProfile);
   ZuTestCall(testCryptoStreamFrames);

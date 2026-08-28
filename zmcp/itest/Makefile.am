@@ -25,5 +25,6 @@ noinst_HEADERS = ZmcpITestPorts.hh
 EXTRA_DIST = README.md
 
 .PHONY: test
+test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)

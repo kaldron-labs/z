@@ -1064,6 +1064,9 @@ using namespace ZhttpParserTest_;
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiLog::init("ZhttpParserTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
   ZuTestCall(testSelectedHeaderValueSplitAcrossRxBuffers);
   ZuTestCall(testCanonicalContentLengthHeader);
