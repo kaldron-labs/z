@@ -313,10 +313,6 @@ ZiMultiplex_WSExt::~ZiMultiplex_WSExt()
 
 #endif /* ZiMultiplex_IOCP */
 
-#if !defined(_WIN32) && defined(ZiMultiplex_Netlink)
-#include <zlib/ZiNetlink.hh>  // support netlink for Unix only
-#endif
-
 #ifdef ZiMultiplex_EPoll
 
 #include <sys/resource.h>
@@ -967,19 +963,12 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
   Socket s;
   ZiIPType::T ipType = ZiIPType::V4;
 
-#if !defined(_WIN32) && defined(ZiMultiplex_Netlink)
-  if (options.netlink())
-    s = (Socket)::socket(AF_NETLINK, SOCK_DGRAM, NETLINK_GENERIC);
-  else
-#endif
-  {
-    if (!remoteIP || !ZiIP_cxnType(localIP, remoteIP, ipType)) {
-      Error("connect", Zi::IOError, ZeError(ZiEINVAL));
-      failFn(false);
-      return;
-    }
-    s = (Socket)::socket(ZiIP_family(ipType), SOCK_STREAM, IPPROTO_TCP);
+  if (!remoteIP || !ZiIP_cxnType(localIP, remoteIP, ipType)) {
+    Error("connect", Zi::IOError, ZeError(ZiEINVAL));
+    failFn(false);
+    return;
   }
+  s = (Socket)::socket(ZiIP_family(ipType), SOCK_STREAM, IPPROTO_TCP);
   if (Zi::nullSocket(s)) {
     ZeError e = ZeLastSockError;
     Zi::closeSocket(s);
@@ -996,28 +985,14 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
 
   if (!!localIP || localPort) {
 #ifndef _WIN32
-#ifdef ZiMultiplex_Netlink
-    if (options.netlink()) {
-      ZiNetlinkSockAddr local;
-      if (bind(s, local.sa(), local.len()) < 0) {
-	ZeError e{errno};
-	::close(s);
-	Warning("bind", Zi::IOError, e);
-	failFn(true);
-	return;
-      }
-    } else
-#endif
-    {
-      if (!localIP) localIP = ZiIP_wildcard(ipType);
-      ZiSockAddr local(localIP, localPort);
-      if (bind(s, local.sa(), local.len()) < 0) {
-	ZeError e{errno};
-	::close(s);
-	Warning("bind", Zi::IOError, e);
-	failFn(true);
-	return;
-      }
+    if (!localIP) localIP = ZiIP_wildcard(ipType);
+    ZiSockAddr local(localIP, localPort);
+    if (bind(s, local.sa(), local.len()) < 0) {
+      ZeError e{errno};
+      ::close(s);
+      Warning("bind", Zi::IOError, e);
+      failFn(true);
+      return;
     }
 #else
     if (!localIP) localIP = ZiIP_wildcard(ipType);
@@ -1123,25 +1098,20 @@ void ZiMultiplex::completedConnect(Connect *request)
     return;
   }
 
-#ifdef ZiMultiplex_Netlink
-  if (!ci.options.netlink())
-#endif
-  {
-    ZiSockAddr local;
-    local.init(ci.remoteIP.type());
-    socklen_t len = local.len();
-    if (getsockname(s, local.sa(), &len) < 0) {
-      ZeError e{errno};
-      connectDel(s);
-      ::close(s);
-      Error("getsockname", Zi::IOError, e);
-      request->fail(false);
-      return;
-    }
-    local.sync();
-    ci.localIP = local.ip();
-    ci.localPort = local.port();
+  ZiSockAddr local;
+  local.init(ci.remoteIP.type());
+  socklen_t len = local.len();
+  if (getsockname(s, local.sa(), &len) < 0) {
+    ZeError e{errno};
+    connectDel(s);
+    ::close(s);
+    Error("getsockname", Zi::IOError, e);
+    request->fail(false);
+    return;
   }
+  local.sync();
+  ci.localIP = local.ip();
+  ci.localPort = local.port();
 
   ZiConnectFn fn = ZuMv(request->fn());
   connectDel(s);
@@ -1163,31 +1133,16 @@ void ZiMultiplex::connect(Connect *request)
   }
 
 retry:
-#ifdef ZiMultiplex_Netlink
-  if (ci.options.netlink()) {
-    ZeError e;
-    if ((e = ZiNetlink::connect(
-	s, ci.options.familyName(), ci.familyID, ci.portID)) != ZeOK) {
-      connectDel(s);
-      ::close(s);
-      // Warning("connect", Zi::IOError, e);
-      request->fail(true);
-      return;
-    }
-  } else
-#endif
-  {
-    ZiSockAddr remote(ci.remoteIP, ci.remotePort);
-    if (::connect(s, remote.sa(), remote.len()) < 0) {
-      ZeError e{errno};
-      if (e.errNo() == EAGAIN || e.errNo() == EINPROGRESS) return;
-      if (e.errNo() == EINTR) goto retry;
-      connectDel(s);
-      ::close(s);
-      // Warning("connect", Zi::IOError, e);
-      request->fail(true);
-      return;
-    }
+  ZiSockAddr remote(ci.remoteIP, ci.remotePort);
+  if (::connect(s, remote.sa(), remote.len()) < 0) {
+    ZeError e{errno};
+    if (e.errNo() == EAGAIN || e.errNo() == EINPROGRESS) return;
+    if (e.errNo() == EINTR) goto retry;
+    connectDel(s);
+    ::close(s);
+    // Warning("connect", Zi::IOError, e);
+    request->fail(true);
+    return;
   }
 
   completedConnect(request);
@@ -1314,14 +1269,6 @@ void ZiMultiplex::listen(
     failFn(false);
     return;
   }
-
-#ifdef ZiMultiplex_Netlink
-  if (options.netlink()) {
-    Error("listen", Zi::IOError, ZeError(ZiEINVAL));
-    failFn(false);
-    return;
-  }
-#endif
 
   rxInvoke([this, listenFn = ZuMv(listenFn),
       failFn = ZuMv(failFn), acceptFn = ZuMv(acceptFn),
@@ -2209,10 +2156,6 @@ retry:
 	IPPROTO_IP, IP_TOS);
     n_ = ::sendmsg(m_info.socket, &msg, 0);
   }
-#ifdef ZiMultiplex_Netlink
-  else if (m_info.options.netlink())
-    n_ = ZiNetlink::send(m_info.socket, m_ci.familyID, m_ci.portID, buf, len);
-#endif
   else
     n_ = ::send(m_info.socket, buf, len, 0);
   if (ZuUnlikely(n_ < 0)) e = errno;
@@ -2352,7 +2295,7 @@ bool ZiMultiplex::initSocket(Socket s, const ZiCxnOptions &options)
       Error("setsockopt(SO_KEEPALIVE)", Zi::IOError, ZeLastSockError);
       return false;
     }
-    if (!options.udp() && !options.netlink() && !options.nagle() &&
+    if (!options.udp() && !options.nagle() &&
 	setsockopt(s, IPPROTO_TCP, TCP_NODELAY,
 	  (const char *)&b, sizeof(int)) < 0) {
       Error("setsockopt(TCP_NODELAY)", Zi::IOError, ZeLastSockError);
@@ -2396,7 +2339,7 @@ bool ZiMultiplex::initSocket(Socket s, const ZiCxnOptions &options)
       Error("setsockopt(SO_KEEPALIVE)", Zi::IOError, ZeLastSockError);
       return false;
     }
-    if (!options.udp() && !options.netlink() && !options.nagle() &&
+    if (!options.udp() && !options.nagle() &&
 	setsockopt(s, IPPROTO_TCP, TCP_NODELAY,
 	  (const char *)&b, sizeof(BOOL))) {
       Error("setsockopt(TCP_NODELAY)", Zi::IOError, ZeLastSockError);
@@ -2570,11 +2513,7 @@ void ZiConnection::disconnect_2(bool peer)
 
   m_rxUp = 0;
 
-  if (m_info.options.udp()
-#ifdef ZiMultiplex_NetLink
-      || m_info.options.netlink()
-#endif
-      ) {
+  if (m_info.options.udp()) {
     executedDisconnect(peer);
     return;
   }

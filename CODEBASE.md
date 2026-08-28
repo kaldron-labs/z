@@ -30,7 +30,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Platform I/O, networking, logging, and daemon helpers in `zi/src/ZiFile.hh:10`, `zi/src/ZiMultiplex.hh:10`, `zi/src/ZiLog.hh:10`, and `zi/src/ZiDaemon.hh:10`.
 - Multiplexing and I/O buffer abstractions in `zi/src/ZiMultiplex.hh:10` and `zi/src/ZiIOBuf.hh:22`.
 - Filesystem and path handling in `zi/src/ZiFile.hh:13` and directory/globbing support in `zi/src/ZiDir.hh:10` and `zi/src/ZiGlob.hh:13`.
-- Network-specific utilities for ring buffers and netlink in `zi/src/ZiRing.hh:22` and `zi/src/ZiNetlink.hh:8`.
+- Network-specific ring-buffer utilities in `zi/src/ZiRing.hh:22`.
 - Connections: provides I/O primitives used by Zfb, Zdb, Zhttp, Zrest, Zws, Zcmd, and Zv (for example, `zfb/src/Zfb.hh:10`, `zdb/src/Zdb.hh:57`, `zhttp/src/Zhttp.hh:14`).
 
 ### Zt (text and data structures)
@@ -545,12 +545,9 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zdash/src/zdash.cc:72` - Top-level symbols: struct Watch, function Watch_Axor, function Watch_HeapID, struct Display_, using DispList, using Display
 - `zi/src/ZiPlatform.cc:17` - Top-level symbols: struct passwd, struct passwd
 - `zi/src/ZiRing.hh:22` - Top-level symbols: define ZiRing_HH, struct ParamData, function data, using Base, class Params_, using Base
-- `zi/src/ZiNetlinkMsg.hh:5` - Top-level symbols: define ZiNetlinkMsg_HH, class ZiConnection, class ZiNetlinkHdr, function hdr, struct nlmsghdr, class ZiGenericNetlinkHdr
-- `zi/src/ZiNetlink.hh:8` - Top-level symbols: define ZiNetlink_HH, class ZiNetlinkSockAddr, struct sockaddr_nl, function sa, class ZiNetlink, using Socket
 - `zi/src/ZiTx.hh:11` - Top-level symbols: define ZiTx_HH, using ZiTxBuf, using ZiTxBufAlloc, class ZiTx, using Impl, function impl
 - `zi/src/ZiLib.hh:10` - Top-level symbols: define ZiLib_HH, define ZiAPI, define ZiExplicit, define ZiAPI, define ZiExplicit, define ZiExtern
 - `zi/src/ZiIP.hh:10` - Top-level symbols: define ZiIP_HH, class ZiAPI, using Hostname, enum Result, function ZiIP, struct Traits
-- `zi/src/ZiNetlink.cc:34` - Top-level symbols: struct msghdr, struct nlattr, struct msghdr, struct nlmsghdr, struct nlmsgerr
 - `zi/src/ZiRingUtil.cc:20` - Top-level symbols: function open, function close, struct stat, struct stat
 - `zi/src/ZiDir.hh:10` - Top-level symbols: define ZiDir_HH, class ZiAPI, using Path, using Guard
 - `zi/src/ZiGlob.hh:13` - Top-level symbols: define ZiGlob_HH, class ZiAPI, struct Entry, function NameAxor, using Iter, using NodePtr
@@ -562,15 +559,13 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zi/src/ZiRingUtil.hh:12` - Top-level symbols: define ZiRingUtil_HH, class ParamData, function derived, struct ZiRingUtilParams, class ZiAPI, using ParamData
 - `zi/src/ZiIP.cc:25` - Top-level symbols: struct sockaddr, struct addrinfoW, class ZiIP_WSDLL, define GetAddrInfo, define FreeAddrInfo, define GetNameInfo
 - `zi/src/ZiRing.cc:26` - Top-level symbols: function Blocker, function Blocker, function open, function close, function Blocker, function Blocker
-- `zi/src/ZiMultiplex.hh:10` - Top-level symbols: define ZiMultiplex_HH, define ZiMultiplex_DEBUG, define ZiMultiplex_IOCP, define ZiMultiplex_EPoll, define ZiMultiplex_Netlink, define ZiDEBUG
-- `zi/src/ZiNetlinkC.h:8` - Top-level symbols: define zi_netlink_H, define ZiGNLVersion, enum ZiGNLAttr, enum ZiGNLCmd
+- `zi/src/ZiMultiplex.hh:10` - Top-level symbols: define ZiMultiplex_HH, define ZiMultiplex_DEBUG, define ZiMultiplex_IOCP, define ZiMultiplex_EPoll, define ZiDEBUG
 - `zi/src/ZiIOBuf.hh:22` - Top-level symbols: define ZiIOBuf_HH, define ZiIOBuf_DefltSize, define ZiIOBuf_DefltMaxSize, struct ZiIOBuf_HeapID, struct IOBuf, function data_
 - `zi/src/ZiDir.cc:83` - Top-level symbols: struct dirent
 - `zi/src/ZiModule.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/src/ZiModule.hh:10` - Top-level symbols: define ZiModule_HH, class ZiAPI, using Handle, using Handle, using Path, using Lock
 - `zi/src/ZiFile.hh:13` - Top-level symbols: define ZiFile_HH, class ZiAPI, using Handle, using Name, using Path, using Offset
 - `zi/src/ZiFile.cc:17` - Top-level symbols: define ZiFile_CopyBufSize, function islower__, class ZiFile_WindowsDrives, function blkSize, function blkSize, function dump
-- `zi/src/ZiNetlinkMsg.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/src/ZiRx.hh:14` - Top-level symbols: define ZiRx_HH, class ZiRx, using Impl, using BufAlloc, function impl, function impl
 - `zdb_pq/ext/ztime.sql:1` - SQL objects: TYPE ztime;, FUNCTION ztime_in_csv, FUNCTION ztime_out_csv, FUNCTION ztime_in_iso, FUNCTION ztime_out_iso, FUNCTION ztime_in_fix (+24 more)
 - `zdb_pq/src/ZdbPQLib.cc:1` - Top-level contents (no regex-matched symbols)
@@ -615,7 +610,6 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zi/test/ZiMxServer.cc:24` - Top-level symbols: class Mx, class Connection, function mx, function timeout, function connected, function recvRequest
 - `zi/test/ZiFileTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/netmapclient.cc:1` - Top-level contents (no regex-matched symbols)
-- `zi/test/ZiNetlinkTest.cc:34` - Top-level symbols: class Mx, class Message, class Connection, function mx, function connected, class Message
 - `zdb_pq/ext/zdecimal.c:12` - Top-level symbols: define pg_bswap128, define pg_bswap128, function pg_bswap128, function isspace__, function zdecimal_in, function zdecimal_out
 - `zi/test/ZiFileAgeTest.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/test/ZiGlobTest.cc:1` - Top-level contents (no regex-matched symbols)

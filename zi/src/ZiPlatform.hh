@@ -31,11 +31,6 @@
 #include <fcntl.h>
 #include <netdb.h>
 
-#ifdef NETLINK
-#include <linux/netlink.h>
-#include <linux/genetlink.h>
-#endif
-
 #else /* !_WIN32 */
 
 #include <winsock2.h>
