@@ -1840,14 +1840,12 @@ int main(int argc, char **argv)
 
   {
     ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
-    if (auto caPath = ::getenv("ZCMD_CAPATH"))
+    auto caPath = ::getenv("ZCMD_CAPATH");
+    if (caPath && *caPath)
       defines->add(ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{caPath});
-    else
-      defines->add(
-	ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{"/etc/ssl/certs"});
-    auto scan = ZfCf::scan(
-      "timeout: 1, rxThread: 3, txThread: 4, caPath: ${CAPATH}",
-      {}, defines);
+    ZtString<> source{"timeout: 1, rxThread: 3, txThread: 4"};
+    if (caPath && *caPath) source << ", caPath: ${CAPATH}";
+    auto scan = ZfCf::scan(source, {}, defines);
     auto cf = ZuMv(scan.p<1>());
     try {
       client->init(mx, cf, interactive);

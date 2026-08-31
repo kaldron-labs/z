@@ -1706,18 +1706,18 @@ int main(int argc, char **argv)
   {
     ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
     auto caPath = ::getenv("ZCMD_CAPATH");
-    defines->add(
-      ZfCf::DefKey{"CAPATH"},
-      ZfCf::DefVal{caPath ? caPath : "/etc/ssl/certs"});
-    auto scan = ZfCf::scan(
+    if (caPath && *caPath)
+      defines->add(ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{caPath});
+    ZtString<> source{
       "timeout: 1,\n"
       "thread: 3,\n"
       "gtkThread: 4,\n"
-      "gtkGlade: zdash.glade,\n"
-      "caPath: ${CAPATH},\n"
+      "gtkGlade: zdash.glade,\n"};
+    if (caPath && *caPath) source << "caPath: ${CAPATH},\n";
+    source <<
       "rxThread: 1,\n"
-      "txThread: 2\n",
-      {}, ZuMv(defines));
+      "txThread: 2\n";
+    auto scan = ZfCf::scan(source, {}, ZuMv(defines));
     auto cf = ZuMv(scan.p<1>());
     try {
       app->init(mx, cf);
