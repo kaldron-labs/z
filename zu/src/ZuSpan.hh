@@ -54,6 +54,24 @@ consteval unsigned bmhSkip() {
   return skip;
 }
 
+// reverse Boyer-Moore-Horspool
+template <auto S, uint8_t C>
+consteval unsigned rbmhSkip() {
+  constexpr unsigned N = S.length();
+  for (unsigned i = 1; i < N; i++)
+    if (uint8_t(S[i]) == C) return i;
+  return N;
+}
+
+template <auto, unsigned> struct RStringSeq_;
+template <auto S> struct RStringSeq_<S, 0> { using T = ZuSeq<>; };
+template <auto S> struct RStringSeq_<S, 1> { using T = ZuSeq<>; };
+template <auto S, unsigned N> struct RStringSeq_ {
+  using T = typename RStringSeq_<S, N - 1>::T::template Push<S[N - 1]>;
+};
+template <auto S>
+using RStringSeq = typename RStringSeq_<S, S.length()>::T;
+
 } // Zu_::Span
 
 template <typename T_>
@@ -560,6 +578,18 @@ private:
       }, N);
     }
   }
+  template <auto S>
+  static constexpr unsigned rbmhSkip_(uint8_t c) {
+    constexpr uint64_t N = S.length();
+    if constexpr (N <= 1) {
+      return 1;
+    } else {
+      using Chars = Zu_::Span::RStringSeq<S>;
+      return ZuSwitch::dispatch<Chars>(c, [](auto C) {
+	return Zu_::Span::rbmhSkip<S, C>();
+      }, N);
+    }
+  }
 
   constexpr int64_t find_(ZuSpan v) const {
     uint64_t l = length();
@@ -600,11 +630,42 @@ private:
     return -1;
   }
 
+  constexpr int64_t rfind_(ZuSpan v) const {
+    uint64_t l = length();
+    uint64_t n = v.length();
+    if (ZuUnlikely(!n)) return l;
+    if (ZuUnlikely(l < n)) return -1;
+    for (uint64_t i = l - n + 1; i--;) {
+      uint64_t j = 0;
+      while (j < n && Cmp::equals(m_data[i + j], v.m_data[j])) ++j;
+      if (j >= n) return i;
+    }
+    return -1;
+  }
+
   constexpr bool match_(ZuSpan v) const {
     uint64_t l = length();
     uint64_t n = v.length();
     if (l < n) return false;
     const auto *data = this->data();
+    const auto *vdata = v.data();
+    if (!ZuConstEval()) {
+#if defined(__GNUC__) && !defined(_WIN32)
+      if constexpr (ZuTraits<T>::IsPOD && ZuTraits<T>::IsIntegral)
+	return !memcmp(data, vdata, n * sizeof(T));
+#endif
+    }
+    for (uint64_t i = 0; i < n; i++)
+      if (!Cmp::equals(data[i], vdata[i])) return false;
+    return true;
+  }
+
+  constexpr bool rmatch_(ZuSpan v) const {
+    uint64_t l = length();
+    uint64_t n = v.length();
+    if (!n) return true;
+    if (l < n) return false;
+    const auto *data = this->data() + (l - n);
     const auto *vdata = v.data();
     if (!ZuConstEval()) {
 #if defined(__GNUC__) && !defined(_WIN32)
@@ -656,18 +717,46 @@ public:
     return -1;
   }
 
+// reverse find subspan
+  template <typename V>
+  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, int64_t>
+  rfind(const V &v) const { return rfind_(v); }
+
+// reverse find compile-time string using Boyer-Moore-Horspool
+  template <
+    ZuString S, typename U = T,
+    ZuIfT<ZuEquiv<U, char>{}, int> = 0>
+  constexpr int64_t rfind() const {
+    constexpr uint64_t n = S.length();
+    uint64_t l = length();
+    if constexpr (!n) return l;
+    if (ZuUnlikely(l < n)) return -1;
+    const T *data = this->data();
+    uint64_t i = l - n;
+    for (;;) {
+      uint64_t j = 0;
+      while (Cmp::equals(data[i + j], S[j])) {
+	if (++j >= n) return i;
+      }
+      unsigned skip = rbmhSkip_<S>(data[i]);
+      if (i < skip) return -1;
+      i -= skip;
+    }
+  }
+
+// reverse find element - lambda should return true on match
+  template <typename L>
+  constexpr ZuIfT<!ZuIsConstructible<L, ZuSpan>{}, int64_t>
+  rfind(L &&l) const {
+    for (uint64_t i = length(); i--;)
+      if (ZuFwd<L>(l)(m_data[i])) return i;
+    return -1;
+  }
+
 // match at start
   template <typename V>
   constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
   match(const V &v) const { return match_(v); }
-
-// exact match
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
-  exact(const V &v) const {
-    ZuSpan span{v};
-    return length() == span.length() && match_(span);
-  }
 
 // match compile-time string at start
   template <
@@ -679,6 +768,33 @@ public:
     for (uint64_t i = 0; i < n; i++)
       if (!Cmp::equals(m_data[i], S[i])) return false;
     return true;
+  }
+
+// match at end
+  template <typename V>
+  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
+  rmatch(const V &v) const { return rmatch_(v); }
+
+// match compile-time string at end
+  template <
+    ZuString S, typename U = T,
+    ZuIfT<ZuEquiv<U, char>{}, int> = 0>
+  constexpr bool rmatch() const {
+    constexpr uint64_t n = S.length();
+    uint64_t l = length();
+    if (l < n) return false;
+    uint64_t o = l - n;
+    for (uint64_t i = 0; i < n; i++)
+      if (!Cmp::equals(m_data[o + i], S[i])) return false;
+    return true;
+  }
+
+// exact match
+  template <typename V>
+  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
+  exact(const V &v) const {
+    ZuSpan span{v};
+    return length() == span.length() && match_(span);
   }
 
 // chomp(), trim(), strip()

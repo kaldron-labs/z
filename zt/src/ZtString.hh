@@ -884,6 +884,15 @@ public:
   ZuIfT<ZuEquiv<V, char>{}, int64_t>
   find() const { return cspan().template find<S>(); }
 
+// reverse find (forwards to ZuSpan)
+  template <typename Arg>
+  int64_t rfind(Arg &&arg) const {
+    return cspan().rfind(ZuFwd<Arg>(arg));
+  }
+  template <ZuString S, typename V = Char>
+  ZuIfT<ZuEquiv<V, char>{}, int64_t>
+  rfind() const { return cspan().template rfind<S>(); }
+
 // match at start (forwards to ZuSpan)
   template <typename Arg>
   bool match(Arg &&arg) const {
@@ -892,6 +901,15 @@ public:
   template <ZuString S, typename V = Char>
   ZuIfT<ZuEquiv<V, char>{}, bool>
   match() const { return cspan().template match<S>(); }
+
+// match at end (forwards to ZuSpan)
+  template <typename Arg>
+  bool rmatch(Arg &&arg) const {
+    return cspan().rmatch(ZuFwd<Arg>(arg));
+  }
+  template <ZuString S, typename V = Char>
+  ZuIfT<ZuEquiv<V, char>{}, bool>
+  rmatch() const { return cspan().template rmatch<S>(); }
 
 // hash()
   uint64_t hash() const { return ZuHash<String>::hash(*this); }

@@ -99,6 +99,13 @@ template <unsigned N_> struct ZuString {
     return -1;
   }
 
+  template <typename L>
+  constexpr int64_t rfind(L &&l) const {
+    for (unsigned i = length(); i--;)
+      if (ZuFwd<L>(l)(data_[i])) return i;
+    return -1;
+  }
+
   template <typename A>
   ZuInline constexpr bool match(const A &a) const {
     if (ZuConstEval()) {
@@ -110,6 +117,21 @@ template <unsigned N_> struct ZuString {
       return true;
     } else {
       return cspan().match(a);
+    }
+  }
+
+  template <typename A>
+  ZuInline constexpr bool rmatch(const A &a) const {
+    if (ZuConstEval()) {
+      unsigned l = length();
+      unsigned n = ZuTraits<A>::length(a);
+      if (l < n) return false;
+      unsigned o = l - n;
+      for (unsigned i = 0; i < n; i++)
+	if (data_[o + i] != a[i]) return false;
+      return true;
+    } else {
+      return cspan().rmatch(a);
     }
   }
 

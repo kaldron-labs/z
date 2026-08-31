@@ -566,14 +566,24 @@ void testFindStarts()
 
   ZuCheck(a.find([](int v) { return v == 30; }) == 2);
   ZuCheck(a.find([](int v) { return v == 99; }) < 0);
+  ZuCheck(a.rfind([](int v) { return v == 30; }) == 2);
+  ZuCheck(a.rfind([](int v) { return v == 99; }) < 0);
   ZuCheck(a.match(prefix));
   ZuCheck(!a.match(mismatch));
+  ZuArray<int, 3> suffix;
+  suffix << 30 << 40;
+  ZuCheck(a.rmatch(suffix));
+  ZuCheck(!a.rmatch(mismatch));
 
   constexpr ZuString s{"hello"};
   ZuCheck(s.find([](char c) { return c == 'l'; }) == 2);
   ZuCheck(s.find([](char c) { return c == 'z'; }) < 0);
+  ZuCheck(s.rfind([](char c) { return c == 'l'; }) == 3);
+  ZuCheck(s.rfind([](char c) { return c == 'z'; }) < 0);
   ZuCheck(s.match("he"));
   ZuCheck(!s.match("ha"));
+  ZuCheck(s.rmatch("lo"));
+  ZuCheck(!s.rmatch("he"));
 
   ZuCSpan cs{"hello world"};
   ZuCheck(cs.find("lo") == 3);

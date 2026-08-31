@@ -8,8 +8,10 @@
 
 #include <zlib/ZiDaemon.hh>
 
+#include <zlib/ZmSingleton.hh>
+
 #include <zlib/ZiLog.hh>
-#include <zlib/ZiFile.hh>
+#include <zlib/ZiPIDFile.hh>
 
 #ifndef _WIN32
 #include <sys/types.h>
@@ -23,7 +25,7 @@
 
 int ZiDaemon::init(
   const char *username, const char *password,
-  int umask, bool daemonize, const char *pidFile)
+  int umask, bool daemonize, const Zi::Path &pidName)
 {
 #ifndef _WIN32
 
@@ -172,82 +174,20 @@ int ZiDaemon::init(
 #endif /* !_WIN32 */
 
   // create / check PID file
-
-  if (pidFile) {
-    ZiFile file;
-    ZuCArray<16> buf;
-
-    if (file.open(pidFile,
-	ZiFile::Create | ZiFile::Exclusive | ZiFile::GC, 0644) != Zi::OK) {
-      if (file.open(pidFile, ZiFile::GC, 0) != Zi::OK) {
-	ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
-	  s << "open(" << f << "): " << e;
-	}));
-	return Error;
-      }
-
-      int n;
-
-      if ((n = file.read(buf.data(), 15)) < 0) {
-	ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
-	  s << "read(" << f << "): " << e;
-	}));
-	return Error;
-      }
-
-      buf.length(n);
-
-      ZuBox<int> pid(buf);
-
-      if (pid > 0) {
-#ifndef _WIN32
-	int i = kill(pid, 0);
-
-	if (i >= 0 || (i < 0 && errno == EPERM)) {
-	  ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
-	    s << "PID " << pid << " still running";
-	  }));
-	  return Running;
-	}
-#else
-	HANDLE h = OpenProcess(
-	    PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
-
-	if (h) {
-	  DWORD exitCode = 0;
-	  bool running =
-	    WaitForSingleObject(h, 0) == WAIT_TIMEOUT &&
-	    GetExitCodeProcess(h, &exitCode) && exitCode == STILL_ACTIVE;
-	  CloseHandle(h);
-	  if (running) {
-	    ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
-	      s << "PID " << pid << " still running";
-	    }));
-	    return Running;
-	  }
-	} else if (GetLastError() == ERROR_ACCESS_DENIED) {
-	  ZiLOG(Error, "ZiDaemon", ([pid](auto &s) {
-	    s << "PID " << pid << " still running";
-	  }));
-	  return Running;
-	}
-#endif
-      }
-
-      if (file.seek(0) != Zi::OK) {
-	ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
-	  s << "seek(" << f << "): " << e;
-	}));
-	return Error;
-      }
+  if (pidName) {
+    auto file = ZmSingleton<ZiPIDFile>::instance();
+    int r = file->init(pidName);
+    if (r == ZiPIDFile::Running) {
+      ZiLOG(Error, "ZiDaemon", ([pid = file->pid()](auto &s) {
+	s << "PID " << pid << " still running";
+      }));
+      return Running;
     }
-
-    buf.null();
-    buf << ZuBox<int>(Zm::getPID());
-
-    if (file.write(buf.data(), buf.length()) != Zi::OK) {
-      ZiLOG(Error, "ZiDaemon", ([f = ZeString{pidFile}, e = file.error()](auto &s) {
-	s << "write(" << f << "): " << e;
+    if (r != ZiPIDFile::OK) {
+      ZiLOG(Error, "ZiDaemon", ([
+	f = ZeString{file->path()},
+	e = file->error()](auto &s) {
+	s << "PID file " << f << ": " << e;
       }));
       return Error;
     }

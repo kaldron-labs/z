@@ -21,6 +21,7 @@
 #include <zlib/ZiDaemon.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiPIDFile.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -146,9 +147,10 @@ int childMain(const Options &options)
   ZiLog::sink(ZiLog::debugSink(
       ZiSinkOptions{}.path(options.logPath ? options.logPath : "&2")));
 
+  Zi::Path pidName;
+  if (options.pidFile) pidName = options.pidFile;
   int r = ZiDaemon::init(
-    nullptr, nullptr, -1, options.daemonize,
-    options.pidFile ? options.pidFile.data() : nullptr);
+    nullptr, nullptr, -1, options.daemonize, pidName);
 
   if (options.marker) {
     ZtString<> text;
@@ -196,7 +198,7 @@ void testNoPIDFile()
 {
   ZuTestScope(testNoPIDFile);
 
-  ZuCheck(ZiDaemon::init(nullptr, nullptr, -1, false, nullptr) == ZiDaemon::OK);
+  ZuCheck(ZiDaemon::init(nullptr, nullptr, -1, false, {}) == ZiDaemon::OK);
 }
 
 void testPIDFileCreateAndRewrite()
@@ -206,14 +208,22 @@ void testPIDFileCreateAndRewrite()
   auto pidFile = path("daemon.pid");
   ZiFile::remove(pidFile);
 
-  ZuCheck(ZiDaemon::init(nullptr, nullptr, -1, false, pidFile) == ZiDaemon::OK);
-  ZuCheck(readPID(pidFile) == static_cast<int>(Zm::getPID()));
+  {
+    ZiPIDFile file;
+    ZuCheck(file.init(g_root, "daemon.pid") == ZiPIDFile::OK);
+    ZuCheck(readPID(pidFile) == static_cast<int>(Zm::getPID()));
+  }
+  ZuCheck(!ZiStat{pidFile}.exists());
 
   ZuCheck(writePID(pidFile, 99999999));
-  ZuCheck(ZiDaemon::init(nullptr, nullptr, -1, false, pidFile) == ZiDaemon::OK);
-  ZtString<> pidText;
-  pidText << ZuBox<int>(Zm::getPID());
-  ZuCheck(!readText(pidFile).cmp(pidText, pidText.length()));
+  {
+    ZiPIDFile file;
+    ZuCheck(file.init(g_root, "daemon.pid") == ZiPIDFile::OK);
+    ZtString<> pidText;
+    pidText << ZuBox<int>(Zm::getPID());
+    ZuCheck(readText(pidFile) == pidText);
+  }
+  ZuCheck(!ZiStat{pidFile}.exists());
 }
 
 void testRunningPID()
@@ -223,21 +233,18 @@ void testRunningPID()
   auto pidFile = path("running.pid");
   ZuCheck(writePID(pidFile, static_cast<int>(Zm::getPID())));
 
-  ZuCheck(
-    ZiDaemon::init(nullptr, nullptr, -1, false, pidFile) == ZiDaemon::Running);
+  ZiPIDFile file;
+  ZuCheck(file.init(g_root, "running.pid") == ZiPIDFile::Running);
+  ZiFile::remove(pidFile);
 }
 
 void testBadUserDoesNotBypassPIDChecks()
 {
   ZuTestScope(testBadUserDoesNotBypassPIDChecks);
 
-  auto pidFile = path("bad-user.pid");
-  ZiFile::remove(pidFile);
-
   ZuCheck(
-    ZiDaemon::init("ZiDaemonTest.NoSuchUser", nullptr, -1, false, pidFile) ==
+    ZiDaemon::init("ZiDaemonTest.NoSuchUser", nullptr, -1, false, {}) ==
       ZiDaemon::OK);
-  ZuCheck(readPID(pidFile) == static_cast<int>(Zm::getPID()));
 }
 
 void testPIDFileOpenError()
@@ -248,8 +255,8 @@ void testPIDFileOpenError()
   ZiFile::rmdir(dir);
   ZuCheck(ZiFile::mkdir(dir) == Zi::OK);
 
-  ZuCheck(
-    ZiDaemon::init(nullptr, nullptr, -1, false, dir) == ZiDaemon::Error);
+  ZiPIDFile file;
+  ZuCheck(file.init(g_root, "pid-dir") == ZiPIDFile::Error);
 }
 
 void testCLIParsing()
@@ -278,29 +285,22 @@ void testChildAndDaemonize(const char *self)
   ZuTestScope(testChildAndDaemonize);
 
 #ifndef _WIN32
-  auto pidFile = path("child.pid");
   auto marker = path("child.marker");
-  auto daemonPIDFile = path("daemonized.pid");
   auto daemonMarker = path("daemonized.marker");
   auto childLog = path("child.log");
   auto daemonLog = path("daemonized.log");
-  ZiFile::remove(pidFile);
   ZiFile::remove(marker);
-  ZiFile::remove(daemonPIDFile);
   ZiFile::remove(daemonMarker);
 
   ZuCheck(runSelf(
-      self, "-c", "-p", pidFile, "-m", marker, "-l", childLog) == 0);
+      self, "-c", "-m", marker, "-l", childLog) == 0);
   ZuCheck(waitForFile(marker));
-  ZuCheck(readPID(pidFile) > 0);
+  ZuCheck(readText(marker)[0] == '0');
 
   ZuCheck(
-    runSelf(self, "-cd", "-p", daemonPIDFile, "-m", daemonMarker,
-      "-l", daemonLog) == 0);
+    runSelf(self, "-cd", "-m", daemonMarker, "-l", daemonLog) == 0);
   ZuCheck(waitForFile(daemonMarker));
-  int daemonPID = readPID(daemonPIDFile);
-  ZuCheck(daemonPID > 0);
-  ZuCheck(daemonPID != static_cast<int>(Zm::getPID()));
+  ZuCheck(readText(daemonMarker)[0] == '0');
 #else
   static_cast<void>(self);
   ZuCheck(true);

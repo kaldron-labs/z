@@ -13,6 +13,8 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <zlib/ZiPlatform.hh>
+
 class ZiAPI ZiDaemon {
   ZiDaemon() = delete;
   ZiDaemon(const ZiDaemon &) = delete;
@@ -41,13 +43,15 @@ public:
   //
   // - If daemonize is true:
   //   - Standard input, output and error are closed and become unavailable
+  //
+  // - pidName is relative to the platform temporary directory
 
   static int init(
       const char *username,
       const char *password,
       int umask,
       bool daemonize,
-      const char *pidFile);
+      const Zi::Path &pidName);
 };
 
 #endif /* ZiDaemon_HH */

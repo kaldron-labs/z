@@ -829,6 +829,9 @@ struct SharedH2Link :
 struct SharedClient :
   public Zhttp::TLS_::ClientHub<
     SharedClient, SharedClientH1Link, SharedClientH2Link> {
+  using Base = Zhttp::TLS_::ClientHub<
+    SharedClient, SharedClientH1Link, SharedClientH2Link>;
+  using NativeLink = typename Base::Link;
   using H1Link = SharedClientH1Link;
   using H2Link = SharedClientH2Link;
   State *state = nullptr;
@@ -861,25 +864,17 @@ struct SharedClient :
 
 struct SharedClientH1Link :
   public Zhttp::TLS_::ClientH1Logical<
-    SharedClient, SharedClientH1Link,
-    Zhttp::TLS_::CliLink<
-      SharedClient, SharedClientH1Link, SharedClientH2Link>> {
+    SharedClient, SharedClientH1Link, SharedClient::NativeLink> {
   using Base = Zhttp::TLS_::ClientH1Logical<
-    SharedClient, SharedClientH1Link,
-    Zhttp::TLS_::CliLink<
-      SharedClient, SharedClientH1Link, SharedClientH2Link>>;
+    SharedClient, SharedClientH1Link, SharedClient::NativeLink>;
   using Base::Base;
 };
 
 struct SharedClientH2Link :
   public Zhttp::H2_::ClientLogical<
-    SharedClient, SharedClientH2Link,
-    Zhttp::TLS_::CliLink<
-      SharedClient, SharedClientH1Link, SharedClientH2Link>> {
+    SharedClient, SharedClientH2Link, SharedClient::NativeLink> {
   using Base = Zhttp::H2_::ClientLogical<
-    SharedClient, SharedClientH2Link,
-    Zhttp::TLS_::CliLink<
-      SharedClient, SharedClientH1Link, SharedClientH2Link>>;
+    SharedClient, SharedClientH2Link, SharedClient::NativeLink>;
   using Base::Base;
 
   ClientParser parser;

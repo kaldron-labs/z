@@ -290,9 +290,21 @@ public:
     return -1;
   }
 
+// reverse find element - lambda should return true on match
+  template <typename L>
+  int64_t rfind(L &&l) const {
+    for (unsigned i = m_length; i--;)
+      if (ZuFwd<L>(l)(m_data[i])) return i;
+    return -1;
+  }
+
 // match at start
   template <typename A>
   bool match(const A &a) const { return cspan().match(a); }
+
+// match at end
+  template <typename A>
+  bool rmatch(const A &a) const { return cspan().rmatch(a); }
 
 // reset to null
 
