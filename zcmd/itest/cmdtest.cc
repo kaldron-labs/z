@@ -94,7 +94,7 @@ struct Options {
   unsigned	localPort = 0;
   ZuCSpan	module = getenv("ZDB_MODULE");
   ZuCSpan	connect = getenv("ZDB_CONNECT");
-  ZuCSpan	caPath = "/etc/ssl/certs";
+  ZuCSpan	caPath;
   unsigned	passLen = 12;
   unsigned	totpRange = 2;
   unsigned	keyInterval = 30;
@@ -110,8 +110,7 @@ ZfStruct((Options, CLI),
   (((localPort),	(CLI::Arg<4>, (Range<1U, 65535U>))), (UInt32)),
   (((module),		(CLI::Opt<'m'>)),		(String)),
   (((connect),		(CLI::Opt<'c'>)),		(String)),
-  (((caPath),		(CLI::Opt<'C'>, CLI::Long<"ca-path">)), (String,
-      "/etc/ssl/certs")),
+  (((caPath),		(CLI::Opt<'C'>, CLI::Long<"ca-path">)), (String)),
   (((passLen),		(CLI::Long<"pass-len">, (Range<6U, 60U>))),
 							(UInt32, 12)),
   (((totpRange),	(CLI::Long<"totp-range">, (Range<0U, 100U>))),
@@ -133,7 +132,7 @@ void usage()
     "  -m, --module=MODULE\tZdb data store module e.g. libZdbPQ.so\n"
     "  -c, --connect=CONNECT\tZdb data store connection string\n"
     "\t\t\te.g. \"dbname=test host=/tmp\"\n"
-    "  -C, --ca-path=CAPATH\tset CA path (default: /etc/ssl/certs)\n"
+    "  -C, --ca-path=CAPATH\tset CA path (default: system trust store)\n"
     "      --pass-len=N\tset default password length (default: 12)\n"
     "      --totp-range=N\tset TOTP accepted range (default: 2)\n"
     "      --key-interval=N\tset key refresh interval (default: 30)\n"
@@ -172,7 +171,7 @@ int main(int argc_, char **argv)
     };
     define("MODULE", options.module);
     define("CONNECT", options.connect);
-    define("CAPATH", options.caPath);
+    if (options.caPath) define("CAPATH", options.caPath);
     define("CERTPATH", options.certPath);
     define("KEYPATH", options.keyPath);
     define("LOCALIP", options.localIP);
@@ -181,7 +180,7 @@ int main(int argc_, char **argv)
     define("TOTPRANGE", ZuBoxed(options.totpRange));
     define("KEYINTERVAL", ZuBoxed(options.keyInterval));
     define("DEBUG", options.debug ? "true" : "false");
-    auto scan = ZfCf::scan(
+    ZtString<> source{
       "mx: {\n"
       "  nThreads: 5,\n"
       "  threads: {\n"
@@ -214,14 +213,15 @@ int main(int argc_, char **argv)
       "  tables: {}\n"
       "},\n"
       "server: {\n"
-      "  thread: app,\n"
-      "  caPath: ${CAPATH},\n"
+      "  thread: app,\n"};
+    if (options.caPath) source << "  caPath: ${CAPATH},\n";
+    source <<
       "  certPath: ${CERTPATH},\n"
       "  keyPath: ${KEYPATH},\n"
       "  localIP: ${LOCALIP},\n"
       "  localPort: ${LOCALPORT}\n"
-      "}\n",
-      {}, ZuMv(defines));
+      "}\n";
+    auto scan = ZfCf::scan(source, {}, ZuMv(defines));
     auto cf = ZuMv(scan.p<1>());
 
     ZiLog::init("cmdtest");
