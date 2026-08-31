@@ -565,6 +565,14 @@ public:
     return -1;
   }
 
+// reverse find element - lambda should return true on match
+  template <typename L>
+  constexpr int64_t rfind(L &&l) const {
+    for (unsigned i = length_; i--;)
+      if (ZuFwd<L>(l)((*this)[i])) return i;
+    return -1;
+  }
+
 // match at start
   template <typename A>
   constexpr bool match(const A &a) const {
@@ -577,6 +585,22 @@ public:
       return true;
     } else {
       return cspan().match(a);
+    }
+  }
+
+// match at end
+  template <typename A>
+  constexpr bool rmatch(const A &a) const {
+    if (ZuConstEval()) {
+      unsigned l = length();
+      unsigned n = ZuTraits<A>::length(a);
+      if (l < n) return false;
+      unsigned o = l - n;
+      for (unsigned i = 0; i < n; i++)
+	if (!Cmp::equals((*this)[o + i], a[i])) return false;
+      return true;
+    } else {
+      return cspan().rmatch(a);
     }
   }
 

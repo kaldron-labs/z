@@ -425,7 +425,8 @@ int ZiFile::open_(
     blkSize = ZiFile_WindowsDrives::blkSize(name);
     DWORD accessFlags = (flags & ReadOnly) ? GENERIC_READ :
       (flags & WriteOnly) ? GENERIC_WRITE : GENERIC_READ | GENERIC_WRITE;
-    DWORD shareFlags = (flags & ReadOnly) ? FILE_SHARE_READ :
+    DWORD shareFlags = (flags & Unpublished) ? 0 :
+      (flags & ReadOnly) ? FILE_SHARE_READ :
       FILE_SHARE_READ | FILE_SHARE_WRITE;
     DWORD createFlags = !(flags & Create) ? OPEN_EXISTING :
       (flags & Exclusive) ? CREATE_NEW : OPEN_ALWAYS;
@@ -522,7 +523,8 @@ int ZiFile::openAt(
 
     ACCESS_MASK accessFlags = (flags & ReadOnly) ? GENERIC_READ :
       (flags & WriteOnly) ? GENERIC_WRITE : GENERIC_READ | GENERIC_WRITE;
-    DWORD shareFlags = (flags & ReadOnly) ? FILE_SHARE_READ :
+    DWORD shareFlags = (flags & Unpublished) ? 0 :
+      (flags & ReadOnly) ? FILE_SHARE_READ :
       FILE_SHARE_READ | FILE_SHARE_WRITE;
     ULONG createDisposition = !(flags & Create) ? FILE_OPEN :
       (flags & Exclusive) ? FILE_CREATE : FILE_OPEN_IF;
@@ -1468,6 +1470,46 @@ error:
   return Zi::IOError;
 }
 
+int ZiFile::mode(unsigned mode)
+{
+  if (Zi::nullHandle(m_handle)) {
+#ifndef _WIN32
+    m_error = EBADF;
+#else
+    m_error = ERROR_INVALID_HANDLE;
+#endif
+    return Zi::IOError;
+  }
+
+#ifndef _WIN32
+  if (fchmod(m_handle, mode) < 0) goto error;
+#else
+  {
+    Path path(Zi::PathMax + 1);
+    DWORD n = GetFinalPathNameByHandleW(
+	m_handle, path.data(), Zi::PathMax + 1, FILE_NAME_NORMALIZED);
+    if (!n || n > Zi::PathMax) goto error;
+    path.length(n);
+    path.truncate();
+
+    unsigned flags = m_flags &
+      ~(Create | Exclusive | Truncate | Append_ | Shadow);
+    if (!mode)
+      flags |= Unpublished;
+    else
+      flags &= ~Unpublished;
+    close();
+    if (open_(path, flags, mode, -1) != Zi::OK) return Zi::IOError;
+  }
+#endif
+
+  return Zi::OK;
+
+error:
+  m_error = ZeLastError;
+  return Zi::IOError;
+}
+
 int ZiFile::sync()
 {
 #ifndef _WIN32
@@ -1613,6 +1655,20 @@ bool ZiStat::isdir() const
 #endif
 }
 
+bool ZiStat::islink() const
+{
+#ifndef _WIN32
+  struct stat s;
+  if (::lstat(m_path, &s) < 0) {
+    m_error = ZeLastError;
+    return false;
+  }
+  return S_ISLNK(s.st_mode);
+#else
+  return attrs_() && (m_attrs & FILE_ATTRIBUTE_REPARSE_POINT);
+#endif
+}
+
 int ZiFile::remove(const Path &name, ZeError *e)
 {
 #ifndef _WIN32
@@ -1684,11 +1740,12 @@ error:
   return Zi::IOError;
 }
 
-int ZiFile::mkdir(const Path &name, ZeError *e)
+int ZiFile::mkdir(const Path &name, unsigned mode, ZeError *e)
 {
 #ifndef _WIN32
-  if (::mkdir(name, 0777) < 0) goto error;
+  if (::mkdir(name, mode) < 0) goto error;
 #else
+  (void)mode;
   if (!CreateDirectory(name, 0)) goto error;
 #endif
   return Zi::OK;
@@ -1831,6 +1888,21 @@ ZiFile::Path ZiFile::cwd()
   }
 #endif
   return ret;
+}
+
+ZiFile::Path ZiFile::tmpDir()
+{
+#ifndef _WIN32
+  return "/tmp";
+#else
+  Path ret(Zi::PathMax + 1);
+  DWORD n = GetTempPathW(Zi::PathMax + 1, ret.data());
+  if (!n || n > Zi::PathMax) return {};
+  while (n > 1 && (ret[n - 1] == L'/' || ret[n - 1] == L'\\')) --n;
+  ret.length(n);
+  ret.truncate();
+  return ret;
+#endif
 }
 
 ZiFile::Path ZiFile::canonical(const Path &name)

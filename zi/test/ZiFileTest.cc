@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZiFile.hh>
@@ -430,6 +431,43 @@ void testOpenAtNoFollowAndStat()
   }
 }
 
+void testModeAndTmpDir()
+{
+  ZuTestScope(testModeAndTmpDir);
+
+  cleanupFiles();
+  ZiFile file;
+  ZuCHECK(file.open(g_foo,
+      ZiFile::WriteOnly | ZiFile::Create | ZiFile::Exclusive |
+      ZiFile::NoFollow | ZiFile::Unpublished | ZiFile::GC, 0) == Zi::OK,
+    "exclusive mode-0 open failed: ", file.error());
+  ZuCHECK(file.write("123", 3) == Zi::OK, "write failed: ", file.error());
+
+  ZiFile unpublished;
+  ZuCheck(unpublished.open(g_foo,
+	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::IOError);
+
+#ifndef _WIN32
+  struct stat stat;
+  ZuCheck(!::stat(g_foo, &stat) && (stat.st_mode & 0777) == 0);
+#endif
+
+  ZuCHECK(file.mode(0644) == Zi::OK, "mode(0644) failed: ", file.error());
+  ZiFile read;
+  ZuCHECK(read.open(g_foo, ZiFile::ReadOnly | ZiFile::GC) == Zi::OK,
+    "published read open failed: ", read.error());
+  ZuCArray<3> buf;
+  ZuCheck(read.read(buf.data(), buf.size()) == int(buf.size()));
+  ZuCheck((ZuCSpan{buf.data(), buf.size()} == "123"));
+
+#ifndef _WIN32
+  ZuCheck(!::stat(g_foo, &stat) && (stat.st_mode & 0777) == 0644);
+#endif
+  auto tmp = ZiFile::tmpDir();
+  ZuCheck(ZiFile::absolute(tmp));
+  ZuCheck(ZiStat{tmp}.isdir());
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -450,5 +488,6 @@ int main(int argc, char **argv)
   ZuTestCall(testNegativeOpen);
   ZuTestCall(testTxStream);
   ZuTestCall(testOpenAtNoFollowAndStat);
+  ZuTestCall(testModeAndTmpDir);
   return 0;
 }

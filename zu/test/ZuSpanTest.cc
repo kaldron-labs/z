@@ -471,11 +471,23 @@ void testSpanFindMatch()
     ZuCheck(s.find("lo") == 3);
     ZuCheck(s.find("x") < 0);
     ZuCheck(s.find("") == 0);
+    ZuCheck(s.rfind("hello") == 0);
+    ZuCheck(s.rfind("world") == 6);
+    ZuCheck(s.rfind("l") == 9);
+    ZuCheck(s.rfind("x") < 0);
+    ZuCheck(s.rfind("") == int64_t(s.length()));
+    ZuCheck(s.rfind([](char c) { return c == 'l'; }) == 9);
+    ZuCheck(s.rfind([](char c) { return c == 'x'; }) < 0);
     ZuCheck(s.match("hello"));
     ZuCheck(s.match("hello world"));
     ZuCheck(!s.match("world"));
     ZuCheck(!s.match("hello world!"));
     ZuCheck(s.match(""));
+    ZuCheck(s.rmatch("world"));
+    ZuCheck(s.rmatch("hello world"));
+    ZuCheck(!s.rmatch("hello"));
+    ZuCheck(!s.rmatch("!hello world"));
+    ZuCheck(s.rmatch(""));
     ZuCheck(s.exact("hello world"));
     ZuCheck(!s.exact("hello"));
     ZuCheck(!s.exact("hello world!"));
@@ -489,9 +501,18 @@ void testSpanFindMatch()
     ZuCheck(s.find<"aababc!">() < 0);
     ZuCheck(s.find<"x">() < 0);
     ZuCheck(s.find<"">() == 0);
+    ZuCheck(s.rfind<"ab">() == 3);
+    ZuCheck(s.rfind<"abc">() == 3);
+    ZuCheck(s.rfind<"aababc">() == 0);
+    ZuCheck(s.rfind<"aababc!">() < 0);
+    ZuCheck(s.rfind<"x">() < 0);
+    ZuCheck(s.rfind<"">() == int64_t(s.length()));
     ZuCheck(s.match<"aab">());
     ZuCheck(!s.match<"ab">());
     ZuCheck(s.match<"">());
+    ZuCheck(s.rmatch<"abc">());
+    ZuCheck(!s.rmatch<"aab">());
+    ZuCheck(s.rmatch<"">());
   }
 
   {
@@ -501,14 +522,24 @@ void testSpanFindMatch()
     ZuCheck(s.find<"bcd">() == 1);
     ZuCheck(s.find("xyz") < 0);
     ZuCheck(s.find<"xyz">() < 0);
+    ZuCheck(s.rfind("bcd") == 1);
+    ZuCheck(s.rfind<"bcd">() == 1);
+    ZuCheck(s.rfind("xyz") < 0);
+    ZuCheck(s.rfind<"xyz">() < 0);
     ZuCheck(s.match("abc"));
     ZuCheck(s.match<"abc">());
     ZuCheck(!s.match("abd"));
     ZuCheck(!s.match<"abd">());
+    ZuCheck(s.rmatch("cde"));
+    ZuCheck(s.rmatch<"cde">());
+    ZuCheck(!s.rmatch("abc"));
+    ZuCheck(!s.rmatch<"abc">());
 
     const signed char needle[] = {'c', 'd'};
     ZuCheck(s.find(ZuSpan<const signed char>{needle, 2}) == 2);
+    ZuCheck(s.rfind(ZuSpan<const signed char>{needle, 2}) == 2);
     ZuCheck(s.match(ZuSpan<const signed char>{needle, 2}) == false);
+    ZuCheck(!s.rmatch(ZuSpan<const signed char>{needle, 2}));
   }
 
   {
@@ -516,8 +547,10 @@ void testSpanFindMatch()
     const int needle[] = {20, 30};
     ZuSpan<const int> s{data, 6};
     ZuCheck(s.find(ZuSpan<const int>{needle, 2}) == 1);
+    ZuCheck(s.rfind(ZuSpan<const int>{needle, 2}) == 4);
     ZuCheck(s.match(ZuSpan<const int>{data, 3}));
     ZuCheck(!s.match(ZuSpan<const int>{needle, 2}));
+    ZuCheck(s.rmatch(ZuSpan<const int>{needle, 2}));
   }
 
   {

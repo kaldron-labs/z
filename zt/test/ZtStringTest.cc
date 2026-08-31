@@ -662,9 +662,17 @@ void testString()
     ZtString<> s = "hello world";
     ZuCheck(s.find([](char c) { return c == 'w'; }) == 6);
     ZuCheck(s.find([](char c) { return c == 'z'; }) < 0);
+    ZuCheck(s.rfind([](char c) { return c == 'l'; }) == 9);
+    ZuCheck(s.rfind([](char c) { return c == 'z'; }) < 0);
+    ZuCheck(s.rfind("l") == 9);
+    ZuCheck(s.rfind<"hello">() == 0);
     ZuCheck(s.match("hello"));
     ZuCheck(s.match(ZuCSpan{"hello"}));
     ZuCheck(!s.match("world"));
+    ZuCheck(s.rmatch("world"));
+    ZuCheck(s.rmatch(ZuCSpan{"world"}));
+    ZuCheck(!s.rmatch("hello"));
+    ZuCheck(s.rmatch<"world">());
   }
 }
 

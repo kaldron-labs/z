@@ -66,6 +66,10 @@ void testArray()
   a.append(tail);
   ZuCheck(a.length() == 6);
   ZuCheck(a[5] == 6);
+  ZuCheck(a.rfind([](int v) { return v == 4; }) == 3);
+  ZuCheck(a.rfind([](int v) { return v == 9; }) < 0);
+  ZuCheck((a.rmatch(ZuArray<int, 2>{5, 6})));
+  ZuCheck((!a.rmatch(ZuArray<int, 2>{4, 6})));
 
   a.splice(1, 2);
   ZuCheck((a == ZuArray<int, 4>{1, 4, 5, 6}));

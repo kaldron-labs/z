@@ -92,7 +92,7 @@ static void usage(int code = 1)
     "  --addr=IP          listen address, default all interfaces\n"
     "  --ipv6             listen on IPv6 address\n"
     "  --daemon           detach and run in background\n"
-    "  --pidfile=PATH     write PID to file\n"
+    "  --pidfile=NAME     write PID beneath the temporary directory\n"
     "  --maxconn=N        maximum concurrent accepted connections\n"
     "  --log=PATH         write log to PATH, '-' for stderr\n"
     "  --syslog           send log to syslog\n"
@@ -185,8 +185,9 @@ static void printMemDiag()
 
 static bool prepareProcess(const Options &options)
 {
-  const char *pidfile = options.pidfile ? options.pidfile.data() : nullptr;
-  int rc = ZiDaemon::init(nullptr, nullptr, -1, options.daemon, pidfile);
+  Zi::Path pidName;
+  if (options.pidfile) pidName = options.pidfile;
+  int rc = ZiDaemon::init(nullptr, nullptr, -1, options.daemon, pidName);
   if (rc == ZiDaemon::Running)
     ZiLOG(Error, "zrestd", "PID file names a running process");
   else if (rc != ZiDaemon::OK)

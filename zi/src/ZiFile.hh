@@ -46,6 +46,7 @@ public:
   ZuTime mtime() const;
   bool exists() const;
   bool isdir() const;
+  bool islink() const;
 
   ZeError error() const { return m_error; }
 
@@ -100,6 +101,7 @@ public:
     StdErr	= 0x10000,// standard error
     NoFollow	= 0x20000,// do not follow final symlink/reparse point
     Directory	= 0x40000,// open directory
+    Unpublished	= 0x80000,// deny concurrent opens until mode() publishes
 
     // frequently used combinations
     Write	= Create | WriteOnly | Truncate,
@@ -200,6 +202,8 @@ public:
   Offset offset();
   int seek(Offset offset);
 
+  // change permissions and publish/unpublish an Unpublished file
+  int mode(unsigned mode);
   int sync();
 
   // all=false returns after the first successful underlying read
@@ -228,11 +232,16 @@ public:
       const Path &oldName, const Path &newName, ZeError *e = nullptr);
   static int copy(
       const Path &oldName, const Path &newName, ZeError *e = nullptr);
-  static int mkdir(const Path &name, ZeError *e = nullptr);
+  static int mkdir(const Path &name, ZeError *e = nullptr) {
+    return mkdir(name, 0777, e);
+  }
+  static int mkdir(
+      const Path &name, unsigned mode, ZeError *e = nullptr);
   static int rmdir(const Path &name, ZeError *e = nullptr);
   static int removeTree(const Path &name, ZeError *e = nullptr);
 
   static Path cwd();
+  static Path tmpDir();
   static Path canonical(const Path &name);
 
   static bool absolute(const Path &name);

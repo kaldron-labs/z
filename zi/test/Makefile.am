@@ -16,7 +16,7 @@ noinst_PROGRAMS = \
 	ZiIOBufTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
-	ZiDaemonTest ZiResolverTest
+	ZiDaemonTest ZiPIDFileTest ZiResolverTest
 noinst_HEADERS = ZiTestPorts.hh ZiTestResidue.hh
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
@@ -43,3 +43,4 @@ ZiRxStreamTest_SOURCES = ZiRxStreamTest.cc
 ZiLogTest_SOURCES = ZiLogTest.cc
 ZiMxLoopTest_SOURCES = ZiMxLoopTest.cc
 ZiDaemonTest_SOURCES = ZiDaemonTest.cc
+ZiPIDFileTest_SOURCES = ZiPIDFileTest.cc
