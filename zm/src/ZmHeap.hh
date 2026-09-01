@@ -12,7 +12,7 @@
 // - optional partitions / sharding
 //   - fast partition lookup
 // - TLS free list
-// - efficient statistics and telemetry (Ztel)
+// - efficient statistics and telemetry (Ztc)
 // - globally configured
 //   - supports profile-guided optimization of heap configuration
 

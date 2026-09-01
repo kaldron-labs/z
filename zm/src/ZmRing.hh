@@ -724,7 +724,13 @@ public:
 	return Zu::IOError;
       }
       m_size = openSize_(params().size ? alignSize(params().size) : 0);
-      if (!m_size) return Zu::IOError;
+      if (!m_size) {
+	closeCtrl();
+	m_headBlocker.close();
+	m_tailBlocker.close();
+	m_flags = 0;
+	return Zu::IOError;
+      }
       if (!openData(m_size, params())) {
 	closeCtrl();
 	m_headBlocker.close();

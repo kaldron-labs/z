@@ -12,7 +12,7 @@
 // - globally configured sizing, lock striping and heap configuration
 //   - see ZmHashMgr
 //   - supports profile-guided optimization of heap and hash configuration
-// - efficient statistics and telemetry (Ztel)
+// - efficient statistics and telemetry (Ztc)
 
 #ifndef ZmHash_HH
 #define ZmHash_HH
