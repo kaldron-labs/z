@@ -96,7 +96,8 @@ inline ZuBSpan msgData(const Hdr *hdr) {
 }
 
 inline bool validTelemetry(const fbs::Telemetry *telemetry) {
-  if (ZuUnlikely(!telemetry || !telemetry->value())) return false;
+  if (ZuUnlikely(!telemetry || !telemetry->id() ||
+      !telemetry->id()->size() || !telemetry->value())) return false;
   switch (telemetry->value_type()) {
     case fbs::TelemetryBody::HeapTelemetry:
     case fbs::TelemetryBody::HashTelemetry:
@@ -122,10 +123,19 @@ inline bool validMsg(const fbs::Msg *msg) {
   if (ZuUnlikely(!msg || !msg->body())) return false;
   switch (msg->body_type()) {
     case fbs::Body::Request:
-    case fbs::Body::Ack:
-    case fbs::Body::SnapshotComplete:
-    case fbs::Body::Error:
       return true;
+    case fbs::Body::Ack: {
+      auto body = msg->body_as_Ack();
+      return body && body->id() && body->id()->size();
+    }
+    case fbs::Body::EOS: {
+      auto body = msg->body_as_EOS();
+      return body && body->id() && body->id()->size();
+    }
+    case fbs::Body::Error: {
+      auto body = msg->body_as_Error();
+      return body && body->id() && body->id()->size();
+    }
     case fbs::Body::Telemetry:
       return validTelemetry(msg->body_as_Telemetry());
     default:

@@ -5,7 +5,6 @@ include "ztc_db.fbs";
 namespace Ztc.fbs;
 
 table AppTelemetry {
-  id:string;
   version:string;
   role:string;
   start_time:int64;
@@ -192,6 +191,7 @@ union TelemetryBody {
 }
 
 table Telemetry {
+  id:string;
   seq_no:uint64;
   value:TelemetryBody;
 }

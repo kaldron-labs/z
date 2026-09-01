@@ -28,7 +28,6 @@
 namespace Ztc {
 
 struct AppTelemetry {
-  ZuID			id;
   ZuID			version;
   ZuID			role;
   int64_t		startTime = 0;

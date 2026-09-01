@@ -5,7 +5,7 @@ METASOURCES = AUTO
 	$(CXXCOMPILE) -C -E $< -o $@
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src \
-	-I$(top_srcdir)/zfb/src -I$(top_srcdir)/ztcp/src \
+	-I$(top_srcdir)/zfb/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
@@ -32,7 +32,6 @@ libZv_la_SOURCES = ZvLib.cc \
 	ZtcDB.cc ZtcDBHost.cc ZtcDBTable.cc ZtcApp.cc ZtcFB.cc ZtcRAGMap.cc \
 	ZvCf.cc ZvYAML.cc ZvTOML.cc ZvEngine.cc ZvThreadParams.cc
 libZv_la_LIBADD = \
-	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \

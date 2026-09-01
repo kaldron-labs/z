@@ -7,7 +7,7 @@ union Body {
   Request,
   Ack,
   Telemetry,
-  SnapshotComplete,
+  EOS,
   Error
 }
 
