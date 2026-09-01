@@ -17,7 +17,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	ZvCfTest ZvYAMLTest ZvTOMLTest ZvEngineTest ZtcMgrTest ZtcDBTest ZtcSchemaTest \
+	ZvCfTest ZvYAMLTest ZvTOMLTest ZtcMgrTest ZtcDBTest ZtcSchemaTest \
 	ZtcFilterTest ZtcAppTest ZtcAlertTest
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
@@ -25,7 +25,6 @@ test: $(noinst_PROGRAMS)
 	prove ZvCfTest
 	prove ZvYAMLTest
 	prove ZvTOMLTest
-	./ZvEngineTest
 	prove ZtcMgrTest
 	prove ZtcDBTest
 	prove ZtcSchemaTest
@@ -35,7 +34,6 @@ test: $(noinst_PROGRAMS)
 ZvCfTest_SOURCES = ZvCfTest.cc
 ZvYAMLTest_SOURCES = ZvYAMLTest.cc
 ZvTOMLTest_SOURCES = ZvTOMLTest.cc
-ZvEngineTest_SOURCES = ZvEngineTest.cc
 ZtcMgrTest_SOURCES = ZtcMgrTest.cc
 ZtcDBTest_SOURCES = ZtcDBTest.cc
 ZtcSchemaTest_SOURCES = ZtcSchemaTest.cc

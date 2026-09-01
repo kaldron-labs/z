@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// generic I/O queue based on ZmPQueue skip lists, used by ZvEngine
+// generic I/O queue based on ZmPQueue skip lists
 //
 // Key / SeqNo - uint64
 // Link ID - ZuID
