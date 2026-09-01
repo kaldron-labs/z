@@ -100,7 +100,9 @@ bool Blocker::open(bool head, const Params &params)
   else
     path << L"_tail";
   path << L".sem";
-  m_sem = CreateSemaphore(0, 0, LONG_MAX, path);
+  m_sem = params.size ?
+    CreateSemaphore(0, 0, LONG_MAX, path) :
+    OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, path);
   if (m_sem == INVALID_HANDLE_VALUE) m_sem = 0;
   if (!m_sem) {
     ZiLOG(Error, "ZiRing", ([path, e = ZeLastError](auto &s) {
@@ -163,7 +165,7 @@ bool CtrlMem::open(unsigned size, const Params &params)
   Zi::Path path(params.name.length() + 6);
   path << params.name << ".ctrl";
   if ((r = m_file.mmap(path,
-	  ZiFile::Create | ZiFile::Shm, size,
+	  (params.size ? ZiFile::Create : 0) | ZiFile::Shm, size,
 	  true, mmapFlags, 0666)) != Zi::OK) {
     ZiLOG(Error, "ZiRing", ([path, e = m_file.error()](auto &s) {
       s << "ZiRing::CtrlMem::open() mmap(" << path  << ") failed: " << e;
@@ -200,7 +202,7 @@ bool DataMem::open(unsigned size, const Params &params)
   Zi::Path path(params.name.length() + 6);
   path << params.name << ".data";
   if ((r = m_file.mmap(path,
-	  ZiFile::Create | ZiFile::Shm, size,
+	  (params.size ? ZiFile::Create : 0) | ZiFile::Shm, size,
 	  true, mmapFlags, 0666)) != Zi::OK) {
     ZiLOG(Error, "ZiRing", ([path, e = m_file.error()](auto &s) {
       s << "ZiRing::DataMem::open() mmap(" << path  << ") failed: " << e;
@@ -237,7 +239,8 @@ bool MirrorMem::open(unsigned size, const Params &params)
   Zi::Path path(params.name.length() + 6);
   path << params.name << ".data";
   if ((r = m_file.mmap(path,
-	  ZiFile::Create | ZiFile::Shm | ZiFile::ShmMirror, size,
+	  (params.size ? ZiFile::Create : 0) |
+	    ZiFile::Shm | ZiFile::ShmMirror, size,
 	  true, mmapFlags, 0666)) != Zi::OK) {
     ZiLOG(Error, "ZiRing", ([path, e = m_file.error()](auto &s) {
       s << "ZiRing::MirrorMem::open() mmap(" << path  << ") failed: " << e;

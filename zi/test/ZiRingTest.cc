@@ -47,7 +47,7 @@ void usage_()
     "  -i INTERVAL\t- set delay between messages in seconds (default: 0)\n"
     "  -L\t\t- low-latency (readers spin indefinitely and do not yield)\n"
     "  -s SPIN\t- set spin count to SPIN (default: 1000)\n"
-    "  -t TIMEOUT\t- set blocking TIMEOUT in milliseconds (default: 1)\n"
+    "  -t TIMEOUT\t- set blocking TIMEOUT in seconds (default: 1)\n"
     "  -S\t\t- slow reader (sleep INTERVAL seconds in between reads)\n"
     "  -c CPUSET\t- bind memory to CPUSET\n";
   Zm::exit(1);
@@ -126,6 +126,27 @@ private:
   ZmTimeInterval<ZmSpinLock>	readTime, writeTime;
   ZmAtomic<unsigned>		m_errors{0};
 };
+
+void testOpenExisting()
+{
+  ZuTestScope(testOpenExisting);
+
+  using Ring = ZiRing<ZmRingT<Msg, ZmRingMW<true>>>;
+  Zi::Name name = ZiTestResidue::uniqueName("existing");
+  ZiTestResidue::addShm(name);
+  Ring opener{ZiRingParams{name, 0}};
+  ZuCheck(opener.open(Ring::Write) != Zu::OK);
+  ZuCheck(opener.closed());
+
+  Ring creator{ZiRingParams{name, 8192}};
+  ZuCheck(creator.open(Ring::Write) == Zu::OK);
+  unsigned size = creator.size();
+  ZuCheck(size >= 8192);
+  ZuCheck(opener.open(Ring::Write) == Zu::OK);
+  ZuCheck(opener.size() == size);
+  opener.close();
+  creator.close();
+}
 
 int main(int argc, char **argv)
 {
@@ -233,6 +254,7 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZuTestMain();
+  ZuTestCall(testOpenExisting);
   bool ok = ZuSwitch::dispatch<4>(
     (static_cast<unsigned>(params.mw)<<1) |
     static_cast<unsigned>(params.mr),
