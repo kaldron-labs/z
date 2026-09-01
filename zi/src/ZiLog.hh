@@ -48,6 +48,7 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiCSV.hh>
+#include <zlib/ZiProgram.hh>
 
 class ZiLog;
 
@@ -338,7 +339,7 @@ private:
   void age_();
 
 private:
-  ZeString		m_program;
+  ZeString		m_program{ZiProgram::name()};
   ZeString		m_facility;
   int			m_level;
   unsigned		m_ringBufSize = (1<<20);	// default 1Mb ring buffer

@@ -355,18 +355,18 @@ private:
 
 public:
   void copy(const String &s) {
-    copy_(s.data_(), s.length());
+    assign_(s.data_(), s.length());
   }
   template <typename S> MatchAnyCString<S> copy(S &&s_) {
     ZuSpan<const Char> s(s_);
-    copy_(s.data(), s.length());
+    assign_(s.data(), s.length());
   }
   template <typename S> MatchOtherString<S> copy(S &&s_) {
     ZuSpan<const Char> s(s_);
-    copy_(s.data(), s.length());
+    assign_(s.data(), s.length());
   }
   template <typename C> MatchChar<C> copy(C c) {
-    copy_(&c, 1);
+    assign_(&c, 1);
   }
 
   template <typename S> MatchAltString<S> copy(S &&s_) {
@@ -385,11 +385,7 @@ public:
 
 public:
   String &operator =(const String &s) noexcept {
-    if (ZuLikely(this != &s)) {
-      Char *oldData = free_1();
-      copy_(s.data_(), s.length());
-      free_2(oldData);
-    }
+    if (ZuLikely(this != &s)) assign_(s.data_(), s.length());
     return *this;
   }
   String &operator =(String &&s) noexcept {
@@ -408,9 +404,7 @@ private:
   MatchString<S> assign(const S &s) {
     if constexpr (ZuIsSame<S, String>{})
       if (this == &s) return;
-    Char *oldData = free_1();
-    copy_(s.data_(), s.length());
-    free_2(oldData);
+    assign_(s.data_(), s.length());
   }
   template <typename S> MatchStrLiteral<S> assign(S &&s_) {
     ZuSpan<const Char> s(s_);
@@ -419,20 +413,14 @@ private:
   }
   template <typename S> MatchCString<S> assign(S &&s_) {
     ZuSpan<const Char> s(s_);
-    Char *oldData = free_1();
-    copy_(s.data(), s.length());
-    free_2(oldData);
+    assign_(s.data(), s.length());
   }
   template <typename S> MatchOtherString<S> assign(S &&s_) {
     ZuSpan<const Char> s(s_);
-    Char *oldData = free_1();
-    copy_(s.data(), s.length());
-    free_2(oldData);
+    assign_(s.data(), s.length());
   }
   template <typename C> MatchChar<C> assign(C c) {
-    Char *oldData = free_1();
-    copy_(&c, 1);
-    free_2(oldData);
+    assign_(&c, 1);
   }
 
   template <typename S> MatchAltString<S> assign(S &&s_) {
@@ -553,9 +541,7 @@ public:
     alloc_(size, length);
   }
   void init(const Char *data, uint64_t length) {
-    Char *oldData = free_1();
-    init_(data, length);
-    free_2(oldData);
+    assign_(data, length);
   }
   void init_(const Char *data, uint64_t length) {
     if (!length) { null_(); return; }
@@ -638,6 +624,18 @@ protected:
     ptr__(newData);
     size_mutable_null(length + 1, 1, 0);
     length_vallocd_builtin(length, 1, 0);
+  }
+
+  void assign_(const Char *copyData, uint64_t length) {
+    if (!length) { clear(); return; }
+    if (mutable_() && length < size_()) {
+      memmove(data_(), copyData, length * sizeof(Char));
+      length_(length);
+      return;
+    }
+    Char *oldData = free_1();
+    copy_(copyData, length);
+    free_2(oldData);
   }
 
   template <typename S> void convert_(const S &s, ZtIconv *iconv);

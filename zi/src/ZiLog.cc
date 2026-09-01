@@ -108,12 +108,6 @@ static int eventlogtype(int i) {
 
 #endif /* !_WIN32 */
 
-#ifdef linux
-extern "C" {
-  extern char *program_invocation_short_name;
-}
-#endif
-
 void ZiLog::init_()
 {
   Guard guard(m_lock);
@@ -122,12 +116,8 @@ void ZiLog::init_()
 
 void ZiLog::init__()
 {
-  if (m_program) return;
-#ifdef linux
-  init__(program_invocation_short_name, "user");
-#else
-  init__("ZiLog", "user");
-#endif
+  if (m_facility) return;
+  init__(m_program, "user");
 }
 
 void ZiLog::init_(const char *program)
@@ -257,7 +247,7 @@ void ZiLog::log__(Fn &fn)
 {
   if (ZuUnlikely(!m_ring.ctrl())) {
     Guard guard(m_lock);
-    if (!m_program) init__();
+    if (!m_facility) init__();
     try { start__(); } catch (...) {
       throw ZeEXCEPT(Fatal, "ZiLog", "start failed!");
     }

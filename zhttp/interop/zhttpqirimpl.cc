@@ -188,11 +188,10 @@ static bool readFile_(ZuCSpan path, ZtString<> &data)
   if (file.open(Zi::Path{path}, ZiFile::ReadOnly | ZiFile::NoFollow |
       ZiFile::GC) != Zi::OK)
     return false;
-  ZiFile::Stat stat;
-  if (file.fstat(stat) != Zi::OK || !stat.regular ||
-      stat.size > 128 * 1024 * 1024)
+  auto stat = file.fstat();
+  if (!stat || stat.isdir() || stat.size() > 128 * 1024 * 1024)
     return false;
-  data.length(unsigned(stat.size));
+  data.length(unsigned(stat.size()));
   int n = file.read(data.data(), data.length());
   return n == int(data.length());
 }

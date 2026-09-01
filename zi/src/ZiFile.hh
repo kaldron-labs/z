@@ -33,12 +33,17 @@
 #endif
 
 class ZiAPI ZiStat {
-  ZiStat(const ZiStat &) = delete;
-  ZiStat &operator =(const ZiStat &) = delete;
+  friend class ZiFile;
 
 public:
   using Path = Zi::Path;
   using Offset = Zi::Offset;
+
+  ZiStat() = default;
+  ZiStat(const ZiStat &) = default;
+  ZiStat &operator =(const ZiStat &) = default;
+  ZiStat(ZiStat &&) = default;
+  ZiStat &operator =(ZiStat &&) = default;
 
   ZiStat(Path path) : m_path{ZuMv(path)} { }
 
@@ -49,6 +54,9 @@ public:
   bool islink() const;
 
   ZeError error() const { return m_error; }
+
+  bool operator !() const { return m_error; }
+  ZuOpBool
 
 private:
 #ifndef _WIN32
@@ -106,13 +114,6 @@ public:
     // frequently used combinations
     Write	= Create | WriteOnly | Truncate,
     Append	= Create | WriteOnly | Append_
-  };
-
-  struct Stat {
-    Offset	size = 0;
-    ZuTime	mtime;
-    bool	regular = false;
-    bool	directory = false;
   };
 
   // Note: Direct requires caller align all reads/writes to blkSize()
@@ -196,7 +197,7 @@ public:
   void close();
 
   Offset size();
-  int fstat(Stat &stat) const;
+  ZiStat fstat() const;
   int blkSize() { return m_blkSize; }
 
   Offset offset();

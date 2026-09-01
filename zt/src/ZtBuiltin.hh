@@ -22,6 +22,11 @@ public:
   static constexpr unsigned BuiltinSize = BuiltinSize_;
   using T = typename Array::T;
 
+private:
+  template <typename ...Args> struct IsSelf : public ZuFalse { };
+  template <typename Arg>
+  struct IsSelf<Arg> : public ZuIsBase<ZuDecay<Arg>, ZtBuiltin> { };
+
 protected:
   using Array::copy___;
   using Array::move___;
@@ -53,7 +58,14 @@ public:
     Array(builtinData_(), 0, BuiltinSize, false)
   {
     auto length = a.length();
-    if (length) copy___(a.data(), length);
+    if (!length) return;
+    if (length <= BuiltinSize) {
+      copy___(a.data(), length);
+      own__(builtinData_(), length, BuiltinSize, false);
+    } else {
+      this->size(length);
+      copy___(a.data(), length);
+    }
   }
   ZtBuiltin(ZtBuiltin &&a) noexcept(ZuNXMove<T>{}) :
     Array(builtinData_(), 0, BuiltinSize, false)
@@ -83,8 +95,9 @@ public:
     return *this;
   }
 
-  template <typename ...Args,
-    decltype(Array(ZuDeclVal<Args &&>()...), int()) = 0>
+  template <typename ...Args, ZuIfT<
+    !IsSelf<Args...>{} &&
+    ZuIsConstructible<ZuTypeList<Args...>, Array>{}, int> = 0>
   ZtBuiltin(Args &&...args) : Array(ZuFwd<Args>(args)...) { }
 
   template <typename Arg>

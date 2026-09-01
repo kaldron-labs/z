@@ -12,6 +12,7 @@
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiPIDFile.hh>
+#include <zlib/ZiProgram.hh>
 
 #ifndef _WIN32
 #include <sys/types.h>
@@ -76,30 +77,18 @@ int ZiDaemon::init(
     // on Windows, re-invoke the same program unless ZiDaemon is set
     bool daemon = false;
 
-    // get path to current program
-    ZtWString<> path{Zi::PathMax};
-    DWORD pathLen = GetModuleFileNameW(
-	0, path.data(), static_cast<DWORD>(path.size()));
-    if (!pathLen || pathLen >= path.size()) {
-      ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
-	s << "GetModuleFileName failed: " << e;
-      }));
-      return Error;
-    }
-    path.length(pathLen);
-    path.truncate();
+    auto cmdLine = ZiProgram::cmdLine();
+    auto program = ZtWString<>{} << ZiProgram::name(cmdLine);
+    if (!program) return Error;
 
     {
       wchar_t *s = _wgetenv(L"_ZiDaemon");
 
-      if (path == s) daemon = true;
+      if (program == s) daemon = true;
     }
 
     if (!daemon) {
-      _wputenv(ZtWString<>{L"_ZiDaemon="} << path);
-
-      // get command line
-      ZtWString<> commandLine(GetCommandLineW());
+      _wputenv(ZtWString<>{L"_ZiDaemon="} << program);
 
       STARTUPINFOW si;
       memset(&si, 0, sizeof(si));
@@ -117,7 +106,7 @@ int ZiDaemon::init(
       if (!username) {
 	// re-invoke same program
 	if (!CreateProcessW(
-	      path, commandLine, 0, 0, FALSE, flags, 0, 0, &si, &pi)) {
+	      program, cmdLine, 0, 0, FALSE, flags, 0, 0, &si, &pi)) {
 	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {
 	    s << "CreateProcess failed: " << e;
 	  }));
@@ -152,7 +141,7 @@ int ZiDaemon::init(
 	CloseHandle(user);
 
 	if (!CreateProcessAsUserW(
-	    token, path, commandLine,
+	    token, program, cmdLine,
 	    0, 0, FALSE, flags, 0, 0, &si, &pi)) {
 	  CloseHandle(token);
 	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {

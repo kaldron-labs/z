@@ -47,7 +47,7 @@ void testQPackLiteral()
 
   unsigned n = 0;
   int used = Zhttp::H3::QPack::decodeLiteral(
-    bytes.cspan(),
+    bytes.span(),
     [&n](Zhttp::H3::Header h) {
       if (!n) ZuCHECK(h.name == ":method" && h.value == "GET",
 	"decoded first header mismatch");
