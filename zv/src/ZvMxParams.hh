@@ -65,7 +65,7 @@ struct ZvMxCf {
   unsigned	queueSize = 0;
   bool		ll = false;
   unsigned	spin = 0;
-  unsigned	timeout = 0;
+  unsigned	timeout = 0;	// milliseconds
   ZtString<>	rxThread;
   ZtString<>	txThread;
 #ifdef ZiMultiplex_EPoll

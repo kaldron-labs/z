@@ -59,7 +59,7 @@ int Blocker::wait(
     Log{"wait", Zm::now(), 0, this,
       reinterpret_cast<uint32_t *>(&addr), val}; */
   if (ZuUnlikely(params.timeout)) {
-    ZuTime out = Zm::now(params.timeout);
+    ZuTime out{ZuTime::Nano{int128_t(params.timeout) * 1000000}};
     unsigned i = 0;
     do {
       if (ZuUnlikely(i >= params.spin)) {
@@ -139,7 +139,7 @@ int Blocker::wait(
     ZmAtomic<uint32_t> &addr, uint32_t val,
     const Params &params)
 {
-  DWORD timeout = params.timeout ? params.timeout * 1000 : INFINITE;
+  DWORD timeout = params.timeout ? params.timeout : INFINITE;
   unsigned i = 0;
   while (i < params.spin) {
     if (addr != val) return Zu::OK;

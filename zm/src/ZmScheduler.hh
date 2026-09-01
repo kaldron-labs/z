@@ -199,7 +199,7 @@ private:
 
   unsigned	m_queueSize = 131072;
   unsigned	m_spin = 1000;
-  unsigned	m_timeout = 1;
+  unsigned	m_timeout = 1;	// milliseconds
 
   Thread	*m_threads = nullptr;
 
