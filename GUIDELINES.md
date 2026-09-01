@@ -150,6 +150,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - For optional CRTP callbacks, prefer side-effect-safe base defaults and direct calls such as `impl()->callback(...)`.
   - Defaults should be harmless: `return true`, `return nullptr`, or no-op.
   - Use `if constexpr` traits only when a safe base default cannot express the behavior.
+- Control inherited CRTP interfaces with access-changing `using` declarations.
+  - Hide a base function with `private: using Base::X;` when the derived class encapsulates it and dependent callers must not access it directly, or when the derived class intentionally replaces it in the public interface with a new function of the same name.
+  - Hoist a base function into the public interface with `public: using Base::X;`.
 
 ### ADL tagging
 - Use friend functions and ADL to tag types and expose compile-time metadata.
