@@ -390,22 +390,20 @@ void testOpenAtNoFollowAndStat()
       ZiFile::ReadOnly | ZiFile::Directory | ZiFile::GC) == Zi::OK,
     "open directory failed: ", dir.error());
 
-  ZiFile::Stat dirStat;
-  ZuCHECK(dir.fstat(dirStat) == Zi::OK, "directory fstat failed: ", dir.error());
-  ZuCheck(dirStat.directory);
-  ZuCheck(!dirStat.regular);
+  auto dirStat = dir.fstat();
+  ZuCHECK(!!dirStat, "directory fstat failed: ", dirStat.error());
+  ZuCheck(dirStat.isdir());
 
   ZiFile file;
   ZuCHECK(file.openAt(dir, path_("child.txt"),
       ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK,
     "openAt child failed: ", file.error());
 
-  ZiFile::Stat fileStat;
-  ZuCHECK(file.fstat(fileStat) == Zi::OK, "file fstat failed: ", file.error());
-  ZuCheck(fileStat.regular);
-  ZuCheck(!fileStat.directory);
-  ZuCheck(fileStat.size == 5);
-  ZuCheck(!!fileStat.mtime);
+  auto fileStat = file.fstat();
+  ZuCHECK(!!fileStat, "file fstat failed: ", fileStat.error());
+  ZuCheck(!fileStat.isdir());
+  ZuCheck(fileStat.size() == 5);
+  ZuCheck(!!fileStat.mtime());
 
   char buf[8] = {0};
   int n = file.read(buf, 5);

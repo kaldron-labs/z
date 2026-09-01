@@ -80,6 +80,12 @@ static void testFreshNestedAndFinal()
     ZuCheck(!::stat(dir2, &stat) && (stat.st_mode & 0777) == 0755);
     ZuCheck(!::stat(path, &stat) && (stat.st_mode & 0777) == 0644);
 #endif
+    file.final();
+    ZuCheck(!ZiStat{path}.exists());
+    ZuCheck(!file.path());
+    ZuCheck(file.error() == ZeOK);
+    ZuCheck(!file.pid());
+    file.final();
   }
   ZuCheck(!ZiStat{path}.exists());
   ZuCheck(ZiStat{dir1}.isdir());

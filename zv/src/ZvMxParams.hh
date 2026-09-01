@@ -22,14 +22,12 @@ struct ZvCxnCf {
   uint32_t	options = 0;
   ZtString<>	multicastInterface;
   unsigned	multicastTTL = 0;
-  ZtString<>	familyName;
 };
 
 ZfStruct((ZvCxnCf, Cf),
   (((options),		(Flags<ZiCxnFlags::Map>)),	(UInt32)),
   (((multicastInterface)),			(String)),
-  (((multicastTTL),	((Range<0U, unsigned(INT_MAX)>))), (UInt32)),
-  (((familyName)),				(String)));
+  (((multicastTTL),	((Range<0U, unsigned(INT_MAX)>))), (UInt32)));
 
 struct ZvMGroupCf {
   ZtString<> interface;
@@ -149,11 +147,6 @@ struct ZvCxnOptions : public ZiCxnOptions {
 	  mreq(ZiMReq(addr, interface));
 	}
       }
-    }
-    if (netlink()) {
-      if (!cf->resolve("familyName"))
-	throw ZfCf_EXCEPT(ZfCfError::required(cf, "familyName"));
-      familyName(patch.familyName);
     }
   }
 

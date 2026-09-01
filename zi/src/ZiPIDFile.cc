@@ -70,7 +70,7 @@ static int resolvePath(
       error = ZiEINVAL;
       return ZiPIDFile::Error;
     }
-    Zi::Path part{tail.trunc(n)};
+    Zi::Path part{tail.data(), n};
     if (dot(part)) {
       error = ZiEINVAL;
       return ZiPIDFile::Error;
@@ -103,6 +103,7 @@ static int readPID(ZiFile &file, int &pid)
   PIDText buf;
   int n = file.read(buf.data(), buf.size());
   pid = 0;
+  if (n == Zi::EndOfFile) return Zi::OK;
   if (n < 0) return Zi::IOError;
   if (!n || n == int(buf.size())) return Zi::OK;
   ZuBox<int> parsed;
@@ -177,12 +178,12 @@ retry:
       Zm::sleep(1);
       goto retry;
     }
-    ZiFile::Stat stat;
-    if (file.fstat(stat) != Zi::OK) {
-      m_error = file.error();
+    stat = file.fstat();
+    if (!stat) {
+      m_error = stat.error();
       return Error;
     }
-    if (!stat.regular) {
+    if (stat.isdir()) {
       m_error = ZiEINVAL;
       return Error;
     }

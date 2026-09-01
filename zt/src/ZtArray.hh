@@ -391,10 +391,7 @@ private:
     }
 
     static void assign_(ZtArray *this_, const A &a) {
-      uint64_t oldLength = 0;
-      T *oldData = this_->free_1(oldLength);
-      this_->copy__(a.m_data, a.length());
-      this_->free_2(oldData, oldLength);
+      this_->assign_(a.m_data, a.length());
     }
     static void assign_(ZtArray *this_, A &&a) {
       this_->free_();
@@ -469,17 +466,11 @@ private:
 
     static void assign_(ZtArray *this_, const A &a_) {
       ZuSpan<const Elem> a(a_);
-      uint64_t oldLength = 0;
-      T *oldData = this_->free_1(oldLength);
-      this_->copy__(a.data(), a.length());
-      this_->free_2(oldData, oldLength);
+      this_->assign_(a.data(), a.length());
     }
     static void assign_(ZtArray *this_, A &&a_) {
       ZuSpan<Elem> a(a_);
-      uint64_t oldLength = 0;
-      T *oldData = this_->free_1(oldLength);
-      this_->move__(a.data(), a.length());
-      this_->free_2(oldData, oldLength);
+      this_->assign_(a.data(), a.length(), Move{});
     }
 
     static ZtArray add_(const ZtArray *this_, const A &a_) {
@@ -592,27 +583,28 @@ private:
 
 public:
   template <typename A> MatchZtArray<A> copy(const A &a) {
-    copy__(a.m_data, a.length());
+    assign_(a.m_data, a.length());
   }
   template <typename A> MatchSpan<A> copy(A &&a_) {
     ZuSpan<const typename ZuTraits<A>::Elem> a(a_);
-    copy__(a.data(), a.length());
+    assign_(a.data(), a.length());
   }
   template <typename A> MatchIterable<A> copy(const A &a) {
     assign(a);
   }
 
   template <typename S> MatchAnyString<S> copy(S &&s) {
-    ctor(ZuFwd<S>(s));
+    ZuSpan<const T> span(s);
+    assign_(span.data(), span.length());
   }
   template <typename S> MatchAltString<S> copy(S &&s) {
-    ctor(ZuFwd<S>(s));
+    assign(ZuFwd<S>(s));
   }
   template <typename C> MatchAltChar<C> copy(C c) {
-    ctor(c);
+    assign(c);
   }
   template <typename R> MatchElem<R> copy(R &&r) {
-    ctor(ZuFwd<R>(r));
+    assign(ZuFwd<R>(r));
   }
 
 public:
@@ -630,10 +622,7 @@ public:
   ZtArray &operator =(A &&a) { assign(ZuFwd<A>(a)); return *this; }
 
   ZtArray &operator =(std::initializer_list<T> a) {
-    uint64_t oldLength = 0;
-    T *oldData = free_1(oldLength);
-    copy__(a.begin(), a.size());
-    free_2(oldData, oldLength);
+    assign_(a.begin(), a.size());
     return *this;
   }
 
@@ -661,10 +650,7 @@ protected:
   }
   template <typename S> MatchString<S> assign(S &&s_) {
     ZuSpan<const T> s(s_);
-    uint64_t oldLength = 0;
-    T *oldData = free_1(oldLength);
-    copy__(s.data(), s.length());
-    free_2(oldData, oldLength);
+    assign_(s.data(), s.length());
   }
 
   template <typename S> MatchAltString<S> assign(S &&s_) {
@@ -800,10 +786,7 @@ public:
     if (initElems_) initElems(m_data, length);
   }
   void copy(const T *data, uint64_t length) {
-    uint64_t oldLength = 0;
-    T *oldData = free_1(oldLength);
-    copy__(data, length);
-    free_2(oldData, oldLength);
+    assign_(data, length);
   }
   void move(T *data, uint64_t length) {
     uint64_t oldLength = 0;
@@ -899,6 +882,49 @@ protected:
     length_vallocd(length, 1);
   }
 
+  template <typename U>
+  bool overlaps_(const U *data, uint64_t length) const {
+    if (!m_data || !data || !length) return false;
+    uintptr_t begin = reinterpret_cast<uintptr_t>(m_data);
+    uintptr_t end = begin + size() * sizeof(T);
+    uintptr_t copyBegin = reinterpret_cast<uintptr_t>(data);
+    uintptr_t copyEnd = copyBegin + length * sizeof(U);
+    return copyBegin < end && begin < copyEnd;
+  }
+
+  template <typename U> void assign_(const U *data, uint64_t length) {
+    if (!length) { clear(); return; }
+    if constexpr (ZuIsSame<ZuStrip<U>, ZuStrip<T>>{})
+      if (data == m_data) { this->length(length); return; }
+    if (mutable_() && length <= size() && !overlaps_(data, length)) {
+      destroyElems(m_data, this->length());
+      copyElems(m_data, data, length);
+      length_(length);
+      return;
+    }
+    uint64_t oldLength = 0;
+    T *oldData = free_1(oldLength);
+    copy__(data, length);
+    free_2(oldData, oldLength);
+  }
+
+  template <typename U>
+  void assign_(U *data, uint64_t length, Move) {
+    if (!length) { clear(); return; }
+    if constexpr (ZuIsSame<ZuStrip<U>, ZuStrip<T>>{})
+      if (data == m_data) { this->length(length); return; }
+    if (mutable_() && length <= size() && !overlaps_(data, length)) {
+      destroyElems(m_data, this->length());
+      this->template moveElems<false>(m_data, data, length);
+      length_(length);
+      return;
+    }
+    uint64_t oldLength = 0;
+    T *oldData = free_1(oldLength);
+    move__(data, length);
+    free_2(oldData, oldLength);
+  }
+
   template <typename S> void convert_(const S &s, ZtIconv *iconv);
 
   void free_() {
@@ -948,9 +974,9 @@ public:
   bool vallocd() const { return m_length_vallocd>>63; }
   bool mutable_() const { return m_size_mutable>>63; }
 
-// direct buffer access
+  // direct buffer access
   auto span() { return ZuSpan(m_data, length()); }
-  auto cspan() const { return ZuSpan(m_data, length()); }
+  auto cspan() const { return ZuSpan<const T>(m_data, length()); }
 
 // iteration - all() is const by default, all<true>() is mutable
   template <bool Mutable = false, typename L>

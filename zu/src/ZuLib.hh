@@ -465,6 +465,9 @@ struct ZuRDecay_ {
 template <typename T>
 using ZuRDecay = typename ZuRDecay_<ZuDecay<T>>::T;
 
+// type list (see ZuTL.hh for implementaion)
+template <typename ...Ts> struct ZuTypeList;
+
 // type matching - alternative to std::is_same
 template <typename U1, typename U2>
 struct ZuIsSame : public ZuFalse { };
@@ -542,6 +545,9 @@ struct ZuIsConstructible_NonComposite : public ZuFalse { };
 template <typename From, typename To>
 struct ZuIsConstructible_NonComposite<From, To,
   decltype(To(ZuDeclVal<From>()), void())> : public ZuTrue { };
+template <typename ...Args, typename To>
+struct ZuIsConstructible_NonComposite<ZuTypeList<Args...>, To,
+  decltype(To(ZuDeclVal<Args...>()), void())> : public ZuTrue { };
 template <typename From, typename To, typename = void>
 struct ZuIsConstructible_Composite : public ZuFalse { };
 template <typename From, typename To>

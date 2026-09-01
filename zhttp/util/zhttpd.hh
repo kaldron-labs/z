@@ -461,7 +461,7 @@ struct State {
   LogSink		log;
   ZiFile		rootDir;
   ZiFile		rootFile;
-  ZiFile::Stat		rootFileStat;
+  ZiStat		rootFileStat;
   ZiMultiplex		*mx = nullptr;
   unsigned		txThread = 0;
   unsigned		fileThread = 0;
@@ -770,8 +770,8 @@ struct StaticPlanner {
       ZiFile index;
       if (index.openAt(dir, state->options.index,
 	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK) {
-	ZiFile::Stat stat;
-	if (index.fstat(stat) == Zi::OK && stat.regular) {
+	auto stat = index.fstat();
+	if (stat && !stat.isdir()) {
 	  auto indexPath = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
 	    unsigned(state->options.root.length() + clean.length() +
 	      state->options.index.length()) + 2, Zi::Path::VHeap);
@@ -794,10 +794,10 @@ struct StaticPlanner {
     }
     if (clean && clean[clean.length() - 1] == '/') return notFound(resp, req.method);
     ZiFile file;
-    ZiFile::Stat stat;
+    ZiStat stat;
     int rc = openFile(clean, file, stat);
     if (rc != Zi::OK) return notFound(resp, req.method);
-    if (!stat.regular)
+    if (stat.isdir())
       return error(resp, 403, "Forbidden", req.method);
     auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
       unsigned(state->options.root.length() + clean.length()) + 1,
@@ -812,10 +812,11 @@ struct StaticPlanner {
 
   ResponsePlan regularFile(
     const RequestData &req, const RequestHeaders &headers,
-    ZiFile file, const ZiFile::Stat &stat, ZuCSpan path,
+    ZiFile file, const ZiStat &stat, ZuCSpan path,
     ResponsePlan resp) const {
-    uint64_t size = stat.size;
-    time_t mtime = stat.mtime ? stat.mtime.as_time_t() : time(nullptr);
+    uint64_t size = stat.size();
+    auto mtime_ = stat.mtime();
+    time_t mtime = mtime_ ? mtime_.as_time_t() : time(nullptr);
     time_t ims;
     if (parseHTTPDate(headers.ifModifiedSince, ims) && mtime <= ims) {
       resp.status = 304;
@@ -870,7 +871,7 @@ struct StaticPlanner {
   }
 
   int openFile(
-    ZuCSpan clean, ZiFile &file, ZiFile::Stat &stat) const {
+    ZuCSpan clean, ZiFile &file, ZiStat &stat) const {
     unsigned offset = 0;
     ZuCSpan part = pathComponent(clean, offset);
     if (!part) return Zi::IOError;
@@ -891,7 +892,8 @@ struct StaticPlanner {
     if (out.openAt(dir, part,
 	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK)
       return Zi::IOError;
-    if (out.fstat(stat) != Zi::OK) return Zi::IOError;
+    stat = out.fstat();
+    if (!stat) return Zi::IOError;
     file = ZuMv(out);
     return Zi::OK;
   }
@@ -979,20 +981,22 @@ struct StaticPlanner {
 #endif
       child << name;
       ZiFile file;
-      ZiFile::Stat stat;
+      ZiStat stat;
       if (file.open(child,
 	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK &&
-	  file.fstat(stat) == Zi::OK) {
-	entry->dir = stat.directory;
-	entry->size = stat.size;
-	entry->mtime = stat.mtime ? stat.mtime.as_time_t() : 0;
+	  (stat = file.fstat())) {
+	entry->dir = stat.isdir();
+	entry->size = stat.size();
+	auto mtime = stat.mtime();
+	entry->mtime = mtime ? mtime.as_time_t() : 0;
       } else if (file.open(child,
 	  ZiFile::ReadOnly | ZiFile::Directory |
 	    ZiFile::NoFollow | ZiFile::GC) == Zi::OK &&
-	  file.fstat(stat) == Zi::OK) {
-	entry->dir = stat.directory;
-	entry->size = stat.size;
-	entry->mtime = stat.mtime ? stat.mtime.as_time_t() : 0;
+	  (stat = file.fstat())) {
+	entry->dir = stat.isdir();
+	entry->size = stat.size();
+	auto mtime = stat.mtime();
+	entry->mtime = mtime ? mtime.as_time_t() : 0;
       }
       }
     }
@@ -1092,8 +1096,8 @@ inline bool initFileState(State &state, S &error) {
       error = "failed to open root file";
       return false;
     }
-    if (state.rootFile.fstat(state.rootFileStat) != Zi::OK ||
-	!state.rootFileStat.regular) {
+    state.rootFileStat = state.rootFile.fstat();
+    if (!state.rootFileStat || state.rootFileStat.isdir()) {
       error = "root is not a regular file";
       return false;
     }
@@ -1104,8 +1108,8 @@ inline bool initFileState(State &state, S &error) {
     error = "failed to open root directory";
     return false;
   }
-  ZiFile::Stat stat;
-  if (state.rootDir.fstat(stat) != Zi::OK || !stat.directory) {
+  auto stat = state.rootDir.fstat();
+  if (!stat || !stat.isdir()) {
     error = "root is not a directory";
     return false;
   }
@@ -1120,18 +1124,18 @@ inline bool validate(Options &options, S &error) {
     return false;
   }
   ZiFile root;
-  ZiFile::Stat stat;
+  ZiStat stat;
   if (options.singleFile) {
     if (root.open(options.root,
 	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK ||
-	root.fstat(stat) != Zi::OK || !stat.regular) {
+	!(stat = root.fstat()) || stat.isdir()) {
       error = "--single-file root is not a readable regular file";
       return false;
     }
   } else {
     if (root.open(options.root,
 	  ZiFile::ReadOnly | ZiFile::Directory | ZiFile::GC) != Zi::OK ||
-	root.fstat(stat) != Zi::OK || !stat.directory) {
+	!(stat = root.fstat()) || !stat.isdir()) {
       error = "root is not a directory";
       return false;
     }

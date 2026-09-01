@@ -16,6 +16,8 @@ using namespace ZuTestUtil;
 
 using IntArray = ZtArray<int, ZtArrayHeapID<"ZtScratch.IntArray">>;
 using CharArray = ZtArray<char, ZtArrayHeapID<"ZtScratch.CharArray">>;
+using StringArray =
+  ZtArray<ZtString<>, ZtArrayHeapID<"ZtScratch.StringArray">>;
 
 struct NoInitArray : public IntArray {
   using IntArray::IntArray;
@@ -30,11 +32,24 @@ void testScratch()
   ZuTestScope(testScratch);
 
   auto ints = ZtScratch(IntArray, 6);
+  auto intsData = ints.data();
   ints.push(1);
   ints.push(2);
   ZuCheck(ints.length() == 2);
   ZuCheck(ints[0] == 1);
   ZuCheck(ints[1] == 2);
+
+  int values[] = { 3, 4, 5 };
+  ints = ZuSpan(values);
+  ZuCheck(ints.data() == intsData);
+  ZuCheck(ints.size() == 6);
+  ZuCheck(!ints.vallocd());
+  ZuCheck(ints.length() == 3 && ints[2] == 5);
+
+  int copiedValues[] = { 6, 7 };
+  ints.copy(ZuSpan(copiedValues));
+  ZuCheck(ints.data() == intsData);
+  ZuCheck(ints.length() == 2 && ints[1] == 7);
 
   auto ints2 = ZtScratch(IntArray, 3, 6);
   ZuCheck(ints2.length() == 3);
@@ -51,11 +66,36 @@ void testScratch()
   ZuCheck(ints3[2] == 12);
 
   auto s = ZtScratch(ZtString<>, 16);
+  auto sData = s.data();
   s << "abc";
   ZuCheck(s == "abc");
 
+  const char text[] = "defg";
+  s = ZuSpan<const char>{text, 4};
+  ZuCheck(s.data() == sData);
+  ZuCheck(s.size() == 16);
+  ZuCheck(!s.vallocd());
+  ZuCheck(s == "defg");
+
+  const char copiedText[] = "hij";
+  s.copy(ZuSpan<const char>{copiedText, 3});
+  ZuCheck(s.data() == sData);
+  ZuCheck(s == "hij");
+
   for (unsigned i = 0; i < 40; i++) s << 'x';
   ZuCheck(s.length() > 16);
+
+  auto strings = ZtScratch(StringArray, 4);
+  auto stringsData = strings.data();
+  strings.push(ZtString<>{"old"});
+  ZtString<> stringValues[] = { "one", "two" };
+  const ZuSpan<const ZtString<>> stringSpan(
+    static_cast<const ZtString<> *>(stringValues), 2);
+  strings = stringSpan;
+  ZuCheck(strings.data() == stringsData);
+  ZuCheck(!strings.vallocd());
+  ZuCheck(strings.length() == 2);
+  ZuCheck(strings[0] == "one" && strings[1] == "two");
 }
 
 void testBuiltinBufferCopyMoveAndGrowth()
@@ -71,6 +111,8 @@ void testBuiltinBufferCopyMoveAndGrowth()
 
   BuiltinBuf b{a};
   ZuCheck(b.length() == 4);
+  ZuCheck(b.size() == BuiltinBuf::BuiltinSize);
+  ZuCheck(!b.vallocd());
   ZuCheck(b[0] == 'a');
   ZuCheck(b[3] == 'd');
 
@@ -78,6 +120,22 @@ void testBuiltinBufferCopyMoveAndGrowth()
   b[8] = 'z';
   ZuCheck(b.length() == 16);
   ZuCheck(b[8] == 'z');
+
+  BuiltinBuf c;
+  auto cData = c.data();
+  c = a;
+  ZuCheck(c.data() == cData);
+  ZuCheck(c.size() == BuiltinBuf::BuiltinSize);
+  ZuCheck(!c.vallocd());
+
+  BuiltinBuf large;
+  large.length(16);
+  large[0] = 'x';
+  large[15] = 'y';
+  BuiltinBuf largeCopy{large};
+  ZuCheck(largeCopy.length() == 16);
+  ZuCheck(largeCopy.vallocd());
+  ZuCheck(largeCopy[0] == 'x' && largeCopy[15] == 'y');
 }
 
 int main(int argc, char **argv)

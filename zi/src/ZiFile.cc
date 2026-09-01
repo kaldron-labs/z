@@ -855,43 +855,38 @@ ZiFile::Offset ZiFile::size()
 #endif
 }
 
-int ZiFile::fstat(Stat &stat) const
+ZiStat ZiFile::fstat() const
 {
+  ZiStat stat;
   if (Zi::nullHandle(m_handle)) {
 #ifndef _WIN32
-    const_cast<ZiFile *>(this)->m_error = EBADF;
+    stat.m_error = EBADF;
 #else
-    const_cast<ZiFile *>(this)->m_error = ERROR_INVALID_HANDLE;
+    stat.m_error = ERROR_INVALID_HANDLE;
 #endif
-    return Zi::IOError;
+    return stat;
   }
 
 #ifndef _WIN32
-  struct stat s;
-  if (::fstat(m_handle, &s) < 0) goto error;
-  stat.size = s.st_size;
-#ifdef __APPLE__
-  stat.mtime = ZuTime{s.st_mtimespec};
-#else
-  stat.mtime = ZuTime{s.st_mtim};
-#endif
-  stat.regular = S_ISREG(s.st_mode);
-  stat.directory = S_ISDIR(s.st_mode);
+  if (::fstat(m_handle, &stat.m_stat) < 0) {
+    stat.m_error = ZeLastError;
+    stat.m_result = Zi::IOError;
+    return stat;
+  }
+  stat.m_result = Zi::OK;
 #else
   BY_HANDLE_FILE_INFORMATION info;
-  if (!GetFileInformationByHandle(m_handle, &info)) goto error;
-  stat.size = (Offset(info.nFileSizeHigh)<<32) | info.nFileSizeLow;
-  stat.mtime = ZuTime{info.ftLastWriteTime};
-  stat.directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
-  stat.regular = !(info.dwFileAttributes &
-    (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+  if (!GetFileInformationByHandle(m_handle, &info)) {
+    stat.m_error = ZeLastError;
+    return stat;
+  }
+  stat.m_size = (Offset(info.nFileSizeHigh)<<32) | info.nFileSizeLow;
+  stat.m_mtime = ZuTime{info.ftLastWriteTime};
+  stat.m_attrs = info.dwFileAttributes;
+  stat.m_sizeResult = stat.m_mtimeResult = stat.m_attrsResult = Zi::OK;
 #endif
 
-  return Zi::OK;
-
-error:
-  const_cast<ZiFile *>(this)->m_error = ZeLastError;
-  return Zi::IOError;
+  return stat;
 }
 
 ZiFile::Offset ZiFile::offset()
@@ -1896,7 +1891,7 @@ ZiFile::Path ZiFile::tmpDir()
   return "/tmp";
 #else
   Path ret(Zi::PathMax + 1);
-  DWORD n = GetTempPathW(Zi::PathMax + 1, ret.data());
+  DWORD n = GetTempPath(Zi::PathMax + 1, ret.data());
   if (!n || n > Zi::PathMax) return {};
   while (n > 1 && (ret[n - 1] == L'/' || ret[n - 1] == L'\\')) --n;
   ret.length(n);

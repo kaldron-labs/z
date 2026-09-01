@@ -29,14 +29,13 @@ public:
 
   int init(const Zi::Path &name);
   int init(const Zi::Path &dir, const Zi::Path &name);
+  void final();
 
   const Zi::Path &path() const { return m_path; }
   ZeError error() const { return m_error; }
   int pid() const { return m_pid; }
 
 private:
-  void final();
-
   Zi::Path	m_path;
   ZeError	m_error = ZeOK;
   int		m_pid = 0;
