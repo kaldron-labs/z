@@ -418,9 +418,15 @@ int ZiFile::open_(
     else
       { SYSTEM_INFO si; GetSystemInfo(&si); blkSize = si.dwPageSize; }
     length = ((length + blkSize - 1) / blkSize) * blkSize;
-    h = CreateFileMapping(
-	INVALID_HANDLE_VALUE, 0, protectFlags, 0,
-	static_cast<DWORD>(length), name_);
+    if (flags & Create)
+      h = CreateFileMapping(
+	  INVALID_HANDLE_VALUE, 0, protectFlags, 0,
+	  static_cast<DWORD>(length), name_);
+    else {
+      DWORD accessFlags =
+	(flags & ReadOnly) ? FILE_MAP_READ : FILE_MAP_WRITE;
+      h = OpenFileMapping(accessFlags, FALSE, name_);
+    }
   } else {
     blkSize = ZiFile_WindowsDrives::blkSize(name);
     DWORD accessFlags = (flags & ReadOnly) ? GENERIC_READ :
