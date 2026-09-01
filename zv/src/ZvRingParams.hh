@@ -22,8 +22,8 @@ struct ZvRingCf {
   unsigned	size = 131072;
   bool		ll = false;
   int		spin = 1000;
-  int		timeout = 1;
-  int		killWait = 1;
+  int		timeout = 1;	// milliseconds
+  int		killWait = 1;	// seconds
   bool		coredump = false;
 };
 

@@ -84,7 +84,7 @@ struct MxTelemetry { // not graphable
   uint32_t	stackSize = 0;
   uint32_t	queueSize = 0;
   uint32_t	spin = 0;
-  uint32_t	timeout = 0;
+  uint32_t	timeout = 0;	// milliseconds
   uint32_t	rxBufSize = 0;
   uint32_t	txBufSize = 0;
   uint16_t	rxThread = 0;

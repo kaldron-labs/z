@@ -37,12 +37,12 @@ int Blocker::wait(
   if (addr.cmpXch(val | Waiting32(), val) != val) return Zu::OK;
   val |= Waiting32();
   if (ZuUnlikely(params.timeout)) {
-    ZuTime out = Zm::now(params.timeout);
+    ZuTime out{ZuTime::Nano{int128_t(params.timeout) * 1000000}};
     unsigned i = 0;
     do {
       if (ZuUnlikely(i >= params.spin)) {
 	if (syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
-	      FUTEX_WAIT | FUTEX_CLOCK_REALTIME,
+	      FUTEX_WAIT,
 	      static_cast<int>(val), &out, 0, 0) < 0) {
 	  if (errno == ETIMEDOUT) return Zu::NotReady;
 	  if (errno == EAGAIN) return Zu::OK;
@@ -125,7 +125,7 @@ int Blocker::wait(
 {
   if (addr.cmpXch(val | Waiting32(), val) != val) return Zu::OK;
   val |= Waiting32();
-  DWORD timeout = params.timeout ? params.timeout * 1000 : INFINITE;
+  DWORD timeout = params.timeout ? params.timeout : INFINITE;
   unsigned i = 0;
   while (i < params.spin) {
     if (addr != val) return Zu::OK;

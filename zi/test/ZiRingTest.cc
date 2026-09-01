@@ -47,7 +47,7 @@ void usage_()
     "  -i INTERVAL\t- set delay between messages in seconds (default: 0)\n"
     "  -L\t\t- low-latency (readers spin indefinitely and do not yield)\n"
     "  -s SPIN\t- set spin count to SPIN (default: 1000)\n"
-    "  -t TIMEOUT\t- set blocking TIMEOUT in seconds (default: 1)\n"
+    "  -t TIMEOUT\t- set blocking TIMEOUT in milliseconds (default: 1)\n"
     "  -S\t\t- slow reader (sleep INTERVAL seconds in between reads)\n"
     "  -c CPUSET\t- bind memory to CPUSET\n";
   Zm::exit(1);
