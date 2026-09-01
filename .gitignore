@@ -36,6 +36,8 @@ tags
 *.i.cc
 *.lo
 *.la
+*.so
+*.bc
 *.exe
 *.dll
 *_fbs.h
@@ -50,8 +52,8 @@ tags
 *.diff
 *.orig
 *.old
-*.~
 *~
+/zdb_pq/ext/libz--*.sql
 !scripts/**
 !zhttp/interop/testdata/**
 zhttp/interop/qir-root/
