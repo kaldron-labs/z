@@ -4,6 +4,8 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <stdlib.h>
+
 #include <zlib/ZuDateTime.hh>
 #include <zlib/ZuTestUtil.hh>
 
@@ -165,8 +167,6 @@ void recoveryCore()
   ZuCheck(Ztc::Alert_::addDays(20231231, 1) == 20240101);
 }
 
-#ifndef _WIN32
-
 bool alertWriteAll(int fd, ZuBSpan data)
 {
   return ZtcTestClient::writeAll(fd, data);
@@ -207,9 +207,9 @@ bool alertSubscribe(
   auto doneFrame = alertReadFrame(fd);
   auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : nullptr;
   auto done = doneMsg &&
-      doneMsg->body_type() == Ztc::fbs::Body::SnapshotComplete ?
-    doneMsg->body_as_SnapshotComplete() : nullptr;
-  return done && done->seqNo() == seqNo && !done->count();
+      doneMsg->body_type() == Ztc::fbs::Body::EOS ?
+    doneMsg->body_as_EOS() : nullptr;
+  return done && done->seqNo() == seqNo;
 }
 
 Ztc::fbs::AckStatus alertRequestStatus(
@@ -279,9 +279,9 @@ bool replayMany(int fd, uint64_t seqNo, const AlertKeys &keys)
   auto doneFrame = alertReadFrame(fd);
   auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : nullptr;
   auto done = doneMsg &&
-      doneMsg->body_type() == Ztc::fbs::Body::SnapshotComplete ?
-    doneMsg->body_as_SnapshotComplete() : nullptr;
-  return done && done->seqNo() == seqNo && done->count() == n;
+      doneMsg->body_type() == Ztc::fbs::Body::EOS ?
+    doneMsg->body_as_EOS() : nullptr;
+  return done && done->seqNo() == seqNo;
 }
 
 bool appDegraded(int fd, uint64_t seqNo)
@@ -330,12 +330,9 @@ void liveAlerts()
   ZuCheck(app.start());
 
   int fd1 = alertConnect(app);
-  int fd2 = alertConnect(app);
-  ZuCheck(fd1 >= 0 && fd2 >= 0);
+  ZuCheck(fd1 >= 0);
   constexpr uint64_t SeqNo1 = UINT64_C(0x123456789abcdef0);
-  constexpr uint64_t SeqNo2 = UINT64_C(0xfedcba9876543210);
   ZuCheck(alertSubscribe(fd1, SeqNo1));
-  ZuCheck(alertSubscribe(fd2, SeqNo2));
 
   auto sink = app.alertSink();
   ZuCheck(sink);
@@ -348,20 +345,15 @@ void liveAlerts()
   sink->post(message, info);
 
   ZmRef<ZiIOBuf> frame1;
-  ZmRef<ZiIOBuf> frame2;
   auto alert1 = alertReceive(fd1, SeqNo1, frame1);
-  auto alert2 = alertReceive(fd2, SeqNo2, frame2);
-  ZuCheck(alert1 && alert2);
+  ZuCheck(alert1);
   ZuCheck(alert1 && Zfb::Load::str(alert1->message()) == "12345");
   ZuCheck(alert1 && alert1->seqNo() == 0);
   ZuCheck(alert1 && alert1->date() == ZuDateTime{time}.yyyymmdd());
   ZuCheck(alert1 && alert1->tid() == UINT64_C(0x12345678));
   ZuCheck(alert1 && alert1->severity() == Ze::Warning);
-  ZuCheck(alert2 && alert2->seqNo() == alert1->seqNo());
-  ZuCheck(frame1 && frame2 && frame1->length == frame2->length);
 
-  ::close(fd1);
-  ::close(fd2);
+  ZtcTestClient::close(fd1);
   ZuCheck(app.stop());
   app.final();
 
@@ -395,7 +387,7 @@ void liveAlerts()
   auto recoveredAlert =
     alertReceive(fd, RecoveredSeqNo, recoveredFrame);
   ZuCheck(recoveredAlert && recoveredAlert->seqNo() == 1);
-  ::close(fd);
+  ZtcTestClient::close(fd);
   ZuCheck(recovered.stop());
   recovered.final();
   ZuCheck(ZiStat{indexPath}.size() == 2 * Zi::Offset(sizeof(uint64_t)));
@@ -442,11 +434,10 @@ void liveAlerts()
   auto replayDoneMsg =
     replayDone ? Ztc::msg(replayDone->ptr<Ztc::Hdr>()) : nullptr;
   auto complete = replayDoneMsg &&
-      replayDoneMsg->body_type() == Ztc::fbs::Body::SnapshotComplete ?
-    replayDoneMsg->body_as_SnapshotComplete() : nullptr;
-  ZuCheck(complete && complete->seqNo() == ReplaySeqNo &&
-    complete->count() == 1);
-  ::close(replayFD);
+      replayDoneMsg->body_type() == Ztc::fbs::Body::EOS ?
+    replayDoneMsg->body_as_EOS() : nullptr;
+  ZuCheck(complete && complete->seqNo() == ReplaySeqNo);
+  ZtcTestClient::close(replayFD);
   ZuCheck(replay.stop());
   replay.final();
 
@@ -518,7 +509,7 @@ void crossDateReplay()
   ZmRef<ZiIOBuf> secondFrame;
   auto second = alertReceive(fd, LiveSeqNo, secondFrame);
   ZuCheck(second && second->date() == todayID && !second->seqNo());
-  ::close(fd);
+  ZtcTestClient::close(fd);
   ZuCheck(app.stop());
   app.final();
 
@@ -536,22 +527,7 @@ void crossDateReplay()
     replayFD, LiveSeqNo + 2,
     Ztc::Alert_::addDays(yesterdayID, -int(cf.alertRetention)), 0) ==
     Ztc::fbs::AckStatus::Invalid);
-  ::close(replayFD);
-  int disconnectFD = alertConnect(replay);
-  ZuCheck(disconnectFD >= 0);
-  Zfb::IOBuilder disconnectBuilder{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
-  auto disconnectRequest = Ztc::fbs::CreateRequestDirect(
-    disconnectBuilder, LiveSeqNo + 3,
-    Ztc::fbs::Group::Alert, "*", 0, true);
-  disconnectBuilder.Finish(Ztc::fbs::CreateMsg(
-    disconnectBuilder, Ztc::fbs::Body::Request,
-    disconnectRequest.Union()));
-  auto disconnectFrame = Ztc::saveHdr(disconnectBuilder);
-  ZuCheck(disconnectFrame &&
-    alertWriteAll(disconnectFD, disconnectFrame->cspan()));
-  ::close(disconnectFD);
+  ZtcTestClient::close(replayFD);
   ZuCheck(replay.stop());
   replay.final();
 
@@ -569,7 +545,7 @@ void crossDateReplay()
   ZuCheck(corruptFD >= 0);
   ZuCheck(appDegraded(corruptFD, LiveSeqNo + 2));
   ZuCheck(ZiStat{yesterdayIndex}.size() == corruptSize);
-  ::close(corruptFD);
+  ZtcTestClient::close(corruptFD);
   ZuCheck(corrupt.stop());
   corrupt.final();
 
@@ -609,31 +585,21 @@ void crossDateReplay()
   ZuCheck(identityFD >= 0);
   ZuCheck(appDegraded(identityFD, LiveSeqNo + 4));
   ZuCheck(ZiStat{todayData}.size() == identitySize);
-  ::close(identityFD);
+  ZtcTestClient::close(identityFD);
   ZuCheck(identity.stop());
   identity.final();
 
 }
 
-#else
-
-void liveAlerts()
-{
-  ZuTestScope(liveAlerts);
-  ZuCheck(true);
-}
-
-void crossDateReplay()
-{
-  ZuTestScope(crossDateReplay);
-  ZuCheck(true);
-}
-
-#endif
-
 int main()
 {
   ZiTestResidue::init("ZtcAlertTest");
+  Zi::Name telName = ZiTestResidue::uniqueName("telemetry");
+#ifdef _WIN32
+  _putenv_s("ZTC_RING", telName.data());
+#else
+  setenv("ZTC_RING", telName.data(), 1);
+#endif
   g_residue = ZiTestResidue::dir("alerts");
   ZiLog::init("ZtcAlertTest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
@@ -642,5 +608,6 @@ int main()
   ZuTestCall(recoveryCore);
   ZuTestCall(liveAlerts);
   ZuTestCall(crossDateReplay);
+  ZtcTestClient::final();
   ZiLog::stop();
 }

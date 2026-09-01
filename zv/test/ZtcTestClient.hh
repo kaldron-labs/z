@@ -4,90 +4,47 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// test-only telemetry public-wire client primitives
+// test-only telemetry public-wire ring client primitives
 
 #ifndef ZtcTestClient_HH
 #define ZtcTestClient_HH
 
-#ifndef _WIN32
+#include <stdlib.h>
+#include <string.h>
 
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
+#include <zlib/ZuDerive.hh>
+
+#include <zlib/ZtArray.hh>
 
 #include <zlib/Zfb.hh>
+
+#include <zlib/ZiProgram.hh>
+#include <zlib/ZiRing.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcMsg.hh>
 
+#include "ZiTestResidue.hh"
+
 namespace ZtcTestClient {
 
-inline bool writeAll(int fd, ZuBSpan data)
+inline unsigned msgSize(const void *ptr)
 {
-  while (data.length()) {
-    int n = ::send(fd, data.data(), data.length(), 0);
-    if (n <= 0) return false;
-    data.offset(unsigned(n));
-  }
-  return true;
+  auto hdr = static_cast<const Ztc::Hdr *>(ptr);
+  return sizeof(Ztc::Hdr) + unsigned(hdr->length);
 }
 
-inline bool readAll(int fd, uint8_t *data, unsigned length)
-{
-  while (length) {
-    int n = ::recv(fd, data, length, 0);
-    if (n <= 0) return false;
-    data += n;
-    length -= unsigned(n);
-  }
-  return true;
-}
+ZuDerive(Ring, (ZiRing<ZmRingSizeAxor<msgSize, ZmRingMW<true>>>));
 
-inline ZmRef<ZiIOBuf> readFrame(int fd)
-{
-  Ztc::Hdr hdr;
-  if (!readAll(fd, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
-    return nullptr;
-  uint64_t total = sizeof(hdr) + uint32_t(hdr.length);
-  if (total > Ztc::AppCf::DefltMaxFrame) return nullptr;
-  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<1024,
-    Ztc::AppCf::DefltMaxFrame, "Ztc.TestClient.Rx">{};
-  if (!buf->alloc(unsigned(total))) return nullptr;
-  buf->append(reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr));
-  unsigned body = uint32_t(hdr.length);
-  if (body) {
-    unsigned offset = buf->length;
-    buf->length += body;
-    if (!readAll(fd, buf->data() + offset, body)) return nullptr;
-  }
-  return buf;
-}
-
-inline int connect(const Ztc::App &app, bool timeout = false)
-{
-  int family = app.localIP().v6() ? AF_INET6 : AF_INET;
-  int fd = ::socket(family, SOCK_STREAM, IPPROTO_TCP);
-  if (fd < 0) return fd;
-  if (timeout) {
-    timeval value{5, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value));
-  }
-  ZiSockAddr addr{app.localIP(), app.localPort()};
-  if (::connect(fd, addr.sa(), addr.len())) {
-    ::close(fd);
-    return -1;
-  }
-  return fd;
-}
+using Frame = ZiIOBufAlloc<1024,
+  Ztc::AppCf::DefltMaxFrame, "Ztc.TestClient.Frame">;
 
 inline ZmRef<ZiIOBuf> request(
     uint64_t seqNo, Ztc::fbs::Group group, ZuCSpan filter,
     uint32_t interval, bool subscribe,
     uint32_t alertDate = 0, uint64_t alertSeqNo = 0)
 {
-  Zfb::IOBuilder fbb{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.TestClient.Tx">{}})};
+  Zfb::IOBuilder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
   auto filter_ = fbb.CreateString(filter.data(), filter.length());
   auto request_ = Ztc::fbs::CreateRequest(
     fbb, seqNo, group, filter_, interval, subscribe,
@@ -97,8 +54,146 @@ inline ZmRef<ZiIOBuf> request(
   return Ztc::saveHdr(fbb);
 }
 
-} // ZtcTestClient
+class Client {
+public:
+  enum { TelSize = 1U<<22, ReadAttempts = 5 };
 
-#endif /* !_WIN32 */
+  bool connect(ZuCSpan id = ZiProgram::name())
+  {
+    if (!m_telReady) {
+      const char *name = ::getenv("ZTC_RING");
+      m_telName = name ? name : "ztc";
+      ZiTestResidue::addShm(m_telName);
+      m_telRing.init(ZiRingParams{m_telName, TelSize}.timeout(1));
+      if (m_telRing.open(Ring::Write) != Zu::OK ||
+	  m_telRing.reset() != Zu::OK)
+	return false;
+      m_telRing.close();
+      if (m_telRing.open(Ring::Read) != Zu::OK ||
+	  m_telRing.attach() != Zu::OK)
+	return false;
+      m_telReady = true;
+    }
+    m_reqRing.close();
+    m_reqRing.init(ZiRingParams{id, 0}.timeout(1));
+    if (m_reqRing.open(Ring::Write) != Zu::OK) return false;
+    bool registered = false;
+    for (const auto &name : m_reqNames)
+      if (name == id) registered = true;
+    if (!registered) {
+      ZiTestResidue::addShm(Zi::Name{id});
+      m_reqNames.push(Zi::Name{id});
+    }
+    m_resetPending = true;
+    return true;
+  }
+
+  bool send(ZuBSpan data)
+  {
+    if (m_reqRing.closed()) return false;
+    if (m_resetPending) {
+      auto reset = request(0, Ztc::fbs::Group::App, {}, 0, false);
+      if (!reset || !sendRaw(reset->cspan())) return false;
+      m_resetPending = false;
+    }
+    return sendRaw(data);
+  }
+
+  ZmRef<ZiIOBuf> read()
+  {
+    for (unsigned attempt = 0; attempt < ReadAttempts; ++attempt) {
+      const void *ptr = m_telRing.shift();
+      if (!ptr) {
+	if (m_telRing.readStatus() < 0) return {};
+	continue;
+      }
+      unsigned size = msgSize(ptr);
+      ZmRef<ZiIOBuf> frame = new Frame;
+      if (size <= Ztc::AppCf::DefltMaxFrame && frame->alloc(size)) {
+	memcpy(frame->data(), ptr, size);
+	frame->length = size;
+      } else
+	frame = {};
+      m_telRing.shift2(size);
+      if (!frame) return {};
+      auto msg = Ztc::msg(frame->ptr<Ztc::Hdr>());
+      auto tel = msg && msg->body_type() == Ztc::fbs::Body::Telemetry ?
+	msg->body_as_Telemetry() : nullptr;
+      if (tel && !tel->seqNo() &&
+	  tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry)
+	continue;
+      return frame;
+    }
+    return {};
+  }
+
+  void close()
+  {
+    m_reqRing.close();
+  }
+
+  void final()
+  {
+    close();
+    if (!m_telRing.closed()) {
+      if (m_telRing.rdrID() >= 0) m_telRing.detach();
+      m_telRing.close();
+    }
+    m_telReady = false;
+  }
+
+private:
+  using Names = ZtArray<Zi::Name,
+    ZtArrayHeapID<"Ztc.TestClient.Names">>;
+
+  bool sendRaw(ZuBSpan data)
+  {
+    void *ptr = m_reqRing.tryPush(data.length());
+    if (!ptr) return false;
+    memcpy(ptr, data.data(), data.length());
+    m_reqRing.push2(ptr, data.length());
+    return true;
+  }
+
+  Zi::Name	m_telName;
+  Ring		m_telRing;
+  Ring		m_reqRing;
+  Names		m_reqNames;
+  bool		m_telReady = false;
+  bool		m_resetPending = true;
+};
+
+inline Client &client()
+{
+  static Client client_;
+  return client_;
+}
+
+inline bool writeAll(int, ZuBSpan data)
+{
+  return client().send(data);
+}
+
+inline ZmRef<ZiIOBuf> readFrame(int)
+{
+  return client().read();
+}
+
+inline int connect(const Ztc::App &, bool = false)
+{
+  return client().connect() ? 1 : -1;
+}
+
+inline void close(int)
+{
+  client().close();
+}
+
+inline void final()
+{
+  client().final();
+}
+
+} // ZtcTestClient
 
 #endif /* ZtcTestClient_HH */

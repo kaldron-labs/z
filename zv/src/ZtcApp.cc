@@ -5,8 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
-
-#include <iostream>
+#include <stdlib.h>
 
 #include <zlib/ZuDateTime.hh>
 
@@ -19,6 +18,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmQueue.hh>
+#include <zlib/ZmThread.hh>
 #include <zlib/ZmVHeap.hh>
 
 #include <zlib/Zfb.hh>
@@ -26,6 +26,8 @@
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiDir.hh>
+#include <zlib/ZiPIDFile.hh>
+#include <zlib/ZiRing.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcAlert.hh>
@@ -34,16 +36,24 @@
 #include <zlib/ZtcMsg.hh>
 
 namespace Ztc {
+
+static unsigned msgSize(const void *ptr)
+{
+  auto hdr = static_cast<const Hdr *>(ptr);
+  return sizeof(Hdr) + unsigned(hdr->length);
+}
+
+ZuDerive(Ring, (ZiRing<ZmRingSizeAxor<msgSize, ZmRingMW<true>>>));
+
 namespace App_ {
 
-using RxFrame =
-  Ztcp::RxBufAlloc<1024, AppCf::DefltMaxFrame, "Ztc.App.RxFrame">;
-using CtrlFrame =
-  Ztcp::TxBufAlloc<512, AppCf::DefltMaxFrame, "Ztc.App.CtrlFrame">;
-using TelFrame =
-  Ztcp::TxBufAlloc<1024, AppCf::DefltMaxFrame, "Ztc.App.TelFrame">;
+enum { DefltFrameSize = 1024 }; // common telemetry/request frame
+using ReqFrame =
+  ZiIOBufAlloc<DefltFrameSize, AppCf::DefltMaxFrame, "Ztc.App.ReqFrame">;
+using MsgFrame =
+  ZiIOBufAlloc<DefltFrameSize, AppCf::DefltMaxFrame, "Ztc.App.MsgFrame">;
 using AlertFrame =
-  ZiIOBufAlloc<1024, AppCf::DefltMaxFrame, "Ztc.App.AlertFrame">;
+  ZiIOBufAlloc<DefltFrameSize, AppCf::DefltMaxFrame, "Ztc.App.AlertFrame">;
 
 template <typename T, ZuString HeapID>
 using Samples = ZtArray<T, ZtArrayHeapID<HeapID>>;
@@ -61,7 +71,7 @@ using DBSamples = Samples<DBTelemetry, "Ztc.App.DBSamples">;
 using DBHostSamples = Samples<DBHostTelemetry, "Ztc.App.DBHostSamples">;
 using DBTableSamples = Samples<DBTableTelemetry, "Ztc.App.DBTableSamples">;
 
-using SubKey = ZuTuple<uint64_t, uint8_t, ZuCSpan>;
+using SubKey = ZuTuple<uint8_t, ZuCSpan>;
 using DueKey = ZuTuple<ZuTime, uint64_t>;
 
 struct PendingAlert {
@@ -75,27 +85,11 @@ struct PendingAlert {
 using AlertFrames = ZmQueue<PendingAlert,
   ZmQueueHeapID<"Ztc.App.AlertPending">>;
 
-class ClientData {
-public:
-  ZmRef<App::Link>	link;
-  uint64_t		generation = 0;
-  unsigned		pending = 0;
-  unsigned		subs = 0;
-};
-
-template <typename Heap>
-class Client__ : public Heap, public ClientData { };
-using ClientHeap = ZmHeap<"Ztc.App.Client", Client__<ZuVoid>>;
-class Client_ final : public Client__<ClientHeap> { };
-
 class Subscription_ {
 public:
-  ZmRef<App::Link>	link;
-  Client_		*client = nullptr;
   Pending_		*snapshot = nullptr;
   Filter_::Filter	filter;
   ZuTime		due;
-  uint64_t		generation = 0;
   uint64_t		seqNo = 0;
   uint64_t		order = 0;
   uint32_t		interval = 0;
@@ -106,7 +100,6 @@ public:
   uint32_t		highDate = 0;
   uint32_t		replayDate = 0;
   uint32_t		openDate = 0;
-  uint32_t		replayCount = 0;
   ZiFile		replayData;
   ZiFile		replayIndex;
   bool			running = false;
@@ -118,11 +111,8 @@ public:
 
 class PendingData {
 public:
-  Client_		*client = nullptr;
   Subscription_	*sub = nullptr;
-  uint64_t		generation = 0;
   uint64_t		seqNo = 0;
-  uint32_t		count = 0;
   uint32_t		offset = 0;
   uint8_t		stage = 0;
   fbs::Group		group = fbs::Group::Heap;
@@ -147,11 +137,7 @@ class Pending__ : public Heap, public PendingData { };
 using PendingHeap = ZmHeap<"Ztc.App.Pending", Pending__<ZuVoid>>;
 class Pending_ final : public Pending__<PendingHeap> { };
 
-using PendingKey = ZuTuple<uint64_t, uint64_t>;
-using ClientIdx = ZmRBTreeKV<uint64_t, Client_ *,
-  ZmRBTreeUnique<true,
-    ZmRBTreeLock<ZmNoLock,
-      ZmRBTreeHeapID<"Ztc.App.ClientIdx">>>>;
+using PendingKey = uint64_t;
 using PendingIdx = ZmRBTreeKV<PendingKey, Pending_ *,
   ZmRBTreeUnique<true,
     ZmRBTreeLock<ZmNoLock,
@@ -159,7 +145,7 @@ using PendingIdx = ZmRBTreeKV<PendingKey, Pending_ *,
 
 static SubKey subKey(const Subscription_ &sub)
 {
-  return {sub.generation, uint8_t(sub.group), sub.filter.key()};
+  return {uint8_t(sub.group), sub.filter.key()};
 }
 
 static DueKey dueKey(const Subscription_ &sub)
@@ -189,8 +175,10 @@ class AlertStore {
 public:
   using LoadResult = Alert_::LoadResult::T;
 
-  void init(Zi::Path prefix, uint32_t maxFrame, unsigned retention) {
+  void init(
+      Zi::Path prefix, ZuID id, uint32_t maxFrame, unsigned retention) {
     m_prefix = ZuMv(prefix);
+    m_id = ZuMv(id);
     m_maxFrame = maxFrame;
     m_retention = retention;
   }
@@ -335,7 +323,9 @@ public:
 
 private:
   static void diag(uint32_t date, ZuCSpan message) {
-    std::cerr << "Ztc alert partition " << date << ": " << message << '\n';
+    ZiLOG(Error, "Ztc.App", ([date, message = ZeString{message}](auto &s) {
+      s << "alert partition " << date << ": " << message;
+    }));
   }
 
   void fail(ZuCSpan message) {
@@ -461,7 +451,9 @@ private:
     auto alert = telemetry && telemetry->value_type() ==
 	fbs::TelemetryBody::AlertTelemetry ?
       telemetry->value_as_AlertTelemetry() : nullptr;
-    if (!alert || telemetry->seqNo() || alert->date() != date ||
+    if (!alert || !telemetry->id() ||
+	ZuCSpan{telemetry->id()->c_str(), telemetry->id()->size()} != m_id ||
+	telemetry->seqNo() || alert->date() != date ||
 	alert->seqNo() != seqNo) return LoadResult::Corrupt;
     frame = ZuMv(loaded);
     return LoadResult::OK;
@@ -507,6 +499,7 @@ private:
   }
 
   Zi::Path	m_prefix;
+  ZuID		m_id;
   ZiFile	m_data;
   ZiFile	m_index;
   uint64_t	m_count = 0;
@@ -576,7 +569,7 @@ public:
     if (!app) return;
     event->ingress = this;
     ++m_accepted;
-    app->mx()->run([app, event = ZuMv(event)]() mutable {
+    app->serviceMx_()->run([app, event = ZuMv(event)]() mutable {
       app->alert_(ZuMv(event));
     }, app->m_cf.workerThread);
   }
@@ -637,7 +630,15 @@ struct StateData {
       new (due.push()) SubDueIdx;
   }
 
-  ClientIdx		clients;
+  Zi::Name		telName;
+  Zi::Path		pidName;
+  ZuUnion<void, ZiPIDFile> pidFile;
+  ZmThread		reqThread;
+  Ring			reqRing;
+  ZmAtomic<unsigned>	reqStop = 0;
+  Ring			telRing;
+  bool			appPending = true;
+
   PendingIdx		pending;
   SubIdx		subs;
   SubDueSets		due;
@@ -710,44 +711,6 @@ ZuTime interval(uint32_t millisecs)
     int32_t(millisecs % 1000) * 1000000};
 }
 
-class FrameScan {
-public:
-  FrameScan(uint32_t maxFrame) : m_maxFrame{maxFrame} { }
-
-  int64_t operator ()(ZuBSpan span) {
-    uint64_t prior = m_seen;
-    if (!m_total) {
-      unsigned n = sizeof(Hdr) - m_hdrLength;
-      if (n > span.length()) n = span.length();
-      if (n) {
-	memcpy(
-	  reinterpret_cast<uint8_t *>(&m_hdr) + m_hdrLength,
-	  span.data(), n);
-	m_hdrLength += n;
-      }
-      if (m_hdrLength == sizeof(Hdr)) {
-	uint64_t body = uint32_t(m_hdr.length);
-	m_total = body + sizeof(Hdr);
-	if (ZuUnlikely(
-	      m_total > m_maxFrame || m_total > unsigned(INT_MAX) ||
-	      m_maxFrame < sizeof(Hdr)))
-	  return -1;
-      }
-    }
-    if (m_total && prior + span.length() >= m_total)
-      return int64_t(m_total - prior);
-    m_seen += span.length();
-    return 0;
-  }
-
-private:
-  Hdr		m_hdr{};
-  uint64_t	m_seen = 0;
-  uint64_t	m_total = 0;
-  uint32_t	m_maxFrame = 0;
-  unsigned	m_hdrLength = 0;
-};
-
 template <typename Index, typename Key, typename Value>
 void indexAdd(Index &index, Key &&key, Value *value)
 {
@@ -775,88 +738,35 @@ void indexWarm(Index &index, Key &&key)
 
 } // App_
 
-class App::Link : public Ztcp::SrvLink<App, Link> {
-  using Base = Ztcp::SrvLink<App, Link>;
-
-friend App;
-
-public:
-  Link(App *app) :
-    Base{app}, m_generation{++app->m_linkGeneration} { }
-
-  void connected(Ztcp::Connected) { }
-  void disconnected(bool) {
-    auto app_ = app();
-    uint64_t generation_ = m_generation;
-    if (!app_->m_running.load_()) return;
-    app_->mx()->run([app_, generation_]() {
-      app_->disconnected_(generation_);
-    }, app_->m_cf.workerThread);
-  }
-
-  uint64_t generation() const { return m_generation; }
-
-  int process(Ztcp::RxStream &rx) {
-    App_::FrameScan scan{app()->m_cf.maxFrame};
-    ZmRef<ZiIOBuf> buf;
-    int64_t n = rx.extract(
-      [&scan](ZuBSpan span) { return scan(span); },
-      [this]() -> ZmRef<Ztcp_::IOQueue::Node> {
-	return new App_::RxFrame{this};
-      },
-      buf);
-    if (n <= 0) return int(n);
-    auto app_ = app();
-    if (ZuUnlikely(!Ztc::msg(buf->ptr<Hdr>()))) {
-      app_->mx()->run([
-	app_, link = ZmRef(this)
-      ]() mutable {
-	app_->invalid_(ZuMv(link));
-      }, app_->m_cf.workerThread);
-      return int(n);
-    }
-    app_->mx()->run([
-      app_, link = ZmRef(this), buf = ZuMv(buf)
-    ]() mutable {
-      app_->request_(ZuMv(link), ZuMv(buf));
-    }, app_->m_cf.workerThread);
-    return int(n);
-  }
-
-private:
-  const uint64_t	m_generation;
-};
-
 namespace App_ {
 
 template <typename T>
-void sendTelemetry(
-  App::Link *link, uint64_t seqNo, fbs::TelemetryBody type, const T &data)
+ZmRef<ZiIOBuf> telemetryFrame(
+  ZuCSpan id, uint64_t seqNo, fbs::TelemetryBody type, const T &data)
 {
   Zfb::IOBuilder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new TelFrame{link}})};
+    frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
+  auto id_ = fbb.CreateString(id.data(), id.length());
   auto value =
     ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
   auto telemetry =
-    fbs::CreateTelemetry(fbb, seqNo, type, value.Union());
+    fbs::CreateTelemetry(fbb, id_, seqNo, type, value.Union());
   fbb.Finish(
     fbs::CreateMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
-  if (auto buf = saveHdr(fbb, link)) link->send(ZuMv(buf));
+  return saveHdr(fbb);
 }
 
-bool sendAlertFrame(
-    App::Link *link, uint64_t seqNo, const ZiIOBuf *canonical)
+ZmRef<ZiIOBuf> alertFrame(uint64_t seqNo, const ZiIOBuf *canonical)
 {
-  ZmRef<ZiIOBuf> frame = new TelFrame{link};
+  ZmRef<ZiIOBuf> frame = new MsgFrame;
   frame->append(canonical->data(), canonical->length);
-  if (ZuUnlikely(frame->length != canonical->length)) return false;
+  if (ZuUnlikely(frame->length != canonical->length)) return {};
   auto root = flatbuffers::GetMutableRoot<fbs::Msg>(
     frame->data() + sizeof(Hdr));
   auto telemetry = root->mutable_body_as_Telemetry();
   if (ZuUnlikely(!telemetry || !telemetry->mutate_seqNo(seqNo)))
-    return false;
-  link->send(ZuMv(frame));
-  return true;
+    return {};
+  return frame;
 }
 
 template <typename S, typename C>
@@ -867,20 +777,6 @@ void copySamples(S &samples, const C &captures)
   samples.size(n);
   for (unsigned i = 0; i < n; ++i)
     new (samples.push()) T{captures[i]};
-}
-
-template <typename S>
-bool sendBatch(
-    App::Link *link, uint64_t seqNo, fbs::TelemetryBody type,
-    const S &samples, uint32_t &offset, uint32_t &count, unsigned &budget)
-{
-  unsigned n = samples.length();
-  while (offset < n && budget) {
-    sendTelemetry(link, seqNo, type, samples[offset++]);
-    ++count;
-    --budget;
-  }
-  return offset == n;
 }
 
 template <unsigned Mode_>
@@ -970,11 +866,10 @@ App::~App()
 
 bool App::init(const AppCf &cf)
 {
-  if (m_initialized || !cf.ip || !cf.ip.loopback() || cf.ip.wildcard())
-    return false;
-  if (cf.maxFrame < sizeof(Hdr) + 8 ||
+  if (m_initialized || !cf.id || cf.maxFrame < sizeof(Hdr) + 8 ||
       cf.maxFrame > AppCf::DefltMaxFrame ||
-      !cf.nAccepts || cf.nAccepts > 1024 ||
+      !cf.reqTimeout || cf.reqTimeout > 3600 || cf.reqSize > (1U<<30) ||
+      uint64_t(cf.reqSize) < uint64_t(cf.maxFrame) + Zm::CacheLineSize ||
       !cf.maxFilter || cf.maxFilter > (1U<<20) ||
       uint64_t(cf.maxFilter) + sizeof(Hdr) + 128 > cf.maxFrame ||
       uint64_t(cf.maxAlertMsg) + sizeof(Hdr) + 128 > cf.maxFrame ||
@@ -986,7 +881,6 @@ bool App::init(const AppCf &cf)
       cf.maxPending > 65536 || cf.maxSubs > 65536 ||
       cf.maxAlertMsg > (1U<<20) || cf.alertTail > (1U<<20) ||
       cf.alertReplay > (1U<<20) || cf.alertRetention > 3660 ||
-      cf.rebindFreq > 3600 ||
       !cf.timerThread || !cf.rxThread || !cf.txThread || !cf.workerThread ||
       !cf.mx.nThreads || cf.mx.nThreads > 1024 ||
       (cf.mx.stackSize &&
@@ -1024,7 +918,8 @@ bool App::init(const AppCf &cf)
 	new (0) App_::AlertEvent{{}, ZeEventInfo{}, 0};
     }
     m_state->tail.init(ZmQueueParams{}.initial(cf.alertTail));
-    m_state->store.init(cf.alertPrefix, cf.maxFrame, cf.alertRetention);
+    m_state->store.init(
+      cf.alertPrefix, cf.id, cf.maxFrame, cf.alertRetention);
     ZiMxParams params;
     params.scheduler([
       id = cf.id, mx = cf.mx,
@@ -1102,7 +997,7 @@ void App::start(CtrlFn fn)
       if (fn) fn(true);
       return;
     }
-    if (m_startPending || m_serverInitialized) {
+    if (m_startPending) {
       guard.unlock();
       if (fn) fn(false);
       return;
@@ -1132,21 +1027,65 @@ void App::start(CtrlFn fn)
     m_state->alertSeqNo = preparedSeqNo;
   }
 
-  if (!Base::init(Ztcp::ServerParams{
-      mx_, m_cf.mx.rxThread, m_cf.mx.txThread})) {
+  if (!m_state->pidName) {
+    const char *telName = ::getenv("ZTC_RING");
+    const char *pidDir = ::getenv("ZTC_DIR");
+    m_state->telName = telName ? telName : "ztc";
+    m_state->pidName << (pidDir ? pidDir : "ztc") << '/'
+      << m_cf.id << ".pid";
+    m_state->telRing.init(ZiRingParams{m_state->telName, 0});
+  }
+
+  auto failed = [this, mx_]() {
+    m_running = false;
+    if (m_state->pidFile.is<ZiPIDFile>())
+      m_state->pidFile.new_<void>();
+    if (!m_state->reqRing.closed()) {
+      if ((m_state->reqRing.flags() & Ring::Read) &&
+	  m_state->reqRing.rdrID() >= 0)
+	m_state->reqRing.detach();
+      m_state->reqRing.close();
+    }
     m_state->store.close();
     mx_->stop();
     startDone_(false);
+  };
+
+  m_state->reqRing.init(
+    ZiRingParams{m_cf.id, m_cf.reqSize}.
+      timeout(m_cf.reqTimeout).ll(m_cf.reqLL));
+  if (m_state->reqRing.open(Ring::Write) != Zu::OK ||
+      m_state->reqRing.reset() != Zu::OK) {
+    failed();
     return;
   }
-  m_serverInitialized = true;
-  Base::start([this](bool ok) {
-    if (!ok) {
-      startDone_(false);
-      return;
-    }
-    Base::listen();
-  });
+  m_state->reqRing.close();
+  if (m_state->reqRing.open(Ring::Read) != Zu::OK ||
+      m_state->reqRing.attach() != Zu::OK) {
+    failed();
+    return;
+  }
+
+  auto pidFile = new (m_state->pidFile.new_<ZiPIDFile>()) ZiPIDFile;
+  if (pidFile->init(ZiFile::tmpDir(), m_state->pidName) != ZiPIDFile::OK) {
+    failed();
+    return;
+  }
+
+  m_state->reqStop = 0;
+  m_running = true;
+  if (m_state->reqThread.run(
+      [this]() { reqRun_(); }, ZmThreadParams{}.name("ztcReq")) < 0) {
+    failed();
+    return;
+  }
+  m_state->ingress->open(this);
+  mx_->run([this]() {
+    if (!m_running.load_()) return;
+    m_state->appPending = true;
+    if (publishApp_(0)) m_state->appPending = false;
+  }, m_cf.workerThread);
+  startDone_(true);
 }
 
 bool App::start()
@@ -1198,19 +1137,31 @@ bool App::stop()
       return false;
   }
   startDone_(false);
-  m_state->ingress->close(this);
   m_running = false;
-  if (m_serverInitialized) {
-    Base::stop();
-    Base::final();
-    m_serverInitialized = false;
+  if (m_state->pidFile.is<ZiPIDFile>())
+    m_state->pidFile.new_<void>();
+  m_state->reqStop = 1;
+  {
+    Ring wake{ZiRingParams{m_cf.id, 0}};
+    if (wake.open(Ring::Write) == Zu::OK) {
+      if (void *ptr = wake.tryPush(sizeof(Hdr))) {
+	static_cast<Hdr *>(ptr)->length = 0;
+	wake.push2(ptr, sizeof(Hdr));
+      }
+    }
+  }
+  m_state->reqThread.join();
+  if (!m_state->reqRing.closed()) {
+    if (m_state->reqRing.rdrID() >= 0) m_state->reqRing.detach();
+    m_state->reqRing.close();
   }
   m_state->ingress->close(this);
-  m_running = false;
   if (mxRunning) {
     ZmBlock<>{}([this, mx_](auto wake) mutable {
       mx_->run([this, wake = ZuMv(wake)]() mutable {
 	clearSubscriptions_();
+	m_state->telRing.close();
+	m_state->appPending = true;
 	wake();
       }, m_cf.workerThread);
     });
@@ -1226,7 +1177,6 @@ bool App::stop()
   }
   if (mxRunning) mx_->stop();
   m_state->store.close();
-  m_boundPort = 0;
   return true;
 }
 
@@ -1245,27 +1195,6 @@ void App::final()
   App_::release(this);
 }
 
-void App::listening(const ZiListenInfo &info)
-{
-  Base::listening(info);
-  m_boundPort = info.port;
-  m_running = true;
-  m_state->ingress->open(this);
-  startDone_(true);
-}
-
-void App::listenFailed(bool transient)
-{
-  Base::listenFailed(transient);
-  if (transient && m_cf.rebindFreq) return;
-  startDone_(false);
-}
-
-ZiConnection *App::accepted(const ZiCxnInfo &ci)
-{
-  return new Link::Cxn{new Link{this}, ci};
-}
-
 void App::rag(RagFn fn) const
 {
   if (!fn) return;
@@ -1274,7 +1203,7 @@ void App::rag(RagFn fn) const
     return;
   }
   const App *app = this;
-  Base::mx()->run([app, fn = ZuMv(fn)]() mutable {
+  serviceMx_()->run([app, fn = ZuMv(fn)]() mutable {
     fn(RAG::T(app->m_rag.load_()));
   }, m_cf.workerThread);
 }
@@ -1292,7 +1221,7 @@ void App::rag(RAG::T rag)
     return;
   }
   App *app = this;
-  Base::mx()->run([app, rag]() { app->rag_(rag); }, m_cf.workerThread);
+  serviceMx_()->run([app, rag]() { app->rag_(rag); }, m_cf.workerThread);
 }
 
 void App::rag_(RAG::T rag)
@@ -1321,13 +1250,14 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     Zfb::IOBuilder fbb{
       frameBuf(ZmRef<ZiIOBuf>{new App_::AlertFrame})};
     fbb.ForceDefaults(true);
+    auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
     auto message =
       fbb.CreateString(event->message().data(), event->message().length());
     Zfb::Time time{event->time.sec(), event->time.nsec()};
     auto value = fbs::CreateAlertTelemetry(
       fbb, message, &time, alertSeqNo, event->tid, date, event->severity);
     auto telemetry = fbs::CreateTelemetry(
-      fbb, 0, fbs::TelemetryBody::AlertTelemetry, value.Union());
+      fbb, id, 0, fbs::TelemetryBody::AlertTelemetry, value.Union());
     fbb.Finish(
       fbs::CreateMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
     ZmRef<ZiIOBuf> canonical = saveHdr(fbb);
@@ -1356,11 +1286,7 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
 	  .frame = canonical, .seqNo = alertSeqNo, .date = date});
 	continue;
       }
-      if (!App_::sendAlertFrame(
-	    sub->link.ptr(), sub->seqNo, canonical.ptr())) {
-	m_state->degraded = true;
-	continue;
-      }
+      publish_(App_::alertFrame(sub->seqNo, canonical.ptr()));
     }
   } catch (...) {
     m_state->degraded = true;
@@ -1369,11 +1295,8 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
 
 void App::warmIndices_()
 {
-  delete new App_::Client_;
   delete new App_::Pending_;
-  App_::indexWarm(m_state->clients, uint64_t{});
-  App_::indexWarm(
-    m_state->pending, App_::PendingKey{uint64_t{}, uint64_t{}});
+  App_::indexWarm(m_state->pending, App_::PendingKey{});
   App_::indexWarm(m_mxIdx, ZuID{});
   App_::indexWarm(m_cxnIdx,
     CxnKey{ZuID{}, ZiIP{}, uint16_t{}, ZiIP{}, uint16_t{}});
@@ -1404,25 +1327,6 @@ void App::clearIndices_()
   m_mxQueueIdx.clean();
   m_cxnIdx.clean();
   m_mxIdx.clean();
-}
-
-App_::Client_ *App::client_(ZmRef<Link> link)
-{
-  uint64_t generation = link->generation();
-  if (auto client = m_state->clients.findVal(generation)) return client;
-  auto client = new App_::Client_;
-  client->link = ZuMv(link);
-  client->generation = generation;
-  App_::indexAdd(m_state->clients, generation, client);
-  return client;
-}
-
-void App::clientRelease_(App_::Client_ *client)
-{
-  if (!client || client->pending || client->subs) return;
-  App_::indexDel(
-    m_state->clients, client->generation, client);
-  delete client;
 }
 
 void App::watch_()
@@ -1636,90 +1540,174 @@ void App::dbTableDeleted_(DBTable *table)
     m_dbTableIdx, DBTableKey{key.p<0>(), key.p<1>()}, table);
 }
 
-void App::request_(ZmRef<Link> link, ZmRef<ZiIOBuf> buf)
+void App::reqRun_()
+{
+  try {
+    while (!m_state->reqStop.load_()) {
+      void *ptr = m_cf.reqLL ?
+	m_state->reqRing.tryShift() : m_state->reqRing.shift();
+      if (!ptr) {
+	if (m_state->reqStop.load_()) return;
+	int status = m_state->reqRing.readStatus();
+	if (status >= 0 || status == Zu::NotReady) continue;
+	ZiLOG(Fatal, "Ztc.App", ([status](auto &s) {
+	  s << "request ring failed: " << status;
+	}));
+	Zm::exit(1);
+      }
+
+      unsigned size = msgSize(ptr);
+      ZmRef<ZiIOBuf> buf = new App_::ReqFrame;
+      if (size <= m_cf.maxFrame && buf->alloc(size)) {
+	memcpy(buf->data(), ptr, size);
+	buf->length = size;
+      } else
+	buf = {};
+      m_state->reqRing.shift2(size);
+
+      ZiMultiplex *mx_ = serviceMx_();
+      if (!buf || !msg(buf->ptr<Hdr>())) {
+	mx_->run([this]() {
+	  if (m_running.load_())
+	    sendError_(1, "invalid FlatBuffers message");
+	}, m_cf.workerThread);
+	continue;
+      }
+      mx_->run([this, buf = ZuMv(buf)]() mutable {
+	if (m_running.load_()) request_(ZuMv(buf));
+      }, m_cf.workerThread);
+    }
+  } catch (...) {
+    if (m_state->reqStop.load_()) return;
+    ZiLOG(Fatal, "Ztc.App", "request thread terminated unexpectedly");
+    Zm::exit(1);
+  }
+}
+
+bool App::publishRaw_(ZmRef<ZiIOBuf> buf)
+{
+  if (!buf) return false;
+  if (m_state->telRing.closed() &&
+      m_state->telRing.open(Ring::Write) != Zu::OK)
+    return false;
+  void *ptr = m_state->telRing.tryPush(buf->length);
+  if (!ptr) return false;
+  memcpy(ptr, buf->data(), buf->length);
+  m_state->telRing.push2(ptr, buf->length);
+  return true;
+}
+
+bool App::publish_(ZmRef<ZiIOBuf> buf)
+{
+  if (m_state->appPending && publishApp_(0))
+    m_state->appPending = false;
+  return publishRaw_(ZuMv(buf));
+}
+
+void App::appTelemetry_(AppTelemetry &data)
+{
+  data.version = m_cf.version;
+  data.role = m_cf.role;
+  data.startTime = m_startTime;
+  data.state = ZmEngineState::Running;
+  data.degraded = m_state->degraded;
+  data.rag = RAG::T(m_rag.load_());
+}
+
+bool App::publishApp_(uint64_t seqNo)
+{
+  AppTelemetry data;
+  appTelemetry_(data);
+  return publishRaw_(App_::telemetryFrame(
+    m_cf.id, seqNo, fbs::TelemetryBody::AppTelemetry, data));
+}
+
+void App::request_(ZmRef<ZiIOBuf> buf)
 {
   auto root = msg_(buf->ptr<Hdr>());
   if (ZuUnlikely(root->body_type() != fbs::Body::Request)) {
-    sendError_(link.ptr(), 1, "expected Request message");
+    sendError_(1, "expected Request message");
     return;
   }
   auto request = root->body_as_Request();
   if (ZuUnlikely(!request)) return;
   uint64_t seqNo = request->seqNo();
+  if (!seqNo) {
+    clearSubscriptions_();
+    return;
+  }
   ZuCSpan filter = Zfb::Load::str(request->filter());
   auto group = request->group();
   if (ZuUnlikely(
 	int(group) < int(fbs::Group::Heap) ||
 	int(group) > int(fbs::Group::Alert))) {
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, fbs::AckStatus::Invalid);
     return;
   }
   Filter_::Filter compiled;
   if (ZuUnlikely(!compiled.compile(group, filter, m_cf.maxFilter))) {
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, fbs::AckStatus::Invalid);
     return;
   }
   uint32_t alertDate = request->alertDate();
   uint64_t alertSeqNo = request->alertSeqNo();
   if (group != fbs::Group::Alert) {
     if (alertDate || alertSeqNo) {
-      sendAck_(link.ptr(), seqNo, fbs::AckStatus::Invalid);
+      sendAck_(seqNo, fbs::AckStatus::Invalid);
       return;
     }
   } else if ((alertDate && !App_::AlertStore::validDate(alertDate)) ||
       (!alertDate && alertSeqNo)) {
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, fbs::AckStatus::Invalid);
     return;
   } else if (alertDate && m_state->alertDate &&
       (alertDate < m_state->store.earliest(m_state->alertDate) ||
        alertDate > m_state->alertDate ||
        (alertDate == m_state->alertDate && m_state->alertSeqNo &&
 	alertSeqNo >= m_state->alertSeqNo))) {
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, fbs::AckStatus::Invalid);
     return;
   }
   if (!request->subscribe()) {
-    unsubscribe_(link.ptr(), seqNo, group, compiled);
+    unsubscribe_(seqNo, group, compiled);
     return;
   }
   uint32_t interval = request->interval();
   if (!interval) {
     if (group == fbs::Group::Alert) {
-      subscribe_(ZuMv(link), seqNo, group, ZuMv(compiled), 0,
+      subscribe_(seqNo, group, ZuMv(compiled), 0,
 	alertDate, alertSeqNo);
 	return;
       }
-    if (!snapshot_(link, seqNo, group, compiled)) {
-      sendAck_(link.ptr(), seqNo, fbs::AckStatus::Failed);
+    if (!snapshot_(seqNo, group, compiled)) {
+      sendAck_(seqNo, fbs::AckStatus::Failed);
       return;
     }
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::OK);
+    sendAck_(seqNo, fbs::AckStatus::OK);
     return;
   }
   if (ZuUnlikely(interval > m_cf.maxInterval)) {
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, fbs::AckStatus::Invalid);
     return;
   }
   if (interval < m_cf.minInterval) interval = m_cf.minInterval;
-  subscribe_(ZuMv(link), seqNo, group, ZuMv(compiled), interval,
+  subscribe_(seqNo, group, ZuMv(compiled), interval,
     alertDate, alertSeqNo);
 }
 
 void App::subscribe_(
-    ZmRef<Link> link, uint64_t seqNo, fbs::Group group,
+    uint64_t seqNo, fbs::Group group,
     Filter_::Filter filter, uint32_t interval,
     uint32_t alertDate, uint64_t alertSeqNo)
 {
-  App_::SubKey key{
-    link->generation(), uint8_t(group), filter.key()};
+  App_::SubKey key{uint8_t(group), filter.key()};
   App_::Subscription *sub = m_state->subs.findPtr(key);
-  App_::Pending_ *sameSeq = m_state->pending.findVal(
-    App_::PendingKey{link->generation(), seqNo});
+  App_::Pending_ *sameSeq = m_state->pending.findVal(seqNo);
   if (group != fbs::Group::Alert &&
       (((!sub || !sub->running) &&
 	m_state->pending.count_() >= m_cf.maxPending) ||
        (sameSeq && (!sub || sameSeq != sub->snapshot)))) {
-    sendAck_(link.ptr(), seqNo, fbs::AckStatus::Failed);
+    sendAck_(seqNo, fbs::AckStatus::Failed);
     return;
   }
   if (sub) {
@@ -1731,17 +1719,12 @@ void App::subscribe_(
     sub->interval = interval;
     sub->dirty = true;
   } else {
-    App_::Client_ *client = client_(link);
-    if (ZuUnlikely(client->subs >= m_cf.maxSubs)) {
-      sendAck_(link.ptr(), seqNo, fbs::AckStatus::Failed);
-      clientRelease_(client);
+    if (ZuUnlikely(m_state->subs.count_() >= m_cf.maxSubs)) {
+      sendAck_(seqNo, fbs::AckStatus::Failed);
       return;
     }
     sub = new App_::Subscription;
-    sub->link = link;
-    sub->client = client;
     sub->filter = ZuMv(filter);
-    sub->generation = link->generation();
     sub->seqNo = seqNo;
     sub->order = ++m_state->nextOrder;
     sub->interval = interval;
@@ -1749,9 +1732,8 @@ void App::subscribe_(
     if (group == fbs::Group::Alert)
       sub->pending.init(ZmQueueParams{}.initial(m_cf.alertReplay));
     m_state->subs.addNode(sub);
-    ++client->subs;
   }
-  sendAck_(link.ptr(), seqNo, fbs::AckStatus::OK, interval);
+  sendAck_(seqNo, fbs::AckStatus::OK, interval);
   if (group == fbs::Group::Alert) {
     sub->oneShot = !interval;
     sub->replayDate = alertDate;
@@ -1764,11 +1746,10 @@ void App::subscribe_(
 }
 
 void App::unsubscribe_(
-    Link *link, uint64_t seqNo, fbs::Group group,
+    uint64_t seqNo, fbs::Group group,
     const Filter_::Filter &filter)
 {
-  App_::SubKey key{
-    link->generation(), uint8_t(group), filter.key()};
+  App_::SubKey key{uint8_t(group), filter.key()};
   if (App_::Subscription *sub = m_state->subs.findPtr(key)) {
     if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
@@ -1776,20 +1757,16 @@ void App::unsubscribe_(
     }
     if (auto pending = sub->snapshot) {
       App_::indexDel(m_state->pending,
-	App_::PendingKey{pending->generation, pending->seqNo}, pending);
+	pending->seqNo, pending);
       pending->sub = nullptr;
       sub->snapshot = nullptr;
       sub->running = false;
-      --sub->client->pending;
       delete pending;
     }
-    App_::Client_ *client = sub->client;
-    --client->subs;
     m_state->subs.delNode(sub);
-    clientRelease_(client);
     armTimer_();
   }
-  sendAck_(link, seqNo, fbs::AckStatus::OK);
+  sendAck_(seqNo, fbs::AckStatus::OK);
 }
 
 void App::runSubscription_(App_::Subscription_ *sub_)
@@ -1800,7 +1777,7 @@ void App::runSubscription_(App_::Subscription_ *sub_)
     return;
   }
   sub->dirty = false;
-  if (!snapshot_(sub->link, sub->seqNo, sub->group, sub->filter, sub)) {
+  if (!snapshot_(sub->seqNo, sub->group, sub->filter, sub)) {
     sub->dirty = true;
     sub->due = Zm::now() + App_::interval(sub->interval);
     m_state->due[unsigned(sub->group)].addNode(sub);
@@ -1819,7 +1796,6 @@ void App::replay_(App_::Subscription_ *sub_)
   sub->replayData.close();
   sub->replayIndex.close();
   sub->openDate = 0;
-  sub->replayCount = 0;
   sub->replayFailed = false;
   sub->highDate = m_state->alertDate;
   sub->highSeqNo = m_state->alertSeqNo ? m_state->alertSeqNo - 1 : 0;
@@ -1860,7 +1836,7 @@ void App::replayBatch_(uint64_t order)
   }
   if (!sub || !sub->replaying) return;
   if (sub->replayFailed) {
-    failReplay_(sub, "alert replay handoff overflow", true);
+    failReplay_(sub, "alert replay handoff overflow");
     return;
   }
 
@@ -1877,13 +1853,7 @@ void App::replayBatch_(uint64_t order)
       sub->replayDate, sub->replaySeqNo, frame,
       sub->replayData, sub->replayIndex, sub->openDate);
     if (result == App_::AlertStore::LoadResult::OK) {
-      if (!App_::sendAlertFrame(
-	    sub->link.ptr(), sub->seqNo, frame.ptr())) {
-	m_state->degraded = true;
-	failReplay_(sub, "alert replay frame allocation failed");
-	return;
-      }
-      ++sub->replayCount;
+      publish_(App_::alertFrame(sub->seqNo, frame.ptr()));
       ++sub->replaySeqNo;
       ++n;
       continue;
@@ -1910,12 +1880,9 @@ void App::finishReplay_(App_::Subscription_ *sub_)
   sub->replayData.close();
   sub->replayIndex.close();
   sub->openDate = 0;
-  sendComplete_(sub->link.ptr(), sub->seqNo, sub->replayCount);
+  sendEOS_(sub->seqNo);
   if (sub->oneShot) {
-    App_::Client_ *client = sub->client;
-    --client->subs;
     m_state->subs.delNode(sub);
-    clientRelease_(client);
     return;
   }
   uint32_t lastDate = sub->highDate;
@@ -1924,31 +1891,22 @@ void App::finishReplay_(App_::Subscription_ *sub_)
     if (pending.date < lastDate ||
 	(pending.date == lastDate && pending.seqNo <= lastSeqNo))
       continue;
-    if (!App_::sendAlertFrame(
-	  sub->link.ptr(), sub->seqNo, pending.frame.ptr())) {
-      m_state->degraded = true;
-      sub->link->disconnect();
-      break;
-    }
+    publish_(App_::alertFrame(sub->seqNo, pending.frame.ptr()));
     lastDate = pending.date;
     lastSeqNo = pending.seqNo;
   }
 }
 
 void App::failReplay_(
-    App_::Subscription_ *sub_, ZuCSpan message, bool disconnect)
+    App_::Subscription_ *sub_, ZuCSpan message)
 {
   auto sub = static_cast<App_::Subscription *>(sub_);
   sub->replaying = false;
   sub->replayData.close();
   sub->replayIndex.close();
   sub->openDate = 0;
-  sendError_(sub->link.ptr(), 2, message);
-  if (disconnect) sub->link->disconnect();
-  App_::Client_ *client = sub->client;
-  --client->subs;
+  sendError_(2, message);
   m_state->subs.delNode(sub);
-  clientRelease_(client);
 }
 
 void App::armTimer_()
@@ -1993,32 +1951,19 @@ void App::timerFired_(uint64_t generation, ZuTime)
   armTimer_();
 }
 
-void App::disconnected_(uint64_t generation)
-{
-  snapshotCancel_(generation);
-  App_::Client_ *client = m_state->clients.findVal(generation);
-  auto i = m_state->subs.iter();
-  while (App_::Subscription *sub = i()) {
-    if (sub->generation != generation) continue;
-    if (*sub->due) {
-      m_state->due[unsigned(sub->group)].delNode(sub);
-      sub->due.null();
-    }
-    --sub->client->subs;
-    i.del(sub);
-  }
-  clientRelease_(client);
-  armTimer_();
-}
-
 void App::clearSubscriptions_()
 {
   ZiMultiplex *mx_ = serviceMx_();
   ++m_state->timerGeneration;
   if (mx_) mx_->del(&m_state->timer);
-  while (m_state->pending.count_()) {
-    auto node = m_state->pending.minimum();
-    snapshotCancel_(node->key().p<0>());
+  while (auto node = m_state->pending.minimum()) {
+    App_::Pending_ *pending = node->val();
+    if (pending->sub) {
+      pending->sub->snapshot = nullptr;
+      pending->sub->running = false;
+    }
+    App_::indexDel(m_state->pending, node->key(), pending);
+    delete pending;
   }
   auto i = m_state->subs.iter();
   while (App_::Subscription *sub = i()) {
@@ -2026,35 +1971,20 @@ void App::clearSubscriptions_()
       m_state->due[unsigned(sub->group)].delNode(sub);
       sub->due.null();
     }
-    --sub->client->subs;
     i.del(sub);
   }
-  while (auto node = m_state->clients.minimum()) {
-    App_::Client_ *client = node->val();
-    App_::indexDel(m_state->clients, node->key(), client);
-    delete client;
-  }
-}
-
-void App::invalid_(ZmRef<Link> link)
-{
-  sendError_(link.ptr(), 1, "invalid FlatBuffers message");
 }
 
 bool App::snapshot_(
-    ZmRef<Link> link, uint64_t seqNo, fbs::Group group,
+    uint64_t seqNo, fbs::Group group,
     const Filter_::Filter &filter, App_::Subscription_ *sub_)
 {
-  uint64_t generation = link->generation();
-  App_::PendingKey key{generation, seqNo};
+  App_::PendingKey key{seqNo};
   if (m_state->pending.findVal(key) ||
       m_state->pending.count_() >= m_cf.maxPending)
     return false;
-  App_::Client_ *client = sub_ ? sub_->client : client_(link);
   auto pending = new App_::Pending_;
-  pending->client = client;
   pending->sub = sub_;
-  pending->generation = generation;
   pending->seqNo = seqNo;
   pending->group = group;
 
@@ -2290,68 +2220,58 @@ bool App::snapshot_(
 	  (filter.mode0() == Filter_::Mode::Exact ?
 	    !filter.stringExact(m_cf.id) :
 	    !filter.stringPrefix(m_cf.id))) break;
-      pending->app.id = m_cf.id;
-      pending->app.version = m_cf.version;
-      pending->app.role = m_cf.role;
-      pending->app.startTime = m_startTime;
-      pending->app.state = ZmEngineState::Running;
-      pending->app.degraded = m_state->degraded;
-      pending->app.rag = RAG::T(m_rag.load_());
+      appTelemetry_(pending->app);
       pending->appCaptured = true;
       break;
     case fbs::Group::Alert:
     default:
       delete pending;
-      clientRelease_(client);
       return false;
   }
 
   App_::indexAdd(m_state->pending, ZuMv(key), pending);
-  ++client->pending;
   if (sub_) {
     sub_->snapshot = pending;
     sub_->running = true;
   }
-  serviceMx_()->run([this, generation, seqNo]() {
-    snapshotBatch_(generation, seqNo);
+  serviceMx_()->run([this, seqNo]() {
+    snapshotBatch_(seqNo);
   }, m_cf.workerThread);
   return true;
 }
 
-void App::snapshotBatch_(uint64_t generation, uint64_t seqNo)
+void App::snapshotBatch_(uint64_t seqNo)
 {
-  App_::PendingKey key{generation, seqNo};
-  App_::Pending_ *pending = m_state->pending.findVal(key);
+  App_::Pending_ *pending = m_state->pending.findVal(seqNo);
   if (!pending) return;
-  Link *link = pending->client->link.ptr();
   unsigned budget = m_cf.maxPending;
   bool done = false;
+  auto sendBatch = [this, pending, seqNo, &budget](
+      fbs::TelemetryBody type, const auto &samples) {
+    unsigned n = samples.length();
+    while (pending->offset < n && budget) {
+      publish_(App_::telemetryFrame(
+	m_cf.id, seqNo, type, samples[pending->offset++]));
+      --budget;
+    }
+    return pending->offset == n;
+  };
 
   switch (pending->group) {
     case fbs::Group::Heap:
-      done = App_::sendBatch(link, seqNo,
-	fbs::TelemetryBody::HeapTelemetry, pending->heaps,
-	pending->offset, pending->count, budget);
+      done = sendBatch(fbs::TelemetryBody::HeapTelemetry, pending->heaps);
       break;
     case fbs::Group::Hash:
-      done = App_::sendBatch(link, seqNo,
-	fbs::TelemetryBody::HashTelemetry, pending->hashes,
-	pending->offset, pending->count, budget);
+      done = sendBatch(fbs::TelemetryBody::HashTelemetry, pending->hashes);
       break;
     case fbs::Group::Thread:
-      done = App_::sendBatch(link, seqNo,
-	fbs::TelemetryBody::ThreadTelemetry, pending->threads,
-	pending->offset, pending->count, budget);
+      done = sendBatch(fbs::TelemetryBody::ThreadTelemetry, pending->threads);
       break;
     case fbs::Group::Mx:
       while (budget && pending->stage < 2) {
 	bool stageDone = pending->stage ?
-	  App_::sendBatch(link, seqNo,
-	    fbs::TelemetryBody::CxnTelemetry, pending->cxns,
-	    pending->offset, pending->count, budget) :
-	  App_::sendBatch(link, seqNo,
-	    fbs::TelemetryBody::MxTelemetry, pending->mxs,
-	    pending->offset, pending->count, budget);
+	  sendBatch(fbs::TelemetryBody::CxnTelemetry, pending->cxns) :
+	  sendBatch(fbs::TelemetryBody::MxTelemetry, pending->mxs);
 	if (!stageDone) break;
 	++pending->stage;
 	pending->offset = 0;
@@ -2359,28 +2279,23 @@ void App::snapshotBatch_(uint64_t generation, uint64_t seqNo)
       done = pending->stage == 2;
       break;
     case fbs::Group::Queue:
-      done = App_::sendBatch(link, seqNo,
-	fbs::TelemetryBody::QueueTelemetry, pending->queues,
-	pending->offset, pending->count, budget);
+      done = sendBatch(fbs::TelemetryBody::QueueTelemetry, pending->queues);
       break;
     case fbs::Group::Hub:
       while (budget && pending->stage < 3) {
 	bool stageDone;
 	switch (pending->stage) {
 	  case 0:
-	    stageDone = App_::sendBatch(link, seqNo,
-	      fbs::TelemetryBody::HubTelemetry, pending->hubs,
-	      pending->offset, pending->count, budget);
+	    stageDone = sendBatch(
+	      fbs::TelemetryBody::HubTelemetry, pending->hubs);
 	    break;
 	  case 1:
-	    stageDone = App_::sendBatch(link, seqNo,
-	      fbs::TelemetryBody::LinkTelemetry, pending->links,
-	      pending->offset, pending->count, budget);
+	    stageDone = sendBatch(
+	      fbs::TelemetryBody::LinkTelemetry, pending->links);
 	    break;
 	  default:
-	    stageDone = App_::sendBatch(link, seqNo,
-	      fbs::TelemetryBody::PoolTelemetry, pending->pools,
-	      pending->offset, pending->count, budget);
+	    stageDone = sendBatch(
+	      fbs::TelemetryBody::PoolTelemetry, pending->pools);
 	    break;
 	}
 	if (!stageDone) break;
@@ -2394,19 +2309,16 @@ void App::snapshotBatch_(uint64_t generation, uint64_t seqNo)
 	bool stageDone;
 	switch (pending->stage) {
 	  case 0:
-	    stageDone = App_::sendBatch(link, seqNo,
-	      fbs::TelemetryBody::DBTelemetry, pending->dbs,
-	      pending->offset, pending->count, budget);
+	    stageDone = sendBatch(
+	      fbs::TelemetryBody::DBTelemetry, pending->dbs);
 	    break;
 	  case 1:
-	    stageDone = App_::sendBatch(link, seqNo,
-	      fbs::TelemetryBody::DBHostTelemetry, pending->hosts,
-	      pending->offset, pending->count, budget);
+	    stageDone = sendBatch(
+	      fbs::TelemetryBody::DBHostTelemetry, pending->hosts);
 	    break;
 	  default:
-	    stageDone = App_::sendBatch(link, seqNo,
-	      fbs::TelemetryBody::DBTableTelemetry, pending->tables,
-	      pending->offset, pending->count, budget);
+	    stageDone = sendBatch(
+	      fbs::TelemetryBody::DBTableTelemetry, pending->tables);
 	    break;
 	}
 	if (!stageDone) break;
@@ -2416,12 +2328,10 @@ void App::snapshotBatch_(uint64_t generation, uint64_t seqNo)
       done = pending->stage == 3;
       break;
     case fbs::Group::App:
-      if (pending->appCaptured && !pending->offset && budget) {
-	App_::sendTelemetry(link, seqNo,
-	  fbs::TelemetryBody::AppTelemetry, pending->app);
+      if (pending->appCaptured && !pending->offset) {
+	publish_(App_::telemetryFrame(m_cf.id, seqNo,
+	  fbs::TelemetryBody::AppTelemetry, pending->app));
 	pending->offset = 1;
-	++pending->count;
-	--budget;
       }
       done = !pending->appCaptured || pending->offset;
       break;
@@ -2435,23 +2345,20 @@ void App::snapshotBatch_(uint64_t generation, uint64_t seqNo)
     snapshotDone_(pending);
     return;
   }
-  serviceMx_()->run([this, generation, seqNo]() {
-    snapshotBatch_(generation, seqNo);
+  serviceMx_()->run([this, seqNo]() {
+    snapshotBatch_(seqNo);
   }, m_cf.workerThread);
 }
 
 void App::snapshotDone_(App_::Pending_ *pending)
 {
-  App_::Client_ *client = pending->client;
   auto sub = static_cast<App_::Subscription *>(pending->sub);
-  App_::indexDel(m_state->pending,
-    App_::PendingKey{pending->generation, pending->seqNo}, pending);
+  App_::indexDel(m_state->pending, pending->seqNo, pending);
   if (sub) {
     sub->snapshot = nullptr;
     sub->running = false;
   }
-  sendComplete_(client->link.ptr(), pending->seqNo, pending->count);
-  --client->pending;
+  sendEOS_(pending->seqNo);
   delete pending;
 
   if (sub && sub->dirty) {
@@ -2463,62 +2370,38 @@ void App::snapshotDone_(App_::Pending_ *pending)
     runSubscription_(sub);
   }
   armTimer_();
-  clientRelease_(client);
-}
-
-void App::snapshotCancel_(uint64_t generation)
-{
-  for (;;) {
-    App_::Pending_ *pending = nullptr;
-    {
-      auto i = m_state->pending.citer();
-      while (auto node = i()) {
-	if (node->key().p<0>() != generation) continue;
-	pending = node->val();
-	break;
-      }
-    }
-    if (!pending) return;
-    App_::Client_ *client = pending->client;
-    if (pending->sub) {
-      pending->sub->snapshot = nullptr;
-      pending->sub->running = false;
-    }
-    App_::indexDel(m_state->pending,
-      App_::PendingKey{pending->generation, pending->seqNo}, pending);
-    --client->pending;
-    delete pending;
-  }
 }
 
 void App::sendAck_(
-    Link *link, uint64_t seqNo, fbs::AckStatus status, uint32_t interval)
+    uint64_t seqNo, fbs::AckStatus status, uint32_t interval)
 {
   Zfb::IOBuilder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::CtrlFrame{link}})};
-  auto ack = fbs::CreateAck(fbb, seqNo, status, interval);
+    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
+  auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
+  auto ack = fbs::CreateAck(fbb, id, seqNo, status, interval);
   fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Ack, ack.Union()));
-  if (auto buf = saveHdr(fbb, link)) link->send(ZuMv(buf));
+  publish_(saveHdr(fbb));
 }
 
-void App::sendError_(Link *link, int32_t code, ZuCSpan message)
+void App::sendError_(int32_t code, ZuCSpan message)
 {
   Zfb::IOBuilder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::CtrlFrame{link}})};
+    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
+  auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
   auto text = fbb.CreateString(message.data(), message.length());
-  auto error = fbs::CreateError(fbb, 0, false, code, text);
+  auto error = fbs::CreateError(fbb, id, 0, false, code, text);
   fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Error, error.Union()));
-  if (auto buf = saveHdr(fbb, link)) link->send(ZuMv(buf));
+  publish_(saveHdr(fbb));
 }
 
-void App::sendComplete_(Link *link, uint64_t seqNo, uint32_t count)
+void App::sendEOS_(uint64_t seqNo)
 {
   Zfb::IOBuilder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::CtrlFrame{link}})};
-  auto complete = fbs::CreateSnapshotComplete(fbb, seqNo, count);
-  fbb.Finish(
-    fbs::CreateMsg(fbb, fbs::Body::SnapshotComplete, complete.Union()));
-  if (auto buf = saveHdr(fbb, link)) link->send(ZuMv(buf));
+    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
+  auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
+  auto eos = fbs::CreateEOS(fbb, id, seqNo);
+  fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::EOS, eos.Union()));
+  publish_(saveHdr(fbb));
 }
 
 } // Ztc

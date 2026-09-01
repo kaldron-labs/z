@@ -22,7 +22,6 @@ void app()
 {
   ZuTestScope(app);
   Ztc::AppTelemetry data;
-  data.id = "app";
   data.version = "10.0.0";
   data.role = "telemetry";
   data.startTime = INT64_C(0x123456789abcdef);
@@ -35,7 +34,6 @@ void app()
   auto fbo = ZfbStruct::verify<Ztc::AppTelemetry>(
     {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
   ZuCheck(fbo);
-  ZuCheck(Zfb::Load::str(fbo->id()) == data.id);
   ZuCheck(Zfb::Load::str(fbo->version()) == data.version);
   ZuCheck(Zfb::Load::str(fbo->role()) == data.role);
   ZuCheck(fbo->startTime() == data.startTime);
@@ -44,7 +42,6 @@ void app()
   ZuCheck(fbo->rag() == Ztc::fbs::RAG::Amber);
 
   auto loaded = ZfbStruct::ctor<Ztc::AppTelemetry>(fbo);
-  ZuCheck(loaded.id == data.id);
   ZuCheck(loaded.version == data.version);
   ZuCheck(loaded.role == data.role);
   ZuCheck(loaded.startTime == data.startTime);
@@ -90,9 +87,11 @@ void alert()
 
   Zfb::Builder msgBuilder;
   msgBuilder.ForceDefaults(true);
+  auto id = msgBuilder.CreateString("app");
   auto value = ZfbStruct::save(msgBuilder, data);
   auto telemetry = Ztc::fbs::CreateTelemetry(
-    msgBuilder, 0, Ztc::fbs::TelemetryBody::AlertTelemetry, value.Union());
+    msgBuilder, id, 0,
+    Ztc::fbs::TelemetryBody::AlertTelemetry, value.Union());
   msgBuilder.Finish(Ztc::fbs::CreateMsg(
     msgBuilder, Ztc::fbs::Body::Telemetry, telemetry.Union()));
   auto msg = flatbuffers::GetMutableRoot<Ztc::fbs::Msg>(
@@ -171,9 +170,10 @@ void framing()
   Zfb::IOBuilder invalidValue{
     Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
   Ztc::AppTelemetry invalidValueData;
+  auto invalidID = invalidValue.CreateString("app");
   auto invalidValueOffset = ZfbStruct::save(invalidValue, invalidValueData);
   auto invalidTelemetry = Ztc::fbs::CreateTelemetry(
-    invalidValue, 3, Ztc::fbs::TelemetryBody(127),
+    invalidValue, invalidID, 3, Ztc::fbs::TelemetryBody(127),
     invalidValueOffset.Union());
   invalidValue.Finish(Ztc::fbs::CreateMsg(
     invalidValue, Ztc::fbs::Body::Telemetry, invalidTelemetry.Union()));
@@ -224,17 +224,19 @@ template <typename T>
 bool unionValue(Ztc::fbs::TelemetryBody type, const T &data)
 {
   Zfb::Builder fbb;
+  auto id = fbb.CreateString("app");
   auto value =
     ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
   auto telemetry = Ztc::fbs::CreateTelemetry(
-    fbb, UINT64_C(0xabcdef0123456789), type, value.Union());
+    fbb, id, UINT64_C(0xabcdef0123456789), type, value.Union());
   fbb.Finish(Ztc::fbs::CreateMsg(
     fbb, Ztc::fbs::Body::Telemetry, telemetry.Union()));
   Zfb::Verifier verifier{fbb.GetBufferPointer(), fbb.GetSize()};
   if (!verifier.VerifyBuffer<Ztc::fbs::Msg>()) return false;
   auto msg = Zfb::GetRoot<Ztc::fbs::Msg>(fbb.GetBufferPointer());
   auto loaded = msg && Ztc::validMsg(msg) ? msg->body_as_Telemetry() : nullptr;
-  return loaded && loaded->seqNo() == UINT64_C(0xabcdef0123456789) &&
+  return loaded && Zfb::Load::str(loaded->id()) == "app" &&
+    loaded->seqNo() == UINT64_C(0xabcdef0123456789) &&
     loaded->value_type() == type && loaded->value();
 }
 

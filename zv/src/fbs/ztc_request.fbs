@@ -13,17 +13,19 @@ table Request {
 }
 
 table Ack {
+  id:string;
   seq_no:uint64;
   status:AckStatus;
   interval:uint32;
 }
 
-table SnapshotComplete {
+table EOS {
+  id:string;
   seq_no:uint64;
-  count:uint32;
 }
 
 table Error {
+  id:string;
   seq_no:uint64;
   has_seq_no:bool;
   code:int32;

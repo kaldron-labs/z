@@ -207,13 +207,12 @@ ZfbStruct(PoolTelemetry,
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 ZfbStruct(AppTelemetry,
-  (((id),		(Ctor<0>, Keys<0>)),		(String)),
-  (((version),		(Ctor<1>)),			(String)),
-  (((role),		(Ctor<2>)),			(String)),
-  (((startTime),	(Ctor<3>)),			(Int64)),
-  (((state),		(Ctor<4>, Mutable, Enum<EngineState::Map>)), (Int8)),
-  (((degraded),		(Ctor<5>, Mutable)),		(Bool)),
-  (((rag),		(Ctor<6>, Mutable, Enum<RAG::Map>)), (Int8)));
+  (((version),		(Ctor<0>)),			(String)),
+  (((role),		(Ctor<1>)),			(String)),
+  (((startTime),	(Ctor<2>)),			(Int64)),
+  (((state),		(Ctor<3>, Mutable, Enum<EngineState::Map>)), (Int8)),
+  (((degraded),		(Ctor<4>, Mutable)),		(Bool)),
+  (((rag),		(Ctor<5>, Mutable, Enum<RAG::Map>)), (Int8)));
 
 ZfbStruct(AlertTelemetry,
   (((date),		(Ctor<4>, Keys<0>)),		(UInt32)),

@@ -28,8 +28,7 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
-
-#include <zlib/Ztcp.hh>
+#include <zlib/ZiProgram.hh>
 
 #include <zlib/ZvMxParams.hh>
 
@@ -49,7 +48,6 @@ namespace Filter_ {
 }
 namespace App_ {
   class AlertEvent;
-  class Client_;
   class Ingress;
   class IngressData;
   class Pending_;
@@ -59,7 +57,8 @@ namespace App_ {
 
 struct AppCf {
   enum {
-    DefltAccepts = 8,
+    DefltReqSize = 1U<<21, // margin over the 1 MiB maximum frame
+    DefltReqTimeout = 1,
     DefltMaxFrame = 1U<<20,
     DefltMaxFilter = 1024,
     DefltMinInterval = 100,
@@ -72,12 +71,12 @@ struct AppCf {
     DefltAlertRetention = 7
   };
 
-  ZuID		id{"ztc"};
+  ZuID		id{ZiProgram::name()};
   ZuID		version{"10.0.0"};
   ZuID		role{"server"};
-  ZiIP		ip{"127.0.0.1"};
-  uint16_t	port = 0;
-  unsigned	nAccepts = DefltAccepts;
+  unsigned	reqSize = DefltReqSize;
+  unsigned	reqTimeout = DefltReqTimeout;
+  bool		reqLL = false;
   unsigned	maxFrame = DefltMaxFrame;
   unsigned	maxFilter = DefltMaxFilter;
   unsigned	minInterval = DefltMinInterval;
@@ -101,16 +100,15 @@ struct AppCf {
   unsigned	rxThread = 2;
   unsigned	txThread = 3;
   unsigned	workerThread = 4;
-  unsigned	rebindFreq = 0;
 };
 
 ZfStruct(AppCf,
   (((id)),						(String)),
   (((version)),						(String)),
   (((role)),						(String)),
-  (((ip)),						(String)),
-  (((port)),						(UInt16)),
-  (((nAccepts),		((Range<1U, 1024U>))),		(UInt32, 8)),
+  (((reqSize),		((Range<64U, 1U<<30U>))),	(UInt32, 1U<<21U)),
+  (((reqTimeout),	((Range<1U, 3600U>))),		(UInt32, 1)),
+  (((reqLL)),						(Bool)),
   (((maxFrame),		((Range<64U, 1U<<30U>))),	(UInt32, 1U<<20U)),
   (((maxFilter),	((Range<1U, 1U<<20U>))),	(UInt32, 1024)),
   (((minInterval),	((Range<1U, 3600000U>))),	(UInt32, 100)),
@@ -128,19 +126,14 @@ ZfStruct(AppCf,
   (((timerThread),	((Range<1U, 1024U>))),		(UInt32, 1)),
   (((rxThread),		((Range<1U, 1024U>))),		(UInt32, 2)),
   (((txThread),		((Range<1U, 1024U>))),		(UInt32, 3)),
-  (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 4)),
-  (((rebindFreq),	((Range<0U, 3600U>))),		(UInt32)));
+  (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 4)));
 
-class ZvAPI App : public Ztcp::Server<App> {
-  using Base = Ztcp::Server<App>;
-
+class ZvAPI App {
 public:
   using CtrlFn =
     ZmFn<void(bool), ZmFnHeapID<"Ztc.App.CtrlFn">>;
   using RagFn =
     ZmFn<void(RAG::T), ZmFnHeapID<"Ztc.App.RagFn">>;
-
-  class Link;
 
 friend App_::Ingress;
 friend App_::IngressData;
@@ -157,18 +150,6 @@ friend App_::IngressData;
   void stop(CtrlFn);
   bool stop();
   void final();
-
-  ZiIP localIP() const { return m_cf.ip; }
-  uint16_t localPort() const {
-    uint16_t port = m_boundPort.load_();
-    return port ? port : m_cf.port;
-  }
-  unsigned nAccepts() const { return m_cf.nAccepts; }
-  unsigned rebindFreq() const { return m_cf.rebindFreq; }
-
-  void listening(const ZiListenInfo &);
-  void listenFailed(bool);
-  ZiConnection *accepted(const ZiCxnInfo &);
 
   void rag(RAG::T);
   void rag(RagFn) const;
@@ -207,43 +188,40 @@ private:
   using DBTableIdx =
     Index<DBTableKey, DBTable, "Ztc.App.DBTableIdx">;
 
-  ZiMultiplex *serviceMx_() {
-    return m_mx.is<ZiMultiplex>() ? &m_mx.p<ZiMultiplex>() : nullptr;
-  }
-  const ZiMultiplex *serviceMx_() const {
+  ZiMultiplex *serviceMx_() const {
     return m_mx.is<ZiMultiplex>() ? &m_mx.p<ZiMultiplex>() : nullptr;
   }
 
-  void request_(ZmRef<Link>, ZmRef<ZiIOBuf>);
+  void reqRun_();
+  void request_(ZmRef<ZiIOBuf>);
   void startDone_(bool);
-  void invalid_(ZmRef<Link>);
-  void disconnected_(uint64_t);
   void timerFired_(uint64_t, ZuTime);
   void rag_(RAG::T);
   void alert_(ZmRef<App_::AlertEvent>);
-  App_::Client_ *client_(ZmRef<Link>);
-  void clientRelease_(App_::Client_ *);
   bool snapshot_(
-    ZmRef<Link>, uint64_t, fbs::Group, const Filter_::Filter &,
+    uint64_t, fbs::Group, const Filter_::Filter &,
     App_::Subscription_ * = nullptr);
-  void snapshotBatch_(uint64_t, uint64_t);
+  void snapshotBatch_(uint64_t);
   void snapshotDone_(App_::Pending_ *);
-  void snapshotCancel_(uint64_t);
   void subscribe_(
-    ZmRef<Link>, uint64_t, fbs::Group, Filter_::Filter, uint32_t,
+    uint64_t, fbs::Group, Filter_::Filter, uint32_t,
     uint32_t = 0, uint64_t = 0);
   void unsubscribe_(
-    Link *, uint64_t, fbs::Group, const Filter_::Filter &);
+    uint64_t, fbs::Group, const Filter_::Filter &);
   void runSubscription_(App_::Subscription_ *);
   void replay_(App_::Subscription_ *);
   void replayBatch_(uint64_t);
   void finishReplay_(App_::Subscription_ *);
-  void failReplay_(App_::Subscription_ *, ZuCSpan, bool = false);
+  void failReplay_(App_::Subscription_ *, ZuCSpan);
   void armTimer_();
   void clearSubscriptions_();
-  void sendAck_(Link *, uint64_t, fbs::AckStatus, uint32_t = 0);
-  void sendError_(Link *, int32_t, ZuCSpan);
-  void sendComplete_(Link *, uint64_t, uint32_t);
+  bool publishRaw_(ZmRef<ZiIOBuf>);
+  bool publish_(ZmRef<ZiIOBuf>);
+  bool publishApp_(uint64_t);
+  void appTelemetry_(AppTelemetry &);
+  void sendAck_(uint64_t, fbs::AckStatus, uint32_t = 0);
+  void sendError_(int32_t, ZuCSpan);
+  void sendEOS_(uint64_t);
 
   void warmIndices_();
   void clearIndices_();
@@ -285,17 +263,14 @@ private:
   DBIdx				m_dbIdx;
   DBHostIdx			m_dbHostIdx;
   DBTableIdx			m_dbTableIdx;
-  ZuUnion<void, ZiMultiplex>	m_mx;
+  mutable ZuUnion<void, ZiMultiplex>	m_mx;
   int64_t			m_startTime = 0;
-  ZmAtomic<unsigned>		m_boundPort = 0;
   ZmAtomic<unsigned>		m_rag = RAG::Off;
-  ZmAtomic<uint64_t>		m_linkGeneration = 0;
   CtrlLock			m_ctrlLock;
   CtrlFn			m_startFn;
   bool				m_startPending = false;
   bool				m_initialized = false;
   bool				m_watching = false;
-  bool				m_serverInitialized = false;
   ZmAtomic<unsigned>		m_running = 0;
 };
 
