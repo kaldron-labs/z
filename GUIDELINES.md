@@ -184,8 +184,14 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ## Use of STL and other dependencies
 - minimize use of STL
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
-- maximally leverage the foundation Z framework libraries:
+- maximally leverage the Z framework foundation libraries:
   - `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
+
+## Windows
+- MSVC/Intel compatibility is a non-goal
+- Targets are gcc and clang under MinGW / MSYS2, 64bit only
+- do not use the `*W()` variant names, the build is always `wchar_t`-enabled:
+  - use `GetTempPath`, not `GetTempPathW`
 
 ## Audit flags
 ### Code structure
