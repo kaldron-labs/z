@@ -10,6 +10,7 @@ table Request {
   subscribe:bool;
   alert_date:uint32;
   alert_seq_no:uint64;
+  id:string;
 }
 
 table Ack {
