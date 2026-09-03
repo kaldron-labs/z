@@ -431,7 +431,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Metadata
 - Use `ZuStruct`, `ZfStruct`, and `ZfbStruct` for compile-time extract/transform metadata.
-- Use metadata integrations instead of ad hoc parsing: JSON `ZfJSON`, ASN.1 `ZfASN1`, CLI `ZfCLI`, CSV `ZfCSV`, URI query `ZfURI`, and Framebuffers `ZfbStruct`.
+- Use metadata integrations instead of ad hoc parsing: JSON `ZfJSON`, ASN.1 `ZfASN1`, CLI `ZfCLI`, CSV `ZfCSV`, URI query `ZfURI`, and FlatBuffers `ZfbStruct`.
+- Strongly discourage direct use of the FlatBuffers C/C++ APIs in application and library code.
+  - Use `ZfbStruct::save`, `ZfbStruct::ctor`, `ZfbStruct::alloc`, `ZfbStruct::new_`, `ZfbStruct::load`, and `ZfbStruct::update` instead.
+  - Direct FlatBuffers API use is reserved for implementing or extending the `Zfb`/`ZfbStruct` integration itself, generated-code boundaries that `ZfbStruct` cannot represent, and explicitly justified verification or reflection work.
+  - Do not bypass `ZfbStruct` merely to call generated builders, accessors, object APIs, `Pack`/`UnPack`, or native-table APIs directly.
 
 ### Concurrency and sharding
 - Use `ZmScheduler` for thread pools.
@@ -739,6 +743,13 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - Example: `int x() const` and `void x(int)`.
 - `decltype(auto) x(this &&self) { ... }` is acceptable to preserve move context.
 - `int &x()` as a setter is an amber flag; use it only when thread-safety is guaranteed by the calling context. If direct mutation is intended, `int x` should probably be a public data member.
+- When an outer fluent parameter type contains or extends another fluent
+  parameter type, preserve inline configuration with the
+  `ZiMxParams::scheduler()` pattern: provide accessors for the inner/base
+  parameters and a same-named lambda overload that applies the lambda and
+  returns the outer type as an rvalue. Do not forward every inner/base setter,
+  and do not permit an inherited setter's narrower return type to decay an
+  inline expression to the base type.
 
 ### Trailing underscores
 - Use trailing underscores for internal-only or thread-dedicated functions/types.
