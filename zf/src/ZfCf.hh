@@ -457,7 +457,9 @@ struct AsObject {
     }
   };
 
-  // Callers must resolve the non-owning raw-node state before saving.
+  // Any actual parse-tree node is retained without inspecting its shape.
+  // The parse tree must remain alive and callers must resolve the non-owning
+  // raw-node state before semantic decoding or non-null saving.
   template <typename ...Ts, typename Facet>
   struct Handler<Union<Ts...>, Facet> {
     using O = Union<Ts...>;
@@ -473,13 +475,9 @@ struct AsObject {
 	using V = typename O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {
-	  ZuAssert((ZuIsSame<As<V>, AsObject>{} ||
-	      (ZuIsSame<As<V>, AsDeflt>{} && ZuFields<V, Facet>::N)));
 	  As<V>::template Handler<V, Facet>::template save<Filter>(s, v);
 	} else {
 	  using U = ZuDecay<decltype(*v)>;
-	  ZuAssert((ZuIsSame<As<U>, AsObject>{} ||
-	      (ZuIsSame<As<U>, AsDeflt>{} && ZuFields<U, Facet>::N)));
 	  if (ZuLikely(v))
 	    As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
 	  else
@@ -489,7 +487,7 @@ struct AsObject {
     }
 
     static bool valid(const AnyNode *node) {
-      return node && node->has<AnyNode::Object>();
+      return node != nullptr;
     }
     Handler(const AnyNode *node_) : node{node_} { }
     O ctor() const { return O(node); }

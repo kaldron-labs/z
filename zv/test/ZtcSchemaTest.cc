@@ -25,6 +25,7 @@ void app()
   data.version = "10.0.0";
   data.role = "telemetry";
   data.startTime = INT64_C(0x123456789abcdef);
+  data.ztcver = UINT32_C(12034056);
   data.state = ZmEngineState::Running;
   data.degraded = true;
   data.rag = Ztc::RAG::Amber;
@@ -37,6 +38,7 @@ void app()
   ZuCheck(Zfb::Load::str(fbo->version()) == data.version);
   ZuCheck(Zfb::Load::str(fbo->role()) == data.role);
   ZuCheck(fbo->startTime() == data.startTime);
+  ZuCheck(fbo->ztcver() == data.ztcver);
   ZuCheck(fbo->state() == data.state);
   ZuCheck(fbo->degraded() == data.degraded);
   ZuCheck(fbo->rag() == Ztc::fbs::RAG::Amber);
@@ -45,6 +47,7 @@ void app()
   ZuCheck(loaded.version == data.version);
   ZuCheck(loaded.role == data.role);
   ZuCheck(loaded.startTime == data.startTime);
+  ZuCheck(loaded.ztcver == data.ztcver);
   ZuCheck(loaded.state == data.state);
   ZuCheck(loaded.degraded == data.degraded);
   ZuCheck(loaded.rag == data.rag);
@@ -107,8 +110,12 @@ void framing()
   ZuTestScope(framing);
   Zfb::IOBuilder fbb{
     Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
-  auto request = Ztc::fbs::CreateRequestDirect(
-    fbb, UINT64_C(0x123456789abcdef0), Ztc::fbs::Group::App, "app");
+  Ztc::Request data;
+  data.filter = "app";
+  data.id = "target";
+  data.seqNo = UINT64_C(0x123456789abcdef0);
+  data.group = uint8_t(Ztc::fbs::Group::App);
+  auto request = ZfbStruct::save(fbb, data);
   fbb.Finish(Ztc::fbs::CreateMsg(
     fbb, Ztc::fbs::Body::Request, request.Union()));
 
@@ -129,6 +136,7 @@ void framing()
   ZuCheck(loaded->seqNo() == UINT64_C(0x123456789abcdef0));
   ZuCheck(loaded->group() == Ztc::fbs::Group::App);
   ZuCheck(Zfb::Load::str(loaded->filter()) == "app");
+  ZuCheck(Zfb::Load::str(loaded->id()) == "target");
 
   uint32_t length = hdr->length;
   hdr->length = UINT32_MAX;
@@ -217,7 +225,8 @@ void goldenWire()
     Zfb::Load::str(loaded->filter()) == "Tx:hub:link*" &&
     loaded->interval() == UINT32_C(0x10203040) && loaded->subscribe() &&
     loaded->alertDate() == UINT32_C(20260731) &&
-    loaded->alertSeqNo() == UINT64_C(0xfedcba9876543210));
+    loaded->alertSeqNo() == UINT64_C(0xfedcba9876543210) &&
+    !loaded->id());
 }
 
 template <typename T>

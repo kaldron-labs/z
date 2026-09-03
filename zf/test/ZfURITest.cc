@@ -157,7 +157,35 @@ struct URIUnionA { int foo = 0; };
 struct URIUnionB { int bar = 0; };
 ZfStruct((URIUnionA, URI), (((foo), (Ctor<0>, Mutable)), (Int32)));
 ZfStruct((URIUnionB, URI), (((bar), (Ctor<0>, Mutable)), (Int32)));
-struct URIUnionHolder { ZfURI::Union<URIUnionA, URIUnionB> value; };
+struct URIUnionArray : public ZtArray<int> {
+  using ZtArray<int>::ZtArray;
+  friend ZfURI::AsArray<ZfFieldTC::Int32> ZfURI_Fmt(URIUnionArray *);
+};
+struct URIUnionText {
+  ZtString<> value;
+  URIUnionText() = default;
+  URIUnionText(ZuCSpan value_) : value{value_} { }
+  template <typename S> friend S &operator <<(S &s, const URIUnionText &v) {
+    s << v.value;
+    return s;
+  }
+  friend ZfURI::AsString ZfURI_Fmt(URIUnionText *);
+};
+struct URIUnionJSON {
+  ZtString<> value;
+  URIUnionJSON() = default;
+  URIUnionJSON(ZuCSpan value_) : value{value_} { }
+  template <typename S> friend S &operator <<(S &s, const URIUnionJSON &v) {
+    s << v.value;
+    return s;
+  }
+  friend ZfURI::AsJSON ZfURI_Fmt(URIUnionJSON *);
+  friend ZfJSON::AsString ZfJSON_Fmt(URIUnionJSON *);
+};
+struct URIUnionHolder {
+  ZfURI::Union<URIUnionA, URIUnionB,
+    URIUnionArray, URIUnionText, URIUnionJSON> value;
+};
 ZfStruct((URIUnionHolder, URI),
   (((value), (Ctor<0>, Mutable)), (UDT)));
 
@@ -684,6 +712,42 @@ void unions()
   ZtString<> round;
   ZfURI::save(round, loaded);
   ZuCheck(round == saved);
+
+  URIUnionHolder array;
+  array.value = URIUnionArray{1, 2, 3};
+  saved.null();
+  ZfURI::save(saved, array);
+  ZuCheck(saved == "?value[0]=1&value[1]=2&value[2]=3");
+  input = saved;
+  auto arrayTree = ZfURI::scan(input.span());
+  auto arrayRaw = ZfURI::handler<URIUnionHolder>(arrayTree.p<1>()).ctor();
+  auto arrayNode = arrayRaw.value.p<const ZfURI::AnyNode *>();
+  ZuCheck(arrayNode && arrayNode->has<ZfURI::AnyNode::Array>());
+  arrayRaw.value = ZfURI::handler<URIUnionArray>(arrayNode).ctor();
+  ZuCheck(arrayRaw.value.p<URIUnionArray>().length() == 3);
+
+  URIUnionHolder scalar;
+  scalar.value = URIUnionText{"text"};
+  saved.null();
+  ZfURI::save(saved, scalar);
+  ZuCheck(saved == "?value=text");
+  input = saved;
+  auto scalarTree = ZfURI::scan(input.span());
+  auto scalarRaw = ZfURI::handler<URIUnionHolder>(scalarTree.p<1>()).ctor();
+  auto scalarNode = scalarRaw.value.p<const ZfURI::AnyNode *>();
+  ZuCheck(scalarNode && scalarNode->has<ZfURI::AnyNode::String>());
+  scalarRaw.value = ZfURI::handler<URIUnionText>(scalarNode).ctor();
+  ZuCheck(scalarRaw.value.p<URIUnionText>().value == "text");
+
+  URIUnionHolder json;
+  json.value = URIUnionJSON{"json"};
+  saved.null();
+  ZfURI::save(saved, json);
+  ZuCheck(saved.find("value=") >= 0);
+
+  using UnionHandler = typename ZfURI::As<decltype(json.value)>::
+    template Handler<decltype(json.value), ZuFacet::URI>;
+  ZuCheck(!UnionHandler::valid(nullptr));
 
   URIUnionHolder empty;
   saved.null();

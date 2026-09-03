@@ -22,6 +22,7 @@
 #include <zlib/ZiRing.hh>
 
 #include <zlib/ZtcApp.hh>
+#include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
 
 #include "ZiTestResidue.hh"
@@ -42,13 +43,20 @@ using Frame = ZiIOBufAlloc<1024,
 inline ZmRef<ZiIOBuf> request(
     uint64_t seqNo, Ztc::fbs::Group group, ZuCSpan filter,
     uint32_t interval, bool subscribe,
-    uint32_t alertDate = 0, uint64_t alertSeqNo = 0)
+    uint32_t alertDate = 0, uint64_t alertSeqNo = 0,
+    ZuCSpan id = {})
 {
   Zfb::IOBuilder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
-  auto filter_ = fbb.CreateString(filter.data(), filter.length());
-  auto request_ = Ztc::fbs::CreateRequest(
-    fbb, seqNo, group, filter_, interval, subscribe,
-    alertDate, alertSeqNo);
+  Ztc::Request data;
+  data.filter = filter;
+  data.id = id;
+  data.seqNo = seqNo;
+  data.alertSeqNo = alertSeqNo;
+  data.interval = interval;
+  data.alertDate = alertDate;
+  data.group = uint8_t(group);
+  data.subscribe = subscribe;
+  auto request_ = ZfbStruct::save(fbb, data);
   fbb.Finish(Ztc::fbs::CreateMsg(
     fbb, Ztc::fbs::Body::Request, request_.Union()));
   return Ztc::saveHdr(fbb);

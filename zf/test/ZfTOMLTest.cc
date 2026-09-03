@@ -52,14 +52,6 @@ static_assert(ZuFieldProp::TOML::GetScalarFmt<
 static_assert(ZuFieldProp::TOML::GetScalarFmt<
   ZuTypeList<ZuFieldProp::TOML::MultilineLiteral>>{} ==
     ZfTOML::MultilineLiteralScalar);
-static_assert(ZuFieldProp::TOML::GetArrayFmt<ZuTypeList<>>{} ==
-  ZfTOML::InlineArray);
-static_assert(ZuFieldProp::TOML::GetArrayFmt<
-  ZuTypeList<ZuFieldProp::TOML::Tables>>{} == ZfTOML::TableArray);
-static_assert(ZuFieldProp::TOML::GetMapFmt<ZuTypeList<>>{} ==
-  ZfTOML::InlineMap);
-static_assert(ZuFieldProp::TOML::GetMapFmt<
-  ZuTypeList<ZuFieldProp::TOML::TableMap>>{} == ZfTOML::TableMap);
 static_assert(ZuFieldProp::TOML::GetBytesFmt<ZuTypeList<>>{} ==
   ZfTOML::Base64);
 static_assert(ZuFieldProp::TOML::GetBytesFmt<
@@ -140,9 +132,9 @@ struct TOMLMapHolder {
   TOMLObjMapRef objects;
 };
 ZfStruct((TOMLMapHolder, TOML),
-  (((inline_), (Ctor<0>)), (UDT)),
-  (((table), (Ctor<1>, TOML::TableMap)), (UDT)),
-  (((objects), (Ctor<2>)), (UDT)));
+  (((inline_), (Ctor<0>, TOML::Inline)), (UDT)),
+  (((table), (Ctor<1>)), (UDT)),
+  (((objects), (Ctor<2>, TOML::Inline)), (UDT)));
 
 struct TOMLUnionA { int foo = 0; };
 struct TOMLUnionB { int bar = 0; };
@@ -151,6 +143,48 @@ ZfStruct((TOMLUnionB, TOML), (((bar), (Ctor<0>, Mutable)), (Int32)));
 struct TOMLUnionHolder { ZfTOML::Union<TOMLUnionA, TOMLUnionB> value; };
 ZfStruct((TOMLUnionHolder, TOML),
   (((value), (Ctor<0>, Mutable)), (UDT)));
+
+struct TOMLUnionArray : public ZtArray<int> {
+  using ZtArray<int>::ZtArray;
+  friend ZfTOML::AsArray<ZfFieldTC::Int32> ZfTOML_Fmt(TOMLUnionArray *);
+};
+struct TOMLUnionText {
+  ZtString<> value;
+  TOMLUnionText() = default;
+  TOMLUnionText(ZuCSpan value_) : value{value_} { }
+  template <typename S> friend S &operator <<(S &s, const TOMLUnionText &v) {
+    s << v.value;
+    return s;
+  }
+  friend ZfTOML::AsString ZfTOML_Fmt(TOMLUnionText *);
+};
+using TOMLMixedUnion = ZfTOML::Union<
+  TOMLUnionA, TOMLIntMap, TOMLUnionArray, TOMLUnionText>;
+struct TOMLMixedHolder { TOMLMixedUnion value; };
+ZfStruct((TOMLMixedHolder, TOML),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+struct TOMLMixedInlineHolder { TOMLMixedUnion value; };
+ZfStruct((TOMLMixedInlineHolder, TOML),
+  (((value), (Ctor<0>, Mutable, TOML::Inline)), (UDT)));
+struct TOMLMixedElements : public ZtArray<TOMLMixedUnion> {
+  using ZtArray<TOMLMixedUnion>::ZtArray;
+  friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLMixedElements *);
+};
+struct TOMLMixedElementsHolder { TOMLMixedElements values; };
+ZfStruct((TOMLMixedElementsHolder, TOML),
+  (((values), (Ctor<0>, Mutable)), (UDT)));
+using TOMLObjectUnion = ZfTOML::Union<TOMLUnionA, TOMLUnionB>;
+struct TOMLObjectUnionElements : public ZtArray<TOMLObjectUnion> {
+  using ZtArray<TOMLObjectUnion>::ZtArray;
+  friend ZfTOML::AsArray<ZfFieldTC::UDT>
+    ZfTOML_Fmt(TOMLObjectUnionElements *);
+};
+struct TOMLObjectUnionElementsHolder { TOMLObjectUnionElements values; };
+ZfStruct((TOMLObjectUnionElementsHolder, TOML),
+  (((values), (Ctor<0>, Mutable)), (UDT)));
+struct TOMLObjectUnionInlineHolder { TOMLObjectUnionElements values; };
+ZfStruct((TOMLObjectUnionInlineHolder, TOML),
+  (((values), (Ctor<0>, Mutable, TOML::Inline)), (UDT)));
 
 struct TOMLTableUnionHolder {
   ZfTOML::Union<TOMLUnionA, TOMLMapHolder> value;
@@ -208,10 +242,7 @@ ZfStruct((TOMLPtrHolder, TOML),
 
 struct TOMLPtrTables { ZmRef<TOMLPtrArray> values; };
 ZfStruct((TOMLPtrTables, TOML),
-  (((values), (Mutable, TOML::Tables)), (UDT)));
-
-static_assert(ZfTOML::InlineMapValid<TOMLIntMapRef>{});
-static_assert(ZfTOML::InlineMapValid<TOMLObjMapRef>{});
+  (((values), (Mutable)), (UDT)));
 ZuAssert((ZuIsSame<
   ZmHeapID<TOMLIntMap>, ZuStringT<"ZfTest.TOML.IntMap">>{}));
 ZuAssert((ZuIsSame<
@@ -265,7 +296,7 @@ ZfStruct((TOMLScalarArrays, TOML),
 
 struct TOMLScalarInline { TOMLScalars values; };
 ZfStruct((TOMLScalarInline, TOML),
-  (((values), (Ctor<0>)), (UDT)));
+  (((values), (Ctor<0>, TOML::Inline)), (UDT)));
 
 struct TOMLScalarRows : public ZtArray<TOMLScalars> {
   using ZtArray<TOMLScalars>::ZtArray;
@@ -273,7 +304,7 @@ struct TOMLScalarRows : public ZtArray<TOMLScalars> {
 };
 struct TOMLScalarTableArray { TOMLScalarRows rows; };
 ZfStruct((TOMLScalarTableArray, TOML),
-  (((rows), (Ctor<0>, TOML::Tables)), (UDT)));
+  (((rows), (Ctor<0>)), (UDT)));
 
 struct TOMLProduct { ZtString<> name; int count = 0; };
 ZfStruct((TOMLProduct, TOML),
@@ -292,7 +323,7 @@ struct TOMLStrings : public ZtArray<ZtString<>> {
 struct TOMLCatalog { ZtString<> title; TOMLProducts products; };
 ZfStruct((TOMLCatalog, TOML),
   (((title), (Ctor<0>, Keys<0>)), (String)),
-  (((products), (Ctor<1>, Mutable, TOML::Tables)), (UDT)));
+  (((products), (Ctor<1>, Mutable)), (UDT)));
 struct TOMLCatalogInline { ZtString<> title; TOMLProducts products; };
 ZfStruct((TOMLCatalogInline, TOML),
   (((title), (Ctor<0>)), (String)),
@@ -313,13 +344,13 @@ ZfStruct((TOMLInterop, TOML),
   (((values), (Ctor<2>)), (StringVec)),
   (((nested), (Ctor<3>)), (UDT)),
   (((when), (Ctor<4>)), (DateTime)),
-  (((inlineMap), (Ctor<5>)), (UDT)),
-  (((tableMap), (Ctor<6>, TOML::TableMap)), (UDT)),
-  (((products), (Ctor<7>, TOML::Tables)), (UDT)));
+  (((inlineMap), (Ctor<5>, TOML::Inline)), (UDT)),
+  (((tableMap), (Ctor<6>)), (UDT)),
+  (((products), (Ctor<7>)), (UDT)));
 struct TOMLSiblingTables { TOMLProducts tools; TOMLProducts supplies; };
 ZfStruct((TOMLSiblingTables, TOML),
-  (((tools), (Ctor<0>, TOML::Tables)), (UDT)),
-  (((supplies), (Ctor<1>, TOML::Tables)), (UDT)));
+  (((tools), (Ctor<0>)), (UDT)),
+  (((supplies), (Ctor<1>)), (UDT)));
 
 using TOMLHex8 = ZuFmt::Hex<false, ZuFmt::Right<8>>;
 struct TOMLFormats { unsigned hex = 0; const char *optional = nullptr; };
@@ -357,7 +388,7 @@ struct TOMLChildren : public ZtArray<TOMLChild> {
 struct TOMLParent { ZtString<> name; TOMLChildren children; };
 ZfStruct((TOMLParent, TOML),
   (((name), (Ctor<0>)), (String)),
-  (((children), (Ctor<1>, TOML::Tables)), (UDT)));
+  (((children), (Ctor<1>)), (UDT)));
 struct TOMLParents : public ZtArray<TOMLParent> {
   using ZtArray<TOMLParent>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLParents *);
@@ -384,22 +415,14 @@ struct TOMLMapArray : public ZtArray<TOMLParentMapRef> {
 
 struct TOMLParentMapHolder { TOMLParentMapRef parents; };
 ZfStruct((TOMLParentMapHolder, TOML),
-  (((parents), (Ctor<0>, TOML::TableMap)), (UDT)));
-
-static_assert(ZfTOML::TableArrayValid<TOMLProducts>{});
-static_assert(!ZfTOML::TableArrayValid<TOMLStrings>{});
-static_assert(ZfTOML::InlineArrayValid<TOMLProducts>{});
-static_assert(!ZfTOML::InlineArrayValid<TOMLParents>{});
-static_assert(!ZfTOML::InlineArrayValid<TOMLMapArray>{});
-static_assert(!ZfTOML::InlineMapValid<TOMLParentMapRef>{});
-static_assert(!ZfTOML::InlineMapValid<TOMLMapMapRef>{});
+  (((parents), (Ctor<0>)), (UDT)));
 struct TOMLNestedTables { TOMLParents parents; };
 ZfStruct((TOMLNestedTables, TOML),
-  (((parents), (Ctor<0>, TOML::Tables)), (UDT)));
+  (((parents), (Ctor<0>)), (UDT)));
 struct TOMLTableGroup { ZtString<> id; TOMLParents parents; };
 ZfStruct((TOMLTableGroup, TOML),
   (((id), (Ctor<0>)), (String)),
-  (((parents), (Ctor<1>, TOML::ID<"child group">, TOML::Tables)), (UDT)));
+  (((parents), (Ctor<1>, TOML::ID<"child group">)), (UDT)));
 struct TOMLGroupedTables { TOMLTableGroup group; };
 ZfStruct((TOMLGroupedTables, TOML),
   (((group), (Ctor<0>, TOML::ID<"unsafe.group">)), (UDT)));
@@ -418,7 +441,7 @@ ZfStruct((TOMLScalarTable, TOML),
   (((literal), (Ctor<2>, TOML::Literal)), (String)),
   (((multiBasic), (Ctor<3>, TOML::MultilineBasic)), (String)),
   (((multiLiteral), (Ctor<4>, TOML::MultilineLiteral)), (String)),
-  (((products), (Ctor<5>, TOML::Tables)), (UDT)));
+  (((products), (Ctor<5>)), (UDT)));
 struct TOMLScalarNestedTable { TOMLScalarTable nested; };
 ZfStruct((TOMLScalarNestedTable, TOML),
   (((nested), (Ctor<0>)), (UDT)));
@@ -770,7 +793,7 @@ static void reflection()
   ZfTOML::save(out, value);
   ZuCheck(out ==
     "name = \"demo\"\nnumber = 42\nenabled = true\n"
-    "values = [\"a\", \"b\"]\nnested = {value = 7}\n");
+    "values = [\"a\", \"b\"]\n[nested]\nvalue = 7\n");
   auto round = ZfTOML::handler<TOMLData>(ZfTOML::scan(out).p<1>()).ctor();
   ZuCheck(round.number == 42 && round.nested.value == 7);
 }
@@ -894,7 +917,8 @@ static void scalarFormatContexts()
     "basic = \"b\"\n"
     "literal = 'l'\n"
     "multiBasic = \"\"\"mb\"\"\"\n"
-    "multiLiteral = '''ml'''\n");
+    "multiLiteral = '''ml'''\n"
+    "products = []\n");
   auto nestedRound = ZfTOML::handler<TOMLScalarNestedTable>(
     ZfTOML::scan(out).p<1>()).ctor();
   ZuCheck(nestedRound.nested.literal == "l");
@@ -1726,7 +1750,8 @@ static void facetsNestedTables()
   ZfTOML::save(out, grouped);
   ZuCheck(out ==
     "[\"unsafe.group\"]\nid = \"group\"\n"
-    "[[\"unsafe.group\".\"child group\"]]\nname = \"nested\"\n");
+    "[[\"unsafe.group\".\"child group\"]]\nname = \"nested\"\n"
+    "children = []\n");
   auto groupedRound = ZfTOML::handler<TOMLGroupedTables>(
     ZfTOML::scan(out).p<1>()).ctor();
   ZuCheck(groupedRound.group.parents.length() == 1);
@@ -1858,8 +1883,9 @@ static void interoperabilityOutput()
   auto out = interopText();
   ZuCheck(out ==
     "title = \"tools\"\nenabled = true\nvalues = [\"one\", \"two\"]\n"
-    "nested = {value = 7}\nwhen = 2024-02-29T12:34:56Z\n"
+    "when = 2024-02-29T12:34:56Z\n"
     "inlineMap = {\"a.b\" = 11}\n"
+    "[nested]\nvalue = 7\n"
     "[tableMap]\nbeta = 12\n"
     "[[products]]\nname = \"hammer\"\ncount = 1\n"
     "[[products]]\nname = \"nail\"\ncount = 20\n");
@@ -1880,6 +1906,126 @@ static void unions()
   ZtString<> round;
   ZfTOML::save(round, loaded);
   ZuCheck(round == saved);
+
+  TOMLMixedHolder mixed;
+  mixed.value = TOMLUnionA{7};
+  saved.null();
+  ZfTOML::save(saved, mixed);
+  ZuCheck(saved == "[value]\nfoo = 7\n");
+  TOMLMixedInlineHolder mixedInline;
+  mixedInline.value = TOMLUnionA{8};
+  saved.null();
+  ZfTOML::save(saved, mixedInline);
+  ZuCheck(saved == "value = {foo = 8}\n");
+
+  TOMLUnionArray numbers;
+  numbers.push(1);
+  numbers.push(2);
+  numbers.push(3);
+  mixed.value = ZuMv(numbers);
+  saved.null();
+  ZfTOML::save(saved, mixed);
+  ZuCheck(saved == "value = [1, 2, 3]\n");
+  auto arrayTree = ZfTOML::scan(saved);
+  auto arrayRaw = ZfTOML::handler<TOMLMixedHolder>(arrayTree.p<1>()).ctor();
+  auto arrayNode = arrayRaw.value.p<const ZfTOML::AnyNode *>();
+  ZuCheck(arrayNode && arrayNode->has<ZfTOML::AnyNode::Array>());
+  arrayRaw.value = ZfTOML::handler<TOMLUnionArray>(arrayNode).ctor();
+  ZuCheck(arrayRaw.value.p<TOMLUnionArray>().length() == 3);
+
+  auto scalarTree = ZfTOML::scan("value = \"text\"\n");
+  auto scalarRaw = ZfTOML::handler<TOMLMixedHolder>(scalarTree.p<1>()).ctor();
+  auto scalarNode = scalarRaw.value.p<const ZfTOML::AnyNode *>();
+  ZuCheck(scalarNode && scalarNode->has<ZfTOML::AnyNode::String>());
+  scalarRaw.value = ZfTOML::handler<TOMLUnionText>(scalarNode).ctor();
+  saved.null();
+  ZfTOML::save(saved, scalarRaw);
+  ZuCheck(saved == "value = \"text\"\n");
+  mixedInline.value = TOMLUnionText{"inline"};
+  saved.null();
+  ZfTOML::save(saved, mixedInline);
+  ZuCheck(saved == "value = \"inline\"\n");
+
+  auto numberTree = ZfTOML::scan("value = 42\n");
+  auto numberRaw = ZfTOML::handler<TOMLMixedHolder>(numberTree.p<1>()).ctor();
+  ZuCheck(numberRaw.value.p<const ZfTOML::AnyNode *>()->scalarType ==
+    ZfTOML::ScalarTC::Number);
+  auto boolTree = ZfTOML::scan("value = true\n");
+  auto boolRaw = ZfTOML::handler<TOMLMixedHolder>(boolTree.p<1>()).ctor();
+  ZuCheck(boolRaw.value.p<const ZfTOML::AnyNode *>()->scalarType ==
+    ZfTOML::ScalarTC::True);
+  auto dateTree = ZfTOML::scan("value = 1979-05-27T07:32:00Z\n");
+  auto dateRaw = ZfTOML::handler<TOMLMixedHolder>(dateTree.p<1>()).ctor();
+  ZuCheck(dateRaw.value.p<const ZfTOML::AnyNode *>()->
+    has<ZfTOML::AnyNode::DateTime>());
+
+  TOMLIntMap map;
+  map.add("answer", 42);
+  mixed.value = ZuMv(map);
+  saved.null();
+  ZfTOML::save(saved, mixed);
+  ZuCheck(saved == "[value]\nanswer = 42\n");
+  TOMLIntMap inlineMap;
+  inlineMap.add("answer", 43);
+  mixedInline.value = ZuMv(inlineMap);
+  saved.null();
+  ZfTOML::save(saved, mixedInline);
+  ZuCheck(saved == "value = {answer = 43}\n");
+
+  TOMLUnionArray inlineNumbers;
+  inlineNumbers.push(4);
+  inlineNumbers.push(5);
+  mixedInline.value = ZuMv(inlineNumbers);
+  saved.null();
+  ZfTOML::save(saved, mixedInline);
+  ZuCheck(saved == "value = [4, 5]\n");
+
+  TOMLMixedElementsHolder elements;
+  TOMLMixedUnion elem;
+  elem = TOMLUnionA{9};
+  elements.values.push(ZuMv(elem));
+  saved.null();
+  ZfTOML::save(saved, elements);
+  ZuCheck(saved == "values = [{foo = 9}]\n");
+
+  TOMLObjectUnionElementsHolder tableElements;
+  TOMLObjectUnion objectElem;
+  objectElem = TOMLUnionA{10};
+  tableElements.values.push(ZuMv(objectElem));
+  saved.null();
+  ZfTOML::save(saved, tableElements);
+  ZuCheck(saved == "[[values]]\nfoo = 10\n");
+  TOMLObjectUnionInlineHolder inlineElements;
+  TOMLObjectUnion inlineElem;
+  inlineElem = TOMLUnionB{11};
+  inlineElements.values.push(ZuMv(inlineElem));
+  saved.null();
+  ZfTOML::save(saved, inlineElements);
+  ZuCheck(saved == "values = [{bar = 11}]\n");
+
+  TOMLCatalog emptyArrays{"empty", {}};
+  saved.null();
+  ZfTOML::save(saved, emptyArrays);
+  ZuCheck(saved == "title = \"empty\"\nproducts = []\n");
+
+  TOMLMixedUnion rootScalar;
+  rootScalar = TOMLUnionText{"root"};
+  ZuCheck(loadError([&saved, &rootScalar] {
+    saved.null();
+    ZfTOML::save(saved, rootScalar);
+  }));
+  TOMLMixedUnion rootArray;
+  TOMLUnionArray rootNumbers;
+  rootNumbers.push(1);
+  rootArray = ZuMv(rootNumbers);
+  ZuCheck(loadError([&saved, &rootArray] {
+    saved.null();
+    ZfTOML::save(saved, rootArray);
+  }));
+
+  using MixedHandler = typename ZfTOML::As<TOMLMixedUnion>::
+    template Handler<TOMLMixedUnion, ZuFacet::TOML>;
+  ZuCheck(!MixedHandler::valid(nullptr));
 
   TOMLUnionHolder empty;
   ZuCheck(loadError([&saved, &empty] {
@@ -1930,7 +2076,7 @@ static void pointers()
   ZtString<> saved;
   ZfTOML::save(saved, value);
   ZuCheck(saved.find("text = \"hello\"") >= 0);
-  ZuCheck(saved.find("objects = [{value = 2}, {value = 3}]") >= 0);
+  ZuCheck(saved.find("[[objects]]\nvalue = 2") >= 0);
 
   auto first = (*value.objects)[0].ptr();
   (*value.objects)[1] = nullptr;
@@ -1992,7 +2138,7 @@ static void pointers()
   ZuCheck(map->findVal("one") && map->findVal("one")->value == 8);
   saved.null();
   ZfTOML::save(saved, map);
-  ZuCheck(saved == "one = {value = 8}\n");
+  ZuCheck(saved == "[one]\nvalue = 8\n");
 }
 
 int main(int argc, char **argv)

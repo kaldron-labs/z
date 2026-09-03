@@ -29,14 +29,14 @@ struct FileItems : public ZtArray<FileItem> {
 struct FileGroup { ZtString<> name; FileItems items; };
 ZfStruct((FileGroup, TOML),
   (((name), (Ctor<0>)), (String)),
-  (((items), (Ctor<1>, TOML::Tables)), (UDT)));
+  (((items), (Ctor<1>)), (UDT)));
 struct FileGroups : public ZtArray<FileGroup> {
   using ZtArray<FileGroup>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(FileGroups *);
 };
 struct FileCatalog { FileGroups groups; };
 ZfStruct((FileCatalog, TOML),
-  (((groups), (Ctor<0>, TOML::Tables)), (UDT)));
+  (((groups), (Ctor<0>)), (UDT)));
 
 static Zi::Path g_dir;
 

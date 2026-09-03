@@ -27,10 +27,24 @@
 
 namespace Ztc {
 
+struct Request {
+  ZtString<>	filter;
+  ZuID		id;
+  uint64_t	seqNo = 0;
+  uint64_t	alertSeqNo = 0;
+  uint32_t	interval = 0;
+  uint32_t	alertDate = 0;
+  uint8_t	group = 0;
+  bool		subscribe = false;
+
+  friend ZfStructPrint ZuPrintType(Request *);
+};
+
 struct AppTelemetry {
   ZuID			version;
   ZuID			role;
   int64_t		startTime = 0;
+  uint32_t		ztcver = Z_VERSION;
   ZmEngineState::T	state = ZmEngineState::Stopped;
   bool			degraded = false;
   RAG::T		rag = RAG::Off;

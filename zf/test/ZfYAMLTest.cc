@@ -51,7 +51,24 @@ struct YAMLUnionA { int foo = 0; };
 struct YAMLUnionB { int bar = 0; };
 ZfStruct((YAMLUnionA, YAML), (((foo), (Ctor<0>, Mutable)), (Int32)));
 ZfStruct((YAMLUnionB, YAML), (((bar), (Ctor<0>, Mutable)), (Int32)));
-struct YAMLUnionHolder { ZfYAML::Union<YAMLUnionA, YAMLUnionB> value; };
+struct YAMLUnionArray : public ZtArray<int> {
+  using ZtArray<int>::ZtArray;
+  friend ZfYAML::AsArray<ZfFieldTC::Int32> ZfYAML_Fmt(YAMLUnionArray *);
+};
+struct YAMLUnionText {
+  ZtString<> value;
+  YAMLUnionText() = default;
+  YAMLUnionText(ZuCSpan value_) : value{value_} { }
+  template <typename S> friend S &operator <<(S &s, const YAMLUnionText &v) {
+    s << v.value;
+    return s;
+  }
+  friend ZfYAML::AsString ZfYAML_Fmt(YAMLUnionText *);
+};
+struct YAMLUnionHolder {
+  ZfYAML::Union<YAMLUnionA, YAMLUnionB,
+    YAMLIntMapRef, YAMLUnionArray, YAMLUnionText> value;
+};
 ZfStruct((YAMLUnionHolder, YAML),
   (((value), (Ctor<0>, Mutable)), (UDT)));
 
@@ -934,6 +951,50 @@ static void unions()
   ZtString<> round;
   ZfYAML::save(round, loaded);
   ZuCheck(round == saved);
+
+  auto arrayTree = ZfYAML::scan("value: [1, 2, 3]\n");
+  auto array = ZfYAML::handler<YAMLUnionHolder>(arrayTree.p<1>()).ctor();
+  auto arrayNode = array.value.p<const ZfYAML::AnyNode *>();
+  ZuCheck(arrayNode && arrayNode->has<ZfYAML::AnyNode::Array>());
+  array.value = ZfYAML::handler<YAMLUnionArray>(arrayNode).ctor();
+  ZuCheck(array.value.p<YAMLUnionArray>().length() == 3);
+  saved.null();
+  ZfYAML::save(saved, array);
+  ZuCheck(saved == "value:\n  - 1\n  - 2\n  - 3");
+
+  auto scalarTree = ZfYAML::scan("value: text\n");
+  auto scalar = ZfYAML::handler<YAMLUnionHolder>(scalarTree.p<1>()).ctor();
+  auto scalarNode = scalar.value.p<const ZfYAML::AnyNode *>();
+  ZuCheck(scalarNode && scalarNode->has<ZfYAML::AnyNode::String>());
+  scalar.value = ZfYAML::handler<YAMLUnionText>(scalarNode).ctor();
+  saved.null();
+  ZfYAML::save(saved, scalar);
+  ZuCheck(saved == "value:\n  \"text\"");
+
+  auto nullTree = ZfYAML::scan("value: null\n");
+  auto nullValue = ZfYAML::handler<YAMLUnionHolder>(nullTree.p<1>()).ctor();
+  auto nullNode = nullValue.value.p<const ZfYAML::AnyNode *>();
+  ZuCheck(nullNode && nullNode->scalarType == ZfYAML::ScalarTC::Null);
+  using UnionHandler = typename ZfYAML::As<decltype(nullValue.value)>::
+    template Handler<decltype(nullValue.value), ZuFacet::YAML>;
+  ZuCheck(!UnionHandler::valid(nullptr));
+
+  auto numberTree = ZfYAML::scan("value: 42\n");
+  auto number = ZfYAML::handler<YAMLUnionHolder>(numberTree.p<1>()).ctor();
+  ZuCheck(number.value.p<const ZfYAML::AnyNode *>()->scalarType ==
+    ZfYAML::ScalarTC::Number);
+  auto boolTree = ZfYAML::scan("value: true\n");
+  auto boolean = ZfYAML::handler<YAMLUnionHolder>(boolTree.p<1>()).ctor();
+  ZuCheck(boolean.value.p<const ZfYAML::AnyNode *>()->scalarType ==
+    ZfYAML::ScalarTC::True);
+
+  YAMLIntMapRef map = new YAMLIntMap{};
+  map->add("answer", 42);
+  YAMLUnionHolder mapped;
+  mapped.value = map;
+  saved.null();
+  ZfYAML::save(saved, mapped);
+  ZuCheck(saved == "value:\n  answer: 42");
 
   YAMLUnionHolder empty;
   saved.null();

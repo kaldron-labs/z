@@ -992,6 +992,7 @@ struct AsObject {
     }
   };
 
+  // Any actual parse-tree node is retained without inspecting its shape.
   // The raw-node state is non-owning; retain the scan tree until resolving it.
   // Empty, unresolved, and null alternatives are omitted when saving.
   template <typename ...Ts, typename Facet>
@@ -1010,14 +1011,9 @@ struct AsObject {
 	using V = typename O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {
-	  ZuAssert((ZuIsSame<As<V>, AsObject>{} ||
-	      (ZuIsSame<As<V>, AsDeflt>{} && ZuFields<V, Facet>::N)));
 	  l(v);
 	  output = true;
 	} else {
-	  using U = ZuDecay<decltype(*v)>;
-	  ZuAssert((ZuIsSame<As<U>, AsObject>{} ||
-	      (ZuIsSame<As<U>, AsDeflt>{} && ZuFields<U, Facet>::N)));
 	  if (ZuLikely(v)) {
 	    l(*v);
 	    output = true;
@@ -1036,7 +1032,7 @@ struct AsObject {
     }
 
     static bool valid(const AnyNode *node) {
-      return node && node->has<AnyNode::Object>();
+      return node != nullptr;
     }
     Handler(const AnyNode *node_) : node{node_} { }
     O ctor() const { return O(node); }

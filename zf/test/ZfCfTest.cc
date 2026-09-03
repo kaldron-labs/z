@@ -60,7 +60,23 @@ struct CfUnionA { int foo = 0; };
 struct CfUnionB { int bar = 0; };
 ZfStruct((CfUnionA, Cf), (((foo), (Ctor<0>, Mutable)), (Int32)));
 ZfStruct((CfUnionB, Cf), (((bar), (Ctor<0>, Mutable)), (Int32)));
-struct CfUnionHolder { ZfCf::Union<CfUnionA, CfUnionB> value; };
+struct CfUnionArray : public ZtArray<int> {
+  using ZtArray<int>::ZtArray;
+  friend ZfCf::AsArray<ZfFieldTC::Int32> ZfCf_Fmt(CfUnionArray *);
+};
+struct CfUnionText {
+  ZtString<> value;
+  CfUnionText() = default;
+  CfUnionText(ZuCSpan value_) : value{value_} { }
+  template <typename S> friend S &operator <<(S &s, const CfUnionText &v) {
+    s << v.value;
+    return s;
+  }
+  friend ZfCf::AsString ZfCf_Fmt(CfUnionText *);
+};
+struct CfUnionHolder {
+  ZfCf::Union<CfUnionA, CfUnionB, CfIntMapRef, CfUnionArray, CfUnionText> value;
+};
 ZfStruct((CfUnionHolder, Cf),
   (((value), (Ctor<0>, Mutable)), (UDT)));
 
@@ -1120,6 +1136,42 @@ static void unions()
   ZtString<> round;
   ZfCf::save(round, loaded);
   ZuCheck(round == saved);
+
+  auto arrayTree = ZfCf::scan("value: [1, 2, 3]");
+  auto array = ZfCf::handler<CfUnionHolder>(arrayTree.p<1>()).ctor();
+  ZuCheck((array.value.is<const ZfCf::AnyNode *>()));
+  auto arrayNode = array.value.p<const ZfCf::AnyNode *>();
+  ZuCheck(arrayNode && arrayNode->has<ZfCf::AnyNode::Array>());
+  array.value = ZfCf::handler<CfUnionArray>(arrayNode).ctor();
+  ZuCheck(array.value.p<CfUnionArray>().length() == 3);
+  saved.null();
+  ZfCf::save(saved, array);
+  ZuCheck(saved == "{\"value\":[1,2,3]}");
+
+  auto scalarTree = ZfCf::scan("value: text");
+  auto scalar = ZfCf::handler<CfUnionHolder>(scalarTree.p<1>()).ctor();
+  auto scalarNode = scalar.value.p<const ZfCf::AnyNode *>();
+  ZuCheck(scalarNode && scalarNode->has<ZfCf::AnyNode::String>());
+  scalar.value = ZfCf::handler<CfUnionText>(scalarNode).ctor();
+  saved.null();
+  ZfCf::save(saved, scalar);
+  ZuCheck(saved == "{\"value\":\"text\"}");
+
+  auto nullTree = ZfCf::scan("value: null");
+  auto nullValue = ZfCf::handler<CfUnionHolder>(nullTree.p<1>()).ctor();
+  ZuCheck((nullValue.value.is<const ZfCf::AnyNode *>()));
+  ZuCheck(nullValue.value.p<const ZfCf::AnyNode *>() != nullptr);
+  using UnionHandler = typename ZfCf::As<decltype(nullValue.value)>::
+    template Handler<decltype(nullValue.value), ZuFacet::Cf>;
+  ZuCheck(!UnionHandler::valid(nullptr));
+
+  CfIntMapRef map = new CfIntMap{};
+  map->add("answer", 42);
+  CfUnionHolder mapped;
+  mapped.value = map;
+  saved.null();
+  ZfCf::save(saved, mapped);
+  ZuCheck(saved == "{\"value\":{\"answer\":42}}");
 
   CfUnionHolder empty;
   saved.null();
