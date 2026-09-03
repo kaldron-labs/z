@@ -60,6 +60,16 @@ namespace PoolState {
 ZfbEnumMatch_(fbs::PoolState, Down, Up, Failed);
 }
 
+ZfbStruct(Request,
+  (((seqNo),		(Ctor<2>)),			(UInt64)),
+  (((group),		(Ctor<6>)),			(UInt8)),
+  (((filter),		(Ctor<0>)),			(String)),
+  (((interval),		(Ctor<4>)),			(UInt32)),
+  (((subscribe),	(Ctor<7>)),			(Bool)),
+  (((alertDate),	(Ctor<5>)),			(UInt32)),
+  (((alertSeqNo),	(Ctor<3>)),			(UInt64)),
+  (((id),		(Ctor<1>)),			(String)));
+
 ZfbStruct(HeapTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((size),		(Ctor<7>, Keys<0>)),			(UInt32)),
@@ -210,9 +220,10 @@ ZfbStruct(AppTelemetry,
   (((version),		(Ctor<0>)),			(String)),
   (((role),		(Ctor<1>)),			(String)),
   (((startTime),	(Ctor<2>)),			(Int64)),
-  (((state),		(Ctor<3>, Mutable, Enum<EngineState::Map>)), (Int8)),
-  (((degraded),		(Ctor<4>, Mutable)),		(Bool)),
-  (((rag),		(Ctor<5>, Mutable, Enum<RAG::Map>)), (Int8)));
+  (((state),		(Ctor<4>, Mutable, Enum<EngineState::Map>)), (Int8)),
+  (((degraded),		(Ctor<5>, Mutable)),		(Bool)),
+  (((rag),		(Ctor<6>, Mutable, Enum<RAG::Map>)), (Int8)),
+  (((ztcver),		(Ctor<3>)),			(UInt32)));
 
 ZfbStruct(AlertTelemetry,
   (((date),		(Ctor<4>, Keys<0>)),		(UInt32)),

@@ -494,12 +494,18 @@ template <
   unsigned TypeCode, typename Props, typename T>
 auto loadValue(AnyNode *);
 
-// discrominated union handling
+// discriminated union handling
 template <typename ...Ts>
 struct Union : public ZuUnion<void, const AnyNode *, Ts...> {
   ZuDerive_(Union, (ZuUnion<void, const AnyNode *, Ts...>));
   friend inline AsObject ZfJSON_Fmt(Union *);
 };
+
+template <typename T> struct IsUnion_ : public ZuFalse { };
+template <typename ...Ts>
+struct IsUnion_<Union<Ts...>> : public ZuTrue { };
+template <typename T>
+using IsUnion = IsUnion_<ZuDecay<T>>;
 
 // pointer-to-object handling
 template <typename U, bool IsPtr = ZuTraits<U>::IsPointer>
@@ -667,7 +673,8 @@ struct AsObject {
   };
 
   // discriminated unions
-  // - on load, the member is set to const AnyNode *
+  // - on load, any actual parse-tree node is retained as const AnyNode *
+  // - the parse tree must remain alive until the union is resolved
   // - on save, the member is dispatched
   //   (callers are always required to resolve unions before saving)
   template <typename ...Ts, typename Facet>
@@ -696,7 +703,7 @@ struct AsObject {
     const AnyNode	*node;
 
     static bool valid(const AnyNode *node) {
-      return node->has<AnyNode::Object>();
+      return node != nullptr;
     }
     Handler(const AnyNode *node_) : node{node_} {
       if (ZuUnlikely(!valid(node))) node = nullptr;
@@ -1239,7 +1246,7 @@ inline T loadValue_(AnyNode *node)
 {
   auto type = node->type;
 
-  if (type == ValueTC::Null) return ZuCmp<T>::null();
+  if (type == ValueTC::Null && !IsUnion<T>{}) return ZuCmp<T>::null();
 
   if constexpr (TypeCode == ZfFieldTC::CString) {
     if (ZuUnlikely(type != ValueTC::String)) return nullptr;

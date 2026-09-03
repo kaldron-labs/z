@@ -485,6 +485,13 @@ inline O loadObject(const ZfJSON::AnyNode *node)
   return ZfJSON::handler<O>(node).ctor();
 }
 
+template <typename ...Ts>
+inline const ZfJSON::AnyNode *raw(const ZfJSON::Union<Ts...> &object)
+{
+  if (!object.template is<const ZfJSON::AnyNode *>()) return nullptr;
+  return object.template p<const ZfJSON::AnyNode *>();
+}
+
 struct RequestShape {
   ZuCSpan jsonrpc;
   ID id;
@@ -760,53 +767,79 @@ struct ReplyUnion_ {
 };
 template <typename Req> using ReplyUnion = typename ReplyUnion_<Req>::T;
 
-struct RxValueFmt;
+template <typename U>
+using ResponseBody = typename U::Body;
 
-struct RxValue {
-  const ZfJSON::AnyNode *node = nullptr;
+template <typename U>
+using NonVoid = ZuBool<!ZuIsSame<U, void>{}>;
 
-  explicit operator bool() const { return node; }
-  friend RxValueFmt ZfJSON_Fmt(RxValue *);
-};
+template <typename Req>
+using ReplyBodies = ZuTypeUnique<ZuTypeGrep<
+  NonVoid, ZuTypeMap<ResponseBody, GetResponses<Req>>>>;
 
-struct RxValueFmt {
-  template <typename O, typename>
-  struct Handler {
-    const ZfJSON::AnyNode *node;
+template <typename Req>
+using ReplyData = ZuTypeApply<ZfJSON::Union, ReplyBodies<Req>>;
 
-    static bool valid(const ZfJSON::AnyNode *node) { return node; }
-    Handler(const ZfJSON::AnyNode *node_) : node{node_} { }
-    O ctor() const { return {node}; }
-    void new_(void *p) const { new (p) O{node}; }
-    void load(O &out) const { out.node = node; }
-    void update(O &out) const { out.node = node; }
-  };
-};
-
-inline RxValueFmt ZfJSON_Fmt(RxValue *) { return {}; }
-
-struct StructuredReply {
+struct StructuredReplyShape {
   int code = ZuCmp<int>::null();
-  RxValue data;
+  EmptyObject data;
 };
-ZfStruct((StructuredReply, JSON),
+ZfStruct((StructuredReplyShape, JSON),
   (((code), (Mutable)), (Int32)),
   (((data), (Mutable, JSON::Opt)), (UDT)));
 
-struct CallReply {
-  StructuredReply structuredContent;
+template <typename Req>
+struct StructuredReply :
+    public StructModel<StructuredReply<Req>, StructuredReplyShape> {
+  using Base = StructModel<StructuredReply<Req>, StructuredReplyShape>;
+  using Data = ReplyData<Req>;
+
+  template <typename Facet>
+  friend typename Base::template Fields<Facet>
+    ZuFields_(StructuredReply *, Facet *);
+  friend StructuredReply ZuStructured_(StructuredReply *);
+
+  int code() const { return code_; }
+  void code(int v) { code_ = v; }
+
+  const Data &data() const { return data_; }
+  Data &data() { return data_; }
+  void data(Data v) { data_ = ZuMv(v); }
+
+  int	code_ = ZuCmp<int>::null();
+  Data	data_;
 };
-ZfStruct((CallReply, JSON),
+
+struct CallReplyShape {
+  StructuredReplyShape structuredContent;
+};
+ZfStruct((CallReplyShape, JSON),
   (((structuredContent), (Mutable)), (UDT)));
+
+template <typename Req>
+struct CallReply : public StructModel<CallReply<Req>, CallReplyShape> {
+  using Base = StructModel<CallReply<Req>, CallReplyShape>;
+  using Structured = StructuredReply<Req>;
+
+  template <typename Facet>
+  friend typename Base::template Fields<Facet> ZuFields_(CallReply *, Facet *);
+  friend CallReply ZuStructured_(CallReply *);
+
+  const Structured &structuredContent() const { return structuredContent_; }
+  Structured &structuredContent() { return structuredContent_; }
+  void structuredContent(Structured v) { structuredContent_ = ZuMv(v); }
+
+  Structured structuredContent_;
+};
 
 template <typename Req>
 inline ReplyUnion<Req> loadToolReply(const ZfJSON::AnyNode *node)
 {
   using Responses = GetResponses<Req>;
   ReplyUnion<Req> out;
-  auto reply = loadObject<CallReply>(node);
-  int code = reply.structuredContent.code;
-  const auto *data = reply.structuredContent.data.node;
+  auto reply = loadObject<CallReply<Req>>(node);
+  int code = reply.structuredContent().code();
+  const auto *data = raw(reply.structuredContent().data());
   int index = -1;
   ZuUnroll::all<Responses>([code, &index]<typename Res>() {
     if (code == Res::Status) index = ZuTypeIndex<Res, Responses>{};
@@ -1008,12 +1041,10 @@ ZfStruct((LogParams, JSON),
 struct RxLogParams {
   ZuCSpan level;
   ZuCSpan logger;
-  RxValue data;
 };
 ZfStruct((RxLogParams, JSON),
   (((level), (Mutable)), (String)),
-  (((logger), (Mutable, JSON::Opt)), (String)),
-  (((data), (Mutable)), (UDT)));
+  (((logger), (Mutable, JSON::Opt)), (String)));
 
 struct ToolsCallShape {
   ZuCSpan name;
@@ -1024,8 +1055,6 @@ ZfStruct((ToolsCallShape, JSON),
   (((name), (Mutable)), (String)),
   (((arguments), (Mutable)), (UDT)),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)));
-
-template <typename Reqs> struct ToolsCallFmt;
 
 template <typename Reqs_>
 struct ToolsCallParams :
@@ -1114,43 +1143,7 @@ struct ToolsCallParams :
     unsigned type = arguments_.type();
     return type >= 2 && type < Arguments::N ? int(type - 2) : -1;
   }
-
-  friend inline ToolsCallFmt<Requests> ZfJSON_Fmt(ToolsCallParams *) {
-    return {};
-  }
 };
-
-template <typename Reqs>
-struct ToolsCallFmt {
-  template <typename Params, typename Facet>
-  struct Handler {
-    using ObjectHandler = ZfJSON::AsObject::Handler<Params, Facet>;
-
-    const ZfJSON::AnyNode *node;
-
-    template <template <typename> class Filter, typename S>
-    static void save(S &s, const Params &params) {
-      if (params.active() < 0) return;
-      ObjectHandler::template save<Filter>(s, params);
-    }
-
-    static bool valid(const ZfJSON::AnyNode *node) {
-      return node && ObjectHandler::valid(node);
-    }
-    Handler(const ZfJSON::AnyNode *node_) : node{node_} { }
-
-    Params ctor() const { return ObjectHandler{node}.ctor(); }
-    void new_(void *p) const { ObjectHandler{node}.new_(p); }
-    void update(Params &out) const { ObjectHandler{node}.update(out); }
-    void load(Params &out) const { ObjectHandler{node}.load(out); }
-  };
-};
-
-template <typename U>
-using ResponseBody = typename U::Body;
-
-template <typename U>
-using NonVoid = ZuBool<!ZuIsSame<U, void>{}>;
 
 template <typename Reqs>
 using AllResponses = ZuTypeApply<
@@ -1222,13 +1215,6 @@ struct Envelope : public StructModel<Envelope<Reqs>, EnvelopeShape> {
   ErrorObject	error_;
   int		kind = MessageKind::Unusable;
 };
-
-template <typename ...Ts>
-inline const ZfJSON::AnyNode *raw(const ZfJSON::Union<Ts...> &object)
-{
-  if (!object.template is<const ZfJSON::AnyNode *>()) return nullptr;
-  return object.template p<const ZfJSON::AnyNode *>();
-}
 
 template <typename Reqs>
 struct Parsed {

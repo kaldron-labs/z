@@ -685,8 +685,9 @@ bool receive(
       progress(app, params.token, params.progress, params.total,
 	params.message, 0);
     } else if (envelope.method() == "notifications/message") {
-      auto params = loadObject<RxLogParams>(raw(envelope.params()));
-      logging(app, params.level, params.data.node, params.logger, 0);
+      auto node = raw(envelope.params());
+      auto params = loadObject<RxLogParams>(node);
+      logging(app, params.level, member(node, "data"), params.logger, 0);
     }
   } catch (...) {
     return false;

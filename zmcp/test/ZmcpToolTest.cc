@@ -85,6 +85,10 @@ static void callParamsTest()
   ZuCheck(scanned.p<0>() > 0);
   auto &nodes = *scanned.p<1>();
   using Params = Zmcp::ToolsCallParams<Catalog>;
+  ZuCheck((ZuIsSame<ZfJSON::As<Params>, ZfJSON::AsDeflt>{}));
+  ZuPtr<Params> allocated = ZfJSON::handler<Params>(nodes[0]).alloc();
+  ZuCheck(allocated->name() == "add");
+  ZuCheck((allocated->arguments().is<const ZfJSON::AnyNode *>()));
   auto params = ZfJSON::handler<Params>(nodes[0]).ctor();
   ZuCheck(params.name() == "add");
   ZuCheck(params.name().data() >= json &&

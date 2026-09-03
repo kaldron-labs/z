@@ -1609,6 +1609,7 @@ void App::appTelemetry_(AppTelemetry &data)
   data.version = m_cf.version;
   data.role = m_cf.role;
   data.startTime = m_startTime;
+  data.ztcver = Z_VERSION;
   data.state = ZmEngineState::Running;
   data.degraded = m_state->degraded;
   data.rag = RAG::T(m_rag.load_());
@@ -1632,6 +1633,8 @@ void App::request_(ZmRef<ZiIOBuf> buf)
   auto request = root->body_as_Request();
   if (ZuUnlikely(!request)) return;
   uint64_t seqNo = request->seqNo();
+  ZuCSpan id = Zfb::Load::str(request->id());
+  if (id && id != m_cf.id) return;
   if (!seqNo) {
     clearSubscriptions_();
     return;

@@ -22,7 +22,7 @@
 #error "Z_VPATCH > 999"
 #endif
 #include <zlib/ZuPP.hh>
-#define Z_VERSION ((Z_VMAJOR * 100000) + (Z_VMINOR * 1000) + V_VPATCH)
+#define Z_VERSION ((Z_VMAJOR * 100000) + (Z_VMINOR * 1000) + Z_VPATCH)
 #define Z_VERNAME ZuPP_Eval( \
   ZuPP_Defer(ZuPP_Q)(Z_VMAJOR) "." \
   ZuPP_Defer(ZuPP_Q)(Z_VMINOR) "." \

@@ -28,6 +28,7 @@ struct SnapshotResult {
   uint32_t		interval = 0;
   unsigned		frames = 0;
   Ztc::fbs::RAG		rag = Ztc::fbs::RAG::Off;
+  uint32_t		ztcver = 0;
   bool			valid = false;
   bool			app = false;
 };
@@ -44,10 +45,11 @@ static void env(const char *name, ZuCSpan value)
 
 static bool sendRequest(
     uint64_t seqNo, Ztc::fbs::Group group, ZuCSpan filter,
-    uint32_t interval, bool subscribe)
+    uint32_t interval, bool subscribe,
+    ZuCSpan id = {})
 {
   auto frame = ZtcTestClient::request(
-    seqNo, group, filter, interval, subscribe);
+    seqNo, group, filter, interval, subscribe, 0, 0, id);
   return frame && ZtcTestClient::writeAll(1, frame->cspan());
 }
 
@@ -84,6 +86,7 @@ static SnapshotResult receive(uint64_t seqNo)
 	if (!app) return result;
 	result.app = true;
 	result.rag = app->rag();
+	result.ztcver = app->ztcver();
       }
       ++result.frames;
       continue;
@@ -159,7 +162,8 @@ static void appTest()
 
   constexpr uint64_t SeqNo = UINT64_C(0x123456789abcdef0);
   auto appResult = snapshot(SeqNo, Ztc::fbs::Group::App, "*");
-  ZuCheck(appResult.valid && appResult.app && appResult.frames == 1);
+  ZuCheck(appResult.valid && appResult.app && appResult.frames == 1 &&
+    appResult.ztcver == Z_VERSION);
 
   auto heaps = snapshot(SeqNo + 1, Ztc::fbs::Group::Heap, "*");
   ZuCheck(heaps.valid && heaps.frames);
@@ -178,6 +182,26 @@ static void appTest()
   auto none = snapshot(SeqNo + 8, Ztc::fbs::Group::App, "other");
   ZuCheck(none.valid && !none.frames);
 
+  ZuCheck(sendRequest(
+    SeqNo + 9, Ztc::fbs::Group::App, "*", 0, true, cf.id));
+  auto targetedAck = ack(SeqNo + 9);
+  auto targeted = receive(SeqNo + 9);
+  ZuCheck(targetedAck.valid &&
+    targetedAck.status == Ztc::fbs::AckStatus::OK &&
+    targeted.valid && targeted.app && targeted.frames == 1);
+
+  ZuCheck(sendRequest(
+    SeqNo + 10, Ztc::fbs::Group::App, "*", 0, true, "other"));
+  ZuCheck(!ZtcTestClient::readFrame(1));
+
+  ZuCheck(sendRequest(
+    SeqNo + 11, Ztc::fbs::Group::App, "*", 0, true));
+  auto wildcardAck = ack(SeqNo + 11);
+  auto wildcard = receive(SeqNo + 11);
+  ZuCheck(wildcardAck.valid &&
+    wildcardAck.status == Ztc::fbs::AckStatus::OK &&
+    wildcard.valid && wildcard.app && wildcard.frames == 1);
+
   Ztc::Hdr badHdr{uint32_t(4)};
   uint32_t badBody = 0;
   ZmRef<ZiIOBuf> bad = new ZtcTestClient::Frame;
@@ -195,18 +219,18 @@ static void appTest()
   ZuCheck(error && !error->seqNo() && !error->hasSeqNo() &&
     Zfb::Load::str(error->id()) == cf.id);
 
-  ZuCheck(sendRequest(SeqNo + 9, Ztc::fbs::Group::App, "*", 500, true));
-  auto subAck = ack(SeqNo + 9);
-  auto subSnapshot = receive(SeqNo + 9);
+  ZuCheck(sendRequest(SeqNo + 12, Ztc::fbs::Group::App, "*", 500, true));
+  auto subAck = ack(SeqNo + 12);
+  auto subSnapshot = receive(SeqNo + 12);
   ZuCheck(subAck.valid && subAck.interval == 500 && subSnapshot.valid);
   auto reset = ZtcTestClient::request(
     0, Ztc::fbs::Group::App, {}, 0, false);
   ZuCheck(reset && ZtcTestClient::writeAll(1, reset->cspan()));
   ZuCheck(sendRequest(
-    SeqNo + 10, Ztc::fbs::Group::App, "other", 500, true));
-  auto resetAck = ack(SeqNo + 10);
+    SeqNo + 13, Ztc::fbs::Group::App, "other", 500, true));
+  auto resetAck = ack(SeqNo + 13);
   ZuCheck(resetAck.valid && resetAck.status == Ztc::fbs::AckStatus::OK);
-  auto resetSnapshot = receive(SeqNo + 10);
+  auto resetSnapshot = receive(SeqNo + 13);
   ZuCheck(resetSnapshot.valid && !resetSnapshot.frames);
   reset = ZtcTestClient::request(
     0, Ztc::fbs::Group::App, {}, 0, false);
@@ -219,7 +243,7 @@ static void appTest()
   ZuCheck(app.start());
   ZuCheck(ZiStat{pidPath}.exists());
   ZuCheck(ZtcTestClient::client().connect(cf.id));
-  auto restarted = snapshot(SeqNo + 11, Ztc::fbs::Group::App, "*");
+  auto restarted = snapshot(SeqNo + 14, Ztc::fbs::Group::App, "*");
   ZuCheck(restarted.valid && restarted.app);
   ZuCheck(app.stop());
   app.final();

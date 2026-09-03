@@ -307,8 +307,12 @@ struct UnionA { int foo; };
 struct UnionB { int bar; };
 ZfStruct((UnionA, JSON), (((foo), (Ctor<0>, Mutable)), (Int32)));
 ZfStruct((UnionB, JSON), (((bar), (Ctor<0>, Mutable)), (Int32)));
+struct UnionArray : public ZtArray<int> {
+  ZuDerive_(UnionArray, ZtArray<int>)
+  friend ZfJSON::AsArray<ZfFieldTC::Int32> ZfJSON_Fmt(UnionArray *);
+};
 struct UnionHolder {
-  ZfJSON::Union<UnionA, UnionB>	u;
+  ZfJSON::Union<UnionA, UnionB, UnionArray, MapText>	u;
 };
 ZfStruct((UnionHolder, JSON), (((u), (Ctor<0>, Mutable)), (UDT)));
 
@@ -868,6 +872,62 @@ int main(int argc, char **argv)
     loaded.u = ZfJSON::handler<UnionA>(node).ctor();
     ZfJSON::save(json2, loaded);
     ZuCheck(json == json2);
+
+    char arrayJSON[] = "{\"u\":[1,2,3]}";
+    auto arrayScan = ZfJSON::scan(arrayJSON);
+    auto arrayHolder =
+      ZfJSON::handler<UnionHolder>((*arrayScan.p<1>())[0]).ctor();
+    ZuCheck((arrayHolder.u.is<const ZfJSON::AnyNode *>()));
+    auto arrayNode = arrayHolder.u.p<const ZfJSON::AnyNode *>();
+    ZuCheck(arrayNode && arrayNode->has<ZfJSON::AnyNode::Array>());
+    arrayHolder.u = ZfJSON::handler<UnionArray>(arrayNode).ctor();
+    ZuCheck(arrayHolder.u.p<UnionArray>().length() == 3);
+    ZuCheck(arrayHolder.u.p<UnionArray>()[1] == 2);
+    json.length_(0);
+    ZfJSON::save(json, arrayHolder);
+    ZuCheck(json == "{\"u\":[1,2,3]}");
+
+    char scalarJSON[] = "{\"u\":\"text\"}";
+    auto scalarScan = ZfJSON::scan(scalarJSON);
+    auto scalarHolder =
+      ZfJSON::handler<UnionHolder>((*scalarScan.p<1>())[0]).ctor();
+    ZuCheck((scalarHolder.u.is<const ZfJSON::AnyNode *>()));
+    auto scalarNode = scalarHolder.u.p<const ZfJSON::AnyNode *>();
+    ZuCheck(scalarNode && scalarNode->has<ZfJSON::AnyNode::String>());
+    scalarHolder.u = ZfJSON::handler<MapText>(scalarNode).ctor();
+    ZuCheck(scalarHolder.u.p<MapText>().value == "text");
+    json.length_(0);
+    ZfJSON::save(json, scalarHolder);
+    ZuCheck(json == "{\"u\":\"text\"}");
+
+    char nullJSON[] = "{\"u\":null}";
+    auto nullScan = ZfJSON::scan(nullJSON);
+    auto nullHolder =
+      ZfJSON::handler<UnionHolder>((*nullScan.p<1>())[0]).ctor();
+    ZuCheck((nullHolder.u.is<const ZfJSON::AnyNode *>()));
+    auto nullNode = nullHolder.u.p<const ZfJSON::AnyNode *>();
+    ZuCheck(nullNode && nullNode->has<ZfJSON::AnyNode::Null>());
+    using UnionHandler = ZfJSON::As<decltype(nullHolder.u)>::
+      Handler<decltype(nullHolder.u), ZuFacet::JSON>;
+    ZuCheck(!UnionHandler::valid(nullptr));
+
+    char numberJSON[] = "{\"u\":42}";
+    auto numberScan = ZfJSON::scan(numberJSON);
+    auto numberHolder =
+      ZfJSON::handler<UnionHolder>((*numberScan.p<1>())[0]).ctor();
+    auto numberNode = numberHolder.u.p<const ZfJSON::AnyNode *>();
+    ZuCheck(numberNode && numberNode->has<ZfJSON::AnyNode::Number>());
+    char boolJSON[] = "{\"u\":true}";
+    auto boolScan = ZfJSON::scan(boolJSON);
+    auto boolHolder =
+      ZfJSON::handler<UnionHolder>((*boolScan.p<1>())[0]).ctor();
+    auto boolNode = boolHolder.u.p<const ZfJSON::AnyNode *>();
+    ZuCheck(boolNode && boolNode->has<ZfJSON::AnyNode::True>());
+
+    UnionHolder empty;
+    json.length_(0);
+    ZfJSON::save(json, empty);
+    ZuCheck(json == "{\"u\":null}");
   }
 
   return 0;
