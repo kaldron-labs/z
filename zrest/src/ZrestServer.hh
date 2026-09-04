@@ -214,7 +214,9 @@ struct MReqParser : public Zhttp::Parser {
   bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
     return ZuSwitch::dispatch<Zhttp::Method::N>(method,
 	[this, method, &target](auto I) -> bool {
-      using MethodReqs = ZuTypeGrep<MethodFilter<I>::template Filter, Reqs>;
+      static constexpr unsigned MethodI = I;
+      using MethodReqs =
+	ZuTypeGrep<MethodFilter<MethodI>::template Filter, Reqs>;
       if constexpr (!MethodReqs::N) {
 	return false;
       } else {
@@ -224,7 +226,8 @@ struct MReqParser : public Zhttp::Parser {
 	if (j < 0) return false;
 	return ZuSwitch::dispatch<MethodReqs::N>(j,
 	    [this, method, &target](auto J) -> bool {
-	  using Req = ZuType<J, MethodReqs>;
+	  static constexpr unsigned ReqI = J;
+	  using Req = ZuType<ReqI, MethodReqs>;
 	  auto request = new (u.template new_<Req, true>()) Req();
 	  request->init();
 	  if (!request->operation(method, target)) {

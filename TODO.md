@@ -1,29 +1,48 @@
 # TODO
 
-## Zm associative containers
-- consider probing for STL compatibility (`begin`, etc. for associative containers)
-  - `insert` / `emplace`
-  - `iterator_category` is bidirectional
-    - `begin`, `end`
+## Z
 
-## ZfCf/ZfYAML/ZfTOML/ZfJSON/ZfURI
-- need `AsMap` below and in alignment with `AsArray`
-  - alternative to `AsObject` for situations where keys and values are not known at compile-time and cannot be mapped to C++ structs using `ZfStruct` metadata
-  - by default, the UDT is assumed to be a Z associative container (`ZmRBTree`, `ZmHash`, `ZmLHash`, ...):
-    - uses `add(k, v)` to load
-    - uses `citer()` to save
-  - can use compile-time probing to determine if STL equivalents should be used
+## Zum
+
+- depends on `Zdb`
+- reusable library for JWT bearer auth, Zdb backed
+- permission -> action?
+
+## Ztc
+
+- `ztcvault`
+  - token issuer (JWT)
+
+- `ztchub`
+  - can depend on `zdb`, new `zum`
+  - enrollment server for `ztcagent`
+  - telemetry aggregator for multiple remote `ztcagent`
+  - server to telemetry front-end clients, e.g. `zdash`
+    - client/server protocol is flatbuffers over websockets
+
+- zcmd effectively goes away
+  - replaced by node.js generic openapi client
+
+## Zdb
+
+- sqlite3 driver
 
 ## Zrest
-- clean up file naming in `zrest/example`
-  - codegen tool takes an optional 
-  - implementation harness (2x - cli/srv)
-    - `zrest.cc`, `zrestd.cc`
-  - REST implementations - (2x - cli/srv)
-    - `xxx_impl.{hh,cc}` - skeleton implementation files
-  - REST interfaces (can be codegen) (3x - core/cli/srv)
-    - `xxx{,_cli,_srv}.{hh,cc}` - interface files
-- re-usable JWT handling?
+
+- openapi codegen
+
+## Zdf
+- permit app to specify dataframe and/or series epoch, so
+  time-series with time values from the past can be handled
+- need single call to load cudf column from zdf reader
+- need single call to load cudf table from zdf dataframe
+- cudf, dlpack integration (in that priority order)
+- TA_Lib (https://ta-lib.org/) integration
+
+## Zrest
+- codegen tool?
+- REST interfaces (can be codegen) (3x - core/cli/srv)
+  - `xxx{,_cli,_srv}.{hh,cc}` - interface files
 
 ## Zum
 - all flatbuffers -> ZfStruct FB
@@ -41,14 +60,6 @@
 - each command group manages it's own client, server links
   - facilitates zdash telemetry fan-in / aggregation etc.
 - command groups can be implemented using REST etc.
-
-## Zdf
-- permit app to specify dataframe and/or series epoch, so
-  time-series with time values from the past can be handled
-- cudf, dlpack integration (in that priority order)
-- TA_Lib (https://ta-lib.org/) integration
-- need single call to load cudf column from zdf reader
-- need single call to load cudf table from zdf dataframe
 
 ## zdash
 - get running, retest

@@ -10,6 +10,27 @@
 
 using namespace ZuTestUtil;
 
+void globalWildcard()
+{
+  ZuTestScope(globalWildcard);
+
+  for (unsigned i = unsigned(Ztc::fbs::Group::Heap);
+      i <= unsigned(Ztc::fbs::Group::Alert); ++i) {
+    auto group = Ztc::fbs::Group(i);
+    ZuCSpan key = group == Ztc::fbs::Group::Hub ? "*:*" :
+      group == Ztc::fbs::Group::Queue ? "*:*:*" : "*";
+    Ztc::Filter_::Filter filter;
+    auto check = [&filter, group, key](ZuCSpan input) {
+      ZuCheck(filter.compile(group, input, 32));
+      ZuCheck(filter.key() == key);
+      ZuCheck(filter.all());
+    };
+    check({});
+    check(ZuCSpan{"", 0});
+    check("*");
+  }
+}
+
 void stringFilter()
 {
   ZuTestScope(stringFilter);
@@ -104,6 +125,7 @@ void typedFilter()
 int main()
 {
   ZuTestMain();
+  ZuTestCall(globalWildcard);
   ZuTestCall(stringFilter);
   ZuTestCall(typedFilter);
 }

@@ -466,7 +466,7 @@ inline unsigned RingExt<Ring, MW, MR>::kill()
   }
   for (unsigned id = 0; id < MaxRdrs; id++)
     if (hdr & (1ULL<<id))
-      kill(rdrPID[id], params.coredump);
+      RingExt_::kill(rdrPID[id], params.coredump);
   Zm::sleep(ZuTime{time_t(params.killWait)});
   return gc();
 }

@@ -983,7 +983,8 @@ public:
 	m_h1 = new H1Logical{
 	  this->app()->user(), this, m_remoteIP, m_remotePort};
 	m_h1->connected_(ProfileTraits<H1TLS>::apply({
-	  .alpn = info.alpn,
+	  .alpn = ALPNString{
+	    info.alpn.data(), unsigned(info.alpn.length())},
 	  .version = uint32_t(info.version),
 	  .transport = Transport::TLS,
 	  .secure = true
@@ -2049,6 +2050,7 @@ private:
     using Base = typename MessageTraits<Profile>::template Response<
       ResponseTx, typename Builder::Headers, HasBody, Streaming>;
     using Ops = ResponseOps<Profile, Builder>;
+    using Headers = typename Builder::Headers;
     static constexpr unsigned HdrBufSize = Builder::HdrBufSize;
 
     ResponseTx(

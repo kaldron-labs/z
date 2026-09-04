@@ -94,10 +94,15 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Supporting CLI/terminfo/globbing components in `zrl/src/ZrlCLI.hh:27`, `zrl/src/ZrlTerminfo.hh:10`, and `zrl/src/ZrlGlobber.hh:10`.
 - Connections: consumed by Zcmd for local command processing and interactive prompts.
 
-### Zv (connectivity framework)
-- Core engine, link, and queue abstractions in `zv/src/ZvEngine.hh:10` and `zv/src/ZvIOQueue.hh:13`.
-- Mmap-backed Zf configuration file loading and CSV helpers live in `zv/src/ZvCf.hh` and `zv/src/ZvCSV.hh`.
-- Connections: uses Zi multiplexing and Zm engine primitives; higher-level services load typed Zf configuration records.
+### Zv (configuration support)
+- Typed configuration loading lives in `zv/src/ZvCf.hh`, with YAML and TOML front ends in `zv/src/ZvYAML.hh` and `zv/src/ZvTOML.hh`.
+- Ring, thread, multiplex, and stack parameter structures are defined by the remaining `Zv*Params` headers.
+- Connections: sits directly above Zi and supplies configuration records to higher-level services.
+
+### Ztc (telemetry and control)
+- Publisher, protocol, and shared-ring APIs live in `ztc/src/ZtcApp.hh`, `ztc/src/ZtcMsg.hh`, and `ztc/src/ZtcRing.hh`.
+- The private `ztcagent` implementation discovers publishers and forwards telemetry over an outbound mTLS hub connection.
+- Connections: sits above Zdb/Zfb and uses Zws, Zhttp, and Ztls for the private agent executable.
 
 ### Zgtk (GTK integration)
 - GTK application and model wrappers in `zgtk/src/ZGtkApp.hh:10` and `zgtk/src/ZGtkTreeModel.hh:10`.
@@ -248,14 +253,12 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zu/test/ZuBase64URLTest.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define TEST
 - `zv/src/ZvThreadParams.hh:10` - Top-level symbols: define ZvThreadParams_HH, using T, struct ZvThreadParams, function init
 - `zu/test/ZuNXTest.cc:17` - Top-level symbols: function out, define CHECK, struct A, struct B, function test1, function test2
-- `zv/src/ZvIOQueue.hh:13` - Top-level symbols: define ZvIOQueue_HH, struct ZvIOQueueRxTx, using ZvSeqNo, using ZvAtomicSeqNo, struct ZvIOMsg_, function length
 - `zu/test/ZuDecimalTest.cc:15` - Top-level symbols: function out, define CHECK
 - `zi/src/ZiDaemon.hh:10` - Top-level symbols: define ZiDaemon_HH, class ZiAPI
 - `zu/test/ZuUTFTest.cc:18` - Top-level symbols: function out, define CHECK
 - `zv/src/ZvLib.hh:10` - Top-level symbols: define ZvLib_HH, define ZvAPI, define ZvExplicit, define ZvAPI, define ZvExplicit, define ZvExtern
 - `zu/test/ZuMvArrayTest.cc:13` - Top-level symbols: function out, define CHECK, struct E, struct G, struct H
 - `zu/test/ZuEndianTest.cc:15` - Top-level symbols: function out, define CHECK
-- `zv/src/ZvQueue.hh:11` - Top-level symbols: define ZvQueue_HH, struct ZvQueueTelemetry, struct ZvQueue
 - `zu/test/ZuPercentTest.cc:12` - Top-level symbols: function encOut, function decOut, function enc, function dec, define ENC, define DEC
 - `zv/src/ZvCSV.cc:1` - Top-level contents (no regex-matched symbols)
 - `zu/test/ZuFPTest.cc:14` - Top-level symbols: function out, define CHECK, function decode, using FP

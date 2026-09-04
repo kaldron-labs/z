@@ -135,7 +135,7 @@ class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
 public:
   Pool_(Client *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
-  void archive_(ReqBuilder *);
+  void archive_(ReqBuilder *) { }
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
 
 private:

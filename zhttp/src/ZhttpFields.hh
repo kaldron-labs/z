@@ -165,8 +165,9 @@ void dispatch(
     }
     ZuSwitch::dispatch<Keys::N>(
       i, [&value, &header, &static_](auto i) {
-	using Key = ZuType<i, Keys>;
-	using KeyValues = typename List::template Value<i>;
+	static constexpr unsigned I = i;
+	using Key = ZuType<I, Keys>;
+	using KeyValues = typename List::template Value<I>;
 	if constexpr (KeyValues::N) {
 	  static constexpr auto matcher = ZuMatcher<KeyValues>();
 	  auto j = matcher.exact(value);

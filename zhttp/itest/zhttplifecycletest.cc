@@ -534,7 +534,8 @@ void testTLS(const TempDir &temp)
   ZuCHECK(mx.start(), "TLS multiplexer start failed");
   if (!mx.running()) return;
   runH1<TLSClient, TLSServer>(
-    Ztls::ClientParams(&mx, "3", "4").caPath(temp.certPath.cspan()),
+    Ztls::ClientParams(&mx, "3", "4").hub(
+      [&temp](auto &p) { p.caPath(temp.certPath.cspan()); }),
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan()),
     state);

@@ -20,7 +20,9 @@
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
+#include <openssl/x509v3.h>
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -894,6 +896,42 @@ bool pkey_verify(const PKey *key, MDType md, ZuBSpan data, ZuBSpan sig)
   return ok == 1;
 }
 
+bool pkey_csr(const PKey *key, void *ctx, CSRFn fn)
+{
+  if (!key || !key->pkey || !fn || !pkey_check_(key->pkey, true))
+    return false;
+
+  const EVP_MD *md = nullptr;
+  switch (EVP_PKEY_base_id(key->pkey)) {
+    case EVP_PKEY_RSA:
+    case EVP_PKEY_EC:
+      md = EVP_sha256();
+      break;
+#if defined(EVP_PKEY_ED25519)
+    case EVP_PKEY_ED25519:
+      break;
+#endif
+    default:
+      return false;
+  }
+
+  X509_REQ *req = X509_REQ_new();
+  X509_NAME *subject = X509_NAME_new();
+  unsigned char *der = nullptr;
+  int len = 0;
+  bool ok = req && subject &&
+    X509_REQ_set_version(req, 0) == 1 &&
+    X509_REQ_set_subject_name(req, subject) == 1 &&
+    X509_REQ_set_pubkey(req, key->pkey) == 1 &&
+    X509_REQ_sign(req, key->pkey, md) > 0 &&
+    (len = i2d_X509_REQ(req, &der)) > 0 &&
+    fn(ctx, ZuBSpan{der, static_cast<unsigned>(len)});
+  OPENSSL_free(der);
+  X509_NAME_free(subject);
+  X509_REQ_free(req);
+  return ok;
+}
+
 CertStore *cert_store_new()
 {
   auto store = new CertStore{};
@@ -921,21 +959,53 @@ bool cert_store_load_file(CertStore *store, const char *path)
   return X509_STORE_load_locations(store->store, path, nullptr) == 1;
 }
 
-bool cert_store_add_der(CertStore *store, const uint8_t *data, size_t len)
+static X509 *x509_der_(ZuBSpan data)
 {
-  if (!store || !store->store || !data || !len) return false;
-  const unsigned char *p = data;
-  X509 *cert = d2i_X509(nullptr, &p, len);
-  if (!cert) return false;
+  if (!data) return nullptr;
+  const unsigned char *ptr = data.data();
+  const unsigned char *end = ptr + data.length();
+  X509 *cert = d2i_X509(nullptr, &ptr, data.length());
+  if (cert && ptr != end) {
+    X509_free(cert);
+    cert = nullptr;
+  }
+  return cert;
+}
+
+static bool cert_store_add_(CertStore *store, X509 *cert)
+{
   int ok = X509_STORE_add_cert(store->store, cert);
-  if (!ok) {
+  if (ok != 1) {
     unsigned long err = ERR_peek_last_error();
     if (ERR_GET_LIB(err) == ERR_LIB_X509 &&
-	ERR_GET_REASON(err) == X509_R_CERT_ALREADY_IN_HASH_TABLE)
+	ERR_GET_REASON(err) == X509_R_CERT_ALREADY_IN_HASH_TABLE) {
+      ERR_clear_error();
       ok = 1;
+    }
   }
-  X509_free(cert);
   return ok == 1;
+}
+
+bool cert_store_add_der(CertStore *store, ZuBSpan data)
+{
+  if (!store || !store->store) return false;
+  X509 *cert = x509_der_(data);
+  if (!cert) return false;
+  bool ok = cert_store_add_(store, cert);
+  X509_free(cert);
+  return ok;
+}
+
+bool cert_store_add_ca(CertStore *store, ZuBSpan data)
+{
+  if (!store || !store->store) return false;
+  X509 *cert = x509_der_(data);
+  if (!cert) return false;
+  bool ok = X509_cmp_current_time(X509_get0_notBefore(cert)) < 0 &&
+    X509_cmp_current_time(X509_get0_notAfter(cert)) > 0 &&
+    X509_check_ca(cert) > 0 && cert_store_add_(store, cert);
+  X509_free(cert);
+  return ok;
 }
 
 VerifyCert *verify_cert_new(CertStore *store)
@@ -1020,6 +1090,80 @@ bool load_certificates(ptls_context_t *ctx, const char *path)
 {
   if (!ctx || !path) return false;
   return ptls_load_certificates(ctx, path) == 0;
+}
+
+bool load_certificates_der(
+  ptls_context_t *ctx, ZuSpan<const ZuBSpan> certs, const PKey *key)
+{
+  if (!ctx || !certs.length() || !key || !key->pkey ||
+      !pkey_check_(key->pkey, true)) return false;
+
+  STACK_OF(X509) *parsed = sk_X509_new_null();
+  STACK_OF(X509) *untrusted = sk_X509_new_null();
+  X509_STORE *store = X509_STORE_new();
+  X509_STORE_CTX *verify = X509_STORE_CTX_new();
+  ptls_iovec_t *list = nullptr;
+  bool ok = parsed && untrusted && store && verify;
+  unsigned count = certs.length();
+
+  for (unsigned i = 0; ok && i < count; ++i) {
+    X509 *cert = x509_der_(certs[i]);
+    if (!cert || !sk_X509_push(parsed, cert)) {
+      X509_free(cert);
+      ok = false;
+    }
+  }
+
+  X509 *leaf = ok ? sk_X509_value(parsed, 0) : nullptr;
+  EVP_PKEY *pub = leaf ? X509_get_pubkey(leaf) : nullptr;
+  ok = ok && pub && EVP_PKEY_eq(pub, key->pkey) == 1;
+  EVP_PKEY_free(pub);
+
+  X509 *anchor = ok ? sk_X509_value(parsed, count - 1) : nullptr;
+  if (ok) ok = X509_STORE_add_cert(store, anchor) == 1;
+  for (unsigned i = 1; ok && i + 1 < count; ++i)
+    if (!sk_X509_push(untrusted, sk_X509_value(parsed, i))) ok = false;
+  if (ok) ok = X509_STORE_CTX_init(verify, store, leaf, untrusted) == 1;
+  if (ok) X509_STORE_CTX_set_flags(
+    verify, X509_V_FLAG_PARTIAL_CHAIN | X509_V_FLAG_X509_STRICT);
+  if (ok) ok = X509_STORE_CTX_set_purpose(
+    verify, X509_PURPOSE_SSL_CLIENT) == 1;
+  if (ok) ok = X509_verify_cert(verify) == 1;
+
+  if (ok) {
+    list = static_cast<ptls_iovec_t *>(
+      calloc(count, sizeof(ptls_iovec_t)));
+    ok = !!list;
+  }
+  for (unsigned i = 0; ok && i < count; ++i) {
+    auto cert = certs[i];
+    list[i].base = static_cast<uint8_t *>(malloc(cert.length()));
+    if (!list[i].base) {
+      ok = false;
+      break;
+    }
+    memcpy(list[i].base, cert.data(), cert.length());
+    list[i].len = cert.length();
+  }
+  if (ok) {
+    if (ctx->certificates.list) {
+      for (size_t i = 0; i < ctx->certificates.count; ++i)
+	free(ctx->certificates.list[i].base);
+      free(ctx->certificates.list);
+    }
+    ctx->certificates.list = list;
+    ctx->certificates.count = count;
+    list = nullptr;
+  }
+  if (list) {
+    for (unsigned i = 0; i < count; ++i) free(list[i].base);
+    free(list);
+  }
+  X509_STORE_CTX_free(verify);
+  X509_STORE_free(store);
+  sk_X509_free(untrusted);
+  sk_X509_pop_free(parsed, X509_free);
+  return ok;
 }
 
 TicketKey *ticket_key_new()

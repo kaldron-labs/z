@@ -73,7 +73,7 @@ static SnapshotResult receive(uint64_t seqNo)
 {
   SnapshotResult result;
   for (;;) {
-    auto frame = ZtcTestClient::readFrame(1);
+    auto frame = ZtcTestClient::readFrame(1, seqNo != 0);
     auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : nullptr;
     if (!msg) return result;
     if (msg->body_type() == Ztc::fbs::Body::Telemetry) {
@@ -160,6 +160,24 @@ static void appTest()
   ZuCheck(ZiStat{pidPath}.exists());
   ZuCheck(ZtcTestClient::client().connect(cf.id));
 
+  auto zero = snapshot(0, Ztc::fbs::Group::App, "*");
+  ZuCheck(zero.valid && zero.app);
+  auto gap = snapshot(2, Ztc::fbs::Group::App, "*");
+  ZuCheck(gap.valid && gap.app);
+  ZuCheck(sendRequest(1, Ztc::fbs::Group::App, "*", 0, true));
+  ZuCheck(!ZtcTestClient::readFrame(1));
+  ZuCheck(sendRequest(2, Ztc::fbs::Group::App, "*", 0, true));
+  ZuCheck(!ZtcTestClient::readFrame(1));
+  ZuCheck(sendRequest(3, Ztc::fbs::Group::App, "*", 500, true));
+  auto admissionAck = ack(3);
+  auto admissionSnapshot = receive(3);
+  ZuCheck(admissionAck.valid && admissionAck.interval == 500 &&
+    admissionSnapshot.valid);
+  ZuCheck(sendRequest(3, Ztc::fbs::Group::App, "*", 0, false));
+  auto unsubscribeAck = ack(3);
+  ZuCheck(unsubscribeAck.valid &&
+    unsubscribeAck.status == Ztc::fbs::AckStatus::OK);
+
   constexpr uint64_t SeqNo = UINT64_C(0x123456789abcdef0);
   auto appResult = snapshot(SeqNo, Ztc::fbs::Group::App, "*");
   ZuCheck(appResult.valid && appResult.app && appResult.frames == 1 &&
@@ -216,15 +234,18 @@ static void appTest()
     Ztc::msg(errorFrame->ptr<Ztc::Hdr>()) : nullptr;
   auto error = errorMsg && errorMsg->body_type() == Ztc::fbs::Body::Error ?
     errorMsg->body_as_Error() : nullptr;
-  ZuCheck(error && !error->seqNo() && !error->hasSeqNo() &&
-    Zfb::Load::str(error->id()) == cf.id);
+  ZuCheck(error);
+  ZuCheck(!error || error->seqNo() == ZuCmp<uint64_t>::null(),
+    ZuTestUtil::log("unexpected error sequence ",
+      error ? error->seqNo() : uint64_t{}));
+  ZuCheck(!error || Zfb::Load::str(error->id()) == cf.id);
 
   ZuCheck(sendRequest(SeqNo + 12, Ztc::fbs::Group::App, "*", 500, true));
   auto subAck = ack(SeqNo + 12);
   auto subSnapshot = receive(SeqNo + 12);
   ZuCheck(subAck.valid && subAck.interval == 500 && subSnapshot.valid);
   auto reset = ZtcTestClient::request(
-    0, Ztc::fbs::Group::App, {}, 0, false);
+    ZuCmp<uint64_t>::null(), Ztc::fbs::Group::App, {}, 0, false);
   ZuCheck(reset && ZtcTestClient::writeAll(1, reset->cspan()));
   ZuCheck(sendRequest(
     SeqNo + 13, Ztc::fbs::Group::App, "other", 500, true));
@@ -233,7 +254,7 @@ static void appTest()
   auto resetSnapshot = receive(SeqNo + 13);
   ZuCheck(resetSnapshot.valid && !resetSnapshot.frames);
   reset = ZtcTestClient::request(
-    0, Ztc::fbs::Group::App, {}, 0, false);
+    ZuCmp<uint64_t>::null(), Ztc::fbs::Group::App, {}, 0, false);
   ZuCheck(reset && ZtcTestClient::writeAll(1, reset->cspan()));
 
   ZuCheck(app.stop());

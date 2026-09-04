@@ -19,6 +19,7 @@
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiAssert.hh>
@@ -35,6 +36,7 @@
 
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsCreds.hh>
 
 #include <stdlib.h>
 #include <string.h>
@@ -130,7 +132,32 @@ private:
   ErrorFn	m_errorFn;
 };
 
-using ClientParams = HubParams;
+class ClientParams : public HubParams {
+public:
+  using HubParams::HubParams;
+
+  HubParams &hub() { return *this; }
+  const HubParams &hub() const { return *this; }
+  template <typename L>
+  ClientParams &&hub(L &&l) {
+    ZuFwd<L>(l)(static_cast<HubParams &>(*this));
+    return ZuMv(*this);
+  }
+
+  ClientParams &&creds(ClientCreds v)
+    { m_creds = ZuMv(v); return ZuMv(*this); }
+  ClientParams &&caCerts(Certs v)
+    { m_caCerts = ZuMv(v); return ZuMv(*this); }
+
+  const ClientCreds &creds() const { return m_creds; }
+  const Certs &caCerts() const { return m_caCerts; }
+
+private:
+  template <typename> friend class Client;
+
+  ClientCreds	m_creds;
+  Certs		m_caCerts;
+};
 
 struct ServerParams : public HubParams {
   using HubParams::HubParams;
@@ -2035,9 +2062,12 @@ protected:
   // Windows - ROOT certificate store (using Cert* API)
 
   bool loadCA(ZuCSpan path) {
-    return loadCA(path ? path.data() : nullptr);
+    return loadCA_(path ? path.data() : nullptr, nullptr);
   }
-  bool loadCA(const char *path) {
+  bool loadCA(ZuCSpan path, const Certs &certs) {
+    return loadCA_(path ? path.data() : nullptr, &certs);
+  }
+  bool loadCA_(const char *path, const Certs *certs) {
     if (!m_cacert) m_cacert = Backend::cert_store_new();
     if (!m_cacert) {
       error_(ZeEXCEPT(Error, "Ztls", "cert_store_new() failed"));
@@ -2070,8 +2100,8 @@ protected:
 
       PCCERT_CONTEXT context = nullptr;
       while (context = CertEnumCertificatesInStore(store, context)) {
-	if (!Backend::cert_store_add_der(
-	      m_cacert, context->pbCertEncoded, context->cbCertEncoded)) {
+	if (!Backend::cert_store_add_der(m_cacert,
+	      {context->pbCertEncoded, context->cbCertEncoded})) {
 	  error_(ZeEXCEPT(Error, "Ztls", "cert_store_add_der() failed"));
 	  CertFreeCertificateContext(context);
 	  CertCloseStore(store, 0);
@@ -2097,6 +2127,16 @@ protected:
 	  s << function << "(\"" << path << "\") failed";
 	})));
 	return false;
+      }
+    }
+    if (certs) {
+      unsigned n = certs->length();
+      for (unsigned i = 0; i < n; ++i) {
+	const auto &cert = (*certs)[i];
+	if (!Backend::cert_store_add_ca(m_cacert, cert)) {
+	  error_(ZeEXCEPT(Error, "Ztls", "cert_store_add_ca() failed"));
+	  return false;
+	}
       }
     }
     if (m_verify) Backend::verify_cert_free(m_verify);
@@ -2230,7 +2270,7 @@ friend Base;
   Client() { }
   ~Client() {
     Backend::sign_cert_free(m_sign);
-    Backend::pkey_free(m_key);
+    if (!m_creds) Backend::pkey_free(m_key);
   }
 
   // specify certPath and keyPath for mTLS
@@ -2245,6 +2285,7 @@ private:
   // stable after init(); released by the destructor
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
+  ClientCreds			m_creds;
 };
 
 template <typename App>
@@ -2258,8 +2299,14 @@ bool Client<App>::init(ClientParams params)
       "client certPath and keyPath must be configured together"));
     return false;
   }
+  if (params.certPath() && params.creds()) {
+    auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
+    errorFn(ZeEXCEPT(Error, "Ztls",
+      "client path and in-memory credentials are mutually exclusive"));
+    return false;
+  }
 
-  return Base::init_(ZuMv(params), [this](const ClientParams &params) -> bool {
+  return Base::init_(ZuMv(params), [this](ClientParams &params) -> bool {
     static ptls_save_ticket_t save_ticket_cb{
       .cb = [](ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input) -> int {
 	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
@@ -2273,7 +2320,7 @@ bool Client<App>::init(ClientParams params)
     ctx->sign_certificate = nullptr;
     ctx->encrypt_ticket = nullptr;
     ctx->require_client_authentication = 0;
-    if (!loadCA(ZuCSpan{params.caPath()})) return false;
+    if (!loadCA(ZuCSpan{params.caPath()}, params.caCerts())) return false;
 
     if (params.certPath() && params.keyPath()) {
       if (!Backend::load_certificates(ctx, params.certPath().data()))
@@ -2287,6 +2334,29 @@ bool Client<App>::init(ClientParams params)
 	return false;
       }
       ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
+    } else if (params.creds()) {
+      m_creds = ZuMv(params.m_creds);
+      const auto &certs = m_creds.certs();
+      unsigned n = certs.length();
+      using Spans = ZtArray<ZuBSpan, ZtArrayHeapID<"Ztls.CertSpans">>;
+      auto spans = ZtScratch(Spans, n);
+      for (unsigned i = 0; i < n; ++i) spans.push(certs[i]);
+      m_key = m_creds.pkey_();
+      m_sign = Backend::sign_cert_new(m_key);
+      if (!m_sign) {
+	m_key = nullptr;
+	m_creds = {};
+	return false;
+      }
+      if (!Backend::load_certificates_der(ctx, spans, m_key)) {
+	Backend::sign_cert_free(m_sign);
+	m_sign = nullptr;
+	m_key = nullptr;
+	m_creds = {};
+	return false;
+      }
+      ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
+      m_creds.clearCerts_();
     }
     return true;
   });

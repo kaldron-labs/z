@@ -123,6 +123,21 @@ save_PK_EC(S &s, const Backend::PKey *key) {
   return {};
 }
 
+template <typename S>
+inline ZuUnion<void, ZeException>
+saveCSR_(S &s, const Backend::PKey *key) {
+  struct Context {
+    S *s;
+    static bool save(void *ptr, ZuBSpan data) {
+      *static_cast<Context *>(ptr)->s << data;
+      return true;
+    }
+  } context{&s};
+  if (!Backend::pkey_csr(key, &context, Context::save))
+    return ZeEXCEPT(Error, "ZtlsPK", "CSR generation failed");
+  return {};
+}
+
 // any key
 struct AnyKey : public ZmPolymorph { };
 
@@ -242,6 +257,9 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
   // save public key
   template <typename S>
   ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }
+
+  template <typename S>
+  ZuUnion<void, ZeException> saveCSR(S &s) const { return saveCSR_(s, key); }
 
   // create public key
   ZuUnion<ZmRef<PK>, ZeException> mkPK() {
@@ -375,6 +393,9 @@ struct SK_EC_ : public PK_EC_<Heap> {
   template <typename S>
   ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }
 
+  template <typename S>
+  ZuUnion<void, ZeException> saveCSR(S &s) const { return saveCSR_(s, key); }
+
   // create public key
   ZuUnion<ZmRef<PK>, ZeException> mkPK() {
     using namespace Data;
@@ -498,6 +519,9 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
   // save public key
   template <typename S>
   ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }
+
+  template <typename S>
+  ZuUnion<void, ZeException> saveCSR(S &s) const { return saveCSR_(s, key); }
 
   // create public key
   ZuUnion<ZmRef<PK>, ZeException> mkPK() {

@@ -9,11 +9,12 @@
 #ifndef ZtcAppTypes_HH
 #define ZtcAppTypes_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtcLib_HH
+#include <zlib/ZtcLib.hh>
 #endif
 
 #include <zlib/ZuID.hh>
+#include <zlib/ZuCmp.hh>
 #include <zlib/ZuTime.hh>
 #include <zlib/ZuTuple.hh>
 
@@ -27,10 +28,13 @@
 
 namespace Ztc {
 
+using RequestFilter =
+  ZtString<ZtStringHeapID<"Ztc.Request.Filter">>;
+
 struct Request {
-  ZtString<>	filter;
+  RequestFilter	filter;
   ZuID		id;
-  uint64_t	seqNo = 0;
+  uint64_t	seqNo = ZuCmp<uint64_t>::null();
   uint64_t	alertSeqNo = 0;
   uint32_t	interval = 0;
   uint32_t	alertDate = 0;
@@ -38,6 +42,18 @@ struct Request {
   bool		subscribe = false;
 
   friend ZfStructPrint ZuPrintType(Request *);
+};
+
+using ErrorMessage =
+  ZtString<ZtStringHeapID<"Ztc.Error.Message">>;
+
+struct Error {
+  ErrorMessage	message;
+  ZuID		id;
+  uint64_t	seqNo = ZuCmp<uint64_t>::null();
+  int32_t	code = 0;
+
+  friend ZfStructPrint ZuPrintType(Error *);
 };
 
 struct AppTelemetry {

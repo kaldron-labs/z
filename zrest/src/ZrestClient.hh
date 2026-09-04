@@ -329,12 +329,14 @@ struct MResParser : public Zhttp::Parser {
   bool status(unsigned code) {
     auto i = builder->u.type() - 1;
     return ZuSwitch::dispatch<Reqs::N>(i, [this, code](auto I) -> bool {
-      unsigned j = lookup.template p<I>().findVal(code);
+      static constexpr unsigned ReqI = I;
+      unsigned j = lookup.template p<ReqI>().findVal(code);
       if (ZuCmp<unsigned>::null(j)) return false;
-      using Req = ZuType<I, Reqs>;
+      using Req = ZuType<ReqI, Reqs>;
       using Responses = GetResponses<Req>;
       ZuSwitch::dispatch<Responses::N>(j, [this](auto J) {
-	using Res = ZuType<J, Responses>;
+	static constexpr unsigned ResI = J;
+	using Res = ZuType<ResI, Responses>;
 	constexpr unsigned K = GetResIndex<Reqs, Req, Res>{};
 	auto response = new (u.template new_<K + 1, true>()) Res();
 	response->init();

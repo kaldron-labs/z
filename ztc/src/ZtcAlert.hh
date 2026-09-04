@@ -9,8 +9,8 @@
 #ifndef ZtcAlert_HH
 #define ZtcAlert_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtcLib_HH
+#include <zlib/ZtcLib.hh>
 #endif
 
 #include <zlib/ZiPlatform.hh>

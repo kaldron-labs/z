@@ -521,14 +521,16 @@ inline Zquic::MigrationMode::T migration(int8_t v)
   }
 }
 
-inline Ztls::HubParams tlsParams(
+inline Ztls::ClientParams tlsParams(
   const HubConfig &hub, const TLSConfig &config)
 {
-  return Ztls::HubParams{
-    hub.mx(), hub.rxThread(), hub.txThread()}
-    .asyncThread(hub.asyncThread())
-    .caPath(config.caPath()).certPath(config.certPath())
-    .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
+  return Ztls::ClientParams{
+    hub.mx(), hub.rxThread(), hub.txThread()}.hub(
+      [&hub, &config](auto &p) {
+	p.asyncThread(hub.asyncThread())
+	  .caPath(config.caPath()).certPath(config.certPath())
+	  .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
+      });
 }
 
 inline Zquic::HubParams quicParams(
@@ -652,7 +654,8 @@ template <> struct Traits<TLS> {
   }
   static ConnectedInfo connected(Connected info) {
     return {
-      .alpn = info.alpn,
+      .alpn = ALPNString{
+	info.alpn.data(), unsigned(info.alpn.length())},
       .version = uint32_t(info.version),
       .transport = Transport::TLS,
       .secure = true
@@ -707,7 +710,8 @@ template <> struct Traits<QUIC> {
   }
   static ConnectedInfo connected(Connected info) {
     return {
-      .alpn = info.alpn,
+      .alpn = ALPNString{
+	info.alpn.data(), unsigned(info.alpn.length())},
       .version = info.version,
       .transport = Transport::QUIC,
       .secure = true

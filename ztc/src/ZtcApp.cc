@@ -27,23 +27,15 @@
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiPIDFile.hh>
-#include <zlib/ZiRing.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcAlert.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcFilter.hh>
 #include <zlib/ZtcMsg.hh>
+#include <zlib/ZtcRing.hh>
 
 namespace Ztc {
-
-static unsigned msgSize(const void *ptr)
-{
-  auto hdr = static_cast<const Hdr *>(ptr);
-  return sizeof(Hdr) + unsigned(hdr->length);
-}
-
-ZuDerive(Ring, (ZiRing<ZmRingSizeAxor<msgSize, ZmRingMW<true>>>));
 
 namespace App_ {
 
@@ -648,6 +640,7 @@ struct StateData {
   ZmScheduler::Timer	timer;
   uint64_t		timerGeneration = 0;
   uint64_t		nextOrder = 0;
+  uint64_t		minReqSeqNo = 0;
   uint64_t		alertSeqNo = 0;
   uint32_t		alertDate = 0;
   bool			degraded = false;
@@ -1015,6 +1008,7 @@ void App::start(CtrlFn fn)
   if (!m_state->store.start(now)) m_state->degraded = true;
   m_state->alertDate = 0;
   m_state->alertSeqNo = 0;
+  m_state->minReqSeqNo = 0;
   uint32_t alertDate = 0;
   uint64_t alertSeqNo = 0;
   if (m_state->store.latest(now, alertDate, alertSeqNo)) {
@@ -1556,7 +1550,7 @@ void App::reqRun_()
 	Zm::exit(1);
       }
 
-      unsigned size = msgSize(ptr);
+      unsigned size = ringSize(ptr);
       ZmRef<ZiIOBuf> buf = new App_::ReqFrame;
       if (size <= m_cf.maxFrame && buf->alloc(size)) {
 	memcpy(buf->data(), ptr, size);
@@ -1569,7 +1563,8 @@ void App::reqRun_()
       if (!buf || !msg(buf->ptr<Hdr>())) {
 	mx_->run([this]() {
 	  if (m_running.load_())
-	    sendError_(1, "invalid FlatBuffers message");
+	    sendError_(ZuCmp<uint64_t>::null(), 1,
+	      "invalid FlatBuffers message");
 	}, m_cf.workerThread);
 	continue;
       }
@@ -1584,24 +1579,42 @@ void App::reqRun_()
   }
 }
 
-bool App::publishRaw_(ZmRef<ZiIOBuf> buf)
+bool App::publishRaw_(ZmRef<ZiIOBuf> buf, App_::Delivery::T delivery)
 {
   if (!buf) return false;
   if (m_state->telRing.closed() &&
       m_state->telRing.open(Ring::Write) != Zu::OK)
     return false;
-  void *ptr = m_state->telRing.tryPush(buf->length);
-  if (!ptr) return false;
-  memcpy(ptr, buf->data(), buf->length);
-  m_state->telRing.push2(ptr, buf->length);
-  return true;
+  bool evicted = false;
+  for (;;) {
+    if (void *ptr = m_state->telRing.push(buf->length)) {
+      memcpy(ptr, buf->data(), buf->length);
+      m_state->telRing.push2(ptr, buf->length);
+      return true;
+    }
+    int status = m_state->telRing.writeStatus();
+    if (status >= 0) {
+      if (delivery == App_::Delivery::Telemetry && evicted) return false;
+      m_state->telRing.kill();
+      evicted = true;
+      if (!m_running.load_()) return false;
+      continue;
+    }
+    switch (status) {
+      case Zu::NotReady:
+      case Zu::EndOfFile:
+      case Zu::IOError:
+      default:
+	return false;
+    }
+  }
 }
 
 bool App::publish_(ZmRef<ZiIOBuf> buf)
 {
   if (m_state->appPending && publishApp_(0))
     m_state->appPending = false;
-  return publishRaw_(ZuMv(buf));
+  return publishRaw_(ZuMv(buf), App_::Delivery::Telemetry);
 }
 
 void App::appTelemetry_(AppTelemetry &data)
@@ -1620,14 +1633,15 @@ bool App::publishApp_(uint64_t seqNo)
   AppTelemetry data;
   appTelemetry_(data);
   return publishRaw_(App_::telemetryFrame(
-    m_cf.id, seqNo, fbs::TelemetryBody::AppTelemetry, data));
+    m_cf.id, seqNo, fbs::TelemetryBody::AppTelemetry, data),
+    App_::Delivery::Telemetry);
 }
 
 void App::request_(ZmRef<ZiIOBuf> buf)
 {
   auto root = msg_(buf->ptr<Hdr>());
   if (ZuUnlikely(root->body_type() != fbs::Body::Request)) {
-    sendError_(1, "expected Request message");
+    sendError_(ZuCmp<uint64_t>::null(), 1, "expected Request message");
     return;
   }
   auto request = root->body_as_Request();
@@ -1635,9 +1649,16 @@ void App::request_(ZmRef<ZiIOBuf> buf)
   uint64_t seqNo = request->seqNo();
   ZuCSpan id = Zfb::Load::str(request->id());
   if (id && id != m_cf.id) return;
-  if (!seqNo) {
+  if (seqNo == ZuCmp<uint64_t>::null()) {
     clearSubscriptions_();
+    m_state->minReqSeqNo = 0;
     return;
+  }
+  if (request->subscribe()) {
+    if (m_state->minReqSeqNo == ZuCmp<uint64_t>::null() ||
+	seqNo < m_state->minReqSeqNo)
+      return;
+    m_state->minReqSeqNo = seqNo + 1;
   }
   ZuCSpan filter = Zfb::Load::str(request->filter());
   auto group = request->group();
@@ -1908,7 +1929,7 @@ void App::failReplay_(
   sub->replayData.close();
   sub->replayIndex.close();
   sub->openDate = 0;
-  sendError_(2, message);
+  sendError_(sub->seqNo, 2, message);
   m_state->subs.delNode(sub);
 }
 
@@ -2383,18 +2404,18 @@ void App::sendAck_(
   auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
   auto ack = fbs::CreateAck(fbb, id, seqNo, status, interval);
   fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Ack, ack.Union()));
-  publish_(saveHdr(fbb));
+  publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
-void App::sendError_(int32_t code, ZuCSpan message)
+void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
 {
   Zfb::IOBuilder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
   auto text = fbb.CreateString(message.data(), message.length());
-  auto error = fbs::CreateError(fbb, id, 0, false, code, text);
+  auto error = fbs::CreateError(fbb, id, seqNo, code, text);
   fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Error, error.Union()));
-  publish_(saveHdr(fbb));
+  publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
 void App::sendEOS_(uint64_t seqNo)
@@ -2404,7 +2425,7 @@ void App::sendEOS_(uint64_t seqNo)
   auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
   auto eos = fbs::CreateEOS(fbb, id, seqNo);
   fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::EOS, eos.Union()));
-  publish_(saveHdr(fbb));
+  publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
 } // Ztc

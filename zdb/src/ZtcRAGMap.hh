@@ -9,8 +9,8 @@
 #ifndef ZtcRAGMap_HH
 #define ZtcRAGMap_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZdbLib_HH
+#include <zlib/ZdbLib.hh>
 #endif
 
 #include <zlib/ZtEnum.hh>
@@ -21,7 +21,7 @@ namespace Ztc {
 namespace RAG {
 
 enum { N = Green + 1 };
-ZtEnumNames(ZvAPI, RAG, Off, Red, Amber, Green);
+ZtEnumNames(ZdbAPI, RAG, Off, Red, Amber, Green);
 struct Map : public Map_ { };
 
 } // RAG
