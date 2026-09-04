@@ -19,23 +19,16 @@
 #include <zlib/Zfb.hh>
 
 #include <zlib/ZiProgram.hh>
-#include <zlib/ZiRing.hh>
-
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
+#include <zlib/ZtcRing.hh>
 
 #include "ZiTestResidue.hh"
 
 namespace ZtcTestClient {
 
-inline unsigned msgSize(const void *ptr)
-{
-  auto hdr = static_cast<const Ztc::Hdr *>(ptr);
-  return sizeof(Ztc::Hdr) + unsigned(hdr->length);
-}
-
-ZuDerive(Ring, (ZiRing<ZmRingSizeAxor<msgSize, ZmRingMW<true>>>));
+using Ring = Ztc::Ring;
 
 using Frame = ZiIOBufAlloc<1024,
   Ztc::AppCf::DefltMaxFrame, "Ztc.TestClient.Frame">;
@@ -100,14 +93,15 @@ public:
   {
     if (m_reqRing.closed()) return false;
     if (m_resetPending) {
-      auto reset = request(0, Ztc::fbs::Group::App, {}, 0, false);
+      auto reset = request(
+	ZuCmp<uint64_t>::null(), Ztc::fbs::Group::App, {}, 0, false);
       if (!reset || !sendRaw(reset->cspan())) return false;
       m_resetPending = false;
     }
     return sendRaw(data);
   }
 
-  ZmRef<ZiIOBuf> read()
+  ZmRef<ZiIOBuf> read(bool skipStartup = true)
   {
     for (unsigned attempt = 0; attempt < ReadAttempts; ++attempt) {
       const void *ptr = m_telRing.shift();
@@ -115,7 +109,7 @@ public:
 	if (m_telRing.readStatus() < 0) return {};
 	continue;
       }
-      unsigned size = msgSize(ptr);
+      unsigned size = Ztc::ringSize(ptr);
       ZmRef<ZiIOBuf> frame = new Frame;
       if (size <= Ztc::AppCf::DefltMaxFrame && frame->alloc(size)) {
 	memcpy(frame->data(), ptr, size);
@@ -127,7 +121,7 @@ public:
       auto msg = Ztc::msg(frame->ptr<Ztc::Hdr>());
       auto tel = msg && msg->body_type() == Ztc::fbs::Body::Telemetry ?
 	msg->body_as_Telemetry() : nullptr;
-      if (tel && !tel->seqNo() &&
+      if (skipStartup && tel && tel->seqNo() == 0 &&
 	  tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry)
 	continue;
       return frame;
@@ -182,9 +176,9 @@ inline bool writeAll(int, ZuBSpan data)
   return client().send(data);
 }
 
-inline ZmRef<ZiIOBuf> readFrame(int)
+inline ZmRef<ZiIOBuf> readFrame(int, bool skipStartup = true)
 {
-  return client().read();
+  return client().read(skipStartup);
 }
 
 inline int connect(const Ztc::App &, bool = false)

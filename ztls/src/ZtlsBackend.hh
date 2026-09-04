@@ -125,12 +125,15 @@ bool pkey_ed25519_export_private(const PKey *, ZuSpan<uint8_t> key);
 bool pkey_sign(const PKey *, MDType md, ZuBSpan data,
   ZuSpan<uint8_t> sig, size_t *siglen);
 bool pkey_verify(const PKey *, MDType md, ZuBSpan data, ZuBSpan sig);
+using CSRFn = bool (*)(void *, ZuBSpan);
+bool pkey_csr(const PKey *, void *ctx, CSRFn);
 
 CertStore *cert_store_new();
 void cert_store_free(CertStore *);
 bool cert_store_load_path(CertStore *, const char *path);
 bool cert_store_load_file(CertStore *, const char *path);
-bool cert_store_add_der(CertStore *, const uint8_t *data, size_t len);
+bool cert_store_add_der(CertStore *, ZuBSpan cert);
+bool cert_store_add_ca(CertStore *, ZuBSpan cert);
 
 VerifyCert *verify_cert_new(CertStore *);
 void verify_cert_free(VerifyCert *);
@@ -143,6 +146,8 @@ bool sign_cert_async(SignCert *, bool);
 
 PKey *pkey_load_pem(const char *path);
 bool load_certificates(ptls_context_t *ctx, const char *path);
+bool load_certificates_der(
+  ptls_context_t *, ZuSpan<const ZuBSpan> certs, const PKey *key);
 
 TicketKey *ticket_key_new();
 void ticket_key_free(TicketKey *);

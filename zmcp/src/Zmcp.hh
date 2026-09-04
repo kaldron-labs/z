@@ -2604,7 +2604,8 @@ private:
       try {
 	ZuSwitch::dispatch<Reqs::N>(index,
 	    [&emit, &envelope, &params, &tool, &completed, era](auto I) {
-	  using Req = ZuType<I, Reqs>;
+	  static constexpr unsigned ReqI = I;
+	  using Req = ZuType<ReqI, Reqs>;
 	  const auto &request =
 	    params.arguments().template p<ToolArg<Req>>().object();
 	  auto complete = [&emit, &envelope, &completed, era](auto &&reply) {

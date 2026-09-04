@@ -15,8 +15,59 @@
 #include <zlib/ZtcDB.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
+#include <zlib/ZtcVer.hh>
 
 using namespace ZuTestUtil;
+
+void version()
+{
+  ZuTestScope(version);
+  constexpr uint32_t v = Ztc::Ver::make(12, 34, 56);
+  ZuCheck(v == UINT32_C(1234056));
+  ZuCheck(Ztc::Ver::major(v) == 12);
+  ZuCheck(Ztc::Ver::minor(v) == 34);
+  ZuCheck(Ztc::Ver::patch(v) == 56);
+  ZuCheck(Ztc::Ver::compatible(Ztc::Ver::make(12, 35, 0), v));
+  ZuCheck(Ztc::Ver::compatible(Ztc::Ver::make(12, 34, 0), v));
+  ZuCheck(!Ztc::Ver::compatible(Ztc::Ver::make(12, 33, 999), v));
+  ZuCheck(!Ztc::Ver::compatible(Ztc::Ver::make(13, 34, 56), v));
+
+  Zfb::Builder fbb;
+  auto request = Ztc::fbs::CreateRequest(fbb);
+  fbb.Finish(request);
+  auto loaded = Zfb::GetRoot<Ztc::fbs::Request>(fbb.GetBufferPointer());
+  ZuCheck(loaded->seqNo() == ZuCmp<uint64_t>::null());
+
+  Zfb::Builder zeroBuilder;
+  auto zero = Ztc::fbs::CreateRequest(
+    zeroBuilder, 0, Ztc::fbs::Group::App);
+  zeroBuilder.Finish(zero);
+  loaded = Zfb::GetRoot<Ztc::fbs::Request>(zeroBuilder.GetBufferPointer());
+  ZuCheck(loaded->seqNo() == 0);
+
+  Zfb::Builder errorBuilder;
+  auto error = Ztc::fbs::CreateError(errorBuilder);
+  errorBuilder.Finish(error);
+  auto loadedError =
+    Zfb::GetRoot<Ztc::fbs::Error>(errorBuilder.GetBufferPointer());
+  ZuCheck(loadedError->seqNo() == ZuCmp<uint64_t>::null());
+
+  Zfb::Builder zeroErrorBuilder;
+  auto zeroError = Ztc::fbs::CreateError(zeroErrorBuilder, {}, 0);
+  zeroErrorBuilder.Finish(zeroError);
+  loadedError =
+    Zfb::GetRoot<Ztc::fbs::Error>(zeroErrorBuilder.GetBufferPointer());
+  ZuCheck(loadedError->seqNo() == 0);
+
+  Zfb::Builder optionalBuilder;
+  auto optional = Ztc::fbs::CreateRequestDirect(
+    optionalBuilder, 1, Ztc::fbs::Group::App, "");
+  optionalBuilder.Finish(optional);
+  loaded = Zfb::GetRoot<Ztc::fbs::Request>(
+    optionalBuilder.GetBufferPointer());
+  ZuCheck(loaded && loaded->filter() && !loaded->filter()->size() &&
+    !loaded->id());
+}
 
 void app()
 {
@@ -654,6 +705,7 @@ void telemetryValues()
 int main()
 {
   ZuTestMain();
+  ZuTestCall(version);
   ZuTestCall(app);
   ZuTestCall(alert);
   ZuTestCall(framing);

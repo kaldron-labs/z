@@ -1627,7 +1627,7 @@ public:
 	app_([this, ok]() { terminated_(m_impl, ok, 0); });
 	break;
     }
-    if (request->serial && request->Base::sequence == m_current)
+    if (request->serial && request->ReqBase::sequence == m_current)
       m_current = 0;
     if (!ok) {
       if (kind == ReqType::Discover && result.ok() &&
@@ -1729,7 +1729,7 @@ private:
     bool serial = !m_peer.ready() || m_peer.era() == Era::Legacy;
     request->init(this, ZuMv(message), m_sequence++, m_endpoint,
       m_sessionID, m_peer.era(), serial);
-    if (sequence) *sequence = request->Base::sequence;
+    if (sequence) *sequence = request->ReqBase::sequence;
     if (request_) *request_ = request.ptr();
     if (serial && (m_current || m_drainingSerial)) {
       if (m_serial.count_() >= m_limits.maxQueue) return false;
@@ -1739,7 +1739,7 @@ private:
 	m_serial.push(SerialRecord<Impl, Catalog>{ZuMv(request)});
       return true;
     }
-    if (serial) m_current = request->Base::sequence;
+    if (serial) m_current = request->ReqBase::sequence;
     return Base::send(0, ZuMv(request));
   }
 
@@ -1915,9 +1915,9 @@ private:
       auto request = ZuMv(next->data().request);
       if (request->cancelled) continue;
       if (m_peer.era() == Era::Legacy)
-	request->Base::sessionID = m_sessionID;
+	request->ReqBase::sessionID = m_sessionID;
       m_drainingSerial = false;
-      m_current = request->Base::sequence;
+      m_current = request->ReqBase::sequence;
       if (!Base::send(0, ZuMv(request))) fail_();
       return;
     }

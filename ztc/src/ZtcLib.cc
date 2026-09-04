@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZvQueue.hh>
+// Z Telemetry and Control Library
 
-ZtEnumImplNS(ZvQueueType);
+#include <zlib/ZtcLib.hh>
+
+ZtcExtern const char ZtcLib[] = "@(#) Z Telemetry and Control Library v" Z_VERNAME;

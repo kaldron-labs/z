@@ -56,12 +56,14 @@ void testInitValidation()
 
   ZuCSpan alpn[] = { "ztls-test" };
 
-  auto clientParams = Ztls::ClientParams(nullptr, "1", "2").alpn(alpn)
-    .caPath("ca.pem")
-    .certPath("client.pem")
-    .keyPath("client.key")
-    .asyncThread("4")
-    .errorFn(Ztls::defaultErrorFn());
+  auto clientParams = Ztls::ClientParams(nullptr, "1", "2").hub(
+    [&alpn](auto &p) {
+      p.alpn(alpn).caPath("ca.pem")
+	.certPath("client.pem")
+	.keyPath("client.key")
+	.asyncThread("4")
+	.errorFn(Ztls::defaultErrorFn());
+    });
   (void)clientParams;
 
   auto serverParams = Ztls::ServerParams(nullptr, "1", "2").alpn(alpn)
@@ -82,10 +84,11 @@ void testInitValidation()
     auto tx = stream->txStream();
     (void)tx;
   }
-  ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", "2").alpn(alpn)),
+  ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", "2").hub(
+      [&alpn](auto &p) { p.alpn(alpn); })),
     "null multiplexer init unexpectedly succeeded");
-  ZuCHECK(!client.init(
-    Ztls::ClientParams(nullptr, "1", "2").alpn(alpn).certPath("client.pem")),
+  ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", "2").hub(
+      [&alpn](auto &p) { p.alpn(alpn).certPath("client.pem"); })),
     "client cert/key XOR init unexpectedly succeeded");
 
   ServerApp server;

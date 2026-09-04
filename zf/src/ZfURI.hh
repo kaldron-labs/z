@@ -1007,7 +1007,7 @@ struct AsObject {
       if (ZuUnlikely(type < 2)) return false;
       bool output = false;
       ZuSwitch::dispatch<O::N - 2>(type - 2, [&o, &l, &output](auto I_) {
-	enum { I = I_ + 2 };
+	static constexpr unsigned I = I_ + 2;
 	using V = typename O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {

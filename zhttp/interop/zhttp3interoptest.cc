@@ -1099,8 +1099,10 @@ void testZhttpClientCaddyHttpsH1()
   state.body = "";
   TLSClient client{&state};
   ZuCSpan alpn[] = { "http/1.1" };
-  ZuCHECK(client.init(
-      Ztls::ClientParams(&mx, "3", "4").caPath(certPath.cspan()).alpn(alpn)),
+  ZuCHECK(client.init(Ztls::ClientParams(&mx, "3", "4").hub(
+      [&certPath, &alpn](auto &p) {
+	p.caPath(certPath.cspan()).alpn(alpn);
+      })),
     "Zhttp client->Caddy HTTPS/H1 client init failed");
   ZuCHECK(client.start(), "Zhttp client->Caddy HTTPS/H1 client start failed");
   ZmRef<TLSClient::Link> link = new TLSClient::Link{&client};

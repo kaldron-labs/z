@@ -9,8 +9,8 @@
 #ifndef ZtcDBTable_HH
 #define ZtcDBTable_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZdbLib_HH
+#include <zlib/ZdbLib.hh>
 #endif
 
 #include <zlib/ZuID.hh>
@@ -31,7 +31,7 @@
 
 namespace Ztc {
 
-ZfbEnumNS(ZvAPI, DBCacheMode, Normal, All);
+ZfbEnumNS(ZdbAPI, DBCacheMode, Normal, All);
 
 using DBTableID =
   ZtString<ZtStringHeapID<"Ztc.DBTableID">>;

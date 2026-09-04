@@ -11,6 +11,9 @@
 
 #include <iostream>
 
+#include <openssl/evp.h>
+#include <openssl/x509.h>
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtArray.hh>
@@ -70,6 +73,57 @@ void parseArgs(int argc, char **argv)
   }
 }
 
+bool acceptCSR(void *, ZuBSpan) { return true; }
+bool rejectCSR(void *, ZuBSpan) { return false; }
+
+template <typename T>
+void checkCSR(const ZmRef<T> &sk, ZuCSpan type)
+{
+  ZtBArray csr;
+  auto r = sk->saveCSR(csr);
+  if (r.template is<ZeException>()) {
+    ZiLog::log(ZuMv(r.template p<ZeException>()));
+    ZTLS_CHECK_RT(false, type, " CSR generation failed");
+    return;
+  }
+
+  const unsigned char *ptr = csr.data();
+  const unsigned char *end = ptr + csr.length();
+  X509_REQ *req = d2i_X509_REQ(nullptr, &ptr, csr.length());
+  ZTLS_CHECK_RT(req && ptr == end, type, " CSR DER parse");
+  if (!req || ptr != end) {
+    X509_REQ_free(req);
+    return;
+  }
+
+  ZTLS_CHECK_RT(X509_NAME_entry_count(X509_REQ_get_subject_name(req)) == 0,
+    type, " CSR empty subject");
+  STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req);
+  ZTLS_CHECK_RT(!exts || sk_X509_EXTENSION_num(exts) == 0,
+    type, " CSR has no extensions");
+  sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+
+  ZtBArray pubDER;
+  r = sk->savePK(pubDER);
+  ZTLS_CHECK_RT(!r.template is<ZeException>(), type, " CSR public key save");
+  if (r.template is<ZeException>()) {
+    X509_REQ_free(req);
+    return;
+  }
+  ptr = pubDER.data();
+  end = ptr + pubDER.length();
+  EVP_PKEY *source = d2i_PUBKEY(nullptr, &ptr, pubDER.length());
+  EVP_PKEY *requested = X509_REQ_get_pubkey(req);
+  ZTLS_CHECK_RT(source && ptr == end && requested &&
+      EVP_PKEY_eq(source, requested) == 1,
+    type, " CSR public key match");
+  ZTLS_CHECK_RT(requested && X509_REQ_verify(req, requested) == 1,
+    type, " CSR signature verification");
+  EVP_PKEY_free(requested);
+  EVP_PKEY_free(source);
+  X509_REQ_free(req);
+}
+
 template <typename T>
 void checkKey(Ztls::Random &rng, ZuCSpan type)
 {
@@ -84,6 +138,10 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
   } else if constexpr (ZuIsSame<T, SK_ED25519>{}) {
     sk = new T{rng};
   }
+
+  checkCSR(sk, type);
+  ZTLS_CHECK_RT(!Ztls::Backend::pkey_csr(sk->key, nullptr, rejectCSR),
+    type, " CSR sink failure ignored");
 
   ZtBArray asn;
   {
@@ -136,6 +194,8 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
       return;
     }
     auto pk = ZuMv(r).template p<0>();
+    ZTLS_CHECK_RT(!Ztls::Backend::pkey_csr(pk->key, nullptr, acceptCSR),
+      type, " public-only CSR generation succeeded");
     ZtBArray asn3;
     pk->save(asn3);
     if (save) {

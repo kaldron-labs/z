@@ -9,8 +9,8 @@
 #ifndef ZtcDB_HH
 #define ZtcDB_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZdbLib_HH
+#include <zlib/ZdbLib.hh>
 #endif
 
 #include <zlib/ZuID.hh>

@@ -3,7 +3,7 @@ include "ztc_types.fbs";
 namespace Ztc.fbs;
 
 table Request {
-  seq_no:uint64;
+  seq_no:uint64 = 18446744073709551615;
   group:Group;
   filter:string;
   interval:uint32;
@@ -27,8 +27,7 @@ table EOS {
 
 table Error {
   id:string;
-  seq_no:uint64;
-  has_seq_no:bool;
+  seq_no:uint64 = 18446744073709551615;
   code:int32;
   message:string;
 }

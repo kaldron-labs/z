@@ -9,8 +9,8 @@
 #ifndef ZtcFilter_HH
 #define ZtcFilter_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtcLib_HH
+#include <zlib/ZtcLib.hh>
 #endif
 
 #include <zlib/ZuPercent.hh>
@@ -61,6 +61,8 @@ public:
     m_c0 = {};
     m_c1 = {};
     m_c2 = {};
+
+    if (!input || input == "*") return canonical(group, input, maxLength);
 
     ZuCSpan raw{input};
     int64_t first = raw.find(

@@ -1131,7 +1131,7 @@ struct AsUnion {
 	throw ZfTOML_EXCEPT(
 	  ZfTOMLError::badValue(nullptr, "resolved union", "unresolved"));
       ZuSwitch::dispatch<O::N - 2>(type - 2, [&o, &l](auto I_) {
-	enum { I = I_ + 2 };
+	static constexpr unsigned I = I_ + 2;
 	using V = typename O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {

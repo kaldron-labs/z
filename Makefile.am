@@ -4,24 +4,25 @@ EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
 	scripts/fbscodegen \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
-SUBDIRS = zu zm zt ze zf zi zrl
+SUBDIRS = zu zm zt ze zf zi zv zrl
 SUBDIRS += ztcp ztls zquic zhttp zws
 SUBDIRS += zrest
 SUBDIRS += zmcp
 SUBDIRS += zfb
-SUBDIRS += zv
 SUBDIRS += zdb
+SUBDIRS += ztc
 if LIBPQ
 SUBDIRS += zdb_pq
 endif
 SUBDIRS += zdf
-# SUBDIRS += zum zcmd zproxy zdash
+# SUBDIRS += zdash
+# zum, zcmd and zproxy are reference code only
 if GTK
 # SUBDIRS += zgtk
 endif
 
-DIST_SUBDIRS = zu zm zt ze zf zi zrl ztcp ztls zquic zhttp zrest zmcp zfb zv zdb \
-	zdb_pq zdf zum zcmd zproxy zgtk zdash zws
+DIST_SUBDIRS = zu zm zt ze zf zi zv zrl ztcp ztls zquic zhttp zws zrest zmcp zfb zdb ztc \
+	zdb_pq zdf zum zcmd zproxy zgtk zdash
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

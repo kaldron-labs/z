@@ -9,8 +9,8 @@
 #ifndef ZtcDBHost_HH
 #define ZtcDBHost_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZdbLib_HH
+#include <zlib/ZdbLib.hh>
 #endif
 
 #include <zlib/ZuID.hh>
@@ -31,7 +31,7 @@
 
 namespace Ztc {
 
-ZtEnumNS(ZvAPI, DBHostState, int8_t,
+ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Instantiated,
   Initialized,
   Electing,

@@ -27,6 +27,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Ztls.hh>
+#include <zlib/ZtlsPK.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -48,14 +49,18 @@ constexpr unsigned TimeoutSeconds = 15;
 struct TempDir {
   Zi::Path	path;
   ZtString<>	certPath;
+  ZtString<>	certDERPath;
   ZtString<>	keyPath;
+  ZtString<>	extPath;
 
   bool init()
   {
     path = ZiTestResidue::dir("fixtures");
 
     certPath << path << "/cert.pem";
+    certDERPath << path << "/cert.der";
     keyPath << path << "/key.pem";
+    extPath << path << "/cert.ext";
 
     ZtString<> cmd;
     cmd <<
@@ -66,10 +71,14 @@ struct TempDir {
       "-addext subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1 "
       "-keyout " << keyPath << ' ' <<
       "-out " << certPath << " >/dev/null 2>&1";
+    if (!systemOK(system(cmd.data()))) return false;
+    cmd = {};
+    cmd << "openssl x509 -in " << certPath << " -outform DER -out "
+      << certDERPath << " >/dev/null 2>&1";
     return systemOK(system(cmd.data()));
   }
 
-  ZtString<> pathOf(const char *name) const
+  ZtString<> pathOf(ZuCSpan name) const
   {
     ZtString<> s;
     s << path << '/' << name;
@@ -245,7 +254,8 @@ bool write_bytes(const char *path, const ZtArray<uint8_t> &data)
   return ok;
 }
 
-bool read_bytes(const char *path, ZtArray<uint8_t> &data)
+template <typename A>
+bool read_bytes(const char *path, A &data)
 {
   FILE *file = fopen(path, "rb");
   if (!file) return false;
@@ -257,6 +267,47 @@ bool read_bytes(const char *path, ZtArray<uint8_t> &data)
   bool ok = !len || fread(data.data(), 1, unsigned(len), file) == unsigned(len);
   if (fclose(file)) ok = false;
   return ok;
+}
+
+struct CertIssue {
+  ZuCSpan	csr;
+  ZuCSpan	cert;
+  ZuCSpan	ca;
+  ZuCSpan	caKey;
+  ZuCSpan	validity;
+  ZuCSpan	profile;
+  unsigned	serial = 1;
+  bool		der = true;
+};
+
+bool issue_cert(const TempDir &temp, const CertIssue &p)
+{
+  ZtString<> cmd;
+  cmd << "openssl x509 -req -inform DER -in " << p.csr
+    << " -CA " << p.ca << " -CAkey " << p.caKey
+    << " -set_serial " << p.serial << ' ' << p.validity;
+  if (p.profile)
+    cmd << " -extfile " << temp.extPath << " -extensions " << p.profile;
+  if (p.der) cmd << " -outform DER";
+  cmd << " -out " << p.cert << " >/dev/null 2>&1";
+  return TempDir::systemOK(system(cmd.data()));
+}
+
+bool gen_csr(ZuCSpan key, ZuCSpan csr, ZuCSpan subject)
+{
+  ZtString<> cmd;
+  cmd << "openssl req -new -newkey rsa:2048 -nodes -subj /CN=" << subject
+    << " -keyout " << key << " -outform DER -out " << csr
+    << " >/dev/null 2>&1";
+  return TempDir::systemOK(system(cmd.data()));
+}
+
+bool cert_to_der(ZuCSpan cert, ZuCSpan der)
+{
+  ZtString<> cmd;
+  cmd << "openssl x509 -in " << cert << " -outform DER -out " << der
+    << " >/dev/null 2>&1";
+  return TempDir::systemOK(system(cmd.data()));
 }
 
 bool consume_payload(
@@ -570,7 +621,10 @@ void run_in_process(
     ptls_cipher_suite_t **cipherSuites = nullptr,
     unsigned expectedCipher = 0,
     unsigned txHeadroom = 0,
-    unsigned txTailroom = 0)
+    unsigned txTailroom = 0,
+    ZmRef<Ztls::PK::AnyPK> clientKey = {},
+    Ztls::Certs clientCerts = {},
+    Ztls::Certs caCerts = {})
 {
   Ztls::Pico::reset_stats();
   capture.reset();
@@ -600,15 +654,22 @@ void run_in_process(
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
-  bool serverOK = server.init(
-    Ztls::ServerParams(&mx, "3", "4")
-      .certPath(temp.certPath.data())
-      .keyPath(temp.keyPath.data()));
+  Ztls::ServerParams serverParams{&mx, "3", "4"};
+  serverParams.certPath(temp.certPath.data()).keyPath(temp.keyPath.data());
+  if (clientKey)
+    serverParams.mTLS(true).caPath(temp.certPath.data());
+  bool serverOK = server.init(ZuMv(serverParams));
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
 
-  bool clientOK = client.init(
-    Ztls::ClientParams(&mx, "3", "4").caPath(temp.certPath.data()));
+  Ztls::ClientParams clientParams{&mx, "3", "4"};
+  if (clientKey) {
+    clientParams.creds(Ztls::ClientCreds{
+      ZuMv(clientKey), ZuMv(clientCerts)}).caCerts(ZuMv(caCerts));
+  } else {
+    clientParams.caPath(temp.certPath.data());
+  }
+  bool clientOK = client.init(ZuMv(clientParams));
   ZTLS_CHECK_RT(clientOK, "TLS client init failed");
   if (!clientOK) { mx.stop(); return; }
 
@@ -711,6 +772,315 @@ void run_in_process(
   }
 }
 
+void free_certificates(ptls_context_t &ctx)
+{
+  if (!ctx.certificates.list) return;
+  for (unsigned i = 0; i < ctx.certificates.count; ++i)
+    free(ctx.certificates.list[i].base);
+  free(ctx.certificates.list);
+  ctx.certificates = {};
+}
+
+template <typename T>
+void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
+{
+  static constexpr char CertExts[] =
+    "[client]\n"
+    "basicConstraints=critical,CA:FALSE\n"
+    "keyUsage=critical,digitalSignature\n"
+    "extendedKeyUsage=clientAuth\n"
+    "subjectAltName=critical,DNS:client\n"
+    "[server]\n"
+    "basicConstraints=critical,CA:FALSE\n"
+    "keyUsage=critical,digitalSignature\n"
+    "extendedKeyUsage=serverAuth\n"
+    "subjectAltName=critical,DNS:client\n"
+    "[badku]\n"
+    "basicConstraints=critical,CA:FALSE\n"
+    "keyUsage=critical,keyEncipherment\n"
+    "extendedKeyUsage=clientAuth\n"
+    "subjectAltName=critical,DNS:client\n"
+    "[ca]\n"
+    "basicConstraints=critical,CA:TRUE\n"
+    "keyUsage=critical,keyCertSign,cRLSign\n"
+    "[ca0]\n"
+    "basicConstraints=critical,CA:TRUE,pathlen:0\n"
+    "keyUsage=critical,keyCertSign,cRLSign\n"
+    "[nonca]\n"
+    "basicConstraints=critical,CA:FALSE\n"
+    "keyUsage=critical,digitalSignature\n";
+  ZtBArray extData;
+  extData << ZuBSpan{CertExts};
+  ZTLS_CHECK_RT(write_bytes(temp.extPath.data(), extData),
+    type, " extension configuration write failed");
+
+  Ztls::Random rng;
+  ZTLS_CHECK_RT(rng.init(), type, " random initialization failed");
+  ZmRef<T> key;
+  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{})
+    key = new T{rng, 2048};
+  else if constexpr (ZuIsSame<T, Ztls::PK::SK_EC>{})
+    key = new T{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  else
+    key = new T{rng};
+
+  ZtBArray csr;
+  auto result = key->saveCSR(csr);
+  ZTLS_CHECK_RT(!result.template is<ZeException>(),
+    type, " CSR generation failed");
+  if (result.template is<ZeException>()) return;
+
+  ZtString<> name;
+  name << type << ".csr.der";
+  ZtString<> csrPath = temp.pathOf(name.data());
+  name = {};
+  name << type << ".cert.der";
+  ZtString<> certPath = temp.pathOf(name.data());
+  ZTLS_CHECK_RT(write_bytes(csrPath.data(), csr), type, " CSR write failed");
+  ZTLS_CHECK_RT(issue_cert(temp, CertIssue{
+      .csr = csrPath,
+      .cert = certPath,
+      .ca = temp.certPath,
+      .caKey = temp.keyPath,
+      .validity = "-days 1",
+      .profile = "client",
+      .serial = 100}),
+    type, " certificate issuance failed");
+
+  Ztls::Cert leaf;
+  Ztls::Cert root;
+  ZTLS_CHECK_RT(read_bytes(certPath.data(), leaf),
+    type, " issued certificate read failed");
+  ZTLS_CHECK_RT(read_bytes(temp.certDERPath.data(), root),
+    type, " CA certificate read failed");
+  if (!leaf || !root) return;
+
+  ZuBSpan chain[] = {leaf, root};
+  ptls_context_t ctx{};
+  ZTLS_CHECK_RT(Ztls::Backend::load_certificates_der(
+      &ctx, chain, key->key), type, " in-memory chain validation failed");
+  auto installed = ctx.certificates.list;
+  auto installedCount = ctx.certificates.count;
+  ZuBSpan malformed[] = {ZuBSpan{"bad"}};
+  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      &ctx, malformed, key->key), type, " malformed certificate accepted");
+  ZTLS_CHECK_RT(ctx.certificates.list == installed &&
+      ctx.certificates.count == installedCount,
+    type, " failed chain replaced installed certificates");
+  free_certificates(ctx);
+
+  ZuBSpan reversed[] = {root, leaf};
+  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      &ctx, reversed, key->key), type, " reversed chain accepted");
+  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      &ctx, {}, key->key), type, " empty chain accepted");
+
+  ZmRef<T> other;
+  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{})
+    other = new T{rng, 2048};
+  else if constexpr (ZuIsSame<T, Ztls::PK::SK_EC>{})
+    other = new T{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  else
+    other = new T{rng};
+  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      &ctx, chain, other->key), type, " mismatched key accepted");
+
+  auto publicResult = key->mkPK();
+  ZTLS_CHECK_RT(!publicResult.template is<ZeException>(),
+    type, " public key creation failed");
+  if (!publicResult.template is<ZeException>()) {
+    auto publicKey = ZuMv(publicResult).template p<0>();
+    ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+        &ctx, chain, publicKey->key), type, " public-only key accepted");
+  }
+
+  TestState invalidState;
+  BaseClient<TestState> invalidClient{invalidState};
+  Ztls::Certs noCerts;
+  ZmRef<Ztls::PK::AnyPK> mixedKey{ZuMv(other)};
+  auto mixedParams = Ztls::ClientParams(nullptr, "3", "4").hub(
+    [&temp](auto &p) {
+      p.certPath(temp.certPath.data()).keyPath(temp.keyPath.data());
+    }).creds(Ztls::ClientCreds{ZuMv(mixedKey), ZuMv(noCerts)});
+  ZTLS_CHECK_RT(!invalidClient.init(ZuMv(mixedParams)),
+    type, " mixed path/in-memory credentials accepted");
+
+  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{}) {
+    Ztls::Cert broken{leaf};
+    broken[broken.length() - 1] ^= 1;
+    ZuBSpan brokenChain[] = {broken, root};
+    ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+        &ctx, brokenChain, key->key), type, " broken chain accepted");
+
+    auto rejectIssued = [&](ZuCSpan name, ZuCSpan validity,
+        ZuCSpan profile, unsigned serial) {
+      ZtString<> path = temp.pathOf(name);
+      bool issued = issue_cert(temp, CertIssue{
+        .csr = csrPath,
+        .cert = path,
+        .ca = temp.certPath,
+        .caKey = temp.keyPath,
+        .validity = validity,
+        .profile = profile,
+        .serial = serial});
+      ZTLS_CHECK_RT(issued, type, " ", name, " issuance failed");
+      Ztls::Cert cert;
+      bool read = issued && read_bytes(path.data(), cert);
+      ZTLS_CHECK_RT(read, type, " ", name, " read failed");
+      if (!read) return;
+      ZuBSpan invalid[] = {cert, root};
+      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+          &ctx, invalid, key->key), type, " ", name, " accepted");
+    };
+    rejectIssued("expired.der",
+      "-not_before 20000101000000Z -not_after 20010101000000Z",
+      "client", 101);
+    rejectIssued("future.der",
+      "-not_before 21000101000000Z -not_after 21010101000000Z",
+      "client", 102);
+    rejectIssued("server-eku.der", "-days 1", "server", 103);
+    rejectIssued("bad-ku.der", "-days 1", "badku", 104);
+
+    ZtString<> int0Key = temp.pathOf("int0.key");
+    ZtString<> int0CSR = temp.pathOf("int0.csr.der");
+    ZtString<> int0PEM = temp.pathOf("int0.pem");
+    ZtString<> int0DER = temp.pathOf("int0.der");
+    ZtString<> int1Key = temp.pathOf("int1.key");
+    ZtString<> int1CSR = temp.pathOf("int1.csr.der");
+    ZtString<> int1PEM = temp.pathOf("int1.pem");
+    ZtString<> int1DER = temp.pathOf("int1.der");
+    ZtString<> constrainedPath = temp.pathOf("constrained.der");
+    bool constrained = gen_csr(int0Key, int0CSR, "int0") &&
+      issue_cert(temp, CertIssue{
+        .csr = int0CSR,
+        .cert = int0PEM,
+        .ca = temp.certPath,
+        .caKey = temp.keyPath,
+        .validity = "-days 1",
+        .profile = "ca0",
+        .serial = 105,
+        .der = false}) &&
+      cert_to_der(int0PEM, int0DER) &&
+      gen_csr(int1Key, int1CSR, "int1") &&
+      issue_cert(temp, CertIssue{
+        .csr = int1CSR,
+        .cert = int1PEM,
+        .ca = int0PEM,
+        .caKey = int0Key,
+        .validity = "-days 1",
+        .profile = "ca",
+        .serial = 106,
+        .der = false}) &&
+      cert_to_der(int1PEM, int1DER) &&
+      issue_cert(temp, CertIssue{
+        .csr = csrPath,
+        .cert = constrainedPath,
+        .ca = int1PEM,
+        .caKey = int1Key,
+        .validity = "-days 1",
+        .profile = "client",
+        .serial = 107});
+    ZTLS_CHECK_RT(constrained, type, " constrained chain issuance failed");
+    Ztls::Cert constrainedLeaf;
+    Ztls::Cert int0;
+    Ztls::Cert int1;
+    constrained = constrained &&
+      read_bytes(constrainedPath.data(), constrainedLeaf) &&
+      read_bytes(int0DER.data(), int0) && read_bytes(int1DER.data(), int1);
+    ZTLS_CHECK_RT(constrained, type, " constrained chain read failed");
+    if (constrained) {
+      ZuBSpan constrainedChain[] = {constrainedLeaf, int1, int0, root};
+      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+          &ctx, constrainedChain, key->key),
+        type, " path-length constraint violation accepted");
+
+      ZuBSpan unrelatedChain[] = {leaf, int0};
+      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+          &ctx, unrelatedChain, key->key),
+        type, " unrelated chain anchor accepted");
+    }
+
+    ZtString<> nonCAKey = temp.pathOf("nonca.key");
+    ZtString<> nonCACSR = temp.pathOf("nonca.csr.der");
+    ZtString<> nonCAPEM = temp.pathOf("nonca.pem");
+    ZtString<> nonCADER = temp.pathOf("nonca.der");
+    ZtString<> nonCALeafPath = temp.pathOf("nonca-leaf.der");
+    bool nonCA = gen_csr(nonCAKey, nonCACSR, "nonca") &&
+      issue_cert(temp, CertIssue{
+        .csr = nonCACSR,
+        .cert = nonCAPEM,
+        .ca = temp.certPath,
+        .caKey = temp.keyPath,
+        .validity = "-days 1",
+        .profile = "nonca",
+        .serial = 108,
+        .der = false}) &&
+      cert_to_der(nonCAPEM, nonCADER) &&
+      issue_cert(temp, CertIssue{
+        .csr = csrPath,
+        .cert = nonCALeafPath,
+        .ca = nonCAPEM,
+        .caKey = nonCAKey,
+        .validity = "-days 1",
+        .profile = "client",
+        .serial = 109});
+    ZTLS_CHECK_RT(nonCA, type, " non-CA chain issuance failed");
+    Ztls::Cert nonCACert;
+    Ztls::Cert nonCALeaf;
+    nonCA = nonCA && read_bytes(nonCADER.data(), nonCACert) &&
+      read_bytes(nonCALeafPath.data(), nonCALeaf);
+    ZTLS_CHECK_RT(nonCA, type, " non-CA chain read failed");
+    if (nonCA) {
+      ZuBSpan nonCAChain[] = {nonCALeaf, nonCACert, root};
+      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+          &ctx, nonCAChain, key->key),
+        type, " non-CA intermediate accepted");
+    }
+  }
+
+  auto store = Ztls::Backend::cert_store_new();
+  ZTLS_CHECK_RT(store && Ztls::Backend::cert_store_add_ca(store, root),
+    type, " supplemental CA rejected");
+  ZTLS_CHECK_RT(store && Ztls::Backend::cert_store_add_ca(store, root),
+    type, " duplicate supplemental CA rejected");
+  ZTLS_CHECK_RT(store && !Ztls::Backend::cert_store_add_ca(store, leaf),
+    type, " non-CA supplemental certificate accepted");
+  ZTLS_CHECK_RT(store && !Ztls::Backend::cert_store_add_ca(
+      store, ZuBSpan{"bad"}), type, " malformed supplemental CA accepted");
+  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{}) {
+    ZtString<> expiredCAPath = temp.pathOf("expired-ca.der");
+    bool expiredCA = issue_cert(temp, CertIssue{
+      .csr = csrPath,
+      .cert = expiredCAPath,
+      .ca = temp.certPath,
+      .caKey = temp.keyPath,
+      .validity = "-not_before 20000101000000Z -not_after 20010101000000Z",
+      .profile = "ca",
+      .serial = 110});
+    ZTLS_CHECK_RT(expiredCA, type, " expired CA issuance failed");
+    Ztls::Cert cert;
+    expiredCA = expiredCA && read_bytes(expiredCAPath.data(), cert);
+    ZTLS_CHECK_RT(expiredCA, type, " expired CA read failed");
+    if (expiredCA)
+      ZTLS_CHECK_RT(!Ztls::Backend::cert_store_add_ca(store, cert),
+        type, " expired supplemental CA accepted");
+  }
+  Ztls::Backend::cert_store_free(store);
+
+  Ztls::Cert leaf2{leaf};
+  Ztls::Cert root2{root};
+  Ztls::Certs clientCerts;
+  clientCerts.push(ZuMv(leaf2));
+  clientCerts.push(ZuMv(root2));
+  Ztls::Certs caCerts;
+  caCerts.push(ZuMv(root));
+  ZmRef<Ztls::PK::AnyPK> clientKey{ZuMv(key)};
+  run_in_process(
+    temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, false,
+    ZiIP{"127.0.0.1"}, "127.0.0.1", nullptr, 0, 0, 0,
+    ZuMv(clientKey), ZuMv(clientCerts), ZuMv(caCerts));
+}
+
 void testConnectFailureShard(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testConnectFailureShard);
@@ -728,8 +1098,8 @@ void testConnectFailureShard(TempDir &temp, LogCapture &capture)
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
-  bool clientOK = client.init(
-    Ztls::ClientParams(&mx, "3", "4").caPath(temp.certPath.data()));
+  bool clientOK = client.init(Ztls::ClientParams(&mx, "3", "4").hub(
+    [&temp](auto &p) { p.caPath(temp.certPath.data()); }));
   ZTLS_CHECK_RT(clientOK, "TLS failure client init failed");
   if (!clientOK) { mx.stop(); return; }
 
@@ -758,6 +1128,76 @@ void testConnectFailureShard(TempDir &temp, LogCapture &capture)
   ZTLS_CHECK_RT(state.connect_failed_transient.load_(),
     "TLS refused-connect failure lost transient status");
   capture.reset();
+}
+
+void testWrongHostname(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testWrongHostname);
+  capture.reset();
+
+  TestState state;
+  state.expectConnectFailure = true;
+  state.ip = ZiIP{"127.0.0.1"};
+  state.port = reserve_loopback_port(state.ip);
+  ZTLS_CHECK_RT(state.port, "failed to reserve wrong-hostname port");
+  if (!state.port) return;
+
+  BaseServer<TestState> server{state, state.ip};
+  BaseClient<TestState> client{state};
+  ZiMultiplex mx(mx_params());
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "wrong-hostname multiplexer start failed");
+  if (!mxStarted) return;
+
+  bool serverOK = server.init(Ztls::ServerParams(&mx, "3", "4")
+    .certPath(temp.certPath.data()).keyPath(temp.keyPath.data()));
+  ZTLS_CHECK_RT(serverOK, "wrong-hostname server init failed");
+  bool clientOK = client.init(Ztls::ClientParams(&mx, "3", "4").hub(
+    [&temp](auto &p) { p.caPath(temp.certPath.data()); }));
+  ZTLS_CHECK_RT(clientOK, "wrong-hostname client init failed");
+  if (!serverOK || !clientOK) { mx.stop(); return; }
+
+  bool serverStarted = server.start();
+  bool clientStarted = client.start();
+  ZTLS_CHECK_RT(serverStarted && clientStarted,
+    "wrong-hostname hubs failed to start");
+  if (!serverStarted || !clientStarted) {
+    if (clientStarted) client.stop();
+    if (serverStarted) server.stop();
+    client.final();
+    server.final();
+    mx.stop();
+    return;
+  }
+
+  server.listen();
+  bool listening = wait_for(state.listening);
+  ZTLS_CHECK_RT(listening, "wrong-hostname listen timed out");
+  if (!listening) { mx.stop(); return; }
+
+  ZmRef<BaseClient<TestState>::Link> link =
+    new BaseClient<TestState>::Link{&client};
+  link->connect("wrong.invalid", state.port, state.ip);
+  bool completed = wait_done(state);
+  ZTLS_CHECK_RT(completed, "wrong-hostname failure timed out");
+
+  link = nullptr;
+  mx.stopListening(state.ip, state.port);
+  bool clientStopped = client.stop();
+  bool serverStopped = server.stop();
+  ZTLS_CHECK_RT(clientStopped && serverStopped,
+    "wrong-hostname hubs failed to stop");
+  client.final();
+  server.final();
+  mx.stop();
+
+  ZiLog::stop();
+  ZTLS_CHECK_RT(!state.client_connected.load_(),
+    "wrong-hostname TLS connection succeeded");
+  ZTLS_CHECK_RT(capture.errors.load_(),
+    "wrong-hostname failure did not report a TLS error");
+  capture.reset();
+  ZiLog::start();
 }
 
 struct ImportedTLS {
@@ -1069,6 +1509,24 @@ void testTLS12HandshakeRejected(TempDir &temp, LogCapture &capture)
   run_tls12_handshake_rejected(temp, capture);
 }
 
+void testInMemoryRSA(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testInMemoryRSA);
+  run_in_memory<Ztls::PK::SK_RSA>(temp, capture, "rsa");
+}
+
+void testInMemoryEC(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testInMemoryEC);
+  run_in_memory<Ztls::PK::SK_EC>(temp, capture, "ec");
+}
+
+void testInMemoryED25519(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testInMemoryED25519);
+  run_in_memory<Ztls::PK::SK_ED25519>(temp, capture, "ed25519");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1092,6 +1550,7 @@ int main(int argc, char **argv)
   ZuCHECK(tempOK, "failed to generate cert/key");
   if (tempOK) {
     ZuTestCall(testConnectFailureShard, temp, capture);
+    ZuTestCall(testWrongHostname, temp, capture);
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
     ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);
@@ -1101,6 +1560,9 @@ int main(int argc, char **argv)
     ZuTestCall(testTLS12ExplicitIV, temp, capture);
     ZuTestCall(testTLS12NoExplicitIV, temp, capture);
     ZuTestCall(testTLS12HandshakeRejected, temp, capture);
+    ZuTestCall(testInMemoryRSA, temp, capture);
+    ZuTestCall(testInMemoryEC, temp, capture);
+    ZuTestCall(testInMemoryED25519, temp, capture);
   }
 
   ZiLog::stop();

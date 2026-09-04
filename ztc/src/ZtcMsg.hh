@@ -9,8 +9,8 @@
 #ifndef ZtcMsg_HH
 #define ZtcMsg_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtcLib_HH
+#include <zlib/ZtcLib.hh>
 #endif
 
 #include <limits.h>

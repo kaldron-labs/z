@@ -532,6 +532,8 @@ struct Object : public Cache<T>::Node {
 // --- table configuration
 
 struct TableCf {
+  ZuDerive(Threads,
+    (ZtArray<IDString, ZtStringHeapID<"Zdb.TableCf.Threads">>));
   ZuDerive(SIDArray,
     (ZtArray<unsigned, ZtArrayHeapID<"Zdb.TableCf.SIDArray">>));
 
@@ -542,14 +544,14 @@ struct TableCf {
 
   IDString		id;
   unsigned		nShards = 1;	// #shards
-  ZtArray<ZtString<>>	threads;	// threads
+  Threads		threads;	// threads
   mutable SIDArray	sids = 0;	// thread slot IDs
   int			cacheMode = CacheMode::Normal;
 
   TableCf() = default;
   TableCf(ZuCSpan id_) : id{id_} { }
   TableCf(
-      ZuCSpan id_, unsigned nShards_, ZtArray<ZtString<>> threads_,
+      ZuCSpan id_, unsigned nShards_, Threads threads_,
       int cacheMode_) :
     id{id_}, nShards{nShards_}, threads(ZuMv(threads_)),
     cacheMode{cacheMode_}

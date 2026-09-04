@@ -9,8 +9,8 @@
 #ifndef ZtcFB_HH
 #define ZtcFB_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtcLib_HH
+#include <zlib/ZtcLib.hh>
 #endif
 
 #include <zlib/ZfbStruct.hh>
@@ -41,9 +41,9 @@ namespace RAG {
 ZfbEnumMatch_(fbs::RAG, Off, Red, Amber, Green);
 }
 
-ZfbEnumMatchNS(ZvAPI, EngineState, ZmEngineState,
+ZfbEnumMatchNS(ZtcAPI, EngineState, ZmEngineState,
   Stopped, Starting, Running, Stopping, StartPending, StopPending);
-ZfbEnumMatchNS(ZvAPI, CxnType, ZiCxnType, TCPIn, TCPOut, UDP);
+ZfbEnumMatchNS(ZtcAPI, CxnType, ZiCxnType, TCPIn, TCPOut, UDP);
 
 namespace QueueType {
 ZfbEnumMatch_(fbs::QueueType, Thread, IPC, Rx, Tx);
@@ -69,6 +69,12 @@ ZfbStruct(Request,
   (((alertDate),	(Ctor<5>)),			(UInt32)),
   (((alertSeqNo),	(Ctor<3>)),			(UInt64)),
   (((id),		(Ctor<1>)),			(String)));
+
+ZfbStruct(Error,
+  (((id),		(Ctor<0>)),			(String)),
+  (((seqNo),		(Ctor<1>)),			(UInt64)),
+  (((code),		(Ctor<2>)),			(Int32)),
+  (((message),		(Ctor<3>)),			(String)));
 
 ZfbStruct(HeapTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
@@ -158,7 +164,7 @@ ZfbStruct(MxTelemetry,
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 namespace QueueType {
-  ZtEnumMap(ZvAPI, QueueType, Map, "Thread", "IPC", "Rx", "Tx");
+  ZtEnumMap(ZtcAPI, QueueType, Map, "Thread", "IPC", "Rx", "Tx");
 }
 
 ZfbStruct(QueueTelemetry,

@@ -9,8 +9,8 @@
 #ifndef ZtcApp_HH
 #define ZtcApp_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZtcLib_HH
+#include <zlib/ZtcLib.hh>
 #endif
 
 #include <zlib/ZuID.hh>
@@ -47,6 +47,7 @@ namespace Filter_ {
   class Filter;
 }
 namespace App_ {
+  struct Delivery { enum T { Telemetry, Control }; };
   class AlertEvent;
   class Ingress;
   class IngressData;
@@ -128,7 +129,7 @@ ZfStruct(AppCf,
   (((txThread),		((Range<1U, 1024U>))),		(UInt32, 3)),
   (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 4)));
 
-class ZvAPI App {
+class ZtcAPI App {
 public:
   using CtrlFn =
     ZmFn<void(bool), ZmFnHeapID<"Ztc.App.CtrlFn">>;
@@ -215,12 +216,12 @@ private:
   void failReplay_(App_::Subscription_ *, ZuCSpan);
   void armTimer_();
   void clearSubscriptions_();
-  bool publishRaw_(ZmRef<ZiIOBuf>);
+  bool publishRaw_(ZmRef<ZiIOBuf>, App_::Delivery::T);
   bool publish_(ZmRef<ZiIOBuf>);
   bool publishApp_(uint64_t);
   void appTelemetry_(AppTelemetry &);
   void sendAck_(uint64_t, fbs::AckStatus, uint32_t = 0);
-  void sendError_(int32_t, ZuCSpan);
+  void sendError_(uint64_t, int32_t, ZuCSpan);
   void sendEOS_(uint64_t);
 
   void warmIndices_();
