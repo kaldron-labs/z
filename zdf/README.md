@@ -137,11 +137,12 @@ durability layer.  An active partial block is saved when it fills or its writer
 stops; wait for the stop callback before treating the final partial block as
 durable.
 
-`Store::dbCf()` also copies its optional `threads` setting to all five tables.
-The block-data table's configured shard/thread mapping becomes the mapping used
-by `Store::run()` and `Store::invoke()`.  As required by `Zdb`, shard and thread
-counts must be powers of two, the thread count must not exceed the shard count,
-and a table supports at most 64 shards.
+`Store::dbCf()` applies its optional `threads` setting to the containing
+`Zdb::DB`.  `Store::run()` and `Store::invoke()` dispatch through that DB's
+shard API.  The shard count is configured once on the DB, and every table in
+the DB—including non-Zdf tables—shares the same count and shard-to-thread
+mapping.  Shard and thread counts must be powers of two, the thread count must
+not exceed the shard count, and a DB supports at most 64 shards.
 
 ## Store lifecycle
 
