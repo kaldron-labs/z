@@ -142,7 +142,7 @@ static void run()
 
       uint64_t id;
 
-      db[0]->shardRun(0, [&id]{
+      orders[0]->run(0, [&id]{
 	ZdbObjRef<Order> o = new ZdbObject<Order>{orders[0], 0};
 	orders[0]->insert(o, [&id](ZdbObject<Order> *o) {
 	  if (ZuUnlikely(!o)) return;
@@ -175,7 +175,7 @@ static void run()
       });
       done.wait();
 
-      db[0]->shardRun(0, [&id]{
+      orders[0]->run(0, [&id]{
 	orders[0]->find<0>(0, ZuFwdTuple("IBM", id),
 	  [&id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o)

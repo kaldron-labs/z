@@ -299,8 +299,8 @@ void run()
   store->writeFn({[&writes](ZuCSpan id) { writes.push(id); }});
   ZmSemaphore commitsDone;
   ZmSemaphore callbackDone;
-  db->shardRun(0, [
-    db = db.ptr(), orders = orders.ptr(), payments = payments.ptr(),
+  orders->run(0, [
+    orders = orders.ptr(), payments = payments.ptr(),
     writes = &writes, commitsDone = &commitsDone, callbackDone = &callbackDone
   ]() {
     ZdbObjRef<Order> order = new ZdbObject<Order>{orders, 0};
@@ -310,7 +310,7 @@ void run()
 	"IBM", 1, "FIX0", "order1", 1, Side::Buy, {100}, {1}};
       object->commit();
     });
-    db->shardRun(0, [writes, callbackDone]() {
+    orders->run(0, [writes, callbackDone]() {
       writes->push("callback");
       callbackDone->post();
     });
@@ -341,7 +341,7 @@ void run()
     if (id == "o") ++*finds;
   }});
   store->deferWork(true);
-  db->shardRun(0, [
+  orders->run(0, [
     orders = orders.ptr(), ok = &exactUNOK,
     callbacks = &exactUNCallbacks, done = &exactUNDone,
     missing = &exactUNMissing
@@ -547,7 +547,7 @@ void run()
   store->performWork();
   exactUNMissing.wait();
   store->deferWork(false);
-  db->shardRun(0, [
+  orders->run(0, [
     orders = orders.ptr(), ok = &exactUNOK,
     callbacks = &exactUNCallbacks, stable = &exactUNStable
   ]() {
@@ -580,8 +580,8 @@ void run()
   ZmSemaphore markerDone;
   ZmSemaphore lookupDone;
   store->deferWork(true);
-  db->shardRun(0, [
-    db = db.ptr(), orders = orders.ptr(), asyncOrder = &asyncOrder,
+  orders->run(0, [
+    orders = orders.ptr(), asyncOrder = &asyncOrder,
     lookupStarted = &lookupStarted, markerDone = &markerDone,
     lookupDone = &lookupDone
   ]() {
@@ -593,7 +593,7 @@ void run()
       lookupDone->post();
     });
     asyncOrder->push("after");
-    db->shardRun(0, [asyncOrder, markerDone]() {
+    orders->run(0, [asyncOrder, markerDone]() {
       asyncOrder->push("marker");
       markerDone->post();
     });
