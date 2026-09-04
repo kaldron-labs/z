@@ -1184,10 +1184,10 @@ public:
     auto result = cmpUN_(next, un);
     switch (result) {
       case OpResult::Executed: {
-	auto body = [&l, next](Object<T> *object_) {
+	auto l_ = [&l, next](Object<T> *object_) {
 	  l(OpResult::Executed, object_, next);
 	};
-	if (!insert_(un, object.ptr(), body))
+	if (!insert_(un, object.ptr(), l_))
 	  l(OpResult::Invalid, nullptr, next);
 	return;
       }
@@ -1221,10 +1221,10 @@ public:
     auto result = cmpUN_(next, un);
     switch (result) {
       case OpResult::Executed: {
-	auto body = [&l, next](Object<T> *object_) {
+	auto l_ = [&l, next](Object<T> *object_) {
 	  l(OpResult::Executed, object_, next);
 	};
-	if (!update_<KeyIDs_>(un, object.ptr(), body))
+	if (!update_<KeyIDs_>(un, object.ptr(), l_))
 	  l(OpResult::Invalid, nullptr, next);
 	return;
       }
@@ -1296,10 +1296,10 @@ public:
     auto result = cmpUN_(next, un);
     switch (result) {
       case OpResult::Executed: {
-	auto body = [&l, next](Object<T> *object_) {
+	auto l_ = [&l, next](Object<T> *object_) {
 	  l(OpResult::Executed, object_, next);
 	};
-	if (!del_(un, object.ptr(), body))
+	if (!del_(un, object.ptr(), l_))
 	  l(OpResult::Invalid, nullptr, next);
 	return;
       }
@@ -1829,8 +1829,6 @@ class ZdbAPI DB :
     public ZmPolymorph, public ZmEngine<DB>, public Ztc::DB {
 public:
   using Engine = ZmEngine<DB>;
-  using Engine::start;
-  using Engine::stop;
 
   bool start() override { return Engine::start(); }
   bool stop() override { return Engine::stop(); }
