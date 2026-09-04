@@ -176,7 +176,7 @@ int main(int argc_, char **argv)
 
     if (!db->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "Zdb start failed");
 
-    db->shardRun(1, [] {
+    payments->run(1, [] {
       payments->find<0>(1, ZuFwdTuple("MISSING", UINT64_C(0)),
 	[](ZmRef<ZdbObject<Order>>) { done.post(); });
     });
@@ -210,7 +210,7 @@ int main(int argc_, char **argv)
     ZuNBox<uint64_t> id;
 
     if (*seqNo) {
-      db->shardRun(0, [seqNo, &id]{
+      orders->run(0, [seqNo, &id]{
 	orders->find<2>(0, ZuFwdTuple("FIX0", seqNo),
 	  [seqNo, &id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
@@ -240,7 +240,7 @@ int main(int argc_, char **argv)
     else
       id = 0;
 
-    db->shardRun(0, [&id, &seqNo]{
+    orders->run(0, [&id, &seqNo]{
       ZdbObjRef<Order> o = new ZdbObject<Order>{orders, 0};
       orders->insert(o, [&id, &seqNo](ZdbObject<Order> *o) {
 	if (ZuUnlikely(!o)) { done.post(); return; }
@@ -260,7 +260,7 @@ int main(int argc_, char **argv)
     });
     done.wait();
 
-    db->shardRun(0, [&id]{
+    orders->run(0, [&id]{
       orders->find<0>(0, ZuFwdTuple("IBM", id),
 	[&id](ZmRef<ZdbObject<Order>> o) {
 	  if (!o)
@@ -292,7 +292,7 @@ int main(int argc_, char **argv)
     done.wait();
 
     if (id > 0) {
-      db->shardRun(0, [id = id - 1]{
+      orders->run(0, [id = id - 1]{
 	orders->findUpd<0, ZuSeq<1>>(0, ZuFwdTuple("IBM", id),
 	  [id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
@@ -316,7 +316,7 @@ int main(int argc_, char **argv)
     }
 
     if (id > 3) {
-      db->shardRun(0, [id = id - 3]{
+      orders->run(0, [id = id - 3]{
 	orders->findDel<0>(0, ZuFwdTuple("IBM", id),
 	  [id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
