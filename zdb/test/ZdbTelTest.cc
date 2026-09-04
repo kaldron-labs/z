@@ -161,16 +161,16 @@ void run()
   }
   {
     Zdb_::DBState state{2};
-    state.update(ZuFwdTuple("o", ZdbShard{1}), 42);
+    state.update("o", ZdbShard{1}, 42);
     Zfb::Builder fbb;
     fbb.Finish(state.save(fbb));
     auto fbo = flatbuffers::GetRoot<Zdb_::fbs::DBState>(
       fbb.GetBufferPointer());
     Zdb_::DBState loaded{fbo};
-    auto found = loaded.find(ZuFwdTuple("o", ZdbShard{1}));
+    auto found = loaded.find("o", ZdbShard{1});
     ZuCheck(found);
     ZuCheck(found->p<1>() == 42);
-    ZuCheck(!loaded.find(ZuFwdTuple("o", ZdbShard{0})));
+    ZuCheck(!loaded.find("o", ZdbShard{0}));
   }
 
   ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
@@ -396,7 +396,7 @@ void run()
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
       ++*callbacks;
       *ok &= result == ZdbOpResult::Executed && object && next == 1;
-      *ok &= orders->db()->shardInvoked(0);
+      *ok &= orders->invoked(0);
       if (!object) return;
       new (object->ptr()) Order{
 	"MSFT", 2, "FIX0", "order2", 2, Side::Buy, {101}, {2}};
@@ -556,7 +556,7 @@ void run()
 	  ZdbObject<Order> *object, ZdbUN next) {
       ++*callbacks;
       *ok &= result == ZdbOpResult::Missing && !object && next == 7;
-      *ok &= orders->db()->shardInvoked(0);
+      *ok &= orders->invoked(0);
       stable->post();
     });
     orders->findDel<0>(0, ZuFwdTuple("MISSING", UINT64_C(101)), 7,
@@ -564,7 +564,7 @@ void run()
 	  ZdbObject<Order> *object, ZdbUN next) {
       ++*callbacks;
       *ok &= result == ZdbOpResult::Missing && !object && next == 7;
-      *ok &= orders->db()->shardInvoked(0);
+      *ok &= orders->invoked(0);
       stable->post();
     });
   });
