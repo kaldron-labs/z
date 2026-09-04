@@ -12,6 +12,7 @@ table DBState {
 table Heartbeat {
   host:string;
   state:uint32;
+  n_shards:uint32;
   db_state:DBState;
 }
 table Record {

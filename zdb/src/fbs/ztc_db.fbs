@@ -19,8 +19,6 @@ enum DBHostState:int8 {
 table DBTableTelemetry {
   db_i_d:string;
   id:string;
-  n_shards:uint32;
-  threads:[string];
   count:uint64;
   cache_loads:uint64;
   cache_misses:uint64;
@@ -43,6 +41,8 @@ table DBHostTelemetry {
 
 table DBTelemetry {
   thread:string;
+  threads:[string];
+  n_shards:uint32;
   self:string;
   leader:string;
   prev:string;

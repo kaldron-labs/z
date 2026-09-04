@@ -1,20 +1,23 @@
 # TODO
 
-## Z
+## Zdb
+
+- sagas
 
 ## Zum
 
-- depends on `Zdb`
-- reusable library for JWT bearer auth, Zdb backed
-- permission -> action?
+- `zum.md` - update for new sagas
 
 ## Ztc
+
+- `ztcagent`:
+  - have it use `ZiLog`'s syslog sink by default
 
 - `ztcvault`
   - token issuer (JWT)
 
 - `ztchub`
-  - can depend on `zdb`, new `zum`
+  - depends on `zdb`, `zum`
   - enrollment server for `ztcagent`
   - telemetry aggregator for multiple remote `ztcagent`
   - server to telemetry front-end clients, e.g. `zdash`
