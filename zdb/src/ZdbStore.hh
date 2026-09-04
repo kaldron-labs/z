@@ -161,6 +161,7 @@ public:
   virtual InitResult init(		// initialize data store - idempotent
       const ZfCf::AnyNode *cf,
       ZiMultiplex *mx,
+      unsigned nShards,			// DB shard count
       FailFn failFn) = 0;		// asynchronous failure notification
   virtual void final() = 0;		// finalize data store - idempotent
 
@@ -169,7 +170,6 @@ public:
 
   virtual void open(			// open table - idempotent, async
       IDString id,			// name of table
-      unsigned nShards,			// #shards
       ZfVFieldArray fields,		// fields
       ZfVKeyFieldArray keyFields,	// keys and their fields
       const reflection::Schema *schema,	// flatbuffer reflection schema

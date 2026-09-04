@@ -17,6 +17,9 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtString.hh>
+
 #include <zlib/ZmFn_.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmRWLock.hh>
@@ -40,6 +43,8 @@ struct DBMgr;
 
 struct DBTelemetry {
   ZuID		thread;
+  ZtArray<ZtString<>> threads;
+  uint32_t	nShards = 0;
   ZuID		self;
   ZuID		leader;
   ZuID		prev;
@@ -74,22 +79,24 @@ struct DBTelemetry {
 };
 ZfbStruct(DBTelemetry,
     (((thread),		(Ctor<0>)),				(String)),
-    (((self),		(Ctor<1>, Keys<0>)),			(String)),
-    (((leader),		(Ctor<2>, Mutable)),			(String)),
-    (((prev),		(Ctor<3>, Mutable)),			(String)),
-    (((next),		(Ctor<4>, Mutable)),			(String)),
-    (((nCxns),		(Ctor<5>, Mutable, Series)),		(UInt32)),
-    (((heartbeatFreq),	(Ctor<6>)),				(UInt32)),
-    (((heartbeatTimeout), (Ctor<7>)),				(UInt32)),
-    (((reconnectFreq),	(Ctor<8>)),				(UInt32)),
-    (((electionTimeout), (Ctor<9>)),				(UInt32)),
-    (((nTables),	(Ctor<10>)),				(UInt16)),
-    (((nHosts),		(Ctor<11>)),				(UInt8)),
-    (((nPeers),		(Ctor<12>)),				(UInt8)),
-    (((state),		(Ctor<13>, Mutable, Enum<DBHostState::Map>)), (Int8)),
-    (((active),		(Ctor<14>, Mutable)),			(UInt8)),
-    (((recovering),	(Ctor<15>, Mutable)),			(UInt8)),
-    (((replicating),	(Ctor<16>, Mutable)),			(UInt8)),
+    (((threads),		(Ctor<1>)),				(StringVec)),
+    (((nShards),	(Ctor<2>)),				(UInt32)),
+    (((self),		(Ctor<3>, Keys<0>)),			(String)),
+    (((leader),		(Ctor<4>, Mutable)),			(String)),
+    (((prev),		(Ctor<5>, Mutable)),			(String)),
+    (((next),		(Ctor<6>, Mutable)),			(String)),
+    (((nCxns),		(Ctor<7>, Mutable, Series)),		(UInt32)),
+    (((heartbeatFreq),	(Ctor<8>)),				(UInt32)),
+    (((heartbeatTimeout), (Ctor<9>)),				(UInt32)),
+    (((reconnectFreq),	(Ctor<10>)),				(UInt32)),
+    (((electionTimeout), (Ctor<11>)),				(UInt32)),
+    (((nTables),	(Ctor<12>)),				(UInt16)),
+    (((nHosts),		(Ctor<13>)),				(UInt8)),
+    (((nPeers),		(Ctor<14>)),				(UInt8)),
+    (((state),		(Ctor<15>, Mutable, Enum<DBHostState::Map>)), (Int8)),
+    (((active),		(Ctor<16>, Mutable)),			(UInt8)),
+    (((recovering),	(Ctor<17>, Mutable)),			(UInt8)),
+    (((replicating),	(Ctor<18>, Mutable)),			(UInt8)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 struct DB {

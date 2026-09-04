@@ -10,6 +10,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtHexDump.hh>
@@ -88,6 +89,16 @@ void build(IOBuilder &fbb, unsigned n)
     auto value = ZfbStruct::ctor<zfbtest2::Test>(test);
     if (value.foo != 42 || value.bar != "Hello" || value.baz.id != "id" ||
       value.baz.price != 142) passed = false;
+    ZuPtr<zfbtest2::Test> allocated =
+      ZfbStruct::alloc<zfbtest2::Test>(test);
+    if (allocated->foo != 42 || allocated->bar != "Hello" ||
+      allocated->baz.id != "id" || allocated->baz.price != 142)
+      passed = false;
+    ZuPtr<zfbtest2::Test> handled =
+      ZfbStruct::Handler<zfbtest2::Test>{test}.alloc();
+    if (handled->foo != 42 || handled->bar != "Hello" ||
+      handled->baz.id != "id" || handled->baz.price != 142)
+      passed = false;
   }
 }
 

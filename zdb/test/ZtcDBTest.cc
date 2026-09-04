@@ -27,13 +27,10 @@ void table()
   Ztc::DBTableTelemetry data;
   data.dbID = "database";
   data.id = "table_identifier_longer_than_twenty_eight_bytes_01";
-  data.threads.push("thread-1");
-  data.threads.push("thread-2");
   data.count = UINT64_C(0xf123456789abcdef);
   data.cacheLoads = UINT64_C(0xe123456789abcdef);
   data.cacheMisses = UINT64_C(0xd123456789abcdef);
   data.cacheEvictions = UINT64_C(0xc123456789abcdef);
-  data.nShards = UINT32_C(0x81234567);
   data.cacheSize = UINT32_C(0x71234567);
   data.cacheMode = Ztc::DBCacheMode::All;
 
@@ -42,10 +39,6 @@ void table()
   ZuCheck(fbo);
   ZuCheck(Zfb::Load::str(fbo->dbID()) == data.dbID);
   ZuCheck(Zfb::Load::str(fbo->id()) == data.id);
-  ZuCheck(fbo->nShards() == data.nShards);
-  ZuCheck(fbo->threads()->size() == 2);
-  ZuCheck(Zfb::Load::str(fbo->threads()->Get(0)) == "thread-1");
-  ZuCheck(Zfb::Load::str(fbo->threads()->Get(1)) == "thread-2");
   ZuCheck(fbo->count() == data.count);
   ZuCheck(fbo->cacheLoads() == data.cacheLoads);
   ZuCheck(fbo->cacheMisses() == data.cacheMisses);
@@ -57,8 +50,6 @@ void table()
   auto loaded = ZfbStruct::ctor<Ztc::DBTableTelemetry>(fbo);
   ZuCheck(loaded.dbID == data.dbID);
   ZuCheck(loaded.id == data.id);
-  ZuCheck(loaded.nShards == data.nShards);
-  ZuCheck(loaded.threads.length() == 2);
   ZuCheck(loaded.count == data.count);
   ZuCheck(loaded.cacheLoads == data.cacheLoads);
   ZuCheck(loaded.cacheMisses == data.cacheMisses);
@@ -107,6 +98,9 @@ void db()
   ZuTestScope(db);
   Ztc::DBTelemetry data;
   data.thread = "db-thread";
+  data.threads.push("thread-1");
+  data.threads.push("thread-2");
+  data.nShards = UINT32_C(0x81234567);
   data.self = "self";
   data.leader = "leader";
   data.prev = "prev";
@@ -128,6 +122,10 @@ void db()
   auto fbo = save(fbb, data);
   ZuCheck(fbo);
   ZuCheck(Zfb::Load::str(fbo->thread()) == data.thread);
+  ZuCheck(fbo->threads()->size() == 2);
+  ZuCheck(Zfb::Load::str(fbo->threads()->Get(0)) == "thread-1");
+  ZuCheck(Zfb::Load::str(fbo->threads()->Get(1)) == "thread-2");
+  ZuCheck(fbo->nShards() == data.nShards);
   ZuCheck(Zfb::Load::str(fbo->self()) == data.self);
   ZuCheck(Zfb::Load::str(fbo->leader()) == data.leader);
   ZuCheck(Zfb::Load::str(fbo->prev()) == data.prev);
@@ -148,6 +146,8 @@ void db()
 
   auto loaded = ZfbStruct::ctor<Ztc::DBTelemetry>(fbo);
   ZuCheck(loaded.thread == data.thread);
+  ZuCheck(loaded.threads.length() == 2);
+  ZuCheck(loaded.nShards == data.nShards);
   ZuCheck(loaded.self == data.self);
   ZuCheck(loaded.leader == data.leader);
   ZuCheck(loaded.prev == data.prev);

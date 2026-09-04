@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZuID.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZfStruct.hh>
@@ -273,6 +274,50 @@ void fieldlessUDT()
   auto loaded =
     ZfCLI::handler<ScalarArgs, ZuFacet::Bah>(parser.root).ctor();
   ZuCheck(loaded.scalar.value == "hello world");
+
+  auto field = parser.root->data<ZfCLI::AnyNode::Object>().find("scalar");
+  ZuPtr<Scalar> allocated =
+    ZfCLI::handler<Scalar, ZuFacet::Bah>(field->val()).alloc();
+  ZuCheck(allocated->value == "hello world");
+}
+
+void allocation()
+{
+  ZuTestScope(allocation);
+
+  {
+    char cli[] = "x --value=7";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<RequiredOpt> parser;
+    parser.scanArgv(in.argv);
+    ZuPtr<RequiredOpt> value =
+      ZfCLI::handler<RequiredOpt>(parser.root).alloc();
+    ZuCheck(value->value == 7);
+  }
+  {
+    char cli[] = "x --values=1 --values=2";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<ArrayOpt, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto field = parser.root->data<ZfCLI::AnyNode::Object>().find("values");
+    ZuPtr<IntArray> values =
+      ZfCLI::handler<IntArray, ZuFacet::Bah>(field->val()).alloc();
+    ZuCheck(values->length() == 2);
+    ZuCheck((*values)[0] == 1);
+    ZuCheck((*values)[1] == 2);
+  }
+  {
+    char cli[] = "x '--nestedJSON={\"i1\":4,\"i2\":5}'";
+    ZfCLI::InCLI in(cli);
+    ZfCLI::Parser<Foo, ZuFacet::Bah> parser;
+    parser.scanArgv(in.argv);
+    auto field =
+      parser.root->data<ZfCLI::AnyNode::Object>().find("nestedJSON");
+    ZuPtr<NestedJSON> value =
+      ZfCLI::handler<NestedJSON, ZuFacet::Bah>(field->val()).alloc();
+    ZuCheck(value->i1 == 4);
+    ZuCheck(value->i2 == 5);
+  }
 }
 
 void bareArraySave()
@@ -510,7 +555,9 @@ void diagnostics()
     ZfCLI::Parser<RequiredOpt> parser;
     parser.scanArgv(in.argv);
     auto message = cliError([&parser] {
-      ZfCLI::handler<RequiredOpt>(parser.root).ctor();
+      ZuPtr<RequiredOpt> value =
+	ZfCLI::handler<RequiredOpt>(parser.root).alloc();
+      (void)value;
     });
     ZuCheck(message.find("option '--value' is required") >= 0);
 
@@ -594,6 +641,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(roundTrip);
   ZuTestCall(fieldlessUDT);
+  ZuTestCall(allocation);
   ZuTestCall(bareArraySave);
   ZuTestCall(cmdQuote);
   ZuTestCall(parseCLI);

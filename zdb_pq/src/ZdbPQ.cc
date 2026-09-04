@@ -64,9 +64,11 @@ OIDs::OIDs()
 }
 
 InitResult Store::init(
-    const ZfCf::AnyNode *cf, ZiMultiplex *mx, FailFn failFn)
+    const ZfCf::AnyNode *cf, ZiMultiplex *mx, unsigned nShards,
+    FailFn failFn)
 {
   m_mx = mx;
+  m_nShards = nShards;
   m_failFn = ZuMv(failFn);
 
   bool replicated;
@@ -532,9 +534,12 @@ void Store::start_enqueue()
 int Store::start_send()
 {
   switch (m_startState.phase()) {
-    case StartState::GetOIDs:	return getOIDs_send();
-    case StartState::MkSchema:	return mkSchema_send();
-    case StartState::MkTblMRD:	return mkTblMRD_send();
+    case StartState::GetOIDs:		return getOIDs_send();
+    case StartState::MkSchema:		return mkSchema_send();
+    case StartState::MkTblMeta:		return mkTblMeta_send();
+    case StartState::SetNShards:	return setNShards_send();
+    case StartState::GetNShards:	return getNShards_send();
+    case StartState::MkTblMRD:		return mkTblMRD_send();
   }
   return SendState::Unsent;
 }
@@ -544,6 +549,9 @@ void Store::start_rcvd(PGresult *res)
   switch (m_startState.phase()) {
     case StartState::GetOIDs:	getOIDs_rcvd(res); break;
     case StartState::MkSchema:	mkSchema_rcvd(res); break;
+    case StartState::MkTblMeta:	mkTblMeta_rcvd(res); break;
+    case StartState::SetNShards:	setNShards_rcvd(res); break;
+    case StartState::GetNShards:	getNShards_rcvd(res); break;
     case StartState::MkTblMRD:	mkTblMRD_rcvd(res); break;
   }
 }
@@ -689,7 +697,79 @@ void Store::mkSchema_rcvd(PGresult *res)
 {
   // ZiLOG(Debug, "ZdbPQ", ([v = m_startState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
-  if (!res) mkTblMRD();
+  if (!res) mkTblMeta();
+}
+
+void Store::mkTblMeta()
+{
+  m_startState.phase(StartState::MkTblMeta);
+  start_enqueue();
+}
+int Store::mkTblMeta_send()
+{
+  return sendQuery<SendState::Sync>(
+    "CREATE TABLE IF NOT EXISTS \"zdb\".\"meta\" ("
+      "\"id\" text NOT NULL PRIMARY KEY, "
+      "\"value\" uint4 NOT NULL)", Tuple{});
+}
+void Store::mkTblMeta_rcvd(PGresult *res)
+{
+  if (!res) setNShards();
+}
+
+void Store::setNShards()
+{
+  m_startState.phase(StartState::SetNShards);
+  start_enqueue();
+}
+int Store::setNShards_send()
+{
+  SQLString query;
+  query << "INSERT INTO \"zdb\".\"meta\" (\"id\", \"value\") "
+    "VALUES ('nShards', " << m_nShards << "::uint4) "
+    "ON CONFLICT (\"id\") DO NOTHING";
+  return sendQuery<SendState::Sync>(query, Tuple{});
+}
+void Store::setNShards_rcvd(PGresult *res)
+{
+  if (!res) getNShards();
+}
+
+void Store::getNShards()
+{
+  m_startState.phase(StartState::GetNShards);
+  m_storedNShards = 0;
+  start_enqueue();
+}
+int Store::getNShards_send()
+{
+  return sendQuery<SendState::Sync>(
+    "SELECT \"value\" FROM \"zdb\".\"meta\" WHERE \"id\" = 'nShards'",
+    Tuple{});
+}
+void Store::getNShards_rcvd(PGresult *res)
+{
+  if (!res) {
+    if (m_startState.failed()) {
+      auto e = ZeEXCEPT(Fatal, "ZdbPQ", ([
+	nShards = m_nShards, storedNShards = m_storedNShards
+      ](auto &s, const auto &) {
+	s << "configured shard count " << nShards
+	  << " differs from stored shard count " << storedNShards;
+      }));
+      start_failed(true, ZuMv(e));
+    } else
+      mkTblMRD();
+    return;
+  }
+  if (PQntuples(res) != 1 || PQnfields(res) != 1 ||
+      PQgetlength(res, 0, 0) != 4) {
+    m_startState.setFailed();
+    return;
+  }
+  m_storedNShards =
+    uint32_t(reinterpret_cast<UInt32 *>(PQgetvalue(res, 0, 0))->v);
+  if (m_storedNShards != m_nShards) m_startState.setFailed();
 }
 
 void Store::mkTblMRD()
@@ -703,7 +783,7 @@ int Store::mkTblMRD_send()
 
   // the MRD schema is unlikely to evolve, so use IF NOT EXISTS
   return sendQuery<SendState::Sync>(
-    "CREATE TABLE IF NOT EXISTS \"zdb.mrd\" ("
+    "CREATE TABLE IF NOT EXISTS \"zdb\".\"mrd\" ("
       "\"tbl\" text NOT NULL, "
       "\"shard\" uint1 NOT NULL, "
       "\"un\" uint8 NOT NULL, "
@@ -719,7 +799,7 @@ void Store::mkTblMRD_rcvd(PGresult *res)
 }
 
 void Store::open(
-  IDString id, unsigned nShards,
+  IDString id,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
   const reflection::Schema *schema,
   IOBufAllocFn bufAllocFn, OpenFn openFn)
@@ -727,7 +807,7 @@ void Store::open(
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   run([
-    this, id = ZuMv(id), nShards,
+    this, id = ZuMv(id),
     fields = ZuMv(fields), keyFields = ZuMv(keyFields),
     schema, bufAllocFn = ZuMv(bufAllocFn), openFn = ZuMv(openFn)
   ]() mutable {
@@ -739,7 +819,7 @@ void Store::open(
       return;
     }
     auto storeTbl = new StoreTbls::Node{
-      this, ZuMv(id), nShards,
+      this, ZuMv(id), m_nShards,
       ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)};
     m_storeTbls->addNode(storeTbl);
     storeTbl->open(ZuMv(openFn));
@@ -1827,7 +1907,7 @@ int StoreTbl::prepMRD_send()
   unsigned n = xKeyFields.length();
   ZtArray<Oid> oids(n);
   query <<
-    "UPDATE \"zdb.mrd\" SET \"un\"=$2::uint8, \"sn\"=$3::uint16 "
+    "UPDATE \"zdb\".\"mrd\" SET \"un\"=$2::uint8, \"sn\"=$3::uint16 "
       "WHERE \"tbl\"='" << m_id_ << "' AND \"shard\"=$1::uint1";
 
   return m_store->sendPrepare(id, query, oids);
@@ -1939,7 +2019,7 @@ int StoreTbl::ensureMRD_send()
 
   Tuple params = { Value{String(m_id_)}, Value{UInt8{m_openState.shard()}} };
   return m_store->sendQuery<SendState::Sync>(
-    "INSERT INTO \"zdb.mrd\" (\"tbl\", \"shard\", \"un\", \"sn\") "
+    "INSERT INTO \"zdb\".\"mrd\" (\"tbl\", \"shard\", \"un\", \"sn\") "
       "VALUES ($1::text, $2::uint1, 0, 0) "
       "ON CONFLICT (\"tbl\", \"shard\") DO NOTHING", params);
 }
@@ -1967,7 +2047,7 @@ int StoreTbl::mrd_send()
 
   Tuple params = { Value{String(m_id_)}, Value{UInt8{m_openState.shard()}} };
   return m_store->sendQuery<SendState::Sync>(
-    "SELECT \"un\", \"sn\" FROM \"zdb.mrd\" "
+    "SELECT \"un\", \"sn\" FROM \"zdb\".\"mrd\" "
       "WHERE \"tbl\"=$1::text AND \"shard\"=$2::uint1", params);
 }
 void StoreTbl::mrd_rcvd(PGresult *res)

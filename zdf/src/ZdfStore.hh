@@ -40,21 +40,16 @@ public:
   void init(Zdb *);
   void final();
 
-  // convert shard to thread slot ID
-  auto sid(Shard shard) const {
-    return m_sids[shard & (m_sids.length() - 1)];
-  }
-
   // dataframe threads (may be shared by app workloads)
   template <typename ...Args>
   void run(Shard shard, Args &&...args) const {
-    m_mx->run(ZuFwd<Args>(args)..., sid(shard));
+    m_db->shardRun(shard, ZuFwd<Args>(args)...);
   }
   template <typename ...Args>
   void invoke(Shard shard, Args &&...args) const {
-    m_mx->invoke(ZuFwd<Args>(args)..., sid(shard));
+    m_db->shardInvoke(shard, ZuFwd<Args>(args)...);
   }
-  bool invoked(Shard shard) const { return m_mx->invoked(sid(shard)); }
+  bool invoked(Shard shard) const { return m_db->shardInvoked(shard); }
 
   void open(OpenFn);	// establishes nextSeriesID
   void close();
@@ -199,14 +194,13 @@ private:
   void opened(bool ok);
 
 private:
-  ZiMultiplex			*m_mx = nullptr;
+  Zdb				*m_db = nullptr;
   StoreState::T			m_state = StoreState::Uninitialized;
   ZdbTblRef<DB::SeriesFixed>	m_seriesFixedTbl;
   ZdbTblRef<DB::SeriesFloat>	m_seriesFloatTbl;
   ZdbTblRef<DB::BlkFixed>	m_blkFixedTbl;
   ZdbTblRef<DB::BlkFloat>	m_blkFloatTbl;
   ZdbTblRef<DB::BlkData>	m_blkDataTbl;
-  ZdbTableCf::SIDArray		m_sids;
   ZmAtomic<uint32_t>		m_nextSeriesID = 1;
   OpenFn			m_openFn;
 };

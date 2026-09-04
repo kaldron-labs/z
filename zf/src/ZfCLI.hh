@@ -45,6 +45,7 @@
 
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuMArray.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuBase32.hh>
@@ -1014,6 +1015,12 @@ struct AsObject {
 	  handler.loadField<ZfFieldFilter::Load, Field>()...);
       }
       template <typename ...Args>
+      static O *alloc(const Handler &handler, Args &&...args) {
+	return new O(
+	  ZuFwd<Args>(args)...,
+	  handler.loadField<ZfFieldFilter::Load, Field>()...);
+      }
+      template <typename ...Args>
       static void new_(void *o, const Handler &handler, Args &&...args) {
 	new (o) O(
 	  ZuFwd<Args>(args)...,
@@ -1033,6 +1040,17 @@ struct AsObject {
 	});
 	return o;
       }
+    }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      checkRequired<ReqFields>();
+      O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+	*this, ZuFwd<Args>(args)...);
+      if constexpr (InitFields::N)
+	ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+	  Field::set(*o, loadField<ZfFieldFilter::Load, Field>());
+	});
+      return o;
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
@@ -1130,9 +1148,9 @@ struct AsArray {
       }
     }
 
-    AnyNode	*node;
+    const AnyNode	*node;
 
-    Handler(AnyNode *node_) : node{node_} { }
+    Handler(const AnyNode *node_) : node{node_} { }
 
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
@@ -1143,6 +1161,14 @@ struct AsArray {
 	return O(ZuFwd<Args>(args)...);
       validate<ZfFieldFilter::Load>();
       return O(
+	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
+    }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      if (ZuUnlikely(!node->has<AnyNode::Array>()))
+	return new O(ZuFwd<Args>(args)...);
+      validate<ZfFieldFilter::Load>();
+      return new O(
 	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
     template <typename ...Args>
@@ -1221,6 +1247,7 @@ struct AsString {
     }
 
     O ctor() const { return Handler_::load(span()); }
+    O *alloc() const { return new O(Handler_::load(span())); }
     void new_(void *o) const { new (o) O(Handler_::load(span())); }
     void load(O &o) const { o = Handler_::load(span()); }
     void update(O &o) const { o = Handler_::load(span()); }
@@ -1268,6 +1295,10 @@ struct AsJSON {
     template <typename ...Args>
     O ctor(Args &&...args) const {
       return handler_().template p<1>().ctor(ZuFwd<Args>(args)...);
+    }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      return handler_().template p<1>().alloc(ZuFwd<Args>(args)...);
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {

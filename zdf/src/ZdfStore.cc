@@ -33,11 +33,12 @@ void Store::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
     "zdf.blk_data"
   };
 
+  if (config.threads) dbCf.threads = ZuMv(config.threads);
+
   for (auto &&tblID: tables) {
     auto node = dbCf.tableCfs.find(tblID);
     using Node = ZuDecay<decltype(*node)>;
     if (!node) dbCf.tableCfs.addNode(node = new Node{tblID});
-    node->data().threads = config.threads;
   }
 }
 
@@ -46,14 +47,12 @@ void Store::init(Zdb *db)
   ZiAssert(m_state == StoreState::Uninitialized, "Zdf",
     (state = m_state), "invalid state=" << state, return);
 
+  m_db = db;
   m_seriesFixedTbl = db->initTable<DB::SeriesFixed>("zdf.series_fixed");
   m_seriesFloatTbl = db->initTable<DB::SeriesFloat>("zdf.series_float");
   m_blkFixedTbl = db->initTable<DB::BlkFixed>("zdf.blk_fixed");
   m_blkFloatTbl = db->initTable<DB::BlkFloat>("zdf.blk_float");
   m_blkDataTbl = db->initTable<DB::BlkData>("zdf.blk_data");
-
-  m_mx = db->mx();
-  m_sids = m_blkDataTbl->config().sids;
 
   m_state = StoreState::Initialized;
 }
@@ -61,6 +60,7 @@ void Store::init(Zdb *db)
 void Store::final()
 {
   m_state = StoreState::Uninitialized;
+  m_db = nullptr;
 
   m_seriesFixedTbl = nullptr;
   m_seriesFloatTbl = nullptr;

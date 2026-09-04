@@ -11,6 +11,7 @@
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuHex.hh>
+#include <zlib/ZuPtr.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
@@ -221,7 +222,8 @@ void testIntegerRange()
   RangeData value;
   unsigned rows = 0;
   reader.read({csv, sizeof(csv) - 1}, [&](const auto &row) {
-    value = row.ctor();
+    ZuPtr<RangeData> allocated = row.alloc();
+    value = *allocated;
     ++rows;
   });
   ZuCheck(rows == 1);
@@ -233,7 +235,8 @@ void testIntegerRange()
   rows = 0;
   unknownReader.read(
     {unknownCSV, sizeof(unknownCSV) - 1}, [&](const auto &row) {
-      unknown = row.ctor();
+      ZuPtr<RangeData> allocated = row.alloc();
+      unknown = *allocated;
       ++rows;
     });
   ZuCheck(rows == 1);

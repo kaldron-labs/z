@@ -59,6 +59,13 @@ ZtEnumNS(ZdbAPI, ObjState, int8_t,
   Delete,
   Deleted);
 
+ZtEnumNS(ZdbAPI, OpResult, int8_t,
+  Invalid,
+  Executed,
+  Skipped,
+  NotReady,
+  Missing);
+
 } // Zdb_
 
 using ZdbShard = Zdb_::Shard;
@@ -72,5 +79,6 @@ using ZdbVN = Zdb_::VN;
 #define ZdbMaxSN Zdb_::maxSN
 
 namespace ZdbObjState = Zdb_::ObjState;
+namespace ZdbOpResult = Zdb_::OpResult;
 
 #endif /* ZdbTypes_HH */

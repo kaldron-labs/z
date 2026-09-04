@@ -52,11 +52,12 @@ void UserDB::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
     "zum.perm"
   };
 
+  dbCf.threads = ZuMv(threads);
+
   for (auto &&tblID: tables) {
     auto node = dbCf.tableCfs.find(tblID);
     using Node = ZuDecay<decltype(*node)>;
     if (!node) dbCf.tableCfs.addNode(node = new Node{tblID});
-    node->data().threads = threads;
   }
 }
 
@@ -70,13 +71,11 @@ void UserDB::init(const ZfCf::AnyNode *cf, Zdb *db)
   m_totpRange = config.totpRange;
   m_keyInterval = config.keyInterval;
 
+  m_db = db;
   m_userTbl = db->initTable<User>("zum.user");
   m_roleTbl = db->initTable<Role>("zum.role");
   m_keyTbl = db->initTable<Key>("zum.key");
   m_permTbl = db->initTable<Perm>("zum.perm");
-
-  m_mx = db->mx();
-  m_sid = m_userTbl->config().sids[0];
 
   m_state = UserDBState::Initialized;
 }
@@ -84,6 +83,7 @@ void UserDB::init(const ZfCf::AnyNode *cf, Zdb *db)
 void UserDB::final()
 {
   m_state = UserDBState::Uninitialized;
+  m_db = nullptr;
 
   m_userTbl = nullptr;
   m_roleTbl = nullptr;

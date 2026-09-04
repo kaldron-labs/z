@@ -278,6 +278,16 @@ struct IDFmt {
 	    const_cast<ZfJSON::AnyNode *>(node));
       return {};
     }
+    O *alloc() const {
+      if (!node) return new O{};
+      if (node->template has<ZfJSON::AnyNode::String>())
+	return new O{IDString{node->template data<ZfJSON::AnyNode::String>()}};
+      if (node->template has<ZfJSON::AnyNode::Number>())
+	return new O{ZfJSON::loadValue<Facet, ZfFieldFilter::Load,
+	  ZfFieldTC::Int64, ZuTypeList<>, int64_t>(
+	    const_cast<ZfJSON::AnyNode *>(node))};
+      return new O{};
+    }
     void new_(void *p) const { new (p) O{ctor()}; }
     void load(O &id) const { id = ctor(); }
     void update(O &id) const { id = ctor(); }
@@ -915,6 +925,14 @@ struct ToolArgFmt {
 	return arg;
       } else
 	return Arg{ObjectHandler{node}.ctor()};
+    }
+    Arg *alloc() const {
+      if constexpr (Arg::Ref) {
+	auto arg = new Arg();
+	ObjectHandler{node}.load(arg->object());
+	return arg;
+      } else
+	return new Arg{ObjectHandler{node}.ctor()};
     }
     void new_(void *p) const {
       if constexpr (Arg::Ref) {

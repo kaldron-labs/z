@@ -132,7 +132,7 @@ static void run()
 
     // orders->writeCache(false);
 
-    orders->run(0, [&id]{
+    db->shardRun(0, [&id]{
       ZdbObjRef<Order> o = new ZdbObject<Order>{orders, 0};
       orders->insert(o, [&id](ZdbObject<Order> *o) {
 	if (ZuUnlikely(!o)) return;
@@ -161,7 +161,7 @@ static void run()
     });
     done.wait();
 
-    orders->run(0, [&id]{
+    db->shardRun(0, [&id]{
       static ZmSemaphore done_;
       orders->find<0>(0, ZuFwdTuple("IBM", id),
 	[&id](ZmRef<ZdbObject<Order>> o) {
@@ -217,7 +217,7 @@ static void run()
       s << "orders count=" << count;
     }));
 
-    orders->run(0, [&id]{
+    db->shardRun(0, [&id]{
       static ZmSemaphore done_;
       orders->find<0>(0, ZuFwdTuple("IBM", id),
 	[&id](ZmRef<ZdbObject<Order>> o) {

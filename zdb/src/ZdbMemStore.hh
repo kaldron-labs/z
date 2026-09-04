@@ -1356,8 +1356,17 @@ private:
 
 public:
   InitResult init(
-      const ZfCf::AnyNode *cf, ZiMultiplex *mx, FailFn failFn) {
+      const ZfCf::AnyNode *cf, ZiMultiplex *mx, unsigned nShards,
+      FailFn failFn) {
     if (!m_storeTbls) m_storeTbls = new StoreTbls{};
+    if (m_nShards && m_nShards != nShards)
+      return ZeEXCEPT(Fatal, "ZdbMem", ([
+	m_nShards = m_nShards, nShards
+      ](auto &s, const auto &) {
+	s << "Store::init() failed: configured shard count " << nShards
+	  << " differs from stored shard count " << m_nShards;
+      }));
+    m_nShards = nShards;
     m_failFn = ZuMv(failFn);
     try {
       auto config = ZfCf::handler<MemStoreCf>(cf).ctor();
@@ -1385,6 +1394,7 @@ public:
     if (!m_preserve) {
       m_storeTbls->clean();
       m_storeTbls = nullptr;
+      m_nShards = 0;
     }
   }
 
@@ -1393,7 +1403,7 @@ public:
   void preserve() { m_preserve = true; }
 
   void open(
-    IDString id, unsigned nShards,
+    IDString id,
     ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema,
     IOBufAllocFn bufAllocFn, OpenFn openFn)
@@ -1406,17 +1416,9 @@ public:
 	  }))});
       return;
     }
-    if (storeTbl) {
-      if (nShards != storeTbl->nShards()) {
-	openFn(OpenResult{ZeEXCEPT(Error, "ZdbMem",
-	    ([id = ZuMv(id)](auto &s, const auto &) {
-	      s << "open(" << id << ") failed - inconsistent nShards";
-	    }))});
-	return;
-      }
-    } else {
+    if (!storeTbl) {
       storeTbl = new StoreTblNode{
-	this, ZuMv(id), nShards,
+	this, ZuMv(id), m_nShards,
 	ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)};
       m_storeTbls->addNode(storeTbl);
     }
@@ -1432,6 +1434,7 @@ public:
 private:
   ZmRef<StoreTbls>	m_storeTbls;
   FailFn		m_failFn;
+  unsigned		m_nShards = 0;
   bool			m_preserve = false;
 };
 

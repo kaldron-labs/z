@@ -55,6 +55,13 @@ class Store : public ZdbMem::Store_<StoreTbl> {
 
 public:
   using Base::Base;
+  using FindFn = ZmFn<void(ZuCSpan)>;
+  using WriteFn = ZmFn<void(ZuCSpan)>;
+
+  void findFn(FindFn fn) { m_findFn = ZuMv(fn); }
+  void found(ZuCSpan id) { if (m_findFn) m_findFn(id); }
+  void writeFn(WriteFn fn) { m_writeFn = ZuMv(fn); }
+  void wrote(ZuCSpan id) { if (m_writeFn) m_writeFn(id); }
 
   void sync() {
     ZmBlock<>{}([this](auto wake) {
@@ -99,6 +106,8 @@ private:
 
   bool		m_deferWork = false;
   bool		m_deferCallbacks = false;
+  FindFn	m_findFn;
+  WriteFn	m_writeFn;
   Queue		m_work;
   Queue		m_callbacks;
 };
@@ -151,6 +160,7 @@ inline void StoreTbl::select(
 inline void StoreTbl::find(
   KeyID keyID, ZmRef<IOBuf> buf, RowFn rowFn)
 {
+  store()->found(id());
   // ZiLOG(Debug, "ZdbMock", "find() work enqueue");
   auto work_ = [
     this, keyID, buf = ZuMv(buf), rowFn = ZuMv(rowFn)
@@ -193,6 +203,7 @@ inline void StoreTbl::recover(Shard shard, UN un, RowFn rowFn) {
 }
 
 inline void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn) {
+  store()->wrote(id());
   // ZiLOG(Debug, "ZdbMock", "write() work enqueue");
   auto work_ = [
     this, buf = ZuMv(buf), commitFn = ZuMv(commitFn)

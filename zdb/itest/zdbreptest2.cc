@@ -150,7 +150,7 @@ static void run()
       store[0]->deferWork(true);
       store[0]->deferCallbacks(true);
 
-      orders[0]->run(0, [&id]{
+      db[0]->shardRun(0, [&id]{
 	ZdbObjRef<Order> o = new ZdbObject<Order>{orders[0], 0};
 	orders[0]->insert(o, [](ZdbObject<Order> *o) {
 	  if (ZuUnlikely(!o)) return;
@@ -177,7 +177,7 @@ static void run()
 	});
       });
       ZmBlock<>{}([](auto wake) {
-	orders[0]->run(0, [wake = ZuMv(wake)]() mutable { wake(); });
+	db[0]->shardRun(0, [wake = ZuMv(wake)]() mutable { wake(); });
       });
 
       orders[0]->selectKeys<2>(ZuFwdTuple("FIX0"), 1, [](auto max, unsigned) {
@@ -200,7 +200,7 @@ static void run()
       done.wait(); // #1
       done.wait(); // #2
 
-      orders[0]->run(0, [&id]{
+      db[0]->shardRun(0, [&id]{
 	static ZmSemaphore done_;
 	orders[0]->find<0>(0, ZuFwdTuple("IBM", id),
 	  [&id](ZmRef<ZdbObject<Order>> o) {
@@ -216,7 +216,7 @@ static void run()
 	  });
       });
       ZmBlock<>{}([](auto wake) {
-	orders[0]->run(0, [wake = ZuMv(wake)]() mutable { wake(); });
+	db[0]->shardRun(0, [wake = ZuMv(wake)]() mutable { wake(); });
       });
 
       orders[0]->selectKeys<2>(ZuFwdTuple("FIX0"), 1,
@@ -250,7 +250,7 @@ static void run()
 
       done.wait(); // wait for db[1] to become active
 
-      orders[1]->run(0, [&id]{
+      db[1]->shardRun(0, [&id]{
 	static ZmSemaphore done_;
 	orders[1]->find<0>(0, ZuFwdTuple("IBM", id),
 	  [&id](ZmRef<ZdbObject<Order>> o) {
