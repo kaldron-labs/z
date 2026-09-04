@@ -1094,8 +1094,7 @@ void DB::repStart()
 	  auto un = state->p<1>();
 	  auto endUN = endState->p<1>();
 	  if (endUN <= un) continue;
-	  table->run(shard,
-	    [table, cxn, shard, un, endUN]() mutable {
+	  table->run(shard, [table, cxn, shard, un, endUN]() mutable {
 	    table->recSend(ZuMv(cxn), shard, un, endUN);
 	  });
 	}
@@ -1136,8 +1135,7 @@ void AnyTable::recSend(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
       }));
     }
     // missing is not an error, skip over updated/deleted records
-    run(shard,
-      [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
+    run(shard, [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
       recNext(ZuMv(cxn), shard, un, endUN);
     });
   });
@@ -1153,8 +1151,7 @@ void AnyTable::recSend_(
 void AnyTable::recNext(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
 {
   if (++un < endUN)
-    run(shard,
-      [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
+    run(shard, [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
       recSend(ZuMv(cxn), shard, un, endUN);
     });
   else
@@ -1731,8 +1728,7 @@ void AnyTable::open(L &&l)
     id(),
     objFields(), objKeyFields(), objSchema(), m_bufAllocFn,
     [this, l = ZuFwd<L>(l)](OpenResult result) mutable {
-      invoke(0,
-	[this, l = ZuMv(l), result = ZuMv(result)]() mutable {
+      invoke(0, [this, l = ZuMv(l), result = ZuMv(result)]() mutable {
 	l(opened(ZuMv(result)));
       });
     });

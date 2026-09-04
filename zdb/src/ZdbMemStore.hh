@@ -1366,7 +1366,6 @@ public:
 	s << "Store::init() failed: configured shard count " << nShards
 	  << " differs from stored shard count " << m_nShards;
       }));
-    m_nShards = nShards;
     m_failFn = ZuMv(failFn);
     try {
       auto config = ZfCf::handler<MemStoreCf>(cf).ctor();
@@ -1387,6 +1386,7 @@ public:
 	s << "Store::init() failed: invalid configuration: " << e;
       }));
     }
+    m_nShards = nShards;
     return InitData{.replicated = false};
   }
   void final() {
