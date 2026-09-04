@@ -9,5 +9,6 @@
 namespace Zdb_ {
 
 ZtEnumImplNS(ObjState);
+ZtEnumImplNS(OpResult);
 
 } // namespace Zdb_

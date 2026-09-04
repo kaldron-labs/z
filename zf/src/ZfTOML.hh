@@ -738,12 +738,19 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
   }
 }
 
+enum Route { Assignment, Table, TableArray };
+enum SavePass { ValuePass, AssignmentPass, TablePass };
+
+struct SaveCtx {
+  bool		&output;
+  ZuCSpan	prefix;
+  bool		inline_;
+};
+
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename S, typename T>
-void saveValue(S &s, const T &v, ZuCSpan key = {});
-
-enum Route { Assignment, Table, TableArray };
+void saveValue(S &s, const T &v, SaveCtx &ctx, ZuCSpan key = {});
 
 template <typename T, typename Facet>
 consteval bool tableShape()
@@ -784,9 +791,9 @@ consteval bool tableArray()
 
 template <
   unsigned TypeCode, typename Props, typename T, typename Facet>
-Route routeValue(const T &v, bool inline_)
+Route routeValue(const T &v, const SaveCtx &ctx)
 {
-  if (inline_) return Assignment;
+  if (ctx.inline_) return Assignment;
   if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
     using Elem = ZuDecay<decltype(v[0])>;
@@ -801,7 +808,7 @@ Route routeValue(const T &v, bool inline_)
 	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
     const auto &v_ = obj_(v);
     if constexpr (IsUnion<O>{}) {
-      return Handler::route(v_, false);
+      return Handler::route(v_, ctx);
     } else if constexpr (Handler::Object || Handler::Map) {
       return Table;
     } else if constexpr (Handler::Array) {
@@ -837,40 +844,45 @@ bool fieldPresent(const O &o)
 
 template <
   typename Facet, template <typename> class Filter,
-  typename S, typename O>
-void saveInlineObject(S &s, const O &o)
+  unsigned ElemCode, typename Props, typename S, typename O>
+void saveArray(S &s, const O &o, SaveCtx &ctx, ZuCSpan key)
 {
-  using Fields = ZuTypeGrep<Filter, ZuFields<O, Facet>>;
-  bool first = true;
-  s << '{';
-  ZuUnroll::all<Fields>([&s, &o, &first]<typename Field>() {
-    enum { TypeCode = Field::Type::Code };
-    using Props = typename Field::Props;
-    if (!fieldPresent<Field>(o)) return;
-    if (!first) s << ", ";
-    auto key = ZuFieldProp::TOML::GetID<Field>{}().cspan();
-    saveKey(s, key);
-    s << " = ";
-    saveValue<Facet, Filter, TypeCode, Props>(s, Field::get(o), key);
-    first = false;
-  });
-  s << '}';
+  unsigned n = ZuTraits<O>::length(o);
+  using Elem = ZuDecay<decltype(o[0])>;
+  if constexpr (tableElems<ElemCode, Elem, Facet>()) {
+    if (!ctx.inline_ && n) {
+      for (unsigned i = 0; i < n; ++i) {
+	const auto &elem = o[i];
+	if constexpr (IsObjPtr<Elem>{})
+	  if (ZuUnlikely(!elem))
+	    throw ZfTOML_EXCEPT(
+	      ZfTOMLError::badValue(nullptr, "non-null", "null"));
+	if (ctx.output) s << '\n';
+	s << "[[" << ctx.prefix << "]]\n";
+	ctx.output = true;
+	SaveCtx elemCtx{ctx.output, ctx.prefix, ctx.inline_};
+	saveValue<Facet, Filter, ElemCode, Props>(s, elem, elemCtx, key);
+      }
+      return;
+    }
+  }
+  SaveCtx elemCtx{ctx.output, ctx.prefix, true};
+  s << '[';
+  for (unsigned i = 0; i < n; ++i) {
+    if (i) s << ", ";
+    saveValue<Facet, Filter, ElemCode, Props>(s, o[i], elemCtx, key);
+  }
+  s << ']';
 }
 
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename S, typename T>
-void saveValue(S &s, const T &v, ZuCSpan key)
+void saveValue(S &s, const T &v, SaveCtx &ctx, ZuCSpan key)
 {
   if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
     enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
-    unsigned n = ZuTraits<T>::length(v);
-    s << '[';
-    for (unsigned i = 0; i < n; ++i) {
-      if (i) s << ", ";
-      saveValue<Facet, Filter, ElemCode, Props>(s, v[i], key);
-    }
-    s << ']';
+    saveArray<Facet, Filter, ElemCode, Props>(s, v, ctx, key);
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     using O = ObjType<T>;
     using Handler = ObjHandler<T, Facet>;
@@ -879,17 +891,12 @@ void saveValue(S &s, const T &v, ZuCSpan key)
 	throw ZfTOML_EXCEPT(
 	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
     const auto &v_ = obj_(v);
-    if constexpr (IsUnion<O>{}) {
-      Handler::template saveInline<Filter, Props>(s, v_, key);
-    } else if constexpr (Handler::Object) {
-      saveInlineObject<Facet, Filter>(s, v_);
-    } else if constexpr (Handler::Array) {
-      Handler::template save<Filter>(s, v_);
-    } else if constexpr (Handler::Map) {
-      Handler::template saveInline<Filter>(s, v_);
+    if constexpr (IsUnion<O>{} || Handler::Object || Handler::Array ||
+	Handler::Map) {
+      Handler::template save_<Filter, Props>(s, v_, ctx, key);
     } else {
       constexpr unsigned Style =
-        ZuFieldProp::TOML::GetScalarFmt<Props>{};
+	ZuFieldProp::TOML::GetScalarFmt<Props>{};
       if constexpr (Style == NativeScalar || Style == BasicScalar) {
 	BasicOut<S> out{s};
 	Handler::template save<Filter>(out, v_);
@@ -905,191 +912,110 @@ void saveValue(S &s, const T &v, ZuCSpan key)
 }
 
 template <
-  typename Facet, template <typename> class Filter, typename Field,
-  typename S, typename O>
-bool saveAssignment(S &s, const O &o, bool first)
+  typename Facet, template <typename> class Filter,
+  unsigned TypeCode, typename Props, typename S, typename T>
+bool saveEntry(
+    S &s, ZuCSpan key, const T &v, SaveCtx &ctx, SavePass pass, bool first)
 {
-  enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
-  if (!fieldPresent<Field>(o)) return false;
-  const auto &v = Field::get(o);
-  constexpr bool Inline = ZuTypeIn<ZuFieldProp::TOML::Inline, Props>{};
-  if (routeValue<TypeCode, Props, decltype(v), Facet>(v, Inline) != Assignment)
-    return false;
-  if (!first) s << '\n';
-  auto key = ZuFieldProp::TOML::GetID<Field>{}().cspan();
-  saveKey(s, key);
-  s << " = ";
-  saveValue<Facet, Filter, TypeCode, Props>(s, v, key);
+  auto route = routeValue<TypeCode, Props, T, Facet>(v, ctx);
+  switch (pass) {
+    case ValuePass:
+    case AssignmentPass:
+      if (route != Assignment) return false;
+      if (!first) s << (pass == ValuePass ? ", " : "\n");
+      saveKey(s, key);
+      s << " = ";
+      saveValue<Facet, Filter, TypeCode, Props>(s, v, ctx, key);
+      ctx.output = true;
+      return true;
+    case TablePass:
+      if (route == Assignment) return false;
+      break;
+  }
+  auto path = ZtScratch(PathBuf, PathScratchSize);
+  if (ctx.prefix) path << ctx.prefix << '.';
+  saveKey(path, key);
+  SaveCtx child{ctx.output, path, ctx.inline_};
+  if (route == Table) {
+    if (ctx.output) s << '\n';
+    s << '[' << path << "]\n";
+    ctx.output = true;
+  }
+  saveValue<Facet, Filter, TypeCode, Props>(s, v, child, key);
   return true;
 }
 
 template <
-  typename Facet, template <typename> class Filter,
-  unsigned TypeCode, typename Props, typename S, typename T>
-void saveMapAssignment(
-    S &s, ZuCSpan key, const T &v, bool first)
-{
-  if (!first) s << '\n';
-  saveKey(s, key);
-  s << " = ";
-  saveValue<Facet, Filter, TypeCode, Props>(s, v, key);
-}
-
-template <
-  typename Facet, template <typename> class Filter,
-  typename S, typename O>
-void saveTblBody(S &, const O &, bool &, ZuCSpan);
-
-template <
-  typename Facet, template <typename> class Filter,
-  typename S, typename T>
-void saveTblArray(
-    S &s, ZuCSpan key, const T &v, bool &output, ZuCSpan prefix = {})
-{
-  using Vec = ObjType<T>;
-  if constexpr (IsObjPtr<ZuDecay<T>>{})
-    if (ZuUnlikely(!v))
-      throw ZfTOML_EXCEPT(
-	ZfTOMLError::badValue(nullptr, "non-null", "null"));
-  const auto &vec = obj_(v);
-  unsigned n = ZuTraits<Vec>::length(vec);
-  using Elem = ZuDecay<decltype(vec[0])>;
-  auto path = ZtScratch(PathBuf, PathScratchSize);
-  if (prefix) path << prefix << '.';
-  saveKey(path, key);
-  for (unsigned i = 0; i < n; ++i) {
-    const auto &elem = vec[i];
-    if constexpr (IsObjPtr<Elem>{})
-      if (ZuUnlikely(!elem))
-	throw ZfTOML_EXCEPT(
-	  ZfTOMLError::badValue(nullptr, "non-null", "null"));
-    if (output) s << '\n';
-    s << "[[" << path << "]]\n";
-    output = true;
-    saveTblBody<Facet, Filter>(s, obj_(elem), output, path);
-  }
-}
-
-template <
-  typename Facet, template <typename> class Filter,
-  unsigned TypeCode, typename Props, typename S, typename T>
-void saveTblValue(
-    S &s, ZuCSpan key, const T &v, bool &output, ZuCSpan prefix = {})
-{
-  auto route = routeValue<TypeCode, Props, T, Facet>(v, false);
-  if constexpr (TypeCode == ZfFieldTC::UDT && IsUnion<ObjType<T>>{}) {
-    using Handler = ObjHandler<T, Facet>;
-    Handler::template saveTblValue<Filter, Props>(
-      s, obj_(v), key, output, prefix);
-  } else if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
-    enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
-    using Elem = ZuDecay<decltype(v[0])>;
-    if constexpr (tableElems<ElemCode, Elem, Facet>())
-      if (route == TableArray)
-	saveTblArray<Facet, Filter>(s, key, v, output, prefix);
-  } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using Handler = ObjHandler<T, Facet>;
-    if constexpr (Handler::Array) {
-      if constexpr (tableArray<T, Facet>())
-	if (route == TableArray)
-	  saveTblArray<Facet, Filter>(s, key, v, output, prefix);
-    } else if constexpr (Handler::Object || Handler::Map) {
-      if constexpr (IsObjPtr<ZuDecay<T>>{})
-	if (ZuUnlikely(!v))
-	  throw ZfTOML_EXCEPT(
-	    ZfTOMLError::badValue(nullptr, "non-null", "null"));
-      const auto &v_ = obj_(v);
-      auto path = ZtScratch(PathBuf, PathScratchSize);
-      if (prefix) path << prefix << '.';
-      saveKey(path, key);
-      if (output) s << '\n';
-      s << '[' << path << "]\n";
-      output = true;
-      saveTblBody<Facet, Filter>(s, v_, output, path);
-    }
-  }
-}
-
-template <
   typename Facet, template <typename> class Filter, typename Field,
   typename S, typename O>
-void saveTblField(
-    S &s, const O &o, bool &output, ZuCSpan prefix = {})
+bool saveField(
+    S &s, const O &o, SaveCtx &ctx, SavePass pass, bool first)
 {
+  if (!fieldPresent<Field>(o)) return false;
   enum { TypeCode = Field::Type::Code };
   using Props = typename Field::Props;
-  if (!fieldPresent<Field>(o)) return;
-  constexpr bool Inline = ZuTypeIn<ZuFieldProp::TOML::Inline, Props>{};
-  const auto &v = Field::get(o);
-  if (routeValue<TypeCode, Props, decltype(v), Facet>(v, Inline) == Assignment)
-    return;
-  auto key = ZuFieldProp::TOML::GetID<Field>{}().cspan();
-  saveTblValue<Facet, Filter, TypeCode, Props>(s, key, v, output, prefix);
+  SaveCtx child{ctx.output, ctx.prefix,
+    ctx.inline_ || ZuTypeIn<ZuFieldProp::TOML::Inline, Props>{}};
+  return saveEntry<Facet, Filter, TypeCode, Props>(s,
+    ZuFieldProp::TOML::GetID<Field>{}().cspan(), Field::get(o),
+    child, pass, first);
 }
 
 template <
   typename Facet, template <typename> class Filter,
   typename S, typename O>
-void saveTblObject(S &s, const O &o, bool &output, ZuCSpan prefix)
+void saveObject(S &s, const O &o, SaveCtx &ctx)
 {
   using Fields = ZuTypeGrep<Filter, ZuFields<O, Facet>>;
+  if (ctx.inline_) {
+    bool first = true;
+    s << '{';
+    ZuUnroll::all<Fields>([&s, &o, &ctx, &first]<typename Field>() {
+      if (saveField<Facet, Filter, Field>(
+	  s, o, ctx, ValuePass, first)) first = false;
+    });
+    s << '}';
+    return;
+  }
   bool first = true;
-  ZuUnroll::all<Fields>([&s, &o, &output, &first]<typename Field>() {
-    if (saveAssignment<Facet, Filter, Field>(s, o, first)) {
-      first = false;
-      output = true;
-    }
+  ZuUnroll::all<Fields>([&s, &o, &ctx, &first]<typename Field>() {
+    if (saveField<Facet, Filter, Field>(
+	s, o, ctx, AssignmentPass, first)) first = false;
   });
-  ZuUnroll::all<Fields>(
-      [&s, &o, &output, &prefix]<typename Field>() {
-    saveTblField<Facet, Filter, Field>(s, o, output, prefix);
+  ZuUnroll::all<Fields>([&s, &o, &ctx]<typename Field>() {
+    saveField<Facet, Filter, Field>(s, o, ctx, TablePass, false);
   });
 }
 
 template <
   typename Facet, template <typename> class Filter,
   typename S, typename O>
-void saveTblMap(S &s, const O &o, bool &output, ZuCSpan prefix)
+void saveMap(S &s, const O &o, SaveCtx &ctx)
 {
   using Handler = typename As<O>::template Handler<O, Facet>;
+  if (ctx.inline_) {
+    bool first = true;
+    s << '{';
+    auto i = o.citer();
+    while (auto node = i())
+      if (saveEntry<Facet, Filter,
+	  Handler::ValCode, typename Handler::ValProps>(s,
+	    node->key(), node->val(), ctx, ValuePass, first)) first = false;
+    s << '}';
+    return;
+  }
   bool first = true;
   {
     auto i = o.citer();
     while (auto node = i())
-      if (routeValue<Handler::ValCode, typename Handler::ValProps,
-	  decltype(node->val()), Facet>(node->val(), false) == Assignment) {
-      saveMapAssignment<
-	Facet, Filter, Handler::ValCode, typename Handler::ValProps>(
-	  s, node->key(), node->val(), first);
-      first = false;
-      output = true;
-      }
+      if (saveEntry<Facet, Filter,
+	  Handler::ValCode, typename Handler::ValProps>(s,
+	    node->key(), node->val(), ctx, AssignmentPass, first)) first = false;
   }
   auto i = o.citer();
   while (auto node = i())
-    if (routeValue<Handler::ValCode, typename Handler::ValProps,
-	decltype(node->val()), Facet>(node->val(), false) != Assignment)
-      saveTblValue<
-	Facet, Filter, Handler::ValCode, typename Handler::ValProps>(
-	  s, node->key(), node->val(), output, prefix);
-}
-
-template <
-  typename Facet, template <typename> class Filter,
-  typename S, typename O>
-void saveTblBody(S &s, const O &o, bool &output, ZuCSpan prefix)
-{
-  using Handler = typename As<O>::template Handler<O, Facet>;
-  if constexpr (IsUnion<O>{})
-    Handler::template saveTblBody<Filter>(s, o, output, prefix);
-  else if constexpr (Handler::Object)
-    saveTblObject<Facet, Filter>(s, o, output, prefix);
-  else if constexpr (Handler::Map)
-    saveTblMap<Facet, Filter>(s, o, output, prefix);
-  else
-    static_assert(ZuAlwaysFalse<O>{},
-      "TOML table context requires an object or map handler");
+    saveEntry<Facet, Filter, Handler::ValCode, typename Handler::ValProps>(s,
+      node->key(), node->val(), ctx, TablePass, false);
 }
 
 struct AsObject {
@@ -1101,15 +1027,19 @@ struct AsObject {
 
     enum { Object = 1, Array = 0, Map = 0, Root = 1 };
 
+    template <template <typename> class Filter, typename, typename S>
+    static void save_(S &s, const O &o, SaveCtx &ctx, ZuCSpan) {
+      saveObject<Facet, Filter>(s, o, ctx);
+    }
+
     template <template <typename> class Filter, typename S>
-    static void save(S &s, const O &o)
-    {
+    static void save(S &s, const O &o) {
       bool output = false;
-      saveTblObject<Facet, Filter>(s, o, output, {});
+      SaveCtx ctx{output, {}, false};
+      save_<Filter, ZuTypeList<>>(s, o, ctx, {});
       if (output) s << '\n';
     }
   };
-
 };
 
 struct AsUnion {
@@ -1145,49 +1075,32 @@ struct AsUnion {
       });
     }
 
-    static Route route(const O &o, bool inline_) {
-      if (inline_) return Assignment;
+    static Route route(const O &o, const SaveCtx &ctx) {
+      if (ctx.inline_) return Assignment;
       Route route = Assignment;
-      dispatch_(o, [&route]<typename V>(const V &v) {
+      dispatch_(o, [&route, &ctx]<typename V>(const V &v) {
 	route = routeValue<
-	  ZfFieldTC::UDT, ZuTypeList<>, V, Facet>(v, false);
+	  ZfFieldTC::UDT, ZuTypeList<>, V, Facet>(v, ctx);
       });
       return route;
     }
 
     template <template <typename> class Filter, typename Props, typename S>
-    static void saveInline(S &s, const O &o, ZuCSpan key) {
-      dispatch_(o, [&s, key]<typename V>(const V &v) {
-	saveValue<Facet, Filter, ZfFieldTC::UDT, Props>(s, v, key);
-      });
-    }
-
-    template <template <typename> class Filter, typename Props, typename S>
-    static void saveTblValue(
-	S &s, const O &o, ZuCSpan key, bool &output, ZuCSpan prefix) {
-      dispatch_(o, [&s, key, &output, prefix]<typename V>(const V &v) {
-	ZfTOML::saveTblValue<
-	  Facet, Filter, ZfFieldTC::UDT, Props>(s, key, v, output, prefix);
-      });
-    }
-
-    template <template <typename> class Filter, typename S>
-    static void saveTblBody(
-	S &s, const O &o, bool &output, ZuCSpan prefix) {
-      dispatch_(o, [&s, &output, prefix]<typename V>(const V &v) {
-	using MemberHandler = ObjHandler<V, Facet>;
-	if constexpr (MemberHandler::Object || MemberHandler::Map)
-	  ZfTOML::saveTblBody<Facet, Filter>(s, v, output, prefix);
-	else
-	  throw ZfTOML_EXCEPT(
-	    ZfTOMLError::badValue(nullptr, "table", "non-table union"));
+    static void save_(
+	S &s, const O &o, SaveCtx &ctx, ZuCSpan key) {
+      dispatch_(o, [&s, &ctx, key]<typename V>(const V &v) {
+	saveValue<Facet, Filter, ZfFieldTC::UDT, Props>(s, v, ctx, key);
       });
     }
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
       bool output = false;
-      saveTblBody<Filter>(s, o, output, {});
+      SaveCtx ctx{output, {}, false};
+      if (route(o, ctx) != Table)
+	throw ZfTOML_EXCEPT(
+	  ZfTOMLError::badValue(nullptr, "table", "non-table union"));
+      save_<Filter, ZuTypeList<>>(s, o, ctx, {});
       if (output) s << '\n';
     }
 
@@ -1217,15 +1130,10 @@ struct AsArray {
       ElemCode = ElemCode_
     };
 
-    template <template <typename> class Filter, typename S>
-    static void save(S &s, const O &o) {
-      unsigned n = ZuTraits<O>::length(o);
-      s << '[';
-      for (unsigned i = 0; i < n; ++i) {
-	if (i) s << ", ";
-	saveValue<Facet, Filter, ElemCode_, ElemProps_>(s, o[i]);
-      }
-      s << ']';
+    template <template <typename> class Filter, typename, typename S>
+    static void save_(
+	S &s, const O &o, SaveCtx &ctx, ZuCSpan key) {
+      saveArray<Facet, Filter, ElemCode_, ElemProps_>(s, o, ctx, key);
     }
   };
 };
@@ -1247,32 +1155,16 @@ struct AsMap {
       ValCode = ValCode_
     };
 
-    template <template <typename> class Filter, typename S>
-    static void saveInline(S &s, const O &o)
-    {
-      s << '{';
-      bool first = true;
-      {
-	auto i = o.citer();
-	while (auto node = i()) {
-	  if (!first) s << ", ";
-	  first = false;
-	  auto &&key = node->key();
-	  auto &&val = node->val();
-	  saveKey(s, key);
-	  s << " = ";
-	  saveValue<Facet, Filter, ValCode_, ValProps_>(
-	    s, val, key);
-	}
-      }
-      s << '}';
+    template <template <typename> class Filter, typename, typename S>
+    static void save_(S &s, const O &o, SaveCtx &ctx, ZuCSpan) {
+      saveMap<Facet, Filter>(s, o, ctx);
     }
 
     template <template <typename> class Filter, typename S>
-    static void save(S &s, const O &o)
-    {
+    static void save(S &s, const O &o) {
       bool output = false;
-      saveTblMap<Facet, Filter>(s, o, output, {});
+      SaveCtx ctx{output, {}, false};
+      save_<Filter, ZuTypeList<>>(s, o, ctx, {});
       if (output) s << '\n';
     }
   };

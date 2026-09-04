@@ -868,6 +868,10 @@ struct Reader {
       return O(ZuFwd<Args>(args)..., reader.loadField<Field>()...);
     }
     template <typename ...Args>
+    static O *alloc(const Reader &reader, Args &&...args) {
+      return new O(ZuFwd<Args>(args)..., reader.loadField<Field>()...);
+    }
+    template <typename ...Args>
     static void new_(void *o, const Reader &reader, Args &&...args) {
       new (o) O(ZuFwd<Args>(args)..., reader.loadField<Field>()...);
     }
@@ -883,6 +887,15 @@ struct Reader {
       });
       return o;
     }
+  }
+  template <typename ...Args>
+  O *alloc(Args &&...args) const {
+    O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+      *this, ZuFwd<Args>(args)...);
+    ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+      Field::set(*o, this->loadField<ZfFieldFilter::Load, Field>());
+    });
+    return o;
   }
   template <typename ...Args>
   void new_(void *o_, Args &&...args) const {

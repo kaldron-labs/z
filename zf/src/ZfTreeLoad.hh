@@ -16,7 +16,6 @@
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuMArray.hh>
 #include <zlib/ZuMatcher.hh>
-#include <zlib/ZuPtr.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
@@ -220,15 +219,10 @@ struct Object {
     checkRequired<ReqFields>();
     O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
       *this, ZuFwd<Args>(args)...);
-    try {
-      ZuUnroll::all<InitFields>([this, o]<typename Field>() {
-	Field::set(*o, this->template loadField<ZfFieldFilter::Load, Field>());
-      });
-      return o;
-    } catch (...) {
-      delete o;
-      throw;
-    }
+    ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+      Field::set(*o, this->template loadField<ZfFieldFilter::Load, Field>());
+    });
+    return o;
   }
 
   template <typename ...Args>
@@ -408,9 +402,9 @@ struct Map {
 
   O *alloc() const
   {
-    ZuPtr<O> o{new O()};
-    load_<ZfFieldFilter::Load>(*o.ptr());
-    return ZuMv(o).release();
+    auto o = new O();
+    load_<ZfFieldFilter::Load>(*o);
+    return o;
   }
 
   void new_(void *p_) const

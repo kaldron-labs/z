@@ -240,6 +240,10 @@ ZfStruct((TOMLPtrHolder, TOML),
   (((objects), (Mutable)), (UDT)),
   (((text), (Mutable, TOML::Opt)), (UDT)));
 
+struct TOMLPtrInlineHolder { TOMLPtrHolder value; };
+ZfStruct((TOMLPtrInlineHolder, TOML),
+  (((value), (Mutable, TOML::Inline)), (UDT)));
+
 struct TOMLPtrTables { ZmRef<TOMLPtrArray> values; };
 ZfStruct((TOMLPtrTables, TOML),
   (((values), (Mutable)), (UDT)));
@@ -328,6 +332,25 @@ struct TOMLCatalogInline { ZtString<> title; TOMLProducts products; };
 ZfStruct((TOMLCatalogInline, TOML),
   (((title), (Ctor<0>)), (String)),
   (((products), (Ctor<1>, TOML::Inline)), (UDT)));
+
+struct TOMLSaveContext {
+  TOMLCatalog catalog;
+  TOMLObjMapRef objects;
+  TOMLMixedUnion mixed;
+  TOMLObjectUnionElements unions;
+};
+ZfStruct((TOMLSaveContext, TOML),
+  (((catalog), (Ctor<0>, Mutable)), (UDT)),
+  (((objects), (Ctor<1>, Mutable)), (UDT)),
+  (((mixed), (Ctor<2>, Mutable)), (UDT)),
+  (((unions), (Ctor<3>, Mutable)), (UDT)));
+struct TOMLSaveContextTable { TOMLSaveContext value; };
+ZfStruct((TOMLSaveContextTable, TOML),
+  (((value), (Ctor<0>, Mutable)), (UDT)));
+struct TOMLSaveContextInline { TOMLSaveContext value; };
+ZfStruct((TOMLSaveContextInline, TOML),
+  (((value), (Ctor<0>, Mutable, TOML::Inline)), (UDT)));
+
 struct TOMLInterop {
   ZtString<> title;
   bool enabled = false;
@@ -1757,6 +1780,114 @@ static void facetsNestedTables()
   ZuCheck(groupedRound.group.parents.length() == 1);
 }
 
+static void runtimeSaveContext()
+{
+  ZuTestScope(runtimeSaveContext);
+
+  TOMLSaveContextInline value;
+  value.value.catalog.title = "tools";
+  value.value.catalog.products.push(TOMLProduct{"hammer", 1});
+  value.value.objects = new TOMLObjMap{};
+  value.value.objects->add("one", TOMLNested{2});
+  value.value.mixed = TOMLUnionA{3};
+  TOMLObjectUnion elem;
+  elem = TOMLUnionB{4};
+  value.value.unions.push(ZuMv(elem));
+
+  ZtString<> out;
+  ZfTOML::save(out, value);
+  ZuCheck(out ==
+    "value = {catalog = {title = \"tools\", products = "
+      "[{name = \"hammer\", count = 1}]}, "
+    "objects = {one = {value = 2}}, mixed = {foo = 3}, "
+      "unions = [{bar = 4}]}\n");
+
+  auto tree = ZfTOML::scan(out);
+  auto round = ZfTOML::handler<TOMLSaveContextInline>(tree.p<1>()).ctor();
+  ZuCheck(round.value.catalog.products.length() == 1 &&
+    round.value.catalog.products[0].name == "hammer");
+  ZuCheck(round.value.objects->findVal("one").value == 2);
+  auto mixedNode = round.value.mixed.p<const ZfTOML::AnyNode *>();
+  ZuCheck(mixedNode && mixedNode->has<ZfTOML::AnyNode::Object>());
+  round.value.mixed = ZfTOML::handler<TOMLUnionA>(mixedNode).ctor();
+  auto unionNode =
+    round.value.unions[0].p<const ZfTOML::AnyNode *>();
+  ZuCheck(unionNode && unionNode->has<ZfTOML::AnyNode::Object>());
+  round.value.unions[0] = ZfTOML::handler<TOMLUnionB>(unionNode).ctor();
+  ZtString<> saved;
+  ZfTOML::save(saved, round);
+  ZuCheck(saved == out);
+
+  TOMLSaveContextTable table;
+  table.value = ZuMv(round.value);
+  out.null();
+  ZfTOML::save(out, table);
+  ZuCheck(out ==
+    "[value]\n"
+    "\n[value.catalog]\ntitle = \"tools\"\n"
+    "[[value.catalog.products]]\nname = \"hammer\"\ncount = 1\n"
+    "[value.objects]\n"
+    "\n[value.objects.one]\nvalue = 2\n"
+    "[value.mixed]\nfoo = 3\n"
+    "[[value.unions]]\nbar = 4\n");
+
+  auto tableRound = ZfTOML::handler<TOMLSaveContextTable>(
+    ZfTOML::scan(out).p<1>()).ctor();
+  ZuCheck(tableRound.value.catalog.products.length() == 1 &&
+    tableRound.value.objects->findVal("one").value == 2);
+
+  TOMLSaveContextInline alternatives;
+  alternatives.value.catalog.title = "empty";
+  alternatives.value.objects = new TOMLObjMap{};
+  alternatives.value.mixed = TOMLUnionText{"text"};
+  out.null();
+  ZfTOML::save(out, alternatives);
+  ZuCheck(out ==
+    "value = {catalog = {title = \"empty\", products = []}, "
+    "objects = {}, mixed = \"text\", unions = []}\n");
+
+  TOMLUnionArray numbers;
+  numbers.push(5);
+  alternatives.value.mixed = ZuMv(numbers);
+  out.null();
+  ZfTOML::save(out, alternatives);
+  ZuCheck(out ==
+    "value = {catalog = {title = \"empty\", products = []}, "
+    "objects = {}, mixed = [5], unions = []}\n");
+
+  TOMLIntMap map;
+  map.add("answer", 6);
+  alternatives.value.mixed = ZuMv(map);
+  out.null();
+  ZfTOML::save(out, alternatives);
+  ZuCheck(out ==
+    "value = {catalog = {title = \"empty\", products = []}, "
+    "objects = {}, mixed = {answer = 6}, unions = []}\n");
+
+  TOMLPtrInlineHolder pointers;
+  pointers.value.object = new TOMLPtrObj{7};
+  pointers.value.objects = new TOMLPtrArray{};
+  pointers.value.objects->push(ZmRef<TOMLPtrObj>{new TOMLPtrObj{8}});
+  out.null();
+  ZfTOML::save(out, pointers);
+  ZuCheck(out ==
+    "value = {object = {value = 7}, objects = [{value = 8}]}\n");
+  auto pointerRound = ZfTOML::handler<TOMLPtrInlineHolder>(
+    ZfTOML::scan(out).p<1>()).ctor();
+  ZuCheck(pointerRound.value.object &&
+    pointerRound.value.object->value == 7 &&
+    pointerRound.value.objects &&
+    pointerRound.value.objects->length() == 1 &&
+    (*pointerRound.value.objects)[0] &&
+    (*pointerRound.value.objects)[0]->value == 8);
+
+  pointers.value.object = nullptr;
+  ZuCheck(loadError([&out, &pointers] {
+    out.null();
+    ZfTOML::save(out, pointers);
+  }));
+}
+
 static void maps()
 {
   ZuTestScope(maps);
@@ -2169,6 +2300,7 @@ int main(int argc, char **argv)
   ZuTestCall(curatedFixtures);
   ZuTestCall(scalarFormatEdges);
   ZuTestCall(facetsNestedTables);
+  ZuTestCall(runtimeSaveContext);
   ZuTestCall(maps);
   ZuTestCall(interoperabilityOutput);
   ZuTestCall(unions);

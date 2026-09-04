@@ -226,14 +226,18 @@ struct DBState : public DBState_ {
   {
     Zfb::Load::all(dbState->tableStates(),
 	[this](unsigned, const fbs::TableState *tableState) {
-	  add(Zfb::Load::str(tableState->table()), tableState->un());
+	  add(ZuFwdTuple(
+	    Zfb::Load::str(tableState->table()), tableState->shard()),
+	    tableState->un());
 	});
   }
   void load(const fbs::DBState *dbState) {
     sn = ZfbTransform::UInt128::load(dbState->sn());
     Zfb::Load::all(dbState->tableStates(),
 	[this](unsigned, const fbs::TableState *tableState) {
-	  update(Zfb::Load::str(tableState->table()), tableState->un());
+	  update(ZuFwdTuple(
+	    Zfb::Load::str(tableState->table()), tableState->shard()),
+	    tableState->un());
 	});
   }
   Zfb::Offset<fbs::DBState> save(Zfb::Builder &fbb) const {
@@ -532,57 +536,32 @@ struct Object : public Cache<T>::Node {
 // --- table configuration
 
 struct TableCf {
-  ZuDerive(Threads,
-    (ZtArray<IDString, ZtStringHeapID<"Zdb.TableCf.Threads">>));
-  ZuDerive(SIDArray,
-    (ZtArray<unsigned, ZtArrayHeapID<"Zdb.TableCf.SIDArray">>));
-
-  // nShards and threads.length() must both be a power of 2
-  // threads.length() must be <= nShards
-  // nShards must be <= 64
-  // nShards is immutable for the table, i.e. is an upper concurrency limit
-
   IDString		id;
-  unsigned		nShards = 1;	// #shards
-  Threads		threads;	// threads
-  mutable SIDArray	sids = 0;	// thread slot IDs
   int			cacheMode = CacheMode::Normal;
 
   TableCf() = default;
   TableCf(ZuCSpan id_) : id{id_} { }
-  TableCf(
-      ZuCSpan id_, unsigned nShards_, Threads threads_,
-      int cacheMode_) :
-    id{id_}, nShards{nShards_}, threads(ZuMv(threads_)),
-    cacheMode{cacheMode_}
-  {
-    if (threads) {
-      unsigned nThreads = threads.length();
-      // ensure nThreads is a power of 2 and <= nShards
-      if ((nThreads & (nThreads - 1)) || nThreads > nShards)
-	throw ZeEXCEPT(Error, "Zdb", ([
-	  id = id, nThreads, nShards = nShards
-	](auto &s) {
-	  s << '"' << id << ".threads\" invalid array size " << nThreads
-	    << " (" << nShards << " shards)";
-	}));
-    }
-  }
+  TableCf(ZuCSpan id_, int cacheMode_) :
+    id{id_}, cacheMode{cacheMode_} { }
   TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
 
   static const auto &IDAxor(const TableCf &cf) { return cf.id; }
 };
 
 ZfStruct((TableCf, Cf),
-  (((nShards),	(Ctor<0>, Cf::ID<"shards">, (Range<1U, 64U>))),
-    (UInt32, 1)),
-  (((threads),	(Ctor<1>)),				(StringVec)),
-  (((cacheMode), (Ctor<2>, Enum<CacheMode::Map>)), (Int32,
+  (((cacheMode), (Ctor<0>, Enum<CacheMode::Map>)), (Int32,
       CacheMode::Normal)));
 
 inline TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
   TableCf{ZfCf::handler<TableCf>(cf).ctor(id_)}
 {
+  for (auto key: {ZuCSpan{"shards"}, ZuCSpan{"threads"}})
+    if (cf->resolve(key))
+      throw ZeEXCEPT(Error, "Zdb", ([
+	id = ZeString{id_}, key = ZeString{key}
+      ](auto &s) {
+	s << "table \"" << id << "\" contains DB-wide \"" << key << '"';
+      }));
 }
 
 // --- table configuration
@@ -625,24 +604,6 @@ public:
   const auto &id() const { return config().id; }
   Ztc::DBTableKey telKey() const override;
   void telemetry(Ztc::DBTableTelemetry &) const override;
-  auto sid(Shard shard) const {
-    const auto &config = this->config();
-    return config.sids[shard & (config.sids.length() - 1)];
-  }
-
-  // DB thread (may be shared)
-  template <typename ...Args>
-  void run(Shard shard, Args &&...args) const {
-    m_mx->run(ZuFwd<Args>(args)..., sid(shard));
-  }
-  template <typename ...Args>
-  void invoke(Shard shard, Args &&...args) const {
-    m_mx->invoke(ZuFwd<Args>(args)..., sid(shard));
-  }
-  bool invoked(Shard shard) const {
-    return m_mx->invoked(sid(shard));
-  }
-
   // record count - SWMR
   uint64_t count() const { return m_count.load_(); }
 
@@ -660,6 +621,8 @@ protected:
   auto evictBufUN(Shard shard, UN un) {
     return m_bufCacheUN[shard]->del(un);
   }
+  unsigned nShards_() const;
+  bool shardInvoked_(Shard) const;
 
 public:
   // next UN that will be allocated
@@ -700,9 +663,17 @@ protected:
   // cache statistics
   virtual void cacheStats(Shard shard, ZmCacheStats &stats) const = 0;
 
-public:
 protected:
   bool writeCache() const { return m_writeCache; }
+
+  static OpResult::T cmpUN_(UN next, UN un) {
+    if (ZuUnlikely(un == nullUN())) return OpResult::Invalid;
+    switch (ZuCmp<UN>::cmp(next, un)) {
+      case -1: return OpResult::NotReady;
+      case  0: return OpResult::Executed;
+      default: return OpResult::Skipped;
+    }
+  }
 
   auto findUN(Shard shard, UN un) const {
     return m_cacheUN[shard]->findVal(un);
@@ -948,7 +919,7 @@ public:
   static ZmRef<IOBuf> allocBuf() { return new IOBufAlloc<T>{}; }
 
   Table(DB *db, TableCf *cf) : AnyTable{db, cf, Table::allocBuf} {
-    unsigned n = cf->nShards;
+    unsigned n = nShards_();
     ZuID cacheID = "Zdb.Cache."; cacheID << cf->id;
     ZuID bufCacheID = "Zdb.BufCache."; bufCacheID << cf->id;
     m_cache.size(n);
@@ -1081,12 +1052,7 @@ private:
   }
 
   // mitigate cold start
-  void warmup() {
-    AnyTable::warmup();
-    unsigned n = config().nShards;
-    for (unsigned i = 0; i < n; i++)
-      run(i, [this, i]() mutable { warmup_(i); });
-  }
+  void warmup();
 private:
   void warmup_(Shard shard) {
     // warmup heaps
@@ -1165,7 +1131,7 @@ public:
   // evict from cache, even if pinned
   template <unsigned KeyID>
   void evict(Shard shard, const Key<KeyID> &key) {
-    ZmAssert(invoked(shard));
+    ZmAssert(shardInvoked_(shard));
 
     ZmRef<Object<T>> object = m_cache[shard].template del<KeyID>(key);
     if (object) {
@@ -1177,7 +1143,7 @@ public:
   void evict(Object<T> *object) {
     auto shard = object->shard();
 
-    ZmAssert(invoked(shard));
+    ZmAssert(shardInvoked_(shard));
 
     m_cache[shard].delNode(object);
     if (object->pinned()) object->unpin();
@@ -1192,26 +1158,34 @@ public:
   void insert(ZmRef<Object<T>> object, L &&l) {
     auto shard = object->shard();
 
-    ZmAssert(invoked(shard));
+    ZmAssert(shardInvoked_(shard));
 
-    object->insert_(nextUN(shard));
-    try {
-      l(object);
-    } catch (...) { object->abort(); throw; }
-    object->abort();
+    if (!insert_(nextUN(shard), ZuMv(object), l)) l(nullptr);
   }
-  // create new object (idempotent with UN as key)
+  // create new object at an intended UN
+  // - lambda(OpResult::T, ZdbObject<T> *, UN)
   template <typename L>
   void insert(UN un, ZmRef<Object<T>> object, L &&l) {
     auto shard = object->shard();
 
-    ZmAssert(invoked(shard));
+    ZiAssert(shardInvoked_(shard), "Zdb", (shard),
+      "insert called outside shard " << ZuBoxed(shard), return);
 
-    if (un != nullUN() && ZuUnlikely(nextUN(shard) > un)) {
-      l(nullptr);
-      return;
+    auto next = nextUN(shard);
+    auto result = cmpUN_(next, un);
+    switch (result) {
+      case OpResult::Executed: {
+	auto body = [&l, next](Object<T> *object_) {
+	  l(OpResult::Executed, object_, next);
+	};
+	if (!insert_(un, ZuMv(object), body))
+	  l(OpResult::Invalid, nullptr, next);
+	return;
+      }
+      default:
+	l(result, nullptr, next);
+	return;
     }
-    insert(ZuMv(object), ZuFwd<L>(l));
   }
 
   // update lambda(ZdbObject<T> *)
@@ -1221,12 +1195,163 @@ public:
   void update(ZmRef<Object<T>> object, L &&l) {
     auto shard = object->shard();
 
-    ZmAssert(invoked(shard));
+    ZmAssert(shardInvoked_(shard));
 
-    if (!update_(object.ptr(), nextUN(shard))) {
-      l(nullptr);
+    if (!update_<KeyIDs_>(nextUN(shard), ZuMv(object), l)) l(nullptr);
+  }
+  // update object at an intended UN
+  // - lambda(OpResult::T, ZdbObject<T> *, UN)
+  template <typename KeyIDs_ = ZuSeq<>, typename L>
+  void update(ZmRef<Object<T>> object, UN un, L &&l) {
+    auto shard = object->shard();
+
+    ZiAssert(shardInvoked_(shard), "Zdb", (shard),
+      "update called outside shard " << ZuBoxed(shard), return);
+
+    auto next = nextUN(shard);
+    auto result = cmpUN_(next, un);
+    switch (result) {
+      case OpResult::Executed: {
+	auto body = [&l, next](Object<T> *object_) {
+	  l(OpResult::Executed, object_, next);
+	};
+	if (!update_<KeyIDs_>(un, ZuMv(object), body))
+	  l(OpResult::Invalid, nullptr, next);
+	return;
+      }
+      default:
+	l(result, nullptr, next);
+	return;
+    }
+  }
+
+  // find and update record (with key, without object)
+  template <
+    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
+  ZuInline void findUpd(Shard shard, Key<KeyID> key, L &&l) {
+    findUpd_<KeyID>(shard, ZuMv(key),
+      [this, l = ZuFwd<L>(l)](ZmRef<Object<T>> object) mutable {
+	if (ZuUnlikely(!object)) { l(object); return; }
+	update<KeyIDs_>(ZuMv(object), ZuMv(l));
+      });
+  }
+  // find and update record at an intended UN (with key, without object)
+  // - lambda(OpResult::T, ZdbObject<T> *, UN)
+  template <
+    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
+  ZuInline void findUpd(Shard shard, Key<KeyID> key, UN un, L &&l) {
+    ZiAssert(shardInvoked_(shard), "Zdb", (shard),
+      "findUpd called outside shard " << ZuBoxed(shard), return);
+
+    auto next = nextUN(shard);
+    auto result = cmpUN_(next, un);
+    if (ZuUnlikely(result != OpResult::Executed)) {
+      l(result, nullptr, next);
       return;
     }
+    findUpd_<KeyID>(shard, ZuMv(key),
+      [this, shard, un, l = ZuFwd<L>(l)](
+	ZmRef<Object<T>> object) mutable {
+	if (ZuLikely(object)) {
+	  update<KeyIDs_>(ZuMv(object), un, ZuMv(l));
+	  return;
+	}
+	auto next = nextUN(shard);
+	auto result = cmpUN_(next, un);
+	if (result == OpResult::Executed) result = OpResult::Missing;
+	l(result, nullptr, next);
+      });
+  }
+
+  // delete lambda(ZdbObject<T> *)
+
+  // delete record
+  template <typename L>
+  void del(ZmRef<Object<T>> object, L &&l) {
+    auto shard = object->shard();
+
+    ZmAssert(shardInvoked_(shard));
+
+    if (!del_(nextUN(shard), ZuMv(object), l)) l(nullptr);
+  }
+  // delete record at an intended UN
+  // - lambda(OpResult::T, ZdbObject<T> *, UN)
+  template <typename L>
+  void del(ZmRef<Object<T>> object, UN un, L &&l) {
+    auto shard = object->shard();
+
+    ZiAssert(shardInvoked_(shard), "Zdb", (shard),
+      "del called outside shard " << ZuBoxed(shard), return);
+
+    auto next = nextUN(shard);
+    auto result = cmpUN_(next, un);
+    switch (result) {
+      case OpResult::Executed: {
+	auto body = [&l, next](Object<T> *object_) {
+	  l(OpResult::Executed, object_, next);
+	};
+	if (!del_(un, ZuMv(object), body))
+	  l(OpResult::Invalid, nullptr, next);
+	return;
+      }
+      default:
+	l(result, nullptr, next);
+	return;
+    }
+  }
+
+  // find and delete record (with key, without object)
+  template <unsigned KeyID, typename L>
+  ZuInline void findDel(Shard shard, const Key<KeyID> &key, L &&l)
+  {
+    findUpd_<KeyID>(shard, key,
+      [this, l = ZuFwd<L>(l)](ZmRef<Object<T>> object) mutable {
+	if (ZuUnlikely(!object)) { l(object); return; }
+	del(ZuMv(object), ZuMv(l));
+      });
+  }
+
+  // find and delete record at an intended UN (with key, without object)
+  // - lambda(OpResult::T, ZdbObject<T> *, UN)
+  template <unsigned KeyID, typename L>
+  ZuInline void findDel(Shard shard, const Key<KeyID> &key, UN un, L &&l) {
+    ZiAssert(shardInvoked_(shard), "Zdb", (shard),
+      "findDel called outside shard " << ZuBoxed(shard), return);
+
+    auto next = nextUN(shard);
+    auto result = cmpUN_(next, un);
+    if (ZuUnlikely(result != OpResult::Executed)) {
+      l(result, nullptr, next);
+      return;
+    }
+    findUpd_<KeyID>(shard, key,
+      [this, shard, un, l = ZuFwd<L>(l)](
+	ZmRef<Object<T>> object) mutable {
+	if (ZuLikely(object)) {
+	  del(ZuMv(object), un, ZuMv(l));
+	  return;
+	}
+	auto next = nextUN(shard);
+	auto result = cmpUN_(next, un);
+	if (result == OpResult::Executed) result = OpResult::Missing;
+	l(result, nullptr, next);
+      });
+  }
+
+private:
+  template <typename L>
+  bool insert_(UN un, ZmRef<Object<T>> object, L &l) {
+    if (!object->insert_(un)) return false;
+    try {
+      l(object.ptr());
+    } catch (...) { object->abort(); throw; }
+    object->abort();
+    return true;
+  }
+
+  template <typename KeyIDs_, typename L>
+  bool update_(UN un, ZmRef<Object<T>> object, L &l) {
+    if (!update_(object.ptr(), un)) return false;
     // keep stale buffers alive until commit or rollback is complete
     auto bufs = ZmScratch(ZmRef<RepBuf<T>>, KeyIDs::N);	// undo buffer
     auto abort = [&object, &bufs]() {
@@ -1235,6 +1360,7 @@ public:
 	  bufs[i]->stale = false;
       bufs.null();
     };
+    auto shard = object->shard();
     ZuUnroll::all<KeyIDs>([this, shard, &object, &bufs](auto KeyID) {
       auto key = ZuStructKey<KeyID>(object->data());
       auto i = m_bufCache[shard].template iter<KeyID>(ZuMv(key));
@@ -1248,62 +1374,18 @@ public:
       }
     });
     try {
-      m_cache[shard].template update<KeyIDs_>(object, [
-	l = ZuFwd<L>(l)
-      ](typename Cache<T>::Node *node) mutable {
-	l(static_cast<Object<T> *>(node));
-      });
+      m_cache[shard].template update<KeyIDs_>(object,
+	[&l](typename Cache<T>::Node *node) {
+	  l(static_cast<Object<T> *>(node));
+	});
     } catch (...) { abort(); throw; }
     abort();
-  }
-  // update object (idempotent) - calls l(null) to skip
-  template <typename KeyIDs_ = ZuSeq<>, typename L>
-  void update(ZmRef<Object<T>> object, UN un, L &&l) {
-    auto shard = object->shard();
-
-    ZmAssert(invoked(shard));
-
-    if (un != nullUN() && ZuUnlikely(nextUN(shard) > un)) {
-      l(nullptr);
-      return;
-    }
-    update<KeyIDs_>(ZuMv(object), ZuFwd<L>(l));
+    return true;
   }
 
-  // find and update record (with key, without object)
-  template <
-    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuInline void findUpd(Shard shard, Key<KeyID> key, L &&l) {
-    findUpd_<KeyID>(shard, ZuMv(key),
-      [this, l = ZuFwd<L>(l)](ZmRef<Object<T>> object) mutable {
-	if (ZuUnlikely(!object)) { l(object); return; }
-	update<KeyIDs_>(ZuMv(object), ZuMv(l));
-      });
-  }
-  // find and update record (idempotent) (with key, without object)
-  template <
-    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuInline void findUpd(Shard shard, Key<KeyID> key, UN un, L &&l) {
-    findUpd_<KeyID>(shard, ZuMv(key),
-      [this, un, l = ZuFwd<L>(l)](ZmRef<Object<T>> object) mutable {
-	if (ZuUnlikely(!object)) { l(object); return; }
-	update<KeyIDs_>(ZuMv(object), un, ZuMv(l));
-      });
-  }
-
-  // delete lambda(ZdbObject<T> *)
-
-  // delete record
   template <typename L>
-  void del(ZmRef<Object<T>> object, L &&l) {
-    auto shard = object->shard();
-
-    ZmAssert(invoked(shard));
-
-    if (!del_(object.ptr(), nextUN(shard))) {
-      l(nullptr);
-      return;
-    }
+  bool del_(UN un, ZmRef<Object<T>> object, L &l) {
+    if (!del_(object.ptr(), un)) return false;
     // all object keys are being invalidated, need to:
     // - evict from cache
     // - mark pending buffers indexed by the old keys as stale
@@ -1318,6 +1400,7 @@ public:
 	  bufs[i]->stale = false;
       bufs.null();
     };
+    auto shard = object->shard();
     ZuUnroll::all<KeyIDs>([this, shard, &object, &bufs](auto KeyID) {
       auto key = ZuStructKey<KeyID>(object->data());
       auto i = m_bufCache[shard].template iter<KeyID>(ZuMv(key));
@@ -1330,51 +1413,17 @@ public:
       }
     });
     try {
-      l(object);
+      l(object.ptr());
     } catch (...) { abort(); throw; }
     abort();
-  }
-  // delete record (idempotent) - returns true if del can proceed
-  template <typename L>
-  void del(ZmRef<AnyObject> object, UN un, L &&l) {
-    auto shard = object->shard();
-
-    ZmAssert(invoked(shard));
-
-    if (un != nullUN() && ZuUnlikely(nextUN(shard) > un)) {
-      l(nullptr);
-      return;
-    }
-    del(ZuMv(object), ZuFwd<L>(l));
+    return true;
   }
 
-  // find and delete record (with key, without object)
-  template <unsigned KeyID, typename L>
-  ZuInline void findDel(Shard shard, const Key<KeyID> &key, L &&l)
-  {
-    findUpd_<KeyID>(shard, key,
-      [this, l = ZuFwd<L>(l)](ZmRef<Object<T>> object) mutable {
-	if (ZuUnlikely(!object)) { l(object); return; }
-	del(ZuMv(object), ZuMv(l));
-      });
-  }
-
-  // find and delete record (idempotent) (with key, without object)
-  template <unsigned KeyID, typename L>
-  ZuInline void findDel(Shard shard, const Key<KeyID> &key, UN un, L &&l) {
-    findUpd_<KeyID>(shard, key,
-      [this, un, l = ZuFwd<L>(l)](ZmRef<Object<T>> object) mutable {
-	if (ZuUnlikely(!object)) { l(object); return; }
-	del(ZuMv(object), un, ZuMv(l));
-      });
-  }
-
-private:
   // commit insert/update/delete - causes replication/write
   ZmRef<IOBuf> commit(AnyObject *object) {
     auto shard = object->shard();
 
-    ZmAssert(invoked(shard));
+    ZmAssert(shardInvoked_(shard));
 
     int origState = object->state();
     if (!object->commit_()) return {};
@@ -1410,21 +1459,25 @@ private:
 
   // abort insert/update/delete
   bool abort(AnyObject *object) {
-    ZmAssert(invoked(object->shard()));
+    ZmAssert(shardInvoked_(object->shard()));
 
     return object->abort_();
   }
 
   // low-level update, calls AnyObject::update_()
   bool update_(Object<T> *object, UN un) {
-    evictUN(object->shard(), object->un());
-    return object->update_(un);
+    auto prevUN = object->un();
+    if (!object->update_(un)) return false;
+    evictUN(object->shard(), prevUN);
+    return true;
   }
 
   // low-level delete, calls AnyObject::del_()
   bool del_(Object<T> *object, UN un) {
-    evictUN(object->shard(), object->un());
-    return object->del_(un);
+    auto prevUN = object->un();
+    if (!object->del_(un)) return false;
+    evictUN(object->shard(), prevUN);
+    return true;
   }
 
 private:
@@ -1634,9 +1687,17 @@ ZfStruct((StoreLoadCf, Cf),
   (((module), (Required)),	(String)),
   (((preload)),		(Bool)));
 
+ZuDerive(DBThreads,
+  (ZtArray<ZtString<>, ZtArrayHeapID<"Zdb.DBCf.Threads">>));
+ZuDerive(DBSIDs,
+  (ZtArray<unsigned, ZtArrayHeapID<"Zdb.DBCf.SIDs">>));
+
 struct DBCf {
   ZuID			thread;
   mutable unsigned	sid = 0;
+  unsigned		nShards = 1;
+  DBThreads		threads;
+  mutable DBSIDs	sids;
   const ZfCf::AnyNode	*storeCf = nullptr;
   TableCfs		tableCfs;
   HostCfs		hostCfs;
@@ -1653,20 +1714,36 @@ struct DBCf {
 
   DBCf() = default;
   DBCf(
-      ZuID thread_, ZuID hostID_, unsigned nAccepts_,
+      ZuID thread_, unsigned nShards_, DBThreads threads_,
+      ZuID hostID_, unsigned nAccepts_,
       unsigned heartbeatFreq_, unsigned heartbeatTimeout_,
       unsigned reconnectFreq_, unsigned electionTimeout_
 #if Zdb_DEBUG
       , bool debug_
 #endif
       ) :
-    thread{ZuMv(thread_)}, hostID{ZuMv(hostID_)}, nAccepts{nAccepts_},
+    thread{ZuMv(thread_)}, nShards{nShards_}, threads(ZuMv(threads_)),
+    hostID{ZuMv(hostID_)}, nAccepts{nAccepts_},
     heartbeatFreq{heartbeatFreq_}, heartbeatTimeout{heartbeatTimeout_},
     reconnectFreq{reconnectFreq_}, electionTimeout{electionTimeout_}
 #if Zdb_DEBUG
     , debug{debug_}
 #endif
-    { }
+  {
+    if (!nShards || nShards > 64 || (nShards & (nShards - 1)))
+      throw ZeEXCEPT(Error, "Zdb", ([nShards = nShards](auto &s) {
+	s << "\"shards\" invalid value " << nShards
+	  << " (must be a power of two in [1, 64])";
+      }));
+    if (threads) {
+      unsigned nThreads = threads.length();
+      if ((nThreads & (nThreads - 1)) || nThreads > nShards)
+	throw ZeEXCEPT(Error, "Zdb", ([nThreads, nShards = nShards](auto &s) {
+	  s << "\"threads\" invalid array size " << nThreads
+	    << " (" << nShards << " shards)";
+	}));
+    }
+  }
   DBCf(const ZfCf::AnyNode *cf);
   DBCf(DBCf &&) = default;
   DBCf &operator =(DBCf &&) = default;
@@ -1694,20 +1771,23 @@ struct DBCf {
 
 ZfStruct((DBCf, Cf),
   (((thread),		(Ctor<0>, Required)),		(String)),
-  (((hostID),		(Ctor<1>)),			(String)),
-  (((nAccepts),		(Ctor<2>, (Range<1U, 1U<<10U>))),
+  (((nShards),		(Ctor<1>, Cf::ID<"shards">, (Range<1U, 64U>))),
+    (UInt32, 1)),
+  (((threads),		(Ctor<2>)),			(StringVec)),
+  (((hostID),		(Ctor<3>)),			(String)),
+  (((nAccepts),		(Ctor<4>, (Range<1U, 1U<<10U>))),
     (UInt32, 8)),
-  (((heartbeatFreq),	(Ctor<3>, (Range<1U, 3600U>))),
+  (((heartbeatFreq),	(Ctor<5>, (Range<1U, 3600U>))),
     (UInt32, 1)),
-  (((heartbeatTimeout),	(Ctor<4>, (Range<1U, 14400U>))),
+  (((heartbeatTimeout),	(Ctor<6>, (Range<1U, 14400U>))),
     (UInt32, 4)),
-  (((reconnectFreq),	(Ctor<5>, (Range<1U, 3600U>))),
+  (((reconnectFreq),	(Ctor<7>, (Range<1U, 3600U>))),
     (UInt32, 1)),
-  (((electionTimeout),	(Ctor<6>, (Range<1U, 3600U>))),
+  (((electionTimeout),	(Ctor<8>, (Range<1U, 3600U>))),
     (UInt32, 8))
 #if Zdb_DEBUG
   ,
-  (((debug),		(Ctor<7>)),			(Bool))
+  (((debug),		(Ctor<9>)),			(Bool))
 #endif
 );
 
@@ -1800,6 +1880,29 @@ public:
     m_mx->invoke(ZuFwd<Args>(args)..., m_cf.sid);
   }
   bool invoked() const { return m_mx->invoked(m_cf.sid); }
+
+  unsigned nShards() const { return m_cf.nShards; }
+  unsigned shardSID(Shard shard) const {
+    ZmAssert(shard < m_cf.nShards, return 0);
+    return m_cf.sids[shard & (m_cf.sids.length() - 1)];
+  }
+  template <typename ...Args>
+  void shardRun(Shard shard, Args &&...args) const {
+    ZmAssert(shard < m_cf.nShards, return);
+    m_mx->run(ZuFwd<Args>(args)...,
+      m_cf.sids[shard & (m_cf.sids.length() - 1)]);
+  }
+  template <typename ...Args>
+  void shardInvoke(Shard shard, Args &&...args) const {
+    ZmAssert(shard < m_cf.nShards, return);
+    m_mx->invoke(ZuFwd<Args>(args)...,
+      m_cf.sids[shard & (m_cf.sids.length() - 1)]);
+  }
+  bool shardInvoked(Shard shard) const {
+    ZmAssert(shard < m_cf.nShards, return false);
+    return m_mx->invoked(
+      m_cf.sids[shard & (m_cf.sids.length() - 1)]);
+  }
 
   const DBCf &config() const { return m_cf; }
   ZiMultiplex *mx() const { return m_mx; }
@@ -1990,6 +2093,25 @@ private:
 
 };
 
+inline unsigned AnyTable::nShards_() const
+{
+  return m_db->nShards();
+}
+
+inline bool AnyTable::shardInvoked_(Shard shard) const
+{
+  return m_db->shardInvoked(shard);
+}
+
+template <typename T>
+inline void Table<T>::warmup()
+{
+  AnyTable::warmup();
+  unsigned n = nShards_();
+  for (unsigned i = 0; i < n; i++)
+    db()->shardRun(i, [this, i]() { warmup_(i); });
+}
+
 template <typename S>
 inline void DB::print(S &s)
 {
@@ -2089,7 +2211,7 @@ template <typename T>
 template <
   unsigned KeyID, bool UpdateLRU, bool Evict, typename L>
 inline void Table<T>::find_(Shard shard, Key<KeyID> key, L &&l) {
-  ZmAssert(invoked(shard));
+  ZmAssert(shardInvoked_(shard));
 
   auto load = [
     this, shard
@@ -2160,7 +2282,7 @@ inline void Table<T>::retrieve_(
       auto shard = context->shard;
       if (ZuLikely(result.is<RowData>())) {
 	auto buf = ZuMv(ZuMv(result).p<RowData>().buf);
-	table->run(shard, [
+	table->db()->shardRun(shard, [
 	  table,
 	  context = ZmRef(context),
 	  buf = ZuMv(buf)
@@ -2183,7 +2305,7 @@ inline void Table<T>::retrieve_(
 	    context->fn(ZuMv(object));
 	});
       } else
-	table->run(shard, [fn = ZuMv(context->fn)]() mutable {
+	table->db()->shardRun(shard, [fn = ZuMv(context->fn)]() mutable {
 	  fn(nullptr);
 	});
     }});

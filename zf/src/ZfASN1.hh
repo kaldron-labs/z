@@ -63,7 +63,6 @@
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuMArray.hh>
-
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZfStruct.hh>
@@ -836,6 +835,10 @@ struct AsObject {
 	return O(ZuFwd<Args>(args)..., handler.loadField<Field>()...);
       }
       template <typename ...Args>
+      static O *alloc(const Handler &handler, Args &&...args) {
+	return new O(ZuFwd<Args>(args)..., handler.loadField<Field>()...);
+      }
+      template <typename ...Args>
       static void new_(void *o, const Handler &handler, Args &&...args) {
 	new (o) O(ZuFwd<Args>(args)..., handler.loadField<Field>()...);
       }
@@ -851,6 +854,15 @@ struct AsObject {
 	});
 	return o;
       }
+    }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const {
+      O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+	*this, ZuFwd<Args>(args)...);
+      ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+	Field::set(*o, this->loadField<Field>());
+      });
+      return o;
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
@@ -1022,6 +1034,8 @@ struct AsArray {
 
     template <typename ...Args>
     O ctor(Args &&...args) const { return O(vec); }
+    template <typename ...Args>
+    O *alloc(Args &&...args) const { return new O(vec); }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const { new (o) O(vec); }
 

@@ -63,30 +63,37 @@ void DB::init(
 	  sid == mx->txThread();
     };
 
+    unsigned nShards = config.nShards;
+    if (!nShards || nShards > 64 || (nShards & (nShards - 1)))
+      throw ZeEXCEPT(Fatal, "Zdb", ([nShards](auto &s) {
+	s << "invalid DB shard count " << nShards;
+      }));
+    unsigned nThreads = config.threads.length();
+    if (nThreads &&
+	((nThreads & (nThreads - 1)) || nThreads > nShards))
+      throw ZeEXCEPT(Fatal, "Zdb", ([nThreads, nShards](auto &s) {
+	s << "invalid DB shard thread count " << nThreads
+	  << " (" << nShards << " shards)";
+      }));
+
     config.sid = mx->sid(config.thread);
     if (invalidSID(mx, config.sid))
       throw ZeEXCEPT(Fatal, "Zdb", ([thread = config.thread](auto &s) {
 	s << "Zdb thread misconfigured: " << thread; }));
 
-    {
-      auto i = config.tableCfs.citer();
-      while (auto tableCf_ = i()) {
-	auto &tableCf = const_cast<TableCf &>(tableCf_->val());
-	if (!tableCf.threads)
-	  tableCf.sids.push(config.sid);
-	else {
-	  tableCf.sids.size(tableCf.threads.length());
-	  tableCf.threads.all([mx, &tableCf](const ZtString<> &thread) {
-	    auto sid = mx->sid(thread);
-	    if (invalidSID(mx, sid))
-	      throw ZeEXCEPT(Fatal, "Zdb",
-		  ([id = tableCf.id, thread = ZeString{thread}](auto &s) {
-		    s << "Zdb " << id
-		      << " thread misconfigured: " << thread; }));
-	    tableCf.sids.push(sid);
-	  });
-	}
-      }
+    config.sids.length(0);
+    if (!config.threads)
+      config.sids.push(config.sid);
+    else {
+      config.sids.size(config.threads.length());
+      config.threads.all([mx, &config](const ZtString<> &thread) {
+	auto sid = mx->sid(thread);
+	if (invalidSID(mx, sid))
+	  throw ZeEXCEPT(Fatal, "Zdb",
+	      ([thread = ZeString{thread}](auto &s) {
+		s << "Zdb shard thread misconfigured: " << thread; }));
+	config.sids.push(sid);
+      });
     }
 
     m_cf = ZuMv(config);
@@ -118,7 +125,7 @@ void DB::init(
       }
       if (!m_store) throw ZeEXCEPT(Fatal, "Zdb", "null data store");
       InitResult result = m_store->init(
-	  m_cf.storeCf, m_mx,
+	  m_cf.storeCf, m_mx, m_cf.nShards,
 	  FailFn{this, ZmFnPtr<&DB::storeFailed>{}});
       m_cf.storeCf = nullptr;
       if (result.is<Event>()) throw ZuMv(result).p<Event>();
@@ -630,7 +637,7 @@ void DB::all(AllFn fn, AllDoneFn doneFn)
   m_allFn = ZuMv(fn);
   m_allDoneFn = ZuMv(doneFn);
   while (auto table = i.val().ptr())
-    table->invoke(0, [table]() {
+    table->db()->shardInvoke(0, [table]() {
       auto db = table->db();
       db->m_allFn(table, AllTableFn{db, [](DB *db, bool ok) {
 	db->invoke([db, ok]() { db->allDone(ok); });
@@ -655,6 +662,8 @@ void DB::allDone(bool ok)
 void DB::telemetry(Ztc::DBTelemetry &data) const
 {
   data.thread = m_cf.thread;
+  data.threads = m_cf.threads;
+  data.nShards = m_cf.nShards;
   data.self = telKey();
   data.leader = m_leader ? m_leader->id() : ZuCSpan{};
   data.prev = m_prev ? m_prev->id() : ZuCSpan{};
@@ -1085,7 +1094,8 @@ void DB::repStart()
 	  auto un = state->p<1>();
 	  auto endUN = endState->p<1>();
 	  if (endUN <= un) continue;
-	  table->run(shard, [table, cxn, shard, un, endUN]() mutable {
+	  table->db()->shardRun(shard,
+	    [table, cxn, shard, un, endUN]() mutable {
 	    table->recSend(ZuMv(cxn), shard, un, endUN);
 	  });
 	}
@@ -1096,7 +1106,7 @@ void DB::repStart()
 // send recovery record
 void AnyTable::recSend(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
 {
-  ZmAssert(invoked(shard));
+  ZmAssert(m_db->shardInvoked(shard));
 
   if (!m_open) return;
 
@@ -1112,7 +1122,7 @@ void AnyTable::recSend(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
   ](RowResult result) mutable {
     if (ZuLikely(result.is<RowData>())) {
       ZmRef<IOBuf> buf = result.p<RowData>().buf;
-      run(shard, [
+      m_db->shardRun(shard, [
 	this, cxn = ZuMv(cxn), shard, un, endUN, buf = ZuMv(buf)
       ]() mutable {
 	recSend_(ZuMv(cxn), shard, un, endUN, ZuMv(buf));
@@ -1126,7 +1136,8 @@ void AnyTable::recSend(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
       }));
     }
     // missing is not an error, skip over updated/deleted records
-    run(shard, [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
+    m_db->shardRun(shard,
+      [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
       recNext(ZuMv(cxn), shard, un, endUN);
     });
   });
@@ -1142,7 +1153,8 @@ void AnyTable::recSend_(
 void AnyTable::recNext(ZmRef<Cxn> cxn, Shard shard, UN un, UN endUN)
 {
   if (++un < endUN)
-    run(shard, [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
+    m_db->shardRun(shard,
+      [this, cxn = ZuMv(cxn), shard, un, endUN]() mutable {
       recSend(ZuMv(cxn), shard, un, endUN);
     });
   else
@@ -1159,7 +1171,7 @@ void DB::recEnd()
 // - falls back to object cache
 ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
 {
-  ZmAssert(invoked(shard));
+  ZmAssert(m_db->shardInvoked(shard));
 
   // build from outbound replication buffer cache
   if (auto buf = findBufUN(shard, un)) {
@@ -1308,6 +1320,25 @@ void Cxn_::msgRead3(ZmRef<IOBuf> buf)
 
 void Cxn_::hbRcvd(const fbs::Heartbeat *hb)
 {
+  if (ZuUnlikely(hb->nShards() != m_db->nShards())) {
+    ZiLOG(Error, "Zdb", ([
+      host = ZeString{Zfb::Load::str(hb->host())},
+      peerNShards = hb->nShards(), nShards = m_db->nShards()
+    ](auto &s) {
+      s << "peer " << host << " has " << peerNShards
+	<< " shards; local DB has " << nShards;
+    }));
+    disconnect();
+    return;
+  }
+  if (auto dbState = hb->dbState())
+    if (auto tableStates = dbState->tableStates())
+      for (auto tableState: *tableStates)
+	if (ZuUnlikely(tableState->shard() >= m_db->nShards())) {
+	  disconnect();
+	  return;
+	}
+
   if (!m_host)
     m_db->associate(
       static_cast<Cxn *>(this), Zfb::Load::str(hb->host()));
@@ -1434,9 +1465,9 @@ void Cxn_::hbSend()
   {
     const auto &dbState = self->dbState();
     auto id = Zfb::Save::str(fbb, self->id());
-    auto msg = fbs::CreateMsg(fbb, fbs::Body::Heartbeat, 
+    auto msg = fbs::CreateMsg(fbb, fbs::Body::Heartbeat,
 	fbs::CreateHeartbeat(fbb, id,
-	  m_db->state(), dbState.save(fbb)).Union());
+	  m_db->state(), m_db->nShards(), dbState.save(fbb)).Union());
     fbb.Finish(msg);
   }
 
@@ -1455,8 +1486,8 @@ void DB::dbStateRefresh()
 
   DBState &dbState = m_self->dbState();
   dbState.updateSN(m_nextSN);
-  all_([&dbState](AnyTable *table) {
-    for (Shard i = 0, n = table->config().nShards; i < n; i++)
+  all_([this, &dbState](AnyTable *table) {
+    for (Shard i = 0, n = nShards(); i < n; i++)
       dbState.update(ZuFwdTuple(table->config().id, i), table->nextUN(i));
   });
 }
@@ -1479,11 +1510,12 @@ void Cxn_::repRecordRcvd(ZmRef<IOBuf> buf)
     << Record_Print{record, table}));
 
   auto shard = record->shard();
+  if (ZuUnlikely(shard >= m_db->nShards())) return;
 
   m_db->replicated(
     m_host, id, shard, record->un(),
     ZfbTransform::UInt128::load(record->sn()));
-  table->invoke(shard, [table, shard, buf = ZuMv(buf)]() mutable {
+  m_db->shardInvoke(shard, [table, shard, buf = ZuMv(buf)]() mutable {
     table->repRecordRcvd(shard, ZuMv(buf));
   });
 }
@@ -1503,7 +1535,8 @@ void Cxn_::repCommitRcvd(ZmRef<IOBuf> buf)
     << "repCommitRcvd(host=" << m_host->id() << ", " << commit->un() << ')');
 
   auto shard = commit->shard();
-  table->invoke(shard, [table, shard, un = commit->un()]() mutable {
+  if (ZuUnlikely(shard >= m_db->nShards())) return;
+  m_db->shardInvoke(shard, [table, shard, un = commit->un()]() mutable {
     table->repCommitRcvd(shard, un);
   });
 }
@@ -1527,7 +1560,7 @@ AnyTable::AnyTable(DB *db, TableCf *cf, IOBufAllocFn fn) :
   m_db{db}, m_cf{cf}, m_mx{db->mx()},
   m_bufAllocFn{ZuMv(fn)}
 {
-  unsigned n = cf->nShards;
+  unsigned n = db->nShards();
   m_nextUN.length(n);
   m_cacheUN.length(n);
   m_bufCacheUN.length(n);
@@ -1554,13 +1587,12 @@ void AnyTable::telemetry(Ztc::DBTableTelemetry &data) const
 {
   data.dbID = m_db->telKey();
   data.id = m_cf->id;
-  data.threads = m_cf->threads;
   data.count = count();
   data.cacheLoads = 0;
   data.cacheMisses = 0;
   data.cacheEvictions = 0;
   data.cacheSize = 0;
-  for (unsigned i = 0, n = m_cf->nShards; i < n; ++i) {
+  for (unsigned i = 0, n = m_db->nShards(); i < n; ++i) {
     ZmCacheStats stats;
     cacheStats(i, stats);
     data.cacheSize += stats.size;
@@ -1568,14 +1600,13 @@ void AnyTable::telemetry(Ztc::DBTableTelemetry &data) const
     data.cacheMisses += stats.misses;
     data.cacheEvictions += stats.evictions;
   }
-  data.nShards = m_cf->nShards;
   data.cacheMode = m_cf->cacheMode;
 }
 
 // process inbound replication - record
 void AnyTable::repRecordRcvd(Shard shard, ZmRef<IOBuf> buf)
 {
-  ZmAssert(invoked(shard));
+  ZmAssert(m_db->shardInvoked(shard));
 
   if (!m_open) return;
 
@@ -1586,7 +1617,7 @@ void AnyTable::repRecordRcvd(Shard shard, ZmRef<IOBuf> buf)
 // process inbound replication - committed
 void AnyTable::repCommitRcvd(Shard shard, UN un)
 {
-  ZmAssert(invoked(shard));
+  ZmAssert(m_db->shardInvoked(shard));
 
   if (!m_open) return;
 
@@ -1605,7 +1636,7 @@ void AnyTable::recover(Shard shard, const fbs::Record *record)
 // outbound replication + persistency
 void AnyTable::write(Shard shard, ZmRef<IOBuf> buf, bool active)
 {
-  ZmAssert(invoked(shard));
+  ZmAssert(m_db->shardInvoked(shard));
 
   cacheBuf(shard, buf);
   auto db = this->db();
@@ -1621,14 +1652,15 @@ void AnyTable::write(Shard shard, ZmRef<IOBuf> buf, bool active)
     auto un = record_(msg)->un();
     bool recovery = msg->body_type() == fbs::Body::Recovery;
     db->invoke([db, buf = ZuMv(buf)]() mutable { db->replicate(buf); });
-    if (recovery) invoke(shard, [this, shard, un]() { evictBuf(shard, un); });
+    if (recovery)
+      db->shardInvoke(shard, [this, shard, un]() { evictBuf(shard, un); });
   }
 }
 
 // low-level internal write to backing data store
 void AnyTable::store(Shard shard, ZmRef<IOBuf> buf)
 {
-  ZmAssert(invoked(shard));
+  ZmAssert(m_db->shardInvoked(shard));
 
   if (ZuUnlikely(!m_open)) return; // table is closing
 
@@ -1657,7 +1689,7 @@ void AnyTable::committed(ZmRef<IOBuf> buf, CommitResult result)
     return;
   }
   bool recovery = msg->body_type() == fbs::Body::Recovery;
-  run(shard, [this, shard, un, recovery]() {
+  m_db->shardRun(shard, [this, shard, un, recovery]() {
     evictBuf(shard, un);
     if (!recovery) commitSend(shard, un);
   });
@@ -1687,7 +1719,7 @@ void AnyTable::open(L &&l)
       s << hostID << " m_open=" << open;
     })); */
 
-  ZmAssert(invoked(0));
+  ZmAssert(m_db->shardInvoked(0));
   ZmAssert(!m_open);
 
   if (m_open) {
@@ -1696,10 +1728,11 @@ void AnyTable::open(L &&l)
   }
 
   db()->store()->open(
-    id(), config().nShards,
+    id(),
     objFields(), objKeyFields(), objSchema(), m_bufAllocFn,
     [this, l = ZuFwd<L>(l)](OpenResult result) mutable {
-      invoke(0, [this, l = ZuMv(l), result = ZuMv(result)]() mutable {
+      m_db->shardInvoke(0,
+	[this, l = ZuMv(l), result = ZuMv(result)]() mutable {
 	l(opened(ZuMv(result)));
       });
     });
@@ -1713,7 +1746,7 @@ bool AnyTable::opened(OpenResult result)
     s << hostID << " m_open=" << open;
   }));
 
-  ZmAssert(invoked(0));
+  ZmAssert(m_db->shardInvoked(0));
   ZmAssert(!m_open);
 
   if (m_open) return true;
@@ -1728,7 +1761,7 @@ bool AnyTable::opened(OpenResult result)
   m_storeTbl = data.storeTbl;
   m_count = data.count;
   m_db->recoveredSN(data.sn);
-  for (unsigned i = 0, n = config().nShards; i < n; i++)
+  for (unsigned i = 0, n = m_db->nShards(); i < n; i++)
     recoveredUN(i, data.un[i]);
 
   m_open = 1;
@@ -1743,7 +1776,7 @@ void AnyTable::close(L &&l)
       s << hostID << " m_open=" << open;
     })); */
 
-  ZmAssert(invoked(0));
+  ZmAssert(m_db->shardInvoked(0));
 
   // ensure idempotence
 
@@ -1759,7 +1792,7 @@ void AnyTable::close(L &&l)
   }
 
   m_storeTbl->close([this, l = ZuFwd<L>(l)]() mutable {
-    invoke(0, [this, l = ZuMv(l)]() mutable {
+    m_db->shardInvoke(0, [this, l = ZuMv(l)]() mutable {
       m_storeTbl = nullptr;
       l();
       m_open = 0;

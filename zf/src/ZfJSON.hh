@@ -642,12 +642,12 @@ struct AsObject {
     }
     template <typename ...Args>
     O *alloc(Args &&...args) const {
-      auto o_ = ZuTypeApply<Ctor, CtorFields>::alloc(*this, ZuFwd<Args>(args)...);
-      O &o = *static_cast<O *>(o_);
-      ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
+      O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+	*this, ZuFwd<Args>(args)...);
+      ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+	Field::set(*o, this->loadField<ZfFieldFilter::Load, Field>());
       });
-      return o_;
+      return o;
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
@@ -874,9 +874,9 @@ struct AsMap {
       return o;
     }
     O *alloc() const {
-      auto p = new O();
-      load_<ZfFieldFilter::Load>(*p);
-      return p;
+      auto o = new O();
+      load_<ZfFieldFilter::Load>(*o);
+      return o;
     }
     void new_(void *p_) const {
       auto p = new (p_) O();

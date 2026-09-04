@@ -1678,7 +1678,7 @@ ZuDerive(Queue, (ZmList<Task, ZmListHeapID<"ZdbPQ.Queue">>));
 // - care is taken to alert and error out on schema inconsistencies
 //   ... while automatically creating new tables and indices as needed
 // - OIDs for all vocabulary types are retrieved and populated
-// - MRD table is idempotently created
+// - metadata and MRD tables are idempotently created
 class StartState {
 public:
   uint32_t v = 0;	// public for printing/logging
@@ -1688,6 +1688,9 @@ public:
     PreStart = 0,
     GetOIDs,	// retrieve OIDs
     MkSchema,	// idempotent create schema
+    MkTblMeta,	// idempotent create DB metadata table
+    SetNShards,	// initialize persistent DB shard count
+    GetNShards,	// validate persistent DB shard count
     MkTblMRD,	// idempotent create MRD table
     Started	// start complete (possibly failed)
   };
@@ -1981,7 +1984,7 @@ ZfStruct((StoreCf, Cf),
 
 class Store : public Zdb_::Store {
 public:
-  InitResult init(const ZfCf::AnyNode *, ZiMultiplex *, FailFn);
+  InitResult init(const ZfCf::AnyNode *, ZiMultiplex *, unsigned, FailFn);
   void final();
 
   void start(StartFn);
@@ -1989,7 +1992,6 @@ public:
 
   void open(
     IDString id,
-    unsigned nShards,
     ZfVFieldArray fields,
     ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema,
@@ -2054,6 +2056,18 @@ private:
   int mkSchema_send();
   void mkSchema_rcvd(PGresult *);
 
+  void mkTblMeta();
+  int mkTblMeta_send();
+  void mkTblMeta_rcvd(PGresult *);
+
+  void setNShards();
+  int setNShards_send();
+  void setNShards_rcvd(PGresult *);
+
+  void getNShards();
+  int getNShards_send();
+  void getNShards_rcvd(PGresult *);
+
   void mkTblMRD();
   int mkTblMRD_send();
   void mkTblMRD_rcvd(PGresult *);
@@ -2066,6 +2080,8 @@ private:
   ZtString<>		m_connection;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_sid = 0;
+  unsigned		m_nShards = 0;
+  unsigned		m_storedNShards = 0;
   FailFn		m_failFn;
 
   ZmRef<StoreTbls>	m_storeTbls;

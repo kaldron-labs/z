@@ -71,7 +71,6 @@
 
 #include <assert.h>
 
-
 #include <zlib/ZfStruct.hh>
 
 #include <zlib/Zfb.hh>
@@ -207,6 +206,10 @@ struct Handler_ {
       return O{ZuFwd<Args>(args)..., Field::load_(handler.fbo)...};
     }
     template <typename ...Args>
+    static O *alloc(const Handler_ &handler, Args &&...args) {
+      return new O{ZuFwd<Args>(args)..., Field::load_(handler.fbo)...};
+    }
+    template <typename ...Args>
     static void new_(void *o, const Handler_ &handler, Args &&...args) {
       new (o) O{ZuFwd<Args>(args)..., Field::load_(handler.fbo)...};
     }
@@ -225,6 +228,18 @@ struct Handler_ {
       });
       return o;
     }
+  }
+  template <
+    bool RO = ReadOnly,
+    typename = ZuIfT<!RO, void>,
+    typename ...Args>
+  O *alloc(Args &&...args) const {
+    O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+      *this, ZuFwd<Args>(args)...);
+    ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+      Field::load(*o, fbo);
+    });
+    return o;
   }
   template <
     bool RO = ReadOnly,
@@ -314,6 +329,14 @@ template <
   typename ...Args>
 inline O ctor(const ZfbType<O> *fbo, Args &&...args) {
   return Handler<O, Facet>{fbo}.ctor(ZuFwd<Args>(args)...);
+}
+template <
+  typename O,
+  typename Facet = ZuFacet::Core,
+  typename = ZuIfT<!ZuStructRO<O>{}, void>,
+  typename ...Args>
+inline O *alloc(const ZfbType<O> *fbo, Args &&...args) {
+  return Handler<O, Facet>{fbo}.alloc(ZuFwd<Args>(args)...);
 }
 template <
   typename O,

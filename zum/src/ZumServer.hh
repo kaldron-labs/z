@@ -111,13 +111,13 @@ public:
   // user DB thread
   template <typename ...Args>
   void run(Args &&...args) const {
-    m_mx->run(ZuFwd<Args>(args)..., m_sid);
+    m_db->shardRun(0, ZuFwd<Args>(args)...);
   }
   template <typename ...Args>
   void invoke(Args &&...args) const {
-    m_mx->invoke(ZuFwd<Args>(args)..., m_sid);
+    m_db->shardInvoke(0, ZuFwd<Args>(args)...);
   }
-  bool invoked() const { return m_mx->invoked(m_sid); }
+  bool invoked() const { return m_db->shardInvoked(0); }
 
   // open
   void open(StringVec perms, OpenFn);
@@ -300,8 +300,7 @@ private:
     return unsigned(fbs::LoginReqData::MAX) + (i - 1);
   }
 
-  ZiMultiplex		*m_mx;
-  unsigned		m_sid = 0;
+  Zdb			*m_db = nullptr;
   UserID		m_nextUserID = 0;
 
   PermID		m_nextPermID = 0;

@@ -68,6 +68,7 @@ ZmRef<Zdb> db;
 
 // table
 ZmRef<ZdbTable<Order>> orders;
+ZmRef<ZdbTable<Order>> payments;
 
 // multiplexer
 ZuPtr<ZiMultiplex> mx;
@@ -123,6 +124,7 @@ int main(int argc_, char **argv)
     ZfCf::DefKey{"DEBUG"}, ZfCf::DefVal{options.debug ? "true" : "false"});
   auto cf = inlineCf(
     "thread: zdb,\n"
+    "shards: 2,\n"
     "hostID: 0,\n"
     "hosts: {0: {standalone: true}},\n"
     "store: {\n"
@@ -131,7 +133,7 @@ int main(int argc_, char **argv)
     "  module: ${MODULE},\n"
     "  connection: ${CONNECT}\n"
     "},\n"
-    "tables: {order: {warmup: true}},\n"
+    "tables: {order: {warmup: true}, payment: {}},\n"
     "debug: ${DEBUG},\n"
     "mx: {\n"
     "  nThreads: 4,\n"
@@ -170,8 +172,15 @@ int main(int argc_, char **argv)
     });
 
     orders = db->initTable<Order>("order"); // might throw
+    payments = db->initTable<Order>("payment");
 
     if (!db->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "Zdb start failed");
+
+    db->shardRun(1, [] {
+      payments->find<0>(1, ZuFwdTuple("MISSING", UINT64_C(0)),
+	[](ZmRef<ZdbObject<Order>>) { done.post(); });
+    });
+    done.wait();
 
     if (options.hashTel)
       ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::hashCSV()));
@@ -201,7 +210,7 @@ int main(int argc_, char **argv)
     ZuNBox<uint64_t> id;
 
     if (*seqNo) {
-      orders->run(0, [seqNo, &id]{
+      db->shardRun(0, [seqNo, &id]{
 	orders->find<2>(0, ZuFwdTuple("FIX0", seqNo),
 	  [seqNo, &id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
@@ -231,7 +240,7 @@ int main(int argc_, char **argv)
     else
       id = 0;
 
-    orders->run(0, [&id, &seqNo]{
+    db->shardRun(0, [&id, &seqNo]{
       ZdbObjRef<Order> o = new ZdbObject<Order>{orders, 0};
       orders->insert(o, [&id, &seqNo](ZdbObject<Order> *o) {
 	if (ZuUnlikely(!o)) { done.post(); return; }
@@ -251,7 +260,7 @@ int main(int argc_, char **argv)
     });
     done.wait();
 
-    orders->run(0, [&id]{
+    db->shardRun(0, [&id]{
       orders->find<0>(0, ZuFwdTuple("IBM", id),
 	[&id](ZmRef<ZdbObject<Order>> o) {
 	  if (!o)
@@ -283,7 +292,7 @@ int main(int argc_, char **argv)
     done.wait();
 
     if (id > 0) {
-      orders->run(0, [id = id - 1]{
+      db->shardRun(0, [id = id - 1]{
 	orders->findUpd<0, ZuSeq<1>>(0, ZuFwdTuple("IBM", id),
 	  [id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
@@ -307,7 +316,7 @@ int main(int argc_, char **argv)
     }
 
     if (id > 3) {
-      orders->run(0, [id = id - 3]{
+      db->shardRun(0, [id = id - 3]{
 	orders->findDel<0>(0, ZuFwdTuple("IBM", id),
 	  [id](ZmRef<ZdbObject<Order>> o) {
 	    if (!o) {
@@ -337,6 +346,7 @@ int main(int argc_, char **argv)
     mx->stop();
 
     orders = {};
+    payments = {};
     db->final(); // calls Store::final()
     db = {};
 

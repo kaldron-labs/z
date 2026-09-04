@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmcpClient.hh>
 #include <zlib/ZmcpServer.hh>
@@ -118,6 +119,29 @@ static void callParamsTest()
     "{\"name\":\"multiply\",\"arguments\":{\"lhs\":4,\"rhs\":5}}");
 }
 
+static void customAllocTest()
+{
+  ZuTestScope(customAlloc);
+
+  {
+    char json[] = "request-id";
+    auto node = ZfJSON::newNode<ZfJSON::AnyNode::String>(json);
+    ZuPtr<Zmcp::ID> id =
+      ZfJSON::handler<Zmcp::ID>(node.ptr()).alloc();
+    ZuCheck(id->string());
+    ZuCheck(id->p<Zmcp::IDString>() == "request-id");
+  }
+  {
+    char json[] = "{\"lhs\":10,\"rhs\":11}";
+    auto scanned = ZfJSON::scan(json);
+    ZuCheck(scanned.p<0>() > 0);
+    ZuPtr<Zmcp::ToolArg<Add>> arg =
+      ZfJSON::handler<Zmcp::ToolArg<Add>>((*scanned.p<1>())[0]).alloc();
+    ZuCheck(arg->value.lhs == 10);
+    ZuCheck(arg->value.rhs == 11);
+  }
+}
+
 static void discriminatorTest()
 {
   ZuTestScope(discriminator);
@@ -163,6 +187,7 @@ int main(int argc, char **argv)
   ZuTestCall(catalogTest);
   ZuTestCall(idempotentTest);
   ZuTestCall(callParamsTest);
+  ZuTestCall(customAllocTest);
   ZuTestCall(discriminatorTest);
   return 0;
 }

@@ -949,9 +949,8 @@ struct AsObject {
     }
     template <typename ...Args>
     O *alloc(Args &&...args) const {
-      ZuPtr<O> owner{ZuTypeApply<Ctor, CtorFields>::alloc(
-	*this, ZuFwd<Args>(args)...)};
-      auto o = owner.ptr();
+      O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
+	*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, o]<typename Field>() {
 	this->template loadField<ZfFieldFilter::Load, Field>(
 	    [o]<typename V>(V &&v, bool deflt) {
@@ -959,7 +958,7 @@ struct AsObject {
 	    Field::set(*o, ZuFwd<V>(v));
 	});
       });
-      return ZuMv(owner).release();
+      return o;
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
