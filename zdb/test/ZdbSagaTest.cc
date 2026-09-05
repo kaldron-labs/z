@@ -4,20 +4,9 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdlib.h>
-#include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <errno.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
-
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZfCf.hh>
-#include <zlib/ZfCLI.hh>
 
 #include <zlib/ZvMxParams.hh>
 
@@ -122,6 +111,7 @@ struct LiveContext : public ZmPolymorph {
   ZdbTable<Order>	*orders = nullptr;
   ZmSemaphore	*done = nullptr;
   ZmSemaphore	*paused = nullptr;
+  ZmSemaphore	*reverseFailed = nullptr;
   unsigned	runs = 0;
   unsigned	inserts = 0;
   unsigned	updates = 0;
@@ -232,7 +222,11 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 	} else {
 	  saga->findDel<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
 	    ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
-	      if (context->failReverse) { complete(false); return; }
+	      if (context->failReverse) {
+		complete(false);
+		if (context->reverseFailed) context->reverseFailed->post();
+		return;
+	      }
 	      complete(bool(row->commit()));
 	    });
 	}
@@ -2261,58 +2255,122 @@ static void rollback(
   ZuCheckRT(mx.stop());
 }
 
-static int child(const char *self)
+static void abandonRollback()
 {
-#ifndef _WIN32
-  pid_t pid = fork();
-  if (pid < 0) return -1;
-  if (!pid) {
-    if (dup2(STDERR_FILENO, STDOUT_FILENO) < 0) _exit(127);
-    execl(self, self, "--fatal-rollback", static_cast<char *>(nullptr));
-    _exit(127);
-  }
-  int status;
-  pid_t result;
-  do { result = waitpid(pid, &status, 0); } while (result < 0 && errno == EINTR);
-  if (result != pid) return -1;
-  if (WIFSIGNALED(status)) return -WTERMSIG(status);
-  return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-#else
-  ZtString<> command;
-  ZfCLI::CmdQuote::quote(command, self);
-  command << " --fatal-rollback";
-  STARTUPINFOA start{};
-  start.cb = sizeof(start);
-  start.dwFlags = STARTF_USESTDHANDLES;
-  start.hStdOutput = start.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-  start.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-  PROCESS_INFORMATION process{};
-  if (!CreateProcessA(nullptr, command.data(), nullptr, nullptr, TRUE, 0,
-      nullptr, nullptr, &start, &process)) return -1;
-  DWORD status = DWORD(-1);
-  if (WaitForSingleObject(process.hProcess, INFINITE) == WAIT_OBJECT_0)
-    GetExitCodeProcess(process.hProcess, &status);
-  CloseHandle(process.hThread);
-  CloseHandle(process.hProcess);
-  return int(status);
-#endif
+  ZuTestScopeRT(abandonRollback);
+  using DB = ZdbSagaDB<zdbtest::LiveContext, zdbtest::LiveSagas>;
+  using M = ZdbMSaga<zdbtest::LiveSagas>;
+  auto config = cf();
+  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZuCheckRT(mx.start());
+  ZmRef<zdbtest::Store> store = new zdbtest::Store{};
+  store->preserve();
+  ZmRef<DB> db = new DB{};
+  ZmSemaphore active, reverseFailed;
+  active_ = &active;
+  db->init(ZdbCf{config->resolve("zdb")}, &mx, ZdbHandler{
+    .upFn = up
+  }, store);
+  auto orders = db->initTable<zdbtest::Order>("o");
+  ZmRef<zdbtest::LiveContext> context = new zdbtest::LiveContext{};
+  context->orders = orders;
+  context->failStep = 1;
+  context->failReverse = true;
+  context->reverseFailed = &reverseFailed;
+  db->sagas(context);
+  ZuCheckRT(db->start());
+  active.wait();
+
+  bool admitted = false, outcome = true;
+  unsigned called = 0;
+  ZmSemaphore submitted, done;
+  ZmRef<M> saga = new M{};
+  saga->init(zdbtest::LiveSaga{{}, 81});
+  ZuCheckRT(db->saga(0, 81, ZuMv(saga),
+    zdbtest::MoveSubmit{&admitted, &submitted},
+    zdbtest::MoveComplete{&outcome, &called, &done}));
+  submitted.wait();
+  reverseFailed.wait();
+  ZuCheckRT(admitted);
+
+  context->failStep = UINT32_MAX;
+  context->failReverse = false;
+  saga = new M{};
+  saga->init(zdbtest::LiveSaga{{}, 82});
+  ZuCheckRT(db->saga(0, 82, ZuMv(saga), [](bool) { },
+    [&outcome, &done](bool ok) { outcome = ok; done.post(); }));
+  done.wait();
+  ZuCheckRT(outcome);
+  ZuCheckRT(!called);
+  bool retained = ZmBlock<bool>{}([db = db.ptr()](auto wake) {
+    db->run([db, wake = ZuMv(wake)]() mutable {
+      wake(db->table("saga")->count() == 1 &&
+	db->table("saga_step")->count() == 1);
+    });
+  });
+  ZuCheckRT(retained);
+  ZuCheckRT(db->stop());
+  orders = {};
+  db->final();
+
+  db->init(ZdbCf{config->resolve("zdb")}, &mx, ZdbHandler{
+    .upFn = up
+  }, store);
+  orders = db->initTable<zdbtest::Order>("o");
+  ZmRef<zdbtest::LiveContext> retry = new zdbtest::LiveContext{};
+  retry->orders = orders;
+  retry->failStep = 1;
+  retry->failReverse = true;
+  retry->reverseFailed = &reverseFailed;
+  db->sagas(retry);
+  ZuCheckRT(db->start());
+  active.wait();
+  reverseFailed.wait();
+  ZuCheckRT(retry->runs == 3);
+  retained = ZmBlock<bool>{}([db = db.ptr()](auto wake) {
+    db->run([db, wake = ZuMv(wake)]() mutable {
+      wake(db->table("saga")->count() == 1 &&
+	db->table("saga_step")->count() == 1);
+    });
+  });
+  ZuCheckRT(retained);
+  ZuCheckRT(db->stop());
+  orders = {};
+  db->final();
+
+  db->init(ZdbCf{config->resolve("zdb")}, &mx, ZdbHandler{
+    .upFn = up
+  }, store);
+  orders = db->initTable<zdbtest::Order>("o");
+  ZmRef<zdbtest::LiveContext> repaired = new zdbtest::LiveContext{};
+  repaired->orders = orders;
+  db->sagas(repaired);
+  ZuCheckRT(db->start());
+  active.wait();
+  ZuCheckRT(repaired->runs == 3);
+  ZuCheckRT(repaired->updates == 1);
+  ZuCheckRT(repaired->deletes == 1);
+  bool clean = ZmBlock<bool>{}([db = db.ptr()](auto wake) {
+    db->run([db, wake = ZuMv(wake)]() mutable {
+      wake(!db->table("saga")->count() &&
+	!db->table("saga_step")->count());
+    });
+  });
+  ZuCheckRT(clean);
+  ZuCheckRT(!called);
+  ZuCheckRT(db->stop());
+  orders = {};
+  db->final();
+  db = {};
+  store = {};
+  ZuCheckRT(mx.stop());
 }
 
-static void fatalRollback(const char *self)
-{
-  ZuTestScopeRT(fatalRollback);
-  ZuCheckRT(child(self) == EXIT_FAILURE);
-}
-
-int main(int argc, char **argv)
+int main()
 {
   ZiLog::init("ZdbSagaTest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
-  if (argc == 2 && !strcmp(argv[1], "--fatal-rollback")) {
-    rollback(1, false, true);
-    return 0;
-  }
   ZuTestMain();
   ZuTestCall(rows);
   ZuTestCall(dispatch);
@@ -2335,7 +2393,7 @@ int main(int argc, char **argv)
   ZuTestCall(rollback, 1);
   ZuTestCall(rollback, 2);
   ZuTestCall(rollback, 1, true);
-  ZuTestCall(fatalRollback, argv[0]);
+  ZuTestCall(abandonRollback);
   ZuTestCall(admissionDeactivated);
   ZuTestCall(admissionDeactivated, true);
   ZuTestCall(indexes);
