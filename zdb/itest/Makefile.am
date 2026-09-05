@@ -16,12 +16,13 @@ LDADD = $(top_builddir)/zdb/test/libZdbTest.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zdbsmoketest zdbreptest zdbreptest2
+noinst_PROGRAMS = zdbsmoketest zdbreptest zdbreptest2 zdbsagareptest
 zdbsmoketest_SOURCES = zdbsmoketest.cc
 zdbreptest_SOURCES = zdbreptest.cc
 zdbreptest2_SOURCES = zdbreptest2.cc
+zdbsagareptest_SOURCES = zdbsagareptest.cc
 dist_noinst_SCRIPTS = 1.sh 2.sh 3.sh clean.sh
-dist_noinst_DATA = 3.cf db.cf zdbbtreetest.cf zdbqueuetest.cf zdbreptest.cf
+dist_noinst_DATA = README.md 3.cf db.cf zdbbtreetest.cf zdbqueuetest.cf zdbreptest.cf
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

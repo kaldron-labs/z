@@ -1651,7 +1651,8 @@ struct Recover {
 struct Write {
   ZmRef<IOBuf>		buf;
   CommitFn		commitFn;
-  bool			mrd = false;	// used by delete only
+  bool			mrd = false;	// delete or ignored insert
+  bool			skipped = false;	// insert left existing row unchanged
 };
 
 using Query = ZuUnion<Open, Count, Select, Find, Recover, Write>;
@@ -1758,7 +1759,8 @@ public:
     MaxUN,	// query max UN, max SN from main table
     EnsureMRD,	// ensure MRD table has row for this table
     MRD,	// query max UN, max SN from mrd table
-    Opened	// open complete (possibly failed)
+    Opened,	// open complete (possibly failed)
+    Reopen	// closed, statements retained on this connection
   };
 
 private:
@@ -1813,12 +1815,13 @@ friend Store;
 
 public:
   StoreTbl(
-    Store *store, IDString id, unsigned nShards,
+    Store *store, bool internal, IDString id, unsigned nShards,
     ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema, IOBufAllocFn bufAllocFn);
 
   Store *store() const { return m_store; }
   const auto &id() const { return m_id; }
+  bool internal() const { return m_internal; }
 
 protected:
   ~StoreTbl();
@@ -1941,6 +1944,8 @@ private:
   Store			*m_store = nullptr;
   IDString		m_id;
   IDString		m_id_;		// snake case
+  IDString		m_stmtID;	// statement prefix and zdb.mrd identity
+  SQLString		m_relation;	// qualified SQL relation
   ZfVFieldArray		m_fields;	// all fields
   UpdFields		m_updFields;	// update fields
   ZfVKeyFieldArray	m_keyFields;	// fields for each key
@@ -1950,6 +1955,7 @@ private:
   KeyGroup		m_keyGroup;	// length of group key
   FieldMap		m_fieldMap;
   IOBufAllocFn		m_bufAllocFn;
+  bool			m_internal;
 
   OpenState		m_openState;
   OpenFn		m_openFn;	// open callback
@@ -1961,8 +1967,8 @@ private:
 
 // --- PostgreSQL data store
 
-inline ZuCSpan StoreTbl_IDAxor(const StoreTbl &storeTbl) {
-  return storeTbl.id();
+inline auto StoreTbl_IDAxor(const StoreTbl &storeTbl) {
+  return ZuTuple<bool, ZuCSpan>{storeTbl.internal(), storeTbl.id()};
 }
 ZuDerive(StoreTbls,
   (ZmHash<StoreTbl,
@@ -1991,6 +1997,7 @@ public:
   void stop(StopFn);
 
   void open(
+    bool internal,
     IDString id,
     ZfVFieldArray fields,
     ZfVKeyFieldArray keyFields,

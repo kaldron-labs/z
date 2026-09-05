@@ -27,7 +27,9 @@ LDADD = $(top_builddir)/zdb/src/libZdbMem.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_LTLIBRARIES = libZdbTest.la
 libZdbTest_la_SOURCES = ZdbTest.cc ZdbTest.hh ZdbMockStore.hh
-noinst_PROGRAMS = ZdbTelTest ZtcDBTest
+noinst_PROGRAMS = ZdbSagaTest ZdbTelTest ZtcDBTest
+ZdbSagaTest_SOURCES = ZdbSagaTest.cc
+ZdbSagaTest_LDADD = libZdbTest.la $(LDADD)
 ZdbTelTest_SOURCES = ZdbTelTest.cc
 ZdbTelTest_LDADD = libZdbTest.la $(LDADD)
 ZtcDBTest_SOURCES = ZtcDBTest.cc

@@ -6,7 +6,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-DZDB_EXPORTS @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-FBS = zdb_.fbs ztc_db.fbs
+FBS = zdb_.fbs zdb_saga.fbs zdb_saga_step.fbs zdb_saga_type.fbs ztc_db.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
 	$(top_builddir)/scripts/fbscodegen -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<
@@ -14,13 +14,13 @@ BUILT_SOURCES = ${FBS_H}
 CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZdbLib.hh \
 	ZdbTypes.hh ZdbBuf.hh ZdbMsg.hh ZdbStore.hh \
-	Zdb.hh ZdbMemStore.hh ZtcRAGMap.hh \
+	ZdbSaga.hh Zdb.hh ZdbMemStore.hh ZtcRAGMap.hh \
 	ZtcDBTable.hh ZtcDBHost.hh ZtcDB.hh \
 	${FBS_H}
 #fbsdir = $(datarootdir)/${PACKAGE}/fbs
 #dist_fbs_DATA = fbs/telemetry.fbs
 lib_LTLIBRARIES = libZdb.la libZdbMem.la
-libZdb_la_SOURCES = ZdbLib.cc ZdbTypes.cc Zdb.cc \
+libZdb_la_SOURCES = ZdbLib.cc ZdbTypes.cc ZdbSaga.cc Zdb.cc \
 	ZtcDB.cc ZtcDBHost.cc ZtcDBTable.cc ZtcRAGMap.cc
 libZdb_la_LIBADD = \
 	$(top_builddir)/zv/src/libZv.la \

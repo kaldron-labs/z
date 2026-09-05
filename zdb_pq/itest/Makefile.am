@@ -16,14 +16,15 @@ LDADD = $(top_builddir)/zdb/test/libZdbTest.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zdbpqtest
+noinst_PROGRAMS = zdbpqtest zdbsagatest
 zdbpqtest_SOURCES = zdbpqtest.cc
+zdbsagatest_SOURCES = zdbsagatest.cc
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	@if test -n "$$ZDB_MODULE" && test -n "$$ZDB_CONNECT"; then \
-	  prove ./zdbpqtest; \
+	  prove -j1 ./zdbpqtest ./zdbsagatest; \
 	else \
 	  echo '1..0 # SKIP ZDB_MODULE and ZDB_CONNECT are required'; \
 	fi

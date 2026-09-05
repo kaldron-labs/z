@@ -1,0 +1,8 @@
+namespace zdbsaga.fbs;
+
+table Account {
+  id:uint64;
+  balance:int64;
+}
+
+root_type Account;

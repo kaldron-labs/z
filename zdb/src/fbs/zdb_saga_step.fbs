@@ -1,0 +1,14 @@
+include "zfb_types.fbs";
+
+namespace Zdb_.fbs;
+
+table SagaStep {
+  type:string;
+  id:Zfb.UInt128;
+  step:uint32;
+  shard:uint8;
+  // Intended target UN; UINT64_MAX records an already-absent Delete.
+  un:uint64;
+}
+
+root_type SagaStep;

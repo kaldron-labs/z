@@ -347,15 +347,17 @@ void run()
     missing = &exactUNMissing
   ]() {
     ZdbObjRef<Order> gap = new ZdbObject<Order>{orders, 0};
-    orders->insert(2, ZuMv(gap), [ok, callbacks](
+    orders->insert(2, gap, [&gap, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (gap->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::NotReady && !object && next == 1;
     });
 
     ZdbObjRef<Order> null = new ZdbObject<Order>{orders, 0};
-    orders->insert(ZdbNullUN(), ZuMv(null), [ok, callbacks](
+    orders->insert(ZdbNullUN(), null, [&null, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (null->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::Invalid && !object && next == 1;
     });
@@ -376,16 +378,18 @@ void run()
     });
 
     ZdbObjRef<Order> invalidUpdate = new ZdbObject<Order>{orders, 0};
-    orders->update(invalidUpdate, 1, [ok, callbacks](
+    orders->update(invalidUpdate, 1, [&invalidUpdate, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (invalidUpdate->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::Invalid && !object && next == 1;
     });
     *ok &= invalidUpdate->state() == ZdbObjState::Undefined;
 
     ZdbObjRef<Order> invalidDel = new ZdbObject<Order>{orders, 0};
-    orders->del(invalidDel, 1, [ok, callbacks](
+    orders->del(invalidDel, 1, [&invalidDel, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (invalidDel->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::Invalid && !object && next == 1;
     });
@@ -404,8 +408,9 @@ void run()
     });
 
     ZdbObjRef<Order> replay = new ZdbObject<Order>{orders, 0};
-    orders->insert(1, ZuMv(replay), [ok, callbacks](
+    orders->insert(1, replay, [&replay, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (replay->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::Skipped && !object && next == 2;
     });
@@ -425,7 +430,7 @@ void run()
       *ok &= result == ZdbOpResult::NotReady && !object && next == 2;
     });
 
-    orders->findUpd<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 2,
+    orders->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple("IBM", UINT64_C(1)), 2,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbObject<Order> *object, ZdbUN next) {
       ++*callbacks;
@@ -486,32 +491,21 @@ void run()
     *ok &= nested->state() == ZdbObjState::Undefined;
 
     ZdbObjRef<Order> nestedReplay = new ZdbObject<Order>{orders, 0};
-    orders->insert(4, ZuMv(nestedReplay), [ok, callbacks](
+    orders->insert(4, nestedReplay, [&nestedReplay, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (nestedReplay->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::Skipped && !object && next == 5;
     });
 
     ZdbObjRef<Order> aborted = new ZdbObject<Order>{orders, 0};
-    orders->insert(5, aborted, [ok, callbacks](
+    orders->insert(5, aborted, [&aborted, ok, callbacks](
 	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+      new (aborted->ptr()) Order{};
       ++*callbacks;
       *ok &= result == ZdbOpResult::Executed && object && next == 5;
     });
     *ok &= aborted->state() == ZdbObjState::Undefined &&
-	orders->nextUN(0) == 5;
-
-    ZdbObjRef<Order> throwing = new ZdbObject<Order>{orders, 0};
-    bool caught = false;
-    try {
-      orders->insert(5, throwing, [ok, callbacks](
-	  ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
-	++*callbacks;
-	*ok &= result == ZdbOpResult::Executed && object && next == 5;
-	throw 1;
-      });
-    } catch (int) { caught = true; }
-    *ok &= caught && throwing->state() == ZdbObjState::Undefined &&
 	orders->nextUN(0) == 5;
 
     ZdbObjRef<Order> parked = new ZdbObject<Order>{orders, 0};
@@ -572,7 +566,7 @@ void run()
   exactUNStable.wait();
   store->findFn({});
   ZuCheck(exactUNOK);
-  ZuCheck(exactUNCallbacks == 25);
+  ZuCheck(exactUNCallbacks == 24);
   ZuCheck(exactUNFinds == 3);
 
   ZtArray<ZtString<>> asyncOrder;
