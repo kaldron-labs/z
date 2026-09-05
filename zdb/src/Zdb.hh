@@ -1849,6 +1849,7 @@ friend Host;
 friend AnyTable;
 friend AnyObject;
 friend Saga;
+friend SagaStepComplete;
 
 private:
   using Lock = ZmLock;
@@ -2027,9 +2028,10 @@ private:
   void down_(bool failed);	// run down command
 
   void sagaRun(ZmRef<Saga>);
-  bool sagaPrepare(Saga *, uint64_t, AnyTable *, Shard, SagaOp::T,
+  bool sagaPrepare(Saga *, AnyTable *, Shard, SagaOp::T,
     bool, UN &, bool &);
   void sagaResult(ZmRef<Saga>, uint64_t, OpResult::T, Shard);
+  void sagaStepComplete(ZmRef<Saga>, uint64_t, uint32_t, Shard);
   SagaRec *sagaRec(Saga *, unsigned);
   bool sagaReserved(AnyTable *, Shard, UN);
   void sagaDone(ZmRef<Saga>, uint64_t);
@@ -2402,83 +2404,44 @@ template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
 inline void Saga::mutate(
     Table<T> *table, Shard shard, ZmRef<Object<T>> object, L &&l)
 {
-  ZmRef<Saga> saga = this;
   auto db = this->db();
-  auto epoch = this->epoch();
-  db->invoke([
-    db, saga = ZuMv(saga), table, shard, object = ZuMv(object),
-    epoch, l = ZuFwd<L>(l)
-  ]() mutable {
-    UN un = nullUN();
-    bool saved = false;
-    if (!db->sagaPrepare(
-	  saga, epoch, table, shard, Op, bool(object), un, saved)) {
-      if constexpr (Op == SagaOp::Insert)
-	if (object) new (object->ptr()) T{};
-      return;
-    }
-    ++db->m_sagaPending;
-    table->run(shard, [
-      saga = ZuMv(saga), table, shard, object = ZuMv(object),
-      un, saved, l = ZuMv(l)
-    ]() mutable {
-      saga->template mutate_<Op, KeyIDs_, Lookup>(
-	saga, table, shard, ZuMv(object), un, saved, ZuMv(l));
-    });
-  });
+  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+    "saga mutation invoked off shard", ::abort());
+  UN un = nullUN();
+  bool saved = false;
+  if (!db->sagaPrepare(this, table, shard, Op, bool(object), un, saved)) {
+    if constexpr (Op == SagaOp::Insert)
+      if (object) new (object->ptr()) T{};
+    return;
+  }
+  mutate_<Op, KeyIDs_, Lookup>(
+    table, shard, ZuMv(object), un, saved, ZuFwd<L>(l));
 }
 
 template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
 inline void Saga::mutate_(
-    ZmRef<Saga> saga, Table<T> *table, Shard shard,
-    ZmRef<Object<T>> object, UN un, bool saved, L &&l)
+    Table<T> *table, Shard shard, ZmRef<Object<T>> object,
+    UN un, bool saved, L &&l)
 {
   auto db = this->db();
-  auto epoch = this->epoch();
-  if constexpr (Lookup >= 0) {
-    if (ZuUnlikely(!saved && object && object->state() == ObjState::Deleted)) {
-      // The control-thread handoff may outlive the row resolved by findUpd_.
-      // Re-resolve the original key, not this object's possibly changed key.
-      db->run([
-	db, saga = ZuMv(saga), table, shard, l = ZuMv(l)
-      ]() mutable {
-	db->sagaRetire();
-	saga->template findMutate_<Op, Lookup, KeyIDs_>(
-	  table, shard, ZuMv(l));
-      });
-      return;
-    }
-  }
-  auto finish = [db, saga, epoch, shard](OpResult::T result) mutable {
-    db->run([db, saga = ZuMv(saga), epoch, shard, result]() mutable {
-      db->sagaRetire();
-      db->sagaResult(ZuMv(saga), epoch, result, shard);
-    });
-  };
   if (saved && un == nullUN()) {
-    finish(OpResult::Skipped); // recorded absent delete; never look up the key
+    m_locs[m_step] = shard;
+    complete_(shard); // recorded absent delete; never look up the key
     return;
   }
   if (!object) {
     if (saved) {
       auto result = table->cmpUN_(table->nextUN(shard), un);
       if (result == OpResult::Executed) result = OpResult::Missing;
-      finish(result);
+      result_(result, shard);
       return;
     }
     if constexpr (Op != SagaOp::Delete) {
-      finish(OpResult::Missing);
+      result_(OpResult::Missing, shard);
       return;
     }
   }
   if (!saved) un = object ? table->nextUN(shard) : nullUN();
-  OpResult::T result = OpResult::Invalid;
-  auto body = [&l, &result, un](Object<T> *o) mutable {
-    if (ZuUnlikely(!o)) return;
-    l(o);
-    enum { State = Op == SagaOp::Delete ? ObjState::Deleted : ObjState::Committed };
-    if (o->state() == State && o->un() == un) result = OpResult::Executed;
-  };
   if (!saved) {
     SagaStep row{
       .type = this->type(), .id = this->id(), .step = this->step(),
@@ -2494,34 +2457,28 @@ inline void Saga::mutate_(
 	committed = bool(o->commit());
       });
     ZiAssert(committed, "Zdb", (), "saga intent did not commit", ::abort());
+    m_locs[m_step] = shard;
     // No yield or preparation between the intent commit and target operation.
     if constexpr (Op == SagaOp::Insert)
-      table->insert(object, body);
+      table->insert(object, ZuFwd<L>(l));
     else if constexpr (Op == SagaOp::Update)
-      table->template update<KeyIDs_>(object, body);
+      table->template update<KeyIDs_>(object, ZuFwd<L>(l));
     else {
       if (object)
-	table->del(object, body);
-      else {
-	l(nullptr);
-	result = OpResult::Executed; // only the no-op marker consumes a UN
-      }
+	table->del(object, ZuFwd<L>(l));
+      else
+	ZuFwd<L>(l)(nullptr);
     }
-    ZiAssert(result == OpResult::Executed, "Zdb", (),
-      "saga effect did not commit after intent", ::abort());
-    finish(result);
     return;
   }
-  auto replay = [&body, &result, &object](
+  OpResult::T result = OpResult::Invalid;
+  auto replay = [this, &l, &result, &object, shard](
       OpResult::T r, Object<T> *o, UN) mutable {
     (void)object; // needed only by the Insert specialization
-    if (r == OpResult::Executed)
-      body(o);
-    else {
-      // Cold replay path: the insert initializer did not construct the row.
-      if constexpr (Op == SagaOp::Insert) new (object->ptr()) T{};
-      result = r;
-    }
+    result = r;
+    if (r != OpResult::Executed) return;
+    m_locs[m_step] = shard;
+    l(o);
   };
   if constexpr (Op == SagaOp::Insert)
     table->insert(un, object, replay);
@@ -2529,7 +2486,14 @@ inline void Saga::mutate_(
     table->template update<KeyIDs_>(object, un, replay);
   else
     table->del(object, un, replay);
-  finish(result);
+  if (result == OpResult::Executed) return;
+  if constexpr (Op == SagaOp::Insert)
+    new (object->ptr()) T{};
+  if (result == OpResult::Skipped) {
+    m_locs[m_step] = shard;
+    complete_(shard);
+  } else
+    result_(result, shard);
 }
 
 template <SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
@@ -2545,49 +2509,39 @@ inline void Saga::findMutate(
 template <SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
 inline void Saga::findMutate_(Table<T> *table, Shard shard, L &&l)
 {
-  ZmRef<Saga> saga = this;
   auto db = this->db();
-  auto epoch = this->epoch();
-  db->invoke([
-    db, saga = ZuMv(saga), table, shard,
-    epoch, l = ZuFwd<L>(l)
-  ]() mutable {
-    UN un = nullUN();
-    bool saved = false;
-    if (!db->sagaPrepare(
-	  saga, epoch, table, shard, Op, false, un, saved)) return;
-    ++db->m_sagaPending;
-    table->run(shard, [
-      db, saga = ZuMv(saga), table, shard,
-      epoch, un, saved, l = ZuMv(l)
-    ]() mutable {
-      if (saved) {
-	auto result = un == nullUN() ? OpResult::Skipped :
-	  table->cmpUN_(table->nextUN(shard), un);
-	if (result != OpResult::Executed) {
-	  db->run([db, saga = ZuMv(saga), epoch, shard, result]() mutable {
-	    db->sagaRetire();
-	    db->sagaResult(ZuMv(saga), epoch, result, shard);
-	  });
-	  return;
-	}
-      }
-      // Resolve a yielding lookup before preparing a new intent/effect pair.
-      // Table owns its lookup key; keep the original with the callback for retry.
-      auto key = l.key;
-      table->template findUpd_<KeyID>(shard, ZuMv(key), [
-	db, saga = ZuMv(saga), table, shard, l = ZuMv(l)
-      ](ZmRef<Object<T>> object) mutable {
-	db->invoke([
-	  db, saga = ZuMv(saga), table, shard,
-	  object = ZuMv(object), l = ZuMv(l)
-	]() mutable {
-	  db->sagaRetire();
-	  saga->template mutate<Op, KeyIDs_, KeyID>(
-	    table, shard, ZuMv(object), ZuMv(l));
-	});
-      });
-    });
+  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+    "saga lookup mutation invoked off shard", ::abort());
+  UN un = nullUN();
+  bool saved = false;
+  if (!db->sagaPrepare(this, table, shard, Op, false, un, saved)) return;
+  if (saved) {
+    auto result = un == nullUN() ? OpResult::Skipped :
+      table->cmpUN_(table->nextUN(shard), un);
+    if (result != OpResult::Executed) {
+      if (result == OpResult::Skipped) {
+	m_locs[m_step] = shard;
+	complete_(shard);
+      } else
+	result_(result, shard);
+      return;
+    }
+  }
+  auto key = l.key;
+  table->template findUpd_<KeyID>(shard, ZuMv(key), [
+    this, table, shard, un, saved, l = ZuMv(l)
+  ](ZmRef<Object<T>> object) mutable {
+    if (!saved) {
+      UN un_ = nullUN();
+      bool saved_ = false;
+      if (!this->db()->sagaPrepare(
+	    this, table, shard, Op, bool(object), un_, saved_))
+	return;
+      un = un_;
+      saved = saved_;
+    }
+    mutate_<Op, KeyIDs_, KeyID>(
+      table, shard, ZuMv(object), un, saved, ZuMv(l));
   });
 }
 
@@ -2945,7 +2899,9 @@ inline void SagaDB<Sagas>::sagaScanData(ZmRef<SagaScan> context, bool next)
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
       auto tuple = ZuMv(result).template p<Tuple>();
-      context->dataRows.push(SagaData{ZuMv(tuple).p<0>(), ZuMv(tuple).p<1>(), ZuMv(tuple).p<2>(), ZuMv(tuple).p<3>()});
+      ZuTupleCall(ZuMv(tuple), [context](auto &&...args) {
+	context->dataRows.push(SagaData{ZuFwd<decltype(args)>(args)...});
+      });
       context->pageCount = count;
       return;
     }
@@ -3019,7 +2975,9 @@ inline void SagaDB<Sagas>::sagaScanSteps(ZmRef<SagaScan> context, bool next)
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
       auto tuple = ZuMv(result).template p<Tuple>();
-      context->stepRows.push(SagaStep{ZuMv(tuple).p<0>(), ZuMv(tuple).p<1>(), ZuMv(tuple).p<2>(), ZuMv(tuple).p<3>(), ZuMv(tuple).p<4>()});
+      ZuTupleCall(ZuMv(tuple), [context](auto &&...args) {
+	context->stepRows.push(SagaStep{ZuFwd<decltype(args)>(args)...});
+      });
       context->pageCount = count;
       return;
     }

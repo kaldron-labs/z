@@ -18,6 +18,7 @@ void Saga::done()
   auto db = this->db();
   auto epoch = this->epoch();
   db->invoke([db, saga = ZuMv(saga), epoch]() mutable {
+    db->sagaRetire();
     db->sagaDone(ZuMv(saga), epoch);
   });
 }
@@ -28,7 +29,45 @@ void Saga::fail(ZeException e)
   auto db = this->db();
   auto epoch = this->epoch();
   db->invoke([db, saga = ZuMv(saga), epoch, e = ZuMv(e)]() mutable {
+    db->sagaRetire();
     db->sagaFail(ZuMv(saga), epoch, ZuMv(e));
+  });
+}
+
+void Saga::complete_(Shard shard)
+{
+  m_locs[m_step] = shard;
+  SagaStepComplete{this, epoch(), step()}(true);
+}
+
+void Saga::result_(OpResult::T result, Shard shard)
+{
+  ZmRef<Saga> saga = this;
+  auto db = this->db();
+  auto epoch = this->epoch();
+  db->invoke([db, saga = ZuMv(saga), epoch, result, shard]() mutable {
+    db->sagaResult(ZuMv(saga), epoch, result, shard);
+  });
+}
+
+void SagaStepComplete::operator ()(bool ok)
+{
+  auto saga_ = ZuMv(saga);
+  if (ZuUnlikely(!saga_)) return;
+  auto db = saga_->db();
+  if (ZuUnlikely(!ok)) {
+    db->invoke([db, saga = ZuMv(saga_), epoch = epoch]() mutable {
+      db->sagaRetire();
+      db->sagaFail(ZuMv(saga), epoch,
+	ZeEXCEPT(Error, "Zdb", "saga step failed"));
+    });
+    return;
+  }
+  auto shard = saga_->m_locs[step];
+  db->invoke([
+    db, saga = ZuMv(saga_), epoch = epoch, step = step, shard
+  ]() mutable {
+    db->sagaStepComplete(ZuMv(saga), epoch, step, shard);
   });
 }
 

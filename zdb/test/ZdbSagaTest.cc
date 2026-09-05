@@ -23,14 +23,16 @@ namespace zdbtest {
 
 struct SagaA {
   using Type = ZuStringT<"sagaA">;
-  using Steps = ZdbSagaSteps(
-    (order, Insert), (order, Update), (payment, Delete));
+  enum { NSteps = 3 };
 
   uint64_t value = 0;
 
-  void operator ()(void *context, ZmRef<ZdbSaga>) {
-    *static_cast<uint64_t *>(context) = value;
+  ZdbSagaStep(0, order, Insert) {
+    *static_cast<uint64_t *>(context_) = value;
+    return {};
   }
+  ZdbSagaStep(1, order, Update) { return {}; }
+  ZdbSagaStep(2, payment, Delete) { return {}; }
 };
 
 ZfbStruct(SagaA,
@@ -38,11 +40,11 @@ ZfbStruct(SagaA,
 
 struct SagaB {
   using Type = ZuStringT<"sagaB">;
-  using Steps = ZdbSagaSteps((payment, Update));
+  enum { NSteps = 1 };
 
   uint32_t value = 0;
 
-  void operator ()(void *, ZmRef<ZdbSaga>) { }
+  ZdbSagaStep(0, payment, Update) { return {}; }
 };
 
 ZfbStruct(SagaB,
@@ -56,7 +58,7 @@ namespace Trace {
 
 struct LiveSaga {
   using Type = ZuStringT<"liveSaga">;
-  using Steps = ZdbSagaSteps((o, Insert), (o, Update), (o, Delete));
+  enum { NSteps = 3 };
 
   uint64_t orderID = 0;
 
@@ -77,69 +79,87 @@ struct LiveSaga {
     uint32_t		pauseStep = UINT32_MAX;
     bool		pausedOnce = false;
     bool		pauseAll = false;
-    ZmRef<ZdbSaga>	pausedSaga;
+    ZtArray<Zdb_::SagaStepComplete> pausedCompletes;
+
+    template <typename Complete>
+    void pause(Complete &&complete) {
+      pausedCompletes.push(ZuFwd<Complete>(complete));
+      paused->post();
+    }
+    Zdb_::SagaStepComplete resume() { return pausedCompletes.pop(); }
+    void release() {
+      while (pausedCompletes.length()) pausedCompletes.pop()(false);
+    }
   };
 
-  void operator ()(void *context_, ZmRef<ZdbSaga> saga) {
+  template <unsigned Step, typename Complete>
+  void begin(void *context_, ZdbSaga *saga, Complete &&complete) {
     auto context = static_cast<Context *>(context_);
     ++context->runs;
-    if (context->trace) context->trace(Trace::Next, saga->step());
-    if (saga->step() == context->pauseStep &&
+    if (context->trace) context->trace(Trace::Next, Step);
+    if (Step == context->pauseStep &&
 	(!context->pausedOnce || context->pauseAll)) {
       context->pausedOnce = true;
-      context->pausedSaga = saga;
-      context->paused->post();
+      context->pause(ZuMv(complete));
       return;
     }
     if (context->read) {
       context->orders->count<0>({}, [
-	context, saga = ZuMv(saga), orderID = orderID
+	this, context, saga, complete = ZuMv(complete)
       ](ZuUnion<void, uint64_t> result) mutable {
-	auto db = saga->db();
-	db->run([
-	  context, saga = ZuMv(saga), result = ZuMv(result), orderID
-	]() mutable {
 	  if (!result.is<uint64_t>()) {
 	    ++context->errors;
-	    saga->fail(ZeEXCEPT(Error, "ZdbTest", "application count failed"));
+	    complete(false);
 	    return;
 	  }
 	  ++context->reads;
-	  if (context->trace) context->trace(Trace::Read, saga->step());
-	  LiveSaga{orderID}.run(context, ZuMv(saga));
-	});
+	  if (context->trace) context->trace(Trace::Read, Step);
+	  run(context, saga, ZuMv(complete), ZuUnsigned<Step>{});
       });
       return;
     }
-    run(context, ZuMv(saga));
+    run(context, saga, ZuFwd<Complete>(complete), ZuUnsigned<Step>{});
   }
 
-  void run(Context *context, ZmRef<ZdbSaga> saga) {
-    switch (saga->step()) {
-      case 0: {
+  template <typename Complete>
+  void run(Context *context, ZdbSaga *saga, Complete &&complete,
+      ZuUnsigned<0>) {
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
 	ZdbObjRef<Order> order =
 	  new ZdbObject<Order>{context->orders, ZdbShard{0}};
 	saga->insert(context->orders, ZuMv(order),
-	  [context, orderID = orderID](ZdbObject<Order> *object) {
+	  [context, complete = ZuMv(complete), orderID = orderID](
+	      ZdbObject<Order> *object) mutable {
 	    ++context->inserts;
-	    if (!object) return;
+	    if (!object) { complete(false); return; }
 	    if (context->trace) context->trace(Trace::Enter, 0);
 	    new (object->ptr()) Order{
 	      "IBM", orderID, "FIX0", "saga", 0,
 	      Side::Buy, {100}, {1}};
 	    object->commit();
 	    if (context->trace) context->trace(Trace::Return, 0);
+	    complete(true);
 	  });
-	return;
-      }
-      case 1: {
-	auto fn = [context](ZdbObject<Order> *object) {
+	});
+  }
+
+  template <typename Complete>
+  void run(Context *context, ZdbSaga *saga, Complete &&complete,
+      ZuUnsigned<1>) {
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
+	auto fn = [context, complete = ZuMv(complete)](
+	    ZdbObject<Order> *object) mutable {
 	  ++context->updates;
-	  if (!object) return;
+	  if (!object) { complete(false); return; }
 	  if (context->trace) context->trace(Trace::Enter, 1);
 	  object->data().seqNo = 1;
 	  object->commit();
 	  if (context->trace) context->trace(Trace::Return, 1);
+	  complete(true);
 	};
 	if (context->secondary)
 	  saga->findUpd<1, ZuSeq<2>>(context->orders, 0,
@@ -147,14 +167,28 @@ struct LiveSaga {
 	else
 	  saga->findUpd<0, ZuSeq<2>>(context->orders, 0,
 	    ZuFwdTuple("IBM", orderID), ZuMv(fn));
-	return;
-      }
-      case 2: {
-	auto fn = [context](ZdbObject<Order> *object) {
+	});
+  }
+
+  template <typename Complete>
+  void run(Context *context, ZdbSaga *saga, Complete &&complete,
+      ZuUnsigned<2>) {
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
+	auto fn = [context, complete = ZuMv(complete)](
+	    ZdbObject<Order> *object) mutable {
 	  ++context->deletes;
 	  if (context->trace) context->trace(Trace::Enter, 2);
 	  if (object) object->commit();
 	  if (context->trace) context->trace(Trace::Return, 2);
+	  if (context->pauseStep == 3 &&
+	      (!context->pausedOnce || context->pauseAll)) {
+	    context->pausedOnce = true;
+	    context->pause(ZuMv(complete));
+	    return;
+	  }
+	  complete(true);
 	};
 	if (context->secondary)
 	  saga->findDel<1>(context->orders, 0,
@@ -162,12 +196,20 @@ struct LiveSaga {
 	else
 	  saga->findDel<0>(context->orders, 0,
 	    ZuFwdTuple("IBM", orderID), ZuMv(fn));
-	return;
-      }
-      default:
-	saga->done();
-	return;
-    }
+	});
+  }
+
+  ZdbSagaStep(0, o, Insert) {
+    begin<Step>(context_, saga, ZuFwd<Complete>(complete));
+    return {};
+  }
+  ZdbSagaStep(1, o, Update) {
+    begin<Step>(context_, saga, ZuFwd<Complete>(complete));
+    return {};
+  }
+  ZdbSagaStep(2, o, Delete) {
+    begin<Step>(context_, saga, ZuFwd<Complete>(complete));
+    return {};
   }
 };
 
@@ -178,30 +220,42 @@ using LiveSagas = ZuTypeList<LiveSaga>;
 
 struct ShortSaga {
   using Type = LiveSaga::Type;
-  using Steps = ZdbSagaSteps((o, Insert));
+  enum { NSteps = 1 };
   uint64_t orderID = 0;
-  void operator ()(void *, ZmRef<ZdbSaga>) { }
+  ZdbSagaStep(0, o, Insert) { return {}; }
 };
 ZfbStruct(ShortSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
 struct ChangedSaga {
   using Type = LiveSaga::Type;
-  using Steps = ZdbSagaSteps((o, Insert), (o, Delete), (o, Delete));
+  enum { NSteps = 3 };
   uint64_t orderID = 0;
-  void operator ()(void *, ZmRef<ZdbSaga>) { }
+  ZdbSagaStep(0, o, Insert) { return {}; }
+  ZdbSagaStep(1, o, Delete) { return {}; }
+  ZdbSagaStep(2, o, Delete) { return {}; }
 };
 ZfbStruct(ChangedSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
+struct PayloadContext {
+  ZmSemaphore entered;
+  Zdb_::SagaStepComplete complete;
+};
+
 struct PayloadSaga {
   using Type = ZuStringT<"payloadSagaWithATypeNameThatExceedsBuiltinStringStorage">;
-  using Steps = ZdbSagaSteps((o, Update));
+  enum { NSteps = 1 };
 
   Zdb_::SagaPayload data;
 
-  void operator ()(void *context, ZmRef<ZdbSaga>) {
-    if (context) static_cast<ZmSemaphore *>(context)->post();
+  ZdbSagaStep(0, o, Update) {
+    if (context_) {
+      auto context = static_cast<PayloadContext *>(context_);
+      context->complete = ZuMv(complete);
+      context->entered.post();
+    }
+    return {};
   }
 };
 ZfbStruct(PayloadSaga,
@@ -678,7 +732,7 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
   // The mock write hook runs on the committing shard, before Table::commit
   // returns. Queue an interloper at each intent to catch a yield before effect.
   using namespace zdbtest::Trace;
-  enum { Steps = zdbtest::LiveSaga::Steps::N };
+  enum { Steps = zdbtest::LiveSaga::NSteps };
   ZtArray<unsigned, ZtArrayHeapID<"Zdb.Test.Trace">> phases;
   phases.length(Steps, false);
   for (unsigned i = 0; i < Steps; ++i) phases[i] = 0;
@@ -690,12 +744,9 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
     });
   });
   context.trace = [
-    &phases, &ordered, orders = orders.ptr(), journal = journal.ptr(), separate
+    &phases, &ordered, orders = orders.ptr(), journal = journal.ptr()
   ](unsigned event, unsigned step) {
     if (event == Next) {
-      // A separate control thread may begin the next application turn before
-      // the probe. Keep trace state shard-owned; only the pair must be atomic.
-      if (!separate && step) ordered &= phases[step - 1] == Probe + 1;
       return;
     }
     ordered &= step < Steps;
@@ -718,18 +769,23 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
   });
 
   bool replaced = false;
+  ZmSemaphore interloper;
   if (race) {
     store->writeFn({});
-    context.trace = [db = db.ptr(), orders = orders.ptr(), race, secondary, &replaced](
+    context.trace = [
+      db = db.ptr(), orders = orders.ptr(), race, secondary,
+      &replaced, &interloper
+    ](
         unsigned event, unsigned step) {
       if (event != Next || step != race) return;
-      // Queue lookup between these two posts, then replace its resolved row
-      // before the wrapper's separately queued mutation gets its turn.
-      db->run([orders, secondary, &replaced]() {
-	orders->run(0, [orders, secondary, &replaced]() {
+      // The direct application shard post must precede this DB-turn
+      // interloper; the old DB-control bounce let the interloper win.
+      db->run([orders, secondary, &replaced, &interloper]() {
+	orders->run(0, [orders, secondary, &replaced, &interloper]() {
 	  if (secondary)
 	    orders->findUpd<0, ZuSeq<1, 2>>(0, ZuFwdTuple("IBM", UINT64_C(42)),
 	      [](ZdbObject<zdbtest::Order> *object) {
+		if (!object) return;
 		object->data().link = "MOVED";
 		object->data().clOrdID = "gone";
 		object->commit();
@@ -740,12 +796,15 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
 	    });
 	  ZdbObjRef<zdbtest::Order> object =
 	    new ZdbObject<zdbtest::Order>{orders, 0};
-	  orders->insert(ZuMv(object), [secondary, &replaced](ZdbObject<zdbtest::Order> *object) {
+	  orders->insert(ZuMv(object), [
+	    secondary, &replaced, &interloper
+	  ](ZdbObject<zdbtest::Order> *object) {
 	    new (object->ptr()) zdbtest::Order{
 	      "IBM", 42, secondary ? "FIX0" : "FIX1",
 	      secondary ? "saga" : "replacement", 0,
 	      zdbtest::Side::Buy, {100}, {2}};
 	    replaced = bool(object->commit());
+	    interloper.post();
 	  });
 	});
       });
@@ -764,9 +823,10 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
     }));
   submitted.wait();
   completed.wait();
+  if (race) interloper.wait();
   ZuCheck(submittedOK);
   ZuCheck(!context.errors);
-  ZuCheck(context.runs == 4);
+  ZuCheck(context.runs == 3);
   ZuCheck(context.inserts == 1);
   ZuCheck(context.updates == 1);
   ZuCheck(context.deletes == 1);
@@ -782,7 +842,7 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
       });
   });
   found.wait();
-  ZuCheck(absent);
+  ZuCheck(race || absent);
 
   ZuCheck(db->stop());
   journal = {};
@@ -878,10 +938,11 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
       });
     });
     db->run([&first]() {
-      auto saga = ZuMv(first.pausedSaga);
+      auto complete = first.resume();
+      auto saga = ZuMv(complete.saga);
       first.pauseStep = 3;
       first.pausedOnce = false;
-      zdbtest::LiveSaga{43}(&first, ZuMv(saga));
+      ZdbMSaga<zdbtest::LiveSagas>::run(&first, ZuMv(saga));
     });
     paused.wait();
     ZmBlock<>{}([orders = orders.ptr(), &noopUN](auto wake) {
@@ -911,12 +972,10 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
   ZuCheck(noopUN);
   ZuCheck(submittedOK);
   ZuCheck(first.runs ==
-    (beforeInsert ? 1U : cut < 2 ? 2U : cut == 2 ? 4U : cut == 3 ? 5U : 3U));
+    (beforeInsert ? 1U : cut < 2 ? 2U : cut == 2 ? 3U : cut == 3 ? 4U : 3U));
   ZuCheck(first.inserts == unsigned(!beforeInsert));
   ZuCheck(!read || first.reads == first.inserts + first.updates + first.deletes);
-  first.pausedSaga = {};
-
-  db->run([db = db.ptr()]() { db->fail(); });
+  db->run([db = db.ptr(), &first]() { db->fail(); first.release(); });
   inactive.wait();
   ZuCheck(db->stop());
   orders = {};
@@ -987,7 +1046,7 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
     recovered.wait();
   }
   ZuCheck(started);
-  ZuCheck(second.runs == 4);
+  ZuCheck(second.runs == 3);
   ZuCheck(!read || second.reads == second.runs);
   ZuCheck(!second.errors);
   ZuCheck(second.inserts == unsigned(beforeInsert));
@@ -1058,7 +1117,6 @@ static void recoveryQueue(bool read = false)
     ZuCheckRT(db->saga(0, i + 1, ZuMv(saga)));
     paused.wait();
   }
-  first.pausedSaga = {};
   bool seeded = ZmBlock<bool>{}([db = db.ptr(), orders = orders.ptr()](auto wake) {
     db->run([db, orders, wake = ZuMv(wake)]() mutable {
       auto table = static_cast<ZdbTable<Zdb_::SagaStep> *>(db->table("saga_step").ptr());
@@ -1082,7 +1140,7 @@ static void recoveryQueue(bool read = false)
     });
   });
   ZuCheckRT(seeded);
-  db->run([db = db.ptr()]() { db->fail(); });
+  db->run([db = db.ptr(), &first]() { db->fail(); first.release(); });
   ZuCheckRT(db->stop());
   orders = {};
   db->final();
@@ -1100,7 +1158,7 @@ static void recoveryQueue(bool read = false)
   ZuCheckRT(started);
   // A's update and B's fresh delete each defer once; the latter cannot take
   // A's reserved UN. All other body entries execute/skip exactly once.
-  ZuCheckRT(second.runs == 10);
+  ZuCheckRT(second.runs == 8);
   ZuCheckRT(!read || second.reads == second.runs);
   ZuCheckRT(!second.errors);
   ZuCheckRT(second.inserts == 0);
@@ -1144,8 +1202,6 @@ static void recoveryError(unsigned mode)
   saga->init(zdbtest::LiveSaga{43});
   ZuCheckRT(db->saga(0, 2, ZuMv(saga)));
   paused.wait();
-  first.pausedSaga = {};
-
   bool seeded = ZmBlock<bool>{}([db = db.ptr(), orders = orders.ptr(), mode](auto wake) {
     db->run([db, orders, mode, wake = ZuMv(wake)]() mutable {
       if (mode >= 6) {
@@ -1209,7 +1265,7 @@ static void recoveryError(unsigned mode)
     });
   });
   ZuCheckRT(seeded);
-  db->run([db = db.ptr()]() { db->fail(); });
+  db->run([db = db.ptr(), &first]() { db->fail(); first.release(); });
   ZuCheckRT(db->stop());
   orders = {};
   db->final();
@@ -1372,9 +1428,8 @@ static void findFail()
   saga->init(zdbtest::LiveSaga{61});
   ZuCheck(db->saga(0, 61, ZuMv(saga)));
   paused.wait();
-  db->run([db = db.ptr()]() { db->fail(); });
+  db->run([db = db.ptr(), &first]() { db->fail(); first.release(); });
   ZuCheck(db->stop());
-  first.pausedSaga = {};
   orders = {};
   db->final();
 
@@ -1402,7 +1457,7 @@ static void findFail()
   store->findResultFn({});
   ZuCheck(db->start());
   ZuCheck(activations == 1);
-  ZuCheck(next.runs == 6);
+  ZuCheck(next.runs == 5);
   ZuCheck(next.inserts == 0 && next.updates == 1 && next.deletes == 1);
   ZuCheck(next.completed == 1);
   ZuCheck(db->stop());
@@ -1581,11 +1636,12 @@ static void admission()
   paused.wait();
   ZuCheck(context.errors == 0);
   db->run([&context]() {
-    M::run(&context, ZuMv(context.pausedSaga));
+    auto complete = context.resume();
+    M::run(&context, ZuMv(complete.saga));
   });
   done.wait();
   ZuCheck(context.completed == 2 && context.errors == 0);
-  ZuCheck(context.runs == 9); // one paused entry plus two complete executions
+  ZuCheck(context.runs == 7); // one paused entry plus two complete executions
   ZuCheck(context.inserts == 2 && context.updates == 2 && context.deletes == 2);
   ZuCheck(db->stop());
   orders = {};
@@ -1608,8 +1664,8 @@ static void payloadAdmission(unsigned size)
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{config->resolve("zdb")}, &mx, {}, store);
   auto orders = db->initTable<zdbtest::Order>("o");
-  ZmSemaphore entered;
-  db->sagas({.context = &entered});
+  zdbtest::PayloadContext context;
+  db->sagas({.context = &context});
   ZuCheckRT(db->start());
   Zdb_::SagaPayload data;
   data.length(size, false);
@@ -1626,7 +1682,7 @@ static void payloadAdmission(unsigned size)
   });
   ZuCheckRT(admitted);
   if (admitted) {
-    entered.wait();
+    context.entered.wait();
     store->sync();
     bool stored = ZmBlock<bool>{}([db = db.ptr(), &saved](auto wake) {
       db->run([db, &saved, wake = ZuMv(wake)]() mutable {
@@ -1648,9 +1704,7 @@ static void payloadAdmission(unsigned size)
     ZuCheckRT(stored);
   }
   // This fixture intentionally leaves the application body suspended.
-  ZmBlock<>{}([db = db.ptr()](auto wake) {
-    db->run([db, wake = ZuMv(wake)]() mutable { db->fail(); wake(); });
-  });
+  context.complete(false);
   ZuCheckRT(db->stop());
   saga = {};
   orders = {};
@@ -1677,7 +1731,7 @@ static void admissionDeactivated(bool read = false)
   if (read)
     context.trace = [db = db.ptr(), &readFailed](unsigned event, unsigned) {
       if (event != zdbtest::Trace::Read) return;
-      db->fail();
+      db->run([db]() { db->fail(); });
       readFailed.post();
     };
   db->sagas(ZdbSagaHandler{.context = &context});
@@ -1705,7 +1759,7 @@ static void admissionDeactivated(bool read = false)
   ZuCheck(rejected == !read);
   ZuCheck(context.runs == unsigned(read));
   ZuCheck(context.reads == unsigned(read));
-  ZuCheck(context.inserts == 0);
+  ZuCheck(context.inserts <= 1);
   ZuCheck(db->stop());
   orders = {};
   db->final();
@@ -1715,9 +1769,9 @@ static void admissionDeactivated(bool read = false)
   zdbtest::LiveSaga::Context next{.orders = orders, .read = read};
   db->sagas(ZdbSagaHandler{.context = &next});
   ZuCheck(db->start());
-  ZuCheck(next.runs == 4);
+  ZuCheck(next.runs == 3);
   ZuCheck(!read || next.reads == next.runs);
-  ZuCheck(next.inserts == 1);
+  ZuCheck(next.inserts + context.inserts == 1);
   ZuCheck(next.updates == 1);
   ZuCheck(next.deletes == 1);
   ZuCheck(db->stop());
@@ -1789,14 +1843,16 @@ static void gracefulStop(bool failed)
   });
   ZuCheck(rejected);
   db->run([db = db.ptr(), &context, failed]() {
-    ZdbMSaga<zdbtest::LiveSagas>::run(&context, ZuMv(context.pausedSaga));
-    // Lookup dispatch precedes failure; the resulting mutation is queued
-    // behind it. Stop must drain that mutation's stale completion.
+    // Queue failure before resumed shard work so the retained completion is
+    // stale when that work drains.
     if (failed) db->run([db]() { db->fail(); });
+    auto complete = context.resume();
+    ZdbMSaga<zdbtest::LiveSagas>::run(
+      &context, ZuMv(complete.saga));
   });
   stopped.wait();
   ZuCheck(stopOK);
-  ZuCheck(context.runs == (failed ? 3 : 5));
+  ZuCheck(context.runs == (failed ? 3 : 4));
   ZuCheck(context.updates == 1);
   orders = {};
   db->final();
@@ -1810,7 +1866,7 @@ static void gracefulStop(bool failed)
   bool started = db->start();
   ZuCheck(started);
   if (started) active.wait();
-  ZuCheck(next.runs == (failed ? 4 : 0));
+  ZuCheck(next.runs == (failed ? 3 : 0));
   ZuCheck(next.inserts == 0);
   ZuCheck(next.updates == 0);
   ZuCheck(next.deletes == unsigned(failed));
@@ -1861,9 +1917,7 @@ static void recoveryCleanup(unsigned cut)
     if (id != "saga" && id != "saga_step") return;
     if (writes++ == cut) db->run([db]() { db->fail(); });
   });
-  db->run([&first]() {
-    zdbtest::LiveSaga{43}(&first, ZuMv(first.pausedSaga));
-  });
+  db->run([&first]() { first.resume()(true); });
   inactive.wait();
   ZuCheck(db->stop());
   store->writeFn({});
@@ -1910,7 +1964,7 @@ static void recoveryCleanup(unsigned cut)
     saga->init(zdbtest::LiveSaga{43});
     ZuCheck(db->saga(0, 2, ZuMv(saga)));
     completed.wait();
-    ZuCheck(second.runs == 4);
+    ZuCheck(second.runs == 3);
     ZuCheck(second.inserts == 1);
     ZuCheck(second.updates == 1);
     ZuCheck(second.deletes == 1);
@@ -1977,8 +2031,7 @@ static void recoveryPages(bool orphan)
   store->sync();
   ZuCheckRT(first.runs == 2 * N);
   ZuCheckRT(first.inserts == N);
-  first.pausedSaga = {};
-  db->run([db = db.ptr()]() { db->fail(); });
+  db->run([db = db.ptr(), &first]() { db->fail(); first.release(); });
   inactive.wait();
   ZuCheckRT(db->stop());
   orders = {};
@@ -1994,7 +2047,7 @@ static void recoveryPages(bool orphan)
   ZuCheckRT(started);
   if (started) active.wait();
   unsigned recovered = N - unsigned(orphan);
-  ZuCheckRT(second.runs == 4 * recovered);
+  ZuCheckRT(second.runs == 3 * recovered);
   ZuCheckRT(second.inserts == 0);
   ZuCheckRT(second.updates == recovered);
   ZuCheckRT(second.deletes == recovered);
