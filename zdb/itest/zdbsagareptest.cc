@@ -40,15 +40,15 @@ struct LiveSaga {
 	context->orders->run(0, [
 	  this, context, saga, complete = ZuMv(complete)
 	]() mutable {
-	ZdbObjRef<Order> order = new ZdbObject<Order>{context->orders, 0};
+	ZdbRowRef<Order> order = new ZdbRow<Order>{context->orders, 0};
 	saga->insert(context->orders, ZuMv(order),
 	  [context, complete = ZuMv(complete), orderID = orderID](
-	      ZdbObject<Order> *object) mutable {
+	      ZdbRow<Order> *row) mutable {
 	    ++context->inserts;
-	    if (!object) { complete(false); return; }
-	    new (object->ptr()) Order{
+	    if (!row) { complete(false); return; }
+	    new (row->ptr()) Order{
 	      "IBM", orderID, "FIX0", "repl", 0, Side::Buy, {100}, {7}};
-	    object->commit();
+	    row->commit();
 	    complete(true);
 	  });
 	});
@@ -63,11 +63,11 @@ struct LiveSaga {
 	]() mutable {
 	saga->findUpd<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
 	  [context, complete = ZuMv(complete)](
-	      ZdbObject<Order> *object) mutable {
+	      ZdbRow<Order> *row) mutable {
 	    ++context->updates;
-	    if (!object) { complete(false); return; }
-	    ++object->data().qtys[0];
-	    object->commit();
+	    if (!row) { complete(false); return; }
+	    ++row->data().qtys[0];
+	    row->commit();
 	    if (context->paused) {
 	      context->pausedComplete = ZuMv(complete);
 	      context->paused->post();
@@ -204,8 +204,8 @@ static void recovery()
       orders = secondOrders.ptr()](auto wake) {
     orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
       orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(42)),
-	[wake = ZuMv(wake)](ZdbObjRef<zdbtest::Order> object) mutable {
-	  wake(object && object->data().qtys[0] == 8);
+	[wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
+	  wake(row && row->data().qtys[0] == 8);
 	});
     });
   });

@@ -127,18 +127,18 @@ struct LiveSaga {
 	context->orders->run(0, [
 	  this, context, saga, complete = ZuMv(complete)
 	]() mutable {
-	ZdbObjRef<Order> order =
-	  new ZdbObject<Order>{context->orders, ZdbShard{0}};
+	ZdbRowRef<Order> order =
+	  new ZdbRow<Order>{context->orders, ZdbShard{0}};
 	saga->insert(context->orders, ZuMv(order),
 	  [context, complete = ZuMv(complete), orderID = orderID](
-	      ZdbObject<Order> *object) mutable {
+	      ZdbRow<Order> *row) mutable {
 	    ++context->inserts;
-	    if (!object) { complete(false); return; }
+	    if (!row) { complete(false); return; }
 	    if (context->trace) context->trace(Trace::Enter, 0);
-	    new (object->ptr()) Order{
+	    new (row->ptr()) Order{
 	      "IBM", orderID, "FIX0", "saga", 0,
 	      Side::Buy, {100}, {1}};
-	    object->commit();
+	    row->commit();
 	    if (context->trace) context->trace(Trace::Return, 0);
 	    complete(true);
 	  });
@@ -152,12 +152,12 @@ struct LiveSaga {
 	  this, context, saga, complete = ZuMv(complete)
 	]() mutable {
 	auto fn = [context, complete = ZuMv(complete)](
-	    ZdbObject<Order> *object) mutable {
+	    ZdbRow<Order> *row) mutable {
 	  ++context->updates;
-	  if (!object) { complete(false); return; }
+	  if (!row) { complete(false); return; }
 	  if (context->trace) context->trace(Trace::Enter, 1);
-	  object->data().seqNo = 1;
-	  object->commit();
+	  row->data().seqNo = 1;
+	  row->commit();
 	  if (context->trace) context->trace(Trace::Return, 1);
 	  complete(true);
 	};
@@ -177,10 +177,10 @@ struct LiveSaga {
 	  this, context, saga, complete = ZuMv(complete)
 	]() mutable {
 	auto fn = [context, complete = ZuMv(complete)](
-	    ZdbObject<Order> *object) mutable {
+	    ZdbRow<Order> *row) mutable {
 	  ++context->deletes;
 	  if (context->trace) context->trace(Trace::Enter, 2);
-	  if (object) object->commit();
+	  if (row) row->commit();
 	  if (context->trace) context->trace(Trace::Return, 2);
 	  if (context->pauseStep == 3 &&
 	      (!context->pausedOnce || context->pauseAll)) {
@@ -784,26 +784,26 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
 	orders->run(0, [orders, secondary, &replaced, &interloper]() {
 	  if (secondary)
 	    orders->findUpd<0, ZuSeq<1, 2>>(0, ZuFwdTuple("IBM", UINT64_C(42)),
-	      [](ZdbObject<zdbtest::Order> *object) {
-		if (!object) return;
-		object->data().link = "MOVED";
-		object->data().clOrdID = "gone";
-		object->commit();
+	      [](ZdbRow<zdbtest::Order> *row) {
+		if (!row) return;
+		row->data().link = "MOVED";
+		row->data().clOrdID = "gone";
+		row->commit();
 	      });
 	  orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(42)),
-	    [](ZdbObject<zdbtest::Order> *object) {
-	      if (object) object->commit();
+	    [](ZdbRow<zdbtest::Order> *row) {
+	      if (row) row->commit();
 	    });
-	  ZdbObjRef<zdbtest::Order> object =
-	    new ZdbObject<zdbtest::Order>{orders, 0};
-	  orders->insert(ZuMv(object), [
+	  ZdbRowRef<zdbtest::Order> row =
+	    new ZdbRow<zdbtest::Order>{orders, 0};
+	  orders->insert(ZuMv(row), [
 	    secondary, &replaced, &interloper
-	  ](ZdbObject<zdbtest::Order> *object) {
-	    new (object->ptr()) zdbtest::Order{
+	  ](ZdbRow<zdbtest::Order> *row) {
+	    new (row->ptr()) zdbtest::Order{
 	      "IBM", 42, secondary ? "FIX0" : "FIX1",
 	      secondary ? "saga" : "replacement", 0,
 	      zdbtest::Side::Buy, {100}, {2}};
-	    replaced = bool(object->commit());
+	    replaced = bool(row->commit());
 	    interloper.post();
 	  });
 	});
@@ -836,8 +836,8 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
   ZmSemaphore found;
   orders->run(0, [orders = orders.ptr(), &absent, &found]() {
     orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(42)),
-      [&absent, &found](ZdbObjRef<zdbtest::Order> object) {
-	absent = !object;
+      [&absent, &found](ZdbRowRef<zdbtest::Order> row) {
+	absent = !row;
 	found.post();
       });
   });
@@ -912,8 +912,8 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
 	auto table = static_cast<ZdbTable<Step> *>(
 	  db->table("saga_step").ptr());
 	table->run(0, [table, orders, intentStep, &journaled, wake = ZuMv(wake)]() mutable {
-	  ZdbObjRef<Step> object = new ZdbObject<Step>{table, ZdbShard{0}};
-	  table->insert(ZuMv(object), [orders, intentStep, &journaled](ZdbObject<Step> *o) {
+	  ZdbRowRef<Step> row = new ZdbRow<Step>{table, ZdbShard{0}};
+	  table->insert(ZuMv(row), [orders, intentStep, &journaled](ZdbRow<Step> *o) {
 	    if (!o) return;
 	    new (o->ptr()) Step{
 	      .type = "liveSaga", .id = 2, .step = unsigned(intentStep), .shard = 0,
@@ -931,7 +931,7 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
     ZmBlock<>{}([orders = orders.ptr()](auto wake) {
       orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
 	orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(43)),
-	  [wake = ZuMv(wake)](ZdbObject<zdbtest::Order> *o) mutable {
+	  [wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *o) mutable {
 	    if (o) o->commit();
 	    wake();
 	  });
@@ -955,9 +955,9 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
   if (afterDelete)
     ZmBlock<>{}([orders = orders.ptr()](auto wake) {
       orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
-	ZdbObjRef<zdbtest::Order> replacement =
-	  new ZdbObject<zdbtest::Order>{orders, ZdbShard{0}};
-	orders->insert(ZuMv(replacement), [](ZdbObject<zdbtest::Order> *o) {
+	ZdbRowRef<zdbtest::Order> replacement =
+	  new ZdbRow<zdbtest::Order>{orders, ZdbShard{0}};
+	orders->insert(ZuMv(replacement), [](ZdbRow<zdbtest::Order> *o) {
 	  if (!o) return;
 	  new (o->ptr()) zdbtest::Order{
 	    "IBM", 43, "FIX0", "replacement", 99,
@@ -1061,7 +1061,7 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
     ZmBlock<>{}([orders = orders.ptr(), &retained](auto wake) {
       orders->run(0, [orders, &retained, wake = ZuMv(wake)]() mutable {
 	orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(43)),
-	  [&retained, wake = ZuMv(wake)](ZdbObjRef<zdbtest::Order> o) mutable {
+	  [&retained, wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> o) mutable {
 	    retained = o && o->data().seqNo == 99;
 	    wake();
 	  });
@@ -1083,12 +1083,12 @@ static bool intent(
 {
   using Step = Zdb_::SagaStep;
   bool ok = false;
-  ZdbObjRef<Step> object = new ZdbObject<Step>{table, 0};
-  table->insert(object, [id, step, un, &ok](ZdbObject<Step> *object) {
-    if (!object) return;
-    new (object->ptr()) Step{
+  ZdbRowRef<Step> row = new ZdbRow<Step>{table, 0};
+  table->insert(row, [id, step, un, &ok](ZdbRow<Step> *row) {
+    if (!row) return;
+    new (row->ptr()) Step{
       .type = "liveSaga", .id = id, .step = step, .shard = 0, .un = un};
-    ok = bool(object->commit());
+    ok = bool(row->commit());
   });
   return ok;
 }
@@ -1123,13 +1123,13 @@ static void recoveryQueue(bool read = false)
       orders->run(0, [table, orders, wake = ZuMv(wake)]() mutable {
 	bool ok = true;
 	for (unsigned i = 0; i < 2; ++i) {
-	  ZdbObjRef<zdbtest::Order> object = new ZdbObject<zdbtest::Order>{orders, 0};
-	  orders->insert(object, [i, &ok](ZdbObject<zdbtest::Order> *object) {
-	    if (!object) { ok = false; return; }
-	    new (object->ptr()) zdbtest::Order{
+	  ZdbRowRef<zdbtest::Order> row = new ZdbRow<zdbtest::Order>{orders, 0};
+	  orders->insert(row, [i, &ok](ZdbRow<zdbtest::Order> *row) {
+	    if (!row) { ok = false; return; }
+	    new (row->ptr()) zdbtest::Order{
 	      "IBM", 43 + i, i ? "FIXB" : "FIXA", "queue", 0,
 	      zdbtest::Side::Buy, {100}, {1}};
-	    ok &= bool(object->commit());
+	    ok &= bool(row->commit());
 	  });
 	  ok &= intent(table, i + 1, 0, i);
 	  // A sorts first but needs B's UN 2 update before its own UN 3 update.
@@ -1211,21 +1211,21 @@ static void recoveryError(unsigned mode)
 	  table, mode, invalidShard = ZdbShard(db->nShards()), wake = ZuMv(wake)
 	]() mutable {
 	  table->findDel<0>(0, ZuFwdTuple("liveSaga", ZdbSagaID{2}),
-	    [table, mode, invalidShard, wake = ZuMv(wake)](ZdbObject<Data> *object) mutable {
-	      if (!object) { wake(false); return; }
-	      Data row = object->data();
-	      if (!object->commit()) { wake(false); return; }
+	    [table, mode, invalidShard, wake = ZuMv(wake)](ZdbRow<Data> *dbRow) mutable {
+	      if (!dbRow) { wake(false); return; }
+	      Data data = dbRow->data();
+	      if (!dbRow->commit()) { wake(false); return; }
 	      switch (mode) {
-		case 6: row.type = "unknownSaga"; break;
-		case 7: row.shard = invalidShard; break;
-		case 8: row.data.length(0); break;
+		case 6: data.type = "unknownSaga"; break;
+		case 7: data.shard = invalidShard; break;
+		case 8: data.data.length(0); break;
 	      }
-	      ZdbObjRef<Data> replacement = new ZdbObject<Data>{table, 0};
+	      ZdbRowRef<Data> replacement = new ZdbRow<Data>{table, 0};
 	      table->insert(ZuMv(replacement),
-		[row = ZuMv(row), wake = ZuMv(wake)](ZdbObject<Data> *object) mutable {
-		  if (!object) { wake(false); return; }
-		  new (object->ptr()) Data{ZuMv(row)};
-		  wake(bool(object->commit()));
+		[data = ZuMv(data), wake = ZuMv(wake)](ZdbRow<Data> *row) mutable {
+		  if (!row) { wake(false); return; }
+		  new (row->ptr()) Data{ZuMv(data)};
+		  wake(bool(row->commit()));
 		});
 	    });
 	});
@@ -1238,15 +1238,15 @@ static void recoveryError(unsigned mode)
 	if (mode == 1) {
 	  // Insert and delete advance the target stream to UN 2, but leave no
 	  // row for an update at exactly that UN. Step zero replays as skipped.
-	  ZdbObjRef<zdbtest::Order> object = new ZdbObject<zdbtest::Order>{orders, 0};
-	  orders->insert(object, [&ok](ZdbObject<zdbtest::Order> *object) {
-	    if (!object) { ok = false; return; }
-	    new (object->ptr()) zdbtest::Order{
+	  ZdbRowRef<zdbtest::Order> row = new ZdbRow<zdbtest::Order>{orders, 0};
+	  orders->insert(row, [&ok](ZdbRow<zdbtest::Order> *row) {
+	    if (!row) { ok = false; return; }
+	    new (row->ptr()) zdbtest::Order{
 	      "IBM", 43, "FIX0", "missing", 0, zdbtest::Side::Buy, {100}, {1}};
-	    ok &= bool(object->commit());
+	    ok &= bool(row->commit());
 	  });
-	  orders->del(object, [&ok](ZdbObject<zdbtest::Order> *object) {
-	    ok &= object && object->commit();
+	  orders->del(row, [&ok](ZdbRow<zdbtest::Order> *row) {
+	    ok &= row && row->commit();
 	  });
 	  ok &= intent(table, 2, 0, 0);
 	  ok &= intent(table, 2, 1, 2);
@@ -2019,7 +2019,7 @@ static void recoveryPages(bool orphan)
 	  typename ZdbTable<Zdb_::SagaData>::template Key<0> key{
 	    "liveSaga", N - 1};
 	  table->findDel<0>(0, key,
-	    [&removed, wake = ZuMv(wake)](ZdbObject<Zdb_::SagaData> *o) mutable {
+	    [&removed, wake = ZuMv(wake)](ZdbRow<Zdb_::SagaData> *o) mutable {
 	      removed = o && o->commit();
 	      wake();
 	    });

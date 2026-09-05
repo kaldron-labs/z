@@ -112,7 +112,7 @@ using BlkDataBuf = ZuArray<uint8_t, BlkSize>;
 
 struct BlkData;
 struct BlkData_Evict { // Zdb evict hook
-  static void evict(ZdbObject<BlkData> *);
+  static void evict(ZdbRow<BlkData> *);
 };
 struct BlkData {
   BlkOffset		blkOffset;

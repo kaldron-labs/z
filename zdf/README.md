@@ -3,7 +3,7 @@
 `Zdf` is a typed, asynchronous dataframe and time-series library built on
 `Zdb`.  It is intended for append-heavy, real-time data: values are compressed
 into small blocks, block metadata remains indexed in memory, block payloads are
-loaded through the `Zdb` object cache, and historical readers automatically
+loaded through the `Zdb` row cache, and historical readers automatically
 become live subscribers when they catch up with the writer.
 
 A dataframe is not stored as a row table.  It is a compile-time view over one
@@ -128,7 +128,7 @@ present in the database configuration:
 - `zdf.blk_data`: compressed 4 KiB payloads.
 
 Series open loads block headers into a sparse skip-list index but does not load
-all compressed payloads.  A reader first checks the `Zdb` object cache, falls
+all compressed payloads.  A reader first checks the `Zdb` row cache, falls
 through to the backing store on a miss, and pins the payload until it advances
 or stops.  Writers pin the active block until its asynchronous insert/update
 completes.  Cache sizing, cache mode, replication, and backing-store durability

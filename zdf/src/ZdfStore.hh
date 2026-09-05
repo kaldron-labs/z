@@ -137,14 +137,14 @@ private:
     ]() mutable {
       auto findFn = [
 	this, shard, name, epoch, fn = ZuMv(fn)
-      ](ZdbObjRef<DBSeries> dbSeries) mutable {
+      ](ZdbRowRef<DBSeries> dbSeries) mutable {
 	if (dbSeries) {
 	  ZmRef<Series> series = new Series{this, ZuMv(dbSeries)};
 	  series->open(ZuMv(fn));
 	  return;
 	}
 	if (!Create) { fn(nullptr); return; }
-	dbSeries = new ZdbObject<DBSeries>{seriesTbl(this), shard};
+	dbSeries = new ZdbRow<DBSeries>{seriesTbl(this), shard};
 	new (dbSeries->ptr_()) DBSeries{
 	  .id = m_nextSeriesID++,
 	  .name = ZuMv(name),
@@ -153,7 +153,7 @@ private:
 	};
 	auto insertFn = [
 	  this, fn = ZuMv(fn)
-	](ZdbObjRef<DBSeries> dbSeries) mutable {
+	](ZdbRowRef<DBSeries> dbSeries) mutable {
 	  if (!dbSeries) { fn(nullptr); return; }
 	  dbSeries->commit();
 	  ZmRef<Series> series = new Series{this, ZuMv(dbSeries)};
