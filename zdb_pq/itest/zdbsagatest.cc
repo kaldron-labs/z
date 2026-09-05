@@ -12,7 +12,6 @@
 #else
 #include <errno.h>
 #include <signal.h>
-#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -41,58 +40,78 @@ struct Context {
   unsigned		inserts = 0;
   unsigned		updates = 0;
   unsigned		deletes = 0;
+  unsigned		errors = 0;
   unsigned		fault = Fault::None;
+  Zdb_::SagaStepComplete pausedComplete;
 };
 
 // Reuse the test intent schema; runtime context is deliberately not saved.
 struct LiveSaga {
   using Type = ZuStringT<"pqSaga1">;
-  using Steps = ZdbSagaSteps(
-    (pq_saga_order, Insert), (pq_saga_order, Update),
-    (pq_saga_item, Delete));
+  enum { NSteps = 3 };
   uint64_t orderID = 0;
 
-  void operator ()(void *context_, ZmRef<ZdbSaga> saga) {
+  ZdbSagaStep(0, pq_saga_order, Insert) {
     auto context = static_cast<Context *>(context_);
     ++context->runs;
-    switch (saga->step()) {
-      case 0: {
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
 	ZdbObjRef<Order> object = new ZdbObject<Order>{context->orders, 0};
 	saga->insert(context->orders, ZuMv(object),
-	  [context, id = orderID](ZdbObject<Order> *object) {
+	  [context, complete = ZuMv(complete), id = orderID](
+	      ZdbObject<Order> *object) mutable {
 	    ++context->inserts;
-	    if (!object) return;
+	    if (!object) { complete(false); return; }
 	    new (object->ptr()) Order{
 	      "SAGA", id, "PQ", "saga", 0, Side::Buy, {100}, {7}};
 	    object->commit();
+	    complete(true);
 	  });
-	return;
-      }
-      case 1:
+	});
+	return {};
+  }
+
+  ZdbSagaStep(1, pq_saga_order, Update) {
+	auto context = static_cast<Context *>(context_);
+	++context->runs;
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
 	saga->findUpd<0>(context->orders, 0, ZuFwdTuple("SAGA", orderID),
-	  [context](ZdbObject<Order> *object) {
+	  [context, complete = ZuMv(complete)](
+	      ZdbObject<Order> *object) mutable {
 	    ++context->updates;
-	    if (!object) return;
+	    if (!object) { complete(false); return; }
 	    ++object->data().qtys[0]; // UN replay must not increment this twice
-	    if (context->fault == Fault::NoCommit) return;
+	    if (context->fault == Fault::NoCommit) { complete(false); return; }
 	    object->commit();
+	    complete(true);
 	  });
-	return;
-      case 2:
+	});
+	return {};
+  }
+
+  ZdbSagaStep(2, pq_saga_item, Delete) {
+	auto context = static_cast<Context *>(context_);
+	++context->runs;
 	if (context->paused) {
+	  context->pausedComplete = ZuMv(complete);
 	  context->paused->post();
-	  return;
+	  return {};
 	}
+	context->items->run(1, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
 	saga->findDel<0>(context->items, 1, ZuFwdTuple("SAGA", orderID),
-	  [context](ZdbObject<Order> *object) {
+	  [context, complete = ZuMv(complete)](
+	      ZdbObject<Order> *object) mutable {
 	    ++context->deletes;
 	    if (object) object->commit();
+	    complete(true);
 	  });
-	return;
-      default:
-	saga->done();
-	return;
-    }
+	});
+	return {};
   }
 };
 
@@ -107,6 +126,7 @@ using DB = ZdbSagaDB<zdbtest::Sagas>;
 
 namespace Mode { enum { Live, Reconnect, Crash, Replay, NoCommit }; }
 enum { CrashStatus = 73 }; // distinguishes the deliberate cut from a failed child
+enum { FailureStatus = 74 };
 
 struct Options {
   bool crash = false;
@@ -174,6 +194,13 @@ static void completed(void *context, ZuCSpan, ZdbSagaID)
   if (done) done->post();
 }
 
+static void failed(void *context, ZuCSpan, ZdbSagaID, ZeException)
+{
+  auto context_ = static_cast<zdbtest::Context *>(context);
+  ++context_->errors;
+  if (context_->done) context_->done->post();
+}
+
 static void exercise(unsigned mode)
 {
   ZuTestScopeRT(exercise);
@@ -185,7 +212,8 @@ static void exercise(unsigned mode)
   auto orders = db->initTable<zdbtest::Order>("pq_saga_order");
   auto items = db->initTable<zdbtest::Order>("pq_saga_item");
   zdbtest::Context context{.orders = orders, .items = items};
-  db->sagas(ZdbSagaHandler{.context = &context, .doneFn = completed});
+  db->sagas(ZdbSagaHandler{
+    .context = &context, .doneFn = completed, .errorFn = failed});
   bool started = db->start();
   ZuCheckRT(started);
   if (!started) {
@@ -218,9 +246,13 @@ static void exercise(unsigned mode)
     });
     ZuCheckRT(admitted);
     if (mode != Mode::Live) {
+      if (mode == Mode::NoCommit) {
+	done.wait();
+	bool stopped = db->stop();
+	_Exit(stopped && context.errors == 1 && context.runs == 2 &&
+	  context.inserts == 1 && context.updates == 1 ? FailureStatus : 1);
+      }
       paused.wait();
-      if (mode == Mode::NoCommit)
-	_Exit(1); // reaching the next step would violate the fatal-error contract
       ZuCheckRT(context.inserts == 1);
       ZuCheckRT(context.updates == 1);
       if (mode == Mode::Crash) {
@@ -241,7 +273,10 @@ static void exercise(unsigned mode)
 	_Exit(admitted && durable && context.inserts == 1 &&
 	  context.updates == 1 ? CrashStatus : 1);
       }
-      db->run([db = db.ptr()]() { db->fail(); });
+      db->run([db = db.ptr(), &context]() {
+	db->fail();
+	context.pausedComplete(false);
+      });
       // This intentionally interrupted saga is preserved; stop flushes the
       // driver before a fresh connection reopens it. This is not a hard-crash test.
       ZuCheckRT(db->stop());
@@ -263,7 +298,7 @@ static void exercise(unsigned mode)
     }
     done.wait();
   }
-  ZuCheckRT(context.runs == 4);
+  ZuCheckRT(context.runs == 3);
   ZuCheckRT(context.inserts == unsigned(mode == Mode::Live));
   ZuCheckRT(context.updates == unsigned(mode == Mode::Live));
   ZuCheckRT(context.deletes == 1);
@@ -505,30 +540,18 @@ static void crash(const char *self)
   if (cut) ZuTestCallRT(exercise, Mode::Replay);
 }
 
-static void fatal(const char *self, const char *option)
+static void failure(const char *self, const char *option)
 {
-  ZuTestScopeRT(fatal);
-#ifdef _WIN32
-  enum { AbortStatus = 3 }; // MinGW CRT abort exit status
-#else
-  enum { AbortStatus = -SIGABRT };
-#endif
-  bool aborted = child(self, option) == AbortStatus;
-  ZuCheckRT(aborted);
-  if (aborted) ZuTestCallRT(exercise, Mode::Live);
+  ZuTestScopeRT(failure);
+  bool failed = child(self, option) == FailureStatus;
+  ZuCheckRT(failed);
+  if (failed) ZuTestCallRT(exercise, Mode::Live);
 }
 
 int main(int argc, char **argv)
 {
   Options options;
   if (ZfCLI::load(options, argc, argv) != 1) return 1;
-#ifndef _WIN32
-  if (options.uncommitted) {
-    // These children deliberately abort; do not leave core dumps in the tree.
-    struct rlimit limit{0, 0};
-    if (setrlimit(RLIMIT_CORE, &limit)) return 1;
-  }
-#endif
   ZiLog::init("zdbsagatest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -543,6 +566,6 @@ int main(int argc, char **argv)
   ZuTestCall(exercise, Mode::Live);
   ZuTestCall(exercise, Mode::Reconnect);
   ZuTestCall(crash, argv[0]);
-  ZuTestCall(fatal, argv[0], "--uncommitted");
+  ZuTestCall(failure, argv[0], "--uncommitted");
   ZiLog::stop();
 }
