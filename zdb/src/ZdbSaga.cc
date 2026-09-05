@@ -6,22 +6,11 @@
 
 // Z Database sagas
 
-#include <stdlib.h>
-
 #include <zlib/Zdb.hh>
 
 namespace Zdb_ {
 
 ZtEnumImplNS(SagaOp);
-
-[[noreturn]] void sagaRollbackFatal(ZeString type, SagaID id, uint32_t step)
-{
-  ZiLOGBT(Fatal, "Zdb", ([type = ZuMv(type), id, step](auto &s) {
-    s << "saga rollback failed: " << type << '/' << id << '/' << step;
-  }));
-  ZiLog::stop();
-  ::exit(EXIT_FAILURE);
-}
 
 void Saga::stepRecovered_(Shard shard)
 {

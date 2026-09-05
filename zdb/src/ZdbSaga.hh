@@ -145,8 +145,6 @@ using SagaRecoveryFn =
   ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>;
 using SagaRunFn = ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>;
 
-[[noreturn]] ZdbExtern void sagaRollbackFatal(ZeString, SagaID, uint32_t);
-
 struct SagaNoop {
   void operator ()(bool) { }
 };
@@ -310,6 +308,8 @@ private:
   static void delStep_(DB *, ZmRef<M>, Complete, unsigned, bool);
   static void finish_(DB *, ZmRef<M>, Complete, bool);
   static void cleanup_(DB *, ZmRef<M>, Complete, unsigned);
+  static void abandon_(DB *, ZmRef<M>);
+  static void end_(DB *, Saga *);
   static void terminal_(DB *, ZmRef<M>, Complete, bool);
 };
 

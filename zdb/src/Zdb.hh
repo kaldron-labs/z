@@ -2650,8 +2650,10 @@ inline void SagaStepComplete<M, Complete>::operator ()(bool ok)
 	ZeEXCEPT(Fatal, "Zdb", "invalid saga step completion"));
       return;
     }
-    if (!fwd && ZuUnlikely(!ok))
-      sagaRollbackFatal(ZeString{saga->type()}, saga->id(), step);
+    if (!fwd && ZuUnlikely(!ok)) {
+      abandon_(db, ZuMv(saga));
+      return;
+    }
     if (fwd && ok) {
       if (auto rec = db->sagaRec(saga, step)) {
 	if (rec->un != nullUN())
@@ -2798,8 +2800,27 @@ inline void SagaStepComplete<M, Complete>::cleanup_(
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::terminal_(
-    DB *db, ZmRef<M> saga, Complete complete, bool success)
+inline void SagaStepComplete<M, Complete>::abandon_(DB *db, ZmRef<M> saga)
+{
+  ZiLOG(Error, "Zdb", ([
+    type = ZeString{saga->type()}, id = saga->id(), step = saga->m_step
+  ](auto &s) {
+    s << "saga rollback abandoned: " << type << '/' << id << '/' << step;
+  }));
+  if (db->m_sagaState == SagaState::Rebuilding) {
+    for (unsigned step = 0; step < saga->m_locs.length(); ++step) {
+      auto rec = db->sagaRec(saga, step);
+      if (!rec) continue;
+      if (rec->un != nullUN())
+	db->m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
+      db->m_sagaStepHash->delNode(rec);
+    }
+  }
+  end_(db, saga);
+}
+
+template <typename M, typename Complete>
+inline void SagaStepComplete<M, Complete>::end_(DB *db, Saga *saga)
 {
   bool rebuilding = db->m_sagaState == SagaState::Rebuilding;
   if (rebuilding) {
@@ -2818,6 +2839,13 @@ inline void SagaStepComplete<M, Complete>::terminal_(
     db->sagaReplay();
   else if (db->Engine::stopping() && !db->m_sagaLive)
     db->run([db]() { db->stop_0(); });
+}
+
+template <typename M, typename Complete>
+inline void SagaStepComplete<M, Complete>::terminal_(
+    DB *db, ZmRef<M> saga, Complete complete, bool success)
+{
+  end_(db, saga);
   auto callback = ZuMv(complete);
   callback(success);
 }
