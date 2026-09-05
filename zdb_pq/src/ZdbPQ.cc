@@ -252,6 +252,8 @@ void Store::stop_1()
     m_conn = nullptr;
     m_connFD = -1;
   }
+  StoreTbls::CIter iter{*m_storeTbls};
+  while (auto table = iter()) table->m_openState.reset();
 }
 
 void Store::wake()
@@ -309,8 +311,13 @@ void Store::recv()
 	consumed = true;
 	if (auto pending = m_sent.headNode())
 	  switch (PQresultStatus(res)) { // ExecStatusType
-	    case PGRES_COMMAND_OK: // query succeeded - no tuples
+	    case PGRES_COMMAND_OK: { // write needs the affected-row count
+	      const auto &task = pending->data();
+	      if (task.is<Work::TblQuery>() &&
+		  task.p<Work::TblQuery>().query.is<Work::Write>())
+		rcvd(pending, res);
 	      break;
+	    }
 	    case PGRES_TUPLES_OK: // query succeeded - 0..N tuples
 	      rcvd(pending, res);
 	      break;
@@ -799,6 +806,7 @@ void Store::mkTblMRD_rcvd(PGresult *res)
 }
 
 void Store::open(
+  bool internal,
   IDString id,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
   const reflection::Schema *schema,
@@ -807,7 +815,7 @@ void Store::open(
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   run([
-    this, id = ZuMv(id),
+    this, internal, id = ZuMv(id),
     fields = ZuMv(fields), keyFields = ZuMv(keyFields),
     schema, bufAllocFn = ZuMv(bufAllocFn), openFn = ZuMv(openFn)
   ]() mutable {
@@ -818,8 +826,21 @@ void Store::open(
 	  }))});
       return;
     }
+    if (auto storeTbl =
+        m_storeTbls->find(ZuTuple<bool, ZuCSpan>{internal, id})) {
+      auto phase = storeTbl->m_openState.phase();
+      if (phase != OpenState::Closed && phase != OpenState::Reopen) {
+	openFn(OpenResult{ZeEXCEPT(Error, "ZdbPQ",
+	    ([id = ZuMv(id)](auto &s, const auto &) {
+	      s << "open(" << id << ") failed - already open";
+	    }))});
+	return;
+      }
+      storeTbl->open(ZuMv(openFn));
+      return;
+    }
     auto storeTbl = new StoreTbls::Node{
-      this, ZuMv(id), m_nShards,
+      this, internal, ZuMv(id), m_nShards,
       ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)};
     m_storeTbls->addNode(storeTbl);
     storeTbl->open(ZuMv(openFn));
@@ -1003,16 +1024,20 @@ static XField xField(
 }
 
 StoreTbl::StoreTbl(
-  Store *store, IDString id, unsigned nShards,
+  Store *store, bool internal, IDString id, unsigned nShards,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
   const reflection::Schema *schema, IOBufAllocFn bufAllocFn
 ) :
   m_store{store}, m_id{ZuMv(id)},
   m_fields{ZuMv(fields)}, m_keyFields{ZuMv(keyFields)},
   m_fieldMap{ZmHashParams(m_fields.length())},
-  m_bufAllocFn{ZuMv(bufAllocFn)}
+  m_bufAllocFn{ZuMv(bufAllocFn)}, m_internal{internal}
 {
   ZtCase::camelSnake(m_id, [this](ZuCSpan id) { m_id_ = id; });
+  char ns = m_internal ? 'i' : 'a';
+  m_stmtID << ns << m_id_;
+  m_relation << '"' << (m_internal ? "zdb" : "public")
+    << "\".\"" << m_id_ << '"';
   const reflection::Object *rootTbl = schema->root_table();
   const Zfb::Vector<Zfb::Offset<reflection::Field>> *fbFields_ =
     rootTbl->fields();
@@ -1062,7 +1087,6 @@ StoreTbl::StoreTbl(
       }));
   }
   m_maxUN.length(nShards);
-  for (unsigned i = 0; i < nShards; i++) m_maxUN[i] = ZdbNullUN();
 }
 
 StoreTbl::~StoreTbl()
@@ -1073,8 +1097,12 @@ void StoreTbl::open(OpenFn openFn)
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  m_openState.reset();
+  unsigned n = m_maxUN.length();
+  for (unsigned i = 0; i < n; i++) m_maxUN[i] = ZdbNullUN();
+  m_maxSN = ZdbNullSN();
   m_openFn = ZuMv(openFn);
+  if (m_openState.phase() == OpenState::Reopen) { openCount(); return; }
+  m_openState.reset();
   mkTable();
 }
 
@@ -1260,19 +1288,22 @@ int StoreTbl::mkTable_send()
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   if (!m_openState.create()) {
-    Tuple params = { Value{String(m_id_)} };
+    Tuple params = {
+      Value{String(m_id_)},
+      Value{String(m_internal ? ZuCSpan{"zdb"} : ZuCSpan{"public"})}
+    };
     return m_store->sendQuery<SendState::Flush>(
       "SELECT a.attname AS name, a.atttypid AS oid "
       "FROM pg_catalog.pg_attribute a "
       "JOIN pg_catalog.pg_class c ON a.attrelid = c.oid "
       "JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid "
       "WHERE c.relname = $1::text "
-	"AND n.nspname = 'public' "
+	"AND n.nspname = $2::text "
 	"AND a.attnum > 0 "
 	"AND NOT a.attisdropped", params);
   } else {
     SQLString query;
-    query << "CREATE TABLE \"" << m_id_ << "\" ("
+    query << "CREATE TABLE " << m_relation << " ("
       "\"_shard\" uint1 NOT NULL, "
       "\"_un\" uint8 NOT NULL, "
       "\"_sn\" uint16 NOT NULL, "
@@ -1408,22 +1439,27 @@ int StoreTbl::mkIndices_send()
   IDString name;
   name << m_id_ << '_' << ZuBoxed(keyID);
   if (!m_openState.create()) {
-    Tuple params = { Value{String(name)} };
+    Tuple params = {
+      Value{String(name)},
+      Value{String(m_internal ? ZuCSpan{"zdb"} : ZuCSpan{"public"})}
+    };
     return m_store->sendQuery<SendState::Flush>(
-      "SELECT a.attname AS name, a.atttypid AS oid "
+      "SELECT a.attname AS name, a.atttypid AS oid, i.indisunique "
       "FROM pg_class t "
       "JOIN pg_index i ON t.oid = i.indrelid "
       "JOIN pg_class d ON d.oid = i.indexrelid "
       "JOIN pg_namespace n ON n.oid = t.relnamespace "
       "JOIN pg_attribute a ON a.attrelid = t.oid "
       "WHERE d.relname = $1::text "
-	"AND n.nspname = 'public' "
+	"AND n.nspname = $2::text "
 	"AND a.attnum = ANY(i.indkey) "
 	"AND NOT a.attisdropped "
       "ORDER BY array_position(i.indkey, a.attnum)", params);
   } else {
     SQLString query;
-    query << "CREATE INDEX \"" << name << "\" ON \"" << m_id_ << "\" (";
+    query << "CREATE ";
+    if (!keyID) query << "UNIQUE ";
+    query << "INDEX \"" << name << "\" ON " << m_relation << " (";
     const auto &keyFields = m_keyFields[keyID];
     const auto &xKeyFields = m_xKeyFields[keyID];
     unsigned n = xKeyFields.length();
@@ -1492,7 +1528,7 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
   if (m_openState.failed()) return;
 
   unsigned n = PQntuples(res);
-  if (n && (PQnfields(res) != 2)) {
+  if (n && (PQnfields(res) != 3)) {
     m_openState.setFailed();
     return;
   }
@@ -1505,6 +1541,10 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
     }
     unsigned oid = reinterpret_cast<UInt32 *>(PQgetvalue(res, i, 1))->v;
     KeyID keyID = m_openState.keyID();
+    if (!keyID && (PQgetlength(res, i, 2) != 1 || !*PQgetvalue(res, i, 2))) {
+      m_openState.setFailed();
+      return;
+    }
     unsigned field = m_openState.field();
     const auto &xKeyFields = m_xKeyFields[keyID];
     ZuCSpan matchID = xKeyFields[field].id_;
@@ -1542,10 +1582,10 @@ int StoreTbl::prepCount_send()
   const auto &xKeyFields = m_xKeyFields[keyID];
 
   IDString id;
-  id << m_id_ << "_count_" << ZuBoxed(keyID);
+  id << m_stmtID << "_count_" << ZuBoxed(keyID);
 
   SQLString query;
-  query << "SELECT CAST(COUNT(*) AS uint8) FROM \"" << m_id_ << '"';
+  query << "SELECT CAST(COUNT(*) AS uint8) FROM " << m_relation;
   ZtArray<Oid> oids;
   unsigned i, k = m_keyGroup[keyID];
   for (i = 0; i < k; i++) {
@@ -1607,7 +1647,7 @@ int StoreTbl::prepSelect_send()
   const auto &xKeyFields = m_xKeyFields[keyID];
 
   IDString id;
-  id << m_id_ << "_sel";
+  id << m_stmtID << "_sel";
   switch (m_openState.phase()) {
     case OpenState::PrepSelectKIX: id << "KIX_"; break;
     case OpenState::PrepSelectKNX: id << "KNX_"; break;
@@ -1638,7 +1678,7 @@ int StoreTbl::prepSelect_send()
     }
     n = keyFields.length();
   }
-  query << " FROM \"" << m_id_ << '"';
+  query << " FROM " << m_relation;
   ZtArray<Oid> oids;
   unsigned i, k = m_keyGroup[keyID];
   for (i = 0; i < k; i++) {
@@ -1717,7 +1757,7 @@ int StoreTbl::prepFind_send()
 
   KeyID keyID = m_openState.keyID();
   IDString id;
-  id << m_id_;
+  id << m_stmtID;
   if (!keyID)
     id << "_recover";
   else
@@ -1729,7 +1769,7 @@ int StoreTbl::prepFind_send()
   for (unsigned i = 0; i < n; i++) {
     query << ", \"" << m_xFields[i].id_ << '"';
   }
-  query << " FROM \"" << m_id_ << "\" WHERE ";
+  query << " FROM " << m_relation << " WHERE ";
   ZtArray<Oid> oids;
   if (!keyID) {
     query << "\"_shard\"=$1::uint1 AND \"_un\"=$2::uint8";
@@ -1774,13 +1814,13 @@ int StoreTbl::prepInsert_send()
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
-  id << m_id_ << "_ins";
+  id << m_stmtID << "_ins";
 
   SQLString query;
   unsigned n = m_xFields.length();
   ZtArray<Oid> oids(n + 4);
-  query << "INSERT INTO \"" << m_id_
-    << "\" (\"_shard\", \"_un\", \"_sn\", \"_vn\"";
+  query << "INSERT INTO " << m_relation
+    << " (\"_shard\", \"_un\", \"_sn\", \"_vn\"";
   for (unsigned i = 0; i < n; i++) {
     query << ", \"" << m_xFields[i].id_ << '"';
   }
@@ -1794,7 +1834,12 @@ int StoreTbl::prepInsert_send()
     query << ", $" << (i + 5) << "::" << m_store->oids().name(type);
     oids.push(m_store->oids().oid(type));
   }
-  query << ')';
+  query << ") ON CONFLICT (";
+  for (unsigned i = 0, n = m_xKeyFields[0].length(); i < n; ++i) {
+    if (i) query << ", ";
+    query << '"' << m_xKeyFields[0][i].id_ << '"';
+  }
+  query << ") DO NOTHING";
 
   return m_store->sendPrepare(id, query, oids);
 }
@@ -1815,14 +1860,14 @@ int StoreTbl::prepUpdate_send()
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
-  id << m_id_ << "_upd";
+  id << m_stmtID << "_upd";
 
   SQLString query;
   unsigned n = m_xFields.length();
   const auto &keyFields = m_keyFields[0];
   ZtArray<Oid> oids(n + 3 + keyFields.length());
-  query << "UPDATE \"" << m_id_
-    << "\" SET \"_un\"=$1::uint8, \"_sn\"=$2::uint16, \"_vn\"=$3::int8";
+  query << "UPDATE " << m_relation
+    << " SET \"_un\"=$1::uint8, \"_sn\"=$2::uint16, \"_vn\"=$3::int8";
   oids.push(m_store->oids().oid(Value::Index<UInt64>{}));
   oids.push(m_store->oids().oid(Value::Index<UInt128>{}));
   oids.push(m_store->oids().oid(Value::Index<UInt64>{}));
@@ -1866,13 +1911,13 @@ int StoreTbl::prepDelete_send()
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
-  id << m_id_ << "_del";
+  id << m_stmtID << "_del";
 
   SQLString query;
   const auto &xKeyFields = m_xKeyFields[0];
   unsigned n = xKeyFields.length();
   ZtArray<Oid> oids(n);
-  query << "DELETE FROM \"" << m_id_ << "\" WHERE ";
+  query << "DELETE FROM " << m_relation << " WHERE ";
   for (unsigned i = 0; i < n; i++) {
     auto type = xKeyFields[i].type;
     if (i) query << " AND ";
@@ -1900,7 +1945,7 @@ int StoreTbl::prepMRD_send()
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   IDString id;
-  id << m_id_ << "_mrd";
+  id << m_stmtID << "_mrd";
 
   SQLString query;
   const auto &xKeyFields = m_xKeyFields[0];
@@ -1908,7 +1953,7 @@ int StoreTbl::prepMRD_send()
   ZtArray<Oid> oids(n);
   query <<
     "UPDATE \"zdb\".\"mrd\" SET \"un\"=$2::uint8, \"sn\"=$3::uint16 "
-      "WHERE \"tbl\"='" << m_id_ << "' AND \"shard\"=$1::uint1";
+      "WHERE \"tbl\"='" << m_stmtID << "' AND \"shard\"=$1::uint1";
 
   return m_store->sendPrepare(id, query, oids);
 }
@@ -1929,7 +1974,7 @@ int StoreTbl::openCount_send()
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
   SQLString query;
-  query << "SELECT CAST(COUNT(*) AS uint8) FROM \"" << m_id_ << '"';
+  query << "SELECT CAST(COUNT(*) AS uint8) FROM " << m_relation;
   return m_store->sendQuery<SendState::Flush>(query, Tuple{});
 }
 void StoreTbl::openCount_rcvd(PGresult *res)
@@ -1962,9 +2007,9 @@ int StoreTbl::maxUN_send()
 
   Tuple params = { Value{UInt8{m_openState.shard()}} };
   SQLString query;
-  query << "SELECT \"_un\", \"_sn\" FROM \"" << m_id_
-    << "\" WHERE \"_un\"=(SELECT MAX(\"_un\") FROM \"" << m_id_
-    << "\" WHERE \"_shard\"=$1::uint1)";
+  query << "SELECT \"_un\", \"_sn\" FROM " << m_relation
+    << " WHERE \"_un\"=(SELECT MAX(\"_un\") FROM " << m_relation
+    << " WHERE \"_shard\"=$1::uint1)";
   return m_store->sendQuery<SendState::Flush>(query, params);
 }
 void StoreTbl::maxUN_rcvd(PGresult *res)
@@ -2017,10 +2062,13 @@ int StoreTbl::ensureMRD_send()
 {
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
-  Tuple params = { Value{String(m_id_)}, Value{UInt8{m_openState.shard()}} };
+  Tuple params = {
+    Value{String(m_stmtID)}, Value{UInt8{m_openState.shard()}},
+    Value{UInt64{ZdbNullUN()}}, Value{UInt128{ZdbNullSN()}}
+  };
   return m_store->sendQuery<SendState::Sync>(
     "INSERT INTO \"zdb\".\"mrd\" (\"tbl\", \"shard\", \"un\", \"sn\") "
-      "VALUES ($1::text, $2::uint1, 0, 0) "
+      "VALUES ($1::text, $2::uint1, $3::uint8, $4::uint16) "
       "ON CONFLICT (\"tbl\", \"shard\") DO NOTHING", params);
 }
 void StoreTbl::ensureMRD_rcvd(PGresult *res)
@@ -2045,7 +2093,9 @@ int StoreTbl::mrd_send()
 {
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
-  Tuple params = { Value{String(m_id_)}, Value{UInt8{m_openState.shard()}} };
+  Tuple params = {
+    Value{String(m_stmtID)}, Value{UInt8{m_openState.shard()}}
+  };
   return m_store->sendQuery<SendState::Sync>(
     "SELECT \"un\", \"sn\" FROM \"zdb\".\"mrd\" "
       "WHERE \"tbl\"=$1::text AND \"shard\"=$2::uint1", params);
@@ -2080,8 +2130,10 @@ void StoreTbl::mrd_rcvd(PGresult *res)
     })); */
 
     auto &maxUN = m_maxUN[shard];
-    if (un > maxUN) maxUN = un;
-    if (sn > m_maxSN) m_maxSN = sn;
+    if (un != ZdbNullUN() && (maxUN == ZdbNullUN() || un > maxUN))
+      maxUN = un;
+    if (sn != ZdbNullSN() && (m_maxSN == ZdbNullSN() || sn > m_maxSN))
+      m_maxSN = sn;
   }
   return;
 
@@ -2094,7 +2146,8 @@ inconsistent:
 void StoreTbl::close(CloseFn fn)
 {
   m_store->run([this, fn = ZuMv(fn)]() mutable {
-    m_openState.phase(OpenState::Closed);
+    m_openState.phase(m_openState.failed() ?
+      OpenState::Closed : OpenState::Reopen);
     fn();
   });
 }
@@ -2201,7 +2254,7 @@ int StoreTbl::count_send(Work::Count &count)
     loadTuple(
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, keyFields, xKeyFields, fbo);
-  id << m_id_ << "_count_" << ZuBoxed(count.keyID);
+  id << m_stmtID << "_count_" << ZuBoxed(count.keyID);
   return m_store->sendPrepared<SendState::Flush>(id, params);
 }
 void StoreTbl::count_rcvd(Work::Count &count, PGresult *res)
@@ -2253,7 +2306,7 @@ int StoreTbl::select_send(Work::Select &select)
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, keyFields, xKeyFields, fbo);
   new (params.push()) Value{UInt64{select.limit}};
-  id << m_id_ << "_sel"
+  id << m_stmtID << "_sel"
     << (select.selectRow ? 'R' : 'K')
     << (select.selectNext ? 'N' : 'I')
     << (select.inclusive ? 'I' : 'X')
@@ -2350,7 +2403,7 @@ int StoreTbl::find_send(Work::Find &find)
   loadTuple(
     params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
     m_store->oids(), nParams, keyFields, xKeyFields, fbo);
-  id << m_id_ << "_find_" << ZuBoxed(find.keyID);
+  id << m_stmtID << "_find_" << ZuBoxed(find.keyID);
   return m_store->sendPrepared<SendState::Flush>(id, params);
 }
 void StoreTbl::find_rcvd(Work::Find &find, PGresult *res)
@@ -2484,7 +2537,7 @@ int StoreTbl::recover_send(Work::Recover &recover)
 {
   Tuple params = { Value{UInt8{recover.shard}}, Value{UInt64{recover.un}} };
   IDAlloc();
-  id << m_id_ << "_recover";
+  id << m_stmtID << "_recover";
   return m_store->sendPrepared<SendState::Flush>(id, params);
 }
 void StoreTbl::recover_rcvd(Work::Recover &recover, PGresult *res)
@@ -2541,6 +2594,16 @@ int StoreTbl::write_send(Work::Write &write)
     s << "UN=" << un << " SN=" << ZuBoxed(sn) << " VN=" << vn;
   })); */
 
+  if (write.mrd) {
+    IDAlloc();
+    ParamAlloc(3);
+    id << m_stmtID << "_mrd";
+    new (params.push()) Value{UInt8{shard}};
+    new (params.push()) Value{UInt64{un}};
+    new (params.push()) Value{UInt128{sn}};
+    return m_store->sendPrepared<SendState::Sync>(id, params);
+  }
+
   auto fbo = Zfb::GetAnyRoot(record->data()->data());
   if (!record->vn()) { // insert
     auto nParams = m_fields.length() + 4; // +4 for shard, un, sn, vn
@@ -2548,7 +2611,7 @@ int StoreTbl::write_send(Work::Write &write)
     ParamAlloc(nParams);
     nParams -= 4;
     VarAlloc(nParams, m_xFields, fbo);
-    id << m_id_ << "_ins";
+    id << m_stmtID << "_ins";
     new (params.push()) Value{UInt8{shard}};
     new (params.push()) Value{UInt64{un}};
     new (params.push()) Value{UInt128{sn}};
@@ -2563,7 +2626,7 @@ int StoreTbl::write_send(Work::Write &write)
     ParamAlloc(nParams);
     nParams -= 3;
     VarAlloc(nParams, m_xUpdFields, fbo);
-    id << m_id_ << "_upd";
+    id << m_stmtID << "_upd";
     new (params.push()) Value{UInt64{un}};
     new (params.push()) Value{UInt128{sn}};
     new (params.push()) Value{UInt64{record->vn()}};
@@ -2571,23 +2634,15 @@ int StoreTbl::write_send(Work::Write &write)
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_updFields, m_xUpdFields, fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
-  } else if (!write.mrd) { // delete
+  } else { // delete
     auto nParams = m_keyFields[0].length();
     IDAlloc();
     ParamAlloc(nParams);
     VarAlloc(nParams, m_xKeyFields[0], fbo);
-    id << m_id_ << "_del";
+    id << m_stmtID << "_del";
     loadTuple(
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_keyFields[0], m_xKeyFields[0], fbo);
-    return m_store->sendPrepared<SendState::Sync>(id, params);
-  } else { // delete - MRD
-    IDAlloc();
-    ParamAlloc(3);
-    id << m_id_ << "_mrd";
-    new (params.push()) Value{UInt8{shard}};
-    new (params.push()) Value{UInt64{un}};
-    new (params.push()) Value{UInt128{sn}};
     return m_store->sendPrepared<SendState::Sync>(id, params);
   }
 }
@@ -2597,12 +2652,16 @@ void StoreTbl::write_rcvd(Work::Write &write, PGresult *res)
     s << "buf=" << ZuBoxPtr(buf).hex() << " res=" << ZuBoxPtr(res).hex();
   })); */
 
-  if (res) return;
-
   if (!write.buf) return; // write failed
 
   auto record = record_(msg_(write.buf->hdr()));
-  if (record->vn() < 0 && !write.mrd) { // delete completed, now update MRD
+  if (res) {
+    if (!write.mrd && !record->vn())
+      write.skipped = !strcmp(PQcmdTuples(res), "0");
+    return;
+  }
+  if ((record->vn() < 0 || write.skipped) && !write.mrd) {
+    // Preserve the stream position when no row carries this UN.
 
     /* ZiLOG(Debug, "ZdbPQ", ([vn = record->vn(), mrd = write.mrd](auto &s) {
       s << "VN=" << vn << " mrd=" << mrd;

@@ -60,6 +60,10 @@ public:
     m_buf->size &= ~(Align - 1);
   }
 
+  // Release the builder arena while its owning IOBuf is still alive,
+  // including when serialization throws before Finish()/buf().
+  ~IOBuilder() { Reset(); }
+
   IOBuilder(IOBuilder &&) = delete;
   IOBuilder &operator =(IOBuilder &&) = delete;
 

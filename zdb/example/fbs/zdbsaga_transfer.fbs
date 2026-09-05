@@ -1,0 +1,16 @@
+namespace zdbsaga.fbs;
+
+enum TransferStatus:int8 {
+  Pending = 0,
+  Complete
+}
+
+table Transfer {
+  id:uint64;
+  from_i_d:uint64;
+  to_i_d:uint64;
+  amount:int64;
+  status:TransferStatus;
+}
+
+root_type Transfer;

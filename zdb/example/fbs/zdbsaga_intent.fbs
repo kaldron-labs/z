@@ -1,0 +1,13 @@
+namespace zdbsaga.fbs;
+
+table BalanceTransfer {
+  transfer_i_d:uint64;
+  from_i_d:uint64;
+  to_i_d:uint64;
+  amount:int64;
+  transfer_shard:uint8;
+  from_shard:uint8;
+  to_shard:uint8;
+}
+
+root_type BalanceTransfer;

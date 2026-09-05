@@ -169,6 +169,7 @@ public:
   virtual void stop(StopFn fn) { fn(StopResult{}); }
 
   virtual void open(			// open table - idempotent, async
+	      bool internal,			// Zdb-internal physical namespace
       IDString id,			// name of table
       ZfVFieldArray fields,		// fields
       ZfVKeyFieldArray keyFields,	// keys and their fields

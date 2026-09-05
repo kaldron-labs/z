@@ -154,11 +154,7 @@ void StoreTbl::insert(
     auto key = extractKey(m_fields, m_keyFields, i, row->data);
     ZmAssert(key.length() == m_keyFields[i].length());
     if (!i && m_indices[i].findVal(key)) {
-      commitFn(ZuMv(buf), CommitResult{ZeEXCEPT(Error, "ZdbMem",
-	  ([id = this->id(), key = ZuMv(key)](auto &s, const auto &) {
-	    s << id << " insert(" << ZuJoin(key, ", ")
-	      << ") failed - record exists";
-	  }))});
+      commitFn(ZuMv(buf), CommitResult{});
       return;
     }
     m_indices[i].add(key, row.constRef());

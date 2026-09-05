@@ -1,0 +1,12 @@
+include "zfb_types.fbs";
+
+namespace Zdb_.fbs;
+
+table SagaData {
+  type:string;
+  id:Zfb.UInt128;
+  shard:uint8;
+  data:[ubyte];
+}
+
+root_type SagaData;

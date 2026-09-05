@@ -15,4 +15,22 @@ table Order {
   qtys:[int32];
   flags:Zfb.Bitmap;
 }
+table SagaA {
+  value:uint64;
+}
+table SagaB {
+  value:uint32;
+}
+table LiveSaga {
+  order_i_d:uint64;
+}
+table ShortSaga {
+  order_i_d:uint64;
+}
+table ChangedSaga {
+  order_i_d:uint64;
+}
+table PayloadSaga {
+  data:[uint8];
+}
 root_type Order;

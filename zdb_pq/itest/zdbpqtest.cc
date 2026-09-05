@@ -124,7 +124,7 @@ int main(int argc_, char **argv)
     ZfCf::DefKey{"DEBUG"}, ZfCf::DefVal{options.debug ? "true" : "false"});
   auto cf = inlineCf(
     "thread: zdb,\n"
-    "shards: 2,\n"
+    "shards: 4,\n"
     "hostID: 0,\n"
     "hosts: {0: {standalone: true}},\n"
     "store: {\n"
@@ -255,6 +255,14 @@ int main(int argc_, char **argv)
 	ZiLOG(Info, "zdbpqtest", ([id, seqNo](auto &s) {
 	  s << "orderID=" << id << " seqNo=" << seqNo;
 	}));
+      });
+      // Repeating an insert must not fail the DB or add a durable row.
+      ZdbObjRef<Order> duplicate = new ZdbObject<Order>{orders, 0};
+      orders->insert(duplicate, [o](ZdbObject<Order> *object) {
+	if (object) {
+	  new (object->ptr()) Order{o->data()};
+	  object->commit();
+	}
 	done.post();
       });
     });
@@ -340,6 +348,15 @@ int main(int argc_, char **argv)
 
     if (options.heapTel)
       ZiLOG(Debug, "zdbpqtest", (ZeString{} << '\n' << Ztc::heapCSV()));
+
+    bool active = false;
+    ZmBlock<>{}([&active](auto wake) {
+      db->run([&active, wake = ZuMv(wake)]() mutable {
+	active = db->active();
+	wake();
+      });
+    });
+    ZuCHECK(active, "DB remains active after repeated inserts");
 
     db->stop(); // closes all tables
 

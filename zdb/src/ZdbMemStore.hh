@@ -1180,11 +1180,11 @@ public:
   using Store = Store__;
 
   StoreTbl(
-    Store *store, IDString id, unsigned nShards,
+    Store *store, bool internal, IDString id, unsigned nShards,
     ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
   :
-    m_store{store}, m_id{ZuMv(id)},
+    m_store{store}, m_id{ZuMv(id)}, m_internal{internal},
     m_fields{ZuMv(fields)}, m_keyFields{ZuMv(keyFields)},
     m_bufAllocFn{ZuMv(bufAllocFn)}
   {
@@ -1231,6 +1231,7 @@ public:
 
   Store *store() const { return m_store; }
   const auto &id() const { return m_id; }
+  bool internal() const { return m_internal; }
 
   bool opened() const { return m_opened; }
 
@@ -1283,7 +1284,12 @@ private:
 
 public:
   void open() { m_opened = true; }
-  void close(CloseFn fn) { m_opened = false; fn(); }
+  void close(CloseFn fn) {
+    m_store->run([this, fn = ZuMv(fn)]() mutable {
+      m_opened = false;
+      fn();
+    });
+  }
 
   void warmup() { }
 
@@ -1312,6 +1318,7 @@ private:
 
   Store			*m_store;
   IDString		m_id;
+  bool			m_internal;
   ZfVFieldArray		m_fields;
   ZfVKeyFieldArray	m_keyFields;
   XFields		m_xFields;
@@ -1330,7 +1337,9 @@ private:
 // --- in-memory data store
 
 template <typename StoreTbl_>
-inline ZuCSpan StoreTbl_IDAxor(const StoreTbl_ &tbl) { return tbl.id(); }
+inline auto StoreTbl_IDAxor(const StoreTbl_ &tbl) {
+  return ZuTuple<bool, ZuCSpan>{tbl.internal(), tbl.id()};
+}
 template <typename StoreTbl_>
 ZuDerive(StoreTbls_,
   (ZmHash<StoreTbl_,
@@ -1403,12 +1412,14 @@ public:
   void preserve() { m_preserve = true; }
 
   void open(
+    bool internal,
     IDString id,
     ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema,
     IOBufAllocFn bufAllocFn, OpenFn openFn)
   {
-    StoreTblNode *storeTbl = m_storeTbls->find(id);
+    StoreTblNode *storeTbl =
+      m_storeTbls->find(ZuTuple<bool, ZuCSpan>{internal, id});
     if (storeTbl && storeTbl->opened()) {
       openFn(OpenResult{ZeEXCEPT(Error, "ZdbMem",
 	  ([id = ZuMv(id)](auto &s, const auto &) {
@@ -1418,7 +1429,7 @@ public:
     }
     if (!storeTbl) {
       storeTbl = new StoreTblNode{
-	this, ZuMv(id), m_nShards,
+	this, internal, ZuMv(id), m_nShards,
 	ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)};
       m_storeTbls->addNode(storeTbl);
     }

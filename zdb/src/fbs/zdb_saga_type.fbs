@@ -1,0 +1,17 @@
+namespace Zdb_.fbs;
+
+enum SagaOp:int8 {
+  Invalid = 0,
+  Insert,
+  Update,
+  Delete
+}
+
+table SagaTypeStep {
+  type:string;
+  step:uint32;
+  table:string;
+  op:SagaOp;
+}
+
+root_type SagaTypeStep;

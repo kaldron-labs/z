@@ -13,6 +13,8 @@
 
 #include <zlib/ZmDemangle.hh>
 
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZfJSON.hh>
 
 #include <zlib/Zfb.hh>
@@ -76,6 +78,21 @@ ZtString<> json(const T &v) {
   return s;
 }
 
+static bool abandoned(const zfbtest3::Order &order, bool finish, bool fail)
+{
+  try {
+    // One alignment unit forces this row to outgrow the builtin buffer.
+    IOBuilder fbb{new ZiIOBufAlloc<IOBuilder::Align>{}};
+    auto offset = ZfbStruct::save(fbb, order);
+    if (finish) fbb.Finish(offset);
+    if (fbb.GetSize() <= IOBuilder::Align) return false;
+    if (fail) throw ZeEXCEPT(Error, "ZfbTest3", "serialization failure");
+  } catch (const ZeException &) {
+    return fail;
+  }
+  return !fail;
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -86,6 +103,11 @@ int main(int argc, char **argv)
     "IBM", 42, "FIX0", "order0", 0, Side::Buy, 100, 100, "1-3",
     "abcdefghijklmnopqrstuvwxyz01",
     ZiIP{"2001:db8::1"}};
+
+  CHECK(abandoned(order, false, false));
+  CHECK(abandoned(order, true, false));
+  CHECK(abandoned(order, false, true));
+  CHECK(abandoned(order, true, true));
 
   {
     IOBuilder fbb(new ZiIOBufAlloc<>());

@@ -35,6 +35,8 @@
 
 #include <zlib/Zdb.hh>
 
+#include <zlib/ZuMatcher.hh>
+
 #include <zlib/ZtBitWindow.hh>
 #include <zlib/ZtHexDump.hh>
 
@@ -45,6 +47,12 @@
 #include <errno.h>
 
 namespace Zdb_ {
+
+static bool reservedTableID(ZuCSpan id)
+{
+  constexpr auto matcher = ZuMatcher<"saga", "saga_step", "saga_type">();
+  return matcher.exact(id) >= 0;
+}
 
 void DB::init(
   DBCf config,
@@ -164,6 +172,10 @@ void DB::init(
 ZmRef<AnyTable> DB::initTable_(
   ZuCSpan id, InitTableFn fn)
 {
+  if (reservedTableID(id))
+    throw ZeEXCEPT(Error, "Zdb", ([id](auto &s) {
+      s << "Zdb::initTable(\"" << id << "\") - reserved identifier";
+    }));
   if (id.length() >= IDSize_)
     throw ZeEXCEPT(Error, "Zdb", ([id](auto &s) {
       s << "Zdb::initTable(\"" << id << "\") - identifier too long (>"
@@ -184,6 +196,274 @@ ZmRef<AnyTable> DB::initTable_(
   return table;
 }
 
+void DB::sagas_(
+    SagaHandler handler, SagaStartFn startFn, SagaStartFn scanFn,
+    SagaRunFn runFn)
+{
+  if (!ZmEngine<DB>::lock(ZmEngineState::Stopped,
+	[
+	  this, handler = ZuMv(handler), startFn = ZuMv(startFn),
+	  scanFn = ZuMv(scanFn), runFn = ZuMv(runFn)
+	]() mutable {
+    if (state() != HostState::Initialized || m_sagaStartFn) return false;
+    m_sagaStartFn = ZuMv(startFn);
+    m_sagaScanFn = ZuMv(scanFn);
+    m_sagaRunFn = ZuMv(runFn);
+    m_sagaHandler = ZuMv(handler);
+    m_sagaTable = new Table<SagaData>{this, &m_sagaCf, true};
+    m_sagaStepTable = new Table<SagaStep>{this, &m_sagaStepCf, true};
+    m_tables.add(m_sagaTable);
+    m_tables.add(m_sagaStepTable);
+    tableAdded_(m_sagaTable);
+    tableAdded_(m_sagaStepTable);
+    return true;
+  }))
+    throw ZeEXCEPT(Fatal, "Zdb", "Zdb::sagas called out of order");
+}
+
+void DB::sagaRun(ZmRef<Saga> saga)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || saga->m_epoch != m_sagaEpoch ||
+	m_sagaState == SagaState::Inactive ||
+	(m_sagaState == SagaState::Active && !m_appActive))) return;
+  m_sagaRunFn(saga);
+}
+
+void DB::sagaDrain(DrainFn fn)
+{
+  ZmAssert(invoked());
+  m_sagaDrainFn = ZuMv(fn);
+  if (!m_sagaPending) run([this]() { sagaDrained(); });
+}
+
+void DB::sagaRetire()
+{
+  ZmAssert(invoked() && m_sagaPending);
+  if (!--m_sagaPending && m_sagaDrainFn)
+    run([this]() { sagaDrained(); });
+}
+
+void DB::sagaDrained()
+{
+  ZmAssert(invoked());
+  if (m_sagaPending || !m_sagaDrainFn) return;
+  auto fn = ZuMv(m_sagaDrainFn);
+  fn();
+}
+
+void DB::sagaClean()
+{
+  ZmAssert(invoked() && !m_sagaPending);
+  m_sagaBlocked = nullptr;
+  m_sagaUNHash = nullptr;
+  m_sagaStepHash = nullptr;
+  m_sagaQueue.clean();
+  m_sagaHash = nullptr;
+  m_sagaScan = nullptr;
+  m_sagaLive = 0;
+}
+
+void DB::sagaDeactivate()
+{
+  ZmAssert(invoked());
+  if (!m_sagaStartFn) return;
+  ++m_sagaEpoch;
+  m_sagaState = SagaState::Inactive;
+  sagaDrain([this]() {
+    sagaClean();
+    if (Engine::stopping()) stop_0();
+  });
+}
+
+bool DB::sagaPrepare(
+    Saga *saga, uint64_t epoch, AnyTable *table, Shard shard, SagaOp::T op,
+    bool effect, UN &un, bool &saved)
+{
+  ZmAssert(invoked());
+  if (epoch != m_sagaEpoch || saga->m_epoch != epoch ||
+      m_sagaState == SagaState::Inactive) return false;
+  if (ZuUnlikely(!table || table->db() != this || shard >= nShards() ||
+      saga->m_step >= saga->m_locs.length())) {
+    sagaFail(saga, epoch, ZeEXCEPT(Error, "Zdb", "invalid saga mutation"));
+    return false;
+  }
+  if (m_sagaState != SagaState::Rebuilding) return true;
+  if (auto rec = sagaRec(saga, saga->m_step)) {
+    if (ZuUnlikely(rec->table != table || rec->shard != shard ||
+	rec->op != op)) {
+      sagaActivateFail(ZeEXCEPT(Fatal, "Zdb", "recovered saga target mismatch"));
+      return false;
+    }
+    un = rec->un;
+    saved = true;
+    return true;
+  }
+  if (effect && sagaReserved(table, shard, table->nextUN(shard))) {
+    sagaResult(saga, epoch, OpResult::NotReady, shard);
+    return false;
+  }
+  return true;
+}
+
+void DB::sagaResult(
+    ZmRef<Saga> saga, uint64_t epoch, OpResult::T result, Shard shard)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || epoch != m_sagaEpoch || saga->m_epoch != epoch))
+    return;
+  switch (result) {
+    case OpResult::Executed:
+    case OpResult::Skipped:
+      if (ZuUnlikely(saga->m_step >= saga->m_locs.length())) {
+	sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga step"));
+	return;
+      }
+      if (auto rec = sagaRec(saga, saga->m_step)) {
+	if (rec->un != nullUN())
+	  m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
+	m_sagaStepHash->delNode(rec);
+      }
+      saga->m_locs[saga->m_step] = shard;
+      m_sagaBlocked = nullptr;
+      ++saga->m_step;
+      sagaRun(ZuMv(saga));
+      return;
+    case OpResult::NotReady: {
+      auto head = m_sagaQueue.headPtr();
+      if (ZuUnlikely(m_sagaState != SagaState::Rebuilding ||
+	  !head || static_cast<SagaNode__ *>(head)->saga != saga)) {
+	sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga deferral"));
+	return;
+      }
+      if (m_sagaBlocked == saga) {
+	sagaActivateFail(ZeEXCEPT(Fatal, "Zdb", "recovered sagas made no progress"));
+	return;
+      }
+      if (!m_sagaBlocked) m_sagaBlocked = saga;
+      m_sagaQueue.rshift();
+      sagaReplay();
+      return;
+    }
+    case OpResult::Missing:
+      sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "saga mutation row is missing"));
+      return;
+    default:
+      sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga mutation"));
+      return;
+  }
+}
+
+void DB::sagaDone(ZmRef<Saga> saga, uint64_t epoch)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
+	saga->m_epoch != epoch)) return;
+  if (ZuUnlikely(saga->m_step != saga->m_locs.length())) {
+    sagaFail(ZuMv(saga), epoch,
+	ZeEXCEPT(Error, "Zdb", "saga done before final step"));
+    return;
+  }
+  auto shard = saga->m_shard;
+  ++m_sagaPending;
+  m_sagaTable->run(shard, [
+    this, saga = ZuMv(saga), epoch, shard
+  ]() mutable {
+    const auto &key = saga->m_key;
+    m_sagaTable->findDel<0>(shard,
+	ZuFwdTuple(key.template p<0>(), key.template p<1>()),
+	[this, saga = ZuMv(saga), epoch](Object<SagaData> *object) mutable {
+	  bool ok = !object;
+	  if (object) ok = object->commit();
+	  run([this, saga = ZuMv(saga), epoch, ok]() mutable {
+	    sagaRetire();
+	    if (ZuUnlikely(!ok)) {
+	      sagaFail(ZuMv(saga), epoch,
+		ZeEXCEPT(Fatal, "Zdb", "failed to delete saga intent"));
+	      return;
+	    }
+	    sagaCleanup(ZuMv(saga), epoch, 0);
+	  });
+	});
+  });
+}
+
+void DB::sagaCleanup(ZmRef<Saga> saga, uint64_t epoch, unsigned step)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
+	saga->m_epoch != epoch)) return;
+  if (step >= saga->m_locs.length()) {
+    sagaComplete(ZuMv(saga), epoch);
+    return;
+  }
+  auto shard = saga->m_locs[step];
+  ++m_sagaPending;
+  m_sagaStepTable->run(shard, [
+    this, saga = ZuMv(saga), epoch, step, shard
+  ]() mutable {
+    const auto &key = saga->m_key;
+    m_sagaStepTable->findDel<0>(shard,
+	ZuFwdTuple(key.template p<0>(), key.template p<1>(), uint32_t(step)),
+	[this, saga = ZuMv(saga), epoch, step](
+	    Object<SagaStep> *object) mutable {
+	  bool ok = !object;
+	  if (object) ok = object->commit();
+	  run([this, saga = ZuMv(saga), epoch, step, ok]() mutable {
+	    sagaRetire();
+	    if (ZuUnlikely(!ok)) {
+	      sagaFail(ZuMv(saga), epoch,
+		ZeEXCEPT(Fatal, "Zdb", "failed to delete saga step intent"));
+	      return;
+	    }
+	    sagaCleanup(ZuMv(saga), epoch, step + 1);
+	  });
+	});
+  });
+}
+
+void DB::sagaComplete(ZmRef<Saga> saga, uint64_t epoch)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
+	saga->m_epoch != epoch)) return;
+  m_sagaHandler.doneFn(
+    m_sagaHandler.context, saga->type(), saga->id());
+  bool rebuilding = m_sagaState == SagaState::Rebuilding;
+  if (rebuilding) {
+    ZmAssert(m_sagaHash);
+    if (m_sagaBlocked == saga) m_sagaBlocked = nullptr;
+    auto listNode = m_sagaQueue.headPtr();
+    ZmAssert(listNode &&
+	static_cast<SagaNode__ *>(listNode)->saga == saga);
+    auto hashNode = static_cast<SagaHash::Node *>(listNode);
+    m_sagaQueue.delNode(listNode);
+    m_sagaHash->delNode(hashNode);
+  } else {
+    ZmAssert(!m_sagaHash);
+    ZmAssert(m_sagaLive);
+    --m_sagaLive;
+  }
+  if (rebuilding)
+    sagaReplay();
+  else if (Engine::stopping() && !m_sagaLive)
+    run([this]() { stop_0(); });
+}
+
+void DB::sagaFail(ZmRef<Saga> saga, uint64_t epoch, ZeException e)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
+	saga->m_epoch != epoch)) return;
+  if (m_sagaState == SagaState::Rebuilding) {
+    sagaActivateFail(ZuMv(e));
+    return;
+  }
+  m_sagaHandler.errorFn(
+    m_sagaHandler.context, saga->type(), saga->id(), ZuMv(e));
+  fail();
+}
+
 void DB::final()
 {
   ZdbDEBUG(this, ([hostID = m_cf.hostID, state = this->state()](auto &s) {
@@ -192,6 +472,8 @@ void DB::final()
 
   if (!ZmEngine<DB>::lock(ZmEngineState::Stopped, [this]() {
     if (state() != HostState::Initialized) return false;
+    ZmAssert(!m_sagaPending && !m_sagaDrainFn);
+    ZmAssert(!m_sagaLive);
     // reset recovery
     m_recovering = 0; m_recover.reset(); m_recoverEnd.reset();
     // reset replication (clearing m_self also sets state to Instantiated)
@@ -209,6 +491,21 @@ void DB::final()
     // reset tables
     m_nextSN = 0;
     m_tables.clean();
+    m_sagaTable = nullptr;
+    m_sagaStepTable = nullptr;
+    m_sagaUNHash = nullptr;
+    m_sagaStepHash = nullptr;
+    m_sagaQueue.clean();
+    m_sagaScan = nullptr;
+    m_sagaHash = nullptr;
+    m_sagaStartFn = {};
+    m_sagaScanFn = {};
+    m_sagaRunFn = {};
+    m_sagaHandler = {};
+    m_sagaState = SagaState::Inactive;
+    m_sagaEpoch = 0;
+    m_sagaLive = 0;
+    m_sagaBlocked = nullptr;
     // reset handler
     m_handler = {};
     // reset backing data store
@@ -291,7 +588,114 @@ void DB::start_1()
   all([](AnyTable *table, DB::AllTableFn done) {
     table->open([done = ZuMv(done)](bool ok) mutable { done(ok); });
   }, [](DB *db, bool ok) {
-    ok ? db->start_2() : db->started(false);
+    if (!ok) {
+      db->startFailed();
+      return;
+    }
+    db->m_sagaStartFn ? db->m_sagaStartFn() : db->start_2();
+  });
+}
+
+void DB::startFailed()
+{
+  ZmAssert(invoked());
+  m_appActive = false;
+  all([](AnyTable *table, DB::AllTableFn done) {
+    table->close([done = ZuMv(done)]() mutable { done(true); });
+  }, [](DB *db, bool) {
+    db->m_store->stop([db](StopResult result) {
+      if (result.is<Event>()) ZiLogEvent(ZuMv(result).p<Event>());
+      db->run([db]() {
+	db->drainShards(0, [db]() {
+	  db->state(HostState::Initialized);
+	  db->started(false);
+	});
+      });
+    });
+  });
+}
+
+void DB::sagaActivate(Host *oldMaster)
+{
+  ZmAssert(invoked());
+  ++m_sagaEpoch;
+  m_sagaState = SagaState::Rebuilding;
+  m_appActive = false;
+  sagaDrain([this, oldMaster]() {
+    sagaClean();
+    m_sagaHash = new SagaHashObj{};
+    m_sagaStepHash = new SagaStepHashObj{};
+    m_sagaUNHash = new SagaUNHashObj{};
+    m_sagaScan = new SagaScan{};
+    m_sagaScan->oldMaster = oldMaster;
+    m_sagaScan->epoch = m_sagaEpoch;
+    m_sagaScanFn();
+  });
+}
+
+SagaRec *DB::sagaRec(Saga *saga, unsigned step)
+{
+  ZmAssert(invoked());
+  if (!m_sagaStepHash) return nullptr;
+  auto rec = m_sagaStepHash->findPtr(SagaStepKey{saga->type(), saga->id(), step});
+  return static_cast<SagaRec *>(rec);
+}
+
+bool DB::sagaReserved(AnyTable *table, Shard shard, UN un)
+{
+  ZmAssert(invoked());
+  return m_sagaUNHash && m_sagaUNHash->find(SagaUNKey{table, shard, un});
+}
+
+void DB::sagaReplay()
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(m_sagaState != SagaState::Rebuilding ||
+	!m_sagaScan || m_sagaScan->epoch != m_sagaEpoch)) return;
+  auto node = m_sagaQueue.headPtr();
+  if (!node) {
+    sagaActivateDone();
+    return;
+  }
+  sagaRun(static_cast<SagaNode__ *>(node)->saga);
+}
+
+void DB::sagaActivateDone()
+{
+  ZmAssert(invoked());
+  Host *oldMaster = m_sagaScan->oldMaster;
+  ZmAssert(!m_sagaUNHash->count_() && !m_sagaStepHash->count_());
+  ZmAssert(!m_sagaHash->count_() && !m_sagaQueue.headPtr());
+  m_sagaHash = nullptr;
+  m_sagaUNHash = nullptr;
+  m_sagaStepHash = nullptr;
+  m_sagaScan = nullptr;
+  m_sagaBlocked = nullptr;
+  m_sagaState = SagaState::Active;
+  m_appActive = true;
+  up_(oldMaster);
+  electionDone();
+}
+
+void DB::sagaActivateFail(ZeException e)
+{
+  ZmAssert(invoked());
+  if (m_sagaState != SagaState::Rebuilding) return;
+  ZiLogEvent(ZuMv(e));
+  ZiLOG(Fatal, "Zdb", "saga activation failed");
+  ++m_sagaEpoch;
+  m_sagaState = SagaState::Inactive;
+  sagaDrain([this]() {
+    sagaClean();
+    switch (ZmEngine::state()) {
+    case ZmEngineState::Starting:
+    case ZmEngineState::StopPending:
+      startFailed();
+      break;
+    default:
+      fail();
+      break;
+    }
   });
 }
 
@@ -347,6 +751,9 @@ void DB::stop_()
       break;
     case Electing:	// holdElection will resume stop_0() at completion
       return;
+    case Stopping:	// saga drain may precede the engine's queued stop wake
+    case Initialized:	// tables closed; store stop/shard drain still in flight
+      return;
     default:
       ZiLOG(Fatal, "Zdb", "DB::stop_ called out of order");
       stopped(false);
@@ -378,6 +785,13 @@ void DB::stop_0()
       return;
   }
 
+  // Keep admitted sagas running, including their row cleanup and done callback.
+  // The engine state already rejects new admission. Completion resumes here.
+  if (m_sagaPending || m_sagaDrainFn ||
+      m_sagaState == SagaState::Rebuilding ||
+      (m_sagaState == SagaState::Active && m_sagaLive)) return;
+  m_sagaState = SagaState::Inactive;
+  m_appActive = false;
   state(Stopping);
   repStop();
   m_mx->del(&m_hbSendTimer);
@@ -427,7 +841,23 @@ void DB::stop_2()
       ZiLogEvent(ZuMv(result).p<Event>());
       ZiLOG(Fatal, "Zdb", "data store stop failed");
     }
-    run([this]() { stopped(true); });
+    run([this]() { drainShards(0, [this]() { stopped(true); }); });
+  });
+}
+
+void DB::drainShards(unsigned shard, DrainFn fn)
+{
+  ZmAssert(invoked());
+  if (shard == nShards()) {
+    fn();
+    return;
+  }
+  // Store close/stop has emitted all write callbacks. Drain their shard work
+  // before final() may release the table objects referenced by those callbacks.
+  shardRun(Shard(shard), [this, shard, fn = ZuMv(fn)]() mutable {
+    run([this, shard, fn = ZuMv(fn)]() mutable {
+      drainShards(shard + 1, ZuMv(fn));
+    });
   });
 }
 
@@ -510,7 +940,6 @@ void DB::holdElection()
   oldMaster = setMaster();
 
   if (won = m_leader == m_self) {
-    m_appActive = true;
     m_prev = nullptr;
     if (!m_nPeers)
       ZiLOG(Warning, "Zdb", "activating standalone");
@@ -521,14 +950,27 @@ void DB::holdElection()
   }
 
   if (won) {
+    if (!appActive && m_sagaStartFn) {
+      state(Active);
+      setNext();
+      sagaActivate(oldMaster);
+      return;
+    }
+    m_appActive = true;
     if (!appActive) up_(oldMaster);
   } else {
+    sagaDeactivate();
     if (appActive) down_(false);
   }
 
   state(won ? Active : Inactive);
   setNext();
 
+  electionDone();
+}
+
+void DB::electionDone()
+{
   switch (ZmEngine::state()) {
     case ZmEngineState::Starting:
     case ZmEngineState::StopPending:
@@ -544,6 +986,13 @@ void DB::holdElection()
 void DB::fail()
 {
   ZmAssert(invoked());
+
+  // Do not replace an already-failing activation's startup completion.
+  if (m_sagaState == SagaState::Inactive && m_sagaDrainFn) return;
+  if (m_sagaState == SagaState::Rebuilding) {
+    sagaActivateFail(ZeEXCEPT(Fatal, "Zdb", "DB failure during saga recovery"));
+    return;
+  }
 
   if (!m_self) {
     ZiLOG(Fatal, "Zdb", "DB::fail called out of order");
@@ -581,6 +1030,7 @@ badorder:
   setMaster();
   m_self->voted(true);
   m_appActive = false;
+  sagaDeactivate();
 
   if (appActive) down_(failed);
 
@@ -600,6 +1050,10 @@ void DB::reactivate(Host *host)
   if (ZmRef<Cxn> cxn = host->cxn()) cxn->hbSend();
 
   bool appActive = m_appActive;
+  if (!appActive && m_sagaStartFn) {
+    sagaActivate(nullptr);
+    return;
+  }
   m_appActive = true;
   if (!appActive) up_(nullptr);
 }
@@ -711,7 +1165,7 @@ void Host::connect()
   if (m_cxn) return;
 
   ZiLOG(Info, "Zdb",
-      ([id = this->id(), ip = config().ip, port = config().port](auto &s) {
+      ([id = ZeString{this->id()}, ip = config().ip, port = config().port](auto &s) {
 	s << "Zdb connecting to host " << id
 	  << " (" << ip << ':' << port << ')';
       }));
@@ -727,7 +1181,7 @@ void Host::connectFailed(bool transient)
   bool retry = transient && m_db->running();
   if (retry) reconnect();
   ZiLOG(Warning, "Zdb",
-      ([id = this->id(),
+      ([id = ZeString{this->id()},
 	ip = config().ip,
 	port = config().port,
 	retry](auto &s) {
@@ -740,7 +1194,7 @@ void Host::connectFailed(bool transient)
 ZiConnection *Host::connected(const ZiCxnInfo &ci)
 {
   ZiLOG(Info, "Zdb",
-      ([id = this->id(),
+      ([id = ZeString{this->id()},
 	remoteIP = ci.remoteIP, remotePort = ci.remotePort,
 	localIP = ci.localIP, localPort = ci.localPort](auto &s) {
     s << "connected to host " << id << " ("
@@ -813,7 +1267,7 @@ void DB::associate(Cxn *cxn, ZuCSpan hostID)
   Host *host = m_hosts->find(hostID);
 
   if (!host) {
-    ZiLOG(Error, "Zdb", ([hostID](auto &s) {
+    ZiLOG(Error, "Zdb", ([hostID = ZeString{hostID}](auto &s) {
       s << "cannot associate incoming cxn: host ID "
 	<< hostID << " not found";
     }));
@@ -821,7 +1275,7 @@ void DB::associate(Cxn *cxn, ZuCSpan hostID)
   }
 
   if (host == m_self) {
-    ZiLOG(Error, "Zdb", ([hostID](auto &s) {
+    ZiLOG(Error, "Zdb", ([hostID = ZeString{hostID}](auto &s) {
       s << "cannot associate incoming cxn: host ID "
 	<< hostID << " is same as self";
     }));
@@ -837,7 +1291,7 @@ void DB::associate(Cxn *cxn, Host *host)
 {
   ZmAssert(invoked());
 
-  ZiLOG(Info, "Zdb", ([hostID = host->id()](auto &s) {
+  ZiLOG(Info, "Zdb", ([hostID = ZeString{host->id()}](auto &s) {
     s << "host " << hostID << " CONNECTED";
   }));
 
@@ -911,7 +1365,7 @@ void DB::disconnected(ZmRef<Cxn> cxn)
 
   if (!host || host->cxn() != cxn) return;
 
-  ZiLOG(Info, "Zdb", ([id = host->id()](auto &s) {
+  ZiLOG(Info, "Zdb", ([id = ZeString{host->id()}](auto &s) {
     s << "host " << id << " DISCONNECTED";
   }));
 
@@ -1001,7 +1455,7 @@ Host *DB::setMaster()
   }
 
   if (m_leader) {
-    ZiLOG(Info, "Zdb", ([id = m_leader->id()](auto &s) {
+    ZiLOG(Info, "Zdb", ([id = ZeString{m_leader->id()}](auto &s) {
       s << "host " << id << " is leader";
     }));
   } else
@@ -1060,7 +1514,7 @@ void DB::repStart()
 {
   ZmAssert(invoked());
 
-  ZiLOG(Info, "Zdb", ([id = m_next->id()](auto &s) {
+  ZiLOG(Info, "Zdb", ([id = ZeString{m_next->id()}](auto &s) {
     s << "host " << id << " is next in line";
   }));
 
@@ -1547,14 +2001,15 @@ void DB::replicated(Host *host, ZuCSpan tblID, Shard shard, UN un, SN sn)
   if ((active() || host == m_next) && !updated) return;
   if (!m_prev) {
     m_prev = host;
-    ZiLOG(Info, "Zdb", ([id = m_prev->id()](auto &s) {
+    ZiLOG(Info, "Zdb", ([id = ZeString{m_prev->id()}](auto &s) {
       s << "host " << id << " is previous in line";
     }));
   }
 }
 
-AnyTable::AnyTable(DB *db, TableCf *cf, IOBufAllocFn fn) :
-  m_db{db}, m_cf{cf}, m_mx{db->mx()},
+AnyTable::AnyTable(
+  DB *db, TableCf *cf, bool internal, IOBufAllocFn fn) :
+  m_db{db}, m_cf{cf}, m_mx{db->mx()}, m_internal{internal},
   m_bufAllocFn{ZuMv(fn)}
 {
   unsigned n = db->nShards();
@@ -1725,6 +2180,7 @@ void AnyTable::open(L &&l)
   }
 
   db()->store()->open(
+    m_internal,
     id(),
     objFields(), objKeyFields(), objSchema(), m_bufAllocFn,
     [this, l = ZuFwd<L>(l)](OpenResult result) mutable {

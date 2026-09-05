@@ -23,11 +23,11 @@ class Store;
 class StoreTbl : public ZdbMem::StoreTbl {
 public:
   StoreTbl(
-    Store *store, IDString id, unsigned nShards,
+    Store *store, bool internal, IDString id, unsigned nShards,
     ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
     const reflection::Schema *schema, IOBufAllocFn bufAllocFn
   ) : ZdbMem::StoreTbl{
-    store, ZuMv(id), nShards,
+    store, internal, ZuMv(id), nShards,
     ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)
   } { }
 
@@ -56,12 +56,25 @@ class Store : public ZdbMem::Store_<StoreTbl> {
 public:
   using Base::Base;
   using FindFn = ZmFn<void(ZuCSpan)>;
+  using FindResultFn = ZmFn<void(ZuCSpan, RowResult &)>;
   using WriteFn = ZmFn<void(ZuCSpan)>;
+  using SelectFn = ZmFn<void(ZuCSpan)>;
+  using SelectResultFn = ZmFn<void(ZuCSpan, TupleResult &)>;
 
   void findFn(FindFn fn) { m_findFn = ZuMv(fn); }
   void found(ZuCSpan id) { if (m_findFn) m_findFn(id); }
+  void findResultFn(FindResultFn fn) { m_findResultFn = ZuMv(fn); }
+  void foundResult(ZuCSpan id, RowResult &result) {
+    if (m_findResultFn) m_findResultFn(id, result);
+  }
   void writeFn(WriteFn fn) { m_writeFn = ZuMv(fn); }
   void wrote(ZuCSpan id) { if (m_writeFn) m_writeFn(id); }
+  void selectFn(SelectFn fn) { m_selectFn = ZuMv(fn); }
+  void selected(ZuCSpan id) { if (m_selectFn) m_selectFn(id); }
+  void selectResultFn(SelectResultFn fn) { m_selectResultFn = ZuMv(fn); }
+  void selectedResult(ZuCSpan id, TupleResult &result) {
+    if (m_selectResultFn) m_selectResultFn(id, result);
+  }
 
   void sync() {
     ZmBlock<>{}([this](auto wake) {
@@ -107,7 +120,10 @@ private:
   bool		m_deferWork = false;
   bool		m_deferCallbacks = false;
   FindFn	m_findFn;
+  FindResultFn	m_findResultFn;
   WriteFn	m_writeFn;
+  SelectFn	m_selectFn;
+  SelectResultFn	m_selectResultFn;
   Queue		m_work;
   Queue		m_callbacks;
 };
@@ -133,6 +149,7 @@ inline void StoreTbl::select(
   KeyID keyID, ZmRef<IOBuf> buf,
   unsigned limit, TupleFn tupleFn)
 {
+  store()->selected(id());
   // ZiLOG(Debug, "ZdbMock", "select() work enqueue");
   auto work_ = [
     this, selectRow, selectNext, inclusive,
@@ -145,6 +162,7 @@ inline void StoreTbl::select(
 	this, tupleFn = ZuMv(tupleFn)
       ](TupleResult result) mutable {
 	// ZiLOG(Debug, "ZdbMock", "select() callback enqueue");
+	store()->selectedResult(id(), result);
 	auto callback = [
 	  tupleFn, result = ZuMv(result) // tupleFn is called repeatedly
 	]() mutable {
@@ -170,6 +188,7 @@ inline void StoreTbl::find(
       this, rowFn = ZuMv(rowFn)
     ](RowResult result) mutable {
       // ZiLOG(Debug, "ZdbMock", "find() callback enqueue");
+      store()->foundResult(id(), result);
       auto callback = [
 	rowFn = ZuMv(rowFn), result = ZuMv(result)
       ]() mutable {
