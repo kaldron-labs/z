@@ -19,7 +19,7 @@ namespace zdbtest {
 
 struct LiveSaga {
   using Type = ZuStringT<"replSaga">;
-  using Steps = ZdbSagaSteps((o, Insert), (o, Update));
+  enum { NSteps = 2 };
 
   uint64_t orderID;
 
@@ -31,36 +31,52 @@ struct LiveSaga {
     unsigned		updates = 0;
     unsigned		completed = 0;
     unsigned		errors = 0;
+    Zdb_::SagaStepComplete pausedComplete;
   };
 
-  void operator ()(void *context_, ZmRef<ZdbSaga> saga) {
+  ZdbSagaStep(0, o, Insert) {
     auto context = static_cast<Context *>(context_);
     ++context->runs;
-    switch (saga->step()) {
-      case 0: {
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
 	ZdbObjRef<Order> order = new ZdbObject<Order>{context->orders, 0};
 	saga->insert(context->orders, ZuMv(order),
-	  [context, orderID = orderID](ZdbObject<Order> *object) {
+	  [context, complete = ZuMv(complete), orderID = orderID](
+	      ZdbObject<Order> *object) mutable {
 	    ++context->inserts;
+	    if (!object) { complete(false); return; }
 	    new (object->ptr()) Order{
 	      "IBM", orderID, "FIX0", "repl", 0, Side::Buy, {100}, {7}};
 	    object->commit();
+	    complete(true);
 	  });
-	return;
-      }
-      case 1:
+	});
+	return {};
+  }
+
+  ZdbSagaStep(1, o, Update) {
+	auto context = static_cast<Context *>(context_);
+	++context->runs;
+	context->orders->run(0, [
+	  this, context, saga, complete = ZuMv(complete)
+	]() mutable {
 	saga->findUpd<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
-	  [context](ZdbObject<Order> *object) {
+	  [context, complete = ZuMv(complete)](
+	      ZdbObject<Order> *object) mutable {
 	    ++context->updates;
+	    if (!object) { complete(false); return; }
 	    ++object->data().qtys[0];
 	    object->commit();
+	    if (context->paused) {
+	      context->pausedComplete = ZuMv(complete);
+	      context->paused->post();
+	      return;
+	    }
+	    complete(true);
 	  });
-	return;
-      default:
-	if (context->paused) context->paused->post();
-	else saga->done();
-	return;
-    }
+	});
+	return {};
   }
 };
 ZfbStruct(LiveSaga,
@@ -173,11 +189,14 @@ static void recovery()
   // Test coordination only: finish the observed follower store write.
   secondStore->sync();
   ZuCheck(leader->context.inserts == 1 && leader->context.updates == 1);
-  leader->run([leader = leader.ptr()]() { leader->fail(); });
+  leader->run([leader = leader.ptr()]() {
+    leader->fail();
+    leader->context.pausedComplete(false);
+  });
   ZuCheck(leader->stop());
   secondUp.wait();
   ZuCheck(follower->ups == 1 && follower->doneAtUp == 1);
-  ZuCheck(follower->context.runs == 3);
+  ZuCheck(follower->context.runs == 2);
   ZuCheck(!follower->context.inserts && !follower->context.updates);
   ZuCheck(!leader->context.errors && !follower->context.errors);
 

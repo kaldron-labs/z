@@ -59,6 +59,9 @@ namespace Zdb_ {
 
 class DB;
 class Saga;
+struct SagaStepComplete;
+struct SagaRec;
+struct SagaUNHash;
 class AnyTable;
 class Host;
 class StoreTbl;
@@ -166,6 +169,8 @@ namespace SagaState {
 
 class Saga_ : public ZmPolymorph {
 friend DB;
+friend Saga;
+friend SagaStepComplete;
 template <typename> friend struct SagaDB;
 
 public:
@@ -190,6 +195,8 @@ private:
     m_epoch = epoch;
     m_shard = shard;
     m_step = 0;
+    m_rec = nullptr;
+    m_uns = nullptr;
   }
 
   DB		*m_db = nullptr;
@@ -198,6 +205,8 @@ private:
   uint64_t	m_epoch = 0;
   uint32_t	m_step = 0;
   Shard		m_shard = 0;
+  SagaRec	*m_rec = nullptr;	// staged recovery step
+  SagaUNHash	*m_uns = nullptr;	// staged serial-replay reservations
 };
 
 template <typename Key, typename L>
@@ -210,6 +219,7 @@ struct SagaFind {
 
 class Saga : public Saga_ {
 friend DB;
+template <typename> friend struct MSaga;
 
 public:
   using Saga_::db;
@@ -218,7 +228,6 @@ public:
   using Saga_::step;
   using Saga_::type;
 
-  void done();
   void fail(ZeException);
 
   template <typename T, typename L>
@@ -236,12 +245,15 @@ public:
 
 protected:
   Saga() = default;
+  void done();
 
 private:
+  void complete_(Shard);
+  void result_(OpResult::T, Shard);
   template <SagaOp::T Op, typename KeyIDs_, int Lookup = -1, typename T, typename L>
   void mutate(Table<T> *, Shard, ZmRef<Object<T>>, L &&);
   template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
-  void mutate_(ZmRef<Saga>, Table<T> *, Shard, ZmRef<Object<T>>, UN, bool, L &&);
+  void mutate_(Table<T> *, Shard, ZmRef<Object<T>>, UN, bool, L &&);
   template <
     SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
   void findMutate(
@@ -249,6 +261,14 @@ private:
   template <
     SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
   void findMutate_(Table<T> *, Shard, L &&);
+};
+
+struct SagaStepComplete {
+  ZmRef<Saga>	saga;
+  uint64_t	epoch = 0;
+  uint32_t	step = 0;
+
+  void operator ()(bool);
 };
 
 struct SagaNode__ : public ZmPolymorph {
@@ -415,6 +435,19 @@ using SagaDefType = typename S::Type;
 template <typename Sagas>
 using SagaTypes = ZuTypeMap<SagaDefType, Sagas>;
 
+template <typename U>
+struct SagaSteps_ {
+  template <typename I>
+  using Step = decltype(
+    ZuDeclVal<U &>().template operator()<I{}>(
+      nullptr, nullptr, [](bool) { }));
+
+  using T = ZuTypeMap<Step, ZuSeqTL<ZuMkSeq<U::NSteps>>>;
+};
+
+template <typename U>
+using SagaSteps = typename SagaSteps_<U>::T;
+
 template <typename Step>
 struct SagaStepValid : public ZuBool<
   Step::Op >= SagaOp::Insert && Step::Op <= SagaOp::Delete> { };
@@ -426,7 +459,7 @@ struct SagaStepsValid_<ZuTypeList<Steps...>> :
 
 template <typename S>
 struct SagaDefValid : public ZuBool<
-  (S::Steps::N > 0) && SagaStepsValid_<typename S::Steps>{}> { };
+  (S::NSteps > 0) && SagaStepsValid_<SagaSteps<S>>{}> { };
 
 template <typename Sagas> struct SagaDefsValid_;
 template <typename ...S>
@@ -456,7 +489,7 @@ struct MSaga<ZuTypeList<S...>> :
     if (type >= sizeof...(S)) return false;
     return ZuSwitch::dispatch<sizeof...(S)>(type, [step, &row](auto I) {
       using Def = ZuType<I, Sagas>;
-      using Steps = typename Def::Steps;
+      using Steps = SagaSteps<Def>;
       if (step >= Steps::N) return false;
       return ZuSwitch::dispatch<Steps::N>(step, [&row](auto J) {
 	using Step = ZuType<J, Steps>;
@@ -507,7 +540,23 @@ struct MSaga<ZuTypeList<S...>> :
     auto saga = static_cast<M *>(saga_.ptr());
     saga->u.dispatch([context, saga = ZuMv(saga_)](
 	auto, auto &def) mutable {
-	def(context, ZuMv(saga));
+	using Def = ZuDecay<decltype(def)>;
+	auto ptr = saga.ptr();
+	auto step = ptr->step();
+	if (ZuLikely(step < Def::NSteps)) {
+	  SagaStepComplete complete{ZuMv(saga), ptr->epoch(), step};
+	  ZuSwitch::dispatch<Def::NSteps>(step,
+	      [context, ptr, &def, complete = ZuMv(complete)](auto I) mutable {
+	    (void)def.template operator()<I>(
+	      context, ptr, ZuMv(complete));
+	  });
+	  return;
+	}
+	if (ZuLikely(step == Def::NSteps)) {
+	  ptr->done();
+	  return;
+	}
+	ptr->fail(ZeEXCEPT(Fatal, "Zdb", "invalid saga step"));
     });
   }
 
@@ -523,7 +572,7 @@ struct MSaga<ZuTypeList<S...>> :
     if (ZuUnlikely(i < 0)) return 0;
     return ZuSwitch::dispatch<sizeof...(S)>(unsigned(i), [](auto I) {
       using Def = ZuType<I, Sagas>;
-      return unsigned(Def::Steps::N);
+      return unsigned(Def::NSteps);
     });
   }
 
@@ -545,7 +594,7 @@ struct MSaga<ZuTypeList<S...>> :
     return ZuSwitch::dispatch<sizeof...(S)>(unsigned(i),
 	[step, &table, &op](auto I) {
 	  using Def = ZuType<I, Sagas>;
-	  return stepDef_<typename Def::Steps>(step, table, op);
+	  return stepDef_<SagaSteps<Def>>(step, table, op);
 	});
   }
 
@@ -601,18 +650,15 @@ using ZdbSagaID = Zdb_::SagaID;
 using ZdbSagaType = Zdb_::SagaType;
 namespace ZdbSagaOp = Zdb_::SagaOp;
 template <typename TableID_, ZdbSagaOp::T Op_>
-struct ZdbSagaStep {
+struct ZdbSagaStep_ {
   using TableID = TableID_;
   enum { Op = Op_ };
 };
-// Saga step typelist definition, for example:
-// ZdbSagaSteps((order, Insert), (order, Update), (payment, Delete));
-#define ZdbSaga_Step_(Table, Op) \
-  ZdbSagaStep<ZuStringT<ZuPP_Q(Table)>, ZdbSagaOp::Op>
-#define ZdbSaga_Step(Step) \
-  ZuPP_Defer(ZdbSaga_Step_)(ZuPP_Strip(Step))
-#define ZdbSagaSteps(...) \
-  ZuTypeList<ZuPP_Eval_(ZuPP_MapComma(ZdbSaga_Step, __VA_ARGS__))>
+#define ZdbSagaStep(step_, table, op) \
+  template <unsigned Step, typename Complete> \
+  ZuIfT<Step == step_, \
+    ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op>> \
+  operator ()(void *context_, ZdbSaga *saga, Complete &&complete)
 using ZdbSagaSubmitResult = Zdb_::SagaSubmitResult;
 using ZdbSagaSubmitFn = Zdb_::SagaSubmitFn;
 using ZdbSagaHandler = Zdb_::SagaHandler;

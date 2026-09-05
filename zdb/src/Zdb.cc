@@ -227,7 +227,12 @@ void DB::sagaRun(ZmRef<Saga> saga)
   if (ZuUnlikely(!saga || saga->m_epoch != m_sagaEpoch ||
 	m_sagaState == SagaState::Inactive ||
 	(m_sagaState == SagaState::Active && !m_appActive))) return;
-  m_sagaRunFn(saga);
+  saga->m_rec = m_sagaState == SagaState::Rebuilding ?
+    sagaRec(saga, saga->m_step) : nullptr;
+  saga->m_uns = m_sagaState == SagaState::Rebuilding ?
+    m_sagaUNHash.ptr() : nullptr;
+  ++m_sagaPending;
+  m_sagaRunFn(ZuMv(saga));
 }
 
 void DB::sagaDrain(DrainFn fn)
@@ -277,30 +282,28 @@ void DB::sagaDeactivate()
 }
 
 bool DB::sagaPrepare(
-    Saga *saga, uint64_t epoch, AnyTable *table, Shard shard, SagaOp::T op,
+    Saga *saga, AnyTable *table, Shard shard, SagaOp::T op,
     bool effect, UN &un, bool &saved)
 {
-  ZmAssert(invoked());
-  if (epoch != m_sagaEpoch || saga->m_epoch != epoch ||
-      m_sagaState == SagaState::Inactive) return false;
   if (ZuUnlikely(!table || table->db() != this || shard >= nShards() ||
       saga->m_step >= saga->m_locs.length())) {
-    sagaFail(saga, epoch, ZeEXCEPT(Error, "Zdb", "invalid saga mutation"));
+    saga->result_(OpResult::Invalid, shard);
     return false;
   }
-  if (m_sagaState != SagaState::Rebuilding) return true;
-  if (auto rec = sagaRec(saga, saga->m_step)) {
+  if (!saga->m_uns) return true;
+  if (auto rec = saga->m_rec) {
     if (ZuUnlikely(rec->table != table || rec->shard != shard ||
 	rec->op != op)) {
-      sagaActivateFail(ZeEXCEPT(Fatal, "Zdb", "recovered saga target mismatch"));
+      saga->result_(OpResult::Invalid, shard);
       return false;
     }
     un = rec->un;
     saved = true;
     return true;
   }
-  if (effect && sagaReserved(table, shard, table->nextUN(shard))) {
-    sagaResult(saga, epoch, OpResult::NotReady, shard);
+  if (effect && saga->m_uns->find(
+	SagaUNKey{table, shard, table->nextUN(shard)})) {
+    saga->result_(OpResult::NotReady, shard);
     return false;
   }
   return true;
@@ -310,25 +313,13 @@ void DB::sagaResult(
     ZmRef<Saga> saga, uint64_t epoch, OpResult::T result, Shard shard)
 {
   ZmAssert(invoked());
-  if (ZuUnlikely(!saga || epoch != m_sagaEpoch || saga->m_epoch != epoch))
+  if (ZuUnlikely(!saga)) return;
+  if (ZuUnlikely(epoch != m_sagaEpoch || saga->m_epoch != epoch)) {
+    sagaRetire();
     return;
+  }
+  sagaRetire();
   switch (result) {
-    case OpResult::Executed:
-    case OpResult::Skipped:
-      if (ZuUnlikely(saga->m_step >= saga->m_locs.length())) {
-	sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga step"));
-	return;
-      }
-      if (auto rec = sagaRec(saga, saga->m_step)) {
-	if (rec->un != nullUN())
-	  m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
-	m_sagaStepHash->delNode(rec);
-      }
-      saga->m_locs[saga->m_step] = shard;
-      m_sagaBlocked = nullptr;
-      ++saga->m_step;
-      sagaRun(ZuMv(saga));
-      return;
     case OpResult::NotReady: {
       auto head = m_sagaQueue.headPtr();
       if (ZuUnlikely(m_sagaState != SagaState::Rebuilding ||
@@ -352,6 +343,32 @@ void DB::sagaResult(
       sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga mutation"));
       return;
   }
+}
+
+void DB::sagaStepComplete(
+    ZmRef<Saga> saga, uint64_t epoch, uint32_t step, Shard shard)
+{
+  ZmAssert(invoked());
+  if (ZuUnlikely(!saga || epoch != m_sagaEpoch || saga->m_epoch != epoch)) {
+    sagaRetire();
+    return;
+  }
+  if (ZuUnlikely(saga->m_step != step || step >= saga->m_locs.length())) {
+    sagaRetire();
+    sagaFail(ZuMv(saga), epoch,
+	ZeEXCEPT(Fatal, "Zdb", "invalid saga step completion"));
+    return;
+  }
+  if (auto rec = sagaRec(saga, step)) {
+    if (rec->un != nullUN())
+      m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
+    m_sagaStepHash->delNode(rec);
+  }
+  saga->m_locs[step] = shard;
+  m_sagaBlocked = nullptr;
+  ++saga->m_step;
+  sagaRetire();
+  sagaRun(ZuMv(saga));
 }
 
 void DB::sagaDone(ZmRef<Saga> saga, uint64_t epoch)
