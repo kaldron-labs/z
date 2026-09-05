@@ -311,13 +311,12 @@ void Store::recv()
 	consumed = true;
 	if (auto pending = m_sent.headNode())
 	  switch (PQresultStatus(res)) { // ExecStatusType
-	    case PGRES_COMMAND_OK: { // write needs the affected-row count
+	    case PGRES_COMMAND_OK: {
 	      const auto &task = pending->data();
 	      if (task.is<Work::TblQuery>() &&
 		  task.p<Work::TblQuery>().query.is<Work::Write>())
 		rcvd(pending, res);
-	      break;
-	    }
+	    } break;
 	    case PGRES_TUPLES_OK: // query succeeded - 0..N tuples
 	      rcvd(pending, res);
 	      break;

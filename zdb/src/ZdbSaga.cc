@@ -6,38 +6,33 @@
 
 // Z Database sagas
 
+#include <stdlib.h>
+
 #include <zlib/Zdb.hh>
 
 namespace Zdb_ {
 
 ZtEnumImplNS(SagaOp);
 
-void Saga::done()
+[[noreturn]] void sagaRollbackFatal(ZeString type, SagaID id, uint32_t step)
 {
-  ZmRef<Saga> saga = this;
-  auto db = this->db();
-  auto epoch = this->epoch();
-  db->invoke([db, saga = ZuMv(saga), epoch]() mutable {
-    db->sagaRetire();
-    db->sagaDone(ZuMv(saga), epoch);
-  });
+  ZiLOGBT(Fatal, "Zdb", ([type = ZuMv(type), id, step](auto &s) {
+    s << "saga rollback failed: " << type << '/' << id << '/' << step;
+  }));
+  ZiLog::stop();
+  ::exit(EXIT_FAILURE);
 }
 
-void Saga::fail(ZeException e)
-{
-  ZmRef<Saga> saga = this;
-  auto db = this->db();
-  auto epoch = this->epoch();
-  db->invoke([db, saga = ZuMv(saga), epoch, e = ZuMv(e)]() mutable {
-    db->sagaRetire();
-    db->sagaFail(ZuMv(saga), epoch, ZuMv(e));
-  });
-}
-
-void Saga::complete_(Shard shard)
+void Saga::stepRecovered_(Shard shard)
 {
   m_locs[m_step] = shard;
-  SagaStepComplete{this, epoch(), step()}(true);
+  ZmRef<Saga> saga = this;
+  auto db = this->db();
+  auto epoch = this->epoch();
+  auto step = this->step();
+  db->invoke([db, saga = ZuMv(saga), epoch, step, shard]() mutable {
+    db->sagaStepRecovered(ZuMv(saga), epoch, step, shard);
+  });
 }
 
 void Saga::result_(OpResult::T result, Shard shard)
@@ -47,27 +42,6 @@ void Saga::result_(OpResult::T result, Shard shard)
   auto epoch = this->epoch();
   db->invoke([db, saga = ZuMv(saga), epoch, result, shard]() mutable {
     db->sagaResult(ZuMv(saga), epoch, result, shard);
-  });
-}
-
-void SagaStepComplete::operator ()(bool ok)
-{
-  auto saga_ = ZuMv(saga);
-  if (ZuUnlikely(!saga_)) return;
-  auto db = saga_->db();
-  if (ZuUnlikely(!ok)) {
-    db->invoke([db, saga = ZuMv(saga_), epoch = epoch]() mutable {
-      db->sagaRetire();
-      db->sagaFail(ZuMv(saga), epoch,
-	ZeEXCEPT(Error, "Zdb", "saga step failed"));
-    });
-    return;
-  }
-  auto shard = saga_->m_locs[step];
-  db->invoke([
-    db, saga = ZuMv(saga_), epoch = epoch, step = step, shard
-  ]() mutable {
-    db->sagaStepComplete(ZuMv(saga), epoch, step, shard);
   });
 }
 

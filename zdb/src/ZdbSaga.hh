@@ -25,7 +25,6 @@
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuTL.hh>
-#include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
@@ -59,7 +58,7 @@ namespace Zdb_ {
 
 class DB;
 class Saga;
-struct SagaStepComplete;
+template <typename, typename> struct SagaStepComplete;
 struct SagaRec;
 struct SagaUNHash;
 class AnyTable;
@@ -142,21 +141,28 @@ ZfbStruct(SagaTypeStep,
 
 ZfbRoot(SagaTypeStep);
 
-using SagaSubmitResult = ZuUnion<void, ZeException>;
-using SagaSubmitFn = ZmFn<
-  void(SagaSubmitResult), ZmFnHeapID<"Zdb.Saga.SubmitFn">>;
+using SagaRecoveryFn =
+  ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>;
+using SagaRunFn = ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>;
 
-typedef void (*SagaDoneFn)(void *, ZuCSpan, SagaID);
-typedef void (*SagaErrorFn)(void *, ZuCSpan, SagaID, ZeException);
+[[noreturn]] ZdbExtern void sagaRollbackFatal(ZeString, SagaID, uint32_t);
 
-struct SagaHandler {
-  void		*context = nullptr;
-  SagaDoneFn	doneFn = [](void *, ZuCSpan, SagaID) { };
-  SagaErrorFn	errorFn = [](void *, ZuCSpan, SagaID, ZeException) { };
+struct SagaNoop {
+  void operator ()(bool) { }
 };
 
-using SagaStartFn = ZmFn<void(), ZmFnHeapID<"Zdb.Saga.StartFn">>;
-using SagaRunFn = ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>;
+template <typename Fn, typename = void>
+struct SagaCallbackValid : public ZuFalse { };
+template <typename Fn>
+struct SagaCallbackValid<Fn, decltype(
+  ZuDeclVal<ZuDecay<Fn> &>()(bool{}), void())> :
+  public ZuIsConstructible<Fn, ZuDecay<Fn>> { };
+
+template <typename Context_>
+struct SagaBase {
+  Context_	*context = nullptr;
+  Saga		*saga = nullptr;
+};
 
 namespace SagaState {
   using T = int8_t;
@@ -170,8 +176,9 @@ namespace SagaState {
 class Saga_ : public ZmPolymorph {
 friend DB;
 friend Saga;
-friend SagaStepComplete;
-template <typename> friend struct SagaDB;
+template <typename, typename> friend struct SagaStepComplete;
+template <typename, typename> friend struct SagaDB;
+template <typename> friend struct MSaga;
 
 public:
   DB *db() const { return m_db; }
@@ -192,9 +199,11 @@ private:
     m_db = db;
     m_key = ZuMv(key);
     m_locs.length(stepCount, false);
+    memset(m_locs.data(), 0xff, stepCount * sizeof(Shard));
     m_epoch = epoch;
     m_shard = shard;
     m_step = 0;
+    m_fwd = true;
     m_rec = nullptr;
     m_uns = nullptr;
   }
@@ -205,6 +214,7 @@ private:
   uint64_t	m_epoch = 0;
   uint32_t	m_step = 0;
   Shard		m_shard = 0;
+  bool		m_fwd = true;
   SagaRec	*m_rec = nullptr;	// staged recovery step
   SagaUNHash	*m_uns = nullptr;	// staged serial-replay reservations
 };
@@ -215,6 +225,25 @@ struct SagaFind {
   L fn;
 
   template <typename O> void operator ()(O row) { fn(row); }
+};
+
+template <SagaOp::T Op, typename Complete, typename L>
+struct SagaCall {
+  Complete complete;
+  L fn;
+
+  void operator ()(decltype(nullptr)) {
+    complete(Op == SagaOp::Delete);
+  }
+
+  template <typename O>
+  void operator ()(O row) {
+    if (ZuUnlikely(!row)) {
+      complete(Op == SagaOp::Delete);
+      return;
+    }
+    fn(row, ZuMv(complete));
+  }
 };
 
 class Saga : public Saga_ {
@@ -228,27 +257,27 @@ public:
   using Saga_::step;
   using Saga_::type;
 
-  void fail(ZeException);
-
-  template <typename T, typename L>
-  void insert(Table<T> *, ZmRef<Row<T>>, L &&);
-  template <typename KeyIDs_ = ZuSeq<>, typename T, typename L>
-  void update(Table<T> *, ZmRef<Row<T>>, L &&);
+  template <typename T, typename Complete, typename L>
+  void insert(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
+  template <typename KeyIDs_ = ZuSeq<>, typename T, typename Complete, typename L>
+  void update(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
   template <
-    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename T, typename L>
-  void findUpd(Table<T> *, Shard, typename Table<T>::template Key<KeyID>, L &&);
-  template <typename T, typename L>
-  void del(Table<T> *, ZmRef<Row<T>>, L &&);
-  template <unsigned KeyID, typename T, typename L>
+    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename T,
+    typename Complete, typename L>
+  void findUpd(Table<T> *, Shard,
+    typename Table<T>::template Key<KeyID>, Complete &&, L &&);
+  template <typename T, typename Complete, typename L>
+  void del(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
+  template <unsigned KeyID, typename T, typename Complete, typename L>
   void findDel(
-    Table<T> *, Shard, const typename Table<T>::template Key<KeyID> &, L &&);
+    Table<T> *, Shard, const typename Table<T>::template Key<KeyID> &,
+    Complete &&, L &&);
 
 protected:
   Saga() = default;
-  void done();
 
 private:
-  void complete_(Shard);
+  void stepRecovered_(Shard);
   void result_(OpResult::T, Shard);
   template <SagaOp::T Op, typename KeyIDs_, int Lookup = -1, typename T, typename L>
   void mutate(Table<T> *, Shard, ZmRef<Row<T>>, L &&);
@@ -263,12 +292,25 @@ private:
   void findMutate_(Table<T> *, Shard, L &&);
 };
 
+template <typename M, typename Complete>
 struct SagaStepComplete {
-  ZmRef<Saga>	saga;
+  ZmRef<M>	saga;
   uint64_t	epoch = 0;
   uint32_t	step = 0;
+  bool		fwd = true;
+  Complete	complete;
 
   void operator ()(bool);
+
+private:
+  template <typename> friend struct MSaga;
+
+  void finish();
+  static void run_(DB *, ZmRef<M>, Complete);
+  static void delStep_(DB *, ZmRef<M>, Complete, unsigned, bool);
+  static void finish_(DB *, ZmRef<M>, Complete, bool);
+  static void cleanup_(DB *, ZmRef<M>, Complete, unsigned);
+  static void terminal_(DB *, ZmRef<M>, Complete, bool);
 };
 
 struct SagaNode__ : public ZmPolymorph {
@@ -439,8 +481,7 @@ template <typename U>
 struct SagaSteps_ {
   template <typename I>
   using Step = decltype(
-    ZuDeclVal<U &>().template operator()<I{}>(
-      nullptr, nullptr, [](bool) { }));
+    ZuDeclVal<U &>().template operator()<I{}>(SagaNoop{}));
 
   using T = ZuTypeMap<Step, ZuSeqTL<ZuMkSeq<U::NSteps>>>;
 };
@@ -465,6 +506,11 @@ template <typename Sagas> struct SagaDefsValid_;
 template <typename ...S>
 struct SagaDefsValid_<ZuTypeList<S...>> :
   public ZuBool<(SagaDefValid<S>{} && ...)> { };
+
+template <typename Context, typename Sagas> struct SagaBasesValid_;
+template <typename Context, typename ...S>
+struct SagaBasesValid_<Context, ZuTypeList<S...>> :
+  public ZuBool<(ZuIsBase<S, SagaBase<Context>>{} && ...)> { };
 
 template <typename ...S>
 struct MSaga<ZuTypeList<S...>> :
@@ -516,7 +562,8 @@ struct MSaga<ZuTypeList<S...>> :
 	  using Def = ZuType<I, Sagas>;
 	  auto fbo = ZfbStruct::verify<Def>(data);
 	  if (ZuUnlikely(!fbo)) return false;
-	  new (saga->u.template new_<Def>()) Def{ZfbStruct::ctor<Def>(fbo)};
+	  ZfbStruct::new_<Def>(saga->u.template new_<Def>(), fbo,
+	    typename Def::Base{});
 	  return true;
 	});
     if (ZuUnlikely(!loaded))
@@ -536,29 +583,65 @@ struct MSaga<ZuTypeList<S...>> :
     });
   }
 
-  static void run(void *context, ZmRef<Saga> saga_) {
-    auto saga = static_cast<M *>(saga_.ptr());
-    saga->u.dispatch([context, saga = ZuMv(saga_)](
+  template <typename Context, typename Complete>
+  static void run(Context *context, ZmRef<M> saga, Complete &&complete) {
+    saga->u.dispatch([context, saga = ZuMv(saga),
+	complete = ZuDecay<Complete>{ZuFwd<Complete>(complete)}](
 	auto, auto &def) mutable {
-	using Def = ZuDecay<decltype(def)>;
+	auto ptr = saga.ptr();
+	if (!def.saga) {
+	  def.context = context;
+	  def.saga = ptr;
+	} else {
+	  ZmAssert(def.context == context && def.saga == ptr);
+	}
+	run_(def, ZuMv(saga), ZuMv(complete));
+    });
+  }
+
+  template <typename Complete>
+  static void run(ZmRef<M> saga, Complete &&complete) {
+    saga->u.dispatch([saga = ZuMv(saga),
+	complete = ZuDecay<Complete>{ZuFwd<Complete>(complete)}](
+	auto, auto &def) mutable {
+	ZmAssert(def.saga == saga.ptr());
+	run_(def, ZuMv(saga), ZuMv(complete));
+    });
+  }
+
+private:
+  template <typename Def, typename Complete>
+  static void run_(Def &def, ZmRef<M> saga, Complete &&complete) {
 	auto ptr = saga.ptr();
 	auto step = ptr->step();
 	if (ZuLikely(step < Def::NSteps)) {
-	  SagaStepComplete complete{ZuMv(saga), ptr->epoch(), step};
-	  ZuSwitch::dispatch<Def::NSteps>(step,
-	      [context, ptr, &def, complete = ZuMv(complete)](auto I) mutable {
-	    (void)def.template operator()<I>(
-	      context, ptr, ZuMv(complete));
-	  });
+	  bool fwd = ptr->m_fwd;
+	  SagaStepComplete<M, ZuDecay<Complete>> stepComplete{
+	    ZuMv(saga), ptr->epoch(), step, fwd, ZuFwd<Complete>(complete)};
+	  if (fwd) {
+	    ZuSwitch::dispatch<Def::NSteps>(step,
+		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
+	      (void)def.template operator()<I>(ZuMv(complete));
+	    });
+	  } else if constexpr (Def::NSteps > 1) {
+	    ZuSwitch::dispatch<Def::NSteps - 1>(step,
+		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
+	      (void)def.template operator()<I, false>(ZuMv(complete));
+	    });
+	  } else
+	    stepComplete(false);
 	  return;
 	}
 	if (ZuLikely(step == Def::NSteps)) {
-	  ptr->done();
+	  SagaStepComplete<M, ZuDecay<Complete>>{
+	    ZuMv(saga), ptr->epoch(), step, true, ZuFwd<Complete>(complete)
+	  }.finish();
 	  return;
 	}
-	ptr->fail(ZeEXCEPT(Fatal, "Zdb", "invalid saga step"));
-    });
+	ptr->result_(OpResult::Invalid, ptr->shard());
   }
+
+public:
 
   static ZuCSpan type(const M *saga) {
     return saga->u.cdispatch([](auto, const auto &def) {
@@ -655,14 +738,13 @@ struct ZdbSagaStep_ {
   enum { Op = Op_ };
 };
 #define ZdbSagaStep(step_, table, op) \
-  template <unsigned Step, typename Complete> \
+  template <unsigned Step, bool Fwd = true, typename Complete> \
   ZuIfT<Step == step_, \
     ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op>> \
-  operator ()(void *context_, ZdbSaga *saga, Complete &&complete)
-using ZdbSagaSubmitResult = Zdb_::SagaSubmitResult;
-using ZdbSagaSubmitFn = Zdb_::SagaSubmitFn;
-using ZdbSagaHandler = Zdb_::SagaHandler;
+  operator ()(Complete &&complete)
 using ZdbSaga = Zdb_::Saga;
+template <typename Context>
+using ZdbSagaBase = Zdb_::SagaBase<Context>;
 template <typename Sagas>
 using ZdbMSaga = Zdb_::MSaga<Sagas>;
 

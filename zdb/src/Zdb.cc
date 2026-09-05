@@ -197,19 +197,17 @@ ZmRef<AnyTable> DB::initTable_(
 }
 
 void DB::sagas_(
-    SagaHandler handler, SagaStartFn startFn, SagaStartFn scanFn,
-    SagaRunFn runFn)
+    SagaRecoveryFn catalogFn, SagaRecoveryFn scanFn, SagaRunFn runFn)
 {
   if (!ZmEngine<DB>::lock(ZmEngineState::Stopped,
 	[
-	  this, handler = ZuMv(handler), startFn = ZuMv(startFn),
+	  this, catalogFn = ZuMv(catalogFn),
 	  scanFn = ZuMv(scanFn), runFn = ZuMv(runFn)
 	]() mutable {
-    if (state() != HostState::Initialized || m_sagaStartFn) return false;
-    m_sagaStartFn = ZuMv(startFn);
+    if (state() != HostState::Initialized || m_sagaCatalogFn) return false;
+    m_sagaCatalogFn = ZuMv(catalogFn);
     m_sagaScanFn = ZuMv(scanFn);
     m_sagaRunFn = ZuMv(runFn);
-    m_sagaHandler = ZuMv(handler);
     m_sagaTable = new Table<SagaData>{this, &m_sagaCf, true};
     m_sagaStepTable = new Table<SagaStep>{this, &m_sagaStepCf, true};
     m_tables.add(m_sagaTable);
@@ -272,7 +270,7 @@ void DB::sagaClean()
 void DB::sagaDeactivate()
 {
   ZmAssert(invoked());
-  if (!m_sagaStartFn) return;
+  if (!m_sagaCatalogFn) return;
   ++m_sagaEpoch;
   m_sagaState = SagaState::Inactive;
   sagaDrain([this]() {
@@ -345,7 +343,7 @@ void DB::sagaResult(
   }
 }
 
-void DB::sagaStepComplete(
+void DB::sagaStepRecovered(
     ZmRef<Saga> saga, uint64_t epoch, uint32_t step, Shard shard)
 {
   ZmAssert(invoked());
@@ -371,102 +369,6 @@ void DB::sagaStepComplete(
   sagaRun(ZuMv(saga));
 }
 
-void DB::sagaDone(ZmRef<Saga> saga, uint64_t epoch)
-{
-  ZmAssert(invoked());
-  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
-	saga->m_epoch != epoch)) return;
-  if (ZuUnlikely(saga->m_step != saga->m_locs.length())) {
-    sagaFail(ZuMv(saga), epoch,
-	ZeEXCEPT(Error, "Zdb", "saga done before final step"));
-    return;
-  }
-  auto shard = saga->m_shard;
-  ++m_sagaPending;
-  m_sagaTable->run(shard, [
-    this, saga = ZuMv(saga), epoch, shard
-  ]() mutable {
-    const auto &key = saga->m_key;
-    m_sagaTable->findDel<0>(shard,
-	ZuFwdTuple(key.template p<0>(), key.template p<1>()),
-	[this, saga = ZuMv(saga), epoch](Row<SagaData> *row) mutable {
-	  bool ok = !row;
-	  if (row) ok = row->commit();
-	  run([this, saga = ZuMv(saga), epoch, ok]() mutable {
-	    sagaRetire();
-	    if (ZuUnlikely(!ok)) {
-	      sagaFail(ZuMv(saga), epoch,
-		ZeEXCEPT(Fatal, "Zdb", "failed to delete saga intent"));
-	      return;
-	    }
-	    sagaCleanup(ZuMv(saga), epoch, 0);
-	  });
-	});
-  });
-}
-
-void DB::sagaCleanup(ZmRef<Saga> saga, uint64_t epoch, unsigned step)
-{
-  ZmAssert(invoked());
-  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
-	saga->m_epoch != epoch)) return;
-  if (step >= saga->m_locs.length()) {
-    sagaComplete(ZuMv(saga), epoch);
-    return;
-  }
-  auto shard = saga->m_locs[step];
-  ++m_sagaPending;
-  m_sagaStepTable->run(shard, [
-    this, saga = ZuMv(saga), epoch, step, shard
-  ]() mutable {
-    const auto &key = saga->m_key;
-    m_sagaStepTable->findDel<0>(shard,
-	ZuFwdTuple(key.template p<0>(), key.template p<1>(), uint32_t(step)),
-	[this, saga = ZuMv(saga), epoch, step](
-	    Row<SagaStep> *row) mutable {
-	  bool ok = !row;
-	  if (row) ok = row->commit();
-	  run([this, saga = ZuMv(saga), epoch, step, ok]() mutable {
-	    sagaRetire();
-	    if (ZuUnlikely(!ok)) {
-	      sagaFail(ZuMv(saga), epoch,
-		ZeEXCEPT(Fatal, "Zdb", "failed to delete saga step intent"));
-	      return;
-	    }
-	    sagaCleanup(ZuMv(saga), epoch, step + 1);
-	  });
-	});
-  });
-}
-
-void DB::sagaComplete(ZmRef<Saga> saga, uint64_t epoch)
-{
-  ZmAssert(invoked());
-  if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
-	saga->m_epoch != epoch)) return;
-  m_sagaHandler.doneFn(
-    m_sagaHandler.context, saga->type(), saga->id());
-  bool rebuilding = m_sagaState == SagaState::Rebuilding;
-  if (rebuilding) {
-    ZmAssert(m_sagaHash);
-    if (m_sagaBlocked == saga) m_sagaBlocked = nullptr;
-    auto listNode = m_sagaQueue.headPtr();
-    ZmAssert(listNode &&
-	static_cast<SagaNode__ *>(listNode)->saga == saga);
-    auto hashNode = static_cast<SagaHash::Node *>(listNode);
-    m_sagaQueue.delNode(listNode);
-    m_sagaHash->delNode(hashNode);
-  } else {
-    ZmAssert(!m_sagaHash);
-    ZmAssert(m_sagaLive);
-    --m_sagaLive;
-  }
-  if (rebuilding)
-    sagaReplay();
-  else if (Engine::stopping() && !m_sagaLive)
-    run([this]() { stop_0(); });
-}
-
 void DB::sagaFail(ZmRef<Saga> saga, uint64_t epoch, ZeException e)
 {
   ZmAssert(invoked());
@@ -476,8 +378,7 @@ void DB::sagaFail(ZmRef<Saga> saga, uint64_t epoch, ZeException e)
     sagaActivateFail(ZuMv(e));
     return;
   }
-  m_sagaHandler.errorFn(
-    m_sagaHandler.context, saga->type(), saga->id(), ZuMv(e));
+  ZiLogEvent(ZuMv(e));
   fail();
 }
 
@@ -515,10 +416,9 @@ void DB::final()
     m_sagaQueue.clean();
     m_sagaScan = nullptr;
     m_sagaHash = nullptr;
-    m_sagaStartFn = {};
+    m_sagaCatalogFn = {};
     m_sagaScanFn = {};
     m_sagaRunFn = {};
-    m_sagaHandler = {};
     m_sagaState = SagaState::Inactive;
     m_sagaEpoch = 0;
     m_sagaLive = 0;
@@ -609,7 +509,7 @@ void DB::start_1()
       db->startFailed();
       return;
     }
-    db->m_sagaStartFn ? db->m_sagaStartFn() : db->start_2();
+    db->m_sagaCatalogFn ? db->m_sagaCatalogFn() : db->start_2();
   });
 }
 
@@ -967,7 +867,7 @@ void DB::holdElection()
   }
 
   if (won) {
-    if (!appActive && m_sagaStartFn) {
+    if (!appActive && m_sagaCatalogFn) {
       state(Active);
       setNext();
       sagaActivate(oldMaster);
@@ -1067,7 +967,7 @@ void DB::reactivate(Host *host)
   if (ZmRef<Cxn> cxn = host->cxn()) cxn->hbSend();
 
   bool appActive = m_appActive;
-  if (!appActive && m_sagaStartFn) {
+  if (!appActive && m_sagaCatalogFn) {
     sagaActivate(nullptr);
     return;
   }
