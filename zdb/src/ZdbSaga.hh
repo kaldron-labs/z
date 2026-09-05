@@ -66,7 +66,7 @@ class AnyTable;
 class Host;
 class StoreTbl;
 template <typename T> class Table;
-template <typename T> struct Object;
+template <typename T> struct Row;
 
 using SagaID = uint128_t;
 
@@ -214,7 +214,7 @@ struct SagaFind {
   Key key;
   L fn;
 
-  template <typename O> void operator ()(O object) { fn(object); }
+  template <typename O> void operator ()(O row) { fn(row); }
 };
 
 class Saga : public Saga_ {
@@ -231,14 +231,14 @@ public:
   void fail(ZeException);
 
   template <typename T, typename L>
-  void insert(Table<T> *, ZmRef<Object<T>>, L &&);
+  void insert(Table<T> *, ZmRef<Row<T>>, L &&);
   template <typename KeyIDs_ = ZuSeq<>, typename T, typename L>
-  void update(Table<T> *, ZmRef<Object<T>>, L &&);
+  void update(Table<T> *, ZmRef<Row<T>>, L &&);
   template <
     unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename T, typename L>
   void findUpd(Table<T> *, Shard, typename Table<T>::template Key<KeyID>, L &&);
   template <typename T, typename L>
-  void del(Table<T> *, ZmRef<Object<T>>, L &&);
+  void del(Table<T> *, ZmRef<Row<T>>, L &&);
   template <unsigned KeyID, typename T, typename L>
   void findDel(
     Table<T> *, Shard, const typename Table<T>::template Key<KeyID> &, L &&);
@@ -251,9 +251,9 @@ private:
   void complete_(Shard);
   void result_(OpResult::T, Shard);
   template <SagaOp::T Op, typename KeyIDs_, int Lookup = -1, typename T, typename L>
-  void mutate(Table<T> *, Shard, ZmRef<Object<T>>, L &&);
+  void mutate(Table<T> *, Shard, ZmRef<Row<T>>, L &&);
   template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
-  void mutate_(Table<T> *, Shard, ZmRef<Object<T>>, UN, bool, L &&);
+  void mutate_(Table<T> *, Shard, ZmRef<Row<T>>, UN, bool, L &&);
   template <
     SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
   void findMutate(

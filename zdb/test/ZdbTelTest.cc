@@ -303,23 +303,23 @@ void run()
     orders = orders.ptr(), payments = payments.ptr(),
     writes = &writes, commitsDone = &commitsDone, callbackDone = &callbackDone
   ]() {
-    ZdbObjRef<Order> order = new ZdbObject<Order>{orders, 0};
-    orders->insert(order, [](ZdbObject<Order> *object) {
-      if (!object) return;
-      new (object->ptr()) Order{
+    ZdbRowRef<Order> order = new ZdbRow<Order>{orders, 0};
+    orders->insert(order, [](ZdbRow<Order> *row) {
+      if (!row) return;
+      new (row->ptr()) Order{
 	"IBM", 1, "FIX0", "order1", 1, Side::Buy, {100}, {1}};
-      object->commit();
+      row->commit();
     });
     orders->run(0, [writes, callbackDone]() {
       writes->push("callback");
       callbackDone->post();
     });
-    ZdbObjRef<Order> payment = new ZdbObject<Order>{payments, 0};
-    payments->insert(payment, [](ZdbObject<Order> *object) {
-      if (!object) return;
-      new (object->ptr()) Order{
+    ZdbRowRef<Order> payment = new ZdbRow<Order>{payments, 0};
+    payments->insert(payment, [](ZdbRow<Order> *row) {
+      if (!row) return;
+      new (row->ptr()) Order{
 	"GBP", 1, "FIX0", "payment1", 1, Side::Buy, {100}, {1}};
-      object->commit();
+      row->commit();
     });
     commitsDone->post();
   });
@@ -346,193 +346,193 @@ void run()
     callbacks = &exactUNCallbacks, done = &exactUNDone,
     missing = &exactUNMissing
   ]() {
-    ZdbObjRef<Order> gap = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> gap = new ZdbRow<Order>{orders, 0};
     orders->insert(2, gap, [&gap, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (gap->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::NotReady && !object && next == 1;
+      *ok &= result == ZdbOpResult::NotReady && !row && next == 1;
     });
 
-    ZdbObjRef<Order> null = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> null = new ZdbRow<Order>{orders, 0};
     orders->insert(ZdbNullUN(), null, [&null, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (null->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Invalid && !object && next == 1;
+      *ok &= result == ZdbOpResult::Invalid && !row && next == 1;
     });
 
     orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(1)),
-	[orders, ok, callbacks](ZdbObjRef<Order> object) {
-      *ok &= bool(object);
-      orders->insert(1, object, [ok, callbacks](
-	  ZdbOpResult::T result, ZdbObject<Order> *object_, ZdbUN next) {
+	[orders, ok, callbacks](ZdbRowRef<Order> row) {
+      *ok &= bool(row);
+      orders->insert(1, row, [ok, callbacks](
+	  ZdbOpResult::T result, ZdbRow<Order> *row_, ZdbUN next) {
 	++*callbacks;
-	*ok &= result == ZdbOpResult::Invalid && !object_ && next == 1;
+	*ok &= result == ZdbOpResult::Invalid && !row_ && next == 1;
       });
-      orders->insert(ZuMv(object), [ok, callbacks](
-	  ZdbObject<Order> *object_) {
+      orders->insert(ZuMv(row), [ok, callbacks](
+	  ZdbRow<Order> *row_) {
 	++*callbacks;
-	*ok &= !object_;
+	*ok &= !row_;
       });
     });
 
-    ZdbObjRef<Order> invalidUpdate = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> invalidUpdate = new ZdbRow<Order>{orders, 0};
     orders->update(invalidUpdate, 1, [&invalidUpdate, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (invalidUpdate->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Invalid && !object && next == 1;
+      *ok &= result == ZdbOpResult::Invalid && !row && next == 1;
     });
-    *ok &= invalidUpdate->state() == ZdbObjState::Undefined;
+    *ok &= invalidUpdate->state() == ZdbRowState::Undefined;
 
-    ZdbObjRef<Order> invalidDel = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> invalidDel = new ZdbRow<Order>{orders, 0};
     orders->del(invalidDel, 1, [&invalidDel, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (invalidDel->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Invalid && !object && next == 1;
+      *ok &= result == ZdbOpResult::Invalid && !row && next == 1;
     });
-    *ok &= invalidDel->state() == ZdbObjState::Undefined;
+    *ok &= invalidDel->state() == ZdbRowState::Undefined;
 
-    ZdbObjRef<Order> insert = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> insert = new ZdbRow<Order>{orders, 0};
     orders->insert(1, ZuMv(insert), [orders, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 1;
+      *ok &= result == ZdbOpResult::Executed && row && next == 1;
       *ok &= orders->invoked(0);
-      if (!object) return;
-      new (object->ptr()) Order{
+      if (!row) return;
+      new (row->ptr()) Order{
 	"MSFT", 2, "FIX0", "order2", 2, Side::Buy, {101}, {2}};
-      *ok &= bool(object->commit());
+      *ok &= bool(row->commit());
     });
 
-    ZdbObjRef<Order> replay = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> replay = new ZdbRow<Order>{orders, 0};
     orders->insert(1, replay, [&replay, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (replay->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Skipped && !object && next == 2;
+      *ok &= result == ZdbOpResult::Skipped && !row && next == 2;
     });
 
     orders->findUpd<0>(0, ZuFwdTuple("MISSING", UINT64_C(99)), 2,
 	[ok, callbacks, missing](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Skipped && !object && next == 7;
+      *ok &= result == ZdbOpResult::Skipped && !row && next == 7;
       missing->post();
     });
 
     orders->findUpd<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 3,
 	[ok, callbacks](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::NotReady && !object && next == 2;
+      *ok &= result == ZdbOpResult::NotReady && !row && next == 2;
     });
 
     orders->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple("IBM", UINT64_C(1)), 2,
 	[ok, callbacks](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 2;
-      if (!object) return;
-      object->data().seqNo = 2;
-      *ok &= bool(object->commit());
+      *ok &= result == ZdbOpResult::Executed && row && next == 2;
+      if (!row) return;
+      row->data().seqNo = 2;
+      *ok &= bool(row->commit());
     });
 
     orders->findUpd<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 2,
 	[ok, callbacks](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Skipped && !object && next == 3;
+      *ok &= result == ZdbOpResult::Skipped && !row && next == 3;
     });
 
     orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 3,
 	[ok, callbacks](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 3;
-      if (object) *ok &= bool(object->commit());
+      *ok &= result == ZdbOpResult::Executed && row && next == 3;
+      if (row) *ok &= bool(row->commit());
     });
 
     orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 3,
 	[ok, callbacks](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Skipped && !object && next == 4;
+      *ok &= result == ZdbOpResult::Skipped && !row && next == 4;
     });
     orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 5,
 	[ok, callbacks](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::NotReady && !object && next == 4;
+      *ok &= result == ZdbOpResult::NotReady && !row && next == 4;
     });
 
-    ZdbObjRef<Order> nested = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> nested = new ZdbRow<Order>{orders, 0};
     orders->insert(4, nested, [orders, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 4;
-      ZdbObjRef<Order> intervening = new ZdbObject<Order>{orders, 0};
+      *ok &= result == ZdbOpResult::Executed && row && next == 4;
+      ZdbRowRef<Order> intervening = new ZdbRow<Order>{orders, 0};
       orders->insert(ZuMv(intervening), [ok, callbacks](
-	  ZdbObject<Order> *object_) {
+	  ZdbRow<Order> *row_) {
 	++*callbacks;
-	*ok &= bool(object_);
-	if (!object_) return;
-	new (object_->ptr()) Order{
+	*ok &= bool(row_);
+	if (!row_) return;
+	new (row_->ptr()) Order{
 	  "ORCL", 3, "FIX0", "order3", 3, Side::Buy, {102}, {3}};
-	*ok &= bool(object_->commit());
+	*ok &= bool(row_->commit());
       });
-      if (!object) return;
-      new (object->ptr()) Order{
+      if (!row) return;
+      new (row->ptr()) Order{
 	"META", 4, "FIX0", "order4", 4, Side::Buy, {103}, {4}};
-      *ok &= !object->commit();
+      *ok &= !row->commit();
     });
-    *ok &= nested->state() == ZdbObjState::Undefined;
+    *ok &= nested->state() == ZdbRowState::Undefined;
 
-    ZdbObjRef<Order> nestedReplay = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> nestedReplay = new ZdbRow<Order>{orders, 0};
     orders->insert(4, nestedReplay, [&nestedReplay, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (nestedReplay->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Skipped && !object && next == 5;
+      *ok &= result == ZdbOpResult::Skipped && !row && next == 5;
     });
 
-    ZdbObjRef<Order> aborted = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> aborted = new ZdbRow<Order>{orders, 0};
     orders->insert(5, aborted, [&aborted, ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       new (aborted->ptr()) Order{};
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 5;
+      *ok &= result == ZdbOpResult::Executed && row && next == 5;
     });
-    *ok &= aborted->state() == ZdbObjState::Undefined &&
+    *ok &= aborted->state() == ZdbRowState::Undefined &&
 	orders->nextUN(0) == 5;
 
-    ZdbObjRef<Order> parked = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> parked = new ZdbRow<Order>{orders, 0};
     orders->insert(6, parked, [ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::NotReady && !object && next == 5;
+      *ok &= result == ZdbOpResult::NotReady && !row && next == 5;
     });
 
-    ZdbObjRef<Order> predecessor = new ZdbObject<Order>{orders, 0};
+    ZdbRowRef<Order> predecessor = new ZdbRow<Order>{orders, 0};
     orders->insert(5, ZuMv(predecessor), [ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 5;
-      if (!object) return;
-      new (object->ptr()) Order{
+      *ok &= result == ZdbOpResult::Executed && row && next == 5;
+      if (!row) return;
+      new (row->ptr()) Order{
 	"AMD", 5, "FIX0", "order5", 5, Side::Buy, {104}, {5}};
-      *ok &= bool(object->commit());
+      *ok &= bool(row->commit());
     });
     orders->insert(6, ZuMv(parked), [ok, callbacks](
-	ZdbOpResult::T result, ZdbObject<Order> *object, ZdbUN next) {
+	ZdbOpResult::T result, ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Executed && object && next == 6;
-      if (!object) return;
-      new (object->ptr()) Order{
+      *ok &= result == ZdbOpResult::Executed && row && next == 6;
+      if (!row) return;
+      new (row->ptr()) Order{
 	"NVDA", 6, "FIX0", "order6", 6, Side::Buy, {105}, {6}};
-      *ok &= bool(object->commit());
+      *ok &= bool(row->commit());
     });
     *ok &= orders->nextUN(0) == 7;
     done->post();
@@ -547,17 +547,17 @@ void run()
   ]() {
     orders->findUpd<0>(0, ZuFwdTuple("MISSING", UINT64_C(100)), 7,
 	[orders, ok, callbacks, stable](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Missing && !object && next == 7;
+      *ok &= result == ZdbOpResult::Missing && !row && next == 7;
       *ok &= orders->invoked(0);
       stable->post();
     });
     orders->findDel<0>(0, ZuFwdTuple("MISSING", UINT64_C(101)), 7,
 	[orders, ok, callbacks, stable](ZdbOpResult::T result,
-	  ZdbObject<Order> *object, ZdbUN next) {
+	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
-      *ok &= result == ZdbOpResult::Missing && !object && next == 7;
+      *ok &= result == ZdbOpResult::Missing && !row && next == 7;
       *ok &= orders->invoked(0);
       stable->post();
     });
@@ -582,7 +582,7 @@ void run()
     asyncOrder->push("before");
     orders->find<0>(0, ZuFwdTuple("MISSING", UINT64_C(99)), [
       asyncOrder, lookupDone
-    ](ZdbObjRef<Order>) {
+    ](ZdbRowRef<Order>) {
       asyncOrder->push("lookup");
       lookupDone->post();
     });

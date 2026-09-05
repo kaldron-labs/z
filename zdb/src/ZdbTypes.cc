@@ -8,7 +8,7 @@
 
 namespace Zdb_ {
 
-ZtEnumImplNS(ObjState);
+ZtEnumImplNS(RowState);
 ZtEnumImplNS(OpResult);
 
 } // namespace Zdb_

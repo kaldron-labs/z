@@ -21,7 +21,7 @@ namespace Zdf {
 
 template <typename> class Series;
 
-using BlkData = ZdbObject<DB::BlkData>;
+using BlkData = ZdbRow<DB::BlkData>;
 
 // all of US equities trades since 2003 is ~350B rows
 // 47bits handles 140T rows for a single series, more than enough

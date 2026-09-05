@@ -101,15 +101,15 @@ struct BalanceTransfer {
     auto shard = transferShard(transferID);
     context->transfers->run(shard,
       [this, context, saga, complete = ZuMv(complete), shard]() mutable {
-	ZdbObjRef<Transfer> object =
-	  new ZdbObject<Transfer>{context->transfers, shard};
-	saga->insert(context->transfers, ZuMv(object),
+	ZdbRowRef<Transfer> row =
+	  new ZdbRow<Transfer>{context->transfers, shard};
+	saga->insert(context->transfers, ZuMv(row),
 	  [this, complete = ZuMv(complete)](
-	      ZdbObject<Transfer> *object) mutable {
-	    if (!object) { complete(false); return; }
-	    new (object->ptr()) Transfer{
+	      ZdbRow<Transfer> *row) mutable {
+	    if (!row) { complete(false); return; }
+	    new (row->ptr()) Transfer{
 	      transferID, fromID, toID, amount, TransferStatus::Pending};
-	    object->commit();
+	    row->commit();
 	    complete(true);
 	  });
       });
@@ -123,10 +123,10 @@ struct BalanceTransfer {
       [this, context, saga, complete = ZuMv(complete), shard]() mutable {
 	saga->findUpd<0>(context->accounts, shard, ZuFwdTuple(fromID),
 	  [this, complete = ZuMv(complete)](
-	      ZdbObject<Account> *object) mutable {
-	    if (!object) { complete(false); return; }
-	    object->data().balance -= amount;
-	    object->commit();
+	      ZdbRow<Account> *row) mutable {
+	    if (!row) { complete(false); return; }
+	    row->data().balance -= amount;
+	    row->commit();
 	    complete(true);
 	  });
       });
@@ -140,10 +140,10 @@ struct BalanceTransfer {
       [this, context, saga, complete = ZuMv(complete), shard]() mutable {
 	saga->findUpd<0>(context->accounts, shard, ZuFwdTuple(toID),
 	  [this, complete = ZuMv(complete)](
-	      ZdbObject<Account> *object) mutable {
-	    if (!object) { complete(false); return; }
-	    object->data().balance += amount;
-	    object->commit();
+	      ZdbRow<Account> *row) mutable {
+	    if (!row) { complete(false); return; }
+	    row->data().balance += amount;
+	    row->commit();
 	    complete(true);
 	  });
       });
@@ -158,10 +158,10 @@ struct BalanceTransfer {
 	saga->findUpd<0>(
 	  context->transfers, shard, ZuFwdTuple(transferID),
 	  [complete = ZuMv(complete)](
-	      ZdbObject<Transfer> *object) mutable {
-	    if (!object) { complete(false); return; }
-	    object->data().status = TransferStatus::Complete;
-	    object->commit();
+	      ZdbRow<Transfer> *row) mutable {
+	    if (!row) { complete(false); return; }
+	    row->data().status = TransferStatus::Complete;
+	    row->commit();
 	    complete(true);
 	  });
       });
@@ -218,12 +218,12 @@ static bool accountInsert(
       table, shard, id, balance](auto wake) mutable {
     table->run(shard, [
 	table, shard, id, balance, wake = ZuMv(wake)]() mutable {
-      ZdbObjRef<Account> object = new ZdbObject<Account>{table, shard};
-      table->insert(object, [
-	id, balance, wake = ZuMv(wake)](ZdbObject<Account> *object) mutable {
-	if (!object) { wake(false); return; }
-	new (object->ptr()) Account{id, balance};
-	wake(bool(object->commit()));
+      ZdbRowRef<Account> row = new ZdbRow<Account>{table, shard};
+      table->insert(row, [
+	id, balance, wake = ZuMv(wake)](ZdbRow<Account> *row) mutable {
+	if (!row) { wake(false); return; }
+	new (row->ptr()) Account{id, balance};
+	wake(bool(row->commit()));
       });
     });
   });
@@ -237,9 +237,9 @@ static bool accountBalance(
     table->run(shard, [
 	table, shard, id, &balance, wake = ZuMv(wake)]() mutable {
       table->find<0>(shard, ZuFwdTuple(id), [
-	  &balance, wake = ZuMv(wake)](ZdbObjRef<Account> object) mutable {
-	if (!object) { wake(false); return; }
-	balance = object->data().balance;
+	  &balance, wake = ZuMv(wake)](ZdbRowRef<Account> row) mutable {
+	if (!row) { wake(false); return; }
+	balance = row->data().balance;
 	wake(true);
       });
     });
@@ -253,8 +253,8 @@ static bool transferComplete(
     table->run(shard, [
 	table, shard, id, wake = ZuMv(wake)]() mutable {
       table->find<0>(shard, ZuFwdTuple(id), [
-	  wake = ZuMv(wake)](ZdbObjRef<Transfer> object) mutable {
-	wake(object && object->data().status == TransferStatus::Complete);
+	  wake = ZuMv(wake)](ZdbRowRef<Transfer> row) mutable {
+	wake(row && row->data().status == TransferStatus::Complete);
       });
     });
   });

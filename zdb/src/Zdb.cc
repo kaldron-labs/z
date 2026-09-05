@@ -389,9 +389,9 @@ void DB::sagaDone(ZmRef<Saga> saga, uint64_t epoch)
     const auto &key = saga->m_key;
     m_sagaTable->findDel<0>(shard,
 	ZuFwdTuple(key.template p<0>(), key.template p<1>()),
-	[this, saga = ZuMv(saga), epoch](Object<SagaData> *object) mutable {
-	  bool ok = !object;
-	  if (object) ok = object->commit();
+	[this, saga = ZuMv(saga), epoch](Row<SagaData> *row) mutable {
+	  bool ok = !row;
+	  if (row) ok = row->commit();
 	  run([this, saga = ZuMv(saga), epoch, ok]() mutable {
 	    sagaRetire();
 	    if (ZuUnlikely(!ok)) {
@@ -423,9 +423,9 @@ void DB::sagaCleanup(ZmRef<Saga> saga, uint64_t epoch, unsigned step)
     m_sagaStepTable->findDel<0>(shard,
 	ZuFwdTuple(key.template p<0>(), key.template p<1>(), uint32_t(step)),
 	[this, saga = ZuMv(saga), epoch, step](
-	    Object<SagaStep> *object) mutable {
-	  bool ok = !object;
-	  if (object) ok = object->commit();
+	    Row<SagaStep> *row) mutable {
+	  bool ok = !row;
+	  if (row) ok = row->commit();
 	  run([this, saga = ZuMv(saga), epoch, step, ok]() mutable {
 	    sagaRetire();
 	    if (ZuUnlikely(!ok)) {
@@ -1636,7 +1636,7 @@ void DB::recEnd()
 
 // build replication buffer
 // - first looks in buffer cache for a buffer to copy
-// - falls back to object cache
+// - falls back to row cache
 ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
 {
   ZmAssert(invoked(shard));
@@ -1661,9 +1661,9 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
     fbb.Finish(msg);
     return saveHdr(fbb, this);
   }
-  // build from object cache (without falling through to reading from disk)
-  if (auto object = findUN(shard, un))
-    return object->replicate(int(fbs::Body::Recovery));
+  // build from row cache (without falling through to reading from disk)
+  if (auto row = findUN(shard, un))
+    return row->replicate(int(fbs::Body::Recovery));
   return nullptr;
 }
 
@@ -1681,18 +1681,18 @@ void AnyTable::commitSend(Shard shard, UN un)
 }
 
 // prepare replication data
-ZmRef<IOBuf> AnyObject::replicate(int type)
+ZmRef<IOBuf> AnyRow::replicate(int type)
 {
-  ZmAssert(state() == ObjState::Committed || state() == ObjState::Deleted);
+  ZmAssert(state() == RowState::Committed || state() == RowState::Deleted);
 
   ZdbDEBUG(m_table->db(), ZeString{}
-    << "AnyObject::replicate(" << type << ')');
+    << "AnyRow::replicate(" << type << ')');
 
   Zfb::IOBuilder fbb{m_table->allocBuf()};
   auto data = Zfb::Save::nest(fbb, [this](Zfb::Builder &fbb) {
-    if (!m_vn) return m_table->objSave(fbb, ptr_());
-    if (m_vn > 0) return m_table->objSaveUpd(fbb, ptr_());
-    return m_table->objSaveDel(fbb, ptr_());
+    if (!m_vn) return m_table->rowSave(fbb, ptr_());
+    if (m_vn > 0) return m_table->rowSaveUpd(fbb, ptr_());
+    return m_table->rowSaveDel(fbb, ptr_());
   });
   {
     auto id = Zfb::Save::str(fbb, m_table->config().id);
@@ -2099,7 +2099,7 @@ void AnyTable::recover(Shard shard, const fbs::Record *record)
 {
   m_db->recoveredSN(ZfbTransform::UInt128::load(record->sn()));
   recoveredUN(shard, record->un());
-  objRecover(record);
+  rowRecover(record);
 }
 
 // outbound replication + persistency
@@ -2199,7 +2199,7 @@ void AnyTable::open(L &&l)
   db()->store()->open(
     m_internal,
     id(),
-    objFields(), objKeyFields(), objSchema(), m_bufAllocFn,
+    rowFields(), rowKeyFields(), rowSchema(), m_bufAllocFn,
     [this, l = ZuFwd<L>(l)](OpenResult result) mutable {
       invoke(0, [this, l = ZuMv(l), result = ZuMv(result)]() mutable {
 	l(opened(ZuMv(result)));
@@ -2269,37 +2269,37 @@ void AnyTable::close(L &&l)
   });
 }
 
-bool AnyObject::insert_(UN un)
+bool AnyRow::insert_(UN un)
 {
-  if (m_state != ObjState::Undefined) return false;
-  m_state = ObjState::Insert;
+  if (m_state != RowState::Undefined) return false;
+  m_state = RowState::Insert;
   m_un = un;
   return true;
 }
-bool AnyObject::update_(UN un)
+bool AnyRow::update_(UN un)
 {
-  if (m_state != ObjState::Committed) return false;
-  m_state = ObjState::Update;
+  if (m_state != RowState::Committed) return false;
+  m_state = RowState::Update;
   m_origUN = m_un;
   m_un = un;
   return true;
 }
-bool AnyObject::del_(UN un)
+bool AnyRow::del_(UN un)
 {
-  if (m_state != ObjState::Committed) return false;
-  m_state = ObjState::Delete;
+  if (m_state != RowState::Committed) return false;
+  m_state = RowState::Delete;
   m_origUN = m_un;
   m_un = un;
   return true;
 }
 
-bool AnyObject::commit_()
+bool AnyRow::commit_()
 {
   switch (m_state) {
     default: return false;
-    case ObjState::Insert:
-    case ObjState::Update:
-    case ObjState::Delete: break;
+    case RowState::Insert:
+    case RowState::Update:
+    case RowState::Delete: break;
   }
   if (ZuUnlikely(!m_table->allocUN(m_shard, m_un))) {
     abort_();
@@ -2307,16 +2307,16 @@ bool AnyObject::commit_()
   }
   m_sn = m_table->db()->allocSN();
   switch (m_state) {
-    case ObjState::Insert:
-      m_state = ObjState::Committed;
+    case RowState::Insert:
+      m_state = RowState::Committed;
       break;
-    case ObjState::Update:
-      m_state = ObjState::Committed;
+    case RowState::Update:
+      m_state = RowState::Committed;
       m_origUN = nullUN();
       ++m_vn;
       break;
-    case ObjState::Delete:
-      m_state = ObjState::Deleted;
+    case RowState::Delete:
+      m_state = RowState::Deleted;
       m_origUN = nullUN();
       m_vn = -m_vn - 1;
       break;
@@ -2324,17 +2324,17 @@ bool AnyObject::commit_()
   return true;
 }
 
-bool AnyObject::abort_()
+bool AnyRow::abort_()
 {
   switch (m_state) {
     default: return false;
-    case ObjState::Insert:
-      m_state = ObjState::Undefined;
+    case RowState::Insert:
+      m_state = RowState::Undefined;
       m_un = nullUN();
       break;
-    case ObjState::Update:
-    case ObjState::Delete:
-      m_state = ObjState::Committed;
+    case RowState::Update:
+    case RowState::Delete:
+      m_state = RowState::Committed;
       m_un = m_origUN;
       m_origUN = nullUN();
       break;

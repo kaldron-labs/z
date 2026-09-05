@@ -36,9 +36,9 @@ UserDB::~UserDB()
 void UserDB::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
 {
   // ensure all tables are running on the same thread
-  // - ensures that direct references to the user and key DB objects
+  // - ensures that direct references to the user and key DB rows
   //   can be cached in the session, permitting single-threaded access
-  //   without contention on the object data
+  //   without contention on the row data
   // - UserDB relies on being a single-writer to the DB (Zdb guarantee)
 
   auto config = ZfCf::handler<UserDBCf>(cf).ctor();
@@ -167,12 +167,12 @@ void UserDB::open_findAddPerm(ZuPtr<Open> context)
 
   m_permTbl->find<1>(0, ZuMvTuple(permName(context)), [
     this, context = ZuMv(context)
-  ](ZmRef<ZdbObject<Perm>> dbPerm) mutable {
+  ](ZmRef<ZdbRow<Perm>> dbPerm) mutable {
     if (!dbPerm) {
-      ZdbObjRef<Perm> dbPerm = new ZdbObject<Perm>{m_permTbl, 0};
+      ZdbRowRef<Perm> dbPerm = new ZdbRow<Perm>{m_permTbl, 0};
       m_permTbl->insert(dbPerm, [
 	this, context = ZuMv(context)
-      ](ZdbObject<Perm> *dbPerm) mutable {
+      ](ZdbRow<Perm> *dbPerm) mutable {
 	if (!dbPerm) { opened(ZuMv(context), false); return; }
 	initPerm(dbPerm, permName(context)); // performs commit
 	stashPermID(this, context, dbPerm->data().id);
@@ -230,15 +230,15 @@ void UserDB::bootstrap_findAddUser(ZuPtr<Bootstrap> context)
 {
   m_userTbl->find<1>(0, ZuFwdTuple(context->userName), [
     this, context = ZuMv(context)
-  ](ZmRef<ZdbObject<User>> dbUser) mutable {
+  ](ZmRef<ZdbRow<User>> dbUser) mutable {
     if (dbUser) {
       bootstrapped(ZuMv(context), BootstrapResult{true});
       return;
     }
-    dbUser = new ZdbObject<User>{m_userTbl, 0};
+    dbUser = new ZdbRow<User>{m_userTbl, 0};
     m_userTbl->insert(dbUser, [
       this, context = ZuMv(context)
-    ](ZdbObject<User> *dbUser) mutable {
+    ](ZdbRow<User> *dbUser) mutable {
       if (!dbUser) {
 	bootstrapped(ZuMv(context), BootstrapResult{false});
 	return;
@@ -269,7 +269,7 @@ void UserDB::bootstrapped(ZuPtr<Bootstrap> context, BootstrapResult result)
 }
 
 // initialize API key
-void UserDB::initKey(ZdbObject<Key> *dbKey, UserID userID, KeyIDData keyID)
+void UserDB::initKey(ZdbRow<Key> *dbKey, UserID userID, KeyIDData keyID)
 {
   auto key = new (dbKey->ptr_()) Key{.userID = userID, .id = keyID};
   key->secret.length(key->secret.size());
@@ -278,7 +278,7 @@ void UserDB::initKey(ZdbObject<Key> *dbKey, UserID userID, KeyIDData keyID)
 }
 
 // initialize permission
-void UserDB::initPerm(ZdbObject<Perm> *dbPerm, String name)
+void UserDB::initPerm(ZdbRow<Perm> *dbPerm, String name)
 {
   new (dbPerm->ptr_()) Perm{m_nextPermID++, ZuMv(name)};
   dbPerm->commit();
@@ -286,7 +286,7 @@ void UserDB::initPerm(ZdbObject<Perm> *dbPerm, String name)
 
 // initialize role
 void UserDB::initRole(
-  ZdbObject<Role> *dbRole, String name,
+  ZdbRow<Role> *dbRole, String name,
   ZtBitmap perms, ZtBitmap apiperms, RoleFlags::T flags)
 {
   new (dbRole->ptr_()) Role{
@@ -300,7 +300,7 @@ void UserDB::initRole(
 
 // initialize user
 void UserDB::initUser(
-  ZdbObject<User> *dbUser, UserID id, String name,
+  ZdbRow<User> *dbUser, UserID id, String name,
   StringVec roles, UserFlags::T flags,
   String &passwd)
 {
@@ -360,7 +360,7 @@ void UserDB::sessionLoad_findUser(ZuPtr<SessionLoad> context)
 {
   m_userTbl->find<1>(0, ZuFwdTuple(context->cred.p<String>()), [
     this, context = ZuMv(context)
-  ](ZmRef<ZdbObject<User>> dbUser) mutable {
+  ](ZmRef<ZdbRow<User>> dbUser) mutable {
     if (!dbUser) { sessionLoaded(ZuMv(context), false); return; }
     dbUser->pin();
     const auto &user = dbUser->data();
@@ -378,7 +378,7 @@ void UserDB::sessionLoad_findKey(ZuPtr<SessionLoad> context)
 {
   m_keyTbl->find<1>(0, ZuFwdTuple(context->cred.p<KeyIDData>()), [
     this, context = ZuMv(context)
-  ](ZmRef<ZdbObject<Key>> dbKey) mutable {
+  ](ZmRef<ZdbRow<Key>> dbKey) mutable {
     if (!dbKey) { sessionLoaded(ZuMv(context), false); return; }
     dbKey->pin();
     context->key = ZuMv(dbKey);
@@ -392,7 +392,7 @@ void UserDB::sessionLoad_findUserID(ZuPtr<SessionLoad> context)
 {
   m_userTbl->find<0>(0, ZuFwdTuple(context->key->data().userID), [
     this, context = ZuMv(context)
-  ](ZmRef<ZdbObject<User>> dbUser) mutable {
+  ](ZmRef<ZdbRow<User>> dbUser) mutable {
     if (!dbUser) { sessionLoaded(ZuMv(context), false); return; }
     dbUser->pin();
     const auto &user = dbUser->data();
@@ -413,7 +413,7 @@ void UserDB::sessionLoad_findRole(ZuPtr<SessionLoad> context)
   const auto &role = context->session->user->data().roles[context->roleIndex];
   m_roleTbl->find<0>(0, ZuFwdTuple(role), [
     this, context = ZuMv(context)
-  ](ZmRef<ZdbObject<Role>> dbRole) mutable {
+  ](ZmRef<ZdbRow<Role>> dbRole) mutable {
     if (dbRole) {
       const auto &role = dbRole->data();
       if (!context->key)
@@ -464,10 +464,10 @@ void UserDB::loginSucceeded(ZmRef<Session> session, LoginFn fn)
     run([
       this, session = ZuMv(session), fn = ZuMv(fn)
     ]() mutable {
-      ZmRef<ZdbObject<User>> user = session->user;
+      ZmRef<ZdbRow<User>> user = session->user;
       m_userTbl->update(ZuMv(user), [
 	session = ZuMv(session), fn = ZuMv(fn)
-      ](ZdbObject<User> *dbUser) mutable {
+      ](ZdbRow<User> *dbUser) mutable {
 	if (dbUser) dbUser->commit();
 	auto ptr = session.ptr();
 	fn(ZuMv(session), loginAck(ptr));
@@ -495,8 +495,8 @@ void UserDB::loginFailed(ZmRef<Session> session, LoginFn fn)
     return;
   }
   run([this, session = ZuMv(session), fn = ZuMv(fn)]() mutable {
-    ZmRef<ZdbObject<User>> dbUser = session->user;
-    m_userTbl->update(ZuMv(dbUser), [fn = ZuMv(fn)](ZdbObject<User> *dbUser) {
+    ZmRef<ZdbRow<User>> dbUser = session->user;
+    m_userTbl->update(ZuMv(dbUser), [fn = ZuMv(fn)](ZdbRow<User> *dbUser) {
       if (dbUser) dbUser->commit();
       fn(nullptr, loginNak());
     });
@@ -793,10 +793,10 @@ void UserDB::chPass(ZmRef<Session> session, ZmRef<ZiIOBuf> buf, ResponseFn fn)
   run([
     this, seqNo = fbRequest->seqNo(), session = ZuMv(session), fn = ZuMv(fn)
   ]() mutable {
-    ZdbObjRef<User> dbUser = session->user;
+    ZdbRowRef<User> dbUser = session->user;
     m_userTbl->update(ZuMv(dbUser), [
       this, seqNo, fn = ZuMv(fn)
-    ](ZdbObject<User> *dbUser) {
+    ](ZdbRow<User> *dbUser) {
       if (dbUser) dbUser->commit();
       IOBuilder fbb;
       auto ackData = fbs::CreateAck(fbb);
@@ -876,7 +876,7 @@ void UserDB::userAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto fbUser = static_cast<const fbs::User *>(fbRequest->data());
     m_userTbl->find<1>(0, ZuMvTuple(Zfb::Load::str(fbUser->name())), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<User> dbUser) mutable {
+    ](ZdbRowRef<User> dbUser) mutable {
       if (dbUser) {
 	auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
 	auto fbUser = static_cast<const fbs::User *>(fbRequest->data());
@@ -885,10 +885,10 @@ void UserDB::userAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
 	    << "user " << ZtQuote::String{userName} << " already exists"));
 	return;
       }
-      dbUser = new ZdbObject<User>{m_userTbl, 0};
+      dbUser = new ZdbRow<User>{m_userTbl, 0};
       m_userTbl->insert(dbUser, [
 	this, buf = ZuMv(buf), fn = ZuMv(fn)
-      ](ZdbObject<User> *dbUser) mutable {
+      ](ZdbRow<User> *dbUser) mutable {
 	auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
 	auto fbUser = static_cast<const fbs::User *>(fbRequest->data());
 	auto userName = Zfb::Load::str(fbUser->name());
@@ -932,7 +932,7 @@ void UserDB::keyClr__(UserID id, L &&l)
 	run([this, id = ZuMv(result).template p<KeyID>()]() mutable {
 	  m_keyTbl->findDel<1>(
 	    0, ZuMvTuple(ZuMv(id).template p<1>()),
-	    [](ZdbObject<Key> *dbKey) mutable {
+	    [](ZdbRow<Key> *dbKey) mutable {
 	      if (dbKey) dbKey->commit();
 	    });
 	});
@@ -954,7 +954,7 @@ void UserDB::resetPass(ZmRef<ZiIOBuf> buf, ResponseFn fn)
   ]() mutable {
     m_userTbl->findUpd<0>(0, ZuMvTuple(ZuMv(id)), [
       this, seqNo, id, fn = ZuMv(fn)
-    ](ZdbObjRef<User> dbUser) mutable {
+    ](ZdbRowRef<User> dbUser) mutable {
       if (!dbUser) {
 	fn(reject(seqNo, __LINE__, String{}
 	    << "user ID " << id << " not found"));
@@ -1002,7 +1002,7 @@ void UserDB::userMod(ZmRef<ZiIOBuf> buf, ResponseFn fn)
 
     auto updateFn = [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<User> dbUser) mutable {
+    ](ZdbRowRef<User> dbUser) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       auto fbUser = static_cast<const fbs::User *>(fbRequest->data());
       if (!dbUser) {
@@ -1058,7 +1058,7 @@ void UserDB::userDel(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto fbUser = static_cast<const fbs::UserID *>(fbRequest->data());
     m_userTbl->findDel<0>(0, ZuMvTuple(fbUser->id()), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<User> dbUser) mutable {
+    ](ZdbRowRef<User> dbUser) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       auto fbUser = static_cast<const fbs::User *>(fbRequest->data());
       if (!dbUser) {
@@ -1143,7 +1143,7 @@ void UserDB::roleAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto roleName = Zfb::Load::str(fbRole->name());
     m_roleTbl->find<0>(0, ZuMvTuple(ZuMv(roleName)), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Role> dbRole) mutable {
+    ](ZdbRowRef<Role> dbRole) mutable {
       if (dbRole) {
 	auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
 	auto fbRole = static_cast<const fbs::Role *>(fbRequest->data());
@@ -1152,10 +1152,10 @@ void UserDB::roleAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
 	    << "role " << ZtQuote::String{roleName} << " already exists"));
 	return;
       }
-      dbRole = new ZdbObject<Role>{m_roleTbl, 0};
+      dbRole = new ZdbRow<Role>{m_roleTbl, 0};
       m_roleTbl->insert(dbRole, [
 	this, buf = ZuMv(buf), fn = ZuMv(fn)
-      ](ZdbObject<Role> *dbRole) mutable {
+      ](ZdbRow<Role> *dbRole) mutable {
 	auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
 	auto fbRole = static_cast<const fbs::Role *>(fbRequest->data());
 	auto roleName = Zfb::Load::str(fbRole->name());
@@ -1187,7 +1187,7 @@ void UserDB::roleMod(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto fbRole = static_cast<const fbs::Role *>(fbRequest->data());
     m_roleTbl->findUpd<0>(0, ZuMvTuple(Zfb::Load::str(fbRole->name())), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Role> dbRole) mutable {
+    ](ZdbRowRef<Role> dbRole) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       auto fbRole = static_cast<const fbs::Role *>(fbRequest->data());
       auto roleName = Zfb::Load::str(fbRole->name());
@@ -1227,7 +1227,7 @@ void UserDB::roleDel(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto roleName = Zfb::Load::str(fbRole->name());
     m_roleTbl->findDel<0>(0, ZuMvTuple(ZuMv(roleName)), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Role> dbRole) mutable {
+    ](ZdbRowRef<Role> dbRole) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       if (!dbRole) {
 	auto fbRole = static_cast<const fbs::RoleID *>(fbRequest->data());
@@ -1317,7 +1317,7 @@ void UserDB::permAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto fbPerm = static_cast<const fbs::PermName *>(fbRequest->data());
     m_permTbl->find<1>(0, ZuMvTuple(Zfb::Load::str(fbPerm->name())), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Perm> dbPerm) mutable {
+    ](ZdbRowRef<Perm> dbPerm) mutable {
       if (dbPerm) {
 	auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
 	auto fbPerm = static_cast<const fbs::Perm *>(fbRequest->data());
@@ -1326,10 +1326,10 @@ void UserDB::permAdd(ZmRef<ZiIOBuf> buf, ResponseFn fn)
 	    << "perm " << ZtQuote::String{permName} << " already exists"));
 	return;
       }
-      dbPerm = new ZdbObject<Perm>{m_permTbl, 0};
+      dbPerm = new ZdbRow<Perm>{m_permTbl, 0};
       m_permTbl->insert(dbPerm, [
 	this, buf = ZuMv(buf), fn = ZuMv(fn)
-      ](ZdbObject<Perm> *dbPerm) mutable {
+      ](ZdbRow<Perm> *dbPerm) mutable {
 	auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
 	auto fbPerm = static_cast<const fbs::PermName *>(fbRequest->data());
 	auto permName = Zfb::Load::str(fbPerm->name());
@@ -1357,7 +1357,7 @@ void UserDB::permMod(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto fbPerm = static_cast<const fbs::Perm *>(fbRequest->data());
     m_permTbl->findUpd<0, ZuSeq<1>>(0, ZuMvTuple(fbPerm->id()), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Perm> dbPerm) mutable {
+    ](ZdbRowRef<Perm> dbPerm) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       auto fbPerm = static_cast<const fbs::Perm *>(fbRequest->data());
       if (!dbPerm) {
@@ -1385,7 +1385,7 @@ void UserDB::permDel(ZmRef<ZiIOBuf> buf, ResponseFn fn)
     auto fbPerm = static_cast<const fbs::PermID *>(fbRequest->data());
     m_permTbl->findDel<0>(0, ZuMvTuple(fbPerm->id()), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Perm> dbPerm) mutable {
+    ](ZdbRowRef<Perm> dbPerm) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       if (!dbPerm) {
 	auto fbPerm = static_cast<const fbs::PermID *>(fbRequest->data());
@@ -1468,7 +1468,7 @@ void UserDB::keyAdd_(
     m_rng->random(keyID);
     m_keyTbl->find<1>(0, ZuFwdTuple(keyID), [
       this, seqNo, userID, keyID, ackType, fn = ZuMv(fn)
-    ](ZdbObjRef<Key> dbKey) mutable {
+    ](ZdbRowRef<Key> dbKey) mutable {
       if (dbKey) {
 	// key ID collision - regenerate and retry
 	run([this, seqNo, userID, ackType, fn = ZuMv(fn)]() mutable {
@@ -1476,10 +1476,10 @@ void UserDB::keyAdd_(
 	});
 	return;
       }
-      dbKey = new ZdbObject<Key>{m_keyTbl, 0};
+      dbKey = new ZdbRow<Key>{m_keyTbl, 0};
       m_keyTbl->insert(dbKey, [
 	this, seqNo, userID, keyID, ackType, fn = ZuMv(fn)
-      ](ZdbObject<Key> *dbKey) mutable {
+      ](ZdbRow<Key> *dbKey) mutable {
 	if (!dbKey) {
 	  fn(reject(seqNo, __LINE__, String{}
 	      << "key insert failed for user ID " << userID));
@@ -1532,7 +1532,7 @@ void UserDB::ownKeyDel(
   auto keyID = Zfb::Load::bytes(fbKeyID->id());
   m_keyTbl->findDel<0>(0, ZuMvTuple(ZuMv(userID), ZuMv(keyID)), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Key> dbKey) mutable {
+    ](ZdbRowRef<Key> dbKey) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       auto fbKeyID = static_cast<const fbs::KeyID *>(fbRequest->data());
       auto keyID = Zfb::Load::bytes(fbKeyID->id());
@@ -1555,7 +1555,7 @@ void UserDB::keyDel(ZmRef<ZiIOBuf> buf, ResponseFn fn)
   auto keyID = Zfb::Load::bytes(fbKeyID->id());
   m_keyTbl->findDel<1>(0, ZuMvTuple(ZuMv(keyID)), [
       this, buf = ZuMv(buf), fn = ZuMv(fn)
-    ](ZdbObjRef<Key> dbKey) mutable {
+    ](ZdbRowRef<Key> dbKey) mutable {
       auto fbRequest = Zfb::GetRoot<fbs::Request>(buf->data());
       auto fbKeyID = static_cast<const fbs::KeyID *>(fbRequest->data());
       auto keyID = Zfb::Load::bytes(fbKeyID->id());

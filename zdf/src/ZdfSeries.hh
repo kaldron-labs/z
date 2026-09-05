@@ -421,7 +421,7 @@ template <typename> friend class Zdf::Reader;
 template <typename, typename, typename> friend class Writer__;
 
 protected:
-  Series(Store *store, ZdbObjRef<DBSeries> dbSeries) :
+  Series(Store *store, ZdbRowRef<DBSeries> dbSeries) :
     m_store{store}, m_dbSeries{ZuMv(dbSeries)}
   {
     m_dbSeries->pin();
@@ -436,7 +436,7 @@ public:
 
   Store *store() const { return m_store; }
   bool opened() const { return m_opened; }
-  ZdbObject<DBSeries> *dbSeries() const { return m_dbSeries; }
+  ZdbRow<DBSeries> *dbSeries() const { return m_dbSeries; }
   unsigned shard() const { return m_shard; }
   SeriesID id() const { return m_id; }
   const IDString &name() const { return *m_name; }
@@ -852,7 +852,7 @@ private:
       data.first = value;
     }
     seriesTbl()->template update<>(m_dbSeries,
-      [](ZdbObject<DBSeries> *dbSeries) {
+      [](ZdbRow<DBSeries> *dbSeries) {
 	if (dbSeries) dbSeries->commit();
       });
   }
@@ -918,8 +918,8 @@ private:
 	return blk->last.float_;
     };
 
-    if (m_lastBlk->blkData->state() == ZdbObjState::Undefined) {
-      ZdbObjRef<DBBlk> dbBlk = new ZdbObject<DBBlk>{blkTbl(), m_shard};
+    if (m_lastBlk->blkData->state() == ZdbRowState::Undefined) {
+      ZdbRowRef<DBBlk> dbBlk = new ZdbRow<DBBlk>{blkTbl(), m_shard};
       new (dbBlk->ptr_()) DBBlk{
 	.blkOffset = m_lastBlkOffset,
 	.offset = m_lastBlk->offset(),
@@ -930,7 +930,7 @@ private:
       if constexpr (Fixed) dbBlk->ptr()->ndp = m_lastBlk->ndp();
 
       blkTbl()->insert(
-	ZuMv(dbBlk), [this_ = ZmRef(this)](ZdbObject<DBBlk> *dbBlk) {
+	ZuMv(dbBlk), [this_ = ZmRef(this)](ZdbRow<DBBlk> *dbBlk) {
 	  ZiAssert(dbBlk, "Zdf", (name = this_->name()),
 	    name << "internal error - insert - null dbBlk", return);
 
@@ -939,7 +939,7 @@ private:
 	  auto ptr = this_.ptr();
 	  ptr->blkDataTbl()->insert(
 	    ptr->m_lastBlk->blkData,
-	    [this_ = ZuMv(this_)](ZdbObject<DB::BlkData> *dbBlkData) mutable {
+	    [this_ = ZuMv(this_)](ZdbRow<DB::BlkData> *dbBlkData) mutable {
 	      ZiAssert(dbBlkData, "Zdf", (name = this_->name()),
 		name << "internal error - insert - null dbBlkData", return);
 
@@ -951,7 +951,7 @@ private:
     } else {
       blkTbl()->template findUpd<0>(
 	shard(), ZuFwdTuple(id(), m_lastBlkOffset),
-	[this_ = ZmRef(this)](ZdbObject<DBBlk> *dbBlk) {
+	[this_ = ZmRef(this)](ZdbRow<DBBlk> *dbBlk) {
 	  ZiAssert(dbBlk, "Zdf", (name = this_->name()),
 	    name << "internal error - update - null dbBlk", return);
 	  ZiAssert(this_->m_lastBlk, "Zdf", (name = this_->name()),
@@ -967,7 +967,7 @@ private:
 	  auto ptr = this_.ptr();
 	  ptr->blkDataTbl()->template update<>(
 	    ptr->m_lastBlk->blkData,
-	    [this_ = ZuMv(this_)](ZdbObject<DB::BlkData> *blkData) mutable {
+	    [this_ = ZuMv(this_)](ZdbRow<DB::BlkData> *blkData) mutable {
 	      ZiAssert(blkData, "Zdf", (name = this_->name()),
 		name << "internal error - update - null blkData", return);
 
@@ -1124,14 +1124,14 @@ private:
     }
     data.blkOffset = blkOffset;
     seriesTbl()->template update<>(m_dbSeries,
-      [](ZdbObject<DBSeries> *dbSeries) {
+      [](ZdbRow<DBSeries> *dbSeries) {
 	if (dbSeries) dbSeries->commit();
       });
   }
 
 private:
   Store			*m_store = nullptr;
-  ZdbObjRef<DBSeries>	m_dbSeries;
+  ZdbRowRef<DBSeries>	m_dbSeries;
   Shard			m_shard;
   SeriesID		m_id;
   const IDString	*m_name = nullptr;
@@ -1145,7 +1145,7 @@ private:
 };
 
 // Zdb evict hook
-inline void DB::BlkData_Evict::evict(ZdbObject<BlkData> *blkData)
+inline void DB::BlkData_Evict::evict(ZdbRow<BlkData> *blkData)
 {
   static_cast<AnySeries *>(blkData->data().series)->unloadBlkData(blkData);
 }
@@ -1155,7 +1155,7 @@ class TimeSeries : public Series<DeltaDecoder<>> {
 
 friend Store;
 
-  TimeSeries(Store *store, ZdbObjRef<Base::DBSeries> dbSeries) :
+  TimeSeries(Store *store, ZdbRowRef<Base::DBSeries> dbSeries) :
     Base{store, ZuMv(dbSeries)}
   {
     m_epoch = this->dbSeries()->data().epoch.as_time();

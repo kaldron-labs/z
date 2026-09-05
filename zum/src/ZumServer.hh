@@ -64,8 +64,8 @@ namespace SessionFlags {
 }
 struct Session_ {
   UserDB		*userDB = nullptr;
-  ZdbObjRef<User>	user;
-  ZdbObjRef<Key>	key;		// if API key access
+  ZdbRowRef<User>	user;
+  ZdbRowRef<Key>	key;		// if API key access
   ZtBitmap		perms;		// effective permissions
   SessionFlags::T	flags = 0;	// SessionFlags
 
@@ -173,7 +173,7 @@ private:
 
     Cred		cred;
     SessionFn		fn;
-    ZdbObjRef<Key>	key;	// null unless non-interactive
+    ZdbRowRef<Key>	key;	// null unless non-interactive
     ZmRef<Session>	session;
     unsigned		roleIndex = 0;
   };
@@ -210,19 +210,19 @@ private:
   ZmRef<ZiIOBuf> reject(SeqNo seqNo, unsigned rejCode, String text);
 
   // initialize key
-  void initKey(ZdbObject<Key> *, UserID, KeyIDData);
+  void initKey(ZdbRow<Key> *, UserID, KeyIDData);
 
   // initialize permission
-  void initPerm(ZdbObject<Perm> *, String name);
+  void initPerm(ZdbRow<Perm> *, String name);
 
   // initialize role
   void initRole(
-    ZdbObject<Role> *, String name,
+    ZdbRow<Role> *, String name,
     ZtBitmap perms, ZtBitmap apiperms, RoleFlags::T);
 
   // initialize user
   void initUser(
-    ZdbObject<User> *, UserID, String name,
+    ZdbRow<User> *, UserID, String name,
     StringVec roles, UserFlags::T,
     String &passwd);
 
