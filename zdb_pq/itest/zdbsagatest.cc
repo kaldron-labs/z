@@ -57,15 +57,15 @@ struct LiveSaga {
 	context->orders->run(0, [
 	  this, context, saga, complete = ZuMv(complete)
 	]() mutable {
-	ZdbObjRef<Order> object = new ZdbObject<Order>{context->orders, 0};
-	saga->insert(context->orders, ZuMv(object),
+	ZdbRowRef<Order> row = new ZdbRow<Order>{context->orders, 0};
+	saga->insert(context->orders, ZuMv(row),
 	  [context, complete = ZuMv(complete), id = orderID](
-	      ZdbObject<Order> *object) mutable {
+	      ZdbRow<Order> *row) mutable {
 	    ++context->inserts;
-	    if (!object) { complete(false); return; }
-	    new (object->ptr()) Order{
+	    if (!row) { complete(false); return; }
+	    new (row->ptr()) Order{
 	      "SAGA", id, "PQ", "saga", 0, Side::Buy, {100}, {7}};
-	    object->commit();
+	    row->commit();
 	    complete(true);
 	  });
 	});
@@ -80,12 +80,12 @@ struct LiveSaga {
 	]() mutable {
 	saga->findUpd<0>(context->orders, 0, ZuFwdTuple("SAGA", orderID),
 	  [context, complete = ZuMv(complete)](
-	      ZdbObject<Order> *object) mutable {
+	      ZdbRow<Order> *row) mutable {
 	    ++context->updates;
-	    if (!object) { complete(false); return; }
-	    ++object->data().qtys[0]; // UN replay must not increment this twice
+	    if (!row) { complete(false); return; }
+	    ++row->data().qtys[0]; // UN replay must not increment this twice
 	    if (context->fault == Fault::NoCommit) { complete(false); return; }
-	    object->commit();
+	    row->commit();
 	    complete(true);
 	  });
 	});
@@ -105,9 +105,9 @@ struct LiveSaga {
 	]() mutable {
 	saga->findDel<0>(context->items, 1, ZuFwdTuple("SAGA", orderID),
 	  [context, complete = ZuMv(complete)](
-	      ZdbObject<Order> *object) mutable {
+	      ZdbRow<Order> *row) mutable {
 	    ++context->deletes;
-	    if (object) object->commit();
+	    if (row) row->commit();
 	    complete(true);
 	  });
 	});
@@ -165,8 +165,8 @@ static bool erase(ZdbTable<zdbtest::Order> *table, ZdbShard shard)
   return ZmBlock<bool>{}([table, shard](auto wake) {
     table->run(shard, [table, shard, wake = ZuMv(wake)]() mutable {
       table->findDel<0>(shard, ZuFwdTuple("SAGA", UINT64_C(1)),
-	[wake = ZuMv(wake)](ZdbObject<zdbtest::Order> *object) mutable {
-	  wake(!object || object->commit());
+	[wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *row) mutable {
+	  wake(!row || row->commit());
 	});
     });
   });
@@ -176,13 +176,13 @@ static bool seed(ZdbTable<zdbtest::Order> *table)
 {
   return ZmBlock<bool>{}([table](auto wake) {
     table->run(1, [table, wake = ZuMv(wake)]() mutable {
-      ZdbObjRef<zdbtest::Order> object = new ZdbObject<zdbtest::Order>{table, 1};
-      table->insert(object,
-	[wake = ZuMv(wake)](ZdbObject<zdbtest::Order> *object) mutable {
-	  if (!object) { wake(false); return; }
-	  new (object->ptr()) zdbtest::Order{
+      ZdbRowRef<zdbtest::Order> row = new ZdbRow<zdbtest::Order>{table, 1};
+      table->insert(row,
+	[wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *row) mutable {
+	  if (!row) { wake(false); return; }
+	  new (row->ptr()) zdbtest::Order{
 	    "SAGA", 1, "PQ", "saga", 0, zdbtest::Side::Buy, {100}, {1}};
-	  wake(object->commit());
+	  wake(row->commit());
 	});
     });
   });
@@ -306,8 +306,8 @@ static void exercise(unsigned mode)
   bool updated = ZmBlock<bool>{}([table = orders.ptr()](auto wake) {
     table->run(0, [table, wake = ZuMv(wake)]() mutable {
       table->find<0>(0, ZuFwdTuple("SAGA", UINT64_C(1)),
-	[wake = ZuMv(wake)](ZdbObjRef<zdbtest::Order> object) mutable {
-	  wake(object && object->data().qtys[0] == 8);
+	[wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
+	  wake(row && row->data().qtys[0] == 8);
 	});
     });
   });

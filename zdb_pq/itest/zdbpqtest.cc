@@ -178,7 +178,7 @@ int main(int argc_, char **argv)
 
     payments->run(1, [] {
       payments->find<0>(1, ZuFwdTuple("MISSING", UINT64_C(0)),
-	[](ZmRef<ZdbObject<Order>>) { done.post(); });
+	[](ZmRef<ZdbRow<Order>>) { done.post(); });
     });
     done.wait();
 
@@ -212,7 +212,7 @@ int main(int argc_, char **argv)
     if (*seqNo) {
       orders->run(0, [seqNo, &id]{
 	orders->find<2>(0, ZuFwdTuple("FIX0", seqNo),
-	  [seqNo, &id](ZmRef<ZdbObject<Order>> o) {
+	  [seqNo, &id](ZmRef<ZdbRow<Order>> o) {
 	    if (!o) {
 	      id = {};
 	      ZiLOG(Info, "zdbpqtest", ([seqNo](auto &s) {
@@ -241,8 +241,8 @@ int main(int argc_, char **argv)
       id = 0;
 
     orders->run(0, [&id, &seqNo]{
-      ZdbObjRef<Order> o = new ZdbObject<Order>{orders, 0};
-      orders->insert(o, [&id, &seqNo](ZdbObject<Order> *o) {
+      ZdbRowRef<Order> o = new ZdbRow<Order>{orders, 0};
+      orders->insert(o, [&id, &seqNo](ZdbRow<Order> *o) {
 	if (ZuUnlikely(!o)) { done.post(); return; }
 	ZuCArray<32> clOrdID;
 	clOrdID << "order" << id;
@@ -257,11 +257,11 @@ int main(int argc_, char **argv)
 	}));
       });
       // Repeating an insert must not fail the DB or add a durable row.
-      ZdbObjRef<Order> duplicate = new ZdbObject<Order>{orders, 0};
-      orders->insert(duplicate, [o](ZdbObject<Order> *object) {
-	if (object) {
-	  new (object->ptr()) Order{o->data()};
-	  object->commit();
+      ZdbRowRef<Order> duplicate = new ZdbRow<Order>{orders, 0};
+      orders->insert(duplicate, [o](ZdbRow<Order> *row) {
+	if (row) {
+	  new (row->ptr()) Order{o->data()};
+	  row->commit();
 	}
 	done.post();
       });
@@ -270,7 +270,7 @@ int main(int argc_, char **argv)
 
     orders->run(0, [&id]{
       orders->find<0>(0, ZuFwdTuple("IBM", id),
-	[&id](ZmRef<ZdbObject<Order>> o) {
+	[&id](ZmRef<ZdbRow<Order>> o) {
 	  if (!o)
 	    ZiLOG(Info, "zdbpqtest", ([id](auto &s) {
 	      s << "find(IBM, " << id << "): (null)";
@@ -302,7 +302,7 @@ int main(int argc_, char **argv)
     if (id > 0) {
       orders->run(0, [id = id - 1]{
 	orders->findUpd<0, ZuSeq<1>>(0, ZuFwdTuple("IBM", id),
-	  [id](ZmRef<ZdbObject<Order>> o) {
+	  [id](ZmRef<ZdbRow<Order>> o) {
 	    if (!o) {
 	      ZiLOG(Info, "zdbpqtest", ([id](auto &s) {
 		s << "findUpd(IBM, " << id << "): (null)";
@@ -326,7 +326,7 @@ int main(int argc_, char **argv)
     if (id > 3) {
       orders->run(0, [id = id - 3]{
 	orders->findDel<0>(0, ZuFwdTuple("IBM", id),
-	  [id](ZmRef<ZdbObject<Order>> o) {
+	  [id](ZmRef<ZdbRow<Order>> o) {
 	    if (!o) {
 	      ZiLOG(Info, "zdbpqtest", ([id](auto &s) {
 		s << "findDel(IBM, " << id << "): (null)";
