@@ -31,7 +31,9 @@ namespace zdbtest {
 
 namespace Fault { enum { None, NoCommit }; }
 
-struct Context {
+using PauseFn = ZmFn<void(bool), ZmFnHeapID<"Zdb.Saga.PQ.Pause">>;
+
+struct Context : public ZmPolymorph {
   ZdbTable<Order>	*orders = nullptr;
   ZdbTable<Order>	*items = nullptr;
   ZmSemaphore	*paused = nullptr;
@@ -42,73 +44,79 @@ struct Context {
   unsigned		deletes = 0;
   unsigned		errors = 0;
   unsigned		fault = Fault::None;
-  Zdb_::SagaStepComplete pausedComplete;
+  bool		pauseReverse = false;
+  PauseFn	pausedComplete;
 };
 
 // Reuse the test intent schema; runtime context is deliberately not saved.
-struct LiveSaga {
+struct LiveSaga : public ZdbSagaBase<Context> {
+  using Base = ZdbSagaBase<Context>;
+  using Base::context;
+  using Base::saga;
   using Type = ZuStringT<"pqSaga1">;
   enum { NSteps = 3 };
   uint64_t orderID = 0;
 
   ZdbSagaStep(0, pq_saga_order, Insert) {
-    auto context = static_cast<Context *>(context_);
     ++context->runs;
-	context->orders->run(0, [
-	  this, context, saga, complete = ZuMv(complete)
-	]() mutable {
-	ZdbRowRef<Order> row = new ZdbRow<Order>{context->orders, 0};
-	saga->insert(context->orders, ZuMv(row),
-	  [context, complete = ZuMv(complete), id = orderID](
-	      ZdbRow<Order> *row) mutable {
+	context->orders->run(0,
+	  [this, complete = ZuMv(complete)]() mutable {
+	if constexpr (Fwd) {
+	  ZdbRowRef<Order> row = new ZdbRow<Order>{context->orders, 0};
+	  saga->insert(context->orders, ZuMv(row), ZuMv(complete),
+	  [this](ZdbRow<Order> *row, auto &&complete) mutable {
 	    ++context->inserts;
-	    if (!row) { complete(false); return; }
 	    new (row->ptr()) Order{
-	      "SAGA", id, "PQ", "saga", 0, Side::Buy, {100}, {7}};
-	    row->commit();
-	    complete(true);
+	      "SAGA", orderID, "PQ", "saga", 0, Side::Buy, {100}, {7}};
+	    complete(bool(row->commit()));
 	  });
+	} else {
+	  saga->findDel<0>(context->orders, 0, ZuFwdTuple("SAGA", orderID),
+	    ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
+	      if (context->pauseReverse) {
+		context->pausedComplete = PauseFn{ZuMv(complete)};
+		context->paused->post();
+		return;
+	      }
+	      complete(bool(row->commit()));
+	    });
+	}
 	});
 	return {};
   }
 
   ZdbSagaStep(1, pq_saga_order, Update) {
-	auto context = static_cast<Context *>(context_);
 	++context->runs;
-	context->orders->run(0, [
-	  this, context, saga, complete = ZuMv(complete)
-	]() mutable {
+	context->orders->run(0,
+	  [this, complete = ZuMv(complete)]() mutable {
 	saga->findUpd<0>(context->orders, 0, ZuFwdTuple("SAGA", orderID),
-	  [context, complete = ZuMv(complete)](
-	      ZdbRow<Order> *row) mutable {
+	  ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
 	    ++context->updates;
-	    if (!row) { complete(false); return; }
-	    ++row->data().qtys[0]; // UN replay must not increment this twice
+	    if constexpr (Fwd)
+	      ++row->data().qtys[0]; // UN replay must not increment this twice
+	    else
+	      --row->data().qtys[0];
 	    if (context->fault == Fault::NoCommit) { complete(false); return; }
-	    row->commit();
-	    complete(true);
+	    complete(bool(row->commit()));
 	  });
 	});
 	return {};
   }
 
   ZdbSagaStep(2, pq_saga_item, Delete) {
-	auto context = static_cast<Context *>(context_);
+	ZuAssert(Fwd);
 	++context->runs;
+	++context->deletes;
 	if (context->paused) {
-	  context->pausedComplete = ZuMv(complete);
+	  context->pausedComplete = PauseFn{ZuMv(complete)};
 	  context->paused->post();
 	  return {};
 	}
-	context->items->run(1, [
-	  this, context, saga, complete = ZuMv(complete)
-	]() mutable {
-	saga->findDel<0>(context->items, 1, ZuFwdTuple("SAGA", orderID),
-	  [context, complete = ZuMv(complete)](
-	      ZdbRow<Order> *row) mutable {
-	    ++context->deletes;
-	    if (row) row->commit();
-	    complete(true);
+	context->items->run(1,
+	  [this, complete = ZuMv(complete)]() mutable {
+	  saga->findDel<0>(context->items, 1, ZuFwdTuple("SAGA", orderID),
+	  ZuMv(complete), [](ZdbRow<Order> *row, auto &&complete) mutable {
+	    complete(bool(row->commit()));
 	  });
 	});
 	return {};
@@ -122,7 +130,7 @@ using Sagas = ZuTypeList<LiveSaga>;
 
 } // zdbtest
 
-using DB = ZdbSagaDB<zdbtest::Sagas>;
+using DB = ZdbSagaDB<zdbtest::Context, zdbtest::Sagas>;
 
 namespace Mode { enum { Live, Reconnect, Crash, Replay, NoCommit }; }
 enum { CrashStatus = 73 }; // distinguishes the deliberate cut from a failed child
@@ -188,19 +196,6 @@ static bool seed(ZdbTable<zdbtest::Order> *table)
   });
 }
 
-static void completed(void *context, ZuCSpan, ZdbSagaID)
-{
-  auto done = static_cast<zdbtest::Context *>(context)->done;
-  if (done) done->post();
-}
-
-static void failed(void *context, ZuCSpan, ZdbSagaID, ZeException)
-{
-  auto context_ = static_cast<zdbtest::Context *>(context);
-  ++context_->errors;
-  if (context_->done) context_->done->post();
-}
-
 static void exercise(unsigned mode)
 {
   ZuTestScopeRT(exercise);
@@ -211,9 +206,11 @@ static void exercise(unsigned mode)
   db->init(ZdbCf{cf}, &mx, {});
   auto orders = db->initTable<zdbtest::Order>("pq_saga_order");
   auto items = db->initTable<zdbtest::Order>("pq_saga_item");
-  zdbtest::Context context{.orders = orders, .items = items};
-  db->sagas(ZdbSagaHandler{
-    .context = &context, .doneFn = completed, .errorFn = failed});
+  ZmRef<zdbtest::Context> context = new zdbtest::Context{};
+  context->orders = orders;
+  context->items = items;
+  auto contextPtr = context.ptr();
+  db->sagas(ZuMv(context));
   bool started = db->start();
   ZuCheckRT(started);
   if (!started) {
@@ -230,18 +227,23 @@ static void exercise(unsigned mode)
     ZuCheckRT(erase(orders, 0));
     ZuCheckRT(erase(items, 1));
     ZuCheckRT(seed(items));
-    context = zdbtest::Context{
-      .orders = orders, .items = items,
-      .paused = mode != Mode::Live ? &paused : nullptr, .done = &done,
-      .fault = mode == Mode::NoCommit ?
-	zdbtest::Fault::NoCommit : zdbtest::Fault::None};
+    contextPtr->paused = mode != Mode::Live ? &paused : nullptr;
+    contextPtr->done = &done;
+    contextPtr->fault =
+      mode == Mode::NoCommit || mode == Mode::Crash ?
+      zdbtest::Fault::NoCommit : zdbtest::Fault::None;
+    contextPtr->pauseReverse = mode == Mode::Crash;
     ZmRef<ZdbMSaga<zdbtest::Sagas>> saga = new ZdbMSaga<zdbtest::Sagas>{};
-    saga->init(zdbtest::LiveSaga{1});
-    bool admitted = ZmBlock<bool>{}([db = db.ptr(), saga = ZuMv(saga)](auto wake) mutable {
+    saga->init(zdbtest::LiveSaga{{}, 1});
+    bool admitted = ZmBlock<bool>{}([
+      db = db.ptr(), saga = ZuMv(saga), context = contextPtr
+    ](auto wake) mutable {
       // The main row belongs to neither of the target shards (0 and 1).
       db->saga(2, 1, ZuMv(saga),
-	[wake = ZuMv(wake)](ZdbSagaSubmitResult result) mutable {
-	  wake(result.is<void>());
+	[wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
+	[context](bool ok) {
+	  if (!ok) ++context->errors;
+	  if (context->done) context->done->post();
 	});
     });
     ZuCheckRT(admitted);
@@ -249,12 +251,13 @@ static void exercise(unsigned mode)
       if (mode == Mode::NoCommit) {
 	done.wait();
 	bool stopped = db->stop();
-	_Exit(stopped && context.errors == 1 && context.runs == 2 &&
-	  context.inserts == 1 && context.updates == 1 ? FailureStatus : 1);
+	_Exit(stopped && contextPtr->errors == 1 && contextPtr->runs == 3 &&
+	  contextPtr->inserts == 1 &&
+	  contextPtr->updates == 1 ? FailureStatus : 1);
       }
       paused.wait();
-      ZuCheckRT(context.inserts == 1);
-      ZuCheckRT(context.updates == 1);
+      ZuCheckRT(contextPtr->inserts == 1);
+      ZuCheckRT(contextPtr->updates == 1);
       if (mode == Mode::Crash) {
 	// A backend SELECT establishes this exact durable cut. Do not call
 	// stop/final or run destructors: all DB state is lost with the process.
@@ -266,16 +269,17 @@ static void exercise(unsigned mode)
 	      if (result.template is<Tuple>()) {
 		auto &row = result.template p<Tuple>();
 		durable = row.template p<1>() == 1 &&
-		  row.template p<7>().length() == 1 && row.template p<7>()[0] == 8;
+		  row.template p<7>().length() == 1 && row.template p<7>()[0] == 7;
 	      } else wake();
 	    });
 	});
-	_Exit(admitted && durable && context.inserts == 1 &&
-	  context.updates == 1 ? CrashStatus : 1);
+	_Exit(admitted && durable && contextPtr->runs == 3 &&
+	  contextPtr->inserts == 1 &&
+	  contextPtr->updates == 1 ? CrashStatus : 1);
       }
-      db->run([db = db.ptr(), &context]() {
+      db->run([db = db.ptr(), context = contextPtr]() {
 	db->fail();
-	context.pausedComplete(false);
+	context->pausedComplete(false);
       });
       // This intentionally interrupted saga is preserved; stop flushes the
       // driver before a fresh connection reopens it. This is not a hard-crash test.
@@ -285,8 +289,12 @@ static void exercise(unsigned mode)
       db->init(ZdbCf{cf}, &mx, {});
       orders = db->initTable<zdbtest::Order>("pq_saga_order");
       items = db->initTable<zdbtest::Order>("pq_saga_item");
-      context = zdbtest::Context{.orders = orders, .items = items, .done = &done};
-      db->sagas(ZdbSagaHandler{.context = &context, .doneFn = completed});
+      context = new zdbtest::Context{};
+      context->orders = orders;
+      context->items = items;
+      context->done = &done;
+      contextPtr = context.ptr();
+      db->sagas(ZuMv(context));
       started = db->start();
       ZuCheckRT(started);
       if (!started) {
@@ -298,10 +306,11 @@ static void exercise(unsigned mode)
     }
     done.wait();
   }
-  ZuCheckRT(context.runs == 3);
-  ZuCheckRT(context.inserts == unsigned(mode == Mode::Live));
-  ZuCheckRT(context.updates == unsigned(mode == Mode::Live));
-  ZuCheckRT(context.deletes == 1);
+  ZuCheckRT(contextPtr->runs == 3);
+  ZuCheckRT(contextPtr->inserts == unsigned(mode == Mode::Live));
+  ZuCheckRT(contextPtr->updates ==
+    unsigned(mode == Mode::Live || mode == Mode::Replay));
+  ZuCheckRT(contextPtr->deletes == 1);
 
   bool updated = ZmBlock<bool>{}([table = orders.ptr()](auto wake) {
     table->run(0, [table, wake = ZuMv(wake)]() mutable {

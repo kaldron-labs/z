@@ -74,7 +74,7 @@ ZfbStruct(Transfer,
 
 ZfbRoot(Transfer);
 
-struct Context {
+struct Context : public ZmPolymorph {
   ZdbTable<Transfer>	*transfers = nullptr;
   ZdbTable<Account>	*accounts = nullptr;
   ZmSemaphore		completed;
@@ -84,7 +84,10 @@ struct Context {
 static ZdbShard transferShard(uint64_t id) { return (id - 1) & 1; }
 static ZdbShard accountShard(uint64_t id) { return (id - 1) & 1; }
 
-struct BalanceTransfer {
+struct BalanceTransfer : public ZdbSagaBase<Context> {
+  using Base = ZdbSagaBase<Context>;
+  using Base::context;
+  using Base::saga;
   using Type = ZuStringT<"balanceTransfer">;
   enum { NSteps = 4 };
 
@@ -97,72 +100,70 @@ struct BalanceTransfer {
   // through asynchronous shard work.  Invoke it only after commit(), as the
   // final use of both this and saga in that callback.
   ZdbSagaStep(0, transfer, Insert) {
-    auto context = static_cast<Context *>(context_);
-    auto shard = transferShard(transferID);
-    context->transfers->run(shard,
-      [this, context, saga, complete = ZuMv(complete), shard]() mutable {
-	ZdbRowRef<Transfer> row =
-	  new ZdbRow<Transfer>{context->transfers, shard};
-	saga->insert(context->transfers, ZuMv(row),
-	  [this, complete = ZuMv(complete)](
-	      ZdbRow<Transfer> *row) mutable {
-	    if (!row) { complete(false); return; }
-	    new (row->ptr()) Transfer{
-	      transferID, fromID, toID, amount, TransferStatus::Pending};
-	    row->commit();
-	    complete(true);
-	  });
+    context->transfers->run(transferShard(transferID),
+      [this, complete = ZuMv(complete)]() mutable {
+	auto shard = transferShard(transferID);
+	if constexpr (Fwd) {
+	  ZdbRowRef<Transfer> row =
+	    new ZdbRow<Transfer>{context->transfers, shard};
+	  saga->insert(context->transfers, ZuMv(row), ZuMv(complete),
+	    [this](ZdbRow<Transfer> *row, auto &&complete) mutable {
+	      new (row->ptr()) Transfer{
+		transferID, fromID, toID, amount, TransferStatus::Pending};
+	      complete(bool(row->commit()));
+	    });
+	} else {
+	  saga->findDel<0>(context->transfers, shard, ZuFwdTuple(transferID),
+	    ZuMv(complete), [](ZdbRow<Transfer> *row, auto &&complete) mutable {
+	      complete(bool(row->commit()));
+	    });
+	}
       });
     return {};
   }
 
   ZdbSagaStep(1, account, Update) {
-    auto context = static_cast<Context *>(context_);
-    auto shard = accountShard(fromID);
-    context->accounts->run(shard,
-      [this, context, saga, complete = ZuMv(complete), shard]() mutable {
+    context->accounts->run(accountShard(fromID),
+      [this, complete = ZuMv(complete)]() mutable {
+	auto shard = accountShard(fromID);
 	saga->findUpd<0>(context->accounts, shard, ZuFwdTuple(fromID),
-	  [this, complete = ZuMv(complete)](
-	      ZdbRow<Account> *row) mutable {
-	    if (!row) { complete(false); return; }
-	    row->data().balance -= amount;
-	    row->commit();
-	    complete(true);
+	  ZuMv(complete), [this](ZdbRow<Account> *row, auto &&complete) mutable {
+	    if constexpr (Fwd)
+	      row->data().balance -= amount;
+	    else
+	      row->data().balance += amount;
+	    complete(bool(row->commit()));
 	  });
       });
     return {};
   }
 
   ZdbSagaStep(2, account, Update) {
-    auto context = static_cast<Context *>(context_);
-    auto shard = accountShard(toID);
-    context->accounts->run(shard,
-      [this, context, saga, complete = ZuMv(complete), shard]() mutable {
+    context->accounts->run(accountShard(toID),
+      [this, complete = ZuMv(complete)]() mutable {
+	auto shard = accountShard(toID);
 	saga->findUpd<0>(context->accounts, shard, ZuFwdTuple(toID),
-	  [this, complete = ZuMv(complete)](
-	      ZdbRow<Account> *row) mutable {
-	    if (!row) { complete(false); return; }
-	    row->data().balance += amount;
-	    row->commit();
-	    complete(true);
+	  ZuMv(complete), [this](ZdbRow<Account> *row, auto &&complete) mutable {
+	    if constexpr (Fwd)
+	      row->data().balance += amount;
+	    else
+	      row->data().balance -= amount;
+	    complete(bool(row->commit()));
 	  });
       });
     return {};
   }
 
   ZdbSagaStep(3, transfer, Update) {
-    auto context = static_cast<Context *>(context_);
-    auto shard = transferShard(transferID);
-    context->transfers->run(shard,
-      [this, context, saga, complete = ZuMv(complete), shard]() mutable {
+    ZuAssert(Fwd);
+    context->transfers->run(transferShard(transferID),
+      [this, complete = ZuMv(complete)]() mutable {
+	auto shard = transferShard(transferID);
 	saga->findUpd<0>(
 	  context->transfers, shard, ZuFwdTuple(transferID),
-	  [complete = ZuMv(complete)](
-	      ZdbRow<Transfer> *row) mutable {
-	    if (!row) { complete(false); return; }
+	  ZuMv(complete), [](ZdbRow<Transfer> *row, auto &&complete) mutable {
 	    row->data().status = TransferStatus::Complete;
-	    row->commit();
-	    complete(true);
+	    complete(bool(row->commit()));
 	  });
       });
     return {};
@@ -185,7 +186,7 @@ ZfbStruct(BalanceTransfer,
 using Sagas = ZuTypeList<BalanceTransfer>;
 using Saga = ZdbMSaga<Sagas>;
 
-struct DB : public ZdbSagaDB<Sagas> {
+struct DB : public ZdbSagaDB<Context, Sagas> {
   ZmSemaphore active;
 };
 
@@ -268,7 +269,7 @@ static int run()
 
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<DB> db = new DB{};
-  Context context;
+  ZmRef<Context> context = new Context{};
 
   db->init(ZdbCf{cf->resolve("zdb")}, &mx, ZdbHandler{
     .upFn = [](Zdb *db_, ZdbHost *) {
@@ -277,20 +278,10 @@ static int run()
   }, store);
   ZdbTblRef<Transfer> transfers = db->initTable<Transfer>("transfer");
   ZdbTblRef<Account> accounts = db->initTable<Account>("account");
-  context.transfers = transfers;
-  context.accounts = accounts;
-  db->sagas(ZdbSagaHandler{
-    .context = &context,
-    .doneFn = [](void *context_, ZuCSpan, ZdbSagaID) {
-      static_cast<Context *>(context_)->completed.post();
-    },
-    .errorFn = [](void *context_, ZuCSpan type, ZdbSagaID, ZeException e) {
-      auto context = static_cast<Context *>(context_);
-      context->failed = true;
-      std::cerr << "saga " << type << " failed: " << e << '\n';
-      context->completed.post();
-    }
-  });
+  context->transfers = transfers;
+  context->accounts = accounts;
+  auto contextPtr = context.ptr();
+  db->sagas(ZuMv(context));
 
   bool ok = db->start();
   if (ok) {
@@ -301,21 +292,23 @@ static int run()
 
   if (ok) {
     ZmRef<Saga> saga = new Saga{};
-    saga->init(BalanceTransfer{
-      .transferID = 1, .fromID = 1, .toID = 2, .amount = 125
-    });
-    ok = ZmBlock<bool>{}([db = db.ptr(), saga = ZuMv(saga)](
+    saga->init(BalanceTransfer{{}, 1, 1, 2, 125});
+    ok = ZmBlock<bool>{}([
+      db = db.ptr(), saga = ZuMv(saga), context = contextPtr
+    ](
 	auto wake) mutable {
-      if (!db->saga(transferShard(1), ZdbSagaID{1}, ZuMv(saga), [
-	  wake = ZuMv(wake)](ZdbSagaSubmitResult result) mutable {
-	wake(result.template is<void>());
-      })) wake(false);
+      if (!db->saga(transferShard(1), ZdbSagaID{1}, ZuMv(saga),
+	[wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
+	[context](bool ok) {
+	  context->failed = !ok;
+	  context->completed.post();
+	})) wake(false);
     });
   }
 
   if (ok) {
-    context.completed.wait();
-    ok = !context.failed;
+    contextPtr->completed.wait();
+    ok = !contextPtr->failed;
   }
 
   int64_t fromBalance = 0;
