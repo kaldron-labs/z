@@ -96,11 +96,9 @@ static inline uint64_t decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   while (n >= 2) {
     i = lookup(*s++); if (i >= 64) break;
     j = lookup(*s++); if (j >= 64) break;
-    if (n == 2 && (j & 15)) break;
     *d++ = (i<<2) | (j>>4);
     if (!(n -= 2)) break;
     i = lookup(*s++); if (i >= 64) break;
-    if (n == 1 && (i & 3)) break;
     *d++ = (j<<4) | (i>>2);
     if (!--n) break;
     j = lookup(*s++); if (j >= 64) break;

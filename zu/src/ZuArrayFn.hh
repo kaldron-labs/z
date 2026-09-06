@@ -345,7 +345,8 @@ template <typename T, class Cmp> struct ZuArrayFn_Cmp<T, Cmp, Cmp, true> {
   }
 };
 
-template <typename T> struct ZuArrayFn_Hash {
+template <typename T, bool = ZuEquiv<T, char>{} || ZuEquiv<T, wchar_t>{}>
+struct ZuArrayFn_Hash {
   static uint32_t hash(const T *data, uint64_t length) {
     ZuHash_FNV::Value v = ZuHash_FNV::initial_();
     if (ZuLikely(length))
@@ -355,15 +356,12 @@ template <typename T> struct ZuArrayFn_Hash {
     return (uint32_t)v;
   }
 };
-template <typename T> struct ZuArrayFn_StringHash {
+template <typename T>
+struct ZuArrayFn_Hash<T, true> {
   ZuInline static uint32_t hash(const T *data, uint64_t length) {
-    return ZuCSpanHash<T>::hash(data, length);
+    return ZuStringHash<T>::hash(data, length);
   }
 };
-template <>
-struct ZuArrayFn_Hash<char> : public ZuArrayFn_StringHash<char> { };
-template <>
-struct ZuArrayFn_Hash<wchar_t> : public ZuArrayFn_StringHash<wchar_t> { };
 
 // main template
 
