@@ -110,7 +110,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 
 ### Zum (user database/IAM)
 - User DB types with RBAC semantics and FlatBuffers-backed structs in `zum/src/Zum.hh:12`.
-- Server logic in `zum/src/ZumServer.hh:10` and entry point in `zum/src/zuserdb.cc:1`.
+- Server logic in `zum/src/ZumServer.hh:10` and entry point in `zum/src/zum.cc:1`.
 - Connections: uses Zfb for serialization and Ztls for crypto/HMAC primitives (e.g., `zum/src/Zum.hh:12`).
 
 ### Tools and single-binary modules
@@ -434,7 +434,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `ztls/src/ed25519/fuzz/fuzz-ed25519.c:4` - Top-level symbols: typedef uint32_t, define rotl32, define quarter, function main
 - `ztls/src/ed25519/fuzz/curve25519-ref10.c:3` - Top-level symbols: typedef crypto_int32, typedef crypto_int64, typedef crypto_uint64
 - `ztls/src/ed25519/test-internals.c:1` - Top-level contents (no regex-matched symbols)
-- `zum/src/zuserdb.cc:29` - Top-level symbols: struct Options, using Data
+- `zum/src/zum.cc:29` - Top-level symbols: struct Options, using Data
 - `ztls/src/ed25519/curve25519-donna-64bit.h:298` - Top-level symbols: define F, define curve25519_contract_carry, define curve25519_contract_carry_full, define curve25519_contract_carry_final, define write51full, define write51
 - `ztls/src/ed25519/test.c:110` - Top-level symbols: define test_batch_count, define test_batch_rounds
 - `ztls/src/ed25519/ed25519-hash.h:5` - Top-level symbols: define HASH_BLOCK_SIZE, define HASH_DIGEST_SIZE, typedef ed25519_hash_context, define Ch, define Maj, define S0
@@ -665,5 +665,5 @@ Higher-level subsystems build on these foundations:
 
 ## Open Questions
 - The build-time wiring (configure-time module enablement and binary composition) is not represented in the analyzed source files; additional context may live in build scripts outside `**/*.{h,hh,c,cc,sql}`.
-- The runtime deployment topology of binaries such as `zproxy`, `zdash`, and `zuserdb` is not described in code comments; only their implementation sources are present in the analyzed set.
+- The runtime deployment topology of binaries such as `zproxy`, `zdash`, and `zum` is not described in code comments; only their implementation sources are present in the analyzed set.
 - Some module integration points (for example, how specific binaries are configured with Zv/Zdb settings) are implied by types but not explicitly documented in the analyzed sources.
