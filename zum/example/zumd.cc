@@ -31,6 +31,7 @@
 #include <zlib/ZumHTTP.hh>
 
 #include <zlib/ZtlsPK.hh>
+#include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsRandom.hh>
 
 enum { RequestLimit = 64, BodyMax = 64U<<10 };
@@ -286,13 +287,13 @@ Zum::String App::page_(ZuBSpan ceremonyID, ZuCSpan options)
 
 bool App::seed_()
 {
-  uint8_t publicKey[Ztls::ES256::PublicKeySize];
+  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
   if (!Ztls::Backend::pkey_ec_export_public(
       m_key->key, {publicKey, sizeof(publicKey)})) return false;
   m_publicKey = Zum::Bytes{ZuBSpan{publicKey}};
-  char jwk[Ztls::ES256::JWKSize];
+  char jwk[Ztls::COSE::ES256::JWKSize];
   unsigned jwkLength = 0;
-  if (!Ztls::es256JWK(
+  if (!Ztls::COSE::ES256::jwk(
       m_publicKey, {jwk, sizeof(jwk)}, jwkLength)) return false;
   Zum::String publicJwk;
   publicJwk << ZuCSpan{jwk, jwkLength - 1} <<

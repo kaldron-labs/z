@@ -10,12 +10,12 @@
 
 #include <zlib/ZumJWT.hh>
 
-#include <zlib/ZtlsSec.hh>
+#include <zlib/ZtlsCOSE.hh>
 
 int main(int argc, char **argv)
 {
   bool ok = argc == 3;
-  uint8_t key[Ztls::ES256::PublicKeySize];
+  uint8_t key[Ztls::COSE::ES256::PublicKeySize];
   if (ok)
     ok = ZuHex::decode(key, ZuBSpan{argv[2]}) == sizeof(key) &&
       ZuCSpan{argv[2]}.length() == sizeof(key) * 2;
