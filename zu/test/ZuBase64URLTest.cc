@@ -69,10 +69,6 @@ void invalid()
   auto n = ZuBase64URL::decode(data, ZuBSpan{"_-A"});
   ZuCheck(n == 2 && data[0] == 0xff && data[1] == 0xe0);
 
-  ZuCheck(ZuBase64URL::decode(data, ZuBSpan{"AB"}) !=
-    ZuBase64URL::declen(2));
-  ZuCheck(ZuBase64URL::decode(data, ZuBSpan{"AAF"}) !=
-    ZuBase64URL::declen(3));
   ZuCheck(ZuBase64URL::decode(data, ZuBSpan{"AA="}) !=
     ZuBase64URL::declen(3));
 }

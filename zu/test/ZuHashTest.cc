@@ -15,6 +15,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuCmp.hh>
+#include <zlib/ZuSpan.hh>
 
 using namespace ZuTestUtil;
 
@@ -186,6 +187,22 @@ void testString(const char *s)
     std::cerr << "Failed to hash \"" << s << "\" to identical values\n");
 }
 
+void testCharEquiv()
+{
+  ZuTestScope(testCharEquiv);
+  char c[] = "foobar";
+  signed char s[] = "foobar";
+  unsigned char u[] = "foobar";
+  ZuSpan<const char> cs{c, 6};
+  ZuSpan<const signed char> ss{s, 6};
+  ZuSpan<const unsigned char> us{u, 6};
+  ZuSpan<char> ms{c, 6};
+  uint32_t hash = ZuHash<decltype(cs)>::hash(cs);
+  ZuCheck(hash == ZuHash<decltype(ss)>::hash(ss));
+  ZuCheck(hash == ZuHash<decltype(us)>::hash(us));
+  ZuCheck(hash == ZuHash<decltype(ms)>::hash(ms));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -246,4 +263,5 @@ int main(int argc, char **argv)
   ZuTestCall(testString, "foobar");
   ZuTestCall(testString, "foobar!");
   ZuTestCall(testString, "foobar!!");
+  ZuTestCall(testCharEquiv);
 }
