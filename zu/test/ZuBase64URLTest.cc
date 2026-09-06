@@ -62,6 +62,21 @@ void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)
   ZuTestCall(dec, dst, src, decMsg);
 }
 
+void invalid()
+{
+  ZuTestScope(invalid);
+  uint8_t data[8] = { 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5 };
+  auto n = ZuBase64URL::decode(data, ZuBSpan{"_-A"});
+  ZuCheck(n == 2 && data[0] == 0xff && data[1] == 0xe0);
+
+  ZuCheck(ZuBase64URL::decode(data, ZuBSpan{"AB"}) !=
+    ZuBase64URL::declen(2));
+  ZuCheck(ZuBase64URL::decode(data, ZuBSpan{"AAF"}) !=
+    ZuBase64URL::declen(3));
+  ZuCheck(ZuBase64URL::decode(data, ZuBSpan{"AA="}) !=
+    ZuBase64URL::declen(3));
+}
+
 #define TEST_(src, dst, src_q, dst_q) ZuTestCall_( \
     src_q " -> " dst_q, test, \
     src, dst, src_q " -> " dst_q, dst_q " -> " src_q)
@@ -84,4 +99,5 @@ int main()
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 }), "ESIzRFVm");
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 }), "ESIzRFVmdw");
   TEST((ZuBSpan{ 0xff, 0xe0 }), "_-A");
+  ZuTestCall(invalid);
 }

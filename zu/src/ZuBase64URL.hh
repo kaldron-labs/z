@@ -30,7 +30,7 @@ static constexpr const uint8_t lookup_[] = {
 
 ZuInline static constexpr uint8_t lookup(uint8_t c) {
   c -= 45;
-  return c > 120 ? 0xff : lookup_[c];
+  return c >= sizeof(lookup_) ? 0xff : lookup_[c];
 };
 
 ZuInline static constexpr bool is(char c) {
@@ -96,9 +96,11 @@ static inline uint64_t decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   while (n >= 2) {
     i = lookup(*s++); if (i >= 64) break;
     j = lookup(*s++); if (j >= 64) break;
+    if (n == 2 && (j & 15)) break;
     *d++ = (i<<2) | (j>>4);
     if (!(n -= 2)) break;
     i = lookup(*s++); if (i >= 64) break;
+    if (n == 1 && (i & 3)) break;
     *d++ = (j<<4) | (i>>2);
     if (!--n) break;
     j = lookup(*s++); if (j >= 64) break;

@@ -117,6 +117,10 @@ void testRuntimeSmokes()
 #else
   ZuCheck(true);
 #endif
+
+  uint8_t secret[] = { 1, 2, 3, 4 };
+  ZuClear(secret, sizeof(secret));
+  ZuCheck(!(secret[0] | secret[1] | secret[2] | secret[3]));
 }
 
 int main(int argc, char **argv)

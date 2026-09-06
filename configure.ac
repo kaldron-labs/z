@@ -238,7 +238,8 @@ AC_CONFIG_FILES([Makefile \
 	ztc/Makefile ztc/src/Makefile ztc/test/Makefile ztc/itest/Makefile \
 	zdb_pq/Makefile zdb_pq/src/Makefile zdb_pq/test/Makefile \
 	zdb_pq/itest/Makefile \
-	zum/Makefile zum/src/Makefile zum/test/Makefile \
+	zum/Makefile zum/src/Makefile zum/test/Makefile zum/itest/Makefile \
+	zum/example/Makefile zum/interop/Makefile \
 	zdf/Makefile zdf/src/Makefile zdf/test/Makefile zdf/itest/Makefile \
 	zrl/Makefile zrl/src/Makefile zrl/test/Makefile zrl/example/Makefile \
 	zcmd/Makefile zcmd/src/Makefile zcmd/test/Makefile zcmd/itest/Makefile \

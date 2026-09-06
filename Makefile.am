@@ -15,8 +15,9 @@ if LIBPQ
 SUBDIRS += zdb_pq
 endif
 SUBDIRS += zdf
+SUBDIRS += zum
 # SUBDIRS += zdash
-# zum, zcmd and zproxy are reference code only
+# zcmd and zproxy are reference code only
 if GTK
 # SUBDIRS += zgtk
 endif

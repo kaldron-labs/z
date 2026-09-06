@@ -248,9 +248,8 @@ struct MReqBuilder : public Zhttp::ReqBuilder {
     u.cdispatch([&l](auto I, const auto &request) {
       using ReqHdrs = GetHdrs<typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
-      using ReqHdrValues = GetHdrValues<ReqHdrs>;
       if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
-	using Values = ZuType<ZuTypeIndex<Key, ReqHdrKeys>{}, ReqHdrValues>;
+	using Values = GetKValues<Key, ReqHdrs>;
 	if constexpr (ZuTypeIn<Value, Values>{})
 	  request.template header<Key, Value>(ZuFwd<L>(l));
       }

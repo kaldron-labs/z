@@ -12,6 +12,13 @@
 using namespace ZuTestUtil;
 
 struct TestObject : public ZmObject { };
+struct RawObject : public ZmObject {
+  ZuSpan<uint8_t> data;
+  RawObject &operator =(ZuSpan<uint8_t> data_) {
+    data = data_;
+    return *this;
+  }
+};
 
 struct NoneReq : public Zrest::ReqBuilder<NoneReq, TestObject> { };
 struct ZeroReq : public Zrest::ReqBuilder<ZeroReq, TestObject> {
@@ -26,6 +33,25 @@ struct ZeroParser : public Zrest::ResParser<ZeroParser, TestObject> {
 };
 struct ZeroReqParser : public Zrest::ReqParser<ZeroReqParser, TestObject> {
   enum { Body = Zrest::BodyPolicy::Zero };
+};
+struct LimitedReqParser : public Zrest::ReqParser<LimitedReqParser, RawObject> {
+  enum { Body = Zrest::BodyPolicy::Raw };
+  static constexpr uint64_t BodyLimit = 4;
+};
+
+struct ExactReq : public Zrest::ReqParser<ExactReq, RawObject> {
+  using Path = ZuStringT<"/authorize">;
+  enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
+  static constexpr uint64_t QueryLimit = 12;
+};
+struct ExactNoQuery : public Zrest::ReqParser<ExactNoQuery, TestObject> {
+  using Path = ZuStringT<"/.well-known/oauth-authorization-server">;
+  enum { Exact = 1 };
+};
+struct FormReq : public Zrest::ReqParser<FormReq, RawObject> {
+  using Path = ZuStringT<"/token">;
+  enum { Method = Zhttp::Method::POST, Exact = 1,
+    Body = Zrest::BodyPolicy::URI, RequireContentType = 1 };
 };
 
 struct ReplyA { };
@@ -87,6 +113,66 @@ static void zeroBodyTest()
   ZuCheck(requestParser.bodyInfo(Zhttp::BodyType::Fixed, 0));
   ZuCheck(!requestParser.bodyInfo(Zhttp::BodyType::Fixed, 1));
   ZuCheck(!requestParser.bodyInfo(Zhttp::BodyType::Streamed, 0));
+  LimitedReqParser limited;
+  ZuCheck(limited.bodyInfo(Zhttp::BodyType::Fixed, 4));
+  ZuCheck(!limited.bodyInfo(Zhttp::BodyType::Fixed, 5));
+}
+
+static void exactRouteTest()
+{
+  ZuTestScope(exactRoute);
+  using Routes = Zrest::MReqParser<ZuTypeList<ExactReq, ExactNoQuery>>;
+  auto match = [](ZuCSpan path) {
+    Routes routes;
+    Zhttp::Target target;
+    target.path = {
+      reinterpret_cast<uint8_t *>(const_cast<char *>(path.data())),
+      path.length()};
+    return routes.operation(Zhttp::Method::GET, target);
+  };
+  ZuCheck(match("/authorize"));
+  ZuCheck(match("/authorize?client_id=x"));
+  ZuCheck(!match("/authorize?client_id=long"));
+  ZuCheck(!match("/authorize/extra"));
+  ZuCheck(match("/.well-known/oauth-authorization-server"));
+  ZuCheck(!match("/.well-known/oauth-authorization-server?x=y"));
+}
+
+static void requestHeaderTest()
+{
+  ZuTestScope(requestHeader);
+  using Routes = Zrest::MReqParser<ZuTypeList<FormReq>>;
+  using ContentType = ZuStringT<"content-type">;
+  using Form = ZuStringT<"application/x-www-form-urlencoded">;
+  using Plain = ZuStringT<"text/plain">;
+  auto init = [](Routes &routes) {
+    char path[] = "/token";
+    Zhttp::Target target;
+    target.path = {
+      reinterpret_cast<uint8_t *>(path), sizeof(path) - 1};
+    return routes.operation(Zhttp::Method::POST, target);
+  };
+  auto valid = [](Routes &routes) {
+    return routes.u.cdispatch([](auto, const auto &request) {
+      return request.valid;
+    });
+  };
+
+  Routes routes;
+  ZuCheck(init(routes));
+  routes.header<ContentType, Form>(Zhttp::FieldSection::Final);
+  ZuCheck(valid(routes));
+  routes.header<ContentType, Form>(Zhttp::FieldSection::Final);
+  ZuCheck(!valid(routes));
+
+  routes.reset();
+  ZuCheck(init(routes));
+  routes.header<ContentType, Plain>(Zhttp::FieldSection::Final);
+  ZuCheck(!valid(routes));
+
+  routes.reset();
+  ZuCheck(init(routes));
+  ZuCheck(!routes.bodyInfo(Zhttp::BodyType::Fixed, 1));
 }
 
 int main(int argc, char **argv)
@@ -94,5 +180,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(zeroBodyTest);
+  ZuTestCall(exactRouteTest);
+  ZuTestCall(requestHeaderTest);
   return 0;
 }

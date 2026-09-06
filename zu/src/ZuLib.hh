@@ -113,10 +113,23 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#ifndef _WIN32
+#include <string.h>
+#endif
 
 static_assert(sizeof(int) == sizeof(unsigned));
 static_assert(sizeof(int) >= sizeof(int32_t));
 static_assert(sizeof(unsigned) >= sizeof(uint32_t));
+
+// clear secret data without dead-store elimination
+inline void ZuClear(void *ptr, size_t size) noexcept
+{
+#ifndef _WIN32
+  ::explicit_bzero(ptr, size);
+#else
+  ::SecureZeroMemory(ptr, size);
+#endif
+}
 
 #ifdef __GNUC__
 

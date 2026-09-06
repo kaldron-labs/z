@@ -1,0 +1,11 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table Scope {
+  id:uint64;
+  audience:string;
+  name:string;
+  role_i_ds:[uint64];
+  state:int8;
+  owner:Zfb.UInt128;
+}
+root_type Scope;

@@ -312,6 +312,12 @@ template <> struct ZuCSpanHash<char> {
     // return ZuHash_GoldenRatio32::hash(hash);
   }
 };
+template <> struct ZuCSpanHash<uint8_t> {
+  static uint32_t hash(const uint8_t *data, size_t len) {
+    return ZuCSpanHash<char>::hash(
+      reinterpret_cast<const char *>(data), len);
+  }
+};
 template <int WCharSize> struct ZuWSpanHash;
 template <> struct ZuWSpanHash<2> {
   static uint32_t hash(const wchar_t *data_, size_t len) {

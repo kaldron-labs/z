@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Huw Rogers
+// (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// server-side RBAC user DB with MFA, API keys, etc.
+// embedded Zum OAuth and passkey HTTP operation owner
 
 #ifndef ZumServer_HH
 #define ZumServer_HH
@@ -13,300 +13,137 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZuArray.hh>
+#include <zlib/ZumAuthorize.hh>
+#include <zlib/ZumDiscovery.hh>
+#include <zlib/ZumOIDC.hh>
+#include <zlib/ZumPasskey.hh>
+#include <zlib/ZumToken.hh>
 
-#include <zlib/ZmHash.hh>
+#include <zlib/ZtlsRandom.hh>
 
-#include <zlib/Zdb.hh>
+namespace Zum {
 
-#include <zlib/Zum.hh>
-
-namespace Zum::Server {
-
-class UserDB;
-
-struct UserDBCf {
-  ZtString<>	thread;
-  unsigned	passLen = 12;
-  unsigned	totpRange = 6;
-  unsigned	keyInterval = 30;
-};
-
-ZfStruct((UserDBCf, Cf),
-  (((thread),		(Required)),			(String)),
-  (((passLen),		((Range<6U, 60U>))),		(UInt32, 12)),
-  (((totpRange),	((Range<0U, 100U>))),		(UInt32, 6)),
-  (((keyInterval),	((Range<0U, 36000U>))),		(UInt32, 30)));
-
-// open callback - ok, permIDs
-using OpenFn = ZmFn<void(bool, ZtArray<unsigned>),
-  ZmFnHeapID<"Zum.Server.OpenFn">>;
-
-// bootstrap callback
-struct BootstrapData { // bootstrap() result data
-  String passwd;
-  String secret;
-};
-using BootstrapResult = ZuUnion<bool, BootstrapData>;
-inline bool bootstrapOK(const BootstrapResult &result) {
-  return !result.is<bool>() || result.p<bool>();
+namespace ReplyType {
+  enum {
+    Page, Redirect, OK, OAuthError, ClientError, Empty, Discovery,
+    ServerError
+  };
 }
-using BootstrapFn = ZmFn<void(BootstrapResult),
-  ZmFnHeapID<"Zum.Server.BootstrapFn">>;
 
-// request/response callback
-using ResponseFn = ZmFn<void(ZmRef<ZiIOBuf>),
-  ZmFnHeapID<"Zum.Server.ResponseFn">>;
+struct ServerReply {
+  String	body;
+  String	location;
+  String	setCookie;
+  unsigned	type = ReplyType::OAuthError;
+};
 
-// live session
-namespace SessionFlags {
-  ZtFlags(ZumAPI, SessionFlags, uint8_t, Interactive);
+namespace PasskeyStartType {
+  enum { Enrollment, Bootstrap, AddCredential, Recovery };
 }
-struct Session_ {
-  UserDB		*userDB = nullptr;
-  ZdbRowRef<User>	user;
-  ZdbRowRef<Key>	key;		// if API key access
-  ZtBitmap		perms;		// effective permissions
-  SessionFlags::T	flags = 0;	// SessionFlags
 
-  ~Session_() {
-    if (user) user->unpin();
-    if (key) key->unpin();
-  }
-
-  static auto IDAxor(const Session_ &session) {
-    return session.user->data().id;
-  }
-  static auto NameAxor(const Session_ &session) {
-    return session.user->data().name;
-  }
-};
-struct Session : public ZmPolymorph, public Session_ {
-  ZuDerive_(Session, Session_)
+struct PasskeyStart {
+  String	capability;
+  unsigned	type = PasskeyStartType::Enrollment;
 };
 
-// session start callback - nullptr on failure
-using SessionFn = ZmFn<void(ZmRef<Session>),
-  ZmFnHeapID<"Zum.Server.SessionFn">>;
+struct PasskeyAdmission {
+  EnrollmentBeginConfig	enrollment;
+  CredentialBeginConfig	credential;
+  RecoveryBeginConfig	recovery;
+  bool			allowed = false;
+};
 
-// login request callback - session, response
-using LoginFn = ZmFn<void(ZmRef<Session>, ZmRef<ZiIOBuf>),
-  ZmFnHeapID<"Zum.Server.LoginFn">>;
+struct ServerLimits {
+  ZfURI::FormLimits	beginForm{2, 16, 4096};
+  ZfURI::FormLimits	ceremonyForm{1, 8, 128};
+  ZfJSON::ScanLimits	json{64U<<10, 8, 256, 64U<<10};
+  ZfCBOR::Limits	cbor{64U<<10, 8, 256, 64U<<10};
+  JWTLimits		jwt;
+  unsigned		credentialID = 1024;
+  unsigned		cookie = 8U<<10;
+  unsigned		jwks = 4;
+  OIDCLimits		oidc;
+  unsigned		oidcPending = 64;
+};
 
-// user DB state
-ZtEnumNS(ZumAPI, UserDBState, int8_t,
-  Uninitialized, Initialized, Opening, Opened, OpenFailed, Bootstrap);
+struct ServerConfig {
+  String	issuer;
+  String	rpID;
+  String	rpName;
+  String	keyID;
+  String	cookieName{"zum_tx"};
+  String	cookiePath{"/"};
+  OIDCConfig	oidc;
+  ServerLimits	limits;
+  uint64_t	requestTimeout = 15;
+  uint64_t	oidcTimeout = 300;
+  uint64_t	passkeyTimeout = 60000;
+  int64_t	ceremonyLifetime = 300;
+  int64_t	codeLifetime = 60;
+  int64_t	accessLifetime = 300;
+  int64_t	refreshLifetime = 86400;
+  unsigned	refreshGenerations = 64;
+  unsigned	spentTokens = 64;
+  unsigned	authMethod = AuthMethod::Passkey;
+};
 
-// main server-side user DB class
-class ZvAPI UserDB {
+using ServerFn = ZmFn<void(ServerReply), ZmFnHeapID<"Zum.ServerFn">>;
+using ClockFn = ZmFn<int64_t(), ZmFnHeapID<"Zum.ClockFn">>;
+using PageFn = ZmFn<String(Bytes, String), ZmFnHeapID<"Zum.PageFn">>;
+using AdmitDoneFn = ZmFn<void(PasskeyAdmission),
+  ZmFnHeapID<"Zum.AdmitDoneFn">>;
+using AdmitFn = ZmFn<void(PasskeyStart, AdmitDoneFn),
+  ZmFnHeapID<"Zum.AdmitFn">>;
+
+class ZumAPI Server {
+  Server(const Server &) = delete;
+  Server &operator =(const Server &) = delete;
+
 public:
-  UserDB(Ztls::Random *rng);
-  ~UserDB();
+  Server() = default;
 
-  static void dbCf(
-    const ZfCf::AnyNode *, ZdbCf &dbCf);	// inject tables into dbCf
-  void init(const ZfCf::AnyNode *, Zdb *);
+  bool init(
+    DB *, DBContext *, Requests *, ServerConfig,
+    ClockFn, PageFn, PolicyFn, AdmitFn, SignFn, OIDCHTTPFn = {});
   void final();
 
-  // user DB thread
-  template <typename ...Args>
-  void run(Args &&...args) const {
-    m_db->shardRun(0, ZuFwd<Args>(args)...);
-  }
-  template <typename ...Args>
-  void invoke(Args &&...args) const {
-    m_db->shardInvoke(0, ZuFwd<Args>(args)...);
-  }
-  bool invoked() const { return m_db->shardInvoked(0); }
+  unsigned authMethod() const { return m_config.authMethod; }
 
-  // open
-  void open(StringVec perms, OpenFn);
-
-  // one-time initialization (idempotent)
-  void bootstrap(String userName, BootstrapFn);
-
-  // process login/access request - returns false if invalid
-  bool loginReq(ZmRef<ZiIOBuf> buf, LoginFn);
-
-  // process user DB request - returns false if invalid
-  bool request(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-
-  // check permissions - ok(session, perm)
-  bool ok(Session *session, unsigned permID) const {
-    auto flags = session->user->data().flags;
-    if (flags & UserFlags::SuperUser()) return true;
-    if ((flags & UserFlags::ChPass()) && !session->key &&
-	permID != m_perms[reqPerm(unsigned(fbs::ReqData::ChPass))])
-      return false;
-    return session->perms[permID];
-  }
+  void authorize(String query, ServerFn);
+  void token(String form, String authorization, ServerFn);
+  void revoke(String form, String authorization, ServerFn);
+  void metadata(ServerFn);
+  void jwks(ServerFn);
+  void passkeyBegin(String json, ServerFn);
+  void passkeyFinish(
+    String query, String cookie, String json, ServerFn);
+  void oidcCallback(String query, String cookie, ServerFn);
 
 private:
-  struct Open {	// internal open() context
-    OpenFn		fn;
-    StringVec	perms;
-    ZtArray<unsigned>	permIDs;
-    unsigned		perm = 0;
-  };
-  void open_(ZuPtr<Open>);
-  void open_recoverNextUserID(ZuPtr<Open>);
-  void open_recoverNextPermID(ZuPtr<Open>);
-  void open_findAddPerm(ZuPtr<Open>);
-  void open_nextPerm(ZuPtr<Open>);
-  void opened(ZuPtr<Open>, bool ok);
+  int64_t now_() const;
+  ZuTime deadline_() const;
+  bool cookie_(String &, Bytes &);
+  String setCookie_(ZuCSpan, bool clear = false) const;
+  bool binding_(String &, Bytes &) const;
+  void passkeyAdmitted_(
+    PasskeyStart, PasskeyAdmission, Bytes, String setCookie, ServerFn);
+  void finishGrant_(Bytes, Bytes, String, ServerFn);
 
-  struct Bootstrap { // internal bootstrap() context
-    String	userName;
-    BootstrapFn	fn;
-  };
-  void bootstrap_(ZuPtr<Bootstrap>);
-  void bootstrap_findAddUser(ZuPtr<Bootstrap>);
-  void bootstrapped(ZuPtr<Bootstrap>, BootstrapResult);
-
-  // import flatbuffers types
-  template <typename T> using Offset = Zfb::Offset<T>;
-  template <typename T> using Vector = Zfb::Vector<T>;
-
-  // start new session
-  struct SessionLoad {
-    using Cred = ZuUnion<String, KeyIDData>;	// username or API key ID
-
-    Cred		cred;
-    SessionFn		fn;
-    ZdbRowRef<Key>	key;	// null unless non-interactive
-    ZmRef<Session>	session;
-    unsigned		roleIndex = 0;
-  };
-  void sessionLoad_login(String userName, SessionFn);
-  void sessionLoad_access(KeyIDData keyID, SessionFn);
-  void sessionLoad_findUser(ZuPtr<SessionLoad> context);
-  void sessionLoad_findKey(ZuPtr<SessionLoad> context);
-  void sessionLoad_findUserID(ZuPtr<SessionLoad> context);
-  void sessionLoad_findRole(ZuPtr<SessionLoad> context);
-  void sessionLoaded(ZuPtr<SessionLoad> context, bool ok);
-
-  // process login/access request
-  void loginReq_(ZmRef<ZiIOBuf> buf, LoginFn);
-
-  // process request
-  void request_(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-
-  // interactive login
-  void login(
-    String user, String passwd, unsigned totp, LoginFn);
-  // API access
-  void access(
-    KeyIDData keyID, ZtArray<uint8_t> token, int64_t stamp,
-    ZtArray<uint8_t> hmac, LoginFn);
-
-  void loginSucceeded(ZmRef<Session>, LoginFn);
-  void loginFailed(ZmRef<Session>, LoginFn);
-
-  // acknowledge request (positively)
-  ZmRef<ZiIOBuf> respond(
-    Zfb::IOBuilder &fbb, SeqNo seqNo,
-    fbs::ReqAckData ackType, Offset<void> ackData);
-  // reject request
-  ZmRef<ZiIOBuf> reject(SeqNo seqNo, unsigned rejCode, String text);
-
-  // initialize key
-  void initKey(ZdbRow<Key> *, UserID, KeyIDData);
-
-  // initialize permission
-  void initPerm(ZdbRow<Perm> *, String name);
-
-  // initialize role
-  void initRole(
-    ZdbRow<Role> *, String name,
-    ZtBitmap perms, ZtBitmap apiperms, RoleFlags::T);
-
-  // initialize user
-  void initUser(
-    ZdbRow<User> *, UserID, String name,
-    StringVec roles, UserFlags::T,
-    String &passwd);
-
-  // clear all API keys for a user
-  template <typename L> void keyClr__(UserID id, L &&l);
-
-  // change password
-  void chPass(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-
-  // query users
-  void userGet(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // add a new user
-  void userAdd(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // reset password (also clears all API keys)
-  void resetPass(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // modify user (name, roles, flags)
-  void userMod(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // delete user (and associated API keys)
-  void userDel(ZmRef<ZiIOBuf> buf, ResponseFn);
-  
-  // query roles
-  void roleGet(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // add role
-  void roleAdd(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // modify role (name, perms, apiperms, flags)
-  void roleMod(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // delete role
-  void roleDel(ZmRef<ZiIOBuf> buf, ResponseFn);
-  
-  // query permissions 
-  void permGet(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // add new permission
-  void permAdd(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // modify permission (name)
-  void permMod(ZmRef<ZiIOBuf> buf, ResponseFn);
-  // delete permission
-  void permDel(ZmRef<ZiIOBuf> buf, ResponseFn);
-
-  // query API keys for user
-  void ownKeyGet(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyGet(ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyGet_(SeqNo, UserID, fbs::ReqAckData, ResponseFn);
-  // add API key for user
-  void ownKeyAdd(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyAdd(ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyAdd_(SeqNo, UserID, fbs::ReqAckData, ResponseFn);
-  // clear all API keys for user
-  void ownKeyClr(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyClr(ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyClr_(SeqNo, UserID, fbs::ReqAckData, ResponseFn);
-  // delete API key
-  void ownKeyDel(ZmRef<Session>, ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyDel(ZmRef<ZiIOBuf> buf, ResponseFn);
-  void keyDel_(SeqNo, KeyIDData, fbs::ReqAckData, ResponseFn);
-
-private:
-  Ztls::Random		*m_rng = nullptr;
-  unsigned		m_passLen = 12;
-  unsigned		m_totpRange = 6;
-  unsigned		m_keyInterval = 30;
-
-  ZmAtomic<int>		m_state = UserDBState::Uninitialized;
-
-  ZdbTblRef<User>	m_userTbl;
-  ZdbTblRef<Role>	m_roleTbl;
-  ZdbTblRef<Key>	m_keyTbl;
-  ZdbTblRef<Perm>	m_permTbl;
-
-  using NPerms = ZuUnsigned<
-    unsigned(fbs::LoginReqData::MAX) + unsigned(fbs::ReqData::MAX)>;
-
-  static constexpr unsigned nPerms() { return NPerms{}; }
-  static constexpr unsigned loginReqPerm(unsigned i) { return i - 1; }
-  static constexpr unsigned reqPerm(unsigned i) {
-    return unsigned(fbs::LoginReqData::MAX) + (i - 1);
-  }
-
-  Zdb			*m_db = nullptr;
-  UserID		m_nextUserID = 0;
-
-  PermID		m_nextPermID = 0;
-  PermID		m_perms[NPerms{}];
+  DB		*m_db = nullptr;
+  DBContext	*m_context = nullptr;
+  Requests	*m_requests = nullptr;
+  ServerConfig	m_config;
+  ClockFn	m_clock;
+  PageFn	m_page;
+  PolicyFn	m_policy;
+  AdmitFn	m_admit;
+  SignFn	m_sign;
+  Ztls::Random	m_rng;
+  Ztls::Random	m_cookieRng;
+  OIDC		m_oidc;
+  bool		m_inited = false;
 };
 
-} // Zum::Server
+} // namespace Zum
 
 #endif /* ZumServer_HH */

@@ -674,10 +674,11 @@ varBufSize(const reflection::Field *field, const Zfb::Table *fbo) {
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<BytesVec>{}, unsigned>
 varBufSize(const reflection::Field *field, const Zfb::Table *fbo) {
-  auto v = Zfb::GetFieldV<Zfb::Offset<Zfb::Vector<uint8_t>>>(*fbo, *field);
+  auto v = Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, *field);
   if (!v) return vecVarSize(0, [](unsigned) { return 0U; });
   return vecVarSize(v->size(), [&v](unsigned i) -> unsigned {
-    return v->Get(i)->size();
+    auto data = v->Get(i)->data();
+    return data ? data->size() : 0;
   });
 }
 
@@ -959,13 +960,14 @@ loadValue(
 {
   ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
   new (ptr) BytesVec{ZuBSpan(varBuf)};
-  auto v = Zfb::GetFieldV<Zfb::Offset<Zfb::Vector<uint8_t>>>(*fbo, *field);
+  auto v = Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, *field);
   unsigned n = v ? v->size() : 0;
   vecInit(varBuf, oids.oid(Value::Index<Bytes>{}), n);
   for (unsigned i = 0; i < n; i++) {
-    auto b = v->Get(i);
-    vecAppend(varBuf, b->size(), [b](uint8_t *ptr, unsigned size) {
-      memcpy(ptr, b->Data(), size);
+    auto data = v->Get(i)->data();
+    auto size = data ? data->size() : 0;
+    vecAppend(varBuf, size, [data](uint8_t *ptr, unsigned size) {
+      if (size) memcpy(ptr, data->Data(), size);
     });
   }
 }
@@ -1222,12 +1224,12 @@ saveOffset(Zfb::Builder &fbb, Offsets &offsets, const Value &value)
   auto hdr = vecHdr(varBuf);
   int n = validateVecHdr(hdr);
   if (n < 0) return;
-  offsets.push(Zfb::Save::vectorIter<Zfb::Vector<uint8_t>>(fbb, n,
+  offsets.push(Zfb::Save::vectorIter<Zfb::Bytes>(fbb, n,
     [&varBuf](Zfb::Builder &fbb, unsigned) {
-      return Zfb::Save::bytes(fbb,
+      return Zfb::CreateBytes(fbb, Zfb::Save::bytes(fbb,
 	vecElem(varBuf, [](const uint8_t *ptr, unsigned length) {
 	  return ZuBSpan{ptr, length};
-	}));
+	})));
     }).Union());
 }
 
