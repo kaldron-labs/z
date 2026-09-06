@@ -1,0 +1,139 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2026 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+// upstream OIDC configuration and local role resolution
+
+#ifndef ZumOIDC_HH
+#define ZumOIDC_HH
+
+#ifndef ZumLib_HH
+#include <zlib/ZumLib.hh>
+#endif
+
+#include <zlib/ZumDB.hh>
+#include <zlib/ZumJWT.hh>
+
+#include <zlib/ZmRef.hh>
+
+namespace Zum {
+
+// OIDC state, nonce, and PKCE verifier each carry 256 bits of entropy.
+enum { OIDCRandomSize = 32 };
+
+namespace AuthMethod {
+  enum { Passkey, OIDC };
+}
+
+namespace OIDCRoles {
+  enum { Local, Mapped };
+}
+
+namespace OIDCClientAuth {
+  enum { Basic, Post, None };
+}
+
+namespace OIDCHTTPMethod {
+  enum { GET, POST };
+}
+
+struct RoleMap {
+  String	value;
+  RoleID	roleID = 0;
+};
+
+using RoleMapVec = ZtArray<RoleMap, VecHeap>;
+
+struct OIDCConfig {
+  String	issuer;
+  String	authorizeEndpoint;
+  String	tokenEndpoint;
+  String	jwksEndpoint;
+  String	clientID;
+  String	clientSecret;
+  String	redirectURI;
+  StringVec	oidcScopes;
+  String	roleClaim;
+  RoleMapVec	roleMap;
+  unsigned	roles = OIDCRoles::Local;
+  unsigned	clientAuth = OIDCClientAuth::Basic;
+};
+
+struct OIDCClaims {
+  String	issuer;
+  String	subject;
+  String	nonce;
+  StringVec	audience;
+  StringVec	roleValues;
+  int64_t	iat = 0;
+  int64_t	expires = 0;
+};
+
+struct OIDCLimits {
+  JWTLimits	jwt;
+  ZfURI::FormLimits	callbackForm{3, 16, 16U<<10};
+  unsigned	audiences = 8;
+  unsigned	roleValues = 128;
+  unsigned	response = 64U<<10;
+  unsigned	keys = 32;
+  int64_t	clockSkew = 60;
+};
+
+using OIDCUserFn = ZmFn<void(bool, User, IDVec),
+  ZmFnHeapID<"Zum.OIDCUserFn">>;
+
+struct OIDCHTTPRequest {
+  String	url;
+  String	contentType;
+  String	authorization;
+  String	body;
+  unsigned	method = OIDCHTTPMethod::GET;
+};
+
+using OIDCHTTPDoneFn = ZmFn<void(unsigned, String),
+  ZmFnHeapID<"Zum.OIDCHTTPDoneFn">>;
+using OIDCHTTPFn = ZmFn<void(OIDCHTTPRequest, OIDCHTTPDoneFn),
+  ZmFnHeapID<"Zum.OIDCHTTPFn">>;
+using OIDCBeginFn = ZmFn<void(bool, String),
+  ZmFnHeapID<"Zum.OIDCBeginFn">>;
+using OIDCFinishFn = ZmFn<void(bool, Bytes, User, IDVec, int64_t),
+  ZmFnHeapID<"Zum.OIDCFinishFn">>;
+using OIDCClockFn = ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>;
+
+class OIDCState;
+
+class ZumAPI OIDC {
+  OIDC(const OIDC &) = delete;
+  OIDC &operator =(const OIDC &) = delete;
+
+public:
+  OIDC();
+  ~OIDC();
+
+  bool init(
+    ZmScheduler *, unsigned sid, DBContext *, OIDCConfig, OIDCLimits,
+    unsigned pendingLimit, uint64_t timeout, OIDCClockFn, OIDCHTTPFn);
+  void final();
+
+  bool begin(Bytes grantID, OIDCBeginFn);
+  bool finish(String query, OIDCFinishFn);
+
+private:
+  ZmRef<OIDCState>	m_state;
+};
+
+ZumExtern bool oidcConfigValid(const OIDCConfig &);
+ZumExtern bool oidcMapRoles(
+  ZuSpan<const String>, ZuSpan<const RoleMap>, IDVec &);
+ZumExtern bool oidcVerifyIDToken(
+  ZuCSpan token, ZuBSpan publicKey, ZuCSpan nonce,
+  const OIDCConfig &, int64_t now, const OIDCLimits &, OIDCClaims &);
+ZumExtern void oidcLoadUser(
+  DBContext *, String subject, const OIDCConfig &, StringVec roleValues,
+  OIDCUserFn);
+
+} // namespace Zum
+
+#endif /* ZumOIDC_HH */

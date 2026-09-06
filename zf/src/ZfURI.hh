@@ -458,6 +458,51 @@ ZfExtern int boq(ZuCSpan span);
 // - Example: "foo%20bar&" -> "foo bar\0\0\0" returning { 7, 10, '&' }
 ZfExtern ZuTuple<int, int, char> eos(ZuSpan<char> data);
 
+struct FormLimits {
+  unsigned fields;
+  unsigned name;
+  unsigned value;
+};
+
+namespace FormResult {
+  enum {
+    OK = 0, Malformed = -1, Fields = -2, Name = -3, Value = -4,
+    Stopped = -5
+  };
+}
+
+// scan an application/x-www-form-urlencoded field sequence in place
+template <typename L>
+int scanForm(ZuSpan<char> data, const FormLimits &limits, L &&field)
+{
+  unsigned fields = 0;
+  while (data) {
+    if (fields++ >= limits.fields) return FormResult::Fields;
+    auto nameEnd = eos(data);
+    int nameLen = nameEnd.template p<0>();
+    if (nameLen < 0 || nameEnd.template p<2>() != '=')
+      return FormResult::Malformed;
+    if (unsigned(nameLen) > limits.name) return FormResult::Name;
+    ZuSpan<char> name{data.data(), unsigned(nameLen)};
+    data.offset(nameEnd.template p<1>());
+
+    if (!data) {
+      if (!field(name, {})) return FormResult::Stopped;
+      break;
+    }
+
+    auto valueEnd = eos(data);
+    int valueLen = valueEnd.template p<0>();
+    auto term = valueEnd.template p<2>();
+    if (valueLen < 0 || (term && term != '&')) return FormResult::Malformed;
+    if (unsigned(valueLen) > limits.value) return FormResult::Value;
+    ZuSpan<char> value{data.data(), unsigned(valueLen)};
+    if (!field(name, value)) return FormResult::Stopped;
+    data.offset(valueEnd.template p<1>());
+  }
+  return FormResult::OK;
+}
+
 // eoc() is the path-component equivalent of eos(); '/' and '?' terminate
 // the component and '+' is not decoded as space
 ZfExtern ZuTuple<int, int, char> eoc(ZuSpan<char> data);

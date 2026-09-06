@@ -1,0 +1,108 @@
+erDiagram
+    ISSUER {
+        string id PK
+        uint next_action_id
+        uint auth_version
+        uint next_audit_id
+    }
+    USER {
+        uint id PK
+        bytes handle UK
+        string oidc_sub UK
+        uint auth_version
+        enum state
+    }
+    CRED {
+        bytes id PK
+        uint user_id FK
+        bytes public_key
+        uint user_version
+        enum state
+    }
+    ACTION {
+        uint id PK
+        string name UK
+        enum state
+    }
+    ROLE {
+        uint id PK
+        string name UK
+        bitmap actions
+        enum state
+    }
+    SCOPE {
+        uint id PK
+        string name UK
+        string audience
+        uint_array role_ids FK
+        enum state
+    }
+    CLIENT {
+        string id PK
+        uint_array scope_ids FK
+        uint_array role_ids FK
+        string_array audiences
+        enum state
+    }
+    GRANT {
+        bytes id PK
+        string issuer FK
+        uint user_id FK
+        string client_id FK
+        bytes credential_id FK
+        uint_array scope_ids FK
+        uint_array role_ids FK
+        bitmap actions
+        bool oauth_state_present
+        enum kind
+        enum state
+    }
+    SIGN_KEY {
+        string id PK
+        string provider_ref
+        string public_jwk
+        enum state
+    }
+    AUDIT {
+        uint id PK
+        string issuer FK
+        int time
+        enum event
+        enum outcome
+    }
+    OIDC_CONFIG {
+        string issuer
+        string client_id
+        string role_claim
+        enum role_source
+    }
+    ROLE_MAP {
+        string claim_value PK
+        uint role_id FK
+    }
+    OIDC_ID_TOKEN {
+        string sub
+        string claim_value
+    }
+
+    ISSUER ||--o{ GRANT : owns
+    ISSUER ||--o{ AUDIT : records
+    ISSUER ||--o{ SIGN_KEY : publishes
+    ISSUER ||--o{ ACTION : allocates
+
+    USER ||--o{ CRED : owns
+    USER ||--o{ GRANT : authenticates
+    CLIENT ||--o{ GRANT : requests
+    CRED o|--o{ GRANT : authenticates_passkey
+    SCOPE }o--o{ GRANT : delegates
+    ROLE }o--o{ USER : assigned_locally
+    ROLE }o--o{ CLIENT : assigned_to_workload
+    ROLE }o--o{ SCOPE : bounds_delegation
+    ACTION }o--o{ ROLE : bundled_by
+    ACTION }o--o{ GRANT : ceiling_snapshot
+
+    OIDC_CONFIG ||--o{ ROLE_MAP : configures
+    OIDC_ID_TOKEN }o--|| USER : resolves_by_sub
+    OIDC_ID_TOKEN ||--o{ ROLE_MAP : supplies_claim_values
+    ROLE ||--o{ ROLE_MAP : selects_local_role
+    ROLE_MAP }o--o{ GRANT : snapshots_mapped_roles

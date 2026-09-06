@@ -1,0 +1,131 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2026 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+// persistent browser passkey enrollment
+
+#ifndef ZumPasskey_HH
+#define ZumPasskey_HH
+
+#ifndef ZumLib_HH
+#include <zlib/ZumLib.hh>
+#endif
+
+#include <zlib/ZumDB.hh>
+#include <zlib/ZumRequest.hh>
+
+namespace Zum {
+
+struct EnrollmentBeginConfig {
+  String	issuer;
+  String	rpID;
+  String	rpName;
+  String	name;
+  String	displayName;
+  IDVec		roleIDs;
+  String	label;
+  UserID	userID = 0;
+  int64_t	now = 0;
+  int64_t	expires = 0;
+  uint64_t	timeout = 0;
+};
+
+struct EnrollmentBeginResult {
+  Bytes		ceremonyID;
+  String	options;
+};
+
+struct BootstrapConfig {
+  String	issuer;
+  IDVec		roleIDs;
+  int64_t	now = 0;
+  int64_t	expires = 0;
+};
+
+struct RecoveryIssueConfig {
+  String	issuer;
+  String	actor;
+  UserID	userID = 0;
+  int64_t	now = 0;
+  int64_t	expires = 0;
+};
+
+struct RecoveryBeginConfig {
+  String	issuer;
+  String	rpID;
+  String	rpName;
+  String	displayName;
+  String	label;
+  int64_t	now = 0;
+  int64_t	expires = 0;
+  uint64_t	timeout = 0;
+};
+
+struct EnrollmentFinishConfig {
+  String		origin;
+  String		rpID;
+  ZfJSON::ScanLimits	jsonLimits;
+  ZfCBOR::Limits	cborLimits;
+  unsigned		credentialIDMax = 0;
+  int64_t		now = 0;
+};
+
+struct CredentialBeginConfig {
+  String	issuer;
+  String	rpID;
+  String	rpName;
+  String	displayName;
+  String	label;
+  UserID	userID = 0;
+  int64_t	now = 0;
+  int64_t	expires = 0;
+  uint64_t	timeout = 0;
+};
+
+using EnrollmentBeginFn = ZmFn<void(int, EnrollmentBeginResult),
+  ZmFnHeapID<"Zum.EnrollmentBeginFn">>;
+using EnrollmentFinishFn = ZmFn<void(int),
+  ZmFnHeapID<"Zum.EnrollmentFinishFn">>;
+using CapabilityFn = ZmFn<void(bool, String),
+  ZmFnHeapID<"Zum.CapabilityFn">>;
+using BootstrapFn = CapabilityFn;
+using RecoveryIssueFn = CapabilityFn;
+
+ZumExtern bool bootstrapIssue(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  BootstrapConfig, BootstrapFn);
+ZumExtern bool recoveryIssue(
+  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
+  RecoveryIssueConfig, RecoveryIssueFn);
+ZumExtern bool recoveryBegin(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  String capability, Bytes bindingDigest, RecoveryBeginConfig,
+  EnrollmentBeginFn);
+ZumExtern bool recoveryFinish(
+  Requests *, ZuTime deadline, DB *, DBContext *, Bytes ceremonyID,
+  Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
+  EnrollmentFinishFn);
+ZumExtern bool enrollmentBegin(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Bytes bindingDigest, EnrollmentBeginConfig, EnrollmentBeginFn);
+ZumExtern bool bootstrapBegin(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  String capability, Bytes bindingDigest, EnrollmentBeginConfig,
+  EnrollmentBeginFn);
+ZumExtern bool enrollmentFinish(
+  Requests *, ZuTime deadline, DB *, DBContext *, Bytes ceremonyID,
+  Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
+  EnrollmentFinishFn);
+ZumExtern bool credentialBegin(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Bytes bindingDigest, CredentialBeginConfig, EnrollmentBeginFn);
+ZumExtern bool credentialFinish(
+  Requests *, ZuTime deadline, DB *, DBContext *, Bytes ceremonyID,
+  Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
+  EnrollmentFinishFn);
+
+} // namespace Zum
+
+#endif /* ZumPasskey_HH */

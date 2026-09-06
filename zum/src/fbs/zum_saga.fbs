@@ -1,0 +1,151 @@
+include "zfb_types.fbs";
+
+namespace Zum.fbs;
+
+table Enrollment {
+  ceremony_i_d:[ubyte];
+  user_i_d:uint64;
+  name:string;
+  handle:[ubyte];
+  role_i_ds:[uint64];
+  credential_i_d:[ubyte];
+  public_key:[ubyte];
+  sign_count:uint32;
+  created:int64;
+  backup_eligible:bool;
+  backed_up:bool;
+  label:string;
+}
+
+table CredentialAdd {
+  ceremony_i_d:[ubyte];
+  issuer:string;
+  user_i_d:uint64;
+  user_handle:[ubyte];
+  credential_i_d:[ubyte];
+  public_key:[ubyte];
+  sign_count:uint32;
+  created:int64;
+  backup_eligible:bool;
+  backed_up:bool;
+  label:string;
+  user_version:uint64 = 1;
+}
+
+table RecoveryStart {
+  capability_i_d:[ubyte];
+  digest:[ubyte];
+  issuer:string;
+  user_i_d:uint64;
+  user_version:uint64;
+  created:int64;
+  expires:int64;
+  actor:string;
+}
+
+table RecoveryEnroll {
+  ceremony_i_d:[ubyte];
+  issuer:string;
+  actor:string;
+  user_i_d:uint64;
+  user_version:uint64;
+  old_handle:[ubyte];
+  new_handle:[ubyte];
+  credential_i_d:[ubyte];
+  public_key:[ubyte];
+  sign_count:uint32;
+  created:int64;
+  backup_eligible:bool;
+  backed_up:bool;
+  label:string;
+}
+
+table CodeFamily {
+  code_i_d:[ubyte];
+  code_digest:[ubyte];
+  family_i_d:[ubyte];
+  issuer:string;
+  user_i_d:uint64;
+  client_i_d:string;
+  credential_i_d:[ubyte];
+  audience:string;
+  scope_i_ds:[uint64];
+  role_i_ds:[uint64];
+  actions:Zfb.Bitmap;
+  digest:[ubyte];
+  auth_version:uint64;
+  user_version:uint64 = 1;
+  auth_time:int64;
+  created:int64;
+  expires:int64;
+}
+
+table UserChange {
+  issuer:string;
+  user_i_d:uint64;
+  old_role_i_ds:[uint64];
+  new_role_i_ds:[uint64];
+  old_updated:int64;
+  updated:int64;
+  auth_version:uint64;
+  old_state:int8;
+  new_state:int8;
+}
+
+table RoleChange {
+  issuer:string;
+  role_i_d:uint64;
+  name:string;
+  old_actions:Zfb.Bitmap;
+  new_actions:Zfb.Bitmap;
+  auth_version:uint64;
+  old_state:int8;
+  new_state:int8;
+}
+
+table CredChange {
+  issuer:string;
+  credential_i_d:[ubyte];
+  old_updated:int64;
+  updated:int64;
+  auth_version:uint64;
+  old_state:int8;
+  new_state:int8;
+}
+
+table ScopeChange {
+  issuer:string;
+  scope_i_d:uint64;
+  audience:string;
+  name:string;
+  old_role_i_ds:[uint64];
+  new_role_i_ds:[uint64];
+  auth_version:uint64;
+  old_state:int8;
+  new_state:int8;
+}
+
+table ClientChange {
+  issuer:string;
+  client_i_d:string;
+  old_secret_digest:[ubyte];
+  new_secret_digest:[ubyte];
+  old_role_i_ds:[uint64];
+  new_role_i_ds:[uint64];
+  old_updated:int64;
+  updated:int64;
+  auth_version:uint64;
+  old_state:int8;
+  new_state:int8;
+}
+
+table ActionChange {
+  issuer:string;
+  action_i_d:uint32;
+  name:string;
+  auth_version:uint64;
+  old_state:int8;
+  new_state:int8;
+}
+
+root_type Enrollment;

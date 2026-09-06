@@ -57,11 +57,15 @@ struct Request {
 
   enum { Method = Zhttp::Method::GET };
   using Path = ZuStringT<"/">;
+  enum { Exact = 0 };
 
   enum { Query = QueryPolicy::None };
   enum { SignQuery = 0 };
+  static constexpr uint64_t QueryLimit = 0;
   enum { Body = BodyPolicy::None };
+  enum { RequireContentType = 0 };
   enum { SignBody = 0 };
+  static constexpr uint64_t BodyLimit = 0;
 
   static constexpr unsigned SignQueryBufSize = 1<<10;
   static constexpr unsigned SignBodyBufSize = 1<<10;

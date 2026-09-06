@@ -30,7 +30,7 @@ static constexpr const uint8_t lookup_[] = {
 
 ZuInline static constexpr uint8_t lookup(uint8_t c) {
   c -= 43;
-  return c > 122 ? 0xff : lookup_[c];
+  return c >= sizeof(lookup_) ? 0xff : lookup_[c];
 };
 
 ZuInline static constexpr bool is(char c) {

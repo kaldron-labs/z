@@ -14,11 +14,12 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsPKTest ZtlsBufHookTest ZtlsAsyncTest
+noinst_PROGRAMS = ZtlsPKTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest
 noinst_HEADERS = ZtlsTestPorts.hh
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
+ZtlsSecTest_SOURCES = ZtlsSecTest.cc
 dist_noinst_SCRIPTS = Keygen.sh
 
 .PHONY: test

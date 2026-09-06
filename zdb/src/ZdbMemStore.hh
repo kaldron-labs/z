@@ -507,14 +507,14 @@ template <unsigned Type>
 inline ZuIfT<Type == Value::Index<int128_t>{}>
 loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
   *static_cast<int128_t *>(ptr) = ZfbTransform::Int128::load(
-    fbo->GetPointer<const Zfb::Int128 *>(field->offset()));
+    fbo->GetStruct<const Zfb::Int128 *>(field->offset()));
 }
 
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<uint128_t>{}>
 loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
   *static_cast<uint128_t *>(ptr) = ZfbTransform::UInt128::load(
-    fbo->GetPointer<const Zfb::UInt128 *>(field->offset()));
+    fbo->GetStruct<const Zfb::UInt128 *>(field->offset()));
 }
 
 template <unsigned Type>
@@ -544,10 +544,11 @@ loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
 template <unsigned Type>
 inline ZuIfT<Type == Value::Index<BytesVec>{}>
 loadValue(void *ptr, const reflection::Field *field, const Zfb::Table *fbo) {
-  auto v = Zfb::GetFieldV<Zfb::Offset<Zfb::Vector<uint8_t>>>(*fbo, *field);
+  auto v = Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, *field);
   unsigned n = v ? v->size() : 0;
   auto array = new (ptr) BytesVec(n);
-  for (unsigned i = 0; i < n; i++) array->push(Zfb::Load::bytes(v->Get(i)));
+  for (unsigned i = 0; i < n; i++)
+    array->push(Zfb::Load::bytes(v->Get(i)->data()));
 }
 
 #define zdbtest_LoadIntVec(width) \
@@ -691,9 +692,9 @@ saveOffset(Zfb::Builder &fbb, Offsets &offsets, const Value &value)
 {
   const auto &array = value.p<BytesVec>();
   unsigned n = array.length();
-  offsets.push(Zfb::Save::vectorIter<Zfb::Vector<uint8_t>>(fbb, n,
+  offsets.push(Zfb::Save::vectorIter<Zfb::Bytes>(fbb, n,
     [&array](Zfb::Builder &fbb, unsigned i) {
-      return Zfb::Save::bytes(fbb, array[i]);
+      return Zfb::CreateBytes(fbb, Zfb::Save::bytes(fbb, array[i]));
     }).Union());
 }
 

@@ -1,0 +1,13 @@
+namespace Zum.fbs;
+table Audit {
+  id:uint64;
+  time:int64;
+  issuer:string;
+  actor:string;
+  subject:string;
+  target:string;
+  event:int8;
+  outcome:int8;
+  detail:string;
+}
+root_type Audit;
