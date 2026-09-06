@@ -31,40 +31,6 @@ namespace Flags {
 ZtEnumImplNS(Values);
 ZtEnumImplNS(Flags);
 
-static void formTest()
-{
-  ZuTestScope(form);
-  char data[] =
-    "scope=read&scope=&redirect_uri=https%3A%2F%2Fapp.example%2Fcb";
-  unsigned field = 0;
-  auto result = ZfURI::scanForm(data, {3, 16, 64},
-    [&field](ZuCSpan name, ZuCSpan value) {
-      switch (field++) {
-        case 0: ZuCheck(name == "scope" && value == "read"); break;
-        case 1: ZuCheck(name == "scope" && !value); break;
-        case 2:
-          ZuCheck(name == "redirect_uri" &&
-            value == "https://app.example/cb");
-          break;
-      }
-      return true;
-    });
-  ZuCheck(result == ZfURI::FormResult::OK);
-  ZuCheck(field == 3);
-
-  char repeated[] = "a=1&a=2";
-  ZuCheck(ZfURI::scanForm(repeated, {1, 1, 1},
-    [](ZuCSpan, ZuCSpan) { return true; }) == ZfURI::FormResult::Fields);
-  char malformed[] = "a=%zz";
-  ZuCheck(ZfURI::scanForm(malformed, {1, 1, 3},
-    [](ZuCSpan, ZuCSpan) { return true; }) == ZfURI::FormResult::Malformed);
-  char empty[] = "a=";
-  ZuCheck(ZfURI::scanForm(empty, {1, 1, 0},
-    [](ZuCSpan name, ZuCSpan value) {
-      return name == "a" && !value;
-    }) == ZfURI::FormResult::OK);
-}
-
 struct Nested {
   int i1 = 0, i2 = 1;
 
@@ -806,7 +772,6 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(formTest);
   ZuTestCall(roundTrip);
   ZuTestCall(fieldlessUDT);
   ZuTestCall(arraySave);

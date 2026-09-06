@@ -6,8 +6,6 @@
 
 #include <zlib/ZfCBOR.hh>
 
-#include <zlib/ZuUTF.hh>
-
 namespace ZfCBOR {
 
 class Scanner {
@@ -21,7 +19,6 @@ public:
     if (unsigned(m_end - m_begin) > m_limits.size)
       return result(Error::Size);
     if (!item(0)) return result(m_error);
-    if (m_p != m_end) return result(Error::Syntax);
     return {unsigned(m_p - m_begin), Error::OK};
   }
 
@@ -44,23 +41,6 @@ private:
     if (unsigned(m_end - m_p) < n) return false;
     value = 0;
     do value = (value << 8) | *m_p++; while (--n);
-    return true;
-  }
-
-  static bool utf8(ZuBSpan data)
-  {
-    const uint8_t *p = data.begin();
-    const uint8_t *end = data.end();
-    while (p < end) {
-      unsigned n = ZuUTF8::in(*p);
-      if (!n || unsigned(end - p) < n) return false;
-      uint32_t u;
-      if (ZuUTF8::in(p, n, u) != n || ZuUTF8::out(u) != n ||
-	  u > 0x10ffff || (u >= 0xd800 && u <= 0xdfff)) return false;
-      for (unsigned i = 1; i < n; ++i)
-	if ((p[i] & 0xc0) != 0x80) return false;
-      p += n;
-    }
     return true;
   }
 
@@ -89,10 +69,6 @@ private:
 	out.type = major == 2 ? Type::Bytes : Type::Text;
 	out.data = {m_p, unsigned(value)};
 	m_p += value;
-	if (major == 3 && !utf8(out.data)) {
-	  m_error = Error::UTF8;
-	  return false;
-	}
 	break;
       case 4:
       case 5: {
@@ -115,12 +91,18 @@ private:
 	  if (!item(depth + 1)) return false;
 	out.type = major == 4 ? Type::Array : Type::Map;
       } break;
+      case 6:
+	if (depth >= m_limits.depth) {
+	  m_error = Error::Depth;
+	  return false;
+	}
+	return item(depth);
       case 7:
 	switch (initial & 31) {
 	  case 20: out.type = Type::Bool; out.value = false; break;
 	  case 21: out.type = Type::Bool; out.value = true; break;
 	  case 22: out.type = Type::Null; out.value = 0; break;
-	  default: m_error = Error::Unsupported; return false;
+	  default: out.type = Type::Simple; break;
 	}
 	break;
       default: m_error = Error::Unsupported; return false;

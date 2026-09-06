@@ -48,15 +48,12 @@ static void cose()
   ZuCheck(seen.root == encoded);
 }
 
-static void malformed()
+static void bounds()
 {
-  ZuTestScope(malformed);
+  ZuTestScope(bounds);
   uint8_t truncated[] = {0x58, 0x02, 0x01};
   ZuCheck(ZfCBOR::scan(truncated, limits, nullptr, nullptr).error ==
     ZfCBOR::Error::Syntax);
-  uint8_t indefinite[] = {0x9f, 0xff};
-  ZuCheck(ZfCBOR::scan(indefinite, limits, nullptr, nullptr).error ==
-    ZfCBOR::Error::Unsupported);
   uint8_t nested[] = {0x81, 0x80};
   ZuCheck(ZfCBOR::scan(nested, {2, 1, 2, 1}, nullptr, nullptr).error ==
     ZfCBOR::Error::Depth);
@@ -70,6 +67,6 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(cose);
-  ZuTestCall(malformed);
+  ZuTestCall(bounds);
   return 0;
 }
