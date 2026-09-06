@@ -122,6 +122,7 @@ struct LiveContext : public ZmPolymorph {
   bool		read = false;
   bool		secondary = false;
   uint32_t	pauseStep = UINT32_MAX;
+  uint32_t	skipStep = UINT32_MAX;
   bool		pausedOnce = false;
   bool		pauseAll = false;
   uint32_t	failStep = UINT32_MAX;
@@ -155,6 +156,11 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
     ++context->runs;
     context->dirs.push(Fwd ? int(Step) + 1 : -int(Step) - 1);
     if (context->trace) context->trace(Trace::Next, Step);
+    if constexpr (Fwd)
+      if (Step == context->skipStep) {
+	saga->skip(ZuFwd<Complete>(complete));
+	return;
+      }
     if constexpr (Fwd)
       if (Step == context->failStep) {
 	if (context->absentReverse && Step) {
@@ -941,7 +947,9 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
 // 0: after insert; 1: update intent only; 2: after delete; 3: absent delete;
 // 4: main row only; 5: insert intent only; 6: delete intent only;
 // 7: after update, before delete intent.
-static void recovery(unsigned cut, bool separate = false, bool read = false)
+static void recovery(
+    unsigned cut, bool separate = false, bool read = false,
+    uint32_t skipStep = UINT32_MAX)
 {
   ZuTestScope(recovery);
 
@@ -970,6 +978,7 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
   first->orders = orders;
   first->paused = &paused;
   first->read = read;
+  first->skipStep = skipStep;
   first->pauseStep = beforeInsert ? 0U : cut < 2 ? 1U : cut == 2 ? 3U : 2U;
   db->sagas(first);
   ZuCheck(db->start());
@@ -1074,6 +1083,7 @@ static void recovery(unsigned cut, bool separate = false, bool read = false)
   ZmRef<zdbtest::LiveContext> second = new zdbtest::LiveContext{};
   second->orders = orders;
   second->read = read;
+  second->skipStep = skipStep;
   // A fresh DB has no cached target row. Observe lookup yielding before the
   // first new intent, then prove its intent/effect pair does not yield.
   unsigned phase = 0;
@@ -2170,7 +2180,8 @@ static void recoveryPages(bool orphan)
 }
 
 static void rollback(
-    unsigned failStep, bool absentReverse = false, bool failReverse = false)
+    unsigned failStep, bool absentReverse = false, bool failReverse = false,
+    uint32_t skipStep = UINT32_MAX)
 {
   ZuTestScopeRT(rollback);
   using DB = ZdbSagaDB<zdbtest::LiveContext, zdbtest::LiveSagas>;
@@ -2189,6 +2200,7 @@ static void rollback(
   ZmRef<zdbtest::LiveContext> context = new zdbtest::LiveContext{};
   context->orders = orders;
   context->failStep = failStep;
+  context->skipStep = skipStep;
   context->absentReverse = absentReverse;
   context->failReverse = failReverse;
   int contextRefs = context->refCount();
@@ -2197,15 +2209,17 @@ static void rollback(
   ZuCheckRT(db->start());
   active.wait();
 
+  bool skipped = skipStep < failStep;
+  unsigned fwdWrites = failStep - skipped;
   unsigned stepWrites = 0;
   bool journalOrder = true;
-  store->writeFn([context = context.ptr(), failStep,
+  store->writeFn([context = context.ptr(), failStep, fwdWrites,
       &stepWrites, &journalOrder](ZuCSpan id) {
     if (id != "saga_step") return;
     ++stepWrites;
-    if (stepWrites > failStep)
+    if (stepWrites > fwdWrites)
       journalOrder &= context->dirs.length() == failStep + 1 +
-	stepWrites - failStep;
+	stepWrites - fwdWrites;
   });
 
   bool admitted = false, outcome = true;
@@ -2222,14 +2236,15 @@ static void rollback(
   ZuCheckRT(!outcome);
   ZuCheckRT(called == 1);
   ZuCheckRT(context->refCount() == contextRefs + 1);
-  ZuCheckRT(context->dirs.length() == (failStep << 1) + 1);
+  ZuCheckRT(context->dirs.length() == (failStep << 1) + 1 - skipped);
   bool ordered = true;
   for (unsigned i = 0; i <= failStep; ++i)
     ordered &= context->dirs[i] == int(i) + 1;
-  for (unsigned i = 0; i < failStep; ++i)
-    ordered &= context->dirs[failStep + 1 + i] == -int(failStep - i);
+  unsigned j = failStep + 1;
+  for (unsigned i = failStep; i-- > 0; )
+    if (i != skipStep) ordered &= context->dirs[j++] == -int(i) - 1;
   ZuCheckRT(ordered);
-  ZuCheckRT(stepWrites == failStep << 1);
+  ZuCheckRT(stepWrites == (failStep - skipped) << 1);
   ZuCheckRT(journalOrder);
   bool clean = ZmBlock<bool>{}([db = db.ptr(), orders = orders.ptr()](auto wake) {
     db->run([db, orders, wake = ZuMv(wake)]() mutable {
@@ -2392,6 +2407,7 @@ int main()
   ZuTestCall(rollback, 0);
   ZuTestCall(rollback, 1);
   ZuTestCall(rollback, 2);
+  ZuTestCall(rollback, 2, false, false, 1);
   ZuTestCall(rollback, 1, true);
   ZuTestCall(abandonRollback);
   ZuTestCall(admissionDeactivated);
@@ -2421,6 +2437,7 @@ int main()
   ZuTestCall(recovery, 7);
   ZuTestCall(recovery, 0, true);
   ZuTestCall(recovery, 7, true);
+  ZuTestCall(recovery, 7, false, false, 1);
   ZuTestCall(recovery, 0, true, true);
   ZuTestCall(recovery, 2, true, true);
   ZuTestCall(recoveryCleanup, 0);

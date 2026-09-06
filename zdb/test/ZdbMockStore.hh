@@ -117,15 +117,15 @@ public:
 private:
   ZuDerive(Queue, (ZmQueue<ZmFn<>, ZmQueueLock<ZmPLock>>));
 
-  bool		m_deferWork = false;
-  bool		m_deferCallbacks = false;
-  FindFn	m_findFn;
-  FindResultFn	m_findResultFn;
-  WriteFn	m_writeFn;
-  SelectFn	m_selectFn;
+  bool			m_deferWork = false;
+  bool			m_deferCallbacks = false;
+  FindFn		m_findFn;
+  FindResultFn		m_findResultFn;
+  WriteFn		m_writeFn;
+  SelectFn		m_selectFn;
   SelectResultFn	m_selectResultFn;
-  Queue		m_work;
-  Queue		m_callbacks;
+  Queue			m_work;
+  Queue			m_callbacks;
 };
 
 inline zdbtest::Store *StoreTbl::store() const
