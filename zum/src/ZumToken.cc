@@ -8,6 +8,7 @@
 
 #include <zlib/ZumAdmin.hh>
 
+
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
@@ -27,7 +28,7 @@ static void codeToken(
   int64_t now, int64_t accessExpires, int64_t refreshExpires,
   JWTLimits, SignFn, TokenFn);
 
-class TokenResult_ : public ZmObject {
+class TokenResult_ : public ZumObject {
 public:
   TokenResult_(int error_, TokenResponse response_) :
     error{error_}, response{ZuMv(response_)} { }
@@ -38,7 +39,7 @@ public:
   TokenResponse	response;
 };
 
-class TokenComplete_ : public ZmObject {
+class TokenComplete_ : public ZumObject {
 public:
   TokenComplete_(TokenFn complete) : m_complete{ZuMv(complete)} { }
 
@@ -66,7 +67,7 @@ private:
   TokenFn	m_complete;
 };
 
-class ClientToken_ : public ZmPolymorph {
+class ClientToken_ : public ZumPolymorph {
 public:
   ClientToken_(
       DBContext *context, Ztls::Random *rng, String issuer, Client client,
@@ -173,7 +174,7 @@ private:
   bool		m_done = false;
 };
 
-class RefreshToken_ : public ZmPolymorph {
+class RefreshToken_ : public ZumPolymorph {
 public:
   RefreshToken_(
       DBContext *context, Ztls::Random *rng, Grant family,
@@ -245,7 +246,7 @@ private:
 
   void reuse_()
   {
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     grants->run(0, [self = ZmRef<RefreshToken_>{this}, grants]() {
       Bytes id = self->m_family.id;
       grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
@@ -369,7 +370,7 @@ private:
   bool		m_done = false;
 };
 
-class CodeToken_ : public ZmPolymorph {
+class CodeToken_ : public ZumPolymorph {
 public:
   CodeToken_(
       DB *db, DBContext *context, Ztls::Random *rng, Grant code,
@@ -487,7 +488,7 @@ private:
       finish_(OAuthError::InvalidGrant, {});
       return;
     }
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     Bytes id = m_code.id;
     grants->run(0, [
       self = ZmRef<CodeToken_>{this}, grants, id = ZuMv(id)
@@ -543,7 +544,7 @@ private:
   bool		m_done = false;
 };
 
-class TokenRequest_ : public ZmPolymorph {
+class TokenRequest_ : public ZumPolymorph {
 public:
   TokenRequest_(
       DB *db, DBContext *context, Ztls::Random *rng,
@@ -562,11 +563,7 @@ public:
       return;
     }
     if (!m_form.mutable_()) m_form.length(m_form.length());
-    if (parseToken({m_form.data(), m_form.length()},
-	m_config.formLimits, m_params)) {
-      finish_(OAuthError::InvalidRequest);
-      return;
-    }
+    parseToken({m_form.data(), m_form.length()}, m_params);
     int error = validateToken(m_params, m_grant);
     if (error) {
       finish_(error == ProfileError::Unsupported ?
@@ -815,7 +812,7 @@ bool tokenRequest(
   }, [state]() mutable { state->cancel(); });
 }
 
-class RevokeComplete_ : public ZmObject {
+class RevokeComplete_ : public ZumObject {
 public:
   RevokeComplete_(RevokeFn complete) : m_complete{ZuMv(complete)} { }
 
@@ -842,7 +839,7 @@ private:
   RevokeFn	m_complete;
 };
 
-class RevokeRequest_ : public ZmPolymorph {
+class RevokeRequest_ : public ZumPolymorph {
 public:
   RevokeRequest_(
       DBContext *context, String form, String authorization,
@@ -860,8 +857,8 @@ public:
       return;
     }
     if (!m_form.mutable_()) m_form.length(m_form.length());
-    if (parseRevoke({m_form.data(), m_form.length()},
-	m_config.formLimits, m_params) || validateRevoke(m_params)) {
+    parseRevoke({m_form.data(), m_form.length()}, m_params);
+    if (validateRevoke(m_params)) {
       finish_(OAuthError::InvalidRequest);
       return;
     }
@@ -934,7 +931,7 @@ private:
       finish_(RevokeIssue::OK);
       return;
     }
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     Bytes id = m_familyID;
     grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [
       self = ZmRef<RevokeRequest_>{this}

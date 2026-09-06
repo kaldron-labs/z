@@ -6,6 +6,7 @@
 
 #include <zlib/ZumDB.hh>
 
+
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
@@ -16,7 +17,7 @@ static bool authorityHasID(const IDVec &ids, uint64_t id)
   return false;
 }
 
-class AuthorityLoad_ : public ZmPolymorph {
+class AuthorityLoad_ : public ZumPolymorph {
 public:
   AuthorityLoad_(
       DBContext *context, Grant grant, Client client, bool requestedPresent,
@@ -267,8 +268,8 @@ void loadUserAuth(
 
 int enrollmentPrepare(
     const Grant &ceremony, ZuBSpan bindingDigest, RegistrationInput &input,
-    ZuCSpan origin, ZuCSpan rpID, const ZfJSON::ScanLimits &jsonLimits,
-    const ZfCBOR::Limits &cborLimits, unsigned credentialIDMax,
+    ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &cborLimits,
+    unsigned credentialIDMax,
     int64_t now, Enrollment &enrollment)
 {
   if (ceremony.kind != GrantKind::Ceremony ||
@@ -285,7 +286,7 @@ int enrollmentPrepare(
   RegistrationResult result;
   int error = verifyRegistration(input,
     RegistrationState{ceremony.challenge, origin, rpID},
-    jsonLimits, cborLimits, credentialIDMax, result);
+    cborLimits, credentialIDMax, result);
   if (error) return error;
 
   Enrollment next;
@@ -307,8 +308,8 @@ int enrollmentPrepare(
 
 int credentialPrepare(
     const Grant &ceremony, ZuBSpan bindingDigest, RegistrationInput &input,
-    ZuCSpan origin, ZuCSpan rpID, const ZfJSON::ScanLimits &jsonLimits,
-    const ZfCBOR::Limits &cborLimits, unsigned credentialIDMax,
+    ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &cborLimits,
+    unsigned credentialIDMax,
     int64_t now, CredentialAdd &add)
 {
   if (ceremony.kind != GrantKind::Ceremony ||
@@ -323,7 +324,7 @@ int credentialPrepare(
   RegistrationResult result;
   int error = verifyRegistration(input,
     RegistrationState{ceremony.challenge, origin, rpID},
-    jsonLimits, cborLimits, credentialIDMax, result);
+    cborLimits, credentialIDMax, result);
   if (error) return error;
 
   CredentialAdd next{
@@ -347,8 +348,8 @@ int credentialPrepare(
 int recoveryPrepare(
     const Grant &ceremony, const User &user, ZuBSpan bindingDigest,
     RegistrationInput &input, ZuCSpan origin, ZuCSpan rpID,
-    const ZfJSON::ScanLimits &jsonLimits, const ZfCBOR::Limits &cborLimits,
-    unsigned credentialIDMax, int64_t now, RecoveryEnroll &recovery)
+    const ZfCBOR::Limits &cborLimits, unsigned credentialIDMax,
+    int64_t now, RecoveryEnroll &recovery)
 {
   if (ceremony.kind != GrantKind::Ceremony ||
       ceremony.purpose != GrantPurpose::Recovery ||
@@ -365,7 +366,7 @@ int recoveryPrepare(
   RegistrationResult result;
   int error = verifyRegistration(input,
     RegistrationState{ceremony.challenge, origin, rpID},
-    jsonLimits, cborLimits, credentialIDMax, result);
+    cborLimits, credentialIDMax, result);
   if (error) return error;
 
   recovery = RecoveryEnroll{

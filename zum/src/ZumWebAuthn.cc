@@ -8,6 +8,8 @@
 
 #include <zlib/ZuBase64URL.hh>
 
+#include <zlib/ZfJSON.hh>
+
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZtlsMD.hh>
@@ -29,8 +31,7 @@ enum {
 
 static bool decode(ZuCSpan encoded, unsigned limit, Bytes &decoded)
 {
-  if (!encoded || (encoded.length() & 3) == 1 ||
-      encoded.length() > ZuBase64URL::enclen(limit)) return false;
+  if (!encoded || encoded.length() > ZuBase64URL::enclen(limit)) return false;
   Bytes next;
   next.length(ZuBase64URL::declen(encoded.length()), false);
   if (ZuBase64URL::decode(next, ZuBSpan{encoded}) != next.length())
@@ -40,14 +41,14 @@ static bool decode(ZuCSpan encoded, unsigned limit, Bytes &decoded)
 }
 
 static ZfJSON::AnyNode *rootObject(
-    ZuSpan<char> json, const ZfJSON::ScanLimits &limits,
-    ZfJSON::ScanResult &parsed)
+    ZuSpan<char> json, ZuPtr<ZfJSON::AnyNode> &tree)
 {
-  parsed = ZfJSON::scanStrict(json, limits);
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>()) return nullptr;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return nullptr;
+  auto parsed = ZfJSON::scan(json);
+  if (parsed.p<0>() < 0) return nullptr;
+  tree = ZuMv(parsed.p<1>());
+  if (!tree || !tree->has<ZfJSON::AnyNode::Array>()) return nullptr;
+  auto &roots = tree->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return nullptr;
   return roots[0];
 }
 
@@ -59,19 +60,21 @@ static ZuCSpan string(ZfJSON::AnyNode *node)
 
 static ZfJSON::AnyNode *responseObject(ZfJSON::AnyNode *root)
 {
+  ZfJSON::AnyNode *response = nullptr;
   for (auto &field: root->data<ZfJSON::AnyNode::Object>())
     if (field.p<0>() == "response") {
       auto node = field.p<1>().ptr();
-      return node->has<ZfJSON::AnyNode::Object>() ? node : nullptr;
+      response = node->has<ZfJSON::AnyNode::Object>() ? node : nullptr;
     }
-  return nullptr;
+  return response;
 }
 
 static ZuCSpan fieldString(ZfJSON::AnyNode *object, ZuCSpan id)
 {
+  ZuCSpan value;
   for (auto &field: object->data<ZfJSON::AnyNode::Object>())
-    if (field.p<0>() == id) return string(field.p<1>().ptr());
-  return {};
+    if (field.p<0>() == id) value = string(field.p<1>().ptr());
+  return value;
 }
 
 static bool credential(
@@ -85,12 +88,11 @@ static bool credential(
   return type == "public-key" && decode(rawID, limit, credentialID);
 }
 
-int parseAssertion(
-    ZuSpan<char> json, const ZfJSON::ScanLimits &jsonLimits,
+int parseAssertion(ZuSpan<char> json,
     const WebAuthnInputLimits &limits, AssertionInput &input)
 {
-  ZfJSON::ScanResult parsed;
-  auto root = rootObject(json, jsonLimits, parsed);
+  ZuPtr<ZfJSON::AnyNode> tree;
+  auto root = rootObject(json, tree);
   if (!root) return WebAuthnError::JSON;
   auto response = responseObject(root);
   AssertionInput next;
@@ -107,12 +109,11 @@ int parseAssertion(
   return WebAuthnError::OK;
 }
 
-int parseRegistration(
-    ZuSpan<char> json, const ZfJSON::ScanLimits &jsonLimits,
+int parseRegistration(ZuSpan<char> json,
     const WebAuthnInputLimits &limits, RegistrationInput &input)
 {
-  ZfJSON::ScanResult parsed;
-  auto root = rootObject(json, jsonLimits, parsed);
+  ZuPtr<ZfJSON::AnyNode> tree;
+  auto root = rootObject(json, tree);
   if (!root) return WebAuthnError::JSON;
   auto response = responseObject(root);
   RegistrationInput next;
@@ -130,8 +131,7 @@ static String encode(ZuBSpan data)
 {
   String encoded;
   encoded.length(ZuBase64URL::enclen(data.length()));
-  encoded.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(encoded.data()), encoded.length()}, data));
+  encoded.length(ZuBase64URL::encode(encoded.span(), data));
   return encoded;
 }
 
@@ -224,22 +224,21 @@ static bool clientData(
 
 static int clientData(
     ZuSpan<char> json, ZuCSpan type, ZuBSpan challenge,
-    ZuCSpan origin, const ZfJSON::ScanLimits &limits)
+    ZuCSpan origin)
 {
-  auto parsed = ZfJSON::scanStrict(json, limits);
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>())
+  auto parsed = ZfJSON::scan(json);
+  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>())
     return WebAuthnError::JSON;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1) return WebAuthnError::JSON;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (!roots) return WebAuthnError::JSON;
   ClientData client;
   if (!clientData(roots[0], client) || client.crossOrigin)
     return WebAuthnError::Fields;
   if (client.type != type) return WebAuthnError::Type;
   ZtString<> encoded;
   encoded.length(ZuBase64URL::enclen(challenge.length()));
-  encoded.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(encoded.data()), encoded.length()},
-    challenge));
+  encoded.length(ZuBase64URL::encode(encoded.span(), challenge));
   if (client.challenge != encoded) return WebAuthnError::Challenge;
   if (client.origin != origin) return WebAuthnError::Origin;
   return WebAuthnError::OK;
@@ -247,7 +246,7 @@ static int clientData(
 
 int verifyAssertion(
     AssertionInput &input, const AssertionState &state,
-    const ZfJSON::ScanLimits &limits, AssertionResult &result)
+    AssertionResult &result)
 {
   if (!input.credentialID || !input.clientDataJSON ||
       !input.authenticatorData || !input.signature || !input.userHandle ||
@@ -262,12 +261,11 @@ int verifyAssertion(
     md.finish(clientHash);
   }
   int error = clientData(input.clientDataJSON, "webauthn.get",
-    state.challenge, state.origin, limits);
+    state.challenge, state.origin);
   if (error) return error;
 
-  // This profile requests no authenticator extensions.
   auto authenticatorData = ZuBSpan{input.authenticatorData};
-  if (authenticatorData.length() != AssertionAuthDataSize)
+  if (authenticatorData.length() < AssertionAuthDataSize)
     return WebAuthnError::AuthData;
   uint8_t rpIDHash[Ztls::MD<>::Size];
   {
@@ -281,7 +279,7 @@ int verifyAssertion(
 
   uint8_t flags = authenticatorData[AuthDataFlags];
   constexpr uint8_t UP = 1U, UV = 1U<<2, BE = 1U<<3, BS = 1U<<4;
-  if ((flags & (UP | UV)) != (UP | UV) || (flags & ~(UP | UV | BE | BS)) ||
+  if ((flags & (UP | UV)) != (UP | UV) ||
       bool(flags & BE) != state.backupEligible ||
       ((flags & BS) && !(flags & BE))) return WebAuthnError::Flags;
   uint32_t signCount =
@@ -321,13 +319,12 @@ static bool attestationVisit(void *ptr, const ZfCBOR::Item &item)
 {
   auto &attestation = *static_cast<Attestation *>(ptr);
   if (!item.depth)
-    return item.type == ZfCBOR::Type::Map && item.value == 3 &&
-      !attestation.value && attestation.seen == 7;
+    return item.type == ZfCBOR::Type::Map && !attestation.value &&
+      (attestation.seen & 3U) == 3U;
   if (item.depth != 1) return true;
   if (!attestation.value) {
-    if (item.type != ZfCBOR::Type::Text) return false;
-    attestation.key = ZuCSpan{
-      reinterpret_cast<const char *>(item.data.data()), item.data.length()};
+    attestation.key = item.type == ZfCBOR::Type::Text ? ZuCSpan{item.data} :
+      ZuCSpan{};
     attestation.value = true;
     return true;
   }
@@ -341,20 +338,15 @@ static bool attestationVisit(void *ptr, const ZfCBOR::Item &item)
     bit = 2U;
     if (item.type != ZfCBOR::Type::Bytes) return false;
     attestation.authData = item.data;
-  } else if (attestation.key == "attStmt") {
-    bit = 4U;
-    if (item.type != ZfCBOR::Type::Map || item.value) return false;
   } else {
-    return false;
+    return true;
   }
-  if (attestation.seen & bit) return false;
   attestation.seen |= bit;
   return true;
 }
 
 int verifyRegistration(
     RegistrationInput &input, const RegistrationState &state,
-    const ZfJSON::ScanLimits &jsonLimits,
     const ZfCBOR::Limits &cborLimits, unsigned credentialIDMax,
     RegistrationResult &result)
 {
@@ -362,7 +354,7 @@ int verifyRegistration(
       !input.attestationObject || !credentialIDMax)
     return WebAuthnError::Fields;
   int error = clientData(input.clientDataJSON, "webauthn.create",
-    state.challenge, state.origin, jsonLimits);
+    state.challenge, state.origin);
   if (error) return error;
 
   Attestation attestation;
@@ -382,7 +374,6 @@ int verifyRegistration(
   constexpr uint8_t UP = 1U, UV = 1U<<2, BE = 1U<<3, BS = 1U<<4,
     AT = 1U<<6;
   if ((flags & (UP | UV | AT)) != (UP | UV | AT) ||
-      (flags & ~(UP | UV | BE | BS | AT)) ||
       ((flags & BS) && !(flags & BE))) return WebAuthnError::Flags;
   uint32_t signCount =
     (uint32_t(authData[AuthDataCounter])<<24) |

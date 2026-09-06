@@ -66,7 +66,6 @@ struct RecoveryBeginConfig {
 struct EnrollmentFinishConfig {
   String		origin;
   String		rpID;
-  ZfJSON::ScanLimits	jsonLimits;
   ZfCBOR::Limits	cborLimits;
   unsigned		credentialIDMax = 0;
   int64_t		now = 0;

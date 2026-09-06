@@ -15,28 +15,14 @@
 
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZfURI.hh>
-
 #include <zlib/Zum.hh>
 
 namespace Ztls { class Random; }
 
 namespace Zum {
 
-namespace FormError {
-  enum {
-    OK = 0,
-    Malformed,
-    Fields,
-    Name,
-    Value,
-    Unknown,
-    Duplicate
-  };
-}
-
 namespace ProfileError {
-  enum { OK = 0, Missing, Empty, Unsupported, Fields, PKCE };
+  enum { OK = 0, Missing, Empty, Unsupported };
 }
 
 namespace TokenGrant {
@@ -149,12 +135,67 @@ struct OpaqueToken {
 // brute-force resistance for opaque OAuth artifacts.
 enum { OpaqueIDSize = 16, OpaqueSecretSize = 32 };
 
-ZumExtern int parseAuthorize(
-  ZuSpan<char>, const ZfURI::FormLimits &, AuthorizeParams &);
-ZumExtern int parseToken(
-  ZuSpan<char>, const ZfURI::FormLimits &, TokenParams &);
-ZumExtern int parseRevoke(
-  ZuSpan<char>, const ZfURI::FormLimits &, RevokeParams &);
+inline int formHex_(char c)
+{
+  c |= 0x20;
+  return c >= '0' && c <= '9' ? int(c - '0') :
+    c >= 'a' && c <= 'f' ? int(c - 'a') + 10 : -1;
+}
+
+inline ZuCSpan formDecode_(ZuSpan<char> data)
+{
+  unsigned out = 0;
+  for (unsigned in = 0, n = data.length(); in < n; ++in) {
+    char c = data[in];
+    if (c == '+') {
+      data[out++] = ' ';
+    } else if (c == '%' && in + 2 < n) {
+      int hi = formHex_(data[in + 1]);
+      int lo = formHex_(data[in + 2]);
+      if (hi >= 0 && lo >= 0) {
+	data[out++] = char((hi << 4) | lo);
+	in += 2;
+      } else {
+	data[out++] = c;
+      }
+    } else {
+      data[out++] = c;
+    }
+  }
+  return {data.data(), out};
+}
+
+template <typename L>
+void formEach(ZuSpan<char> data, L field)
+{
+  while (data) {
+    unsigned end = 0;
+    while (end < data.length() && data[end] != '&') ++end;
+    auto part = data;
+    part.trunc(end);
+    if (end < data.length())
+      data.offset(end + 1);
+    else
+      data = {};
+    if (!part) continue;
+
+    unsigned equal = 0;
+    while (equal < part.length() && part[equal] != '=') ++equal;
+    auto name = part;
+    name.trunc(equal);
+    auto value = part;
+    if (equal < part.length())
+      value.offset(equal + 1);
+    else
+      value = {part.data() + part.length(), 0};
+
+    field(formDecode_(name), formDecode_(value));
+  }
+}
+
+ZumExtern void parseAuthorize(ZuSpan<char>, AuthorizeParams &);
+ZumExtern void parseToken(ZuSpan<char>, TokenParams &);
+ZumExtern void parseRevoke(ZuSpan<char>, RevokeParams &);
 ZumExtern int validateAuthorize(const AuthorizeParams &);
 ZumExtern int validateToken(const TokenParams &, int &grant);
 ZumExtern int validateRevoke(const RevokeParams &);
@@ -167,7 +208,8 @@ ZumExtern bool authorizeClient(
   const Client &, const AuthorizeParams &);
 ZumExtern bool authorizationBegin(
   Ztls::Random &, Grant &, ZuCSpan issuer, const AuthorizeParams &,
-  const ScopeSelection &, ZuBSpan bindingDigest, uint64_t authVersion,
+  const ScopeSelection &, bool passkey, ZuBSpan bindingDigest,
+  uint64_t authVersion,
   int64_t created, int64_t expires);
 ZumExtern bool authorizationFinish(
   Ztls::Random &, Grant &, ZuBSpan bindingDigest, UserID,

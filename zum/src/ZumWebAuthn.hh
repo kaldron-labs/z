@@ -15,7 +15,6 @@
 
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZfJSON.hh>
 #include <zlib/ZfCBOR.hh>
 
 #include <zlib/Zum.hh>
@@ -104,6 +103,7 @@ struct RegistrationInput {
 };
 
 struct WebAuthnInputLimits {
+  // Tunable allocation bounds for browser-controlled credential payloads.
   unsigned	credentialID = 1024;
   unsigned	clientDataJSON = 4096;
   unsigned	authenticatorData = 4096;
@@ -113,18 +113,14 @@ struct WebAuthnInputLimits {
 };
 
 ZumExtern int parseAssertion(
-  ZuSpan<char>, const ZfJSON::ScanLimits &,
-  const WebAuthnInputLimits &, AssertionInput &);
+  ZuSpan<char>, const WebAuthnInputLimits &, AssertionInput &);
 ZumExtern int parseRegistration(
-  ZuSpan<char>, const ZfJSON::ScanLimits &,
-  const WebAuthnInputLimits &, RegistrationInput &);
+  ZuSpan<char>, const WebAuthnInputLimits &, RegistrationInput &);
 
 ZumExtern int verifyAssertion(
-  AssertionInput &, const AssertionState &,
-  const ZfJSON::ScanLimits &, AssertionResult &);
+  AssertionInput &, const AssertionState &, AssertionResult &);
 ZumExtern int verifyRegistration(
   RegistrationInput &, const RegistrationState &,
-  const ZfJSON::ScanLimits &,
   const ZfCBOR::Limits &, unsigned credentialIDMax,
   RegistrationResult &);
 

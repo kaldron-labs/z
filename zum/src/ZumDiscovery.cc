@@ -8,9 +8,10 @@
 
 #include <zlib/ZfJSON.hh>
 
+
 namespace Zum {
 
-class DiscoveryComplete_ : public ZmObject {
+class DiscoveryComplete_ : public ZumObject {
 public:
   DiscoveryComplete_(DiscoveryFn complete) :
     m_complete{ZuMv(complete)} { }
@@ -79,7 +80,7 @@ String jwksJSON(const StringVec &publicJwks)
   return json;
 }
 
-class JWKSLoad_ : public ZmPolymorph {
+class JWKSLoad_ : public ZumPolymorph {
 public:
   JWKSLoad_(
       DBContext *context, int64_t now, unsigned maxKeys,

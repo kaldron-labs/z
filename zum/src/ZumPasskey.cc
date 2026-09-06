@@ -8,12 +8,13 @@
 
 #include <zlib/ZumAdmin.hh>
 
+
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
 
-class PasskeyBeginComplete_ : public ZmObject {
+class PasskeyBeginComplete_ : public ZumObject {
 public:
   PasskeyBeginComplete_(EnrollmentBeginFn complete) :
     m_complete{ZuMv(complete)} { }
@@ -42,7 +43,7 @@ private:
   EnrollmentBeginFn m_complete;
 };
 
-class PasskeyFinishComplete_ : public ZmObject {
+class PasskeyFinishComplete_ : public ZumObject {
 public:
   PasskeyFinishComplete_(EnrollmentFinishFn complete) :
     m_complete{ZuMv(complete)} { }
@@ -70,7 +71,7 @@ private:
   EnrollmentFinishFn m_complete;
 };
 
-class CapabilityResult_ : public ZmObject {
+class CapabilityResult_ : public ZumObject {
 public:
   CapabilityResult_(bool ok_, String value_) :
     ok{ok_}, value{ZuMv(value_)} { }
@@ -84,7 +85,7 @@ public:
   String	value;
 };
 
-class CapabilityComplete_ : public ZmObject {
+class CapabilityComplete_ : public ZumObject {
 public:
   CapabilityComplete_(CapabilityFn complete) :
     m_complete{ZuMv(complete)} { }
@@ -114,7 +115,7 @@ private:
   CapabilityFn	m_complete;
 };
 
-class EnrollmentBegin_ : public ZmPolymorph {
+class EnrollmentBegin_ : public ZumPolymorph {
 public:
   EnrollmentBegin_(
       DBContext *context, Ztls::Random *rng, String capability,
@@ -282,7 +283,7 @@ private:
   bool		m_done = false;
 };
 
-class EnrollmentFinish_ : public ZmPolymorph {
+class EnrollmentFinish_ : public ZumPolymorph {
 public:
   EnrollmentFinish_(
       DB *db, DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
@@ -326,8 +327,8 @@ private:
     }
     Enrollment enrollment;
     int error = enrollmentPrepare(row->data(), m_bindingDigest, m_input,
-      m_config.origin, m_config.rpID, m_config.jsonLimits,
-      m_config.cborLimits, m_config.credentialIDMax,
+      m_config.origin, m_config.rpID, m_config.cborLimits,
+      m_config.credentialIDMax,
       m_config.now, enrollment);
     if (error) {
       finish_(error);
@@ -370,7 +371,7 @@ private:
       finish_(WebAuthnError::Storage);
       return;
     }
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     Bytes id = m_ceremonyID;
     grants->run(0, [
       self = ZmRef<EnrollmentFinish_>{this}, grants, id = ZuMv(id)
@@ -418,7 +419,7 @@ private:
   bool		m_done = false;
 };
 
-class CredentialBegin_ : public ZmPolymorph {
+class CredentialBegin_ : public ZumPolymorph {
 public:
   CredentialBegin_(
       DBContext *context, Ztls::Random *rng, Bytes bindingDigest,
@@ -462,7 +463,7 @@ private:
 
   void user_()
   {
-    auto *users = m_context->users;
+    auto users = m_context->users;
     UserID id = m_config.userID;
     users->run(0, [self = ZmRef<CredentialBegin_>{this}, users, id]() {
       users->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
@@ -527,7 +528,7 @@ private:
   bool		m_done = false;
 };
 
-class CredentialFinish_ : public ZmPolymorph {
+class CredentialFinish_ : public ZumPolymorph {
 public:
   CredentialFinish_(
       DB *db, DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
@@ -571,8 +572,8 @@ private:
     }
     CredentialAdd add;
     int error = credentialPrepare(row->data(), m_bindingDigest, m_input,
-      m_config.origin, m_config.rpID, m_config.jsonLimits,
-      m_config.cborLimits, m_config.credentialIDMax, m_config.now, add);
+      m_config.origin, m_config.rpID, m_config.cborLimits,
+      m_config.credentialIDMax, m_config.now, add);
     if (error) {
       finish_(error);
       return;
@@ -602,7 +603,7 @@ private:
 	self->finish_(WebAuthnError::Storage);
 	return;
       }
-      auto *grants = self->m_context->grants;
+      auto grants = self->m_context->grants;
       Bytes id = self->m_ceremonyID;
       grants->run(0, [self = ZuMv(self), grants, id = ZuMv(id)]() mutable {
 	grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
@@ -635,7 +636,7 @@ private:
   bool		m_done = false;
 };
 
-class RecoveryIssue_ : public ZmPolymorph {
+class RecoveryIssue_ : public ZumPolymorph {
 public:
   RecoveryIssue_(
       DB *db, DBContext *context, Ztls::Random *rng,
@@ -758,7 +759,7 @@ private:
   bool		m_done = false;
 };
 
-class RecoveryBegin_ : public ZmPolymorph {
+class RecoveryBegin_ : public ZumPolymorph {
 public:
   RecoveryBegin_(
       DBContext *context, Ztls::Random *rng, String capability,
@@ -916,7 +917,7 @@ private:
   bool		m_done = false;
 };
 
-class RecoveryFinish_ : public ZmPolymorph {
+class RecoveryFinish_ : public ZumPolymorph {
 public:
   RecoveryFinish_(
       DB *db, DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
@@ -977,8 +978,8 @@ private:
     }
     RecoveryEnroll recovery;
     int error = recoveryPrepare(m_ceremony, row->data(), m_bindingDigest,
-      m_input, m_config.origin, m_config.rpID, m_config.jsonLimits,
-      m_config.cborLimits, m_config.credentialIDMax, m_config.now, recovery);
+      m_input, m_config.origin, m_config.rpID, m_config.cborLimits,
+      m_config.credentialIDMax, m_config.now, recovery);
     if (error) {
       finish_(error);
       return;
@@ -1024,7 +1025,7 @@ private:
       finish_(WebAuthnError::Storage);
       return;
     }
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     Bytes id = m_ceremonyID;
     grants->run(0, [
       self = ZmRef<RecoveryFinish_>{this}, grants, id = ZuMv(id)

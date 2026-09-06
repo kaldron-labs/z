@@ -10,6 +10,7 @@
 
 #include <zlib/ZfJSON.hh>
 
+
 namespace Zum {
 
 static ServerReply jsonReply(int error)
@@ -25,7 +26,7 @@ static ServerReply serverError()
     .type = ReplyType::ServerError};
 }
 
-class ReplyComplete_ : public ZmObject {
+class ReplyComplete_ : public ZumObject {
 public:
   ReplyComplete_(ServerFn complete) : m_complete{ZuMv(complete)} { }
 
@@ -44,14 +45,13 @@ static String encodeID(ZuBSpan id)
 {
   String value;
   value.length(ZuBase64URL::enclen(id.length()));
-  value.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(value.data()), value.length()}, id));
+  value.length(ZuBase64URL::encode(value.span(), id));
   return value;
 }
 
 static bool decodeID(ZuCSpan value, Bytes &id)
 {
-  if (!value || (value.length() & 3) == 1) return false;
+  if (!value) return false;
   Bytes next;
   next.length(ZuBase64URL::declen(value.length()), false);
   if (ZuBase64URL::decode(next, ZuBSpan{value}) != next.length()) return false;
@@ -59,50 +59,43 @@ static bool decodeID(ZuCSpan value, Bytes &id)
   return true;
 }
 
-static bool ceremonyQuery(
-    String &query, const ZfURI::FormLimits &limits, Bytes &id)
+static bool ceremonyQuery(String &query, Bytes &id)
 {
   if (query && query[0] == '?') query.splice(0, 1);
   if (!query.mutable_()) query.length(query.length());
   ZuCSpan encoded;
-  bool seen = false;
-  int result = ZfURI::scanForm({query.data(), query.length()},
-    limits, [&encoded, &seen](
-        ZuSpan<char> name, ZuSpan<char> value) {
-      if (seen || name != "id") return false;
-      seen = true;
-      encoded = value;
-      return true;
+  formEach({query.data(), query.length()},
+    [&encoded](ZuCSpan name, ZuCSpan value) {
+      if (name == "id") encoded = value;
     });
-  return result == ZfURI::FormResult::OK && seen && decodeID(encoded, id);
+  return encoded && decodeID(encoded, id);
 }
 
-static bool passkeyStart(
-    String &json, const ZfJSON::ScanLimits &limits, PasskeyStart &start)
+static bool passkeyStart(String &json, PasskeyStart &start)
 {
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scanStrict({json.data(), json.length()}, limits);
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
   String purpose;
   PasskeyStart next;
   unsigned seen = 0;
   for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
     auto value = field.p<1>().ptr();
-    if (!value->has<ZfJSON::AnyNode::String>()) return false;
     unsigned bit;
     if (field.p<0>() == "purpose") {
       bit = 1U;
+      if (!value->has<ZfJSON::AnyNode::String>()) return false;
       purpose = value->data<ZfJSON::AnyNode::String>();
     } else if (field.p<0>() == "capability") {
       bit = 2U;
+      if (!value->has<ZfJSON::AnyNode::String>()) return false;
       next.capability = value->data<ZfJSON::AnyNode::String>();
     } else {
-      return false;
+      continue;
     }
-    if (seen & bit) return false;
     seen |= bit;
   }
   if (!(seen & 1U)) return false;
@@ -118,7 +111,7 @@ static bool passkeyStart(
     return false;
   bool needsCapability = next.type == PasskeyStartType::Bootstrap ||
     next.type == PasskeyStartType::Recovery;
-  if (needsCapability != bool(next.capability)) return false;
+  if (needsCapability && !next.capability) return false;
   start = ZuMv(next);
   return true;
 }
@@ -137,20 +130,20 @@ bool Server::init(
     ClockFn clock, PageFn page, PolicyFn policy, AdmitFn admit, SignFn sign,
     OIDCHTTPFn oidcHTTP)
 {
-  if (m_inited || !db || !context || !requests || !clock ||
-      !policy || !sign || !config.issuer || !config.rpID || !config.keyID ||
+  if (m_db || !db || !context || !requests || !clock ||
+      !policy || !sign || !config.issuer || !config.keyID ||
       !config.cookieName || !config.cookiePath || !config.requestTimeout ||
-      !config.passkeyTimeout || config.ceremonyLifetime <= 0 ||
-      config.codeLifetime <= 0 || config.accessLifetime <= 0 ||
+      config.ceremonyLifetime <= 0 || config.codeLifetime <= 0 ||
+      config.accessLifetime <= 0 ||
       config.refreshLifetime <= 0 || !config.refreshGenerations ||
-      !config.spentTokens || !config.limits.credentialID ||
-      !config.limits.cookie ||
-      !config.limits.jwks ||
+      !config.spentTokens || !config.limits.cookie || !config.limits.jwks ||
       (config.authMethod != AuthMethod::Passkey &&
        config.authMethod != AuthMethod::OIDC) ||
-      (config.authMethod == AuthMethod::Passkey && (!page || !admit)) ||
+      (config.authMethod == AuthMethod::Passkey &&
+       (!config.rpID || !config.rpName || !config.passkeyTimeout ||
+	!config.limits.credentialID || !page || !admit)) ||
       (config.authMethod == AuthMethod::OIDC &&
-       (!oidcConfigValid(config.oidc) || !config.oidcTimeout || !oidcHTTP)) ||
+       (!config.oidcTimeout || !oidcHTTP)) ||
       !m_rng.init() || !m_cookieRng.init()) return false;
   m_db = db;
   m_context = context;
@@ -168,13 +161,11 @@ bool Server::init(
     final();
     return false;
   }
-  m_inited = true;
   return true;
 }
 
 void Server::final()
 {
-  m_inited = false;
   m_oidc.final();
   m_sign = {};
   m_admit = {};
@@ -233,7 +224,6 @@ bool Server::binding_(String &cookie, Bytes &digest) const
     while (valueEnd > valueStart && cookie[valueEnd - 1] == ' ') --valueEnd;
     if (ZuCSpan{cookie.data() + offset, nameEnd - offset} ==
 	m_config.cookieName) {
-      if (value) return false;
       value = {cookie.data() + valueStart, valueEnd - valueStart};
     }
     offset = end + (end < length);
@@ -244,8 +234,12 @@ bool Server::binding_(String &cookie, Bytes &digest) const
 
 void Server::authorize(String query, ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (query.length() > m_config.limits.form) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
   String cookie;
   Bytes binding;
   if (!cookie_(cookie, binding)) { done->finish(serverError()); return; }
@@ -259,10 +253,13 @@ void Server::authorize(String query, ServerFn complete)
   if (!authorizeRequest(m_requests, deadline_(), m_context, m_rng,
       ZuMv(query), ZuMv(binding), AuthorizeConfig{
         .issuer = m_config.issuer,
-        .rpID = m_config.rpID,
+        .rpID = m_config.authMethod == AuthMethod::Passkey ?
+          m_config.rpID : String{},
         .now = now,
         .expires = now + m_config.ceremonyLifetime,
-        .timeout = m_config.passkeyTimeout
+        .timeout = m_config.authMethod == AuthMethod::Passkey ?
+          m_config.passkeyTimeout : 0,
+        .passkey = m_config.authMethod == AuthMethod::Passkey
       }, [this, setCookie = ZuMv(setCookie), done](
           int error, AuthorizeResult result) mutable {
         if (error == AuthorizeIssue::OK) {
@@ -306,8 +303,12 @@ void Server::authorize(String query, ServerFn complete)
 
 void Server::token(String form, String authorization, ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (form.length() > m_config.limits.form) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
   int64_t now = now_();
   if (now <= 0 || !tokenRequest(m_requests, deadline_(), m_db, m_context,
       m_rng, ZuMv(form), ZuMv(authorization), TokenConfig{
@@ -337,8 +338,12 @@ void Server::token(String form, String authorization, ServerFn complete)
 
 void Server::revoke(String form, String authorization, ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (form.length() > m_config.limits.form) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
   int64_t now = now_();
   if (now <= 0 || !revokeRequest(m_requests, deadline_(), m_context,
       ZuMv(form), ZuMv(authorization),
@@ -357,14 +362,14 @@ void Server::revoke(String form, String authorization, ServerFn complete)
 
 void Server::metadata(ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   complete(ServerReply{
     .body = metadataJSON(m_config.issuer), .type = ReplyType::Discovery});
 }
 
 void Server::jwks(ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   int64_t now = now_();
   if (now <= 0 || !jwksLoad(m_requests, deadline_(), m_context, now,
@@ -378,14 +383,15 @@ void Server::jwks(ServerFn complete)
 
 void Server::passkeyBegin(String json, ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   if (m_config.authMethod != AuthMethod::Passkey) {
     done->finish(jsonReply(OAuthError::AccessDenied));
     return;
   }
   PasskeyStart start;
-  if (!::Zum::passkeyStart(json, m_config.limits.json, start)) {
+  if (json.length() > m_config.limits.json ||
+      !::Zum::passkeyStart(json, start)) {
     done->finish(jsonReply(OAuthError::InvalidRequest));
     return;
   }
@@ -482,18 +488,19 @@ void Server::passkeyAdmitted_(
 void Server::passkeyFinish(
     String query, String cookie, String json, ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   if (m_config.authMethod != AuthMethod::Passkey) {
     complete(jsonReply(OAuthError::AccessDenied));
     return;
   }
   Bytes id, binding;
-  if (!ceremonyQuery(query, m_config.limits.ceremonyForm, id) ||
-      !binding_(cookie, binding) ||
-      !json.mutable_()) {
+  if (query.length() > m_config.limits.ceremonyQuery ||
+      json.length() > m_config.limits.json || !ceremonyQuery(query, id) ||
+      !binding_(cookie, binding)) {
     complete(jsonReply(OAuthError::InvalidRequest));
     return;
   }
+  if (!json.mutable_()) json.length(json.length());
   finishGrant_(ZuMv(id), ZuMv(binding), ZuMv(json), ZuMv(complete));
 }
 
@@ -501,7 +508,7 @@ void Server::finishGrant_(
     Bytes id, Bytes binding, String json, ServerFn complete)
 {
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
-  auto *grants = m_context->grants;
+  auto grants = m_context->grants;
   grants->run(0, [this, grants, id = ZuMv(id), binding = ZuMv(binding),
       json = ZuMv(json), done]() mutable {
     grants->find<0>(0, ZuFwdTuple(id), [this, id = ZuMv(id),
@@ -519,13 +526,12 @@ void Server::finishGrant_(
       if (purpose == GrantPurpose::Authorization) {
         AssertionInput input;
         int error = parseAssertion({json.data(), json.length()},
-          m_config.limits.json, WebAuthnInputLimits{}, input);
+          WebAuthnInputLimits{}, input);
         if (error || !authorizeFinish(m_requests, deadline_(), m_context,
             m_rng, ZuMv(id), ZuMv(binding), ZuMv(input),
             AuthorizeFinishConfig{
               .origin = m_config.issuer, .rpID = m_config.rpID,
-              .jsonLimits = m_config.limits.json, .now = now,
-              .codeExpires = now + m_config.codeLifetime
+              .now = now, .codeExpires = now + m_config.codeLifetime
             }, m_policy, [this, done](
                 int error, String location) mutable {
               if (error == AuthorizeIssue::OK)
@@ -548,7 +554,7 @@ void Server::finishGrant_(
 
       RegistrationInput input;
       int error = parseRegistration({json.data(), json.length()},
-        m_config.limits.json, WebAuthnInputLimits{}, input);
+        WebAuthnInputLimits{}, input);
       if (error) {
         auto reply = jsonReply(OAuthError::AccessDenied);
         reply.setCookie = setCookie_({}, true);
@@ -567,7 +573,6 @@ void Server::finishGrant_(
       };
       EnrollmentFinishConfig config{
         .origin = m_config.issuer, .rpID = m_config.rpID,
-        .jsonLimits = m_config.limits.json,
         .cborLimits = m_config.limits.cbor,
         .credentialIDMax = m_config.limits.credentialID, .now = now};
       bool started;
@@ -599,7 +604,7 @@ void Server::finishGrant_(
 
 void Server::oidcCallback(String query, String cookie, ServerFn complete)
 {
-  if (!m_inited || !complete) return;
+  if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   Bytes binding;
   if (m_config.authMethod != AuthMethod::OIDC ||

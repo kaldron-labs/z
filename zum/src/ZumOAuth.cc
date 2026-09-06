@@ -10,6 +10,7 @@
 #include <zlib/ZuBase64URL.hh>
 
 #include <zlib/ZfJSON.hh>
+#include <zlib/ZfURI.hh>
 
 #include <zlib/ZhttpURL.hh>
 
@@ -21,120 +22,71 @@
 
 namespace Zum {
 
-static int formError(int result)
-{
-  switch (result) {
-    case ZfURI::FormResult::OK: return FormError::OK;
-    case ZfURI::FormResult::Fields: return FormError::Fields;
-    case ZfURI::FormResult::Name: return FormError::Name;
-    case ZfURI::FormResult::Value: return FormError::Value;
-    default: return FormError::Malformed;
-  }
-}
-
 template <typename Params, typename Field>
-static bool set(Params &params, Field field, ZuCSpan value, ZuCSpan &dst)
+static void set(Params &params, Field field, ZuCSpan value, ZuCSpan &dst)
 {
   uint8_t bit = uint8_t(1U << field);
-  if (params.seen & bit) return false;
   params.seen |= bit;
   dst = value;
-  return true;
 }
 
-int parseAuthorize(
-    ZuSpan<char> data, const ZfURI::FormLimits &limits,
-    AuthorizeParams &params)
+void parseAuthorize(ZuSpan<char> data, AuthorizeParams &params)
 {
   params = {};
-  int error = FormError::OK;
-  int result = ZfURI::scanForm(data, limits,
-    [&params, &error](ZuCSpan name, ZuCSpan value) {
+  formEach(data, [&params](ZuCSpan name, ZuCSpan value) {
       using F = AuthorizeParams;
-      bool ok;
       if (name == "response_type")
-	ok = set(params, F::ResponseType, value, params.responseType);
+	set(params, F::ResponseType, value, params.responseType);
       else if (name == "client_id")
-	ok = set(params, F::ClientID, value, params.clientID);
+	set(params, F::ClientID, value, params.clientID);
       else if (name == "redirect_uri")
-	ok = set(params, F::RedirectURI, value, params.redirectURI);
+	set(params, F::RedirectURI, value, params.redirectURI);
       else if (name == "scope")
-	ok = set(params, F::Scope, value, params.scope);
+	set(params, F::Scope, value, params.scope);
       else if (name == "state")
-	ok = set(params, F::State, value, params.state);
+	set(params, F::State, value, params.state);
       else if (name == "code_challenge")
-	ok = set(params, F::CodeChallenge, value, params.codeChallenge);
+	set(params, F::CodeChallenge, value, params.codeChallenge);
       else if (name == "code_challenge_method")
-	ok = set(params, F::CodeChallengeMethod,
+	set(params, F::CodeChallengeMethod,
 	  value, params.codeChallengeMethod);
-      else {
-	error = FormError::Unknown;
-	return false;
-      }
-      if (!ok) error = FormError::Duplicate;
-      return !error;
     });
-  return error ? error : formError(result);
 }
 
-int parseToken(
-    ZuSpan<char> data, const ZfURI::FormLimits &limits,
-    TokenParams &params)
+void parseToken(ZuSpan<char> data, TokenParams &params)
 {
   params = {};
-  int error = FormError::OK;
-  int result = ZfURI::scanForm(data, limits,
-    [&params, &error](ZuCSpan name, ZuCSpan value) {
+  formEach(data, [&params](ZuCSpan name, ZuCSpan value) {
       using F = TokenParams;
-      bool ok;
       if (name == "grant_type")
-	ok = set(params, F::GrantType, value, params.grantType);
+	set(params, F::GrantType, value, params.grantType);
       else if (name == "code")
-	ok = set(params, F::Code, value, params.code);
+	set(params, F::Code, value, params.code);
       else if (name == "client_id")
-	ok = set(params, F::ClientID, value, params.clientID);
+	set(params, F::ClientID, value, params.clientID);
       else if (name == "redirect_uri")
-	ok = set(params, F::RedirectURI, value, params.redirectURI);
+	set(params, F::RedirectURI, value, params.redirectURI);
       else if (name == "code_verifier")
-	ok = set(params, F::CodeVerifier, value, params.codeVerifier);
+	set(params, F::CodeVerifier, value, params.codeVerifier);
       else if (name == "refresh_token")
-	ok = set(params, F::RefreshToken, value, params.refreshToken);
+	set(params, F::RefreshToken, value, params.refreshToken);
       else if (name == "scope")
-	ok = set(params, F::Scope, value, params.scope);
-      else {
-	error = FormError::Unknown;
-	return false;
-      }
-      if (!ok) error = FormError::Duplicate;
-      return !error;
+	set(params, F::Scope, value, params.scope);
     });
-  return error ? error : formError(result);
 }
 
-int parseRevoke(
-    ZuSpan<char> data, const ZfURI::FormLimits &limits,
-    RevokeParams &params)
+void parseRevoke(ZuSpan<char> data, RevokeParams &params)
 {
   params = {};
-  int error = FormError::OK;
-  int result = ZfURI::scanForm(data, limits,
-    [&params, &error](ZuCSpan name, ZuCSpan value) {
+  formEach(data, [&params](ZuCSpan name, ZuCSpan value) {
       using F = RevokeParams;
-      bool ok;
       if (name == "token")
-	ok = set(params, F::Token, value, params.token);
+	set(params, F::Token, value, params.token);
       else if (name == "token_type_hint")
-	ok = set(params, F::TokenTypeHint, value, params.tokenTypeHint);
+	set(params, F::TokenTypeHint, value, params.tokenTypeHint);
       else if (name == "client_id")
-	ok = set(params, F::ClientID, value, params.clientID);
-      else {
-	error = FormError::Unknown;
-	return false;
-      }
-      if (!ok) error = FormError::Duplicate;
-      return !error;
+	set(params, F::ClientID, value, params.clientID);
     });
-  return error ? error : formError(result);
 }
 
 int validateAuthorize(const AuthorizeParams &params)
@@ -150,13 +102,6 @@ int validateAuthorize(const AuthorizeParams &params)
     return ProfileError::Empty;
   if (params.responseType != "code" ||
       params.codeChallengeMethod != "S256") return ProfileError::Unsupported;
-  if (params.codeChallenge.length() != ZuBase64URL::enclen(32))
-    return ProfileError::PKCE;
-  for (char c: params.codeChallenge)
-    if (!ZuBase64URL::is(c)) return ProfileError::PKCE;
-  if (ZuBase64URL::lookup(
-      params.codeChallenge[params.codeChallenge.length() - 1]) & 3)
-    return ProfileError::PKCE;
   return ProfileError::OK;
 }
 
@@ -167,25 +112,21 @@ int validateToken(const TokenParams &params, int &grant)
   if (!params.has(F::GrantType)) return ProfileError::Missing;
   if (!params.grantType) return ProfileError::Empty;
 
-  unsigned required, allowed;
+  unsigned required;
   if (params.grantType == "authorization_code") {
     grant = TokenGrant::AuthorizationCode;
     required = (1U<<F::GrantType) | (1U<<F::Code) |
       (1U<<F::RedirectURI) | (1U<<F::CodeVerifier);
-    allowed = required | (1U<<F::ClientID) | (1U<<F::Scope);
   } else if (params.grantType == "refresh_token") {
     grant = TokenGrant::RefreshToken;
     required = (1U<<F::GrantType) | (1U<<F::RefreshToken);
-    allowed = required | (1U<<F::ClientID) | (1U<<F::Scope);
   } else if (params.grantType == "client_credentials") {
     grant = TokenGrant::ClientCredentials;
     required = 1U<<F::GrantType;
-    allowed = required | (1U<<F::Scope);
   } else {
     return ProfileError::Unsupported;
   }
   if ((params.seen & required) != required) return ProfileError::Missing;
-  if (params.seen & ~allowed) return ProfileError::Fields;
   if ((params.has(F::Code) && !params.code) ||
       (params.has(F::ClientID) && !params.clientID) ||
       (params.has(F::RedirectURI) && !params.redirectURI) ||
@@ -218,11 +159,8 @@ bool parseBasic(ZuSpan<char> value, BasicAuth &auth)
   auto encoded = value.offset(i);
   unsigned n = encoded.length();
   while (n && encoded[n - 1] == '=') --n;
-  unsigned padding = encoded.length() - n;
-  if (padding > 2 || (n & 3) == 1) return false;
   unsigned expected = ZuBase64::declen(n);
-  auto decoded = ZuSpan<uint8_t>{
-    reinterpret_cast<uint8_t *>(encoded.data()), expected};
+  ZuSpan<uint8_t> decoded = encoded.trunc(expected);
   if (ZuBase64::decode(decoded, ZuBSpan{encoded.data(), n}) != expected)
     return false;
   auto plain = ZuCSpan{encoded.data(), expected};
@@ -244,13 +182,9 @@ static void opaqueFinish(
   next.token.length(
     ZuBase64URL::enclen(OpaqueIDSize) + 1 +
       ZuBase64URL::enclen(OpaqueSecretSize));
-  unsigned n = ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(next.token.data()), next.token.length()},
-    id);
+  unsigned n = ZuBase64URL::encode(next.token.span(), id);
   next.token[n++] = '.';
-  n += ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(next.token.data() + n),
-    next.token.length() - n}, secret);
+  n += ZuBase64URL::encode(next.token.span().offset(n), secret);
   next.token.length(n);
   next.digest = opaqueDigest(next.token);
   opaque = ZuMv(next);
@@ -320,12 +254,13 @@ bool authorizeClient(const Client &client, const AuthorizeParams &params)
 bool authorizationBegin(
     Ztls::Random &rng, Grant &grant, ZuCSpan issuer,
     const AuthorizeParams &params, const ScopeSelection &selection,
-    ZuBSpan bindingDigest, uint64_t authVersion,
+    bool passkey, ZuBSpan bindingDigest, uint64_t authVersion,
     int64_t created, int64_t expires)
 {
   enum { ChallengeSize = 32 }; // WebAuthn/PKCE SHA-256 challenge entropy
   uint8_t random[OpaqueIDSize + ChallengeSize];
-  if (!rng.random(random)) return false;
+  unsigned randomSize = OpaqueIDSize + (passkey ? ChallengeSize : 0);
+  if (!rng.random({random, randomSize})) return false;
 
   Grant next;
   next.id = Bytes{ZuBSpan{random, OpaqueIDSize}};
@@ -334,8 +269,8 @@ bool authorizationBegin(
   next.audience = selection.audience;
   next.redirectURI = params.redirectURI;
   next.scopeIDs = selection.scopeIDs;
-  next.challenge = Bytes{ZuBSpan{
-    random + OpaqueIDSize, ChallengeSize}};
+  if (passkey)
+    next.challenge = Bytes{ZuBSpan{random + OpaqueIDSize, ChallengeSize}};
   next.bindingDigest = bindingDigest;
   next.pkceChallenge = Bytes{ZuBSpan{params.codeChallenge}};
   if (params.has(AuthorizeParams::State)) {
@@ -348,7 +283,7 @@ bool authorizationBegin(
   next.kind = GrantKind::Ceremony;
   next.purpose = GrantPurpose::Authorization;
   next.state = State::Active;
-  ZuClear(random, sizeof(random));
+  ZuClear(random, randomSize);
   grant = ZuMv(next);
   return true;
 }
@@ -528,16 +463,11 @@ bool redirectMatches(
 
 bool pkceVerify(ZuCSpan challenge, ZuCSpan verifier)
 {
-  if (verifier.length() < 43 || verifier.length() > 128) return false;
-  for (char c: verifier)
-    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-	(c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' ||
-	c == '~')) return false;
   uint8_t digest[Ztls::MD<>::Size];
   { Ztls::MD<> md; md.update(ZuBSpan{verifier}); md.finish(digest); }
   char encoded[ZuBase64URL::enclen(sizeof(digest))];
   unsigned n = ZuBase64URL::encode(
-    {reinterpret_cast<uint8_t *>(encoded), sizeof(encoded)}, digest);
+    ZuSpan<uint8_t>{encoded, sizeof(encoded)}, digest);
   return Ztls::ctEqual(ZuBSpan{challenge}, ZuBSpan{encoded, n});
 }
 

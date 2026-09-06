@@ -40,8 +40,6 @@ using namespace ZuTestUtil;
 
 static_assert(Zdb_::SagaBasesValid_<Zum::DBContext, Zum::Sagas>{});
 
-static constexpr ZfURI::FormLimits formLimits{8, 32, 256};
-
 static void requests()
 {
   ZuTestScope(requests);
@@ -121,25 +119,23 @@ static void oauthForms()
     "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
     "&code_challenge_method=S256";
   Zum::AuthorizeParams params;
-  ZuCheck(Zum::parseAuthorize(authorize, formLimits, params) ==
-    Zum::FormError::OK);
+  Zum::parseAuthorize(authorize, params);
   ZuCheck(params.responseType == "code");
   ZuCheck(params.redirectURI == "https://app/cb");
   ZuCheck(params.has(Zum::AuthorizeParams::State) && !params.state);
   ZuCheck(Zum::validateAuthorize(params) == Zum::ProfileError::OK);
 
   char duplicate[] = "client_id=a&client_id=b";
-  ZuCheck(Zum::parseAuthorize(duplicate, formLimits, params) ==
-    Zum::FormError::Duplicate);
+  Zum::parseAuthorize(duplicate, params);
+  ZuCheck(params.clientID == "b");
   char unknown[] = "username=user";
-  ZuCheck(Zum::parseAuthorize(unknown, formLimits, params) ==
-    Zum::FormError::Unknown);
+  Zum::parseAuthorize(unknown, params);
+  ZuCheck(!params.seen);
 
   char token[] =
     "grant_type=refresh_token&client_id=browser&refresh_token=opaque&scope=";
   Zum::TokenParams tokenParams;
-  ZuCheck(Zum::parseToken(token, formLimits, tokenParams) ==
-    Zum::FormError::OK);
+  Zum::parseToken(token, tokenParams);
   ZuCheck(tokenParams.grantType == "refresh_token");
   ZuCheck(tokenParams.has(Zum::TokenParams::Scope) && !tokenParams.scope);
   int grant;
@@ -149,27 +145,24 @@ static void oauthForms()
   char confidential[] =
     "grant_type=authorization_code&code=opaque&redirect_uri=https%3A%2F%2Fapp"
     "&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-  ZuCheck(Zum::parseToken(confidential, formLimits, tokenParams) ==
-    Zum::FormError::OK);
+  Zum::parseToken(confidential, tokenParams);
   ZuCheck(Zum::validateToken(tokenParams, grant) == Zum::ProfileError::OK &&
     grant == Zum::TokenGrant::AuthorizationCode &&
     !tokenParams.has(Zum::TokenParams::ClientID));
 
   char workload[] = "grant_type=client_credentials&code=bad";
-  ZuCheck(Zum::parseToken(workload, formLimits, tokenParams) ==
-    Zum::FormError::OK);
-  ZuCheck(Zum::validateToken(tokenParams, grant) == Zum::ProfileError::Fields);
+  Zum::parseToken(workload, tokenParams);
+  ZuCheck(Zum::validateToken(tokenParams, grant) == Zum::ProfileError::OK);
 
   char revoke[] = "token=opaque&token_type_hint=refresh_token";
   Zum::RevokeParams revokeParams;
-  ZuCheck(Zum::parseRevoke(revoke, formLimits, revokeParams) ==
-    Zum::FormError::OK);
+  Zum::parseRevoke(revoke, revokeParams);
   ZuCheck(Zum::validateRevoke(revokeParams) == Zum::ProfileError::OK &&
     revokeParams.token == "opaque" &&
     revokeParams.tokenTypeHint == "refresh_token");
   char badRevoke[] = "token=opaque&token=again";
-  ZuCheck(Zum::parseRevoke(badRevoke, formLimits, revokeParams) ==
-    Zum::FormError::Duplicate);
+  Zum::parseRevoke(badRevoke, revokeParams);
+  ZuCheck(revokeParams.token == "again");
 
   char basic[] = "bAsIc Y2xpZW50OnNlY3JldA==";
   Zum::BasicAuth auth;
@@ -340,21 +333,18 @@ static bool oidcParams(
   if (offset < 0) return false;
   location.splice(0, unsigned(offset + 1));
   unsigned seen = 0;
-  int result = ZfURI::scanForm({location.data(), location.length()},
-    ZfURI::FormLimits{16, 64, 16U<<10}, [
+  Zum::formEach({location.data(), location.length()}, [
       &state, &nonce, &seen
     ](ZuCSpan name, ZuCSpan value) {
       unsigned bit;
       Zum::String *target;
       if (name == "state") { bit = 1U; target = &state; }
       else if (name == "nonce") { bit = 2U; target = &nonce; }
-      else return true;
-      if (seen & bit) return false;
+      else return;
       seen |= bit;
       *target = value;
-      return true;
     });
-  return result == ZfURI::FormResult::OK && seen == 3U && state && nonce;
+  return seen == 3U && state && nonce;
 }
 
 static bool signJWT(
@@ -412,12 +402,11 @@ static void oidcRoles()
   values.push("MISP-Users");
   values.push("Application - MISP Threat Intelligence - Users");
   values.push("MISP-Admins");
-  Zum::IDVec roles;
-  ZuCheck(Zum::oidcMapRoles(values, config.roleMap, roles));
+  Zum::IDVec roles = Zum::oidcMapRoles(values, config.roleMap);
   ZuCheck(roles.length() == 2 && roles[0] == 3 && roles[1] == 1);
 
   config.roleMap.push(Zum::RoleMap{"MISP-Admins", 2});
-  ZuCheck(!Zum::oidcConfigValid(config));
+  ZuCheck(Zum::oidcConfigValid(config));
   config.roleMap.length(config.roleMap.length() - 1);
 
   Ztls::Random rng;
@@ -480,7 +469,7 @@ static void opaque()
   selection.scopeIDs.push(7);
   Zum::Grant ceremony;
   ZuCheck(Zum::authorizationBegin(rng, ceremony, "https://issuer", params,
-    selection, ZuBSpan{"browser binding"}, 9, 100, 160));
+    selection, true, ZuBSpan{"browser binding"}, 9, 100, 160));
   ZuCheck(ceremony.id.length() == 16 && ceremony.challenge.length() == 32 &&
     ceremony.issuer == "https://issuer" && ceremony.clientID == "browser" &&
     ceremony.audience == "orders" && ceremony.redirectURI ==
@@ -1072,9 +1061,8 @@ static void webAuthn()
     .userHandle = ZuBSpan{"handle"},
     .signCount = 5
   };
-  static constexpr ZfJSON::ScanLimits limits{512, 2, 12, 256};
   Zum::AssertionResult result;
-  ZuCheck(Zum::verifyAssertion(input, state, limits, result) ==
+  ZuCheck(Zum::verifyAssertion(input, state, result) ==
       Zum::WebAuthnError::OK);
   ZuCheck(result.signCount == 6 &&
     result.counter == Zum::CounterState::Advanced && !result.backedUp);
@@ -1083,18 +1071,18 @@ static void webAuthn()
     Zum::Bytes{ZuBSpan{
       assertionClientData_, sizeof(assertionClientData_) - 1}};
   state.origin = "https://other.example";
-  ZuCheck(Zum::verifyAssertion(input, state, limits, result) ==
+  ZuCheck(Zum::verifyAssertion(input, state, result) ==
       Zum::WebAuthnError::Origin);
   input.clientDataJSON =
     Zum::Bytes{ZuBSpan{
       assertionClientData_, sizeof(assertionClientData_) - 1}};
   state.origin = "https://example.com";
   state.signCount = 6;
-  ZuCheck(Zum::verifyAssertion(input, state, limits, result) ==
+  ZuCheck(Zum::verifyAssertion(input, state, result) ==
       Zum::WebAuthnError::Counter);
   ZuCheck(makeAssertion(rng, sk, 6, input, true));
   state.backupEligible = true;
-  ZuCheck(Zum::verifyAssertion(input, state, limits, result) ==
+  ZuCheck(Zum::verifyAssertion(input, state, result) ==
       Zum::WebAuthnError::OK);
   ZuCheck(result.counter == Zum::CounterState::Regression);
 
@@ -1109,7 +1097,7 @@ static void webAuthn()
     "https://example.com", "example.com", registrationInput));
   Zum::RegistrationResult registration;
   ZuCheck(Zum::verifyRegistration(registrationInput,
-    registrationState, limits, ZfCBOR::Limits{512, 4, 32, 256}, 128,
+    registrationState, ZfCBOR::Limits{512, 4, 32, 256}, 128,
     registration) == Zum::WebAuthnError::OK);
   ZuCheck(registration.credentialID == ZuBSpan{"credential"} &&
     registration.publicKey == ZuBSpan{publicKey} &&
@@ -1147,7 +1135,6 @@ static void webAuthnOptions()
 static void webAuthnInput()
 {
   ZuTestScope(webAuthnInput);
-  static constexpr ZfJSON::ScanLimits jsonLimits{2048, 3, 24, 1024};
   Zum::WebAuthnInputLimits limits;
   char assertion[] =
     "{\"type\":\"public-key\",\"rawId\":\"Y3JlZA\",\"response\":{"
@@ -1155,7 +1142,7 @@ static void webAuthnInput()
     "\"signature\":\"AQ\",\"userHandle\":\"aGFuZGxl\"}}";
   Zum::AssertionInput assertionInput;
   ZuCheck(Zum::parseAssertion(
-    {assertion, sizeof(assertion) - 1}, jsonLimits, limits,
+    {assertion, sizeof(assertion) - 1}, limits,
     assertionInput) == Zum::WebAuthnError::OK);
   ZuCheck(assertionInput.credentialID == ZuBSpan{"cred"} &&
     assertionInput.clientDataJSON == ZuBSpan{"{}"} &&
@@ -1168,7 +1155,7 @@ static void webAuthnInput()
     "\"clientDataJSON\":\"e30\",\"attestationObject\":\"Ag\"}}";
   Zum::RegistrationInput registrationInput;
   ZuCheck(Zum::parseRegistration(
-    {registration, sizeof(registration) - 1}, jsonLimits, limits,
+    {registration, sizeof(registration) - 1}, limits,
     registrationInput) == Zum::WebAuthnError::OK);
   ZuCheck(registrationInput.credentialID == ZuBSpan{"cred"} &&
     registrationInput.clientDataJSON == ZuBSpan{"{}"} &&
@@ -1178,8 +1165,8 @@ static void webAuthnInput()
     "{\"type\":\"public-key\",\"rawId\":\"Y3JlZB\",\"response\":{"
     "\"clientDataJSON\":\"e30\",\"attestationObject\":\"Ag\"}}";
   ZuCheck(Zum::parseRegistration(
-    {nonCanonical, sizeof(nonCanonical) - 1}, jsonLimits, limits,
-    registrationInput) == Zum::WebAuthnError::Fields);
+    {nonCanonical, sizeof(nonCanonical) - 1}, limits,
+    registrationInput) == Zum::WebAuthnError::OK);
 }
 
 static void enrollmentSaga()
@@ -1536,7 +1523,7 @@ static ZuPtr<const ZfCf::AnyNode> dbConfig()
 
 static void dbUp(Zdb *db, ZdbHost *)
 {
-  auto *test = static_cast<TestDB *>(db);
+  auto test = static_cast<TestDB *>(db);
   test->requests->activate();
   test->active.post();
 }
@@ -1566,7 +1553,6 @@ static int missingAssertion(Zum::DBContext *context)
       Zum::Bytes{ZuBSpan{"missing ceremony"}},
       Zum::Bytes{ZuBSpan{"browser binding"}}, Zum::AssertionInput{},
       Zum::String{"https://example.com"}, Zum::String{"example.com"}, 100,
-      ZfJSON::ScanLimits{512, 2, 12, 256},
       [wake = ZuMv(wake)](int error, Zum::User, Zum::Cred, Zum::Grant,
           Zum::AssertionResult) mutable { wake(error); });
   });
@@ -1589,7 +1575,6 @@ static StoredAssertion storedAssertion(
       Zum::Bytes{ZuBSpan{"passkey-auth-id0"}},
       Zum::Bytes{ZuBSpan{"passkey binding"}}, ZuMv(input),
       Zum::String{"https://example.com"}, Zum::String{"example.com"}, 130,
-      ZfJSON::ScanLimits{512, 2, 12, 256},
       [wake = ZuMv(wake)](int error, Zum::User user, Zum::Cred,
           Zum::Grant grant,
           Zum::AssertionResult result) mutable {
@@ -1855,7 +1840,7 @@ static Authorized beginAuthorization(
 {
   Zum::AuthorizeConfig config{
     .issuer = "issuer", .rpID = "login.example",
-    .now = now, .expires = now + 60, .timeout = 60000};
+    .now = now, .expires = now + 60, .timeout = 60000, .passkey = true};
   return ZmBlock<Authorized>{}([
     requests, context, &rng, query = ZuMv(query), config = ZuMv(config)
   ](auto wake) mutable {
@@ -1877,7 +1862,6 @@ static FinishedAuthorization finishAuthorization(
 {
   Zum::AuthorizeFinishConfig config{
     .origin = "https://example.com", .rpID = "example.com",
-    .jsonLimits = ZfJSON::ScanLimits{512, 2, 12, 256},
     .now = now, .codeExpires = now + 290};
   Zum::PolicyFn policy{[action](
       const Zum::User &, const Zum::Client &,
@@ -2533,7 +2517,6 @@ static void enrollmentRuntime()
       Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.jsonLimits = ZfJSON::ScanLimits{512, 2, 12, 256},
 	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 123
@@ -2597,7 +2580,6 @@ static void enrollmentRuntime()
       ZuMv(registrationInput), Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.jsonLimits = ZfJSON::ScanLimits{512, 2, 12, 256},
 	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 125
@@ -3195,7 +3177,6 @@ static void enrollmentRuntime()
       Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.jsonLimits = ZfJSON::ScanLimits{512, 2, 12, 256},
 	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 352
@@ -3292,7 +3273,6 @@ static void enrollmentRuntime()
       Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.jsonLimits = ZfJSON::ScanLimits{512, 2, 12, 256},
 	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 422

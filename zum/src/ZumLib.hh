@@ -11,9 +11,12 @@
 
 #include <zlib/ZuLib.hh>
 
+#include <zlib/ZmObject.hh>
+#include <zlib/ZmPolymorph.hh>
+
 #ifdef _WIN32
 
-#ifdef ZV_EXPORTS
+#ifdef ZUM_EXPORTS
 #define ZumAPI ZuExport_API
 #define ZumExplicit ZuExport_Explicit
 #else
@@ -29,5 +32,15 @@
 #define ZumExtern extern
 
 #endif
+
+class ZumAPI ZumObjectAlloc {
+public:
+  static void *operator new(size_t);
+  static void operator delete(void *);
+  static void operator delete(void *, size_t);
+};
+
+class ZumObject : public ZumObjectAlloc, public ZmObject { };
+class ZumPolymorph : public ZumObjectAlloc, public ZmPolymorph { };
 
 #endif /* ZumLib_HH */

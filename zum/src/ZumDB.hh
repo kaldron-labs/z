@@ -26,7 +26,7 @@
 
 namespace Zum {
 
-struct DBContext : public ZmPolymorph {
+struct DBContext : public ZumPolymorph {
   ZdbTable<Issuer>	*issuers = nullptr;
   ZdbTable<User>	*users = nullptr;
   ZdbTable<Cred>	*creds = nullptr;
@@ -73,8 +73,8 @@ template <typename Complete>
 void actionCreate(
     DBContext *context, String issuerID, String name, Complete &&complete)
 {
-  auto *issuers = context->issuers;
-  auto *actions = context->actions;
+  auto issuers = context->issuers;
+  auto actions = context->actions;
   actions->run(0, [
     issuers, actions, issuerID = ZuMv(issuerID), name = ZuMv(name),
     complete = ZuFwd<Complete>(complete)
@@ -128,20 +128,20 @@ template <typename Complete>
 void assertionVerify(
     DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
     AssertionInput input, String origin, String rpID, int64_t now,
-    ZfJSON::ScanLimits limits, Complete &&complete)
+    Complete &&complete)
 {
-  auto *grants = context->grants;
-  auto *creds = context->creds;
-  auto *users = context->users;
+  auto grants = context->grants;
+  auto creds = context->creds;
+  auto users = context->users;
   grants->run(0, [
     grants, creds, users, ceremonyID = ZuMv(ceremonyID),
     bindingDigest = ZuMv(bindingDigest), input = ZuMv(input),
-    origin = ZuMv(origin), rpID = ZuMv(rpID), now, limits,
+    origin = ZuMv(origin), rpID = ZuMv(rpID), now,
     complete = ZuFwd<Complete>(complete)
   ]() mutable {
     grants->find<0>(0, ZuFwdTuple(ceremonyID), [
       creds, users, bindingDigest = ZuMv(bindingDigest), input = ZuMv(input),
-      origin = ZuMv(origin), rpID = ZuMv(rpID), now, limits,
+      origin = ZuMv(origin), rpID = ZuMv(rpID), now,
       complete = ZuMv(complete)
     ](ZdbRowRef<Grant> grant) mutable {
       if (!grant || grant->data().kind != GrantKind::Ceremony ||
@@ -160,7 +160,7 @@ void assertionVerify(
       Bytes credentialID = input.credentialID;
       creds->find<0>(0, ZuFwdTuple(credentialID), [
 	creds, users, grant = ZuMv(grant), input = ZuMv(input),
-	origin = ZuMv(origin), rpID = ZuMv(rpID), now, limits,
+	origin = ZuMv(origin), rpID = ZuMv(rpID), now,
 	complete = ZuMv(complete)
       ](ZdbRowRef<Cred> cred) mutable {
 	if (!cred || cred->data().state != State::Active || cred->data().owner ||
@@ -176,7 +176,7 @@ void assertionVerify(
 	users->find<0>(0, ZuFwdTuple(userID), [
 	  creds, grant = ZuMv(grant), cred = ZuMv(cred),
 	  input = ZuMv(input), origin = ZuMv(origin), rpID = ZuMv(rpID),
-	  now, limits, complete = ZuMv(complete)
+	  now, complete = ZuMv(complete)
 	](ZdbRowRef<User> user) mutable {
 	  if (!user || user->data().state != State::Active ||
 	      user->data().owner || !user->data().handle ||
@@ -199,7 +199,7 @@ void assertionVerify(
 	    .backupEligible = cred->data().backupEligible
 	  };
 	  AssertionResult result;
-	  int error = verifyAssertion(input, state, limits, result);
+	  int error = verifyAssertion(input, state, result);
 	  if (error) {
 	    complete(error, User{.handle = user->data().handle},
 	      Cred{.id = cred->data().id}, Grant{
@@ -257,7 +257,7 @@ template <typename Complete>
 void authorizationInsert(
     DBContext *context, Grant grant, Complete &&complete)
 {
-  auto *grants = context->grants;
+  auto grants = context->grants;
   grants->run(0, [
     grants, grant = ZuMv(grant), complete = ZuFwd<Complete>(complete)
   ]() mutable {
@@ -283,9 +283,9 @@ void authorizationFinish(
     int64_t authTime, int64_t codeExpires,
     Complete &&complete)
 {
-  auto *issuers = context->issuers;
-  auto *users = context->users;
-  auto *grants = context->grants;
+  auto issuers = context->issuers;
+  auto users = context->users;
+  auto grants = context->grants;
   grants->run(0, [
     issuers, users, grants, rng = &rng, id = ZuMv(id),
     bindingDigest = ZuMv(bindingDigest), userID,
@@ -367,9 +367,9 @@ void refreshFinish(
     uint64_t userVersion, int64_t now,
     unsigned generationLimit, unsigned spentLimit, Complete &&complete)
 {
-  auto *issuers = context->issuers;
-  auto *users = context->users;
-  auto *grants = context->grants;
+  auto issuers = context->issuers;
+  auto users = context->users;
+  auto grants = context->grants;
   issuers->run(0, [
     issuers, users, grants, rng = &rng, familyID = ZuMv(familyID),
     presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
@@ -461,9 +461,9 @@ void tokenRelease(
     uint64_t authVersion, int64_t now, TokenResponse response,
     Complete &&complete)
 {
-  auto *issuers = context->issuers;
-  auto *users = context->users;
-  auto *grants = context->grants;
+  auto issuers = context->issuers;
+  auto users = context->users;
+  auto grants = context->grants;
   issuers->run(0, [
     issuers, users, grants, issuer = ZuMv(issuer), familyID = ZuMv(familyID),
     authVersion, now, response = ZuMv(response),
@@ -740,8 +740,8 @@ ZfbStruct(Enrollment,
 
 ZumExtern int enrollmentPrepare(
   const Grant &, ZuBSpan bindingDigest, RegistrationInput &,
-  ZuCSpan origin, ZuCSpan rpID, const ZfJSON::ScanLimits &,
-  const ZfCBOR::Limits &, unsigned credentialIDMax,
+  ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &,
+  unsigned credentialIDMax,
   int64_t now, Enrollment &);
 
 struct CredentialAdd : public ZdbSagaBase<DBContext> {
@@ -904,8 +904,8 @@ ZfbStruct(CredentialAdd,
 
 ZumExtern int credentialPrepare(
   const Grant &, ZuBSpan bindingDigest, RegistrationInput &,
-  ZuCSpan origin, ZuCSpan rpID, const ZfJSON::ScanLimits &,
-  const ZfCBOR::Limits &, unsigned credentialIDMax,
+  ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &,
+  unsigned credentialIDMax,
   int64_t now, CredentialAdd &);
 
 struct RecoveryStart : public ZdbSagaBase<DBContext> {
@@ -1271,8 +1271,8 @@ ZfbStruct(RecoveryEnroll,
 
 ZumExtern int recoveryPrepare(
   const Grant &, const User &, ZuBSpan bindingDigest, RegistrationInput &,
-  ZuCSpan origin, ZuCSpan rpID, const ZfJSON::ScanLimits &,
-  const ZfCBOR::Limits &, unsigned credentialIDMax,
+  ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &,
+  unsigned credentialIDMax,
   int64_t now, RecoveryEnroll &);
 
 struct CodeFamily : public ZdbSagaBase<DBContext> {

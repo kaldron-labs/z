@@ -37,8 +37,7 @@ static bool encode(String &out, ZuBSpan data)
 {
   auto n = ZuBase64URL::enclen(data.length());
   out.length(n);
-  return ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(out.data()), unsigned(n)}, data) == n;
+  return ZuBase64URL::encode(out.span(), data) == n;
 }
 
 static bool accessClaims(
@@ -102,28 +101,13 @@ bool clientClaims(
     authority, actions, now, expires, claims);
 }
 
-ZfStruct((ClaimsJSON, JSON),
-  (((iss),		(Required)),			(String)),
-  (((sub),		(Required)),			(String)),
-  (((aud),		(Required)),			(String)),
-  (((clientID),	(JSON::ID<"client_id">, Required)),	(String)),
-  (((jti),		(Required)),			(String)),
-  (((scope),		(Required)),			(String)),
-  (((actions),		(Required)),			(StringVec)),
-  (((iat),		(Required)),			(Int64)),
-  (((nbf),		(Required)),			(Int64)),
-  (((exp),		(Required)),			(Int64)),
-  (((authTime),	(JSON::ID<"auth_time">, JSON::Opt)),	(Int64)),
-  (((amr),		(JSON::Opt)),			(StringVec)));
-
 static bool encodePart(String &out, ZuBSpan data, unsigned limit)
 {
   auto old = out.length();
   auto n = ZuBase64URL::enclen(data.length());
   if (old + n > limit) return false;
   out.length(old + n);
-  return ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(out.data() + old), unsigned(n)}, data) == n;
+  return ZuBase64URL::encode(out.span().offset(old), data) == n;
 }
 
 static bool claimsJSON(
@@ -131,7 +115,7 @@ static bool claimsJSON(
 {
   bool interactive = claims.authTime > 0;
   if (!claims.issuer || !claims.subject || !claims.audience ||
-      !claims.clientID || !claims.jti || !claims.scope || !claims.actions ||
+      !claims.clientID || !claims.jti || !claims.scope ||
       claims.actions.length() > limits.actions || claims.iat <= 0 ||
       claims.nbf <= 0 || claims.exp <= claims.iat || claims.nbf >= claims.exp ||
       (interactive != bool(claims.amr))) return false;
@@ -206,34 +190,27 @@ bool jwtFinish(
 
 static bool decodePart(ZuCSpan encoded, unsigned limit, JWTBytes &decoded)
 {
-  if (!encoded || (encoded.length() & 3) == 1 ||
-      encoded.length() > ZuBase64URL::enclen(limit)) return false;
+  if (!encoded || encoded.length() > ZuBase64URL::enclen(limit)) return false;
   auto n = ZuBase64URL::declen(encoded.length());
   decoded.length(n, false);
   return ZuBase64URL::decode(decoded, ZuBSpan{encoded}) == n;
 }
 
-static ZfJSON::AnyNode *jsonObject(
-    JWTBytes &json, const JWTLimits &limits, ZfJSON::ScanResult &result)
+static ZfJSON::AnyNode *jsonObject(ZfJSON::AnyNode *tree)
 {
-  result = ZfJSON::scanStrict({
-    reinterpret_cast<char *>(json.data()), json.length()},
-    {limits.json, limits.depth, limits.nodes, limits.string});
-  if (!result || !result.root->has<ZfJSON::AnyNode::Array>()) return nullptr;
-  auto &roots = result.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return nullptr;
+  if (!tree || !tree->has<ZfJSON::AnyNode::Array>()) return nullptr;
+  auto &roots = tree->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return nullptr;
   return roots[0];
 }
 
-static bool loadHeader(
-    JWTBytes &json, const JWTLimits &limits, JWTHeader &header)
+static bool loadHeader(JWTBytes &json, JWTHeader &header)
 {
-  ZfJSON::ScanResult result;
-  auto node = jsonObject(json, limits, result);
+  auto parsed = ZfJSON::scan(ZuSpan<char>{json});
+  if (parsed.p<0>() < 0) return false;
+  auto node = jsonObject(parsed.p<1>());
   if (!node) return false;
   auto &fields = node->data<ZfJSON::AnyNode::Object>();
-  if (fields.length() < 2 || fields.length() > 3) return false;
   unsigned seen = 0;
   JWTHeader next;
   for (auto &field: fields) {
@@ -251,9 +228,8 @@ static bool loadHeader(
       bit = 4U;
       next.keyID = string;
     } else {
-      return false;
+      continue;
     }
-    if (seen & bit) return false;
     seen |= bit;
   }
   if ((seen & 6U) != 6U || !next.algorithm || !next.keyID) return false;
@@ -289,7 +265,7 @@ bool jwtHeader(ZuCSpan token, const JWTLimits &limits, JWTHeader &header)
   JWTBytes decoded;
   return splitJWT(token, headerPart, claimsPart, signaturePart, limits.token) &&
     decodePart(headerPart, limits.json, decoded) &&
-    loadHeader(decoded, limits, header);
+    loadHeader(decoded, header);
 }
 
 bool jwtES256(
@@ -303,7 +279,7 @@ bool jwtES256(
   JWTBytes headerJSON, signature;
   JWTHeader nextHeader;
   if (!decodePart(headerPart, limits.json, headerJSON) ||
-      !loadHeader(headerJSON, limits, nextHeader) ||
+      !loadHeader(headerJSON, nextHeader) ||
       nextHeader.algorithm != "ES256" ||
       !decodePart(signaturePart, Ztls::ES256::SignatureSize, signature) ||
       signature.length() != Ztls::ES256::SignatureSize) return false;
@@ -311,64 +287,68 @@ bool jwtES256(
   unsigned derLength;
   if (!Ztls::es256RawToDER(signature, der, derLength) ||
       !Ztls::es256Verify(publicKey,
-        ZuBSpan{reinterpret_cast<const uint8_t *>(token.data()),
+        ZuBSpan{token.data(),
           unsigned(signaturePart.data() - token.data() - 1)},
         ZuBSpan{der, derLength})) return false;
 
   JWTBytes claimsJSON;
   if (!decodePart(claimsPart, limits.json, claimsJSON)) return false;
   String nextClaims{ZuBSpan{claimsJSON}};
+  nextClaims.length(nextClaims.length());
   header = ZuMv(nextHeader);
   claims = ZuMv(nextClaims);
   return true;
-}
-
-static bool claimsFields(
-    ZfJSON::AnyNode *node, bool &interactive)
-{
-  auto &fields = node->data<ZfJSON::AnyNode::Object>();
-  uint16_t seen = 0;
-  for (auto &field: fields) {
-    unsigned bit;
-    auto id = field.p<0>();
-    if (id == "iss") bit = 1U<<0;
-    else if (id == "sub") bit = 1U<<1;
-    else if (id == "aud") bit = 1U<<2;
-    else if (id == "client_id") bit = 1U<<3;
-    else if (id == "jti") bit = 1U<<4;
-    else if (id == "scope") bit = 1U<<5;
-    else if (id == "actions") bit = 1U<<6;
-    else if (id == "iat") bit = 1U<<7;
-    else if (id == "nbf") bit = 1U<<8;
-    else if (id == "exp") bit = 1U<<9;
-    else if (id == "auth_time") bit = 1U<<10;
-    else if (id == "amr") bit = 1U<<11;
-    else return false;
-    seen |= bit;
-  }
-  constexpr uint16_t required = (1U<<10) - 1;
-  interactive = (seen & (3U<<10)) == (3U<<10);
-  return (seen & required) == required &&
-    (!(seen & (3U<<10)) || interactive) &&
-    fields.length() == 10U + (interactive ? 2U : 0U);
 }
 
 static bool loadClaims(
     JWTBytes &json, ZuCSpan issuer, ZuCSpan audience, int64_t now,
     const JWTLimits &limits, Principal &principal)
 {
-  ZfJSON::ScanResult result;
-  auto node = jsonObject(json, limits, result);
-  bool interactive;
-  if (!node || !claimsFields(node, interactive)) return false;
+  auto parsed = ZfJSON::scan(ZuSpan<char>{json});
+  if (parsed.p<0>() < 0) return false;
+  auto node = jsonObject(parsed.p<1>());
+  if (!node) return false;
   ClaimsJSON claims;
-  try {
-    ZfJSON::handler<ClaimsJSON>(node).load(claims);
-  } catch (...) {
-    return false;
+  for (auto &field: node->data<ZfJSON::AnyNode::Object>()) {
+    auto name = field.p<0>();
+    auto value = field.p<1>().ptr();
+    if (name == "iss" || name == "sub" || name == "aud" ||
+	name == "client_id" || name == "jti" || name == "scope") {
+      if (!value->has<ZfJSON::AnyNode::String>()) return false;
+      auto &string = value->data<ZfJSON::AnyNode::String>();
+      if (name == "iss") claims.iss = string;
+      else if (name == "sub") claims.sub = string;
+      else if (name == "aud") claims.aud = string;
+      else if (name == "client_id") claims.clientID = string;
+      else if (name == "jti") claims.jti = string;
+      else claims.scope = string;
+    } else if (name == "iat" || name == "nbf" || name == "exp" ||
+	name == "auth_time") {
+      if (!value->has<ZfJSON::AnyNode::Number>()) return false;
+      auto number = ZfJSON::eov_Decimal(
+	value->data<ZfJSON::AnyNode::Number>());
+      if (number.p<0>() < 0) return false;
+      auto integer = int64_t(number.p<1>().floor());
+      if (name == "iat") claims.iat = integer;
+      else if (name == "nbf") claims.nbf = integer;
+      else if (name == "exp") claims.exp = integer;
+      else claims.authTime = integer;
+    } else if (name == "actions" || name == "amr") {
+      if (!value->has<ZfJSON::AnyNode::Array>()) return false;
+      auto &array = value->data<ZfJSON::AnyNode::Array>();
+      if (array.length() > limits.actions) return false;
+      StringVec strings;
+      for (auto &item: array) {
+	if (!item->has<ZfJSON::AnyNode::String>()) return false;
+	strings.push(item->data<ZfJSON::AnyNode::String>());
+      }
+      if (name == "actions") claims.actions = ZuMv(strings);
+      else claims.amr = ZuMv(strings);
+    }
   }
+  bool interactive = claims.authTime || claims.amr;
   if (claims.iss != issuer || claims.aud != audience || !claims.sub ||
-      !claims.clientID || !claims.jti || !claims.scope || !claims.actions ||
+      !claims.clientID || !claims.jti || !claims.scope ||
       claims.actions.length() > limits.actions || claims.iat <= 0 ||
       claims.nbf <= 0 || claims.exp <= claims.iat || claims.nbf >= claims.exp ||
       claims.iat > now || claims.nbf > now || now >= claims.exp) return false;
