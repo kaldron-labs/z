@@ -268,7 +268,7 @@ void loadUserAuth(
 
 int enrollmentPrepare(
     const Grant &ceremony, ZuBSpan bindingDigest, RegistrationInput &input,
-    ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &cborLimits,
+    ZuCSpan origin, ZuCSpan rpID,
     unsigned credentialIDMax,
     int64_t now, Enrollment &enrollment)
 {
@@ -286,7 +286,7 @@ int enrollmentPrepare(
   RegistrationResult result;
   int error = verifyRegistration(input,
     RegistrationState{ceremony.challenge, origin, rpID},
-    cborLimits, credentialIDMax, result);
+    credentialIDMax, result);
   if (error) return error;
 
   Enrollment next;
@@ -308,7 +308,7 @@ int enrollmentPrepare(
 
 int credentialPrepare(
     const Grant &ceremony, ZuBSpan bindingDigest, RegistrationInput &input,
-    ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &cborLimits,
+    ZuCSpan origin, ZuCSpan rpID,
     unsigned credentialIDMax,
     int64_t now, CredentialAdd &add)
 {
@@ -324,7 +324,7 @@ int credentialPrepare(
   RegistrationResult result;
   int error = verifyRegistration(input,
     RegistrationState{ceremony.challenge, origin, rpID},
-    cborLimits, credentialIDMax, result);
+    credentialIDMax, result);
   if (error) return error;
 
   CredentialAdd next{
@@ -348,7 +348,7 @@ int credentialPrepare(
 int recoveryPrepare(
     const Grant &ceremony, const User &user, ZuBSpan bindingDigest,
     RegistrationInput &input, ZuCSpan origin, ZuCSpan rpID,
-    const ZfCBOR::Limits &cborLimits, unsigned credentialIDMax,
+    unsigned credentialIDMax,
     int64_t now, RecoveryEnroll &recovery)
 {
   if (ceremony.kind != GrantKind::Ceremony ||
@@ -366,7 +366,7 @@ int recoveryPrepare(
   RegistrationResult result;
   int error = verifyRegistration(input,
     RegistrationState{ceremony.challenge, origin, rpID},
-    cborLimits, credentialIDMax, result);
+    credentialIDMax, result);
   if (error) return error;
 
   recovery = RecoveryEnroll{

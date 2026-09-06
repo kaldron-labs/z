@@ -573,7 +573,6 @@ void Server::finishGrant_(
       };
       EnrollmentFinishConfig config{
         .origin = m_config.issuer, .rpID = m_config.rpID,
-        .cborLimits = m_config.limits.cbor,
         .credentialIDMax = m_config.limits.credentialID, .now = now};
       bool started;
       switch (purpose) {

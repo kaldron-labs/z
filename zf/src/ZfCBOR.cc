@@ -10,15 +10,12 @@ namespace ZfCBOR {
 
 class Scanner {
 public:
-  Scanner(ZuBSpan data, const Limits &limits, void *ctx, Visit visit) :
-    m_begin{data.begin()}, m_p{data.begin()}, m_end{data.end()},
-    m_limits{limits}, m_ctx{ctx}, m_visit{visit} { }
+  Scanner(ZuBSpan data) :
+    m_begin{data.begin()}, m_p{data.begin()}, m_end{data.end()} { }
 
   Result scan()
   {
-    if (unsigned(m_end - m_begin) > m_limits.size)
-      return result(Error::Size);
-    if (!item(0)) return result(m_error);
+    if (!item()) return result(Error::Syntax);
     return {unsigned(m_p - m_begin), Error::OK};
   }
 
@@ -27,16 +24,28 @@ private:
     return {unsigned(m_p - m_begin), error};
   }
 
-  bool arg(unsigned ai, uint64_t &value)
+  bool data(uint64_t n)
   {
+    if (n > uint64_t(m_end - m_p)) return false;
+    m_p += unsigned(n);
+    return true;
+  }
+
+  bool header(unsigned &major, unsigned &ai, uint64_t &value)
+  {
+    if (m_p >= m_end) return false;
+    uint8_t initial = *m_p++;
+    major = initial >> 5;
+    ai = initial & 31;
     if (ai < 24) { value = ai; return true; }
+    if (ai == 31) { value = UINT64_MAX; return true; }
     unsigned n;
     switch (ai) {
       case 24: n = 1; break;
       case 25: n = 2; break;
       case 26: n = 4; break;
       case 27: n = 8; break;
-      default: m_error = Error::Unsupported; return false;
+      default: return false;
     }
     if (unsigned(m_end - m_p) < n) return false;
     value = 0;
@@ -44,90 +53,91 @@ private:
     return true;
   }
 
-  bool item(unsigned depth)
+  bool indefEnd()
+  {
+    if (m_p >= m_end || *m_p != 0xff) return false;
+    ++m_p;
+    return true;
+  }
+
+  bool string(unsigned major)
+  {
+    for (;;) {
+      if (indefEnd()) return true;
+      if (m_p >= m_end) return false;
+      unsigned chunkMajor, ai;
+      uint64_t n;
+      if (!header(chunkMajor, ai, n) || chunkMajor != major || ai == 31)
+        return false;
+      if (!data(n)) return false;
+    }
+  }
+
+  bool array()
+  {
+    for (;;) {
+      if (indefEnd()) return true;
+      if (!item()) return false;
+    }
+  }
+
+  bool map()
+  {
+    for (;;) {
+      if (indefEnd()) return true;
+      if (!item() || !item()) return false;
+    }
+  }
+
+  bool items(uint64_t n)
+  {
+    for (; n; --n)
+      if (!item()) return false;
+    return true;
+  }
+
+  bool item()
   {
     if (m_p >= m_end) return false;
-    if (m_items >= m_limits.items) {
-      m_error = Error::Items;
-      return false;
-    }
-    ++m_items;
-    const uint8_t *begin = m_p;
-    uint8_t initial = *m_p++;
-    unsigned major = initial >> 5;
+    unsigned major, ai;
     uint64_t value;
-    if (!arg(initial & 31, value)) return false;
-
-    Item out{int(major), value, {}, {}, depth};
+    if (!header(major, ai, value)) return false;
+    if (ai == 31)
+      switch (major) {
+        case 2: return string(major);
+        case 3: return string(major);
+        case 4: return array();
+        case 5: return map();
+        default: return false;
+      }
     switch (major) {
-      case 0: out.type = Type::UInt; break;
-      case 1: out.type = Type::NInt; break;
+      case 0:
+      case 1:
+      case 7:
+        return true;
       case 2:
       case 3:
-	if (value > m_limits.data) { m_error = Error::Data; return false; }
-	if (value > uint64_t(m_end - m_p)) return false;
-	out.type = major == 2 ? Type::Bytes : Type::Text;
-	out.data = {m_p, unsigned(value)};
-	m_p += value;
-	break;
+        return data(value);
       case 4:
-      case 5: {
-	if (depth >= m_limits.depth) {
-	  m_error = Error::Depth;
-	  return false;
-	}
-	uint64_t n = value;
-	if (major == 5) {
-	  if (n > (m_limits.items - m_items) / 2) {
-	    m_error = Error::Items;
-	    return false;
-	  }
-	  n *= 2;
-	} else if (n > m_limits.items - m_items) {
-	  m_error = Error::Items;
-	  return false;
-	}
-	for (uint64_t i = 0; i < n; ++i)
-	  if (!item(depth + 1)) return false;
-	out.type = major == 4 ? Type::Array : Type::Map;
-      } break;
+        return items(value);
+      case 5:
+        if (value > UINT64_MAX / 2) return false;
+        return items(value * 2);
       case 6:
-	if (depth >= m_limits.depth) {
-	  m_error = Error::Depth;
-	  return false;
-	}
-	return item(depth);
-      case 7:
-	switch (initial & 31) {
-	  case 20: out.type = Type::Bool; out.value = false; break;
-	  case 21: out.type = Type::Bool; out.value = true; break;
-	  case 22: out.type = Type::Null; out.value = 0; break;
-	  default: out.type = Type::Simple; break;
-	}
-	break;
-      default: m_error = Error::Unsupported; return false;
+        return item();
+      default:
+        return false;
     }
-    out.encoded = {begin, unsigned(m_p - begin)};
-    if (m_visit && !m_visit(m_ctx, out)) {
-      m_error = Error::Stopped;
-      return false;
-    }
-    return true;
   }
 
   const uint8_t	*m_begin;
   const uint8_t	*m_p;
   const uint8_t	*m_end;
-  const Limits	&m_limits;
-  void		*m_ctx;
-  Visit		m_visit;
-  unsigned	m_items = 0;
-  int		m_error = Error::Syntax;
 };
 
-Result scan(ZuBSpan data, const Limits &limits, void *ctx, Visit visit)
+Result scan(ZuBSpan data)
 {
-  return Scanner{data, limits, ctx, visit}.scan();
+  return Scanner{data}.scan();
 }
 
 } // namespace ZfCBOR

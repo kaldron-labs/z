@@ -121,7 +121,7 @@ ZumExtern int verifyAssertion(
   AssertionInput &, const AssertionState &, AssertionResult &);
 ZumExtern int verifyRegistration(
   RegistrationInput &, const RegistrationState &,
-  const ZfCBOR::Limits &, unsigned credentialIDMax,
+  unsigned credentialIDMax,
   RegistrationResult &);
 
 } // namespace Zum

@@ -32,6 +32,7 @@
 #include <zlib/ZumWebAuthn.hh>
 
 #include <zlib/ZtlsMD.hh>
+#include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsPK.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsSec.hh>
@@ -363,9 +364,9 @@ static bool signJWT(
   auto result = key.sign(rng, digest, [&der](ZuBSpan value) {
     der = Zum::Bytes{value};
   });
-  uint8_t raw[Ztls::ES256::SignatureSize];
+  uint8_t raw[Ztls::COSE::ES256::SignatureSize];
   if (result.template is<ZeException>() ||
-      !Ztls::es256DERToRaw(der, raw)) return false;
+      !Ztls::COSE::ES256::derToRaw(der, raw)) return false;
   next << '.';
   if (!jwtPart(next, ZuCSpan{
       reinterpret_cast<const char *>(raw), unsigned(sizeof(raw))}))
@@ -412,7 +413,7 @@ static void oidcRoles()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t publicKey[Ztls::ES256::PublicKeySize];
+  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(key.key, publicKey));
   Zum::String token;
   ZuCheck(signJWT(rng, key, "{\"alg\":\"ES256\",\"kid\":\"upstream\","
@@ -770,7 +771,7 @@ static void jwt()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t publicKey[Ztls::ES256::PublicKeySize];
+  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, publicKey));
 
   Zum::User user;
@@ -799,7 +800,7 @@ static void jwt()
   Zum::JWTLimits limits;
   Zum::PreparedJWT prepared;
   ZuCheck(Zum::jwtPrepare(claims, "key-1", limits, prepared));
-  uint8_t signature[Ztls::ES256::DERMax];
+  uint8_t signature[Ztls::COSE::ES256::DERMax];
   unsigned signatureLength = 0;
   auto signed_ = sk.sign(rng, prepared.digest, [
     &signature, &signatureLength
@@ -969,7 +970,7 @@ static bool makeRegistration(
     ZuBSpan challenge,
     ZuCSpan origin, ZuCSpan rpID, Zum::RegistrationInput &input)
 {
-  if (publicKey.length() != Ztls::ES256::PublicKeySize) return false;
+  if (publicKey.length() != Ztls::COSE::ES256::PublicKeySize) return false;
   Zum::String encoded;
   encoded.length(ZuBase64URL::enclen(challenge.length()));
   encoded.length(ZuBase64URL::encode({
@@ -1047,7 +1048,7 @@ static void webAuthn()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t publicKey[Ztls::ES256::PublicKeySize];
+  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, publicKey));
 
   Zum::AssertionInput input;
@@ -1097,7 +1098,7 @@ static void webAuthn()
     "https://example.com", "example.com", registrationInput));
   Zum::RegistrationResult registration;
   ZuCheck(Zum::verifyRegistration(registrationInput,
-    registrationState, ZfCBOR::Limits{512, 4, 32, 256}, 128,
+    registrationState, 128,
     registration) == Zum::WebAuthnError::OK);
   ZuCheck(registration.credentialID == ZuBSpan{"credential"} &&
     registration.publicKey == ZuBSpan{publicKey} &&
@@ -2501,7 +2502,7 @@ static void enrollmentRuntime()
   }) == Zum::WebAuthnError::Ceremony);
   Zum::Bytes passkeyHandle = enrollmentGrant.userHandle;
   Ztls::PK::SK_EC passkey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t passkeyPublic[Ztls::ES256::PublicKeySize];
+  uint8_t passkeyPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(passkey.key, passkeyPublic));
   Zum::RegistrationInput registrationInput;
   ZuCheck(makeRegistration(passkeyPublic, 5, "credential",
@@ -2517,7 +2518,6 @@ static void enrollmentRuntime()
       Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 123
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
@@ -2564,7 +2564,7 @@ static void enrollmentRuntime()
     addGrant.userID == 42 && addGrant.userHandle == passkeyHandle);
   Ztls::PK::SK_EC secondPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t secondPublic[Ztls::ES256::PublicKeySize];
+  uint8_t secondPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(
     secondPasskey.key, secondPublic));
   ZuCheck(makeRegistration(secondPublic, 0, "credential-2",
@@ -2580,7 +2580,6 @@ static void enrollmentRuntime()
       ZuMv(registrationInput), Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 125
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
@@ -2719,13 +2718,13 @@ static void enrollmentRuntime()
   }));
   Ztls::PK::SK_EC upstreamKey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t upstreamPublic[Ztls::ES256::PublicKeySize];
+  uint8_t upstreamPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(
     upstreamKey.key, upstreamPublic));
   auto x = base64URL(ZuBSpan{
-    upstreamPublic + 1, Ztls::ES256::CoordinateSize});
+    upstreamPublic + 1, Ztls::COSE::ES256::CoordinateSize});
   auto y = base64URL(ZuBSpan{upstreamPublic + 1 +
-    Ztls::ES256::CoordinateSize, Ztls::ES256::CoordinateSize});
+    Ztls::COSE::ES256::CoordinateSize, Ztls::COSE::ES256::CoordinateSize});
   Zum::String upstreamJWKS{
     "{\"keys\":[{\"kid\":\"upstream\",\"kty\":\"EC\","
     "\"crv\":\"P-256\",\"use\":\"sig\",\"alg\":\"ES256\",\"x\":\""};
@@ -2911,7 +2910,7 @@ static void enrollmentRuntime()
     authority.data.actions[writeAction]);
 
   Ztls::PK::SK_EC tokenKey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t tokenPublic[Ztls::ES256::PublicKeySize];
+  uint8_t tokenPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(tokenKey.key, tokenPublic));
   ZuCheck(setKeyRetirement(context, "token-key", 250));
   auto issued = issueTokenRequest(db->requests, db, context, rng,
@@ -3162,7 +3161,7 @@ static void enrollmentRuntime()
   Zum::Bytes recoveryHandle = recoveryGrant.userHandle;
   Ztls::PK::SK_EC recoveryPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t recoveryPublic[Ztls::ES256::PublicKeySize];
+  uint8_t recoveryPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(
     recoveryPasskey.key, recoveryPublic));
   ZuCheck(makeRegistration(recoveryPublic, 1, "recovery-credential",
@@ -3177,7 +3176,6 @@ static void enrollmentRuntime()
       Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 352
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
@@ -3258,7 +3256,7 @@ static void enrollmentRuntime()
     context, browserEnrollmentBegin.ceremonyID);
   Ztls::PK::SK_EC browserPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t browserPublic[Ztls::ES256::PublicKeySize];
+  uint8_t browserPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(
     browserPasskey.key, browserPublic));
   ZuCheck(makeRegistration(browserPublic, 0, "browser-credential",
@@ -3273,7 +3271,6 @@ static void enrollmentRuntime()
       Zum::EnrollmentFinishConfig{
 	.origin = "https://example.com",
 	.rpID = "example.com",
-	.cborLimits = ZfCBOR::Limits{512, 4, 32, 256},
 	.credentialIDMax = 128,
 	.now = 422
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });

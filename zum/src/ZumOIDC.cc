@@ -18,6 +18,7 @@
 #include <zlib/ZmScheduler.hh>
 
 #include <zlib/ZtlsMD.hh>
+#include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
@@ -350,14 +351,14 @@ static bool jwksResponse(
         crv != "P-256" || (use && use != "sig") ||
         (alg && alg != "ES256")) continue;
     OIDCKey key{.id = ZuMv(kid)};
-    key.publicKey.length(Ztls::ES256::PublicKeySize, false);
+    key.publicKey.length(Ztls::COSE::ES256::PublicKeySize, false);
     key.publicKey[0] = 4;
     if (ZuBase64URL::decode({key.publicKey.data() + 1,
-          Ztls::ES256::CoordinateSize}, ZuBSpan{x}) !=
-          Ztls::ES256::CoordinateSize ||
+          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{x}) !=
+          Ztls::COSE::ES256::CoordinateSize ||
         ZuBase64URL::decode({key.publicKey.data() + 1 +
-          Ztls::ES256::CoordinateSize, Ztls::ES256::CoordinateSize},
-          ZuBSpan{y}) != Ztls::ES256::CoordinateSize)
+          Ztls::COSE::ES256::CoordinateSize, Ztls::COSE::ES256::CoordinateSize},
+          ZuBSpan{y}) != Ztls::COSE::ES256::CoordinateSize)
       continue;
     bool duplicate = false;
     for (auto &existing: next)
