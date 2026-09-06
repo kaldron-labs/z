@@ -2573,6 +2573,16 @@ inline void Saga::insert(
       ZuFwd<Complete>(complete), ZuFwd<L>(l)});
 }
 
+template <typename Complete>
+inline void Saga::skip(Complete &&complete)
+{
+  if (ZuUnlikely(m_rec)) {
+    result_(OpResult::Invalid, m_rec->shard);
+    return;
+  }
+  ZuFwd<Complete>(complete)(true);
+}
+
 template <typename KeyIDs_, typename T, typename Complete, typename L>
 inline void Saga::update(
     Table<T> *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)

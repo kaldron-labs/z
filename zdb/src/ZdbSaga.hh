@@ -255,6 +255,8 @@ public:
   using Saga_::step;
   using Saga_::type;
 
+  template <typename Complete>
+  void skip(Complete &&);
   template <typename T, typename Complete, typename L>
   void insert(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
   template <typename KeyIDs_ = ZuSeq<>, typename T, typename Complete, typename L>
@@ -624,6 +626,10 @@ private:
 	      (void)def.template operator()<I>(ZuMv(complete));
 	    });
 	  } else if constexpr (Def::NSteps > 1) {
+	    if (ptr->m_locs[step] == Shard(-1)) {
+	      stepComplete(true);
+	      return;
+	    }
 	    ZuSwitch::dispatch<Def::NSteps - 1>(step,
 		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
 	      (void)def.template operator()<I, false>(ZuMv(complete));
