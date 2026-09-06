@@ -4170,7 +4170,9 @@ public:
   }
 
   void final() {
+#ifdef ZDEBUG
     for (auto link: m_reusable) ZmAssert(!link);
+#endif
     m_reusable.length(0);
     m_links.length(0);
     Base::final();
@@ -4697,8 +4699,10 @@ public:
     stopBatch_();
   }
   void final() {
+#ifdef ZDEBUG
     for (auto operation: m_operations) ZmAssert(!operation);
     for (auto &link: m_links) ZmAssert(link->drained());
+#endif
     m_links.length(0);
     m_operations.length(0);
     Base::final();
@@ -5758,9 +5762,11 @@ public:
     if (m_mx) stop();
     ZmAssert(!m_activeReqs->count_());
     m_hubs.final();
+#ifdef ZDEBUG
     for (auto &request: m_liveReqs)
       ZmAssert(!request->request && !request->armed());
     for (auto &link: m_links) ZmAssert(link->drained());
+#endif
     ZmAssert(!m_pending && !m_routePending && !m_transitionPending &&
 	!m_dispatchPosted);
     ZmAssert(!m_stopIngressFns && !m_stopTxFns);

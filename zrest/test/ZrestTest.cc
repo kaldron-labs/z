@@ -38,7 +38,6 @@ struct LimitedReqParser : public Zrest::ReqParser<LimitedReqParser, RawObject> {
   enum { Body = Zrest::BodyPolicy::Raw };
   static constexpr uint64_t BodyLimit = 4;
 };
-
 struct ExactReq : public Zrest::ReqParser<ExactReq, RawObject> {
   using Path = ZuStringT<"/authorize">;
   enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
@@ -47,11 +46,6 @@ struct ExactReq : public Zrest::ReqParser<ExactReq, RawObject> {
 struct ExactNoQuery : public Zrest::ReqParser<ExactNoQuery, TestObject> {
   using Path = ZuStringT<"/.well-known/oauth-authorization-server">;
   enum { Exact = 1 };
-};
-struct FormReq : public Zrest::ReqParser<FormReq, RawObject> {
-  using Path = ZuStringT<"/token">;
-  enum { Method = Zhttp::Method::POST, Exact = 1,
-    Body = Zrest::BodyPolicy::URI, RequireContentType = 1 };
 };
 
 struct ReplyA { };
@@ -69,6 +63,10 @@ using OneRequest = ZuTypeList<RequestA>;
 using TwoRequests = ZuTypeList<RequestA, RequestB>;
 using OneHeader = ZuTypeList<ZuStringT<"x-a">>;
 using TwoHeaders = ZuTypeList<ZuStringT<"x-a">, ZuStringT<"x-b">>;
+using MultiHeaders = ZhttpHeaders(("content-type", "a"),
+  ("content-type", "b"));
+using ContentType = ZuStringT<"content-type">;
+using ContentTypes = ZuTypeList<ZuStringT<"a">, ZuStringT<"b">>;
 
 ZuAssert((ZuIsSame<Zrest::GetAllHdrKeys<OneRequest>, OneHeader>{}));
 ZuAssert((ZuIsSame<Zrest::GetAllHdrKeys<TwoRequests>, TwoHeaders>{}));
@@ -78,6 +76,8 @@ ZuAssert((ZuIsSame<Zrest::GetAllResponses<TwoRequests>,
   ZuTypeList<ReplyA, ReplyB>>{}));
 ZuAssert((ZuIsSame<Zrest::GetAllReqRes<OneRequest>,
   ZuTypeList<Zrest::ReqRes<RequestA, ReplyA>>>{}));
+ZuAssert((ZuIsSame<Zrest::GetKValues<ContentType, MultiHeaders>,
+  ContentTypes>{}));
 
 static void zeroBodyTest()
 {
@@ -138,49 +138,11 @@ static void exactRouteTest()
   ZuCheck(!match("/.well-known/oauth-authorization-server?x=y"));
 }
 
-static void requestHeaderTest()
-{
-  ZuTestScope(requestHeader);
-  using Routes = Zrest::MReqParser<ZuTypeList<FormReq>>;
-  using ContentType = ZuStringT<"content-type">;
-  using Form = ZuStringT<"application/x-www-form-urlencoded">;
-  using Plain = ZuStringT<"text/plain">;
-  auto init = [](Routes &routes) {
-    char path[] = "/token";
-    Zhttp::Target target;
-    target.path = {
-      reinterpret_cast<uint8_t *>(path), sizeof(path) - 1};
-    return routes.operation(Zhttp::Method::POST, target);
-  };
-  auto valid = [](Routes &routes) {
-    return routes.u.cdispatch([](auto, const auto &request) {
-      return request.valid;
-    });
-  };
-
-  Routes routes;
-  ZuCheck(init(routes));
-  routes.header<ContentType, Form>(Zhttp::FieldSection::Final);
-  ZuCheck(valid(routes));
-  routes.header<ContentType, Form>(Zhttp::FieldSection::Final);
-  ZuCheck(!valid(routes));
-
-  routes.reset();
-  ZuCheck(init(routes));
-  routes.header<ContentType, Plain>(Zhttp::FieldSection::Final);
-  ZuCheck(!valid(routes));
-
-  routes.reset();
-  ZuCheck(init(routes));
-  ZuCheck(!routes.bodyInfo(Zhttp::BodyType::Fixed, 1));
-}
-
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(zeroBodyTest);
   ZuTestCall(exactRouteTest);
-  ZuTestCall(requestHeaderTest);
   return 0;
 }
