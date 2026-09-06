@@ -217,10 +217,6 @@ namespace ZfURIError {
 
 }
 
-#define ZfURI_EXCEPT(...) \
-  ZeMkException(Ze::Error, __FILE__, __LINE__, ZuFnName, \
-    ZfURIError::Component, __VA_ARGS__)
-
 // ZfURIConfig(Facet, Config)
 // - configure URI for facet
 // - must be used in top-level namespace
@@ -1898,14 +1894,16 @@ inline S &savePath_(S &s, const O &o) {
 	  using FieldT = typename Field::T;
 	  using U = ObjType<FieldT>;
 	  const auto &v = Field::get(o);
-	  if constexpr (IsObjPtr<FieldT>{})
-	    if (ZuUnlikely(!v))
-	      throw ZfURI_EXCEPT(ZfURIError::nullPath());
 	  s << '/';
-	  using AsString = decltype(ZfURI_StringFmt(ZuDeclVal<U *>()));
-	  using StringHandler =
-	    typename AsString::template Handler<URIQuote<false>, U>;
-	  StringHandler::save(s, obj_(v));
+	  bool null = false;
+	  if constexpr (IsObjPtr<FieldT>{})
+	    if (!v) null = true;
+	  if (!null) {
+	    using AsString = decltype(ZfURI_StringFmt(ZuDeclVal<U *>()));
+	    using StringHandler =
+	      typename AsString::template Handler<URIQuote<false>, U>;
+	    StringHandler::save(s, obj_(v));
+	  }
 	} else {
 	  // leaf type
 	  // - Note: vectors in the path are always in bare list format
