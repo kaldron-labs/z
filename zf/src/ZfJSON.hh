@@ -326,36 +326,6 @@ using CNodeArray = const NodeArray;
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode>, ZuSpan<char> span);
 
-struct ScanLimits {
-  unsigned size;
-  unsigned depth;
-  unsigned nodes;
-  unsigned string;
-};
-
-namespace ScanError {
-  enum {
-    OK = 0,
-    Syntax,
-    Size,
-    Depth,
-    Nodes,
-    String,
-    Duplicate
-  };
-}
-
-struct ScanResult {
-  int offset = -1;
-  int error = ScanError::Syntax;
-  ZuPtr<AnyNode> root;
-
-  explicit operator bool() const { return error == ScanError::OK; }
-};
-
-// strict RFC 8259 scan for bounded untrusted input; builds the normal node tree
-ZfExtern ScanResult scanStrict(ZuSpan<char>, const ScanLimits &);
-
 template <typename Data, typename ...Args>
 inline auto newNode(Args && ...args) {
   using T = Node<Data>;

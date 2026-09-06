@@ -18,11 +18,11 @@
 namespace ZfCBOR {
 
 namespace Type {
-  enum { UInt, NInt, Bytes, Text, Array, Map, Bool, Null };
+  enum { UInt, NInt, Bytes, Text, Array, Map, Bool, Null, Simple };
 }
 
 namespace Error {
-  enum { OK, Syntax, Size, Depth, Items, Data, UTF8, Unsupported, Stopped };
+  enum { OK, Syntax, Size, Depth, Items, Data, Unsupported, Stopped };
 }
 
 struct Limits {
