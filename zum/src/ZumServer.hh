@@ -58,7 +58,6 @@ struct ServerLimits {
   unsigned		form = 16U<<10;
   unsigned		ceremonyQuery = 256;
   unsigned		json = 64U<<10;
-  ZfCBOR::Limits	cbor{64U<<10, 8, 256, 64U<<10};
   JWTLimits		jwt;
   unsigned		credentialID = 1024;
   unsigned		cookie = 8U<<10;

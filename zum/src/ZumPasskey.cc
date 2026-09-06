@@ -327,7 +327,7 @@ private:
     }
     Enrollment enrollment;
     int error = enrollmentPrepare(row->data(), m_bindingDigest, m_input,
-      m_config.origin, m_config.rpID, m_config.cborLimits,
+      m_config.origin, m_config.rpID,
       m_config.credentialIDMax,
       m_config.now, enrollment);
     if (error) {
@@ -572,7 +572,7 @@ private:
     }
     CredentialAdd add;
     int error = credentialPrepare(row->data(), m_bindingDigest, m_input,
-      m_config.origin, m_config.rpID, m_config.cborLimits,
+      m_config.origin, m_config.rpID,
       m_config.credentialIDMax, m_config.now, add);
     if (error) {
       finish_(error);
@@ -978,7 +978,7 @@ private:
     }
     RecoveryEnroll recovery;
     int error = recoveryPrepare(m_ceremony, row->data(), m_bindingDigest,
-      m_input, m_config.origin, m_config.rpID, m_config.cborLimits,
+      m_input, m_config.origin, m_config.rpID,
       m_config.credentialIDMax, m_config.now, recovery);
     if (error) {
       finish_(error);

@@ -740,7 +740,7 @@ ZfbStruct(Enrollment,
 
 ZumExtern int enrollmentPrepare(
   const Grant &, ZuBSpan bindingDigest, RegistrationInput &,
-  ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &,
+  ZuCSpan origin, ZuCSpan rpID,
   unsigned credentialIDMax,
   int64_t now, Enrollment &);
 
@@ -904,7 +904,7 @@ ZfbStruct(CredentialAdd,
 
 ZumExtern int credentialPrepare(
   const Grant &, ZuBSpan bindingDigest, RegistrationInput &,
-  ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &,
+  ZuCSpan origin, ZuCSpan rpID,
   unsigned credentialIDMax,
   int64_t now, CredentialAdd &);
 
@@ -1271,7 +1271,7 @@ ZfbStruct(RecoveryEnroll,
 
 ZumExtern int recoveryPrepare(
   const Grant &, const User &, ZuBSpan bindingDigest, RegistrationInput &,
-  ZuCSpan origin, ZuCSpan rpID, const ZfCBOR::Limits &,
+  ZuCSpan origin, ZuCSpan rpID,
   unsigned credentialIDMax,
   int64_t now, RecoveryEnroll &);
 

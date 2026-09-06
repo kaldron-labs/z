@@ -12,7 +12,7 @@
 
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
-#include <zlib/ZtlsSec.hh>
+#include <zlib/ZtlsCOSE.hh>
 
 namespace Zum {
 
@@ -180,8 +180,8 @@ bool jwtPrepare(
 bool jwtFinish(
     PreparedJWT &prepared, ZuBSpan derSignature, const JWTLimits &limits)
 {
-  uint8_t raw[Ztls::ES256::SignatureSize];
-  if (!Ztls::es256DERToRaw(derSignature, raw) ||
+  uint8_t raw[Ztls::COSE::ES256::SignatureSize];
+  if (!Ztls::COSE::ES256::derToRaw(derSignature, raw) ||
       prepared.token.length() + 1 + ZuBase64URL::enclen(sizeof(raw)) >
         limits.token) return false;
   prepared.token << '.';
@@ -281,12 +281,12 @@ bool jwtES256(
   if (!decodePart(headerPart, limits.json, headerJSON) ||
       !loadHeader(headerJSON, nextHeader) ||
       nextHeader.algorithm != "ES256" ||
-      !decodePart(signaturePart, Ztls::ES256::SignatureSize, signature) ||
-      signature.length() != Ztls::ES256::SignatureSize) return false;
-  uint8_t der[Ztls::ES256::DERMax];
+      !decodePart(signaturePart, Ztls::COSE::ES256::SignatureSize, signature) ||
+      signature.length() != Ztls::COSE::ES256::SignatureSize) return false;
+  uint8_t der[Ztls::COSE::ES256::DERMax];
   unsigned derLength;
-  if (!Ztls::es256RawToDER(signature, der, derLength) ||
-      !Ztls::es256Verify(publicKey,
+  if (!Ztls::COSE::ES256::rawToDER(signature, der, derLength) ||
+      !Ztls::COSE::ES256::verify(publicKey,
         ZuBSpan{token.data(),
           unsigned(signaturePart.data() - token.data() - 1)},
         ZuBSpan{der, derLength})) return false;

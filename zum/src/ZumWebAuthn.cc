@@ -13,6 +13,7 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZtlsMD.hh>
+#include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsSec.hh>
 
@@ -288,7 +289,7 @@ int verifyAssertion(
     (uint32_t(authenticatorData[AuthDataCounter + 2])<<8) |
     uint32_t(authenticatorData[AuthDataCounter + 3]);
 
-  if (!Ztls::es256Verify(state.publicKey, authenticatorData,
+  if (!Ztls::COSE::ES256::verify(state.publicKey, authenticatorData,
       clientHash, input.signature)) return WebAuthnError::Signature;
 
   AssertionResult next{
@@ -308,46 +309,22 @@ int verifyAssertion(
   return WebAuthnError::OK;
 }
 
+using namespace ZuFieldProp;
+
 struct Attestation {
-  ZuCSpan	key;
+  ZuCSpan	fmt;
   ZuBSpan	authData;
-  unsigned	seen = 0;
-  bool		value = false;
 };
 
-static bool attestationVisit(void *ptr, const ZfCBOR::Item &item)
-{
-  auto &attestation = *static_cast<Attestation *>(ptr);
-  if (!item.depth)
-    return item.type == ZfCBOR::Type::Map && !attestation.value &&
-      (attestation.seen & 3U) == 3U;
-  if (item.depth != 1) return true;
-  if (!attestation.value) {
-    attestation.key = item.type == ZfCBOR::Type::Text ? ZuCSpan{item.data} :
-      ZuCSpan{};
-    attestation.value = true;
-    return true;
-  }
-  attestation.value = false;
-  unsigned bit;
-  if (attestation.key == "fmt") {
-    bit = 1U;
-    if (item.type != ZfCBOR::Type::Text || item.data != ZuBSpan{"none"})
-      return false;
-  } else if (attestation.key == "authData") {
-    bit = 2U;
-    if (item.type != ZfCBOR::Type::Bytes) return false;
-    attestation.authData = item.data;
-  } else {
-    return true;
-  }
-  attestation.seen |= bit;
-  return true;
-}
+ZfStruct(Attestation,
+  (((fmt), (Mutable)), (String)),
+  (((authData), (Mutable)), (Bytes)));
+
+ZfStructRender(Attestation, CBOR, fmt, authData);
 
 int verifyRegistration(
     RegistrationInput &input, const RegistrationState &state,
-    const ZfCBOR::Limits &cborLimits, unsigned credentialIDMax,
+    unsigned credentialIDMax,
     RegistrationResult &result)
 {
   if (!input.credentialID || !input.clientDataJSON ||
@@ -357,9 +334,10 @@ int verifyRegistration(
     state.challenge, state.origin);
   if (error) return error;
 
-  Attestation attestation;
-  if (!ZfCBOR::scan(input.attestationObject, cborLimits,
-      &attestation, attestationVisit)) return WebAuthnError::Attestation;
+  Attestation attestation{};
+  ZfCBOR::handler<Attestation>(input.attestationObject).load(attestation);
+  if (attestation.fmt != "none" || !attestation.authData)
+    return WebAuthnError::Attestation;
   auto authData = attestation.authData;
   if (authData.length() < AttestedHeaderSize) return WebAuthnError::AuthData;
   uint8_t rpIDHash[Ztls::MD<>::Size];
@@ -391,9 +369,9 @@ int verifyRegistration(
   if (credentialID != input.credentialID) return WebAuthnError::Credential;
   ZuBSpan cose{authData.data() + AttestedHeaderSize + credentialLength,
     authData.length() - AttestedHeaderSize - credentialLength};
-  uint8_t publicKey[Ztls::ES256::PublicKeySize];
-  if (!Ztls::es256COSEPublicKey(cose, cborLimits, publicKey) ||
-      !Ztls::es256PublicKeyValid(publicKey)) return WebAuthnError::PublicKey;
+  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
+  if (!Ztls::COSE::ES256::loadPK(cose, publicKey))
+    return WebAuthnError::PublicKey;
 
   RegistrationResult next;
   next.credentialID = Bytes{credentialID};

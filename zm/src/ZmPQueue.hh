@@ -1150,7 +1150,7 @@ private:
     return {clipped ? ZmPQResult::Clipped : ZmPQResult::Inserted, nullptr};
 
 #ifndef ZDEBUG
-  error:
+    [[maybe_unused]] error:
 #endif
     return {ZmPQResult::Invalid, nullptr};
   }
