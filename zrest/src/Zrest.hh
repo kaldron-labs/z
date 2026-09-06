@@ -63,7 +63,6 @@ struct Request {
   enum { SignQuery = 0 };
   static constexpr uint64_t QueryLimit = 0;
   enum { Body = BodyPolicy::None };
-  enum { RequireContentType = 0 };
   enum { SignBody = 0 };
   static constexpr uint64_t BodyLimit = 0;
 
