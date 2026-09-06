@@ -8,11 +8,12 @@
 
 #include <zlib/ZumAdmin.hh>
 
+
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
 
-class AuthorizeComplete_ : public ZmObject {
+class AuthorizeComplete_ : public ZumObject {
 public:
   AuthorizeComplete_(AuthorizeFn complete) :
     m_complete{ZuMv(complete)} { }
@@ -41,7 +42,7 @@ private:
   AuthorizeFn	m_complete;
 };
 
-class AuthorizeCodeResult_ : public ZmObject {
+class AuthorizeCodeResult_ : public ZumObject {
 public:
   AuthorizeCodeResult_(int error_, String location_) :
     error{error_}, location{ZuMv(location_)} { }
@@ -56,7 +57,7 @@ public:
   String	location;
 };
 
-class AuthorizeCodeComplete_ : public ZmObject {
+class AuthorizeCodeComplete_ : public ZumObject {
 public:
   AuthorizeCodeComplete_(AuthorizeCodeFn complete) :
     m_complete{ZuMv(complete)} { }
@@ -86,7 +87,7 @@ private:
   AuthorizeCodeFn m_complete;
 };
 
-class AuthorizeRequest_ : public ZmPolymorph {
+class AuthorizeRequest_ : public ZumPolymorph {
 public:
   AuthorizeRequest_(
       DBContext *context, Ztls::Random *rng, String query,
@@ -98,17 +99,13 @@ public:
   void start()
   {
     if (!m_context || !m_rng || !m_bindingDigest || !m_config.issuer ||
-	!m_config.rpID || m_config.now <= 0 ||
-	m_config.expires <= m_config.now || !m_config.timeout) {
+	(m_config.passkey && (!m_config.rpID || !m_config.timeout)) ||
+	m_config.now <= 0 || m_config.expires <= m_config.now) {
       finish_(OAuthError::ServerError);
       return;
     }
     if (!m_query.mutable_()) m_query.length(m_query.length());
-    if (parseAuthorize({m_query.data(), m_query.length()},
-	m_config.formLimits, m_params)) {
-      finish_(OAuthError::InvalidRequest);
-      return;
-    }
+    parseAuthorize({m_query.data(), m_query.length()}, m_params);
     m_profileError = validateAuthorize(m_params);
     if (!m_params.has(AuthorizeParams::ClientID) ||
 	!m_params.has(AuthorizeParams::RedirectURI) ||
@@ -202,14 +199,15 @@ private:
     }
     Grant grant;
     if (!authorizationBegin(*m_rng, grant, m_config.issuer, m_params,
-	selection, m_bindingDigest, m_authVersion,
+	selection, m_config.passkey, m_bindingDigest, m_authVersion,
 	m_config.now, m_config.expires)) {
       finish_(OAuthError::ServerError);
       return;
     }
     m_result.ceremonyID = grant.id;
-    m_result.options = assertionOptions(
-      grant.challenge, m_config.rpID, m_config.timeout);
+    if (m_config.passkey)
+      m_result.options = assertionOptions(
+	grant.challenge, m_config.rpID, m_config.timeout);
     m_result.redirect = false;
     clear_();
     authorizationInsert(m_context, ZuMv(grant), [
@@ -235,7 +233,7 @@ private:
   bool		m_done = false;
 };
 
-class AuthorizeFinish_ : public ZmPolymorph {
+class AuthorizeFinish_ : public ZumPolymorph {
 public:
   AuthorizeFinish_(
       DBContext *context, Ztls::Random *rng, Bytes ceremonyID,
@@ -257,7 +255,7 @@ public:
     }
     assertionVerify(m_context, m_ceremonyID, m_bindingDigest,
       ZuMv(m_input), m_config.origin, m_config.rpID, m_config.now,
-      m_config.jsonLimits, [self = ZmRef<AuthorizeFinish_>{this}](
+      [self = ZmRef<AuthorizeFinish_>{this}](
 	  int error, User user, Cred cred, Grant grant,
 	  AssertionResult result) mutable {
 	self->asserted_(error, ZuMv(user), ZuMv(cred), ZuMv(grant), result);
@@ -386,7 +384,7 @@ private:
   bool		m_done = false;
 };
 
-class AuthorizeOIDCFinish_ : public ZmPolymorph {
+class AuthorizeOIDCFinish_ : public ZumPolymorph {
 public:
   AuthorizeOIDCFinish_(
       DBContext *context, Ztls::Random *rng, Bytes ceremonyID,
@@ -407,7 +405,7 @@ public:
       finish_(OAuthError::ServerError, {});
       return;
     }
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     grants->run(0, [self = ZmRef<AuthorizeOIDCFinish_>{this}, grants]() {
       Bytes id = self->m_ceremonyID;
       grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](

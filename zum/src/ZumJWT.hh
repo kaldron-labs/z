@@ -48,11 +48,9 @@ struct Principal {
 };
 
 struct JWTLimits {
+  // Tunable allocation/work bounds for bearer tokens received from peers.
   unsigned	token = 8U<<10;
   unsigned	json = 4U<<10;
-  unsigned	depth = 3;
-  unsigned	nodes = 256;
-  unsigned	string = 512;
   unsigned	actions = 128;
 };
 

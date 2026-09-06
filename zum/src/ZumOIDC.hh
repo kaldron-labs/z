@@ -72,11 +72,12 @@ struct OIDCClaims {
 };
 
 struct OIDCLimits {
+  // Tunable bounds for upstream responses and pending login state.
   JWTLimits	jwt;
-  ZfURI::FormLimits	callbackForm{3, 16, 16U<<10};
   unsigned	audiences = 8;
   unsigned	roleValues = 128;
   unsigned	response = 64U<<10;
+  unsigned	callback = 16U<<10;
   unsigned	keys = 32;
   int64_t	clockSkew = 60;
 };
@@ -125,8 +126,8 @@ private:
 };
 
 ZumExtern bool oidcConfigValid(const OIDCConfig &);
-ZumExtern bool oidcMapRoles(
-  ZuSpan<const String>, ZuSpan<const RoleMap>, IDVec &);
+ZumExtern IDVec oidcMapRoles(
+  ZuSpan<const String>, ZuSpan<const RoleMap>);
 ZumExtern bool oidcVerifyIDToken(
   ZuCSpan token, ZuBSpan publicKey, ZuCSpan nonce,
   const OIDCConfig &, int64_t now, const OIDCLimits &, OIDCClaims &);

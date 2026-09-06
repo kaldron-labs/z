@@ -25,10 +25,10 @@ namespace AuthorizeIssue {
 struct AuthorizeConfig {
   String		issuer;
   String		rpID;
-  ZfURI::FormLimits	formLimits{8, 32, 16U<<10};
   int64_t		now = 0;
   int64_t		expires = 0;
   uint64_t		timeout = 0;
+  bool			passkey = false;
 };
 
 struct AuthorizeResult {
@@ -43,7 +43,6 @@ struct AuthorizeResult {
 struct AuthorizeFinishConfig {
   String		origin;
   String		rpID;
-  ZfJSON::ScanLimits	jsonLimits;
   int64_t		now = 0;
   int64_t		codeExpires = 0;
 };

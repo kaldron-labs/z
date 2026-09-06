@@ -76,8 +76,7 @@ static Zum::String encode(ZuBSpan data)
 {
   Zum::String value;
   value.length(ZuBase64URL::enclen(data.length()));
-  value.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(value.data()), value.length()}, data));
+  value.length(ZuBase64URL::encode(value.span(), data));
   return value;
 }
 

@@ -10,12 +10,13 @@
 
 #include <zlib/ZuBase64URL.hh>
 
+
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsSec.hh>
 
 namespace Zum {
 
-class AdminComplete_ : public ZmObject {
+class AdminComplete_ : public ZumObject {
 public:
   AdminComplete_(AdminFn complete) : m_complete{ZuMv(complete)} { }
 
@@ -42,7 +43,7 @@ private:
   AdminFn	m_complete;
 };
 
-class ActionComplete_ : public ZmObject {
+class ActionComplete_ : public ZumObject {
 public:
   ActionComplete_(ActionFn complete) : m_complete{ZuMv(complete)} { }
 
@@ -69,7 +70,7 @@ private:
   ActionFn	m_complete;
 };
 
-class CleanupComplete_ : public ZmObject {
+class CleanupComplete_ : public ZumObject {
 public:
   CleanupComplete_(CleanupFn complete) : m_complete{ZuMv(complete)} { }
 
@@ -102,8 +103,8 @@ void auditWrite(DBContext *context, Audit audit, AdminFn complete)
     complete(AdminError::Invalid);
     return;
   }
-  auto *issuers = context->issuers;
-  auto *audits = context->audits;
+  auto issuers = context->issuers;
+  auto audits = context->audits;
   String issuer = audit.issuer;
   issuers->run(0, [
     issuers, audits, issuer = ZuMv(issuer), audit = ZuMv(audit),
@@ -144,8 +145,7 @@ String auditID(ZuBSpan id)
 {
   String target;
   target.length(ZuBase64URL::enclen(id.length()));
-  target.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(target.data()), target.length()}, id));
+  target.length(ZuBase64URL::encode(target.span(), id));
   return target;
 }
 
@@ -180,7 +180,7 @@ static void actionAdd_(
   });
 }
 
-class ActionChange_ : public ZmPolymorph {
+class ActionChange_ : public ZumPolymorph {
 public:
   ActionChange_(
       DB *db, DBContext *context, Ztls::Random *rng, String issuer,
@@ -323,7 +323,7 @@ static void signKeyAdd_(
     return;
   }
   String target = key.id;
-  auto *keys = context->signKeys;
+  auto keys = context->signKeys;
   keys->run(0, [
     context, keys, issuer = ZuMv(issuer), actor = ZuMv(actor),
     target = ZuMv(target), key = ZuMv(key), now,
@@ -366,7 +366,7 @@ static void signKeyRetire_(
     complete(AdminError::Invalid);
     return;
   }
-  auto *keys = context->signKeys;
+  auto keys = context->signKeys;
   keys->run(0, [
     context, keys, issuer = ZuMv(issuer), actor = ZuMv(actor),
     id = ZuMv(id), retireAfter, now, complete = ZuMv(complete)
@@ -404,7 +404,7 @@ static void signKeyRetire_(
   });
 }
 
-class UserChange_ : public ZmPolymorph {
+class UserChange_ : public ZumPolymorph {
 public:
   UserChange_(
       DB *db, DBContext *context, Ztls::Random *rng, String issuer,
@@ -586,7 +586,7 @@ static void userState_(
   change->start();
 }
 
-class RoleChange_ : public ZmPolymorph {
+class RoleChange_ : public ZumPolymorph {
 public:
   RoleChange_(
       DB *db, DBContext *context, Ztls::Random *rng, String issuer,
@@ -774,7 +774,7 @@ static void roleState_(
   change->start();
 }
 
-class CredChange_ : public ZmPolymorph {
+class CredChange_ : public ZumPolymorph {
 public:
   CredChange_(
       DB *db, DBContext *context, Ztls::Random *rng, String issuer,
@@ -910,7 +910,7 @@ static void credentialState_(
   change->start();
 }
 
-class ScopeChange_ : public ZmPolymorph {
+class ScopeChange_ : public ZumPolymorph {
 public:
   ScopeChange_(
       DB *db, DBContext *context, Ztls::Random *rng, String issuer,
@@ -1088,7 +1088,7 @@ static void scopeState_(
   change->start();
 }
 
-class ClientChange_ : public ZmPolymorph {
+class ClientChange_ : public ZumPolymorph {
 public:
   enum Change { RolesChange, StateChange, SecretChange };
 
@@ -1301,7 +1301,7 @@ static void clientSecretDigest_(
   change->start();
 }
 
-class GrantCleanup_ : public ZmPolymorph {
+class GrantCleanup_ : public ZumPolymorph {
 public:
   GrantCleanup_(
       DBContext *context, int64_t now, unsigned limit, CleanupFn complete) :
@@ -1346,7 +1346,7 @@ private:
       return;
     }
     Bytes id = m_ids[m_index++];
-    auto *grants = m_context->grants;
+    auto grants = m_context->grants;
     grants->run(0, [
       self = ZmRef<GrantCleanup_>{this}, grants, id = ZuMv(id)
     ]() mutable {
@@ -1384,7 +1384,7 @@ static void grantCleanup_(
   cleanup->start();
 }
 
-class AuditCleanup_ : public ZmPolymorph {
+class AuditCleanup_ : public ZumPolymorph {
 public:
   AuditCleanup_(
       DBContext *context, int64_t before, unsigned limit,
@@ -1435,7 +1435,7 @@ private:
       return;
     }
     auto key = ZuMv(m_keys[m_index++]);
-    auto *audits = m_context->audits;
+    auto audits = m_context->audits;
     audits->run(0, [
       self = ZmRef<AuditCleanup_>{this}, audits, key = ZuMv(key)
     ]() mutable {
@@ -1482,7 +1482,7 @@ static void grantRevoke_(
     complete(AdminError::Invalid);
     return;
   }
-  auto *grants = context->grants;
+  auto grants = context->grants;
   grants->run(0, [
     context, grants, issuer = ZuMv(issuer), id = ZuMv(id),
     actor = ZuMv(actor), now,

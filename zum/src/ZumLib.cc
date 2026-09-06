@@ -8,4 +8,27 @@
 
 #include <zlib/ZumLib.hh>
 
+#include <zlib/ZmVHeap.hh>
+
+// Zum's asynchronous state varies materially in size.  Start at the smallest
+// size class and use the standard jumbo threshold; larger objects still work
+// but are not retained in the recycling allocator.
+using ZumObjectHeap = ZmVHeap<
+  "Zum.Object", 0, ZmVHeap_DefltMax, alignof(max_align_t)>;
+
+void *ZumObjectAlloc::operator new(size_t size)
+{
+  return ZumObjectHeap::valloc(size);
+}
+
+void ZumObjectAlloc::operator delete(void *ptr)
+{
+  ZumObjectHeap::vfree(ptr);
+}
+
+void ZumObjectAlloc::operator delete(void *ptr, size_t)
+{
+  ZumObjectHeap::vfree(ptr);
+}
+
 ZumExtern const char ZumLib[] = "@(#) Z User Management Library v" Z_VERNAME;

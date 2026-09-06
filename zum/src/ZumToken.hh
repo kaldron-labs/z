@@ -38,7 +38,6 @@ using RevokeFn = ZmFn<void(int), ZmFnHeapID<"Zum.RevokeFn">>;
 struct TokenConfig {
   String		issuer;
   String		keyID;
-  ZfURI::FormLimits	formLimits{8, 32, 16U<<10};
   JWTLimits		jwtLimits;
   int64_t		now = 0;
   int64_t		accessExpires = 0;
@@ -49,7 +48,6 @@ struct TokenConfig {
 
 struct RevokeConfig {
   String		issuer;
-  ZfURI::FormLimits	formLimits{4, 32, 16U<<10};
   int64_t		now = 0;
 };
 

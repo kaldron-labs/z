@@ -48,38 +48,23 @@ bool oidcConfigValid(const OIDCConfig &config)
       (config.clientAuth != OIDCClientAuth::Basic &&
        config.clientAuth != OIDCClientAuth::Post &&
        config.clientAuth != OIDCClientAuth::None) ||
-      (config.clientAuth != OIDCClientAuth::None && !config.clientSecret) ||
-      (config.clientAuth == OIDCClientAuth::None && config.clientSecret))
+      (config.clientAuth != OIDCClientAuth::None && !config.clientSecret))
     return false;
-  for (unsigned i = 0, n = config.oidcScopes.length(); i < n; ++i) {
-    if (!config.oidcScopes[i]) return false;
-    for (unsigned j = 0; j < i; ++j)
-      if (config.oidcScopes[j] == config.oidcScopes[i]) return false;
-  }
   switch (config.roles) {
     case OIDCRoles::Local:
       return !config.roleClaim && !config.roleMap;
     case OIDCRoles::Mapped:
-      if (!config.roleClaim || reservedClaim(config.roleClaim) ||
-	  !config.roleMap) return false;
-      break;
+      return config.roleClaim && !reservedClaim(config.roleClaim);
     default:
       return false;
   }
-  for (unsigned i = 0, n = config.roleMap.length(); i < n; ++i) {
-    auto &entry = config.roleMap[i];
-    if (!entry.value || !entry.roleID) return false;
-    for (unsigned j = 0; j < i; ++j)
-      if (config.roleMap[j].value == entry.value) return false;
-  }
-  return true;
 }
 
 static bool stringValue(ZfJSON::AnyNode *node, String &value)
 {
   if (!node || !node->has<ZfJSON::AnyNode::String>()) return false;
   value = node->data<ZfJSON::AnyNode::String>();
-  return bool(value);
+  return true;
 }
 
 static bool integerValue(ZfJSON::AnyNode *node, int64_t &value)
@@ -101,7 +86,7 @@ static bool stringsValue(
     next.push(ZuMv(value));
   } else if (node && node->has<ZfJSON::AnyNode::Array>()) {
     auto &array = node->data<ZfJSON::AnyNode::Array>();
-    if (!array || array.length() > limit) return false;
+    if (array.length() > limit) return false;
     for (auto &item: array) {
       String value;
       if (!stringValue(item, value)) return false;
@@ -125,20 +110,18 @@ bool oidcVerifyIDToken(
     const OIDCConfig &config, int64_t now, const OIDCLimits &limits,
     OIDCClaims &claims)
 {
-  if (!nonce || !oidcConfigValid(config) || now <= 0 ||
+  if (!nonce || !config.issuer || !config.clientID || now <= 0 ||
       !limits.audiences || !limits.roleValues || limits.clockSkew < 0)
     return false;
   JWTHeader header;
   String json;
   if (!jwtES256(token, publicKey, limits.jwt, header, json) ||
       (header.type && header.type != "JWT")) return false;
-  auto parsed = ZfJSON::scanStrict(
-    {json.data(), json.length()}, {limits.jwt.json, limits.jwt.depth,
-      limits.jwt.nodes, limits.jwt.string});
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
 
   OIDCClaims next;
   String authorizedParty;
@@ -171,12 +154,13 @@ bool oidcVerifyIDToken(
     } else {
       continue;
     }
-    if (!valid || (seen & bit)) return false;
+    if (!valid) return false;
     seen |= bit;
   }
   constexpr unsigned required = (1U<<3) - 1 | (7U<<4);
   if ((seen & required) != required || next.issuer != config.issuer ||
-      next.nonce != nonce || !hasAudience(next.audience, config.clientID) ||
+      !next.subject || next.nonce != nonce ||
+      !hasAudience(next.audience, config.clientID) ||
       next.iat <= 0 || next.expires <= next.iat ||
       next.iat > now + limits.clockSkew ||
       now - limits.clockSkew >= next.expires) return false;
@@ -186,45 +170,41 @@ bool oidcVerifyIDToken(
   return true;
 }
 
-bool oidcMapRoles(
-    ZuSpan<const String> values, ZuSpan<const RoleMap> map, IDVec &roles)
+IDVec oidcMapRoles(
+    ZuSpan<const String> values, ZuSpan<const RoleMap> map)
 {
-  IDVec next;
-  for (unsigned i = 0, n = values.length(); i < n; ++i) {
-    auto &value = values[i];
+  IDVec roles;
+  for (auto &value: values) {
     if (!value) continue;
-    bool duplicate = false;
-    for (unsigned j = 0; j < i; ++j)
-      if (values[j] == value) { duplicate = true; break; }
-    if (duplicate) continue;
     for (auto &entry: map)
       if (entry.value == value) {
-	if (entry.roleID && !hasRole(next, entry.roleID))
-	  next.push(entry.roleID);
+	if (entry.roleID && !hasRole(roles, entry.roleID))
+	  roles.push(entry.roleID);
 	break;
       }
   }
-  roles = ZuMv(next);
-  return true;
+  return roles;
 }
 
 void oidcLoadUser(
     DBContext *context, String subject, const OIDCConfig &config,
     StringVec roleValues, OIDCUserFn complete)
 {
-  if (!context || !subject || !complete || !oidcConfigValid(config)) {
+  if (!context || !subject || !complete) {
     if (complete) complete(false, User{}, IDVec{});
     return;
   }
-  auto roles = config.roles;
-  RoleMapVec roleMap = config.roleMap;
-  auto *users = context->users;
+  auto mode = config.roles;
+  IDVec mapped;
+  if (mode == OIDCRoles::Mapped)
+    mapped = oidcMapRoles(roleValues, config.roleMap);
+  auto users = context->users;
   users->run(0, [
-    users, subject = ZuMv(subject), roles, roleMap = ZuMv(roleMap),
-    roleValues = ZuMv(roleValues), complete = ZuMv(complete)
+    users, subject = ZuMv(subject), mode, mapped = ZuMv(mapped),
+    complete = ZuMv(complete)
   ]() mutable {
     users->find<3>(0, ZuFwdTuple(ZuMv(subject)), [
-      roles, roleMap = ZuMv(roleMap), roleValues = ZuMv(roleValues),
+      mode, mapped = ZuMv(mapped),
       complete = ZuMv(complete)
     ](ZdbRowRef<User> row) mutable {
       if (!row || row->data().state != State::Active || row->data().owner) {
@@ -232,19 +212,17 @@ void oidcLoadUser(
 	return;
       }
       User user = row->data();
-      IDVec roleIDs;
-      switch (roles) {
+      switch (mode) {
 	case OIDCRoles::Local:
-	  roleIDs = user.roleIDs;
+	  mapped = user.roleIDs;
 	  break;
 	case OIDCRoles::Mapped:
-	  oidcMapRoles(roleValues, roleMap, roleIDs);
 	  break;
 	default:
 	  complete(false, User{}, IDVec{});
 	  return;
       }
-      complete(true, ZuMv(user), ZuMv(roleIDs));
+      complete(true, ZuMv(user), ZuMv(mapped));
     });
   });
 }
@@ -262,7 +240,7 @@ using OIDCKeyVec = ZtArray<OIDCKey, ZtArrayHeapID<"Zum.OIDC.KeySet">>;
 
 class OIDCState;
 
-class OIDCReq : public ZmObject {
+class OIDCReq : public ZumObject {
 public:
   OIDCReq(OIDCState *state_) : state{state_} { }
 
@@ -295,8 +273,7 @@ static bool randomText(Ztls::Random &rng, String &value)
   uint8_t random[OIDCRandomSize];
   if (!rng.random(random)) return false;
   value.length(ZuBase64URL::enclen(sizeof(random)));
-  return ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(value.data()), value.length()}, random) ==
+  return ZuBase64URL::encode(value.span(), random) ==
     value.length();
 }
 
@@ -311,22 +288,19 @@ static void formField(String &out, bool &first, ZuCSpan name, ZuCSpan value)
 static bool tokenResponse(
     String &json, const OIDCLimits &limits, String &idToken)
 {
-  if (!json || json.length() > limits.response || !json.mutable_())
-    return false;
-  auto parsed = ZfJSON::scanStrict({json.data(), json.length()},
-    {limits.response, 4, 128, limits.jwt.token});
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  if (!json || json.length() > limits.response) return false;
+  if (!json.mutable_()) json.length(json.length());
+  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
   String next;
-  bool seen = false;
   for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
     if (field.p<0>() != "id_token") continue;
-    if (seen || !stringValue(field.p<1>().ptr(), next)) return false;
-    seen = true;
+    if (!stringValue(field.p<1>().ptr(), next)) return false;
   }
-  if (!seen || next.length() > limits.jwt.token) return false;
+  if (!next || next.length() > limits.jwt.token) return false;
   idToken = ZuMv(next);
   return true;
 }
@@ -334,28 +308,25 @@ static bool tokenResponse(
 static bool jwksResponse(
     String &json, const OIDCLimits &limits, OIDCKeyVec &keys)
 {
-  if (!json || json.length() > limits.response || !json.mutable_())
-    return false;
-  auto parsed = ZfJSON::scanStrict({json.data(), json.length()},
-    {limits.response, 5, 512, limits.jwt.string});
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  if (!json || json.length() > limits.response) return false;
+  if (!json.mutable_()) json.length(json.length());
+  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
   ZfJSON::AnyNode *keysNode = nullptr;
   for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>())
-    if (field.p<0>() == "keys") {
-      if (keysNode) return false;
-      keysNode = field.p<1>().ptr();
-    }
+    if (field.p<0>() == "keys") keysNode = field.p<1>().ptr();
   if (!keysNode || !keysNode->has<ZfJSON::AnyNode::Array>()) return false;
   auto &array = keysNode->data<ZfJSON::AnyNode::Array>();
   if (!array || array.length() > limits.keys) return false;
   OIDCKeyVec next;
   for (auto &node: array) {
-    if (!node->has<ZfJSON::AnyNode::Object>()) return false;
+    if (!node->has<ZfJSON::AnyNode::Object>()) continue;
     String kid, kty, crv, use, alg, x, y;
     unsigned seen = 0;
+    bool valid = true;
     for (auto &field: node->data<ZfJSON::AnyNode::Object>()) {
       String *value = nullptr;
       unsigned bit = 0;
@@ -367,14 +338,17 @@ static bool jwksResponse(
       else if (field.p<0>() == "x") { bit = 1U<<5; value = &x; }
       else if (field.p<0>() == "y") { bit = 1U<<6; value = &y; }
       else continue;
-      if ((seen & bit) || !stringValue(field.p<1>().ptr(), *value))
-        return false;
+      if (!stringValue(field.p<1>().ptr(), *value)) {
+	valid = false;
+	break;
+      }
       seen |= bit;
     }
-    constexpr unsigned required = (1U<<7) - 1;
-    if ((seen & required) != required || kty != "EC" || crv != "P-256" ||
-        use != "sig" || alg != "ES256" || (x.length() & 3) == 1 ||
-        (y.length() & 3) == 1) continue;
+    constexpr unsigned required =
+      (1U<<0) | (1U<<1) | (1U<<2) | (1U<<5) | (1U<<6);
+    if (!valid || (seen & required) != required || !kid || kty != "EC" ||
+        crv != "P-256" || (use && use != "sig") ||
+        (alg && alg != "ES256")) continue;
     OIDCKey key{.id = ZuMv(kid)};
     key.publicKey.length(Ztls::ES256::PublicKeySize, false);
     key.publicKey[0] = 4;
@@ -384,9 +358,11 @@ static bool jwksResponse(
         ZuBase64URL::decode({key.publicKey.data() + 1 +
           Ztls::ES256::CoordinateSize, Ztls::ES256::CoordinateSize},
           ZuBSpan{y}) != Ztls::ES256::CoordinateSize)
-      return false;
+      continue;
+    bool duplicate = false;
     for (auto &existing: next)
-      if (existing.id == key.id) return false;
+      if (existing.id == key.id) { duplicate = true; break; }
+    if (duplicate) continue;
     next.push(ZuMv(key));
   }
   if (!next) return false;
@@ -394,7 +370,7 @@ static bool jwksResponse(
   return true;
 }
 
-class OIDCState : public ZmObject {
+class OIDCState : public ZumObject {
 public:
   bool init(
       ZmScheduler *scheduler, unsigned sid, DBContext *context,
@@ -488,15 +464,14 @@ private:
     md.finish(digest);
     String challenge;
     challenge.length(ZuBase64URL::enclen(sizeof(digest)));
-    challenge.length(ZuBase64URL::encode({
-      reinterpret_cast<uint8_t *>(challenge.data()), challenge.length()},
-      digest));
+    challenge.length(ZuBase64URL::encode(challenge.span(), digest));
     if (!challenge || m_pending.find(request->stateID)) {
       complete(false, String{});
       return;
     }
     String scope;
     for (auto &value: m_config.oidcScopes) {
+      if (!value) continue;
       if (scope) scope << ' ';
       scope << value;
     }
@@ -521,30 +496,28 @@ private:
 
   void finish_(String query, OIDCFinishFn complete)
   {
-    if (!m_up || !query.mutable_()) {
+    if (!m_up || query.length() > m_limits.callback) {
       complete(false, Bytes{}, User{}, IDVec{}, 0);
       return;
     }
+    if (!query.mutable_()) query.length(query.length());
     if (query[0] == '?') query.splice(0, 1);
     String code, stateID, error;
     unsigned seen = 0;
-    int result = ZfURI::scanForm({query.data(), query.length()},
-      m_limits.callbackForm,
+    formEach({query.data(), query.length()},
       [&code, &stateID, &error, &seen](ZuCSpan name, ZuCSpan value) {
         String *target;
         unsigned bit;
         if (name == "code") { target = &code; bit = 1U; }
         else if (name == "state") { target = &stateID; bit = 2U; }
         else if (name == "error") { target = &error; bit = 4U; }
-        else return false;
-        if (seen & bit) return false;
+        else return;
         seen |= bit;
         *target = value;
-        return true;
       });
     auto request = stateID ? m_pending.findVal(stateID) : ZmRef<OIDCReq>{};
-    if (result != ZfURI::FormResult::OK || !request || request->consumed ||
-        !(seen & 2U) || bool(code) == bool(error)) {
+    if (!request || request->consumed || !(seen & 2U) ||
+        bool(code) == bool(error)) {
       complete(false, Bytes{}, User{}, IDVec{}, 0);
       return;
     }

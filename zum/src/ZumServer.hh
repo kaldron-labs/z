@@ -54,9 +54,10 @@ struct PasskeyAdmission {
 };
 
 struct ServerLimits {
-  ZfURI::FormLimits	beginForm{2, 16, 4096};
-  ZfURI::FormLimits	ceremonyForm{1, 8, 128};
-  ZfJSON::ScanLimits	json{64U<<10, 8, 256, 64U<<10};
+  // Tunable bounds for unauthenticated HTTP inputs and database responses.
+  unsigned		form = 16U<<10;
+  unsigned		ceremonyQuery = 256;
+  unsigned		json = 64U<<10;
   ZfCBOR::Limits	cbor{64U<<10, 8, 256, 64U<<10};
   JWTLimits		jwt;
   unsigned		credentialID = 1024;
@@ -141,7 +142,6 @@ private:
   Ztls::Random	m_rng;
   Ztls::Random	m_cookieRng;
   OIDC		m_oidc;
-  bool		m_inited = false;
 };
 
 } // namespace Zum

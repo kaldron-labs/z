@@ -96,14 +96,10 @@ static int selectScopes_(
   unsigned length = requested.length();
   unsigned offset = 0;
   while (offset < length) {
+    while (offset < length && requested[offset] == ' ') ++offset;
+    if (offset == length) break;
     unsigned end = offset;
-    while (end < length && requested[end] != ' ') {
-      uint8_t c = requested[end];
-      if (c < 0x21 || c == 0x22 || c == 0x5c || c > 0x7e)
-	return ScopeError::Malformed;
-      ++end;
-    }
-    if (end == offset) return ScopeError::Malformed;
+    while (end < length && requested[end] != ' ') ++end;
     ZuCSpan name{requested.data() + offset, end - offset};
     const Scope *selected = nullptr;
     for (auto &scope: scopes) {
@@ -116,10 +112,10 @@ static int selectScopes_(
     }
     if (!selected) return ScopeError::Unavailable;
     if (int error = addScope(client, next, *selected)) return error;
-    if (end == requested.length()) break;
+    if (end == length) break;
     offset = end + 1;
-    if (offset == requested.length()) return ScopeError::Malformed;
   }
+  if (!next.scopeIDs) return ScopeError::Malformed;
   selection = ZuMv(next);
   return ScopeError::OK;
 }

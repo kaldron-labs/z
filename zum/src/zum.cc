@@ -102,7 +102,7 @@ struct DB : public Zum::DB {
 
 static void dbUp(Zdb *db, ZdbHost *)
 {
-  auto *app = static_cast<DB *>(db);
+  auto app = static_cast<DB *>(db);
   app->requests->activate();
   app->active.post();
 }

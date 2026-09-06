@@ -16,14 +16,13 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmList.hh>
-#include <zlib/ZmObject.hh>
 #include <zlib/ZmScheduler.hh>
 
 namespace Zum {
 
 class Requests;
 
-class ZumAPI Request : public ZmObject {
+class ZumAPI Request : public ZumObject {
   Request(const Request &) = delete;
   Request &operator =(const Request &) = delete;
 
@@ -50,7 +49,7 @@ friend Requests;
   bool			m_done = false;
 };
 
-class ZumAPI Requests : public ZmObject {
+class ZumAPI Requests : public ZumObject {
   Requests(const Requests &) = delete;
   Requests &operator =(const Requests &) = delete;
 

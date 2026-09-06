@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// exact Zrest routes for Zum's restricted HTTP profile
+// Zrest routes for Zum's restricted HTTP profile
 
 #ifndef ZumHTTP_HH
 #define ZumHTTP_HH
@@ -13,13 +13,14 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+
 #include <zlib/ZrestServer.hh>
 
 #include <zlib/ZumServer.hh>
 
 namespace Zum {
 
-struct HTTPResponse : public ZmObject {
+struct HTTPResponse : public ZumObject {
   String	body;
   String	location;
   String	setCookie;
@@ -106,7 +107,7 @@ struct RevokeOK : public Zrest::ResBuilder<RevokeOK, HTTPResponse> {
     "content-length");
 };
 
-struct HTTPData : public ZmObject {
+struct HTTPData : public ZumObject {
   ZuSpan<uint8_t> data;
 
   HTTPData &operator =(ZuSpan<uint8_t> data_) {
@@ -137,17 +138,6 @@ using HTTPRequests = ZuTypeList<AuthorizeReq<App>, TokenReq<App>,
   PasskeyBeginReq<App>, PasskeyFinishReq<App>, MetadataReq<App>, JWKSReq<App>,
   RevokeReq<App>, OIDCCallbackReq<App>>;
 
-// Mount exactly one interactive authentication surface.  HTTPRequests is
-// retained for parser tests; services should select one of these two lists.
-template <typename App>
-using PasskeyHTTPRequests = ZuTypeList<AuthorizeReq<App>, TokenReq<App>,
-  PasskeyBeginReq<App>, PasskeyFinishReq<App>, MetadataReq<App>, JWKSReq<App>,
-  RevokeReq<App>>;
-
-template <typename App>
-using OIDCHTTPRequests = ZuTypeList<AuthorizeReq<App>, TokenReq<App>,
-  MetadataReq<App>, JWKSReq<App>, RevokeReq<App>, OIDCCallbackReq<App>>;
-
 template <typename App>
 struct AuthorizeReq : public Zrest::ReqParser<AuthorizeReq<App>, HTTPQuery> {
   enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
@@ -165,7 +155,7 @@ struct TokenReq : public Zrest::ReqParser<TokenReq<App>, HTTPData> {
   using Base = Zrest::ReqParser<TokenReq, HTTPData>;
   using Base::header;
   enum { Method = Zhttp::Method::POST, Exact = 1,
-    Body = Zrest::BodyPolicy::Raw, RequireContentType = 1 };
+    Body = Zrest::BodyPolicy::Raw };
   static constexpr uint64_t BodyLimit = 16U<<10;
   using Path = ZuStringT<"/token">;
   using Headers = ZhttpHeaders(
@@ -190,7 +180,7 @@ struct PasskeyReq : public Zrest::ReqParser<Impl, HTTPData> {
   using Base = Zrest::ReqParser<Impl, HTTPData>;
   using Base::header;
   enum { Method = Zhttp::Method::POST, Exact = 1,
-    Body = Zrest::BodyPolicy::Raw, RequireContentType = 1 };
+    Body = Zrest::BodyPolicy::Raw };
   static constexpr uint64_t BodyLimit = 64U<<10;
   using Headers = ZhttpHeaders(
     ("content-type", "application/json"), "content-length", "cookie");
@@ -253,7 +243,7 @@ struct RevokeReq : public Zrest::ReqParser<RevokeReq<App>, HTTPData> {
   using Base = Zrest::ReqParser<RevokeReq, HTTPData>;
   using Base::header;
   enum { Method = Zhttp::Method::POST, Exact = 1,
-    Body = Zrest::BodyPolicy::Raw, RequireContentType = 1 };
+    Body = Zrest::BodyPolicy::Raw };
   static constexpr uint64_t BodyLimit = 16U<<10;
   using Path = ZuStringT<"/revoke">;
   using Headers = ZhttpHeaders(
@@ -474,76 +464,47 @@ private:
     object->body = ZuMv(reply.body);
     object->location = ZuMv(reply.location);
     object->setCookie = ZuMv(reply.setCookie);
-    if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{}) {
-      switch (reply.type) {
-        case ReplyType::Page:
+    switch (reply.type) {
+      case ReplyType::Page:
+        if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{})
           return send_<PageOK, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::Redirect:
+        break;
+      case ReplyType::Redirect:
+        if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{} ||
+            ZuIsSame<Request, PasskeyFinishReq<App>>{} ||
+            ZuIsSame<Request, OIDCCallbackReq<App>>{})
           return send_<Redirect, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::OAuthError:
-          return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
-    } else if constexpr (ZuIsSame<Request, TokenReq<App>>{}) {
-      switch (reply.type) {
-        case ReplyType::OK:
+        break;
+      case ReplyType::OK:
+        if constexpr (ZuIsSame<Request, TokenReq<App>>{})
           return send_<TokenOK, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::OAuthError:
+        else if constexpr (ZuIsSame<Request, PasskeyBeginReq<App>>{} ||
+            ZuIsSame<Request, PasskeyFinishReq<App>>{})
+          return send_<PasskeyOK, Request>(ZuMv(link), ZuMv(object));
+        break;
+      case ReplyType::OAuthError:
+        if constexpr (!ZuIsSame<Request, MetadataReq<App>>{} &&
+            !ZuIsSame<Request, JWKSReq<App>>{})
           return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::ClientError:
+        break;
+      case ReplyType::ClientError:
+        if constexpr (ZuIsSame<Request, TokenReq<App>>{} ||
+            ZuIsSame<Request, RevokeReq<App>>{})
           return send_<ClientError, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
-    } else if constexpr (ZuIsSame<Request, RevokeReq<App>>{}) {
-      switch (reply.type) {
-        case ReplyType::Empty:
+        break;
+      case ReplyType::Empty:
+        if constexpr (ZuIsSame<Request, RevokeReq<App>>{})
           return send_<RevokeOK, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::OAuthError:
-          return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::ClientError:
-          return send_<ClientError, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
-    } else if constexpr (ZuIsSame<Request, PasskeyBeginReq<App>>{}) {
-      switch (reply.type) {
-        case ReplyType::OK:
-          return send_<PasskeyOK, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::OAuthError:
-          return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
-    } else if constexpr (ZuIsSame<Request, PasskeyFinishReq<App>>{}) {
-      switch (reply.type) {
-        case ReplyType::OK:
-          return send_<PasskeyOK, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::Redirect:
-          return send_<Redirect, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::OAuthError:
-          return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
-    } else if constexpr (ZuIsSame<Request, OIDCCallbackReq<App>>{}) {
-      switch (reply.type) {
-        case ReplyType::Redirect:
-          return send_<Redirect, Request>(ZuMv(link), ZuMv(object));
-        case ReplyType::OAuthError:
-          return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
-    } else {
-      switch (reply.type) {
-        case ReplyType::Discovery:
+        break;
+      case ReplyType::Discovery:
+        if constexpr (ZuIsSame<Request, MetadataReq<App>>{} ||
+            ZuIsSame<Request, JWKSReq<App>>{})
           return send_<DiscoveryOK, Request>(ZuMv(link), ZuMv(object));
-        default:
-          return send_<ServerError, Request>(ZuMv(link), ZuMv(object));
-      }
+        break;
+      default:
+        break;
     }
+    send_<ServerError, Request>(ZuMv(link), ZuMv(object));
   }
 
   Server	*m_server = nullptr;

@@ -39,6 +39,8 @@
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 
+#include <zlib/ZumOAuth.hh>
+
 ZuDerive(String, ZtString<ZtStringHeapID<"zumc.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"zumc.Bytes">>));
 
@@ -91,8 +93,7 @@ static String encode(ZuBSpan data)
 {
   String s;
   s.length(ZuBase64URL::enclen(data.length()));
-  s.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(s.data()), s.length()}, data));
+  s.length(ZuBase64URL::encode(s.span(), data));
   return s;
 }
 
@@ -303,20 +304,18 @@ public:
     String query{ZuBSpan{span}};
     if (!query.mutable_()) query.length(query.length());
     unsigned seen = 0;
-    if (ok) ok = ZfURI::scanForm({query.data(), query.length()},
-      ZfURI::FormLimits{3, 16, 4096}, [this, &seen](
-          ZuSpan<char> name, ZuSpan<char> value) {
-        if (name == "code" && !(seen & 1U)) {
-          code = value; seen |= 1U; return true;
+    if (ok) Zum::formEach({query.data(), query.length()}, [this, &seen](
+          ZuCSpan name, ZuCSpan value) {
+        if (name == "code") {
+	  code = value; seen |= 1U; return;
         }
-        if (name == "state" && !(seen & 2U)) {
-          state = value; seen |= 2U; return true;
+        if (name == "state") {
+	  state = value; seen |= 2U; return;
         }
-        if (name == "error" && !(seen & 4U)) {
-          error = value; seen |= 4U; return true;
+        if (name == "error") {
+	  error = value; seen |= 4U; return;
         }
-        return false;
-      }) == ZfURI::FormResult::OK;
+      });
     ZmRef<CallbackBody> object = new CallbackBody{};
     object->data = ok && code ?
       String{"<!doctype html><h1>Authorized</h1><p>You may close this window.</p>"} :
@@ -355,12 +354,13 @@ static ZiMxParams mxParams()
 
 static bool tokenJSON(String &json, Tokens &tokens)
 {
+  if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scanStrict({json.data(), json.length()},
-    ZfJSON::ScanLimits{BodyMax, 3, 32, BodyMax});
-  if (!parsed || !parsed.root->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.root->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>())
     return false;
   unsigned seen = 0;
   for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
