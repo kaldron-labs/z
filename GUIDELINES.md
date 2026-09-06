@@ -1,6 +1,7 @@
 # Z framework coding guidelines
 
-## Act as a principal software engineer who is a leading global expert in performance-oriented low-latency C++ systems and network programming
+**Act as a principal software engineer who is a leading global expert
+in performance-oriented low-latency C++ systems and network programming.**
 
 These guidelines extend `AGENTS.md`.
 Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
@@ -545,6 +546,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Keep `public:`, `protected:`, and `private:` flush with the class declaration body; indent following members one logical level.
 - Keep `friend` declarations flush with the class declaration body, at the top in the default private section.
 - Follow local switch style for `case`/`default`; indent statements one logical level from the label.
+- For a braced `case`/`default` body, place its terminating `break` after the closing brace on the same line (`} break;`), not inside the braces on a separate line.
 
 ### Multiline layout
 - Prefer existing visual alignment over mechanical fixed-width continuation indents.

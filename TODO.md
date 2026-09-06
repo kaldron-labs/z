@@ -2,11 +2,7 @@
 
 ## Zdb
 
-- sagas
-
-## Zum
-
-- `zum.md` - update for new sagas
+- "startup replays recovered incomplete sagas that are crash residue from a previous run"
 
 ## Ztc
 
