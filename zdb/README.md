@@ -210,10 +210,12 @@ The supported teardown boundary is completed `stop()` followed by `final()`.
 ## Sagas
 
 A saga is a serialized application intent executed as a fixed sequence of steps.
-Each forward step describes one table mutation. If a step fails, the runner
-compensates the previously completed steps in reverse order. Sagas provide
-recovery and compensation across shards; they do not isolate intermediate
-effects from other requests or provide an atomic multi-row transaction.
+Each applicable forward step describes one table mutation; skipped steps allow
+the sequence to express payload-selected branches and later convergence. If a
+step fails, the runner compensates the previously completed operations in
+reverse order. Sagas provide recovery and compensation across shards; they do
+not isolate intermediate effects from other requests or provide an atomic
+multi-row transaction.
 
 ### Definition and context
 
@@ -295,6 +297,93 @@ move construction. Capture only `this` when that supplies the application data.
 Outer asynchronous posts retain it with `[this, complete = ZuMv(complete)]`.
 Do not capture it by reference across a post; explicitly move it into any work
 that outlives the callback.
+
+Call `saga->skip(ZuMv(complete))` when a forward step is intentionally
+inapplicable. It writes no step intent and completes successfully. Recovery
+re-evaluates the step definition and must reach the same `skip` call; `skip`
+rejects recovery if that step has a persisted operation intent. Rollback uses
+the missing intent location to bypass the reverse step automatically, so the
+reverse path mirrors the earlier forward no-op without re-evaluating the
+application condition.
+
+### Branching workflows
+
+Skipped steps turn the fixed step sequence into a branching workflow. Define
+the union of all possible branch operations as ordinary numbered steps, then
+skip every step outside the selected path. Branches can diverge across several
+steps and converge at a later common step; optional work is a branch with one
+empty path. Execution remains serialized in step order. Only operations on the
+selected path write step intents, and rollback compensates only those operations.
+
+Keep the branch discriminator in the serialized saga payload and set it before
+submitting the saga. Mutating a definition field after admission does not update
+the saved payload. Recovery starts again at step zero and re-evaluates each
+definition, so every attempt must select the same path. A decision derived from
+external state is suitable only when that state is durable and cannot change the
+answer during the lifetime of the saga.
+
+For example, a payment can use either an internal ledger path or an external
+settlement path while sharing reservation and finalization steps:
+
+```c++
+struct Payment : public ZdbSagaBase<Context> {
+  using Base = ZdbSagaBase<Context>;
+  using Base::context;
+  using Base::saga;
+  using Type = ZuStringT<"payment">;
+  enum { NSteps = 5 };
+
+  Route::T route;                 // serialized; fixed before submission
+  uint64_t paymentID;
+
+  ZdbSagaStep(0, reservation, Insert) {
+    // Common reservation and its compensation.
+    reserve<Fwd>(ZuMv(complete));
+    return {};
+  }
+
+  ZdbSagaStep(1, ledger, Update) {
+    if (route != Route::Internal) {
+      saga->skip(ZuMv(complete));
+      return {};
+    }
+    debitLedger<Fwd>(ZuMv(complete));
+    return {};
+  }
+
+  ZdbSagaStep(2, ledger, Update) {
+    if (route != Route::Internal) {
+      saga->skip(ZuMv(complete));
+      return {};
+    }
+    creditLedger<Fwd>(ZuMv(complete));
+    return {};
+  }
+
+  ZdbSagaStep(3, settlement, Insert) {
+    if (route != Route::External) {
+      saga->skip(ZuMv(complete));
+      return {};
+    }
+    settleExternally<Fwd>(ZuMv(complete));
+    return {};
+  }
+
+  ZdbSagaStep(4, payment, Update) {
+    ZuAssert(Fwd);
+    finalize(ZuMv(complete));      // branch convergence
+    return {};
+  }
+};
+```
+
+For `Route::Internal`, step 3 has no intent and is absent from rollback. For
+`Route::External`, steps 1 and 2 have no intents and are absent from rollback.
+On recovery the serialized `route` selects the same lane, recorded operations
+replay through their normal wrappers, and untaken operations call `skip` again.
+Every declared step still belongs to the saga catalog, regardless of which
+routes use it; keep its step number, table ID, and operation stable while
+outstanding sagas may exist.
 
 The wrapper suppresses the application lambda on null: null insert/update
 callbacks complete false; null delete callbacks complete true, silently. This
@@ -451,6 +540,18 @@ Pass an explicit `ZmRef<Zdb_::Store>` to `init()` or omit it and configure
 `store.module` to load a module exporting the `ZdbStore` entry point. `store.preload`
 controls module preloading. A `store` configuration object is required even when
 passing an explicit store instance.
+
+The standard environment-variable convention for loadable stores is:
+
+- `ZDB_MODULE`: module path used for `store.module`, for example
+  `$PWD/zdb_pq/src/.libs/libZdbPQ.so`.
+- `ZDB_CONNECT`: backend connection string used for `store.connection`, for
+  example `host=/tmp dbname=test` for PostgreSQL.
+
+`Zdb` does not read these variables itself; the application maps them into its
+configuration. The PostgreSQL integration programs accept `--module`/`-m` and
+`--connect`/`-c`, using `ZDB_MODULE` and `ZDB_CONNECT` as their respective
+defaults.
 
 ### In-memory
 
