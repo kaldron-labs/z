@@ -707,14 +707,46 @@ inline void saveKey(S &s)
   }
 }
 
+// Canonical map ordering compares the encoded keys.  Keep the key as a span,
+// rather than staging it in a fixed-size encoded buffer: reflected IDs have
+// no artificial length limit.
 struct KeyOrderValue {
-  uint8_t	n = 0;
-  uint8_t	data[34]{};
+  ZuCSpan	id;
+  uint64_t	arg;
+  unsigned	length;
+  uint8_t	major;
+  bool		intID;
+
+  constexpr uint8_t byte(unsigned i) const {
+    if (!intID) {
+      if (!i) {
+	if (arg < 24) return uint8_t(0x60 | arg);
+	if (arg <= UINT8_MAX) return 0x78;
+	if (arg <= UINT16_MAX) return 0x79;
+	if (arg <= UINT32_MAX) return 0x7a;
+	return 0x7b;
+      }
+	unsigned h = arg < 24 ? 1 : arg <= UINT8_MAX ? 2 :
+	arg <= UINT16_MAX ? 3 : arg <= UINT32_MAX ? 5 : 9;
+	if (i < h) return uint8_t(arg >> ((h - i - 1) << 3));
+      return id[i - h];
+    }
+    if (!i) {
+      if (arg < 24) return uint8_t((major << 5) | arg);
+      if (arg <= UINT8_MAX) return uint8_t((major << 5) | 24);
+      if (arg <= UINT16_MAX) return uint8_t((major << 5) | 25);
+      if (arg <= UINT32_MAX) return uint8_t((major << 5) | 26);
+      return uint8_t((major << 5) | 27);
+    }
+    return uint8_t(arg >> ((length - i) << 3));
+  }
 
   constexpr bool operator >(const KeyOrderValue &r) const {
-    if (n != r.n) return n > r.n;
-    for (unsigned i = 0; i < n; ++i)
-      if (data[i] != r.data[i]) return data[i] > r.data[i];
+    if (length != r.length) return length > r.length;
+    for (unsigned i = 0; i < length; ++i) {
+      auto l = byte(i), rr = r.byte(i);
+      if (l != rr) return l > rr;
+    }
     return false;
   }
 };
@@ -722,35 +754,20 @@ struct KeyOrderValue {
 template <typename Field>
 struct CBOROrder {
   static consteval KeyOrderValue value() {
-    KeyOrderValue value;
     auto id = ZuFieldProp::CBOR::GetID<Field>{}().cspan();
     using Props = typename Field::Props;
     if constexpr (ZuFieldProp::CBOR::IsIntID<Props>{}) {
       constexpr IntIDValue idValue = intIDValue<Field>();
-      uint64_t n = idValue.arg;
-      unsigned major = idValue.negative ? 1 : 0;
-      if (n < 24) value.data[value.n++] = uint8_t((major << 5) | n);
-      else if (n <= UINT8_MAX) {
-	value.data[value.n++] = uint8_t((major << 5) | 24);
-	value.data[value.n++] = uint8_t(n);
-      } else if (n <= UINT16_MAX) {
-	value.data[value.n++] = uint8_t((major << 5) | 25);
-	value.data[value.n++] = uint8_t(n >> 8);
-	value.data[value.n++] = uint8_t(n);
-      } else if (n <= UINT32_MAX) {
-	value.data[value.n++] = uint8_t((major << 5) | 26);
-	for (int i = 3; i >= 0; --i) value.data[value.n++] = uint8_t(n >> (i << 3));
-      } else {
-	value.data[value.n++] = uint8_t((major << 5) | 27);
-	for (int i = 7; i >= 0; --i) value.data[value.n++] = uint8_t(n >> (i << 3));
-      }
+      uint64_t arg = idValue.arg;
+      return {id, arg, unsigned(
+	arg < 24 ? 1 : arg <= UINT8_MAX ? 2 : arg <= UINT16_MAX ? 3 :
+	arg <= UINT32_MAX ? 5 : 9), uint8_t(idValue.negative ? 1 : 0), true};
     } else {
       unsigned n = id.length();
-      if (n < 24) value.data[value.n++] = uint8_t(0x60 | n);
-      else value.data[value.n++] = 0x78, value.data[value.n++] = uint8_t(n);
-      for (unsigned i = 0; i < n; ++i) value.data[value.n++] = id[i];
+      unsigned h = n < 24 ? 1 : n <= UINT8_MAX ? 2 : n <= UINT16_MAX ? 3 :
+	n <= UINT32_MAX ? 5 : 9;
+      return {id, n, h + n, 3, false};
     }
-    return value;
   }
   static constexpr KeyOrderValue V = value();
   constexpr const KeyOrderValue &operator ()() const { return V; }

@@ -37,6 +37,10 @@ struct TextObject {
   ZuCSpan	value;
 };
 
+struct LongKeyObject {
+  int32_t	value, shortValue;
+};
+
 ZfStruct(ArrayObject,
   (((values),	(Mutable)),	(Int32Vec)));
 
@@ -58,6 +62,14 @@ ZfStruct(TextObject,
   (((value),	(Mutable)),	(String)));
 
 ZfStructRender(TextObject, CBOR, value);
+
+ZfStruct(LongKeyObject,
+  (((value),		(Mutable)),	(Int32)),
+  (((shortValue),	(Mutable)),	(Int32)));
+
+ZfStructRender(LongKeyObject, CBOR,
+  (value, (CBOR::ID<"abcdefghijklmnopqrstuvwxyz0123456789">)),
+  (shortValue, (CBOR::ID<"z">)));
 
 struct IntArray : public IntValues {
   ZuDerive_(IntArray, IntValues);
@@ -282,6 +294,21 @@ static void intKey()
   ZuCheck(minLoaded.value == 7);
 }
 
+static void longKey()
+{
+  ZuTestScope(longKey);
+  TestBuf encoded;
+  ZfCBOR::save(encoded, LongKeyObject{7, 8});
+  auto key = ZuCSpan{encoded.data() + 6, 36};
+  ZuCheck(encoded.length() == 43 && uint8_t(encoded[0]) == 0xa2 &&
+    encoded[1] == 'a' && encoded[2] == 'z' && uint8_t(encoded[3]) == 8 &&
+    uint8_t(encoded[4]) == 0x78 && uint8_t(encoded[5]) == 36 &&
+    key == "abcdefghijklmnopqrstuvwxyz0123456789" &&
+    uint8_t(encoded[42]) == 7);
+  auto value = ZfCBOR::handler<LongKeyObject>(encoded).ctor();
+  ZuCheck(value.value == 7 && value.shortValue == 8);
+}
+
 static void text()
 {
   ZuTestScope(text);
@@ -477,6 +504,7 @@ int main(int argc, char **argv)
   ZuTestCall(truncation);
   ZuTestCall(object);
   ZuTestCall(intKey);
+  ZuTestCall(longKey);
   ZuTestCall(text);
   ZuTestCall(arrays);
   ZuTestCall(floats);
