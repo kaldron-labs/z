@@ -133,7 +133,7 @@ static bool stageEnrollment(Zum::DB *db, Zum::DBContext *context)
       .userHandle = Zum::Bytes{ZuBSpan{"recovered handle"}}
     })) return false;
 
-  using M = ZdbMSaga<Zum::Sagas>;
+  using M = Zum::MSaga;
   ZmRef<M> saga = new M{};
   saga->init(Zum::Enrollment{
     .ceremonyID = ZuMv(ceremonyID),
