@@ -10,7 +10,7 @@
 
 #include <zlib/ZfJSON.hh>
 
-#include <zlib/ZtString.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsCOSE.hh>
@@ -237,8 +237,8 @@ static int clientData(
   if (!clientData(roots[0], client) || client.crossOrigin)
     return WebAuthnError::Fields;
   if (client.type != type) return WebAuthnError::Type;
-  ZtString<> encoded;
-  encoded.length(ZuBase64URL::enclen(challenge.length()));
+  unsigned length = ZuBase64URL::enclen(challenge.length());
+  auto encoded = ZtScratch(String, length, length);
   encoded.length(ZuBase64URL::encode(encoded.span(), challenge));
   if (client.challenge != encoded) return WebAuthnError::Challenge;
   if (client.origin != origin) return WebAuthnError::Origin;

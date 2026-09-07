@@ -255,8 +255,7 @@ private:
       .oldState = row->data().state,
       .newState = m_state
     };
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<ActionChange_>{this}
@@ -514,8 +513,7 @@ private:
       .oldState = user.state,
       .newState = state
     };
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<UserChange_>{this}
@@ -702,8 +700,7 @@ private:
       .oldState = role.state,
       .newState = state
     };
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<RoleChange_>{this}
@@ -854,8 +851,7 @@ private:
       .oldState = row->data().state,
       .newState = m_state
     };
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<CredChange_>{this}
@@ -1017,8 +1013,7 @@ private:
       .oldState = scope.state,
       .newState = state
     };
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<ScopeChange_>{this}
@@ -1211,8 +1206,7 @@ private:
       .oldState = client.state,
       .newState = state
     };
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<ClientChange_>{this}

@@ -353,8 +353,7 @@ private:
     };
     static_assert(sizeof(m_sagaID) == 16);
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(enrollment));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<EnrollmentFinish_>{this}
@@ -591,8 +590,7 @@ private:
     };
     static_assert(sizeof(m_sagaID) == 16);
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(add));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<CredentialFinish_>{this}
@@ -731,8 +729,7 @@ private:
     ZdbSagaID sagaID;
     static_assert(sizeof(sagaID) == 16);
     memcpy(&sagaID, recovery.capabilityID.data(), sizeof(sagaID));
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(recovery));
     if (!m_db->saga(0, sagaID, ZuMv(saga), [
       self = ZmRef<RecoveryIssue_>{this}
@@ -1007,8 +1004,7 @@ private:
     static_assert(sizeof(m_sagaID) == 16);
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     reinterpret_cast<uint8_t *>(&m_sagaID)[0] ^= 0x80;
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(recovery));
     if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
       self = ZmRef<RecoveryFinish_>{this}
