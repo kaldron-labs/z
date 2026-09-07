@@ -15,7 +15,7 @@
 
 #include <zlib/ZuSpan.hh>
 
-#include <zlib/ZmScratch.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZfCBOR.hh>
 
@@ -28,10 +28,13 @@ namespace Ztls::COSE {
 
 namespace CBOR = ZuFieldProp::CBOR;
 
+using Scratch = ZtBArray<ZtArrayHeapID<"Ztls.COSE.Scratch">>;
+
 namespace ES256 {
   enum {
     CoordinateSize = 32,
     SignatureSize = CoordinateSize * 2,
+    // RFC 7518 ES256 is P-256: DER ECDSA has at most two 33-byte INTEGERs.
     DERMax = 72,
     PublicKeySize = 1 + SignatureSize,
     JWKSize = 126
@@ -276,11 +279,11 @@ private:
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::PK_EC *key) {
   unsigned oidLen = Backend::pkey_ec_oid_size(key->key);
-  auto oid = ZmScratch(uint8_t, oidLen); oid.length(oidLen);
+  auto oid = ZtScratch(Scratch, oidLen); oid.length(oidLen);
   if (!Backend::pkey_ec_export_oid(key->key, oid) ||
       ZuBSpan{oid} != PK::OIDs::EC_GRP_SECP256R1)
     return ZeEXCEPT(Error, "ZtlsCOSE", "unsupported EC curve");
-  auto point = ZmScratch(uint8_t, ES256::PublicKeySize);
+  auto point = ZtScratch(Scratch, ES256::PublicKeySize);
   point.length(ES256::PublicKeySize);
   if (!Backend::pkey_ec_export_public(key->key, point) || point[0] != 4)
     return ZeEXCEPT(Error, "ZtlsCOSE", "EC public key export failed");
@@ -292,12 +295,12 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::PK_EC *key) {
 
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::SK_EC *key) {
-  auto point = ZmScratch(uint8_t, ES256::PublicKeySize);
+  auto point = ZtScratch(Scratch, ES256::PublicKeySize);
   point.length(ES256::PublicKeySize);
-  auto d = ZmScratch(uint8_t, ES256::CoordinateSize);
+  auto d = ZtScratch(Scratch, ES256::CoordinateSize);
   d.length(ES256::CoordinateSize);
   unsigned oidLen = Backend::pkey_ec_oid_size(key->key);
-  auto oid = ZmScratch(uint8_t, oidLen); oid.length(oidLen);
+  auto oid = ZtScratch(Scratch, oidLen); oid.length(oidLen);
   if (!Backend::pkey_ec_export_oid(key->key, oid) ||
       ZuBSpan{oid} != PK::OIDs::EC_GRP_SECP256R1)
     return ZeEXCEPT(Error, "ZtlsCOSE", "unsupported EC curve");
@@ -332,9 +335,9 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::SK_ED25519 *key) {
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::PK_RSA *key) {
   unsigned n = Backend::pkey_rsa_size(key->key);
-  auto modulus = ZmScratch(uint8_t, n); modulus.length(n);
-  auto exponent = ZmScratch(uint8_t, RSA::ExponentSize);
-  exponent.length(RSA::ExponentSize);
+  auto scratch = ZtScratch(Scratch, n + RSA::ExponentSize);
+  ZuSpan<uint8_t> modulus{scratch.data(), n};
+  ZuSpan<uint8_t> exponent{scratch.data() + n, RSA::ExponentSize};
   if (!Backend::pkey_rsa_export_public(key->key, modulus, exponent))
     return ZeEXCEPT(Error, "ZtlsCOSE", "RSA public key export failed");
   ZfCBOR::save(s, Data::RSAPK{KeyType::RSA, modulus, exponent});
@@ -344,15 +347,16 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::PK_RSA *key) {
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::SK_RSA *key) {
   unsigned n = Backend::pkey_rsa_size(key->key), p = n >> 1;
-  auto modulus = ZmScratch(uint8_t, n); modulus.length(n);
-  auto exponent = ZmScratch(uint8_t, RSA::ExponentSize);
-  exponent.length(RSA::ExponentSize);
-  auto d = ZmScratch(uint8_t, n); d.length(n);
-  auto prime1 = ZmScratch(uint8_t, p); prime1.length(p);
-  auto prime2 = ZmScratch(uint8_t, p); prime2.length(p);
-  auto exp1 = ZmScratch(uint8_t, p); exp1.length(p);
-  auto exp2 = ZmScratch(uint8_t, p); exp2.length(p);
-  auto coeff = ZmScratch(uint8_t, p); coeff.length(p);
+  auto scratch = ZtScratch(Scratch, 2 * n + 5 * p + RSA::ExponentSize);
+  auto ptr = scratch.data();
+  ZuSpan<uint8_t> modulus{ptr, n}; ptr += n;
+  ZuSpan<uint8_t> exponent{ptr, RSA::ExponentSize}; ptr += RSA::ExponentSize;
+  ZuSpan<uint8_t> d{ptr, n}; ptr += n;
+  ZuSpan<uint8_t> prime1{ptr, p}; ptr += p;
+  ZuSpan<uint8_t> prime2{ptr, p}; ptr += p;
+  ZuSpan<uint8_t> exp1{ptr, p}; ptr += p;
+  ZuSpan<uint8_t> exp2{ptr, p}; ptr += p;
+  ZuSpan<uint8_t> coeff{ptr, p};
   if (!Backend::pkey_rsa_export_private(key->key, modulus, exponent, d,
       prime1, prime2, exp1, exp2, coeff))
     return ZeEXCEPT(Error, "ZtlsCOSE", "RSA private key export failed");
