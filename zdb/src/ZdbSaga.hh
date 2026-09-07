@@ -51,6 +51,8 @@
 #include <zlib/zdb_saga_type_fbs.h>
 
 #ifndef ZdbSaga_BuiltinSize
+// Initial inline payload allocation, not a payload limit.  256 bytes covers
+// ordinary saga state while ZtBuiltin retains its tagged heap fallback.
 #define ZdbSaga_BuiltinSize 256
 #endif
 
