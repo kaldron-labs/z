@@ -257,14 +257,13 @@ private:
     };
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<ActionChange_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(AdminError::Storage);
-    }, [self = ZmRef<ActionChange_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(AdminError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<ActionChange_>{this}, ZmFnPtr<&ActionChange_::sagaSubmit_>{}},
+      SagaFn{ZmRef<ActionChange_>{this}, ZmFnPtr<&ActionChange_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(AdminError::Storage); }
 
   void saga_(bool ok)
   {
@@ -515,14 +514,13 @@ private:
     };
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<UserChange_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(AdminError::Storage);
-    }, [self = ZmRef<UserChange_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(AdminError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<UserChange_>{this}, ZmFnPtr<&UserChange_::sagaSubmit_>{}},
+      SagaFn{ZmRef<UserChange_>{this}, ZmFnPtr<&UserChange_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(AdminError::Storage); }
 
   void saga_(bool ok)
   {
@@ -702,14 +700,13 @@ private:
     };
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<RoleChange_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(AdminError::Storage);
-    }, [self = ZmRef<RoleChange_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(AdminError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<RoleChange_>{this}, ZmFnPtr<&RoleChange_::sagaSubmit_>{}},
+      SagaFn{ZmRef<RoleChange_>{this}, ZmFnPtr<&RoleChange_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(AdminError::Storage); }
 
   void saga_(bool ok)
   {
@@ -853,14 +850,13 @@ private:
     };
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<CredChange_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(AdminError::Storage);
-    }, [self = ZmRef<CredChange_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(AdminError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<CredChange_>{this}, ZmFnPtr<&CredChange_::sagaSubmit_>{}},
+      SagaFn{ZmRef<CredChange_>{this}, ZmFnPtr<&CredChange_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(AdminError::Storage); }
 
   void saga_(bool ok)
   {
@@ -1015,14 +1011,13 @@ private:
     };
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<ScopeChange_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(AdminError::Storage);
-    }, [self = ZmRef<ScopeChange_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(AdminError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<ScopeChange_>{this}, ZmFnPtr<&ScopeChange_::sagaSubmit_>{}},
+      SagaFn{ZmRef<ScopeChange_>{this}, ZmFnPtr<&ScopeChange_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(AdminError::Storage); }
 
   void saga_(bool ok)
   {
@@ -1208,14 +1203,13 @@ private:
     };
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<ClientChange_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(AdminError::Storage);
-    }, [self = ZmRef<ClientChange_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(AdminError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<ClientChange_>{this}, ZmFnPtr<&ClientChange_::sagaSubmit_>{}},
+      SagaFn{ZmRef<ClientChange_>{this}, ZmFnPtr<&ClientChange_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(AdminError::Storage); }
 
   void saga_(bool ok)
   {

@@ -355,14 +355,13 @@ private:
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(enrollment));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<EnrollmentFinish_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(WebAuthnError::Storage);
-    }, [self = ZmRef<EnrollmentFinish_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(WebAuthnError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<EnrollmentFinish_>{this}, ZmFnPtr<&EnrollmentFinish_::sagaSubmit_>{}},
+      SagaFn{ZmRef<EnrollmentFinish_>{this}, ZmFnPtr<&EnrollmentFinish_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(WebAuthnError::Storage); }
 
   void saga_(bool ok)
   {
@@ -592,34 +591,41 @@ private:
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(add));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<CredentialFinish_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(WebAuthnError::Storage);
-    }, [self = ZmRef<CredentialFinish_>{this}](bool ok) mutable {
-      if (!ok) {
-	self->finish_(WebAuthnError::Storage);
-	return;
-      }
-      auto grants = self->m_context->grants;
-      Bytes id = self->m_ceremonyID;
-      grants->run(0, [self = ZuMv(self), grants, id = ZuMv(id)]() mutable {
-	grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
-	    ZdbRow<Grant> *row) mutable {
-	  if (!row || row->data().kind != GrantKind::Ceremony ||
-	      row->data().state != State::Consumed ||
-	      row->data().owner != self->m_sagaID || !row->commit()) {
-	    self->finish_(WebAuthnError::Storage);
-	    return;
-	  }
-	  auditWrite(self->m_context, ZuMv(self->m_audit), [
-	    self = ZuMv(self)
-	  ](int error) mutable {
-	    self->finish_(error ? WebAuthnError::Storage : WebAuthnError::OK);
-	  });
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<CredentialFinish_>{this},
+	ZmFnPtr<&CredentialFinish_::sagaSubmit_>{}},
+      SagaFn{ZmRef<CredentialFinish_>{this},
+	ZmFnPtr<&CredentialFinish_::saga_>{}}))
+      sagaSubmit_(false);
+  }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(WebAuthnError::Storage); }
+
+  void saga_(bool ok)
+  {
+    if (!ok) {
+      finish_(WebAuthnError::Storage);
+      return;
+    }
+    auto grants = m_context->grants;
+    Bytes id = m_ceremonyID;
+    grants->run(0, [self = ZmRef<CredentialFinish_>{this}, grants,
+	id = ZuMv(id)]() mutable {
+      grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
+	  ZdbRow<Grant> *row) mutable {
+	if (!row || row->data().kind != GrantKind::Ceremony ||
+	    row->data().state != State::Consumed ||
+	    row->data().owner != self->m_sagaID || !row->commit()) {
+	  self->finish_(WebAuthnError::Storage);
+	  return;
+	}
+	auditWrite(self->m_context, ZuMv(self->m_audit), [
+	  self = ZuMv(self)
+	](int error) mutable {
+	  self->finish_(error ? WebAuthnError::Storage : WebAuthnError::OK);
 	});
       });
-    })) finish_(WebAuthnError::Storage);
+    });
   }
 
   DB		*m_db = nullptr;
@@ -731,19 +737,25 @@ private:
     memcpy(&sagaID, recovery.capabilityID.data(), sizeof(sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(recovery));
-    if (!m_db->saga(0, sagaID, ZuMv(saga), [
+    if (!sagaSubmit(m_db, sagaID, ZuMv(saga),
+      SagaFn{ZmRef<RecoveryIssue_>{this},
+	ZmFnPtr<&RecoveryIssue_::sagaSubmit_>{}},
+      SagaFn{ZmRef<RecoveryIssue_>{this},
+	ZmFnPtr<&RecoveryIssue_::saga_>{}}))
+      sagaSubmit_(false);
+  }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(false); }
+
+  void saga_(bool ok)
+  {
+    if (!ok) {
+      finish_(false);
+      return;
+    }
+    auditWrite(m_context, ZuMv(m_audit), [
       self = ZmRef<RecoveryIssue_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(false);
-    }, [self = ZmRef<RecoveryIssue_>{this}](bool ok) mutable {
-      if (!ok) {
-	self->finish_(false);
-	return;
-      }
-      auditWrite(self->m_context, ZuMv(self->m_audit), [
-	self = ZuMv(self)
-      ](int error) mutable { self->finish_(!error); });
-    })) finish_(false);
+    ](int error) mutable { self->finish_(!error); });
   }
 
   DB		*m_db = nullptr;
@@ -1006,14 +1018,13 @@ private:
     reinterpret_cast<uint8_t *>(&m_sagaID)[0] ^= 0x80;
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(recovery));
-    if (!m_db->saga(0, m_sagaID, ZuMv(saga), [
-      self = ZmRef<RecoveryFinish_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(WebAuthnError::Storage);
-    }, [self = ZmRef<RecoveryFinish_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(WebAuthnError::Storage);
+    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+      SagaFn{ZmRef<RecoveryFinish_>{this}, ZmFnPtr<&RecoveryFinish_::sagaSubmit_>{}},
+      SagaFn{ZmRef<RecoveryFinish_>{this}, ZmFnPtr<&RecoveryFinish_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(WebAuthnError::Storage); }
 
   void saga_(bool ok)
   {
