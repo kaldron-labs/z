@@ -471,14 +471,13 @@ private:
     m_sagaID = sagaID;
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(family));
-    if (!m_db->saga(0, sagaID, ZuMv(saga), [
-      self = ZmRef<CodeToken_>{this}
-    ](bool ok) mutable {
-      if (!ok) self->finish_(OAuthError::ServerError, {});
-    }, [self = ZmRef<CodeToken_>{this}](bool ok) mutable {
-      self->saga_(ok);
-    })) finish_(OAuthError::ServerError, {});
+    if (!sagaSubmit(m_db, sagaID, ZuMv(saga),
+      SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::sagaSubmit_>{}},
+      SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::saga_>{}}))
+      sagaSubmit_(false);
   }
+
+  void sagaSubmit_(bool ok) { if (!ok) finish_(OAuthError::ServerError, {}); }
 
   void saga_(bool ok)
   {

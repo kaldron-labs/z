@@ -28,6 +28,9 @@
 
 namespace Zum {
 
+struct MSaga;
+struct DB;
+
 struct DBContext : public ZumPolymorph {
   ZdbTable<Issuer>	*issuers = nullptr;
   ZdbTable<User>	*users = nullptr;
@@ -61,6 +64,7 @@ struct AuthorityData {
 
 using AuthorityFn = ZmFn<void(int, AuthorityData),
   ZmFnHeapID<"Zum.AuthorityFn">>;
+ZuDerive(SagaFn, (ZmFn<void(bool), ZmFnHeapID<"Zum.SagaFn">>));
 
 ZumExtern void loadGrantAuth(
   DBContext *, Grant, Client, bool requestedPresent, String requested,
@@ -70,6 +74,9 @@ ZumExtern void loadClientAuth(
   String requested, AuthorityFn);
 ZumExtern void loadUserAuth(
   DBContext *, Grant, User, Cred, IDVec principalRoleIDs, AuthorityFn);
+
+ZumExtern bool sagaSubmit(
+  DB *, ZdbSagaID, ZmRef<MSaga>, SagaFn, SagaFn);
 
 template <typename Complete>
 void actionCreate(

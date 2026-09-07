@@ -11,6 +11,13 @@
 
 namespace Zum {
 
+bool sagaSubmit(
+    DB *db, ZdbSagaID id, ZmRef<MSaga> saga,
+    SagaFn submit, SagaFn complete)
+{
+  return db && db->saga(0, id, ZuMv(saga), ZuMv(submit), ZuMv(complete));
+}
+
 static bool authorityHasID(const IDVec &ids, uint64_t id)
 {
   for (auto value: ids) if (value == id) return true;
