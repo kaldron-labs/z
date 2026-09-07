@@ -16,6 +16,8 @@
 #include <zlib/ZumOAuth.hh>
 #include <zlib/ZumWebAuthn.hh>
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZmFn.hh>
 
 #include <zlib/Zdb.hh>
@@ -535,9 +537,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   bool		backedUp = false;
   String	label;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.grant, Update) {
     if constexpr (!Fwd) {
       // A failed enrollment still spends its one-use capability.
       complete(true);
@@ -564,9 +564,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Insert>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.user, Insert) {
     context->users->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -602,9 +600,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Insert>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.cred, Insert) {
     context->creds->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -643,9 +639,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 3, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(3, zum.cred, Update) {
     context->creds->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -664,9 +658,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 4, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(4, zum.user, Update) {
     context->users->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -685,9 +677,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 5, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(5, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -704,9 +694,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 6, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(6, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -764,9 +752,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
   String	label;
   uint64_t	userVersion = 1;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.grant, Update) {
     if constexpr (!Fwd) {
       // A failed registration still spends its one-use ceremony.
       complete(true);
@@ -807,9 +793,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Insert>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.cred, Insert) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<Cred> row =
@@ -848,9 +832,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -868,9 +850,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 3, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(3, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -924,9 +904,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
   int64_t	expires = 0;
   String	actor;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -958,9 +936,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Insert>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.grant, Insert) {
     context->grants->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<Grant> row =
@@ -999,9 +975,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -1019,9 +993,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 3, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(3, zum.grant, Update) {
     context->grants->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->grants, 0, ZuFwdTuple(capabilityID),
 	ZuMv(complete), [this](
@@ -1074,9 +1046,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   bool		backedUp = false;
   String	label;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.grant, Update) {
     if constexpr (!Fwd) {
       // A failed recovery still spends its one-use capability.
       complete(true);
@@ -1118,9 +1088,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Insert>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.cred, Insert) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<Cred> row =
@@ -1159,9 +1127,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -1178,9 +1144,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 3, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(3, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -1214,9 +1178,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 4, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(4, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -1233,9 +1195,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 5, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(5, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -1300,9 +1260,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
   int64_t	created = 0;
   int64_t	expires = 0;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.grant, Update) {
     context->grants->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -1331,9 +1289,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Insert>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.grant, Insert) {
     context->grants->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -1379,9 +1335,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.grant, Update) {
     context->issuers->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
@@ -1426,9 +1380,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 3, ZdbSagaStep_<
-    ZuStringT<"zum.grant">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(3, zum.grant, Update) {
     context->grants->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->grants, 0, ZuFwdTuple(familyID),
 	ZuMv(complete), [this](
@@ -1487,9 +1439,7 @@ struct UserChange : public ZdbSagaBase<DBContext> {
   State::T	oldState = State::Pending;
   State::T	newState = State::Pending;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -1525,9 +1475,7 @@ struct UserChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.issuer">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.issuer, Update) {
     context->issuers->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->issuers, 0, ZuFwdTuple(issuer),
 	ZuMv(complete), [this](
@@ -1551,9 +1499,7 @@ struct UserChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.user">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.user, Update) {
     context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
@@ -1599,9 +1545,7 @@ struct RoleChange : public ZdbSagaBase<DBContext> {
   State::T	oldState = State::Pending;
   State::T	newState = State::Pending;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.role">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.role, Update) {
     context->roles->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->roles, 0, ZuFwdTuple(roleID),
 	ZuMv(complete), [this](
@@ -1633,9 +1577,7 @@ struct RoleChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.issuer">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.issuer, Update) {
     context->issuers->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->issuers, 0, ZuFwdTuple(issuer),
 	ZuMv(complete), [this](
@@ -1659,9 +1601,7 @@ struct RoleChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.role">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.role, Update) {
     context->roles->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->roles, 0, ZuFwdTuple(roleID),
 	ZuMv(complete), [this](
@@ -1705,9 +1645,7 @@ struct CredChange : public ZdbSagaBase<DBContext> {
   State::T	oldState = State::Pending;
   State::T	newState = State::Pending;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -1738,9 +1676,7 @@ struct CredChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.issuer">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.issuer, Update) {
     context->issuers->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->issuers, 0, ZuFwdTuple(issuer),
 	ZuMv(complete), [this](
@@ -1764,9 +1700,7 @@ struct CredChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.cred">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.cred, Update) {
     context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
@@ -1811,9 +1745,7 @@ struct ScopeChange : public ZdbSagaBase<DBContext> {
   State::T	oldState = State::Pending;
   State::T	newState = State::Pending;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.scope">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.scope, Update) {
     context->scopes->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->scopes, 0, ZuFwdTuple(scopeID),
 	ZuMv(complete), [this](
@@ -1845,9 +1777,7 @@ struct ScopeChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.issuer">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.issuer, Update) {
     context->issuers->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->issuers, 0, ZuFwdTuple(issuer),
 	ZuMv(complete), [this](
@@ -1871,9 +1801,7 @@ struct ScopeChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.scope">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.scope, Update) {
     context->scopes->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->scopes, 0, ZuFwdTuple(scopeID),
 	ZuMv(complete), [this](
@@ -1922,9 +1850,7 @@ struct ClientChange : public ZdbSagaBase<DBContext> {
   State::T	oldState = State::Pending;
   State::T	newState = State::Pending;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.client">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.client, Update) {
     context->clients->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->clients, 0, ZuFwdTuple(clientID),
 	ZuMv(complete), [this](
@@ -1962,9 +1888,7 @@ struct ClientChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.issuer">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.issuer, Update) {
     context->issuers->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->issuers, 0, ZuFwdTuple(issuer),
 	ZuMv(complete), [this](
@@ -1988,9 +1912,7 @@ struct ClientChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.client">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.client, Update) {
     context->clients->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->clients, 0, ZuFwdTuple(clientID),
 	ZuMv(complete), [this](
@@ -2037,9 +1959,7 @@ struct ActionChange : public ZdbSagaBase<DBContext> {
   State::T	oldState = State::Pending;
   State::T	newState = State::Pending;
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 0, ZdbSagaStep_<
-    ZuStringT<"zum.action">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(0, zum.action, Update) {
     context->actions->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->actions, 0, ZuFwdTuple(actionID),
 	ZuMv(complete), [this](
@@ -2067,9 +1987,7 @@ struct ActionChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 1, ZdbSagaStep_<
-    ZuStringT<"zum.issuer">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(1, zum.issuer, Update) {
     context->issuers->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->issuers, 0, ZuFwdTuple(issuer),
 	ZuMv(complete), [this](
@@ -2093,9 +2011,7 @@ struct ActionChange : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  template <unsigned Step, bool Fwd = true, typename Complete>
-  ZuIfT<Step == 2, ZdbSagaStep_<
-    ZuStringT<"zum.action">, ZdbSagaOp::Update>> operator ()(Complete &&complete) {
+  ZdbSagaStep(2, zum.action, Update) {
     context->actions->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->actions, 0, ZuFwdTuple(actionID),
 	ZuMv(complete), [this](
@@ -2124,7 +2040,8 @@ ZfbStruct(ActionChange,
 using Sagas = ZuTypeList<
   Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
   UserChange, RoleChange, CredChange, ScopeChange, ClientChange, ActionChange>;
-using DB = ZdbSagaDB<DBContext, Sagas>;
+ZuDerive(MSaga, (ZdbMSaga<Sagas>));
+ZuDerive(DB, (ZdbSagaDB<DBContext, Sagas>));
 
 ZumExtern ZmRef<DBContext> registerSchema(DB *);
 

@@ -469,8 +469,7 @@ private:
     static_assert(sizeof(sagaID) == 16);
     memcpy(&sagaID, m_code.id.data(), sizeof(sagaID));
     m_sagaID = sagaID;
-    using M = ZdbMSaga<Sagas>;
-    ZmRef<M> saga = new M{};
+    ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(family));
     if (!m_db->saga(0, sagaID, ZuMv(saga), [
       self = ZmRef<CodeToken_>{this}
