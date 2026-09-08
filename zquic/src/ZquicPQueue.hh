@@ -47,8 +47,8 @@ struct RxData {
   void write(const I &) { }
 };
 
-struct StreamRxData : public Zquic_::IOQueue::Node {
-  using Base = Zquic_::IOQueue::Node;
+struct StreamRxData : public ZiRxQueue::Node {
+  using Base = ZiRxQueue::Node;
 
   ZmRef<ZiIOBuf>	packet;
   uint64_t		offset = 0;

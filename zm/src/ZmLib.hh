@@ -24,9 +24,9 @@
 
 #else
 
-#define ZmAPI
-#define ZmExplicit
-#define ZmExtern extern
+#define ZmAPI ZuExport_API
+#define ZmExplicit ZuExport_Explicit
+#define ZmExtern extern ZmAPI
 
 #endif
 

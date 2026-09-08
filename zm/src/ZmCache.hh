@@ -61,28 +61,84 @@ struct ZmCacheEvict : public NTP {
   enum { Evict = Evict_ };
 };
 
-template <typename T_, typename NTP = ZmCache_Defaults>
+template <typename T_>
+struct ZmCache_LRU_NTP : public ZmListNode<T_, ZmListShadow<>> {
+  ZuDerive_(ZmCache_LRU_NTP, (ZmListNode<T_, ZmListShadow<>>))
+};
+template <typename T_>
+struct ZmCache_LRU_Node : public ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T {
+  ZuDerive_(ZmCache_LRU_Node,
+    (typename ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T))
+};
+template <typename T_>
+struct ZmCache_LRU : public ZmList<
+    T_, ZmCache_LRU_NTP<T_>, ZmCache_LRU_Node<T_>, ZmCache_LRU<T_>> {
+  using Base = ZmList<
+    T_, ZmCache_LRU_NTP<T_>, ZmCache_LRU_Node<T_>, ZmCache_LRU<T_>>;
+  using Base::Base;
+};
+template <typename T_>
+struct ZmCache_LRUDisable {
+  using Node = T_;
+  Node *delNode(Node *node) { return node; }
+  Node *shift() { return nullptr; }
+  void pushNode(Node *) { }
+};
+template <typename T_, bool Evict_>
+struct ZmCache_LRUT;
+template <typename T_>
+struct ZmCache_LRUT<T_, true> { using T = ZmCache_LRU<T_>; };
+template <typename T_>
+struct ZmCache_LRUT<T_, false> { using T = ZmCache_LRUDisable<T_>; };
+
+ZmHashDeriveT((Node_, NTP_), (T_, LRU_), ZmCache_Hash, Node_,
+  (ZmHashNode<Node_, ZmHashLock<ZmNoLock, NTP_>>));
+
+template <typename Node_, typename HeapID_, bool Sharded_>
+struct ZmCache_FindFn : public ZmFn<void(Node_ *),
+    ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>> {
+  ZuDerive_(ZmCache_FindFn,
+    (ZmFn<void(Node_ *),
+      ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>>) )
+};
+template <typename FindFn_>
+struct ZmCache_FindFnList_NTP : public ZmList_Defaults {
+  ZuDerive_(ZmCache_FindFnList_NTP, ZmList_Defaults)
+};
+template <typename FindFn_>
+struct ZmCache_FindFnList_Node : public
+    ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T {
+  ZuDerive_(ZmCache_FindFnList_Node,
+    (typename ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T))
+};
+template <typename FindFn_>
+struct ZmCache_FindFnList : public ZmList<
+    FindFn_, ZmCache_FindFnList_NTP<FindFn_>,
+    ZmCache_FindFnList_Node<FindFn_>, ZmCache_FindFnList<FindFn_>> {
+  using Base = ZmList<
+    FindFn_, ZmCache_FindFnList_NTP<FindFn_>,
+    ZmCache_FindFnList_Node<FindFn_>, ZmCache_FindFnList<FindFn_>>;
+  using Base::Base;
+};
+
+ZmHashDeriveT((Key_, FindFnList_, HeapID_, Sharded_), ZmCache_LoadHash,
+  (ZuTuple<Key_, FindFnList_>),
+  (ZmHashKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(),
+    ZmHashHeapID_<HeapID_, ZmHashSharded<Sharded_{}>>>));
+
+template <typename T_, typename NTP = ZmCache_Defaults, typename Impl_ = void>
 class ZmCache {
 public:
   using T = T_;
+  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, ZmCache, Impl_>;
   using Lock = typename NTP::Lock;
   enum { Evict = NTP::Evict };
 
 private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
-  ZuDerive(LRUList, (ZmList<T, ZmListNode<T, ZmListShadow<>>>));
-  struct LRUDisable { // LRU list is not needed if eviction is disabled
-    using Node = T;
-    Node *delNode(Node *node) { return node; }
-    Node *shift() { return nullptr; }
-    void pushNode(Node *) { }
-  };
-  using LRU = ZuIf<Evict, LRUList, LRUDisable>;
-  ZuDerive(Hash,
-    (ZmHash<typename LRU::Node,
-      ZmHashNode<typename LRU::Node,
-	ZmHashLock<ZmNoLock, NTP>>>)); // overrides NTP::Lock
+  using LRU = typename ZmCache_LRUT<T, Evict>::T;
+  using Hash = ZmCache_Hash<typename LRU::Node, NTP, T, LRU>;
 
 public:
   using Key = typename Hash::Key;
@@ -96,12 +152,10 @@ public:
   using NodeMvRef = typename Hash::NodeMvRef;
 
 private:
-  using FindFn = ZmFn<void(Node *),
-    ZmFnHeapID<HeapID{}() + ".FindFn"_Zu, ZmFnSharded<Sharded>>>;
-  ZuDerive(FindFnList, (ZmList<FindFn>));
-  ZuDerive(LoadHash,
-    (ZmHashKV<Key, FindFnList,
-      ZmHashHeapID_<HeapID, ZmHashSharded<Sharded>>>));
+  using FindFn = ZmCache_FindFn<Node, HeapID, Sharded>;
+  using FindFnList = ZmCache_FindFnList<FindFn>;
+  using LoadHash = ZmCache_LoadHash<
+    Key, FindFnList, HeapID, ZuBool<Sharded>>;
 
 public:
   ZmCache() noexcept {
@@ -337,7 +391,7 @@ public:
   template <bool Delete = false, typename L>
   ZuIfT<!Delete> all(L &&l) const {
     m_lock.lock();
-    const_cast<ZmCache *>(this)->all_<Delete, false>(ZuFwd<L>(l));
+    const_cast<Impl *>(this)->all_<Delete, false>(ZuFwd<L>(l));
   }
   template <bool Delete, typename L>
   ZuIfT<Delete> all(L &&l) {
@@ -406,8 +460,35 @@ private:
 };
 
 template <typename P0, typename P1, typename NTP = ZmCache_Defaults>
-ZuDerive(ZmCacheKV,
-  (ZmCache<ZuTuple<P0, P1>,
-    ZmCacheKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>>));
+struct ZmCacheKV : public ZmCache<
+    ZuTuple<P0, P1>,
+    ZmCacheKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>,
+    ZmCacheKV<P0, P1, NTP>> {
+  using Base = ZmCache<
+    ZuTuple<P0, P1>,
+    ZmCacheKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>,
+    ZmCacheKV<P0, P1, NTP>>;
+  using Base::Base;
+};
+
+#define ZmCacheDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  ZuDerive(Name, (ZmCache<ZuPP_Strip(T_), Name ## _NTP, Name>));
+
+#define ZmCacheDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmCache<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args)>>));
+#define ZmCacheDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmCache<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmCacheDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmCacheDeriveT(...) \
+  ZmCacheDeriveT_N(__VA_ARGS__, \
+    ZmCacheDeriveT_5(__VA_ARGS__), \
+    ZmCacheDeriveT_4(__VA_ARGS__))
 
 #endif /* ZmCache_HH */

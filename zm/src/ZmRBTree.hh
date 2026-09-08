@@ -194,6 +194,44 @@ private:
   uintptr_t	m_parent = 0;
 };
 
+template <typename T_, class NTP_, typename Node_, typename Impl_>
+class ZmRBTree;
+
+// ZmRBTree_NodeT - the concrete tree node selected by an NTP
+template <typename T_, typename NTP_>
+struct ZmRBTree_NodeT {
+private:
+  static constexpr auto KeyAxor = NTP_::KeyAxor;
+  static constexpr auto ValAxor = NTP_::ValAxor;
+  enum { Unique = NTP_::Unique };
+  using NodeBase = typename NTP_::Node;
+  using HeapID = typename NTP_::HeapID;
+  enum { Sharded = NTP_::Sharded };
+
+  struct Node;
+  using NodeExt = ZmRBTree_NodeExt<Node, Unique>;
+  using NodeImpl = ZmNode<
+    T_, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
+
+  struct Node : public NodeImpl {
+    template <typename, class, typename, typename> friend class ZmRBTree;
+    ZuDerive_(Node, NodeImpl)
+  private:
+    using NodeExt::black;
+    using NodeExt::setBlack;
+    using NodeExt::clrBlack;
+    using NodeExt::right;
+    using NodeExt::left;
+    using NodeExt::parent;
+    using NodeExt::dup;
+    using NodeExt::clearDup;
+    using NodeExt::clear;
+  };
+
+public:
+  using T = Node;
+};
+
 // ZmRBTree search and iteration comparators
 enum {
   ZmRBTreeEqual = 0,
@@ -207,6 +245,7 @@ enum {
 template <typename Tree_, int Direction_>
 class ZmRBTreeIter_ {
 friend Tree_;
+template <typename, class, typename, typename> friend class ZmRBTree;
 
 public:
   using Tree = Tree_;
@@ -319,7 +358,9 @@ struct ZmRBTree_IsStaticEquals<T, Cmp, decltype(
   void())> : public ZuTrue { };
 
 // red/black tree
-template <typename T_, class NTP = ZmRBTree_Defaults>
+template <typename T_, class NTP = ZmRBTree_Defaults,
+  typename Node_ = typename ZmRBTree_NodeT<T_, NTP>::T,
+  typename Impl_ = void>
 class ZmRBTree : public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
   template <typename, int> friend class ZmRBTreeIter_;
   template <typename, int> friend class ZmRBTreeIter;
@@ -327,6 +368,7 @@ class ZmRBTree : public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
 
 public:
   using T = T_;
+  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, ZmRBTree, Impl_>;
   static constexpr auto KeyAxor = NTP::KeyAxor;
   static constexpr auto ValAxor = NTP::ValAxor;
   using KeyRet = decltype(KeyAxor(ZuDeclVal<const T &>()));
@@ -350,29 +392,11 @@ private:
 
 public:
   template <int Direction = ZmRBTreeGreaterEqual>
-  using Iter = ZmRBTreeIter<ZmRBTree, Direction>;
+  using Iter = ZmRBTreeIter<Impl, Direction>;
   template <int Direction = ZmRBTreeGreaterEqual>
-  using CIter = ZmRBTreeCIter<ZmRBTree, Direction>;
+  using CIter = ZmRBTreeCIter<Impl, Direction>;
 
-  struct Node;
-private:
-  using NodeExt = ZmRBTree_NodeExt<Node, Unique>;
-  using Node_ = ZmNode<T, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
-public:
-  struct Node : public Node_ {
-  friend ZmRBTree;
-    ZuDerive_(Node, Node_)
-  private:
-    using NodeExt::black;
-    using NodeExt::setBlack;
-    using NodeExt::clrBlack;
-    using NodeExt::right;
-    using NodeExt::left;
-    using NodeExt::parent;
-    using NodeExt::dup;
-    using NodeExt::clearDup;
-    using NodeExt::clear;
-  };
+  using Node = Node_;
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
@@ -917,19 +941,19 @@ private:
 public:
   template <int Direction = ZmRBTreeGreaterEqual>
   auto iter() {
-    return Iter<Direction>{*this};
+    return Iter<Direction>{static_cast<Impl &>(*this)};
   }
   template <int Direction = ZmRBTreeGreaterEqual, typename P>
   auto iter(P &&key) {
-    return Iter<Direction>{*this, ZuFwd<P>(key)};
+    return Iter<Direction>{static_cast<Impl &>(*this), ZuFwd<P>(key)};
   }
   template <int Direction = ZmRBTreeGreaterEqual>
   auto citer() const {
-    return CIter<Direction>{*this};
+    return CIter<Direction>{static_cast<const Impl &>(*this)};
   }
   template <int Direction = ZmRBTreeGreaterEqual, typename P>
   auto citer(P &&key) const {
-    return CIter<Direction>{*this, ZuFwd<P>(key)};
+    return CIter<Direction>{static_cast<const Impl &>(*this), ZuFwd<P>(key)};
   }
 
 // clean tree
@@ -1290,35 +1314,40 @@ private:
   using Iter_ = ZmRBTreeIter_<ZmRBTree, Direction>;
 
   template <int Direction>
-  ZuIfT<(Direction >= 0)> iterBegin(Iter_<Direction> &iter) {
+  ZuIfT<(Direction >= 0)> iterBegin(
+      ZmRBTreeIter_<Impl, Direction> &iter) {
     iter.m_node = m_minimum;
   }
   template <int Direction>
-  ZuIfT<(Direction < 0)> iterBegin(Iter_<Direction> &iter) {
+  ZuIfT<(Direction < 0)> iterBegin(
+      ZmRBTreeIter_<Impl, Direction> &iter) {
     iter.m_node = m_maximum;
   }
   template <int Direction, typename P>
-  void iterBegin(Iter_<Direction> &iter, const P &key) {
+  void iterBegin(ZmRBTreeIter_<Impl, Direction> &iter, const P &key) {
     iter.m_node = find_<Direction>(matchKey(key),
       [](const Node *) constexpr { return true; });
   }
 
   template <int Direction>
-  ZuIfT<(Direction > 0), Node *> iterate(Iter_<Direction> &iter) {
+  ZuIfT<(Direction > 0), Node *> iterate(
+      ZmRBTreeIter_<Impl, Direction> &iter) {
     Node *node = iter.m_node;
     if (!node) return nullptr;
     iter.m_node = next(node);
     return node;
   }
   template <int Direction>
-  ZuIfT<(!Direction), Node *> iterate(Iter_<Direction> &iter) {
+  ZuIfT<(!Direction), Node *> iterate(
+      ZmRBTreeIter_<Impl, Direction> &iter) {
     Node *node = iter.m_node;
     if (!node) return nullptr;
     iter.m_node = node->dup();
     return node;
   }
   template <int Direction>
-  ZuIfT<(Direction < 0), Node *> iterate(Iter_<Direction> &iter) {
+  ZuIfT<(Direction < 0), Node *> iterate(
+      ZmRBTreeIter_<Impl, Direction> &iter) {
     Node *node = iter.m_node;
     if (!node) return nullptr;
     iter.m_node = prev(node);
@@ -1343,5 +1372,42 @@ template <typename P0, typename P1, typename NTP = ZmRBTree_Defaults>
 using ZmRBTreeKV =
   ZmRBTree<ZuTuple<P0, P1>,
     ZmRBTreeKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>>;
+
+#define ZmRBTreeDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  using Name ## _Node = ZmRBTree_NodeT<ZuPP_Strip(T_), Name ## _NTP>::T; \
+  ZuDerive(Name, \
+    (ZmRBTree<ZuPP_Strip(T_), Name ## _NTP, Name ## _Node, Name>));
+
+#define ZmRBTreeDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) using Name ## _Node = \
+    ZmRBTree_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T; \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmRBTree<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name ## _Node<ZuPP_Strip(Args)>, Name<ZuPP_Strip(Args)>>));
+#define ZmRBTreeDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) using Name ## _Node = \
+    ZmRBTree_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T; \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmRBTree<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name ## _Node<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmRBTreeDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmRBTreeDeriveT(...) \
+  ZmRBTreeDeriveT_N(__VA_ARGS__, \
+    ZmRBTreeDeriveT_5(__VA_ARGS__), \
+    ZmRBTreeDeriveT_4(__VA_ARGS__))
+
+#define ZmRBTreeKVDerive(Name, P0_, P1_, ...) \
+  ZuDerive(Name ## _NTP, \
+    (ZmRBTreeKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), __VA_ARGS__>)); \
+  using Name ## _Node = ZmRBTree_NodeT< \
+    ZuTuple<ZuPP_Strip(P0_), ZuPP_Strip(P1_)>, \
+    Name ## _NTP>::T; \
+  ZuDerive(Name, \
+    (ZmRBTree<ZuTuple<ZuPP_Strip(P0_), ZuPP_Strip(P1_)>, \
+      Name ## _NTP, Name ## _Node, Name>))
 
 #endif /* ZmRBTree_HH */

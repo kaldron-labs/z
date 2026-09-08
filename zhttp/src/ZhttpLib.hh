@@ -24,9 +24,9 @@
 
 #else
 
-#define ZhttpAPI
-#define ZhttpExplicit
-#define ZhttpExtern extern
+#define ZhttpAPI ZuExport_API
+#define ZhttpExplicit ZuExport_Explicit
+#define ZhttpExtern extern ZhttpAPI
 
 #endif
 

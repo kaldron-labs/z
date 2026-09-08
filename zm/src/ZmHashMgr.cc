@@ -22,11 +22,10 @@ friend Ztc::HashMgr;
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
-  ZuDerive(ID2Params,
-    (ZmRBTreeKV<ZuID, ZmHashParams,
-      ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"ZmHashMgr_",
-	  ZmRBTreeLock<ZmNoLock>>>>));
+  ZmRBTreeKVDerive(ID2Params, ZuID, ZmHashParams,
+    ZmRBTreeUnique<true,
+      ZmRBTreeHeapID<"ZmHashMgr_",
+	ZmRBTreeLock<ZmNoLock>>>);
 
 public:
   ZmHashMgr_() { }

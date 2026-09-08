@@ -23,7 +23,7 @@ inline bool operator ==(const Object &l, const Object &r) {
   return l.m_val == r.m_val;
 }
 
-ZuDerive(ObjectHash, (ZmHash<ZmRef<Object>>));
+ZmHashDerive(ObjectHash, ZmRef<Object>, (ZmHash_Defaults));
 
 int main(int argc, char *argv[])
 {

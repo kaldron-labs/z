@@ -18,8 +18,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZmList.hh>
 
-ZuDerive(ZiTxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+ZmListDerive(ZiTxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 
 using ZiTxBuf = ZiTxQueue::Node;
 

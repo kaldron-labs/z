@@ -93,11 +93,10 @@ friend Ztc::ThreadMgr;
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
-  ZuDerive(Map,
-    (ZmRBTree<ZmThreadContext *,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmNoLock,
-	  ZmRBTreeHeapID<"Ztc.ThreadMgr">>>>));
+  ZmRBTreeDerive(Map, ZmThreadContext *,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmNoLock,
+	ZmRBTreeHeapID<"Ztc.ThreadMgr">>>);
 
 public:
   static ZmThreadMgr_ *instance() {

@@ -26,11 +26,10 @@ friend Ztc::HubMgr;
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
-  ZuDerive(Map,
-    (ZmRBTreeKV<Key, Ztc::Hub *,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmNoLock,
-	  ZmRBTreeHeapID<"Ztc.HubMgr">>>>));
+  ZmRBTreeKVDerive(Map, Key, Ztc::Hub *,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmNoLock,
+	ZmRBTreeHeapID<"Ztc.HubMgr">>>);
   using Captures =
     ZtArray<Ztc::HubTelemetry,
       ZtArrayHeapID<"Ztc.HubMgr.Capture">>;

@@ -47,23 +47,22 @@ class ZmAPI ZmAnyHash_ : public ZmPolymorph, public Ztc::Hash { };
 inline uintptr_t ZmAnyHash_PtrAxor(const ZmAnyHash_ &h) {
   return reinterpret_cast<uintptr_t>(&h);
 }
-ZuDerive(ZmHashMgr_Tables,
-  (ZmRBTree<ZmAnyHash_,
-    ZmRBTreeNode<ZmAnyHash_,
-      ZmRBTreeKey<ZmAnyHash_PtrAxor,
-	ZmRBTreeUnique<true,
-	  ZmRBTreeShadow<
-	    ZmRBTreeHeapID<"">>>>>>));
+ZmRBTreeDerive(ZmHashMgr_Tables, ZmAnyHash_,
+  ZmRBTreeNode<ZmAnyHash_,
+    ZmRBTreeKey<ZmAnyHash_PtrAxor,
+      ZmRBTreeUnique<true,
+	ZmRBTreeShadow<
+	  ZmRBTreeHeapID<"">>>>>);
 using ZmAnyHash = ZmHashMgr_Tables::Node;
 
-template <typename, typename> class ZmHash; 
+template <typename, typename, typename, typename> class ZmHash;
 template <typename, typename, typename, unsigned> class ZmLHash_;
 
 class ZmHashMgr_;
 class ZmAPI ZmHashMgr {
 friend ZmHashMgr_;
 friend ZmHashParams;
-template <typename, typename> friend class ZmHash; 
+template <typename, typename, typename, typename> friend class ZmHash;
 template <typename, typename, typename, unsigned> friend class ZmLHash_;
 
 public:

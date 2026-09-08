@@ -46,15 +46,23 @@
 
 namespace Ztls_ {
 
-using IOQueue = ZiRxQueue;
-using RxStream = ZiRxStream<IOQueue>;
+using RxQueue = ZiRxQueue;
+using TxQueue = ZiTxQueue;
+using RxStream = ZiRxStream<RxQueue>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
-using BufAlloc =
-  Zi::IOBufAlloc<IOQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+using RxBufAlloc =
+  Zi::IOBufAlloc<RxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+
+template <
+  unsigned Size = ZiIOBuf_DefltSize,
+  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  ZuString HeapID = ZiIOBuf_HeapID{}()>
+using TxBufAlloc =
+  Zi::IOBufAlloc<TxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
 
 } // namespace Ztls_
 
@@ -253,13 +261,13 @@ template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Ztls.RxBuf">
-using RxBufAlloc = Ztls_::BufAlloc<Size, MaxSize, HeapID>;
+using RxBufAlloc = Ztls_::RxBufAlloc<Size, MaxSize, HeapID>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Ztls.TxBuf">
-using TxBufAlloc = Ztls_::BufAlloc<Size, MaxSize, HeapID>;
+using TxBufAlloc = Ztls_::TxBufAlloc<Size, MaxSize, HeapID>;
 
 template <typename RxBufAlloc>
 inline int parseHdr(const ZiIOContext &, ZiIOBuf *buf) {
@@ -279,8 +287,8 @@ class Link :
   public ZiTx<Impl>,
   public Ztc::Link
 {
-  ZuAssert((ZuIs_<RxBufAlloc_, Ztls_::IOQueue::Node>{}));
-  ZuAssert((ZuIs_<TxBufAlloc_, Ztls_::IOQueue::Node>{}));
+  ZuAssert((ZuIs_<RxBufAlloc_, Ztls_::RxQueue::Node>{}));
+  ZuAssert((ZuIs_<TxBufAlloc_, Ztls_::TxQueue::Node>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:

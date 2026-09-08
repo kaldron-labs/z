@@ -834,7 +834,7 @@ class HeaderSpans {
   using List = HeaderList<Headers>;
   using Keys = typename List::Keys;
 
-  static_assert(ZuTypeUnique<Keys>::N == Keys::N,
+  ZuAssert((ZuTypeUnique<Keys>::N == Keys::N),
     "mutable header spans require unique keys");
 
 public:
@@ -842,7 +842,7 @@ public:
   void record(ZuSpan<uint8_t> span) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
     using Value = typename List::template Value<I>;
-    static_assert(!Value::N,
+    ZuAssert((!Value::N),
       "only runtime-valued declared headers have mutable spans");
     m_slots[I] = span;
   }
@@ -850,7 +850,7 @@ public:
   void recordOffset(uint64_t offset, unsigned length) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
     using Value = typename List::template Value<I>;
-    static_assert(!Value::N,
+    ZuAssert((!Value::N),
       "only runtime-valued declared headers have mutable spans");
     m_slots[I] = {reinterpret_cast<uint8_t *>(uintptr_t(offset + 1)), length};
   }
@@ -866,7 +866,7 @@ public:
     auto patch = [this]<typename Key, typename P>(P &&patcher) {
       constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
       using Value = typename List::template Value<I>;
-      static_assert(!Value::N,
+      ZuAssert((!Value::N),
 	"bodyHdrs cannot mutate a fixed declared header value");
       ZuFwd<P>(patcher)(m_slots[I]);
     };
@@ -883,12 +883,12 @@ class HeaderSpans<Headers, 0> {
 public:
   template <typename Key>
   void record(ZuSpan<uint8_t>) {
-    static_assert(!ZuIsSame<Key, Key>{},
+    ZuAssert((!ZuIsSame<Key, Key>{}),
       "header span key is not declared");
   }
   template <typename Key>
   void recordOffset(uint64_t, unsigned) {
-    static_assert(!ZuIsSame<Key, Key>{},
+    ZuAssert((!ZuIsSame<Key, Key>{}),
       "header span key is not declared");
   }
   void resolve(uint8_t *) { }

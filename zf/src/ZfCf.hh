@@ -53,10 +53,9 @@ namespace ZfCf {
 
 ZuDerive(DefKey, (ZtString<ZtStringBuiltin<16, ZtStringHeapID<"ZfCf.DefineKey">>>));
 ZuDerive(DefVal, (ZtString<ZtStringBuiltin<48, ZtStringHeapID<"ZfCf.DefineVal">>>));
-ZuDerive(Defines_, (
-  ZmRBTreeKV<DefKey, DefVal,
-    ZmRBTreeUnique<true,
-      ZmRBTreeHeapID<"ZfCf.Defines">>>));
+ZmRBTreeKVDerive(Defines_, DefKey, DefVal,
+  ZmRBTreeUnique<true,
+    ZmRBTreeHeapID<"ZfCf.Defines">>);
 struct Defines : public ZuObject, public Defines_ { };
 
 using ZfTree::AnyNode;

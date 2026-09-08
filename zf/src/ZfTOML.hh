@@ -665,7 +665,7 @@ template <
   unsigned TypeCode, typename Props, typename S, typename T>
 void saveScalar(S &s, const T &v, ZuCSpan key = {})
 {
-  static_assert(ScalarFmtValid<TypeCode, Props>{},
+  ZuAssert((ScalarFmtValid<TypeCode, Props>{}),
     "TOML string ScalarFmt requires a string output representation");
   constexpr unsigned Style = ZuFieldProp::TOML::GetScalarFmt<Props>{};
   if constexpr (TypeCode == ZfFieldTC::CString ||

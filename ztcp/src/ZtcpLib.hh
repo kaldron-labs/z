@@ -24,9 +24,9 @@
 
 #else
 
-#define ZtcpAPI
-#define ZtcpExplicit
-#define ZtcpExtern extern
+#define ZtcpAPI ZuExport_API
+#define ZtcpExplicit ZuExport_Explicit
+#define ZtcpExtern extern ZtcpAPI
 
 #endif
 

@@ -16,7 +16,7 @@
 
 using namespace ZuTestUtil;
 
-static_assert(ZuIs_<ZfYAML::AnyNode, ZfTree::AnyNode>{});
+ZuAssert((ZuIs_<ZfYAML::AnyNode, ZfTree::AnyNode>{}));
 
 ZtEnumNS(, YAMLValues, int8_t, High, Low, Normal);
 namespace YAMLFlags { ZtFlags(, Flags, uint8_t, Bit0, Bit1, Bit2); }

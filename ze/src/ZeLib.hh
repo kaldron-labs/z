@@ -24,9 +24,9 @@
 
 #else
 
-#define ZeAPI
-#define ZeExplicit
-#define ZeExtern extern
+#define ZeAPI ZuExport_API
+#define ZeExplicit ZuExport_Explicit
+#define ZeExtern extern ZeAPI
 
 #endif
 

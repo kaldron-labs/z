@@ -56,7 +56,7 @@ struct ZCmp {
   static constexpr const Z *null() { return nullptr; }
 };
 
-ZuDerive(ZHash, (ZmHashKV<unsigned, ZmRef<Z>, ZmHashLock<ZmPLock>>));
+ZmHashKVDerive(ZHash, unsigned, ZmRef<Z>, (ZmHashLock<ZmPLock>));
 
 void Y::helloWorld() { out("hello world [Y]"); }
 

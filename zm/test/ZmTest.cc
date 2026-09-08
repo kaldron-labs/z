@@ -42,10 +42,20 @@ struct ZCmp {
   static const ZmRef<Z> &null() { static const ZmRef<Z> z; return z; }
 };
 
-ZuDerive(ZList, (ZmList<ZmRef<Z>, ZmListCmp<ZCmp> >));
-ZuDerive(ZHash, (ZmHashKV<int, ZmRef<Z> >));
+ZmListDerive(ZList, ZmRef<Z>, ZmListCmp<ZCmp>);
+ZmHashKVDerive(ZHash, int, ZmRef<Z>, (ZmHash_Defaults));
 
-ZuDerive(ZList2, (ZmList<ZuCArray<20>, ZmListNode<ZuCArray<20>>>));
+ZmListDerive(ZList2, ZuCArray<20>, ZmListNode<ZuCArray<20>>);
+
+using ZListDefault = ZmList<ZmRef<Z>, ZList_NTP>;
+using ZListExplicit = ZmList<ZmRef<Z>, ZList_NTP, ZList_Node, ZList>;
+ZuAssert((ZuIsSame<ZList::Impl, ZList>{}));
+ZuAssert((ZuIsSame<ZList::Node, ZList_Node>{}));
+ZuAssert((ZuIsSame<ZListExplicit::Node, ZList::Node>{}));
+ZuAssert((ZuIsSame<ZListExplicit::NodeRef, ZList::NodeRef>{}));
+ZuAssert((ZuIsSame<ZListExplicit::NodeMvRef, ZList::NodeMvRef>{}));
+ZuAssert((sizeof(ZList::Node) == sizeof(ZListDefault::Node)));
+ZuAssert((alignof(ZList::Node) == alignof(ZListDefault::Node)));
 
 void Y::helloWorld() { log("hello world [Y]"); }
 

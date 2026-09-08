@@ -29,10 +29,12 @@ struct ZCmp {
   static constexpr const Z *null() { return nullptr; }
 };
 
-ZuDerive(ZCache, (ZmCacheKV<unsigned, Z, ZmCacheLock<ZmPLock>>));
+ZmCacheDerive(ZCache, (ZuTuple<unsigned, Z>),
+  ZmCacheKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(),
+    ZmCacheLock<ZmPLock>>);
 using ZNode = ZCache::Node;
 
-ZuDerive(ZTree, (ZmRBTreeKV<unsigned, Z>));
+ZmRBTreeKVDerive(ZTree, unsigned, Z, ZmRBTree_Defaults);
 
 void backFill(ZTree &tree, unsigned cacheSize)
 {

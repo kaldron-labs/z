@@ -116,4 +116,8 @@
   __VA_OPT__(, ZuPP_Defer(ZuPP_MapIndexComma_)()(map, (i + 1), __VA_ARGS__))
 #define ZuPP_MapIndexCommaComma_() ZuPP_MapIndexComma
 
+#define ZuPP_PfxTypename_(Arg) typename Arg
+#define ZuPP_PfxTypename(Args) \
+  template <ZuPP_Eval(ZuPP_Defer(ZuPP_MapComma)(ZuPP_PfxTypename_, ZuPP_Strip(Args)))>
+
 #endif /* ZuPP_HH */

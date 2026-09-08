@@ -43,7 +43,17 @@ struct ZCmp {
   }
 };
 
-ZuDerive(Tree, (ZmRBTree<ZmRef<Z>, ZmRBTreeCmp<ZCmp> >));
+ZmRBTreeDerive(Tree, ZmRef<Z>, ZmRBTreeCmp<ZCmp>);
+
+using TreeDefault = ZmRBTree<ZmRef<Z>, Tree_NTP>;
+using TreeExplicit = ZmRBTree<ZmRef<Z>, Tree_NTP, Tree_Node, Tree>;
+ZuAssert((ZuIsSame<Tree::Impl, Tree>{}));
+ZuAssert((ZuIsSame<Tree::Node, Tree_Node>{}));
+ZuAssert((ZuIsSame<TreeExplicit::Node, Tree::Node>{}));
+ZuAssert((ZuIsSame<TreeExplicit::NodeRef, Tree::NodeRef>{}));
+ZuAssert((ZuIsSame<TreeExplicit::NodeMvRef, Tree::NodeMvRef>{}));
+ZuAssert((sizeof(Tree::Node) == sizeof(TreeDefault::Node)));
+ZuAssert((alignof(Tree::Node) == alignof(TreeDefault::Node)));
 
 static void delptr(Tree *tree, Z *z) {
   tree->del(z);

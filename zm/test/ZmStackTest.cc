@@ -38,6 +38,8 @@ struct C {
   static ZmAtomic<uint32_t>	m_count;
 };
 
+ZmStackDerive(S, C, ZmStack_Defaults);
+
 void testParamsAndEmpty()
 {
   ZuTestScope(testParamsAndEmpty);
@@ -46,7 +48,7 @@ void testParamsAndEmpty()
   ZuCheck(params.initial() == 0);
   ZuCheck(params.maxFrag() == ZmStackMaxFrag);
 
-  ZmStack<C> s{ZmStackParams{}.initial(2).maxFrag(25)};
+  S s{ZmStackParams{}.initial(2).maxFrag(25)};
   ZuCheck(s.size() == 2);
   ZuCheck(s.length() == 0);
   ZuCheck(s.count() == 0);

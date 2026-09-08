@@ -40,7 +40,7 @@ class ZiAPI ZiGlob {
 
     static const Zi::Path &NameAxor(const Entry &entry) { return entry.name; }
   };
-  ZuDerive(Entries, (ZmRBTree<Entry, ZmRBTreeKey<Entry::NameAxor>>));
+  ZmRBTreeDerive(Entries, Entry, ZmRBTreeKey<Entry::NameAxor>);
   using Iter = decltype(ZuDeclVal<const Entries &>().citer());
 
 public:

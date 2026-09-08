@@ -16,7 +16,7 @@
 
 struct Connection : public ZmObject { };
 
-ZuDerive(ConnHash, (ZmHashKV<int, ZmRef<Connection>, ZmHashLock<ZmPLock>>));
+ZmHashKVDerive(ConnHash, int, ZmRef<Connection>, (ZmHashLock<ZmPLock>));
 
 struct TestObject {
   TestObject() : connHash{new ConnHash()} { }

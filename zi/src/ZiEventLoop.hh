@@ -79,11 +79,10 @@ struct Socket__ {
 struct Socket_ : public ZuObject, public Socket__ { ZuDerive_(Socket_, Socket__); };
 
 // Socket hash table, keyed on socket
-ZuDerive(Sockets,
-  (ZmHash<Socket_,
-    ZmHashNode<Socket_,
-      ZmHashKey<Socket_::KeyAxor,
-	ZmHashHeapID<"ZiEventLoop.Socket">>>>));
+ZmHashDerive(Sockets, Socket_,
+  (ZmHashNode<Socket_,
+    ZmHashKey<Socket_::KeyAxor,
+	ZmHashHeapID<"ZiEventLoop.Socket">>>));
 
 using Socket = Sockets::Node;
 
@@ -101,16 +100,15 @@ struct Handle__ {
 struct Handle_ : public ZuObject, public Handle__ { ZuDerive_(Handle_, Handle__); };
 
 // Handle hash table, keyed on handle
-ZuDerive(Handles,
-  (ZmHash<Handle_,
-    ZmHashNode<Handle_,
-      ZmHashKey<Handle_::KeyAxor,
-	ZmHashHeapID<"ZiEventLoop.Handle">>>>));
+ZmHashDerive(Handles, Handle_,
+  (ZmHashNode<Handle_,
+    ZmHashKey<Handle_::KeyAxor,
+	ZmHashHeapID<"ZiEventLoop.Handle">>>));
 
 using Handle = Handles::Node;
 
 // main event loop
-class Loop {
+class ZiAPI Loop {
 public:
   void init(ZmScheduler *, unsigned sid, FailFn);
   void final();

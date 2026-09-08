@@ -24,9 +24,9 @@
 
 #else
 
-#define ZfAPI
-#define ZfExplicit
-#define ZfExtern extern
+#define ZfAPI ZuExport_API
+#define ZfExplicit ZuExport_Explicit
+#define ZfExtern extern ZfAPI
 
 #endif
 

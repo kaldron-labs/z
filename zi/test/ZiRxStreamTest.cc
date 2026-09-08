@@ -20,8 +20,7 @@ using namespace ZuTestUtil;
 
 namespace ZiRxStreamTest_ {
 
-ZuDerive(RxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 64, 256,
   ZuStringT<"ZiRxStreamTest.Buf">>;
 

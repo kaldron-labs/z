@@ -156,8 +156,8 @@ struct StreamTask {
   void	(*stopFn)(void *) = nullptr;
   void	(*releaseFn)(void *) = nullptr;
 };
-ZuDerive(StreamTaskQ, (ZmList<StreamTask,
-  ZmListNode<StreamTask, ZmListHeapID<"Zhttp.StreamTask">>>));
+ZmListDerive(StreamTaskQ, StreamTask,
+  ZmListNode<StreamTask, ZmListHeapID<"Zhttp.StreamTask">>);
 
 enum { StreamStopBatch = 64 };
 

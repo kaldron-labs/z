@@ -836,11 +836,10 @@ inline const SentFrameKey &SentFrameKey_IDAxor(const SentFrameKey &key)
   return key;
 }
 
-ZuDerive(SentFrameAckHash,
-  (ZmHash<SentFrameKey,
-    ZmHashNode<SentFrameKey,
-      ZmHashKey<SentFrameKey_IDAxor,
-	ZmHashHeapID<"Zquic.Pkt.AckdFrame">>>>));
+ZmHashDerive(SentFrameAckHash, SentFrameKey,
+  (ZmHashNode<SentFrameKey,
+    ZmHashKey<SentFrameKey_IDAxor,
+	ZmHashHeapID<"Zquic.Pkt.AckdFrame">>>));
 
 struct SentFrameUpdate {
   SentFrameRef	ref;
@@ -1191,9 +1190,8 @@ private:
 #endif
 };
 
-ZuDerive(RecoveryPktList,
-  (ZmList<SentPkt *,
-    ZmListHeapID<"Zquic.Pkt.Recovery">>));
+ZmListDerive(RecoveryPktList, SentPkt *,
+  ZmListHeapID<"Zquic.Pkt.Recovery">);
 
 using TxPkt = SentPkt;
 

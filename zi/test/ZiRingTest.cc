@@ -71,8 +71,8 @@ struct Msg {
   uint32_t m_writer;
 };
 
-ZuDerive(WriterSeqs, (ZmHashKV<uint32_t, uint64_t,
-  ZmHashLock<ZmNoLock, ZmHashHeapID<"ZiRingTest.WriterSeqs">>>));
+ZmHashKVDerive(WriterSeqs, uint32_t, uint64_t,
+  (ZmHashLock<ZmNoLock, ZmHashHeapID<"ZiRingTest.WriterSeqs">>));
 
 struct Params {
   ZtString<>		name;

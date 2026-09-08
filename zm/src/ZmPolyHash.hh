@@ -49,6 +49,81 @@ using ZmPolyHashHeapID = ZmHashHeapID_<ZuStringT<HeapID>, NTP>;
 template <bool Sharded, typename NTP = ZmPolyHash_Defaults>
 using ZmPolyHashSharded = ZmHashSharded<Sharded, NTP>;
 
+// a stable owner policy for direct ZmPolyHash use; derive macros introduce a
+// concrete owner-named replacement, so recursive index nodes do not carry the
+// complete predecessor-node spelling in their identity
+template <typename T_, typename NTP_>
+struct ZmPolyHash_Index {
+  using Value = T_;
+  using NTP = NTP_;
+};
+
+template <typename Index_, unsigned KeyID_>
+struct ZmPolyHash_NodeT;
+
+template <typename Index_, unsigned KeyID_, bool Last_>
+struct ZmPolyHash_NextT;
+template <typename Index_, unsigned KeyID_>
+struct ZmPolyHash_NextT<Index_, KeyID_, false> {
+  using T = typename ZmPolyHash_NodeT<Index_, KeyID_ + 1>::T;
+};
+template <typename Index_, unsigned KeyID_>
+struct ZmPolyHash_NextT<Index_, KeyID_, true> {
+  using T = typename Index_::Value;
+};
+
+// implementation detail for ZmPolyHash_NodeT; its public interface is kept
+// deliberately private so consumers can only name NodeT::T
+template <typename Index_, unsigned KeyID_>
+class ZmPolyHash_NodeT_ {
+  using Value = typename Index_::Value;
+  using NTP = typename Index_::NTP;
+  enum { Last = KeyID_ + 1 == ZuSeqTL<ZuStructKeyIDs<Value>>::N };
+  using Next = typename ZmPolyHash_NextT<Index_, KeyID_, Last>::T;
+  using HashNTP = ZmHashNode<Next,
+    ZmHashKey<ZuFieldAxor<Value, KeyID_>(),
+      ZmHashLock<typename NTP::Lock,
+	ZmHashShadow_<NTP::Shadow || KeyID_,
+	  ZmHashHeapID_<typename NTP::HeapID, // must come after Shadow
+	    ZmHashSharded<NTP::Sharded>>>>>>;
+public:
+  using T = typename ZmHash_NodeT<Next, HashNTP>::T;
+};
+
+// The only public purpose of this trait is its resolved concrete node type.
+template <typename Index_, unsigned KeyID_>
+struct ZmPolyHash_NodeT {
+private:
+  using Base = typename ZmPolyHash_NodeT_<Index_, KeyID_>::T;
+
+public:
+  struct T : public Base {
+    ZuDerive_(T, Base)
+  };
+};
+
+template <typename Index_, unsigned KeyID_>
+struct ZmPolyHash_HashT {
+private:
+  using Value = typename Index_::Value;
+  using NTP = typename Index_::NTP;
+  enum { Last = KeyID_ + 1 == ZuSeqTL<ZuStructKeyIDs<Value>>::N };
+  using Next = typename ZmPolyHash_NextT<Index_, KeyID_, Last>::T;
+  using Node = typename ZmPolyHash_NodeT<Index_, KeyID_>::T;
+  using HashNTP = ZmHashNode<Next,
+    ZmHashKey<ZuFieldAxor<Value, KeyID_>(),
+      ZmHashLock<typename NTP::Lock,
+	ZmHashShadow_<NTP::Shadow || KeyID_,
+	  ZmHashHeapID_<typename NTP::HeapID, // must come after Shadow
+	    ZmHashSharded<NTP::Sharded>>>>>>;
+
+public:
+  struct T : public ZmHash<Next, HashNTP, Node, T> {
+    using Base = ZmHash<Next, HashNTP, Node, T>;
+    using Base::Base;
+  };
+};
+
 // reverse sort of key IDs
 template <typename KeyID>
 using ZmPolyHash_KeyIDIndex = ZuInt<-int(KeyID{})>;
@@ -56,57 +131,25 @@ template <typename KeyIDs>
 using ZmPolyHash_SortKeyIDs =
   ZuTypeSort<ZmPolyHash_KeyIDIndex, ZuSeqTL<KeyIDs>>;
 
-template <typename T_, typename NTP = ZmPolyHash_Defaults>
+template <typename T_, typename NTP_ = ZmPolyHash_Defaults,
+  typename Index_ = ZmPolyHash_Index<T_, NTP_>>
 class ZmPolyHash {
 public:
   using T = T_;
+  using NTP = NTP_;
+  using Index = Index_;
   using Lock = typename NTP::Lock;
   enum { Shadow = NTP::Shadow };
-  using HeapID = NTP::HeapID;
+  using HeapID = typename NTP::HeapID;
   enum { Sharded = NTP::Sharded };
 
 private:
-  // low-level template for individual index hash table
-  template <typename Node, auto Axor, bool Shadow_>
-  using Hash___ =
-    ZmHash<Node,
-      ZmHashNode<Node,
-	ZmHashKey<Axor,
-	  ZmHashLock<Lock,
-	    ZmHashShadow_<Shadow_,
-	      ZmHashHeapID_<HeapID, // must come after Shadow
-		ZmHashSharded<Sharded>>>>>>>;
-  // resolve index hash table type given key ID and node type
-  template <unsigned KeyID, typename Node_, typename O = T>
-  struct Hash__ {
-    using T__ = Hash___<
-      Node_,
-      ZuFieldAxor<O, KeyID>(),
-      Shadow || KeyID>;
-    using NodeFn = ZmNodeFn<Shadow || KeyID, Node_>;
-    struct T : public T__ {
-      using T__::T__;
-      using Node = T__::Node;
-      using NodeRef = NodeFn::template Ref<Node>;
-      using NodeMvRef = NodeFn::template MvRef<Node>;
-    };
-  };
   // key IDs as a type list
   using KeyIDs = ZuSeqTL<ZuStructKeyIDs<T>>;
   // number of keys
   enum { NKeys = KeyIDs::N };
-  // each index's node type derives from the next index's, except the last
-  template <unsigned KeyID, typename O = T>
-  struct Hash_ {
-    using T = typename Hash__<KeyID, typename Hash_<KeyID + 1>::T::Node>::T;
-  };
-  template <typename O>
-  struct Hash_<NKeys - 1, O> {
-    enum { KeyID = NKeys - 1 };
-    using T = typename Hash__<KeyID, O>::T;
-  };
   template <typename KeyID>
-  using Hash = typename Hash_<KeyID{}>::T;
+  using Hash = typename ZmPolyHash_HashT<Index, KeyID{}>::T;
   // list of index hash table types
   using HashTL = ZuTypeMap<Hash, KeyIDs>;
   // list of hash ref types
@@ -256,5 +299,38 @@ public:
 private:
   HashRefs	m_hashes;
 };
+
+#define ZmPolyHashDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  struct Name ## _Index { \
+    using Value = ZuPP_Strip(T_); \
+    using NTP = Name ## _NTP; \
+  }; \
+  ZuDerive(Name, \
+    (ZmPolyHash<ZuPP_Strip(T_), Name ## _NTP, Name ## _Index>));
+
+#define ZmPolyHashDeriveT_4(Args, Name, T_, NTP_) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP_); \
+  ZuPP_PfxTypename(Args) struct Name ## _Index { \
+    using Value = ZuPP_Strip(T_); \
+    using NTP = Name ## _NTP<ZuPP_Strip(Args)>; \
+  }; \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmPolyHash<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name ## _Index<ZuPP_Strip(Args)>>));
+#define ZmPolyHashDeriveT_5(Args, XArgs, Name, T_, NTP_) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP_); \
+  ZuPP_PfxTypename(Args) struct Name ## _Index { \
+    using Value = ZuPP_Strip(T_); \
+    using NTP = Name ## _NTP<ZuPP_Strip(Args)>; \
+  }; \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmPolyHash<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name ## _Index<ZuPP_Strip(Args)>>));
+#define ZmPolyHashDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmPolyHashDeriveT(...) \
+  ZmPolyHashDeriveT_N(__VA_ARGS__, \
+    ZmPolyHashDeriveT_5(__VA_ARGS__), \
+    ZmPolyHashDeriveT_4(__VA_ARGS__))
 
 #endif /* ZmPolyHash_HH */

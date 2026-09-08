@@ -28,7 +28,7 @@ ZuStruct(Foo_,
     ((k), ((Keys<0, 1>))),
     ((l), (Keys<3>)));
 
-ZuDerive(Hash, (ZmPolyHash<Foo_>));
+ZmPolyHashDerive(Hash, Foo_, ZmPolyHash_Defaults);
 using Foo = Hash::Node;
 
 int main(int argc, char **argv)

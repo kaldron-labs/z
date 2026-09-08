@@ -951,12 +951,11 @@ inline const ClientPoolKey &ClientPoolEntry_KeyAxor(
   return entry.key;
 }
 
-ZuDerive(ClientPoolHash,
-  (ZmHash<ClientPoolEntry,
-    ZmHashNode<ClientPoolEntry,
-      ZmHashKey<ClientPoolEntry_KeyAxor,
-	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zhttp.H2">>>>>));
+ZmHashDerive(ClientPoolHash, ClientPoolEntry,
+  (ZmHashNode<ClientPoolEntry,
+    ZmHashKey<ClientPoolEntry_KeyAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zhttp.H2">>>>));
 
 struct ClientGenEntry {
   uint64_t	generation = 0;
@@ -968,12 +967,11 @@ inline uint64_t ClientGenEntry_KeyAxor(const ClientGenEntry &entry) {
   return entry.generation;
 }
 
-ZuDerive(ClientGenHash,
-  (ZmHash<ClientGenEntry,
-    ZmHashNode<ClientGenEntry,
-      ZmHashKey<ClientGenEntry_KeyAxor,
-	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zhttp.H2.Generations">>>>>));
+ZmHashDerive(ClientGenHash, ClientGenEntry,
+  (ZmHashNode<ClientGenEntry,
+    ZmHashKey<ClientGenEntry_KeyAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zhttp.H2.Generations">>>>));
 
 template <typename App>
 class ClientHub : public Ztls::Client<ClientHub<App>> {
@@ -2671,12 +2669,11 @@ inline const CliLinkKey &CliLinkEntry_KeyAxor(const CliLinkEntry &entry) {
   return entry.key;
 }
 
-ZuDerive(CliLinkHash,
-  (ZmHash<CliLinkEntry,
-    ZmHashNode<CliLinkEntry,
-      ZmHashKey<CliLinkEntry_KeyAxor,
-	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zhttp.H3.ClientLinks">>>>>));
+ZmHashDerive(CliLinkHash, CliLinkEntry,
+  (ZmHashNode<CliLinkEntry,
+    ZmHashKey<CliLinkEntry_KeyAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zhttp.H3.ClientLinks">>>>));
 
 struct CliLinkGenEntry {
   uint64_t	generation = 0;
@@ -2689,12 +2686,11 @@ inline uint64_t CliLinkGenEntry_KeyAxor(const CliLinkGenEntry &entry) {
   return entry.generation;
 }
 
-ZuDerive(CliLinkGenHash,
-  (ZmHash<CliLinkGenEntry,
-    ZmHashNode<CliLinkGenEntry,
-      ZmHashKey<CliLinkGenEntry_KeyAxor,
-	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zhttp.H3.Generations">>>>>));
+ZmHashDerive(CliLinkGenHash, CliLinkGenEntry,
+  (ZmHashNode<CliLinkGenEntry,
+    ZmHashKey<CliLinkGenEntry_KeyAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zhttp.H3.Generations">>>>));
 
 // App is incomplete while its CRTP base is instantiated.  ZmContext pins the
 // protocol-private link; the two function pointers are control-plane only.

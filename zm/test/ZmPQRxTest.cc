@@ -42,7 +42,7 @@ struct Msg_ : public ZmObject, public Msg_Data {
   void write(const I &i) { }
 };
 
-ZuDerive(Queue, (ZmPQueue<Msg_, ZmPQueueNode<Msg_>>));
+ZmPQueueDerive(Queue, Msg_, ZmPQueueNode<Msg_>);
 
 class App : public ZmPQRx<App, Queue> {
 public:

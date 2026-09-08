@@ -32,7 +32,7 @@ class ZmHeapLookup {
 public:
   static constexpr unsigned hashSize() { return 8; }
 
-  ZuDerive(Hash, (ZmLHashKV<uintptr_t, ZmHeapCache *, ZmLHashLocal<>>));
+  ZmLHashKVDerive(Hash, uintptr_t, ZmHeapCache *, ZmLHashLocal<>);
 
 public:
   ZmHeapLookup() : m_hash{ZmHashParams{hashSize()}} { }
@@ -93,30 +93,28 @@ friend bool ZmHeapFail();
   // these containers use a null heap ID to prevent a circular dependency
 
   // primary key for heap configurations is {ID, partition}
-  ZuDerive(IDPart2Config,
-    (ZmRBTreeKV<IDPart, ZmHeapConfig,
+  ZmRBTreeDerive(IDPart2Config, (ZuTuple<IDPart, ZmHeapConfig>),
+    ZmRBTreeKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(),
       ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"">>>));
+	ZmRBTreeHeapID<"">>>);
   // id2Cache is non-unique map used to find and configure heaps that were
   // constructed prior to configuration, and enable/disable tracing by apps
-  ZuDerive(ID2Cache,
-    (ZmRBTree<ZmHeapCache *,
-      ZmRBTreeKey<ZmHeapCache::IDAxor,
-	ZmRBTreeHeapID<"">>>));
+  ZmRBTreeDerive(ID2Cache, ZmHeapCache *,
+    ZmRBTreeKey<ZmHeapCache::IDAxor,
+      ZmRBTreeHeapID<"">>);
   // key2Cache is unique map from primary key to individual heap cache;
   // primary key for a heap is {ID, partition, size, sharded}
-  ZuDerive(Key2Cache,
-    (ZmRBTree<ZmHeapCache *,
-      ZmRBTreeKey<ZmHeapCache::KeyAxor,
-	ZmRBTreeUnique<true,
-	  ZmRBTreeHeapID<"">>>>));
+  ZmRBTreeDerive(Key2Cache, ZmHeapCache *,
+    ZmRBTreeKey<ZmHeapCache::KeyAxor,
+      ZmRBTreeUnique<true,
+	ZmRBTreeHeapID<"">>>);
   // lookups are only used for non-sharded heaps; primary key is {ID, size};
   // IDSize2Lookup maps direct from {ID, size, address} to individual heap
   // for free()
-  ZuDerive(IDSize2Lookup,
-    (ZmRBTreeKV<IDSize, ZmHeapLookup,
+  ZmRBTreeDerive(IDSize2Lookup, (ZuTuple<IDSize, ZmHeapLookup>),
+    ZmRBTreeKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(),
       ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"">>>));
+	ZmRBTreeHeapID<"">>>);
 
   using ReportFn = ZmHeapReportFn;
 

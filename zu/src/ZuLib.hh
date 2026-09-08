@@ -95,9 +95,11 @@
 
 #else /* _WIN32 */
 
-#define ZuAPI
-#define ZuExplicit
-#define ZuExtern extern
+#define ZuExport_API __attribute__((visibility("default")))
+#define ZuExport_Explicit __attribute__((visibility("default")))
+#define ZuAPI ZuExport_API
+#define ZuExplicit ZuExport_Explicit
+#define ZuExtern extern ZuAPI
 
 #endif /* _WIN32 */
 

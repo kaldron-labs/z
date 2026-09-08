@@ -78,8 +78,8 @@ template <int N> struct String {
   char	m_data[N];
 };
 
-ZuDerive(PerfHash, (ZmHashKV<unsigned, String<16>, ZmHashLock<ZmLock> >));
-ZuDerive(PerfLHash, (ZmLHashKV<unsigned, String<16>, ZmLHashLock<ZmLock> >));
+ZmHashKVDerive(PerfHash, unsigned, String<16>, (ZmHashLock<ZmLock>));
+ZmLHashKVDerive(PerfLHash, unsigned, String<16>, ZmLHashLock<ZmLock>);
 
 unsigned perfTestSize = 1000;
 unsigned concurrency = 1;

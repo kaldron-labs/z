@@ -39,9 +39,7 @@ struct CustomTarget {
 
   friend ZuPrintFn ZuPrintType(CustomTarget *);
 };
-ZuDerive(RxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf,
-    ZmListHeapID<"">>>));
+ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 1<<20,
   ZuStringT<"ZhttpQPackDynamicTest.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;

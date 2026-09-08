@@ -118,12 +118,16 @@ struct ZmQueueSharded : public NTP {
 // only provide delPtr and findPtr methods to callers of unlocked ZmQueues
 // since they are intrinsically not thread-safe
 
-template <typename T, class NTP> class ZmQueue;
+template <typename T, class NTP, typename Impl> class ZmQueue;
 
-template <typename Ring> struct ZmQueue_Unlocked;
+template <typename T, class NTP, typename Impl>
+struct ZmQueue_Impl { using Type = Impl; };
 template <typename T, class NTP>
-struct ZmQueue_Unlocked<ZmQueue<T, NTP> > {
-  using Ring = ZmQueue<T, NTP>;
+struct ZmQueue_Impl<T, NTP, void> { using Type = ZmQueue<T, NTP, void>; };
+
+template <typename Ring, typename T_>
+struct ZmQueue_Unlocked {
+  using T = T_;
 
   template <typename P>
   T *findPtr(P &&v) {
@@ -134,13 +138,13 @@ struct ZmQueue_Unlocked<ZmQueue<T, NTP> > {
   }
 };
 
-template <typename Ring, class Lock> struct ZmQueue_Base { };
-template <typename Ring>
-struct ZmQueue_Base<Ring, ZmNoLock> : public ZmQueue_Unlocked<Ring> { };
+template <typename Ring, typename T, class Lock> struct ZmQueue_Base { };
+template <typename Ring, typename T>
+struct ZmQueue_Base<Ring, T, ZmNoLock> : public ZmQueue_Unlocked<Ring, T> { };
 
 // derives from Ops so that a ZmQueue includes an *instance* of Ops
 
-template <typename T_, class NTP = ZmQueue_Defaults>
+template <typename T_, class NTP = ZmQueue_Defaults, typename Impl_ = void>
 class ZmQueue :
   private ZmVHeap_<
     typename NTP::HeapID,
@@ -148,11 +152,14 @@ class ZmQueue :
     sizeof(T_) * NTP::HeapMax,
     alignof(T_),
     NTP::Sharded>,
-  public ZmQueue_Base<ZmQueue<T_, NTP>, typename NTP::Lock>,
+  public ZmQueue_Base<
+    typename ZmQueue_Impl<T_, NTP, Impl_>::Type, T_, typename NTP::Lock>,
   public NTP::template OpsT<T_>
 {
 public:
-friend ZmQueue_Unlocked<ZmQueue>;
+  using Impl = typename ZmQueue_Impl<T_, NTP, Impl_>::Type;
+
+friend ZmQueue_Unlocked<Impl, T_>;
 
   using T = T_;
   static constexpr auto KeyAxor = NTP::KeyAxor;
@@ -433,7 +440,7 @@ private:
 friend Iter_;
   class Iter_ : private Guard {
   protected:
-    using Ring = ZmQueue<T, NTP>;
+    using Ring = Impl;
 
     Iter_(Ring &ring, unsigned i) :
 	Guard(ring.m_lock), m_ring(ring), m_i(i) { }
@@ -506,5 +513,25 @@ private:
     unsigned	  m_count = 0;
     double	  m_defrag;
 };
+
+#define ZmQueueDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  ZuDerive(Name, (ZmQueue<ZuPP_Strip(T_), Name ## _NTP, Name>));
+
+#define ZmQueueDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmQueue<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args)>>));
+#define ZmQueueDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmQueue<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmQueueDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmQueueDeriveT(...) \
+  ZmQueueDeriveT_N(__VA_ARGS__, \
+    ZmQueueDeriveT_5(__VA_ARGS__), \
+    ZmQueueDeriveT_4(__VA_ARGS__))
 
 #endif /* ZmQueue_HH */

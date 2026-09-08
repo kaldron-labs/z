@@ -39,7 +39,7 @@ namespace HubState {
     Stopped, Starting, Running, Stopping, StartPending, StopPending);
 }
 
-struct HubTelemetry {
+struct ZiAPI HubTelemetry {
   ZuID		id;		// primary key
   ZuID		mxID;
   uint16_t	down = 0;
@@ -72,7 +72,7 @@ struct HubTelemetry {
   void rag(RAG::T) { }
 };
 
-struct Hub {
+struct ZiAPI Hub {
   using AllLinksFn =
     ZmFn<void(Link *), AllFnHeapID>;
   using AllPoolsFn =
@@ -103,7 +103,7 @@ protected:
   ZmAtomic<unsigned>	m_nLinks = 0;
 };
 
-struct HubMgr {
+struct ZiAPI HubMgr {
 private:
   using WatchLock = ZmRWLock;
   using WatchGuard = ZmGuard<WatchLock>;

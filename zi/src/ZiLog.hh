@@ -208,7 +208,7 @@ class ZeAPI ZiLog {
 
   ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
   using Fn = ZmRingFn<ZiLog *>;
-  ZuDerive(Queue_, (ZmQueue<Fn, ZmQueueHeapID<"ZiLog.Queue">>));
+  ZmQueueDerive(Queue_, Fn, ZmQueueHeapID<"ZiLog.Queue">);
   struct Queue : public Queue_ {
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;

@@ -115,12 +115,16 @@ struct ZmStackSharded : public NTP {
 // only provide delPtr and findPtr methods to callers of unlocked ZmStacks
 // since they are intrinsically not thread-safe
 
-template <typename T, class NTP> class ZmStack;
+template <typename T, class NTP, typename Impl> class ZmStack;
 
-template <class Stack> struct ZmStack_Unlocked;
+template <typename T, class NTP, typename Impl>
+struct ZmStack_Impl { using Type = Impl; };
 template <typename T, class NTP>
-struct ZmStack_Unlocked<ZmStack<T, NTP> > {
-  using Stack = ZmStack<T, NTP>;
+struct ZmStack_Impl<T, NTP, void> { using Type = ZmStack<T, NTP, void>; };
+
+template <typename Stack, typename T_>
+struct ZmStack_Unlocked {
+  using T = T_;
 
   template <typename P>
   T *findPtr(P &&v) {
@@ -131,13 +135,13 @@ struct ZmStack_Unlocked<ZmStack<T, NTP> > {
   }
 };
 
-template <class Stack, class Lock> struct ZmStack_Base { };
-template <class Stack>
-struct ZmStack_Base<Stack, ZmNoLock> : public ZmStack_Unlocked<Stack> { };
+template <class Stack, typename T, class Lock> struct ZmStack_Base { };
+template <class Stack, typename T>
+struct ZmStack_Base<Stack, T, ZmNoLock> : public ZmStack_Unlocked<Stack, T> { };
 
 // derives from Ops so that a ZmStack includes an *instance* of Ops
 
-template <typename T_, class NTP = ZmStack_Defaults>
+template <typename T_, class NTP = ZmStack_Defaults, typename Impl_ = void>
 class ZmStack :
   private ZmVHeap_<
     typename NTP::HeapID,
@@ -145,15 +149,18 @@ class ZmStack :
     sizeof(T_) * NTP::HeapMax,
     alignof(T_),
     NTP::Sharded>,
-  public ZmStack_Base<ZmStack<T_, NTP>, typename NTP::Lock>,
+  public ZmStack_Base<
+    typename ZmStack_Impl<T_, NTP, Impl_>::Type, T_, typename NTP::Lock>,
   public NTP::template OpsT<T_>
 {
-  ZmStack(const ZmStack &);
-  ZmStack &operator =(const ZmStack &);	// prevent mis-use
-
-friend ZmStack_Unlocked<ZmStack>;
-
 public:
+  using Impl = typename ZmStack_Impl<T_, NTP, Impl_>::Type;
+
+friend ZmStack_Unlocked<Impl, T_>;
+
+  ZmStack(const ZmStack &) = delete;
+  ZmStack &operator =(const ZmStack &) = delete;
+
   using T = T_;
   static constexpr auto KeyAxor = NTP::KeyAxor;
   using Key = ZuRDecay<decltype(KeyAxor(ZuDeclVal<const T &>()))>;
@@ -359,7 +366,7 @@ friend Iter;
     Iter(const Iter &);
     Iter &operator =(const Iter &);	// prevent mis-use
 
-    using Stack = ZmStack<T, NTP>;
+    using Stack = Impl;
 
   public:
     Iter(Stack &stack) :
@@ -388,7 +395,7 @@ friend RIter;
     RIter(const RIter &);
     RIter &operator =(const RIter &);	// prevent mis-use
 
-    using Stack = ZmStack<T, NTP>;
+    using Stack = Impl;
 
   public:
     RIter(Stack &stack) :
@@ -420,5 +427,25 @@ private:
     unsigned	  m_count = 0;
     double	  m_defrag;
 };
+
+#define ZmStackDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  ZuDerive(Name, (ZmStack<ZuPP_Strip(T_), Name ## _NTP, Name>));
+
+#define ZmStackDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmStack<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args)>>));
+#define ZmStackDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmStack<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmStackDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmStackDeriveT(...) \
+  ZmStackDeriveT_N(__VA_ARGS__, \
+    ZmStackDeriveT_5(__VA_ARGS__), \
+    ZmStackDeriveT_4(__VA_ARGS__))
 
 #endif /* ZmStack_HH */
