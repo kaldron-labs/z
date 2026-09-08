@@ -466,7 +466,7 @@ private:
     }
     m_familyID = family.familyID;
     ZdbSagaID sagaID;
-    static_assert(sizeof(sagaID) == 16);
+    ZuAssert((sizeof(sagaID) == 16));
     memcpy(&sagaID, m_code.id.data(), sizeof(sagaID));
     m_sagaID = sagaID;
     ZmRef<MSaga> saga = new MSaga{};

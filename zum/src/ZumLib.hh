@@ -27,9 +27,9 @@
 
 #else
 
-#define ZumAPI
-#define ZumExplicit
-#define ZumExtern extern
+#define ZumAPI ZuExport_API
+#define ZumExplicit ZuExport_Explicit
+#define ZumExtern extern ZumAPI
 
 #endif
 

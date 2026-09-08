@@ -351,7 +351,7 @@ private:
       .outcome = AuditOutcome::Success,
       .detail = "enrollment"
     };
-    static_assert(sizeof(m_sagaID) == 16);
+    ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(enrollment));
@@ -587,7 +587,7 @@ private:
       .outcome = AuditOutcome::Success,
       .detail = "add"
     };
-    static_assert(sizeof(m_sagaID) == 16);
+    ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(add));
@@ -733,7 +733,7 @@ private:
       .actor = m_config.actor
     };
     ZdbSagaID sagaID;
-    static_assert(sizeof(sagaID) == 16);
+    ZuAssert((sizeof(sagaID) == 16));
     memcpy(&sagaID, recovery.capabilityID.data(), sizeof(sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(recovery));
@@ -1013,7 +1013,7 @@ private:
       .outcome = AuditOutcome::Success,
       .detail = "recovery"
     };
-    static_assert(sizeof(m_sagaID) == 16);
+    ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     reinterpret_cast<uint8_t *>(&m_sagaID)[0] ^= 0x80;
     ZmRef<MSaga> saga = new MSaga{};

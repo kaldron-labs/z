@@ -39,7 +39,7 @@
 
 using namespace ZuTestUtil;
 
-static_assert(Zdb_::SagaBasesValid_<Zum::DBContext, Zum::Sagas>{});
+ZuAssert((Zdb_::SagaBasesValid_<Zum::DBContext, Zum::Sagas>{}));
 
 static void requests()
 {
@@ -1173,7 +1173,7 @@ static void webAuthnInput()
 static void enrollmentSaga()
 {
   ZuTestScope(enrollmentSaga);
-  using M = ZdbMSaga<Zum::Sagas>;
+  using M = Zum::MSaga;
   Zum::Enrollment enrollment;
   enrollment.ceremonyID = Zum::Bytes{ZuBSpan{"ceremony"}};
   enrollment.userID = 42;
@@ -1769,6 +1769,7 @@ static bool insertIssuer(
 template <typename T>
 static bool insertRecord(ZdbTable<T> *table, T data)
 {
+
   return ZmBlock<bool>{}([
     table, data = ZuMv(data)
   ](auto wake) mutable {
@@ -2142,7 +2143,7 @@ static bool insertCode(Zum::DBContext *context, ZuBSpan id)
 template <typename T>
 static bool runSaga(TestDB *db, T data, ZdbSagaID id)
 {
-  using M = ZdbMSaga<Zum::Sagas>;
+  using M = Zum::MSaga;
   ZmRef<M> saga = new M{};
   saga->init(ZuMv(data));
   ZmSemaphore completed;

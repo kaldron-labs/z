@@ -198,9 +198,9 @@ struct ResParser : public Zrest::MResParser<ReqBuilder_> { };
 
 class Pool;
 template <typename Heap = ZuVoid> class Pool_;
-ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
+ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
-    ZmPQueueHeapID<"zum.ReqBuilder">>>>));
+    ZmPQueueHeapID<"zum.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
@@ -287,8 +287,8 @@ struct CallbackParser : public Zrest::MReqParser<CallbackRequests> {
 
 using CallbackBuilder = Zrest::MResBuilder<CallbackParser>;
 struct CallbackBuilder_ : public ZmObject, public CallbackBuilder { };
-ZuDerive(CallbackBuilderQ, (ZmList<CallbackBuilder_,
-  ZmListNode<CallbackBuilder_, ZmListHeapID<"zum.CallbackBuilder">>>));
+ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
+  ZmListNode<CallbackBuilder_, ZmListHeapID<"zum.CallbackBuilder">>);
 using CallbackBuilderNode = CallbackBuilderQ::Node;
 
 class CallbackApp {
