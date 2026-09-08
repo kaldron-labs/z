@@ -131,6 +131,12 @@ ZfbStruct(BlkData,
 
 ZfbRoot(BlkData);
 
+ZdbTableDerive(SeriesFixedTable, SeriesFixed);
+ZdbTableDerive(SeriesFloatTable, SeriesFloat);
+ZdbTableDerive(BlkFixedTable, BlkFixed);
+ZdbTableDerive(BlkFloatTable, BlkFloat);
+ZdbTableDerive(BlkDataTable, BlkData);
+
 } // Zdf::DB
 
 #endif /* ZdfSchema_HH */

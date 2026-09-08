@@ -24,9 +24,9 @@
 
 #else
 
-#define ZdfAPI
-#define ZdfExplicit
-#define ZdfExtern extern
+#define ZdfAPI ZuExport_API
+#define ZdfExplicit ZuExport_Explicit
+#define ZdfExtern extern ZdfAPI
 
 #endif
 
