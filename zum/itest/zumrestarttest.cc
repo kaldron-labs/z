@@ -103,6 +103,7 @@ static bool insertIssuer(Zum::DBContext *context)
 template <typename T>
 static bool insertRecord(ZdbTable<T> *table, T data)
 {
+
   return ZmBlock<bool>{}([table, data = ZuMv(data)](auto wake) mutable {
     table->run(0, [table, data = ZuMv(data), wake = ZuMv(wake)]() mutable {
       ZdbRowRef<T> row = new ZdbRow<T>{table, ZdbShard{0}};

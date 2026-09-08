@@ -146,8 +146,8 @@ struct Parser : public Zrest::MReqParser<Requests> {
 
 using Builder = Zrest::MResBuilder<Parser>;
 struct ResBuilder_ : public ZmObject, public Builder { };
-ZuDerive(ResBuilderQ, (ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"zumd.ResBuilder">>>));
+ZmListDerive(ResBuilderQ, ResBuilder_,
+  ZmListNode<ResBuilder_, ZmListHeapID<"zumd.ResBuilder">>);
 
 struct DB : public Zum::DB {
   ZmSemaphore active;
@@ -237,6 +237,7 @@ static void dbDown(Zdb *db, bool)
 template <typename T>
 static bool insertRecord(ZdbTable<T> *table, T data)
 {
+
   return ZmBlock<bool>{}([table, data = ZuMv(data)](auto wake) mutable {
     table->run(0, [table, data = ZuMv(data), wake = ZuMv(wake)]() mutable {
       ZdbRowRef<T> row = new ZdbRow<T>{table, ZdbShard{0}};

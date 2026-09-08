@@ -13,14 +13,16 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumOAuth.hh>
-#include <zlib/ZumWebAuthn.hh>
-
 #include <zlib/ZuDerive.hh>
 
 #include <zlib/ZmFn.hh>
 
+#include <zlib/Zum.hh>
+
 #include <zlib/Zdb.hh>
+
+#include <zlib/ZumOAuth.hh>
+#include <zlib/ZumWebAuthn.hh>
 
 #include <zlib/ZtlsSec.hh>
 
@@ -30,6 +32,17 @@ namespace Zum {
 
 struct MSaga;
 struct DB;
+
+ZdbTableDerive(IssuerTable, Issuer);
+ZdbTableDerive(UserTable, User);
+ZdbTableDerive(CredTable, Cred);
+ZdbTableDerive(ActionTable, Action);
+ZdbTableDerive(RoleTable, Role);
+ZdbTableDerive(ScopeTable, Scope);
+ZdbTableDerive(ClientTable, Client);
+ZdbTableDerive(GrantTable, Grant);
+ZdbTableDerive(SignKeyTable, SignKey);
+ZdbTableDerive(AuditTable, Audit);
 
 struct DBContext : public ZumPolymorph {
   ZdbTable<Issuer>	*issuers = nullptr;
@@ -2047,8 +2060,10 @@ ZfbStruct(ActionChange,
 using Sagas = ZuTypeList<
   Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
   UserChange, RoleChange, CredChange, ScopeChange, ClientChange, ActionChange>;
-ZuDerive(MSaga, (ZdbMSaga<Sagas>));
-ZuDerive(DB, (ZdbSagaDB<DBContext, Sagas>));
+struct MSaga;
+using MSagaBase = ZdbMSaga<Sagas, MSaga>;
+struct MSaga : public MSagaBase { ZuDerive_(MSaga, MSagaBase) };
+ZuDerive(DB, (ZdbSagaDB<DBContext, Sagas, SagaFn, MSaga>));
 
 ZumExtern ZmRef<DBContext> registerSchema(DB *);
 
