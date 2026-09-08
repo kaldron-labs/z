@@ -121,10 +121,9 @@ struct ResParser : public Zrest::MResParser<ReqBuilder_> { };
 
 class Pool;
 template <typename Heap = ZuVoid> class Pool_;
-ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
-  ZmPQueueOverlap<false,
-    ZmPQueueNode<ReqBuilder_,
-      ZmPQueueHeapID<"zrest.ReqBuilder">>>>));
+ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
+  ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
+    ZmPQueueHeapID<"zrest.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 

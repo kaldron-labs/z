@@ -59,8 +59,8 @@ struct ResBuilder_ : public ZmObject, public Builder {
   bool close_ = false;
   bool disconnect() const { return close_; }
 };
-ZuDerive(ResBuilderQ, (ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"zrestd.ResBuilder">>>));
+ZmListDerive(ResBuilderQ, ResBuilder_,
+  ZmListNode<ResBuilder_, ZmListHeapID<"zrestd.ResBuilder">>);
 using ResBuilder = ResBuilderQ::Node;
 
 extern ZmSemaphore done;

@@ -24,9 +24,9 @@
 
 #else
 
-#define ZrestAPI
-#define ZrestExplicit
-#define ZrestExtern extern
+#define ZrestAPI ZuExport_API
+#define ZrestExplicit ZuExport_Explicit
+#define ZrestExtern extern ZrestAPI
 
 #endif
 
