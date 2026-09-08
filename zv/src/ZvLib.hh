@@ -24,9 +24,9 @@
 
 #else
 
-#define ZvAPI
-#define ZvExplicit
-#define ZvExtern extern
+#define ZvAPI ZuExport_API
+#define ZvExplicit ZuExport_Explicit
+#define ZvExtern extern ZvAPI
 
 #endif
 
