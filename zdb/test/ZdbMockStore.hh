@@ -115,7 +115,7 @@ public:
   }
 
 private:
-  ZuDerive(Queue, (ZmQueue<ZmFn<>, ZmQueueLock<ZmPLock>>));
+  ZmQueueDerive(Queue, ZmFn<>, ZmQueueLock<ZmPLock>);
 
   bool			m_deferWork = false;
   bool			m_deferCallbacks = false;

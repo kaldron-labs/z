@@ -21,11 +21,10 @@ friend Ztc::DBMgr;
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
-  ZuDerive(Map,
-    (ZmRBTree<Ztc::DB *,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmNoLock,
-	  ZmRBTreeHeapID<"Ztc.DBMgr">>>>));
+  ZmRBTreeDerive(Map, Ztc::DB *,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmNoLock,
+	ZmRBTreeHeapID<"Ztc.DBMgr">>>);
   using Captures =
     ZtArray<Ztc::DBTelemetry,
       ZtArrayHeapID<"Ztc.DBMgr.Capture">>;

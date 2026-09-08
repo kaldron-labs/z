@@ -208,8 +208,8 @@ void DB::sagas_(
     m_sagaCatalogFn = ZuMv(catalogFn);
     m_sagaScanFn = ZuMv(scanFn);
     m_sagaRunFn = ZuMv(runFn);
-    m_sagaTable = new Table<SagaData>{this, &m_sagaCf, true};
-    m_sagaStepTable = new Table<SagaStep>{this, &m_sagaStepCf, true};
+    m_sagaTable = new TableT<SagaData>{this, &m_sagaCf, true};
+    m_sagaStepTable = new TableT<SagaStep>{this, &m_sagaStepCf, true};
     m_tables.add(m_sagaTable);
     m_tables.add(m_sagaStepTable);
     tableAdded_(m_sagaTable);
@@ -1970,6 +1970,80 @@ void AnyTable::telemetry(Ztc::DBTableTelemetry &data) const
     data.cacheEvictions += stats.evictions;
   }
   data.cacheMode = m_cf->cacheMode;
+}
+
+void AnyTable::count(
+  unsigned keyID, ZmRef<IOBuf> key, ZmRef<Count> context)
+{
+  m_storeTbl->count(keyID, ZuMv(key), CountFn{ZuMv(context),
+    [](Count *context, CountResult result) {
+      if (ZuUnlikely(result.is<Event>())) {
+	ZiLogEvent(ZuMv(result).p<Event>());
+	context->fn(Count::Result{});
+	return;
+      }
+      context->fn(Count::Result{result.p<CountData>().count});
+    }});
+}
+
+void AnyTable::retrieve(
+  unsigned keyID, ZmRef<IOBuf> key, ZmRef<Find> context)
+{
+  m_storeTbl->find(keyID, ZuMv(key), RowFn{ZuMv(context),
+    [](Find *context, RowResult result) {
+      auto table = context->table;
+      if (ZuUnlikely(result.is<Event>())) {
+	ZiLogEvent(ZuMv(result).p<Event>());
+	auto db = table->db();
+	ZiLOG(Fatal, "Zdb", ([
+	  id = ZeString{table->id()}, context = ZmRef(context)
+	](auto &s) {
+	  s << "find of " << id << '/';
+	  ZuVStream s_{s};
+	  context->printKey(s_);
+	  s << " failed";
+	}));
+	// Invalidate the activation before releasing the failed lookup. Saga
+	// continuations must still retire their pending work so teardown drains.
+	db->run([db, context = ZmRef(context)]() mutable {
+	  db->fail();
+	  auto shard = context->shard;
+	  db->shardRun(shard, [context = ZuMv(context)]() mutable {
+	    context->found(nullptr);
+	  });
+	});
+	return;
+      }
+      auto shard = context->shard;
+      if (ZuLikely(result.is<RowData>())) {
+	auto buf = ZuMv(ZuMv(result).p<RowData>().buf);
+	table->run(shard, [
+	  table, context = ZmRef(context), buf = ZuMv(buf)
+	]() mutable {
+	  auto shard = context->shard;
+	  auto row = table->rowLoad(ZuMv(buf), shard);
+	  if (row->shard() != shard) {
+	    // sharding inconsistency is fatal, the app is broken
+	    ZeString message;
+	    message << "find of " << table->id() << '/';
+	    {
+	      ZuVStream s{message};
+	      context->printKey(s);
+	    }
+	    message << " failed: row " << *row
+	      << " shard != find context shard " << shard;
+	    ZiLOG(Fatal, "Zdb", ([message = ZuMv(message)](auto &s) {
+	      s << message;
+	    }));
+	    context->found(nullptr);
+	  } else
+	    context->found(ZuMv(row));
+	});
+      } else
+	table->run(shard, [context = ZmRef(context)]() mutable {
+	  context->found(nullptr);
+	});
+    }});
 }
 
 // process inbound replication - record

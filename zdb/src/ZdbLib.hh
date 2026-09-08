@@ -24,9 +24,9 @@
 
 #else
 
-#define ZdbAPI
-#define ZdbExplicit
-#define ZdbExtern extern
+#define ZdbAPI ZuExport_API
+#define ZdbExplicit ZuExport_Explicit
+#define ZdbExtern extern ZdbAPI
 
 #endif
 

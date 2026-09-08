@@ -74,6 +74,9 @@ ZfbStruct(Transfer,
 
 ZfbRoot(Transfer);
 
+ZdbTableDerive(AccountTable, Account);
+ZdbTableDerive(TransferTable, Transfer);
+
 struct Context : public ZmPolymorph {
   ZdbTable<Transfer>	*transfers = nullptr;
   ZdbTable<Account>	*accounts = nullptr;

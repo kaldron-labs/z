@@ -99,12 +99,11 @@ inline UN IOBuf_UNAxor(const IOBuf_ &buf) {
 
 constexpr const auto &BufCache_ID() { return "Zdb.BufCache"; }
 
-ZuDerive(BufCacheUN,
-  (ZmHash<IOBuf_,
-    ZmHashNode<IOBuf_,
-      ZmHashKey<IOBuf_UNAxor,
-	ZmHashLock<ZmPLock,
-	  ZmHashShadow<>>>>>));
+ZmHashDerive(BufCacheUN, IOBuf_,
+  (ZmHashNode<IOBuf_,
+    ZmHashKey<IOBuf_UNAxor,
+      ZmHashLock<ZmPLock,
+	ZmHashShadow<>>>>));
 
 struct IOBuf : public BufCacheUN::Node {
   ZuDerive_(IOBuf, BufCacheUN::Node)

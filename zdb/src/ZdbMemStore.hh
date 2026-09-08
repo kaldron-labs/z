@@ -1106,12 +1106,11 @@ struct MemRow_ : public ZuObject, public MemRow__ {
   template <typename ...Args>
   MemRow_(Args &&...args) : MemRow__{ZuFwd<Args>(args)...} { }
 };
-ZuDerive(IndexUN,
-  (ZmRBTree<MemRow_,
-    ZmRBTreeNode<MemRow_,
-      ZmRBTreeKey<MemRow_::UNAxor,
-	ZmRBTreeUnique<true,
-	  ZmRBTreeHeapID<"MemRow">>>>>));
+ZmRBTreeDerive(IndexUN, MemRow_,
+  ZmRBTreeNode<MemRow_,
+    ZmRBTreeKey<MemRow_::UNAxor,
+      ZmRBTreeUnique<true,
+	ZmRBTreeHeapID<"MemRow">>>>);
 struct MemRow : public IndexUN::Node {
   using Base = IndexUN::Node;
   using Base::Base;
@@ -1147,11 +1146,10 @@ template <typename T = Tuple> struct TupleCmp {
     return equals_(l, r, ln < rn ? ln : rn);
   }
 };
-ZuDerive(Index,
-  (ZmRBTreeKV<Tuple, ZmRef<const MemRow>,
-    ZmRBTreeCmp<TupleCmp,
-      ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"MemRowIndex">>>>));
+ZmRBTreeKVDerive(Index, Tuple, ZmRef<const MemRow>,
+  ZmRBTreeCmp<TupleCmp,
+    ZmRBTreeUnique<true,
+      ZmRBTreeHeapID<"MemRowIndex">>>);
 
 // --- in-memory data store base class
 
@@ -1341,13 +1339,11 @@ template <typename StoreTbl_>
 inline auto StoreTbl_IDAxor(const StoreTbl_ &tbl) {
   return ZuTuple<bool, ZuCSpan>{tbl.internal(), tbl.id()};
 }
-template <typename StoreTbl_>
-ZuDerive(StoreTbls_,
-  (ZmHash<StoreTbl_,
-    ZmHashNode<StoreTbl_,
-      ZmHashKey<StoreTbl_IDAxor<StoreTbl_>,
-	ZmHashLock<ZmPLock,
-	ZmHashHeapID<"ZdbMem.StoreTbl">>>>>));
+ZmHashDeriveT((StoreTbl_), StoreTbls_, StoreTbl_,
+  (ZmHashNode<StoreTbl_,
+    ZmHashKey<StoreTbl_IDAxor<StoreTbl_>,
+      ZmHashLock<ZmPLock,
+	ZmHashHeapID<"ZdbMem.StoreTbl">>>>));
 
 struct MemStoreCf {
   ZtString<> thread;

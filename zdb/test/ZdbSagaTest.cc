@@ -61,8 +61,8 @@ ZfbStruct(SagaB,
 
 using Sagas = ZuTypeList<SagaA, SagaB>;
 
-static_assert(Zdb_::SagaBasesValid_<Context, Sagas>{});
-static_assert(!Zdb_::SagaBasesValid_<OtherContext, Sagas>{});
+ZuAssert((Zdb_::SagaBasesValid_<Context, Sagas>{}));
+ZuAssert((!Zdb_::SagaBasesValid_<OtherContext, Sagas>{}));
 
 namespace Trace {
   enum { Intent, Enter, Commit, Return, Probe, Next, Read };
@@ -339,7 +339,7 @@ ZfbStruct(ChangedSaga,
 
 struct PayloadContext : public ZmPolymorph {
   ZmSemaphore entered;
-  PauseFn complete;
+  Zdb_::SagaCompleteFn complete;
 };
 
 struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
