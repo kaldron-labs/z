@@ -24,9 +24,9 @@
 
 #else
 
-#define ZrlAPI
-#define ZrlExplicit
-#define ZrlExtern extern
+#define ZrlAPI ZuExport_API
+#define ZrlExplicit ZuExport_Explicit
+#define ZrlExtern extern ZrlAPI
 
 #endif
 

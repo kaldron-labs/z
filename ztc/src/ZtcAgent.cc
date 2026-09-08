@@ -132,15 +132,12 @@ struct Leg {
 
 inline uint64_t Leg_SeqAxor(const Leg &leg) { return leg.seqNo; }
 
-ZuDerive(LegList,
-  (ZmList<Leg,
-    ZmListNode<Leg, ZmListShadow<>>>));
-ZuDerive(LegHash,
-  (ZmHash<typename LegList::Node,
-    ZmHashNode<typename LegList::Node,
-      ZmHashKey<Leg_SeqAxor,
+ZmListDerive(LegList, Leg, ZmListNode<Leg, ZmListShadow<>>);
+ZmHashDerive(LegHash, typename LegList::Node,
+  (ZmHashNode<typename LegList::Node,
+    ZmHashKey<Leg_SeqAxor,
 	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Ztc.Agent.Leg">>>>>));
+	  ZmHashHeapID<"Ztc.Agent.Leg">>>>));
 
 struct App {
   App(ZuID id_, uint32_t ztcver_, const AgentCf &cf) :
@@ -161,17 +158,14 @@ struct App {
 
 inline const ZuID &App_IDAxor(const App &app) { return app.id; }
 
-ZuDerive(Apps,
-  (ZmHash<App,
-    ZmHashNode<App,
-      ZmHashKey<App_IDAxor,
+ZmHashDerive(Apps, App,
+  (ZmHashNode<App,
+    ZmHashKey<App_IDAxor,
 	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Ztc.Agent.App">>>>>));
+	  ZmHashHeapID<"Ztc.Agent.App">>>>));
 
-ZuDerive(AppIDs,
-  (ZmHash<ZuID,
-    ZmHashLock<ZmNoLock,
-      ZmHashHeapID<"Ztc.Agent.ReqExcl">>>));
+ZmHashDerive(AppIDs, ZuID,
+  (ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Agent.ReqExcl">>));
 
 struct Req {
   Req(Request request_, uint64_t cxnGen_) :
@@ -186,12 +180,11 @@ struct Req {
 
 inline uint64_t Req_SeqAxor(const Req &req) { return req.request.seqNo; }
 
-ZuDerive(Reqs,
-  (ZmHash<Req,
-    ZmHashNode<Req,
-      ZmHashKey<Req_SeqAxor,
+ZmHashDerive(Reqs, Req,
+  (ZmHashNode<Req,
+    ZmHashKey<Req_SeqAxor,
 	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Ztc.Agent.Req">>>>>));
+	  ZmHashHeapID<"Ztc.Agent.Req">>>>));
 
 ZuDerive(Credits, (ZmRing<ZmRingT<unsigned>>));
 
@@ -379,10 +372,9 @@ struct EnrollRes : public Zhttp::Parser {
   EnrollReq_	*req = nullptr;
 };
 
-ZuDerive(EnrollReqQ, (ZmPQueue<EnrollReq_,
-  ZmPQueueOverlap<false,
-    ZmPQueueNode<EnrollReq_,
-      ZmPQueueHeapID<"Ztc.Agent.EnrollReq">>>>));
+ZmPQueueDerive(EnrollReqQ, EnrollReq_,
+  ZmPQueueOverlap<false, ZmPQueueNode<EnrollReq_,
+    ZmPQueueHeapID<"Ztc.Agent.EnrollReq">>>);
 using EnrollReq = EnrollReqQ::Node;
 using EnrollTxQ =
   ZmPQTx<EnrollPool, EnrollReqQ, ZmPQTxOrdered<false>>;

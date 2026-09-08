@@ -24,9 +24,9 @@
 
 #else
 
-#define ZwsAPI
-#define ZwsExplicit
-#define ZwsExtern extern
+#define ZwsAPI ZuExport_API
+#define ZwsExplicit ZuExport_Explicit
+#define ZwsExtern extern ZwsAPI
 
 #endif
 

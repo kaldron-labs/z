@@ -148,16 +148,16 @@ struct Link {
   }
 };
 
-ZuDerive(OuterQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+ZmListDerive(OuterQueue, ZiIOBuf,
+  ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 using OuterRx = ZiRxStream<OuterQueue>;
 using OuterBufAlloc = Zi::IOBufAlloc<
   OuterQueue::Node, 256, 1<<20, ZuStringT<"ZwsTest.OuterRx">>;
 
 using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Bytes">>;
 
-ZuDerive(H1Queue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+ZmListDerive(H1Queue, ZiIOBuf,
+  ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 using H1Rx = ZiRxStream<H1Queue>;
 using H1BufAlloc = Zi::IOBufAlloc<
   H1Queue::Node, 256, 2048, ZuStringT<"ZwsTest.H1Rx">>;

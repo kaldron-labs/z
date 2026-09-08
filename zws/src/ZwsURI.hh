@@ -43,7 +43,7 @@ struct URIError {
 
 ZuDerive(URIString, ZtString<ZtStringHeapID<"Zws.URI">>);
 
-struct URI {
+struct ZwsAPI URI {
   URIString	scheme;
   URIString	host;
   URIString	target;
