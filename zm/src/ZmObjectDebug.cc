@@ -15,10 +15,9 @@
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmPLock.hh>
 
-ZuDerive(DebugTree,
-  (ZmRBTreeKV<const void *, const ZmBackTrace *,
-    ZmRBTreeUnique<true,
-      ZmRBTreeLock<ZmPLock> > >));
+ZmRBTreeKVDerive(DebugTree, const void *, const ZmBackTrace *,
+  ZmRBTreeUnique<true,
+    ZmRBTreeLock<ZmPLock>>);
 
 void ZmObjectDebug::debug() const
 {

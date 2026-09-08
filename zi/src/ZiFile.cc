@@ -96,13 +96,11 @@ private:
 
   static ZiFile_WindowsDrives *instance();
 
-  ZuDerive(DriveLetters,
-    (ZmRBTreeKV<ZtWString<>, char,
-      ZmRBTreeLock<ZmNoLock>>));
-  ZuDerive(DriveBlkSizes,
-    (ZmRBTreeKV<char, unsigned,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmNoLock>>>));
+  ZmRBTreeKVDerive(DriveLetters, ZtWString<>, char,
+    ZmRBTreeLock<ZmNoLock>);
+  ZmRBTreeKVDerive(DriveBlkSizes, char, unsigned,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmNoLock>>);
 
   HMODULE		m_ntdll;
   PNtQueryObject	m_ntQueryObject;

@@ -287,6 +287,30 @@ struct ZmHash_NodeExt {
   Node	*next = nullptr;
 };
 
+// ZmHash_NodeT - the concrete hash node selected by an NTP
+template <typename T_, typename NTP_>
+struct ZmHash_NodeT {
+private:
+  static constexpr auto KeyAxor = NTP_::KeyAxor;
+  static constexpr auto ValAxor = NTP_::ValAxor;
+  using NodeBase = typename NTP_::Node;
+  using HeapID = typename NTP_::HeapID;
+  enum { Sharded = NTP_::Sharded };
+
+  struct Node;
+  using NodeExt = ZmHash_NodeExt<Node>;
+  using NodeImpl = ZmNode<
+    T_, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
+
+  struct Node : public NodeImpl {
+    ZuDerive_(Node, NodeImpl)
+    using Ext = NodeExt;
+  };
+
+public:
+  using T = Node;
+};
+
 // compile-time check if cmp is static
 template <typename T, typename Cmp, typename = void>
 struct ZmHash_IsStaticCmp : public ZuFalse { };
@@ -302,13 +326,17 @@ struct ZmHash_IsStaticEquals<T, Cmp, decltype(
   Cmp::equals(ZuDeclVal<const T &>(), ZuDeclVal<const T &>()),
   void())> : public ZuTrue { };
 
-template <typename T_, typename NTP = ZmHash_Defaults>
+template <typename T_, typename NTP_ = ZmHash_Defaults,
+  typename Node_ = typename ZmHash_NodeT<T_, NTP_>::T,
+  typename Impl_ = void>
 class ZmHash :
     public ZmAnyHash,
-    public ZmHash_LockMgr<typename NTP::Lock>,
-    public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
+    public ZmHash_LockMgr<typename NTP_::Lock>,
+    public ZmNodeFn<NTP_::Shadow, typename NTP_::Node> {
 public:
   using T = T_;
+  using NTP = NTP_;
+  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, ZmHash, Impl_>;
   static constexpr auto KeyAxor = NTP::KeyAxor;
   static constexpr auto ValAxor = NTP::ValAxor;
   using KeyRet = decltype(KeyAxor(ZuDeclVal<const T &>()));
@@ -345,18 +373,7 @@ public:
   unsigned bits() const { return m_bits; }
   using LockMgr::cBits;
 
-  struct Node;
-private:
-  using NodeExt = ZmHash_NodeExt<Node>;
-  using Node_ = ZmNode<
-    T, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
-public:
-  struct Node : public Node_ {
-    friend ZmHash;
-    ZuDerive_(Node, Node_)
-  private:
-    using NodeExt::next;
-  };
+  using Node = Node_;
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
@@ -366,6 +383,13 @@ private:
   using NodeFn::nodeDeref;
   using NodeFn::nodeAcquire;
   using NodeFn::nodeDelete;
+
+  static Node *next(Node *node) {
+    return static_cast<Node *>(node->Ext::next);
+  }
+  static void next(Node *node, Node *next_) {
+    node->Ext::next = next_;
+  }
 
 public:
   static KeyRet key(const Node *node) {
@@ -402,8 +426,9 @@ private:
   template <typename I> class Iter_;
 template <typename> friend class Iter_;
   template <typename I> class Iter_ : public Iter__<I> { // CRTP
-    using Hash = ZmHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  template <typename, typename, typename, typename> friend class ZmHash;
 
     Iter_(const Iter_ &) = delete;
     Iter_ &operator =(const Iter_ &) = delete;
@@ -430,8 +455,9 @@ template <typename> friend class Iter_;
 template <typename, typename> friend class KeyIter_;
   template <typename I, typename IKey_>
   class KeyIter_ : public Iter_<I> { // CRTP
-    using Hash = ZmHash<T, NTP>;
-  friend class ZmHash<T, NTP>;
+    using Hash = Impl;
+  friend Impl;
+  template <typename, typename, typename, typename> friend class ZmHash;
 
     KeyIter_(const KeyIter_ &) = delete;
     KeyIter_ &operator =(const KeyIter_ &) = delete;
@@ -461,8 +487,9 @@ public:
     Iter(const Iter &) = delete;
     Iter &operator =(const Iter &) = delete;
 
-    using Hash = ZmHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  template <typename, typename, typename, typename> friend class ZmHash;
 
     using Base = Iter_<Iter>;
     using Base::hash;
@@ -481,8 +508,9 @@ public:
     CIter(const CIter &) = delete;
     CIter &operator =(const CIter &) = delete;
 
-    using Hash = ZmHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  template <typename, typename, typename, typename> friend class ZmHash;
 
     using Base = Iter_<CIter>;
     using Base::hash;
@@ -502,8 +530,9 @@ public:
     KeyIter(const KeyIter &) = delete;
     KeyIter &operator =(const KeyIter &) = delete;
 
-    using Hash = ZmHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  template <typename, typename, typename, typename> friend class ZmHash;
 
     using Base = KeyIter_<KeyIter<IKey_>, IKey_>;
     using typename Base::IKey;
@@ -529,8 +558,9 @@ public:
     ReadKeyIter(const ReadKeyIter &) = delete;
     ReadKeyIter &operator =(const ReadKeyIter &) = delete;
 
-    using Hash = ZmHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  template <typename, typename, typename, typename> friend class ZmHash;
     using Base = KeyIter_<ReadKeyIter<IKey_>, IKey_>;
 
     using typename Base::IKey;
@@ -714,7 +744,7 @@ private:
 
     unsigned slot = ZmHashBits(code, m_bits);
 
-    node->NodeExt::next = m_table[slot];
+    next(node, m_table[slot]);
     m_table[slot] = ZuMv(node);
     m_count.store_(count + 1);
   }
@@ -868,7 +898,7 @@ private:
 
     for (node = m_table[slot];
 	 node && !match(node);
-	 node = node->NodeExt::next);
+	 node = next(node));
 
     return node;
   }
@@ -902,7 +932,7 @@ private:
 
     for (node = m_table[slot];
 	 node && !equals(node->Node::key(), KeyAxor(data));
-	 node = node->NodeExt::next);
+	 node = next(node));
 
     if (!node) addNode_(node = new Node{ZuFwd<P>(data)}, code);
     return node;
@@ -987,33 +1017,34 @@ private:
 
     for (node = m_table[slot];
 	 node && !match(node);
-	 prevNode = node, node = node->NodeExt::next);
+	 prevNode = node, node = next(node));
 
     if (!node) return {};
 
     if (!prevNode)
-      m_table[slot] = node->NodeExt::next;
+      m_table[slot] = next(node);
     else
-      prevNode->NodeExt::next = node->NodeExt::next;
+      next(prevNode, next(node));
 
     m_count.store_(count - 1);
 
-    node->NodeExt::next = nullptr;
+    next(node, nullptr);
 
     return nodeAcquire(node);
   }
 
 public:
-  auto iter() { return Iter{*this}; }
+  auto iter() { return Iter{static_cast<Impl &>(*this)}; }
   template <typename P>
   auto iter(P key) {
-    return KeyIter<ZuRDecay<P>>{*this, ZuMv(key)};
+    return KeyIter<ZuRDecay<P>>{static_cast<Impl &>(*this), ZuMv(key)};
   }
 
-  auto citer() const { return CIter{*this}; }
+  auto citer() const { return CIter{static_cast<const Impl &>(*this)}; }
   template <typename P>
   auto citer(P key) const {
-    return ReadKeyIter<ZuRDecay<P>>{*this, ZuMv(key)};
+    return ReadKeyIter<ZuRDecay<P>>{
+      static_cast<const Impl &>(*this), ZuMv(key)};
   }
 
 private:
@@ -1046,7 +1077,7 @@ private:
       node = m_table[slot];
     } else {
       prevNode = node;
-      node = node->NodeExt::next;
+      node = next(node);
     }
 
     if (!node) {
@@ -1078,12 +1109,12 @@ private:
       node = m_table[slot];
     } else {
       prevNode = node;
-      node = node->NodeExt::next;
+      node = next(node);
     }
 
     for (;
 	 node && !equals(node->Node::key(), iter.key);
-	 prevNode = node, node = node->NodeExt::next);
+	 prevNode = node, node = next(node));
 
     if (!node) {
       LockTraits::unlock(lockSlot(slot));
@@ -1108,15 +1139,15 @@ private:
     if (!count || !node) return nullptr;
 
     if (!prevNode)
-      m_table[iter.slot] = node->NodeExt::next;
+      m_table[iter.slot] = next(node);
     else
-      prevNode->NodeExt::next = node->NodeExt::next;
+      next(prevNode, next(node));
 
     iter.node = prevNode;
 
     m_count.store_(count - 1);
 
-    node->NodeExt::next = nullptr;
+    next(node, nullptr);
 
     return nodeAcquire(node);
   }
@@ -1131,7 +1162,7 @@ public:
       node = m_table[i];
 
       while (prevNode = node) {
-	node = prevNode->NodeExt::next;
+	node = next(prevNode);
 	nodeDeref(prevNode);
 	nodeDelete(prevNode);
       }
@@ -1185,9 +1216,9 @@ private:
 
     for (unsigned i = 0; i < n; i++)
       for (node = m_table[i]; node; node = nextNode) {
-	nextNode = node->NodeExt::next;
+	nextNode = next(node);
 	unsigned j = ZmHashBits(HashFn::hash(node->Node::key()), bits);
-	node->NodeExt::next = table[j];
+	next(node, table[j]);
 	table[j] = node;
       }
     Zm::alignedFree(m_table);
@@ -1208,5 +1239,43 @@ template <typename P0, typename P1, typename NTP = ZmHash_Defaults>
 using ZmHashKV =
   ZmHash<ZuTuple<P0, P1>,
     ZmHashKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>>;
+
+#define ZmHashDerive(Name, T_, NTP) \
+  ZuDerive(Name ## _NTP, NTP); \
+  ZuDerive(Name ## _Node, \
+    (ZmHash_NodeT<ZuPP_Strip(T_), Name ## _NTP>::T)); \
+  ZuDerive(Name, \
+    (ZmHash<ZuPP_Strip(T_), Name ## _NTP, Name ## _Node, Name>));
+
+#define ZmHashKVDerive(Name, P0_, P1_, NTP) \
+  ZuDerive(Name ## _NTP, \
+    (ZmHashKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), ZuPP_Strip(NTP)>)); \
+  ZuDerive(Name ## _Node, \
+    (ZmHash_NodeT<ZuTuple<ZuPP_Strip(P0_), ZuPP_Strip(P1_)>, \
+      Name ## _NTP>::T)); \
+  ZuDerive(Name, \
+    (ZmHash<ZuTuple<ZuPP_Strip(P0_), ZuPP_Strip(P1_)>, \
+      Name ## _NTP, Name ## _Node, Name>))
+
+#define ZmHashDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _Node, \
+    (ZmHash_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T)); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmHash<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, Name ## _Node<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args)>>));
+#define ZmHashDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _Node, \
+    (ZmHash_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T)); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmHash<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, Name ## _Node<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmHashDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmHashDeriveT(...) \
+  ZmHashDeriveT_N(__VA_ARGS__, \
+    ZmHashDeriveT_5(__VA_ARGS__), \
+    ZmHashDeriveT_4(__VA_ARGS__))
+
 
 #endif /* ZmHash_HH */

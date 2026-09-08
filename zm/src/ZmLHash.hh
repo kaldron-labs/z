@@ -137,9 +137,17 @@ struct alignas(T) ZmLHash_Data {
   ZuInline constexpr ~ZmLHash_Data() noexcept { }
   union { T v; };
 };
+
+template <typename T, typename NTP, typename Impl> class ZmLHash;
+
+template <typename T, typename NTP, typename Impl>
+struct ZmLHash_Impl { using Type = Impl; };
+template <typename T, typename NTP>
+struct ZmLHash_Impl<T, NTP, void> { using Type = ZmLHash<T, NTP, void>; };
+
 template <typename T_, auto KeyAxor, auto ValAxor>
 class ZmLHash_Node {
-template <typename, typename> friend class ZmLHash;
+template <typename, typename, typename> friend class ZmLHash;
 template <typename, typename, typename, unsigned> friend class ZmLHash_;
 
 public:
@@ -407,13 +415,15 @@ protected:
   Node	 		*m_table = nullptr;
 };
 
-template <typename T_, typename NTP = ZmLHash_Defaults>
-class ZmLHash : public ZmLHash_<ZmLHash<T_, NTP>, T_, NTP, NTP::Static> {
+template <typename T_, typename NTP = ZmLHash_Defaults, typename Impl_ = void>
+class ZmLHash : public ZmLHash_<
+  typename ZmLHash_Impl<T_, NTP, Impl_>::Type, T_, NTP, NTP::Static> {
 template <typename, typename, typename, unsigned> friend class ZmLHash_;
 
-friend class ZmLHash__<ZmLHash<T_, NTP>, NTP>;
+friend class ZmLHash__<typename ZmLHash_Impl<T_, NTP, Impl_>::Type, NTP>;
 
-  using Base = ZmLHash_<ZmLHash<T_, NTP>, T_, NTP, NTP::Static>;
+  using Impl = typename ZmLHash_Impl<T_, NTP, Impl_>::Type;
+  using Base = ZmLHash_<Impl, T_, NTP, NTP::Static>;
 
 public:
   using T = T_;
@@ -482,8 +492,9 @@ protected:
   class Iter_;
 friend Iter_;
   class Iter_ {			// hash iterator
-    using Hash = ZmLHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  friend ZmLHash;
 
     Iter_(const Iter_ &) = delete;
     Iter_ &operator =(const Iter_ &) = delete;
@@ -523,8 +534,9 @@ template <typename> friend class KeyIter_;
     KeyIter_(const KeyIter_ &) = delete;
     KeyIter_ &operator =(const KeyIter_ &) = delete;
 
-    using Hash = ZmLHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  friend ZmLHash;
 
     using Iter_::hash;
 
@@ -556,8 +568,9 @@ public:
     Iter(const Iter &) = delete;
     Iter &operator =(const Iter &) = delete;
 
-    using Hash = ZmLHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  friend ZmLHash;
 
     using Base = Iter_;
     using Base::hash;
@@ -578,8 +591,9 @@ public:
     CIter(const CIter &) = delete;
     CIter &operator =(const CIter &) = delete;
 
-    using Hash = ZmLHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  friend ZmLHash;
 
     using Base = Iter_;
     using Base::hash;
@@ -602,8 +616,9 @@ public:
     KeyIter(const KeyIter &) = delete;
     KeyIter &operator =(const KeyIter &) = delete;
 
-    using Hash = ZmLHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  friend ZmLHash;
 
     using Base = KeyIter_<IKey_>;
     using typename Base::IKey;
@@ -629,8 +644,9 @@ public:
     ReadKeyIter(const ReadKeyIter &) = delete;
     ReadKeyIter &operator =(const ReadKeyIter &) = delete;
 
-    using Hash = ZmLHash<T, NTP>;
+    using Hash = Impl;
   friend Hash;
+  friend ZmLHash;
 
     using Base = KeyIter_<IKey_>;
     using typename Base::IKey;
@@ -1088,16 +1104,16 @@ public:
     m_count = 0;
   }
 
-  auto iter() { return Iter{*this}; }
+  auto iter() { return Iter{static_cast<Impl &>(*this)}; }
   template <typename P>
   auto iter(P key) {
-    return KeyIter<P>{*this, ZuMv(key)};
+    return KeyIter<P>{static_cast<Impl &>(*this), ZuMv(key)};
   }
 
-  auto citer() const { return CIter{*this}; }
+  auto citer() const { return CIter{static_cast<const Impl &>(*this)}; }
   template <typename P>
   auto citer(P key) const {
-    return ReadKeyIter<P>{*this, ZuMv(key)};
+    return ReadKeyIter<P>{static_cast<const Impl &>(*this), ZuMv(key)};
   }
 
 private:
@@ -1234,5 +1250,32 @@ template <typename P0, typename P1, typename NTP = ZmLHash_Defaults>
 using ZmLHashKV =
   ZmLHash<ZuTuple<P0, P1>,
     ZmLHashKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>>;
+
+#define ZmLHashDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  ZuDerive(Name, (ZmLHash<ZuPP_Strip(T_), Name ## _NTP, Name>));
+
+#define ZmLHashDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmLHash<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args)>>));
+#define ZmLHashDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmLHash<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmLHashDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmLHashDeriveT(...) \
+  ZmLHashDeriveT_N(__VA_ARGS__, \
+    ZmLHashDeriveT_5(__VA_ARGS__), \
+    ZmLHashDeriveT_4(__VA_ARGS__))
+
+#define ZmLHashKVDerive(Name, P0_, P1_, ...) \
+  ZuDerive(Name ## _NTP, \
+    (ZmLHashKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), __VA_ARGS__>)); \
+  ZuDerive(Name, \
+    (ZmLHash<ZuTuple<ZuPP_Strip(P0_), ZuPP_Strip(P1_)>, \
+      Name ## _NTP, Name>));
 
 #endif /* ZmLHash_HH */

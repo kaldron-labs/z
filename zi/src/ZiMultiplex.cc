@@ -29,11 +29,10 @@ friend Ztc::MxMgr;
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
-  ZuDerive(Map,
-    (ZmRBTree<ZiMultiplex *,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmNoLock,
-	  ZmRBTreeHeapID<"Ztc.MxMgr">>>>));
+  ZmRBTreeDerive(Map, ZiMultiplex *,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmNoLock,
+	ZmRBTreeHeapID<"Ztc.MxMgr">>>);
   using Captures =
     ZtArray<Ztc::MxTelemetry,
       ZtArrayHeapID<"Ztc.MxMgr.Capture">>;

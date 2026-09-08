@@ -666,7 +666,7 @@ class ZquicAPI ZquicLogger {
   using Guard = ZmGuard<Lock>;
   ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
   using Fn = ZmRingFn<ZquicLogger *>;
-  ZuDerive(Queue_, (ZmQueue<Fn, ZmQueueHeapID<"Zquic.Log.Queue">>));
+  ZmQueueDerive(Queue_, Fn, ZmQueueHeapID<"Zquic.Log.Queue">);
   struct Queue : public Queue_ {
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;

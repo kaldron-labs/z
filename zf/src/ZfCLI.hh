@@ -496,10 +496,9 @@ public:
   ZuDerive(String, ZuSpan<char>);
   ZuDerive(Array, (ZtBuiltin<
       ZtArray<ZuPtr<AnyNode>, ZtArrayHeapID_<Node_HeapID>>, ArraySize>));
-  ZuDerive(Object,
-    (ZmRBTreeKV<ZuCSpan, ZuPtr<AnyNode>,
-      ZmRBTreeUnique<true,
-	ZmRBTreeHeapID_<Node_HeapID>>>));
+  ZmRBTreeKVDerive(Object, ZuCSpan, ZuPtr<AnyNode>,
+    ZmRBTreeUnique<true,
+      ZmRBTreeHeapID_<Node_HeapID>>);
 
   using TL = ZuTypeList<String, Array, Object>;
 

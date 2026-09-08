@@ -177,7 +177,7 @@ struct URLView {
   friend ZuPrintFn ZuPrintType(URLView *);
 };
 
-class URL {
+class ZhttpAPI URL {
 public:
   URL() = default;
   explicit URL(ZuBSpan s) { assign(s); }
@@ -211,7 +211,7 @@ private:
   bool		m_ipv6Literal = false;
 };
 
-struct Target {
+struct ZhttpAPI Target {
   AuthorityView		authority;
   ZuSpan<uint8_t>	raw;
   ZuSpan<uint8_t>	path;

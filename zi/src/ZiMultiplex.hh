@@ -748,12 +748,11 @@ friend ZiConnection;
     bool		m_up;
     ZiListenInfo	m_info;
   };
-  ZuDerive(ListenerHash,
-    (ZmHash<Listener_,
-      ZmHashNode<Listener_,
-	ZmHashKey<Listener_::SocketAxor,
-	  ZmHashHeapID<"ZiMultiplex.Listener",
-	    ZmHashSharded<true>>>>>));
+  ZmHashDerive(ListenerHash, Listener_,
+    (ZmHashNode<Listener_,
+      ZmHashKey<Listener_::SocketAxor,
+	ZmHashHeapID<"ZiMultiplex.Listener",
+	  ZmHashSharded<true>>>>));
   using Listener = ListenerHash::Node;
 
 #if ZiMultiplex__AcceptHeap
@@ -847,21 +846,19 @@ template <typename> friend class Connect_;
 #endif
   };
 #if ZiMultiplex__ConnectHash
-  ZuDerive(ConnectHash,
-    (ZmHash<Connect_,
-      ZmHashNode<Connect_,
-	ZmHashKey<Connect_::SocketAxor,
-	  ZmHashHeapID<"ZiMultiplex.Connect">>>>));
+  ZmHashDerive(ConnectHash, Connect_,
+    (ZmHashNode<Connect_,
+      ZmHashKey<Connect_::SocketAxor,
+	ZmHashHeapID<"ZiMultiplex.Connect">>>));
   using Connect = ConnectHash::Node;
 #else
   using ConnectHeap = ZmHeap<"ZiMultiplex.Connect", Connect_<ZuVoid>>;
   ZuDerive(Connect, (Connect_<ConnectHeap>));
 #endif
 
-  ZuDerive(CxnHash,
-    (ZmHash<ZmRef<ZiConnection>,
-      ZmHashKey<ZiConnection::SocketAxor,
-	ZmHashHeapID<"ZiMultiplex.Connection">>>));
+  ZmHashDerive(CxnHash, ZmRef<ZiConnection>,
+    (ZmHashKey<ZiConnection::SocketAxor,
+	ZmHashHeapID<"ZiMultiplex.Connection">>));
 
 public:
   using Socket = Zi::Socket;

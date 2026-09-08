@@ -15,15 +15,15 @@ using namespace ZuTestUtil;
 
 using AnyNode = ZfTree::AnyNode;
 
-static_assert(ZuIs_<ZfCf::AnyNode, ZfTree::AnyNode>{});
-static_assert(ZfTree::ValueTC::Array == 0);
-static_assert(ZfTree::ValueTC::Object == 1);
-static_assert(ZfTree::ValueTC::String == 2);
-static_assert(ZfTree::ValueTC::DateTime == 3);
-static_assert(sizeof(AnyNode) == 3 * sizeof(void *));
-static_assert(AnyNode::StringSize > 0);
-static_assert(AnyNode::ArraySize > 0);
-static_assert(AnyNode::ObjectSize > 0);
+ZuAssert((ZuIs_<ZfCf::AnyNode, ZfTree::AnyNode>{}));
+ZuAssert((ZfTree::ValueTC::Array == 0));
+ZuAssert((ZfTree::ValueTC::Object == 1));
+ZuAssert((ZfTree::ValueTC::String == 2));
+ZuAssert((ZfTree::ValueTC::DateTime == 3));
+ZuAssert((sizeof(AnyNode) == 3 * sizeof(void *)));
+ZuAssert((AnyNode::StringSize > 0));
+ZuAssert((AnyNode::ArraySize > 0));
+ZuAssert((AnyNode::ObjectSize > 0));
 
 struct BadType { };
 

@@ -656,10 +656,9 @@ void ReqBuilder_::connected(const Zhttp::ConnectedInfo &info)
 struct Client;
 struct Pool;
 template <typename Heap = ZuVoid> struct Pool_;
-ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
-  ZmPQueueOverlap<false,
-    ZmPQueueNode<ReqBuilder_,
-      ZmPQueueHeapID<"zhttp.ReqBuilder">>>>));
+ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
+  ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
+    ZmPQueueHeapID<"zhttp.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuAssert((ZuIsSame<ReqBuilderQ::HeapID, ZuStringT<"zhttp.ReqBuilder">>{}));
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;

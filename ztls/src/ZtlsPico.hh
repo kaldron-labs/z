@@ -11,6 +11,8 @@
 
 #include <stdint.h>
 
+#include <zlib/ZtlsLib.hh>
+
 #include <zpicotls.h>
 
 namespace Ztls::Pico {
@@ -25,11 +27,11 @@ struct Stats {
   uint64_t	internal_alloc_fail = 0;
 };
 
-void install();
-Stats stats();
-void reset_stats();
+ZtlsAPI void install();
+ZtlsAPI Stats stats();
+ZtlsAPI void reset_stats();
 
-class AeadCtx {
+class ZtlsAPI AeadCtx {
 public:
   AeadCtx() = default;
   ~AeadCtx() { clear(); }
@@ -47,7 +49,7 @@ private:
   uint16_t	m_size = 0;
 };
 
-class CipherCtx {
+class ZtlsAPI CipherCtx {
 public:
   CipherCtx() = default;
   ~CipherCtx() { clear(); }

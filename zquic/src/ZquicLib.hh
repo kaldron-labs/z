@@ -24,9 +24,9 @@
 
 #else
 
-#define ZquicAPI
-#define ZquicExplicit
-#define ZquicExtern extern
+#define ZquicAPI ZuExport_API
+#define ZquicExplicit ZuExport_Explicit
+#define ZquicExtern extern ZquicAPI
 
 #endif
 

@@ -148,10 +148,9 @@ struct ResParser : public Zhttp::Parser {
   }
 };
 
-ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
-  ZmPQueueOverlap<false,
-    ZmPQueueNode<ReqBuilder_,
-      ZmPQueueHeapID<"Zhttp.Test.Fallback.ReqBuilder">>>>));
+ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
+  ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
+    ZmPQueueHeapID<"Zhttp.Test.Fallback.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 

@@ -24,15 +24,15 @@
 
 #else
 
-#define ZtlsAPI
-#define ZtlsExplicit
-#define ZtlsExtern extern
+#define ZtlsAPI ZuExport_API
+#define ZtlsExplicit ZuExport_Explicit
+#define ZtlsExtern extern ZtlsAPI
 
 #endif
 
 namespace Ztls {
 namespace Backend {
-size_t format_error(int err, char *buf, size_t len);
+ZtlsAPI size_t format_error(int err, char *buf, size_t len);
 }
 }
 
@@ -48,7 +48,7 @@ ZtlsExtern void init(); // can be called repeatedly
 
 struct StrError { char buf[200]; };
 
-inline ZuCSpan strerror_(int e) {
+ZtlsAPI inline ZuCSpan strerror_(int e) {
   char *buf = ZmTLS<StrError>().buf;
   constexpr unsigned N = sizeof(StrError{}.buf);
   unsigned n = Backend::format_error(e, buf, N);

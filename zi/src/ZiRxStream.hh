@@ -47,8 +47,7 @@
 
 #include <zlib/ZiIOBuf.hh>
 
-ZuDerive(ZiRxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+ZmListDerive(ZiRxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 
 namespace Zi {
 

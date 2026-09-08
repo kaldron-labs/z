@@ -237,10 +237,9 @@ struct MockBodyRx {
   uint64_t pending = 3;
 };
 
-ZuDerive(ReqBuilderQ, (ZmPQueue<ReqBuilder_,
-  ZmPQueueOverlap<false,
-    ZmPQueueNode<ReqBuilder_,
-      ZmPQueueHeapID<"Zhttp.Test.ReqBuilder">>>>));
+ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
+  ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
+    ZmPQueueHeapID<"Zhttp.Test.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 

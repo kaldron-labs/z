@@ -40,7 +40,7 @@ struct Msg_ : public ZuObject, public Msg_Data {
   void write(const I &i) { }
 };
 
-ZuDerive(Queue, (ZmPQueue<Msg_, ZmPQueueNode<ZuObject>>));
+ZmPQueueDerive(Queue, Msg_, ZmPQueueNode<ZuObject>);
 
 using XXX = decltype(ZuDeclVal<const typename Queue::Node &>().key());
 

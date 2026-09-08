@@ -39,21 +39,24 @@ struct Msg : public ZuObject, public Msg_Data {
   unsigned elems() const { return 1; }
 };
 
-ZuDerive(PQueue,
-  (ZmPQueue<Msg,
-    ZmPQueueNode<Msg,
-      ZmPQueueBits<1,
-	ZmPQueueLevels<4>>>>));
+ZmPQueueDerive(PQueue, Msg,
+  ZmPQueueNode<Msg, ZmPQueueBits<1, ZmPQueueLevels<4>>>);
 
 using QMsg = PQueue::Node;
 
-ZuDerive(NoOverlapPQueue,
-  (ZmPQueue<Msg,
-    ZmPQueueNode<Msg,
-      ZmPQueueStats<false,
-	ZmPQueueOverlap<false,
-	  ZmPQueueBits<3,
-	    ZmPQueueLevels<3>>>>>>));
+using PQueueDefault = ZmPQueue<Msg, PQueue_NTP>;
+using PQueueExplicit = ZmPQueue<Msg, PQueue_NTP, PQueue_Node, PQueue>;
+ZuAssert((ZuIsSame<PQueue::Impl, PQueue>{}));
+ZuAssert((ZuIsSame<PQueue::Node, PQueue_Node>{}));
+ZuAssert((ZuIsSame<PQueueExplicit::Node, PQueue::Node>{}));
+ZuAssert((ZuIsSame<PQueueExplicit::NodeRef, PQueue::NodeRef>{}));
+ZuAssert((ZuIsSame<PQueueExplicit::NodeMvRef, PQueue::NodeMvRef>{}));
+ZuAssert((sizeof(PQueue::Node) == sizeof(PQueueDefault::Node)));
+ZuAssert((alignof(PQueue::Node) == alignof(PQueueDefault::Node)));
+
+ZmPQueueDerive(NoOverlapPQueue, Msg,
+  ZmPQueueNode<Msg, ZmPQueueStats<false,
+    ZmPQueueOverlap<false, ZmPQueueBits<3, ZmPQueueLevels<3>>>>>);
 
 using NoOverlapQMsg = NoOverlapPQueue::Node;
 
@@ -76,10 +79,8 @@ struct PlainMsg : public PlainMsg_Data {
   void write(const I &) { }
 };
 
-ZuDerive(PlainPQueue,
-  (ZmPQueue<PlainMsg,
-    ZmPQueueBits<1,
-      ZmPQueueLevels<3>>>));
+ZmPQueueDerive(PlainPQueue, PlainMsg,
+  ZmPQueueBits<1, ZmPQueueLevels<3>>);
 
 using PlainQMsg = PlainPQueue::Node;
 
@@ -103,18 +104,12 @@ struct WriteMsg : public ZuObject, public WriteMsg_Data {
   void write(const I &i) { p<2>() = i.value(); }
 };
 
-ZuDerive(WritePQueue,
-  (ZmPQueue<WriteMsg,
-    ZmPQueueNode<WriteMsg,
-      ZmPQueueBits<1,
-	ZmPQueueLevels<3>>>>));
+ZmPQueueDerive(WritePQueue, WriteMsg,
+  ZmPQueueNode<WriteMsg, ZmPQueueBits<1, ZmPQueueLevels<3>>>);
 
-ZuDerive(NoWritePQueue,
-  (ZmPQueue<WriteMsg,
-    ZmPQueueNode<WriteMsg,
-      ZmPQueueOverwrite<false,
-	ZmPQueueBits<1,
-	  ZmPQueueLevels<3>>>>>));
+ZmPQueueDerive(NoWritePQueue, WriteMsg,
+  ZmPQueueNode<WriteMsg, ZmPQueueOverwrite<false,
+    ZmPQueueBits<1, ZmPQueueLevels<3>>>>);
 
 using WriteQMsg = WritePQueue::Node;
 using NoWriteQMsg = NoWritePQueue::Node;

@@ -34,11 +34,9 @@ struct Cxn : public ZuObject {
 template <typename Link_>
 inline const CxnID &Cxn_IDAxor(const Cxn<Link_> *cxn) { return cxn->id; }
 
-template <typename Link_>
-ZuDerive(CxnRoutes_,
-  (ZmHash<ZmRef<Cxn<Link_>>,
-    ZmHashKey<Cxn_IDAxor<Link_>,
-      ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>>));
+ZmHashDeriveT((Link_), CxnRoutes_, ZmRef<Cxn<Link_>>,
+  (ZmHashKey<Cxn_IDAxor<Link_>,
+	ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>));
 
 template <typename Link_>
 class CxnRouter {
@@ -221,16 +219,14 @@ private:
 #endif
 };
 
-template <typename Link_>
-ZuDerive(ServerLinks_,
-  (ZmHash<ZmRef<Link_>,
-    ZmHashHeapID<"Zquic.Server.LinkHash">>));
+ZmHashDeriveT((Link_), ServerLinks_, ZmRef<Link_>,
+  (ZmHashHeapID<"Zquic.Server.LinkHash">));
 
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zquic.Endpoint.DiscFn">>;
 using EndpointRebindFn =
   ZmFn<void(bool, ZiSockAddr, bool), ZmFnHeapID<"Zquic.Endpoint.RebindFn">>;
-ZuDerive(EndpointDiscFns,
-  (ZmQueue<EndpointDiscFn, ZmQueueHeapID<"Zquic.Endpoint.DiscFns">>));
+ZmQueueDerive(EndpointDiscFns, EndpointDiscFn,
+  ZmQueueHeapID<"Zquic.Endpoint.DiscFns">);
 
 template <typename Impl_>
 class Endpoint_ {
@@ -249,10 +245,9 @@ class Endpoint_ {
       ZiSockAddr		addr;
       EcnMark::T		ecn = EcnMark::NotECT;
     };
-    ZuDerive(TxQueue,
-      (ZmList<ZmRef<TxNode>,
-	ZmListNode<ZmRef<TxNode>,
-	  ZmListHeapID<"Zquic.Endpoint.TxQueue">>>));
+    ZmListDerive(TxQueue, ZmRef<TxNode>,
+      ZmListNode<ZmRef<TxNode>,
+	ZmListHeapID<"Zquic.Endpoint.TxQueue">>);
 
     void *operator new(size_t s) {
       using Heap = ZmHeap<"Zquic.Endpoint.Cxn", Cxn_>;

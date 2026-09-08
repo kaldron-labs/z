@@ -44,12 +44,10 @@ struct WatchAlloc_ : public Heap {
 ZuDerive(WatchAlloc,
   (WatchAlloc_<ZmHeap<"Ztc.Watch.TestHeap", WatchAlloc_<ZuVoid>>>));
 
-ZuDerive(WatchHash,
-  (ZmHashKV<unsigned, unsigned,
-    ZmHashHeapID<"Ztc.Watch.TestHash">>));
-ZuDerive(WatchDrainHash,
-  (ZmHashKV<unsigned, unsigned,
-    ZmHashHeapID<"Ztc.Watch.Drain">>));
+ZmHashKVDerive(WatchHash, unsigned, unsigned,
+  (ZmHashHeapID<"Ztc.Watch.TestHash">));
+ZmHashKVDerive(WatchDrainHash, unsigned, unsigned,
+  (ZmHashHeapID<"Ztc.Watch.Drain">));
 
 void managerGuards()
 {

@@ -110,10 +110,36 @@ struct ZmList_NodeExt {
   Node	*next = nullptr, *prev = nullptr;
 };
 
-template <typename T_, class NTP = ZmList_Defaults>
+template <typename T_, typename NTP_>
+struct ZmList_NodeT {
+private:
+  static constexpr auto KeyAxor = NTP_::KeyAxor;
+  static constexpr auto ValAxor = NTP_::ValAxor;
+  using NodeBase = typename NTP_::Node;
+  using HeapID = typename NTP_::HeapID;
+  enum { Sharded = NTP_::Sharded };
+
+  struct Node;
+  using NodeExt = ZmList_NodeExt<Node>;
+  using NodeImpl = ZmNode<
+    T_, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
+
+  struct Node : public NodeImpl {
+    ZuDerive_(Node, NodeImpl)
+    using Ext = NodeExt;
+  };
+
+public:
+  using T = Node;
+};
+
+template <typename T_, class NTP = ZmList_Defaults,
+  typename Node_ = typename ZmList_NodeT<T_, NTP>::T,
+  typename Impl_ = void>
 class ZmList : public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
 public:
   using T = T_;
+  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, ZmList, Impl_>;
   static constexpr auto KeyAxor = NTP::KeyAxor;
   static constexpr auto ValAxor = NTP::ValAxor;
   using KeyRet = decltype(KeyAxor(ZuDeclVal<const T &>()));
@@ -139,19 +165,7 @@ private:
 template <typename> friend class Iter_;
 
 public:
-  struct Node;
-private:
-  using NodeExt = ZmList_NodeExt<Node>;
-  using Node_ = ZmNode<
-    T, KeyAxor, ValAxor, NodeBase, NodeExt, HeapID, Sharded>;
-public:
-  struct Node : public Node_ {
-    friend ZmList;
-    ZuDerive_(Node, Node_)
-  private:
-    using NodeExt::next;
-    using NodeExt::prev;
-  };
+  using Node = Node_;
   using NodeRef = typename NodeFn::template Ref<Node>;
   using NodeMvRef = typename NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
@@ -161,6 +175,19 @@ private:
   using NodeFn::nodeDeref;
   using NodeFn::nodeDelete;
   using NodeFn::nodeAcquire;
+
+  static Node *next(Node *node) {
+    return static_cast<Node *>(node->Ext::next);
+  }
+  static void next(Node *node, Node *next_) {
+    node->Ext::next = next_;
+  }
+  static Node *prev(Node *node) {
+    return static_cast<Node *>(node->Ext::prev);
+  }
+  static void prev(Node *node, Node *prev_) {
+    node->Ext::prev = prev_;
+  }
 
   static KeyRet key(Node *node) {
     if (ZuLikely(node)) return node->Node::key();
@@ -197,8 +224,9 @@ private:
     Iter_(const Iter_ &) = delete;
     Iter_ &operator =(const Iter_ &) = delete;
 
-    using List = ZmList<T, NTP>;
+    using List = Impl;
   friend List;
+  friend ZmList;
 
   protected:
     Iter_(Iter_ &&) = default;
@@ -226,7 +254,7 @@ public:
     Iter(const Iter &) = delete;
     Iter &operator =(const Iter &) = delete;
 
-    using List = ZmList<T, NTP>;
+    using List = Impl;
   friend List;
     using Base = Iter_<Iter>;
 
@@ -270,7 +298,7 @@ public:
     CIter(const CIter &) = delete;
     CIter &operator =(const CIter &) = delete;
 
-    using List = ZmList<T, NTP>;
+    using List = Impl;
   friend List;
     using Base = Iter_<CIter>;
 
@@ -329,8 +357,8 @@ public:
     if (head) {
       Guard guard(m_lock);
       if (m_tail) {
-	m_tail->NodeExt::next = head;
-	head->NodeExt::prev = m_tail;
+	next(m_tail, head);
+	prev(head, m_tail);
 	m_tail = tail;
 	m_count += count;
       } else {
@@ -431,7 +459,7 @@ private:
     Node *node;
     Guard guard(m_lock);
     if (!m_count) return nullptr;
-    for (node = m_head; node && !match(node); node = node->NodeExt::next);
+    for (node = m_head; node && !match(node); node = next(node));
     return node;
   }
 
@@ -497,7 +525,7 @@ private:
     Guard guard(m_lock);
     if (!m_count) return nullptr;
     Node *node;
-    for (node = m_head; node && !match(node); node = node->NodeExt::next);
+    for (node = m_head; node && !match(node); node = next(node));
     if (ZuUnlikely(!node)) return {};
     if (!del__(node)) return {};
     return nodeAcquire(node);
@@ -529,12 +557,12 @@ public:
   }
 private:
   void pushNode_(Node *node) {
-    node->NodeExt::next = nullptr;
-    node->NodeExt::prev = m_tail;
+    next(node, nullptr);
+    prev(node, m_tail);
     if (!m_tail)
       m_head = node;
     else
-      m_tail->NodeExt::next = node;
+      next(m_tail, node);
     m_tail = node;
     ++m_count;
   }
@@ -545,12 +573,12 @@ public:
 
     if (!(node = m_tail)) return nullptr;
 
-    if (!(m_tail = node->NodeExt::prev))
+    if (!(m_tail = prev(node)))
       m_head = nullptr;
     else
-      m_tail->NodeExt::next = nullptr;
+      next(m_tail, nullptr);
 
-    node->NodeExt::prev = nullptr;
+    prev(node, nullptr);
 
     NodeMvRef ret = node;
 
@@ -567,13 +595,14 @@ public:
 
     if (!(node = m_tail)) return nullptr;
 
-    if (!(m_tail = node->NodeExt::prev))
+    if (!(m_tail = prev(node)))
       m_tail = node;
     else {
-      node->NodeExt::next(m_head);
-      m_head->NodeExt::prev = node;
-      (m_head = node)->NodeExt::prev = nullptr;
-      m_tail->NodeExt::next = nullptr;
+      next(node, m_head);
+      prev(m_head, node);
+      m_head = node;
+      prev(m_head, nullptr);
+      next(m_tail, nullptr);
     }
 
     return node;
@@ -595,12 +624,12 @@ public:
     Guard guard(m_lock);
 
     nodeRef(node);
-    node->NodeExt::prev = nullptr;
-    node->NodeExt::next = m_head;
+    prev(node, nullptr);
+    next(node, m_head);
     if (!m_head)
       m_tail = node;
     else
-      m_head->NodeExt::prev = node;
+      prev(m_head, node);
     m_head = node;
     ++m_count;
   }
@@ -611,12 +640,12 @@ public:
 
     if (!(node = m_head)) return nullptr;
 
-    if (!(m_head = node->NodeExt::next))
+    if (!(m_head = next(node)))
       m_tail = nullptr;
     else
-      m_head->NodeExt::prev = nullptr;
+      prev(m_head, nullptr);
 
-    node->NodeExt::next = nullptr;
+    next(node, nullptr);
 
     NodeMvRef ret = node;
 
@@ -633,13 +662,14 @@ public:
 
     if (!(node = m_head)) return nullptr;
 
-    if (!(m_head = node->NodeExt::next))
+    if (!(m_head = next(node)))
       m_head = node;
     else {
-      node->NodeExt::prev = m_tail;
-      m_tail->NodeExt::next = node;
-      (m_tail = node)->NodeExt::next = nullptr;
-      m_head->NodeExt::prev = nullptr;
+      prev(node, m_tail);
+      next(m_tail, node);
+      m_tail = node;
+      next(m_tail, nullptr);
+      prev(m_head, nullptr);
     }
 
     return node;
@@ -669,8 +699,8 @@ public:
     m_count = 0;
   }
 
-  auto iter() { return Iter{*this}; }
-  auto citer() const { return CIter{*this}; }
+  auto iter() { return Iter{static_cast<Impl &>(*this)}; }
+  auto citer() const { return CIter{static_cast<const Impl &>(*this)}; }
 
 protected:
   template <typename I>
@@ -685,7 +715,7 @@ protected:
     if (!node)
       node = m_head;
     else
-      node = node->NodeExt::next;
+      node = next(node);
 
     if (!node) return nullptr;
 
@@ -702,15 +732,15 @@ protected:
     if (!prevNode) { push(node); return; }
 
     nodeRef(node);
-    if (Node *nextNode = prevNode->NodeExt::next) {
-      node->NodeExt::next = nextNode;
-      nextNode->NodeExt::prev = node;
+    if (Node *nextNode = next(prevNode)) {
+      next(node, nextNode);
+      prev(nextNode, node);
     } else {
       m_tail = node;
-      node->NodeExt::next = nullptr;
+      next(node, nullptr);
     }
-    node->NodeExt::prev = prevNode;
-    prevNode->NodeExt::next = node;
+    prev(node, prevNode);
+    next(prevNode, node);
     ++m_count;
   }
 
@@ -725,15 +755,15 @@ protected:
     if (!nextNode) { unshift(node); return; }
 
     nodeRef(node);
-    if (Node *prevNode = nextNode->NodeExt::prev) {
-      node->NodeExt::prev = prevNode;
-      prevNode->NodeExt::next = node;
+    if (Node *prevNode = prev(nextNode)) {
+      prev(node, prevNode);
+      next(prevNode, node);
     } else {
       m_head = node;
-      node->NodeExt::prev = nullptr;
+      prev(node, nullptr);
     }
-    node->NodeExt::next = nextNode;
-    nextNode->NodeExt::prev(node);
+    next(node, nextNode);
+    prev(nextNode, node);
     ++m_count;
   }
 
@@ -744,7 +774,7 @@ protected:
     Node *node = iter.m_node;
 
     if (ZuUnlikely(!node)) return {};
-    iter.m_node = node->NodeExt::prev;
+    iter.m_node = prev(node);
     if (!del__(node)) return {};
     return nodeAcquire(node);
   }
@@ -754,8 +784,8 @@ protected:
   }
 
   bool del__(Node *node) {
-    Node *prevNode = node->NodeExt::prev;
-    Node *nextNode = node->NodeExt::next;
+    Node *prevNode = prev(node);
+    Node *nextNode = next(node);
 
     if (!prevNode && !nextNode && (m_head != node || m_tail != node))
       return false;
@@ -765,16 +795,17 @@ protected:
     if (!prevNode)
       m_head = nextNode;
     else
-      prevNode->NodeExt::next = nextNode;
+      next(prevNode, nextNode);
 
     if (!nextNode)
       m_tail = prevNode;
     else
-      nextNode->NodeExt::prev = prevNode;
+      prev(nextNode, prevNode);
 
     --m_count;
     
-    node->NodeExt::next = node->NodeExt::prev = nullptr;
+    next(node, nullptr);
+    prev(node, nullptr);
     return true;
   }
 
@@ -784,7 +815,7 @@ protected:
     Node *node = m_head, *prevNode;
 
     while (prevNode = node) {
-      node = prevNode->NodeExt::next;
+      node = next(prevNode);
       nodeDeref(prevNode);
       nodeDelete(prevNode);
     }
@@ -800,5 +831,33 @@ template <typename P0, typename P1, typename NTP = ZmList_Defaults>
 using ZmListKV =
   ZmList<ZuTuple<P0, P1>,
     ZmListKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), NTP>>;
+
+#define ZmListDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  ZuDerive(Name ## _Node, \
+    (ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP>::T)); \
+  ZuDerive(Name, \
+    (ZmList<ZuPP_Strip(T_), Name ## _NTP, Name ## _Node, Name>));
+
+#define ZmListDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _Node, \
+    (ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T)); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmList<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name ## _Node<ZuPP_Strip(Args)>, Name<ZuPP_Strip(Args)>>));
+#define ZmListDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _Node, \
+    (ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T)); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmList<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
+      Name ## _Node<ZuPP_Strip(Args)>, \
+      Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
+#define ZmListDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmListDeriveT(...) \
+  ZmListDeriveT_N(__VA_ARGS__, \
+    ZmListDeriveT_5(__VA_ARGS__), \
+    ZmListDeriveT_4(__VA_ARGS__))
 
 #endif /* ZmList_HH */

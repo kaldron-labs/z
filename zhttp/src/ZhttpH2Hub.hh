@@ -720,16 +720,14 @@ inline uint32_t TxWindowEntry_IDAxor(const TxWindowEntry &entry)
   return entry.id;
 }
 
-ZuDerive(TxWindowList,
-  (ZmList<TxWindowEntry,
-    ZmListNode<TxWindowEntry, ZmListShadow<>>>));
+ZmListDerive(TxWindowList, TxWindowEntry,
+  ZmListNode<TxWindowEntry, ZmListShadow<>>);
 
-ZuDerive(TxWindowHash,
-  (ZmHash<typename TxWindowList::Node,
-    ZmHashNode<typename TxWindowList::Node,
-      ZmHashKey<TxWindowEntry_IDAxor,
-	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zhttp.H2">>>>>));
+ZmHashDerive(TxWindowHash, typename TxWindowList::Node,
+  (ZmHashNode<typename TxWindowList::Node,
+    ZmHashKey<TxWindowEntry_IDAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zhttp.H2">>>>));
 
 template <typename Impl, typename Logical>
 class Wire : public H2::Connection<Wire<Impl, Logical>> {

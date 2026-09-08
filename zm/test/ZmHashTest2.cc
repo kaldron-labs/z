@@ -28,11 +28,20 @@ void dump(Order *o)
 {
   log("order ID: ", o->id);}
 
-ZuDerive(Orders,
-  (ZmHash<ZmRef<Order>,
-    ZmHashKey<Order::IDAccessor,
-      ZmHashLock<ZmNoLock,
-	ZmHashHeapID<"Orders">>>>));
+ZmHashDerive(Orders, ZmRef<Order>,
+  (ZmHashKey<Order::IDAccessor,
+    ZmHashLock<ZmNoLock,
+      ZmHashHeapID<"Orders">>>));
+
+using OrdersDefault = ZmHash<ZmRef<Order>, Orders_NTP>;
+using OrdersExplicit = ZmHash<ZmRef<Order>, Orders_NTP, Orders_Node, Orders>;
+ZuAssert((ZuIsSame<Orders::Impl, Orders>{}));
+ZuAssert((ZuIsSame<Orders::Node, Orders_Node>{}));
+ZuAssert((ZuIsSame<OrdersExplicit::Node, Orders::Node>{}));
+ZuAssert((ZuIsSame<OrdersExplicit::NodeRef, Orders::NodeRef>{}));
+ZuAssert((ZuIsSame<OrdersExplicit::NodeMvRef, Orders::NodeMvRef>{}));
+ZuAssert((sizeof(Orders::Node) == sizeof(OrdersDefault::Node)));
+ZuAssert((alignof(Orders::Node) == alignof(OrdersDefault::Node)));
 
 int main(int argc, char **argv)
 {

@@ -37,6 +37,8 @@ struct C {
   static ZmAtomic<uint32_t>	m_count;
 };
 
+ZmQueueDerive(Q, C, ZmQueue_Defaults);
+
 void testParamsAndEmpty()
 {
   ZuTestScope(testParamsAndEmpty);
@@ -45,7 +47,7 @@ void testParamsAndEmpty()
   ZuCheck(params.initial() == 0);
   ZuCheck(params.maxFrag() == ZmQueueMaxFrag);
 
-  ZmQueue<C> q{ZmQueueParams{}.initial(2).maxFrag(25)};
+  Q q{ZmQueueParams{}.initial(2).maxFrag(25)};
   ZuCheck(q.size() == 2);
   ZuCheck(q.length() == 0);
   ZuCheck(q.count_() == 0);

@@ -225,7 +225,7 @@ private:
   ZuDerive(Fn, (ZmRingFn<ZmRingFnHeapID<"ZmScheduler.Fn">>));
 
   // overflow queue DLQ
-  ZuDerive(Queue_, (ZmQueue<Fn, ZmQueueHeapID<"ZmScheduler.Queue">>));
+  ZmQueueDerive(Queue_, Fn, ZmQueueHeapID<"ZmScheduler.Queue">);
   struct Queue : public Queue_ {
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;
@@ -276,11 +276,10 @@ private:
     ZuOpBool
   };
   static const ZuTime &Timer_TimeoutAxor(const Timer_ &t) { return t.timeout; }
-  ZuDerive(ScheduleTree,
-    (ZmRBTree<Timer_,
-      ZmRBTreeKey<Timer_TimeoutAxor,
-	ZmRBTreeNode<Timer_,
-	  ZmRBTreeShadow<>>>>));
+  ZmRBTreeDerive(ScheduleTree, Timer_,
+    ZmRBTreeKey<Timer_TimeoutAxor,
+      ZmRBTreeNode<Timer_,
+	ZmRBTreeShadow<>>>);
 public:
   using Timer = ScheduleTree::Node;
 

@@ -52,6 +52,76 @@ struct ZmPolyCacheEvict : public NTP {
   enum { Evict = Evict_ };
 };
 
+template <typename T_>
+struct ZmPolyCache_LRUList_NTP : public
+    ZmListNode<T_, ZmListShadow<>> {
+  ZuDerive_(ZmPolyCache_LRUList_NTP, (ZmListNode<T_, ZmListShadow<>>))
+};
+template <typename T_>
+struct ZmPolyCache_LRUList_Node : public
+    ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T {
+  ZuDerive_(ZmPolyCache_LRUList_Node,
+    (typename ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T))
+};
+template <typename T_>
+struct ZmPolyCache_LRUList : public
+    ZmList<T_, ZmPolyCache_LRUList_NTP<T_>,
+      ZmPolyCache_LRUList_Node<T_>, ZmPolyCache_LRUList<T_>> {
+  using Base = ZmList<T_, ZmPolyCache_LRUList_NTP<T_>,
+    ZmPolyCache_LRUList_Node<T_>, ZmPolyCache_LRUList<T_>>;
+  using Base::Base;
+};
+template <typename T_>
+struct ZmPolyCache_LRUDisable {
+  using Node = T_;
+  Node *delNode(Node *node) { return nullptr; }
+  Node *shift() { return nullptr; }
+  void pushNode(Node *) { }
+};
+template <typename T_, bool Evict_>
+struct ZmPolyCache_LRUT;
+template <typename T_>
+struct ZmPolyCache_LRUT<T_, true> { using T = ZmPolyCache_LRUList<T_>; };
+template <typename T_>
+struct ZmPolyCache_LRUT<T_, false> { using T = ZmPolyCache_LRUDisable<T_>; };
+
+ZmPolyHashDeriveT((NTP_, LRU_), (T_), ZmPolyCache_Hash,
+  (typename LRU_::Node), (ZmPolyHashLock<ZmNoLock, NTP_>));
+
+template <typename Node_, typename HeapID_, bool Sharded_>
+struct ZmPolyCache_FindFn : public ZmFn<void(Node_ *),
+    ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>> {
+  ZuDerive_(ZmPolyCache_FindFn,
+    (ZmFn<void(Node_ *),
+      ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>>) )
+};
+template <typename FindFn_, typename HeapID_>
+struct ZmPolyCache_FindFnList_NTP : public ZmHashHeapID_<HeapID_> {
+  ZuDerive_(ZmPolyCache_FindFnList_NTP, (ZmHashHeapID_<HeapID_>))
+};
+template <typename FindFn_, typename HeapID_>
+struct ZmPolyCache_FindFnList_Node : public ZmList_NodeT<
+    FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>>::T {
+  ZuDerive_(ZmPolyCache_FindFnList_Node,
+    (typename ZmList_NodeT<
+      FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>>::T))
+};
+template <typename FindFn_, typename HeapID_>
+struct ZmPolyCache_FindFnList : public ZmList<
+    FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>,
+    ZmPolyCache_FindFnList_Node<FindFn_, HeapID_>,
+    ZmPolyCache_FindFnList<FindFn_, HeapID_>> {
+  using Base = ZmList<
+    FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>,
+    ZmPolyCache_FindFnList_Node<FindFn_, HeapID_>,
+    ZmPolyCache_FindFnList<FindFn_, HeapID_>>;
+  using Base::Base;
+};
+
+ZmHashDeriveT((Key_, FindFnList_, HeapID_), ZmPolyCache_LoadHash,
+  (ZuTuple<Key_, FindFnList_>),
+  (ZmHashKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(), ZmHashHeapID_<HeapID_>>));
+
 template <typename T_, typename NTP = ZmPolyCache_Defaults>
 class ZmPolyCache {
 public:
@@ -62,17 +132,8 @@ public:
 private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
-  using LRUList = ZmList<T, ZmListNode<T, ZmListShadow<>>>;
-  struct LRUDisable { // LRU list is not needed if eviction is disabled
-    using Node = T;
-    Node *delNode(Node *node) { return nullptr; }
-    Node *shift() { return nullptr; }
-    void pushNode(Node *) { }
-  };
-  using LRU = ZuIf<Evict, LRUList, LRUDisable>;
-  using PolyHash =
-    ZmPolyHash<typename LRU::Node,
-      ZmPolyHashLock<ZmNoLock, NTP>>; // overrides NTP::Lock
+  using LRU = typename ZmPolyCache_LRUT<T, Evict>::T;
+  using PolyHash = ZmPolyCache_Hash<NTP, LRU, T>;
 
 public:
   using HeapID = PolyHash::HeapID;
@@ -83,9 +144,8 @@ public:
   using NodeMvRef = typename PolyHash::NodeMvRef;
 
 private:
-  using FindFn = ZmFn<void(Node *),
-    ZmFnHeapID<HeapID{}() + ".FindFn"_Zu, ZmFnSharded<Sharded>>>;
-  using FindFnList = ZmList<FindFn, ZmHashHeapID_<HeapID>>;
+  using FindFn = ZmPolyCache_FindFn<Node, HeapID, Sharded>;
+  using FindFnList = ZmPolyCache_FindFnList<FindFn, HeapID>;
   // key IDs as a type list
   using KeyIDs = ZuSeqTL<ZuStructKeyIDs<T>>;
   // key types, each a tuple
@@ -94,7 +154,7 @@ private:
   using Keys = ZuTypeMap<KeyT, KeyIDs>;
   // load hash tables, mapping keys to pending find() operations for each KeyID
   template <typename KeyID>
-  using LoadHash = ZmHashKV<KeyT<KeyID>, FindFnList, ZmHashHeapID_<HeapID>>;
+  using LoadHash = ZmPolyCache_LoadHash<KeyT<KeyID>, FindFnList, HeapID>;
   // hash table node type
   template <int KeyID>
   using LoadHashNode = typename LoadHash<ZuUnsigned<KeyID>>::Node;
@@ -190,12 +250,36 @@ public:
       return;
     }
     ++m_misses;
+    findMiss_<KeyID, Evict_>(
+      guard, ZuMv(key), FindFn{ZuMv(findFn)}, ZuMv(loadFn));
+  }
+
+  template <
+    int KeyID = 0,
+    bool UpdateLRU = Evict, bool Evict_ = Evict,
+    typename FindFn_, typename LoadFn, typename EvictFn>
+  void find(Key<KeyID> key, FindFn_ findFn, LoadFn loadFn, EvictFn evictFn) {
+    Guard guard{m_lock};
+    ++m_loads;
+    if (NodeRef node = find_<KeyID, UpdateLRU>(key)) {
+      findFn(ZuMv(node)); return;
+    }
+    ++m_misses;
+    findMiss_<KeyID, Evict_>(
+      guard, ZuMv(key), FindFn{ZuMv(findFn)},
+      ZuMv(loadFn), ZuMv(evictFn));
+  }
+
+private:
+  template <int KeyID, bool Evict_, typename LoadFn>
+  void findMiss_(
+      Guard &guard, Key<KeyID> key, FindFn findFn, LoadFn loadFn) {
     const auto &loadHash = m_loadHashes.template p<KeyID>();
     LoadHashNode<KeyID> *load = loadHash->find(key);
     bool pending = load;
     if (!pending)
       loadHash->addNode(load = new LoadHashNode<KeyID>{key, FindFnList{}});
-    load->val().push(FindFn{ZuMv(findFn)});
+    load->val().push(ZuMv(findFn));
     guard.unlock();
     if (!pending)
       loadFn(ZuMv(key), [this, key](NodeRef node) {
@@ -209,23 +293,16 @@ public:
       });
   }
 
-  template <
-    int KeyID = 0,
-    bool UpdateLRU = Evict,
-    typename FindFn_, typename LoadFn, typename EvictFn>
-  void find(Key<KeyID> key, FindFn_ findFn, LoadFn loadFn, EvictFn evictFn) {
-    Guard guard{m_lock};
-    ++m_loads;
-    if (NodeRef node = find_<KeyID, UpdateLRU>(key)) {
-      findFn(ZuMv(node)); return;
-    }
-    ++m_misses;
+  template <int KeyID, bool Evict_, typename LoadFn, typename EvictFn>
+  void findMiss_(
+      Guard &guard, Key<KeyID> key, FindFn findFn,
+      LoadFn loadFn, EvictFn evictFn) {
     const auto &loadHash = m_loadHashes.template p<KeyID>();
     LoadHashNode<KeyID> *load = loadHash->find(key);
     bool pending = load;
     if (!pending)
       loadHash->addNode(load = new LoadHashNode<KeyID>{key, FindFnList{}});
-    load->val().push(FindFn{ZuMv(findFn)});
+    load->val().push(ZuMv(findFn));
     guard.unlock();
     if (!pending)
       loadFn(key, [this, key, evictFn = ZuMv(evictFn)](NodeRef node) {
@@ -238,6 +315,8 @@ public:
 	}
       });
   }
+
+public:
 
   template <bool Evict_ = Evict>
   ZuIfT<!Evict_ || !Evict> add(NodeRef node) {
@@ -380,5 +459,23 @@ private:
     uint64_t		  m_misses = 0;
     uint64_t		  m_evictions = 0;
 };
+
+#define ZmPolyCacheDerive(Name, T_, ...) \
+  ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
+  ZuDerive(Name, (ZmPolyCache<ZuPP_Strip(T_), Name ## _NTP>));
+
+#define ZmPolyCacheDeriveT_4(Args, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename(Args) ZuDerive(Name, \
+    (ZmPolyCache<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>));
+#define ZmPolyCacheDeriveT_5(Args, XArgs, Name, T_, NTP) \
+  ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
+  ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
+    (ZmPolyCache<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>));
+#define ZmPolyCacheDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
+#define ZmPolyCacheDeriveT(...) \
+  ZmPolyCacheDeriveT_N(__VA_ARGS__, \
+    ZmPolyCacheDeriveT_5(__VA_ARGS__), \
+    ZmPolyCacheDeriveT_4(__VA_ARGS__))
 
 #endif /* ZmPolyCache_HH */

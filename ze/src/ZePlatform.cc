@@ -123,10 +123,9 @@ class ZePlatform_WSAErrors {
 public:
   enum { N = sizeof(ZePlatform_WSAErrors_) / sizeof(ZePlatform_WSAErrors_[0]) };
   enum { Bits = ZuIntrin::log2(N) };
-  ZuDerive(Hash,
-    (ZmLHashKV<DWORD, const char *,
-      ZmLHashStatic<Bits,
-	ZmLHashLock<ZmNoLock>>>));
+  ZmLHashKVDerive(Hash, DWORD, const char *,
+    ZmLHashStatic<Bits,
+      ZmLHashLock<ZmNoLock>>);
 
   ZePlatform_WSAErrors() {
     m_hash = new Hash();

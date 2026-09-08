@@ -259,8 +259,8 @@ public:
       "stream Rx queued slice exceeds packet-backed range", return);
     m_rxDelivered += data.length;
     m_rxState.delivered(m_rxDelivered);
-    ZmRef<Zquic_::IOQueue::Node> buf =
-      static_cast<Zquic_::IOQueue::Node *>(msg);
+    ZmRef<ZiRxQueue::Node> buf =
+      static_cast<ZiRxQueue::Node *>(msg);
     m_rx.push(ZuMv(buf));
     if (m_link)
       ZquicLOG(m_link->app()->qlogTrace(), ([
@@ -939,11 +939,9 @@ public:
 template <typename Stream_>
 inline int64_t Stream_IDAxor(const Stream_ &s) { return s.id(); }
 
-template <typename Stream_>
-ZuDerive(Streams_,
-  (ZmHash<Stream_,
-    ZmHashNode<Stream_,
-      ZmHashKey<Stream_IDAxor<Stream_>,
-	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>>));
+ZmHashDeriveT((Stream_), Streams_, Stream_,
+  (ZmHashNode<Stream_,
+    ZmHashKey<Stream_IDAxor<Stream_>,
+	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>));
 
 } // namespace Zquic

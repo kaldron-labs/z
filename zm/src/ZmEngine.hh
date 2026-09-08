@@ -59,7 +59,7 @@ private:
 
   struct HeapID : public ZuStringT<"ZmEngine"> { };
   using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
-  ZuDerive(CtrlFnRing, (ZmQueue<CtrlFn, ZmQueueHeapID_<HeapID>>));
+  ZmQueueDerive(CtrlFnRing, CtrlFn, ZmQueueHeapID_<HeapID>);
 
 public:
   template <typename L>

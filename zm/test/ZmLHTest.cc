@@ -75,8 +75,8 @@ struct String {
 
 ZuDerive(S, String<16>);
 
-ZuDerive(Hash, (ZmHashKV<S, int, ZmHashLock<ZmNoLock>>));
-ZuDerive(LHash, (ZmLHashKV<S, int, ZmLHashLock<ZmNoLock>>));
+ZmHashKVDerive(Hash, S, int, (ZmHashLock<ZmNoLock>));
+ZmLHashKVDerive(LHash, S, int, ZmLHashLock<ZmNoLock>);
 
 template <typename H>
 struct HashAdapter {

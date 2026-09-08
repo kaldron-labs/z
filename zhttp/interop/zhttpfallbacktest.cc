@@ -37,8 +37,7 @@ constexpr unsigned FallbackMaxBody = 64<<10;
 using IOBufAlloc =
   ZiIOBufAlloc<FallbackBufSize, FallbackMaxBody, "Zhttp.Fallback.Buf">;
 
-ZuDerive(RxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>));
+ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, FallbackBufSize,
   FallbackMaxBody, ZuStringT<"Zhttp.Fallback.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;

@@ -28,7 +28,7 @@ ZuStruct(Foo_,
     ((k), ((Keys<0, 1>))),
     ((l), (Keys<3>)));
 
-ZuDerive(Cache, (ZmPolyCache<Foo_>));
+ZmPolyCacheDerive(Cache, Foo_, ZmPolyCache_Defaults);
 using Foo = Cache::Node;
 
 int main(int argc, char **argv)

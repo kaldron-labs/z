@@ -354,12 +354,11 @@ inline uint64_t StreamScheduleEntry_IDAxor(const StreamScheduleEntry &entry)
   return entry.id;
 }
 
-ZuDerive(StreamScheduleHash,
-  (ZmHash<StreamScheduleEntry,
-    ZmHashNode<StreamScheduleEntry,
-      ZmHashKey<StreamScheduleEntry_IDAxor,
-	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zquic.StreamScheduler">>>>>));
+ZmHashDerive(StreamScheduleHash, StreamScheduleEntry,
+  (ZmHashNode<StreamScheduleEntry,
+    ZmHashKey<StreamScheduleEntry_IDAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Zquic.StreamScheduler">>>>));
 
 class StreamScheduler {
 public:

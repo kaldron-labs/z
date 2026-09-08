@@ -35,57 +35,57 @@ namespace ZuFieldProp::TOML {
   using CSV9 = CSV<ZfTOML::Sec, 9>;
 }
 
-static_assert(ZuIs_<ZfTOML::AnyNode, ZfTree::AnyNode>{});
-static_assert(ZuIs_<ZfTOML::AnyNode, ZfCf::AnyNode>{});
-static_assert(ZfTOML::ScalarN == 5); // extend the exhaustive matrix below
-static_assert(ZuIsSame<decltype(&ZfTOML::TOMLPolicy::scalar),
-  bool (*)(int, ZfTreeLoad::ScalarMask::T)>{});
-static_assert(ZuFieldProp::TOML::GetScalarFmt<ZuTypeList<>>{} ==
-  ZfTOML::NativeScalar);
-static_assert(ZuFieldProp::TOML::GetScalarFmt<
-  ZuTypeList<ZuFieldProp::TOML::Literal>>{} == ZfTOML::LiteralScalar);
-static_assert(ZuFieldProp::TOML::GetScalarFmt<
-  ZuTypeList<ZuFieldProp::TOML::Basic>>{} == ZfTOML::BasicScalar);
-static_assert(ZuFieldProp::TOML::GetScalarFmt<
+ZuAssert((ZuIs_<ZfTOML::AnyNode, ZfTree::AnyNode>{}));
+ZuAssert((ZuIs_<ZfTOML::AnyNode, ZfCf::AnyNode>{}));
+ZuAssert((ZfTOML::ScalarN == 5)); // extend the exhaustive matrix below
+ZuAssert((ZuIsSame<decltype(&ZfTOML::TOMLPolicy::scalar),
+  bool (*)(int, ZfTreeLoad::ScalarMask::T)>{}));
+ZuAssert((ZuFieldProp::TOML::GetScalarFmt<ZuTypeList<>>{} ==
+  ZfTOML::NativeScalar));
+ZuAssert((ZuFieldProp::TOML::GetScalarFmt<
+  ZuTypeList<ZuFieldProp::TOML::Literal>>{} == ZfTOML::LiteralScalar));
+ZuAssert((ZuFieldProp::TOML::GetScalarFmt<
+  ZuTypeList<ZuFieldProp::TOML::Basic>>{} == ZfTOML::BasicScalar));
+ZuAssert((ZuFieldProp::TOML::GetScalarFmt<
   ZuTypeList<ZuFieldProp::TOML::MultilineBasic>>{} ==
-    ZfTOML::MultilineBasicScalar);
-static_assert(ZuFieldProp::TOML::GetScalarFmt<
+    ZfTOML::MultilineBasicScalar));
+ZuAssert((ZuFieldProp::TOML::GetScalarFmt<
   ZuTypeList<ZuFieldProp::TOML::MultilineLiteral>>{} ==
-    ZfTOML::MultilineLiteralScalar);
-static_assert(ZuFieldProp::TOML::GetBytesFmt<ZuTypeList<>>{} ==
-  ZfTOML::Base64);
-static_assert(ZuFieldProp::TOML::GetBytesFmt<
-  ZuTypeList<ZuFieldProp::TOML::Base64URL>>{} == ZfTOML::Base64URL);
-static_assert(ZuFieldProp::TOML::GetBytesFmt<
-  ZuTypeList<ZuFieldProp::TOML::Base32>>{} == ZfTOML::Base32);
-static_assert(ZuFieldProp::TOML::GetBytesFmt<
-  ZuTypeList<ZuFieldProp::TOML::Hex>>{} == ZfTOML::Hex);
-static_assert(ZuFieldProp::TOML::GetBytesFmt<
-  ZuTypeList<ZuFieldProp::TOML::Raw>>{} == ZfTOML::Raw);
-static_assert(!ZuFieldProp::TOML::GetNumberFmt<ZuTypeList<>>::String);
-static_assert(ZuFieldProp::TOML::GetNumberFmt<
-  ZuTypeList<ZuFieldProp::TOML::String<>>>::String);
-static_assert(ZuFieldProp::TOML::GetTimeFmt<ZuTypeList<>>::Fmt == ZfTOML::ISO);
-static_assert(ZuFieldProp::TOML::GetTimeFmt<
+    ZfTOML::MultilineLiteralScalar));
+ZuAssert((ZuFieldProp::TOML::GetBytesFmt<ZuTypeList<>>{} ==
+  ZfTOML::Base64));
+ZuAssert((ZuFieldProp::TOML::GetBytesFmt<
+  ZuTypeList<ZuFieldProp::TOML::Base64URL>>{} == ZfTOML::Base64URL));
+ZuAssert((ZuFieldProp::TOML::GetBytesFmt<
+  ZuTypeList<ZuFieldProp::TOML::Base32>>{} == ZfTOML::Base32));
+ZuAssert((ZuFieldProp::TOML::GetBytesFmt<
+  ZuTypeList<ZuFieldProp::TOML::Hex>>{} == ZfTOML::Hex));
+ZuAssert((ZuFieldProp::TOML::GetBytesFmt<
+  ZuTypeList<ZuFieldProp::TOML::Raw>>{} == ZfTOML::Raw));
+ZuAssert((!ZuFieldProp::TOML::GetNumberFmt<ZuTypeList<>>::String));
+ZuAssert((ZuFieldProp::TOML::GetNumberFmt<
+  ZuTypeList<ZuFieldProp::TOML::String<>>>::String));
+ZuAssert((ZuFieldProp::TOML::GetTimeFmt<ZuTypeList<>>::Fmt == ZfTOML::ISO));
+ZuAssert((ZuFieldProp::TOML::GetTimeFmt<
   ZuTypeList<ZuFieldProp::TOML::Unix<ZfTOML::Sec, 9>>>::Fmt ==
-    ZfTOML::Unix);
-static_assert(!ZuFieldProp::TOML::GetOptional<ZuTypeList<>>{});
-static_assert(ZuFieldProp::TOML::GetOptional<
-  ZuTypeList<ZuFieldProp::TOML::Opt>>{});
-static_assert(!ZfTOML::ScalarFmtValid<ZfFieldTC::Bool,
-  ZuTypeList<ZuFieldProp::TOML::Basic>>{});
-static_assert(!ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
-  ZuTypeList<ZuFieldProp::TOML::Basic>>{});
-static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
-  ZuTypeList<ZuFieldProp::TOML::String<>, ZuFieldProp::TOML::Basic>>{});
-static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
+    ZfTOML::Unix));
+ZuAssert((!ZuFieldProp::TOML::GetOptional<ZuTypeList<>>{}));
+ZuAssert((ZuFieldProp::TOML::GetOptional<
+  ZuTypeList<ZuFieldProp::TOML::Opt>>{}));
+ZuAssert((!ZfTOML::ScalarFmtValid<ZfFieldTC::Bool,
+  ZuTypeList<ZuFieldProp::TOML::Basic>>{}));
+ZuAssert((!ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
+  ZuTypeList<ZuFieldProp::TOML::Basic>>{}));
+ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
+  ZuTypeList<ZuFieldProp::TOML::String<>, ZuFieldProp::TOML::Basic>>{}));
+ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
   ZuTypeList<ZuFieldProp::Enum<TOMLValues::Map>,
-    ZuFieldProp::TOML::Basic>>{});
-static_assert(!ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
-  ZuTypeList<ZuFieldProp::TOML::Basic>>{});
-static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
+    ZuFieldProp::TOML::Basic>>{}));
+ZuAssert((!ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
+  ZuTypeList<ZuFieldProp::TOML::Basic>>{}));
+ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
   ZuTypeList<ZuFieldProp::TOML::CSV<ZfTOML::Sec, 3>,
-    ZuFieldProp::TOML::Basic>>{});
+    ZuFieldProp::TOML::Basic>>{}));
 
 template <typename Style>
 struct TOMLExplicitNativeInvalid : public ZuBool<
@@ -93,18 +93,18 @@ struct TOMLExplicitNativeInvalid : public ZuBool<
     !ZfTOML::ScalarFmtValid<ZfFieldTC::Int32, ZuTypeList<Style>>{} &&
     !ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime, ZuTypeList<Style>>{}> { };
 
-static_assert(TOMLExplicitNativeInvalid<ZuFieldProp::TOML::Basic>{});
-static_assert(TOMLExplicitNativeInvalid<ZuFieldProp::TOML::Literal>{});
-static_assert(TOMLExplicitNativeInvalid<
-  ZuFieldProp::TOML::MultilineBasic>{});
-static_assert(TOMLExplicitNativeInvalid<
-  ZuFieldProp::TOML::MultilineLiteral>{});
-static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::Bool,
-  ZuTypeList<ZuFieldProp::TOML::Native>>{});
-static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
-  ZuTypeList<ZuFieldProp::TOML::Native>>{});
-static_assert(ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
-  ZuTypeList<ZuFieldProp::TOML::Native>>{});
+ZuAssert((TOMLExplicitNativeInvalid<ZuFieldProp::TOML::Basic>{}));
+ZuAssert((TOMLExplicitNativeInvalid<ZuFieldProp::TOML::Literal>{}));
+ZuAssert((TOMLExplicitNativeInvalid<
+  ZuFieldProp::TOML::MultilineBasic>{}));
+ZuAssert((TOMLExplicitNativeInvalid<
+  ZuFieldProp::TOML::MultilineLiteral>{}));
+ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::Bool,
+  ZuTypeList<ZuFieldProp::TOML::Native>>{}));
+ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::Int32,
+  ZuTypeList<ZuFieldProp::TOML::Native>>{}));
+ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
+  ZuTypeList<ZuFieldProp::TOML::Native>>{}));
 
 struct TOMLNested { int value = 0; };
 ZfStruct((TOMLNested, TOML),
@@ -391,15 +391,15 @@ ZfStructRender(TOMLFacet, TOML,
 using TOMLFacetFields = ZuFields<TOMLFacet, ZuFacet::TOML>;
 using TOMLFacetField = ZuType<0, TOMLFacetFields>;
 using JSONFacetField = ZuType<0, ZuFields<TOMLFacet, ZuFacet::JSON>>;
-static_assert(!ZuIs_<typename TOMLFacetField::Props,
-  typename JSONFacetField::Props>{});
-static_assert(ZuIs_<ZuFieldProp::TOML::GetID<TOMLFacetField>,
-  ZuStringT<"toml.value">>{});
-static_assert(ZuIs_<ZuFieldProp::TOML::GetIDs<TOMLFacetFields>,
-  ZuTypeList<ZuStringT<"toml.value">>>{});
+ZuAssert((!ZuIs_<typename TOMLFacetField::Props,
+  typename JSONFacetField::Props>{}));
+ZuAssert((ZuIs_<ZuFieldProp::TOML::GetID<TOMLFacetField>,
+  ZuStringT<"toml.value">>{}));
+ZuAssert((ZuIs_<ZuFieldProp::TOML::GetIDs<TOMLFacetFields>,
+  ZuTypeList<ZuStringT<"toml.value">>>{}));
 using TOMLDataField = ZuType<0, ZuFields<TOMLData, ZuFacet::TOML>>;
-static_assert(ZuIs_<ZuFieldProp::TOML::GetID<TOMLDataField>,
-  ZuStringT<"name">>{});
+ZuAssert((ZuIs_<ZuFieldProp::TOML::GetID<TOMLDataField>,
+  ZuStringT<"name">>{}));
 
 struct TOMLChild { ZtString<> name; };
 ZfStruct((TOMLChild, TOML),

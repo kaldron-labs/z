@@ -21,16 +21,24 @@
 
 namespace Zquic_ {
 
-// Intrusive base only; Zi::IOBufAlloc supplies the role heap.
-using IOQueue = ZiRxQueue;
-using RxStream = ZiRxStream<IOQueue>;
+// Intrusive base shared by packet, stream and crypto buffers; Zi::IOBufAlloc
+// supplies the role heap. It is deliberately independent of either I/O queue.
+struct BufNode : public ZiIOBuf {
+  BufNode(uint8_t *data_, unsigned size_) : ZiIOBuf(data_, size_) { }
+  BufNode(uint8_t *data_, unsigned size_, void *owner_) :
+    ZiIOBuf(data_, size_, owner_) { }
+  BufNode(uint8_t *data_, unsigned size_, void *owner_, unsigned length_) :
+    ZiIOBuf(data_, size_, owner_, length_) { }
+};
+
+using RxStream = ZiRxStream<ZiRxQueue>;
 
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Buf">
 using BufAlloc =
-  Zi::IOBufAlloc<IOQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+  Zi::IOBufAlloc<BufNode, Size, MaxSize, ZuStringT<HeapID>>;
 
 } // namespace Zquic_
 

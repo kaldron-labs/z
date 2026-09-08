@@ -14,9 +14,7 @@ using namespace ZuTestUtil;
 
 namespace ZhttpH3PushTest_ {
 
-ZuDerive(RxQueue,
-  (ZmList<ZiIOBuf, ZmListNode<ZiIOBuf,
-    ZmListHeapID<"">>>));
+ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 1<<20,
   ZuStringT<"ZhttpH3PushTest.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;

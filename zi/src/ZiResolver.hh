@@ -159,10 +159,9 @@ public:
 private:
   ZmAtomic<unsigned>	m_cancelled = 0;
 };
-ZuDerive(QueryList,
-  (ZmList<Query_,
-    ZmListNode<Query_,
-      ZmListHeapID<"ZiResolver.Query">>>));
+ZmListDerive(QueryList, Query_,
+  ZmListNode<Query_,
+    ZmListHeapID<"ZiResolver.Query">>);
 using Query = QueryList::Node;
 
 class ZiAPI Main {
