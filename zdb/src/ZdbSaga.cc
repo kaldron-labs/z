@@ -12,6 +12,42 @@ namespace Zdb_ {
 
 ZtEnumImplNS(SagaOp);
 
+bool Saga::prepare_(
+    AnyTable *table, Shard shard, SagaOp::T op,
+    bool effect, UN &un, bool &saved)
+{
+  return db()->sagaPrepare(this, table, shard, op, effect, un, saved);
+}
+
+void Saga::intent_(Shard shard, UN un)
+{
+  auto db = this->db();
+  SagaStep step{
+    .type = this->type(), .id = this->id(), .step = this->step(),
+    .shard = shard, .un = un
+  };
+  ZmRef<Row<SagaStep>> intent =
+    new Row<SagaStep>{db->m_sagaStepTable, shard};
+  bool committed = false;
+  db->m_sagaStepTable->insert(intent,
+    [&step, &committed](Row<SagaStep> *row) {
+      if (ZuUnlikely(!row)) return;
+      new (row->ptr()) SagaStep{ZuMv(step)};
+      committed = bool(row->commit());
+    });
+  ZiAssert(committed, "Zdb", (), "saga intent did not commit", ::abort());
+  m_locs[m_step] = shard;
+}
+
+void Saga::replay_(OpResult::T result, Shard shard)
+{
+  if (result == OpResult::Skipped) {
+    m_locs[m_step] = shard;
+    stepRecovered_(shard);
+  } else
+    result_(result, shard);
+}
+
 void Saga::stepRecovered_(Shard shard)
 {
   m_locs[m_step] = shard;

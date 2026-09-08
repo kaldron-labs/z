@@ -105,6 +105,12 @@
 #include <zlib/ZdbStore.hh>
 #include <zlib/ZdbSaga.hh>
 
+#define ZdbTableDerive(Name, T_) \
+  struct Name; \
+  ZuPP_Strip(T_) *ZdbTableModel(Name *); \
+  Name *ZdbTableType(ZuPP_Strip(T_) *); \
+  ZuDerive(Name, (Zdb_::Table<ZuPP_Strip(T_), Name>))
+
 #if defined(ZDEBUG) && !defined(Zdb_DEBUG)
 #define Zdb_DEBUG 1
 #endif
@@ -156,8 +162,19 @@ namespace CacheMode {
 class DB;				// database
 class Host;				// cluster host
 class AnyTable;				// untyped table
-template <typename T> class Table;	// typed table
+template <typename Impl_> class Table_;	// typed table implementation
+template <typename T_, typename Impl_> class Table; // typed table
+template <typename T> class Row_;
+struct Count;
+struct Find;
 struct Record_Print;
+
+template <typename T> Table<T> *ZdbTableType(T *);
+template <typename T>
+using TableT = ZuDecay<decltype(*ZdbTableType(ZuDeclVal<T *>()))>;
+template <typename T, typename Impl> T *ZdbTableModel(Table<T, Impl> *);
+template <typename Impl>
+using TableModelT = ZuDecay<decltype(*ZdbTableModel(ZuDeclVal<Impl *>()))>;
 
 // --- replication connection
 
@@ -205,15 +222,15 @@ private:
 
   ZmScheduler::Timer	m_hbTimer;
 };
-ZuDerive(CxnList,
-  (ZmList<Cxn_,
-    ZmListNode<Cxn_,
-      ZmListHeapID<"Zdb.Cxn">>>));
+ZmListDerive(CxnList, Cxn_,
+  ZmListNode<Cxn_,
+    ZmListHeapID<"Zdb.Cxn">>);
 using Cxn = CxnList::Node;
 
 // --- DB state - SN and key/value linear hash from {table ID, shard} -> UN
 
-ZuDerive(DBState_, (ZmLHashKV<ZuTuple<IDString, Shard>, UN, ZmLHashLocal<>>));
+using DBStateT = ZuTuple<IDString, Shard>;
+ZmLHashKVDerive(DBState_, DBStateT, UN, ZmLHashLocal<>);
 struct DBState : public DBState_ {
   SN		sn = 0;
 
@@ -357,7 +374,7 @@ class ZdbAPI AnyRow : public ZmPolymorph {
   AnyRow &operator =(AnyRow &&) = delete;
 
   friend AnyTable;
-  template <typename> friend class Table;
+  template <typename> friend class Table_;
 
 public:
   AnyRow(AnyTable *table, Shard shard) :
@@ -424,10 +441,9 @@ inline UN AnyRow_UNAxor(const ZmRef<AnyRow> &row) {
 }
 
 // temporarily there may be more than one UN referencing a cached row
-ZuDerive(CacheUN,
-  (ZmHashKV<UN, ZmRef<AnyRow>,
-    ZmHashLock<ZmPLock,
-      ZmHashHeapID<"Zdb.UpdCache">>>));
+ZmHashKVDerive(CacheUN, UN, ZmRef<AnyRow>,
+  (ZmHashLock<ZmPLock,
+	ZmHashHeapID<"Zdb.UpdCache">>));
 
 // --- typed row
 
@@ -441,14 +457,13 @@ using FieldFilter =
 template <typename O, typename Facet = ZuFacet::Core>
 using Fields = ZuTypeGrep<FieldFilter, ZuFields<O, Facet>>;
 
-template <typename T> class Table;
-
 template <typename T_>
 class Row_ : public AnyRow {
 public:
   using T = T_;
+  using Table = TableT<T>;
 
-  Row_(Table<T> *table_, Shard shard) : AnyRow{table_, shard} { }
+  Row_(Table *table_, Shard shard) : AnyRow{table_, shard} { }
 
   Row_() = delete;
   Row_(const Row_ &) = delete;
@@ -456,9 +471,7 @@ public:
   Row_(Row_ &&) = delete;
   Row_ &operator =(Row_ &&) = delete;
 
-  Table<T> *table() const {
-    return static_cast<Table<T> *>(AnyRow::table());
-  }
+  Table *table() const { return static_cast<Table *>(AnyRow::table()); }
 
   void *ptr_() { return &m_data[0]; }
   const void *ptr_() const { return &m_data[0]; }
@@ -519,10 +532,8 @@ private:
 };
 
 // typed row cache
-template <typename T>
-ZuDerive(Cache,
-  (ZmPolyCache<Row_<T>,
-    ZmPolyCacheHeapID_<Zdb_HeapID<T>>>));
+ZmPolyCacheDeriveT((T), Cache, (Row_<T>),
+  (ZmPolyCacheHeapID_<Zdb_HeapID<T>>));
 
 // typed row
 template <typename T>
@@ -570,11 +581,10 @@ inline TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
 
 // --- table configuration
 
-ZuDerive(TableCfs,
-  (ZmRBTree<TableCf,
-    ZmRBTreeKey<TableCf::IDAxor,
-      ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"Zdb.TableCf">>>>));
+ZmRBTreeDerive(TableCfs, TableCf,
+  ZmRBTreeKey<TableCf::IDAxor,
+    ZmRBTreeUnique<true,
+      ZmRBTreeHeapID<"Zdb.TableCf">>>);
 
 // --- generic table
 
@@ -595,7 +605,8 @@ private:
   bool opened(OpenResult);
   template <typename L> void close(L &&l);	// l()
 protected:
-  void warmup() { m_storeTbl->warmup(); }
+  void count(unsigned keyID, ZmRef<IOBuf>, ZmRef<Count>);
+  void retrieve(unsigned keyID, ZmRef<IOBuf>, ZmRef<Find>);
 
 public:
   DB *db() const { return m_db; }
@@ -646,6 +657,9 @@ public:
 
 protected:
   // --- implemented by Table<T>
+
+  // construct a typed row from a trusted replication buffer
+  virtual ZmRef<AnyRow> rowLoad(IOBuf *, Shard) = 0;
 
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
   virtual Zfb::Offset<void> rowSave(Zfb::Builder &, const void *) const = 0;
@@ -816,9 +830,8 @@ struct RepBuf_ : public ZmPolymorph {
 };
 
 // replication buffer cache
-template <typename T>
-ZuDerive(BufCache,
-  (ZmPolyHash<RepBuf_<T>, ZmPolyHashHeapID_<ZdbBuf_HeapID<T>>>));
+ZmPolyHashDeriveT((T), BufCache, (RepBuf_<T>),
+  (ZmPolyHashHeapID_<ZdbBuf_HeapID<T>>));
 
 // replication buffer
 template <typename T>
@@ -858,22 +871,36 @@ template <typename Tuple>
 ZuDerive(Select, (Select_<Tuple, Select_Heap<Tuple>>));
 
 // backing data store find() context
+struct Find : public ZmPolymorph {
+  Find(AnyTable *table_, Shard shard_) : table{table_}, shard{shard_} { }
+
+  virtual void found(ZmRef<AnyRow>) = 0;
+  virtual void printKey(ZuVStream &) const = 0;
+
+  AnyTable	*table;
+  Shard		shard;
+};
 template <typename T, typename Key> struct Find__ {
   using Fn = ZmFn<void(ZmRef<Row<T>>), ZmFnHeapID<"Zdb.Find.Fn">>;
 
-  Table<T>	*table;
-  unsigned	shard;
   Key		key;
   Fn		fn;
 };
 template <typename T, typename Key, typename Heap>
-struct Find_ : public Heap, public ZmPolymorph, public Find__<T, Key> {
-  ZuDerive_(Find_, (Find__<T, Key>))
+struct Find_ : public Heap, public Find, public Find__<T, Key> {
+  template <typename L>
+  Find_(AnyTable *table, Shard shard, Key key, L &&l) :
+    Find{table, shard}, Find__<T, Key>{ZuMv(key), ZuFwd<L>(l)} { }
+
+  void found(ZmRef<AnyRow> row) override {
+    this->fn(ZmRef<Row<T>>{ZuMv(row)});
+  }
+  void printKey(ZuVStream &s) const override { s << this->key; }
 };
 template <typename T, typename Key>
 using Find_Heap = ZmHeap<"Zdb.Find", Find_<T, Key, ZuVoid>>;
 template <typename T, typename Key>
-ZuDerive(Find, (Find_<T, Key, Find_Heap<T, Key>>));
+ZuDerive(FindCtx, (Find_<T, Key, Find_Heap<T, Key>>));
 
 // split group keys into group part and grouped part
 template <typename O, unsigned KeyID>
@@ -900,14 +927,20 @@ struct SplitKey {
 
 // --- typed table
 
-template <typename T>
-class Table : public AnyTable {
+template <typename Impl_>
+class Table_ : public AnyTable {
 friend DB;
 friend Cxn_;
-friend Row_<T>;
 friend Saga;
+template <typename> friend class Row_;
 
 public:
+  using Impl = Impl_;
+  using T = TableModelT<Impl>;
+
+  ZuInline auto impl() { return static_cast<Impl *>(this); }
+  ZuInline auto impl() const { return static_cast<const Impl *>(this); }
+
   enum { BufSize = ZdbBuf_Size<T>{} };
 
   using Fields = Zdb_::Fields<T>;
@@ -931,8 +964,8 @@ private:
 public:
   static ZmRef<IOBuf> allocBuf() { return new IOBufAlloc<T>{}; }
 
-  Table(DB *db, TableCf *cf, bool internal) :
-    AnyTable{db, cf, internal, Table::allocBuf}
+  Table_(DB *db, TableCf *cf, bool internal) :
+    AnyTable{db, cf, internal, Table_::allocBuf}
   {
     unsigned n = nShards_();
     ZuID cacheID = "Zdb.Cache."; cacheID << cf->id;
@@ -949,7 +982,7 @@ public:
 private:
   // rowLoad(buf, shard)
   // - construct row from flatbuffer (trusted source)
-  ZmRef<Row<T>> rowLoad(IOBuf *buf, unsigned shard) {
+  ZmRef<AnyRow> rowLoad(IOBuf *buf, Shard shard) override {
     auto record = record_(msg_(buf->hdr()));
     if (record->vn() < 0) return {}; // deleted
     auto data = Zfb::Load::bytes(record->data());
@@ -958,7 +991,7 @@ private:
     auto fbo = ZfbStruct::root<T>(&data[0]);
     ZiAssert(fbo, "Zdb",
       (id = this->id()), "bad record data in table " << id, return {});
-    ZmRef<Row<T>> row = new Row<T>(this, shard);
+    ZmRef<Row<T>> row = new Row<T>(impl(), shard);
     ZfbStruct::new_<T>(row->ptr(), fbo);
     row->init(
       record->shard(), record->un(),
@@ -966,17 +999,19 @@ private:
     return row;
   }
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
-  Zfb::Offset<void> rowSave(Zfb::Builder &fbb, const void *ptr) const {
+  Zfb::Offset<void> rowSave(Zfb::Builder &fbb, const void *ptr) const override {
     return ZfbStruct::save(fbb, *static_cast<const T *>(ptr)).Union();
   }
-  Zfb::Offset<void> rowSaveUpd(Zfb::Builder &fbb, const void *ptr) const {
+  Zfb::Offset<void> rowSaveUpd(
+      Zfb::Builder &fbb, const void *ptr) const override {
     return ZfbStruct::saveUpd(fbb, *static_cast<const T *>(ptr)).Union();
   }
-  Zfb::Offset<void> rowSaveDel(Zfb::Builder &fbb, const void *ptr) const {
+  Zfb::Offset<void> rowSaveDel(
+      Zfb::Builder &fbb, const void *ptr) const override {
     return ZfbStruct::saveDel(fbb, *static_cast<const T *>(ptr)).Union();
   }
   // rowRecover(record) - process recovered record (untrusted source)
-  void rowRecover(const fbs::Record *record) {
+  void rowRecover(const fbs::Record *record) override {
     auto fbo = ZfbStruct::verify<T>(Zfb::Load::bytes(record->data()));
     if (!fbo) return;
     auto shard = record->shard();
@@ -1008,20 +1043,20 @@ private:
   }
 
   // rowFields() - run-time field array
-  ZfVFieldArray rowFields() const { return ZfVFields<T>(); }
+  ZfVFieldArray rowFields() const override { return ZfVFields<T>(); }
   // rowKeyFields() - run-time key field arrays
-  ZfVKeyFieldArray rowKeyFields() const { return ZfVKeyFields<T>(); }
+  ZfVKeyFieldArray rowKeyFields() const override { return ZfVKeyFields<T>(); }
   // rowSchema() - flatbuffer reflection schema
-  const reflection::Schema *rowSchema() const {
+  const reflection::Schema *rowSchema() const override {
     return reflection::GetSchema(ZfbSchema<T>::data());
   }
 
   // rowPrint(stream, ptr) - print row
-  void rowPrint(ZuVStream &s, const void *ptr) const {
+  void rowPrint(ZuVStream &s, const void *ptr) const override {
     ZfStructPrint::print(s, *static_cast<const T *>(ptr));
   }
   // rowPrintFB(stream, data) - print flatbuffer
-  void rowPrintFB(ZuVStream &s, ZuBSpan data) const {
+  void rowPrintFB(ZuVStream &s, ZuBSpan data) const override {
     auto fbo = ZfbStruct::verify<T>(data);
     if (!fbo) return;
     s << *fbo;
@@ -1047,14 +1082,12 @@ private:
   // find from backing data store (retried on failure)
   template <unsigned KeyID, typename L>
   void retrieve(Shard shard, Key<KeyID>, L &&);
-  template <unsigned KeyID>
-  void retrieve_(ZmRef<Find<T, Key<KeyID>>> context);
 
   // buffer cache
-  void cacheBuf_(Shard shard, ZmRef<IOBuf> buf) {
+  void cacheBuf_(Shard shard, ZmRef<IOBuf> buf) override {
     m_bufCache[shard].add(new RepBuf<T>{ZuMv(buf)});
   }
-  ZmRef<IOBuf> evictBuf_(Shard shard, IOBuf *buf) {
+  ZmRef<IOBuf> evictBuf_(Shard shard, IOBuf *buf) override {
     if (auto repBuf = m_bufCache[shard].delNode(
 	static_cast<RepBuf<T> *>(static_cast<RepBuf_<T> *>(buf->rep))))
       return ZuMv(repBuf->buf);
@@ -1062,28 +1095,8 @@ private:
   }
 
   // cache statistics
-  void cacheStats(Shard shard, ZmCacheStats &stats) const {
+  void cacheStats(Shard shard, ZmCacheStats &stats) const override {
     m_cache[shard].stats(stats);
-  }
-
-  // mitigate cold start
-  void warmup();
-private:
-  void warmup_(Shard shard) {
-    // warmup heaps
-    ZmRef<Row<T>> row = new Row<T>(this, shard);
-    row->init(shard, 0, 0, 0);
-    new (row->ptr()) T{};
-    // warmup caches
-    m_cache[shard].add(row);
-    m_cache[shard].delNode(row);
-    // warmup UN cache
-    cacheUN(shard, 0, row);
-    evictUN(shard, 0);
-    // warmup buffer cache
-    ZmRef<IOBuf> buf = row->replicate(int(fbs::Body::Replication));
-    cacheBuf(shard, buf);
-    evictBuf(shard, 0);
   }
 
   template <
@@ -1246,7 +1259,7 @@ public:
     unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
   ZuInline void findUpd(Shard shard, Key<KeyID> key, L &&l) {
     findUpd_<KeyID>(shard, ZuMv(key),
-      [this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
+	[this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
 	if (ZuUnlikely(!row)) { l(row); return; }
 	update<KeyIDs_>(ZuMv(row), ZuMv(l));
       });
@@ -1321,7 +1334,7 @@ public:
   ZuInline void findDel(Shard shard, const Key<KeyID> &key, L &&l)
   {
     findUpd_<KeyID>(shard, key,
-      [this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
+	[this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
 	if (ZuUnlikely(!row)) { l(row); return; }
 	del(ZuMv(row), ZuMv(l));
       });
@@ -1506,6 +1519,18 @@ private:
   BufCacheArray			m_bufCache;
 };
 
+template <typename T, typename Impl>
+using TableImpl = ZuIf<ZuIsSame<Impl, void>{}, Table<T>, Impl>;
+
+template <typename T_, typename Impl_>
+class Table : public Table_<TableImpl<T_, Impl_>> {
+  using Base = Table_<TableImpl<T_, Impl_>>;
+
+public:
+  using Base::Base;
+  using Base::operator =;
+};
+
 template <typename T>
 inline ZmRef<IOBuf> Row_<T>::commit() {
   return this->table()->commit(static_cast<AnyRow *>(this));
@@ -1515,13 +1540,16 @@ inline bool Row_<T>::abort() {
   return this->table()->abort(static_cast<AnyRow *>(this));
 }
 
+ZdbTableDerive(SagaTable, SagaData);
+ZdbTableDerive(SagaStepTable, SagaStep);
+ZdbTableDerive(SagaTypeTable, SagaTypeStep);
+
 // --- table container
 
-ZuDerive(Tables,
-  (ZmRBTree<ZmRef<AnyTable>,
-    ZmRBTreeKey<AnyTable::IDAxor,
-      ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"Zdb.Table">>>>));
+ZmRBTreeDerive(Tables, ZmRef<AnyTable>,
+  ZmRBTreeKey<AnyTable::IDAxor,
+    ZmRBTreeUnique<true,
+      ZmRBTreeHeapID<"Zdb.Table">>>);
 
 // --- DB host configuration
 
@@ -1573,11 +1601,10 @@ inline HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
   }
 }
 
-ZuDerive(HostCfs,
-  (ZmRBTree<HostCf,
-    ZmRBTreeKey<HostCf::IDAxor,
-      ZmRBTreeUnique<true,
-	ZmRBTreeHeapID<"Zdb.HostCf">>>>));
+ZmRBTreeDerive(HostCfs, HostCf,
+  ZmRBTreeKey<HostCf::IDAxor,
+    ZmRBTreeUnique<true,
+      ZmRBTreeHeapID<"Zdb.HostCf">>>);
 
 // --- DB host
 
@@ -1668,17 +1695,15 @@ private:
 };
 
 // host container
-ZuDerive(HostIndex,
-  (ZmRBTree<Host,
-    ZmRBTreeNode<Host,
-      ZmRBTreeShadow<
-	ZmRBTreeKey<Host::IndexAxor,
-	  ZmRBTreeUnique<true>>>>>));
-ZuDerive(Hosts,
-  (ZmHash<HostIndex::Node,
-    ZmHashNode<HostIndex::Node,
-      ZmHashKey<Host::IDAxor,
-	ZmHashHeapID<"Zdb.Host">>>>));
+ZmRBTreeDerive(HostIndex, Host,
+  ZmRBTreeNode<Host,
+    ZmRBTreeShadow<
+      ZmRBTreeKey<Host::IndexAxor,
+	ZmRBTreeUnique<true>>>>);
+ZmHashDerive(Hosts, HostIndex::Node,
+  (ZmHashNode<HostIndex::Node,
+    ZmHashKey<Host::IDAxor,
+	ZmHashHeapID<"Zdb.Host">>>));
 
 // --- DB handler functions
 
@@ -1843,8 +1868,8 @@ public:
   bool stop() override { return Engine::stop(); }
 
 friend Engine;
-template <typename, typename> friend struct SagaDB;
-template <typename> friend struct MSaga;
+template <typename, typename, typename, typename> friend struct SagaDB;
+template <typename, typename> friend struct MSaga;
 friend Cxn_;
 friend Host;
 friend AnyTable;
@@ -1877,10 +1902,11 @@ public:
   void final();
 
   template <typename T>
-  ZmRef<Table<T>> initTable(ZuCSpan id) {
+  ZmRef<TableT<T>> initTable(ZuCSpan id) {
+    using Impl = TableT<T>;
     return initTable_(id,
       [](DB *db, TableCf *tableCf) mutable {
-	return static_cast<AnyTable *>(new Table<T>{db, tableCf, false});
+	return static_cast<AnyTable *>(new Impl{db, tableCf, false});
       });
   }
 
@@ -2104,8 +2130,8 @@ private:
   SagaRunFn		m_sagaRunFn;
   TableCf		m_sagaCf{"saga"};
   TableCf		m_sagaStepCf{"saga_step"};
-  ZmRef<Table<SagaData>> m_sagaTable;
-  ZmRef<Table<SagaStep>> m_sagaStepTable;
+  ZmRef<TableT<SagaData>> m_sagaTable;
+  ZmRef<TableT<SagaStep>> m_sagaStepTable;
 
   // mutable while stopped
   DBHandler		m_handler;
@@ -2179,15 +2205,6 @@ inline bool AnyTable::invoked(Shard shard) const
   return m_db->shardInvoked(shard);
 }
 
-template <typename T>
-inline void Table<T>::warmup()
-{
-  AnyTable::warmup();
-  unsigned n = nShards_();
-  for (unsigned i = 0; i < n; i++)
-    run(i, [this, i]() { warmup_(i); });
-}
-
 template <typename S>
 inline void DB::print(S &s)
 {
@@ -2213,9 +2230,9 @@ inline void DB::print(S &s)
   }
 }
 
-template <typename T>
+template <typename Impl_>
 template <unsigned KeyID, typename L>
-inline void Table<T>::count(GroupKey<KeyID> key, L &&l)
+inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
 {
   using Context = Count;
 
@@ -2227,21 +2244,10 @@ inline void Table<T>::count(GroupKey<KeyID> key, L &&l)
   fbb.Finish(ZfbStruct::save(fbb, key).Union());
   // fbb.Finish(ZfbStruct::SaveFieldsFn<Key, ZuFacet::Core, ZuFields<Key>, ZfFieldFilter::Save>::save(fbb, key).Union());
   auto keyBuf = fbb.buf();
-
-  auto countFn = CountFn{ZuMv(context),
-    [](Context *context, CountResult result) {
-      if (ZuUnlikely(result.is<Event>())) { // error
-	ZiLogEvent(ZuMv(result).p<Event>());
-	context->fn(typename Context::Result{});
-	return;
-      }
-      context->fn(typename Context::Result{result.p<CountData>().count});
-    }};
-
-  storeTbl()->count(KeyID, ZuMv(keyBuf), ZuMv(countFn));
+  AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
 
-template <typename T>
+template <typename Impl_>
 template <
   unsigned KeyID,
   typename SelectKey,
@@ -2249,7 +2255,7 @@ template <
   bool SelectRow,
   bool SelectNext,
   typename L>
-inline void Table<T>::select_(
+inline void Table_<Impl_>::select_(
   SelectKey selectKey, bool inclusive, unsigned limit, L &&l)
 {
   using Context = Select<Tuple_>;
@@ -2289,10 +2295,10 @@ inline void Table<T>::select_(
     KeyID, ZuMv(keyBuf), limit, ZuMv(tupleFn));
 }
 
-template <typename T>
+template <typename Impl_>
 template <
   unsigned KeyID, bool UpdateLRU, bool Evict, typename L>
-inline void Table<T>::find_(Shard shard, Key<KeyID> key, L &&l) {
+inline void Table_<Impl_>::find_(Shard shard, Key<KeyID> key, L &&l) {
   ZmAssert(invoked(shard));
 
   auto load = [
@@ -2312,7 +2318,7 @@ inline void Table<T>::find_(Shard shard, Key<KeyID> key, L &&l) {
   if constexpr (Evict) {
     m_cache[shard].template find<KeyID, UpdateLRU>(
       ZuMv(key), ZuFwd<L>(l), ZuMv(load),
-      [this](AnyRow *row) {
+	[this](AnyRow *row) {
 	if (row->pinned()) return false;
 	evictUN(row->shard(), row->un());
 	row->evict();
@@ -2323,254 +2329,79 @@ inline void Table<T>::find_(Shard shard, Key<KeyID> key, L &&l) {
 	ZuMv(key), ZuFwd<L>(l), ZuMv(load));
 }
 
-template <typename T>
+template <typename Impl_>
 template <unsigned KeyID, typename L>
-inline void Table<T>::retrieve(
+inline void Table_<Impl_>::retrieve(
   Shard shard, Key<KeyID> key, L &&l)
 {
   using Key_ = Key<KeyID>;
-  using Context = Find<T, Key_>;
+  using Context = FindCtx<T, Key_>;
 
   auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
-  retrieve_<KeyID>(ZuMv(context));
-}
-template <typename T>
-template <unsigned KeyID>
-inline void Table<T>::retrieve_(
-  ZmRef<Find<T, ZuStructKeyT<T, KeyID>>> context)
-{
-  using Key_ = Key<KeyID>;
-  using Context = Find<T, Key_>;
-
   Zfb::IOBuilder fbb{allocBuf()};
   fbb.Finish(ZfbStruct::save(fbb, context->key));
   auto keyBuf = fbb.buf();
-
-  storeTbl()->find(KeyID, ZuMv(keyBuf), RowFn{ZuMv(context),
-    [](Context *context, RowResult result) {
-      auto table = context->table;
-      if (ZuUnlikely(result.is<Event>())) {
-	ZiLogEvent(ZuMv(result).p<Event>());
-	auto db = context->table->db();
-	ZiLOG(Fatal, "Zdb", ([id = ZeString{table->id()}, key = context->key](auto &s) {
-	  s << "find of " << id << '/' << key << " failed";
-	}));
-	// Invalidate the activation before releasing the failed lookup. Saga
-	// continuations must still retire their pending work so teardown drains.
-	db->run([db, shard = context->shard, fn = ZuMv(context->fn)]() mutable {
-	  db->fail();
-	  db->shardRun(shard, [fn = ZuMv(fn)]() mutable { fn(nullptr); });
-	});
-	return;
-      }
-      auto shard = context->shard;
-      if (ZuLikely(result.is<RowData>())) {
-	auto buf = ZuMv(ZuMv(result).p<RowData>().buf);
-	table->run(shard, [
-	  table,
-	  context = ZmRef(context),
-	  buf = ZuMv(buf)
-	]() mutable {
-	  auto shard = context->shard;
-	  ZmRef<Row<T>> row =
-	    table->rowLoad(ZuMv(buf), shard);
-	  if (row->shard() != shard) {
-	    auto fn = ZuMv(context->fn);
-	    // sharding inconsistency is fatal, the app is broken
-	    ZeString message;
-	    message << "find of " << context->table->id()
-	      << '/' << context->key << " failed: row " << *row
-	      << " shard != find context shard " << context->shard;
-	    ZiLOG(Fatal, "Zdb", ([message = ZuMv(message)](auto &s) {
-	      s << message;
-	    }));
-	    fn(nullptr);
-	  } else
-	    context->fn(ZuMv(row));
-	});
-      } else
-	table->run(shard, [fn = ZuMv(context->fn)]() mutable {
-	  fn(nullptr);
-	});
-    }});
+  AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
 
-template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
-inline void Saga::mutate(
-    Table<T> *table, Shard shard, ZmRef<Row<T>> row, L &&l)
+template <typename T, typename Impl, typename Complete, typename L>
+inline void Saga::insert(
+    Impl *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
 {
-  auto db = this->db();
+  using Complete_ = ZuDecay<Complete>;
+  using Fn = SagaFn<T, Complete_>;
+  using Call = SagaInsert<Complete_, Fn>;
+
+  Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
+  auto shard = row ? row->shard() : Shard{0};
   ZiAssert(table && table->invoked(shard), "Zdb", (shard),
-    "saga mutation invoked off shard", ::abort());
+    "saga insert invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
-    if constexpr (Op == SagaOp::Insert)
-      table->insert(ZuMv(row), ZuFwd<L>(l));
-    else if constexpr (Op == SagaOp::Update)
-      table->template update<KeyIDs_>(ZuMv(row), ZuFwd<L>(l));
-    else {
-      if (row)
-	table->del(ZuMv(row), ZuFwd<L>(l));
-      else
-	ZuFwd<L>(l)(nullptr);
-    }
+    table->insert(ZuMv(row), ZuMv(call));
     return;
   }
   UN un = nullUN();
   bool saved = false;
-  if (!db->sagaPrepare(this, table, shard, Op, bool(row), un, saved)) {
-    if constexpr (Op == SagaOp::Insert)
-      if (row) new (row->ptr()) T{};
+  if (!prepare_(table, shard, SagaOp::Insert, bool(row), un, saved)) {
+    if (row) new (row->ptr()) T{};
     return;
   }
-  mutate_<Op, KeyIDs_, Lookup>(
-    table, shard, ZuMv(row), un, saved, ZuFwd<L>(l));
+  insert_(table, shard, ZuMv(row), un, saved, ZuMv(call));
 }
 
-template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
-inline void Saga::mutate_(
-    Table<T> *table, Shard shard, ZmRef<Row<T>> row,
-    UN un, bool saved, L &&l)
+template <typename T, typename Impl, typename Call>
+inline void Saga::insert_(
+    Impl *table, Shard shard, ZmRef<Row<T>> row,
+    UN un, bool saved, Call call)
 {
-  auto db = this->db();
-  if (saved && un == nullUN()) {
-    m_locs[m_step] = shard;
-    stepRecovered_(shard); // recorded absent delete; never look up the key
-    return;
-  }
   if (!row) {
     if (saved) {
       auto result = table->cmpUN_(table->nextUN(shard), un);
       if (result == OpResult::Executed) result = OpResult::Missing;
       result_(result, shard);
-      return;
-    }
-    if constexpr (Op != SagaOp::Delete) {
+    } else
       result_(OpResult::Missing, shard);
-      return;
-    }
+    return;
   }
-  if (!saved) un = row ? table->nextUN(shard) : nullUN();
+  if (!saved) un = table->nextUN(shard);
   if (!saved) {
-    SagaStep step{
-      .type = this->type(), .id = this->id(), .step = this->step(),
-      .shard = shard, .un = un
-    };
-    ZmRef<Row<SagaStep>> intent =
-      new Row<SagaStep>{db->m_sagaStepTable, shard};
-    bool committed = false;
-    db->m_sagaStepTable->insert(intent,
-      [&step, &committed](Row<SagaStep> *o) {
-	if (ZuUnlikely(!o)) return;
-	new (o->ptr()) SagaStep{ZuMv(step)};
-	committed = bool(o->commit());
-      });
-    ZiAssert(committed, "Zdb", (), "saga intent did not commit", ::abort());
-    m_locs[m_step] = shard;
-    // No yield or preparation between the intent commit and target operation.
-    if constexpr (Op == SagaOp::Insert)
-      table->insert(row, ZuFwd<L>(l));
-    else if constexpr (Op == SagaOp::Update)
-      table->template update<KeyIDs_>(row, ZuFwd<L>(l));
-    else {
-      if (row)
-	table->del(row, ZuFwd<L>(l));
-      else
-	ZuFwd<L>(l)(nullptr);
-    }
+    intent_(shard, un);
+    table->insert(row, ZuMv(call));
     return;
   }
   OpResult::T result = OpResult::Invalid;
-  auto replay = [this, &l, &result, &row, shard](
+  table->insert(un, row, [this, &call, &result, shard](
       OpResult::T r, Row<T> *o, UN) mutable {
-    (void)row; // needed only by the Insert specialization
     result = r;
     if (r != OpResult::Executed) return;
     m_locs[m_step] = shard;
-    l(o);
-  };
-  if constexpr (Op == SagaOp::Insert)
-    table->insert(un, row, replay);
-  else if constexpr (Op == SagaOp::Update)
-    table->template update<KeyIDs_>(row, un, replay);
-  else
-    table->del(row, un, replay);
-  if (result == OpResult::Executed) return;
-  if constexpr (Op == SagaOp::Insert)
-    new (row->ptr()) T{};
-  if (result == OpResult::Skipped) {
-    m_locs[m_step] = shard;
-    stepRecovered_(shard);
-  } else
-    result_(result, shard);
-}
-
-template <SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
-inline void Saga::findMutate(
-    Table<T> *table, Shard shard,
-    typename Table<T>::template Key<KeyID> key, L &&l)
-{
-  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
-    "saga lookup mutation invoked off shard", ::abort());
-  if (ZuUnlikely(!m_fwd)) {
-    if constexpr (Op == SagaOp::Update)
-      table->template findUpd<KeyID, KeyIDs_>(
-	shard, ZuMv(key), ZuFwd<L>(l));
-    else
-      table->template findDel<KeyID>(shard, key, ZuFwd<L>(l));
-    return;
-  }
-  findMutate_<Op, KeyID, KeyIDs_>(table, shard,
-    SagaFind<typename Table<T>::template Key<KeyID>, ZuDecay<L>>{
-      ZuMv(key), ZuFwd<L>(l)});
-}
-
-template <SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
-inline void Saga::findMutate_(Table<T> *table, Shard shard, L &&l)
-{
-  auto db = this->db();
-  UN un = nullUN();
-  bool saved = false;
-  if (!db->sagaPrepare(this, table, shard, Op, false, un, saved)) return;
-  if (saved) {
-    auto result = un == nullUN() ? OpResult::Skipped :
-      table->cmpUN_(table->nextUN(shard), un);
-    if (result != OpResult::Executed) {
-      if (result == OpResult::Skipped) {
-	m_locs[m_step] = shard;
-	stepRecovered_(shard);
-      } else
-	result_(result, shard);
-      return;
-    }
-  }
-  auto key = l.key;
-  table->template findUpd_<KeyID>(shard, ZuMv(key), [
-    this, table, shard, un, saved, l = ZuMv(l)
-  ](ZmRef<Row<T>> row) mutable {
-    if (!saved) {
-      UN un_ = nullUN();
-      bool saved_ = false;
-      if (!this->db()->sagaPrepare(
-	    this, table, shard, Op, bool(row), un_, saved_))
-	return;
-      un = un_;
-      saved = saved_;
-    }
-    mutate_<Op, KeyIDs_, KeyID>(
-      table, shard, ZuMv(row), un, saved, ZuMv(l));
+    call(o);
   });
-}
-
-template <typename T, typename Complete, typename L>
-inline void Saga::insert(
-    Table<T> *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
-{
-  auto shard = row ? row->shard() : Shard{0};
-  mutate<SagaOp::Insert, ZuSeq<>>(table, shard, ZuMv(row),
-    SagaCall<SagaOp::Insert, ZuDecay<Complete>, ZuDecay<L>>{
-      ZuFwd<Complete>(complete), ZuFwd<L>(l)});
+  if (result == OpResult::Executed) return;
+  new (row->ptr()) T{};
+  replay_(result, shard);
 }
 
 template <typename Complete>
@@ -2583,47 +2414,247 @@ inline void Saga::skip(Complete &&complete)
   ZuFwd<Complete>(complete)(true);
 }
 
-template <typename KeyIDs_, typename T, typename Complete, typename L>
+template <typename KeyIDs_, typename T, typename Impl,
+  typename Complete, typename L>
 inline void Saga::update(
-    Table<T> *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
+    Impl *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
 {
+  using Complete_ = ZuDecay<Complete>;
+  using Fn = SagaFn<T, Complete_>;
+  using Call = SagaUpdate<Complete_, Fn>;
+
+  Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
   auto shard = row ? row->shard() : Shard{0};
-  mutate<SagaOp::Update, KeyIDs_>(table, shard, ZuMv(row),
-    SagaCall<SagaOp::Update, ZuDecay<Complete>, ZuDecay<L>>{
-      ZuFwd<Complete>(complete), ZuFwd<L>(l)});
+  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+    "saga update invoked off shard", ::abort());
+  if (ZuUnlikely(!m_fwd)) {
+    table->template update<KeyIDs_>(ZuMv(row), ZuMv(call));
+    return;
+  }
+  UN un = nullUN();
+  bool saved = false;
+  if (!prepare_(table, shard, SagaOp::Update, bool(row), un, saved))
+    return;
+  update_<KeyIDs_>(table, shard, ZuMv(row), un, saved, ZuMv(call));
 }
 
-template <
-  unsigned KeyID, typename KeyIDs_, typename T, typename Complete, typename L>
+template <typename KeyIDs_, typename T, typename Impl, typename Call>
+inline void Saga::update_(
+    Impl *table, Shard shard, ZmRef<Row<T>> row,
+    UN un, bool saved, Call call)
+{
+  if (!row) {
+    if (saved) {
+      auto result = table->cmpUN_(table->nextUN(shard), un);
+      if (result == OpResult::Executed) result = OpResult::Missing;
+      result_(result, shard);
+    } else
+      result_(OpResult::Missing, shard);
+    return;
+  }
+  if (!saved) un = table->nextUN(shard);
+  if (!saved) {
+    intent_(shard, un);
+    table->template update<KeyIDs_>(row, ZuMv(call));
+    return;
+  }
+  OpResult::T result = OpResult::Invalid;
+  table->template update<KeyIDs_>(row, un, [
+    this, &call, &result, shard
+  ](OpResult::T r, Row<T> *o, UN) mutable {
+    result = r;
+    if (r != OpResult::Executed) return;
+    m_locs[m_step] = shard;
+    call(o);
+  });
+  if (result == OpResult::Executed) return;
+  replay_(result, shard);
+}
+
+template <unsigned KeyID, typename KeyIDs_, typename Impl,
+  typename Complete, typename L>
 inline void Saga::findUpd(
-    Table<T> *table, Shard shard,
-    typename Table<T>::template Key<KeyID> key, Complete &&complete, L &&l)
-{
-  findMutate<SagaOp::Update, KeyID, KeyIDs_>(
-    table, shard, ZuMv(key),
-    SagaCall<SagaOp::Update, ZuDecay<Complete>, ZuDecay<L>>{
-      ZuFwd<Complete>(complete), ZuFwd<L>(l)});
-}
-
-template <typename T, typename Complete, typename L>
-inline void Saga::del(
-    Table<T> *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
-{
-  auto shard = row ? row->shard() : Shard{0};
-  mutate<SagaOp::Delete, ZuSeq<>>(table, shard, ZuMv(row),
-    SagaCall<SagaOp::Delete, ZuDecay<Complete>, ZuDecay<L>>{
-      ZuFwd<Complete>(complete), ZuFwd<L>(l)});
-}
-
-template <unsigned KeyID, typename T, typename Complete, typename L>
-inline void Saga::findDel(
-    Table<T> *table, Shard shard,
-    const typename Table<T>::template Key<KeyID> &key,
+    Impl *table, Shard shard,
+    typename Impl::template Key<KeyID> key,
     Complete &&complete, L &&l)
 {
-  findMutate<SagaOp::Delete, KeyID, ZuSeq<>>(table, shard, key,
-    SagaCall<SagaOp::Delete, ZuDecay<Complete>, ZuDecay<L>>{
-      ZuFwd<Complete>(complete), ZuFwd<L>(l)});
+  using T = typename Impl::T;
+  using Complete_ = ZuDecay<Complete>;
+  using Fn = SagaFn<T, Complete_>;
+  using Call = SagaUpdate<Complete_, Fn>;
+
+  Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
+  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+    "saga find-update invoked off shard", ::abort());
+  if (ZuUnlikely(!m_fwd)) {
+    table->template findUpd<KeyID, KeyIDs_>(shard, ZuMv(key),
+      ZuMv(call));
+    return;
+  }
+  findUpd_<KeyID, KeyIDs_>(
+    table, shard, ZuMv(key), ZuMv(call));
+}
+
+template <unsigned KeyID, typename KeyIDs_, typename Impl, typename Call>
+inline void Saga::findUpd_(
+    Impl *table, Shard shard,
+    typename Impl::template Key<KeyID> key, Call call)
+{
+  UN un = nullUN();
+  bool saved = false;
+  if (!prepare_(table, shard, SagaOp::Update, false, un, saved))
+    return;
+  if (saved) {
+    auto result = un == nullUN() ? OpResult::Skipped :
+      table->cmpUN_(table->nextUN(shard), un);
+    if (result != OpResult::Executed) {
+      replay_(result, shard);
+      return;
+    }
+  }
+  table->template findUpd_<KeyID>(shard, ZuMv(key),
+    SagaFindUpdate<KeyIDs_, Impl, Call>{
+      this, table, shard, un, saved, ZuMv(call)});
+}
+
+template <typename T, typename Impl, typename Complete, typename L>
+inline void Saga::del(
+    Impl *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
+{
+  using Complete_ = ZuDecay<Complete>;
+  using Fn = SagaFn<T, Complete_>;
+  using Call = SagaDelete<Complete_, Fn>;
+
+  Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
+  auto shard = row ? row->shard() : Shard{0};
+  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+    "saga delete invoked off shard", ::abort());
+  if (ZuUnlikely(!m_fwd)) {
+    if (row)
+      table->del(ZuMv(row), ZuMv(call));
+    else
+      call(nullptr);
+    return;
+  }
+  UN un = nullUN();
+  bool saved = false;
+  if (!prepare_(table, shard, SagaOp::Delete, bool(row), un, saved))
+    return;
+  del_(table, shard, ZuMv(row), un, saved, ZuMv(call));
+}
+
+template <typename T, typename Impl, typename Call>
+inline void Saga::del_(
+    Impl *table, Shard shard, ZmRef<Row<T>> row,
+    UN un, bool saved, Call call)
+{
+  if (saved && un == nullUN()) {
+    m_locs[m_step] = shard;
+    stepRecovered_(shard);
+    return;
+  }
+  if (!row && saved) {
+    auto result = table->cmpUN_(table->nextUN(shard), un);
+    if (result == OpResult::Executed) result = OpResult::Missing;
+    result_(result, shard);
+    return;
+  }
+  if (!saved) un = row ? table->nextUN(shard) : nullUN();
+  if (!saved) {
+    intent_(shard, un);
+    if (row)
+      table->del(row, ZuMv(call));
+    else
+      call(nullptr);
+    return;
+  }
+  OpResult::T result = OpResult::Invalid;
+  table->del(row, un, [this, &call, &result, shard](
+      OpResult::T r, Row<T> *o, UN) mutable {
+    result = r;
+    if (r != OpResult::Executed) return;
+    m_locs[m_step] = shard;
+    call(o);
+  });
+  if (result == OpResult::Executed) return;
+  replay_(result, shard);
+}
+
+template <unsigned KeyID, typename Impl, typename Complete, typename L>
+inline void Saga::findDel(
+    Impl *table, Shard shard,
+    const typename Impl::template Key<KeyID> &key,
+    Complete &&complete, L &&l)
+{
+  using T = typename Impl::T;
+  using Complete_ = ZuDecay<Complete>;
+  using Fn = SagaFn<T, Complete_>;
+  using Call = SagaDelete<Complete_, Fn>;
+
+  Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
+  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+    "saga find-delete invoked off shard", ::abort());
+  if (ZuUnlikely(!m_fwd)) {
+    table->template findDel<KeyID>(shard, key, ZuMv(call));
+    return;
+  }
+  using Key = typename Impl::template Key<KeyID>;
+  findDel_<KeyID>(table, shard, Key{key}, ZuMv(call));
+}
+
+template <unsigned KeyID, typename Impl, typename Call>
+inline void Saga::findDel_(
+    Impl *table, Shard shard,
+    typename Impl::template Key<KeyID> key, Call call)
+{
+  UN un = nullUN();
+  bool saved = false;
+  if (!prepare_(table, shard, SagaOp::Delete, false, un, saved))
+    return;
+  if (saved) {
+    auto result = un == nullUN() ? OpResult::Skipped :
+      table->cmpUN_(table->nextUN(shard), un);
+    if (result != OpResult::Executed) {
+      replay_(result, shard);
+      return;
+    }
+  }
+  table->template findUpd_<KeyID>(shard, ZuMv(key),
+    SagaFindDelete<Impl, Call>{
+      this, table, shard, un, saved, ZuMv(call)});
+}
+
+template <typename KeyIDs, typename Impl, typename Call>
+inline void SagaFindUpdate<KeyIDs, Impl, Call>::operator ()(
+    ZmRef<Row<typename Impl::T>> row)
+{
+  if (!saved) {
+    UN un_ = nullUN();
+    bool saved_ = false;
+    if (!saga->prepare_(
+	  table, shard, SagaOp::Update, bool(row), un_, saved_))
+      return;
+    un = un_;
+    saved = saved_;
+  }
+  saga->template update_<KeyIDs>(
+    table, shard, ZuMv(row), un, saved, ZuMv(call));
+}
+
+template <typename Impl, typename Call>
+inline void SagaFindDelete<Impl, Call>::operator ()(
+    ZmRef<Row<typename Impl::T>> row)
+{
+  if (!saved) {
+    UN un_ = nullUN();
+    bool saved_ = false;
+    if (!saga->prepare_(
+	  table, shard, SagaOp::Delete, bool(row), un_, saved_))
+      return;
+    un = un_;
+    saved = saved_;
+  }
+  saga->del_(table, shard, ZuMv(row), un, saved, ZuMv(call));
 }
 
 template <typename M, typename Complete>
@@ -2863,11 +2894,15 @@ inline void SagaStepComplete<M, Complete>::terminal_(
 
 enum { SagaScanSize = 256 }; // cold store query page, not a replay batch
 
-template <typename Context, typename Sagas>
+template <typename Context, typename Sagas,
+  typename Complete = SagaCompleteFn,
+  typename M_ = MSaga<Sagas>>
 struct SagaDB : public DB {
-  using M = MSaga<Sagas>;
+  using M = M_;
 
-  static_assert(SagaBasesValid_<Context, Sagas>{},
+  ZuAssert((SagaCallbackValid<Complete>{}));
+
+  ZuAssert((SagaBasesValid_<Context, Sagas>{}),
     "saga definition does not derive from ZdbSagaBase<Context>");
 
   void sagas(ZmRef<Context> context) {
@@ -2876,13 +2911,12 @@ struct SagaDB : public DB {
       [this]() { sagaScanData(m_sagaScan, false); },
       [this](ZmRef<Saga> saga) {
 	M::run(m_sagaContext.ptr(),
-	  ZmRef<M>{static_cast<M *>(saga.ptr())}, SagaNoop{});
+	  ZmRef<M>{static_cast<M *>(saga.ptr())}, Complete{});
       });
     m_sagaContext = ZuMv(context);
   }
-  template <typename Submit, typename Complete, typename = ZuIfT<
-    SagaCallbackValid<Submit>{} && SagaCallbackValid<Complete>{}>>
-  bool saga(Shard, SagaID, ZmRef<M>, Submit &&, Complete &&);
+  template <typename Submit, typename = ZuIfT<SagaCallbackValid<Submit>{}>>
+  bool saga(Shard, SagaID, ZmRef<M>, Submit &&, Complete);
 
   void final() {
     DB::final();
@@ -2905,17 +2939,17 @@ private:
   ZmRef<Context> m_sagaContext;
 };
 
-template <typename Context, typename Sagas>
-template <typename Submit, typename Complete, typename>
-inline bool SagaDB<Context, Sagas>::saga(
+template <typename Context, typename Sagas, typename Complete, typename M_>
+template <typename Submit, typename>
+inline bool SagaDB<Context, Sagas, Complete, M_>::saga(
     Shard shard, SagaID id, ZmRef<M> saga,
-    Submit &&submit, Complete &&complete)
+    Submit &&submit, Complete complete)
 {
   if (!m_mx || !m_mx->running()) return false;
   return spawn([
     this, shard, id, saga = ZuMv(saga),
     submit = ZuDecay<Submit>{ZuFwd<Submit>(submit)},
-    complete = ZuDecay<Complete>{ZuFwd<Complete>(complete)}
+    complete = ZuMv(complete)
   ]() mutable {
     if (ZuUnlikely(!saga || !m_sagaCatalogFn)) {
       submit(false);
@@ -2989,8 +3023,8 @@ inline bool SagaDB<Context, Sagas>::saga(
   });
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaCatalog()
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalog()
 {
   ZmAssert(invoked());
 
@@ -3017,7 +3051,7 @@ inline void SagaDB<Context, Sagas>::sagaCatalog()
     true, "saga_type", ZfVFields<SagaTypeStep>(),
     ZfVKeyFields<SagaTypeStep>(),
     reflection::GetSchema(ZfbSchema<SagaTypeStep>::data()),
-    Table<SagaTypeStep>::allocBuf,
+    TableT<SagaTypeStep>::allocBuf,
     [this, context = ZuMv(context)](OpenResult result) mutable {
       run([this, context = ZuMv(context), result = ZuMv(result)]() mutable {
 	sagaCatalogOpen(ZuMv(context), ZuMv(result));
@@ -3025,8 +3059,8 @@ inline void SagaDB<Context, Sagas>::sagaCatalog()
     });
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaCatalogOpen(
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogOpen(
     ZmRef<SagaCatalog> context, OpenResult result)
 {
   ZmAssert(invoked());
@@ -3049,13 +3083,13 @@ inline void SagaDB<Context, Sagas>::sagaCatalogOpen(
   sagaCatalogScan(ZuMv(context), false);
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
 {
   ZmAssert(invoked());
   context->pageCount = 0;
 
-  Zfb::IOBuilder fbb{Table<SagaTypeStep>::allocBuf()};
+  Zfb::IOBuilder fbb{TableT<SagaTypeStep>::allocBuf()};
   if (next) {
     using Key = ZuStructKeyT<SagaTypeStep, 0>;
     Key key{context->type, uint32_t(context->step - 1)};
@@ -3108,8 +3142,8 @@ inline void SagaDB<Context, Sagas>::sagaCatalogScan(ZmRef<SagaCatalog> context, 
     }});
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaCatalogWrite(ZmRef<SagaCatalog> context)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogWrite(ZmRef<SagaCatalog> context)
 {
   ZmAssert(invoked());
   SagaTypeStep row;
@@ -3128,7 +3162,7 @@ inline void SagaDB<Context, Sagas>::sagaCatalogWrite(ZmRef<SagaCatalog> context)
   ++context->writeStep;
   UN un = context->nextUN++;
   SN sn = allocSN();
-  Zfb::IOBuilder fbb{Table<SagaTypeStep>::allocBuf()};
+  Zfb::IOBuilder fbb{TableT<SagaTypeStep>::allocBuf()};
   auto data = Zfb::Save::nest(fbb, [&row](Zfb::Builder &fbb) {
     return ZfbStruct::save(fbb, row).Union();
   });
@@ -3149,8 +3183,8 @@ inline void SagaDB<Context, Sagas>::sagaCatalogWrite(ZmRef<SagaCatalog> context)
     }});
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaCatalogClose(ZmRef<SagaCatalog> context)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogClose(ZmRef<SagaCatalog> context)
 {
   ZmAssert(invoked());
   if (!context->table) {
@@ -3165,8 +3199,8 @@ inline void SagaDB<Context, Sagas>::sagaCatalogClose(ZmRef<SagaCatalog> context)
   });
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaCatalogFinish(ZmRef<SagaCatalog> context)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogFinish(ZmRef<SagaCatalog> context)
 {
   ZmAssert(invoked());
   if (context->error) {
@@ -3178,13 +3212,13 @@ inline void SagaDB<Context, Sagas>::sagaCatalogFinish(ZmRef<SagaCatalog> context
   start_2();
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaScanData(ZmRef<SagaScan> context, bool next)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaScanData(ZmRef<SagaScan> context, bool next)
 {
   ZmAssert(invoked());
   ++m_sagaPending;
   context->pageCount = 0;
-  using Tuple = typename Table<SagaData>::Tuple;
+  using Tuple = typename TableT<SagaData>::Tuple;
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
       auto tuple = ZuMv(result).template p<Tuple>();
@@ -3209,8 +3243,8 @@ inline void SagaDB<Context, Sagas>::sagaScanData(ZmRef<SagaScan> context, bool n
   }
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaLoadData(ZmRef<SagaScan> context)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaLoadData(ZmRef<SagaScan> context)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(context->epoch != m_sagaEpoch ||
@@ -3254,13 +3288,13 @@ inline void SagaDB<Context, Sagas>::sagaLoadData(ZmRef<SagaScan> context)
   sagaScanSteps(ZuMv(context), false);
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaScanSteps(ZmRef<SagaScan> context, bool next)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaScanSteps(ZmRef<SagaScan> context, bool next)
 {
   ZmAssert(invoked());
   ++m_sagaPending;
   context->pageCount = 0;
-  using Tuple = typename Table<SagaStep>::Tuple;
+  using Tuple = typename TableT<SagaStep>::Tuple;
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
       auto tuple = ZuMv(result).template p<Tuple>();
@@ -3286,8 +3320,8 @@ inline void SagaDB<Context, Sagas>::sagaScanSteps(ZmRef<SagaScan> context, bool 
   }
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaLoadSteps(ZmRef<SagaScan> context)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan> context)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(context->epoch != m_sagaEpoch ||
@@ -3334,7 +3368,7 @@ inline void SagaDB<Context, Sagas>::sagaLoadSteps(ZmRef<SagaScan> context)
     ++context->pending;
     ++m_sagaPending;
     auto shard = row.shard;
-    typename Table<SagaStep>::template Key<0> stepKey{
+    typename TableT<SagaStep>::template Key<0> stepKey{
       row.type, row.id, row.step};
     m_sagaStepTable->run(shard, [
       this, context, shard, stepKey = ZuMv(stepKey)
@@ -3362,8 +3396,8 @@ inline void SagaDB<Context, Sagas>::sagaLoadSteps(ZmRef<SagaScan> context)
   sagaOrphanDone(ZuMv(context), true);
 }
 
-template <typename Context, typename Sagas>
-inline void SagaDB<Context, Sagas>::sagaOrphanDone(ZmRef<SagaScan> context, bool ok)
+template <typename Context, typename Sagas, typename Complete, typename M_>
+inline void SagaDB<Context, Sagas, Complete, M_>::sagaOrphanDone(ZmRef<SagaScan> context, bool ok)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(context->epoch != m_sagaEpoch ||
@@ -3474,13 +3508,15 @@ template <typename T> using ZdbRowRef = ZmRef<ZdbRow<T>>;
 namespace ZdbRowState = Zdb_::RowState;
 
 using ZdbAnyTable = Zdb_::AnyTable;
-template <typename T> using ZdbTable = Zdb_::Table<T>;
+template <typename T> using ZdbTable = Zdb_::TableT<T>;
 using ZdbTableCf = Zdb_::TableCf;
 template <typename T> using ZdbTblRef = ZmRef<ZdbTable<T>>;
 
 using Zdb = Zdb_::DB;
-template <typename Context, typename Sagas>
-using ZdbSagaDB = Zdb_::SagaDB<Context, Sagas>;
+template <typename Context, typename Sagas,
+  typename Complete = Zdb_::SagaCompleteFn,
+  typename M = Zdb_::MSaga<Sagas>>
+using ZdbSagaDB = Zdb_::SagaDB<Context, Sagas, Complete, M>;
 using ZdbHandler = Zdb_::DBHandler;
 using ZdbCf = Zdb_::DBCf;
 

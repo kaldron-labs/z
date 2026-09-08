@@ -66,7 +66,8 @@ struct SagaUNHash;
 class AnyTable;
 class Host;
 class StoreTbl;
-template <typename T> class Table;
+template <typename Impl_> class Table_;
+template <typename T_, typename Impl_ = void> class Table;
 template <typename T> struct Row;
 
 using SagaID = uint128_t;
@@ -147,6 +148,9 @@ using SagaRecoveryFn =
   ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>;
 using SagaRunFn = ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>;
 
+ZuDerive(SagaCompleteFn,
+  (ZmFn<void(bool), ZmFnHeapID<"Zdb.Saga.CompleteFn">>));
+
 struct SagaNoop {
   void operator ()(bool) { }
 };
@@ -177,8 +181,8 @@ class Saga_ : public ZmPolymorph {
 friend DB;
 friend Saga;
 template <typename, typename> friend struct SagaStepComplete;
-template <typename, typename> friend struct SagaDB;
-template <typename> friend struct MSaga;
+template <typename, typename, typename, typename> friend struct SagaDB;
+template <typename, typename> friend struct MSaga;
 
 public:
   DB *db() const { return m_db; }
@@ -219,36 +223,55 @@ private:
   SagaUNHash	*m_uns = nullptr;	// staged serial-replay reservations
 };
 
-template <typename Key, typename L>
-struct SagaFind {
-  Key key;
-  L fn;
+template <typename T, typename Complete>
+using SagaFn = ZmFn<void(Row<T> *, Complete), ZmFnHeapID<"Zdb.Saga.Fn">>;
 
-  template <typename O> void operator ()(O row) { fn(row); }
-};
+template <typename Complete, typename L>
+struct SagaInsert {
+  Complete	complete;
+  L		fn;
 
-template <SagaOp::T Op, typename Complete, typename L>
-struct SagaCall {
-  Complete complete;
-  L fn;
-
-  void operator ()(decltype(nullptr)) {
-    complete(Op == SagaOp::Delete);
-  }
-
-  template <typename O>
-  void operator ()(O row) {
-    if (ZuUnlikely(!row)) {
-      complete(Op == SagaOp::Delete);
-      return;
-    }
+  void operator ()(decltype(nullptr)) { complete(false); }
+  template <typename O> void operator ()(O row) {
+    if (ZuUnlikely(!row)) { complete(false); return; }
     fn(row, ZuMv(complete));
   }
 };
 
+template <typename Complete, typename L>
+struct SagaUpdate {
+  Complete	complete;
+  L		fn;
+
+  void operator ()(decltype(nullptr)) { complete(false); }
+  template <typename O> void operator ()(O row) {
+    if (ZuUnlikely(!row)) { complete(false); return; }
+    fn(row, ZuMv(complete));
+  }
+};
+
+template <typename Complete, typename L>
+struct SagaDelete {
+  Complete	complete;
+  L		fn;
+
+  void operator ()(decltype(nullptr)) { complete(true); }
+  template <typename O> void operator ()(O row) {
+    if (ZuUnlikely(!row)) { complete(true); return; }
+    fn(row, ZuMv(complete));
+  }
+};
+
+template <typename KeyIDs, typename Impl, typename Call>
+struct SagaFindUpdate;
+template <typename Impl, typename Call>
+struct SagaFindDelete;
+
 class Saga : public Saga_ {
 friend DB;
-template <typename> friend struct MSaga;
+template <typename, typename> friend struct MSaga;
+template <typename, typename, typename> friend struct SagaFindUpdate;
+template <typename, typename> friend struct SagaFindDelete;
 
 public:
   using Saga_::db;
@@ -259,39 +282,65 @@ public:
 
   template <typename Complete>
   void skip(Complete &&);
-  template <typename T, typename Complete, typename L>
-  void insert(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
-  template <typename KeyIDs_ = ZuSeq<>, typename T, typename Complete, typename L>
-  void update(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
-  template <
-    unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename T,
+  template <typename T, typename Impl, typename Complete, typename L>
+  void insert(Impl *, ZmRef<Row<T>>, Complete &&, L &&);
+  template <typename KeyIDs_ = ZuSeq<>, typename T, typename Impl,
     typename Complete, typename L>
-  void findUpd(Table<T> *, Shard,
-    typename Table<T>::template Key<KeyID>, Complete &&, L &&);
-  template <typename T, typename Complete, typename L>
-  void del(Table<T> *, ZmRef<Row<T>>, Complete &&, L &&);
-  template <unsigned KeyID, typename T, typename Complete, typename L>
+  void update(Impl *, ZmRef<Row<T>>, Complete &&, L &&);
+  template <unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename Impl,
+    typename Complete, typename L>
+  void findUpd(Impl *, Shard,
+    typename Impl::template Key<KeyID>, Complete &&, L &&);
+  template <typename T, typename Impl, typename Complete, typename L>
+  void del(Impl *, ZmRef<Row<T>>, Complete &&, L &&);
+  template <unsigned KeyID, typename Impl, typename Complete, typename L>
   void findDel(
-    Table<T> *, Shard, const typename Table<T>::template Key<KeyID> &,
+    Impl *, Shard, const typename Impl::template Key<KeyID> &,
     Complete &&, L &&);
 
 protected:
   Saga() = default;
 
 private:
-  void stepRecovered_(Shard);
-  void result_(OpResult::T, Shard);
-  template <SagaOp::T Op, typename KeyIDs_, int Lookup = -1, typename T, typename L>
-  void mutate(Table<T> *, Shard, ZmRef<Row<T>>, L &&);
-  template <SagaOp::T Op, typename KeyIDs_, int Lookup, typename T, typename L>
-  void mutate_(Table<T> *, Shard, ZmRef<Row<T>>, UN, bool, L &&);
-  template <
-    SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
-  void findMutate(
-    Table<T> *, Shard, typename Table<T>::template Key<KeyID>, L &&);
-  template <
-    SagaOp::T Op, unsigned KeyID, typename KeyIDs_, typename T, typename L>
-  void findMutate_(Table<T> *, Shard, L &&);
+  ZdbAPI void stepRecovered_(Shard);
+  ZdbAPI void result_(OpResult::T, Shard);
+  ZdbAPI bool prepare_(AnyTable *, Shard, SagaOp::T, bool, UN &, bool &);
+  ZdbAPI void intent_(Shard, UN);
+  ZdbAPI void replay_(OpResult::T, Shard);
+  template <typename T, typename Impl, typename Call>
+  void insert_(Impl *, Shard, ZmRef<Row<T>>, UN, bool, Call);
+  template <typename KeyIDs_, typename T, typename Impl, typename Call>
+  void update_(Impl *, Shard, ZmRef<Row<T>>, UN, bool, Call);
+  template <unsigned KeyID, typename KeyIDs_, typename Impl, typename Call>
+  void findUpd_(Impl *, Shard, typename Impl::template Key<KeyID>, Call);
+  template <typename T, typename Impl, typename Call>
+  void del_(Impl *, Shard, ZmRef<Row<T>>, UN, bool, Call);
+  template <unsigned KeyID, typename Impl, typename Call>
+  void findDel_(Impl *, Shard, typename Impl::template Key<KeyID>, Call);
+};
+
+template <typename KeyIDs, typename Impl, typename Call>
+struct SagaFindUpdate {
+  Saga		*saga;
+  Impl		*table;
+  Shard		shard;
+  UN		un;
+  bool		saved;
+  Call		call;
+
+  void operator ()(ZmRef<Row<typename Impl::T>>);
+};
+
+template <typename Impl, typename Call>
+struct SagaFindDelete {
+  Saga		*saga;
+  Impl		*table;
+  Shard		shard;
+  UN		un;
+  bool		saved;
+  Call		call;
+
+  void operator ()(ZmRef<Row<typename Impl::T>>);
 };
 
 template <typename M, typename Complete>
@@ -305,7 +354,7 @@ struct SagaStepComplete {
   void operator ()(bool);
 
 private:
-  template <typename> friend struct MSaga;
+  template <typename, typename> friend struct MSaga;
 
   void finish();
   static void run_(DB *, ZmRef<M>, Complete);
@@ -323,20 +372,18 @@ struct SagaNode__ : public ZmPolymorph {
   SagaNode__(ZmRef<Saga> saga_) : saga{ZuMv(saga_)} { }
 };
 
-ZuDerive(SagaList,
-  (ZmList<SagaNode__,
-    ZmListNode<SagaNode__,
-      ZmListShadow<>>>));
+ZmListDerive(SagaList, SagaNode__,
+  ZmListNode<SagaNode__,
+    ZmListShadow<>>);
 
 inline const SagaKey &SagaKeyAxor(const SagaList::Node &node) {
   return static_cast<const SagaNode__ &>(node).saga->key();
 }
 
-ZuDerive(SagaHash,
-  (ZmHash<SagaList::Node,
-    ZmHashNode<SagaList::Node,
-      ZmHashKey<SagaKeyAxor,
-	ZmHashHeapID<"">>>>));
+ZmHashDerive(SagaHash, SagaList::Node,
+  (ZmHashNode<SagaList::Node,
+    ZmHashKey<SagaKeyAxor,
+	ZmHashHeapID<"">>>));
 
 template <typename Heap>
 struct SagaNode_ : public Heap, public SagaHash::Node {
@@ -365,7 +412,7 @@ struct MSaga_ : public Heap, public Saga {
 template <typename Sagas>
 using MSagaHeap = ZmHeap<"Zdb.Saga", MSaga_<Sagas, ZuVoid>>;
 
-template <typename Sagas> struct MSaga;
+template <typename Sagas, typename Impl_ = void> struct MSaga;
 
 template <typename Heap>
 struct SagaHash_ : public Heap, public SagaHash {
@@ -421,15 +468,13 @@ inline SagaStepKey SagaStepAxor(const SagaRec__ &rec) {
   return {rec.saga->type(), rec.saga->id(), rec.step};
 }
 
-ZuDerive(SagaUNHash,
-  (ZmHash<SagaRec__,
-    ZmHashNode<SagaRec__,
-      ZmHashKey<SagaUNAxor,
-	ZmHashShadow<ZmHashHeapID<"">>>>>));
-ZuDerive(SagaStepHash,
-  (ZmHash<SagaUNHash::Node,
-    ZmHashNode<SagaUNHash::Node,
-      ZmHashKey<SagaStepAxor, ZmHashHeapID<"">>>>));
+ZmHashDerive(SagaUNHash, SagaRec__,
+  (ZmHashNode<SagaRec__,
+    ZmHashKey<SagaUNAxor,
+	ZmHashShadow<ZmHashHeapID<"">>>>));
+ZmHashDerive(SagaStepHash, SagaUNHash::Node,
+  (ZmHashNode<SagaUNHash::Node,
+    ZmHashKey<SagaStepAxor, ZmHashHeapID<"">>>));
 
 template <typename Heap>
 struct SagaRec_ : public Heap, public SagaStepHash::Node {
@@ -516,19 +561,20 @@ template <typename Context, typename ...S>
 struct SagaBasesValid_<Context, ZuTypeList<S...>> :
   public ZuBool<(ZuIsBase<S, SagaBase<Context>>{} && ...)> { };
 
-template <typename ...S>
-struct MSaga<ZuTypeList<S...>> :
+template <typename ...S, typename Impl_>
+struct MSaga<ZuTypeList<S...>, Impl_> :
   public MSaga_<ZuTypeList<S...>, MSagaHeap<ZuTypeList<S...>>> {
   ZuDerive_(MSaga, (MSaga_<ZuTypeList<S...>, MSagaHeap<ZuTypeList<S...>>>))
   using Sagas = ZuTypeList<S...>;
   using Types = SagaTypes<Sagas>;
-  using M = MSaga<Sagas>;
+  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, MSaga<Sagas>, Impl_>;
+  using M = Impl;
   using Saga::type;
 
-  static_assert(sizeof...(S) > 0, "empty saga bundle");
-  static_assert(ZuTypeUnique<Types>::N == sizeof...(S),
+  ZuAssert((sizeof...(S) > 0), "empty saga bundle");
+  ZuAssert((ZuTypeUnique<Types>::N == sizeof...(S)),
     "duplicate saga type");
-  static_assert(SagaDefsValid_<Sagas>{}, "invalid saga definition");
+  ZuAssert((SagaDefsValid_<Sagas>{}), "invalid saga definition");
 
   static int match(ZuCSpan type) {
     static constexpr auto matcher = ZuMatcher<Types>();
@@ -589,8 +635,24 @@ struct MSaga<ZuTypeList<S...>> :
 
   template <typename Context, typename Complete>
   static void run(Context *context, ZmRef<M> saga, Complete &&complete) {
+    runImpl(context, ZuMv(saga),
+      SagaCompleteFn{[complete = ZuFwd<Complete>(complete)](
+	bool ok) mutable { complete(ok); }});
+  }
+
+  template <typename Complete>
+  static void run(ZmRef<M> saga, Complete &&complete) {
+    runImpl(ZuMv(saga),
+      SagaCompleteFn{[complete = ZuFwd<Complete>(complete)](
+	bool ok) mutable { complete(ok); }});
+  }
+
+private:
+  template <typename Context>
+  static void runImpl(
+      Context *context, ZmRef<M> saga, SagaCompleteFn complete) {
     saga->u.dispatch([context, saga = ZuMv(saga),
-	complete = ZuDecay<Complete>{ZuFwd<Complete>(complete)}](
+	complete = ZuMv(complete)](
 	auto, auto &def) mutable {
 	auto ptr = saga.ptr();
 	if (!def.saga) {
@@ -603,29 +665,27 @@ struct MSaga<ZuTypeList<S...>> :
     });
   }
 
-  template <typename Complete>
-  static void run(ZmRef<M> saga, Complete &&complete) {
-    saga->u.dispatch([saga = ZuMv(saga),
-	complete = ZuDecay<Complete>{ZuFwd<Complete>(complete)}](
+  static void runImpl(ZmRef<M> saga, SagaCompleteFn complete) {
+    saga->u.dispatch([saga = ZuMv(saga), complete = ZuMv(complete)](
 	auto, auto &def) mutable {
 	ZmAssert(def.saga == saga.ptr());
 	run_(def, ZuMv(saga), ZuMv(complete));
     });
   }
 
-private:
-  template <typename Def, typename Complete>
-  static void run_(Def &def, ZmRef<M> saga, Complete &&complete) {
+  template <typename Def>
+  static void run_(Def &def, ZmRef<M> saga, SagaCompleteFn complete) {
 	auto ptr = saga.ptr();
 	auto step = ptr->step();
 	if (ZuLikely(step < Def::NSteps)) {
 	  bool fwd = ptr->m_fwd;
-	  SagaStepComplete<M, ZuDecay<Complete>> stepComplete{
-	    ZuMv(saga), ptr->epoch(), step, fwd, ZuFwd<Complete>(complete)};
+	  SagaStepComplete<M, SagaCompleteFn> stepComplete{
+	    ZuMv(saga), ptr->epoch(), step, fwd, ZuMv(complete)};
 	  if (fwd) {
 	    ZuSwitch::dispatch<Def::NSteps>(step,
 		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
-	      (void)def.template operator()<I>(ZuMv(complete));
+	      (void)def.template operator()<I, true, SagaCompleteFn>(
+		ZuMv(complete));
 	    });
 	  } else if constexpr (Def::NSteps > 1) {
 	    if (ptr->m_locs[step] == Shard(-1)) {
@@ -634,15 +694,16 @@ private:
 	    }
 	    ZuSwitch::dispatch<Def::NSteps - 1>(step,
 		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
-	      (void)def.template operator()<I, false>(ZuMv(complete));
+	      (void)def.template operator()<I, false, SagaCompleteFn>(
+		ZuMv(complete));
 	    });
 	  } else
 	    stepComplete(false);
 	  return;
 	}
 	if (ZuLikely(step == Def::NSteps)) {
-	  SagaStepComplete<M, ZuDecay<Complete>>{
-	    ZuMv(saga), ptr->epoch(), step, true, ZuFwd<Complete>(complete)
+	  SagaStepComplete<M, SagaCompleteFn>{
+	    ZuMv(saga), ptr->epoch(), step, true, ZuMv(complete)
 	  }.finish();
 	  return;
 	}
@@ -746,14 +807,15 @@ struct ZdbSagaStep_ {
   enum { Op = Op_ };
 };
 #define ZdbSagaStep(step_, table, op) \
-  template <unsigned Step, bool Fwd = true, typename Complete> \
+  template <unsigned Step, bool Fwd = true, \
+    typename Complete = Zdb_::SagaCompleteFn> \
   ZuIfT<Step == step_, \
     ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op>> \
-  operator ()(Complete &&complete)
+  operator ()(Complete complete)
 using ZdbSaga = Zdb_::Saga;
 template <typename Context>
 using ZdbSagaBase = Zdb_::SagaBase<Context>;
-template <typename Sagas>
-using ZdbMSaga = Zdb_::MSaga<Sagas>;
+template <typename Sagas, typename Impl_ = void>
+using ZdbMSaga = Zdb_::MSaga<Sagas, Impl_>;
 
 #endif /* ZdbSaga_HH */

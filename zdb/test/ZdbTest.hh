@@ -17,6 +17,8 @@
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
 
+#include <zlib/Zdb.hh>
+
 #include "zdbtest_fbs.h"
 
 namespace zdbtest {
@@ -52,6 +54,8 @@ ZfbStruct((Order, JSON),
   (((flags),	(Ctor<8>, Mutable)),	(UDT, ZtBitmap{"4,8,16-42"})));
 
 ZfbRoot(Order);	// bind Order to flatbuffer schema
+
+ZdbTableDerive(OrderTable, Order);
 
 }
 
