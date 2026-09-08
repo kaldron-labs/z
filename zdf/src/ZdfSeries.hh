@@ -239,11 +239,8 @@ private:
   bool			m_failed = false;
 };
 
-template <typename Decoder>
-ZuDerive(ReaderList,
-  (ZmList<Reader<Decoder>,
-    ZmListNode<Reader<Decoder>,
-      ZmListHeapID<"Zdf.Reader">>>));
+ZmListDeriveT((Decoder), ReaderList, Reader<Decoder>,
+  (ZmListNode<Reader<Decoder>, ZmListHeapID<"Zdf.Reader">>));
 
 template <typename Decoder>
 using RdrNode = typename ReaderList<Decoder>::Node;
@@ -377,15 +374,10 @@ struct IndexBlk_Fn {
   ZuInline Offset key() const { return indexBlk.offset; }
   static constexpr uint64_t length() { return IndexBlkSize; }
 };
-ZuDerive(Index,
-  (ZmPQueue<IndexBlk_,
-    ZmPQueueFn<IndexBlk_Fn,
-      ZmPQueueNode<IndexBlk_,
-	ZmPQueueStats<false,
-	  ZmPQueueOverlap<false,
-	    ZmPQueueBits<3,
-	      ZmPQueueLevels<3,
-		ZmPQueueHeapID<"Zdf.IndexBlk">>>>>>>>));
+ZmPQueueDerive(Index, IndexBlk_, ZmPQueueFn<IndexBlk_Fn,
+  ZmPQueueNode<IndexBlk_, ZmPQueueStats<false,
+    ZmPQueueOverlap<false, ZmPQueueBits<3, ZmPQueueLevels<3,
+      ZmPQueueHeapID<"Zdf.IndexBlk">>>>>>>);
 using IndexBlk = Index::Node;
 
 struct InternalError { };	// internal exception
