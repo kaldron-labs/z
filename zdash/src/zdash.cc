@@ -103,13 +103,10 @@ namespace Telemetry {
   static constexpr const auto &Watch_HeapID() {
     return "zdash.Telemetry.Watch";
   }
-  template <typename T>
-  ZuDerive(WatchList,
-    (ZmList<T,
-      ZmListKey<Watch_Axor,
-	ZmListNode<T,
-	  ZmListHeapID<Watch_HeapID,
-	    ZmListLock<ZmNoLock>>>>>));
+  ZmListDeriveT((T), WatchList, T,
+    (ZmListKey<Watch_Axor,
+      ZmListNode<T,
+	ZmListHeapID<Watch_HeapID, ZmListLock<ZmNoLock>>>>));
 
   // display - contains pointer to tree array
   struct Display_ : public Watch {
@@ -230,14 +227,12 @@ namespace Telemetry {
   }
   template <typename T>
   static auto KeyAxor(const T &v) { return v.telKey(); }
-  template <typename T>
-  ZuDerive(ItemTree_,
-    (ZmRBTree<Item_<T>,
-      ZmRBTreeNode<Item_<T>,
-	ZmRBTreeKey<KeyAxor<Item_<T>>,
-	  ZmRBTreeUnique<true,
-	    ZmRBTreeLock<ZmNoLock,
-	      ZmRBTreeHeapID<ItemTree_HeapID>>>>>>));
+  ZmRBTreeDeriveT((T), ItemTree_, Item_<T>,
+    (ZmRBTreeNode<Item_<T>,
+      ZmRBTreeKey<KeyAxor<Item_<T>>,
+	ZmRBTreeUnique<true,
+	  ZmRBTreeLock<ZmNoLock,
+	    ZmRBTreeHeapID<ItemTree_HeapID>>>>>));
   template <typename T>
   class ItemTree : public ItemTree_<T> {
   public:
@@ -863,13 +858,12 @@ public:
 static CliLink_::Key CliLink_KeyAxor(const CliLink_ &link) {
   return link.key();
 }
-ZuDerive(CliLinks,
-  (ZmRBTree<CliLink_,
-    ZmRBTreeNode<CliLink_,
-      ZmRBTreeKey<CliLink_KeyAxor,
-	ZmRBTreeUnique<true,
-	  ZmRBTreeLock<ZmPLock,
-	    ZmRBTreeHeapID<"CliLink">>>>>>));
+ZmRBTreeDerive(CliLinks, CliLink_,
+  ZmRBTreeNode<CliLink_,
+    ZmRBTreeKey<CliLink_KeyAxor,
+      ZmRBTreeUnique<true,
+	ZmRBTreeLock<ZmPLock,
+	  ZmRBTreeHeapID<"CliLink">>>>>);
 using CliLink = CliLinks::Node;
 
 class SrvLink : public ZcmdSrvLink<App_Srv, SrvLink> {

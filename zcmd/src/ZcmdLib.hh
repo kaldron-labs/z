@@ -24,9 +24,9 @@
 
 #else
 
-#define ZcmdAPI
-#define ZcmdExplicit
-#define ZcmdExtern extern
+#define ZcmdAPI ZuExport_API
+#define ZcmdExplicit ZuExport_Explicit
+#define ZcmdExtern extern ZcmdAPI
 
 #endif
 

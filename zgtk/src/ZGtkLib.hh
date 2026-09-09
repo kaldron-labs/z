@@ -28,9 +28,9 @@
 
 #else
 
-#define ZGtkAPI
-#define ZGtkExplicit
-#define ZGtkExtern extern
+#define ZGtkAPI ZuExport_API
+#define ZGtkExplicit ZuExport_Explicit
+#define ZGtkExtern extern ZGtkAPI
 
 #endif
 

@@ -24,9 +24,9 @@
 
 #else
 
-#define ZdbPQAPI
-#define ZdbPQExplicit
-#define ZdbPQExtern extern
+#define ZdbPQAPI ZuExport_API
+#define ZdbPQExplicit ZuExport_Explicit
+#define ZdbPQExtern extern ZdbPQAPI
 
 #endif
 

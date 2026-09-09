@@ -229,11 +229,11 @@ inline uintptr_t TransportContextEntry_KeyAxor(
   return entry.id;
 }
 
-ZuDerive(TransportContextHash, (ZmHash<TransportContextEntry,
-  ZmHashNode<TransportContextEntry,
+ZmHashDerive(TransportContextHash, TransportContextEntry,
+  (ZmHashNode<TransportContextEntry,
     ZmHashKey<TransportContextEntry_KeyAxor,
       ZmHashLock<ZmNoLock,
-        ZmHashHeapID<"Zmcp.HTTP.Context">>>>>));
+        ZmHashHeapID<"Zmcp.HTTP.Context">>>>));
 
 template <typename Res>
 using ReplyMessage = ToolReplyMessage<Res>;
@@ -398,11 +398,11 @@ inline uint64_t WorkEntry_KeyAxor(const WorkEntry &entry) {
   return entry.generation;
 }
 
-ZuDerive(WorkHash, (ZmHash<WorkEntry,
-  ZmHashNode<WorkEntry,
+ZmHashDerive(WorkHash, WorkEntry,
+  (ZmHashNode<WorkEntry,
     ZmHashKey<WorkEntry_KeyAxor,
       ZmHashLock<ZmNoLock,
-        ZmHashHeapID<"Zmcp.HTTP.Works">>>>>));
+        ZmHashHeapID<"Zmcp.HTTP.Works">>>>));
 
 class HTTPStreamRef {
 public:
@@ -500,11 +500,11 @@ inline const ID &PendingEntry_KeyAxor(const PendingEntry &entry) {
   return entry.id;
 }
 
-ZuDerive(PendingHash, (ZmHash<PendingEntry,
-  ZmHashNode<PendingEntry,
+ZmHashDerive(PendingHash, PendingEntry,
+  (ZmHashNode<PendingEntry,
     ZmHashKey<PendingEntry_KeyAxor,
       ZmHashLock<ZmNoLock,
-        ZmHashHeapID<"Zmcp.Server.Pending">>>>>));
+        ZmHashHeapID<"Zmcp.Server.Pending">>>>));
 
 template <typename Catalog, typename Heap>
 class HTTPSession_ : public Heap, public ZuObject {
@@ -574,8 +574,8 @@ struct HTTPSessionHash : public HTTPSessionHash_<Catalog> { };
 using SessionEntropy =
   ZtArray<uint8_t, ZtArrayHeapID<"Zmcp.HTTP.SessionID">>;
 
-ZuDerive(SSEQueue, (ZmList<SSERecord,
-  ZmListNode<SSERecord, ZmListHeapID<"Zmcp.SSE.Queue">>>));
+ZmListDerive(SSEQueue, SSERecord,
+  ZmListNode<SSERecord, ZmListHeapID<"Zmcp.SSE.Queue">>);
 
 using ResumeFn = ZmFn<bool(), ZmFnHeapID<"Zmcp.SSE.Resume">>;
 using SSECloseFn = ZmFn<void(), ZmFnHeapID<"Zmcp.SSE.Close">>;

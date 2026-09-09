@@ -755,10 +755,10 @@ varBufSize(const reflection::Field *field, const Zfb::Table *fbo) {
 class OIDs {
   using OIDs_ = ZuArray<unsigned, Value::N - 1>;
   enum { Bits = ZuIntrin::log2(Value::N) };
-  ZuDerive(Types,
-    (ZmLHashKV<unsigned, int8_t, ZmLHashStatic<Bits, ZmLHashLocal<>>>));
-  ZuDerive(Lookup,
-    (ZmLHashKV<ZuCSpan, int8_t, ZmLHashStatic<Bits, ZmLHashLocal<>>>));
+  ZmLHashKVDerive(Types, unsigned, int8_t,
+    ZmLHashStatic<Bits, ZmLHashLocal<>>);
+  ZmLHashKVDerive(Lookup, ZuCSpan, int8_t,
+    ZmLHashStatic<Bits, ZmLHashLocal<>>);
 
 public:
   OIDs();
@@ -1672,7 +1672,7 @@ struct TblQuery {
 
 using Task = ZuUnion<Start, Stop, TblQuery>;
 
-ZuDerive(Queue, (ZmList<Task, ZmListHeapID<"ZdbPQ.Queue">>));
+ZmListDerive(Queue, Task, ZmListHeapID<"ZdbPQ.Queue">);
 
 } // Work
 
@@ -1940,7 +1940,7 @@ private:
     (ZtArray<const ZfVField *, ZtArrayHeapID<"ZdbPQ.UpdFields">>));
   ZuDerive(FieldID, ZtString<ZtStringHeapID<"ZdbPQ.FieldID">>);
   ZuDerive(KeyGroup, (ZtArray<unsigned, ZtArrayHeapID<"ZdbPQ.KeyGroup">>));
-  ZuDerive(FieldMap, (ZmLHashKV<FieldID, unsigned, ZmLHashLocal<>>));
+  ZmLHashKVDerive(FieldMap, FieldID, unsigned, ZmLHashLocal<>);
   ZuDerive(MaxUN, (ZtArray<UN, ZtArrayHeapID<"ZdbPQ.MaxUN">>));
 
   Store			*m_store = nullptr;
@@ -1972,12 +1972,11 @@ private:
 inline auto StoreTbl_IDAxor(const StoreTbl &storeTbl) {
   return ZuTuple<bool, ZuCSpan>{storeTbl.internal(), storeTbl.id()};
 }
-ZuDerive(StoreTbls,
-  (ZmHash<StoreTbl,
-    ZmHashNode<StoreTbl,
-      ZmHashKey<StoreTbl_IDAxor,
-	ZmHashLock<ZmPLock,
-	ZmHashHeapID<"ZdbPQ.StoreTbl">>>>>));
+ZmHashDerive(StoreTbls, StoreTbl,
+  (ZmHashNode<StoreTbl,
+    ZmHashKey<StoreTbl_IDAxor,
+      ZmHashLock<ZmPLock,
+	ZmHashHeapID<"ZdbPQ.StoreTbl">>>>));
 
 struct StoreCf {
   ZtString<>	thread;
