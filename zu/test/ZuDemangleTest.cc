@@ -35,6 +35,11 @@ struct Derived : public Base {
   }
 };
 
+struct ArrayIDs { using Keys = ZuStringTL<"ZuVArray_::Array<ZuSpan">; };
+struct ElemIDs {
+  using Keys = ZuStringTL<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">;
+};
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -54,10 +59,10 @@ int main(int argc, char **argv)
     ZuCArray<512> s;
     s << ZuDemangle<decltype(a)>{};
     log(s);
-    ZuCHECK(ZuMatcher<"ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+    ZuCHECK(ZuMatcher<ArrayIDs>().find(s).p<1>() == 0);
     s = {}; s << ZuDemangle<typename ZuTraits<decltype(a)>::Elem>{};
     log(s);
-    ZuCHECK(ZuMatcher<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+    ZuCHECK(ZuMatcher<ElemIDs>().find(s).p<1>() == 0);
   }
   {
     ZuCArray<512> s;

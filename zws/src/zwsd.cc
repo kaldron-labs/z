@@ -39,7 +39,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((address),   (CLI::Opt<'a'>, CLI::Long<"address">)),    (String, "0.0.0.0")),
   (((cert),      (CLI::Opt<'c'>, CLI::Long<"cert">)),       (String)),
   (((key),       (CLI::Opt<'k'>, CLI::Long<"key">)),        (String)),

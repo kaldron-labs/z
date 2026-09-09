@@ -39,7 +39,7 @@ struct Connected {
 ZuDerive(Host, ZtString<ZtStringHeapID<"Zquic.Host">>);
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
 
-class ResetToken {
+class ZquicAPI ResetToken {
 public:
   static constexpr unsigned Length = 16;
 
@@ -67,7 +67,7 @@ private:
   bool		m_valid = false;
 };
 
-class PathChallenge {
+class ZquicAPI PathChallenge {
 public:
   static constexpr unsigned Length = 8;
 

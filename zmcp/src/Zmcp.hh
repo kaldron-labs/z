@@ -74,6 +74,7 @@ using JSONRPCVersion = ZuStringT<"2.0">;
 using LogLevels = ZuStringTL<
   "debug", "info", "notice", "warning",
   "error", "critical", "alert", "emergency">;
+struct LogLevelIDs { using Keys = LogLevels; };
 
 namespace LogLevel {
   enum { Disabled = -1, Debug, Info, Notice, Warning,
@@ -82,7 +83,7 @@ namespace LogLevel {
 
 inline int logLevel(ZuCSpan name)
 {
-  constexpr auto matcher = ZuMatcher<LogLevels>();
+  constexpr auto matcher = ZuMatcher<LogLevelIDs>();
   return matcher.exact(name);
 }
 
@@ -300,7 +301,7 @@ struct Error {
   ErrorString message;
   int code = ErrorCode::Internal;
 };
-ZfStruct((Error, JSON),
+ZfStruct(ZmcpAPI, (Error, JSON),
   (((code), (Mutable)), (Int32)),
   (((message), (Mutable)), (String)));
 
@@ -310,7 +311,7 @@ struct ToolAnnotationsShape {
   bool idempotentHint = false;
   bool openWorldHint = true;
 };
-ZfStruct((ToolAnnotationsShape, JSON),
+ZfStruct(ZmcpAPI, (ToolAnnotationsShape, JSON),
   (((readOnlyHint), (Mutable)), (Bool)),
   (((destructiveHint), (Mutable)), (Bool)),
   (((idempotentHint), (Mutable)), (Bool)),
@@ -356,7 +357,7 @@ struct EmptyObject {
   explicit operator bool() const { return true; }
   friend inline ZfJSON::AsObject ZfJSON_Fmt(EmptyObject *) { return {}; }
 };
-ZfStruct((EmptyObject, JSON));
+ZfStruct(ZmcpAPI, (EmptyObject, JSON));
 
 template <typename Object, bool = ZuIsBase<Object, ZmObject>{}>
 struct ToolObject_ { using T = Object; };
@@ -461,6 +462,7 @@ template <typename ...Req>
 struct Contract<ZuTypeList<Req...>> {
   using Requests = ZuTypeList<Req...>;
   using ToolIDs = ZuTypeList<GetToolID<Req>...>;
+  using Keys = ToolIDs;
 
   ZuAssert((validToolID<GetToolID<Req>>() && ...));
   ZuAssert((validID<GetOperationID<Req>>() && ...));
@@ -508,7 +510,7 @@ struct RequestShape {
   ZuCSpan method;
   EmptyObject params;
 };
-ZfStruct((RequestShape, JSON),
+ZfStruct(ZmcpAPI, (RequestShape, JSON),
   (((jsonrpc), (Mutable)), (String)),
   (((id), (Mutable)), (UDT)),
   (((method), (Mutable)), (String)),
@@ -534,7 +536,7 @@ struct NotificationShape {
   ZuCSpan method;
   EmptyObject params;
 };
-ZfStruct((NotificationShape, JSON),
+ZfStruct(ZmcpAPI, (NotificationShape, JSON),
   (((jsonrpc), (Mutable)), (String)),
   (((method), (Mutable)), (String)),
   (((params), (Mutable)), (UDT)));
@@ -558,7 +560,7 @@ struct ResultShape {
   ID id;
   EmptyObject result;
 };
-ZfStruct((ResultShape, JSON),
+ZfStruct(ZmcpAPI, (ResultShape, JSON),
   (((jsonrpc), (Mutable)), (String)),
   (((id), (Mutable)), (UDT)),
   (((result), (Mutable)), (UDT)));
@@ -581,7 +583,7 @@ struct ErrorShape {
   ID id;
   Error error;
 };
-ZfStruct((ErrorShape, JSON),
+ZfStruct(ZmcpAPI, (ErrorShape, JSON),
   (((jsonrpc), (Mutable)), (String)),
   (((id), (Mutable)), (UDT)),
   (((error), (Mutable)), (UDT)));
@@ -651,7 +653,7 @@ struct PeerInfo {
 
   explicit operator bool() const { return true; }
 };
-ZfStruct((PeerInfo, JSON),
+ZfStruct(ZmcpAPI, (PeerInfo, JSON),
   (((name), (Mutable)), (String)),
   (((version), (Mutable)), (String)));
 
@@ -660,7 +662,7 @@ struct ServerMeta {
 
   explicit operator bool() const { return true; }
 };
-ZfStruct((ServerMeta, JSON),
+ZfStruct(ZmcpAPI, (ServerMeta, JSON),
   (((serverInfo),
     (Mutable, JSON::ID<"io.modelcontextprotocol/serverInfo">)), (UDT)));
 
@@ -690,14 +692,14 @@ struct StructuredResultShape {
   int code = 0;
   EmptyObject data;
 };
-ZfStruct((StructuredResultShape, JSON),
+ZfStruct(ZmcpAPI, (StructuredResultShape, JSON),
   (((code), (Mutable)), (Int32)),
   (((data), (Mutable)), (UDT)));
 
 struct StructuredEmpty {
   int code = 0;
 };
-ZfStruct((StructuredEmpty, JSON),
+ZfStruct(ZmcpAPI, (StructuredEmpty, JSON),
   (((code), (Mutable)), (Int32)));
 
 template <typename Body>
@@ -719,7 +721,7 @@ struct CallResultShape {
   StructuredEmpty structuredContent;
   bool isError = false;
 };
-ZfStruct((CallResultShape, JSON),
+ZfStruct(ZmcpAPI, (CallResultShape, JSON),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)),
   (((resultType), (Mutable, JSON::Opt)), (String)),
   (((content), (Mutable)), (UDT)),
@@ -794,7 +796,7 @@ struct StructuredReplyShape {
   int code = ZuCmp<int>::null();
   EmptyObject data;
 };
-ZfStruct((StructuredReplyShape, JSON),
+ZfStruct(ZmcpAPI, (StructuredReplyShape, JSON),
   (((code), (Mutable)), (Int32)),
   (((data), (Mutable, JSON::Opt)), (UDT)));
 
@@ -823,7 +825,7 @@ struct StructuredReply :
 struct CallReplyShape {
   StructuredReplyShape structuredContent;
 };
-ZfStruct((CallReplyShape, JSON),
+ZfStruct(ZmcpAPI, (CallReplyShape, JSON),
   (((structuredContent), (Mutable)), (UDT)));
 
 template <typename Req>
@@ -967,7 +969,7 @@ struct ClientMeta {
 
   explicit operator bool() const { return true; }
 };
-ZfStruct((ClientMeta, JSON),
+ZfStruct(ZmcpAPI, (ClientMeta, JSON),
   (((protocolVersion),
     (Mutable, JSON::Opt,
       JSON::ID<"io.modelcontextprotocol/protocolVersion">)), (String)),
@@ -1005,7 +1007,7 @@ inline ClientMetaOpt clientMeta(
 struct MetaParams {
   ClientMetaOpt meta;
 };
-ZfStruct((MetaParams, JSON),
+ZfStruct(ZmcpAPI, (MetaParams, JSON),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)));
 
 struct InitializeParams {
@@ -1013,7 +1015,7 @@ struct InitializeParams {
   EmptyObject capabilities;
   PeerInfo clientInfo;
 };
-ZfStruct((InitializeParams, JSON),
+ZfStruct(ZmcpAPI, (InitializeParams, JSON),
   (((protocolVersion), (Mutable)), (String)),
   (((capabilities), (Mutable)), (UDT)),
   (((clientInfo), (Mutable)), (UDT)));
@@ -1021,7 +1023,7 @@ ZfStruct((InitializeParams, JSON),
 struct SetLevelParams {
   ZuCSpan level;
 };
-ZfStruct((SetLevelParams, JSON),
+ZfStruct(ZmcpAPI, (SetLevelParams, JSON),
   (((level), (Mutable)), (String)));
 
 struct CancelledParams {
@@ -1029,7 +1031,7 @@ struct CancelledParams {
   ZuCSpan reason;
   ClientMetaOpt meta;
 };
-ZfStruct((CancelledParams, JSON),
+ZfStruct(ZmcpAPI, (CancelledParams, JSON),
   (((requestID), (Mutable, JSON::ID<"requestId">)), (UDT)),
   (((reason), (Mutable, JSON::Opt)), (String)),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)));
@@ -1040,7 +1042,7 @@ struct ProgressParams {
   double total = ZuCmp<double>::null();
   ZuCSpan message;
 };
-ZfStruct((ProgressParams, JSON),
+ZfStruct(ZmcpAPI, (ProgressParams, JSON),
   (((token), (Mutable, JSON::ID<"progressToken">)), (UDT)),
   (((progress), (Mutable)), (Float)),
   (((total), (Mutable, JSON::Opt)), (Float)),
@@ -1051,7 +1053,7 @@ struct LogParams {
   ZuCSpan logger;
   ZuCSpan data;
 };
-ZfStruct((LogParams, JSON),
+ZfStruct(ZmcpAPI, (LogParams, JSON),
   (((level), (Mutable)), (String)),
   (((logger), (Mutable, JSON::Opt)), (String)),
   (((data), (Mutable)), (String)));
@@ -1060,7 +1062,7 @@ struct RxLogParams {
   ZuCSpan level;
   ZuCSpan logger;
 };
-ZfStruct((RxLogParams, JSON),
+ZfStruct(ZmcpAPI, (RxLogParams, JSON),
   (((level), (Mutable)), (String)),
   (((logger), (Mutable, JSON::Opt)), (String)));
 
@@ -1069,7 +1071,7 @@ struct ToolsCallShape {
   ZfJSON::Union<EmptyObject> arguments;
   ClientMetaOpt meta;
 };
-ZfStruct((ToolsCallShape, JSON),
+ZfStruct(ZmcpAPI, (ToolsCallShape, JSON),
   (((name), (Mutable)), (String)),
   (((arguments), (Mutable)), (UDT)),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)));
@@ -1152,7 +1154,7 @@ struct ToolsCallParams :
       using Req = ZuType<0, Requests>;
       return name_ == GetToolID<Req>{}() ? 0 : -1;
     } else {
-      constexpr auto matcher = ZuMatcher<ToolIDs>();
+      constexpr auto matcher = ZuMatcher<Contract<Requests>>();
       return matcher.exact(name_);
     }
   }
@@ -1190,7 +1192,7 @@ struct EnvelopeShape {
   ZfJSON::Union<EmptyObject> result;
   ErrorObject error;
 };
-ZfStruct((EnvelopeShape, JSON),
+ZfStruct(ZmcpAPI, (EnvelopeShape, JSON),
   (((id), (Mutable)), (UDT)),
   (((method), (Mutable)), (String)),
   (((params), (Mutable)), (UDT)),
@@ -1402,7 +1404,7 @@ struct ScalarShape {
   EmptyObject deflt;
   ZuCSpan mcpHeader;
 };
-ZfStruct((ScalarShape, JSON),
+ZfStruct(ZmcpAPI, (ScalarShape, JSON),
   (((type), (Mutable)), (String)),
   (((enum_), (Mutable, JSON::Opt, JSON::ID<"enum">)), (UDT)),
   (((minimum), (Mutable, JSON::Opt)), (UDT)),
@@ -1473,7 +1475,7 @@ struct ArrayShape {
   ZuCSpan type;
   EmptyObject items;
 };
-ZfStruct((ArrayShape, JSON),
+ZfStruct(ZmcpAPI, (ArrayShape, JSON),
   (((type), (Mutable)), (String)),
   (((items), (Mutable)), (UDT)));
 
@@ -1487,7 +1489,7 @@ struct MapShape {
   ZuCSpan type;
   EmptyObject additionalProperties;
 };
-ZfStruct((MapShape, JSON),
+ZfStruct(ZmcpAPI, (MapShape, JSON),
   (((type), (Mutable)), (String)),
   (((additionalProperties), (Mutable)), (UDT)));
 
@@ -1580,7 +1582,7 @@ struct ObjectShape {
   EmptyNames required;
   bool additionalProperties = false;
 };
-ZfStruct((ObjectShape, JSON),
+ZfStruct(ZmcpAPI, (ObjectShape, JSON),
   (((type), (Mutable)), (String)),
   (((properties), (Mutable)), (UDT)),
   (((required), (Mutable, JSON::Opt)), (UDT)),
@@ -1645,7 +1647,7 @@ using ObjectDesc = ValueDesc<ZfFieldTC::UDT, ZuTypeList<>, O>;
 struct ConstShape {
   int value;
 };
-ZfStruct((ConstShape, JSON),
+ZfStruct(ZmcpAPI, (ConstShape, JSON),
   (((value), (Mutable, JSON::ID<"const">)), (Int32)));
 
 template <typename Res>
@@ -1680,7 +1682,7 @@ struct ResponsePropertiesShape {
   EmptyObject code;
   EmptyObject data;
 };
-ZfStruct((ResponsePropertiesShape, JSON),
+ZfStruct(ZmcpAPI, (ResponsePropertiesShape, JSON),
   (((code), (Mutable)), (UDT)),
   (((data), (Mutable, JSON::Opt)), (UDT)));
 
@@ -1718,7 +1720,7 @@ struct ResponseShape {
   bool additionalProperties = false;
   ZuCSpan description;
 };
-ZfStruct((ResponseShape, JSON),
+ZfStruct(ZmcpAPI, (ResponseShape, JSON),
   (((type), (Mutable)), (String)),
   (((properties), (Mutable)), (UDT)),
   (((required), (Mutable)), (UDT)),
@@ -1769,7 +1771,7 @@ struct ResponseList_<ZuTypeList<Res...>> {
 struct OutputShape {
   EmptyObject oneOf;
 };
-ZfStruct((OutputShape, JSON),
+ZfStruct(ZmcpAPI, (OutputShape, JSON),
   (((oneOf), (Mutable)), (UDT)));
 
 template <typename Req>
@@ -1780,7 +1782,7 @@ struct Output : public ZuStructShim<Output<Req>, OutputShape> {
 struct OperationMeta {
   ZuCSpan operationID;
 };
-ZfStruct((OperationMeta, JSON),
+ZfStruct(ZmcpAPI, (OperationMeta, JSON),
   (((operationID),
     (Mutable, JSON::ID<"operationId">)), (String)));
 
@@ -1813,7 +1815,7 @@ struct ToolShape {
   EmptyObject outputSchema;
   OperationMeta meta;
 };
-ZfStruct((ToolShape, JSON),
+ZfStruct(ZmcpAPI, (ToolShape, JSON),
   (((name), (Mutable)), (String)),
   (((title), (Mutable, JSON::Opt)), (String)),
   (((description), (Mutable, JSON::Opt)), (String)),
@@ -1874,7 +1876,7 @@ struct ToolsResultShape {
   ZuCSpan cacheScope;
   uint64_t ttlMs = 0;
 };
-ZfStruct((ToolsResultShape, JSON),
+ZfStruct(ZmcpAPI, (ToolsResultShape, JSON),
   (((tools), (Mutable)), (UDT)),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)),
   (((resultType), (Mutable, JSON::Opt)), (String)),
@@ -2256,12 +2258,13 @@ using MethodIDs = ZuStringTL<
   "notifications/progress",
   "notifications/message",
   "logging/setLevel">;
+struct MethodID { using Keys = MethodIDs; };
 
 struct EmptyResult {
   ServerMetaOpt meta;
   ZuCSpan resultType;
 };
-ZfStruct((EmptyResult, JSON),
+ZfStruct(ZmcpAPI, (EmptyResult, JSON),
   (((meta), (Mutable, JSON::Opt, JSON::ID<"_meta">)), (UDT)),
   (((resultType), (Mutable, JSON::Opt)), (String)));
 
@@ -2302,20 +2305,20 @@ struct RxVersions :
 struct DiscoverRxResult {
   RxVersions supportedVersions;
 };
-ZfStruct((DiscoverRxResult, JSON),
+ZfStruct(ZmcpAPI, (DiscoverRxResult, JSON),
   (((supportedVersions), (Mutable)), (UDT)));
 
 struct ToolsCapability {
   EmptyObject tools;
 };
-ZfStruct((ToolsCapability, JSON),
+ZfStruct(ZmcpAPI, (ToolsCapability, JSON),
   (((tools), (Mutable)), (UDT)));
 
 struct LegacyCapabilities {
   EmptyObject tools;
   EmptyObject logging;
 };
-ZfStruct((LegacyCapabilities, JSON),
+ZfStruct(ZmcpAPI, (LegacyCapabilities, JSON),
   (((tools), (Mutable)), (UDT)),
   (((logging), (Mutable)), (UDT)));
 
@@ -2327,7 +2330,7 @@ struct DiscoverResult {
   ZuCSpan cacheScope;
   int ttlMs = CatalogTTL;
 };
-ZfStruct((DiscoverResult, JSON),
+ZfStruct(ZmcpAPI, (DiscoverResult, JSON),
   (((supportedVersions), (Mutable)), (UDT)),
   (((capabilities), (Mutable)), (UDT)),
   (((meta), (Mutable, JSON::ID<"_meta">)), (UDT)),
@@ -2340,7 +2343,7 @@ struct InitializeResult {
   LegacyCapabilities capabilities;
   PeerInfo serverInfo;
 };
-ZfStruct((InitializeResult, JSON),
+ZfStruct(ZmcpAPI, (InitializeResult, JSON),
   (((protocolVersion), (Mutable)), (String)),
   (((capabilities), (Mutable)), (UDT)),
   (((serverInfo), (Mutable)), (UDT)));
@@ -2519,7 +2522,7 @@ private:
     if (envelope.kind != MessageKind::Request &&
 	envelope.kind != MessageKind::Notification)
       return true;
-    constexpr auto matcher = ZuMatcher<MethodIDs>();
+    constexpr auto matcher = ZuMatcher<MethodID>();
     int method = matcher.exact(envelope.method());
     switch (method) {
       case 0: discover_(emit, envelope.id()); break;

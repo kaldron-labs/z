@@ -61,7 +61,7 @@ struct Thread {
   virtual void telemetry(ThreadTelemetry &data) const = 0;
 };
 
-struct ThreadMgr {
+struct ZmAPI ThreadMgr {
 private:
   using WatchLock = ZmRWLock;
   using WatchGuard = ZmGuard<WatchLock>;

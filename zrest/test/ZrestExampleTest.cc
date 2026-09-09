@@ -25,7 +25,7 @@ struct TestClaims {
 
 using TestJTIFormat = ZuFmt::Hex<false, ZuFmt::Right<32>>;
 
-ZfStruct((TestClaims, JSON),
+ZfStruct(, (TestClaims, JSON),
   (((jti), (JSON::String<TestJTIFormat>, Required)), (UInt128)));
 
 ZuDerive(TestJWTBuf, (ZtArray<uint8_t,

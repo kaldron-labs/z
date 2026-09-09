@@ -72,7 +72,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((callbackPort), (CLI::Long<"callback-port">)), (UInt32, CallbackPort)),
   (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
   (((url), (CLI::Arg<1>)), (String, "http://localhost:8080/")),

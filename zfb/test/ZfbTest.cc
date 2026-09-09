@@ -35,12 +35,13 @@ struct Test {
   friend ZfStructPrint ZuPrintType(Test *);
 };
 
-ZfbStruct(Test,
+ZfbStruct(, Test,
   (((foo), (Ctor<0>)), (Int32)),
   (((bar), (Ctor<1>)), (String, "bar")),
   (((baz), (Ctor<2>)), (StringVec)));
 
 ZfbRoot(Test);
+ZfbStructImpl(Test);
 
 } // zfbtest
 
@@ -157,6 +158,10 @@ int main(int argc, char **argv)
   ZuTestMain();
   unsigned n = 64;
   IOBuilder fbb(new ZiIOBufAlloc<>());
+  CHECK((ZfVFieldMatcher<zfbtest::Test>()("bar") ==
+	ZuTypeIndex<zfbtest::ZfField_Test_bar,
+	  ZuFields<zfbtest::Test>>{}));
+  CHECK(ZfVFieldMatcher<zfbtest::Test>()("missing") < 0);
   build<false>(fbb, n);
   build<true>(fbb, n);
   build<true>(fbb, n);

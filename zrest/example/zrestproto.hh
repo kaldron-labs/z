@@ -27,7 +27,7 @@ struct Pong_ : public Heap, public ZmObject {
 using Pong_Heap = ZmHeap<"zrest.Pong", Pong_<ZuVoid>>;
 ZuDerive(Pong, (Pong_<Pong_Heap>));
 
-ZfStruct((Ping, URI), (((ping), (Required)), (Bool)));
-ZfStruct((Pong, JSON), (((pong), (Required)), (Bool)));
+ZfStruct(, (Ping, URI), (((ping), (Required)), (Bool)));
+ZfStruct(, (Pong, JSON), (((pong), (Required)), (Bool)));
 
 #endif /* zrestproto_HH */

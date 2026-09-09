@@ -39,7 +39,7 @@ struct SeriesFixed {
   friend ZfStructPrint ZuPrintType(SeriesFixed *);
 };
 
-ZfbStruct(SeriesFixed,
+ZfbStruct(ZdfAPI, SeriesFixed,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt32)),
   (((name),	(Ctor<1>, Keys<1>)),			(String)),
   (((first),	(Ctor<2>, Mutable)),			(Int64)),
@@ -59,7 +59,7 @@ struct SeriesFloat {
   friend ZfStructPrint ZuPrintType(SeriesFloat *);
 };
 
-ZfbStruct(SeriesFloat,
+ZfbStruct(ZdfAPI, SeriesFloat,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt32)),
   (((name),	(Ctor<1>, Keys<1>)),			(String)),
   (((first),	(Ctor<2>, Mutable)),			(Float)),
@@ -79,7 +79,7 @@ struct BlkFixed {
   friend ZfStructPrint ZuPrintType(BlkFixed *);
 };
 
-ZfbStruct(BlkFixed,
+ZfbStruct(ZdfAPI, BlkFixed,
   (((seriesID),	(Ctor<3>, Keys<0>, Group<0>)),		(UInt32)),
   (((blkOffset),(Ctor<0>, Keys<0>)),			(UInt64)),
   (((offset),	(Ctor<1>, Mutable)),			(UInt64)),
@@ -99,7 +99,7 @@ struct BlkFloat {
   friend ZfStructPrint ZuPrintType(BlkFloat *);
 };
 
-ZfbStruct(BlkFloat,
+ZfbStruct(ZdfAPI, BlkFloat,
   (((seriesID),	(Ctor<3>, Keys<0>, Group<0>)),		(UInt32)),
   (((blkOffset),(Ctor<0>, Keys<0>)),			(UInt64)),
   (((offset),	(Ctor<1>, Mutable)),			(UInt64)),
@@ -124,7 +124,7 @@ struct BlkData {
   friend BlkData_Evict ZdbEvictHook(BlkData *);
 };
 
-ZfbStruct(BlkData,
+ZfbStruct(ZdfAPI, BlkData,
   (((seriesID),	(Ctor<1>, Keys<0>, Group<0>, Descend<0>)),	(UInt32)),
   (((blkOffset),(Ctor<0>, Keys<0>, Descend<0>)),		(UInt64)),
   (((buf),	(Mutable)),					(Bytes)));

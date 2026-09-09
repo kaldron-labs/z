@@ -91,7 +91,7 @@ struct InitialKeyMaterial {
   InitialSecret	server;
 };
 
-struct InitialCrypto {
+struct ZquicAPI InitialCrypto {
   static bool derive(InitialKeyMaterial &, const CxnID &);
   static int encrypt(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan, ZuBSpan);
@@ -104,7 +104,7 @@ struct InitialCrypto {
     uint8_t *, unsigned, const InitialSecret &, ZuBSpan);
 };
 
-struct InitialPktProt {
+struct ZquicAPI InitialPktProt {
   static int protectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     ZuBSpan, ZuBSpan, unsigned, unsigned);
@@ -116,7 +116,7 @@ struct InitialPktProt {
     unsigned, uint64_t &, unsigned &);
 };
 
-struct TrafficSecret {
+struct ZquicAPI TrafficSecret {
   static constexpr unsigned MaxSecretLen = 64;
   static constexpr unsigned MaxKeyLen = 32;
   static constexpr unsigned MaxIVLen = 16;
@@ -139,7 +139,7 @@ struct TrafficSecret {
   bool				installed = false;
 };
 
-struct PktProtState {
+struct ZquicAPI PktProtState {
   PktProtState() = default;
   PktProtState(const PktProtState &) = delete;
   PktProtState &operator =(const PktProtState &) = delete;
@@ -157,7 +157,7 @@ struct PktProtState {
   bool			installed = false;
 };
 
-struct PktProt {
+struct ZquicAPI PktProt {
   static bool deriveSecret(
     TrafficSecret &, ptls_cipher_suite_t *, ZuBSpan);
   static int protectLongV(
@@ -208,7 +208,7 @@ struct CryptoDiag {
 
 using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 
-class CryptoStream :
+class ZquicAPI CryptoStream :
   public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
   static constexpr unsigned MaxBufSize = (64<<10); // 64K
@@ -298,7 +298,7 @@ struct CryptoConfig {
 ZuDerive(TLSTransportParams,
   (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Crypto.TLSTransportParams">>));
 
-class Crypto {
+class ZquicAPI Crypto {
 public:
   static constexpr unsigned TLSOutputMax = (64<<10); // 64K
   // QUIC uses TLS 1.3 cipher suites with defined header protection. TLS 1.3

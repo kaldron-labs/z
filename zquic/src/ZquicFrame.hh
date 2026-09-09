@@ -70,7 +70,7 @@ struct Frame {
   }
 };
 
-struct FrameCodec {
+struct ZquicAPI FrameCodec {
   static bool ackEliciting(FrameType::T);
   static int parse(ZuBSpan, Frame &, unsigned &);
   static int writePadding(uint8_t *, unsigned, unsigned);

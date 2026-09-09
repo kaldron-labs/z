@@ -114,7 +114,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((caseName), (CLI::Long<"case">)),                            (String, "")),
   (((timeout),  (CLI::Long<"timeout">)),                         (UInt32, DefaultCaseTimeout)),
   (((stallTimeout),
@@ -335,10 +335,22 @@ ZuCSpan caseMigrationLocal(const Case &c)
   return scenarioMigrates(c) ? ZuCSpan{"127.0.0.1:0"} : ZuCSpan{};
 }
 
+struct PairIDs {
+  using Keys = ZuStringTL<
+    "zhttp-caddy", "zhttp-zhttpd", "curl-caddy", "curl-zhttpd">;
+};
+struct ProtoIDs {
+  using Keys = ZuStringTL<
+    "h1-tcp", "h1-tls", "h2-tls", "h3", "h3-prefer">;
+};
+struct ScenarioIDs {
+  using Keys = ZuStringTL<
+    "mig-headers", "mig-bytes", "mig-drop", "mig-caddy", "mig-curl", "put">;
+};
+
 bool parsePair(ZuCSpan name, Pair::T &pair)
 {
-  static constexpr auto matcher = ZuMatcher<
-    "zhttp-caddy", "zhttp-zhttpd", "curl-caddy", "curl-zhttpd">();
+  static constexpr auto matcher = ZuMatcher<PairIDs>();
   int i = matcher.exact(name);
   if (i < 0) return false;
   pair = Pair::T(i);
@@ -347,8 +359,7 @@ bool parsePair(ZuCSpan name, Pair::T &pair)
 
 bool parseProto(ZuCSpan name, Proto::T &proto)
 {
-  static constexpr auto matcher =
-    ZuMatcher<"h1-tcp", "h1-tls", "h2-tls", "h3", "h3-prefer">();
+  static constexpr auto matcher = ZuMatcher<ProtoIDs>();
   int i = matcher.exact(name);
   if (i < 0) return false;
   proto = Proto::T(i);
@@ -361,9 +372,7 @@ bool parseScenario(ZuCSpan name, Scenario::T &scenario)
     scenario = Scenario::Default;
     return true;
   }
-  static constexpr auto matcher = ZuMatcher<
-    "mig-headers", "mig-bytes", "mig-drop", "mig-caddy", "mig-curl",
-    "put">();
+  static constexpr auto matcher = ZuMatcher<ScenarioIDs>();
   int i = matcher.exact(name);
   if (i < 0) return false;
   scenario = Scenario::T(i + 1);

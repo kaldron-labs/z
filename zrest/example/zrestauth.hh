@@ -56,12 +56,12 @@ using InternalError_Heap =
   ZmHeap<"zrest.InternalError", InternalError_<ZuVoid>>;
 ZuDerive(InternalError, (InternalError_<InternalError_Heap>));
 
-ZfStruct((Credentials, JSON),
+ZfStruct(, (Credentials, JSON),
   (((username), (Required)), (String)),
   (((password), (Required)), (String)));
-ZfStruct((RefreshRequest, JSON),
+ZfStruct(, (RefreshRequest, JSON),
   (((refreshToken), (JSON::ID<"refresh_token">, Required)), (String)));
-ZfStruct((TokenResponse, JSON),
+ZfStruct(, (TokenResponse, JSON),
   (((accessToken), (JSON::ID<"access_token">, Required)), (String)),
   (((refreshToken), (JSON::ID<"refresh_token">, Required)), (String)),
   (((expiresIn), (JSON::ID<"expires_in">, Required)), (UInt64)));

@@ -17,10 +17,19 @@ ZtEnumImplStruct(HPackFailure);
 ZtEnumImplStruct(HPackRep);
 
 using HPackStatic_ = StaticTable<HPackTbl>;
+struct HPackNameIDs { using Keys = HPackStatic_::Names; };
+template <unsigned I>
+struct HPackValueIDs {
+  using Key = ZuType<I, HPackStatic_::Names>;
+  using Keys = HPackStatic_::Values<Key>;
+};
+struct NeverIndexIDs {
+  using Keys = ZuStringTL<"authorization", "cookie", "set-cookie">;
+};
 
 static int hpackStaticName_(ZuBSpan value)
 {
-  static constexpr auto matcher = ZuMatcher<HPackStatic_::Names>();
+  static constexpr auto matcher = ZuMatcher<HPackNameIDs>();
   return matcher.exact(value);
 }
 
@@ -47,7 +56,7 @@ static int hpackStaticIndex_(ZuBSpan name, ZuBSpan value)
       using Key = ZuType<nameIndex, HPackStatic_::Names>;
       using KeyEntries = HPackStatic_::Entries<Key>;
       using KeyValues = HPackStatic_::Values<Key>;
-      static constexpr auto matcher = ZuMatcher<KeyValues>();
+      static constexpr auto matcher = ZuMatcher<HPackValueIDs<nameIndex>>();
       int j = matcher.exact(value);
       if (j < 0) return;
       ZuSwitch::dispatch<KeyEntries::N>(
@@ -688,8 +697,7 @@ void HPackEncoder::neverIndex(ZuBSpan name)
 
 bool HPackEncoder::neverIndexed(ZuBSpan name) const
 {
-  static constexpr auto matcher =
-    ZuMatcher<"authorization", "cookie", "set-cookie">();
+  static constexpr auto matcher = ZuMatcher<NeverIndexIDs>();
   if (matcher.exact(name) >= 0) return true;
   return m_neverIndex->find(name);
 }

@@ -277,12 +277,12 @@ namespace Huffman {
   ZuInline constexpr uint64_t enclen(uint64_t slen) {
     return (slen>>2)*15U + (((slen & 3U)*30U + 7U)>>3);
   }
-  uint64_t encode(ZuSpan<uint8_t>, ZuBSpan);
+  ZhttpAPI uint64_t encode(ZuSpan<uint8_t>, ZuBSpan);
 
   ZuInline constexpr uint64_t declen(uint64_t slen) {
     return ((slen / 5U)<<3) + (((slen % 5U)<<3)/5U);
   }
-  int64_t decode(ZuSpan<uint8_t>, ZuBSpan);
+  ZhttpAPI int64_t decode(ZuSpan<uint8_t>, ZuBSpan);
 
 } // namespace Huffman
 

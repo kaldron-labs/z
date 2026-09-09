@@ -65,7 +65,7 @@ struct Heap {
   virtual void telemetry(HeapTelemetry &data) const = 0;
 };
 
-struct HeapMgr {
+struct ZmAPI HeapMgr {
 private:
   using WatchLock = ZmPLock;
   using WatchGuard = ZmGuard<WatchLock>;

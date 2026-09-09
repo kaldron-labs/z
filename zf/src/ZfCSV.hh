@@ -367,6 +367,9 @@ ZuDerive(Row, (ZtArray<Cell, ZtArrayHeapID<"ZfCSV.Row">>));
 // - each row is split into a Row
 // - each object is loaded from the Row as indexed by Lookup
 template <typename Fields>
+struct FieldIDs { using Keys = ZuFieldProp::CSV::GetIDs<Fields>; };
+
+template <typename Fields>
 struct Lookup : ZuArray<int, Fields::N> {
   using Base = ZuArray<int, Fields::N>;
   using Base::Base;
@@ -377,7 +380,7 @@ struct Lookup : ZuArray<int, Fields::N> {
   Lookup(const Header &header) : ncols(header.length()) {
     this->length(Fields::N);
     for (unsigned i = 0; i < Fields::N; i++) (*this)[i] = -1;
-    constexpr auto matcher = ZuMatcher<ZuFieldProp::CSV::GetIDs<Fields>>();
+    constexpr auto matcher = ZuMatcher<FieldIDs<Fields>>();
     for (unsigned i = 0; i < ncols; i++) {
       auto j = matcher.exact(header[i]);
       if (j >= 0) (*this)[j] = i;

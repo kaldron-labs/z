@@ -89,7 +89,7 @@ struct Issuer {
 
   friend ZfStructPrint ZuPrintType(Issuer *);
 };
-ZfbStruct(Issuer,
+ZfbStruct(ZumAPI, Issuer,
   (((id),		(Ctor<0>, Keys<0>)),	(String)),
   (((nextActionID),	(Ctor<1>, Mutable)),	(UInt32, 0)),
   (((authVersion),	(Ctor<2>, Mutable)),	(UInt64, 0)),
@@ -110,7 +110,7 @@ struct User {
 
   friend ZfStructPrint ZuPrintType(User *);
 };
-ZfbStruct(User,
+ZfbStruct(ZumAPI, User,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt64)),
   (((name),	(Ctor<1>, Keys<2>, Mutable)),		(String)),
   (((handle),	(Ctor<2>, Keys<1>)),			(Bytes)),
@@ -139,7 +139,7 @@ struct Cred {
 
   friend ZfStructPrint ZuPrintType(Cred *);
 };
-ZfbStruct(Cred,
+ZfbStruct(ZumAPI, Cred,
   (((id),		(Ctor<0>, Keys<0>)),			(Bytes)),
   (((userID),		(Ctor<0>, Keys<1>, Group<1>)),		(UInt64)),
   (((publicKey),	(Ctor<1>)),				(Bytes)),
@@ -162,7 +162,7 @@ struct Action {
 
   friend ZfStructPrint ZuPrintType(Action *);
 };
-ZfbStruct(Action,
+ZfbStruct(ZumAPI, Action,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt32)),
   (((name),	(Ctor<1>, Keys<1>)),			(String)),
   (((state),	(Ctor<2>, Mutable, Enum<State::Map>)),	(Int8)),
@@ -178,7 +178,7 @@ struct Role {
 
   friend ZfStructPrint ZuPrintType(Role *);
 };
-ZfbStruct(Role,
+ZfbStruct(ZumAPI, Role,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt64)),
   (((name),	(Ctor<1>, Keys<1>, Mutable)),		(String)),
   (((actions),	(Ctor<2>, Mutable)),			(UDT, ZtBitmap{})),
@@ -196,7 +196,7 @@ struct Scope {
 
   friend ZfStructPrint ZuPrintType(Scope *);
 };
-ZfbStruct(Scope,
+ZfbStruct(ZumAPI, Scope,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	(UInt64)),
   (((audience),	(Ctor<1>, Keys<1>, Group<1>)),		(String)),
   (((name),	(Ctor<2>, Keys<1>, Mutable)),		(String)),
@@ -221,7 +221,7 @@ struct Client {
 
   friend ZfStructPrint ZuPrintType(Client *);
 };
-ZfbStruct(Client,
+ZfbStruct(ZumAPI, Client,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((secretDigest),	(Ctor<1>, Mutable, Hidden)),		(Bytes)),
   (((redirects),	(Ctor<2>, Mutable)),			(StringVec)),
@@ -291,7 +291,7 @@ struct Grant {
 
   friend ZfStructPrint ZuPrintType(Grant *);
 };
-ZfbStruct(Grant,
+ZfbStruct(ZumAPI, Grant,
   (((id),		(Ctor<0>, Keys<0>)),			(Bytes)),
   (((issuer),		(Ctor<11>)),				(String)),
   (((userID),		(Ctor<3>, Mutable)),			(UInt64)),
@@ -335,7 +335,7 @@ struct SignKey {
 
   friend ZfStructPrint ZuPrintType(SignKey *);
 };
-ZfbStruct(SignKey,
+ZfbStruct(ZumAPI, SignKey,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((providerRef),	(Ctor<1>, Hidden)),			(String)),
   (((publicJwk),	(Ctor<2>)),				(String)),
@@ -357,7 +357,7 @@ struct Audit {
 
   friend ZfStructPrint ZuPrintType(Audit *);
 };
-ZfbStruct(Audit,
+ZfbStruct(ZumAPI, Audit,
   (((id),	(Ctor<0>, Keys<0>, Descend<0>)),		(UInt64)),
   (((time),	(Ctor<1>, Keys<1>)),			(Int64)),
   (((issuer),	(Ctor<2>, Keys<0>, Group<0>)),		(String)),

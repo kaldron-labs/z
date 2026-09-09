@@ -48,9 +48,13 @@
 
 namespace Zdb_ {
 
+struct ReservedIDs {
+  using Keys = ZuStringTL<"saga", "saga_step", "saga_type">;
+};
+
 static bool reservedTableID(ZuCSpan id)
 {
-  constexpr auto matcher = ZuMatcher<"saga", "saga_step", "saga_type">();
+  constexpr auto matcher = ZuMatcher<ReservedIDs>();
   return matcher.exact(id) >= 0;
 }
 

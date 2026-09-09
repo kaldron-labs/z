@@ -33,7 +33,7 @@
 
 ZtEnumImplNS(Http2Mode);
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((addr),       (CLI::Long<"addr">)),                       (String, "0.0.0.0")),
   (((port),       (CLI::Long<"port">)),                       (UInt32, 8080)),
   (((cert),       (CLI::Long<"cert">)),                       (String)),

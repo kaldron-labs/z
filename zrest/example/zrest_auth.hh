@@ -46,9 +46,9 @@ struct RefreshReq_ : public Heap, public ZmObject {
 using RefreshReq_Heap = ZmHeap<"zrest.RefreshReq", RefreshReq_<ZuVoid>>;
 ZuDerive(RefreshReq, (RefreshReq_<RefreshReq_Heap>));
 
-ZfStruct((TokenState, JSON),
+ZfStruct(, (TokenState, JSON),
   (((refreshToken), (JSON::ID<"refresh_token">, Required)), (String)));
-ZfStruct((AuthReq, JSON),
+ZfStruct(, (AuthReq, JSON),
   (((username), (Required)), (String)),
   (((password), (Required)), (String)));
 

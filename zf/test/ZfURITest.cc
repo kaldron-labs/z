@@ -64,14 +64,14 @@ struct ScalarArgs {
   Scalar scalar;
 };
 
-ZfStruct((ScalarArgs, Bah),
+ZfStruct(, (ScalarArgs, Bah),
   (((scalar), (Ctor<0>)), (UDT)));
 
-ZfStruct((Nested, Bah),
+ZfStruct(, (Nested, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
-ZfStruct((NestedJSON, Bah),
+ZfStruct(, (NestedJSON, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
@@ -93,7 +93,7 @@ struct ArrayOpt {
   IntArray values;
 };
 
-ZfStruct((ArrayOpt, URI),
+ZfStruct(, (ArrayOpt, URI),
   (((values), (Ctor<0>)), (UDT)));
 
 struct URIPtrObj_ : public ZmObject {
@@ -101,7 +101,7 @@ struct URIPtrObj_ : public ZmObject {
   URIPtrObj_(int value_ = 0) : value{value_} { }
 };
 using URIPtrObj = ZfHeapTest<"ZfTest.URI.PtrObj", URIPtrObj_>;
-ZfStruct((URIPtrObj, URI),
+ZfStruct(, (URIPtrObj, URI),
   (((value), (Ctor<0>, Mutable)), (Int32)));
 
 struct URIFmtOpt : public ZmObject { };
@@ -126,7 +126,7 @@ struct URIPtrJSON_ : public ZmObject {
 };
 using URIPtrJSON = ZfHeapTest<"ZfTest.URI.PtrJSON", URIPtrJSON_>;
 inline ZfURI::AsJSON ZfURI_Fmt(URIPtrJSON *);
-ZfStruct((URIPtrJSON, URI),
+ZfStruct(, (URIPtrJSON, URI),
   (((value), (Ctor<0>, Mutable)), (Int32)));
 
 struct URIPtrArray_ : public ZmObject, public ZtArray<ZmRef<URIPtrObj>> {
@@ -143,20 +143,20 @@ struct URIPtrHolder {
   ZmRef<URIPtrText> text;
   ZmRef<URIPtrJSON> json;
 };
-ZfStruct((URIPtrHolder, URI),
+ZfStruct(, (URIPtrHolder, URI),
   (((object), (Mutable)), (UDT)),
   (((objects), (Mutable)), (UDT)),
   (((text), (Mutable)), (UDT)),
   (((json), (Mutable)), (UDT)));
 
 struct URIPathPtr { ZmRef<URIPtrText> value; };
-ZfStruct((URIPathPtr, URI),
+ZfStruct(, (URIPathPtr, URI),
   (((value), (Mutable, URI::PathIndex<0>)), (UDT)));
 
 struct URIUnionA { int foo = 0; };
 struct URIUnionB { int bar = 0; };
-ZfStruct((URIUnionA, URI), (((foo), (Ctor<0>, Mutable)), (Int32)));
-ZfStruct((URIUnionB, URI), (((bar), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct(, (URIUnionA, URI), (((foo), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct(, (URIUnionB, URI), (((bar), (Ctor<0>, Mutable)), (Int32)));
 struct URIUnionArray : public ZtArray<int> {
   using ZtArray<int>::ZtArray;
   friend ZfURI::AsArray<ZfFieldTC::Int32> ZfURI_Fmt(URIUnionArray *);
@@ -186,7 +186,7 @@ struct URIUnionHolder {
   ZfURI::Union<URIUnionA, URIUnionB,
     URIUnionArray, URIUnionText, URIUnionJSON> value;
 };
-ZfStruct((URIUnionHolder, URI),
+ZfStruct(, (URIUnionHolder, URI),
   (((value), (Ctor<0>, Mutable)), (UDT)));
 
 ZuAssert((ZuIsSame<
@@ -202,7 +202,7 @@ struct URIFormatInt {
   unsigned value = 0;
 };
 using URIIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
-ZfStruct((URIFormatInt, URI),
+ZfStruct(, (URIFormatInt, URI),
   (((value), (Ctor<0>, URI::Number<URIIntFormat>)), (UInt32)));
 
 struct URIUpdate {
@@ -212,13 +212,13 @@ struct URIUpdate {
   int kept;
   int reset;
 };
-ZfStruct(URIUpdate,
+ZfStruct(, URIUpdate,
   (((required), (Ctor<0>, Mutable, Required)), (Int32)),
   (((pathKept), (Ctor<1>, Mutable)),           (Int32, 2)),
   (((pathReset), (Ctor<2>, Mutable, Reset)),   (Int32, 3)),
   (((kept),     (Ctor<3>, Mutable)),           (Int32, 4)),
   (((reset),    (Ctor<4>, Mutable, Reset)),    (Int32, 5)));
-ZfStructRender(URIUpdate, URI,
+ZfStructRender(, URIUpdate, URI,
   required,
   (pathKept, URI::PathIndex<0>),
   (pathReset, URI::PathIndex<1>),
@@ -246,7 +246,7 @@ struct Foo {
   friend ZfStructPrint ZuPrintType(Foo *);
 };
 
-ZfStruct(Foo,
+ZfStruct(, Foo,
   (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
   (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
   (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
@@ -269,7 +269,7 @@ ZfStruct(Foo,
   (((nestedJSON),	(Ctor<14>)),	(UDT)),
   (((bytesVec),		(Ctor<15>)),	(BytesVec)));
 
-ZfStructRender(Foo, Bah,
+ZfStructRender(, Foo, Bah,
   (enum_,	URI::ID<"enum-BAH">),
   (int_,	URI::ID<"int-BAH">,	URI::Number<ZuFmt::Right<9>>),
   (float_,	URI::ID<"float-BAH">,	URI::Number<ZuFmt::FP<4>>),
@@ -285,17 +285,6 @@ static const ZfURI::AnyNode *uriField(
   if (!node || !node->has<ZfURI::AnyNode::Object>()) return nullptr;
   auto field = node->data<ZfURI::AnyNode::Object>().find(id);
   return field ? field->val().ptr() : nullptr;
-}
-
-template <typename L>
-static bool uriError(L l)
-{
-  try {
-    l();
-  } catch (const ZeException &) {
-    return true;
-  }
-  return false;
 }
 
 ZfURIConfig(Bah, (
@@ -680,12 +669,11 @@ void pointers()
   ZuCheck(!mismatch.object);
 
   URIPathPtr path;
-  ZuCheck(uriError([&saved, &path] {
-    saved.null();
-    ZfURI::savePath(saved, path);
-  }));
-  ZuCheck(!saved);
+  saved.null();
+  ZfURI::savePath(saved, path);
+  ZuCheck(saved == "/");
   path.value = new URIPtrText{"hello world"};
+  saved.null();
   ZfURI::savePath(saved, path);
   ZuCheck(saved == "/hello%20world");
 

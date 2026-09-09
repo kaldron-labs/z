@@ -106,7 +106,7 @@ struct SockDiag {
   uint64_t	mtuQueryErrors = 0;
 };
 
-struct Sock {
+struct ZquicAPI Sock {
   static SockPlan plan(const SockConfig &);
   static bool initUDP(Zi::Socket, const SockConfig &, SockDiag * = nullptr);
   static PathHint pathHint(Zi::Socket, const SockConfig &, SockDiag * = nullptr);

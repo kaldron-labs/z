@@ -24,7 +24,7 @@ struct ZvCxnCf {
   unsigned	multicastTTL = 0;
 };
 
-ZfStruct((ZvCxnCf, Cf),
+ZfStruct(ZvAPI, (ZvCxnCf, Cf),
   (((options),		(Flags<ZiCxnFlags::Map>)),	(UInt32)),
   (((multicastInterface)),			(String)),
   (((multicastTTL),	((Range<0U, unsigned(INT_MAX)>))), (UInt32)));
@@ -33,7 +33,7 @@ struct ZvMGroupCf {
   ZtString<> interface;
 };
 
-ZfStruct((ZvMGroupCf, Cf),
+ZfStruct(ZvAPI, (ZvMGroupCf, Cf),
   (((interface), (Required)), (String)));
 
 struct ZvMxThreadCf {
@@ -46,7 +46,7 @@ struct ZvMxThreadCf {
   bool		detached = false;
 };
 
-ZfStruct((ZvMxThreadCf, Cf),
+ZfStruct(ZvAPI, (ZvMxThreadCf, Cf),
   (((isolated)),					(Bool)),
   (((name)),					(String)),
   (((stackSize),	((Range<0U, unsigned(INT_MAX)>))), (UInt32)),
@@ -82,7 +82,7 @@ struct ZvMxCf {
 #endif
 };
 
-ZfStruct((ZvMxCf, Cf),
+ZfStruct(ZvAPI, (ZvMxCf, Cf),
   (((nThreads),		((Range<1U, 1024U>))),		(UInt32, 3)),
   (((stackSize),	((Range<16384U, 2U<<20U>))),	(UInt32)),
   (((priority),		(Enum<ZmThreadPriority::Map>)),	(Int32,

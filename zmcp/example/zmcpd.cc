@@ -26,7 +26,7 @@ struct Options {
   bool help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((stdio), (CLI::Long<"stdio">)), (Bool, false)),
   (((port), (CLI::Opt<'p'>, CLI::Long<"port">)), (UInt32, 8080)),
   (((token), (CLI::Long<"token">)), (String)),

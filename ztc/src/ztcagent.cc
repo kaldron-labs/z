@@ -26,7 +26,7 @@ struct Options {
   bool		version = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((config),	(CLI::Opt<'c'>, CLI::Long<"config">)),	(String,
 	"ztcagent.conf")),
   (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),	(Bool)),

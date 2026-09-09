@@ -30,6 +30,11 @@
 
 namespace ZfTreeLoad {
 
+template <typename Policy, typename Fields>
+struct FieldIDs {
+  using Keys = typename Policy::template GetIDs<Fields>;
+};
+
 // Policy supplies field-property selectors, scalar admission and boolean
 // extraction, [[noreturn]] load errors, and nested UDT handler selection.
 // All policy dispatch is compile-time; this layer owns no parser or emitter.
@@ -120,8 +125,7 @@ struct Object {
   {
     for (unsigned i = 0; i < SaveFields::N; i++) lookup[i] = -1;
     if (valid(node)) {
-      constexpr auto matcher =
-	ZuMatcher<typename Policy::template GetIDs<SaveFields>>();
+      constexpr auto matcher = ZuMatcher<FieldIDs<Policy, SaveFields>>();
       const auto &fields = node->data<AnyNode::Object>();
       for (unsigned i = 0, n = fields.length(); i < n; i++) {
 	auto j = matcher.exact(fields[i].p<0>());

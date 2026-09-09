@@ -14,7 +14,7 @@
 
 // metadata macro DSL for identifying and using data fields and keys
 //
-// ZfStruct((Type[, Facets...]), Fields...)
+// ZfStruct(API, (Type[, Facets...]), Fields...)
 //
 // the parentheses around Type are optional if no facets are specified
 //
@@ -3774,22 +3774,35 @@ struct ZfField_DateTimeVec<Base, Def, false> :
   ZuPP_Defer(ZfField)(O, ZuPP_Eval_(ZfField_BaseID(Base)))
 #define ZfField_Type(O, Args) ZuPP_Defer(ZfField_Type_)(O, ZuPP_Strip(Args))
 
-#define ZfStruct_(O, Facets, ...) \
+#define ZfStruct_Render__(API, O, Facet) \
+  struct API ZfFields_##O##_##Facet { \
+    using Fields = ZfFields_##O; \
+    using Keys = ZuFieldIDs<Fields>; \
+    static int match(ZuCSpan); \
+  }; \
+  ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *);
+#define ZfStruct_Render_(API_O, Facet) \
+  ZuPP_Defer(ZfStruct_Render__)(ZuPP_Strip(API_O), Facet)
+#define ZfStruct_Render(API_O, ...) \
+  ZuPP_Eval_(ZuPP_MapArg(ZfStruct_Render_, API_O, __VA_ARGS__))
+
+#define ZfStruct_(API, O, Facets, ...) \
   __VA_OPT__(ZuPP_MapArg(ZfField_Decl, O, __VA_ARGS__)) \
-  using ZuFields_##O = ZuTypeList< \
+  using ZfFields_##O = ZuTypeList< \
     __VA_OPT__(ZuPP_MapArgComma(ZfField_Type, O, __VA_ARGS__))>; \
   O ZuStructured_(O *); \
-  ZuStruct_Render(O, Core ZuPP_StripAppend(Facets))
+  ZfStruct_Render((API, O), Core ZuPP_StripAppend(Facets))
 
-#define ZfStruct(O_Facets, ...) \
+#define ZfStruct(API, O_Facets, ...) \
   ZuPP_Eval(ZuPP_Defer(ZfStruct_)( \
+    API, \
     ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))
 
 // render fields to a facet (ZfStruct layer)
 // - optionally extends selected fields with additional properties
-// - ZfStructRender(Object, Facet[, (FieldID[, Property...])...])
+// - ZfStructRender(API, Object, Facet[, (FieldID[, Property...])...])
 #define ZfField_RenderDecl__(O, ID, ...) \
   using Props_ = ZfField(O, ID)::Props; \
   using Props = typename Props_::template Push<ZuField_Props_(__VA_ARGS__)>;
@@ -3804,11 +3817,29 @@ struct ZfField_DateTimeVec<Base, Def, false> :
 #define ZfField_RenderType(O_Facet, Args) \
   ZuPP_Defer(ZfField_RenderType_)(ZuPP_Strip(O_Facet), ZuPP_Strip(Args))
 
-#define ZfStructRender(O, Facet, ...) \
+#define ZfStructRender(API, O, Facet, ...) \
   ZuPP_Eval(ZuPP_MapArg(ZfField_RenderDecl, (O, Facet), __VA_ARGS__)) \
-  using ZfFields_##O##_##Facet = ZuTypeList< \
-    ZuPP_Eval(ZuPP_MapArgComma(ZfField_RenderType, (O, Facet), __VA_ARGS__))>; \
+  struct API ZfFields_##O##_##Facet { \
+    using Fields = ZuTypeList< \
+      ZuPP_Eval(ZuPP_MapArgComma(ZfField_RenderType, (O, Facet), __VA_ARGS__))>; \
+    using Keys = ZuFieldIDs<Fields>; \
+    static int match(ZuCSpan); \
+  }; \
   ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *)
+
+// structure implementation code (lives in `.cc`)
+// ZfStructImpl(Object[, Facet]); Facet defaults to Core
+#define ZfStructImpl_(O, Facet) \
+  int ZfFields_##O##_##Facet::match(ZuCSpan s) { \
+    static constexpr auto matcher = ZuMatcher<ZfFields_##O##_##Facet>(); \
+    return matcher.match(s); \
+  }
+#define ZfStructImpl_1(O) ZfStructImpl_(O, Core)
+#define ZfStructImpl_2(O, Facet) ZfStructImpl_(O, Facet)
+#define ZfStructImpl_N(_0, _1, Fn, ...) Fn
+#define ZfStructImpl(...) \
+  ZfStructImpl_N(__VA_ARGS__, \
+    ZfStructImpl_2(__VA_ARGS__), ZfStructImpl_1(__VA_ARGS__))
 
 template <typename Field>
 struct ZfFieldPrint_ {
@@ -3876,19 +3907,9 @@ inline ZfVFieldArray ZfVFields() {
 }
 
 typedef int (*ZfVFieldMatchFn)(ZuCSpan);
-template <typename Fields>
-inline ZfVFieldMatchFn ZfVFieldMatcher_() {
-  if constexpr (!Fields::N)
-    return [](ZuCSpan) { return -1; };
-  else
-    return [](ZuCSpan s) {
-      constexpr auto matcher = ZuMatcher<ZuFieldIDs<Fields>>();
-      return matcher.match(s);
-    };
-}
-template <typename O>
+template <typename O, typename Facet = ZuFacet::Core>
 inline ZfVFieldMatchFn ZfVFieldMatcher() {
-  return ZfVFieldMatcher_<ZuFields<O>>();
+  return ZuFieldMeta<O, Facet>::match;
 }
 
 // run-time keys

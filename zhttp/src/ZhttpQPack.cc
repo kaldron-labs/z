@@ -15,10 +15,19 @@ ZtEnumImplStruct(QPackInsn);
 ZtEnumImplStruct(QPackBuildFailure);
 
 using QPackStatic_ = StaticTable<QPackTbl>;
+struct QPackNameIDs { using Keys = QPackStatic_::Names; };
+template <unsigned I>
+struct QPackValueIDs {
+  using Key = ZuType<I, QPackStatic_::Names>;
+  using Keys = QPackStatic_::Values<Key>;
+};
+struct NeverIndexIDs {
+  using Keys = ZuStringTL<"authorization", "cookie", "set-cookie">;
+};
 
 static int qpackStaticName_(ZuBSpan value)
 {
-  static constexpr auto matcher = ZuMatcher<QPackStatic_::Names>();
+  static constexpr auto matcher = ZuMatcher<QPackNameIDs>();
   return matcher.exact(value);
 }
 
@@ -45,7 +54,7 @@ static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
       using Key = ZuType<nameIndex, QPackStatic_::Names>;
       using KeyEntries = QPackStatic_::Entries<Key>;
       using KeyValues = QPackStatic_::Values<Key>;
-      static constexpr auto matcher = ZuMatcher<KeyValues>();
+      static constexpr auto matcher = ZuMatcher<QPackValueIDs<nameIndex>>();
       int j = matcher.exact(value);
       if (j < 0) return;
       ZuSwitch::dispatch<KeyEntries::N>(
@@ -61,8 +70,7 @@ static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
 bool Params::neverIndex(ZuBSpan name) const
 {
   if (neverIndex_->find(name)) return true;
-  static constexpr auto matcher =
-    ZuMatcher<"authorization", "cookie", "set-cookie">();
+  static constexpr auto matcher = ZuMatcher<NeverIndexIDs>();
   return matcher.exact(name) >= 0;
 }
 

@@ -72,7 +72,7 @@ struct QLogVantage {
   Zquic::Vantage::T	type = Zquic::Vantage::Unknown;
 };
 
-ZfStruct((QLogVantage, JSON),
+ZfStruct(, (QLogVantage, JSON),
   (((type), (Enum<Zquic::Vantage::JSON>)), (Int8)));
 
 struct QLogImplementation {
@@ -80,7 +80,7 @@ struct QLogImplementation {
   ZuCSpan	version;
 };
 
-ZfStruct((QLogImplementation, JSON),
+ZfStruct(, (QLogImplementation, JSON),
   (((name)), (String)),
   (((version)), (String)));
 
@@ -89,7 +89,7 @@ struct QLogReferenceTime {
   ZuCSpan	epoch;
 };
 
-ZfStruct((QLogReferenceTime, JSON),
+ZfStruct(, (QLogReferenceTime, JSON),
   (((clockType), (JSON::ID<"clock_type">)), (String)),
   (((epoch)), (String)));
 
@@ -136,7 +136,7 @@ struct QLogCommonFieldsJSON {
 inline QLogCommonFieldsJSON ZfJSON_Fmt(QLogCommonFields *);
 
 namespace Zquic {
-ZfStruct((LinkInfo, JSON),
+ZfStruct(, (LinkInfo, JSON),
   (((origDCID), (JSON::ID<"ODCID">, JSON::Hex, JSON::Opt)), (Bytes)),
   (((groupID), (JSON::ID<"group_id">, JSON::Hex, JSON::Opt)), (Bytes)),
   (((dcid), (JSON::ID<"DCID">, JSON::Hex, JSON::Opt)), (Bytes)),
@@ -181,7 +181,7 @@ struct QLogTrace {
   QLogEvtSchemas	eventSchemas;
 };
 
-ZfStruct((QLogTrace, JSON),
+ZfStruct(, (QLogTrace, JSON),
   (((vantage), (JSON::ID<"vantage_point">)), (UDT)),
   (((commonFields), (JSON::ID<"common_fields">)), (UDT)),
   (((eventSchemas), (JSON::ID<"event_schemas">)), (UDT)));
@@ -194,7 +194,7 @@ struct QLogHeader {
   QLogTrace	trace;
 };
 
-ZfStruct((QLogHeader, JSON),
+ZfStruct(, (QLogHeader, JSON),
   (((fileSchema), (JSON::ID<"file_schema">)), (String)),
   (((serializationFormat), (JSON::ID<"serialization_format">)), (String)),
   (((title)), (String)),
@@ -210,7 +210,7 @@ struct QLogEndpointInfo {
   ZuOpBool
 };
 
-ZfStruct((QLogEndpointInfo, JSON),
+ZfStruct(, (QLogEndpointInfo, JSON),
   (((ip), (JSON::ID<"ip_v4">)), (UDT)),
   (((port), (JSON::ID<"port_v4">)), (UInt16)));
 
@@ -236,7 +236,7 @@ struct QLogCxnStateData {
   Zquic::LinkState::T newState = Zquic::LinkState::Handshaking;
 };
 
-ZfStruct((QLogCxnStateData, JSON),
+ZfStruct(, (QLogCxnStateData, JSON),
   (((oldState), (JSON::ID<"old">,
     Enum<Zquic::LinkState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">,
@@ -256,7 +256,7 @@ struct QLogRawInfo {
   uint64_t	payloadLength = 0;
 };
 
-ZfStruct((QLogRawInfo, JSON),
+ZfStruct(, (QLogRawInfo, JSON),
   (((length)), (UInt64)),
   (((payloadLength), (JSON::ID<"payload_length">)), (UInt64)));
 
@@ -285,7 +285,7 @@ struct QLogDatagramData {
 	QLogECNArray	ecn;
 };
 
-ZfStruct((QLogDatagramData, JSON),
+ZfStruct(, (QLogDatagramData, JSON),
   (((count)), (UInt16)),
   (((raw)), (UDT)),
   (((ecn)), (UDT)));
@@ -339,7 +339,7 @@ struct QLogPacketHeader {
 	uint64_t	packetNumber = 0;
 };
 
-ZfStruct((QLogPacketHeader, JSON),
+ZfStruct(, (QLogPacketHeader, JSON),
   (((packetType), (JSON::ID<"packet_type">, Enum<Zquic::PktType::JSON>)),
       (Int8)),
   (((packetNumber), (JSON::ID<"packet_number">)), (UInt64)));
@@ -390,7 +390,7 @@ struct QLogAckData {
 	QLogPktNumArray packetNumbers;
 };
 
-ZfStruct((QLogAckData, JSON),
+ZfStruct(, (QLogAckData, JSON),
   (((packetSpace), (JSON::ID<"packet_number_space">,
     Enum<Zquic::PktNumSpace::JSON>)),
       (Int8)),
@@ -418,7 +418,7 @@ struct QLogPktLostData {
     PktLostTrigger::ReorderThresh;
 };
 
-ZfStruct((QLogPktLostData, JSON),
+ZfStruct(, (QLogPktLostData, JSON),
   (((header)), (UDT)),
   (((trigger), (Enum<PktLostTrigger::JSON>)), (Int8)));
 
@@ -435,7 +435,7 @@ struct QLogMarkRetransData {
   QLogFrameArray frames;
 };
 
-ZfStruct((QLogMarkRetransData, JSON),
+ZfStruct(, (QLogMarkRetransData, JSON),
   (((frames)), (UDT)));
 
 struct QLogMarkRetransEvt {
@@ -457,7 +457,7 @@ struct QLogRecMetricsData {
   uint64_t	bytesInFlight = 0;
 };
 
-ZfStruct((QLogRecMetricsData, JSON),
+ZfStruct(, (QLogRecMetricsData, JSON),
   (((latestRTT), (JSON::ID<"latest_rtt">)), (Float)),
   (((smoothedRTT), (JSON::ID<"smoothed_rtt">)), (Float)),
   (((rttVariance), (JSON::ID<"rtt_variance">)), (Float)),
@@ -496,7 +496,7 @@ struct QLogCongStateData {
   CongTrigger::T trigger = CongTrigger::Ack;
 };
 
-ZfStruct((QLogCongStateData, JSON),
+ZfStruct(, (QLogCongStateData, JSON),
   (((newState), (JSON::ID<"new">,
     Enum<CongState::JSON>)), (Int8)),
   (((trigger), (Enum<CongTrigger::JSON>)), (Int8)));
@@ -544,7 +544,7 @@ struct QLogTimerData {
   double	delta = 0;
 };
 
-ZfStruct((QLogTimerData, JSON),
+ZfStruct(, (QLogTimerData, JSON),
   (((timerType), (JSON::ID<"timer_type">,
     Enum<TimerType::JSON>)), (Int8)),
   (((packetSpace), (JSON::ID<"packet_number_space">,
@@ -567,7 +567,7 @@ struct QLogECNData {
   ECNState::T newState = ECNState::Unknown;
 };
 
-ZfStruct((QLogECNData, JSON),
+ZfStruct(, (QLogECNData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<ECNState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<ECNState::JSON>)), (Int8)));
 
@@ -591,7 +591,7 @@ struct QLogSecData {
   bool		success = true;
 };
 
-ZfStruct((QLogSecData, JSON),
+ZfStruct(, (QLogSecData, JSON),
   (((kind), (Enum<SecKind::JSON>)), (Int8)),
   (((packetSpace), (JSON::ID<"packet_number_space">,
     Enum<Zquic::PktNumSpace::JSON>)), (Int8)),
@@ -668,14 +668,14 @@ struct QLogALPNID {
   ZeString	stringValue;
 };
 
-ZfStruct((QLogALPNID, JSON),
+ZfStruct(, (QLogALPNID, JSON),
   (((stringValue), (JSON::ID<"string_value">)), (String)));
 
 struct QLogALPNData {
   QLogALPNID chosenALPN;
 };
 
-ZfStruct((QLogALPNData, JSON),
+ZfStruct(, (QLogALPNData, JSON),
   (((chosenALPN), (JSON::ID<"chosen_alpn">)), (UDT)));
 
 struct QLogALPNEvt {
@@ -729,7 +729,7 @@ struct QLogMTUData {
   bool		done = false;
 };
 
-ZfStruct((QLogMTUData, JSON),
+ZfStruct(, (QLogMTUData, JSON),
   (((newMTU), (JSON::ID<"new">)), (UInt32)),
   (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((done)), (Bool)));
@@ -749,7 +749,7 @@ struct QLogPathValidData {
   Zquic::Vantage::T vantage = Zquic::Vantage::Unknown;
 };
 
-ZfStruct((QLogPathValidData, JSON),
+ZfStruct(, (QLogPathValidData, JSON),
   (((success)), (Bool)),
   (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)), (UInt64)),
   (((vantage), (JSON::ID<"vantage">,
@@ -801,7 +801,7 @@ struct QLogMigrationData {
   bool			closeOnFailure = false;
 };
 
-ZfStruct((QLogMigrationData, JSON),
+ZfStruct(, (QLogMigrationData, JSON),
   (((activeLocal), (JSON::ID<"active_local">)), (UDT)),
   (((activeRemote), (JSON::ID<"active_remote">)), (UDT)),
   (((candidateLocal), (JSON::ID<"candidate_local">)), (UDT)),
@@ -841,7 +841,7 @@ struct QLogStreamData {
   bool		fin = false;
 };
 
-ZfStruct((QLogStreamData, JSON),
+ZfStruct(, (QLogStreamData, JSON),
   (((streamType), (JSON::ID<"stream_type">,
     Enum<ZquicLog_::StreamType::JSON>)), (Int8)),
   (((oldState), (JSON::ID<"old">,
@@ -875,7 +875,7 @@ struct QLogStreamMovedData {
   QLogRawInfo	raw;
 };
 
-ZfStruct((QLogStreamMovedData, JSON),
+ZfStruct(, (QLogStreamMovedData, JSON),
   (((streamID), (JSON::ID<"stream_id">)), (UInt64)),
   (((offset)), (UInt64)),
   (((from), (Enum<StreamDataLoc::JSON>)), (Int8)),
@@ -900,7 +900,7 @@ struct QLogCxnBlockedData {
     BlockedReason::CxnFlowCtrl;
 };
 
-ZfStruct((QLogCxnBlockedData, JSON),
+ZfStruct(, (QLogCxnBlockedData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)), (Int8)),
   (((reason), (Enum<BlockedReason::JSON>)), (Int8)));
@@ -922,7 +922,7 @@ struct QLogStreamBlockedData {
     BlockedReason::StreamFlowCtrl;
 };
 
-ZfStruct((QLogStreamBlockedData, JSON),
+ZfStruct(, (QLogStreamBlockedData, JSON),
   (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)), (Int8)),
   (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)), (Int8)),
   (((streamID), (JSON::ID<"stream_id">)), (UInt64)),

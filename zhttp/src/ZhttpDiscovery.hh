@@ -266,7 +266,7 @@ private:
   bool		m_done = false;
 };
 
-struct AltSvcValueStorage {
+struct ZhttpAPI AltSvcValueStorage {
   struct Part {
     uint32_t offset = 0;
     uint32_t length = 0;

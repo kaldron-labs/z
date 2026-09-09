@@ -121,7 +121,7 @@ struct HPackWarmEntry {
 using HPackWarmEntries =
   ZtArray<HPackWarmEntry, ZtArrayHeapID<"Zhttp.H2.HPack.Warm">>;
 
-class HPackTable {
+class ZhttpAPI HPackTable {
 public:
   bool capacity(uint32_t);
   bool insert(ZuBSpan, ZuBSpan);
@@ -175,7 +175,7 @@ using HPackTxExact = ZmLHash<HPackTxExactEntry,
 using HPackTxNames = ZmLHash<HPackTxNameEntry,
   ZmLHashKey<HPackTxNameEntry::KeyAxor, ZmLHashLocal<>>>;
 
-class HPackTxTable {
+class ZhttpAPI HPackTxTable {
 public:
   bool init(uint32_t);
   void final();
@@ -215,7 +215,7 @@ private:
   uint32_t	m_used = 0;
 };
 
-class HPack {
+class ZhttpAPI HPack {
 public:
   static bool staticField(uint64_t, Field &);
   static int staticIndex(ZuBSpan, ZuBSpan);
@@ -238,7 +238,7 @@ struct HPackUpdates {
   uint8_t	count = 0;
 };
 
-class HPackDecoder {
+class ZhttpAPI HPackDecoder {
 public:
   bool init(uint32_t capacity, uint64_t maxHeaderListSize);
   void reset();
@@ -353,7 +353,7 @@ private:
   bool		m_capacityAllowed = true;
 };
 
-class HPackEncoder {
+class ZhttpAPI HPackEncoder {
 public:
   HPackEncoder() : m_neverIndex{new HPackNameSet} { }
 

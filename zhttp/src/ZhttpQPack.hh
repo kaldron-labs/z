@@ -200,7 +200,7 @@ struct QPackRxEntry {
 using QPackRxArray =
   ZtArray<QPackRxEntry, ZtArrayHeapID<"Zhttp.H3.QPackRx.Array">>;
 
-struct QPackRxTable {
+struct ZhttpAPI QPackRxTable {
   QPackRxArray	entries;	// oldest-to-newest
   uint32_t	head_ = 0;
   uint64_t	baseAbs_ = 0;
@@ -360,7 +360,7 @@ using QPackTxSections =
     ZmLHashKey<QPackTxSection::StreamAxor,
       ZmLHashLocal<>>>;
 
-struct QPackTxTable {
+struct ZhttpAPI QPackTxTable {
   ZuPtr<QPackTxHash>	exact;
   ZuPtr<QPackTxNames>	names;
   QPackTxOrder		order;
@@ -431,7 +431,7 @@ struct QPackTxTable {
   }
 };
 
-struct QPack {
+struct ZhttpAPI QPack {
   static int staticIndex(ZuBSpan name, ZuBSpan value);
   static bool staticField(uint64_t, Header &);
   static bool staticName(uint64_t, HeaderName &);

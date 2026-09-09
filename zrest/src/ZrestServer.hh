@@ -212,6 +212,13 @@ struct MethodFilter {
 template <typename Req>
 using ReqPath = typename Req::Path;
 
+template <typename Reqs, unsigned Method>
+struct PathIDs {
+  using MethodReqs =
+    ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
+  using Keys = ZuTypeMap<ReqPath, MethodReqs>;
+};
+
 template <typename Reqs_>
 struct MReqParser : public Zhttp::Parser {
   using Reqs = Reqs_;
@@ -232,8 +239,7 @@ struct MReqParser : public Zhttp::Parser {
       if constexpr (!MethodReqs::N) {
 	return false;
       } else {
-	using Paths = ZuTypeMap<ReqPath, MethodReqs>;
-	constexpr auto matcher = ZuMatcher<Paths>();
+	constexpr auto matcher = ZuMatcher<PathIDs<Reqs, MethodI>>();
 	auto j = matcher.match(target.path);
 	if (j < 0) return false;
 	return ZuSwitch::dispatch<MethodReqs::N>(j,

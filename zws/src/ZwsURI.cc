@@ -87,6 +87,9 @@ URIString URI::str() const
   return out;
 }
 
+struct SchemeIDs { using Keys = ZuStringTL<"ws", "wss">; };
+struct AuthEndIDs { using Keys = ZuStringTL<"/", "?", "@">; };
+
 URIError URI::parse(URI &out, ZuCSpan input)
 {
   URI parsed;
@@ -107,7 +110,7 @@ URIError URI::parse(URI &out, ZuCSpan input)
   if (!schemeSuffix.match("://"))
     return URI_::error(URICode::UnsupportedScheme);
   URI_::lower(parsed.scheme, {inputData, schemeLen});
-  static constexpr auto schemes = ZuMatcher<"ws", "wss">();
+  static constexpr auto schemes = ZuMatcher<SchemeIDs>();
   switch (schemes.exact(parsed.scheme)) {
   case 0:
     parsed.port = 80;
@@ -134,7 +137,7 @@ URIError URI::parse(URI &out, ZuCSpan input)
   const unsigned authStart = schemeLen + 3;
   const ZuCSpan remainder{
     inputData + authStart, inputLen - authStart};
-  static constexpr auto authEndMatcher = ZuMatcher<"/", "?", "@">();
+  static constexpr auto authEndMatcher = ZuMatcher<AuthEndIDs>();
   const auto [authOffset, authToken] = authEndMatcher.find(remainder);
   if (authToken == 2)
     return URI_::error(URICode::UserInfo, authStart + authOffset);

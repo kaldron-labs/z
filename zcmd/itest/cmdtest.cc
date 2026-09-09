@@ -103,7 +103,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((certPath),		(CLI::Arg<1>)),			(String)),
   (((keyPath),		(CLI::Arg<2>)),			(String)),
   (((localIP),		(CLI::Arg<3>)),			(String)),

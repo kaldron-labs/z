@@ -46,7 +46,7 @@ struct TelemetryCf {
   unsigned	alertMaxReplay = 10;
 };
 
-ZfStruct((TelemetryCf, Cf),
+ZfStruct(ZcmdAPI, (TelemetryCf, Cf),
   (((thread)),						(String)),
   (((minInterval), ((Range<1U, 1000000U>))),		(UInt32, 10)),
   (((alertPrefix)),					(String, "alerts")),
@@ -56,7 +56,7 @@ struct ServerCf {
   TelemetryCf telemetry;
 };
 
-ZfStruct((ServerCf, Cf),
+ZfStruct(ZcmdAPI, (ServerCf, Cf),
   (((telemetry)), (UDT)));
 
 enum { AckIOBufSize = 32 };

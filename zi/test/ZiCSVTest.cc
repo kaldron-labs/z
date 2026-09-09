@@ -22,7 +22,7 @@ struct CSVRow {
   int32_t	id = 0;
 };
 
-ZfStruct(CSVRow,
+ZfStruct(, CSVRow,
   (((text), (Ctor<0>)), (String)),
   (((id),   (Ctor<1>)), (Int32)));
 

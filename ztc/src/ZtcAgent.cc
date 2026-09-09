@@ -74,7 +74,7 @@ struct EnrollRequest {
   uint32_t	protocolVersion = 1;
 };
 
-ZfStruct((EnrollRequest, JSON),
+ZfStruct(, (EnrollRequest, JSON),
   (((protocolVersion),
     (JSON::ID<"protocol_version">)),		(UInt32)),
   (((deviceID),
@@ -96,7 +96,7 @@ struct EnrollResponse {
   uint16_t	hubPort = 0;
 };
 
-ZfStruct((EnrollResponse, JSON),
+ZfStruct(, (EnrollResponse, JSON),
   (((protocolVersion),
     (JSON::ID<"protocol_version">, Required)),	(UInt32)),
   (((nonce),

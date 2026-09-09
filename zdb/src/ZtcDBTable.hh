@@ -57,7 +57,7 @@ struct DBTableTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBTableTelemetry *);
 };
-ZfbStruct(DBTableTelemetry,
+ZfbStruct(ZdbAPI, DBTableTelemetry,
     (((dbID),		(Ctor<0>, Keys<0>)),			(String)),
     (((id),		(Ctor<1>, Keys<0>)),			(String)),
     (((cacheMode),	(Ctor<7>, Enum<DBCacheMode::Map>)),	(Int8)),

@@ -48,7 +48,7 @@ struct Order {
   friend ZfStructPrint ZuPrintType(Order *);
 };
 
-ZfbStruct((Order, JSON),
+ZfbStruct(, (Order, JSON),
   (((symbol), (Keys<0>, Ctor<0>)), (String)),
   (((orderID), (Keys<0>, Ctor<1>)), (UInt64)),
   (((link), ((Keys<1, 2>), Group<2>, Descend<2>, Ctor<2>)), (String)),

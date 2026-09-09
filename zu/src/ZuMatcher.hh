@@ -20,7 +20,8 @@
 
 // Example usage:
 //
-// constexpr auto matcher = ZuMatcher<"foo", "foh", "bar", "baz">();
+// struct IDs { using Keys = ZuStringTL<"foo", "foh", "bar", "baz">; };
+// constexpr auto matcher = ZuMatcher<IDs>();
 //
 // matcher.match("fo") < 0
 // matcher.match("foo") == 0
@@ -62,6 +63,13 @@
 
 namespace Zu_::AhoCorasick {
 
+// node index with 0 as null sentinel value
+struct StateNext { uint16_t v = 0; };
+#if !ZuMatcher_Switch
+// key index with 0 as null sentinel value
+struct ByteNext { uint8_t v = 0; };
+#endif
+
 // a node in the automaton (i.e. a state in the FSM)
 // - each node contains a map from a matched character to the
 //   corresponding next node in the automaton
@@ -72,12 +80,9 @@ struct Node {
 // this version also builds the chars[] array that is used to construct the
 // ZuSeq<> compile-time sequence of chars for switching
 #if ZuMatcher_Switch
-  // next index with 0 as null sentinel value
-  struct Next { uint16_t v = 0; };
-
   static constexpr uint8_t Width = End - Begin;
 
-  Next next_[Width];
+  StateNext next_[Width];
   ZuArray<uint8_t, NKeys> chars;
   uint16_t fail = 0;	// index of node to fail back to - used by find()
   uint8_t output = 0;	// index of matched key + 1, 0 if no match
@@ -95,18 +100,15 @@ struct Node {
       chars.push(c);
     }
   }
+  // set a root default without adding it to the explicit character list
+  consteval void next0(uint8_t c) { next_[c - Begin].v = 1; }
 #else
-  // node index with 0 as null sentinel value
-  struct KeyNext { uint16_t v = 0; };
-  // key next index with 0 as null sentinel value
-  struct Next { uint8_t v = 0; };
-
   static constexpr uint8_t Width = End - Begin;
 
   // if the number of keys is fewer than 14, nibbles can be used instead
   // of bytes for the next_[] array that is indexed by character value
-  Next next_[NKeys > 14 ? Width : ((Width + 1)>>1)];
-  KeyNext keyNext_[NKeys];
+  ByteNext next_[NKeys > 14 ? Width : ((Width + 1)>>1)];
+  StateNext keyNext_[NKeys];
   uint16_t fail = 0;	// index of node to fail back to - used by find()
   uint8_t output = 0;	// index of matched key + 1, 0 if no match
 
@@ -278,11 +280,7 @@ __attribute__((no_instrument_function))
 	nodes[next - 1].fail = 1;
 	queue[back++] = next - 1;
       } else {
-#if ZuMatcher_Switch
-	nodes[0].next(i, 1);
-#else
 	nodes[0].next0(i);
-#endif
       }
     }
 
@@ -306,8 +304,12 @@ __attribute__((no_instrument_function))
   constexpr ~Automaton() { }
 };
 
-template <typename Keys>
+template <typename ID, unsigned N = ID::Keys::N>
 struct Matcher {
+  using Keys = typename ID::Keys;
+
+  ZuAssert(N == Keys::N);
+  ZuAssert(N >= 2);
   ZuAssert(Keys::N < 256);
 
   using Automaton_ = Automaton<Keys>;
@@ -365,8 +367,6 @@ struct Matcher {
   // prefix match of keys at the beginning of the passed string
   // - returns the index of the matched key or -1 if no match
   static constexpr int match(ZuCSpan s) {
-    if constexpr (Keys::N == 1)
-      return s.template match<ZuType<0, Keys>{}()>() ? 0 : -1;
     uint16_t current = 0;
     for (unsigned i = 0, n = s.length(); i < n; i++) {
       uint8_t c = s[i];
@@ -390,10 +390,6 @@ struct Matcher {
   // substring match of keys anywhere in the passed string
   // - returns {offset, index} of the matched key or {-1, -1} if no match
   static constexpr ZuTuple<int, int> find(ZuCSpan s) {
-    if constexpr (Keys::N == 1) {
-      int offset = s.template find<ZuType<0, Keys>{}()>();
-      return {offset, offset >= 0 ? 0 : -1};
-    }
     uint16_t current = 0;
     for (unsigned i = 0, n = s.length(); i < n; i++) {
       uint8_t c = s[i];
@@ -417,19 +413,51 @@ struct Matcher {
   }
 };
 
+template <typename ID>
+struct Matcher<ID, 0> {
+  using Keys = typename ID::Keys;
+
+  ZuAssert(Keys::N == 0);
+
+  static consteval Keys keys() { return Keys{}; }
+  static constexpr int match(ZuCSpan) { return -1; }
+  static constexpr int exact(ZuCSpan) { return -1; }
+  static constexpr ZuTuple<int, int> find(ZuCSpan) { return {-1, -1}; }
+};
+
+template <typename ID>
+struct Matcher<ID, 1> {
+  using Keys = typename ID::Keys;
+  using Key = ZuType<0, Keys>;
+
+  ZuAssert(Keys::N == 1);
+
+  static consteval Keys keys() { return Keys{}; }
+
+  static constexpr int match(ZuCSpan s) {
+    if constexpr (!Key{}().length()) return 0;
+    return s.template match<Key{}()>() ? 0 : -1;
+  }
+  static constexpr int exact(ZuCSpan s) {
+    if (s.length() != Key{}().length()) return -1;
+    if constexpr (!Key{}().length()) return 0;
+    return s.template match<Key{}()>() ? 0 : -1;
+  }
+  static constexpr ZuTuple<int, int> find(ZuCSpan s) {
+    if constexpr (!Key{}().length()) return {0, 0};
+    int offset = s.template find<Key{}()>();
+    return {offset, offset >= 0 ? 0 : -1};
+  }
+};
+
 } // Zu_::AhoCorasick
 
-// ZuMatcher<"a", "b", ...>()
-template <ZuString ...Keys>
+// ZuMatcher<ID>(), where ID::Keys is a ZuTypeList
+template <typename ID>
 constexpr auto ZuMatcher() {
-  ZuAssert(sizeof...(Keys) < 256);
-  return Zu_::AhoCorasick::Matcher<ZuStringTL<Keys...>>{};
-}
-// ZuMatcher<ZuFieldProp::JSON::GetIDs<Order>>;
-template <typename Keys>
-constexpr auto ZuMatcher() {
+  using Keys = typename ID::Keys;
   ZuAssert(Keys::N < 256);
-  return Zu_::AhoCorasick::Matcher<Keys>{};
+  return Zu_::AhoCorasick::Matcher<ID>{};
 }
 
 #endif /* ZuMatcher_HH */

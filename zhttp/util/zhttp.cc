@@ -83,7 +83,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
   (((output),    (CLI::Opt<'o'>,  CLI::Long<"output">)),     (String, "index.html")),
   (((discardResponse),

@@ -60,7 +60,7 @@ namespace PoolState {
 ZfbEnumMatch_(fbs::PoolState, Down, Up, Failed);
 }
 
-ZfbStruct(Request,
+ZfbStruct(ZtcAPI, Request,
   (((seqNo),		(Ctor<2>)),			(UInt64)),
   (((group),		(Ctor<6>)),			(UInt8)),
   (((filter),		(Ctor<0>)),			(String)),
@@ -70,13 +70,13 @@ ZfbStruct(Request,
   (((alertSeqNo),	(Ctor<3>)),			(UInt64)),
   (((id),		(Ctor<1>)),			(String)));
 
-ZfbStruct(Error,
+ZfbStruct(ZtcAPI, Error,
   (((id),		(Ctor<0>)),			(String)),
   (((seqNo),		(Ctor<1>)),			(UInt64)),
   (((code),		(Ctor<2>)),			(Int32)),
   (((message),		(Ctor<3>)),			(String)));
 
-ZfbStruct(HeapTelemetry,
+ZfbStruct(ZtcAPI, HeapTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((size),		(Ctor<7>, Keys<0>)),			(UInt32)),
   (((alignment),	(Ctor<10>, Keys<0>)),			(UInt8)),
@@ -91,7 +91,7 @@ ZfbStruct(HeapTelemetry,
   (((allocated, RdFn),	(Synthetic, Series)),			(UInt64)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(HashTelemetry,
+ZfbStruct(ZtcAPI, HashTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((addr),		(Ctor<1>, Keys<0>, Hex)),		(UInt64)),
   (((shadow),		(Ctor<10>)),				(UInt8)),
@@ -105,7 +105,7 @@ ZfbStruct(HashTelemetry,
   (((resized),		(Ctor<6>)),				(UInt32)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(ThreadTelemetry,
+ZfbStruct(ZtcAPI, ThreadTelemetry,
   (((name),		(Ctor<0>)),				(String)),
   (((tid),		(Ctor<1>, Keys<0>)),			(UInt64)),
   (((stackSize),	(Ctor<2>)),				(UInt64)),
@@ -121,7 +121,7 @@ ZfbStruct(ThreadTelemetry,
   (((detached),		(Ctor<12>)),				(Bool)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(CxnTelemetry,
+ZfbStruct(ZtcAPI, CxnTelemetry,
   (((mxID),		(Ctor<0>, Keys<0>)),			(String)),
   (((remoteIP),		(Ctor<17>, Keys<0>)),			(UDT)),
   (((remotePort),	(Ctor<19>, Keys<0>)),			(UInt16)),
@@ -146,7 +146,7 @@ ZfbStruct(CxnTelemetry,
   (((type),		(Ctor<21>, Enum<CxnType::Map>)),		(Int8)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(MxTelemetry,
+ZfbStruct(ZtcAPI, MxTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((stackSize),	(Ctor<1>)),				(UInt32)),
   (((queueSize),	(Ctor<2>)),				(UInt32)),
@@ -167,7 +167,7 @@ namespace QueueType {
   ZtEnumMap(ZtcAPI, QueueType, Map, "Thread", "IPC", "Rx", "Tx");
 }
 
-ZfbStruct(QueueTelemetry,
+ZfbStruct(ZtcAPI, QueueTelemetry,
   (((ownerID),		(Ctor<0>, Keys<0>)),			(String)),
   (((id),		(Ctor<1>, Keys<0>)),			(String)),
   (((type),		(Ctor<9>, Keys<0>, Enum<QueueType::Map>)), (Int8)),
@@ -180,7 +180,7 @@ ZfbStruct(QueueTelemetry,
   (((full),		(Ctor<8>, Mutable, Series, Delta)),	(UInt32)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(HubTelemetry,
+ZfbStruct(ZtcAPI, HubTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),
   (((linkType),		(Ctor<11>, Keys<0>, Enum<LinkType::Map>)), (Int8)),
   (((mxID),		(Ctor<1>)),				(String)),
@@ -196,7 +196,7 @@ ZfbStruct(HubTelemetry,
   (((state),		(Ctor<12>, Mutable, Enum<EngineState::Map>)), (Int8)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(LinkTelemetry,
+ZfbStruct(ZtcAPI, LinkTelemetry,
   (((hubID),		(Ctor<0>, Keys<0>)),			(String)),
   (((id),		(Ctor<1>, Keys<0>)),			(String)),
   (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),	(UInt64)),
@@ -208,7 +208,7 @@ ZfbStruct(LinkTelemetry,
   (((state),		(Ctor<8>, Mutable, Enum<LinkState::Map>)),	(Int8)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(PoolTelemetry,
+ZfbStruct(ZtcAPI, PoolTelemetry,
   (((hubID),		(Ctor<0>, Keys<0>)),			(String)),
   (((id),		(Ctor<1>, Keys<0>)),			(String)),
   (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),	(UInt64)),
@@ -222,7 +222,7 @@ ZfbStruct(PoolTelemetry,
   (((state),		(Ctor<10>, Mutable, Enum<PoolState::Map>)),	(Int8)),
   (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-ZfbStruct(AppTelemetry,
+ZfbStruct(ZtcAPI, AppTelemetry,
   (((version),		(Ctor<0>)),			(String)),
   (((role),		(Ctor<1>)),			(String)),
   (((startTime),	(Ctor<2>)),			(Int64)),
@@ -231,7 +231,7 @@ ZfbStruct(AppTelemetry,
   (((rag),		(Ctor<6>, Mutable, Enum<RAG::Map>)), (Int8)),
   (((ztcver),		(Ctor<3>)),			(UInt32)));
 
-ZfbStruct(AlertTelemetry,
+ZfbStruct(ZtcAPI, AlertTelemetry,
   (((date),		(Ctor<4>, Keys<0>)),		(UInt32)),
   (((seqNo),		(Ctor<2>, Keys<0>)),		(UInt64)),
   (((time),		(Ctor<1>)),			(Time)),

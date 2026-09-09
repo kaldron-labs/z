@@ -38,7 +38,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((count),    (CLI::Opt<'n'>, CLI::Long<"count">)),     (UInt32, 10000)),
   (((size),     (CLI::Opt<'s'>, CLI::Long<"size">)),      (UInt32, 32)),
   (((warmup),   (CLI::Opt<'w'>, CLI::Long<"warmup">)),    (UInt32, 1000)),

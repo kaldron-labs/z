@@ -23,7 +23,7 @@ struct ZvStackCf {
   double	maxFrag = 0;
 };
 
-ZfStruct((ZvStackCf, Cf),
+ZfStruct(ZvAPI, (ZvStackCf, Cf),
   (((initial),	((Range<2U, 28U>))),	(UInt32)),
   (((maxFrag),	((Range<1.0, 256.0>))),	(Float)));
 

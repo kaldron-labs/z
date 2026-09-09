@@ -10,9 +10,11 @@
 
 namespace Ztc::QueueType {
 
+struct NameIDs { using Keys = Names; };
+
 T lookup(ZuCSpan name)
 {
-  static constexpr auto matcher = ZuMatcher<Names>();
+  static constexpr auto matcher = ZuMatcher<NameIDs>();
   return matcher.exact(name);
 }
 

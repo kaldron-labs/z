@@ -69,7 +69,7 @@ struct Frame {
   ZuTime	time;
   double	price;
 };
-ZfStruct(Frame,
+ZfStruct(, Frame,
   (((seqNo),	(Ctor<0>, Series, Index, Delta)),	(UInt64)),
   (((time),	(Ctor<1>, Series, Index, Delta)),	(Time, "2020/01/01")),
   (((price),	(Ctor<2>, Series, NDP<9>)),		(Float)));
@@ -268,7 +268,7 @@ struct Options {
   bool		heapTel;
   bool		help;
 };
-ZfStruct(Options,
+ZfStruct(, Options,
   (((module),    (Ctor<0>, CLI::Opt<'m'>)),  (String, getenv("ZDB_MODULE"))),
   (((connect),   (Ctor<1>, CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
   (((debug),     (Ctor<2>, CLI::Flag<'d'>)), (Bool)),

@@ -31,7 +31,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((ca),       (CLI::Opt<'c'>, CLI::Long<"ca">)),        (String)),
   (((agent),    (CLI::Opt<'a'>, CLI::Long<"agent">)),     (String, "Zws")),
   (((timeout),  (CLI::Opt<'t'>, CLI::Long<"timeout">)),   (UInt32, 600)),

@@ -81,6 +81,7 @@
 #define ZtEnumMap_(API, ID, Map, ...) \
   struct API Map##_ { \
     using Names = ZuStringTL<__VA_ARGS__>; \
+    using Keys = Names; \
     static constexpr const auto &id() { return #ID; } \
     static T s2v(ZuCSpan); \
     static T match(ZuCSpan); \
@@ -235,7 +236,7 @@
     return ZuCSpan(ZuType<I, Names>{}); \
   })
 #define ZtEnumImpl_2(ID, Map) \
-  static auto Map##_matcher = ZuMatcher<Map##_::Names>(); \
+  static auto Map##_matcher = ZuMatcher<Map##_>(); \
   T Map##_::s2v(ZuCSpan s) { return Map##_matcher.exact(s); } \
   T Map##_::match(ZuCSpan s) { return Map##_matcher.match(s); } \
   ZuCSpan Map##_::v2s(int i) { ZtEnumImpl_v2s(); }
@@ -252,7 +253,7 @@
 // ZtEnumImplStruct(ID[, Map]);
 // - shorthand for struct-wrapped enums
 #define ZtEnumImplStruct_2(ID, Map) \
-  static auto ID##_##Map##_matcher = ZuMatcher<ID::Map##_::Names>(); \
+  static auto ID##_##Map##_matcher = ZuMatcher<ID::Map##_>(); \
   ID::T ID::Map##_::s2v(ZuCSpan s) { \
     return ID##_##Map##_matcher.exact(s); \
   } \

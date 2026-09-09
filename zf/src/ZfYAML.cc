@@ -52,12 +52,18 @@ namespace Style { enum { Plain, Single, Double, Literal, Folded }; }
 namespace Chomp { enum { Clip, Strip, Keep }; }
 namespace ValueKind { enum { String, Array, Object }; }
 
-static constexpr auto true_ = ZuMatcher<
-  "y", "Y", "yes", "Yes", "YES", "true", "True", "TRUE",
-  "on", "On", "ON">();
-static constexpr auto false_ = ZuMatcher<
-  "n", "N", "no", "No", "NO", "false", "False", "FALSE",
-  "off", "Off", "OFF">();
+struct TrueIDs {
+  using Keys = ZuStringTL<
+    "y", "Y", "yes", "Yes", "YES", "true", "True", "TRUE",
+    "on", "On", "ON">;
+};
+struct FalseIDs {
+  using Keys = ZuStringTL<
+    "n", "N", "no", "No", "NO", "false", "False", "FALSE",
+    "off", "Off", "OFF">;
+};
+static constexpr auto true_ = ZuMatcher<TrueIDs>();
+static constexpr auto false_ = ZuMatcher<FalseIDs>();
 
 bool YAMLPolicy::implicit(ZuCSpan s)
 {

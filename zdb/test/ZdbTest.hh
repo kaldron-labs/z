@@ -42,7 +42,7 @@ struct Order {
   friend ZuStringT<"zdbtest.order.buf"> ZdbBufHeapID(Order *);
 };
 
-ZfbStruct((Order, JSON),
+ZfbStruct(, (Order, JSON),
   (((symbol),	(Ctor<0>, Keys<0>)),				(String)),
   (((orderID),	(Ctor<1>, Keys<0>, Mutable)),			(UInt64)),
   (((link),	(Ctor<2>, (Keys<1, 2>), Group<2>, Descend<2>)),	(String)),
