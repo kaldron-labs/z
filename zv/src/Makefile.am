@@ -14,7 +14,7 @@ pkginclude_HEADERS = ZvLib.hh \
 	ZvMxParams.hh ZvStackParams.hh
 lib_LTLIBRARIES = libZv.la
 libZv_la_CPPFLAGS = $(AM_CPPFLAGS) -DZV_EXPORTS 
-libZv_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
+libZv_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZv_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZv_la_SOURCES = ZvLib.cc ZvCf.cc ZvYAML.cc ZvTOML.cc ZvThreadParams.cc
 libZv_la_LIBADD = \

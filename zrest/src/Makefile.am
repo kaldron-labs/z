@@ -10,7 +10,7 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZrestLib.hh Zrest.hh ZrestClient.hh ZrestServer.hh
 lib_LTLIBRARIES = libZrest.la
 libZrest_la_CPPFLAGS = $(AM_CPPFLAGS) -DZREST_EXPORTS 
-libZrest_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
+libZrest_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZrest_la_SOURCES = ZrestLib.cc
 libZrest_la_LIBADD = \
 	$(top_builddir)/zhttp/src/libZhttp.la $(top_builddir)/zquic/src/libZquic.la \

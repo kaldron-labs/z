@@ -33,7 +33,7 @@ dist_noinst_DATA = $(addprefix fbs/,${FBS})
 lib_LTLIBRARIES = libZum.la
 bin_PROGRAMS = zum
 libZum_la_CPPFLAGS = $(AM_CPPFLAGS) -DZUM_EXPORTS
-libZum_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
+libZum_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZum_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZum_la_SOURCES = ZumLib.cc Zum.cc ZumAdmin.cc ZumAuthorize.cc ZumDB.cc ZumDiscovery.cc ZumJWT.cc ZumOAuth.cc ZumOIDC.cc \
 	ZumPasskey.cc ZumRequest.cc ZumServer.cc ZumToken.cc ZumWebAuthn.cc
