@@ -3872,38 +3872,37 @@ struct ZfStructPrint : public ZuPrintDelegate {
 
 using ZfVFieldArray = ZuSpan<const ZfVField *>;
 
-template <typename VField, typename ...Fields>
-struct ZfVFieldFactory {
-  enum { N = sizeof...(Fields) };
+template <typename Meta, typename VField>
+class ZfVFieldFactory {
+  using Fields = typename ZuFields__<Meta>::T;
+  enum { N = Fields::N };
 
+  const VField		m_fields[N];
+  const ZfVField	*m_ptrs[N];
+
+  template <unsigned ...I>
+  ZfVFieldFactory(ZuSeq<I...>) :
+      m_fields{VField{ZuType<I, Fields>{}}...},
+      m_ptrs{static_cast<const ZfVField *>(&m_fields[I])...},
+      fields{m_ptrs, N} { }
+
+public:
   ZfVFieldArray	fields;
 
   static ZfVFieldFactory *instance() {
     return ZmSingleton<ZfVFieldFactory>::instance();
   }
 
-  ZfVFieldFactory() {
-    static const VField fields_[N] =
-      // std::initializer_list<ZfVField>
-    {
-      VField{Fields{}}...
-    };
-    static const ZfVField *ptr_[N];
-    ZuUnroll::all<N>([](auto i) {
-      ptr_[i] = static_cast<const ZfVField *>(&fields_[i]);
-    });
-    fields = {&ptr_[0], N};
-  }
+  ZfVFieldFactory() : ZfVFieldFactory{ZuMkSeq<N>{}} { }
 };
-template <typename Fields, typename VField = ZfVField>
+template <typename Meta, typename VField = ZfVField>
 inline ZfVFieldArray ZfVFields_() {
-  using Factory = ZuTypeApply<
-    ZfVFieldFactory, typename Fields::template Unshift<VField>>;
+  using Factory = ZfVFieldFactory<Meta, VField>;
   return Factory::instance()->fields;
 }
 template <typename O, typename VField = ZfVField>
 inline ZfVFieldArray ZfVFields() {
-  return ZfVFields_<ZuFields<O>, VField>();
+  return ZfVFields_<ZuFieldMeta<O>, VField>();
 }
 
 typedef int (*ZfVFieldMatchFn)(ZuCSpan);

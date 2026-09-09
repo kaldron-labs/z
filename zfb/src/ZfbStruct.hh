@@ -102,72 +102,6 @@ namespace ZfbStruct {
 template <typename T> using Offset = Zfb::Offset<T>;
 
 template <typename Field> using IsNested = ZuBool<!Field::IsInline>;
-template <
-  typename O, typename Facet, typename NestedFields, typename Field,
-  bool = IsNested<Field>{}>
-struct SaveFieldFn {
-  template <template <typename> class Filter, typename Builder>
-  static void save(Builder &fbb, const O &o, const Offset<void> *) {
-    Field::template save<Facet, Filter>(fbb, o);
-  }
-};
-template <typename O, typename Facet, typename NestedFields, typename Field>
-struct SaveFieldFn<O, Facet, NestedFields, Field, true> {
-  template <template <typename> class Filter, typename Builder>
-  static void save(Builder &fbb, const O &o, const Offset<void> *offsets) {
-    using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
-    Field::template save<Facet, Filter>(fbb, o, offsets[OffsetIndex{}]);
-  }
-};
-template <
-  typename O, typename Facet, typename Fields, template <typename> class Filter,
-  typename NestedFields = ZuTypeGrep<IsNested, Fields>,
-  unsigned = Fields::N,
-  unsigned = NestedFields::N>
-struct SaveFieldsFn {
-  using Builder = ZfbBuilder<O>;
-  using FBType = ZfbType<O>;
-  static Offset<FBType> save(Zfb::Builder &fbb_, const O &o) {
-    Offset<void> offsets[NestedFields::N];
-    ZuUnroll::all<NestedFields>(
-	[&fbb_, &o, offsets = &offsets[0]]<typename Field>() {
-	  using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
-	  offsets[OffsetIndex{}] = Field::template save<Facet, Filter>(fbb_, o);
-	});
-    Builder fbb{fbb_};
-    ZuUnroll::all<Fields>(
-	[&fbb, &o, offsets = &offsets[0]]<typename Field>() {
-	  using Fn = SaveFieldFn<O, Facet, NestedFields, Field>;
-	  Fn::template save<Filter>(fbb, o, offsets);
-	});
-    return fbb.Finish();
-  }
-};
-template <
-  typename O, typename Facet, typename Fields, template <typename> class Filter,
-  typename NestedFields, unsigned N>
-struct SaveFieldsFn<O, Facet, Fields, Filter, NestedFields, N, 0> {
-  using Builder = ZfbBuilder<O>;
-  using FBType = ZfbType<O>;
-  static Offset<FBType> save(Zfb::Builder &fbb_, const O &o) {
-    Builder fbb{fbb_};
-    ZuUnroll::all<Fields>([&fbb, &o]<typename Field>() {
-      Field::template save<Facet, Filter>(fbb, o);
-    });
-    return fbb.Finish();
-  }
-};
-template <
-  typename O, typename Facet, typename Fields, template <typename> class Filter,
-  typename NestedFields>
-struct SaveFieldsFn<O, Facet, Fields, Filter, NestedFields, 0, 0> {
-  using Builder = ZfbBuilder<O>;
-  using FBType = ZfbType<O>;
-  static Offset<FBType> save(Zfb::Builder &fbb_, const O &) {
-    Builder fbb{fbb_};
-    return fbb.Finish();
-  }
-};
 
 template <typename O_, typename Facet>
 struct Handler_ {
@@ -189,40 +123,80 @@ struct Handler_ {
 
   using FBType = ZfbType<O>;
 
+  template <template <typename> class Filter>
+  struct SaveFieldsFn {
+    using Fields = ZuTypeGrep<Filter, AllFields>;
+    using NestedFields = ZuTypeGrep<IsNested, Fields>;
+
+    static Offset<FBType> save(Zfb::Builder &fbb_, const O &o) {
+      if constexpr (!Fields::N) {
+	ZfbBuilder<O> fbb{fbb_};
+	return fbb.Finish();
+      } else if constexpr (!NestedFields::N) {
+	ZfbBuilder<O> fbb{fbb_};
+	ZuUnroll::all<Fields>([&fbb, &o]<typename Field>() {
+	  Field::template save<Facet, Filter>(fbb, o);
+	});
+	return fbb.Finish();
+      } else {
+	Offset<void> offsets[NestedFields::N];
+	ZuUnroll::all<NestedFields>(
+	    [&fbb_, &o, offsets = &offsets[0]]<typename Field>() {
+	      using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
+	      offsets[OffsetIndex{}] =
+		Field::template save<Facet, Filter>(fbb_, o);
+	    });
+	ZfbBuilder<O> fbb{fbb_};
+	ZuUnroll::all<Fields>(
+	    [&fbb, &o, offsets = &offsets[0]]<typename Field>() {
+	      if constexpr (IsNested<Field>{}) {
+		using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
+		Field::template save<Facet, Filter>(
+		  fbb, o, offsets[OffsetIndex{}]);
+	      } else
+		Field::template save<Facet, Filter>(fbb, o);
+	    });
+	return fbb.Finish();
+      }
+    }
+  };
+
   const FBType	*fbo;
 
   Handler_(const FBType *fbo_) : fbo{fbo_} { }
 
   template <template <typename> class Filter>
   static Offset<FBType> save(Zfb::Builder &fbb, const O &o) {
-    using Fields = ZuTypeGrep<Filter, AllFields>;
-    return SaveFieldsFn<O, Facet, Fields, Filter>::save(fbb, o);
+    return SaveFieldsFn<Filter>::save(fbb, o);
   }
 
-  template <typename ...Field>
-  struct Ctor {
-    template <typename ...Args>
-    static O ctor(const Handler_ &handler, Args &&...args) {
-      return O{ZuFwd<Args>(args)..., Field::load_(handler.fbo)...};
-    }
-    template <typename ...Args>
-    static O *alloc(const Handler_ &handler, Args &&...args) {
-      return new O{ZuFwd<Args>(args)..., Field::load_(handler.fbo)...};
-    }
-    template <typename ...Args>
-    static void new_(void *o, const Handler_ &handler, Args &&...args) {
-      new (o) O{ZuFwd<Args>(args)..., Field::load_(handler.fbo)...};
-    }
-  };
+private:
+  template <unsigned ...I, typename ...Args>
+  O ctor_(ZuSeq<I...>, Args &&...args) const {
+    return O{
+      ZuFwd<Args>(args)..., ZuType<I, CtorFields>::load_(fbo)...};
+  }
+  template <unsigned ...I, typename ...Args>
+  O *alloc_(ZuSeq<I...>, Args &&...args) const {
+    return new O{
+      ZuFwd<Args>(args)..., ZuType<I, CtorFields>::load_(fbo)...};
+  }
+  template <unsigned ...I, typename ...Args>
+  void new__(void *o, ZuSeq<I...>, Args &&...args) const {
+    new (o) O{
+      ZuFwd<Args>(args)..., ZuType<I, CtorFields>::load_(fbo)...};
+  }
+
+public:
   template <
     bool RO = ReadOnly,
     typename = ZuIfT<!RO, void>,
     typename ...Args>
   O ctor(Args &&...args) const {
     if constexpr (!InitFields::N) // exploit guaranteed copy elision
-      return ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
+      return ctor_(ZuMkSeq<CtorFields::N>{}, ZuFwd<Args>(args)...);
     else {
-      O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
+      O o = ctor_(ZuMkSeq<CtorFields::N>{}, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	Field::load(o, fbo);
       });
@@ -234,8 +208,7 @@ struct Handler_ {
     typename = ZuIfT<!RO, void>,
     typename ...Args>
   O *alloc(Args &&...args) const {
-    O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
-      *this, ZuFwd<Args>(args)...);
+    O *o = alloc_(ZuMkSeq<CtorFields::N>{}, ZuFwd<Args>(args)...);
     ZuUnroll::all<InitFields>([this, o]<typename Field>() {
       Field::load(*o, fbo);
     });
@@ -246,7 +219,7 @@ struct Handler_ {
     typename = ZuIfT<!RO, void>,
     typename ...Args>
   void new_(void *o_, Args &&...args) const {
-    ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
+    new__(o_, ZuMkSeq<CtorFields::N>{}, ZuFwd<Args>(args)...);
     O &o = *static_cast<O *>(o_);
     ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
       Field::load(o, fbo);
@@ -1190,6 +1163,7 @@ inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
 #define ZfbStruct_Render__(API, O, Facet) \
   struct API ZfFields_##O##_##Facet { \
     using Fields = ZfFields_##O; \
+    using Keys = ZuFieldIDs<Fields>; \
     static int match(ZuCSpan); \
   }; \
   ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *);
