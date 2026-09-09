@@ -20,8 +20,8 @@ namespace Zum {
 
 ZumExtern String metadataJSON(ZuCSpan issuer);
 ZumExtern String jwksJSON(const StringVec &publicJwks);
-using DiscoveryFn = ZmFn<void(bool, String),
-  ZmFnHeapID<"Zum.DiscoveryFn">>;
+ZuDerive(DiscoveryFn, (ZmFn<void(bool, String),
+  ZmFnHeapID<"Zum.DiscoveryFn">>));
 ZumExtern bool jwksLoad(
   Requests *, ZuTime deadline, DBContext *, int64_t now,
   unsigned maxKeys, DiscoveryFn);

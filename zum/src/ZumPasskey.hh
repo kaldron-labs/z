@@ -82,12 +82,12 @@ struct CredentialBeginConfig {
   uint64_t	timeout = 0;
 };
 
-using EnrollmentBeginFn = ZmFn<void(int, EnrollmentBeginResult),
-  ZmFnHeapID<"Zum.EnrollmentBeginFn">>;
-using EnrollmentFinishFn = ZmFn<void(int),
-  ZmFnHeapID<"Zum.EnrollmentFinishFn">>;
-using CapabilityFn = ZmFn<void(bool, String),
-  ZmFnHeapID<"Zum.CapabilityFn">>;
+ZuDerive(EnrollmentBeginFn, (ZmFn<void(int, EnrollmentBeginResult),
+  ZmFnHeapID<"Zum.EnrollmentBeginFn">>));
+ZuDerive(EnrollmentFinishFn, (ZmFn<void(int),
+  ZmFnHeapID<"Zum.EnrollmentFinishFn">>));
+ZuDerive(CapabilityFn, (ZmFn<void(bool, String),
+  ZmFnHeapID<"Zum.CapabilityFn">>));
 using BootstrapFn = CapabilityFn;
 using RecoveryIssueFn = CapabilityFn;
 

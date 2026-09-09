@@ -410,8 +410,8 @@ public:
       }
       self->m_waiting.null();
       self->m_keys.clean();
-      self->m_http = {};
-      self->m_clock = {};
+      self->m_http = OIDCHTTPFn{};
+      self->m_clock = OIDCClockFn{};
       if (self->m_config.clientSecret.mutable_())
         ZuClear(self->m_config.clientSecret.data(),
           self->m_config.clientSecret.length());

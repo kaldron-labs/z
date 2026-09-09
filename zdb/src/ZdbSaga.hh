@@ -144,9 +144,10 @@ ZfbStruct(ZdbAPI, SagaTypeStep,
 
 ZfbRoot(SagaTypeStep);
 
-using SagaRecoveryFn =
-  ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>;
-using SagaRunFn = ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>;
+ZuDerive(SagaRecoveryFn,
+  (ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>));
+ZuDerive(SagaRunFn,
+  (ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>));
 
 ZuDerive(SagaCompleteFn,
   (ZmFn<void(bool), ZmFnHeapID<"Zdb.Saga.CompleteFn">>));
@@ -396,9 +397,9 @@ template <typename Sagas>
 using SagaUnion =
   ZuTypeApply<ZuUnion, typename Sagas::template Unshift<void>>;
 
-template <typename Sagas, typename Heap>
+template <typename Catalog, typename Heap>
 struct MSaga_ : public Heap, public Saga {
-  using Union = SagaUnion<Sagas>;
+  using Union = SagaUnion<typename Catalog::List>;
 
   Union u;
 
@@ -409,10 +410,10 @@ struct MSaga_ : public Heap, public Saga {
   }
 };
 
-template <typename Sagas>
-using MSagaHeap = ZmHeap<"Zdb.Saga", MSaga_<Sagas, ZuVoid>>;
+template <typename Catalog>
+using MSagaHeap = ZmHeap<"Zdb.Saga", MSaga_<Catalog, ZuVoid>>;
 
-template <typename Sagas, typename Impl_ = void> struct MSaga;
+template <typename Catalog, typename Impl_ = void> struct MSaga;
 
 template <typename Heap>
 struct SagaHash_ : public Heap, public SagaHash {
@@ -433,8 +434,8 @@ struct SagaCatalog__ {
   unsigned	writeType = 0;
   unsigned	writeStep = 0;
 
-  template <typename Sagas> void load(SagaTypeStep);
-  template <typename Sagas> void end();
+  template <typename Catalog> void load(SagaTypeStep);
+  template <typename Catalog> void end();
 };
 template <typename Heap>
 struct SagaCatalog_ : public Heap, public ZmPolymorph, public SagaCatalog__ {
@@ -561,32 +562,31 @@ template <typename Context, typename ...S>
 struct SagaBasesValid_<Context, ZuTypeList<S...>> :
   public ZuBool<(ZuIsBase<S, SagaBase<Context>>{} && ...)> { };
 
-template <typename Sagas>
-struct SagaIDs { using Keys = SagaTypes<Sagas>; };
+template <typename Catalog>
+struct SagaIDs { using Keys = SagaTypes<typename Catalog::List>; };
 
-template <typename ...S, typename Impl_>
-struct MSaga<ZuTypeList<S...>, Impl_> :
-  public MSaga_<ZuTypeList<S...>, MSagaHeap<ZuTypeList<S...>>> {
-  ZuDerive_(MSaga, (MSaga_<ZuTypeList<S...>, MSagaHeap<ZuTypeList<S...>>>))
-  using Sagas = ZuTypeList<S...>;
+template <typename Catalog, typename Impl_>
+struct MSaga : public MSaga_<Catalog, MSagaHeap<Catalog>> {
+  ZuDerive_(MSaga, (MSaga_<Catalog, MSagaHeap<Catalog>>))
+  using Sagas = typename Catalog::List;
   using Types = SagaTypes<Sagas>;
-  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, MSaga<Sagas>, Impl_>;
+  using Impl = ZuIf<ZuIsSame<Impl_, void>{}, MSaga<Catalog>, Impl_>;
   using M = Impl;
   using Saga::type;
 
-  ZuAssert((sizeof...(S) > 0), "empty saga bundle");
-  ZuAssert((ZuTypeUnique<Types>::N == sizeof...(S)),
+  ZuAssert((Sagas::N > 0), "empty saga bundle");
+  ZuAssert((ZuTypeUnique<Types>::N == Sagas::N),
     "duplicate saga type");
   ZuAssert((SagaDefsValid_<Sagas>{}), "invalid saga definition");
 
   static int match(ZuCSpan type) {
-    static constexpr auto matcher = ZuMatcher<SagaIDs<Sagas>>();
+    static constexpr auto matcher = ZuMatcher<SagaIDs<Catalog>>();
     return matcher.exact(type);
   }
 
   static bool catalog(unsigned type, unsigned step, SagaTypeStep &row) {
-    if (type >= sizeof...(S)) return false;
-    return ZuSwitch::dispatch<sizeof...(S)>(type, [step, &row](auto I) {
+    if (type >= Sagas::N) return false;
+    return ZuSwitch::dispatch<Sagas::N>(type, [step, &row](auto I) {
       using Def = ZuType<I, Sagas>;
       using Steps = SagaSteps<Def>;
       if (step >= Steps::N) return false;
@@ -610,7 +610,7 @@ struct MSaga<ZuTypeList<S...>, Impl_> :
 	s << "unknown saga type \"" << type << '"';
       }));
     ZmRef<M> saga = new M{};
-    bool loaded = ZuSwitch::dispatch<sizeof...(S)>(unsigned(i),
+    bool loaded = ZuSwitch::dispatch<Sagas::N>(unsigned(i),
 	[saga = saga.ptr(), data](auto I) {
 	  using Def = ZuType<I, Sagas>;
 	  auto fbo = ZfbStruct::verify<Def>(data);
@@ -725,7 +725,7 @@ public:
   static unsigned stepCount(ZuCSpan type) {
     int i = match(type);
     if (ZuUnlikely(i < 0)) return 0;
-    return ZuSwitch::dispatch<sizeof...(S)>(unsigned(i), [](auto I) {
+    return ZuSwitch::dispatch<Sagas::N>(unsigned(i), [](auto I) {
       using Def = ZuType<I, Sagas>;
       return unsigned(Def::NSteps);
     });
@@ -746,7 +746,7 @@ public:
       ZuCSpan type, unsigned step, ZuCSpan &table, SagaOp::T &op) {
     int i = match(type);
     if (ZuUnlikely(i < 0)) return false;
-    return ZuSwitch::dispatch<sizeof...(S)>(unsigned(i),
+    return ZuSwitch::dispatch<Sagas::N>(unsigned(i),
 	[step, &table, &op](auto I) {
 	  using Def = ZuType<I, Sagas>;
 	  return stepDef_<SagaSteps<Def>>(step, table, op);
@@ -755,11 +755,11 @@ public:
 
 };
 
-template <typename Sagas>
+template <typename Catalog>
 inline void SagaCatalog__::end()
 {
   if (error || typeIndex < 0) return;
-  auto expected = MSaga<Sagas>::stepCount(type);
+  auto expected = MSaga<Catalog>::stepCount(type);
   if (step != expected)
     error = ZeEXCEPT(Fatal, "Zdb", ([
       type = ZeString{type}, step = step, expected
@@ -769,23 +769,23 @@ inline void SagaCatalog__::end()
     }));
 }
 
-template <typename Sagas>
+template <typename Catalog>
 inline void SagaCatalog__::load(SagaTypeStep row)
 {
   if (error) return;
   if (row.type != type) {
-    end<Sagas>();
+    end<Catalog>();
     if (error) return;
     type = ZuMv(row.type);
     step = 0;
-    typeIndex = MSaga<Sagas>::match(type);
+    typeIndex = MSaga<Catalog>::match(type);
     if (typeIndex >= 0) seen[typeIndex] = 1;
   }
   if (typeIndex >= 0) {
     ZuCSpan table;
     SagaOp::T op = SagaOp::Invalid;
     if (row.step != step ||
-	!MSaga<Sagas>::stepDef(type, row.step, table, op) ||
+	!MSaga<Catalog>::stepDef(type, row.step, table, op) ||
 	row.table != table || row.op != op) {
       error = ZeEXCEPT(Fatal, "Zdb", ([
 	type = ZeString{type}, step = row.step
@@ -818,7 +818,7 @@ struct ZdbSagaStep_ {
 using ZdbSaga = Zdb_::Saga;
 template <typename Context>
 using ZdbSagaBase = Zdb_::SagaBase<Context>;
-template <typename Sagas, typename Impl_ = void>
-using ZdbMSaga = Zdb_::MSaga<Sagas, Impl_>;
+template <typename Catalog, typename Impl_ = void>
+using ZdbMSaga = Zdb_::MSaga<Catalog, Impl_>;
 
 #endif /* ZdbSaga_HH */

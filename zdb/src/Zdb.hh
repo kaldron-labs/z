@@ -2907,10 +2907,11 @@ inline void SagaStepComplete<M, Complete>::terminal_(
 
 enum { SagaScanSize = 256 }; // cold store query page, not a replay batch
 
-template <typename Context, typename Sagas,
+template <typename Context, typename Catalog,
   typename Complete = SagaCompleteFn,
-  typename M_ = MSaga<Sagas>>
+  typename M_ = MSaga<Catalog>>
 struct SagaDB : public DB {
+  using Sagas = typename Catalog::List;
   using M = M_;
 
   ZuAssert((SagaCallbackValid<Complete>{}));
@@ -2952,9 +2953,9 @@ private:
   ZmRef<Context> m_sagaContext;
 };
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
+template <typename Context, typename Catalog, typename Complete, typename M_>
 template <typename Submit, typename>
-inline bool SagaDB<Context, Sagas, Complete, M_>::saga(
+inline bool SagaDB<Context, Catalog, Complete, M_>::saga(
     Shard shard, SagaID id, ZmRef<M> saga,
     Submit &&submit, Complete complete)
 {
@@ -3036,8 +3037,8 @@ inline bool SagaDB<Context, Sagas, Complete, M_>::saga(
   });
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalog()
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalog()
 {
   ZmAssert(invoked());
 
@@ -3072,8 +3073,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalog()
     });
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogOpen(
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogOpen(
     ZmRef<SagaCatalog> context, OpenResult result)
 {
   ZmAssert(invoked());
@@ -3096,8 +3097,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogOpen(
   sagaCatalogScan(ZuMv(context), false);
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
 {
   ZmAssert(invoked());
   context->pageCount = 0;
@@ -3133,7 +3134,7 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogScan(ZmRef<SagaCata
 	    Fatal, "Zdb", "invalid saga_type row");
 	  return;
 	}
-	context->template load<Sagas>(ZfbStruct::ctor<SagaTypeStep>(fbo));
+	context->template load<Catalog>(ZfbStruct::ctor<SagaTypeStep>(fbo));
 	context->pageCount = data.count;
 	return;
       }
@@ -3146,7 +3147,7 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogScan(ZmRef<SagaCata
 	  this->sagaCatalogScan(ZuMv(context), true);
 	  return;
 	}
-	context->template end<Sagas>();
+	context->template end<Catalog>();
 	if (context->error)
 	  this->sagaCatalogClose(ZuMv(context));
 	else
@@ -3155,8 +3156,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogScan(ZmRef<SagaCata
     }});
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogWrite(ZmRef<SagaCatalog> context)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogWrite(ZmRef<SagaCatalog> context)
 {
   ZmAssert(invoked());
   SagaTypeStep row;
@@ -3196,8 +3197,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogWrite(ZmRef<SagaCat
     }});
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogClose(ZmRef<SagaCatalog> context)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogClose(ZmRef<SagaCatalog> context)
 {
   ZmAssert(invoked());
   if (!context->table) {
@@ -3212,8 +3213,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogClose(ZmRef<SagaCat
   });
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogFinish(ZmRef<SagaCatalog> context)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogFinish(ZmRef<SagaCatalog> context)
 {
   ZmAssert(invoked());
   if (context->error) {
@@ -3225,8 +3226,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaCatalogFinish(ZmRef<SagaCa
   start_2();
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaScanData(ZmRef<SagaScan> context, bool next)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaScanData(ZmRef<SagaScan> context, bool next)
 {
   ZmAssert(invoked());
   ++m_sagaPending;
@@ -3256,8 +3257,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaScanData(ZmRef<SagaScan> c
   }
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaLoadData(ZmRef<SagaScan> context)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadData(ZmRef<SagaScan> context)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(context->epoch != m_sagaEpoch ||
@@ -3301,8 +3302,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaLoadData(ZmRef<SagaScan> c
   sagaScanSteps(ZuMv(context), false);
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaScanSteps(ZmRef<SagaScan> context, bool next)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaScanSteps(ZmRef<SagaScan> context, bool next)
 {
   ZmAssert(invoked());
   ++m_sagaPending;
@@ -3333,8 +3334,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaScanSteps(ZmRef<SagaScan> 
   }
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan> context)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan> context)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(context->epoch != m_sagaEpoch ||
@@ -3409,8 +3410,8 @@ inline void SagaDB<Context, Sagas, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan> 
   sagaOrphanDone(ZuMv(context), true);
 }
 
-template <typename Context, typename Sagas, typename Complete, typename M_>
-inline void SagaDB<Context, Sagas, Complete, M_>::sagaOrphanDone(ZmRef<SagaScan> context, bool ok)
+template <typename Context, typename Catalog, typename Complete, typename M_>
+inline void SagaDB<Context, Catalog, Complete, M_>::sagaOrphanDone(ZmRef<SagaScan> context, bool ok)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(context->epoch != m_sagaEpoch ||
@@ -3526,10 +3527,10 @@ using ZdbTableCf = Zdb_::TableCf;
 template <typename T> using ZdbTblRef = ZmRef<ZdbTable<T>>;
 
 using Zdb = Zdb_::DB;
-template <typename Context, typename Sagas,
+template <typename Context, typename Catalog,
   typename Complete = Zdb_::SagaCompleteFn,
-  typename M = Zdb_::MSaga<Sagas>>
-using ZdbSagaDB = Zdb_::SagaDB<Context, Sagas, Complete, M>;
+  typename M = Zdb_::MSaga<Catalog>>
+using ZdbSagaDB = Zdb_::SagaDB<Context, Catalog, Complete, M>;
 using ZdbHandler = Zdb_::DBHandler;
 using ZdbCf = Zdb_::DBCf;
 

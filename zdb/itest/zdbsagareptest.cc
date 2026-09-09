@@ -58,7 +58,8 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	  saga->findDel<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
 	    ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
 	      if (context->pauseReverse) {
-		context->pausedComplete = PauseFn{ZuMv(complete)};
+		context->pausedComplete = PauseFn{
+		  [complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
 		context->paused->post();
 		return;
 	      }
@@ -81,7 +82,8 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	    ++row->data().qtys[0];
 	    bool ok = row->commit();
 	    if (context->paused) {
-	      context->pausedComplete = PauseFn{ZuMv(complete)};
+	      context->pausedComplete = PauseFn{
+		[complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
 	      context->paused->post();
 	      return;
 	    }
@@ -94,9 +96,9 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-using Sagas = ZuTypeList<LiveSaga>;
+struct SagaCatalog { using List = ZuTypeList<LiveSaga>; };
 
-struct ReplDB : public ZdbSagaDB<Context, Sagas> {
+struct ReplDB : public ZdbSagaDB<Context, SagaCatalog> {
   Context	*context = nullptr;
   ZmSemaphore	*up = nullptr;
   unsigned	ups = 0;
@@ -210,7 +212,7 @@ static void recovery(unsigned mode)
   });
   ZuCheck(standby);
 
-  using M = ZdbMSaga<zdbtest::Sagas>;
+  using M = ZdbMSaga<zdbtest::SagaCatalog>;
   ZmRef<M> saga = new M{};
   saga->init(zdbtest::LiveSaga{{}, 42});
   bool admitted = ZmBlock<bool>{}([
