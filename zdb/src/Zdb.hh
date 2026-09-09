@@ -1083,6 +1083,37 @@ private:
   template <unsigned KeyID, typename L>
   void retrieve(Shard shard, Key<KeyID>, L &&);
 
+  template <unsigned KeyID>
+  struct FindLoad {
+    Table_ *table;
+    Shard shard;
+
+    template <typename L>
+    void operator ()(const Key<KeyID> &key, L &&l) {
+      auto [buf, found] = table->template findBuf<KeyID>(shard, key);
+      if (buf) {
+	l(table->rowLoad(buf, shard));
+	return;
+      }
+      if (found) {
+	l(nullptr);
+	return;
+      }
+      table->template retrieve<KeyID>(shard, key, ZuFwd<L>(l));
+    }
+  };
+
+  struct FindEvict {
+    Table_ *table;
+
+    bool operator ()(AnyRow *row) const {
+      if (row->pinned()) return false;
+      table->evictUN(row->shard(), row->un());
+      row->evict();
+      return true;
+    }
+  };
+
   // buffer cache
   void cacheBuf_(Shard shard, ZmRef<IOBuf> buf) override {
     m_bufCache[shard].add(new RepBuf<T>{ZuMv(buf)});
@@ -2301,29 +2332,11 @@ template <
 inline void Table_<Impl_>::find_(Shard shard, Key<KeyID> key, L &&l) {
   ZmAssert(invoked(shard));
 
-  auto load = [
-    this, shard
-  ]<typename L_>(const Key<KeyID> &key, L_ &&l) mutable {
-    auto [buf, found] = findBuf<KeyID>(shard, key);
-    if (buf) {
-      l(rowLoad(buf, shard));
-      return;
-    }
-    if (found) {
-      l(nullptr);
-      return;
-    }
-    retrieve<KeyID>(shard, key, ZuFwd<L_>(l));
-  };
+  FindLoad<KeyID> load{this, shard};
   if constexpr (Evict) {
     m_cache[shard].template find<KeyID, UpdateLRU>(
       ZuMv(key), ZuFwd<L>(l), ZuMv(load),
-	[this](AnyRow *row) {
-	if (row->pinned()) return false;
-	evictUN(row->shard(), row->un());
-	row->evict();
-	return true;
-      });
+	FindEvict{this});
   } else
     m_cache[shard].template find<KeyID, UpdateLRU, false>(
 	ZuMv(key), ZuFwd<L>(l), ZuMv(load));
