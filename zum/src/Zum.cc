@@ -5,12 +5,14 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/Zum.hh>
+#include <zlib/ZumMgmt.hh>
 
 #include <zlib/ZtlsSec.hh>
 
 namespace Zum {
 
 ZtEnumImplNS(State);
+ZtEnumImplNS(MgmtOp);
 ZtEnumImplNS(ClientType);
 ZtEnumImplNS(GrantKind);
 ZtEnumImplNS(GrantPurpose);

@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// offline first-user enrollment capability issuer
+// offline system bootstrap tool
 
 #include <iostream>
 
@@ -20,29 +20,26 @@
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/ZumPasskey.hh>
+#include <zlib/ZumMgmt.hh>
 
 #include <zlib/ZtlsRandom.hh>
 
 struct Options {
+  Zum::String	admin;
   Zum::String	issuer;
-  Zum::IDVec	roles;
   Zum::String	module;
   Zum::String	connect;
   Zum::String	log;
-  Zum::String	actor;
-  Zum::UserID	recover = 0;
   uint32_t	ttl = 900;
   bool		debug = false;
   bool		help = false;
 };
 ZfStruct(, (Options, CLI),
-  (((issuer),	(CLI::Arg<1>)),			(String)),
-  (((roles),	(CLI::Args<2>)),			(UInt64Vec)),
+  (((admin),	(CLI::Arg<1>)),			(String)),
+  (((issuer),	(CLI::Opt<'i'>)),			(String)),
   (((module),	(CLI::Opt<'m'>)),			(String)),
   (((connect),	(CLI::Opt<'c'>)),			(String)),
   (((log),	(CLI::Opt<'l'>)),			(String, "&2")),
-  (((actor),	(CLI::Opt<'a'>)),			(String)),
-  (((recover),	(CLI::Opt<'r'>)),			(UInt64)),
   (((ttl),	(CLI::Opt<'t'>, (Range<1, 86400>))),	(UInt32, 900)),
   (((debug),	(CLI::Flag<'d'>)),			(Bool)),
   (((help),	(CLI::Flag<'h'>)),			(Bool)));
@@ -50,22 +47,87 @@ ZfStruct(, (Options, CLI),
 static void usage()
 {
   std::cerr <<
-    "Usage: zum ISSUER ROLE_ID... [OPTION]...\n"
-    "       zum ISSUER -r USER_ID -a ACTOR [OPTION]...\n\n"
-    "Issue a one-shot browser enrollment or account-recovery capability.\n"
-    "Run with all service writers quiesced. For first-user enrollment,\n"
-    "ROLE_IDs must name the ordinary administrative roles already seeded\n"
-    "for ISSUER. Recovery suspends USER_ID and invalidates its credentials\n"
-    "and refresh families before issuing the capability.\n\n"
+    "Usage: zum ADMIN_EMAIL [OPTION]...\n\n"
+    "Initialize an empty Zum store and issue a one-shot browser enrollment\n"
+    "capability for its first administrative user. The bootstrap creates\n"
+    "the built-in Zum management actions and the superuser role.\n\n"
     "Options:\n"
     "  -m, --module=MODULE\tZdb store module (default: $ZDB_MODULE)\n"
     "  -c, --connect=CONNECT\tZdb connection (default: $ZDB_CONNECT)\n"
-    "  -r, --recover=USER_ID\trecover an existing user\n"
-    "  -a, --actor=ACTOR\trecovery audit actor\n"
+    "  -i, --issuer=ISSUER\tissuer URL (default: https:// email domain)\n"
     "  -t, --ttl=SECONDS\tcapability lifetime (default: 900)\n"
     "  -l, --log=FILE\tlog destination (default: stderr)\n"
     "  -d, --debug\t\tenable Zdb debug logging\n"
     "  -h, --help\t\tthis help\n" << std::flush;
+}
+
+static bool defaultIssuer(Zum::String &issuer, ZuCSpan admin)
+{
+  unsigned at = 0;
+  for (unsigned i = 0, n = admin.length(); i < n; i++) {
+    if (admin[i] != '@') continue;
+    if (at || !i || i + 1 == n) return false;
+    at = i;
+  }
+  if (!at) return false;
+  issuer << "https://" << admin.offset(at + 1);
+  return true;
+}
+
+template <typename T>
+static bool insertRecord(ZdbTable<T> *table, T data)
+{
+  return ZmBlock<bool>{}([
+    table, data = ZuMv(data)
+  ](auto wake) mutable {
+    table->run(0, [table, data = ZuMv(data), wake = ZuMv(wake)]() mutable {
+      ZdbRowRef<T> row = new ZdbRow<T>{table, ZdbShard{0}};
+      table->insert(row, [
+	data = ZuMv(data), wake = ZuMv(wake)
+      ](ZdbRow<T> *row) mutable {
+	if (!row) { wake(false); return; }
+	new (row->ptr()) T{ZuMv(data)};
+	wake(row->commit());
+      });
+    });
+  });
+}
+
+static bool bootstrap(
+    Zum::Requests *requests, Zum::DBContext *context, Ztls::Random &rng,
+    Options &options, int64_t now, Zum::String &capability)
+{
+  unsigned n = Zum::MgmtOp::N;
+  if (!insertRecord(context->issuers, Zum::Issuer{
+      .id = options.issuer, .nextActionID = n, .authVersion = 1}))
+    return false;
+  for (unsigned i = 0; i < n; i++) {
+    if (!insertRecord(context->actions, Zum::Action{
+	.id = i, .name = Zum::managementAction(i),
+	.state = Zum::State::Active}))
+      return false;
+  }
+  ZtBitmap permitted{n};
+  for (unsigned i = 0; i < n; i++) permitted.set(i);
+  if (!insertRecord(context->roles, Zum::Role{
+      .id = 1, .name = "superuser", .actions = ZuMv(permitted),
+      .state = Zum::State::Active}))
+    return false;
+  Zum::IDVec roleIDs;
+  roleIDs.push(1);
+  return ZmBlock<bool>{}([
+    requests, context, &rng, &options, now, &capability, roleIDs = ZuMv(roleIDs)
+  ](auto wake) mutable {
+    if (!Zum::bootstrapIssue(requests, Zm::now() + ZuTime{30},
+	context, rng, Zum::BootstrapConfig{
+	.issuer = options.issuer, .roleIDs = ZuMv(roleIDs),
+	.userName = options.admin, .label = "bootstrap passkey", .userID = 1,
+	.now = now, .expires = now + options.ttl
+	}, [&capability, wake = ZuMv(wake)](bool ok, Zum::String value) mutable {
+	capability = ZuMv(value);
+	wake(ok);
+	})) wake(false);
+  });
 }
 
 static ZuPtr<const ZfCf::AnyNode> config(const Options &options)
@@ -128,8 +190,8 @@ int main(int argc, char **argv)
     usage();
     return 0;
   }
-  if (!options.issuer || !options.module || !options.connect ||
-      (options.recover ? (!options.actor || options.roles) : !options.roles)) {
+  if (!options.admin || !options.module || !options.connect ||
+      (!options.issuer && !defaultIssuer(options.issuer, options.admin))) {
     usage();
     return 1;
   }
@@ -159,47 +221,13 @@ int main(int argc, char **argv)
       throw ZeEXCEPT(Fatal, "zum", "random initialization failed");
     Zum::String capability;
     int64_t now = Zm::now().sec();
-    bool ok;
-    if (options.recover) {
-      ok = ZmBlock<bool>{}([db, context, &rng, &options,
-          now, &capability](auto wake) mutable {
-	if (!Zum::recoveryIssue(db->requests, Zm::now() + ZuTime{30},
-	  db, context, rng, Zum::RecoveryIssueConfig{
-	  .issuer = ZuMv(options.issuer),
-	  .actor = ZuMv(options.actor),
-	  .userID = options.recover,
-	  .now = now,
-	  .expires = now + options.ttl
-	}, [&capability, wake](
-	    bool ok, Zum::String value) mutable {
-	  capability = ZuMv(value);
-	  wake(ok);
-	})) wake(false);
-      });
-    } else {
-      ok = ZmBlock<bool>{}([context, db, &rng, &options,
-          now, &capability](auto wake) mutable {
-	if (!Zum::bootstrapIssue(db->requests, Zm::now() + ZuTime{30},
-	  context, rng, Zum::BootstrapConfig{
-	  .issuer = ZuMv(options.issuer),
-	  .roleIDs = ZuMv(options.roles),
-	  .now = now,
-	  .expires = now + options.ttl
-	}, [&capability, wake](
-	    bool ok, Zum::String value) mutable {
-	  capability = ZuMv(value);
-	  wake(ok);
-	})) wake(false);
-      });
-    }
+    bool ok = bootstrap(db->requests, context, rng, options, now, capability);
     if (ok) {
       std::cout << capability << '\n' << std::flush;
       ZuClear(capability.data(), capability.length());
       result = 0;
     } else {
-      std::cerr << (options.recover ?
-	"recovery capability unavailable\n" :
-	"bootstrap capability already issued or unavailable\n");
+      std::cerr << "Zum store already initialized or bootstrap failed\n";
     }
     ZmSemaphore requestsDown;
     db->requests->deactivate([&requestsDown]() { requestsDown.post(); });

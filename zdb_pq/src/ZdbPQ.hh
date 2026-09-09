@@ -761,12 +761,7 @@ class OIDs {
     ZmLHashStatic<Bits, ZmLHashLocal<>>);
 
 public:
-  OIDs();
-
-  const char *name(unsigned i) const {
-    if (i < 1 || i >= Value::N) return nullptr;
-    return m_names[i - 1];
-  }
+  static const char *name(unsigned i);
   unsigned oid(unsigned i) const {
     if (i < 1 || i >= Value::N) return ZuCmp<unsigned>::null();
     return m_oids[i - 1];
@@ -788,13 +783,12 @@ public:
     ZmAssert(i >= 1 && i < Value::N);
     m_oids[i - 1] = oid;
     m_types.add(unsigned(oid), i);
-    m_lookup.add(m_names[i - 1], i);	// only add resolved names to lookup
+    m_lookup.add(name(i), i);	// only add resolved names to lookup
   }
 
 private:
   unsigned resolve(PGconn *conn, ZuCSpan name);
 
-  const char	**m_names = nullptr;
   OIDs_		m_oids;
   Types		m_types;
   Lookup	m_lookup;

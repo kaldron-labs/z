@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZumDB.hh>
+#include <zlib/ZumMgmt.hh>
 #include <zlib/ZumRequest.hh>
 
 namespace Zum {

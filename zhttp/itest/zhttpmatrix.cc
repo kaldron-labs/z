@@ -754,41 +754,32 @@ bool writeCaddyfile(
   ZuCSpan path, Proto::T proto, unsigned port, ZuCSpan rootPath,
   ZuCSpan certPath, ZuCSpan keyPath)
 {
-  ZtString<> filePath;
-  filePath << path;
-  FILE *f = fopen(filePath.data(), "w");
-  if (!f) return false;
-  int n;
+  ZtString<> data;
   if (proto == Proto::H1TCP)
-    n = fprintf(f,
+    data <<
       "{\n"
       "  admin off\n"
       "  auto_https off\n"
       "}\n"
-      "http://127.0.0.1:%u {\n"
-      "  root * %.*s\n"
+      "http://127.0.0.1:" << port << " {\n"
+      "  root * " << rootPath << '\n' <<
       "  file_server\n"
-      "}\n",
-      port, int(rootPath.length()), rootPath.data());
+      "}\n";
   else
-    n = fprintf(f,
+    data <<
       "{\n"
       "  admin off\n"
       "  auto_https disable_redirects\n"
-      "  servers :%u {\n"
+      "  servers :" << port << " {\n"
       "    protocols h1 h2 h3\n"
       "  }\n"
       "}\n"
-      "https://localhost:%u {\n"
-      "  tls %.*s %.*s\n"
-      "  root * %.*s\n"
+      "https://localhost:" << port << " {\n"
+      "  tls " << certPath << ' ' << keyPath << '\n' <<
+      "  root * " << rootPath << '\n' <<
       "  file_server\n"
-      "}\n",
-      port, port,
-      int(certPath.length()), certPath.data(),
-      int(keyPath.length()), keyPath.data(),
-      int(rootPath.length()), rootPath.data());
-  return n > 0 && !fclose(f);
+      "}\n";
+  return writeFile(path, data);
 }
 
 void appendReadyCommand(

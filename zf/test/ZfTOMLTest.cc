@@ -4,12 +4,12 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
-
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAlloc.hh>
 #include <zlib/ZmRBTree.hh>
+
+#include <zlib/ZiFile.hh>
 
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfTOML.hh>
@@ -645,25 +645,18 @@ using TOMLFixturePath = ZtString<ZtStringHeapID<"ZfTOML.FixturePath">>;
 static bool fixture(TOMLFixture &data, ZuCSpan name)
 {
   const char *roots[] = {ZF_TOML_TEST_SRCDIR, "zf/test", "."};
-  FILE *file = nullptr;
+  ZiFile file;
   for (auto root: roots) {
     TOMLFixturePath path;
     path << root << "/toml-test/" << name;
-    file = fopen(path, "rb");
+    file.open(path, ZiFile::ReadOnly | ZiFile::GC);
     if (file) break;
   }
   if (!file) return false;
-  if (fseek(file, 0, SEEK_END)) { fclose(file); return false; }
-  long length = ftell(file);
-  if (length < 0 || fseek(file, 0, SEEK_SET)) {
-    fclose(file);
-    return false;
-  }
+  auto length = file.size();
+  if (length < 0 || uint64_t(length) > INT_MAX) return false;
   data.length(unsigned(length));
-  bool ok = !length ||
-    fread(data.data(), 1, unsigned(length), file) == unsigned(length);
-  if (fclose(file)) ok = false;
-  return ok;
+  return !length || file.read(data.data(), unsigned(length)) == int(length);
 }
 
 template <typename L>
@@ -2276,7 +2269,7 @@ int main(int argc, char **argv)
 {
   if (argc == 2 && ZuCSpan{argv[1]} == "--interop") {
     auto out = interopText();
-    return fwrite(out.data(), 1, out.length(), stdout) == out.length() ? 0 : 1;
+    return ZiFile::stdOut().write(out.data(), out.length()) == Zi::OK ? 0 : 1;
   }
   parse(argc, argv);
   ZuTestMain();

@@ -66,18 +66,28 @@ bool waitUntil(L l, unsigned iterations = 2000)
 
 inline void printFile(const char *label, const ZtString<> &path)
 {
-  FILE *f = fopen(path.data(), "r");
-  if (!f) return;
-  std::cout << "# " << label << ':';
-  char buf[256];
-  bool any = false;
-  while (fgets(buf, sizeof(buf), f)) {
-    if (!any) std::cout << '\n';
-    any = true;
-    std::cout << "# " << buf;
+  ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
+  if (!file) return;
+  auto length = file.size();
+  if (length < 0 || uint64_t(length) > INT_MAX) return;
+  ZtString<> data;
+  data.length(unsigned(length));
+  if (length && file.read(data.data(), unsigned(length)) != int(length)) return;
+  auto out = ZiFile::stdOut();
+  out << "# " << label << ":";
+  if (!data) {
+    out << " <empty>\n";
+    return;
   }
-  if (!any) std::cout << " <empty>\n";
-  fclose(f);
+  out << "\n";
+  unsigned offset = 0;
+  while (offset < data.length()) {
+    ZuCSpan tail{data.data() + offset, data.length() - offset};
+    int eol = tail.find("\n");
+    unsigned n = eol < 0 ? tail.length() : unsigned(eol) + 1;
+    out << "# " << ZuCSpan{tail.data(), n};
+    offset += n;
+  }
 }
 
 inline bool writeLocalhostCert_(
@@ -96,11 +106,7 @@ inline bool writeLocalhostCert_(
 }
 
 struct TempDir {
-#ifdef Z_TEST_RESIDUE
   Zi::Path	path;
-#else
-  char		path[PATH_MAX]{};
-#endif
   ZtString<>	certPath;
   ZtString<>	keyPath;
 
@@ -116,8 +122,8 @@ struct TempDir {
     name << prefix << '-' << ZuBox<unsigned>{++counter};
     path = ZiTestResidue::dir(name);
 #else
-    snprintf(path, sizeof(path), "/tmp/%s.XXXXXX", prefix);
-    if (!mkdtemp(path)) return false;
+    path << ZiFile::tmpDir() << '/' << prefix << ".XXXXXX";
+    if (!mkdtemp(path.data())) return false;
 #endif
     certPath = pathOf("cert.pem");
     keyPath = pathOf("key.pem");
@@ -133,22 +139,16 @@ struct TempDir {
   ZtString<> pathOf(const char *name) const
   {
     ZtString<> s;
-#ifdef Z_TEST_RESIDUE
     s << path << '/' << name;
-#else
-    s << static_cast<const char *>(path) << '/' << name;
-#endif
     return s;
   }
 
 #ifndef Z_TEST_RESIDUE
   void cleanup()
   {
-    if (!path[0]) return;
-    ZtString<> cmd;
-    cmd << "rm -rf " << static_cast<const char *>(path);
-    ::system(cmd.data());
-    path[0] = 0;
+    if (!path) return;
+    ZiFile::removeTree(path);
+    path.null();
   }
 #endif
 };
@@ -242,28 +242,21 @@ inline bool writeCaddyfile(
   ZuCSpan path, unsigned port, ZuCSpan certPath, ZuCSpan keyPath,
   ZuCSpan route, ZuCSpan body)
 {
-  ZtString<> filePath;
-  filePath << path;
-  FILE *f = fopen(filePath.data(), "w");
-  if (!f) return false;
-  int n = fprintf(f,
+  ZtString<> data;
+  data <<
     "{\n"
     "  admin off\n"
     "  auto_https disable_redirects\n"
-    "  servers :%u {\n"
+    "  servers :" << port << " {\n"
     "    protocols h1 h2 h3\n"
     "  }\n"
     "}\n"
-    "https://localhost:%u {\n"
-    "  tls %.*s %.*s\n"
-    "  respond %.*s \"%.*s\" 200\n"
-    "}\n",
-    port, port,
-    int(certPath.length()), certPath.data(),
-    int(keyPath.length()), keyPath.data(),
-    int(route.length()), route.data(),
-    int(body.length()), body.data());
-  return n > 0 && !fclose(f);
+    "https://localhost:" << port << " {\n"
+    "  tls " << certPath << ' ' << keyPath << '\n' <<
+    "  respond " << route << " \"" << body << "\" 200\n"
+    "}\n";
+  ZiFile file{Zi::Path{path}, ZiFile::Write | ZiFile::GC};
+  return file && file.write(data.data(), data.length()) == Zi::OK;
 }
 
 #ifndef _WIN32

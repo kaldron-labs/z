@@ -10,7 +10,6 @@
 #include <arpa/inet.h>
 #include <limits.h>
 #include <netinet/in.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -24,6 +23,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Ztls.hh>
@@ -246,27 +246,20 @@ void fill_payload(ZtArray<uint8_t> &payload, unsigned len, uint8_t seed)
 
 bool write_bytes(const char *path, const ZtArray<uint8_t> &data)
 {
-  FILE *file = fopen(path, "wb");
+  ZiFile file{path, ZiFile::Write | ZiFile::GC};
   if (!file) return false;
-  bool ok = !data.length() ||
-    fwrite(data.data(), 1, data.length(), file) == data.length();
-  if (fclose(file)) ok = false;
-  return ok;
+  return !data.length() || file.write(data.data(), data.length()) == Zi::OK;
 }
 
 template <typename A>
 bool read_bytes(const char *path, A &data)
 {
-  FILE *file = fopen(path, "rb");
+  ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return false;
-  if (fseek(file, 0, SEEK_END)) { fclose(file); return false; }
-  long len = ftell(file);
-  if (len < 0) { fclose(file); return false; }
-  if (fseek(file, 0, SEEK_SET)) { fclose(file); return false; }
+  auto len = file.size();
+  if (len < 0 || uint64_t(len) > INT_MAX) return false;
   data.length(unsigned(len));
-  bool ok = !len || fread(data.data(), 1, unsigned(len), file) == unsigned(len);
-  if (fclose(file)) ok = false;
-  return ok;
+  return !len || file.read(data.data(), unsigned(len)) == int(len);
 }
 
 struct CertIssue {

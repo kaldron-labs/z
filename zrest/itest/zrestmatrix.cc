@@ -7,7 +7,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -19,6 +18,8 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZiFile.hh>
 
 #include "ZhttpTestUtil.hh"
 #include "ZrestITestPorts.hh"
@@ -273,10 +274,9 @@ static Command clientCommand(bool go, unsigned port,
 
 static void failureOutput(const Child &server, const Child &client)
 {
-  printf("# server (%.*s):\n", int(server.name.length()), server.name.data());
-  fwrite(server.output.data(), 1, server.output.length(), stdout);
-  printf("# client (%.*s):\n", int(client.name.length()), client.name.data());
-  fwrite(client.output.data(), 1, client.output.length(), stdout);
+  auto out = ZiFile::stdOut();
+  out << "# server (" << server.name << "):\n" << server.output <<
+    "# client (" << client.name << "):\n" << client.output;
 }
 
 static bool runPair(bool goClient, bool goServer, unsigned requests,
@@ -352,8 +352,9 @@ static bool runProbe(bool goServer)
 
 int main()
 {
+  auto out = ZiFile::stdOut();
 #ifdef _WIN32
-  fputs("1..0 # SKIP process fixture is not available on Windows\n", stdout);
+  out << "1..0 # SKIP process fixture is not available on Windows\n";
   return 0;
 #else
   struct sigaction action{};
@@ -363,16 +364,18 @@ int main()
   sigaction(SIGTERM, &action, nullptr);
   if (!exists("../interop/go/client") || !exists("../interop/go/server") ||
       !exists("./zrestprobe")) {
-    fputs("1..0 # SKIP Go interoperability fixtures unavailable\n", stdout);
+    out << "1..0 # SKIP Go interoperability fixtures unavailable\n";
     return 0;
   }
   ZiTestResidue::init("zrestmatrix");
-  fputs("1..9\n", stdout);
+  out << "1..9\n";
   unsigned test = 0, failed = 0;
 #define RUN(name, expression) do { \
     if (interrupted) break; \
     bool ok = (expression); ++test; if (!ok) ++failed; \
-    printf("%s%u - %s\n", ok ? "ok " : "not ok ", test, name); \
+    MatrixString result; \
+    result << (ok ? "ok " : "not ok ") << test << " - " << name << '\n'; \
+    out << result; \
   } while (0)
   RUN("zrest to Go server", runPair(false, true, 2, 1, "2", "3s", true, false));
   RUN("Go client to zrestd", runPair(true, false, 2, 1, "2s", "1s", true, false));

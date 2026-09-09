@@ -4,9 +4,9 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
-
 #include <zlib/ZuTestUtil.hh>
+
+#include <zlib/ZiFile.hh>
 
 using namespace ZuTestUtil;
 
@@ -17,9 +17,8 @@ static void schemas()
   for (auto name : names) {
     ZtString<> path{ZDASH_SRCDIR};
     path << "/fbs/" << name << ".fbs";
-    FILE *file = fopen(path, "r");
+    ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
     ZuCHECK(file, name);
-    if (file) fclose(file);
   }
 }
 

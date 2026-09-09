@@ -7,6 +7,7 @@
 #include <iostream>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZiFile.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
@@ -996,21 +997,17 @@ bool stopServer(Server &server)
 
 bool writeHttpCaddyfile(ZuCSpan path, unsigned port, ZuCSpan body)
 {
-  ZtString<> filePath;
-  filePath << path;
-  FILE *f = fopen(filePath.data(), "w");
-  if (!f) return false;
-  int n = fprintf(f,
-	    "{\n"
-	    "  admin off\n"
-	    "}\n"
-	    "http://127.0.0.1:%u {\n"
-	    "  header Content-Length \"%lu\"\n"
-	    "  respond %.*s \"%.*s\" 200\n"
-	    "}\n",
-	    port, body.length(), int(Path.length()), Path.data(),
-	    int(body.length()), body.data());
-  return n > 0 && !fclose(f);
+  ZtString<> data;
+  data <<
+    "{\n"
+    "  admin off\n"
+    "}\n"
+    "http://127.0.0.1:" << port << " {\n"
+    "  header Content-Length \"" << body.length() << "\"\n"
+    "  respond " << Path << " \"" << body << "\" 200\n"
+    "}\n";
+  ZiFile file{Zi::Path{path}, ZiFile::Write | ZiFile::GC};
+  return file && file.write(data.data(), data.length()) == Zi::OK;
 }
 
 bool waitHttpCaddyReady(unsigned port)

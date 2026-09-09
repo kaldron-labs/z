@@ -5,7 +5,6 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <limits.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -138,18 +137,27 @@ static bool writeFile(ZuCSpan path, ZuCSpan data, unsigned mode = 0666)
 
 static void printFile(const char *label, ZuCSpan path)
 {
-  ZtString<> path_;
-  path_ << path;
-  FILE *file = ::fopen(path_.data(), "r");
+  ZiFile file{Zi::Path{path}, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return;
-  std::cout << "# " << label << ":\n";
-  char buf[512];
-  while (::fgets(buf, sizeof(buf), file)) std::cout << "# " << buf;
-  ::fclose(file);
+  auto length = file.size();
+  if (length < 0 || uint64_t(length) > INT_MAX) return;
+  ZtString<> data;
+  data.length(unsigned(length));
+  if (length && file.read(data.data(), unsigned(length)) != int(length)) return;
+  auto out = ZiFile::stdOut();
+  out << "# " << label << ":\n";
+  unsigned offset = 0;
+  while (offset < data.length()) {
+    ZuCSpan tail{data.data() + offset, data.length() - offset};
+    int eol = tail.find("\n");
+    unsigned n = eol < 0 ? tail.length() : unsigned(eol) + 1;
+    out << "# " << ZuCSpan{tail.data(), n};
+    offset += n;
+  }
 }
 
 struct TempDir {
-  char		path[PATH_MAX]{};
+  Zi::Path	path;
   ZtString<>	script;
   ZtString<>	log;
 
@@ -157,23 +165,23 @@ struct TempDir {
 
   bool init()
   {
-    ::snprintf(path, sizeof(path), "/tmp/zringmatrix.XXXXXX");
-    if (!::mkdtemp(path)) return false;
-    script << static_cast<const char *>(path) << "/case.sh";
-    log << static_cast<const char *>(path) << "/case.log";
+    path << ZiFile::tmpDir() << "/zringmatrix.XXXXXX";
+    if (!::mkdtemp(path.data())) return false;
+    script << path << "/case.sh";
+    log << path << "/case.log";
     return true;
   }
 
   void cleanup()
   {
-    if (!path[0]) return;
+    if (!path) return;
     ZiFile::remove(script);
     ZiFile::remove(log);
     ZiFile::rmdir(path);
-    path[0] = 0;
+    path.null();
   }
 
-  void preserve() { path[0] = 0; }
+  void preserve() { path.null(); }
 };
 
 struct CaseScript {
@@ -185,7 +193,7 @@ struct CaseScript {
   CaseScript(const TempDir &temp)
   {
     unsigned pathLen = unsigned(::strlen(temp.path));
-    ZuCSpan nonce{temp.path + pathLen - 6, 6};
+    ZuCSpan nonce{temp.path.data() + pathLen - 6, 6};
     ring << "ZiRingMatrix." << nonce << '.' << ZuBoxed(Zm::getPID()) << '.' <<
       ZuBoxed(++caseID);
     exe << matrixDir << "/../test/ZiRingTest";

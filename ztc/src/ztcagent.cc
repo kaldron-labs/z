@@ -88,7 +88,7 @@ int main(int argc, char **argv)
     }
 
     ZiLog::init("ztcagent");
-    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+    ZiLog::sink(ZiLog::sysSink());
     ZiLog::start();
 
     ZmTrap::sigintFn(trapped);
