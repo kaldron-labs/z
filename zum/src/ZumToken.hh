@@ -27,13 +27,13 @@ namespace RevokeIssue {
   enum { OK = -1 };
 }
 
-using SignatureFn = ZmFn<void(Bytes),
-  ZmFnHeapID<"Zum.SignatureFn">>;
-using SignFn = ZmFn<void(ZuCSpan, ZuBSpan, SignatureFn),
-  ZmFnHeapID<"Zum.SignFn">>;
-using TokenFn = ZmFn<void(int, TokenResponse),
-  ZmFnHeapID<"Zum.TokenFn">>;
-using RevokeFn = ZmFn<void(int), ZmFnHeapID<"Zum.RevokeFn">>;
+ZuDerive(SignatureFn,
+  (ZmFn<void(Bytes), ZmFnHeapID<"Zum.SignatureFn">>));
+ZuDerive(SignFn, (ZmFn<void(ZuCSpan, ZuBSpan, SignatureFn),
+  ZmFnHeapID<"Zum.SignFn">>));
+ZuDerive(TokenFn, (ZmFn<void(int, TokenResponse),
+  ZmFnHeapID<"Zum.TokenFn">>));
+ZuDerive(RevokeFn, (ZmFn<void(int), ZmFnHeapID<"Zum.RevokeFn">>));
 
 struct TokenConfig {
   String		issuer;

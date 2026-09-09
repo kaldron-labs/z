@@ -82,8 +82,8 @@ struct OIDCLimits {
   int64_t	clockSkew = 60;
 };
 
-using OIDCUserFn = ZmFn<void(bool, User, IDVec),
-  ZmFnHeapID<"Zum.OIDCUserFn">>;
+ZuDerive(OIDCUserFn, (ZmFn<void(bool, User, IDVec),
+  ZmFnHeapID<"Zum.OIDCUserFn">>));
 
 struct OIDCHTTPRequest {
   String	url;
@@ -93,15 +93,16 @@ struct OIDCHTTPRequest {
   unsigned	method = OIDCHTTPMethod::GET;
 };
 
-using OIDCHTTPDoneFn = ZmFn<void(unsigned, String),
-  ZmFnHeapID<"Zum.OIDCHTTPDoneFn">>;
-using OIDCHTTPFn = ZmFn<void(OIDCHTTPRequest, OIDCHTTPDoneFn),
-  ZmFnHeapID<"Zum.OIDCHTTPFn">>;
-using OIDCBeginFn = ZmFn<void(bool, String),
-  ZmFnHeapID<"Zum.OIDCBeginFn">>;
-using OIDCFinishFn = ZmFn<void(bool, Bytes, User, IDVec, int64_t),
-  ZmFnHeapID<"Zum.OIDCFinishFn">>;
-using OIDCClockFn = ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>;
+ZuDerive(OIDCHTTPDoneFn, (ZmFn<void(unsigned, String),
+  ZmFnHeapID<"Zum.OIDCHTTPDoneFn">>));
+ZuDerive(OIDCHTTPFn, (ZmFn<void(OIDCHTTPRequest, OIDCHTTPDoneFn),
+  ZmFnHeapID<"Zum.OIDCHTTPFn">>));
+ZuDerive(OIDCBeginFn, (ZmFn<void(bool, String),
+  ZmFnHeapID<"Zum.OIDCBeginFn">>));
+ZuDerive(OIDCFinishFn, (ZmFn<void(bool, Bytes, User, IDVec, int64_t),
+  ZmFnHeapID<"Zum.OIDCFinishFn">>));
+ZuDerive(OIDCClockFn,
+  (ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>));
 
 class OIDCState;
 

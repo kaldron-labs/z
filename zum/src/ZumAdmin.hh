@@ -22,10 +22,11 @@ namespace AdminError {
   enum { OK = 0, Invalid, Storage };
 }
 
-using AdminFn = ZmFn<void(int), ZmFnHeapID<"Zum.AdminFn">>;
-using ActionFn = ZmFn<void(int, ActionID), ZmFnHeapID<"Zum.ActionFn">>;
-using CleanupFn = ZmFn<void(int, unsigned),
-  ZmFnHeapID<"Zum.CleanupFn">>;
+ZuDerive(AdminFn, (ZmFn<void(int), ZmFnHeapID<"Zum.AdminFn">>));
+ZuDerive(ActionFn,
+  (ZmFn<void(int, ActionID), ZmFnHeapID<"Zum.ActionFn">>));
+ZuDerive(CleanupFn, (ZmFn<void(int, unsigned),
+  ZmFnHeapID<"Zum.CleanupFn">>));
 
 ZumExtern String auditID(ZuBSpan);
 ZumExtern void auditWrite(DBContext *, Audit, AdminFn);

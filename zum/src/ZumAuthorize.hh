@@ -47,16 +47,16 @@ struct AuthorizeFinishConfig {
   int64_t		codeExpires = 0;
 };
 
-using AuthorizeFn = ZmFn<void(int, AuthorizeResult),
-  ZmFnHeapID<"Zum.AuthorizeFn">>;
-using PolicyDoneFn = ZmFn<void(bool, ZtBitmap),
-  ZmFnHeapID<"Zum.PolicyDoneFn">>;
-using PolicyFn = ZmFn<void(
+ZuDerive(AuthorizeFn, (ZmFn<void(int, AuthorizeResult),
+  ZmFnHeapID<"Zum.AuthorizeFn">>));
+ZuDerive(PolicyDoneFn, (ZmFn<void(bool, ZtBitmap),
+  ZmFnHeapID<"Zum.PolicyDoneFn">>));
+ZuDerive(PolicyFn, (ZmFn<void(
   const User &, const Client &, const ScopeSelection &,
   const ZtBitmap &, PolicyDoneFn),
-  ZmFnHeapID<"Zum.PolicyFn">>;
-using AuthorizeCodeFn = ZmFn<void(int, String),
-  ZmFnHeapID<"Zum.AuthorizeCodeFn">>;
+  ZmFnHeapID<"Zum.PolicyFn">>));
+ZuDerive(AuthorizeCodeFn, (ZmFn<void(int, String),
+  ZmFnHeapID<"Zum.AuthorizeCodeFn">>));
 
 ZumExtern bool authorizeRequest(
   Requests *, ZuTime deadline, DBContext *, Ztls::Random &,

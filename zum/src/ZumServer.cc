@@ -167,11 +167,11 @@ bool Server::init(
 void Server::final()
 {
   m_oidc.final();
-  m_sign = {};
-  m_admit = {};
-  m_policy = {};
-  m_page = {};
-  m_clock = {};
+  m_sign = SignFn{};
+  m_admit = AdmitFn{};
+  m_policy = PolicyFn{};
+  m_page = PageFn{};
+  m_clock = ClockFn{};
   m_config = {};
   m_requests = nullptr;
   m_context = nullptr;

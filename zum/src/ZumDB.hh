@@ -75,8 +75,8 @@ struct AuthorityData {
   ZtBitmap	actions;
 };
 
-using AuthorityFn = ZmFn<void(int, AuthorityData),
-  ZmFnHeapID<"Zum.AuthorityFn">>;
+ZuDerive(AuthorityFn, (ZmFn<void(int, AuthorityData),
+  ZmFnHeapID<"Zum.AuthorityFn">>));
 ZuDerive(SagaFn, (ZmFn<void(bool), ZmFnHeapID<"Zum.SagaFn">>));
 
 ZumExtern void loadGrantAuth(
@@ -2057,13 +2057,15 @@ ZfbStruct(ZumAPI, ActionChange,
   (((oldState),		(Ctor<4>, Enum<State::Map>)), (Int8)),
   (((newState),		(Ctor<5>, Enum<State::Map>)), (Int8)));
 
-using Sagas = ZuTypeList<
-  Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
-  UserChange, RoleChange, CredChange, ScopeChange, ClientChange, ActionChange>;
+struct SagaCatalog {
+  using List = ZuTypeList<
+    Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
+    UserChange, RoleChange, CredChange, ScopeChange, ClientChange, ActionChange>;
+};
 struct MSaga;
-using MSagaBase = ZdbMSaga<Sagas, MSaga>;
+using MSagaBase = ZdbMSaga<SagaCatalog, MSaga>;
 struct MSaga : public MSagaBase { ZuDerive_(MSaga, MSagaBase) };
-ZuDerive(DB, (ZdbSagaDB<DBContext, Sagas, SagaFn, MSaga>));
+ZuDerive(DB, (ZdbSagaDB<DBContext, SagaCatalog, SagaFn, MSaga>));
 
 ZumExtern ZmRef<DBContext> registerSchema(DB *);
 

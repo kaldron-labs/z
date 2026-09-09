@@ -87,13 +87,15 @@ struct ServerConfig {
   unsigned	authMethod = AuthMethod::Passkey;
 };
 
-using ServerFn = ZmFn<void(ServerReply), ZmFnHeapID<"Zum.ServerFn">>;
-using ClockFn = ZmFn<int64_t(), ZmFnHeapID<"Zum.ClockFn">>;
-using PageFn = ZmFn<String(Bytes, String), ZmFnHeapID<"Zum.PageFn">>;
-using AdmitDoneFn = ZmFn<void(PasskeyAdmission),
-  ZmFnHeapID<"Zum.AdmitDoneFn">>;
-using AdmitFn = ZmFn<void(PasskeyStart, AdmitDoneFn),
-  ZmFnHeapID<"Zum.AdmitFn">>;
+ZuDerive(ServerFn,
+  (ZmFn<void(ServerReply), ZmFnHeapID<"Zum.ServerFn">>));
+ZuDerive(ClockFn, (ZmFn<int64_t(), ZmFnHeapID<"Zum.ClockFn">>));
+ZuDerive(PageFn,
+  (ZmFn<String(Bytes, String), ZmFnHeapID<"Zum.PageFn">>));
+ZuDerive(AdmitDoneFn, (ZmFn<void(PasskeyAdmission),
+  ZmFnHeapID<"Zum.AdmitDoneFn">>));
+ZuDerive(AdmitFn, (ZmFn<void(PasskeyStart, AdmitDoneFn),
+  ZmFnHeapID<"Zum.AdmitFn">>));
 
 class ZumAPI Server {
   Server(const Server &) = delete;

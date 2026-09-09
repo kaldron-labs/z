@@ -186,10 +186,10 @@ ZfbStruct(, BalanceTransfer,
   (((toID),		(Ctor<2>)),	(UInt64)),
   (((amount),		(Ctor<3>)),	(Int64)));
 
-using Sagas = ZuTypeList<BalanceTransfer>;
-using Saga = ZdbMSaga<Sagas>;
+struct SagaCatalog { using List = ZuTypeList<BalanceTransfer>; };
+using Saga = ZdbMSaga<SagaCatalog>;
 
-struct DB : public ZdbSagaDB<Context, Sagas> {
+struct DB : public ZdbSagaDB<Context, SagaCatalog> {
   ZmSemaphore active;
 };
 
@@ -298,8 +298,7 @@ static int run()
     saga->init(BalanceTransfer{{}, 1, 1, 2, 125});
     ok = ZmBlock<bool>{}([
       db = db.ptr(), saga = ZuMv(saga), context = contextPtr
-    ](
-	auto wake) mutable {
+    ](auto wake) mutable {
       if (!db->saga(transferShard(1), ZdbSagaID{1}, ZuMv(saga),
 	[wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
 	[context](bool ok) {

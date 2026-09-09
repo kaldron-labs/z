@@ -27,7 +27,7 @@ class ZumAPI Request : public ZumObject {
   Request &operator =(const Request &) = delete;
 
 public:
-  using Fn = ZmFn<void(), ZmFnHeapID<"Zum.Request.Fn">>;
+  ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Request.Fn">>));
 
   void complete(Fn);
 
@@ -54,9 +54,9 @@ class ZumAPI Requests : public ZumObject {
   Requests &operator =(const Requests &) = delete;
 
 public:
-  using StartFn = ZmFn<void(ZmRef<Request>),
-    ZmFnHeapID<"Zum.Requests.StartFn">>;
-  using Fn = ZmFn<void(), ZmFnHeapID<"Zum.Requests.Fn">>;
+  ZuDerive(StartFn, (ZmFn<void(ZmRef<Request>),
+    ZmFnHeapID<"Zum.Requests.StartFn">>));
+  ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Requests.Fn">>));
 
   Requests() = default;
 

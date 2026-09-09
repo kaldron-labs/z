@@ -74,7 +74,8 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	  saga->findDel<0>(context->orders, 0, ZuFwdTuple("SAGA", orderID),
 	    ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
 	      if (context->pauseReverse) {
-		context->pausedComplete = PauseFn{ZuMv(complete)};
+		context->pausedComplete = PauseFn{
+		  [complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
 		context->paused->post();
 		return;
 	      }
@@ -108,7 +109,8 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	++context->runs;
 	++context->deletes;
 	if (context->paused) {
-	  context->pausedComplete = PauseFn{ZuMv(complete)};
+	  context->pausedComplete = PauseFn{
+	    [complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
 	  context->paused->post();
 	  return {};
 	}
@@ -126,11 +128,11 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-using Sagas = ZuTypeList<LiveSaga>;
+struct SagaCatalog { using List = ZuTypeList<LiveSaga>; };
 
 } // zdbtest
 
-using DB = ZdbSagaDB<zdbtest::Context, zdbtest::Sagas>;
+using DB = ZdbSagaDB<zdbtest::Context, zdbtest::SagaCatalog>;
 
 namespace Mode { enum { Live, Reconnect, Crash, Replay, NoCommit }; }
 enum { CrashStatus = 73 }; // distinguishes the deliberate cut from a failed child
@@ -233,7 +235,8 @@ static void exercise(unsigned mode)
       mode == Mode::NoCommit || mode == Mode::Crash ?
       zdbtest::Fault::NoCommit : zdbtest::Fault::None;
     contextPtr->pauseReverse = mode == Mode::Crash;
-    ZmRef<ZdbMSaga<zdbtest::Sagas>> saga = new ZdbMSaga<zdbtest::Sagas>{};
+    ZmRef<ZdbMSaga<zdbtest::SagaCatalog>> saga =
+      new ZdbMSaga<zdbtest::SagaCatalog>{};
     saga->init(zdbtest::LiveSaga{{}, 1});
     bool admitted = ZmBlock<bool>{}([
       db = db.ptr(), saga = ZuMv(saga), context = contextPtr

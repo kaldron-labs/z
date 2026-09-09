@@ -59,10 +59,10 @@ struct SagaB : public ZdbSagaBase<Context> {
 ZfbStruct(, SagaB,
   (((value), (Ctor<0>)), (UInt32)));
 
-using Sagas = ZuTypeList<SagaA, SagaB>;
+struct Sagas { using List = ZuTypeList<SagaA, SagaB>; };
 
-ZuAssert((Zdb_::SagaBasesValid_<Context, Sagas>{}));
-ZuAssert((!Zdb_::SagaBasesValid_<OtherContext, Sagas>{}));
+ZuAssert((Zdb_::SagaBasesValid_<Context, Sagas::List>{}));
+ZuAssert((!Zdb_::SagaBasesValid_<OtherContext, Sagas::List>{}));
 
 namespace Trace {
   enum { Intent, Enter, Commit, Return, Probe, Next, Read };
@@ -313,7 +313,7 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-using LiveSagas = ZuTypeList<LiveSaga>;
+struct LiveSagas { using List = ZuTypeList<LiveSaga>; };
 
 struct ShortSaga : public ZdbSagaBase<LiveContext> {
   using Base = ZdbSagaBase<LiveContext>;
@@ -336,6 +336,9 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
 };
 ZfbStruct(, ChangedSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
+
+struct ShortCatalog { using List = ZuTypeList<ShortSaga>; };
+struct ChangedCatalog { using List = ZuTypeList<ChangedSaga>; };
 
 struct PayloadContext : public ZmPolymorph {
   ZmSemaphore entered;
@@ -439,7 +442,8 @@ static void rows()
 
 static bool payload(unsigned size)
 {
-  using M = ZdbMSaga<ZuTypeList<zdbtest::PayloadSaga>>;
+  struct Catalog { using List = ZuTypeList<zdbtest::PayloadSaga>; };
+  using M = ZdbMSaga<Catalog>;
   Zdb_::SagaPayload input;
   input.length(size, false);
   for (unsigned i = 0; i < size; ++i) input[i] = uint8_t(i);
@@ -487,7 +491,7 @@ static void dispatch()
   }));
 
   ZtArray<Zdb_::SagaTypeStep> catalog;
-  for (unsigned i = 0; i < zdbtest::Sagas::N; ++i) {
+  for (unsigned i = 0; i < zdbtest::Sagas::List::N; ++i) {
     Zdb_::SagaTypeStep row;
     for (unsigned j = 0; M::catalog(i, j, row); ++j)
       catalog.push(ZuMv(row));
@@ -510,7 +514,7 @@ static void catalog()
   using M = ZdbMSaga<zdbtest::Sagas>;
   auto context = []() {
     ZmRef<Zdb_::SagaCatalog> c = new Zdb_::SagaCatalog{};
-    c->seen.length(zdbtest::Sagas::N, false);
+    c->seen.length(zdbtest::Sagas::List::N, false);
     memset(c->seen.data(), 0, c->seen.length());
     return c;
   };
@@ -1468,9 +1472,9 @@ static void catalogStartup()
   ZuCheck((catalogStart<zdbtest::LiveContext, zdbtest::LiveSagas>(
     config, &mx, store, 3)));
   ZuCheck((catalogStart<zdbtest::LiveContext,
-    ZuTypeList<zdbtest::ShortSaga>>(config, &mx, store, 0)));
+    zdbtest::ShortCatalog>(config, &mx, store, 0)));
   ZuCheck((catalogStart<zdbtest::LiveContext,
-    ZuTypeList<zdbtest::ChangedSaga>>(config, &mx, store, 0)));
+    zdbtest::ChangedCatalog>(config, &mx, store, 0)));
   // All handles must have closed; neither failed build may alter the catalog.
   ZuCheck((catalogStart<zdbtest::LiveContext, zdbtest::LiveSagas>(
     config, &mx, store, 3)));
@@ -1752,7 +1756,7 @@ static void admission()
 static void payloadAdmission(unsigned size)
 {
   ZuTestScopeRT(payloadAdmission);
-  using Sagas = ZuTypeList<zdbtest::PayloadSaga>;
+  struct Sagas { using List = ZuTypeList<zdbtest::PayloadSaga>; };
   using DB = ZdbSagaDB<zdbtest::PayloadContext, Sagas>;
   using M = ZdbMSaga<Sagas>;
   auto config = cf(true);

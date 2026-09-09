@@ -33,7 +33,7 @@ void Request::finish_(Fn fn)
   m_done = true;
   m_requests->m_scheduler->del(&m_timer);
   m_requests->remove_(this);
-  m_cancel = {};
+  m_cancel = Fn{};
   if (fn) fn();
 }
 

@@ -420,9 +420,9 @@ void DB::final()
     m_sagaQueue.clean();
     m_sagaScan = nullptr;
     m_sagaHash = nullptr;
-    m_sagaCatalogFn = {};
-    m_sagaScanFn = {};
-    m_sagaRunFn = {};
+    m_sagaCatalogFn = SagaRecoveryFn{};
+    m_sagaScanFn = SagaRecoveryFn{};
+    m_sagaRunFn = SagaRunFn{};
     m_sagaState = SagaState::Inactive;
     m_sagaEpoch = 0;
     m_sagaLive = 0;

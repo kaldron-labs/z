@@ -39,7 +39,8 @@
 
 using namespace ZuTestUtil;
 
-ZuAssert((Zdb_::SagaBasesValid_<Zum::DBContext, Zum::Sagas>{}));
+ZuAssert((Zdb_::SagaBasesValid_<
+  Zum::DBContext, Zum::SagaCatalog::List>{}));
 
 static void requests()
 {
