@@ -4,13 +4,16 @@
 
 - "startup replays recovered incomplete sagas that are crash residue from a previous run"
 
+## Zum
+
+- check implementation
+  - need administration of all tables for built-in use
+  - need to prove OIDC integration
+
 ## Ztc
 
-- `ztcagent`:
+- `ztcagent`
   - have it use `ZiLog`'s syslog sink by default
-
-- `ztcvault`
-  - token issuer (JWT)
 
 - `ztchub`
   - depends on `zdb`, `zum`
@@ -19,7 +22,7 @@
   - server to telemetry front-end clients, e.g. `zdash`
     - client/server protocol is flatbuffers over websockets
 
-- zcmd effectively goes away
+- zcmd effectively goes away?
   - replaced by node.js generic openapi client
 
 ## Zdb

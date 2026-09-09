@@ -7,6 +7,7 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZtcpLib.hh Ztcp.hh
 lib_LTLIBRARIES = libZtcp.la
 libZtcp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTCP_EXPORTS
+libZtcp_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZtcp_la_SOURCES = ZtcpLib.cc
 libZtcp_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \

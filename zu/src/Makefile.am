@@ -23,6 +23,7 @@ pkginclude_HEADERS = \
 	\
 	zu_lib.h zu_decimal.h zu_time.h zu_bitmap.h
 lib_LTLIBRARIES = libZu.la
+libZu_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZu_la_SOURCES = \
 	ZuLib.cc ZuUTF.cc ZuTime.cc ZuDateTime.cc ZuTest.cc \
 	ZuDemangle.cc \

@@ -16,6 +16,7 @@ pkginclude_HEADERS = \
 	ZiResolver.hh ZiHeapCSV.hh ZiHashCSV.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 lib_LTLIBRARIES = libZi.la
+libZi_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZi_la_SOURCES = \
 	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
 	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc ZiProgram.cc \

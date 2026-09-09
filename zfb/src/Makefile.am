@@ -16,6 +16,7 @@ pkginclude_HEADERS = ZfbLib.hh Zfb.hh ZfbStruct.hh ${FBS_H}
 fbsdir = $(datarootdir)/${PACKAGE}/fbs
 dist_fbs_DATA = fbs/zfb_types.fbs
 lib_LTLIBRARIES = libZfb.la
+libZfb_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZfb_la_SOURCES = ZfbLib.cc Zfb.cc
 libZfb_la_LIBADD = \
 	$(top_builddir)/zi/src/libZi.la \

@@ -12,6 +12,7 @@ pkginclude_HEADERS = ZGtkLib.hh \
 	ZGtkTreeModel.hh
 lib_LTLIBRARIES = libZGtk.la
 libZGtk_la_CPPFLAGS = $(AM_CPPFLAGS) -DZGTK_EXPORTS 
+libZGtk_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZGtk_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZGtk_la_SOURCES = ZGtkLib.cc ZGtkApp.cc
 libZGtk_la_LIBADD = $(top_builddir)/zv/src/libZv.la \
