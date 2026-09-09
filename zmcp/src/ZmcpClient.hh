@@ -543,12 +543,11 @@ inline const ID &PendingEntry_KeyAxor(const PendingEntry &entry) {
   return entry.id;
 }
 
-ZuDerive(PendingHash,
-  (ZmHash<PendingEntry,
-    ZmHashNode<PendingEntry,
-      ZmHashKey<PendingEntry_KeyAxor,
+ZmHashDerive(PendingHash, PendingEntry,
+  (ZmHashNode<PendingEntry,
+    ZmHashKey<PendingEntry_KeyAxor,
 	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zmcp.Pending">>>>>));
+	  ZmHashHeapID<"Zmcp.Pending">>>>));
 
 class PendingCalls {
 public:
@@ -1323,12 +1322,11 @@ inline const ID &ActiveEntry_KeyAxor(const ActiveEntry &entry) {
   return entry.id;
 }
 
-ZuDerive(ActiveHash,
-  (ZmHash<ActiveEntry,
-    ZmHashNode<ActiveEntry,
-      ZmHashKey<ActiveEntry_KeyAxor,
+ZmHashDerive(ActiveHash, ActiveEntry,
+  (ZmHashNode<ActiveEntry,
+    ZmHashKey<ActiveEntry_KeyAxor,
 	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zmcp.HTTP.Active">>>>>));
+	  ZmHashHeapID<"Zmcp.HTTP.Active">>>>));
 
 template <typename Heap>
 struct CancelAction_ : public Heap, public ZmObject {

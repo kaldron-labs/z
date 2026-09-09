@@ -207,7 +207,7 @@ private:
   ZiFile		m_index;
 };
 
-ZuDerive(AlertQueue, (ZmQueue<ZmRef<ZiIOBuf>>));
+ZmQueueDerive(AlertQueue, ZmRef<ZiIOBuf>, ZmQueue_Defaults);
 
 template <typename App_, typename Link_>
 class Server : public ZmEngine<Server<App_, Link_>>, ZvEngineMgr {
@@ -445,21 +445,18 @@ private:
     m_alertQueue.push(ZuMv(buf));
   }
 
-  ZuDerive(Queues,
-    (ZmRBTreeKV<ZuTuple<unsigned, ZuID>, QueueFn,
-      ZmRBTreeUnique<true>>));
+  ZmRBTreeKVDerive(Queues, (ZuTuple<unsigned, ZuID>), QueueFn,
+    ZmRBTreeUnique<true>);
 
   static ZuCSpan EngineIDAxor(const ZvEngine *engine) { return engine->id(); }
-  ZuDerive(Engines,
-    (ZmRBTree<ZmRef<ZvEngine>,
-      ZmRBTreeKey<EngineIDAxor,
-	ZmRBTreeUnique<true>>>));
+  ZmRBTreeDerive(Engines, ZmRef<ZvEngine>,
+    ZmRBTreeKey<EngineIDAxor, ZmRBTreeUnique<true>>);
 
   struct Watch_ {
     Link	*link = nullptr;
     ZuID	filter;
   };
-  ZuDerive(WatchList_, (ZmList<Watch_, ZmListNode<Watch_>>)); // FIXME - HeapID
+  ZmListDerive(WatchList_, Watch_, ZmListNode<Watch_>); // FIXME - HeapID
   using Watch = typename WatchList_::Node;
   struct WatchList {
     WatchList_		list;

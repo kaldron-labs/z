@@ -106,7 +106,7 @@ private:
   ZtArray<char>	m_buf;
 };
 
-ZuDerive(IOList, (ZmList<ZmRef<IOBuf>, ZmListLock<ZmNoLock> >));
+ZmListDerive(IOList, ZmRef<IOBuf>, ZmListLock<ZmNoLock>);
 
 class IOQueue : protected IOList {
 public:
@@ -293,7 +293,7 @@ template <typename S> inline void Connection::print(S &s) const
 struct ListenerPrintIn;
 struct ListenerPrintOut;
 class Listener : public ZmObject {
-  ZuDerive(ProxyHash, (ZmHash<ZmRef<Proxy>>));
+  ZmHashDerive(ProxyHash, ZmRef<Proxy>, (ZmHash_Defaults));
 
 public:
   Listener(App *app, uint32_t cxnFlags,
@@ -601,13 +601,11 @@ public:
       ZiMultiplex{ZvMxParams{"zproxy", cf}} { }
   };
 
-  ZuDerive(ListenerHash,
-    (ZmHash<ZmRef<Listener>,
-      ZmHashKey<Listener::LocalPortAxor>>));
+  ZmHashDerive(ListenerHash, ZmRef<Listener>,
+    (ZmHashKey<Listener::LocalPortAxor>));
 
-  ZuDerive(ProxyHash,
-    (ZmHash<ZmRef<Proxy>,
-      ZmHashKey<Proxy::SrcPortAxor>>));
+  ZmHashDerive(ProxyHash, ZmRef<Proxy>,
+    (ZmHashKey<Proxy::SrcPortAxor>));
 
   App() : m_verbose(false) {
     m_listeners = new ListenerHash(ZmHashParams().bits(4).loadFactor(1.0));

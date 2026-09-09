@@ -2061,12 +2061,11 @@ inline const ID &CompletionEntry_KeyAxor(const CompletionEntry &entry) {
   return entry.id;
 }
 
-ZuDerive(CompletionHash,
-  (ZmHash<CompletionEntry,
-    ZmHashNode<CompletionEntry,
-      ZmHashKey<CompletionEntry_KeyAxor,
+ZmHashDerive(CompletionHash, CompletionEntry,
+  (ZmHashNode<CompletionEntry,
+    ZmHashKey<CompletionEntry_KeyAxor,
 	ZmHashLock<ZmNoLock,
-	  ZmHashHeapID<"Zmcp.Completions">>>>>));
+	  ZmHashHeapID<"Zmcp.Completions">>>>));
 
 namespace CompletionState {
   enum { Open, Closing, Closed };

@@ -24,9 +24,9 @@
 
 #else
 
-#define ZmcpAPI
-#define ZmcpExplicit
-#define ZmcpExtern extern
+#define ZmcpAPI ZuExport_API
+#define ZmcpExplicit ZuExport_Explicit
+#define ZmcpExtern extern ZmcpAPI
 
 #endif
 

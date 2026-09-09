@@ -142,18 +142,15 @@ template <typename, typename> friend class Client;
 
 private:
   // containers of pending requests
-  ZuDerive(UserDBReqs,
-    (ZmRBTreeKV<ZvSeqNo, ZumAckFn,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmPLock>>>));
-  ZuDerive(CmdReqs,
-    (ZmRBTreeKV<ZvSeqNo, ZcmdAckFn,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmPLock>>>));
-  ZuDerive(TelReqs,
-    (ZmRBTreeKV<ZvSeqNo, ZtelAckFn,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmPLock>>>));
+  ZmRBTreeKVDerive(UserDBReqs, ZvSeqNo, ZumAckFn,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmPLock>>);
+  ZmRBTreeKVDerive(CmdReqs, ZvSeqNo, ZcmdAckFn,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmPLock>>);
+  ZmRBTreeKVDerive(TelReqs, ZvSeqNo, ZtelAckFn,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmPLock>>);
 
 public:
   struct State {

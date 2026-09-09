@@ -99,10 +99,9 @@ private:
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
-  ZuDerive(Cmds,
-    (ZmRBTreeKV<ZuCSpan, CmdData,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmNoLock>>>));
+  ZmRBTreeKVDerive(Cmds, ZuCSpan, CmdData,
+    ZmRBTreeUnique<true,
+      ZmRBTreeLock<ZmNoLock>>);
 
   Cmds		 	m_cmds;
   ZtArray<FinalFn>	m_finalFn;
