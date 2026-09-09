@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-SUBDIRS = src# test itest
+SUBDIRS = src # src# test itest
 
 .PHONY: test
 test: all

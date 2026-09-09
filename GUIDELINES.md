@@ -101,6 +101,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ### Build configuration
 - use the `configure` wrapper named `z.config` to reconfigure the build
   - usage: `z.config -h`
+- Linux executables and shared libraries use zstd-compressed DWARF at link time
+  - requires a linker and debugger with zstd-compressed ELF debug-section support
+  - retains full debug information; existing input objects can be reused
 - this is a hierarchy of Makefiles that **intentionally** do not automatically rebuild dependencies in other directories
   - use a top-level `make -j8` to ensure all dependencies are rebuilt/refreshed
 - add external dependencies in `configure.ac`

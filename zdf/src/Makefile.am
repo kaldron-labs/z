@@ -25,6 +25,7 @@ pkginclude_HEADERS = ZdfLib.hh \
 #fbsdir = $(datarootdir)/${PACKAGE}/fbs
 #dist_fbs_DATA = fbs/telemetry.fbs
 lib_LTLIBRARIES = libZdf.la
+libZdf_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZdf_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZdf_la_SOURCES = ZdfLib.cc ZdfSeries.cc ZdfStore.cc
 libZdf_la_LIBADD = \

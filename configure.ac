@@ -75,8 +75,10 @@ case $build_os in
   linux-*) 
     Z_CFLAGS=""
     Z_CXXFLAGS=""
-    Z_LDFLAGS="-rdynamic"
-    Z_SO_LDFLAGS="-release $Z_VERSION"
+    Z_VISIBILITY_CXXFLAGS="-fvisibility=hidden"
+    # Compress final ELF DWARF while reusing uncompressed input objects.
+    Z_LDFLAGS="-rdynamic -Wl,--compress-debug-sections=zstd"
+    Z_SO_LDFLAGS="-release $Z_VERSION -Wl,--compress-debug-sections=zstd"
     Z_LIBS="-lm"
     Z_MT_LIBS="$CK_LIBS $HWLOC_LIBS -lpthread -lrt -latomic"
     Z_ZT_LIBS="$PCRE_LIBS"
@@ -93,6 +95,7 @@ case $build_os in
     Z_CPPFLAGS="-DUNICODE $Z_CPPFLAGS"
     Z_CFLAGS="-mstackrealign -fuse-ld=lld"
     Z_CXXFLAGS="-mstackrealign -fuse-ld=lld"
+    Z_VISIBILITY_CXXFLAGS=""
     Z_LDFLAGS="-Wl,--enable-auto-import"
     Z_SO_LDFLAGS="-no-undefined"
     Z_LIBS="-lm"
@@ -104,6 +107,7 @@ case $build_os in
   *)
     Z_CFLAGS=""
     Z_CXXFLAGS=""
+    Z_VISIBILITY_CXXFLAGS="-fvisibility=hidden"
     Z_LDFLAGS=""
     Z_SO_LDFLAGS=""
     Z_LIBS="-lm"
@@ -144,6 +148,7 @@ AS_CASE([$CC],
 AC_SUBST(Z_CPPFLAGS)
 AC_SUBST(Z_CFLAGS)
 AC_SUBST(Z_CXXFLAGS)
+AC_SUBST(Z_VISIBILITY_CXXFLAGS)
 AC_SUBST(Z_LDFLAGS)
 AC_SUBST(Z_SO_LDFLAGS)
 AC_SUBST(Z_LIBS)

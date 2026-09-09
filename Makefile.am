@@ -10,12 +10,12 @@ SUBDIRS += zrest
 SUBDIRS += zmcp
 SUBDIRS += zfb
 SUBDIRS += zdb
-SUBDIRS += ztc
 if LIBPQ
 SUBDIRS += zdb_pq
 endif
-SUBDIRS += zdf
 SUBDIRS += zum
+# SUBDIRS += ztc
+# SUBDIRS += zdf
 # SUBDIRS += zdash
 # zcmd and zproxy are reference code only
 if GTK

@@ -8,6 +8,7 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZdbPQLib.hh ZdbPQ.hh
 lib_LTLIBRARIES = libZdbPQ.la
+libZdbPQ_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZdbPQ_la_SOURCES = ZdbPQLib.cc ZdbPQ.cc
 libZdbPQ_la_LIBADD = \
 	$(top_builddir)/ztc/src/libZtc.la $(top_builddir)/zv/src/libZv.la \

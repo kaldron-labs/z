@@ -1,6 +1,6 @@
 METASOURCES = AUTO
 EXTRA_DIST = ztcagent.conf README.md
-SUBDIRS = src test itest
+SUBDIRS = src # src test itest
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

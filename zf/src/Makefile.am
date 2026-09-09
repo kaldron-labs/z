@@ -12,6 +12,7 @@ pkginclude_HEADERS = \
 	ZfLib.hh ZfStruct.hh ZfJSON.hh ZfURI.hh ZfCBOR.hh ZfCLI.hh ZfASN1.hh ZfCSV.hh \
 	ZfTree.hh ZfTreeLoad.hh ZfCf.hh ZfYAML.hh ZfTOML.hh
 lib_LTLIBRARIES = libZf.la
+libZf_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZf_la_SOURCES = \
 	ZfLib.cc ZfStruct.cc ZfJSON.cc ZfURI.cc ZfCBOR.cc ZfCLI.cc ZfCSV.cc ZfCf.cc \
 	ZfYAML.cc ZfTOML.cc

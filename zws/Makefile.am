@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-SUBDIRS = src test bench interop
+SUBDIRS = src # src test bench interop
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

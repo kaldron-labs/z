@@ -25,6 +25,7 @@ pkginclude_HEADERS = \
 	\
 	ZtcTypes.hh ZtcHash.hh ZtcHeap.hh ZtcQueue.hh ZtcThread.hh
 lib_LTLIBRARIES = libZm.la
+libZm_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
 libZm_la_SOURCES = \
 	ZmAssert.cc ZmBackTrace.cc ZmGlobal.cc ZmHashMgr.cc ZmHeap.cc \
 	ZmLib.cc ZmLock.cc ZmObjectDebug.cc ZmRandom.cc \

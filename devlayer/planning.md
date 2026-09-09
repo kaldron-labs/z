@@ -27,4 +27,14 @@
 
 ---
 
-audit the implementation against all `GUIDELINES.md` flags and guidelines; repair all findings
+`plan.md`: act as a skeptical principal software engineer
+- audit the implementation against all `GUIDELINES.md` flags and guidelines
+- scrutinize all new in-memory containers
+  - can they be replaced by better code algorithms?
+  - can they be made leaner or simpler?
+  - can multiple containers be consolidated into fewer?
+- scrutinize all copies and heap allocations
+  - can the copy be elided?
+  - should in-place mutation be used?
+  - can the allocation be replaced by on-stack scratch storage with heap fallback, e.g. `ZtScratch`
+- repair all findings
