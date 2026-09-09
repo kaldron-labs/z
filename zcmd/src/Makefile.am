@@ -32,7 +32,7 @@ nodist_pkginclude_HEADERS = ${FBS_H}
 dist_noinst_DATA = $(addprefix fbs/,${FBS})
 lib_LTLIBRARIES = libZcmd.la
 libZcmd_la_CPPFLAGS = $(AM_CPPFLAGS) -DZCMD_EXPORTS
-libZcmd_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
+libZcmd_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZcmd_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZcmd_la_SOURCES = ZcmdLib.cc \
 	ZcmdDispatcher.cc ZcmdHost.cc Ztel.cc

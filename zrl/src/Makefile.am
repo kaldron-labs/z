@@ -10,7 +10,7 @@ pkginclude_HEADERS = ZrlLib.hh ZrlTypes.hh Zrl.hh ZrlCLI.hh \
 	ZrlGlobber.hh ZrlHistory.hh
 dist_pkgdata_DATA = ZrlEmacs.map ZrlVi.map
 lib_LTLIBRARIES = libZrl.la
-libZrl_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_VISIBILITY_CXXFLAGS@
+libZrl_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZrl_la_SOURCES = ZrlLib.cc Zrl.cc ZrlCLI.cc \
 	ZrlLine.cc ZrlTerminal.cc ZrlEditor.cc \
 	ZrlHistory.cc ZrlGlobber.cc
