@@ -23,7 +23,7 @@ struct FileYAML {
   int		number = 0;
 };
 
-ZfStruct((FileYAML, YAML),
+ZfStruct(, (FileYAML, YAML),
   (((value),	(Ctor<0>)),	(String)),
   (((number),	(Ctor<1>)),	(Int32)));
 

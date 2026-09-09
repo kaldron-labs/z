@@ -103,7 +103,7 @@ struct AppCf {
   unsigned	workerThread = 4;
 };
 
-ZfStruct(AppCf,
+ZfStruct(ZtcAPI, AppCf,
   (((id)),						(String)),
   (((version)),						(String)),
   (((role)),						(String)),

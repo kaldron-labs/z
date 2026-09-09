@@ -37,7 +37,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((module),  (CLI::Opt<'m'>)),  (String, getenv("ZDB_MODULE"))),
   (((connect), (CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
   (((debug),   (CLI::Flag<'d'>)),                        (Bool)),

@@ -30,7 +30,7 @@ struct Foo {
   friend ZfStructPrint ZuPrintType(Foo *);
 };
 
-ZfStruct(Foo,
+ZfStruct(, Foo,
   (((string, Rd),	(Ctor<0>)),		(String, "hello \"world\"")),
   (((bytesVec),		(Ctor<1>)),		(BytesVec)),
   (((t),		(Ctor<2>, NDP<3>)),	(DateTime)),
@@ -44,7 +44,7 @@ ZfStruct(Foo,
 
 using namespace ZfASN1::Encoding;
 
-ZfStructRender(Foo, Bah,
+ZfStructRender(, Foo, Bah,
   (string, (ASN1::Fmt<3, tagU(), set_(0), tag(0)>)),
   bytesVec, t,
   (iv,     ASN1::Type<OID>));

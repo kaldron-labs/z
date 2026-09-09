@@ -145,9 +145,11 @@ Error::T validateFrame(
 
 namespace Zhttp { namespace TLS_ {
 
+struct ALPNIDs { using Keys = ZuStringTL<"h2", "http/1.1">; };
+
 Version::T version(ZuCSpan alpn, H2Policy::T policy)
 {
-  static constexpr auto matcher = ZuMatcher<"h2", "http/1.1">();
+  static constexpr auto matcher = ZuMatcher<ALPNIDs>();
   switch (matcher.exact(alpn)) {
     case 0:
       return policy != H2Policy::Disable ? Version::H2 : Version::T(-1);

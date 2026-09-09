@@ -453,9 +453,18 @@ struct Core { }; // core facet
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))
 
-// obtain the fields of a ZuStruct
+// obtain the field metadata and fields of a ZuStruct
 template <typename O, typename Facet = ZuFacet::Core>
-using ZuFields = decltype(ZuFields_(ZuDeclVal<O *>(), ZuDeclVal<Facet *>()));
+using ZuFieldMeta =
+  decltype(ZuFields_(ZuDeclVal<O *>(), ZuDeclVal<Facet *>()));
+template <typename Meta, typename = void>
+struct ZuFields__ { using T = Meta; };
+template <typename Meta>
+struct ZuFields__<Meta, decltype(typename Meta::Fields(), void())> {
+  using T = typename Meta::Fields;
+};
+template <typename O, typename Facet = ZuFacet::Core>
+using ZuFields = typename ZuFields__<ZuFieldMeta<O, Facet>>::T;
 
 // obtain a consteval typelist of field IDs suitable for use with ZuMatcher_<>
 template <typename> struct ZuFieldIDs_;

@@ -96,7 +96,7 @@ ZhttpAPI URLParseError parseAuthority(
   AuthorityView &, ZuSpan<uint8_t>, unsigned offset,
   uint16_t defltPort, bool requirePort, bool allowZeroPort = false);
 
-struct OriginView {
+struct ZhttpAPI OriginView {
   ZuBSpan	host;
   uint16_t	port = 0;
   Scheme::T	scheme = -1;
@@ -118,7 +118,7 @@ struct OriginView {
   friend ZuPrintFn ZuPrintType(OriginView *);
 };
 
-struct Origin {
+struct ZhttpAPI Origin {
   URLString	host;
   uint16_t	port = 0;
   Scheme::T	scheme = -1;
@@ -139,7 +139,7 @@ struct Origin {
   uint32_t hash() const;
 };
 
-struct URLView {
+struct ZhttpAPI URLView {
   ZuBSpan	raw;
   ZuBSpan	authorityRaw;
   ZuBSpan	host;

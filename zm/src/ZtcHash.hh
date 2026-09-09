@@ -60,7 +60,7 @@ struct Hash {
   virtual void telemetry(HashTelemetry &) const = 0;
 };
 
-struct HashMgr {
+struct ZmAPI HashMgr {
 private:
   using WatchLock = ZmPLock;
   using WatchGuard = ZmGuard<WatchLock>;

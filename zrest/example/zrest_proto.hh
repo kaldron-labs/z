@@ -86,7 +86,7 @@ struct PingReq_ : public Heap, public ZmObject {
 using PingReq_Heap = ZmHeap<"zrest.PingReq", PingReq_<ZuVoid>>;
 ZuDerive(PingReq, (PingReq_<PingReq_Heap>));
 
-ZfStruct((PingReq, URI), (((ping), (Required)), (Bool)));
+ZfStruct(, (PingReq, URI), (((ping), (Required)), (Bool)));
 
 #include "zrestproto_cli.hh"
 

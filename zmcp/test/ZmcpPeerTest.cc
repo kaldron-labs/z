@@ -33,9 +33,9 @@ static uint64_t zmcpAllocated()
 
 struct EchoReq { int value = 0; };
 struct EchoResult { int value = 0; };
-ZfStruct((EchoReq, JSON),
+ZfStruct(, (EchoReq, JSON),
   (((value), (Ctor<0>, Required, MCP::Header<"Value">)), (Int32)));
-ZfStruct((EchoResult, JSON),
+ZfStruct(, (EchoResult, JSON),
   (((value), (Ctor<0>, Required)), (Int32)));
 struct EchoOK : public Zmcp::Response {
   using Body = EchoResult;
@@ -58,13 +58,13 @@ struct EchoSSE : public Zmcp::Request {
 using EchoSSECatalog = ZuTypeList<EchoSSE>;
 
 struct HeaderNested { bool enabled = false; };
-ZfStruct((HeaderNested, JSON),
+ZfStruct(, (HeaderNested, JSON),
   (((enabled), (Ctor<0>, MCP::Header<"Enabled">)), (Bool)));
 struct HeaderReq {
   ZtString<> text;
   HeaderNested nested;
 };
-ZfStruct((HeaderReq, JSON),
+ZfStruct(, (HeaderReq, JSON),
   (((text), (Ctor<0>, MCP::Header<"Text">)), (String)),
   (((nested), (Ctor<1>)), (UDT)));
 

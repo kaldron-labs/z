@@ -26,6 +26,16 @@ struct Foo { template <unsigned> static int bar(const char *); };
 
 template <typename> struct Baz { };
 
+struct ArrayIDs { using Keys = ZuStringTL<"ZuVArray_::Array<ZuSpan">; };
+struct ElemIDs {
+  using Keys = ZuStringTL<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">;
+};
+struct FooIDs { using Keys = ZuStringTL<"A<\"foo\">">; };
+struct BarIDs { using Keys = ZuStringTL<"A<\"bar\">">; };
+struct MainIDs { using Keys = ZuStringTL<"B<main">; };
+struct MatcherIDs { using Keys = ZuStringTL<"foo", "bar", "baz", "bah">; };
+struct MatcherNameIDs { using Keys = ZuStringTL<"Matcher<MatcherIDs">; };
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -48,10 +58,10 @@ int main(int argc, char **argv)
     ZuVArray<ZuBSpan> a;
     (s = {}) << ZuDemangle<decltype(a)>{};
     log(s);
-    ZuCheck(ZuMatcher<"ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<ArrayIDs>().find(s).p<1>() == 0);
     (s = {}) << ZuDemangle<typename ZuTraits<decltype(a)>::Elem>{};
     log(s);
-    ZuCheck(ZuMatcher<"ZuVArray_::Elem<ZuVArray_::Array<ZuSpan">().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<ElemIDs>().find(s).p<1>() == 0);
   }
   {
     (s = {}) << ZuDemangle<A<"foobar">>{};
@@ -65,19 +75,19 @@ int main(int argc, char **argv)
     ZuCheck(s == "A<\"a\\\"b\\\\c\\n\">");
     (s = {}) << ZuDemangle<ZuTuple<A<"foo">, A<"bar">>>{};
     log(s);
-    ZuCheck(ZuMatcher<"A<\"foo\">">().find(s).p<1>() == 0);
-    ZuCheck(ZuMatcher<"A<\"bar\">">().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<FooIDs>().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<BarIDs>().find(s).p<1>() == 0);
     (s = {}) << ZuDemangle<B<[]{ return "foobar"; }>>{};
     log(s);
-    ZuCheck(ZuMatcher<"B<main">().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<MainIDs>().find(s).p<1>() == 0);
     (s = {}) << ZuDemangle<B<"foobar"_Zu>>{};
     log(s);
     ZuCheck(s == "B<\"foobar\">");
     (s = {}) << ZuDemangle<D<"foobar">>{};
     log(s);
     ZuCheck(s == "D<\"foobar\">");
-    (s = {}) << ZuDemangle<decltype(ZuMatcher<"foo", "bar", "baz", "bah">())>{};
+    (s = {}) << ZuDemangle<decltype(ZuMatcher<MatcherIDs>())>{};
     log(s);
-    ZuCheck(ZuMatcher<"ZuStringTL<\"foo\", \"bar\", \"baz\", \"bah\">">().find(s).p<1>() == 0);
+    ZuCheck(ZuMatcher<MatcherNameIDs>().find(s).p<1>() == 0);
   }
 }

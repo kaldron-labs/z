@@ -732,7 +732,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(Enrollment,
+ZfbStruct(ZumAPI, Enrollment,
   (((ceremonyID),	(Ctor<0>)),	(Bytes)),
   (((userID),		(Ctor<1>)),	(UInt64)),
   (((name),		(Ctor<2>)),	(String)),
@@ -888,7 +888,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(CredentialAdd,
+ZfbStruct(ZumAPI, CredentialAdd,
   (((ceremonyID),	(Ctor<0>)),	(Bytes)),
   (((issuer),		(Ctor<1>)),	(String)),
   (((userID),		(Ctor<2>)),	(UInt64)),
@@ -1034,7 +1034,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(RecoveryStart,
+ZfbStruct(ZumAPI, RecoveryStart,
   (((capabilityID),	(Ctor<0>)),	(Bytes)),
   (((digest),		(Ctor<1>)),	(Bytes)),
   (((issuer),		(Ctor<2>)),	(String)),
@@ -1233,7 +1233,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(RecoveryEnroll,
+ZfbStruct(ZumAPI, RecoveryEnroll,
   (((ceremonyID),	(Ctor<0>)),	(Bytes)),
   (((issuer),		(Ctor<1>)),	(String)),
   (((actor),		(Ctor<2>)),	(String)),
@@ -1418,7 +1418,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(CodeFamily,
+ZfbStruct(ZumAPI, CodeFamily,
   (((codeID),		(Ctor<0>)),	(Bytes)),
   (((codeDigest),	(Ctor<1>)),	(Bytes)),
   (((familyID),	(Ctor<2>)),	(Bytes)),
@@ -1538,7 +1538,7 @@ struct UserChange : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(UserChange,
+ZfbStruct(ZumAPI, UserChange,
   (((issuer),		(Ctor<0>)),	(String)),
   (((userID),		(Ctor<1>)),	(UInt64)),
   (((oldRoleIDs),	(Ctor<2>)),	(UInt64Vec)),
@@ -1640,7 +1640,7 @@ struct RoleChange : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(RoleChange,
+ZfbStruct(ZumAPI, RoleChange,
   (((issuer),		(Ctor<0>)),	(String)),
   (((roleID),		(Ctor<1>)),	(UInt64)),
   (((name),		(Ctor<2>)),	(String)),
@@ -1739,7 +1739,7 @@ struct CredChange : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(CredChange,
+ZfbStruct(ZumAPI, CredChange,
   (((issuer),		(Ctor<0>)),	(String)),
   (((credentialID),	(Ctor<1>)),	(Bytes)),
   (((oldUpdated),	(Ctor<2>)),	(Int64)),
@@ -1840,7 +1840,7 @@ struct ScopeChange : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(ScopeChange,
+ZfbStruct(ZumAPI, ScopeChange,
   (((issuer),		(Ctor<0>)),	(String)),
   (((scopeID),		(Ctor<1>)),	(UInt64)),
   (((audience),		(Ctor<2>)),	(String)),
@@ -1952,7 +1952,7 @@ struct ClientChange : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(ClientChange,
+ZfbStruct(ZumAPI, ClientChange,
   (((issuer),		(Ctor<0>)),	(String)),
   (((clientID),		(Ctor<1>)),	(String)),
   (((oldSecretDigest),	(Ctor<2>)),	(Bytes)),
@@ -2049,7 +2049,7 @@ struct ActionChange : public ZdbSagaBase<DBContext> {
   }
 };
 
-ZfbStruct(ActionChange,
+ZfbStruct(ZumAPI, ActionChange,
   (((issuer),		(Ctor<0>)),	(String)),
   (((actionID),		(Ctor<1>)),	(UInt32)),
   (((name),		(Ctor<2>)),	(String)),

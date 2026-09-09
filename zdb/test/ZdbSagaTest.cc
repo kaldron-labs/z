@@ -41,7 +41,7 @@ struct SagaA : public ZdbSagaBase<Context> {
   ZdbSagaStep(2, payment, Delete) { return {}; }
 };
 
-ZfbStruct(SagaA,
+ZfbStruct(, SagaA,
   (((value), (Ctor<0>)), (UInt64)));
 
 struct SagaB : public ZdbSagaBase<Context> {
@@ -56,7 +56,7 @@ struct SagaB : public ZdbSagaBase<Context> {
   ZdbSagaStep(0, payment, Update) { return {}; }
 };
 
-ZfbStruct(SagaB,
+ZfbStruct(, SagaB,
   (((value), (Ctor<0>)), (UInt32)));
 
 using Sagas = ZuTypeList<SagaA, SagaB>;
@@ -310,7 +310,7 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
   }
 };
 
-ZfbStruct(LiveSaga,
+ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
 using LiveSagas = ZuTypeList<LiveSaga>;
@@ -322,7 +322,7 @@ struct ShortSaga : public ZdbSagaBase<LiveContext> {
   uint64_t orderID = 0;
   ZdbSagaStep(0, o, Insert) { return {}; }
 };
-ZfbStruct(ShortSaga,
+ZfbStruct(, ShortSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
 struct ChangedSaga : public ZdbSagaBase<LiveContext> {
@@ -334,7 +334,7 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   ZdbSagaStep(1, o, Delete) { return {}; }
   ZdbSagaStep(2, o, Delete) { return {}; }
 };
-ZfbStruct(ChangedSaga,
+ZfbStruct(, ChangedSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
 struct PayloadContext : public ZmPolymorph {
@@ -359,7 +359,7 @@ struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
     return {};
   }
 };
-ZfbStruct(PayloadSaga,
+ZfbStruct(, PayloadSaga,
   (((data), (Ctor<0>)), (Bytes)));
 
 } // zdbtest

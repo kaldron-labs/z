@@ -32,7 +32,7 @@
 ZtEnumImplNS(Http3Mode);
 ZtEnumImplNS(Http2Mode);
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
   (((user),      (CLI::Long<"user">)),                       (String, "test")),
   (((pass),      (CLI::Long<"pass">)),                       (String, "test123")),

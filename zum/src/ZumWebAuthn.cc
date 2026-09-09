@@ -316,11 +316,11 @@ struct Attestation {
   ZuBSpan	authData;
 };
 
-ZfStruct(Attestation,
+ZfStruct(, Attestation,
   (((fmt), (Mutable)), (String)),
   (((authData), (Mutable)), (Bytes)));
 
-ZfStructRender(Attestation, CBOR, fmt, authData);
+ZfStructRender(, Attestation, CBOR, fmt, authData);
 
 int verifyRegistration(
     RegistrationInput &input, const RegistrationState &state,

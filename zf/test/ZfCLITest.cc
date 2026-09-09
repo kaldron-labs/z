@@ -57,14 +57,14 @@ struct ScalarArgs {
   Scalar scalar;
 };
 
-ZfStruct((ScalarArgs, Bah),
+ZfStruct(, (ScalarArgs, Bah),
   (((scalar), (Ctor<0>)), (UDT)));
 
-ZfStruct((Nested, Bah),
+ZfStruct(, (Nested, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
-ZfStruct((NestedJSON, Bah),
+ZfStruct(, (NestedJSON, Bah),
   (((i1), (Ctor<0>)), (Int32)),
   (((i2), (Ctor<1>)), (Int32)));
 
@@ -96,7 +96,7 @@ struct Foo {
   friend ZfStructPrint ZuPrintType(Foo *);
 };
 
-ZfStruct((Foo, Bah),
+ZfStruct(, (Foo, Bah),
   (((string, Rd), (Ctor<0>)), (CString, "hello \"world\"")),
   (((bytes), (Ctor<1>, CLI::Escaped, CLI::Arg<1>)), (Bytes, ZuBSpan{"bytes"})),
   (((id), (Ctor<2>, Mutable)), (String, "goodbye")),
@@ -128,7 +128,7 @@ struct LongOnly {
   bool		verbose = false;
 };
 
-ZfStruct((LongOnly, CLI),
+ZfStruct(, (LongOnly, CLI),
   (((port),    (CLI::Long<"port">)),    (UInt32)),
   (((verbose), (CLI::Long<"verbose">)), (Bool)));
 
@@ -139,7 +139,7 @@ struct DelimitedArgs {
   DelimitedArgs(V &&v) : values{ZuFwd<V>(v)} { }
 };
 
-ZfStruct((DelimitedArgs, Bah),
+ZfStruct(, (DelimitedArgs, Bah),
   (((values), (Ctor<0>, CLI::Long<"values">)), (StringVec)));
 
 struct IntArray : public ZtArray<int> {
@@ -151,35 +151,35 @@ struct ArrayOpt {
   IntArray values;
 };
 
-ZfStruct((ArrayOpt, Bah),
+ZfStruct(, (ArrayOpt, Bah),
   (((values), (Ctor<0>)), (UDT)));
 
 struct BareArrayOpt {
   IntArray values;
 };
 
-ZfStruct((BareArrayOpt, CLI),
+ZfStruct(, (BareArrayOpt, CLI),
   (((values), (Ctor<0>)), (UDT)));
 
 struct Positional {
   int value = 0;
 };
 
-ZfStruct((Positional, CLI),
+ZfStruct(, (Positional, CLI),
   (((value), (Ctor<0>, CLI::Arg<1>, (Range<0, 10>))), (Int32)));
 
 struct RequiredOpt {
   int value = ZuCmp<int>::null();
 };
 
-ZfStruct((RequiredOpt, CLI),
+ZfStruct(, (RequiredOpt, CLI),
   (((value), (Ctor<0>, Mutable, Required)), (Int32)));
 
 struct CLIFormatInt {
   unsigned value = 0;
 };
 using CLIIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
-ZfStruct((CLIFormatInt, CLI),
+ZfStruct(, (CLIFormatInt, CLI),
   (((value), (Ctor<0>, CLI::Long<"value">,
     CLI::Number<CLIIntFormat>)), (UInt32)));
 

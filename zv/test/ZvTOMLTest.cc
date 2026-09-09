@@ -15,19 +15,19 @@
 using namespace ZuTestUtil;
 
 struct FileTOML { ZtString<> value; int number = 0; };
-ZfStruct((FileTOML, TOML),
+ZfStruct(, (FileTOML, TOML),
   (((value), (Ctor<0>, Keys<0>)), (String)),
   (((number), (Ctor<1>, Mutable)), (Int32)));
 
 struct FileItem { ZtString<> name; };
-ZfStruct((FileItem, TOML),
+ZfStruct(, (FileItem, TOML),
   (((name), (Ctor<0>)), (String)));
 struct FileItems : public ZtArray<FileItem> {
   using ZtArray<FileItem>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(FileItems *);
 };
 struct FileGroup { ZtString<> name; FileItems items; };
-ZfStruct((FileGroup, TOML),
+ZfStruct(, (FileGroup, TOML),
   (((name), (Ctor<0>)), (String)),
   (((items), (Ctor<1>)), (UDT)));
 struct FileGroups : public ZtArray<FileGroup> {
@@ -35,7 +35,7 @@ struct FileGroups : public ZtArray<FileGroup> {
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(FileGroups *);
 };
 struct FileCatalog { FileGroups groups; };
-ZfStruct((FileCatalog, TOML),
+ZfStruct(, (FileCatalog, TOML),
   (((groups), (Ctor<0>)), (UDT)));
 
 static Zi::Path g_dir;

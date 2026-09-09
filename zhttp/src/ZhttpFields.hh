@@ -140,6 +140,13 @@ using String = ZtBArray<ZtArrayHeapID<"Zhttp.Fields.String">>;
 ZhttpAPI bool forbidden(ZuBSpan);
 ZhttpAPI int pseudo(ZuBSpan);
 
+template <typename Headers>
+struct NameIDs { using Keys = typename HeaderList<Headers>::Keys; };
+template <typename Headers, unsigned I>
+struct ValueIDs {
+  using Keys = typename HeaderList<Headers>::template Value<I>;
+};
+
 template <typename Impl, typename = void>
 struct HasRuntime : public ZuFalse { };
 template <typename Impl>
@@ -157,7 +164,7 @@ void dispatch(
   using List = HeaderList<Headers>;
   using Keys = typename List::Keys;
   if constexpr (Keys::N) {
-    static constexpr auto matcher = ZuMatcher<Keys>();
+    static constexpr auto matcher = ZuMatcher<NameIDs<Headers>>();
     auto i = matcher.exact(key);
     if (i < 0) {
       unknown(key, value);
@@ -169,7 +176,7 @@ void dispatch(
 	using Key = ZuType<I, Keys>;
 	using KeyValues = typename List::template Value<I>;
 	if constexpr (KeyValues::N) {
-	  static constexpr auto matcher = ZuMatcher<KeyValues>();
+	  static constexpr auto matcher = ZuMatcher<ValueIDs<Headers, I>>();
 	  auto j = matcher.exact(value);
 	  if (j >= 0) {
 	    ZuSwitch::dispatch<KeyValues::N>(

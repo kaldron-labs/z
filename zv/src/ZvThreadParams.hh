@@ -31,7 +31,7 @@ struct ZvThreadCf {
   ZtString<>	cpuset;
 };
 
-ZfStruct((ZvThreadCf, Cf),
+ZfStruct(ZvAPI, (ZvThreadCf, Cf),
   (((stackSize),	((Range<16384U, 2U<<20U>))),	(UInt32)),
   (((priority),		(Enum<ZmThreadPriority::Map>)),	(Int32,
       ZmThreadPriority::Normal)),

@@ -38,7 +38,7 @@ struct Options {
   bool		help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((ca),        (CLI::Opt<'c'>, CLI::Long<"ca">)),         (String)),
   (((message),   (CLI::Opt<'m'>, CLI::Long<"message">)),    (String, "ping")),
   (((protocol),  (CLI::Opt<'p'>, CLI::Long<"protocol">)),   (String)),

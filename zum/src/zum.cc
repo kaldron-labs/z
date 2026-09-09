@@ -35,7 +35,7 @@ struct Options {
   bool		debug = false;
   bool		help = false;
 };
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((issuer),	(CLI::Arg<1>)),			(String)),
   (((roles),	(CLI::Args<2>)),			(UInt64Vec)),
   (((module),	(CLI::Opt<'m'>)),			(String)),

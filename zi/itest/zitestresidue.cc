@@ -45,7 +45,7 @@ struct Options {
   Mode::T	mode = Mode::Parent;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((mode), (Ctor<0>, Enum<Mode::Map>, CLI::Long<"mode">)),
     (Int8, Mode::Parent)));
 

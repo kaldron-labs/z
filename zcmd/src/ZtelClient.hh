@@ -40,7 +40,7 @@ struct ClientCf {
   unsigned	timeout = 0;
 };
 
-ZfStruct((ClientCf, Cf),
+ZfStruct(ZcmdAPI, (ClientCf, Cf),
   (((rxThread), (Required)),				(String)),
   (((txThread), (Required)),				(String)),
   (((caPath)),						(String)),

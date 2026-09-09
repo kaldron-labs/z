@@ -26,10 +26,10 @@
 namespace Zquic {
 
 namespace VarInt {
-  unsigned length(uint64_t);
-  int encode(uint8_t *, unsigned, uint64_t);
-  int put(uint8_t *, unsigned, uint64_t, unsigned &);
-  int decode(ZuBSpan, uint64_t &, unsigned &);
+  ZquicAPI unsigned length(uint64_t);
+  ZquicAPI int encode(uint8_t *, unsigned, uint64_t);
+  ZquicAPI int put(uint8_t *, unsigned, uint64_t, unsigned &);
+  ZquicAPI int decode(ZuBSpan, uint64_t &, unsigned &);
 }
 
 class PktWriter {
@@ -115,7 +115,7 @@ struct LinkInfo {
   ZuOpBool
 };
 
-struct PktNumber {
+struct ZquicAPI PktNumber {
   static unsigned encodedLength(uint64_t pn, uint64_t largestAckd);
   static int encode(uint8_t *, unsigned, uint64_t pn, unsigned length);
   static uint64_t decode(uint64_t largestPN, uint64_t truncated, unsigned bits);
@@ -147,7 +147,7 @@ struct ShortHdr {
   bool		keyPhase = false;
 };
 
-struct Pkt {
+struct ZquicAPI Pkt {
   static bool isLong(ZuBSpan);
   static bool isVerNeg(ZuBSpan);
   static int parseLong(ZuBSpan, LongHdr &);

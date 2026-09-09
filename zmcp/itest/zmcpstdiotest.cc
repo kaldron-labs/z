@@ -102,9 +102,9 @@ struct Harness {
 
 struct EchoReq { int value = 0; };
 struct EchoResult { int value = 0; };
-ZfStruct((EchoReq, JSON),
+ZfStruct(, (EchoReq, JSON),
   (((value), (Ctor<0>, Required)), (Int32)));
-ZfStruct((EchoResult, JSON),
+ZfStruct(, (EchoResult, JSON),
   (((value), (Ctor<0>, Required)), (Int32)));
 struct EchoOK : public Zmcp::Response {
   using Body = EchoResult;

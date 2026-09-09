@@ -39,12 +39,12 @@ struct Test {
   friend ZfStructPrint ZuPrintType(Test *);
 };
 
-ZfbStruct(Object,
+ZfbStruct(, Object,
   (((id), (Ctor<0>)), (String)),
   (((price), (Ctor<1>)), (Int32)),
   (((flags), (Ctor<2>)), (UDT, ZuBitmap<100>{"42"})));
 
-ZfbStruct(Test,
+ZfbStruct(, Test,
   (((foo), (Ctor<0>)), (Int32)),
   (((bar), (Ctor<1>)), (String)),
   (((baz), (Ctor<2>)), (UDT)));

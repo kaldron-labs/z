@@ -37,7 +37,7 @@ struct Options {
   bool		help;
 };
 
-ZfStruct(Options,
+ZfStruct(, Options,
   (((quiet),		(Ctor<0>, CLI::Flag<'q'>)),		(Bool)),
   (((child),		(Ctor<1>, CLI::Flag<'c'>)),		(Bool)),
   (((daemonize),	(Ctor<2>, CLI::Flag<'d'>)),		(Bool)),

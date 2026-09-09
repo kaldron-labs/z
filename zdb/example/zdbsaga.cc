@@ -44,7 +44,7 @@ struct Account {
   friend ZuStringT<"Zdb.Example.Account.Buf"> ZdbBufHeapID(Account *);
 };
 
-ZfbStruct(Account,
+ZfbStruct(, Account,
   (((id),	(Ctor<0>, Keys<0>)),	(UInt64)),
   (((balance),	(Ctor<1>, Mutable)),	(Int64)));
 
@@ -65,7 +65,7 @@ struct Transfer {
   friend ZuStringT<"Zdb.Example.Transfer.Buf"> ZdbBufHeapID(Transfer *);
 };
 
-ZfbStruct(Transfer,
+ZfbStruct(, Transfer,
   (((id),	(Ctor<0>, Keys<0>)),	(UInt64)),
   (((fromID),	(Ctor<1>)),		(UInt64)),
   (((toID),	(Ctor<2>)),		(UInt64)),
@@ -180,7 +180,7 @@ using BalanceSteps = ZuTypeList<
   ZdbSagaStep_<ZuStringT<"transfer">, ZdbSagaOp::Update>>;
 ZuAssert((ZuIsSame<Zdb_::SagaSteps<BalanceTransfer>, BalanceSteps>{}));
 
-ZfbStruct(BalanceTransfer,
+ZfbStruct(, BalanceTransfer,
   (((transferID),	(Ctor<0>)),	(UInt64)),
   (((fromID),		(Ctor<1>)),	(UInt64)),
   (((toID),		(Ctor<2>)),	(UInt64)),

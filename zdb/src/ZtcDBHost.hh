@@ -65,7 +65,7 @@ struct DBHostTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBHostTelemetry *);
 };
-ZfbStruct(DBHostTelemetry,
+ZfbStruct(ZdbAPI, DBHostTelemetry,
     (((ip),		(Ctor<0>)),				(UDT)),
     (((dbID),		(Ctor<1>, Keys<0>)),			(String)),
     (((id),		(Ctor<2>, Keys<0>)),			(String)),

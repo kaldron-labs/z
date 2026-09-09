@@ -18,7 +18,7 @@ struct StoreCf {
   ZtArray<ZtString<>> threads;
 };
 
-ZfStruct((StoreCf, Cf),
+ZfStruct(, (StoreCf, Cf),
   (((threads)), (StringVec)));
 
 void Store::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)

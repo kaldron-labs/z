@@ -135,7 +135,7 @@ struct ZiSinkEvent {
   const ZeEventInfo	&info;
 };
 
-ZfStruct(ZiSinkEvent,
+ZfStruct(ZiAPI, ZiSinkEvent,
   (((time,      AliasRd, info.time)),      (Time)),
   (((tid,       AliasRd, info.tid)),       (UInt32)),
   (((severity,  AliasRd, info.severity)),  (Int8)),

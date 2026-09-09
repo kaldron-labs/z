@@ -30,7 +30,7 @@ struct Data {
   uint8_t	cBits;
 };
 
-ZfStruct(Data,
+ZfStruct(ZiAPI, Data,
     (((id),		(Ctor<0>, Keys<0>)),	(String)),
     (((bits),		(Ctor<2>)),		(UInt8)),
     (((loadFactor),	(Ctor<1>)),		(Float)),

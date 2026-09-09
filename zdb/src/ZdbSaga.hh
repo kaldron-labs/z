@@ -95,7 +95,7 @@ struct SagaData {
   friend ZuStringT<"Zdb.Saga.Buf"> ZdbBufHeapID(SagaData *);
 };
 
-ZfbStruct(SagaData,
+ZfbStruct(ZdbAPI, SagaData,
   (((type),	(Ctor<0>, Keys<0>)),	(String)),
   (((id),	(Ctor<1>, Keys<0>)),	(UInt128)),
   (((shard),	(Ctor<2>)),		(UInt8)),
@@ -114,7 +114,7 @@ struct SagaStep {
   friend ZuStringT<"Zdb.Saga.Step.Buf"> ZdbBufHeapID(SagaStep *);
 };
 
-ZfbStruct(SagaStep,
+ZfbStruct(ZdbAPI, SagaStep,
   (((type),	(Ctor<0>, Keys<0>)),	(String)),
   (((id),	(Ctor<1>, Keys<0>)),	(UInt128)),
   (((step),	(Ctor<2>, Keys<0>)),	(UInt32)),
@@ -136,7 +136,7 @@ struct SagaTypeStep {
   SagaOp::T	op;
 };
 
-ZfbStruct(SagaTypeStep,
+ZfbStruct(ZdbAPI, SagaTypeStep,
   (((type),	(Ctor<0>, Keys<0>)),	(String)),
   (((step),	(Ctor<2>, Keys<0>)),	(UInt32)),
   (((table),	(Ctor<1>)),		(String)),
@@ -561,6 +561,9 @@ template <typename Context, typename ...S>
 struct SagaBasesValid_<Context, ZuTypeList<S...>> :
   public ZuBool<(ZuIsBase<S, SagaBase<Context>>{} && ...)> { };
 
+template <typename Sagas>
+struct SagaIDs { using Keys = SagaTypes<Sagas>; };
+
 template <typename ...S, typename Impl_>
 struct MSaga<ZuTypeList<S...>, Impl_> :
   public MSaga_<ZuTypeList<S...>, MSagaHeap<ZuTypeList<S...>>> {
@@ -577,7 +580,7 @@ struct MSaga<ZuTypeList<S...>, Impl_> :
   ZuAssert((SagaDefsValid_<Sagas>{}), "invalid saga definition");
 
   static int match(ZuCSpan type) {
-    static constexpr auto matcher = ZuMatcher<Types>();
+    static constexpr auto matcher = ZuMatcher<SagaIDs<Sagas>>();
     return matcher.exact(type);
   }
 

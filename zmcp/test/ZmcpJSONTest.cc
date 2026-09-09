@@ -11,7 +11,7 @@
 using namespace ZuTestUtil;
 
 struct Params { int value = 0; };
-ZfStruct((Params, JSON), (((value), (Ctor<0>)), (Int32)));
+ZfStruct(, (Params, JSON), (((value), (Ctor<0>)), (Int32)));
 struct JSONOK : public Zmcp::Response {
   using Body = Params;
 };

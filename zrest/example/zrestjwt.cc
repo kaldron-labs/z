@@ -53,10 +53,10 @@ struct JWTClaims {
 
 using JTIFormat = ZuFmt::Hex<false, ZuFmt::Right<32>>;
 
-ZfStruct((JWTHeader, JSON),
+ZfStruct(, (JWTHeader, JSON),
   (((alg), (Enum<JWTAlg::Map>, Required)), (Int8)),
   (((typ), (Enum<JWTTyp::Map>, Required)), (Int8)));
-ZfStruct((JWTClaims, JSON),
+ZfStruct(, (JWTClaims, JSON),
   (((sub), (Required)), (String)),
   (((iat), (Required)), (Int64)),
   (((nbf), (Required)), (Int64)),

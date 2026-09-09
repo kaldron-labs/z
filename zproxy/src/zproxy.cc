@@ -503,7 +503,7 @@ struct ProxyArgs {
   unsigned	reconnect = 1;
 };
 
-ZfStruct((ProxyArgs, CLI),
+ZfStruct(, (ProxyArgs, CLI),
   (((local),		(CLI::Arg<1>)),				(String)),
   (((remote),		(CLI::Arg<2>)),				(String)),
   (((source),		(CLI::Arg<3>)),				(String)),
@@ -521,14 +521,14 @@ ZfStruct((ProxyArgs, CLI),
 struct TargetArgs {
   ZuCSpan target;
 };
-ZfStruct((TargetArgs, CLI),
+ZfStruct(, (TargetArgs, CLI),
   (((target), (CLI::Arg<1>)), (String)));
 
 struct TargetSideArgs {
   ZuCSpan	target;
   int		side = Side::Both;
 };
-ZfStruct((TargetSideArgs, CLI),
+ZfStruct(, (TargetSideArgs, CLI),
   (((target), (CLI::Arg<1>)),			(String)),
   (((side), (CLI::Arg<2>, Enum<Side::Map>)),	(Int32, Side::Both)));
 
@@ -537,7 +537,7 @@ struct TargetIOArgs {
   int		side = Side::Both;
   int		op = IOOp::Both;
 };
-ZfStruct((TargetIOArgs, CLI),
+ZfStruct(, (TargetIOArgs, CLI),
   (((target), (CLI::Arg<1>)),			(String)),
   (((side), (CLI::Arg<2>, Enum<Side::Map>)),	(Int32, Side::Both)),
   (((op), (CLI::Arg<3>, Enum<IOOp::Map>)),	(Int32, IOOp::Both)));
@@ -547,7 +547,7 @@ struct TargetToggleArgs {
   bool		on = true;
   int		side = Side::Both;
 };
-ZfStruct((TargetToggleArgs, CLI),
+ZfStruct(, (TargetToggleArgs, CLI),
   (((target), (CLI::Arg<1>)),			(String)),
   (((on), (CLI::Arg<2>)),			(Bool, true)),
   (((side), (CLI::Arg<3>, Enum<Side::Map>)),	(Int32, Side::Both)));
@@ -555,20 +555,20 @@ ZfStruct((TargetToggleArgs, CLI),
 struct ToggleArgs {
   bool on = true;
 };
-ZfStruct((ToggleArgs, CLI),
+ZfStruct(, (ToggleArgs, CLI),
   (((on), (CLI::Arg<1>)), (Bool, true)));
 
 struct StatusArgs {
   ZuCSpan tag;
 };
-ZfStruct((StatusArgs, CLI),
+ZfStruct(, (StatusArgs, CLI),
   (((tag), (CLI::Arg<1>)), (String)));
 
 struct AppCf {
   bool verbose = false;
 };
 
-ZfStruct((AppCf, Cf),
+ZfStruct(, (AppCf, Cf),
   (((verbose)), (Bool, false)));
 
 template <typename Host_>
@@ -1746,7 +1746,7 @@ struct Options {
   unsigned	nThreads = 0;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((verbose),	(CLI::Flag<'v'>)),			(Bool)),
   (((nThreads),	(CLI::Opt<'t'>, CLI::Long<"n-threads">,
       (Range<1U, 1024U>))),				(UInt32)));

@@ -15,7 +15,7 @@
 namespace Zcmd {
 
 struct Help { ZuCSpan cmd; };
-ZfStruct(Help, (((cmd), (CLI::Arg<1>)), (String)));
+ZfStruct(, Help, (((cmd), (CLI::Arg<1>)), (String)));
 Fn helpCmd()
 {
   return [](Context *ctx, ZiIOBuf *out, const Argv &argv) {
@@ -46,7 +46,7 @@ Fn helpCmd()
 }
 
 struct LoadMod { ZiModule::Path path; };
-ZfStruct(LoadMod, (((path), (CLI::Arg<1>)), (String)));
+ZfStruct(, LoadMod, (((path), (CLI::Arg<1>)), (String)));
 Fn loadModCmd()
 {
   return [](Context *ctx, ZiIOBuf *out, const Argv &argv) {

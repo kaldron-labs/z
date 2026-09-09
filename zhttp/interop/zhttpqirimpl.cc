@@ -793,9 +793,16 @@ ZuCSpan roleName(Role role)
   return {};
 }
 
+struct RoleIDs { using Keys = ZuStringTL<"client", "server">; };
+struct CaseIDs {
+  using Keys = ZuStringTL<
+    "handshake", "transfer", "http3", "rebind-port", "rebind-addr",
+    "connectionmigration">;
+};
+
 bool parseRole(ZuCSpan s, Role &role)
 {
-  static constexpr auto matcher = ZuMatcher<"client", "server">();
+  static constexpr auto matcher = ZuMatcher<RoleIDs>();
   int i = matcher.exact(s);
   if (i < 0) return false;
   role = Role(i);
@@ -818,9 +825,7 @@ ZuCSpan caseName(Case testCase)
 
 Case parseCase(ZuCSpan s)
 {
-  static constexpr auto matcher = ZuMatcher<
-    "handshake", "transfer", "http3", "rebind-port", "rebind-addr",
-    "connectionmigration">();
+  static constexpr auto matcher = ZuMatcher<CaseIDs>();
   int i = matcher.exact(s);
   return i < 0 ? Unsupported : Case(i);
 }

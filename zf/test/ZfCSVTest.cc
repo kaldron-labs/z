@@ -26,7 +26,7 @@ struct RangeData {
   int value = 42;
 };
 
-ZfStruct((RangeData, CSV),
+ZfStruct(, (RangeData, CSV),
   (((value), (Ctor<0>, (Range<0, 100>))), (Int32, 42)));
 
 struct RealRangeData {
@@ -35,7 +35,7 @@ struct RealRangeData {
   ZuDecimal decimal;
 };
 
-ZfStruct((RealRangeData, CSV),
+ZfStruct(, (RealRangeData, CSV),
   (((float_), (Ctor<0>, (Range<0.0, 1.0>))), (Float, 0.5)),
   (((fixed), (Ctor<1>,
       (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Fixed)),
@@ -46,7 +46,7 @@ struct CSVText {
   ZuCArray<8> text;
 };
 
-ZfStruct((CSVText, CSV),
+ZfStruct(, (CSVText, CSV),
   (((text), (Ctor<0>)), (String)));
 
 void testHeaderSplitAndUnquote()

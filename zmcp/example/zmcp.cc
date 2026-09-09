@@ -31,7 +31,7 @@ struct Options {
   bool help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((stdio), (CLI::Long<"stdio">)), (Bool, false)),
   (((host), (CLI::Long<"host">)), (String, "127.0.0.1")),
   (((port), (CLI::Opt<'p'>, CLI::Long<"port">)), (UInt32, 8080)),

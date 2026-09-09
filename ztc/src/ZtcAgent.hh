@@ -94,7 +94,7 @@ struct AgentCf {
   unsigned	routeThread = 3;
 };
 
-ZfStruct((AgentCf, Cf),
+ZfStruct(ZtcAPI, (AgentCf, Cf),
   (((maxFrame),		((Range<64U, unsigned(AgentCf::MaxFrame)>))),
 						(UInt32, 1U<<20U)),
   (((telFrames),	((Range<1U, unsigned(INT_MAX)>))), (UInt32, 1024)),

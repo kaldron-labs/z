@@ -27,7 +27,7 @@ struct ZvRingCf {
   bool		coredump = false;
 };
 
-ZfStruct((ZvRingCf, Cf),
+ZfStruct(ZvAPI, (ZvRingCf, Cf),
   (((name),		(Required)),			(String)),
   (((size),		((Range<8192U, 1U<<30U>))),	(UInt32, 131072)),
   (((ll)),					(Bool, false)),

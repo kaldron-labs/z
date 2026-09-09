@@ -563,7 +563,7 @@ struct TableCf {
   static const auto &IDAxor(const TableCf &cf) { return cf.id; }
 };
 
-ZfStruct((TableCf, Cf),
+ZfStruct(ZdbAPI, (TableCf, Cf),
   (((cacheMode), (Ctor<0>, Enum<CacheMode::Map>)), (Int32,
       CacheMode::Normal)));
 
@@ -1579,7 +1579,7 @@ struct HostCf {
   static ZuCSpan IDAxor(const HostCf &cfg) { return cfg.id; }
 };
 
-ZfStruct((HostCf, Cf),
+ZfStruct(ZdbAPI, (HostCf, Cf),
   (((priority),	(Ctor<0>, (Range<0, 1<<30>))),	(Int32)),
   (((ip),	(Ctor<1>)),				(String)),
   (((port),	(Ctor<2>, (Range<1, 65534>))),
@@ -1724,7 +1724,7 @@ struct StoreLoadCf {
   bool		preload = false;
 };
 
-ZfStruct((StoreLoadCf, Cf),
+ZfStruct(ZdbAPI, (StoreLoadCf, Cf),
   (((module), (Required)),	(String)),
   (((preload)),		(Bool)));
 
@@ -1810,7 +1810,7 @@ struct DBCf {
   }
 };
 
-ZfStruct((DBCf, Cf),
+ZfStruct(ZdbAPI, (DBCf, Cf),
   (((thread),		(Ctor<0>, Required)),		(String)),
   (((nShards),		(Ctor<1>, Cf::ID<"shards">, (Range<1U, 64U>))),
     (UInt32, 1)),

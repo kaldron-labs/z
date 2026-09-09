@@ -78,7 +78,7 @@ struct AppCf {
   unsigned	gtkThread = 0;
 };
 
-ZfStruct((AppCf, Cf),
+ZfStruct(, (AppCf, Cf),
   (((telRing)),						(UDT)),
   (((appRole), (Enum<ZvTelemetry::AppRole::Map>)),	(Int32,
       ZvTelemetry::AppRole::Dev)),

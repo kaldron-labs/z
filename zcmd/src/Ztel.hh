@@ -123,7 +123,7 @@ struct Heap : public Heap_ {
 
   friend ZfStructPrint ZuPrintType(Heap *);
 };
-ZfbStruct(Heap,
+ZfbStruct(ZcmdAPI, Heap,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
     (((size),		(Ctor<7>, Keys<0>)),			(UInt32)),
     (((alignment),	(Ctor<10>)),				(UInt8)),
@@ -151,7 +151,7 @@ struct HashTbl : public HashTbl_ {
 
   friend ZfStructPrint ZuPrintType(HashTbl *);
 };
-ZfbStruct(HashTbl,
+ZfbStruct(ZcmdAPI, HashTbl,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
     (((addr),		(Ctor<1>, Keys<0>, Hex)),		(UInt64)),
     (((shadow),		(Ctor<10>)),				(Bool)),
@@ -180,7 +180,7 @@ struct Thread : public Thread_ {
 };
 // LATER - need to optionally enrich this with thread ring count and overCount
 // (i.e. scheduler queue length and DLQ length)
-ZfbStruct(Thread,
+ZfbStruct(ZcmdAPI, Thread,
     (((name),		(Ctor<0>)),				(String)),
     (((sid),		(Ctor<8>)),				(UInt16)),
     (((tid),		(Ctor<1>, Keys<0>)),			(UInt64)),
@@ -205,7 +205,7 @@ struct Mx : public Mx_ {
 
   friend ZfStructPrint ZuPrintType(Mx *);
 };
-ZfbStruct(Mx,
+ZfbStruct(ZcmdAPI, Mx,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
     (((state),		(Ctor<10>, Mutable, Enum<EngineState::Map>)), (Int8)),
     (((nThreads),	(Ctor<13>)),				(UInt8)),
@@ -237,7 +237,7 @@ struct Socket : public Socket_ {
 
   friend ZfStructPrint ZuPrintType(Socket *);
 };
-ZfbStruct(Socket,
+ZfbStruct(ZcmdAPI, Socket,
     (((mxID),		(Ctor<0>)),				(String)),
     (((type),		(Ctor<17>, Enum<SocketType::Map>)),	(Int8)),
     (((remoteIP),	(Ctor<13>, Keys<0>)),			(IP)),
@@ -276,7 +276,7 @@ struct Queue : public Queue_ {
 
   friend ZfStructPrint ZuPrintType(Queue *);
 };
-ZfbStruct(Queue,
+ZfbStruct(ZcmdAPI, Queue,
     (((id),		(Keys<0>, Ctor<0>)),			(String)),
     (((type),		(Keys<0>, Ctor<9>, Enum<ZvQueueType::Map>)), (Int8)),
     (((size),		(Ctor<7>)),				(UInt32)),
@@ -300,7 +300,7 @@ struct Link : public Link_ {
 
   friend ZfStructPrint ZuPrintType(Link *);
 };
-ZfbStruct(Link,
+ZfbStruct(ZcmdAPI, Link,
     (((id),		(Ctor<0>, Keys<0>)),			(String)),
     (((engineID),	(Ctor<1>)),				(String)),
     (((state),		(Ctor<5>, Mutable, Enum<LinkState::Map>)), (Int8)),
@@ -321,7 +321,7 @@ struct Engine : public Engine_ {
 
   friend ZfStructPrint ZuPrintType(Engine *);
 };
-ZfbStruct(Engine,
+ZfbStruct(ZcmdAPI, Engine,
     (((id),		(Keys<0>, Ctor<0>)),			(String)),
     (((type),		(Ctor<1>)),				(String)),
     (((state),		(Ctor<12>, Mutable, Enum<EngineState::Map>)), (Int8)),
@@ -353,7 +353,7 @@ struct App {
 
   friend ZfStructPrint ZuPrintType(App *);
 };
-ZfbStruct(App,
+ZfbStruct(ZcmdAPI, App,
     (((id),		(Keys<0>, Ctor<0>)),			(String)),
     (((version),	(Ctor<1>)),				(String)),
     (((uptime),		(Ctor<2>, Mutable)),			(DateTime)),
@@ -371,7 +371,7 @@ struct Alert {
 
   friend ZfStructPrint ZuPrintType(Alert *);
 };
-ZfbStruct(Alert,
+ZfbStruct(ZcmdAPI, Alert,
     (((time),		(Ctor<0>)),				(DateTime)),
     (((seqNo),		(Ctor<1>)),				(UInt64)),
     (((tid),		(Ctor<2>)),				(UInt64)),

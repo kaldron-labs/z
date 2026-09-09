@@ -78,10 +78,10 @@ struct FrameHeader {
 };
 
 // decode a contiguous nine-byte frame header
-bool decodeHeader(ZuBSpan, FrameHeader &);
+ZhttpAPI bool decodeHeader(ZuBSpan, FrameHeader &);
 
 // incremental nine-byte frame header parser
-class FrameHeaderParser {
+class ZhttpAPI FrameHeaderParser {
 public:
   int process(ZuBSpan, unsigned &, FrameHeader &);
   void reset() { m_length = 0; }
@@ -92,7 +92,7 @@ private:
 };
 
 // incremental client connection preface parser
-class PrefaceParser {
+class ZhttpAPI PrefaceParser {
 public:
   static ZuBSpan value();
 
@@ -144,7 +144,7 @@ int putSetting(Bytes &out, uint16_t key, uint32_t value) {
   return putUInt32(out, value) + 2;
 }
 
-struct Settings {
+struct ZhttpAPI Settings {
   uint32_t	headerTableSize = 4096;
   uint32_t	maxConcurrentStreams = uint32_t(-1);
   uint32_t	initialWindowSize = DefltWindow;
@@ -156,7 +156,7 @@ struct Settings {
   Error::T apply(uint16_t key, uint32_t value, bool peerIsServer);
 };
 
-Error::T validateFrame(const FrameHeader &, uint32_t maxFrameSize);
+ZhttpAPI Error::T validateFrame(const FrameHeader &, uint32_t maxFrameSize);
 
 template <typename Impl>
 class Connection {

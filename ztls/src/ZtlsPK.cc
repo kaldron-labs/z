@@ -13,13 +13,14 @@ namespace Ztls::PK {
 
 namespace Load_ {
 
+struct KeyTypeIDs {
+  using Keys = ZuStringTL<
+    OIDs::PKCS1_RSA, OIDs::EC_ALG_UNRESTRICTED, OIDs::ED25519>;
+};
+
 int keyType(ZuCSpan id)
 {
-  static constexpr auto matcher = ZuMatcher<
-    OIDs::PKCS1_RSA,			// RSA
-    OIDs::EC_ALG_UNRESTRICTED,		// EC
-    OIDs::ED25519				// ED25519
-  >();
+  static constexpr auto matcher = ZuMatcher<KeyTypeIDs>();
   return matcher.exact(id);
 }
 
@@ -27,14 +28,22 @@ int keyType(ZuCSpan id)
 
 namespace Data {
 
+struct PEMHeadIDs {
+  using Keys = ZuStringTL<
+    "-----BEGIN PRIVATE KEY-----", "-----BEGIN EC PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN PUBLIC KEY-----",
+    "-----BEGIN RSA PUBLIC KEY-----">;
+};
+struct PEMTailIDs {
+  using Keys = ZuStringTL<
+    "-----END PRIVATE KEY-----", "-----END EC PRIVATE KEY-----",
+    "-----END RSA PRIVATE KEY-----", "-----END PUBLIC KEY-----",
+    "-----END RSA PUBLIC KEY-----">;
+};
+
 int pemHead(ZuCSpan span, unsigned &offset, unsigned &length)
 {
-  static constexpr auto matcher = ZuMatcher<
-    "-----BEGIN PRIVATE KEY-----",	// must line up with Type above
-    "-----BEGIN EC PRIVATE KEY-----",
-    "-----BEGIN RSA PRIVATE KEY-----",
-    "-----BEGIN PUBLIC KEY-----",
-    "-----BEGIN RSA PUBLIC KEY-----">();
+  static constexpr auto matcher = ZuMatcher<PEMHeadIDs>();
   auto [offset_, type] = matcher.find(span);
   if (offset_ < 0) return -1;
   using Keys = ZuDecay<decltype(matcher.keys())>;
@@ -47,12 +56,7 @@ int pemHead(ZuCSpan span, unsigned &offset, unsigned &length)
 
 int pemTail(ZuCSpan span, int type)
 {
-  static constexpr auto matcher = ZuMatcher<
-    "-----END PRIVATE KEY-----",
-    "-----END EC PRIVATE KEY-----",
-    "-----END RSA PRIVATE KEY-----",
-    "-----END PUBLIC KEY-----",
-    "-----END RSA PUBLIC KEY-----">();
+  static constexpr auto matcher = ZuMatcher<PEMTailIDs>();
   auto [offset, type_] = matcher.find(span);
   return type == type_ ? offset : -1;
 }

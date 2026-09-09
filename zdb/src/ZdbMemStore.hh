@@ -1349,7 +1349,7 @@ struct MemStoreCf {
   ZtString<> thread;
 };
 
-ZfStruct((MemStoreCf, Cf),
+ZfStruct(ZdbAPI, (MemStoreCf, Cf),
   (((thread), (Required)), (String)));
 
 template <typename StoreTbl_>

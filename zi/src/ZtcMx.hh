@@ -129,7 +129,7 @@ struct Mx {
   virtual void unwatch() = 0;
 };
 
-struct MxMgr {
+struct ZiAPI MxMgr {
 private:
   using WatchLock = ZmRWLock;
   using WatchGuard = ZmGuard<WatchLock>;

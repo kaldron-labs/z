@@ -9,6 +9,7 @@
 #include <zlib/ZmPlatform.hh>
 
 #include <zlib/ZvCf.hh>
+#include <zlib/ZvThreadParams.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -23,7 +24,7 @@ struct FileCf {
   int		number = 0;
 };
 
-ZfStruct((FileCf, Cf),
+ZfStruct(, (FileCf, Cf),
   (((value),	(Ctor<0>)),	(String)),
   (((number),	(Ctor<1>)),	(Int32)));
 
@@ -341,6 +342,13 @@ int main(int argc, char **argv)
   g_dir = ZiTestResidue::dir("fixtures");
 
   ZuTestMain();
+
+  ZuCheck(ZfVFieldMatcher<ZvThreadCf>()("priority") ==
+	ZfFieldIndex(ZvThreadCf, priority));
+  ZuCheck((ZfVFieldMatcher<ZvThreadCf, ZuFacet::Cf>()("cpuset") ==
+	ZfFieldIndex(ZvThreadCf, cpuset)));
+  ZuCheck(ZfVFieldMatcher<ZvThreadCf>()("missing") < 0);
+
   ZuTestCall(files);
   ZuTestCall(emptyAndErrors);
   ZuTestCall(nestedObjectAndDuplicates);

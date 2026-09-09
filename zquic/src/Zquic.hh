@@ -119,7 +119,7 @@ struct TokenInfo {
   CxnID		serverCID;
 };
 
-struct AddressToken {
+struct ZquicAPI AddressToken {
   enum {
     SecretLength = 32,
     NonceLength = 16,
@@ -229,7 +229,7 @@ struct ServerPktDecision {
   unsigned		responseLength = 0;
 };
 
-struct ServerPkt {
+struct ZquicAPI ServerPkt {
   static ServerPktDecision routeLongHdr(
     ZuBSpan, uint8_t *response, unsigned responseLen);
 };
@@ -247,7 +247,7 @@ struct AddrValidationDiag {
   uint64_t	tokenODCIDMismatch = 0;
 };
 
-struct StatelessReset {
+struct ZquicAPI StatelessReset {
   static constexpr unsigned TokenLength = ResetToken::Length;
   static constexpr unsigned MinLength = 21;
 
@@ -269,7 +269,7 @@ using Zquic_::Endpoint_;
 using Zquic_::ServerLinks_;
 
 // Connection bootstrap
-struct CxnIDGen {
+struct ZquicAPI CxnIDGen {
   static constexpr unsigned InitialLength = MinCIDLength;
 
   static bool random(CxnID &, unsigned length = InitialLength);
@@ -278,7 +278,7 @@ struct CxnIDGen {
     unsigned dcidLength = InitialLength, unsigned scidLength = InitialLength);
 };
 
-class ClientBootstrap {
+class ZquicAPI ClientBootstrap {
 public:
   bool started() const { return m_started; }
   bool retried() const { return m_retried; }
@@ -348,7 +348,7 @@ private:
   bool		m_retried = false;
 };
 
-class ServerBootstrap {
+class ZquicAPI ServerBootstrap {
 public:
   bool accepted() const { return m_accepted; }
   const CxnID &initialDCID() const { return m_initialDCID; }

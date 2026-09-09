@@ -7,3 +7,6 @@
 #include <zlib/ZvThreadParams.hh>
 
 ZtEnumImplNS(ZmThreadPriority);
+
+ZfStructImpl(ZvThreadCf);
+ZfStructImpl(ZvThreadCf, Cf);

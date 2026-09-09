@@ -91,7 +91,7 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	return {};
   }
 };
-ZfbStruct(LiveSaga,
+ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
 using Sagas = ZuTypeList<LiveSaga>;

@@ -77,7 +77,7 @@ struct DBTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBTelemetry *);
 };
-ZfbStruct(DBTelemetry,
+ZfbStruct(ZdbAPI, DBTelemetry,
     (((thread),		(Ctor<0>)),				(String)),
     (((threads),		(Ctor<1>)),				(StringVec)),
     (((nShards),	(Ctor<2>)),				(UInt32)),
@@ -99,7 +99,7 @@ ZfbStruct(DBTelemetry,
     (((replicating),	(Ctor<18>, Mutable)),			(UInt8)),
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
-struct DB {
+struct ZdbAPI DB {
   using AllDBTablesFn = ZmFn<void(DBTable *), AllFnHeapID>;
   using AllDBHostsFn = ZmFn<void(DBHost *), AllFnHeapID>;
 
@@ -117,7 +117,7 @@ protected:
   static void tableDeleted_(DBTable *);
 };
 
-struct DBMgr {
+struct ZdbAPI DBMgr {
 private:
   using WatchLock = ZmRWLock;
   using WatchGuard = ZmGuard<WatchLock>;

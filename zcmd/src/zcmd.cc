@@ -575,7 +575,7 @@ private:
 using Context = ZCmd::Context;
 
 struct PasswdCmd { };
-ZfStruct(PasswdCmd);
+ZfStruct(, PasswdCmd);
 Zcmd::Fn passwdCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
     PasswdCmd options;
@@ -626,7 +626,7 @@ struct UsersCmd {
   bool			exclusive = false;
   int			limit = 10;
 };
-ZfStruct(UsersCmd,
+ZfStruct(, UsersCmd,
   (((id),        (Ctor<0>, CLI::Opt<'i'>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((exclusive), (Ctor<2>, CLI::Flag<'x'>)), (Bool)),
@@ -689,7 +689,7 @@ struct UserAddCmd {
   bool			enabled = true;
   bool			immutable = false;
 };
-ZfStruct(UserAddCmd,
+ZfStruct(, UserAddCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((roles),     (Ctor<1>, CLI::Arg<2>)),    (StringVec)),
   (((enabled),   (Ctor<2>, CLI::Flag<'e'>)), (Bool)),
@@ -743,7 +743,7 @@ Zcmd::Fn userAddCmd() {
 struct ResetPassCmd {
   Zum::UserID	userID;
 };
-ZfStruct(ResetPassCmd,
+ZfStruct(, ResetPassCmd,
   (((userID), (Ctor<0>, CLI::Arg<1>)), (UInt64)));
 Zcmd::Fn resetPassCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -785,7 +785,7 @@ struct UserModCmd {
   ZuBox<int8_t>		enabled;
   ZuBox<int8_t>		immutable;
 };
-ZfStruct(UserModCmd,
+ZfStruct(, UserModCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((roles),     (Ctor<2>, CLI::Opt<'r'>)),  (StringVec)),
@@ -843,7 +843,7 @@ Zcmd::Fn userModCmd() {
 struct UserDelCmd {
   Zum::UserID		userID;
 };
-ZfStruct(UserDelCmd,
+ZfStruct(, UserDelCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn userDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -883,7 +883,7 @@ struct RolesCmd {
   bool		exclusive = false;
   uint16_t	limit = 10;
 };
-ZfStruct(RolesCmd,
+ZfStruct(, RolesCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((exclusive), (Ctor<1>, CLI::Flag<'x'>)), (Bool)),
   (((limit),     (Ctor<2>, CLI::Opt<'l'>,
@@ -934,7 +934,7 @@ struct RoleAddCmd {
   ZtBitmap		apiperms;
   bool			immutable = false;
 };
-ZfStruct(RoleAddCmd,
+ZfStruct(, RoleAddCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((perms),     (Ctor<1>, CLI::Arg<2>)),    (UDT)),
   (((apiperms),  (Ctor<2>, CLI::Arg<3>)),    (UDT)),
@@ -982,7 +982,7 @@ struct RoleModCmd {
   ZtBitmap		apiperms;
   ZuBox<int8_t>		immutable;
 };
-ZfStruct(RoleModCmd,
+ZfStruct(, RoleModCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((perms),     (Ctor<1>, CLI::Opt<'p'>)),  (UDT)),
   (((apiperms),  (Ctor<2>, CLI::Opt<'a'>)),  (UDT)),
@@ -1040,7 +1040,7 @@ Zcmd::Fn roleModCmd() {
 struct RoleDelCmd {
   ZuCSpan		name;
 };
-ZfStruct(RoleDelCmd,
+ZfStruct(, RoleDelCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),    (String)));
 Zcmd::Fn roleDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1081,7 +1081,7 @@ struct PermsCmd {
   bool			exclusive = false;
   uint16_t		limit = 10;
 };
-ZfStruct(PermsCmd,
+ZfStruct(, PermsCmd,
   (((id),        (Ctor<0>, CLI::Opt<'i'>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Opt<'n'>)),  (String)),
   (((exclusive), (Ctor<2>, CLI::Flag<'x'>)), (Bool)),
@@ -1140,7 +1140,7 @@ Zcmd::Fn permsCmd() {
 struct PermAddCmd {
   ZuCSpan		name;
 };
-ZfStruct(PermAddCmd,
+ZfStruct(, PermAddCmd,
   (((name),      (Ctor<0>, CLI::Arg<1>)),  (String)));
 Zcmd::Fn permAddCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1182,7 +1182,7 @@ struct PermModCmd {
   ZuBox<uint64_t>	id;
   ZuCSpan		name;
 };
-ZfStruct(PermModCmd,
+ZfStruct(, PermModCmd,
   (((id),        (Ctor<0>, CLI::Arg<1>)),  (UInt64)),
   (((name),      (Ctor<1>, CLI::Arg<2>)),  (String)));
 Zcmd::Fn permModCmd() {
@@ -1222,7 +1222,7 @@ Zcmd::Fn permModCmd() {
 struct PermDelCmd {
   ZuBox<uint64_t>	id;
 };
-ZfStruct(PermDelCmd,
+ZfStruct(, PermDelCmd,
   (((id),        (Ctor<0>, CLI::Arg<1>)),  (UInt64)));
 Zcmd::Fn permDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1261,7 +1261,7 @@ Zcmd::Fn permDelCmd() {
 struct KeysCmd {
   Zum::UserID		userID;
 };
-ZfStruct(KeysCmd,
+ZfStruct(, KeysCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn keysCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1308,7 +1308,7 @@ Zcmd::Fn keysCmd() {
 struct KeyAddCmd {
   Zum::UserID		userID;
 };
-ZfStruct(KeyAddCmd,
+ZfStruct(, KeyAddCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn keyAddCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1353,7 +1353,7 @@ Zcmd::Fn keyAddCmd() {
 struct KeyClrCmd {
   Zum::UserID		userID;
 };
-ZfStruct(KeyClrCmd,
+ZfStruct(, KeyClrCmd,
   (((userID),    (Ctor<0>, CLI::Arg<1>)),    (UInt64)));
 Zcmd::Fn keyClrCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1397,7 +1397,7 @@ Zcmd::Fn keyClrCmd() {
 struct KeyDelCmd {
   Zum::KeyIDData	id;
 };
-ZfStruct(KeyDelCmd,
+ZfStruct(, KeyDelCmd,
   (((id),        (Ctor<0>, CLI::Arg<1>)),  (Bytes)));
 Zcmd::Fn keyDelCmd() {
   return [](Context *ctx, ZiIOBuf *out, const Zcmd::Argv &argv) {
@@ -1443,7 +1443,7 @@ struct TelcapCmd {
   uint32_t	interval = 0;
   bool		unsubscribe = false;
 };
-ZfStruct(TelcapCmd,
+ZfStruct(, TelcapCmd,
   (((path),        (Ctor<0>, CLI::Arg<1>)),    (String)),
   (((captures),    (Ctor<1>, CLI::Args<2>)),   (StringVec)),
   (((interval),    (Ctor<2>, CLI::Opt<'i'>, (Range<100, 1000000>))),

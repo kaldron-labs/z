@@ -18,7 +18,7 @@ struct Record {
   String	text;
 };
 
-ZfStruct((Record, JSON),
+ZfStruct(, (Record, JSON),
   (((id)),	(UInt64)),
   (((text)),	(String)));
 

@@ -24,10 +24,10 @@ struct SharedResult : public ZmObject {
   int value = 0;
 };
 
-ZfStruct((SharedReq, JSON),
+ZfStruct(, (SharedReq, JSON),
   (((lhs), (Mutable)), (Int32)),
   (((rhs), (Mutable)), (Int32)));
-ZfStruct((SharedResult, JSON),
+ZfStruct(, (SharedResult, JSON),
   (((value), (Mutable)), (Int32)));
 
 template <int Status_>

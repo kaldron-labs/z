@@ -1984,7 +1984,7 @@ struct StoreCf {
   bool		replicated = false;
 };
 
-ZfStruct((StoreCf, Cf),
+ZfStruct(ZdbPQAPI, (StoreCf, Cf),
   (((thread), (Required)),	(String)),
   (((connection), (Required)),	(String)),
   (((replicated)),		(Bool)));

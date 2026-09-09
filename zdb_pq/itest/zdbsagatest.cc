@@ -123,7 +123,7 @@ struct LiveSaga : public ZdbSagaBase<Context> {
   }
 };
 
-ZfbStruct(LiveSaga,
+ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
 using Sagas = ZuTypeList<LiveSaga>;
@@ -140,7 +140,7 @@ struct Options {
   bool crash = false;
   bool uncommitted = false;
 };
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((crash), (CLI::Flag<'c'>, CLI::Long<"crash">)), (Bool)),
   (((uncommitted), (CLI::Flag<'u'>, CLI::Long<"uncommitted">)), (Bool)));
 

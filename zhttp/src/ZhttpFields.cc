@@ -16,18 +16,25 @@ ZtEnumImplNS(FieldSection);
 
 namespace Fields {
 
+struct ForbiddenIDs {
+  using Keys = ZuStringTL<
+    "connection", "proxy-connection", "keep-alive",
+    "transfer-encoding", "upgrade">;
+};
+struct PseudoIDs {
+  using Keys = ZuStringTL<
+    ":method", ":path", ":scheme", ":authority", ":protocol">;
+};
+
 bool forbidden(ZuBSpan name)
 {
-  static constexpr auto matcher = ZuMatcher<
-    "connection", "proxy-connection", "keep-alive",
-    "transfer-encoding", "upgrade">();
+  static constexpr auto matcher = ZuMatcher<ForbiddenIDs>();
   return matcher.exact(name) >= 0;
 }
 
 int pseudo(ZuBSpan name)
 {
-  static constexpr auto matcher =
-    ZuMatcher<":method", ":path", ":scheme", ":authority", ":protocol">();
+  static constexpr auto matcher = ZuMatcher<PseudoIDs>();
   return matcher.exact(name);
 }
 

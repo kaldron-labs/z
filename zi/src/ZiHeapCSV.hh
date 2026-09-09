@@ -30,7 +30,7 @@ struct Data {
   ZmBitmap	cpuset;
 };
 
-ZfStruct(Data,
+ZfStruct(ZiAPI, Data,
     (((id),		(Ctor<0>, Keys<0>, Group<0>)),	(String)),
     (((partition),	(Ctor<2>, Keys<0>)),		(UInt16)),
     (((cacheSize),	(Ctor<1>)),			(UInt64)),

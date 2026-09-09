@@ -122,6 +122,8 @@ template <typename O>
 struct GetIDs_ : public GetIDs_<ZuFields<O>> { };
 template <typename U>
 using GetIDs = typename GetIDs_<U>::T;
+template <typename Fields>
+struct FieldIDs { using Keys = GetIDs<Fields>; };
 
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
@@ -563,7 +565,7 @@ struct AsObject {
       for (unsigned i = 0; i < SaveFields::N; i++) lookup[i] = -1;
       if (node->has<AnyNode::Object>()) {
 	constexpr auto matcher =
-	  ZuMatcher<ZuFieldProp::JSON::GetIDs<SaveFields>>();
+	  ZuMatcher<ZuFieldProp::JSON::FieldIDs<SaveFields>>();
 	unsigned matched = 0;
 	const auto &fields = node->data<AnyNode::Object>();
 	for (unsigned i = 0, n = fields.length(); i < n; i++) {

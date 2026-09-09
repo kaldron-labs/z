@@ -14,7 +14,7 @@ namespace Zquic {
 
 static constexpr uint16_t TLSExtQUICParamsV1 = 0x39;
 
-struct TransportParams {
+struct ZquicAPI TransportParams {
   CxnID		origDCID;
   CxnID		initialSCID;
   CxnID		retrySCID;
@@ -39,7 +39,7 @@ struct TransportParams {
   int decode(ZuBSpan);
 };
 
-ZeroRTTReason::T validateZeroRTTParams(
+ZquicAPI ZeroRTTReason::T validateZeroRTTParams(
   const TransportParams &remembered, const TransportParams &current);
 
 } // namespace Zquic

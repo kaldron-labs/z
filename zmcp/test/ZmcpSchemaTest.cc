@@ -19,7 +19,7 @@ struct SchemaEmpty : public Zmcp::Response { enum { Status = 204 }; };
 struct Nested {
   bool enabled = false;
 };
-ZfStruct((Nested, JSON),
+ZfStruct(, (Nested, JSON),
   (((enabled), (Ctor<0>, Required)), (Bool)));
 
 struct SchemaReq {
@@ -27,7 +27,7 @@ struct SchemaReq {
   ZtString<> label;
   Nested nested;
 };
-ZfStruct((SchemaReq, JSON),
+ZfStruct(, (SchemaReq, JSON),
   (((count), (Ctor<0>, (Range<1, 8>))), (Int32, 2)),
   (((label), (Ctor<1>, Required, MCP::Header<"Label">)), (String)),
   (((nested), (Ctor<2>, Required)), (UDT)));
@@ -82,7 +82,7 @@ struct SchemaAdvanced {
   NestedArray objects;
   SchemaMap values;
 };
-ZfStruct((SchemaAdvanced, JSON),
+ZfStruct(, (SchemaAdvanced, JSON),
   (((name), (Ctor<0>)), (String, "fallback")),
   (((mode), (Ctor<1>, (Enum<SchemaMode::Map>))),
     (Int32, SchemaMode::Safe)),

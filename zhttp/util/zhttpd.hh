@@ -160,7 +160,7 @@ struct Options {
   bool			help = false;
 };
 
-ZfStruct((Options, CLI),
+ZfStruct(, (Options, CLI),
   (((root),            (CLI::Arg<1>)),                           (String)),
   (((addr),            (CLI::Long<"addr">)),                     (String, "0.0.0.0")),
   (((port),            (CLI::Long<"port">)),                     (UInt32, 8080)),

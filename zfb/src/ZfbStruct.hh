@@ -1187,26 +1187,36 @@ inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
   }
 
 // rendering
-#define ZfbStruct_Render_(O, Facet) \
-  ZuFields_##O ZuFields_(O *, ZuFacet::Facet *);
-#define ZfbStruct_Render(O, ...) \
-  ZuPP_Eval_(ZuPP_MapArg(ZfbStruct_Render_, O, __VA_ARGS__))
+#define ZfbStruct_Render__(API, O, Facet) \
+  struct API ZfFields_##O##_##Facet { \
+    using Fields = ZfFields_##O; \
+    static int match(ZuCSpan); \
+  }; \
+  ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *);
+#define ZfbStruct_Render_(API_O, Facet) \
+  ZuPP_Defer(ZfbStruct_Render__)(ZuPP_Strip(API_O), Facet)
+#define ZfbStruct_Render(API_O, ...) \
+  ZuPP_Eval_(ZuPP_MapArg(ZfbStruct_Render_, API_O, __VA_ARGS__))
 
 // main structure declaration macros ZfbStruct()
-#define ZfbStruct_(O, Facets, ...) \
+#define ZfbStruct_(API, O, Facets, ...) \
   O ZuStructured_(O *); \
   ZfbStruct_Pre(O) \
   __VA_OPT__(ZuPP_MapArg(ZfbField_Decl, O, __VA_ARGS__)) \
-  using ZuFields_##O = ZuTypeList< \
+  using ZfFields_##O = ZuTypeList< \
     __VA_OPT__(ZuPP_MapArgComma(ZfField_Type, O, __VA_ARGS__))>; \
-  ZfbStruct_Render(O, Core ZuPP_StripAppend(Facets)) \
+  ZfbStruct_Render((API, O), Core ZuPP_StripAppend(Facets)) \
   ZfbStruct_Post(O)
 
-#define ZfbStruct(O_Facets, ...) \
+#define ZfbStruct(API, O_Facets, ...) \
   ZuPP_Eval(ZuPP_Defer(ZfbStruct_)( \
+    API, \
     ZuPP_Eval_(ZuStruct_Object(O_Facets)), \
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))
+
+// ZfbStructImpl(Object[, Facet]); Facet defaults to Core; use in `.cc`
+#define ZfbStructImpl(...) ZfStructImpl(__VA_ARGS__)
 
 // enable load/save for a ZuStructShim<..., ZuFields<Orig>>
 #define ZfbEnableShim(O, Orig) \
