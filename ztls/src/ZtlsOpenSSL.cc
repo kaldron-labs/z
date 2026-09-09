@@ -28,6 +28,8 @@
 
 #include <zpicotls/openssl.h>
 
+#include <zlib/ZmSpecific.hh>
+
 #include <zlib/ZtlsBackend.hh>
 #include <zlib/ZtlsPico.hh>
 
@@ -396,12 +398,10 @@ static void replace_pkey_(PKey *key, EVP_PKEY *pkey)
   key->pkey = pkey;
 }
 
-static thread_local TicketKey *ticket_key_tls_ = nullptr;
-
 static int ticket_key_cb_(unsigned char *key_name, unsigned char *iv,
   EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc)
 {
-  auto key = ticket_key_tls_;
+  auto key = ZmTLS<TicketKey *, (int TicketKey::*){}>();
   if (!key) return -1;
   OSSL_PARAM params[] = {
     OSSL_PARAM_construct_utf8_string(
@@ -429,11 +429,12 @@ static int ticket_key_cb_(unsigned char *key_name, unsigned char *iv,
 static int ticket_encrypt_cb_(ptls_encrypt_ticket_t *self, ptls_t *,
   int is_encrypt, ptls_buffer_t *dst, ptls_iovec_t src)
 {
-  ticket_key_tls_ = reinterpret_cast<TicketKey *>(self);
+  auto &key = ZmTLS<TicketKey *, (int TicketKey::*){}>();
+  key = reinterpret_cast<TicketKey *>(self);
   int ret = is_encrypt ?
     ptls_openssl_encrypt_ticket_evp(dst, src, ticket_key_cb_) :
     ptls_openssl_decrypt_ticket_evp(dst, src, ticket_key_cb_);
-  ticket_key_tls_ = nullptr;
+  key = nullptr;
   return ret;
 }
 

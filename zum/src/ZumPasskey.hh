@@ -40,6 +40,9 @@ struct EnrollmentBeginResult {
 struct BootstrapConfig {
   String	issuer;
   IDVec		roleIDs;
+  String	userName;
+  String	label;
+  UserID	userID = 0;
   int64_t	now = 0;
   int64_t	expires = 0;
 };

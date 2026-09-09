@@ -17,50 +17,48 @@ namespace ZdbPQ {
 
 ZtEnumImplNS(SendState);
 
-OIDs::OIDs()
+const char *OIDs::name(unsigned i)
 {
-  static const char *names[Value::N - 1] = {
-    "text",	// String
-    "bytea",	// Bytes
-    "bool",	// Bool
-    "int1",	// Int8
-    "uint1",	// UInt8
-    "int2",	// Int16
-    "uint2",	// UInt16
-    "int4",	// Int32
-    "uint4",	// UInt32
-    "int8",	// Int64
-    "uint8",	// UInt64
-    "float8",	// Float
-    "zdecimal",	// Fixed
-    "zdecimal",	// Decimal
-    "ztime",	// Time
-    "ztime",	// DateTime
-    "int16",	// Int128
-    "uint16",	// UInt128
-    "zbitmap",	// Bitmap
-    "inet",	// IP
-
-    "_text",	// StringVec
-    "_bytea",	// BytesVec
-    "_int1",	// Int8Vec
-    "_uint1",	// UInt8Vec
-    "_int2",	// Int16Vec
-    "_uint2",	// UInt16Vec
-    "_int4",	// Int32Vec
-    "_uint4",	// UInt32Vec
-    "_int8",	// Int64Vec
-    "_uint8",	// UInt64Vec
-    "_int16",	// Int128Vec
-    "_uint16",	// UInt128Vec
-    "_float8",	// FloatVec
-    "_zdecimal",// FixedVec
-    "_zdecimal",// DecimalVec
-    "_ztime",	// TimeVec
-    "_ztime"	// DateTimeVec
-  };
-
-  m_names = names;
+  switch (i) {
+    case Value::Index<String>{}: return "text";
+    case Value::Index<Bytes>{}: return "bytea";
+    case Value::Index<Bool>{}: return "bool";
+    case Value::Index<Int8>{}: return "int1";
+    case Value::Index<UInt8>{}: return "uint1";
+    case Value::Index<Int16>{}: return "int2";
+    case Value::Index<UInt16>{}: return "uint2";
+    case Value::Index<Int32>{}: return "int4";
+    case Value::Index<UInt32>{}: return "uint4";
+    case Value::Index<Int64>{}: return "int8";
+    case Value::Index<UInt64>{}: return "uint8";
+    case Value::Index<Float>{}: return "float8";
+    case Value::Index<Fixed>{}: return "zdecimal";
+    case Value::Index<Decimal>{}: return "zdecimal";
+    case Value::Index<Time>{}: return "ztime";
+    case Value::Index<DateTime>{}: return "ztime";
+    case Value::Index<Int128>{}: return "int16";
+    case Value::Index<UInt128>{}: return "uint16";
+    case Value::Index<Bitmap>{}: return "zbitmap";
+    case Value::Index<IP>{}: return "inet";
+    case Value::Index<StringVec>{}: return "_text";
+    case Value::Index<BytesVec>{}: return "_bytea";
+    case Value::Index<Int8Vec>{}: return "_int1";
+    case Value::Index<UInt8Vec>{}: return "_uint1";
+    case Value::Index<Int16Vec>{}: return "_int2";
+    case Value::Index<UInt16Vec>{}: return "_uint2";
+    case Value::Index<Int32Vec>{}: return "_int4";
+    case Value::Index<UInt32Vec>{}: return "_uint4";
+    case Value::Index<Int64Vec>{}: return "_int8";
+    case Value::Index<UInt64Vec>{}: return "_uint8";
+    case Value::Index<Int128Vec>{}: return "_int16";
+    case Value::Index<UInt128Vec>{}: return "_uint16";
+    case Value::Index<FloatVec>{}: return "_float8";
+    case Value::Index<FixedVec>{}: return "_zdecimal";
+    case Value::Index<DecimalVec>{}: return "_zdecimal";
+    case Value::Index<TimeVec>{}: return "_ztime";
+    case Value::Index<DateTimeVec>{}: return "_ztime";
+    default: return nullptr;
+  }
 }
 
 InitResult Store::init(
@@ -620,7 +618,7 @@ skip:
     auto e = ZeEXCEPT(Fatal, "ZdbPQ",
       ([type](auto &s, const auto &) {
 	s << "OID name for type index " << type
-	  << " is null - check static names[] array in OIDs constructor";
+	  << " is null - check OIDs::name()";
       }));
     start_failed(true, ZuMv(e));
     return SendState::Unsent;

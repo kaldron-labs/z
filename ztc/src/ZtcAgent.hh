@@ -157,8 +157,8 @@ private:
   int process_(ZuSpan<uint8_t>);
 
   ZmRef<ZiIOBuf>	m_frame;
-  uint64_t	m_cxnGen = 0;
-  unsigned	m_size = 0;
+  uint64_t		m_cxnGen = 0;
+  unsigned		m_size = 0;
 };
 
 } // Ztc

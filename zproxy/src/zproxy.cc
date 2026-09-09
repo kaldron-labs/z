@@ -25,6 +25,7 @@
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZtHexDump.hh>
 
+#include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZfCLI.hh>
@@ -717,8 +718,7 @@ public:
   void executed(
       ZmRef<Context> ctx, ZmRef<ZiIOBuf> buf, ZuBSpan out, int code) {
     ctx->code = code;
-    if (out) fwrite(out.data(), 1, out.length(), stdout);
-    fflush(stdout);
+    if (out) (void)ZiFile::stdOut().write(out.data(), out.length());
     m_executed.post();
   }
 

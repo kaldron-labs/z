@@ -46,10 +46,15 @@ namespace EngineState {
 
   int rag(int i) {
     using namespace RAG;
-    if (i < 0 || i >= ZmEngineState::N) return Off;
-    static const int values[ZmEngineState::N] =
-      { Red, Amber, Green, Red, Amber, Red };
-    return values[i];
+    switch (i) {
+      case Stopped: return Red;
+      case Starting: return Amber;
+      case Running: return Green;
+      case Stopping: return Red;
+      case StartPending: return Amber;
+      case StopPending: return Red;
+      default: return Off;
+    }
   }
 }
 namespace LinkState {
@@ -57,10 +62,20 @@ namespace LinkState {
 
   int rag(int i) {
     using namespace RAG;
-    if (i < 0 || i >= ZvLinkState::N) return Off;
-    static const int values[ZvLinkState::N] =
-      { Red, Off, Off, Amber, Green, Amber, Amber, Red, Amber, Amber, Amber };
-    return values[i];
+    switch (i) {
+      case Down: return Red;
+      case Disabled: return Off;
+      case Deleted: return Off;
+      case Connecting: return Amber;
+      case Up: return Green;
+      case ReconnectPending: return Amber;
+      case Reconnecting: return Amber;
+      case Failed: return Red;
+      case Disconnecting: return Amber;
+      case ConnectPending: return Amber;
+      case DisconnectPending: return Amber;
+      default: return Off;
+    }
   }
 }
 
@@ -93,12 +108,15 @@ namespace DBHostState {
 
   int rag(int i) {
     using namespace ZvRAG;
-    enum { N = Ztc::DBHostState::N };
-    if (i < 0 || i >= N) return Off;
-    static const int values[N] = {
-      Off, Amber, Amber, Green, Amber, Amber
-    };
-    return values[i];
+    switch (i) {
+      case Instantiated: return Off;
+      case Initialized: return Amber;
+      case Electing: return Amber;
+      case Active: return Green;
+      case Inactive: return Amber;
+      case Stopping: return Amber;
+      default: return Off;
+    }
   }
 }
 

@@ -42,6 +42,25 @@ using namespace ZuTestUtil;
 ZuAssert((Zdb_::SagaBasesValid_<
   Zum::DBContext, Zum::SagaCatalog::List>{}));
 
+static void managementCatalog()
+{
+  ZuTestScope(managementCatalog);
+  ZuCheck(!Zum::managementAction(-1));
+  ZuCheck(!Zum::managementAction(Zum::MgmtOp::N));
+  ZuCheck(Zum::managementAction(Zum::MgmtOp::userRecover) ==
+    "Zum.userRecover");
+  ZuCheck(Zum::MgmtOp::lookup("credentialAdd") < 0);
+  ZuCheck(Zum::MgmtOp::lookup("auditUpdate") < 0);
+  ZuCheck(Zum::MgmtOp::lookup("grantCreate") < 0);
+  bool unique = true;
+  for (unsigned i = 0; i < Zum::MgmtOp::N; ++i) {
+    unique &= Zum::MgmtOp::lookup(Zum::MgmtOp::name(i)) == i;
+    for (unsigned j = 0; j < i; ++j)
+      unique &= Zum::managementAction(i) != Zum::managementAction(j);
+  }
+  ZuCheck(unique);
+}
+
 static void requests()
 {
   ZuTestScope(requests);
@@ -3614,6 +3633,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(managementCatalog);
   ZuTestCall(requests);
   ZuTestCall(oauthForms);
   ZuTestCall(oidcRoles);

@@ -130,8 +130,7 @@ public:
   void start()
   {
     if (!m_context || !m_rng || !m_bindingDigest || !m_config.issuer ||
-	!m_config.rpID || !m_config.rpName || !m_config.name ||
-	!m_config.displayName || !m_config.userID || m_config.now <= 0 ||
+	!m_config.rpID || !m_config.rpName || m_config.now <= 0 ||
 	m_config.expires <= m_config.now || !m_config.timeout) {
       finish_(WebAuthnError::Storage, {});
       return;
@@ -144,7 +143,11 @@ public:
 	finish_(WebAuthnError::Ceremony, {});
 	return;
       }
-      random_(false);
+      bootstrap_();
+      return;
+    }
+    if (!m_config.name || !m_config.displayName || !m_config.userID) {
+      finish_(WebAuthnError::Storage, {});
       return;
     }
     String issuer = m_config.issuer;
@@ -184,6 +187,41 @@ private:
       return;
     }
     random_(true);
+  }
+
+  void bootstrap_()
+  {
+    Bytes id = m_capID;
+    m_context->grants->run(0, [
+      self = ZmRef<EnrollmentBegin_>{this}, id = ZuMv(id)
+    ]() mutable {
+      self->m_context->grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+	self = ZuMv(self)
+      ](ZdbRowRef<Grant> row) mutable {
+	if (!row || row->data().kind != GrantKind::Capability ||
+	    row->data().purpose != GrantPurpose::Bootstrap ||
+	    row->data().state != State::Active || row->data().owner ||
+	    row->data().issuer != self->m_config.issuer ||
+	    row->data().expires <= self->m_config.now ||
+	    !Ztls::ctEqual(row->data().digest, self->m_capDigest)) {
+	  self->finish_(WebAuthnError::Ceremony, {});
+	  return;
+	}
+	auto &grant = row->data();
+	if (grant.userID) self->m_config.userID = grant.userID;
+	if (grant.userName) {
+	  self->m_config.name = grant.userName;
+	  self->m_config.displayName = grant.userName;
+	}
+	if (grant.label) self->m_config.label = grant.label;
+	if (!self->m_config.name || !self->m_config.displayName ||
+	    !self->m_config.userID) {
+	  self->finish_(WebAuthnError::Ceremony, {});
+	  return;
+	}
+	self->random_(false);
+      });
+    });
   }
 
   void random_(bool create)
@@ -1103,6 +1141,7 @@ static void bootstrapIssue_(
   }
   Grant grant{
     .id = ZuMv(capability.id),
+    .userID = config.userID,
     .created = config.now,
     .expires = config.expires,
     .kind = GrantKind::Capability,
@@ -1110,7 +1149,9 @@ static void bootstrapIssue_(
     .state = State::Active,
     .issuer = config.issuer,
     .roleIDs = ZuMv(config.roleIDs),
-    .digest = ZuMv(capability.digest)
+    .digest = ZuMv(capability.digest),
+    .userName = ZuMv(config.userName),
+    .label = ZuMv(config.label)
   };
   String token = ZuMv(capability.token);
   String issuer = config.issuer;
