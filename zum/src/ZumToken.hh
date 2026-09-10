@@ -44,11 +44,13 @@ struct TokenConfig {
   int64_t		refreshExpires = 0;
   unsigned		generationLimit = 0;
   unsigned		spentLimit = 0;
+  String		facadeClientID;
 };
 
 struct RevokeConfig {
   String		issuer;
   int64_t		now = 0;
+  String		facadeClientID;
 };
 
 ZumExtern bool tokenRequest(

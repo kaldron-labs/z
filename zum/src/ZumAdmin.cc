@@ -149,6 +149,25 @@ String auditID(ZuBSpan id)
   return target;
 }
 
+Audit managementAuditRecord(
+    String issuer, int operation, String actor, AppID appID, String target,
+    String correlationID, unsigned status, int64_t now)
+{
+  return Audit{
+    .time = now,
+    .issuer = ZuMv(issuer),
+    .appID = appID,
+    .operationID = ActionID(operation),
+    .actor = ZuMv(actor),
+    .target = ZuMv(target),
+    .event = AuditEvent::Administration,
+    .outcome = AuditOutcome::T(status >= 200 && status < 300 ?
+      AuditOutcome::Success : AuditOutcome::Failure),
+    .correlationID = ZuMv(correlationID),
+    .detail = MgmtOp::name(operation)
+  };
+}
+
 static void actionAdd_(
     DBContext *context, String issuer, String actor, String name,
     int64_t now, ActionFn complete)
@@ -230,7 +249,7 @@ private:
       return;
     }
     m_authVersion = issuer->data().authVersion;
-    m_context->actions->find<0>(0, ZuFwdTuple(m_actionID), [
+    m_context->actions->find<0>(0, ZuFwdTuple(AppID{0}, m_actionID), [
       self = ZmRef<ActionChange_>{this}
     ](ZdbRowRef<Action> row) mutable { self->action_(ZuMv(row)); });
   }
@@ -468,7 +487,7 @@ private:
       return;
     }
     auto id = m_roleIDs[m_roleIndex];
-    m_context->roles->find<0>(0, ZuFwdTuple(id), [
+    m_context->roles->find<0>(0, ZuFwdTuple(AppID{0}, id), [
       self = ZmRef<UserChange_>{this}
     ](ZdbRowRef<Role> row) mutable {
       if (!row || row->data().owner) {
@@ -654,7 +673,7 @@ private:
       return;
     }
     auto id = ActionID(m_action);
-    m_context->actions->find<0>(0, ZuFwdTuple(id), [
+    m_context->actions->find<0>(0, ZuFwdTuple(AppID{0}, id), [
       self = ZmRef<RoleChange_>{this}
     ](ZdbRowRef<Action> row) mutable {
       if (!row) {
@@ -668,7 +687,7 @@ private:
 
   void role_()
   {
-    m_context->roles->find<0>(0, ZuFwdTuple(m_roleID), [
+    m_context->roles->find<0>(0, ZuFwdTuple(AppID{0}, m_roleID), [
       self = ZmRef<RoleChange_>{this}
     ](ZdbRowRef<Role> row) mutable {
       if (!row || row->data().owner) {
@@ -964,7 +983,7 @@ private:
       return;
     }
     auto id = m_roleIDs[m_roleIndex];
-    m_context->roles->find<0>(0, ZuFwdTuple(id), [
+    m_context->roles->find<0>(0, ZuFwdTuple(AppID{0}, id), [
       self = ZmRef<ScopeChange_>{this}
     ](ZdbRowRef<Role> row) mutable {
       if (!row || row->data().owner) {
@@ -978,7 +997,7 @@ private:
 
   void scope_()
   {
-    m_context->scopes->find<0>(0, ZuFwdTuple(m_scopeID), [
+    m_context->scopes->find<0>(0, ZuFwdTuple(AppID{0}, m_scopeID), [
       self = ZmRef<ScopeChange_>{this}
     ](ZdbRowRef<Scope> row) mutable {
       if (!row || row->data().owner) {
@@ -1146,7 +1165,7 @@ private:
       return;
     }
     auto id = m_roleIDs[m_roleIndex];
-    m_context->roles->find<0>(0, ZuFwdTuple(id), [
+    m_context->roles->find<0>(0, ZuFwdTuple(AppID{0}, id), [
       self = ZmRef<ClientChange_>{this}
     ](ZdbRowRef<Role> row) mutable {
       if (!row || row->data().owner) {
@@ -1302,15 +1321,15 @@ public:
       finish_(AdminError::Invalid);
       return;
     }
-    using Table = ZdbTable<Grant>;
+    using Table = GrantTable;
     using Tuple = Table::Tuple;
     m_context->grants->selectRows<1>({}, m_limit, [
       self = ZmRef<GrantCleanup_>{this}
     ](ZuUnion<void, Tuple> result, unsigned) mutable {
       if (result.template is<Tuple>()) {
 	auto row = ZuMv(result).template p<Tuple>();
-	if (row.template p<18>() <= self->m_now &&
-	    !row.template p<23>())
+	if (row.template p<21>() <= self->m_now &&
+	    !row.template p<26>())
 	  self->m_ids.push(Bytes{row.template p<0>()});
 	return;
       }
@@ -1386,16 +1405,16 @@ public:
       finish_(AdminError::Invalid);
       return;
     }
-    using Table = ZdbTable<Audit>;
+    using Table = AuditTable;
     using Tuple = Table::Tuple;
     m_context->audits->selectRows<1>({}, m_limit, [
       self = ZmRef<AuditCleanup_>{this}
     ](ZuUnion<void, Tuple> result, unsigned) mutable {
       if (result.template is<Tuple>()) {
 	auto row = ZuMv(result).template p<Tuple>();
-	if (row.template p<1>() <= self->m_before)
+	if (row.template p<3>() <= self->m_before)
 	  self->m_keys.push(Key{
-	    row.template p<0>(), String{row.template p<2>()}});
+	    row.template p<1>(), String{row.template p<0>()}});
 	return;
       }
       self->remove_();
@@ -1428,7 +1447,7 @@ private:
       self = ZmRef<AuditCleanup_>{this}, audits, key = ZuMv(key)
     ]() mutable {
       audits->findDel<0>(0,
-	ZuFwdTuple(key.id, ZuMv(key.issuer)), [self = ZuMv(self)](
+	ZuFwdTuple(ZuMv(key.issuer), key.id), [self = ZuMv(self)](
 	  ZdbRow<Audit> *row) mutable {
 	if (!row || row->data().time > self->m_before) {
 	  self->remove_();

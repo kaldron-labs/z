@@ -222,7 +222,7 @@ AC_CONFIG_FILES([Makefile \
 	zm/Makefile zm/src/Makefile zm/test/Makefile zm/bench/Makefile \
 	zt/Makefile zt/src/Makefile zt/test/Makefile \
 	ze/Makefile ze/src/Makefile ze/test/Makefile \
-	zf/Makefile zf/src/Makefile zf/test/Makefile zf/interop/Makefile \
+	zf/Makefile zf/src/Makefile zf/test/Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
 	zi/example/Makefile \
 	ztcp/Makefile ztcp/src/Makefile ztcp/test/Makefile ztcp/example/Makefile \
@@ -238,7 +238,7 @@ AC_CONFIG_FILES([Makefile \
 	zws/Makefile zws/src/Makefile zws/test/Makefile \
 	zws/bench/Makefile zws/interop/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile \
-	zv/Makefile zv/src/Makefile zv/test/Makefile \
+	zv/Makefile zv/src/Makefile zv/test/Makefile zv/interop/Makefile \
 	zdb/Makefile zdb/src/Makefile zdb/test/Makefile zdb/itest/Makefile \
 	zdb/example/Makefile \
 	ztc/Makefile ztc/src/Makefile ztc/test/Makefile ztc/itest/Makefile \

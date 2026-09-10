@@ -1,0 +1,14 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table Membership {
+  app_i_d:uint64;
+  user_i_d:uint64;
+  role_i_ds:[uint64];
+  state:int8;
+  auth_version:uint64 = 1;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type Membership;

@@ -13,12 +13,26 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZrestServer.hh>
 
 #include <zlib/ZumServer.hh>
 
 namespace Zum {
+
+// WebAuthn completion is fetched by the provider page, not a navigation.
+// A browser's manual fetch redirect hides both Location and status. Return
+// the already-validated OAuth destination as JSON; keep session cookies.
+inline void passkeyReply(ServerReply &reply)
+{
+  if (reply.type != ReplyType::Redirect) return;
+  reply.body = "{\"redirectURI\":";
+  ZfJSON::quote(reply.body, reply.location);
+  reply.body << '}';
+  reply.location.null();
+  reply.type = ReplyType::OK;
+}
 
 struct HTTPResponse : public ZumObject {
   String	body;
@@ -53,6 +67,19 @@ struct ClientError : public NoStoreJSON<ClientError, 401> {
     ("content-type", "application/json"),
     ("cache-control", "no-store"), ("pragma", "no-cache"),
     ("www-authenticate", "Basic"), "content-length");
+};
+struct BearerError : public NoStoreJSON<BearerError, 401> {
+  using Base = NoStoreJSON<BearerError, 401>;
+  using Base::header;
+  using Headers = ZhttpHeaders(
+    ("content-type", "application/json"),
+    ("cache-control", "no-store"), ("pragma", "no-cache"),
+    "www-authenticate", "content-length");
+  template <typename Key, typename L> void header(L &&l) const {
+    if constexpr (Key{}() == "www-authenticate")
+      l("Bearer error=\"invalid_token\"");
+    else Base::template header<Key>(ZuFwd<L>(l));
+  }
 };
 struct ServerError : public NoStoreJSON<ServerError, 500> { };
 
@@ -108,7 +135,8 @@ struct RevokeOK : public Zrest::ResBuilder<RevokeOK, HTTPResponse> {
 };
 
 struct HTTPData : public ZumObject {
-  ZuSpan<uint8_t> data;
+  // Zhttp parser spans are callback-scoped; completion runs after consume.
+  String data;
 
   HTTPData &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
@@ -129,22 +157,40 @@ template <typename App> struct TokenReq;
 template <typename App> struct PasskeyBeginReq;
 template <typename App> struct PasskeyFinishReq;
 template <typename App> struct MetadataReq;
+template <typename App> struct OpenIDMetadataReq;
 template <typename App> struct JWKSReq;
+template <typename App> struct UserInfoReq;
+template <typename App> struct UserInfoPostReq;
 template <typename App> struct RevokeReq;
 template <typename App> struct OIDCCallbackReq;
+template <typename App> struct LoginReq;
+template <typename App> struct LoginPostReq;
+template <typename App> struct ConsentReq;
+template <typename App> struct LogoutReq;
 
 template <typename App>
 using HTTPRequests = ZuTypeList<AuthorizeReq<App>, TokenReq<App>,
   PasskeyBeginReq<App>, PasskeyFinishReq<App>, MetadataReq<App>, JWKSReq<App>,
-  RevokeReq<App>, OIDCCallbackReq<App>>;
+  OpenIDMetadataReq<App>, UserInfoReq<App>, UserInfoPostReq<App>, RevokeReq<App>,
+  OIDCCallbackReq<App>, LoginReq<App>, LoginPostReq<App>, ConsentReq<App>,
+  LogoutReq<App>>;
 
 template <typename App>
 struct AuthorizeReq : public Zrest::ReqParser<AuthorizeReq<App>, HTTPQuery> {
+  using Base = Zrest::ReqParser<AuthorizeReq<App>, HTTPQuery>;
+  using Base::header;
   enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
   static constexpr uint64_t QueryLimit = 16U<<10;
   using Path = ZuStringT<"/authorize">;
+  using Headers = ZhttpHeaders("cookie");
   using Responses = ZuTypeList<PageOK, Redirect, OAuthErrorRes, ServerError>;
   App *app = nullptr;
+  String cookie;
+  void init() { Base::init(); cookie.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "cookie") cookie = value;
+  }
   template <typename Link> void complete(Link *link, bool ok) {
     app->authorize(link, *this, ok);
   }
@@ -163,9 +209,9 @@ struct TokenReq : public Zrest::ReqParser<TokenReq<App>, HTTPData> {
     "content-length", "authorization");
   using Responses = ZuTypeList<TokenOK, OAuthErrorRes, ClientError, ServerError>;
   App *app = nullptr;
-  ZuSpan<uint8_t> authorization;
+  String authorization;
 
-  void init() { Base::init(); authorization = {}; }
+  void init() { Base::init(); authorization.null(); }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "authorization") authorization = value;
@@ -185,9 +231,9 @@ struct PasskeyReq : public Zrest::ReqParser<Impl, HTTPData> {
   using Headers = ZhttpHeaders(
     ("content-type", "application/json"), "content-length", "cookie");
   App *app = nullptr;
-  ZuSpan<uint8_t> cookie;
+  String cookie;
 
-  void init() { Base::init(); cookie = {}; }
+  void init() { Base::init(); cookie.null(); }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "cookie") cookie = value;
@@ -208,7 +254,8 @@ struct PasskeyFinishReq : public PasskeyReq<App, PasskeyFinishReq<App>> {
   enum { Query = Zrest::QueryPolicy::Raw };
   static constexpr uint64_t QueryLimit = 256;
   using Path = ZuStringT<"/passkey/finish">;
-  using Responses = ZuTypeList<PasskeyOK, Redirect, OAuthErrorRes, ServerError>;
+  using Responses = ZuTypeList<PasskeyOK, PageOK, Redirect, OAuthErrorRes,
+    ServerError>;
   String query;
   auto &queryObject(HTTPData *) { return query; }
   template <typename Link> void complete(Link *link, bool ok) {
@@ -228,6 +275,18 @@ struct MetadataReq : public Zrest::ReqParser<MetadataReq<App>, HTTPData> {
 };
 
 template <typename App>
+struct OpenIDMetadataReq : public Zrest::ReqParser<OpenIDMetadataReq<App>,
+    HTTPData> {
+  enum { Exact = 1 };
+  using Path = ZuStringT<"/.well-known/openid-configuration">;
+  using Responses = ZuTypeList<DiscoveryOK, ServerError>;
+  App *app = nullptr;
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->openidMetadata(link, *this, ok);
+  }
+};
+
+template <typename App>
 struct JWKSReq : public Zrest::ReqParser<JWKSReq<App>, HTTPData> {
   enum { Exact = 1 };
   using Path = ZuStringT<"/jwks">;
@@ -235,6 +294,51 @@ struct JWKSReq : public Zrest::ReqParser<JWKSReq<App>, HTTPData> {
   App *app = nullptr;
   template <typename Link> void complete(Link *link, bool ok) {
     app->jwks(link, *this, ok);
+  }
+};
+
+template <typename App>
+struct UserInfoReq : public Zrest::ReqParser<UserInfoReq<App>, HTTPData> {
+  using Base = Zrest::ReqParser<UserInfoReq, HTTPData>;
+  using Base::header;
+  enum { Exact = 1 };
+  using Path = ZuStringT<"/userinfo">;
+  using Headers = ZhttpHeaders("authorization");
+  using Responses = ZuTypeList<TokenOK, BearerError, ServerError>;
+  App *app = nullptr;
+  String authorization;
+
+  void init() { Base::init(); authorization.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "authorization") authorization = value;
+  }
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->userInfo(link, *this, ok);
+  }
+};
+
+template <typename App>
+struct UserInfoPostReq : public Zrest::ReqParser<UserInfoPostReq<App>,
+    HTTPData> {
+  using Base = Zrest::ReqParser<UserInfoPostReq, HTTPData>;
+  using Base::header;
+  enum { Method = Zhttp::Method::POST, Exact = 1,
+    Body = Zrest::BodyPolicy::Raw };
+  static constexpr uint64_t BodyLimit = 0;
+  using Path = ZuStringT<"/userinfo">;
+  using Headers = ZhttpHeaders("content-length", "authorization");
+  using Responses = ZuTypeList<TokenOK, BearerError, ServerError>;
+  App *app = nullptr;
+  String authorization;
+
+  void init() { Base::init(); authorization.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "authorization") authorization = value;
+  }
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->userInfo(link, *this, ok);
   }
 };
 
@@ -252,9 +356,9 @@ struct RevokeReq : public Zrest::ReqParser<RevokeReq<App>, HTTPData> {
   using Responses = ZuTypeList<RevokeOK, OAuthErrorRes, ClientError,
     ServerError>;
   App *app = nullptr;
-  ZuSpan<uint8_t> authorization;
+  String authorization;
 
-  void init() { Base::init(); authorization = {}; }
+  void init() { Base::init(); authorization.null(); }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "authorization") authorization = value;
@@ -273,17 +377,113 @@ struct OIDCCallbackReq : public Zrest::ReqParser<OIDCCallbackReq<App>,
   static constexpr uint64_t QueryLimit = 16U<<10;
   using Path = ZuStringT<"/oidc/callback">;
   using Headers = ZhttpHeaders("cookie");
-  using Responses = ZuTypeList<Redirect, OAuthErrorRes, ServerError>;
+  using Responses = ZuTypeList<PageOK, Redirect, OAuthErrorRes, ServerError>;
   App *app = nullptr;
-  ZuSpan<uint8_t> cookie;
+  String cookie;
 
-  void init() { Base::init(); cookie = {}; }
+  void init() { Base::init(); cookie.null(); }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "cookie") cookie = value;
   }
   template <typename Link> void complete(Link *link, bool ok) {
     app->oidcCallback(link, *this, ok);
+  }
+};
+
+template <typename App>
+struct LoginReq : public Zrest::ReqParser<LoginReq<App>, HTTPData> {
+  using Base = Zrest::ReqParser<LoginReq, HTTPData>;
+  using Base::header;
+  enum { Exact = 1 };
+  using Path = ZuStringT<"/login">;
+  using Headers = ZhttpHeaders("cookie");
+  using Responses = ZuTypeList<PageOK, ServerError>;
+  App *app = nullptr;
+  String cookie;
+
+  void init() { Base::init(); cookie.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "cookie") cookie = value;
+  }
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->login(link, *this, ok);
+  }
+};
+
+template <typename App>
+struct LoginPostReq : public Zrest::ReqParser<LoginPostReq<App>, HTTPData> {
+  using Base = Zrest::ReqParser<LoginPostReq, HTTPData>;
+  using Base::header;
+  enum { Method = Zhttp::Method::POST, Exact = 1,
+    Body = Zrest::BodyPolicy::Raw };
+  static constexpr uint64_t BodyLimit = 16U<<10;
+  using Path = ZuStringT<"/login">;
+  using Headers = ZhttpHeaders(
+    ("content-type", "application/x-www-form-urlencoded"),
+    "content-length", "cookie");
+  using Responses = ZuTypeList<PageOK, Redirect, OAuthErrorRes, ServerError>;
+  App *app = nullptr;
+  String cookie;
+
+  void init() { Base::init(); cookie.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "cookie") cookie = value;
+  }
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->login(link, *this, ok);
+  }
+};
+
+template <typename App>
+struct LogoutReq : public Zrest::ReqParser<LogoutReq<App>, HTTPData> {
+  using Base = Zrest::ReqParser<LogoutReq, HTTPData>;
+  using Base::header;
+  enum { Method = Zhttp::Method::POST, Exact = 1,
+    Body = Zrest::BodyPolicy::Raw };
+  static constexpr uint64_t BodyLimit = 16U<<10;
+  using Path = ZuStringT<"/logout">;
+  using Headers = ZhttpHeaders(
+    ("content-type", "application/x-www-form-urlencoded"),
+    "content-length", "cookie");
+  using Responses = ZuTypeList<PageOK, OAuthErrorRes, ServerError>;
+  App *app = nullptr;
+  String cookie;
+
+  void init() { Base::init(); cookie.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "cookie") cookie = value;
+  }
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->logout(link, *this, ok);
+  }
+};
+
+template <typename App>
+struct ConsentReq : public Zrest::ReqParser<ConsentReq<App>, HTTPData> {
+  using Base = Zrest::ReqParser<ConsentReq, HTTPData>;
+  using Base::header;
+  enum { Method = Zhttp::Method::POST, Exact = 1,
+    Body = Zrest::BodyPolicy::Raw };
+  static constexpr uint64_t BodyLimit = 16U<<10;
+  using Path = ZuStringT<"/consent">;
+  using Headers = ZhttpHeaders(
+    ("content-type", "application/x-www-form-urlencoded"),
+    "content-length", "cookie");
+  using Responses = ZuTypeList<Redirect, OAuthErrorRes, ServerError>;
+  App *app = nullptr;
+  String cookie;
+
+  void init() { Base::init(); cookie.null(); }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "cookie") cookie = value;
+  }
+  template <typename Link> void complete(Link *link, bool ok) {
+    app->consent(link, *this, ok);
   }
 };
 
@@ -320,8 +520,9 @@ public:
       return;
     }
     auto query = String{ZuBSpan{request.object->data}};
-    m_server->authorize(ZuMv(query), [this, hold = ZmRef<Link>{link}](
-        ServerReply reply) mutable {
+    String cookie{ZuBSpan{request.cookie}};
+    m_server->authorize(ZuMv(query), ZuMv(cookie),
+      [this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
       respond_<AuthorizeReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -363,6 +564,72 @@ public:
   }
 
   template <typename Link>
+  void login(Link *link, const LoginReq<App> &request, bool ok)
+  {
+    if (!ok) {
+      respond_<LoginReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = "{}", .type = ReplyType::ServerError});
+      return;
+    }
+    String cookie{ZuBSpan{request.cookie}};
+    m_server->login(ZuMv(cookie), [this, hold = ZmRef<Link>{link}](
+	ServerReply reply) mutable {
+      respond_<LoginReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
+  void login(Link *link, const LoginPostReq<App> &request, bool ok)
+  {
+    if (!ok) {
+      respond_<LoginPostReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = oauthErrorJSON(OAuthError::InvalidRequest),
+        .type = ReplyType::OAuthError});
+      return;
+    }
+    String form{ZuBSpan{request.object->data}};
+    String cookie{ZuBSpan{request.cookie}};
+    m_server->login(ZuMv(form), ZuMv(cookie), [
+      this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      respond_<LoginPostReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
+  void logout(Link *link, const LogoutReq<App> &request, bool ok)
+  {
+    if (!ok) {
+      respond_<LogoutReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = oauthErrorJSON(OAuthError::InvalidRequest),
+        .type = ReplyType::OAuthError});
+      return;
+    }
+    String form{ZuBSpan{request.object->data}};
+    String cookie{ZuBSpan{request.cookie}};
+    m_server->logout(ZuMv(form), ZuMv(cookie), [
+      this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      respond_<LogoutReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
+  void consent(Link *link, const ConsentReq<App> &request, bool ok)
+  {
+    if (!ok) {
+      respond_<ConsentReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = oauthErrorJSON(OAuthError::InvalidRequest),
+        .type = ReplyType::OAuthError});
+      return;
+    }
+    String form{ZuBSpan{request.object->data}};
+    String cookie{ZuBSpan{request.cookie}};
+    m_server->consent(ZuMv(form), ZuMv(cookie), [
+      this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      respond_<ConsentReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
   void passkeyBegin(
       Link *link, const PasskeyBeginReq<App> &request, bool ok)
   {
@@ -396,6 +663,7 @@ public:
     m_server->passkeyFinish(ZuMv(query), ZuMv(cookie), ZuMv(json), [
       this, hold = ZmRef<Link>{link}
     ](ServerReply reply) mutable {
+      passkeyReply(reply);
       respond_<PasskeyFinishReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -415,6 +683,20 @@ public:
   }
 
   template <typename Link>
+  void openidMetadata(Link *link, const OpenIDMetadataReq<App> &, bool ok)
+  {
+    if (!ok) {
+      respond_<OpenIDMetadataReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = "{}", .type = ReplyType::ServerError});
+      return;
+    }
+    m_server->metadata([this, hold = ZmRef<Link>{link}](
+        ServerReply reply) mutable {
+      respond_<OpenIDMetadataReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
   void jwks(Link *link, const JWKSReq<App> &, bool ok)
   {
     if (!ok) {
@@ -425,6 +707,40 @@ public:
     m_server->jwks([this, hold = ZmRef<Link>{link}](
         ServerReply reply) mutable {
       respond_<JWKSReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
+  void userInfo(Link *link, const UserInfoReq<App> &request, bool ok)
+  {
+    if (!ok) {
+      respond_<UserInfoReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = "{\"error\":\"invalid_token\"}",
+        .type = ReplyType::BearerError});
+      return;
+    }
+    String authorization{ZuBSpan{request.authorization}};
+    m_server->userInfo(ZuMv(authorization), [
+      this, hold = ZmRef<Link>{link}
+    ](ServerReply reply) mutable {
+      respond_<UserInfoReq<App>>(ZuMv(hold), ZuMv(reply));
+    });
+  }
+
+  template <typename Link>
+  void userInfo(Link *link, const UserInfoPostReq<App> &request, bool ok)
+  {
+    if (!ok) {
+      respond_<UserInfoPostReq<App>>(ZmRef<Link>{link}, ServerReply{
+        .body = "{\"error\":\"invalid_token\"}",
+        .type = ReplyType::BearerError});
+      return;
+    }
+    String authorization{ZuBSpan{request.authorization}};
+    m_server->userInfo(ZuMv(authorization), [
+      this, hold = ZmRef<Link>{link}
+    ](ServerReply reply) mutable {
+      respond_<UserInfoPostReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
 
@@ -466,31 +782,53 @@ private:
     object->setCookie = ZuMv(reply.setCookie);
     switch (reply.type) {
       case ReplyType::Page:
-        if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{})
+        if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{} ||
+            ZuIsSame<Request, PasskeyFinishReq<App>>{} ||
+            ZuIsSame<Request, OIDCCallbackReq<App>>{})
+          return send_<PageOK, Request>(ZuMv(link), ZuMv(object));
+        else if constexpr (ZuIsSame<Request, LoginReq<App>>{} ||
+            ZuIsSame<Request, LoginPostReq<App>>{} ||
+            ZuIsSame<Request, LogoutReq<App>>{})
           return send_<PageOK, Request>(ZuMv(link), ZuMv(object));
         break;
       case ReplyType::Redirect:
         if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{} ||
             ZuIsSame<Request, PasskeyFinishReq<App>>{} ||
-            ZuIsSame<Request, OIDCCallbackReq<App>>{})
+            ZuIsSame<Request, OIDCCallbackReq<App>>{} ||
+            ZuIsSame<Request, LoginPostReq<App>>{} ||
+            ZuIsSame<Request, ConsentReq<App>>{})
           return send_<Redirect, Request>(ZuMv(link), ZuMv(object));
         break;
       case ReplyType::OK:
-        if constexpr (ZuIsSame<Request, TokenReq<App>>{})
+        if constexpr (ZuIsSame<Request, TokenReq<App>>{} ||
+            ZuIsSame<Request, UserInfoReq<App>>{} ||
+            ZuIsSame<Request, UserInfoPostReq<App>>{})
           return send_<TokenOK, Request>(ZuMv(link), ZuMv(object));
         else if constexpr (ZuIsSame<Request, PasskeyBeginReq<App>>{} ||
             ZuIsSame<Request, PasskeyFinishReq<App>>{})
           return send_<PasskeyOK, Request>(ZuMv(link), ZuMv(object));
         break;
       case ReplyType::OAuthError:
-        if constexpr (!ZuIsSame<Request, MetadataReq<App>>{} &&
-            !ZuIsSame<Request, JWKSReq<App>>{})
-          return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
+	if constexpr (ZuIsSame<Request, AuthorizeReq<App>>{} ||
+	    ZuIsSame<Request, TokenReq<App>>{} ||
+	    ZuIsSame<Request, PasskeyBeginReq<App>>{} ||
+	    ZuIsSame<Request, PasskeyFinishReq<App>>{} ||
+	    ZuIsSame<Request, RevokeReq<App>>{} ||
+	    ZuIsSame<Request, LoginPostReq<App>>{} ||
+	    ZuIsSame<Request, ConsentReq<App>>{} ||
+	    ZuIsSame<Request, LogoutReq<App>>{} ||
+	    ZuIsSame<Request, OIDCCallbackReq<App>>{})
+	  return send_<OAuthErrorRes, Request>(ZuMv(link), ZuMv(object));
         break;
       case ReplyType::ClientError:
         if constexpr (ZuIsSame<Request, TokenReq<App>>{} ||
             ZuIsSame<Request, RevokeReq<App>>{})
           return send_<ClientError, Request>(ZuMv(link), ZuMv(object));
+        break;
+      case ReplyType::BearerError:
+        if constexpr (ZuIsSame<Request, UserInfoReq<App>>{} ||
+            ZuIsSame<Request, UserInfoPostReq<App>>{})
+          return send_<BearerError, Request>(ZuMv(link), ZuMv(object));
         break;
       case ReplyType::Empty:
         if constexpr (ZuIsSame<Request, RevokeReq<App>>{})
@@ -498,6 +836,7 @@ private:
         break;
       case ReplyType::Discovery:
         if constexpr (ZuIsSame<Request, MetadataReq<App>>{} ||
+            ZuIsSame<Request, OpenIDMetadataReq<App>>{} ||
             ZuIsSame<Request, JWKSReq<App>>{})
           return send_<DiscoveryOK, Request>(ZuMv(link), ZuMv(object));
         break;

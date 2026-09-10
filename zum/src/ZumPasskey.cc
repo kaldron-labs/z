@@ -199,7 +199,8 @@ private:
 	self = ZuMv(self)
       ](ZdbRowRef<Grant> row) mutable {
 	if (!row || row->data().kind != GrantKind::Capability ||
-	    row->data().purpose != GrantPurpose::Bootstrap ||
+	    (row->data().purpose != GrantPurpose::Bootstrap &&
+	     row->data().purpose != GrantPurpose::Enrollment) ||
 	    row->data().state != State::Active || row->data().owner ||
 	    row->data().issuer != self->m_config.issuer ||
 	    row->data().expires <= self->m_config.now ||
@@ -252,12 +253,13 @@ private:
 	challenge = Bytes{challenge}, handle = Bytes{handle},
 	result = ZuMv(result)
       ]() mutable {
-	self->m_context->grants->findUpd<0, ZuSeq<1>>(
+	self->m_context->grants->findUpd<0, ZuSeq<1, 2>>(
 	  0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self),
 	    challenge = ZuMv(challenge), handle = ZuMv(handle),
 	    result = ZuMv(result)](ZdbRow<Grant> *row) mutable {
 	  bool ok = row && row->data().kind == GrantKind::Capability &&
-	    row->data().purpose == GrantPurpose::Bootstrap &&
+	    (row->data().purpose == GrantPurpose::Bootstrap ||
+	     row->data().purpose == GrantPurpose::Enrollment) &&
 	    row->data().state == State::Active && !row->data().owner &&
 	    row->data().issuer == self->m_config.issuer &&
 	    row->data().expires > self->m_config.now &&
@@ -690,7 +692,8 @@ public:
   {
     if (!m_db || !m_context || !m_rng || !m_config.issuer ||
 	!m_config.actor || !m_config.userID || m_config.now <= 0 ||
-	m_config.expires <= m_config.now) {
+	m_config.expires <= m_config.now || !m_config.version ||
+	m_config.version == UINT64_MAX) {
       finish_(false);
       return;
     }
@@ -733,6 +736,8 @@ private:
 	self = ZuMv(self)
       ](ZdbRowRef<User> user) mutable {
 	if (!user || user->data().owner ||
+	    user->data().source != UserSource::Local ||
+	    user->data().version != self->m_config.version ||
 	    (user->data().state != State::Active &&
 	     user->data().state != State::Suspended)) {
 	  self->finish_(false);
@@ -768,7 +773,8 @@ private:
       .userVersion = user.authVersion + 1,
       .created = m_config.now,
       .expires = m_config.expires,
-      .actor = m_config.actor
+      .actor = m_config.actor,
+      .version = m_config.version
     };
     ZdbSagaID sagaID;
     ZuAssert((sizeof(sagaID) == 16));
@@ -1141,6 +1147,7 @@ static void bootstrapIssue_(
   }
   Grant grant{
     .id = ZuMv(capability.id),
+    .appID = config.appID,
     .userID = config.userID,
     .created = config.now,
     .expires = config.expires,
@@ -1192,6 +1199,45 @@ static void bootstrapIssue_(
   });
 }
 
+static void enrollmentIssue_(
+    DBContext *context, Ztls::Random &rng, EnrollmentIssueConfig config,
+    CapabilityFn complete)
+{
+  if (!context || !config.issuer || !config.userName || !config.userID ||
+      config.now <= 0 || config.expires <= config.now) {
+    complete(false, String{});
+    return;
+  }
+  OpaqueToken capability;
+  if (!opaqueIssue(rng, capability)) {
+    complete(false, String{});
+    return;
+  }
+  Grant grant{
+    .id = ZuMv(capability.id),
+    .userID = config.userID,
+    .created = config.now,
+    .expires = config.expires,
+    .kind = GrantKind::Capability,
+    .purpose = GrantPurpose::Enrollment,
+    .state = State::Active,
+    .issuer = ZuMv(config.issuer),
+    .digest = ZuMv(capability.digest),
+    .userName = ZuMv(config.userName),
+    .label = ZuMv(config.label),
+    .actor = "precreated"
+  };
+  String token = ZuMv(capability.token);
+  authorizationInsert(context, ZuMv(grant), [token = ZuMv(token),
+      complete = ZuMv(complete)](bool ok) mutable {
+    if (!ok) {
+      ZuClear(token.data(), token.length());
+      token.null();
+    }
+    complete(ok, ZuMv(token));
+  });
+}
+
 static void recoveryIssue_(
     DB *db, DBContext *context, Ztls::Random &rng,
     RecoveryIssueConfig config, RecoveryIssueFn complete)
@@ -1213,6 +1259,23 @@ bool bootstrapIssue(
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
     bootstrapIssue_(context, rng, ZuMv(config), [state](
+	bool ok, String value) mutable {
+      state->complete(ok, ZuMv(value));
+    });
+  }, [state]() mutable { state->cancel(); });
+}
+
+bool enrollmentIssue(
+    Requests *requests, ZuTime deadline, DBContext *context,
+    Ztls::Random &rng, EnrollmentIssueConfig config, CapabilityFn complete)
+{
+  if (!requests || !complete) return false;
+  ZmRef<CapabilityComplete_> state =
+    new CapabilityComplete_{ZuMv(complete)};
+  return requests->run(deadline, [state, context, &rng,
+      config = ZuMv(config)](ZmRef<Request> request) mutable {
+    state->request(ZuMv(request));
+    enrollmentIssue_(context, rng, ZuMv(config), [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
     });

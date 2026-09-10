@@ -15,6 +15,7 @@ table Enrollment {
   backup_eligible:bool;
   backed_up:bool;
   label:string;
+  precreated:bool;
 }
 
 table CredentialAdd {
@@ -41,6 +42,7 @@ table RecoveryStart {
   created:int64;
   expires:int64;
   actor:string;
+  version:uint64;
 }
 
 table RecoveryEnroll {
@@ -65,6 +67,7 @@ table CodeFamily {
   code_digest:[ubyte];
   family_i_d:[ubyte];
   issuer:string;
+  app_i_d:uint64;
   user_i_d:uint64;
   client_i_d:string;
   credential_i_d:[ubyte];
@@ -78,6 +81,13 @@ table CodeFamily {
   auth_time:int64;
   created:int64;
   expires:int64;
+  scope:string;
+  nonce:string;
+  authority_provider_i_d:uint64;
+  policy_version:uint64;
+  evidence_version:uint64;
+  authority_source:int8;
+  facade_client_i_d:string;
 }
 
 table UserChange {
@@ -146,6 +156,44 @@ table ActionChange {
   auth_version:uint64;
   old_state:int8;
   new_state:int8;
+}
+
+table ExternalProjection {
+  provider_i_d:uint64;
+  issuer:string;
+  subject:string;
+  user_i_d:uint64;
+  name:string;
+  handle:[ubyte];
+  created:int64;
+}
+
+table AppEnrollment {
+  core_app_i_d:uint64;
+  app_i_d:uint64;
+  app_name:string;
+  app_label:string;
+  audience_i_d:uint64;
+  audience_u_r_i:string;
+  client_i_d:string;
+  secret_digest:[ubyte];
+  redirects:[string];
+  client_type:int8;
+  native_service:bool;
+  created:int64;
+  catalog_publish_op:uint32;
+  operation_query_op:uint32;
+}
+
+table AppActionAdd {
+  app_i_d:uint64;
+  action_i_d:uint32;
+  name:string;
+  label:string;
+  created:int64;
+  old_app_version:uint64;
+  old_auth_version:uint64;
+  old_updated:int64;
 }
 
 root_type Enrollment;

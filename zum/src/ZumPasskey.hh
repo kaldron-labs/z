@@ -39,7 +39,17 @@ struct EnrollmentBeginResult {
 
 struct BootstrapConfig {
   String	issuer;
+  AppID		appID = 0;
   IDVec		roleIDs;
+  String	userName;
+  String	label;
+  UserID	userID = 0;
+  int64_t	now = 0;
+  int64_t	expires = 0;
+};
+
+struct EnrollmentIssueConfig {
+  String	issuer;
   String	userName;
   String	label;
   UserID	userID = 0;
@@ -53,6 +63,7 @@ struct RecoveryIssueConfig {
   UserID	userID = 0;
   int64_t	now = 0;
   int64_t	expires = 0;
+  uint64_t	version = 0;
 };
 
 struct RecoveryBeginConfig {
@@ -97,6 +108,9 @@ using RecoveryIssueFn = CapabilityFn;
 ZumExtern bool bootstrapIssue(
   Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
   BootstrapConfig, BootstrapFn);
+ZumExtern bool enrollmentIssue(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  EnrollmentIssueConfig, CapabilityFn);
 ZumExtern bool recoveryIssue(
   Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
   RecoveryIssueConfig, RecoveryIssueFn);

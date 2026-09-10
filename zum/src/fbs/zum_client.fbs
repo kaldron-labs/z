@@ -2,7 +2,10 @@ include "zfb_types.fbs";
 namespace Zum.fbs;
 table Client {
   id:string;
+  app_i_d:uint64;
+  label:string;
   secret_digest:[ubyte];
+  secret_version:uint64 = 1;
   redirects:[string];
   audiences:[string];
   scope_i_ds:[uint64];
@@ -10,8 +13,14 @@ table Client {
   created:int64;
   updated:int64;
   type:int8;
+  auth_method:int8;
   grants:uint8;
+  refresh_allowed:bool;
+  identity_scopes:[string];
   state:int8;
+  version:uint64 = 1;
   owner:Zfb.UInt128;
+  previous_secret_digest:[ubyte];
+  previous_secret_expires:int64;
 }
 root_type Client;

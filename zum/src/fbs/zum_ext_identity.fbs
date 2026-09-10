@@ -1,0 +1,13 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table ExtIdentity {
+  provider_i_d:uint64;
+  issuer:string;
+  subject:string;
+  user_i_d:uint64;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type ExtIdentity;

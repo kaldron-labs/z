@@ -6,14 +6,14 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <stdlib.h>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZfCf.hh>
 
 #include <zlib/ZvMxParams.hh>
-
-#include <zlib/ZdbMemStore.hh>
 
 #include <zlib/ZumDB.hh>
 #include <zlib/ZumRequest.hh>
@@ -27,10 +27,15 @@ struct TestDB : public Zum::DB {
 
 static ZuPtr<const ZfCf::AnyNode> config()
 {
-  auto scan = ZfCf::scan(
+  ZmRef<ZfCf::Defines> defines = new ZfCf::Defines{};
+  defines->add(ZfCf::DefKey{"MODULE"},
+    ZfCf::DefVal{::getenv("ZUM_TEST_MODULE")});
+  defines->add(ZfCf::DefKey{"CONNECT"},
+    ZfCf::DefVal{::getenv("ZUM_TEST_CONNECT")});
+  Zum::String source{
     "zdb: {\n"
     "  thread: zdb, shards: 1, threads: [shard],\n"
-    "  store: {thread: store},\n"
+    "  store: {thread: store, module: ${MODULE}, connection: ${CONNECT}},\n"
     "  hostID: self, hosts: {self: {standalone: true}}, tables: {}\n"
     "},\n"
     "mx: {\n"
@@ -41,7 +46,8 @@ static ZuPtr<const ZfCf::AnyNode> config()
     "    4: {name: store, isolated: true},\n"
     "    5: {name: shard, isolated: true}\n"
     "  }\n"
-    "}\n");
+    "}\n"};
+  auto scan = ZfCf::scan(source, {}, ZuMv(defines));
   return ZuMv(scan.p<1>());
 }
 
@@ -58,14 +64,13 @@ static void dbDown(Zdb *db, bool)
 }
 
 static ZmRef<TestDB> startDB(
-    const ZfCf::AnyNode *cf, ZiMultiplex &mx,
-    const ZmRef<ZdbMem::Store> &store, ZmRef<Zum::DBContext> &context)
+    const ZfCf::AnyNode *cf, ZiMultiplex &mx, ZmRef<Zum::DBContext> &context)
 {
   ZmRef<TestDB> db = new TestDB{};
   db->requests = new Zum::Requests{};
   if (!db->requests->init(&mx, 5, 8)) return {};
   db->init(ZdbCf{cf->resolve("zdb")}, &mx,
-    ZdbHandler{.upFn = dbUp, .downFn = dbDown}, store.ptr());
+    ZdbHandler{.upFn = dbUp, .downFn = dbDown});
   context = Zum::registerSchema(db);
   if (!db->start()) return {};
   db->active.wait();
@@ -77,6 +82,8 @@ static bool stopDB(ZmRef<TestDB> &db, ZmRef<Zum::DBContext> &context)
   ZmSemaphore drained;
   db->requests->deactivate([&drained]() { drained.post(); });
   drained.wait();
+  // stop() waits for store queue/pipeline completion and shard callback drain.
+  // Only after it returns may final() release tables and a new DB be opened.
   bool ok = db->stop();
   context = {};
   db->final();
@@ -174,6 +181,183 @@ static bool stageEnrollment(Zum::DB *db, Zum::DBContext *context)
   });
 }
 
+static bool stageAppEnrollment(
+    Zum::DB *db, Zum::AppID appID, Zum::AudienceID audienceID,
+    ZuCSpan clientID, ZdbSagaID sagaID, Zum::ActionID catalogPublishOp,
+    Zum::ActionID operationQueryOp)
+{
+  Zum::AppEnrollment enrollment{.coreAppID = 1, .appID = appID,
+    .appName = Zum::String{clientID}, .appLabel = "Orders",
+    .audienceID = audienceID,
+    .audienceURI = Zum::String{"https://orders.example/"} << appID,
+    .clientID = Zum::String{clientID},
+    .secretDigest = Zum::Bytes{ZuBSpan{"verifier"}},
+    .clientType = Zum::ClientType::Confidential, .nativeService = true,
+    .created = 100, .catalogPublishOp = catalogPublishOp,
+    .operationQueryOp = operationQueryOp};
+  ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
+  saga->init(ZuMv(enrollment));
+  Zdb_::SagaPayload payload;
+  Zum::MSaga::save(saga, payload);
+  return ZmBlock<bool>{}([
+    db, sagaID, payload = ZuMv(payload)
+  ](auto wake) mutable {
+    db->run([db, sagaID, payload = ZuMv(payload),
+        wake = ZuMv(wake)]() mutable {
+      auto table = static_cast<ZdbTable<Zdb_::SagaData> *>(
+	db->table("saga").ptr());
+      table->run(0, [table, sagaID, payload = ZuMv(payload),
+	  wake = ZuMv(wake)]() mutable {
+	ZdbRowRef<Zdb_::SagaData> row =
+	  new ZdbRow<Zdb_::SagaData>{table, ZdbShard{0}};
+	table->insert(row, [sagaID, payload = ZuMv(payload), wake = ZuMv(wake)](
+	    ZdbRow<Zdb_::SagaData> *row) mutable {
+	  if (!row) { wake(false); return; }
+	  new (row->ptr()) Zdb_::SagaData{
+	    .type = Zum::AppEnrollment::Type{}(),
+	    .id = sagaID, .shard = 0, .data = ZuMv(payload)};
+	  wake(bool(row->commit()));
+	});
+      });
+    });
+  });
+}
+
+struct AppRollbackState {
+  Zum::App		app;
+  Zum::Audience	audience;
+  Zum::Client		client;
+};
+
+// Test-only durable images at each intent/effect boundary. No production
+// callbacks are bypassed during recovery: startup runs the real AppActionAdd.
+template <typename T>
+static ZmRef<ZdbTable<T>> internalTable(Zum::DB *db, ZuCSpan name)
+{
+  return ZmBlock<ZmRef<ZdbTable<T>>>{}([db, name](auto wake) mutable {
+    db->run([db, name, wake = ZuMv(wake)]() mutable {
+      wake(static_cast<ZdbTable<T> *>(db->table(name).ptr()));
+    });
+  });
+}
+
+template <typename Table, typename Key>
+static typename Table::T record(Table *table, Key key)
+{
+  using T = typename Table::T;
+  return ZmBlock<T>{}([table, key = ZuMv(key)](auto wake) mutable {
+    table->run(0, [table, key = ZuMv(key), wake = ZuMv(wake)]() mutable {
+      table->template find<0>(0, ZuMv(key), [wake = ZuMv(wake)](
+	  ZdbRowRef<T> row) mutable { wake(row ? T{row->data()} : T{}); });
+    });
+  });
+}
+
+static bool stageActionAdd(
+    Zum::DB *db, Zum::DBContext *context, const Zum::App &app,
+    ZdbSagaID sagaID, ZuCSpan name, unsigned cut)
+{
+  Zum::AppActionAdd add{.appID = app.id, .actionID = app.nextActionID,
+    .name = Zum::String{name}, .label = "Recovered action", .created = 200,
+    .oldAppVersion = app.version, .oldAuthVersion = app.authVersion,
+    .oldUpdated = app.updated};
+  ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
+  saga->init(ZuMv(add));
+  Zdb_::SagaPayload payload;
+  Zum::MSaga::save(saga, payload);
+  auto data = internalTable<Zdb_::SagaData>(db, "saga");
+  auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
+  if (!insertRecord(data.ptr(), Zdb_::SagaData{
+      .type = Zum::AppActionAdd::Type{}(), .id = sagaID,
+      .shard = 0, .data = ZuMv(payload)})) return false;
+  for (unsigned step = 0; step < Zum::AppActionAdd::NSteps; ++step) {
+    if (cut == 2 * step) return true;
+    Zdb_::AnyTable *table = step == 0 || step == 3 ?
+      static_cast<Zdb_::AnyTable *>(context->apps) :
+      static_cast<Zdb_::AnyTable *>(context->actions);
+    auto un = ZmBlock<Zdb_::UN>{}([table](auto wake) mutable {
+      table->run(0, [table, wake = ZuMv(wake)]() mutable {
+	wake(table->nextUN(0));
+      });
+    });
+    if (!insertRecord(steps.ptr(), Zdb_::SagaStep{
+	.type = Zum::AppActionAdd::Type{}(), .id = sagaID,
+	.step = step, .shard = 0, .un = un})) return false;
+    if (cut == 2 * step + 1) return true;
+    if (step == 0 || step == 3) {
+      if (!ZmBlock<bool>{}([context, &app, sagaID, step](auto wake) mutable {
+	context->apps->run(0, [context, &app, sagaID, step,
+	    wake = ZuMv(wake)]() mutable {
+	  context->apps->findUpd<0>(0, ZuFwdTuple(app.id), [
+	      &app, sagaID, step, wake = ZuMv(wake)](
+	      ZdbRow<Zum::App> *row) mutable {
+	    if (!row) { wake(false); return; }
+	    if (!step) {
+	      row->data().nextActionID = app.nextActionID + 1;
+	      row->data().version = app.version + 1;
+	      row->data().authVersion = app.authVersion + 1;
+	      row->data().updated = 200;
+	      row->data().owner = sagaID;
+	    } else row->data().owner = 0;
+	    wake(bool(row->commit()));
+	  });
+	});
+      })) return false;
+    } else if (step == 1) {
+      if (!insertRecord(context->actions, Zum::Action{
+	  .appID = app.id, .id = app.nextActionID, .name = Zum::String{name},
+	  .label = "Recovered action", .state = Zum::State::Active,
+	  .origin = Zum::Origin::Custom, .version = 1,
+	  .created = 200, .updated = 200, .owner = sagaID})) return false;
+    } else {
+      if (!ZmBlock<bool>{}([context, &app](auto wake) mutable {
+	context->actions->run(0, [context, &app, wake = ZuMv(wake)]() mutable {
+	  context->actions->findUpd<0>(0, ZuFwdTuple(app.id, app.nextActionID),
+	    [wake = ZuMv(wake)](ZdbRow<Zum::Action> *row) mutable {
+	      if (!row) { wake(false); return; }
+	      row->data().owner = 0;
+	      wake(bool(row->commit()));
+	    });
+	});
+      })) return false;
+    }
+  }
+  return true;
+}
+
+static bool sagaEmpty(Zum::DB *db)
+{
+  return ZmBlock<bool>{}([db](auto wake) mutable {
+    db->run([db, wake = ZuMv(wake)]() mutable {
+      wake(!db->table("saga")->count() &&
+	!db->table("saga_step")->count());
+    });
+  });
+}
+
+static AppRollbackState appRollbackState(Zum::DBContext *context)
+{
+  return ZmBlock<AppRollbackState>{}([context](auto wake) mutable {
+    context->apps->run(0, [context, wake = ZuMv(wake)]() mutable {
+      context->apps->find<0>(0, ZuFwdTuple(Zum::AppID{19}), [context,
+	  wake = ZuMv(wake)](ZdbRowRef<Zum::App> app) mutable {
+	context->audiences->find<0>(0, ZuFwdTuple(Zum::AudienceID{20}), [
+	  context, app = ZuMv(app), wake = ZuMv(wake)
+	](ZdbRowRef<Zum::Audience> audience) mutable {
+	  context->clients->find<0>(0, ZuFwdTuple(ZuCSpan{"svc_failed"}), [
+	    app = ZuMv(app), audience = ZuMv(audience), wake = ZuMv(wake)
+	  ](ZdbRowRef<Zum::Client> client) mutable {
+	    wake(AppRollbackState{
+	      app ? Zum::App{app->data()} : Zum::App{},
+	      audience ? Zum::Audience{audience->data()} : Zum::Audience{},
+	      client ? Zum::Client{client->data()} : Zum::Client{}});
+	  });
+	});
+      });
+    });
+  });
+}
+
 static bool enrollmentRecovered(Zum::DBContext *context)
 {
   return ZmBlock<bool>{}([context](auto wake) mutable {
@@ -190,6 +374,56 @@ static bool enrollmentRecovered(Zum::DBContext *context)
 	      cred->data().state == Zum::State::Active &&
 	      !cred->data().owner && cred->data().userID == 42);
 	  });
+      });
+    });
+  });
+}
+
+static bool appEnrollmentRecovered(Zum::DBContext *context)
+{
+  return ZmBlock<bool>{}([context](auto wake) mutable {
+    context->apps->run(0, [context, wake = ZuMv(wake)]() mutable {
+      context->apps->find<0>(0, ZuFwdTuple(Zum::AppID{9}), [context,
+	  wake = ZuMv(wake)](ZdbRowRef<Zum::App> app) mutable {
+	context->audiences->find<0>(0, ZuFwdTuple(Zum::AudienceID{10}), [
+	  context, app = ZuMv(app), wake = ZuMv(wake)
+	](ZdbRowRef<Zum::Audience> audience) mutable {
+	  context->clients->find<0>(0, ZuFwdTuple(ZuCSpan{"svc_orders"}), [
+	    context, app = ZuMv(app), audience = ZuMv(audience),
+	    wake = ZuMv(wake)
+	  ](ZdbRowRef<Zum::Client> client) mutable {
+	    context->clientAccess->find<0>(0,
+	      ZuFwdTuple(ZuCSpan{"svc_orders"}, Zum::AppID{1}), [context,
+	      app = ZuMv(app), audience = ZuMv(audience),
+	      client = ZuMv(client), wake = ZuMv(wake)
+	    ](ZdbRowRef<Zum::ClientAccess> clientAccess) mutable {
+	      context->adminAccess->find<0>(0,
+		ZuFwdTuple(Zum::ActorKind::Client,
+		  ZuCSpan{"svc_orders"}, Zum::AppID{9}), [context,
+		app = ZuMv(app), audience = ZuMv(audience),
+		client = ZuMv(client), clientAccess = ZuMv(clientAccess),
+		wake = ZuMv(wake)
+	      ](ZdbRowRef<Zum::AdminAccess> adminAccess) mutable {
+		context->authPolicies->find<0>(0, ZuFwdTuple(Zum::AppID{9}), [
+		  app = ZuMv(app), audience = ZuMv(audience),
+		  client = ZuMv(client), clientAccess = ZuMv(clientAccess),
+		  adminAccess = ZuMv(adminAccess), wake = ZuMv(wake)
+		](ZdbRowRef<Zum::AuthPolicy> policy) mutable {
+		  wake(app && app->data().state == Zum::State::Active &&
+		    app->data().version == 2 && !app->data().owner &&
+		    audience && audience->data().appID == 9 &&
+		    !audience->data().owner && client &&
+		    client->data().appID == 9 && !client->data().owner &&
+		    client->data().secretDigest == ZuBSpan{"verifier"} &&
+		    clientAccess && !clientAccess->data().owner &&
+		    clientAccess->data().appID == 1 && adminAccess &&
+		    !adminAccess->data().owner && adminAccess->data().appID == 9 &&
+		    policy && !policy->data().owner && policy->data().appID == 9);
+		});
+	      });
+	    });
+	  });
+	});
       });
     });
   });
@@ -220,7 +454,7 @@ static State loadState(Zum::DBContext *context, Zum::ActionID id)
       context->issuers->find<0>(0, ZuFwdTuple(ZuCSpan{"issuer"}), [
 	context, id, wake = ZuMv(wake)
       ](ZdbRowRef<Zum::Issuer> issuer) mutable {
-	context->actions->find<0>(0, ZuFwdTuple(id), [
+	context->actions->find<0>(0, ZuFwdTuple(Zum::AppID{0}, id), [
 	  issuer = ZuMv(issuer), wake = ZuMv(wake)
 	](ZdbRowRef<Zum::Action> action) mutable {
 	  wake(State{
@@ -238,11 +472,8 @@ static void restart()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
-  ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
-  store->preserve();
-
   ZmRef<Zum::DBContext> context;
-  auto db = startDB(cf, mx, store, context);
+  auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
   if (!db) return;
   ZuCheck(insertIssuer(context));
@@ -253,7 +484,7 @@ static void restart()
     state.action.id == first && state.action.name == "orders.read");
   ZuCheck(stopDB(db, context));
 
-  db = startDB(cf, mx, store, context);
+  db = startDB(cf, mx, context);
   ZuCheck(bool(db));
   if (!db) return;
   state = loadState(context, first);
@@ -265,7 +496,48 @@ static void restart()
     loadState(context, second).issuer.nextActionID == second + 1);
   ZuCheck(stopDB(db, context));
 
-  store = {};
+  ZuCheck(mx.stop());
+}
+
+static void grantUpdate()
+{
+  ZuTestScope(grantUpdate);
+  auto cf = config();
+  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZuCheck(mx.start());
+  ZmRef<Zum::DBContext> context;
+  auto db = startDB(cf, mx, context);
+  ZuCheck(bool(db));
+  if (!db) return;
+  constexpr ZuCSpan id{"grant-update-001"};
+  ZuCheck(insertRecord(context->grants, Zum::Grant{
+    .id = Zum::Bytes{ZuBSpan{id}}, .roleIDs = Zum::IDVec{1},
+    .scope = "before"}));
+  ZuCheck(ZmBlock<bool>{}([context, id](auto wake) mutable {
+    auto grants = context->grants;
+    grants->run(0, [grants, id, wake = ZuMv(wake)]() mutable {
+      grants->findUpd<0>(0, ZuFwdTuple(ZuBSpan{id}),
+        [wake = ZuMv(wake)](ZdbRow<Zum::Grant> *row) mutable {
+        if (!row) { wake(false); return; }
+        row->data().roleIDs = Zum::IDVec{2, 3};
+        row->data().scope = "after";
+        row->data().authoritySource = Zum::UserSource::External;
+        row->data().authorityProviderID = 8;
+        wake(row->commit());
+      });
+    });
+  }));
+  ZuCheck(stopDB(db, context));
+  db = startDB(cf, mx, context);
+  ZuCheck(bool(db));
+  if (!db) return;
+  auto grant = record(context->grants, ZuFwdTuple(ZuBSpan{id}));
+  ZuCheck(grant.id == ZuBSpan{id} && grant.scope == "after" &&
+    grant.roleIDs.length() == 2 && grant.roleIDs[0] == 2 &&
+    grant.roleIDs[1] == 3 &&
+    grant.authoritySource == Zum::UserSource::External &&
+    grant.authorityProviderID == 8);
+  ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
 }
 
@@ -275,32 +547,93 @@ static void sagaRecovery()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
-  ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
-  store->preserve();
-
   ZmRef<Zum::DBContext> context;
-  auto db = startDB(cf, mx, store, context);
+  auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
   if (!db) return;
   ZuCheck(stageEnrollment(db, context));
+  ZuCheck(stageAppEnrollment(
+    db, 9, 10, "svc_orders", ZdbSagaID{43}, 69, 1));
+  // Equal operation IDs are a corrupt enrollment payload. It fails after the
+  // app, audience, client, and client-access inserts and must roll them back.
+  ZuCheck(stageAppEnrollment(
+    db, 19, 20, "svc_failed", ZdbSagaID{44}, 1, 1));
   ZuCheck(stopDB(db, context));
 
-  db = startDB(cf, mx, store, context);
+  db = startDB(cf, mx, context);
   ZuCheck(bool(db));
   if (!db) return;
   ZuCheck(db->requests->active());
   ZuCheck(enrollmentRecovered(context));
+  ZuCheck(appEnrollmentRecovered(context));
+  auto rollback = appRollbackState(context);
+  ZuCheck(!rollback.app.id);
+  ZuCheck(!rollback.audience.id);
+  ZuCheck(!rollback.client.id);
+  ZuCheck(sagaEmpty(db));
+
+  // Every step has an intent-only image and an effect-committed image, plus
+  // the initial durable payload. Reconstruct the DB at each boundary.
+  for (unsigned cut = 0; cut <= 2 * Zum::AppActionAdd::NSteps; ++cut) {
+    ZuTestRepeat(actionRecovery, 2 * Zum::AppActionAdd::NSteps + 1);
+    auto app = record(context->apps, ZuFwdTuple(Zum::AppID{9}));
+    Zum::String name{"cut"};
+    name << cut;
+    ZuCheck(stageActionAdd(db, context, app, ZdbSagaID{100 + cut}, name, cut));
+    ZuCheck(stopDB(db, context));
+    db = startDB(cf, mx, context);
+    ZuCheck(bool(db));
+    if (!db) return;
+    auto next = record(context->apps, ZuFwdTuple(app.id));
+    auto action = record(context->actions,
+      ZuFwdTuple(app.id, app.nextActionID));
+    ZuCheck(db->requests->active() && !next.owner &&
+      next.nextActionID == app.nextActionID + 1 &&
+      next.version == app.version + 1 && next.authVersion == app.authVersion + 1 &&
+      next.updated == 200);
+    ZuCheck(action.appID == app.id && action.id == app.nextActionID &&
+      action.name == name && action.label == "Recovered action" &&
+      action.state == Zum::State::Active && action.origin == Zum::Origin::Custom &&
+      !action.owner && action.version == 1 && !action.tombstone);
+    ZuCheck(sagaEmpty(db));
+  }
+
+  // A duplicate name after a committed app reservation must compensate the
+  // allocation without changing the existing action or leaving an owned app.
+  auto app = record(context->apps, ZuFwdTuple(Zum::AppID{9}));
+  ZuCheck(stageActionAdd(db, context, app, ZdbSagaID{200}, "cut0", 2));
+  ZuCheck(stopDB(db, context));
+  db = startDB(cf, mx, context);
+  ZuCheck(bool(db));
+  if (!db) return;
+  auto next = record(context->apps, ZuFwdTuple(app.id));
+  auto existing = record(context->actions,
+    ZuFwdTuple(app.id, Zum::ActionID{0}));
+  auto absent = record(context->actions, ZuFwdTuple(app.id, app.nextActionID));
+  ZuCheck(!next.owner && next.nextActionID == app.nextActionID &&
+    next.version == app.version && next.authVersion == app.authVersion &&
+    next.updated == app.updated);
+  ZuCheck(existing.name == "cut0" && !existing.owner && existing.version == 1 &&
+    existing.state == Zum::State::Active && !absent.appID);
+  ZuCheck(sagaEmpty(db));
   ZuCheck(stopDB(db, context));
 
-  store = {};
   ZuCheck(mx.stop());
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  auto module = ::getenv("ZUM_TEST_MODULE");
+  auto connect = ::getenv("ZUM_TEST_CONNECT");
+  if (!module || !*module || !connect || !*connect) {
+    std::cerr << "zumrestarttest: set ZUM_TEST_MODULE and ZUM_TEST_CONNECT "
+      "for a fresh disposable PostgreSQL database\n";
+    return 1;
+  }
   ZuTestMain();
   ZuTestCall(restart);
+  ZuTestCall(grantUpdate);
   ZuTestCall(sagaRecovery);
   return 0;
 }

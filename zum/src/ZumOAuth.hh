@@ -39,6 +39,8 @@ namespace OAuthError {
     UnsupportedResponseType,
     UnsupportedGrantType,
     InvalidScope,
+    LoginRequired,
+    ConsentRequired,
     ServerError,
     TemporarilyUnavailable
   };
@@ -50,6 +52,7 @@ namespace ClientAuth {
 
 struct TokenResponse {
   String	accessToken;
+  String	idToken;
   String	refreshToken;
   String	scope;
   uint64_t	expiresIn = 0;
@@ -58,6 +61,8 @@ struct TokenResponse {
 inline void tokenClear(TokenResponse &response) {
   if (response.accessToken && response.accessToken.mutable_())
     ZuClear(response.accessToken.data(), response.accessToken.length());
+  if (response.idToken && response.idToken.mutable_())
+    ZuClear(response.idToken.data(), response.idToken.length());
   if (response.refreshToken && response.refreshToken.mutable_())
     ZuClear(response.refreshToken.data(), response.refreshToken.length());
   response = {};
@@ -71,7 +76,12 @@ struct AuthorizeParams {
     Scope,
     State,
     CodeChallenge,
-    CodeChallengeMethod
+    CodeChallengeMethod,
+    Nonce,
+    LoginHint,
+    Resource,
+    Prompt,
+    MaxAge
   };
 
   ZuCSpan	responseType;
@@ -81,7 +91,12 @@ struct AuthorizeParams {
   ZuCSpan	state;
   ZuCSpan	codeChallenge;
   ZuCSpan	codeChallengeMethod;
-  uint8_t	seen = 0;
+  ZuCSpan	nonce;
+  ZuCSpan	loginHint;
+  ZuCSpan	resource;
+  ZuCSpan	prompt;
+  ZuCSpan	maxAge;
+  uint16_t	seen = 0;
 
   bool has(Field field) const { return seen & (1U << field); }
 };
@@ -226,7 +241,8 @@ ZumExtern String codeRedirect(const Grant &, ZuCSpan code);
 ZumExtern String errorRedirect(
   ZuCSpan redirectURI, int error, ZuCSpan state, bool statePresent);
 ZumExtern int authenticateClient(
-  const Client &, int grant, const TokenParams &, const BasicAuth *);
+  const Client &, int grant, const TokenParams &, const BasicAuth *,
+  int64_t now = 0);
 ZumExtern bool redirectMatches(ClientType::T, ZuBSpan registered,
   ZuBSpan requested);
 ZumExtern bool pkceVerify(ZuCSpan challenge, ZuCSpan verifier);

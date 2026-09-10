@@ -60,11 +60,21 @@ String metadataJSON(ZuCSpan issuer)
   endpoint(json, issuer, "/jwks");
   json << ",\"revocation_endpoint\":";
   endpoint(json, issuer, "/revoke");
+  json << ",\"userinfo_endpoint\":";
+  endpoint(json, issuer, "/userinfo");
   json << ",\"response_types_supported\":[\"code\"]"
     ",\"grant_types_supported\":[\"authorization_code\",\"refresh_token\","
     "\"client_credentials\"]"
     ",\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\","
     "\"none\"]"
+    ",\"revocation_endpoint_auth_methods_supported\":["
+    "\"client_secret_basic\",\"none\"]"
+    ",\"subject_types_supported\":[\"public\"]"
+    ",\"id_token_signing_alg_values_supported\":[\"ES256\"]"
+    ",\"scopes_supported\":[\"openid\",\"profile\",\"email\"]"
+    ",\"claims_supported\":[\"sub\",\"iss\",\"aud\",\"exp\",\"iat\","
+    "\"auth_time\",\"nonce\",\"amr\",\"name\","
+    "\"preferred_username\",\"email\"]"
     ",\"code_challenge_methods_supported\":[\"S256\"]}";
   return json;
 }
@@ -94,7 +104,7 @@ public:
       finish_(false);
       return;
     }
-    using Table = ZdbTable<SignKey>;
+    using Table = SignKeyTable;
     using Tuple = Table::Tuple;
     m_context->signKeys->selectRows<0>({}, m_maxKeys + 1, [
       self = ZmRef<JWKSLoad_>{this}
@@ -105,12 +115,12 @@ public:
 	  return;
 	}
 	auto row = ZuMv(result).template p<Tuple>();
-	if (row.template p<5>() == State::Active &&
-	    row.template p<3>() <= self->m_now &&
-	    (!row.template p<4>() || row.template p<4>() > self->m_now) &&
-	    row.template p<2>()) {
+	if (row.template p<8>() == State::Active &&
+	    row.template p<6>() <= self->m_now &&
+	    (!row.template p<7>() || row.template p<7>() > self->m_now) &&
+	    row.template p<4>()) {
 	  if (self->m_keyCount++) self->m_json << ',';
-	  self->m_json << row.template p<2>();
+	  self->m_json << row.template p<4>();
 	}
 	return;
       }
