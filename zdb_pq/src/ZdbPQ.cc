@@ -1715,12 +1715,14 @@ int StoreTbl::prepSelect_send()
       query << '$' << (i + 1) << "::" << m_store->oids().name(type);
       oids.push(m_store->oids().oid(type));
     }
-  query << " ORDER BY ";
-  for (i = k; i < n; i++) {
-    if (i > k) query << ", ";
-    query << '"' << xKeyFields[i].id_ << '"';
-    if (keyFields[i]->descend & (uint64_t(1)<<keyID))
-      query << " DESC";
+  if (k < n) {
+    query << " ORDER BY ";
+    for (i = k; i < n; i++) {
+      if (i > k) query << ", ";
+      query << '"' << xKeyFields[i].id_ << '"';
+      if (keyFields[i]->descend & (uint64_t(1)<<keyID))
+	query << " DESC";
+    }
   }
   query << " LIMIT $" << (oids.length() + 1) << "::uint8";
   oids.push(m_store->oids().oid(Value::Index<UInt64>{}));
