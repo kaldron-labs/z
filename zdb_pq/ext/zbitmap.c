@@ -92,7 +92,8 @@ Datum zbitmap_recv(PG_FUNCTION_ARGS) {
        errmsg("bitmap length is too large"),
        errdetail("A bitmap cannot be longer than %d 64bit words.",
 	 ZBITMAP_MAX_LEN)));
-  v = zu_bitmap_new_(&allocator, n);
+  /* zu_bitmap_new_() takes a bit length; the wire format carries words. */
+  v = zu_bitmap_new_(&allocator, n << 6);
   for (i = 0; i < n; i++)
     zu_bitmap_set_word(v, i, pq_getmsgint64(buf));
   PG_RETURN_POINTER(DATAVAR(v));
