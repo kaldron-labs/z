@@ -2,7 +2,10 @@ include "zfb_types.fbs";
 namespace Zum.fbs;
 table User {
   id:uint64;
+  source:int8;
   name:string;
+  profile:string;
+  email:string;
   handle:[ubyte];
   role_i_ds:[uint64];
   created:int64;
@@ -10,6 +13,7 @@ table User {
   state:int8;
   owner:Zfb.UInt128;
   auth_version:uint64 = 1;
+  version:uint64 = 1;
   oidc_sub:string;
 }
 root_type User;

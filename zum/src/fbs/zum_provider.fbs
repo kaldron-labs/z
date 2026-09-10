@@ -1,0 +1,18 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table Provider {
+  id:uint64;
+  name:string;
+  issuer:string;
+  client_i_d:string;
+  client_secret:[ubyte];
+  scopes:[string];
+  role_claim:string;
+  claim_source:int8;
+  state:int8;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type Provider;

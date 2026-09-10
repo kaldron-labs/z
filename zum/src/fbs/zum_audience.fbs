@@ -1,0 +1,14 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table Audience {
+  id:uint64;
+  app_i_d:uint64;
+  name:string;
+  uri:string;
+  state:int8;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type Audience;

@@ -7,9 +7,12 @@
 #include <zlib/ZumServer.hh>
 
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuICmp.hh>
 
 #include <zlib/ZfJSON.hh>
 
+#include <zlib/ZtlsHMAC.hh>
+#include <zlib/ZtlsSec.hh>
 
 namespace Zum {
 
@@ -24,6 +27,77 @@ static ServerReply serverError()
   return ServerReply{
     .body = oauthErrorJSON(OAuthError::TemporarilyUnavailable),
     .type = ReplyType::ServerError};
+}
+
+static bool decodeID(ZuCSpan, Bytes &);
+
+static bool logoutForm(String &form, String &csrf)
+{
+  bool valid = true;
+  bool seen = false;
+  formEach(form.span(), [&valid, &seen, &csrf](ZuCSpan name, ZuCSpan value) {
+    if (name != "csrf" || seen || !value) {
+      valid = false;
+      return;
+    }
+    seen = true;
+    csrf = value;
+  });
+  return valid && seen;
+}
+
+static bool loginForm(String &form, Bytes &id, String &login)
+{
+  ZuCSpan encoded;
+  bool valid = true;
+  unsigned seen = 0;
+  formEach(form.span(), [&valid, &seen, &encoded, &login](
+      ZuCSpan name, ZuCSpan value) {
+    unsigned bit = 0;
+    if (name == "id") {
+      bit = 1U;
+      encoded = value;
+    } else if (name == "login") {
+      bit = 2U;
+      login = value;
+    } else {
+      valid = false;
+      return;
+    }
+    if (seen & bit) valid = false;
+    seen |= bit;
+  });
+  return valid && seen == 3U && login && login.length() <= 1024 &&
+    decodeID(encoded, id);
+}
+
+static bool consentForm(String &form, Bytes &id, bool &approve)
+{
+  ZuCSpan encoded;
+  ZuCSpan decision;
+  bool valid = true;
+  unsigned seen = 0;
+  formEach(form.span(), [&valid, &seen, &encoded, &decision](
+      ZuCSpan name, ZuCSpan value) {
+    unsigned bit = 0;
+    if (name == "id") {
+      bit = 1U;
+      encoded = value;
+    } else if (name == "decision") {
+      bit = 2U;
+      decision = value;
+    } else {
+      valid = false;
+      return;
+    }
+    if (seen & bit) valid = false;
+    seen |= bit;
+  });
+  if (!valid || seen != 3U ||
+      (decision != "approve" && decision != "deny") ||
+      !decodeID(encoded, id)) return false;
+  approve = decision == "approve";
+  return true;
 }
 
 class ReplyComplete_ : public ZumObject {
@@ -71,6 +145,20 @@ static bool ceremonyQuery(String &query, Bytes &id)
   return encoded && decodeID(encoded, id);
 }
 
+static bool facadeQuery(String &query, Bytes &id)
+{
+  if (query && query[0] == '?') query.splice(0, 1);
+  if (!query.mutable_()) query.length(query.length());
+  ZuCSpan encoded;
+  unsigned count = 0;
+  formEach({query.data(), query.length()},
+    [&encoded, &count](ZuCSpan name, ZuCSpan value) {
+      ++count;
+      if (name == "request") encoded = value;
+    });
+  return count == 1 && encoded && decodeID(encoded, id);
+}
+
 static bool passkeyStart(String &json, PasskeyStart &start)
 {
   if (!json.mutable_()) json.length(json.length());
@@ -109,7 +197,8 @@ static bool passkeyStart(String &json, PasskeyStart &start)
     next.type = PasskeyStartType::Recovery;
   else
     return false;
-  bool needsCapability = next.type == PasskeyStartType::Bootstrap ||
+  bool needsCapability = next.type == PasskeyStartType::Enrollment ||
+    next.type == PasskeyStartType::Bootstrap ||
     next.type == PasskeyStartType::Recovery;
   if (needsCapability && !next.capability) return false;
   start = ZuMv(next);
@@ -125,25 +214,44 @@ static String ceremonyJSON(ZuBSpan id, ZuCSpan options)
   return body;
 }
 
+static String consentPage(ZuBSpan id)
+{
+  String page{
+    "<!doctype html><meta charset=utf-8><title>Zum consent</title>"
+    "<meta name=referrer content=no-referrer><h1>Authorize application</h1>"
+    "<p>The application requests the scopes shown in the authorization "
+    "request.</p><form method=post action=/consent><input type=hidden name=id "
+    "value=\""};
+  page << encodeID(id) << "\"><button name=decision value=approve>Approve"
+    "</button><button name=decision value=deny>Deny</button></form>";
+  return page;
+}
+
 bool Server::init(
     DB *db, DBContext *context, Requests *requests, ServerConfig config,
     ClockFn clock, PageFn page, PolicyFn policy, AdmitFn admit, SignFn sign,
-    OIDCHTTPFn oidcHTTP)
+    OIDCHTTPFn oidcHTTP, AuthRouteFn authRoute)
 {
   if (m_db || !db || !context || !requests || !clock ||
-      !policy || !sign || !config.issuer || !config.keyID ||
+      !policy || !sign || !config.issuer || !config.keyID || !config.publicKey ||
       !config.cookieName || !config.cookiePath || !config.requestTimeout ||
       config.ceremonyLifetime <= 0 || config.codeLifetime <= 0 ||
       config.accessLifetime <= 0 ||
-      config.refreshLifetime <= 0 || !config.refreshGenerations ||
+      config.refreshLifetime <= 0 || config.sessionIdle <= 0 ||
+      config.sessionAbsolute <= 0 ||
+      config.sessionIdle > config.sessionAbsolute || !config.refreshGenerations ||
       !config.spentTokens || !config.limits.cookie || !config.limits.jwks ||
       (config.authMethod != AuthMethod::Passkey &&
-       config.authMethod != AuthMethod::OIDC) ||
-      (config.authMethod == AuthMethod::Passkey &&
+       config.authMethod != AuthMethod::OIDC &&
+       config.authMethod != AuthMethod::LocalFirst) ||
+      ((config.authMethod == AuthMethod::Passkey ||
+        config.authMethod == AuthMethod::LocalFirst) &&
        (!config.rpID || !config.rpName || !config.passkeyTimeout ||
 	!config.limits.credentialID || !page || !admit)) ||
       (config.authMethod == AuthMethod::OIDC &&
-       (!config.oidcTimeout || !oidcHTTP)) ||
+       (!config.oidcTimeout || !oidcHTTP || !oidcConfigValid(config.oidc))) ||
+      (config.authMethod == AuthMethod::LocalFirst &&
+       (!config.oidcTimeout || !oidcHTTP || !authRoute)) ||
       !m_rng.init() || !m_cookieRng.init()) return false;
   m_db = db;
   m_context = context;
@@ -154,8 +262,9 @@ bool Server::init(
   m_policy = ZuMv(policy);
   m_admit = ZuMv(admit);
   m_sign = ZuMv(sign);
-  if (m_config.authMethod == AuthMethod::OIDC && !m_oidc.init(
-      requests->scheduler(), requests->sid(), context, m_config.oidc,
+  m_authRoute = ZuMv(authRoute);
+  if (m_config.authMethod != AuthMethod::Passkey && !m_oidc.init(
+      requests->scheduler(), requests->sid(), context,
       m_config.limits.oidc, m_config.limits.oidcPending,
       m_config.oidcTimeout, [this]() { return now_(); }, ZuMv(oidcHTTP))) {
     final();
@@ -167,6 +276,7 @@ bool Server::init(
 void Server::final()
 {
   m_oidc.final();
+  m_authRoute = AuthRouteFn{};
   m_sign = SignFn{};
   m_admit = AdmitFn{};
   m_policy = PolicyFn{};
@@ -194,16 +304,23 @@ bool Server::cookie_(String &value, Bytes &digest)
   return true;
 }
 
-String Server::setCookie_(ZuCSpan value, bool clear) const
+String Server::setCookie_(ZuCSpan value, bool clear, int64_t lifetime) const
 {
+  if (lifetime <= 0) lifetime = m_config.ceremonyLifetime;
   String header;
   header << m_config.cookieName << '=' << value << "; Path=" <<
     m_config.cookiePath << "; Secure; HttpOnly; SameSite=Lax; Max-Age=" <<
-    ZuBoxed(clear ? 0 : m_config.ceremonyLifetime);
+    ZuBoxed(clear ? 0 : lifetime);
   return header;
 }
 
 bool Server::binding_(String &cookie, Bytes &digest) const
+{
+  String value;
+  return binding_(cookie, value, digest);
+}
+
+bool Server::binding_(String &cookie, String &token, Bytes &digest) const
 {
   unsigned length = cookie.length();
   if (!length || length > m_config.limits.cookie) return false;
@@ -229,10 +346,125 @@ bool Server::binding_(String &cookie, Bytes &digest) const
     offset = end + (end < length);
   }
   Bytes id;
-  return value && opaqueParse(value, id, digest);
+  if (!value) return false;
+  token = value;
+  return opaqueParse(token, id, digest);
+}
+
+String Server::csrf_(ZuBSpan key) const
+{
+  if (!key) return {};
+  uint8_t digest[Ztls::HMAC<>::Size];
+  Ztls::HMAC<> hmac;
+  hmac.start(key);
+  hmac.update(ZuBSpan{"zum.logout.csrf"});
+  hmac.finish(digest);
+  String encoded;
+  encoded.length(ZuBase64URL::enclen(sizeof(digest)));
+  encoded.length(ZuBase64URL::encode(encoded.span(), digest));
+  ZuClear(digest, sizeof(digest));
+  return encoded;
 }
 
 void Server::authorize(String query, ServerFn complete)
+{
+  authorize(ZuMv(query), String{}, ZuMv(complete));
+}
+
+void Server::authorize(String query, String browserCookie, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (query.length() > m_config.limits.form) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  String reference{query};
+  String sessionToken;
+  Bytes sessionDigest;
+  (void)binding_(browserCookie, sessionToken, sessionDigest);
+  Bytes id;
+  if (!facadeQuery(reference, id)) {
+    authorize_(ZuMv(query), {}, 0, ZuMv(sessionToken),
+      [done](ServerReply reply) mutable {
+      done->finish(ZuMv(reply));
+    });
+    return;
+  }
+  String cookie;
+  Bytes binding;
+  if (!cookie_(cookie, binding)) { done->finish(serverError()); return; }
+  String setCookie = setCookie_(cookie);
+  if (cookie.mutable_()) ZuClear(cookie.data(), cookie.length());
+  int64_t now = now_();
+  if (now <= 0) { done->finish(serverError()); return; }
+  auto grants = m_context->grants;
+  bool queued = m_requests->run(deadline_(), [this, grants,
+      id = ZuMv(id), binding = ZuMv(binding),
+      sessionToken = ZuMv(sessionToken), now,
+      setCookie = ZuMv(setCookie), done](ZmRef<Request> request) mutable {
+    grants->run(0, [this, grants, id = ZuMv(id), binding = ZuMv(binding),
+        sessionToken = ZuMv(sessionToken), now, setCookie = ZuMv(setCookie), done,
+        request = ZuMv(request)]() mutable {
+      grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [this,
+          binding = ZuMv(binding), sessionToken = ZuMv(sessionToken),
+          now, setCookie = ZuMv(setCookie), done,
+          request = ZuMv(request)](ZdbRow<Grant> *row) mutable {
+        int error = OAuthError::InvalidRequest;
+        AuthorizeResult result;
+        if (row && row->data().kind == GrantKind::Ceremony &&
+            row->data().purpose == GrantPurpose::Authorization &&
+            row->data().state == State::Active && !row->data().owner &&
+            row->data().facadeClientID && !row->data().generation &&
+            row->data().expires > now) {
+          auto &grant = row->data();
+          grant.bindingDigest = binding;
+          grant.generation = 1;
+          result.ceremonyID = grant.id;
+          result.appID = grant.appID;
+          result.redirectURI = grant.redirectURI;
+          result.state = grant.oauthState;
+          result.statePresent = grant.oauthStatePresent;
+          result.prompt = grant.prompt;
+          result.promptPresent = grant.promptPresent;
+          result.maxAge = grant.maxAge;
+          result.maxAgePresent = grant.maxAgePresent;
+          result.redirect = true;
+          if (m_config.authMethod != AuthMethod::OIDC)
+            result.options = assertionOptions(grant.challenge,
+              m_config.rpID, m_config.passkeyTimeout);
+          if (row->commit()) error = AuthorizeIssue::OK;
+          else error = OAuthError::ServerError;
+        }
+        request->complete([this, error, result = ZuMv(result),
+            binding = ZuMv(binding), sessionToken = ZuMv(sessionToken),
+            setCookie = ZuMv(setCookie), done]() mutable {
+          if (error == AuthorizeIssue::OK)
+            sessionAuthorize_(ZuMv(result), ZuMv(binding),
+              ZuMv(sessionToken), ZuMv(setCookie),
+              [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+          else
+            authorizeReply_(error, ZuMv(result), ZuMv(setCookie),
+              [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+        });
+      });
+    });
+  }, [done]() mutable {
+    done->finish(jsonReply(OAuthError::TemporarilyUnavailable));
+  });
+  if (!queued) done->finish(serverError());
+}
+
+void Server::authorize(
+    String query, String facadeClientID, AppID facadeAppID,
+    ServerFn complete)
+{
+  authorize_(ZuMv(query), ZuMv(facadeClientID), facadeAppID, {},
+    ZuMv(complete));
+}
+
+void Server::authorize_(String query, String facadeClientID,
+    AppID facadeAppID, String sessionToken, ServerFn complete)
 {
   if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
@@ -250,27 +482,118 @@ void Server::authorize(String query, ServerFn complete)
     done->finish(serverError());
     return;
   }
+  Bytes sessionBinding{binding};
   if (!authorizeRequest(m_requests, deadline_(), m_context, m_rng,
       ZuMv(query), ZuMv(binding), AuthorizeConfig{
         .issuer = m_config.issuer,
-        .rpID = m_config.authMethod == AuthMethod::Passkey ?
+        .rpID = m_config.authMethod != AuthMethod::OIDC ?
           m_config.rpID : String{},
         .now = now,
         .expires = now + m_config.ceremonyLifetime,
-        .timeout = m_config.authMethod == AuthMethod::Passkey ?
+        .timeout = m_config.authMethod != AuthMethod::OIDC ?
           m_config.passkeyTimeout : 0,
-        .passkey = m_config.authMethod == AuthMethod::Passkey
-      }, [this, setCookie = ZuMv(setCookie), done](
+        .passkey = m_config.authMethod != AuthMethod::OIDC,
+        .facadeClientID = ZuMv(facadeClientID),
+        .facadeAppID = facadeAppID
+      }, [this, binding = ZuMv(sessionBinding),
+          sessionToken = ZuMv(sessionToken),
+          setCookie = ZuMv(setCookie), done](
           int error, AuthorizeResult result) mutable {
-        if (error == AuthorizeIssue::OK) {
-          if (m_config.authMethod == AuthMethod::Passkey) {
+        if (error == AuthorizeIssue::OK)
+          sessionAuthorize_(ZuMv(result), ZuMv(binding),
+            ZuMv(sessionToken), ZuMv(setCookie),
+            [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+        else
+          authorizeReply_(error, ZuMv(result), ZuMv(setCookie),
+            [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+      })) done->finish(serverError());
+}
+
+void Server::sessionAuthorize_(AuthorizeResult result, Bytes binding,
+    String sessionToken, String setCookie, ServerFn complete)
+{
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  bool none = result.promptPresent && result.prompt == "none";
+  bool login = result.promptPresent && result.prompt == "login";
+  if (!sessionToken || login) {
+    if (none) {
+      done->finish(ServerReply{
+	.location = errorRedirect(result.redirectURI,
+	  OAuthError::LoginRequired, result.state, result.statePresent),
+	.setCookie = setCookie_({}, true), .type = ReplyType::Redirect});
+      return;
+    }
+    authorizeReply_(AuthorizeIssue::OK, ZuMv(result), ZuMv(setCookie),
+      [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+    return;
+  }
+  int64_t now = now_();
+  if (now <= 0 || !sessionUse(m_requests, deadline_(), m_context,
+      ZuMv(sessionToken), String{m_config.issuer}, now, m_config.sessionIdle,
+      [this, result = ZuMv(result), binding = ZuMv(binding),
+	  setCookie = ZuMv(setCookie), none, now, done](int error,
+	    Session session, String) mutable {
+        bool stale = error != SessionError::OK ||
+	  session.authTime <= 0 || session.authTime > now ||
+	  (result.maxAgePresent &&
+	    uint64_t(now - session.authTime) > result.maxAge);
+	if (stale) {
+	  if (none) {
+	    done->finish(ServerReply{
+	      .location = errorRedirect(result.redirectURI,
+		OAuthError::LoginRequired, result.state, result.statePresent),
+	      .setCookie = setCookie_({}, true), .type = ReplyType::Redirect});
+	    return;
+	  }
+	  authorizeReply_(AuthorizeIssue::OK, ZuMv(result), ZuMv(setCookie),
+	    [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+	  return;
+	}
+	if (!authorizeSessionFinish(m_requests, deadline_(), m_context, m_rng,
+	    ZuMv(result.ceremonyID), ZuMv(binding), ZuMv(session),
+	    AuthorizeFinishConfig{.now = now,
+	      .codeExpires = now + m_config.codeLifetime, .consent = true},
+	    m_policy,
+	    [this, result = ZuMv(result), setCookie = ZuMv(setCookie),
+	        none, done](
+		int error, String location) mutable {
+	      if (error == AuthorizeIssue::OK) {
+		done->finish(ServerReply{.location = ZuMv(location),
+		  .type = ReplyType::Redirect});
+		return;
+	      }
+	      if (error == AuthorizeIssue::Consent) {
+		done->finish(ServerReply{
+		  .body = consentPage(result.ceremonyID),
+		  .setCookie = ZuMv(setCookie), .type = ReplyType::Page});
+		return;
+	      }
+	      done->finish(ServerReply{
+		.location = errorRedirect(result.redirectURI,
+		  none && error != OAuthError::ConsentRequired ?
+		    OAuthError::LoginRequired : error,
+		  result.state, result.statePresent),
+		.setCookie = error == OAuthError::AccessDenied ? String{} :
+		  setCookie_({}, true), .type = ReplyType::Redirect});
+	    })) done->finish(serverError());
+      })) done->finish(serverError());
+}
+
+void Server::authorizeReply_(int error, AuthorizeResult result,
+    String setCookie, ServerFn complete)
+{
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (error == AuthorizeIssue::OK) {
+          auto local = [this, done](AuthorizeResult result,
+              String setCookie) mutable {
             String body = m_page(
               ZuMv(result.ceremonyID), ZuMv(result.options));
             done->finish(ServerReply{.body = ZuMv(body),
               .setCookie = ZuMv(setCookie), .type = ReplyType::Page});
-            return;
-          }
-          if (!m_oidc.begin(ZuMv(result.ceremonyID),
+          };
+          auto upstream = [this, done](AuthorizeResult result,
+              OIDCConfig oidc, String setCookie) mutable {
+            if (!m_oidc.begin(ZuMv(result.ceremonyID), ZuMv(oidc),
               [this, setCookie = ZuMv(setCookie), done](
                   bool ok, String location) mutable {
                 if (ok)
@@ -283,10 +606,41 @@ void Server::authorize(String query, ServerFn complete)
                   done->finish(ZuMv(reply));
                 }
               })) {
-            auto reply = serverError();
-            reply.setCookie = setCookie_({}, true);
-            done->finish(ZuMv(reply));
+              auto reply = serverError();
+              reply.setCookie = setCookie_({}, true);
+              done->finish(ZuMv(reply));
+            }
+          };
+          if (m_config.authMethod == AuthMethod::Passkey ||
+              (m_config.authMethod == AuthMethod::LocalFirst &&
+               !result.loginHint)) {
+            local(ZuMv(result), ZuMv(setCookie));
+            return;
           }
+          if (m_config.authMethod == AuthMethod::OIDC) {
+            upstream(ZuMv(result), m_config.oidc, ZuMv(setCookie));
+            return;
+          }
+          auto route = m_authRoute;
+          AppID appID = result.appID;
+          String hint = result.loginHint;
+            route(appID, ZuMv(hint), [this, done, local = ZuMv(local),
+              upstream = ZuMv(upstream), result = ZuMv(result),
+              setCookie = ZuMv(setCookie)](AuthRoute route) mutable {
+            switch (route.type) {
+              case AuthRouteType::Local:
+                local(ZuMv(result), ZuMv(setCookie));
+                return;
+              case AuthRouteType::Upstream:
+                upstream(ZuMv(result), ZuMv(route.oidc), ZuMv(setCookie));
+                return;
+              default: {
+                auto reply = serverError();
+                reply.setCookie = setCookie_({}, true);
+                done->finish(ZuMv(reply));
+              } return;
+            }
+          });
         } else if (result.redirect) {
           done->finish(ServerReply{
             .location = errorRedirect(result.redirectURI, error,
@@ -298,10 +652,57 @@ void Server::authorize(String query, ServerFn complete)
           reply.setCookie = setCookie_({}, true);
           done->finish(ZuMv(reply));
         }
+}
+
+void Server::facadeAuthorize(String query, String facadeClientID,
+    AppID facadeAppID, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (!facadeClientID || !facadeAppID ||
+      query.length() > m_config.limits.form) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  String discarded;
+  Bytes binding;
+  if (!cookie_(discarded, binding)) { done->finish(serverError()); return; }
+  if (discarded.mutable_()) ZuClear(discarded.data(), discarded.length());
+  int64_t now = now_();
+  if (now <= 0 || !authorizeRequest(m_requests, deadline_(), m_context, m_rng,
+      ZuMv(query), ZuMv(binding), AuthorizeConfig{
+        .issuer = m_config.issuer,
+        .rpID = m_config.authMethod != AuthMethod::OIDC ?
+          m_config.rpID : String{},
+        .now = now,
+        .expires = now + m_config.ceremonyLifetime,
+        .timeout = m_config.authMethod != AuthMethod::OIDC ?
+          m_config.passkeyTimeout : 0,
+        .passkey = m_config.authMethod != AuthMethod::OIDC,
+        .facadeClientID = ZuMv(facadeClientID),
+        .facadeAppID = facadeAppID
+      }, [this, done](int error, AuthorizeResult result) mutable {
+        if (error != AuthorizeIssue::OK) {
+          done->finish(jsonReply(error));
+          return;
+        }
+        String url = m_config.issuer;
+        if (url[url.length() - 1] == '/') url.length(url.length() - 1);
+        url << "/authorize?request=" << encodeID(result.ceremonyID);
+        String body{"{\"authorizationURL\":"};
+        ZfJSON::quote(body, url);
+        body << ",\"expiresIn\":" << m_config.ceremonyLifetime << '}';
+        done->finish(ServerReply{.body = ZuMv(body), .type = ReplyType::OK});
       })) done->finish(serverError());
 }
 
 void Server::token(String form, String authorization, ServerFn complete)
+{
+  token(ZuMv(form), ZuMv(authorization), {}, ZuMv(complete));
+}
+
+void Server::token(String form, String authorization,
+    String facadeClientID, ServerFn complete)
 {
   if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
@@ -319,7 +720,8 @@ void Server::token(String form, String authorization, ServerFn complete)
         .accessExpires = now + m_config.accessLifetime,
         .refreshExpires = now + m_config.refreshLifetime,
         .generationLimit = m_config.refreshGenerations,
-        .spentLimit = m_config.spentTokens
+        .spentLimit = m_config.spentTokens,
+        .facadeClientID = ZuMv(facadeClientID)
       }, m_sign, [done](
           int error, TokenResponse response) mutable {
         if (error == TokenIssue::OK) {
@@ -338,6 +740,12 @@ void Server::token(String form, String authorization, ServerFn complete)
 
 void Server::revoke(String form, String authorization, ServerFn complete)
 {
+  revoke(ZuMv(form), ZuMv(authorization), {}, ZuMv(complete));
+}
+
+void Server::revoke(String form, String authorization,
+    String facadeClientID, ServerFn complete)
+{
   if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   if (form.length() > m_config.limits.form) {
@@ -347,7 +755,8 @@ void Server::revoke(String form, String authorization, ServerFn complete)
   int64_t now = now_();
   if (now <= 0 || !revokeRequest(m_requests, deadline_(), m_context,
       ZuMv(form), ZuMv(authorization),
-      RevokeConfig{.issuer = m_config.issuer, .now = now},
+      RevokeConfig{.issuer = m_config.issuer, .now = now,
+	.facadeClientID = ZuMv(facadeClientID)},
       [done](int error) mutable {
         if (error == RevokeIssue::OK)
           done->finish(ServerReply{.type = ReplyType::Empty});
@@ -357,6 +766,175 @@ void Server::revoke(String form, String authorization, ServerFn complete)
             reply.type = ReplyType::ClientError;
           done->finish(ZuMv(reply));
         }
+      })) done->finish(serverError());
+}
+
+void Server::login(String cookie, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  String token;
+  Bytes digest;
+  String csrf;
+  if (binding_(cookie, token, digest)) csrf = csrf_(digest);
+  if (token && token.mutable_()) ZuClear(token.data(), token.length());
+  String body{
+    "<!doctype html><meta charset=utf-8><title>Zum login</title>"
+    "<meta name=referrer content=no-referrer><h1>Zum</h1>"};
+  if (csrf) {
+    body << "<p>Signed in to Zum.</p><form method=post action=/logout>"
+      "<input type=hidden name=csrf value=\"" << csrf <<
+      "\"><button>Sign out of Zum</button></form>";
+  } else {
+    body << "<p>Start sign-in from an enrolled application.</p>";
+  }
+  complete(ServerReply{.body = ZuMv(body), .type = ReplyType::Page});
+}
+
+void Server::login(String form, String cookie, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (!form || form.length() > m_config.limits.form ||
+      cookie.length() > m_config.limits.cookie) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  if (!form.mutable_()) form.length(form.length());
+  Bytes id;
+  String login;
+  Bytes binding;
+  if (!loginForm(form, id, login) || !binding_(cookie, binding)) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  int64_t now = now_();
+  if (now <= 0) { done->finish(serverError()); return; }
+  auto grants = m_context->grants;
+  bool queued = m_requests->run(deadline_(), [this, grants, id = ZuMv(id),
+      login = ZuMv(login), binding = ZuMv(binding), now, done](
+      ZmRef<Request> request) mutable {
+    grants->run(0, [this, grants, id = ZuMv(id), login = ZuMv(login),
+        binding = ZuMv(binding), now, done, request = ZuMv(request)]() mutable {
+      grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [this,
+          login = ZuMv(login), binding = ZuMv(binding), now, done,
+          request = ZuMv(request)](ZdbRowRef<Grant> row) mutable {
+        int error = OAuthError::InvalidRequest;
+        AuthorizeResult result;
+        if (row && row->data().kind == GrantKind::Ceremony &&
+            row->data().purpose == GrantPurpose::Authorization &&
+            row->data().state == State::Active && !row->data().owner &&
+            row->data().expires > now &&
+            Ztls::ctEqual(row->data().bindingDigest, binding)) {
+          const auto &grant = row->data();
+          result.ceremonyID = grant.id;
+          result.appID = grant.appID;
+          result.loginHint = ZuMv(login);
+          result.options = assertionOptions(grant.challenge,
+            m_config.rpID, m_config.passkeyTimeout);
+          result.redirectURI = grant.redirectURI;
+          result.state = grant.oauthState;
+          result.statePresent = grant.oauthStatePresent;
+          result.prompt = grant.prompt;
+          result.promptPresent = grant.promptPresent;
+          result.maxAge = grant.maxAge;
+          result.maxAgePresent = grant.maxAgePresent;
+          result.redirect = true;
+          error = AuthorizeIssue::OK;
+        }
+        request->complete([this, error, result = ZuMv(result), done]() mutable {
+          authorizeReply_(error, ZuMv(result), {},
+            [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+        });
+      });
+    });
+  }, [done]() mutable {
+    done->finish(jsonReply(OAuthError::TemporarilyUnavailable));
+  });
+  if (!queued) done->finish(serverError());
+}
+
+void Server::consent(String form, String cookie, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (!form || form.length() > m_config.limits.form ||
+      cookie.length() > m_config.limits.cookie) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  if (!form.mutable_()) form.length(form.length());
+  Bytes id, binding;
+  bool approve = false;
+  if (!consentForm(form, id, approve) || !binding_(cookie, binding)) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  int64_t now = now_();
+  Bytes sessionGrant{id};
+  if (now <= 0 || !authorizeConsentFinish(m_requests, deadline_(), m_context,
+      m_rng, ZuMv(id), ZuMv(binding), approve,
+      AuthorizeFinishConfig{.now = now,
+        .codeExpires = now + m_config.codeLifetime}, m_policy,
+      [this, id = ZuMv(sessionGrant), done](
+          int error, String location) mutable {
+        if (error == AuthorizeIssue::OK) {
+          sessionReply_(ZuMv(id), ZuMv(location),
+            [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
+          return;
+        }
+        if (error == OAuthError::AccessDenied && location) {
+          done->finish(ServerReply{.location = ZuMv(location),
+            .setCookie = setCookie_({}, true),
+            .type = ReplyType::Redirect});
+          return;
+        }
+        auto reply = jsonReply(error);
+        reply.setCookie = setCookie_({}, true);
+        done->finish(ZuMv(reply));
+      })) done->finish(serverError());
+}
+
+void Server::logout(String form, String cookie, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (!form || form.length() > m_config.limits.form ||
+      cookie.length() > m_config.limits.cookie) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  if (!form.mutable_()) form.length(form.length());
+  String submitted;
+  String token;
+  Bytes digest;
+  if (!logoutForm(form, submitted) ||
+      !binding_(cookie, token, digest)) {
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  String expected = csrf_(digest);
+  bool matches = expected.length() == submitted.length() &&
+    Ztls::ctEqual(ZuBSpan{expected}, ZuBSpan{submitted});
+  if (submitted && submitted.mutable_())
+    ZuClear(submitted.data(), submitted.length());
+  if (expected && expected.mutable_())
+    ZuClear(expected.data(), expected.length());
+  if (!matches) {
+    if (token && token.mutable_()) ZuClear(token.data(), token.length());
+    done->finish(jsonReply(OAuthError::InvalidRequest));
+    return;
+  }
+  int64_t now = now_();
+  if (now <= 0 || !sessionRevoke(m_requests, deadline_(), m_context,
+      ZuMv(token), now, [this, done](int error) mutable {
+        if (error != SessionError::OK) {
+	  done->finish(serverError());
+	  return;
+	}
+	done->finish(ServerReply{
+	  .body = "<!doctype html><meta charset=utf-8><title>Zum logout</title>"
+	    "<meta name=referrer content=no-referrer><h1>Signed out of Zum</h1>",
+	  .setCookie = setCookie_({}, true), .type = ReplyType::Page});
       })) done->finish(serverError());
 }
 
@@ -381,11 +959,68 @@ void Server::jwks(ServerFn complete)
       })) done->finish(serverError());
 }
 
+void Server::userInfo(String authorization, ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  static constexpr ZuCSpan prefix{"Bearer "};
+  if (authorization.length() <= prefix.length() ||
+      !ZuICmp<ZuCSpan>::equals(
+        ZuCSpan{authorization.data(), prefix.length()}, prefix)) {
+    done->finish(ServerReply{
+      .body = "{\"error\":\"invalid_token\"}",
+      .type = ReplyType::BearerError});
+    return;
+  }
+  authorization.splice(0, prefix.length());
+  Principal principal;
+  int64_t now = now_();
+  if (!jwtVerifyIssuer(authorization, m_config.keyID, m_config.issuer,
+      m_config.publicKey, now, m_config.limits.jwt, principal) ||
+      !scopeContains(principal.scope, "openid")) {
+    done->finish(ServerReply{
+      .body = "{\"error\":\"invalid_token\"}",
+      .type = ReplyType::BearerError});
+    return;
+  }
+  Bytes handle;
+  if (!decodeID(principal.subject, handle)) {
+    done->finish(ServerReply{
+      .body = "{\"error\":\"invalid_token\"}",
+      .type = ReplyType::BearerError});
+    return;
+  }
+  String clientID = principal.clientID;
+  m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [
+    this, done, handle = ZuMv(handle), principal = ZuMv(principal)
+  ](ZdbRowRef<Client> client) mutable {
+    if (!client || client->data().state != State::Active ||
+        client->data().owner) {
+      done->finish(ServerReply{
+        .body = "{\"error\":\"invalid_token\"}",
+        .type = ReplyType::BearerError});
+      return;
+    }
+    m_context->users->find<1>(0, ZuFwdTuple(ZuMv(handle)), [
+      done, principal = ZuMv(principal)
+    ](ZdbRowRef<User> user) mutable {
+      String json;
+      if (!user || !userInfoJSON(user->data(), principal, json)) {
+        done->finish(ServerReply{
+          .body = "{\"error\":\"invalid_token\"}",
+          .type = ReplyType::BearerError});
+        return;
+      }
+      done->finish(ServerReply{.body = ZuMv(json), .type = ReplyType::OK});
+    });
+  });
+}
+
 void Server::passkeyBegin(String json, ServerFn complete)
 {
   if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
-  if (m_config.authMethod != AuthMethod::Passkey) {
+  if (m_config.authMethod == AuthMethod::OIDC) {
     done->finish(jsonReply(OAuthError::AccessDenied));
     return;
   }
@@ -445,8 +1080,8 @@ void Server::passkeyAdmitted_(
       config.now = now;
       config.expires = now + m_config.ceremonyLifetime;
       config.timeout = m_config.passkeyTimeout;
-      started = enrollmentBegin(m_requests, deadline_(), m_context, m_rng,
-        ZuMv(binding), ZuMv(config), ZuMv(done));
+      started = bootstrapBegin(m_requests, deadline_(), m_context, m_rng,
+        ZuMv(start.capability), ZuMv(binding), ZuMv(config), ZuMv(done));
     } break;
     case PasskeyStartType::Bootstrap: {
       auto config = ZuMv(admission.enrollment);
@@ -489,7 +1124,7 @@ void Server::passkeyFinish(
     String query, String cookie, String json, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  if (m_config.authMethod != AuthMethod::Passkey) {
+  if (m_config.authMethod == AuthMethod::OIDC) {
     complete(jsonReply(OAuthError::AccessDenied));
     return;
   }
@@ -524,6 +1159,7 @@ void Server::finishGrant_(
       auto purpose = row->data().purpose;
       int64_t now = now_();
       if (purpose == GrantPurpose::Authorization) {
+        Bytes sessionGrant{id};
         AssertionInput input;
         int error = parseAssertion({json.data(), json.length()},
           WebAuthnInputLimits{}, input);
@@ -531,13 +1167,20 @@ void Server::finishGrant_(
             m_rng, ZuMv(id), ZuMv(binding), ZuMv(input),
             AuthorizeFinishConfig{
               .origin = m_config.issuer, .rpID = m_config.rpID,
-              .now = now, .codeExpires = now + m_config.codeLifetime
-            }, m_policy, [this, done](
+              .now = now, .codeExpires = now + m_config.codeLifetime,
+              .consent = true
+            }, m_policy, [this, id = ZuMv(sessionGrant), done](
                 int error, String location) mutable {
-              if (error == AuthorizeIssue::OK)
-                done->finish(ServerReply{.location = ZuMv(location),
-                  .setCookie = setCookie_({}, true),
-                  .type = ReplyType::Redirect});
+              if (error == AuthorizeIssue::OK) {
+                sessionReply_(ZuMv(id), ZuMv(location),
+                  [done](ServerReply reply) mutable {
+                    done->finish(ZuMv(reply));
+                  });
+              }
+              else if (error == AuthorizeIssue::Consent) {
+                done->finish(ServerReply{.body = consentPage(id),
+                  .type = ReplyType::Page});
+              }
               else {
                 auto reply = jsonReply(error);
                 reply.setCookie = setCookie_({}, true);
@@ -561,15 +1204,37 @@ void Server::finishGrant_(
         done->finish(ZuMv(reply));
         return;
       }
-      auto finish = [this, done](int error) mutable {
+      auto finish = [this, done, purpose](int error) mutable {
         if (error) {
           auto reply = jsonReply(OAuthError::AccessDenied);
           reply.setCookie = setCookie_({}, true);
           done->finish(ZuMv(reply));
-        } else {
+          return;
+        }
+        if (purpose != GrantPurpose::Bootstrap) {
           done->finish(ServerReply{.body = "{\"ok\":true}",
             .setCookie = setCookie_({}, true), .type = ReplyType::OK});
+          return;
         }
+        auto issuers = m_context->issuers;
+        issuers->run(0, [this, issuers, done]() mutable {
+          String issuer = m_config.issuer;
+          issuers->findUpd<0>(0, ZuFwdTuple(ZuMv(issuer)), [this, done](
+              ZdbRow<Issuer> *row) mutable {
+            if (!row ||
+                row->data().bootstrapPhase != BootstrapPhase::AdminPending) {
+              done->finish(serverError());
+              return;
+            }
+            row->data().bootstrapPhase = BootstrapPhase::Ready;
+            if (!row->commit()) {
+              done->finish(serverError());
+              return;
+            }
+            done->finish(ServerReply{.body = "{\"ok\":true}",
+              .setCookie = setCookie_({}, true), .type = ReplyType::OK});
+          });
+        });
       };
       EnrollmentFinishConfig config{
         .origin = m_config.issuer, .rpID = m_config.rpID,
@@ -601,12 +1266,29 @@ void Server::finishGrant_(
   });
 }
 
+void Server::sessionReply_(Bytes grantID, String location, ServerFn complete)
+{
+  int64_t now = now_();
+  if (now <= 0 || !sessionIssueGrant(m_requests, deadline_(), m_context,
+      m_rng, ZuMv(grantID), now, m_config.sessionIdle,
+      m_config.sessionAbsolute, [this, location = ZuMv(location),
+        complete = ZuMv(complete)](int error, Session, String token) mutable {
+        complete(ServerReply{.location = ZuMv(location),
+          .setCookie = error == SessionError::OK ?
+            setCookie_(token, false, m_config.sessionAbsolute) :
+            setCookie_({}, true), .type = ReplyType::Redirect});
+      })) {
+    complete(ServerReply{.location = ZuMv(location),
+      .setCookie = setCookie_({}, true), .type = ReplyType::Redirect});
+  }
+}
+
 void Server::oidcCallback(String query, String cookie, ServerFn complete)
 {
   if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   Bytes binding;
-  if (m_config.authMethod != AuthMethod::OIDC ||
+  if (m_config.authMethod == AuthMethod::Passkey ||
       !binding_(cookie, binding)) {
     auto reply = jsonReply(OAuthError::InvalidRequest);
     reply.setCookie = setCookie_({}, true);
@@ -615,18 +1297,25 @@ void Server::oidcCallback(String query, String cookie, ServerFn complete)
   }
   if (!m_oidc.finish(ZuMv(query), [this, binding = ZuMv(binding), done](
       bool ok, Bytes grantID, User user, IDVec roleIDs,
-      int64_t authTime) mutable {
+      Evidence evidence, int64_t authTime) mutable {
     int64_t now = now_();
+    Bytes sessionGrant{grantID};
     if (!ok || now <= 0 || !authorizeOIDCFinish(
         m_requests, deadline_(), m_context, m_rng, ZuMv(grantID),
-        ZuMv(binding), ZuMv(user), ZuMv(roleIDs), authTime,
+        ZuMv(binding), ZuMv(user), ZuMv(roleIDs), ZuMv(evidence),
+        authTime,
         AuthorizeFinishConfig{.now = now,
-          .codeExpires = now + m_config.codeLifetime}, m_policy,
-        [this, done](int error, String location) mutable {
+          .codeExpires = now + m_config.codeLifetime, .consent = true}, m_policy,
+        [this, id = ZuMv(sessionGrant), done](
+            int error, String location) mutable {
           if (error == AuthorizeIssue::OK)
-            done->finish(ServerReply{.location = ZuMv(location),
-              .setCookie = setCookie_({}, true),
-              .type = ReplyType::Redirect});
+            sessionReply_(ZuMv(id), ZuMv(location),
+              [done](ServerReply reply) mutable {
+                done->finish(ZuMv(reply));
+              });
+          else if (error == AuthorizeIssue::Consent)
+            done->finish(ServerReply{.body = consentPage(id),
+              .type = ReplyType::Page});
           else {
             auto reply = jsonReply(error);
             reply.setCookie = setCookie_({}, true);

@@ -1,6 +1,12 @@
 namespace Zum.fbs;
 table Issuer {
   id:string;
+  schema_version:uint32;
+  core_app_i_d:uint64;
+  bootstrap_phase:int8;
+  initial_user_i_d:uint64;
+  initial_client_i_d:string;
+  key_check:[ubyte];
   next_action_i_d:uint32;
   auth_version:uint64;
   next_audit_i_d:uint64;

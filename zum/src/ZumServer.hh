@@ -17,6 +17,7 @@
 #include <zlib/ZumDiscovery.hh>
 #include <zlib/ZumOIDC.hh>
 #include <zlib/ZumPasskey.hh>
+#include <zlib/ZumSession.hh>
 #include <zlib/ZumToken.hh>
 
 #include <zlib/ZtlsRandom.hh>
@@ -25,7 +26,7 @@ namespace Zum {
 
 namespace ReplyType {
   enum {
-    Page, Redirect, OK, OAuthError, ClientError, Empty, Discovery,
+    Page, Redirect, OK, OAuthError, ClientError, BearerError, Empty, Discovery,
     ServerError
   };
 }
@@ -71,6 +72,7 @@ struct ServerConfig {
   String	rpID;
   String	rpName;
   String	keyID;
+  Bytes		publicKey;
   String	cookieName{"zum_tx"};
   String	cookiePath{"/"};
   OIDCConfig	oidc;
@@ -82,6 +84,8 @@ struct ServerConfig {
   int64_t	codeLifetime = 60;
   int64_t	accessLifetime = 300;
   int64_t	refreshLifetime = 86400;
+  int64_t	sessionIdle = 1800;
+  int64_t	sessionAbsolute = 43200;
   unsigned	refreshGenerations = 64;
   unsigned	spentTokens = 64;
   unsigned	authMethod = AuthMethod::Passkey;
@@ -96,6 +100,15 @@ ZuDerive(AdmitDoneFn, (ZmFn<void(PasskeyAdmission),
   ZmFnHeapID<"Zum.AdmitDoneFn">>));
 ZuDerive(AdmitFn, (ZmFn<void(PasskeyStart, AdmitDoneFn),
   ZmFnHeapID<"Zum.AdmitFn">>));
+struct AuthRoute {
+  OIDCConfig	oidc;
+  unsigned	type = 0;
+};
+namespace AuthRouteType { enum { Local, Upstream, Error }; }
+ZuDerive(AuthRouteDoneFn, (ZmFn<void(AuthRoute),
+  ZmFnHeapID<"Zum.AuthRouteDoneFn">>));
+ZuDerive(AuthRouteFn, (ZmFn<void(AppID, String, AuthRouteDoneFn),
+  ZmFnHeapID<"Zum.AuthRouteFn">>));
 
 class ZumAPI Server {
   Server(const Server &) = delete;
@@ -106,30 +119,51 @@ public:
 
   bool init(
     DB *, DBContext *, Requests *, ServerConfig,
-    ClockFn, PageFn, PolicyFn, AdmitFn, SignFn, OIDCHTTPFn = {});
+    ClockFn, PageFn, PolicyFn, AdmitFn, SignFn, OIDCHTTPFn = {},
+    AuthRouteFn = {});
   void final();
 
   unsigned authMethod() const { return m_config.authMethod; }
 
   void authorize(String query, ServerFn);
+  void authorize(String query, String cookie, ServerFn);
+  void authorize(String query, String facadeClientID, AppID, ServerFn);
+  void facadeAuthorize(String query, String facadeClientID, AppID, ServerFn);
   void token(String form, String authorization, ServerFn);
+  void token(String form, String authorization, String facadeClientID,
+    ServerFn);
   void revoke(String form, String authorization, ServerFn);
+  void revoke(String form, String authorization, String facadeClientID,
+    ServerFn);
+  void login(String cookie, ServerFn);
+  void login(String form, String cookie, ServerFn);
+  void consent(String form, String cookie, ServerFn);
+  void logout(String form, String cookie, ServerFn);
   void metadata(ServerFn);
   void jwks(ServerFn);
+  void userInfo(String authorization, ServerFn);
   void passkeyBegin(String json, ServerFn);
   void passkeyFinish(
     String query, String cookie, String json, ServerFn);
   void oidcCallback(String query, String cookie, ServerFn);
 
 private:
+  void authorize_(String, String, AppID, String, ServerFn);
   int64_t now_() const;
   ZuTime deadline_() const;
   bool cookie_(String &, Bytes &);
-  String setCookie_(ZuCSpan, bool clear = false) const;
+  String setCookie_(
+    ZuCSpan, bool clear = false, int64_t lifetime = 0) const;
   bool binding_(String &, Bytes &) const;
+  bool binding_(String &, String &, Bytes &) const;
+  String csrf_(ZuBSpan) const;
   void passkeyAdmitted_(
     PasskeyStart, PasskeyAdmission, Bytes, String setCookie, ServerFn);
   void finishGrant_(Bytes, Bytes, String, ServerFn);
+  void sessionReply_(Bytes, String, ServerFn);
+  void authorizeReply_(int, AuthorizeResult, String, ServerFn);
+  void sessionAuthorize_(
+    AuthorizeResult, Bytes, String, String, ServerFn);
 
   DB		*m_db = nullptr;
   DBContext	*m_context = nullptr;
@@ -143,6 +177,7 @@ private:
   Ztls::Random	m_rng;
   Ztls::Random	m_cookieRng;
   OIDC		m_oidc;
+  AuthRouteFn	m_authRoute;
 };
 
 } // namespace Zum

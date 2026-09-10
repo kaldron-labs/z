@@ -1,10 +1,18 @@
 include "zfb_types.fbs";
 namespace Zum.fbs;
 table Role {
+  app_i_d:uint64;
   id:uint64;
   name:string;
+  label:string;
   actions:Zfb.Bitmap;
   state:int8;
+  origin:int8;
+  catalog_revision:uint64;
+  tombstone:bool;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
   owner:Zfb.UInt128;
 }
 root_type Role;

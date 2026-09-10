@@ -1,9 +1,17 @@
 include "zfb_types.fbs";
 namespace Zum.fbs;
 table Action {
+  app_i_d:uint64;
   id:uint32;
   name:string;
+  label:string;
   state:int8;
+  origin:int8;
+  catalog_revision:uint64;
+  tombstone:bool;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
   owner:Zfb.UInt128;
 }
 root_type Action;

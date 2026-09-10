@@ -19,7 +19,7 @@
 namespace Zum {
 
 namespace AuthorizeIssue {
-  enum { OK = -1 };
+  enum { Consent = -2, OK = -1 };
 }
 
 struct AuthorizeConfig {
@@ -29,14 +29,22 @@ struct AuthorizeConfig {
   int64_t		expires = 0;
   uint64_t		timeout = 0;
   bool			passkey = false;
+  String		facadeClientID;
+  AppID			facadeAppID = 0;
 };
 
 struct AuthorizeResult {
   Bytes		ceremonyID;
+  AppID		appID = 0;
+  String	loginHint;
   String	options;
   String	redirectURI;
   String	state;
+  String	prompt;
+  uint64_t	maxAge = 0;
   bool		statePresent = false;
+  bool		promptPresent = false;
+  bool		maxAgePresent = false;
   bool		redirect = false;
 };
 
@@ -45,6 +53,7 @@ struct AuthorizeFinishConfig {
   String		rpID;
   int64_t		now = 0;
   int64_t		codeExpires = 0;
+  bool			consent = false;
 };
 
 ZuDerive(AuthorizeFn, (ZmFn<void(int, AuthorizeResult),
@@ -68,7 +77,16 @@ ZumExtern bool authorizeFinish(
 ZumExtern bool authorizeOIDCFinish(
   Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, User, IDVec roleIDs,
-  int64_t authTime, AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
+  Evidence, int64_t authTime, AuthorizeFinishConfig, PolicyFn,
+  AuthorizeCodeFn);
+ZumExtern bool authorizeSessionFinish(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Bytes ceremonyID, Bytes bindingDigest, Session,
+  AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
+ZumExtern bool authorizeConsentFinish(
+  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Bytes ceremonyID, Bytes bindingDigest, bool approve,
+  AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 
 } // namespace Zum
 

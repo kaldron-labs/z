@@ -1,0 +1,15 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table AdminAccess {
+  actor_kind:int8;
+  actor_i_d:string;
+  app_i_d:uint64;
+  operation_i_ds:[uint32];
+  role_i_ds:[uint64];
+  state:int8;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type AdminAccess;

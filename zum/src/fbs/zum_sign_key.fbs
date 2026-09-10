@@ -1,10 +1,16 @@
 namespace Zum.fbs;
 table SignKey {
   id:string;
+  issuer:string;
+  algorithm:string;
   provider_ref:string;
   public_jwk:string;
+  private_material:[ubyte];
   not_before:int64;
   retire_after:int64;
   state:int8;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
 }
 root_type SignKey;

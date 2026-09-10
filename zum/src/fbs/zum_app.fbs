@@ -1,0 +1,18 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table App {
+  id:uint64;
+  name:string;
+  label:string;
+  state:int8;
+  next_action_i_d:uint32;
+  auth_version:uint64 = 1;
+  catalog_revision:uint64;
+  catalog_digest:[ubyte];
+  service_client_i_d:string;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type App;

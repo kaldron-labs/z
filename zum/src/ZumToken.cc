@@ -83,7 +83,8 @@ public:
   void start()
   {
     if (!m_context || !m_rng || !m_issuer || !m_sign ||
-	m_key.state != State::Active || !m_key.id || !m_key.providerRef ||
+	m_key.state != State::Active || !m_key.id ||
+	bool(m_key.providerRef) == bool(m_key.privateMaterial) ||
 	m_key.notBefore > m_now ||
 	(m_key.retireAfter && m_expires > m_key.retireAfter) ||
 	m_now <= 0 || m_expires <= m_now) {
@@ -117,10 +118,12 @@ private:
 	OAuthError::InvalidClient : OAuthError::InvalidScope, {});
       return;
     }
-    m_authVersion = data.issuer.authVersion;
+    m_authVersion = data.app.authVersion;
+    m_appID = data.app.id;
     AccessClaims claims;
     if (!clientClaims(*m_rng, m_issuer, data.client, data.selection,
-	data.actions, data.actionRecords, m_now, m_expires, claims) ||
+	data.actions, data.actionRecords, data.clientAppID,
+	m_now, m_expires, claims) ||
 	!jwtPrepare(claims, m_key.id, m_limits, m_prepared)) {
       finish_(OAuthError::ServerError, {});
       return;
@@ -147,7 +150,7 @@ private:
       .scope = ZuMv(m_scope),
       .expiresIn = uint64_t(m_expires - m_now)
     };
-    tokenRelease(m_context, m_issuer, {}, m_authVersion, m_now,
+    tokenRelease(m_context, m_issuer, m_appID, {}, m_authVersion, m_now,
       ZuMv(response), [self = ZmRef<ClientToken_>{this}](
 	  bool ok, TokenResponse response) mutable {
 	self->finish_(ok ? TokenIssue::OK : OAuthError::InvalidClient,
@@ -169,6 +172,7 @@ private:
   TokenFn	m_complete;
   PreparedJWT	m_prepared;
   String	m_scope;
+  AppID		m_appID = 0;
   uint64_t	m_authVersion = 0;
   bool		m_signDone = false;
   bool		m_done = false;
@@ -195,9 +199,9 @@ public:
 	m_family.kind != GrantKind::Refresh ||
 	m_family.state != State::Active || m_family.expires <= m_now ||
 	m_family.clientID != m_client.id ||
-	m_key.state != State::Active || !m_key.id || !m_key.providerRef ||
+	m_key.state != State::Active || !m_key.id ||
+	bool(m_key.providerRef) == bool(m_key.privateMaterial) ||
 	m_key.notBefore > m_now ||
-	(m_key.retireAfter && m_expires > m_key.retireAfter) ||
 	m_now <= 0 || m_expires <= m_now ||
 	!m_generationLimit || !m_spentLimit) {
       finish_(OAuthError::InvalidGrant, {});
@@ -214,7 +218,8 @@ public:
 	break;
     }
     loadGrantAuth(m_context, m_family, m_client,
-      m_requestedPresent, m_requested, [self = ZmRef<RefreshToken_>{this}](
+      m_requestedPresent, m_requested, m_now,
+      [self = ZmRef<RefreshToken_>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -277,7 +282,15 @@ private:
 	OAuthError::InvalidGrant : OAuthError::InvalidScope, {});
       return;
     }
-    m_authVersion = data.issuer.authVersion;
+    if (data.authorityDeadline)
+      m_expires = m_expires < data.authorityDeadline ?
+        m_expires : data.authorityDeadline;
+    if (m_expires <= m_now ||
+        (m_key.retireAfter && m_expires > m_key.retireAfter)) {
+      finish_(OAuthError::InvalidGrant, {});
+      return;
+    }
+    m_authVersion = data.app.authVersion;
     m_scopeIDs = data.selection.scopeIDs;
     m_actions = data.actions;
     AccessClaims claims;
@@ -290,9 +303,20 @@ private:
       finish_(OAuthError::ServerError, {});
       return;
     }
+    m_hasID = scopeContains(data.selection.scope, "openid");
+    if (m_hasID) {
+      IDClaims id;
+      if (!idClaims(m_family.issuer, data.user, data.client, data.selection,
+          m_family.nonce,
+          m_family.credentialID ? ZuCSpan{"passkey"} : ZuCSpan{"oidc"},
+          m_family.authTime, m_now, m_expires, id) ||
+          !idTokenPrepare(id, m_key.id, m_limits, m_idPrepared)) {
+	finish_(OAuthError::ServerError, {});
+	return;
+      }
+    }
     m_scope = ZuMv(data.selection.scope);
-    auto sign = ZuMv(m_sign);
-    sign(m_key.providerRef, m_prepared.digest, [
+    m_sign(m_key.providerRef, m_prepared.digest, [
       self = ZmRef<RefreshToken_>{this}
     ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
   }
@@ -308,8 +332,32 @@ private:
     m_response.accessToken = ZuMv(m_prepared.token);
     m_response.scope = ZuMv(m_scope);
     m_response.expiresIn = uint64_t(m_expires - m_now);
+    if (m_hasID) {
+      m_sign(m_key.providerRef, m_idPrepared.digest, [
+        self = ZmRef<RefreshToken_>{this}
+      ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
+      return;
+    }
+    rotate_();
+  }
+
+  void idSigned_(Bytes signature)
+  {
+    if (m_done || m_idSignDone) return;
+    m_idSignDone = true;
+    if (!signature || !jwtFinish(m_idPrepared, signature, m_limits)) {
+      finish_(OAuthError::ServerError, {});
+      return;
+    }
+    m_response.idToken = ZuMv(m_idPrepared.token);
+    rotate_();
+  }
+
+  void rotate_()
+  {
     refreshFinish(m_context, *m_rng, m_family.id, m_presentedDigest,
-      m_family.issuer, ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion,
+      m_family.issuer, m_family.appID, m_scope,
+      ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion,
       m_family.userID, m_family.userVersion, m_now,
       m_generationLimit, m_spentLimit, [
 	self = ZmRef<RefreshToken_>{this}
@@ -337,7 +385,8 @@ private:
       return;
     }
     m_response.refreshToken = ZuMv(refresh);
-    tokenRelease(m_context, m_family.issuer, m_family.id, m_authVersion,
+    tokenRelease(m_context, m_family.issuer, m_family.appID,
+      m_family.id, m_authVersion,
       m_now, ZuMv(m_response), [self = ZmRef<RefreshToken_>{this}](
 	  bool ok, TokenResponse response) mutable {
 	self->finish_(ok ? TokenIssue::OK : OAuthError::InvalidGrant,
@@ -361,12 +410,15 @@ private:
   SignFn	m_sign;
   TokenFn	m_complete;
   PreparedJWT	m_prepared;
+  PreparedJWT	m_idPrepared;
   TokenResponse	m_response;
   String	m_scope;
   IDVec		m_scopeIDs;
   ZtBitmap	m_actions;
   uint64_t	m_authVersion = 0;
   bool		m_signDone = false;
+  bool		m_idSignDone = false;
+  bool		m_hasID = false;
   bool		m_done = false;
 };
 
@@ -390,14 +442,17 @@ public:
     if (!m_db || !m_context || !m_rng ||
 	m_code.id.length() != OpaqueIDSize ||
 	!m_codeDigest || !m_sign || m_key.state != State::Active ||
-	!m_key.id || !m_key.providerRef || m_key.notBefore > m_now ||
-	(m_key.retireAfter && m_accessExpires > m_key.retireAfter) || m_now <= 0 ||
+	!m_key.id ||
+	bool(m_key.providerRef) == bool(m_key.privateMaterial) ||
+	m_key.notBefore > m_now ||
+	m_now <= 0 ||
 	m_accessExpires <= m_now || m_refreshExpires <= m_now) {
       finish_(OAuthError::ServerError, {});
       return;
     }
     loadGrantAuth(m_context, m_code, m_client,
-      m_requestedPresent, m_requested, [self = ZmRef<CodeToken_>{this}](
+      m_requestedPresent, m_requested, m_now,
+      [self = ZmRef<CodeToken_>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -426,7 +481,15 @@ private:
 	OAuthError::InvalidGrant : OAuthError::InvalidScope, {});
       return;
     }
-    m_authVersion = data.issuer.authVersion;
+    if (data.authorityDeadline)
+      m_accessExpires = m_accessExpires < data.authorityDeadline ?
+        m_accessExpires : data.authorityDeadline;
+    if (m_accessExpires <= m_now ||
+        (m_key.retireAfter && m_accessExpires > m_key.retireAfter)) {
+      finish_(OAuthError::InvalidGrant, {});
+      return;
+    }
+    m_authVersion = data.app.authVersion;
     m_scopeIDs = data.selection.scopeIDs;
     m_actions = data.actions;
     AccessClaims claims;
@@ -438,9 +501,20 @@ private:
       finish_(OAuthError::ServerError, {});
       return;
     }
+    m_hasID = scopeContains(data.selection.scope, "openid");
+    if (m_hasID) {
+      IDClaims id;
+      if (!idClaims(m_code.issuer, data.user, data.client, data.selection,
+          m_code.nonce,
+          m_code.credentialID ? ZuCSpan{"passkey"} : ZuCSpan{"oidc"},
+          m_code.authTime, m_now, m_accessExpires, id) ||
+          !idTokenPrepare(id, m_key.id, m_limits, m_idPrepared)) {
+	finish_(OAuthError::ServerError, {});
+	return;
+      }
+    }
     m_scope = ZuMv(data.selection.scope);
-    auto sign = ZuMv(m_sign);
-    sign(m_key.providerRef, m_prepared.digest, [
+    m_sign(m_key.providerRef, m_prepared.digest, [
       self = ZmRef<CodeToken_>{this}
     ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
   }
@@ -456,10 +530,32 @@ private:
     m_response.accessToken = ZuMv(m_prepared.token);
     m_response.scope = ZuMv(m_scope);
     m_response.expiresIn = uint64_t(m_accessExpires - m_now);
+    if (m_hasID) {
+      m_sign(m_key.providerRef, m_idPrepared.digest, [
+        self = ZmRef<CodeToken_>{this}
+      ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
+      return;
+    }
+    tokens_();
+  }
 
+  void idSigned_(Bytes signature)
+  {
+    if (m_done || m_idSignDone) return;
+    m_idSignDone = true;
+    if (!signature || !jwtFinish(m_idPrepared, signature, m_limits)) {
+      finish_(OAuthError::ServerError, {});
+      return;
+    }
+    m_response.idToken = ZuMv(m_idPrepared.token);
+    tokens_();
+  }
+
+  void tokens_()
+  {
     CodeFamily family;
     if (!codeFamilyPrepare(*m_rng, m_code, m_codeDigest,
-	ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion, m_now,
+      m_scope, ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion, m_now,
 	m_refreshExpires, family, m_response.refreshToken)) {
       finish_(OAuthError::ServerError, {});
       return;
@@ -507,7 +603,7 @@ private:
 
   void release_()
   {
-    tokenRelease(m_context, m_code.issuer, m_familyID, m_authVersion,
+    tokenRelease(m_context, m_code.issuer, m_code.appID, m_familyID, m_authVersion,
       m_now, ZuMv(m_response), [self = ZmRef<CodeToken_>{this}](
 	  bool ok, TokenResponse response) mutable {
 	self->finish_(ok ? TokenIssue::OK : OAuthError::InvalidGrant,
@@ -531,6 +627,7 @@ private:
   SignFn	m_sign;
   TokenFn	m_complete;
   PreparedJWT	m_prepared;
+  PreparedJWT	m_idPrepared;
   TokenResponse	m_response;
   String	m_scope;
   IDVec		m_scopeIDs;
@@ -539,6 +636,8 @@ private:
   ZdbSagaID	m_sagaID;
   uint64_t	m_authVersion = 0;
   bool		m_signDone = false;
+  bool		m_idSignDone = false;
+  bool		m_hasID = false;
   bool		m_done = false;
 };
 
@@ -639,7 +738,7 @@ private:
     }
     m_client = row->data();
     int error = authenticateClient(m_client, m_grant, m_params,
-      m_hasBasic ? &m_basic : nullptr);
+      m_hasBasic ? &m_basic : nullptr, m_config.now);
     if (error) {
 	clientAuthFail_(error == ClientAuth::UnauthorizedGrant ?
 	  OAuthError::UnauthorizedClient : OAuthError::InvalidClient,
@@ -651,6 +750,10 @@ private:
     m_authorization.null();
     m_basic = {};
     if (m_grant == TokenGrant::ClientCredentials) {
+      if (m_config.facadeClientID) {
+	finish_(OAuthError::UnauthorizedClient);
+	return;
+      }
       m_requested = m_params.scope;
       m_requestedPresent = m_params.has(TokenParams::Scope);
       loadKey_();
@@ -670,7 +773,8 @@ private:
 
   void grant_(ZdbRowRef<Grant> row)
   {
-    if (!row || row->data().issuer != m_config.issuer) {
+    if (!row || row->data().issuer != m_config.issuer ||
+	row->data().facadeClientID != m_config.facadeClientID) {
       finish_(OAuthError::InvalidGrant);
       return;
     }
@@ -916,8 +1020,12 @@ private:
     }
     m_client = row->data();
     if (m_client.type == ClientType::Confidential) {
-      if (!m_hasBasic || !m_client.secretDigest ||
-	  !Ztls::secretVerify(m_client.secretDigest, m_basic.secret)) {
+      bool secret = m_hasBasic &&
+	(Ztls::secretVerify(m_client.secretDigest, m_basic.secret) ||
+	 (m_config.now > 0 && m_client.previousSecretExpires > m_config.now &&
+	  m_client.previousSecretDigest && Ztls::secretVerify(
+	    m_client.previousSecretDigest, m_basic.secret)));
+      if (!secret) {
 	finish_(OAuthError::InvalidClient);
 	return;
       }
@@ -940,6 +1048,7 @@ private:
   {
     if (!row || row->data().kind != GrantKind::Refresh ||
 	row->data().issuer != m_config.issuer ||
+	row->data().facadeClientID != m_config.facadeClientID ||
 	row->data().clientID != m_client.id || row->data().owner ||
 	refreshMatch(row->data(), m_digest) == RefreshMatch::Unknown) {
       finish_(RevokeIssue::OK);

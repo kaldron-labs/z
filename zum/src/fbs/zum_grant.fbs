@@ -3,8 +3,11 @@ namespace Zum.fbs;
 table Grant {
   id:[ubyte];
   issuer:string;
+  app_i_d:uint64;
+  audience_i_d:uint64;
   user_i_d:uint64;
   client_i_d:string;
+  facade_client_i_d:string;
   credential_i_d:[ubyte];
   audience:string;
   redirect_u_r_i:string;
@@ -30,7 +33,19 @@ table Grant {
   role_i_ds:[uint64];
   label:string;
   user_version:uint64 = 1;
+  client_version:uint64;
+  membership_version:uint64;
+  policy_version:uint64;
+  evidence_version:uint64;
+  authority_source:int8;
   actor:string;
   oauth_state_present:bool;
+  scope:string;
+  nonce:string;
+  authority_provider_i_d:uint64;
+  prompt:string;
+  max_age:uint64;
+  prompt_present:bool;
+  max_age_present:bool;
 }
 root_type Grant;

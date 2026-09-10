@@ -1,0 +1,20 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table Evidence {
+  app_i_d:uint64;
+  user_i_d:uint64;
+  provider_i_d:uint64;
+  role_values:[string];
+  eligible:bool;
+  observed:int64;
+  deadline:int64;
+  source:int8;
+  policy_version:uint64;
+  protected_refresh_token:[ubyte];
+  refresh_outcome:int8;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type Evidence;

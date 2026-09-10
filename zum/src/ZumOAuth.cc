@@ -25,7 +25,7 @@ namespace Zum {
 template <typename Params, typename Field>
 static void set(Params &params, Field field, ZuCSpan value, ZuCSpan &dst)
 {
-  uint8_t bit = uint8_t(1U << field);
+  auto bit = decltype(params.seen)(1U << field);
   params.seen |= bit;
   dst = value;
 }
@@ -50,6 +50,16 @@ void parseAuthorize(ZuSpan<char> data, AuthorizeParams &params)
       else if (name == "code_challenge_method")
 	set(params, F::CodeChallengeMethod,
 	  value, params.codeChallengeMethod);
+      else if (name == "nonce")
+	set(params, F::Nonce, value, params.nonce);
+      else if (name == "login_hint")
+	set(params, F::LoginHint, value, params.loginHint);
+      else if (name == "resource")
+	set(params, F::Resource, value, params.resource);
+      else if (name == "prompt")
+	set(params, F::Prompt, value, params.prompt);
+      else if (name == "max_age")
+	set(params, F::MaxAge, value, params.maxAge);
     });
 }
 
@@ -102,6 +112,45 @@ int validateAuthorize(const AuthorizeParams &params)
     return ProfileError::Empty;
   if (params.responseType != "code" ||
       params.codeChallengeMethod != "S256") return ProfileError::Unsupported;
+  if (params.has(F::Nonce) && !params.nonce) return ProfileError::Empty;
+  if (params.has(F::LoginHint) && !params.loginHint)
+    return ProfileError::Empty;
+  if (params.has(F::Resource) && !params.resource)
+    return ProfileError::Empty;
+  if (params.has(F::Prompt) && !params.prompt)
+    return ProfileError::Empty;
+  if (params.has(F::MaxAge)) {
+    if (!params.maxAge) return ProfileError::Empty;
+    uint64_t maxAge = 0;
+    for (auto c: params.maxAge) {
+      if (c < '0' || c > '9') return ProfileError::Unsupported;
+      unsigned digit = unsigned(c - '0');
+      if (maxAge > (UINT64_MAX - digit) / 10)
+	return ProfileError::Unsupported;
+      maxAge = maxAge * 10 + digit;
+    }
+  }
+  if (params.has(F::Prompt)) {
+    bool none = false, login = false;
+    unsigned offset = 0;
+    while (offset < params.prompt.length()) {
+      unsigned end = offset;
+      while (end < params.prompt.length() && params.prompt[end] != ' ')
+	++end;
+      ZuCSpan value{params.prompt.data() + offset, end - offset};
+      if (!value || (value != "none" && value != "login"))
+	return ProfileError::Unsupported;
+      if (value == "none") {
+	if (none) return ProfileError::Unsupported;
+	none = true;
+      } else {
+	if (login) return ProfileError::Unsupported;
+	login = true;
+      }
+      offset = end + (end < params.prompt.length());
+    }
+    if (none && login) return ProfileError::Unsupported;
+  }
   return ProfileError::OK;
 }
 
@@ -245,7 +294,8 @@ bool authorizeClient(const Client &client, const AuthorizeParams &params)
       client.id != params.clientID ||
       !(client.grants & ClientGrant::AuthorizationCode) ||
       (client.type != ClientType::Browser &&
-       client.type != ClientType::Native)) return false;
+       client.type != ClientType::Native &&
+       client.type != ClientType::Confidential)) return false;
   for (auto &redirect: client.redirects)
     if (redirectMatches(client.type, redirect, params.redirectURI)) return true;
   return false;
@@ -265,10 +315,14 @@ bool authorizationBegin(
   Grant next;
   next.id = Bytes{ZuBSpan{random, OpaqueIDSize}};
   next.issuer = issuer;
+  next.appID = selection.appID;
+  next.audienceID = selection.audienceID;
   next.clientID = params.clientID;
   next.audience = selection.audience;
   next.redirectURI = params.redirectURI;
+  next.scope = selection.scope;
   next.scopeIDs = selection.scopeIDs;
+  if (params.has(AuthorizeParams::Nonce)) next.nonce = params.nonce;
   if (passkey)
     next.challenge = Bytes{ZuBSpan{random + OpaqueIDSize, ChallengeSize}};
   next.bindingDigest = bindingDigest;
@@ -276,6 +330,15 @@ bool authorizationBegin(
   if (params.has(AuthorizeParams::State)) {
     next.oauthState = params.state;
     next.oauthStatePresent = true;
+  }
+  if (params.has(AuthorizeParams::Prompt)) {
+    next.prompt = params.prompt;
+    next.promptPresent = true;
+  }
+  if (params.has(AuthorizeParams::MaxAge)) {
+    for (auto c: params.maxAge)
+      next.maxAge = next.maxAge * 10 + unsigned(c - '0');
+    next.maxAgePresent = true;
   }
   next.authVersion = authVersion;
   next.created = created;
@@ -296,7 +359,8 @@ bool authorizationFinish(
 {
   if (grant.kind != GrantKind::Ceremony ||
       grant.purpose != GrantPurpose::Authorization ||
-      grant.state != State::Active || grant.owner ||
+      (grant.state != State::Active && grant.state != State::Pending) ||
+      grant.owner ||
       grant.expires <= authTime ||
       grant.authVersion != authVersion ||
       !Ztls::ctEqual(grant.bindingDigest, bindingDigest) ||
@@ -316,6 +380,7 @@ bool authorizationFinish(
   grant.authTime = authTime;
   grant.expires = codeExpires;
   grant.kind = GrantKind::Code;
+  grant.state = State::Active;
   code = ZuMv(next.token);
   return true;
 }
@@ -338,6 +403,10 @@ String tokenResponseJSON(const TokenResponse &response)
   json << ",\"token_type\":\"Bearer\",\"expires_in\":" <<
     ZuBoxed(response.expiresIn) << ",\"scope\":";
   ZfJSON::quote(json, response.scope);
+  if (response.idToken) {
+    json << ",\"id_token\":";
+    ZfJSON::quote(json, response.idToken);
+  }
   if (response.refreshToken) {
     json << ",\"refresh_token\":";
     ZfJSON::quote(json, response.refreshToken);
@@ -359,6 +428,8 @@ static ZuCSpan errorCode(int error)
     case OAuthError::UnsupportedGrantType:
       return "unsupported_grant_type";
     case OAuthError::InvalidScope: return "invalid_scope";
+    case OAuthError::LoginRequired: return "login_required";
+    case OAuthError::ConsentRequired: return "consent_required";
     case OAuthError::TemporarilyUnavailable:
       return "temporarily_unavailable";
     default: return "server_error";
@@ -408,7 +479,7 @@ String errorRedirect(
 
 int authenticateClient(
     const Client &client, int grant, const TokenParams &params,
-    const BasicAuth *basic)
+    const BasicAuth *basic, int64_t now)
 {
   if (client.state != State::Active || client.owner)
     return ClientAuth::InvalidClient;
@@ -432,9 +503,14 @@ int authenticateClient(
     return ClientAuth::UnauthorizedGrant;
 
   if (client.type == ClientType::Confidential) {
+    bool secret = basic &&
+      (Ztls::secretVerify(client.secretDigest, ZuBSpan{basic->secret}) ||
+       (now > 0 && client.previousSecretExpires > now &&
+	client.previousSecretDigest && Ztls::secretVerify(
+	  client.previousSecretDigest, ZuBSpan{basic->secret})));
     if (!basic || basic->clientID != client.id ||
         (params.clientID && params.clientID != client.id) ||
-        !Ztls::secretVerify(client.secretDigest, ZuBSpan{basic->secret}))
+        !secret)
       return ClientAuth::InvalidClient;
   } else if (basic || !params.clientID || params.clientID != client.id) {
     return ClientAuth::InvalidClient;

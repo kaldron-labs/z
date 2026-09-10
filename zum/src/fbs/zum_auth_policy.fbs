@@ -1,0 +1,21 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table AuthPolicy {
+  app_i_d:uint64;
+  provider_i_d:uint64;
+  local_first:bool = true;
+  eligibility_mode:int8;
+  eligibility_claim:string;
+  eligibility_values:[string];
+  assignment_max_age:uint32;
+  session_idle:uint32;
+  session_absolute:uint32;
+  token_lifetime:uint32;
+  consent_policy:int8;
+  state:int8;
+  version:uint64 = 1;
+  created:int64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type AuthPolicy;

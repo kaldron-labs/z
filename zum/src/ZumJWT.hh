@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/Zum.hh>
+#include <zlib/ZumJWTVerify.hh>
 
 namespace Ztls { class Random; }
 
@@ -35,34 +36,26 @@ struct AccessClaims {
   int64_t	nbf = 0;
   int64_t	exp = 0;
   int64_t	authTime = 0;
+  AppID		appID = 0;
 };
 
-struct Principal {
+struct IDClaims {
+  String	issuer;
   String	subject;
-  String	clientID;
-  String	scope;
-  StringVec	actions;
-  int64_t	expires = 0;
+  String	audience;
+  String	nonce;
+  String	name;
+  String	preferredUserName;
+  String	email;
+  StringVec	amr;
+  int64_t	iat = 0;
+  int64_t	exp = 0;
   int64_t	authTime = 0;
-  String	authMethod;
-};
-
-struct JWTLimits {
-  // Tunable allocation/work bounds for bearer tokens received from peers.
-  unsigned	token = 8U<<10;
-  unsigned	json = 4U<<10;
-  unsigned	actions = 128;
 };
 
 struct PreparedJWT {
   String	token;
   uint8_t	digest[JWTDigestSize];
-};
-
-struct JWTHeader {
-  String	type;
-  String	algorithm;
-  String	keyID;
 };
 
 ZumExtern bool interactiveClaims(
@@ -73,19 +66,20 @@ ZumExtern bool interactiveClaims(
 ZumExtern bool clientClaims(
   Ztls::Random &, ZuCSpan issuer, const Client &,
   const ScopeSelection &, const ZtBitmap &, ZuSpan<const Action>,
-  int64_t now, int64_t expires, AccessClaims &);
+  AppID clientAppID, int64_t now, int64_t expires, AccessClaims &);
 ZumExtern bool jwtPrepare(
   const AccessClaims &, ZuCSpan kid, const JWTLimits &, PreparedJWT &);
+ZumExtern bool idClaims(
+  ZuCSpan issuer, const User &, const Client &, const ScopeSelection &,
+  ZuCSpan nonce,
+  ZuCSpan authMethod, int64_t authTime, int64_t now, int64_t expires,
+  IDClaims &);
+ZumExtern bool idTokenPrepare(
+  const IDClaims &, ZuCSpan kid, const JWTLimits &, PreparedJWT &);
+ZumExtern bool scopeContains(ZuCSpan, ZuCSpan);
 ZumExtern bool jwtFinish(
   PreparedJWT &, ZuBSpan derSignature, const JWTLimits &);
-ZumExtern bool jwtHeader(
-  ZuCSpan token, const JWTLimits &, JWTHeader &);
-ZumExtern bool jwtES256(
-  ZuCSpan token, ZuBSpan publicKey, const JWTLimits &,
-  JWTHeader &, String &claims);
-ZumExtern bool jwtVerify(
-  ZuCSpan token, ZuCSpan kid, ZuCSpan issuer, ZuCSpan audience,
-  ZuBSpan publicKey, int64_t now, const JWTLimits &, Principal &);
+ZumExtern bool userInfoJSON(const User &, const Principal &, String &);
 
 } // namespace Zum
 

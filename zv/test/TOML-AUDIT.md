@@ -18,7 +18,7 @@ sanitizers, and Valgrind by the acceptance commands in `toml.md`.
 | File input | Read-only `ZiMMapFile` (`ZiMMapFile`'s framework heap paths) | No input copy; every retained key/value is copied into `ZfTree.Node` before unmap. |
 | File output | `ZiFileTxStream` | Uses the established transactional file-stream buffer path. |
 | Diagnostics | `ZeString`, `Zi::Path`, and `ZeException` framework storage | Cold failure path, with existing named framework heaps and value captures only. |
-| Curated fixtures | `ZfTOML.Fixture` and `ZfTOML.FixturePath` | Test-only, cold-path C `FILE` access; it avoids introducing a `zi` dependency into `zf/test`. |
+| Curated fixtures | `ZfTOML.Fixture` and `ZfTOML.FixturePath` | Test-only, cold-path `ZiFile` access in `zv/test`. |
 
 The parser writes decoded strings directly into their final node strings and
 moves completed children into parent containers. Numeric lexemes are retained

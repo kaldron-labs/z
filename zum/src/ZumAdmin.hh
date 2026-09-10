@@ -31,6 +31,9 @@ ZuDerive(CleanupFn, (ZmFn<void(int, unsigned),
 
 ZumExtern String auditID(ZuBSpan);
 ZumExtern void auditWrite(DBContext *, Audit, AdminFn);
+ZumExtern Audit managementAuditRecord(
+  String issuer, int operation, String actor, AppID, String target,
+  String correlationID, unsigned status, int64_t now);
 ZumExtern bool actionAdd(
   Requests *, ZuTime deadline, DBContext *, String issuer,
   String actor, String name, int64_t now, ActionFn);

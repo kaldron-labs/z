@@ -24,7 +24,7 @@ namespace Zum {
 enum { OIDCRandomSize = 32 };
 
 namespace AuthMethod {
-  enum { Passkey, OIDC };
+  enum { Passkey, OIDC, LocalFirst };
 }
 
 namespace OIDCRoles {
@@ -39,24 +39,33 @@ namespace OIDCHTTPMethod {
   enum { GET, POST };
 }
 
-struct RoleMap {
+struct OIDCRoleMap {
   String	value;
   RoleID	roleID = 0;
 };
 
-using RoleMapVec = ZtArray<RoleMap, VecHeap>;
+using OIDCRoleMapVec = ZtArray<OIDCRoleMap, VecHeap>;
 
 struct OIDCConfig {
+  AppID		appID = 0;
+  ProviderID	providerID = 0;
+  uint64_t	policyVersion = 0;
+  uint32_t	assignmentMaxAge = 0;
   String	issuer;
   String	authorizeEndpoint;
   String	tokenEndpoint;
   String	jwksEndpoint;
+  String	userinfoEndpoint;
   String	clientID;
   String	clientSecret;
   String	redirectURI;
   StringVec	oidcScopes;
   String	roleClaim;
-  RoleMapVec	roleMap;
+  OIDCRoleMapVec roleMap;
+  EligibilityMode::T eligibilityMode = EligibilityMode::MappedRole;
+  String	eligibilityClaim;
+  StringVec	eligibilityValues;
+  ClaimSource::T claimSource = ClaimSource::IDToken;
   unsigned	roles = OIDCRoles::Local;
   unsigned	clientAuth = OIDCClientAuth::Basic;
 };
@@ -67,6 +76,7 @@ struct OIDCClaims {
   String	nonce;
   StringVec	audience;
   StringVec	roleValues;
+  StringVec	eligibilityValues;
   int64_t	iat = 0;
   int64_t	expires = 0;
 };
@@ -82,7 +92,7 @@ struct OIDCLimits {
   int64_t	clockSkew = 60;
 };
 
-ZuDerive(OIDCUserFn, (ZmFn<void(bool, User, IDVec),
+ZuDerive(OIDCUserFn, (ZmFn<void(bool, User, IDVec, Evidence),
   ZmFnHeapID<"Zum.OIDCUserFn">>));
 
 struct OIDCHTTPRequest {
@@ -99,7 +109,8 @@ ZuDerive(OIDCHTTPFn, (ZmFn<void(OIDCHTTPRequest, OIDCHTTPDoneFn),
   ZmFnHeapID<"Zum.OIDCHTTPFn">>));
 ZuDerive(OIDCBeginFn, (ZmFn<void(bool, String),
   ZmFnHeapID<"Zum.OIDCBeginFn">>));
-ZuDerive(OIDCFinishFn, (ZmFn<void(bool, Bytes, User, IDVec, int64_t),
+ZuDerive(OIDCFinishFn,
+  (ZmFn<void(bool, Bytes, User, IDVec, Evidence, int64_t),
   ZmFnHeapID<"Zum.OIDCFinishFn">>));
 ZuDerive(OIDCClockFn,
   (ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>));
@@ -115,11 +126,11 @@ public:
   ~OIDC();
 
   bool init(
-    ZmScheduler *, unsigned sid, DBContext *, OIDCConfig, OIDCLimits,
+    ZmScheduler *, unsigned sid, DBContext *, OIDCLimits,
     unsigned pendingLimit, uint64_t timeout, OIDCClockFn, OIDCHTTPFn);
   void final();
 
-  bool begin(Bytes grantID, OIDCBeginFn);
+  bool begin(Bytes grantID, OIDCConfig, OIDCBeginFn);
   bool finish(String query, OIDCFinishFn);
 
 private:
@@ -128,13 +139,13 @@ private:
 
 ZumExtern bool oidcConfigValid(const OIDCConfig &);
 ZumExtern IDVec oidcMapRoles(
-  ZuSpan<const String>, ZuSpan<const RoleMap>);
+  ZuSpan<const String>, ZuSpan<const OIDCRoleMap>);
 ZumExtern bool oidcVerifyIDToken(
   ZuCSpan token, ZuBSpan publicKey, ZuCSpan nonce,
   const OIDCConfig &, int64_t now, const OIDCLimits &, OIDCClaims &);
 ZumExtern void oidcLoadUser(
   DBContext *, String subject, const OIDCConfig &, StringVec roleValues,
-  OIDCUserFn);
+  StringVec eligibilityValues, int64_t now, OIDCUserFn);
 
 } // namespace Zum
 
