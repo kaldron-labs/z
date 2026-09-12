@@ -8,6 +8,11 @@
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuCmp.hh>
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuPercent.hh>
 
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
@@ -22,81 +27,148 @@
 
 namespace Zum {
 
+struct TokenResponseWire {
+  String accessToken;
+  String tokenType{"Bearer"};
+  uint64_t expiresIn = 0;
+  String scope;
+  String idToken;
+  String refreshToken;
+};
+ZfStruct(, (TokenResponseWire, JSON),
+  (((accessToken),	(JSON::ID<"access_token">, Required)), (String)),
+  (((tokenType),	(JSON::ID<"token_type">, Required)),	(String)),
+  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	(UInt64)),
+  (((scope),		(Required)),	(String)),
+  (((idToken),		(JSON::ID<"id_token">, JSON::Opt)),	(String)),
+  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)), (String)));
+
+struct OAuthErrorWire { String error; };
+ZfStruct(, (OAuthErrorWire, JSON),
+  (((error),		(Required)),	(String)));
+
+struct AuthorizeFields {
+  using Keys = ZuStringTL<"response_type", "client_id", "redirect_uri",
+    "scope", "state", "code_challenge", "code_challenge_method", "nonce",
+    "login_hint", "resource", "prompt", "max_age">;
+};
+struct TokenFields {
+  using Keys = ZuStringTL<"grant_type", "code", "client_id", "redirect_uri",
+    "code_verifier", "refresh_token", "scope">;
+};
+struct RevokeFields {
+  using Keys = ZuStringTL<"token", "token_type_hint", "client_id">;
+};
+struct GrantTypes {
+  using Keys = ZuStringTL<"authorization_code", "refresh_token",
+    "client_credentials">;
+};
+
+int formDecode_(ZuSpan<char> data)
+{
+  if (!data) return 0;
+  using Form = ZuPercent::Codec<ZfURI::PercentQuote<true>>;
+  auto result = Form::decode(data);
+  return result ? int(result.out) : -1;
+}
+
 template <typename Params, typename Field>
-static void set(Params &params, Field field, ZuCSpan value, ZuCSpan &dst)
+static bool set(Params &params, Field field, ZuCSpan value, ZuCSpan &dst)
 {
   auto bit = decltype(params.seen)(1U << field);
+  if (params.seen & bit) return false;
   params.seen |= bit;
   dst = value;
+  return true;
 }
 
-void parseAuthorize(ZuSpan<char> data, AuthorizeParams &params)
+bool parseAuthorize(ZuSpan<char> data, AuthorizeParams &params)
 {
   params = {};
-  formEach(data, [&params](ZuCSpan name, ZuCSpan value) {
-      using F = AuthorizeParams;
-      if (name == "response_type")
-	set(params, F::ResponseType, value, params.responseType);
-      else if (name == "client_id")
-	set(params, F::ClientID, value, params.clientID);
-      else if (name == "redirect_uri")
-	set(params, F::RedirectURI, value, params.redirectURI);
-      else if (name == "scope")
-	set(params, F::Scope, value, params.scope);
-      else if (name == "state")
-	set(params, F::State, value, params.state);
-      else if (name == "code_challenge")
-	set(params, F::CodeChallenge, value, params.codeChallenge);
-      else if (name == "code_challenge_method")
-	set(params, F::CodeChallengeMethod,
-	  value, params.codeChallengeMethod);
-      else if (name == "nonce")
-	set(params, F::Nonce, value, params.nonce);
-      else if (name == "login_hint")
-	set(params, F::LoginHint, value, params.loginHint);
-      else if (name == "resource")
-	set(params, F::Resource, value, params.resource);
-      else if (name == "prompt")
-	set(params, F::Prompt, value, params.prompt);
-      else if (name == "max_age")
-	set(params, F::MaxAge, value, params.maxAge);
-    });
+  bool valid = true;
+  constexpr auto matcher = ZuMatcher<AuthorizeFields>();
+  return formEach(data, [&params, &valid, &matcher](
+      ZuCSpan name, ZuCSpan value) {
+    switch (matcher.exact(name)) {
+      case AuthorizeParams::ResponseType:
+	valid &= set(params, AuthorizeParams::ResponseType, value,
+	  params.responseType); break;
+      case AuthorizeParams::ClientID:
+	valid &= set(params, AuthorizeParams::ClientID, value, params.clientID); break;
+      case AuthorizeParams::RedirectURI:
+	valid &= set(params, AuthorizeParams::RedirectURI, value,
+	  params.redirectURI); break;
+      case AuthorizeParams::Scope:
+	valid &= set(params, AuthorizeParams::Scope, value, params.scope); break;
+      case AuthorizeParams::State:
+	valid &= set(params, AuthorizeParams::State, value, params.state); break;
+      case AuthorizeParams::CodeChallenge:
+	valid &= set(params, AuthorizeParams::CodeChallenge, value,
+	  params.codeChallenge); break;
+      case AuthorizeParams::CodeChallengeMethod:
+	valid &= set(params, AuthorizeParams::CodeChallengeMethod, value,
+	  params.codeChallengeMethod); break;
+      case AuthorizeParams::Nonce:
+	valid &= set(params, AuthorizeParams::Nonce, value, params.nonce); break;
+      case AuthorizeParams::LoginHint:
+	valid &= set(params, AuthorizeParams::LoginHint, value,
+	  params.loginHint); break;
+      case AuthorizeParams::Resource:
+	valid &= set(params, AuthorizeParams::Resource, value, params.resource); break;
+      case AuthorizeParams::Prompt:
+	valid &= set(params, AuthorizeParams::Prompt, value, params.prompt); break;
+      case AuthorizeParams::MaxAge:
+	valid &= set(params, AuthorizeParams::MaxAge, value, params.maxAge); break;
+    }
+  }) && valid;
 }
 
-void parseToken(ZuSpan<char> data, TokenParams &params)
+bool parseToken(ZuSpan<char> data, TokenParams &params)
 {
   params = {};
-  formEach(data, [&params](ZuCSpan name, ZuCSpan value) {
-      using F = TokenParams;
-      if (name == "grant_type")
-	set(params, F::GrantType, value, params.grantType);
-      else if (name == "code")
-	set(params, F::Code, value, params.code);
-      else if (name == "client_id")
-	set(params, F::ClientID, value, params.clientID);
-      else if (name == "redirect_uri")
-	set(params, F::RedirectURI, value, params.redirectURI);
-      else if (name == "code_verifier")
-	set(params, F::CodeVerifier, value, params.codeVerifier);
-      else if (name == "refresh_token")
-	set(params, F::RefreshToken, value, params.refreshToken);
-      else if (name == "scope")
-	set(params, F::Scope, value, params.scope);
-    });
+  bool valid = true;
+  constexpr auto matcher = ZuMatcher<TokenFields>();
+  return formEach(data, [&params, &valid, &matcher](
+      ZuCSpan name, ZuCSpan value) {
+    switch (matcher.exact(name)) {
+      case TokenParams::GrantType:
+	valid &= set(params, TokenParams::GrantType, value, params.grantType); break;
+      case TokenParams::Code:
+	valid &= set(params, TokenParams::Code, value, params.code); break;
+      case TokenParams::ClientID:
+	valid &= set(params, TokenParams::ClientID, value, params.clientID); break;
+      case TokenParams::RedirectURI:
+	valid &= set(params, TokenParams::RedirectURI, value,
+	  params.redirectURI); break;
+      case TokenParams::CodeVerifier:
+	valid &= set(params, TokenParams::CodeVerifier, value,
+	  params.codeVerifier); break;
+      case TokenParams::RefreshToken:
+	valid &= set(params, TokenParams::RefreshToken, value,
+	  params.refreshToken); break;
+      case TokenParams::Scope:
+	valid &= set(params, TokenParams::Scope, value, params.scope); break;
+    }
+  }) && valid;
 }
 
-void parseRevoke(ZuSpan<char> data, RevokeParams &params)
+bool parseRevoke(ZuSpan<char> data, RevokeParams &params)
 {
   params = {};
-  formEach(data, [&params](ZuCSpan name, ZuCSpan value) {
-      using F = RevokeParams;
-      if (name == "token")
-	set(params, F::Token, value, params.token);
-      else if (name == "token_type_hint")
-	set(params, F::TokenTypeHint, value, params.tokenTypeHint);
-      else if (name == "client_id")
-	set(params, F::ClientID, value, params.clientID);
-    });
+  bool valid = true;
+  constexpr auto matcher = ZuMatcher<RevokeFields>();
+  return formEach(data, [&params, &valid, &matcher](
+      ZuCSpan name, ZuCSpan value) {
+    switch (matcher.exact(name)) {
+      case RevokeParams::Token:
+	valid &= set(params, RevokeParams::Token, value, params.token); break;
+      case RevokeParams::TokenTypeHint:
+	valid &= set(params, RevokeParams::TokenTypeHint, value,
+	  params.tokenTypeHint); break;
+      case RevokeParams::ClientID:
+	valid &= set(params, RevokeParams::ClientID, value, params.clientID); break;
+    }
+  }) && valid;
 }
 
 int validateAuthorize(const AuthorizeParams &params)
@@ -121,21 +193,18 @@ int validateAuthorize(const AuthorizeParams &params)
     return ProfileError::Empty;
   if (params.has(F::MaxAge)) {
     if (!params.maxAge) return ProfileError::Empty;
-    uint64_t maxAge = 0;
-    for (auto c: params.maxAge) {
-      if (c < '0' || c > '9') return ProfileError::Unsupported;
-      unsigned digit = unsigned(c - '0');
-      if (maxAge > (UINT64_MAX - digit) / 10)
-	return ProfileError::Unsupported;
-      maxAge = maxAge * 10 + digit;
-    }
+    ZuBox<uint64_t> maxAge;
+    if (maxAge.scan(params.maxAge) != int(params.maxAge.length()) ||
+	ZuCmp<uint64_t>::null(maxAge))
+      return ProfileError::Unsupported;
   }
   if (params.has(F::Prompt)) {
     bool none = false, login = false;
     unsigned offset = 0;
-    while (offset < params.prompt.length()) {
+    unsigned n = params.prompt.length();
+    while (offset < n) {
       unsigned end = offset;
-      while (end < params.prompt.length() && params.prompt[end] != ' ')
+      while (end < n && params.prompt[end] != ' ')
 	++end;
       ZuCSpan value{params.prompt.data() + offset, end - offset};
       if (!value || (value != "none" && value != "login"))
@@ -161,19 +230,23 @@ int validateToken(const TokenParams &params, int &grant)
   if (!params.has(F::GrantType)) return ProfileError::Missing;
   if (!params.grantType) return ProfileError::Empty;
 
-  unsigned required;
-  if (params.grantType == "authorization_code") {
-    grant = TokenGrant::AuthorizationCode;
-    required = (1U<<F::GrantType) | (1U<<F::Code) |
-      (1U<<F::RedirectURI) | (1U<<F::CodeVerifier);
-  } else if (params.grantType == "refresh_token") {
-    grant = TokenGrant::RefreshToken;
-    required = (1U<<F::GrantType) | (1U<<F::RefreshToken);
-  } else if (params.grantType == "client_credentials") {
-    grant = TokenGrant::ClientCredentials;
-    required = 1U<<F::GrantType;
-  } else {
-    return ProfileError::Unsupported;
+  unsigned required = 0;
+  constexpr auto matcher = ZuMatcher<GrantTypes>();
+  switch (matcher.exact(params.grantType)) {
+    case 0:
+      grant = TokenGrant::AuthorizationCode;
+      required = (1U<<F::GrantType) | (1U<<F::Code) |
+	(1U<<F::RedirectURI) | (1U<<F::CodeVerifier);
+      break;
+    case 1:
+      grant = TokenGrant::RefreshToken;
+      required = (1U<<F::GrantType) | (1U<<F::RefreshToken);
+      break;
+    case 2:
+      grant = TokenGrant::ClientCredentials;
+      required = 1U<<F::GrantType;
+      break;
+    default: return ProfileError::Unsupported;
   }
   if ((params.seen & required) != required) return ProfileError::Missing;
   if ((params.has(F::Code) && !params.code) ||
@@ -216,8 +289,12 @@ bool parseBasic(ZuSpan<char> value, BasicAuth &auth)
   for (unsigned j = 0; j < expected; ++j)
     if (plain[j] == ':') {
       if (!j) return false;
-      auth.clientID = {plain.data(), j};
-      auth.secret = {plain.data() + j + 1, expected - j - 1};
+      using Form = ZuPercent::Codec<ZfURI::PercentQuote<true>>;
+      auto client = Form::decode({encoded.data(), j});
+      auto secret = Form::decode({encoded.data() + j + 1, expected - j - 1});
+      if (!client || !client.out || !secret) return false;
+      auth.clientID = {encoded.data(), unsigned(client.out)};
+      auth.secret = {encoded.data() + j + 1, unsigned(secret.out)};
       return true;
     }
   return false;
@@ -257,10 +334,10 @@ bool opaqueIssue(Ztls::Random &rng, OpaqueToken &opaque)
 bool opaqueIssue(Ztls::Random &rng, ZuBSpan id, OpaqueToken &opaque)
 {
   if (id.length() != OpaqueIDSize) return false;
-  uint8_t secret[OpaqueSecretSize];
+  ZuBArray<OpaqueSecretSize> secret(OpaqueSecretSize, false);
   if (!rng.random(secret)) return false;
   opaqueFinish(id, secret, opaque);
-  ZuClear(secret, sizeof(secret));
+  ZuClear(secret.data(), secret.length());
   return true;
 }
 
@@ -308,12 +385,13 @@ bool authorizationBegin(
     int64_t created, int64_t expires)
 {
   enum { ChallengeSize = 32 }; // WebAuthn/PKCE SHA-256 challenge entropy
-  uint8_t random[OpaqueIDSize + ChallengeSize];
+  ZuBArray<OpaqueIDSize + ChallengeSize> random(
+    OpaqueIDSize + ChallengeSize, false);
   unsigned randomSize = OpaqueIDSize + (passkey ? ChallengeSize : 0);
-  if (!rng.random({random, randomSize})) return false;
+  if (!rng.random({random.data(), randomSize})) return false;
 
   Grant next;
-  next.id = Bytes{ZuBSpan{random, OpaqueIDSize}};
+  next.id = Bytes{ZuBSpan{random.data(), OpaqueIDSize}};
   next.issuer = issuer;
   next.appID = selection.appID;
   next.audienceID = selection.audienceID;
@@ -324,9 +402,9 @@ bool authorizationBegin(
   next.scopeIDs = selection.scopeIDs;
   if (params.has(AuthorizeParams::Nonce)) next.nonce = params.nonce;
   if (passkey)
-    next.challenge = Bytes{ZuBSpan{random + OpaqueIDSize, ChallengeSize}};
+    next.challenge = Bytes{ZuBSpan{random.data() + OpaqueIDSize, ChallengeSize}};
   next.bindingDigest = bindingDigest;
-  next.pkceChallenge = Bytes{ZuBSpan{params.codeChallenge}};
+  next.pkceChallenge = Bytes{params.codeChallenge};
   if (params.has(AuthorizeParams::State)) {
     next.oauthState = params.state;
     next.oauthStatePresent = true;
@@ -336,8 +414,11 @@ bool authorizationBegin(
     next.promptPresent = true;
   }
   if (params.has(AuthorizeParams::MaxAge)) {
-    for (auto c: params.maxAge)
-      next.maxAge = next.maxAge * 10 + unsigned(c - '0');
+    ZuBox<uint64_t> maxAge;
+    if (maxAge.scan(params.maxAge) != int(params.maxAge.length()) ||
+	ZuCmp<uint64_t>::null(maxAge))
+      return false;
+    next.maxAge = maxAge;
     next.maxAgePresent = true;
   }
   next.authVersion = authVersion;
@@ -346,7 +427,7 @@ bool authorizationBegin(
   next.kind = GrantKind::Ceremony;
   next.purpose = GrantPurpose::Authorization;
   next.state = State::Active;
-  ZuClear(random, randomSize);
+  ZuClear(random.data(), randomSize);
   grant = ZuMv(next);
   return true;
 }
@@ -398,20 +479,11 @@ bool codeMatches(
 
 String tokenResponseJSON(const TokenResponse &response)
 {
-  String json{"{\"access_token\":"};
-  ZfJSON::quote(json, response.accessToken);
-  json << ",\"token_type\":\"Bearer\",\"expires_in\":" <<
-    ZuBoxed(response.expiresIn) << ",\"scope\":";
-  ZfJSON::quote(json, response.scope);
-  if (response.idToken) {
-    json << ",\"id_token\":";
-    ZfJSON::quote(json, response.idToken);
-  }
-  if (response.refreshToken) {
-    json << ",\"refresh_token\":";
-    ZfJSON::quote(json, response.refreshToken);
-  }
-  json << '}';
+  String json;
+  ZfJSON::save(json, TokenResponseWire{
+    .accessToken = response.accessToken, .expiresIn = response.expiresIn,
+    .scope = response.scope, .idToken = response.idToken,
+    .refreshToken = response.refreshToken});
   return json;
 }
 
@@ -438,9 +510,8 @@ static ZuCSpan errorCode(int error)
 
 String oauthErrorJSON(int error)
 {
-  String json{"{\"error\":"};
-  ZfJSON::quote(json, errorCode(error));
-  json << '}';
+  String json;
+  ZfJSON::save(json, OAuthErrorWire{errorCode(error)});
   return json;
 }
 
@@ -450,10 +521,10 @@ static String redirect(
 {
   String uri{redirectURI};
   uri << (redirectURI.find<"?">() >= 0 ? '&' : '?') << name << '=';
-  ZfURI::URIQuote<false>::quote(uri, value);
+  ZfURI::PathQuote::quote(uri, value);
   if (statePresent) {
     uri << "&state=";
-    ZfURI::URIQuote<false>::quote(uri, state);
+    ZfURI::PathQuote::quote(uri, state);
   }
   return uri;
 }
@@ -539,12 +610,14 @@ bool redirectMatches(
 
 bool pkceVerify(ZuCSpan challenge, ZuCSpan verifier)
 {
-  uint8_t digest[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
   { Ztls::MD<> md; md.update(ZuBSpan{verifier}); md.finish(digest); }
-  char encoded[ZuBase64URL::enclen(sizeof(digest))];
+  ZuBArray<ZuBase64URL::enclen(Ztls::MD<>::Size)> encoded(
+    ZuBase64URL::enclen(Ztls::MD<>::Size), false);
   unsigned n = ZuBase64URL::encode(
-    ZuSpan<uint8_t>{encoded, sizeof(encoded)}, digest);
-  return Ztls::ctEqual(ZuBSpan{challenge}, ZuBSpan{encoded, n});
+    encoded.span(), digest);
+  return Ztls::ctEqual(
+    ZuBSpan{challenge}, ZuBSpan{encoded.data(), n});
 }
 
 } // namespace Zum

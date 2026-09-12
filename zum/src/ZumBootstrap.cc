@@ -5,14 +5,17 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include "ZumBootstrap.hh"
+#include <zlib/ZumDB.hh>
+#include <zlib/ZumKeyDB.hh>
 
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuCmp.hh>
+#include <zlib/ZfJSON.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsPK.hh>
@@ -23,19 +26,23 @@
 
 namespace Zum {
 
-enum { SchemaVersion = 9 };
-
-static Bytes keyCheck(ZuBSpan key)
-{
-  Bytes digest;
-  digest.length(Ztls::MD<>::Size, false);
-  unsigned length = 0;
-  if (!::HMAC(EVP_sha256(), key.data(), int(key.length()),
-      reinterpret_cast<const uint8_t *>("zum.db.key.v1"),
-      sizeof("zum.db.key.v1") - 1, digest.data(), &length) ||
-      length != digest.length()) digest.null();
-  return digest;
-}
+struct BootstrapJWK {
+  String kid;
+  String kty;
+  String crv;
+  String use;
+  String alg;
+  String x;
+  String y;
+};
+ZfStruct(, (BootstrapJWK, JSON),
+  (((kid),		(Required)),	(String)),
+  (((kty),		(Required)),	(String)),
+  (((crv),		(Required)),	(String)),
+  (((use),		(Required)),	(String)),
+  (((alg),		(Required)),	(String)),
+  (((x),		(Required)),	(String)),
+  (((y),		(Required)),	(String)));
 
 static bool encode(String &out, ZuBSpan value)
 {
@@ -44,110 +51,6 @@ static bool encode(String &out, ZuBSpan value)
   return ZuBase64URL::encode(out.span(), value) == length;
 }
 
-static Bytes encryptSecret(
-    Ztls::Random &rng, ZuBSpan key, ZuBSpan aad, ZuBSpan plain)
-{
-  enum { Version = 1, AES256GCM = 1, KeyID = 1,
-    Header = 6, Nonce = 12, Tag = 16 };
-  if (key.length() != 32 || plain.length() > unsigned(INT_MAX) ||
-      aad.length() > unsigned(INT_MAX)) return {};
-  Bytes envelope;
-  envelope.length(Header + Nonce + plain.length() + Tag, false);
-  auto out = envelope.data();
-  out[0] = Version;
-  out[1] = AES256GCM;
-  out[2] = uint8_t(KeyID >> 24);
-  out[3] = uint8_t(KeyID >> 16);
-  out[4] = uint8_t(KeyID >> 8);
-  out[5] = uint8_t(KeyID);
-  if (!rng.random({out + Header, Nonce})) return {};
-  EVP_CIPHER_CTX *cipher = EVP_CIPHER_CTX_new();
-  if (!cipher) return {};
-  int n = 0, offset = 0;
-  bool ok = EVP_EncryptInit_ex(
-      cipher, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) == 1 &&
-    EVP_CIPHER_CTX_ctrl(cipher, EVP_CTRL_GCM_SET_IVLEN, Nonce, nullptr) == 1 &&
-    EVP_EncryptInit_ex(
-      cipher, nullptr, nullptr, key.data(), out + Header) == 1 &&
-    (!aad || EVP_EncryptUpdate(cipher, nullptr, &n,
-      aad.data(), int(aad.length())) == 1) &&
-    (!plain || EVP_EncryptUpdate(cipher, out + Header + Nonce, &n,
-      plain.data(), int(plain.length())) == 1);
-  if (ok) offset = n;
-  ok = ok && EVP_EncryptFinal_ex(
-    cipher, out + Header + Nonce + offset, &n) == 1;
-  if (ok) offset += n;
-  ok = ok && unsigned(offset) == plain.length() &&
-    EVP_CIPHER_CTX_ctrl(cipher, EVP_CTRL_GCM_GET_TAG, Tag,
-      out + Header + Nonce + plain.length()) == 1;
-  EVP_CIPHER_CTX_free(cipher);
-  if (!ok) {
-    ZuClear(envelope.data(), envelope.length());
-    return {};
-  }
-  return envelope;
-}
-
-static String secretAAD(
-    ZuCSpan issuer, ZuCSpan recordType, ZuCSpan recordID, ZuCSpan field)
-{
-  String aad;
-  aad << issuer << '\0' << recordType << '\0' << recordID << '\0' << field;
-  return aad;
-}
-
-bool serverSecretDecrypt(
-    ZuBSpan key, ZuCSpan issuer, ZuCSpan recordType, ZuCSpan recordID,
-    ZuCSpan field, ZuBSpan envelope, Bytes &plain)
-{
-  enum { Version = 1, AES256GCM = 1, KeyID = 1,
-    Header = 6, Nonce = 12, Tag = 16 };
-  plain.null();
-  if (key.length() != 32 || envelope.length() < Header + Nonce + Tag ||
-      envelope[0] != Version || envelope[1] != AES256GCM || envelope[2] ||
-      envelope[3] || envelope[4] || envelope[5] != KeyID) return false;
-  auto length = envelope.length() - Header - Nonce - Tag;
-  if (length > unsigned(INT_MAX)) return false;
-  auto aad = secretAAD(issuer, recordType, recordID, field);
-  if (aad.length() > unsigned(INT_MAX)) return false;
-  Bytes next;
-  next.length(length, false);
-  EVP_CIPHER_CTX *cipher = EVP_CIPHER_CTX_new();
-  if (!cipher) return false;
-  int n = 0, offset = 0;
-  bool ok = EVP_DecryptInit_ex(
-      cipher, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) == 1 &&
-    EVP_CIPHER_CTX_ctrl(cipher, EVP_CTRL_GCM_SET_IVLEN, Nonce, nullptr) == 1 &&
-    EVP_DecryptInit_ex(cipher, nullptr, nullptr, key.data(),
-      envelope.data() + Header) == 1 &&
-    (!aad || EVP_DecryptUpdate(cipher, nullptr, &n,
-      reinterpret_cast<const uint8_t *>(aad.data()), int(aad.length())) == 1) &&
-    (!length || EVP_DecryptUpdate(cipher, next.data(), &n,
-      envelope.data() + Header + Nonce, int(length)) == 1);
-  if (ok) offset = n;
-  ok = ok && EVP_CIPHER_CTX_ctrl(cipher, EVP_CTRL_GCM_SET_TAG, Tag,
-      const_cast<uint8_t *>(envelope.data()) + Header + Nonce + length) == 1 &&
-    EVP_DecryptFinal_ex(cipher, next.data() + offset, &n) == 1;
-  if (ok) offset += n;
-  EVP_CIPHER_CTX_free(cipher);
-  if (!ok || unsigned(offset) != length) {
-    if (next) ZuClear(next.data(), next.length());
-    return false;
-  }
-  plain = ZuMv(next);
-  return true;
-}
-
-bool serverSecretEncrypt(
-    Ztls::Random &rng, ZuBSpan key, ZuCSpan issuer, ZuCSpan recordType,
-    ZuCSpan recordID, ZuCSpan field, ZuBSpan plain, Bytes &envelope)
-{
-  String aad = secretAAD(issuer, recordType, recordID, field);
-  Bytes next = encryptSecret(rng, key, aad, plain);
-  if (!next) return false;
-  envelope = ZuMv(next);
-  return true;
-}
 
 static bool prepareSigner(
     Ztls::Random &rng, const ServerBootstrapConfig &config, SignKey &signer)
@@ -166,14 +69,14 @@ static bool prepareSigner(
       !encode(y, {publicKey.data() + 1 +
         Ztls::COSE::ES256::CoordinateSize,
         Ztls::COSE::ES256::CoordinateSize})) return false;
-  auto aad = secretAAD(
-    config.issuer, "zum.sign_key", id, "privateMaterial");
-  Bytes encrypted = encryptSecret(rng, config.dbKey, aad, privateKey);
+  Bytes encrypted;
+  serverSecretEncrypt(rng, config.dbKey, config.issuer,
+    "zum.sign_key", id, "privateMaterial", privateKey, encrypted);
   ZuClear(privateKey.data(), privateKey.length());
   if (!encrypted) return false;
-  String jwk{"{\"kid\":\"bootstrap\",\"kty\":\"EC\",\"crv\":\"P-256\","
-    "\"use\":\"sig\",\"alg\":\"ES256\",\"x\":\""};
-  jwk << x << "\",\"y\":\"" << y << "\"}";
+  String jwk;
+  ZfJSON::save(jwk, BootstrapJWK{
+    "bootstrap", "EC", "P-256", "sig", "ES256", ZuMv(x), ZuMv(y)});
   signer = SignKey{
     .id = id, .issuer = config.issuer, .algorithm = "ES256",
     .publicJwk = ZuMv(jwk), .privateMaterial = ZuMv(encrypted),
@@ -187,18 +90,19 @@ static bool randomID(Ztls::Random &rng, uint64_t &id)
   do {
     if (!rng.random({reinterpret_cast<uint8_t *>(&id), sizeof(id)}))
       return false;
-  } while (!id || id == UINT64_MAX);
+  } while (!id || id == ZuCmp<uint64_t>::null());
   return true;
 }
 
 static Bytes bootstrapID(ZuCSpan issuer)
 {
-  uint8_t hash[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> hash(Ztls::MD<>::Size, false);
   Ztls::MD<> md;
   md.update(ZuBSpan{"zum.bootstrap"});
   md.update(ZuBSpan{issuer});
   md.finish(hash);
-  return Bytes{ZuBSpan{hash, OpaqueIDSize}};
+  hash.length(OpaqueIDSize);
+  return Bytes{hash};
 }
 
 static bool writeCapability(ZuCSpan path, ZuCSpan issuer, ZuCSpan token)
@@ -212,8 +116,9 @@ static bool writeCapability(ZuCSpan path, ZuCSpan issuer, ZuCSpan token)
     O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
   if (fd < 0) return false;
   unsigned offset = 0;
-  while (offset < value.length()) {
-    auto n = ::write(fd, value.data() + offset, value.length() - offset);
+  unsigned length = value.length();
+  while (offset < length) {
+    auto n = ::write(fd, value.data() + offset, length - offset);
     if (n <= 0) { ::close(fd); return false; }
     offset += unsigned(n);
   }
@@ -240,7 +145,7 @@ public:
       finish_(false);
       return;
     }
-    m_check = keyCheck(m_config.dbKey);
+    m_check = serverKeyCheck(m_config.dbKey);
     auto issuers = m_context->issuers;
     String id = m_config.issuer;
     issuers->run(0, [self = ZmRef<ServerBootstrap_>{this}, issuers,
@@ -306,8 +211,7 @@ private:
       .id = m_config.issuer, .schemaVersion = SchemaVersion,
       .bootstrapPhase = BootstrapPhase::Empty,
       .initialClientID = m_config.adminClientID,
-      .keyCheck = m_check, .nextActionID = CoreAction::N,
-      .authVersion = 1
+      .keyCheck = m_check
     };
     if (!randomID(*m_rng, issuer.coreAppID) ||
         !randomID(*m_rng, issuer.initialUserID)) {
@@ -327,10 +231,23 @@ private:
 
   void validate_()
   {
-    if (!m_check || m_issuer.schemaVersion != SchemaVersion ||
+    if (m_issuer.schemaVersion != SchemaVersion) {
+      ZiLOG(Error, "Zum", ([version = m_issuer.schemaVersion](auto &s) {
+	s << "database migration required: issuer schema version " << version
+	  << ", supported version " << SchemaVersion;
+      }));
+      finish_(false);
+      return;
+    }
+    if (!m_check ||
         !Ztls::ctEqual(m_issuer.keyCheck, m_check) ||
         !m_issuer.coreAppID || !m_issuer.initialUserID ||
         !m_issuer.initialClientID) {
+      finish_(false);
+      return;
+    }
+    if (m_issuer.pendingKeyCheck) {
+      ZiLOG(Error, "Zum", "offline database secret-key rotation incomplete");
       finish_(false);
       return;
     }
@@ -359,6 +276,8 @@ private:
   void seedActions_(bool ok)
   {
     if (!ok) { finish_(false); return; }
+    while (m_actionID < CoreAction::N && !coreAction(m_actionID))
+      ++m_actionID;
     if (m_actionID >= CoreAction::N) {
       seedSuperuser_();
       return;
@@ -376,7 +295,8 @@ private:
   void seedSuperuser_()
   {
     ZtBitmap actions{CoreAction::N};
-    for (ActionID i = 0; i < CoreAction::N; ++i) actions.set(i);
+    for (ActionID i = 0; i < CoreAction::N; ++i)
+      if (coreAction(i)) actions.set(i);
     auto now = m_config.now;
     ensure_(m_context->roles, Role{
       .appID = m_issuer.coreAppID, .id = CoreRole::Superuser,
@@ -425,10 +345,11 @@ private:
     auto now = m_config.now;
     ensure_(m_context->scopes, Scope{
       .appID = m_issuer.coreAppID, .id = CoreScope::Admin,
-      .audienceID = CoreAudience::Admin, .audience = m_adminURI,
+      .audienceID = CoreAudience::Admin,
       .name = "zum.admin", .roleIDs = IDVec{CoreRole::Superuser},
       .state = State::Active, .origin = Origin::Standard,
-      .catalogRevision = 1, .created = now, .updated = now},
+      .catalogRevision = 1, .created = now, .updated = now,
+      .catalogRoleIDs = IDVec{CoreRole::Superuser}},
       &ServerBootstrap_::seedServiceScope_);
   }
 
@@ -438,10 +359,11 @@ private:
     auto now = m_config.now;
     ensure_(m_context->scopes, Scope{
       .appID = m_issuer.coreAppID, .id = CoreScope::AppService,
-      .audienceID = CoreAudience::Admin, .audience = m_adminURI,
+      .audienceID = CoreAudience::Admin,
       .name = "zum.service", .roleIDs = IDVec{CoreRole::AppService},
       .state = State::Active, .origin = Origin::Standard,
-      .catalogRevision = 1, .created = now, .updated = now},
+      .catalogRevision = 1, .created = now, .updated = now,
+      .catalogRoleIDs = IDVec{CoreRole::AppService}},
       &ServerBootstrap_::seedClient_);
   }
 
@@ -460,8 +382,6 @@ private:
     client.identityScopes.push("openid");
     client.identityScopes.push("profile");
     client.identityScopes.push("email");
-    client.audiences.push(m_adminURI);
-    client.scopeIDs.push(CoreScope::Admin);
     ensure_(m_context->clients, ZuMv(client),
       &ServerBootstrap_::seedClientAccess_);
   }
@@ -557,10 +477,9 @@ private:
 
   void issue_()
   {
-    IDVec roles{CoreRole::Superuser};
     if (!bootstrapIssue(m_requests, Zm::now() + ZuTime{15}, m_context, *m_rng,
         BootstrapConfig{.issuer = m_config.issuer,
-          .appID = m_issuer.coreAppID, .roleIDs = ZuMv(roles),
+          .appID = m_issuer.coreAppID,
           .userName = m_config.admin, .label = "bootstrap passkey",
           .userID = m_issuer.initialUserID, .now = m_config.now,
           .expires = m_config.now + m_config.ttl},

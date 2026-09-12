@@ -7,9 +7,6 @@ table Client {
   secret_digest:[ubyte];
   secret_version:uint64 = 1;
   redirects:[string];
-  audiences:[string];
-  scope_i_ds:[uint64];
-  role_i_ds:[uint64];
   created:int64;
   updated:int64;
   type:int8;

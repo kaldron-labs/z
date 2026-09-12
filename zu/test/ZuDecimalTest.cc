@@ -113,6 +113,7 @@ int main()
   ZuCheck((ZuDecimal{"100000000000000000"}.ndp() == 0));
   ZuCheck((ZuFixed{ZuDecimal("1.0001")}.ndp == 4));
   ZuCheck(((ZuCArray<32>{} << ZuFixed{ZuDecimal("1.0001")}) == "1.0001"));
+  ZuCheck(((ZuCArray<32>{} << ZuFixed{ZuDecimal("-12.34")}) == "-12.34"));
   ZuCheck(((ZuCArray<32>{} << ZuFixed{ZuDecimal("0")}) == "0"));
   ZuCheck(((ZuCArray<32>{} << ZuFixed{ZuDecimal("1")}) == "1"));
   ZuCheck(((ZuCArray<48>{} << ZuFixed{ZuDecimal(".000000000000000001")}) == "0.000000000000000001"));

@@ -1,0 +1,45 @@
+include "zfb_types.fbs";
+namespace zdbsltest.fbs;
+
+table AllTypes {
+  id:ulong;
+  string_value:string;
+  bytes_value:[ubyte];
+  bool_value:bool;
+  int8_value:byte;
+  uint8_value:ubyte;
+  int16_value:short;
+  uint16_value:ushort;
+  int32_value:int;
+  uint32_value:uint;
+  int64_value:long;
+  uint64_value:ulong;
+  int128_value:Zfb.Int128;
+  uint128_value:Zfb.UInt128;
+  float_value:double;
+  fixed_value:Zfb.Fixed;
+  decimal_value:Zfb.Decimal;
+  time_value:Zfb.Time;
+  date_time_value:Zfb.DateTime;
+  bitmap_value:Zfb.Bitmap;
+  ip_value:Zfb.IP;
+  string_vec:[string];
+  bytes_vec:[Zfb.Bytes];
+  int8_vec:[byte];
+  uint8_vec:[ubyte];
+  int16_vec:[short];
+  uint16_vec:[ushort];
+  int32_vec:[int];
+  uint32_vec:[uint];
+  int64_vec:[long];
+  uint64_vec:[ulong];
+  int128_vec:[Zfb.Int128];
+  uint128_vec:[Zfb.UInt128];
+  float_vec:[double];
+  fixed_vec:[Zfb.Fixed];
+  decimal_vec:[Zfb.Decimal];
+  time_vec:[Zfb.Time];
+  date_time_vec:[Zfb.DateTime];
+}
+
+root_type AllTypes;

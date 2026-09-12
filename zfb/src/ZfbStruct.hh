@@ -573,8 +573,8 @@ struct Int128Vec {
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
   static auto save(Builder &fbb, ZfStruct_::Int128Vec a) {
-    return Zfb::Save::structVecIter<Int128>(fbb, a.length(),
-      [&a](Int128 *ptr, uint64_t i) mutable {
+    return Zfb::Save::structVecIter<Zfb::Int128>(fbb, a.length(),
+      [&a](Zfb::Int128 *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Int128{Int128::save(int128_t(a[i]))};
       });
   }
@@ -595,8 +595,8 @@ struct UInt128Vec {
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
   static auto save(Builder &fbb, ZfStruct_::UInt128Vec a) {
-    return Zfb::Save::structVecIter<UInt128>(fbb, a.length(),
-      [&a](UInt128 *ptr, uint64_t i) mutable {
+    return Zfb::Save::structVecIter<Zfb::UInt128>(fbb, a.length(),
+      [&a](Zfb::UInt128 *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::UInt128{UInt128::save(uint128_t(a[i]))};
       });
   }
@@ -638,8 +638,8 @@ struct FixedVec {
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
   static auto save(Builder &fbb, ZfStruct_::FixedVec a) {
-    return Zfb::Save::structVecIter<Fixed>(fbb, a.length(),
-      [&a](Fixed *ptr, uint64_t i) mutable {
+    return Zfb::Save::structVecIter<Zfb::Fixed>(fbb, a.length(),
+      [&a](Zfb::Fixed *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Fixed{Fixed::save(ZuFixed(a[i]))};
       });
   }
@@ -660,8 +660,8 @@ struct DecimalVec {
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
   static auto save(Builder &fbb, ZfStruct_::DecimalVec a) {
-    return Zfb::Save::structVecIter<Decimal>(fbb, a.length(),
-      [&a](Decimal *ptr, uint64_t i) mutable {
+    return Zfb::Save::structVecIter<Zfb::Decimal>(fbb, a.length(),
+      [&a](Zfb::Decimal *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Decimal{Decimal::save(ZuDecimal(a[i]))};
       });
   }
@@ -682,8 +682,8 @@ struct TimeVec {
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
   static auto save(Builder &fbb, ZfStruct_::TimeVec a) {
-    return Zfb::Save::structVecIter<Time>(fbb, a.length(),
-      [&a](Time *ptr, uint64_t i) mutable {
+    return Zfb::Save::structVecIter<Zfb::Time>(fbb, a.length(),
+      [&a](Zfb::Time *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::Time{Time::save(ZuTime(a[i]))};
       });
   }
@@ -704,8 +704,8 @@ struct DateTimeVec {
     typename = void, template <typename> class = ZuAlwaysTrue,
     typename Builder>
   static auto save(Builder &fbb, ZfStruct_::DateTimeVec a) {
-    return Zfb::Save::structVecIter<DateTime>(fbb, a.length(),
-      [&a](DateTime *ptr, uint64_t i) mutable {
+    return Zfb::Save::structVecIter<Zfb::DateTime>(fbb, a.length(),
+      [&a](Zfb::DateTime *ptr, uint64_t i) mutable {
 	new (ptr) Zfb::DateTime{DateTime::save(ZuDateTime(a[i]))};
       });
   }

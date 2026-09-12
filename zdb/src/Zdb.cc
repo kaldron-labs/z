@@ -48,6 +48,58 @@
 
 namespace Zdb_ {
 
+TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
+  TableCf{ZfCf::handler<TableCf>(cf).ctor(id_)}
+{
+  for (auto key: {ZuCSpan{"shards"}, ZuCSpan{"threads"}})
+    if (cf->resolve(key))
+      throw ZeEXCEPT(Error, "Zdb", ([
+	id = ZeString{id_}, key = ZeString{key}
+      ](auto &s) {
+	s << "table \"" << id << "\" contains DB-wide \"" << key << '"';
+      }));
+}
+
+HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
+  HostCf{ZfCf::handler<HostCf>(cf).ctor(id_)}
+{
+  if (!standalone) {
+    if (!cf->resolve("priority"))
+      throw ZfCf_EXCEPT(ZfCfError::required(cf, "priority"));
+    if (!cf->resolve("ip"))
+      throw ZfCf_EXCEPT(ZfCfError::required(cf, "ip"));
+    if (!cf->resolve("port"))
+      throw ZfCf_EXCEPT(ZfCfError::required(cf, "port"));
+  }
+}
+
+DBCf::DBCf(const ZfCf::AnyNode *cf) :
+  DBCf{ZfCf::handler<DBCf>(cf).ctor()}
+{
+  storeCf = cf->resolve("store");
+  auto tables = cf->resolve("tables");
+  if (!tables)
+    throw ZfCf_EXCEPT(ZfCfError::required(cf, "tables"));
+  if (!tables->has<ZfCf::AnyNode::Object>())
+    throw ZfCf_EXCEPT(ZfCfError::badType(tables, "object"));
+  for (auto &field: tables->data<ZfCf::AnyNode::Object>())
+    tableCfs.addNode(
+      new TableCfs::Node{field.p<0>(), field.p<1>()});
+
+  auto hosts = cf->resolve("hosts");
+  if (!hosts)
+    throw ZfCf_EXCEPT(ZfCfError::required(cf, "hosts"));
+  if (!hosts->has<ZfCf::AnyNode::Object>())
+    throw ZfCf_EXCEPT(ZfCfError::badType(hosts, "object"));
+  for (auto &field: hosts->data<ZfCf::AnyNode::Object>())
+    hostCfs.addNode(
+      new HostCfs::Node{field.p<0>(), field.p<1>()});
+}
+
+DB::DB() { }
+DB::~DB() { }
+
+
 struct ReservedIDs {
   using Keys = ZuStringTL<"saga", "saga_step", "saga_type">;
 };
@@ -578,7 +630,30 @@ void DB::sagaReplay()
     sagaActivateDone();
     return;
   }
-  sagaRun(static_cast<SagaNode__ *>(node)->saga);
+  auto saga = static_cast<SagaNode__ *>(node)->saga;
+  if (saga->m_fwd && *saga->m_deadline && saga->m_deadline <= Zm::now()) {
+    unsigned step = saga->m_locs.length();
+    while (step && saga->m_locs[step - 1] == Shard(-1)) --step;
+    saga->m_fwd = false;
+    if (!step) {
+      saga->m_step = saga->m_locs.length();
+    } else {
+      saga->m_step = --step;
+	auto rec = sagaRec(saga, step);
+	if (ZuUnlikely(!rec)) {
+	sagaActivateFail(ZeEXCEPT(
+	  Fatal, "Zdb", "missing expired saga step intent"));
+	return;
+      }
+	bool applied = rec->un == nullUN() ||
+	  ZuCmp<UN>::cmp(rec->table->nextUN(rec->shard), rec->un) > 0;
+	if (applied && step + 1 == saga->m_locs.length()) {
+	  saga->m_step = saga->m_locs.length();
+	  saga->m_fwd = true;
+	}
+    }
+  }
+  sagaRun(ZuMv(saga));
 }
 
 void DB::sagaActivateDone()
@@ -1027,10 +1102,12 @@ void DB::allDone(bool ok)
   if (ZuUnlikely(!m_allCount)) return;
   if (ok) --m_allNotOK;
   if (!--m_allCount) {
-    m_allDoneFn(this, !m_allNotOK);
+    bool allOK = !m_allNotOK;
+    auto doneFn = ZuMv(m_allDoneFn);
     m_allFn = AllFn{};
     m_allDoneFn = AllDoneFn{};
     m_allCount = m_allNotOK = 0;
+    doneFn(this, allOK);
   }
 }
 

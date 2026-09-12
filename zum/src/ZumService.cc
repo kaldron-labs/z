@@ -8,8 +8,11 @@
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuDerive.hh>
+#include <zlib/ZuPtr.hh>
 
 #include <zlib/ZfJSON.hh>
+#include <zlib/ZfURI.hh>
 
 #include <zlib/ZtlsCOSE.hh>
 
@@ -36,132 +39,147 @@ struct ServiceKey {
 ZuDerive(ServiceKeyVec, (ZtArray<ServiceKey,
   ZtArrayHeapID<"Zum.Service.KeyVec">>));
 
-static bool jsonObject(
-    String &json, ZfJSON::AnyNode::Object *&object, unsigned limit)
+struct TokenWire {
+  String accessToken;
+  uint64_t expiresIn = 0;
+};
+ZfStruct(, (TokenWire, JSON),
+  (((accessToken),	(JSON::ID<"access_token">, Required)),	(String)),
+  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	(UInt64)));
+
+struct DiscoveryWire {
+  String issuer;
+  String jwksURI;
+};
+ZfStruct(, (DiscoveryWire, JSON),
+  (((issuer),		(Required)),	(String)),
+  (((jwksURI),		(JSON::ID<"jwks_uri">, Required)),	(String)));
+
+struct JWKWire {
+  String alg;
+  String crv;
+  String kid;
+  String kty;
+  String use;
+  String x;
+  String y;
+};
+ZfStruct(, (JWKWire, JSON),
+  (((alg),		(JSON::Opt)),	(String)),
+  (((crv),		(Required)),	(String)),
+  (((kid),		(Required)),	(String)),
+  (((kty),		(Required)),	(String)),
+  (((use),		(JSON::Opt)),	(String)),
+  (((x),		(Required)),	(String)),
+  (((y),		(Required)),	(String)));
+ZuDerive(JWKWireArray,
+  (ZtArray<JWKWire, ZtArrayHeapID<"Zum.Service.JWKs">>));
+struct JWKWireVec : public JWKWireArray {
+  ZuDerive_(JWKWireVec, JWKWireArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(JWKWireVec *);
+};
+struct JWKSResponse { JWKWireVec keys; };
+ZfStruct(, (JWKSResponse, JSON),
+  (((keys),		(Required)),	(UDT)));
+
+struct AuthorizeWire {
+  String authorizationURL;
+  uint64_t expiresIn = 0;
+};
+ZfStruct(, (AuthorizeWire, JSON),
+  (((authorizationURL),	(Required)),	(String)),
+  (((expiresIn),		(Required)),	(UInt64)));
+
+struct AuthorizeRequestWire {
+  String clientID;
+  String redirectURI;
+  String responseType;
+  String scope;
+  String resource;
+  String state;
+  String codeChallenge;
+  String codeChallengeMethod;
+  String nonce;
+  String prompt;
+  uint32_t maxAge = ZuCmp<uint32_t>::null();
+};
+ZfStruct(, (AuthorizeRequestWire, JSON),
+  (((clientID),		(Required)),	(String)),
+  (((redirectURI),	(Required)),	(String)),
+  (((responseType),	(Required)),	(String)),
+  (((scope),		(Required)),	(String)),
+  (((resource),		(JSON::Opt)),	(String)),
+  (((state),		(JSON::Opt)),	(String)),
+  (((codeChallenge),	(Required)),	(String)),
+  (((codeChallengeMethod),(Required)),	(String)),
+  (((nonce),		(JSON::Opt)),	(String)),
+  (((prompt),		(JSON::Opt)),	(String)),
+  (((maxAge),		(JSON::Opt)),	(UInt32)));
+
+struct FormWire { String form; };
+ZfStruct(, (FormWire, JSON),
+  (((form),		(Required)),	(String)));
+
+template <typename T>
+static bool jsonLoad(String &json, unsigned limit, T &value)
 {
   if (!json || json.length() > limit) return false;
   if (!json.mutable_()) json.length(json.length());
   auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  object = &roots[0]->data<ZfJSON::AnyNode::Object>();
-  return true;
-}
-
-static bool stringValue(ZfJSON::AnyNode *node, String &value)
-{
-  if (!node || !node->has<ZfJSON::AnyNode::String>()) return false;
-  value = node->data<ZfJSON::AnyNode::String>();
-  return true;
-}
-
-static bool uintValue(ZfJSON::AnyNode *node, uint64_t &value)
-{
-  if (!node || !node->has<ZfJSON::AnyNode::Number>()) return false;
-  auto decimal = ZfJSON::eov_Decimal(node->data<ZfJSON::AnyNode::Number>());
-  if (decimal.p<0>() < 0 || decimal.p<1>() < 0 ||
-      decimal.p<1>() != decimal.p<1>().floor()) return false;
-  int64_t integer = decimal.p<1>().floor();
-  value = uint64_t(integer);
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
+  value = ZfJSON::handler<T>(roots[0]).ctor();
   return true;
 }
 
 static bool tokenResponse(String json, unsigned limit,
     String &token, uint64_t &expires)
 {
-  ZfJSON::AnyNode::Object *object;
-  if (!jsonObject(json, object, limit)) return false;
-  unsigned seen = 0;
-  for (auto &field: *object) {
-    if (field.p<0>() == "access_token") {
-      if (seen & 1U || !stringValue(field.p<1>().ptr(), token)) return false;
-      seen |= 1U;
-    } else if (field.p<0>() == "expires_in") {
-      if (seen & 2U || !uintValue(field.p<1>().ptr(), expires)) return false;
-      seen |= 2U;
-    }
-  }
-  return seen == 3U && token && expires;
+  TokenWire wire;
+  if (!jsonLoad(json, limit, wire) || !wire.accessToken || !wire.expiresIn)
+    return false;
+  token = ZuMv(wire.accessToken);
+  expires = wire.expiresIn;
+  return true;
 }
 
 static bool discoveryResponse(String json, unsigned limit,
     ZuCSpan expectedIssuer, String &jwks)
 {
-  ZfJSON::AnyNode::Object *object;
-  if (!jsonObject(json, object, limit)) return false;
-  String issuer;
-  unsigned seen = 0;
-  for (auto &field: *object) {
-    if (field.p<0>() == "issuer") {
-      if (seen & 1U || !stringValue(field.p<1>().ptr(), issuer)) return false;
-      seen |= 1U;
-    } else if (field.p<0>() == "jwks_uri") {
-      if (seen & 2U || !stringValue(field.p<1>().ptr(), jwks)) return false;
-      seen |= 2U;
-    }
-  }
-  return seen == 3U && issuer == expectedIssuer && jwks;
+  DiscoveryWire wire;
+  if (!jsonLoad(json, limit, wire) || wire.issuer != expectedIssuer ||
+      !wire.jwksURI) return false;
+  jwks = ZuMv(wire.jwksURI);
+  return true;
 }
 
 static bool jwksResponse(
     String json, unsigned limit, unsigned keyMax, ServiceKeyVec &keys)
 {
-  ZfJSON::AnyNode::Object *object;
-  if (!jsonObject(json, object, limit)) return false;
-  ZfJSON::AnyNode *node = nullptr;
-  for (auto &field: *object)
-    if (field.p<0>() == "keys") {
-      if (node) return false;
-      node = field.p<1>().ptr();
-    }
-  if (!node || !node->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &array = node->data<ZfJSON::AnyNode::Array>();
-  if (!array || array.length() > keyMax) return false;
+  JWKSResponse wire;
+  if (!jsonLoad(json, limit, wire) || !wire.keys ||
+      wire.keys.length() > keyMax) return false;
   ServiceKeyVec next;
-  for (auto &item: array) {
-    if (!item->has<ZfJSON::AnyNode::Object>()) continue;
-    String kid, kty, crv, use, alg, x, y;
-    unsigned seen = 0;
-    bool valid = true;
-    for (auto &field: item->data<ZfJSON::AnyNode::Object>()) {
-      String *value = nullptr;
-      unsigned bit = 0;
-      if (field.p<0>() == "kid") { bit = 1U<<0; value = &kid; }
-      else if (field.p<0>() == "kty") { bit = 1U<<1; value = &kty; }
-      else if (field.p<0>() == "crv") { bit = 1U<<2; value = &crv; }
-      else if (field.p<0>() == "use") { bit = 1U<<3; value = &use; }
-      else if (field.p<0>() == "alg") { bit = 1U<<4; value = &alg; }
-      else if (field.p<0>() == "x") { bit = 1U<<5; value = &x; }
-      else if (field.p<0>() == "y") { bit = 1U<<6; value = &y; }
-      else continue;
-      if ((seen & bit) || !stringValue(field.p<1>().ptr(), *value)) {
-        valid = false;
-        break;
-      }
-      seen |= bit;
-    }
-    constexpr unsigned required =
-      (1U<<0) | (1U<<1) | (1U<<2) | (1U<<5) | (1U<<6);
-    if (!valid || (seen & required) != required || !kid || kty != "EC" ||
-        crv != "P-256" || (use && use != "sig") ||
-        (alg && alg != "ES256")) continue;
-    ServiceKey key{.id = ZuMv(kid)};
+  for (auto &item: wire.keys) {
+    if (!item.kid || item.kty != "EC" || item.crv != "P-256" ||
+        (item.use && item.use != "sig") ||
+        (item.alg && item.alg != "ES256")) continue;
+    ServiceKey key{.id = ZuMv(item.kid)};
     key.publicKey.length(Ztls::COSE::ES256::PublicKeySize, false);
     key.publicKey[0] = 4;
     if (ZuBase64URL::decode({key.publicKey.data() + 1,
-          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{x}) !=
+          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{item.x}) !=
           Ztls::COSE::ES256::CoordinateSize ||
         ZuBase64URL::decode({key.publicKey.data() + 1 +
           Ztls::COSE::ES256::CoordinateSize,
-          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{y}) !=
-          Ztls::COSE::ES256::CoordinateSize) continue;
-    bool duplicate = false;
+          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{item.y}) !=
+          Ztls::COSE::ES256::CoordinateSize ||
+        !Ztls::COSE::ES256::validPK(key.publicKey)) continue;
     for (auto &existing: next)
-      if (existing.id == key.id) { duplicate = true; break; }
-    if (!duplicate) next.push(ZuMv(key));
+      if (existing.id == key.id) return false;
+    next.push(ZuMv(key));
   }
   if (!next) return false;
   keys = ZuMv(next);
@@ -171,22 +189,12 @@ static bool jwksResponse(
 static bool authorizeResponse(String json, unsigned limit,
     ServiceAuthorizeResult &result)
 {
-  ZfJSON::AnyNode::Object *object;
-  if (!jsonObject(json, object, limit)) return false;
-  unsigned seen = 0;
-  for (auto &field: *object) {
-    if (field.p<0>() == "authorizationURL") {
-      if (seen & 1U ||
-          !stringValue(field.p<1>().ptr(), result.authorizationURL))
-        return false;
-      seen |= 1U;
-    } else if (field.p<0>() == "expiresIn") {
-      if (seen & 2U || !uintValue(field.p<1>().ptr(), result.expiresIn))
-        return false;
-      seen |= 2U;
-    }
-  }
-  return seen == 3U && result.authorizationURL && result.expiresIn;
+  AuthorizeWire wire;
+  if (!jsonLoad(json, limit, wire) || !wire.authorizationURL ||
+      !wire.expiresIn) return false;
+  result.authorizationURL = ZuMv(wire.authorizationURL);
+  result.expiresIn = wire.expiresIn;
+  return true;
 }
 
 static String endpoint(ZuCSpan issuer, ZuCSpan path)
@@ -199,8 +207,10 @@ static String endpoint(ZuCSpan issuer, ZuCSpan path)
 
 static String basicAuth(ZuCSpan clientID, ZuBSpan secret)
 {
-  String plain{clientID};
-  plain << ':' << secret;
+  String plain;
+  ZfURI::PathQuote::quote(plain, clientID);
+  plain << ':';
+  ZfURI::PathQuote::quote(plain, secret);
   String encoded;
   encoded.length(ZuBase64::enclen(plain.length()));
   encoded.length(ZuBase64::encode(encoded.span(), ZuBSpan{plain}));
@@ -220,7 +230,7 @@ static int serviceStatus(unsigned status)
   return ServiceError::Invalid;
 }
 
-struct ServiceState : public ZmObject {
+struct ServiceState : public ZumObject {
   enum State { Initial, Starting, Started, Stopping, Stopped };
 
   ServiceState(ServiceConfig config, ServiceHTTPFn http) :
@@ -258,12 +268,15 @@ struct ServiceState : public ZmObject {
     state = Starting;
     authenticate_([self = ZmRef<ServiceState>{this},
         complete = ZuMv(complete)](bool ok) mutable {
+      if (self->state != Starting) { complete(ServiceError::Stopped); return; }
       if (!ok) { self->state = Initial; complete(ServiceError::Unavailable); return; }
       self->discovery_([self = ZuMv(self),
           complete = ZuMv(complete)](bool ok) mutable {
+        if (self->state != Starting) { complete(ServiceError::Stopped); return; }
         if (!ok) { self->state = Initial; complete(ServiceError::Invalid); return; }
         self->keys_([self = ZuMv(self), complete = ZuMv(complete)](
             bool ok) mutable {
+          if (self->state != Starting) { complete(ServiceError::Stopped); return; }
           if (!ok || !self->verifyWorkload_()) {
             self->state = Initial;
             complete(ServiceError::Unauthorized);
@@ -378,6 +391,7 @@ struct ServiceState : public ZmObject {
         principal) || principal.authMethod ||
         principal.clientID != config.clientID || !principal.appID) return false;
     appID = principal.appID;
+    if (accessExpires > principal.expires) accessExpires = principal.expires;
     return true;
   }
 
@@ -415,7 +429,7 @@ struct ServiceState : public ZmObject {
     if (renewing) return;
     renewing = true;
     authenticate_([self = ZmRef<ServiceState>{this}](bool ok) mutable {
-      if (!ok) { self->renewed_(false); return; }
+      if (!ok || self->state != Started) { self->renewed_(false); return; }
       self->verifyWorkload_([self = ZuMv(self)](bool ok) mutable {
         self->renewed_(ok);
       });
@@ -435,29 +449,20 @@ struct ServiceState : public ZmObject {
         complete(ServiceAuthorizeResult{.error = ServiceError::Invalid});
         return;
       }
-      String body{"{\"clientID\":"};
-      ZfJSON::quote(body, request.clientID);
-      body << ",\"redirectURI\":"; ZfJSON::quote(body, request.redirectURI);
-      body << ",\"responseType\":"; ZfJSON::quote(body, request.responseType);
-      body << ",\"scope\":"; ZfJSON::quote(body, request.scope);
-      if (request.resource) {
-        body << ",\"resource\":"; ZfJSON::quote(body, request.resource);
-      }
-      if (request.statePresent) {
-        body << ",\"state\":"; ZfJSON::quote(body, request.state);
-      }
-      body << ",\"codeChallenge\":";
-      ZfJSON::quote(body, request.codeChallenge);
-      body << ",\"codeChallengeMethod\":";
-      ZfJSON::quote(body, request.codeChallengeMethod);
-      if (request.noncePresent) {
-        body << ",\"nonce\":"; ZfJSON::quote(body, request.nonce);
-      }
-      if (request.promptPresent) {
-        body << ",\"prompt\":"; ZfJSON::quote(body, request.prompt);
-      }
-      if (request.maxAgePresent) body << ",\"maxAge\":" << request.maxAge;
-      body << '}';
+      AuthorizeRequestWire wire{
+        .clientID = ZuMv(request.clientID),
+        .redirectURI = ZuMv(request.redirectURI),
+        .responseType = ZuMv(request.responseType),
+        .scope = ZuMv(request.scope), .resource = ZuMv(request.resource),
+        .state = request.statePresent ? ZuMv(request.state) : String{},
+        .codeChallenge = ZuMv(request.codeChallenge),
+        .codeChallengeMethod = ZuMv(request.codeChallengeMethod),
+        .nonce = request.noncePresent ? ZuMv(request.nonce) : String{},
+        .prompt = request.promptPresent ? ZuMv(request.prompt) : String{},
+        .maxAge = request.maxAgePresent ? request.maxAge :
+          ZuCmp<uint32_t>::null()};
+      String body;
+      ZfJSON::save(body, wire);
       self->send_(ServiceHTTPRequest{.method = ServiceMethod::POST,
         .url = endpoint(self->config.issuerURL, "/service/authorize"),
         .authorization = String{"Bearer "} << self->accessToken,
@@ -468,7 +473,8 @@ struct ServiceState : public ZmObject {
           if (response.status == 200 && authorizeResponse(
               ZuMv(response.body), self->config.responseMax, result))
             result.error = ServiceError::OK;
-          else result.error = serviceStatus(response.status);
+          else result.error = response.status == 200 ?
+            ServiceError::Invalid : serviceStatus(response.status);
           complete(ZuMv(result));
         });
     });
@@ -484,9 +490,8 @@ struct ServiceState : public ZmObject {
             ServiceError::Stopped});
         return;
       }
-      String body{"{\"form\":"};
-      ZfJSON::quote(body, form);
-      body << '}';
+      String body;
+      ZfJSON::save(body, FormWire{ZuMv(form)});
       auto path = operation == ServiceProtocolOp::Token ?
         ZuCSpan{"/service/token"} : ZuCSpan{"/service/revoke"};
       self->send_(ServiceHTTPRequest{.method = ServiceMethod::POST,
@@ -540,7 +545,7 @@ struct ServiceState : public ZmObject {
   {
     token_([self = ZmRef<ServiceState>{this}, manifest = ZuMv(manifest),
         complete = ZuMv(complete)](bool ok) mutable {
-      if (!ok || !manifest.json || !manifest.digest || !manifest.revision) {
+      if (!ok || !manifest.revision) {
         complete(ServiceProtocolResult{.error = ok ? ServiceError::Invalid :
           self->state == Started ? ServiceError::Unavailable :
             ServiceError::Stopped});
@@ -551,12 +556,12 @@ struct ServiceState : public ZmObject {
       String etag{"\"catalog-"};
       etag << (manifest.revision - 1) << '"';
       String idem{self->config.clientID};
-      idem << ':' << manifest.revision << ':' << manifest.digest;
+      idem << ':' << manifest.revision;
       self->send_(ServiceHTTPRequest{.method = ServiceMethod::PUT,
         .url = ZuMv(url),
         .authorization = String{"Bearer "} << self->accessToken,
         .contentType = "application/json", .ifMatch = ZuMv(etag),
-        .idempotencyKey = ZuMv(idem), .body = ZuMv(manifest.json)},
+        .idempotencyKey = ZuMv(idem), .manifest = ZuMv(manifest)},
         [complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
           complete(ServiceProtocolResult{.body = ZuMv(response.body),
             .status = response.status, .error = serviceStatus(response.status)});
@@ -614,7 +619,9 @@ Service::~Service() { final(); }
 
 bool Service::init(ServiceConfig config, ServiceHTTPFn http)
 {
-  if (m_state || !config.scheduler || !config.issuerURL || !config.clientID ||
+  if (m_state || !config.scheduler || !config.sid ||
+      config.sid > config.scheduler->params().nThreads() ||
+      !config.issuerURL || !config.clientID ||
       !config.clientSecret || !config.audience || !config.requestTimeout ||
       !config.responseMax || !config.keyMax || !http) return false;
   m_state = new ServiceState{ZuMv(config), ZuMv(http)};

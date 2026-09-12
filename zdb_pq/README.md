@@ -54,6 +54,11 @@ callback after its step intent. The parent requires process termination via
 rows and verify normal execution. The aborting POSIX children disable core
 dumps before starting worker threads.
 
+The batch fixture also submits sagas with a persisted zero `ZuTime` deadline
+and interrupts them before and after each step intent. Initial execution is
+unaffected; after each drained reconnect, recovery compensates the applied
+prefix instead of replaying forward, then removes the saga journal rows.
+
 The same binary opens `saga_ns` in both `public` and `zdb`, checking independent
 CRUD and sequence histories, then closes and reopens both handles on the same
 connection. After deleting the rows it recreates the store and checks that

@@ -2970,8 +2970,21 @@ void resolverLifecycle()
     App app;
     bool inited = startApp(app, mx, 1, config);
     ZuCHECK(inited, "start resolver-borrowing agent");
-    if (inited) app.stop();
-    if (inited) app.final();
+    if (inited) {
+      ZmSemaphore finalized;
+      bool stopped = false;
+      app.stop([&app, &mx, &finalized, &stopped](bool ok) {
+	// Post behind the stop callback before releasing its owner. Calling a
+	// second blocking stop from final() here would deadlock the Rx shard.
+	mx.run([&app, &finalized, &stopped, ok]() {
+	  stopped = ok;
+	  if (ok) app.final();
+	  finalized.post();
+	}, mx.rxThread());
+      });
+      finalized.wait();
+      ZuCHECK(stopped, "finalize drained client on Rx without blocking");
+    }
     ZuCHECK(ZiResolver::instance()->running(),
       "agent preserves externally owned resolver");
   }

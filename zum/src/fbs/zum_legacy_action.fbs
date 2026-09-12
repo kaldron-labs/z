@@ -1,0 +1,9 @@
+include "zfb_types.fbs";
+namespace Zum.Legacy.fbs;
+table Action {
+  id:uint32;
+  name:string;
+  state:int8;
+  owner:Zfb.UInt128;
+}
+root_type Action;

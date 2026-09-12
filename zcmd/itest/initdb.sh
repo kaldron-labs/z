@@ -1,2 +1,2 @@
 #!/bin/sh
-../../zum/src/zuserdb "$@" admin admin 12 ZCmd ZTel
+../../zum/src/zum "$@" admin admin 12 ZCmd ZTel

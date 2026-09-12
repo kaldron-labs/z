@@ -11,7 +11,6 @@ table Evidence {
   source:int8;
   policy_version:uint64;
   protected_refresh_token:[ubyte];
-  refresh_outcome:int8;
   version:uint64 = 1;
   created:int64;
   updated:int64;

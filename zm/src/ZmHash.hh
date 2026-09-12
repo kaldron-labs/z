@@ -746,7 +746,11 @@ private:
 
     next(node, m_table[slot]);
     m_table[slot] = ZuMv(node);
-    m_count.store_(count + 1);
+    // Different lock stripes can mutate the shared count concurrently.
+    if constexpr (ZuIsSame<Lock, ZmNoLock>{})
+      m_count.store_(count + 1);
+    else
+      ++m_count;
   }
 
 private:
@@ -1026,7 +1030,10 @@ private:
     else
       next(prevNode, next(node));
 
-    m_count.store_(count - 1);
+    if constexpr (ZuIsSame<Lock, ZmNoLock>{})
+      m_count.store_(count - 1);
+    else
+      --m_count;
 
     next(node, nullptr);
 
@@ -1145,7 +1152,10 @@ private:
 
     iter.node = prevNode;
 
-    m_count.store_(count - 1);
+    if constexpr (ZuIsSame<Lock, ZmNoLock>{})
+      m_count.store_(count - 1);
+    else
+      --m_count;
 
     next(node, nullptr);
 

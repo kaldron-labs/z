@@ -13,8 +13,15 @@
   - align all names to naming rules
   - check intended implementation against all audit flags
   - add references to specific guidelines that apply in each case
-- simplify the design as much as possible
-- delete unnecessary elements
+- pressure test the need for every element
+  - delete unnecessary elements
+  - simplify the design as much as possible
+- do not overengineer
+- do not redundantly re-validate
+- do not hand-code or reimplement Z framework capabilities, particularly:
+  - do not hand-code formatting or parsing (e.g. JSON, numbers)
+  - do not redundantly cast between convertible types
+  - do not heap-allocate unnecessarily (use stack-allocated heap-fallback scratch capabilities)
 
 `plan.md`:
 - do not rebuild unnecessarily or frequently
@@ -24,6 +31,8 @@
 `plan.md`: update for sliced phases, with interim acceptance criteria between each phase
 
 `plan.md`: perform final review and update for internal consistency
+
+`plan.md`: batch source code changes, rebuild infrequently; re-use current clang debug build configuration; only use valgrind if necessary; asan, gcc, mingw are out of scope
 
 ---
 

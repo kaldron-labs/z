@@ -7,34 +7,33 @@
 #include <zlib/Zum.hh>
 #include <zlib/ZumMgmt.hh>
 
+#include <zlib/ZuUTF.hh>
+
 #include <zlib/ZtlsSec.hh>
 
 namespace Zum {
 
 bool loginNormalize(String &name)
 {
-  while (name && (name[0] == ' ' || name[0] == '\t')) name.splice(0, 1);
-  while (name && (name[name.length() - 1] == ' ' ||
-      name[name.length() - 1] == '\t')) name.length(name.length() - 1);
-  if (!name || name.length() > 256) return false;
-  for (unsigned i = 0; i < name.length();) {
-    uint8_t c = uint8_t(name[i]);
-    if (c < 0x80) {
-      if (c < 0x20 || c == 0x7f) return false;
-      if (c >= 'A' && c <= 'Z') name[i] = char(c + ('a' - 'A'));
-      ++i;
-      continue;
-    }
-    unsigned n = c >= 0xc2 && c <= 0xdf ? 2 :
-      c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 0;
-    if (!n || i + n > name.length()) return false;
-    for (unsigned j = 1; j < n; ++j)
+  enum { Max = 256 }; // bounded login index key and OIDC login_hint
+  unsigned begin = 0, end = name.length();
+  while (begin < end && (name[begin] == ' ' || name[begin] == '\t')) ++begin;
+  while (end > begin && (name[end - 1] == ' ' || name[end - 1] == '\t')) --end;
+  if (begin) name.splice(0, begin);
+  name.length(end - begin);
+  if (!name || name.length() > Max) return false;
+  for (unsigned i = 0, n = name.length(); i < n;) {
+    uint32_t c;
+    unsigned width = ZuUTF8::in(
+      reinterpret_cast<const uint8_t *>(name.data() + i), n - i, c);
+    if (!width || c == 0x7f || c < 0x20) return false;
+    for (unsigned j = 1; j < width; ++j)
       if ((uint8_t(name[i + j]) & 0xc0) != 0x80) return false;
-    uint8_t c1 = uint8_t(name[i + 1]);
-    if ((c == 0xe0 && c1 < 0xa0) || (c == 0xed && c1 >= 0xa0) ||
-        (c == 0xf0 && c1 < 0x90) || (c == 0xf4 && c1 >= 0x90))
-      return false;
-    i += n;
+    if ((width == 2 && c < 0x80) || (width == 3 && c < 0x800) ||
+	(width == 4 && c < 0x10000) || c > 0x10ffff ||
+	(c >= 0xd800 && c <= 0xdfff)) return false;
+    if (c >= 'A' && c <= 'Z') name[i] = char(c + ('a' - 'A'));
+    i += width;
   }
   return true;
 }
@@ -187,10 +186,11 @@ static bool hasString(const StringVec &strings, ZuCSpan string)
 static bool scopeName(ZuCSpan scopes, ZuCSpan name)
 {
   unsigned offset = 0;
-  while (offset < scopes.length()) {
-    while (offset < scopes.length() && scopes[offset] == ' ') ++offset;
+  unsigned n = scopes.length();
+  while (offset < n) {
+    while (offset < n && scopes[offset] == ' ') ++offset;
     unsigned end = offset;
-    while (end < scopes.length() && scopes[end] != ' ') ++end;
+    while (end < n && scopes[end] != ' ') ++end;
     if (ZuCSpan{scopes.data() + offset, end - offset} == name) return true;
     offset = end;
   }
@@ -215,12 +215,15 @@ static bool addIdentityScope(
 }
 
 static int addScope(
-    const Client &client, ScopeSelection &selection, const Scope &scope)
+    const Client &client, const ClientAccess &access,
+    ScopeSelection &selection, const ScopeAuth &resolved)
 {
-  if (scope.appID != client.appID) return ScopeError::Unavailable;
-  if (!hasString(client.audiences, scope.audience))
+  const auto &scope = resolved.scope;
+  if (scope.appID != access.appID || access.clientID != client.id)
+    return ScopeError::Unavailable;
+  if (!hasID(access.audienceIDs, scope.audienceID))
     return ScopeError::Audience;
-  if (selection.audience && selection.audience != scope.audience)
+  if (selection.audience && selection.audience != resolved.audience)
     return ScopeError::Audience;
   if (!hasID(selection.scopeIDs, scope.id)) {
     addScopeName(selection, scope.name);
@@ -228,16 +231,18 @@ static int addScope(
     for (auto roleID: scope.roleIDs)
       if (!hasID(selection.roleIDs, roleID)) selection.roleIDs.push(roleID);
   }
-  selection.audience = scope.audience;
+  selection.audience = resolved.audience;
   selection.appID = scope.appID;
   selection.audienceID = scope.audienceID;
   return ScopeError::OK;
 }
 
 static int selectScopes_(
-    const Client &client, const IDVec *grantedScopeIDs,
+    const Client &client, const ClientAccess &access,
+    const IDVec *grantedScopeIDs,
     ZuCSpan granted,
-    ZuCSpan requested, ZuSpan<const Scope> scopes, ScopeSelection &selection)
+    ZuCSpan requested, ZuSpan<const ScopeAuth> scopes,
+    ScopeSelection &selection)
 {
   if (!requested) return ScopeError::Malformed;
   ScopeSelection next;
@@ -261,17 +266,18 @@ static int selectScopes_(
       offset = end + 1;
       continue;
     }
-    const Scope *selected = nullptr;
-    for (auto &scope: scopes) {
+    const ScopeAuth *selected = nullptr;
+    for (auto &resolved: scopes) {
+      const auto &scope = resolved.scope;
       if (scope.state != State::Active || scope.owner || scope.name != name ||
-	  !hasID(client.scopeIDs, scope.id) ||
+	  !hasID(access.scopeIDs, scope.id) ||
 	  (grantedScopeIDs && !hasID(*grantedScopeIDs, scope.id))) continue;
-      if (selected && selected->audience != scope.audience)
+	  if (selected && selected->audience != resolved.audience)
 	return ScopeError::Audience;
-      selected = &scope;
+      selected = &resolved;
     }
     if (!selected) return ScopeError::Unavailable;
-    if (int error = addScope(client, next, *selected)) return error;
+    if (int error = addScope(client, access, next, *selected)) return error;
     if (end == length) break;
     offset = end + 1;
   }
@@ -282,31 +288,35 @@ static int selectScopes_(
 }
 
 int selectScopes(
-    const Client &client, ZuCSpan requested, ZuSpan<const Scope> scopes,
-    ScopeSelection &selection)
+    const Client &client, const ClientAccess &access, ZuCSpan requested,
+    ZuSpan<const ScopeAuth> scopes, ScopeSelection &selection)
 {
-  return selectScopes_(client, nullptr, {}, requested, scopes, selection);
+  return selectScopes_(client, access, nullptr, {}, requested,
+    scopes, selection);
 }
 
 int selectGrantedScopes(
-    const Client &client, const IDVec &grantedScopeIDs,
+    const Client &client, const ClientAccess &access,
+    const IDVec &grantedScopeIDs,
     bool requestedPresent, ZuCSpan requested,
-    ZuSpan<const Scope> scopes, ScopeSelection &selection)
+    ZuSpan<const ScopeAuth> scopes, ScopeSelection &selection)
 {
   if (requestedPresent)
     return selectScopes_(
-      client, &grantedScopeIDs, {}, requested, scopes, selection);
+      client, access, &grantedScopeIDs, {}, requested, scopes, selection);
   ScopeSelection next;
   for (auto scopeID: grantedScopeIDs) {
-    const Scope *selected = nullptr;
-    for (auto &scope: scopes)
+    const ScopeAuth *selected = nullptr;
+    for (auto &resolved: scopes) {
+      const auto &scope = resolved.scope;
       if (scope.id == scopeID && scope.state == State::Active && !scope.owner &&
-	  hasID(client.scopeIDs, scope.id)) {
-	selected = &scope;
+	  hasID(access.scopeIDs, scope.id)) {
+	selected = &resolved;
 	break;
       }
+    }
     if (!selected) return ScopeError::Unavailable;
-    if (int error = addScope(client, next, *selected)) return error;
+    if (int error = addScope(client, access, next, *selected)) return error;
   }
   if (!next.scopeIDs) return ScopeError::Unavailable;
   selection = ZuMv(next);
@@ -314,18 +324,20 @@ int selectGrantedScopes(
 }
 
 int selectGrantedScopes(
-    const Client &client, const IDVec &grantedScopeIDs, ZuCSpan granted,
+    const Client &client, const ClientAccess &access,
+    const IDVec &grantedScopeIDs, ZuCSpan granted,
     bool requestedPresent, ZuCSpan requested,
-    ZuSpan<const Scope> scopes, ScopeSelection &selection)
+    ZuSpan<const ScopeAuth> scopes, ScopeSelection &selection)
 {
-  return selectScopes_(client, &grantedScopeIDs, granted,
+  return selectScopes_(client, access, &grantedScopeIDs, granted,
     requestedPresent ? requested : granted, scopes, selection);
 }
 
 int interactiveAuthority(
     const Grant &grant, const User &user, const Cred &cred,
     const Client &client, bool requestedPresent, ZuCSpan requested,
-    unsigned actionCount, ZuSpan<const Scope> scopes,
+    unsigned actionCount, const ClientAccess &access,
+    ZuSpan<const ScopeAuth> scopes,
     ZuSpan<const Role> roles, ZuSpan<const Action> actionRecords,
     ScopeSelection &selection, ZtBitmap &actions)
 {
@@ -333,13 +345,14 @@ int interactiveAuthority(
     return AuthorityError::Invalid;
 
   ScopeSelection next;
-  int error = selectGrantedScopes(client, grant.scopeIDs, grant.scope,
+  int error = selectGrantedScopes(client, access,
+    grant.scopeIDs, grant.scope,
     requestedPresent, requested, scopes, next);
   if (error) return error;
   if (next.audience != grant.audience) return ScopeError::Audience;
 
   ZtBitmap nextActions = effectiveActions(actionCount,
-    user.roleIDs, next.roleIDs, roles, actionRecords);
+    grant.roleIDs, next.roleIDs, roles, actionRecords);
   nextActions = intersectActions(ZuMv(nextActions), grant.actions);
   selection = ZuMv(next);
   actions = ZuMv(nextActions);
@@ -373,19 +386,20 @@ bool clientPrincipal(const Client &client)
 }
 
 int clientAuthority(
-    const Client &client, ZuCSpan requested, unsigned actionCount,
-    ZuSpan<const Scope> scopes, ZuSpan<const Role> roles,
+    const Client &client, const ClientAccess &access, ZuCSpan requested,
+    unsigned actionCount, ZuSpan<const ScopeAuth> scopes,
+    ZuSpan<const Role> roles,
     ZuSpan<const Action> actionRecords, ScopeSelection &selection,
     ZtBitmap &actions)
 {
   if (!clientPrincipal(client)) return AuthorityError::Invalid;
 
   ScopeSelection next;
-  int error = selectScopes(client, requested, scopes, next);
+  int error = selectScopes(client, access, requested, scopes, next);
   if (error) return error;
   if (next.identity) return ScopeError::Unavailable;
   ZtBitmap nextActions = effectiveActions(actionCount,
-    client.roleIDs, next.roleIDs, roles, actionRecords);
+    access.roleIDs, next.roleIDs, roles, actionRecords);
   selection = ZuMv(next);
   actions = ZuMv(nextActions);
   return ScopeError::OK;

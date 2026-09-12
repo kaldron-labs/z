@@ -9,6 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmBlock.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiLog.hh>
@@ -21,9 +22,10 @@ static ZiMxParams mxParams()
 {
   return ZiMxParams()
     .scheduler([](auto &s) {
-      s.nThreads(2)
+      s.nThreads(3)
 	.thread(1, [](auto &t) { t.name("rx"); })
-	.thread(2, [](auto &t) { t.name("tx"); });
+	.thread(2, [](auto &t) { t.name("tx"); })
+	.thread(3, [](auto &t) { t.name("upstream"); });
     })
     .rxThread(1).txThread(2);
 }
@@ -34,14 +36,32 @@ static void upstream()
   ZiMultiplex mx{mxParams()};
   ZuCheck(mx.start());
   Zum::UpstreamHTTP http;
-  ZuCheck(http.init(&mx));
+  ZuCheck(!http.init(&mx, 0));
+  ZuCheck(!http.init(&mx, 1));
+  ZuCheck(!http.init(&mx, 2));
+  ZuCheck(!http.init(&mx, 4));
+  ZuCheck(!http.init(&mx, 3, 0));
+  ZuCheck(http.init(&mx, 3));
   auto send = http.fn();
 
-  unsigned status = unsigned(-1);
+  for (ZuCSpan url: {"", "http://example.com", "https://",
+      "https://example.com/#fragment"}) {
+    ZuCheck(ZmBlock<bool>{}([&send, &mx, url](auto wake) mutable {
+      send(Zum::OIDCHTTPRequest{.url = url},
+	[&mx, wake = ZuMv(wake)](unsigned status, Zum::String body) mutable {
+	  wake(!status && !body && mx.invoked(3));
+	});
+    }));
+  }
+  // final() posts behind this request and must drain its callback before
+  // returning; the callback's stack references remain valid until then.
+  bool drained = false;
   send(Zum::OIDCHTTPRequest{.url = "http://example.com"},
-    [&status](unsigned status_, Zum::String) { status = status_; });
-  ZuCheck(status == 0);
+    [&mx, &drained](unsigned status, Zum::String body) {
+      drained = !status && !body && mx.invoked(3);
+    });
   http.final();
+  ZuCheck(drained);
   ZuCheck(mx.stop());
 }
 
@@ -51,7 +71,8 @@ static void publicUpstream()
   ZiMultiplex mx{mxParams()};
   ZuCheck(mx.start());
   Zum::UpstreamHTTP http;
-  ZuCheck(http.init(&mx));
+  ZuCheck(http.init(&mx, 3, Zum::UpstreamHTTP::DefaultOrigins,
+      ZuCSpan{::getenv("ZUM_UPSTREAM_TEST_CA")}));
   auto send = http.fn();
   ZmSemaphore done;
   Zum::String body;

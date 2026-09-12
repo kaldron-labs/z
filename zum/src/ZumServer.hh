@@ -71,8 +71,6 @@ struct ServerConfig {
   String	issuer;
   String	rpID;
   String	rpName;
-  String	keyID;
-  Bytes		publicKey;
   String	cookieName{"zum_tx"};
   String	cookiePath{"/"};
   OIDCConfig	oidc;
@@ -121,6 +119,9 @@ public:
     DB *, DBContext *, Requests *, ServerConfig,
     ClockFn, PageFn, PolicyFn, AdmitFn, SignFn, OIDCHTTPFn = {},
     AuthRouteFn = {});
+  // Cancel upstream transactions; retain callbacks/configuration until the
+  // owner has drained HTTP and Zdb, then call final().
+  void stop();
   void final();
 
   unsigned authMethod() const { return m_config.authMethod; }
@@ -140,6 +141,7 @@ public:
   void consent(String form, String cookie, ServerFn);
   void logout(String form, String cookie, ServerFn);
   void metadata(ServerFn);
+  void ready(ServerFn);
   void jwks(ServerFn);
   void userInfo(String authorization, ServerFn);
   void passkeyBegin(String json, ServerFn);
@@ -161,6 +163,8 @@ private:
     PasskeyStart, PasskeyAdmission, Bytes, String setCookie, ServerFn);
   void finishGrant_(Bytes, Bytes, String, ServerFn);
   void sessionReply_(Bytes, String, ServerFn);
+  void userInfo_(String, ServerFn);
+  void userInfo_(Principal, ServerFn);
   void authorizeReply_(int, AuthorizeResult, String, ServerFn);
   void sessionAuthorize_(
     AuthorizeResult, Bytes, String, String, ServerFn);

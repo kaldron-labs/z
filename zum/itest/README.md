@@ -1,14 +1,19 @@
 # Zum integration tests
 
-`zumrestarttest` uses PostgreSQL for both the basic restart and saga recovery
-scenarios. There is no in-memory fallback. Supply both test-specific variables
-and use a fresh disposable database with the `uint` and `libz` extensions
-already installed. From `zum/itest`:
+`zumrestarttest` uses SQLite for both the basic restart and saga recovery
+scenarios. There is no in-memory fallback. `make test` creates fresh disposable
+SQLite files and supplies all test-specific variables. For a focused manual run
+from `zum/itest`:
 
 ```sh
-export ZUM_TEST_MODULE=$PWD/../../zdb_pq/src/.libs/libZdbPQ.so
-export ZUM_TEST_CONNECT='host=/tmp dbname=YOUR_DISPOSABLE_DATABASE'
-export ZUM_HTTP_CONNECT='host=/tmp dbname=YOUR_OTHER_DISPOSABLE_DATABASE'
+export ZUM_TEST_MODULE=$PWD/../../zdb_sqlite/src/.libs/libZdbSL.so
+export ZUM_TEST_CONNECT=/tmp/zum-restart.db
+export ZUM_MIGRATION_SOURCE_CONNECT=/tmp/zum-migration-source.db
+export ZUM_MIGRATION_TARGET_CONNECT=/tmp/zum-migration-target.db
+export ZUM_HTTP_CONNECT=/tmp/zum-http.db
+export ZUM_FEDERATION_CONNECT=/tmp/zum-federation.db
+export ZUM_CLUSTER_CONNECT_A=/tmp/zum-cluster-a.db
+export ZUM_CLUSTER_CONNECT_B=/tmp/zum-cluster-b.db
 make -j3 && make -j3 test
 ```
 
@@ -20,12 +25,41 @@ the effect is committed, plus the initial payload-only image. It checks stable
 IDs, exactly-once allocation/version changes, released ownership, empty saga
 journals, and duplicate-name compensation after a committed app reservation.
 These are explicitly staged durable images, not process-kill injection.
+The new `invitationRecovery` case stages all17 intent/effect boundaries of
+UserInvite.v2 with an existing external identity matching the invited local
+name. It checks exactly one external authority/version increment, released
+owners, pending local invitation/capability and completed request. A stale
+external snapshot after the local user and capability effects forces
+compensation, leaving the external record unchanged and removing the invitation.
+See the ledger for execution status; written cases are not evidence of a pass.
+This invitation case and the complete 14-scenario SQLite restart suite pass
+against the current schema; detailed commands/results are in the ledger.
+The `memberRecovery` case stages all nine intent/effect boundaries of the
+four-step membership change saga. Recovery must publish the membership's role
+and state replacement together with exactly one membership/app version advance,
+release both owners, and empty the journals. A stale membership snapshot after
+the application reservation must compensate without changing either record.
 The `grantUpdate` case separately verifies persistence of changed role IDs,
-scope, authority source, and provider ID across a drained PostgreSQL reopen;
+scope, authority source, and provider ID across a drained SQLite reopen;
 it is a metadata test, not upstream OIDC interoperability coverage.
+`roleRemoval` stages the typed role-deletion payload and every intent/effect cut
+across its 24 expanded steps, reopening SQLite for all 49 durable images.
+The repeated reference branches contain two rows in each of membership, client
+access, admin access, scope and role mapping. Separate cases cover empty
+reference sets and a stale second mapping that forces compensation after the
+first mapping has been deleted. Checks include retained unrelated roles and
+settings, restored before-images on rollback, logical versions, released owners
+and empty journals. The complete boundary matrix passes in the current
+SQLite restart suite.
+Catalog recovery first covers payload-only completion and compensation. The
+expanded fixture additionally stages all 29 intent/effect cuts for its 14 phases
+with one inserted and one replaced row per definition table, plus a stale scope
+after earlier effects have committed. It checks app publication, original IDs,
+scope-binding removals, logical versions, owners and empty journals. The complete
+catalog boundary matrix passes in the current SQLite restart suite.
 Shutdown first closes request admission and waits for its drain. It then waits
-for `Zdb::stop()`, which closes tables, drains the PostgreSQL write queue and
-in-flight pipeline, and drains shard callbacks before returning. Only then does
+for `Zdb::stop()`, which closes tables, drains the SQLite store queue and
+in-flight work, and drains shard callbacks before returning. Only then does
 the fixture finalize the old DB and open another instance.
 
 The fixture writes rows and requires an empty database;
@@ -33,23 +67,273 @@ do not point it at an existing user store. It does not create or drop databases.
 The ordinary `ZDB_MODULE` and `ZDB_CONNECT` variables do not select its database.
 This is Zdb stop/start recovery, not a process-kill or replicated failover test.
 
+`zumclustertest` starts two real daemons with separate fresh SQLite stores,
+one shared encryption key and issuer, and native Zdb host/priority configuration.
+Supply `ZUM_CLUSTER_CONNECT_A`, `ZUM_CLUSTER_CONNECT_B` and `ZUM_TEST_MODULE`.
+Both nodes must expose liveness; neither is ready before admin enrollment.
+The standby must reject all 68 administrative routes with 503. The source-tree
+fixture extracts method/path declarations from ZumMgmt.cc and verifies its
+catalog count, avoiding a second manually maintained endpoint list. Requests
+have no credentials and use minimal bodies: this tests inactive admission,
+not authenticated authorization or mutation validation on a standby.
+Both must shut down on
+SIGTERM. The expanded scenario stops the leader normally, awaits Zdb activation
+of the survivor, and checks unchanged bootstrap IDs and continued health access.
+It requires `sqlite3` on `PATH` for read-only bootstrap snapshots. This is
+activation/listener lifecycle coverage, not a replication durability or failover
+SLA claim. See the current ledger for the status of the expanded scenario.
+
+`zumupstreamtest` exercises the real upstream transport against reserved loopback
+ports, without persistent storage, certificates, or an external IdP. Non-listening sockets
+refuse connections while retaining their ports; alternating origins exercises
+idle-slot eviction. A listening socket holds a TLS handshake pending while a
+second origin tests saturation, followed by cancellation/drain on shutdown.
+Immediate shutdown after submission checks startup callback ownership. Completion
+uses framework continuations and main-thread waits, not timing-based sleeps.
+These tests do not establish TLS certificate validation or OIDC interoperability.
+
+`zumfederationtest` invokes `zumfederation.py` and requires a separate fresh
+SQLite file in `ZUM_FEDERATION_CONNECT`, plus `ZUM_TEST_MODULE` and the
+same Python dependencies as `zumhttptest`. Run `prove -v -j1 zumfederationtest`.
+It uses `zumidp.py`, an independent local TLS/OIDC fixture with an ephemeral CA
+and ES256 signing key. The daemon's non-secret `upstream.caPath` configuration
+selects that CA; certificate verification is not bypassed and system trust is
+not modified. Test credentials/keys stay in its private temporary directory.
+The same fixture CA authenticates a test-only TLS reverse proxy in front of
+`zumd`; its canonical issuer and upstream callback are HTTPS. The Python browser
+driver verifies that certificate too. Production HTTPS requirements are unchanged.
+It checks discovery, Basic-authenticated code exchange with PKCE, signed ID-token
+claims, N:1 role mapping, automatic external identity projection, downstream token issuance
+and refresh, and local administrator login during upstream outage. This is not
+Okta interoperability or full upstream freshness/revocation acceptance.
+Both supported eligibility modes are exercised: `mappedRole`, plus `claimValues`
+with accepted scalar/array strings, unknown-value denial, and wrong-type denial.
+Provider isolation is exercised with a second enrolled provider record using the
+same independent upstream issuer and subject: the second application cannot use
+the first provider's mappings, then succeeds only after its own mappings exist;
+its projected identity and evidence remain provider/application-qualified.
+The expanded fixture also enrolls the ping service through the real admin CLI,
+checks real `zumping` login/pong/refresh before and after service restart, and
+checks denial after fresh upstream claims contain only unmapped roles. The local
+HTTP fixture additionally requires `zumping` to fail without a pong while either
+`zumd` or `zumpingd` is stopped, then proves recovery after `zumd` restarts. These
+fixtures also require `zumpingd` startup to reject a missing or invalid
+`ZUM_CLIENT_SECRET` without logging either the issued or presented secret. These
+additional checks require the rebuilt CLI/service binaries with private-CA config.
+It also switches the provider to UserInfo claims, supplies roles different from
+the ID token, and verifies that only the selected source populates evidence.
+A mismatched UserInfo subject must fail without modifying users or evidence.
+Signed ID tokens with a mismatched nonce, audience or issuer must fail before
+UserInfo is fetched and without changing assignment evidence.
+The evidence-expiry case configures a five-second assignment lifetime, verifies
+later browser-session deadlines and capped access-token expiry, waits until the
+actual evidence deadline, and checks refresh denial without upstream requests
+or evidence extension. A fresh upstream login must restore resource access.
+This deadline wait tests protocol time; it is not synchronization for concurrent
+work. The fixture does not edit persisted records behind Zdb.
+Mapping removal and mapped-role disablement are tested against still-fresh
+evidence. Refreshed signed tokens lose their actions without upstream requests;
+restoring configuration cannot expand the narrowed refresh family. A new
+authorization flow is required to regain the action.
+See `../IMPLEMENTATION.md` for the execution status of newly added checks.
+The optional manual transport probe in `ZumUpstreamTest` also accepts
+`ZUM_UPSTREAM_TEST_CA` alongside `ZUM_UPSTREAM_TEST_URL` for a private CA.
+
 `zumhttptest` invokes `zumhttp.py`, requiring Python 3 and its `cryptography`
-package, plus the already-built `../src/zumd`. It uses a separate fresh
-PostgreSQL database selected by `ZUM_HTTP_CONNECT`, with the same extensions
-and store module. For a focused run, use `prove -v -j1 zumhttptest` here.
+package, `sqlite3` on `PATH`, plus the already-built `../src/zumd`, `../src/zum` and
+`../example/zumpingd` and `../example/zumping`. It uses a separate fresh
+SQLite file selected by `ZUM_HTTP_CONNECT` and the configured store module. For
+a focused run, use `prove -v -j1 zumhttptest` here.
+After draining/stopping the daemon, the fixture changes only the disposable
+store's issuer version marker, checks explicit migration-required refusal with
+no active admission or added users/apps, and restores the marker. A passive
+health listener may start before validation. This tests rejection,
+not conversion of an old physical schema or a completed migration facility.
 It launches the source-tree wrapper, waits for the listener startup event,
-and exercises bootstrap registration and OAuth authorization-code login with
+using standalone defaults on its first start and `--config zumd.cf` on subsequent
+starts. That fixture keeps the store unchanged but changes numeric thread order,
+checking that request dispatch resolves the named `shard` thread. This exercises
+node configuration loading, not multi-node replication or failover.
+It exercises bootstrap registration and OAuth authorization-code login with
 PKCE using independently generated and signed WebAuthn messages, rejects code
 reuse, and rotates refresh tokens. It then creates an application and action
 through HTTP, checks enrollment retries and changed-input conflicts, gracefully
 stops the server, and verifies the records, credential, and non-secret retry
 result after restarting on the same database.
+The session lifecycle scenario reuses a confidential-client login silently
+(`prompt=none`) for a native business client and the separate Zum admin app.
+It checks that `prompt=login` displays authentication, invalid logout CSRF does
+not end the authenticated session, and valid provider logout rejects reuse of
+the old cookie while leaving independent application refresh grants usable.
+The forced-login check abandons its new transaction cookie and restores the
+original session handle for the separate logout checks; it does not claim a
+completed reauthentication or account-switching test.
+The same scenario accepts a sufficiently large `max_age`, crosses one real
+protocol-second boundary, and requires `login_required` for `max_age=0` while
+the original session remains usable without that freshness restriction.
+After refresh rotation it replays the consumed token and requires rejection of
+the newest token too, proving family revocation for both business and admin
+clients rather than merely stale-token rejection.
+The fixture also launches `zum login --no-browser`, completes its authorization
+using the virtual authenticator, delivers the state-bound loopback callback, and
+checks owner-only credential-file permissions. Administrative coverage now
+requires a successful response,401 and403 for every catalog operation. Service
+delegation suspension/restoration supplies operationQuery's forbidden case.
+Reported400/412/503 counts only identify observed statuses, not complete
+invalid-input, cross-app or inactive-node verification for each route.
+Specific cross-app checks submit the core superuser role ID to a business
+app's membership, scope, client-access and admin-delegation endpoints. Rejection
+must preserve target records, app authority versions and the core role catalog.
+The source role ID is verified absent in the target app; identical-ID or
+identical-name catalog isolation is also exercised by the independent orders
+application and `zumpingd`, which both define `ping` action/role/scope names;
+each other's valid resource tokens remain rejected by the service.
+The real ping-service checks additionally present a valid core-admin token and
+another application's valid token carrying an action named ping. Both must
+return401 before and after service restart. The fixture verifies signatures
+and expiry first, so expired or malformed tokens cannot satisfy that check.
+GET and POST UserInfo accept the openid access token and return exactly the
+matching ID-token subject when no profile/email scope was granted. Missing or
+malformed credentials, ID-token substitution and an admin access token without
+openid all fail with401 invalid_token.
+Suspending the client through REST also makes both UserInfo methods reject its
+otherwise valid token. Restoring that client permits the same unexpired token
+again, without changing the subject or extending its lifetime.
+A second `zum appQuery` process
+uses that file to query the core application. This exercises the real CLI's
+PKCE/token/callback and REST wiring, not an actual browser or platform authenticator.
+Application enrollment, local user invitation, membership creation and role
+assignment use the real CLI as well. Secret-bearing operations must print only
+the delivery-file receipt and write their response into an owner-only file;
+subsequent HTTP queries and retries verify the resulting records and request IDs.
+Definition lifecycle cases create an audience, role, scope, client and provider,
+then exercise audience/role/provider updates and each definition's state endpoint.
+They check missing/stale ETags, exactly one version increment on accepted changes,
+and unchanged records after rejected stale updates.
+User/credential cases cover profile and label updates, credential state,
+recovery preconditions, one-time recovery response redaction on retry, and
+credential queries by exact ID or indexed user group. Bounded revocation cases
+check sessions, consents and grants for the disposable user: one record at a
+time, unrelated users unchanged, remaining records revoked and then zero work.
+Exact grant revocation uses the ID returned by the query, checks unpadded
+base64url encoding and verifies that a second request reports zero new effects.
+Grant-cleanup cases reject missing request keys, invalid limits and caller-chosen
+cutoffs, then verify the deletion bound, expiry of any removed records and
+unchanged surviving records. A zero-removal run does not establish expired-row
+deletion coverage. Auth-policy replacement and role-map deletion check ETag
+preconditions and persisted results. Signing-key retirement checks the future
+verification window and continued verification of an existing token.
+The offline DB-key rotation gate stops the server, corrupts one late signing
+envelope in the disposable SQLite store, and requires rotation to fail with
+the pending marker retained. It checks old-key startup is refused while pending,
+a different target key cannot resume or alter ciphertext, and the original
+target can resume after the fixture repairs the corrupted envelope. Completed
+retry must leave ciphertext byte-identical; old-key startup then fails and
+new-key startup/login succeeds. This is a partial-error/resume test, not a
+process-kill test. Native `zumrestarttest` additionally stages each ciphertext
+field and key-binding update before step-UN persistence, after it, and after
+the mutation, then drains/reopens SQLite and checks recovery. The native
+recovery gate and real archive restore passed on 2026-09-11; see
+IMPLEMENTATION.md for exact evidence and remaining limits.
+
+Offline schema conversion uses the typed legacy reader in `ZumLegacy.hh` and
+the explicit JSON mapping contract in `ZumMigrate.hh`. The supported source is
+the pre-application schema containing issuer-global actions, roles and scopes;
+it is not the older password-based four-table user database. Every legacy
+action, role, scope, audience URI and client must have exactly one mapping.
+Action, role and scope mappings supply both an application ID and the new
+application-local ID. Roles whose action bitmap crosses mapped applications,
+scopes whose roles or audience cross applications, duplicate target IDs, and
+records retaining a saga owner are rejected. User-level role assignments are
+split into per-application memberships. Client authorities are split into
+per-application client-access rows. Legacy grants are intentionally invalidated
+because their authority snapshots do not carry the required application and
+version boundaries; legacy audit rows are not copied because audit is now
+emitted through `ZiLog`.
+
+The legacy `oidcSub` value is not provider-qualified and cannot establish a
+current `(provider, issuer, subject)` identity binding. Every such projection
+must therefore appear in `discardExternalUsers`; migration removes that user and
+any associated credential, and a subsequent upstream login re-projects it from
+validated provider evidence. Omitting one or naming a local user rejects the
+migration. `zummigrationtest` creates the physical legacy tables in one fresh
+SQLite file, runs the real `zumd --migrate` command twice into a second
+fresh database, checks exact application-local translations and invalidations,
+then runs ordinary `zumd --once` twice and checks idempotent core bootstrap.
+Both stores are drained before they are reopened. Migration also requires all
+Zum tables in a new target to be empty and checks Zdb's maintained whole-table
+cardinalities at the final boundary, including zero rows in every table that
+has no safe legacy translation.
+
+The mapping `catalogRoleIDs` member is the explicit last-publisher baseline for
+a mapped scope. Mapped legacy scopes are custom by default, so an empty value is
+meaningful and does not infer bindings from the effective role list. A future
+source adapter for a schema containing standard scopes must require this field
+from retained manifest history or an explicit operator policy.
+
+The ping-service scenario enrolls another application through `zum`, starts
+`zumpingd` with its client secret in the environment (no DB credentials), checks
+unauthenticated `/ping` returns401, and queries its single ping action/role/scope.
+A graceful service restart must leave those catalog records unchanged. This
+scenario now also invites `user`, enrolls its virtual passkey, assigns only the
+ping role (no core membership), registers a public native client, and launches
+`zumping`. The fixture drives its browser redirect and loopback callback; the
+client must redeem through `zumpingd`, receive pong, rotate its refresh token,
+and receive pong again. Repeat login after service restart. This extended user
+flow also removes the ping role through `zum` between code issuance and redemption,
+requires the real client to fail without pong, then restores the role and requires
+a fresh login to succeed. This revocation-race addition passed on 2026-09-11.
+The preceding positive user
+flow passed against fresh SQLite on 2026-09-11, including the direct facade
+authorization regression. Browser interactions use the virtual authenticator;
+this is not evidence of a real browser/platform-authenticator run.
 It also checks filtered GET queries, rejects unknown filters, requires an ETag
 for updates (428), rejects stale ETags (412), and verifies the accepted label
 update after restart.
 An enrolled service also obtains a client-credentials token; its limited core
 role must not permit listing all applications (403), while no bearer token
 returns 401.
+Catalog publication checks reject a human administrator and a service targeting
+another app, require the initial revision ETag, reject stale ETags, and publish
+a standard action/role using the owning service. Identical revision/digest
+replay preserves the definitions and app versions without requiring an ETag;
+conflicting digests and missing ETags on newer revisions do not change records.
+Each request supplies the required Idempotency-Key, with separate keys to test
+the catalog's own revision/digest replay rather than only request-cache replay.
+The role-deletion regression supplies all five reference kinds, checks missing
+and stale ETags, removes the role, and verifies cleanup across a drained restart.
+The expanded catalog regression checks same-revision tombstone repair under the
+original ID without recreating deleted references, newer-revision scope binding
+preservation, content-digest validation, omission retirement, and preservation
+of disabled/custom definitions. It also exercises normalized empty labels,
+Unicode/control-character digests, and new scope bindings without resurrecting
+old removals. These cases passed after correcting the Unicode formatter and
+including audienceID in the fixture's exact scope-name query.
+The fixture enumerates all 68 live management operations, verifies their seeded
+actions, rejects missing/invalid bearer tokens, checks denial of operations
+outside the workload token's authority, and checks unsupported methods and
+their `Allow` headers. This does not replace authorized success and input
+validation coverage for every operation.
+After a complete run, the fixture reports observed successful administrative
+operations and names those without a successful-call scenario. It retains only
+method/path/status for this report, never query strings or response bodies.
+These counts guide missing tests; they do not establish each operation's input,
+cross-app authorization, persistence or redaction invariants.
+Expanded collection-query checks cover pagination, field redaction and empty
+external projections in standalone mode. Malformed/trailing/null-sentinel
+numeric filters and zero-based action-state lifecycle coverage pass in the
+current HTTP fixture.
+An invited user cannot bypass credential enrollment by transitioning through
+Suspended or Disabled to Active. Missing/stale ETags and rejected transitions
+are checked, including unchanged records on denial. After graceful shutdown
+drains ZiLog, the fixture checks log events for actor, outcome and correlation
+IDs and verifies that secret material is absent. The removed audit endpoints
+must return 404; there is no audit table or exactly-once log replay contract.
+Client-access and role-mapping collections are checked across paginated and
+full queries, including multiple clients/providers, repeated role values in
+different apps, malformed/MAC-altered cursors, cross-operation/app cursor
+rejection, and unchanged records after restart. Collection indexes group by
+application; mapping values from different providers must not be skipped.
 Application and client-access suspension/reactivation are exercised through
 HTTP: both row and authorization versions advance once per actual transition,
 unchanged-state retries preserve the ETag, stale ETags fail, and suspended
@@ -68,8 +352,12 @@ incorrect verifier fails even with the correct secret. Its access and ID tokens
 are independently verified, and ordinary client queries must redact credentials.
 Role removal
 narrows refreshed access; restoring the role does not expand that narrowed
-family. Membership suspension rejects refresh before and after another drained
-PostgreSQL-backed server restart. This is not third-party OIDC conformance or
+family. Role and state replacements check both membership and application
+versions, missing/stale ETags, and identical PUT retries with unchanged records.
+Zero, unknown and duplicate role references are rejected without changing either
+the membership or application.
+Membership suspension rejects refresh before and after another drained
+SQLite-backed server restart. This is not third-party OIDC conformance or
 upstream-provider interoperability coverage.
 This is a virtual-authenticator protocol fixture, not a real-browser,
 TLS-conformance, process-kill, or replicated-failover test.
@@ -77,5 +365,8 @@ TLS-conformance, process-kill, or replicated-failover test.
 The HTTP fixture generates its encryption key in memory and supplies it only
 through the server environment. Bootstrap material and server diagnostics live
 in a private temporary directory; no secrets are printed. These temporary
-credentials are discarded on exit, so use a new disposable database for each
-invocation. Neither fixture creates or drops its database.
+credentials are discarded on successful exit. On failure, the fixture retains
+its private temporary directory and prints only its path, preserving diagnostics
+without printing secrets. The encryption key remains process-local and is not
+retained, so use a new disposable database for each invocation. Neither fixture
+creates or drops its database.

@@ -13,82 +13,16 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
+#include <zlib/Zum.hh>
 #include <zlib/ZumMgmt.hh>
-#include <zlib/ZumRequest.hh>
 
 namespace Zum {
 
-namespace AdminError {
-  enum { OK = 0, Invalid, Storage };
-}
-
-ZuDerive(AdminFn, (ZmFn<void(int), ZmFnHeapID<"Zum.AdminFn">>));
-ZuDerive(ActionFn,
-  (ZmFn<void(int, ActionID), ZmFnHeapID<"Zum.ActionFn">>));
-ZuDerive(CleanupFn, (ZmFn<void(int, unsigned),
-  ZmFnHeapID<"Zum.CleanupFn">>));
-
 ZumExtern String auditID(ZuBSpan);
-ZumExtern void auditWrite(DBContext *, Audit, AdminFn);
+ZumExtern void logEvent(Audit);
 ZumExtern Audit managementAuditRecord(
   String issuer, int operation, String actor, AppID, String target,
   String correlationID, unsigned status, int64_t now);
-ZumExtern bool actionAdd(
-  Requests *, ZuTime deadline, DBContext *, String issuer,
-  String actor, String name, int64_t now, ActionFn);
-ZumExtern bool actionState(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, ActionID, State::T, int64_t now, AdminFn);
-ZumExtern bool grantRevoke(
-  Requests *, ZuTime deadline, DBContext *, String issuer, Bytes id,
-  String actor, int64_t now, AdminFn);
-ZumExtern bool signKeyAdd(
-  Requests *, ZuTime deadline, DBContext *, String issuer,
-  String actor, SignKey, int64_t now, AdminFn);
-ZumExtern bool signKeyRetire(
-  Requests *, ZuTime deadline, DBContext *, String issuer, String actor,
-  String id, int64_t retireAfter, int64_t now, AdminFn);
-ZumExtern bool userRoles(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, UserID, IDVec, int64_t now, AdminFn);
-ZumExtern bool userState(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, UserID, State::T, int64_t now, AdminFn);
-ZumExtern bool roleActions(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, RoleID, ZtBitmap, int64_t now, AdminFn);
-ZumExtern bool roleState(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, RoleID, State::T, int64_t now, AdminFn);
-ZumExtern bool credentialState(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, Bytes credentialID, State::T,
-  int64_t now, AdminFn);
-ZumExtern bool scopeRoles(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, ScopeID, IDVec, int64_t now, AdminFn);
-ZumExtern bool scopeState(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, ScopeID, State::T, int64_t now, AdminFn);
-ZumExtern bool clientRoles(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, String clientID, IDVec, int64_t now,
-  AdminFn);
-ZumExtern bool clientState(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, String clientID, State::T,
-  int64_t now, AdminFn);
-ZumExtern bool clientSecretDigest(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
-  String issuer, String actor, String clientID, Bytes secretDigest,
-  int64_t now, AdminFn);
-ZumExtern bool grantCleanup(
-  Requests *, ZuTime deadline, DBContext *, int64_t now,
-  unsigned limit, CleanupFn);
-ZumExtern bool auditCleanup(
-  Requests *, ZuTime deadline, DBContext *, int64_t before,
-  unsigned limit, CleanupFn);
 
 } // namespace Zum
 

@@ -825,7 +825,13 @@ public:
   }
   template <int Direction = ZmRBTreeEqual, typename P0, typename P1>
   NodeMvRef del(P0 &&p0, P1 &&p1) {
-    return del<Direction>(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
+    auto data = ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1));
+    ReadGuard guard(m_lock);
+    Node *node = find_<Direction>(matchKey(KeyAxor(data)),
+	[&data](const Node *node) { return node->Node::data() == data; });
+    if (!node) return nullptr;
+    delNode_(node);
+    return nodeAcquire(node);
   }
 
   template <int Direction = ZmRBTreeEqual, typename P>
@@ -968,7 +974,7 @@ public:
 private:
   void clean_() { clean_([](auto) { }); }
   template <typename L> void clean_(L &&l) {
-    Node *node = m_minimum, *next;
+    Node *node = m_root, *next;
     if (!node) return;
     do {
       if (next = node->left()) { node = next; continue; }

@@ -13,6 +13,9 @@ SUBDIRS += zdb
 if LIBPQ
 SUBDIRS += zdb_pq
 endif
+if SQLITE
+SUBDIRS += zdb_sqlite
+endif
 SUBDIRS += zum
 # SUBDIRS += ztc
 # SUBDIRS += zdf
@@ -23,7 +26,7 @@ if GTK
 endif
 
 DIST_SUBDIRS = zu zm zt ze zf zi zv zrl ztcp ztls zquic zhttp zws zrest zmcp zfb zdb ztc \
-	zdb_pq zdf zum zcmd zproxy zgtk zdash
+	zdb_pq zdb_sqlite zdf zum zcmd zproxy zgtk zdash
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

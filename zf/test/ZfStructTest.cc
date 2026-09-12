@@ -327,10 +327,62 @@ struct UnionHolder {
 };
 ZfStruct(, (UnionHolder, JSON), (((u), (Ctor<0>, Mutable)), (UDT)));
 
+using JSONValue = ZfJSON::Union<>;
+struct JSONValueVec : public ZtArray<JSONValue> {
+  ZuDerive_(JSONValueVec, ZtArray<JSONValue>);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(JSONValueVec *);
+};
+struct JSONValueReply { JSONValueVec items; };
+ZfStruct(, (JSONValueReply, JSON), (((items), (Required)), (UDT)));
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+
+  {
+    ZuCSpan value{"éX中Y🎵Z\n\1\"\\/"};
+    ZtString escaped;
+    ZfJSON::quote(escaped, value);
+    ZuCheck(escaped == "\"\\u00e9X\\u4e2dY\\ud83c\\udfb5Z\\n\\u0001\\\"\\\\/\"");
+    escaped.null();
+    ZfJSON::quote(escaped, ZuCSpan{"\0\x1f", 2});
+    ZuCheck(escaped == "\"\\u0000\\u001f\"");
+  }
+
+  {
+    char source[] = "{\"items\":[{\"id\":\"1\",\"name\":\"zum\"}]}";
+    auto parsed = ZfJSON::scan(source);
+    ZuCheck(parsed.p<0>() == int(sizeof(source) - 1) && parsed.p<1>() &&
+      parsed.p<1>()->has<ZfJSON::AnyNode::Array>());
+    auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+    ZuCheck(roots.length() == 1 && ZfJSON::unique(roots[0]));
+    JSONValueVec values;
+    values.push(JSONValue{static_cast<const ZfJSON::AnyNode *>(roots[0].ptr())});
+    ZtString encoded;
+    ZfJSON::save(encoded, JSONValueReply{ZuMv(values)});
+    ZuCheck(encoded ==
+      "{\"items\":[{\"items\":[{\"id\":\"1\",\"name\":\"zum\"}]}]}");
+
+    char first[] = "{\"kty\":\"EC\",\"kid\":\"one\"}";
+    char second[] = "{\"kty\":\"EC\",\"kid\":\"two\"}";
+    auto firstParsed = ZfJSON::scan(first);
+    auto secondParsed = ZfJSON::scan(second);
+    JSONValueVec jwks;
+    jwks.push(JSONValue{static_cast<const ZfJSON::AnyNode *>(
+      (*firstParsed.p<1>())[0].ptr())});
+    jwks.push(JSONValue{static_cast<const ZfJSON::AnyNode *>(
+      (*secondParsed.p<1>())[0].ptr())});
+    encoded.length_(0);
+    ZfJSON::save(encoded, JSONValueReply{ZuMv(jwks)});
+    ZuCheck(encoded == "{\"items\":[{\"kty\":\"EC\",\"kid\":\"one\"},"
+      "{\"kty\":\"EC\",\"kid\":\"two\"}]}");
+
+    char duplicate[] = "{\"id\":1,\"id\":2}";
+    auto duplicateParsed = ZfJSON::scan(duplicate);
+    ZuCheck(duplicateParsed.p<1>() &&
+      !ZfJSON::unique((*duplicateParsed.p<1>())[0]));
+  }
 
   using Fields = ZuFields<Foo>;
 

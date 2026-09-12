@@ -6,6 +6,8 @@
 
 #include <zlib/ZumMgmt.hh>
 
+#include <zlib/ZuArray.hh>
+
 namespace Zum {
 
 ZtEnumImplNS(MgmtOp);
@@ -25,7 +27,7 @@ MgmtString coreAction(uint32_t id)
 #define ZUM_ROUTE(ID, METHOD, PATH) \
   {MgmtOp::ID, Zhttp::Method::METHOD, PATH}
 
-static const MgmtRoute routes[] = {
+static constexpr ZuArray<MgmtRoute, MgmtOp::N> routes{
   ZUM_ROUTE(issuerQuery, GET, "/admin/issuer"),
   ZUM_ROUTE(operationQuery, GET, "/admin/operations"),
   ZUM_ROUTE(appQuery, GET, "/admin/apps"),
@@ -115,31 +117,31 @@ static const MgmtRoute routes[] = {
   ZUM_ROUTE(signKeyAdd, POST, "/admin/signing-keys"),
   ZUM_ROUTE(signKeyRetire, POST,
     "/admin/signing-keys/{keyID}/retire"),
-  ZUM_ROUTE(auditQuery, GET, "/admin/audit"),
-  ZUM_ROUTE(auditCleanup, POST, "/admin/audit/cleanup"),
+  {}, {}, // Retired operation IDs have no route.
   ZUM_ROUTE(catalogPublish, PUT, "/admin/apps/{appID}/catalog")
 };
 
 #undef ZUM_ROUTE
 
-static_assert(sizeof(routes) / sizeof(routes[0]) == MgmtOp::N);
+static_assert(routes.length() == MgmtOp::N);
 
 static bool pathMatch(ZuCSpan pattern, ZuCSpan path)
 {
   unsigned p = 0, v = 0;
-  while (p < pattern.length() && v < path.length()) {
+  unsigned patternLength = pattern.length(), pathLength = path.length();
+  while (p < patternLength && v < pathLength) {
     if (pattern[p] != '{') {
       if (pattern[p++] != path[v++]) return false;
       continue;
     }
-    while (p < pattern.length() && pattern[p] != '}') ++p;
-    if (p == pattern.length()) return false;
+    while (p < patternLength && pattern[p] != '}') ++p;
+    if (p == patternLength) return false;
     ++p;
     unsigned start = v;
-    while (v < path.length() && path[v] != '/') ++v;
+    while (v < pathLength && path[v] != '/') ++v;
     if (v == start) return false;
   }
-  return p == pattern.length() && v == path.length();
+  return p == patternLength && v == pathLength;
 }
 
 const MgmtRoute *managementRoute(int op)
@@ -153,7 +155,8 @@ int managementOperation(Zhttp::Method::T method, ZuCSpan path)
   auto query = path.find<"?">();
   if (query >= 0) path = {path.data(), unsigned(query)};
   for (auto &route: routes)
-    if (route.method == method && pathMatch(route.path, path)) return route.op;
+    if (route.path && route.method == method && pathMatch(route.path, path))
+      return route.op;
   return -1;
 }
 
@@ -162,10 +165,11 @@ MgmtString managementAllow(ZuCSpan path)
   auto query = path.find<"?">();
   if (query >= 0) path = {path.data(), unsigned(query)};
   MgmtString allow;
-  bool seen[Zhttp::Method::N]{};
+  uint64_t seen = 0;
   for (auto &route: routes) {
-    if (!pathMatch(route.path, path) || seen[route.method]) continue;
-    seen[route.method] = true;
+    auto bit = uint64_t{1} << route.method;
+    if (!route.path || !pathMatch(route.path, path) || (seen & bit)) continue;
+    seen |= bit;
     if (allow) allow << ", ";
     allow << Zhttp::Method::name(route.method);
   }
@@ -193,7 +197,6 @@ bool managementNeedsIdempotency(int op)
     case MgmtOp::grantCleanup:
     case MgmtOp::signKeyAdd:
     case MgmtOp::signKeyRetire:
-    case MgmtOp::auditCleanup:
     case MgmtOp::catalogPublish:
       return true;
     default:

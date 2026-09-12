@@ -11,12 +11,45 @@
 
 using namespace ZuTestUtil;
 
+ZuDerive(TestString, ZtString<ZtStringHeapID<"Zrest.Test.String">>);
+
 struct TestObject : public ZmObject { };
 struct RawObject : public ZmObject {
   ZuSpan<uint8_t> data;
   RawObject &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
+  }
+};
+struct SignedObject : public ZmObject { TestString value; };
+ZfStruct(, (SignedObject, JSON),
+  (((value), (Required)), (String)));
+
+struct BodySink {
+  TestString data;
+  template <typename T> BodySink &operator <<(T &&value) {
+    data << ZuFwd<T>(value);
+    return *this;
+  }
+  void flush() { }
+  unsigned produced() const { return data.length(); }
+};
+
+template <typename Base>
+struct SignedBuilder : public Base {
+  enum { Body = Zrest::BodyPolicy::JSON, SignBody = 1 };
+  static constexpr unsigned SignBodyBufSize = 256;
+
+  mutable TestString signedBody;
+
+  template <typename S>
+  void prefixBody(S &s, const SignedObject *) const {
+    s << "{\"body\":";
+  }
+  template <typename S>
+  void signBody(S &s, const SignedObject *, ZuCSpan body) const {
+    signedBody = body;
+    s << ",\"signed\":true}";
   }
 };
 
@@ -47,6 +80,10 @@ struct ExactNoQuery : public Zrest::ReqParser<ExactNoQuery, TestObject> {
   using Path = ZuStringT<"/.well-known/oauth-authorization-server">;
   enum { Exact = 1 };
 };
+struct SignedReq : public SignedBuilder<
+    Zrest::ReqBuilder<SignedReq, SignedObject>> { };
+struct SignedRes : public SignedBuilder<
+    Zrest::ResBuilder<SignedRes, SignedObject>> { };
 
 struct ReplyA { };
 struct ReplyB { };
@@ -138,11 +175,38 @@ static void exactRouteTest()
   ZuCheck(!match("/.well-known/oauth-authorization-server?x=y"));
 }
 
+template <typename Builder>
+static BodySink signedBody(Builder &builder)
+{
+  ZmRef<SignedObject> object = new SignedObject{};
+  object->value = "value";
+  builder.init(object.ptr());
+  BodySink sink;
+  builder.body([&sink](auto emit) { emit(sink); });
+  return sink;
+}
+
+static void signedBodyTest()
+{
+  ZuTestScope(signedBody);
+  SignedReq request;
+  auto requestBody = signedBody(request);
+  ZuCheck(request.signedBody == "{\"value\":\"value\"}");
+  ZuCheck(requestBody.data ==
+    "{\"body\":{\"value\":\"value\"},\"signed\":true}");
+  SignedRes response;
+  auto responseBody = signedBody(response);
+  ZuCheck(response.signedBody == "{\"value\":\"value\"}");
+  ZuCheck(responseBody.data ==
+    "{\"body\":{\"value\":\"value\"},\"signed\":true}");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(zeroBodyTest);
   ZuTestCall(exactRouteTest);
+  ZuTestCall(signedBodyTest);
   return 0;
 }

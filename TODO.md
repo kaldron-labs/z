@@ -1,7 +1,12 @@
 # TODO
 
+## ZfJSON
+
+- explain `ZfJSON::unique`
+
 ## Zdb
 
+- sqlite3 driver
 - "startup replays recovered incomplete sagas that are crash residue from a previous run"
 
 ## Zum
@@ -12,26 +17,15 @@
 
 ## Ztc
 
-- `ztcagent`
-  - have it use `ZiLog`'s syslog sink by default
-
 - `ztchub`
-  - depends on `zdb`, `zum`
+  - depends on `zumd`
   - enrollment server for `ztcagent`
-  - telemetry aggregator for multiple remote `ztcagent`
-  - server to telemetry front-end clients, e.g. `zdash`
+  - telemetry aggregator for multiple remote `ztcagent` instances
+  - server for telemetry front-end clients, e.g. `zdash`
     - client/server protocol is flatbuffers over websockets
 
 - zcmd effectively goes away?
   - replaced by node.js generic openapi client
-
-## Zdb
-
-- sqlite3 driver
-
-## Zrest
-
-- openapi codegen
 
 ## Zdf
 - permit app to specify dataframe and/or series epoch, so
@@ -45,10 +39,6 @@
 - codegen tool?
 - REST interfaces (can be codegen) (3x - core/cli/srv)
   - `xxx{,_cli,_srv}.{hh,cc}` - interface files
-
-## Zum
-- all flatbuffers -> ZfStruct FB
-- own protocol
 
 ## Zcmd
 - remove ZcmdClient, ZcmdServer, OutBufAlloc, etc.

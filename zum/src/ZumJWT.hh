@@ -13,6 +13,8 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+#include <zlib/ZuArray.hh>
+
 #include <zlib/Zum.hh>
 #include <zlib/ZumJWTVerify.hh>
 
@@ -55,7 +57,9 @@ struct IDClaims {
 
 struct PreparedJWT {
   String	token;
-  uint8_t	digest[JWTDigestSize];
+  ZuBArray<JWTDigestSize> digest;
+
+  PreparedJWT() : digest(JWTDigestSize, false) { }
 };
 
 ZumExtern bool interactiveClaims(

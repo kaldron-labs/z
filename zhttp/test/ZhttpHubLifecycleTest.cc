@@ -226,6 +226,31 @@ void testAsyncStopDuringStart()
   hubs.final();
 }
 
+void testNestedAsync()
+{
+  ZuTestScope(testNestedAsync);
+  Events events;
+  Zhttp::Hubs outer, inner;
+  Fake<1> a{
+    .events = &events, .hubs = &inner,
+    .deferStart = true, .deferStop = true};
+  ZuCHECK(inner.init(a) && outer.add(inner));
+  unsigned starts = 0, stops = 0;
+  outer.start([&starts](bool ok) { starts += ok ? 1 : 2; });
+  outer.start([&starts](bool ok) { starts += ok ? 10 : 20; });
+  outer.stop([&stops](bool ok) { stops += ok ? 1 : 2; });
+  ZuCHECK(!starts && !stops && a.starts == 1);
+  auto startDone = ZuMv(a.startDone);
+  startDone(true);
+  ZuCHECK(starts == 11 && !stops && a.stops == 1);
+  auto stopDone = ZuMv(a.stopDone);
+  stopDone(true);
+  ZuCHECK(stops == 1 && outer.state() == ZmEngineState::Stopped &&
+    inner.state() == ZmEngineState::Stopped);
+  outer.final();
+  ZuCHECK(a.inits == 1 && a.finals == 1);
+}
+
 } // namespace ZhttpHubLifecycleTest_
 
 int main(int argc, char **argv)
@@ -244,5 +269,6 @@ int main(int argc, char **argv)
   ZuTestCall(testStartFailure, 2U);
   ZuTestCall(testStopDuringStart);
   ZuTestCall(testAsyncStopDuringStart);
+  ZuTestCall(testNestedAsync);
   return 0;
 }

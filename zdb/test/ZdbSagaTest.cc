@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZfCf.hh>
 
@@ -20,6 +21,14 @@
 using namespace ZuTestUtil;
 
 namespace zdbtest {
+
+struct KeyOrder {
+  unsigned member;
+  unsigned group;
+};
+ZfStruct(, KeyOrder,
+  (((member), (Ctor<0>, (Keys<0, 1>), Group<0>)), (UInt32)),
+  (((group), (Ctor<1>, (Keys<0, 1>), Group<1>)), (UInt32)));
 
 struct Context : public ZmPolymorph { };
 struct OtherContext : public ZmPolymorph { };
@@ -59,7 +68,44 @@ struct SagaB : public ZdbSagaBase<Context> {
 ZfbStruct(, SagaB,
   (((value), (Ctor<0>)), (UInt32)));
 
-struct Sagas { using List = ZuTypeList<SagaA, SagaB>; };
+template <typename Catalog>
+static int sagaMatch(ZuCSpan type)
+{
+  struct IDs { using Keys = Zdb_::SagaTypes<typename Catalog::List>; };
+  static constexpr auto matcher = ZuMatcher<IDs>();
+  return matcher.exact(type);
+}
+
+struct Sagas {
+  using List = ZuTypeList<SagaA, SagaB>;
+  static int match(ZuCSpan type) { return sagaMatch<Sagas>(type); }
+};
+
+struct RepeatSaga : public ZdbSagaBase<Context> {
+  using Base = ZdbSagaBase<Context>;
+  using Type = ZuStringT<"repeatSaga">;
+  enum { NSteps = 4 };
+  uint64_t first = 0;
+  uint64_t second = 0;
+
+  ZdbSagaRepeatStep(0, order, Insert, first) { return {}; }
+  ZdbSagaStep(1, order, Update) { return {}; }
+  ZdbSagaRepeatStep(2, payment, Delete, second) { return {}; }
+  ZdbSagaStep(3, payment, Update) { return {}; }
+};
+ZfbStruct(, RepeatSaga,
+  (((first), (Ctor<0>)), (UInt64)),
+  (((second), (Ctor<1>)), (UInt64)));
+struct RepeatSagas {
+  using List = ZuTypeList<RepeatSaga>;
+  static int match(ZuCSpan type) { return sagaMatch<RepeatSagas>(type); }
+};
+
+struct BadRepeat {
+  enum { NSteps = 1 };
+  ZdbSagaRepeatStep(0, order, Insert, 2) { return {}; }
+};
+ZuAssert((!Zdb_::SagaDefValid<BadRepeat>{}));
 
 ZuAssert((Zdb_::SagaBasesValid_<Context, Sagas::List>{}));
 ZuAssert((!Zdb_::SagaBasesValid_<OtherContext, Sagas::List>{}));
@@ -119,6 +165,7 @@ struct LiveContext : public ZmPolymorph {
   unsigned	completed = 0;
   unsigned	errors = 0;
   unsigned	reads = 0;
+  ZuTime	deadline;
   bool		read = false;
   bool		secondary = false;
   uint32_t	pauseStep = UINT32_MAX;
@@ -153,6 +200,7 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 
   template <unsigned Step, bool Fwd, typename Complete>
   void begin(Complete &&complete) {
+    context->deadline = saga->deadline();
     ++context->runs;
     context->dirs.push(Fwd ? int(Step) + 1 : -int(Step) - 1);
     if (context->trace) context->trace(Trace::Next, Step);
@@ -313,7 +361,10 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-struct LiveSagas { using List = ZuTypeList<LiveSaga>; };
+struct LiveSagas {
+  using List = ZuTypeList<LiveSaga>;
+  static int match(ZuCSpan type) { return sagaMatch<LiveSagas>(type); }
+};
 
 struct ShortSaga : public ZdbSagaBase<LiveContext> {
   using Base = ZdbSagaBase<LiveContext>;
@@ -337,8 +388,14 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
 ZfbStruct(, ChangedSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-struct ShortCatalog { using List = ZuTypeList<ShortSaga>; };
-struct ChangedCatalog { using List = ZuTypeList<ChangedSaga>; };
+struct ShortCatalog {
+  using List = ZuTypeList<ShortSaga>;
+  static int match(ZuCSpan type) { return sagaMatch<ShortCatalog>(type); }
+};
+struct ChangedCatalog {
+  using List = ZuTypeList<ChangedSaga>;
+  static int match(ZuCSpan type) { return sagaMatch<ChangedCatalog>(type); }
+};
 
 struct PayloadContext : public ZmPolymorph {
   ZmSemaphore entered;
@@ -442,7 +499,12 @@ static void rows()
 
 static bool payload(unsigned size)
 {
-  struct Catalog { using List = ZuTypeList<zdbtest::PayloadSaga>; };
+  struct Catalog {
+    using List = ZuTypeList<zdbtest::PayloadSaga>;
+    static int match(ZuCSpan type) {
+      return zdbtest::sagaMatch<Catalog>(type);
+    }
+  };
   using M = ZdbMSaga<Catalog>;
   Zdb_::SagaPayload input;
   input.length(size, false);
@@ -591,6 +653,92 @@ static void catalog()
   Zdb_::SagaTypeStep unused;
   ZuCheck(!M::catalog(2, 0, unused));
   ZuCheck(!M::catalog(0, 3, unused));
+}
+
+static void groupKeys()
+{
+  ZuTestScope(groupKeys);
+  using Model = zdbtest::KeyOrder;
+  auto primary = Zdb_::SplitKey<Model, 0>::storeFields();
+  auto secondary = Zdb_::SplitKey<Model, 1>::storeFields();
+  ZuCheck(primary.length() == 2);
+  ZuCheck(primary[0]->id == "member");
+  ZuCheck(primary[1]->id == "group");
+  ZuCheck(secondary.length() == 2);
+  ZuCheck(secondary[0]->id == "group");
+  ZuCheck(secondary[1]->id == "member");
+  Model row{17, 23};
+  auto key = ZuStructKey<1>(row);
+  ZuCheck(key.p<0>() == 17);
+  ZuCheck(key.p<1>() == 23);
+  auto plain = Zdb_::SplitKey<zdbtest::Order, 0>::storeFields();
+  ZuCheck(plain[0]->id == "symbol");
+  ZuCheck(plain[1]->id == "orderID");
+}
+
+static void repeatedLayout()
+{
+  ZuTestScope(repeatedLayout);
+  using Def = zdbtest::RepeatSaga;
+  using Layout = Zdb_::SagaLayout<Def>;
+  using M = ZdbMSaga<zdbtest::RepeatSagas>;
+  Def def{{}, 3, 2};
+  ZuCheck(Layout::size(def) == 7);
+  unsigned iteration;
+  bool phases = true;
+  bool iterations = true;
+  for (unsigned step = 0; step < 7; ++step) {
+    auto phase = Layout::phase(def, step, iteration);
+    phases &= phase == (step < 3 ? 0 : step == 3 ? 1 : step < 6 ? 2 : 3);
+    iterations &=
+	iteration == (step < 3 ? step : step > 3 && step < 6 ? step - 4 : 0);
+  }
+  ZuCheck(phases);
+  ZuCheck(iterations);
+  ZuCheck(Layout::phase(def, 7, iteration) == Def::NSteps);
+  ZmRef<M> saga = new M{};
+  saga->init(ZuMv(def));
+  Zdb_::SagaPayload payload;
+  M::save(saga, payload);
+  auto loaded = M::load(Def::Type{}(), payload);
+  ZuCheck(M::stepCount(loaded.ptr()) == 7);
+  ZuCSpan table;
+  ZdbSagaOp::T op = ZdbSagaOp::Invalid;
+  ZuCheck(M::stepDef(loaded.ptr(), 4, table, op));
+  ZuCheck(table == "payment" && op == ZdbSagaOp::Delete);
+  ZuCheck(M::stepDef(loaded.ptr(), 6, table, op));
+  ZuCheck(op == ZdbSagaOp::Update);
+  ZuCheck(!M::stepDef(loaded.ptr(), 7, table, op));
+
+  Def empty;
+  ZuCheck(Layout::size(empty) == 2);
+  ZuCheck(Layout::phase(empty, 0, iteration) == 1 && !iteration);
+  ZuCheck(Layout::phase(empty, 1, iteration) == 3 && !iteration);
+  ZuCheck(Layout::size(Def{{}, UINT32_MAX - 2, 0}) == UINT32_MAX);
+  ZuCheck(!Layout::size(Def{{}, UINT32_MAX - 1, 0}));
+  ZuCheck(!Layout::size(Def{{}, UINT64_MAX, UINT64_MAX}));
+
+  Zdb_::SagaTypeStep row;
+  ZuCheck(M::catalog(0, 0, row) && row.repeat);
+  ZmRef<Zdb_::SagaCatalog> catalog = new Zdb_::SagaCatalog{};
+  catalog->seen.length(1);
+  bool catalogRows = true;
+  bool repeatFlags = true;
+  for (unsigned phase = 0; phase < Def::NSteps; ++phase) {
+    catalogRows &= M::catalog(0, phase, row);
+    repeatFlags &= row.repeat == (phase == 0 || phase == 2);
+    catalog->load<zdbtest::RepeatSagas>(row);
+  }
+  ZuCheck(catalogRows);
+  ZuCheck(repeatFlags);
+  catalog->end<zdbtest::RepeatSagas>();
+  ZuCheck(!catalog->error);
+  catalog = new Zdb_::SagaCatalog{};
+  catalog->seen.length(1);
+  M::catalog(0, 0, row);
+  row.repeat = false;
+  catalog->load<zdbtest::RepeatSagas>(row);
+  ZuCheck(bool(catalog->error));
 }
 
 static void indexes()
@@ -953,7 +1101,7 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
 // 7: after update, before delete intent.
 static void recovery(
     unsigned cut, bool separate = false, bool read = false,
-    uint32_t skipStep = UINT32_MAX)
+    uint32_t skipStep = UINT32_MAX, bool expired = false)
 {
   ZuTestScope(recovery);
 
@@ -993,11 +1141,12 @@ static void recovery(
   ZmRef<ZdbMSaga<zdbtest::LiveSagas>> saga =
     new ZdbMSaga<zdbtest::LiveSagas>{};
   saga->init(zdbtest::LiveSaga{{}, 43});
+  ZuTime deadline = expired ? ZuTime{0} : ZuTime{};
   ZuCheck(db->saga(0, 2, ZuMv(saga),
     [&submittedOK, &submitted](bool ok) {
       submittedOK = ok;
       submitted.post();
-    }, [](bool) { }));
+    }, [](bool) { }, deadline));
   submitted.wait();
   paused.wait();
   // Model a crash after an intent reaches the store, before its effect.
@@ -1092,7 +1241,7 @@ static void recovery(
   // first new intent, then prove its intent/effect pair does not yield.
   unsigned phase = 0;
   bool ordered = true;
-  bool trace = cut == 0 || cut == 7;
+  bool trace = !expired && (cut == 0 || cut == 7);
   if (trace) {
     store->findFn([db = db.ptr(), &phase, &ordered](ZuCSpan id) {
       if (id != "o" || phase) return;
@@ -1136,28 +1285,35 @@ static void recovery(
     active.wait();
   }
   ZuCheck(started);
-  ZuCheck(second->runs == 3);
+  unsigned expiredRuns = cut == 0 || cut == 1 ? 1U :
+    cut == 7 || cut == 6 ? 2U : 0U;
+  ZuCheck(second->runs == (expired ? expiredRuns : 3U));
   ZuCheck(!read || second->reads == second->runs);
   ZuCheck(!second->errors);
-  ZuCheck(second->inserts == unsigned(beforeInsert));
-  ZuCheck(second->updates == unsigned(cut < 2 || beforeInsert));
-  ZuCheck(second->deletes == unsigned(!afterDelete));
+  ZuCheck(second->inserts == unsigned(!expired && beforeInsert));
+  ZuCheck(second->updates == (expired ? unsigned(expiredRuns == 2) :
+    unsigned(cut < 2 || beforeInsert)));
+  ZuCheck(second->deletes == unsigned(!expired && !afterDelete));
   ZuCheck(!trace || (ordered && phase == 7));
   store->findFn({});
   store->writeFn({});
 
-  bool retained = !afterDelete;
-  if (started && afterDelete)
-    ZmBlock<>{}([orders = orders.ptr(), &retained](auto wake) {
-      orders->run(0, [orders, &retained, wake = ZuMv(wake)]() mutable {
+  bool retained = false;
+  if (started)
+    ZmBlock<>{}([orders = orders.ptr(), &retained, afterDelete](auto wake) {
+      orders->run(0, [orders, &retained, afterDelete,
+	  wake = ZuMv(wake)]() mutable {
 	orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(43)),
-	  [&retained, wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> o) mutable {
-	    retained = o && o->data().seqNo == 99;
+	  [&retained, afterDelete,
+	    wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> o) mutable {
+	    retained = o && (!afterDelete || o->data().seqNo == 99);
 	    wake();
 	  });
       });
     });
-  ZuCheck(retained);
+  ZuCheck(!afterDelete ? !retained : retained);
+  ZuCheck(!expired || !second->runs ||
+    (*second->deadline && second->deadline <= Zm::now()));
 
   bool stopped = !started || db->stop();
   ZuCheck(stopped);
@@ -1701,9 +1857,9 @@ static void admission()
   context->paused = &paused;
   context->pauseStep = 0;
   auto submit = [db = db.ptr(), context = context.ptr()](
-      ZdbShard shard, ZmRef<M> saga) {
+      ZdbShard shard, ZmRef<M> saga, ZuTime deadline = {}) {
     return ZmBlock<bool>{}([
-      db, context, shard, saga = ZuMv(saga)
+      db, context, shard, saga = ZuMv(saga), deadline
     ](auto wake) mutable {
       db->saga(shard, 1, ZuMv(saga),
 	[wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
@@ -1727,7 +1883,7 @@ static void admission()
 		context->done->post();
 	      });
 	  }
-	});
+	}, deadline);
     });
   };
   ZuCheck(!submit(0, make())); // registration is optional, but required here
@@ -1756,7 +1912,12 @@ static void admission()
 static void payloadAdmission(unsigned size)
 {
   ZuTestScopeRT(payloadAdmission);
-  struct Sagas { using List = ZuTypeList<zdbtest::PayloadSaga>; };
+  struct Sagas {
+    using List = ZuTypeList<zdbtest::PayloadSaga>;
+    static int match(ZuCSpan type) {
+      return zdbtest::sagaMatch<Sagas>(type);
+    }
+  };
   using DB = ZdbSagaDB<zdbtest::PayloadContext, Sagas>;
   using M = ZdbMSaga<Sagas>;
   auto config = cf(true);
@@ -2392,6 +2553,8 @@ int main()
   ZiLog::start();
   ZuTestMain();
   ZuTestCall(rows);
+  ZuTestCall(groupKeys);
+  ZuTestCall(repeatedLayout);
   ZuTestCall(dispatch);
   ZuTestCall(catalog);
   ZuTestCall(catalogStartup);
@@ -2444,6 +2607,13 @@ int main()
   ZuTestCall(recovery, 7, false, false, 1);
   ZuTestCall(recovery, 0, true, true);
   ZuTestCall(recovery, 2, true, true);
+  ZuTestCall(recovery, 0, false, false, UINT32_MAX, true);
+  ZuTestCall(recovery, 1, false, false, UINT32_MAX, true);
+  ZuTestCall(recovery, 2, false, false, UINT32_MAX, true);
+  ZuTestCall(recovery, 4, false, false, UINT32_MAX, true);
+  ZuTestCall(recovery, 5, false, false, UINT32_MAX, true);
+  ZuTestCall(recovery, 6, false, false, UINT32_MAX, true);
+  ZuTestCall(recovery, 7, false, false, UINT32_MAX, true);
   ZuTestCall(recoveryCleanup, 0);
   ZuTestCall(recoveryCleanup, 1);
   ZuTestCall(recoveryCleanup, 2);

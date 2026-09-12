@@ -13,12 +13,14 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
+#include <zlib/Zum.hh>
 #include <zlib/ZumRequest.hh>
 
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
+
+struct DBContext;
 
 namespace SessionError { enum { OK = -1, Invalid, Expired, Storage }; }
 

@@ -1,0 +1,17 @@
+# Node configuration fixture: use named threads in a different numeric order.
+# MODULE, CONNECT and DEBUG are supplied by zumd's command-line/environment input.
+zdb: {
+  thread: zdb, shards: 1, threads: [shard],
+  store: {thread: store, module: ${MODULE}, connection: ${CONNECT}},
+  hostID: self, hosts: {self: {standalone: true}},
+  tables: {}, debug: ${DEBUG}
+},
+mx: {
+  nThreads: 5, rxThread: rx, txThread: tx, threads: {
+    1: {name: rx, isolated: true},
+    2: {name: tx, isolated: true},
+    3: {name: shard, isolated: true},
+    4: {name: store, isolated: true},
+    5: {name: zdb, isolated: true}
+  }
+}

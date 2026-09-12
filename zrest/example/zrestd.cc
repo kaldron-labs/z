@@ -14,6 +14,7 @@
 
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmTime.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtcHash.hh>
@@ -82,6 +83,58 @@ ZfStruct(, (Options, CLI),
   (((help),       (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool)));
 
 ZmSemaphore done;
+
+bool App::init()
+{
+  return m_rng.init();
+}
+
+int App::auth_(const AuthParser &parser, bool ok,
+    ZmRef<TokenResponse> &tokens)
+{
+  if (!ok) { fail_(); return AuthResult::Failed; }
+  const auto &credentials = *parser.object;
+  if (!credentials.username || !credentials.password ||
+      credentials.username != m_options->user ||
+      credentials.password != m_options->pass)
+    return AuthResult::Unauthorized;
+  tokens = new TokenResponse{};
+  if (!jwtIssuePair(m_rng, m_options->jwtSecret, credentials.username,
+	Zm::now().sec(), m_options->accessSecs, m_options->refreshSecs,
+	*tokens)) {
+    return AuthResult::InternalError;
+  }
+  return AuthResult::OK;
+}
+
+void App::authOK_()
+{
+  ++m_auth;
+  event_("auth");
+}
+
+int App::refresh_(const RefreshParser &parser, bool ok,
+    ZmRef<TokenResponse> &tokens)
+{
+  if (!ok) { fail_(); return AuthResult::Failed; }
+  CredString subject;
+  if (!parser.object->refreshToken ||
+      !jwtValidate(m_options->jwtSecret, parser.object->refreshToken,
+	TokenType::refresh, Zm::now().sec(), subject))
+    return AuthResult::Unauthorized;
+  tokens = new TokenResponse{};
+  if (!jwtIssuePair(m_rng, m_options->jwtSecret, subject, Zm::now().sec(),
+	m_options->accessSecs, m_options->refreshSecs, *tokens)) {
+    return AuthResult::InternalError;
+  }
+  return AuthResult::OK;
+}
+
+void App::refreshOK_()
+{
+  ++m_refresh;
+  event_("refresh");
+}
 
 static void usage(int code = 1)
 {
@@ -251,6 +304,36 @@ void Parser::init(App &app_)
 {
   app = &app_;
   Zrest::MReqParser<Requests>::init(app_);
+}
+
+int App::ping_(const PingParser &parser, bool ok)
+{
+  auto authorization = ZuCSpan{parser.authorization};
+  auto prefix = authorization;
+  prefix.trunc(7);
+  auto token = authorization;
+  token.offset(7);
+  bool bearer = authorization.length() > 7 && prefix == "Bearer " &&
+    token.find([](char c) { return c == ' '; }) < 0;
+  CredString subject;
+  if (!ok || !parser.object->ping || parser.authorizationCount != 1 ||
+      !bearer || !jwtValidate(m_options->jwtSecret, token,
+	TokenType::access, Zm::now().sec(), subject))
+    return PingResult::Unauthorized;
+  return PingResult::OK;
+}
+
+void App::pong_()
+{
+  ++m_pong;
+  event_("pong");
+  if (m_pong < m_options->requests) return;
+  ZiLOG(Info, "zrestd", ([auth = m_auth, refresh = m_refresh,
+      pong = m_pong](auto &s) {
+    s << "event=summary auth=" << auth << " refresh=" << refresh <<
+      " pong=" << pong;
+  }));
+  signal_(true);
 }
 
 

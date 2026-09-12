@@ -156,6 +156,7 @@ Subsidiary allocations within those blocks are:
 - Zi	- I/O - file I/O and socket I/O multiplexing (epoll 
 - Zv	- Service Frameworks - I/O framework, option parsing, config files
 - Zdb	- Database - in-memory DB, using Zi for HA clustering/replication
+- ZdbSL - persistent SQLite backing store for Zdb
 
 ## building libbfd shared object (Linux)
 

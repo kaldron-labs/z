@@ -17,6 +17,7 @@
 #endif
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZvMxParams.hh>
@@ -45,6 +46,9 @@ struct Context : public ZmPolymorph {
   unsigned		errors = 0;
   unsigned		fault = Fault::None;
   bool		pauseReverse = false;
+  uint32_t	pauseAt = UINT32_MAX;
+  bool		holdIntent = false;
+  ZtArray<int>	dirs;
   PauseFn	pausedComplete;
 };
 
@@ -128,7 +132,102 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-struct SagaCatalog { using List = ZuTypeList<LiveSaga>; };
+struct BatchSaga : public ZdbSagaBase<Context> {
+  using Base = ZdbSagaBase<Context>;
+  using Base::context;
+  using Base::saga;
+  using Type = ZuStringT<"pqBatch1">;
+  enum { NSteps = 3 };
+  ZtArray<uint64_t> ids;
+  uint32_t failAt = UINT32_MAX;
+
+  template <bool Fwd, typename Complete>
+  bool begin(Complete &complete) {
+    context->dirs.push(Fwd ? int(saga->step() + 1) : -int(saga->step() + 1));
+    if constexpr (Fwd) {
+      if (saga->step() == failAt) { complete(false); return false; }
+      if (!context->holdIntent && hold(complete)) return false;
+    }
+    return true;
+  }
+
+  template <typename Complete>
+  bool hold(Complete &complete) {
+    if (!context->paused || saga->step() != context->pauseAt) return false;
+    context->pausedComplete = PauseFn{
+      [complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
+    context->paused->post();
+    return true;
+  }
+
+  ZdbSagaRepeatStep(0, pq_saga_order, Insert, ids.length()) {
+    if (!begin<Fwd>(complete)) return {};
+    auto id = ids[saga->iteration()];
+    auto shard = ZdbShard(saga->iteration() & 1);
+    context->orders->run(shard, [
+      this, id, shard, complete = ZuMv(complete)]() mutable {
+      if constexpr (Fwd) {
+	ZdbRowRef<Order> row = new ZdbRow<Order>{context->orders, shard};
+	saga->insert(context->orders, ZuMv(row), ZuMv(complete),
+	  [this, id](ZdbRow<Order> *row, auto &&complete) mutable {
+	    ZtString name;
+	    name << id;
+	    new (row->ptr()) Order{
+	      "BATCH", id, "BATCH", name, id, Side::Buy, {100}, {7}};
+	    if (context->holdIntent && hold(complete)) return;
+	    complete(bool(row->commit()));
+	  });
+      } else {
+	saga->findDel<0>(context->orders, shard, ZuFwdTuple("BATCH", id),
+	  ZuMv(complete), [](ZdbRow<Order> *row, auto &&complete) mutable {
+	    complete(bool(row->commit()));
+	  });
+      }
+    });
+    return {};
+  }
+
+  ZdbSagaRepeatStep(1, pq_saga_order, Update, ids.length()) {
+    if (!begin<Fwd>(complete)) return {};
+    auto id = ids[saga->iteration()];
+    auto shard = ZdbShard(saga->iteration() & 1);
+    context->orders->run(shard, [
+      this, id, shard, complete = ZuMv(complete)]() mutable {
+      saga->findUpd<0>(context->orders, shard, ZuFwdTuple("BATCH", id),
+	ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
+	  if (Fwd && context->holdIntent && hold(complete)) return;
+	  row->data().qtys[0] += Fwd ? 1 : -1;
+	  complete(bool(row->commit()));
+	});
+    });
+    return {};
+  }
+
+  ZdbSagaStep(2, pq_saga_item, Delete) {
+    ZuAssert(Fwd);
+    if (!begin<Fwd>(complete)) return {};
+    context->items->run(1, [this, complete = ZuMv(complete)]() mutable {
+      saga->findDel<0>(context->items, 1, ZuFwdTuple("BATCH", UINT64_C(0)),
+	ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
+	  if (context->holdIntent && hold(complete)) return;
+	  complete(bool(row->commit()));
+	});
+    });
+    return {};
+  }
+};
+ZfbStruct(, BatchSaga,
+  (((ids), (Ctor<0>)), (UInt64Vec)),
+  (((failAt), (Ctor<1>)), (UInt32)));
+
+struct SagaCatalog {
+  using List = ZuTypeList<LiveSaga, BatchSaga>;
+  static int match(ZuCSpan type) {
+    struct IDs { using Keys = Zdb_::SagaTypes<List>; };
+    static constexpr auto matcher = ZuMatcher<IDs>();
+    return matcher.exact(type);
+  }
+};
 
 } // zdbtest
 
@@ -307,7 +406,9 @@ static void exercise(unsigned mode)
 	return;
       }
     }
-    done.wait();
+    // A reconstructed saga has no callback from the old live submission.
+    // start() has already waited for replay and activation in reconnect mode.
+    if (mode != Mode::Reconnect) done.wait();
   }
   ZuCheckRT(contextPtr->runs == 3);
   ZuCheckRT(contextPtr->inserts == unsigned(mode == Mode::Live));
@@ -336,6 +437,133 @@ static void exercise(unsigned mode)
   orders = {}; items = {};
   db->final();
   db = {};
+  ZuCheckRT(mx.stop());
+}
+
+static void batches(
+    unsigned count, bool recover, bool fail = false, bool expired = false)
+{
+  ZuTestScopeRT(batches);
+  using M = ZdbMSaga<zdbtest::SagaCatalog>;
+  auto cf = config();
+  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZuCheckRT(mx.start());
+  auto cuts = recover ? (fail ? 2 : 2 * (2 * count + 1)) : 1;
+  for (unsigned cut = 0; cut < cuts; ++cut) {
+    ZmRef<DB> db = new DB{};
+    ZdbTblRef<zdbtest::Order> orders, items;
+    ZmRef<zdbtest::Context> context;
+    auto start = [&db, &orders, &items, &context, &cf, &mx]() {
+      db->init(ZdbCf{cf}, &mx, {});
+      orders = db->initTable<zdbtest::Order>("pq_saga_order");
+      items = db->initTable<zdbtest::Order>("pq_saga_item");
+      context = new zdbtest::Context{};
+      context->orders = orders;
+      context->items = items;
+      db->sagas(context);
+      return db->start();
+    };
+    auto stop = [&db, &orders, &items, &context]() {
+      bool ok = db->stop(); // drains PostgreSQL and shard callbacks
+      orders = {}; items = {}; context = {};
+      db->final();
+      return ok;
+    };
+    ZuCheckRT(start());
+    ZuCheckRT(ZmBlock<bool>{}([items = items.ptr()](auto wake) {
+      items->run(1, [items, wake = ZuMv(wake)]() mutable {
+	ZdbRowRef<zdbtest::Order> row = new ZdbRow<zdbtest::Order>{items, 1};
+	items->insert(row, [wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *row) mutable {
+	  if (!row) { wake(false); return; }
+	  new (row->ptr()) zdbtest::Order{
+	    "BATCH", 0, "BATCH", "marker", 0, zdbtest::Side::Buy, {100}, {1}};
+	  wake(bool(row->commit()));
+	});
+      });
+    }));
+    zdbtest::BatchSaga def;
+    for (unsigned i = 0; i < count; ++i) def.ids.push(100 + i);
+    if (fail) def.failAt = count + 1;
+    ZmRef<M> saga = new M{};
+    saga->init(ZuMv(def));
+    ZuCheckRT(M::stepCount(saga.ptr()) == 2 * count + 1);
+    ZmSemaphore submitted, done, paused;
+    bool admitted = false, outcome = true;
+    if (recover) {
+      context->paused = &paused;
+      context->pauseAt = fail ? count : cut / 2;
+      context->holdIntent = cut & 1;
+    }
+    ZuCheckRT(db->saga(2, 400 + cut, ZuMv(saga),
+      [&admitted, &submitted](bool ok) { admitted = ok; submitted.post(); },
+      [&outcome, &done](bool ok) { outcome = ok; done.post(); },
+      expired ? ZuTime{0} : ZuTime{}));
+    submitted.wait();
+    ZuCheckRT(admitted);
+    if (recover) {
+      paused.wait();
+      db->run([db = db.ptr(), context = context.ptr()]() {
+	db->fail();
+	context->pausedComplete(false);
+      });
+      ZuCheckRT(stop());
+      ZuCheckRT(start());
+      // Recovered work has no callback from the interrupted live instance.
+    } else {
+      done.wait();
+      ZuCheckRT(outcome == !fail);
+    }
+    if (expired) {
+      auto reverses = cut / 2;
+      ZuCheckRT(context->dirs.length() == reverses);
+      for (unsigned i = 0; i < reverses; ++i)
+	ZuCheckRT(context->dirs[i] == -int(reverses - i));
+    } else {
+      auto forwards = fail ? count + 2 : 2 * count + 1;
+      auto reverses = fail ? count + 1 : 0;
+      ZuCheckRT(context->dirs.length() == forwards + reverses);
+      for (unsigned i = 0; i < forwards; ++i)
+	ZuCheckRT(context->dirs[i] == int(i + 1));
+      for (unsigned i = 0; i < reverses; ++i)
+	ZuCheckRT(context->dirs[forwards + i] == -int(reverses - i));
+    }
+    for (unsigned i = 0; i < count; ++i) {
+      ZuCheckRT(ZmBlock<bool>{}([
+	orders = orders.ptr(), id = uint64_t(100 + i),
+	shard = ZdbShard(i & 1), fail, expired
+      ](auto wake) {
+	orders->run(shard, [
+	  orders, id, shard, fail, expired, wake = ZuMv(wake)]() mutable {
+	  orders->find<0>(shard, ZuFwdTuple("BATCH", id), [
+	    orders, id, shard, fail, expired, wake = ZuMv(wake)
+	  ](ZdbRowRef<zdbtest::Order> row) mutable {
+	    bool valid = fail || expired ? !row :
+	      row && row->data().qtys[0] == 8;
+	    orders->findDel<0>(shard, ZuFwdTuple("BATCH", id),
+	      [valid, wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *row) mutable {
+		wake(valid && (!row || row->commit()));
+	      });
+	  });
+	});
+      }));
+    }
+    ZuCheckRT(ZmBlock<bool>{}([items = items.ptr(), fail, expired](auto wake) {
+      items->run(1, [items, fail, expired, wake = ZuMv(wake)]() mutable {
+	items->findDel<0>(1, ZuFwdTuple("BATCH", UINT64_C(0)),
+	  [fail, expired, wake = ZuMv(wake)](
+	      ZdbRow<zdbtest::Order> *row) mutable {
+	    bool valid = bool(row) == (fail || expired);
+	    wake(valid && (!row || row->commit()));
+	  });
+      });
+    }));
+    ZuCheckRT(ZmBlock<bool>{}([db = db.ptr()](auto wake) {
+      db->run([db, wake = ZuMv(wake)]() mutable {
+	wake(!db->table("saga")->count() && !db->table("saga_step")->count());
+      });
+    }));
+    ZuCheckRT(stop());
+  }
   ZuCheckRT(mx.stop());
 }
 
@@ -579,5 +807,11 @@ int main(int argc, char **argv)
   ZuTestCall(exercise, Mode::Reconnect);
   ZuTestCall(crash, argv[0]);
   ZuTestCall(failure, argv[0], "--uncommitted");
+  ZuTestCall(batches, 0, false);
+  ZuTestCall(batches, 3, false);
+  ZuTestCall(batches, 3, false, true);
+  ZuTestCall(batches, 3, true);
+  ZuTestCall(batches, 3, true, true);
+  ZuTestCall(batches, 3, true, false, true);
   ZiLog::stop();
 }

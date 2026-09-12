@@ -46,13 +46,14 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   consentQuery, consentRevoke,
   grantQuery, grantRevoke, grantCleanup,
   signKeyQuery, signKeyAdd, signKeyRetire,
-  auditQuery, auditCleanup,
+  retired67, retired68, // Retired audit IDs; never reuse these positions.
   catalogPublish);
 
 // Invalid request IDs must not resolve to a usable permission name.
 inline MgmtString managementAction(int op)
 {
-  if (unsigned(op) >= MgmtOp::N) return {};
+  if (unsigned(op) >= MgmtOp::N ||
+      op == MgmtOp::retired67 || op == MgmtOp::retired68) return {};
   MgmtString name{"Zum."};
   name << MgmtOp::name(op);
   return name;
@@ -81,8 +82,7 @@ ZumAPI const MgmtRoute *managementRoute(int op);
 ZumAPI int managementOperation(Zhttp::Method::T, ZuCSpan path);
 ZumAPI MgmtString managementAllow(ZuCSpan path);
 ZumAPI bool managementNeedsIdempotency(int op);
-// Successful authorization attempts for every mutating route produce a
-// management audit record; collection queries do not recursively grow audit.
+// Mutating management operations emit outcome events through ZiLog.
 ZumAPI bool managementAudited(int op);
 
 } // namespace Zum

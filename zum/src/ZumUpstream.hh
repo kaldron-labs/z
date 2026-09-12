@@ -4,8 +4,14 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// pooled HTTP client for upstream OIDC providers
+
 #ifndef ZumUpstream_HH
 #define ZumUpstream_HH
+
+#ifndef ZumLib_HH
+#include <zlib/ZumLib.hh>
+#endif
 
 #include <zlib/ZmRef.hh>
 
@@ -19,13 +25,20 @@ class UpstreamHTTPState;
 
 class UpstreamHTTP {
 public:
+  // Small deployments normally use only a handful of provider origins; callers
+  // can raise this bound without changing the per-origin HTTP concurrency.
+  enum { DefaultOrigins = 32 };
   UpstreamHTTP();
   ~UpstreamHTTP();
 
   UpstreamHTTP(const UpstreamHTTP &) = delete;
   UpstreamHTTP &operator =(const UpstreamHTTP &) = delete;
 
-  bool init(ZiMultiplex *);
+  // Own mutable transport state on a non-I/O scheduler shard. The caller drains
+  // users of fn() before final(), which runs on the main thread with mx alive.
+  // Empty caPath uses native system trust; otherwise use a CA file/directory.
+  bool init(ZiMultiplex *, unsigned sid, unsigned origins = DefaultOrigins,
+      ZuCSpan caPath = {});
   OIDCHTTPFn fn() const;
   void final();
 

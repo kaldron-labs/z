@@ -95,6 +95,63 @@ void gtfo()
   Zm::exit(1);
 }
 
+static void cursors()
+{
+  ZuTestScope(cursors);
+  for (unsigned i = 0; i < 3; ++i) {
+    bool committed = false;
+    orders->run(0, [i, &committed]() {
+      ZdbRowRef<Order> row = new ZdbRow<Order>{orders, 0};
+      orders->insert(ZuMv(row), [i, &committed](ZdbRow<Order> *row) {
+	if (row) {
+	  new (row->ptr()) Order{};
+	  auto &data = row->data();
+	  data.symbol = "CURSOR";
+	  data.orderID = i + 1;
+	  data.link = i < 2 ? "scan-a" : "scan-b";
+	  data.clOrdID = i == 1 ? "b" : "a";
+	  data.seqNo = 102 - i;
+	  committed = row->commit();
+	}
+	done.post();
+      });
+    });
+    done.wait();
+    ZuCheck(committed);
+  }
+  for (bool inclusive: {false, true}) {
+    unsigned count = 0;
+    bool matched = true;
+    orders->nextKeys<1>(ZuFwdTuple("scan-a", "a"), inclusive, 3,
+      [inclusive, &count, &matched](auto result, unsigned) {
+	using Key = ZuStructKeyT<Order, 1>;
+	if (!result.template is<Key>()) { done.post(); return; }
+	auto key = ZuMv(result).template p<Key>();
+	unsigned index = count++ + !inclusive;
+	matched &= index < 3 &&
+	  key.template p<0>() == (index < 2 ? "scan-a" : "scan-b") &&
+	  key.template p<1>() == (index == 1 ? "b" : "a");
+      });
+    done.wait();
+    ZuCheck(matched);
+    ZuCheck(count == (inclusive ? 3 : 2));
+    count = 0;
+    matched = true;
+    orders->nextKeys<2>(ZuFwdTuple("scan-a", uint64_t{102}), inclusive, 3,
+      [inclusive, &count, &matched](auto result, unsigned) {
+	using Key = ZuStructKeyT<Order, 2>;
+	if (!result.template is<Key>()) { done.post(); return; }
+	auto key = ZuMv(result).template p<Key>();
+	unsigned index = count++ + !inclusive;
+	matched &= index < 2 && key.template p<0>() == "scan-a" &&
+	  key.template p<1>() == 102 - index;
+      });
+    done.wait();
+    ZuCheck(matched);
+    ZuCheck(count == (inclusive ? 2 : 1));
+  }
+}
+
 int main(int argc_, char **argv)
 {
   ZuTestMain();
@@ -357,6 +414,8 @@ int main(int argc_, char **argv)
       });
     });
     ZuCHECK(active, "DB remains active after repeated inserts");
+
+    ZuTestCall(cursors);
 
     db->stop(); // closes all tables
 

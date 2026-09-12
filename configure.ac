@@ -186,6 +186,17 @@ AS_IF([test ".$with_pq" = ".yes"], [
 ])
 AM_CONDITIONAL([LIBPQ], [test ".$with_pq" = ".yes"])
 
+# sqlite3 (optional)
+AC_ARG_WITH([sqlite], AS_HELP_STRING([--with-sqlite], [Build with SQLite3]))
+AS_IF([test ".$with_sqlite" = ".yes"], [
+  PKG_CHECK_MODULES([SQLITE], [sqlite3 >= 3.37.0], [], [dnl
+    AC_MSG_ERROR([sqlite3 >= 3.37.0 unavailable])
+  ])
+  AC_SUBST(SQLITE_CFLAGS)
+  AC_SUBST(SQLITE_LIBS)
+])
+AM_CONDITIONAL([SQLITE], [test ".$with_sqlite" = ".yes"])
+
 # Gtk (optional)
 AC_ARG_WITH([gtk], AS_HELP_STRING([--with-gtk], [Build with Gtk]))
 AS_IF([test ".$with_gtk" = ".yes"], [
@@ -204,7 +215,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zv ztcp ztls zquic zhttp zrest zmcp zws zfb zdb ztc zdb_pq zum zdf zrl zcmd zproxy zgtk; do {
+for i in zu zm zt ze zf zi zv ztcp ztls zquic zhttp zrest zmcp zws zfb zdb ztc zdb_pq zdb_sqlite zum zdf zrl zcmd zproxy zgtk; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -244,6 +255,8 @@ AC_CONFIG_FILES([Makefile \
 	ztc/Makefile ztc/src/Makefile ztc/test/Makefile ztc/itest/Makefile \
 	zdb_pq/Makefile zdb_pq/src/Makefile zdb_pq/test/Makefile \
 	zdb_pq/itest/Makefile \
+	zdb_sqlite/Makefile zdb_sqlite/src/Makefile zdb_sqlite/test/Makefile \
+	zdb_sqlite/itest/Makefile \
 	zum/Makefile zum/src/Makefile zum/test/Makefile zum/itest/Makefile \
 	zum/example/Makefile zum/interop/Makefile \
 	zdf/Makefile zdf/src/Makefile zdf/test/Makefile zdf/itest/Makefile \

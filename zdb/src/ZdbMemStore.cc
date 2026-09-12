@@ -197,7 +197,7 @@ void StoreTbl::update(
       auto j = i - 1;
       auto key = extractKey(m_fields, m_keyFields, i, row->data);
       if (key != origKeys[j]) {
-	m_indices[i].del(origKeys[j]);
+	m_indices[i].del(origKeys[j], row.constRef());
 	m_indices[i].add(key, row.constRef());
       }
     }
@@ -224,7 +224,7 @@ void StoreTbl::del(
     for (unsigned i = 1; i < n; i++) {
       auto key = extractKey(m_fields, m_keyFields, i, row->data);
       ZmAssert(key.length() == m_keyFields[i].length());
-      m_indices[i].del(key);
+      m_indices[i].del(key, row.constRef());
     }
     commitFn(ZuMv(buf), CommitResult{});
   } else {

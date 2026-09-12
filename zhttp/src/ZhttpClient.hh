@@ -5634,9 +5634,16 @@ public:
   }
 
   bool start() {
-    if (!m_hubs.start()) return false;
-    txRun_([this]() { Tx::start(); });
-    return true;
+    return ZmBlock<bool>{}([this](auto wake) { this->start(ZuMv(wake)); });
+  }
+  template <typename Done>
+  void start(Done &&done) {
+    m_hubs.start([this, done = Hubs::DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
+      txRun_([this, done = ZuMv(done), ok]() mutable {
+	if (ok) Tx::start();
+	done(ok);
+      });
+    });
   }
 
   void send(ZmRef<ReqBuilder> request) {
@@ -5755,7 +5762,9 @@ public:
   }
 
   void final() {
-    if (m_mx) stop();
+    // The owner has awaited stop(), or this pool was never started.
+    ZmAssert(m_hubs.state() == ZmEngineState::Stopped);
+    ZmAssert(!m_rxStopping || (m_rxStopped && m_txStopped));
     ZmAssert(!m_activeReqs->count_());
     m_hubs.final();
 #ifdef ZDEBUG
@@ -7281,25 +7290,6 @@ private:
   bool		m_txStopped = false;
 };
 
-template <typename Heap>
-struct ClientStopState_ : public Heap, public ZmObject {
-  ClientStopState_(unsigned left_, Hubs::DoneFn done_) :
-    done{ZuMv(done_)}, left{left_} { }
-
-  void stopped(bool ok_) {
-    if (!ok_) ok = false;
-    if (--left) return;
-    done(ok);
-  }
-
-  Hubs::DoneFn	done;
-  unsigned	left;
-  bool		ok = true;
-};
-using ClientStopState = ClientStopState_<
-  ZmHeap<"Zhttp.Client.Stop", ClientStopState_<ZuVoid>>>;
-using ClientStopStateRef = ZmRef<ClientStopState>;
-
 // Client is the application-facing lifecycle and dispatch coordinator.  Pool_
 // is the final application pool type; its TxQ must be bound to Pool_, not to
 // this coordinator.
@@ -7346,7 +7336,7 @@ public:
     unsigned slot, Destination destination,
     const Config &config = {})
   {
-    if (!m_inited || m_started || slot >= m_pools.length() ||
+    if (!m_inited || m_ctl.state() != ZmEngineState::Stopped || slot >= m_pools.length() ||
 	m_pools[slot] || !destination.valid())
       return false;
     Config effective = m_config.overlay(config);
@@ -7360,28 +7350,31 @@ public:
     pool->ZmObject::debug();
 #endif
     if (!pool->init(
-	slot, ZuMv(destination), m_hub, effective, m_tcp, h2, quic))
+	slot, ZuMv(destination), m_hub, effective, m_tcp, h2, quic) ||
+	!m_ctl.add(*pool)) {
+      pool->final();
       return false;
+    }
     m_pools[slot] = ZuMv(pool);
     return true;
   }
 
   bool start() {
-    if (!m_inited || m_started) return false;
+    return ZmBlock<bool>{}([this](auto wake) { this->start(ZuMv(wake)); });
+  }
+  template <typename Done>
+  void start(Done &&done) {
+    DoneFn done_{ZuFwd<Done>(done)};
+    if (!m_inited) { done_(false); return; }
     for (unsigned i = 0, n = m_pools.length(); i < n; ++i)
-      if (!m_pools[i]) return false;
-    ZiResolver::start();
-    for (unsigned i = 0, n = m_pools.length(); i < n; ++i)
-      if (!m_pools[i]->start()) {
-	for (unsigned j = 0; j < i; ++j) m_pools[j]->stop();
-	return false;
-      }
-    m_started = true;
-    return true;
+      if (!m_pools[i]) { done_(false); return; }
+    if (m_resolverOwned) ZiResolver::start();
+    if (!ZiResolver::instance()->running()) { done_(false); return; }
+    m_ctl.start(ZuMv(done_));
   }
 
   bool send(unsigned slot, ZmRef<ReqBuilder> request) {
-    if (!m_started || !request) return false;
+    if (!m_ctl.running() || !request) return false;
     auto pool = pool_(slot);
     if (!pool) return false;
     pool->send(ZuMv(request));
@@ -7394,7 +7387,7 @@ public:
     return true;
   }
   bool seal(unsigned slot) {
-    if (!m_started) return false;
+    if (!m_ctl.running()) return false;
     auto pool = pool_(slot);
     if (!pool) return false;
     pool->seal();
@@ -7425,21 +7418,11 @@ public:
   }
   template <typename Done>
   void stop(Done &&done) {
-    DoneFn done_{ZuFwd<Done>(done)};
-    if (!m_started) {
-      done_(true);
-      return;
-    }
-    m_started = false;
-    ClientStopStateRef state = new ClientStopState{
-      unsigned(m_pools.length()), ZuMv(done_)};
-    for (auto &pool: m_pools)
-      pool->stop([state](bool ok) mutable { state->stopped(ok); });
+    m_ctl.stop(ZuFwd<Done>(done));
   }
 
   void final() {
-    if (m_started) stop();
-    for (auto &pool: m_pools) if (pool) pool->final();
+    m_ctl.final();
     m_pools.init();
     m_idle.init();
     if (m_resolverOwned) {
@@ -7508,12 +7491,12 @@ private:
   H2Config	m_h2;
   QUICConfig	m_quic;
   Pools		m_pools;
+  Hubs		m_ctl;
   unsigned	m_completed = 0;
   unsigned	m_failed = 0;
   unsigned	m_active = 0;
   bool		m_resolverOwned = false;
   bool		m_inited = false;
-  bool		m_started = false;
 
   // Tx thread exclusive after start().
   alignas(Zm::CacheLineSize)

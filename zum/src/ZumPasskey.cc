@@ -5,10 +5,12 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZumPasskey.hh>
+#include <zlib/ZumDB.hh>
+#include <zlib/ZumDBOps.hh>
 
 #include <zlib/ZumAdmin.hh>
 
-
+#include <zlib/ZuArray.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 
@@ -247,7 +249,6 @@ private:
 	m_config.name, m_config.displayName, m_config.timeout)
     };
     if (!create) {
-      m_config.roleIDs.null();
       m_context->grants->run(0, [
 	self = ZmRef<EnrollmentBegin_>{this}, id = ZuMv(id),
 	challenge = Bytes{challenge}, handle = Bytes{handle},
@@ -296,7 +297,6 @@ private:
       .purpose = GrantPurpose::Enrollment,
       .state = State::Active,
       .issuer = m_config.issuer,
-      .roleIDs = ZuMv(m_config.roleIDs),
       .challenge = Bytes{challenge},
       .bindingDigest = m_bindingDigest,
       .userName = m_config.name,
@@ -391,13 +391,34 @@ private:
       .outcome = AuditOutcome::Success,
       .detail = "enrollment"
     };
+    if (enrollment.precreated) {
+      auto table = m_context->users;
+      UserID id = enrollment.userID;
+      table->run(0, [self = ZmRef<EnrollmentFinish_>{this}, table, id,
+	  enrollment = ZuMv(enrollment)]() mutable {
+	table->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self),
+	    enrollment = ZuMv(enrollment)](ZdbRowRef<User> row) mutable {
+	  if (!row) { self->finish_(WebAuthnError::Ceremony); return; }
+	  enrollment.beforeUser = row->data();
+	  self->submit_(ZuMv(enrollment));
+	});
+      });
+      return;
+    }
+    submit_(ZuMv(enrollment));
+  }
+
+  void submit_(Enrollment enrollment)
+  {
+    ZuTime deadline{enrollment.beforeGrant.expires};
     ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(enrollment));
     if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
       SagaFn{ZmRef<EnrollmentFinish_>{this}, ZmFnPtr<&EnrollmentFinish_::sagaSubmit_>{}},
-      SagaFn{ZmRef<EnrollmentFinish_>{this}, ZmFnPtr<&EnrollmentFinish_::saga_>{}}))
+      SagaFn{ZmRef<EnrollmentFinish_>{this}, ZmFnPtr<&EnrollmentFinish_::saga_>{}},
+      deadline))
       sagaSubmit_(false);
   }
 
@@ -409,39 +430,9 @@ private:
       finish_(WebAuthnError::Storage);
       return;
     }
-    auto grants = m_context->grants;
-    Bytes id = m_ceremonyID;
-    grants->run(0, [
-      self = ZmRef<EnrollmentFinish_>{this}, grants, id = ZuMv(id)
-    ]() mutable {
-      grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
-	  ZdbRow<Grant> *row) mutable {
-	if (!row || row->data().kind != GrantKind::Ceremony ||
-	    row->data().state != State::Consumed ||
-	    row->data().owner != self->m_sagaID || !row->commit()) {
-	  self->finish_(WebAuthnError::Storage);
-	  return;
-	}
-	self->audit_();
-      });
-    });
-  }
-
-  void audit_()
-  {
-    auditWrite(m_context, ZuMv(m_principalAudit), [
-      self = ZmRef<EnrollmentFinish_>{this}
-    ](int error) mutable {
-      if (error) {
-	self->finish_(WebAuthnError::Storage);
-	return;
-      }
-      auditWrite(self->m_context, ZuMv(self->m_credentialAudit), [
-	self = ZuMv(self)
-      ](int error) mutable {
-	self->finish_(error ? WebAuthnError::Storage : WebAuthnError::OK);
-      });
-    });
+    logEvent(ZuMv(m_principalAudit));
+    logEvent(ZuMv(m_credentialAudit));
+    finish_(WebAuthnError::OK);
   }
 
   DB		*m_db = nullptr;
@@ -630,12 +621,13 @@ private:
     ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     ZmRef<MSaga> saga = new MSaga{};
+    ZuTime deadline{add.beforeGrant.expires};
     saga->init(ZuMv(add));
     if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
       SagaFn{ZmRef<CredentialFinish_>{this},
 	ZmFnPtr<&CredentialFinish_::sagaSubmit_>{}},
       SagaFn{ZmRef<CredentialFinish_>{this},
-	ZmFnPtr<&CredentialFinish_::saga_>{}}))
+	ZmFnPtr<&CredentialFinish_::saga_>{}}, deadline))
       sagaSubmit_(false);
   }
 
@@ -647,25 +639,8 @@ private:
       finish_(WebAuthnError::Storage);
       return;
     }
-    auto grants = m_context->grants;
-    Bytes id = m_ceremonyID;
-    grants->run(0, [self = ZmRef<CredentialFinish_>{this}, grants,
-	id = ZuMv(id)]() mutable {
-      grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
-	  ZdbRow<Grant> *row) mutable {
-	if (!row || row->data().kind != GrantKind::Ceremony ||
-	    row->data().state != State::Consumed ||
-	    row->data().owner != self->m_sagaID || !row->commit()) {
-	  self->finish_(WebAuthnError::Storage);
-	  return;
-	}
-	auditWrite(self->m_context, ZuMv(self->m_audit), [
-	  self = ZuMv(self)
-	](int error) mutable {
-	  self->finish_(error ? WebAuthnError::Storage : WebAuthnError::OK);
-	});
-      });
-    });
+    logEvent(ZuMv(m_audit));
+    finish_(WebAuthnError::OK);
   }
 
   DB		*m_db = nullptr;
@@ -690,27 +665,11 @@ public:
 
   void start()
   {
-    if (!m_db || !m_context || !m_rng || !m_config.issuer ||
-	!m_config.actor || !m_config.userID || m_config.now <= 0 ||
-	m_config.expires <= m_config.now || !m_config.version ||
-	m_config.version == UINT64_MAX) {
+    if (!m_db || !m_context || !m_rng) {
       finish_(false);
       return;
     }
-    String issuer = m_config.issuer;
-    m_context->issuers->run(0, [
-      self = ZmRef<RecoveryIssue_>{this}, issuer = ZuMv(issuer)
-    ]() mutable {
-      self->m_context->issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [
-	self = ZuMv(self)
-      ](ZdbRowRef<Issuer> issuer) mutable {
-	if (!issuer) {
-	  self->finish_(false);
-	  return;
-	}
-	self->user_();
-      });
-    });
+    user_();
   }
 
 private:
@@ -735,11 +694,7 @@ private:
       self->m_context->users->find<0>(0, ZuFwdTuple(id), [
 	self = ZuMv(self)
       ](ZdbRowRef<User> user) mutable {
-	if (!user || user->data().owner ||
-	    user->data().source != UserSource::Local ||
-	    user->data().version != self->m_config.version ||
-	    (user->data().state != State::Active &&
-	     user->data().state != State::Suspended)) {
+	if (!user) {
 	  self->finish_(false);
 	  return;
 	}
@@ -774,7 +729,9 @@ private:
       .created = m_config.now,
       .expires = m_config.expires,
       .actor = m_config.actor,
-      .version = m_config.version
+      .version = m_config.version,
+      .oldState = user.state, .oldUpdated = user.updated,
+      .request = ZuMv(m_config.request)
     };
     ZdbSagaID sagaID;
     ZuAssert((sizeof(sagaID) == 16));
@@ -785,7 +742,7 @@ private:
       SagaFn{ZmRef<RecoveryIssue_>{this},
 	ZmFnPtr<&RecoveryIssue_::sagaSubmit_>{}},
       SagaFn{ZmRef<RecoveryIssue_>{this},
-	ZmFnPtr<&RecoveryIssue_::saga_>{}}))
+	ZmFnPtr<&RecoveryIssue_::saga_>{}}, ZuTime{m_config.expires}))
       sagaSubmit_(false);
   }
 
@@ -797,9 +754,8 @@ private:
       finish_(false);
       return;
     }
-    auditWrite(m_context, ZuMv(m_audit), [
-      self = ZmRef<RecoveryIssue_>{this}
-    ](int error) mutable { self->finish_(!error); });
+    logEvent(ZuMv(m_audit));
+    finish_(true);
   }
 
   DB		*m_db = nullptr;
@@ -1061,10 +1017,12 @@ private:
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     reinterpret_cast<uint8_t *>(&m_sagaID)[0] ^= 0x80;
     ZmRef<MSaga> saga = new MSaga{};
+    ZuTime deadline{recovery.beforeGrant.expires};
     saga->init(ZuMv(recovery));
     if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
       SagaFn{ZmRef<RecoveryFinish_>{this}, ZmFnPtr<&RecoveryFinish_::sagaSubmit_>{}},
-      SagaFn{ZmRef<RecoveryFinish_>{this}, ZmFnPtr<&RecoveryFinish_::saga_>{}}))
+      SagaFn{ZmRef<RecoveryFinish_>{this}, ZmFnPtr<&RecoveryFinish_::saga_>{}},
+      deadline))
       sagaSubmit_(false);
   }
 
@@ -1076,38 +1034,9 @@ private:
       finish_(WebAuthnError::Storage);
       return;
     }
-    auto grants = m_context->grants;
-    Bytes id = m_ceremonyID;
-    grants->run(0, [
-      self = ZmRef<RecoveryFinish_>{this}, grants, id = ZuMv(id)
-    ]() mutable {
-      grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
-	  ZdbRow<Grant> *row) mutable {
-	if (!row || row->data().state != State::Consumed ||
-	    row->data().owner != self->m_sagaID || !row->commit()) {
-	  self->finish_(WebAuthnError::Storage);
-	  return;
-	}
-	self->audit_();
-      });
-    });
-  }
-
-  void audit_()
-  {
-    auditWrite(m_context, ZuMv(m_principalAudit), [
-      self = ZmRef<RecoveryFinish_>{this}
-    ](int error) mutable {
-      if (error) {
-	self->finish_(WebAuthnError::Storage);
-	return;
-      }
-      auditWrite(self->m_context, ZuMv(self->m_credentialAudit), [
-	self = ZuMv(self)
-      ](int error) mutable {
-	self->finish_(error ? WebAuthnError::Storage : WebAuthnError::OK);
-      });
-    });
+    logEvent(ZuMv(m_principalAudit));
+    logEvent(ZuMv(m_credentialAudit));
+    finish_(WebAuthnError::OK);
   }
 
   DB		*m_db = nullptr;
@@ -1133,15 +1062,16 @@ static void bootstrapIssue_(
     complete(false, String{});
     return;
   }
-  uint8_t hash[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> hash(Ztls::MD<>::Size, false);
   {
     Ztls::MD<> md;
     md.update(ZuBSpan{"zum.bootstrap"});
     md.update(ZuBSpan{config.issuer});
     md.finish(hash);
   }
+  hash.length(OpaqueIDSize);
   OpaqueToken capability;
-  if (!opaqueIssue(rng, ZuBSpan{hash, OpaqueIDSize}, capability)) {
+  if (!opaqueIssue(rng, hash, capability)) {
     complete(false, String{});
     return;
   }
@@ -1155,7 +1085,6 @@ static void bootstrapIssue_(
     .purpose = GrantPurpose::Bootstrap,
     .state = State::Active,
     .issuer = config.issuer,
-    .roleIDs = ZuMv(config.roleIDs),
     .digest = ZuMv(capability.digest),
     .userName = ZuMv(config.userName),
     .label = ZuMv(config.label)
@@ -1199,45 +1128,6 @@ static void bootstrapIssue_(
   });
 }
 
-static void enrollmentIssue_(
-    DBContext *context, Ztls::Random &rng, EnrollmentIssueConfig config,
-    CapabilityFn complete)
-{
-  if (!context || !config.issuer || !config.userName || !config.userID ||
-      config.now <= 0 || config.expires <= config.now) {
-    complete(false, String{});
-    return;
-  }
-  OpaqueToken capability;
-  if (!opaqueIssue(rng, capability)) {
-    complete(false, String{});
-    return;
-  }
-  Grant grant{
-    .id = ZuMv(capability.id),
-    .userID = config.userID,
-    .created = config.now,
-    .expires = config.expires,
-    .kind = GrantKind::Capability,
-    .purpose = GrantPurpose::Enrollment,
-    .state = State::Active,
-    .issuer = ZuMv(config.issuer),
-    .digest = ZuMv(capability.digest),
-    .userName = ZuMv(config.userName),
-    .label = ZuMv(config.label),
-    .actor = "precreated"
-  };
-  String token = ZuMv(capability.token);
-  authorizationInsert(context, ZuMv(grant), [token = ZuMv(token),
-      complete = ZuMv(complete)](bool ok) mutable {
-    if (!ok) {
-      ZuClear(token.data(), token.length());
-      token.null();
-    }
-    complete(ok, ZuMv(token));
-  });
-}
-
 static void recoveryIssue_(
     DB *db, DBContext *context, Ztls::Random &rng,
     RecoveryIssueConfig config, RecoveryIssueFn complete)
@@ -1259,23 +1149,6 @@ bool bootstrapIssue(
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
     bootstrapIssue_(context, rng, ZuMv(config), [state](
-	bool ok, String value) mutable {
-      state->complete(ok, ZuMv(value));
-    });
-  }, [state]() mutable { state->cancel(); });
-}
-
-bool enrollmentIssue(
-    Requests *requests, ZuTime deadline, DBContext *context,
-    Ztls::Random &rng, EnrollmentIssueConfig config, CapabilityFn complete)
-{
-  if (!requests || !complete) return false;
-  ZmRef<CapabilityComplete_> state =
-    new CapabilityComplete_{ZuMv(complete)};
-  return requests->run(deadline, [state, context, &rng,
-      config = ZuMv(config)](ZmRef<Request> request) mutable {
-    state->request(ZuMv(request));
-    enrollmentIssue_(context, rng, ZuMv(config), [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
     });

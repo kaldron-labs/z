@@ -59,8 +59,8 @@ and drains resulting shard callbacks. It cannot finish a step whose application
 has retained its completion indefinitely. Keep the multiplex, DB, tables, and
 context alive through teardown. A stopped DB can be started again; after
 `final()`, initialize and register it again before reuse. For a saga DB, call
-`final()` through its typed `ZdbSagaDB<Context, Sagas>` owner: that wrapper releases
-the configured context after base finalization.
+`final()` through its typed `ZdbSagaDB<Context, SagaCatalog>` owner: that wrapper
+releases the configured context after base finalization.
 
 ### Configuration
 
@@ -93,9 +93,11 @@ is `Normal`. Cache policy does not replace backing storage or change ownership.
 ## Tables, rows, and shard ownership
 
 Define a row with `ZfbStruct` metadata and a matching generated FlatBuffers schema.
+
 Declare primary key fields with `Keys<0>`, secondary indices with other key IDs,
 and updateable fields with `Mutable`. Use `Group<KeyID>` for grouped queries.
-The primary key is immutable. Zdb supports unique primary and secondary indices.
+The primary key (key 0) is unique and immutable. Secondary keys (1+) may be
+non-unique.
 See the account/transfer types in the example and
 [ZdbTest.hh](test/ZdbTest.hh) for composite keys and grouped indices.
 
@@ -132,6 +134,14 @@ by draining their work before finalization.
 
 Ordinary mutation callbacks receive a nullable raw row pointer; check it before
 use. These differ from the non-null saga-operation callbacks described below.
+
+For a non-unique secondary key, `find`, `findUpd`, and `findDel` select one
+unspecified matching row, consistent with the PostgreSQL store's `LIMIT 1`
+lookup. Update/delete applies to that row, not every row sharing the key.
+Use `selectKeys` or `selectRows` to retrieve multiple matches. Equal-key rows
+have no defined relative order; exclusive continuation skips all rows equal to
+the boundary key, while inclusive continuation can return them again. Include
+a unique tie-breaker in a secondary key when paging must visit every row once.
 `ZuFwdTuple(...)` is convenient for constructing typed key arguments.
 
 ```c++
@@ -209,10 +219,11 @@ The supported teardown boundary is completed `stop()` followed by `final()`.
 
 ## Sagas
 
-A saga is a serialized application intent executed as a fixed sequence of steps.
-Each applicable forward step describes one table mutation; skipped steps allow
-the sequence to express payload-selected branches and later convergence. If a
-step fails, the runner compensates the previously completed operations in
+A saga is a serialized application intent whose payload determines a fixed
+sequence of mutation effects. Each applicable forward step invocation describes
+one table mutation; repeated phases expand to zero or more such invocations, and
+skipped steps allow payload-selected branches and later convergence. If an
+invocation fails, the runner compensates the previously completed operations in
 reverse order. Sagas provide recovery and compensation across shards; they do
 not isolate intermediate effects from other requests or provide an atomic
 multi-row transaction.
@@ -234,14 +245,15 @@ struct BalanceTransfer : public ZdbSagaBase<Context> {
   // Serializable request fields and ZdbSagaStep definitions.
 };
 
-using Sagas = ZuTypeList<BalanceTransfer>;
-using DB = ZdbSagaDB<Context, Sagas>;
-using Saga = ZdbMSaga<Sagas>;
+struct SagaCatalog { using List = ZuTypeList<BalanceTransfer>; };
+using DB = ZdbSagaDB<Context, SagaCatalog>;
+using Saga = ZdbMSaga<SagaCatalog>;
 ```
 
-Supply `Context` once as a DB template argument. Every definition in `Sagas` must
+Supply `Context` and the catalog type as DB template arguments; the catalog's
+`List` names the saga definitions. Every definition in `SagaCatalog::List` must
 derive from `ZdbSagaBase<Context>` and declare its `Base` alias. Definitions have
-unique stable `Type` strings, positive `NSteps`, and contiguous step numbers
+unique stable `Type` strings, positive `NSteps`, and contiguous phase numbers
 starting at zero. Serialize the request payload with `ZfbStruct`; the base
 pointers are runtime data and must not be serialized. Aggregate construction
 includes an empty base, for example `BalanceTransfer{{}, ...}`.
@@ -258,10 +270,48 @@ Shared context does not make its mutable members safe for concurrent shard acces
 
 `ZdbSagaStep(step, tableID, Insert|Update|Delete)` declares an operator template
 with `unsigned Step`, defaulted `bool Fwd = true`, and `typename Complete`.
-Its only argument is `Complete &&complete`; return `{}` for the macro's metadata
+Its only argument is `Complete complete`; return `{}` for the macro's metadata
 return type. The runner calls `operator()<Step>()` for forward execution and
 `operator()<Step, false>()` for rollback. Select application behavior with
-`if constexpr (Fwd)`. The last step is never reversed and can use `ZuAssert(Fwd)`.
+`if constexpr (Fwd)`. The last declared phase is never reversed and can use
+`ZuAssert(Fwd)`.
+
+For a variable number of homogeneous row effects, use
+`ZdbSagaRepeatStep(phase, tableID, Insert|Update|Delete, countExpression)`.
+`NSteps` counts declared phases, not expanded effects. The count expression must
+be derived solely from fields in the immutable serialized saga capture-pack,
+normally the length of a captured array. Set those fields before submission and
+do not modify them during execution. The count must not depend on live database
+state, runtime context, results from earlier phases, mutable progress, or time.
+
+Zdb evaluates the count both during initial admission and while reconstructing
+the expanded layout on replay. The same capture-pack must therefore produce the
+same count and the same mapping from every persisted journal step ordinal to its
+phase and iteration. A different count on replay can associate a persisted
+effect with the wrong phase or payload element. `repeat() const` prevents direct
+mutation through that call but cannot enforce this semantic requirement; it is
+an invariant of the saga definition.
+
+Each invocation uses `saga->iteration()` to select its zero-based captured
+payload element and performs one normal saga table operation. Zero repeats omit
+that phase. The last phase must be non-repeated: it retains the single commit
+boundary.
+
+Every expanded effect has a distinct `saga->step()` journal ordinal and target UN.
+Rollback visits each completed effect in reverse order, including each repetition,
+and reconstructs its iteration from the same payload. Execution yields through the
+existing continuations between effects; do not loop over writes inside a step.
+The total expanded count must fit the journal's uint32 step-ID space; admission
+rejects overflow before allocating locations or writing an intent. There is no
+application-specific fixed batch limit.
+
+The persisted type catalog includes each phase's `repeat` flag, but not the
+instance-specific count; replay derives that count again from the saved
+capture-pack. Changing a phase between fixed and repeated, or changing its
+count/element semantics, requires a new type version and migration of outstanding
+intents. Existing PostgreSQL internal catalog schemas require the added boolean
+field (false for existing fixed phases) before opening with this schema; source
+upgrades are not an offline migration.
 
 The following is the insert/compensating-delete pattern used in the example:
 
@@ -321,6 +371,28 @@ the saved payload. Recovery starts again at step zero and re-evaluates each
 definition, so every attempt must select the same path. A decision derived from
 external state is suitable only when that state is durable and cannot change the
 answer during the lifetime of the saga.
+
+In ordinary procedural pseudo-code, the happy path (without compensating
+reversals) might branch on `foo` like this:
+
+```text
+// branch on foo
+{ A; if (foo) B; else C; }
+```
+
+Express the same workflow as saga steps by capturing `foo` in the serialized
+saga payload:
+
+```text
+[foo] // saga capture-pack
+step 0: { if (Fwd) A; else -A; }
+step 1: { if (foo) { if (Fwd) B; else -B; } else skip; }
+step 2: { if (!foo) { if (Fwd) C; else -C; } else skip; }
+```
+
+If `foo` is not captured, it could evaluate differently during replay, causing
+inconsistent execution during recovery or abort. Branching--including which
+steps are skipped--must be repeatable.
 
 For example, a payment can use either an internal ledger path or an external
 settlement path while sharing reservation and finalization steps:
@@ -411,7 +483,7 @@ throw across the callback boundary.
 | Forward `complete(true)` | Call only after the step's intended effect has committed, or a legitimate no-op has succeeded. Runner advances to the next step. |
 | Forward `complete(false)` | The failed step must leave no effect requiring compensation. Runner deletes any failed-step intent, then reverses steps `Step - 1` down to zero. The failed step itself is not reversed. |
 | Reverse `complete(true)` | Compensation, including an already-compensated no-op, has succeeded. Runner deletes the original forward step intent before moving to the preceding step. |
-| Reverse `complete(false)` | Intentional abandonment after the application's best cleanup effort. Runner logs the saga type/ID/step at `Error`, stops processing that saga without calling its terminal completion, retains its journal records, and continues other work. The application owns any remaining cleanup. |
+| Reverse `complete(false)` | Intentional abandonment after the application's best cleanup effort. Runner logs the saga type/ID/step at `Error`, stops processing that saga without calling its terminal completion, retains its remaining journal records, and continues other work. The application owns any remaining cleanup. |
 
 Call `complete(bool(row->commit()))` after the mutation, as the final use of the
 definition/continuation in that callback. Completion can advance execution and
@@ -428,24 +500,42 @@ automatically resave that payload. The framework does not journal arbitrary
 network calls or provide exactly-once external effects.
 
 The declared table and operation describe the forward mutation. Use that table,
-the correct shard, and one journaled mutation per forward step. Do not yield
-between entering its mutation callback and commit. Asynchronous reads/preparation
-may precede the operation; completion must remain owned throughout.
+the correct shard, and one journaled mutation per expanded forward invocation.
+Do not yield between entering its mutation callback and commit. Asynchronous
+reads/preparation may precede the operation; completion must remain owned
+throughout.
 
 ### Submission and terminal outcome
 
 ```c++
 ZmRef<Saga> request = new Saga{};
 request->init(BalanceTransfer{{}, transferID, fromID, toID, amount});
+ZuTime deadline = Zm::now(30); // absolute time, 30 seconds from now
 bool queued = db->saga(shard, sagaID, ZuMv(request),
   [](bool admitted) { /* admission result */ },
-  [](bool success) { /* terminal result for this live submission */ });
+  [](bool success) { /* terminal result for this live submission */ },
+  deadline); // omit the final argument or pass {} for no deadline
 ```
 
 `sagaID` identifies the intent within its saga type; it is separate from payload
 identifiers. The submission `shard` locates the main intent and need not be the
 shard of each target mutation. Choose IDs and duplicate-request policy at the
 application level.
+
+The optional final argument is an absolute `ZuTime` deadline persisted in the
+main saga row. Its sentinel null value means the saga never expires. A caller
+may derive the value once from its initial submission time and a configured
+interval, but must not pass or persist a relative interval or renew the deadline
+on retry. The deadline does not gate initial submission or its live forward
+execution.
+Passing zero or another already-expired non-null time is valid and makes the
+saga one-shot: it runs normally when submitted, but cannot replay forward after
+a restart. During activation recovery, an expired unfinished saga enters
+rollback without running later forward business steps. Zdb reconciles the last
+journaled effect, removes an unapplied last intent where necessary, and
+compensates only the applied prefix. If the terminal effect was already applied,
+recovery performs terminal journal cleanup without rerunning that business
+effect.
 
 - Immediate `false`: the call could not queue; neither callback runs.
 - `submit(false)`: asynchronous admission rejection; terminal completion does not
@@ -480,37 +570,44 @@ is not reported as orderly `complete(false)`.
 
 ### Recovery and rollback persistence
 
-The internal `saga` table holds serialized intents, `saga_step` holds forward
-step intents and target update numbers (UNs), and `saga_type` records step
-metadata. Their namespace is distinct from application tables. Catalog validation
-checks compatible definitions at activation; keep type IDs, step ordering,
-operation/table metadata, and payload decoding compatible with outstanding
-intents. Changing the bundle is not a migration for already-persisted work.
+The internal `saga` table holds serialized intents, `saga_step` holds expanded
+forward-step intents and target update numbers (UNs), and `saga_type` records
+declared phase metadata. Their namespace is distinct from application tables.
+Catalog validation checks compatible definitions at activation; keep type IDs,
+phase ordering, repeat flags, operation/table metadata, and payload decoding
+compatible with outstanding intents. Changing the catalog is not a migration for
+already-persisted work.
 
-Forward recovery uses recorded UNs to execute or skip mutations without blindly
-repeating an effect. Recovery finishes before application `upFn`; malformed
-intents, incompatible metadata, or replay that cannot make progress fail
-activation. Reads may run again even when a mutation body is skipped.
+When forward recovery is selected, recorded UNs let it execute or skip mutations
+without blindly repeating an effect. Recovery finishes before application
+`upFn`; malformed intents, incompatible metadata, or replay that cannot make
+progress fail activation. Reads may run again even when a mutation body is
+skipped.
 
-Rollback direction and progress are entirely in memory. Reverse operations use
-ordinary table mutation paths, write no reverse intents, and reserve no saga UNs.
-After compensation succeeds, its original forward intent is deleted; then the
-preceding reverse step runs. After all reversals, the main intent is deleted.
-Forward success deletes the main intent and cleans remaining step intents.
+The current rollback direction and progress are not stored as rollback journal
+state. Reverse operations use ordinary table mutation paths, write no reverse
+intents, and reserve no saga UNs. After compensation succeeds, its original
+forward intent is deleted; then the preceding reverse step runs. After all
+reversals, the main intent is deleted. Forward success deletes the main intent
+and cleans remaining step intents.
 
 A crash or leader loss during rollback abandons that in-memory decision. Recovery
-starts in forward mode at step zero using whatever original intents remain. It
-may succeed this time; if it fails, compensation begins again. There is no durable
-rollback cursor or callback outbox. The window between compensation and deletion
-of its original intent is part of the application recovery model, not an atomic
-pair. Test interruption points and business invariants accordingly.
+of an unexpired saga starts in forward mode at step zero using whatever original
+intents remain; it may succeed this time, or fail and begin compensation again.
+An expired saga instead re-enters the deadline recovery path described above.
+There is no durable rollback cursor or callback outbox. The window between
+compensation and deletion of its original intent is part of the application
+recovery model, not an atomic pair. Test interruption points and business
+invariants accordingly.
 
 Reverse `complete(false)` has the same persistence outcome without terminating
 the process: the saga and its remaining step intents stay in the journal, while
 the in-memory run and recovery reservations are released so unrelated work can
-continue. A later service run replays the saga forward from step zero. This gives
-operators an opportunity to repair the compensation failure before restarting;
-after repair, replay can complete and remove the retained journal records.
+continue. On a later service run, an unexpired saga replays forward from step
+zero; an expired saga re-enters compensation or terminal reconciliation. This
+gives operators an opportunity to repair the compensation failure before
+restarting; after repair, recovery can complete and remove the retained journal
+records.
 
 ## Replication and activation
 
@@ -584,6 +681,17 @@ Enable this only when the backend deployment actually supplies that contract.
 This flag does not configure PostgreSQL replication or make application commits
 synchronous. PostgreSQL integration tests require `ZDB_MODULE` and `ZDB_CONNECT`;
 see [zdbsagatest.cc](../zdb_pq/itest/zdbsagatest.cc).
+
+### SQLite
+
+`ZdbSL::Store` lives in [zdb_sqlite](../zdb_sqlite/). It provides local
+persistent storage in a SQLite WAL database using one configured isolated
+store thread. Its configuration requires `thread` and `connection` (the file
+path); `synchronous` defaults to `NORMAL` and also accepts `FULL` and `OFF`.
+The backend does not perform replication. It reports that capability to Zdb,
+which performs replication when directed by the application configuration.
+See [the SQLite backend documentation](../zdb_sqlite/README.md) for schema,
+type encoding, inspection, backup, and test details.
 
 ### Implementing a store
 

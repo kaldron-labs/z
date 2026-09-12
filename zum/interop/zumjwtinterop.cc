@@ -8,7 +8,7 @@
 
 #include <zlib/ZuHex.hh>
 
-#include <zlib/ZumJWT.hh>
+#include <zlib/ZumJWTVerify.hh>
 
 #include <zlib/ZtlsCOSE.hh>
 
@@ -24,6 +24,7 @@ int main(int argc, char **argv)
     ok = Zum::jwtVerify(argv[1], "interop", "https://issuer.example",
       "orders", key, 150, Zum::JWTLimits{}, principal) &&
       principal.subject == "workload" &&
+      principal.appID == 1 &&
       principal.clientID == "workload" && principal.scope == "read" &&
       principal.actions.length() == 1 &&
       principal.actions[0] == "orders.read" && !principal.authMethod;

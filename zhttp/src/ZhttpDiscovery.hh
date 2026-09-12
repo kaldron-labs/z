@@ -238,10 +238,10 @@ struct AltSvcClear {
 
 class AltSvcCursor {
 public:
-  AltSvcCursor(ZuBSpan, OriginView, unsigned maxAlternatives);
-  AltSvcCursor(ZuSpan<uint8_t>, OriginView, unsigned maxAlternatives);
+  ZhttpAPI AltSvcCursor(ZuBSpan, OriginView, unsigned maxAlternatives);
+  ZhttpAPI AltSvcCursor(ZuSpan<uint8_t>, OriginView, unsigned maxAlternatives);
 
-  bool next(AltSvcValue &);
+  ZhttpAPI bool next(AltSvcValue &);
   AltSvcParseError error() const { return m_error; }
   bool clear() const { return m_clear; }
 
@@ -305,9 +305,9 @@ public:
   explicit AltSvcCache(unsigned maxOrigins) :
     m_entries{new AltSvcTable}, m_maxOrigins{maxOrigins} { }
 
-  bool update(
+  ZhttpAPI bool update(
     const Origin &, ZuBSpan, unsigned maxAlternatives, ZuTime now);
-  bool update(
+  ZhttpAPI bool update(
     const Origin &, ZuSpan<uint8_t>, unsigned maxAlternatives, ZuTime now);
 
   template <typename L>

@@ -13,10 +13,12 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
+#include <zlib/ZumTypes.hh>
 #include <zlib/ZumRequest.hh>
 
 namespace Zum {
+
+struct DBContext;
 
 ZumExtern String metadataJSON(ZuCSpan issuer);
 ZumExtern String jwksJSON(const StringVec &publicJwks);

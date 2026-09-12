@@ -1,4 +1,5 @@
 METASOURCES = AUTO
+EXTRA_DIST = README.md
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src \
 	-I$(top_srcdir)/ztls/src \
@@ -22,7 +23,10 @@ LDADD = $(top_builddir)/zum/src/libZumServer.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZumTest ZumUpstreamTest ZumClientTest
+noinst_PROGRAMS = ZumTest ZumUpstreamTest ZumClientTest ZumSecretTest \
+	ZumMigrateTest
+ZumSecretTest_SOURCES = ZumSecretTest.cc
+ZumMigrateTest_SOURCES = ZumMigrateTest.cc
 ZumTest_SOURCES = ZumTest.cc
 ZumUpstreamTest_SOURCES = ZumUpstreamTest.cc
 ZumUpstreamTest_LDADD = $(top_builddir)/zum/src/libZumUpstream.la $(LDADD)

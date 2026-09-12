@@ -80,11 +80,11 @@ struct ZuFixed {
 
   constexpr ZuFixed(const ZuDecimal &v) noexcept {
     unsigned ndp_ = v.ndp();
-    mantissa = v.value / ZuDecimalFn::pow10_128(18 - ndp_);
+    mantissa = v.value / int128_t(ZuDecimalFn::pow10_128(18 - ndp_));
     ndp = ndp_;
   }
   constexpr ZuFixed(const ZuDecimal &v, unsigned ndp_) noexcept {
-    mantissa = v.value / ZuDecimalFn::pow10_128(18 - ndp_);
+    mantissa = v.value / int128_t(ZuDecimalFn::pow10_128(18 - ndp_));
     ndp = ndp_;
   }
 

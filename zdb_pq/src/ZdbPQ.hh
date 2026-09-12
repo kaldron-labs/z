@@ -787,8 +787,6 @@ public:
   }
 
 private:
-  unsigned resolve(PGconn *conn, ZuCSpan name);
-
   OIDs_		m_oids;
   Types		m_types;
   Lookup	m_lookup;
@@ -2073,10 +2071,6 @@ private:
   void mkTblMRD();
   int mkTblMRD_send();
   void mkTblMRD_rcvd(PGresult *);
-
-  void mkIdxMRD();
-  int mkIdxMRD_send();
-  void mkIdxMRD_rcvd(PGresult *);
 
 private:
   ZtString<>		m_connection;

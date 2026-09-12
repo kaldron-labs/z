@@ -13,10 +13,14 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
+#include <zlib/Zum.hh>
+#include <zlib/ZumWebAuthn.hh>
 #include <zlib/ZumRequest.hh>
 
 namespace Zum {
+
+struct DB;
+struct DBContext;
 
 struct EnrollmentBeginConfig {
   String	issuer;
@@ -24,7 +28,6 @@ struct EnrollmentBeginConfig {
   String	rpName;
   String	name;
   String	displayName;
-  IDVec		roleIDs;
   String	label;
   UserID	userID = 0;
   int64_t	now = 0;
@@ -40,16 +43,6 @@ struct EnrollmentBeginResult {
 struct BootstrapConfig {
   String	issuer;
   AppID		appID = 0;
-  IDVec		roleIDs;
-  String	userName;
-  String	label;
-  UserID	userID = 0;
-  int64_t	now = 0;
-  int64_t	expires = 0;
-};
-
-struct EnrollmentIssueConfig {
-  String	issuer;
   String	userName;
   String	label;
   UserID	userID = 0;
@@ -64,6 +57,7 @@ struct RecoveryIssueConfig {
   int64_t	now = 0;
   int64_t	expires = 0;
   uint64_t	version = 0;
+  IdemRequest request;
 };
 
 struct RecoveryBeginConfig {
@@ -108,9 +102,6 @@ using RecoveryIssueFn = CapabilityFn;
 ZumExtern bool bootstrapIssue(
   Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
   BootstrapConfig, BootstrapFn);
-ZumExtern bool enrollmentIssue(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
-  EnrollmentIssueConfig, CapabilityFn);
 ZumExtern bool recoveryIssue(
   Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
   RecoveryIssueConfig, RecoveryIssueFn);

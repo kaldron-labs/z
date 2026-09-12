@@ -13,11 +13,14 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
+#include <zlib/ZumOAuth.hh>
 #include <zlib/ZumJWT.hh>
 #include <zlib/ZumRequest.hh>
 
 namespace Zum {
+
+struct DB;
+struct DBContext;
 
 namespace TokenIssue {
   enum { OK = -1 };
@@ -29,7 +32,7 @@ namespace RevokeIssue {
 
 ZuDerive(SignatureFn,
   (ZmFn<void(Bytes), ZmFnHeapID<"Zum.SignatureFn">>));
-ZuDerive(SignFn, (ZmFn<void(ZuCSpan, ZuBSpan, SignatureFn),
+ZuDerive(SignFn, (ZmFn<void(const SignKey &, ZuBSpan, SignatureFn),
   ZmFnHeapID<"Zum.SignFn">>));
 ZuDerive(TokenFn, (ZmFn<void(int, TokenResponse),
   ZmFnHeapID<"Zum.TokenFn">>));
@@ -37,8 +40,8 @@ ZuDerive(RevokeFn, (ZmFn<void(int), ZmFnHeapID<"Zum.RevokeFn">>));
 
 struct TokenConfig {
   String		issuer;
-  String		keyID;
   JWTLimits		jwtLimits;
+  unsigned		maxKeys = 0;
   int64_t		now = 0;
   int64_t		accessExpires = 0;
   int64_t		refreshExpires = 0;
