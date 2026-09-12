@@ -233,7 +233,7 @@ private:
   {
     if (m_issuer.schemaVersion != SchemaVersion) {
       ZiLOG(Error, "Zum", ([version = m_issuer.schemaVersion](auto &s) {
-	s << "database migration required: issuer schema version " << version
+	s << "unsupported database schema: issuer schema version " << version
 	  << ", supported version " << SchemaVersion;
       }));
       finish_(false);

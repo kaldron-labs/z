@@ -15,7 +15,7 @@ LDADD = $(top_builddir)/zdb_sqlite/src/libZdbSL.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@SQLITE_LIBS@ @FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZdbSLTest
-ZdbSLTest_SOURCES = ZdbSLTest.cc
+ZdbSLTest_SOURCES = ZdbSLTest.cc ../src/ZdbSLCodec.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)

@@ -2240,16 +2240,12 @@ void Daemon::adminAudit_(int op, String actor, AppID appID,
     AdminDoneFn complete)
 {
   if (!managementAudited(op)) {
-    if (result.status >= 400)
-      result.body = correlate_(ZuMv(result.body), correlationID);
     complete(ZuMv(result));
     return;
   }
   Audit audit = managementAuditRecord(m_config.issuer, op, ZuMv(actor), appID,
     ZuMv(target), String{correlationID}, result.status, Zm::now().sec());
   logEvent(ZuMv(audit));
-  if (result.status >= 400)
-    result.body = correlate_(ZuMv(result.body), correlationID);
   complete(ZuMv(result));
 }
 

@@ -30,7 +30,7 @@ missing
 stamp-*
 tags
 /logs/
-__pycache__/
+**/__pycache__/
 *.pyc
 *.tmp
 *.o

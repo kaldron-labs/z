@@ -1,8 +1,0 @@
-namespace Zum.Legacy.fbs;
-table Issuer {
-  id:string;
-  next_action_i_d:uint32;
-  auth_version:uint64;
-  next_audit_i_d:uint64;
-}
-root_type Issuer;

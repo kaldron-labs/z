@@ -16,7 +16,23 @@ For Postgres testing:
     CREATE EXTENSION libz;
     ```
     - Check enabled extensions with `\dx`
-8. Run `zdbpqtest` with `-m zdb_pq/src/.libs/libZdbPQ.so` `-c 'host=/tmp dbname=test`
+8. Run `zdbpqtest` with `-m zdb_pq/src/.libs/libZdbPQ.so` `-c 'host=/tmp dbname=test'`
+
+## Continuation benchmark
+
+`zdb_pq/bench/zdbpqbench` prints the generated mixed-direction continuation
+SQL and its size for two, four, and eight fields. With a libpq connection
+string it also creates and analyzes a disposable temporary 100,000-row table,
+then prints `EXPLAIN (ANALYZE, BUFFERS)` for the eight-field continuation:
+
+```sh
+make -C zdb_pq/bench -j8
+./zdb_pq/bench/zdbpqbench 'host=/tmp dbname=test'
+```
+
+The PostgreSQL fixture is session-local and disappears when the benchmark
+exits. Run it against a disposable development server; it is intentionally
+not part of `make test` and has no timing threshold.
 
 ## Integration tests
 

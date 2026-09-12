@@ -6,14 +6,9 @@ SQLite files and supplies all test-specific variables. For a focused manual run
 from `zum/itest`:
 
 ```sh
-export ZUM_TEST_MODULE=$PWD/../../zdb_sqlite/src/.libs/libZdbSL.so
-export ZUM_TEST_CONNECT=/tmp/zum-restart.db
-export ZUM_MIGRATION_SOURCE_CONNECT=/tmp/zum-migration-source.db
-export ZUM_MIGRATION_TARGET_CONNECT=/tmp/zum-migration-target.db
-export ZUM_HTTP_CONNECT=/tmp/zum-http.db
-export ZUM_FEDERATION_CONNECT=/tmp/zum-federation.db
-export ZUM_CLUSTER_CONNECT_A=/tmp/zum-cluster-a.db
-export ZUM_CLUSTER_CONNECT_B=/tmp/zum-cluster-b.db
+export ZDB_MODULE=$PWD/../../zdb_sqlite/src/.libs/libZdbSL.so
+export ZDB_CONNECT=/tmp/zum-restart.db
+export ZUM_CLUSTER_PEER_CONNECT=/tmp/zum-cluster-b.db
 make -j3 && make -j3 test
 ```
 
@@ -64,12 +59,11 @@ the fixture finalize the old DB and open another instance.
 
 The fixture writes rows and requires an empty database;
 do not point it at an existing user store. It does not create or drop databases.
-The ordinary `ZDB_MODULE` and `ZDB_CONNECT` variables do not select its database.
 This is Zdb stop/start recovery, not a process-kill or replicated failover test.
 
 `zumclustertest` starts two real daemons with separate fresh SQLite stores,
 one shared encryption key and issuer, and native Zdb host/priority configuration.
-Supply `ZUM_CLUSTER_CONNECT_A`, `ZUM_CLUSTER_CONNECT_B` and `ZUM_TEST_MODULE`.
+Supply `ZDB_MODULE`, `ZDB_CONNECT` and `ZUM_CLUSTER_PEER_CONNECT`.
 Both nodes must expose liveness; neither is ready before admin enrollment.
 The standby must reject all 68 administrative routes with 503. The source-tree
 fixture extracts method/path declarations from ZumMgmt.cc and verifies its
@@ -93,7 +87,7 @@ uses framework continuations and main-thread waits, not timing-based sleeps.
 These tests do not establish TLS certificate validation or OIDC interoperability.
 
 `zumfederationtest` invokes `zumfederation.py` and requires a separate fresh
-SQLite file in `ZUM_FEDERATION_CONNECT`, plus `ZUM_TEST_MODULE` and the
+SQLite file in `ZDB_CONNECT`, plus `ZDB_MODULE` and the
 same Python dependencies as `zumhttptest`. Run `prove -v -j1 zumfederationtest`.
 It uses `zumidp.py`, an independent local TLS/OIDC fixture with an ephemeral CA
 and ES256 signing key. The daemon's non-secret `upstream.caPath` configuration
@@ -142,13 +136,13 @@ The optional manual transport probe in `ZumUpstreamTest` also accepts
 `zumhttptest` invokes `zumhttp.py`, requiring Python 3 and its `cryptography`
 package, `sqlite3` on `PATH`, plus the already-built `../src/zumd`, `../src/zum` and
 `../example/zumpingd` and `../example/zumping`. It uses a separate fresh
-SQLite file selected by `ZUM_HTTP_CONNECT` and the configured store module. For
+SQLite file selected by `ZDB_CONNECT` and the configured store module. For
 a focused run, use `prove -v -j1 zumhttptest` here.
 After draining/stopping the daemon, the fixture changes only the disposable
-store's issuer version marker, checks explicit migration-required refusal with
+store's issuer version marker, checks explicit unsupported-schema refusal with
 no active admission or added users/apps, and restores the marker. A passive
-health listener may start before validation. This tests rejection,
-not conversion of an old physical schema or a completed migration facility.
+health listener may start before validation. This tests rejection without
+modifying the unsupported store.
 It launches the source-tree wrapper, waits for the listener startup event,
 using standalone defaults on its first start and `--config zumd.cf` on subsequent
 starts. That fixture keeps the store unchanged but changes numeric thread order,
@@ -236,40 +230,9 @@ the mutation, then drains/reopens SQLite and checks recovery. The native
 recovery gate and real archive restore passed on 2026-09-11; see
 IMPLEMENTATION.md for exact evidence and remaining limits.
 
-Offline schema conversion uses the typed legacy reader in `ZumLegacy.hh` and
-the explicit JSON mapping contract in `ZumMigrate.hh`. The supported source is
-the pre-application schema containing issuer-global actions, roles and scopes;
-it is not the older password-based four-table user database. Every legacy
-action, role, scope, audience URI and client must have exactly one mapping.
-Action, role and scope mappings supply both an application ID and the new
-application-local ID. Roles whose action bitmap crosses mapped applications,
-scopes whose roles or audience cross applications, duplicate target IDs, and
-records retaining a saga owner are rejected. User-level role assignments are
-split into per-application memberships. Client authorities are split into
-per-application client-access rows. Legacy grants are intentionally invalidated
-because their authority snapshots do not carry the required application and
-version boundaries; legacy audit rows are not copied because audit is now
-emitted through `ZiLog`.
-
-The legacy `oidcSub` value is not provider-qualified and cannot establish a
-current `(provider, issuer, subject)` identity binding. Every such projection
-must therefore appear in `discardExternalUsers`; migration removes that user and
-any associated credential, and a subsequent upstream login re-projects it from
-validated provider evidence. Omitting one or naming a local user rejects the
-migration. `zummigrationtest` creates the physical legacy tables in one fresh
-SQLite file, runs the real `zumd --migrate` command twice into a second
-fresh database, checks exact application-local translations and invalidations,
-then runs ordinary `zumd --once` twice and checks idempotent core bootstrap.
-Both stores are drained before they are reopened. Migration also requires all
-Zum tables in a new target to be empty and checks Zdb's maintained whole-table
-cardinalities at the final boundary, including zero rows in every table that
-has no safe legacy translation.
-
-The mapping `catalogRoleIDs` member is the explicit last-publisher baseline for
-a mapped scope. Mapped legacy scopes are custom by default, so an empty value is
-meaningful and does not infer bindings from the effective role list. A future
-source adapter for a schema containing standard scopes must require this field
-from retained manifest history or an explicit operator policy.
+Backward compatibility and data migration are non-goals. The HTTP fixture
+verifies that `zumd` rejects a non-empty store whose schema version does not
+exactly match, without changing its version marker or authority-row counts.
 
 The ping-service scenario enrolls another application through `zum`, starts
 `zumpingd` with its client secret in the environment (no DB credentials), checks

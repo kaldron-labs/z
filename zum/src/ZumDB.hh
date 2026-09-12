@@ -19,7 +19,6 @@
 #include <zlib/ZumRevoke.hh>
 #include <zlib/ZumConsent.hh>
 #include <zlib/ZumRekey.hh>
-#include <zlib/ZumMigratePut.hh>
 
 namespace Zum {
 
@@ -33,8 +32,8 @@ struct SagaCatalog {
     AppChange, UserEdit, CredEdit, AudienceEdit, ProviderEdit, ClientEdit, KeyRetire,
     ClientAccessState, AdminAccessState, RoleMapDelete, RoleMapPut, PolicyPut,
     ClientAccessPut, AdminAccessPut, ProviderAdd, AudienceAdd, RoleAdd, ScopeAdd, UserInvite,
-    ClientAdd, KeyAdd, Revoke, GrantCleanup, ConsentCode, MigrationStart,
-    MigrationPut, MigrationFinish, KeyBinding, SecretRekey>;
+    ClientAdd, KeyAdd, Revoke, GrantCleanup, ConsentCode, KeyBinding,
+    SecretRekey>;
   static ZumAPI int match(ZuCSpan);
 };
 struct MSaga;

@@ -407,7 +407,8 @@ public:
     String idempotencyKey = request.idempotencyKey;
     AdminDoneFn reply{[this, correlationID, hold = ZmRef<Link>{link}](
         AdminResult result) mutable {
-      result.body = correlate_(ZuMv(result.body), correlationID);
+      if (result.status >= 400)
+	result.body = correlate_(ZuMv(result.body), correlationID);
       adminSend_<Request>(hold.ptr(), ZuMv(result));
     }};
     auto cancel = [reply]() mutable {

@@ -32,9 +32,9 @@ static ZuPtr<const ZfCf::AnyNode> config()
 {
   ZmRef<ZfCf::Defines> defines = new ZfCf::Defines{};
   defines->add(ZfCf::DefKey{"MODULE"},
-    ZfCf::DefVal{::getenv("ZUM_TEST_MODULE")});
+    ZfCf::DefVal{::getenv("ZDB_MODULE")});
   defines->add(ZfCf::DefKey{"CONNECT"},
-    ZfCf::DefVal{::getenv("ZUM_TEST_CONNECT")});
+    ZfCf::DefVal{::getenv("ZDB_CONNECT")});
   Zum::String source{
     "zdb: {\n"
     "  thread: zdb, shards: 1, threads: [shard],\n"
@@ -661,6 +661,7 @@ static void memberRecovery()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -721,6 +722,7 @@ static void memberRecovery()
   ZuCheck(sagaEmpty(db));
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 template <typename Table>
@@ -771,6 +773,7 @@ static void rekeyRecovery()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -850,6 +853,7 @@ static void rekeyRecovery()
   }
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 static bool stageInvitation(Zum::DB *db, Zum::DBContext *context,
@@ -931,6 +935,7 @@ static void invitationRecovery()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -984,6 +989,7 @@ static void invitationRecovery()
   }
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 template <typename Table>
@@ -1080,6 +1086,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -1187,6 +1194,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
   ZuCheck(sagaEmpty(db));
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 static void catalogBoundaries()
@@ -1339,6 +1347,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -1453,6 +1462,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   ZuCheck(sagaEmpty(db));
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 static void roleBoundaries()
@@ -1486,6 +1496,7 @@ static void restart()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -1513,6 +1524,7 @@ static void restart()
   ZuCheck(stopDB(db, context));
 
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 static void grantUpdate()
@@ -1521,6 +1533,7 @@ static void grantUpdate()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -1555,6 +1568,7 @@ static void grantUpdate()
     grant.authorityProviderID == 8);
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 static void sagaRecovery()
@@ -1563,6 +1577,7 @@ static void sagaRecovery()
   auto cf = config();
   ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
   ZuCheck(mx.start());
+  ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
@@ -1659,15 +1674,16 @@ static void sagaRecovery()
   ZuCheck(stopDB(db, context));
 
   ZuCheck(mx.stop());
+  stopMx.cancel();
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  auto module = ::getenv("ZUM_TEST_MODULE");
-  auto connect = ::getenv("ZUM_TEST_CONNECT");
+  auto module = ::getenv("ZDB_MODULE");
+  auto connect = ::getenv("ZDB_CONNECT");
   if (!module || !*module || !connect || !*connect) {
-    std::cerr << "zumrestarttest: set ZUM_TEST_MODULE and ZUM_TEST_CONNECT "
+    std::cerr << "zumrestarttest: set ZDB_MODULE and ZDB_CONNECT "
       "for a fresh disposable SQLite database\n";
     return 1;
   }

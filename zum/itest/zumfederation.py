@@ -449,9 +449,9 @@ def exercise(fixture, provider):
 
 
 def main():
-    if not os.environ.get("ZUM_FEDERATION_CONNECT"):
-        raise AssertionError("set ZUM_FEDERATION_CONNECT for a fresh SQLite federation fixture")
-    os.environ["ZUM_HTTP_CONNECT"] = os.environ["ZUM_FEDERATION_CONNECT"]
+    for key in ("ZDB_MODULE", "ZDB_CONNECT"):
+        if not os.environ.get(key):
+            raise AssertionError("set " + key + " for a fresh SQLite federation fixture")
     directory = tempfile.mkdtemp(prefix="zum-federation-")
     provider = None
     fixture = None

@@ -339,14 +339,16 @@ static bool checkTypes(const AllTypes &v)
 static void types()
 {
   ZuTestScope(types);
-  allTypes->run(0, [] {
-    allTypes->findDel<0>(0, ZuFwdTuple(uint64_t{1}),
-      [](ZmRef<ZdbRow<AllTypes>> row) {
-	if (row) row->commit();
-	done.post();
-      });
-  });
-  done.wait();
+  for (uint64_t id: {uint64_t{1}, uint64_t{2}}) {
+    allTypes->run(0, [id] {
+      allTypes->findDel<0>(0, ZuFwdTuple(id),
+	[](ZmRef<ZdbRow<AllTypes>> row) {
+	  if (row) row->commit();
+	  done.post();
+	});
+    });
+    done.wait();
+  }
 
   bool committed = false;
   allTypes->run(0, [&committed] {
@@ -363,6 +365,20 @@ static void types()
   done.wait();
   ZuCHECK(committed, "all type families insert");
 
+  bool emptyCommitted = false;
+  allTypes->run(0, [&emptyCommitted] {
+    ZdbRowRef<AllTypes> row = new ZdbRow<AllTypes>{allTypes, 0};
+    allTypes->insert(ZuMv(row), [&emptyCommitted](ZdbRow<AllTypes> *row) {
+      if (row) {
+	new (row->ptr()) AllTypes{.id = 2};
+	emptyCommitted = row->commit();
+      }
+      done.post();
+    });
+  });
+  done.wait();
+  ZuCHECK(emptyCommitted, "empty type families insert");
+
   if (!db->stop() || !db->start())
     throw ZeEXCEPT(Fatal, "zdbsltest", "all-types restart failed");
 
@@ -377,6 +393,26 @@ static void types()
   });
   done.wait();
   ZuCHECK(matched, "all type families round trip");
+
+  bool emptyMatched = false;
+  allTypes->run(0, [&emptyMatched] {
+    allTypes->evict<0>(0, ZuFwdTuple(uint64_t{2}));
+    allTypes->find<0>(0, ZuFwdTuple(uint64_t{2}),
+      [&emptyMatched](ZmRef<ZdbRow<AllTypes>> row) {
+	if (row) {
+	  auto &v = row->data();
+	  emptyMatched = v.id == 2 && !v.stringValue && !v.bytesValue &&
+	    !v.bitmapValue && !v.ipValue && !v.stringVec && !v.bytesVec &&
+	    !v.int8Vec && !v.uint8Vec && !v.int16Vec && !v.uint16Vec &&
+	    !v.int32Vec && !v.uint32Vec && !v.int64Vec && !v.uint64Vec &&
+	    !v.int128Vec && !v.uint128Vec && !v.floatVec && !v.fixedVec &&
+	    !v.decimalVec && !v.timeVec && !v.dateTimeVec;
+	}
+	done.post();
+      });
+  });
+  done.wait();
+  ZuCHECK(emptyMatched, "empty type families round trip");
 }
 
 int main(int argc_, char **argv)
