@@ -5,10 +5,9 @@ one connection, and one configured isolated `ZmScheduler` thread per store.
 The store reports `replicated=false`; when replication is configured, Zdb
 performs it between hosts and each host uses its own SQLite file.
 
-SQLite 3.37 or newer is required. The top-level configuration enables the
-module when `sqlite3` is available through pkg-config. Pass `-S` to `z.config`
-or `--without-sqlite` to `configure` to disable it. PostgreSQL is independent
-and may be disabled with `-P`.
+SQLite 3.37 or newer is required by default and must be available through
+pkg-config. Pass `-S` to `z.config` or `--without-sqlite` to `configure` to
+disable the module. PostgreSQL is independent and may be disabled with `-P`.
 
 ## Configuration
 

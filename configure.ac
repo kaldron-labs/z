@@ -186,8 +186,10 @@ AS_IF([test ".$with_pq" = ".yes"], [
 ])
 AM_CONDITIONAL([LIBPQ], [test ".$with_pq" = ".yes"])
 
-# sqlite3 (optional)
-AC_ARG_WITH([sqlite], AS_HELP_STRING([--with-sqlite], [Build with SQLite3]))
+# sqlite3 (enabled by default)
+AC_ARG_WITH([sqlite],
+  AS_HELP_STRING([--without-sqlite], [Build without SQLite3]), [],
+  [with_sqlite=yes])
 AS_IF([test ".$with_sqlite" = ".yes"], [
   PKG_CHECK_MODULES([SQLITE], [sqlite3 >= 3.37.0], [], [dnl
     AC_MSG_ERROR([sqlite3 >= 3.37.0 unavailable])
