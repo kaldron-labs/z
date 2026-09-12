@@ -12,15 +12,20 @@ SQLITE_EXTENSION_INIT1
 #include <zlib/ZtString.hh>
 #include <zlib/ZtScratch.hh>
 
+#include <zlib/ZdbSLLib.hh>
 #include <zlib/ZdbSLCodec.hh>
 
 namespace ZdbSL {
 
 using Text = ZtString<ZtStringHeapID<"ZdbSL.Inspect">>;
+// Every supported scalar renders within 64 bytes, including sign and
+// fractional precision.  Oversized fallback remains attributed to Text.
+enum { InspectTextSize = 64 };
 
 template <typename T, bool (*Load)(ZuBSpan, T &)>
-static void inspect(sqlite3_context *cxn, sqlite3_value *arg)
+static void inspect(sqlite3_context *cxn, int, sqlite3_value **argv)
 {
+  sqlite3_value *arg = argv[0];
   if (sqlite3_value_type(arg) != SQLITE_BLOB) {
     sqlite3_result_error(cxn, "ZdbSL value must be a BLOB", -1);
     return;
@@ -33,29 +38,9 @@ static void inspect(sqlite3_context *cxn, sqlite3_value *arg)
     sqlite3_result_error(cxn, "malformed ZdbSL value", -1);
     return;
   }
-  auto text = ZtScratch(Text, 128);
+  auto text = ZtScratch(Text, InspectTextSize);
   text << value;
   sqlite3_result_text(cxn, text.data(), text.length(), SQLITE_TRANSIENT);
-}
-
-static void datetime(sqlite3_context *cxn, int argc, sqlite3_value **argv)
-{
-  if (argc == 1) inspect<ZuDateTime, loadDateTime>(cxn, argv[0]);
-}
-
-static void time(sqlite3_context *cxn, int argc, sqlite3_value **argv)
-{
-  if (argc == 1) inspect<ZuTime, loadTime>(cxn, argv[0]);
-}
-
-static void decimal(sqlite3_context *cxn, int argc, sqlite3_value **argv)
-{
-  if (argc == 1) inspect<ZuDecimal, loadDecimal>(cxn, argv[0]);
-}
-
-static void floating(sqlite3_context *cxn, int argc, sqlite3_value **argv)
-{
-  if (argc == 1) inspect<double, loadFloat>(cxn, argv[0]);
 }
 
 } // ZdbSL
@@ -70,13 +55,15 @@ extern "C" ZdbSLAPI int sqlite3_zdbslinspect_init(
       db, id, 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_INNOCUOUS,
       nullptr, fn, nullptr, nullptr, nullptr);
   };
-  int rc = add("zdbsl_datetime", ZdbSL::datetime);
+  int rc = add("zdbsl_datetime",
+    ZdbSL::inspect<ZuDateTime, ZdbSL::loadDateTime>);
   if (rc != SQLITE_OK) return rc;
-  rc = add("zdbsl_time", ZdbSL::time);
+  rc = add("zdbsl_time", ZdbSL::inspect<ZuTime, ZdbSL::loadTime>);
   if (rc != SQLITE_OK) return rc;
-  rc = add("zdbsl_decimal", ZdbSL::decimal);
+  rc = add("zdbsl_decimal",
+    ZdbSL::inspect<ZuDecimal, ZdbSL::loadDecimal>);
   if (rc != SQLITE_OK) return rc;
-  rc = add("zdbsl_float", ZdbSL::floating);
+  rc = add("zdbsl_float", ZdbSL::inspect<double, ZdbSL::loadFloat>);
   if (rc != SQLITE_OK) return rc;
   return SQLITE_OK;
 }

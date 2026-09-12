@@ -480,17 +480,4 @@ table SecretRekey {
   after:[ubyte];
 }
 
-table MigrationPut {
-  kind:uint32;
-  image:[ubyte];
-}
-
-table MigrationStart {
-  issuer:Issuer;
-}
-
-table MigrationFinish {
-  issuer:string;
-}
-
 root_type Enrollment;

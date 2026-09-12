@@ -15,6 +15,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuDecimal.hh>
@@ -24,6 +25,7 @@
 #include <zlib/ZuIntrin.hh>
 
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -87,11 +89,139 @@ ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbPQ.SQLString">>);
 
 struct XField {
   IDString			id_;		// snake case field ID
+  const ZfVField		*vfield;	// Z field
   const reflection::Field	*field;		// flatbuffers reflection field
   unsigned			type;		// Value union discriminator
 };
 ZuDerive(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbPQ.XField">>));
-ZuDerive(XKeyFields, (ZtArray<XFields, ZtArrayHeapID<"ZdbPQ.XKeyField">>));
+
+using XFieldIx = uint16_t;
+ZuAssert(Zdb_::maxFields() <= ZuCmp<XFieldIx>::maximum());
+
+ZuDerive(XFieldIxs,
+  (ZtArray<XFieldIx, ZtArrayHeapID<"ZdbPQ.XFieldIx">>));
+
+struct XKeyField {
+  XFieldIx	field;
+  uint8_t	flags;
+
+  enum { Descend = 1, IndexDesc = 2 };
+
+  bool descend() const { return flags & Descend; }
+  bool indexDesc() const { return flags & IndexDesc; }
+};
+ZuDerive(XKeyFields,
+  (ZtArray<XKeyField, ZtArrayHeapID<"ZdbPQ.XKeyField">>));
+
+struct XKey {
+  XKeyFields	fields;
+  uint16_t	group = 0;
+  uint16_t	descending = 0;
+  uint16_t	offsets = 0;
+  int8_t	direction = 0;
+
+  enum { Ascending = 0, Descending, Mixed };
+};
+ZuDerive(XKeys, (ZtArray<XKey, ZtArrayHeapID<"ZdbPQ.XKey">>));
+
+struct IndexRow {
+  ZuCSpan	indexID;
+  ZuCSpan	fieldID;
+  unsigned	oid;
+  unsigned	field;
+  unsigned	nKey;
+  unsigned	nTotal;
+  bool		unique;
+  bool		descending;
+};
+
+struct IndexMatch {
+  uint16_t next = ZuCmp<uint16_t>::null();
+};
+
+inline bool matchIndex(
+  IndexMatch &match, ZuCSpan expectedID,
+  const XFields &fields, const XKey &key, KeyID keyID,
+  const IndexRow &row, bool oidMatch)
+{
+  unsigned n = key.fields.length();
+  if (row.indexID != expectedID || row.unique != !keyID ||
+      row.nKey != n || row.nTotal != n ||
+      !row.field || row.field > n ||
+      (!ZuNull(match.next) && row.field != match.next + 1) ||
+      (ZuNull(match.next) && row.field != 1))
+    return false;
+  const auto &keyField = key.fields[row.field - 1];
+  const auto &field = fields[keyField.field];
+  if (row.fieldID != field.id_ || !oidMatch ||
+      row.descending != keyField.indexDesc())
+    return false;
+  match.next = row.field;
+  return true;
+}
+
+inline const XField &xFieldAt(
+    const XFields &, const XFields &fields, unsigned i)
+{
+  return fields[i];
+}
+inline const XField &xFieldAt(
+    const XFields &fields, const XFieldIxs &projection, unsigned i)
+{
+  return fields[projection[i]];
+}
+inline const XField &xFieldAt(
+    const XFields &fields, const XKeyFields &projection, unsigned i)
+{
+  return fields[projection[i].field];
+}
+
+template <typename Param>
+inline void continuation(
+  SQLString &sql, const XFields &fields, const XKey &key,
+  unsigned begin, bool inclusive, Param param)
+{
+  unsigned n = key.fields.length();
+  if (begin >= n) return;
+  bool descending = key.direction == XKey::Descending;
+  if (key.direction != XKey::Mixed) {
+    sql << '(';
+    for (unsigned i = begin; i < n; i++) {
+      if (i > begin) sql << ',';
+      sql << '"' << fields[key.fields[i].field].id_ << '"';
+    }
+    sql << ')' << (descending ? '<' : '>');
+    if (inclusive) sql << '=';
+    sql << '(';
+    for (unsigned i = begin; i < n; i++) {
+      if (i > begin) sql << ',';
+      param(sql, i);
+    }
+    sql << ')';
+    return;
+  }
+
+  const auto &first = fields[key.fields[begin].field];
+  sql << '"' << first.id_ << '"'
+    << (key.fields[begin].descend() ? '<' : '>') << '=';
+  param(sql, begin);
+  sql << " AND (";
+  unsigned open = 1;
+  for (unsigned i = begin; i < n; i++) {
+    const auto &xField = fields[key.fields[i].field];
+    sql << '"' << xField.id_ << '"'
+      << (key.fields[i].descend() ? '<' : '>');
+    if (inclusive && i + 1 == n) sql << '=';
+    param(sql, i);
+    if (i + 1 < n) {
+      sql << " OR (\"" << xField.id_ << "\"=";
+      param(sql, i);
+      sql << " AND (";
+      open += 2;
+    }
+  }
+  while (open--) sql << ')';
+}
 
 // --- value union (postgres binary send/receive formats)
 
@@ -1145,15 +1275,21 @@ loadValue(
 
 using Offset = Zfb::Offset<void>;
 
+struct SavedOffset {
+  Offset	offset;
+  uint8_t	ipType;
+};
+
 struct Offsets {
-  Offset		*data;
+  SavedOffset		*data;
   unsigned		in = 0;
   mutable unsigned	out = 0;
 
-  Offsets(Offset *data_) : data{data_} { }
+  Offsets(SavedOffset *data_) : data{data_} { }
 
-  void push(Offset o) { data[in++] = o; }
-  Offset shift() const { return data[out++]; }
+  void push(Offset o) { data[in++] = {o, 0}; }
+  void push(Offset o, uint8_t ipType) { data[in++] = {o, ipType}; }
+  SavedOffset shift() const { return data[out++]; }
 };
 
 template <unsigned Type>
@@ -1189,7 +1325,10 @@ template <unsigned Type>
 inline ZuIfT<Type == Value::Index<IP>{}>
 saveOffset(Zfb::Builder &fbb, Offsets &offsets, const Value &value)
 {
-  offsets.push(ZfbTransform::IP::save(fbb, value.p<Type>().ziIP()).offset);
+  auto ip = value.p<Type>().ziIP();
+  offsets.push(
+    ZfbTransform::IP::save(fbb, ip).offset,
+    uint8_t(ZfbTransform::IP::type(ip)));
 }
 
 template <unsigned Type>
@@ -1404,9 +1543,9 @@ inline ZuIfT<
   isVar(Type)>
 saveValue(
   Zfb::Builder &fbb, const Offsets &offsets,
-  const reflection::Field *field, const Value &value)
+  const reflection::Field *field, const Value &)
 {
-  fbb.AddOffset(field->offset(), offsets.shift());
+  fbb.AddOffset(field->offset(), offsets.shift().offset);
 }
 
 template <unsigned Type>
@@ -1524,43 +1663,89 @@ saveValue(
   Zfb::Builder &fbb, const Offsets &offsets,
   const reflection::Field *field, const Value &value)
 {
+  auto saved = offsets.shift();
   fbb.AddElement<uint8_t>(
-    field->offset() - 2,
-    static_cast<uint8_t>(ZfbTransform::IP::type(value.p<Type>().ziIP())), 0);
-  fbb.AddOffset(field->offset(), offsets.shift());
+    field->offset() - 2, saved.ipType, 0);
+  fbb.AddOffset(field->offset(), saved.offset);
 }
 
 // --- data tuple
 
 ZuDerive(Tuple, (ZtArray<Value, ZtArrayHeapID<"ZdbPQ.Tuple">>));
+ZuDerive(ResultTuple,
+  (ZtArray<Value, ZtArrayHeapID<"ZdbPQ.ResultTuple">>));
+ZuDerive(QueryParams,
+  (ZtArray<uintptr_t, ZtArrayHeapID<"ZdbPQ.QueryParams">>));
+ZuDerive(PrepParams,
+  (ZtArray<uintptr_t, ZtArrayHeapID<"ZdbPQ.PreparedParams">>));
+ZuDerive(SavedOffsets,
+  (ZtArray<SavedOffset, ZtArrayHeapID<"ZdbPQ.SavedOffset">>));
+
+struct ParamLayout {
+  static constexpr unsigned WordSize = sizeof(uintptr_t);
+
+  static constexpr unsigned oidWords(unsigned n) {
+    return (n * sizeof(Oid) + WordSize - 1) / WordSize;
+  }
+  static constexpr unsigned intWords(unsigned n) {
+    return (n * sizeof(int) + WordSize - 1) / WordSize;
+  }
+  static constexpr unsigned words(unsigned n, bool types) {
+    return (types ? oidWords(n) : 0) + n + (intWords(n) << 1);
+  }
+
+  ParamLayout(uintptr_t *ptr, unsigned n, bool types)
+  {
+    if (!n) return;
+    if (types) {
+      oids = reinterpret_cast<Oid *>(ptr);
+      ptr += oidWords(n);
+    }
+    values = reinterpret_cast<const char **>(ptr);
+    ptr += n;
+    lengths = reinterpret_cast<int *>(ptr);
+    ptr += intWords(n);
+    formats = reinterpret_cast<int *>(ptr);
+  }
+
+  Oid		*oids = nullptr;
+  const char	**values = nullptr;
+  int		*lengths = nullptr;
+  int		*formats = nullptr;
+};
+
+ZuAssert(alignof(Oid) <= alignof(uintptr_t));
+ZuAssert(alignof(int) <= alignof(uintptr_t));
+ZuAssert(ParamLayout::words(Zdb_::maxFields() + 4, true) <=
+  ZuCmp<unsigned>::maximum());
 
 // load tuple from flatbuffer
 // - when called from select_send(), nParams is < fields.length()
-template <typename Tuple_>
+template <typename Tuple_, typename Fields>
 void loadTuple(
   Tuple_ &tuple,
   ZuSpan<uint8_t> varBuf,
   ZuSpan<const VarBufPart> varBufParts,
   const OIDs &oids,
   unsigned nParams,
-  const ZfVFieldArray &fields,
-  const XFields &xFields,
+  const XFields &xFields, const Fields &fields,
   const Zfb::Table *fbo)
 {
   unsigned j = 0;
   for (unsigned i = 0; i < nParams; i++) {
     auto value = static_cast<Value *>(tuple.push());
-    auto type = xFields[i].type;
+    const auto &xField = xFieldAt(xFields, fields, i);
+    auto type = xField.type;
     if (!isVar(type))
       ZuSwitch::dispatch<Value_::N>(type, [
-	value, field = xFields[i].field, fbo
+	value, field = xField.field, fbo
       ](auto I) {
 	loadValue<I>(value->new_<I, true>(), field, fbo);
       });
     else {
       auto &varBufPart = varBufParts[j++];
       ZuSwitch::dispatch<Value_::N>(type, [
-	value, &varBuf, &varBufPart, &oids, field = xFields[i].field, fbo
+	value, &varBuf, &varBufPart, &oids, field = xField.field, fbo
       ](auto I) {
 	loadValue<I>(
 	  value->new_<I, true>(), varBuf, varBufPart, oids, field, fbo);
@@ -1570,17 +1755,21 @@ void loadTuple(
 }
 
 // save tuple to flatbuffer
+template <typename Fields>
 Offset saveTuple(
   Zfb::Builder &fbb,
-  const XFields &xFields,
+  const XFields &xFields, const Fields &fields,
+  unsigned nOffsets,
   ZuSpan<const Value> tuple)
 {
-  unsigned n = xFields.length();
+  unsigned n = fields.length();
   ZmAssert(tuple.length() == n);
-  auto offsets_ = ZmScratch(Offset, n);
+  auto offsets_ =
+    ZmScratch(SavedOffset, nOffsets, SavedOffsets::VHeap);
   Offsets offsets(offsets_.data());
   for (unsigned i = 0; i < n; i++) {
-    auto type = xFields[i].type;
+    const auto &xField = xFieldAt(xFields, fields, i);
+    auto type = xField.type;
     const auto &value = tuple[i];
     ZuSwitch::dispatch<Value::N>(type,
       [&fbb, &offsets, &value](auto I) {
@@ -1589,10 +1778,11 @@ Offset saveTuple(
   }
   auto start = fbb.StartTable();
   for (unsigned i = 0; i < n; i++) {
-    auto type = xFields[i].type;
+    const auto &xField = xFieldAt(xFields, fields, i);
+    auto type = xField.type;
     const auto &value = tuple[i];
     ZuSwitch::dispatch<Value::N>(type,
-      [&fbb, &offsets, field = xFields[i].field, &value](auto I) {
+      [&fbb, &offsets, field = xField.field, &value](auto I) {
 	saveValue<I>(fbb, offsets, field, value);
       });
   }
@@ -1846,6 +2036,7 @@ private:
   void open_rcvd(PGresult *);
   void open_failed(ZeException);
   void opened();
+  void initFieldMap();
 
   // open phases
   void mkTable();
@@ -1907,7 +2098,9 @@ private:
 
   int select_send(Work::Select &);
   void select_rcvd(Work::Select &, PGresult *);
-  ZmRef<IOBuf> select_save(ZuSpan<const Value> tuple, const XFields &xFields);
+  template <typename Fields>
+  ZmRef<IOBuf> select_save(
+    ZuSpan<const Value> tuple, const Fields &fields, unsigned nOffsets);
   void select_failed(Work::Select &, ZeException);
 
   int find_send(Work::Find &);
@@ -1928,11 +2121,27 @@ private:
   void write_failed(Work::Write &, ZeException);
 
 private:
-  ZuDerive(UpdFields,
-    (ZtArray<const ZfVField *, ZtArrayHeapID<"ZdbPQ.UpdFields">>));
   ZuDerive(FieldID, ZtString<ZtStringHeapID<"ZdbPQ.FieldID">>);
-  ZuDerive(KeyGroup, (ZtArray<unsigned, ZtArrayHeapID<"ZdbPQ.KeyGroup">>));
-  ZmLHashKVDerive(FieldMap, FieldID, unsigned, ZmLHashLocal<>);
+  ZmLHashKVDerive(FieldMapHash, FieldID, unsigned, ZmLHashLocal<>);
+  template <typename Heap> struct FieldMap_ : FieldMapHash, Heap {
+    using FieldMapHash::FieldMapHash;
+  };
+  ZuDerive(FieldMap,
+    (FieldMap_<ZmHeap<"ZdbPQ.FieldMap", FieldMap_<ZuVoid>>>));
+  struct IndexState : IndexMatch {
+    IDString	id;
+    KeyID	keyID = 0;
+  };
+  ZuDerive(IndexStates,
+    (ZtArray<IndexState, ZtArrayHeapID<"ZdbPQ.IndexState">>));
+  ZmLHashKVDerive(IndexMapHash, ZuCSpan, unsigned, ZmLHashLocal<>);
+  template <typename Heap> struct IndexMap_ : IndexMapHash, Heap {
+    using IndexMapHash::IndexMapHash;
+  };
+  ZuDerive(IndexMap,
+    (IndexMap_<ZmHeap<"ZdbPQ.IndexMap", IndexMap_<ZuVoid>>>));
+  ZuDerive(MissingIndices,
+    (ZtArray<KeyID, ZtArrayHeapID<"ZdbPQ.MissingIndex">>));
   ZuDerive(MaxUN, (ZtArray<UN, ZtArrayHeapID<"ZdbPQ.MaxUN">>));
 
   Store			*m_store = nullptr;
@@ -1940,14 +2149,15 @@ private:
   IDString		m_id_;		// snake case
   IDString		m_stmtID;	// statement prefix and zdb.mrd identity
   SQLString		m_relation;	// qualified SQL relation
-  ZfVFieldArray		m_fields;	// all fields
-  UpdFields		m_updFields;	// update fields
-  ZfVKeyFieldArray	m_keyFields;	// fields for each key
   XFields		m_xFields;
-  XFields		m_xUpdFields;
-  XKeyFields		m_xKeyFields;
-  KeyGroup		m_keyGroup;	// length of group key
-  FieldMap		m_fieldMap;
+  XFieldIxs		m_xUpdFields;
+  XKeys			m_xKeys;
+  uint16_t		m_xOffsets = 0;
+  ZuPtr<FieldMap>	m_fieldMap;
+  IndexStates		m_indexStates;
+  ZuPtr<IndexMap>	m_indexMap;
+  MissingIndices	m_missingIndices;
+  uint16_t		m_missingPos = 0;
   IOBufAllocFn		m_bufAllocFn;
   bool			m_internal;
 

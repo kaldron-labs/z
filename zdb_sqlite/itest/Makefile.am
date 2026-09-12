@@ -28,7 +28,8 @@ LDADD = $(top_builddir)/zdb/test/libZdbTest.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@SQLITE_LIBS@ @FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zdbsltest zdbsagatest zdbslrepltest
-dist_noinst_SCRIPTS = zdbslconfigtest zdbslinspecttest zdbslschematest
+dist_noinst_SCRIPTS = zdbslconfigtest zdbslinspecttest zdbslschematest \
+	zdbslplantest
 zdbsltest_SOURCES = zdbsltest.cc
 zdbsagatest_SOURCES = zdbsagatest.cc
 zdbslrepltest_SOURCES = zdbslrepltest.cc
@@ -43,4 +44,4 @@ test: $(noinst_PROGRAMS)
 	ZDBSL_INSPECT=$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSLInspect.so \
 	prove -j1 ./zdbsltest ./zdbsagatest ./zdbslrepltest \
 	  ./zdbslconfigtest \
-	  ./zdbslinspecttest ./zdbslschematest
+	  ./zdbslinspecttest ./zdbslschematest ./zdbslplantest

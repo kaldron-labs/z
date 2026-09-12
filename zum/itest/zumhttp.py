@@ -137,9 +137,7 @@ class Fixture:
             self.port = listener.getsockname()[1]
         self.origin = f"http://localhost:{self.port}"
         self.env = dict(os.environ, ZUM_DB_KEY=os.environ.get(
-            "ZUM_HTTP_DB_KEY", base64.b64encode(secrets.token_bytes(32)).decode()),
-            ZDB_MODULE=os.environ["ZUM_TEST_MODULE"],
-            ZDB_CONNECT=os.environ["ZUM_HTTP_CONNECT"])
+            "ZUM_HTTP_DB_KEY", base64.b64encode(secrets.token_bytes(32)).decode()))
         self.cookies = SimpleCookie()
         self.process = None
         self.log = None
@@ -255,16 +253,21 @@ class Fixture:
             assert (b"secret-key rotation complete" in result.stdout) == success
             assert b"zumd: listening" not in result.stdout
 
-        def fingerprints(snapshot, key, table=b"zum.sign_key", field=b"privateMaterial"):
+        def fingerprints(snapshot, key, table=b"zum.sign_key",
+                         field=b"privateMaterial", hex_ids=False):
             cipher = AESGCM(base64.b64decode(key))
             result = {}
             for line in snapshot.splitlines():
                 key_id, value = line.split(b"|", 1)
                 if not value:
                     continue
+                record_id = key_id
+                if hex_ids:
+                    record_id = str(int.from_bytes(
+                        bytes.fromhex(key_id.decode()), "big")).encode()
                 envelope = bytes.fromhex(value.decode())
                 assert envelope[:6] == b"\x01\x01\x00\x00\x00\x01"
-                aad = (self.origin.encode() + b"\0" + table + b"\0" + key_id +
+                aad = (self.origin.encode() + b"\0" + table + b"\0" + record_id +
                        b"\0" + field)
                 result[key_id] = hashlib.sha256(cipher.decrypt(
                     envelope[6:18], envelope[18:], aad)).digest()
@@ -272,11 +275,11 @@ class Fixture:
 
         before = ciphertext()
         original_fingerprints = fingerprints(before, old_key)
-        provider_query = ('SELECT id, lower(hex(client_secret)) '
+        provider_query = ('SELECT lower(hex(id)), lower(hex(client_secret)) '
                           'FROM "a_zum.provider" ORDER BY id')
         provider_before = sql(provider_query)
         provider_fingerprints = fingerprints(
-            provider_before, old_key, b"provider", b"clientSecret")
+            provider_before, old_key, b"provider", b"clientSecret", True)
         assert provider_fingerprints
         backup = self.directory / "before-rekey.dump"
         result = subprocess.run([
@@ -335,7 +338,7 @@ class Fixture:
         assert fingerprints(after, new_key) == original_fingerprints
         provider_after = sql(provider_query)
         assert provider_after != provider_before
-        assert fingerprints(provider_after, new_key, b"provider", b"clientSecret") == \
+        assert fingerprints(provider_after, new_key, b"provider", b"clientSecret", True) == \
             provider_fingerprints
         # The retained pre-rotation ciphertext still needs its matching old key.
         assert fingerprints(before, old_key) == original_fingerprints
@@ -410,7 +413,7 @@ class Fixture:
                     process.communicate()
                     raise AssertionError("unsupported-schema startup did not fail promptly")
             assert process.returncode != 0 and b"zumd: active" not in output
-            assert "database migration required" in log_path.read_text()
+            assert "unsupported database schema" in log_path.read_text()
             assert sql('SELECT schema_version FROM "a_zum.issuer"') == "0"
             assert sql(counts) == before
         finally:
@@ -1191,8 +1194,7 @@ class Fixture:
                           f'audience: {json.dumps(audience)}, '
                           f'audienceID: {audiences[0]["id"]}, port: {port}\n')
         env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"])
-        for key in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT",
-                    "ZUM_TEST_MODULE", "ZUM_HTTP_CONNECT", "ZUM_TEST_CONNECT"):
+        for key in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
         executable = Path(__file__).resolve().parent.parent / "example" / "zumpingd"
         missing_env = dict(env)
@@ -1360,8 +1362,7 @@ class Fixture:
         self.cookies = SimpleCookie()
         executable = Path(__file__).resolve().parent.parent / "example" / "zumping"
         env = dict(os.environ)
-        for key in ("ZUM_CLIENT_SECRET", "ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT",
-                    "ZUM_TEST_MODULE", "ZUM_HTTP_CONNECT", "ZUM_TEST_CONNECT"):
+        for key in ("ZUM_CLIENT_SECRET", "ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
         with (self.directory / "zumping.log").open("ab") as log:
             process = subprocess.Popen([str(executable), "--config", str(config), "--no-browser"],
@@ -1396,8 +1397,7 @@ class Fixture:
         assert shortened != source
         unavailable.write_text(shortened)
         env = dict(os.environ)
-        for key in ("ZUM_CLIENT_SECRET", "ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT",
-                    "ZUM_TEST_MODULE", "ZUM_HTTP_CONNECT", "ZUM_TEST_CONNECT"):
+        for key in ("ZUM_CLIENT_SECRET", "ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
         with (self.directory / "zumping.log").open("ab") as log:
             result = subprocess.run([str(executable), "--config", str(unavailable),
@@ -2023,7 +2023,7 @@ class Fixture:
 
 
 def main():
-    for key in ("ZUM_TEST_MODULE", "ZUM_HTTP_CONNECT"):
+    for key in ("ZDB_MODULE", "ZDB_CONNECT"):
         if not os.environ.get(key):
             raise AssertionError("set " + key + " for a fresh SQLite HTTP fixture")
     directory = tempfile.mkdtemp(prefix="zum-http-")

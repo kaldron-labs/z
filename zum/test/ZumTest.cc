@@ -1839,26 +1839,6 @@ static void enrollmentSaga()
   ZuTestScope(enrollmentSaga);
   using M = Zum::MSaga;
   {
-    Zum::App app{.id = 77, .name = "migrated"};
-    Zum::MigrationPut put{
-      .kind = Zum::MigrationPut::Kind::App,
-      .image = Zum::SagaImage::save(app)};
-    ZmRef<M> saga = new M{};
-    saga->init(ZuMv(put));
-    Zdb_::SagaPayload payload;
-    M::save(saga, payload);
-    auto loaded = M::load(Zum::MigrationPut::Type{}(), payload);
-    ZuCheck(bool(loaded));
-    ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-      if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::MigrationPut>{}) {
-        Zum::App app;
-        return change.kind == Zum::MigrationPut::Kind::App &&
-          Zum::SagaImage::load(change.image, app) &&
-          app.id == 77 && app.name == "migrated";
-      } else return false;
-    }));
-  }
-  {
     Zum::KeyBinding binding{
       .issuer = "issuer",
       .beforeCheck = Zum::Bytes{ZuBSpan{"old-check"}},
@@ -6187,7 +6167,7 @@ static void enrollmentRuntime()
     authority.data.actionRecords[0].appID == 900);
 
   // Missing rows, foreign ownership, disabled rows, and unapproved IDs
-  // must not authorize a workload through the scope's legacy audience URI.
+  // must not authorize a workload through a different audience URI.
   for (unsigned i = 0; i < 4; ++i) {
     Zum::AudienceID audienceID = 920 + i;
     Zum::ScopeID scopeID = 910 + i;

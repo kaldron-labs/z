@@ -17,8 +17,8 @@ import time
 
 
 def exercise(directory):
-    module = os.environ["ZUM_TEST_MODULE"]
-    connections = [os.environ["ZUM_CLUSTER_CONNECT_A"], os.environ["ZUM_CLUSTER_CONNECT_B"]]
+    module = os.environ["ZDB_MODULE"]
+    connections = [os.environ["ZDB_CONNECT"], os.environ["ZUM_CLUSTER_PEER_CONNECT"]]
     assert connections[0] != connections[1], "cluster nodes need separate disposable stores"
     reservations = [socket.socket() for _ in range(4)]
     for listener in reservations:

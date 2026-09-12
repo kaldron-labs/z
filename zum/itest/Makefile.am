@@ -20,9 +20,8 @@ LDADD = $(top_builddir)/zum/src/libZumServer.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zumrestarttest zummigrationtest zumhttptest zumupstreamtest zumfederationtest zumclustertest
+noinst_PROGRAMS = zumrestarttest zumhttptest zumupstreamtest zumfederationtest zumclustertest
 zumrestarttest_SOURCES = zumrestarttest.cc
-zummigrationtest_SOURCES = zummigrationtest.cc
 zumhttptest_SOURCES = zumhttptest.cc
 zumhttptest_LDADD = $(top_builddir)/zu/src/libZu.la @Z_LIBS@
 zumfederationtest_SOURCES = zumfederationtest.cc
@@ -35,16 +34,20 @@ EXTRA_DIST = README.md zumhttp.py zumd.cf zumidp.py zumfederation.py zumcluster.
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
-	@dir=$$(mktemp -d); \
-	trap 'for db in restart migration-source migration-target http federation cluster-a cluster-b; do \
+	@set -e; \
+	export PYTHONDONTWRITEBYTECODE=1; \
+	dir=$$(mktemp -d); \
+	trap 'for db in restart http federation cluster-a cluster-b; do \
 	  rm -f "$$dir/$$db.db" "$$dir/$$db.db-wal" "$$dir/$$db.db-shm"; \
 	done; rmdir "$$dir"' EXIT; \
-	ZUM_TEST_MODULE=$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so \
-	ZUM_TEST_CONNECT="$$dir/restart.db" \
-	ZUM_MIGRATION_SOURCE_CONNECT="$$dir/migration-source.db" \
-	ZUM_MIGRATION_TARGET_CONNECT="$$dir/migration-target.db" \
-	ZUM_HTTP_CONNECT="$$dir/http.db" \
-	ZUM_FEDERATION_CONNECT="$$dir/federation.db" \
-	ZUM_CLUSTER_CONNECT_A="$$dir/cluster-a.db" \
-	ZUM_CLUSTER_CONNECT_B="$$dir/cluster-b.db" \
-	prove -j1 $(noinst_PROGRAMS)
+	module=$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so; \
+	ZDB_MODULE="$$module" ZDB_CONNECT="$$dir/restart.db" \
+	  prove ./zumrestarttest; \
+	ZDB_MODULE="$$module" ZDB_CONNECT="$$dir/http.db" \
+	  prove ./zumhttptest; \
+	prove ./zumupstreamtest; \
+	ZDB_MODULE="$$module" ZDB_CONNECT="$$dir/federation.db" \
+	  prove ./zumfederationtest; \
+	ZDB_MODULE="$$module" ZDB_CONNECT="$$dir/cluster-a.db" \
+	  ZUM_CLUSTER_PEER_CONNECT="$$dir/cluster-b.db" \
+	  prove ./zumclustertest

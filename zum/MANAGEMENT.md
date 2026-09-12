@@ -59,9 +59,9 @@ authority versions within the invitation saga. A local account's presence also
 blocks new external issuance for that name, including when the local account is
 pending or suspended. No identity, membership or role assignment is transferred.
 Issued access tokens retain their documented expiry boundary. The current
-UserInvite definition and physical schema are covered by the PostgreSQL staged
-recovery and migration suites; old invitation intents must be settled before
-the required offline migration.
+UserInvite definition and physical schema are covered by the SQLite staged
+recovery suite. Prior schemas and saga definitions are unsupported; backward
+compatibility and data migration are non-goals.
 
 Listener availability is separate from database authority. Passive nodes expose
 `/health/live`; `/health/ready` and database-dependent operations return 503

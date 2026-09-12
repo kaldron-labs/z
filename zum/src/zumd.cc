@@ -28,7 +28,6 @@
 #include "ZumDaemon.hh"
 #include "ZumUpstream.hh"
 #include "ZumRekey.hh"
-#include "ZumMigrate.hh"
 
 struct Options {
   Zum::String	config;
@@ -38,9 +37,6 @@ struct Options {
   Zum::String	issuer;
   Zum::String	admin;
   Zum::String	bootstrapOutput;
-  Zum::String	migrate;
-  Zum::String	sourceModule;
-  Zum::String	sourceConnect;
   Zum::String	addr{"127.0.0.1"};
   Zum::String	rpID{"localhost"};
   Zum::String	rpName{"Zum"};
@@ -61,9 +57,6 @@ ZfStruct(, (Options, CLI),
   (((issuer),	(CLI::Long<"issuer">)),		(String)),
   (((admin),	(CLI::Long<"admin">)),		(String)),
   (((bootstrapOutput), (CLI::Long<"bootstrap-output">)), (String)),
-  (((migrate),	(CLI::Long<"migrate">)),	(String)),
-  (((sourceModule), (CLI::Long<"source-module">)), (String)),
-  (((sourceConnect), (CLI::Long<"source-connect">)), (String)),
   (((addr),	(CLI::Long<"addr">)),		(String, "127.0.0.1")),
   (((port),	(CLI::Long<"port">, (Range<1, 65535>))), (UInt32, 8080)),
   (((rpID),	(CLI::Long<"rp-id">)),		(String, "localhost")),
@@ -90,9 +83,6 @@ static void usage(int code)
     "  --admin=LOGIN       initial local administrator login\n"
     "  --bootstrap-output=FILE  owner-only enrollment URL output\n"
     "  --bootstrap-ttl=N   enrollment capability seconds (default: 900)\n"
-    "  --migrate=FILE      offline legacy-schema migration mapping\n"
-    "  --source-module=PATH  migration source Zdb store module\n"
-    "  --source-connect=STRING  migration source Zdb connection\n"
     "  --upstream-origins=N  maximum cached upstream origins (default: 32)\n"
     "  --addr=IP           HTTP listen address (default: 127.0.0.1)\n"
     "  --port=N            HTTP listen port (default: 8080)\n"
@@ -152,50 +142,6 @@ static ZuPtr<const ZfCf::AnyNode> config(
   return ZuMv(scan.p<1>());
 }
 
-static ZuPtr<const ZfCf::AnyNode> migrationConfig(
-    const Options &options, Zum::String &source)
-{
-  ZmRef<ZfCf::Defines> defines = new ZfCf::Defines{};
-  defines->add(ZfCf::DefKey{"MODULE"}, ZfCf::DefVal{options.module});
-  defines->add(ZfCf::DefKey{"CONNECT"}, ZfCf::DefVal{options.connect});
-  defines->add(ZfCf::DefKey{"SOURCE_MODULE"},
-    ZfCf::DefVal{options.sourceModule});
-  defines->add(ZfCf::DefKey{"SOURCE_CONNECT"},
-    ZfCf::DefVal{options.sourceConnect});
-  defines->add(ZfCf::DefKey{"DEBUG"},
-    ZfCf::DefVal{options.debug ? "true" : "false"});
-  auto scan = ZfCf::scan(
-    "zdb: {\n"
-    "  thread: targetDB, shards: 1, threads: [targetShard],\n"
-    "  store: {thread: targetStore, module: ${MODULE},\n"
-    "    connection: ${CONNECT}},\n"
-    "  hostID: target, hosts: {target: {standalone: true}},\n"
-    "  tables: {}, debug: ${DEBUG}\n"
-    "},\n"
-    "sourceZdb: {\n"
-    "  thread: sourceDB, shards: 1, threads: [sourceShard],\n"
-    "  store: {thread: sourceStore, module: ${SOURCE_MODULE},\n"
-    "    connection: ${SOURCE_CONNECT}},\n"
-    "  hostID: source, hosts: {source: {standalone: true}},\n"
-    "  tables: {}, debug: ${DEBUG}\n"
-    "},\n"
-    "mx: {\n"
-    "  nThreads: 8, rxThread: rx, txThread: tx, threads: {\n"
-    "    1: {name: rx, isolated: true},\n"
-    "    2: {name: tx, isolated: true},\n"
-    "    3: {name: targetDB, isolated: true},\n"
-    "    4: {name: targetStore, isolated: true},\n"
-    "    5: {name: targetShard, isolated: true},\n"
-    "    6: {name: sourceDB, isolated: true},\n"
-    "    7: {name: sourceStore, isolated: true},\n"
-    "    8: {name: sourceShard, isolated: true}\n"
-    "  }\n"
-    "}\n", {}, ZuMv(defines));
-  if (scan.p<0>() < 0) return {};
-  source.null();
-  return ZuMv(scan.p<1>());
-}
-
 struct DB : public Zum::DB {
   ZmRef<Zum::Requests>	requests;
   ZmRef<Zum::Requests>	bootstrapRequests;
@@ -203,160 +149,6 @@ struct DB : public Zum::DB {
   uint64_t		generation = 0;
   bool			failed = false;
 };
-
-struct MigrationWait : public ZumPolymorph {
-  ZmSemaphore		done;
-  ZmAtomic<unsigned>	signaled = 0;
-  Zum::String		error;
-  bool			migrated = false;
-
-  void complete(bool ok, Zum::String error_ = {})
-  {
-    if (signaled.cmpXch(1, 0)) return;
-    migrated = ok;
-    error = ZuMv(error_);
-    done.post();
-  }
-};
-
-struct MigrationSourceDB : public Zdb {
-  ZmSemaphore		changed;
-  ZmAtomic<MigrationWait *> wait = nullptr;
-  bool			up = false;
-  bool			failed = false;
-};
-
-struct MigrationTargetDB : public Zum::DB {
-  ZmSemaphore		changed;
-  ZmAtomic<MigrationWait *> wait = nullptr;
-  bool			up = false;
-  bool			failed = false;
-};
-
-static void migrationSourceUp(Zdb *db, ZdbHost *)
-{
-  auto source = static_cast<MigrationSourceDB *>(db);
-  source->up = true;
-  source->changed.post();
-}
-
-static void migrationSourceDown(Zdb *db, bool failed)
-{
-  auto source = static_cast<MigrationSourceDB *>(db);
-  source->up = false;
-  source->failed |= failed;
-  source->changed.post();
-  if (MigrationWait *wait = source->wait)
-    wait->complete(false, "migration source deactivated");
-}
-
-static void migrationTargetUp(Zdb *db, ZdbHost *)
-{
-  auto target = static_cast<MigrationTargetDB *>(db);
-  target->up = true;
-  target->changed.post();
-}
-
-static void migrationTargetDown(Zdb *db, bool failed)
-{
-  auto target = static_cast<MigrationTargetDB *>(db);
-  target->up = false;
-  target->failed |= failed;
-  target->changed.post();
-  if (MigrationWait *wait = target->wait)
-    wait->complete(false, "migration target deactivated");
-}
-
-template <typename DB>
-static bool migrationActive(DB *db)
-{
-  db->changed.wait();
-  return db->up && !db->failed;
-}
-
-static int migrate(const Options &options, ZuBSpan dbKey)
-{
-  Zum::Migrate::Plan plan;
-  Zum::String error;
-  if (!Zum::Migrate::loadPlan(options.migrate, plan, error))
-    throw ZeEXCEPT(Fatal, "zumd", ([error = ZuMv(error)](auto &s) {
-      s << "invalid migration mapping: " << error;
-    }));
-
-  Zum::String configSource;
-  auto cf = migrationConfig(options, configSource);
-  if (!cf || !cf->resolve("mx") || !cf->resolve("zdb") ||
-      !cf->resolve("sourceZdb"))
-    throw ZeEXCEPT(Fatal, "zumd", "invalid migration configuration");
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
-  ZmRef<MigrationSourceDB> source = new MigrationSourceDB{};
-  ZmRef<MigrationTargetDB> target = new MigrationTargetDB{};
-  source->init(ZdbCf{cf->resolve("sourceZdb")}, &mx,
-    ZdbHandler{.upFn = migrationSourceUp, .downFn = migrationSourceDown});
-  target->init(ZdbCf{cf->resolve("zdb")}, &mx,
-    ZdbHandler{.upFn = migrationTargetUp, .downFn = migrationTargetDown});
-  ZmRef<Zum::Legacy::DBContext> sourceContext =
-    Zum::Legacy::registerSchema(source);
-  ZmRef<Zum::DBContext> targetContext = Zum::registerSchema(target);
-  bool mxStarted = false, sourceStarted = false, targetStarted = false;
-  bool sourceDrained = true, targetDrained = true;
-  auto stop = [
-    &targetStarted, &targetDrained, target,
-    &sourceStarted, &sourceDrained, source,
-    &mxStarted, &mx, &targetContext, &sourceContext
-  ]() {
-    if (targetStarted) {
-      targetDrained = target->stop();
-      targetStarted = false;
-    }
-    if (sourceStarted) {
-      sourceDrained = source->stop();
-      sourceStarted = false;
-    }
-    if (mxStarted) {
-      mx.stop();
-      mxStarted = false;
-    }
-    targetContext = {};
-    sourceContext = {};
-    target->final();
-    source->final();
-  };
-  try {
-    if (!(mxStarted = mx.start()) || !(sourceStarted = source->start()) ||
-        !migrationActive(source.ptr()) || !(targetStarted = target->start()) ||
-        !migrationActive(target.ptr()))
-      throw ZeEXCEPT(Fatal, "zumd", "migration database activation failed");
-    Ztls::Random rng;
-    if (!rng.init())
-      throw ZeEXCEPT(Fatal, "zumd", "random initialization failed");
-    ZmRef<MigrationWait> wait = new MigrationWait{};
-    source->wait = wait.ptr();
-    target->wait = wait.ptr();
-    Zum::Migrate::run(source, sourceContext, target, targetContext, rng,
-      Zum::Migrate::Config{
-        .plan = ZuMv(plan), .dbKey = Zum::Bytes{dbKey}},
-      [wait](
-          bool ok, Zum::String error) mutable {
-        wait->complete(ok, ZuMv(error));
-      });
-    wait->done.wait();
-    source->wait = nullptr;
-    target->wait = nullptr;
-    if (!wait->migrated)
-      throw ZeEXCEPT(Fatal, "zumd", ([error = ZuMv(wait->error)](auto &s) {
-        s << "migration failed: " << error;
-      }));
-    stop();
-    if (!sourceDrained || !targetDrained)
-      throw ZeEXCEPT(Fatal, "zumd", "migration store drain failed");
-  } catch (...) {
-    stop();
-    throw;
-  }
-  std::cout << "zumd: migration complete" << std::endl;
-  return 0;
-}
 
 static ZmSemaphore done;
 static ZmAtomic<unsigned> stopping = 0;
@@ -395,25 +187,15 @@ int main(int argc, char **argv)
   if (options.help) usage(0);
   if (!options.module) options.module = ::getenv("ZDB_MODULE");
   if (!options.connect) options.connect = ::getenv("ZDB_CONNECT");
-  if (!options.sourceModule) options.sourceModule = options.module;
   ZuCSpan encodedDBKey = ::getenv("ZUM_DB_KEY");
   if (!encodedDBKey) usage(1);
-  if (options.migrate) {
-    if (options.config || !options.module || !options.connect ||
-        !options.sourceModule || !options.sourceConnect ||
-        (options.module == options.sourceModule &&
-         options.connect == options.sourceConnect) ||
-        options.rekey || options.once || options.bootstrapReissue)
-      usage(1);
-  } else if ((!options.config && (!options.module || !options.connect)) ||
+  if ((!options.config && (!options.module || !options.connect)) ||
       !options.issuer || (!options.rekey &&
         (!options.admin || !options.bootstrapOutput)) ||
-      options.sourceConnect ||
       (options.rekey && (options.once || options.bootstrapReissue))) {
     usage(1);
   }
-  if (!options.rekey && !options.migrate &&
-      !Zum::loginNormalize(options.admin)) {
+  if (!options.rekey && !Zum::loginNormalize(options.admin)) {
     std::cerr << "zumd: invalid administrator login\n";
     return 1;
   }
@@ -442,20 +224,6 @@ int main(int argc, char **argv)
   ZiLog::start();
   ZmTrap::sigintFn(interrupted);
   ZmTrap::trap();
-
-  if (options.migrate) {
-    int migrationResult = 1;
-    try {
-      migrationResult = migrate(options, dbKey);
-    } catch (const ZeException &e) {
-      std::cerr << e << '\n';
-    } catch (const ZeError &e) {
-      std::cerr << e.message() << '\n';
-    }
-    if (dbKey && dbKey.mutable_()) ZuClear(dbKey.data(), dbKey.length());
-    ZiLog::stop();
-    return migrationResult;
-  }
 
   int result = 1;
   try {

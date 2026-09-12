@@ -16,28 +16,20 @@
 #include <sqlite3.h>
 
 #include <zlib/ZmHash.hh>
-#include <zlib/ZmLHash.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wchanges-meaning"
-#endif
-#include <zlib/ZdbMemStore.hh>
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
-#include <zlib/ZdbSLCodec.hh>
+#include <zlib/ZfbStruct.hh>
+
+#include <zlib/ZdbStore.hh>
 
 namespace ZdbSL {
 
 using namespace Zdb_;
 
 ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbSL.SQLString">>);
-ZuDerive(FieldID, ZtString<ZtStringHeapID<"ZdbSL.FieldID">>);
 
 namespace Synchronous {
   ZtEnum(ZdbSLAPI, Synchronous, int8_t, NORMAL, FULL, OFF);
@@ -47,20 +39,32 @@ namespace OpenState {
   enum { Closed, Opened, Reopen };
 }
 
+struct FieldInfo {
+  const reflection::Field	*field = nullptr;
+  uint8_t			type = 0;
+  uint8_t			storage = 0;
+  uint8_t			fixedSize = 0;
+};
+
 struct XField {
-  FieldID		id;
+  IDString		id;
   const ZfVField	*vfield = nullptr;
-  ZdbMem::XField	field{};
+  FieldInfo		field;
 };
 ZuDerive(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbSL.XField">>));
+struct XFieldRef {
+  const XField	*field = nullptr;
+  bool		descend = false;
+};
+ZuDerive(XFieldRefs,
+  (ZtArray<XFieldRef, ZtArrayHeapID<"ZdbSL.XFieldRef">>));
 ZuDerive(XKeyFields,
-  (ZtArray<XFields, ZtArrayHeapID<"ZdbSL.XKeyField">>));
-ZuDerive(UpdFields,
-  (ZtArray<const ZfVField *, ZtArrayHeapID<"ZdbSL.UpdFields">>));
+  (ZtArray<XFieldRefs, ZtArrayHeapID<"ZdbSL.XKeyField">>));
 ZuDerive(KeyGroup,
   (ZtArray<unsigned, ZtArrayHeapID<"ZdbSL.KeyGroup">>));
+ZuDerive(KeyDirs,
+  (ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.KeyDirs">>));
 ZuDerive(MaxUN, (ZtArray<UN, ZtArrayHeapID<"ZdbSL.MaxUN">>));
-ZmLHashKVDerive(FieldMap, FieldID, unsigned, ZmLHashLocal<>);
 
 struct KeyStmts {
   sqlite3_stmt	*count = nullptr;
@@ -123,20 +127,18 @@ private:
   void state_();
   void finalize_();
 
-  ZmRef<IOBuf> tuple_(sqlite3_stmt *, const XFields &);
+  template <typename Fields>
+  ZmRef<IOBuf> tuple_(sqlite3_stmt *, const Fields &);
   template <bool Recovery> ZmRef<IOBuf> row_(sqlite3_stmt *);
 
   Store			*m_store = nullptr;
   IDString		m_id;
   SQLString		m_relation;
-  ZfVFieldArray		m_fields;
-  UpdFields		m_updFields;
-  ZfVKeyFieldArray	m_keyFields;
   XFields		m_xFields;
-  XFields		m_xUpdFields;
+  XFieldRefs		m_xUpdFields;
   XKeyFields		m_xKeyFields;
   KeyGroup		m_keyGroup;
-  FieldMap		m_fieldMap;
+  KeyDirs		m_keyDirs;
   IOBufAllocFn		m_bufAllocFn;
   bool			m_internal = false;
   int8_t		m_openState = OpenState::Closed;
@@ -180,6 +182,9 @@ public:
   bool stopping() const { return m_stopping; }
   sqlite3 *conn() const { return m_conn; }
   unsigned nShards() const { return m_nShards; }
+  unsigned lengthLimit() const { return m_lengthLimit; }
+  sqlite3_stmt *beginStmt() const { return m_beginStmt; }
+  sqlite3_stmt *commitStmt() const { return m_commitStmt; }
 
   template <typename ...Args> void run(Args &&...args) {
     m_mx->run(ZuFwd<Args>(args)..., m_sid);
@@ -201,6 +206,9 @@ private:
   FailFn		m_failFn;
   ZmRef<StoreTbls>	m_storeTbls;
   sqlite3		*m_conn = nullptr;
+  sqlite3_stmt		*m_beginStmt = nullptr;
+  sqlite3_stmt		*m_commitStmt = nullptr;
+  unsigned		m_lengthLimit = 0;
   bool			m_stopping = false;
   Synchronous::T	m_synchronous = Synchronous::NORMAL;
 };

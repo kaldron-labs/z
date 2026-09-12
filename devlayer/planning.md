@@ -47,3 +47,13 @@
   - should in-place mutation be used?
   - can the allocation be replaced by on-stack scratch storage with heap fallback, e.g. `ZtScratch`
 - repair all findings
+
+find performance impairments
+  - unnecessary copying
+  - unnecessary use of heap (where stack scratch would be better)
+  - unnecessary validation
+  - unnecessary hand-rolled code
+    - where use of dependency Z framework capabilities would be better
+    - particularly format conversions, printing, scanning, byte-swapping, etc.
+  - unnecessarily complex algorithms
+  - repeated evaluation of stable expressions

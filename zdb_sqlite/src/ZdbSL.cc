@@ -9,19 +9,72 @@
 #include <zlib/ZuJoin.hh>
 #include <zlib/ZuSwitch.hh>
 
-#include <zlib/ZmScratch.hh>
+#include <zlib/ZmLHash.hh>
+#include <zlib/ZmObject.hh>
 
 #include <zlib/ZtCase.hh>
+#include <zlib/ZtScratch.hh>
 
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZdbSL.hh>
+#include <zlib/ZdbSLCodec.hh>
 
 namespace ZdbSL {
 
+static const char *fieldMapID() { return "ZdbSL.FieldMap"; }
+ZmLHashKVDerive(FieldMap, IDString, unsigned,
+  ZmLHashID<fieldMapID, ZmLHashLocal<>>);
+struct FieldMapObj : public ZmObject {
+  FieldMapObj(unsigned n) : map{ZmHashParams(n)} { }
+  FieldMap map;
+};
+
+struct ExpectedIndex {
+  SQLString		id;
+  const XFieldRefs	*fields = nullptr;
+  bool			unique = false;
+  bool			seen = false;
+};
+ZuDerive(ExpectedIndices,
+  (ZtArray<ExpectedIndex, ZtArrayHeapID<"ZdbSL.ExpectedIndex">>));
+static const char *indexMapID() { return "ZdbSL.IndexMap"; }
+ZmLHashKVDerive(IndexMap, ZuCSpan, unsigned,
+  ZmLHashID<indexMapID, ZmLHashLocal<>>);
+struct IndexMapObj : public ZmObject {
+  IndexMapObj(unsigned n) : map{ZmHashParams(n)} { }
+  IndexMap map;
+};
+
 ZtEnumImplNS(Synchronous);
 
-using Value = ZdbMem::Value;
+struct Type {
+  enum {
+    Void,
+    String, Bytes, Bool,
+    Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64,
+    Float, Fixed, Decimal, Time, DateTime, Int128, UInt128, Bitmap, IP,
+    StringVec, BytesVec,
+    Int8Vec, UInt8Vec, Int16Vec, UInt16Vec, Int32Vec, UInt32Vec,
+    Int64Vec, UInt64Vec, Int128Vec, UInt128Vec, FloatVec, FixedVec,
+    DecimalVec, TimeVec, DateTimeVec,
+    N
+  };
+};
+
+struct Storage { enum { Integer, Text, Blob }; };
+
+static bool isVec(unsigned type) { return type >= Type::StringVec; }
+
+static const XField &fieldAt(const XFields &fields, unsigned i)
+{
+  return fields[i];
+}
+
+static const XField &fieldAt(const XFieldRefs &fields, unsigned i)
+{
+  return *fields[i].field;
+}
 
 struct Stmt {
   sqlite3_stmt *ptr = nullptr;
@@ -32,14 +85,53 @@ struct Stmt {
 
 struct Reset {
   sqlite3_stmt *stmt;
-  ~Reset() {
-    sqlite3_reset(stmt);
-    sqlite3_clear_bindings(stmt);
-  }
+  // All parameters are rebound before the next step.  Reset while any
+  // SQLITE_STATIC source and scratch storage is still alive.
+  ~Reset() { sqlite3_reset(stmt); }
 };
 
 static ZeException cxnError(
-  sqlite3 *cxn, ZuCSpan operation, int rc = SQLITE_ERROR)
+  sqlite3 *, ZuCSpan, int = SQLITE_ERROR);
+
+class Txn {
+public:
+  Txn(sqlite3 *cxn, sqlite3_stmt *begin, sqlite3_stmt *commit) :
+    m_cxn{cxn}, m_commit{commit}
+  {
+    int rc = sqlite3_step(begin);
+    if (rc != SQLITE_DONE) {
+      sqlite3_reset(begin);
+      throw cxnError(m_cxn, "begin transaction", rc);
+    }
+    m_active = true;
+    rc = sqlite3_reset(begin);
+    if (rc != SQLITE_OK) {
+      sqlite3_exec(m_cxn, "ROLLBACK", nullptr, nullptr, nullptr);
+      m_active = false;
+      throw cxnError(m_cxn, "begin transaction", rc);
+    }
+  }
+  ~Txn() {
+    if (m_active) sqlite3_exec(m_cxn, "ROLLBACK", nullptr, nullptr, nullptr);
+  }
+
+  void commit() {
+    int rc = sqlite3_step(m_commit);
+    if (rc == SQLITE_DONE) m_active = false;
+    int resetRC = sqlite3_reset(m_commit);
+    if (rc != SQLITE_DONE) throw cxnError(m_cxn, "commit transaction", rc);
+    if (resetRC != SQLITE_OK)
+      throw cxnError(m_cxn, "commit transaction", resetRC);
+  }
+
+private:
+  sqlite3	*m_cxn;
+  sqlite3_stmt	*m_commit;
+  bool		m_active = false;
+};
+
+static ZeException cxnError(
+  sqlite3 *cxn, ZuCSpan operation, int rc)
 {
   int xrc = cxn ? sqlite3_extended_errcode(cxn) : rc;
   if (xrc == SQLITE_OK) xrc = rc;
@@ -82,7 +174,158 @@ static void done(sqlite3 *cxn, sqlite3_stmt *stmt)
   if (rc != SQLITE_DONE) throw cxnError(cxn, "sqlite3_step()", rc);
 }
 
-static SQLString quoteID(ZuCSpan);
+struct QuoteID {
+  ZuCSpan id;
+
+  template <typename S> void print(S &s) const {
+    s << '"';
+    for (char c: id) {
+      s << c;
+      if (c == '"') s << c;
+    }
+    s << '"';
+  }
+  friend ZuPrintFn ZuPrintType(QuoteID *);
+};
+
+static QuoteID quoteID(ZuCSpan id) { return {id}; }
+
+static unsigned resolveType(
+  const Zfb::Vector<Zfb::Offset<reflection::Field>> *fields,
+  const ZfVField *field, ZuCSpan id, const reflection::Field *&fbField)
+{
+  // StoreTbl receives erased Zf metadata, so run-time reflection is the
+  // required boundary for matching it to the generated FlatBuffer schema.
+  fbField = fields->LookupByKey(id);
+  if (!fbField) return Type::Void;
+  auto ftype = field->type;
+  switch (fbField->type()->base_type()) {
+    case reflection::String:
+      if (ftype->code == ZfFieldTC::CString ||
+          ftype->code == ZfFieldTC::String) return Type::String;
+      break;
+    case reflection::Bool:
+      if (ftype->code == ZfFieldTC::Bool) return Type::Bool;
+      break;
+    case reflection::Byte:
+      if (ftype->code == ZfFieldTC::Int8) return Type::Int8;
+      break;
+    case reflection::UByte:
+      if (ftype->code == ZfFieldTC::UInt8) return Type::UInt8;
+      break;
+    case reflection::Short:
+      if (ftype->code == ZfFieldTC::Int16) return Type::Int16;
+      break;
+    case reflection::UShort:
+      if (ftype->code == ZfFieldTC::UInt16) return Type::UInt16;
+      break;
+    case reflection::Int:
+      if (ftype->code == ZfFieldTC::Int32) return Type::Int32;
+      break;
+    case reflection::UInt:
+      if (ftype->code == ZfFieldTC::UInt32) return Type::UInt32;
+      break;
+    case reflection::Long:
+      if (ftype->code == ZfFieldTC::Int64) return Type::Int64;
+      break;
+    case reflection::ULong:
+      if (ftype->code == ZfFieldTC::UInt64) return Type::UInt64;
+      break;
+    case reflection::Double:
+      if (ftype->code == ZfFieldTC::Float) return Type::Float;
+      break;
+    case reflection::Obj:
+      switch (ftype->code) {
+        case ZfFieldTC::Int128: return Type::Int128;
+        case ZfFieldTC::UInt128: return Type::UInt128;
+        case ZfFieldTC::Fixed: return Type::Fixed;
+        case ZfFieldTC::Decimal: return Type::Decimal;
+        case ZfFieldTC::Time: return Type::Time;
+        case ZfFieldTC::DateTime: return Type::DateTime;
+        case ZfFieldTC::UDT:
+          if (ftype->info.udt()->id == "Bitmap") return Type::Bitmap;
+          if (ftype->info.udt()->id == "IP") return Type::IP;
+          break;
+      }
+      break;
+    case reflection::Union:
+      if (ftype->code == ZfFieldTC::UDT && ftype->info.udt()->id == "IP")
+        return Type::IP;
+      break;
+    case reflection::Vector:
+      switch (fbField->type()->element()) {
+        case reflection::String:
+          if (ftype->code == ZfFieldTC::StringVec) return Type::StringVec;
+          break;
+        case reflection::Byte:
+          if (ftype->code == ZfFieldTC::Int8Vec) return Type::Int8Vec;
+          break;
+        case reflection::UByte:
+          if (ftype->code == ZfFieldTC::Bytes) return Type::Bytes;
+          if (ftype->code == ZfFieldTC::UInt8Vec) return Type::UInt8Vec;
+          break;
+        case reflection::Short:
+          if (ftype->code == ZfFieldTC::Int16Vec) return Type::Int16Vec;
+          break;
+        case reflection::UShort:
+          if (ftype->code == ZfFieldTC::UInt16Vec) return Type::UInt16Vec;
+          break;
+        case reflection::Int:
+          if (ftype->code == ZfFieldTC::Int32Vec) return Type::Int32Vec;
+          break;
+        case reflection::UInt:
+          if (ftype->code == ZfFieldTC::UInt32Vec) return Type::UInt32Vec;
+          break;
+        case reflection::Long:
+          if (ftype->code == ZfFieldTC::Int64Vec) return Type::Int64Vec;
+          break;
+        case reflection::ULong:
+          if (ftype->code == ZfFieldTC::UInt64Vec) return Type::UInt64Vec;
+          break;
+        case reflection::Double:
+          if (ftype->code == ZfFieldTC::FloatVec) return Type::FloatVec;
+          break;
+        case reflection::Obj:
+          switch (ftype->code) {
+            case ZfFieldTC::BytesVec: return Type::BytesVec;
+            case ZfFieldTC::Int128Vec: return Type::Int128Vec;
+            case ZfFieldTC::UInt128Vec: return Type::UInt128Vec;
+            case ZfFieldTC::FixedVec: return Type::FixedVec;
+            case ZfFieldTC::DecimalVec: return Type::DecimalVec;
+            case ZfFieldTC::TimeVec: return Type::TimeVec;
+            case ZfFieldTC::DateTimeVec: return Type::DateTimeVec;
+          }
+          break;
+        default: break;
+      }
+      break;
+    default: break;
+  }
+  return Type::Void;
+}
+
+static void validateCoreStrict(sqlite3 *cxn)
+{
+  Stmt stmt;
+  stmt.ptr = prepare(cxn,
+    "SELECT \"name\", \"strict\" FROM pragma_table_list "
+    "WHERE \"schema\"='main' AND \"name\" IN "
+    "('zdbsl_meta','zdbsl_schema','zdbsl_mrd')");
+  bool meta = false, schema = false, mrd = false;
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    ZuCSpan table{
+      reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)),
+      unsigned(sqlite3_column_bytes(stmt, 0))};
+    bool strict = sqlite3_column_int(stmt, 1) == 1;
+    if (table == "zdbsl_meta") meta = strict;
+    else if (table == "zdbsl_schema") schema = strict;
+    else if (table == "zdbsl_mrd") mrd = strict;
+  }
+  if (rc != SQLITE_DONE) throw cxnError(cxn, "inspect STRICT tables", rc);
+  if (!meta || !schema || !mrd)
+    throw ZeEXCEPT(Fatal, "ZdbSL", "internal table is missing or not STRICT");
+}
 
 static void validateStrict(sqlite3 *cxn, ZuCSpan table)
 {
@@ -102,10 +345,11 @@ static void validateStrict(sqlite3 *cxn, ZuCSpan table)
   if (rc != SQLITE_DONE) throw cxnError(cxn, "inspect STRICT table", rc);
 }
 
-enum CoreTable : uint8_t { Meta, Schema, MRD };
+struct CoreTable { enum { Meta, Schema, MRD }; };
+struct KeyDir { enum { Ascending, Descending, Mixed }; };
 
 static void validateCoreTable(
-    sqlite3 *cxn, ZuCSpan table, CoreTable core, unsigned nColumns)
+    sqlite3 *cxn, ZuCSpan table, unsigned core, unsigned nColumns)
 {
   SQLString sql;
   sql << "PRAGMA table_info(" << quoteID(table) << ')';
@@ -118,13 +362,13 @@ static void validateCoreTable(
     const char *type = nullptr;
     unsigned pk = 0;
     switch (core) {
-      case Meta:
+      case CoreTable::Meta:
         switch (column) {
           case 0: id = "id"; type = "TEXT"; pk = 1; break;
           case 1: id = "value"; type = "INTEGER"; break;
         }
         break;
-      case Schema:
+      case CoreTable::Schema:
         switch (column) {
           case 0: id = "internal"; type = "INTEGER"; pk = 1; break;
           case 1: id = "tbl"; type = "TEXT"; pk = 2; break;
@@ -139,7 +383,7 @@ static void validateCoreTable(
           case 10: id = "descend"; type = "INTEGER"; break;
         }
         break;
-      case MRD:
+      case CoreTable::MRD:
         switch (column) {
           case 0: id = "internal"; type = "INTEGER"; pk = 1; break;
           case 1: id = "tbl"; type = "TEXT"; pk = 2; break;
@@ -170,578 +414,399 @@ static void validateCoreTable(
     }));
 }
 
-static SQLString quoteID(ZuCSpan id)
+static const char *storageName(unsigned storage)
 {
-  SQLString out;
-  out << '"';
-  for (char c: id) {
-    out << c;
-    if (c == '"') out << c;
+  switch (storage) {
+    case Storage::Integer: return "INTEGER";
+    case Storage::Text: return "TEXT";
+    default: return "BLOB";
   }
-  out << '"';
-  return out;
 }
 
-static const char *storage(unsigned type)
+static unsigned storageID(unsigned type)
 {
   switch (type) {
-    case Value::Index<bool>{}:
-    case Value::Index<int8_t>{}:
-    case Value::Index<uint8_t>{}:
-    case Value::Index<int16_t>{}:
-    case Value::Index<uint16_t>{}:
-    case Value::Index<int32_t>{}:
-    case Value::Index<uint32_t>{}:
-    case Value::Index<int64_t>{}:
-      return "INTEGER";
-    case Value::Index<ZdbMem::String>{}:
-      return "TEXT";
-    default:
-      return "BLOB";
+    case Type::Bool:
+    case Type::Int8:
+    case Type::UInt8:
+    case Type::Int16:
+    case Type::UInt16:
+    case Type::Int32:
+    case Type::UInt32:
+    case Type::Int64: return Storage::Integer;
+    case Type::String: return Storage::Text;
+    default: return Storage::Blob;
   }
 }
 
 static unsigned fixedSize(unsigned type)
 {
   switch (type) {
-    case Value::Index<uint64_t>{}:
-    case Value::Index<double>{}: return 8;
-    case Value::Index<ZuTime>{}:
-    case Value::Index<ZuDateTime>{}: return 12;
-    case Value::Index<ZuFixed>{}:
-    case Value::Index<ZuDecimal>{}:
-    case Value::Index<int128_t>{}:
-    case Value::Index<uint128_t>{}: return 16;
+    case Type::UInt64:
+    case Type::Float:
+    case Type::Int64Vec:
+    case Type::UInt64Vec:
+    case Type::FloatVec: return 8;
+    case Type::Time:
+    case Type::DateTime:
+    case Type::TimeVec:
+    case Type::DateTimeVec: return 12;
+    case Type::Fixed:
+    case Type::Decimal:
+    case Type::Int128:
+    case Type::UInt128:
+    case Type::FixedVec:
+    case Type::DecimalVec:
+    case Type::Int128Vec:
+    case Type::UInt128Vec: return 16;
+    case Type::Int8Vec:
+    case Type::UInt8Vec: return 1;
+    case Type::Int16Vec:
+    case Type::UInt16Vec: return 2;
+    case Type::Int32Vec:
+    case Type::UInt32Vec: return 4;
     default: return 0;
   }
 }
 
-template <typename T>
-static void saveUnsigned(uint8_t *ptr, T value)
+struct VarPart {
+  unsigned offset;
+  unsigned length;
+};
+ZuDerive(VarParts,
+  (ZtArray<VarPart, ZtArrayHeapID<"ZdbSL.VarParts">>));
+ZuDerive(VarBuf,
+  (ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.VarBuf">>));
+
+static uint64_t vecSize(uint64_t n, unsigned width)
 {
-  if constexpr (sizeof(T) == 1)
-    *ptr = value;
-  else {
-    T data = ZuBE(value);
-    memcpy(ptr, &data, sizeof(data));
-  }
+  return sizeof(uint32_t) + n * width;
 }
 
-template <typename T, typename U>
-static void saveSigned(uint8_t *ptr, T value)
+static uint64_t encodedSize(const XField &xfield, const Zfb::Table *fbo)
 {
-  U data = ZuPun<T, U>(value).out ^ (U(1)<<(sizeof(U) * 8 - 1));
-  saveUnsigned(ptr, data);
-}
-
-template <typename T>
-static bool loadUnsigned(ZuBSpan &data, T &value)
-{
-  if (data.length() < sizeof(T)) return false;
-  if constexpr (sizeof(T) == 1) {
-    value = data[0];
-    data.offset(1);
-  } else {
-    T encoded;
-    memcpy(&encoded, data.data(), sizeof(encoded));
-    value = ZuBE(encoded);
-    data.offset(sizeof(encoded));
-  }
-  return true;
-}
-
-template <typename T, typename U>
-static bool loadSigned(ZuBSpan &data, T &value)
-{
-  U encoded;
-  if (!loadUnsigned(data, encoded)) return false;
-  encoded ^= U(1)<<(sizeof(U) * 8 - 1);
-  value = ZuPun<U, T>(encoded).out;
-  return true;
-}
-
-static uint64_t varSize(const Value &value)
-{
-  auto vecSize = [](unsigned n, unsigned width) {
-    return uint64_t(4) + uint64_t(n) * width;
-  };
-  auto addSize = [](uint64_t &size, uint64_t n) {
-    if (n > UINT64_MAX - size) size = UINT64_MAX;
-    else size += n;
-  };
-  switch (value.type()) {
-    case Value::Index<ZtBitmap>{}:
-      return vecSize(value.p<ZtBitmap>().data.length(), 8);
-    case Value::Index<ZiIP>{}:
-      switch (value.p<ZiIP>().type()) {
-        case ZiIPType::V4: return 5;
-        case ZiIPType::V6: return 17;
+  const reflection::Field &field = *xfield.field.field;
+  switch (xfield.field.type) {
+    case Type::String:
+    case Type::Bytes:
+    case Type::Bool:
+    case Type::Int8:
+    case Type::UInt8:
+    case Type::Int16:
+    case Type::UInt16:
+    case Type::Int32:
+    case Type::UInt32:
+    case Type::Int64:
+      return 0;
+    case Type::Bitmap: {
+      auto bitmap = fbo->GetPointer<const Zfb::Bitmap *>(field.offset());
+      auto data = bitmap ? bitmap->data() : nullptr;
+      return vecSize(data ? data->size() : 0, sizeof(uint64_t));
+    }
+    case Type::IP: {
+      ZiIP ip = ZfbTransform::IP::load(
+        static_cast<Zfb::IP>(
+          fbo->GetField<uint8_t>(field.offset() - 2, 0)),
+        fbo->GetPointer<const void *>(field.offset()));
+      switch (ip.type()) {
+        case ZiIPType::V4: return 1 + sizeof(in_addr);
+        case ZiIPType::V6: return 1 + sizeof(in6_addr);
         default: return 1;
       }
-    case Value::Index<ZdbMem::StringVec>{}: {
-      uint64_t size = 4;
-      value.p<ZdbMem::StringVec>().all(
-        [&size, addSize](const auto &v) {
-          addSize(size, uint64_t(4) + v.length());
-        });
-      return size;
     }
-    case Value::Index<ZdbMem::BytesVec>{}: {
-      uint64_t size = 4;
-      value.p<ZdbMem::BytesVec>().all(
-        [&size, addSize](const auto &v) {
-          addSize(size, uint64_t(4) + v.length());
-        });
-      return size;
-    }
-    case Value::Index<ZdbMem::Int8Vec>{}:
-      return vecSize(value.p<ZdbMem::Int8Vec>().length(), 1);
-    case Value::Index<ZdbMem::UInt8Vec>{}:
-      return vecSize(value.p<ZdbMem::UInt8Vec>().length(), 1);
-    case Value::Index<ZdbMem::Int16Vec>{}:
-      return vecSize(value.p<ZdbMem::Int16Vec>().length(), 2);
-    case Value::Index<ZdbMem::UInt16Vec>{}:
-      return vecSize(value.p<ZdbMem::UInt16Vec>().length(), 2);
-    case Value::Index<ZdbMem::Int32Vec>{}:
-      return vecSize(value.p<ZdbMem::Int32Vec>().length(), 4);
-    case Value::Index<ZdbMem::UInt32Vec>{}:
-      return vecSize(value.p<ZdbMem::UInt32Vec>().length(), 4);
-    case Value::Index<ZdbMem::Int64Vec>{}:
-      return vecSize(value.p<ZdbMem::Int64Vec>().length(), 8);
-    case Value::Index<ZdbMem::UInt64Vec>{}:
-      return vecSize(value.p<ZdbMem::UInt64Vec>().length(), 8);
-    case Value::Index<ZdbMem::Int128Vec>{}:
-      return vecSize(value.p<ZdbMem::Int128Vec>().length(), 16);
-    case Value::Index<ZdbMem::UInt128Vec>{}:
-      return vecSize(value.p<ZdbMem::UInt128Vec>().length(), 16);
-    case Value::Index<ZdbMem::FloatVec>{}:
-      return vecSize(value.p<ZdbMem::FloatVec>().length(), 8);
-    case Value::Index<ZdbMem::FixedVec>{}:
-      return vecSize(value.p<ZdbMem::FixedVec>().length(), 16);
-    case Value::Index<ZdbMem::DecimalVec>{}:
-      return vecSize(value.p<ZdbMem::DecimalVec>().length(), 16);
-    case Value::Index<ZdbMem::TimeVec>{}:
-      return vecSize(value.p<ZdbMem::TimeVec>().length(), 12);
-    case Value::Index<ZdbMem::DateTimeVec>{}:
-      return vecSize(value.p<ZdbMem::DateTimeVec>().length(), 12);
-    default: return fixedSize(value.type());
-  }
-}
-
-template <typename V, typename L>
-static void saveVec(uint8_t *ptr, const V &values, L &&save)
-{
-  saveUnsigned(ptr, uint32_t(values.length()));
-  ptr += 4;
-  values.all([&ptr, &save](const auto &value) { save(ptr, value); });
-}
-
-static void encode(uint8_t *ptr, const Value &value)
-{
-  switch (value.type()) {
-    case Value::Index<uint64_t>{}: saveU64(ptr, value.p<uint64_t>()); break;
-    case Value::Index<int128_t>{}: saveS128(ptr, value.p<int128_t>()); break;
-    case Value::Index<uint128_t>{}: saveU128(ptr, value.p<uint128_t>()); break;
-    case Value::Index<double>{}: saveFloat(ptr, value.p<double>()); break;
-    case Value::Index<ZuFixed>{}: saveFixed(ptr, value.p<ZuFixed>()); break;
-    case Value::Index<ZuDecimal>{}: saveDecimal(ptr, value.p<ZuDecimal>()); break;
-    case Value::Index<ZuTime>{}: saveTime(ptr, value.p<ZuTime>()); break;
-    case Value::Index<ZuDateTime>{}:
-      saveDateTime(ptr, value.p<ZuDateTime>()); break;
-    case Value::Index<ZtBitmap>{}: {
-      const auto &v = value.p<ZtBitmap>().data;
-      saveUnsigned(ptr, uint32_t(v.length()));
-      ptr += 4;
-      v.all([&ptr](uint64_t word) { saveUnsigned(ptr, word); ptr += 8; });
-    } break;
-    case Value::Index<ZiIP>{}: {
-      const auto &v = value.p<ZiIP>();
-      switch (v.type()) {
-        case ZiIPType::V4:
-          *ptr++ = 4; memcpy(ptr, &v.inAddr(), 4); break;
-        case ZiIPType::V6:
-          *ptr++ = 6; memcpy(ptr, &v.in6Addr(), 16); break;
-        default: *ptr = 0; break;
+    case Type::StringVec: {
+      auto values =
+        Zfb::GetFieldV<Zfb::Offset<Zfb::String>>(*fbo, field);
+      uint64_t size = sizeof(uint32_t);
+      unsigned n = values ? values->size() : 0;
+      for (unsigned i = 0; i < n; ++i) {
+        uint64_t length = values->Get(i)->size();
+        if (length > UINT64_MAX - sizeof(uint32_t) ||
+            size > UINT64_MAX - sizeof(uint32_t) - length)
+          return UINT64_MAX;
+        size += sizeof(uint32_t) + length;
       }
-    } break;
-    case Value::Index<ZdbMem::StringVec>{}:
-      saveVec(ptr, value.p<ZdbMem::StringVec>(), [](uint8_t *&ptr, const auto &v) {
-        saveUnsigned(ptr, uint32_t(v.length())); ptr += 4;
-        memcpy(ptr, v.data(), v.length()); ptr += v.length();
-      });
-      break;
-    case Value::Index<ZdbMem::BytesVec>{}:
-      saveVec(ptr, value.p<ZdbMem::BytesVec>(), [](uint8_t *&ptr, const auto &v) {
-        saveUnsigned(ptr, uint32_t(v.length())); ptr += 4;
-        memcpy(ptr, v.data(), v.length()); ptr += v.length();
-      });
-      break;
-#define ZdbSL_SaveVec(Type, Elem, ...) \
-    case Value::Index<ZdbMem::Type##Vec>{}: \
-      saveVec(ptr, value.p<ZdbMem::Type##Vec>(), \
-        [](uint8_t *&ptr, Elem v) { __VA_ARGS__; }); \
-      break
-    ZdbSL_SaveVec(Int8, int8_t, saveSigned<int8_t, uint8_t>(ptr, v); ptr += 1;);
-    ZdbSL_SaveVec(UInt8, uint8_t, *ptr++ = v;);
-    ZdbSL_SaveVec(Int16, int16_t, saveSigned<int16_t, uint16_t>(ptr, v); ptr += 2;);
-    ZdbSL_SaveVec(UInt16, uint16_t, saveUnsigned(ptr, v); ptr += 2;);
-    ZdbSL_SaveVec(Int32, int32_t, saveSigned<int32_t, uint32_t>(ptr, v); ptr += 4;);
-    ZdbSL_SaveVec(UInt32, uint32_t, saveUnsigned(ptr, v); ptr += 4;);
-    ZdbSL_SaveVec(Int64, int64_t, saveSigned<int64_t, uint64_t>(ptr, v); ptr += 8;);
-    ZdbSL_SaveVec(UInt64, uint64_t, saveU64(ptr, v); ptr += 8;);
-    ZdbSL_SaveVec(Int128, int128_t, saveS128(ptr, v); ptr += 16;);
-    ZdbSL_SaveVec(UInt128, uint128_t, saveU128(ptr, v); ptr += 16;);
-    ZdbSL_SaveVec(Float, double, saveFloat(ptr, v); ptr += 8;);
-    ZdbSL_SaveVec(Fixed, ZuFixed,
-      saveFixed(ptr, v); ptr += 16;);
-    ZdbSL_SaveVec(Decimal, ZuDecimal, saveDecimal(ptr, v); ptr += 16;);
-    ZdbSL_SaveVec(Time, ZuTime, saveTime(ptr, v); ptr += 12;);
-    ZdbSL_SaveVec(DateTime, ZuDateTime, saveDateTime(ptr, v); ptr += 12;);
-#undef ZdbSL_SaveVec
-    default: break;
+      return size;
+    }
+    case Type::BytesVec: {
+      auto values =
+        Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, field);
+      uint64_t size = sizeof(uint32_t);
+      unsigned n = values ? values->size() : 0;
+      for (unsigned i = 0; i < n; ++i) {
+        auto data = values->Get(i)->data();
+        uint64_t length = data ? data->size() : 0;
+        if (length > UINT64_MAX - sizeof(uint32_t) ||
+            size > UINT64_MAX - sizeof(uint32_t) - length)
+          return UINT64_MAX;
+        size += sizeof(uint32_t) + length;
+      }
+      return size;
+    }
+#define ZdbSL_VecSize(Type_, Elem_) \
+    case Type::Type_: { \
+      auto values = Zfb::GetFieldV<Elem_>(*fbo, field); \
+      return vecSize(values ? values->size() : 0, xfield.field.fixedSize); \
+    }
+    ZdbSL_VecSize(Int8Vec, int8_t)
+    ZdbSL_VecSize(UInt8Vec, uint8_t)
+    ZdbSL_VecSize(Int16Vec, int16_t)
+    ZdbSL_VecSize(UInt16Vec, uint16_t)
+    ZdbSL_VecSize(Int32Vec, int32_t)
+    ZdbSL_VecSize(UInt32Vec, uint32_t)
+    ZdbSL_VecSize(Int64Vec, int64_t)
+    ZdbSL_VecSize(UInt64Vec, uint64_t)
+    ZdbSL_VecSize(Int128Vec, Zfb::Int128 *)
+    ZdbSL_VecSize(UInt128Vec, Zfb::UInt128 *)
+    ZdbSL_VecSize(FloatVec, double)
+    ZdbSL_VecSize(FixedVec, Zfb::Fixed *)
+    ZdbSL_VecSize(DecimalVec, Zfb::Decimal *)
+    ZdbSL_VecSize(TimeVec, Zfb::Time *)
+    ZdbSL_VecSize(DateTimeVec, Zfb::DateTime *)
+#undef ZdbSL_VecSize
+    default:
+      return xfield.field.fixedSize;
   }
 }
 
-static int bindValue(
-  sqlite3_stmt *stmt, unsigned param, const Value &value, ZuSpan<uint8_t> scratch)
-{
-  switch (value.type()) {
-    case Value::Index<ZdbMem::String>{}: {
-      const auto &v = value.p<ZdbMem::String>();
-      static const char empty = 0;
-      return sqlite3_bind_text64(stmt, param, v.length() ? v.data() : &empty,
-        v.length(), SQLITE_STATIC, SQLITE_UTF8);
-    }
-    case Value::Index<ZdbMem::Bytes>{}: {
-      const auto &v = value.p<ZdbMem::Bytes>();
-      static const uint8_t empty = 0;
-      return sqlite3_bind_blob64(stmt, param, v.length() ? v.data() : &empty,
-        v.length(), SQLITE_STATIC);
-    }
-    case Value::Index<bool>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<bool>());
-    case Value::Index<int8_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<int8_t>());
-    case Value::Index<uint8_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<uint8_t>());
-    case Value::Index<int16_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<int16_t>());
-    case Value::Index<uint16_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<uint16_t>());
-    case Value::Index<int32_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<int32_t>());
-    case Value::Index<uint32_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<uint32_t>());
-    case Value::Index<int64_t>{}:
-      return sqlite3_bind_int64(stmt, param, value.p<int64_t>());
-    default: {
-      uint64_t size_ = varSize(value);
-      if (size_ > UINT_MAX || scratch.length() != size_) return SQLITE_TOOBIG;
-      unsigned size = size_;
-      encode(scratch.data(), value);
-      static const uint8_t empty = 0;
-      return sqlite3_bind_blob64(stmt, param,
-        size ? scratch.data() : &empty, size, SQLITE_STATIC);
-    }
-  }
-}
-
-static bool decode(Value *, unsigned type, sqlite3_stmt *, unsigned);
-
-static unsigned inputSize(
-  sqlite3 *cxn, unsigned n, const XFields &fields, const Zfb::Table *fbo)
+template <typename Fields>
+static unsigned planInput(
+  sqlite3 *cxn, unsigned lengthLimit, unsigned n,
+  const Fields &fields, const Zfb::Table *fbo, ZuSpan<VarPart> parts)
 {
   uint64_t total = 0;
-  uint64_t limit = sqlite3_limit(cxn, SQLITE_LIMIT_LENGTH, -1);
   for (unsigned i = 0; i < n; ++i) {
-    unsigned type = fields[i].field.type;
-    if (type == Value::Index<ZdbMem::String>{} ||
-        type == Value::Index<ZdbMem::Bytes>{} || storage(type)[0] == 'I')
-      continue;
-    Value value;
-    ZuSwitch::dispatch<Value::N>(type,
-      [&value, field = fields[i].field.field, fbo](auto I) {
-        ZdbMem::loadValue<I>(value.new_<I, true>(), field, fbo);
-      });
-    uint64_t size = varSize(value);
-    if (size > limit || size > UINT_MAX || total > UINT_MAX - size)
+    uint64_t size = encodedSize(fieldAt(fields, i), fbo);
+    if (size > lengthLimit || size > UINT_MAX || total > UINT_MAX - size)
       throw cxnError(cxn, "encode SQLite value", SQLITE_TOOBIG);
+    parts[i] = {unsigned(total), unsigned(size)};
     total += size;
   }
   return unsigned(total);
 }
 
-static void bindInput(
-  sqlite3 *cxn, sqlite3_stmt *stmt, unsigned first,
-  unsigned n, const XFields &fields, const Zfb::Table *fbo,
-  ZuSpan<uint8_t> data)
+static void saveCount(uint8_t *&ptr, unsigned n)
 {
-  unsigned offset = 0;
-  for (unsigned i = 0; i < n; ++i) {
-    const auto &xfield = fields[i].field;
-    unsigned type = xfield.type;
-    int rc;
-    if (type == Value::Index<ZdbMem::String>{}) {
-      auto v = Zfb::Load::str(Zfb::GetFieldS(*fbo, *xfield.field));
-      static const char empty = 0;
-      rc = sqlite3_bind_text64(stmt, first + i,
-        v.length() ? v.data() : &empty, v.length(), SQLITE_STATIC, SQLITE_UTF8);
-      if (rc != SQLITE_OK) throw cxnError(cxn, "sqlite3_bind_text64()", rc);
-      continue;
-    }
-    if (type == Value::Index<ZdbMem::Bytes>{}) {
-      auto v = Zfb::Load::bytes(Zfb::GetFieldV<uint8_t>(*fbo, *xfield.field));
-      static const uint8_t empty = 0;
-      rc = sqlite3_bind_blob64(stmt, first + i,
-        v.length() ? v.data() : &empty, v.length(), SQLITE_STATIC);
-      if (rc != SQLITE_OK) throw cxnError(cxn, "sqlite3_bind_blob64()", rc);
-      continue;
-    }
-    Value value;
-    ZuSwitch::dispatch<Value::N>(type,
-      [&value, field = xfield.field, fbo](auto I) {
-        ZdbMem::loadValue<I>(value.new_<I, true>(), field, fbo);
+  saveUnsigned(ptr, uint32_t(n));
+  ptr += sizeof(uint32_t);
+}
+
+template <typename V, typename L>
+static void savePVec(uint8_t *ptr, const V *values, L &&save)
+{
+  unsigned n = values ? values->size() : 0;
+  saveCount(ptr, n);
+  for (unsigned i = 0; i < n; ++i) save(ptr, values->Get(i));
+}
+
+static void encodeField(
+  uint8_t *ptr, const XField &xfield, const Zfb::Table *fbo)
+{
+  const reflection::Field &field = *xfield.field.field;
+  switch (xfield.field.type) {
+    case Type::UInt64:
+      saveU64(ptr, Zfb::GetFieldI<uint64_t>(*fbo, field));
+      break;
+    case Type::Int128:
+      saveS128(ptr, ZfbTransform::Int128::load(
+        fbo->GetStruct<const Zfb::Int128 *>(field.offset())));
+      break;
+    case Type::UInt128:
+      saveU128(ptr, ZfbTransform::UInt128::load(
+        fbo->GetStruct<const Zfb::UInt128 *>(field.offset())));
+      break;
+    case Type::Float:
+      saveFloat(ptr, Zfb::GetFieldF<double>(*fbo, field));
+      break;
+    case Type::Fixed:
+      saveFixed(ptr, ZfbTransform::Fixed::load(
+        fbo->GetStruct<const Zfb::Fixed *>(field.offset())));
+      break;
+    case Type::Decimal:
+      saveDecimal(ptr, ZfbTransform::Decimal::load(
+        fbo->GetStruct<const Zfb::Decimal *>(field.offset())));
+      break;
+    case Type::Time:
+      saveTime(ptr, ZfbTransform::Time::load(
+        fbo->GetStruct<const Zfb::Time *>(field.offset())));
+      break;
+    case Type::DateTime:
+      saveDateTime(ptr, ZfbTransform::DateTime::load(
+        fbo->GetStruct<const Zfb::DateTime *>(field.offset())));
+      break;
+    case Type::Bitmap: {
+      auto bitmap = fbo->GetPointer<const Zfb::Bitmap *>(field.offset());
+      auto data = bitmap ? bitmap->data() : nullptr;
+      unsigned n = data ? data->size() : 0;
+      saveCount(ptr, n);
+      for (unsigned i = 0; i < n; ++i) {
+        saveUnsigned(ptr, data->Get(i));
+        ptr += sizeof(uint64_t);
+      }
+    } break;
+    case Type::IP: {
+      ZiIP ip = ZfbTransform::IP::load(
+        static_cast<Zfb::IP>(
+          fbo->GetField<uint8_t>(field.offset() - 2, 0)),
+        fbo->GetPointer<const void *>(field.offset()));
+      switch (ip.type()) {
+        case ZiIPType::V4:
+          *ptr++ = 4;
+          memcpy(ptr, &ip.inAddr(), sizeof(in_addr));
+          break;
+        case ZiIPType::V6:
+          *ptr++ = 6;
+          memcpy(ptr, &ip.in6Addr(), sizeof(in6_addr));
+          break;
+        default:
+          *ptr = 0;
+          break;
+      }
+    } break;
+    case Type::StringVec: {
+      auto values =
+        Zfb::GetFieldV<Zfb::Offset<Zfb::String>>(*fbo, field);
+      unsigned n = values ? values->size() : 0;
+      saveCount(ptr, n);
+      for (unsigned i = 0; i < n; ++i) {
+        auto value = values->Get(i);
+        unsigned length = value->size();
+        saveCount(ptr, length);
+        memcpy(ptr, value->Data(), length);
+        ptr += length;
+      }
+    } break;
+    case Type::BytesVec: {
+      auto values =
+        Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, field);
+      unsigned n = values ? values->size() : 0;
+      saveCount(ptr, n);
+      for (unsigned i = 0; i < n; ++i) {
+        auto data = values->Get(i)->data();
+        unsigned length = data ? data->size() : 0;
+        saveCount(ptr, length);
+        if (length) memcpy(ptr, data->Data(), length);
+        ptr += length;
+      }
+    } break;
+#define ZdbSL_SaveUVec(Type_, Elem_) \
+    case Type::Type_: { \
+      auto values = Zfb::GetFieldV<Elem_>(*fbo, field); \
+      savePVec(ptr, values, [](uint8_t *&out, Elem_ value) { \
+        saveUnsigned(out, value); out += sizeof(Elem_); \
+      }); \
+    } break
+#define ZdbSL_SaveSVec(Type_, Elem_, UInt_) \
+    case Type::Type_: { \
+      auto values = Zfb::GetFieldV<Elem_>(*fbo, field); \
+      savePVec(ptr, values, [](uint8_t *&out, Elem_ value) { \
+        saveSigned<Elem_, UInt_>(out, value); out += sizeof(Elem_); \
+      }); \
+    } break
+    ZdbSL_SaveSVec(Int8Vec, int8_t, uint8_t);
+    ZdbSL_SaveUVec(UInt8Vec, uint8_t);
+    ZdbSL_SaveSVec(Int16Vec, int16_t, uint16_t);
+    ZdbSL_SaveUVec(UInt16Vec, uint16_t);
+    ZdbSL_SaveSVec(Int32Vec, int32_t, uint32_t);
+    ZdbSL_SaveUVec(UInt32Vec, uint32_t);
+    ZdbSL_SaveSVec(Int64Vec, int64_t, uint64_t);
+    ZdbSL_SaveUVec(UInt64Vec, uint64_t);
+#undef ZdbSL_SaveSVec
+#undef ZdbSL_SaveUVec
+#define ZdbSL_SaveObjVec(Type_, FBType_, Native_, Width_, Transform_, Save_) \
+    case Type::Type_: { \
+      auto values = Zfb::GetFieldV<FBType_ *>(*fbo, field); \
+      savePVec(ptr, values, [](uint8_t *&out, const FBType_ *value) { \
+        Native_ native = ZfbTransform::Transform_::load(value); \
+        Save_(out, native); \
+        out += sizeof(Width_); \
+      }); \
+    } break
+    ZdbSL_SaveObjVec(
+      Int128Vec, Zfb::Int128, int128_t, int128_t, Int128, saveS128);
+    ZdbSL_SaveObjVec(
+      UInt128Vec, Zfb::UInt128, uint128_t, uint128_t, UInt128, saveU128);
+    ZdbSL_SaveObjVec(
+      FixedVec, Zfb::Fixed, ZuFixed, int128_t, Fixed, saveFixed);
+    ZdbSL_SaveObjVec(
+      DecimalVec, Zfb::Decimal, ZuDecimal, int128_t, Decimal, saveDecimal);
+    ZdbSL_SaveObjVec(
+      TimeVec, Zfb::Time, ZuTime, TimeData, Time, saveTime);
+    ZdbSL_SaveObjVec(
+      DateTimeVec, Zfb::DateTime, ZuDateTime, DateTimeData,
+      DateTime, saveDateTime);
+#undef ZdbSL_SaveObjVec
+    case Type::FloatVec: {
+      auto values = Zfb::GetFieldV<double>(*fbo, field);
+      savePVec(ptr, values, [](uint8_t *&out, double value) {
+        saveFloat(out, value);
+        out += sizeof(double);
       });
-    uint64_t size_ = varSize(value);
-    if (offset > data.length() || size_ > data.length() - offset)
-      throw cxnError(cxn, "encode SQLite value", SQLITE_TOOBIG);
-    unsigned size = size_;
-    uint8_t *ptr = size ? data.data() + offset : nullptr;
-    rc = bindValue(stmt, first + i, value,
-      ZuSpan<uint8_t>{ptr, size});
-    if (rc != SQLITE_OK) throw cxnError(cxn, "sqlite3_bind()", rc);
-    offset += size;
+    } break;
+    default:
+      break;
   }
 }
 
+template <typename Fields>
+static void bindInput(
+  sqlite3 *cxn, sqlite3_stmt *stmt, unsigned first,
+  unsigned n, const Fields &fields, const Zfb::Table *fbo,
+  ZuSpan<const VarPart> parts, ZuSpan<uint8_t> data)
+{
+  static const char emptyText = 0;
+  static const uint8_t emptyBlob = 0;
+  for (unsigned i = 0; i < n; ++i) {
+    const XField &xfield = fieldAt(fields, i);
+    const reflection::Field &field = *xfield.field.field;
+    int rc;
+    switch (xfield.field.type) {
+      case Type::String: {
+        ZuCSpan value = Zfb::Load::str(Zfb::GetFieldS(*fbo, field));
+        rc = sqlite3_bind_text64(stmt, first + i,
+          value.length() ? value.data() : &emptyText, value.length(),
+          SQLITE_STATIC, SQLITE_UTF8);
+      } break;
+      case Type::Bytes: {
+        ZuBSpan value =
+          Zfb::Load::bytes(Zfb::GetFieldV<uint8_t>(*fbo, field));
+        rc = sqlite3_bind_blob64(stmt, first + i,
+          value.length() ? value.data() : &emptyBlob, value.length(),
+          SQLITE_STATIC);
+      } break;
+      case Type::Bool:
+        rc = sqlite3_bind_int64(
+          stmt, first + i, Zfb::GetFieldI<bool>(*fbo, field));
+        break;
+#define ZdbSL_BindInt(Type_, CType_) \
+      case Type::Type_: \
+        rc = sqlite3_bind_int64( \
+          stmt, first + i, Zfb::GetFieldI<CType_>(*fbo, field)); \
+        break
+      ZdbSL_BindInt(Int8, int8_t);
+      ZdbSL_BindInt(UInt8, uint8_t);
+      ZdbSL_BindInt(Int16, int16_t);
+      ZdbSL_BindInt(UInt16, uint16_t);
+      ZdbSL_BindInt(Int32, int32_t);
+      ZdbSL_BindInt(UInt32, uint32_t);
+      ZdbSL_BindInt(Int64, int64_t);
+#undef ZdbSL_BindInt
+      default: {
+        const VarPart &part = parts[i];
+        uint8_t *ptr = part.length ? data.data() + part.offset : nullptr;
+        encodeField(ptr, xfield, fbo);
+        rc = sqlite3_bind_blob64(stmt, first + i,
+          part.length ? ptr : &emptyBlob, part.length, SQLITE_STATIC);
+      } break;
+    }
+    if (rc != SQLITE_OK) throw cxnError(cxn, "bind SQLite value", rc);
+  }
+}
 static ZuBSpan columnBlob(sqlite3_stmt *stmt, unsigned col)
 {
   return {
     static_cast<const uint8_t *>(sqlite3_column_blob(stmt, col)),
     unsigned(sqlite3_column_bytes(stmt, col))};
-}
-
-template <typename V, typename E, typename L>
-static bool loadVec(ZuBSpan data, V &values, unsigned width, L &&load)
-{
-  uint32_t n;
-  if (!loadUnsigned(data, n) ||
-      uint64_t(n) * width != data.length()) return false;
-  values.size(n);
-  for (unsigned i = 0; i < n; ++i) {
-    E value;
-    if (!load(data, value)) return false;
-    values.push(ZuMv(value));
-  }
-  return !data.length();
-}
-
-template <typename V, typename E>
-static bool loadUVec(ZuBSpan data, V &values)
-{
-  return loadVec<V, E>(data, values, sizeof(E),
-    [](ZuBSpan &data, E &value) { return loadUnsigned(data, value); });
-}
-
-template <typename V, typename E, typename U>
-static bool loadSVec(ZuBSpan data, V &values)
-{
-  return loadVec<V, E>(data, values, sizeof(E),
-    [](ZuBSpan &data, E &value) { return loadSigned<E, U>(data, value); });
-}
-
-template <typename V, typename E, bool (*Load)(ZuBSpan, E &)>
-static bool loadObjVec(ZuBSpan data, V &values, unsigned width)
-{
-  return loadVec<V, E>(data, values, width,
-    [width](ZuBSpan &data, E &value) {
-      if (data.length() < width) return false;
-      ZuBSpan part{data.data(), width};
-      data.offset(width);
-      return Load(part, value);
-    });
-}
-
-template <typename V, typename E>
-static bool loadVarVec(ZuBSpan data, V &values)
-{
-  uint32_t n;
-  if (!loadUnsigned(data, n)) return false;
-  values.size(n);
-  for (unsigned i = 0; i < n; ++i) {
-    uint32_t length;
-    if (!loadUnsigned(data, length) || data.length() < length) return false;
-    new (values.push()) E{ZuSpan<const typename ZuTraits<E>::Elem>{
-      data.data(), length}};
-    data.offset(length);
-  }
-  return !data.length();
-}
-
-static bool decode(Value *value, unsigned type, sqlite3_stmt *stmt, unsigned col)
-{
-  if (storage(type)[0] == 'I') {
-    if (sqlite3_column_type(stmt, col) != SQLITE_INTEGER) return false;
-    sqlite3_int64 v = sqlite3_column_int64(stmt, col);
-    switch (type) {
-      case Value::Index<bool>{}: new (value) Value{bool(v)}; return true;
-      case Value::Index<int8_t>{}: new (value) Value{int8_t(v)}; return true;
-      case Value::Index<uint8_t>{}: new (value) Value{uint8_t(v)}; return true;
-      case Value::Index<int16_t>{}: new (value) Value{int16_t(v)}; return true;
-      case Value::Index<uint16_t>{}: new (value) Value{uint16_t(v)}; return true;
-      case Value::Index<int32_t>{}: new (value) Value{int32_t(v)}; return true;
-      case Value::Index<uint32_t>{}: new (value) Value{uint32_t(v)}; return true;
-      case Value::Index<int64_t>{}: new (value) Value{int64_t(v)}; return true;
-    }
-  }
-  if (type == Value::Index<ZdbMem::String>{}) {
-    if (sqlite3_column_type(stmt, col) != SQLITE_TEXT) return false;
-    ZuCSpan data{
-      reinterpret_cast<const char *>(sqlite3_column_text(stmt, col)),
-      unsigned(sqlite3_column_bytes(stmt, col))};
-    new (value) Value{ZdbMem::String{data}};
-    return true;
-  }
-  if (sqlite3_column_type(stmt, col) != SQLITE_BLOB) return false;
-  ZuBSpan data = columnBlob(stmt, col);
-  switch (type) {
-    case Value::Index<ZdbMem::Bytes>{}:
-      new (value) Value{ZdbMem::Bytes{data}};
-      return true;
-    case Value::Index<uint64_t>{}: {
-      uint64_t v;
-      if (!loadU64(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<int128_t>{}: {
-      int128_t v;
-      if (!loadS128(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<uint128_t>{}: {
-      uint128_t v;
-      if (!loadU128(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<double>{}: {
-      double v;
-      if (!loadFloat(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<ZuFixed>{}: {
-      ZuFixed v;
-      if (!loadFixed(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<ZuDecimal>{}: {
-      ZuDecimal v;
-      if (!loadDecimal(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<ZuTime>{}: {
-      ZuTime v;
-      if (!loadTime(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<ZuDateTime>{}: {
-      ZuDateTime v;
-      if (!loadDateTime(data, v)) return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<ZtBitmap>{}: {
-      uint32_t n;
-      if (!loadUnsigned(data, n) || uint64_t(n) * 8 != data.length())
-        return false;
-      ZtBitmap v;
-      v.data.length(n);
-      for (unsigned i = 0; i < n; ++i)
-        if (!loadUnsigned(data, v.data[i])) return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-    case Value::Index<ZiIP>{}: {
-      if (!data.length()) return false;
-      uint8_t family = data[0];
-      data.offset(1);
-      ZiIP v;
-      if (!family) {
-        if (data.length()) return false;
-      } else if (family == 4 && data.length() == sizeof(in_addr)) {
-        in_addr addr;
-        memcpy(&addr, data.data(), sizeof(addr));
-        v = ZiIP{addr};
-      } else if (family == 6 && data.length() == sizeof(in6_addr)) {
-        in6_addr addr;
-        memcpy(&addr, data.data(), sizeof(addr));
-        v = ZiIP{addr};
-      } else return false;
-      new (value) Value{v};
-    } return true;
-    case Value::Index<ZdbMem::StringVec>{}: {
-      ZdbMem::StringVec v;
-      if (!loadVarVec<ZdbMem::StringVec, ZdbMem::String>(data, v)) return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-    case Value::Index<ZdbMem::BytesVec>{}: {
-      ZdbMem::BytesVec v;
-      if (!loadVarVec<ZdbMem::BytesVec, ZdbMem::Bytes>(data, v)) return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-#define ZdbSL_LoadUVec(Type, Elem) \
-    case Value::Index<ZdbMem::Type##Vec>{}: { \
-      ZdbMem::Type##Vec v; \
-      if (!loadUVec<ZdbMem::Type##Vec, Elem>(data, v)) return false; \
-      new (value) Value{ZuMv(v)}; \
-    } return true
-#define ZdbSL_LoadSVec(Type, Elem, UInt) \
-    case Value::Index<ZdbMem::Type##Vec>{}: { \
-      ZdbMem::Type##Vec v; \
-      if (!loadSVec<ZdbMem::Type##Vec, Elem, UInt>(data, v)) return false; \
-      new (value) Value{ZuMv(v)}; \
-    } return true
-    ZdbSL_LoadSVec(Int8, int8_t, uint8_t);
-    ZdbSL_LoadUVec(UInt8, uint8_t);
-    ZdbSL_LoadSVec(Int16, int16_t, uint16_t);
-    ZdbSL_LoadUVec(UInt16, uint16_t);
-    ZdbSL_LoadSVec(Int32, int32_t, uint32_t);
-    ZdbSL_LoadUVec(UInt32, uint32_t);
-    ZdbSL_LoadSVec(Int64, int64_t, uint64_t);
-    ZdbSL_LoadUVec(UInt64, uint64_t);
-    ZdbSL_LoadSVec(Int128, int128_t, uint128_t);
-    ZdbSL_LoadUVec(UInt128, uint128_t);
-#undef ZdbSL_LoadSVec
-#undef ZdbSL_LoadUVec
-    case Value::Index<ZdbMem::FloatVec>{}: {
-      ZdbMem::FloatVec v;
-      if (!loadObjVec<ZdbMem::FloatVec, double, loadFloat>(data, v, 8))
-        return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-    case Value::Index<ZdbMem::FixedVec>{}: {
-      ZdbMem::FixedVec v;
-      if (!loadObjVec<ZdbMem::FixedVec, ZuFixed, loadFixed>(data, v, 16))
-        return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-    case Value::Index<ZdbMem::DecimalVec>{}: {
-      ZdbMem::DecimalVec v;
-      if (!loadObjVec<ZdbMem::DecimalVec, ZuDecimal, loadDecimal>(data, v, 16))
-        return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-    case Value::Index<ZdbMem::TimeVec>{}: {
-      ZdbMem::TimeVec v;
-      if (!loadObjVec<ZdbMem::TimeVec, ZuTime, loadTime>(data, v, 12))
-        return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-    case Value::Index<ZdbMem::DateTimeVec>{}: {
-      ZdbMem::DateTimeVec v;
-      if (!loadObjVec<ZdbMem::DateTimeVec, ZuDateTime, loadDateTime>(data, v, 12))
-        return false;
-      new (value) Value{ZuMv(v)};
-    } return true;
-  }
-  return false;
 }
 
 InitResult Store::init(
@@ -782,6 +847,7 @@ void Store::final()
   m_mx = nullptr;
   m_sid = 0;
   m_nShards = 0;
+  m_lengthLimit = 0;
 }
 
 void Store::start(StartFn fn)
@@ -800,11 +866,18 @@ void Store::start_(StartFn fn)
       nullptr);
     if (rc != SQLITE_OK) throw cxnError(m_conn, "sqlite3_open_v2()", rc);
     sqlite3_extended_result_codes(m_conn, 1);
+    m_lengthLimit = sqlite3_limit(m_conn, SQLITE_LIMIT_LENGTH, -1);
     startup_();
+    m_beginStmt = prepare(m_conn, "BEGIN IMMEDIATE");
+    m_commitStmt = prepare(m_conn, "COMMIT");
     fn(StartResult{});
   } catch (const ZeException &e) {
+    if (m_beginStmt) sqlite3_finalize(m_beginStmt);
+    if (m_commitStmt) sqlite3_finalize(m_commitStmt);
+    m_beginStmt = m_commitStmt = nullptr;
     if (m_conn) sqlite3_close_v2(m_conn);
     m_conn = nullptr;
+    m_lengthLimit = 0;
     fn(StartResult{e});
   }
 }
@@ -849,20 +922,18 @@ void Store::startup_()
     exec(m_conn,
       "CREATE TABLE IF NOT EXISTS \"zdbsl_mrd\" ("
       "\"internal\" INTEGER NOT NULL, \"tbl\" TEXT NOT NULL, "
-      "\"shard\" INTEGER NOT NULL CHECK (\"shard\" BETWEEN 0 AND 255), "
+      "\"shard\" INTEGER NOT NULL, "
       "\"un\" BLOB NOT NULL, \"sn\" BLOB NOT NULL, "
       "PRIMARY KEY (\"internal\", \"tbl\", \"shard\")) STRICT");
-    validateCoreTable(m_conn, "zdbsl_meta", Meta, 2);
-    validateCoreTable(m_conn, "zdbsl_schema", Schema, 11);
-    validateCoreTable(m_conn, "zdbsl_mrd", MRD, 5);
-    validateStrict(m_conn, "zdbsl_meta");
-    validateStrict(m_conn, "zdbsl_schema");
-    validateStrict(m_conn, "zdbsl_mrd");
+    validateCoreTable(m_conn, "zdbsl_meta", CoreTable::Meta, 2);
+    validateCoreTable(m_conn, "zdbsl_schema", CoreTable::Schema, 11);
+    validateCoreTable(m_conn, "zdbsl_mrd", CoreTable::MRD, 5);
+    validateCoreStrict(m_conn);
     {
       Stmt stmt;
       stmt.ptr = prepare(m_conn,
         "INSERT INTO \"zdbsl_meta\" (\"id\", \"value\") "
-        "VALUES ('format', 1), ('nShards', ?) ON CONFLICT DO NOTHING");
+        "VALUES ('format', 2), ('nShards', ?) ON CONFLICT DO NOTHING");
       if (sqlite3_bind_int64(stmt, 1, m_nShards) != SQLITE_OK)
         throw cxnError(m_conn, "bind shard topology");
       done(m_conn, stmt);
@@ -879,7 +950,7 @@ void Store::startup_()
           reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)),
           unsigned(sqlite3_column_bytes(stmt, 0))};
         sqlite3_int64 value = sqlite3_column_int64(stmt, 1);
-        if ((id == "format" && value != 1) ||
+        if ((id == "format" && value != 2) ||
             (id == "nShards" && value != m_nShards))
           throw ZeEXCEPT(Fatal, "ZdbSL", ([
             id = ZeString{id}, value, nShards = m_nShards
@@ -924,12 +995,16 @@ void Store::stop_1(StopFn fn)
     tbl->finalize_();
     tbl->m_openState = OpenState::Closed;
   }
+  if (m_beginStmt) sqlite3_finalize(m_beginStmt);
+  if (m_commitStmt) sqlite3_finalize(m_commitStmt);
+  m_beginStmt = m_commitStmt = nullptr;
   int rc = m_conn ? sqlite3_close(m_conn) : SQLITE_OK;
   if (rc != SQLITE_OK) {
     fn(StopResult{cxnError(m_conn, "sqlite3_close()", rc)});
     return;
   }
   m_conn = nullptr;
+  m_lengthLimit = 0;
   fn(StopResult{});
 }
 
@@ -978,47 +1053,67 @@ StoreTbl::StoreTbl(
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
   const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
 :
-  m_store{store}, m_id{ZuMv(id)}, m_fields{ZuMv(fields)},
-  m_keyFields{ZuMv(keyFields)},
-  m_fieldMap{ZmHashParams(m_fields.length())},
+  m_store{store}, m_id{ZuMv(id)},
   m_bufAllocFn{ZuMv(bufAllocFn)}, m_internal{internal}
 {
   SQLString physical;
   physical << (m_internal ? "i_" : "a_") << m_id;
   m_relation = quoteID(physical);
   auto fbFields = schema->root_table()->fields();
-  unsigned n = m_fields.length();
+  unsigned n = fields.length();
   m_xFields.size(n);
+  ZmRef<FieldMapObj> fieldMap = new FieldMapObj{n};
   for (unsigned i = 0; i < n; ++i) {
-    ZtCase::camelSnake(m_fields[i]->id, [this, fbFields, i](ZuCSpan id_) {
-      XField xfield{
-        .id = FieldID{id_}, .vfield = m_fields[i],
-        .field = ZdbMem::xField(fbFields, m_fields[i], id_)};
-      if (!xfield.field.field || !xfield.field.type)
+    ZtCase::camelSnake(fields[i]->id, [this, &fields, fieldMap, fbFields, i](ZuCSpan id_) {
+      const reflection::Field *fbField = nullptr;
+      unsigned type = resolveType(fbFields, fields[i], id_, fbField);
+      XField *xfield = m_xFields.push();
+      new (xfield) XField{
+        .id = IDString{id_}, .vfield = fields[i],
+        .field = {
+          .field = fbField,
+          .type = uint8_t(type),
+          .storage = uint8_t(storageID(type)),
+          .fixedSize = uint8_t(fixedSize(type))
+        }};
+      if (!xfield->field.field || !xfield->field.type)
         throw ZeEXCEPT(Fatal, "ZdbSL", ([id = ZeString{id_}](auto &s, const auto &) {
           s << "unsupported or inconsistent field " << id;
         }));
-      m_xFields.push(xfield);
-      m_fieldMap.add(xfield.id, i);
-      if (m_fields[i]->props & ZfVFieldProp::Mutable()) {
-        m_updFields.push(m_fields[i]);
-        m_xUpdFields.push(xfield);
-      }
+      fieldMap->map.add(xfield->id, i);
+      if (fields[i]->props & ZfVFieldProp::Mutable())
+        m_xUpdFields.push(XFieldRef{.field = xfield});
     });
   }
-  n = m_keyFields.length();
+  n = keyFields.length();
   m_xKeyFields.size(n);
   m_keyGroup.length(n);
+  m_keyDirs.length(n);
   for (unsigned i = 0; i < n; ++i) {
-    new (m_xKeyFields.push()) XFields{m_keyFields[i].length()};
+    new (m_xKeyFields.push()) XFieldRefs{keyFields[i].length()};
     m_keyGroup[i] = 0;
-    for (unsigned j = 0; j < m_keyFields[i].length(); ++j) {
-      if (m_keyFields[i][j]->group & (uint64_t(1)<<i)) m_keyGroup[i] = j + 1;
-      ZtCase::camelSnake(m_keyFields[i][j]->id, [this, i](ZuCSpan id_) {
-        auto field = m_fieldMap.findVal(id_);
-        m_xKeyFields[i].push(m_xFields[field]);
+    for (unsigned j = 0; j < keyFields[i].length(); ++j) {
+      if (keyFields[i][j]->group & (uint64_t(1)<<i)) m_keyGroup[i] = j + 1;
+      bool descend = keyFields[i][j]->descend & (uint64_t(1)<<i);
+      ZtCase::camelSnake(keyFields[i][j]->id,
+          [this, fieldMap, i, descend](ZuCSpan id_) {
+        auto field = fieldMap->map.findVal(id_);
+        m_xKeyFields[i].push(XFieldRef{
+          .field = &m_xFields[field], .descend = descend});
       });
     }
+    unsigned group = m_keyGroup[i];
+    unsigned dir = KeyDir::Ascending;
+    if (group < keyFields[i].length()) {
+      bool descend = m_xKeyFields[i][group].descend;
+      dir = descend ? KeyDir::Descending : KeyDir::Ascending;
+      for (unsigned j = group + 1; j < keyFields[i].length(); ++j)
+        if (m_xKeyFields[i][j].descend != descend) {
+          dir = KeyDir::Mixed;
+          break;
+        }
+    }
+    m_keyDirs[i] = dir;
   }
   m_maxUN.length(nShards);
   m_stmts.keys.length(n);
@@ -1049,68 +1144,47 @@ void StoreTbl::schema_()
     }
     SQLString ddl;
     ddl << "CREATE TABLE IF NOT EXISTS " << m_relation << " ("
-      "\"_shard\" INTEGER NOT NULL CHECK (\"_shard\" BETWEEN 0 AND 255), "
+      "\"_shard\" INTEGER NOT NULL, "
       "\"_un\" BLOB NOT NULL, \"_sn\" BLOB NOT NULL, "
       "\"_vn\" INTEGER NOT NULL";
     for (unsigned i = 0; i < m_xFields.length(); ++i) {
       const auto &field = m_xFields[i];
-      ddl << ", " << quoteID(field.id) << ' ' << storage(field.field.type)
+      ddl << ", " << quoteID(field.id) << ' '
+        << storageName(field.field.storage)
         << " NOT NULL";
-      switch (field.field.type) {
-        case Value::Index<bool>{}:
-          ddl << " CHECK (" << quoteID(field.id) << " IN (0, 1))";
-          break;
-        case Value::Index<int8_t>{}:
-          ddl << " CHECK (" << quoteID(field.id) << " BETWEEN -128 AND 127)";
-          break;
-        case Value::Index<uint8_t>{}:
-          ddl << " CHECK (" << quoteID(field.id) << " BETWEEN 0 AND 255)";
-          break;
-        case Value::Index<int16_t>{}:
-          ddl << " CHECK (" << quoteID(field.id)
-            << " BETWEEN -32768 AND 32767)";
-          break;
-        case Value::Index<uint16_t>{}:
-          ddl << " CHECK (" << quoteID(field.id) << " BETWEEN 0 AND 65535)";
-          break;
-        case Value::Index<int32_t>{}:
-          ddl << " CHECK (" << quoteID(field.id)
-            << " BETWEEN -2147483648 AND 2147483647)";
-          break;
-        case Value::Index<uint32_t>{}:
-          ddl << " CHECK (" << quoteID(field.id)
-            << " BETWEEN 0 AND 4294967295)";
-          break;
-      }
     }
     ddl << ") STRICT";
     exec(cxn, ddl);
     validateStrict(cxn, physical);
 
+    unsigned nIndices = m_xKeyFields.length() + 1;
+    ExpectedIndices expectedIndices{nIndices};
     for (unsigned keyID = 0; keyID < m_xKeyFields.length(); ++keyID) {
-      SQLString indexID;
-      indexID << "zdbsl_k" << ZuBoxed(keyID) << '_'
+      ExpectedIndex *expected = expectedIndices.push();
+      new (expected) ExpectedIndex{
+        .fields = &m_xKeyFields[keyID], .unique = !keyID};
+      expected->id << "zdbsl_k" << ZuBoxed(keyID) << '_'
         << (m_internal ? 'i' : 'a') << '_' << m_id;
       SQLString sql;
       sql << "CREATE ";
       if (!keyID) sql << "UNIQUE ";
-      sql << "INDEX IF NOT EXISTS " << quoteID(indexID) << " ON "
+      sql << "INDEX IF NOT EXISTS " << quoteID(expected->id) << " ON "
         << m_relation << " (";
       const auto &fields = m_xKeyFields[keyID];
       for (unsigned i = 0; i < fields.length(); ++i) {
         if (i) sql << ", ";
-        sql << quoteID(fields[i].id);
-        if (m_keyFields[keyID][i]->descend & (uint64_t(1)<<keyID))
-          sql << " DESC";
+        sql << quoteID(fields[i].field->id);
+        if (fields[i].descend) sql << " DESC";
       }
       sql << ')';
       exec(cxn, sql);
     }
     {
-      SQLString indexID;
-      indexID << "zdbsl_un_" << (m_internal ? 'i' : 'a') << '_' << m_id;
+      ExpectedIndex *expected = expectedIndices.push();
+      new (expected) ExpectedIndex{.unique = true};
+      expected->id << "zdbsl_un_" << (m_internal ? 'i' : 'a') << '_' << m_id;
       SQLString sql;
-      sql << "CREATE UNIQUE INDEX IF NOT EXISTS " << quoteID(indexID)
+      sql << "CREATE UNIQUE INDEX IF NOT EXISTS " << quoteID(expected->id)
         << " ON " << m_relation << " (\"_shard\", \"_un\")";
       exec(cxn, sql);
     }
@@ -1133,7 +1207,7 @@ void StoreTbl::schema_()
               SQLITE_STATIC, SQLITE_UTF8) != SQLITE_OK ||
             sqlite3_bind_int64(insert, 5,
               field.vfield->type->code) != SQLITE_OK ||
-            sqlite3_bind_text(insert, 6, storage(field.field.type), -1,
+            sqlite3_bind_text(insert, 6, storageName(field.field.storage), -1,
               SQLITE_STATIC) != SQLITE_OK ||
             sqlite3_bind_int64(insert, 7,
               int64_t(field.vfield->props)) != SQLITE_OK ||
@@ -1173,7 +1247,7 @@ void StoreTbl::schema_()
       if (sqlite3_column_int64(check, 0) != ordinal || id != field.id ||
           sqlite3_column_int64(check, 2) != field.vfield->type->code ||
           sqlite3_column_int64(check, 3) != 1 ||
-          storage_ != storage(field.field.type) ||
+          storage_ != storageName(field.field.storage) ||
           uint64_t(sqlite3_column_int64(check, 5)) != field.vfield->props ||
           uint64_t(sqlite3_column_int64(check, 6)) != field.vfield->keys ||
           uint64_t(sqlite3_column_int64(check, 7)) != field.vfield->group ||
@@ -1213,7 +1287,7 @@ void StoreTbl::schema_()
           if (columns - 4 >= m_xFields.length())
             throw ZeEXCEPT(Fatal, "ZdbSL", "physical table has extra columns");
           expectedName = m_xFields[columns - 4].id;
-          expectedType = storage(m_xFields[columns - 4].field.type);
+          expectedType = storageName(m_xFields[columns - 4].field.storage);
           break;
       }
       if (name != expectedName || type != expectedType ||
@@ -1230,33 +1304,43 @@ void StoreTbl::schema_()
     if (columns != m_xFields.length() + 4)
       throw ZeEXCEPT(Fatal, "ZdbSL", "physical table has missing columns");
 
-    auto validateIndex = [this, cxn, &physical](
-        const SQLString &indexID, bool unique, const XFields *fields) {
+    ZmRef<IndexMapObj> indexMap = new IndexMapObj{nIndices};
+    for (unsigned i = 0; i < nIndices; ++i)
+      indexMap->map.add(expectedIndices[i].id, i);
+    {
       SQLString pragma;
       pragma << "PRAGMA index_list(" << quoteID(physical) << ')';
       Stmt list;
       list.ptr = prepare(cxn, pragma);
-      bool found = false;
       int rc;
       while ((rc = sqlite3_step(list)) == SQLITE_ROW) {
         ZuCSpan id{
           reinterpret_cast<const char *>(sqlite3_column_text(list, 1)),
           unsigned(sqlite3_column_bytes(list, 1))};
-        if (id != indexID) continue;
-        if (bool(sqlite3_column_int(list, 2)) != unique ||
+        unsigned i = indexMap->map.findVal(id);
+        if (ZuNull(i))
+          throw ZeEXCEPT(Fatal, "ZdbSL", "unexpected index definition");
+        ExpectedIndex &expected = expectedIndices[i];
+        if (expected.seen ||
+            bool(sqlite3_column_int(list, 2)) != expected.unique ||
             sqlite3_column_int(list, 4))
           throw ZeEXCEPT(Fatal, "ZdbSL", "inconsistent index definition");
-        found = true;
+        expected.seen = true;
       }
       if (rc != SQLITE_DONE) throw cxnError(cxn, "PRAGMA index_list", rc);
-      if (!found)
+    }
+    indexMap = nullptr;
+    for (unsigned i = 0; i < nIndices; ++i) {
+      const ExpectedIndex &expectedIndex = expectedIndices[i];
+      if (!expectedIndex.seen)
         throw ZeEXCEPT(Fatal, "ZdbSL", "missing index after creation");
 
-      pragma.null();
-      pragma << "PRAGMA index_xinfo(" << quoteID(indexID) << ')';
+      SQLString pragma;
+      pragma << "PRAGMA index_xinfo(" << quoteID(expectedIndex.id) << ')';
       Stmt info;
       info.ptr = prepare(cxn, pragma);
       unsigned ordinal = 0;
+      int rc;
       while ((rc = sqlite3_step(info)) == SQLITE_ROW) {
         if (!sqlite3_column_int(info, 5)) continue;
         ZuCSpan id{
@@ -1264,12 +1348,11 @@ void StoreTbl::schema_()
           unsigned(sqlite3_column_bytes(info, 2))};
         ZuCSpan expected;
         bool descend = false;
-        if (fields) {
-          if (ordinal >= fields->length())
+        if (expectedIndex.fields) {
+          if (ordinal >= expectedIndex.fields->length())
             throw ZeEXCEPT(Fatal, "ZdbSL", "index has extra columns");
-          expected = (*fields)[ordinal].id;
-          unsigned keyID = unsigned(fields - m_xKeyFields.data());
-          descend = m_keyFields[keyID][ordinal]->descend & (uint64_t(1)<<keyID);
+          expected = (*expectedIndex.fields)[ordinal].field->id;
+          descend = (*expectedIndex.fields)[ordinal].descend;
         } else {
           switch (ordinal) {
             case 0: expected = "_shard"; break;
@@ -1283,19 +1366,11 @@ void StoreTbl::schema_()
         ++ordinal;
       }
       if (rc != SQLITE_DONE) throw cxnError(cxn, "PRAGMA index_xinfo", rc);
-      unsigned expected = fields ? fields->length() : 2;
+      unsigned expected = expectedIndex.fields ?
+        expectedIndex.fields->length() : 2;
       if (ordinal != expected)
         throw ZeEXCEPT(Fatal, "ZdbSL", "index has missing columns");
-    };
-    for (unsigned keyID = 0; keyID < m_xKeyFields.length(); ++keyID) {
-      SQLString indexID;
-      indexID << "zdbsl_k" << ZuBoxed(keyID) << '_'
-        << (m_internal ? 'i' : 'a') << '_' << m_id;
-      validateIndex(indexID, !keyID, &m_xKeyFields[keyID]);
     }
-    SQLString unIndex;
-    unIndex << "zdbsl_un_" << (m_internal ? 'i' : 'a') << '_' << m_id;
-    validateIndex(unIndex, true, nullptr);
     exec(cxn, "COMMIT");
   } catch (...) {
     sqlite3_exec(cxn, "ROLLBACK", nullptr, nullptr, nullptr);
@@ -1303,45 +1378,63 @@ void StoreTbl::schema_()
   }
 }
 
-static void columns(SQLString &sql, const XFields &fields)
+template <typename Fields>
+static void columns(SQLString &sql, const Fields &fields)
 {
   for (unsigned i = 0; i < fields.length(); ++i) {
     if (i) sql << ", ";
-    sql << quoteID(fields[i].id);
+    sql << quoteID(fieldAt(fields, i).id);
   }
 }
 
-static void equal(SQLString &sql, const XFields &fields, unsigned n)
+template <typename Fields>
+static void equal(SQLString &sql, const Fields &fields, unsigned n)
 {
   for (unsigned i = 0; i < n; ++i) {
-    sql << (i ? " AND " : " WHERE ") << quoteID(fields[i].id)
+    sql << (i ? " AND " : " WHERE ") << quoteID(fieldAt(fields, i).id)
       << "=?" << ZuBoxed(i + 1);
   }
 }
 
+template <typename Projection>
 static SQLString selectSQL(
-  const SQLString &relation, const XFields &projection,
-  const ZfVFieldArray &keyFields, const XFields &xKeyFields,
-  KeyID keyID, unsigned group, bool next, bool inclusive)
+  const SQLString &relation, const Projection &projection,
+  const XFieldRefs &keyFields, unsigned group, unsigned direction,
+  bool next, bool inclusive)
 {
   SQLString sql;
   sql << "SELECT ";
   columns(sql, projection);
   sql << " FROM " << relation;
-  equal(sql, xKeyFields, group);
-  unsigned n = xKeyFields.length();
+  equal(sql, keyFields, group);
+  unsigned n = keyFields.length();
   if (next && group < n) {
     sql << (group ? " AND (" : " WHERE (");
-    for (unsigned i = group; i < n; ++i) {
-      if (i > group) sql << " OR ";
+    if (direction != KeyDir::Mixed) {
       sql << '(';
-      for (unsigned j = group; j < i; ++j)
-        sql << quoteID(xKeyFields[j].id) << "=?" << ZuBoxed(j + 1)
-          << " AND ";
-      sql << quoteID(xKeyFields[i].id)
-        << ((keyFields[i]->descend & (uint64_t(1)<<keyID)) ? '<' : '>');
-      if (inclusive && i + 1 == n) sql << '=';
-      sql << '?' << ZuBoxed(i + 1) << ')';
+      for (unsigned i = group; i < n; ++i) {
+        if (i > group) sql << ", ";
+        sql << quoteID(keyFields[i].field->id);
+      }
+      sql << ") " << (direction == KeyDir::Descending ? '<' : '>');
+      if (inclusive) sql << '=';
+      sql << " (";
+      for (unsigned i = group; i < n; ++i) {
+        if (i > group) sql << ", ";
+        sql << '?' << ZuBoxed(i + 1);
+      }
+      sql << ')';
+    } else {
+      for (unsigned i = group; i < n; ++i) {
+        bool descend = keyFields[i].descend;
+        sql << quoteID(keyFields[i].field->id) << (descend ? '<' : '>');
+        if (inclusive && i + 1 == n) sql << '=';
+        sql << '?' << ZuBoxed(i + 1);
+        if (i + 1 < n)
+          sql << " OR (" << quoteID(keyFields[i].field->id) << "=?"
+            << ZuBoxed(i + 1) << " AND (";
+      }
+      for (unsigned i = group + 1; i < n; ++i) sql << "))";
     }
     sql << ')';
   }
@@ -1349,8 +1442,8 @@ static SQLString selectSQL(
     sql << " ORDER BY ";
     for (unsigned i = group; i < n; ++i) {
       if (i > group) sql << ", ";
-      sql << quoteID(xKeyFields[i].id);
-      if (keyFields[i]->descend & (uint64_t(1)<<keyID)) sql << " DESC";
+      sql << quoteID(keyFields[i].field->id);
+      if (keyFields[i].descend) sql << " DESC";
     }
   }
   sql << " LIMIT ?" << ZuBoxed((next ? n : group) + 1);
@@ -1363,30 +1456,29 @@ void StoreTbl::statements_()
   for (unsigned keyID = 0; keyID < m_xKeyFields.length(); ++keyID) {
     auto &stmts = m_stmts.keys[keyID];
     const auto &fields = m_xKeyFields[keyID];
-    const auto &keyFields = m_keyFields[keyID];
     unsigned group = m_keyGroup[keyID];
     SQLString sql{"SELECT count(*) FROM "};
     sql << m_relation;
     equal(sql, fields, group);
     stmts.count = prepare(cxn, sql);
     stmts.selectKIX = prepare(cxn,
-      selectSQL(m_relation, fields, keyFields, fields, keyID,
-        group, false, false));
+      selectSQL(m_relation, fields, fields,
+        group, m_keyDirs[keyID], false, false));
     stmts.selectKNX = prepare(cxn,
-      selectSQL(m_relation, fields, keyFields, fields, keyID,
-        group, true, false));
+      selectSQL(m_relation, fields, fields,
+        group, m_keyDirs[keyID], true, false));
     stmts.selectKNI = prepare(cxn,
-      selectSQL(m_relation, fields, keyFields, fields, keyID,
-        group, true, true));
+      selectSQL(m_relation, fields, fields,
+        group, m_keyDirs[keyID], true, true));
     stmts.selectRIX = prepare(cxn,
-      selectSQL(m_relation, m_xFields, keyFields, fields, keyID,
-        group, false, false));
+      selectSQL(m_relation, m_xFields, fields,
+        group, m_keyDirs[keyID], false, false));
     stmts.selectRNX = prepare(cxn,
-      selectSQL(m_relation, m_xFields, keyFields, fields, keyID,
-        group, true, false));
+      selectSQL(m_relation, m_xFields, fields,
+        group, m_keyDirs[keyID], true, false));
     stmts.selectRNI = prepare(cxn,
-      selectSQL(m_relation, m_xFields, keyFields, fields, keyID,
-        group, true, true));
+      selectSQL(m_relation, m_xFields, fields,
+        group, m_keyDirs[keyID], true, true));
     sql.null();
     sql << "SELECT \"_shard\", \"_un\", \"_sn\", \"_vn\", ";
     columns(sql, m_xFields);
@@ -1415,7 +1507,7 @@ void StoreTbl::statements_()
     const auto &key = m_xKeyFields[0];
     for (unsigned i = 0; i < key.length(); ++i) {
       if (i) sql << ", ";
-      sql << quoteID(key[i].id);
+      sql << quoteID(key[i].field->id);
     }
     sql << ") DO NOTHING";
     m_stmts.insert = prepare(cxn, sql);
@@ -1426,12 +1518,12 @@ void StoreTbl::statements_()
       << " SET \"_un\"=?1, \"_sn\"=?2, \"_vn\"=?3";
     unsigned param = 4;
     for (const auto &field: m_xUpdFields)
-      sql << ", " << quoteID(field.id) << "=?" << ZuBoxed(param++);
+      sql << ", " << quoteID(field.field->id) << "=?" << ZuBoxed(param++);
     sql << " WHERE ";
     const auto &key = m_xKeyFields[0];
     for (unsigned i = 0; i < key.length(); ++i) {
       if (i) sql << " AND ";
-      sql << quoteID(key[i].id) << "=?" << ZuBoxed(param++);
+      sql << quoteID(key[i].field->id) << "=?" << ZuBoxed(param++);
     }
     m_stmts.update = prepare(cxn, sql);
   }
@@ -1441,7 +1533,7 @@ void StoreTbl::statements_()
     const auto &key = m_xKeyFields[0];
     for (unsigned i = 0; i < key.length(); ++i) {
       if (i) sql << " AND ";
-      sql << quoteID(key[i].id) << "=?" << ZuBoxed(i + 1);
+      sql << quoteID(key[i].field->id) << "=?" << ZuBoxed(i + 1);
     }
     m_stmts.del = prepare(cxn, sql);
   }
@@ -1469,63 +1561,53 @@ void StoreTbl::state_()
     m_maxUN[shard] = ZdbNullUN();
   m_maxSN = ZdbNullSN();
   SQLString liveSQL;
-  liveSQL << "SELECT \"_un\" FROM " << m_relation
+  liveSQL << "SELECT \"_un\", \"_sn\" FROM " << m_relation
     << " WHERE \"_shard\"=?1 ORDER BY \"_un\" DESC LIMIT 1";
   Stmt live;
   live.ptr = prepare(cxn, liveSQL);
   Stmt mrd;
   mrd.ptr = prepare(cxn,
-    "SELECT \"un\", \"sn\" FROM \"zdbsl_mrd\" "
-    "WHERE \"internal\"=?1 AND \"tbl\"=?2 AND \"shard\"=?3");
-  for (unsigned shard = 0; shard < m_maxUN.length(); ++shard) {
-    {
-      Reset reset{live};
-      if (sqlite3_bind_int64(live, 1, shard) != SQLITE_OK)
-        throw cxnError(cxn, "bind live high-water shard");
-      int rc = sqlite3_step(live);
-      if (rc == SQLITE_ROW) {
-        uint64_t un;
-        if (!loadU64(columnBlob(live, 0), un))
-          throw ZeEXCEPT(Fatal, "ZdbSL", "invalid live high-water value");
-        m_maxUN[shard] = un;
-      } else if (rc != SQLITE_DONE) throw cxnError(cxn, "read live high-water", rc);
-    }
-    {
-      Reset reset{mrd};
-      if (sqlite3_bind_int(mrd, 1, m_internal) != SQLITE_OK ||
-          sqlite3_bind_text64(mrd, 2, m_id.data(), m_id.length(),
-            SQLITE_STATIC, SQLITE_UTF8) != SQLITE_OK ||
-          sqlite3_bind_int64(mrd, 3, shard) != SQLITE_OK)
-        throw cxnError(cxn, "bind delete high-water identity");
-      int rc = sqlite3_step(mrd);
-      if (rc == SQLITE_ROW) {
-        uint64_t un;
-        uint128_t sn;
-        if (!loadU64(columnBlob(mrd, 0), un) ||
-            !loadU128(columnBlob(mrd, 1), sn))
-          throw ZeEXCEPT(Fatal, "ZdbSL", "invalid delete high-water value");
-        if (un != ZdbNullUN() &&
-            (m_maxUN[shard] == ZdbNullUN() || un > m_maxUN[shard]))
-          m_maxUN[shard] = un;
-        if (sn != ZdbNullSN() && (m_maxSN == ZdbNullSN() || sn > m_maxSN))
-          m_maxSN = sn;
-      } else if (rc != SQLITE_DONE) throw cxnError(cxn, "read delete high-water", rc);
-    }
+    "SELECT \"shard\", \"un\", \"sn\" FROM \"zdbsl_mrd\" "
+    "WHERE \"internal\"=?1 AND \"tbl\"=?2 ORDER BY \"shard\"");
+  if (sqlite3_bind_int(mrd, 1, m_internal) != SQLITE_OK ||
+      sqlite3_bind_text64(mrd, 2, m_id.data(), m_id.length(),
+        SQLITE_STATIC, SQLITE_UTF8) != SQLITE_OK)
+    throw cxnError(cxn, "bind delete high-water identity");
+  int mrdRC;
+  while ((mrdRC = sqlite3_step(mrd)) == SQLITE_ROW) {
+    sqlite3_int64 shard_ = sqlite3_column_int64(mrd, 0);
+    if (shard_ < 0 || uint64_t(shard_) >= m_maxUN.length())
+      throw ZeEXCEPT(Fatal, "ZdbSL", "invalid delete high-water shard");
+    unsigned shard = shard_;
+    uint64_t un;
+    uint128_t sn;
+    if (!loadU64(columnBlob(mrd, 1), un) ||
+        !loadU128(columnBlob(mrd, 2), sn))
+      throw ZeEXCEPT(Fatal, "ZdbSL", "invalid delete high-water value");
+    if (un != ZdbNullUN() &&
+        (m_maxUN[shard] == ZdbNullUN() || un > m_maxUN[shard]))
+      m_maxUN[shard] = un;
+    if (sn != ZdbNullSN() && (m_maxSN == ZdbNullSN() || sn > m_maxSN))
+      m_maxSN = sn;
   }
-  {
-    SQLString sql{"SELECT \"_sn\" FROM "};
-    sql << m_relation << " ORDER BY \"_sn\" DESC LIMIT 1";
-    Stmt stmt;
-    stmt.ptr = prepare(cxn, sql);
-    int rc = sqlite3_step(stmt);
+  if (mrdRC != SQLITE_DONE)
+    throw cxnError(cxn, "read delete high-water", mrdRC);
+  for (unsigned shard = 0; shard < m_maxUN.length(); ++shard) {
+    Reset reset{live};
+    if (sqlite3_bind_int64(live, 1, shard) != SQLITE_OK)
+      throw cxnError(cxn, "bind live high-water shard");
+    int rc = sqlite3_step(live);
     if (rc == SQLITE_ROW) {
+      uint64_t un;
       uint128_t sn;
-      if (!loadU128(columnBlob(stmt, 0), sn))
-        throw ZeEXCEPT(Fatal, "ZdbSL", "invalid live sequence value");
+      if (!loadU64(columnBlob(live, 0), un) ||
+          !loadU128(columnBlob(live, 1), sn))
+        throw ZeEXCEPT(Fatal, "ZdbSL", "invalid live high-water value");
+      if (m_maxUN[shard] == ZdbNullUN() || un > m_maxUN[shard])
+        m_maxUN[shard] = un;
       if (m_maxSN == ZdbNullSN() || sn > m_maxSN) m_maxSN = sn;
-    } else if (rc != SQLITE_DONE) {
-      throw cxnError(cxn, "read live sequence", rc);
-    }
+    } else if (rc != SQLITE_DONE)
+      throw cxnError(cxn, "read live high-water", rc);
   }
 }
 
@@ -1582,49 +1664,320 @@ void StoreTbl::finalize_()
   finalize(m_stmts.mrd);
 }
 
-static ZdbMem::Offset saveTuple(
-    Zfb::Builder &fbb, sqlite3_stmt *stmt, const XFields &fields,
+using Offset = Zfb::Offset<void>;
+
+struct SavedOffset {
+  Offset	offset;
+  uint8_t	ipType = 0;
+  bool		valid = false;
+};
+ZuDerive(SavedOffsets,
+  (ZtArray<SavedOffset, ZtArrayHeapID<"ZdbSL.SavedOffset">>));
+
+static ZuCSpan columnText(sqlite3_stmt *stmt, unsigned col)
+{
+  return {
+    reinterpret_cast<const char *>(sqlite3_column_text(stmt, col)),
+    unsigned(sqlite3_column_bytes(stmt, col))};
+}
+
+static bool vecData(ZuBSpan &data, unsigned width, unsigned &n)
+{
+  uint32_t count;
+  if (!loadUnsigned(data, count) ||
+      uint64_t(count) * width != data.length()) return false;
+  n = count;
+  return true;
+}
+
+static bool varVecData(ZuBSpan &data, unsigned &n)
+{
+  uint32_t count;
+  if (!loadUnsigned(data, count)) return false;
+  ZuBSpan scan = data;
+  for (unsigned i = 0; i < count; ++i) {
+    uint32_t length;
+    if (!loadUnsigned(scan, length) || scan.length() < length) return false;
+    scan.offset(length);
+  }
+  if (scan.length()) return false;
+  n = count;
+  return true;
+}
+
+template <typename T, typename L>
+static SavedOffset savePVec(Zfb::Builder &fbb, ZuBSpan data, L &&load)
+{
+  unsigned n;
+  if (!vecData(data, sizeof(T), n)) return {};
+  return {Zfb::Save::pvectorIter<T>(
+    fbb, n, [&data, load = ZuFwd<L>(load)](unsigned) mutable {
+      T value = load(data.data());
+      data.offset(sizeof(T));
+      return value;
+    }).Union(), 0, true};
+}
+
+template <typename FB, typename T, typename L, typename S>
+static SavedOffset saveStructVec(
+  Zfb::Builder &fbb, ZuBSpan data, unsigned width, L &&load, S &&save)
+{
+  unsigned n;
+  if (!vecData(data, width, n)) return {};
+  return {Zfb::Save::structVecIter<FB>(
+    fbb, n, [&data, width,
+      load = ZuFwd<L>(load), save = ZuFwd<S>(save)](FB *out, unsigned) mutable {
+      T value = load(data.data());
+      data.offset(width);
+      *out = save(value);
+    }).Union(), 0, true};
+}
+
+static SavedOffset saveOffset(
+  Zfb::Builder &fbb, sqlite3_stmt *stmt, unsigned col, unsigned type)
+{
+  if (type == Type::String) {
+    if (sqlite3_column_type(stmt, col) != SQLITE_TEXT) return {};
+    return {Zfb::Save::str(fbb, columnText(stmt, col)).Union(), 0, true};
+  }
+  if (sqlite3_column_type(stmt, col) != SQLITE_BLOB) return {};
+  ZuBSpan data = columnBlob(stmt, col);
+  switch (type) {
+    case Type::Bytes:
+      return {Zfb::Save::bytes(fbb, data).Union(), 0, true};
+    case Type::Bitmap: {
+      unsigned n;
+      if (!vecData(data, sizeof(uint64_t), n)) return {};
+      auto offset = Zfb::CreateBitmap(
+        fbb, Zfb::Save::pvectorIter<uint64_t>(
+          fbb, n, [&data](unsigned) {
+            uint64_t value = loadUnsigned_<uint64_t>(data.data());
+            data.offset(sizeof(value));
+            return value;
+          }));
+      return {offset.Union(), 0, true};
+    }
+    case Type::IP: {
+      if (!data.length()) return {};
+      uint8_t family = data[0];
+      data.offset(1);
+      ZiIP ip;
+      switch (family) {
+        case 0:
+          if (data.length()) return {};
+          break;
+        case 4: {
+          if (data.length() != sizeof(in_addr)) return {};
+          in_addr addr;
+          memcpy(&addr, data.data(), sizeof(addr));
+          ip = ZiIP{addr};
+        } break;
+        case 6: {
+          if (data.length() != sizeof(in6_addr)) return {};
+          in6_addr addr;
+          memcpy(&addr, data.data(), sizeof(addr));
+          ip = ZiIP{addr};
+        } break;
+        default:
+          return {};
+      }
+      auto saved = ZfbTransform::IP::save(fbb, ip);
+      return {saved.offset, uint8_t(saved.type), true};
+    }
+    case Type::StringVec: {
+      unsigned n;
+      if (!varVecData(data, n)) return {};
+      auto offset = Zfb::Save::strVecIter(fbb, n, [&data](unsigned) {
+        uint32_t length = loadUnsigned_<uint32_t>(data.data());
+        data.offset(sizeof(length));
+        ZuCSpan value{
+          reinterpret_cast<const char *>(data.data()), length};
+        data.offset(length);
+        return value;
+      });
+      return {offset.Union(), 0, true};
+    }
+    case Type::BytesVec: {
+      unsigned n;
+      if (!varVecData(data, n)) return {};
+      auto offset = Zfb::Save::vectorIter<Zfb::Bytes>(
+        fbb, n, [&data](Zfb::Builder &fbb, unsigned) {
+          uint32_t length = loadUnsigned_<uint32_t>(data.data());
+          data.offset(sizeof(length));
+          ZuBSpan value{data.data(), length};
+          data.offset(length);
+          return Zfb::CreateBytes(fbb, Zfb::Save::bytes(fbb, value));
+        });
+      return {offset.Union(), 0, true};
+    }
+#define ZdbSL_SaveUVec(Type_, Elem_) \
+    case Type::Type_: \
+      return savePVec<Elem_>(fbb, data, \
+	[](const uint8_t *in) { return loadUnsigned_<Elem_>(in); })
+#define ZdbSL_SaveSVec(Type_, Elem_, UInt_) \
+    case Type::Type_: \
+      return savePVec<Elem_>(fbb, data, \
+	[](const uint8_t *in) { return loadSigned_<Elem_, UInt_>(in); })
+    ZdbSL_SaveSVec(Int8Vec, int8_t, uint8_t);
+    ZdbSL_SaveUVec(UInt8Vec, uint8_t);
+    ZdbSL_SaveSVec(Int16Vec, int16_t, uint16_t);
+    ZdbSL_SaveUVec(UInt16Vec, uint16_t);
+    ZdbSL_SaveSVec(Int32Vec, int32_t, uint32_t);
+    ZdbSL_SaveUVec(UInt32Vec, uint32_t);
+    ZdbSL_SaveSVec(Int64Vec, int64_t, uint64_t);
+    ZdbSL_SaveUVec(UInt64Vec, uint64_t);
+#undef ZdbSL_SaveSVec
+#undef ZdbSL_SaveUVec
+    case Type::Int128Vec:
+      return saveStructVec<Zfb::Int128, int128_t>(
+	fbb, data, sizeof(int128_t), loadS128_,
+	[](int128_t value) { return ZfbTransform::Int128::save(value); });
+    case Type::UInt128Vec:
+      return saveStructVec<Zfb::UInt128, uint128_t>(
+	fbb, data, sizeof(uint128_t), loadU128_,
+	[](uint128_t value) { return ZfbTransform::UInt128::save(value); });
+    case Type::FloatVec:
+      return savePVec<double>(fbb, data, loadFloat_);
+    case Type::FixedVec:
+      return saveStructVec<Zfb::Fixed, ZuFixed>(
+	fbb, data, sizeof(int128_t), loadFixed_,
+	[](ZuFixed value) { return ZfbTransform::Fixed::save(value); });
+    case Type::DecimalVec:
+      return saveStructVec<Zfb::Decimal, ZuDecimal>(
+	fbb, data, sizeof(int128_t), loadDecimal_,
+	[](ZuDecimal value) { return ZfbTransform::Decimal::save(value); });
+    case Type::TimeVec:
+      return saveStructVec<Zfb::Time, ZuTime>(
+	fbb, data, sizeof(TimeData), loadTime_,
+	[](ZuTime value) { return ZfbTransform::Time::save(value); });
+    case Type::DateTimeVec:
+      return saveStructVec<Zfb::DateTime, ZuDateTime>(
+	fbb, data, sizeof(DateTimeData), loadDateTime_,
+	[](ZuDateTime value) { return ZfbTransform::DateTime::save(value); });
+    default:
+      return {};
+  }
+}
+
+static bool hasOffset(unsigned type)
+{
+  return type == Type::String || type == Type::Bytes ||
+    type == Type::Bitmap || type == Type::IP || isVec(type);
+}
+
+static bool saveValue(
+  Zfb::Builder &fbb, sqlite3_stmt *stmt, unsigned col,
+  const XField &xfield, const SavedOffset &saved)
+{
+  const reflection::Field *field = xfield.field.field;
+  unsigned type = xfield.field.type;
+  if (hasOffset(type)) {
+    if (!saved.valid) return false;
+    if (!saved.offset.o) return true;
+    if (type == Type::IP)
+      fbb.AddElement<uint8_t>(field->offset() - 2, saved.ipType, 0);
+    fbb.AddOffset(field->offset(), saved.offset);
+    return true;
+  }
+  if (xfield.field.storage == Storage::Integer) {
+    if (sqlite3_column_type(stmt, col) != SQLITE_INTEGER) return false;
+    sqlite3_int64 value = sqlite3_column_int64(stmt, col);
+    switch (type) {
+      case Type::Bool:
+        fbb.AddElement<bool>(
+          field->offset(), bool(value), field->default_integer());
+        return true;
+#define ZdbSL_SaveInt(Type_, CType_) \
+      case Type::Type_: \
+        fbb.AddElement<CType_>( \
+          field->offset(), CType_(value), field->default_integer()); \
+        return true
+      ZdbSL_SaveInt(Int8, int8_t);
+      ZdbSL_SaveInt(UInt8, uint8_t);
+      ZdbSL_SaveInt(Int16, int16_t);
+      ZdbSL_SaveInt(UInt16, uint16_t);
+      ZdbSL_SaveInt(Int32, int32_t);
+      ZdbSL_SaveInt(UInt32, uint32_t);
+      ZdbSL_SaveInt(Int64, int64_t);
+#undef ZdbSL_SaveInt
+    }
+    return false;
+  }
+  if (sqlite3_column_type(stmt, col) != SQLITE_BLOB) return false;
+  ZuBSpan data = columnBlob(stmt, col);
+  switch (type) {
+    case Type::UInt64: {
+      uint64_t value;
+      if (!loadU64(data, value)) return false;
+      fbb.AddElement<uint64_t>(
+        field->offset(), value, field->default_integer());
+    } return true;
+    case Type::Float: {
+      double value;
+      if (!loadFloat(data, value)) return false;
+      fbb.AddElement<double>(
+        field->offset(), value, field->default_real());
+    } return true;
+    case Type::Int128: {
+      int128_t value;
+      if (!loadS128(data, value)) return false;
+      auto fb = ZfbTransform::Int128::save(value);
+      fbb.AddStruct(field->offset(), &fb);
+    } return true;
+    case Type::UInt128: {
+      uint128_t value;
+      if (!loadU128(data, value)) return false;
+      auto fb = ZfbTransform::UInt128::save(value);
+      fbb.AddStruct(field->offset(), &fb);
+    } return true;
+    case Type::Fixed: {
+      ZuFixed value;
+      if (!loadFixed(data, value)) return false;
+      auto fb = ZfbTransform::Fixed::save(value);
+      fbb.AddStruct(field->offset(), &fb);
+    } return true;
+    case Type::Decimal: {
+      ZuDecimal value;
+      if (!loadDecimal(data, value)) return false;
+      auto fb = ZfbTransform::Decimal::save(value);
+      fbb.AddStruct(field->offset(), &fb);
+    } return true;
+    case Type::Time: {
+      ZuTime value;
+      if (!loadTime(data, value)) return false;
+      auto fb = ZfbTransform::Time::save(value);
+      fbb.AddStruct(field->offset(), &fb);
+    } return true;
+    case Type::DateTime: {
+      ZuDateTime value;
+      if (!loadDateTime(data, value)) return false;
+      auto fb = ZfbTransform::DateTime::save(value);
+      fbb.AddStruct(field->offset(), &fb);
+    } return true;
+    default:
+      return false;
+  }
+}
+
+template <typename Fields>
+static Offset saveTuple(
+    Zfb::Builder &fbb, sqlite3_stmt *stmt, const Fields &fields,
     unsigned base = 0)
 {
   unsigned n = fields.length();
-  auto offsets_ = ZmScratch(ZdbMem::Offset, n);
-  ZdbMem::Offsets offsets(offsets_.data());
-  if (!offsets) return {};
-  for (unsigned i = 0; i < n; ++i) {
-    unsigned type = fields[i].field.type;
-    if (type != Value::Index<ZdbMem::String>{} &&
-        type != Value::Index<ZdbMem::Bytes>{} &&
-        type != Value::Index<ZtBitmap>{} &&
-        type != Value::Index<ZiIP>{} && !ZdbMem::isVec(type))
-      continue;
-    Value value;
-    if (!decode(&value, type, stmt, base + i))
-      throw ZeEXCEPT(Fatal, "ZdbSL", "invalid stored tuple value");
-    ZuSwitch::dispatch<Value::N>(type,
-      [&fbb, &offsets, &value](auto I) {
-        ZdbMem::saveOffset<I>(fbb, offsets, value);
-      });
-  }
+  auto offsets = ZtScratch(SavedOffsets, n, n);
+  for (unsigned i = 0; i < n; ++i)
+    offsets[i] = hasOffset(fieldAt(fields, i).field.type) ?
+      saveOffset(fbb, stmt, base + i, fieldAt(fields, i).field.type) :
+      SavedOffset{};
   auto start = fbb.StartTable();
-  for (unsigned i = 0; i < n; ++i) {
-    unsigned type = fields[i].field.type;
-    Value value;
-    if ((type == Value::Index<ZiIP>{} ||
-         (type != Value::Index<ZdbMem::String>{} &&
-          type != Value::Index<ZdbMem::Bytes>{} &&
-          type != Value::Index<ZtBitmap>{} && !ZdbMem::isVec(type))) &&
-        !decode(&value, type, stmt, base + i))
+  for (unsigned i = 0; i < n; ++i)
+    if (!saveValue(fbb, stmt, base + i, fieldAt(fields, i), offsets[i]))
       throw ZeEXCEPT(Fatal, "ZdbSL", "invalid stored tuple value");
-    ZuSwitch::dispatch<Value::N>(type,
-      [&fbb, &offsets, field = fields[i].field.field,
-       &value](auto I) {
-        ZdbMem::saveValue<I>(fbb, offsets, field, value);
-      });
-  }
-  return ZdbMem::Offset{fbb.EndTable(start)};
+  return Offset{fbb.EndTable(start)};
 }
-
-ZmRef<IOBuf> StoreTbl::tuple_(sqlite3_stmt *stmt, const XFields &fields)
+template <typename Fields>
+ZmRef<IOBuf> StoreTbl::tuple_(sqlite3_stmt *stmt, const Fields &fields)
 {
   Zfb::IOBuilder fbb{m_bufAllocFn()};
   fbb.Finish(saveTuple(fbb, stmt, fields));
@@ -1684,10 +2037,12 @@ void StoreTbl::count_(KeyID keyID, ZmRef<IOBuf> buf, CountFn fn)
   try {
     unsigned n = m_keyGroup[keyID];
     auto fbo = Zfb::GetAnyRoot(buf->data());
-    auto size = inputSize(m_store->conn(), n, m_xKeyFields[keyID], fbo);
-    auto scratch = ZmScratch(uint8_t, size);
+    auto parts = ZtScratch(VarParts, n, n);
+    auto size = planInput(m_store->conn(), m_store->lengthLimit(),
+      n, m_xKeyFields[keyID], fbo, parts.span());
+    auto scratch = ZtScratch(VarBuf, size, size);
     bindInput(m_store->conn(), stmt, 1,
-      n, m_xKeyFields[keyID], fbo, {scratch.data(), size});
+      n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
     int rc = sqlite3_step(stmt);
     if (rc != SQLITE_ROW) throw cxnError(m_store->conn(), "count", rc);
     fn(CountResult{CountData{uint64_t(sqlite3_column_int64(stmt, 0))}});
@@ -1729,16 +2084,18 @@ void StoreTbl::select_(
   try {
     unsigned n = selectNext ? m_xKeyFields[keyID].length() : m_keyGroup[keyID];
     auto fbo = Zfb::GetAnyRoot(buf->data());
-    auto size = inputSize(m_store->conn(), n, m_xKeyFields[keyID], fbo);
-    auto scratch = ZmScratch(uint8_t, size);
+    auto parts = ZtScratch(VarParts, n, n);
+    auto size = planInput(m_store->conn(), m_store->lengthLimit(),
+      n, m_xKeyFields[keyID], fbo, parts.span());
+    auto scratch = ZtScratch(VarBuf, size, size);
     bindInput(m_store->conn(), stmt, 1,
-      n, m_xKeyFields[keyID], fbo, {scratch.data(), size});
+      n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
     int rc = sqlite3_bind_int64(stmt, n + 1, limit);
     if (rc != SQLITE_OK) throw cxnError(m_store->conn(), "bind select limit", rc);
-    const auto &fields = selectRow ? m_xFields : m_xKeyFields[keyID];
     unsigned count = 0;
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-      auto result = tuple_(stmt, fields);
+      auto result = selectRow ? tuple_(stmt, m_xFields) :
+        tuple_(stmt, m_xKeyFields[keyID]);
       fn(TupleResult{TupleData{
         .keyID = selectRow ? KeyID(ZuStructKeyID::All) : keyID,
         .buf = ZuMv(result), .count = ++count}});
@@ -1768,10 +2125,12 @@ void StoreTbl::find_(KeyID keyID, ZmRef<IOBuf> buf, RowFn fn)
   try {
     unsigned n = m_xKeyFields[keyID].length();
     auto fbo = Zfb::GetAnyRoot(buf->data());
-    auto size = inputSize(m_store->conn(), n, m_xKeyFields[keyID], fbo);
-    auto scratch = ZmScratch(uint8_t, size);
+    auto parts = ZtScratch(VarParts, n, n);
+    auto size = planInput(m_store->conn(), m_store->lengthLimit(),
+      n, m_xKeyFields[keyID], fbo, parts.span());
+    auto scratch = ZtScratch(VarBuf, size, size);
     bindInput(m_store->conn(), stmt, 1,
-      n, m_xKeyFields[keyID], fbo, {scratch.data(), size});
+      n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_DONE) { fn(RowResult{}); return; }
     if (rc != SQLITE_ROW) throw cxnError(m_store->conn(), "find", rc);
@@ -1797,10 +2156,9 @@ void StoreTbl::recover_(Shard shard, UN un, RowFn fn)
   sqlite3_stmt *stmt = m_stmts.recover;
   Reset reset{stmt};
   try {
-    uint8_t data[8];
-    saveU64(data, un);
+    UNData data{un};
     if (sqlite3_bind_int64(stmt, 1, shard) != SQLITE_OK ||
-        sqlite3_bind_blob64(stmt, 2, data, sizeof(data),
+        sqlite3_bind_blob64(stmt, 2, &data, sizeof(data),
           SQLITE_STATIC) != SQLITE_OK)
       throw cxnError(m_store->conn(), "bind recovery key");
     int rc = sqlite3_step(stmt);
@@ -1814,12 +2172,14 @@ void StoreTbl::recover_(Shard shard, UN un, RowFn fn)
 
 static void bindMeta(
   sqlite3 *cxn, sqlite3_stmt *stmt, unsigned first,
-  UN un, SN sn, VN vn, uint8_t *unData, uint8_t *snData)
+  UN un, SN sn, VN vn, UNData &unData, SNData &snData)
 {
-  saveU64(unData, un);
-  saveU128(snData, sn);
-  if (sqlite3_bind_blob64(stmt, first, unData, 8, SQLITE_STATIC) != SQLITE_OK ||
-      sqlite3_bind_blob64(stmt, first + 1, snData, 16, SQLITE_STATIC) != SQLITE_OK ||
+  unData = un;
+  snData = sn;
+  if (sqlite3_bind_blob64(stmt, first, &unData, sizeof(unData),
+        SQLITE_STATIC) != SQLITE_OK ||
+      sqlite3_bind_blob64(stmt, first + 1, &snData, sizeof(snData),
+        SQLITE_STATIC) != SQLITE_OK ||
       sqlite3_bind_int64(stmt, first + 2, vn) != SQLITE_OK)
     throw cxnError(cxn, "bind row metadata");
 }
@@ -1854,9 +2214,10 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
   bool inserted = false;
   bool removed = false;
   try {
-    exec(cxn, "BEGIN IMMEDIATE");
+    Txn txn{cxn, m_store->beginStmt(), m_store->commitStmt()};
     auto fbo = Zfb::GetAnyRoot(record->data()->data());
-    uint8_t unData[8], snData[16];
+    UNData unData;
+    SNData snData;
     bool mrd = false;
     if (!vn) {
       sqlite3_stmt *stmt = m_stmts.insert;
@@ -1864,10 +2225,13 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       if (sqlite3_bind_int64(stmt, 1, shard) != SQLITE_OK)
         throw cxnError(cxn, "bind insert shard");
       bindMeta(cxn, stmt, 2, un, sn, vn, unData, snData);
-      unsigned n = m_fields.length();
-      auto size = inputSize(cxn, n, m_xFields, fbo);
-      auto scratch = ZmScratch(uint8_t, size);
-      bindInput(cxn, stmt, 5, n, m_xFields, fbo, {scratch.data(), size});
+      unsigned n = m_xFields.length();
+      auto parts = ZtScratch(VarParts, n, n);
+      auto size = planInput(
+        cxn, m_store->lengthLimit(), n, m_xFields, fbo, parts.span());
+      auto scratch = ZtScratch(VarBuf, size, size);
+      bindInput(cxn, stmt, 5, n, m_xFields, fbo,
+        parts.cspan(), scratch.span());
       done(cxn, stmt);
       inserted = sqlite3_changes(cxn) == 1;
       mrd = !inserted;
@@ -1875,29 +2239,35 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       sqlite3_stmt *stmt = m_stmts.update;
       Reset reset{stmt};
       bindMeta(cxn, stmt, 1, un, sn, vn, unData, snData);
-      unsigned nUpdate = m_updFields.length();
-      unsigned nKey = m_keyFields[0].length();
-      auto updateSize = inputSize(cxn, nUpdate, m_xUpdFields, fbo);
-      auto keySize = inputSize(cxn, nKey, m_xKeyFields[0], fbo);
+      unsigned nUpdate = m_xUpdFields.length();
+      unsigned nKey = m_xKeyFields[0].length();
+      auto updateParts = ZtScratch(VarParts, nUpdate, nUpdate);
+      auto keyParts = ZtScratch(VarParts, nKey, nKey);
+      auto updateSize = planInput(cxn, m_store->lengthLimit(),
+        nUpdate, m_xUpdFields, fbo, updateParts.span());
+      auto keySize = planInput(cxn, m_store->lengthLimit(),
+        nKey, m_xKeyFields[0], fbo, keyParts.span());
       if (keySize > UINT_MAX - updateSize)
         throw cxnError(cxn, "encode SQLite values", SQLITE_TOOBIG);
       unsigned size = updateSize + keySize;
-      auto scratch = ZmScratch(uint8_t, size);
+      auto scratch = ZtScratch(VarBuf, size, size);
       bindInput(cxn, stmt, 4, nUpdate, m_xUpdFields, fbo,
-        {scratch.data(), updateSize});
+        updateParts.cspan(), {scratch.data(), updateSize});
       bindInput(cxn, stmt, 4 + nUpdate, nKey, m_xKeyFields[0], fbo,
-        {scratch.data() + updateSize, keySize});
+        keyParts.cspan(), {scratch.data() + updateSize, keySize});
       done(cxn, stmt);
       if (sqlite3_changes(cxn) != 1)
         throw ZeEXCEPT(Error, "ZdbSL", "update failed - primary key missing");
     } else {
       sqlite3_stmt *stmt = m_stmts.del;
       Reset reset{stmt};
-      unsigned n = m_keyFields[0].length();
-      auto size = inputSize(cxn, n, m_xKeyFields[0], fbo);
-      auto scratch = ZmScratch(uint8_t, size);
+      unsigned n = m_xKeyFields[0].length();
+      auto parts = ZtScratch(VarParts, n, n);
+      auto size = planInput(cxn, m_store->lengthLimit(),
+        n, m_xKeyFields[0], fbo, parts.span());
+      auto scratch = ZtScratch(VarBuf, size, size);
       bindInput(cxn, stmt, 1,
-        n, m_xKeyFields[0], fbo, {scratch.data(), size});
+        n, m_xKeyFields[0], fbo, parts.cspan(), scratch.span());
       done(cxn, stmt);
       if (sqlite3_changes(cxn) != 1)
         throw ZeEXCEPT(Error, "ZdbSL", "delete failed - primary key missing");
@@ -1907,27 +2277,26 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
     if (mrd) {
       sqlite3_stmt *stmt = m_stmts.mrd;
       Reset reset{stmt};
-      saveU64(unData, un);
-      saveU128(snData, sn);
+      unData = un;
+      snData = sn;
       if (sqlite3_bind_int(stmt, 1, m_internal) != SQLITE_OK ||
           sqlite3_bind_text64(stmt, 2, m_id.data(), m_id.length(),
             SQLITE_STATIC, SQLITE_UTF8) != SQLITE_OK ||
           sqlite3_bind_int64(stmt, 3, shard) != SQLITE_OK ||
-          sqlite3_bind_blob64(stmt, 4, unData, 8,
+          sqlite3_bind_blob64(stmt, 4, &unData, sizeof(unData),
             SQLITE_STATIC) != SQLITE_OK ||
-          sqlite3_bind_blob64(stmt, 5, snData, 16,
+          sqlite3_bind_blob64(stmt, 5, &snData, sizeof(snData),
             SQLITE_STATIC) != SQLITE_OK)
         throw cxnError(cxn, "bind delete high-water state");
       done(cxn, stmt);
     }
-    exec(cxn, "COMMIT");
+    txn.commit();
     m_maxUN[shard] = un;
     if (m_maxSN == ZdbNullSN() || sn > m_maxSN) m_maxSN = sn;
     if (inserted) ++m_count;
     if (removed) --m_count;
     fn(ZuMv(buf), CommitResult{});
   } catch (const ZeException &e) {
-    sqlite3_exec(cxn, "ROLLBACK", nullptr, nullptr, nullptr);
     fn(ZuMv(buf), CommitResult{e});
   }
 }

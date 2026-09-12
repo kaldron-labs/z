@@ -11,47 +11,32 @@
 
 namespace ZdbSL {
 
-template <typename T>
-static void saveU(uint8_t *ptr, T v)
-{
-  T value = ZuBE(v);
-  memcpy(ptr, &value, sizeof(value));
-}
-
-template <typename T>
-static bool loadU(ZuBSpan data, T &v)
-{
-  if (data.length() != sizeof(T)) return false;
-  T value;
-  memcpy(&value, data.data(), sizeof(value));
-  v = ZuBE(value);
+void saveU64(uint8_t *ptr, uint64_t v) { saveUnsigned(ptr, v); }
+uint64_t loadU64_(const uint8_t *ptr) { return loadUnsigned_<uint64_t>(ptr); }
+bool loadU64(ZuBSpan data, uint64_t &v) {
+  if (data.length() != sizeof(v)) return false;
+  v = loadU64_(data.data());
   return true;
 }
-
-template <typename T, typename U>
-static void saveS(uint8_t *ptr, T v)
-{
-  U u = ZuPun<T, U>(v).out ^ (U(1)<<(sizeof(U) * 8 - 1));
-  saveU(ptr, u);
+void saveU128(uint8_t *ptr, uint128_t v) { saveUnsigned(ptr, v); }
+uint128_t loadU128_(const uint8_t *ptr) {
+  return loadUnsigned_<uint128_t>(ptr);
 }
-
-template <typename T, typename U>
-static bool loadS(ZuBSpan data, T &v)
-{
-  U u;
-  if (!loadU(data, u)) return false;
-  u ^= U(1)<<(sizeof(U) * 8 - 1);
-  v = ZuPun<U, T>(u).out;
+bool loadU128(ZuBSpan data, uint128_t &v) {
+  if (data.length() != sizeof(v)) return false;
+  v = loadU128_(data.data());
   return true;
 }
-
-void saveU64(uint8_t *ptr, uint64_t v) { saveU(ptr, v); }
-bool loadU64(ZuBSpan data, uint64_t &v) { return loadU(data, v); }
-void saveU128(uint8_t *ptr, uint128_t v) { saveU(ptr, v); }
-bool loadU128(ZuBSpan data, uint128_t &v) { return loadU(data, v); }
-void saveS128(uint8_t *ptr, int128_t v) { saveS<int128_t, uint128_t>(ptr, v); }
+void saveS128(uint8_t *ptr, int128_t v) {
+  saveSigned<int128_t, uint128_t>(ptr, v);
+}
+int128_t loadS128_(const uint8_t *ptr) {
+  return loadSigned_<int128_t, uint128_t>(ptr);
+}
 bool loadS128(ZuBSpan data, int128_t &v) {
-  return loadS<int128_t, uint128_t>(data, v);
+  if (data.length() != sizeof(v)) return false;
+  v = loadS128_(data.data());
+  return true;
 }
 
 void saveFloat(uint8_t *ptr, double v)
@@ -64,61 +49,79 @@ void saveFloat(uint8_t *ptr, double v)
   else
     u = ZuPun<double, uint64_t>(v).out;
   u = (u>>63) ? ~u : (u ^ (UINT64_C(1)<<63));
-  saveU(ptr, u);
+  saveUnsigned(ptr, u);
 }
 
 bool loadFloat(ZuBSpan data, double &v)
 {
-  uint64_t u;
-  if (!loadU(data, u)) return false;
-  u = (u>>63) ? (u ^ (UINT64_C(1)<<63)) : ~u;
-  v = ZuPun<uint64_t, double>(u).out;
+  if (data.length() != sizeof(v)) return false;
+  v = loadFloat_(data.data());
   return true;
+}
+
+double loadFloat_(const uint8_t *ptr)
+{
+  uint64_t u = loadUnsigned_<uint64_t>(ptr);
+  u = (u>>63) ? (u ^ (UINT64_C(1)<<63)) : ~u;
+  return ZuPun<uint64_t, double>(u).out;
 }
 
 void saveTime(uint8_t *ptr, ZuTime v)
 {
-  saveS<int64_t, uint64_t>(ptr, v.sec());
-  saveS<int32_t, uint32_t>(ptr + 8, v.nsec());
+  saveSigned<int64_t, uint64_t>(ptr, v.sec());
+  saveSigned<int32_t, uint32_t>(ptr + sizeof(uint64_t), v.nsec());
 }
 
 bool loadTime(ZuBSpan data, ZuTime &v)
 {
   if (data.length() != sizeof(TimeData)) return false;
-  int64_t sec;
-  int32_t nsec;
-  if (!loadS<int64_t, uint64_t>({data.data(), 8}, sec) ||
-      !loadS<int32_t, uint32_t>({data.data() + 8, 4}, nsec)) return false;
-  v = ZuTime{sec, nsec};
+  v = loadTime_(data.data());
   return true;
+}
+
+ZuTime loadTime_(const uint8_t *ptr)
+{
+  return ZuTime{
+    loadSigned_<int64_t, uint64_t>(ptr),
+    loadSigned_<int32_t, uint32_t>(ptr + sizeof(uint64_t))};
 }
 
 void saveDateTime(uint8_t *ptr, ZuDateTime v)
 {
-  saveS<int32_t, uint32_t>(ptr, v.julian());
-  saveS<int32_t, uint32_t>(ptr + 4, v.sec());
-  saveS<int32_t, uint32_t>(ptr + 8, v.nsec());
+  saveSigned<int32_t, uint32_t>(ptr, v.julian());
+  saveSigned<int32_t, uint32_t>(ptr + sizeof(uint32_t), v.sec());
+  saveSigned<int32_t, uint32_t>(
+    ptr + 2 * sizeof(uint32_t), v.nsec());
 }
 
 bool loadDateTime(ZuBSpan data, ZuDateTime &v)
 {
   if (data.length() != sizeof(DateTimeData)) return false;
-  int32_t julian, sec, nsec;
-  if (!loadS<int32_t, uint32_t>({data.data(), 4}, julian) ||
-      !loadS<int32_t, uint32_t>({data.data() + 4, 4}, sec) ||
-      !loadS<int32_t, uint32_t>({data.data() + 8, 4}, nsec)) return false;
-  v = ZuDateTime{ZuDateTime::Julian{julian}, sec, nsec};
+  v = loadDateTime_(data.data());
   return true;
+}
+
+ZuDateTime loadDateTime_(const uint8_t *ptr)
+{
+  int32_t julian = loadSigned_<int32_t, uint32_t>(ptr);
+  int32_t sec = loadSigned_<int32_t, uint32_t>(
+    ptr + sizeof(uint32_t));
+  int32_t nsec = loadSigned_<int32_t, uint32_t>(
+    ptr + 2 * sizeof(uint32_t));
+  return ZuDateTime{ZuDateTime::Julian{julian}, sec, nsec};
 }
 
 void saveDecimal(uint8_t *ptr, ZuDecimal v) { saveS128(ptr, v.value); }
 
 bool loadDecimal(ZuBSpan data, ZuDecimal &v)
 {
-  int128_t value;
-  if (!loadS128(data, value)) return false;
-  v = ZuDecimal{ZuDecimal::Unscaled{value}};
+  if (data.length() != sizeof(int128_t)) return false;
+  v = loadDecimal_(data.data());
   return true;
+}
+
+ZuDecimal loadDecimal_(const uint8_t *ptr) {
+  return ZuDecimal{ZuDecimal::Unscaled{loadS128_(ptr)}};
 }
 
 void saveFixed(uint8_t *ptr, ZuFixed v)
@@ -128,10 +131,14 @@ void saveFixed(uint8_t *ptr, ZuFixed v)
 
 bool loadFixed(ZuBSpan data, ZuFixed &v)
 {
-  ZuDecimal decimal;
-  if (!loadDecimal(data, decimal)) return false;
-  v = decimal.value == ZuDecimal::null() ? ZuFixed{} : ZuFixed{decimal};
+  if (data.length() != sizeof(int128_t)) return false;
+  v = loadFixed_(data.data());
   return true;
+}
+
+ZuFixed loadFixed_(const uint8_t *ptr) {
+  ZuDecimal decimal = loadDecimal_(ptr);
+  return decimal.value == ZuDecimal::null() ? ZuFixed{} : ZuFixed{decimal};
 }
 
 } // ZdbSL

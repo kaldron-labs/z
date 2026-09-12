@@ -8,16 +8,6 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 FBS = \
-	zum_legacy_issuer.fbs \
-	zum_legacy_user.fbs \
-	zum_legacy_cred.fbs \
-	zum_legacy_action.fbs \
-	zum_legacy_role.fbs \
-	zum_legacy_scope.fbs \
-	zum_legacy_client.fbs \
-	zum_legacy_grant.fbs \
-	zum_legacy_sign_key.fbs \
-	zum_legacy_audit.fbs \
 	zum_issuer.fbs \
 	zum_app.fbs \
 	zum_user.fbs \
@@ -50,8 +40,7 @@ pkginclude_HEADERS = ZumLib.hh ZumTypes.hh ZumJWTVerify.hh ZumService.hh
 noinst_HEADERS = Zum.hh ZumAdmin.hh ZumAuthorize.hh ZumDB.hh ZumDiscovery.hh ZumSecret.hh \
 	ZumDBContext.hh ZumIdentityDB.hh ZumAppDB.hh ZumProviderDB.hh \
 	ZumKeyDB.hh ZumRequestDB.hh ZumDBOps.hh ZumSagas.hh ZumRoleDelete.hh ZumRekey.hh \
-	ZumSagaImage.hh ZumCatalog.hh ZumRevoke.hh ZumConsent.hh ZumLegacy.hh ZumMigrate.hh \
-	ZumMigratePut.hh \
+	ZumSagaImage.hh ZumCatalog.hh ZumRevoke.hh ZumConsent.hh \
 	ZumHTTP.hh ZumJWT.hh ZumOAuth.hh ZumOIDC.hh ZumMgmt.hh ZumPasskey.hh \
 	ZumRequest.hh ZumServer.hh ZumSession.hh ZumToken.hh ZumWebAuthn.hh
 nodist_noinst_HEADERS = ${FBS_H}
@@ -93,7 +82,7 @@ zumd_LDADD = libZumServer.la \
 zumd_SOURCES = zumd.cc ZumBootstrap.cc ZumBootstrap.hh ZumDaemon.cc ZumDaemon.hh \
 	ZumRoleDelete.cc
 libZumServer_la_SOURCES = Zum.cc ZumAdmin.cc ZumAuthorize.cc ZumDB.cc \
-	ZumSchema.cc ZumLegacy.cc ZumMigrate.cc ZumMigrateRun.cc ZumSagas.cc ZumSecret.cc ZumRekey.cc \
+	ZumSchema.cc ZumSagas.cc ZumSecret.cc ZumRekey.cc \
 	ZumDiscovery.cc ZumJWT.cc ZumMgmt.cc ZumOAuth.cc ZumOIDC.cc \
 	ZumPasskey.cc ZumRequest.cc ZumServer.cc ZumSession.cc ZumToken.cc \
 	ZumWebAuthn.cc

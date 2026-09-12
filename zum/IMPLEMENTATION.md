@@ -3,6 +3,27 @@
 This ledger tracks implementation of [`../zum3.md`](../zum3.md).  A milestone
 is complete only when its gate has the required observable evidence.
 
+## Current policy
+
+Backward compatibility and data migration are non-goals. `zumd` accepts an
+empty store for bootstrap or a store at the exact current schema version; it
+rejects any other non-empty store without changing it. The former migration
+implementation, command-line interface, sagas, schemas, and tests have been
+removed. Historical entries below that describe migration implementation or
+verification are superseded and retained only as a record of earlier work.
+
+Zum integration persistence tests now select SQLite solely through
+`ZDB_MODULE` and `ZDB_CONNECT`; there is no Zum-visible SQLite interface.
+
+Clang-debug acceptance on 2026-09-12: the incremental `zdb_sqlite` and `zum`
+module builds passed with `-j3`. The SQLite adapter integration target passed
+all 7 files and 52 TAP cases. The Zum unit target passed all 4 files and 29 TAP
+cases. The complete Zum integration target passed `zumrestarttest` (14 cases),
+`zumhttptest` (1), `zumupstreamtest` (3), `zumfederationtest` (1), and
+`zumclustertest` (1), using fresh disposable SQLite stores. During acceptance,
+`ZdbSL` was corrected to distinguish a valid empty offset-backed value from a
+decode failure; the adapter test now covers an all-empty type-family row.
+
 ## Baseline
 
 - Date: 2026-09-09

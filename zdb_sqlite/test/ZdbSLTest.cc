@@ -105,6 +105,30 @@ static void temporal()
   ZuCHECK(memcmp(before, after, 12) < 0, "DateTime day boundary order");
 }
 
+static void malformed()
+{
+  ZuTestScope(malformed);
+  uint8_t data[16] = {};
+  uint64_t u64;
+  uint128_t u128;
+  int128_t s128;
+  double floating;
+  ZuTime time;
+  ZuDateTime datetime;
+  ZuDecimal decimal;
+  ZuFixed fixed;
+  ZuCHECK(!ZdbSL::loadU64({data, 7}, u64), "reject short U64");
+  ZuCHECK(!ZdbSL::loadU128({data, 15}, u128), "reject short U128");
+  ZuCHECK(!ZdbSL::loadS128({data, 15}, s128), "reject short S128");
+  ZuCHECK(!ZdbSL::loadFloat({data, 7}, floating), "reject short float");
+  ZuCHECK(!ZdbSL::loadTime({data, 11}, time), "reject short time");
+  ZuCHECK(!ZdbSL::loadDateTime({data, 11}, datetime),
+    "reject short datetime");
+  ZuCHECK(!ZdbSL::loadDecimal({data, 15}, decimal),
+    "reject short decimal");
+  ZuCHECK(!ZdbSL::loadFixed({data, 15}, fixed), "reject short fixed");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -113,5 +137,6 @@ int main(int argc, char **argv)
   ZuTestCall(floating);
   ZuTestCall(decimal);
   ZuTestCall(temporal);
+  ZuTestCall(malformed);
   return 0;
 }
