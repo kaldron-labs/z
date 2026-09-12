@@ -1,0 +1,17 @@
+include "zfb_types.fbs";
+namespace Zum.Legacy.fbs;
+table Client {
+  id:string;
+  secret_digest:[ubyte];
+  redirects:[string];
+  audiences:[string];
+  scope_i_ds:[uint64];
+  role_i_ds:[uint64];
+  created:int64;
+  updated:int64;
+  type:int8;
+  grants:uint8;
+  state:int8;
+  owner:Zfb.UInt128;
+}
+root_type Client;

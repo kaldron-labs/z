@@ -43,7 +43,6 @@
 #include <zlib/zum_consent_fbs.h>
 #include <zlib/zum_grant_fbs.h>
 #include <zlib/zum_sign_key_fbs.h>
-#include <zlib/zum_audit_fbs.h>
 #include <zlib/zum_request_fbs.h>
 
 namespace Zum {
@@ -72,14 +71,15 @@ ZtEnumNS(ZumAPI, AuditEvent, int8_t,
 ZtEnumNS(ZumAPI, RefreshMatch, int8_t, Unknown, Current, Spent);
 ZtEnumNS(ZumAPI, RefreshRotate, int8_t,
   Invalid, Unknown, Rotated, Reused, Exhausted);
-ZtEnumNS(ZumAPI, BootstrapPhase, int8_t, Empty, Core, AdminPending, Ready);
+ZtEnumNS(ZumAPI, BootstrapPhase, int8_t,
+  Empty, Core, AdminPending, Ready, Migrating);
 ZtEnumNS(ZumAPI, UserSource, int8_t, Local, External);
 ZtEnumNS(ZumAPI, Origin, int8_t, Standard, Custom);
 ZtEnumNS(ZumAPI, ActorKind, int8_t, User, Client);
 ZtEnumNS(ZumAPI, ClaimSource, int8_t, IDToken, UserInfo);
 ZtEnumNS(ZumAPI, EligibilityMode, int8_t, ClaimValues, MappedRole);
 ZtEnumNS(ZumAPI, ConsentPolicy, int8_t, Explicit, Preauthorized);
-ZtEnumNS(ZumAPI, RequestStatus, int8_t, Pending, Complete, Failed);
+ZtEnumNS(ZumAPI, RequestStatus, int8_t, Pending, Complete);
 
 namespace ClientGrant {
   enum { AuthorizationCode = 1, ClientCredentials = 2, RefreshToken = 4 };
@@ -113,6 +113,8 @@ struct ScopeSelection {
   bool		identity = false;
 };
 
+enum { SchemaVersion = 17 };
+
 struct Issuer {
   String	id;
   uint32_t	schemaVersion = 0;
@@ -121,9 +123,9 @@ struct Issuer {
   UserID	initialUserID = 0;
   String	initialClientID;
   Bytes		keyCheck;
-  ActionID	nextActionID = 0;
-  uint64_t	authVersion = 0;
-  uint64_t	nextAuditID = 0;
+
+  // Nonempty while offline secret-key rotation is incomplete.
+  Bytes		pendingKeyCheck;
 
   friend ZfStructPrint ZuPrintType(Issuer *);
 };
@@ -135,9 +137,7 @@ ZfbStruct(ZumAPI, (Issuer, JSON),
   (((initialUserID),	(Ctor<4>, Mutable, JSON::String<>)),	(UInt64)),
   (((initialClientID),	(Ctor<5>, Mutable)),	(String)),
   (((keyCheck),		(Ctor<6>, Mutable, Hidden)), (Bytes)),
-  (((nextActionID),	(Ctor<7>, Mutable)),	(UInt32, 0)),
-  (((authVersion),	(Ctor<8>, Mutable, JSON::String<>)),	(UInt64, 0)),
-  (((nextAuditID),	(Ctor<9>, Mutable, JSON::String<>)),	(UInt64, 0)));
+  (((pendingKeyCheck),	(Ctor<7>, Mutable, Hidden)), (Bytes)));
 ZfbRoot(Issuer);
 
 struct App {
@@ -165,7 +165,7 @@ ZfbStruct(ZumAPI, (App, JSON),
   (((nextActionID),	(Ctor<4>, Mutable)),			(UInt32, 0)),
   (((authVersion),	(Ctor<5>, Mutable, JSON::String<>)),			(UInt64, 1)),
   (((catalogRevision),	(Ctor<6>, Mutable, JSON::String<>)),			(UInt64, 0)),
-  (((catalogDigest),	(Ctor<7>, Mutable)),			(Bytes)),
+  (((catalogDigest),	(Ctor<7>, Mutable, JSON::Base64URL)),	(Bytes)),
   (((serviceClientID),	(Ctor<8>, Mutable)),			(String)),
   (((version),		(Ctor<9>, Mutable, JSON::String<>)),			(UInt64, 1)),
   (((created),		(Ctor<10>)),				(Int64)),
@@ -205,14 +205,12 @@ struct User {
   String	profile;
   String	email;
   Bytes		handle;
-  IDVec		roleIDs;
   int64_t	created = 0;
   int64_t	updated = 0;
   State::T	state = State::Pending;
   uint128_t	owner = 0;
   uint64_t	authVersion = 1;
   uint64_t	version = 1;
-  String	oidcSub;
 
   friend ZfStructPrint ZuPrintType(User *);
 };
@@ -222,15 +220,13 @@ ZfbStruct(ZumAPI, (User, JSON),
   (((name),	(Ctor<2>, Keys<2>, Mutable)),		(String)),
   (((profile),	(Ctor<3>, Mutable)),			(String)),
   (((email),	(Ctor<4>, Mutable)),			(String)),
-  (((handle),	(Ctor<5>, Keys<1>, Mutable)),		(Bytes)),
-  (((roleIDs),	(Ctor<6>, Mutable, JSON::String<>)),			(UInt64Vec)),
-  (((created),	(Ctor<7>)),				(Int64)),
-  (((updated),	(Ctor<8>, Mutable)),			(Int64)),
-  (((state),	(Ctor<9>, Mutable, Enum<State::Map>)),	(Int8)),
-  (((owner),	(Ctor<10>, Mutable, Hidden)),		(UInt128)),
-  (((authVersion), (Ctor<11>, Mutable, JSON::String<>)),			(UInt64, 1)),
-  (((version),		(Ctor<12>, Mutable, JSON::String<>)),			(UInt64, 1)),
-  (((oidcSub),		(Ctor<13>, Keys<3>, Mutable)),	(String)));
+  (((handle),	(Ctor<5>, Keys<1>, Mutable, JSON::Base64URL)), (Bytes)),
+  (((created),	(Ctor<6>)),				(Int64)),
+  (((updated),	(Ctor<7>, Mutable)),			(Int64)),
+  (((state),	(Ctor<8>, Mutable, Enum<State::Map>)),	(Int8)),
+  (((owner),	(Ctor<9>, Mutable, Hidden)),		(UInt128)),
+  (((authVersion), (Ctor<10>, Mutable, JSON::String<>)),			(UInt64, 1)),
+  (((version),		(Ctor<11>, Mutable, JSON::String<>)),			(UInt64, 1)));
 ZfbRoot(User);
 
 struct Cred {
@@ -251,19 +247,19 @@ struct Cred {
   friend ZfStructPrint ZuPrintType(Cred *);
 };
 ZfbStruct(ZumAPI, (Cred, JSON),
-  (((id),		(Ctor<0>, Keys<0>)),			(Bytes)),
-  (((userID),		(Ctor<0>, Keys<1>, Group<1>, JSON::String<>)),		(UInt64)),
-  (((publicKey),	(Ctor<1>, Hidden)),			(Bytes)),
-  (((signCount),	(Ctor<2>, Mutable)),			(UInt32, 0)),
-  (((created),		(Ctor<3>)),				(Int64)),
-  (((updated),		(Ctor<4>, Mutable)),			(Int64)),
-  (((state),		(Ctor<5>, Mutable, Enum<State::Map>)),	(Int8)),
-  (((backupEligible),	(Ctor<6>)),				(Bool, false)),
-  (((backedUp),		(Ctor<7>, Mutable)),			(Bool, false)),
-  (((label),		(Ctor<8>, Mutable)),			(String)),
-  (((owner),		(Ctor<9>, Mutable, Hidden)),		(UInt128)),
-  (((userVersion),	(Ctor<10>, JSON::String<>)),			(UInt64, 1)),
-  (((version),		(Ctor<11>, Mutable, JSON::String<>)),			(UInt64, 1)));
+  (((id),		(Ctor<0>, Keys<0>, JSON::Base64URL)),	(Bytes)),
+  (((userID),		(Ctor<1>, Keys<1>, Group<1>, JSON::String<>)),		(UInt64)),
+  (((publicKey),	(Ctor<2>, Hidden)),			(Bytes)),
+  (((signCount),	(Ctor<3>, Mutable)),			(UInt32, 0)),
+  (((created),		(Ctor<4>)),				(Int64)),
+  (((updated),		(Ctor<5>, Mutable)),			(Int64)),
+  (((state),		(Ctor<6>, Mutable, Enum<State::Map>)),	(Int8)),
+  (((backupEligible),	(Ctor<7>)),				(Bool, false)),
+  (((backedUp),		(Ctor<8>, Mutable)),			(Bool, false)),
+  (((label),		(Ctor<9>, Mutable)),			(String)),
+  (((owner),		(Ctor<10>, Mutable, Hidden)),		(UInt128)),
+  (((userVersion),	(Ctor<11>, JSON::String<>)),			(UInt64, 1)),
+  (((version),		(Ctor<12>, Mutable, JSON::String<>)),			(UInt64, 1)));
 ZfbRoot(Cred);
 
 struct Action {
@@ -334,7 +330,6 @@ struct Scope {
   AppID		appID = 0;
   ScopeID	id = 0;
   AudienceID	audienceID = 0;
-  String	audience;
   String	name;
   IDVec		roleIDs;
   State::T	state = State::Active;
@@ -344,6 +339,7 @@ struct Scope {
   int64_t	created = 0;
   int64_t	updated = 0;
   uint128_t	owner = 0;
+  IDVec		catalogRoleIDs;
 
   friend ZfStructPrint ZuPrintType(Scope *);
 };
@@ -351,16 +347,16 @@ ZfbStruct(ZumAPI, (Scope, JSON),
   (((appID),		(Ctor<0>, (Keys<0, 1>), JSON::String<>)),		(UInt64)),
   (((id),		(Ctor<1>, Keys<0>, JSON::String<>)),			(UInt64)),
   (((audienceID),	(Ctor<2>, Keys<1>, JSON::String<>)),			(UInt64)),
-  (((audience),		(Ctor<3>)),				(String)),
-  (((name),		(Ctor<4>, Keys<1>, Mutable)),		(String)),
-  (((roleIDs),		(Ctor<5>, Mutable, JSON::String<>)),			(UInt64Vec)),
-  (((state),		(Ctor<6>, Mutable, Enum<State::Map>)),	(Int8)),
-  (((origin),		(Ctor<7>, Enum<Origin::Map>)),		(Int8)),
-  (((catalogRevision),	(Ctor<8>, Mutable, JSON::String<>)),			(UInt64)),
-  (((version),		(Ctor<9>, Mutable, JSON::String<>)),			(UInt64, 1)),
-  (((created),		(Ctor<10>)),				(Int64)),
-  (((updated),		(Ctor<11>, Mutable)),			(Int64)),
-  (((owner),		(Ctor<12>, Mutable, Hidden)),		(UInt128)));
+  (((name),		(Ctor<3>, Keys<1>, Mutable)),		(String)),
+  (((roleIDs),		(Ctor<4>, Mutable, JSON::String<>)),			(UInt64Vec)),
+  (((state),		(Ctor<5>, Mutable, Enum<State::Map>)),	(Int8)),
+  (((origin),		(Ctor<6>, Enum<Origin::Map>)),		(Int8)),
+  (((catalogRevision),	(Ctor<7>, Mutable, JSON::String<>)),			(UInt64)),
+  (((version),		(Ctor<8>, Mutable, JSON::String<>)),			(UInt64, 1)),
+  (((created),		(Ctor<9>)),				(Int64)),
+  (((updated),		(Ctor<10>, Mutable)),			(Int64)),
+  (((owner),		(Ctor<11>, Mutable, Hidden)),		(UInt128)),
+  (((catalogRoleIDs),	(Ctor<12>, Mutable, Hidden)),		(UInt64Vec)));
 ZfbRoot(Scope);
 
 struct Audience {
@@ -388,6 +384,13 @@ ZfbStruct(ZumAPI, (Audience, JSON),
   (((owner),	(Ctor<8>, Mutable, Hidden)),		(UInt128)));
 ZfbRoot(Audience);
 
+// Runtime authority resolved from an app-owned scope and audience.  This is
+// deliberately not a database record: the URI belongs to zum.audience.
+struct ScopeAuth {
+  Scope		scope;
+  String	audience;
+};
+
 struct Client {
   String	id;
   AppID		appID = 0;
@@ -395,9 +398,6 @@ struct Client {
   Bytes		secretDigest;
   uint64_t	secretVersion = 1;
   StringVec	redirects;
-  StringVec	audiences;
-  IDVec		scopeIDs;
-  IDVec		roleIDs;
   int64_t	created = 0;
   int64_t	updated = 0;
   ClientType::T	type = ClientType::Browser;
@@ -420,21 +420,18 @@ ZfbStruct(ZumAPI, (Client, JSON),
   (((secretDigest),	(Ctor<3>, Mutable, Hidden)),		(Bytes)),
   (((secretVersion),	(Ctor<4>, Mutable, JSON::String<>)),			(UInt64, 1)),
   (((redirects),	(Ctor<5>, Mutable)),			(StringVec)),
-  (((audiences),	(Ctor<6>, Mutable)),			(StringVec)),
-  (((scopeIDs),		(Ctor<7>, Mutable, JSON::String<>)),			(UInt64Vec)),
-  (((roleIDs),		(Ctor<8>, Mutable, JSON::String<>)),			(UInt64Vec)),
-  (((created),		(Ctor<9>)),				(Int64)),
-  (((updated),		(Ctor<10>, Mutable)),			(Int64)),
-  (((type),		(Ctor<11>, Enum<ClientType::Map>)),	(Int8)),
-  (((authMethod),	(Ctor<12>, Mutable, Enum<ClientAuthMethod::Map>)), (Int8)),
-  (((grants),		(Ctor<13>, Mutable)),			(UInt8, 0)),
-  (((refreshAllowed),	(Ctor<14>, Mutable)),			(Bool, false)),
-  (((identityScopes),	(Ctor<15>, Mutable)),			(StringVec)),
-  (((state),		(Ctor<16>, Mutable, Enum<State::Map>)),	(Int8)),
-  (((version),		(Ctor<17>, Mutable, JSON::String<>)),			(UInt64, 1)),
-  (((owner),		(Ctor<18>, Mutable, Hidden)),		(UInt128)),
-  (((previousSecretDigest), (Ctor<19>, Mutable, Hidden)),	(Bytes)),
-  (((previousSecretExpires),(Ctor<20>, Mutable)),		(Int64)));
+  (((created),		(Ctor<6>)),				(Int64)),
+  (((updated),		(Ctor<7>, Mutable)),			(Int64)),
+  (((type),		(Ctor<8>, Enum<ClientType::Map>)),	(Int8)),
+  (((authMethod),	(Ctor<9>, Mutable, Enum<ClientAuthMethod::Map>)), (Int8)),
+  (((grants),		(Ctor<10>, Mutable)),			(UInt8, 0)),
+  (((refreshAllowed),	(Ctor<11>, Mutable)),			(Bool, false)),
+  (((identityScopes),	(Ctor<12>, Mutable)),			(StringVec)),
+  (((state),		(Ctor<13>, Mutable, Enum<State::Map>)),	(Int8)),
+  (((version),		(Ctor<14>, Mutable, JSON::String<>)),			(UInt64, 1)),
+  (((owner),		(Ctor<15>, Mutable, Hidden)),		(UInt128)),
+  (((previousSecretDigest), (Ctor<16>, Mutable, Hidden)),	(Bytes)),
+  (((previousSecretExpires),(Ctor<17>, Mutable)),		(Int64)));
 ZfbRoot(Client);
 
 struct ClientAccess {
@@ -453,8 +450,8 @@ struct ClientAccess {
   friend ZfStructPrint ZuPrintType(ClientAccess *);
 };
 ZfbStruct(ZumAPI, (ClientAccess, JSON),
-  (((clientID),		(Ctor<0>, Keys<0>, Group<0>)),		(String)),
-  (((appID),		(Ctor<1>, Keys<0>, JSON::String<>)),			(UInt64)),
+  (((clientID),		(Ctor<0>, (Keys<0, 1>), Group<0>)),		(String)),
+  (((appID),		(Ctor<1>, (Keys<0, 1>), Group<1>, JSON::String<>)),	(UInt64)),
   (((audienceIDs),	(Ctor<2>, Mutable, JSON::String<>)),			(UInt64Vec)),
   (((scopeIDs),		(Ctor<3>, Mutable, JSON::String<>)),			(UInt64Vec)),
   (((roleIDs),		(Ctor<4>, Mutable, JSON::String<>)),			(UInt64Vec)),
@@ -602,9 +599,9 @@ struct RoleMap {
   friend ZfStructPrint ZuPrintType(RoleMap *);
 };
 ZfbStruct(ZumAPI, (RoleMap, JSON),
-  (((appID),		(Ctor<0>, Keys<0>, Group<0>, JSON::String<>)),		(UInt64)),
-  (((providerID),	(Ctor<1>, Keys<0>, Group<0>, JSON::String<>)),		(UInt64)),
-  (((value),		(Ctor<2>, Keys<0>)),			(String)),
+  (((appID),		(Ctor<0>, (Keys<0, 1>), (Group<0, 1>), JSON::String<>)), (UInt64)),
+  (((providerID),	(Ctor<1>, (Keys<0, 1>), Group<0>, JSON::String<>)),	(UInt64)),
+  (((value),		(Ctor<2>, (Keys<0, 1>))),			(String)),
   (((roleID),		(Ctor<3>, Mutable, JSON::String<>)),			(UInt64)),
   (((state),		(Ctor<4>, Mutable, Enum<State::Map>)),	(Int8)),
   (((version),		(Ctor<5>, Mutable, JSON::String<>)),			(UInt64, 1)),
@@ -625,7 +622,6 @@ struct Evidence {
   uint64_t	policyVersion = 0;
   // AES-256-GCM envelope; never a plaintext upstream refresh token.
   Bytes		protectedRefreshToken;
-  AuditOutcome::T refreshOutcome = AuditOutcome::Failure;
   uint64_t	version = 1;
   int64_t	created = 0;
   int64_t	updated = 0;
@@ -644,11 +640,10 @@ ZfbStruct(ZumAPI, (Evidence, JSON),
   (((source),		(Ctor<7>, Mutable, Enum<ClaimSource::Map>)), (Int8)),
   (((policyVersion),	(Ctor<8>, Mutable, JSON::String<>)),			(UInt64)),
   (((protectedRefreshToken), (Ctor<9>, Mutable, Hidden)),	(Bytes)),
-  (((refreshOutcome),	(Ctor<10>, Mutable, Enum<AuditOutcome::Map>)), (Int8)),
-  (((version),		(Ctor<11>, Mutable, JSON::String<>)),			(UInt64, 1)),
-  (((created),		(Ctor<12>)),				(Int64)),
-  (((updated),		(Ctor<13>, Mutable)),			(Int64)),
-  (((owner),		(Ctor<14>, Mutable, Hidden)),		(UInt128)));
+  (((version),		(Ctor<10>, Mutable, JSON::String<>)),			(UInt64, 1)),
+  (((created),		(Ctor<11>)),				(Int64)),
+  (((updated),		(Ctor<12>, Mutable)),			(Int64)),
+  (((owner),		(Ctor<13>, Mutable, Hidden)),		(UInt128)));
 ZfbRoot(Evidence);
 
 struct Session {
@@ -670,7 +665,7 @@ struct Session {
   friend ZfStructPrint ZuPrintType(Session *);
 };
 ZfbStruct(ZumAPI, (Session, JSON),
-  (((digest),		(Ctor<0>, Keys<0>, Hidden)),		(Bytes)),
+  (((digest),		(Ctor<0>, (Keys<0, 1>), Hidden)),		(Bytes)),
   (((userID),		(Ctor<1>, Keys<1>, Group<1>, JSON::String<>)),		(UInt64)),
   (((providerID),	(Ctor<2>, JSON::String<>)),				(UInt64)),
   (((issuer),		(Ctor<3>)),				(String)),
@@ -701,10 +696,10 @@ struct Consent {
   friend ZfStructPrint ZuPrintType(Consent *);
 };
 ZfbStruct(ZumAPI, (Consent, JSON),
-  (((userID),		(Ctor<0>, Keys<0>, JSON::String<>)),			(UInt64)),
-  (((clientID),		(Ctor<1>, Keys<0>)),			(String)),
-  (((appID),		(Ctor<2>, Keys<0>, JSON::String<>)),			(UInt64)),
-  (((audienceID),	(Ctor<3>, Keys<0>, JSON::String<>)),			(UInt64)),
+  (((userID),		(Ctor<0>, (Keys<0, 1>), Group<1>, JSON::String<>)),	(UInt64)),
+  (((clientID),		(Ctor<1>, (Keys<0, 1>))),			(String)),
+  (((appID),		(Ctor<2>, (Keys<0, 1>), JSON::String<>)),		(UInt64)),
+  (((audienceID),	(Ctor<3>, (Keys<0, 1>), JSON::String<>)),		(UInt64)),
   (((scopeIDs),		(Ctor<4>, Mutable, JSON::String<>)),			(UInt64Vec)),
   (((state),		(Ctor<5>, Mutable, Enum<State::Map>)),	(Int8)),
   (((version),		(Ctor<6>, Mutable, JSON::String<>)),			(UInt64, 1)),
@@ -786,14 +781,14 @@ struct Grant {
   friend ZfStructPrint ZuPrintType(Grant *);
 };
 ZfbStruct(ZumAPI, (Grant, JSON),
-  (((id),		(Ctor<0>, Keys<0>)),			(Bytes)),
+  (((id),		(Ctor<0>, (Keys<0, 2, 3>), JSON::Base64URL)), (Bytes)),
   (((issuer),		(Ctor<18>)),				(String)),
   (((userID),		(Ctor<10>, Keys<2>, Group<2>, Mutable, JSON::String<>)),	(UInt64)),
-  (((appID),		(Ctor<8>, Keys<2>, JSON::String<>)),			(UInt64)),
+  (((appID),		(Ctor<8>, (Keys<2, 3>), Group<3>, JSON::String<>)),	(UInt64)),
   (((audienceID),	(Ctor<9>, JSON::String<>)),				(UInt64)),
   (((clientID),		(Ctor<19>)),				(String)),
   (((facadeClientID),	(Ctor<20>)),				(String)),
-  (((credentialID),	(Ctor<27>, Mutable)),			(Bytes)),
+  (((credentialID),	(Ctor<27>, Mutable, JSON::Base64URL)),	(Bytes)),
   (((audience),		(Ctor<21>)),				(String)),
   (((redirectURI),	(Ctor<28>)),				(String)),
   (((scopeIDs),		(Ctor<24>, Mutable, JSON::String<>)),			(UInt64Vec)),
@@ -856,7 +851,7 @@ ZfbStruct(ZumAPI, (SignKey, JSON),
   (((algorithm),	(Ctor<2>)),				(String)),
   (((providerRef),	(Ctor<3>, Hidden)),			(String)),
   (((publicJwk),	(Ctor<4>)),				(String)),
-  (((privateMaterial),	(Ctor<5>, Hidden)),			(Bytes)),
+  (((privateMaterial),	(Ctor<5>, Mutable, Hidden)),		(Bytes)),
   (((notBefore),	(Ctor<6>)),				(Int64)),
   (((retireAfter),	(Ctor<7>, (Keys<1, 2>), Descend<1>, Mutable)), (Int64)),
   (((state),		(Ctor<8>, Mutable, Enum<State::Map>)),	(Int8)),
@@ -865,8 +860,8 @@ ZfbStruct(ZumAPI, (SignKey, JSON),
   (((updated),		(Ctor<11>, Mutable)),			(Int64)));
 ZfbRoot(SignKey);
 
+// Ephemeral diagnostic event, not a database record.
 struct Audit {
-  uint64_t	id = 0;
   int64_t	time = 0;
   String	issuer;
   AppID		appID = 0;
@@ -879,22 +874,7 @@ struct Audit {
   String	correlationID;
   String	detail;
 
-  friend ZfStructPrint ZuPrintType(Audit *);
 };
-ZfbStruct(ZumAPI, (Audit, JSON),
-  (((issuer),	(Ctor<2>, Keys<0>, Group<0>)),		(String)),
-  (((id),	(Ctor<0>, Keys<0>, JSON::String<>)),				(UInt64)),
-  (((appID),	(Ctor<3>, Keys<2>, Group<2>, JSON::String<>)),		(UInt64)),
-  (((time),	(Ctor<1>, (Keys<1, 2>))),			(Int64)),
-  (((operationID),	(Ctor<4>)),				(UInt32)),
-  (((actor),	(Ctor<5>)),					(String)),
-  (((subject),	(Ctor<6>)),					(String)),
-  (((target),	(Ctor<7>)),					(String)),
-  (((event),	(Ctor<8>, Enum<AuditEvent::Map>)),		(Int8)),
-  (((outcome),	(Ctor<9>, Enum<AuditOutcome::Map>)),		(Int8)),
-  (((correlationID),	(Ctor<10>)),				(String)),
-  (((detail),	(Ctor<11>)),					(String)));
-ZfbRoot(Audit);
 
 struct IdemRequest {
   ActorKind::T	actorKind = ActorKind::User;
@@ -920,13 +900,15 @@ ZfbStruct(ZumAPI, (IdemRequest, JSON),
   (((idempotencyKey),	(Ctor<3>, Keys<0>)),			(String)),
   (((requestDigest),	(Ctor<4>, Hidden)),			(Bytes)),
   (((sagaID),		(Ctor<5>, Hidden)),			(UInt128)),
-  (((status),		(Ctor<6>, Mutable, Enum<RequestStatus::Map>)), (Int8)),
+  (((status),		(Ctor<6>, Mutable,
+			Enum<RequestStatus::Map>)),		(Int8)),
   (((resultIDs),	(Ctor<7>, Mutable)),			(StringVec)),
-  (((expires),		(Ctor<8>, Keys<1>, Mutable)),		(Int64)),
+  (((expires),		(Ctor<8>, Mutable)),		(Int64)),
   (((version),		(Ctor<9>, Mutable, JSON::String<>)),			(UInt64, 1)),
   (((created),		(Ctor<10>)),				(Int64)),
   (((updated),		(Ctor<11>, Mutable)),			(Int64)),
-  (((owner),		(Ctor<12>, Mutable, Hidden)),		(UInt128)));
+  (((owner),		(Ctor<12>, Mutable, Hidden)),
+							(UInt128)));
 ZfbRoot(IdemRequest);
 
 ZumExtern ZtBitmap intersectActions(ZtBitmap, const ZtBitmap &);
@@ -942,26 +924,30 @@ ZumExtern ZtBitmap appEffectiveActions(
   ZuSpan<const Role>, ZuSpan<const Action>);
 ZumExtern bool actionAlloc(App &, ActionID &);
 ZumExtern int selectScopes(
-  const Client &, ZuCSpan requested, ZuSpan<const Scope>, ScopeSelection &);
+  const Client &, const ClientAccess &, ZuCSpan requested,
+  ZuSpan<const ScopeAuth>, ScopeSelection &);
 ZumExtern int selectGrantedScopes(
-  const Client &, const IDVec &grantedScopeIDs,
+  const Client &, const ClientAccess &, const IDVec &grantedScopeIDs,
   bool requestedPresent, ZuCSpan requested,
-  ZuSpan<const Scope>, ScopeSelection &);
+  ZuSpan<const ScopeAuth>, ScopeSelection &);
 ZumExtern int selectGrantedScopes(
-  const Client &, const IDVec &grantedScopeIDs, ZuCSpan granted,
+  const Client &, const ClientAccess &, const IDVec &grantedScopeIDs,
+  ZuCSpan granted,
   bool requestedPresent, ZuCSpan requested,
-  ZuSpan<const Scope>, ScopeSelection &);
+  ZuSpan<const ScopeAuth>, ScopeSelection &);
 ZumExtern bool interactivePrincipal(
   const Grant &, const User &, const Cred &, const Client &);
 ZumExtern bool clientPrincipal(const Client &);
 ZumExtern int interactiveAuthority(
   const Grant &, const User &, const Cred &, const Client &,
   bool requestedPresent, ZuCSpan requested, unsigned actionCount,
-  ZuSpan<const Scope>, ZuSpan<const Role>, ZuSpan<const Action>,
+  const ClientAccess &, ZuSpan<const ScopeAuth>, ZuSpan<const Role>,
+  ZuSpan<const Action>,
   ScopeSelection &, ZtBitmap &);
 ZumExtern int clientAuthority(
-  const Client &, ZuCSpan requested, unsigned actionCount,
-  ZuSpan<const Scope>, ZuSpan<const Role>, ZuSpan<const Action>,
+  const Client &, const ClientAccess &, ZuCSpan requested,
+  unsigned actionCount, ZuSpan<const ScopeAuth>, ZuSpan<const Role>,
+  ZuSpan<const Action>,
   ScopeSelection &, ZtBitmap &);
 ZumExtern RefreshMatch::T refreshMatch(const Grant &, ZuBSpan digest);
 ZumExtern RefreshRotate::T refreshRotate(

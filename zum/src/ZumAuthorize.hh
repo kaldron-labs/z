@@ -13,10 +13,14 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
+#include <zlib/ZumOAuth.hh>
+#include <zlib/ZumWebAuthn.hh>
 #include <zlib/ZumRequest.hh>
 
 namespace Zum {
+
+struct DBContext;
+struct DB;
 
 namespace AuthorizeIssue {
   enum { Consent = -2, OK = -1 };
@@ -84,7 +88,7 @@ ZumExtern bool authorizeSessionFinish(
   Bytes ceremonyID, Bytes bindingDigest, Session,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 ZumExtern bool authorizeConsentFinish(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, bool approve,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 

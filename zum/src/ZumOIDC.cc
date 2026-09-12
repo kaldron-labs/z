@@ -5,11 +5,15 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZumOIDC.hh>
+#include <zlib/ZumDB.hh>
 
 #include <string.h>
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuDerive.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
@@ -27,6 +31,118 @@
 
 namespace Zum {
 
+struct OIDCIDWire {
+  String issuer;
+  String subject;
+  ZfJSON::Union<String, StringVec> audience;
+  String authorizedParty;
+  String nonce;
+  int64_t iat = 0;
+  int64_t expires = 0;
+  int64_t authTime = 0;
+};
+ZfStruct(, (OIDCIDWire, JSON),
+  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((subject),		(JSON::ID<"sub">, Required)),	(String)),
+  (((audience),		(JSON::ID<"aud">, Required)),	(UDT)),
+  (((authorizedParty), (JSON::ID<"azp">, JSON::Opt)),	(String)),
+  (((nonce),		(Required)),	(String)),
+  (((iat),		(Required)),	(Int64)),
+  (((expires),		(JSON::ID<"exp">, Required)),	(Int64)),
+  (((authTime),		(JSON::ID<"auth_time">, Required)), (Int64)));
+
+struct OIDCTokenWire { String idToken; String accessToken; };
+ZfStruct(, (OIDCTokenWire, JSON),
+  (((idToken),		(JSON::ID<"id_token">, Required)),	(String)),
+  (((accessToken),	(JSON::ID<"access_token">, JSON::Opt)), (String)));
+struct OIDCUserInfoWire { String subject; };
+ZfStruct(, (OIDCUserInfoWire, JSON),
+  (((subject),		(JSON::ID<"sub">, Required)),	(String)));
+struct OIDCJWKWire {
+  String kid;
+  String kty;
+  String crv;
+  String use;
+  String alg;
+  String x;
+  String y;
+};
+ZfStruct(, (OIDCJWKWire, JSON),
+  (((kid),		(Required)),	(String)),
+  (((kty),		(Required)),	(String)),
+  (((crv),		(Required)),	(String)),
+  (((use),		(JSON::Opt)),	(String)),
+  (((alg),		(JSON::Opt)),	(String)),
+  (((x),		(Required)),	(String)),
+  (((y),		(Required)),	(String)));
+ZuDerive(OIDCJWKWireArray, (ZtArray<OIDCJWKWire,
+  ZtArrayHeapID<"Zum.OIDC.JWKs">>));
+struct OIDCJWKWireVec : public OIDCJWKWireArray {
+  ZuDerive_(OIDCJWKWireVec, OIDCJWKWireArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(OIDCJWKWireVec *);
+};
+struct OIDCJWKSResponse { OIDCJWKWireVec keys; };
+ZfStruct(, (OIDCJWKSResponse, JSON),
+  (((keys),		(Required)),	(UDT)));
+struct OIDCDiscoveryWire {
+  String issuer;
+  String authorize;
+  String token;
+  String jwks;
+  StringVec responses;
+  StringVec algorithms;
+  StringVec methods;
+  String userinfo;
+};
+ZfStruct(, (OIDCDiscoveryWire, JSON),
+  (((issuer),		(Required)),	(String)),
+  (((authorize),	(JSON::ID<"authorization_endpoint">, Required)), (String)),
+  (((token),		(JSON::ID<"token_endpoint">, Required)), (String)),
+  (((jwks),		(JSON::ID<"jwks_uri">, Required)), (String)),
+  (((responses),	(JSON::ID<"response_types_supported">, Required)), (StringVec)),
+  (((algorithms),	(JSON::ID<"id_token_signing_alg_values_supported">, Required)), (StringVec)),
+  (((methods),		(JSON::ID<"token_endpoint_auth_methods_supported">, Required)), (StringVec)),
+  (((userinfo),		(JSON::ID<"userinfo_endpoint">, JSON::Opt)), (String)));
+struct OIDCEssentialWire { bool essential = true; };
+ZfStruct(, (OIDCEssentialWire, JSON),
+  (((essential),	(Required)),	(Bool)));
+struct OIDCAuthTimeWire { OIDCEssentialWire authTime; };
+ZfStruct(, (OIDCAuthTimeWire, JSON),
+  (((authTime),		(JSON::ID<"auth_time">, Required)), (UDT)));
+struct OIDCClaimsWire { OIDCAuthTimeWire idToken; };
+ZfStruct(, (OIDCClaimsWire, JSON),
+  (((idToken),		(JSON::ID<"id_token">, Required)), (UDT)));
+
+struct OIDCCallbackFields {
+  using Keys = ZuStringTL<"code", "state", "error">;
+};
+struct ReservedClaims {
+  using Keys = ZuStringTL<"iss", "sub", "aud", "azp", "nonce", "iat", "exp">;
+};
+
+template <typename T>
+static bool jsonLoad(String &json, ZuPtr<ZfJSON::AnyNode> &root, T &value)
+{
+  auto parsed = ZfJSON::scan(json.span());
+  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
+      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  root = ZuMv(roots[0]);
+  value = ZfJSON::handler<T>(root).ctor();
+  return true;
+}
+
+static ZfJSON::AnyNode *jsonField(
+    const ZfJSON::AnyNode *object, ZuCSpan name)
+{
+  if (!object || !object->has<ZfJSON::AnyNode::Object>()) return nullptr;
+  for (auto &field: object->data<ZfJSON::AnyNode::Object>())
+    if (field.p<0>() == name) return field.p<1>();
+  return nullptr;
+}
+
 static bool hasScope(const StringVec &scopes, ZuCSpan name)
 {
   for (auto &scope: scopes) if (scope == name) return true;
@@ -35,8 +151,8 @@ static bool hasScope(const StringVec &scopes, ZuCSpan name)
 
 static bool reservedClaim(ZuCSpan name)
 {
-  return name == "iss" || name == "sub" || name == "aud" ||
-    name == "azp" || name == "nonce" || name == "iat" || name == "exp";
+  constexpr auto matcher = ZuMatcher<ReservedClaims>();
+  return matcher.exact(name) >= 0;
 }
 
 static bool hasRole(const IDVec &roles, RoleID roleID)
@@ -91,24 +207,15 @@ bool oidcConfigValid(const OIDCConfig &config)
   }
 }
 
-static bool stringValue(ZfJSON::AnyNode *node, String &value)
+static bool stringValue(const ZfJSON::AnyNode *node, String &value)
 {
   if (!node || !node->has<ZfJSON::AnyNode::String>()) return false;
   value = node->data<ZfJSON::AnyNode::String>();
   return true;
 }
 
-static bool integerValue(ZfJSON::AnyNode *node, int64_t &value)
-{
-  if (!node || !node->has<ZfJSON::AnyNode::Number>()) return false;
-  auto parsed = ZfJSON::eov_Decimal(node->data<ZfJSON::AnyNode::Number>());
-  if (parsed.p<0>() < 0) return false;
-  value = int64_t(parsed.p<1>().floor());
-  return true;
-}
-
 static bool stringsValue(
-    ZfJSON::AnyNode *node, unsigned limit, StringVec &values)
+    const ZfJSON::AnyNode *node, unsigned limit, StringVec &values)
 {
   StringVec next;
   if (node && node->has<ZfJSON::AnyNode::String>()) {
@@ -148,70 +255,60 @@ bool oidcVerifyIDToken(
   String json;
   if (!jwtES256(token, publicKey, limits.jwt, header, json) ||
       (header.type && header.type != "JWT")) return false;
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-
+  ZuPtr<ZfJSON::AnyNode> root;
+  OIDCIDWire wire;
+  if (!jsonLoad(json, root, wire)) return false;
   OIDCClaims next;
-  String authorizedParty;
-  unsigned seen = 0;
-  auto &fields = roots[0]->data<ZfJSON::AnyNode::Object>();
-  for (auto &field: fields) {
-    auto name = field.p<0>();
-    auto value = field.p<1>().ptr();
-    unsigned bit = 0;
-    bool valid = true;
-    if (name == "iss") {
-      bit = 1U<<0; valid = stringValue(value, next.issuer);
-    } else if (name == "sub") {
-      bit = 1U<<1; valid = stringValue(value, next.subject);
-    } else if (name == "aud") {
-      bit = 1U<<2;
-      valid = stringsValue(value, limits.audiences, next.audience);
-    } else if (name == "azp") {
-      bit = 1U<<3; valid = stringValue(value, authorizedParty);
-    } else if (name == "nonce") {
-      bit = 1U<<4; valid = stringValue(value, next.nonce);
-    } else if (name == "iat") {
-      bit = 1U<<5; valid = integerValue(value, next.iat);
-    } else if (name == "exp") {
-      bit = 1U<<6; valid = integerValue(value, next.expires);
-    } else if (config.claimSource == ClaimSource::IDToken &&
-        ((config.roles == OIDCRoles::Mapped &&
-	name == config.roleClaim) ||
-	(config.eligibilityMode == EligibilityMode::ClaimValues &&
-	 name == config.eligibilityClaim))) {
-      StringVec values;
-      valid = stringsValue(value, limits.roleValues, values);
-      if (config.roles == OIDCRoles::Mapped && name == config.roleClaim) {
-	bit |= 1U<<7;
-	next.roleValues = values;
-      }
-      if (config.eligibilityMode == EligibilityMode::ClaimValues &&
-	  name == config.eligibilityClaim) {
-	bit |= 1U<<8;
-	next.eligibilityValues = ZuMv(values);
-      }
-    } else {
-      continue;
+  next.issuer = ZuMv(wire.issuer);
+  next.subject = ZuMv(wire.subject);
+  next.nonce = ZuMv(wire.nonce);
+  next.iat = wire.iat;
+  next.expires = wire.expires;
+  next.authTime = wire.authTime;
+  if (!wire.audience.template is<const ZfJSON::AnyNode *>()) return false;
+  auto audience = wire.audience.template p<const ZfJSON::AnyNode *>();
+  if (audience->has<ZfJSON::AnyNode::String>()) {
+    String value;
+    if (!stringValue(audience, value) || !value) return false;
+    wire.audience = ZuMv(value);
+    next.audience.push(ZuMv(wire.audience.template p<String>()));
+  } else if (audience->has<ZfJSON::AnyNode::Array>()) {
+    StringVec values;
+    if (!stringsValue(audience, limits.audiences, values)) return false;
+    wire.audience = ZuMv(values);
+    next.audience = ZuMv(wire.audience.template p<StringVec>());
+  } else return false;
+  bool rolesPresent = false, eligibilityPresent = false;
+  if (config.claimSource == ClaimSource::IDToken) {
+    if (config.roles == OIDCRoles::Mapped) {
+      auto value = jsonField(root, config.roleClaim);
+      rolesPresent = value &&
+        stringsValue(value, limits.roleValues, next.roleValues);
+      if (value && !rolesPresent) return false;
     }
-    if (!valid || (seen & bit)) return false;
-    seen |= bit;
+    if (config.eligibilityMode == EligibilityMode::ClaimValues) {
+      auto value = jsonField(root, config.eligibilityClaim);
+      eligibilityPresent = value &&
+        stringsValue(value, limits.roleValues, next.eligibilityValues);
+      if (value && !eligibilityPresent) return false;
+    }
   }
-  constexpr unsigned required = (1U<<3) - 1 | (7U<<4);
-  if ((seen & required) != required || next.issuer != config.issuer ||
+  if (next.issuer != config.issuer ||
       !next.subject || next.nonce != nonce ||
       !hasAudience(next.audience, config.clientID) ||
       next.iat <= 0 || next.expires <= next.iat ||
+      next.authTime <= 0 || next.authTime > next.iat ||
       next.iat > now + limits.clockSkew ||
       now - limits.clockSkew >= next.expires ||
       (config.claimSource == ClaimSource::IDToken &&
        config.eligibilityMode == EligibilityMode::ClaimValues &&
-       !(seen & (1U<<8)))) return false;
-  if ((next.audience.length() > 1 || (seen & (1U<<3))) &&
-      authorizedParty != config.clientID) return false;
+       !eligibilityPresent)) return false;
+  if (config.maxAgePresent && now > next.authTime &&
+      uint64_t(now - next.authTime) > config.maxAge &&
+      uint64_t(now - next.authTime) - config.maxAge > uint64_t(limits.clockSkew))
+    return false;
+  if ((next.audience.length() > 1 || wire.authorizedParty) &&
+      wire.authorizedParty != config.clientID) return false;
   claims = ZuMv(next);
   return true;
 }
@@ -232,7 +329,7 @@ IDVec oidcMapRoles(
   return roles;
 }
 
-class OIDCUserLoad_ : public ZmObject {
+class OIDCUserLoad_ : public ZumObject {
 public:
   OIDCUserLoad_(DBContext *context, String subject,
       const OIDCConfig &config, StringVec roleValues,
@@ -325,15 +422,17 @@ private:
   void user_(UserID userID)
   {
     auto users = m_context->users;
-    users->find<0>(0, ZuFwdTuple(userID), [
-        self = ZmRef<OIDCUserLoad_>{this}](ZdbRowRef<User> row) mutable {
-      if (!row || row->data().source != UserSource::External ||
-          row->data().state != State::Active || row->data().owner) {
-        self->finish_(false);
-        return;
-      }
-      self->m_user = row->data();
-      self->evidence_();
+    users->run(0, [self = ZmRef<OIDCUserLoad_>{this}, users, userID]() mutable {
+      users->find<0>(0, ZuFwdTuple(userID), [
+          self = ZuMv(self)](ZdbRowRef<User> row) mutable {
+	if (!row || row->data().source != UserSource::External ||
+	    row->data().state != State::Active || row->data().owner) {
+	  self->finish_(false);
+	  return;
+	}
+	self->m_user = row->data();
+	self->evidence_();
+      });
     });
   }
 
@@ -351,32 +450,31 @@ private:
   void evidence_()
   {
     auto evidence = m_context->evidence;
-    auto key = ZuFwdTuple(m_appID, m_user.id, m_providerID);
-    evidence->findUpd<0>(0, ZuMv(key), [
-        self = ZmRef<OIDCUserLoad_>{this}, evidence](
+    evidence->run(0, [self = ZmRef<OIDCUserLoad_>{this}, evidence]() mutable {
+      auto key = ZuFwdTuple(self->m_appID, self->m_user.id, self->m_providerID);
+      evidence->findUpd<0, ZuSeq<1>>(0, ZuMv(key), [self = ZuMv(self), evidence](
           ZdbRow<Evidence> *row) mutable {
-      if (row) {
-        if (row->data().owner) { self->finish_(false); return; }
-        auto next = self->evidenceRecord_();
-        next.version = row->data().version + 1;
-        next.created = row->data().created;
-        // Retained upstream tokens are opaque protected envelopes.  This path
-        // does not receive a new upstream refresh token; preserve ciphertext.
-        next.protectedRefreshToken = row->data().protectedRefreshToken;
-        next.refreshOutcome = row->data().refreshOutcome;
-        row->data() = ZuMv(next);
-        self->m_evidence = row->data();
-        self->finish_(row->commit() && self->m_eligible);
-        return;
-      }
-      ZdbRowRef<Evidence> created = new ZdbRow<Evidence>{
-        evidence, ZdbShard{0}};
-      evidence->insert(ZuMv(created), [self = ZuMv(self)](
-          ZdbRow<Evidence> *row) mutable {
-        if (!row) { self->finish_(false); return; }
-        new (row->ptr()) Evidence{self->evidenceRecord_()};
-        self->m_evidence = row->data();
-        self->finish_(row->commit() && self->m_eligible);
+	if (row) {
+	  if (row->data().owner) { self->finish_(false); return; }
+	  auto next = self->evidenceRecord_();
+	  next.version = row->data().version + 1;
+	  next.created = row->data().created;
+	  // This path receives no new upstream refresh token; preserve ciphertext.
+	  next.protectedRefreshToken = row->data().protectedRefreshToken;
+	  row->data() = ZuMv(next);
+	  self->m_evidence = row->data();
+	  self->finish_(row->commit() && self->m_eligible);
+	  return;
+	}
+	ZdbRowRef<Evidence> created = new ZdbRow<Evidence>{
+	  evidence, ZdbShard{0}};
+	evidence->insert(ZuMv(created), [self = ZuMv(self)](
+	    ZdbRow<Evidence> *row) mutable {
+	  if (!row) { self->finish_(false); return; }
+	  new (row->ptr()) Evidence{self->evidenceRecord_()};
+	  self->m_evidence = row->data();
+	  self->finish_(row->commit() && self->m_eligible);
+	});
       });
     });
   }
@@ -427,11 +525,8 @@ struct OIDCKey {
   Bytes		publicKey;
 };
 
-static const String &oidcKeyID(const OIDCKey &key) { return key.id; }
-using OIDCKeyHash = ZmHash<OIDCKey,
-  ZmHashKey<oidcKeyID,
-    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.OIDC.Keys">>>>;
-using OIDCKeyVec = ZtArray<OIDCKey, ZtArrayHeapID<"Zum.OIDC.KeySet">>;
+ZuDerive(OIDCKeyVec,
+  (ZtArray<OIDCKey, ZtArrayHeapID<"Zum.OIDC.KeySet">>));
 
 class OIDCState;
 
@@ -458,14 +553,14 @@ static const String &oidcReqID(const ZmRef<OIDCReq> &request)
   return request->stateID;
 }
 
-using OIDCReqHash = ZmHash<ZmRef<OIDCReq>,
-  ZmHashKey<oidcReqID,
-    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.OIDC.Pending">>>>;
+ZmHashDerive(OIDCReqHash, ZmRef<OIDCReq>,
+  (ZmHashKey<oidcReqID,
+    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.OIDC.Pending">>>));
 static bool randomText(Ztls::Random &rng, String &value)
 {
-  uint8_t random[OIDCRandomSize];
+  ZuBArray<OIDCRandomSize> random(OIDCRandomSize, false);
   if (!rng.random(random)) return false;
-  value.length(ZuBase64URL::enclen(sizeof(random)));
+  value.length(ZuBase64URL::enclen(random.length()));
   return ZuBase64URL::encode(value.span(), random) ==
     value.length();
 }
@@ -475,7 +570,7 @@ static void formField(String &out, bool &first, ZuCSpan name, ZuCSpan value)
   if (!first) out << '&';
   first = false;
   out << name << '=';
-  ZfURI::URIQuote<true>::quote(out, value);
+  ZfURI::PathQuote::quote(out, value);
 }
 
 static bool tokenResponse(
@@ -484,34 +579,15 @@ static bool tokenResponse(
 {
   if (!json || json.length() > limits.response) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  String nextID, nextAccess;
-  unsigned seen = 0;
-  for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
-    String *target;
-    unsigned bit;
-    if (field.p<0>() == "id_token") {
-      target = &nextID;
-      bit = 1U;
-    } else if (field.p<0>() == "access_token") {
-      target = &nextAccess;
-      bit = 2U;
-    } else {
-      continue;
-    }
-    if ((seen & bit) || !stringValue(field.p<1>().ptr(), *target))
-      return false;
-    seen |= bit;
-  }
-  if (!nextID || nextID.length() > limits.jwt.token ||
-      (needAccessToken && (!nextAccess || nextAccess.length() > limits.response)))
+  ZuPtr<ZfJSON::AnyNode> root;
+  OIDCTokenWire wire;
+  if (!jsonLoad(json, root, wire) || !wire.idToken ||
+      wire.idToken.length() > limits.jwt.token ||
+      (needAccessToken && (!wire.accessToken ||
+        wire.accessToken.length() > limits.response)))
     return false;
-  idToken = ZuMv(nextID);
-  accessToken = ZuMv(nextAccess);
+  idToken = ZuMv(wire.idToken);
+  accessToken = ZuMv(wire.accessToken);
   return true;
 }
 
@@ -521,47 +597,16 @@ static bool userinfoResponse(
 {
   if (!json || json.length() > limits.response || !subject) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  String nextSubject;
+  ZuPtr<ZfJSON::AnyNode> root;
+  OIDCUserInfoWire wire;
+  if (!jsonLoad(json, root, wire)) return false;
   StringVec nextRoles, nextEligibility;
-  unsigned seen = 0;
-  for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
-    auto name = field.p<0>();
-    auto value = field.p<1>().ptr();
-    unsigned bit = 0;
-    bool valid = true;
-    if (name == "sub") {
-      bit = 1U;
-      valid = stringValue(value, nextSubject);
-    } else if ((config.roles == OIDCRoles::Mapped &&
-	name == config.roleClaim) ||
-	(config.eligibilityMode == EligibilityMode::ClaimValues &&
-	 name == config.eligibilityClaim)) {
-      StringVec values;
-      valid = stringsValue(value, limits.roleValues, values);
-      if (config.roles == OIDCRoles::Mapped && name == config.roleClaim) {
-	bit |= 2U;
-	nextRoles = values;
-      }
-      if (config.eligibilityMode == EligibilityMode::ClaimValues &&
-	  name == config.eligibilityClaim) {
-	bit |= 4U;
-	nextEligibility = ZuMv(values);
-      }
-    } else {
-      continue;
-    }
-    if (!valid || (seen & bit)) return false;
-    seen |= bit;
-  }
-  if (!(seen & 1U) || nextSubject != subject ||
-      (config.roles == OIDCRoles::Mapped && !(seen & 2U)) ||
-      (config.eligibilityMode == EligibilityMode::ClaimValues &&
-       !(seen & 4U))) return false;
+  bool roles = config.roles != OIDCRoles::Mapped ||
+    stringsValue(jsonField(root, config.roleClaim), limits.roleValues, nextRoles);
+  bool eligibility = config.eligibilityMode != EligibilityMode::ClaimValues ||
+    stringsValue(jsonField(root, config.eligibilityClaim),
+      limits.roleValues, nextEligibility);
+  if (wire.subject != subject || !roles || !eligibility) return false;
   roleValues = ZuMv(nextRoles);
   eligibilityValues = ZuMv(nextEligibility);
   return true;
@@ -572,59 +617,28 @@ static bool jwksResponse(
 {
   if (!json || json.length() > limits.response) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  ZfJSON::AnyNode *keysNode = nullptr;
-  for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>())
-    if (field.p<0>() == "keys") keysNode = field.p<1>().ptr();
-  if (!keysNode || !keysNode->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &array = keysNode->data<ZfJSON::AnyNode::Array>();
-  if (!array || array.length() > limits.keys) return false;
+  ZuPtr<ZfJSON::AnyNode> root;
+  OIDCJWKSResponse response;
+  if (!jsonLoad(json, root, response) || !response.keys ||
+      response.keys.length() > limits.keys) return false;
   OIDCKeyVec next;
-  for (auto &node: array) {
-    if (!node->has<ZfJSON::AnyNode::Object>()) continue;
-    String kid, kty, crv, use, alg, x, y;
-    unsigned seen = 0;
-    bool valid = true;
-    for (auto &field: node->data<ZfJSON::AnyNode::Object>()) {
-      String *value = nullptr;
-      unsigned bit = 0;
-      if (field.p<0>() == "kid") { bit = 1U<<0; value = &kid; }
-      else if (field.p<0>() == "kty") { bit = 1U<<1; value = &kty; }
-      else if (field.p<0>() == "crv") { bit = 1U<<2; value = &crv; }
-      else if (field.p<0>() == "use") { bit = 1U<<3; value = &use; }
-      else if (field.p<0>() == "alg") { bit = 1U<<4; value = &alg; }
-      else if (field.p<0>() == "x") { bit = 1U<<5; value = &x; }
-      else if (field.p<0>() == "y") { bit = 1U<<6; value = &y; }
-      else continue;
-      if (!stringValue(field.p<1>().ptr(), *value)) {
-	valid = false;
-	break;
-      }
-      seen |= bit;
-    }
-    constexpr unsigned required =
-      (1U<<0) | (1U<<1) | (1U<<2) | (1U<<5) | (1U<<6);
-    if (!valid || (seen & required) != required || !kid || kty != "EC" ||
-        crv != "P-256" || (use && use != "sig") ||
-        (alg && alg != "ES256")) continue;
-    OIDCKey key{.id = ZuMv(kid)};
+  for (auto &wire: response.keys) {
+    if (!wire.kid || wire.kty != "EC" || wire.crv != "P-256" ||
+        !wire.x || !wire.y || (wire.use && wire.use != "sig") ||
+        (wire.alg && wire.alg != "ES256")) continue;
+    OIDCKey key{.id = ZuMv(wire.kid)};
     key.publicKey.length(Ztls::COSE::ES256::PublicKeySize, false);
     key.publicKey[0] = 4;
     if (ZuBase64URL::decode({key.publicKey.data() + 1,
-          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{x}) !=
+          Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{wire.x}) !=
           Ztls::COSE::ES256::CoordinateSize ||
         ZuBase64URL::decode({key.publicKey.data() + 1 +
           Ztls::COSE::ES256::CoordinateSize, Ztls::COSE::ES256::CoordinateSize},
-          ZuBSpan{y}) != Ztls::COSE::ES256::CoordinateSize)
+          ZuBSpan{wire.y}) != Ztls::COSE::ES256::CoordinateSize ||
+        !Ztls::COSE::ES256::validPK(key.publicKey))
       continue;
-    bool duplicate = false;
     for (auto &existing: next)
-      if (existing.id == key.id) { duplicate = true; break; }
-    if (duplicate) continue;
+      if (existing.id == key.id) return false;
     next.push(ZuMv(key));
   }
   if (!next) return false;
@@ -637,42 +651,9 @@ static bool discoveryResponse(
 {
   if (!json || json.length() > limits.response) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  String issuer, authorize, token, jwks, userinfo;
-  StringVec responses, algorithms, methods;
-  unsigned seen = 0;
-  for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
-    auto name = field.p<0>();
-    auto value = field.p<1>().ptr();
-    bool valid = true;
-    unsigned bit = 0;
-    if (name == "issuer") {
-      bit = 1U<<0; valid = stringValue(value, issuer);
-    } else if (name == "authorization_endpoint") {
-      bit = 1U<<1; valid = stringValue(value, authorize);
-    } else if (name == "token_endpoint") {
-      bit = 1U<<2; valid = stringValue(value, token);
-    } else if (name == "jwks_uri") {
-      bit = 1U<<3; valid = stringValue(value, jwks);
-    } else if (name == "response_types_supported") {
-      bit = 1U<<4; valid = stringsValue(value, 32, responses);
-    } else if (name == "id_token_signing_alg_values_supported") {
-      bit = 1U<<5; valid = stringsValue(value, 32, algorithms);
-    } else if (name == "token_endpoint_auth_methods_supported") {
-      bit = 1U<<6; valid = stringsValue(value, 32, methods);
-    } else if (name == "userinfo_endpoint") {
-      bit = 1U<<7; valid = stringValue(value, userinfo);
-    } else {
-      continue;
-    }
-    if (!valid || seen & bit) return false;
-    seen |= bit;
-  }
-  constexpr unsigned required = (1U<<7) - 1;
+  ZuPtr<ZfJSON::AnyNode> root;
+  OIDCDiscoveryWire wire;
+  if (!jsonLoad(json, root, wire)) return false;
   auto contains = [](const StringVec &values, ZuCSpan value) {
     for (auto &candidate: values) if (candidate == value) return true;
     return false;
@@ -681,15 +662,16 @@ static bool discoveryResponse(
     ZuCSpan{"client_secret_basic"} :
     config.clientAuth == OIDCClientAuth::Post ?
       ZuCSpan{"client_secret_post"} : ZuCSpan{"none"};
-  if ((seen & required) != required || issuer != config.issuer ||
-      !contains(responses, "code") || !contains(algorithms, "ES256") ||
-      !contains(methods, method) ||
-      (config.claimSource == ClaimSource::UserInfo && !(seen & (1U<<7))))
+  if (wire.issuer != config.issuer || !wire.authorize || !wire.token ||
+      !wire.jwks || !contains(wire.responses, "code") ||
+      !contains(wire.algorithms, "ES256") ||
+      !contains(wire.methods, method) ||
+      (config.claimSource == ClaimSource::UserInfo && !wire.userinfo))
     return false;
-  config.authorizeEndpoint = ZuMv(authorize);
-  config.tokenEndpoint = ZuMv(token);
-  config.jwksEndpoint = ZuMv(jwks);
-  config.userinfoEndpoint = ZuMv(userinfo);
+  config.authorizeEndpoint = ZuMv(wire.authorize);
+  config.tokenEndpoint = ZuMv(wire.token);
+  config.jwksEndpoint = ZuMv(wire.jwks);
+  config.userinfoEndpoint = ZuMv(wire.userinfo);
   return oidcConfigValid(config);
 }
 
@@ -730,7 +712,6 @@ public:
         if (complete)
           complete(false, Bytes{}, User{}, IDVec{}, Evidence{}, 0);
       }
-      self->m_keys.clean();
       self->m_http = OIDCHTTPFn{};
       self->m_clock = OIDCClockFn{};
     });
@@ -783,22 +764,10 @@ private:
       return;
     }
     ++m_discovering;
-    ZuCSpan issuer{config.issuer};
-    auto scheme = issuer.find<"://">();
-    unsigned authority = scheme >= 0 ? unsigned(scheme) + 3 : 0;
-    ZuCSpan authoritySpan{
-      issuer.data() + authority, issuer.length() - authority};
-    auto slash = authoritySpan.find<"/">();
-    String url;
-    if (slash < 0 || unsigned(slash) + authority + 1 == issuer.length()) {
-      url = issuer;
-      if (url[url.length() - 1] == '/') url.length(url.length() - 1);
-      url << "/.well-known/openid-configuration";
-    } else {
-      unsigned path = authority + unsigned(slash);
-      url = ZuCSpan{issuer.data(), path};
-      url << "/.well-known/openid-configuration" << issuer.offset(path);
-    }
+    // OIDC Discovery appends to the issuer path, unlike RFC 8414's rule.
+    String url{config.issuer};
+    if (url[url.length() - 1] == '/') url.length(url.length() - 1);
+    url << "/.well-known/openid-configuration";
     auto send = m_http;
     send(OIDCHTTPRequest{.url = ZuMv(url)}, [
       self = ZmRef<OIDCState>{this}, grantID = ZuMv(grantID),
@@ -842,12 +811,12 @@ private:
     }
     request->grantID = ZuMv(grantID);
     request->config = ZuMv(config);
-    uint8_t digest[Ztls::MD<>::Size];
+    ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
     Ztls::MD<> md;
     md.update(ZuBSpan{request->verifier});
     md.finish(digest);
     String challenge;
-    challenge.length(ZuBase64URL::enclen(sizeof(digest)));
+    challenge.length(ZuBase64URL::enclen(digest.length()));
     challenge.length(ZuBase64URL::encode(challenge.span(), digest));
     if (!challenge || m_pending.find(request->stateID)) {
       complete(false, String{});
@@ -866,10 +835,22 @@ private:
     formField(location, first, "client_id", request->config.clientID);
     formField(location, first, "redirect_uri", request->config.redirectURI);
     formField(location, first, "scope", scope);
+    if (request->config.loginHint)
+      formField(location, first, "login_hint", request->config.loginHint);
     formField(location, first, "state", request->stateID);
     formField(location, first, "nonce", request->nonce);
     formField(location, first, "code_challenge", challenge);
     formField(location, first, "code_challenge_method", "S256");
+    String claims;
+    ZfJSON::save(claims, OIDCClaimsWire{});
+    formField(location, first, "claims", claims);
+    if (request->config.prompt)
+      formField(location, first, "prompt", request->config.prompt);
+    if (request->config.maxAgePresent) {
+      String age;
+      age << request->config.maxAge;
+      formField(location, first, "max_age", age);
+    }
     m_pending.add(request);
     m_scheduler->add(&request->timer, Zm::now() + ZuTime{double(m_timeout)},
       ZmScheduler::Update, [request](auto &&arm) {
@@ -888,19 +869,25 @@ private:
     if (query[0] == '?') query.splice(0, 1);
     String code, stateID, error;
     unsigned seen = 0;
-    formEach({query.data(), query.length()},
-      [&code, &stateID, &error, &seen](ZuCSpan name, ZuCSpan value) {
+    bool valid = true;
+    constexpr auto matcher = ZuMatcher<OIDCCallbackFields>();
+    valid = formEach({query.data(), query.length()},
+      [&code, &stateID, &error, &seen, &valid, &matcher](
+          ZuCSpan name, ZuCSpan value) {
         String *target;
         unsigned bit;
-        if (name == "code") { target = &code; bit = 1U; }
-        else if (name == "state") { target = &stateID; bit = 2U; }
-        else if (name == "error") { target = &error; bit = 4U; }
-        else return;
+        switch (matcher.exact(name)) {
+          case 0: target = &code; bit = 1U; break;
+          case 1: target = &stateID; bit = 2U; break;
+          case 2: target = &error; bit = 4U; break;
+          default: return;
+        }
+        if (seen & bit) { valid = false; return; }
         seen |= bit;
         *target = value;
-      });
+      }) && valid;
     auto request = stateID ? m_pending.findVal(stateID) : ZmRef<OIDCReq>{};
-    if (!request || request->consumed || !(seen & 2U) ||
+    if (!valid || !request || request->consumed || !(seen & 2U) ||
         bool(code) == bool(error)) {
       complete(false, Bytes{}, User{}, IDVec{}, Evidence{}, 0);
       return;
@@ -920,13 +907,16 @@ private:
       .body = ZuMv(body), .method = OIDCHTTPMethod::POST};
     switch (request->config.clientAuth) {
       case OIDCClientAuth::Basic: {
-        String plain{request->config.clientID};
-        plain << ':' << request->config.clientSecret;
+        String plain;
+        ZfURI::PathQuote::quote(plain, request->config.clientID);
+        plain << ':';
+        ZfURI::PathQuote::quote(plain, request->config.clientSecret);
         String encoded;
         encoded.length(ZuBase64::enclen(plain.length()));
         encoded.length(ZuBase64::encode(encoded.span(), ZuBSpan{plain}));
         if (plain.mutable_()) ZuClear(plain.data(), plain.length());
         http.authorization << "Basic " << encoded;
+        if (encoded.mutable_()) ZuClear(encoded.data(), encoded.length());
       } break;
       case OIDCClientAuth::Post:
         formField(http.body, first, "client_id", request->config.clientID);
@@ -962,13 +952,8 @@ private:
       return;
     }
     request->keyID = ZuMv(header.keyID);
-    String cacheID{request->config.issuer};
-    cacheID << '\n' << request->keyID;
-    auto key = m_keys.findVal(cacheID);
-    if (key.id) {
-      verify_(request, key.publicKey);
-      return;
-    }
+    // Re-fetch the bounded issuer key set for each SSO exchange. No key
+    // survives provider removal merely because an earlier login used it.
     auto send = m_http;
     send(OIDCHTTPRequest{.url = request->config.jwksEndpoint},
       [self = ZmRef<OIDCState>{this}, request](
@@ -987,18 +972,12 @@ private:
       fail_(request);
       return;
     }
-    for (auto &key: keys) {
-      String cacheID{request->config.issuer};
-      cacheID << '\n' << key.id;
-      key.id = ZuMv(cacheID);
-      m_keys.del(key.id);
-      m_keys.add(ZuMv(key));
-    }
-    String cacheID{request->config.issuer};
-    cacheID << '\n' << request->keyID;
-    auto key = m_keys.findVal(cacheID);
-    if (!key.id) { fail_(request); return; }
-    verify_(request, key.publicKey);
+    for (const auto &key: keys)
+      if (key.id == request->keyID) {
+	verify_(request, key.publicKey);
+	return;
+      }
+    fail_(request);
   }
 
   void verify_(ZmRef<OIDCReq> request, ZuBSpan publicKey)
@@ -1010,7 +989,7 @@ private:
       fail_(request);
       return;
     }
-    int64_t authTime = claims.iat;
+    int64_t authTime = claims.authTime;
     if (request->config.claimSource == ClaimSource::UserInfo) {
       OIDCHTTPRequest http{
         .url = request->config.userinfoEndpoint,
@@ -1116,7 +1095,6 @@ private:
   OIDCClockFn	m_clock;
   Ztls::Random	m_rng;
   OIDCReqHash	m_pending;
-  OIDCKeyHash	m_keys;
   unsigned	m_discovering = 0;
   ZmAtomic<uint32_t> m_up = 0;
 };

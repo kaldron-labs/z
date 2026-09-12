@@ -15,6 +15,8 @@
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSpecific.hh>
+#include <zlib/ZmPLock.hh>
+#include <zlib/ZmSemaphore.hh>
 
 using namespace ZuTestUtil;
 
@@ -43,11 +45,60 @@ ZuAssert((ZuIsSame<OrdersExplicit::NodeMvRef, Orders::NodeMvRef>{}));
 ZuAssert((sizeof(Orders::Node) == sizeof(OrdersDefault::Node)));
 ZuAssert((alignof(Orders::Node) == alignof(OrdersDefault::Node)));
 
+static void concurrentCount()
+{
+  ZuTestScope(concurrentCount);
+  using Hash = ZmHash<unsigned, ZmHashLock<ZmPLock,
+    ZmHashHeapID<"ZmHashTest.Count">>>;
+  // Enough overlap to exercise independent lock stripes without resizing.
+  enum { PerThread = 8192 };
+  ZmRef<Hash> hash = new Hash{ZmHashParams{}.bits(15).cBits(2).loadFactor(1.0)};
+  auto run = [hash](bool remove) -> int {
+    ZmSemaphore ready, go;
+    unsigned removed0 = 0, removed1 = 0;
+    auto work = [hash, remove, &ready, &go](unsigned start, unsigned &removed) {
+      ready.post();
+      go.wait();
+      for (unsigned i = 0; i < PerThread; ++i) {
+	unsigned id = start + i;
+	if (remove) { if (hash->del(id)) ++removed; }
+	else hash->add(id);
+      }
+    };
+    ZmThread first{[&work, &removed0]() { work(0, removed0); }};
+    ZmThread second{[&work, &removed1]() { work(PerThread, removed1); }};
+    bool started = bool(first) && bool(second);
+    if (first) ready.wait();
+    if (second) ready.wait();
+    go.post();
+    go.post();
+    if (first) first.join();
+    if (second) second.join();
+    if (!started) return -1;
+    return remove ? int(removed0 + removed1) : 0;
+  };
+  ZuCheck(run(false) == 0);
+  ZuCheck(hash->count_() == 2 * PerThread);
+  unsigned visited = 0;
+  {
+    auto i = hash->citer();
+    while (i()) ++visited;
+  }
+  ZuCheck(visited == 2 * PerThread);
+  ZuCheck(run(true) == 2 * PerThread);
+  ZuCheck(!hash->count_());
+  {
+    auto i = hash->citer();
+    ZuCheck(!i());
+  }
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
 
   ZuTestMain();
+  ZuTestCall(concurrentCount);
 
   ZmHeapMgr::init("Orders", 0, ZmHeapConfig{100});
   ZmRef<Orders> orders = new Orders(ZmHashParams().bits(7).loadFactor(1.0));

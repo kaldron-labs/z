@@ -4,15 +4,29 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// resumable empty-database bootstrap for zumd
+
 #ifndef ZumBootstrap_HH
 #define ZumBootstrap_HH
 
-#include <zlib/ZumDB.hh>
+#ifndef ZumLib_HH
+#include <zlib/ZumLib.hh>
+#endif
+
+#include <zlib/ZuDerive.hh>
+
+#include <zlib/ZmFn.hh>
+
+#include <zlib/Zum.hh>
 #include <zlib/ZumRequest.hh>
+#include <zlib/ZumSecret.hh>
 
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
+
+struct DB;
+struct DBContext;
 
 struct ServerBootstrapConfig {
   String	issuer;
@@ -41,14 +55,6 @@ ZuDerive(ServerBootstrapFn, (ZmFn<void(bool, ServerBootstrapResult),
 void serverBootstrap(
   DB *, Requests *, DBContext *, Ztls::Random &,
   ServerBootstrapConfig, ServerBootstrapFn);
-
-bool serverSecretDecrypt(
-  ZuBSpan key, ZuCSpan issuer, ZuCSpan recordType, ZuCSpan recordID,
-  ZuCSpan field, ZuBSpan envelope, Bytes &plain);
-
-bool serverSecretEncrypt(
-  Ztls::Random &, ZuBSpan key, ZuCSpan issuer, ZuCSpan recordType,
-  ZuCSpan recordID, ZuCSpan field, ZuBSpan plain, Bytes &envelope);
 
 } // namespace Zum
 

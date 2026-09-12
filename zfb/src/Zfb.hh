@@ -14,6 +14,7 @@
 #endif
 
 #include <flatbuffers/flatbuffers.h>
+#include <flatbuffers/reflection.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +44,21 @@ namespace Zfb {
 using namespace flatbuffers;
 
 using Builder = FlatBufferBuilder;
+
+// flatbuffers::GetFieldV() compares sizeof(T) with the reflected element
+// size.  For vectors of structs T is a pointer even though the structs are
+// stored inline, and reflection exposes Obj rather than the struct byte width.
+template <typename T>
+inline Vector<T> *GetFieldV(
+    const Table &table, const reflection::Field &field)
+{
+  FLATBUFFERS_ASSERT(field.type()->base_type() == reflection::Vector);
+  if constexpr (ZuTraits<T>::IsPointer)
+    FLATBUFFERS_ASSERT(field.type()->element() == reflection::Obj);
+  else
+    FLATBUFFERS_ASSERT(sizeof(T) == GetTypeSize(field.type()->element()));
+  return table.GetPointer<Vector<T> *>(field.offset());
+}
 
 // IOBuilder customizes FlatBufferBuilder with an allocator that
 // builds directly into a detachable IOBuf for transmission/persistence

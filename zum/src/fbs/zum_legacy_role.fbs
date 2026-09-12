@@ -1,0 +1,10 @@
+include "zfb_types.fbs";
+namespace Zum.Legacy.fbs;
+table Role {
+  id:uint64;
+  name:string;
+  actions:Zfb.Bitmap;
+  state:int8;
+  owner:Zfb.UInt128;
+}
+root_type Role;

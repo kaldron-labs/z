@@ -1,13 +1,38 @@
 include "zfb_types.fbs";
+include "zum_issuer.fbs";
+include "zum_app.fbs";
+include "zum_role.fbs";
+include "zum_scope.fbs";
+include "zum_action.fbs";
+include "zum_user.fbs";
+include "zum_cred.fbs";
+include "zum_audience.fbs";
+include "zum_provider.fbs";
+include "zum_client.fbs";
+include "zum_sign_key.fbs";
+include "zum_client_access.fbs";
+include "zum_admin_access.fbs";
+include "zum_role_map.fbs";
+include "zum_auth_policy.fbs";
+include "zum_grant.fbs";
+include "zum_request.fbs";
+include "zum_consent.fbs";
 
 namespace Zum.fbs;
+
+table ConsentCode {
+  before_grant:Grant;
+  after_grant:Grant;
+  before_consent:Consent;
+  scope_i_ds:[uint64];
+  now:long;
+}
 
 table Enrollment {
   ceremony_i_d:[ubyte];
   user_i_d:uint64;
   name:string;
   handle:[ubyte];
-  role_i_ds:[uint64];
   credential_i_d:[ubyte];
   public_key:[ubyte];
   sign_count:uint32;
@@ -16,6 +41,8 @@ table Enrollment {
   backed_up:bool;
   label:string;
   precreated:bool;
+  before_grant:Grant;
+  before_user:User;
 }
 
 table CredentialAdd {
@@ -31,6 +58,7 @@ table CredentialAdd {
   backed_up:bool;
   label:string;
   user_version:uint64 = 1;
+  before_grant:Grant;
 }
 
 table RecoveryStart {
@@ -43,6 +71,9 @@ table RecoveryStart {
   expires:int64;
   actor:string;
   version:uint64;
+  old_state:int8;
+  old_updated:int64;
+  request:IdemRequest;
 }
 
 table RecoveryEnroll {
@@ -60,6 +91,8 @@ table RecoveryEnroll {
   backup_eligible:bool;
   backed_up:bool;
   label:string;
+  before_grant:Grant;
+  before_user:User;
 }
 
 table CodeFamily {
@@ -88,74 +121,7 @@ table CodeFamily {
   evidence_version:uint64;
   authority_source:int8;
   facade_client_i_d:string;
-}
-
-table UserChange {
-  issuer:string;
-  user_i_d:uint64;
-  old_role_i_ds:[uint64];
-  new_role_i_ds:[uint64];
-  old_updated:int64;
-  updated:int64;
-  auth_version:uint64;
-  old_state:int8;
-  new_state:int8;
-}
-
-table RoleChange {
-  issuer:string;
-  role_i_d:uint64;
-  name:string;
-  old_actions:Zfb.Bitmap;
-  new_actions:Zfb.Bitmap;
-  auth_version:uint64;
-  old_state:int8;
-  new_state:int8;
-}
-
-table CredChange {
-  issuer:string;
-  credential_i_d:[ubyte];
-  old_updated:int64;
-  updated:int64;
-  auth_version:uint64;
-  old_state:int8;
-  new_state:int8;
-}
-
-table ScopeChange {
-  issuer:string;
-  scope_i_d:uint64;
-  audience:string;
-  name:string;
-  old_role_i_ds:[uint64];
-  new_role_i_ds:[uint64];
-  auth_version:uint64;
-  old_state:int8;
-  new_state:int8;
-}
-
-table ClientChange {
-  issuer:string;
-  client_i_d:string;
-  old_secret_digest:[ubyte];
-  new_secret_digest:[ubyte];
-  old_role_i_ds:[uint64];
-  new_role_i_ds:[uint64];
-  old_updated:int64;
-  updated:int64;
-  auth_version:uint64;
-  old_state:int8;
-  new_state:int8;
-}
-
-table ActionChange {
-  issuer:string;
-  action_i_d:uint32;
-  name:string;
-  auth_version:uint64;
-  old_state:int8;
-  new_state:int8;
+  before_grant:Grant;
 }
 
 table ExternalProjection {
@@ -183,6 +149,7 @@ table AppEnrollment {
   created:int64;
   catalog_publish_op:uint32;
   operation_query_op:uint32;
+  request:IdemRequest;
 }
 
 table AppActionAdd {
@@ -194,6 +161,336 @@ table AppActionAdd {
   old_app_version:uint64;
   old_auth_version:uint64;
   old_updated:int64;
+  request:IdemRequest;
+}
+
+table MembershipChange {
+  app_i_d:uint64;
+  user_i_d:uint64;
+  old_roles:[uint64];
+  new_roles:[uint64];
+  old_state:int8;
+  new_state:int8;
+  version:uint64;
+  auth_version:uint64;
+  old_updated:int64;
+  updated:int64;
+  app_version:uint64;
+  app_auth_version:uint64;
+  app_updated:int64;
+  request:IdemRequest;
+  assign_roles:bool;
+  if_match:string;
+}
+
+// Immutable before-images, encoded with each record's ZfbStruct schema.
+// Each entry is one independently journaled and compensated row effect.
+table RoleDelete {
+  app:App;
+  role:Role;
+  members:[Zfb.Bytes];
+  clients:[Zfb.Bytes];
+  admins:[Zfb.Bytes];
+  scopes:[Zfb.Bytes];
+  maps:[Zfb.Bytes];
+  updated:int64;
+  request:IdemRequest;
+}
+
+table CatalogEdit {
+  before:[ubyte];
+  after:[ubyte];
+}
+
+table CatalogRows {
+  added:[Zfb.Bytes];
+  changed:[Zfb.Bytes];
+}
+
+table CatalogPublish {
+  before:App;
+  after:App;
+  actions:CatalogRows;
+  roles:CatalogRows;
+  scopes:CatalogRows;
+  request:IdemRequest;
+}
+
+table MembershipAdd {
+  app_i_d:uint64;
+  user_i_d:uint64;
+  created:int64;
+  request:IdemRequest;
+}
+
+table RoleEdit {
+  app:App;
+  before:Role;
+  action_i_ds:[uint32];
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+  kind:int8;
+  label:string;
+  state:int8;
+}
+
+table ScopeEdit {
+  app:App;
+  before:Scope;
+  role_i_ds:[uint64];
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+  kind:int8;
+  state:int8;
+}
+
+table ActionEdit {
+  app:App;
+  before:Action;
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+  state:int8;
+}
+
+table AppChange {
+  before:App;
+  if_match:string;
+  label:string;
+  updated:int64;
+  request:IdemRequest;
+  state_only:bool;
+  state:int8;
+}
+
+table UserEdit {
+  before:User;
+  if_match:string;
+  profile:string;
+  email:string;
+  fields:uint8;
+  updated:int64;
+  request:IdemRequest;
+  state_only:bool;
+  state:int8;
+}
+
+table CredEdit {
+  before:Cred;
+  if_match:string;
+  label:string;
+  updated:int64;
+  request:IdemRequest;
+  state_only:bool;
+  state:int8;
+}
+
+table AudienceEdit {
+  app:App;
+  before:Audience;
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+  state:int8;
+  name:string;
+  state_only:bool;
+}
+
+table ProviderEdit {
+  before:Provider;
+  if_match:string;
+  values:Provider;
+  updated:int64;
+  request:IdemRequest;
+  state_only:bool;
+  state:int8;
+  fields:uint8;
+}
+
+table ClientEdit {
+  before:Client;
+  if_match:string;
+  values:Client;
+  updated:int64;
+  request:IdemRequest;
+  state_only:bool;
+  state:int8;
+  fields:uint8;
+  overlap_seconds:uint32;
+}
+
+table KeyRetire {
+  before:SignKey;
+  if_match:string;
+  retire_after:int64;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table ClientAccessState {
+  before:ClientAccess;
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+  state:int8;
+}
+
+table AdminAccessState {
+  before:AdminAccess;
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+  state:int8;
+}
+
+table RoleMapDelete {
+  app:App;
+  before:RoleMap;
+  if_match:string;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table RoleMapPut {
+  app:App;
+  before:RoleMap;
+  role_i_d:uint64;
+  if_match:string;
+  if_none_match:string;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table PolicyPut {
+  app:App;
+  before:AuthPolicy;
+  values:AuthPolicy;
+  if_match:string;
+  if_none_match:string;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table ClientAccessPut {
+  app:App;
+  before:ClientAccess;
+  values:ClientAccess;
+  if_match:string;
+  if_none_match:string;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table AdminAccessPut {
+  app:App;
+  before:AdminAccess;
+  values:AdminAccess;
+  if_match:string;
+  if_none_match:string;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table ProviderAdd {
+  before:Provider;
+  values:Provider;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table AudienceAdd {
+  app:App;
+  before:Audience;
+  values:Audience;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table RoleAdd {
+  app:App;
+  before:Role;
+  values:Role;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table ScopeAdd {
+  app:App;
+  before:Scope;
+  values:Scope;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table UserInvite {
+  before:User;
+  values:User;
+  updated:int64;
+  request:IdemRequest;
+  grant:Grant;
+  external:User;
+}
+
+table ClientAdd {
+  app:App;
+  before:Client;
+  values:Client;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table KeyAdd {
+  before:SignKey;
+  values:SignKey;
+  updated:int64;
+  request:IdemRequest;
+}
+
+table Revoke {
+  sessions:[Zfb.Bytes];
+  consents:[Zfb.Bytes];
+  grants:[Zfb.Bytes];
+  updated:int64;
+  request:IdemRequest;
+}
+
+table GrantCleanup {
+  grants:[Zfb.Bytes];
+  updated:int64;
+  request:IdemRequest;
+}
+
+table KeyBinding {
+  issuer:string;
+  before_check:[ubyte];
+  after_check:[ubyte];
+  before_pending:[ubyte];
+  after_pending:[ubyte];
+}
+
+table SecretRekey {
+  field:uint32;
+  provider_i_d:uint64;
+  app_i_d:uint64;
+  user_i_d:uint64;
+  key_i_d:string;
+  before:[ubyte];
+  after:[ubyte];
+}
+
+table MigrationPut {
+  kind:uint32;
+  image:[ubyte];
+}
+
+table MigrationStart {
+  issuer:Issuer;
+}
+
+table MigrationFinish {
+  issuer:string;
 }
 
 root_type Enrollment;

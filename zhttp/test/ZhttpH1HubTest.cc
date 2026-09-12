@@ -28,11 +28,13 @@ int main(int argc, char **argv)
     ZuTestCall(run<Zhttp::H1TCP>, temp);
     ZuTestCall(run<Zhttp::H1TCP>, temp);
     ZuTestCall(runServerStop<Zhttp::H1TCP>, temp);
+    ZuTestCall((runServerStop<Zhttp::H1TCP, true>), temp);
     ZuTestCall(runUpgrade<Zhttp::H1TCP>, temp);
     ZuTestCall(run<Zhttp::H1TLS>, temp);
     ZuTestCall(run<Zhttp::H1TLS>, temp);
     ZuTestCall(run<Zhttp::H1TLS>, temp);
     ZuTestCall(runServerStop<Zhttp::H1TLS>, temp);
+    ZuTestCall((runServerStop<Zhttp::H1TLS, true>), temp);
     ZuTestCall(runUpgrade<Zhttp::H1TLS>, temp);
     ZuTestCall(testTLSFailure, temp, otherCA);
   }

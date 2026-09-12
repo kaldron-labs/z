@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiLog.hh>
@@ -96,7 +97,14 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-struct SagaCatalog { using List = ZuTypeList<LiveSaga>; };
+struct SagaCatalog {
+  using List = ZuTypeList<LiveSaga>;
+  static int match(ZuCSpan type) {
+    struct IDs { using Keys = Zdb_::SagaTypes<List>; };
+    static constexpr auto matcher = ZuMatcher<IDs>();
+    return matcher.exact(type);
+  }
+};
 
 struct ReplDB : public ZdbSagaDB<Context, SagaCatalog> {
   Context	*context = nullptr;

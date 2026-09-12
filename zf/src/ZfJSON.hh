@@ -29,6 +29,8 @@
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuUTF.hh>
 
 #include <zlib/ZmScratch.hh>
 
@@ -327,6 +329,25 @@ using CNodeArray = const NodeArray;
 // scan JSON, build parse tree
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode>, ZuSpan<char> span);
+template <typename S> S &saveNode_(S &, const AnyNode *);
+
+inline bool unique(const AnyNode *node) {
+  if (!node) return false;
+  if (node->has<AnyNode::Array>()) {
+    for (auto &value: node->data<AnyNode::Array>())
+      if (!unique(value)) return false;
+  } else if (node->has<AnyNode::Object>()) {
+    auto &object = node->data<AnyNode::Object>();
+    unsigned n = object.length();
+    for (unsigned i = 0; i < n; ++i) {
+      auto &field = object[i];
+      for (unsigned j = 0; j < i; ++j)
+	if (field.p<0>() == object[j].p<0>()) return false;
+      if (!unique(field.p<1>())) return false;
+    }
+  }
+  return true;
+}
 
 template <typename Data, typename ...Args>
 inline auto newNode(Args && ...args) {
@@ -410,8 +431,11 @@ bad:
 
 template <typename S>
 inline void quote(S &s, ZuCSpan v) {
+  auto escape = [&s](uint16_t c) {
+    s << "\\u" << ZuBoxed(c).fmt<ZuFmt::Hex<false, ZuFmt::Right<4>>>();
+  };
   s << '"';
-  for (unsigned i = 0, n = v.length(); i < n; i++) {
+  for (unsigned i = 0, n = v.length(); i < n;) {
     uint32_t u32;
     unsigned l8 =
       ZuUTF8::in(reinterpret_cast<const uint8_t *>(&v[i]), n - i, u32);
@@ -425,25 +449,17 @@ inline void quote(S &s, ZuCSpan v) {
 	case '\n': s << "\\n"; break;
 	case '\r': s << "\\r"; break;
 	case '\t': s << "\\t"; break;
-	default: s << char(u32); break;
+	default:
+	  if (u32 < 0x20) escape(u32);
+	  else s << char(u32);
+	  break;
       }
-    } else  {
-      uint16_t u16[2];
-      unsigned l16 = ZuUTF16::out(u16, 2, u32);
-      char buf[10] = { '\\', 'u' };
-      {
-	ZuStream s_(&buf[2], 8);
-	s_ << ZuBoxed(u16[0]).fmt<ZuFmt::Hex<false, ZuFmt::Right<4>>>();
-      }
-      s << ZuCSpan(&buf[0], 6);
-      if (l16 > 1) {
-	{
-	  ZuStream s_(&buf[2], 8);
-	  s_ << ZuBoxed(u16[1]).fmt<ZuFmt::Hex<false, ZuFmt::Right<4>>>();
-	}
-	s << ZuCSpan(&buf[0], 6);
-      }
+    } else {
+      ZuArray<uint16_t, 2> u16(2, false);
+      unsigned l16 = ZuUTF16::out(u16.data(), u16.length(), u32);
+      for (unsigned j = 0; j < l16; ++j) escape(u16[j]);
     }
+    i += l8;
   }
   s << '"';
 }
@@ -677,29 +693,34 @@ struct AsObject {
   // discriminated unions
   // - on load, any actual parse-tree node is retained as const AnyNode *
   // - the parse tree must remain alive until the union is resolved
-  // - on save, the member is dispatched
-  //   (callers are always required to resolve unions before saving)
+  // - on save, a resolved member is dispatched; an unresolved parse-tree node
+  //   is emitted directly while its parse tree and backing input remain alive
   template <typename ...Ts, typename Facet>
   struct Handler<Union<Ts...>, Facet> {
     using O = Union<Ts...>;
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
       auto type = o.type();
-      if (ZuUnlikely(type < 2)) { s << "null"; return; }
-      ZuSwitch::dispatch<O::N - 2>(type - 2, [&s, &o](auto I_) {
-	static constexpr unsigned I = I_ + 2;
-	using V = typename O::template Type<I>;
-	const auto &v = o.template p<I>();
-	if constexpr (!IsObjPtr<V>{})
-	  As<V>::template Handler<V, Facet>::template save<Filter>(s, v);
-	else {
-	  if (ZuLikely(v)) {
-	    using U = ZuDecay<decltype(*v)>;
-	    As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
-	  } else
-	    s << "null";
-	}
-      });
+      if (ZuUnlikely(!type)) { s << "null"; return; }
+      if (ZuUnlikely(type == 1)) {
+	saveNode_(s, o.template p<const AnyNode *>());
+	return;
+      }
+      if constexpr (sizeof...(Ts))
+	ZuSwitch::dispatch<O::N - 2>(type - 2, [&s, &o](auto I_) {
+	  static constexpr unsigned I = I_ + 2;
+	  using V = typename O::template Type<I>;
+	  const auto &v = o.template p<I>();
+	  if constexpr (!IsObjPtr<V>{})
+	    As<V>::template Handler<V, Facet>::template save<Filter>(s, v);
+	  else {
+	    if (ZuLikely(v)) {
+	      using U = ZuDecay<decltype(*v)>;
+	      As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
+	    } else
+	      s << "null";
+	  }
+	});
     }
 
     const AnyNode	*node;
@@ -1522,6 +1543,48 @@ inline S &save(S &s, const O &v) {
       As<U>::template Handler<U, Facet>::template save<Filter>(s, *v);
     }
   }
+  return s;
+}
+
+template <typename S>
+inline S &saveNode_(S &s, const AnyNode *node) {
+  if (!node) { s << "null"; return s; }
+  switch (node->type) {
+    case ValueTC::Null: s << "null"; return s;
+    case ValueTC::True: s << "true"; return s;
+    case ValueTC::False: s << "false"; return s;
+    case ValueTC::String:
+      quote(s, node->data<AnyNode::String>());
+      return s;
+    case ValueTC::Number:
+      s << node->data<AnyNode::Number>();
+      return s;
+    case ValueTC::Array: {
+      s << '[';
+      bool first = true;
+      for (auto &value: node->data<AnyNode::Array>()) {
+	if (!first) s << ',';
+	first = false;
+	saveNode_(s, value.ptr());
+      }
+      s << ']';
+      return s;
+    }
+    case ValueTC::Object: {
+      s << '{';
+      bool first = true;
+      for (auto &field: node->data<AnyNode::Object>()) {
+	if (!first) s << ',';
+	first = false;
+	quote(s, field.p<0>());
+	s << ':';
+	saveNode_(s, field.p<1>().ptr());
+      }
+      s << '}';
+      return s;
+    }
+  }
+  s << "null";
   return s;
 }
 template <

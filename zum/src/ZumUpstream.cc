@@ -6,7 +6,10 @@
 
 #include "ZumUpstream.hh"
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmPQueue.hh>
@@ -14,6 +17,7 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
@@ -30,11 +34,11 @@ enum {
 };
 
 template <unsigned Status_>
-struct ResponseData : public ZmObject {
+struct ResponseData : public ZumObject {
   enum { Status = Status_ };
   String body;
   ResponseData &operator =(ZuSpan<uint8_t> data) {
-    body = ZuBSpan{data};
+    body = data;
     return *this;
   }
 };
@@ -61,7 +65,7 @@ struct Response : public Zrest::ResParser<Response<Status_>,
 	  return n;
 	},
 	[this](ZuSpan<uint8_t> span) {
-	  this->object->body << ZuBSpan{span};
+	  this->object->body << span;
 	  if (m_fixed) m_remaining -= span.length();
 	});
       if (consumed < 0) return false;
@@ -80,7 +84,7 @@ using Responses = ZuTypeList<Response<200>, Response<201>, Response<204>,
   Response<409>, Response<415>, Response<422>, Response<429>, Response<500>,
   Response<501>, Response<502>, Response<503>, Response<504>>;
 
-struct Call : public ZmObject {
+struct Call : public ZumObject {
   mutable String	contentType;
   mutable String	authorization;
   mutable String	target;
@@ -145,8 +149,9 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Requests> {
   void selected(const Zhttp::Endpoint *endpoint, uint64_t, uint64_t,
       unsigned, unsigned, Zhttp::Transport::T transport,
       Zhttp::Version::T version) {
-    ZiLOG(Debug, "zumd", ([endpoint, transport, version](auto &s) {
-      s << "upstream HTTP selected " << endpoint->ip << ':' << endpoint->port
+    ZiLOG(Debug, "zumd", ([ip = endpoint->ip, port = endpoint->port,
+        transport, version](auto &s) {
+      s << "upstream HTTP selected " << ip << ':' << port
 	<< " transport=" << Zhttp::Transport{}.name(transport)
 	<< " HTTP=" << Zhttp::Version{}.name(version);
     }));
@@ -191,11 +196,11 @@ public:
   using Pool_<PoolHeap>::Pool_;
 };
 
-class Client : public ZmObject, public Zhttp::Client<Client, Pool> {
+class Client : public ZumObject, public Zhttp::Client<Client, Pool> {
 public:
   using Base = Zhttp::Client<Client, Pool>;
 
-  bool init(ZiMultiplex *mx, const Zhttp::URLView &url) {
+  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     m_host = url.host;
     m_port = url.port;
     m_ipv6Literal = url.ipv6Literal;
@@ -205,7 +210,7 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(true).tcp(true).tls(true).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{},
+        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.caPath(caPath),
         Zhttp::QUICConfig{})) return false;
     Base::txErrorFn(ZiTxErrorFn{[](ZeException &e) {
       ZiLOG(Error, "zumd", ([e](auto &s) {
@@ -213,7 +218,7 @@ public:
       }));
       return false;
     }});
-    return Base::pool(0, Zhttp::Destination{url.origin()}) && Base::start();
+    return Base::pool(0, Zhttp::Destination{url.origin()});
   }
 
   bool origin(const Zhttp::URLView &url) const {
@@ -257,16 +262,25 @@ private:
   bool		m_ipv6Literal = false;
 };
 
-using Clients = ZtArray<ZmRef<Client>,
-  ZtArrayHeapID<"Zum.Upstream.Clients">>;
+struct Entry {
+  ZmRef<Client> client;
+  unsigned pending = 0;
+  bool retiring = false;
+};
+ZuDerive(Clients,
+  (ZtArray<Entry, ZtArrayHeapID<"Zum.Upstream.Clients">>));
 
 } // namespace Upstream_
 
-class UpstreamHTTPState : public ZmObject {
+class UpstreamHTTPState : public ZumObject {
 public:
-  bool init(ZiMultiplex *mx) {
-    if (!mx || m_up) return false;
+  bool init(ZiMultiplex *mx, unsigned sid, unsigned origins, ZuCSpan caPath) {
+    if (!mx || m_up || !sid || !origins || sid > mx->params().nThreads() ||
+        sid == mx->rxThread() || sid == mx->txThread()) return false;
     m_mx = mx;
+    m_sid = sid;
+    m_origins = origins;
+    m_caPath = caPath;
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)
       ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
@@ -276,6 +290,43 @@ public:
   }
 
   void send(OIDCHTTPRequest request, OIDCHTTPDoneFn complete) {
+    m_mx->run([this, request = ZuMv(request),
+        complete = ZuMv(complete)]() mutable {
+      send_(ZuMv(request), ZuMv(complete));
+    }, m_sid);
+  }
+
+  void final() {
+    if (!m_mx) return;
+    ZmBlock<bool>{}([this](auto wake) mutable {
+      m_mx->run([this, wake = ZuMv(wake)]() mutable {
+	m_up = false;
+	m_stopDone = ZuMv(wake);
+	m_stopping = m_clients.length();
+	if (!m_stopping) { stopped_(); return; }
+	for (auto &entry: m_clients) {
+	  if (entry.retiring) continue;
+	  if (!entry.client) { stopOne_(); continue; }
+	  entry.client->stop([this](bool) {
+	    m_mx->run([this]() {
+	      stopOne_();
+	    }, m_sid);
+	  });
+	}
+      }, m_sid);
+    });
+    for (auto &entry: m_clients) if (entry.client) entry.client->final();
+    m_clients.init();
+    if (m_resolverOwned) {
+      ZiResolver::stop();
+      ZiResolver::final();
+      m_resolverOwned = false;
+    }
+    m_mx = nullptr;
+  }
+
+private:
+  void send_(OIDCHTTPRequest request, OIDCHTTPDoneFn complete) {
     if (!m_up || !complete || !request.url) {
       if (complete) complete(0, String{});
       return;
@@ -287,39 +338,100 @@ public:
       complete(0, String{});
       return;
     }
-    Upstream_::Client *client = nullptr;
-    for (auto &candidate: m_clients)
-      if (candidate->origin(url)) { client = candidate; break; }
-    if (!client) {
+    unsigned count = m_clients.length(), idle = count;
+    for (unsigned i = 0; i < count; ++i) {
+      const auto &entry = m_clients[i];
+      if (entry.retiring) continue;
+      if (entry.client && entry.client->origin(url)) {
+	dispatch_(i, ZuMv(request), ZuMv(complete), url);
+	return;
+      }
+      if (!entry.pending && idle == count) idle = i;
+    }
+    if (count < m_origins) {
+      m_clients.push(Upstream_::Entry{});
+      dispatch_(count, ZuMv(request), ZuMv(complete), url);
+      return;
+    }
+    if (idle == count) { complete(503, String{}); return; }
+    auto &entry = m_clients[idle];
+    if (!entry.client) {
+      dispatch_(idle, ZuMv(request), ZuMv(complete), url);
+      return;
+    }
+    entry.retiring = true;
+    entry.client->stop([this, idle, request = ZuMv(request),
+        complete = ZuMv(complete)](bool ok) mutable {
+      m_mx->run([this, idle, ok, request = ZuMv(request),
+          complete = ZuMv(complete)]() mutable {
+	auto &entry = m_clients[idle];
+	entry.retiring = false;
+	if (!m_up) {
+	  complete(0, String{});
+	  stopOne_();
+	  return;
+	}
+	// The native stop continuation has drained Rx/Tx; finalization does not wait.
+	entry.client->final();
+	entry.client = nullptr;
+	if (!ok) { complete(0, String{}); return; }
+	Zhttp::URL parsed{request.url};
+	dispatch_(idle, ZuMv(request), ZuMv(complete), parsed.url());
+      }, m_sid);
+    });
+  }
+
+  void dispatch_(unsigned slot, OIDCHTTPRequest request,
+      OIDCHTTPDoneFn complete, const Zhttp::URLView &url) {
+    auto &entry = m_clients[slot];
+    if (!entry.client) {
       ZmRef<Upstream_::Client> candidate = new Upstream_::Client{};
-      if (!candidate->init(m_mx, url)) {
+      if (!candidate->init(m_mx, url, m_caPath)) {
         candidate->final();
         complete(0, String{});
         return;
       }
-      client = candidate;
-      m_clients.push(ZuMv(candidate));
+      entry.client = ZuMv(candidate);
     }
-    client->send(ZuMv(request), ZuMv(complete), url);
+    ++entry.pending;
+    entry.client->start([this, slot, request = ZuMv(request),
+        complete = ZuMv(complete)](bool ok) mutable {
+      m_mx->run([this, slot, ok, request = ZuMv(request),
+          complete = ZuMv(complete)]() mutable {
+	if (!ok || !m_up) {
+	  --m_clients[slot].pending;
+	  complete(0, String{});
+	  return;
+	}
+	Zhttp::URL parsed{request.url};
+	m_clients[slot].client->send(ZuMv(request), [this, slot,
+	    complete = ZuMv(complete)](unsigned status, String body) mutable {
+	  m_mx->run([this, slot, status, body = ZuMv(body),
+	      complete = ZuMv(complete)]() mutable {
+	    --m_clients[slot].pending;
+	    complete(status, ZuMv(body));
+	  }, m_sid);
+	}, parsed.url());
+      }, m_sid);
+    });
   }
 
-  void final() {
-    if (!m_up) return;
-    m_up = false;
-    for (auto &client: m_clients) client->stop();
-    for (auto &client: m_clients) client->final();
-    m_clients.init();
-    if (m_resolverOwned) {
-      ZiResolver::stop();
-      ZiResolver::final();
-      m_resolverOwned = false;
-    }
-    m_mx = nullptr;
+  void stopOne_() {
+    if (!--m_stopping) stopped_();
   }
 
-private:
+  void stopped_() {
+    auto complete = ZuMv(m_stopDone);
+    complete(true);
+  }
+
   ZiMultiplex		*m_mx = nullptr;
   Upstream_::Clients	m_clients;
+  String		m_caPath;
+  ZmFn<void(bool)>	m_stopDone;
+  unsigned		m_sid = 0;
+  unsigned		m_origins = 0;
+  unsigned		m_stopping = 0;
   bool			m_resolverOwned = false;
   bool			m_up = false;
 };
@@ -327,11 +439,12 @@ private:
 UpstreamHTTP::UpstreamHTTP() = default;
 UpstreamHTTP::~UpstreamHTTP() { final(); }
 
-bool UpstreamHTTP::init(ZiMultiplex *mx)
+bool UpstreamHTTP::init(ZiMultiplex *mx, unsigned sid, unsigned origins,
+    ZuCSpan caPath)
 {
   if (m_state) return false;
   ZmRef<UpstreamHTTPState> state = new UpstreamHTTPState{};
-  if (!state->init(mx)) return false;
+  if (!state->init(mx, sid, origins, caPath)) return false;
   m_state = ZuMv(state);
   return true;
 }

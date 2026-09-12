@@ -7,8 +7,6 @@ table Issuer {
   initial_user_i_d:uint64;
   initial_client_i_d:string;
   key_check:[ubyte];
-  next_action_i_d:uint32;
-  auth_version:uint64;
-  next_audit_i_d:uint64;
+  pending_key_check:[ubyte];
 }
 root_type Issuer;

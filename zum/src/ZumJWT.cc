@@ -7,6 +7,7 @@
 #include <zlib/ZumJWT.hh>
 
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuArray.hh>
 
 #include <zlib/ZfJSON.hh>
 
@@ -16,13 +17,92 @@
 
 namespace Zum {
 
+struct JWTHeaderWire {
+  String typ;
+  String alg;
+  String kid;
+};
+ZfStruct(, (JWTHeaderWire, JSON),
+  (((typ),		(Required)),	(String)),
+  (((alg),		(Required)),	(String)),
+  (((kid),		(Required)),	(String)));
+
+struct AccessClaimsWire {
+  String issuer;
+  String subject;
+  String audience;
+  String clientID;
+  AppID appID = 0;
+  int64_t iat = 0;
+  int64_t nbf = 0;
+  int64_t exp = 0;
+  String jti;
+  String scope;
+  StringVec actions;
+  int64_t authTime = 0;
+  StringVec amr;
+};
+ZfStruct(, (AccessClaimsWire, JSON),
+  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((subject),		(JSON::ID<"sub">, Required)),	(String)),
+  (((audience),		(JSON::ID<"aud">, Required)),	(String)),
+  (((clientID),		(JSON::ID<"client_id">, Required)), (String)),
+  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, Required)), (UInt64)),
+  (((iat),		(Required)),	(Int64)),
+  (((nbf),		(Required)),	(Int64)),
+  (((exp),		(Required)),	(Int64)),
+  (((jti),		(Required)),	(String)),
+  (((scope),		(Required)),	(String)),
+  (((actions),		(Required)),	(StringVec)),
+  (((authTime),		(JSON::ID<"auth_time">, JSON::Opt)), (Int64)),
+  (((amr),		(JSON::Opt)),	(StringVec)));
+
+struct IDClaimsWire {
+  String issuer;
+  String subject;
+  String audience;
+  int64_t iat = 0;
+  int64_t exp = 0;
+  int64_t authTime = 0;
+  StringVec amr;
+  String nonce;
+  String name;
+  String preferredUserName;
+  String email;
+};
+ZfStruct(, (IDClaimsWire, JSON),
+  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((subject),		(JSON::ID<"sub">, Required)),	(String)),
+  (((audience),		(JSON::ID<"aud">, Required)),	(String)),
+  (((iat),		(Required)),	(Int64)),
+  (((exp),		(Required)),	(Int64)),
+  (((authTime),		(JSON::ID<"auth_time">, Required)), (Int64)),
+  (((amr),		(Required)),	(StringVec)),
+  (((nonce),		(JSON::Opt)),	(String)),
+  (((name),		(JSON::Opt)),	(String)),
+  (((preferredUserName), (JSON::ID<"preferred_username">, JSON::Opt)), (String)),
+  (((email),		(JSON::Opt)),	(String)));
+
+struct UserInfoWire {
+  String subject;
+  String name;
+  String preferredUserName;
+  String email;
+};
+ZfStruct(, (UserInfoWire, JSON),
+  (((subject),		(JSON::ID<"sub">, Required)),	(String)),
+  (((name),		(JSON::Opt)),	(String)),
+  (((preferredUserName), (JSON::ID<"preferred_username">, JSON::Opt)), (String)),
+  (((email),		(JSON::Opt)),	(String)));
+
 bool scopeContains(ZuCSpan scopes, ZuCSpan name)
 {
   unsigned offset = 0;
-  while (offset < scopes.length()) {
-    while (offset < scopes.length() && scopes[offset] == ' ') ++offset;
+  unsigned n = scopes.length();
+  while (offset < n) {
+    while (offset < n && scopes[offset] == ' ') ++offset;
     unsigned end = offset;
-    while (end < scopes.length() && scopes[end] != ' ') ++end;
+    while (end < n && scopes[end] != ' ') ++end;
     if (ZuCSpan{scopes.data() + offset, end - offset} == name) return true;
     offset = end;
   }
@@ -42,7 +122,7 @@ static bool accessClaims(
     const ZtBitmap &authority, ZuSpan<const Action> actions,
     int64_t now, int64_t expires, AccessClaims &claims)
 {
-  uint8_t random[JWTIDSize];
+  ZuBArray<JWTIDSize> random(JWTIDSize, false);
   if (!rng.random(random)) return false;
   AccessClaims next;
   next.issuer = issuer;
@@ -123,35 +203,14 @@ static bool claimsJSON(
   if (interactive && (claims.amr.length() != 1 ||
       (claims.amr[0] != "passkey" && claims.amr[0] != "oidc"))) return false;
 
-  json.null();
-  json << "{\"iss\":";
-  ZfJSON::quote(json, claims.issuer);
-  json << ",\"sub\":";
-  ZfJSON::quote(json, claims.subject);
-  json << ",\"aud\":";
-  ZfJSON::quote(json, claims.audience);
-  json << ",\"client_id\":";
-  ZfJSON::quote(json, claims.clientID);
-  json << ",\"zum_app_id\":\"" << claims.appID << '"';
-  json << ",\"iat\":" << ZuBoxed(claims.iat) <<
-    ",\"nbf\":" << ZuBoxed(claims.nbf) <<
-    ",\"exp\":" << ZuBoxed(claims.exp) << ",\"jti\":";
-  ZfJSON::quote(json, claims.jti);
-  json << ",\"scope\":";
-  ZfJSON::quote(json, claims.scope);
-  json << ",\"actions\":[";
-  for (unsigned i = 0, n = claims.actions.length(); i < n; ++i) {
-    if (i) json << ',';
-    ZfJSON::quote(json, claims.actions[i]);
-  }
-  json << ']';
-  if (interactive) {
-    json << ",\"auth_time\":" << ZuBoxed(claims.authTime) <<
-      ",\"amr\":[";
-    ZfJSON::quote(json, claims.amr[0]);
-    json << ']';
-  }
-  json << '}';
+  ZfJSON::save(json, AccessClaimsWire{
+    .issuer = claims.issuer, .subject = claims.subject,
+    .audience = claims.audience, .clientID = claims.clientID,
+    .appID = claims.appID, .iat = claims.iat, .nbf = claims.nbf,
+    .exp = claims.exp, .jti = claims.jti, .scope = claims.scope,
+    .actions = claims.actions,
+    .authTime = interactive ? claims.authTime : 0,
+    .amr = interactive ? claims.amr : StringVec{}});
   return json.length() <= limits.json;
 }
 
@@ -161,9 +220,7 @@ bool jwtPrepare(
 {
   if (!kid || !limits.token || !limits.json || !limits.actions) return false;
   String header;
-  header << "{\"typ\":\"at+jwt\",\"alg\":\"ES256\",\"kid\":";
-  ZfJSON::quote(header, kid);
-  header << '}';
+  ZfJSON::save(header, JWTHeaderWire{"at+jwt", "ES256", kid});
   if (header.length() > limits.json) return false;
   String claims_;
   if (!claimsJSON(claims_, claims, limits)) return false;
@@ -217,37 +274,15 @@ bool idTokenPrepare(
       claims.exp <= claims.iat || claims.authTime <= 0 ||
       (claims.amr[0] != "passkey" && claims.amr[0] != "oidc") ||
       !limits.token || !limits.json) return false;
-  String header{"{\"typ\":\"JWT\",\"alg\":\"ES256\",\"kid\":"};
-  ZfJSON::quote(header, kid);
-  header << '}';
-  String json{"{\"iss\":"};
-  ZfJSON::quote(json, claims.issuer);
-  json << ",\"sub\":";
-  ZfJSON::quote(json, claims.subject);
-  json << ",\"aud\":";
-  ZfJSON::quote(json, claims.audience);
-  json << ",\"iat\":" << ZuBoxed(claims.iat) <<
-    ",\"exp\":" << ZuBoxed(claims.exp) <<
-    ",\"auth_time\":" << ZuBoxed(claims.authTime) << ",\"amr\":[";
-  ZfJSON::quote(json, claims.amr[0]);
-  json << ']';
-  if (claims.nonce) {
-    json << ",\"nonce\":";
-    ZfJSON::quote(json, claims.nonce);
-  }
-  if (claims.name) {
-    json << ",\"name\":";
-    ZfJSON::quote(json, claims.name);
-  }
-  if (claims.preferredUserName) {
-    json << ",\"preferred_username\":";
-    ZfJSON::quote(json, claims.preferredUserName);
-  }
-  if (claims.email) {
-    json << ",\"email\":";
-    ZfJSON::quote(json, claims.email);
-  }
-  json << '}';
+  String header;
+  ZfJSON::save(header, JWTHeaderWire{"JWT", "ES256", kid});
+  String json;
+  ZfJSON::save(json, IDClaimsWire{
+    .issuer = claims.issuer, .subject = claims.subject,
+    .audience = claims.audience, .iat = claims.iat, .exp = claims.exp,
+    .authTime = claims.authTime, .amr = claims.amr,
+    .nonce = claims.nonce, .name = claims.name,
+    .preferredUserName = claims.preferredUserName, .email = claims.email});
   if (header.length() > limits.json || json.length() > limits.json)
     return false;
   PreparedJWT next;
@@ -264,9 +299,10 @@ bool idTokenPrepare(
 bool jwtFinish(
     PreparedJWT &prepared, ZuBSpan derSignature, const JWTLimits &limits)
 {
-  uint8_t raw[Ztls::COSE::ES256::SignatureSize];
+  ZuBArray<Ztls::COSE::ES256::SignatureSize> raw(
+    Ztls::COSE::ES256::SignatureSize, false);
   if (!Ztls::COSE::ES256::derToRaw(derSignature, raw) ||
-      prepared.token.length() + 1 + ZuBase64URL::enclen(sizeof(raw)) >
+      prepared.token.length() + 1 + ZuBase64URL::enclen(raw.length()) >
         limits.token) return false;
   prepared.token << '.';
   return encodePart(prepared.token, raw, limits.token);
@@ -279,24 +315,14 @@ bool userInfoJSON(const User &user, const Principal &principal, String &json)
   String subject;
   if (!encode(subject, user.handle) || subject != principal.subject)
     return false;
-  String next{"{\"sub\":"};
-  ZfJSON::quote(next, subject);
+  UserInfoWire wire{.subject = ZuMv(subject)};
   if (scopeContains(principal.scope, "profile")) {
-    if (user.profile || user.name) {
-      next << ",\"name\":";
-      ZfJSON::quote(next, user.profile ? user.profile : user.name);
-    }
-    if (user.name) {
-      next << ",\"preferred_username\":";
-      ZfJSON::quote(next, user.name);
-    }
+    if (user.profile || user.name) wire.name = user.profile ? user.profile : user.name;
+    wire.preferredUserName = user.name;
   }
-  if (scopeContains(principal.scope, "email") && user.email) {
-    next << ",\"email\":";
-    ZfJSON::quote(next, user.email);
-  }
-  next << '}';
-  json = ZuMv(next);
+  if (scopeContains(principal.scope, "email")) wire.email = user.email;
+  json.null();
+  ZfJSON::save(json, wire);
   return true;
 }
 

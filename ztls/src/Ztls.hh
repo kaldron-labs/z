@@ -434,6 +434,7 @@ private:
     auto oldState = state_();
     m_cxn = ZuMv(cxn);
     stateChanged_(oldState);
+    app()->linkConnected_();
     impl()->connected_(); // client initiates handshake
   }
 
@@ -1869,6 +1870,7 @@ public:
   }
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
+  void linkConnected_() { }
   void linkDisconnected_() { }
 
 private:
@@ -2464,11 +2466,18 @@ friend Base;
     m_listening = false;
   }
 
+  void linkConnected_() {
+    ZiAssert(this->rxInvoked(), "Ztls", (),
+      "TLS server link admission outside Rx thread", return);
+    ++m_pending;
+  }
   void linkDisconnected_() {
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS server link completion outside Rx thread", return);
-    if (!this->stopping() || !m_stopCount) return;
-    if (!--m_stopCount && m_stopDrained) Base::stop_0();
+    ZiAssert(m_pending, "Ztls", (),
+      "TLS server disconnect without pending connection", return);
+    if (!--m_pending && this->stopping() && m_stopDrained)
+      Base::stop_0();
   }
 
 protected:
@@ -2515,17 +2524,20 @@ protected:
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS server stop initialization outside Rx thread", return);
     stopListening();
-    m_stopCount = 0;
     m_stopDrained = false;
-    // Drain accepted connections whose connected_1() is already queued
-    // before enumerating links; down() requires the installed m_cxn.
-    stop_0();
+    // Stop the listener on the I/O Rx shard before draining accepted
+    // connections on our Rx shard; down() requires the installed m_cxn.
+    mx()->rxRun([this]() {
+      this->rxRun([this]() { stop_0(); });
+    });
   }
 
   void stop_0() {
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS server stop drain outside Rx thread", return);
-    m_stopCount = this->downLinks_();
+    // Link lifetime can extend beyond disconnect completion. Count accepted
+    // connections until their completion, not retained telemetry links.
+    this->downLinks_();
     this->rxRun([this]() { stop_2(); });
   }
 
@@ -2533,7 +2545,7 @@ protected:
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS server stop completion outside Rx thread", return);
     m_stopDrained = true;
-    if (!m_stopCount) Base::stop_0();
+    if (!m_pending) Base::stop_0();
   }
 
 private:
@@ -2545,7 +2557,7 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer		m_rebindTimer;
-  unsigned			m_stopCount = 0;
+  unsigned			m_pending = 0;
   bool				m_listening = false;
   bool				m_stopDrained = false;
 };

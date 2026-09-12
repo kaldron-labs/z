@@ -21,6 +21,14 @@ table SagaA {
 table SagaB {
   value:uint32;
 }
+table RepeatSaga {
+  first:uint64;
+  second:uint64;
+}
+table BatchSaga {
+  ids:[uint64];
+  fail_at:uint32 = 4294967295;
+}
 table LiveSaga {
   order_i_d:uint64;
 }

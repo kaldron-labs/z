@@ -56,6 +56,7 @@ struct State {
   unsigned		links = 1;
   uint16_t		port = 0;
   bool			keepAlive = false;
+  bool			retainClosed = false;
 
   void fail() {
     errors = 1;
@@ -162,6 +163,7 @@ struct Server :
   using Link = ServerLink<Profile>;
 
   State	*state = nullptr;
+  ZmRef<Link> closedLink;
 
   Server(State *state_) : state{state_} { }
 
@@ -170,7 +172,8 @@ struct Server :
   void listening(const ZiListenInfo &) { state->listening.post(); }
   void listening() { state->listening.post(); }
   void listenFailed(bool) { state->fail(); }
-  void disconnected(Link &, bool) {
+  void disconnected(Link &link, bool) {
+    if (state->retainClosed) closedLink = &link;
     state->close(LifeEvt::SrvDisconnected);
   }
 };
@@ -690,7 +693,7 @@ void run(
     "H1 application event order mismatch");
 }
 
-template <typename Profile>
+template <typename Profile, bool Retain = false>
 void runServerStop(const TempDir &temp)
 {
   ZuTestScope(runServerStop);
@@ -698,6 +701,7 @@ void runServerStop(const TempDir &temp)
   State state;
   state.rounds = 1;
   state.keepAlive = true;
+  state.retainClosed = Retain;
   state.port = testPort();
   ZuCHECK(state.port, "active-stop loopback port allocation failed");
   if (!state.port) return;
@@ -744,6 +748,14 @@ void runServerStop(const TempDir &temp)
     ZuCHECK(active, "active-stop request timed out");
   }
 
+  if constexpr (Retain) {
+    if (active) {
+      client.rxRun([link]() { link->disconnect(); });
+      bool closed = state.done.timedwait(Zm::now(10)) == 0;
+      ZuCHECK(closed, "retained-link disconnect timed out");
+    }
+  }
+
   ZmSemaphore stopDone;
   ZmAtomic<unsigned> stopErrors = 0;
   ZmAtomic<unsigned> stopReturned = 0;
@@ -767,10 +779,11 @@ void runServerStop(const TempDir &temp)
     (void)stopDone.timedwait(Zm::now(10));
   } else
     client.stop();
-  bool disconnected = state.done.timedwait(Zm::now(10)) == 0;
+  bool disconnected = Retain || state.done.timedwait(Zm::now(10)) == 0;
   ZuCHECK(disconnected, "active-stop link completion timed out");
 
   link = nullptr;
+  server.closedLink = nullptr;
   client.final();
   server.final();
   mx.stop();

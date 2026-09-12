@@ -8,6 +8,16 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 FBS = \
+	zum_legacy_issuer.fbs \
+	zum_legacy_user.fbs \
+	zum_legacy_cred.fbs \
+	zum_legacy_action.fbs \
+	zum_legacy_role.fbs \
+	zum_legacy_scope.fbs \
+	zum_legacy_client.fbs \
+	zum_legacy_grant.fbs \
+	zum_legacy_sign_key.fbs \
+	zum_legacy_audit.fbs \
 	zum_issuer.fbs \
 	zum_app.fbs \
 	zum_user.fbs \
@@ -30,7 +40,6 @@ FBS = \
 	zum_grant.fbs \
 	zum_saga.fbs \
 	zum_sign_key.fbs \
-	zum_audit.fbs \
 	zum_request.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
@@ -38,7 +47,11 @@ ${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
 BUILT_SOURCES = ${FBS_H}
 CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZumLib.hh ZumTypes.hh ZumJWTVerify.hh ZumService.hh
-noinst_HEADERS = Zum.hh ZumAdmin.hh ZumAuthorize.hh ZumDB.hh ZumDiscovery.hh \
+noinst_HEADERS = Zum.hh ZumAdmin.hh ZumAuthorize.hh ZumDB.hh ZumDiscovery.hh ZumSecret.hh \
+	ZumDBContext.hh ZumIdentityDB.hh ZumAppDB.hh ZumProviderDB.hh \
+	ZumKeyDB.hh ZumRequestDB.hh ZumDBOps.hh ZumSagas.hh ZumRoleDelete.hh ZumRekey.hh \
+	ZumSagaImage.hh ZumCatalog.hh ZumRevoke.hh ZumConsent.hh ZumLegacy.hh ZumMigrate.hh \
+	ZumMigratePut.hh \
 	ZumHTTP.hh ZumJWT.hh ZumOAuth.hh ZumOIDC.hh ZumMgmt.hh ZumPasskey.hh \
 	ZumRequest.hh ZumServer.hh ZumSession.hh ZumToken.hh ZumWebAuthn.hh
 nodist_noinst_HEADERS = ${FBS_H}
@@ -61,7 +74,8 @@ libZum_la_LIBADD = \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 zum_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zv/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src
-zum_LDADD = $(top_builddir)/zrest/src/libZrest.la \
+zum_LDADD = libZum.la \
+	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
@@ -76,8 +90,10 @@ zumd_LDADD = libZumServer.la \
 	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zv/src/libZv.la
-zumd_SOURCES = zumd.cc ZumBootstrap.cc ZumBootstrap.hh ZumDaemon.cc ZumDaemon.hh
+zumd_SOURCES = zumd.cc ZumBootstrap.cc ZumBootstrap.hh ZumDaemon.cc ZumDaemon.hh \
+	ZumRoleDelete.cc
 libZumServer_la_SOURCES = Zum.cc ZumAdmin.cc ZumAuthorize.cc ZumDB.cc \
+	ZumSchema.cc ZumLegacy.cc ZumMigrate.cc ZumMigrateRun.cc ZumSagas.cc ZumSecret.cc ZumRekey.cc \
 	ZumDiscovery.cc ZumJWT.cc ZumMgmt.cc ZumOAuth.cc ZumOIDC.cc \
 	ZumPasskey.cc ZumRequest.cc ZumServer.cc ZumSession.cc ZumToken.cc \
 	ZumWebAuthn.cc

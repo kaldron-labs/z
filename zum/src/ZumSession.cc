@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZumSession.hh>
+#include <zlib/ZumIdentityDB.hh>
 
 #include <zlib/ZumOAuth.hh>
 
@@ -138,7 +139,7 @@ static void use_(DBContext *context, String token, String issuer,
   auto sessions = context->sessions;
   sessions->run(0, [sessions, digest = ZuMv(digest), issuer = ZuMv(issuer),
       now, idleLifetime, complete = ZuMv(complete)]() mutable {
-    sessions->findUpd<0>(0, ZuFwdTuple(ZuMv(digest)), [issuer = ZuMv(issuer),
+    sessions->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple(ZuMv(digest)), [issuer = ZuMv(issuer),
 	  now, idleLifetime, complete = ZuMv(complete)](
 	    ZdbRow<Session> *row) mutable {
       if (!row || row->data().issuer != issuer ||
@@ -178,7 +179,15 @@ static void revoke_(DBContext *context, String token, int64_t now,
       complete = ZuMv(complete)]() mutable {
     sessions->findUpd<0>(0, ZuFwdTuple(ZuMv(digest)), [now,
 	  complete = ZuMv(complete)](ZdbRow<Session> *row) mutable {
-      if (!row || row->data().state == State::Revoked) {
+      if (!row) {
+	complete(SessionError::OK);
+	return;
+      }
+      if (row->data().owner) {
+	complete(SessionError::Storage);
+	return;
+      }
+      if (row->data().state == State::Revoked) {
 	complete(SessionError::OK);
 	return;
       }

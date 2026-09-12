@@ -14,22 +14,29 @@
 #endif
 
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuLib.hh>
+#include <zlib/ZuICmp.hh>
+#include <zlib/ZuPercent.hh>
 
 #include <zlib/ZmList.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
+#include <zlib/ZmVHeap.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZfCLI.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
 
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiFile.hh>
 
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
@@ -39,16 +46,36 @@
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 
-#include <zlib/ZumOAuth.hh>
+ZuDerive(String, ZtString<ZtStringHeapID<"zumping.String">>);
+ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"zumping.Bytes">>));
 
-ZuDerive(String, ZtString<ZtStringHeapID<"zumc.String">>);
-ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"zumc.Bytes">>));
+using ObjectHeap = ZmVHeap<
+  "zumping.Object", 0, ZmVHeap_DefltMax, alignof(max_align_t)>;
+class ObjectAlloc {
+public:
+  static void *operator new(size_t size) { return ObjectHeap::valloc(size); }
+  static void operator delete(void *ptr) { ObjectHeap::vfree(ptr); }
+  static void operator delete(void *ptr, size_t) { ObjectHeap::vfree(ptr); }
+};
+class Object : public ObjectAlloc, public ZmObject { };
 
 struct Tokens {
   String	accessToken;
   String	refreshToken;
   String	scope;
 };
+
+struct TokenWire {
+  String accessToken;
+  String refreshToken;
+  String scope;
+  String tokenType;
+};
+ZfStruct(, (TokenWire, JSON),
+  (((accessToken),	(JSON::ID<"access_token">, Required)),	(String)),
+  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	(String)),
+  (((scope),		(JSON::Opt)),	(String)),
+  (((tokenType),	(JSON::ID<"token_type">, Required)),	(String)));
 
 static void clearTokens(Tokens &tokens)
 {
@@ -66,27 +93,85 @@ enum {
 };
 
 struct Options {
-  String	url{"http://localhost:8080/"};
-  uint32_t	callbackPort = CallbackPort;
+  String	config;
   bool		noBrowser = false;
   bool		help = false;
 };
 
 ZfStruct(, (Options, CLI),
-  (((callbackPort), (CLI::Long<"callback-port">)), (UInt32, CallbackPort)),
+  (((config), (CLI::Long<"config">)), (String)),
   (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
-  (((url), (CLI::Arg<1>)), (String, "http://localhost:8080/")),
   (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 static void usage(int code = 1)
 {
   std::cerr <<
-    "Usage: zumc [OPTION]... [AUTHORIZATION-SERVER]\n\n"
-    "  --callback-port=N  loopback callback port, default 8081\n"
-    "  --no-browser       print the authorization URL without opening it\n"
-    "  -h, --help         show help\n\n"
-    "The authorization server defaults to http://localhost:8080/.\n";
+    "Usage: zumping --config FILE [--no-browser]\n";
   ::exit(code);
+}
+
+struct Config {
+  String serviceURL;
+  String clientID;
+  String scope{"ping"};
+  uint32_t callbackPort = CallbackPort;
+  uint32_t loginTimeout = 180;
+};
+ZfStruct(, (Config, Cf),
+  (((serviceURL), (Required)), (String)),
+  (((clientID), (Required)), (String)),
+  (((scope)), (String, "ping")),
+  (((callbackPort), ((Range<1, 65535>))), (UInt32, CallbackPort)),
+  (((loginTimeout), ((Range<1, 3600>))), (UInt32, 180)));
+
+static bool loadConfig(ZuCSpan path, Config &config)
+{
+  ZiFile file;
+  if (file.open(Zi::Path{path}, ZiFile::ReadOnly | ZiFile::NoFollow |
+	ZiFile::GC) != Zi::OK) return false;
+  auto size = file.size();
+  if (size <= 0 || uint64_t(size) > BodyMax) return false;
+  String source;
+  source.length(unsigned(size));
+  if (file.read(source.data(), unsigned(size)) != int(size)) return false;
+  auto parsed = ZfCf::scan(source.span());
+  if (parsed.p<0>() < 0 || !parsed.p<1>()) return false;
+  config = ZfCf::handler<Config>(parsed.p<1>()).ctor();
+  return config.serviceURL && config.clientID;
+}
+
+
+
+template <typename Fn>
+static bool formEach(ZuCSpan form, Fn &&fn)
+{
+  while (form) {
+    auto amp = form.find("&");
+    ZuCSpan item = amp >= 0 ?
+      ZuCSpan{form.data(), unsigned(amp)} : form;
+    auto eq = item.find("=");
+    if (eq < 0) return false;
+    String name{item.data(), unsigned(eq)};
+    String value{item.offset(unsigned(eq) + 1)};
+    using Form = ZuPercent::Codec<ZfURI::PercentQuote<true>>;
+    auto key = Form::decode(name.span());
+    auto data = Form::decode(value.span());
+    if (!key || !data) return false;
+    name.length(key.out);
+    value.length(data.out);
+    fn(name, value);
+    if (amp < 0) break;
+    form.offset(unsigned(amp) + 1);
+  }
+  return true;
+}
+
+static String formField(ZuCSpan name, ZuCSpan value)
+{
+  String form{name};
+  form << '=';
+  ZfURI::PathQuote::quote(form, value);
+  return form;
 }
 
 static String encode(ZuBSpan data)
@@ -98,11 +183,11 @@ static String encode(ZuBSpan data)
 }
 
 template <unsigned Status_>
-struct HTTPData : public ZmObject {
+struct HTTPData : public Object {
   enum { Status = Status_ };
   String data;
   HTTPData &operator =(ZuSpan<uint8_t> data_) {
-    data = ZuBSpan{data_};
+    data = data_;
     return *this;
   }
 };
@@ -111,30 +196,44 @@ struct Result {
   ZmSemaphore	done;
   String	body;
   unsigned	status = 0;
+  ~Result() {
+    if (body.mutable_()) ZuClear(body.data(), body.length());
+  }
 };
 
 class Client;
 
-struct Call : public ZmObject {
+struct Call : public Object {
   Client	*client = nullptr;
   Result	*result = nullptr;
   String	body;
   String	authorization;
+  mutable ZmAtomic<unsigned> done = 0;
+
+  ~Call() {
+    if (body.mutable_()) ZuClear(body.data(), body.length());
+    if (authorization.mutable_()) ZuClear(authorization.data(), authorization.length());
+  }
+  void finish(unsigned status, ZuCSpan body = {}) const {
+    if (done.cmpXch(1, 0)) return;
+    result->status = status;
+    result->body = body;
+    result->done.post();
+  }
 
   template <typename Link, typename Response>
   void process(Link *, const Response *response) const {
-    result->status = Response::Status;
-    result->body = response->data;
-    result->done.post();
+    finish(Response::Status, response->data);
   }
   template <typename Link> void failed(Link *) const {
-    result->done.post();
+    finish(0);
   }
 };
 
 using OKData = HTTPData<200>;
 using BadRequestData = HTTPData<400>;
 using UnauthorizedData = HTTPData<401>;
+using ForbiddenData = HTTPData<403>;
 using ServerErrorData = HTTPData<500>;
 
 struct TokenOK : public Zrest::ResParser<TokenOK, OKData> {
@@ -168,7 +267,7 @@ struct ResourceBuilder : public Zrest::ReqBuilder<ResourceBuilder, Call> {
   using Base = Zrest::ReqBuilder<ResourceBuilder, Call>;
   using Base::header;
   enum { Exact = 1 };
-  using Path = ZuStringT<"/resource">;
+  using Path = ZuStringT<"/ping">;
   using Headers = ZhttpHeaders("authorization");
   struct OK : public Zrest::ResParser<OK, OKData> {
     enum { Status = 200, Body = Zrest::BodyPolicy::Raw };
@@ -177,7 +276,10 @@ struct ResourceBuilder : public Zrest::ReqBuilder<ResourceBuilder, Call> {
       UnauthorizedData> {
     enum { Status = 401, Body = Zrest::BodyPolicy::Raw };
   };
-  using Responses = ZuTypeList<OK, Unauthorized>;
+  struct Forbidden : public Zrest::ResParser<Forbidden, ForbiddenData> {
+    enum { Status = 403, Body = Zrest::BodyPolicy::Raw };
+  };
+  using Responses = ZuTypeList<OK, Unauthorized, Forbidden, ServerError>;
   template <typename Key, typename L> void header(L &&l) const {
     if constexpr (Key{}() == "authorization") l(this->object->authorization);
     else Base::template header<Key>(ZuFwd<L>(l));
@@ -192,6 +294,11 @@ struct ReqBuilder_ : public ZmObject,
   uint64_t id = 0;
   uint64_t key() const { return id; }
   uint64_t length() const { return 1; }
+  void completed(const Zhttp::Result &result) {
+    u.cdispatch([&result](auto, const auto &request) {
+      request.object->finish(result.status);
+    });
+  }
 };
 
 struct ResParser : public Zrest::MResParser<ReqBuilder_> { };
@@ -236,7 +343,7 @@ public:
       ZmRef<ReqBuilder> request = new ReqBuilder{};
       request->id = m_id++;
       request->template init<Builder>(call.ptr());
-      this->send(0, ZuMv(request));
+      if (!this->send(0, ZuMv(request))) call->finish(0);
     });
     result.done.wait();
   }
@@ -244,12 +351,12 @@ private:
   uint64_t m_id = 0;
 };
 
-struct CallbackData : public ZmObject {
+struct CallbackData : public Object {
   ZuSpan<uint8_t> data;
   CallbackData &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
 
-struct CallbackBody : public ZmObject {
+struct CallbackBody : public Object {
   String data;
 };
 
@@ -299,23 +406,35 @@ public:
   template <typename Link>
   void callback(Link *link, const CallbackReq &request, bool ok)
   {
-    auto span = request.object->data;
-    if (span && span[0] == '?') span.offset(1);
-    String query{ZuBSpan{span}};
+    String query;
+    if (ok && request.object) {
+      auto span = request.object->data;
+      if (span && span[0] == '?') span.offset(1);
+      query = span;
+    } else ok = false;
     if (!query.mutable_()) query.length(query.length());
     unsigned seen = 0;
-    if (ok) Zum::formEach({query.data(), query.length()}, [this, &seen](
+    bool duplicate = false;
+    String code_, state_, error_;
+    if (ok) ok = formEach({query.data(), query.length()}, [&seen, &duplicate,
+	&code_, &state_, &error_](
           ZuCSpan name, ZuCSpan value) {
         if (name == "code") {
-	  code = value; seen |= 1U; return;
+	  duplicate |= bool(seen & 1U); code_ = value; seen |= 1U; return;
         }
         if (name == "state") {
-	  state = value; seen |= 2U; return;
+	  duplicate |= bool(seen & 2U); state_ = value; seen |= 2U; return;
         }
         if (name == "error") {
-	  error = value; seen |= 4U; return;
+	  duplicate |= bool(seen & 4U); error_ = value; seen |= 4U; return;
         }
       });
+    ok = ok && !duplicate && !received && state_ == expectedState &&
+      ((seen == 3U && code_) || (seen == 6U && error_));
+    if (ok) {
+      code = ZuMv(code_); state = ZuMv(state_); error = ZuMv(error_);
+      received = true;
+    }
     ZmRef<CallbackBody> object = new CallbackBody{};
     object->data = ok && code ?
       String{"<!doctype html><h1>Authorized</h1><p>You may close this window.</p>"} :
@@ -323,7 +442,7 @@ public:
     ZmRef<CallbackBuilderNode> response = new CallbackBuilderNode{};
     response->template init<CallbackOK, CallbackReq>(object.ptr());
     link->send(ZuMv(response));
-    callbackDone.post();
+    if (ok) callbackDone.post();
   }
 
   void listening(int, unsigned) { }
@@ -334,6 +453,8 @@ public:
   String	code;
   String	state;
   String	error;
+  String	expectedState;
+  bool		received = false;
 };
 
 template <typename Link>
@@ -357,24 +478,18 @@ static bool tokenJSON(String &json, Tokens &tokens)
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
   auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>())
-    return false;
-  unsigned seen = 0;
-  for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
-    auto value = field.p<1>().ptr();
-    if (field.p<0>() == "access_token" && value->has<ZfJSON::AnyNode::String>()) {
-      tokens.accessToken = value->data<ZfJSON::AnyNode::String>(); seen |= 1U;
-    } else if (field.p<0>() == "refresh_token" &&
-        value->has<ZfJSON::AnyNode::String>()) {
-      tokens.refreshToken = value->data<ZfJSON::AnyNode::String>(); seen |= 2U;
-    } else if (field.p<0>() == "scope" && value->has<ZfJSON::AnyNode::String>()) {
-      tokens.scope = value->data<ZfJSON::AnyNode::String>();
-    }
-  }
-  return (seen & 3U) == 3U;
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
+  TokenWire wire = ZfJSON::handler<TokenWire>(roots[0]).ctor();
+  if (!wire.accessToken ||
+      !ZuICmp<ZuCSpan>::equals(wire.tokenType, "Bearer")) return false;
+  Tokens next{ZuMv(wire.accessToken), ZuMv(wire.refreshToken),
+    ZuMv(wire.scope)};
+  clearTokens(tokens);
+  tokens = ZuMv(next);
+  return true;
 }
 
 static void openBrowser(ZuCSpan url, bool noBrowser)
@@ -397,20 +512,23 @@ int main(int argc, char **argv)
   try { argc = ZfCLI::load(options, argc, argv); }
   catch (const ZeException &e) { std::cerr << e << '\n'; usage(); }
   if (options.help) usage(0);
-  if (argc < 1 || argc > 2 || !options.callbackPort ||
-      options.callbackPort > 65535) usage();
+  if (argc != 1 || !options.config) usage();
+  Config config;
+  if (!loadConfig(options.config, config)) {
+    std::cerr << "zumping: invalid configuration\n"; return 1;
+  }
 
   Zhttp::URL urlStorage;
-  auto urlError = urlStorage.assign(options.url);
-  if (!urlError.ok()) { std::cerr << "zumc: invalid server URL\n"; return 1; }
+  auto urlError = urlStorage.assign(config.serviceURL);
+  if (!urlError.ok()) { std::cerr << "zumping: invalid server URL\n"; return 1; }
   Zhttp::URLView url = urlStorage.url();
   if (!url.host || (url.path && url.path != "/") ||
       url.hasQuery || url.hasFragment) {
-    std::cerr << "zumc: server URL must be an HTTP(S) origin\n";
+    std::cerr << "zumping: server URL must be an HTTP(S) origin\n";
     return 1;
   }
 
-  ZiLog::init("zumc");
+  ZiLog::init("zumping");
   ZiLog::level(Ze::Warning);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -424,6 +542,7 @@ int main(int argc, char **argv)
   bool secure = url.scheme == Zhttp::Scheme::https;
   auto clientConfig = Zhttp::Config().links(1).concurrency(1).linkMax(1)
     .requestTimeout(ClientTimeout).retainedBodyMax(BodyMax)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(secure).tcp(true).tls(secure).quic(false);
   bool clientInited = client.init(Zhttp::HubConfig{&mx, "rx", "tx"}, 1,
     clientConfig, Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
@@ -431,24 +550,9 @@ int main(int argc, char **argv)
     Zhttp::Destination{url.host, url.port, url.ipv6Literal});
   bool clientUp = poolInited && client.start();
   if (!clientUp) {
-    std::cerr << "zumc: HTTP client start failed\n";
+    std::cerr << "zumping: HTTP client start failed\n";
     if (clientInited) client.stop();
     client.final(); mx.stop(); ZiLog::stop(); return 1;
-  }
-
-  CallbackApp callback;
-  Zhttp::Server<CallbackApp> callbackServer;
-  auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
-    .port(options.callbackPort).idleTimeout(ClientTimeout)
-    .retainedBodyMax(BodyMax).tcp();
-  bool callbackInited = callbackServer.init(
-    Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig), &callback);
-  bool callbackUp = callbackInited && callbackServer.start();
-  if (!callbackUp) {
-    std::cerr << "zumc: callback listener start failed\n";
-    if (callbackInited) (void)callbackServer.stop();
-    callbackServer.final(); client.stop(); client.final();
-    mx.stop(); ZiLog::stop(); return 1;
   }
 
   Ztls::Random rng;
@@ -456,7 +560,7 @@ int main(int argc, char **argv)
   random.length(32, false);
   bool ok = rng.init() && rng.random(random);
   String verifier = ok ? encode(random) : String{};
-  uint8_t digest[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
   if (ok) {
     Ztls::MD<> md;
     md.update(ZuBSpan{verifier});
@@ -466,33 +570,50 @@ int main(int argc, char **argv)
   random.length(16, false);
   ok = ok && rng.random(random);
   String state = ok ? encode(random) : String{};
+  CallbackApp callback;
+  callback.expectedState = state;
+  Zhttp::Server<CallbackApp> callbackServer;
+  auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
+    .port(config.callbackPort).idleTimeout(ClientTimeout)
+    .retainedBodyMax(BodyMax).tcp();
+  bool callbackInited = callbackServer.init(
+    Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig), &callback);
+  bool callbackUp = callbackInited && callbackServer.start();
+  if (!callbackUp) {
+    std::cerr << "zumping: callback listener start failed\n";
+    if (callbackInited) (void)callbackServer.stop();
+    callbackServer.final(); client.stop(); client.final();
+    mx.stop(); ZiLog::stop(); return 1;
+  }
+
   String redirect;
-  redirect << "http://127.0.0.1:" << options.callbackPort << "/callback";
-  String origin{options.url};
+  redirect << "http://127.0.0.1:" << config.callbackPort << "/callback";
+  String origin{config.serviceURL};
   if (origin && origin[origin.length() - 1] == '/') origin.length(origin.length() - 1);
   String authorize;
-  authorize << origin << "/authorize?response_type=code&client_id=zum&redirect_uri="
-    "http%3A%2F%2F127.0.0.1%3A" << options.callbackPort <<
-    "%2Fcallback&scope=example.use&state=" << state <<
+  authorize << origin << "/authorize?response_type=code&" <<
+    formField("client_id", config.clientID) << '&' <<
+    formField("redirect_uri", redirect) << '&' << formField("scope", config.scope) <<
+    "&state=" << state <<
     "&code_challenge=" << challenge << "&code_challenge_method=S256";
   if (ok) openBrowser(authorize, options.noBrowser);
-  if (!ok) std::cerr << "zumc: random source failed\n";
+  if (!ok) std::cerr << "zumping: random source failed\n";
 
-  if (ok) callbackDone.wait();
+  if (ok) ok = !callbackDone.timedwait(
+    Zm::now() + ZuTime{int64_t(config.loginTimeout)});
   ok = ok && callback.code && callback.state == state && !callback.error;
-  if (!ok && callback.error)
-    std::cerr << "zumc: authorization failed: " << callback.error << '\n';
+  if (!ok) std::cerr << "zumping: authorization failed or timed out\n";
 
   Tokens tokens;
   if (ok) {
     String form;
-    form << "grant_type=authorization_code&code=" << callback.code <<
-      "&client_id=zum&redirect_uri=http%3A%2F%2F127.0.0.1%3A" <<
-      options.callbackPort << "%2Fcallback&code_verifier=" << verifier;
+    form << "grant_type=authorization_code&" << formField("code", callback.code) <<
+      '&' << formField("client_id", config.clientID) << '&' <<
+      formField("redirect_uri", redirect) << '&' << formField("code_verifier", verifier);
     Result result;
     client.perform<TokenBuilder>(result, ZuMv(form));
     ok = result.status == 200 && tokenJSON(result.body, tokens);
-    if (!ok) std::cerr << "zumc: code redemption failed: " << result.body << '\n';
+    if (!ok) std::cerr << "zumping: code redemption failed\n";
   }
 
   if (ok) {
@@ -501,12 +622,13 @@ int main(int argc, char **argv)
     bearer << tokens.accessToken;
     client.perform<ResourceBuilder>(result, {}, ZuMv(bearer));
     ok = result.status == 200;
-    std::cout << "access token: " << result.body << '\n';
+    if (ok) std::cout << result.body << '\n';
   }
 
-  if (ok) {
-    String form{"grant_type=refresh_token&refresh_token="};
-    form << tokens.refreshToken << "&client_id=zum";
+  if (ok && tokens.refreshToken) {
+    String form{"grant_type=refresh_token&"};
+    form << formField("refresh_token", tokens.refreshToken) << '&' <<
+      formField("client_id", config.clientID);
     Result result;
     client.perform<TokenBuilder>(result, ZuMv(form));
     Tokens rotated;
@@ -516,7 +638,7 @@ int main(int argc, char **argv)
       tokens = ZuMv(rotated);
       std::cout << "refresh token rotated\n";
     } else {
-      std::cerr << "zumc: refresh failed: " << result.body << '\n';
+      std::cerr << "zumping: refresh failed\n";
     }
   }
 
@@ -526,7 +648,7 @@ int main(int argc, char **argv)
     bearer << tokens.accessToken;
     client.perform<ResourceBuilder>(result, {}, ZuMv(bearer));
     ok = result.status == 200;
-    std::cout << "refreshed access token: " << result.body << '\n';
+    if (ok) std::cout << result.body << '\n';
   }
   clearTokens(tokens);
 

@@ -1438,7 +1438,35 @@ public:
 	final_();
 	return false;
       }
-      m_entries.push(Hubs_::Entry{
+      add_(hub);
+      return true;
+    });
+  }
+
+  // Register an already initialized hub; its owner retains its lifetime.
+  template <typename Hub>
+  bool add(Hub &hub) {
+    return Engine::lock(ZmEngineState::Stopped, [this, &hub]() {
+      add_(hub);
+      return true;
+    });
+  }
+
+  void final() {
+    // Finalize only after the stop continuation; never wait on an I/O shard.
+    bool ok = Engine::lock(ZmEngineState::Stopped, [this]() {
+      final_();
+      return true;
+    });
+    ZmAssert(ok, (return));
+  }
+
+private:
+  friend Engine;
+
+  template <typename Hub>
+  void add_(Hub &hub) {
+    m_entries.push(Hubs_::Entry{
 	.ptr = &hub,
 	.start = [](void *ptr, DoneFn done) {
 	  static_cast<Hub *>(ptr)->start(
@@ -1455,21 +1483,8 @@ public:
 	  if constexpr (Hubs_::HasStopAccepting<Hub>{})
 	    static_cast<Hub *>(ptr)->stopAccepting();
 	}
-      });
-      return true;
     });
   }
-
-  void final() {
-    (void)Engine::stop();
-    (void)Engine::lock(ZmEngineState::Stopped, [this]() {
-      final_();
-      return true;
-    });
-  }
-
-private:
-  friend Engine;
 
   void start_() {
     if (!m_entries) {
@@ -1539,7 +1554,7 @@ private:
   void final_() {
     for (unsigned i = m_entries.length(); i; --i)
       m_entries[i - 1].final(m_entries[i - 1].ptr);
-    m_entries.length(0);
+    m_entries.init();
   }
 
   Entries	m_entries;

@@ -1148,8 +1148,9 @@ template <typename T = Tuple> struct TupleCmp {
 };
 ZmRBTreeKVDerive(Index, Tuple, ZmRef<const MemRow>,
   ZmRBTreeCmp<TupleCmp,
-    ZmRBTreeUnique<true,
+    ZmRBTreeUnique<false,
       ZmRBTreeHeapID<"MemRowIndex">>>);
+// Key 0 uniqueness is enforced by insert(); secondary keys may repeat.
 
 // --- in-memory data store base class
 

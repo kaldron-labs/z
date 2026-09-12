@@ -13,8 +13,11 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZumJWTVerify.hh>
 
@@ -25,6 +28,67 @@ namespace ServiceError {
   enum { OK = -1, Invalid, Unauthorized, Forbidden, Unavailable, Stopped };
 }
 
+struct ServiceAction {
+  String label;
+  String name;
+};
+ZfStruct(, (ServiceAction, JSON),
+  (((label),		(JSON::Opt)),	(String)),
+  (((name),		(Required)),	(String)));
+ZuDerive(ServiceActionArray, (ZtArray<ServiceAction,
+  ZtArrayHeapID<"Zum.Service.Actions">>));
+struct ServiceActionVec : public ServiceActionArray {
+  ZuDerive_(ServiceActionVec, ServiceActionArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(ServiceActionVec *);
+};
+
+struct ServiceRole {
+  StringVec actions;
+  String label;
+  String name;
+};
+ZfStruct(, (ServiceRole, JSON),
+  (((actions),		(Required)),	(StringVec)),
+  (((label),		(JSON::Opt)),	(String)),
+  (((name),		(Required)),	(String)));
+ZuDerive(ServiceRoleArray, (ZtArray<ServiceRole,
+  ZtArrayHeapID<"Zum.Service.Roles">>));
+struct ServiceRoleVec : public ServiceRoleArray {
+  ZuDerive_(ServiceRoleVec, ServiceRoleArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(ServiceRoleVec *);
+};
+
+struct ServiceScope {
+  AudienceID audienceID = 0;
+  String name;
+  StringVec roles;
+};
+ZfStruct(, (ServiceScope, JSON),
+  (((audienceID),	(Required, JSON::String<>)),	(UInt64)),
+  (((name),		(Required)),	(String)),
+  (((roles),		(Required)),	(StringVec)));
+ZuDerive(ServiceScopeArray, (ZtArray<ServiceScope,
+  ZtArrayHeapID<"Zum.Service.Scopes">>));
+struct ServiceScopeVec : public ServiceScopeArray {
+  ZuDerive_(ServiceScopeVec, ServiceScopeArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(ServiceScopeVec *);
+};
+
+struct ServiceCatalog {
+  ServiceActionVec actions;
+  ServiceRoleVec roles;
+  ServiceScopeVec scopes;
+};
+ZfStruct(, (ServiceCatalog, JSON),
+  (((actions),		(Required)),	(UDT)),
+  (((roles),		(Required)),	(UDT)),
+  (((scopes),		(Required)),	(UDT)));
+
+struct ServiceManifest {
+  ServiceCatalog catalog;
+  uint64_t revision = 0;
+};
+
 struct ServiceHTTPRequest {
   unsigned method = ServiceMethod::GET;
   String url;
@@ -33,6 +97,7 @@ struct ServiceHTTPRequest {
   String ifMatch;
   String idempotencyKey;
   String body;
+  ServiceManifest manifest;
   uint64_t timeout = 0;
 };
 
@@ -97,12 +162,6 @@ struct ServicePrincipal {
   String audience;
   StringVec actions;
   int64_t expires = 0;
-};
-
-struct ServiceManifest {
-  String json;
-  String digest;
-  uint64_t revision = 0;
 };
 
 ZuDerive(ServiceDoneFn, (ZmFn<void(int),

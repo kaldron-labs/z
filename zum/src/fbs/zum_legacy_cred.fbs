@@ -1,0 +1,17 @@
+include "zfb_types.fbs";
+namespace Zum.Legacy.fbs;
+table Cred {
+  id:[ubyte];
+  user_i_d:uint64;
+  public_key:[ubyte];
+  sign_count:uint32;
+  created:int64;
+  updated:int64;
+  state:int8;
+  backup_eligible:bool;
+  backed_up:bool;
+  label:string;
+  owner:Zfb.UInt128;
+  user_version:uint64 = 1;
+}
+root_type Cred;

@@ -29,6 +29,7 @@ def main():
         "sub": "workload",
         "aud": "orders",
         "client_id": "workload",
+        "zum_app_id": "1",
         "iat": 100,
         "nbf": 100,
         "exp": 200,

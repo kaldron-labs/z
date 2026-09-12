@@ -21,6 +21,10 @@
 namespace Zum {
 
 class Requests;
+class Request;
+
+ZmListDerive(RequestList, ZmRef<Request>,
+  ZmListHeapID<"Zum.Requests">);
 
 class ZumAPI Request : public ZumObject {
   Request(const Request &) = delete;
@@ -33,7 +37,6 @@ public:
 
 private:
 friend Requests;
-  using List = ZmList<ZmRef<Request>, ZmListHeapID<"Zum.Requests">>;
 
   Request(Requests *, Fn);
 
@@ -43,7 +46,7 @@ friend Requests;
   void timeout_();
 
   Requests		*m_requests = nullptr;
-  List::Node		*m_node = nullptr;
+  RequestList::Node	*m_node = nullptr;
   ZmScheduler::Timer	m_timer;
   Fn			m_cancel;
   bool			m_done = false;
@@ -74,7 +77,6 @@ public:
 
 private:
 friend Request;
-  using List = Request::List;
 
   void invoke_(Fn);
   void admit_(ZmRef<Request>, ZuTime, StartFn);
@@ -87,8 +89,8 @@ friend Request;
   unsigned		m_limit = 0;
   ZmAtomic<unsigned>	m_count = 0;
   ZmAtomic<uint32_t>	m_up = 0;
-  List			m_requests;
-  List			m_draining;
+  RequestList		m_requests;
+  RequestList		m_draining;
   Fn			m_deactivated;
   bool			m_closing = false;
 };

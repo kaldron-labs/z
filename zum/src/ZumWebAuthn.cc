@@ -6,7 +6,9 @@
 
 #include <zlib/ZumWebAuthn.hh>
 
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuDerive.hh>
 
 #include <zlib/ZfJSON.hh>
 
@@ -41,70 +43,73 @@ static bool decode(ZuCSpan encoded, unsigned limit, Bytes &decoded)
   return true;
 }
 
-static ZfJSON::AnyNode *rootObject(
-    ZuSpan<char> json, ZuPtr<ZfJSON::AnyNode> &tree)
+struct AssertionResponseWire {
+  String authenticatorData;
+  String clientDataJSON;
+  String signature;
+  String userHandle;
+};
+ZfStruct(, (AssertionResponseWire, JSON),
+  (((authenticatorData),	(Required)),	(String)),
+  (((clientDataJSON),	(Required)),	(String)),
+  (((signature),		(Required)),	(String)),
+  (((userHandle),	(Required)),	(String)));
+
+struct RegistrationResponseWire {
+  String attestationObject;
+  String clientDataJSON;
+};
+ZfStruct(, (RegistrationResponseWire, JSON),
+  (((attestationObject),	(Required)),	(String)),
+  (((clientDataJSON),	(Required)),	(String)));
+
+struct AssertionCredentialWire {
+  String rawID;
+  AssertionResponseWire response;
+  String type;
+};
+ZfStruct(, (AssertionCredentialWire, JSON),
+  (((rawID),	(JSON::ID<"rawId">, Required)),	(String)),
+  (((response),	(Required)),	(UDT)),
+  (((type),	(Required)),	(String)));
+
+struct RegistrationCredentialWire {
+  String rawID;
+  RegistrationResponseWire response;
+  String type;
+};
+ZfStruct(, (RegistrationCredentialWire, JSON),
+  (((rawID),	(JSON::ID<"rawId">, Required)),	(String)),
+  (((response),	(Required)),	(UDT)),
+  (((type),	(Required)),	(String)));
+
+template <typename T>
+static bool jsonLoad(ZuSpan<char> json, T &value)
 {
   auto parsed = ZfJSON::scan(json);
-  if (parsed.p<0>() < 0) return nullptr;
-  tree = ZuMv(parsed.p<1>());
-  if (!tree || !tree->has<ZfJSON::AnyNode::Array>()) return nullptr;
-  auto &roots = tree->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return nullptr;
-  return roots[0];
-}
-
-static ZuCSpan string(ZfJSON::AnyNode *node)
-{
-  if (!node || !node->has<ZfJSON::AnyNode::String>()) return {};
-  return node->data<ZfJSON::AnyNode::String>();
-}
-
-static ZfJSON::AnyNode *responseObject(ZfJSON::AnyNode *root)
-{
-  ZfJSON::AnyNode *response = nullptr;
-  for (auto &field: root->data<ZfJSON::AnyNode::Object>())
-    if (field.p<0>() == "response") {
-      auto node = field.p<1>().ptr();
-      response = node->has<ZfJSON::AnyNode::Object>() ? node : nullptr;
-    }
-  return response;
-}
-
-static ZuCSpan fieldString(ZfJSON::AnyNode *object, ZuCSpan id)
-{
-  ZuCSpan value;
-  for (auto &field: object->data<ZfJSON::AnyNode::Object>())
-    if (field.p<0>() == id) value = string(field.p<1>().ptr());
-  return value;
-}
-
-static bool credential(
-    ZfJSON::AnyNode *root, unsigned limit, Bytes &credentialID)
-{
-  ZuCSpan type, rawID;
-  for (auto &field: root->data<ZfJSON::AnyNode::Object>()) {
-    if (field.p<0>() == "type") type = string(field.p<1>().ptr());
-    else if (field.p<0>() == "rawId") rawID = string(field.p<1>().ptr());
-  }
-  return type == "public-key" && decode(rawID, limit, credentialID);
+  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
+  value = ZfJSON::handler<T>(roots[0]).ctor();
+  return true;
 }
 
 int parseAssertion(ZuSpan<char> json,
     const WebAuthnInputLimits &limits, AssertionInput &input)
 {
-  ZuPtr<ZfJSON::AnyNode> tree;
-  auto root = rootObject(json, tree);
-  if (!root) return WebAuthnError::JSON;
-  auto response = responseObject(root);
+  AssertionCredentialWire wire;
+  if (!jsonLoad(json, wire)) return WebAuthnError::JSON;
   AssertionInput next;
-  if (!response || !credential(root, limits.credentialID, next.credentialID) ||
-      !decode(fieldString(response, "clientDataJSON"),
+  if (wire.type != "public-key" ||
+      !decode(wire.rawID, limits.credentialID, next.credentialID) ||
+      !decode(wire.response.clientDataJSON,
         limits.clientDataJSON, next.clientDataJSON) ||
-      !decode(fieldString(response, "authenticatorData"),
+      !decode(wire.response.authenticatorData,
         limits.authenticatorData, next.authenticatorData) ||
-      !decode(fieldString(response, "signature"),
+      !decode(wire.response.signature,
         limits.signature, next.signature) ||
-      !decode(fieldString(response, "userHandle"),
+      !decode(wire.response.userHandle,
         limits.userHandle, next.userHandle)) return WebAuthnError::Fields;
   input = ZuMv(next);
   return WebAuthnError::OK;
@@ -113,15 +118,14 @@ int parseAssertion(ZuSpan<char> json,
 int parseRegistration(ZuSpan<char> json,
     const WebAuthnInputLimits &limits, RegistrationInput &input)
 {
-  ZuPtr<ZfJSON::AnyNode> tree;
-  auto root = rootObject(json, tree);
-  if (!root) return WebAuthnError::JSON;
-  auto response = responseObject(root);
+  RegistrationCredentialWire wire;
+  if (!jsonLoad(json, wire)) return WebAuthnError::JSON;
   RegistrationInput next;
-  if (!response || !credential(root, limits.credentialID, next.credentialID) ||
-      !decode(fieldString(response, "clientDataJSON"),
+  if (wire.type != "public-key" ||
+      !decode(wire.rawID, limits.credentialID, next.credentialID) ||
+      !decode(wire.response.clientDataJSON,
         limits.clientDataJSON, next.clientDataJSON) ||
-      !decode(fieldString(response, "attestationObject"),
+      !decode(wire.response.attestationObject,
         limits.attestationObject, next.attestationObject))
     return WebAuthnError::Fields;
   input = ZuMv(next);
@@ -145,15 +149,83 @@ bool webAuthnChallenge(Ztls::Random &rng, Bytes &challenge)
   return true;
 }
 
+struct AssertionPublicKey {
+  String challenge;
+  String rpID;
+  uint64_t timeout = 0;
+  String userVerification;
+};
+ZfStruct(, (AssertionPublicKey, JSON),
+  (((challenge),		(Required)),	(String)),
+  (((rpID),		(JSON::ID<"rpId">, Required)),	(String)),
+  (((timeout),		(Required)),	(UInt64)),
+  (((userVerification),	(Required)),	(String)));
+
+struct AssertionOptions { AssertionPublicKey publicKey; };
+ZfStruct(, (AssertionOptions, JSON),
+  (((publicKey),	(Required)),	(UDT)));
+
+struct RelyingParty { String id; String name; };
+ZfStruct(, (RelyingParty, JSON),
+  (((id),		(Required)),	(String)),
+  (((name),		(Required)),	(String)));
+
+struct RegistrationUser { String id; String name; String displayName; };
+ZfStruct(, (RegistrationUser, JSON),
+  (((id),		(Required)),	(String)),
+  (((name),		(Required)),	(String)),
+  (((displayName),	(Required)),	(String)));
+
+struct CredentialParam { String type; int32_t alg = 0; };
+ZfStruct(, (CredentialParam, JSON),
+  (((type),		(Required)),	(String)),
+  (((alg),		(Required)),	(Int32)));
+ZuDerive(CredentialParamArray, (ZtArray<CredentialParam,
+  ZtArrayHeapID<"Zum.WebAuthn.Params">>));
+struct CredentialParamVec : public CredentialParamArray {
+  ZuDerive_(CredentialParamVec, CredentialParamArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CredentialParamVec *);
+};
+
+struct AuthenticatorSelection {
+  String residentKey;
+  bool requireResidentKey = false;
+  String userVerification;
+};
+ZfStruct(, (AuthenticatorSelection, JSON),
+  (((residentKey),	(Required)),	(String)),
+  (((requireResidentKey),(Required)),	(Bool)),
+  (((userVerification),	(Required)),	(String)));
+
+struct RegistrationPublicKey {
+  String challenge;
+  RelyingParty rp;
+  RegistrationUser user;
+  CredentialParamVec pubKeyCredParams;
+  uint64_t timeout = 0;
+  AuthenticatorSelection authenticatorSelection;
+  String attestation;
+};
+ZfStruct(, (RegistrationPublicKey, JSON),
+  (((challenge),		(Required)),	(String)),
+  (((rp),		(Required)),	(UDT)),
+  (((user),		(Required)),	(UDT)),
+  (((pubKeyCredParams),	(Required)),	(UDT)),
+  (((timeout),		(Required)),	(UInt64)),
+  (((authenticatorSelection),(Required)),	(UDT)),
+  (((attestation),	(Required)),	(String)));
+
+struct RegistrationOptions { RegistrationPublicKey publicKey; };
+ZfStruct(, (RegistrationOptions, JSON),
+  (((publicKey),	(Required)),	(UDT)));
+
 String assertionOptions(
     ZuBSpan challenge, ZuCSpan rpID, uint64_t timeoutMS)
 {
-  String json{"{\"publicKey\":{\"challenge\":"};
-  ZfJSON::quote(json, encode(challenge));
-  json << ",\"rpId\":";
-  ZfJSON::quote(json, rpID);
-  json << ",\"timeout\":" << timeoutMS <<
-    ",\"userVerification\":\"required\"}}";
+  String json;
+  ZfJSON::save(json, AssertionOptions{AssertionPublicKey{
+    .challenge = encode(challenge), .rpID = rpID, .timeout = timeoutMS,
+    .userVerification = "required"}});
   return json;
 }
 
@@ -162,79 +234,36 @@ String registrationOptions(
     ZuBSpan userHandle, ZuCSpan userName, ZuCSpan displayName,
     uint64_t timeoutMS)
 {
-  String json{"{\"publicKey\":{\"challenge\":"};
-  ZfJSON::quote(json, encode(challenge));
-  json << ",\"rp\":{\"id\":";
-  ZfJSON::quote(json, rpID);
-  json << ",\"name\":";
-  ZfJSON::quote(json, rpName);
-  json << "},\"user\":{\"id\":";
-  ZfJSON::quote(json, encode(userHandle));
-  json << ",\"name\":";
-  ZfJSON::quote(json, userName);
-  json << ",\"displayName\":";
-  ZfJSON::quote(json, displayName);
-  json << "},\"pubKeyCredParams\":[{\"type\":\"public-key\",\"alg\":-7}],"
-    "\"timeout\":" << timeoutMS <<
-    ",\"authenticatorSelection\":{\"residentKey\":\"required\","
-    "\"requireResidentKey\":true,\"userVerification\":\"required\"},"
-    "\"attestation\":\"none\"}}";
+  String json;
+  ZfJSON::save(json, RegistrationOptions{RegistrationPublicKey{
+    .challenge = encode(challenge), .rp = {rpID, rpName},
+    .user = {encode(userHandle), userName, displayName},
+    .pubKeyCredParams = {{.type = "public-key", .alg = -7}},
+    .timeout = timeoutMS,
+    .authenticatorSelection = {"required", true, "required"},
+    .attestation = "none"}});
   return json;
 }
 
 struct ClientData {
-  ZuCSpan	type;
-  ZuCSpan	challenge;
-  ZuCSpan	origin;
+  String	type;
+  String	challenge;
+  String	origin;
   bool		crossOrigin = false;
 };
-
-static bool clientData(
-    ZfJSON::AnyNode *node, ClientData &data)
-{
-  if (!node || !node->has<ZfJSON::AnyNode::Object>()) return false;
-  auto &fields = node->data<ZfJSON::AnyNode::Object>();
-  unsigned seen = 0;
-  for (auto &field: fields) {
-    auto id = field.p<0>();
-    auto value = field.p<1>().ptr();
-    unsigned bit;
-    if (id == "type") {
-      bit = 1U;
-      if (!value->has<ZfJSON::AnyNode::String>()) return false;
-      data.type = value->data<ZfJSON::AnyNode::String>();
-    } else if (id == "challenge") {
-      bit = 2U;
-      if (!value->has<ZfJSON::AnyNode::String>()) return false;
-      data.challenge = value->data<ZfJSON::AnyNode::String>();
-    } else if (id == "origin") {
-      bit = 4U;
-      if (!value->has<ZfJSON::AnyNode::String>()) return false;
-      data.origin = value->data<ZfJSON::AnyNode::String>();
-    } else if (id == "crossOrigin") {
-      bit = 8U;
-      if (value->has<ZfJSON::AnyNode::True>()) data.crossOrigin = true;
-      else if (!value->has<ZfJSON::AnyNode::False>()) return false;
-    } else {
-      continue;
-    }
-    seen |= bit;
-  }
-  return (seen & 7U) == 7U;
-}
+ZfStruct(, (ClientData, JSON),
+  (((type),		(Required)),	(String)),
+  (((challenge),	(Required)),	(String)),
+  (((origin),		(Required)),	(String)),
+  (((crossOrigin),	(JSON::Opt)),	(Bool, false)));
 
 static int clientData(
     ZuSpan<char> json, ZuCSpan type, ZuBSpan challenge,
     ZuCSpan origin)
 {
-  auto parsed = ZfJSON::scan(json);
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>())
-    return WebAuthnError::JSON;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots) return WebAuthnError::JSON;
   ClientData client;
-  if (!clientData(roots[0], client) || client.crossOrigin)
+  if (!jsonLoad(json, client)) return WebAuthnError::JSON;
+  if (!client.type || !client.challenge || !client.origin || client.crossOrigin)
     return WebAuthnError::Fields;
   if (client.type != type) return WebAuthnError::Type;
   unsigned length = ZuBase64URL::enclen(challenge.length());
@@ -255,7 +284,7 @@ int verifyAssertion(
     return WebAuthnError::Fields;
 
   // ZfJSON parses in place; hash the exact browser bytes before parsing.
-  uint8_t clientHash[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> clientHash(Ztls::MD<>::Size, false);
   {
     Ztls::MD<> md;
     md.update(input.clientDataJSON);
@@ -268,14 +297,14 @@ int verifyAssertion(
   auto authenticatorData = ZuBSpan{input.authenticatorData};
   if (authenticatorData.length() < AssertionAuthDataSize)
     return WebAuthnError::AuthData;
-  uint8_t rpIDHash[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> rpIDHash(Ztls::MD<>::Size, false);
   {
     Ztls::MD<> md;
     md.update(ZuBSpan{state.rpID});
     md.finish(rpIDHash);
   }
   if (!Ztls::ctEqual(
-      {authenticatorData.data(), sizeof(rpIDHash)}, rpIDHash))
+      {authenticatorData.data(), rpIDHash.length()}, rpIDHash))
     return WebAuthnError::RPID;
 
   uint8_t flags = authenticatorData[AuthDataFlags];
@@ -340,13 +369,13 @@ int verifyRegistration(
     return WebAuthnError::Attestation;
   auto authData = attestation.authData;
   if (authData.length() < AttestedHeaderSize) return WebAuthnError::AuthData;
-  uint8_t rpIDHash[Ztls::MD<>::Size];
+  ZuBArray<Ztls::MD<>::Size> rpIDHash(Ztls::MD<>::Size, false);
   {
     Ztls::MD<> md;
     md.update(ZuBSpan{state.rpID});
     md.finish(rpIDHash);
   }
-  if (!Ztls::ctEqual({authData.data(), sizeof(rpIDHash)}, rpIDHash))
+  if (!Ztls::ctEqual({authData.data(), rpIDHash.length()}, rpIDHash))
     return WebAuthnError::RPID;
   uint8_t flags = authData[AuthDataFlags];
   constexpr uint8_t UP = 1U, UV = 1U<<2, BE = 1U<<3, BS = 1U<<4,
@@ -369,13 +398,14 @@ int verifyRegistration(
   if (credentialID != input.credentialID) return WebAuthnError::Credential;
   ZuBSpan cose{authData.data() + AttestedHeaderSize + credentialLength,
     authData.length() - AttestedHeaderSize - credentialLength};
-  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
+  ZuBArray<Ztls::COSE::ES256::PublicKeySize> publicKey(
+    Ztls::COSE::ES256::PublicKeySize, false);
   if (!Ztls::COSE::ES256::loadPK(cose, publicKey))
     return WebAuthnError::PublicKey;
 
   RegistrationResult next;
   next.credentialID = Bytes{credentialID};
-  next.publicKey = Bytes{ZuBSpan{publicKey}};
+  next.publicKey = Bytes{publicKey};
   next.signCount = signCount;
   next.backupEligible = flags & BE;
   next.backedUp = flags & BS;

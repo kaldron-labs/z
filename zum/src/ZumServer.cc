@@ -5,16 +5,67 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZumServer.hh>
+#include <zlib/ZumIdentityDB.hh>
+#include <zlib/ZumAppDB.hh>
+#include <zlib/ZumKeyDB.hh>
 
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuICmp.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZfJSON.hh>
 
 #include <zlib/ZtlsHMAC.hh>
+#include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsSec.hh>
 
 namespace Zum {
+
+struct PasskeyStartWire {
+  String purpose;
+  String capability;
+};
+ZfStruct(, (PasskeyStartWire, JSON),
+  (((purpose),		(Required)),	(String)),
+  (((capability),	(JSON::Opt)),	(String)));
+struct PasskeyStartTypes {
+  using Keys = ZuStringTL<"enrollment", "bootstrap", "add", "recovery">;
+};
+
+struct CeremonyWire {
+  String ceremony;
+  ZfJSON::Union<> options;
+};
+ZfStruct(, (CeremonyWire, JSON),
+  (((ceremony),		(Required)),	(String)),
+  (((options),		(Required)),	(UDT)));
+
+struct AuthorizationWire {
+  String authorizationURL;
+  uint64_t expiresIn = 0;
+};
+ZfStruct(, (AuthorizationWire, JSON),
+  (((authorizationURL),	(Required)),	(String)),
+  (((expiresIn),	(Required)),	(UInt64)));
+
+struct StatusWire { String status; };
+ZfStruct(, (StatusWire, JSON),
+  (((status),		(Required)),	(String)));
+struct OKWire { bool ok = false; };
+ZfStruct(, (OKWire, JSON),
+  (((ok),		(Required)),	(Bool)));
+struct BearerErrorWire { String error; };
+ZfStruct(, (BearerErrorWire, JSON),
+  (((error),		(Required)),	(String)));
+
+template <typename T>
+static String serverJSON(T value)
+{
+  String body;
+  ZfJSON::save(body, value);
+  return body;
+}
 
 static ServerReply jsonReply(int error)
 {
@@ -35,14 +86,15 @@ static bool logoutForm(String &form, String &csrf)
 {
   bool valid = true;
   bool seen = false;
-  formEach(form.span(), [&valid, &seen, &csrf](ZuCSpan name, ZuCSpan value) {
+  valid = formEach(form.span(), [&valid, &seen, &csrf](
+      ZuCSpan name, ZuCSpan value) {
     if (name != "csrf" || seen || !value) {
       valid = false;
       return;
     }
     seen = true;
     csrf = value;
-  });
+  }) && valid;
   return valid && seen;
 }
 
@@ -51,7 +103,7 @@ static bool loginForm(String &form, Bytes &id, String &login)
   ZuCSpan encoded;
   bool valid = true;
   unsigned seen = 0;
-  formEach(form.span(), [&valid, &seen, &encoded, &login](
+  valid = formEach(form.span(), [&valid, &seen, &encoded, &login](
       ZuCSpan name, ZuCSpan value) {
     unsigned bit = 0;
     if (name == "id") {
@@ -66,7 +118,7 @@ static bool loginForm(String &form, Bytes &id, String &login)
     }
     if (seen & bit) valid = false;
     seen |= bit;
-  });
+  }) && valid;
   return valid && seen == 3U && login && login.length() <= 1024 &&
     decodeID(encoded, id);
 }
@@ -77,7 +129,7 @@ static bool consentForm(String &form, Bytes &id, bool &approve)
   ZuCSpan decision;
   bool valid = true;
   unsigned seen = 0;
-  formEach(form.span(), [&valid, &seen, &encoded, &decision](
+  valid = formEach(form.span(), [&valid, &seen, &encoded, &decision](
       ZuCSpan name, ZuCSpan value) {
     unsigned bit = 0;
     if (name == "id") {
@@ -92,7 +144,7 @@ static bool consentForm(String &form, Bytes &id, bool &approve)
     }
     if (seen & bit) valid = false;
     seen |= bit;
-  });
+  }) && valid;
   if (!valid || seen != 3U ||
       (decision != "approve" && decision != "deny") ||
       !decodeID(encoded, id)) return false;
@@ -138,10 +190,10 @@ static bool ceremonyQuery(String &query, Bytes &id)
   if (query && query[0] == '?') query.splice(0, 1);
   if (!query.mutable_()) query.length(query.length());
   ZuCSpan encoded;
-  formEach({query.data(), query.length()},
+  if (!formEach({query.data(), query.length()},
     [&encoded](ZuCSpan name, ZuCSpan value) {
       if (name == "id") encoded = value;
-    });
+    })) return false;
   return encoded && decodeID(encoded, id);
 }
 
@@ -151,11 +203,11 @@ static bool facadeQuery(String &query, Bytes &id)
   if (!query.mutable_()) query.length(query.length());
   ZuCSpan encoded;
   unsigned count = 0;
-  formEach({query.data(), query.length()},
+  if (!formEach({query.data(), query.length()},
     [&encoded, &count](ZuCSpan name, ZuCSpan value) {
       ++count;
       if (name == "request") encoded = value;
-    });
+    })) return false;
   return count == 1 && encoded && decodeID(encoded, id);
 }
 
@@ -163,40 +215,23 @@ static bool passkeyStart(String &json, PasskeyStart &start)
 {
   if (!json.mutable_()) json.length(json.length());
   auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() < 0 || !parsed.p<1>() ||
+  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (!roots || !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  String purpose;
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
+      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  auto wire = ZfJSON::handler<PasskeyStartWire>(roots[0]).ctor();
+  if (!wire.purpose) return false;
   PasskeyStart next;
-  unsigned seen = 0;
-  for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
-    auto value = field.p<1>().ptr();
-    unsigned bit;
-    if (field.p<0>() == "purpose") {
-      bit = 1U;
-      if (!value->has<ZfJSON::AnyNode::String>()) return false;
-      purpose = value->data<ZfJSON::AnyNode::String>();
-    } else if (field.p<0>() == "capability") {
-      bit = 2U;
-      if (!value->has<ZfJSON::AnyNode::String>()) return false;
-      next.capability = value->data<ZfJSON::AnyNode::String>();
-    } else {
-      continue;
-    }
-    seen |= bit;
+  next.capability = ZuMv(wire.capability);
+  constexpr auto matcher = ZuMatcher<PasskeyStartTypes>();
+  switch (matcher.exact(wire.purpose)) {
+    case 0: next.type = PasskeyStartType::Enrollment; break;
+    case 1: next.type = PasskeyStartType::Bootstrap; break;
+    case 2: next.type = PasskeyStartType::AddCredential; break;
+    case 3: next.type = PasskeyStartType::Recovery; break;
+    default: return false;
   }
-  if (!(seen & 1U)) return false;
-  if (purpose == "enrollment")
-    next.type = PasskeyStartType::Enrollment;
-  else if (purpose == "bootstrap")
-    next.type = PasskeyStartType::Bootstrap;
-  else if (purpose == "add")
-    next.type = PasskeyStartType::AddCredential;
-  else if (purpose == "recovery")
-    next.type = PasskeyStartType::Recovery;
-  else
-    return false;
   bool needsCapability = next.type == PasskeyStartType::Enrollment ||
     next.type == PasskeyStartType::Bootstrap ||
     next.type == PasskeyStartType::Recovery;
@@ -207,10 +242,17 @@ static bool passkeyStart(String &json, PasskeyStart &start)
 
 static String ceremonyJSON(ZuBSpan id, ZuCSpan options)
 {
-  String body{"{\"ceremony\":"};
+  String source{options};
+  auto parsed = ZfJSON::scan(source.span());
+  if (parsed.p<0>() != int(source.length()) || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return {};
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
+      !roots[0]->has<ZfJSON::AnyNode::Object>()) return {};
   auto encoded = encodeID(id);
-  ZfJSON::quote(body, encoded);
-  body << ",\"options\":" << options << '}';
+  String body;
+  ZfJSON::save(body, CeremonyWire{ZuMv(encoded),
+    static_cast<const ZfJSON::AnyNode *>(roots[0].ptr())});
   return body;
 }
 
@@ -233,7 +275,7 @@ bool Server::init(
     OIDCHTTPFn oidcHTTP, AuthRouteFn authRoute)
 {
   if (m_db || !db || !context || !requests || !clock ||
-      !policy || !sign || !config.issuer || !config.keyID || !config.publicKey ||
+      !policy || !sign || !config.issuer ||
       !config.cookieName || !config.cookiePath || !config.requestTimeout ||
       config.ceremonyLifetime <= 0 || config.codeLifetime <= 0 ||
       config.accessLifetime <= 0 ||
@@ -273,9 +315,14 @@ bool Server::init(
   return true;
 }
 
-void Server::final()
+void Server::stop()
 {
   m_oidc.final();
+}
+
+void Server::final()
+{
+  stop();
   m_authRoute = AuthRouteFn{};
   m_sign = SignFn{};
   m_admit = AdmitFn{};
@@ -354,15 +401,15 @@ bool Server::binding_(String &cookie, String &token, Bytes &digest) const
 String Server::csrf_(ZuBSpan key) const
 {
   if (!key) return {};
-  uint8_t digest[Ztls::HMAC<>::Size];
+  ZuBArray<Ztls::HMAC<>::Size> digest(Ztls::HMAC<>::Size, false);
   Ztls::HMAC<> hmac;
   hmac.start(key);
   hmac.update(ZuBSpan{"zum.logout.csrf"});
   hmac.finish(digest);
   String encoded;
-  encoded.length(ZuBase64URL::enclen(sizeof(digest)));
+  encoded.length(ZuBase64URL::enclen(digest.length()));
   encoded.length(ZuBase64URL::encode(encoded.span(), digest));
-  ZuClear(digest, sizeof(digest));
+  ZuClear(digest.data(), digest.length());
   return encoded;
 }
 
@@ -593,6 +640,13 @@ void Server::authorizeReply_(int error, AuthorizeResult result,
           };
           auto upstream = [this, done](AuthorizeResult result,
               OIDCConfig oidc, String setCookie) mutable {
+            oidc.maxAge = result.maxAge;
+            oidc.maxAgePresent = result.maxAgePresent;
+            if (result.promptPresent && result.prompt == "login") {
+              oidc.prompt = "login";
+              oidc.maxAge = 0;
+              oidc.maxAgePresent = true;
+            }
             if (!m_oidc.begin(ZuMv(result.ceremonyID), ZuMv(oidc),
               [this, setCookie = ZuMv(setCookie), done](
                   bool ok, String location) mutable {
@@ -689,9 +743,8 @@ void Server::facadeAuthorize(String query, String facadeClientID,
         String url = m_config.issuer;
         if (url[url.length() - 1] == '/') url.length(url.length() - 1);
         url << "/authorize?request=" << encodeID(result.ceremonyID);
-        String body{"{\"authorizationURL\":"};
-        ZfJSON::quote(body, url);
-        body << ",\"expiresIn\":" << m_config.ceremonyLifetime << '}';
+        String body = serverJSON(AuthorizationWire{
+          ZuMv(url), uint64_t(m_config.ceremonyLifetime)});
         done->finish(ServerReply{.body = ZuMv(body), .type = ReplyType::OK});
       })) done->finish(serverError());
 }
@@ -714,8 +767,8 @@ void Server::token(String form, String authorization,
   if (now <= 0 || !tokenRequest(m_requests, deadline_(), m_db, m_context,
       m_rng, ZuMv(form), ZuMv(authorization), TokenConfig{
         .issuer = m_config.issuer,
-        .keyID = m_config.keyID,
         .jwtLimits = m_config.limits.jwt,
+        .maxKeys = m_config.limits.jwks,
         .now = now,
         .accessExpires = now + m_config.accessLifetime,
         .refreshExpires = now + m_config.refreshLifetime,
@@ -871,7 +924,7 @@ void Server::consent(String form, String cookie, ServerFn complete)
   }
   int64_t now = now_();
   Bytes sessionGrant{id};
-  if (now <= 0 || !authorizeConsentFinish(m_requests, deadline_(), m_context,
+  if (now <= 0 || !authorizeConsentFinish(m_requests, deadline_(), m_db, m_context,
       m_rng, ZuMv(id), ZuMv(binding), approve,
       AuthorizeFinishConfig{.now = now,
         .codeExpires = now + m_config.codeLifetime}, m_policy,
@@ -938,6 +991,54 @@ void Server::logout(String form, String cookie, ServerFn complete)
       })) done->finish(serverError());
 }
 
+struct ReadyKey_ : public ZumObject {
+  SignKey key;
+  Bytes digest;
+};
+
+void Server::ready(ServerFn complete)
+{
+  if (!m_db || !complete) return;
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (!m_requests->run(deadline_(), [this, done](ZmRef<Request> request) mutable {
+    ServerFn finish{[done, request = ZuMv(request)](ServerReply reply) mutable {
+      request->complete([done, reply = ZuMv(reply)]() mutable {
+        done->finish(ZuMv(reply));
+      });
+    }};
+    m_context->issuers->find<0>(0, ZuFwdTuple(m_config.issuer),
+      [this, finish = ZuMv(finish)](ZdbRowRef<Issuer> issuer) mutable {
+        int64_t now = now_();
+        if (!issuer || issuer->data().bootstrapPhase != BootstrapPhase::Ready ||
+            now <= 0 || m_config.accessLifetime > INT64_MAX - now) {
+          finish(serverError());
+          return;
+        }
+        signKeyLoad(m_context, m_config.issuer, now, now + m_config.accessLifetime,
+          m_config.limits.jwks, [this, finish = ZuMv(finish)](SignKey key) mutable {
+            if (!key.id || !m_sign || !m_requests->active()) {
+              finish(serverError());
+              return;
+            }
+            ZmRef<ReadyKey_> probe = new ReadyKey_{};
+            probe->key = ZuMv(key);
+            probe->digest.length(Ztls::MD<>::Size, false);
+            Ztls::MD<> md;
+            md.update(ZuBSpan{"zum.readiness"});
+            md.finish(probe->digest);
+            m_sign(probe->key, probe->digest, [probe, finish = ZuMv(finish)](
+                Bytes signature) mutable {
+              bool ok = bool(signature);
+              if (signature.mutable_()) ZuClear(signature.data(), signature.length());
+              finish(ok ? ServerReply{.body = serverJSON(StatusWire{"ready"}),
+                .type = ReplyType::OK} : serverError());
+            });
+          });
+      });
+  }, [done]() mutable { done->finish(serverError()); }))
+    done->finish(serverError());
+}
+
 void Server::metadata(ServerFn complete)
 {
   if (!m_db || !complete) return;
@@ -963,30 +1064,64 @@ void Server::userInfo(String authorization, ServerFn complete)
 {
   if (!m_db || !complete) return;
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  if (!m_requests->run(deadline_(), [this, done,
+      authorization = ZuMv(authorization)](ZmRef<Request> request) mutable {
+    userInfo_(ZuMv(authorization), [done, request = ZuMv(request)](
+        ServerReply reply) mutable {
+      request->complete([done, reply = ZuMv(reply)]() mutable {
+        done->finish(ZuMv(reply));
+      });
+    });
+  }, [done]() mutable { done->finish(serverError()); }))
+    done->finish(serverError());
+}
+
+void Server::userInfo_(String authorization, ServerFn complete)
+{
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   static constexpr ZuCSpan prefix{"Bearer "};
   if (authorization.length() <= prefix.length() ||
       !ZuICmp<ZuCSpan>::equals(
         ZuCSpan{authorization.data(), prefix.length()}, prefix)) {
     done->finish(ServerReply{
-      .body = "{\"error\":\"invalid_token\"}",
+      .body = serverJSON(BearerErrorWire{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
   authorization.splice(0, prefix.length());
-  Principal principal;
+  JWTHeader header;
   int64_t now = now_();
-  if (!jwtVerifyIssuer(authorization, m_config.keyID, m_config.issuer,
-      m_config.publicKey, now, m_config.limits.jwt, principal) ||
-      !scopeContains(principal.scope, "openid")) {
+  if (now <= 0 || !jwtHeader(authorization, m_config.limits.jwt, header)) {
     done->finish(ServerReply{
-      .body = "{\"error\":\"invalid_token\"}",
+      .body = serverJSON(BearerErrorWire{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
+  m_context->signKeys->find<0>(0, ZuFwdTuple(ZuMv(header.keyID)), [
+    this, done, now, authorization = ZuMv(authorization)
+  ](ZdbRowRef<SignKey> row) mutable {
+    Principal principal;
+    if (!row || !signKeyVerify(row->data(), authorization,
+	m_config.issuer, {}, now, m_config.limits.jwt, principal) ||
+	!scopeContains(principal.scope, "openid")) {
+      done->finish(ServerReply{
+	.body = serverJSON(BearerErrorWire{"invalid_token"}),
+	.type = ReplyType::BearerError});
+      return;
+    }
+    userInfo_(ZuMv(principal), [done](ServerReply reply) mutable {
+      done->finish(ZuMv(reply));
+    });
+  });
+}
+
+void Server::userInfo_(Principal principal, ServerFn complete)
+{
+  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
   Bytes handle;
   if (!decodeID(principal.subject, handle)) {
     done->finish(ServerReply{
-      .body = "{\"error\":\"invalid_token\"}",
+      .body = serverJSON(BearerErrorWire{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -997,7 +1132,7 @@ void Server::userInfo(String authorization, ServerFn complete)
     if (!client || client->data().state != State::Active ||
         client->data().owner) {
       done->finish(ServerReply{
-        .body = "{\"error\":\"invalid_token\"}",
+        .body = serverJSON(BearerErrorWire{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }
@@ -1007,7 +1142,7 @@ void Server::userInfo(String authorization, ServerFn complete)
       String json;
       if (!user || !userInfoJSON(user->data(), principal, json)) {
         done->finish(ServerReply{
-          .body = "{\"error\":\"invalid_token\"}",
+          .body = serverJSON(BearerErrorWire{"invalid_token"}),
           .type = ReplyType::BearerError});
         return;
       }
@@ -1212,7 +1347,7 @@ void Server::finishGrant_(
           return;
         }
         if (purpose != GrantPurpose::Bootstrap) {
-          done->finish(ServerReply{.body = "{\"ok\":true}",
+          done->finish(ServerReply{.body = serverJSON(OKWire{true}),
             .setCookie = setCookie_({}, true), .type = ReplyType::OK});
           return;
         }
@@ -1231,7 +1366,7 @@ void Server::finishGrant_(
               done->finish(serverError());
               return;
             }
-            done->finish(ServerReply{.body = "{\"ok\":true}",
+            done->finish(ServerReply{.body = serverJSON(OKWire{true}),
               .setCookie = setCookie_({}, true), .type = ReplyType::OK});
           });
         });

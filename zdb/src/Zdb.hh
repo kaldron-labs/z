@@ -24,7 +24,7 @@
 //   - In-memory write queue of I/O buffers
 // - Async replication independent of backing store
 //   (can be disabled for replicated backing stores)
-// - Primary and multiple-secondary unique in-memory and on-disk indices
+// - Unique primary key (0), potentially non-unique secondary keys (1+)
 // - Find, insert, update, delete operations (i.e. find and CRUD)
 // - Batched select and count queries (index-based, optionally grouped)
 // - Front-end shares threads with the application
@@ -61,6 +61,8 @@
 #endif
 
 #include <zlib/ZuTraits.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuTL.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuID.hh>
@@ -73,6 +75,7 @@
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmTime.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmEngine.hh>
@@ -558,7 +561,7 @@ struct TableCf {
   TableCf(ZuCSpan id_) : id{id_} { }
   TableCf(ZuCSpan id_, int cacheMode_) :
     id{id_}, cacheMode{cacheMode_} { }
-  TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
+  ZdbAPI TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
 
   static const auto &IDAxor(const TableCf &cf) { return cf.id; }
 };
@@ -567,17 +570,6 @@ ZfStruct(ZdbAPI, (TableCf, Cf),
   (((cacheMode), (Ctor<0>, Enum<CacheMode::Map>)), (Int32,
       CacheMode::Normal)));
 
-inline TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
-  TableCf{ZfCf::handler<TableCf>(cf).ctor(id_)}
-{
-  for (auto key: {ZuCSpan{"shards"}, ZuCSpan{"threads"}})
-    if (cf->resolve(key))
-      throw ZeEXCEPT(Error, "Zdb", ([
-	id = ZeString{id_}, key = ZeString{key}
-      ](auto &s) {
-	s << "table \"" << id << "\" contains DB-wide \"" << key << '"';
-      }));
-}
 
 // --- table configuration
 
@@ -923,6 +915,13 @@ struct SplitKey {
   using MemberKey = ZuStructTupleT<Key, ZuMkCRef, ZuDecay, NotGroup>;
   // - filter keys that have 1 or more group fields
   using IsGroupKey = ZuBool<GroupFields::N>;
+
+  // Stores compare a group prefix followed by its ordered members. Key tuples
+  // retain declaration order; field metadata preserves their accessors while
+  // presenting the store's prefix order, including inverse secondary indexes.
+  static ZfVFieldArray storeFields() {
+    return ZfVFields_<ZuTypeConcat<GroupFields, MemberFields>>();
+  }
 };
 
 // --- typed table
@@ -1045,7 +1044,19 @@ private:
   // rowFields() - run-time field array
   ZfVFieldArray rowFields() const override { return ZfVFields<T>(); }
   // rowKeyFields() - run-time key field arrays
-  ZfVKeyFieldArray rowKeyFields() const override { return ZfVKeyFields<T>(); }
+  ZfVKeyFieldArray rowKeyFields() const override {
+    return []<unsigned ...I>(ZuSeq<I...>) -> ZfVKeyFieldArray {
+      // Immutable metadata storage is exactly the schema's number of keys.
+      struct Fields {
+	ZuArray<ZfVFieldArray, sizeof...(I)> data;
+	Fields() : data(sizeof...(I), false) {
+	  ((data[I] = SplitKey<T, I>::storeFields()), ...);
+	}
+      };
+      static const Fields fields;
+      return fields.data;
+    }(ZuMkSeq<KeyIDs::N>{});
+  }
   // rowSchema() - flatbuffer reflection schema
   const reflection::Schema *rowSchema() const override {
     return reflection::GetSchema(ZfbSchema<T>::data());
@@ -1171,6 +1182,7 @@ public:
   }
 
   // find - lambda(ZdbRowRef<T>)
+  // - non-unique secondary keys return one unspecified match, as do findUpd/Del
   template <unsigned KeyID, typename L>
   ZuInline void find(Shard shard, Key<KeyID> key, L &&l) {
     config().cacheMode == CacheMode::All ?
@@ -1605,7 +1617,7 @@ struct HostCf {
 	s << '"' << id << "\": non-standalone host requires ip and port";
       }));
   }
-  HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
+  ZdbAPI HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf);
 
   static ZuCSpan IDAxor(const HostCf &cfg) { return cfg.id; }
 };
@@ -1619,18 +1631,6 @@ ZfStruct(ZdbAPI, (HostCf, Cf),
   (((up),	(Ctor<4>)),				(String)),
   (((down),	(Ctor<5>)),				(String)));
 
-inline HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
-  HostCf{ZfCf::handler<HostCf>(cf).ctor(id_)}
-{
-  if (!standalone) {
-    if (!cf->resolve("priority"))
-      throw ZfCf_EXCEPT(ZfCfError::required(cf, "priority"));
-    if (!cf->resolve("ip"))
-      throw ZfCf_EXCEPT(ZfCfError::required(cf, "ip"));
-    if (!cf->resolve("port"))
-      throw ZfCf_EXCEPT(ZfCfError::required(cf, "port"));
-  }
-}
 
 ZmRBTreeDerive(HostCfs, HostCf,
   ZmRBTreeKey<HostCf::IDAxor,
@@ -1816,7 +1816,7 @@ struct DBCf {
 	}));
     }
   }
-  DBCf(const ZfCf::AnyNode *cf);
+  ZdbAPI DBCf(const ZfCf::AnyNode *cf);
   DBCf(DBCf &&) = default;
   DBCf &operator =(DBCf &&) = default;
 
@@ -1863,28 +1863,6 @@ ZfStruct(ZdbAPI, (DBCf, Cf),
 #endif
 );
 
-inline DBCf::DBCf(const ZfCf::AnyNode *cf) :
-  DBCf{ZfCf::handler<DBCf>(cf).ctor()}
-{
-  storeCf = cf->resolve("store");
-  auto tables = cf->resolve("tables");
-  if (!tables)
-    throw ZfCf_EXCEPT(ZfCfError::required(cf, "tables"));
-  if (!tables->has<ZfCf::AnyNode::Object>())
-    throw ZfCf_EXCEPT(ZfCfError::badType(tables, "object"));
-  for (auto &field: tables->data<ZfCf::AnyNode::Object>())
-    tableCfs.addNode(
-      new TableCfs::Node{field.p<0>(), field.p<1>()});
-
-  auto hosts = cf->resolve("hosts");
-  if (!hosts)
-    throw ZfCf_EXCEPT(ZfCfError::required(cf, "hosts"));
-  if (!hosts->has<ZfCf::AnyNode::Object>())
-    throw ZfCf_EXCEPT(ZfCfError::badType(hosts, "object"));
-  for (auto &field: hosts->data<ZfCf::AnyNode::Object>())
-    hostCfs.addNode(
-      new HostCfs::Node{field.p<0>(), field.p<1>()});
-}
 
 // --- DB
 
@@ -1918,8 +1896,8 @@ public:
   bool debug() const { return m_cf.debug; }
 #endif
 
-  DB() { }
-  ~DB() { }
+  DB();
+  ~DB();
 
   DB(const DB &) = delete;
   DB &operator =(const DB &) = delete;
@@ -2729,19 +2707,19 @@ inline void SagaStepComplete<M, Complete>::operator ()(bool ok)
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::finish()
+inline void SagaStepComplete<M, Complete>::finish(bool success)
 {
   auto saga_ = ZuMv(saga);
   if (ZuUnlikely(!saga_)) return;
   auto db = saga_->db();
   db->invoke([
     db, saga = ZuMv(saga_), complete = ZuMv(complete),
-    epoch = epoch
+    epoch = epoch, success
   ]() mutable {
     db->sagaRetire();
     if (ZuUnlikely(!saga || epoch != db->m_sagaEpoch ||
 	saga->m_epoch != epoch)) return;
-    finish_(db, ZuMv(saga), ZuMv(complete), true);
+    finish_(db, ZuMv(saga), ZuMv(complete), success);
   });
 }
 
@@ -2930,7 +2908,7 @@ struct SagaDB : public DB {
     m_sagaContext = ZuMv(context);
   }
   template <typename Submit, typename = ZuIfT<SagaCallbackValid<Submit>{}>>
-  bool saga(Shard, SagaID, ZmRef<M>, Submit &&, Complete);
+  bool saga(Shard, SagaID, ZmRef<M>, Submit &&, Complete &&, ZuTime = {});
 
   void final() {
     DB::final();
@@ -2957,13 +2935,13 @@ template <typename Context, typename Catalog, typename Complete, typename M_>
 template <typename Submit, typename>
 inline bool SagaDB<Context, Catalog, Complete, M_>::saga(
     Shard shard, SagaID id, ZmRef<M> saga,
-    Submit &&submit, Complete complete)
+    Submit &&submit, Complete &&complete, ZuTime deadline)
 {
   if (!m_mx || !m_mx->running()) return false;
   return spawn([
     this, shard, id, saga = ZuMv(saga),
     submit = ZuDecay<Submit>{ZuFwd<Submit>(submit)},
-    complete = ZuMv(complete)
+    complete = ZuDecay<Complete>{ZuFwd<Complete>(complete)}, deadline
   ]() mutable {
     if (ZuUnlikely(!saga || !m_sagaCatalogFn)) {
       submit(false);
@@ -2984,13 +2962,20 @@ inline bool SagaDB<Context, Catalog, Complete, M_>::saga(
       submit(false);
       return;
     }
+    auto stepCount = M::stepCount(saga.ptr());
+    if (ZuUnlikely(!stepCount)) {
+      submit(false);
+      return;
+    }
     ZmRef<Row<SagaData>> row;
     try {
       row = new Row<SagaData>{m_sagaTable, shard};
       new (row->ptr()) SagaData{
-	.type = type, .id = id, .shard = shard
+	.type = type, .id = id, .shard = shard, .deadline = deadline
       };
       M::save(saga, row->data().data);
+      saga->init_(this, SagaKey{type, id}, shard, m_sagaEpoch, stepCount,
+	deadline);
     } catch (ZeException &e) {
       ZiLogEvent(ZuMv(e));
       submit(false);
@@ -2999,8 +2984,6 @@ inline bool SagaDB<Context, Catalog, Complete, M_>::saga(
       submit(false);
       return;
     }
-    saga->init_(this, SagaKey{type, id}, shard, m_sagaEpoch,
-	M::stepCount(type));
     ++m_sagaPending;
     m_sagaTable->run(shard, [
       this, saga = ZuMv(saga), row = ZuMv(row),
@@ -3276,8 +3259,11 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadData(ZmRef<SagaScan>
 	throw ZeEXCEPT(Fatal, "Zdb", "duplicate recovered saga");
       ZmRef<M> saga = M::load(row.type, row.data);
       ZuCSpan type = M::type(saga);
+      auto stepCount = M::stepCount(saga.ptr());
+      if (ZuUnlikely(!stepCount))
+	throw ZeEXCEPT(Fatal, "Zdb", "invalid recovered saga length");
       saga->init_(this, SagaKey{type, row.id}, row.shard, m_sagaEpoch,
-	M::stepCount(row.type));
+	stepCount, row.deadline);
       ZmRef<SagaNode> node = new SagaNode{ZuMv(saga)};
       m_sagaHash->addNode(node.ptr());
       m_sagaQueue.pushNode(static_cast<SagaList::Node *>(node.ptr()));
@@ -3349,7 +3335,7 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan
     ZuCSpan tableID;
     SagaOp::T op = SagaOp::Invalid;
     if (ZuUnlikely(row.shard >= nShards() ||
-	!M::stepDef(row.type, row.step, tableID, op) ||
+	!M::stepDef(static_cast<M *>(saga), row.step, tableID, op) ||
 	(row.un == nullUN() && op != SagaOp::Delete))) {
       sagaActivateFail(ZeEXCEPT(Fatal, "Zdb", "invalid recovered saga step"));
       return;

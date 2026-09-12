@@ -1,0 +1,10 @@
+namespace Zum.Legacy.fbs;
+table SignKey {
+  id:string;
+  provider_ref:string;
+  public_jwk:string;
+  not_before:int64;
+  retire_after:int64;
+  state:int8;
+}
+root_type SignKey;

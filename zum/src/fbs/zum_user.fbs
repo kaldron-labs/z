@@ -7,13 +7,11 @@ table User {
   profile:string;
   email:string;
   handle:[ubyte];
-  role_i_ds:[uint64];
   created:int64;
   updated:int64;
   state:int8;
   owner:Zfb.UInt128;
   auth_version:uint64 = 1;
   version:uint64 = 1;
-  oidc_sub:string;
 }
 root_type User;

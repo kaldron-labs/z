@@ -4,8 +4,14 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// zumd REST/OIDC server
+
 #ifndef ZumDaemon_HH
 #define ZumDaemon_HH
+
+#ifndef ZumLib_HH
+#include <zlib/ZumLib.hh>
+#endif
 
 #include <zlib/ZmList.hh>
 
@@ -14,8 +20,10 @@
 #include <zlib/ZfJSON.hh>
 
 #include <zlib/ZumHTTP.hh>
+#include <zlib/ZumIdentityDB.hh>
 #include <zlib/ZumMgmt.hh>
 #include <zlib/ZumJWT.hh>
+#include <zlib/ZumRequest.hh>
 
 #include <zlib/ZtlsPK.hh>
 
@@ -32,6 +40,7 @@ struct DaemonConfig {
   String	admin;
   Bytes		dbKey;
   OIDCHTTPFn	upstreamHTTP;
+  uint64_t	requestTimeout = 15;
   ServerBootstrapResult bootstrap;
 };
 
@@ -155,6 +164,8 @@ struct AdminResult {
 };
 ZuDerive(AdminDoneFn, (ZmFn<void(AdminResult),
   ZmFnHeapID<"zumd.AdminDone">>));
+ZuDerive(AdminAuthFn, (ZmFn<void(bool, Principal),
+  ZmFnHeapID<"zumd.AdminAuth">>));
 struct AdminPermit {
   IDVec roleIDs;
   AppID targetApp = 0;
@@ -164,9 +175,7 @@ struct AdminPermit {
 ZuDerive(AdminAccessFn, (ZmFn<void(AdminPermit),
   ZmFnHeapID<"zumd.AdminAccess">>));
 struct IdemBegin {
-  ActorKind::T actorKind = ActorKind::User;
-  String actorID;
-  Bytes digest;
+  IdemRequest request;
   AdminResult result;
   bool execute = false;
 };
@@ -211,12 +220,12 @@ struct AdminReq : public Zrest::ReqParser<Impl, AdminData> {
     if (!Base::operation(method, target)) return false;
     auto query = target.path.find<"?">();
     if (query >= 0) {
-      this->object->target = String{ZuCSpan{
-	reinterpret_cast<const char *>(target.path.data()),
-	static_cast<unsigned>(query)}};
-      this->object->query = String{ZuCSpan{
-	reinterpret_cast<const char *>(target.path.data() + query + 1),
-	target.path.length() - static_cast<unsigned>(query) - 1}};
+      ZuBSpan path{target.path};
+      path.trunc(unsigned(query));
+      this->object->target = path;
+      path = target.path;
+      path.offset(unsigned(query) + 1);
+      this->object->query = path;
     } else {
       this->object->target = String{target.path};
       this->object->query.null();
@@ -308,6 +317,9 @@ public:
 
   bool init(
     DB *, DBContext *, Requests *, ZiMultiplex *, DaemonConfig);
+  // Main thread, with request admission closed: prepare active-node signing
+  // after bootstrap. init/start do not read an inactive replica's database.
+  bool prepare(ServerBootstrapResult);
   bool start();
   void stop();
   void final();
@@ -315,28 +327,24 @@ public:
   template <typename Link>
   void live(Link *link, const LiveReq &, bool ok)
   {
-    if (ok) send_<HealthOK, LiveReq>(link, "{\"status\":\"live\"}");
+    if (ok) send_<HealthOK, LiveReq>(
+      link, httpJSON(HTTPStatusWire{"live"}));
   }
 
   template <typename Link>
   void ready(Link *link, const ReadyReq &, bool ok)
   {
-    if (!ok) {
+    if (!ok || !m_requests->active()) {
       send_<HealthUnavailable, ReadyReq>(
-        link, "{\"status\":\"unavailable\"}");
+        link, httpJSON(HTTPStatusWire{"unavailable"}));
       return;
     }
-    auto issuers = m_context->issuers;
-    issuers->run(0, [this, issuers, hold = ZmRef<Link>{link}]() mutable {
-      String issuer = m_config.issuer;
-      issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [this,
-          hold = ZuMv(hold)](ZdbRowRef<Issuer> row) mutable {
-        if (row && row->data().bootstrapPhase == BootstrapPhase::Ready)
-          send_<HealthOK, ReadyReq>(hold.ptr(), "{\"status\":\"ready\"}");
-        else
-          send_<HealthUnavailable, ReadyReq>(
-            hold.ptr(), "{\"status\":\"not-ready\"}");
-      });
+    m_provider.ready([this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      if (m_requests->active() && reply.type == ReplyType::OK)
+        send_<HealthOK, ReadyReq>(hold.ptr(), ZuMv(reply.body));
+      else
+        send_<HealthUnavailable, ReadyReq>(
+          hold.ptr(), httpJSON(HTTPStatusWire{"not-ready"}));
     });
   }
 
@@ -345,7 +353,7 @@ public:
   {
     if (!ok || !request.object->data) {
       send_<HealthUnavailable, BootstrapReq>(
-        link, "{\"status\":\"unavailable\"}");
+        link, httpJSON(HTTPStatusWire{"unavailable"}));
       return;
     }
     send_<BootstrapPage, BootstrapReq>(link, bootstrapPage_());
@@ -356,7 +364,7 @@ public:
   {
     if (!ok || !request.object->data) {
       send_<HealthUnavailable, EnrollReq>(
-	link, "{\"status\":\"unavailable\"}");
+	link, httpJSON(HTTPStatusWire{"unavailable"}));
       return;
     }
     send_<BootstrapPage, EnrollReq>(link, enrollPage_());
@@ -366,6 +374,11 @@ public:
   void admin(Link *link, const Request &request, bool ok)
   {
     String correlationID = correlation_();
+    if (!m_requests->active()) {
+      send_<HealthUnavailable, Request>(link, correlate_(
+        error_("unavailable", "server is inactive"), correlationID));
+      return;
+    }
     if (!ok || !request.object) {
       send_<AdminBadRequest, Request>(
         link, correlate_(error_("invalid_request", "invalid request"),
@@ -380,8 +393,8 @@ public:
           correlate_(error_("method_not_allowed", "method is not allowed"),
 	    correlationID), ZuMv(allow));
       else
-        send_<AdminBadRequest, Request>(
-          link, correlate_(error_("invalid_request", "invalid request"),
+        send_<AdminNotFound, Request>(
+          link, correlate_(error_("not_found", "unknown administrative endpoint"),
 	    correlationID));
       return;
     }
@@ -392,125 +405,30 @@ public:
     String ifMatch = request.ifMatch;
     String ifNoneMatch = request.ifNoneMatch;
     String idempotencyKey = request.idempotencyKey;
-    auto issuers = m_context->issuers;
-    issuers->run(0, [this, issuers, op,
-        authorization = ZuMv(authorization),
-        target = ZuMv(target), query = ZuMv(query), body = ZuMv(body),
-        ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
-        idempotencyKey = ZuMv(idempotencyKey),
-        correlationID = ZuMv(correlationID),
-        hold = ZmRef<Link>{link}]() mutable {
-      String issuer = m_config.issuer;
-      issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [this, op,
-          authorization = ZuMv(authorization),
+    AdminDoneFn reply{[this, correlationID, hold = ZmRef<Link>{link}](
+        AdminResult result) mutable {
+      result.body = correlate_(ZuMv(result.body), correlationID);
+      adminSend_<Request>(hold.ptr(), ZuMv(result));
+    }};
+    auto cancel = [reply]() mutable {
+      reply(AdminResult{error_("unavailable", "request unavailable"), 503});
+    };
+    if (!m_requests->run(Zm::now() + ZuTime{double(m_config.requestTimeout)},
+        [this, op, authorization = ZuMv(authorization),
           target = ZuMv(target), query = ZuMv(query), body = ZuMv(body),
           ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
           idempotencyKey = ZuMv(idempotencyKey),
-          correlationID = ZuMv(correlationID),
-          hold = ZuMv(hold)](ZdbRowRef<Issuer> row) mutable {
-        if (!row || row->data().bootstrapPhase != BootstrapPhase::Ready) {
-          send_<HealthUnavailable, Request>(
-            hold.ptr(), correlate_(
-	      error_("unavailable", "server is not ready"), correlationID));
-          return;
-        }
-        Principal principal;
-        if (!adminAuth_(authorization, principal)) {
-          send_<AdminUnauthorized, Request>(
-            hold.ptr(), correlate_(
-	      error_("invalid_token", "invalid bearer token"), correlationID));
-          return;
-        }
-        String required = managementAction(op);
-        bool permitted = false;
-        for (const auto &action: principal.actions)
-          if (action == required) { permitted = true; break; }
-        if (!permitted) {
-          send_<AdminForbidden, Request>(hold.ptr(), correlate_(
-            error_("forbidden", "operation is not permitted"), correlationID));
-          return;
-        }
-        String subject = principal.subject;
-        bool interactive = bool(principal.authMethod);
-        AppID targetApp = 0;
-        bool appScoped = adminTargetApp(target, targetApp);
-        adminAccess_(op, ZuMv(subject), interactive, targetApp, appScoped,
-          [this, op,
-            principal = ZuMv(principal), target = ZuMv(target),
-            query = ZuMv(query), body = ZuMv(body),
-            ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
-            idempotencyKey = ZuMv(idempotencyKey),
-            correlationID = ZuMv(correlationID), hold = ZuMv(hold)](
-              AdminPermit permit) mutable {
-          if (!permit.allowed) {
-            send_<AdminForbidden, Request>(hold.ptr(),
-              correlate_(error_("forbidden", "operation is not permitted"),
-		correlationID));
-            return;
-          }
-          if (managementNeedsIdempotency(op) && !idempotencyKey) {
-            send_<AdminBadRequest, Request>(hold.ptr(), correlate_(error_(
-              "invalid_request", "Idempotency-Key is required"),
-	      correlationID));
-            return;
-          }
-          auto actorKind = principal.authMethod ?
-            ActorKind::User : ActorKind::Client;
-          String actorID = principal.subject;
-          String requestKey = idempotencyKey;
-          Bytes requestDigest;
-          if (requestKey)
-            requestDigest = idemDigest_(op, target, body, ifMatch, ifNoneMatch);
-          idemBegin_(op, actorKind, ZuMv(actorID), ZuMv(requestDigest),
-            ZuMv(requestKey),
-            [this, op, principal = ZuMv(principal), permit = ZuMv(permit),
-              target = ZuMv(target), query = ZuMv(query),
-              body = ZuMv(body), ifMatch = ZuMv(ifMatch),
-              ifNoneMatch = ZuMv(ifNoneMatch),
-              idempotencyKey = ZuMv(idempotencyKey),
-              correlationID = ZuMv(correlationID), hold = ZuMv(hold)](
-                IdemBegin idem) mutable {
-              if (!idem.execute) {
-                idem.result.body = correlate_(ZuMv(idem.result.body),
-		  correlationID);
-                adminSend_<Request>(hold.ptr(), ZuMv(idem.result));
-                return;
-              }
-              auto actorKind = idem.actorKind;
-              auto actorID = ZuMv(idem.actorID);
-              auto digest = ZuMv(idem.digest);
-              String auditActor = principal.subject;
-              AppID auditAppID = permit.targetApp;
-              String auditTarget = target;
-              String callKey = idempotencyKey;
-              adminCall_(op, ZuMv(principal), ZuMv(permit),
-                ZuMv(target), ZuMv(query), ZuMv(body), ZuMv(ifMatch),
-                ZuMv(ifNoneMatch),
-                ZuMv(callKey), [this, actorKind,
-                  actorID = ZuMv(actorID), op,
-                  idempotencyKey = ZuMv(idempotencyKey),
-                  digest = ZuMv(digest),
-                  auditActor = ZuMv(auditActor), auditAppID,
-                  auditTarget = ZuMv(auditTarget),
-                  correlationID = ZuMv(correlationID), hold = ZuMv(hold)](
-                    AdminResult result) mutable {
-                  idemFinish_(actorKind, ZuMv(actorID), op,
-                    ZuMv(idempotencyKey), ZuMv(digest), ZuMv(result),
-                    [this, op, auditActor = ZuMv(auditActor), auditAppID,
-		      auditTarget = ZuMv(auditTarget),
-		      correlationID = ZuMv(correlationID),
-		      hold = ZuMv(hold)](AdminResult result) mutable {
-		      adminAudit_(op, ZuMv(auditActor), auditAppID,
-			ZuMv(auditTarget), ZuMv(correlationID), ZuMv(result),
-			[this, hold = ZuMv(hold)](AdminResult result) mutable {
-			  adminSend_<Request>(hold.ptr(), ZuMv(result));
-			});
-                    });
-                });
-            });
+          correlationID = ZuMv(correlationID), reply](
+            ZmRef<Zum::Request> pending) mutable {
+      adminRequest_(op, ZuMv(authorization), ZuMv(target), ZuMv(query),
+        ZuMv(body), ZuMv(ifMatch), ZuMv(ifNoneMatch),
+        ZuMv(idempotencyKey), ZuMv(correlationID),
+        [pending = ZuMv(pending), reply = ZuMv(reply)](AdminResult result) mutable {
+          pending->complete([reply = ZuMv(reply), result = ZuMv(result)]() mutable {
+            reply(ZuMv(result));
+          });
         });
-      });
-    });
+    }, cancel)) cancel();
   }
 
   template <int Operation, typename Link, typename Request>
@@ -552,6 +470,11 @@ private:
   template <typename Request, typename Link>
   void adminSend_(Link *link, AdminResult result)
   {
+    if (!m_requests->active()) {
+      send_<HealthUnavailable, Request>(link, correlate_(
+        error_("unavailable", "server is inactive"), correlation_()));
+      return;
+    }
     switch (result.status) {
       case 200: send_<HealthOK, Request>(link, ZuMv(result.body)); return;
       case 201: send_<AdminCreated, Request>(link, ZuMv(result.body)); return;
@@ -589,18 +512,21 @@ private:
   static String correlate_(String, ZuCSpan);
   static String issuerJSON_(const Issuer &);
   static String operationsJSON_(unsigned, unsigned, ZuBSpan);
-  bool adminAuth_(ZuCSpan, Principal &) const;
+  void adminAuth_(String, AdminAuthFn);
+  void adminRequest_(int, String, String, String, String,
+    String, String, String, String, AdminDoneFn);
   static bool adminTargetApp(ZuCSpan, AppID &);
   void adminAccess_(int, String, bool, AppID, bool, AdminAccessFn);
   static Bytes idemDigest_(int, ZuCSpan, ZuCSpan, ZuCSpan, ZuCSpan);
   void idemBegin_(int, ActorKind::T, String, Bytes, String, IdemBeginFn);
-  void idemFinish_(ActorKind::T, String, int, String, Bytes,
-    AdminResult, AdminDoneFn);
   void adminAudit_(int, String, AppID, String, String,
     AdminResult, AdminDoneFn);
   void adminCall_(int, Principal, AdminPermit, String, String, String,
-    String, String, String, AdminDoneFn);
+    String, String, String, IdemRequest, AdminDoneFn);
   void serviceCall_(int, String, String, AdminDoneFn);
+  void serviceRequest_(int, String, String, AdminDoneFn);
+  void serviceAuthed_(int, Principal, String, AdminDoneFn);
+  void roleDelete_(AppID, RoleID, String, IdemRequest, AdminDoneFn);
   void authRoute_(AppID, String, AuthRouteDoneFn);
   bool loadKey_();
 
@@ -611,7 +537,7 @@ private:
   DaemonConfig		m_config;
   Server		m_provider;
   ZmRef<Ztls::PK::SK_EC> m_key;
-  Bytes			m_publicKey;
+  String		m_signKeyID;
   Ztls::Random		m_rng;
   Zhttp::Server<Daemon>	m_http;
   bool			m_httpInited = false;

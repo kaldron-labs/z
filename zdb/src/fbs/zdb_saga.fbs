@@ -7,6 +7,7 @@ table SagaData {
   id:Zfb.UInt128;
   shard:uint8;
   data:[ubyte];
+  deadline:Zfb.Time;
 }
 
 root_type SagaData;

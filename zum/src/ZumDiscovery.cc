@@ -5,11 +5,176 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZumDiscovery.hh>
+#include <zlib/ZumKeyDB.hh>
+
+#include <zlib/ZuDerive.hh>
 
 #include <zlib/ZfJSON.hh>
 
 
 namespace Zum {
+
+struct MetadataWire {
+  String issuer;
+  String authorizationEndpoint;
+  String tokenEndpoint;
+  String jwksURI;
+  String revocationEndpoint;
+  String userinfoEndpoint;
+  StringVec responseTypesSupported;
+  StringVec grantTypesSupported;
+  StringVec tokenAuthMethods;
+  StringVec revokeAuthMethods;
+  StringVec subjectTypesSupported;
+  StringVec idTokenAlgs;
+  StringVec scopesSupported;
+  StringVec claimsSupported;
+  StringVec codeChallengeMethods;
+};
+ZfStruct(, (MetadataWire, JSON),
+  (((issuer),		(Required)),	(String)),
+  (((authorizationEndpoint), (JSON::ID<"authorization_endpoint">, Required)), (String)),
+  (((tokenEndpoint),	(JSON::ID<"token_endpoint">, Required)), (String)),
+  (((jwksURI),		(JSON::ID<"jwks_uri">, Required)), (String)),
+  (((revocationEndpoint), (JSON::ID<"revocation_endpoint">, Required)), (String)),
+  (((userinfoEndpoint), (JSON::ID<"userinfo_endpoint">, Required)), (String)),
+  (((responseTypesSupported), (JSON::ID<"response_types_supported">, Required)), (StringVec)),
+  (((grantTypesSupported), (JSON::ID<"grant_types_supported">, Required)), (StringVec)),
+  (((tokenAuthMethods), (JSON::ID<"token_endpoint_auth_methods_supported">, Required)), (StringVec)),
+  (((revokeAuthMethods), (JSON::ID<"revocation_endpoint_auth_methods_supported">, Required)), (StringVec)),
+  (((subjectTypesSupported), (JSON::ID<"subject_types_supported">, Required)), (StringVec)),
+  (((idTokenAlgs), (JSON::ID<"id_token_signing_alg_values_supported">, Required)), (StringVec)),
+  (((scopesSupported), (JSON::ID<"scopes_supported">, Required)), (StringVec)),
+  (((claimsSupported), (JSON::ID<"claims_supported">, Required)), (StringVec)),
+  (((codeChallengeMethods), (JSON::ID<"code_challenge_methods_supported">, Required)), (StringVec)));
+
+using PublicJWK = ZfJSON::Union<>;
+ZuDerive(PublicJWKArray, (ZtArray<PublicJWK,
+  ZtArrayHeapID<"Zum.Discovery.JWKs">>));
+struct PublicJWKVec : public PublicJWKArray {
+  ZuDerive_(PublicJWKVec, PublicJWKArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(PublicJWKVec *);
+};
+struct JWKSReply { PublicJWKVec keys; };
+ZfStruct(, (JWKSReply, JSON),
+  (((keys),		(Required)),	(UDT)));
+ZuDerive(PublicJWKRootArray, (ZtArray<ZuPtr<ZfJSON::AnyNode>,
+  ZtArrayHeapID<"Zum.Discovery.JWKRoots">>));
+
+static bool publicJWK(
+    String &source, PublicJWK &jwk, ZuPtr<ZfJSON::AnyNode> &owner)
+{
+  auto parsed = ZfJSON::scan(source.span());
+  if (parsed.p<0>() != int(source.length()) || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
+      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  jwk = static_cast<const ZfJSON::AnyNode *>(roots[0]);
+  owner = ZuMv(parsed.p<1>());
+  return true;
+}
+
+static bool jwksJSON_(StringVec &sources, String &json, bool strict)
+{
+  JWKSReply reply;
+  PublicJWKRootArray owners;
+  for (auto &source: sources) {
+    PublicJWK jwk;
+    ZuPtr<ZfJSON::AnyNode> owner;
+    if (!publicJWK(source, jwk, owner)) {
+      if (strict) return false;
+      continue;
+    }
+    reply.keys.push(ZuMv(jwk));
+    owners.push(ZuMv(owner));
+  }
+  ZfJSON::save(json, reply);
+  return true;
+}
+
+class SignKeyLoad_ : public ZumObject {
+public:
+  SignKeyLoad_(DBContext *context, String issuer, int64_t now,
+      int64_t expires, unsigned maxKeys, SignKeyFn complete) :
+    m_context{context}, m_issuer{ZuMv(issuer)}, m_now{now},
+    m_expires{expires}, m_maxKeys{maxKeys}, m_complete{ZuMv(complete)} { }
+
+  void start()
+  {
+    if (!m_context || !m_issuer || m_now <= 0 || m_expires <= m_now ||
+	!m_maxKeys || m_maxKeys == UINT_MAX) {
+      m_complete(SignKey{});
+      return;
+    }
+    using Tuple = SignKeyTable::Tuple;
+    m_context->signKeys->selectRows<0>({}, m_maxKeys + 1, [
+      self = ZmRef<SignKeyLoad_>{this}
+    ](ZuUnion<void, Tuple> result, unsigned count) mutable {
+      if (result.template is<Tuple>()) {
+	if (count > self->m_maxKeys) {
+	  self->m_overflow = true;
+	  return;
+	}
+	const auto &key = result.template p<Tuple>();
+	if (key.template p<1>() != self->m_issuer ||
+	    key.template p<2>() != "ES256" ||
+	    key.template p<8>() != State::Active ||
+	    key.template p<6>() > self->m_now ||
+	    (key.template p<7>() && key.template p<7>() < self->m_expires) ||
+	    bool(key.template p<3>()) == bool(key.template p<5>())) return;
+	if (!self->m_id || key.template p<6>() > self->m_start ||
+	    (key.template p<6>() == self->m_start &&
+	      ZuCmp<String>::cmp(key.template p<0>(), self->m_id) > 0)) {
+	  self->m_id = key.template p<0>();
+	  self->m_start = key.template p<6>();
+	}
+	return;
+      }
+      if (self->m_overflow || !self->m_id) {
+	self->m_complete(SignKey{});
+	return;
+      }
+      String id = self->m_id;
+      auto table = self->m_context->signKeys;
+      table->run(0, [table, id = ZuMv(id), self = ZuMv(self)]() mutable {
+	table->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+	  self = ZuMv(self)
+	](ZdbRowRef<SignKey> row) mutable {
+	  if (!row || row->data().issuer != self->m_issuer ||
+	      row->data().algorithm != "ES256" ||
+	      row->data().state != State::Active ||
+	      row->data().notBefore > self->m_now ||
+	      (row->data().retireAfter && row->data().retireAfter < self->m_expires) ||
+	      bool(row->data().providerRef) == bool(row->data().privateMaterial)) {
+	    self->m_complete(SignKey{});
+	    return;
+	  }
+	  self->m_complete(SignKey{row->data()});
+	});
+      });
+    });
+  }
+
+private:
+  DBContext *m_context;
+  String m_issuer;
+  int64_t m_now;
+  int64_t m_expires;
+  unsigned m_maxKeys;
+  SignKeyFn m_complete;
+  String m_id;
+  int64_t m_start = 0;
+  bool m_overflow = false;
+};
+
+void signKeyLoad(DBContext *context, String issuer, int64_t now,
+    int64_t expires, unsigned maxKeys, SignKeyFn complete)
+{
+  ZmRef<SignKeyLoad_> load = new SignKeyLoad_{
+    context, ZuMv(issuer), now, expires, maxKeys, ZuMv(complete)};
+  load->start();
+}
 
 class DiscoveryComplete_ : public ZumObject {
 public:
@@ -39,54 +204,44 @@ private:
   DiscoveryFn	m_complete;
 };
 
-static void endpoint(String &json, ZuCSpan issuer, ZuCSpan path)
+static String endpoint(ZuCSpan issuer, ZuCSpan path)
 {
   String value{issuer};
   if (value && value[value.length() - 1] == '/') value.length(value.length() - 1);
   value << path;
-  ZfJSON::quote(json, value);
+  return value;
 }
 
 String metadataJSON(ZuCSpan issuer)
 {
   String json;
-  json << "{\"issuer\":";
-  ZfJSON::quote(json, issuer);
-  json << ",\"authorization_endpoint\":";
-  endpoint(json, issuer, "/authorize");
-  json << ",\"token_endpoint\":";
-  endpoint(json, issuer, "/token");
-  json << ",\"jwks_uri\":";
-  endpoint(json, issuer, "/jwks");
-  json << ",\"revocation_endpoint\":";
-  endpoint(json, issuer, "/revoke");
-  json << ",\"userinfo_endpoint\":";
-  endpoint(json, issuer, "/userinfo");
-  json << ",\"response_types_supported\":[\"code\"]"
-    ",\"grant_types_supported\":[\"authorization_code\",\"refresh_token\","
-    "\"client_credentials\"]"
-    ",\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\","
-    "\"none\"]"
-    ",\"revocation_endpoint_auth_methods_supported\":["
-    "\"client_secret_basic\",\"none\"]"
-    ",\"subject_types_supported\":[\"public\"]"
-    ",\"id_token_signing_alg_values_supported\":[\"ES256\"]"
-    ",\"scopes_supported\":[\"openid\",\"profile\",\"email\"]"
-    ",\"claims_supported\":[\"sub\",\"iss\",\"aud\",\"exp\",\"iat\","
-    "\"auth_time\",\"nonce\",\"amr\",\"name\","
-    "\"preferred_username\",\"email\"]"
-    ",\"code_challenge_methods_supported\":[\"S256\"]}";
+  ZfJSON::save(json, MetadataWire{
+    .issuer = issuer,
+    .authorizationEndpoint = endpoint(issuer, "/authorize"),
+    .tokenEndpoint = endpoint(issuer, "/token"),
+    .jwksURI = endpoint(issuer, "/jwks"),
+    .revocationEndpoint = endpoint(issuer, "/revoke"),
+    .userinfoEndpoint = endpoint(issuer, "/userinfo"),
+    .responseTypesSupported = {"code"},
+    .grantTypesSupported = {"authorization_code", "refresh_token",
+      "client_credentials"},
+    .tokenAuthMethods = {"client_secret_basic", "none"},
+    .revokeAuthMethods = {"client_secret_basic", "none"},
+    .subjectTypesSupported = {"public"},
+    .idTokenAlgs = {"ES256"},
+    .scopesSupported = {"openid", "profile", "email"},
+    .claimsSupported = {"sub", "iss", "aud", "exp", "iat", "auth_time",
+      "nonce", "amr", "name", "preferred_username", "email"},
+    .codeChallengeMethods = {"S256"}});
   return json;
 }
 
 String jwksJSON(const StringVec &publicJwks)
 {
-  String json{"{\"keys\":["};
-  for (unsigned i = 0, n = publicJwks.length(); i < n; ++i) {
-    if (i) json << ',';
-    json << publicJwks[i];
-  }
-  json << "]}";
+  StringVec sources;
+  for (const auto &source: publicJwks) sources.push(source);
+  String json;
+  jwksJSON_(sources, json, false);
   return json;
 }
 
@@ -96,7 +251,7 @@ public:
       DBContext *context, int64_t now, unsigned maxKeys,
       DiscoveryFn complete) :
     m_context{context}, m_now{now}, m_maxKeys{maxKeys},
-    m_complete{ZuMv(complete)}, m_json{"{\"keys\":["} { }
+    m_complete{ZuMv(complete)} { }
 
   void start()
   {
@@ -115,12 +270,11 @@ public:
 	  return;
 	}
 	auto row = ZuMv(result).template p<Tuple>();
-	if (row.template p<8>() == State::Active &&
+	if ((row.template p<8>() == State::Active || row.template p<8>() == State::Suspended) &&
 	    row.template p<6>() <= self->m_now &&
 	    (!row.template p<7>() || row.template p<7>() > self->m_now) &&
 	    row.template p<4>()) {
-	  if (self->m_keyCount++) self->m_json << ',';
-	  self->m_json << row.template p<4>();
+	  self->m_keys.push(ZuMv(row.template p<4>()));
 	}
 	return;
       }
@@ -134,16 +288,16 @@ private:
     if (m_done) return;
     m_done = true;
     auto complete = ZuMv(m_complete);
-    if (ok) m_json << "]}";
-    complete(ok, ok ? ZuMv(m_json) : String{});
+    String json;
+    if (ok) ok = jwksJSON_(m_keys, json, true);
+    complete(ok, ZuMv(json));
   }
 
   DBContext	*m_context = nullptr;
   int64_t	m_now = 0;
   unsigned	m_maxKeys = 0;
   DiscoveryFn	m_complete;
-  String	m_json;
-  unsigned	m_keyCount = 0;
+  StringVec	m_keys;
   bool		m_overflow = false;
   bool		m_done = false;
 };

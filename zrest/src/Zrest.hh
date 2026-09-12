@@ -63,6 +63,8 @@ struct Request {
   enum { SignQuery = 0 };
   static constexpr uint64_t QueryLimit = 0;
   enum { Body = BodyPolicy::None };
+  // Signed bodies are bracketed by prefixBody() and signBody(); the span
+  // passed to signBody() excludes the prefix.
   enum { SignBody = 0 };
   static constexpr uint64_t BodyLimit = 0;
 
@@ -80,6 +82,8 @@ struct Response {
   enum { Status = 200 };
 
   enum { Body = BodyPolicy::None };
+  // Signed bodies are bracketed by prefixBody() and signBody(); the span
+  // passed to signBody() excludes the prefix.
   enum { SignBody = 0 };
 
   static constexpr unsigned SignBodyBufSize = 1<<10;

@@ -17,14 +17,15 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuInt.hh>
-#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPP.hh>
 #include <zlib/ZuSeq.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
+#include <zlib/ZuTime.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuTL.hh>
+#include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
@@ -90,6 +91,7 @@ struct SagaData {
   SagaID	id;
   Shard		shard;
   SagaPayload	data;
+  ZuTime	deadline;
 
   friend ZuStringT<"Zdb.Saga"> ZdbHeapID(SagaData *);
   friend ZuStringT<"Zdb.Saga.Buf"> ZdbBufHeapID(SagaData *);
@@ -99,7 +101,8 @@ ZfbStruct(ZdbAPI, SagaData,
   (((type),	(Ctor<0>, Keys<0>)),	(String)),
   (((id),	(Ctor<1>, Keys<0>)),	(UInt128)),
   (((shard),	(Ctor<2>)),		(UInt8)),
-  (((data),	(Ctor<3>)),		(Bytes)));
+  (((data),	(Ctor<3>)),		(Bytes)),
+  (((deadline),	(Ctor<4>)),		(Time)));
 
 ZfbRoot(SagaData);
 
@@ -134,13 +137,15 @@ struct SagaTypeStep {
   IDString	table;
   uint32_t	step;
   SagaOp::T	op;
+  bool		repeat = false;
 };
 
 ZfbStruct(ZdbAPI, SagaTypeStep,
   (((type),	(Ctor<0>, Keys<0>)),	(String)),
   (((step),	(Ctor<2>, Keys<0>)),	(UInt32)),
   (((table),	(Ctor<1>)),		(String)),
-  (((op),	(Ctor<3>, Enum<SagaOp::Map>)), (Int8)));
+  (((op),	(Ctor<3>, Enum<SagaOp::Map>)), (Int8)),
+  (((repeat),	(Ctor<4>)),		(Bool)));
 
 ZfbRoot(SagaTypeStep);
 
@@ -192,7 +197,9 @@ public:
   SagaID id() const { return m_key.template p<1>(); }
   Shard shard() const { return m_shard; }
   uint32_t step() const { return m_step; }
+  uint32_t iteration() const { return m_iteration; }
   uint64_t epoch() const { return m_epoch; }
+  ZuTime deadline() const { return m_deadline; }
 
 protected:
   Saga_() = default;
@@ -200,7 +207,7 @@ protected:
 private:
   void init_(
       DB *db, SagaKey key, Shard shard, uint64_t epoch,
-      unsigned stepCount) {
+      unsigned stepCount, ZuTime deadline) {
     m_db = db;
     m_key = ZuMv(key);
     m_locs.length(stepCount, false);
@@ -208,6 +215,8 @@ private:
     m_epoch = epoch;
     m_shard = shard;
     m_step = 0;
+    m_iteration = 0;
+    m_deadline = deadline;
     m_fwd = true;
     m_rec = nullptr;
     m_uns = nullptr;
@@ -218,7 +227,9 @@ private:
   SagaLocs	m_locs;
   uint64_t	m_epoch = 0;
   uint32_t	m_step = 0;
+  uint32_t	m_iteration = 0;
   Shard		m_shard = 0;
+  ZuTime	m_deadline;
   bool		m_fwd = true;
   SagaRec	*m_rec = nullptr;	// staged recovery step
   SagaUNHash	*m_uns = nullptr;	// staged serial-replay reservations
@@ -357,7 +368,7 @@ struct SagaStepComplete {
 private:
   template <typename, typename> friend struct MSaga;
 
-  void finish();
+  void finish(bool);
   static void run_(DB *, ZmRef<M>, Complete);
   static void delStep_(DB *, ZmRef<M>, Complete, unsigned, bool);
   static void finish_(DB *, ZmRef<M>, Complete, bool);
@@ -550,7 +561,64 @@ struct SagaStepsValid_<ZuTypeList<Steps...>> :
 
 template <typename S>
 struct SagaDefValid : public ZuBool<
-  (S::NSteps > 0) && SagaStepsValid_<SagaSteps<S>>{}> { };
+  (S::NSteps > 0) && SagaStepsValid_<SagaSteps<S>>{} &&
+  !ZuType<S::NSteps - 1, SagaSteps<S>>::Repeat> { };
+
+template <typename Steps> struct SagaRepeats;
+template <typename ...Steps>
+struct SagaRepeats<ZuTypeList<Steps...>> :
+  public ZuBool<(Steps::Repeat || ...)> { };
+
+// Repetition counts are immutable saved payload data, never live DB queries.
+// The persisted catalog describes phases; journal step IDs describe individual
+// effects. A terminal, non-repeated phase retains the existing commit boundary.
+template <typename Def>
+struct SagaLayout {
+  using Steps = SagaSteps<Def>;
+
+  template <unsigned I>
+  static uint64_t count(const Def &def) {
+    if constexpr (ZuType<I, Steps>::Repeat)
+      return def.template repeat<I>();
+    else
+      return 1;
+  }
+
+  static unsigned size(const Def &def) {
+    if constexpr (!SagaRepeats<Steps>{})
+      return Def::NSteps;
+    else {
+      unsigned size = 0;
+      bool valid = true;
+      ZuUnroll::all<Def::NSteps>([&def, &size, &valid](auto I) {
+	if (!valid) return;
+	auto n = count<I>(def);
+	if (n > UINT32_MAX - size) valid = false;
+	else size += unsigned(n);
+      });
+      return valid ? size : 0;
+    }
+  }
+
+  static unsigned phase(const Def &def, unsigned step, unsigned &iteration) {
+    iteration = 0;
+    if constexpr (!SagaRepeats<Steps>{})
+      return step;
+    else {
+      unsigned phase = Def::NSteps;
+      ZuUnroll::all<Def::NSteps>([&def, &step, &iteration, &phase](auto I) {
+	if (phase != Def::NSteps) return;
+	auto n = count<I>(def);
+	if (step < n) {
+	  phase = I;
+	  iteration = step;
+	} else
+	  step -= unsigned(n);
+      });
+      return phase;
+    }
+  }
+};
 
 template <typename Sagas> struct SagaDefsValid_;
 template <typename ...S>
@@ -561,9 +629,6 @@ template <typename Context, typename Sagas> struct SagaBasesValid_;
 template <typename Context, typename ...S>
 struct SagaBasesValid_<Context, ZuTypeList<S...>> :
   public ZuBool<(ZuIsBase<S, SagaBase<Context>>{} && ...)> { };
-
-template <typename Catalog>
-struct SagaIDs { using Keys = SagaTypes<typename Catalog::List>; };
 
 template <typename Catalog, typename Impl_>
 struct MSaga : public MSaga_<Catalog, MSagaHeap<Catalog>> {
@@ -579,10 +644,7 @@ struct MSaga : public MSaga_<Catalog, MSagaHeap<Catalog>> {
     "duplicate saga type");
   ZuAssert((SagaDefsValid_<Sagas>{}), "invalid saga definition");
 
-  static int match(ZuCSpan type) {
-    static constexpr auto matcher = ZuMatcher<SagaIDs<Catalog>>();
-    return matcher.exact(type);
-  }
+  static int match(ZuCSpan type) { return Catalog::match(type); }
 
   static bool catalog(unsigned type, unsigned step, SagaTypeStep &row) {
     if (type >= Sagas::N) return false;
@@ -596,7 +658,8 @@ struct MSaga : public MSaga_<Catalog, MSagaHeap<Catalog>> {
 	  .type = typename Def::Type{}(),
 	  .table = typename Step::TableID{}(),
 	  .step = J,
-	  .op = Step::Op
+	  .op = Step::Op,
+	  .repeat = Step::Repeat
 	};
 	return true;
       });
@@ -680,12 +743,25 @@ private:
   static void run_(Def &def, ZmRef<M> saga, SagaCompleteFn complete) {
 	auto ptr = saga.ptr();
 	auto step = ptr->step();
-	if (ZuLikely(step < Def::NSteps)) {
+	if (ZuUnlikely(!ptr->m_fwd && ptr->m_rec &&
+	    (ptr->m_rec->un == nullUN() ||
+	     ZuCmp<UN>::cmp(ptr->m_rec->table->nextUN(ptr->m_rec->shard),
+	       ptr->m_rec->un) <= 0))) {
+	  SagaStepComplete<M, SagaCompleteFn>{
+	    ZuMv(saga), ptr->epoch(), step, false, ZuMv(complete)}(true);
+	  return;
+	}
+	if (ZuLikely(step < ptr->m_locs.length())) {
+	  auto phase = SagaLayout<Def>::phase(def, step, ptr->m_iteration);
+	  if (ZuUnlikely(phase >= Def::NSteps)) {
+	    ptr->result_(OpResult::Invalid, ptr->shard());
+	    return;
+	  }
 	  bool fwd = ptr->m_fwd;
 	  SagaStepComplete<M, SagaCompleteFn> stepComplete{
 	    ZuMv(saga), ptr->epoch(), step, fwd, ZuMv(complete)};
 	  if (fwd) {
-	    ZuSwitch::dispatch<Def::NSteps>(step,
+	    ZuSwitch::dispatch<Def::NSteps>(phase,
 		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
 	      (void)def.template operator()<I, true, SagaCompleteFn>(
 		ZuMv(complete));
@@ -695,7 +771,7 @@ private:
 	      stepComplete(true);
 	      return;
 	    }
-	    ZuSwitch::dispatch<Def::NSteps - 1>(step,
+	    ZuSwitch::dispatch<Def::NSteps - 1>(phase,
 		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
 	      (void)def.template operator()<I, false, SagaCompleteFn>(
 		ZuMv(complete));
@@ -704,10 +780,10 @@ private:
 	    stepComplete(false);
 	  return;
 	}
-	if (ZuLikely(step == Def::NSteps)) {
+	if (ZuLikely(step == ptr->m_locs.length())) {
 	  SagaStepComplete<M, SagaCompleteFn>{
-	    ZuMv(saga), ptr->epoch(), step, true, ZuMv(complete)
-	  }.finish();
+	    ZuMv(saga), ptr->epoch(), step, ptr->m_fwd, ZuMv(complete)
+	  }.finish(ptr->m_fwd);
 	  return;
 	}
 	ptr->result_(OpResult::Invalid, ptr->shard());
@@ -731,26 +807,45 @@ public:
     });
   }
 
+  static unsigned stepCount(const M *saga) {
+    return saga->u.cdispatch([](auto, const auto &def) {
+      return SagaLayout<ZuDecay<decltype(def)>>::size(def);
+    });
+  }
+
   template <typename Steps>
-  static bool stepDef_(unsigned step, ZuCSpan &table, SagaOp::T &op) {
+  static bool stepDef_(unsigned step, ZuCSpan &table, SagaOp::T &op,
+      bool *repeat = nullptr) {
     if (step >= Steps::N) return false;
-    return ZuSwitch::dispatch<Steps::N>(step, [&table, &op](auto I) {
+    return ZuSwitch::dispatch<Steps::N>(step, [&table, &op, repeat](auto I) {
       using Step = ZuType<I, Steps>;
       table = typename Step::TableID{}();
       op = Step::Op;
+      if (repeat) *repeat = Step::Repeat;
       return true;
     });
   }
 
   static bool stepDef(
-      ZuCSpan type, unsigned step, ZuCSpan &table, SagaOp::T &op) {
+      ZuCSpan type, unsigned step, ZuCSpan &table, SagaOp::T &op,
+      bool *repeat = nullptr) {
     int i = match(type);
     if (ZuUnlikely(i < 0)) return false;
     return ZuSwitch::dispatch<Sagas::N>(unsigned(i),
-	[step, &table, &op](auto I) {
+	[step, &table, &op, repeat](auto I) {
 	  using Def = ZuType<I, Sagas>;
-	  return stepDef_<SagaSteps<Def>>(step, table, op);
+	  return stepDef_<SagaSteps<Def>>(step, table, op, repeat);
 	});
+  }
+
+  static bool stepDef(
+      const M *saga, unsigned step, ZuCSpan &table, SagaOp::T &op) {
+    return saga->u.cdispatch([step, &table, &op](auto, const auto &def) {
+      using Def = ZuDecay<decltype(def)>;
+      unsigned iteration;
+      auto phase = SagaLayout<Def>::phase(def, step, iteration);
+      return stepDef_<SagaSteps<Def>>(phase, table, op);
+    });
   }
 
 };
@@ -784,9 +879,10 @@ inline void SagaCatalog__::load(SagaTypeStep row)
   if (typeIndex >= 0) {
     ZuCSpan table;
     SagaOp::T op = SagaOp::Invalid;
+    bool repeat = false;
     if (row.step != step ||
-	!MSaga<Catalog>::stepDef(type, row.step, table, op) ||
-	row.table != table || row.op != op) {
+	!MSaga<Catalog>::stepDef(type, row.step, table, op, &repeat) ||
+	row.table != table || row.op != op || row.repeat != repeat) {
       error = ZeEXCEPT(Fatal, "Zdb", ([
 	type = ZeString{type}, step = row.step
       ](auto &s) {
@@ -804,16 +900,24 @@ inline void SagaCatalog__::load(SagaTypeStep row)
 using ZdbSagaID = Zdb_::SagaID;
 using ZdbSagaType = Zdb_::SagaType;
 namespace ZdbSagaOp = Zdb_::SagaOp;
-template <typename TableID_, ZdbSagaOp::T Op_>
+template <typename TableID_, ZdbSagaOp::T Op_, bool Repeat_ = false>
 struct ZdbSagaStep_ {
   using TableID = TableID_;
-  enum { Op = Op_ };
+  enum { Op = Op_, Repeat = Repeat_ };
 };
 #define ZdbSagaStep(step_, table, op) \
   template <unsigned Step, bool Fwd = true, \
     typename Complete = Zdb_::SagaCompleteFn> \
   ZuIfT<Step == step_, \
     ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op>> \
+  operator ()(Complete complete)
+#define ZdbSagaRepeatStep(step_, table, op, count_) \
+  template <unsigned Step> \
+  ZuIfT<Step == step_, uint64_t> repeat() const { return (count_); } \
+  template <unsigned Step, bool Fwd = true, \
+    typename Complete = Zdb_::SagaCompleteFn> \
+  ZuIfT<Step == step_, \
+    ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op, true>> \
   operator ()(Complete complete)
 using ZdbSaga = Zdb_::Saga;
 template <typename Context>

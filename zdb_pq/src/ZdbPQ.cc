@@ -212,21 +212,25 @@ void Store::stop(StopFn fn)
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  m_stopFn = ZuMv(fn);
-  m_stopping = true; // inhibits further application requests
-
-  run([this]() mutable { enqueue(Work::Stop{}); });
+  run([this, fn = ZuMv(fn)]() mutable {
+    m_stopFn = ZuMv(fn);
+    m_stopping = true; // store-thread admission fence
+    enqueue(Work::Stop{});
+  });
 }
 
 void Store::stop_()	// called after dequeuing Stop
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  if (!m_sent.count_()) { stop_0(); return; }
+  if (!m_queue.count_() && !m_sent.count_()) stop_0();
 }
 
 void Store::stop_0()
 {
+  // send() and recv() can both observe the drained queue in one event turn.
+  // Only one continuation may close the loop and release the stop callback.
+  if (m_eventLoop.stopping()) return;
   m_eventLoop.stop(ZiEvent::StopFn{
     this,
     [](Store *store, ZiEvent::StopResult) {
@@ -292,6 +296,7 @@ void Store::recv()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
+  if (m_eventLoop.stopping()) return;
   bool stop = false;
 
   bool consumed;
@@ -448,6 +453,7 @@ void Store::send()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
+  if (m_eventLoop.stopping()) return;
   int sendState = SendState::Unsent;
 
   using namespace Work;
@@ -460,7 +466,7 @@ void Store::send()
 	break;
       case Task::Index<Stop>{}:
 	stop_();
-	break;
+	return;
       case Task::Index<TblQuery>{}: {
 	auto &tblQuery = work->data().p<TblQuery>();
 	switch (tblQuery.query.type()) {
@@ -1691,30 +1697,57 @@ int StoreTbl::prepSelect_send()
   if (m_openState.phase() == OpenState::PrepSelectKNX ||
       m_openState.phase() == OpenState::PrepSelectKNI ||
       m_openState.phase() == OpenState::PrepSelectRNX ||
-      m_openState.phase() == OpenState::PrepSelectRNI) // continuation
-    for (i = k; i < n; i++) {
-      auto type = xKeyFields[i].type;
-      if (!i) // k could be 0
-	query << " WHERE ";
-      else
-	query << " AND ";
-      query << '"' << xKeyFields[i].id_ << '"';
-      if (keyFields[i]->descend & (uint64_t(1)<<keyID)) {
-	if (m_openState.phase() == OpenState::PrepSelectKNI ||
-	    m_openState.phase() == OpenState::PrepSelectRNI) // inclusive
-	  query << "<=";
-	else
-	  query << '<';
-      } else {
-	if (m_openState.phase() == OpenState::PrepSelectKNI ||
-	    m_openState.phase() == OpenState::PrepSelectRNI) // inclusive
-	  query << ">=";
-	else
-	  query << '>';
-      }
-      query << '$' << (i + 1) << "::" << m_store->oids().name(type);
-      oids.push(m_store->oids().oid(type));
+      m_openState.phase() == OpenState::PrepSelectRNI) { // continuation
+    bool inclusive = m_openState.phase() == OpenState::PrepSelectKNI ||
+      m_openState.phase() == OpenState::PrepSelectRNI;
+    unsigned descending = 0;
+    for (i = k; i < n; ++i) {
+      descending += bool(keyFields[i]->descend & (uint64_t(1)<<keyID));
+      oids.push(m_store->oids().oid(xKeyFields[i].type));
     }
+    auto param = [this, &query, &xKeyFields](unsigned field) {
+      query << '$' << (field + 1) << "::" <<
+        m_store->oids().name(xKeyFields[field].type);
+    };
+    if (k < n) {
+      query << (k ? " AND " : " WHERE ");
+      if (!descending || descending == n - k) {
+	// Uniform direction: PostgreSQL row comparison follows index order.
+	query << '(';
+	for (i = k; i < n; ++i) {
+	  if (i > k) query << ',';
+	  query << '"' << xKeyFields[i].id_ << '"';
+	}
+	query << ')' << (descending ? '<' : '>');
+	if (inclusive) query << '=';
+	query << '(';
+	for (i = k; i < n; ++i) {
+	  if (i > k) query << ',';
+	  param(i);
+	}
+	query << ')';
+      } else {
+	// Mixed directions: equal prefixes followed by the first differing
+	// member. Only the last alternative includes the boundary itself.
+	query << '(';
+	for (i = k; i < n; ++i) {
+	  if (i > k) query << " OR ";
+	  query << '(';
+	  for (unsigned j = k; j < i; ++j) {
+	    query << '"' << xKeyFields[j].id_ << "\"=";
+	    param(j);
+	    query << " AND ";
+	  }
+	  query << '"' << xKeyFields[i].id_ << '"' <<
+	    ((keyFields[i]->descend & (uint64_t(1)<<keyID)) ? '<' : '>');
+	  if (inclusive && i + 1 == n) query << '=';
+	  param(i);
+	  query << ')';
+	}
+	query << ')';
+      }
+    }
+  }
   if (k < n) {
     query << " ORDER BY ";
     for (i = k; i < n; i++) {
@@ -2260,10 +2293,9 @@ void StoreTbl::count_rcvd(Work::Count &count, PGresult *res)
 {
   // ZiLOG(Debug, "ZdbPQ", ([v = m_openState.v](auto &s) { s << ZuBoxed(v).hex(); }));
 
-  if (!res) {
-    count.countFn(CountResult{CountData{.count = 0}});
-    return;
-  }
+  // PGgetResult() returns null after the result already delivered above.
+  // Unlike select(), count() is a one-shot callback and has no EOR callback.
+  if (!res) return;
 
   if (PQntuples(res) != 1 ||
       PQnfields(res) != 1 ||
@@ -2583,10 +2615,10 @@ int StoreTbl::write_send(Work::Write &write)
 
   if (!write.mrd) {
     auto &maxUN = m_maxUN[shard];
-    if (maxUN != ZdbNullUN() && un <= maxUN)
+    if (maxUN != ZdbNullUN() && un <= maxUN) {
+      write.commitFn(ZuMv(write.buf), CommitResult{});
       return SendState::Unsent;
-    maxUN = un;
-    m_maxSN = sn;
+    }
   }
 
   /* ZiLOG(Debug, "ZdbPQ", ([un, sn, vn = record->vn()](auto &s) {
@@ -2655,8 +2687,25 @@ void StoreTbl::write_rcvd(Work::Write &write, PGresult *res)
 
   auto record = record_(msg_(write.buf->hdr()));
   if (res) {
-    if (!write.mrd && !record->vn())
-      write.skipped = !strcmp(PQcmdTuples(res), "0");
+    if (!write.mrd) {
+      if (!record->vn()) {
+	write.skipped = !strcmp(PQcmdTuples(res), "0");
+      } else if (strcmp(PQcmdTuples(res), "1")) {
+	write_failed(write, ZeEXCEPT(Error, "ZdbPQ", ([
+	  operation = ZeString{record->vn() > 0 ? "update" : "delete"}
+	](auto &s) {
+	  s << operation << " failed - primary key missing";
+	})));
+	return;
+      }
+    }
+    if (write.mrd || (record->vn() >= 0 && !write.skipped)) {
+      auto shard = record->shard();
+      auto un = record->un();
+      auto sn = ZfbTransform::UInt128::load(record->sn());
+      m_maxUN[shard] = un;
+      if (m_maxSN == ZdbNullSN() || sn > m_maxSN) m_maxSN = sn;
+    }
     return;
   }
   if ((record->vn() < 0 || write.skipped) && !write.mrd) {

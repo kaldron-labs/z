@@ -3247,7 +3247,8 @@ struct ZfFieldType_FloatVec : public ZfFieldType_<Props_> {
       bool first = true;
       for (unsigned i = 0, n = ZuTraits<T>::length(print.vec); i < n; i++) {
 	if (!first) s << Fmt::VecDelim(); else first = false;
-	ZuBox<ZuFPType<sizeof(T)>> v = print.vec[i];
+	using Elem = ZuDecay<decltype(print.vec[i])>;
+	ZuBox<Elem> v = print.vec[i];
 	if constexpr (ZuFieldProp::HasNDP<Props>{})
 	  s << v.template fp<ZuFieldProp::GetNDP<Props>{}, '\0', Fmt>();
 	else
@@ -3948,7 +3949,7 @@ inline ZfVKeyFieldArray ZfVKeyFields() {
 // - Init - fields initialized post-construction
 // - Save - fields used to fully persist an object
 // - Upd - mutable fields that may be present in an update, and the primary key
-// - Del - the primary key
+// - Del - all key fields
 
 // ZfFieldFiltered<ZfFieldFilter::Load, Fields>;
 namespace ZfFieldFilter {
@@ -3979,7 +3980,7 @@ namespace ZfFieldFilter {
     bool(ZuFieldProp::Key<typename Field::Props, 0>{})>;
 
   template <typename Field>
-  using Del = ZuFieldProp::Key<typename Field::Props, 0>;
+  using Del = ZuBool<bool(ZuFieldProp::GetKeys<typename Field::Props>::N)>;
 }
 
 // ZfVStructInfo aggregates the field metadata a run-time

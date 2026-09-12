@@ -5,6 +5,9 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZumToken.hh>
+#include <zlib/ZumDB.hh>
+#include <zlib/ZumDBOps.hh>
+#include <zlib/ZumKeyDB.hh>
 
 #include <zlib/ZumAdmin.hh>
 
@@ -130,7 +133,7 @@ private:
     }
     m_scope = ZuMv(data.selection.scope);
     auto sign = ZuMv(m_sign);
-    sign(m_key.providerRef, m_prepared.digest, [
+    sign(m_key, m_prepared.digest, [
       self = ZmRef<ClientToken_>{this}
     ](Bytes signature) mutable {
       self->signed_(ZuMv(signature));
@@ -236,17 +239,15 @@ private:
 
   void reuseAudit_()
   {
-    auditWrite(m_context, Audit{
+    logEvent(Audit{
       .time = m_now,
       .issuer = m_family.issuer,
       .actor = m_family.clientID,
       .target = auditID(m_family.id),
       .event = AuditEvent::RefreshReuse,
       .outcome = AuditOutcome::Failure
-    }, [self = ZmRef<RefreshToken_>{this}](int error) mutable {
-      self->finish_(error == AdminError::OK ?
-	OAuthError::InvalidGrant : OAuthError::ServerError, {});
     });
+    finish_(OAuthError::InvalidGrant, {});
   }
 
   void reuse_()
@@ -315,8 +316,8 @@ private:
 	return;
       }
     }
-    m_scope = ZuMv(data.selection.scope);
-    m_sign(m_key.providerRef, m_prepared.digest, [
+    m_response.scope = ZuMv(data.selection.scope);
+    m_sign(m_key, m_prepared.digest, [
       self = ZmRef<RefreshToken_>{this}
     ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
   }
@@ -330,10 +331,9 @@ private:
       return;
     }
     m_response.accessToken = ZuMv(m_prepared.token);
-    m_response.scope = ZuMv(m_scope);
     m_response.expiresIn = uint64_t(m_expires - m_now);
     if (m_hasID) {
-      m_sign(m_key.providerRef, m_idPrepared.digest, [
+      m_sign(m_key, m_idPrepared.digest, [
         self = ZmRef<RefreshToken_>{this}
       ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
       return;
@@ -356,7 +356,7 @@ private:
   void rotate_()
   {
     refreshFinish(m_context, *m_rng, m_family.id, m_presentedDigest,
-      m_family.issuer, m_family.appID, m_scope,
+      m_family.issuer, m_family.appID, m_response.scope,
       ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion,
       m_family.userID, m_family.userVersion, m_now,
       m_generationLimit, m_spentLimit, [
@@ -412,7 +412,6 @@ private:
   PreparedJWT	m_prepared;
   PreparedJWT	m_idPrepared;
   TokenResponse	m_response;
-  String	m_scope;
   IDVec		m_scopeIDs;
   ZtBitmap	m_actions;
   uint64_t	m_authVersion = 0;
@@ -513,8 +512,8 @@ private:
 	return;
       }
     }
-    m_scope = ZuMv(data.selection.scope);
-    m_sign(m_key.providerRef, m_prepared.digest, [
+    m_response.scope = ZuMv(data.selection.scope);
+    m_sign(m_key, m_prepared.digest, [
       self = ZmRef<CodeToken_>{this}
     ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
   }
@@ -528,10 +527,9 @@ private:
       return;
     }
     m_response.accessToken = ZuMv(m_prepared.token);
-    m_response.scope = ZuMv(m_scope);
     m_response.expiresIn = uint64_t(m_accessExpires - m_now);
     if (m_hasID) {
-      m_sign(m_key.providerRef, m_idPrepared.digest, [
+      m_sign(m_key, m_idPrepared.digest, [
         self = ZmRef<CodeToken_>{this}
       ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
       return;
@@ -555,7 +553,7 @@ private:
   {
     CodeFamily family;
     if (!codeFamilyPrepare(*m_rng, m_code, m_codeDigest,
-      m_scope, ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion, m_now,
+      m_response.scope, ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion, m_now,
 	m_refreshExpires, family, m_response.refreshToken)) {
       finish_(OAuthError::ServerError, {});
       return;
@@ -564,12 +562,12 @@ private:
     ZdbSagaID sagaID;
     ZuAssert((sizeof(sagaID) == 16));
     memcpy(&sagaID, m_code.id.data(), sizeof(sagaID));
-    m_sagaID = sagaID;
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(family));
     if (!sagaSubmit(m_db, sagaID, ZuMv(saga),
       SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::sagaSubmit_>{}},
-      SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::saga_>{}}))
+      SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::saga_>{}},
+      ZuTime{m_refreshExpires}))
       sagaSubmit_(false);
   }
 
@@ -582,23 +580,7 @@ private:
       finish_(OAuthError::InvalidGrant, {});
       return;
     }
-    auto grants = m_context->grants;
-    Bytes id = m_code.id;
-    grants->run(0, [
-      self = ZmRef<CodeToken_>{this}, grants, id = ZuMv(id)
-    ]() mutable {
-      grants->findDel<0>(0, ZuFwdTuple(ZuMv(id)), [
-	self = ZuMv(self)
-      ](ZdbRow<Grant> *row) mutable {
-	if (!row || row->data().kind != GrantKind::Code ||
-	    row->data().state != State::Consumed ||
-	    row->data().owner != self->m_sagaID || !row->commit()) {
-	  self->finish_(OAuthError::ServerError, {});
-	  return;
-	}
-	self->release_();
-      });
-    });
+    release_();
   }
 
   void release_()
@@ -629,11 +611,9 @@ private:
   PreparedJWT	m_prepared;
   PreparedJWT	m_idPrepared;
   TokenResponse	m_response;
-  String	m_scope;
   IDVec		m_scopeIDs;
   ZtBitmap	m_actions;
   Bytes		m_familyID;
-  ZdbSagaID	m_sagaID;
   uint64_t	m_authVersion = 0;
   bool		m_signDone = false;
   bool		m_idSignDone = false;
@@ -660,8 +640,9 @@ public:
       return;
     }
     if (!m_form.mutable_()) m_form.length(m_form.length());
-    parseToken({m_form.data(), m_form.length()}, m_params);
-    int error = validateToken(m_params, m_grant);
+    bool parsed = parseToken({m_form.data(), m_form.length()}, m_params);
+    int error = parsed ? validateToken(m_params, m_grant) :
+      ProfileError::Unsupported;
     if (error) {
       finish_(error == ProfileError::Unsupported ?
 	OAuthError::UnsupportedGrantType : OAuthError::InvalidRequest);
@@ -717,16 +698,14 @@ private:
   void clientAuthFail_(int error, String actor)
   {
     clear_();
-    auditWrite(m_context, Audit{
+    logEvent(Audit{
       .time = m_config.now,
       .issuer = m_config.issuer,
       .actor = ZuMv(actor),
       .event = AuditEvent::ClientAuthentication,
       .outcome = AuditOutcome::Failure
-    }, [self = ZmRef<TokenRequest_>{this}, error](int auditError) mutable {
-      self->finish_(auditError == AdminError::OK ?
-	error : OAuthError::ServerError);
     });
+    finish_(error);
   }
 
   void client_(ZdbRowRef<Client> row)
@@ -794,23 +773,18 @@ private:
 
   void loadKey_()
   {
-    if (!m_config.keyID) {
-      finish_(OAuthError::ServerError);
-      return;
-    }
-    String id = m_config.keyID;
-    m_context->signKeys->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+    signKeyLoad(m_context, m_config.issuer, m_config.now,
+      m_config.accessExpires, m_config.maxKeys, [
       self = ZmRef<TokenRequest_>{this}
-    ](ZdbRowRef<SignKey> row) mutable { self->key_(ZuMv(row)); });
+    ](SignKey key) mutable { self->key_(ZuMv(key)); });
   }
 
-  void key_(ZdbRowRef<SignKey> row)
+  void key_(SignKey key)
   {
-    if (!row) {
+    if (!key.id) {
       finish_(OAuthError::ServerError);
       return;
     }
-    SignKey key = row->data();
     clear_();
     auto complete = ZuMv(m_complete);
     if (m_grant == TokenGrant::ClientCredentials) {
@@ -959,8 +933,8 @@ public:
       return;
     }
     if (!m_form.mutable_()) m_form.length(m_form.length());
-    parseRevoke({m_form.data(), m_form.length()}, m_params);
-    if (validateRevoke(m_params)) {
+    if (!parseRevoke({m_form.data(), m_form.length()}, m_params) ||
+	validateRevoke(m_params)) {
       finish_(OAuthError::InvalidRequest);
       return;
     }
@@ -1067,7 +1041,7 @@ private:
       finish_(OAuthError::ServerError);
       return;
     }
-    auditWrite(m_context, Audit{
+    logEvent(Audit{
       .time = m_config.now,
       .issuer = m_config.issuer,
       .actor = m_client.id,
@@ -1075,9 +1049,8 @@ private:
       .event = AuditEvent::Revocation,
       .outcome = AuditOutcome::Success,
       .detail = "refresh token"
-    }, [self = ZmRef<RevokeRequest_>{this}](int error) mutable {
-      self->finish_(error ? OAuthError::ServerError : RevokeIssue::OK);
     });
+    finish_(RevokeIssue::OK);
   }
 
   DBContext	*m_context = nullptr;

@@ -1,0 +1,36 @@
+include "zfb_types.fbs";
+namespace Zum.Legacy.fbs;
+table Grant {
+  id:[ubyte];
+  issuer:string;
+  user_i_d:uint64;
+  client_i_d:string;
+  credential_i_d:[ubyte];
+  audience:string;
+  redirect_u_r_i:string;
+  scope_i_ds:[uint64];
+  actions:Zfb.Bitmap;
+  digest:[ubyte];
+  spent:[Zfb.Bytes];
+  challenge:[ubyte];
+  binding_digest:[ubyte];
+  pkce_challenge:[ubyte];
+  oauth_state:string;
+  auth_version:uint64;
+  auth_time:int64;
+  created:int64;
+  expires:int64;
+  generation:uint32;
+  kind:int8;
+  purpose:int8;
+  state:int8;
+  owner:Zfb.UInt128;
+  user_name:string;
+  user_handle:[ubyte];
+  role_i_ds:[uint64];
+  label:string;
+  user_version:uint64 = 1;
+  actor:string;
+  oauth_state_present:bool;
+}
+root_type Grant;

@@ -13,12 +13,17 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/ZumDB.hh>
-#include <zlib/ZumJWT.hh>
+#include <zlib/ZuDerive.hh>
 
+#include <zlib/ZmScheduler.hh>
 #include <zlib/ZmRef.hh>
 
+#include <zlib/ZumOAuth.hh>
+#include <zlib/ZumJWT.hh>
+
 namespace Zum {
+
+struct DBContext;
 
 // OIDC state, nonce, and PKCE verifier each carry 256 bits of entropy.
 enum { OIDCRandomSize = 32 };
@@ -44,7 +49,7 @@ struct OIDCRoleMap {
   RoleID	roleID = 0;
 };
 
-using OIDCRoleMapVec = ZtArray<OIDCRoleMap, VecHeap>;
+ZuDerive(OIDCRoleMapVec, (ZtArray<OIDCRoleMap, VecHeap>));
 
 struct OIDCConfig {
   AppID		appID = 0;
@@ -68,6 +73,10 @@ struct OIDCConfig {
   ClaimSource::T claimSource = ClaimSource::IDToken;
   unsigned	roles = OIDCRoles::Local;
   unsigned	clientAuth = OIDCClientAuth::Basic;
+  String	prompt;
+  String	loginHint;
+  uint64_t	maxAge = 0;
+  bool		maxAgePresent = false;
 };
 
 struct OIDCClaims {
@@ -78,6 +87,7 @@ struct OIDCClaims {
   StringVec	roleValues;
   StringVec	eligibilityValues;
   int64_t	iat = 0;
+  int64_t	authTime = 0;
   int64_t	expires = 0;
 };
 

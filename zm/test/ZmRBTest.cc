@@ -44,6 +44,7 @@ struct ZCmp {
 };
 
 ZmRBTreeDerive(Tree, ZmRef<Z>, ZmRBTreeCmp<ZCmp>);
+ZmRBTreeKVDerive(KVTree, int, int, ZmRBTreeUnique<false>);
 
 using TreeDefault = ZmRBTree<ZmRef<Z>, Tree_NTP>;
 using TreeExplicit = ZmRBTree<ZmRef<Z>, Tree_NTP, Tree_Node, Tree>;
@@ -94,6 +95,18 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  {
+    KVTree tree;
+    tree.add(1, 10);
+    tree.add(1, 11);
+    tree.add(2, 20);
+    auto removed = tree.del(1, 11);
+    ZuCheck(removed && removed->val() == 11);
+    ZuCheck(tree.count_() == 2);
+    ZuCheck(tree.findVal(1) == 10);
+    tree.clean();
+    ZuCheck(!tree.count_());
+  }
   Tree tree;
   log("sizeof(Tree::Node)=", sizeof(Tree::Node));
   ZmRef<Z> z;

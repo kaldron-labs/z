@@ -12,6 +12,7 @@ table SagaTypeStep {
   step:uint32;
   table:string;
   op:SagaOp;
+  repeat:bool;
 }
 
 root_type SagaTypeStep;

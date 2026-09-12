@@ -55,7 +55,6 @@ static int hpackStaticIndex_(ZuBSpan name, ZuBSpan value)
     unsigned(i), [&index, &value](auto nameIndex) {
       using Key = ZuType<nameIndex, HPackStatic_::Names>;
       using KeyEntries = HPackStatic_::Entries<Key>;
-      using KeyValues = HPackStatic_::Values<Key>;
       static constexpr auto matcher = ZuMatcher<HPackValueIDs<nameIndex>>();
       int j = matcher.exact(value);
       if (j < 0) return;

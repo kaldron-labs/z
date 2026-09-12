@@ -53,7 +53,6 @@ static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
     unsigned(i), [&index, &value](auto nameIndex) {
       using Key = ZuType<nameIndex, QPackStatic_::Names>;
       using KeyEntries = QPackStatic_::Entries<Key>;
-      using KeyValues = QPackStatic_::Values<Key>;
       static constexpr auto matcher = ZuMatcher<QPackValueIDs<nameIndex>>();
       int j = matcher.exact(value);
       if (j < 0) return;

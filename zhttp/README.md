@@ -487,6 +487,19 @@ hubs.stop([](bool) { /* shutdown continuation */ });
 hubs.final();
 ```
 
+`Hubs`, client pools, and `Client` require a completed stop before `final()`
+(initialization failures that never started are also safe to finalize).
+Finalization does not initiate another shutdown or wait for Rx/Tx. A service
+owner can post finalization to its owning shard after the asynchronous stop
+continuation; synchronous `stop()` remains a main-thread convenience. Clients
+that own the process-wide resolver must still finalize that resolver on the
+main thread; worker-owned clients use an externally managed resolver.
+Client and pool `start(done)` use the same native `Hubs` controller as shutdown;
+concurrent startup requests and stop-during-start follow its engine semantics.
+`Hubs::add` registers an already initialized, externally owned component without
+reinitializing it. Client pools use this to preserve pool configuration failure
+isolation while sharing the native lifecycle controller.
+
 QUIC configuration defaults include H3 ALPN, control streams, QPACK, flow
 control, and passive migration.  Applications override only the policy they
 need.  The test client and server expose these migration policy switches:
