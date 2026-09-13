@@ -54,9 +54,12 @@ struct ReqParser : public Request, public Zhttp::Parser {
 
   bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyLength = length;
-    return type != Zhttp::BodyType::Streamed &&
-      (!Impl::BodyLimit || length <= Impl::BodyLimit) &&
-      (Impl::Body != BodyPolicy::Zero || !length);
+    if constexpr (Impl::Body == BodyPolicy::None ||
+	Impl::Body == BodyPolicy::Zero)
+      return type != Zhttp::BodyType::Fixed || !length;
+    else
+      return type != Zhttp::BodyType::Streamed &&
+	(!Impl::BodyLimit || length <= Impl::BodyLimit);
   }
 
   template <typename Rx> bool body(Rx &rx) {
@@ -81,7 +84,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
 	    using Body_URI_Facet = Impl::Body_URI_Facet;
-	    auto scan = ZfURI::scan(span);
+	    auto scan = ZfURI::scan(span, true);
 	    if (scan.p<0>() < 0 || !scan.p<1>()) {
 	      object = nullptr;
 	      return;
@@ -221,26 +224,13 @@ struct ResBuilder : public Response, public Zhttp::Builder {
   }
 };
 
-template <unsigned Method>
-struct MethodFilter {
-  template <typename Req>
-  using Filter = ZuBool<Req::Method == Method>;
-};
-
-template <typename Req>
-using ReqPath = typename Req::Path;
-
-template <typename Reqs, unsigned Method>
-struct PathIDs {
-  using MethodReqs =
-    ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
-  using Keys = ZuTypeMap<ReqPath, MethodReqs>;
-};
-
-template <typename Reqs_>
+template <typename Catalog_, unsigned Skip_ = 0>
 struct MReqParser : public Zhttp::Parser {
-  using Reqs = Reqs_;
-  using Headers = MergeHdrs<Reqs>;
+  using Catalog = Catalog_;
+  using Reqs = typename Catalog::List;
+  enum { Skip = Skip_ };
+  using HdrCatalog = typename Catalog::ReqHeaders;
+  using Headers = typename HdrCatalog::List;
   using Union = GetUnion<Reqs>;
 
   Union		u;
@@ -257,23 +247,27 @@ struct MReqParser : public Zhttp::Parser {
       if constexpr (!MethodReqs::N) {
 	return false;
       } else {
-	constexpr auto matcher = ZuMatcher<PathIDs<Reqs, MethodI>>();
-	auto j = matcher.match(target.path);
+	auto path = target.path;
+	if constexpr (Skip)
+	  if (ZuUnlikely(!skip(path, Skip))) return false;
+	auto j = Catalog::reqMatch(method, path);
 	if (j < 0) return false;
 	return ZuSwitch::dispatch<MethodReqs::N>(j,
-	    [this, method, &target](auto J) -> bool {
+	    [this, method, &path, &target](auto J) -> bool {
 	  static constexpr unsigned ReqI = J;
 	  using Req = ZuType<ReqI, MethodReqs>;
 	  if constexpr (Req::Exact) {
 	    using Path = typename Req::Path;
 	    constexpr unsigned n = Path{}().length();
-	    if (target.path.length() != n &&
+	    if (path.length() != n &&
 		(Req::Query == QueryPolicy::None ||
-		 target.path.length() <= n || target.path[n] != '?'))
+		 path.length() <= n || path[n] != '?'))
 	      return false;
 	  }
 	  auto request = new (u.template new_<Req, true>()) Req();
 	  request->init();
+	  // Skip projects a suffix for dispatch only.  Concrete operations receive
+	  // the full target so typed URI fields can load the leading components.
 	  if (!request->operation(method, target)) {
 	    u = {};
 	    return false;
@@ -350,12 +344,13 @@ struct MReqParser : public Zhttp::Parser {
   void reset() { u.null(); }
 };
 
-template <typename Parser_>
+template <typename Catalog_>
 struct MResBuilder : public Zhttp::ResBuilder {
-  using Parser = Parser_;
-  using Reqs = typename Parser::Reqs;
+  using Catalog = Catalog_;
+  using Reqs = typename Catalog::List;
   using AllResponses = GetAllResponses<Reqs>;
-  using Headers = MergeHdrs<AllResponses>;
+  using HdrCatalog = typename Catalog::ResHeaders;
+  using Headers = typename HdrCatalog::List;
   static constexpr unsigned HdrBufSize =
     ZuTypeApply<MaxHdrBufSize, AllResponses>{};
   using Union = GetUnion<AllResponses>;
@@ -369,7 +364,7 @@ struct MResBuilder : public Zhttp::ResBuilder {
     response->init(object);
   }
 
-  template <typename Res, typename Object>
+  template <typename Res, typename Parser, typename Object>
   void init(const Parser &parser, Object *object) {
     ZuSwitch::dispatch<Reqs::N>(parser.u.type() - 1,
 	[this, object](auto I) {

@@ -26,15 +26,17 @@ noinst_HEADERS = ZrestITestPorts.hh
 zrestmatrix_SOURCES = zrestmatrix.cc
 
 if HAVE_GO
-all-local: zrestprobe
+all-local: zrestprobe zrestua
 zrestprobe: $(srcdir)/zrestprobe.go
 	$(GO) build -o $@ $(srcdir)/zrestprobe.go
+zrestua: $(srcdir)/zrestua.go
+	$(GO) build -o $@ $(srcdir)/zrestua.go
 
 clean-local:
-	rm -f zrestprobe
+	rm -f zrestprobe zrestua
 endif
 
-EXTRA_DIST = README.md zrestprobe.go
+EXTRA_DIST = README.md zrestprobe.go zrestua.go
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

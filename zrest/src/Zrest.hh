@@ -11,6 +11,10 @@
 
 #include <zlib/ZrestLib.hh>
 
+#include <zlib/ZuMatcher.hh>
+
+#include <zlib/ZmLHash.hh>
+
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtScratch.hh>
 
@@ -51,6 +55,10 @@ using Headers = typename Headers_<Impl>::T;
 ZuDerive(SignBuf, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf">>));
 
 struct DefltHdrs { };
+
+// Advance path past n complete leading components, retaining the slash before
+// the remaining path.  The zero case is an inlined no-op for literal dispatch.
+ZrestExtern bool skip(ZuSpan<uint8_t> &path, unsigned n);
 
 struct Request {
   using Headers = DefltHdrs;
@@ -168,7 +176,14 @@ struct MergeHdrs_ {
 template <typename List>
 using MergeHdrs = typename MergeHdrs_<List>::T;
 
-template <typename Req> using GetResponses = typename Req::Responses;
+template <typename Req, typename = void>
+struct GetResponses_ { using T = ZuTypeList<>; };
+template <typename Req>
+struct GetResponses_<Req, decltype(
+  ZuDeclVal<typename Req::Responses *>(), void())> {
+  using T = typename Req::Responses;
+};
+template <typename Req> using GetResponses = typename GetResponses_<Req>::T;
 template <typename Reqs>
 using GetAllResponses = ZuTypeApply<
   ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>;
@@ -187,6 +202,107 @@ using GetResIndex = ZuTypeIndex<ReqRes<Req, Res>, GetAllReqRes<Reqs>>;
 template <typename List>
 using GetUnion = ZuTypeApply<ZuUnion, typename List::template Unshift<void>>;
 
+template <unsigned Method>
+struct MethodFilter {
+  template <typename Req>
+  using Filter = ZuBool<Req::Method == Method>;
+};
+
+template <typename Req>
+using ReqPath = typename Req::Path;
+
+template <typename Reqs, unsigned Method>
+struct PathIDs {
+  using MethodReqs =
+    ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
+  using Keys = ZuTypeMap<ReqPath, MethodReqs>;
+};
+
+template <typename Reqs>
+int reqMatch(Zhttp::Method::T method, ZuBSpan path)
+{
+  return ZuSwitch::dispatch<Zhttp::Method::N>(method,
+      [&path](auto I) -> int {
+    static constexpr unsigned MethodI = I;
+    using MethodReqs =
+      ZuTypeGrep<MethodFilter<MethodI>::template Filter, Reqs>;
+    if constexpr (!MethodReqs::N) return -1;
+    else {
+      static constexpr auto matcher = ZuMatcher<PathIDs<Reqs, MethodI>>();
+      return matcher.match(path);
+    }
+  });
+}
+
+template <typename Res> using GetStatus = ZuUnsigned<Res::Status>;
+template <typename Req>
+using GetStatuses = ZuTypeMap<GetStatus, GetResponses<Req>>;
+
+template <typename Req> struct GetResLookup_ {
+  using Statuses = GetStatuses<Req>;
+  using Responses = GetResponses<Req>;
+  enum { N = Responses::N };
+  enum { Bits = ZuIntrin::log2(N) };
+  using Hash_ =
+    ZmLHashKV<unsigned, unsigned, ZmLHashStatic<Bits, ZmLHashLocal<>>>;
+  struct Hash : public Hash_ {
+    using Hash_::add;
+    Hash() {
+      for (unsigned i = 0; i < N; i++)
+	ZuSwitch::dispatch<N>(i, [this](auto I) {
+	  this->add(ZuType<I, Statuses>{}(), I);
+	});
+    }
+  };
+  using T = Hash;
+};
+template <typename Req>
+using GetResLookup = typename GetResLookup_<Req>::T;
+
+template <typename Reqs>
+int resMatch(unsigned request, unsigned status)
+{
+  return ZuSwitch::dispatch<Reqs::N>(request,
+      [status](auto I) -> int {
+    static constexpr unsigned ReqI = I;
+    using Req = ZuType<ReqI, Reqs>;
+    using Responses = GetResponses<Req>;
+    if constexpr (!Responses::N) return -1;
+    else {
+      static const GetResLookup<Req> lookup;
+      unsigned response = lookup.findVal(status);
+      if (ZuCmp<unsigned>::null(response)) return -1;
+      return ZuSwitch::dispatch<Responses::N>(response,
+	[](auto J) -> int {
+	  static constexpr unsigned ResI = J;
+	  using Res = ZuType<ResI, Responses>;
+	  return GetResIndex<Reqs, Req, Res>{};
+	});
+    }
+  });
+}
+
 } // Zrest
+
+#define ZrestCatalogDerive(Name, Reqs) \
+  ZhttpHdrCatalogDerive(Name##ReqHeaders, Zrest::MergeHdrs<Reqs>); \
+  ZhttpHdrCatalogDerive(Name##ResHeaders, \
+    Zrest::MergeHdrs<Zrest::GetAllResponses<Reqs>>); \
+  struct Name { \
+    using List = Reqs; \
+    using ReqHeaders = Name##ReqHeaders; \
+    using ResHeaders = Name##ResHeaders; \
+    static int reqMatch(Zhttp::Method::T, ZuBSpan); \
+    static int resMatch(unsigned, unsigned); \
+  }
+#define ZrestCatalogImpl(Name) \
+  ZhttpHdrCatalogImpl(Name##ReqHeaders) \
+  ZhttpHdrCatalogImpl(Name##ResHeaders) \
+  int Name::reqMatch(Zhttp::Method::T method, ZuBSpan path) { \
+    return Zrest::reqMatch<List>(method, path); \
+  } \
+  int Name::resMatch(unsigned request, unsigned status) { \
+    return Zrest::resMatch<List>(request, status); \
+  }
 
 #endif /* Zrest_HH */

@@ -196,8 +196,11 @@ struct ResParser : public Response, public Zhttp::Parser {
 
   bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
     bodyLength = length;
-    return type != Zhttp::BodyType::Streamed &&
-      (Impl::Body != BodyPolicy::Zero || !length);
+    if constexpr (Impl::Body == BodyPolicy::None ||
+	Impl::Body == BodyPolicy::Zero)
+      return type != Zhttp::BodyType::Fixed || !length;
+    else
+      return type != Zhttp::BodyType::Streamed;
   }
 
   template <typename Rx> bool body(Rx &rx) {
@@ -218,7 +221,7 @@ struct ResParser : public Response, public Zhttp::Parser {
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
 	    using Body_URI_Facet = Impl::Body_URI_Facet;
-	    auto scan = ZfURI::scan(span);
+	    auto scan = ZfURI::scan(span, true);
 	    auto handler = ZfURI::handler<Object, Body_URI_Facet>(scan.p<1>());
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::Raw) {
@@ -235,10 +238,12 @@ struct ResParser : public Response, public Zhttp::Parser {
   }
 };
 
-template <typename Reqs_>
+template <typename Catalog_>
 struct MReqBuilder : public Zhttp::ReqBuilder {
-  using Reqs = Reqs_;
-  using Headers = MergeHdrs<Reqs>;
+  using Catalog = Catalog_;
+  using Reqs = typename Catalog::List;
+  using HdrCatalog = typename Catalog::ReqHeaders;
+  using Headers = typename HdrCatalog::List;
   static constexpr unsigned HdrBufSize = ZuTypeApply<MaxHdrBufSize, Reqs>{};
   using Union = GetUnion<Reqs>;
 
@@ -300,44 +305,15 @@ struct MReqBuilder : public Zhttp::ReqBuilder {
   }
 };
 
-template <typename Res> using GetStatus = ZuUnsigned<Res::Status>;
-template <typename Req>
-using GetStatuses = ZuTypeMap<GetStatus, GetResponses<Req>>;
-
-template <typename Req> struct GetResLookup_ {
-  using Statuses = GetStatuses<Req>;
-  using Responses = GetResponses<Req>;
-  enum { N = Responses::N };
-  enum { Bits = ZuIntrin::log2(N) };
-  using Hash_ =
-    ZmLHashKV<unsigned, unsigned, ZmLHashStatic<Bits, ZmLHashLocal<>>>;
-  struct Hash : public Hash_ {
-    using Hash_::add;
-    Hash() {
-      for (unsigned i = 0; i < N; i++)
-	ZuSwitch::dispatch<N>(i, [this](auto I) {
-	  this->add(ZuType<I, Statuses>{}(), I);
-	});
-    }
-  };
-  using T = Hash;
-};
-template <typename Req>
-using GetResLookup = typename GetResLookup_<Req>::T;
-template <typename Reqs>
-using GetReqLookup = ZuTypeApply<ZuTuple, ZuTypeMap<GetResLookup, Reqs>>;
-
-template <typename Builder_>
+template <typename Catalog_, typename Builder_>
 struct MResParser : public Zhttp::Parser {
+  using Catalog = Catalog_;
   using Builder = Builder_;
-  using Reqs = typename Builder::Reqs;
+  using Reqs = typename Catalog::List;
   using AllResponses = GetAllResponses<Reqs>;
-  using Headers = MergeHdrs<AllResponses>;
+  using HdrCatalog = typename Catalog::ResHeaders;
+  using Headers = typename HdrCatalog::List;
   using Union = GetUnion<AllResponses>;
-  using Lookup = GetReqLookup<Reqs>;
-
-  inline static Lookup lookup;
-
   Union		u;
   const Builder	*builder = nullptr;
 
@@ -345,21 +321,15 @@ struct MResParser : public Zhttp::Parser {
 
   bool status(unsigned code) {
     auto i = builder->u.type() - 1;
-    return ZuSwitch::dispatch<Reqs::N>(i, [this, code](auto I) -> bool {
-      static constexpr unsigned ReqI = I;
-      unsigned j = lookup.template p<ReqI>().findVal(code);
-      if (ZuCmp<unsigned>::null(j)) return false;
-      using Req = ZuType<ReqI, Reqs>;
-      using Responses = GetResponses<Req>;
-      ZuSwitch::dispatch<Responses::N>(j, [this](auto J) {
-	static constexpr unsigned ResI = J;
-	using Res = ZuType<ResI, Responses>;
-	constexpr unsigned K = GetResIndex<Reqs, Req, Res>{};
-	auto response = new (u.template new_<K + 1, true>()) Res();
+    int j = Catalog::resMatch(i, code);
+    if (j < 0) return false;
+    return ZuSwitch::dispatch<AllResponses::N>(unsigned(j),
+      [this](auto J) -> bool {
+        using Res = ZuType<J, AllResponses>;
+	auto response = new (u.template new_<J + 1, true>()) Res();
 	response->init();
+        return true;
       });
-      return true;
-    });
   }
 
   template <typename Key, typename Value>

@@ -8,7 +8,7 @@
 #define ZrestITestPorts_HH
 
 namespace ZrestITestPort {
-  enum { Matrix = 20700, MatrixEnd = 20709 };
+  enum { Matrix = 20700, MatrixEnd = 20720 };
 }
 
 #endif /* ZrestITestPorts_HH */

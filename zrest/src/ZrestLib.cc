@@ -6,6 +6,23 @@
 
 // Z REST library
 
-#include <zlib/ZrestLib.hh>
+#include <zlib/Zrest.hh>
 
 ZrestExtern const char ZrestLib[] = "@(#) Z REST Library v" Z_VERNAME;
+
+namespace Zrest {
+
+ZrestExtern bool skip(ZuSpan<uint8_t> &path, unsigned n)
+{
+  if (ZuLikely(!n)) return true;
+  if (ZuUnlikely(!path || path[0] != '/')) return false;
+  for (unsigned i = 0; i < n; ++i) {
+    path.offset(1);
+    auto offset = path.find([](auto c) { return c == '/'; });
+    if (ZuUnlikely(offset < 0)) return false;
+    path.offset(offset);
+  }
+  return true;
+}
+
+} // Zrest
