@@ -682,6 +682,13 @@ void pointers()
     ZfURI::scan(rawInput).p<1>()).alloc();
   ZuCheck(raw && raw->value == 7);
   delete raw;
+
+  char bodyInput[] = "value=9";
+  auto bodyTree = ZfURI::scan(bodyInput, true);
+  auto body = ZfURI::handler<URIPtrObj>(bodyTree.p<1>()).alloc();
+  ZuCheck(bodyTree.p<0>() == int(sizeof(bodyInput) - 1));
+  ZuCheck(body && body->value == 9);
+  delete body;
 }
 
 void unions()

@@ -472,12 +472,14 @@ public:
   using Link = Link_;
   using Profile = Profile_;
   using ResParser = ResParser_;
-  using ReqHeaders = typename Request::Headers;
-  using RespHeaders = typename ResParser::Headers;
+  using ReqHdrCatalog = typename Request::HdrCatalog;
+  using RespHdrCatalog = typename ResParser::HdrCatalog;
+  using ReqHeaders = typename ReqHdrCatalog::List;
+  using RespHeaders = typename RespHdrCatalog::List;
   using Message = MessageTraits<Profile>;
   ZuAssert((ZuIs_<ResParser, Zhttp::Parser>{}),
     "Zhttp::Client requires ResParser to derive from Zhttp::Parser");
-  using ReqHeaderKeys = typename HeaderList<ReqHeaders>::Keys;
+  using ReqHeaderKeys = typename HeaderList<ReqHdrCatalog>::Keys;
   enum { ReqContentLength =
     ZuTypeIn<ZuStringT<"content-length">, ReqHeaderKeys>{} };
   ZuAssert((
@@ -544,7 +546,7 @@ private:
     }
 
     Request		*app = nullptr;
-    HeaderSpans<ReqHeaders> spans;
+    HeaderSpans<ReqHdrCatalog> spans;
     ZuBSpan		target;
     ZuBSpan		authority;
     uint64_t		produced = 0;
@@ -557,10 +559,10 @@ private:
   struct Builder_ :
     public Message::template Request<
       Builder_<HasBody, Streaming>,
-      ReqHeaders, HasBody, Streaming>,
+      ReqHdrCatalog, HasBody, Streaming>,
     public ReqOps {
     using Base = typename Message::template Request<
-      Builder_, ReqHeaders, HasBody, Streaming>;
+      Builder_, ReqHdrCatalog, HasBody, Streaming>;
     static constexpr unsigned HdrBufSize = Request::HdrBufSize;
 
     Builder_(
@@ -585,7 +587,7 @@ private:
 
   struct ParserSink_ {
     using Protocol = typename Message::template ResponseParser<
-      Parser, RespHeaders>;
+      Parser, RespHdrCatalog>;
     using State = typename Protocol::State;
 
     bool operation(Method::T, Target &) { return true; }
@@ -634,10 +636,10 @@ private:
 
   struct Parser :
     public Message::template ResponseParser<
-      Parser, RespHeaders>,
+      Parser, RespHdrCatalog>,
     public ParserSink_ {
     using Base = typename Message::template ResponseParser<
-      Parser, RespHeaders>;
+      Parser, RespHdrCatalog>;
     using State = typename Base::State;
 
     using ParserSink_::body;
@@ -5349,8 +5351,8 @@ public:
   using ReqBuilder = typename Tx::Msg;
   using ReqBuilder_ = typename ReqBuilder::T;
   using ResParser = ResParser_;
-  using ReqHeaders = typename ReqBuilder_::Headers;
-  using RespHeaders = typename ResParser::Headers;
+  using ReqHdrCatalog = typename ReqBuilder_::HdrCatalog;
+  using RespHdrCatalog = typename ResParser::HdrCatalog;
   using Self = Pool;
 
   using RouteState = ClientRouteState;
@@ -5591,12 +5593,12 @@ public:
       m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_config = config;
     if (config.secure() && config.tls())
-      m_hpackSeeds.template add<ReqHeaders>(tls.hpackTxCapacity());
+      m_hpackSeeds.template add<ReqHdrCatalog>(tls.hpackTxCapacity());
     if (config.secure() && config.quic()) {
       auto params = H3::Params().qpackLimits({
 	quic.qpackRxCapacity(), quic.qpackTxCapacity(),
 	quic.qpackRxBlocked(), quic.qpackTxSections()});
-      m_qpackSeeds.template add<ReqHeaders>(
+      m_qpackSeeds.template add<ReqHdrCatalog>(
 	params, quic.qpackTxCapacity());
     }
     URLString origin;

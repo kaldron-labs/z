@@ -14,7 +14,13 @@ using namespace ZuTestUtil;
 
 namespace ZhttpH2MessageTest_ {
 
-using TestHeaders = ZhttpHeaders("x-test");
+using TestHeaderList = ZhttpHeaders("x-test");
+ZhttpHdrCatalogDerive(TestHeaders, TestHeaderList);
+ZhttpHdrCatalogImpl(TestHeaders)
+
+using BuildHeaderList = ZhttpHeaders("content-length", "x-test");
+ZhttpHdrCatalogDerive(BuildHeaders, BuildHeaderList);
+ZhttpHdrCatalogImpl(BuildHeaders)
 
 template <typename Base_>
 struct SyntheticParser : public Base_ {
@@ -50,7 +56,7 @@ struct Parsed :
   public SyntheticParser<Zhttp::H2::Parser<Parsed, true, TestHeaders>> {
   using Base = SyntheticParser<Zhttp::H2::Parser<Parsed, true, TestHeaders>>;
   using Base::reset;
-  using Headers = TestHeaders;
+  using HdrCatalog = TestHeaders;
 
   Parsed() : Base{1024} { }
 
@@ -135,7 +141,7 @@ struct Response :
   public SyntheticParser<Zhttp::H2::Parser<Response, false, TestHeaders>> {
   using Base = SyntheticParser<Zhttp::H2::Parser<Response, false, TestHeaders>>;
   using Base::reset;
-  using Headers = TestHeaders;
+  using HdrCatalog = TestHeaders;
 
   Response() : Base{1024} { }
 
@@ -194,11 +200,11 @@ struct Response :
 struct RejectingRequest :
   public Zhttp::Parser,
   public SyntheticParser<
-    Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>> {
+    Zhttp::H2::Parser<RejectingRequest, true, Zhttp::DefltHdrCatalog>> {
   using Base = SyntheticParser<
-    Zhttp::H2::Parser<RejectingRequest, true, ZuTypeList<>>>;
+    Zhttp::H2::Parser<RejectingRequest, true, Zhttp::DefltHdrCatalog>>;
   using Base::reset;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   RejectingRequest() : Base{1024} { }
 
@@ -308,10 +314,10 @@ struct BuildOps : public Zhttp::Builder {
 
 struct RequestBuild :
   public Zhttp::H2::Request<
-    RequestBuild, ZhttpHeaders("content-length", "x-test"),
+    RequestBuild, BuildHeaders,
     true>,
   public BuildOps {
-  using Headers = ZhttpHeaders("content-length", "x-test");
+  using HdrCatalog = BuildHeaders;
   using BuildOps::header;
   using BuildOps::host;
   using BuildOps::operation;
@@ -319,10 +325,10 @@ struct RequestBuild :
 
 struct ResponseBuild :
   public Zhttp::H2::Response<
-    ResponseBuild, ZhttpHeaders("content-length", "x-test"),
+    ResponseBuild, BuildHeaders,
     true>,
   public BuildOps {
-  using Headers = ZhttpHeaders("content-length", "x-test");
+  using HdrCatalog = BuildHeaders;
   using BuildOps::header;
   using BuildOps::status;
 };
@@ -330,7 +336,7 @@ struct ResponseBuild :
 struct ConnectBuild :
   public Zhttp::Builder,
   public Zhttp::H2::Request<ConnectBuild> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -367,11 +373,11 @@ struct StreamConsumer {
 struct StreamResponse :
   public Zhttp::Parser,
   public SyntheticParser<
-    Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>>> {
+    Zhttp::H2::Parser<StreamResponse, false, Zhttp::DefltHdrCatalog>> {
   using Base = SyntheticParser<
-    Zhttp::H2::Parser<StreamResponse, false, ZuTypeList<>>>;
+    Zhttp::H2::Parser<StreamResponse, false, Zhttp::DefltHdrCatalog>>;
   using Base::reset;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   StreamResponse() : Base{1}, consumer{this} {
     dispatch.init(link, consumer);

@@ -652,10 +652,12 @@ using CNodeArray = const NodeArray;
 using NodeObject = typename AnyNode::Object;
 using CNodeObject = const NodeObject;
 
-// scan URI (path + query), build parse tree
+// scan URI (path + query), or form body, and build parse tree
 ZfExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan key);
-ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuSpan<char> span);
-ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(ZuPtr<AnyNode>, ZuSpan<char> span);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(
+  ZuSpan<char> span, bool body = false);
+ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(
+  ZuPtr<AnyNode>, ZuSpan<char> span, bool body = false);
 
 // --- output functions
 

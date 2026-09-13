@@ -122,9 +122,18 @@ template <typename Heap = ZuVoid> struct Pool_;
 struct ReqBuilder_;
 struct ResParser;
 
+using ReqHeaderList =
+  ZuTypeList<ZuStringT<"content-length">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(ReqHeaders, ReqHeaderList);
+ZhttpHdrCatalogImpl(ReqHeaders)
+using ResHeaderList =
+  ZuTypeList<ZuStringT<"location">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(ResHeaders, ResHeaderList);
+ZhttpHdrCatalogImpl(ResHeaders)
+
 struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   using ContentLength = ZuStringT<"content-length">;
-  using Headers = ZuTypeList<ContentLength, ZuTypeList<>>;
+  using HdrCatalog = ReqHeaders;
   Zhttp::BodyPolicy::T bodyPolicy() const {
     return bodyData ?
       Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
@@ -198,7 +207,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 int listenerAt(uint16_t);
 
 struct ResParser : public Zhttp::Parser {
-  using Headers = ZuTypeList<ZuStringT<"location">, ZuTypeList<>>;
+  using HdrCatalog = ResHeaders;
 
   bool enable1xx() const { return false; }
 

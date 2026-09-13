@@ -28,10 +28,14 @@ static void appendBytes(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 namespace ZhttpQPackDynamicTest_ {
 
 using StreamAlloc = ZiIOBufAlloc<256, 4096, "ZhttpQPackDynamicTest.Buf">;
-using BuilderHeaders = ZhttpHeaders("accept");
-using SeedHeaders = ZhttpHeaders(
+using BuilderHeaderList = ZhttpHeaders("accept");
+ZhttpHdrCatalogDerive(BuilderHeaders, BuilderHeaderList);
+ZhttpHdrCatalogImpl(BuilderHeaders)
+using SeedHeaderList = ZhttpHeaders(
   ("x-fixed", "fixed"), "x-runtime",
   ("content-type", "application/json"), ("connection", "close"));
+ZhttpHdrCatalogDerive(SeedHeaders, SeedHeaderList);
+ZhttpHdrCatalogImpl(SeedHeaders)
 
 struct CustomTarget {
   template <typename S>
@@ -133,7 +137,7 @@ struct BuilderState :
   public Zhttp::Builder,
   public Zhttp::H3::Request<BuilderState, BuilderHeaders> {
   using Base = Zhttp::H3::Request<BuilderState, BuilderHeaders>;
-  using Headers = BuilderHeaders;
+  using HdrCatalog = BuilderHeaders;
 
   const Zhttp::H3::Params &h3Params() const { return params; }
   Zhttp::H3::QPackTxTable *qpackTx() { return &tx; }
@@ -192,7 +196,9 @@ struct BuilderState :
   ZuBSpan		runtimeValue = "zhttp-runtime";
 };
 
-using ParserHeaders = ZhttpHeaders("x-test");
+using ParserHeaderList = ZhttpHeaders("x-test");
+ZhttpHdrCatalogDerive(ParserHeaders, ParserHeaderList);
+ZhttpHdrCatalogImpl(ParserHeaders)
 
 struct ParserStream;
 
@@ -221,7 +227,7 @@ struct ParserStream :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<ParserStream, true, ParserHeaders> {
   using Base = Zhttp::H3::Parser<ParserStream, true, ParserHeaders>;
-  using Headers = ParserHeaders;
+  using HdrCatalog = ParserHeaders;
 
   ParserStream() : Base{1024}, consumer{this} {
     dispatch.init(link, consumer);
@@ -394,7 +400,7 @@ struct ResponseParserStream :
   public Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders> {
   using Base =
     Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders>;
-  using Headers = ParserHeaders;
+  using HdrCatalog = ParserHeaders;
 
   ResponseParserStream() : Base{1024} { }
   RxStream &rxStream() { return rx; }

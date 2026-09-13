@@ -260,21 +260,22 @@ namespace H2_ {
 template <typename App> class ServerHub;
 template <typename App> class SrvLink;
 
-template <typename Headers, typename Sets,
-  bool = bool(ZuTypeIn<Headers, Sets>{})>
+template <typename HdrCatalog, typename Sets,
+  bool = bool(ZuTypeIn<HdrCatalog, Sets>{})>
 struct HeaderPlan_ {
   enum { Valid = 0, Index = unsigned(-1) };
 };
-template <typename Headers, typename Sets>
-struct HeaderPlan_<Headers, Sets, true> {
-  enum { Valid = 1, Index = ZuTypeIndex<Headers, Sets>{} };
+template <typename HdrCatalog, typename Sets>
+struct HeaderPlan_<HdrCatalog, Sets, true> {
+  enum { Valid = 1, Index = ZuTypeIndex<HdrCatalog, Sets>{} };
 };
-template <typename Headers, typename Sets, bool = bool(Sets::N)>
+template <typename HdrCatalog, typename Sets, bool = bool(Sets::N)>
 struct HeaderPlan {
   enum { Valid = 0, Index = unsigned(-1) };
 };
-template <typename Headers, typename Sets>
-struct HeaderPlan<Headers, Sets, true> : public HeaderPlan_<Headers, Sets> {
+template <typename HdrCatalog, typename Sets>
+struct HeaderPlan<HdrCatalog, Sets, true> :
+    public HeaderPlan_<HdrCatalog, Sets> {
 };
 
 template <typename App>
@@ -582,10 +583,10 @@ public:
   template <typename Builder>
   auto transmit(Builder &) {
     auto tx = txStream();
-    using Headers = typename Builder::Headers;
+    using HdrCatalog = typename Builder::HdrCatalog;
     using Sets = typename ResponseHeaderSets<App>::T;
-    if constexpr (HeaderPlan<Headers, Sets>::Valid)
-      tx.plan(HeaderPlan<Headers, Sets>::Index);
+    if constexpr (HeaderPlan<HdrCatalog, Sets>::Valid)
+      tx.plan(HeaderPlan<HdrCatalog, Sets>::Index);
     return tx;
   }
   bool active() const { return m_native && m_streamID; }
@@ -1833,7 +1834,7 @@ public:
   using Engine = ZmEngine<Server<App_>>;
   using App = App_;
   using AppParser = typename App::Parser;
-  using ReqHeaders = typename AppParser::Headers;
+  using ReqHdrCatalog = typename AppParser::HdrCatalog;
   ZuAssert((ZuIs_<AppParser, Zhttp::Parser>{}),
     "Zhttp::Server requires App::Parser to derive from Zhttp::Parser");
   using ResBuilderQ = typename App::ResBuilderQ;
@@ -1882,9 +1883,9 @@ private:
   template <typename Profile>
   struct Parser :
     public MessageTraits<Profile>::template RequestParser<
-      Parser<Profile>, ReqHeaders> {
+      Parser<Profile>, ReqHdrCatalog> {
     using Base = typename MessageTraits<Profile>::template RequestParser<
-      Parser, ReqHeaders>;
+      Parser, ReqHdrCatalog>;
     using State = typename Base::State;
 
     void bind(Server *server_, ProfileLink<Profile> *link_) {
@@ -1958,7 +1959,8 @@ private:
 
   template <typename Profile, typename Builder>
   struct ResponseOps {
-    using Headers = typename Builder::Headers;
+    using HdrCatalog = typename Builder::HdrCatalog;
+    using Headers = typename HdrCatalog::List;
 
     ResponseOps(
 	Server *server_, Builder &builder_,
@@ -2033,7 +2035,7 @@ private:
 
     Server		*server = nullptr;
     Builder		*builder = nullptr;
-    HeaderSpans<Headers> spans;
+    HeaderSpans<HdrCatalog> spans;
     uint64_t		produced = 0;
     bool		rejectContentLength = false;
     bool		invalidHeader = false;
@@ -2045,11 +2047,12 @@ private:
   struct ResponseTx :
     public MessageTraits<Profile>::template Response<
       ResponseTx<Profile, Builder, HasBody, Streaming>,
-      typename Builder::Headers, HasBody, Streaming>,
+      typename Builder::HdrCatalog, HasBody, Streaming>,
     public ResponseOps<Profile, Builder> {
     using Base = typename MessageTraits<Profile>::template Response<
-      ResponseTx, typename Builder::Headers, HasBody, Streaming>;
+      ResponseTx, typename Builder::HdrCatalog, HasBody, Streaming>;
     using Ops = ResponseOps<Profile, Builder>;
+    using HdrCatalog = typename Builder::HdrCatalog;
     using Headers = typename Builder::Headers;
     static constexpr unsigned HdrBufSize = Builder::HdrBufSize;
 
@@ -2738,8 +2741,8 @@ private:
     if (m_config.tlsEnabled()) {
       using Sets = typename ResponseHeaderSets<App>::T;
       uint32_t capacity = m_config.tlsConfig().hpackTxCapacity();
-      ZuUnroll::all<Sets>([this, capacity]<typename Headers>() {
-	m_hpackSeeds.template add<Headers>(capacity);
+      ZuUnroll::all<Sets>([this, capacity]<typename HdrCatalog>() {
+	m_hpackSeeds.template add<HdrCatalog>(capacity);
       });
     }
     if (m_config.quicEnabled()) {
@@ -2748,8 +2751,8 @@ private:
 	quic.qpackRxCapacity(), quic.qpackTxCapacity(),
 	quic.qpackRxBlocked(), quic.qpackTxSections()});
       using Sets = typename ResponseHeaderSets<App>::T;
-      ZuUnroll::all<Sets>([this, &params, &quic]<typename Headers>() {
-	m_qpackSeeds.template add<Headers>(
+      ZuUnroll::all<Sets>([this, &params, &quic]<typename HdrCatalog>() {
+	m_qpackSeeds.template add<HdrCatalog>(
 	  params, quic.qpackTxCapacity());
       });
     }

@@ -33,6 +33,12 @@
 
 namespace Zhttp {
 
+struct ZhttpAPI DefltHdrCatalog {
+  using List = ZuTypeList<>;
+  static int nameMatch(ZuBSpan);
+  static int valueMatch(unsigned, ZuBSpan);
+};
+
 ZtEnumNS(ZhttpAPI, FieldSection, int8_t, Informational, Final, Trailers);
 namespace FieldSection { enum { Invalid = -1 }; }
 
@@ -140,12 +146,37 @@ using String = ZtBArray<ZtArrayHeapID<"Zhttp.Fields.String">>;
 ZhttpAPI bool forbidden(ZuBSpan);
 ZhttpAPI int pseudo(ZuBSpan);
 
-template <typename Headers>
-struct NameIDs { using Keys = typename HeaderList<Headers>::Keys; };
-template <typename Headers, unsigned I>
+template <typename HdrCatalog>
+struct NameIDs { using Keys = typename HeaderList<HdrCatalog>::Keys; };
+template <typename HdrCatalog, unsigned I>
 struct ValueIDs {
-  using Keys = typename HeaderList<Headers>::template Value<I>;
+  using Keys = typename HeaderList<HdrCatalog>::template Value<I>;
 };
+
+template <typename HdrCatalog>
+int nameMatch(ZuBSpan key) {
+  using Keys = typename HeaderList<HdrCatalog>::Keys;
+  if constexpr (!Keys::N) return -1;
+  else {
+    static constexpr auto matcher = ZuMatcher<NameIDs<HdrCatalog>>();
+    return matcher.exact(key);
+  }
+}
+
+template <typename HdrCatalog>
+int valueMatch(unsigned key, ZuBSpan value) {
+  using List = HeaderList<HdrCatalog>;
+  if constexpr (!List::N) return -1;
+  else return ZuSwitch::dispatch<List::N>(key,
+      [&value](auto I) -> int {
+    using Values = typename List::template Value<I>;
+    if constexpr (!Values::N) return -1;
+    else {
+      static constexpr auto matcher = ZuMatcher<ValueIDs<HdrCatalog, I>>();
+      return matcher.exact(value);
+    }
+  });
+}
 
 template <typename Impl, typename = void>
 struct HasRuntime : public ZuFalse { };
@@ -157,15 +188,14 @@ struct HasRuntime<Impl,
     public ZuTrue { };
 
 template <
-  typename Headers, typename Header, typename Static, typename Unknown>
+  typename Catalog, typename Header, typename Static, typename Unknown>
 void dispatch(
   ZuBSpan key, ZuSpan<uint8_t> value,
   Header &&header, Static &&static_, Unknown &&unknown) {
-  using List = HeaderList<Headers>;
+  using List = HeaderList<Catalog>;
   using Keys = typename List::Keys;
   if constexpr (Keys::N) {
-    static constexpr auto matcher = ZuMatcher<NameIDs<Headers>>();
-    auto i = matcher.exact(key);
+    auto i = Catalog::nameMatch(key);
     if (i < 0) {
       unknown(key, value);
       return;
@@ -176,8 +206,7 @@ void dispatch(
 	using Key = ZuType<I, Keys>;
 	using KeyValues = typename List::template Value<I>;
 	if constexpr (KeyValues::N) {
-	  static constexpr auto matcher = ZuMatcher<ValueIDs<Headers, I>>();
-	  auto j = matcher.exact(value);
+	  auto j = Catalog::valueMatch(I, value);
 	  if (j >= 0) {
 	    ZuSwitch::dispatch<KeyValues::N>(
 	      j, [&static_](auto j) {
@@ -392,5 +421,19 @@ private:
 } // namespace Fields
 
 } // namespace Zhttp
+
+#define ZhttpHdrCatalogDerive(Name, Headers) \
+  struct Name { \
+    using List = Headers; \
+    static int nameMatch(ZuBSpan); \
+    static int valueMatch(unsigned, ZuBSpan); \
+  }
+#define ZhttpHdrCatalogImpl(Name) \
+  int Name::nameMatch(ZuBSpan key) { \
+    return Zhttp::Fields::nameMatch<Name>(key); \
+  } \
+  int Name::valueMatch(unsigned key, ZuBSpan value) { \
+    return Zhttp::Fields::valueMatch<Name>(key, value); \
+  }
 
 #endif /* ZhttpFields_HH */

@@ -34,8 +34,12 @@ using Zquic::Test::haveCaddy;
 using Zquic::Test::waitCaddyReady;
 using Zquic::Test::writeCaddyfile;
 
-using RequestHeaders = ZhttpHeaders("content-length");
-using ResponseHeaders = ZhttpHeaders("content-type", "content-length");
+using RequestHeaderList = ZhttpHeaders("content-length");
+ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
+ZhttpHdrCatalogImpl(RequestHeaders)
+using ResponseHeaderList = ZhttpHeaders("content-type", "content-length");
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
 
 ZuCSpan Path = "/zhttp-interop";
 ZuCSpan Host = "localhost";
@@ -131,7 +135,7 @@ struct ResponseBuilder :
   public Zhttp::Builder,
   public Builder_<ResponseBuilder<Builder_>> {
   using Base = Builder_<ResponseBuilder<Builder_>>;
-  using Headers = ResponseHeaders;
+  using HdrCatalog = ResponseHeaders;
   using Base::body;
   using Zhttp::Builder::header;
 
@@ -242,7 +246,7 @@ struct RequestParser :
   public RequestParserBase_<RequestParser<H3>, H3> {
   using Base = RequestParserBase_<RequestParser<H3>, H3>;
   using State = typename Base::State;
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHeaders;
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
   bool qpackDecoderWrite(ZuBSpan span) const {
@@ -303,7 +307,7 @@ struct ResponseParser :
   public ResponseParserBase_<ResponseParser<H3>, H3> {
   using Base = ResponseParserBase_<ResponseParser<H3>, H3>;
   using State = typename Base::State;
-  using Headers = ResponseHeaders;
+  using HdrCatalog = ResponseHeaders;
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
   bool qpackDecoderWrite(ZuBSpan span) const {
@@ -333,17 +337,17 @@ struct ResponseParser :
 
 template <typename Impl>
 struct RequestBuilder_ :
-  public Zhttp::H1Request<Impl, ZuTypeList<>, false> { };
+  public Zhttp::H1Request<Impl, Zhttp::DefltHdrCatalog, false> { };
 template <typename Impl>
 struct RequestBuilderH3_ :
-  public Zhttp::H3Request<Impl, ZuTypeList<>, false> { };
+  public Zhttp::H3Request<Impl, Zhttp::DefltHdrCatalog, false> { };
 
 template <template <typename> typename Builder_>
 struct RequestBuilder :
   public Zhttp::Builder,
   public Builder_<RequestBuilder<Builder_>> {
   using Base = Builder_<RequestBuilder<Builder_>>;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   RequestBuilder(ZuCSpan body_) : content{body_} { }
 

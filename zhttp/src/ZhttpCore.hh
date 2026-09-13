@@ -147,8 +147,9 @@ ZuInline bool streaming(T v) {
 
 } // namespace BodyPolicy
 
-template <typename Headers>
+template <typename HdrCatalog>
 struct HeaderList {
+  using Headers = typename HdrCatalog::List;
   ZuAssert(!(Headers::N & 1), "header list must contain key/value pairs");
   enum { N = Headers::N >> 1 };
   template <unsigned I> using Key = ZuType<I << 1, Headers>;

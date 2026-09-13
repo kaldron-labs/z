@@ -554,7 +554,7 @@ ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
 template <
   typename Impl,
   bool Request_ = false,
-  typename Headers_ = ZuTypeList<>>
+  typename HdrCatalog_ = DefltHdrCatalog>
 class Parser {
 public:
   Parser(uint64_t bodyMax = DefltMaxBody) :
@@ -563,8 +563,8 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
-  using Headers = typename Headers_::template Unshift<
-    ZuStringT<"content-length">, ZuTypeList<>>;
+  using HdrCatalog = HdrCatalog_;
+  using Headers = typename HdrCatalog::List;
   using State = ParserState;
 
   void reset() {
@@ -788,7 +788,7 @@ private:
       return;
     }
     if (!m_deliverHeaders) return;
-    Fields::dispatch<Headers>(
+    Fields::dispatch<HdrCatalog>(
       key, value,
       [this](auto key_, ZuSpan<uint8_t> value_) {
 	impl()->template header<ZuDecay<decltype(key_)>>(
@@ -866,14 +866,15 @@ private:
 
 template <
   typename Impl,
-  typename Headers_ = ZuTypeList<>,
+  typename HdrCatalog_ = DefltHdrCatalog,
   bool HasBody_ = false,
   bool Streaming_ = false>
 class Builder_ {
 public:
   auto impl() { return static_cast<Impl *>(this); }
 
-  using Headers = Headers_;
+  using HdrCatalog = HdrCatalog_;
+  using Headers = typename HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
 
@@ -914,7 +915,7 @@ protected:
       Builder_::field_(stream, ":authority", ZuFwd<Host>(host));
     });
     if (streamMode)
-      headers_<Headers, false>(stream);
+      headers_<HdrCatalog, false>(stream);
     else
       headers_(stream);
     patch_(stream);
@@ -939,7 +940,7 @@ protected:
     status[2] = uint8_t('0' + (value % 10));
     field_(stream, ":status", status.span());
     if (streamMode)
-      headers_<Headers, false>(stream);
+      headers_<HdrCatalog, false>(stream);
     else
       headers_(stream);
     patch_(stream);
@@ -1044,10 +1045,10 @@ private:
   }
 
   template <
-    typename KVs = Headers, bool IncludeContentLength = true,
+    typename Catalog = HdrCatalog, bool IncludeContentLength = true,
     typename Stream>
   void headers_(Stream &stream) {
-    using List = HeaderList<KVs>;
+    using List = HeaderList<Catalog>;
     ZuUnroll::all<List::N>([this, &stream](auto I) {
       using Key = typename List::template Key<I>;
       using Value = typename List::template Value<I>;
@@ -1082,11 +1083,11 @@ private:
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Request : public Builder_<Impl, Headers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
+class Request : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
+  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1095,11 +1096,11 @@ public:
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Response : public Builder_<Impl, Headers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
+class Response : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
+  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
 
 public:
   template <typename Stream>

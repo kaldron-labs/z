@@ -21,6 +21,10 @@ using namespace ZuTestUtil;
 
 namespace ZhttpH2HubTest_ {
 
+using ResponseHeaderList = ZhttpHeaders("content-length");
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
+
 struct State {
   ZmSemaphore	listening;
   ZmSemaphore	response;
@@ -268,7 +272,7 @@ void runAdmissionErrors()
 struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Request<RequestBuilder> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::GET, [](auto &&emit) {
@@ -282,8 +286,8 @@ struct RequestBuilder :
 struct StreamRequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Request<StreamRequestBuilder,
-    ZuTypeList<>, true> {
-  using Headers = ZuTypeList<>;
+    Zhttp::DefltHdrCatalog, true> {
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -299,9 +303,9 @@ struct StreamRequestBuilder :
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Response<
-    ResponseBuilder, ZhttpHeaders("content-length"), true> {
-  using Headers = ZhttpHeaders("content-length");
-  using Base = Zhttp::H2::Response<ResponseBuilder, Headers, true>;
+    ResponseBuilder, ResponseHeaders, true> {
+  using HdrCatalog = ResponseHeaders;
+  using Base = Zhttp::H2::Response<ResponseBuilder, HdrCatalog, true>;
   using Base::body;
   unsigned status() { return 200; }
   template <typename Key, typename L>
@@ -314,7 +318,7 @@ struct ResponseBuilder :
 struct StreamResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Response<StreamResponseBuilder> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base = Zhttp::H2::Response<StreamResponseBuilder>;
   using Base::body;
   unsigned status() { return 200; }
@@ -335,7 +339,7 @@ struct ClientStream {
 struct ClientParser :
   public Zhttp::Parser,
   public Zhttp::H2::Parser<ClientParser, false> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   ClientParser() : consumer{this} { }
 
   void bind(ClientLink &link) { dispatch.init(link, consumer); }
@@ -526,7 +530,7 @@ struct ServerStream {
 struct ServerParser :
   public Zhttp::Parser,
   public Zhttp::H2::Parser<ServerParser, true> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   ServerParser() : consumer{this} { }
 
   void bind(ServerLink &link) { dispatch.init(link, consumer); }

@@ -40,8 +40,12 @@ static constexpr ZuCSpan QIRMigrationCIDReserveName{"4"};
 // progress before the simulator's 5s rebind cadence can compound stalls.
 static constexpr ZuTime QIRRebindHeartBeat{1};
 
-using H3ReqHeaders = ZhttpHeaders("user-agent", "accept");
-using H3RespHeaders = ZhttpHeaders("location");
+using H3ReqHeaderList = ZhttpHeaders("user-agent", "accept");
+ZhttpHdrCatalogDerive(H3ReqHeaders, H3ReqHeaderList);
+ZhttpHdrCatalogImpl(H3ReqHeaders)
+using H3RespHeaderList = ZhttpHeaders("location");
+ZhttpHdrCatalogDerive(H3RespHeaders, H3RespHeaderList);
+ZhttpHdrCatalogImpl(H3RespHeaders)
 
 enum {
   H3DataMax = 100<<20,
@@ -267,7 +271,7 @@ struct H3Request :
   public H3ReqOps {
   using Base = Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>;
   using H3Cxn = H3Cxn_;
-  using Headers = H3ReqHeaders;
+  using HdrCatalog = H3ReqHeaders;
 
   H3Request(const Request &request_, H3Cxn &h3_, uint64_t streamID_) :
     H3ReqOps{request_}, h3{&h3_}, streamID_{streamID_} { }
@@ -555,7 +559,7 @@ struct H3ResponseParser :
   using Base = Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders>;
   using Base::reset;
   using State = typename Base::State;
-  using Headers = H3RespHeaders;
+  using HdrCatalog = H3RespHeaders;
 
   H3ResponseParser() : Base{H3RespBodyMax} { }
 

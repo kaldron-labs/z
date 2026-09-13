@@ -30,7 +30,16 @@ enum { TestPort = ZhttpTestPort::MsgH2 };
 enum { TestPort = ZhttpTestPort::MsgH3 };
 #endif
 
-using TestHeaders = ZhttpHeaders("x-test", "x-trailer");
+using TestHeaderList = ZhttpHeaders("x-test", "x-trailer");
+ZhttpHdrCatalogDerive(TestHeaders, TestHeaderList);
+ZhttpHdrCatalogImpl(TestHeaders)
+using RequestHeaderList =
+  ZhttpHeaders(("x-fixed", "fixed"), "content-length");
+ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
+ZhttpHdrCatalogImpl(RequestHeaders)
+using ResponseHeaderList = ZhttpHeaders("x-test");
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
 
 struct State {
   ZmSemaphore	listening;
@@ -49,12 +58,11 @@ struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Request<
     RequestBuilder<Profile>,
-    ZhttpHeaders(("x-fixed", "fixed"), "content-length"),
+    RequestHeaders,
     true, false> {
-  using Headers =
-    ZhttpHeaders(("x-fixed", "fixed"), "content-length");
+  using HdrCatalog = RequestHeaders;
   using Base = typename Zhttp::MessageTraits<Profile>::template Request<
-    RequestBuilder, Headers, true, false>;
+    RequestBuilder, HdrCatalog, true, false>;
   using Base::body;
   template <typename L>
   void operation(L &&l) {
@@ -91,9 +99,9 @@ template <typename Profile>
 struct InfoBuilder :
   public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
-    InfoBuilder<Profile>, ZhttpHeaders("x-test"),
+    InfoBuilder<Profile>, ResponseHeaders,
     false, false> {
-  using Headers = ZhttpHeaders("x-test");
+  using HdrCatalog = ResponseHeaders;
   unsigned status() { return 103; }
   template <typename Key, typename L>
   void header(L &&l) {
@@ -110,11 +118,11 @@ template <typename Profile>
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
-    ResponseBuilder<Profile>, ZhttpHeaders("x-test"),
+    ResponseBuilder<Profile>, ResponseHeaders,
     true, true> {
-  using Headers = ZhttpHeaders("x-test");
+  using HdrCatalog = ResponseHeaders;
   using Base = typename Zhttp::MessageTraits<Profile>::template Response<
-    ResponseBuilder, Headers, true, true>;
+    ResponseBuilder, HdrCatalog, true, true>;
   using Base::body;
   unsigned status() { return 200; }
   uint64_t contentLength() { return 4; }
@@ -142,7 +150,7 @@ struct ClientParser :
     ClientParser, TestHeaders>;
   using Base::reset;
   using State = typename Base::State;
-  using Headers = TestHeaders;
+  using HdrCatalog = TestHeaders;
 
   bool enable1xx() const { return true; }
   bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
@@ -263,12 +271,13 @@ struct ServerSession {
 
   struct Parser :
     public Zhttp::Parser,
-    public Message::template RequestParser<Parser, ZuTypeList<>> {
+    public Message::template RequestParser<Parser, Zhttp::DefltHdrCatalog> {
     using Base =
-      typename Message::template RequestParser<Parser, ZuTypeList<>>;
+      typename Message::template RequestParser<Parser,
+	Zhttp::DefltHdrCatalog>;
     using Base::reset;
     using State = typename Base::State;
-    using Headers = ZuTypeList<>;
+    using HdrCatalog = Zhttp::DefltHdrCatalog;
 
     bool operation(
       Zhttp::Method::T method_, Zhttp::Target &target) {

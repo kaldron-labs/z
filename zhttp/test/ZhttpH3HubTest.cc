@@ -8,6 +8,10 @@
 
 namespace ZhttpH3HubTest_ {
 
+using ResponseHeaderList = ZhttpHeaders("content-length");
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
+
 template <typename Link>
 void streamContract(Link &link)
 {
@@ -47,7 +51,7 @@ struct StreamState {
 struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Request<RequestBuilder> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::GET, [](auto &&emit) {
@@ -61,7 +65,7 @@ struct RequestBuilder :
 struct StreamRequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Request<StreamRequestBuilder> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::CONNECT, [](auto &&emit) {
@@ -77,9 +81,9 @@ struct StreamRequestBuilder :
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Response<
-    ResponseBuilder, ZhttpHeaders("content-length"), true> {
-  using Headers = ZhttpHeaders("content-length");
-  using Base = Zhttp::H3::Response<ResponseBuilder, Headers, true>;
+    ResponseBuilder, ResponseHeaders, true> {
+  using HdrCatalog = ResponseHeaders;
+  using Base = Zhttp::H3::Response<ResponseBuilder, HdrCatalog, true>;
   using Base::body;
   unsigned status() const { return 200; }
   template <typename Key, typename L>
@@ -92,7 +96,7 @@ struct ResponseBuilder :
 struct StreamResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Response<StreamResponseBuilder> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base = Zhttp::H3::Response<StreamResponseBuilder>;
   using Base::body;
   unsigned status() const { return 200; }
@@ -113,7 +117,7 @@ struct ClientParser :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<ClientParser, false> {
   using Base = Zhttp::H3::Parser<ClientParser, false>;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   ClientParser() : consumer{this} { }
 
@@ -329,7 +333,7 @@ struct ServerParser :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<ServerParser, true> {
   using Base = Zhttp::H3::Parser<ServerParser, true>;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   ServerParser() : consumer{this} { }
 
