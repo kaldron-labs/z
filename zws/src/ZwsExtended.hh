@@ -23,16 +23,18 @@ namespace Extended {
 
 using ClientHeaders = ZhttpHeaders(
   "sec-websocket-protocol", "sec-websocket-extensions");
+ZhttpHdrCatalogDerive(ZwsAPI ClientHdrCatalog, ClientHeaders);
 using ServerHeaders = ZhttpHeaders(
   "host", "sec-websocket-version", "sec-websocket-protocol");
+ZhttpHdrCatalogDerive(ZwsAPI ServerHdrCatalog, ServerHeaders);
 
 template <typename Profile>
 class Request :
   public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Request<
-    Request<Profile>, ServerHeaders, false, false> {
+    Request<Profile>, ServerHdrCatalog, false, false> {
 public:
-  using Headers = ServerHeaders;
+  using HdrCatalog = ServerHdrCatalog;
   using Zhttp::Builder::header;
 
   Request(const URI &uri, ZuBSpan protocol = {}) :
@@ -64,9 +66,9 @@ template <typename Profile>
 class Response :
   public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
-    Response<Profile>, ClientHeaders, false, false> {
+    Response<Profile>, ClientHdrCatalog, false, false> {
 public:
-  using Headers = ClientHeaders;
+  using HdrCatalog = ClientHdrCatalog;
   using Zhttp::Builder::header;
 
   Response(ZuBSpan protocol = {}) : m_protocol{protocol} { }
@@ -85,9 +87,9 @@ template <typename Profile>
 class ErrorResponse :
   public Zhttp::Builder,
   public Zhttp::MessageTraits<Profile>::template Response<
-    ErrorResponse<Profile>, ZuTypeList<>, false, false> {
+    ErrorResponse<Profile>, Zhttp::DefltHdrCatalog, false, false> {
 public:
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   unsigned status() const { return 400; }
 };
 
@@ -95,13 +97,13 @@ template <typename Link, typename Profile>
 class ClientParser :
   public Zhttp::Parser,
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
-    ClientParser<Link, Profile>, ClientHeaders> {
+    ClientParser<Link, Profile>, ClientHdrCatalog> {
   using Message = Zhttp::MessageTraits<Profile>;
   using Base = typename Message::template ResponseParser<
-    ClientParser, ClientHeaders>;
+    ClientParser, ClientHdrCatalog>;
 
 public:
-  using Headers = ClientHeaders;
+  using HdrCatalog = ClientHdrCatalog;
   using State = typename Base::State;
   using Zhttp::Parser::header;
 
@@ -184,13 +186,13 @@ template <typename Link, typename Profile>
 class ServerParser :
   public Zhttp::Parser,
   public Zhttp::MessageTraits<Profile>::template RequestParser<
-    ServerParser<Link, Profile>, ServerHeaders> {
+    ServerParser<Link, Profile>, ServerHdrCatalog> {
   using Message = Zhttp::MessageTraits<Profile>;
   using Base = typename Message::template RequestParser<
-    ServerParser, ServerHeaders>;
+    ServerParser, ServerHdrCatalog>;
 
 public:
-  using Headers = ServerHeaders;
+  using HdrCatalog = ServerHdrCatalog;
   using State = typename Base::State;
   using Zhttp::Parser::header;
 

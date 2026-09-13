@@ -5,6 +5,15 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZwsProtocol.hh>
+#include <zlib/ZwsExtended.hh>
+#include <zlib/ZwsH1.hh>
+
+ZhttpHdrCatalogImpl(Zws::H1::ClientHdrCatalog)
+ZhttpHdrCatalogImpl(Zws::H1::ServerHdrCatalog)
+ZhttpHdrCatalogImpl(Zws::H1::RequestHdrCatalog)
+ZhttpHdrCatalogImpl(Zws::H1::ResponseHdrCatalog)
+ZhttpHdrCatalogImpl(Zws::Extended::ClientHdrCatalog)
+ZhttpHdrCatalogImpl(Zws::Extended::ServerHdrCatalog)
 
 namespace Zws {
 

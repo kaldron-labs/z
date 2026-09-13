@@ -24,14 +24,15 @@ namespace H1 {
 using ClientHeaders = ZhttpHeaders(
   "upgrade", "connection", "sec-websocket-accept",
   "sec-websocket-protocol", "sec-websocket-extensions");
+ZhttpHdrCatalogDerive(ZwsAPI ClientHdrCatalog, ClientHeaders);
 
 class ClientParser :
   public Zhttp::Parser,
-  public Zhttp::H1ResponseParser<ClientParser, ClientHeaders> {
-  using Base = Zhttp::H1ResponseParser<ClientParser, ClientHeaders>;
+  public Zhttp::H1ResponseParser<ClientParser, ClientHdrCatalog> {
+  using Base = Zhttp::H1ResponseParser<ClientParser, ClientHdrCatalog>;
 
 public:
-  using Headers = ClientHeaders;
+  using HdrCatalog = ClientHdrCatalog;
   using State = Zhttp::H1::ParserState;
   using Zhttp::Parser::header;
 
@@ -119,14 +120,15 @@ private:
 using ServerHeaders = ZhttpHeaders(
   "host", "upgrade", "connection", "sec-websocket-key",
   "sec-websocket-version", "sec-websocket-protocol");
+ZhttpHdrCatalogDerive(ZwsAPI ServerHdrCatalog, ServerHeaders);
 
 class ServerParser :
   public Zhttp::Parser,
-  public Zhttp::H1RequestParser<ServerParser, ServerHeaders> {
-  using Base = Zhttp::H1RequestParser<ServerParser, ServerHeaders>;
+  public Zhttp::H1RequestParser<ServerParser, ServerHdrCatalog> {
+  using Base = Zhttp::H1RequestParser<ServerParser, ServerHdrCatalog>;
 
 public:
-  using Headers = ServerHeaders;
+  using HdrCatalog = ServerHdrCatalog;
   using State = Zhttp::H1::ParserState;
   using Zhttp::Parser::header;
 
@@ -228,14 +230,15 @@ using RequestHeaders = ZhttpHeaders(
   ("connection", ("Upgrade")),
   "sec-websocket-key", "sec-websocket-version",
   "sec-websocket-protocol");
+ZhttpHdrCatalogDerive(ZwsAPI RequestHdrCatalog, RequestHeaders);
 
 class Request :
   public Zhttp::Builder,
-  public Zhttp::H1Request<Request, RequestHeaders> {
-  using Base = Zhttp::H1Request<Request, RequestHeaders>;
+  public Zhttp::H1Request<Request, RequestHdrCatalog> {
+  using Base = Zhttp::H1Request<Request, RequestHdrCatalog>;
 
 public:
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHdrCatalog;
   using Zhttp::Builder::header;
 
   Request(const URI &uri, ZuBSpan key, ZuBSpan protocol = {}) :
@@ -269,14 +272,15 @@ using ResponseHeaders = ZhttpHeaders(
   ("upgrade", ("websocket")),
   ("connection", ("Upgrade")),
   "sec-websocket-accept", "sec-websocket-protocol");
+ZhttpHdrCatalogDerive(ZwsAPI ResponseHdrCatalog, ResponseHeaders);
 
 class Response :
   public Zhttp::Builder,
-  public Zhttp::H1Response<Response, ResponseHeaders> {
-  using Base = Zhttp::H1Response<Response, ResponseHeaders>;
+  public Zhttp::H1Response<Response, ResponseHdrCatalog> {
+  using Base = Zhttp::H1Response<Response, ResponseHdrCatalog>;
 
 public:
-  using Headers = ResponseHeaders;
+  using HdrCatalog = ResponseHdrCatalog;
   using Zhttp::Builder::header;
 
   Response(ZuBSpan accept, ZuBSpan protocol = {}) :
@@ -302,7 +306,7 @@ class ErrorResponse :
   using Base = Zhttp::H1Response<ErrorResponse>;
 
 public:
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   unsigned status() const { return 400; }
 };
 
