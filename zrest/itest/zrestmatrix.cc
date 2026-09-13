@@ -26,6 +26,10 @@
 
 enum { CaseTimeout = 15, ReadyTimeout = 5 };
 
+namespace TestTransport {
+  enum { H1, H2, H3 };
+}
+
 static volatile sig_atomic_t interrupted;
 
 static void interrupt(int sig) { interrupted = sig; }
@@ -171,7 +175,7 @@ static int findAfter(ZuCSpan text, ZuCSpan needle, unsigned offset)
 
 static bool sequence(ZuCSpan log)
 {
-  int auth = log.find("event=auth");
+  int auth = log.find("event=authorize");
   int pong1 = auth >= 0 ? findAfter(log, "event=pong", unsigned(auth + 1)) : -1;
   int refresh = pong1 >= 0 ? findAfter(log, "event=refresh", unsigned(pong1 + 1)) : -1;
   int pong2 = refresh >= 0 ? findAfter(log, "event=pong", unsigned(refresh + 1)) : -1;
@@ -230,7 +234,7 @@ static bool pacedWaves(
 
 static Command serverCommand(bool go, unsigned port,
     const Zhttp::Test::TempDir &temp, unsigned requests,
-    ZuCSpan accessLifetime)
+    ZuCSpan accessLifetime, ZuCSpan refreshLifetime, int transport)
 {
   Command command;
   if (go) {
@@ -239,35 +243,48 @@ static Command serverCommand(bool go, unsigned port,
     command.add("../interop/go/server").option("addr", addr)
       .option("cert", temp.certPath).option("key", temp.keyPath);
   } else {
-    command.add("../example/zrestd").add("--https")
-      .option("http2", "disable").option("addr", "127.0.0.1")
+    command.add("../example/zrestd").add("--https");
+    if (transport == TestTransport::H3)
+      command.add("--http3").option("http2", "disable");
+    else
+      command.option("http2",
+        transport == TestTransport::H2 ? "force" : "disable");
+    command.option("addr", "127.0.0.1")
       .option("port", port).option("cert", temp.certPath)
       .option("key", temp.keyPath).option("log", "-");
   }
   command.option("access-token-lifetime", accessLifetime)
-    .option("refresh-token-lifetime", "1h")
-    .option("jwt-secret", "matrix-secret").option("requests", requests)
-    .add("--verbose");
+    .option("refresh-token-lifetime", refreshLifetime)
+    .option("requests", requests).add("--verbose");
   return command;
 }
 
 static Command clientCommand(bool go, unsigned port,
     const Zhttp::Test::TempDir &temp, unsigned requests, unsigned jobs,
-    ZuCSpan interval)
+    ZuCSpan interval, int transport)
 {
-  MatrixString url;
-  url << "https://localhost:" << port;
+  MatrixString issuer, resource;
+  issuer << "https://localhost:" << port << "/oauth2/ping";
+  resource << "https://localhost:" << port << "/api/ping";
   Command command;
   if (go) {
-    command.add("../interop/go/client").option("url", url)
+    command.add("../interop/go/client").option("issuer", issuer)
+      .option("resource", resource).option("browser", "./zrestua")
       .option("cert", temp.certPath).option("requests", requests)
       .option("interval", interval);
   } else {
-    command.add("../example/zrest").option("http3", "disable")
-      .option("http2", "disable").option("ca", temp.certPath)
+    command.add("../example/zrest");
+    if (transport == TestTransport::H3)
+      command.option("http3", "force").option("http2", "disable");
+    else
+      command.option("http3", "disable").option("http2",
+        transport == TestTransport::H2 ? "force" : "disable");
+    command.option("ca", temp.certPath)
+      .option("issuer", issuer).option("resource", resource)
+      .option("browser", "./zrestua")
       .option("requests", requests).option("jobs", jobs)
       .option("links", jobs).option("link-max", 1)
-      .option("interval", interval).add("--verbose").add(url);
+      .option("interval", interval).add("--verbose");
   }
   return command;
 }
@@ -281,7 +298,7 @@ static void failureOutput(const Child &server, const Child &client)
 
 static bool runPair(bool goClient, bool goServer, unsigned requests,
     unsigned jobs, ZuCSpan interval, ZuCSpan accessLifetime,
-    bool expectRefresh, bool fractional)
+    bool expectRefresh, bool fractional, int transport)
 {
   Zhttp::Test::TempDir temp;
   if (!temp.init("zrestmatrix") || !Zhttp::Test::writeLocalhostCert(
@@ -290,9 +307,9 @@ static bool runPair(bool goClient, bool goServer, unsigned requests,
   unsigned port = Zhttp::Test::loopbackPort(nextPort++);
   if (!port) return false;
   Command serverCmd = serverCommand(
-    goServer, port, temp, requests, accessLifetime);
+    goServer, port, temp, requests, accessLifetime, "1h", transport);
   Command clientCmd = clientCommand(
-    goClient, port, temp, requests, jobs, interval);
+    goClient, port, temp, requests, jobs, interval, transport);
   Child server, client;
   if (!spawn(server, goServer ? "go server" : "zrestd", serverCmd)) return false;
   bool ok = waitListening(server, monoMS() + ReadyTimeout * 1000);
@@ -303,19 +320,21 @@ static bool runPair(bool goClient, bool goServer, unsigned requests,
   else terminate(server);
   if (ok) {
     MatrixString summary;
-    summary << "summary auth=1 refresh=" << (expectRefresh ? 1 : 0) <<
-      " pong=" << requests;
+    summary << "summary authorize=1 token=1 refresh=" <<
+      (expectRefresh ? 1 : 0) <<
+      " revoke=1 pong=" << requests;
     ok = server.output.find(summary) >= 0 &&
       (!expectRefresh || sequence(server.output));
     if (!goClient) ok = ok && pongIDs(client.output, requests);
     if (fractional) {
-      int auth = client.output.find("event=auth time_ns=");
+      int auth = client.output.find("event=authorize time_ns=");
       uint64_t tenthNS = 0;
       ok = ok && pacedWaves(client.output, 10, 2, tenthNS);
       if (auth < 0) ok = false;
       else {
 	ZuBox<uint64_t> authNS;
-	authNS.scan(client.output.data() + auth + strlen("event=auth time_ns="));
+	authNS.scan(client.output.data() + auth +
+	  strlen("event=authorize time_ns="));
 	ok = ok && tenthNS >= authNS + 90000000ULL;
       }
     }
@@ -326,19 +345,28 @@ static bool runPair(bool goClient, bool goServer, unsigned requests,
   return ok;
 }
 
-static bool runProbe(bool goServer)
+static bool runProbe(bool goServer, bool expiry)
 {
   Zhttp::Test::TempDir temp;
   if (!temp.init("zrestprobe") || !Zhttp::Test::writeLocalhostCert(
 	temp, temp.certPath, temp.keyPath)) return false;
   static unsigned nextPort = ZrestITestPort::MatrixEnd - 1;
   unsigned port = Zhttp::Test::loopbackPort(nextPort++);
-  Command serverCmd = serverCommand(goServer, port, temp, 1000000, "1s");
-  MatrixString url;
-  url << "https://localhost:" << port;
+  Command serverCmd = serverCommand(
+    goServer, port, temp, 1000000, "1s", expiry ? "2s" : "1h",
+    TestTransport::H1);
+  if (expiry) serverCmd.option("state-limit", 1);
+  MatrixString issuer, resource;
+  issuer << "https://localhost:" << port << "/oauth2/ping";
+  resource << "https://localhost:" << port << "/api/ping";
   Command probeCmd;
-  probeCmd.add("./zrestprobe").option("url", url)
-    .option("cert", temp.certPath).option("jwt-secret", "matrix-secret");
+  probeCmd.add("./zrestprobe").option("issuer", issuer)
+    .option("resource", resource).option("cert", temp.certPath)
+    .option("browser", "./zrestua");
+  if (expiry)
+    probeCmd.add("--expiry");
+  else if (!goServer)
+    probeCmd.add("--authority").add("--second-app");
   Child server, probe;
   if (!spawn(server, goServer ? "go server" : "zrestd", serverCmd)) return false;
   bool ok = waitListening(server, monoMS() + ReadyTimeout * 1000);
@@ -363,12 +391,12 @@ int main()
   sigaction(SIGINT, &action, nullptr);
   sigaction(SIGTERM, &action, nullptr);
   if (!exists("../interop/go/client") || !exists("../interop/go/server") ||
-      !exists("./zrestprobe")) {
+      !exists("./zrestprobe") || !exists("./zrestua")) {
     out << "1..0 # SKIP Go interoperability fixtures unavailable\n";
     return 0;
   }
   ZiTestResidue::init("zrestmatrix");
-  out << "1..9\n";
+  out << "1..12\n";
   unsigned test = 0, failed = 0;
 #define RUN(name, expression) do { \
     if (interrupted) break; \
@@ -377,15 +405,27 @@ int main()
     result << (ok ? "ok " : "not ok ") << test << " - " << name << '\n'; \
     out << result; \
   } while (0)
-  RUN("zrest to Go server", runPair(false, true, 2, 1, "2", "3s", true, false));
-  RUN("Go client to zrestd", runPair(true, false, 2, 1, "2s", "1s", true, false));
-  RUN("zrest to zrestd", runPair(false, false, 2, 1, "2", "3s", true, false));
-  RUN("Go client to Go server", runPair(true, true, 2, 1, "2s", "1s", true, false));
-  RUN("concurrent zrest to zrestd", runPair(false, false, 8, 4, "2", "3s", true, false));
-  RUN("concurrent zrest to Go", runPair(false, true, 8, 4, "2", "3s", true, false));
-  RUN("fractional zrest pacing", runPair(false, false, 20, 2, "0.01", "5m", false, true));
-  RUN("zrestd negative authentication", runProbe(false));
-  RUN("Go negative authentication", runProbe(true));
+  RUN("zrest to Go server", runPair(false, true, 2, 1, "2", "3s", true,
+    false, TestTransport::H1));
+  RUN("Go client to zrestd", runPair(true, false, 2, 1, "2s", "1s", true,
+    false, TestTransport::H1));
+  RUN("zrest to zrestd", runPair(false, false, 2, 1, "2", "3s", true,
+    false, TestTransport::H1));
+  RUN("Go client to Go server", runPair(true, true, 2, 1, "2s", "1s", true,
+    false, TestTransport::H1));
+  RUN("concurrent zrest to zrestd", runPair(false, false, 8, 4, "2", "3s",
+    true, false, TestTransport::H1));
+  RUN("concurrent zrest to Go", runPair(false, true, 8, 4, "2", "3s", true,
+    false, TestTransport::H1));
+  RUN("fractional zrest pacing", runPair(false, false, 20, 2, "0.01", "5m",
+    false, true, TestTransport::H1));
+  RUN("zrest HTTP/2", runPair(false, false, 1, 1, "0", "5m", false,
+    false, TestTransport::H2));
+  RUN("zrest HTTP/3", runPair(false, false, 1, 1, "0", "5m", false,
+    false, TestTransport::H3));
+  RUN("zrestd OAuth negative cases", runProbe(false, false));
+  RUN("Go OAuth negative cases", runProbe(true, false));
+  RUN("zrestd bounded state expiry", runProbe(false, true));
 #undef RUN
   bool passed = !interrupted && !failed;
   ZiTestResidue::final(passed);

@@ -80,6 +80,35 @@ struct ExactNoQuery : public Zrest::ReqParser<ExactNoQuery, TestObject> {
   using Path = ZuStringT<"/.well-known/oauth-authorization-server">;
   enum { Exact = 1 };
 };
+struct PrefixPath {
+  TestString oauth2;
+  TestString app;
+  TestString version;
+  TestString endpoint;
+};
+ZfStruct(, (PrefixPath, URI),
+  (((oauth2),   (URI::PathIndex<0>, Required)), (String)),
+  (((app),      (URI::PathIndex<1>, Required)), (String)),
+  (((version),  (URI::PathIndex<2>, Required)), (String)),
+  (((endpoint), (URI::PathIndex<3>, Required)), (String)));
+struct PrefixedReq : public Zrest::ReqParser<PrefixedReq, RawObject> {
+  using Base = Zrest::ReqParser<PrefixedReq, RawObject>;
+  using Path = ZuStringT<"/v1/token">;
+  enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
+
+  ZuBSpan fullPath;
+  PrefixPath prefix;
+
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    fullPath = target.path;
+    TestString path{target.path};
+    auto scan = ZfURI::scan(path.span());
+    ZfURI::handler<PrefixPath>(scan.p<1>()).load(prefix);
+    auto suffix = target;
+    if (!Zrest::skip(suffix.path, 2)) return false;
+    return Base::operation(method, suffix);
+  }
+};
 struct SignedReq : public SignedBuilder<
     Zrest::ReqBuilder<SignedReq, SignedObject>> { };
 struct SignedRes : public SignedBuilder<
@@ -145,27 +174,31 @@ static void zeroBodyTest()
   ZeroParser parser;
   ZuCheck(parser.bodyInfo(Zhttp::BodyType::Fixed, 0));
   ZuCheck(!parser.bodyInfo(Zhttp::BodyType::Fixed, 1));
-  ZuCheck(!parser.bodyInfo(Zhttp::BodyType::Streamed, 0));
+  ZuCheck(parser.bodyInfo(Zhttp::BodyType::Streamed, 0));
   ZeroReqParser requestParser;
   ZuCheck(requestParser.bodyInfo(Zhttp::BodyType::Fixed, 0));
   ZuCheck(!requestParser.bodyInfo(Zhttp::BodyType::Fixed, 1));
-  ZuCheck(!requestParser.bodyInfo(Zhttp::BodyType::Streamed, 0));
+  ZuCheck(requestParser.bodyInfo(Zhttp::BodyType::Streamed, 0));
   LimitedReqParser limited;
   ZuCheck(limited.bodyInfo(Zhttp::BodyType::Fixed, 4));
   ZuCheck(!limited.bodyInfo(Zhttp::BodyType::Fixed, 5));
 }
 
-static void exactRouteTest()
+using ExactRequests = ZuTypeList<ExactReq, ExactNoQuery>;
+ZrestCatalogDerive(ExactCatalog, ExactRequests);
+ZrestCatalogImpl(ExactCatalog)
+
+static void exactPathTest()
 {
-  ZuTestScope(exactRoute);
-  using Routes = Zrest::MReqParser<ZuTypeList<ExactReq, ExactNoQuery>>;
+  ZuTestScope(exactPath);
+  using Parser = Zrest::MReqParser<ExactCatalog>;
   auto match = [](ZuCSpan path) {
-    Routes routes;
+    Parser parser;
     Zhttp::Target target;
     target.path = {
       reinterpret_cast<uint8_t *>(const_cast<char *>(path.data())),
       path.length()};
-    return routes.operation(Zhttp::Method::GET, target);
+    return parser.operation(Zhttp::Method::GET, target);
   };
   ZuCheck(match("/authorize"));
   ZuCheck(match("/authorize?client_id=x"));
@@ -173,6 +206,45 @@ static void exactRouteTest()
   ZuCheck(!match("/authorize/extra"));
   ZuCheck(match("/.well-known/oauth-authorization-server"));
   ZuCheck(!match("/.well-known/oauth-authorization-server?x=y"));
+}
+
+using PrefixRequests = ZuTypeList<PrefixedReq>;
+ZrestCatalogDerive(PrefixCatalog, PrefixRequests);
+ZrestCatalogImpl(PrefixCatalog)
+using PrefixParser = Zrest::MReqParser<PrefixCatalog, 2>;
+
+static Zhttp::Target target(ZuCSpan path)
+{
+  Zhttp::Target target;
+  target.path = {
+    reinterpret_cast<uint8_t *>(const_cast<char *>(path.data())),
+    path.length()};
+  return target;
+}
+
+static void skipPathTest()
+{
+  ZuTestScope(skipPath);
+  PrefixParser parser;
+  auto requestTarget = target(
+    "/oauth2/ping/v1/token?grant_type=refresh_token");
+  ZuCheck(parser.operation(Zhttp::Method::GET, requestTarget));
+  ZuCheck(requestTarget.path ==
+    "/oauth2/ping/v1/token?grant_type=refresh_token");
+  parser.u.dispatch([](auto, auto &request) {
+    ZuCheck(request.fullPath ==
+      "/oauth2/ping/v1/token?grant_type=refresh_token");
+    ZuCheck(request.prefix.oauth2 == "oauth2" &&
+      request.prefix.app == "ping" && request.prefix.version == "v1" &&
+      request.prefix.endpoint == "token");
+    ZuCheck(request.object->data == "?grant_type=refresh_token");
+  });
+
+  PrefixParser malformed;
+  auto relative = target("oauth2/ping/v1/token");
+  ZuCheck(!malformed.operation(Zhttp::Method::GET, relative));
+  auto shortPath = target("/oauth2/ping");
+  ZuCheck(!malformed.operation(Zhttp::Method::GET, shortPath));
 }
 
 template <typename Builder>
@@ -206,7 +278,8 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(zeroBodyTest);
-  ZuTestCall(exactRouteTest);
+  ZuTestCall(exactPathTest);
+  ZuTestCall(skipPathTest);
   ZuTestCall(signedBodyTest);
   return 0;
 }

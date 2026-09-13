@@ -14,12 +14,8 @@ LDADD = $(top_builddir)/zrest/src/libZrest.la $(top_builddir)/zhttp/src/libZhttp
 	$(top_builddir)/zu/src/libZu.la @PTLS_LIBS@ @Z_IO_LIBS@ \
 	@Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zrest zrestd
-noinst_LTLIBRARIES = libzrestexample.la
-noinst_HEADERS = zrestauth.hh zrestauth_cli.hh zrestauth_srv.hh \
-	zrestproto.hh zrestproto_cli.hh zrestproto_srv.hh zrestjwt.hh \
-	zrest_auth.hh zrest_proto.hh zrestd_auth.hh zrestd_proto.hh
-libzrestexample_la_SOURCES = zrestjwt.cc
+noinst_HEADERS = zrest.hh
 zrest_SOURCES = zrest.cc
-zrest_LDADD = libzrestexample.la $(LDADD)
+zrest_LDADD = $(LDADD)
 zrestd_SOURCES = zrestd.cc
-zrestd_LDADD = libzrestexample.la $(LDADD)
+zrestd_LDADD = $(LDADD)
