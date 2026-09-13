@@ -282,14 +282,18 @@ HdrString outputPath(ZuCSpan base, unsigned reqID, unsigned requests)
   return path;
 }
 
-using RequestHeaders = ZhttpHeaders(
+using RequestHeaderList = ZhttpHeaders(
   "user-agent",
   "accept",
   "content-length");
-using ResponseHeaders = ZhttpHeaders(
+using ResponseHeaderList = ZhttpHeaders(
   "alt-svc",
   "connection",
   "location");
+ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
+ZhttpHdrCatalogImpl(RequestHeaders)
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
 
 using URLView = Zhttp::URLView;
 
@@ -299,7 +303,7 @@ constexpr uint64_t RespBodyMax = 100<<20;
 struct ResParser;
 
 struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHeaders;
   using ContentLength = ZuStringT<"content-length">;
 
   Zhttp::BodyPolicy::T bodyPolicy() const {
@@ -513,7 +517,7 @@ void logFraming(ReqBuilder_ &req)
 void logConnected(const ReqBuilder_ &, const Zhttp::ConnectedInfo &);
 
 struct ResParser : public Zhttp::Parser {
-  using Headers = ResponseHeaders;
+  using HdrCatalog = ResponseHeaders;
 
   bool enable1xx() const { return false; }
 

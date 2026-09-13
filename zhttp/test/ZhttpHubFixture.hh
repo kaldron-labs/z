@@ -275,7 +275,7 @@ struct UpgradeReq :
   public Zhttp::H1::Parser<UpgradeReq, true> {
   using Base = Zhttp::H1::Parser<UpgradeReq, true>;
   using State = Zhttp::H1::ParserState;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Zhttp::Parser::header;
 
   bool operation(
@@ -302,7 +302,7 @@ struct UpgradeResp :
   public Zhttp::H1::Parser<UpgradeResp, false> {
   using Base = Zhttp::H1::Parser<UpgradeResp, false>;
   using State = Zhttp::H1::ParserState;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Zhttp::Parser::header;
 
   bool enable1xx() const { return true; }

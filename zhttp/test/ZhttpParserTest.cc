@@ -38,15 +38,17 @@ bool spanEq(ZuBSpan span, const char *s)
   return span.length() == n && (!n || !::memcmp(span.data(), s, n));
 }
 
-using ResponseHeaders = ZuTypeList<
+using ResponseHeaderList = ZuTypeList<
   ZuStringT<"key">, ZuTypeList<>,
   ZuStringT<"x-empty">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
 struct ResponseParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders> {
   using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders>;
   using Base::reset;
-  using Headers = ResponseHeaders;
+  using HdrCatalog = ResponseHeaders;
 
   ResponseParser() : Base{1024} { }
 
@@ -144,13 +146,15 @@ struct ResponseParser :
   ZtString<>			runtimeValue;
 };
 
-using RequestHeaders = ZuTypeList<ZuStringT<"host">, ZuTypeList<>>;
+using RequestHeaderList = ZuTypeList<ZuStringT<"host">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
+ZhttpHdrCatalogImpl(RequestHeaders)
 struct RequestParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestParser, true, RequestHeaders> {
   using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders>;
   using Base::reset;
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHeaders;
 
   RequestParser() : Base{1024} { }
 
@@ -206,11 +210,11 @@ struct RequestParser :
 struct LimitedRequestParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<
-    LimitedRequestParser, true, ZuTypeList<>, 16, 32> {
+    LimitedRequestParser, true, Zhttp::DefltHdrCatalog, 16, 32> {
   using Base = Zhttp::H1::Parser<
-    LimitedRequestParser, true, ZuTypeList<>, 16, 32>;
+    LimitedRequestParser, true, Zhttp::DefltHdrCatalog, 16, 32>;
   using Base::reset;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   void complete(Zhttp::H1::ParserState::T) { ++completeCalls; }
   unsigned completeCalls = 0;
 };
@@ -221,7 +225,7 @@ struct RejectingParser :
   public Zhttp::H1::Parser<RejectingParser<Request>, Request> {
   using Base = Zhttp::H1::Parser<RejectingParser<Request>, Request>;
   using Base::reset;
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   RejectingParser() : Base{1024} { }
 

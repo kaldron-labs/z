@@ -34,6 +34,10 @@ using namespace ZuTestUtil;
 
 namespace ZhttpClientFallbackTest_ {
 
+using ResponseHeaderList = ZhttpHeaders("alt-svc");
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
+
 struct Resolver {
   Resolver() : ops{
     .context = this,
@@ -80,7 +84,7 @@ struct ReqBuilder_;
 struct ResParser;
 
 struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
     return Zhttp::BodyPolicy::None;
   }
@@ -118,7 +122,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 };
 
 struct ResParser : public Zhttp::Parser {
-  using Headers = ZhttpHeaders("alt-svc");
+  using HdrCatalog = ResponseHeaders;
 
   bool enable1xx() const { return false; }
 

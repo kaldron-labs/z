@@ -139,7 +139,8 @@ inline void contentLengthSet(L &&l, uint64_t length)
 struct Parser { // base class with defaulted types and member functions
   // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
   // value, or a non-empty list of values eligible for static dispatch.
-  using Headers = ZuTypeList<>; // ZhttpHeaders(...);
+  using HdrCatalog = DefltHdrCatalog;
+  using Headers = typename HdrCatalog::List;
 
   Parser() = default;
 
@@ -196,7 +197,8 @@ struct Parser { // base class with defaulted types and member functions
 struct Builder {
   // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
   // value, or a singleton list containing the fixed value.
-  using Headers = ZuTypeList<>; // ZhttpHeaders(...);
+  using HdrCatalog = DefltHdrCatalog;
+  using Headers = typename HdrCatalog::List;
 
   // default header section scratch buffer size for H2/H3
   static constexpr unsigned HdrBufSize = 1<<10; // 1k scratch buffer
@@ -327,33 +329,33 @@ struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers> {
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>>
-using H1RequestParser = H1::Parser<Impl, true, Headers>;
+  typename HdrCatalog = DefltHdrCatalog>
+using H1RequestParser = H1::Parser<Impl, true, HdrCatalog>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>>
-using H1ResponseParser = H1::Parser<Impl, false, Headers>;
+  typename HdrCatalog = DefltHdrCatalog>
+using H1ResponseParser = H1::Parser<Impl, false, HdrCatalog>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>>
-using H2RequestParser = H2::Parser<Impl, true, Headers>;
+  typename HdrCatalog = DefltHdrCatalog>
+using H2RequestParser = H2::Parser<Impl, true, HdrCatalog>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>>
-using H2ResponseParser = H2::Parser<Impl, false, Headers>;
+  typename HdrCatalog = DefltHdrCatalog>
+using H2ResponseParser = H2::Parser<Impl, false, HdrCatalog>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>>
-using H3RequestParser = H3::Parser<Impl, true, Headers>;
+  typename HdrCatalog = DefltHdrCatalog>
+using H3RequestParser = H3::Parser<Impl, true, HdrCatalog>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>>
-using H3ResponseParser = H3::Parser<Impl, false, Headers>;
+  typename HdrCatalog = DefltHdrCatalog>
+using H3ResponseParser = H3::Parser<Impl, false, HdrCatalog>;
 
 // Low-level protocol Builder CRTP adapters used internally by the role
 // facades. Application Builders do not derive from these aliases. The
@@ -362,45 +364,45 @@ using H3ResponseParser = H3::Parser<Impl, false, Headers>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false, bool Chunked = false>
 using H1Request =
-  H1::Request<Impl, Headers, HasBody, Chunked>;
+  H1::Request<Impl, HdrCatalog, HasBody, Chunked>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false, bool Chunked = false>
 using H1Response =
-  H1::Response<Impl, Headers, HasBody, Chunked>;
+  H1::Response<Impl, HdrCatalog, HasBody, Chunked>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false>
 using H2Request =
-  H2::Request<Impl, Headers, HasBody, false>;
+  H2::Request<Impl, HdrCatalog, HasBody, false>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false>
 using H2Response =
-  H2::Response<Impl, Headers, HasBody, false>;
+  H2::Response<Impl, HdrCatalog, HasBody, false>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false>
 using H3Request =
-  H3::Request<Impl, Headers, HasBody, false>;
+  H3::Request<Impl, HdrCatalog, HasBody, false>;
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false>
 using H3Response =
-  H3::Response<Impl, Headers, HasBody, false>;
+  H3::Response<Impl, HdrCatalog, HasBody, false>;
 
 // Application message callback contract
 //
@@ -432,16 +434,16 @@ template <> struct HttpTraits<Version::H1> {
     CloseDelimited = true
   };
 
-  template <typename Impl, typename Headers>
-  using RequestParser = H1::Parser<Impl, true, Headers>;
-  template <typename Impl, typename Headers>
-  using ResponseParser = H1::Parser<Impl, false, Headers>;
-  template <typename Impl, typename Headers, bool HasBody, bool Chunked>
+  template <typename Impl, typename HdrCatalog>
+  using RequestParser = H1::Parser<Impl, true, HdrCatalog>;
+  template <typename Impl, typename HdrCatalog>
+  using ResponseParser = H1::Parser<Impl, false, HdrCatalog>;
+  template <typename Impl, typename HdrCatalog, bool HasBody, bool Chunked>
   using Request =
-    H1::Request<Impl, Headers, HasBody, Chunked>;
-  template <typename Impl, typename Headers, bool HasBody, bool Chunked>
+    H1::Request<Impl, HdrCatalog, HasBody, Chunked>;
+  template <typename Impl, typename HdrCatalog, bool HasBody, bool Chunked>
   using Response =
-    H1::Response<Impl, Headers, HasBody, Chunked>;
+    H1::Response<Impl, HdrCatalog, HasBody, Chunked>;
 };
 
 template <> struct HttpTraits<Version::H2> {
@@ -451,16 +453,16 @@ template <> struct HttpTraits<Version::H2> {
     CloseDelimited = false
   };
 
-  template <typename Impl, typename Headers>
-  using RequestParser = H2::Parser<Impl, true, Headers>;
-  template <typename Impl, typename Headers>
-  using ResponseParser = H2::Parser<Impl, false, Headers>;
-  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
+  template <typename Impl, typename HdrCatalog>
+  using RequestParser = H2::Parser<Impl, true, HdrCatalog>;
+  template <typename Impl, typename HdrCatalog>
+  using ResponseParser = H2::Parser<Impl, false, HdrCatalog>;
+  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
   using Request =
-    H2::Request<Impl, Headers, HasBody, Streaming>;
-  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
+    H2::Request<Impl, HdrCatalog, HasBody, Streaming>;
+  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
   using Response =
-    H2::Response<Impl, Headers, HasBody, Streaming>;
+    H2::Response<Impl, HdrCatalog, HasBody, Streaming>;
 };
 
 template <> struct HttpTraits<Version::H3> {
@@ -470,16 +472,16 @@ template <> struct HttpTraits<Version::H3> {
     CloseDelimited = false
   };
 
-  template <typename Impl, typename Headers>
-  using RequestParser = H3::Parser<Impl, true, Headers>;
-  template <typename Impl, typename Headers>
-  using ResponseParser = H3::Parser<Impl, false, Headers>;
-  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
+  template <typename Impl, typename HdrCatalog>
+  using RequestParser = H3::Parser<Impl, true, HdrCatalog>;
+  template <typename Impl, typename HdrCatalog>
+  using ResponseParser = H3::Parser<Impl, false, HdrCatalog>;
+  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
   using Request =
-    H3::Request<Impl, Headers, HasBody, Streaming>;
-  template <typename Impl, typename Headers, bool HasBody, bool Streaming>
+    H3::Request<Impl, HdrCatalog, HasBody, Streaming>;
+  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
   using Response =
-    H3::Response<Impl, Headers, HasBody, Streaming>;
+    H3::Response<Impl, HdrCatalog, HasBody, Streaming>;
 };
 
 template <typename Profile, typename Traits>
@@ -527,9 +529,9 @@ using HeaderSeeds =
 // bootstrap state.  Application Builder instances are never consulted.
 class HeaderSeedCatalog {
 public:
-  template <typename Headers>
+  template <typename HdrCatalog>
   void add(const H3::Params &params, uint32_t capacity) {
-    using List = HeaderList<Headers>;
+    using List = HeaderList<HdrCatalog>;
     ZuUnroll::all<List::N>([this, &params, capacity](auto I) {
       using Key = typename List::template Key<I>;
       using Value = typename List::template Value<I>;
@@ -609,10 +611,10 @@ using HPackSeedPlans =
 
 class HPackSeedCatalog {
 public:
-  template <typename Headers>
+  template <typename HdrCatalog>
   void add(uint32_t capacity) {
     HPackSeedPlan plan;
-    using List = HeaderList<Headers>;
+    using List = HeaderList<HdrCatalog>;
     ZuUnroll::all<List::N>([&plan, capacity](auto I) {
       using Key = typename List::template Key<I>;
       using Value = typename List::template Value<I>;
@@ -828,10 +830,10 @@ private:
 };
 
 template <
-  typename Headers,
-  unsigned N = HeaderList<Headers>::N>
+  typename HdrCatalog,
+  unsigned N = HeaderList<HdrCatalog>::N>
 class HeaderSpans {
-  using List = HeaderList<Headers>;
+  using List = HeaderList<HdrCatalog>;
   using Keys = typename List::Keys;
 
   ZuAssert((ZuTypeUnique<Keys>::N == Keys::N),
@@ -878,8 +880,8 @@ private:
   ZuSpan<uint8_t>	m_slots[N]{};
 };
 
-template <typename Headers>
-class HeaderSpans<Headers, 0> {
+template <typename HdrCatalog>
+class HeaderSpans<HdrCatalog, 0> {
 public:
   template <typename Key>
   void record(ZuSpan<uint8_t>) {

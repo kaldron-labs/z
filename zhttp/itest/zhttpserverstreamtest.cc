@@ -27,6 +27,10 @@ using namespace ZuTestUtil;
 
 namespace zhttpserverstreamtest_ {
 
+using RequestHeaderList = ZhttpHeaders("content-length");
+ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
+ZhttpHdrCatalogImpl(RequestHeaders)
+
 using StreamEmitFn = ZmFn<bool(), ZmFnHeapID<"Zhttp.Server.Emit">>;
 
 namespace StreamTurn {
@@ -174,7 +178,7 @@ struct App {
       Emit emit;
     };
 
-    using Headers = ZuTypeList<>;
+    using HdrCatalog = Zhttp::DefltHdrCatalog;
     Zhttp::BodyPolicy::T bodyPolicy() const {
       return state->streamTurn == StreamTurn::OptionalAbsent ?
 	Zhttp::BodyPolicy::OptionalStream : Zhttp::BodyPolicy::Stream;
@@ -242,7 +246,7 @@ struct App {
   using ResBuilder = ResBuilderQ::Node;
 
   struct Parser : public Zhttp::Parser {
-    using Headers = ZuTypeList<>;
+    using HdrCatalog = Zhttp::DefltHdrCatalog;
 
     void init(App &app) { state = app.state; }
 
@@ -316,16 +320,13 @@ using Server = Zhttp::Server<App>;
 
 template <typename Profile>
 struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
-  using RequestHeaders = ZuTypeList<
-    ZuStringT<"content-length">, ZuTypeList<>>;
-
   struct Builder :
     public Zhttp::Builder,
     public Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false> {
     using Base = typename Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false>;
-    using Headers = RequestHeaders;
+    using HdrCatalog = RequestHeaders;
     using Base::body;
 
     template <typename L>
@@ -351,12 +352,12 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     struct Parser :
       public Zhttp::Parser,
       public Zhttp::MessageTraits<Profile>::template ResponseParser<
-	Parser, ZuTypeList<>> {
+	Parser, Zhttp::DefltHdrCatalog> {
       using Base =
 	typename Zhttp::MessageTraits<Profile>::template ResponseParser<
-	  Parser, ZuTypeList<>>;
+	  Parser, Zhttp::DefltHdrCatalog>;
       using State = typename Base::State;
-      using Headers = ZuTypeList<>;
+      using HdrCatalog = Zhttp::DefltHdrCatalog;
       using Base::reset;
 
       void status(unsigned value) { status_ = value; }

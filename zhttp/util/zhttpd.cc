@@ -159,7 +159,7 @@ bool prepareProcess(Options &options)
   return true;
 }
 
-using ReqHeaders = ZhttpHeaders(
+using ReqHeaderList = ZhttpHeaders(
   "host",
   "authorization",
   "range",
@@ -168,7 +168,7 @@ using ReqHeaders = ZhttpHeaders(
   "referer",
   "user-agent");
 
-using FixedRespHeaders = ZhttpHeaders(
+using FixedRespHeaderList = ZhttpHeaders(
   "content-type",
   "date",
   "server",
@@ -180,6 +180,10 @@ using FixedRespHeaders = ZhttpHeaders(
   "allow",
   "connection",
   "content-length");
+ZhttpHdrCatalogDerive(ReqHeaders, ReqHeaderList);
+ZhttpHdrCatalogImpl(ReqHeaders)
+ZhttpHdrCatalogDerive(FixedRespHeaders, FixedRespHeaderList);
+ZhttpHdrCatalogImpl(FixedRespHeaders)
 
 struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   struct Mode { enum { Empty, Fixed, Generated, JSON, File }; };
@@ -188,7 +192,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     Zhttp::WriteOutcome::T operator ()(Body &) const;
   };
 
-  using Headers = FixedRespHeaders;
+  using HdrCatalog = FixedRespHeaders;
   using ContentLength = ZuStringT<"content-length">;
   using FileBuf = ZiIOBufAlloc<
     FileChunk, FileChunk, "Zhttpd.FileBody">;
@@ -397,7 +401,7 @@ struct HasHttp10<T, decltype(ZuDeclVal<const T &>().http10(), void())> :
   public ZuTrue { };
 
 struct Parser : public Zhttp::Parser {
-  using Headers = ReqHeaders;
+  using HdrCatalog = ReqHeaders;
 
   void init(App &app_) { app = &app_; }
 

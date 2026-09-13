@@ -152,7 +152,7 @@ inline int64_t parseLine(
 template <
   typename Impl,
   bool Request_ = false,
-  typename Headers_ = ZuTypeList<>,
+  typename HdrCatalog_ = DefltHdrCatalog,
   uint64_t MaxStartLine_ = DefltMaxStartLine,
   uint64_t MaxHeaderSection_ = DefltMaxHeaderSection>
 class Parser {
@@ -164,9 +164,8 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
-  using Headers = typename Headers_::template Unshift<
-    ZuStringT<"transfer-encoding">, ZuTypeList<>,
-    ZuStringT<"content-length">, ZuTypeList<>>;
+  using HdrCatalog = HdrCatalog_;
+  using Headers = typename HdrCatalog::List;
   static constexpr uint64_t MaxStartLine = MaxStartLine_;
   static constexpr uint64_t MaxHeaderSection = MaxHeaderSection_;
   using State = ParserState;
@@ -240,7 +239,7 @@ private:
       return;
     }
     if (!deliverHeaders_()) return;
-    Fields::dispatch<Headers>(
+    Fields::dispatch<HdrCatalog>(
       key, value,
       [this](auto key, ZuSpan<uint8_t> value) {
 	impl()->template header<ZuDecay<decltype(key)>>(section_(), value);
@@ -740,7 +739,7 @@ auto chunkedStream(Lower &lower) {
 // HTTP/1 message builder
 template <
   typename Impl,
-  typename Headers_ = ZuTypeList<>,
+  typename HdrCatalog_ = DefltHdrCatalog,
   bool HasBody_ = false,		// has a body
   bool Chunked_ = false>		// body is chunked
 class Builder_ {
@@ -750,7 +749,8 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  using Headers = Headers_;
+  using HdrCatalog = HdrCatalog_;
+  using Headers = typename HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Chunked = Chunked_ };
 
@@ -776,11 +776,11 @@ private:
   }
   void patch_(...) { }
 
-  template <typename KVs = Headers, typename Stream>
+  template <typename Catalog = HdrCatalog, typename Stream>
   void headers_(Stream &stream) {
     // header key/values
     {
-	using List = HeaderList<KVs>;
+	using List = HeaderList<Catalog>;
 	ZuUnroll::all<List::N>([this, &stream](auto I) {
 	  using Key = typename List::template Key<I>;
 	  using Value = typename List::template Value<I>;
@@ -809,7 +809,7 @@ private:
 	  }
 	});
     }
-    if constexpr (ZuIsSame<KVs, Headers>{})
+    if constexpr (ZuIsSame<Catalog, HdrCatalog>{})
       impl()->header([&stream]<typename Key, typename Value>(
 	    Key &&key, Value &&value) {
 	  stream << ZuFwd<Key>(key) << ": " << ZuFwd<Value>(value) << "\r\n";
@@ -821,7 +821,7 @@ private:
     auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
     if constexpr (HasBody && Chunked)
       block << "transfer-encoding: chunked\r\n";
-    headers_<Headers>(block);
+    headers_<HdrCatalog>(block);
     if constexpr (HasBody && !Chunked) {
       headerBase_(block.data(), 0);
       patch_(0);
@@ -893,11 +893,11 @@ public:
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Chunked = false>
-class Request : public Builder_<Impl, Headers, HasBody, Chunked> {
-  using Base = Builder_<Impl, Headers, HasBody, Chunked>;
+class Request : public Builder_<Impl, HdrCatalog, HasBody, Chunked> {
+  using Base = Builder_<Impl, HdrCatalog, HasBody, Chunked>;
 
 public:
   template <typename Stream>
@@ -906,11 +906,11 @@ public:
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Chunked = false>
-class Response : public Builder_<Impl, Headers, HasBody, Chunked> {
-  using Base = Builder_<Impl, Headers, HasBody, Chunked>;
+class Response : public Builder_<Impl, HdrCatalog, HasBody, Chunked> {
+  using Base = Builder_<Impl, HdrCatalog, HasBody, Chunked>;
 
 public:
   template <typename Stream>

@@ -587,7 +587,7 @@ private:
 template <
   typename Impl,
   bool Request_ = false,
-  typename Headers_ = ZuTypeList<>>
+  typename HdrCatalog_ = DefltHdrCatalog>
 class Parser {
 public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
@@ -600,8 +600,8 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
-  using Headers = typename Headers_::template Unshift<
-    ZuStringT<"content-length">, ZuTypeList<>>;
+  using HdrCatalog = HdrCatalog_;
+  using Headers = typename HdrCatalog::List;
   using State = ParserState;
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -736,7 +736,11 @@ private:
   void header_(
       Zhttp::FieldSection::T section,
       ZuBSpan key, ZuSpan<uint8_t> value) {
-    Fields::dispatch<Headers>(
+    if (key == "content-length") {
+      this->template header_<ZuStringT<"content-length">>(section, value);
+      return;
+    }
+    Fields::dispatch<HdrCatalog>(
       key, value,
       [this, section](auto key, ZuSpan<uint8_t> value) {
 	this->template header_<ZuDecay<decltype(key)>>(section, value);
@@ -1280,7 +1284,7 @@ auto dataStream(Lower &lower, uint64_t length) {
 // HTTP/3 message builder
 template <
   typename Impl,
-  typename Headers_ = ZuTypeList<>,
+  typename HdrCatalog_ = DefltHdrCatalog,
   bool HasBody_ = false,		// has a body
   bool Streaming_ = false>
 class Builder_ {
@@ -1294,7 +1298,8 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  using Headers = Headers_;
+  using HdrCatalog = HdrCatalog_;
+  using Headers = typename HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
 
@@ -1488,9 +1493,9 @@ private:
   }
   void patch_(...) { }
 
-  template <typename KVs, typename Build>
+  template <typename Catalog, typename Build>
   bool headers_(Build &build) {
-    using List = HeaderList<KVs>;
+    using List = HeaderList<Catalog>;
     ZuUnroll::all<List::N>([this, &build](auto I) {
 	using Key = typename List::template Key<I>;
 	using Value = typename List::template Value<I>;
@@ -1628,7 +1633,7 @@ protected:
 	  build.field(":authority", ZuFwd<Host>(host));
 	});
 	contentLength_(build);
-	headers_<Headers>(build);
+	headers_<HdrCatalog>(build);
 	return build.ok;
     });
     return valid && m_qpackFailure == QPackBuildFailure::None;
@@ -1642,7 +1647,7 @@ protected:
 	ZuBArray<StatusSize> buf;
 	build.field(":status", statusSpan_(status, buf));
 	contentLength_(build);
-	headers_<Headers>(build);
+	headers_<HdrCatalog>(build);
 	return build.ok;
     });
   }
@@ -1707,11 +1712,11 @@ private:
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Request : public Builder_<Impl, Headers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
+class Request : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
+  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1720,11 +1725,11 @@ public:
 
 template <
   typename Impl,
-  typename Headers = ZuTypeList<>,
+  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Response : public Builder_<Impl, Headers, HasBody, Streaming> {
-  using Base = Builder_<Impl, Headers, HasBody, Streaming>;
+class Response : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
+  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
 
 public:
   template <typename Stream>

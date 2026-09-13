@@ -428,7 +428,9 @@ void testWarmPlan()
 {
   ZuTestScope(testWarmPlan);
 
-  using Headers = ZhttpHeaders(("x-fixed", "fixed"), "x-runtime");
+  struct Headers {
+    using List = ZhttpHeaders(("x-fixed", "fixed"), "x-runtime");
+  };
   Zhttp::HPackSeedCatalog catalog;
   catalog.add<Headers>(512);
   ZuCHECK(catalog.entries().length() == 1 &&
@@ -479,8 +481,8 @@ void testWarmPlans()
 {
   ZuTestScope(testWarmPlans);
 
-  using First = ZhttpHeaders(("x-first", "one"));
-  using Second = ZhttpHeaders(("x-second", "two"));
+  struct First { using List = ZhttpHeaders(("x-first", "one")); };
+  struct Second { using List = ZhttpHeaders(("x-second", "two")); };
   Zhttp::HPackSeedCatalog catalog;
   catalog.add<First>(512);
   catalog.add<Second>(512);

@@ -12,6 +12,9 @@
 
 namespace Zhttp {
 
+int DefltHdrCatalog::nameMatch(ZuBSpan) { return -1; }
+int DefltHdrCatalog::valueMatch(unsigned, ZuBSpan) { return -1; }
+
 ZtEnumImplNS(FieldSection);
 
 namespace Fields {

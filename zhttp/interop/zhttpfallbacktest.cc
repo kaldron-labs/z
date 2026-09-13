@@ -74,12 +74,21 @@ struct ResponseCtx {
   int			status = -1;
 };
 
-using RequestHeaders = ZuTypeList<ZuStringT<"host">, ZuTypeList<>>;
+using RequestHeaderList = ZuTypeList<ZuStringT<"host">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
+ZhttpHdrCatalogImpl(RequestHeaders)
+using ResponseHeaderList = ZhttpHeaders("content-length");
+ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
+ZhttpHdrCatalogImpl(ResponseHeaders)
+using RequestBuilderHeaderList =
+  ZhttpHeaders(("user-agent", "ZhttpFallbackTest/1.0"));
+ZhttpHdrCatalogDerive(RequestBuilderHeaders, RequestBuilderHeaderList);
+ZhttpHdrCatalogImpl(RequestBuilderHeaders)
 struct RequestRx :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RequestRx, true, RequestHeaders> {
   using Base = Zhttp::H1::Parser<RequestRx, true, RequestHeaders>;
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHeaders;
 
   RequestRx() : Base{FallbackMaxBody} { }
 
@@ -107,9 +116,10 @@ struct RequestRx :
 
 struct ResponseRx :
   public Zhttp::Parser,
-  public Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>> {
-  using Base = Zhttp::H1::Parser<ResponseRx, false, ZuTypeList<>>;
-  using Headers = ZuTypeList<>;
+  public Zhttp::H1::Parser<ResponseRx, false, Zhttp::DefltHdrCatalog> {
+  using Base =
+    Zhttp::H1::Parser<ResponseRx, false, Zhttp::DefltHdrCatalog>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   ResponseRx() : Base{FallbackMaxBody} { }
 
@@ -134,11 +144,11 @@ struct ResponseRx :
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Response<
-    ResponseBuilder, ZhttpHeaders("content-length"), true> {
+    ResponseBuilder, ResponseHeaders, true> {
   using Base =
     Zhttp::H1::Response<
-      ResponseBuilder, ZhttpHeaders("content-length"), true>;
-  using Headers = ZhttpHeaders("content-length");
+      ResponseBuilder, ResponseHeaders, true>;
+  using HdrCatalog = ResponseHeaders;
   using Zhttp::Builder::header;
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
@@ -152,14 +162,12 @@ struct ResponseBuilder :
   uint64_t contentLength_;
 };
 
-using RequestBuilderHeaders =
-  ZhttpHeaders(("user-agent", "ZhttpFallbackTest/1.0"));
 struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders> {
   using Base =
     Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders>;
-  using Headers = RequestBuilderHeaders;
+  using HdrCatalog = RequestBuilderHeaders;
   using Zhttp::Builder::header;
 
   template <typename L>

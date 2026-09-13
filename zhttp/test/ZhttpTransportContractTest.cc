@@ -100,10 +100,10 @@ template <typename Message>
 struct BodyBuilder :
   public Zhttp::Builder,
   public Message::template Request<
-    BodyBuilder<Message>, ZuTypeList<>, true, false> {
+    BodyBuilder<Message>, Zhttp::DefltHdrCatalog, true, false> {
   using Base = typename Message::template Request<
-    BodyBuilder, ZuTypeList<>, true, false>;
-  using Headers = ZuTypeList<>;
+    BodyBuilder, Zhttp::DefltHdrCatalog, true, false>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base::body;
   uint64_t contentLength() const { return 1; }
 };
@@ -427,18 +427,22 @@ struct QueryPath {
   friend ZuPrintFn ZuPrintType(QueryPath *);
 };
 
-using TxHeaders = ZuTypeList<ZuStringT<"x-custom">, ZuTypeList<>>;
+using TxHeaderList = ZuTypeList<ZuStringT<"x-custom">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(TxHeaders, TxHeaderList);
+ZhttpHdrCatalogImpl(TxHeaders)
 using ContentLength = ZuStringT<"content-length">;
 using BodySize = ZuStringT<"x-body-size">;
-using FixedHeaders = ZuTypeList<
+using FixedHeaderList = ZuTypeList<
   ContentLength, ZuTypeList<>, BodySize, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(FixedHeaders, FixedHeaderList);
+ZhttpHdrCatalogImpl(FixedHeaders)
 
 struct TxBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Request<
     TxBuilder, TxHeaders, true, true> {
-  using Headers = TxHeaders;
-  using Base = Zhttp::H1::Request<TxBuilder, Headers, true, true>;
+  using HdrCatalog = TxHeaders;
+  using Base = Zhttp::H1::Request<TxBuilder, HdrCatalog, true, true>;
   using Base::body;
   template <typename L>
   void operation(L &&l) {
@@ -459,7 +463,7 @@ struct TxBuilder :
 struct ResponseTxBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Response<ResponseTxBuilder> {
-  using Headers = ZuTypeList<>;
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   unsigned status() const { return 204; }
 };
@@ -468,8 +472,8 @@ struct FixedTxBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Request<
     FixedTxBuilder, FixedHeaders, true, false> {
-  using Headers = FixedHeaders;
-  using Base = Zhttp::H1::Request<FixedTxBuilder, Headers, true, false>;
+  using HdrCatalog = FixedHeaders;
+  using Base = Zhttp::H1::Request<FixedTxBuilder, HdrCatalog, true, false>;
   using Base::body;
   template <typename L>
   void operation(L &&l) {
