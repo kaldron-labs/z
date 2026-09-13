@@ -1097,9 +1097,9 @@ template <typename Impl, typename Catalog>
 struct Request_ : public ZmObject,
     public HTTPRequestBuilder<Message<Catalog>> {
   using Base = HTTPRequestBuilder<Message<Catalog>>;
-  using BaseKeys = typename Zhttp::HeaderList<typename Base::Headers>::Keys;
+  using BaseKeys = ZuTypeSlice<2, 0, typename Base::Headers>;
   using AppHeaderList = AppHeaders<Impl>;
-  using AppKeys = typename Zhttp::HeaderList<AppHeaderList>::Keys;
+  using AppKeys = ZuTypeSlice<2, 0, AppHeaderList>;
   using HeaderKeys = ZuTypeConcat<BaseKeys, AppKeys>;
 
   using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;

@@ -1,0 +1,105 @@
+#!/bin/sh
+
+echo 'TAP version 14'
+echo '1..9'
+
+db=$(mktemp --suffix=.db)
+trap 'rm -f "$db" "$db-wal" "$db-shm"' EXIT
+test_dir=$(dirname "$0")
+
+run()
+{
+  "$test_dir/zdbsltest" -c "$db" >/dev/null 2>&1
+}
+
+if run && run; then
+  echo 'ok 1 - repeated startup'
+else
+  echo 'not ok 1 - repeated startup'
+fi
+
+sqlite3 "$db" 'DROP INDEX "zdbsl_k1_a_order";'
+if run && test "$(sqlite3 "$db" \
+    "SELECT group_concat(name, ',') FROM pragma_index_xinfo('zdbsl_k1_a_order') WHERE key=1;")" \
+    = 'link,cl_ord_i_d'; then
+  echo 'ok 2 - recreate missing index'
+else
+  echo 'not ok 2 - recreate missing index'
+fi
+
+type=$(sqlite3 "$db" \
+  "SELECT type FROM zdbsl_schema WHERE internal=0 AND tbl='order' AND ordinal=0;")
+rows=$(sqlite3 "$db" 'SELECT count(*) FROM a_order;')
+sqlite3 "$db" \
+  "UPDATE zdbsl_schema SET type=type+1 WHERE internal=0 AND tbl='order' AND ordinal=0;"
+if run || test "$(sqlite3 "$db" 'SELECT count(*) FROM a_order;')" != "$rows" || \
+    test "$(sqlite3 "$db" \
+      "SELECT type FROM zdbsl_schema WHERE internal=0 AND tbl='order' AND ordinal=0;")" \
+      != "$((type + 1))"; then
+  echo 'not ok 3 - reject logical schema mismatch without mutation'
+else
+  echo 'ok 3 - reject logical schema mismatch without mutation'
+fi
+sqlite3 "$db" \
+  "UPDATE zdbsl_schema SET type=$type WHERE internal=0 AND tbl='order' AND ordinal=0;"
+
+sqlite3 "$db" \
+  'DROP INDEX "zdbsl_k1_a_order"; CREATE INDEX "zdbsl_k1_a_order" ON a_order(symbol);'
+rows=$(sqlite3 "$db" 'SELECT count(*) FROM a_order;')
+if run || test "$(sqlite3 "$db" 'SELECT count(*) FROM a_order;')" != "$rows" || \
+    test "$(sqlite3 "$db" \
+      "SELECT group_concat(name, ',') FROM pragma_index_xinfo('zdbsl_k1_a_order') WHERE key=1;")" \
+      != 'symbol'; then
+  echo 'not ok 4 - reject incompatible index without replacement'
+else
+  echo 'ok 4 - reject incompatible index without replacement'
+fi
+sqlite3 "$db" 'DROP INDEX "zdbsl_k1_a_order";'
+run >/dev/null 2>&1
+
+sqlite3 "$db" \
+  'DROP INDEX "zdbsl_k1_a_order"; CREATE INDEX "zdbsl_k1_a_order" ON a_order(link DESC,cl_ord_i_d);'
+if run; then
+  echo 'not ok 5 - reject wrong index direction'
+else
+  echo 'ok 5 - reject wrong index direction'
+fi
+sqlite3 "$db" 'DROP INDEX "zdbsl_k1_a_order";'
+run >/dev/null 2>&1
+
+sqlite3 "$db" \
+  "DROP INDEX \"zdbsl_k1_a_order\"; CREATE INDEX \"zdbsl_k1_a_order\" ON a_order(link,cl_ord_i_d) WHERE link<>'';"
+if run; then
+  echo 'not ok 6 - reject partial index'
+else
+  echo 'ok 6 - reject partial index'
+fi
+sqlite3 "$db" 'DROP INDEX "zdbsl_k1_a_order";'
+run >/dev/null 2>&1
+
+sqlite3 "$db" \
+  'DROP INDEX "zdbsl_k1_a_order"; CREATE UNIQUE INDEX "zdbsl_k1_a_order" ON a_order(link,cl_ord_i_d);'
+if run; then
+  echo 'not ok 7 - reject wrong index uniqueness'
+else
+  echo 'ok 7 - reject wrong index uniqueness'
+fi
+sqlite3 "$db" 'DROP INDEX "zdbsl_k1_a_order";'
+run >/dev/null 2>&1
+
+sqlite3 "$db" 'CREATE INDEX "zdbsl_unexpected" ON a_order(symbol);'
+if run; then
+  echo 'not ok 8 - reject unexpected index'
+else
+  echo 'ok 8 - reject unexpected index'
+fi
+sqlite3 "$db" 'DROP INDEX "zdbsl_unexpected";'
+
+rows=$(sqlite3 "$db" 'SELECT count(*) FROM a_order;')
+sqlite3 "$db" "UPDATE zdbsl_meta SET value=3 WHERE id='format';"
+if run || test "$(sqlite3 "$db" 'SELECT count(*) FROM a_order;')" != "$rows" || \
+    test "$(sqlite3 "$db" "SELECT value FROM zdbsl_meta WHERE id='format';")" != 3; then
+  echo 'not ok 9 - reject incompatible format without mutation'
+else
+  echo 'ok 9 - reject incompatible format without mutation'
+fi

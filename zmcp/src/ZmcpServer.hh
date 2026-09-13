@@ -1368,11 +1368,10 @@ public:
 
   class Parser : public HTTPParser<Parser> {
     using Base = HTTPParser<Parser>;
-    using BaseKeys = typename Zhttp::HeaderList<
-      typename Base::Headers>::Keys;
+    using BaseKeys = ZuTypeSlice<2, 0, typename Base::Headers>;
 
   public:
-    using AppKeys = typename Zhttp::HeaderList<AppHeaderList>::Keys;
+    using AppKeys = ZuTypeSlice<2, 0, AppHeaderList>;
     using HeaderKeys = ZuTypeConcat<BaseKeys, AppKeys>;
     using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;
     ZuAssert(ZuTypeUnique<HeaderKeys>::N == HeaderKeys::N,

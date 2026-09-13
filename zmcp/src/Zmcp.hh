@@ -2874,7 +2874,7 @@ template <typename> using HTTPHeaderSlot_ = HTTPHeaderSlot;
 
 template <typename Headers>
 class HTTPHeaders {
-  using Keys = typename Zhttp::HeaderList<Headers>::Keys;
+  using Keys = ZuTypeSlice<2, 0, Headers>;
   using Slots = ZuTypeApply<ZuTuple, ZuTypeMap<HTTPHeaderSlot_, Keys>>;
 
 public:

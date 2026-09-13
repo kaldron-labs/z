@@ -5,7 +5,6 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZfCf.hh>
 
@@ -68,18 +67,8 @@ struct SagaB : public ZdbSagaBase<Context> {
 ZfbStruct(, SagaB,
   (((value), (Ctor<0>)), (UInt32)));
 
-template <typename Catalog>
-static int sagaMatch(ZuCSpan type)
-{
-  struct IDs { using Keys = Zdb_::SagaTypes<typename Catalog::List>; };
-  static constexpr auto matcher = ZuMatcher<IDs>();
-  return matcher.exact(type);
-}
-
-struct Sagas {
-  using List = ZuTypeList<SagaA, SagaB>;
-  static int match(ZuCSpan type) { return sagaMatch<Sagas>(type); }
-};
+ZdbSagaDerive(Sagas, SagaA, SagaB);
+ZdbSagaImpl(Sagas, SagaA, SagaB)
 
 struct RepeatSaga : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -96,10 +85,8 @@ struct RepeatSaga : public ZdbSagaBase<Context> {
 ZfbStruct(, RepeatSaga,
   (((first), (Ctor<0>)), (UInt64)),
   (((second), (Ctor<1>)), (UInt64)));
-struct RepeatSagas {
-  using List = ZuTypeList<RepeatSaga>;
-  static int match(ZuCSpan type) { return sagaMatch<RepeatSagas>(type); }
-};
+ZdbSagaDerive(RepeatSagas, RepeatSaga);
+ZdbSagaImpl(RepeatSagas, RepeatSaga)
 
 struct BadRepeat {
   enum { NSteps = 1 };
@@ -361,10 +348,8 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 ZfbStruct(, LiveSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-struct LiveSagas {
-  using List = ZuTypeList<LiveSaga>;
-  static int match(ZuCSpan type) { return sagaMatch<LiveSagas>(type); }
-};
+ZdbSagaDerive(LiveSagas, LiveSaga);
+ZdbSagaImpl(LiveSagas, LiveSaga)
 
 struct ShortSaga : public ZdbSagaBase<LiveContext> {
   using Base = ZdbSagaBase<LiveContext>;
@@ -388,14 +373,10 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
 ZfbStruct(, ChangedSaga,
   (((orderID), (Ctor<0>)), (UInt64)));
 
-struct ShortCatalog {
-  using List = ZuTypeList<ShortSaga>;
-  static int match(ZuCSpan type) { return sagaMatch<ShortCatalog>(type); }
-};
-struct ChangedCatalog {
-  using List = ZuTypeList<ChangedSaga>;
-  static int match(ZuCSpan type) { return sagaMatch<ChangedCatalog>(type); }
-};
+ZdbSagaDerive(ShortCatalog, ShortSaga);
+ZdbSagaImpl(ShortCatalog, ShortSaga)
+ZdbSagaDerive(ChangedCatalog, ChangedSaga);
+ZdbSagaImpl(ChangedCatalog, ChangedSaga)
 
 struct PayloadContext : public ZmPolymorph {
   ZmSemaphore entered;
@@ -421,6 +402,9 @@ struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
 };
 ZfbStruct(, PayloadSaga,
   (((data), (Ctor<0>)), (Bytes)));
+
+ZdbSagaDerive(PayloadCatalog, PayloadSaga);
+ZdbSagaImpl(PayloadCatalog, PayloadSaga)
 
 } // zdbtest
 
@@ -499,13 +483,7 @@ static void rows()
 
 static bool payload(unsigned size)
 {
-  struct Catalog {
-    using List = ZuTypeList<zdbtest::PayloadSaga>;
-    static int match(ZuCSpan type) {
-      return zdbtest::sagaMatch<Catalog>(type);
-    }
-  };
-  using M = ZdbMSaga<Catalog>;
+  using M = ZdbMSaga<zdbtest::PayloadCatalog>;
   Zdb_::SagaPayload input;
   input.length(size, false);
   for (unsigned i = 0; i < size; ++i) input[i] = uint8_t(i);
@@ -1912,12 +1890,7 @@ static void admission()
 static void payloadAdmission(unsigned size)
 {
   ZuTestScopeRT(payloadAdmission);
-  struct Sagas {
-    using List = ZuTypeList<zdbtest::PayloadSaga>;
-    static int match(ZuCSpan type) {
-      return zdbtest::sagaMatch<Sagas>(type);
-    }
-  };
+  using Sagas = zdbtest::PayloadCatalog;
   using DB = ZdbSagaDB<zdbtest::PayloadContext, Sagas>;
   using M = ZdbMSaga<Sagas>;
   auto config = cf(true);
