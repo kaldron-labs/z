@@ -11,7 +11,6 @@
 #include <iostream>
 
 #include <zlib/ZuLib.hh>
-#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmBlock.hh>
@@ -187,14 +186,8 @@ ZfbStruct(, BalanceTransfer,
   (((toID),		(Ctor<2>)),	(UInt64)),
   (((amount),		(Ctor<3>)),	(Int64)));
 
-struct SagaCatalog {
-  using List = ZuTypeList<BalanceTransfer>;
-  static int match(ZuCSpan type) {
-    struct IDs { using Keys = Zdb_::SagaTypes<List>; };
-    static constexpr auto matcher = ZuMatcher<IDs>();
-    return matcher.exact(type);
-  }
-};
+ZdbSagaDerive(SagaCatalog, BalanceTransfer);
+ZdbSagaImpl(SagaCatalog, BalanceTransfer)
 using Saga = ZdbMSaga<SagaCatalog>;
 
 struct DB : public ZdbSagaDB<Context, SagaCatalog> {

@@ -110,6 +110,26 @@ shard for subsequent operations, including lookups through secondary indices.
 Keep that mapping consistent across hosts and restarts. A logical shard maps to
 `threads[shard & (threads.length() - 1)]`; several shards may share a worker.
 
+### Persistent schema evolution
+
+The PostgreSQL and SQLite stores validate application schema at table scope,
+not by requiring the complete set of registered application tables to match the
+complete database schema. Each table registered with `initTable<T>()` is checked
+independently against its stored columns and indices. Existing database tables
+which the application does not register do not prevent startup.
+
+If a registered table does not yet exist, the store creates the table and all
+of its declared indices during open. If the table exists but a declared index
+is missing, the store creates that index. These operations are idempotent across
+normal stop/start and reopen cycles, so an application release may add entirely
+new tables together with their declared indices without a separate schema
+bootstrap step.
+
+An existing registered table is not migrated in place. Incompatible columns or
+an incompatible definition of an expected index cause that table's open to fail,
+which fails DB startup. Apply any required data or type migration separately
+before starting the new application schema.
+
 Use `table->run(shard, fn)` or `db->shardRun(shard, fn)` to post row work.
 `invoke`/`shardInvoke` may execute inline when already on the destination worker;
 `run` posts work. `db->run(fn)` targets the DB control thread. Do not assume the

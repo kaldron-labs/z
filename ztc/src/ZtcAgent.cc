@@ -249,7 +249,11 @@ public:
 using EnrollReqHeaders = ZhttpHeaders(
   "content-type", "accept", "authorization", "cache-control",
   "content-length");
+ZhttpHdrCatalogDerive(EnrollReqHdrCatalog, EnrollReqHeaders);
+ZhttpHdrCatalogImpl(EnrollReqHdrCatalog)
 using EnrollResHeaders = ZhttpHeaders("content-type", "cache-control");
+ZhttpHdrCatalogDerive(EnrollResHdrCatalog, EnrollResHeaders);
+ZhttpHdrCatalogImpl(EnrollResHdrCatalog)
 
 struct EnrollReq_;
 struct EnrollRes;
@@ -265,7 +269,7 @@ struct Authorization {
 };
 
 struct EnrollReq_ : public ZmObject, public Zhttp::ReqBuilder {
-  using Headers = EnrollReqHeaders;
+  using HdrCatalog = EnrollReqHdrCatalog;
   using ContentLength = ZuStringT<"content-length">;
 
   constexpr Zhttp::BodyPolicy::T bodyPolicy() const {
@@ -323,7 +327,7 @@ struct EnrollReq_ : public ZmObject, public Zhttp::ReqBuilder {
 };
 
 struct EnrollRes : public Zhttp::Parser {
-  using Headers = EnrollResHeaders;
+  using HdrCatalog = EnrollResHdrCatalog;
 
   bool enable1xx() const { return false; }
   void init(const EnrollReq_ &req_) {

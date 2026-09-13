@@ -17,6 +17,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuInt.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPP.hh>
 #include <zlib/ZuSeq.hh>
 #include <zlib/ZuSpan.hh>
@@ -924,5 +925,17 @@ template <typename Context>
 using ZdbSagaBase = Zdb_::SagaBase<Context>;
 template <typename Catalog, typename Impl_ = void>
 using ZdbMSaga = Zdb_::MSaga<Catalog, Impl_>;
+
+#define ZdbSagaDerive(Name, ...) \
+  struct Name { \
+    using List = ZuTypeList<__VA_ARGS__>; \
+    static int match(ZuCSpan); \
+  }
+#define ZdbSagaImpl(Name, ...) \
+  int Name::match(ZuCSpan type) { \
+    struct IDs { using Keys = Zdb_::SagaTypes<List>; }; \
+    static constexpr auto matcher = ZuMatcher<IDs>(); \
+    return matcher.exact(type); \
+  }
 
 #endif /* ZdbSaga_HH */
