@@ -230,19 +230,19 @@ ZfStruct(, (JWTHeader, JSON),
 
 class App;
 struct Application;
+using OAuthAppString = ZtString<ZtStringBuiltin<OAuthAppIDMax,
+  ZtStringHeapID<"zrestd.AppID">>>;
 
 struct AppRequest {
   App			*app = nullptr;
   ZmRef<Application>	application;
-  OAuthString		appID;
+  OAuthAppString	appID;
   OAuthString		issuer;
   OAuthString		audience;
   bool			valid = true;
   bool			admitted = false;
 
   bool admit();
-  bool endpoint(Zhttp::Target &, OAuthEndpointPath &, ZuCSpan);
-  bool metadata(Zhttp::Target &, OAuthMetadataPath &);
   void origin(Zhttp::Scheme::T, ZuCSpan);
 };
 
@@ -355,26 +355,12 @@ struct BearerResponse : public Zrest::ResBuilder<Impl, BearerFailure> {
 struct PingUnauthorized : public BearerResponse<PingUnauthorized, 401> { };
 struct PingForbidden : public BearerResponse<PingForbidden, 403> { };
 
-static bool loadURIPath(
-    Zhttp::Target &target, OAuthAuthorizeReq &query)
-{
-  OAuthString data{target.path};
-  auto scan = ZfURI::scan(data.span());
-  if (scan.p<0>() != int(data.length()) || !scan.p<1>()) return false;
-  ZfURI::handler<OAuthAuthorizeReq>(scan.p<1>()).load(query);
-  return true;
-}
-
 struct MetadataParser :
     public Zrest::ReqParser<MetadataParser, Empty>, public AppRequest {
-  using Path = ZuStringT<"/oauth2/">;
+  using Path = ZuStringT<"">;
   using Headers = ZhttpHeaders("host");
   using Responses = ZuTypeList<MetadataOK, OAuthBadRequest, NotFound>;
-  OAuthMetadataPath route;
-
-  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    return metadata(target, route);
-  }
+  enum { Exact = 1 };
   template <typename Link> void complete(Link *, bool);
 };
 
@@ -386,13 +372,6 @@ struct AuthorizeGetParser :
   using Responses = ZuTypeList<AuthorizePage, AuthorizeRedirect,
     OAuthBadRequest, OAuthInternalError, OAuthUnavailable, NotFound>;
   enum { Exact = 1, Query = Zrest::QueryPolicy::URI };
-  OAuthEndpointPath route;
-
-  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    if (!endpoint(target, route, "authorize")) return false;
-    valid = loadURIPath(target, *this->object);
-    return true;
-  }
   template <typename Link> void complete(Link *, bool);
 };
 
@@ -408,15 +387,11 @@ struct AuthorizePostParser :
   enum { Method = Zhttp::Method::POST, Exact = 1,
     Body = Zrest::BodyPolicy::URI };
   using Body_URI_Facet = ZuFacet::URI;
-  OAuthEndpointPath route;
   OAuthString contentType;
   OAuthString cookie;
   unsigned contentTypeCount = 0;
   unsigned cookieCount = 0;
 
-  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    return endpoint(target, route, "authorize");
-  }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "content-type") {
@@ -441,13 +416,9 @@ struct TokenParser : public Zrest::ReqParser<TokenParser, TokenForm>,
   enum { Method = Zhttp::Method::POST, Exact = 1,
     Body = Zrest::BodyPolicy::URI };
   using Body_URI_Facet = ZuFacet::URI;
-  OAuthEndpointPath route;
   OAuthString contentType;
   unsigned contentTypeCount = 0;
 
-  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    return endpoint(target, route, "token");
-  }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "content-type") {
@@ -469,13 +440,9 @@ struct RevokeParser : public Zrest::ReqParser<RevokeParser, OAuthRevokeReq>,
   enum { Method = Zhttp::Method::POST, Exact = 1,
     Body = Zrest::BodyPolicy::URI };
   using Body_URI_Facet = ZuFacet::URI;
-  OAuthEndpointPath route;
   OAuthString contentType;
   unsigned contentTypeCount = 0;
 
-  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    return endpoint(target, route, "revoke");
-  }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "content-type") {
@@ -492,11 +459,6 @@ struct KeysParser : public Zrest::ReqParser<KeysParser, Empty>,
   using Headers = ZhttpHeaders("host");
   using Responses = ZuTypeList<KeysOK, OAuthBadRequest, NotFound>;
   enum { Exact = 1 };
-  OAuthEndpointPath route;
-
-  bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    return endpoint(target, route, "keys");
-  }
   template <typename Link> void complete(Link *, bool);
 };
 
@@ -504,7 +466,7 @@ struct PingParser : public Zrest::ReqParser<PingParser, Ping>,
     public AppRequest {
   using Base = Zrest::ReqParser<PingParser, Ping>;
   using Base::header;
-  using Path = PingPath;
+  using Path = ZuStringT<"/ping">;
   using Headers = ZhttpHeaders("authorization", "host");
   using Responses = ZuTypeList<PingOK, PingUnauthorized, PingForbidden,
     NotFound>;
@@ -512,10 +474,6 @@ struct PingParser : public Zrest::ReqParser<PingParser, Ping>,
   OAuthString authorization;
   unsigned authorizationCount = 0;
 
-  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
-    appID = "ping";
-    return Base::operation(method, target);
-  }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "authorization") {
@@ -526,26 +484,31 @@ struct PingParser : public Zrest::ReqParser<PingParser, Ping>,
   template <typename Link> void complete(Link *, bool);
 };
 
-using ApplicationRequests = ZuTypeList<MetadataParser, AuthorizeGetParser,
-  AuthorizePostParser, TokenParser, RevokeParser, KeysParser>;
+using EndpointRequests = ZuTypeList<AuthorizeGetParser, AuthorizePostParser,
+  TokenParser, RevokeParser, KeysParser>;
+using MetadataRequests = ZuTypeList<MetadataParser>;
+using ApplicationRequests = ZuTypeConcat<EndpointRequests, MetadataRequests>;
 using ResourceRequests = ZuTypeList<PingParser>;
 using Requests = ZuTypeConcat<ApplicationRequests, ResourceRequests>;
 
-ZrestCatalogDerive(ApplicationCatalog, ApplicationRequests);
-ZrestCatalogImpl(ApplicationCatalog)
+ZrestCatalogDerive(EndpointCatalog, EndpointRequests);
+ZrestCatalogImpl(EndpointCatalog)
+ZrestCatalogDerive(MetadataCatalog, MetadataRequests);
+ZrestCatalogImpl(MetadataCatalog)
 ZrestCatalogDerive(ResourceCatalog, ResourceRequests);
 ZrestCatalogImpl(ResourceCatalog)
 
-template <typename Catalog_, unsigned Skip_>
-struct RequestParser : public Zrest::MReqParser<Catalog_, Skip_> {
-  using Base = Zrest::MReqParser<Catalog_, Skip_>;
+template <typename Catalog_>
+struct RequestParser : public Zrest::MReqParser<Catalog_> {
+  using Base = Zrest::MReqParser<Catalog_>;
   App *app = nullptr;
 
   void init(App &app_) { app = &app_; Base::init(app_); }
-  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
-    if (!Base::operation(method, target)) return false;
-    return this->u.dispatch([this](auto, auto &request) {
+  bool selected(ZuCSpan appID) {
+    if (!appID || appID.length() > OAuthAppIDMax) return false;
+    return this->u.dispatch([this, appID](auto, auto &request) {
       request.app = app;
+      request.appID = appID;
       request.admit();
       return true;
     });
@@ -557,23 +520,74 @@ struct RequestParser : public Zrest::MReqParser<Catalog_, Skip_> {
   }
 };
 
-using ApplicationParser = RequestParser<ApplicationCatalog, 2>;
-using ResourceParser = RequestParser<ResourceCatalog, 0>;
+struct AppPrefix { ZuCSpan app; };
+ZfStruct(, (AppPrefix, URI),
+  (((app), (URI::PathIndex<0>, Required)), (String)));
 
-struct Parser : public Zhttp::Parser {
+struct MetadataSuffix {
+  ZuCSpan metadata;
+  ZuCSpan oauth2;
+  ZuCSpan app;
+};
+ZfStruct(, (MetadataSuffix, URI),
+  (((metadata), (URI::PathIndex<0>, Required)), (String)),
+  (((oauth2),   (URI::PathIndex<1>, Required)), (String)),
+  (((app),      (URI::PathIndex<2>, Required)), (String)));
+
+struct EndpointParser : public RequestParser<EndpointCatalog> {
+  using Base = RequestParser<EndpointCatalog>;
+
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    AppPrefix prefix;
+    auto suffix = ZfURI::loadPathPrefix(prefix, target.path);
+    if (!suffix) return false;
+    auto projected = target;
+    projected.path = suffix;
+    return Base::operation(method, projected) && selected(prefix.app);
+  }
+};
+
+struct MetadataReqParser : public RequestParser<MetadataCatalog> {
+  using Base = RequestParser<MetadataCatalog>;
+
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    MetadataSuffix route;
+    if (!ZfURI::loadPath(route, target.path) ||
+	route.metadata != "oauth-authorization-server" ||
+	route.oauth2 != "oauth2") return false;
+    auto projected = target;
+    projected.path = {};
+    return Base::operation(method, projected) && selected(route.app);
+  }
+};
+
+struct ResourceParser : public RequestParser<ResourceCatalog> {
+  using Base = RequestParser<ResourceCatalog>;
+
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    return Base::operation(method, target) && selected("ping");
+  }
+};
+
+using Roots = ZuTypeList<
+  Zrest::ReqRoot<ZuStringT<"oauth2">, EndpointParser>,
+  Zrest::ReqRoot<ZuStringT<".well-known">, MetadataReqParser>,
+  Zrest::ReqRoot<ZuStringT<"api">, ResourceParser>>;
+ZrestRootCatalogDerive(RootCatalog, Roots);
+ZrestRootCatalogImpl(RootCatalog)
+
+struct Parser : public Zrest::MReqParser<RootCatalog,
+    Zrest::MReqRootPolicy<RootCatalog, App>> {
+  using Base = Zrest::MReqParser<RootCatalog,
+    Zrest::MReqRootPolicy<RootCatalog, App>>;
   using Reqs = Requests;
-  using Headers = Zrest::MergeHdrs<Reqs>;
-  using Union = ZuUnion<void, ApplicationParser, ResourceParser>;
-
-  Union u;
-  App *app = nullptr;
   OAuthString authority;
   OAuthString host;
   Zhttp::Scheme::T targetScheme = -1;
   bool hasAuthority = false;
 
   void init(App &app_) {
-    app = &app_;
+    Base::init(app_);
     authority.null();
     host.null();
     targetScheme = -1;
@@ -585,46 +599,23 @@ struct Parser : public Zhttp::Parser {
       authority << target.authority;
       hasAuthority = true;
     }
-    auto application = new (u.template new_<ApplicationParser, true>())
-      ApplicationParser{};
-    application->init(*app);
-    if (application->operation(method, target)) return true;
-    auto resource = new (u.template new_<ResourceParser, true>())
-      ResourceParser{};
-    resource->init(*app);
-    if (resource->operation(method, target)) return true;
-    u = {};
-    return false;
+    return Base::operation(method, target);
   }
 
   template <typename Key, typename Value>
   void header(Zhttp::FieldSection::T section) {
-    u.dispatch([section](auto, auto &parser) {
-      parser.template header<Key, Value>(section);
-    });
+    Base::template header<Key, Value>(section);
   }
   template <typename Key>
   void header(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "host")
       if (!hasAuthority && !host && value.length() <= OAuthURLMax)
-        host = ZuCSpan{value};
-    u.dispatch([section, &value](auto, auto &parser) {
-      parser.template header<Key>(section, value);
-    });
+        host = value;
+    Base::template header<Key>(section, value);
   }
   void header(Zhttp::FieldSection::T section,
       ZuBSpan key, ZuSpan<uint8_t> value) {
-    u.dispatch([section, &key, &value](auto, auto &parser) {
-      parser.header(section, key, value);
-    });
-  }
-  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
-    return u.dispatch([type, length](auto, auto &parser) {
-      return parser.bodyInfo(type, length);
-    });
-  }
-  template <typename Rx> bool body(Rx &rx) {
-    return u.dispatch([&rx](auto, auto &parser) { return parser.body(rx); });
+    Base::header(section, key, value);
   }
   template <typename Link> void complete(Link *link, bool ok) {
     constexpr Zhttp::Scheme::T scheme =
@@ -632,20 +623,19 @@ struct Parser : public Zhttp::Parser {
     if (targetScheme >= 0 && targetScheme != scheme) ok = false;
     if (!hasAuthority) {
       Zhttp::AuthorityView parsed;
-      ZuSpan<uint8_t> value{host};
+      auto value = host.cspan();
       auto error = Zhttp::parseAuthority(parsed, value, 0,
         Zhttp::Scheme::defltPort(scheme), false);
       if (error.ok()) authority << parsed;
       else ok = false;
     }
     if (!authority) ok = false;
-    u.dispatch([link, ok, scheme,
-        authority = ZuCSpan{authority}](auto, auto &parser) {
+    this->u.dispatch([link, ok, scheme,
+        authority = authority.span()](auto, auto &parser) {
       parser.origin(scheme, authority);
       parser.complete(link, ok);
     });
   }
-  void reset() { u.null(); }
 };
 
 ZrestCatalogDerive(Catalog, Requests);
@@ -834,7 +824,8 @@ static bool scopeHas(ZuCSpan scope, ZuCSpan required)
 {
   while (scope) {
     int i = scope.find([](char c) { return c == ' '; });
-    ZuCSpan item = i < 0 ? scope : ZuCSpan{scope.data(), unsigned(i)};
+    auto item = scope;
+    if (i >= 0) item.trunc(unsigned(i));
     if (item == required) return true;
     if (i < 0) break;
     scope.offset(unsigned(i) + 1);
@@ -847,8 +838,8 @@ static bool scopeSubset(ZuCSpan requested, ZuCSpan granted)
   if (!scopeValid(requested)) return false;
   while (requested) {
     int i = requested.find([](char c) { return c == ' '; });
-    ZuCSpan item = i < 0 ? requested :
-      ZuCSpan{requested.data(), unsigned(i)};
+    auto item = requested;
+    if (i >= 0) item.trunc(unsigned(i));
     if (!scopeHas(granted, item)) return false;
     if (i < 0) break;
     requested.offset(unsigned(i) + 1);
@@ -860,8 +851,7 @@ static bool loopbackRedirect(ZuCSpan redirect)
 {
   if (!redirect || redirect.length() > OAuthURLMax) return false;
   OAuthString data{redirect};
-  Zhttp::URLView url{ZuSpan<uint8_t>{
-    reinterpret_cast<uint8_t *>(data.data()), data.length()}};
+  Zhttp::URLView url{data};
   return url.ok() && url.scheme == Zhttp::Scheme::http &&
     url.explicitPort && !url.hasQuery && !url.hasFragment &&
     url.path == "/callback" &&
@@ -887,10 +877,10 @@ static bool cookieValue(ZuCSpan cookies, OAuthString &value)
   while (cookies) {
     while (cookies && cookies[0] == ' ') cookies.offset(1);
     int end = cookies.find([](char c) { return c == ';'; });
-    ZuCSpan cookie = end < 0 ? cookies :
-      ZuCSpan{cookies.data(), unsigned(end)};
+    auto cookie = cookies;
+    if (end >= 0) cookie.trunc(unsigned(end));
     if (cookie.length() > name.length() &&
-        ZuCSpan{cookie.data(), name.length()} == name) {
+        cookie.prefix(name) == int(name.length())) {
       value = cookie.offset(name.length());
       return true;
     }
@@ -1099,12 +1089,12 @@ public:
   template <typename Link>
   void ping(Link *link, const PingParser &parser, bool ok) {
     parser.application->expire(Zm::now().sec());
-    auto authorization = ZuCSpan{parser.authorization};
+    auto authorization = parser.authorization.cspan();
     auto token = authorization;
     if (token.length() > 7) token.offset(7);
     if (!ok || !parser.object->ping || parser.authorizationCount != 1 ||
         authorization.length() <= 7 ||
-        ZuCSpan{authorization.data(), 7} != "Bearer " ||
+        authorization.prefix("Bearer ") != 7 ||
         token.find([](char c) { return c == ' '; }) >= 0) {
       bearer_<PingUnauthorized>(link, parser, "invalid_token");
       return;
@@ -1214,38 +1204,6 @@ void AppRequest::origin(Zhttp::Scheme::T scheme, ZuCSpan authority)
   audience.null();
   audience << Zhttp::Scheme::name(scheme) << "://" << authority <<
     "/api/ping";
-}
-
-bool AppRequest::endpoint(
-    Zhttp::Target &target, OAuthEndpointPath &route, ZuCSpan expected)
-{
-  auto path = target.path;
-  int query = path.find([](uint8_t c) { return c == '?'; });
-  if (query >= 0) path.trunc(unsigned(query));
-  OAuthString data{ZuCSpan{path}};
-  auto scan = ZfURI::scan(data.span());
-  if (scan.p<0>() != int(data.length()) || !scan.p<1>()) return false;
-  ZfURI::handler<OAuthEndpointPath>(scan.p<1>()).load(route);
-  if (route.oauth2 != "oauth2" || route.version != "v1" ||
-      route.endpoint != expected || !route.app ||
-      route.app.length() > OAuthAppIDMax) return false;
-  appID = route.app;
-  return true;
-}
-
-bool AppRequest::metadata(
-    Zhttp::Target &target, OAuthMetadataPath &route)
-{
-  OAuthString data{target.path};
-  auto scan = ZfURI::scan(data.span());
-  if (scan.p<0>() != int(data.length()) || !scan.p<1>()) return false;
-  ZfURI::handler<OAuthMetadataPath>(scan.p<1>()).load(route);
-  if (route.wellKnown != ".well-known" ||
-      route.metadata != "oauth-authorization-server" ||
-      route.oauth2 != "oauth2" || !route.app ||
-      route.app.length() > OAuthAppIDMax) return false;
-  appID = route.app;
-  return true;
 }
 
 template <typename Link, typename Request>
@@ -1564,7 +1522,7 @@ void App::revoke(Link *link, const RevokeParser &parser, bool ok)
       "invalid revocation request");
     return;
   }
-  auto clientID = ZuCSpan{parser.object->clientID};
+  auto clientID = parser.object->clientID.span();
   if (!parser.application->clients.find(clientID)) {
     error_<OAuthUnauthorized>(link, parser, "invalid_client",
       "unknown public client");

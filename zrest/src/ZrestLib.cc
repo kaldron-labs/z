@@ -25,4 +25,24 @@ ZrestExtern bool skip(ZuSpan<uint8_t> &path, unsigned n)
   return true;
 }
 
+ZrestExtern bool splitRoot(
+    ZuSpan<uint8_t> path, ZuBSpan &root, ZuSpan<uint8_t> &suffix)
+{
+  root = {};
+  suffix = {};
+  if (ZuUnlikely(path.length() < 2 || path[0] != '/')) return false;
+  path.offset(1);
+  auto delimiter = path.find([](auto c) { return c == '/' || c == '?'; });
+  if (delimiter < 0) {
+    root = path;
+    suffix = {path.data() + path.length(), 0};
+  } else {
+    root = path;
+    root.trunc(unsigned(delimiter));
+    suffix = path;
+    suffix.offset(unsigned(delimiter));
+  }
+  return bool(root);
+}
+
 } // Zrest

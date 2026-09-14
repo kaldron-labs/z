@@ -31,7 +31,6 @@ struct ReqParser : public Request, public Zhttp::Parser {
   auto &bodyObject(Object *object) { return *object; }
 
   bool operation(Zhttp::Method::T, Zhttp::Target &target) {
-    impl()->init();
     if constexpr (Impl::Query == QueryPolicy::URI) {
       using Path = Impl::Path;
       using Query_URI_Facet = Impl::Query_URI_Facet;
@@ -224,23 +223,33 @@ struct ResBuilder : public Response, public Zhttp::Builder {
   }
 };
 
+struct MReqPathProjection {
+  Zhttp::Target &target;
+  ZuSpan<uint8_t> saved;
+
+  MReqPathProjection(Zhttp::Target &target_, ZuSpan<uint8_t> path_):
+    target(target_), saved(target_.path) { target.path = path_; }
+  ~MReqPathProjection() { target.path = saved; }
+};
+
 template <typename Catalog_, unsigned Skip_ = 0>
-struct MReqParser : public Zhttp::Parser {
+struct MReqPolicy {
   using Catalog = Catalog_;
   using Reqs = typename Catalog::List;
-  enum { Skip = Skip_ };
-  using HdrCatalog = typename Catalog::ReqHeaders;
-  using Headers = typename HdrCatalog::List;
   using Union = GetUnion<Reqs>;
+  enum { Skip = Skip_ };
 
-  Union		u;
+  template <typename Alt>
+  using Hdrs = GetHdrs<Alt>;
 
-  template <typename Server>
-  void init(Server &) { }
+  template <typename Parser, typename Server>
+  void init(Parser &, Server &) { }
 
-  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+  template <typename Parser>
+  bool operation(Parser &parser, Zhttp::Method::T method,
+      Zhttp::Target &target) {
     return ZuSwitch::dispatch<Zhttp::Method::N>(method,
-	[this, method, &target](auto I) -> bool {
+	[&parser, method, &target](auto I) -> bool {
       static constexpr unsigned MethodI = I;
       using MethodReqs =
 	ZuTypeGrep<MethodFilter<MethodI>::template Filter, Reqs>;
@@ -250,38 +259,111 @@ struct MReqParser : public Zhttp::Parser {
 	auto path = target.path;
 	if constexpr (Skip)
 	  if (ZuUnlikely(!skip(path, Skip))) return false;
-	auto j = Catalog::reqMatch(method, path);
+	int j = Catalog::reqMatch(method, path);
 	if (j < 0) return false;
-	return ZuSwitch::dispatch<MethodReqs::N>(j,
-	    [this, method, &path, &target](auto J) -> bool {
-	  static constexpr unsigned ReqI = J;
-	  using Req = ZuType<ReqI, MethodReqs>;
+	return ZuSwitch::dispatch<MethodReqs::N>(unsigned(j),
+	    [&parser, method, &target, path](auto J) -> bool {
+	  using Req = ZuType<J, MethodReqs>;
 	  if constexpr (Req::Exact) {
-	    using Path = typename Req::Path;
-	    constexpr unsigned n = Path{}().length();
+	    using ReqPath = typename Req::Path;
+	    constexpr unsigned n = ReqPath{}().length();
 	    if (path.length() != n &&
 		(Req::Query == QueryPolicy::None ||
-		 path.length() <= n || path[n] != '?'))
-	      return false;
+		 path.length() <= n || path[n] != '?')) return false;
 	  }
-	  auto request = new (u.template new_<Req, true>()) Req();
+	  auto request = new (parser.u.template new_<Req, true>()) Req();
 	  request->init();
-	  // Skip projects a suffix for dispatch only.  Concrete operations receive
-	  // the full target so typed URI fields can load the leading components.
-	  if (!request->operation(method, target)) {
-	    u = {};
+	  bool ok;
+	  {
+	    MReqPathProjection projected(target, path);
+	    ok = request->operation(method, target);
+	  }
+	  if (!ok) {
+	    parser.u.null();
 	    return false;
 	  }
 	  return true;
-	});
+	}, false);
       }
-    });
+    }, false);
+  }
+
+  template <typename Alt>
+  static bool complete(Alt &request, bool ok) {
+    return ok && request.object;
+  }
+};
+
+template <typename Catalog_, typename Server_>
+struct MReqRootPolicy {
+  using Catalog = Catalog_;
+  using Server = Server_;
+  using Roots = typename Catalog::List;
+  using Parsers = GetRootParsers<Roots>;
+  using Union = GetUnion<Parsers>;
+  Server *server = nullptr;
+
+  template <typename Alt>
+  using Hdrs = typename Alt::Headers;
+
+  template <typename Parser>
+  void init(Parser &, Server &server_) { server = &server_; }
+
+  template <typename Parser>
+  bool operation(Parser &parser, Zhttp::Method::T method,
+      Zhttp::Target &target) {
+    if (!server) return false;
+    ZuBSpan root;
+    ZuSpan<uint8_t> suffix;
+    if (ZuUnlikely(!splitRoot(target.path, root, suffix))) return false;
+    int i = Catalog::rootMatch(root);
+    if (i < 0) return false;
+    return ZuSwitch::dispatch<Roots::N>(unsigned(i),
+	[&parser, method, &target, suffix, this](auto I) -> bool {
+      using Root = ZuType<I, Roots>;
+      using Child = typename Root::Parser;
+      auto child = new (parser.u.template new_<I + 1, true>()) Child();
+      child->init(*server);
+      bool ok;
+      {
+	MReqPathProjection projected(target, suffix);
+	ok = child->operation(method, target);
+      }
+      if (!ok) {
+	parser.u.null();
+	return false;
+      }
+      return true;
+	}, false);
+  }
+
+  template <typename Alt>
+  static bool complete(Alt &, bool ok) { return ok; }
+};
+
+template <typename Catalog_, typename Policy_ = MReqPolicy<Catalog_>>
+struct MReqParser : public Zhttp::Parser {
+  using Catalog = Catalog_;
+  using Policy = Policy_;
+  using HdrCatalog = typename Catalog::ReqHeaders;
+  using Headers = typename HdrCatalog::List;
+  using Union = typename Policy::Union;
+
+  Union		u;
+  Policy		policy;
+
+  template <typename Server>
+  void init(Server &server) { policy.init(*this, server); }
+
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    return policy.operation(*this, method, target);
   }
 
   template <typename Key, typename Value>
   void header(Zhttp::FieldSection::T section) {
     u.dispatch([section](auto I, auto &request) {
-      using ReqHdrs = GetHdrs<typename Union::template Type<I>>;
+      using ReqHdrs = typename Policy::template Hdrs<
+	typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
       if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
 	using Values = GetKValues<Key, ReqHdrs>;
@@ -306,7 +388,8 @@ struct MReqParser : public Zhttp::Parser {
   template <typename Key>
   void header(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     u.dispatch([section, &value](auto I, auto &request) {
-      using ReqHdrs = GetHdrs<typename Union::template Type<I>>;
+      using ReqHdrs = typename Policy::template Hdrs<
+	typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
       if constexpr (ZuTypeIn<Key, ReqHdrKeys>{})
 	request.template header<Key>(section, value);
@@ -314,8 +397,7 @@ struct MReqParser : public Zhttp::Parser {
 	request.header(section, Key{}(), value);
     });
   }
-  void header(
-      Zhttp::FieldSection::T section,
+  void header(Zhttp::FieldSection::T section,
       ZuBSpan key, ZuSpan<uint8_t> value) {
     u.dispatch([section, &key, &value](auto, auto &request) {
       request.header(section, key, value);
@@ -336,8 +418,9 @@ struct MReqParser : public Zhttp::Parser {
 
   template <typename Link>
   void complete(Link *link, bool ok) {
-    u.dispatch([&link, ok](auto, auto &request) {
-      request.complete(link, ok && request.object);
+    u.dispatch([link, ok](auto I, auto &request) {
+      request.complete(link, Policy::template complete<
+	      typename Union::template Type<I>>(request, ok));
     });
   }
 
@@ -359,7 +442,8 @@ struct MResBuilder : public Zhttp::ResBuilder {
 
   template <typename Res, typename Req, typename Object>
   void init(Object *object) {
-    constexpr unsigned J = GetResIndex<Reqs, Req, Res>{};
+    ZuAssert((ZuTypeIn<Res, GetResponses<Req>>{}));
+    constexpr unsigned J = GetResIndex<Reqs, Res>{};
     auto response = new (u.template new_<J + 1, true>()) Res();
     response->init(object);
   }
@@ -370,7 +454,7 @@ struct MResBuilder : public Zhttp::ResBuilder {
 	[this, object](auto I) {
       using Req = ZuType<I, Reqs>;
       if constexpr (ZuTypeIn<Res, GetResponses<Req>>{})
-	init<Res, Req>(object);
+	this->template init<Res, Req>(object);
     });
   }
 
