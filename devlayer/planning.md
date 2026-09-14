@@ -36,6 +36,21 @@
 
 ---
 
+intentional breaking change:
+- propagate to all dependents
+- do not retain legacy compatibility
+
+retain current build configuration:
+- rebuild infrequently
+  - do not rebuild or retest until major milestones are reached
+- rebuild incrementally, re-using current build artifacts
+- other build configurations are out of scope
+  - other compilers
+  - other release/debug build flags
+  - other platforms
+
+---
+
 `plan.md`: act as a skeptical principal software engineer
 - audit the implementation against all `GUIDELINES.md` flags and guidelines
 - scrutinize all new in-memory containers
