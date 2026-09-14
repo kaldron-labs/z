@@ -3505,3 +3505,12 @@ historical command notes below do not supersede it.
   without an invented TTL. Initial execution remains unaffected; only recovery
   after an existing non-null deadline selects native compensation. The rebuilt
   unit, live HTTP and federation fixtures passed with this handoff.
+- The current source-only OAuth cleanup separates a protected service's exact
+  `issuerURL` from the core `managementIssuerURL` used by its catalog publisher.
+  Catalog-client enrollment now owns that confidential client and its
+  client-access row under the core application while retaining target-app
+  `admin_access`; `libZum` discovers and verifies management and protected JWKS
+  independently and always publishes to the protected app derived from
+  `issuerURL`. The HTTP fixture, restart expectations, ping example config, and
+  documentation are aligned with this split and the `zum.catalog` scope.
+  Per instruction, these latest C++ changes have not yet been rebuilt.

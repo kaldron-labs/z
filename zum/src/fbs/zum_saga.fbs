@@ -17,6 +17,7 @@ include "zum_auth_policy.fbs";
 include "zum_grant.fbs";
 include "zum_request.fbs";
 include "zum_consent.fbs";
+include "zum_ssf_delivery.fbs";
 
 namespace Zum.fbs;
 
@@ -120,7 +121,6 @@ table CodeFamily {
   policy_version:uint64;
   evidence_version:uint64;
   authority_source:int8;
-  facade_client_i_d:string;
   before_grant:Grant;
 }
 
@@ -141,11 +141,12 @@ table AppEnrollment {
   app_label:string;
   audience_i_d:uint64;
   audience_u_r_i:string;
+  sign_key:SignKey;
   client_i_d:string;
   secret_digest:[ubyte];
   redirects:[string];
   client_type:int8;
-  native_service:bool;
+  catalog_client:bool;
   created:int64;
   catalog_publish_op:uint32;
   operation_query_op:uint32;
@@ -480,4 +481,6 @@ table SecretRekey {
   after:[ubyte];
 }
 
-root_type Enrollment;
+table SSFDeliveryAdd {
+  delivery:SSFDelivery;
+}

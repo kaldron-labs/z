@@ -46,9 +46,10 @@ def exercise(fixture, provider):
         return fixture.request("GET", path, token=admin)[0]["items"]
 
     audience_uri = "https://federation.example/api"
-    app = create("/admin/apps", {"name": "federation", "integration": "nativeService",
+    app = create("/admin/apps", {"name": "federation", "integration": "catalogClient",
                                   "audienceURI": audience_uri})
     app_id = app["appID"]
+    provider.redirects.add(fixture.issuer(app_id) + "/v1/oidc/callback")
     prefix = "/admin/apps/" + app_id
     audience = next(row for row in query("/admin/audiences?limit=1000") if row["appID"] == app_id)
     action = create(prefix + "/actions", {"name": "ping", "label": "Ping"})
@@ -101,7 +102,7 @@ def exercise(fixture, provider):
     delegate(app_id, role["id"])
     assert not any(user["source"] == "External" for user in query("/admin/users?limit=1000"))
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     users = [user for user in query("/admin/users?limit=1000") if user["source"] == "External"]
@@ -126,7 +127,7 @@ def exercise(fixture, provider):
     # bootstrap administrator remains local even when the upstream is unavailable.
     before = dict(provider.calls)
     provider.outage = True
-    refreshed, _ = fixture.request("POST", "/token", {
+    refreshed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": tokens["refresh_token"]}, form=True)
     fixture.verify_access(refreshed["access_token"], client["id"], app_id, audience_uri, ["ping"])
@@ -137,7 +138,7 @@ def exercise(fixture, provider):
     assert provider.calls == before
     provider.outage = False
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     assert int(evidence()["version"]) == int(observed["version"]) + 1
@@ -145,6 +146,8 @@ def exercise(fixture, provider):
                 if user["source"] == "External"]) == 1
 
     def ping_sso(app, catalog, service_port, user):
+        provider.redirects.add(fixture.issuer(app["appID"]) +
+                               "/v1/oidc/callback")
         policy = query("/admin/auth-policies?appID=" + app["appID"])[0]
         if policy["providerID"] != upstream["id"]:
             delegate(app["appID"], catalog["roleQuery"][0]["id"])
@@ -154,24 +157,25 @@ def exercise(fixture, provider):
     fixture.ping_service(after_login=ping_sso)
     fixture.stop()
     fixture.start()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     persisted = [user for user in query("/admin/users?limit=1000") if user["source"] == "External"]
     assert len(persisted) == 1 and persisted[0]["id"] == users[0]["id"]
 
-    def denied_login(target_client=client, target_audience=audience_uri):
+    def denied_login(target_client=client, target_app=app_id):
         fixture.cookies = SimpleCookie()
         verifier = secrets.token_urlsafe(32)
-        page, _ = fixture.request("GET", "/authorize?" + urlencode({
+        page, _ = fixture.request("GET", fixture.oauth(target_app, "authorize") +
+                                  "?" + urlencode({
             "response_type": "code", "client_id": target_client["id"],
             "redirect_uri": "http://127.0.0.1:49152/callback", "scope": "openid ping",
-            "resource": target_audience, "state": secrets.token_urlsafe(24),
+            "state": secrets.token_urlsafe(24),
             "nonce": secrets.token_urlsafe(24), "code_challenge_method": "S256",
             "code_challenge": b64(hashlib.sha256(verifier.encode()).digest())}))
         ceremony = re.search(r"const id='([^']+)'", page)
         assert ceremony
-        _, headers = fixture.request("POST", "/login", {
+        _, headers = fixture.request("POST", fixture.oauth(target_app, "login"), {
             "id": ceremony[1], "login": "external-user"}, form=True, status=302)
         callback = urlsplit(provider.authorize(headers["location"]))
         return fixture.request("GET", callback.path + "?" + callback.query, status=400)[0]
@@ -181,9 +185,10 @@ def exercise(fixture, provider):
     # and subject without inheriting the first provider's mappings or evidence.
     isolated_uri = "https://provider-isolation.example/api"
     isolated_app = create("/admin/apps", {
-        "name": "provider-isolation", "integration": "nativeService",
+        "name": "provider-isolation", "integration": "catalogClient",
         "audienceURI": isolated_uri})
     isolated_id = isolated_app["appID"]
+    provider.redirects.add(fixture.issuer(isolated_id) + "/v1/oidc/callback")
     isolated_prefix = "/admin/apps/" + isolated_id
     isolated_audience = next(row for row in query("/admin/audiences?limit=1000")
                              if row["appID"] == isolated_id)
@@ -214,16 +219,27 @@ def exercise(fixture, provider):
                     {"roleID": isolated_role["id"]}, token=admin,
                     headers={"If-None-Match": "*"}, status=201)
     set_policy(isolated_id, provider_id=isolated_provider["id"])
-    assert denied_login(isolated_client, isolated_uri)["error"] == "access_denied"
+    assert denied_login(isolated_client, isolated_id)["error"] == "access_denied"
     isolated_maps = query(isolated_prefix + "/role-mappings?limit=1000")
     assert len(isolated_maps) == 1
     assert isolated_maps[0]["providerID"] == isolated_provider["id"]
     delegate(isolated_id, isolated_role["id"], isolated_provider["id"])
     fixture.cookies = SimpleCookie()
-    isolated_tokens = fixture.login(isolated_client["id"], "openid ping", isolated_uri,
+    isolated_tokens = fixture.login(isolated_client["id"], "openid ping", isolated_id,
                                     return_tokens=True, login="external-user")
     fixture.verify_access(isolated_tokens["access_token"], isolated_client["id"],
                           isolated_id, isolated_uri, ["ping"])
+    for wrong_app, wrong_client, refresh in (
+            (isolated_id, client["id"], tokens["refresh_token"]),
+            (app_id, isolated_client["id"], isolated_tokens["refresh_token"])):
+        denied, _ = fixture.request("POST", fixture.oauth(wrong_app, "token"), {
+            "grant_type": "refresh_token", "client_id": wrong_client,
+            "refresh_token": refresh}, form=True, status=401)
+        assert denied["error"] == "invalid_client"
+    primary_keys = fixture.request("GET", fixture.oauth(app_id, "keys"))[0]["keys"]
+    isolated_keys = fixture.request("GET", fixture.oauth(isolated_id, "keys"))[0]["keys"]
+    assert {key["kid"] for key in primary_keys}.isdisjoint(
+        key["kid"] for key in isolated_keys)
     isolated_evidence = [row for row in query("/admin/evidence?limit=1000")
                          if row["appID"] == isolated_id]
     assert len(isolated_evidence) == 1
@@ -240,7 +256,7 @@ def exercise(fixture, provider):
     # scalar or array claim, but reject unknown values and non-string claim types.
     set_policy(app_id, eligibility_mode="ClaimValues", eligibility_values=["readers"])
     fixture.cookies = SimpleCookie()
-    claim_tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    claim_tokens = fixture.login(client["id"], "openid ping", app_id,
                                  return_tokens=True, login="external-user")
     fixture.verify_access(claim_tokens["access_token"], client["id"], app_id,
                           audience_uri, ["ping"])
@@ -251,7 +267,7 @@ def exercise(fixture, provider):
     assert denied_login()["error"] == "access_denied"
     provider.id_overrides = {"roles": "readers"}
     fixture.cookies = SimpleCookie()
-    claim_tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    claim_tokens = fixture.login(client["id"], "openid ping", app_id,
                                  return_tokens=True, login="external-user")
     fixture.verify_access(claim_tokens["access_token"], client["id"], app_id,
                           audience_uri, ["ping"])
@@ -269,7 +285,7 @@ def exercise(fixture, provider):
     before_evidence = evidence()
     provider.userinfo_roles = ["readers"]
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     assert provider.calls.get("/userinfo", 0) == before_userinfo + 1
@@ -301,7 +317,7 @@ def exercise(fixture, provider):
     # direct DB edits. Waiting here exercises protocol time, not async completion.
     set_policy(app_id, assignment_max_age=5)
     fixture.cookies = SimpleCookie()
-    expiring = fixture.login(client["id"], "openid ping", audience_uri,
+    expiring = fixture.login(client["id"], "openid ping", app_id,
                              return_tokens=True, login="external-user")
     short_evidence = evidence()
     deadline = int(short_evidence["deadline"])
@@ -315,7 +331,7 @@ def exercise(fixture, provider):
     if remaining > 0:
         time.sleep(remaining)
     upstream_calls = dict(provider.calls)
-    denied, _ = fixture.request("POST", "/token", {
+    denied, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": expiring["refresh_token"]}, form=True, status=400)
     assert denied["error"] == "invalid_grant"
@@ -323,7 +339,7 @@ def exercise(fixture, provider):
     assert evidence() == short_evidence
     set_policy(app_id)
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     assert int(evidence()["deadline"]) > deadline
@@ -338,7 +354,7 @@ def exercise(fixture, provider):
                         "/" + b64(mapping["value"].encode()), token=admin,
                         headers={"If-Match": mapping["etag"]})
     before_calls = dict(provider.calls)
-    narrowed, _ = fixture.request("POST", "/token", {
+    narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": tokens["refresh_token"]}, form=True)
     fixture.verify_access(narrowed["access_token"], client["id"], app_id, audience_uri, [])
@@ -348,12 +364,12 @@ def exercise(fixture, provider):
                         "/" + b64(mapping["value"].encode()),
                         {"roleID": mapping["roleID"]}, token=admin,
                         headers={"If-None-Match": "*"}, status=201)
-    still_narrowed, _ = fixture.request("POST", "/token", {
+    still_narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": narrowed["refresh_token"]}, form=True)
     fixture.verify_access(still_narrowed["access_token"], client["id"], app_id, audience_uri, [])
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     active_role = next(row for row in query(prefix + "/roles?limit=1000") if row["id"] == role["id"])
@@ -361,7 +377,7 @@ def exercise(fixture, provider):
                     {"state": "Disabled"}, token=admin, headers={"If-Match": active_role["etag"]})
     mapped_evidence = evidence()
     before_calls = dict(provider.calls)
-    narrowed, _ = fixture.request("POST", "/token", {
+    narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": tokens["refresh_token"]}, form=True)
     fixture.verify_access(narrowed["access_token"], client["id"], app_id, audience_uri, [])
@@ -369,12 +385,12 @@ def exercise(fixture, provider):
     disabled_role = next(row for row in query(prefix + "/roles?limit=1000") if row["id"] == role["id"])
     fixture.request("PUT", prefix + "/roles/" + role["id"] + "/state",
                     {"state": "Active"}, token=admin, headers={"If-Match": disabled_role["etag"]})
-    still_narrowed, _ = fixture.request("POST", "/token", {
+    still_narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": narrowed["refresh_token"]}, form=True)
     fixture.verify_access(still_narrowed["access_token"], client["id"], app_id, audience_uri, [])
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     # Fresh authoritative claims with no mapped role deny admission and invalidate
@@ -383,7 +399,7 @@ def exercise(fixture, provider):
     provider.userinfo_roles = None
     denied = denied_login()
     assert denied["error"] == "access_denied" and not evidence()["eligible"]
-    denied, _ = fixture.request("POST", "/token", {
+    denied, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": tokens["refresh_token"]}, form=True, status=400)
     assert denied["error"] == "invalid_grant"
@@ -391,14 +407,14 @@ def exercise(fixture, provider):
     # it must not inherit the external identity or its application assignments.
     provider.roles = ["readers"]
     fixture.cookies = SimpleCookie()
-    tokens = fixture.login(client["id"], "openid ping", audience_uri,
+    tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")
     projected_name = users[0]["name"]
     session_cookies = SimpleCookie(fixture.cookies.output(header="", sep=";"))
     # An untrusted browser hint is not a projected identity name.
     assert projected_name != "external-user"
     create("/admin/users", {"name": "external-user"})
-    tokens, _ = fixture.request("POST", "/token", {
+    tokens, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": tokens["refresh_token"]}, form=True)
     external_query = "/admin/users?id=" + users[0]["id"]
@@ -415,28 +431,30 @@ def exercise(fixture, provider):
     assert not query(prefix + "/memberships?userID=" + local_rows[0]["id"])
     before_calls = dict(provider.calls)
     fixture.cookies = SimpleCookie()
-    page, _ = fixture.request("GET", "/authorize?" + urlencode({
+    page, _ = fixture.request("GET", fixture.oauth(app_id, "authorize") +
+                              "?" + urlencode({
         "response_type": "code", "client_id": client["id"],
         "redirect_uri": "http://127.0.0.1:49152/callback", "scope": "openid ping",
-        "resource": audience_uri, "state": secrets.token_urlsafe(24),
+        "state": secrets.token_urlsafe(24),
         "nonce": secrets.token_urlsafe(24), "code_challenge_method": "S256",
         "code_challenge": b64(hashlib.sha256(secrets.token_bytes(32)).digest())}))
     ceremony = re.search(r"const id='([^']+)'", page)
     assert ceremony
-    page, headers = fixture.request("POST", "/login", {
+    page, headers = fixture.request("POST", fixture.oauth(app_id, "login"), {
         "id": ceremony[1], "login": projected_name}, form=True)
     assert "navigator.credentials" in page and "location" not in headers
     assert provider.calls == before_calls, "local account must suppress upstream fallback"
-    denied, _ = fixture.request("POST", "/token", {
+    denied, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
         "refresh_token": tokens["refresh_token"]}, form=True, status=400)
     assert denied["error"] == "invalid_grant"
     assert provider.calls == before_calls
     fixture.cookies = session_cookies
-    _, headers = fixture.request("GET", "/authorize?" + urlencode({
+    _, headers = fixture.request("GET", fixture.oauth(app_id, "authorize") +
+                                 "?" + urlencode({
         "response_type": "code", "client_id": client["id"],
         "redirect_uri": "http://127.0.0.1:49152/callback", "scope": "openid ping",
-        "resource": audience_uri, "state": "conflict-check", "prompt": "none",
+        "state": "conflict-check", "prompt": "none",
         "nonce": secrets.token_urlsafe(24), "code_challenge_method": "S256",
         "code_challenge": b64(hashlib.sha256(secrets.token_bytes(32)).digest())}), status=302)
     result = parse_qs(urlsplit(headers["location"]).query)
@@ -444,6 +462,7 @@ def exercise(fixture, provider):
     assert result["state"] == ["conflict-check"] and provider.calls == before_calls
     assert query(local_query) == local_rows
     assert local["enrollmentURL"]
+    fixture.proxy.close()
     fixture.stop()
     assert provider.client_secret not in (fixture.directory / "server.log").read_text()
 
@@ -458,27 +477,21 @@ def main():
     try:
         provider = Provider(directory)
         fixture = TLSFixture(directory, provider)
-        provider.redirect = fixture.origin + "/oidc/callback"
         fixture.idp = provider
         fixture.node_config = Path(directory) / "node.cf"
         fixture.node_config.write_text(Path(__file__).with_name("zumd.cf").read_text() +
-            ",\nupstream: {caPath: " + json.dumps(str(provider.ca_path)) + "}\n")
+            ",\noidc: {caPath: " + json.dumps(str(provider.ca_path)) + "}\n")
         exercise(fixture, provider)
     except BaseException:
-        if fixture and fixture.process:
-            try:
-                fixture.stop()
-            except Exception:
-                pass  # Preserve the protocol failure; leave diagnostics private.
         print("# failed federation diagnostics retained in " + directory, flush=True)
         raise
     else:
         shutil.rmtree(directory)
     finally:
-        if fixture and fixture.process:
-            fixture.stop()
         if fixture:
             fixture.proxy.close()
+        if fixture and fixture.process:
+            fixture.stop()
         if provider:
             provider.close()
 

@@ -7,22 +7,13 @@
 #include <zlib/ZumMgmt.hh>
 
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuCmp.hh>
+
+#include <zlib/ZmHash.hh>
 
 namespace Zum {
 
 ZtEnumImplNS(MgmtOp);
-
-MgmtString coreAction(uint32_t id)
-{
-  if (id < MgmtOp::N) return managementAction(id);
-  switch (id) {
-    case CoreAction::FacadeAuthorize:
-      return MgmtString{"Zum.facade.authorize"};
-    case CoreAction::FacadeToken: return MgmtString{"Zum.facade.token"};
-    case CoreAction::FacadeRevoke: return MgmtString{"Zum.facade.revoke"};
-    default: return {};
-  }
-}
 
 #define ZUM_ROUTE(ID, METHOD, PATH) \
   {MgmtOp::ID, Zhttp::Method::METHOD, PATH}
@@ -123,25 +114,121 @@ static constexpr ZuArray<MgmtRoute, MgmtOp::N> routes{
 
 #undef ZUM_ROUTE
 
-static_assert(routes.length() == MgmtOp::N);
+ZuAssert(routes.length() == MgmtOp::N);
 
-static bool pathMatch(ZuCSpan pattern, ZuCSpan path)
+using MgmtEdgeKey = ZuTuple<unsigned, ZuCSpan>;
+using MgmtTerminalKey = ZuTuple<unsigned, uint8_t>;
+using MgmtEdgeMap = ZmHashKV<MgmtEdgeKey, unsigned,
+  ZmHashHeapID<"Zum.Mgmt.Edges">>;
+using MgmtNodeMap = ZmHashKV<unsigned, unsigned,
+  ZmHashHeapID<"Zum.Mgmt.Nodes">>;
+using MgmtTerminalMap = ZmHashKV<MgmtTerminalKey, int,
+  ZmHashHeapID<"Zum.Mgmt.Terminals">>;
+
+static bool pathComponent(ZuCSpan &path, ZuCSpan &component)
 {
-  unsigned p = 0, v = 0;
-  unsigned patternLength = pattern.length(), pathLength = path.length();
-  while (p < patternLength && v < pathLength) {
-    if (pattern[p] != '{') {
-      if (pattern[p++] != path[v++]) return false;
-      continue;
-    }
-    while (p < patternLength && pattern[p] != '}') ++p;
-    if (p == patternLength) return false;
-    ++p;
-    unsigned start = v;
-    while (v < pathLength && path[v] != '/') ++v;
-    if (v == start) return false;
+  if (!path || path[0] != '/') return false;
+  path.offset(1);
+  if (!path) return false;
+  auto delimiter = path.find<"/">();
+  component = path;
+  if (delimiter < 0) {
+    path = {};
+  } else {
+    component.trunc(unsigned(delimiter));
+    path.offset(unsigned(delimiter));
   }
-  return p == patternLength && v == pathLength;
+  return bool(component);
+}
+
+class MgmtRouter {
+public:
+  MgmtRouter()
+  {
+    for (const auto &route: routes) {
+      if (!route.path) continue;
+      ZuCSpan path{route.path};
+      ZuCSpan component;
+      ZmAssert(pathComponent(path, component) && component == "admin");
+      unsigned node = 0;
+      while (path) {
+	ZmAssert(pathComponent(path, component));
+	bool wildcard = component.length() > 2 && component[0] == '{' &&
+	  component[component.length() - 1] == '}';
+	unsigned next;
+	if (wildcard) {
+	  next = m_wildcards.findVal(node);
+	  if (ZuCmp<unsigned>::null(next)) {
+	    next = m_nodes++;
+	    m_wildcards.add(node, next);
+	  }
+	} else {
+	  auto key = ZuFwdTuple(node, component);
+	  next = m_edges.findVal(key);
+	  if (ZuCmp<unsigned>::null(next)) {
+	    next = m_nodes++;
+	    m_edges.add(ZuMv(key), next);
+	  }
+	}
+	node = next;
+      }
+      auto key = ZuFwdTuple(node, uint8_t(route.method));
+      ZmAssert(ZuCmp<int>::null(m_terminals.findVal(key)));
+      m_terminals.add(ZuMv(key), route.op);
+    }
+  }
+
+  unsigned node(ZuCSpan path) const
+  {
+    auto query = path.find<"?">();
+    if (query >= 0) path.trunc(unsigned(query));
+    unsigned node = 0;
+    ZuCSpan component;
+    while (path) {
+      if (!pathComponent(path, component)) return UINT_MAX;
+      if (!node && component == "admin") continue;
+      unsigned next = m_edges.findVal(ZuFwdTuple(node, component));
+      if (ZuCmp<unsigned>::null(next)) next = m_wildcards.findVal(node);
+      if (ZuCmp<unsigned>::null(next)) return UINT_MAX;
+      node = next;
+    }
+    return node;
+  }
+
+  int operation(Zhttp::Method::T method, ZuCSpan path) const
+  {
+    if (unsigned(method) >= Zhttp::Method::N) return -1;
+    unsigned node_ = node(path);
+    if (node_ == UINT_MAX) return -1;
+    int op = m_terminals.findVal(ZuFwdTuple(node_, uint8_t(method)));
+    return ZuCmp<int>::null(op) ? -1 : op;
+  }
+
+  MgmtString allow(ZuCSpan path) const
+  {
+    unsigned node_ = node(path);
+    if (node_ == UINT_MAX) return {};
+    MgmtString allow;
+    for (unsigned method = 0; method < Zhttp::Method::N; ++method) {
+      int op = m_terminals.findVal(ZuFwdTuple(node_, uint8_t(method)));
+      if (ZuCmp<int>::null(op)) continue;
+      if (allow) allow << ", ";
+      allow << Zhttp::Method::name(method);
+    }
+    return allow;
+  }
+
+private:
+  MgmtEdgeMap		m_edges;
+  MgmtNodeMap		m_wildcards;
+  MgmtTerminalMap	m_terminals;
+  unsigned		m_nodes = 1;
+};
+
+static const MgmtRouter &managementRouter()
+{
+  static const MgmtRouter router;
+  return router;
 }
 
 const MgmtRoute *managementRoute(int op)
@@ -152,28 +239,12 @@ const MgmtRoute *managementRoute(int op)
 
 int managementOperation(Zhttp::Method::T method, ZuCSpan path)
 {
-  auto query = path.find<"?">();
-  if (query >= 0) path = {path.data(), unsigned(query)};
-  for (auto &route: routes)
-    if (route.path && route.method == method && pathMatch(route.path, path))
-      return route.op;
-  return -1;
+  return managementRouter().operation(method, path);
 }
 
 MgmtString managementAllow(ZuCSpan path)
 {
-  auto query = path.find<"?">();
-  if (query >= 0) path = {path.data(), unsigned(query)};
-  MgmtString allow;
-  uint64_t seen = 0;
-  for (auto &route: routes) {
-    auto bit = uint64_t{1} << route.method;
-    if (!route.path || !pathMatch(route.path, path) || (seen & bit)) continue;
-    seen |= bit;
-    if (allow) allow << ", ";
-    allow << Zhttp::Method::name(route.method);
-  }
-  return allow;
+  return managementRouter().allow(path);
 }
 
 bool managementNeedsIdempotency(int op)

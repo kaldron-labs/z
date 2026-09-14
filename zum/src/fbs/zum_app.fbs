@@ -9,7 +9,6 @@ table App {
   auth_version:uint64 = 1;
   catalog_revision:uint64;
   catalog_digest:[ubyte];
-  service_client_i_d:string;
   version:uint64 = 1;
   created:int64;
   updated:int64;

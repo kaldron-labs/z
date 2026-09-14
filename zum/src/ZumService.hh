@@ -20,6 +20,7 @@
 #include <zlib/ZfJSON.hh>
 
 #include <zlib/ZumJWTVerify.hh>
+#include <zlib/ZumMgmt.hh>
 
 namespace Zum {
 
@@ -28,64 +29,8 @@ namespace ServiceError {
   enum { OK = -1, Invalid, Unauthorized, Forbidden, Unavailable, Stopped };
 }
 
-struct ServiceAction {
-  String label;
-  String name;
-};
-ZfStruct(, (ServiceAction, JSON),
-  (((label),		(JSON::Opt)),	(String)),
-  (((name),		(Required)),	(String)));
-ZuDerive(ServiceActionArray, (ZtArray<ServiceAction,
-  ZtArrayHeapID<"Zum.Service.Actions">>));
-struct ServiceActionVec : public ServiceActionArray {
-  ZuDerive_(ServiceActionVec, ServiceActionArray);
-  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(ServiceActionVec *);
-};
-
-struct ServiceRole {
-  StringVec actions;
-  String label;
-  String name;
-};
-ZfStruct(, (ServiceRole, JSON),
-  (((actions),		(Required)),	(StringVec)),
-  (((label),		(JSON::Opt)),	(String)),
-  (((name),		(Required)),	(String)));
-ZuDerive(ServiceRoleArray, (ZtArray<ServiceRole,
-  ZtArrayHeapID<"Zum.Service.Roles">>));
-struct ServiceRoleVec : public ServiceRoleArray {
-  ZuDerive_(ServiceRoleVec, ServiceRoleArray);
-  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(ServiceRoleVec *);
-};
-
-struct ServiceScope {
-  AudienceID audienceID = 0;
-  String name;
-  StringVec roles;
-};
-ZfStruct(, (ServiceScope, JSON),
-  (((audienceID),	(Required, JSON::String<>)),	(UInt64)),
-  (((name),		(Required)),	(String)),
-  (((roles),		(Required)),	(StringVec)));
-ZuDerive(ServiceScopeArray, (ZtArray<ServiceScope,
-  ZtArrayHeapID<"Zum.Service.Scopes">>));
-struct ServiceScopeVec : public ServiceScopeArray {
-  ZuDerive_(ServiceScopeVec, ServiceScopeArray);
-  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(ServiceScopeVec *);
-};
-
-struct ServiceCatalog {
-  ServiceActionVec actions;
-  ServiceRoleVec roles;
-  ServiceScopeVec scopes;
-};
-ZfStruct(, (ServiceCatalog, JSON),
-  (((actions),		(Required)),	(UDT)),
-  (((roles),		(Required)),	(UDT)),
-  (((scopes),		(Required)),	(UDT)));
-
 struct ServiceManifest {
-  ServiceCatalog catalog;
+  CatalogData catalog;
   uint64_t revision = 0;
 };
 
@@ -111,10 +56,24 @@ ZuDerive(ServiceHTTPDoneFn, (ZmFn<void(ServiceHTTPResponse),
 ZuDerive(ServiceHTTPFn, (ZmFn<void(ServiceHTTPRequest, ServiceHTTPDoneFn),
   ZmFnHeapID<"Zum.Service.HTTP">>));
 
+struct ServiceSSFConfig {
+  bool		enabled = false;
+	String	receiverID;
+	String	callbackPath;
+	String	callbackAuth;
+	String	transmitterIssuer;
+	String	audience;
+  unsigned	maxBytes = 64U<<10;
+  uint32_t	clockSkew = 30;
+  unsigned	dedupMax = 1024;
+};
+
 struct ServiceConfig {
   ZmScheduler	*scheduler = nullptr;
   unsigned	sid = 0;
   String	issuerURL;
+  String	managementIssuerURL;
+  String	managementURL;
   String	clientID;
   Bytes		clientSecret;
   String	audience;
@@ -123,31 +82,11 @@ struct ServiceConfig {
   uint32_t	jwksRefresh = 30;
   unsigned	responseMax = 64U<<10;
   unsigned	keyMax = 8;
-  JWTLimits	jwtLimits;
-};
-
-struct ServiceAuthorizeRequest {
-  String clientID;
-  String redirectURI;
-  String responseType{"code"};
-  String scope;
-  String resource;
-  String state;
-  String codeChallenge;
-  String codeChallengeMethod{"S256"};
-  String nonce;
-  String prompt;
-  uint32_t maxAge = 0;
-  bool statePresent = false;
-  bool noncePresent = false;
-  bool promptPresent = false;
-  bool maxAgePresent = false;
-};
-
-struct ServiceAuthorizeResult {
-  String authorizationURL;
-  uint64_t expiresIn = 0;
-  int error = ServiceError::Invalid;
+	JWTLimits	jwtLimits;
+	String		introspectionURL;
+	String		introspectionClientID;
+	Bytes		introspectionSecret;
+	ServiceSSFConfig ssf;
 };
 
 struct ServiceProtocolResult {
@@ -156,7 +95,14 @@ struct ServiceProtocolResult {
   int error = ServiceError::Invalid;
 };
 
+struct ServiceSETRequest {
+  String	authorization;
+  String	contentType;
+  String	body;
+};
+
 struct ServicePrincipal {
+  TokenID tokenID;
   String subject;
   AppID appID = 0;
   String audience;
@@ -166,12 +112,14 @@ struct ServicePrincipal {
 
 ZuDerive(ServiceDoneFn, (ZmFn<void(int),
   ZmFnHeapID<"Zum.Service.Done">>));
-ZuDerive(ServiceAuthorizeFn, (ZmFn<void(ServiceAuthorizeResult),
-  ZmFnHeapID<"Zum.Service.Authorize">>));
 ZuDerive(ServiceProtocolFn, (ZmFn<void(ServiceProtocolResult),
   ZmFnHeapID<"Zum.Service.Protocol">>));
 ZuDerive(ServiceVerifyFn, (ZmFn<void(int, ServicePrincipal),
   ZmFnHeapID<"Zum.Service.Verify">>));
+ZuDerive(ServiceRefreshFn, (ZmFn<void(RefreshID, int64_t),
+  ZmFnHeapID<"Zum.Service.Refresh">>));
+ZuDerive(ServiceSETDoneFn, (ZmFn<void(int),
+  ZmFnHeapID<"Zum.Service.SETDone">>));
 
 struct ServiceState;
 
@@ -185,10 +133,9 @@ public:
 
   bool init(ServiceConfig, ServiceHTTPFn);
   void start(ServiceDoneFn);
-  void authorize(ServiceAuthorizeRequest, ServiceAuthorizeFn);
-  void token(String form, ServiceProtocolFn);
-  void revoke(String form, ServiceProtocolFn);
   void verify(String accessToken, ServiceVerifyFn);
+  void setRefreshRevocationFn(ServiceRefreshFn);
+  void receiveSET(ServiceSETRequest, ServiceSETDoneFn);
   void publish(ServiceManifest, ServiceProtocolFn);
   void stop(ServiceDoneFn);
   void final();

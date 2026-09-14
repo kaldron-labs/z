@@ -36,7 +36,7 @@ release both owners, and empty the journals. A stale membership snapshot after
 the application reservation must compensate without changing either record.
 The `grantUpdate` case separately verifies persistence of changed role IDs,
 scope, authority source, and provider ID across a drained SQLite reopen;
-it is a metadata test, not upstream OIDC interoperability coverage.
+it is a metadata test, not external OIDC-provider interoperability coverage.
 `roleRemoval` stages the typed role-deletion payload and every intent/effect cut
 across its 24 expanded steps, reopening SQLite for all 49 durable images.
 The repeated reference branches contain two rows in each of membership, client
@@ -77,7 +77,7 @@ It requires `sqlite3` on `PATH` for read-only bootstrap snapshots. This is
 activation/listener lifecycle coverage, not a replication durability or failover
 SLA claim. See the current ledger for the status of the expanded scenario.
 
-`zumupstreamtest` exercises the real upstream transport against reserved loopback
+`zumoidchttptest` exercises the real OIDC HTTP transport against reserved loopback
 ports, without persistent storage, certificates, or an external IdP. Non-listening sockets
 refuse connections while retaining their ports; alternating origins exercises
 idle-slot eviction. A listening socket holds a TLS handshake pending while a
@@ -90,25 +90,26 @@ These tests do not establish TLS certificate validation or OIDC interoperability
 SQLite file in `ZDB_CONNECT`, plus `ZDB_MODULE` and the
 same Python dependencies as `zumhttptest`. Run `prove -v -j1 zumfederationtest`.
 It uses `zumidp.py`, an independent local TLS/OIDC fixture with an ephemeral CA
-and ES256 signing key. The daemon's non-secret `upstream.caPath` configuration
+and ES256 signing key. The daemon's non-secret `oidc.caPath` configuration
 selects that CA; certificate verification is not bypassed and system trust is
 not modified. Test credentials/keys stay in its private temporary directory.
 The same fixture CA authenticates a test-only TLS reverse proxy in front of
-`zumd`; its canonical issuer and upstream callback are HTTPS. The Python browser
+`zumd`; its canonical issuer and OIDC callback are HTTPS. The Python browser
 driver verifies that certificate too. Production HTTPS requirements are unchanged.
 It checks discovery, Basic-authenticated code exchange with PKCE, signed ID-token
 claims, N:1 role mapping, automatic external identity projection, downstream token issuance
-and refresh, and local administrator login during upstream outage. This is not
-Okta interoperability or full upstream freshness/revocation acceptance.
+and refresh, and local administrator login during an external provider outage.
+This is not Okta interoperability or full external-provider
+freshness/revocation acceptance.
 Both supported eligibility modes are exercised: `mappedRole`, plus `claimValues`
 with accepted scalar/array strings, unknown-value denial, and wrong-type denial.
 Provider isolation is exercised with a second enrolled provider record using the
-same independent upstream issuer and subject: the second application cannot use
+same independent provider issuer and subject: the second application cannot use
 the first provider's mappings, then succeeds only after its own mappings exist;
 its projected identity and evidence remain provider/application-qualified.
 The expanded fixture also enrolls the ping service through the real admin CLI,
 checks real `zumping` login/pong/refresh before and after service restart, and
-checks denial after fresh upstream claims contain only unmapped roles. The local
+checks denial after fresh provider claims contain only unmapped roles. The local
 HTTP fixture additionally requires `zumping` to fail without a pong while either
 `zumd` or `zumpingd` is stopped, then proves recovery after `zumd` restarts. These
 fixtures also require `zumpingd` startup to reject a missing or invalid
@@ -121,17 +122,17 @@ Signed ID tokens with a mismatched nonce, audience or issuer must fail before
 UserInfo is fetched and without changing assignment evidence.
 The evidence-expiry case configures a five-second assignment lifetime, verifies
 later browser-session deadlines and capped access-token expiry, waits until the
-actual evidence deadline, and checks refresh denial without upstream requests
-or evidence extension. A fresh upstream login must restore resource access.
+actual evidence deadline, and checks refresh denial without provider requests
+or evidence extension. A fresh provider login must restore resource access.
 This deadline wait tests protocol time; it is not synchronization for concurrent
 work. The fixture does not edit persisted records behind Zdb.
 Mapping removal and mapped-role disablement are tested against still-fresh
-evidence. Refreshed signed tokens lose their actions without upstream requests;
+evidence. Refreshed signed tokens lose their actions without provider requests;
 restoring configuration cannot expand the narrowed refresh family. A new
 authorization flow is required to regain the action.
 See `../IMPLEMENTATION.md` for the execution status of newly added checks.
-The optional manual transport probe in `ZumUpstreamTest` also accepts
-`ZUM_UPSTREAM_TEST_CA` alongside `ZUM_UPSTREAM_TEST_URL` for a private CA.
+The optional manual transport probe in `ZumOIDCHTTPTest` also accepts
+`ZUM_OIDC_TEST_CA` alongside `ZUM_OIDC_TEST_URL` for a private CA.
 
 `zumhttptest` invokes `zumhttp.py`, requiring Python 3 and its `cryptography`
 package, `sqlite3` on `PATH`, plus the already-built `../src/zumd`, `../src/zum` and
@@ -241,14 +242,14 @@ A graceful service restart must leave those catalog records unchanged. This
 scenario now also invites `user`, enrolls its virtual passkey, assigns only the
 ping role (no core membership), registers a public native client, and launches
 `zumping`. The fixture drives its browser redirect and loopback callback; the
-client must redeem through `zumpingd`, receive pong, rotate its refresh token,
+client must redeem directly through `zumd`, receive pong from `zumpingd`, rotate its refresh token,
 and receive pong again. Repeat login after service restart. This extended user
 flow also removes the ping role through `zum` between code issuance and redemption,
 requires the real client to fail without pong, then restores the role and requires
 a fresh login to succeed. This revocation-race addition passed on 2026-09-11.
 The preceding positive user
-flow passed against fresh SQLite on 2026-09-11, including the direct facade
-authorization regression. Browser interactions use the virtual authenticator;
+flow passed against fresh SQLite on 2026-09-11, including direct issuer
+authorization. Browser interactions use the virtual authenticator;
 this is not evidence of a real browser/platform-authenticator run.
 It also checks filtered GET queries, rejects unknown filters, requires an ETag
 for updates (428), rejects stale ETags (412), and verifies the accepted label
@@ -321,7 +322,7 @@ Zero, unknown and duplicate role references are rejected without changing either
 the membership or application.
 Membership suspension rejects refresh before and after another drained
 SQLite-backed server restart. This is not third-party OIDC conformance or
-upstream-provider interoperability coverage.
+external OIDC-provider interoperability coverage.
 This is a virtual-authenticator protocol fixture, not a real-browser,
 TLS-conformance, process-kill, or replicated-failover test.
 

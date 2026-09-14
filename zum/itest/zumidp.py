@@ -34,7 +34,7 @@ class Provider:
         self.directory = Path(directory)
         self.client_id = "zum-upstream"
         self.client_secret = secrets.token_urlsafe(32)
-        self.redirect = None
+        self.redirects = set()
         self.roles = ["operators", "readers", "unmapped"]
         self.userinfo_roles = None
         self.userinfo_subject = None
@@ -165,7 +165,8 @@ class Provider:
         elif path == "/authorize":
             params = parse_qs(urlsplit(request.path).query)
             valid = (params.get("client_id") == [self.client_id] and
-                     params.get("redirect_uri") == [self.redirect] and
+                     len(params.get("redirect_uri", [])) == 1 and
+                     params["redirect_uri"][0] in self.redirects and
                      params.get("response_type") == ["code"] and
                      params.get("code_challenge_method") == ["S256"] and
                      all(len(params.get(key, [])) == 1 for key in
@@ -175,7 +176,7 @@ class Provider:
                 return
             code = secrets.token_urlsafe(32)
             self.codes[code] = {key: values[0] for key, values in params.items()}
-            self.reply(request, 302, location=self.redirect + "?" + urlencode({
+            self.reply(request, 302, location=params["redirect_uri"][0] + "?" + urlencode({
                 "code": code, "state": params["state"][0]}))
         elif path == "/token":
             basic = "Basic " + base64.b64encode(
@@ -191,7 +192,7 @@ class Provider:
             code = self.codes.pop(params.get("code", [""])[0], None)
             verifier = params.get("code_verifier", [""])[0]
             if (not code or params.get("grant_type") != ["authorization_code"] or
-                    params.get("redirect_uri") != [self.redirect] or
+                    params.get("redirect_uri") != [code["redirect_uri"]] or
                     b64(hashlib.sha256(verifier.encode()).digest()) != code["code_challenge"]):
                 self.reply(request, 400, {"error": "invalid_grant"})
                 return
@@ -227,7 +228,8 @@ class Provider:
             response.read()
             assert response.status == 302, "upstream fixture rejected authorization"
             callback = response.getheader("Location")
-            assert callback.startswith(self.redirect + "?")
+            assert any(callback.startswith(redirect + "?")
+                       for redirect in self.redirects)
             return callback
         finally:
             connection.close()
@@ -237,6 +239,7 @@ class TLSProxy:
     """Fixture-only TLS termination; Zum retains its canonical HTTPS issuer."""
 
     def __init__(self, backend_port, provider):
+        self.backend_port = backend_port
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
@@ -248,7 +251,8 @@ class TLSProxy:
                 body = self.rfile.read(length) if length else None
                 headers = {key: value for key, value in self.headers.items()
                            if key.lower() not in ("connection", "transfer-encoding")}
-                connection = http.client.HTTPConnection("127.0.0.1", backend_port, timeout=30)
+                connection = http.client.HTTPConnection("127.0.0.1", owner.backend_port,
+                                                       timeout=30)
                 try:
                     connection.request(self.command, self.path, body, headers)
                     response = connection.getresponse()
@@ -262,18 +266,25 @@ class TLSProxy:
                     self.end_headers()
                     self.wfile.write(data)
                     self.close_connection = True
+                except OSError:
+                    self.send_response(503)
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
                 finally:
                     connection.close()
 
             do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = relay
 
+        owner = self
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(provider.cert_path, provider.key_path)
         context.set_alpn_protocols(["http/1.1"])
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         self.port = self.server.server_port
-        self.origin = "https://localhost:" + str(self.port)
+        self.origin = "https://127.0.0.1:" + str(self.port)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
