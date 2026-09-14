@@ -279,6 +279,61 @@ ZfStructRender(, Foo, Bah,
   int_ranged, hex, flags, float_ranged, fixed, decimal,
   time_, nested, nestedJSON, bytesVec);
 
+struct DirectPath {
+  ZuCSpan prefix;
+  uint64_t id = 0;
+  ZuCSpan endpoint;
+};
+ZfStruct(, (DirectPath, URI),
+  (((prefix),	(URI::PathIndex<0>, Required)),	(String)),
+  (((id),	(URI::PathIndex<1>, Required)),	(UInt64)),
+  (((endpoint),	(URI::PathIndex<2>, Required)),	(String)));
+
+struct DirectPrefix {
+  ZuCSpan prefix;
+  uint64_t id = 0;
+};
+ZfStruct(, (DirectPrefix, URI),
+  (((prefix),	(URI::PathIndex<0>, Required)),	(String)),
+  (((id),	(URI::PathIndex<1>, Required)),	(UInt64)));
+
+static void directPath()
+{
+  ZuTestScope(directPath);
+  char input[] = "/oauth2/42/token";
+  DirectPath path;
+  ZuCheck(ZfURI::loadPath(path, input));
+  ZuCheck(path.prefix == "oauth2" && path.id == 42 &&
+    path.endpoint == "token");
+  ZuCSpan unchanged{input, sizeof(input) - 1};
+  ZuCheck(unchanged == "/oauth2/42/token");
+
+  char short_[] = "/oauth2/42";
+  ZuCheck(!ZfURI::loadPath(path, short_));
+  char leadingSlash[] = "//oauth2/42/token";
+  ZuCheck(!ZfURI::loadPath(path, leadingSlash));
+  char missing[] = "/oauth2//token";
+  ZuCheck(!ZfURI::loadPath(path, missing));
+  char long_[] = "/oauth2/42/token/extra";
+  ZuCheck(!ZfURI::loadPath(path, long_));
+  char tailed[] = "/oauth2/42tail/token";
+  ZuCheck(!ZfURI::loadPath(path, tailed));
+  char negative[] = "/oauth2/-1/token";
+  ZuCheck(!ZfURI::loadPath(path, negative));
+  char nullID[] = "/oauth2/18446744073709551615/token";
+  ZuCheck(!ZfURI::loadPath(path, nullID));
+
+  char prefixed[] = "/oauth2/42/v1/token?x=1";
+  DirectPrefix prefix;
+  auto suffix = ZfURI::loadPathPrefix(prefix, prefixed);
+  ZuCheck(prefix.prefix == "oauth2" && prefix.id == 42 &&
+    suffix == "/v1/token?x=1");
+  ZuCSpan prefixed_{prefixed, sizeof(prefixed) - 1};
+  ZuCheck(prefixed_ == "/oauth2/42/v1/token?x=1");
+  char noSuffix[] = "/oauth2/42";
+  ZuCheck(!ZfURI::loadPathPrefix(prefix, noSuffix));
+}
+
 static const ZfURI::AnyNode *uriField(
     const ZfURI::AnyNode *node, ZuCSpan id)
 {
@@ -768,6 +823,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(roundTrip);
+  ZuTestCall(directPath);
   ZuTestCall(fieldlessUDT);
   ZuTestCall(arraySave);
   ZuTestCall(malformedURINegatives);
