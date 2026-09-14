@@ -324,8 +324,8 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 0> {
       do { lc = l_[i]; rc = r_[i++]; } while (lc && rc && lc == rc);
       return lc - rc;
     } else {
-      const char *l = ZuTraits<L>::data(l_);
-      const char *r = ZuTraits<R>::data(r_);
+      const auto *l = ZuTraits<L>::data(l_);
+      const auto *r = ZuTraits<R>::data(r_);
       if (!l) {
 	if (!r) return 0;
 	l = "";
@@ -390,7 +390,7 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
       if (!l) return -!!r;
       if (!r) return 1;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
-      if (int i = strncmp(l, r, ln > rn ? rn : ln)) return i;
+      if (int i = memcmp(l, r, ln > rn ? rn : ln)) return i;
       return ln - rn;
     }
   }
@@ -405,12 +405,12 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
       }
       return ln < rn;
     } else {
-      const char *l = ZuTraits<L>::data(l_);
-      const char *r = ZuTraits<R>::data(r_);
+      const auto *l = ZuTraits<L>::data(l_);
+      const auto *r = ZuTraits<R>::data(r_);
       if (!l) return !!r;
       if (!r) return false;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
-      if (int i = strncmp(l, r, ln > rn ? rn : ln)) return i < 0;
+      if (int i = memcmp(l, r, ln > rn ? rn : ln)) return i < 0;
       return ln < rn;
     }
   }
@@ -425,13 +425,13 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
       }
       return true;
     } else {
-      const char *l = ZuTraits<L>::data(l_);
-      const char *r = ZuTraits<R>::data(r_);
+      const auto *l = ZuTraits<L>::data(l_);
+      const auto *r = ZuTraits<R>::data(r_);
       if (!l) return !r;
       if (!r) return false;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
       if (ln != rn) return false;
-      return !strncmp(l, r, ln);
+      return !memcmp(l, r, ln);
     }
   }
 };
