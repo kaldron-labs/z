@@ -11,7 +11,11 @@
 
 #include <zlib/ZrestLib.hh>
 
+#include <zlib/ZuAssert.hh>
+#include <zlib/ZuIntrin.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZuSwitch.hh>
+#include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmLHash.hh>
 
@@ -59,6 +63,11 @@ struct DefltHdrs { };
 // Advance path past n complete leading components, retaining the slash before
 // the remaining path.  The zero case is an inlined no-op for literal dispatch.
 ZrestExtern bool skip(ZuSpan<uint8_t> &path, unsigned n);
+
+// Split an origin-form path at its first component.  root excludes the leading
+// slash; suffix begins with '/', '?' or is empty, and aliases path.
+ZrestExtern bool splitRoot(
+  ZuSpan<uint8_t> path, ZuBSpan &root, ZuSpan<uint8_t> &suffix);
 
 struct Request {
   using Headers = DefltHdrs;
@@ -185,19 +194,10 @@ struct GetResponses_<Req, decltype(
 };
 template <typename Req> using GetResponses = typename GetResponses_<Req>::T;
 template <typename Reqs>
-using GetAllResponses = ZuTypeApply<
-  ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>;
-
-template <typename Req, typename Res> struct ReqRes { };
-template <typename Req> struct GetReqRes_ {
-  template <typename Res> using ReqRes_ = ReqRes<Req, Res>;
-  using T = ZuTypeMap<ReqRes_, GetResponses<Req>>;
-};
-template <typename Req> using GetReqRes = typename GetReqRes_<Req>::T;
-template <typename Reqs>
-using GetAllReqRes = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetReqRes, Reqs>>;
-template <typename Reqs, typename Req, typename Res>
-using GetResIndex = ZuTypeIndex<ReqRes<Req, Res>, GetAllReqRes<Reqs>>;
+using GetAllResponses = ZuTypeUnique<ZuTypeApply<
+  ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>>;
+template <typename Reqs, typename Res>
+using GetResIndex = ZuTypeIndex<Res, GetAllResponses<Reqs>>;
 
 template <typename List>
 using GetUnion = ZuTypeApply<ZuUnion, typename List::template Unshift<void>>;
@@ -211,16 +211,69 @@ struct MethodFilter {
 template <typename Req>
 using ReqPath = typename Req::Path;
 
+template <typename Req>
+using ExactReq = ZuBool<Req::Exact>;
+template <typename Req>
+using PrefixReq = ZuBool<!Req::Exact>;
+
 template <typename Reqs, unsigned Method>
-struct PathIDs {
-  using MethodReqs =
-    ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
-  using Keys = ZuTypeMap<ReqPath, MethodReqs>;
+struct ReqCatalogMethodValid {
+  using MethodReqs = ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
+  using ExactReqs = ZuTypeGrep<ExactReq, MethodReqs>;
+  using PrefixReqs = ZuTypeGrep<PrefixReq, MethodReqs>;
+  using ExactPaths = ZuTypeMap<ReqPath, ExactReqs>;
+  using PrefixPaths = ZuTypeMap<ReqPath, PrefixReqs>;
+  static constexpr bool value =
+    ZuTypeUnique<ExactPaths>::N == ExactReqs::N &&
+    ZuTypeUnique<PrefixPaths>::N == PrefixReqs::N;
+};
+
+template <typename Reqs, unsigned Method = 0>
+struct ReqCatalogValid_ {
+  static constexpr bool value =
+    ReqCatalogMethodValid<Reqs, Method>::value &&
+    ReqCatalogValid_<Reqs, Method + 1>::value;
+};
+template <typename Reqs>
+struct ReqCatalogValid_<Reqs, Zhttp::Method::N> {
+  static constexpr bool value = true;
+};
+template <typename Reqs>
+using ReqCatalogValid = ZuBool<ReqCatalogValid_<Reqs>::value>;
+
+template <typename Reqs, unsigned Method>
+struct GetReqLookup_ {
+  using MethodReqs = ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
+  using ExactReqs = ZuTypeGrep<ExactReq, MethodReqs>;
+  enum { N = ExactReqs::N };
+  enum { Bits = ZuIntrin::log2(N) };
+  using Hash_ = ZmLHashKV<ZuBSpan, unsigned,
+    ZmLHashStatic<Bits, ZmLHashLocal<>>>;
+  struct Hash : public Hash_ {
+    using Hash_::add;
+    Hash() {
+      ZuUnroll::all<ExactReqs>([this]<typename Req>() {
+	using Path = typename Req::Path;
+	this->add(ZuBSpan{Path{}()}, ZuTypeIndex<Req, MethodReqs>{});
+      });
+    }
+  };
+  using T = Hash;
+};
+template <typename Reqs, unsigned Method>
+using GetReqLookup = typename GetReqLookup_<Reqs, Method>::T;
+
+template <typename Reqs, unsigned Method>
+struct PrefixPathIDs {
+  using MethodReqs = ZuTypeGrep<MethodFilter<Method>::template Filter, Reqs>;
+  using PrefixReqs = ZuTypeGrep<PrefixReq, MethodReqs>;
+  using Keys = ZuTypeMap<ReqPath, PrefixReqs>;
 };
 
 template <typename Reqs>
 int reqMatch(Zhttp::Method::T method, ZuBSpan path)
 {
+  ZuAssert((ReqCatalogValid<Reqs>{}));
   return ZuSwitch::dispatch<Zhttp::Method::N>(method,
       [&path](auto I) -> int {
     static constexpr unsigned MethodI = I;
@@ -228,10 +281,28 @@ int reqMatch(Zhttp::Method::T method, ZuBSpan path)
       ZuTypeGrep<MethodFilter<MethodI>::template Filter, Reqs>;
     if constexpr (!MethodReqs::N) return -1;
     else {
-      static constexpr auto matcher = ZuMatcher<PathIDs<Reqs, MethodI>>();
-      return matcher.match(path);
+      if (auto query = path.find<"?">(); query >= 0)
+	path.trunc(unsigned(query));
+      using ExactReqs = ZuTypeGrep<ExactReq, MethodReqs>;
+      if constexpr (ExactReqs::N) {
+	static const GetReqLookup<Reqs, MethodI> lookup;
+	unsigned request = lookup.findVal(path);
+	if (!ZuCmp<unsigned>::null(request)) return int(request);
+      }
+      using IDs = PrefixPathIDs<Reqs, MethodI>;
+      using PrefixReqs = typename IDs::PrefixReqs;
+      if constexpr (!PrefixReqs::N) return -1;
+      else {
+	static constexpr auto matcher = ZuMatcher<IDs>();
+	int prefix = matcher.match(path);
+	if (prefix < 0) return -1;
+	return ZuSwitch::dispatch<PrefixReqs::N>(prefix, [](auto J) {
+	  using Req = ZuType<J, PrefixReqs>;
+	  return int(ZuTypeIndex<Req, MethodReqs>{});
+	}, -1);
+      }
     }
-  });
+  }, -1);
 }
 
 template <typename Res> using GetStatus = ZuUnsigned<Res::Status>;
@@ -276,10 +347,60 @@ int resMatch(unsigned request, unsigned status)
 	[](auto J) -> int {
 	  static constexpr unsigned ResI = J;
 	  using Res = ZuType<ResI, Responses>;
-	  return GetResIndex<Reqs, Req, Res>{};
-	});
+	  return GetResIndex<Reqs, Res>{};
+	      }, -1);
     }
-  });
+  }, -1);
+}
+
+template <typename Path_, typename Parser_>
+struct ReqRoot {
+  using Path = Path_;
+  using Parser = Parser_;
+};
+
+template <typename Root>
+using GetRootParser = typename Root::Parser;
+template <typename Roots>
+using GetRootParsers = ZuTypeMap<GetRootParser, Roots>;
+template <typename Parser>
+using GetParserHdrs = typename Parser::Headers;
+template <typename Parsers>
+struct MergeParserHdrs_ {
+  using Hdrs = ZuTypeApply<ZuTypeConcat,
+    ZuTypeMap<GetParserHdrs, Parsers>>;
+  using Keys = ZuTypeUnique<GetHdrKeys<Hdrs>>;
+  using T = typename MergeHdrs__<Hdrs, Keys>::T;
+};
+template <typename Parsers>
+using MergeParserHdrs = typename MergeParserHdrs_<Parsers>::T;
+
+template <typename Roots>
+struct GetRootLookup_ {
+  enum { N = Roots::N };
+  enum { Bits = ZuIntrin::log2(N) };
+  using Hash_ = ZmLHashKV<ZuBSpan, unsigned,
+    ZmLHashStatic<Bits, ZmLHashLocal<>>>;
+  struct Hash : public Hash_ {
+    using Hash_::add;
+    Hash() {
+      ZuUnroll::all<Roots>([this]<typename Root>() {
+	using Path = typename Root::Path;
+	this->add(ZuBSpan{Path{}()}, ZuTypeIndex<Root, Roots>{});
+      });
+    }
+  };
+  using T = Hash;
+};
+template <typename Roots>
+using GetRootLookup = typename GetRootLookup_<Roots>::T;
+
+template <typename Roots>
+int rootMatch(ZuBSpan root)
+{
+  static const GetRootLookup<Roots> lookup;
+  unsigned i = lookup.findVal(root);
+  return ZuCmp<unsigned>::null(i) ? -1 : int(i);
 }
 
 } // Zrest
@@ -292,6 +413,7 @@ int resMatch(unsigned request, unsigned status)
     using List = Reqs; \
     using ReqHeaders = Name##ReqHeaders; \
     using ResHeaders = Name##ResHeaders; \
+    ZuAssert((Zrest::ReqCatalogValid<Reqs>{})); \
     static int reqMatch(Zhttp::Method::T, ZuBSpan); \
     static int resMatch(unsigned, unsigned); \
   }
@@ -303,6 +425,20 @@ int resMatch(unsigned request, unsigned status)
   } \
   int Name::resMatch(unsigned request, unsigned status) { \
     return Zrest::resMatch<List>(request, status); \
+  }
+
+#define ZrestRootCatalogDerive(Name, Roots) \
+  ZhttpHdrCatalogDerive(Name##ReqHeaders, \
+    Zrest::MergeParserHdrs<Zrest::GetRootParsers<Roots>>); \
+  struct Name { \
+    using List = Roots; \
+    using ReqHeaders = Name##ReqHeaders; \
+    static int rootMatch(ZuBSpan); \
+  }
+#define ZrestRootCatalogImpl(Name) \
+  ZhttpHdrCatalogImpl(Name##ReqHeaders) \
+  int Name::rootMatch(ZuBSpan root) { \
+    return Zrest::rootMatch<List>(root); \
   }
 
 #endif /* Zrest_HH */

@@ -15,7 +15,9 @@ ZuDerive(TestString, ZtString<ZtStringHeapID<"Zrest.Test.String">>);
 
 struct TestObject : public ZmObject { };
 struct RawObject : public ZmObject {
+  inline static unsigned constructions = 0;
   ZuSpan<uint8_t> data;
+  RawObject() { ++constructions; }
   RawObject &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
@@ -80,33 +82,26 @@ struct ExactNoQuery : public Zrest::ReqParser<ExactNoQuery, TestObject> {
   using Path = ZuStringT<"/.well-known/oauth-authorization-server">;
   enum { Exact = 1 };
 };
-struct PrefixPath {
-  TestString oauth2;
-  TestString app;
-  TestString version;
-  TestString endpoint;
-};
-ZfStruct(, (PrefixPath, URI),
-  (((oauth2),   (URI::PathIndex<0>, Required)), (String)),
-  (((app),      (URI::PathIndex<1>, Required)), (String)),
-  (((version),  (URI::PathIndex<2>, Required)), (String)),
-  (((endpoint), (URI::PathIndex<3>, Required)), (String)));
 struct PrefixedReq : public Zrest::ReqParser<PrefixedReq, RawObject> {
   using Base = Zrest::ReqParser<PrefixedReq, RawObject>;
   using Path = ZuStringT<"/v1/token">;
   enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
+  using Headers = ZhttpHeaders("x-route");
 
-  ZuBSpan fullPath;
-  PrefixPath prefix;
+  ZuBSpan projectedPath;
+  TestString routeHeader;
+  inline static unsigned completions = 0;
 
   bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
-    fullPath = target.path;
-    TestString path{target.path};
-    auto scan = ZfURI::scan(path.span());
-    ZfURI::handler<PrefixPath>(scan.p<1>()).load(prefix);
-    auto suffix = target;
-    if (!Zrest::skip(suffix.path, 2)) return false;
-    return Base::operation(method, suffix);
+    projectedPath = target.path;
+    return Base::operation(method, target);
+  }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "x-route") routeHeader = value;
+  }
+  template <typename Link> void complete(Link *, bool ok) {
+    if (ok) ++completions;
   }
 };
 struct SignedReq : public SignedBuilder<
@@ -124,7 +119,46 @@ struct RequestB : public Zrest::Request {
   using Headers = ZhttpHeaders("x-b");
   using Responses = ZuTypeList<ReplyB>;
 };
+struct RequestC : public Zrest::Request {
+  using Responses = ZuTypeList<ReplyA>;
+};
 
+struct DuplicateExactA : public Zrest::Request {
+  using Path = ZuStringT<"/duplicate">;
+  enum { Exact = 1 };
+};
+struct DuplicateExactB : public Zrest::Request {
+  using Path = ZuStringT<"/duplicate">;
+  enum { Exact = 1 };
+};
+struct DuplicatePrefixA : public Zrest::Request {
+  using Path = ZuStringT<"/prefix">;
+};
+struct DuplicatePrefixB : public Zrest::Request {
+  using Path = ZuStringT<"/prefix">;
+};
+struct PostDuplicate : public DuplicateExactA {
+  enum { Method = Zhttp::Method::POST };
+};
+struct ExactPrefixOverlap : public DuplicateExactA {
+  enum { Exact = 0 };
+};
+struct OverlapExact : public Zrest::Request {
+  using Path = ZuStringT<"/overlap">;
+  enum { Exact = 1 };
+};
+struct OverlapPrefix : public Zrest::Request {
+  using Path = ZuStringT<"/overlap">;
+};
+
+ZuAssert((!Zrest::ReqCatalogValid<ZuTypeList<
+  DuplicateExactA, DuplicateExactB>>{}));
+ZuAssert((!Zrest::ReqCatalogValid<ZuTypeList<
+  DuplicatePrefixA, DuplicatePrefixB>>{}));
+ZuAssert((Zrest::ReqCatalogValid<ZuTypeList<
+  DuplicateExactA, PostDuplicate>>{}));
+ZuAssert((Zrest::ReqCatalogValid<ZuTypeList<
+  DuplicateExactA, ExactPrefixOverlap>>{}));
 using OneRequest = ZuTypeList<RequestA>;
 using TwoRequests = ZuTypeList<RequestA, RequestB>;
 using OneHeader = ZuTypeList<ZuStringT<"x-a">>;
@@ -140,8 +174,9 @@ ZuAssert((ZuIsSame<Zrest::GetAllResponses<OneRequest>,
   ZuTypeList<ReplyA>>{}));
 ZuAssert((ZuIsSame<Zrest::GetAllResponses<TwoRequests>,
   ZuTypeList<ReplyA, ReplyB>>{}));
-ZuAssert((ZuIsSame<Zrest::GetAllReqRes<OneRequest>,
-  ZuTypeList<Zrest::ReqRes<RequestA, ReplyA>>>{}));
+ZuAssert((ZuIsSame<Zrest::GetAllResponses<
+  ZuTypeList<RequestA, RequestB, RequestC>>,
+  ZuTypeList<ReplyA, ReplyB>>{}));
 ZuAssert((ZuIsSame<Zrest::GetKValues<ContentType, MultiHeaders>,
   ContentTypes>{}));
 
@@ -193,12 +228,16 @@ static void exactPathTest()
   ZuTestScope(exactPath);
   using Parser = Zrest::MReqParser<ExactCatalog>;
   auto match = [](ZuCSpan path) {
+    unsigned constructions = RawObject::constructions;
     Parser parser;
+    TestString data;
+    data << path;
     Zhttp::Target target;
-    target.path = {
-      reinterpret_cast<uint8_t *>(const_cast<char *>(path.data())),
-      path.length()};
-    return parser.operation(Zhttp::Method::GET, target);
+    target.path = data;
+    bool matched = parser.operation(Zhttp::Method::GET, target);
+    if (matched && path.find<"/authorize">() == 0)
+      ZuCheck(RawObject::constructions == constructions + 1);
+    return matched;
   };
   ZuCheck(match("/authorize"));
   ZuCheck(match("/authorize?client_id=x"));
@@ -208,18 +247,56 @@ static void exactPathTest()
   ZuCheck(!match("/.well-known/oauth-authorization-server?x=y"));
 }
 
+struct ResponseA : public Zrest::ResBuilder<ResponseA, TestObject> {
+  enum { Status = 201 };
+};
+struct ResponseReq : public Zrest::Request {
+  using Responses = ZuTypeList<ResponseA>;
+};
+using ResponseRequests = ZuTypeList<ResponseReq>;
+ZrestCatalogDerive(ResponseCatalog, ResponseRequests);
+ZrestCatalogImpl(ResponseCatalog)
+
+using OverlapRequests = ZuTypeList<OverlapExact, OverlapPrefix>;
+ZrestCatalogDerive(OverlapCatalog, OverlapRequests);
+ZrestCatalogImpl(OverlapCatalog)
+
+static void dispatchBoundaryTest()
+{
+  ZuTestScope(dispatchBoundary);
+  ZuBSpan path;
+  path = "/duplicate";
+  ZuCheck(ResponseCatalog::reqMatch(Zhttp::Method::T(-1), path) == -1);
+  ZuCheck(Zrest::resMatch<ResponseRequests>(ResponseRequests::N, 201) == -1);
+  ZuCheck(OverlapCatalog::reqMatch(Zhttp::Method::GET,
+    ZuBSpan{"/overlap"}) == 0);
+  ZuCheck(OverlapCatalog::reqMatch(Zhttp::Method::GET,
+    ZuBSpan{"/overlap/child"}) == 1);
+  Zrest::MReqParser<ResponseCatalog> parser;
+  Zrest::MResBuilder<ResponseCatalog> builder;
+  TestObject object;
+  builder.init<ResponseA>(parser, &object);
+  ZuCheck(builder.status() == 500);
+}
+
 using PrefixRequests = ZuTypeList<PrefixedReq>;
 ZrestCatalogDerive(PrefixCatalog, PrefixRequests);
 ZrestCatalogImpl(PrefixCatalog)
-using PrefixParser = Zrest::MReqParser<PrefixCatalog, 2>;
+using PrefixParser = Zrest::MReqParser<PrefixCatalog,
+  Zrest::MReqPolicy<PrefixCatalog, 2>>;
 
-static Zhttp::Target target(ZuCSpan path)
+struct TestTarget : public Zhttp::Target {
+  TestString data;
+
+  TestTarget(ZuCSpan path_) {
+    data << path_;
+    path = data;
+  }
+};
+
+static TestTarget target(ZuCSpan path)
 {
-  Zhttp::Target target;
-  target.path = {
-    reinterpret_cast<uint8_t *>(const_cast<char *>(path.data())),
-    path.length()};
-  return target;
+  return TestTarget{path};
 }
 
 static void skipPathTest()
@@ -232,11 +309,8 @@ static void skipPathTest()
   ZuCheck(requestTarget.path ==
     "/oauth2/ping/v1/token?grant_type=refresh_token");
   parser.u.dispatch([](auto, auto &request) {
-    ZuCheck(request.fullPath ==
-      "/oauth2/ping/v1/token?grant_type=refresh_token");
-    ZuCheck(request.prefix.oauth2 == "oauth2" &&
-      request.prefix.app == "ping" && request.prefix.version == "v1" &&
-      request.prefix.endpoint == "token");
+    ZuCheck(request.projectedPath ==
+      "/v1/token?grant_type=refresh_token");
     ZuCheck(request.object->data == "?grant_type=refresh_token");
   });
 
@@ -245,6 +319,104 @@ static void skipPathTest()
   ZuCheck(!malformed.operation(Zhttp::Method::GET, relative));
   auto shortPath = target("/oauth2/ping");
   ZuCheck(!malformed.operation(Zhttp::Method::GET, shortPath));
+}
+
+struct RootServer { };
+
+struct AppPath { uint64_t appID = 0; };
+ZfStruct(, (AppPath, URI),
+  (((appID), (URI::PathIndex<0>, Required)), (UInt64)));
+
+struct AppParser : public Zrest::MReqParser<PrefixCatalog> {
+  using Base = Zrest::MReqParser<PrefixCatalog>;
+  uint64_t appID = 0;
+
+  void init(RootServer &) { appID = 0; }
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
+    AppPath app;
+    auto suffix = ZfURI::loadPathPrefix(app, target.path);
+    if (!suffix || !app.appID) return false;
+    auto projected = target;
+    projected.path = suffix;
+    if (!Base::operation(method, projected)) return false;
+    appID = app.appID;
+    return true;
+  }
+};
+
+struct HealthReq : public Zrest::ReqParser<HealthReq, TestObject> {
+  using Path = ZuStringT<"/live">;
+  enum { Exact = 1 };
+};
+using HealthRequests = ZuTypeList<HealthReq>;
+ZrestCatalogDerive(HealthCatalog, HealthRequests);
+ZrestCatalogImpl(HealthCatalog)
+using HealthParser = Zrest::MReqParser<HealthCatalog>;
+
+struct EnrollReq : public Zrest::ReqParser<EnrollReq, TestObject> {
+  using Path = ZuStringT<"">;
+  enum { Exact = 1 };
+};
+using EnrollRequests = ZuTypeList<EnrollReq>;
+ZrestCatalogDerive(EnrollCatalog, EnrollRequests);
+ZrestCatalogImpl(EnrollCatalog)
+using EnrollParser = Zrest::MReqParser<EnrollCatalog>;
+
+using TestRoots = ZuTypeList<
+  Zrest::ReqRoot<ZuStringT<"oauth2">, AppParser>,
+  Zrest::ReqRoot<ZuStringT<"health">, HealthParser>,
+  Zrest::ReqRoot<ZuStringT<"enroll">, EnrollParser>>;
+ZrestRootCatalogDerive(RootCatalog, TestRoots);
+ZrestRootCatalogImpl(RootCatalog)
+using RootParser = Zrest::MReqParser<RootCatalog,
+  Zrest::MReqRootPolicy<RootCatalog, RootServer>>;
+
+static void rootPathTest()
+{
+  ZuTestScope(rootPath);
+  RootServer server;
+  RootParser parser;
+  parser.init(server);
+
+  auto app = target("/oauth2/42/v1/token?grant_type=refresh_token");
+  ZuCheck(parser.operation(Zhttp::Method::GET, app));
+  ZuCheck(app.path ==
+    "/oauth2/42/v1/token?grant_type=refresh_token");
+  auto &appParser = parser.u.template p<AppParser>();
+  ZuCheck(appParser.appID == 42);
+  auto &request = appParser.u.template p<PrefixedReq>();
+  ZuCheck(request.projectedPath ==
+    "/v1/token?grant_type=refresh_token");
+  ZuCheck(request.object->data == "?grant_type=refresh_token");
+  TestString header{"selected-child"};
+  parser.template header<ZuStringT<"x-route">>(
+    Zhttp::FieldSection::Final, header);
+  ZuCheck(request.routeHeader == "selected-child");
+  unsigned completions = PrefixedReq::completions;
+  struct TestLink { };
+  TestLink *link = nullptr;
+  parser.complete(link, true);
+  ZuCheck(PrefixedReq::completions == completions + 1);
+  parser.reset();
+
+  auto health = target("/health/live");
+  ZuCheck(parser.operation(Zhttp::Method::GET, health));
+  ZuCheck(parser.u.template is<HealthParser>());
+  parser.reset();
+
+  auto enroll = target("/enroll");
+  ZuCheck(parser.operation(Zhttp::Method::GET, enroll));
+  ZuCheck(parser.u.template is<EnrollParser>());
+  parser.reset();
+
+  auto enrollQuery = target("/enroll?invalid=true");
+  ZuCheck(!parser.operation(Zhttp::Method::GET, enrollQuery));
+  auto unknown = target("/unknown/live");
+  ZuCheck(!parser.operation(Zhttp::Method::GET, unknown));
+  auto boundary = target("/oauth2x/42/v1/token");
+  ZuCheck(!parser.operation(Zhttp::Method::GET, boundary));
+  auto relative = target("oauth2/42/v1/token");
+  ZuCheck(!parser.operation(Zhttp::Method::GET, relative));
 }
 
 template <typename Builder>
@@ -278,8 +450,10 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(zeroBodyTest);
+  ZuTestCall(dispatchBoundaryTest);
   ZuTestCall(exactPathTest);
   ZuTestCall(skipPathTest);
+  ZuTestCall(rootPathTest);
   ZuTestCall(signedBodyTest);
   return 0;
 }

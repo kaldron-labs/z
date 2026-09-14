@@ -596,17 +596,12 @@ static bool endpointTarget(ZuCSpan value, const Zhttp::URLView &issuer,
   auto url = storage.url();
   if (!validURL(url, issuer.scheme == Zhttp::Scheme::http) ||
       !sameOrigin(url, issuer) || !url.path) return false;
-  OAuthString path{url.path};
-  auto scan = ZfURI::scan(path.span());
-  if (scan.p<0>() != int(path.length()) || !scan.p<1>()) return false;
+  target = url.path;
   OAuthEndpointPath endpoint;
-  ZfURI::handler<OAuthEndpointPath>(scan.p<1>()).load(endpoint);
-  OAuthString canonical;
-  ZfURI::savePath(canonical, endpoint);
-  if (url.path != canonical || endpoint.oauth2 != "oauth2" ||
+  if (!ZfURI::loadPath(endpoint, target) ||
+      endpoint.oauth2 != "oauth2" ||
       endpoint.app != appID || endpoint.version != "v1" ||
       endpoint.endpoint != expected) return false;
-  target = url.path;
   return true;
 }
 
@@ -797,14 +792,9 @@ int main(int argc, char **argv)
       !resourceURL.path || issuerURL.scheme != resourceURL.scheme) usage();
 
   OAuthString issuerPath{issuerURL.path};
-  auto issuerScan = ZfURI::scan(issuerPath.span());
   OAuthIssuerPath issuer;
-  if (issuerScan.p<0>() != int(issuerPath.length()) || !issuerScan.p<1>())
-    usage();
-  ZfURI::handler<OAuthIssuerPath>(issuerScan.p<1>()).load(issuer);
-  OAuthString canonicalIssuer;
-  ZfURI::savePath(canonicalIssuer, issuer);
-  if (issuerURL.path != canonicalIssuer || issuer.oauth2 != "oauth2" ||
+  if (!ZfURI::loadPath(issuer, issuerPath) ||
+      issuer.oauth2 != "oauth2" ||
       !issuer.app || issuer.app.length() > OAuthAppIDMax) usage();
 
   OAuthMetadataPath metadataPath;
