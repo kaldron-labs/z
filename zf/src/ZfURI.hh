@@ -1778,6 +1778,101 @@ inline T loadValue_(ZuSpan<char> span)
   ZuUnreachable();
 }
 
+// Load only URI path fields directly, without constructing an AnyNode tree.
+// eoc() decodes escapes in place; delimiters it overwrites are restored, but
+// escaped input remains decoded.  Query fields are deliberately not inspected.
+template <bool Prefix, typename Facet, typename O>
+bool loadPath_(O &o, ZuSpan<char> span, ZuSpan<char> *suffix)
+{
+  using Fields = PathFields<
+    ZuTypeGrep<ZfFieldFilter::Load, ZuFields<O, Facet>>>;
+  if constexpr (!Fields::N) return false;
+  if (!span || span[0] != '/') return false;
+  span.offset(1);
+  bool ok = true;
+  ZuUnroll::all<Fields>([&o, &span, &ok]<typename Field>() {
+    if (!ok) return;
+    using Props = typename Field::Props;
+    constexpr int index = ZuFieldProp::URI::GetPathIndex<Props>{}();
+    constexpr int expected = ZuTypeIndex<Field, Fields>{};
+    static_assert(index == expected,
+      "ZfURI::loadPath requires contiguous path indices beginning at zero");
+    auto result = eoc(span);
+    int output = result.p<0>();
+    int input = result.p<1>();
+    char delimiter = result.p<2>();
+    if (delimiter && input > 0) span[unsigned(input) - 1] = delimiter;
+    constexpr bool last = expected + 1 == int(Fields::N);
+    if (output <= 0 || input <= 0 ||
+	(last && !Prefix ? delimiter != 0 : delimiter != '/')) {
+      ok = false;
+      return;
+    }
+    ZuSpan<char> value{span.data(), unsigned(output)};
+    using Type = typename Field::Type;
+    using T = typename Field::T;
+    if constexpr (Type::Code == ZfFieldTC::String) {
+      Field::set(o, T(value));
+    } else if constexpr (
+	Type::Code == ZfFieldTC::Int8 ||
+	Type::Code == ZfFieldTC::Int16 ||
+	Type::Code == ZfFieldTC::Int32 ||
+	Type::Code == ZfFieldTC::Int64 ||
+	Type::Code == ZfFieldTC::Int128 ||
+	Type::Code == ZfFieldTC::UInt8 ||
+	Type::Code == ZfFieldTC::UInt16 ||
+	Type::Code == ZfFieldTC::UInt32 ||
+	Type::Code == ZfFieldTC::UInt64 ||
+	Type::Code == ZfFieldTC::UInt128) {
+      using Fmt = ZuFieldProp::URI::GetNumberFmt<Props>;
+      if constexpr (ZuIsBoxed<T>{}) {
+	using Scan = ZfFieldScanInt<Props, typename Fmt::Fmt, T>;
+	auto parsed = Scan::eov(value);
+	if (parsed.template p<0>() != int(value.length()) ||
+	    !*parsed.template p<1>()) {
+	  ok = false;
+	  return;
+	}
+	Field::set(o, parsed.template p<1>());
+      } else {
+	using B = ZuBox<ZfFieldTC::Type<Type::Code>>;
+	using Scan = ZfFieldScanInt<Props, typename Fmt::Fmt, B>;
+	auto parsed = Scan::eov(value);
+	if (parsed.template p<0>() != int(value.length()) ||
+	    !*parsed.template p<1>()) {
+	  ok = false;
+	  return;
+	}
+	Field::set(o, T(parsed.template p<1>().val()));
+      }
+    } else {
+      static_assert(Type::Code == ZfFieldTC::String,
+	"ZfURI::loadPath supports string and integer path fields");
+    }
+    span.offset(unsigned(input) - unsigned(Prefix && last));
+  });
+  if (!ok || (!Prefix && span)) return false;
+  if constexpr (Prefix) *suffix = span;
+  return true;
+}
+
+// Load an entire path.  Pass a span truncated before '?' if queries are valid.
+template <typename Facet = ZuFacet::URI, typename O>
+bool loadPath(O &o, ZuSpan<char> span)
+{
+  return loadPath_<false, Facet>(o, span, nullptr);
+}
+
+// Load the leading typed path fields and return the remaining path beginning
+// with '/'.  A null span indicates failure; a prefix necessarily has a suffix.
+template <typename Facet = ZuFacet::URI, typename O>
+ZuSpan<char> loadPathPrefix(O &o, ZuSpan<char> span)
+{
+  ZuSpan<char> suffix;
+  if (!loadPath_<true, Facet>(o, span, &suffix)) return {};
+  return suffix;
+}
+
 template <
   typename Facet, template <typename> class Filter,
   unsigned TypeCode, typename Props, typename T>
