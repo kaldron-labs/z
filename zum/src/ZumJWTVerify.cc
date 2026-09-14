@@ -156,18 +156,24 @@ static bool loadClaims(
       claims.actions.length() > limits.actions || claims.iat <= 0 ||
       claims.nbf <= 0 || claims.exp <= claims.iat || claims.nbf >= claims.exp ||
       claims.iat > now || claims.nbf > now || now >= claims.exp) return false;
-  if (interactive && (claims.authTime <= 0 || claims.authTime > claims.iat ||
-      claims.amr.length() != 1 ||
-      (claims.amr[0] != "passkey" && claims.amr[0] != "oidc"))) return false;
+  String authMethod;
+  if (interactive) {
+    if (claims.authTime <= 0 || claims.authTime > claims.iat ||
+	claims.amr.length() != 1) return false;
+    authMethod = ZuMv(claims.amr[0]);
+    if (authMethod != "passkey" && authMethod != "oidc") return false;
+  }
 
   Principal next;
+  next.tokenID = TokenID{
+    .issuer = ZuMv(claims.iss), .jti = ZuMv(claims.jti)};
   next.subject = ZuMv(claims.sub);
   next.clientID = ZuMv(claims.clientID);
   next.scope = ZuMv(claims.scope);
   next.actions = ZuMv(claims.actions);
   next.expires = claims.exp;
   next.authTime = interactive ? claims.authTime : 0;
-  if (interactive) next.authMethod = ZuMv(claims.amr[0]);
+  if (interactive) next.authMethod = ZuMv(authMethod);
   next.appID = claims.appID;
   principal = ZuMv(next);
   return true;

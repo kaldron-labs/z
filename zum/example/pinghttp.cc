@@ -28,13 +28,17 @@ namespace PingHTTP_ {
 enum {
   RequestTimeout = 15,
   ResponseMax = 64U<<10,
-  Concurrency = 32
+  Concurrency = 32,
+  DestinationMax = 8
 };
 
 template <unsigned Status_>
 struct ResponseData : public ZumObject {
   enum { Status = Status_ };
   String body;
+  ~ResponseData() {
+    if (body.mutable_()) ZuClear(body.data(), body.length());
+  }
   ResponseData &operator =(ZuSpan<uint8_t> data) {
     body = data;
     return *this;
@@ -93,6 +97,12 @@ struct Call : public ZumObject {
   mutable ServiceHTTPDoneFn complete;
   mutable ZmAtomic<unsigned> done = 0;
 
+  ~Call() {
+    if (authorization.mutable_())
+      ZuClear(authorization.data(), authorization.length());
+    if (body.mutable_()) ZuClear(body.data(), body.length());
+  }
+
   void finish(unsigned status, String value) const {
     if (done.cmpXch(1, 0)) return;
     if (authorization.mutable_())
@@ -106,7 +116,7 @@ struct Call : public ZumObject {
 
   template <typename Link, typename Value>
   void process(Link *, const Value *value) const {
-    finish(Value::Status, String{value->body});
+    finish(Value::Status, value->body);
   }
   template <typename Link> void failed(Link *) const {
     finish(0, {});
@@ -146,7 +156,7 @@ struct PUT : public Request<PUT, Zhttp::Method::PUT,
   enum { SignBody = 1 };
   static constexpr unsigned SignBodyBufSize = ResponseMax;
 
-  const ServiceCatalog &bodyObject(const Call *call) const {
+  const CatalogData &bodyObject(const Call *call) const {
     return call->manifest.catalog;
   }
   template <typename S>
@@ -174,8 +184,10 @@ struct PUT : public Request<PUT, Zhttp::Method::PUT,
   }
 };
 using Requests = ZuTypeList<GET, POST, PUT>;
+ZrestCatalogDerive(Catalog, Requests);
+ZrestCatalogImpl(Catalog)
 
-struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Requests> {
+struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Catalog> {
   using Reqs = Requests;
   uint64_t id = 0;
   uint64_t key() const { return id; }
@@ -186,7 +198,7 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Requests> {
       Zhttp::Version::T version) {
     ZiLOG(Debug, "zumd", ([ip = endpoint->ip, port = endpoint->port,
         transport, version](auto &s) {
-      s << "upstream HTTP selected " << ip << ':' << port
+      s << "service HTTP destination selected " << ip << ':' << port
 	<< " transport=" << Zhttp::Transport{}.name(transport)
 	<< " HTTP=" << Zhttp::Version{}.name(version);
     }));
@@ -200,7 +212,7 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Requests> {
   }
 };
 
-struct ResParser : public Zrest::MResParser<ReqBuilder_> { };
+struct ResParser : public Zrest::MResParser<Catalog, ReqBuilder_> { };
 
 class Client;
 class Pool;
@@ -251,7 +263,7 @@ public:
         Zhttp::QUICConfig{})) return false;
     Base::txErrorFn(ZiTxErrorFn{[](ZeException &e) {
       ZiLOG(Error, "zumd", ([e](auto &s) {
-	s << "upstream HTTP transmit error: " << e;
+	s << "service HTTP transmit error: " << e;
       }));
       return false;
     }});
@@ -274,7 +286,7 @@ public:
     call->idempotencyKey = ZuMv(request.idempotencyKey);
     call->complete = ZuMv(complete);
     if (url.path) {
-      ZuBSpan path = url.path;
+      auto path = url.path;
       if (path[0] == '/') path.offset(1);
       call->target = path;
     }
@@ -311,62 +323,104 @@ private:
 
 class PingHTTPState : public ZumObject {
 public:
-  bool init(ZiMultiplex *mx, ZuCSpan issuer, ZuCSpan caPath) {
-    Zhttp::URL parsed{issuer};
-    auto url = parsed.url();
-    if (!parsed.ok() || !url.host || url.hasFragment || url.hasQuery ||
+  bool add_(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
+    if (!url.host || url.hasFragment ||
         (url.scheme != Zhttp::Scheme::https &&
           !(url.scheme == Zhttp::Scheme::http &&
             (url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1"))))
       return false;
+    for (auto &client: m_clients)
+      if (client->origin(url)) return true;
+    if (m_clients.length() >= PingHTTP_::DestinationMax) return false;
+    ZmRef<PingHTTP_::Client> client = new PingHTTP_::Client{};
+    if (!client->init(mx, url, caPath)) return false;
+    m_clients.push(ZuMv(client));
+    return true;
+  }
+
+  bool add_(ZiMultiplex *mx, ZuCSpan origin, ZuCSpan caPath) {
+    Zhttp::URL parsed{origin};
+    return parsed.ok() && add_(mx, parsed.url(), caPath);
+  }
+
+  bool init(ZiMultiplex *mx, ZuCSpan issuer, ZuCSpan managementIssuer,
+      ZuCSpan management, ZuCSpan caPath) {
+    m_mx = mx;
+    m_caPath = caPath;
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)
       ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
     ZiResolver::start();
-    m_client = new PingHTTP_::Client{};
-    if (!m_client->init(mx, url, caPath)) { final(); return false; }
+    if (!add_(mx, issuer, caPath) || !add_(mx, managementIssuer, caPath) ||
+	!add_(mx, management, caPath)) {
+      final();
+      return false;
+    }
     return true;
   }
 
   void send(ServiceHTTPRequest request, ServiceHTTPDoneFn complete) {
-    if (!m_client) { complete(ServiceHTTPResponse{}); return; }
-    auto client = m_client;
+    Zhttp::URL parsed{request.url};
+    auto url = parsed.url();
+    if (!parsed.ok() || url.hasFragment) {
+      complete(ServiceHTTPResponse{});
+      return;
+    }
+    ZmRef<PingHTTP_::Client> client;
+    for (auto &candidate: m_clients)
+      if (candidate->origin(url)) { client = candidate; break; }
+    if (!client) {
+      if (!add_(m_mx, url, m_caPath)) {
+	complete(ServiceHTTPResponse{});
+	return;
+      }
+      for (auto &candidate: m_clients)
+	if (candidate->origin(url)) { client = candidate; break; }
+      if (!client) { complete(ServiceHTTPResponse{}); return; }
+    }
     client->txRun(0, [client, request = ZuMv(request),
         complete = ZuMv(complete)]() mutable {
       Zhttp::URL parsed{request.url};
       auto url = parsed.url();
       if (!parsed.ok() || url.hasFragment || !client->origin(url)) {
-        complete(ServiceHTTPResponse{}); return;
+	complete(ServiceHTTPResponse{});
+	return;
       }
       client->send(ZuMv(request), ZuMv(complete), url);
     });
   }
 
   void final() {
-    if (m_client) {
-      m_client->stop();
-      m_client->final();
-      m_client = nullptr;
+    for (auto &client: m_clients) {
+      client->stop();
+      client->final();
     }
+    m_clients.null();
     if (m_resolverOwned) {
       ZiResolver::stop();
       ZiResolver::final();
       m_resolverOwned = false;
     }
+    m_caPath.null();
+    m_mx = nullptr;
   }
 private:
-  ZmRef<PingHTTP_::Client> m_client;
+  ZtArray<ZmRef<PingHTTP_::Client>> m_clients;
+  ZiMultiplex *m_mx = nullptr;
+  String m_caPath;
   bool m_resolverOwned = false;
 };
 
 PingHTTP::PingHTTP() = default;
 PingHTTP::~PingHTTP() { final(); }
 
-bool PingHTTP::init(ZiMultiplex *mx, ZuCSpan issuer, ZuCSpan caPath)
+bool PingHTTP::init(ZiMultiplex *mx, ZuCSpan issuer,
+    ZuCSpan managementIssuer, ZuCSpan management, ZuCSpan caPath)
 {
   if (m_state) return false;
   ZmRef<PingHTTPState> state = new PingHTTPState{};
-  if (!state->init(mx, issuer, caPath)) return false;
+  if (!state->init(mx, issuer, managementIssuer, management, caPath))
+    return false;
   m_state = ZuMv(state);
   return true;
 }

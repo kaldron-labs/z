@@ -15,11 +15,11 @@
 
 #include <zlib/ZvMxParams.hh>
 
-#include <zlib/ZumDB.hh>
-#include <zlib/ZumDBOps.hh>
-#include <zlib/ZumKeyDB.hh>
+#include <zlib/zumd_db.hh>
+#include <zlib/zumd_db_ops.hh>
+#include <zlib/zumd_key_db.hh>
 #include <zlib/ZumMgmt.hh>
-#include <zlib/ZumRequest.hh>
+#include <zlib/zumd_request.hh>
 
 using namespace ZuTestUtil;
 
@@ -197,7 +197,7 @@ static bool stageAppEnrollment(
     .audienceURI = Zum::String{"https://orders.example/"} << appID,
     .clientID = Zum::String{clientID},
     .secretDigest = Zum::Bytes{ZuBSpan{"verifier"}},
-    .clientType = Zum::ClientType::Confidential, .nativeService = true,
+    .clientType = Zum::ClientType::Confidential, .catalogClient = true,
     .created = 100, .catalogPublishOp = catalogPublishOp,
     .operationQueryOp = operationQueryOp,
     .request = Zum::IdemRequest{.actorID = "recovery-admin",
@@ -460,7 +460,7 @@ static bool appEnrollmentRecovered(Zum::DBContext *context)
 		    app->data().version == 2 && !app->data().owner &&
 		    audience && audience->data().appID == 9 &&
 		    !audience->data().owner && client &&
-		    client->data().appID == 9 && !client->data().owner &&
+		    client->data().appID == 1 && !client->data().owner &&
 		    client->data().secretDigest == ZuBSpan{"verifier"} &&
 		    clientAccess && !clientAccess->data().owner &&
 		    clientAccess->data().appID == 1 && adminAccess &&

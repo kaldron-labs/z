@@ -1,5 +1,7 @@
-serviceURL: "http://127.0.0.1:8080"
-clientID: "REPLACE_WITH_ENROLLED_PUBLIC_CLIENT_ID"
-scope: "ping"
-callbackPort: 8081
-loginTimeout: 180
+issuerURL: "http://127.0.0.1:8090/oauth2/REPLACE_WITH_APP_ID",
+serviceURL: "http://127.0.0.1:8080",
+clientID: "REPLACE_WITH_ENROLLED_PUBLIC_CLIENT_ID",
+scope: "ping",
+callbackPort: 8081,
+loginTimeout: 180,
+loopbackTest: true

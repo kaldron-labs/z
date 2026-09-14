@@ -10,6 +10,7 @@ capabilities, process environments, or secret-bearing response bodies.
 """
 
 import base64
+import copy
 import hashlib
 import http.client
 from http.cookies import SimpleCookie
@@ -148,6 +149,15 @@ class Fixture:
         self.node_config = None
         self.idp = None
         self.ca_path = None
+        self.core_app_id = None
+
+    def issuer(self, app_id=None):
+        app_id = app_id or self.core_app_id
+        assert app_id
+        return self.origin + "/oauth2/" + str(app_id)
+
+    def oauth(self, app_id, endpoint):
+        return "/oauth2/" + str(app_id) + "/v1/" + endpoint
 
     def start(self):
         self.cookies = SimpleCookie()
@@ -204,6 +214,25 @@ class Fixture:
             if process.returncode:
                 raise AssertionError("server shutdown failed")
 
+    @staticmethod
+    def wait_output(process, prefix, timeout=30):
+        pending = b""
+        deadline = time.monotonic() + timeout
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise AssertionError("process output event timed out")
+                data = os.read(process.stdout.fileno(), 4096)
+                if not data:
+                    raise AssertionError("process exited before output event")
+                pending += data
+                lines = pending.split(b"\n")
+                pending = lines.pop()
+                if any(line.startswith(prefix) for line in lines):
+                    return
+
     def wrong_key(self, key=None):
         assert self.process is None
         server = Path(__file__).resolve().parent.parent / "src" / "zumd"
@@ -257,6 +286,10 @@ class Fixture:
                          field=b"privateMaterial", hex_ids=False):
             cipher = AESGCM(base64.b64decode(key))
             result = {}
+            issuers = {}
+            if table == b"zum.sign_key":
+                issuers = dict(line.split(b"|", 1) for line in sql(
+                    'SELECT id, issuer FROM "a_zum.sign_key"').splitlines())
             for line in snapshot.splitlines():
                 key_id, value = line.split(b"|", 1)
                 if not value:
@@ -267,7 +300,8 @@ class Fixture:
                         bytes.fromhex(key_id.decode()), "big")).encode()
                 envelope = bytes.fromhex(value.decode())
                 assert envelope[:6] == b"\x01\x01\x00\x00\x00\x01"
-                aad = (self.origin.encode() + b"\0" + table + b"\0" + record_id +
+                issuer = issuers.get(key_id, self.origin.encode())
+                aad = (issuer + b"\0" + table + b"\0" + record_id +
                        b"\0" + field)
                 result[key_id] = hashlib.sha256(cipher.decrypt(
                     envelope[6:18], envelope[18:], aad)).digest()
@@ -486,6 +520,21 @@ class Fixture:
         assert int(active["version"]) == int(before["version"]) + 2
         assert int(active["authVersion"]) == int(before["authVersion"]) + 2
         return active["authVersion"]
+
+    def app_disable(self, token, app_id):
+        query = "/admin/apps?id=" + app_id
+        before = self.request("GET", query, token=token)[0]["items"][0]
+        changed, _ = self.request(
+            "PUT", "/admin/apps/" + app_id + "/state",
+            {"state": "Disabled"}, token=token,
+            headers={"If-Match": before["etag"]})
+        assert changed["item"]["etag"] != before["etag"]
+        disabled = self.request("GET", query, token=token)[0]["items"][0]
+        assert disabled["state"] == "Disabled"
+        self.request("GET", "/.well-known/"
+                     "oauth-authorization-server/oauth2/" + app_id,
+                     status=500)
+        self.request("GET", self.oauth(app_id, "keys"), status=500)
 
     def management_matrix(self, token, workload):
         catalog, _ = self.request("GET", "/admin/operations?limit=1000", token=token)
@@ -718,11 +767,19 @@ class Fixture:
             unrelated = [row for row in before if row["userID"] != user["id"]]
             eligible = [row for row in before if row["userID"] == user["id"]
                         and row["state"] not in ("Revoked", "Consumed")]
-            assert eligible, "revocation fixture has no live " + collection
             body = {"userID": user["id"], "limit": 1}
             self.request("POST", path, body, token=token, status=400)
             self.request("POST", path, dict(body, limit=0), token=token,
                          headers={"Idempotency-Key": secrets.token_hex(16)}, status=400)
+            if not eligible:
+                # The exact grant revocation above may consume the last live
+                # grant; the filtered operation must then remain successful
+                # and report that it changed nothing.
+                assert collection == "grants"
+                result, _ = self.request("POST", path, body, token=token,
+                                         headers={"Idempotency-Key": secrets.token_hex(16)})
+                assert result["item"]["revoked"] == 0
+                continue
             result, _ = self.request("POST", path, body, token=token,
                                      headers={"Idempotency-Key": secrets.token_hex(16)})
             assert result["item"]["revoked"] == 1, collection + " did not revoke one eligible record"
@@ -809,8 +866,8 @@ class Fixture:
             return self.request("GET", query, token=token)[0]["items"][0]
 
         def authenticate(basic, status=200):
-            return self.request("POST", "/token", {
-                "grant_type": "client_credentials", "scope": "zum.service"},
+            return self.request("POST", self.oauth(self.core_app_id, "token"), {
+                "grant_type": "client_credentials", "scope": "zum.catalog"},
                 form=True, headers={"Authorization": "Basic " + basic}, status=status)
 
         before = current()
@@ -894,33 +951,59 @@ class Fixture:
         self.request("GET", "/health/ready", status=503)
         capability_file = self.directory / "enrollment"
         assert capability_file.stat().st_mode & 0o777 == 0o600
-        capability = parse_qs(urlsplit(capability_file.read_text().strip()).query)["capability"][0]
-        begin, _ = self.request("POST", "/passkey/begin",
+        enrollment = urlsplit(capability_file.read_text().strip())
+        capability = parse_qs(enrollment.query)["capability"][0]
+        page, _ = self.request("GET", enrollment.path + "?" + enrollment.query)
+        match = re.search(r"/oauth2/([0-9]+)/v1/passkey/begin", page)
+        assert match, "bootstrap page did not identify its application issuer"
+        self.core_app_id = match[1]
+        begin, _ = self.request("POST", self.oauth(
+                                self.core_app_id, "passkey/begin"),
                                 {"purpose": "bootstrap", "capability": capability})
         registration = self.authenticator.register(begin["options"]["publicKey"])
-        self.request("POST", "/passkey/finish?id=" + begin["ceremony"], registration)
+        self.request("POST", self.oauth(self.core_app_id, "passkey/finish") +
+                     "?id=" + begin["ceremony"], registration)
         self.request("GET", "/health/ready")
+        metadata, _ = self.request("GET", "/.well-known/"
+                                   "oauth-authorization-server/oauth2/" +
+                                   self.core_app_id)
+        assert metadata["issuer"] == self.issuer()
+        assert metadata["authorization_endpoint"] == \
+            self.issuer() + "/v1/authorize"
+        assert metadata["token_endpoint"] == self.issuer() + "/v1/token"
+        assert metadata["jwks_uri"] == self.issuer() + "/v1/keys"
+        oidc, _ = self.request("GET", "/oauth2/" + self.core_app_id +
+                               "/.well-known/openid-configuration")
+        assert oidc == metadata
 
-    def login(self, client_id="zum-admin", scope="zum.admin", resource=None,
-              return_tokens=False, client_secret=None,
-              redirect="http://127.0.0.1:49152/callback", login="http-admin"):
+    def login(self, client_id="zum-admin", scope="zum.admin", app_id=None,
+              return_tokens=False, client_secret=None, replay_refresh=False,
+              redirect="http://127.0.0.1:49152/callback", login="http-admin",
+              wrong_app_id=None, offline=True):
+        app_id = app_id or self.core_app_id
+        if offline and "offline_access" not in scope.split():
+            scope += " offline_access"
         verifier = b64(secrets.token_bytes(32))
         state = b64(secrets.token_bytes(24))
         query = {"response_type": "code", "client_id": client_id,
-                 "redirect_uri": redirect, "scope": scope,
-                 "resource": resource or self.origin + "/admin", "state": state,
+                 "redirect_uri": redirect, "scope": scope, "state": state,
                  "code_challenge": b64(hashlib.sha256(verifier.encode()).digest()),
                  "code_challenge_method": "S256"}
         nonce = b64(secrets.token_bytes(24)) if "openid" in scope.split() else None
         if nonce:
             query["nonce"] = nonce
-        location = self.authorize("/authorize?" + urlencode(query), login=login)
+        location = self.authorize(self.oauth(app_id, "authorize") + "?" +
+                                  urlencode(query), login=login)
         result = parse_qs(urlsplit(location).query)
-        assert result["state"] == [state] and "code" in result
+        assert result["state"] == [state] and "code" in result, result
         assert location.startswith(redirect + "?")
         request = {"grant_type": "authorization_code", "client_id": client_id,
                    "redirect_uri": redirect, "code": result["code"][0],
                    "code_verifier": verifier}
+        if wrong_app_id is not None:
+            denied, _ = self.request("POST", self.oauth(wrong_app_id, "token"),
+                                     request, form=True, status=401)
+            assert denied["error"] == "invalid_client"
         def token_request(value):
             headers = {}
             if client_secret is not None:
@@ -928,53 +1011,66 @@ class Fixture:
                     invalid_headers = {} if secret is None else {
                         "Authorization": "Basic " + base64.b64encode(
                             (client_id + ":" + secret).encode()).decode()}
-                    denied, _ = self.request("POST", "/token", value, form=True,
+                    denied, _ = self.request("POST", self.oauth(app_id, "token"),
+                                              value, form=True,
                                               headers=invalid_headers, status=401)
                     assert denied["error"] == "invalid_client"
                 headers["Authorization"] = "Basic " + base64.b64encode(
                     (client_id + ":" + client_secret).encode()).decode()
                 if value["grant_type"] == "authorization_code":
-                    denied, _ = self.request("POST", "/token",
+                    denied, _ = self.request("POST", self.oauth(app_id, "token"),
                                               dict(value, code_verifier=b64(secrets.token_bytes(32))),
                                               form=True, headers=headers, status=400)
                     assert denied["error"] == "invalid_grant"
-            return self.request("POST", "/token", value, form=True, headers=headers)
+            return self.request("POST", self.oauth(app_id, "token"), value,
+                                form=True, headers=headers)
 
         tokens, _ = token_request(request)
         assert tokens["token_type"].lower() == "bearer" and tokens["access_token"]
         if nonce:
-            identity = self.verify_jwt(tokens["id_token"])
-            assert identity["iss"] == self.origin and identity["aud"] == client_id
+            identity = self.verify_jwt(tokens["id_token"], app_id)
+            assert identity["iss"] == self.issuer(app_id) and identity["aud"] == client_id
             assert identity["nonce"] == nonce and identity["sub"]
             assert identity["iat"] <= time.time() < identity["exp"]
+        if not offline:
+            assert "refresh_token" not in tokens
+            return tokens if return_tokens else tokens["access_token"]
         replay_headers = {} if client_secret is None else {
             "Authorization": "Basic " + base64.b64encode(
                 (client_id + ":" + client_secret).encode()).decode()}
-        self.request("POST", "/token", request, form=True, headers=replay_headers, status=400)
+        self.request("POST", self.oauth(app_id, "token"), request, form=True,
+                     headers=replay_headers, status=400)
         refreshed, _ = token_request({
             "grant_type": "refresh_token", "client_id": client_id,
             "refresh_token": tokens["refresh_token"]})
         assert refreshed["token_type"].lower() == "bearer" and refreshed["access_token"]
         assert refreshed["refresh_token"] != tokens["refresh_token"]
+        if replay_refresh:
+            denied, _ = self.request("POST", self.oauth(app_id, "token"), {
+                "grant_type": "refresh_token", "client_id": client_id,
+                "refresh_token": tokens["refresh_token"]}, form=True,
+                headers=replay_headers, status=400)
+            assert denied["error"] == "invalid_grant"
         if nonce:
-            identity = self.verify_jwt(refreshed["id_token"])
-            assert identity["iss"] == self.origin and identity["aud"] == client_id
+            identity = self.verify_jwt(refreshed["id_token"], app_id)
+            assert identity["iss"] == self.issuer(app_id) and identity["aud"] == client_id
             assert identity["nonce"] == nonce and identity["sub"]
         return refreshed if return_tokens else refreshed["access_token"]
 
-    def session_lifecycle(self, client_id, audience_uri):
-        def silent(client, scope, resource, error=None, max_age=None):
+    def session_lifecycle(self, client_id, app_id):
+        def silent(client, scope, issuer_app, error=None, max_age=None):
             verifier = b64(secrets.token_bytes(32))
             state = b64(secrets.token_bytes(24))
             redirect = "http://127.0.0.1:49152/callback"
             query = {"response_type": "code", "client_id": client,
-                     "redirect_uri": redirect, "scope": scope, "resource": resource,
+                     "redirect_uri": redirect, "scope": scope,
                      "state": state, "prompt": "none",
                      "code_challenge": b64(hashlib.sha256(verifier.encode()).digest()),
                      "code_challenge_method": "S256"}
             if max_age is not None:
                 query["max_age"] = max_age
-            _, headers = self.request("GET", "/authorize?" + urlencode(query), status=302)
+            _, headers = self.request("GET", self.oauth(issuer_app, "authorize") +
+                                      "?" + urlencode(query), status=302)
             location = headers["location"]
             assert location.startswith(redirect + "?")
             result = parse_qs(urlsplit(location).query)
@@ -983,48 +1079,57 @@ class Fixture:
                 assert result.get("error") == [error] and "code" not in result
                 return
             assert "code" in result and "error" not in result
-            return self.request("POST", "/token", {
+            return self.request("POST", self.oauth(issuer_app, "token"), {
                 "grant_type": "authorization_code", "client_id": client,
                 "redirect_uri": redirect, "code": result["code"][0],
                 "code_verifier": verifier}, form=True)[0]
 
         # The current session was authenticated through the confidential app
-        # client. Reuse it without interaction for a native client and Zum admin.
-        native = silent(client_id, "ping", audience_uri)
-        admin = silent("zum-admin", "zum.admin", self.origin + "/admin")
+        # client. Reuse it for another client of the same application, but not
+        # across application-scoped issuer boundaries.
+        native = silent(client_id, "ping", app_id)
+        silent(client_id, "offline_access ping", app_id, "consent_required")
         session_cookies = SimpleCookie(self.cookies.output(header="", sep=";"))
-        silent(client_id, "ping", audience_uri, max_age=3600)
+        silent("zum-admin", "zum.admin", self.core_app_id, "login_required")
+        self.cookies = SimpleCookie()
+        admin = self.login(return_tokens=True)
+        self.cookies = SimpleCookie(session_cookies.output(header="", sep=";"))
+        silent(client_id, "ping", app_id, max_age=3600)
         # Cross a real protocol-second boundary: max_age=0 must reject this
         # existing authentication even though its session is otherwise usable.
         time.sleep(int(time.time()) + 1.05 - time.time())
-        silent(client_id, "ping", audience_uri, "login_required", max_age=0)
+        silent(client_id, "ping", app_id, "login_required", max_age=0)
         self.cookies = SimpleCookie(session_cookies.output(header="", sep=";"))
-        silent(client_id, "ping", audience_uri)
-        page, _ = self.request("GET", "/authorize?" + urlencode({
+        silent(client_id, "ping", app_id)
+        page, _ = self.request("GET", self.oauth(app_id, "authorize") + "?" + urlencode({
             "response_type": "code", "client_id": client_id,
             "redirect_uri": "http://127.0.0.1:49152/callback",
-            "scope": "ping", "resource": audience_uri, "prompt": "login",
+            "scope": "ping", "prompt": "login",
             "state": b64(secrets.token_bytes(24)), "code_challenge_method": "S256",
             "code_challenge": b64(hashlib.sha256(secrets.token_bytes(32)).digest())}))
         assert "navigator.credentials" in page, "prompt=login must require authentication"
         # Abandon the reauthentication transaction. Its new binding cookie is
         # not the authenticated handle whose logout boundary is tested below.
         self.cookies = session_cookies
-        page, _ = self.request("GET", "/login")
+        page, _ = self.request("GET", self.oauth(app_id, "login"))
         csrf = re.search(r'name=csrf value="([^"]+)"', page)
         assert csrf, "provider session must offer CSRF-bound logout"
-        self.request("POST", "/logout", {"csrf": "incorrect"}, form=True, status=400)
-        silent(client_id, "ping", audience_uri)
+        self.request("POST", self.oauth(app_id, "logout"),
+                     {"csrf": "incorrect"}, form=True, status=400)
+        silent(client_id, "ping", app_id)
         old_cookies = SimpleCookie(self.cookies.output(header="", sep=";"))
-        page, headers = self.request("POST", "/logout", {"csrf": csrf[1]}, form=True)
+        page, headers = self.request("POST", self.oauth(app_id, "logout"),
+                                     {"csrf": csrf[1]}, form=True)
         assert "Signed out of Zum" in page and "location" not in headers
-        silent(client_id, "ping", audience_uri, "login_required")
+        silent(client_id, "ping", app_id, "login_required")
         self.cookies = old_cookies
-        silent(client_id, "ping", audience_uri, "login_required")
+        silent(client_id, "ping", app_id, "login_required")
         self.cookies = SimpleCookie()
         # Ending provider SSO does not revoke independent application grants.
-        for client, tokens in ((client_id, native), ("zum-admin", admin)):
-            refreshed, _ = self.request("POST", "/token", {
+        for client, issuer_app, tokens in (
+                (client_id, app_id, native),
+                ("zum-admin", self.core_app_id, admin)):
+            refreshed, _ = self.request("POST", self.oauth(issuer_app, "token"), {
                 "grant_type": "refresh_token", "client_id": client,
                 "refresh_token": tokens["refresh_token"]}, form=True)
             assert refreshed["access_token"]
@@ -1032,34 +1137,56 @@ class Fixture:
             # Reusing a consumed token revokes that family, including the
             # newest token, rather than just rejecting the stale credential.
             for consumed in (tokens["refresh_token"], refreshed["refresh_token"]):
-                denied, _ = self.request("POST", "/token", {
+                denied, _ = self.request("POST", self.oauth(issuer_app, "token"), {
                     "grant_type": "refresh_token", "client_id": client,
                     "refresh_token": consumed}, form=True, status=400)
                 assert denied["error"] == "invalid_grant"
 
     def authorize(self, path, login="http-admin", authenticator=None):
+        route = re.match(r"^(/oauth2/[^/]+)/v1/", path)
+        assert route, "authorization request lacks application issuer path"
+        prefix = route[1] + "/v1/"
         page, headers = self.request("GET", path, status=(200, 302))
         if "location" in headers:
             return headers["location"]
-        match = re.search(r"const id='([^']+)',o=(.*?);const d=", page)
+        match = re.search(r"const id='([^']+)',o=(.*?),loginPath='", page)
         assert match, "authorization did not return a passkey page"
         ceremony = match[1]
-        _, headers = self.request("POST", "/login", {"id": ceremony, "login": login},
+        _, headers = self.request("POST", prefix + "login",
+                                  {"id": ceremony, "login": login},
                                   form=True, status=(200, 302))
         if "location" in headers:
             assert self.idp is not None, "no upstream browser fixture configured"
             callback = urlsplit(self.idp.authorize(headers["location"]))
+            issuer_app = route[1].rsplit("/", 1)[1]
+            if self.core_app_id and issuer_app != self.core_app_id:
+                cookies = copy.deepcopy(self.cookies)
+                denied, _ = self.request(
+                    "GET", self.oauth(self.core_app_id, "oidc/callback") +
+                    "?" + callback.query, status=400)
+                assert denied["error"] == "access_denied"
+                self.cookies = cookies
             finish, headers = self.request("GET", callback.path + "?" + callback.query,
                                            status=(200, 302))
             if "location" in headers:
                 return headers["location"]
         else:
             assertion = (authenticator or self.authenticator).assert_(json.loads(match[2])["publicKey"])
-            finish, _ = self.request("POST", "/passkey/finish?id=" + ceremony, assertion)
+            finish, _ = self.request("POST", prefix +
+                                     "passkey/finish?id=" + ceremony, assertion)
         if isinstance(finish, str):
             consent = re.search(r'name=id value="([^"]+)"', finish)
             assert consent, "unexpected passkey completion page"
-            _, headers = self.request("POST", "/consent",
+            issuer_app = route[1].rsplit("/", 1)[1]
+            if self.core_app_id and issuer_app != self.core_app_id:
+                cookies = copy.deepcopy(self.cookies)
+                denied, _ = self.request(
+                    "POST", self.oauth(self.core_app_id, "consent"),
+                    {"id": consent[1], "decision": "approve"},
+                    form=True, status=400)
+                assert denied["error"] == "access_denied"
+                self.cookies = cookies
+            _, headers = self.request("POST", prefix + "consent",
                                       {"id": consent[1], "decision": "approve"},
                                       form=True, status=302)
             location = headers["location"]
@@ -1068,7 +1195,7 @@ class Fixture:
         return location
 
     def cli_callback(self, process, port, login="http-admin", authenticator=None,
-                     service_port=None, before_callback=None):
+                     app_id=None, before_callback=None):
         pending = b""
         deadline = time.monotonic() + 30
         with selectors.DefaultSelector() as selector:
@@ -1086,27 +1213,8 @@ class Fixture:
                 if urls:
                     url = urlsplit(urls[0].decode())
                     break
-        if service_port is not None:
-            assert url.hostname == "127.0.0.1" and url.port == service_port
-            connection = http.client.HTTPConnection("127.0.0.1", service_port, timeout=15)
-            try:
-                connection.request("GET", url.path + "?" + url.query)
-                response = connection.getresponse()
-                body = response.read()
-                error = ""
-                if response.status != 302:
-                    try:
-                        code = json.loads(body).get("error")
-                        if code in ("invalid_request", "authorization_failed"):
-                            error = " (" + code + ")"
-                    except (ValueError, AttributeError):
-                        pass
-                assert response.status == 302, f"service authorize returned {response.status}{error}"
-                url = urlsplit(response.getheader("Location"))
-            finally:
-                connection.close()
         assert f"{url.scheme}://{url.netloc}" == self.origin
-        assert url.path == "/authorize"
+        assert url.path == self.oauth(app_id or self.core_app_id, "authorize")
         location = urlsplit(self.authorize(url.path + "?" + url.query, login, authenticator))
         assert location.hostname == "127.0.0.1" and location.port == port
         assert location.path == "/callback"
@@ -1129,18 +1237,22 @@ class Fixture:
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
-        config.write_text(f'issuerURL: {json.dumps(self.origin)}, '
+        config.write_text(f'issuerURL: {json.dumps(self.issuer())}, '
+                          f'managementURL: {json.dumps(self.origin)}, '
+                          f'scope: "zum.admin offline_access", '
                           f'caPath: {json.dumps(str(self.ca_path) if self.ca_path else "")}, '
                           f'credentialFile: {json.dumps(str(credentials))}, '
-                          f'callbackPort: {port}, loginTimeout: 30\n')
+                          f'callbackPort: {port}, loginTimeout: 30, '
+                          f'loopbackTest: true\n')
         with (self.directory / "admin.log").open("ab") as log:
             process = subprocess.Popen([str(executable), "--config", str(config),
                                         "login", "--no-browser"],
                                        stdout=subprocess.PIPE, stderr=log)
             try:
                 self.cli_callback(process, port)
-                process.communicate(timeout=30)
-                assert process.returncode == 0, "admin CLI login failed"
+                output, _ = process.communicate(timeout=30)
+                assert process.returncode == 0, \
+                    "admin CLI login failed: " + output.decode(errors="replace")
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -1180,7 +1292,7 @@ class Fixture:
     def ping_service(self, after_login=None, foreign_tokens=()):
         audience = "https://ping.example/api"
         app = self.admin_secret("appEnroll", {
-            "name": "zumpingd", "integration": "nativeService", "audienceURI": audience,
+            "name": "zumpingd", "integration": "catalogClient", "audienceURI": audience,
             "$idempotencyKey": secrets.token_hex(16)})["item"]
         audiences = self.admin_command("audienceQuery", {"uri": audience})["items"]
         assert len(audiences) == 1
@@ -1188,7 +1300,9 @@ class Fixture:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         config = self.directory / "zumpingd.cf"
-        config.write_text(f'zum: {{issuerURL: {json.dumps(self.origin)}, '
+        config.write_text(f'zum: {{issuerURL: {json.dumps(self.issuer(app["appID"]))}, '
+                          f'managementIssuerURL: {json.dumps(self.issuer(self.core_app_id))}, '
+                          f'managementURL: {json.dumps(self.origin)}, '
                           f'clientID: {json.dumps(app["client_id"])} }}, '
                           f'caPath: {json.dumps(str(self.ca_path) if self.ca_path else "")}, '
                           f'audience: {json.dumps(audience)}, '
@@ -1238,9 +1352,18 @@ class Fixture:
                         response = connection.getresponse()
                         response.read()
                         assert response.status == 401
+                        for method, path in (("GET", "/authorize"),
+                                             ("POST", "/token"),
+                                             ("POST", "/revoke")):
+                            connection.request(method, path)
+                            response = connection.getresponse()
+                            response.read()
+                            assert response.status == 404, \
+                                "resource server exposes an OAuth facade"
                         for foreign in foreign_tokens:
                             claims = self.verify_jwt(foreign)
-                            assert claims["iss"] == self.origin and claims["aud"] != audience
+                            assert claims["iss"] == self.issuer(claims["zum_app_id"])
+                            assert claims["aud"] != audience
                             assert claims["iat"] <= time.time() < claims["exp"]
                             connection.request("GET", "/ping",
                                                headers={"Authorization": "Bearer " + foreign})
@@ -1306,10 +1429,12 @@ class Fixture:
         authenticator = Authenticator(self.origin)
         self.cookies = SimpleCookie()
         capability = parse_qs(urlsplit(invited["enrollmentURL"]).query)["capability"][0]
-        begin, _ = self.request("POST", "/passkey/begin",
+        begin, _ = self.request("POST", self.oauth(
+                                self.core_app_id, "passkey/begin"),
                                 {"purpose": "bootstrap", "capability": capability})
         registration = authenticator.register(begin["options"]["publicKey"])
-        self.request("POST", "/passkey/finish?id=" + begin["ceremony"], registration)
+        self.request("POST", self.oauth(self.core_app_id, "passkey/finish") +
+                     "?id=" + begin["ceremony"], registration)
         member = self.admin_command("membershipAdd", {
             "appID": app_id, "userID": invited["id"],
             "$idempotencyKey": secrets.token_hex(16)})["item"]
@@ -1324,7 +1449,7 @@ class Fixture:
         assert self.admin_command("membershipQuery", {
             "appID": core, "userID": invited["id"]})["items"] == []
         config, port = self.ping_registration(app, audience_id, catalog, service_port)
-        return config, port, authenticator
+        return config, port, authenticator, app_id
 
     def ping_registration(self, app, audience_id, catalog, service_port):
         app_id = app["appID"]
@@ -1340,24 +1465,15 @@ class Fixture:
             "appID": app_id, "clientID": client["id"],
             "audienceIDs": [audience_id], "scopeIDs": [catalog["scopeQuery"][0]["id"]],
             "roleIDs": [], "$ifNoneMatch": "*"})
-        basic = base64.b64encode((app["client_id"] + ":" + app["client_secret"]).encode()).decode()
-        workload, _ = self.request("POST", "/token", {
-            "grant_type": "client_credentials", "scope": "zum.service"}, form=True,
-            headers={"Authorization": "Basic " + basic})
-        authorize, _ = self.request("POST", "/service/authorize", {
-            "clientID": client["id"], "redirectURI": f"http://127.0.0.1:{port}/callback",
-            "responseType": "code", "scope": "ping", "state": b64(secrets.token_bytes(24)),
-            "codeChallenge": b64(hashlib.sha256(secrets.token_bytes(32)).digest()),
-            "codeChallengeMethod": "S256"}, token=workload["access_token"])
-        assert authorize["authorizationURL"].startswith(self.origin + "/authorize?request=")
-        assert authorize["expiresIn"] > 0
         config = self.directory / "zumping.cf"
-        config.write_text(f'serviceURL: "http://127.0.0.1:{service_port}", '
+        config.write_text(f'issuerURL: {json.dumps(self.issuer(app_id))}, '
+                          f'serviceURL: "http://127.0.0.1:{service_port}", '
                           f'clientID: {json.dumps(client["id"])}, scope: ping, '
-                          f'callbackPort: {port}, loginTimeout: 30\n')
+                          f'caPath: {json.dumps(str(self.ca_path) if self.ca_path else "")}, '
+                          f'callbackPort: {port}, loginTimeout: 30, loopbackTest: true\n')
         return config, port
 
-    def ping_client(self, service_port, config, port, authenticator, *, before_callback=None,
+    def ping_client(self, service_port, config, port, authenticator, app_id, *, before_callback=None,
                     login="user"):
         self.cookies = SimpleCookie()
         executable = Path(__file__).resolve().parent.parent / "example" / "zumping"
@@ -1369,7 +1485,7 @@ class Fixture:
                                        env=env, stdout=subprocess.PIPE, stderr=log)
             try:
                 self.cli_callback(process, port, login, authenticator,
-                                  service_port, before_callback)
+                                  app_id, before_callback)
                 output, _ = process.communicate(timeout=30)
                 replies = [json.loads(line) for line in output.splitlines() if line.startswith(b"{")]
                 if before_callback is not None:
@@ -1602,14 +1718,20 @@ class Fixture:
         # The app's earlier mutations made its authority version independent.
         assert int(app["items"][0]["authVersion"]) > 1
         self.cookies = SimpleCookie()
-        tokens = self.login(client["id"], "openid ping", audience_uri, return_tokens=True)
+        tokens = self.login(client["id"], "openid ping", app_id,
+                           return_tokens=True, wrong_app_id=self.core_app_id)
+        ordinary = self.login(client["id"], "openid ping", app_id,
+                              return_tokens=True, offline=False)
+        assert "refresh_token" not in ordinary
         self.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
-        identity = self.verify_jwt(tokens["id_token"])
+        identity = self.verify_jwt(tokens["id_token"], app_id)
         for method in ("GET", "POST"):
-            info, _ = self.request(method, "/userinfo", token=tokens["access_token"])
+            info, _ = self.request(method, self.oauth(app_id, "userinfo"),
+                                   token=tokens["access_token"])
             assert info == {"sub": identity["sub"]}, "ungranted identity claims leaked"
             for invalid in (None, "invalid", tokens["id_token"], token):
-                denied, _ = self.request(method, "/userinfo", token=invalid, status=401)
+                denied, _ = self.request(method, self.oauth(app_id, "userinfo"),
+                                         token=invalid, status=401)
                 assert denied["error"] == "invalid_token"
         client_query = "/admin/clients?id=" + client["id"]
         registered, _ = self.request("GET", client_query, token=token)
@@ -1617,13 +1739,15 @@ class Fixture:
                                      {"state": "Suspended"}, token=token,
                                      headers={"If-Match": registered["items"][0]["etag"]})
         for method in ("GET", "POST"):
-            denied, _ = self.request(method, "/userinfo", token=tokens["access_token"], status=401)
+            denied, _ = self.request(method, self.oauth(app_id, "userinfo"),
+                                     token=tokens["access_token"], status=401)
             assert denied["error"] == "invalid_token"
         self.request("PUT", "/admin/clients/" + client["id"] + "/state",
                      {"state": "Active"}, token=token,
                      headers={"If-Match": suspended["item"]["etag"]})
         for method in ("GET", "POST"):
-            info, _ = self.request(method, "/userinfo", token=tokens["access_token"])
+            info, _ = self.request(method, self.oauth(app_id, "userinfo"),
+                                   token=tokens["access_token"])
             assert info == {"sub": identity["sub"]}
         web = create("/admin/clients", {
             "appID": app_id, "label": "Independent web client", "type": "confidential",
@@ -1639,16 +1763,16 @@ class Fixture:
         collections = self.grouped_queries(token, app_id, role["id"],
                                            {client["id"], web["id"]})
         self.cookies = SimpleCookie()
-        web_tokens = self.login(web["id"], "openid ping", audience_uri,
+        web_tokens = self.login(web["id"], "openid ping", app_id,
                                 return_tokens=True, client_secret=web["client_secret"],
                                 redirect="https://orders.example/callback")
         self.verify_access(web_tokens["access_token"], web["id"], app_id, audience_uri, ["ping"])
-        self.session_lifecycle(client["id"], audience_uri)
+        self.session_lifecycle(client["id"], app_id)
         membership_path = prefix + "/memberships/" + user_id
         self.membership_roles(token, prefix, user_id, [])
 
         def refresh(current, status=200):
-            result, _ = self.request("POST", "/token", {
+            result, _ = self.request("POST", self.oauth(app_id, "token"), {
                 "grant_type": "refresh_token", "client_id": client["id"],
                 "refresh_token": current["refresh_token"]}, form=True, status=status)
             return result
@@ -1941,7 +2065,8 @@ class Fixture:
         jwk = {"kty": "EC", "crv": "P-256", "alg": "ES256", "use": "sig",
                "kid": kid, "x": b64(public.x.to_bytes(32, "big")),
                "y": b64(public.y.to_bytes(32, "big"))}
-        value = {"id": kid, "algorithm": "ES256", "publicJwk": compact(jwk).decode(),
+        value = {"appID": self.core_app_id, "id": kid,
+                 "algorithm": "ES256", "publicJwk": compact(jwk).decode(),
                  "privateMaterial": material, "notBefore": int(time.time())}
         before, _ = self.request("GET", path, token=token)
         self.request("POST", path,
@@ -1952,6 +2077,10 @@ class Fixture:
         wrong = ec.generate_private_key(ec.SECP256R1())
         self.request("POST", path, dict(value, privateMaterial=private_material(wrong)),
             token=token, headers={"Idempotency-Key": secrets.token_hex(16)}, status=400)
+        assert self.request("GET", path, token=token)[0] == before
+        self.request("POST", path,
+            dict(value, appID="18446744073709551614"), token=token,
+            headers={"Idempotency-Key": secrets.token_hex(16)}, status=404)
         assert self.request("GET", path, token=token)[0] == before
         added, _ = self.request("POST", path, value, token=token,
             headers={"Idempotency-Key": secrets.token_hex(16)}, status=201)
@@ -1997,16 +2126,17 @@ class Fixture:
 
     def verify_access(self, access_token, client_id, app_id, audience_uri, actions):
         claims = self.verify_jwt(access_token)
-        assert claims["iss"] == self.origin and claims["aud"] == audience_uri
+        assert claims["iss"] == self.issuer(app_id) and claims["aud"] == audience_uri
         assert claims["zum_app_id"] == app_id and claims["client_id"] == client_id
         assert claims["scope"] == "openid ping" and claims["actions"] == actions
         assert claims["iat"] <= time.time() < claims["exp"]
 
-    def verify_jwt(self, access_token):
-        encoded_header, encoded_claims, encoded_signature = access_token.split(".")
+    def verify_jwt(self, token, app_id=None):
+        encoded_header, encoded_claims, encoded_signature = token.split(".")
         header = json.loads(unb64(encoded_header))
         claims = json.loads(unb64(encoded_claims))
-        jwks, _ = self.request("GET", "/jwks")
+        key_app_id = app_id or claims["zum_app_id"]
+        jwks, _ = self.request("GET", self.oauth(key_app_id, "keys"))
         keys = [key for key in jwks["keys"] if key["kid"] == header["kid"]]
         assert header["alg"] == "ES256" and len(keys) == 1
         key = keys[0]
@@ -2040,15 +2170,16 @@ def main():
             assert len(initial["items"]) == 1
             app_input = {
                 "name": "http-orders", "label": "HTTP Orders",
-                "integration": "nativeService", "audienceURI": "https://orders.example/api"}
+                "integration": "catalogClient", "audienceURI": "https://orders.example/api"}
             app_headers = {"Idempotency-Key": secrets.token_hex(16)}
             app = fixture.admin_secret("appEnroll", dict(app_input, **{
                 "$idempotencyKey": app_headers["Idempotency-Key"]}))
             assert app["item"]["client_secret"] and app["item"]["client_id"]
             basic = base64.b64encode((app["item"]["client_id"] + ":" +
                                       app["item"]["client_secret"]).encode()).decode()
-            workload, _ = fixture.request("POST", "/token", {
-                "grant_type": "client_credentials", "scope": "zum.service"},
+            app_id = app["item"]["appID"]
+            workload, _ = fixture.request("POST", fixture.oauth(fixture.core_app_id, "token"), {
+                "grant_type": "client_credentials", "scope": "zum.catalog"},
                 form=True, headers={"Authorization": "Basic " + basic})
             assert workload["access_token"] and "refresh_token" not in workload
             fixture.management_matrix(token, workload["access_token"])
@@ -2065,7 +2196,6 @@ def main():
                             headers={"If-Match": suspended["item"]["etag"]})
             fixture.request("GET", "/admin/operations", token=workload["access_token"])
             fixture.request("GET", "/admin/apps", token=workload["access_token"], status=403)
-            app_id = app["item"]["appID"]
             replay, _ = fixture.request("POST", "/admin/apps", app_input,
                                         token=token, headers=app_headers)
             assert replay["status"] == "complete" and app_id in replay["resultIDs"]
@@ -2106,13 +2236,31 @@ def main():
                     "idempotencyKey": failed_headers["Idempotency-Key"]}), token=token)
                 assert failed["items"] == []
             def workload_token(status=200):
-                return fixture.request("POST", "/token", {
-                    "grant_type": "client_credentials", "scope": "zum.service"},
+                return fixture.request("POST", fixture.oauth(fixture.core_app_id, "token"), {
+                    "grant_type": "client_credentials", "scope": "zum.catalog"},
                     form=True, headers={"Authorization": "Basic " + basic}, status=status)
+
+            def issuer_unavailable():
+                workload_token()
+                fixture.request("GET", "/.well-known/"
+                                "oauth-authorization-server/oauth2/" + app_id,
+                                status=500)
 
             app_query = "/admin/apps?id=" + app_id
             app_version = fixture.state_cycle(app_query, update_path + "/state", token,
-                                              lambda: workload_token(401))
+                                              issuer_unavailable)
+            workload_token()
+            active = fixture.request("GET", app_query, token=token)[0]["items"][0]
+            disabled = fixture.request("PUT", update_path + "/state",
+                                       {"state": "Disabled"}, token=token,
+                                       headers={"If-Match": active["etag"]})[0]["item"]
+            issuer_unavailable()
+            changed = fixture.request("PUT", update_path + "/state",
+                                      {"state": "Active"}, token=token,
+                                      headers={"If-Match": disabled["etag"]})[0]["item"]
+            active = fixture.request("GET", app_query, token=token)[0]["items"][0]
+            assert active["etag"] == changed["etag"] and active["state"] == "Active"
+            app_version = active["authVersion"]
             workload_token()
             core_id = initial["items"][0]["id"]
             access_path = "/admin/apps/" + core_id + "/client-access"
@@ -2192,6 +2340,7 @@ def main():
             assert fixture.verify_jwt(foreign_access)["actions"] == ["ping"]
             fixture.ping_service(foreign_tokens=(token, foreign_access))
             fixture.definition_lifecycle(token, app_id)
+            fixture.app_disable(token, app_id)
             fixture.report_coverage()
         except BaseException:
             try:

@@ -13,11 +13,46 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+#include <zlib/ZuCmp.hh>
+#include <zlib/ZuHash.hh>
+
 #include <zlib/ZumTypes.hh>
 
 namespace Zum {
 
+struct TokenID {
+  String	issuer;
+  String	jti;
+
+  int cmp(const TokenID &token) const {
+    if (int c = issuer.cmp(token.issuer)) return c;
+    return jti.cmp(token.jti);
+  }
+  friend bool operator ==(const TokenID &l, const TokenID &r) {
+    return !l.cmp(r);
+  }
+  uint32_t hash() const {
+    return issuer.hash() ^ jti.hash();
+  }
+};
+
+// Opaque refresh-token family identity.  The family identifier is encoded for
+// event transport; it is never the refresh-token bearer value.
+struct RefreshID {
+  String	issuer;
+  String	familyID;
+
+  int cmp(const RefreshID &value) const {
+    if (int c = issuer.cmp(value.issuer)) return c;
+    return familyID.cmp(value.familyID);
+  }
+  friend bool operator ==(const RefreshID &l, const RefreshID &r) {
+    return !l.cmp(r);
+  }
+};
+
 struct Principal {
+  TokenID	tokenID;
   String	subject;
   String	clientID;
   String	scope;

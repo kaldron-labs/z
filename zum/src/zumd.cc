@@ -21,13 +21,26 @@
 
 #include <zlib/ZvMxParams.hh>
 
-#include <zlib/ZumDB.hh>
-#include <zlib/ZumRequest.hh>
+#include <zlib/zumd_db.hh>
+#include <zlib/zumd_request.hh>
 
-#include "ZumBootstrap.hh"
-#include "ZumDaemon.hh"
-#include "ZumUpstream.hh"
-#include "ZumRekey.hh"
+#include "zumd_bootstrap.hh"
+#include "zumd_daemon.hh"
+#include "zumd_oidc.hh"
+#include "zumd_rekey.hh"
+
+namespace Zum {
+
+ZrestCatalogImpl(PublicCatalog)
+ZrestCatalogImpl(HealthCatalog)
+ZrestCatalogImpl(BootstrapCatalog)
+ZrestCatalogImpl(EnrollCatalog)
+ZrestCatalogImpl(WellKnownCatalog)
+ZrestCatalogImpl(AdminCatalog)
+ZrestCatalogImpl(DaemonCatalog)
+ZrestRootCatalogImpl(DaemonRootCatalog)
+
+} // Zum
 
 struct Options {
   Zum::String	config;
@@ -35,6 +48,7 @@ struct Options {
   Zum::String	connect;
   Zum::String	log{"&2"};
   Zum::String	issuer;
+  Zum::String	ssfIssuer;
   Zum::String	admin;
   Zum::String	bootstrapOutput;
   Zum::String	addr{"127.0.0.1"};
@@ -42,7 +56,7 @@ struct Options {
   Zum::String	rpName{"Zum"};
   uint32_t	port = 8080;
   uint32_t	bootstrapTTL = 900;
-  uint32_t	upstreamOrigins = Zum::UpstreamHTTP::DefaultOrigins;
+  uint32_t	oidcOrigins = Zum::OIDCHTTP::DefaultOrigins;
   bool		debug = false;
   bool		bootstrapReissue = false;
   bool		once = false;
@@ -55,6 +69,7 @@ ZfStruct(, (Options, CLI),
   (((connect),	(CLI::Long<"connect">)),	(String)),
   (((log),	(CLI::Long<"log">)),		(String, "&2")),
   (((issuer),	(CLI::Long<"issuer">)),		(String)),
+  (((ssfIssuer),	(CLI::Long<"ssf-issuer">)),	(String)),
   (((admin),	(CLI::Long<"admin">)),		(String)),
   (((bootstrapOutput), (CLI::Long<"bootstrap-output">)), (String)),
   (((addr),	(CLI::Long<"addr">)),		(String, "127.0.0.1")),
@@ -63,8 +78,8 @@ ZfStruct(, (Options, CLI),
   (((rpName),	(CLI::Long<"rp-name">)),	(String, "Zum")),
   (((bootstrapTTL), (CLI::Long<"bootstrap-ttl">,
       (Range<1, 86400>))), (UInt32, 900)),
-  (((upstreamOrigins), (CLI::Long<"upstream-origins">)),
-      (UInt32, Zum::UpstreamHTTP::DefaultOrigins)),
+  (((oidcOrigins), (CLI::Long<"oidc-origins">)),
+      (UInt32, Zum::OIDCHTTP::DefaultOrigins)),
   (((debug),	(CLI::Flag<'d'>, CLI::Long<"debug">)), (Bool)),
   (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)), (Bool)),
   (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)), (Bool)),
@@ -79,11 +94,12 @@ static void usage(int code)
     "  --module=PATH       Zdb store module (default: $ZDB_MODULE)\n"
     "  --connect=STRING    Zdb connection (default: $ZDB_CONNECT)\n"
     "  --log=FILE          log destination (default: stderr)\n"
-    "  --issuer=URL        canonical issuer URL\n"
+    "  --issuer=URL        public authorization base URL\n"
+    "  --ssf-issuer=URL    application-scoped issuer used in SSF SETs\n"
     "  --admin=LOGIN       initial local administrator login\n"
     "  --bootstrap-output=FILE  owner-only enrollment URL output\n"
     "  --bootstrap-ttl=N   enrollment capability seconds (default: 900)\n"
-    "  --upstream-origins=N  maximum cached upstream origins (default: 32)\n"
+    "  --oidc-origins=N    maximum cached OIDC origins (default: 32)\n"
     "  --addr=IP           HTTP listen address (default: 127.0.0.1)\n"
     "  --port=N            HTTP listen port (default: 8080)\n"
     "  --rp-id=NAME        WebAuthn relying-party ID (default: localhost)\n"
@@ -96,11 +112,43 @@ static void usage(int code)
   ::exit(code);
 }
 
-struct UpstreamConfig {
+struct OIDCConfig {
   Zum::String caPath;
 };
-ZfStruct(, (UpstreamConfig, Cf),
+ZfStruct(, (OIDCConfig, Cf),
   (((caPath)), (String)));
+
+struct SSFReceiverCf {
+  Zum::String receiverID;
+  Zum::AppID appID = 0;
+  Zum::String audience;
+  Zum::String deliveryURL;
+  // This is an environment-variable name, not the callback credential.
+  Zum::String secretRef;
+  uint64_t revision = 0;
+};
+ZfStruct(, (SSFReceiverCf, Cf),
+  (((receiverID), (Required)), (String)),
+  (((appID), (Required)), (UInt64)),
+  (((audience), (Required)), (String)),
+  (((deliveryURL), (Required)), (String)),
+  (((secretRef), (Required)), (String)),
+  (((revision), (Required)), (UInt64)));
+
+struct SSFReceiverVecCf : public ZtArray<SSFReceiverCf> {
+  using Base = ZtArray<SSFReceiverCf>;
+  using Base::Base;
+  using Base::operator =;
+  friend ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(SSFReceiverVecCf *);
+};
+
+struct SSFCf {
+  Zum::String issuer;
+  SSFReceiverVecCf receivers;
+};
+ZfStruct(, (SSFCf, Cf),
+  (((issuer)), (String)),
+  (((receivers)), (UDT)));
 
 static ZuPtr<const ZfCf::AnyNode> config(
     const Options &options, Zum::String &source)
@@ -231,6 +279,29 @@ int main(int argc, char **argv)
     auto cf = config(options, configSource);
     if (!cf || !cf->resolve("mx") || !cf->resolve("zdb"))
       throw ZeEXCEPT(Fatal, "zumd", "invalid node configuration");
+    SSFCf ssfConfig;
+    if (auto node = cf->resolve("ssf"))
+      ssfConfig = ZfCf::handler<SSFCf>(node).ctor();
+    Zum::String ssfIssuer = options.ssfIssuer;
+    if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
+    if (!ssfIssuer) ssfIssuer = options.issuer;
+    Zum::SSFReceiverVec ssfReceivers;
+    for (const auto &receiver: ssfConfig.receivers) {
+      if (!receiver.receiverID || !receiver.appID || !receiver.audience ||
+          !receiver.deliveryURL || !receiver.secretRef || !receiver.revision)
+        throw ZeEXCEPT(Fatal, "zumd", "invalid SSF receiver configuration");
+      ssfReceivers.push(Zum::SSFRx{
+        .receiverID = receiver.receiverID, .appID = receiver.appID,
+        .audience = receiver.audience, .deliveryURL = receiver.deliveryURL,
+        .secretRef = receiver.secretRef, .revision = receiver.revision});
+    }
+    Zum::SSFSecretFn ssfSecret;
+    if (ssfReceivers) {
+      ssfSecret = Zum::SSFSecretFn{[](Zum::String secretRef) {
+        auto value = ::getenv(secretRef);
+        return value ? Zum::String{value} : Zum::String{};
+      }};
+    }
     ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
@@ -241,9 +312,9 @@ int main(int argc, char **argv)
     db->init(ZdbCf{cf->resolve("zdb")}, &mx,
       ZdbHandler{.upFn = dbUp, .downFn = dbDown});
     ZmRef<Zum::DBContext> context = Zum::registerSchema(db);
-    Zum::UpstreamHTTP upstream;
+    Zum::OIDCHTTP oidcHTTP;
     Zum::Daemon daemon;
-    bool upstreamInited = false, daemonInited = false;
+    bool oidcHTTPInited = false, daemonInited = false;
     bool mxStarted = false, dbStarted = false, stopped = false;
     bool storeStopped = true;
     auto stopDB = [&dbStarted, &storeStopped, db]() {
@@ -252,7 +323,7 @@ int main(int argc, char **argv)
       dbStarted = false;
     };
     auto stop = [
-      &stopped, &mxStarted, db, &daemon, &upstreamInited, &upstream,
+      &stopped, &mxStarted, db, &daemon, &oidcHTTPInited, &oidcHTTP,
       &stopDB, &mx, &context
     ]() {
       if (stopped) return;
@@ -265,7 +336,7 @@ int main(int argc, char **argv)
         requestsDown.wait();
       }
       daemon.stop();
-      if (upstreamInited) upstream.final();
+      if (oidcHTTPInited) oidcHTTP.final();
       stopDB();
       daemon.final();
       if (mxStarted) mx.stop();
@@ -280,19 +351,22 @@ int main(int argc, char **argv)
       if (!rng.init())
         throw ZeEXCEPT(Fatal, "zumd", "random initialization failed");
       if (!options.once && !options.rekey) {
-        UpstreamConfig upstreamConfig;
-        if (auto node = cf->resolve("upstream"))
-          upstreamConfig = ZfCf::handler<UpstreamConfig>(node).ctor();
-        upstreamInited = upstream.init(&mx, db->requests->sid(),
-          options.upstreamOrigins, upstreamConfig.caPath);
-        if (!upstreamInited)
-          throw ZeEXCEPT(Fatal, "zumd", "upstream HTTP initialization failed");
+        OIDCConfig oidcConfig;
+        if (auto node = cf->resolve("oidc"))
+          oidcConfig = ZfCf::handler<OIDCConfig>(node).ctor();
+        oidcHTTPInited = oidcHTTP.init(&mx, db->requests->sid(),
+          options.oidcOrigins, oidcConfig.caPath);
+        if (!oidcHTTPInited)
+          throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP initialization failed");
         daemonInited = daemon.init(db, context, db->requests, &mx,
             Zum::DaemonConfig{
               .addr = options.addr, .port = uint16_t(options.port),
-              .issuer = options.issuer, .rpID = options.rpID,
+              .issuer = options.issuer, .ssfIssuer = ZuMv(ssfIssuer),
+              .rpID = options.rpID,
               .rpName = options.rpName, .admin = options.admin,
-              .dbKey = dbKey, .upstreamHTTP = upstream.fn()});
+              .dbKey = dbKey, .oidcHTTP = oidcHTTP.fn(),
+              .ssfSecret = ZuMv(ssfSecret),
+              .ssfReceivers = ZuMv(ssfReceivers)});
         if (!daemonInited || !daemon.start())
           throw ZeEXCEPT(Fatal, "zumd", "HTTP server start failed");
         std::cout << "zumd: listening" << std::endl;

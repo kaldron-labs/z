@@ -7,7 +7,6 @@ table Grant {
   audience_i_d:uint64;
   user_i_d:uint64;
   client_i_d:string;
-  facade_client_i_d:string;
   credential_i_d:[ubyte];
   audience:string;
   redirect_u_r_i:string;

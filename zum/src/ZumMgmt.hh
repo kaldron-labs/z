@@ -13,13 +13,74 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+#include <zlib/ZumTypes.hh>
+
 #include <zlib/ZtString.hh>
+#include <zlib/ZtArray.hh>
+
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZhttpCore.hh>
 
 namespace Zum {
 
 ZuDerive(MgmtString, ZtString<ZtStringHeapID<"Zum.MgmtString">>);
+
+struct CatalogAction {
+  String label;
+  String name;
+};
+ZfStruct(, (CatalogAction, JSON),
+  (((label),		(JSON::Opt)),	(String)),
+  (((name),		(Required)),	(String)));
+ZuDerive(CatalogActionArray, (ZtArray<CatalogAction,
+  ZtArrayHeapID<"Zum.Catalog.Actions">>));
+struct CatalogActionVec : public CatalogActionArray {
+  ZuDerive_(CatalogActionVec, CatalogActionArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogActionVec *);
+};
+
+struct CatalogRole {
+  StringVec actions;
+  String label;
+  String name;
+};
+ZfStruct(, (CatalogRole, JSON),
+  (((actions),		(Required)),	(StringVec)),
+  (((label),		(JSON::Opt)),	(String)),
+  (((name),		(Required)),	(String)));
+ZuDerive(CatalogRoleArray, (ZtArray<CatalogRole,
+  ZtArrayHeapID<"Zum.Catalog.Roles">>));
+struct CatalogRoleVec : public CatalogRoleArray {
+  ZuDerive_(CatalogRoleVec, CatalogRoleArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogRoleVec *);
+};
+
+struct CatalogScope {
+  AudienceID audienceID = 0;
+  String name;
+  StringVec roles;
+};
+ZfStruct(, (CatalogScope, JSON),
+  (((audienceID),	(Required, JSON::String<>)),	(UInt64)),
+  (((name),		(Required)),	(String)),
+  (((roles),		(Required)),	(StringVec)));
+ZuDerive(CatalogScopeArray, (ZtArray<CatalogScope,
+  ZtArrayHeapID<"Zum.Catalog.Scopes">>));
+struct CatalogScopeVec : public CatalogScopeArray {
+  ZuDerive_(CatalogScopeVec, CatalogScopeArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogScopeVec *);
+};
+
+struct CatalogData {
+  CatalogActionVec actions;
+  CatalogRoleVec roles;
+  CatalogScopeVec scopes;
+};
+ZfStruct(, (CatalogData, JSON),
+  (((actions),		(Required)),	(UDT)),
+  (((roles),		(Required)),	(UDT)),
+  (((scopes),		(Required)),	(UDT)));
 
 // One operation per remote management call. Append entries: these values
 // are the built-in action IDs as well as management request identities.
@@ -60,15 +121,10 @@ inline MgmtString managementAction(int op)
 }
 
 namespace CoreAction {
-  enum : uint32_t {
-    FacadeAuthorize = MgmtOp::N,
-    FacadeToken,
-    FacadeRevoke,
-    N
-  };
+  enum : uint32_t { N = MgmtOp::N };
 }
 
-ZumAPI MgmtString coreAction(uint32_t);
+inline MgmtString coreAction(uint32_t id) { return managementAction(id); }
 
 struct MgmtRoute {
   int16_t		op = -1;
@@ -76,7 +132,9 @@ struct MgmtRoute {
   const char		*path = nullptr;
 };
 
-// The route registry is indexed by MgmtOp and is the sole source used by
+// The route registry is intentionally immutable and pointer-stable: the
+// public API returns records by address and the runtime router walks the same
+// records when constructing its dispatch graph. It is the sole source used by
 // daemon dispatch and administrative clients.
 ZumAPI const MgmtRoute *managementRoute(int op);
 ZumAPI int managementOperation(Zhttp::Method::T, ZuCSpan path);

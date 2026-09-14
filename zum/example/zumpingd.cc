@@ -4,21 +4,18 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Ping service: no database, local credential store or upstream OIDC integration.
+// Ping resource server: no database, local credential store or OIDC provider.
 
 #include <iostream>
 #include <stdlib.h>
 
-#include <zlib/ZuPercent.hh>
 #include <zlib/ZuCmp.hh>
-#include <zlib/ZuMatcher.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZfJSON.hh>
-#include <zlib/ZfURI.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZhttpServer.hh>
@@ -56,10 +53,14 @@ ZfStruct(, (Options, CLI),
 
 struct ZumConfig {
   String issuerURL;
+  String managementIssuerURL;
+  String managementURL;
   String clientID;
 };
 ZfStruct(, (ZumConfig, Cf),
   (((issuerURL), (Required)), (String)),
+  (((managementIssuerURL), (Required)), (String)),
+  (((managementURL), (Required)), (String)),
   (((clientID), (Required)), (String)));
 
 struct Config {
@@ -92,80 +93,19 @@ static bool loadConfig(ZuCSpan path, Config &config)
   if (parsed.p<0>() < 0 || !parsed.p<1>()) return false;
   config = ZfCf::handler<Config>(parsed.p<1>()).ctor();
   // TLS terminates at a deployment reverse proxy; this listener is loopback only.
-  return config.zum.issuerURL && config.zum.clientID && config.audience &&
+  return config.zum.issuerURL && config.zum.managementIssuerURL &&
+    config.zum.managementURL &&
+    config.zum.clientID && config.audience &&
     config.audienceID && (config.addr == "127.0.0.1" || config.addr == "::1");
 }
 
 static Zum::ServiceManifest manifest(uint64_t audienceID)
 {
-  return {Zum::ServiceCatalog{
+  return {Zum::CatalogData{
     .actions = {{.name = "ping"}},
     .roles = {{.actions = {"ping"}, .name = "ping"}},
     .scopes = {{.audienceID = audienceID, .name = "ping", .roles = {"ping"}}}
   }, 1};
-}
-
-static bool decode(String &out, ZuCSpan value)
-{
-  out = value;
-  using Form = ZuPercent::Codec<ZfURI::PercentQuote<true>>;
-  auto result = Form::decode(out.span());
-  if (!result) return false;
-  out.length(result.out);
-  return true;
-}
-
-struct AuthorizeFields {
-  using Keys = ZuStringTL<"client_id", "redirect_uri", "response_type",
-    "scope", "resource", "state", "code_challenge",
-    "code_challenge_method", "nonce", "prompt", "max_age">;
-};
-
-static bool authorizeInput(ZuCSpan query, Zum::ServiceAuthorizeRequest &input)
-{
-  constexpr auto matcher = ZuMatcher<AuthorizeFields>();
-  if (query && query[0] == '?') query.offset(1);
-  unsigned seen = 0;
-  while (query) {
-    auto amp = query.find("&");
-    ZuCSpan part{query.data(), amp >= 0 ? unsigned(amp) : query.length()};
-    auto equal = part.find("=");
-    if (equal < 0) return false;
-    String key, value;
-    if (!decode(key, {part.data(), unsigned(equal)}) ||
-        !decode(value, part.offset(unsigned(equal) + 1))) return false;
-    int field = matcher.exact(key);
-    if (field < 0) {
-      if (amp < 0) break;
-      query.offset(unsigned(amp) + 1);
-      continue;
-    }
-    unsigned bit = 1U<<field;
-    if (seen & bit) return false;
-    seen |= bit;
-    switch (field) {
-      case 0: input.clientID = ZuMv(value); break;
-      case 1: input.redirectURI = ZuMv(value); break;
-      case 2: input.responseType = ZuMv(value); break;
-      case 3: input.scope = ZuMv(value); break;
-      case 4: input.resource = ZuMv(value); break;
-      case 5: input.state = ZuMv(value); input.statePresent = true; break;
-      case 6: input.codeChallenge = ZuMv(value); break;
-      case 7: input.codeChallengeMethod = ZuMv(value); break;
-      case 8: input.nonce = ZuMv(value); input.noncePresent = true; break;
-      case 9: input.prompt = ZuMv(value); input.promptPresent = true; break;
-      case 10: {
-	ZuBox<uint32_t> n;
-	if (n.scan(value) != int(value.length()) ||
-	    ZuCmp<uint32_t>::null(n)) return false;
-	input.maxAge = n;
-	input.maxAgePresent = true;
-      } break;
-    }
-    if (amp < 0) break;
-    query.offset(unsigned(amp) + 1);
-  }
-  return (seen & (1U | 2U | 4U | 64U | 128U)) == (1U | 2U | 4U | 64U | 128U);
 }
 
 struct RawData : public ZumObject {
@@ -190,44 +130,29 @@ struct Response : public Zrest::ResBuilder<Response<Status_>, Reply> {
     } else Base::template header<Key>(ZuFwd<L>(l));
   }
 };
-using Responses = ZuTypeList<Response<200>, Response<302>, Response<400>,
-  Response<401>, Response<403>, Response<404>, Response<405>, Response<409>,
-  Response<415>, Response<422>, Response<429>, Response<500>, Response<502>,
-  Response<503>, Response<504>>;
+using Responses = ZuTypeList<Response<200>, Response<202>, Response<400>, Response<401>,
+  Response<403>, Response<404>, Response<503>>;
 
 class App;
 template <typename Impl>
 struct Request : public Zrest::ReqParser<Impl, RawData> {
   using Base = Zrest::ReqParser<Impl, RawData>;
+  enum { Body = Zrest::BodyPolicy::Raw };
   using Base::header;
   static constexpr uint64_t QueryLimit = 16U<<10;
   static constexpr uint64_t BodyLimit = BodyMax;
-  using Headers = ZhttpHeaders("authorization");
+  using Headers = ZhttpHeaders("authorization", "content-type");
   using Responses = ::Responses;
   App *app = nullptr;
   String authorization;
-  void init() { Base::init(); authorization.null(); }
+  String contentType;
+  void init() { Base::init(); authorization.null(); contentType.null(); }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
     if constexpr (Key{}() == "authorization") authorization = value;
+    else if constexpr (Key{}() == "content-type") contentType = value;
   }
   template <typename Link> void complete(Link *, bool);
-};
-struct Authorize : public Request<Authorize> {
-  enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
-  using Path = ZuStringT<"/authorize">;
-};
-struct Token : public Request<Token> {
-  enum { Exact = 1, Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::Raw };
-  using Path = ZuStringT<"/token">;
-  using Headers = ZhttpHeaders(
-    ("content-type", "application/x-www-form-urlencoded"), "content-length");
-};
-struct Revoke : public Request<Revoke> {
-  enum { Exact = 1, Method = Zhttp::Method::POST, Body = Zrest::BodyPolicy::Raw };
-  using Path = ZuStringT<"/revoke">;
-  using Headers = ZhttpHeaders(
-    ("content-type", "application/x-www-form-urlencoded"), "content-length");
 };
 struct Ping : public Request<Ping> {
   enum { Exact = 1 };
@@ -237,9 +162,19 @@ struct Health : public Request<Health> {
   enum { Exact = 1 };
   using Path = ZuStringT<"/health/ready">;
 };
-using Requests = ZuTypeList<Authorize, Token, Revoke, Ping, Health>;
-struct Parser : public Zrest::MReqParser<Requests> {
-  using Base = Zrest::MReqParser<Requests>;
+struct NotFoundGet : public Request<NotFoundGet> { };
+struct NotFoundPost : public Request<NotFoundPost> {
+  enum { Method = Zhttp::Method::POST };
+};
+struct SSF : public Request<SSF> {
+  enum { Exact = 1, Method = Zhttp::Method::POST };
+  using Path = ZuStringT<"/ssf">;
+};
+using Requests = ZuTypeList<Ping, Health, SSF, NotFoundGet, NotFoundPost>;
+ZrestCatalogDerive(Catalog, Requests);
+ZrestCatalogImpl(Catalog)
+struct Parser : public Zrest::MReqParser<Catalog> {
+  using Base = Zrest::MReqParser<Catalog>;
   void init(App &app_) { app = &app_; }
   bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
     if (!Base::operation(method, target)) return false;
@@ -248,7 +183,7 @@ struct Parser : public Zrest::MReqParser<Requests> {
   }
   App *app = nullptr;
 };
-struct Builder : public ZmObject, public Zrest::MResBuilder<Parser> { };
+struct Builder : public ZmObject, public Zrest::MResBuilder<Catalog> { };
 ZmListDerive(BuilderQ, Builder,
   ZmListNode<Builder, ZmListHeapID<"zumpingd.Reply">>);
 
@@ -267,19 +202,11 @@ public:
     switch (status) {
 #define PING_RESPONSE(N) case N: response->template init<Response<N>, Req>(object.ptr()); break
       PING_RESPONSE(200);
-      PING_RESPONSE(302);
+      PING_RESPONSE(202);
       PING_RESPONSE(400);
       PING_RESPONSE(401);
       PING_RESPONSE(403);
       PING_RESPONSE(404);
-      PING_RESPONSE(405);
-      PING_RESPONSE(409);
-      PING_RESPONSE(415);
-      PING_RESPONSE(422);
-      PING_RESPONSE(429);
-      PING_RESPONSE(500);
-      PING_RESPONSE(502);
-      PING_RESPONSE(504);
       default: response->template init<Response<503>, Req>(object.ptr()); break;
 #undef PING_RESPONSE
     }
@@ -290,34 +217,32 @@ public:
   void request(Link *link, const Req &request, bool ok) {
     if (!ok) return reply<Req>(ZmRef<Link>{link}, 400,
       json({.error = "invalid_request"}));
-    if constexpr (ZuIsSame<Req, Health>{}) {
+    if constexpr (ZuIsSame<Req, NotFoundGet>{} ||
+	ZuIsSame<Req, NotFoundPost>{}) {
+      reply<Req>(ZmRef<Link>{link}, 404, json({.error = "not_found"}));
+    } else if constexpr (ZuIsSame<Req, Health>{}) {
       reply<Req>(ZmRef<Link>{link}, 200, json({.status = "ready"}));
-    } else if constexpr (ZuIsSame<Req, Authorize>{}) {
-      Zum::ServiceAuthorizeRequest input;
-      if (!authorizeInput(request.object->data, input))
-        return reply<Req>(ZmRef<Link>{link}, 400,
-          json({.error = "invalid_request"}));
-      service.authorize(ZuMv(input), [hold = ZmRef<Link>{link}](
-          Zum::ServiceAuthorizeResult result) mutable {
-        if (result.error == Zum::ServiceError::OK)
-          reply<Req>(ZuMv(hold), 302, {}, ZuMv(result.authorizationURL));
-        else reply<Req>(ZuMv(hold),
-          result.error == Zum::ServiceError::Unavailable ? 503 : 400,
-          json({.error = "authorization_failed"}));
-      });
-    } else if constexpr (ZuIsSame<Req, Token>{} || ZuIsSame<Req, Revoke>{}) {
-      auto complete = [hold = ZmRef<Link>{link}](Zum::ServiceProtocolResult result) mutable {
-        reply<Req>(ZuMv(hold), result.status, ZuMv(result.body));
-      };
-      String form{request.object->data};
-      if constexpr (ZuIsSame<Req, Token>{}) service.token(ZuMv(form), ZuMv(complete));
-      else service.revoke(ZuMv(form), ZuMv(complete));
+    } else if constexpr (ZuIsSame<Req, SSF>{}) {
+      service.receiveSET(Zum::ServiceSETRequest{
+        .authorization = request.authorization,
+        .contentType = request.contentType,
+        .body = request.object->data},
+        [hold = ZmRef<Link>{link}](int error) mutable {
+          unsigned status;
+          switch (error) {
+            case Zum::ServiceError::OK: status = 202; break;
+            case Zum::ServiceError::Unauthorized: status = 401; break;
+            case Zum::ServiceError::Unavailable: status = 503; break;
+            default: status = 400; break;
+          }
+          reply<Req>(ZuMv(hold), status, {});
+        });
     } else {
       ZuCSpan bearer{request.authorization};
       if (bearer.length() <= 7 || bearer.prefix("Bearer ") != 7)
         return reply<Req>(ZmRef<Link>{link}, 401,
           json({.error = "invalid_token"}));
-      service.verify(String{bearer.offset(7)}, [hold = ZmRef<Link>{link}](
+      service.verify(bearer.offset(7), [hold = ZmRef<Link>{link}](
           int error, Zum::ServicePrincipal principal) mutable {
         if (error != Zum::ServiceError::OK)
           return reply<Req>(ZuMv(hold), error == Zum::ServiceError::Unavailable ? 503 : 401,
@@ -356,8 +281,10 @@ int main(int argc, char **argv)
     }
   } catch (const ZeException &e) { std::cerr << e << '\n'; return 1; }
   auto secret = getenv("ZUM_CLIENT_SECRET");
-  if (!secret || !*secret) {
-    std::cerr << "zumpingd: ZUM_CLIENT_SECRET is required\n"; return 1;
+  auto callbackAuth = getenv("ZUM_SSF_CALLBACK_AUTH");
+  if (!secret || !*secret || !callbackAuth || !*callbackAuth) {
+    std::cerr << "zumpingd: ZUM_CLIENT_SECRET and ZUM_SSF_CALLBACK_AUTH are required\n";
+    return 1;
   }
   ZiLog::init("zumpingd");
   ZiLog::level(Ze::Warning);
@@ -376,14 +303,31 @@ int main(int argc, char **argv)
   if (!mx.start()) { ZiLog::stop(); return 1; }
   Zum::PingHTTP transport;
   App app;
-  bool ok = transport.init(&mx, config.zum.issuerURL, config.caPath);
+  bool ok = transport.init(&mx, config.zum.issuerURL,
+    config.zum.managementIssuerURL, config.zum.managementURL,
+    config.caPath);
   bool initialized = ok && app.service.init(Zum::ServiceConfig{
     .scheduler = &mx, .sid = ServiceSID, .issuerURL = config.zum.issuerURL,
+    .managementIssuerURL = config.zum.managementIssuerURL,
+    .managementURL = config.zum.managementURL,
     .clientID = config.zum.clientID,
     .clientSecret = Zum::Bytes{ZuCSpan{secret}},
-    .audience = config.audience}, transport.fn());
+    .audience = config.audience,
+    .ssf = Zum::ServiceSSFConfig{
+      .enabled = true, .receiverID = config.zum.clientID,
+      .callbackPath = "/ssf",
+      .callbackAuth = callbackAuth,
+      .transmitterIssuer = config.zum.issuerURL,
+      .audience = config.audience}}, transport.fn());
   ok = initialized;
   if (ok) {
+    // Ping has no long-lived sessions; the callback still installs the
+    // resource-server revocation hook used by stateful consumers.
+    app.service.setRefreshRevocationFn([](Zum::RefreshID, int64_t) {
+      // The example has no renewal state of its own; expose receipt of the
+      // shared callback as a lifecycle diagnostic for integration fixtures.
+      std::cout << "zumpingd refresh family revoked\n" << std::flush;
+    });
     ZmSemaphore ready;
     app.service.start([&ready, &ok](int error) {
       ok = error == Zum::ServiceError::OK; ready.post();

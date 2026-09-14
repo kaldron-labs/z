@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZumSecret.hh>
+#include <zlib/zumd_secret.hh>
 
 using namespace ZuTestUtil;
 

@@ -1,3 +1,4 @@
+include "zfb_types.fbs";
 namespace Zum.fbs;
 table SignKey {
   id:string;
@@ -12,5 +13,6 @@ table SignKey {
   version:uint64 = 1;
   created:int64;
   updated:int64;
+  owner:Zfb.UInt128;
 }
 root_type SignKey;

@@ -19,21 +19,22 @@
 
 #include <zlib/ZdbMemStore.hh>
 
-#include <zlib/ZumAdmin.hh>
-#include <zlib/ZumAuthorize.hh>
-#include <zlib/ZumDB.hh>
-#include <zlib/ZumDBOps.hh>
-#include <zlib/ZumKeyDB.hh>
-#include <zlib/ZumDiscovery.hh>
-#include <zlib/ZumHTTP.hh>
-#include <zlib/ZumJWT.hh>
-#include <zlib/ZumOAuth.hh>
-#include <zlib/ZumOIDC.hh>
-#include <zlib/ZumPasskey.hh>
-#include <zlib/ZumRequest.hh>
-#include <zlib/ZumSession.hh>
-#include <zlib/ZumToken.hh>
-#include <zlib/ZumWebAuthn.hh>
+#include <zlib/zumd_admin.hh>
+#include <zlib/zumd_authorize.hh>
+#include <zlib/zumd_db.hh>
+#include <zlib/zumd_db_ops.hh>
+#include <zlib/zumd_key_db.hh>
+#include <zlib/zumd_discovery.hh>
+#include <zlib/zumd_http.hh>
+#include <zlib/zumd_jwt.hh>
+#include <zlib/zumd_oauth.hh>
+#include <zlib/zumd_oidc.hh>
+#include <zlib/zumd_passkey.hh>
+#include <zlib/zumd_request.hh>
+#include <zlib/zumd_session.hh>
+#include <zlib/zumd_token.hh>
+#include <zlib/zumd_revoke.hh>
+#include <zlib/zumd_webauthn.hh>
 
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsCOSE.hh>
@@ -79,11 +80,7 @@ static void managementCatalog()
   ZuCheck(!Zum::managementAction(Zum::MgmtOp::N));
   ZuCheck(Zum::managementAction(Zum::MgmtOp::userRecover) ==
     "Zum.userRecover");
-  ZuCheck(Zum::CoreAction::N == 73 &&
-    Zum::coreAction(Zum::CoreAction::FacadeAuthorize) ==
-      "Zum.facade.authorize" &&
-    Zum::coreAction(Zum::CoreAction::FacadeToken) == "Zum.facade.token" &&
-    Zum::coreAction(Zum::CoreAction::FacadeRevoke) == "Zum.facade.revoke" &&
+  ZuCheck(Zum::CoreAction::N == Zum::MgmtOp::N &&
     !Zum::coreAction(Zum::CoreAction::N));
   ZuCheck(Zum::managementNeedsIdempotency(Zum::MgmtOp::appEnroll) &&
     Zum::managementNeedsIdempotency(Zum::MgmtOp::catalogPublish) &&
@@ -138,6 +135,19 @@ static void managementCatalog()
   ZuCheck(unique);
   ZuCheck(Zum::managementAllow("/admin/apps") == "GET, POST");
   ZuCheck(Zum::managementAllow("/admin/apps/42?ignored=true") == "PATCH");
+  ZuCheck(Zum::managementOperation(
+    Zhttp::Method::PATCH, "/admin/apps/state") == Zum::MgmtOp::appUpdate);
+  ZuCheck(Zum::managementOperation(
+    Zhttp::Method::PUT, "/admin/apps/42/state") == Zum::MgmtOp::appState);
+  ZuCheck(Zum::managementOperation(
+    Zhttp::Method::PUT, "/apps/42/state") == Zum::MgmtOp::appState);
+  ZuCheck(Zum::managementAllow("/apps") == "GET, POST");
+  ZuCheck(Zum::managementOperation(
+    Zhttp::Method::GET, "/admin/apps/") < 0);
+  ZuCheck(Zum::managementOperation(
+    Zhttp::Method::GET, "/admin//apps") < 0);
+  ZuCheck(Zum::managementOperation(
+    Zhttp::Method::PUT, "/admin/apps/42/state/extra") < 0);
   ZuCheck(!Zum::managementAllow("/admin/unknown"));
 }
 
@@ -298,6 +308,19 @@ static void oauthForms()
     "prompt=none%20login";
   ZuCheck(Zum::parseAuthorize(invalidPrompt, params));
   ZuCheck(Zum::validateAuthorize(params) == Zum::ProfileError::Unsupported);
+  char consentPrompt[] =
+    "response_type=code&client_id=browser&redirect_uri=https%3A%2F%2Fapp%2Fcb"
+    "&scope=openid%20offline_access&code_challenge=x&"
+    "code_challenge_method=S256&prompt=consent";
+  ZuCheck(Zum::parseAuthorize(consentPrompt, params));
+  ZuCheck(Zum::validateAuthorize(params) == Zum::ProfileError::OK &&
+    params.prompt == "consent");
+  char combinedPrompt[] =
+    "response_type=code&client_id=browser&redirect_uri=https%3A%2F%2Fapp%2Fcb"
+    "&scope=openid&code_challenge=x&code_challenge_method=S256&"
+    "prompt=none%20consent";
+  ZuCheck(Zum::parseAuthorize(combinedPrompt, params));
+  ZuCheck(Zum::validateAuthorize(params) == Zum::ProfileError::Unsupported);
 
   char duplicate[] = "client_id=a&client_id=b";
   ZuCheck(!Zum::parseAuthorize(duplicate, params));
@@ -424,53 +447,73 @@ struct HTTPTestApp {
   template <typename ...Args> void logout(Args &&...) { }
 };
 
+using HTTPTestRequests = Zum::HTTPRequests<HTTPTestApp>;
+ZrestCatalogDerive(HTTPTestCatalog, HTTPTestRequests);
+ZrestCatalogImpl(HTTPTestCatalog)
+using HTTPTestChild = Zum::HTTPParser<HTTPTestApp, HTTPTestCatalog>;
+using HTTPTestRoots = ZuTypeList<
+  Zrest::ReqRoot<ZuStringT<"oauth2">, HTTPTestChild>>;
+ZrestRootCatalogDerive(HTTPTestRootCatalog, HTTPTestRoots);
+ZrestRootCatalogImpl(HTTPTestRootCatalog)
+using HTTPTestParser = Zrest::MReqParser<HTTPTestRootCatalog,
+  Zrest::MReqRootPolicy<HTTPTestRootCatalog, HTTPTestApp>>;
+
 static void httpRoutes()
 {
   ZuTestScope(httpRoutes);
   HTTPTestApp app;
-  Zum::HTTPParser<HTTPTestApp> parser;
+  HTTPTestParser parser;
   parser.init(app);
   auto match = [&parser](Zhttp::Method::T method, ZuCSpan path) {
-    Zum::String data{path};
+    Zum::String data;
+    data << path;
     Zhttp::Target target;
-    target.path = {
-      reinterpret_cast<uint8_t *>(data.data()), data.length()};
+    target.path = data;
     bool ok = parser.operation(method, target);
     parser.reset();
     return ok;
   };
-  ZuCheck(match(Zhttp::Method::GET, "/authorize?client_id=x"));
-  ZuCheck(!match(Zhttp::Method::GET, "/authorize/extra"));
-  ZuCheck(match(Zhttp::Method::POST, "/token"));
-  ZuCheck(!match(Zhttp::Method::GET, "/token"));
-  ZuCheck(match(Zhttp::Method::POST, "/passkey/begin"));
-  ZuCheck(match(Zhttp::Method::POST, "/passkey/finish"));
   ZuCheck(match(Zhttp::Method::GET,
-    "/.well-known/oauth-authorization-server"));
+    "/oauth2/42/v1/authorize?client_id=x"));
+  ZuCheck(!match(Zhttp::Method::GET,
+    "/oauth2/42/v1/authorize/extra"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/token"));
+  ZuCheck(!match(Zhttp::Method::GET, "/oauth2/42/v1/token"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/passkey/begin"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/passkey/finish"));
   ZuCheck(match(Zhttp::Method::GET,
-    "/.well-known/openid-configuration"));
-  ZuCheck(match(Zhttp::Method::GET, "/jwks"));
-  ZuCheck(match(Zhttp::Method::GET, "/userinfo"));
-  ZuCheck(match(Zhttp::Method::POST, "/userinfo"));
-  ZuCheck(match(Zhttp::Method::POST, "/revoke"));
-  ZuCheck(!match(Zhttp::Method::GET, "/revoke"));
-  ZuCheck(match(Zhttp::Method::GET, "/oidc/callback?code=x&state=y"));
-  ZuCheck(match(Zhttp::Method::GET, "/login"));
-  ZuCheck(match(Zhttp::Method::POST, "/login"));
-  ZuCheck(match(Zhttp::Method::POST, "/consent"));
-  ZuCheck(!match(Zhttp::Method::GET, "/consent"));
-  ZuCheck(match(Zhttp::Method::POST, "/logout"));
-  ZuCheck(!match(Zhttp::Method::GET, "/logout"));
+    "/oauth2/42/.well-known/openid-configuration"));
+  ZuCheck(match(Zhttp::Method::GET, "/oauth2/42/v1/keys"));
+  ZuCheck(match(Zhttp::Method::GET, "/oauth2/42/v1/userinfo"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/userinfo"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/revoke"));
+  ZuCheck(!match(Zhttp::Method::GET, "/oauth2/42/v1/revoke"));
+  ZuCheck(match(Zhttp::Method::GET,
+    "/oauth2/42/v1/oidc/callback?code=x&state=y"));
+  ZuCheck(match(Zhttp::Method::GET, "/oauth2/42/v1/login"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/login"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/consent"));
+  ZuCheck(!match(Zhttp::Method::GET, "/oauth2/42/v1/consent"));
+  ZuCheck(match(Zhttp::Method::POST, "/oauth2/42/v1/logout"));
+  ZuCheck(!match(Zhttp::Method::GET, "/oauth2/42/v1/logout"));
+  ZuCheck(!match(Zhttp::Method::POST, "/oauth2//v1/token"));
+  ZuCheck(!match(Zhttp::Method::POST, "/oauth2//42/v1/token"));
+  ZuCheck(!match(Zhttp::Method::POST, "/oauth2/42tail/v1/token"));
+  ZuCheck(!match(Zhttp::Method::POST,
+    "/oauth2/18446744073709551615/v1/token"));
+  ZuCheck(!match(Zhttp::Method::POST, "/oauth2/42/v1/unknown"));
 
-  Zum::String query{"/authorize?client_id=x"};
+  Zum::String query;
+  query << "/oauth2/42/v1/authorize?client_id=x";
   Zhttp::Target target;
-  target.path = {
-    reinterpret_cast<uint8_t *>(query.data()), query.length()};
+  target.path = query;
   ZuCheck(parser.operation(Zhttp::Method::GET, target));
-  ZuCheck(parser.u.cdispatch([](auto, const auto &request) {
+  auto &child = parser.u.template p<HTTPTestChild>();
+  ZuCheck(child.u.cdispatch([](auto, const auto &request) {
     if constexpr (ZuIsSame<ZuDecay<decltype(request)>,
         Zum::AuthorizeReq<HTTPTestApp>>{})
-      return request.object->data == "client_id=x";
+      return request.object->appID == 42 &&
+        request.object->data == "client_id=x";
     else
       return false;
   }));
@@ -480,33 +523,33 @@ static void httpRoutes()
   // invalidate the query or authentication headers used at completion.
   Zum::HTTPQuery ownedQuery;
   Zum::String queryInput{ZuCSpan{"?client_id=test"}};
-  ownedQuery = ZuSpan<uint8_t>{queryInput};
+  ownedQuery = queryInput;
   memset(queryInput.data(), 0, queryInput.length());
   ZuCheck(ownedQuery.data == "client_id=test");
   Zum::HTTPData ownedBody;
   Zum::String bodyInput{ZuCSpan{"{\"type\":\"public-key\"}"}};
-  ownedBody = ZuSpan<uint8_t>{bodyInput};
+  ownedBody = bodyInput;
   memset(bodyInput.data(), 0, bodyInput.length());
   ZuCheck(ownedBody.data == "{\"type\":\"public-key\"}");
   Zum::PasskeyFinishReq<HTTPTestApp> passkey;
   passkey.init();
   Zum::String cookieInput{ZuCSpan{"zum_tx=test"}};
   passkey.template header<ZuStringT<"cookie">>(
-    Zhttp::FieldSection::Final, ZuSpan<uint8_t>{cookieInput});
+    Zhttp::FieldSection::Final, cookieInput);
   memset(cookieInput.data(), 0, cookieInput.length());
   ZuCheck(passkey.cookie == "zum_tx=test");
   Zum::TokenReq<HTTPTestApp> tokenRequest;
   tokenRequest.init();
   Zum::String authInput{ZuCSpan{"Basic test"}};
   tokenRequest.template header<ZuStringT<"authorization">>(
-    Zhttp::FieldSection::Final, ZuSpan<uint8_t>{authInput});
+    Zhttp::FieldSection::Final, authInput);
   memset(authInput.data(), 0, authInput.length());
   ZuCheck(tokenRequest.authorization == "Basic test");
 
   ZmRef<Zum::HTTPResponse> response = new Zum::HTTPResponse{};
   response->body = "{}";
   {
-    Zum::HTTPBuilder<HTTPTestApp> builder;
+    Zum::HTTPBuilder<HTTPTestCatalog> builder;
     builder.template init<Zum::TokenOK, Zum::TokenReq<HTTPTestApp>>(
       response.ptr());
     ZuCheck(builder.status() == 200 &&
@@ -522,7 +565,7 @@ static void httpRoutes()
     finish.setCookie == "zum_tx=session; Secure; HttpOnly");
   response->body = finish.body;
   response->setCookie = finish.setCookie;
-  Zum::HTTPBuilder<HTTPTestApp> builder;
+  Zum::HTTPBuilder<HTTPTestCatalog> builder;
   builder.template init<Zum::PasskeyOK, Zum::PasskeyFinishReq<HTTPTestApp>>(
     response.ptr());
   ZuCheck(builder.status() == 200 &&
@@ -542,6 +585,75 @@ static void httpRoutes()
   Zum::passkeyReply(finish);
   ZuCheck(finish.type == Zum::ReplyType::OAuthError &&
     finish.body == "{\"error\":\"access_denied\"}");
+}
+
+static void limits()
+{
+  ZuTestScope(limits);
+  Zum::ServerLimits server;
+  ZuCheck(server.valid());
+  server.form = Zum::ServerLimitMax::Form - 1;
+  ZuCheck(server.valid());
+  server.form = Zum::ServerLimitMax::Form;
+  ZuCheck(server.valid());
+  server.form = Zum::ServerLimitMax::Form + 1;
+  ZuCheck(!server.valid());
+
+  server = {};
+  server.ceremonyQuery = Zum::ServerLimitMax::CeremonyQuery;
+  ZuCheck(server.valid());
+  server.ceremonyQuery = Zum::ServerLimitMax::CeremonyQuery + 1;
+  ZuCheck(!server.valid());
+  server = {};
+  server.json = Zum::ServerLimitMax::JSON;
+  ZuCheck(server.valid());
+  server.json = Zum::ServerLimitMax::JSON + 1;
+  ZuCheck(!server.valid());
+
+  server = {};
+  server.oidc.response = Zum::OIDCLimitMax::Response;
+  server.oidc.callback = Zum::OIDCLimitMax::Callback;
+  ZuCheck(server.valid());
+  server.oidc.response = Zum::OIDCLimitMax::Response + 1;
+  ZuCheck(!server.valid());
+  server = {};
+  server.oidc.callback = Zum::OIDCLimitMax::Callback + 1;
+  ZuCheck(!server.valid());
+
+  Zum::AuthorizeReq<HTTPTestApp> query;
+  query.init();
+  Zum::String suffix;
+  suffix.length(Zum::ServerLimitMax::Query);
+  memset(suffix.data(), 'x', suffix.length());
+  Zum::String path{"/v1/authorize"};
+  path << suffix;
+  Zhttp::Target target;
+  target.path = path;
+  ZuCheck(query.operation(Zhttp::Method::GET, target));
+  query.init();
+  suffix.length(Zum::ServerLimitMax::Query + 1);
+  memset(suffix.data(), 'x', suffix.length());
+  path = "/v1/authorize";
+  path << suffix;
+  target.path = path;
+  ZuCheck(!query.operation(Zhttp::Method::GET, target));
+
+  Zum::TokenReq<HTTPTestApp> form;
+  form.init();
+  ZuCheck(form.bodyInfo(Zhttp::BodyType::Fixed, Zum::ServerLimitMax::Form));
+  ZuCheck(!form.bodyInfo(
+    Zhttp::BodyType::Fixed, Zum::ServerLimitMax::Form + 1));
+  Zum::PasskeyBeginReq<HTTPTestApp> json;
+  json.init();
+  ZuCheck(json.bodyInfo(Zhttp::BodyType::Fixed, Zum::ServerLimitMax::JSON));
+  ZuCheck(!json.bodyInfo(
+    Zhttp::BodyType::Fixed, Zum::ServerLimitMax::JSON + 1));
+
+  ZuCheck(Zum::AuthorityScanLimit::RoleMappingsScan ==
+      Zum::AuthorityScanLimit::RoleMappings + 1 &&
+    Zum::AuthorityScanLimit::ClientAccessScan ==
+      Zum::AuthorityScanLimit::ClientAccess + 1 &&
+    Zum::AdminQueryLimit::Scan == Zum::AdminQueryLimit::Results + 1);
 }
 
 static void redirects()
@@ -591,22 +703,19 @@ static void redirects()
   ZuCheck(!Zum::authorizeClient(client, params));
 }
 
-static bool jwtPart(Zum::String &token, ZuCSpan value)
+static bool jwtPart(Zum::String &token, ZuBSpan value)
 {
   auto offset = token.length();
   auto length = ZuBase64URL::enclen(value.length());
   token.length(offset + length);
-  return ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(token.data() + offset), unsigned(length)},
-    ZuBSpan{value}) == length;
+  return ZuBase64URL::encode(token.span().offset(offset), value) == length;
 }
 
 static Zum::String base64URL(ZuBSpan value)
 {
   Zum::String encoded;
   encoded.length(ZuBase64URL::enclen(value.length()));
-  encoded.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(encoded.data()), encoded.length()}, value));
+  encoded.length(ZuBase64URL::encode(encoded.span(), value));
   return encoded;
 }
 
@@ -651,8 +760,7 @@ static bool signJWT(
   if (result.template is<ZeException>() ||
       !Ztls::COSE::ES256::derToRaw(der, raw)) return false;
   next << '.';
-  if (!jwtPart(next, ZuCSpan{
-      reinterpret_cast<const char *>(raw), unsigned(sizeof(raw))}))
+  if (!jwtPart(next, raw))
     return false;
   token = ZuMv(next);
   return true;
@@ -847,7 +955,6 @@ static void opaque()
   narrowedActions.set(3);
   Zum::CodeFamily family;
   Zum::String refreshToken;
-  ceremony.facadeClientID = "service";
   ZuCheck(Zum::codeFamilyPrepare(rng, ceremony, codeDigest,
     "openid read", ZuMv(narrowedScopes), ZuMv(narrowedActions), 11, 150, 1000,
     family, refreshToken));
@@ -855,7 +962,6 @@ static void opaque()
     family.issuer == ceremony.issuer && family.appID == ceremony.appID &&
     family.userID == ceremony.userID &&
     family.clientID == ceremony.clientID &&
-    family.facadeClientID == ceremony.facadeClientID &&
     family.credentialID == ceremony.credentialID &&
     family.audience == ceremony.audience && family.scope == "openid read" &&
     family.scopeIDs.length() == 1 &&
@@ -931,6 +1037,13 @@ static void actions()
   Zum::Client client{.id = "browser", .appID = 1};
   client.identityScopes.push("openid");
   client.identityScopes.push("profile");
+  Zum::StringVec redirects;
+  redirects.push("https://app.example/callback");
+  ZuCheck(!Zum::clientConfigValid(Zum::ClientType::Native,
+    Zum::ClientGrant::AuthorizationCode, true, redirects));
+  ZuCheck(Zum::clientConfigValid(Zum::ClientType::Native,
+    Zum::ClientGrant::AuthorizationCode | Zum::ClientGrant::RefreshToken,
+    true, redirects));
   Zum::ClientAccess access{.clientID = "browser", .appID = 1,
     .audienceIDs = {1, 2}, .scopeIDs = {10, 11}};
   Zum::ScopeAuth scopes[] = {
@@ -979,7 +1092,18 @@ static void actions()
   client.type = Zum::ClientType::Browser;
   client.grants = Zum::ClientGrant::AuthorizationCode |
     Zum::ClientGrant::RefreshToken;
+  client.refreshAllowed = true;
   client.state = Zum::State::Active;
+  ZuCheck(Zum::selectScopes(client, access,
+    "openid offline_access read", scopes, selection) == Zum::ScopeError::OK);
+  ZuCheck(selection.identity &&
+    selection.scope == "openid offline_access read" &&
+    selection.scopeIDs.length() == 1);
+  client.refreshAllowed = false;
+  ZuCheck(Zum::selectScopes(client, access,
+    "openid offline_access read", scopes, selection) ==
+    Zum::ScopeError::Unavailable);
+  client.refreshAllowed = true;
   Zum::User user{
     .id = 42,
     .handle = Zum::Bytes{ZuBSpan{"handle"}},
@@ -1003,6 +1127,15 @@ static void actions()
   grant.actions.length(8);
   grant.actions.set(1);
   ZtBitmap authority;
+  client.type = Zum::ClientType::Confidential;
+  client.grants = Zum::ClientGrant::ClientCredentials |
+    Zum::ClientGrant::RefreshToken;
+  ZuCheck(Zum::clientAuthority(client, access, "offline_access", 8,
+    scopes, roles, actionRecords, selection, authority) ==
+    Zum::ScopeError::Unavailable);
+  client.type = Zum::ClientType::Browser;
+  client.grants = Zum::ClientGrant::AuthorizationCode |
+    Zum::ClientGrant::RefreshToken;
   ZuCheck(Zum::interactiveAuthority(grant, user, cred, client,
     false, {}, 8, access, scopes, roles, actionRecords, selection, authority) ==
     Zum::ScopeError::OK);
@@ -1102,7 +1235,7 @@ static void appRecords()
     .id = 1, .name = "zum", .label = "Zum", .state = Zum::State::Active,
     .nextActionID = 70, .authVersion = 2, .catalogRevision = 3,
     .catalogDigest = Zum::Bytes{ZuBSpan{"digest"}},
-    .serviceClientID = "zum-service", .created = 10, .updated = 11});
+    .created = 10, .updated = 11});
   ZuCheck(app.id == 1 && app.name == "zum" && app.nextActionID == 70 &&
     app.catalogRevision == 3 && app.catalogDigest == ZuBSpan{"digest"});
 
@@ -1292,13 +1425,57 @@ static void appAuthority()
 static void discovery()
 {
   ZuTestScope(discovery);
-  auto metadata = Zum::metadataJSON("https://auth.example/");
-  ZuCheck(metadata.find<"\"issuer\":\"https://auth.example/\"">() >= 0);
+  Zum::String path;
+  ZuCheck(Zum::appIssuerPath(42, path) && path == "/oauth2/42");
+  Zum::AppIssuerPath issuerPath;
+  ZuCheck(ZfURI::loadPath(issuerPath, path) &&
+    issuerPath.oauth2 == "oauth2" && issuerPath.appID == 42);
+  ZuCheck(Zum::appEndpointPath(42, "v1", "authorize", path) &&
+    path == "/oauth2/42/v1/authorize");
+  Zum::AppEndpointPath endpointPath;
+  ZuCheck(ZfURI::loadPath(endpointPath, path) &&
+    endpointPath.oauth2 == "oauth2" && endpointPath.appID == 42 &&
+    endpointPath.group == "v1" && endpointPath.endpoint == "authorize");
+  ZuCheck(Zum::appNestedEndpointPath(
+    42, "v1", "passkey", "begin", path) &&
+    path == "/oauth2/42/v1/passkey/begin");
+  Zum::AppNestedEndpointPath nestedPath;
+  ZuCheck(ZfURI::loadPath(nestedPath, path) &&
+    nestedPath.appID == 42 && nestedPath.group == "v1" &&
+    nestedPath.section == "passkey" && nestedPath.endpoint == "begin");
+  ZuCheck(Zum::appOIDCMetadataPath(42, path) &&
+    path == "/oauth2/42/.well-known/openid-configuration");
+  Zum::AppOIDCMetadataPath oidcPath;
+  ZuCheck(ZfURI::loadPath(oidcPath, path) && oidcPath.appID == 42 &&
+    oidcPath.wellKnown == ".well-known" &&
+    oidcPath.endpoint == "openid-configuration");
+  ZuCheck(Zum::appOAuthMetadataPath(42, path) &&
+    path == "/.well-known/oauth-authorization-server/oauth2/42");
+  Zum::AppOAuthMetadataPath oauthPath;
+  ZuCheck(ZfURI::loadPath(oauthPath, path) && oauthPath.appID == 42 &&
+    oauthPath.wellKnown == ".well-known" &&
+    oauthPath.endpoint == "oauth-authorization-server" &&
+    oauthPath.oauth2 == "oauth2");
+  Zum::String missing;
+  Zum::String extra;
+  missing.copy("/oauth2/v1/token");
+  extra.copy("/oauth2/42/v1/token/extra");
+  ZuCheck(!ZfURI::loadPath(endpointPath, missing));
+  ZuCheck(!ZfURI::loadPath(endpointPath, extra));
+  Zum::String issuer;
+  ZuCheck(Zum::appIssuer("https://auth.example/", 42, issuer) &&
+    issuer == "https://auth.example/oauth2/42");
+  ZuCheck(!Zum::appIssuer("https://auth.example/?bad=1", 42, issuer));
+  auto metadata = Zum::metadataJSON("https://auth.example/", 42, {});
   ZuCheck(metadata.find<
-    "\"authorization_endpoint\":\"https://auth.example/authorize\"">() >= 0);
+    "\"issuer\":\"https://auth.example/oauth2/42\"">() >= 0);
+  ZuCheck(metadata.find<
+    "\"authorization_endpoint\":"
+    "\"https://auth.example/oauth2/42/v1/authorize\"">() >= 0);
   ZuCheck(metadata.find<"\"code_challenge_methods_supported\":[\"S256\"]">() >= 0);
+  ZuCheck(metadata.find<"\"offline_access\"">() >= 0);
   ZuCheck(metadata.find<"\"userinfo_endpoint\":"
-    "\"https://auth.example/userinfo\"">() >= 0);
+    "\"https://auth.example/oauth2/42/v1/userinfo\"">() >= 0);
   ZuCheck(metadata.find<"\"id_token_signing_alg_values_supported\":"
     "[\"ES256\"]">() >= 0);
 
@@ -1406,6 +1583,8 @@ static void jwt()
   ZuCheck(Zum::jwtVerify(prepared.token, "key-1", "https://issuer", "orders",
     publicKey, 120, limits, principal));
   ZuCheck(principal.subject == subject &&
+    principal.tokenID.issuer == claims.issuer &&
+    principal.tokenID.jti == claims.jti &&
     principal.clientID == "browser" && principal.scope == "orders.read" &&
     principal.appID == 27 &&
     principal.actions.length() == 1 &&
@@ -1521,6 +1700,34 @@ static void jwt()
     !principal.authMethod && !principal.authTime && principal.expires == 260);
 }
 
+static void ssfSET()
+{
+  ZuTestScope(ssfSET);
+  Ztls::Random rng;
+  ZuCheck(rng.init());
+  Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
+  ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, publicKey));
+  Zum::SignKey key{.id = "key-1", .issuer = "https://issuer"};
+  Zum::String set;
+  Zum::makeSSF(key, "https://receiver", Zum::RefreshID{
+    .issuer = "https://issuer/oauth2/9", .familyID = "family-1"}, 180, 120,
+    [&sk, &rng](const Zum::SignKey &, ZuBSpan digest,
+        Zum::SignatureFn complete) {
+      sk.sign(rng, digest, [complete = ZuMv(complete)](ZuBSpan der) mutable {
+        complete(Zum::Bytes{der});
+      });
+    }, [&set](Zum::String value) { set = ZuMv(value); });
+  ZuCheck(set);
+  Zum::JWTHeader header;
+  Zum::String claims;
+  Zum::JWTLimits limits;
+  ZuCheck(Zum::jwtES256(set, publicKey, limits, header, claims) &&
+    header.type == "secevent+jwt" && header.algorithm == "ES256" &&
+    claims.find<"urn:zum:events:refresh-token-revoked">() >= 0 &&
+    claims.find<"family-1">() >= 0);
+}
+
 static constexpr char assertionClientData_[] =
   "{\"type\":\"webauthn.get\",\"challenge\":\"Y2hhbGxlbmdl\","
   "\"origin\":\"https://example.com\","
@@ -1581,9 +1788,7 @@ static bool makeAssertion(
 {
   Zum::String encoded;
   encoded.length(ZuBase64URL::enclen(challenge.length()));
-  encoded.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(encoded.data()), encoded.length()},
-    challenge));
+  encoded.length(ZuBase64URL::encode(encoded.span(), challenge));
   Zum::String clientData{"{\"type\":\"webauthn.get\",\"challenge\":"};
   ZfJSON::quote(clientData, encoded);
   clientData << ",\"origin\":";
@@ -1637,9 +1842,7 @@ static bool makeRegistration(
   if (publicKey.length() != Ztls::COSE::ES256::PublicKeySize) return false;
   Zum::String encoded;
   encoded.length(ZuBase64URL::enclen(challenge.length()));
-  encoded.length(ZuBase64URL::encode({
-    reinterpret_cast<uint8_t *>(encoded.data()), encoded.length()},
-    challenge));
+  encoded.length(ZuBase64URL::encode(encoded.span(), challenge));
   Zum::String clientData{"{\"type\":\"webauthn.create\",\"challenge\":"};
   ZfJSON::quote(clientData, encoded);
   clientData << ",\"origin\":";
@@ -2032,7 +2235,6 @@ static void enrollmentSaga()
   family.issuer = "issuer";
   family.userID = 42;
   family.clientID = "browser";
-  family.facadeClientID = "service";
   family.credentialID = Zum::Bytes{ZuBSpan{"credential"}};
   family.audience = "orders";
   family.scopeIDs.push(3);
@@ -2052,7 +2254,7 @@ static void enrollmentSaga()
   ZuCheck(loaded->u.cdispatch([](auto, const auto &family) {
     if constexpr (ZuIsSame<ZuDecay<decltype(family)>, Zum::CodeFamily>{})
       return family.userID == 42 && family.authVersion == 7 &&
-        family.facadeClientID == "service" && family.actions[2] &&
+        family.actions[2] &&
 	family.beforeGrant.id == family.codeID && family.beforeGrant.expires == 200;
     else
       return false;
@@ -2068,9 +2270,15 @@ static void enrollmentSaga()
 
   Zum::AppEnrollment appEnrollment{.coreAppID = 1, .appID = 9,
     .appName = "orders", .appLabel = "Orders", .audienceID = 10,
-    .audienceURI = "https://orders.example", .clientID = "svc_orders",
+    .audienceURI = "https://orders.example",
+    .signKey = Zum::SignKey{.id = "app_9_1",
+      .issuer = "https://auth.example/oauth2/9", .algorithm = "ES256",
+      .publicJwk = "{}", .privateMaterial = Zum::Bytes{ZuBSpan{"key"}},
+      .notBefore = 123, .state = Zum::State::Active,
+      .created = 123, .updated = 123},
+    .clientID = "svc_orders",
     .secretDigest = Zum::Bytes{ZuBSpan{"verifier"}},
-    .clientType = Zum::ClientType::Confidential, .nativeService = true,
+    .clientType = Zum::ClientType::Confidential, .catalogClient = true,
     .created = 123, .catalogPublishOp = Zum::MgmtOp::catalogPublish,
     .operationQueryOp = Zum::MgmtOp::operationQuery,
     .request = Zum::IdemRequest{.actorID = "admin",
@@ -2088,8 +2296,10 @@ static void enrollmentSaga()
         Zum::AppEnrollment>{})
       return enrollment.coreAppID == 1 && enrollment.appID == 9 &&
 	 enrollment.appName == "orders" && enrollment.clientID == "svc_orders" &&
+	 enrollment.signKey.id == "app_9_1" &&
+	 enrollment.signKey.issuer == "https://auth.example/oauth2/9" &&
 	 enrollment.secretDigest == ZuBSpan{"verifier"} &&
-	 enrollment.nativeService &&
+	 enrollment.catalogClient &&
          enrollment.request.idempotencyKey == "enroll-orders" &&
          enrollment.request.operation == Zum::MgmtOp::appEnroll &&
          enrollment.request.requestDigest == ZuBSpan{"request digest"};
@@ -2100,11 +2310,13 @@ static void enrollmentSaga()
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
   ZuCheck(M::catalog(5, 1, step));
   ZuCheck(step.table == "zum.app" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(5, 6, step));
+  ZuCheck(M::catalog(5, 3, step));
+  ZuCheck(step.table == "zum.sign_key" && step.op == ZdbSagaOp::Insert);
+  ZuCheck(M::catalog(5, 7, step));
   ZuCheck(step.table == "zum.auth_policy" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(5, 12, step));
+  ZuCheck(M::catalog(5, 14, step));
   ZuCheck(step.table == "zum.app" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(5, 13, step));
+  ZuCheck(M::catalog(5, 15, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
 
   Zum::ExternalProjection projection{.providerID = 8,
@@ -3215,6 +3427,7 @@ static int missingAssertion(Zum::DBContext *context)
     Zum::assertionVerify(context,
       Zum::Bytes{ZuBSpan{"missing ceremony"}},
       Zum::Bytes{ZuBSpan{"browser binding"}}, Zum::AssertionInput{},
+      Zum::String{"issuer"}, Zum::AppID{8},
       Zum::String{"https://example.com"}, Zum::String{"example.com"}, 100,
       [wake = ZuMv(wake)](int error, Zum::User, Zum::Cred, Zum::Grant,
           Zum::AssertionResult) mutable { wake(error); });
@@ -3237,6 +3450,7 @@ static StoredAssertion storedAssertion(
     Zum::assertionVerify(context,
       Zum::Bytes{ZuBSpan{"passkey-auth-id0"}},
       Zum::Bytes{ZuBSpan{"passkey binding"}}, ZuMv(input),
+      Zum::String{"issuer"}, Zum::AppID{8},
       Zum::String{"https://example.com"}, Zum::String{"example.com"}, 130,
       [wake = ZuMv(wake)](int error, Zum::User user, Zum::Cred,
           Zum::Grant grant,
@@ -3498,10 +3712,11 @@ struct FinishedAuthorization {
 
 static Authorized beginAuthorization(
     Zum::Requests *requests, Zum::DBContext *context, Ztls::Random &rng,
-    Zum::String query, int64_t now = 200)
+    Zum::String query, int64_t now = 200,
+    Zum::String issuer = "issuer")
 {
   Zum::AuthorizeConfig config{
-    .issuer = "issuer", .rpID = "login.example",
+    .issuer = ZuMv(issuer), .appID = 9, .rpID = "login.example",
     .now = now, .expires = now + 60, .timeout = 60000, .passkey = true};
   return ZmBlock<Authorized>{}([
     requests, context, &rng, query = ZuMv(query), config = ZuMv(config)
@@ -3518,13 +3733,17 @@ static Authorized beginAuthorization(
 }
 
 static FinishedAuthorization finishAuthorization(
-    Zum::Requests *requests, Zum::DBContext *context, Ztls::Random &rng,
+    Zum::Requests *requests, Zum::DB *db, Zum::DBContext *context,
+    Ztls::Random &rng,
     Zum::Bytes ceremonyID, Zum::AssertionInput input,
-    Zum::ActionID action, int64_t now = 210)
+    Zum::ActionID action, int64_t now = 210,
+    Zum::String issuer = "issuer/oauth2/9", Zum::AppID appID = 9,
+    bool approveConsent = false)
 {
   Zum::AuthorizeFinishConfig config{
+    .issuer = ZuMv(issuer), .appID = appID,
     .origin = "https://example.com", .rpID = "example.com",
-    .now = now, .codeExpires = now + 290};
+    .now = now, .codeExpires = now + 290, .consent = approveConsent};
   Zum::PolicyFn policy{[action](
       const Zum::User &, const Zum::Client &,
       const Zum::ScopeSelection &, const ZtBitmap &allowed,
@@ -3534,14 +3753,35 @@ static FinishedAuthorization finishAuthorization(
     complete(true, ZuMv(actions));
   }};
   return ZmBlock<FinishedAuthorization>{}([
-    requests, context, &rng, ceremonyID = ZuMv(ceremonyID),
-    input = ZuMv(input), config = ZuMv(config), policy = ZuMv(policy)
+    requests, db, context, &rng, ceremonyID = ZuMv(ceremonyID),
+    input = ZuMv(input), config = ZuMv(config), policy = ZuMv(policy),
+    approveConsent
   ](auto wake) mutable {
+    Zum::Bytes consentID = ceremonyID;
+    Zum::Bytes consentBinding{ZuBSpan{"browser binding"}};
+    auto consentConfig = config;
+    auto consentPolicy = policy;
     if (!Zum::authorizeFinish(requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(input), ZuMv(config),
-      ZuMv(policy), [wake](
+      ZuMv(policy), [requests, db, context, &rng, wake = ZuMv(wake),
+          approveConsent, consentID = ZuMv(consentID),
+          consentBinding = ZuMv(consentBinding),
+          consentConfig = ZuMv(consentConfig),
+          consentPolicy = ZuMv(consentPolicy)](
 	  int error, Zum::String location) mutable {
+	if (error == Zum::AuthorizeIssue::Consent && approveConsent) {
+	  auto consentComplete = [wake = ZuMv(wake)](
+	      int error, Zum::String location) mutable {
+	    wake(FinishedAuthorization{error, ZuMv(location)});
+	  };
+	  auto fallback = consentComplete;
+	  if (!Zum::authorizeConsentFinish(requests, Zm::now() + ZuTime{10},
+      db, context, rng, ZuMv(consentID), ZuMv(consentBinding), true,
+	      ZuMv(consentConfig), ZuMv(consentPolicy), ZuMv(consentComplete)))
+	    fallback(Zum::OAuthError::TemporarilyUnavailable, {});
+	  return;
+	}
 	wake(FinishedAuthorization{error, ZuMv(location)});
       }))
       wake(FinishedAuthorization{});
@@ -3552,9 +3792,11 @@ static FinishedAuthorization finishOIDCAuthorization(
     Zum::Requests *requests, Zum::DBContext *context, Ztls::Random &rng,
     Zum::Bytes ceremonyID, Zum::User user, Zum::IDVec roleIDs,
     Zum::Evidence evidence, Zum::ActionID action, int64_t authTime,
-    int64_t now = 200)
+    int64_t now = 200, Zum::String issuer = "issuer/oauth2/9",
+    Zum::AppID appID = 9)
 {
-  Zum::AuthorizeFinishConfig config{.now = now, .codeExpires = now + 290};
+  Zum::AuthorizeFinishConfig config{.issuer = ZuMv(issuer), .appID = appID,
+    .now = now, .codeExpires = now + 290};
   Zum::PolicyFn policy{[action](
       const Zum::User &, const Zum::Client &,
       const Zum::ScopeSelection &, const ZtBitmap &allowed,
@@ -3599,17 +3841,18 @@ static IssuedToken issueTokenRequest(
     Zum::Requests *requests, TestDB *db, Zum::DBContext *context,
     Ztls::Random &rng,
     Zum::String form, Zum::String authorization,
-    Ztls::PK::SK_EC &key, int64_t now, Zum::String facadeClientID = {})
+    Ztls::PK::SK_EC &key, int64_t now,
+    Zum::String issuer = "issuer")
 {
   Zum::TokenConfig config{
-    .issuer = "issuer",
+    .issuer = ZuMv(issuer),
+    .appID = 9,
     .maxKeys = 64,
     .now = now,
     .accessExpires = now + 60,
     .refreshExpires = 1000,
     .generationLimit = 8,
-    .spentLimit = 8,
-    .facadeClientID = ZuMv(facadeClientID)
+    .spentLimit = 8
   };
   auto sign = testSigner(rng, key);
   return ZmBlock<IssuedToken>{}([
@@ -4483,8 +4726,7 @@ static void enrollmentRuntime()
       app.created == expectedApp.created && app.updated == expectedApp.updated &&
       app.nextActionID == expectedApp.nextActionID &&
       app.catalogRevision == expectedApp.catalogRevision &&
-      app.catalogDigest == expectedApp.catalogDigest &&
-      app.serviceClientID == expectedApp.serviceClientID);
+      app.catalogDigest == expectedApp.catalogDigest);
     ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
       context->requests->run(0, [context, key, op, valid, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
@@ -4669,7 +4911,7 @@ static void enrollmentRuntime()
     &db, &context
   ](auto wake) mutable {
     Zum::jwksLoad(db->requests, Zm::now() + ZuTime{10},
-      context, 100, 4, [wake = ZuMv(wake)](
+      context, "issuer", 100, 4, [wake = ZuMv(wake)](
 	bool ok, Zum::String json) mutable {
       wake(ok ? ZuMv(json) : Zum::String{});
     });
@@ -4767,6 +5009,25 @@ static void enrollmentRuntime()
   cleanup.grants.push(Zum::SagaImage::save(expired));
   ZuCheck(runSaga(db, ZuMv(cleanup), ZdbSagaID{12005}));
   ZuCheck(!loadGrant(context, ZuBSpan{"revocable"}).id);
+  Zum::SSFDelivery ssfDelivery{
+    .eventID = "event-1", .receiverID = "receiver-1",
+    .familyIssuer = "issuer/oauth2/9", .familyID = "family-1",
+    .familyExpires = 1000, .set = Zum::Bytes{ZuBSpan{"signed-set"}},
+    .nextDelivery = 101};
+  Zum::SSFDeliveryAdd ssfAdd;
+  ssfAdd.delivery = ssfDelivery;
+  ZuCheck(runSaga(db, ZuMv(ssfAdd), ZdbSagaID{12023}));
+  ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
+    auto table = context->ssfDeliveries;
+    table->run(0, [table, wake = ZuMv(wake)]() mutable {
+      table->find<0>(0, ZuFwdTuple(Zum::String{"event-1"},
+          Zum::String{"receiver-1"}),
+        [wake = ZuMv(wake)](ZdbRowRef<Zum::SSFDelivery> row) mutable {
+          wake(row && !row->data().owner &&
+            row->data().set == ZuBSpan{"signed-set"});
+        });
+    });
+  }));
   // Issuer version is 10; app 20 independently has version 17.
   for (unsigned i = 0; i < 6; ++i) {
     Zum::Grant candidate{authorization};
@@ -4879,7 +5140,7 @@ static void enrollmentRuntime()
 
   Zum::String bootstrap;
   Zum::BootstrapConfig bootstrapConfig{
-    .issuer = "issuer", .now = 90, .expires = 1000};
+    .issuer = "issuer", .appID = 9, .now = 90, .expires = 1000};
   ZuCheck(ZmBlock<bool>{}([
     &db, &context, &rng, &bootstrapConfig, &bootstrap
   ](auto wake) mutable {
@@ -4892,7 +5153,7 @@ static void enrollmentRuntime()
     });
   }) && bootstrap);
   Zum::BootstrapConfig duplicateBootstrap{
-    .issuer = "issuer", .now = 91, .expires = 1000};
+    .issuer = "issuer", .appID = 9, .now = 91, .expires = 1000};
   ZuCheck(!ZmBlock<bool>{}([
     &db, &context, &rng, &duplicateBootstrap
   ](auto wake) mutable {
@@ -4988,7 +5249,7 @@ static void enrollmentRuntime()
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &sessionUser,
       &providerSession, &sessionToken](auto wake) mutable {
     Zum::sessionIssue(db->requests, Zm::now() + ZuTime{10}, context, rng,
-      Zum::SessionConfig{.issuer = "issuer",
+      Zum::SessionConfig{.issuer = "issuer/oauth2/9",
 	.subject = Zum::auditID(sessionUser.handle), .userID = 42,
 	.authTime = 123, .now = 130, .idleLifetime = 10,
 	.absoluteLifetime = 30, .authVersion = sessionUser.authVersion},
@@ -5007,7 +5268,7 @@ static void enrollmentRuntime()
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession,
       &providerSession](auto wake) mutable {
     Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
-      ZuMv(reusableSession), Zum::String{"issuer"}, 135, 10,
+      ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 135, 10,
       [&providerSession, wake = ZuMv(wake)](int error,
 	  Zum::Session session, Zum::String) mutable {
 	providerSession = ZuMv(session);
@@ -5043,7 +5304,7 @@ static void enrollmentRuntime()
   reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
     Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
-      ZuMv(reusableSession), Zum::String{"issuer"}, 136, 10,
+      ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 136, 10,
       [wake = ZuMv(wake)](int error, Zum::Session, Zum::String) mutable {
 	wake(error);
       });
@@ -5051,7 +5312,7 @@ static void enrollmentRuntime()
   reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
     Zum::sessionRevoke(db->requests, Zm::now() + ZuTime{10}, context,
-      ZuMv(reusableSession), 136,
+      ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 136,
       [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::SessionError::Storage);
   auto reservedSession = sessionOwner(0);
@@ -5063,13 +5324,13 @@ static void enrollmentRuntime()
   Zum::String revokedSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &revokedSession](auto wake) mutable {
     Zum::sessionRevoke(db->requests, Zm::now() + ZuTime{10}, context,
-      ZuMv(revokedSession), 136,
+      ZuMv(revokedSession), Zum::String{"issuer/oauth2/9"}, 136,
       [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::SessionError::OK);
   reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
     Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
-      ZuMv(reusableSession), Zum::String{"issuer"}, 137, 10,
+      ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 137, 10,
       [wake = ZuMv(wake)](int error, Zum::Session, Zum::String) mutable {
 	wake(error);
       });
@@ -5326,6 +5587,7 @@ static void enrollmentRuntime()
   browser.type = Zum::ClientType::Browser;
   browser.grants = Zum::ClientGrant::AuthorizationCode |
     Zum::ClientGrant::RefreshToken;
+  browser.refreshAllowed = true;
   browser.state = Zum::State::Active;
   ZuCheck(insertRecord(context->clients, Zum::Client{browser}));
 
@@ -5375,6 +5637,7 @@ static void enrollmentRuntime()
     .state = Zum::State::Active}));
   ZuCheck(insertRecord(context->authPolicies, Zum::AuthPolicy{
     .appID = 9, .providerID = 8, .assignmentMaxAge = 300,
+    .sessionIdle = 1800, .sessionAbsolute = 43200, .tokenLifetime = 300,
     .state = Zum::State::Active, .version = 3}));
   ZuCheck(insertRecord(context->roleMaps, Zum::RoleMap{
     .appID = 9, .providerID = 8, .value = "Zum-Users", .roleID = 7,
@@ -5441,7 +5704,7 @@ static void enrollmentRuntime()
   discoveredConfig.jwksEndpoint.null();
   Zum::Grant oidcCeremony;
   oidcCeremony.id = Zum::Bytes{ZuBSpan{"oidc-grant-id-00"}};
-  oidcCeremony.issuer = "issuer";
+  oidcCeremony.issuer = "issuer/oauth2/9";
   oidcCeremony.clientID = "oidc-browser";
   oidcCeremony.appID = 9;
   oidcCeremony.audience = "orders";
@@ -5522,11 +5785,19 @@ static void enrollmentRuntime()
   int64_t oidcAuthTime = 0;
   Zum::String callback{"code=upstream-code&state="};
   callback << oidcState;
+  ZuCheck(!ZmBlock<bool>{}([&oidc, callback = Zum::String{callback}](
+      auto wake) mutable {
+    if (!oidc.finish(10, ZuMv(callback), [wake = ZuMv(wake)](bool ok,
+	Zum::Bytes, Zum::User, Zum::IDVec, Zum::Evidence, int64_t) mutable {
+      wake(ok);
+    })) wake(true);
+  }));
+  ZuCheck(tokenReqs == 0);
   ZuCheck(ZmBlock<bool>{}([
     &oidc, &callback, &oidcGrant, &oidcUser, &oidcRoles,
     &oidcLoginEvidence, &oidcAuthTime
   ](auto wake) mutable {
-    if (!oidc.finish(ZuMv(callback), [
+    if (!oidc.finish(9, ZuMv(callback), [
         &oidcGrant, &oidcUser, &oidcRoles, &oidcLoginEvidence, &oidcAuthTime,
         wake = ZuMv(wake)
       ](bool ok, Zum::Bytes grantID, Zum::User user,
@@ -5593,7 +5864,7 @@ static void enrollmentRuntime()
     &oidc, &userinfoCallback, &userinfoGrant, &userinfoUser,
     &userinfoRoles, &userinfoEvidence, &userinfoAuthTime
   ](auto wake) mutable {
-    if (!oidc.finish(ZuMv(userinfoCallback), [
+    if (!oidc.finish(9, ZuMv(userinfoCallback), [
         &userinfoGrant, &userinfoUser, &userinfoRoles, &userinfoEvidence,
         &userinfoAuthTime,
         wake = ZuMv(wake)
@@ -5645,7 +5916,7 @@ static void enrollmentRuntime()
     removedCallback << removedState;
     ZuCheck(!ZmBlock<bool>{}([&oidc, callback = ZuMv(removedCallback)](
 	auto wake) mutable {
-      if (!oidc.finish(ZuMv(callback), [wake = ZuMv(wake)](bool ok,
+      if (!oidc.finish(9, ZuMv(callback), [wake = ZuMv(wake)](bool ok,
 	  Zum::Bytes, Zum::User, Zum::IDVec, Zum::Evidence, int64_t) mutable {
 	wake(ok);
       })) wake(false);
@@ -5708,6 +5979,18 @@ static void enrollmentRuntime()
       });
     });
   }));
+  auto wrongOIDCIssuer = finishOIDCAuthorization(
+    db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
+    Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
+    oidcAuthTime, 200, "issuer/oauth2/10", 9);
+  ZuCheck(wrongOIDCIssuer.error == Zum::OAuthError::AccessDenied &&
+    !wrongOIDCIssuer.location);
+  auto wrongOIDCApp = finishOIDCAuthorization(
+    db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
+    Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
+    oidcAuthTime, 200, "issuer/oauth2/9", 10);
+  ZuCheck(wrongOIDCApp.error == Zum::OAuthError::AccessDenied &&
+    !wrongOIDCApp.location);
   auto oidcAuthorized = finishOIDCAuthorization(
     db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
     Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
@@ -5767,12 +6050,22 @@ static void enrollmentRuntime()
   oidcScheduler->run([&oidcDown]() { oidcDown.post(); }, oidcSID);
   oidcDown.wait();
 
+  ZuCheck(insertRecord(context->signKeys, Zum::SignKey{
+    .id = "app-token-key",
+    .issuer = "issuer/oauth2/9",
+    .algorithm = "ES256",
+    .providerRef = "test-key",
+    .publicJwk = "{\"kty\":\"EC\",\"kid\":\"app-token-key\"}",
+    .notBefore = 100,
+    .retireAfter = 1000,
+    .state = Zum::State::Active
+  }));
   auto ssoUser = loadUser(context, 42);
   Zum::String ssoToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &ssoUser,
       &ssoToken](auto wake) mutable {
     Zum::sessionIssue(db->requests, Zm::now() + ZuTime{10}, context, rng,
-      Zum::SessionConfig{.issuer = "issuer",
+      Zum::SessionConfig{.issuer = "issuer/oauth2/9",
 	.subject = Zum::auditID(ssoUser.handle), .userID = 42,
 	.authTime = 190, .now = 200, .idleLifetime = 1800,
 	.absoluteLifetime = 43200, .authVersion = ssoUser.authVersion},
@@ -5789,7 +6082,7 @@ static void enrollmentRuntime()
       .rpName = "Example",
       .authMethod = Zum::AuthMethod::Passkey},
     [&serverNow]() { return serverNow; },
-    [](Zum::Bytes id, Zum::String) { return base64URL(id); },
+    [](Zum::AppID, Zum::Bytes id, Zum::String) { return base64URL(id); },
     [](const Zum::User &, const Zum::Client &,
 	const Zum::ScopeSelection &, const ZtBitmap &allowed,
 	Zum::PolicyDoneFn complete) { complete(true, ZtBitmap{allowed}); },
@@ -5802,7 +6095,7 @@ static void enrollmentRuntime()
     db->requests->deactivate([wake = ZuMv(wake)]() mutable { wake(true); });
   }));
   auto inactiveInfo = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
-    providerServer.userInfo("Bearer invalid",
+    providerServer.userInfo(9, "Bearer invalid",
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
   ZuCheck(inactiveInfo.type == Zum::ReplyType::ServerError);
@@ -5814,7 +6107,7 @@ static void enrollmentRuntime()
   ZuCheck(inactiveReady.type == Zum::ReplyType::ServerError);
   db->requests->activate();
   auto invalidInfo = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
-    providerServer.userInfo("Bearer invalid",
+    providerServer.userInfo(9, "Bearer invalid",
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
   ZuCheck(invalidInfo.type == Zum::ReplyType::BearerError);
@@ -5825,7 +6118,7 @@ static void enrollmentRuntime()
     "code_challenge_method=S256"};
   auto loginStart = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &loginQuery](auto wake) mutable {
-    providerServer.authorize(ZuMv(loginQuery),
+    providerServer.authorize(9, ZuMv(loginQuery),
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	wake(ZuMv(reply));
       });
@@ -5836,7 +6129,7 @@ static void enrollmentRuntime()
   loginForm << loginStart.body << "&login=alice";
   auto loginSelected = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &loginForm, &loginStart](auto wake) mutable {
-    providerServer.login(ZuMv(loginForm), Zum::String{loginStart.setCookie},
+    providerServer.login(9, ZuMv(loginForm), Zum::String{loginStart.setCookie},
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	wake(ZuMv(reply));
       });
@@ -5852,7 +6145,7 @@ static void enrollmentRuntime()
   ssoCookie << ssoToken;
   auto ssoReply = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &ssoQuery, &ssoCookie](auto wake) mutable {
-    providerServer.authorize(ZuMv(ssoQuery), ZuMv(ssoCookie),
+    providerServer.authorize(9, ZuMv(ssoQuery), ZuMv(ssoCookie),
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	wake(ZuMv(reply));
       });
@@ -5873,7 +6166,7 @@ static void enrollmentRuntime()
       &providerServer, &consentID, &ssoReply](auto wake) mutable {
     Zum::String form{"id="};
     form << consentID << "&decision=approve";
-    providerServer.consent(ZuMv(form), Zum::String{ssoReply.setCookie},
+    providerServer.consent(9, ZuMv(form), Zum::String{ssoReply.setCookie},
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	wake(ZuMv(reply));
       });
@@ -5893,7 +6186,7 @@ static void enrollmentRuntime()
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &oidcUser,
       &upstreamSession](auto wake) mutable {
     Zum::sessionIssue(db->requests, Zm::now() + ZuTime{10}, context, rng,
-      Zum::SessionConfig{.issuer = "issuer",
+      Zum::SessionConfig{.issuer = "issuer/oauth2/9",
 	.subject = Zum::auditID(oidcUser.handle), .userID = oidcUser.id,
 	.providerID = 8, .authTime = 190, .now = 200,
 	.idleLifetime = 1800, .absoluteLifetime = 43200,
@@ -5916,7 +6209,7 @@ static void enrollmentRuntime()
     cookie << upstreamSession;
     return ZmBlock<Zum::ServerReply>{}([&providerServer,
 	query = ZuMv(query), cookie = ZuMv(cookie)](auto wake) mutable {
-      providerServer.authorize(ZuMv(query), ZuMv(cookie),
+      providerServer.authorize(9, ZuMv(query), ZuMv(cookie),
 	[wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	  wake(ZuMv(reply));
 	});
@@ -5962,7 +6255,7 @@ static void enrollmentRuntime()
   logoutCookie << ssoToken;
   auto loginPage = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &logoutCookie](auto wake) mutable {
-    providerServer.login(Zum::String{logoutCookie}, [wake = ZuMv(wake)](
+    providerServer.login(9, Zum::String{logoutCookie}, [wake = ZuMv(wake)](
 	Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
   constexpr ZuCSpan csrfMarker{"name=csrf value=\""};
@@ -5978,7 +6271,7 @@ static void enrollmentRuntime()
   ZuCheck(loginPage.type == Zum::ReplyType::Page && logoutCSRF);
   auto badLogout = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &logoutCookie](auto wake) mutable {
-    providerServer.logout("csrf=wrong", Zum::String{logoutCookie},
+    providerServer.logout(9, "csrf=wrong", Zum::String{logoutCookie},
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	wake(ZuMv(reply));
       });
@@ -5989,7 +6282,7 @@ static void enrollmentRuntime()
       &providerServer, &logoutCookie, &logoutCSRF](auto wake) mutable {
     Zum::String form{"csrf="};
     form << logoutCSRF;
-    providerServer.logout(ZuMv(form), Zum::String{logoutCookie},
+    providerServer.logout(9, ZuMv(form), Zum::String{logoutCookie},
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
 	wake(ZuMv(reply));
       });
@@ -6008,12 +6301,13 @@ static void enrollmentRuntime()
   Zum::String authorizeQuery{
     "response_type=code&client_id=browser&"};
   authorizeQuery <<
-    "redirect_uri=https%3A%2F%2Fapp%2Fcb&scope=read&state=return&" <<
+    "redirect_uri=https%3A%2F%2Fapp%2Fcb&scope=read%20offline_access&state=return&" <<
     "code_challenge=" <<
     "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&" <<
-    "code_challenge_method=S256&prompt=none&max_age=100";
+    "code_challenge_method=S256&prompt=consent&max_age=100";
   auto authorized = beginAuthorization(
-    db->requests, context, rng, ZuMv(authorizeQuery));
+    db->requests, context, rng, ZuMv(authorizeQuery), 200,
+    "issuer/oauth2/9");
   ZuCheck(authorized.error == Zum::AuthorizeIssue::OK &&
     authorized.result.ceremonyID && authorized.result.options &&
     !authorized.result.redirect);
@@ -6024,23 +6318,23 @@ static void enrollmentRuntime()
     requestGrant.clientID == "browser" &&
     requestGrant.redirectURI == "https://app/cb" &&
     requestGrant.audience == "orders" &&
-    requestGrant.scope == "read" &&
+    requestGrant.scope == "read offline_access" &&
     requestGrant.scopeIDs.length() == 1 && requestGrant.scopeIDs[0] == 7 &&
     requestGrant.bindingDigest == ZuBSpan{"browser binding"} &&
     requestGrant.oauthState == "return" && requestGrant.oauthStatePresent &&
-    requestGrant.prompt == "none" && requestGrant.promptPresent &&
+    requestGrant.prompt == "consent" && requestGrant.promptPresent &&
     requestGrant.maxAge == 100 && requestGrant.maxAgePresent &&
     requestGrant.authVersion == 12 &&
     requestGrant.expires == 260);
 
   Zum::Grant authorityGrant;
-  authorityGrant.issuer = "issuer";
+  authorityGrant.issuer = "issuer/oauth2/9";
   authorityGrant.appID = 9;
   authorityGrant.userID = 42;
   authorityGrant.clientID = "browser";
   authorityGrant.credentialID = Zum::Bytes{ZuBSpan{"credential"}};
   authorityGrant.audience = "orders";
-  authorityGrant.scope = "read";
+  authorityGrant.scope = "read offline_access";
   authorityGrant.scopeIDs.push(7);
   authorityGrant.roleIDs.push(7);
   authorityGrant.actions.length(2);
@@ -6049,7 +6343,7 @@ static void enrollmentRuntime()
     context, Zum::Grant{authorityGrant}, Zum::Client{browser});
   ZuCheck(authority.error == Zum::ScopeError::OK &&
     authority.data.app.authVersion == 12 &&
-    authority.data.selection.scope == "read" &&
+    authority.data.selection.scope == "read offline_access" &&
     authority.data.actions[readAction] &&
     !authority.data.actions[writeAction] &&
     authority.data.actionRecords.length() == 1);
@@ -6234,13 +6528,14 @@ static void enrollmentRuntime()
   Ztls::PK::SK_EC tokenKey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t tokenPublic[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(tokenKey.key, tokenPublic));
-  ZuCheck(setKeyRetirement(context, "token-key", 250));
+  ZuCheck(setKeyRetirement(context, "app-token-key", 250));
   auto issued = issueTokenRequest(db->requests, db, context, rng,
     Zum::String{"grant_type=client_credentials"},
-    Zum::String{"Basic d29ya2xvYWQ6c2VjcmV0"}, tokenKey, 200);
+    Zum::String{"Basic d29ya2xvYWQ6c2VjcmV0"}, tokenKey, 200,
+    "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::OAuthError::ServerError &&
     !issued.response.accessToken);
-  ZuCheck(setKeyRetirement(context, "token-key", 1000));
+  ZuCheck(setKeyRetirement(context, "app-token-key", 1000));
   ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
     context->evidence->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->evidence->findUpd<0>(0, ZuFwdTuple(Zum::AppID{9},
@@ -6258,18 +6553,19 @@ static void enrollmentRuntime()
     "&code_verifier=" <<
     "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
   issued = issueTokenRequest(db->requests, db, context, rng,
-    ZuMv(oidcCodeForm), {}, tokenKey, 250);
+    ZuMv(oidcCodeForm), {}, tokenKey, 250, "issuer/oauth2/9");
   Zum::Principal principal;
   Zum::JWTHeader idHeader;
   Zum::String idJSON;
   ZuCheck(issued.error == Zum::TokenIssue::OK &&
-    issued.response.refreshToken && issued.response.idToken &&
-    issued.response.scope == "openid read" && issued.response.expiresIn == 25 &&
-    Zum::jwtVerify(issued.response.accessToken, "token-key", "issuer",
+    !issued.response.refreshToken && issued.response.idToken &&
+    issued.response.scope == "openid read" &&
+    issued.response.expiresIn == 25 &&
+    Zum::jwtVerify(issued.response.accessToken, "app-token-key", "issuer/oauth2/9",
       "orders", tokenPublic, 270, Zum::JWTLimits{}, principal));
   ZuCheck(Zum::jwtES256(issued.response.idToken, tokenPublic,
     Zum::JWTLimits{}, idHeader, idJSON) && idHeader.type == "JWT" &&
-    idJSON.find<"\"iss\":\"issuer\"">() >= 0 &&
+    idJSON.find<"\"iss\":\"issuer/oauth2/9\"">() >= 0 &&
     idJSON.find<"\"aud\":\"oidc-browser\"">() >= 0 &&
     idJSON.find<"\"nonce\":\"local-nonce\"">() >= 0 &&
     idJSON.find<"\"sub\":\"b2lkYyBoYW5kbGU\"">() >= 0);
@@ -6277,21 +6573,14 @@ static void enrollmentRuntime()
     principal.authMethod == "oidc" &&
     principal.authTime == 190 && principal.actions.length() == 1 &&
     principal.actions[0] == "orders.read");
-  Zum::String delegatedRefresh{issued.response.refreshToken};
-  Zum::String delegatedRefreshForm{
-    "grant_type=refresh_token&refresh_token="};
-  delegatedRefreshForm << delegatedRefresh << "&client_id=oidc-browser";
-  issued = issueTokenRequest(db->requests, db, context, rng,
-    ZuMv(delegatedRefreshForm), {}, tokenKey, 276);
-  ZuCheck(issued.error == Zum::OAuthError::InvalidGrant &&
-    !issued.response.accessToken);
   issued = issueTokenRequest(db->requests, db, context, rng,
     Zum::String{"grant_type=client_credentials"},
-    Zum::String{"Basic d29ya2xvYWQ6c2VjcmV0"}, tokenKey, 200);
+    Zum::String{"Basic d29ya2xvYWQ6c2VjcmV0"}, tokenKey, 200,
+    "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::TokenIssue::OK &&
     issued.response.scope == "read" && !issued.response.refreshToken &&
     issued.response.expiresIn == 60 && Zum::jwtVerify(
-      issued.response.accessToken, "token-key", "issuer", "orders",
+      issued.response.accessToken, "app-token-key", "issuer/oauth2/9", "orders",
       tokenPublic, 220, Zum::JWTLimits{}, principal));
   ZuCheck(principal.subject == "workload" &&
     principal.clientID == "workload" && !principal.authMethod &&
@@ -6302,9 +6591,21 @@ static void enrollmentRuntime()
   ZuCheck(makeAssertion(rng, passkey, 7, requestGrant.challenge,
     "https://example.com", "example.com", requestAssertion));
   requestAssertion.userHandle = passkeyHandle;
-  auto finished = finishAuthorization(db->requests, context, rng,
+  auto wrongFinishIssuer = finishAuthorization(
+    db->requests, db, context, rng, Zum::Bytes{authorized.result.ceremonyID},
+    Zum::AssertionInput{requestAssertion}, readAction, 210,
+    "issuer/oauth2/10", 9);
+  ZuCheck(wrongFinishIssuer.error == Zum::OAuthError::AccessDenied &&
+    !wrongFinishIssuer.location);
+  auto wrongFinishApp = finishAuthorization(
+    db->requests, db, context, rng, Zum::Bytes{authorized.result.ceremonyID},
+    Zum::AssertionInput{requestAssertion}, readAction, 210,
+    "issuer/oauth2/9", 10);
+  ZuCheck(wrongFinishApp.error == Zum::OAuthError::AccessDenied &&
+    !wrongFinishApp.location);
+  auto finished = finishAuthorization(db->requests, db, context, rng,
     Zum::Bytes{authorized.result.ceremonyID}, ZuMv(requestAssertion),
-    readAction);
+    readAction, 210, "issuer/oauth2/9", 9, true);
   constexpr ZuCSpan codePrefix{"https://app/cb?code="};
   constexpr ZuCSpan codeSuffix{"&state=return"};
   ZuCheck(finished.error == Zum::AuthorizeIssue::OK &&
@@ -6327,14 +6628,15 @@ static void enrollmentRuntime()
     "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&" <<
     "code_challenge_method=S256";
   auto repeated = beginAuthorization(
-    db->requests, context, rng, ZuMv(repeatedAuthorizeQuery));
+    db->requests, context, rng, ZuMv(repeatedAuthorizeQuery), 200,
+    "issuer/oauth2/9");
   auto repeatedGrant = loadGrant(context, repeated.result.ceremonyID);
   Zum::AssertionInput repeatedAssertion;
   ZuCheck(repeated.error == Zum::AuthorizeIssue::OK &&
     makeAssertion(rng, passkey, 7, repeatedGrant.challenge,
       "https://example.com", "example.com", repeatedAssertion));
   repeatedAssertion.userHandle = passkeyHandle;
-  auto rejected = finishAuthorization(db->requests, context, rng,
+  auto rejected = finishAuthorization(db->requests, db, context, rng,
     Zum::Bytes{repeated.result.ceremonyID}, ZuMv(repeatedAssertion),
     readAction);
   ZuCheck(rejected.error == Zum::OAuthError::AccessDenied);
@@ -6355,28 +6657,14 @@ static void enrollmentRuntime()
     "&client_id=browser&redirect_uri=https%3A%2F%2Fapp%2Fcb" <<
     "&code_verifier=" <<
     "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-  ZuCheck(ZmBlock<bool>{}([context, codeID](auto wake) mutable {
-    context->grants->run(0, [context, codeID,
-        wake = ZuMv(wake)]() mutable {
-      context->grants->findUpd<0>(0, ZuFwdTuple(codeID), [
-          wake = ZuMv(wake)](ZdbRow<Zum::Grant> *row) mutable {
-        if (!row) { wake(false); return; }
-        row->data().facadeClientID = "enrolled-service";
-        wake(row->commit());
-      });
-    });
-  }));
-  auto directFacade = issueTokenRequest(db->requests, db, context, rng,
-    Zum::String{codeForm}, {}, tokenKey, 250);
-  ZuCheck(directFacade.error == Zum::OAuthError::InvalidGrant &&
-    !directFacade.response.accessToken);
   issued = issueTokenRequest(
     db->requests, db, context, rng, ZuMv(codeForm), {}, tokenKey, 250,
-    Zum::String{"enrolled-service"});
+    "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::TokenIssue::OK &&
-    issued.response.refreshToken && issued.response.scope == "read" &&
+    issued.response.refreshToken &&
+    issued.response.scope == "read offline_access" &&
     issued.response.expiresIn == 60 && Zum::jwtVerify(
-      issued.response.accessToken, "token-key", "issuer", "orders",
+      issued.response.accessToken, "app-token-key", "issuer/oauth2/9", "orders",
       tokenPublic, 270, Zum::JWTLimits{}, principal));
   ZuCheck(principal.authMethod == "passkey" && principal.authTime == 210 &&
     principal.actions.length() == 1 && principal.actions[0] == "orders.read");
@@ -6388,7 +6676,6 @@ static void enrollmentRuntime()
     codeFamily.state == Zum::State::Active &&
     codeFamily.digest == codeRefreshDigest &&
     codeFamily.scope == issued.response.scope &&
-    codeFamily.facadeClientID == "enrolled-service" &&
     codeFamily.authVersion == 12 && codeFamily.scopeIDs.length() == 1 &&
     codeFamily.scopeIDs[0] == 7 && codeFamily.actions[readAction] &&
     !codeFamily.actions[writeAction]);
@@ -6411,7 +6698,7 @@ static void enrollmentRuntime()
     .expires = 1000,
     .kind = Zum::GrantKind::Refresh,
     .state = Zum::State::Active,
-    .issuer = "issuer",
+    .issuer = "issuer/oauth2/9",
     .clientID = "browser",
     .audience = "orders",
     .authTime = 123,
@@ -6426,11 +6713,12 @@ static void enrollmentRuntime()
   Zum::String refreshForm{"grant_type=refresh_token&refresh_token="};
   refreshForm << refresh.token << "&client_id=browser";
   issued = issueTokenRequest(
-    db->requests, db, context, rng, ZuMv(refreshForm), {}, tokenKey, 300);
+    db->requests, db, context, rng, ZuMv(refreshForm), {}, tokenKey, 300,
+    "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::TokenIssue::OK &&
     issued.response.refreshToken && issued.response.scope == "read" &&
     issued.response.expiresIn == 60 && Zum::jwtVerify(
-      issued.response.accessToken, "token-key", "issuer", "orders",
+      issued.response.accessToken, "app-token-key", "issuer/oauth2/9", "orders",
       tokenPublic, 320, Zum::JWTLimits{}, principal));
   ZuCheck(principal.authMethod == "passkey" && principal.authTime == 123 &&
     principal.appID == 9 && principal.actions.length() == 1 &&
@@ -6448,7 +6736,8 @@ static void enrollmentRuntime()
   Zum::String reuseForm{"grant_type=refresh_token&refresh_token="};
   reuseForm << refresh.token << "&client_id=browser";
   issued = issueTokenRequest(
-    db->requests, db, context, rng, ZuMv(reuseForm), {}, tokenKey, 330);
+    db->requests, db, context, rng, ZuMv(reuseForm), {}, tokenKey, 330,
+    "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::OAuthError::InvalidGrant &&
     loadGrant(context, refresh.id).state == Zum::State::Revoked);
   ZuCheck(logged(
@@ -6459,7 +6748,8 @@ static void enrollmentRuntime()
 
   issued = issueTokenRequest(db->requests, db, context, rng,
     Zum::String{"grant_type=client_credentials"},
-    Zum::String{"Basic d29ya2xvYWQ6d3Jvbmc="}, tokenKey, 340);
+    Zum::String{"Basic d29ya2xvYWQ6d3Jvbmc="}, tokenKey, 340,
+    "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::OAuthError::InvalidClient);
   ZuCheck(logged(
     Zum::String{} << " event=" << int(Zum::AuditEvent::ClientAuthentication) << " ",
@@ -6647,7 +6937,8 @@ static void enrollmentRuntime()
     "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&" <<
     "code_challenge_method=S256";
   auto enrollmentAuthorization = beginAuthorization(
-    db->requests, context, rng, ZuMv(enrollmentQuery), 420);
+    db->requests, context, rng, ZuMv(enrollmentQuery), 420,
+    "issuer/oauth2/9");
   auto enrollmentAuthorizationGrant = loadGrant(
     context, enrollmentAuthorization.result.ceremonyID);
   ZuCheck(enrollmentAuthorization.error == Zum::AuthorizeIssue::OK &&
@@ -6716,7 +7007,7 @@ static void enrollmentRuntime()
     Zum::Bytes{ZuBSpan{"browser-credential"}};
   enrollmentAssertion.userHandle = browserEnrollmentGrant.userHandle;
   auto enrollmentFinished = finishAuthorization(
-    db->requests, context, rng,
+    db->requests, db, context, rng,
     ZuMv(enrollmentAuthorization.result.ceremonyID),
     ZuMv(enrollmentAssertion), readAction, 423);
   ZuCheck(enrollmentFinished.error == Zum::AuthorizeIssue::OK &&
@@ -6764,7 +7055,8 @@ static void enrollmentRuntime()
   ZuCheck(issuedKey(431, "token-key"));
   ZuCheck(selectedKey("issuer", 431, 4).id == "token-key");
   auto overlapJWKS = ZmBlock<Zum::String>{}([db, context](auto wake) mutable {
-    Zum::jwksLoad(db->requests, Zm::now() + ZuTime{10}, context, 499, 4,
+    Zum::jwksLoad(db->requests, Zm::now() + ZuTime{10}, context,
+      "issuer", 499, 4,
       [wake = ZuMv(wake)](bool ok, Zum::String json) mutable {
         wake(ok ? ZuMv(json) : Zum::String{});
       });
@@ -6788,7 +7080,7 @@ static void enrollmentRuntime()
     &db, &context
   ](auto wake) mutable {
     Zum::jwksLoad(db->requests, Zm::now() + ZuTime{10},
-      context, 501, 4, [wake = ZuMv(wake)](
+      context, "issuer", 501, 4, [wake = ZuMv(wake)](
 	bool ok, Zum::String json) mutable {
       wake(ok ? ZuMv(json) : Zum::String{});
     });
@@ -6814,7 +7106,7 @@ static void enrollmentRuntime()
   ](auto wake) mutable {
     Zum::revokeRequest(db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(revokeForm), {}, Zum::RevokeConfig{
-	.issuer = "issuer", .now = 452
+	.issuer = "issuer", .appID = 9, .now = 452
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::RevokeIssue::OK);
   ZuCheck(loadGrant(context, revokeToken.id).state == Zum::State::Revoked);
@@ -6832,7 +7124,7 @@ static void enrollmentRuntime()
   ](auto wake) mutable {
     Zum::revokeRequest(db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(unknownForm), {}, Zum::RevokeConfig{
-	.issuer = "issuer", .now = 453
+	.issuer = "issuer", .appID = 9, .now = 453
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::RevokeIssue::OK);
 
@@ -6970,6 +7262,7 @@ int main(int argc, char **argv)
   ZuTestCall(oauthForms);
   ZuTestCall(oidcRoles);
   ZuTestCall(httpRoutes);
+  ZuTestCall(limits);
   ZuTestCall(redirects);
   ZuTestCall(pkce);
   ZuTestCall(opaque);
@@ -6980,6 +7273,7 @@ int main(int argc, char **argv)
   ZuTestCall(discovery);
   ZuTestCall(refresh);
   ZuTestCall(jwt);
+  ZuTestCall(ssfSET);
   ZuTestCall(webAuthn);
   ZuTestCall(webAuthnOptions);
   ZuTestCall(webAuthnInput);

@@ -18,13 +18,12 @@ public management operation.
 
 Bootstrap seeds the catalog in the core Zum application. The core
 `superuser` role contains every management action. The distinct
-`appService` role contains only operation-status lookup, catalog publication,
-and the three service-facade actions. Enrolled services never receive
-`superuser` implicitly.
+`catalogPublisher` role contains only operation-status lookup and catalog
+publication. Enrolled catalog publishers never receive `superuser` implicitly.
 
 A bearer token must carry the exact operation action. Current database state
 must additionally prove either the active core superuser membership or an
-active `admin_access` delegation for the authenticated user/service and target
+active `admin_access` delegation for the authenticated user/client and target
 application. The service which owns an application may publish that
 application's available action/standard-role/scope catalog; catalog publication
 never assigns roles to users or restores deleted privileges.
@@ -122,7 +121,9 @@ without rewriting it. This changes encrypted secret fields only, not signing
 keys, OAuth client-secret values, user assignments or ordinary database fields.
 See IMPLEMENTATION.md for the current validation status of this operation.
 
-The non-secret configuration contains `issuerURL`, and may contain
+The non-secret configuration contains the exact application `issuerURL`
+(`https://auth.example/oauth2/APP_ID`) and the independent administrative
+`managementURL` origin. It may also contain
 `clientID` (default `zum-admin`), `scope` (default `zum.admin`), `callbackPort`,
 `loginTimeout`, optional `caPath` for a private issuer CA, and an owner-only
 `credentialFile`. Empty `caPath` retains native system trust. Login uses an external
@@ -159,7 +160,8 @@ zumd --issuer=https://iam.example.test \
 ```
 
 Open the one-time URL from that file in a normal browser and create the initial
-platform passkey. Configure `zum` with the same `issuerURL`, the `zum-admin`
+platform passkey. Configure `zum` with the core application's issuer URL shown
+by discovery, the `zumd` origin as `managementURL`, the `zum-admin`
 client, a loopback callback, and (when applicable) the private test CA, then run
 `zum --config FILE login`. The browser must complete the passkey assertion and
 return to the state-bound loopback callback. Use the authenticated CLI to enroll
@@ -171,10 +173,10 @@ manual gate.
 
 ## Public OAuth 2.0 and OIDC endpoints
 
-Outbound upstream OIDC connections use system TLS trust by default. For a private
-CA, add `upstream: {caPath: "/path/to/ca.pem"}` to the `zumd --config` node file.
+Outbound OIDC-provider connections use system TLS trust by default. For a private
+CA, add `oidc: {caPath: "/path/to/ca.pem"}` to the `zumd --config` node file.
 The path can name a CA bundle or native CA directory; it is non-secret deployment
-configuration. Certificate and hostname verification remain enabled. Upstream
+configuration. Certificate and hostname verification remain enabled. OIDC-provider
 client secrets remain encrypted in the database, not in this section.
 
 The administrative routes above are separate from the issuer's public protocol
@@ -182,17 +184,21 @@ surface:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/.well-known/oauth-authorization-server` | OAuth authorization-server metadata. |
-| GET | `/.well-known/openid-configuration` | OpenID Provider metadata. |
-| GET | `/authorize` | Authorization-code initiation with S256 PKCE. |
-| POST | `/token` | Authorization-code, refresh-token, and client-credentials exchange. |
-| POST | `/revoke` | Token revocation. |
-| GET | `/jwks` | Active public signing keys. |
-| GET | `/userinfo` | Claims selected by an access token carrying `openid`. |
+| GET | `/.well-known/oauth-authorization-server/oauth2/{appID}` | OAuth authorization-server metadata. |
+| GET | `/oauth2/{appID}/.well-known/openid-configuration` | OpenID Provider metadata. |
+| GET | `/oauth2/{appID}/v1/authorize` | Authorization-code initiation with S256 PKCE. |
+| POST | `/oauth2/{appID}/v1/token` | Authorization-code, refresh-token, and client-credentials exchange. |
+| POST | `/oauth2/{appID}/v1/revoke` | Token revocation. |
+| GET | `/oauth2/{appID}/v1/keys` | Active public signing keys for that issuer. |
+| GET/POST | `/oauth2/{appID}/v1/userinfo` | Claims selected by an access token carrying `openid`. |
 
 An interactive request may combine a resource scope with the enrolled client's
-`openid`, `profile`, and `email` identity scopes. The exact granted scope string
-and original nonce survive code exchange and refresh. `openid` causes an ES256
-ID token to be returned; `profile` and `email` control only their corresponding
-ID-token and UserInfo claims. Identity scopes are not accepted for
-client-credentials grants.
+`openid`, `profile`, `email`, and (when refresh tokens are enabled)
+`offline_access` identity scopes. `offline_access` always requires interactive
+consent; `prompt=consent` explicitly selects that path, while `prompt=none`
+fails with `consent_required` when consent is needed. The exact granted scope
+string and original nonce survive code exchange and refresh. An approved
+`offline_access` request creates the refresh-token family; an ordinary code
+exchange does not. `openid` causes an ES256 ID token to be returned; `profile`
+and `email` control only their corresponding ID-token and UserInfo claims.
+Identity scopes are not accepted for client-credentials grants.

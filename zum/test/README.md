@@ -9,6 +9,6 @@ substitution, tampering, rekey retries and empty plaintext. Keys are generated
 inside the test; it needs no database or environment secrets and prints no key
 material. This is not the offline maintenance command or its persistence test.
 
-`ZumTest`, `ZumClientTest` and `ZumUpstreamTest` cover server records/protocols,
-service-client behavior and upstream transport respectively. SQLite restart,
+`ZumTest`, `ZumClientTest` and `ZumOIDCHTTPTest` cover server records/protocols,
+service-client behavior and OIDC HTTP transport respectively. SQLite restart,
 full HTTP/service flows and clustered activation tests live in `../itest`.

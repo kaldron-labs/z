@@ -21,7 +21,8 @@ class PingHTTP {
 public:
   PingHTTP();
   ~PingHTTP();
-  bool init(ZiMultiplex *, ZuCSpan issuer, ZuCSpan caPath = {});
+  bool init(ZiMultiplex *, ZuCSpan issuer, ZuCSpan managementIssuer,
+    ZuCSpan management, ZuCSpan caPath = {});
   ServiceHTTPFn fn() const;
   void final();
 private:

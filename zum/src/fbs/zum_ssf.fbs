@@ -1,0 +1,13 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+table SSFRx {
+  receiver_i_d:string;
+  app_i_d:uint64;
+  audience:string;
+  delivery_u_r_l:string;
+  secret_ref:string;
+  revision:uint64 = 1;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+root_type SSFRx;
