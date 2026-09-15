@@ -436,7 +436,7 @@ public:
   }
   int process(Ztls::RxStream &rx) { return Wire_::process(rx); }
   auto txStream() { return Base::txStream(); }
-  auto directTxStream() { return Base::txStream_(); }
+  auto txStream_() { return Base::txStream_(); }
   void disconnectNative() { Base::disconnect(); }
   auto logicalTx(uint32_t id) {
     return HeaderBlock<SrvLink>{
@@ -1033,7 +1033,7 @@ public:
     }
   }
   auto txStream() { return Base::txStream(); }
-  auto directTxStream() { return Base::txStream_(); }
+  auto txStream_() { return Base::txStream_(); }
   auto logicalTx(uint32_t id) {
     return H2_::HeaderBlock<SrvLink>{
       *this, Wire::encoder(), id, Wire::peerFrameSize()};

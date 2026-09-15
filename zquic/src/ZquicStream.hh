@@ -456,7 +456,7 @@ public:
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_stream;
       auto stream = static_cast<Stream *>(buf->owner);
-      if (AppThread)
+      if constexpr (AppThread)
 	return stream->send(ZuMv(buf));
       else
 	return stream->send_(ZuMv(buf));
@@ -471,7 +471,7 @@ public:
   auto txStream_() { // direct call from within tx thread
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream txStream_ outside Tx thread",
-      return TxStream_<false>{*this});
+      return TxStream_<true>{*this});
     return TxStream_<false>{*this};
   }
 

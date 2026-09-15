@@ -1261,7 +1261,7 @@ public:
   }
   int process(Ztls::RxStream &rx) { return Wire_::process(rx); }
   auto txStream() { return Base::txStream(); }
-  auto directTxStream() { return Base::txStream_(); }
+  auto txStream_() { return Base::txStream_(); }
   void disconnectNative() { Base::disconnect(); }
 
   void openNow_(ZmRef<Logical> logical) {
@@ -2212,7 +2212,7 @@ public:
     }
   }
   auto txStream() { return Base::txStream(); }
-  auto directTxStream() { return Base::txStream_(); }
+  auto txStream_() { return Base::txStream_(); }
   auto logicalTx(uint32_t id) {
     return H2_::HeaderBlock<CliLink>{
       *this, this->encoder(), id, this->peerFrameSize()};

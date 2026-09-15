@@ -192,7 +192,7 @@ bool alertSubscribe(
   auto request = Ztc::fbs::CreateRequestDirect(
     fbb, seqNo, Ztc::fbs::Group::Alert, "*", interval, true,
     date, alertSeqNo);
-  fbb.Finish(Ztc::fbs::CreateMsg(
+  fbb.Finish(Ztc::saveMsg(
     fbb, Ztc::fbs::Body::Request, request.Union()));
   auto frame = Ztc::saveHdr(fbb);
   if (!frame || !alertWriteAll(fd, frame->cspan())) return false;
@@ -221,7 +221,7 @@ Ztc::fbs::AckStatus alertRequestStatus(
   auto request = Ztc::fbs::CreateRequestDirect(
     fbb, seqNo, Ztc::fbs::Group::Alert, "*", 0, true,
     date, alertSeqNo);
-  fbb.Finish(Ztc::fbs::CreateMsg(
+  fbb.Finish(Ztc::saveMsg(
     fbb, Ztc::fbs::Body::Request, request.Union()));
   auto frame = Ztc::saveHdr(fbb);
   if (!frame || !alertWriteAll(fd, frame->cspan()))
@@ -257,7 +257,7 @@ bool replayMany(int fd, uint64_t seqNo, const AlertKeys &keys)
       Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
   auto request = Ztc::fbs::CreateRequestDirect(
     builder, seqNo, Ztc::fbs::Group::Alert, "*", 0, true);
-  builder.Finish(Ztc::fbs::CreateMsg(
+  builder.Finish(Ztc::saveMsg(
     builder, Ztc::fbs::Body::Request, request.Union()));
   auto requestFrame = Ztc::saveHdr(builder);
   if (!requestFrame || !alertWriteAll(fd, requestFrame->cspan())) return false;
@@ -291,7 +291,7 @@ bool appDegraded(int fd, uint64_t seqNo)
       Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
   auto request = Ztc::fbs::CreateRequestDirect(
     builder, seqNo, Ztc::fbs::Group::App, "*", 0, true);
-  builder.Finish(Ztc::fbs::CreateMsg(
+  builder.Finish(Ztc::saveMsg(
     builder, Ztc::fbs::Body::Request, request.Union()));
   auto requestFrame = Ztc::saveHdr(builder);
   if (!requestFrame || !alertWriteAll(fd, requestFrame->cspan())) return false;
@@ -414,7 +414,7 @@ void liveAlerts()
   auto replayRequest = Ztc::fbs::CreateRequestDirect(
     replayBuilder, ReplaySeqNo, Ztc::fbs::Group::Alert, "*", 0, true,
     date, 0);
-  replayBuilder.Finish(Ztc::fbs::CreateMsg(
+  replayBuilder.Finish(Ztc::saveMsg(
     replayBuilder, Ztc::fbs::Body::Request, replayRequest.Union()));
   auto requestFrame = Ztc::saveHdr(replayBuilder);
   ZuCheck(requestFrame && alertWriteAll(replayFD, requestFrame->cspan()));

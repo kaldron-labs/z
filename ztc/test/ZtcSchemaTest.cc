@@ -15,22 +15,12 @@
 #include <zlib/ZtcDB.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
-#include <zlib/ZtcVer.hh>
 
 using namespace ZuTestUtil;
 
-void version()
+void defaults()
 {
-  ZuTestScope(version);
-  constexpr uint32_t v = Ztc::Ver::make(12, 34, 56);
-  ZuCheck(v == UINT32_C(1234056));
-  ZuCheck(Ztc::Ver::major(v) == 12);
-  ZuCheck(Ztc::Ver::minor(v) == 34);
-  ZuCheck(Ztc::Ver::patch(v) == 56);
-  ZuCheck(Ztc::Ver::compatible(Ztc::Ver::make(12, 35, 0), v));
-  ZuCheck(Ztc::Ver::compatible(Ztc::Ver::make(12, 34, 0), v));
-  ZuCheck(!Ztc::Ver::compatible(Ztc::Ver::make(12, 33, 999), v));
-  ZuCheck(!Ztc::Ver::compatible(Ztc::Ver::make(13, 34, 56), v));
+  ZuTestScope(defaults);
 
   Zfb::Builder fbb;
   auto request = Ztc::fbs::CreateRequest(fbb);
@@ -58,6 +48,16 @@ void version()
   loadedError =
     Zfb::GetRoot<Ztc::fbs::Error>(zeroErrorBuilder.GetBufferPointer());
   ZuCheck(loadedError->seqNo() == 0);
+
+  Ztc::Error source{Ztc::ErrorMessage{"queue full"}, ZuID{"publisher"}, 7, 5};
+  Zfb::Builder roundtrip;
+  roundtrip.Finish(ZfbStruct::save(roundtrip, source));
+  auto errorObject = ZfbStruct::verify<Ztc::Error>(
+    {roundtrip.GetBufferPointer(), unsigned(roundtrip.GetSize())});
+  ZuCheck(errorObject);
+  auto restored = ZfbStruct::ctor<Ztc::Error>(errorObject);
+  ZuCheck(restored.id == source.id && restored.seqNo == source.seqNo &&
+    restored.code == source.code && restored.message == source.message);
 
   Zfb::Builder optionalBuilder;
   auto optional = Ztc::fbs::CreateRequestDirect(
@@ -143,10 +143,10 @@ void alert()
   msgBuilder.ForceDefaults(true);
   auto id = msgBuilder.CreateString("app");
   auto value = ZfbStruct::save(msgBuilder, data);
-  auto telemetry = Ztc::fbs::CreateTelemetry(
+  auto telemetry = Ztc::saveTelemetry(
     msgBuilder, id, 0,
     Ztc::fbs::TelemetryBody::AlertTelemetry, value.Union());
-  msgBuilder.Finish(Ztc::fbs::CreateMsg(
+  msgBuilder.Finish(Ztc::saveMsg(
     msgBuilder, Ztc::fbs::Body::Telemetry, telemetry.Union()));
   auto msg = flatbuffers::GetMutableRoot<Ztc::fbs::Msg>(
     msgBuilder.GetBufferPointer());
@@ -167,7 +167,7 @@ void framing()
   data.seqNo = UINT64_C(0x123456789abcdef0);
   data.group = uint8_t(Ztc::fbs::Group::App);
   auto request = ZfbStruct::save(fbb, data);
-  fbb.Finish(Ztc::fbs::CreateMsg(
+  fbb.Finish(Ztc::saveMsg(
     fbb, Ztc::fbs::Body::Request, request.Union()));
 
   auto body = fbb.GetBufferPointer();
@@ -220,7 +220,7 @@ void framing()
     Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
   auto invalidOuterRequest = Ztc::fbs::CreateRequestDirect(
     invalidOuter, 2, Ztc::fbs::Group::App, "*");
-  invalidOuter.Finish(Ztc::fbs::CreateMsg(
+  invalidOuter.Finish(Ztc::saveMsg(
     invalidOuter, Ztc::fbs::Body(127), invalidOuterRequest.Union()));
   auto invalidOuterBuf = Ztc::saveHdr(invalidOuter);
   ZuCheck(invalidOuterBuf &&
@@ -231,10 +231,10 @@ void framing()
   Ztc::AppTelemetry invalidValueData;
   auto invalidID = invalidValue.CreateString("app");
   auto invalidValueOffset = ZfbStruct::save(invalidValue, invalidValueData);
-  auto invalidTelemetry = Ztc::fbs::CreateTelemetry(
+  auto invalidTelemetry = Ztc::saveTelemetry(
     invalidValue, invalidID, 3, Ztc::fbs::TelemetryBody(127),
     invalidValueOffset.Union());
-  invalidValue.Finish(Ztc::fbs::CreateMsg(
+  invalidValue.Finish(Ztc::saveMsg(
     invalidValue, Ztc::fbs::Body::Telemetry, invalidTelemetry.Union()));
   auto invalidValueBuf = Ztc::saveHdr(invalidValue);
   ZuCheck(invalidValueBuf &&
@@ -264,7 +264,7 @@ void goldenWire()
     fbb, UINT64_C(0x123456789abcdef0), Ztc::fbs::Group::Queue,
     "Tx:hub:link*", UINT32_C(0x10203040), true,
     UINT32_C(20260731), UINT64_C(0xfedcba9876543210));
-  fbb.Finish(Ztc::fbs::CreateMsg(
+  fbb.Finish(Ztc::saveMsg(
     fbb, Ztc::fbs::Body::Request, request.Union()));
   auto buf = Ztc::saveHdr(fbb);
   ZuCheck(buf && buf->length == sizeof(capture));
@@ -287,9 +287,9 @@ bool unionValue(Ztc::fbs::TelemetryBody type, const T &data)
   auto id = fbb.CreateString("app");
   auto value =
     ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
-  auto telemetry = Ztc::fbs::CreateTelemetry(
+  auto telemetry = Ztc::saveTelemetry(
     fbb, id, UINT64_C(0xabcdef0123456789), type, value.Union());
-  fbb.Finish(Ztc::fbs::CreateMsg(
+  fbb.Finish(Ztc::saveMsg(
     fbb, Ztc::fbs::Body::Telemetry, telemetry.Union()));
   Zfb::Verifier verifier{fbb.GetBufferPointer(), fbb.GetSize()};
   if (!verifier.VerifyBuffer<Ztc::fbs::Msg>()) return false;
@@ -705,7 +705,7 @@ void telemetryValues()
 int main()
 {
   ZuTestMain();
-  ZuTestCall(version);
+  ZuTestCall(defaults);
   ZuTestCall(app);
   ZuTestCall(alert);
   ZuTestCall(framing);

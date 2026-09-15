@@ -18,7 +18,6 @@
 #include <zlib/ZvCf.hh>
 
 #include <zlib/ZtcAgent.hh>
-#include <zlib/ZtcVer.hh>
 
 struct Options {
   ZtString<>	config{"ztcagent.conf"};
@@ -45,25 +44,31 @@ static void usage(int code)
     "Usage: ztcagent [OPTION]...\n\n"
     "Options:\n"
     "  -c, --config=PATH  configuration file (default ztcagent.conf)\n"
-    "  -V, --version      print protocol version\n"
+    "  -V, --version      print version\n"
     "  -h, --help         print this help\n" << std::flush;
   ::exit(code);
 }
 
 static Ztc::AgentEnv environment()
 {
-  const char *token = ::getenv("ZTC_ENROLL_TOKEN");
+  const char *issuer = ::getenv("ZTC_ISSUER");
+  const char *clientID = ::getenv("ZTC_CLIENT_ID");
+  const char *credentialStore = ::getenv("ZTC_CREDENTIAL_STORE");
+  const char *wssURL = ::getenv("ZTC_WSS_URL");
+  const char *accessToken = ::getenv("ZTC_ACCESS_TOKEN");
+  const char *pidDir = ::getenv("ZTC_DIR");
   const char *ring = ::getenv("ZTC_RING");
-  const char *dir = ::getenv("ZTC_DIR");
-  const char *device = ::getenv("ZTC_DEVICE_ID");
-  const char *url = ::getenv("ZTC_ENROLL_URL");
   return {
-    .token = token ? token : "",
-    .ring = ring ? ring : "ztc",
-    .pidDir = dir ? dir : "ztc",
-    .deviceID = device ? device : "",
-    .enrollURL = url ? url :
-      "https://enroll.devices.kaldron.io:443/v1/enroll"
+    .issuer = issuer ? issuer : "",
+    .clientID = clientID ? clientID : "",
+    .deviceID = ::getenv("ZTC_DEVICE_ID") ?
+      ::getenv("ZTC_DEVICE_ID") : "",
+    .credentialStore = credentialStore ? credentialStore : "",
+    .caPath = ::getenv("ZTC_CA_PATH") ? ::getenv("ZTC_CA_PATH") : "",
+    .wssURL = wssURL ? wssURL : "",
+    .accessToken = accessToken ? accessToken : "",
+    .pidDir = pidDir ? pidDir : "ztc",
+    .ring = ring ? ring : "ztc"
   };
 }
 
@@ -75,15 +80,17 @@ int main(int argc, char **argv)
     if (options.help) usage(0);
     if (argc != 1) usage(1);
     if (options.version) {
-      std::cout << Ztc::Ver::make(Z_VMAJOR, Z_VMINOR, Z_VPATCH) << '\n';
+      std::cout << Z_VERSION << '\n';
       return 0;
     }
 
     auto loaded = ZvCf::load(options.config);
     Ztc::AgentCf cf = ZfCf::handler<Ztc::AgentCf>(loaded.p<1>()).ctor();
     auto env = environment();
-    if (!env.token) {
-      std::cerr << "ZTC_ENROLL_TOKEN is required\n";
+    if (!env.issuer || !env.clientID || !env.deviceID ||
+        !env.credentialStore || !env.wssURL || !env.accessToken) {
+      std::cerr << "ZTC_ISSUER, ZTC_CLIENT_ID, ZTC_CREDENTIAL_STORE, "
+        "ZTC_DEVICE_ID, ZTC_WSS_URL, and ZTC_ACCESS_TOKEN are required\n";
       return 1;
     }
 

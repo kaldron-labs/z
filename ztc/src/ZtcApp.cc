@@ -743,9 +743,9 @@ ZmRef<ZiIOBuf> telemetryFrame(
   auto value =
     ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
   auto telemetry =
-    fbs::CreateTelemetry(fbb, id_, seqNo, type, value.Union());
+    saveTelemetry(fbb, id_, seqNo, type, value.Union());
   fbb.Finish(
-    fbs::CreateMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
+    saveMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
   return saveHdr(fbb);
 }
 
@@ -1250,10 +1250,10 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     Zfb::Time time{event->time.sec(), event->time.nsec()};
     auto value = fbs::CreateAlertTelemetry(
       fbb, message, &time, alertSeqNo, event->tid, date, event->severity);
-    auto telemetry = fbs::CreateTelemetry(
+    auto telemetry = saveTelemetry(
       fbb, id, 0, fbs::TelemetryBody::AlertTelemetry, value.Union());
     fbb.Finish(
-      fbs::CreateMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
+      saveMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
     ZmRef<ZiIOBuf> canonical = saveHdr(fbb);
     if (ZuUnlikely(!canonical || canonical->length > m_cf.maxFrame)) {
       m_state->degraded = true;
@@ -2401,9 +2401,8 @@ void App::sendAck_(
 {
   Zfb::IOBuilder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
-  auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
-  auto ack = fbs::CreateAck(fbb, id, seqNo, status, interval);
-  fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Ack, ack.Union()));
+  auto ack = ZfbStruct::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
+  fbb.Finish(saveMsg(fbb, fbs::Body::Ack, ack.Union()));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
@@ -2411,10 +2410,8 @@ void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
 {
   Zfb::IOBuilder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
-  auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
-  auto text = fbb.CreateString(message.data(), message.length());
-  auto error = fbs::CreateError(fbb, id, seqNo, code, text);
-  fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Error, error.Union()));
+  auto error = ZfbStruct::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
+  fbb.Finish(saveMsg(fbb, fbs::Body::Error, error.Union()));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
@@ -2422,9 +2419,8 @@ void App::sendEOS_(uint64_t seqNo)
 {
   Zfb::IOBuilder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
-  auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
-  auto eos = fbs::CreateEOS(fbb, id, seqNo);
-  fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::EOS, eos.Union()));
+  auto eos = ZfbStruct::save(fbb, EOS{m_cf.id, seqNo});
+  fbb.Finish(saveMsg(fbb, fbs::Body::EOS, eos.Union()));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
