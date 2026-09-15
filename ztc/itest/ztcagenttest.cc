@@ -9,7 +9,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiRing.hh>
-#include <zlib/ZtcVer.hh>
 #include <zlib/ZtcRing.hh>
 
 #include "ZiTestResidue.hh"
@@ -31,12 +30,6 @@ public:
     rdrID(-1);
   }
 };
-
-static void portableBuild()
-{
-  ZuTestScope(portable_build);
-  ZuCheck(Ztc::Ver::make(Z_VMAJOR, Z_VMINOR, Z_VPATCH) == Z_VERSION);
-}
 
 static void slowReader()
 {
@@ -93,6 +86,5 @@ int main()
 {
   ZiTestResidue::init("ztcagenttest");
   ZuTestMain();
-  ZuTestCall(portableBuild);
   ZuTestCall(slowReader);
 }

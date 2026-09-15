@@ -388,7 +388,7 @@ public:
   auto txStream() { return TxStream_<true>{*this}; }
   auto txStream_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
-      "TCP txStream_ outside Tx thread", return TxStream_<false>{*this});
+      "TCP txStream_ outside Tx thread", return TxStream_<true>{*this});
     return TxStream_<false>{*this};
   }
 

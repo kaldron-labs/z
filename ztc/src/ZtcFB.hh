@@ -70,11 +70,21 @@ ZfbStruct(ZtcAPI, Request,
   (((alertSeqNo),	(Ctor<3>)),			(UInt64)),
   (((id),		(Ctor<1>)),			(String)));
 
+ZfbStruct(ZtcAPI, Ack,
+  (((id), (Ctor<0>)), (String)),
+  (((seqNo), (Ctor<1>)), (UInt64)),
+  (((status), (Ctor<3>)), (UInt8)),
+  (((interval), (Ctor<2>)), (UInt32)));
+
+ZfbStruct(ZtcAPI, EOS,
+  (((id), (Ctor<0>)), (String)),
+  (((seqNo), (Ctor<1>)), (UInt64)));
+
 ZfbStruct(ZtcAPI, Error,
-  (((id),		(Ctor<0>)),			(String)),
-  (((seqNo),		(Ctor<1>)),			(UInt64)),
-  (((code),		(Ctor<2>)),			(Int32)),
-  (((message),		(Ctor<3>)),			(String)));
+  (((id),		(Ctor<1>)),			(String)),
+  (((seqNo),		(Ctor<2>)),			(UInt64)),
+  (((code),		(Ctor<3>)),			(Int32)),
+  (((message),		(Ctor<0>)),			(String)));
 
 ZfbStruct(ZtcAPI, HeapTelemetry,
   (((id),		(Ctor<0>, Keys<0>)),			(String)),

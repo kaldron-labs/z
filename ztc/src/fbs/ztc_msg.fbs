@@ -13,6 +13,9 @@ union Body {
 
 table Msg {
   body:Body;
+  sub_id:uint64;
+  device_id:string;
+  agent_gen:uint64;
 }
 
 root_type Msg;

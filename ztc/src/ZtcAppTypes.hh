@@ -44,6 +44,18 @@ struct Request {
   friend ZfStructPrint ZuPrintType(Request *);
 };
 
+struct Ack {
+  ZuID id;
+  uint64_t seqNo = 0;
+  uint32_t interval = 0;
+  uint8_t status = 0;
+};
+
+struct EOS {
+  ZuID id;
+  uint64_t seqNo = 0;
+};
+
 using ErrorMessage =
   ZtString<ZtStringHeapID<"Ztc.Error.Message">>;
 

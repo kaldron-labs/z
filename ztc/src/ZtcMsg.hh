@@ -23,10 +23,32 @@
 #include <zlib/ZmRef.hh>
 
 #include <zlib/Zfb.hh>
+#include <zlib/ZfbStruct.hh>
 
 #include <zlib/ztc_msg_fbs.h>
 
 namespace Ztc {
+
+namespace fbs { Msg ZfbType_(Msg *); }
+
+inline constexpr ZuCSpan Protocol{"ztc"};
+
+// ZfbStruct saves payload fields. These two union boundaries compose already
+// serialized offsets; ZfbStruct has no built-in prebuilt union-offset field.
+inline auto saveMsg(Zfb::Builder &builder, fbs::Body type,
+    Zfb::Offset<void> body, uint64_t subID = 0,
+    Zfb::Offset<flatbuffers::String> deviceID = {}, uint64_t generation = 0)
+{
+  return fbs::CreateMsg(builder, type, body, subID, deviceID, generation);
+}
+
+inline auto saveTelemetry(Zfb::Builder &builder,
+    Zfb::Offset<flatbuffers::String> id, uint64_t seqNo,
+    fbs::TelemetryBody type, Zfb::Offset<void> value)
+{
+  return fbs::CreateTelemetry(builder, id, seqNo, type, value);
+}
+
 
 #pragma pack(push, 4)
 struct Hdr {
@@ -119,14 +141,23 @@ inline bool validTelemetry(const fbs::Telemetry *telemetry) {
   }
 }
 
+inline bool validRequest(const fbs::Request *request) {
+  if (ZuUnlikely(!request)) return false;
+  auto group = int(request->group());
+  return group >= int(fbs::Group::Heap) &&
+    group <= int(fbs::Group::Alert);
+}
+
 inline bool validMsg(const fbs::Msg *msg) {
   if (ZuUnlikely(!msg || !msg->body())) return false;
   switch (msg->body_type()) {
     case fbs::Body::Request:
-      return true;
+      return validRequest(msg->body_as_Request());
     case fbs::Body::Ack: {
       auto body = msg->body_as_Ack();
-      return body && body->id() && body->id()->size();
+      return body && body->id() && body->id()->size() &&
+        body->status() >= fbs::AckStatus::OK &&
+        body->status() <= fbs::AckStatus::Failed;
     }
     case fbs::Body::EOS: {
       auto body = msg->body_as_EOS();
@@ -143,14 +174,16 @@ inline bool validMsg(const fbs::Msg *msg) {
   }
 }
 
-inline const fbs::Msg *msg(const Hdr *hdr) {
-  if (ZuUnlikely(!hdr)) return nullptr;
-  auto data = hdr->data();
-  auto length = uint32_t(hdr->length);
-  if (ZuUnlikely((!Zfb::Verifier{data, length}.VerifyBuffer<fbs::Msg>())))
-    return nullptr;
-  auto root = Zfb::GetRoot<fbs::Msg>(data);
+inline const fbs::Msg *msg(ZuBSpan data)
+{
+  if (data.length() < sizeof(flatbuffers::uoffset_t)) return nullptr;
+  auto root = ZfbStruct::verify<fbs::Msg>(data);
   return validMsg(root) ? root : nullptr;
+}
+
+inline const fbs::Msg *msg(const Hdr *hdr)
+{
+  return hdr ? msg(ZuBSpan{hdr->data(), uint32_t(hdr->length)}) : nullptr;
 }
 
 inline const fbs::Msg *msg_(const Hdr *hdr) {

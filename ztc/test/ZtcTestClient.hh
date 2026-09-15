@@ -50,7 +50,7 @@ inline ZmRef<ZiIOBuf> request(
   data.group = uint8_t(group);
   data.subscribe = subscribe;
   auto request_ = ZfbStruct::save(fbb, data);
-  fbb.Finish(Ztc::fbs::CreateMsg(
+  fbb.Finish(Ztc::saveMsg(
     fbb, Ztc::fbs::Body::Request, request_.Union()));
   return Ztc::saveHdr(fbb);
 }

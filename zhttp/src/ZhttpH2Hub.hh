@@ -1588,7 +1588,7 @@ private:
     if (auto entry_ = txWindow_(id)) entry_->txErrorFn = ZuMv(fn);
   }
   unsigned dataMaxSizeTx_(uint32_t id) {
-    auto tx = impl_()->directTxStream();
+    auto tx = impl_()->txStream_();
     uint32_t length = m_txFrameSize;
     (void)id;
     unsigned overhead = tx.headRoom() + tx.tailRoom() + 9;
@@ -1643,7 +1643,7 @@ private:
       "H2 end queue outside Tx thread", return);
     auto entry_ = txWindow_(id);
     if (!entry_ || entry_->localEndQueued) return;
-    auto tx = impl_()->directTxStream();
+    auto tx = impl_()->txStream_();
     auto buf = tx.allocBuf_(tx.headRoom());
     if (!buf) {
       txError_(id);
@@ -1906,7 +1906,7 @@ private:
 	    frame[3] == FrameType::Continuation &&
 	    (frame[4] & Flag::EndHeaders))
 	  m_headerStream = 0;
-	auto tx = impl_()->directTxStream();
+	auto tx = impl_()->txStream_();
 	tx.sendBuf_(ZuMv(pending), false);
       } else {
 	ZmAssert(entry_->endMarker);

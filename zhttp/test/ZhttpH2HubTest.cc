@@ -95,7 +95,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
 
   FlowApp *app() const { return app_; }
   Tx txStream() { return Tx{this}; }
-  Tx directTxStream() { return Tx{this}; }
+  Tx txStream_() { return Tx{this}; }
   void h2CapacityTx_(bool value) {
     capacity = value;
     ++capacityCalls;

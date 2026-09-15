@@ -891,7 +891,7 @@ public:
   }
   auto txStream_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
-      "TLS txStream_ outside Tx thread", return TxStream_<false>{*this});
+      "TLS txStream_ outside Tx thread", return TxStream_<true>{*this});
     return TxStream_<false>{*this};
   }
 
@@ -1838,6 +1838,7 @@ private:
 public:
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
+      m_stopping = true;
       Ztc::HubMgr::del(this);
       final_();
       return true;
@@ -1879,7 +1880,7 @@ private:
     Ztc::Hub::linkAdded_(link);
   }
   void linkDeleted_(Ztc::Link *link, LinkState::T state) {
-    if (m_links.del(link)) {
+    if (m_stopping || m_links.del(link)) {
       switch (state) {
 	case LinkState::Down: Ztc::Hub::linkDownDec_(); break;
 	case LinkState::Up: Ztc::Hub::linkUpDec_(); break;
@@ -1888,6 +1889,7 @@ private:
       Ztc::Hub::linkDeleted_(link);
     }
   }
+  void stopping_() { m_stopping = true; }
 
 public:
   void linkState_(
@@ -1918,12 +1920,16 @@ protected:
     return n;
   }
   unsigned downLinks_() {
+    ZtArray<Ztc::Link *> links;
     unsigned n = 0;
-    auto i = m_links.citer();
-    while (Ztc::Link *link = i.key()) {
-      ++n;
-      link->down();
+    {
+      auto i = m_links.citer();
+      while (Ztc::Link *link = i.key()) {
+	links.push(link);
+	++n;
+      }
     }
+    for (auto link: links) link->down();
     return n;
   }
   unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
@@ -2228,6 +2234,7 @@ private:
   unsigned			m_rxThread = 0;
   unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
+  bool				m_stopping = false;
 
   // shared
   // Exceptional lock-guarded registry used by lifecycle and telemetry callers.
@@ -2537,6 +2544,7 @@ protected:
       "TLS server stop drain outside Rx thread", return);
     // Link lifetime can extend beyond disconnect completion. Count accepted
     // connections until their completion, not retained telemetry links.
+    this->stopping_();
     this->downLinks_();
     this->rxRun([this]() { stop_2(); });
   }

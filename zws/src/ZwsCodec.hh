@@ -130,6 +130,25 @@ public:
     });
   }
 
+  template <typename L>
+  void txStream_(L &&l, Opcode::T opcode = Opcode::Binary) {
+    if (!m_txEnabled.load_()) return;
+    Link *link = m_link;
+    if (!link) return;
+    bool valid = true;
+    Zhttp::Stream{*link}.txStream_([
+      this, opcode, &valid, l = ZuFwd<L>(l)](auto &lower) mutable {
+	auto tx = txLayer<!Server>(lower, opcode, m_random);
+	l(tx);
+	valid = tx.valid();
+      });
+    if (valid) return;
+    auto app = link->app();
+    app->rxRun([impl = ZmRef(this->impl())]() mutable {
+      impl->transmitFailed_();
+    });
+  }
+
   void close(uint16_t code = CloseCode::Normal, ZuBSpan reason = {}) {
     if (!m_txEnabled.load_() || reason.length() > MaxControl - 2) return;
     Link *link = m_link;

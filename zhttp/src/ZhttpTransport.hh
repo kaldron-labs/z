@@ -829,6 +829,15 @@ public:
       ZuFwd<L>(l)(tx);
     });
   }
+  template <typename L>
+  void txStream_(L &&l) {
+    m_link->streamTx_([&l](auto &tx) {
+      ZuAssert(
+	Stream_::IsTx<ZuDecay<decltype(tx)>>{},
+	"invalid Zhttp logical-stream Tx stream");
+      ZuFwd<L>(l)(tx);
+    });
+  }
 
   void end() { m_link->streamTxEnd(); }
   void reset() { m_link->streamTxReset(); }
@@ -1091,6 +1100,12 @@ public:
     auto tx = this->txStream();
     ZuFwd<L>(l)(tx);
   }
+  template <typename L>
+  void streamTx_(L &&l) {
+    if (!m_stream.tx()) return;
+    auto tx = this->txStream_();
+    ZuFwd<L>(l)(tx);
+  }
   void streamTxEnd() {
     if (!m_stream.end()) return;
     this->app()->txRun([link = ZmRef(impl())]() mutable {
@@ -1236,6 +1251,12 @@ public:
   void streamTx(L &&l) {
     if (!m_stream.tx()) return;
     auto tx = this->txStream();
+    ZuFwd<L>(l)(tx);
+  }
+  template <typename L>
+  void streamTx_(L &&l) {
+    if (!m_stream.tx()) return;
+    auto tx = this->txStream_();
     ZuFwd<L>(l)(tx);
   }
   void streamTxEnd() {
