@@ -1081,15 +1081,14 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
   using Base::context;
   using Base::saga;
-  using Type = ZuStringT<"appEnrollment.v3">;
-  enum { NSteps = 16 };
+  using Type = ZuStringT<"appEnrollment.v4">;
+  enum { NSteps = 14 };
 
   AppID		coreAppID = 0;
   AppID		appID = 0;
   String	appName;
   String	appLabel;
-  AudienceID	audienceID = 0;
-  String	audienceURI;
+  String	audience;
   SignKey	signKey;
   String	clientID;
   Bytes		secretDigest;
@@ -1115,7 +1114,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 	    new (row->ptr()) App{.id = appID, .name = appName,
 	      .label = appLabel, .state = State::Pending, .authVersion = 1,
 	      .version = 1, .created = created, .updated = created,
-	      .owner = saga->id()};
+	      .owner = saga->id(), .audience = audience};
 	    complete(row->commit());
 	  });
       } else {
@@ -1130,35 +1129,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaStep(2, zum.audience, Insert) {
-    if (!audienceID) { saga->skip(ZuMv(complete)); return {}; }
-    context->audiences->run(0, [this, complete = ZuMv(complete)]() mutable {
-      if constexpr (Fwd) {
-	ZdbRowRef<Audience> row =
-	  new ZdbRow<Audience>{context->audiences, ZdbShard{0}};
-	saga->insert(context->audiences, ZuMv(row), ZuMv(complete),
-	  [this](ZdbRow<Audience> *row, auto &&complete) mutable {
-	    new (row->ptr()) Audience{.id = audienceID, .appID = appID,
-	      .name = "default", .uri = audienceURI, .state = State::Active,
-	      .version = 1, .created = created, .updated = created,
-	      .owner = saga->id()};
-	    complete(row->commit());
-	  });
-      } else {
-	saga->findDel<0>(context->audiences, 0, ZuFwdTuple(audienceID),
-	  ZuMv(complete), [this](ZdbRow<Audience> *row,
-	      auto &&complete) mutable {
-	    if (!row || row->data().owner != saga->id()) {
-	      complete(true); return;
-	    }
-	    complete(row->commit());
-	  });
-      }
-    });
-    return {};
-  }
-
-  ZdbSagaStep(3, zum.sign_key, Insert) {
+  ZdbSagaStep(2, zum.sign_key, Insert) {
     if (!signKey.id) { saga->skip(ZuMv(complete)); return {}; }
     context->signKeys->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
@@ -1184,7 +1155,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaStep(4, zum.client, Insert) {
+  ZdbSagaStep(3, zum.client, Insert) {
     context->clients->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<Client> row =
@@ -1226,7 +1197,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaStep(5, zum.client_access, Insert) {
+  ZdbSagaStep(4, zum.client_access, Insert) {
     if (!catalogClient) { saga->skip(ZuMv(complete)); return {}; }
     context->clientAccess->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
@@ -1235,7 +1206,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 	saga->insert(context->clientAccess, ZuMv(row), ZuMv(complete),
 	  [this](ZdbRow<ClientAccess> *row, auto &&complete) mutable {
 	    new (row->ptr()) ClientAccess{.clientID = clientID,
-	      .appID = coreAppID, .audienceIDs = IDVec{CoreAudience::Admin},
+	      .appID = coreAppID,
 	      .roleIDs = IDVec{CoreRole::CatalogPublisher}, .state = State::Active,
 	      .version = 1, .created = created, .updated = created,
 	      .owner = saga->id()};
@@ -1255,7 +1226,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaStep(6, zum.admin_access, Insert) {
+  ZdbSagaStep(5, zum.admin_access, Insert) {
     if (!catalogClient) { saga->skip(ZuMv(complete)); return {}; }
     if (!catalogPublishOp || !operationQueryOp ||
 	catalogPublishOp == operationQueryOp) {
@@ -1293,7 +1264,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaStep(7, zum.auth_policy, Insert) {
+  ZdbSagaStep(6, zum.auth_policy, Insert) {
     context->authPolicies->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<AuthPolicy> row =
@@ -1339,22 +1310,20 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     return {}; \
   }
 
-  ZUM_APP_ENROLL_RELEASE(8, audience, audiences,
-    ZuFwdTuple(audienceID), !audienceID)
-  ZUM_APP_ENROLL_RELEASE(9, sign_key, signKeys,
+  ZUM_APP_ENROLL_RELEASE(7, sign_key, signKeys,
     ZuFwdTuple(signKey.id), !signKey.id)
-  ZUM_APP_ENROLL_RELEASE(10, client, clients,
+  ZUM_APP_ENROLL_RELEASE(8, client, clients,
     ZuFwdTuple(clientID), false)
-  ZUM_APP_ENROLL_RELEASE(11, client_access, clientAccess,
+  ZUM_APP_ENROLL_RELEASE(9, client_access, clientAccess,
     ZuFwdTuple(clientID, coreAppID), !catalogClient)
-  ZUM_APP_ENROLL_RELEASE(12, admin_access, adminAccess,
+  ZUM_APP_ENROLL_RELEASE(10, admin_access, adminAccess,
     ZuFwdTuple(ActorKind::Client, clientID, appID), !catalogClient)
-  ZUM_APP_ENROLL_RELEASE(13, auth_policy, authPolicies,
+  ZUM_APP_ENROLL_RELEASE(11, auth_policy, authPolicies,
     ZuFwdTuple(appID), false)
 
 #undef ZUM_APP_ENROLL_RELEASE
 
-  ZdbSagaStep(14, zum.app, Update) {
+  ZdbSagaStep(12, zum.app, Update) {
     context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(appID),
 	ZuMv(complete), [this](ZdbRow<App> *row,
@@ -1372,11 +1341,10 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
-  ZdbSagaStep(15, zum.request, Update) {
+  ZdbSagaStep(13, zum.request, Update) {
     StringVec ids;
     ids.push(String{} << appID);
     ids.push(clientID);
-    if (audienceID) ids.push(String{} << audienceID);
     requestComplete(this, ZuMv(ids), created, ZuMv(complete));
     return {};
   }
@@ -1388,18 +1356,17 @@ ZfbStruct(ZumAPI, AppEnrollment,
   (((appID),		(Ctor<1>)),	(UInt64)),
   (((appName),		(Ctor<2>)),	(String)),
   (((appLabel),		(Ctor<3>)),	(String)),
-  (((audienceID),	(Ctor<4>)),	(UInt64)),
-  (((audienceURI),	(Ctor<5>)),	(String)),
-  (((signKey),		(Ctor<6>)),	(UDT)),
-  (((clientID),		(Ctor<7>)),	(String)),
-  (((secretDigest),	(Ctor<8>)),	(Bytes)),
-  (((redirects),	(Ctor<9>)),	(StringVec)),
-  (((clientType),	(Ctor<10>, Enum<ClientType::Map>)), (Int8)),
-  (((catalogClient),	(Ctor<11>)),	(Bool)),
-  (((created),		(Ctor<12>)),	(Int64)),
-  (((catalogPublishOp), (Ctor<13>)),	(UInt32)),
-  (((operationQueryOp), (Ctor<14>)),	(UInt32)),
-  (((request), (Ctor<15>)), (UDT)));
+  (((audience),	(Ctor<4>)),	(String)),
+  (((signKey),		(Ctor<5>)),	(UDT)),
+  (((clientID),		(Ctor<6>)),	(String)),
+  (((secretDigest),	(Ctor<7>)),	(Bytes)),
+  (((redirects),	(Ctor<8>)),	(StringVec)),
+  (((clientType),	(Ctor<9>, Enum<ClientType::Map>)), (Int8)),
+  (((catalogClient),	(Ctor<10>)),	(Bool)),
+  (((created),		(Ctor<11>)),	(Int64)),
+  (((catalogPublishOp), (Ctor<12>)),	(UInt32)),
+  (((operationQueryOp), (Ctor<13>)),	(UInt32)),
+  (((request), (Ctor<14>)), (UDT)));
 
 struct ExternalProjection : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -1552,7 +1519,6 @@ struct AppActionAdd : public ZdbSagaBase<DBContext> {
   uint64_t	oldAuthVersion = 0;
   int64_t	oldUpdated = 0;
   IdemRequest request;
-
 
   ZdbSagaStep(0, zum.request, Insert) {
     requestInsert<Fwd>(this, ZuMv(complete));
@@ -2394,89 +2360,6 @@ ZfbStruct(ZumAPI, CredEdit,
   (((stateOnly), (Ctor<5>)), (Bool)),
   (((state), (Ctor<6>, Enum<State::Map>)), (Int8)));
 
-struct AudienceEdit : public ZdbSagaBase<DBContext> {
-  using Base = ZdbSagaBase<DBContext>;
-  using Base::context;
-  using Base::saga;
-  using Type = ZuStringT<"audienceEdit.v1">;
-  enum { NSteps = 6 };
-
-  App app;
-  Audience before;
-  String ifMatch;
-  int64_t updated = 0;
-  IdemRequest request;
-  State::T state = State::Pending;
-  String name;
-  bool stateOnly = false;
-  unsigned error = 0;
-
-  bool unchanged() const { return stateOnly && state == before.state; }
-  ZumAPI unsigned appError(const App &) const;
-  ZumAPI unsigned audienceError(const Audience &) const;
-
-  ZdbSagaStep(0, zum.request, Insert) {
-    requestInsert<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(1, zum.app, Update) {
-    appEditStart<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(2, zum.audience, Update) {
-    if constexpr (!Fwd)
-      if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->audiences->run(0, [this, complete = ZuMv(complete)]() mutable {
-      context->audiences->find<0>(0, ZuFwdTuple(before.id),
-	[this, complete = ZuMv(complete)](ZdbRowRef<Audience> row) mutable {
-	  if (!row) { error = 404; complete(!Fwd); return; }
-	  if (unchanged()) {
-	    error = audienceError(row->data());
-	    if (error) complete(false);
-	    else saga->skip(ZuMv(complete));
-	    return;
-	  }
-	  saga->update(context->audiences, ZuMv(row), ZuMv(complete),
-	    [this](ZdbRow<Audience> *row, auto &&complete) mutable {
-	      if constexpr (Fwd) {
-		if (auto code = audienceError(row->data())) {
-		  error = code; complete(false); return;
-		}
-		if (stateOnly) row->data().state = state;
-		else row->data().name = name;
-		row->data().version = before.version + 1;
-		row->data().updated = updated;
-		row->data().owner = saga->id();
-	      } else row->data() = before;
-	      complete(row->commit());
-	    });
-	});
-    });
-    return {};
-  }
-  ZdbSagaStep(3, zum.audience, Update) {
-    appEditRelease<Fwd>(this, context->audiences, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(4, zum.app, Update) {
-    appEditPublish<Fwd>(this, stateOnly, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(5, zum.request, Update) {
-    requestComplete(this, {}, updated, ZuMv(complete));
-    return {};
-  }
-};
-ZfbStruct(ZumAPI, AudienceEdit,
-  (((app), (Ctor<0>)), (UDT)),
-  (((before), (Ctor<1>)), (UDT)),
-  (((ifMatch), (Ctor<2>)), (String)),
-  (((updated), (Ctor<3>)), (Int64)),
-  (((request), (Ctor<4>)), (UDT)),
-  (((state), (Ctor<5>, Enum<State::Map>)), (Int8)),
-  (((name), (Ctor<6>)), (String)),
-  (((stateOnly), (Ctor<7>)), (Bool)));
-
 struct ProviderEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
   using Base::context;
@@ -3075,59 +2958,6 @@ ZfbStruct(ZumAPI, ProviderAdd,
   (((values), (Ctor<1>)), (UDT)),
   (((updated), (Ctor<2>)), (Int64)),
   (((request), (Ctor<3>)), (UDT)));
-
-struct AudienceAdd : public ZdbSagaBase<DBContext> {
-  using Base = ZdbSagaBase<DBContext>;
-  using Base::context;
-  using Base::saga;
-  using Type = ZuStringT<"audienceAdd.v1">;
-  enum { NSteps = 6 };
-
-  App app;
-  Audience before;
-  Audience values;
-  int64_t updated = 0;
-  IdemRequest request;
-  unsigned error = 0;
-
-  bool unchanged() const { return false; }
-  ZumAPI unsigned appError(const App &) const;
-  ZumAPI void validate(Zdb_::SagaCompleteFn);
-  ZumAPI Audience result() const;
-
-  ZdbSagaStep(0, zum.request, Insert) {
-    requestInsert<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(1, zum.app, Update) {
-    appEditStart<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(2, zum.audience, Insert) {
-    recordPut<Fwd, true>(this, context->audiences, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(3, zum.audience, Update) {
-    appEditRelease<Fwd>(this, context->audiences, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(4, zum.app, Update) {
-    appEditPublish<Fwd>(this, true, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(5, zum.request, Update) {
-    StringVec ids;
-    ids.push(String{} << values.id);
-    requestComplete(this, ZuMv(ids), updated, ZuMv(complete));
-    return {};
-  }
-};
-ZfbStruct(ZumAPI, AudienceAdd,
-  (((app), (Ctor<0>)), (UDT)),
-  (((before), (Ctor<1>)), (UDT)),
-  (((values), (Ctor<2>)), (UDT)),
-  (((updated), (Ctor<3>)), (Int64)),
-  (((request), (Ctor<4>)), (UDT)));
 
 struct RoleAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;

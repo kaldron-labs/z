@@ -374,8 +374,8 @@ bool authorizeClient(const Client &client, const AuthorizeParams &params)
 
 bool authorizationBegin(
     Ztls::Random &rng, Grant &grant, ZuCSpan issuer,
-    const AuthorizeParams &params, const ScopeSelection &selection,
-    bool passkey, ZuBSpan bindingDigest, uint64_t authVersion,
+    const App &app, const AuthorizeParams &params, const ScopeSelection &selection,
+    bool passkey, ZuBSpan bindingDigest,
     int64_t created, int64_t expires)
 {
   enum { ChallengeSize = 32 }; // WebAuthn/PKCE SHA-256 challenge entropy
@@ -387,10 +387,9 @@ bool authorizationBegin(
   Grant next;
   next.id = Bytes{ZuBSpan{random.data(), OpaqueIDSize}};
   next.issuer = issuer;
-  next.appID = selection.appID;
-  next.audienceID = selection.audienceID;
+  next.appID = app.id;
   next.clientID = params.clientID;
-  next.audience = selection.audience;
+  next.audience = app.audience;
   next.redirectURI = params.redirectURI;
   next.scope = selection.scope;
   next.requestedRoleIDs = selection.roleIDs;
@@ -415,7 +414,7 @@ bool authorizationBegin(
     next.maxAge = maxAge;
     next.maxAgePresent = true;
   }
-  next.authVersion = authVersion;
+  next.authVersion = app.authVersion;
   next.created = created;
   next.expires = expires;
   next.kind = GrantKind::Ceremony;

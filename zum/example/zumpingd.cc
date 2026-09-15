@@ -67,7 +67,6 @@ struct Config {
   ZumConfig zum;
   String caPath;
   String audience;
-  uint64_t audienceID = 0;
   String addr{"127.0.0.1"};
   uint32_t port = 8080;
 };
@@ -75,7 +74,6 @@ ZfStruct(, (Config, Cf),
   (((zum), (Required)), (UDT)),
   (((caPath)), (String)),
   (((audience), (Required)), (String)),
-  (((audienceID), (Required)), (UInt64)),
   (((addr)), (String, "127.0.0.1")),
   (((port), ((Range<1, 65535>))), (UInt32, 8080)));
 
@@ -96,7 +94,7 @@ static bool loadConfig(ZuCSpan path, Config &config)
   return config.zum.issuerURL && config.zum.managementIssuerURL &&
     config.zum.managementURL &&
     config.zum.clientID && config.audience &&
-    config.audienceID && (config.addr == "127.0.0.1" || config.addr == "::1");
+    (config.addr == "127.0.0.1" || config.addr == "::1");
 }
 
 static Zum::ServiceManifest manifest()
@@ -108,7 +106,7 @@ static Zum::ServiceManifest manifest()
 }
 
 struct RawData : public ZumObject {
-  ZuSpan<uint8_t> data;
+  Zum::String data;
   RawData &operator =(ZuSpan<uint8_t> value) { data = value; return *this; }
 };
 struct Reply : public ZumObject { String body; String location; };
@@ -225,7 +223,7 @@ public:
       service.receiveSET(Zum::ServiceSETRequest{
         .authorization = request.authorization,
         .contentType = request.contentType,
-        .body = request.object->data},
+        .body = ZuMv(request.object->data)},
         [hold = ZmRef<Link>{link}](int error) mutable {
           unsigned status;
           switch (error) {

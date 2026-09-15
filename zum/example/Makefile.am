@@ -30,5 +30,5 @@ zumping_LDADD = $(top_builddir)/zrest/src/libZrest.la \
 noinst_PROGRAMS = zumpingd zumping
 zumpingd_SOURCES = zumpingd.cc pinghttp.cc
 zumping_SOURCES = zumping.cc
-noinst_HEADERS = pinghttp.hh
+noinst_HEADERS = pinghttp.hh native.hh
 EXTRA_DIST = zumping.cf zumpingd.cf README.md

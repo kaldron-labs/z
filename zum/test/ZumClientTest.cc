@@ -121,6 +121,7 @@ static void serviceToken()
   ZuCheck(scheduler.start());
   unsigned tokens = 0, calls = 0, introspections = 0;
   bool introspectionAuth = false;
+  Zum::String introspectionContext;
   bool holdRenewal = false;
   Zum::ServiceHTTPDoneFn renewal;
   ZmSemaphore renewalHeld, operationDone;
@@ -139,7 +140,7 @@ static void serviceToken()
       .callbackAuth = "Bearer callback",
       .transmitterIssuer = "https://issuer/oauth2/8", .audience = "ping"}};
   Zum::ServiceHTTPFn http{[&token, &jwks, &tokens, &calls, &introspections,
-      &introspectionAuth,
+      &introspectionAuth, &introspectionContext,
       &holdRenewal, &renewal, &renewalHeld](
       Zum::ServiceHTTPRequest request, Zum::ServiceHTTPDoneFn complete) {
     if (request.url == "https://issuer/oauth2/7/v1/token") {
@@ -187,7 +188,7 @@ static void serviceToken()
         "\"client_id\":\"service\",\"zum_app_id\":\"9\","
         "\"jti\":\"introspected\",\"scope\":\"ping\","
         "\"actions\":[\"ping\"],\"exp\":"};
-      body << (Zm::now().sec() + 300) << '}';
+      body << (Zm::now().sec() + 300) << introspectionContext << '}';
       complete(Zum::ServiceHTTPResponse{200, ZuMv(body)});
     } else if (request.url == "https://issuer/admin/apps/9/catalog") {
       ++calls;
@@ -222,7 +223,7 @@ static void serviceToken()
         Zum::ServicePrincipal principal) mutable {
       introspectOK = error == Zum::ServiceError::OK &&
         principal.tokenID.issuer == "https://issuer/oauth2/9" &&
-        principal.tokenID.jti == "introspected";
+        principal.tokenID.jti == "introspected" && !principal.authMethod;
       wake(error);
     });
   }) == Zum::ServiceError::OK);
@@ -236,6 +237,24 @@ static void serviceToken()
   }) == Zum::ServiceError::Unauthorized);
   ZuCheck(introspections == 1);
   unsigned refreshRevoked = 0;
+  auto checkContext = [&service, &introspectionContext](
+      ZuCSpan context, ZuCSpan expected) {
+    introspectionContext = context;
+    Zum::String unknown = encode(ZuBSpan{
+      "{\"alg\":\"ES256\",\"typ\":\"at+jwt\",\"kid\":\"unknown\"}"});
+    unknown << '.' << encode(ZuBSpan{"{}"}) << ".invalid";
+    return ZmBlock<bool>{}([&service, &unknown, expected](auto wake) mutable {
+      service.verify(ZuMv(unknown), [wake = ZuMv(wake), expected](int error,
+          Zum::ServicePrincipal principal) mutable {
+        wake(error == Zum::ServiceError::OK &&
+          (expected ? principal.authMethod == expected : !principal.authMethod));
+      });
+    });
+  };
+  ZuCheck(checkContext(",\"grant_type\":\"client_credentials\"", "client_credentials"));
+  ZuCheck(checkContext(",\"amr\":[\"passkey\"]", "passkey"));
+  ZuCheck(checkContext(",\"amr\":[\"oidc\"]", "oidc"));
+  ZuCheck(checkContext(",\"amr\":[\"unknown\"]", ""));
   service.setRefreshRevocationFn([&refreshRevoked](Zum::RefreshID refreshID,
       int64_t expires) {
     ++refreshRevoked;

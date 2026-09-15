@@ -37,6 +37,18 @@ ZuDerive(ServiceReadyVec, (ZtArray<ServiceReadyFn,
 ZuDerive(ServiceDoneVec, (ZtArray<ServiceDoneFn,
   ZtArrayHeapID<"Zum.Service.DoneVec">>));
 
+template <typename Vec, typename Value>
+static void completeAll(Vec &pending, Value value)
+{
+  auto waiters = ZuMv(pending);
+  pending.null();
+  // ZmFn has POD array traits; consume each capture before discarding the array.
+  for (auto &waiter: waiters) {
+    auto fn = ZuMv(waiter);
+    fn(value);
+  }
+}
+
 struct ServiceKey {
   String id;
   Bytes publicKey;
@@ -124,6 +136,8 @@ struct Introspection {
   StringVec actions;
   AppID appID = 0;
   int64_t expires = 0;
+  StringVec amr;
+  String grantType;
 };
 ZfStruct(, (Introspection, JSON),
   (((active),		(Required)),				(Bool)),
@@ -135,7 +149,9 @@ ZfStruct(, (Introspection, JSON),
   (((scope),		(JSON::Opt)),				(String)),
   (((actions),		(JSON::Opt)),				(StringVec)),
   (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, JSON::Opt)), (UInt64)),
-  (((expires),		(JSON::ID<"exp">, JSON::Opt)),	(Int64)));
+  (((expires),		(JSON::ID<"exp">, JSON::Opt)),	(Int64)),
+  (((amr),		(JSON::Opt)),			(StringVec)),
+  (((grantType),		(JSON::ID<"grant_type">, JSON::Opt)), (String)));
 
 struct TokenWire {
   String accessToken;
@@ -687,17 +703,13 @@ struct ServiceState : public ZumObject {
     if (keysRefreshing) return;
     int64_t now = Zm::now().sec();
     if (keysLoaded && now - keysLoaded < config.jwksRefresh) {
-      auto waiters = ZuMv(keyWaiters);
-      keyWaiters.null();
-      for (auto &waiter: waiters) waiter(false);
+      completeAll(keyWaiters, false);
       return;
     }
     keysRefreshing = true;
     keys_(false, [self = ZmRef<ServiceState>{this}](bool ok) mutable {
       self->keysRefreshing = false;
-      auto waiters = ZuMv(self->keyWaiters);
-      self->keyWaiters.null();
-      for (auto &waiter: waiters) waiter(ok);
+      completeAll(self->keyWaiters, ok);
     });
   }
 
@@ -722,9 +734,7 @@ struct ServiceState : public ZumObject {
   void renewed_(bool ok)
   {
     renewing = false;
-    auto waiters = ZuMv(tokenWaiters);
-    tokenWaiters.null();
-    for (auto &waiter: waiters) waiter(ok);
+    completeAll(tokenWaiters, ok);
   }
 
   void token_(ServiceReadyFn complete)
@@ -782,11 +792,18 @@ struct ServiceState : public ZumObject {
         return;
       }
       TokenID tokenID{.issuer = ZuMv(value.issuer), .jti = ZuMv(value.jti)};
+      String authMethod;
+      if (value.amr.length() == 1 &&
+          (value.amr[0] == "passkey" || value.amr[0] == "oidc"))
+        authMethod = ZuMv(value.amr[0]);
+      else if (!value.amr && value.grantType == "client_credentials")
+        authMethod = "client_credentials";
       if (token.mutable_()) ZuClear(token.data(), token.length());
       complete(ServiceError::OK, ServicePrincipal{
         .tokenID = ZuMv(tokenID), .subject = ZuMv(value.subject),
         .appID = self->appID, .audience = self->config.audience,
-        .actions = ZuMv(value.actions), .expires = value.expires});
+        .actions = ZuMv(value.actions), .expires = value.expires,
+        .authMethod = ZuMv(authMethod)});
     });
   }
 
@@ -805,7 +822,9 @@ struct ServiceState : public ZumObject {
         .tokenID = ZuMv(principal.tokenID),
         .subject = ZuMv(principal.subject), .appID = principal.appID,
         .audience = config.audience, .actions = ZuMv(principal.actions),
-        .expires = principal.expires});
+        .expires = principal.expires,
+        .authMethod = principal.authMethod ? ZuMv(principal.authMethod) :
+          String{"client_credentials"}});
       return;
     }
     JWTHeader header;
@@ -829,7 +848,9 @@ struct ServiceState : public ZumObject {
           .tokenID = ZuMv(principal.tokenID),
           .subject = ZuMv(principal.subject), .appID = principal.appID,
           .audience = self->config.audience,
-          .actions = ZuMv(principal.actions), .expires = principal.expires});
+          .actions = ZuMv(principal.actions), .expires = principal.expires,
+          .authMethod = principal.authMethod ? ZuMv(principal.authMethod) :
+            String{"client_credentials"}});
         return;
       }
       JWTHeader refreshed;
@@ -885,9 +906,7 @@ struct ServiceState : public ZumObject {
     if (state != Stopping || inflight) return;
     state = Stopped;
     clear_();
-    auto waiters = ZuMv(stopWaiters);
-    stopWaiters.null();
-    for (auto &waiter: waiters) waiter(ServiceError::OK);
+    completeAll(stopWaiters, ServiceError::OK);
   }
 
   void clear_()

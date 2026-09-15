@@ -216,12 +216,17 @@ private:
 
   void seedApp_()
   {
+    String audience = m_config.issuer;
+    if (audience[audience.length() - 1] == '/')
+      audience.length(audience.length() - 1);
+    audience << "/admin";
     auto now = m_config.now;
     ensure_(m_context->apps, App{
       .id = m_issuer.coreAppID, .name = "zum", .label = "Zum",
       .state = State::Active, .nextActionID = CoreAction::N,
       .authVersion = 1, .catalogRevision = 1,
-      .created = now, .updated = now}, &ServerBootstrap_::seedActions_);
+      .created = now, .updated = now, .audience = ZuMv(audience)},
+      &ServerBootstrap_::seedActions_);
   }
 
   void seedActions_(bool ok)
@@ -269,22 +274,7 @@ private:
       .name = "zum.catalog", .label = "Zum catalog publisher",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
-      .created = now, .updated = now}, &ServerBootstrap_::seedAudience_);
-  }
-
-  void seedAudience_(bool ok)
-  {
-    if (!ok) { finish_(false); return; }
-    m_adminURI = m_config.issuer;
-    if (m_adminURI[m_adminURI.length() - 1] == '/')
-      m_adminURI.length(m_adminURI.length() - 1);
-    m_adminURI << "/admin";
-    auto now = m_config.now;
-    ensure_(m_context->audiences, Audience{
-      .id = CoreAudience::Admin, .appID = m_issuer.coreAppID,
-      .name = "admin", .uri = m_adminURI,
-      .state = State::Active, .created = now, .updated = now},
-      &ServerBootstrap_::seedClient_);
+      .created = now, .updated = now}, &ServerBootstrap_::seedClient_);
   }
 
   void seedClient_(bool ok)
@@ -312,7 +302,6 @@ private:
     auto now = m_config.now;
     ensure_(m_context->clientAccess, ClientAccess{
       .clientID = m_issuer.initialClientID, .appID = m_issuer.coreAppID,
-      .audienceIDs = IDVec{CoreAudience::Admin},
       .roleIDs = IDVec{CoreRole::Superuser, CoreRole::CatalogPublisher},
       .state = State::Active,
       .created = now, .updated = now}, &ServerBootstrap_::seedUser_);
@@ -524,7 +513,6 @@ private:
   ServerBootstrapResult m_result;
   Issuer		m_issuer;
   Bytes		m_check;
-  String		m_adminURI;
   ActionID		m_actionID = 0;
   bool			m_done = false;
 };

@@ -9,8 +9,6 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuCmp.hh>
 
-#include <zlib/ZmHash.hh>
-
 namespace Zum {
 
 ZtEnumImplNS(MgmtOp);
@@ -53,13 +51,6 @@ static constexpr ZuArray<MgmtRoute, MgmtOp::N> routes{
   ZUM_ROUTE(roleState, PUT,
     "/admin/apps/{appID}/roles/{roleID}/state"),
   ZUM_ROUTE(roleDelete, DELETE, "/admin/apps/{appID}/roles/{roleID}"),
-  {}, {}, {}, {}, // Retired scope operation IDs have no route.
-  ZUM_ROUTE(audienceQuery, GET, "/admin/audiences"),
-  ZUM_ROUTE(audienceAdd, POST, "/admin/audiences"),
-  ZUM_ROUTE(audienceUpdate, PATCH,
-    "/admin/audiences/{audienceID}"),
-  ZUM_ROUTE(audienceState, PUT,
-    "/admin/audiences/{audienceID}/state"),
   ZUM_ROUTE(clientQuery, GET, "/admin/clients"),
   ZUM_ROUTE(clientAdd, POST, "/admin/clients"),
   ZUM_ROUTE(clientUpdate, PATCH, "/admin/clients/{clientID}"),
@@ -103,22 +94,12 @@ static constexpr ZuArray<MgmtRoute, MgmtOp::N> routes{
   ZUM_ROUTE(signKeyAdd, POST, "/admin/signing-keys"),
   ZUM_ROUTE(signKeyRetire, POST,
     "/admin/signing-keys/{keyID}/retire"),
-  {}, {}, // Retired operation IDs have no route.
   ZUM_ROUTE(catalogPublish, PUT, "/admin/apps/{appID}/catalog")
 };
 
 #undef ZUM_ROUTE
 
 ZuAssert(routes.length() == MgmtOp::N);
-
-using MgmtEdgeKey = ZuTuple<unsigned, ZuCSpan>;
-using MgmtTerminalKey = ZuTuple<unsigned, uint8_t>;
-using MgmtEdgeMap = ZmHashKV<MgmtEdgeKey, unsigned,
-  ZmHashHeapID<"Zum.Mgmt.Edges">>;
-using MgmtNodeMap = ZmHashKV<unsigned, unsigned,
-  ZmHashHeapID<"Zum.Mgmt.Nodes">>;
-using MgmtTerminalMap = ZmHashKV<MgmtTerminalKey, int,
-  ZmHashHeapID<"Zum.Mgmt.Terminals">>;
 
 static bool pathComponent(ZuCSpan &path, ZuCSpan &component)
 {
@@ -136,94 +117,33 @@ static bool pathComponent(ZuCSpan &path, ZuCSpan &component)
   return bool(component);
 }
 
-class MgmtRouter {
-public:
-  MgmtRouter()
-  {
-    for (const auto &route: routes) {
-      if (!route.path) continue;
-      ZuCSpan path{route.path};
-      ZuCSpan component;
-      ZmAssert(pathComponent(path, component) && component == "admin");
-      unsigned node = 0;
-      while (path) {
-	ZmAssert(pathComponent(path, component));
-	bool wildcard = component.length() > 2 && component[0] == '{' &&
-	  component[component.length() - 1] == '}';
-	unsigned next;
-	if (wildcard) {
-	  next = m_wildcards.findVal(node);
-	  if (ZuCmp<unsigned>::null(next)) {
-	    next = m_nodes++;
-	    m_wildcards.add(node, next);
-	  }
-	} else {
-	  auto key = ZuFwdTuple(node, component);
-	  next = m_edges.findVal(key);
-	  if (ZuCmp<unsigned>::null(next)) {
-	    next = m_nodes++;
-	    m_edges.add(ZuMv(key), next);
-	  }
-	}
-	node = next;
-      }
-      auto key = ZuFwdTuple(node, uint8_t(route.method));
-      ZmAssert(ZuCmp<int>::null(m_terminals.findVal(key)));
-      m_terminals.add(ZuMv(key), route.op);
-    }
-  }
-
-  unsigned node(ZuCSpan path) const
-  {
-    auto query = path.find<"?">();
-    if (query >= 0) path.trunc(unsigned(query));
-    unsigned node = 0;
-    ZuCSpan component;
-    while (path) {
-      if (!pathComponent(path, component)) return UINT_MAX;
-      if (!node && component == "admin") continue;
-      unsigned next = m_edges.findVal(ZuFwdTuple(node, component));
-      if (ZuCmp<unsigned>::null(next)) next = m_wildcards.findVal(node);
-      if (ZuCmp<unsigned>::null(next)) return UINT_MAX;
-      node = next;
-    }
-    return node;
-  }
-
-  int operation(Zhttp::Method::T method, ZuCSpan path) const
-  {
-    if (unsigned(method) >= Zhttp::Method::N) return -1;
-    unsigned node_ = node(path);
-    if (node_ == UINT_MAX) return -1;
-    int op = m_terminals.findVal(ZuFwdTuple(node_, uint8_t(method)));
-    return ZuCmp<int>::null(op) ? -1 : op;
-  }
-
-  MgmtString allow(ZuCSpan path) const
-  {
-    unsigned node_ = node(path);
-    if (node_ == UINT_MAX) return {};
-    MgmtString allow;
-    for (unsigned method = 0; method < Zhttp::Method::N; ++method) {
-      int op = m_terminals.findVal(ZuFwdTuple(node_, uint8_t(method)));
-      if (ZuCmp<int>::null(op)) continue;
-      if (allow) allow << ", ";
-      allow << Zhttp::Method::name(method);
-    }
-    return allow;
-  }
-
-private:
-  MgmtEdgeMap		m_edges;
-  MgmtNodeMap		m_wildcards;
-  MgmtTerminalMap	m_terminals;
-  unsigned		m_nodes = 1;
-};
-
-static const MgmtRouter &managementRouter()
+static bool routeMatches(const MgmtRoute &route, ZuCSpan requestPath)
 {
-  static const MgmtRouter router;
-  return router;
+  ZuCSpan routePath{route.path};
+  auto query = requestPath.find<"?">();
+  if (query >= 0) requestPath.trunc(unsigned(query));
+  ZuCSpan routeComponent;
+  ZuCSpan requestComponent;
+  if (!pathComponent(routePath, routeComponent) ||
+      routeComponent != "admin") return false;
+
+  // The management API accepts both /admin/... and /... paths for the
+  // existing daemon clients. The route catalog keeps the canonical form.
+  if (requestPath) {
+    auto saved = requestPath;
+    if (!pathComponent(saved, requestComponent)) return false;
+    if (requestComponent == "admin") requestPath = saved;
+  }
+
+  while (routePath || requestPath) {
+    if (!pathComponent(routePath, routeComponent) ||
+        !pathComponent(requestPath, requestComponent)) return false;
+    bool wildcard = routeComponent.length() > 2 &&
+      routeComponent[0] == '{' &&
+      routeComponent[routeComponent.length() - 1] == '}';
+    if (!wildcard && routeComponent != requestComponent) return false;
+  }
+  return true;
 }
 
 const MgmtRoute *managementRoute(int op)
@@ -234,12 +154,32 @@ const MgmtRoute *managementRoute(int op)
 
 int managementOperation(Zhttp::Method::T method, ZuCSpan path)
 {
-  return managementRouter().operation(method, path);
+  if (unsigned(method) >= Zhttp::Method::N) return -1;
+  for (const auto &route: routes)
+    if (route.path && route.method == method && routeMatches(route, path))
+      return route.op;
+  return -1;
 }
 
 MgmtString managementAllow(ZuCSpan path)
 {
-  return managementRouter().allow(path);
+  MgmtString allow;
+  for (const auto &route: routes) {
+    if (!route.path || !routeMatches(route, path)) continue;
+    auto method = route.method;
+    bool present = false;
+    for (const auto &prior: routes) {
+      if (prior.path && prior.method == method &&
+	  routeMatches(prior, path) && prior.op < route.op) {
+	present = true;
+	break;
+      }
+    }
+    if (present) continue;
+    if (allow) allow << ", ";
+    allow << Zhttp::Method::name(method);
+  }
+  return allow;
 }
 
 bool managementNeedsIdempotency(int op)
@@ -252,7 +192,6 @@ bool managementNeedsIdempotency(int op)
     case MgmtOp::actionAdd:
     case MgmtOp::roleAdd:
     case MgmtOp::roleDelete:
-    case MgmtOp::audienceAdd:
     case MgmtOp::clientAdd:
     case MgmtOp::clientSecretRotate:
     case MgmtOp::providerAdd:

@@ -64,7 +64,7 @@ ZfStruct(, (CatalogData, JSON),
   (((actions),		(Required)),	(UDT)),
   (((roles),		(Required)),	(UDT)));
 
-// One operation per remote management call. Append entries: these values
+// One operation per remote management call. These values
 // are the built-in action IDs as well as management request identities.
 // Query accepts an exact key or bounded pagination; there is no separate
 // Read permission. Lifecycle changes use named operations, not row writes.
@@ -76,8 +76,6 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   membershipQuery, membershipAdd, membershipRoles, membershipState,
   actionQuery, actionAdd, actionState,
   roleQuery, roleAdd, roleUpdate, roleActions, roleState, roleDelete,
-  retiredScopeQuery, retiredScopeAdd, retiredScopeRoles, retiredScopeState,
-  audienceQuery, audienceAdd, audienceUpdate, audienceState,
   clientQuery, clientAdd, clientUpdate, clientState, clientSecretRotate,
   clientAccessQuery, clientAccessSet, clientAccessState,
   adminAccessQuery, adminAccessSet, adminAccessState,
@@ -89,16 +87,12 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   consentQuery, consentRevoke,
   grantQuery, grantRevoke, grantCleanup,
   signKeyQuery, signKeyAdd, signKeyRetire,
-  retired67, retired68, // Retired IDs; never reuse these positions.
   catalogPublish);
 
 // Invalid request IDs must not resolve to a usable permission name.
 inline MgmtString managementAction(int op)
 {
-  if (unsigned(op) >= MgmtOp::N ||
-      op == MgmtOp::retiredScopeQuery || op == MgmtOp::retiredScopeAdd ||
-      op == MgmtOp::retiredScopeRoles || op == MgmtOp::retiredScopeState ||
-      op == MgmtOp::retired67 || op == MgmtOp::retired68) return {};
+  if (unsigned(op) >= MgmtOp::N) return {};
   MgmtString name{"Zum."};
   name << MgmtOp::name(op);
   return name;

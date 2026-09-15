@@ -34,7 +34,6 @@ namespace AuthorityScanLimit {
   };
 }
 
-ZuDerive(ScopeVec, (ZtArray<ScopeAuth, VecHeap>));
 ZuDerive(RoleVec, (ZtArray<Role, VecHeap>));
 ZuDerive(ActionVec, (ZtArray<Action, VecHeap>));
 
@@ -45,7 +44,7 @@ struct AuthorityData {
   Cred		cred;
   Client	client;
   ClientAccess	access;
-  ScopeVec	scopes;
+  RoleVec	scopes;
   RoleVec	roles;
   ActionVec	actionRecords;
   ScopeSelection selection;
@@ -58,7 +57,7 @@ struct AuthorityData {
 ZuDerive(AuthorityFn, (ZmFn<void(int, AuthorityData),
   ZmFnHeapID<"Zum.AuthorityFn">>));
 ZuDerive(ClientScopesFn,
-  (ZmFn<void(int, App, Client, ClientAccess, ScopeVec),
+  (ZmFn<void(int, App, Client, ClientAccess, RoleVec),
   ZmFnHeapID<"Zum.ClientScopesFn">>));
 ZumExtern void clientScopes(DBContext *, Client, ClientScopesFn);
 

@@ -44,7 +44,7 @@ def sign_catalog(contents, revision):
     return {"catalog": contents, "revision": str(revision), "digest": digest}
 
 
-def catalog_manifest(revision, audience_id=None, empty=False):
+def catalog_manifest(revision, empty=False):
     contents = {
         "actions": [{"name": "catalog.probe", "label": "Catalog é probe / \"\\\n\u0001 🎵"}],
         "roles": [{"name": "catalog.probe", "actions": ["catalog.probe"]}]}
@@ -536,9 +536,7 @@ class Fixture:
         catalog, _ = self.request("GET", "/admin/operations?limit=1000", token=token)
         operations = catalog["items"]
         self.operations = operations
-        assert len(operations) == 64 and "nextCursor" not in catalog
-        assert {27, 28, 29, 30, 67, 68}.isdisjoint(
-            item["id"] for item in operations)
+        assert len(operations) == 60 and "nextCursor" not in catalog
         assert len({item["id"] for item in operations}) == len(operations)
         assert len({item["name"] for item in operations}) == len(operations)
         issuer, _ = self.request("GET", "/admin/issuer", token=token)
@@ -672,13 +670,6 @@ class Fixture:
         self.request("DELETE", mapping_path, token=token,
                      headers={"If-Match": mapping["etag"]})
         assert self.request("GET", mappings_query, token=token)[0]["items"] == mappings[1:]
-        audience = create("/admin/audiences", {
-            "appID": app_id, "name": "lifecycle", "uri": "https://lifecycle.example/api"})
-        audience_path = "/admin/audiences/" + audience["id"]
-        audience_query = "/admin/audiences?id=" + audience["id"]
-        edit(audience_query, audience_path, "PATCH", {"name": "renamed lifecycle"})
-        edit(audience_query, audience_path + "/state", "PUT", {"state": "Disabled"})
-        edit(audience_query, audience_path + "/state", "PUT", {"state": "Active"})
         role = create(prefix + "/roles", {"name": "lifecycle", "label": "Lifecycle"})
         role_query = prefix + "/roles?id=" + role["id"]
         role_path = prefix + "/roles/" + role["id"]
@@ -810,7 +801,7 @@ class Fixture:
     def numeric_filters(self, token, app_id, action_id):
         prefix = "/admin/apps/" + app_id
         filters = [("/admin/" + collection, "id", {})
-                   for collection in ("apps", "users", "audiences", "providers")]
+                   for collection in ("apps", "users", "providers")]
         filters += [("/admin/auth-policies", "appID", {}),
                     (prefix + "/memberships", "userID", {}),
                     (prefix + "/actions", "id", {}),
@@ -1050,6 +1041,11 @@ class Fixture:
         return refreshed if return_tokens else refreshed["access_token"]
 
     def session_lifecycle(self, client_id, app_id):
+        cookies = copy.deepcopy(self.cookies)
+        self.cookies = SimpleCookie()
+        native = self.login(client_id, "ping", app_id, return_tokens=True)
+        self.cookies = cookies
+
         def silent(client, scope, issuer_app, error=None, max_age=None):
             verifier = b64(secrets.token_bytes(32))
             state = b64(secrets.token_bytes(24))
@@ -1070,7 +1066,7 @@ class Fixture:
             if error:
                 assert result.get("error") == [error] and "code" not in result
                 return
-            assert "code" in result and "error" not in result
+            assert "code" in result and "error" not in result, result.get("error")
             return self.request("POST", self.oauth(issuer_app, "token"), {
                 "grant_type": "authorization_code", "client_id": client,
                 "redirect_uri": redirect, "code": result["code"][0],
@@ -1079,9 +1075,11 @@ class Fixture:
         # The current session was authenticated through the confidential app
         # client. Reuse it for another client of the same application, but not
         # across application-scoped issuer boundaries.
-        native = silent(client_id, "ping", app_id)
-        silent(client_id, "offline_access ping", app_id, "consent_required")
+        ordinary = silent(client_id, "ping", app_id)
+        assert "refresh_token" not in ordinary
         session_cookies = SimpleCookie(self.cookies.output(header="", sep=";"))
+        silent(client_id, "offline_access ping", app_id, "consent_required")
+        self.cookies = copy.deepcopy(session_cookies)
         silent("zum-admin", "zum.admin", self.core_app_id, "login_required")
         self.cookies = SimpleCookie()
         admin = self.login(return_tokens=True)
@@ -1141,31 +1139,33 @@ class Fixture:
         page, headers = self.request("GET", path, status=(200, 302))
         if "location" in headers:
             return headers["location"]
-        match = re.search(r"const id='([^']+)',o=(.*?),loginPath='", page)
-        assert match, "authorization did not return a passkey page"
-        ceremony = match[1]
-        _, headers = self.request("POST", prefix + "login",
-                                  {"id": ceremony, "login": login},
-                                  form=True, status=(200, 302))
-        if "location" in headers:
-            assert self.idp is not None, "no upstream browser fixture configured"
-            callback = urlsplit(self.idp.authorize(headers["location"]))
-            issuer_app = route[1].rsplit("/", 1)[1]
-            if self.core_app_id and issuer_app != self.core_app_id:
-                cookies = copy.deepcopy(self.cookies)
-                denied, _ = self.request(
-                    "GET", self.oauth(self.core_app_id, "oidc/callback") +
-                    "?" + callback.query, status=400)
-                assert denied["error"] == "access_denied"
-                self.cookies = cookies
-            finish, headers = self.request("GET", callback.path + "?" + callback.query,
-                                           status=(200, 302))
+        finish = page
+        if not re.search(r'name=id value="([^"]+)"', page):
+            match = re.search(r"const id='([^']+)',o=(.*?),loginPath='", page)
+            assert match, "authorization did not return a passkey page"
+            ceremony = match[1]
+            _, headers = self.request("POST", prefix + "login",
+                                      {"id": ceremony, "login": login},
+                                      form=True, status=(200, 302))
             if "location" in headers:
-                return headers["location"]
-        else:
-            assertion = (authenticator or self.authenticator).assert_(json.loads(match[2])["publicKey"])
-            finish, _ = self.request("POST", prefix +
-                                     "passkey/finish?id=" + ceremony, assertion)
+                assert self.idp is not None, "no upstream browser fixture configured"
+                callback = urlsplit(self.idp.authorize(headers["location"]))
+                issuer_app = route[1].rsplit("/", 1)[1]
+                if self.core_app_id and issuer_app != self.core_app_id:
+                    cookies = copy.deepcopy(self.cookies)
+                    denied, _ = self.request(
+                        "GET", self.oauth(self.core_app_id, "oidc/callback") +
+                        "?" + callback.query, status=400)
+                    assert denied["error"] == "access_denied"
+                    self.cookies = cookies
+                finish, headers = self.request("GET", callback.path + "?" + callback.query,
+                                               status=(200, 302))
+                if "location" in headers:
+                    return headers["location"]
+            else:
+                assertion = (authenticator or self.authenticator).assert_(json.loads(match[2])["publicKey"])
+                finish, _ = self.request("POST", prefix +
+                                         "passkey/finish?id=" + ceremony, assertion)
         if isinstance(finish, str):
             consent = re.search(r'name=id value="([^"]+)"', finish)
             assert consent, "unexpected passkey completion page"
@@ -1284,10 +1284,10 @@ class Fixture:
     def ping_service(self, after_login=None, foreign_tokens=()):
         audience = "https://ping.example/api"
         app = self.admin_secret("appEnroll", {
-            "name": "zumpingd", "integration": "catalogClient", "audienceURI": audience,
+            "name": "zumpingd", "integration": "catalogClient", "audience": audience,
             "$idempotencyKey": secrets.token_hex(16)})["item"]
-        audiences = self.admin_command("audienceQuery", {"uri": audience})["items"]
-        assert len(audiences) == 1
+        stored = self.admin_command("appQuery", {"id": app["appID"]})["items"]
+        assert len(stored) == 1 and stored[0]["audience"] == audience
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
@@ -1298,8 +1298,9 @@ class Fixture:
                           f'clientID: {json.dumps(app["client_id"])} }}, '
                           f'caPath: {json.dumps(str(self.ca_path) if self.ca_path else "")}, '
                           f'audience: {json.dumps(audience)}, '
-                          f'audienceID: {audiences[0]["id"]}, port: {port}\n')
-        env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"])
+                          f'port: {port}\n')
+        env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"],
+                   ZUM_SSF_CALLBACK_AUTH="Bearer " + secrets.token_urlsafe(24))
         for key in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
         executable = Path(__file__).resolve().parent.parent / "example" / "zumpingd"
@@ -1372,7 +1373,7 @@ class Fixture:
                     if previous is not None:
                         assert catalog == previous, "ping restart changed its catalog"
                     else:
-                        user = self.ping_user(app, audiences[0]["id"], catalog, port)
+                        user = self.ping_user(app, catalog, port)
                     previous = catalog
                     self.ping_client(port, *user)
                     if after_login:
@@ -1414,7 +1415,7 @@ class Fixture:
             if restart:
                 self.ping_unavailable(user[0], "zumpingd")
 
-    def ping_user(self, app, audience_id, catalog, service_port):
+    def ping_user(self, app, catalog, service_port):
         app_id = app["appID"]
         invited = self.admin_secret("userInvite", {
             "name": "user", "$idempotencyKey": secrets.token_hex(16)})["item"]
@@ -1440,10 +1441,10 @@ class Fixture:
         core = self.admin_command("appQuery", {"name": "zum"})["items"][0]["id"]
         assert self.admin_command("membershipQuery", {
             "appID": core, "userID": invited["id"]})["items"] == []
-        config, port = self.ping_registration(app, audience_id, catalog, service_port)
+        config, port = self.ping_registration(app, catalog, service_port)
         return config, port, authenticator, app_id
 
-    def ping_registration(self, app, audience_id, catalog, service_port):
+    def ping_registration(self, app, catalog, service_port):
         app_id = app["appID"]
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -1455,12 +1456,11 @@ class Fixture:
             "$idempotencyKey": secrets.token_hex(16)})["item"]
         self.admin_command("clientAccessSet", {
             "appID": app_id, "clientID": client["id"],
-            "audienceIDs": [audience_id],
             "roleIDs": [catalog["roleQuery"][0]["id"]], "$ifNoneMatch": "*"})
         config = self.directory / "zumping.cf"
         config.write_text(f'issuerURL: {json.dumps(self.issuer(app_id))}, '
                           f'serviceURL: "http://127.0.0.1:{service_port}", '
-                          f'clientID: {json.dumps(client["id"])}, scope: ping, '
+                          f'clientID: {json.dumps(client["id"])}, scope: "ping offline_access", '
                           f'caPath: {json.dumps(str(self.ca_path) if self.ca_path else "")}, '
                           f'callbackPort: {port}, loginTimeout: 30, loopbackTest: true\n')
         return config, port
@@ -1633,7 +1633,7 @@ class Fixture:
             (prefix + "/memberships?userID=" + user_id,
              prefix + "/memberships/" + user_id + "/roles", None),
             (prefix + "/client-access?clientID=" + client_id,
-             prefix + "/client-access/" + client_id, ("audienceIDs", "roleIDs")))
+             prefix + "/client-access/" + client_id, ("roleIDs",)))
         for lookup, path, fields in cases:
             before = query(lookup)
             assert len(before) == 1
@@ -1663,10 +1663,6 @@ class Fixture:
         users, _ = self.request("GET", "/admin/users?name=http-admin&source=Local", token=token)
         assert len(users["items"]) == 1
         user_id = users["items"][0]["id"]
-        audiences, _ = self.request("GET", "/admin/audiences?" + urlencode({"uri": audience_uri}),
-                                    token=token)
-        assert len(audiences["items"]) == 1
-        audience_id = audiences["items"][0]["id"]
         role = create(prefix + "/roles", {"name": "ping", "label": "Ping"})
         self.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
                      {"actionIDs": [action_id]}, token=token, headers={"If-Match": role["etag"]})
@@ -1698,7 +1694,7 @@ class Fixture:
             "redirectURIs": ["http://127.0.0.1:49152/callback"],
             "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
         self.request("PUT", prefix + "/client-access/" + client["id"], {
-            "audienceIDs": [audience_id], "roleIDs": [role["id"]]},
+            "roleIDs": [role["id"]]},
             token=token, headers={"If-None-Match": "*"}, status=201)
         self.cross_app_refs(token, app_id, user_id, client["id"])
         app, _ = self.request("GET", "/admin/apps?id=" + app_id, token=token)
@@ -1745,7 +1741,7 @@ class Fixture:
         assert "client_secret" not in registered["items"][0]
         assert "secretDigest" not in registered["items"][0]
         self.request("PUT", prefix + "/client-access/" + web["id"], {
-            "audienceIDs": [audience_id], "roleIDs": [role["id"]]},
+            "roleIDs": [role["id"]]},
             token=token, headers={"If-None-Match": "*"}, status=201)
         collections = self.grouped_queries(token, app_id, role["id"],
                                            {client["id"], web["id"]})
@@ -1802,11 +1798,11 @@ class Fixture:
             result, _ = self.request("GET", path + "?limit=1000", token=token)
             assert result["items"] == items
         self.role_removal(token, app_id, user_id, client["id"],
-                          audience_id, role["id"])
+                          role["id"])
         return tokens["access_token"]
 
     def role_removal(self, token, app_id, user_id, client_id,
-                     audience_id, retained_role):
+                     retained_role):
         prefix = "/admin/apps/" + app_id
 
         def query(path):
@@ -1824,8 +1820,7 @@ class Fixture:
         client_query = prefix + "/client-access?clientID=" + client_id
         access = query(client_query)[0]
         self.request("PUT", prefix + "/client-access/" + client_id,
-                     {"audienceIDs": access["audienceIDs"],
-                      "roleIDs": [role_id]}, token=token,
+                     {"roleIDs": [role_id]}, token=token,
                      headers={"If-Match": access["etag"]})
         access_path = prefix + "/admin-access/user/"
         for invalid_id in ("0", "18446744073709551615", user_id + "junk"):
@@ -1881,8 +1876,10 @@ class Fixture:
             assert all(role_id not in item.get("roleIDs", []) and
                        item.get("roleID") != role_id for item in items)
         assert after[0][0]["roleIDs"] == [retained_role]
-        assert after[1][0]["audienceIDs"] == [audience_id]
-        assert after[2][0]["roleIDs"] == [retained_role]
+        assert after[1][0]["roleIDs"] == []
+        delegation = next(row for row in after[2]
+                          if row["actorKind"] == "User" and row["actorID"] == user_id)
+        assert delegation["roleIDs"] == []
         self.stop()
         self.start()
         assert [query(path) for path in queries] == after
@@ -1899,9 +1896,7 @@ class Fixture:
 
         prefix = "/admin/apps/" + app_id
         path = prefix + "/catalog"
-        audiences = self.request("GET", "/admin/audiences?limit=1000", token=token)[0]["items"]
-        audience_id = next(item["id"] for item in audiences if item["appID"] == app_id)
-        manifest = catalog_manifest(1, audience_id)
+        manifest = catalog_manifest(1)
         headers = {"If-Match": '"catalog-0"'}
         publish(path, manifest, token=token, headers=headers, status=403)
         publish("/admin/apps/" + core_id + "/catalog", manifest,
@@ -2007,7 +2002,8 @@ class Fixture:
         claims = self.verify_jwt(access_token)
         assert claims["iss"] == self.issuer(app_id) and claims["aud"] == audience_uri
         assert claims["zum_app_id"] == app_id and claims["client_id"] == client_id
-        assert claims["scope"] == "openid ping" and claims["actions"] == actions
+        assert claims["scope"] == "openid ping offline_access" and claims["actions"] == actions, (
+            claims["scope"], claims["actions"], actions)
         assert claims["iat"] <= time.time() < claims["exp"]
 
     def verify_jwt(self, token, app_id=None):
@@ -2049,7 +2045,7 @@ def main():
             assert len(initial["items"]) == 1
             app_input = {
                 "name": "http-orders", "label": "HTTP Orders",
-                "integration": "catalogClient", "audienceURI": "https://orders.example/api"}
+                "integration": "catalogClient", "audience": "https://orders.example/api"}
             app_headers = {"Idempotency-Key": secrets.token_hex(16)}
             app = fixture.admin_secret("appEnroll", dict(app_input, **{
                 "$idempotencyKey": app_headers["Idempotency-Key"]}))
@@ -2149,7 +2145,7 @@ def main():
             access_row_path = access_path + "/" + app["item"]["client_id"]
             fixture.request("PUT", access_row_path,
                             {field: access[field] for field in
-                             ("audienceIDs", "roleIDs")}, token=token,
+                             ("roleIDs",)}, token=token,
                             headers={"If-Match": access["etag"]})
             workload_token()
             client_query = "/admin/clients?" + urlencode({"id": app["item"]["client_id"]})
@@ -2210,7 +2206,7 @@ def main():
             assert "client_secret" not in replay and "item" not in replay
             publisher, _ = workload_token()
             fixture.catalog(token, publisher["access_token"], app_id, core_id)
-            foreign_access = fixture.app_login(token, app_id, action_id, app_input["audienceURI"])
+            foreign_access = fixture.app_login(token, app_id, action_id, app_input["audience"])
             fixture.administrative_queries(token, app_id)
             fixture.numeric_filters(token, app_id, action_id)
             fixture.rotate_client(token, app["item"]["client_id"], basic)

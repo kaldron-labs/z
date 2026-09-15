@@ -47,13 +47,15 @@ zum_test_libs = $(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 LDADD = $(zumd_test_objects) $(zum_test_libs)
-noinst_PROGRAMS = ZumTest ZumOIDCHTTPTest ZumClientTest ZumSecretTest
+noinst_PROGRAMS = ZumTest ZumOIDCHTTPTest ZumClientTest ZumSecretTest ZumScopeTest
 ZumSecretTest_SOURCES = ZumSecretTest.cc
 ZumSecretTest_LDADD = $(zumd_objdir)/zumd-zumd_secret.$(OBJEXT) $(zum_test_libs)
 ZumTest_SOURCES = ZumTest.cc
 ZumOIDCHTTPTest_SOURCES = ZumOIDCHTTPTest.cc
 ZumOIDCHTTPTest_LDADD = $(zumd_oidc_objects) $(zum_test_libs)
 ZumClientTest_SOURCES = ZumClientTest.cc
+ZumScopeTest_SOURCES = ZumScopeTest.cc
+ZumScopeTest_LDADD = $(zumd_objdir)/zumd-zumd_core.$(OBJEXT) $(zum_test_libs)
 ZumClientTest_LDADD = $(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zi/src/libZi.la \

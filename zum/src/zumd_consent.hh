@@ -35,7 +35,7 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
   ZuStructKeyT<Consent, 0> consentKey() const
   {
     return {beforeGrant.userID, beforeGrant.clientID,
-      beforeGrant.appID, beforeGrant.audienceID};
+      beforeGrant.appID};
   }
 
   Consent result() const
@@ -45,7 +45,6 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
       item.userID = beforeGrant.userID;
       item.clientID = beforeGrant.clientID;
       item.appID = beforeGrant.appID;
-      item.audienceID = beforeGrant.audienceID;
       item.created = now;
     }
     // A revoked consent does not carry its former role views into a new approval.
@@ -74,8 +73,7 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
 	beforeConsent.owner || beforeConsent.version == UINT64_MAX ||
 	(beforeConsent.version && (beforeConsent.userID != beforeGrant.userID ||
 	  beforeConsent.clientID != beforeGrant.clientID ||
-	  beforeConsent.appID != beforeGrant.appID ||
-	  beforeConsent.audienceID != beforeGrant.audienceID))) {
+	  beforeConsent.appID != beforeGrant.appID))) {
       complete(false); return;
     }
     context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {

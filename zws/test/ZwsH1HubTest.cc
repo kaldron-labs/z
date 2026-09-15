@@ -46,6 +46,8 @@ struct State {
   ZmAtomic<unsigned>	cliMessages = 0;
   ZmAtomic<unsigned>	closes = 0;
   ZmAtomic<unsigned>	reconnects = 0;
+  unsigned		target = 4;
+  bool			stress = false;
   ZtString<>		request;
   ZtString<>		response;
   uint16_t		port = 0;
@@ -55,7 +57,7 @@ struct State {
     done.post();
   }
   void down() {
-    if (disconnected.xchAdd(1) + 1 == 4) done.post();
+    if (disconnected.xchAdd(1) + 1 == target) done.post();
   }
 };
 
@@ -81,8 +83,8 @@ bool validInfo(const Zhttp::ConnectedInfo &info)
 }
 
 struct ServerApp {
+	struct LinkState { ZtString<> message; };
   State		*state;
-  ZtString<>	message;
 
   void listening(const ZiListenInfo &) { state->listening.post(); }
   void listening() { state->listening.post(); }
@@ -108,20 +110,22 @@ struct ServerApp {
   }
 
   template <typename Link>
-  int messageStart(Link &, Zws::Opcode::T opcode) {
+  int messageStart(Link &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Text) return -1;
-    message.length(0);
+    link.state().message.length(0);
     return 1;
   }
   template <typename Link, typename Rx>
-  int process(Link &, Rx &rx) {
+  int process(Link &link, Rx &rx) {
     return Zhttp::bodyEach(
-      rx, [this](ZuSpan<uint8_t> span) { message << span; }) ? 1 : -1;
+      rx, [&link](ZuSpan<uint8_t> span) {
+	link.state().message << span;
+	}) ? 1 : -1;
   }
   template <typename Link>
   int messageEnd(Link &link) {
     ++state->srvMessages;
-    if (message != state->request) return -1;
+    if (link.state().message != state->request) return -1;
     link.txStream([this](auto &tx) {
       tx << state->response;
       tx.flush();
@@ -145,8 +149,8 @@ struct ServerApp {
 };
 
 struct ClientApp {
+	struct LinkState { ZtString<> message; };
   State		*state;
-  ZtString<>	message;
 
   template <typename Link>
   void connected(Link &link, Zhttp::ConnectedInfo info) {
@@ -162,20 +166,22 @@ struct ClientApp {
   }
 
   template <typename Link>
-  int messageStart(Link &, Zws::Opcode::T opcode) {
+  int messageStart(Link &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Text) return -1;
-    message.length(0);
+    link.state().message.length(0);
     return 1;
   }
   template <typename Link, typename Rx>
-  int process(Link &, Rx &rx) {
+  int process(Link &link, Rx &rx) {
     return Zhttp::bodyEach(
-      rx, [this](ZuSpan<uint8_t> span) { message << span; }) ? 1 : -1;
+      rx, [&link](ZuSpan<uint8_t> span) {
+	link.state().message << span;
+	}) ? 1 : -1;
   }
   template <typename Link>
   int messageEnd(Link &link) {
     ++state->cliMessages;
-    if (message != state->response) return -1;
+    if (link.state().message != state->response) return -1;
     link.close();
     return 1;
   }
@@ -183,6 +189,7 @@ struct ClientApp {
   template <typename Link>
   void disconnected(Link &link, bool) {
     state->down();
+    if (state->stress) return;
     if (state->cliMessages.load_() != 1 ||
 	state->reconnects.xchAdd(1))
       return;
@@ -404,6 +411,63 @@ void run(const TempDir &temp)
   }
 }
 
+void runConcurrentWSS(const TempDir &temp)
+{
+  ZuTestScope(runConcurrentWSS);
+  constexpr unsigned Clients = 64;
+  State state;
+  state.stress = true;
+  state.target = Clients * 2;
+  state.request.length(4096);
+  state.response.length(4096);
+  for (unsigned i = 0; i < state.request.length(); ++i) {
+    state.request.data()[i] = 'a' + (i % 26);
+    state.response.data()[i] = 'A' + (i % 26);
+  }
+  static unsigned nextPort = TestPort + 100;
+  for (unsigned i = 0; i < 100 && !state.port; ++i)
+    state.port = loopbackPort(nextPort++);
+  ZuCHECK(state.port);
+  if (!state.port) return;
+  ZiMultiplex mx{mxParams()};
+  ZuCHECK(mx.start());
+  if (!mx.running()) return;
+  ServerApp serverApp{&state};
+  ClientApp clientApp{&state};
+  using Server = Zws::Server<ServerApp, Zhttp::H1TLS>;
+  using Client = Zws::Client<ClientApp, Zhttp::H1TLS>;
+  Server server{&serverApp, ZiIP{"127.0.0.1"}, state.port};
+  Client client{&clientApp};
+  Zhttp::HubConfig hub{&mx, "3", "4"};
+  ZuCHECK(server.init(hub, ProfileConfig<Zhttp::H1TLS>::server(temp)));
+  ZuCHECK(client.init(hub, ProfileConfig<Zhttp::H1TLS>::client(temp)));
+  ZuCHECK(server.start() && client.start());
+  ZuCHECK(state.listening.timedwait(Zm::now(10)) == 0);
+  Zws::URI uri;
+  ZtString<> text;
+  text << "wss://127.0.0.1:" << state.port << "/stream";
+  ZuCHECK(Zws::URI::parse(uri, text).ok());
+  using Link = Client::Link;
+  ZtArray<ZmRef<Link>> links;
+  links.length(Clients);
+  for (unsigned i = 0; i < Clients; ++i) {
+    links[i] = new Link{&client, uri, "chat"};
+    links[i]->connect();
+  }
+  ZuCHECK(state.done.timedwait(Zm::now(30)) == 0);
+  server.stopAccepting();
+  client.stop();
+  server.stop();
+  links.length(0);
+  client.final();
+  server.final();
+  mx.stop();
+  ZuCHECK(!state.errors.load_(), "errors=", state.errors.load_(),
+    " last=", Zws::Failure{}.name(state.lastError.load_()));
+  ZuCHECK(state.cliMessages.load_() == Clients);
+  ZuCHECK(state.srvMessages.load_() == Clients);
+}
+
 } // namespace ZwsH1HubTest_
 
 int main(int argc, char **argv)
@@ -434,6 +498,7 @@ int main(int argc, char **argv)
 #else
     ZuTestCall(run<Zhttp::H1TCP>, temp);
     ZuTestCall(run<Zhttp::H1TLS>, temp);
+    ZuTestCall(runConcurrentWSS, temp);
 #endif
   }
 

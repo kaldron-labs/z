@@ -318,7 +318,7 @@ struct AppInput {
   String integration;
   String clientType;
   StringVec redirectURIs;
-  String audienceURI;
+  String audience;
 };
 ZfStruct(, (AppInput, JSON),
   (((name),		(Required)),	(String)),
@@ -326,7 +326,7 @@ ZfStruct(, (AppInput, JSON),
   (((integration),	(Required)),	(String)),
   (((clientType),	(JSON::Opt)),	(String)),
   (((redirectURIs),	(JSON::Opt)),	(StringVec)),
-  (((audienceURI),	(JSON::Opt)),	(String)));
+  (((audience),	(JSON::Opt)),	(String)));
 
 struct MembershipInput {
   UserID userID = 0;
@@ -347,16 +347,6 @@ struct ActionsInput {
 };
 ZfStruct(, (ActionsInput, JSON),
   (((actionIDs),	(Required)),	(UInt32Vec)));
-
-struct AudienceInput {
-  AppID appID = 0;
-  String name;
-  String uri;
-};
-ZfStruct(, (AudienceInput, JSON),
-  (((appID),	(Required, JSON::String<>)),	(UInt64)),
-  (((name),	(Required)),	(String)),
-  (((uri),	(Required)),	(String)));
 
 struct RotateInput {
   uint32_t overlapSeconds = 0;
@@ -400,11 +390,9 @@ ZfStruct(, (ClientUpdateInput, JSON),
   (((identityScopes),	(JSON::Opt)),	(StringVec)));
 
 struct ClientAccessInput {
-  IDVec audienceIDs;
   IDVec roleIDs;
 };
 ZfStruct(, (ClientAccessInput, JSON),
-  (((audienceIDs),	(Required, JSON::String<>)),	(UInt64Vec)),
   (((roleIDs),		(Required, JSON::String<>)),	(UInt64Vec)));
 
 struct AdminAccessInput {
@@ -495,14 +483,12 @@ struct ConsentSelector {
   UserID userID = 0;
   String clientID;
   AppID appID = 0;
-  AudienceID audienceID = 0;
   uint32_t limit = 0;
 };
 ZfStruct(, (ConsentSelector, JSON),
   (((userID),		(Required, JSON::String<>)),	(UInt64)),
   (((clientID),		(JSON::Opt)),	(String)),
   (((appID),		(JSON::Opt, JSON::String<>)),	(UInt64, 0)),
-  (((audienceID),	(JSON::Opt, JSON::String<>)),	(UInt64, 0)),
   (((limit),		(Required)),	(UInt32)));
 
 struct GrantSelector {
@@ -559,8 +545,8 @@ ZfStruct(, (CatalogInput, JSON),
 
 struct QueryInput {
   enum {
-    ID, Name, Source, AppID_, UserID_, AudienceID_, ClientID_, ProviderID_,
-    ActorKind_, ActorID_, Value, KeyID, URI, Issuer_, Subject, Operation,
+    ID, Name, Source, AppID_, UserID_, ClientID_, ProviderID_,
+    ActorKind_, ActorID_, Value, KeyID, Issuer_, Subject, Operation,
     IdempotencyKey, Cursor, Limit, N
   };
   String id;
@@ -568,14 +554,12 @@ struct QueryInput {
   String source;
   String appID;
   String userID;
-  String audienceID;
   String clientID;
   String providerID;
   String actorKind;
   String actorID;
   String value;
   String keyID;
-  String uri;
   String issuer;
   String subject;
   String operation;
@@ -586,8 +570,8 @@ struct QueryInput {
 };
 struct QueryFields {
   using Keys = ZuStringTL<"id", "name", "source", "appID", "userID",
-    "audienceID", "clientID", "providerID", "actorKind", "actorID", "value",
-    "keyID", "uri", "issuer", "subject", "operation", "idempotencyKey",
+    "clientID", "providerID", "actorKind", "actorID", "value",
+    "keyID", "issuer", "subject", "operation", "idempotencyKey",
     "cursor", "limit">;
 };
 ZfStruct(, (QueryInput, URI),
@@ -596,14 +580,12 @@ ZfStruct(, (QueryInput, URI),
   (((source),		(Mutable)),	(String)),
   (((appID),		(Mutable)),	(String)),
   (((userID),		(Mutable)),	(String)),
-  (((audienceID),	(Mutable)),	(String)),
   (((clientID),		(Mutable)),	(String)),
   (((providerID),	(Mutable)),	(String)),
   (((actorKind),	(Mutable)),	(String)),
   (((actorID),		(Mutable)),	(String)),
   (((value),		(Mutable)),	(String)),
   (((keyID),		(Mutable)),	(String)),
-  (((uri),		(Mutable)),	(String)),
   (((issuer),		(Mutable)),	(String)),
   (((subject),		(Mutable)),	(String)),
   (((operation),	(Mutable)),	(String)),
@@ -698,7 +680,6 @@ static bool adminQueryFields(int op, uint32_t seen)
     case MgmtOp::membershipQuery: return fields(userID | page);
     case MgmtOp::actionQuery:
     case MgmtOp::roleQuery: return fields(id | name | page);
-    case MgmtOp::audienceQuery: return fields(id | (1U<<QueryInput::URI) | page);
     case MgmtOp::clientQuery: return fields(id | clientID | page);
     case MgmtOp::clientAccessQuery: return fields(clientID | page);
     case MgmtOp::adminAccessQuery:
@@ -818,8 +799,7 @@ class AppEdit_ : public ZumPolymorph {
 public:
   enum { AppFirst = ZuIsSame<Edit, RoleEdit>{} ||
     ZuIsSame<Edit, ActionEdit>{},
-    Creation = ZuIsSame<Edit, ProviderAdd>{} || ZuIsSame<Edit, AudienceAdd>{} ||
-      ZuIsSame<Edit, RoleAdd>{} ||
+    Creation = ZuIsSame<Edit, ProviderAdd>{} || ZuIsSame<Edit, RoleAdd>{} ||
       ZuIsSame<Edit, UserInvite>{} || ZuIsSame<Edit, ClientAdd>{} || ZuIsSame<Edit, KeyAdd>{} };
   using Snapshot = ZuIf<AppFirst, App, ZuDecay<decltype(ZuDeclVal<Edit>().before)>>;
 
@@ -838,8 +818,7 @@ public:
 	  else self->snapshot_().version = 0;
 	  if constexpr (AppFirst) self->record_();
 	  else if constexpr (ZuIsSame<Edit, UserInvite>{}) self->external_();
-	  else if constexpr (ZuIsSame<Edit, AudienceEdit>{} || ZuIsSame<Edit, AudienceAdd>{} ||
-	      ZuIsSame<Edit, ClientAdd>{} ||
+	  else if constexpr (ZuIsSame<Edit, ClientAdd>{} ||
 	      ZuIsSame<Edit, RoleAdd>{} ||
 	      ZuIsSame<Edit, RoleMapDelete>{} ||
 	      ZuIsSame<Edit, RoleMapPut>{} || ZuIsSame<Edit, PolicyPut>{} ||
@@ -866,8 +845,6 @@ private:
     if constexpr (ZuIsSame<Edit, UserEdit>{} || ZuIsSame<Edit, UserInvite>{})
       return m_context->users;
     else if constexpr (ZuIsSame<Edit, CredEdit>{}) return m_context->creds;
-    else if constexpr (ZuIsSame<Edit, AudienceEdit>{} || ZuIsSame<Edit, AudienceAdd>{})
-      return m_context->audiences;
     else if constexpr (ZuIsSame<Edit, ProviderEdit>{} || ZuIsSame<Edit, ProviderAdd>{})
       return m_context->providers;
     else if constexpr (ZuIsSame<Edit, ClientEdit>{} || ZuIsSame<Edit, ClientAdd>{})
@@ -1068,12 +1045,12 @@ public:
     ZtArrayHeapID<"Zum.Admin.RefreshNotice">>));
 
   BulkRevoke_(DB *db, DBContext *context, Ztls::Random *rng, int kind, UserID userID,
-      String clientID, AppID appID, AudienceID audienceID,
+      String clientID, AppID appID,
       uint32_t limit, IdemRequest request, AdminDoneFn complete,
       RefreshRevokeFn event = {}) :
     m_db{db}, m_context{context}, m_rng{rng},
     m_kind{kind}, m_userID{userID}, m_clientID{ZuMv(clientID)},
-    m_appID{appID}, m_audienceID{audienceID}, m_limit{limit},
+    m_appID{appID}, m_limit{limit},
     m_complete{ZuMv(complete)}, m_event{ZuMv(event)} {
     m_change.request = ZuMv(request);
   }
@@ -1200,8 +1177,7 @@ private:
       [this](const auto &tuple) -> int {
 	if (tuple.template p<0>() != m_userID) return -1;
 	return (!m_clientID || tuple.template p<1>() == m_clientID) &&
-	  (!m_appID || tuple.template p<2>() == m_appID) &&
-	  (!m_audienceID || tuple.template p<3>() == m_audienceID);
+	  (!m_appID || tuple.template p<2>() == m_appID);
       });
   }
 
@@ -1291,7 +1267,6 @@ private:
   UserID	m_userID = 0;
   String	m_clientID;
   AppID		m_appID = 0;
-  AudienceID	m_audienceID = 0;
   uint32_t	m_limit = 0;
   AdminDoneFn	m_complete;
   RefreshRevokeFn	m_event;
@@ -1564,10 +1539,9 @@ public:
     bool confidential = clientType == ClientType::Confidential;
     if (!m_context || !m_rng || !m_issuer.coreAppID ||
 	!m_input.name || (!catalogClient && !oidc) ||
-	!m_input.audienceURI || (catalogClient && !confidential) ||
+	!m_input.audience || (catalogClient && !confidential) ||
 	(oidc && !m_input.redirectURIs) ||
 	!randomID(*m_rng, m_appID) ||
-	!randomID(*m_rng, m_audienceID) ||
 	!m_rng->random(random)) {
       finish_(400, "invalid application enrollment");
       return;
@@ -1600,8 +1574,8 @@ public:
     }
     AppEnrollment enrollment{.coreAppID = m_issuer.coreAppID,
       .appID = m_appID, .appName = ZuMv(m_input.name),
-      .appLabel = ZuMv(m_input.label), .audienceID = m_audienceID,
-      .audienceURI = ZuMv(m_input.audienceURI), .signKey = ZuMv(signKey),
+      .appLabel = ZuMv(m_input.label),
+      .audience = ZuMv(m_input.audience), .signKey = ZuMv(signKey),
       .clientID = m_clientID,
       .secretDigest = ZuMv(m_secretDigest),
       .redirects = ZuMv(m_input.redirectURIs), .clientType = clientType,
@@ -1645,11 +1619,6 @@ private:
     id << m_appID;
     ids.push(ZuMv(id));
     ids.push(m_clientID);
-    if (m_audienceID) {
-      id.null();
-      id << m_audienceID;
-      ids.push(ZuMv(id));
-    }
     complete(AdminResult{ZuMv(body), 201, ZuMv(ids)});
   }
 
@@ -1662,7 +1631,6 @@ private:
   IdemRequest	m_request;
   AdminDoneFn	m_complete;
   AppID		m_appID = 0;
-  AudienceID	m_audienceID = 0;
   String	m_appIssuer;
   String	m_clientID;
   String	m_secret;
@@ -2786,22 +2754,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    Bytes{m_config.dbKey}, ZuMv(complete), ZuTuple<AppID>{appID}); return;
       }
     }
-    case MgmtOp::audienceQuery:
-      if (queryInput.id) {
-	uint64_t id;
-	if (!adminUInt(queryInput.id, id) || !id) break;
-	adminFind<0>(m_context->audiences, ZuFwdTuple(AudienceID{id}),
-	  ZuMv(complete));
-	return;
-      }
-      if (queryInput.uri) {
-	adminFind<1>(m_context->audiences, ZuFwdTuple(ZuMv(queryInput.uri)),
-	  ZuMv(complete));
-	return;
-      }
-      adminQuery(m_context->audiences, queryInput.limit,
-	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
-	ZuMv(complete)); return;
     case MgmtOp::clientQuery:
       if (queryInput.id || queryInput.clientID) {
 	String id = queryInput.id ? ZuMv(queryInput.id) :
@@ -2932,22 +2884,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	RoleEdit{.app = App{.id = appID}, .before = Role{.appID = appID, .id = id},
 	  .ifMatch = ZuMv(ifMatch), .request = ZuMv(request),
 	  .kind = RoleEdit::Label, .label = ZuMv(label)}, ZuMv(complete)};
-      change->start();
-      return;
-    }
-    case MgmtOp::audienceUpdate: {
-      uint64_t id;
-      String name, unused;
-      unsigned seen = 0;
-      if (!pathUInt(target, "/admin/audiences/", {}, id) ||
-	  !stringPatchBody(body, "name", name, {}, unused, seen)) break;
-      if (!ifMatch) {
-	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
-	return;
-      }
-      ZmRef<AppEdit_<AudienceEdit>> change = new AppEdit_<AudienceEdit>{m_db, m_context, &m_rng,
-	AudienceEdit{.before = Audience{.id = id}, .ifMatch = ZuMv(ifMatch),
-	  .request = ZuMv(request), .name = ZuMv(name)}, ZuMv(complete)};
       change->start();
       return;
     }
@@ -3124,24 +3060,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       ZmRef<ActionAdd_> add = new ActionAdd_{m_db, m_context, &m_rng,
 	appID, ZuMv(input), ZuMv(request), ZuMv(complete)};
       add->start();
-      return;
-    }
-    case MgmtOp::audienceAdd: {
-      AudienceInput input;
-      uint64_t id;
-      if (!idempotencyKey || !adminBody(body, input) || !input.appID ||
-	  !input.name || !input.uri || !randomID(m_rng, id)) {
-	complete(AdminResult{
-	  error_("invalid_request", "invalid audience creation"), 400});
-	return;
-      }
-      ZmRef<AppEdit_<AudienceAdd>> change = new AppEdit_<AudienceAdd>{
-	m_db, m_context, &m_rng, AudienceAdd{
-	  .before = Audience{.id = id, .appID = input.appID},
-	  .values = Audience{.id = id, .appID = input.appID,
-	    .name = ZuMv(input.name), .uri = ZuMv(input.uri)},
-	  .request = ZuMv(request)}, ZuMv(complete)};
-      change->start();
       return;
     }
     case MgmtOp::membershipAdd: {
@@ -3373,7 +3291,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	m_db, m_context, &m_rng, ClientAccessPut{
 	  .before = ClientAccess{.clientID = clientID, .appID = appID},
 	  .values = ClientAccess{.clientID = ZuMv(clientID), .appID = appID,
-	    .audienceIDs = ZuMv(input.audienceIDs),
 	    .roleIDs = ZuMv(input.roleIDs)}, .ifMatch = ZuMv(ifMatch),
 	  .ifNoneMatch = ZuMv(ifNoneMatch), .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
@@ -3685,7 +3602,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       SessionSelector input;
       if (!adminBody(body, input)) break;
       ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, m_context, &m_rng,
-	BulkRevoke_::Sessions, input.userID, {}, 0, 0, input.limit,
+	BulkRevoke_::Sessions, input.userID, {}, 0, input.limit,
 	ZuMv(request), ZuMv(complete)};
       revoke->start();
       return;
@@ -3695,7 +3612,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       if (!adminBody(body, input)) break;
       ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, m_context, &m_rng,
 	BulkRevoke_::Consents, input.userID, ZuMv(input.clientID),
-	input.appID, input.audienceID, input.limit, ZuMv(request), ZuMv(complete)};
+	input.appID, input.limit, ZuMv(request), ZuMv(complete)};
       revoke->start();
       return;
     }
@@ -3710,13 +3627,13 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	if (ZuBase64URL::decode(id, ZuBSpan{input.id}) != id.length() || !id ||
 	    input.userID || input.appID) break;
 	ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, m_context, &m_rng,
-	  BulkRevoke_::Grants, 0, {}, 0, 0, 1, ZuMv(request), ZuMv(complete),
+	  BulkRevoke_::Grants, 0, {}, 0, 1, ZuMv(request), ZuMv(complete),
 	  m_config.refreshRevoke};
 	revoke->one(ZuMv(id));
 	return;
       }
       ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, m_context, &m_rng,
-	BulkRevoke_::Grants, input.userID, {}, input.appID, 0,
+	BulkRevoke_::Grants, input.userID, {}, input.appID,
 	input.limit, ZuMv(request), ZuMv(complete), m_config.refreshRevoke};
       revoke->start();
       return;
@@ -3725,7 +3642,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       CleanupInput input;
       if (!adminBody(body, input) || input.before) break;
       ZmRef<BulkRevoke_> cleanup = new BulkRevoke_{m_db, m_context, &m_rng,
-	BulkRevoke_::Cleanup, 0, {}, 0, 0, input.limit, ZuMv(request), ZuMv(complete)};
+	BulkRevoke_::Cleanup, 0, {}, 0, input.limit, ZuMv(request), ZuMv(complete)};
       cleanup->start();
       return;
     }
@@ -3939,26 +3856,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  change->start();
 	  return;
 	}
-      }
-      break;
-    }
-    case MgmtOp::audienceState: {
-      uint64_t id;
-      if (pathUInt(target, "/admin/audiences/", "/state", id)) {
-	State::T state;
-	if (!stateBody(body, state)) {
-	  complete(adminErrorResult(400, "invalid_request", "invalid state"));
-	  return;
-	}
-	if (!ifMatch) {
-	  complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
-	  return;
-	}
-	ZmRef<AppEdit_<AudienceEdit>> change = new AppEdit_<AudienceEdit>{m_db, m_context, &m_rng,
-	  AudienceEdit{.before = Audience{.id = id}, .ifMatch = ZuMv(ifMatch),
-	    .request = ZuMv(request), .state = state, .stateOnly = true}, ZuMv(complete)};
-	change->start();
-	return;
       }
       break;
     }

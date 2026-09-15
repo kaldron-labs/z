@@ -108,6 +108,8 @@ struct ServicePrincipal {
   String audience;
   StringVec actions;
   int64_t expires = 0;
+  // Verified authentication context; empty when introspection omits it.
+  String authMethod;
 };
 
 ZuDerive(ServiceDoneFn, (ZmFn<void(int),

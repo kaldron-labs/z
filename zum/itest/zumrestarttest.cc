@@ -187,14 +187,13 @@ static bool stageEnrollment(Zum::DB *db, Zum::DBContext *context)
 }
 
 static bool stageAppEnrollment(
-    Zum::DB *db, Zum::AppID appID, Zum::AudienceID audienceID,
+    Zum::DB *db, Zum::AppID appID,
     ZuCSpan clientID, ZdbSagaID sagaID, Zum::ActionID catalogPublishOp,
     Zum::ActionID operationQueryOp)
 {
   Zum::AppEnrollment enrollment{.coreAppID = 1, .appID = appID,
     .appName = Zum::String{clientID}, .appLabel = "Orders",
-    .audienceID = audienceID,
-    .audienceURI = Zum::String{"https://orders.example/"} << appID,
+    .audience = Zum::String{"https://orders.example/"} << appID,
     .clientID = Zum::String{clientID},
     .secretDigest = Zum::Bytes{ZuBSpan{"verifier"}},
     .clientType = Zum::ClientType::Confidential, .catalogClient = true,
@@ -235,7 +234,6 @@ static bool stageAppEnrollment(
 
 struct AppRollbackState {
   Zum::App		app;
-  Zum::Audience	audience;
   Zum::Client		client;
 };
 
@@ -388,18 +386,13 @@ static AppRollbackState appRollbackState(Zum::DBContext *context)
     context->apps->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(Zum::AppID{19}), [context,
 	  wake = ZuMv(wake)](ZdbRowRef<Zum::App> app) mutable {
-	context->audiences->find<0>(0, ZuFwdTuple(Zum::AudienceID{20}), [
-	  context, app = ZuMv(app), wake = ZuMv(wake)
-	](ZdbRowRef<Zum::Audience> audience) mutable {
 	  context->clients->find<0>(0, ZuFwdTuple(ZuCSpan{"svc_failed"}), [
-	    app = ZuMv(app), audience = ZuMv(audience), wake = ZuMv(wake)
+	    app = ZuMv(app), wake = ZuMv(wake)
 	  ](ZdbRowRef<Zum::Client> client) mutable {
 	    wake(AppRollbackState{
 	      app ? Zum::App{app->data()} : Zum::App{},
-	      audience ? Zum::Audience{audience->data()} : Zum::Audience{},
 	      client ? Zum::Client{client->data()} : Zum::Client{}});
 	  });
-	});
       });
     });
   });
@@ -432,34 +425,30 @@ static bool appEnrollmentRecovered(Zum::DBContext *context)
     context->apps->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(Zum::AppID{9}), [context,
 	  wake = ZuMv(wake)](ZdbRowRef<Zum::App> app) mutable {
-	context->audiences->find<0>(0, ZuFwdTuple(Zum::AudienceID{10}), [
-	  context, app = ZuMv(app), wake = ZuMv(wake)
-	](ZdbRowRef<Zum::Audience> audience) mutable {
 	  context->clients->find<0>(0, ZuFwdTuple(ZuCSpan{"svc_orders"}), [
-	    context, app = ZuMv(app), audience = ZuMv(audience),
+	    context, app = ZuMv(app),
 	    wake = ZuMv(wake)
 	  ](ZdbRowRef<Zum::Client> client) mutable {
 	    context->clientAccess->find<0>(0,
 	      ZuFwdTuple(ZuCSpan{"svc_orders"}, Zum::AppID{1}), [context,
-	      app = ZuMv(app), audience = ZuMv(audience),
+	      app = ZuMv(app),
 	      client = ZuMv(client), wake = ZuMv(wake)
 	    ](ZdbRowRef<Zum::ClientAccess> clientAccess) mutable {
 	      context->adminAccess->find<0>(0,
 		ZuFwdTuple(Zum::ActorKind::Client,
 		  ZuCSpan{"svc_orders"}, Zum::AppID{9}), [context,
-		app = ZuMv(app), audience = ZuMv(audience),
+		app = ZuMv(app),
 		client = ZuMv(client), clientAccess = ZuMv(clientAccess),
 		wake = ZuMv(wake)
 	      ](ZdbRowRef<Zum::AdminAccess> adminAccess) mutable {
 		context->authPolicies->find<0>(0, ZuFwdTuple(Zum::AppID{9}), [
-		  app = ZuMv(app), audience = ZuMv(audience),
+		  app = ZuMv(app),
 		  client = ZuMv(client), clientAccess = ZuMv(clientAccess),
 		  adminAccess = ZuMv(adminAccess), wake = ZuMv(wake)
 		](ZdbRowRef<Zum::AuthPolicy> policy) mutable {
 		  wake(app && app->data().state == Zum::State::Active &&
 		    app->data().version == 2 && !app->data().owner &&
-		    audience && audience->data().appID == 9 &&
-		    !audience->data().owner && client &&
+		    app->data().audience == "https://orders.example/9" && client &&
 		    client->data().appID == 1 && !client->data().owner &&
 		    client->data().secretDigest == ZuBSpan{"verifier"} &&
 		    clientAccess && !clientAccess->data().owner &&
@@ -470,7 +459,6 @@ static bool appEnrollmentRecovered(Zum::DBContext *context)
 	      });
 	    });
 	  });
-	});
       });
     });
   });
@@ -667,7 +655,7 @@ static void memberRecovery()
   ZuCheck(bool(db));
   if (!db) return;
   ZuCheck(insertRecord(context->apps, Zum::App{.id = 30, .name = "member-recovery",
-    .state = Zum::State::Active, .created = 100, .updated = 100}));
+    .state = Zum::State::Active, .created = 100, .updated = 100, .audience = "https://member-recovery.example"}));
   ZuCheck(insertRecord(context->users, Zum::User{.id = 31,
     .name = "member-recovery", .handle = Zum::Bytes{ZuBSpan{"member-recovery"}},
     .state = Zum::State::Active}));
@@ -1099,6 +1087,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
     .state = Zum::State::Suspended, .origin = Zum::Origin::Standard,
     .catalogRevision = 1, .created = 100, .updated = 100};
   role.actions.set(0);
+  app.audience = Zum::String{"https://"} << app.name << ".example";
   ZuCheck(insertRecord(context->apps, app));
   ZuCheck(insertRecord(context->actions, action));
   ZuCheck(insertRecord(context->roles, role));
@@ -1330,6 +1319,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   Zum::Role role{.appID = app.id, .id = 400, .name = "remove",
     .label = "Remove", .created = 100, .updated = 100};
   role.actions.set(7);
+  app.audience = Zum::String{"https://"} << app.name << ".example";
   ZuCheck(insertRecord(context->apps, app));
   ZuCheck(insertRecord(context->roles, role));
   Zum::RoleDelete change{.app = app, .role = role, .updated = 200,
@@ -1350,7 +1340,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
 	.appID = app.id, .userID = 500 + i, .roleIDs = {399, 400, 401},
 	.state = Zum::State::Active, .created = 100, .updated = 100}, change.members));
       ZuCheck(add(context->clientAccess, Zum::ClientAccess{
-	.clientID = value, .appID = app.id, .audienceIDs = {7},
+	.clientID = value, .appID = app.id,
 	.roleIDs = {400, 401}, .state = Zum::State::Active,
 	.created = 100, .updated = 100}, change.clients));
       ZuCheck(add(context->adminAccess, Zum::AdminAccess{
@@ -1416,8 +1406,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
       };
       ZuCheck(check(member) && member.authVersion == 1 + !fail &&
 	member.roleIDs.length() == 2 + fail && member.roleIDs[0] == 399);
-      ZuCheck(check(client) && client.authVersion == 1 + !fail &&
-	client.audienceIDs == Zum::IDVec{7});
+      ZuCheck(check(client) && client.authVersion == 1 + !fail);
       ZuCheck(check(admin) && admin.operationIDs == Zum::ActionIDVec{7});
       ZuCheck(fail ? map.roleID == 400 && map.version == 1 && !map.owner : !map.appID);
     }
@@ -1465,7 +1454,7 @@ static void restart()
   if (!db) return;
   ZuCheck(insertIssuer(context));
   ZuCheck(insertRecord(context->apps, Zum::App{.id = 1, .name = "restart",
-    .state = Zum::State::Active, .created = 100, .updated = 100}));
+    .state = Zum::State::Active, .created = 100, .updated = 100, .audience = "https://restart.example"}));
   Zum::ActionID first = 0;
   ZuCheck(createAction(db, context, "orders.read", first));
   auto state = loadState(context, first);
@@ -1546,11 +1535,11 @@ static void sagaRecovery()
   if (!db) return;
   ZuCheck(stageEnrollment(db, context));
   ZuCheck(stageAppEnrollment(
-    db, 9, 10, "svc_orders", ZdbSagaID{43}, 69, 1));
+    db, 9, "svc_orders", ZdbSagaID{43}, Zum::MgmtOp::catalogPublish, Zum::MgmtOp::operationQuery));
   // Equal operation IDs are a corrupt enrollment payload. It fails after the
-  // app, audience, client, and client-access inserts and must roll them back.
+  // app, client, and client-access inserts and must roll them back.
   ZuCheck(stageAppEnrollment(
-    db, 19, 20, "svc_failed", ZdbSagaID{44}, 1, 1));
+    db, 19, "svc_failed", ZdbSagaID{44}, 1, 1));
   ZuCheck(stopDB(db, context));
 
   db = startDB(cf, mx, context);
@@ -1564,17 +1553,15 @@ static void sagaRecovery()
       Zum::ActionID(Zum::MgmtOp::appEnroll), Zum::String{"svc_orders"}));
   ZuCheck(enrollmentRequest.status == Zum::RequestStatus::Complete &&
     !enrollmentRequest.owner && enrollmentRequest.sagaID == ZdbSagaID{43} &&
-    enrollmentRequest.resultIDs.length() == 3 &&
+    enrollmentRequest.resultIDs.length() == 2 &&
     enrollmentRequest.resultIDs[0] == "9" &&
-    enrollmentRequest.resultIDs[1] == "svc_orders" &&
-    enrollmentRequest.resultIDs[2] == "10");
+    enrollmentRequest.resultIDs[1] == "svc_orders");
   auto failedRequest = record(context->requests,
     ZuFwdTuple(Zum::ActorKind::User, Zum::String{"recovery-admin"},
       Zum::ActionID(Zum::MgmtOp::appEnroll), Zum::String{"svc_failed"}));
   ZuCheck(!failedRequest.idempotencyKey);
   auto rollback = appRollbackState(context);
   ZuCheck(!rollback.app.id);
-  ZuCheck(!rollback.audience.id);
   ZuCheck(!rollback.client.id);
   ZuCheck(sagaEmpty(db));
 

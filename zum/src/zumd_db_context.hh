@@ -27,7 +27,6 @@ struct AppTable;
 struct MembershipTable;
 struct ActionTable;
 struct RoleTable;
-struct AudienceTable;
 struct ClientTable;
 struct ClientAccessTable;
 struct AdminAccessTable;
@@ -49,7 +48,6 @@ struct DBContext : public ZumPolymorph {
   MembershipTable	*memberships = nullptr;
   ActionTable		*actions = nullptr;
   RoleTable		*roles = nullptr;
-  AudienceTable		*audiences = nullptr;
   ClientTable		*clients = nullptr;
   ClientAccessTable	*clientAccess = nullptr;
   AdminAccessTable	*adminAccess = nullptr;

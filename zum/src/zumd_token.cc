@@ -124,7 +124,7 @@ private:
     m_authVersion = data.app.authVersion;
     m_appID = data.app.id;
     AccessClaims claims;
-    if (!clientClaims(*m_rng, m_issuer, data.client, data.selection,
+    if (!clientClaims(*m_rng, m_issuer, data.app, data.client, data.selection,
 	data.actions, data.actionRecords, data.clientAppID,
 	m_now, m_expires, claims) ||
 	!jwtPrepare(claims, m_key.id, m_limits, m_prepared)) {
@@ -299,7 +299,7 @@ private:
     m_requestedRoleIDs = data.selection.roleIDs;
     m_actions = data.actions;
     AccessClaims claims;
-    if (!interactiveClaims(*m_rng, m_family.issuer, data.user, data.client,
+    if (!interactiveClaims(*m_rng, m_family.issuer, data.app, data.user, data.client,
 	data.selection, data.actions, data.actionRecords,
 	m_family.credentialID ? ZuCSpan{"passkey"} : ZuCSpan{"oidc"},
 	m_family.authTime,
@@ -497,7 +497,7 @@ private:
     m_requestedRoleIDs = data.selection.roleIDs;
     m_actions = data.actions;
     AccessClaims claims;
-    if (!interactiveClaims(*m_rng, m_code.issuer, data.user, data.client,
+    if (!interactiveClaims(*m_rng, m_code.issuer, data.app, data.user, data.client,
 	data.selection, data.actions, data.actionRecords,
 	m_code.credentialID ? ZuCSpan{"passkey"} : ZuCSpan{"oidc"}, m_code.authTime,
 	m_now, m_accessExpires, claims) ||

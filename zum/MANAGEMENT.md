@@ -1,9 +1,8 @@
 # Management operations
 
 [ZumMgmt.hh](src/ZumMgmt.hh) is the shared wire catalog for Zum
-administration. Its 64 active `MgmtOp` values each identify exactly one remote
-call and one core permission named `Zum.<operation>`; six retired slots retain
-their numeric IDs without permissions or routes. The route registry in
+administration. Its 60 `MgmtOp` values each identify exactly one remote
+call and one core action named `Zum.<operation>`. The route registry in
 [ZumMgmt.cc](src/ZumMgmt.cc) is the sole method/path mapping used by `zumd`,
 the `zum` client, and registry tests.
 
@@ -38,16 +37,16 @@ never assigns roles to users or restores deleted privileges.
 | Users/credentials | `userQuery`, `userInvite`, `userUpdate`, `userState`, `userRecover`; `credentialQuery`, `credentialUpdate`, `credentialState` |
 | Memberships | `membershipQuery`, `membershipAdd`, `membershipRoles`, `membershipState` |
 | Actions/roles | `actionQuery`, `actionAdd`, `actionState`; `roleQuery`, `roleAdd`, `roleUpdate`, `roleActions`, `roleState`, `roleDelete` |
-| Audiences/clients | `audienceQuery`, `audienceAdd`, `audienceUpdate`, `audienceState`; `clientQuery`, `clientAdd`, `clientUpdate`, `clientState`, `clientSecretRotate` |
+| Clients | `clientQuery`, `clientAdd`, `clientUpdate`, `clientState`, `clientSecretRotate` |
 | Delegation | `clientAccessQuery`, `clientAccessSet`, `clientAccessState`; `adminAccessQuery`, `adminAccessSet`, `adminAccessState` |
 | Federation | `providerQuery`, `providerAdd`, `providerUpdate`, `providerState`; `authPolicyQuery`, `authPolicySet`; `roleMapQuery`, `roleMapSet`, `roleMapDelete`; `identityQuery`, `evidenceQuery` |
 | Runtime state | `sessionQuery`, `sessionRevoke`; `consentQuery`, `consentRevoke`; `grantQuery`, `grantRevoke`, `grantCleanup` |
 | Keys | `signKeyQuery`, `signKeyAdd`, `signKeyRetire` |
 
-The precise method/path table, typed mutation fields, role-derived scope semantics, catalog
-ownership, federation freshness, and lifecycle contracts are normative in
-[zum3.md](../zum3.md). Append operations; never renumber a catalog already
-seeded in a database.
+The route registry defines the method/path table.
+[Zum terminology](../zum_terminology.md) defines the application, principal,
+role, action and scope vocabulary. Schema version 20 requires reprovisioning
+existing databases; its operation catalog removes audience management.
 
 ## HTTP rules
 
@@ -95,10 +94,8 @@ credential, revocation, key-rotation, or principal-change events.
 Logging is outside business sagas; compensation restores application state, not
 log history. Alert persistence, distribution, replay, and retention use existing
 Ztc facilities. There is no Zum audit table or audit query/cleanup API in the
-target design. The two retired operation IDs remain reserved and have no route
-or usable permission name; later action IDs retain their values. Old audit-row
-tests have been replaced with ZiLog attribution, outcome, correlation and secret-
-redaction checks in the HTTP fixture.
+data model. The HTTP fixture checks ZiLog attribution, outcome, correlation
+and secret redaction.
 
 ## Administrative client
 
@@ -203,3 +200,10 @@ string and original nonce survive code exchange and refresh. An approved
 exchange does not. `openid` causes an ES256 ID token to be returned; `profile`
 and `email` control only their corresponding ID-token and UserInfo claims.
 Identity scopes are not accepted for client-credentials grants.
+
+## Application audience
+
+`appEnroll` requires `audience`, the immutable token audience of the
+application/service. `appQuery` returns this field. Application state controls
+its availability. `clientAccessSet` accepts `roleIDs`; the URL identifies the
+target application. `consentRevoke` can filter by user, client and application.
