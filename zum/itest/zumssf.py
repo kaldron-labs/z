@@ -89,12 +89,11 @@ def main():
         # The real resource server owns its catalog.  Publish it before
         # assigning the fixture user and native client to the advertised role.
         catalog = {}
-        for operation in ("actionQuery", "roleQuery", "scopeQuery"):
+        for operation in ("actionQuery", "roleQuery"):
             catalog[operation] = fixture.admin_command(
                 operation, {"appID": app_id})["items"]
         assert len(catalog["actionQuery"]) == 1
         assert len(catalog["roleQuery"]) == 1
-        assert len(catalog["scopeQuery"]) == 1
         user_config, _, authenticator, _ = fixture.ping_user(
             app, audiences[0]["id"], catalog, service_port)
         client_match = re.search(r'clientID: "([^"]+)"', user_config.read_text())

@@ -81,14 +81,14 @@ static void addRoles(
 
 ZtBitmap effectiveActions(
     unsigned actionCount, const IDVec &principalRoleIDs,
-    const IDVec &scopeRoleIDs, ZuSpan<const Role> roles,
+    const IDVec &delegatedRoleIDs, ZuSpan<const Role> roles,
     ZuSpan<const Action> actionRecords)
 {
   if (!actionCount) return {};
   ZtBitmap principal{actionCount};
   ZtBitmap delegated{actionCount};
   addRoles(principal, principalRoleIDs, roles);
-  addRoles(delegated, scopeRoleIDs, roles);
+  addRoles(delegated, delegatedRoleIDs, roles);
   principal = intersectActions(ZuMv(principal), delegated);
 
   ZtBitmap enabled{actionCount};
@@ -125,22 +125,22 @@ bool membershipValid(
 }
 
 bool scopeValid(
-    const App &app, const Scope &scope, const Audience &audience,
+    const App &app, const ScopeAuth &scope, const Audience &audience,
     ZuSpan<const Role> roles)
 {
-  return app.id && scope.appID == app.id && audience.appID == app.id &&
-    scope.audienceID == audience.id && !scope.owner && !audience.owner &&
-    roleRefsValid(app.id, scope.roleIDs, roles);
+  return app.id && scope.role.appID == app.id && audience.appID == app.id &&
+    scope.audience == audience.uri && !audience.owner &&
+    !scope.role.owner && roleRefsValid(app.id, IDVec{scope.role.id}, roles);
 }
 
 ZtBitmap appEffectiveActions(
-    const App &app, const Membership &membership, const Scope &scope,
+    const App &app, const Membership &membership, const ScopeAuth &scope,
     const Audience &audience, ZuSpan<const Role> roles,
     ZuSpan<const Action> actions)
 {
   if (app.state != State::Active || app.owner ||
       membership.state != State::Active ||
-      scope.state != State::Active || audience.state != State::Active ||
+      scope.role.state != State::Active || audience.state != State::Active ||
       !membershipValid(app, membership, roles) ||
       !scopeValid(app, scope, audience, roles)) return {};
 
@@ -151,11 +151,7 @@ ZtBitmap appEffectiveActions(
     if (role->state == State::Active && !role->owner)
       principal |= role->actions;
   }
-  for (auto id: scope.roleIDs) {
-    auto role = findRole(app.id, id, roles);
-    if (role->state == State::Active && !role->owner)
-      delegated |= role->actions;
-  }
+  delegated |= scope.role.actions;
   principal = intersectActions(ZuMv(principal), delegated);
 
   ZtBitmap enabled{app.nextActionID};
@@ -190,7 +186,16 @@ static bool hasString(const StringVec &strings, ZuCSpan string)
 
 static bool scopeName(ZuCSpan scopes, ZuCSpan name)
 {
-  return scopeContains(scopes, name);
+  unsigned offset = 0;
+  unsigned n = scopes.length();
+  while (offset < n) {
+    while (offset < n && scopes[offset] == ' ') ++offset;
+    unsigned end = offset;
+    while (end < n && scopes[end] != ' ') ++end;
+    if (ZuCSpan{scopes.data() + offset, end - offset} == name) return true;
+    offset = end;
+  }
+  return false;
 }
 
 static void addScopeName(ScopeSelection &selection, ZuCSpan name)
@@ -218,28 +223,26 @@ static int addScope(
     const Client &client, const ClientAccess &access,
     ScopeSelection &selection, const ScopeAuth &resolved)
 {
-  const auto &scope = resolved.scope;
-  if (scope.appID != access.appID || access.clientID != client.id)
+  const auto &role = resolved.role;
+  if (role.appID != access.appID || access.clientID != client.id)
     return ScopeError::Unavailable;
-  if (!hasID(access.audienceIDs, scope.audienceID))
+  if (!hasID(access.roleIDs, role.id))
     return ScopeError::Audience;
   if (selection.audience && selection.audience != resolved.audience)
     return ScopeError::Audience;
-  if (!hasID(selection.scopeIDs, scope.id)) {
-    addScopeName(selection, scope.name);
-    selection.scopeIDs.push(scope.id);
-    for (auto roleID: scope.roleIDs)
-      if (!hasID(selection.roleIDs, roleID)) selection.roleIDs.push(roleID);
+  if (!hasID(selection.roleIDs, role.id)) {
+    addScopeName(selection, role.name);
+    selection.roleIDs.push(role.id);
   }
   selection.audience = resolved.audience;
-  selection.appID = scope.appID;
-  selection.audienceID = scope.audienceID;
+  selection.appID = role.appID;
+  selection.audienceID = resolved.audienceID;
   return ScopeError::OK;
 }
 
 static int selectScopes_(
     const Client &client, const ClientAccess &access,
-    const IDVec *grantedScopeIDs,
+    const IDVec *grantedRoleIDs,
     ZuCSpan granted,
     ZuCSpan requested, ZuSpan<const ScopeAuth> scopes,
     ScopeSelection &selection)
@@ -254,7 +257,7 @@ static int selectScopes_(
     unsigned end = offset;
     while (end < length && requested[end] != ' ') ++end;
     ZuCSpan name{requested.data() + offset, end - offset};
-    if (grantedScopeIDs) {
+    if (grantedRoleIDs) {
       if (granted) {
         if (!scopeName(granted, name)) return ScopeError::Unavailable;
       } else if (hasString(client.identityScopes, name)) {
@@ -268,10 +271,10 @@ static int selectScopes_(
     }
     const ScopeAuth *selected = nullptr;
     for (auto &resolved: scopes) {
-      const auto &scope = resolved.scope;
-      if (scope.state != State::Active || scope.owner || scope.name != name ||
-	  !hasID(access.scopeIDs, scope.id) ||
-	  (grantedScopeIDs && !hasID(*grantedScopeIDs, scope.id))) continue;
+      const auto &role = resolved.role;
+      if (role.state != State::Active || role.owner || role.name != name ||
+	  !hasID(access.roleIDs, role.id) ||
+	  (grantedRoleIDs && !hasID(*grantedRoleIDs, role.id))) continue;
 	  if (selected && selected->audience != resolved.audience)
 	return ScopeError::Audience;
       selected = &resolved;
@@ -297,20 +300,20 @@ int selectScopes(
 
 int selectGrantedScopes(
     const Client &client, const ClientAccess &access,
-    const IDVec &grantedScopeIDs,
+    const IDVec &grantedRoleIDs,
     bool requestedPresent, ZuCSpan requested,
     ZuSpan<const ScopeAuth> scopes, ScopeSelection &selection)
 {
   if (requestedPresent)
     return selectScopes_(
-      client, access, &grantedScopeIDs, {}, requested, scopes, selection);
+      client, access, &grantedRoleIDs, {}, requested, scopes, selection);
   ScopeSelection next;
-  for (auto scopeID: grantedScopeIDs) {
+  for (auto roleID: grantedRoleIDs) {
     const ScopeAuth *selected = nullptr;
     for (auto &resolved: scopes) {
-      const auto &scope = resolved.scope;
-      if (scope.id == scopeID && scope.state == State::Active && !scope.owner &&
-	  hasID(access.scopeIDs, scope.id)) {
+      const auto &role = resolved.role;
+      if (role.id == roleID && role.state == State::Active && !role.owner &&
+	  hasID(access.roleIDs, role.id)) {
 	selected = &resolved;
 	break;
       }
@@ -318,18 +321,18 @@ int selectGrantedScopes(
     if (!selected) return ScopeError::Unavailable;
     if (int error = addScope(client, access, next, *selected)) return error;
   }
-  if (!next.scopeIDs) return ScopeError::Unavailable;
+  if (!next.roleIDs) return ScopeError::Unavailable;
   selection = ZuMv(next);
   return ScopeError::OK;
 }
 
 int selectGrantedScopes(
     const Client &client, const ClientAccess &access,
-    const IDVec &grantedScopeIDs, ZuCSpan granted,
+    const IDVec &grantedRoleIDs, ZuCSpan granted,
     bool requestedPresent, ZuCSpan requested,
     ZuSpan<const ScopeAuth> scopes, ScopeSelection &selection)
 {
-  return selectScopes_(client, access, &grantedScopeIDs, granted,
+  return selectScopes_(client, access, &grantedRoleIDs, granted,
     requestedPresent ? requested : granted, scopes, selection);
 }
 
@@ -346,7 +349,7 @@ int interactiveAuthority(
 
   ScopeSelection next;
   int error = selectGrantedScopes(client, access,
-    grant.scopeIDs, grant.scope,
+    grant.requestedRoleIDs, grant.scope,
     requestedPresent, requested, scopes, next);
   if (error) return error;
   if (next.audience != grant.audience) return ScopeError::Audience;

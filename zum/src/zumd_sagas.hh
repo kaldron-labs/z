@@ -868,7 +868,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
   String	clientID;
   Bytes		credentialID;
   String	audience;
-  IDVec		scopeIDs;
+  IDVec		requestedRoleIDs;
   IDVec		roleIDs;
   ZtBitmap	actions;
   Bytes		digest;
@@ -900,7 +900,8 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 	  Ztls::ctEqual(code.digest, codeDigest) && code.issuer == issuer &&
 	  code.userID == userID && code.clientID == clientID &&
 	  code.credentialID == credentialID && code.audience == audience &&
-	  code.scope == beforeGrant.scope && code.scopeIDs == beforeGrant.scopeIDs &&
+	  code.scope == beforeGrant.scope &&
+	  code.requestedRoleIDs == beforeGrant.requestedRoleIDs &&
 	  code.actions == beforeGrant.actions &&
 	  code.nonce == nonce &&
 	  code.appID == appID &&
@@ -954,7 +955,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 	    .audience = audience,
 	    .authoritySource = authoritySource,
 	    .authTime = authTime,
-	    .scopeIDs = scopeIDs,
+	    .requestedRoleIDs = requestedRoleIDs,
 	    .roleIDs = roleIDs,
 	    .actions = actions,
 	    .credentialID = credentialID,
@@ -1054,7 +1055,7 @@ ZfbStruct(ZumAPI, CodeFamily,
   (((clientID),	(Ctor<6>)),	(String)),
   (((credentialID),	(Ctor<7>)),	(Bytes)),
   (((audience),	(Ctor<8>)),	(String)),
-  (((scopeIDs),	(Ctor<9>)),	(UInt64Vec)),
+  (((requestedRoleIDs), (Ctor<9>)), (UInt64Vec)),
   (((roleIDs),		(Ctor<10>)),	(UInt64Vec)),
   (((actions),		(Ctor<11>)),	(UDT)),
   (((digest),		(Ctor<12>)),	(Bytes)),
@@ -1073,7 +1074,7 @@ ZfbStruct(ZumAPI, CodeFamily,
 
 ZumExtern bool codeFamilyPrepare(
   Ztls::Random &, const Grant &, ZuBSpan codeDigest,
-  String scope, IDVec scopeIDs, ZtBitmap actions, uint64_t authVersion,
+  String scope, IDVec requestedRoleIDs, ZtBitmap actions, uint64_t authVersion,
   int64_t now, int64_t expires, CodeFamily &, String &refreshToken);
 
 struct AppEnrollment : public ZdbSagaBase<DBContext> {
@@ -1235,7 +1236,6 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 	  [this](ZdbRow<ClientAccess> *row, auto &&complete) mutable {
 	    new (row->ptr()) ClientAccess{.clientID = clientID,
 	      .appID = coreAppID, .audienceIDs = IDVec{CoreAudience::Admin},
-	      .scopeIDs = IDVec{CoreScope::CatalogPublish},
 	      .roleIDs = IDVec{CoreRole::CatalogPublisher}, .state = State::Active,
 	      .version = 1, .created = created, .updated = created,
 	      .owner = saga->id()};
@@ -2063,103 +2063,6 @@ ZfbStruct(ZumAPI, RoleEdit,
   (((kind), (Ctor<6>)), (Int8)),
   (((label), (Ctor<7>)), (String)),
   (((state), (Ctor<8>, Enum<State::Map>)), (Int8)));
-
-struct ScopeEdit : public ZdbSagaBase<DBContext> {
-  using Base = ZdbSagaBase<DBContext>;
-  using Base::context;
-  using Base::saga;
-  using Type = ZuStringT<"scopeEdit.v1">;
-  enum { NSteps = 6 };
-  enum { Roles, Status };
-
-  App app;
-  Scope before;
-  IDVec roleIDs;
-  String ifMatch;
-  int64_t updated = 0;
-  IdemRequest request;
-  int8_t kind = Roles;
-  State::T state = State::Pending;
-  unsigned error = 0;
-
-  bool unchanged() const { return kind == Status && state == before.state; }
-  ZumAPI unsigned appError(const App &) const;
-  ZumAPI unsigned scopeError(const Scope &) const;
-  ZumAPI void validate(unsigned, Zdb_::SagaCompleteFn);
-
-  ZdbSagaStep(0, zum.request, Insert) {
-    requestInsert<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-
-  ZdbSagaStep(1, zum.app, Update) {
-    appEditStart<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-
-  ZdbSagaStep(2, zum.scope, Update) {
-    if constexpr (!Fwd)
-      if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    auto apply = [this, complete = ZuMv(complete)](bool valid) mutable {
-      context->scopes->run(0, [this, valid, complete = ZuMv(complete)]() mutable {
-	context->scopes->find<0>(0, ZuFwdTuple(app.id, before.id),
-	  [this, valid, complete = ZuMv(complete)](ZdbRowRef<Scope> row) mutable {
-	    if (!row) { error = 404; complete(!Fwd); return; }
-	    if (unchanged()) {
-	      error = scopeError(row->data());
-	      if (error) complete(false);
-	      else saga->skip(ZuMv(complete));
-	      return;
-	    }
-	    saga->update(context->scopes, ZuMv(row), ZuMv(complete),
-	      [this, valid](ZdbRow<Scope> *row, auto &&complete) mutable {
-		if (Fwd && !valid) { error = 400; complete(false); return; }
-		if constexpr (Fwd) {
-		  if (auto code = scopeError(row->data())) {
-		    error = code; complete(false); return;
-		  }
-		  switch (kind) {
-		    case Status: row->data().state = state; break;
-		    default: row->data().roleIDs = roleIDs; break;
-		  }
-		  row->data().version = before.version + 1;
-		  row->data().updated = updated;
-		  row->data().owner = saga->id();
-		} else row->data() = before;
-		complete(row->commit());
-	      });
-	  });
-      });
-    };
-    if constexpr (Fwd) validate(0, ZuMv(apply));
-    else apply(true);
-    return {};
-  }
-
-  ZdbSagaStep(3, zum.scope, Update) {
-    appEditRelease<Fwd>(this, context->scopes, ZuMv(complete));
-    return {};
-  }
-
-  ZdbSagaStep(4, zum.app, Update) {
-    appEditPublish<Fwd>(this, true, ZuMv(complete));
-    return {};
-  }
-
-  ZdbSagaStep(5, zum.request, Update) {
-    requestComplete(this, {}, updated, ZuMv(complete));
-    return {};
-  }
-};
-ZfbStruct(ZumAPI, ScopeEdit,
-  (((app), (Ctor<0>)), (UDT)),
-  (((before), (Ctor<1>)), (UDT)),
-  (((roleIDs), (Ctor<2>)), (UInt64Vec)),
-  (((ifMatch), (Ctor<3>)), (String)),
-  (((updated), (Ctor<4>)), (Int64)),
-  (((request), (Ctor<5>)), (UDT)),
-  (((kind), (Ctor<6>)), (Int8)),
-  (((state), (Ctor<7>, Enum<State::Map>)), (Int8)));
 
 struct ActionEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -3273,59 +3176,6 @@ struct RoleAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, RoleAdd,
-  (((app), (Ctor<0>)), (UDT)),
-  (((before), (Ctor<1>)), (UDT)),
-  (((values), (Ctor<2>)), (UDT)),
-  (((updated), (Ctor<3>)), (Int64)),
-  (((request), (Ctor<4>)), (UDT)));
-
-struct ScopeAdd : public ZdbSagaBase<DBContext> {
-  using Base = ZdbSagaBase<DBContext>;
-  using Base::context;
-  using Base::saga;
-  using Type = ZuStringT<"scopeAdd.v1">;
-  enum { NSteps = 6 };
-
-  App app;
-  Scope before;
-  Scope values;
-  int64_t updated = 0;
-  IdemRequest request;
-  unsigned error = 0;
-
-  bool unchanged() const { return false; }
-  ZumAPI unsigned appError(const App &) const;
-  ZumAPI void validate(Zdb_::SagaCompleteFn);
-  ZumAPI Scope result() const;
-
-  ZdbSagaStep(0, zum.request, Insert) {
-    requestInsert<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(1, zum.app, Update) {
-    appEditStart<Fwd>(this, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(2, zum.scope, Insert) {
-    recordPut<Fwd, true>(this, context->scopes, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(3, zum.scope, Update) {
-    appEditRelease<Fwd>(this, context->scopes, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(4, zum.app, Update) {
-    appEditPublish<Fwd>(this, true, ZuMv(complete));
-    return {};
-  }
-  ZdbSagaStep(5, zum.request, Update) {
-    StringVec ids;
-    ids.push(String{} << values.id);
-    requestComplete(this, ZuMv(ids), updated, ZuMv(complete));
-    return {};
-  }
-};
-ZfbStruct(ZumAPI, ScopeAdd,
   (((app), (Ctor<0>)), (UDT)),
   (((before), (Ctor<1>)), (UDT)),
   (((values), (Ctor<2>)), (UDT)),

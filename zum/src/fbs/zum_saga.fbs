@@ -2,7 +2,6 @@ include "zfb_types.fbs";
 include "zum_issuer.fbs";
 include "zum_app.fbs";
 include "zum_role.fbs";
-include "zum_scope.fbs";
 include "zum_action.fbs";
 include "zum_user.fbs";
 include "zum_cred.fbs";
@@ -25,7 +24,7 @@ table ConsentCode {
   before_grant:Grant;
   after_grant:Grant;
   before_consent:Consent;
-  scope_i_ds:[uint64];
+  role_i_ds:[uint64];
   now:long;
 }
 
@@ -106,7 +105,7 @@ table CodeFamily {
   client_i_d:string;
   credential_i_d:[ubyte];
   audience:string;
-  scope_i_ds:[uint64];
+  requested_role_i_ds:[uint64];
   role_i_ds:[uint64];
   actions:Zfb.Bitmap;
   digest:[ubyte];
@@ -192,7 +191,6 @@ table RoleDelete {
   members:[Zfb.Bytes];
   clients:[Zfb.Bytes];
   admins:[Zfb.Bytes];
-  scopes:[Zfb.Bytes];
   maps:[Zfb.Bytes];
   updated:int64;
   request:IdemRequest;
@@ -213,7 +211,6 @@ table CatalogPublish {
   after:App;
   actions:CatalogRows;
   roles:CatalogRows;
-  scopes:CatalogRows;
   request:IdemRequest;
 }
 
@@ -233,17 +230,6 @@ table RoleEdit {
   request:IdemRequest;
   kind:int8;
   label:string;
-  state:int8;
-}
-
-table ScopeEdit {
-  app:App;
-  before:Scope;
-  role_i_ds:[uint64];
-  if_match:string;
-  updated:int64;
-  request:IdemRequest;
-  kind:int8;
   state:int8;
 }
 
@@ -413,14 +399,6 @@ table RoleAdd {
   app:App;
   before:Role;
   values:Role;
-  updated:int64;
-  request:IdemRequest;
-}
-
-table ScopeAdd {
-  app:App;
-  before:Scope;
-  values:Scope;
   updated:int64;
   request:IdemRequest;
 }

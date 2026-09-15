@@ -99,12 +99,11 @@ static bool loadConfig(ZuCSpan path, Config &config)
     config.audienceID && (config.addr == "127.0.0.1" || config.addr == "::1");
 }
 
-static Zum::ServiceManifest manifest(uint64_t audienceID)
+static Zum::ServiceManifest manifest()
 {
   return {Zum::CatalogData{
     .actions = {{.name = "ping"}},
-    .roles = {{.actions = {"ping"}, .name = "ping"}},
-    .scopes = {{.audienceID = audienceID, .name = "ping", .roles = {"ping"}}}
+    .roles = {{.actions = {"ping"}, .name = "ping"}}
   }, 1};
 }
 
@@ -334,7 +333,7 @@ int main(int argc, char **argv)
     });
     ready.wait();
     if (ok) {
-      app.service.publish(manifest(config.audienceID), [&ready, &ok](
+      app.service.publish(manifest(), [&ready, &ok](
           Zum::ServiceProtocolResult result) {
         ok = result.error == Zum::ServiceError::OK; ready.post();
       });

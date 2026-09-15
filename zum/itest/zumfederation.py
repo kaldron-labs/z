@@ -57,15 +57,11 @@ def exercise(fixture, provider):
     fixture.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
                     {"actionIDs": [action["id"]]}, token=admin,
                     headers={"If-Match": role["etag"]})
-    scope = create(prefix + "/scopes", {"name": "ping", "audienceID": audience["id"]})
-    fixture.request("PUT", prefix + "/scopes/" + scope["id"] + "/roles",
-                    {"roleIDs": [role["id"]]}, token=admin,
-                    headers={"If-Match": scope["etag"]})
     client = create("/admin/clients", {"appID": app_id, "label": "Independent federation client",
         "type": "native", "redirectURIs": ["http://127.0.0.1:49152/callback"],
         "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
     fixture.request("PUT", prefix + "/client-access/" + client["id"], {
-        "audienceIDs": [audience["id"]], "scopeIDs": [scope["id"]], "roleIDs": []},
+        "audienceIDs": [audience["id"]], "roleIDs": [role["id"]]},
         token=admin, headers={"If-None-Match": "*"}, status=201)
     upstream = create("/admin/providers", {"name": "independent-fixture",
         "issuer": provider.issuer, "clientID": provider.client_id,
@@ -197,18 +193,13 @@ def exercise(fixture, provider):
     fixture.request("PUT", isolated_prefix + "/roles/" + isolated_role["id"] + "/actions",
                     {"actionIDs": [isolated_action["id"]]}, token=admin,
                     headers={"If-Match": isolated_role["etag"]})
-    isolated_scope = create(isolated_prefix + "/scopes", {
-        "name": "ping", "audienceID": isolated_audience["id"]})
-    fixture.request("PUT", isolated_prefix + "/scopes/" + isolated_scope["id"] + "/roles",
-                    {"roleIDs": [isolated_role["id"]]}, token=admin,
-                    headers={"If-Match": isolated_scope["etag"]})
     isolated_client = create("/admin/clients", {
         "appID": isolated_id, "label": "Provider isolation client", "type": "native",
         "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 5,
         "refreshAllowed": True, "identityScopes": ["openid"]})
     fixture.request("PUT", isolated_prefix + "/client-access/" + isolated_client["id"], {
-        "audienceIDs": [isolated_audience["id"]], "scopeIDs": [isolated_scope["id"]],
-        "roleIDs": []}, token=admin, headers={"If-None-Match": "*"}, status=201)
+        "audienceIDs": [isolated_audience["id"]], "roleIDs": [isolated_role["id"]]},
+        token=admin, headers={"If-None-Match": "*"}, status=201)
     isolated_provider = create("/admin/providers", {
         "name": "second-fixture", "issuer": provider.issuer,
         "clientID": provider.client_id, "clientSecret": provider.client_secret,

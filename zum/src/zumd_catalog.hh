@@ -20,22 +20,6 @@
 
 namespace Zum {
 
-// Preserve administrator removals from the previous published role set.
-// Only a newly introduced manifest binding may add effective authority.
-inline IDVec catalogScopeRoles(const Scope &before, const IDVec &desired)
-{
-  IDVec roles;
-  roles.size(desired.length());
-  for (auto id: desired) {
-    bool current = false, published = false;
-    for (auto old: before.roleIDs) if (old == id) { current = true; break; }
-    for (auto old: before.catalogRoleIDs)
-      if (old == id) { published = true; break; }
-    if (current || !published) roles.push(id);
-  }
-  return roles;
-}
-
 struct CatalogEdit {
   Bytes before;
   Bytes after;
@@ -64,14 +48,13 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
   using Base::context;
   using Base::saga;
-  using Type = ZuStringT<"catalogPublish.v2">;
-  enum { NSteps = 16 };
+  using Type = ZuStringT<"catalogPublish.v3">;
+  enum { NSteps = 12 };
 
   App before;
   App after;
   CatalogRows actions;
   CatalogRows roles;
-  CatalogRows scopes;
   IdemRequest request;
 
   template <typename T> bool valid(const T &item) const {
@@ -211,31 +194,19 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
   ZdbSagaRepeatStep(5, zum.role, Update, roles.changed.length()) {
     change<Fwd>(context->roles, roles.changed, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(6, zum.scope, Insert, scopes.added.length()) {
-    insert<Fwd>(context->scopes, scopes.added, ZuMv(complete)); return {};
-  }
-  ZdbSagaRepeatStep(7, zum.scope, Update, scopes.changed.length()) {
-    change<Fwd>(context->scopes, scopes.changed, ZuMv(complete)); return {};
-  }
-  ZdbSagaRepeatStep(8, zum.action, Update, actions.added.length()) {
+  ZdbSagaRepeatStep(6, zum.action, Update, actions.added.length()) {
     release<Fwd, true>(context->actions, actions.added, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(9, zum.action, Update, actions.changed.length()) {
+  ZdbSagaRepeatStep(7, zum.action, Update, actions.changed.length()) {
     release<Fwd, false>(context->actions, actions.changed, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(10, zum.role, Update, roles.added.length()) {
+  ZdbSagaRepeatStep(8, zum.role, Update, roles.added.length()) {
     release<Fwd, true>(context->roles, roles.added, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(11, zum.role, Update, roles.changed.length()) {
+  ZdbSagaRepeatStep(9, zum.role, Update, roles.changed.length()) {
     release<Fwd, false>(context->roles, roles.changed, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(12, zum.scope, Update, scopes.added.length()) {
-    release<Fwd, true>(context->scopes, scopes.added, ZuMv(complete)); return {};
-  }
-  ZdbSagaRepeatStep(13, zum.scope, Update, scopes.changed.length()) {
-    release<Fwd, false>(context->scopes, scopes.changed, ZuMv(complete)); return {};
-  }
-  ZdbSagaStep(14, zum.app, Update) {
+  ZdbSagaStep(10, zum.app, Update) {
     if (before.version == after.version) {
       saga->skip(ZuMv(complete)); return {};
     }
@@ -254,7 +225,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
-  ZdbSagaStep(15, zum.request, Update) {
+  ZdbSagaStep(11, zum.request, Update) {
     StringVec ids;
     ids.push(String{} << before.id);
     requestComplete(this, ZuMv(ids),
@@ -269,8 +240,7 @@ ZfbStruct(ZumAPI, CatalogPublish,
   (((after), (Ctor<1>)), (UDT)),
   (((actions), (Ctor<2>)), (UDT)),
   (((roles), (Ctor<3>)), (UDT)),
-  (((scopes), (Ctor<4>)), (UDT)),
-  (((request), (Ctor<5>)), (UDT)));
+  (((request), (Ctor<4>)), (UDT)));
 
 } // namespace Zum
 

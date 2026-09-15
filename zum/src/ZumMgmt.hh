@@ -56,31 +56,13 @@ struct CatalogRoleVec : public CatalogRoleArray {
   friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogRoleVec *);
 };
 
-struct CatalogScope {
-  AudienceID audienceID = 0;
-  String name;
-  StringVec roles;
-};
-ZfStruct(, (CatalogScope, JSON),
-  (((audienceID),	(Required, JSON::String<>)),	(UInt64)),
-  (((name),		(Required)),	(String)),
-  (((roles),		(Required)),	(StringVec)));
-ZuDerive(CatalogScopeArray, (ZtArray<CatalogScope,
-  ZtArrayHeapID<"Zum.Catalog.Scopes">>));
-struct CatalogScopeVec : public CatalogScopeArray {
-  ZuDerive_(CatalogScopeVec, CatalogScopeArray);
-  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogScopeVec *);
-};
-
 struct CatalogData {
   CatalogActionVec actions;
   CatalogRoleVec roles;
-  CatalogScopeVec scopes;
 };
 ZfStruct(, (CatalogData, JSON),
   (((actions),		(Required)),	(UDT)),
-  (((roles),		(Required)),	(UDT)),
-  (((scopes),		(Required)),	(UDT)));
+  (((roles),		(Required)),	(UDT)));
 
 // One operation per remote management call. Append entries: these values
 // are the built-in action IDs as well as management request identities.
@@ -94,7 +76,7 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   membershipQuery, membershipAdd, membershipRoles, membershipState,
   actionQuery, actionAdd, actionState,
   roleQuery, roleAdd, roleUpdate, roleActions, roleState, roleDelete,
-  scopeQuery, scopeAdd, scopeRoles, scopeState,
+  retiredScopeQuery, retiredScopeAdd, retiredScopeRoles, retiredScopeState,
   audienceQuery, audienceAdd, audienceUpdate, audienceState,
   clientQuery, clientAdd, clientUpdate, clientState, clientSecretRotate,
   clientAccessQuery, clientAccessSet, clientAccessState,
@@ -107,13 +89,15 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   consentQuery, consentRevoke,
   grantQuery, grantRevoke, grantCleanup,
   signKeyQuery, signKeyAdd, signKeyRetire,
-  retired67, retired68, // Retired audit IDs; never reuse these positions.
+  retired67, retired68, // Retired IDs; never reuse these positions.
   catalogPublish);
 
 // Invalid request IDs must not resolve to a usable permission name.
 inline MgmtString managementAction(int op)
 {
   if (unsigned(op) >= MgmtOp::N ||
+      op == MgmtOp::retiredScopeQuery || op == MgmtOp::retiredScopeAdd ||
+      op == MgmtOp::retiredScopeRoles || op == MgmtOp::retiredScopeState ||
       op == MgmtOp::retired67 || op == MgmtOp::retired68) return {};
   MgmtString name{"Zum."};
   name << MgmtOp::name(op);

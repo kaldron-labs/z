@@ -29,7 +29,7 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
   Grant beforeGrant;
   Grant afterGrant;
   Consent beforeConsent;
-  IDVec scopeIDs;
+  IDVec roleIDs;
   int64_t now = 0;
 
   ZuStructKeyT<Consent, 0> consentKey() const
@@ -48,13 +48,13 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
       item.audienceID = beforeGrant.audienceID;
       item.created = now;
     }
-    // A revoked consent does not carry its former scopes into a new approval.
-    if (beforeConsent.state != State::Active) item.scopeIDs.null();
-    for (auto id: scopeIDs) {
+    // A revoked consent does not carry its former role views into a new approval.
+    if (beforeConsent.state != State::Active) item.roleIDs.null();
+    for (auto id: roleIDs) {
       bool found = false;
-      for (auto existing: item.scopeIDs)
+      for (auto existing: item.roleIDs)
 	if (existing == id) { found = true; break; }
-      if (!found) item.scopeIDs.push(id);
+      if (!found) item.roleIDs.push(id);
     }
     item.state = State::Active;
     item.version = beforeConsent.version + 1;
@@ -122,7 +122,7 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
 		item.appID != beforeGrant.appID || item.clientID != beforeGrant.clientID ||
 		item.expires != beforeGrant.expires || item.authVersion != beforeGrant.authVersion ||
 		item.generation != beforeGrant.generation || item.authTime != beforeGrant.authTime ||
-		item.scopeIDs != beforeGrant.scopeIDs ||
+		item.requestedRoleIDs != beforeGrant.requestedRoleIDs ||
 		item.userVersion != beforeGrant.userVersion ||
 		item.bindingDigest != beforeGrant.bindingDigest || item.digest != beforeGrant.digest) {
 	      complete(false); return;
@@ -213,7 +213,7 @@ ZfbStruct(ZumAPI, ConsentCode,
   (((beforeGrant), (Ctor<0>)), (UDT)),
   (((afterGrant), (Ctor<1>)), (UDT)),
   (((beforeConsent), (Ctor<2>)), (UDT)),
-  (((scopeIDs), (Ctor<3>)), (UInt64Vec)),
+  (((roleIDs), (Ctor<3>)), (UInt64Vec)),
   (((now), (Ctor<4>)), (Int64)));
 
 } // namespace Zum

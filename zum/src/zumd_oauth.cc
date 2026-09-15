@@ -393,7 +393,7 @@ bool authorizationBegin(
   next.audience = selection.audience;
   next.redirectURI = params.redirectURI;
   next.scope = selection.scope;
-  next.scopeIDs = selection.scopeIDs;
+  next.requestedRoleIDs = selection.roleIDs;
   if (params.has(AuthorizeParams::Nonce)) next.nonce = params.nonce;
   if (passkey)
     next.challenge = Bytes{ZuBSpan{random.data() + OpaqueIDSize, ChallengeSize}};

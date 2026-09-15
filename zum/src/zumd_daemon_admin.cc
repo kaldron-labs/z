@@ -348,14 +348,6 @@ struct ActionsInput {
 ZfStruct(, (ActionsInput, JSON),
   (((actionIDs),	(Required)),	(UInt32Vec)));
 
-struct ScopeInput {
-  AudienceID audienceID = 0;
-  String name;
-};
-ZfStruct(, (ScopeInput, JSON),
-  (((audienceID),	(Required, JSON::String<>)),	(UInt64)),
-  (((name),		(Required)),	(String)));
-
 struct AudienceInput {
   AppID appID = 0;
   String name;
@@ -409,12 +401,10 @@ ZfStruct(, (ClientUpdateInput, JSON),
 
 struct ClientAccessInput {
   IDVec audienceIDs;
-  IDVec scopeIDs;
   IDVec roleIDs;
 };
 ZfStruct(, (ClientAccessInput, JSON),
   (((audienceIDs),	(Required, JSON::String<>)),	(UInt64Vec)),
-  (((scopeIDs),		(Required, JSON::String<>)),	(UInt64Vec)),
   (((roleIDs),		(Required, JSON::String<>)),	(UInt64Vec)));
 
 struct AdminAccessInput {
@@ -691,7 +681,6 @@ static bool adminQueryFields(int op, uint32_t seen)
   constexpr uint32_t source = 1U<<QueryInput::Source;
   constexpr uint32_t appID = 1U<<QueryInput::AppID_;
   constexpr uint32_t userID = 1U<<QueryInput::UserID_;
-  constexpr uint32_t audienceID = 1U<<QueryInput::AudienceID_;
   constexpr uint32_t clientID = 1U<<QueryInput::ClientID_;
   constexpr uint32_t operation = 1U<<QueryInput::Operation;
   constexpr uint32_t idem = 1U<<QueryInput::IdempotencyKey;
@@ -709,8 +698,6 @@ static bool adminQueryFields(int op, uint32_t seen)
     case MgmtOp::membershipQuery: return fields(userID | page);
     case MgmtOp::actionQuery:
     case MgmtOp::roleQuery: return fields(id | name | page);
-    case MgmtOp::scopeQuery:
-      return fields(id | audienceID | name | page);
     case MgmtOp::audienceQuery: return fields(id | (1U<<QueryInput::URI) | page);
     case MgmtOp::clientQuery: return fields(id | clientID | page);
     case MgmtOp::clientAccessQuery: return fields(clientID | page);
@@ -829,10 +816,10 @@ static bool roleCeiling(const AdminPermit &permit, const IDVec &roleIDs)
 template <typename Edit>
 class AppEdit_ : public ZumPolymorph {
 public:
-  enum { AppFirst = ZuIsSame<Edit, RoleEdit>{} || ZuIsSame<Edit, ScopeEdit>{} ||
+  enum { AppFirst = ZuIsSame<Edit, RoleEdit>{} ||
     ZuIsSame<Edit, ActionEdit>{},
     Creation = ZuIsSame<Edit, ProviderAdd>{} || ZuIsSame<Edit, AudienceAdd>{} ||
-      ZuIsSame<Edit, RoleAdd>{} || ZuIsSame<Edit, ScopeAdd>{} ||
+      ZuIsSame<Edit, RoleAdd>{} ||
       ZuIsSame<Edit, UserInvite>{} || ZuIsSame<Edit, ClientAdd>{} || ZuIsSame<Edit, KeyAdd>{} };
   using Snapshot = ZuIf<AppFirst, App, ZuDecay<decltype(ZuDeclVal<Edit>().before)>>;
 
@@ -853,7 +840,7 @@ public:
 	  else if constexpr (ZuIsSame<Edit, UserInvite>{}) self->external_();
 	  else if constexpr (ZuIsSame<Edit, AudienceEdit>{} || ZuIsSame<Edit, AudienceAdd>{} ||
 	      ZuIsSame<Edit, ClientAdd>{} ||
-	      ZuIsSame<Edit, RoleAdd>{} || ZuIsSame<Edit, ScopeAdd>{} ||
+	      ZuIsSame<Edit, RoleAdd>{} ||
 	      ZuIsSame<Edit, RoleMapDelete>{} ||
 	      ZuIsSame<Edit, RoleMapPut>{} || ZuIsSame<Edit, PolicyPut>{} ||
 	      ZuIsSame<Edit, ClientAccessPut>{} || ZuIsSame<Edit, AdminAccessPut>{})
@@ -895,7 +882,6 @@ private:
       return m_context->roleMaps;
     else if constexpr (ZuIsSame<Edit, PolicyPut>{}) return m_context->authPolicies;
     else if constexpr (ZuIsSame<Edit, RoleAdd>{}) return m_context->roles;
-    else if constexpr (ZuIsSame<Edit, ScopeAdd>{}) return m_context->scopes;
     else return m_context->apps;
   }
 
@@ -908,7 +894,6 @@ private:
   auto table_() const
   {
     if constexpr (ZuIsSame<Edit, RoleEdit>{}) return m_context->roles;
-    else if constexpr (ZuIsSame<Edit, ScopeEdit>{}) return m_context->scopes;
     else return m_context->actions;
   }
 
@@ -1720,7 +1705,7 @@ private:
 	if (before.origin != Origin::Standard || m_present(before)) return;
 	if (before.owner) { m_ok = false; return; }
 	if (before.state != State::Active) return;
-	if constexpr (!ZuIsSame<T, Scope>{}) if (before.tombstone) return;
+        if (before.tombstone) return;
 	if (before.version == UINT64_MAX) { m_ok = false; return; }
 	T after = before;
 	after.state = State::Disabled;
@@ -1852,26 +1837,6 @@ private:
 	  if (name == role.actions[j]) return false;
       }
     }
-    unsigned scopeCount = m_input.catalog.scopes.length();
-    for (unsigned i = 0; i < scopeCount; ++i) {
-      const auto &scope = m_input.catalog.scopes[i];
-      if (!scope.audienceID || !scope.name) return false;
-      for (unsigned j = 0; j < i; ++j)
-	if (scope.audienceID == m_input.catalog.scopes[j].audienceID &&
-	    scope.name == m_input.catalog.scopes[j].name) return false;
-      unsigned scopeRoleCount = scope.roles.length();
-      for (unsigned r = 0; r < scopeRoleCount; ++r) {
-	auto &name = scope.roles[r];
-	bool found = false;
-	for (unsigned j = 0; j < roleCount; ++j)
-	  if (name == m_input.catalog.roles[j].name) {
-	    found = true; break;
-	  }
-	if (!found) return false;
-	for (unsigned j = 0; j < r; ++j)
-	  if (name == scope.roles[j]) return false;
-      }
-    }
     return true;
   }
 
@@ -1974,7 +1939,7 @@ private:
   {
     if (m_offset >= m_input.catalog.roles.length()) {
       m_offset = 0;
-      scope_();
+      retire_();
       return;
     }
     unsigned index = m_offset++;
@@ -2038,84 +2003,6 @@ private:
     });
   }
 
-  void scope_()
-  {
-    if (m_offset >= m_input.catalog.scopes.length()) { retire_(); return; }
-    unsigned index = m_offset++;
-    const auto &input = m_input.catalog.scopes[index];
-    IDVec roleIDs;
-    for (auto &name: input.roles) {
-      int role = roleIndex_(name);
-      if (role < 0) {
-	fail_(400, "invalid_request", "scope role is unavailable");
-	return;
-      }
-      roleIDs.push(m_roleIDs[role]);
-    }
-    auto audiences = m_context->audiences;
-    audiences->run(0, [self = ZmRef<CatalogPublish_>{this}, audiences,
-	index, roleIDs = ZuMv(roleIDs)]() mutable {
-      audiences->find<0>(0,
-	ZuFwdTuple(self->m_input.catalog.scopes[index].audienceID), [self = ZuMv(self),
-	  index, roleIDs = ZuMv(roleIDs)](ZdbRowRef<Audience> audience) mutable {
-	if (!audience || audience->data().appID != self->m_appID ||
-	    audience->data().state != State::Active || audience->data().owner) {
-	  self->fail_(400, "invalid_request", "invalid catalog audience");
-	  return;
-	}
-	self->scopeWrite_(index, ZuMv(roleIDs));
-      });
-    });
-  }
-
-  void scopeWrite_(unsigned index, IDVec roleIDs)
-  {
-    auto table = m_context->scopes;
-    String name = m_input.catalog.scopes[index].name;
-    AudienceID audienceID = m_input.catalog.scopes[index].audienceID;
-    table->run(0, [self = ZmRef<CatalogPublish_>{this}, table, index,
-	name = ZuMv(name), audienceID,
-	roleIDs = ZuMv(roleIDs)]() mutable {
-      table->find<1>(0, ZuFwdTuple(self->m_appID, audienceID,
-	ZuMv(name)), [self = ZuMv(self), index,
-	  audienceID,
-	  roleIDs = ZuMv(roleIDs)](ZdbRowRef<Scope> row) mutable {
-	if (row) {
-	  auto scope = row->data();
-	  if (scope.origin != Origin::Standard || scope.owner) {
-	    self->fail_(409, "conflict", "catalog scope name is reserved");
-	    return;
-	  }
-	  if (self->m_replay) { self->scope_(); return; }
-	  scope.roleIDs = catalogScopeRoles(scope, roleIDs);
-	  scope.catalogRoleIDs = ZuMv(roleIDs);
-	  scope.catalogRevision = self->m_input.revision;
-	  ++scope.version;
-	  scope.updated = self->m_change.after.updated;
-	  self->m_change.scopes.change(row->data(), scope);
-	  self->scope_();
-	  return;
-	}
-	uint64_t id;
-	if (!randomID(*self->m_rng, id)) {
-	  self->fail_(503, "unavailable", "scope ID generation failed");
-	  return;
-	}
-	int64_t now = Zm::now().sec();
-	Scope scope{.appID = self->m_appID, .id = id,
-	  .audienceID = audienceID,
-	  .name = self->m_input.catalog.scopes[index].name,
-	  .roleIDs = ZuMv(roleIDs), .state = State::Active,
-	  .origin = Origin::Standard,
-	  .catalogRevision = self->m_input.revision, .version = 1,
-	  .created = now, .updated = now};
-	scope.catalogRoleIDs = scope.roleIDs;
-	self->m_change.scopes.add(scope);
-	self->scope_();
-      });
-    });
-  }
-
   template <typename Table, typename Present>
   void retire_(Table *table, CatalogRows &rows, Present present)
   {
@@ -2142,13 +2029,6 @@ private:
 	retire_(m_context->roles, m_change.roles,
 	  [this](const Role &role) { return roleIndex_(role.name) >= 0; });
 	break;
-      case 2:
-	retire_(m_context->scopes, m_change.scopes, [this](const Scope &scope) {
-	  for (const auto &item: m_input.catalog.scopes)
-	    if (item.audienceID == scope.audienceID && item.name == scope.name) return true;
-	  return false;
-	});
-	break;
       default: finish_(); break;
     }
   }
@@ -2156,8 +2036,7 @@ private:
   void finish_()
   {
     if (m_replay && !m_change.actions.added && !m_change.actions.changed &&
-	!m_change.roles.added && !m_change.roles.changed &&
-	!m_change.scopes.added && !m_change.scopes.changed) {
+	!m_change.roles.added && !m_change.roles.changed) {
       m_change.after = m_change.before;
     } else {
       auto &app = m_change.after;
@@ -2705,9 +2584,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
     filterShape = !filters || filters == (1U<<QueryInput::ID) ||
       filters == (1U<<QueryInput::Name) ||
       filters == ((1U<<QueryInput::Name) | (1U<<QueryInput::Source));
-  else if (op == MgmtOp::scopeQuery)
-    filterShape = !filters || filters == (1U<<QueryInput::ID) ||
-      filters == ((1U<<QueryInput::AudienceID_) | (1U<<QueryInput::Name));
   if (!filterShape) {
     complete(AdminResult{
       error_("invalid_request", "conflicting query filters"), 400});
@@ -2826,7 +2702,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
     case MgmtOp::membershipQuery:
     case MgmtOp::actionQuery:
     case MgmtOp::roleQuery:
-    case MgmtOp::scopeQuery:
     case MgmtOp::clientAccessQuery:
     case MgmtOp::adminAccessQuery:
     case MgmtOp::roleMapQuery: {
@@ -2890,33 +2765,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    return;
 	  }
 	  adminQueryApp<0>(m_context->roles, appID, queryInput.limit,
-	    ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
-	    ZuMv(complete)); return;
-	case MgmtOp::scopeQuery:
-	  if (queryInput.id) {
-	    uint64_t id;
-	    if (!adminUInt(queryInput.id, id) || !id) {
-	      complete(AdminResult{
-		error_("invalid_request", "invalid scope id filter"), 400});
-	      return;
-	    }
-	    adminFind<0>(m_context->scopes,
-	      ZuFwdTuple(appID, ScopeID{id}), ZuMv(complete));
-	    return;
-	  }
-	  if (queryInput.audienceID && queryInput.name) {
-	    uint64_t id;
-	    if (!adminUInt(queryInput.audienceID, id) || !id) {
-	      complete(AdminResult{
-		error_("invalid_request", "invalid audienceID filter"), 400});
-	      return;
-	    }
-	    adminFind<1>(m_context->scopes,
-	      ZuFwdTuple(appID, AudienceID{id}, ZuMv(queryInput.name)),
-	      ZuMv(complete));
-	    return;
-	  }
-	  adminQueryApp<0>(m_context->scopes, appID, queryInput.limit,
 	    ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	    ZuMv(complete)); return;
 	case MgmtOp::clientAccessQuery:
@@ -3296,26 +3144,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       change->start();
       return;
     }
-    case MgmtOp::scopeAdd: {
-      AppID appID;
-      ScopeInput input;
-      uint64_t id;
-      if (!idempotencyKey || !adminTargetApp(target, appID) ||
-	  !adminBody(body, input) || !input.audienceID || !input.name ||
-	  !randomID(m_rng, id)) {
-	complete(AdminResult{
-	  error_("invalid_request", "invalid scope creation"), 400});
-	return;
-      }
-      ZmRef<AppEdit_<ScopeAdd>> change = new AppEdit_<ScopeAdd>{
-	m_db, m_context, &m_rng, ScopeAdd{
-	  .before = Scope{.appID = appID, .id = id},
-	  .values = Scope{.appID = appID, .id = id,
-	    .audienceID = input.audienceID, .name = ZuMv(input.name)},
-	  .request = ZuMv(request)}, ZuMv(complete)};
-      change->start();
-      return;
-    }
     case MgmtOp::membershipAdd: {
       AppID appID;
       MembershipInput input;
@@ -3385,36 +3213,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       ZmRef<AppEdit_<RoleEdit>> change = new AppEdit_<RoleEdit>{m_db, m_context, &m_rng,
 	RoleEdit{.app = App{.id = appID}, .before = Role{.appID = appID, .id = roleID},
 	  .actionIDs = ZuMv(input.actionIDs), .ifMatch = ZuMv(ifMatch),
-	  .request = ZuMv(request)}, ZuMv(complete)};
-      change->start();
-      return;
-    }
-    case MgmtOp::scopeRoles: {
-      AppID appID;
-      if (!adminTargetApp(target, appID)) break;
-      String prefix{"/admin/apps/"};
-      prefix << appID << "/scopes/";
-      uint64_t scopeID;
-      RolesInput input;
-      if (!pathUInt(target, prefix, "/roles", scopeID) ||
-	  !adminBody(body, input)) {
-	complete(AdminResult{
-	  error_("invalid_request", "invalid scope roles"), 400});
-	return;
-      }
-      if (!roleCeiling(permit, input.roleIDs)) {
-	complete(AdminResult{
-	  error_("forbidden", "scope roles exceed delegation"), 403});
-	return;
-      }
-      if (!ifMatch) {
-	complete(AdminResult{
-	  error_("precondition_required", "If-Match is required"), 428});
-	return;
-      }
-      ZmRef<AppEdit_<ScopeEdit>> change = new AppEdit_<ScopeEdit>{m_db, m_context, &m_rng,
-	ScopeEdit{.app = App{.id = appID}, .before = Scope{.appID = appID, .id = scopeID},
-	  .roleIDs = ZuMv(input.roleIDs), .ifMatch = ZuMv(ifMatch),
 	  .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
       return;
@@ -3575,7 +3373,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	m_db, m_context, &m_rng, ClientAccessPut{
 	  .before = ClientAccess{.clientID = clientID, .appID = appID},
 	  .values = ClientAccess{.clientID = ZuMv(clientID), .appID = appID,
-	    .audienceIDs = ZuMv(input.audienceIDs), .scopeIDs = ZuMv(input.scopeIDs),
+	    .audienceIDs = ZuMv(input.audienceIDs),
 	    .roleIDs = ZuMv(input.roleIDs)}, .ifMatch = ZuMv(ifMatch),
 	  .ifNoneMatch = ZuMv(ifNoneMatch), .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
@@ -4075,8 +3873,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
     }
     case MgmtOp::membershipState:
     case MgmtOp::actionState:
-    case MgmtOp::roleState:
-    case MgmtOp::scopeState: {
+    case MgmtOp::roleState: {
       AppID appID;
       if (!adminTargetApp(target, appID)) break;
       String prefix{"/admin/apps/"};
@@ -4085,7 +3882,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	case MgmtOp::membershipState: prefix << "/memberships/"; break;
 	case MgmtOp::actionState: prefix << "/actions/"; break;
 	case MgmtOp::roleState: prefix << "/roles/"; break;
-	default: prefix << "/scopes/"; break;
       }
       uint64_t id;
       if (!pathUInt(target, prefix, "/state", id, op == MgmtOp::actionState)) break;
@@ -4140,23 +3936,6 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    RoleEdit{.app = App{.id = appID}, .before = Role{.appID = appID, .id = id},
 	      .ifMatch = ZuMv(ifMatch), .request = ZuMv(request),
 	      .kind = RoleEdit::Status, .state = state}, ZuMv(complete)};
-	  change->start();
-	  return;
-	}
-	default: {
-	  State::T state;
-	  if (!stateBody(body, state)) {
-	    complete(adminErrorResult(400, "invalid_request", "invalid state"));
-	    return;
-	  }
-	  if (!ifMatch) {
-	    complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
-	    return;
-	  }
-	  ZmRef<AppEdit_<ScopeEdit>> change = new AppEdit_<ScopeEdit>{m_db, m_context, &m_rng,
-	    ScopeEdit{.app = App{.id = appID}, .before = Scope{.appID = appID, .id = id},
-	      .ifMatch = ZuMv(ifMatch), .request = ZuMv(request),
-	      .kind = ScopeEdit::Status, .state = state}, ZuMv(complete)};
 	  change->start();
 	  return;
 	}

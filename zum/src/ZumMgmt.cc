@@ -53,12 +53,7 @@ static constexpr ZuArray<MgmtRoute, MgmtOp::N> routes{
   ZUM_ROUTE(roleState, PUT,
     "/admin/apps/{appID}/roles/{roleID}/state"),
   ZUM_ROUTE(roleDelete, DELETE, "/admin/apps/{appID}/roles/{roleID}"),
-  ZUM_ROUTE(scopeQuery, GET, "/admin/apps/{appID}/scopes"),
-  ZUM_ROUTE(scopeAdd, POST, "/admin/apps/{appID}/scopes"),
-  ZUM_ROUTE(scopeRoles, PUT,
-    "/admin/apps/{appID}/scopes/{scopeID}/roles"),
-  ZUM_ROUTE(scopeState, PUT,
-    "/admin/apps/{appID}/scopes/{scopeID}/state"),
+  {}, {}, {}, {}, // Retired scope operation IDs have no route.
   ZUM_ROUTE(audienceQuery, GET, "/admin/audiences"),
   ZUM_ROUTE(audienceAdd, POST, "/admin/audiences"),
   ZUM_ROUTE(audienceUpdate, PATCH,
@@ -257,7 +252,6 @@ bool managementNeedsIdempotency(int op)
     case MgmtOp::actionAdd:
     case MgmtOp::roleAdd:
     case MgmtOp::roleDelete:
-    case MgmtOp::scopeAdd:
     case MgmtOp::audienceAdd:
     case MgmtOp::clientAdd:
     case MgmtOp::clientSecretRotate:

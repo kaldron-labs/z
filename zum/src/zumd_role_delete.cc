@@ -174,8 +174,7 @@ private:
       case 0: scan_(m_context->memberships, m_change.members); break;
       case 1: scan_(m_context->clientAccess, m_change.clients); break;
       case 2: scan_(m_context->adminAccess, m_change.admins); break;
-      case 3: scan_(m_context->scopes, m_change.scopes); break;
-      case 4: scan_(m_context->roleMaps, m_change.maps); break;
+      case 3: scan_(m_context->roleMaps, m_change.maps); break;
       default: submit_(); break;
     }
   }

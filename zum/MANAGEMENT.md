@@ -1,8 +1,8 @@
 # Management operations
 
 [ZumMgmt.hh](src/ZumMgmt.hh) is the shared wire catalog for Zum
-administration. Its 68 active `MgmtOp` values each identify exactly one remote
-call and one core permission named `Zum.<operation>`; two retired slots retain
+administration. Its 64 active `MgmtOp` values each identify exactly one remote
+call and one core permission named `Zum.<operation>`; six retired slots retain
 their numeric IDs without permissions or routes. The route registry in
 [ZumMgmt.cc](src/ZumMgmt.cc) is the sole method/path mapping used by `zumd`,
 the `zum` client, and registry tests.
@@ -17,15 +17,16 @@ public management operation.
 ## Authorization ownership
 
 Bootstrap seeds the catalog in the core Zum application. The core
-`superuser` role contains every management action. The distinct
-`catalogPublisher` role contains only operation-status lookup and catalog
-publication. Enrolled catalog publishers never receive `superuser` implicitly.
+`zum.admin` role contains every management action. The distinct
+`zum.catalog` role contains only operation-status lookup and catalog
+publication. Enrolled catalog publishers never receive `zum.admin` implicitly.
 
 A bearer token must carry the exact operation action. Current database state
 must additionally prove either the active core superuser membership or an
 active `admin_access` delegation for the authenticated user/client and target
 application. The service which owns an application may publish that
-application's available action/standard-role/scope catalog; catalog publication
+application's available action/standard-role catalog. Each role name is also
+the corresponding OAuth resource-scope name at runtime; catalog publication
 never assigns roles to users or restores deleted privileges.
 
 ## Areas
@@ -36,14 +37,14 @@ never assigns roles to users or restores deleted privileges.
 | Applications | `appQuery`, `appEnroll`, `appUpdate`, `appState` |
 | Users/credentials | `userQuery`, `userInvite`, `userUpdate`, `userState`, `userRecover`; `credentialQuery`, `credentialUpdate`, `credentialState` |
 | Memberships | `membershipQuery`, `membershipAdd`, `membershipRoles`, `membershipState` |
-| Actions/roles/scopes | `actionQuery`, `actionAdd`, `actionState`; `roleQuery`, `roleAdd`, `roleUpdate`, `roleActions`, `roleState`, `roleDelete`; `scopeQuery`, `scopeAdd`, `scopeRoles`, `scopeState` |
+| Actions/roles | `actionQuery`, `actionAdd`, `actionState`; `roleQuery`, `roleAdd`, `roleUpdate`, `roleActions`, `roleState`, `roleDelete` |
 | Audiences/clients | `audienceQuery`, `audienceAdd`, `audienceUpdate`, `audienceState`; `clientQuery`, `clientAdd`, `clientUpdate`, `clientState`, `clientSecretRotate` |
 | Delegation | `clientAccessQuery`, `clientAccessSet`, `clientAccessState`; `adminAccessQuery`, `adminAccessSet`, `adminAccessState` |
 | Federation | `providerQuery`, `providerAdd`, `providerUpdate`, `providerState`; `authPolicyQuery`, `authPolicySet`; `roleMapQuery`, `roleMapSet`, `roleMapDelete`; `identityQuery`, `evidenceQuery` |
 | Runtime state | `sessionQuery`, `sessionRevoke`; `consentQuery`, `consentRevoke`; `grantQuery`, `grantRevoke`, `grantCleanup` |
 | Keys | `signKeyQuery`, `signKeyAdd`, `signKeyRetire` |
 
-The precise method/path table, typed mutation fields, scope semantics, catalog
+The precise method/path table, typed mutation fields, role-derived scope semantics, catalog
 ownership, federation freshness, and lifecycle contracts are normative in
 [zum3.md](../zum3.md). Append operations; never renumber a catalog already
 seeded in a database.
@@ -192,7 +193,7 @@ surface:
 | GET | `/oauth2/{appID}/v1/keys` | Active public signing keys for that issuer. |
 | GET/POST | `/oauth2/{appID}/v1/userinfo` | Claims selected by an access token carrying `openid`. |
 
-An interactive request may combine a resource scope with the enrolled client's
+An interactive request may combine a role-derived resource scope with the enrolled client's
 `openid`, `profile`, `email`, and (when refresh tokens are enabled)
 `offline_access` identity scopes. `offline_access` always requires interactive
 consent; `prompt=consent` explicitly selects that path, while `prompt=none`

@@ -15,7 +15,6 @@ FBS = \
 	zum_membership.fbs \
 	zum_action.fbs \
 	zum_role.fbs \
-	zum_scope.fbs \
 	zum_audience.fbs \
 	zum_client.fbs \
 	zum_client_access.fbs \

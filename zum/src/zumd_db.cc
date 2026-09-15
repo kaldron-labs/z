@@ -23,19 +23,16 @@ public:
   void start()
   {
     if (!m_client.appID || m_client.state != State::Active || m_client.owner) {
-      finish_(AuthorityError::Invalid);
-      return;
+      finish_(AuthorityError::Invalid); return;
     }
     auto apps = m_context->apps;
     apps->run(0, [self = ZmRef<ClientScopes_>{this}, apps]() {
       apps->find<0>(0, ZuFwdTuple(self->m_client.appID), [self = ZuMv(self)](
-	  ZdbRowRef<App> row) mutable {
-	if (!row || row->data().state != State::Active || row->data().owner) {
-	  self->finish_(AuthorityError::Invalid);
-	  return;
-	}
-	self->m_app = row->data();
-	self->access_();
+          ZdbRowRef<App> row) mutable {
+        if (!row || row->data().state != State::Active || row->data().owner) {
+          self->finish_(AuthorityError::Invalid); return;
+        }
+        self->m_app = row->data(); self->access_();
       });
     });
   }
@@ -44,12 +41,8 @@ private:
   void finish_(int error)
   {
     auto complete = ZuMv(m_complete);
-    if (error) {
-      complete(error, App{}, Client{}, ClientAccess{}, ScopeVec{});
-      return;
-    }
-    complete(0, ZuMv(m_app), ZuMv(m_client), ZuMv(m_access),
-      ZuMv(m_scopes));
+    if (error) { complete(error, App{}, Client{}, ClientAccess{}, ScopeVec{}); return; }
+    complete(0, ZuMv(m_app), ZuMv(m_client), ZuMv(m_access), ZuMv(m_scopes));
   }
 
   void access_()
@@ -57,64 +50,56 @@ private:
     auto access = m_context->clientAccess;
     access->run(0, [self = ZmRef<ClientScopes_>{this}, access]() {
       access->find<0>(0, ZuFwdTuple(self->m_client.id, self->m_client.appID),
-	[self = ZuMv(self)](ZdbRowRef<ClientAccess> row) mutable {
-	// No resource approval is needed for identity-only OIDC scopes.
-	if (!row) { self->finish_(0); return; }
-	if (row->data().state != State::Active || row->data().owner) {
-	  self->finish_(AuthorityError::Invalid);
-	  return;
-	}
-	self->m_access = row->data();
-	self->m_audienceIDs = row->data().audienceIDs;
-	self->scope_();
-      });
+        [self = ZuMv(self)](ZdbRowRef<ClientAccess> row) mutable {
+          if (!row) { self->finish_(0); return; }
+          if (row->data().state != State::Active || row->data().owner) {
+            self->finish_(AuthorityError::Invalid); return;
+          }
+          self->m_access = row->data(); self->role_();
+        });
     });
   }
 
-  void scope_()
+  void role_()
   {
-    if (m_offset >= m_access.scopeIDs.length()) { finish_(0); return; }
-    ScopeID id = m_access.scopeIDs[m_offset++];
-    auto scopes = m_context->scopes;
-    scopes->run(0, [self = ZmRef<ClientScopes_>{this}, scopes, id]() {
-      scopes->find<0>(0, ZuFwdTuple(self->m_client.appID, id),
-	[self = ZuMv(self)](ZdbRowRef<Scope> row) mutable {
-	if (!row || row->data().state != State::Active || row->data().owner ||
-	    !authorityHasID(self->m_audienceIDs, row->data().audienceID)) {
-	  self->scope_();
-	  return;
-	}
-	self->audience_(row->data());
-      });
+    if (m_roleOffset >= m_access.roleIDs.length()) { finish_(0); return; }
+    RoleID id = m_access.roleIDs[m_roleOffset++];
+    auto roles = m_context->roles;
+    roles->run(0, [self = ZmRef<ClientScopes_>{this}, roles, id]() {
+      roles->find<0>(0, ZuFwdTuple(self->m_client.appID, id),
+        [self = ZuMv(self)](ZdbRowRef<Role> row) mutable {
+          if (!row || row->data().state != State::Active || row->data().owner ||
+              row->data().tombstone) { self->role_(); return; }
+          self->m_role = row->data(); self->audienceOffset = 0; self->audience_();
+        });
     });
   }
 
-  void audience_(Scope scope)
+  void audience_()
   {
+    if (audienceOffset >= m_access.audienceIDs.length()) { role_(); return; }
+    AudienceID id = m_access.audienceIDs[audienceOffset++];
     auto audiences = m_context->audiences;
-    audiences->run(0, [self = ZmRef<ClientScopes_>{this}, audiences,
-	scope = ZuMv(scope)]() mutable {
-      AudienceID id = scope.audienceID;
-      audiences->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self),
-	  scope = ZuMv(scope)](ZdbRowRef<Audience> row) mutable {
-	if (row && row->data().appID == self->m_client.appID &&
-	    row->data().state == State::Active && !row->data().owner &&
-	    row->data().uri) {
-	  self->m_scopes.push(ScopeAuth{
-	    .scope = ZuMv(scope), .audience = row->data().uri});
-	}
-	self->scope_();
+    audiences->run(0, [self = ZmRef<ClientScopes_>{this}, audiences, id]() {
+      audiences->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
+          ZdbRowRef<Audience> row) mutable {
+        if (row && row->data().appID == self->m_client.appID &&
+            row->data().state == State::Active && !row->data().owner && row->data().uri)
+          self->m_scopes.push(ScopeAuth{.role = self->m_role,
+            .audienceID = row->data().id, .audience = row->data().uri});
+        self->audience_();
       });
     });
   }
 
-  DBContext	*m_context;
-  App		m_app;
-  Client	m_client;
-  ClientAccess	m_access;
-  IDVec		m_audienceIDs;
-  ScopeVec	m_scopes;
-  unsigned	m_offset = 0;
+  DBContext *m_context;
+  App m_app;
+  Client m_client;
+  ClientAccess m_access;
+  Role m_role;
+  ScopeVec m_scopes;
+  unsigned m_roleOffset = 0;
+  unsigned audienceOffset = 0;
   ClientScopesFn m_complete;
 };
 
@@ -346,7 +331,7 @@ private:
     while (m_accessIndex < n) {
       m_candidate = m_access[m_accessIndex++];
       if (m_candidate.state != State::Active || m_candidate.owner ||
-	  !m_candidate.appID || !m_candidate.scopeIDs) continue;
+	  !m_candidate.appID || !m_candidate.roleIDs) continue;
       auto apps = m_context->apps;
       apps->run(0, [self = ZmRef<AuthorityLoad_>{this}, apps]() mutable {
 	apps->find<0>(0, ZuFwdTuple(self->m_candidate.appID), [
@@ -366,11 +351,11 @@ private:
 
   void candidateScope_()
   {
-    if (m_candidateScope >= m_candidate.scopeIDs.length()) {
+    if (m_candidateScope >= m_candidate.roleIDs.length()) {
       ScopeSelection selection;
       int error = selectGrantedScopes(m_data.client, m_candidate,
-        m_candidate.scopeIDs,
-	m_requestedPresent, m_requested, m_candidateScopes, selection);
+        m_candidate.roleIDs, m_requestedPresent, m_requested,
+        m_candidateScopes, selection);
       if (error) { accessNext_(); return; }
       m_data.access = m_candidate;
       m_data.app = ZuMv(m_candidateApp);
@@ -379,33 +364,35 @@ private:
       scopesDone_();
       return;
     }
-    auto id = m_candidate.scopeIDs[m_candidateScope++];
-    auto scopes = m_context->scopes;
-    scopes->run(0, [self = ZmRef<AuthorityLoad_>{this}, scopes, id]() mutable {
-      scopes->find<0>(0, ZuFwdTuple(self->m_candidate.appID, id), [
-	  self = ZuMv(self)](ZdbRowRef<Scope> scope) mutable {
-	if (!scope || scope->data().state != State::Active ||
-	    scope->data().owner || !authorityHasID(
-	      self->m_candidate.audienceIDs, scope->data().audienceID)) {
-	  self->candidateScope_();
-	  return;
-	}
-	auto audiences = self->m_context->audiences;
-	Scope value = scope->data();
-	audiences->run(0, [self = ZuMv(self), audiences,
-	    value = ZuMv(value)]() mutable {
-	  AudienceID id = value.audienceID;
-	  audiences->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self),
-	      value = ZuMv(value)](ZdbRowRef<Audience> audience) mutable {
-	    if (audience && audience->data().appID == self->m_candidate.appID &&
-		audience->data().state == State::Active && !audience->data().owner &&
-		audience->data().uri) {
-	      self->m_candidateScopes.push(ScopeAuth{
-		.scope = ZuMv(value), .audience = audience->data().uri});
-	    }
-	    self->candidateScope_();
-	  });
-	});
+    RoleID id = m_candidate.roleIDs[m_candidateScope++];
+    auto roles = m_context->roles;
+    roles->run(0, [self = ZmRef<AuthorityLoad_>{this}, roles, id]() {
+      roles->find<0>(0, ZuFwdTuple(self->m_candidate.appID, id),
+        [self = ZuMv(self)](ZdbRowRef<Role> row) mutable {
+          if (!row || row->data().state != State::Active || row->data().owner ||
+              row->data().tombstone) { self->candidateScope_(); return; }
+          self->m_candidateRole = row->data(); self->m_candidateAudience = 0;
+          self->candidateAudience_();
+        });
+    });
+  }
+
+  void candidateAudience_()
+  {
+    if (m_candidateAudience >= m_candidate.audienceIDs.length()) {
+      candidateScope_(); return;
+    }
+    AudienceID id = m_candidate.audienceIDs[m_candidateAudience++];
+    auto audiences = m_context->audiences;
+    audiences->run(0, [self = ZmRef<AuthorityLoad_>{this}, audiences, id]() {
+      audiences->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
+          ZdbRowRef<Audience> row) mutable {
+        if (row && row->data().appID == self->m_candidate.appID &&
+            row->data().state == State::Active && !row->data().owner && row->data().uri)
+          self->m_candidateScopes.push(ScopeAuth{
+            .role = self->m_candidateRole, .audienceID = row->data().id,
+            .audience = row->data().uri});
+        self->candidateAudience_();
       });
     });
   }
@@ -513,7 +500,7 @@ private:
 	return;
       }
       error = selectGrantedScopes(m_data.client, m_data.access,
-        m_data.grant.scopeIDs,
+        m_data.grant.requestedRoleIDs,
 	m_data.grant.scope, m_requestedPresent, m_requested,
 	m_data.scopes, m_data.selection);
       if (!error && m_data.selection.audience != m_data.grant.audience)
@@ -524,7 +511,7 @@ private:
 	return;
       }
       error = selectGrantedScopes(m_data.client, m_data.access,
-        m_data.access.scopeIDs,
+        m_data.access.roleIDs,
 	m_requestedPresent, m_requested, m_data.scopes, m_data.selection);
     }
     if (error) { finish_(error); return; }
@@ -612,6 +599,7 @@ private:
   ZtArray<ClientAccess, VecHeap> m_access;
   ClientAccess	m_candidate;
   App		m_candidateApp;
+  Role		m_candidateRole;
   ScopeVec	m_candidateScopes;
   String	m_requested;
   String	m_issuer;
@@ -620,6 +608,7 @@ private:
   unsigned	m_index = 0;
   unsigned	m_accessIndex = 0;
   unsigned	m_candidateScope = 0;
+  unsigned	m_candidateAudience = 0;
   int		m_action = -1;
   bool		m_requestedPresent = false;
   bool		m_interactive = false;

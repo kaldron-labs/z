@@ -27,10 +27,10 @@ ZuDerive(SagaFn, (ZmFn<void(bool), ZmFnHeapID<"Zum.SagaFn">>));
 ZdbSagaDerive(SagaCatalog,
   Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
   AppEnrollment, ExternalProjection, AppActionAdd, MembershipChange, RoleDelete,
-  CatalogPublish, MembershipAdd, RoleEdit, ScopeEdit, ActionEdit,
+  CatalogPublish, MembershipAdd, RoleEdit, ActionEdit,
   AppChange, UserEdit, CredEdit, AudienceEdit, ProviderEdit, ClientEdit, KeyRetire,
   ClientAccessState, AdminAccessState, RoleMapDelete, RoleMapPut, PolicyPut,
-  ClientAccessPut, AdminAccessPut, ProviderAdd, AudienceAdd, RoleAdd, ScopeAdd,
+  ClientAccessPut, AdminAccessPut, ProviderAdd, AudienceAdd, RoleAdd,
   UserInvite, ClientAdd, KeyAdd, Revoke, GrantCleanup, ConsentCode, KeyBinding,
   SecretRekey, SSFDeliveryAdd);
 struct MSaga;

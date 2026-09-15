@@ -30,7 +30,6 @@ ZuDerive(ActionIDVec, (ZtArray<uint32_t, VecHeap>));
 using AppID = uint64_t;
 using UserID = uint64_t;
 using RoleID = uint64_t;
-using ScopeID = uint64_t;
 using AudienceID = uint64_t;
 using ProviderID = uint64_t;
 using ActionID = uint32_t;
