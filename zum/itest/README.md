@@ -65,7 +65,7 @@ This is Zdb stop/start recovery, not a process-kill or replicated failover test.
 one shared encryption key and issuer, and native Zdb host/priority configuration.
 Supply `ZDB_MODULE`, `ZDB_CONNECT` and `ZUM_CLUSTER_PEER_CONNECT`.
 Both nodes must expose liveness; neither is ready before admin enrollment.
-The standby must reject all 64 active administrative routes with 503. The source-tree
+The standby must reject all 60 active administrative routes with 503. The source-tree
 fixture extracts method/path declarations from ZumMgmt.cc and verifies its
 catalog count, avoiding a second manually maintained endpoint list. Requests
 have no credentials and use minimal bodies: this tests inactive admission,
@@ -202,8 +202,8 @@ Application enrollment, local user invitation, membership creation and role
 assignment use the real CLI as well. Secret-bearing operations must print only
 the delivery-file receipt and write their response into an owner-only file;
 subsequent HTTP queries and retries verify the resulting records and request IDs.
-Definition lifecycle cases create an audience, role, client and provider,
-then exercise audience/role/provider updates and each definition's state endpoint.
+Definition lifecycle cases create a role, client and provider, then exercise
+role/provider updates and each definition's state endpoint.
 They check missing/stale ETags, exactly one version increment on accepted changes,
 and unchanged records after rejected stale updates.
 User/credential cases cover profile and label updates, credential state,
@@ -275,7 +275,7 @@ of disabled/custom definitions. It also exercises normalized empty labels and
 Unicode/control-character digests without a separate scope catalog. These cases
 passed after correcting the Unicode formatter; resource scope names are derived
 from the published role names.
-The fixture enumerates all 64 live management operations, verifies their seeded
+The fixture enumerates all 60 live management operations, verifies their seeded
 actions, rejects missing/invalid bearer tokens, checks denial of operations
 outside the workload token's authority, and checks unsupported methods and
 their `Allow` headers. This does not replace authorized success and input

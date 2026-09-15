@@ -17,7 +17,7 @@ if SQLITE
 SUBDIRS += zdb_sqlite
 endif
 SUBDIRS += zum
-# SUBDIRS += ztc
+SUBDIRS += ztc
 # SUBDIRS += zdf
 # SUBDIRS += zdash
 # zcmd and zproxy are reference code only

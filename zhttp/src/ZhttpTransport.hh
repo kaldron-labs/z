@@ -1289,17 +1289,29 @@ public:
   }
   bool active() const { return !!this->cxn(); }
   using Base::send;
-  bool send(ZmRef<ZiIOBuf> buf) {
+  using Base::send_;
+  bool send_(ZmRef<ZiIOBuf> buf, uint64_t generation) {
+    return sendTracked_(ZuMv(buf), [this, generation](auto &&buf) {
+      return Base::send_(ZuFwd<decltype(buf)>(buf), generation);
+    });
+  }
+
+private:
+  template <typename Fn>
+  bool sendTracked_(ZmRef<ZiIOBuf> buf, Fn &&fn) {
     ZiIOBuf *last = buf.ptr();
     m_txLast = last;
     m_txReady = true;
-    if (!Base::send(ZuMv(buf))) {
+    bool ok = ZuFwd<Fn>(fn)(ZuMv(buf));
+    if (!ok) {
       if (m_txLast == last) m_txLast = nullptr;
       m_txOK = false;
       return false;
     }
     return true;
   }
+
+public:
   void txComplete(TxCompleteFn fn) {
     m_txComplete = ZuMv(fn);
   }

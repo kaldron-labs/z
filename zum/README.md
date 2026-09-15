@@ -12,6 +12,81 @@ credential store or OIDC-provider implementation of its own. Its companion
 example configuration and setup procedure are in
 [`example/README.md`](example/README.md).
 
+## Terminology
+
+Zum uses a deliberately small authorization vocabulary. Several OAuth and
+JWT terms describe the same application boundary, but they have different
+meanings in standards documents. The table below defines the canonical Zum
+terms and the aliases that may appear when discussing interoperability.
+
+| Canonical Zum term | Other terms | Precise meaning |
+|---|---|---|
+| **Application** | service, resource | The protected application or API. |
+| **Audience** | — | The application's identifier in the token's `aud` claim. It is a token field, not a separate domain object. |
+| **Principal** | user, service account | The identity acting through an OAuth client. |
+| **Caller** | — | The principal as observed on a particular request; useful in prose, but not a domain-model term. |
+| **Role** | — | A named set of actions. |
+| **Action** | permission | A named capability or operation. In Zum, each action corresponds 1:1 with its permission, so there is no separate permission object. |
+| **Scope** | — | A run-time view of a requested role. The scope name is the role name and its effective actions are the role's actions. |
+
+The canonical model is:
+
+```text
+application = protected service/resource
+aud         = application identifier
+principal   = user or service identity
+role        = set of actions
+action      = permission
+scope       = requested role view
+```
+
+The one important qualification is **client**. An OAuth client is the
+credentialed software obtaining or presenting the token. It may represent a
+user or a service principal, but it is conceptually separate from that
+principal. In a client-credentials flow, the service identity and OAuth client
+will commonly be represented by the same deployment, but the roles remain
+distinct.
+
+## Audience and application
+
+In `zumd`, `audience` is an attribute of an application and therefore belongs
+as a column on the application table:
+
+```text
+Application
+  appID
+  issuer
+  audience
+  ...
+```
+
+It identifies the application when the application is the protected
+service/resource. Tokens issued for the application carry this value as `aud`;
+services validate it against their configured application audience.
+
+The audience is not modeled as:
+
+- a principal attribute;
+- a role or scope attribute;
+- a separate audience table; or
+- a token-request-defined permission boundary.
+
+The application owns the audience. Principals receive roles within that
+application.
+
+## Standards-facing terminology
+
+JWT defines `aud` as the intended recipient of a token. In Zum's application
+model, that recipient is the protected application. The word *audience* is
+therefore retained for the wire claim and standards compatibility, while
+Zum's domain documentation should use *application* when referring to the
+owned object.
+
+The token's subject identifies the principal acting through the client. The
+client presents the token to the application, which verifies the issuer,
+audience, expiry, token type, and signature before applying the principal's
+effective actions.
+
 ## libZum
 
 The installed library headers are:
@@ -48,6 +123,18 @@ Zum-issued bearer tokens. It supplies:
   revocation, with replay protection, bounded retention and an application
   refresh-family callback; and
 - explicit asynchronous shutdown which waits for all in-flight HTTP work.
+
+Verification returns the principal's authentication context in `authMethod`:
+`client_credentials`, `passkey`, or `oidc`. Applications can require the
+appropriate context as well as an action. Introspection supplies this context
+only when its response includes a recognized `amr` or an explicit
+`grant_type=client_credentials`; otherwise the field is empty and applications
+which require it must reject the request.
+
+`zum.catalog` is the management client's protocol scope. Resource scopes are
+derived from application roles: each role name is one same-named scope and
+selects exactly that role's actions. Provider and identity scopes such as
+`openid` remain separate from these role-named resource scopes.
 
 The service owns its protocol state on the configured scheduler shard. The
 application supplies `ServiceHTTPFn`, an asynchronous HTTP adapter; `libZum`
@@ -114,7 +201,7 @@ Its main features are:
 - WebAuthn/passkey bootstrap, enrollment, login, additional credentials and
   recovery;
 - multi-application RBAC: applications, users, memberships, actions, roles,
-  audiences, clients and client/admin delegation. OAuth resource scopes are
+  clients and client/admin delegation. OAuth resource scopes are
   runtime views of roles and are derived from the role catalog;
 - an operation-oriented `/admin` REST API with bearer authorization,
   idempotency keys, ETag preconditions, bounded queries, secret redaction and
@@ -223,7 +310,7 @@ reports durable completion.
 
 ## Further documentation
 
-- [`MANAGEMENT.md`](MANAGEMENT.md) — management routes, permissions, public
+- [`MANAGEMENT.md`](MANAGEMENT.md) — management routes, actions, public
   OAuth/OIDC endpoints, client configuration and operational contracts.
 - [`example/README.md`](example/README.md) — complete `zumpingd`/`zumping`
   enrollment and login flow.
@@ -231,3 +318,12 @@ reports durable completion.
   clustering and OIDC transport integration tests.
 - [`test/README.md`](test/README.md) — unit-test coverage for the service,
   protocol and transport components.
+
+### Application audiences
+
+Each application represents one service and owns one immutable
+`audience` string, used as the resource access token’s `aud` claim.
+`appEnroll` requires `audience`; `appQuery` returns it on the application.
+Client access grants select application roles. Consent is keyed by user, client
+and application. Schema version 20 removes the separate audience table and IDs;
+existing databases require reprovisioning.

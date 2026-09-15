@@ -64,10 +64,8 @@ def main():
         audience_uri = "https://ssf.example/api"
         app = fixture.admin_secret("appEnroll", {
             "name": "ssf-service", "integration": "catalogClient",
-            "audienceURI": audience_uri,
+            "audience": audience_uri,
             "$idempotencyKey": secrets.token_hex(16)})["item"]
-        audiences = fixture.admin_command("audienceQuery", {"uri": audience_uri})["items"]
-        assert len(audiences) == 1
         app_id = app["appID"]
         service_port = free_port()
         service_config = directory / "zumpingd-ssf.cf"
@@ -77,7 +75,7 @@ def main():
             f'managementURL: {json.dumps(fixture.origin)}, '
             f'clientID: {json.dumps(app["client_id"])} }}, '
             f'caPath: "", audience: {json.dumps(audience_uri)}, '
-            f'audienceID: {audiences[0]["id"]}, port: {service_port}\n')
+            f'port: {service_port}\n')
         callback_auth = "Bearer " + secrets.token_urlsafe(24)
         callback_ref = "ZUM_SSF_SSF_AUTH"
         service_env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"],
@@ -95,7 +93,7 @@ def main():
         assert len(catalog["actionQuery"]) == 1
         assert len(catalog["roleQuery"]) == 1
         user_config, _, authenticator, _ = fixture.ping_user(
-            app, audiences[0]["id"], catalog, service_port)
+            app, catalog, service_port)
         client_match = re.search(r'clientID: "([^"]+)"', user_config.read_text())
         assert client_match
         client_id = client_match[1]
@@ -185,3 +183,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    print("1..1\nok 1 - SSF refresh-family delivery and restart")

@@ -63,12 +63,12 @@ struct PreparedJWT {
 };
 
 ZumExtern bool interactiveClaims(
-  Ztls::Random &, ZuCSpan issuer, const User &, const Client &,
+  Ztls::Random &, ZuCSpan issuer, const App &, const User &, const Client &,
   const ScopeSelection &, const ZtBitmap &, ZuSpan<const Action>,
   ZuCSpan authMethod, int64_t authTime, int64_t now, int64_t expires,
   AccessClaims &);
 ZumExtern bool clientClaims(
-  Ztls::Random &, ZuCSpan issuer, const Client &,
+  Ztls::Random &, ZuCSpan issuer, const App &, const Client &,
   const ScopeSelection &, const ZtBitmap &, ZuSpan<const Action>,
   AppID clientAppID, int64_t now, int64_t expires, AccessClaims &);
 ZumExtern bool jwtPrepare(

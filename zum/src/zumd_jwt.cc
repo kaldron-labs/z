@@ -180,9 +180,9 @@ static bool encode(String &out, ZuBSpan data)
 }
 
 static bool accessClaims(
-    Ztls::Random &rng, ZuCSpan issuer, ZuCSpan subject,
+    Ztls::Random &rng, ZuCSpan issuer, const App &app, ZuCSpan subject,
     const Client &client, const ScopeSelection &selection,
-    const ZtBitmap &authority, ZuSpan<const Action> actions,
+    const ZtBitmap &authority, ZuSpan<const Action> actions, AppID clientAppID,
     int64_t now, int64_t expires, AccessClaims &claims)
 {
   ZuBArray<JWTIDSize> random(JWTIDSize, false);
@@ -190,9 +190,9 @@ static bool accessClaims(
   AccessClaims next;
   next.issuer = issuer;
   next.subject = subject;
-  next.audience = selection.audience;
+  next.audience = app.audience;
   next.clientID = client.id;
-  next.appID = client.appID;
+  next.appID = clientAppID;
   if (!encode(next.jti, random)) return false;
   next.scope = selection.scope;
   for (auto &action: actions)
@@ -205,7 +205,7 @@ static bool accessClaims(
 }
 
 bool interactiveClaims(
-    Ztls::Random &rng, ZuCSpan issuer, const User &user,
+    Ztls::Random &rng, ZuCSpan issuer, const App &app, const User &user,
     const Client &client, const ScopeSelection &selection,
     const ZtBitmap &authority, ZuSpan<const Action> actions,
     ZuCSpan authMethod, int64_t authTime, int64_t now, int64_t expires,
@@ -220,8 +220,8 @@ bool interactiveClaims(
   String subject;
   if (!encode(subject, user.handle)) return false;
   AccessClaims next;
-  if (!accessClaims(rng, issuer, subject, client, selection,
-      authority, actions, now, expires, next)) return false;
+  if (!accessClaims(rng, issuer, app, subject, client, selection,
+      authority, actions, client.appID, now, expires, next)) return false;
   if (authMethod != "passkey" && authMethod != "oidc") return false;
   next.authTime = authTime;
   next.amr.push(authMethod);
@@ -230,7 +230,7 @@ bool interactiveClaims(
 }
 
 bool clientClaims(
-    Ztls::Random &rng, ZuCSpan issuer, const Client &client,
+    Ztls::Random &rng, ZuCSpan issuer, const App &app, const Client &client,
     const ScopeSelection &selection, const ZtBitmap &authority,
     ZuSpan<const Action> actions, AppID clientAppID,
     int64_t now, int64_t expires,
@@ -239,10 +239,8 @@ bool clientClaims(
   if (client.state != State::Active ||
       client.type != ClientType::Confidential ||
       !(client.grants & ClientGrant::ClientCredentials)) return false;
-  Client identity{client};
-  identity.appID = clientAppID;
-  return accessClaims(rng, issuer, client.id, identity, selection,
-    authority, actions, now, expires, claims);
+  return accessClaims(rng, issuer, app, client.id, client, selection,
+    authority, actions, clientAppID, now, expires, claims);
 }
 
 static bool encodePart(String &out, ZuBSpan data, unsigned limit)

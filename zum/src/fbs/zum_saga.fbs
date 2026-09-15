@@ -5,7 +5,6 @@ include "zum_role.fbs";
 include "zum_action.fbs";
 include "zum_user.fbs";
 include "zum_cred.fbs";
-include "zum_audience.fbs";
 include "zum_provider.fbs";
 include "zum_client.fbs";
 include "zum_sign_key.fbs";
@@ -138,8 +137,7 @@ table AppEnrollment {
   app_i_d:uint64;
   app_name:string;
   app_label:string;
-  audience_i_d:uint64;
-  audience_u_r_i:string;
+  audience:string;
   sign_key:SignKey;
   client_i_d:string;
   secret_digest:[ubyte];
@@ -274,16 +272,6 @@ table CredEdit {
   state:int8;
 }
 
-table AudienceEdit {
-  app:App;
-  before:Audience;
-  if_match:string;
-  updated:int64;
-  request:IdemRequest;
-  state:int8;
-  name:string;
-  state_only:bool;
-}
 
 table ProviderEdit {
   before:Provider;
@@ -387,13 +375,6 @@ table ProviderAdd {
   request:IdemRequest;
 }
 
-table AudienceAdd {
-  app:App;
-  before:Audience;
-  values:Audience;
-  updated:int64;
-  request:IdemRequest;
-}
 
 table RoleAdd {
   app:App;

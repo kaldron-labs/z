@@ -13,5 +13,6 @@ table App {
   created:int64;
   updated:int64;
   owner:Zfb.UInt128;
+  audience:string;
 }
 root_type App;

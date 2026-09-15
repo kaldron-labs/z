@@ -3,7 +3,6 @@ namespace Zum.fbs;
 table ClientAccess {
   client_i_d:string;
   app_i_d:uint64;
-  audience_i_ds:[uint64];
   role_i_ds:[uint64];
   state:int8;
   auth_version:uint64 = 1;

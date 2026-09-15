@@ -28,9 +28,9 @@ ZdbSagaDerive(SagaCatalog,
   Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
   AppEnrollment, ExternalProjection, AppActionAdd, MembershipChange, RoleDelete,
   CatalogPublish, MembershipAdd, RoleEdit, ActionEdit,
-  AppChange, UserEdit, CredEdit, AudienceEdit, ProviderEdit, ClientEdit, KeyRetire,
+  AppChange, UserEdit, CredEdit, ProviderEdit, ClientEdit, KeyRetire,
   ClientAccessState, AdminAccessState, RoleMapDelete, RoleMapPut, PolicyPut,
-  ClientAccessPut, AdminAccessPut, ProviderAdd, AudienceAdd, RoleAdd,
+  ClientAccessPut, AdminAccessPut, ProviderAdd, RoleAdd,
   UserInvite, ClientAdd, KeyAdd, Revoke, GrantCleanup, ConsentCode, KeyBinding,
   SecretRekey, SSFDeliveryAdd);
 struct MSaga;

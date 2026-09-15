@@ -5,6 +5,5 @@ zum: {
   clientID: "REPLACE_WITH_ENROLLED_SERVICE_CLIENT_ID"
 },
 audience: "https://ping.example/api",
-audienceID: 1,
 addr: "127.0.0.1",
 port: 8080

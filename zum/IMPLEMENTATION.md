@@ -1,7 +1,8 @@
 # Zum multi-application IAM implementation ledger
 
-This ledger tracks implementation of [`../zum3.md`](../zum3.md).  A milestone
-is complete only when its gate has the required observable evidence.
+This ledger tracks Zum implementation and verification. Current domain terms
+are defined in [Zum terminology](../zum_terminology.md). A milestone is complete
+only when its gate has the required observable evidence.
 
 ## Current policy
 
@@ -15,7 +16,21 @@ verification are superseded and retained only as a record of earlier work.
 Zum integration persistence tests now select SQLite solely through
 `ZDB_MODULE` and `ZDB_CONNECT`; there is no Zum-visible SQLite interface.
 
-The current schema is 19. Resource scopes are derived at request time from
+The current schema is 20. Audience is an immutable attribute of `App`; there
+is no audience table, ID, management operation, or scope wrapper. Access tokens
+use `App.audience`. Application enrollment requires `audience`, client access
+selects role IDs, and consent is keyed by user/client/application. Management
+has 60 contiguous operations; obsolete numeric slots are removed.
+
+Schema-20 validation on 2026-09-15 (Linux x86-64, Clang 22.1.8, `-O3 -g`):
+`make -C zum -j2 test` passed all 5 unit binaries (34 TAP cases), all 7
+integration fixtures (30 TAP cases), and OpenSSL JWT interoperability.
+The Ztc rebuild, 7 unit binaries and 2 C++ integration binaries also passed.
+Its dependent `ztchubtest.py` completes enrollment, catalog publication, token
+issuance and request forwarding, but still disconnects before the first front-end
+telemetry message after the rebuild; the full Ztc test target therefore fails.
+
+Resource scopes are derived at request time from
 active application roles: a scope name resolves to exactly one same-named role,
 and that role supplies the action set. There is no persisted scope record,
 scope ID, scope administration endpoint, catalog scope list, or scope saga.

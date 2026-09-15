@@ -370,34 +370,12 @@ void Server::app_(AppID appID, AppServerFn complete)
 	return;
       }
       String issuer;
-      if (!appIssuer(m_config.issuer, appID, issuer)) {
+      if (!row->data().audience || !appIssuer(m_config.issuer, appID, issuer)) {
 	complete(AppServer{});
 	return;
       }
-      auto audiences = m_context->audiences;
-      audiences->selectRows<2>(ZuFwdTuple(appID), 2, [this, appID,
-	  issuer = ZuMv(issuer), complete = ZuMv(complete),
-	  audience = String{}, audienceID = AudienceID{0}, found = false,
-	  invalid = false](
-	    ZuUnion<void, AudienceTable::Tuple> result, unsigned) mutable {
-	if (result.template is<AudienceTable::Tuple>()) {
-	  auto tuple = ZuMv(result).template p<AudienceTable::Tuple>();
-	  if (tuple.template p<1>() != appID ||
-	      tuple.template p<4>() != State::Active ||
-	      tuple.template p<8>() || !tuple.template p<3>()) return;
-	  if (found) invalid = true;
-	  else {
-	    audienceID = tuple.template p<0>();
-	    audience = ZuMv(tuple.template p<3>());
-	    found = true;
-	  }
-	  return;
-	}
-	if (!found || invalid) { complete(AppServer{}); return; }
-	policy_(AppServer{
-	  .issuer = ZuMv(issuer), .audience = ZuMv(audience), .appID = appID,
-	  .audienceID = audienceID}, ZuMv(complete));
-      });
+      policy_(AppServer{.issuer = ZuMv(issuer),
+        .audience = row->data().audience, .appID = appID}, ZuMv(complete));
     });
   });
 }

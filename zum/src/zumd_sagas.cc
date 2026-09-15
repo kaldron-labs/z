@@ -188,11 +188,6 @@ unsigned RoleMapDelete::appError(const App &item) const
   return appVersionError(app, item);
 }
 
-unsigned AudienceAdd::appError(const App &item) const
-{
-  return appVersionError(app, item);
-}
-
 unsigned ClientAdd::appError(const App &item) const
 {
   return appVersionError(app, item);
@@ -251,27 +246,6 @@ void RoleAdd::validate(Zdb_::SagaCompleteFn complete)
 {
   error = catalogAddError(*this);
   complete(!error);
-}
-
-Audience AudienceAdd::result() const
-{
-  Audience item = values;
-  item.state = State::Active;
-  item.version = 1;
-  item.created = item.updated = updated;
-  item.owner = 0;
-  return item;
-}
-
-void AudienceAdd::validate(Zdb_::SagaCompleteFn complete)
-{
-  if (!values.id || values.id == UINT64_MAX || values.id != before.id ||
-      !values.appID || values.appID != app.id || values.appID != before.appID ||
-      !values.name || !values.uri) {
-    error = 400; complete(false); return;
-  }
-  if (before.version) { error = 409; complete(false); return; }
-  complete(true);
 }
 
 unsigned RoleMapPut::appError(const App &item) const
@@ -393,35 +367,20 @@ static bool uniqueRefs(const IDs &ids, bool nonzero = true)
   return true;
 }
 
-template <unsigned Kind, typename Edit>
+template <typename Edit>
 static void accessRefs(Edit *def, unsigned offset, Zdb_::SagaCompleteFn complete)
 {
-  const auto &ids = [def]() -> const IDVec & {
-    if constexpr (Kind == 0) return def->values.audienceIDs;
-    else return def->values.roleIDs;
-  }();
-  if (offset == ids.length()) {
-    if constexpr (Kind < 1) accessRefs<Kind + 1>(def, 0, ZuMv(complete));
-    else complete(true);
-    return;
-  }
-  auto table = [def]() {
-    if constexpr (Kind == 0) return def->context->audiences;
-    else return def->context->roles;
-  }();
+  const auto &ids = def->values.roleIDs;
+  if (offset == ids.length()) { complete(true); return; }
+  auto roles = def->context->roles;
   auto id = ids[offset];
-  using T = typename ZuDecay<decltype(*table)>::T;
-  table->run(0, [def, table, id, offset, complete = ZuMv(complete)]() mutable {
-    typename ZuDecay<decltype(*table)>::template Key<0> key;
-    if constexpr (Kind == 0) key = ZuFwdTuple(id);
-    else key = ZuFwdTuple(def->values.appID, id);
-    table->template find<0>(0, ZuMv(key),
-      [def, offset, complete = ZuMv(complete)](ZdbRowRef<T> row) mutable {
-	if (!row || row->data().appID != def->values.appID || row->data().owner ||
-	    row->data().state != State::Active) {
-	  def->error = 400; complete(false); return;
-	}
-	accessRefs<Kind>(def, offset + 1, ZuMv(complete));
+  roles->run(0, [def, roles, id, offset, complete = ZuMv(complete)]() mutable {
+    roles->template find<0>(0, ZuFwdTuple(def->values.appID, id),
+      [def, offset, complete = ZuMv(complete)](ZdbRowRef<Role> row) mutable {
+        if (!row || row->data().owner || row->data().state != State::Active) {
+          def->error = 400; complete(false); return;
+        }
+        accessRefs(def, offset + 1, ZuMv(complete));
       });
   });
 }
@@ -468,7 +427,7 @@ void ClientAccessPut::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.appID || values.appID != app.id || values.appID != before.appID ||
       !values.clientID || values.clientID != before.clientID ||
-      !uniqueRefs(values.audienceIDs) || !uniqueRefs(values.roleIDs)) {
+      !uniqueRefs(values.roleIDs)) {
     error = 400; complete(false); return;
   }
   if (!before.version && (ifMatch || ifNoneMatch != "*")) {
@@ -481,7 +440,7 @@ void ClientAccessPut::validate(Zdb_::SagaCompleteFn complete)
 	if (!row || row->data().owner || row->data().state != State::Active) {
 	  error = 400; complete(false); return;
 	}
-	accessRefs<0>(this, 0, ZuMv(complete));
+	accessRefs(this, 0, ZuMv(complete));
       });
   });
 }
@@ -514,7 +473,7 @@ void AdminAccessPut::validate(Zdb_::SagaCompleteFn complete)
 		row->data().state == State::Consumed) {
 	      error = 400; complete(false); return;
 	    }
-	    accessRefs<2>(this, 0, ZuMv(complete));
+	    accessRefs(this, 0, ZuMv(complete));
 	  });
       });
       return;
@@ -529,7 +488,7 @@ void AdminAccessPut::validate(Zdb_::SagaCompleteFn complete)
 		row->data().authMethod != ClientAuthMethod::ClientSecretBasic) {
 	      error = 400; complete(false); return;
 	    }
-	    accessRefs<2>(this, 0, ZuMv(complete));
+	    accessRefs(this, 0, ZuMv(complete));
 	  });
       });
       return;
@@ -680,25 +639,6 @@ unsigned ProviderEdit::recordError(const Provider &item) const
       ((fields & 32) && (values.claimSource < 0 || values.claimSource >= ClaimSource::N)))
     return 409;
   return 0;
-}
-
-unsigned AudienceEdit::appError(const App &item) const
-{
-  if (stateOnly && (state < 0 || state >= State::N)) return 400;
-  return !app.version || item.state != State::Active || item.owner || app.owner ||
-    item.version != app.version || item.authVersion != app.authVersion ||
-    item.updated != app.updated || (!unchanged() &&
-      (app.version == UINT64_MAX || (stateOnly && app.authVersion == UINT64_MAX))) ? 409 : 0;
-}
-
-unsigned AudienceEdit::audienceError(const Audience &item) const
-{
-  String etag{"\"v"};
-  etag << item.version << '"';
-  if (ifMatch != etag || item.version != before.version) return 412;
-  return !before.version || before.appID != app.id || before.owner || item.owner ||
-    (stateOnly && item.state == State::Revoked) ||
-    (!unchanged() && before.version == UINT64_MAX) ? 409 : 0;
 }
 
 unsigned CredEdit::credError(const Cred &item) const

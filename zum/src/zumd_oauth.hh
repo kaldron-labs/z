@@ -201,9 +201,8 @@ ZumExtern Bytes opaqueDigest(ZuCSpan token);
 ZumExtern bool authorizeClient(
   const Client &, const AuthorizeParams &);
 ZumExtern bool authorizationBegin(
-  Ztls::Random &, Grant &, ZuCSpan issuer, const AuthorizeParams &,
+  Ztls::Random &, Grant &, ZuCSpan issuer, const App &, const AuthorizeParams &,
   const ScopeSelection &, bool passkey, ZuBSpan bindingDigest,
-  uint64_t authVersion,
   int64_t created, int64_t expires);
 ZumExtern bool authorizationFinish(
   Ztls::Random &, Grant &, ZuBSpan bindingDigest, UserID,

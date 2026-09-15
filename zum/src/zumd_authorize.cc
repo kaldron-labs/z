@@ -173,8 +173,7 @@ private:
     auto consents = m_context->consents;
     consents->run(0, [self = ZmRef<ConsentGate_>{this}, consents]() {
       consents->find<0>(0, ZuFwdTuple(self->m_userID,
-          self->m_grant.clientID, self->m_grant.appID,
-          self->m_grant.audienceID), [self = ZuMv(self)](
+          self->m_grant.clientID, self->m_grant.appID), [self = ZuMv(self)](
           ZdbRowRef<Consent> row) mutable {
         bool allowed = row && row->data().state == State::Active &&
           !row->data().owner;
@@ -341,12 +340,12 @@ private:
     clientScopes(m_context, ZuMv(m_client),
       [self = ZmRef<AuthorizeRequest_>{this}](
 	  int error, App app, Client client, ClientAccess access,
-	  ScopeVec scopes) mutable {
+	  RoleVec scopes) mutable {
 	if (error || app.id != self->m_config.appID ||
 	    app.state != State::Active || app.owner) {
 	  self->finish_(OAuthError::AccessDenied); return;
 	}
-	self->m_authVersion = app.authVersion;
+	self->m_app = ZuMv(app);
 	self->m_client = ZuMv(client);
 	self->m_access = ZuMv(access);
 	self->m_scopes = ZuMv(scopes);
@@ -363,13 +362,13 @@ private:
       return;
     }
     if (m_params.has(AuthorizeParams::Resource) &&
-	selection.audience != m_params.resource) {
+	m_app.audience != m_params.resource) {
       finish_(OAuthError::InvalidScope);
       return;
     }
     Grant grant;
-    if (!authorizationBegin(*m_rng, grant, m_config.issuer, m_params,
-	selection, m_config.passkey, m_bindingDigest, m_authVersion,
+    if (!authorizationBegin(*m_rng, grant, m_config.issuer, m_app, m_params,
+	selection, m_config.passkey, m_bindingDigest,
 	m_config.now, m_config.expires)) {
       finish_(OAuthError::ServerError);
       return;
@@ -397,8 +396,8 @@ private:
   AuthorizeResult m_result;
   Client	m_client;
   ClientAccess	m_access;
-  ScopeVec	m_scopes;
-  uint64_t	m_authVersion = 0;
+  RoleVec	m_scopes;
+  App		m_app;
   int		m_profileError = ProfileError::OK;
   bool		m_done = false;
 };
@@ -1161,7 +1160,7 @@ private:
   {
     auto consents = m_context->consents;
     auto key = ZuFwdTuple(m_grant.userID, m_grant.clientID,
-      m_grant.appID, m_grant.audienceID);
+      m_grant.appID);
     consents->run(0, [self = ZmRef<AuthorizeConsentFinish_>{this}, consents,
         key = ZuMv(key)]() mutable {
       consents->find<0>(0, ZuMv(key), [self](ZdbRowRef<Consent> row) mutable {

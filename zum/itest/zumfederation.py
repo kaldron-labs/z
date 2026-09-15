@@ -47,11 +47,10 @@ def exercise(fixture, provider):
 
     audience_uri = "https://federation.example/api"
     app = create("/admin/apps", {"name": "federation", "integration": "catalogClient",
-                                  "audienceURI": audience_uri})
+                                  "audience": audience_uri})
     app_id = app["appID"]
     provider.redirects.add(fixture.issuer(app_id) + "/v1/oidc/callback")
     prefix = "/admin/apps/" + app_id
-    audience = next(row for row in query("/admin/audiences?limit=1000") if row["appID"] == app_id)
     action = create(prefix + "/actions", {"name": "ping", "label": "Ping"})
     role = create(prefix + "/roles", {"name": "ping", "label": "Ping"})
     fixture.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
@@ -61,7 +60,7 @@ def exercise(fixture, provider):
         "type": "native", "redirectURIs": ["http://127.0.0.1:49152/callback"],
         "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
     fixture.request("PUT", prefix + "/client-access/" + client["id"], {
-        "audienceIDs": [audience["id"]], "roleIDs": [role["id"]]},
+        "roleIDs": [role["id"]]},
         token=admin, headers={"If-None-Match": "*"}, status=201)
     upstream = create("/admin/providers", {"name": "independent-fixture",
         "issuer": provider.issuer, "clientID": provider.client_id,
@@ -182,12 +181,10 @@ def exercise(fixture, provider):
     isolated_uri = "https://provider-isolation.example/api"
     isolated_app = create("/admin/apps", {
         "name": "provider-isolation", "integration": "catalogClient",
-        "audienceURI": isolated_uri})
+        "audience": isolated_uri})
     isolated_id = isolated_app["appID"]
     provider.redirects.add(fixture.issuer(isolated_id) + "/v1/oidc/callback")
     isolated_prefix = "/admin/apps/" + isolated_id
-    isolated_audience = next(row for row in query("/admin/audiences?limit=1000")
-                             if row["appID"] == isolated_id)
     isolated_action = create(isolated_prefix + "/actions", {"name": "ping"})
     isolated_role = create(isolated_prefix + "/roles", {"name": "ping"})
     fixture.request("PUT", isolated_prefix + "/roles/" + isolated_role["id"] + "/actions",
@@ -198,7 +195,7 @@ def exercise(fixture, provider):
         "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 5,
         "refreshAllowed": True, "identityScopes": ["openid"]})
     fixture.request("PUT", isolated_prefix + "/client-access/" + isolated_client["id"], {
-        "audienceIDs": [isolated_audience["id"]], "roleIDs": [isolated_role["id"]]},
+        "roleIDs": [isolated_role["id"]]},
         token=admin, headers={"If-None-Match": "*"}, status=201)
     isolated_provider = create("/admin/providers", {
         "name": "second-fixture", "issuer": provider.issuer,
@@ -368,18 +365,18 @@ def exercise(fixture, provider):
                     {"state": "Disabled"}, token=admin, headers={"If-Match": active_role["etag"]})
     mapped_evidence = evidence()
     before_calls = dict(provider.calls)
-    narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
+    denied, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
-        "refresh_token": tokens["refresh_token"]}, form=True)
-    fixture.verify_access(narrowed["access_token"], client["id"], app_id, audience_uri, [])
+        "refresh_token": tokens["refresh_token"]}, form=True, status=400)
+    assert denied["error"] == "invalid_scope"
     assert evidence() == mapped_evidence and provider.calls == before_calls
     disabled_role = next(row for row in query(prefix + "/roles?limit=1000") if row["id"] == role["id"])
     fixture.request("PUT", prefix + "/roles/" + role["id"] + "/state",
                     {"state": "Active"}, token=admin, headers={"If-Match": disabled_role["etag"]})
-    still_narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
+    restored, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
-        "refresh_token": narrowed["refresh_token"]}, form=True)
-    fixture.verify_access(still_narrowed["access_token"], client["id"], app_id, audience_uri, [])
+        "refresh_token": tokens["refresh_token"]}, form=True)
+    fixture.verify_access(restored["access_token"], client["id"], app_id, audience_uri, ["ping"])
     fixture.cookies = SimpleCookie()
     tokens = fixture.login(client["id"], "openid ping", app_id,
                            return_tokens=True, login="external-user")

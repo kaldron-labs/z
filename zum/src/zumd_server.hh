@@ -42,14 +42,13 @@ struct AppServer {
   String	issuer;
   String	audience;
   AppID		appID = 0;
-  AudienceID	audienceID = 0;
   uint32_t	tokenLifetime = 0;
   uint32_t	sessionIdle = 0;
   uint32_t	sessionAbsolute = 0;
 
   ZuOpBool
   bool operator !() const {
-    return !appID || !audienceID || !issuer || !audience ||
+    return !appID || !issuer || !audience ||
       !tokenLifetime || !sessionIdle || !sessionAbsolute;
   }
 };

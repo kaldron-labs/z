@@ -4,7 +4,6 @@ table Grant {
   id:[ubyte];
   issuer:string;
   app_i_d:uint64;
-  audience_i_d:uint64;
   user_i_d:uint64;
   client_i_d:string;
   credential_i_d:[ubyte];
