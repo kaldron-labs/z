@@ -5,6 +5,29 @@ row and replication-buffer caches, asynchronous backing stores, DB-wide sharding
 leader election and replication, and recoverable sagas. Tables and their indices
 are defined in C++/FlatBuffers metadata before startup.
 
+Zdb includes RAFT-like leader election and failover. Applications can delegate
+their activation to Zdb. Zdb dynamically organizes cluster hosts into a
+replication chain from the leader to the lowest-priority follower.
+Replication is async.
+
+Restart/recovery is from backing data store, then from the cluster
+leader (if the local host itself is not elected leader).
+
+Principal features:
+- Statically configured tables (intentional design)
+- Plug-in backing data stores:
+  - Postgres, sqlite3, in-memory
+- In-memory write-through row cache
+  - Deferred async writes
+  - In-memory write queue of I/O buffers
+- Async replication independent of backing store
+  (can be disabled for replicated backing stores)
+- Unique primary key (0), potentially non-unique secondary keys (1+)
+- Find, insert, update, delete operations (i.e. find and CRUD)
+- Batched select and count queries (index-based, optionally grouped)
+- Front-end shares threads with the application
+- Optional data sharding for multi-threaded concurrency
+
 Include `<zlib/Zdb.hh>`. The complete runnable application example is
 [zdbsaga.cc](example/zdbsaga.cc), with its schemas and build rules in
 [example/](example/). Public implementation contracts are in
