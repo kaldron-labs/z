@@ -177,6 +177,17 @@ void run()
   ZuCheck(mx.start());
 
   {
+    Zdb empty;
+    auto emptyCf = ZdbCf{config->resolve("zdb")};
+    emptyCf.nShards = 1;
+    emptyCf.threads.length(0);
+    empty.init(ZuMv(emptyCf), &mx, {}, new zdbtest::Store{});
+    ZuCheck(empty.start());
+    ZuCheck(empty.stop());
+    empty.final();
+  }
+
+  {
     Zdb other;
     auto otherCf = ZdbCf{config->resolve("zdb")};
     otherCf.nShards = 1;

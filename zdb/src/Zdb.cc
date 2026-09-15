@@ -1080,8 +1080,7 @@ void DB::all(AllFn fn, AllDoneFn doneFn)
   auto i = m_tables.citer();
   m_allCount = m_allNotOK = m_tables.count_();
   if (ZuUnlikely(!m_allCount)) {
-    ZiLOG(Fatal, "Zdb", ([](auto &s) { s << "Zdb - no tables"; }));
-    doneFn(this, false);
+    doneFn(this, true);
     return;
   }
   m_allFn = ZuMv(fn);

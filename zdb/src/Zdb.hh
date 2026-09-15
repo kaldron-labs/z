@@ -6,30 +6,6 @@
 
 // Z database
 
-// Zdb is a clustered/replicated in-process/in-memory DB/ORM that includes
-// RAFT-like leader election and failover. Zdb dynamically organizes
-// cluster hosts into a replication chain from the leader to the
-// lowest-priority follower. Replication is async. ZmEngine is used for
-// start/stop state management. Zdb applications are stateful back-end
-// services that defer to Zdb for activation/deactivation.
-// Restart/recovery is from backing data store, then from the cluster
-// leader (if the local host itself is not elected leader).
-
-// Principal features:
-// - Statically configured tables (intentional design limitation)
-// - Plug-in backing data store (mocked for unit-testing)
-//   - Currently two stores: Postgres, in-memory
-// - In-memory write-through row cache
-//   - Deferred async writes
-//   - In-memory write queue of I/O buffers
-// - Async replication independent of backing store
-//   (can be disabled for replicated backing stores)
-// - Unique primary key (0), potentially non-unique secondary keys (1+)
-// - Find, insert, update, delete operations (i.e. find and CRUD)
-// - Batched select and count queries (index-based, optionally grouped)
-// - Front-end shares threads with the application
-// - Optional data sharding for multi-threaded concurrency
-
 // select() is an un-cached backing data store query that
 // returns 0..N immutable ZuTuples for read-only purposes
 // - cache consistency is assured by enqueuing the select on the
