@@ -119,7 +119,8 @@ private:
 
 using ServerHeaders = ZhttpHeaders(
   "host", "upgrade", "connection", "sec-websocket-key",
-  "sec-websocket-version", "sec-websocket-protocol");
+  "sec-websocket-version", "sec-websocket-protocol", "authorization",
+  "cookie", "origin");
 ZhttpHdrCatalogDerive(ZwsAPI ServerHdrCatalog, ServerHeaders);
 
 class ServerParser :
@@ -138,6 +139,9 @@ public:
     m_host.length(0);
     m_key.length(0);
     m_protocols.length(0);
+    m_authorization.length(0);
+    m_cookie.length(0);
+    m_origin.length(0);
     m_state = State::Initial;
     m_method = -1;
     m_hostSeen = false;
@@ -192,6 +196,15 @@ public:
       if (m_protocolSeen) m_invalid = true;
       m_protocolSeen = true;
       m_protocols = value;
+    } else if constexpr (Key{}() == "authorization") {
+      if (m_authorization) m_invalid = true;
+      m_authorization = value;
+    } else if constexpr (Key{}() == "cookie") {
+      if (m_cookie) m_invalid = true;
+      m_cookie = value;
+    } else if constexpr (Key{}() == "origin") {
+      if (m_origin) m_invalid = true;
+      m_origin = value;
     }
   }
 
@@ -205,12 +218,18 @@ public:
   ZuBSpan target() const { return m_target; }
   ZuBSpan key() const { return m_key; }
   ZuBSpan protocols() const { return m_protocols; }
+  ZuBSpan authorization() const { return m_authorization; }
+  ZuBSpan cookie() const { return m_cookie; }
+  ZuBSpan origin() const { return m_origin; }
 
 private:
   HandshakeString	m_target;
   HandshakeString	m_host;
   HandshakeString	m_key;
   HandshakeString	m_protocols;
+  HandshakeString	m_authorization;
+  HandshakeString	m_cookie;
+  HandshakeString	m_origin;
   State::T		m_state = State::Initial;
   Zhttp::Method::T	m_method = -1;
   bool			m_hostSeen = false;
@@ -229,7 +248,7 @@ using RequestHeaders = ZhttpHeaders(
   ("upgrade", ("websocket")),
   ("connection", ("Upgrade")),
   "sec-websocket-key", "sec-websocket-version",
-  "sec-websocket-protocol");
+  "sec-websocket-protocol", "authorization", "cookie", "origin");
 ZhttpHdrCatalogDerive(ZwsAPI RequestHdrCatalog, RequestHeaders);
 
 class Request :
@@ -241,8 +260,11 @@ public:
   using HdrCatalog = RequestHdrCatalog;
   using Zhttp::Builder::header;
 
-  Request(const URI &uri, ZuBSpan key, ZuBSpan protocol = {}) :
-    m_uri{&uri}, m_key{key}, m_protocol{protocol} { }
+  Request(const URI &uri, ZuBSpan key, ZuBSpan protocol = {},
+      ZuBSpan authorization = {}, ZuBSpan cookie = {},
+      ZuBSpan origin = {}) :
+    m_uri{&uri}, m_key{key}, m_protocol{protocol},
+    m_authorization{authorization}, m_cookie{cookie}, m_origin{origin} { }
 
   template <typename L>
   void operation(L &&l) {
@@ -260,12 +282,21 @@ public:
       l("13");
     else if constexpr (Key{}() == "sec-websocket-protocol")
       l(m_protocol);
+    else if constexpr (Key{}() == "authorization")
+      l(m_authorization);
+    else if constexpr (Key{}() == "cookie")
+      l(m_cookie);
+    else if constexpr (Key{}() == "origin")
+      l(m_origin);
   }
 
 private:
   const URI		*m_uri;
   HandshakeString	m_key;
   HandshakeString	m_protocol;
+  HandshakeString	m_authorization;
+  HandshakeString	m_cookie;
+  HandshakeString	m_origin;
 };
 
 using ResponseHeaders = ZhttpHeaders(

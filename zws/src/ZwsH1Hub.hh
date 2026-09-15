@@ -221,10 +221,13 @@ public:
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 
-  H1ClientLink(Hub *hub, const URI &uri, ZuBSpan protocol = {}) :
+  H1ClientLink(Hub *hub, const URI &uri, ZuBSpan protocol = {},
+      ZuBSpan authorization = {}, ZuBSpan cookie = {},
+      ZuBSpan origin = {}) :
     HTTPBase{hub, ZtString<>{uri.host}, uri.port},
     CodecBase{*this, hub->random(), hub->wsConfig()},
-    m_uri{uri}, m_protocol{protocol} { }
+    m_uri{uri}, m_protocol{protocol}, m_authorization{authorization},
+    m_cookie{cookie}, m_origin{origin} { }
 
   void open_(Zhttp::ConnectedInfo info) {
     this->CodecBase::reopen_(*this);
@@ -240,7 +243,8 @@ public:
     this->CodecBase::opening_();
     m_parser.expected(m_key, m_protocol);
     auto tx = HTTPBase::txStream();
-    H1::Request request{m_uri, m_key, m_protocol};
+    H1::Request request{m_uri, m_key, m_protocol, m_authorization,
+      m_cookie, m_origin};
     if (!request.begin(tx)) {
       failHandshake_();
       this->disconnect();
@@ -327,6 +331,9 @@ private:
 
   URI			m_uri;
   HandshakeString	m_protocol;
+  HandshakeString	m_authorization;
+  HandshakeString	m_cookie;
+  HandshakeString	m_origin;
   HandshakeString	m_key;
   H1::ClientParser	m_parser;
   Zhttp::ConnectedInfo	m_info;
@@ -498,6 +505,9 @@ public:
     H1_::error(*this->app()->app(), *this, failure, 0);
   }
   ZuBSpan protocol() const { return m_protocol; }
+  ZuBSpan authorization() const { return m_parser.authorization(); }
+  ZuBSpan cookie() const { return m_parser.cookie(); }
+  ZuBSpan origin() const { return m_parser.origin(); }
   void info_(Zhttp::ConnectedInfo info) { m_info = ZuMv(info); }
 
   void down_(bool peer) {

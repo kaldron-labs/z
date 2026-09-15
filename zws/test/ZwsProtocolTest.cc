@@ -148,23 +148,19 @@ struct Link {
   }
 };
 
-ZmListDerive(OuterQueue, ZiIOBuf,
-  ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
-using OuterRx = ZiRxStream<OuterQueue>;
+using OuterRx = ZiRxStream<ZiRxQueue>;
 using OuterBufAlloc = Zi::IOBufAlloc<
-  OuterQueue::Node, 256, 1<<20, ZuStringT<"ZwsTest.OuterRx">>;
+	ZiRxQueue::Node, 256, 1<<20, ZuStringT<"ZwsTest.OuterRx">>;
 
 using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Bytes">>;
 
-ZmListDerive(H1Queue, ZiIOBuf,
-  ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
-using H1Rx = ZiRxStream<H1Queue>;
+using H1Rx = ZiRxStream<ZiRxQueue>;
 using H1BufAlloc = Zi::IOBufAlloc<
-  H1Queue::Node, 256, 2048, ZuStringT<"ZwsTest.H1Rx">>;
+	ZiRxQueue::Node, 256, 2048, ZuStringT<"ZwsTest.H1Rx">>;
 
 void push(H1Rx &rx, ZuCSpan data)
 {
-  ZmRef<H1Queue::Node> buf = new H1BufAlloc{};
+  ZmRef<ZiRxQueue::Node> buf = new H1BufAlloc{};
   *buf << data;
   rx.push(ZuMv(buf));
 }
@@ -256,7 +252,7 @@ struct App :
 
   int feed(Bytes &wire) {
     if (wire) {
-      ZmRef<OuterQueue::Node> buf = new OuterBufAlloc{};
+      ZmRef<ZiRxQueue::Node> buf = new OuterBufAlloc{};
       *buf << wire;
       auto span = buf->span();
       wireData = span.data();
