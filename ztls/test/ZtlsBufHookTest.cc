@@ -126,6 +126,7 @@ struct TestState {
   bool			clientKeyUpdate = false;
   bool			serverKeyUpdate = false;
   bool			serverDisconnectAfterSend = false;
+  bool			multi = false;
   bool			expectConnectFailure = false;
   unsigned		txHeadroom = 0;
   unsigned		txTailroom = 0;
@@ -426,6 +427,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
   struct Link : public Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc> {
     using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app, ZuID{"client"}} { }
+    ZmAtomic<unsigned> rx_offset{0};
 
     void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
@@ -480,15 +482,18 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       while (!rx.empty()) {
 	bool complete = false;
 	int consumed = consume_payload_frame(
-	  state, state.client_rx_bytes, state.serverPayload, rx,
+	  state, state.multi ? rx_offset : state.client_rx_bytes,
+	  state.serverPayload, rx,
 	  "client received unexpected payload", complete);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
-	if (complete && !state.client_closed.xch(1)) {
-	  queue_telemetry(*this, state.client_rx, state.client_tx);
-	  if (auto serverLink = state.server_link.load_()) {
-	    queue_telemetry(
-	      *serverLink, state.server_rx, state.server_tx);
+	if (complete && (state.multi || !state.client_closed.xch(1))) {
+	  if (!state.multi) {
+	    queue_telemetry(*this, state.client_rx, state.client_tx);
+	    if (auto serverLink = state.server_link.load_()) {
+	      queue_telemetry(
+		*serverLink, state.server_rx, state.server_tx);
+	    }
 	  }
 	  if (!state.serverDisconnectAfterSend) this->disconnect_();
 	}
@@ -515,6 +520,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   struct Link : public Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc> {
     using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
+    ZmAtomic<unsigned> rx_offset{0};
 
     void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
@@ -549,11 +555,12 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       while (!rx.empty()) {
 	bool complete = false;
 	int consumed = consume_payload_frame(
-	  state, state.server_rx_bytes, state.clientPayload, rx,
+	  state, state.multi ? rx_offset : state.server_rx_bytes,
+	  state.clientPayload, rx,
 	  "server received unexpected payload", complete);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
-	if (complete && !state.server_replied.xch(1)) {
+	if (complete && (state.multi || !state.server_replied.xch(1))) {
 	  if (state.serverKeyUpdate && !this->updateKey_(true)) {
 	    state.fail("server key update failed");
 	    return -1;
@@ -1412,6 +1419,66 @@ void testTLS13JumboBuffers(TempDir &temp, LogCapture &capture)
   run_in_process(temp, capture, JumboPayloadSize, JumboPayloadSize, false);
 }
 
+void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
+{
+  ZuTestScopeRT(testTLS13ConcurrentRecords);
+  constexpr unsigned Clients = 64;
+  constexpr unsigned Payload = 4096;
+  Ztls::Pico::reset_stats();
+  capture.reset();
+
+  TestState state;
+  state.multi = true;
+  state.target = Clients * 2;
+  state.ip = ZiIP{"127.0.0.1"};
+  state.port = reserve_loopback_port();
+  state.serverDisconnectAfterSend = true;
+  fill_payload(state.clientPayload, Payload, 0x11);
+  fill_payload(state.serverPayload, Payload, 0x63);
+  ZTLS_CHECK_RT(state.port, "failed to reserve loopback port");
+  if (!state.port) return;
+
+  BaseServer<TestState> server(state, state.ip);
+  BaseClient<TestState> client(state);
+  ZiMultiplex mx(mx_params());
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
+  bool serverOK = server.init(
+    Ztls::ServerParams(&mx, "3", "4")
+      .certPath(temp.certPath.data()).keyPath(temp.keyPath.data()));
+  Ztls::ClientParams clientParams{&mx, "3", "4"};
+  clientParams.caPath(temp.certPath.data());
+  bool clientOK = client.init(ZuMv(clientParams));
+  ZTLS_CHECK_RT(serverOK && clientOK, "TLS stress init failed");
+  if (!serverOK || !clientOK) { mx.stop(); return; }
+  bool serverStarted = server.start();
+  bool clientStarted = client.start();
+  ZTLS_CHECK_RT(serverStarted && clientStarted, "TLS stress start failed");
+  if (!serverStarted || !clientStarted) { mx.stop(); return; }
+  server.listen();
+  if (!wait_for(state.listening)) {
+    ZTLS_CHECK_RT(false, "TLS stress listen timed out");
+  } else {
+    ZtArray<ZmRef<typename BaseClient<TestState>::Link>> links;
+    links.length(Clients);
+    for (unsigned i = 0; i < Clients; ++i) {
+      links[i] = new typename BaseClient<TestState>::Link(&client);
+      links[i]->connect("127.0.0.1", state.port);
+    }
+    ZTLS_CHECK_RT(wait_done(state), "TLS stress disconnect wait timed out");
+  }
+  mx.stopListening(state.ip, state.port);
+  client.stop();
+  server.stop();
+  client.final();
+  server.final();
+  mx.stop();
+  ZTLS_CHECK_RT(!capture.errors.load_(), "TLS stress emitted error logs");
+  ZTLS_CHECK_RT(!state.errors.load_(),
+    state.error_msg ? state.error_msg : "TLS stress failed");
+}
+
 void testTLS13IPv6Loopback(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13IPv6Loopback);
@@ -1545,6 +1612,7 @@ int main(int argc, char **argv)
     ZuTestCall(testConnectFailureShard, temp, capture);
     ZuTestCall(testWrongHostname, temp, capture);
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
+    ZuTestCall(testTLS13ConcurrentRecords, temp, capture);
     ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);
     ZuTestCall(testTLS13ServerKeyUpdate, temp, capture);
