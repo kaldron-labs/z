@@ -231,23 +231,11 @@ unsigned RoleAdd::appError(const App &item) const
   return appVersionError(app, item);
 }
 
-unsigned ScopeAdd::appError(const App &item) const
-{
-  return appVersionError(app, item);
-}
-
 Role RoleAdd::result() const
 {
   return Role{.appID = values.appID, .id = values.id, .name = values.name,
     .label = values.label, .state = State::Active, .origin = Origin::Custom,
     .version = 1, .created = updated, .updated = updated};
-}
-
-Scope ScopeAdd::result() const
-{
-  return Scope{.appID = values.appID, .id = values.id, .audienceID = values.audienceID,
-    .name = values.name, .state = State::Active,
-    .origin = Origin::Custom, .version = 1, .created = updated, .updated = updated};
 }
 
 template <typename Add>
@@ -263,23 +251,6 @@ void RoleAdd::validate(Zdb_::SagaCompleteFn complete)
 {
   error = catalogAddError(*this);
   complete(!error);
-}
-
-void ScopeAdd::validate(Zdb_::SagaCompleteFn complete)
-{
-  if ((error = catalogAddError(*this))) { complete(false); return; }
-  if (!values.audienceID) { error = 400; complete(false); return; }
-  auto audiences = context->audiences;
-  audiences->run(0, [this, audiences, complete = ZuMv(complete)]() mutable {
-    audiences->find<0>(0, ZuFwdTuple(values.audienceID),
-      [this, complete = ZuMv(complete)](ZdbRowRef<Audience> row) mutable {
-	if (!row || row->data().appID != values.appID || row->data().owner ||
-	    row->data().state != State::Active) {
-	  error = 400; complete(false); return;
-	}
-	complete(true);
-      });
-  });
 }
 
 Audience AudienceAdd::result() const
@@ -427,17 +398,15 @@ static void accessRefs(Edit *def, unsigned offset, Zdb_::SagaCompleteFn complete
 {
   const auto &ids = [def]() -> const IDVec & {
     if constexpr (Kind == 0) return def->values.audienceIDs;
-    else if constexpr (Kind == 1) return def->values.scopeIDs;
     else return def->values.roleIDs;
   }();
   if (offset == ids.length()) {
-    if constexpr (Kind < 2) accessRefs<Kind + 1>(def, 0, ZuMv(complete));
+    if constexpr (Kind < 1) accessRefs<Kind + 1>(def, 0, ZuMv(complete));
     else complete(true);
     return;
   }
   auto table = [def]() {
     if constexpr (Kind == 0) return def->context->audiences;
-    else if constexpr (Kind == 1) return def->context->scopes;
     else return def->context->roles;
   }();
   auto id = ids[offset];
@@ -451,14 +420,6 @@ static void accessRefs(Edit *def, unsigned offset, Zdb_::SagaCompleteFn complete
 	if (!row || row->data().appID != def->values.appID || row->data().owner ||
 	    row->data().state != State::Active) {
 	  def->error = 400; complete(false); return;
-	}
-	if constexpr (Kind == 2) {
-	  if (row->data().tombstone) { def->error = 400; complete(false); return; }
-	} else if constexpr (Kind == 1) {
-	  bool approved = false;
-	  for (auto id: def->values.audienceIDs)
-	    if (id == row->data().audienceID) { approved = true; break; }
-	  if (!approved) { def->error = 400; complete(false); return; }
 	}
 	accessRefs<Kind>(def, offset + 1, ZuMv(complete));
       });
@@ -507,7 +468,7 @@ void ClientAccessPut::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.appID || values.appID != app.id || values.appID != before.appID ||
       !values.clientID || values.clientID != before.clientID ||
-      !uniqueRefs(values.audienceIDs) || !uniqueRefs(values.scopeIDs) || !uniqueRefs(values.roleIDs)) {
+      !uniqueRefs(values.audienceIDs) || !uniqueRefs(values.roleIDs)) {
     error = 400; complete(false); return;
   }
   if (!before.version && (ifMatch || ifNoneMatch != "*")) {
@@ -800,46 +761,6 @@ unsigned ActionEdit::actionError(const Action &item) const
     (!unchanged() && before.version == UINT64_MAX) ? 409 : 0;
 }
 
-unsigned ScopeEdit::appError(const App &item) const
-{
-  if (kind < Roles || kind > Status ||
-      (kind == Status && (state < 0 || state >= State::N))) return 400;
-  return !app.version || item.state != State::Active || item.owner || app.owner ||
-    item.updated != app.updated || item.version != app.version ||
-    item.authVersion != app.authVersion ||
-    (!unchanged() && (app.version == UINT64_MAX ||
-      app.authVersion == UINT64_MAX)) ? 409 : 0;
-}
-
-unsigned ScopeEdit::scopeError(const Scope &item) const
-{
-  String etag{"\"v"};
-  etag << item.version << '"';
-  if (ifMatch != etag || item.version != before.version) return 412;
-  return !before.version || before.appID != app.id || before.owner || item.owner ||
-    (kind == Status && item.state == State::Revoked) ||
-    (!unchanged() && before.version == UINT64_MAX) ? 409 : 0;
-}
-
-void ScopeEdit::validate(unsigned offset, Zdb_::SagaCompleteFn complete)
-{
-  if (kind != Roles || offset == roleIDs.length()) { complete(true); return; }
-  auto id = roleIDs[offset];
-  if (!id) { complete(false); return; }
-  for (unsigned i = 0; i < offset; ++i)
-    if (roleIDs[i] == id) { complete(false); return; }
-  context->roles->run(0, [this, offset, id, complete = ZuMv(complete)]() mutable {
-    context->roles->find<0>(0, ZuFwdTuple(app.id, id),
-      [this, offset, complete = ZuMv(complete)](ZdbRowRef<Role> row) mutable {
-	if (!row || row->data().state != State::Active ||
-	    row->data().tombstone || row->data().owner) {
-	  complete(false); return;
-	}
-	validate(offset + 1, ZuMv(complete));
-      });
-  });
-}
-
 unsigned RoleEdit::appError(const App &item) const
 {
   if (kind < Actions || kind > Status ||
@@ -1095,7 +1016,7 @@ int recoveryPrepare(
 
 bool codeFamilyPrepare(
     Ztls::Random &rng, const Grant &code, ZuBSpan codeDigest,
-    String scope, IDVec scopeIDs, ZtBitmap actions, uint64_t authVersion,
+    String scope, IDVec requestedRoleIDs, ZtBitmap actions, uint64_t authVersion,
     int64_t now, int64_t expires, CodeFamily &family, String &refreshToken)
 {
   OpaqueToken refresh;
@@ -1113,7 +1034,7 @@ bool codeFamilyPrepare(
   next.audience = code.audience;
   next.scope = ZuMv(scope);
   next.nonce = code.nonce;
-  next.scopeIDs = ZuMv(scopeIDs);
+  next.requestedRoleIDs = ZuMv(requestedRoleIDs);
   next.roleIDs = code.roleIDs;
   next.actions = ZuMv(actions);
   next.digest = ZuMv(refresh.digest);

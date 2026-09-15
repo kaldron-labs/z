@@ -179,8 +179,8 @@ private:
         bool allowed = row && row->data().state == State::Active &&
           !row->data().owner;
         if (allowed)
-          for (auto scopeID: self->m_grant.scopeIDs)
-            if (!hasID_(row->data().scopeIDs, scopeID)) {
+          for (auto roleID: self->m_grant.requestedRoleIDs)
+            if (!hasID_(row->data().roleIDs, roleID)) {
               allowed = false;
               break;
             }
@@ -1180,7 +1180,7 @@ private:
         m_authority.authorityDeadline < expires)
       expires = m_authority.authorityDeadline;
     ConsentCode change{.beforeGrant = m_grant, .afterGrant = m_grant,
-      .beforeConsent = ZuMv(before), .scopeIDs = m_authority.selection.scopeIDs,
+      .beforeConsent = ZuMv(before), .roleIDs = m_authority.selection.roleIDs,
       .now = m_config.now};
     if (!authorizationFinish(*m_rng, change.afterGrant, m_bindingDigest,
       m_authority.user.id, m_authority.cred.id,

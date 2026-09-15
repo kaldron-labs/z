@@ -331,7 +331,7 @@ void authorizationFinish(
 template <typename Complete>
 void refreshFinish(
     DBContext *context, Ztls::Random &rng, Bytes familyID,
-    Bytes presentedDigest, String issuer, AppID appID, String scope, IDVec scopeIDs,
+    Bytes presentedDigest, String issuer, AppID appID, String scope, IDVec requestedRoleIDs,
     ZtBitmap actions, uint64_t authVersion, UserID userID,
     uint64_t userVersion, int64_t now,
     unsigned generationLimit, unsigned spentLimit, Complete &&complete)
@@ -342,7 +342,7 @@ void refreshFinish(
   apps->run(0, [
     apps, users, grants, rng = &rng, familyID = ZuMv(familyID),
     presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
-    scope = ZuMv(scope), scopeIDs = ZuMv(scopeIDs),
+    scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
     actions = ZuMv(actions), appID, authVersion,
     userID, userVersion, now,
     generationLimit, spentLimit,
@@ -351,7 +351,7 @@ void refreshFinish(
     apps->find<0>(0, ZuFwdTuple(appID), [
       users, grants, rng, familyID = ZuMv(familyID),
       presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
-      scope = ZuMv(scope), scopeIDs = ZuMv(scopeIDs),
+      scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
       actions = ZuMv(actions), appID, authVersion,
       userID, userVersion, now,
       generationLimit, spentLimit, complete = ZuMv(complete)
@@ -364,7 +364,7 @@ void refreshFinish(
       users->find<0>(0, ZuFwdTuple(userID), [
 	grants, rng, familyID = ZuMv(familyID),
 	presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
-	scope = ZuMv(scope), scopeIDs = ZuMv(scopeIDs),
+        scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
 	actions = ZuMv(actions), appID, authVersion,
 	userID, userVersion, now, generationLimit, spentLimit,
 	complete = ZuMv(complete)
@@ -377,7 +377,7 @@ void refreshFinish(
 	grants->findUpd<0>(0, ZuFwdTuple(familyID), [
 	  rng, familyID = ZuMv(familyID),
 	  presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
-	  scope = ZuMv(scope), scopeIDs = ZuMv(scopeIDs),
+	  scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
 	  actions = ZuMv(actions), appID, authVersion,
 	  userID, userVersion, now, generationLimit, spentLimit,
 	  complete = ZuMv(complete)
@@ -403,7 +403,7 @@ void refreshFinish(
 	    ZuMv(next.digest), now, generationLimit, spentLimit);
 	  if (result == RefreshRotate::Rotated) {
 	    row->data().scope = ZuMv(scope);
-	    row->data().scopeIDs = ZuMv(scopeIDs);
+	    row->data().requestedRoleIDs = ZuMv(requestedRoleIDs);
 	    row->data().actions = ZuMv(actions);
 	    row->data().authVersion = authVersion;
 	  }

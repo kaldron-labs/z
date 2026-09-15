@@ -1062,24 +1062,26 @@ void Server::metadata(AppID appID, ServerFn complete)
   if (!complete) return;
   app_(appID, [this, complete = ZuMv(complete)](AppServer app) mutable {
     if (!app) { complete(serverError()); return; }
-    auto scopes = m_context->scopes;
     unsigned limit = m_config.limits.metadataScopes;
-    if (!scopes || !limit || limit == UINT_MAX) {
+    auto roles = m_context->roles;
+    if (!roles || !limit || limit == UINT_MAX) {
       complete(serverError());
       return;
     }
-    scopes->selectRows<1>(ZuFwdTuple(app.appID), limit + 1,
+    roles->selectRows<0>({}, limit + 1,
       [this, app = ZuMv(app), limit, complete = ZuMv(complete),
           values = StringVec{}, overflow = false](
-          ZuUnion<void, ScopeTable::Tuple> result, unsigned count) mutable {
-        if (result.template is<ScopeTable::Tuple>()) {
-          if (count > limit) { overflow = true; return; }
-          auto tuple = ZuMv(result).template p<ScopeTable::Tuple>();
-          if (tuple.template p<0>() == app.appID &&
-              tuple.template p<2>() == app.audienceID &&
-              tuple.template p<5>() == State::Active &&
-              tuple.template p<3>())
-            values.push(ZuMv(tuple.template p<3>()));
+          ZuUnion<void, RoleTable::Tuple> result, unsigned) mutable {
+        if (result.template is<RoleTable::Tuple>()) {
+          if (values.length() >= limit) { overflow = true; return; }
+          auto tuple = ZuMv(result).template p<RoleTable::Tuple>();
+          Role role;
+          ZuTupleCall(ZuMv(tuple), [&role](auto &&...args) {
+            role = Role{ZuFwd<decltype(args)>(args)...};
+          });
+          if (role.appID == app.appID && role.state == State::Active && !role.owner &&
+              !role.tombstone && role.name)
+            values.push(ZuMv(role.name));
           return;
         }
         if (overflow) { complete(serverError()); return; }

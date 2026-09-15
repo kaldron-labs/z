@@ -15,6 +15,15 @@ verification are superseded and retained only as a record of earlier work.
 Zum integration persistence tests now select SQLite solely through
 `ZDB_MODULE` and `ZDB_CONNECT`; there is no Zum-visible SQLite interface.
 
+The current schema is 19. Resource scopes are derived at request time from
+active application roles: a scope name resolves to exactly one same-named role,
+and that role supplies the action set. There is no persisted scope record,
+scope ID, scope administration endpoint, catalog scope list, or scope saga.
+`ClientAccess`, consent, grants and code families persist role IDs where they
+need authorization snapshots. Provider configuration still persists upstream
+OIDC scope strings, and provider role mappings still map upstream role values
+to local application role IDs.
+
 Clang-debug acceptance on 2026-09-12: the incremental `zdb_sqlite` and `zum`
 module builds passed with `-j3`. The SQLite adapter integration target passed
 all 7 files and 52 TAP cases. The Zum unit target passed all 4 files and 29 TAP

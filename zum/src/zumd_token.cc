@@ -296,7 +296,7 @@ private:
       return;
     }
     m_authVersion = data.app.authVersion;
-    m_scopeIDs = data.selection.scopeIDs;
+    m_requestedRoleIDs = data.selection.roleIDs;
     m_actions = data.actions;
     AccessClaims claims;
     if (!interactiveClaims(*m_rng, m_family.issuer, data.user, data.client,
@@ -361,7 +361,7 @@ private:
   {
     refreshFinish(m_context, *m_rng, m_family.id, m_presentedDigest,
       m_family.issuer, m_family.appID, m_response.scope,
-      ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion,
+      ZuMv(m_requestedRoleIDs), ZuMv(m_actions), m_authVersion,
       m_family.userID, m_family.userVersion, m_now,
       m_generationLimit, m_spentLimit, [
 	self = ZmRef<RefreshToken_>{this}
@@ -417,7 +417,7 @@ private:
   PreparedJWT	m_prepared;
   PreparedJWT	m_idPrepared;
   TokenResponse	m_response;
-  IDVec		m_scopeIDs;
+  IDVec		m_requestedRoleIDs;
   ZtBitmap	m_actions;
   uint64_t	m_authVersion = 0;
   bool		m_signDone = false;
@@ -494,7 +494,7 @@ private:
       return;
     }
     m_authVersion = data.app.authVersion;
-    m_scopeIDs = data.selection.scopeIDs;
+    m_requestedRoleIDs = data.selection.roleIDs;
     m_actions = data.actions;
     AccessClaims claims;
     if (!interactiveClaims(*m_rng, m_code.issuer, data.user, data.client,
@@ -564,7 +564,7 @@ private:
     }
     CodeFamily family;
     if (!codeFamilyPrepare(*m_rng, m_code, m_codeDigest,
-      m_response.scope, ZuMv(m_scopeIDs), ZuMv(m_actions), m_authVersion, m_now,
+      m_response.scope, ZuMv(m_requestedRoleIDs), ZuMv(m_actions), m_authVersion, m_now,
 	m_refreshExpires, family, m_response.refreshToken)) {
       finish_(OAuthError::ServerError, {});
       return;
@@ -634,7 +634,7 @@ private:
   PreparedJWT	m_prepared;
   PreparedJWT	m_idPrepared;
   TokenResponse	m_response;
-  IDVec		m_scopeIDs;
+  IDVec		m_requestedRoleIDs;
   ZtBitmap	m_actions;
   Bytes		m_familyID;
   uint64_t	m_authVersion = 0;

@@ -23,7 +23,6 @@ ZdbTableDerive(AppTable, App);
 ZdbTableDerive(MembershipTable, Membership);
 ZdbTableDerive(ActionTable, Action);
 ZdbTableDerive(RoleTable, Role);
-ZdbTableDerive(ScopeTable, Scope);
 ZdbTableDerive(AudienceTable, Audience);
 ZdbTableDerive(ClientTable, Client);
 ZdbTableDerive(ClientAccessTable, ClientAccess);

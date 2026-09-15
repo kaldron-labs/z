@@ -173,37 +173,20 @@ static void jsonContract()
     .id = credential.id, .credentialID = credential.id});
   ZuCheck(grantJSON.find<"\"id\":\"-_8\"">() >= 0 &&
     grantJSON.find<"\"credentialID\":\"-_8\"">() >= 0);
-  Zum::Scope scope{
+  Zum::Role role{
     .appID = UINT64_MAX - 1,
     .id = 9007199254740993ULL,
-    .audienceID = 42,
-    .roleIDs = {1, 9007199254740994ULL},
+    .name = "reader",
     .catalogRevision = 9007199254740995ULL,
     .version = 9007199254740996ULL
   };
   ZtString<> json;
-  ZfJSON::AsObject::Handler<Zum::Scope, ZuFacet::JSON>::
-    template save<Zum::PublicField>(json, scope);
-  ZuCheck(json ==
-    "{\"appID\":\"18446744073709551614\","
-    "\"id\":\"9007199254740993\",\"audienceID\":\"42\","
-    "\"name\":\"\","
-    "\"roleIDs\":[\"1\",\"9007199254740994\"],"
-    "\"state\":\"Active\",\"origin\":\"Custom\","
-    "\"catalogRevision\":\"9007199254740995\","
-    "\"version\":\"9007199254740996\","
-    "\"created\":0,\"updated\":0}");
-  auto parsed = ZfJSON::scan(json);
-  ZuCheck(parsed.p<0>() >= 0);
-  if (parsed.p<0>() >= 0) {
-    auto copy = ZfJSON::AsObject::Handler<Zum::Scope, ZuFacet::JSON>{
-      (*parsed.p<1>())[0]}.ctor();
-    ZuCheck(copy.appID == UINT64_MAX - 1 &&
-      copy.id == 9007199254740993ULL &&
-      copy.roleIDs.length() == 2 &&
-      copy.roleIDs[1] == 9007199254740994ULL &&
-      copy.version == 9007199254740996ULL);
-  }
+  ZfJSON::AsObject::Handler<Zum::Role, ZuFacet::JSON>::
+    template save<Zum::PublicField>(json, role);
+  ZuCheck(json.find<"\"appID\":\"18446744073709551614\"">() >= 0 &&
+    json.find<"\"id\":\"9007199254740993\"">() >= 0 &&
+    json.find<"\"name\":\"reader\"">() >= 0 &&
+    json.find<"\"catalogRevision\":\"9007199254740995\"">() >= 0);
 }
 
 static void requests()
@@ -876,7 +859,6 @@ static void opaque()
   selection.audienceID = 3;
   selection.audience = "orders";
   selection.scope = "openid read";
-  selection.scopeIDs.push(7);
   Zum::Grant ceremony;
   ZuCheck(Zum::authorizationBegin(rng, ceremony, "https://issuer", params,
     selection, true, ZuBSpan{"browser binding"}, 9, 100, 160));
@@ -884,8 +866,7 @@ static void opaque()
     ceremony.issuer == "https://issuer" && ceremony.appID == 27 &&
     ceremony.clientID == "browser" &&
     ceremony.audience == "orders" && ceremony.redirectURI ==
-      "https://app/cb" && ceremony.scopeIDs.length() == 1 &&
-    ceremony.scopeIDs[0] == 7 && ceremony.bindingDigest ==
+      "https://app/cb" && ceremony.bindingDigest ==
       ZuBSpan{"browser binding"} && ceremony.pkceChallenge ==
       ZuBSpan{"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"} &&
     !ceremony.oauthState && ceremony.oauthStatePresent &&
@@ -964,8 +945,8 @@ static void opaque()
     family.clientID == ceremony.clientID &&
     family.credentialID == ceremony.credentialID &&
     family.audience == ceremony.audience && family.scope == "openid read" &&
-    family.scopeIDs.length() == 1 &&
-    family.scopeIDs[0] == 7 && family.actions[3] &&
+    family.requestedRoleIDs.length() == 1 &&
+    family.requestedRoleIDs[0] == 7 && family.actions[3] &&
     family.authVersion == 11 && family.authTime == ceremony.authTime &&
     family.created == 150 && family.expires == 1000 && refreshToken);
   Zum::Bytes refreshID, refreshDigest;
@@ -1013,9 +994,9 @@ static void actions()
   Zum::IDVec userRoles;
   userRoles.push(1);
   userRoles.push(2);
-  Zum::IDVec scopeRoles;
-  scopeRoles.push(2);
-  scopeRoles.push(3);
+  Zum::IDVec delegatedRoles;
+  delegatedRoles.push(2);
+  delegatedRoles.push(3);
   Zum::Role roles[] = {
     {.id = 1, .name = "reader", .actions = ZtBitmap{8U}},
     {.id = 2, .name = "writer", .actions = ZtBitmap{8U}},
@@ -1030,7 +1011,7 @@ static void actions()
     {.id = 2, .name = "write"},
     {.id = 3, .name = "disabled", .state = Zum::State::Disabled}
   };
-  auto resolved = Zum::effectiveActions(8, userRoles, scopeRoles,
+  auto resolved = Zum::effectiveActions(8, userRoles, delegatedRoles,
     roles, actionRecords);
   ZuCheck(!resolved[1] && resolved[2] && !resolved[3]);
 
@@ -1045,34 +1026,33 @@ static void actions()
     Zum::ClientGrant::AuthorizationCode | Zum::ClientGrant::RefreshToken,
     true, redirects));
   Zum::ClientAccess access{.clientID = "browser", .appID = 1,
-    .audienceIDs = {1, 2}, .scopeIDs = {10, 11}};
-  Zum::ScopeAuth scopes[] = {
-    {.scope = {.appID = 1, .id = 10, .audienceID = 1, .name = "read"},
+    .audienceIDs = {1, 2}, .roleIDs = {1, 2}};
+  Zum::ScopeAuth scopes[3] = {
+    {.role = {.appID = 1, .id = 1, .name = "read"}, .audienceID = 1,
       .audience = "orders"},
-    {.scope = {.appID = 1, .id = 11, .audienceID = 1, .name = "write"},
+    {.role = {.appID = 1, .id = 2, .name = "write"}, .audienceID = 1,
       .audience = "orders"},
-    {.scope = {.appID = 1, .id = 12, .audienceID = 2, .name = "charge"},
+    {.role = {.appID = 1, .id = 3, .name = "charge"}, .audienceID = 2,
       .audience = "billing"}
   };
-  scopes[0].scope.roleIDs.push(1);
-  scopes[1].scope.roleIDs.push(2);
   Zum::ScopeSelection selection;
   ZuCheck(Zum::selectScopes(client, access,
     "read write read", scopes, selection) ==
     Zum::ScopeError::OK);
   ZuCheck(selection.audience == "orders" && selection.scope == "read write" &&
-    selection.scopeIDs.length() == 2 && selection.roleIDs.length() == 2);
-  access.scopeIDs.push(12);
+    selection.roleIDs.length() == 2 && selection.roleIDs[0] == 1 &&
+    selection.roleIDs[1] == 2);
+  access.roleIDs.push(3);
   ZuCheck(Zum::selectScopes(client, access,
     "read charge", scopes, selection) ==
     Zum::ScopeError::Audience);
 
   Zum::IDVec granted;
-  granted.push(10);
+  granted.push(1);
   ZuCheck(Zum::selectGrantedScopes(
     client, access, granted, false, {}, scopes, selection) == Zum::ScopeError::OK);
-  ZuCheck(selection.scope == "read" && selection.scopeIDs.length() == 1 &&
-    selection.scopeIDs[0] == 10);
+  ZuCheck(selection.scope == "read" && selection.roleIDs.length() == 1 &&
+    selection.roleIDs[0] == 1);
   ZuCheck(Zum::selectGrantedScopes(
     client, access, granted, true, "write", scopes, selection) ==
     Zum::ScopeError::Unavailable);
@@ -1080,7 +1060,7 @@ static void actions()
     "openid profile read", scopes, selection) ==
     Zum::ScopeError::OK);
   ZuCheck(selection.identity && selection.audience == "orders" &&
-    selection.scope == "openid profile read" && selection.scopeIDs.length() == 1);
+    selection.scope == "openid profile read" && selection.roleIDs.length() == 1);
   ZuCheck(Zum::selectGrantedScopes(client, access,
     granted, "openid read", false, {},
     scopes, selection) == Zum::ScopeError::OK);
@@ -1098,7 +1078,7 @@ static void actions()
     "openid offline_access read", scopes, selection) == Zum::ScopeError::OK);
   ZuCheck(selection.identity &&
     selection.scope == "openid offline_access read" &&
-    selection.scopeIDs.length() == 1);
+    selection.roleIDs.length() == 1);
   client.refreshAllowed = false;
   ZuCheck(Zum::selectScopes(client, access,
     "openid offline_access read", scopes, selection) ==
@@ -1121,8 +1101,8 @@ static void actions()
   grant.credentialID = cred.id;
   grant.audience = "orders";
   grant.scope = "read write";
-  grant.scopeIDs.push(10);
-  grant.scopeIDs.push(11);
+  grant.requestedRoleIDs.push(1);
+  grant.requestedRoleIDs.push(2);
   grant.roleIDs = userRoles;
   grant.actions.length(8);
   grant.actions.set(1);
@@ -1257,12 +1237,12 @@ static void appRecords()
     .clientID = "service", .appID = 1, .state = Zum::State::Active,
     .authVersion = 5};
   clientAccess.audienceIDs.push(4);
-  clientAccess.scopeIDs.push(6);
+  clientAccess.roleIDs.push(6);
   clientAccess.roleIDs.push(7);
   clientAccess = roundTrip(clientAccess);
   ZuCheck(clientAccess.clientID == "service" &&
-    clientAccess.audienceIDs[0] == 4 && clientAccess.scopeIDs[0] == 6 &&
-    clientAccess.roleIDs[0] == 7);
+    clientAccess.audienceIDs[0] == 4 && clientAccess.roleIDs[0] == 6 &&
+    clientAccess.roleIDs[1] == 7);
 
   Zum::AdminAccess adminAccess{
     .actorKind = Zum::ActorKind::Client, .actorID = "service", .appID = 1,
@@ -1328,9 +1308,9 @@ static void appRecords()
   Zum::Consent consent{
     .userID = 2, .clientID = "native", .appID = 1, .audienceID = 4,
     .state = Zum::State::Active};
-  consent.scopeIDs.push(6);
+  consent.roleIDs.push(6);
   consent = roundTrip(consent);
-  ZuCheck(consent.clientID == "native" && consent.scopeIDs[0] == 6);
+  ZuCheck(consent.clientID == "native" && consent.roleIDs[0] == 6);
 
   Zum::IdemRequest request{
     .actorKind = Zum::ActorKind::User, .actorID = "2",
@@ -1356,9 +1336,12 @@ static void appAuthority()
   Zum::Audience audience{
     .id = 3, .appID = 1, .uri = "https://one.example/api",
     .state = Zum::State::Active};
-  Zum::Scope scope{
-    .appID = 1, .id = 4, .audienceID = 3, .state = Zum::State::Active};
-  scope.roleIDs.push(7);
+  Zum::ScopeAuth scope{
+    .role = Zum::Role{.appID = 1, .id = 7, .name = "operator",
+      .state = Zum::State::Active},
+    .audienceID = 3, .audience = audience.uri};
+  scope.role.actions.length(2);
+  scope.role.actions.set(0);
 
   Zum::Role one{
     .appID = 1, .id = 7, .name = "operator", .state = Zum::State::Active};
@@ -1385,9 +1368,8 @@ static void appAuthority()
   ZuCheck(ZuStructKey<0>(roles[0]) != ZuStructKey<0>(roles[1]));
   ZuCheck(ZuStructKey<1>(roles[0]) != ZuStructKey<1>(roles[1]));
   auto otherScope = scope;
-  otherScope.appID = 2;
-  ZuCheck(ZuStructKey<0>(scope) != ZuStructKey<0>(otherScope));
-  ZuCheck(ZuStructKey<1>(scope) != ZuStructKey<1>(otherScope));
+  otherScope.role.appID = 2;
+  ZuCheck(otherScope.role.appID != scope.role.appID);
 
   Zum::Session firstSession{.digest = Zum::Bytes{ZuBSpan{"first"}}, .userID = 9};
   auto secondSession = firstSession;
@@ -1408,8 +1390,7 @@ static void appAuthority()
   wrongAudience.appID = 2;
   ZuCheck(!Zum::scopeValid(app, scope, wrongAudience, roles));
   auto wrongScope = scope;
-  wrongScope.roleIDs.null();
-  wrongScope.roleIDs.push(8);
+  wrongScope.role.id = 8;
   ZuCheck(!Zum::scopeValid(app, wrongScope, audience, roles));
   auto wrongMembership = membership;
   wrongMembership.appID = 2;
@@ -2237,7 +2218,7 @@ static void enrollmentSaga()
   family.clientID = "browser";
   family.credentialID = Zum::Bytes{ZuBSpan{"credential"}};
   family.audience = "orders";
-  family.scopeIDs.push(3);
+  family.requestedRoleIDs.push(3);
   family.actions.length(8);
   family.actions.set(2);
   family.digest = Zum::Bytes{ZuBSpan{"digest"}};
@@ -2467,33 +2448,6 @@ static void enrollmentSaga()
   ZuCheck(step.table == "zum.role" && step.op == ZdbSagaOp::Update);
   ZuCheck(M::catalog(12, 5, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
-  Zum::ScopeEdit scopeEdit{
-    .app = Zum::App{.id = 9},
-    .before = Zum::Scope{.appID = 9, .id = 4, .audienceID = 8, .name = "read"},
-    .roleIDs = {2, 3}, .ifMatch = "\"v1\"", .updated = 127,
-    .request = Zum::IdemRequest{.actorID = "admin",
-      .operation = Zum::MgmtOp::scopeRoles, .idempotencyKey = "scope-roles"},
-    .kind = Zum::ScopeEdit::Roles, .error = 400};
-  saga = new M{};
-  saga->init(ZuMv(scopeEdit));
-  M::save(saga, payload);
-  loaded = M::load(Zum::ScopeEdit::Type{}(), payload);
-  ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ScopeEdit>{})
-      return change.app.id == 9 && change.before.appID == 9 &&
-	change.before.id == 4 && change.before.audienceID == 8 &&
-	change.roleIDs == Zum::IDVec{2, 3} && change.ifMatch == "\"v1\"" &&
-	change.request.idempotencyKey == "scope-roles" &&
-	change.kind == Zum::ScopeEdit::Roles && !change.error;
-    else return false;
-  }));
-  ZuCheck(M::catalog(13, 0, step));
-  ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(13, 2, step));
-  ZuCheck(step.table == "zum.scope" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(13, 5, step));
-  ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ActionEdit actionEdit{
     .app = Zum::App{.id = 9},
     .before = Zum::Action{.appID = 9, .id = 0, .name = "ping"},
@@ -2514,11 +2468,11 @@ static void enrollmentSaga()
 	change.state == Zum::State::Disabled && !change.error;
     else return false;
   }));
-  ZuCheck(M::catalog(14, 0, step));
+  ZuCheck(M::catalog(13, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(14, 2, step));
+  ZuCheck(M::catalog(13, 2, step));
   ZuCheck(step.table == "zum.action" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(14, 5, step));
+  ZuCheck(M::catalog(13, 5, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::AppChange appChange{.before = Zum::App{.id = 9, .name = "orders",
       .label = "Original", .state = Zum::State::Active, .authVersion = 4, .version = 3},
@@ -2541,11 +2495,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "app-state";
     else return false;
   }));
-  ZuCheck(M::catalog(15, 0, step));
+  ZuCheck(M::catalog(14, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(15, 1, step));
+  ZuCheck(M::catalog(14, 1, step));
   ZuCheck(step.table == "zum.app" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(15, 3, step));
+  ZuCheck(M::catalog(14, 3, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::UserEdit userEdit{.before = Zum::User{.id = 42, .name = "local",
       .profile = "Original", .email = "original@example.test"},
@@ -2567,11 +2521,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "user-profile";
     else return false;
   }));
-  ZuCheck(M::catalog(16, 0, step));
+  ZuCheck(M::catalog(15, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(16, 1, step));
+  ZuCheck(M::catalog(15, 1, step));
   ZuCheck(step.table == "zum.user" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(16, 3, step));
+  ZuCheck(M::catalog(15, 3, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::CredEdit credEdit{.before = Zum::Cred{
       .id = Zum::Bytes{ZuBSpan{"credential"}}, .userID = 42, .signCount = 7,
@@ -2594,11 +2548,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "credential-label";
     else return false;
   }));
-  ZuCheck(M::catalog(17, 0, step));
+  ZuCheck(M::catalog(16, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(17, 1, step));
+  ZuCheck(M::catalog(16, 1, step));
   ZuCheck(step.table == "zum.cred" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(17, 3, step));
+  ZuCheck(M::catalog(16, 3, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::AudienceEdit audienceEdit{.app = Zum::App{.id = 42,
       .state = Zum::State::Active},
@@ -2636,13 +2590,13 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "audience-name";
     else return false;
   }));
-  ZuCheck(M::catalog(18, 0, step));
+  ZuCheck(M::catalog(17, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(18, 1, step));
+  ZuCheck(M::catalog(17, 1, step));
   ZuCheck(step.table == "zum.app" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(18, 2, step));
+  ZuCheck(M::catalog(17, 2, step));
   ZuCheck(step.table == "zum.audience" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(18, 5, step));
+  ZuCheck(M::catalog(17, 5, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ProviderEdit providerEdit{.before = Zum::Provider{.id = 44,
       .name = "upstream", .issuer = "https://id.example/", .clientID = "client",
@@ -2687,11 +2641,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "provider-claim";
     else return false;
   }));
-  ZuCheck(M::catalog(19, 0, step));
+  ZuCheck(M::catalog(18, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(19, 1, step));
+  ZuCheck(M::catalog(18, 1, step));
   ZuCheck(step.table == "zum.provider" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(19, 3, step));
+  ZuCheck(M::catalog(18, 3, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ClientEdit clientEdit{.before = Zum::Client{.id = "native-cli", .appID = 42,
       .label = "Original", .secretDigest = Zum::Bytes{ZuBSpan{"digest"}},
@@ -2739,11 +2693,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "client-label";
     else return false;
   }));
-  ZuCheck(M::catalog(20, 0, step));
+  ZuCheck(M::catalog(19, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(20, 1, step));
+  ZuCheck(M::catalog(19, 1, step));
   ZuCheck(step.table == "zum.client" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(20, 3, step));
+  ZuCheck(M::catalog(19, 3, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ClientEdit rotation{.before = Zum::Client{.id = "service",
       .secretDigest = Zum::Bytes{ZuBSpan{"old-hash"}}, .secretVersion = 7,
@@ -2809,11 +2763,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "retire-key";
     else return false;
   }));
-  ZuCheck(M::catalog(21, 0, step));
+  ZuCheck(M::catalog(20, 0, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(21, 1, step));
+  ZuCheck(M::catalog(20, 1, step));
   ZuCheck(step.table == "zum.sign_key" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(21, 2, step));
+  ZuCheck(M::catalog(20, 2, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   auto accessState = []<typename Edit>(Edit change, unsigned index, ZuCSpan table) {
     ZuCheck(!change.recordError(change.before));
@@ -2863,7 +2817,7 @@ static void enrollmentSaga()
     .ifMatch = "\"v1\"", .updated = 136,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::clientAccessState, .idempotencyKey = "access-state"},
-    .state = Zum::State::Disabled}, 22, "zum.client_access");
+    .state = Zum::State::Disabled}, 21, "zum.client_access");
   accessState(Zum::AdminAccessState{
     .before = Zum::AdminAccess{.actorKind = Zum::ActorKind::User,
       .actorID = "admin", .appID = 42, .operationIDs = {Zum::MgmtOp::roleQuery},
@@ -2871,7 +2825,7 @@ static void enrollmentSaga()
     .ifMatch = "\"v1\"", .updated = 136,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::adminAccessState, .idempotencyKey = "access-state"},
-    .state = Zum::State::Disabled}, 23, "zum.admin_access");
+    .state = Zum::State::Disabled}, 22, "zum.admin_access");
   Zum::RoleMapDelete mapDelete{.app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::RoleMap{.appID = 42, .providerID = 43, .value = "upstream-role",
       .roleID = 44, .state = Zum::State::Active},
@@ -2899,9 +2853,9 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "delete-map" && !change.error;
     else return false;
   }));
-  ZuCheck(M::catalog(24, 2, step));
+  ZuCheck(M::catalog(23, 2, step));
   ZuCheck(step.table == "zum.role_map" && step.op == ZdbSagaOp::Delete);
-  ZuCheck(M::catalog(24, 4, step));
+  ZuCheck(M::catalog(23, 4, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::RoleMapPut mapPut{.app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::RoleMap{.appID = 42, .providerID = 43, .value = "upstream-role",
@@ -2930,11 +2884,11 @@ static void enrollmentSaga()
 	change.roleID == 45 && change.request.idempotencyKey == "replace-map" && !change.error;
     else return false;
   }));
-  ZuCheck(M::catalog(25, 2, step));
+  ZuCheck(M::catalog(24, 2, step));
   ZuCheck(step.table == "zum.role_map" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(25, 3, step));
+  ZuCheck(M::catalog(24, 3, step));
   ZuCheck(step.table == "zum.role_map" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(25, 6, step));
+  ZuCheck(M::catalog(24, 6, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::PolicyPut policyPut{.app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::AuthPolicy{.appID = 42, .created = 100},
@@ -2965,11 +2919,11 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "policy" && !change.error;
     else return false;
   }));
-  ZuCheck(M::catalog(26, 2, step));
+  ZuCheck(M::catalog(25, 2, step));
   ZuCheck(step.table == "zum.auth_policy" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(26, 3, step));
+  ZuCheck(M::catalog(25, 3, step));
   ZuCheck(step.table == "zum.auth_policy" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(26, 6, step));
+  ZuCheck(M::catalog(25, 6, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   auto accessPut = []<typename Edit>(Edit change, unsigned index, ZuCSpan table) {
     ZuCheck(!change.appError(change.app));
@@ -3014,7 +2968,7 @@ static void enrollmentSaga()
       .audienceIDs = {43}, .roleIDs = {45}}, .ifMatch = "\"v1\"", .updated = 140,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::clientAccessSet, .idempotencyKey = "access-put"}},
-    27, "zum.client_access");
+    26, "zum.client_access");
   accessPut(Zum::AdminAccessPut{
     .app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::AdminAccess{.actorKind = Zum::ActorKind::User, .actorID = "admin",
@@ -3024,7 +2978,7 @@ static void enrollmentSaga()
     .ifMatch = "\"v1\"", .updated = 140,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::adminAccessSet, .idempotencyKey = "access-put"}},
-    28, "zum.admin_access");
+    27, "zum.admin_access");
   Zum::ProviderAdd providerAdd{.before = Zum::Provider{.id = 46, .version = 0},
     .values = Zum::Provider{.id = 46, .name = "upstream", .issuer = "https://id.example/",
       .clientID = "client", .clientSecret = Zum::Bytes{ZuBSpan{"ciphertext"}},
@@ -3057,9 +3011,9 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "provider-add";
     else return false;
   }));
-  ZuCheck(M::catalog(29, 1, step));
+  ZuCheck(M::catalog(28, 1, step));
   ZuCheck(step.table == "zum.provider" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(29, 3, step));
+  ZuCheck(M::catalog(28, 3, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::AudienceAdd audienceAdd{.app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::Audience{.id = 47, .appID = 42, .version = 0},
@@ -3089,9 +3043,9 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "audience-add";
     else return false;
   }));
-  ZuCheck(M::catalog(30, 2, step));
+  ZuCheck(M::catalog(29, 2, step));
   ZuCheck(step.table == "zum.audience" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(30, 5, step));
+  ZuCheck(M::catalog(29, 5, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   auto catalogAdd = []<typename Add>(Add change, unsigned index, ZuCSpan table) {
     ZuCheck(!change.appError(change.app));
@@ -3102,7 +3056,7 @@ static void enrollmentSaga()
     if constexpr (ZuIsSame<Add, Zum::RoleAdd>{}) {
       ZuCheck(!result.actions);
       change.validate([](bool ok) { ZuCheck(ok); });
-    } else ZuCheck(!result.roleIDs && !result.catalogRoleIDs && result.audienceID == 47);
+    } else ZuCheck(result.audienceID == 47);
     change.values.appID = 43;
     change.validate([](bool ok) { ZuCheck(!ok); });
     ZuCheck(change.error == 400);
@@ -3130,13 +3084,7 @@ static void enrollmentSaga()
     .before = Zum::Role{.appID = 42, .id = 48, .version = 0},
     .values = Zum::Role{.appID = 42, .id = 48, .name = "custom"}, .updated = 143,
     .request = Zum::IdemRequest{.actorID = "admin",
-      .operation = Zum::MgmtOp::roleAdd, .idempotencyKey = "catalog-add"}}, 31, "zum.role");
-  catalogAdd(Zum::ScopeAdd{
-    .app = Zum::App{.id = 42, .state = Zum::State::Active},
-    .before = Zum::Scope{.appID = 42, .id = 48, .version = 0},
-    .values = Zum::Scope{.appID = 42, .id = 48, .audienceID = 47, .name = "custom"},
-    .updated = 143, .request = Zum::IdemRequest{.actorID = "admin",
-      .operation = Zum::MgmtOp::scopeAdd, .idempotencyKey = "catalog-add"}}, 32, "zum.scope");
+      .operation = Zum::MgmtOp::roleAdd, .idempotencyKey = "catalog-add"}}, 30, "zum.role");
   Zum::UserInvite invitation{.before = Zum::User{.id = 49, .version = 0},
     .values = Zum::User{.id = 49, .name = "new-user", .email = "user@example.test"},
     .grant = Zum::Grant{.id = Zum::Bytes{ZuBSpan{"grant-id"}}, .userID = 49,
@@ -3171,11 +3119,11 @@ static void enrollmentSaga()
 	change.external.authVersion == 7 && change.external.version == 9;
     else return false;
   }));
-  ZuCheck(M::catalog(33, 1, step));
+  ZuCheck(M::catalog(31, 1, step));
   ZuCheck(step.table == "zum.user" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(33, 2, step));
+  ZuCheck(M::catalog(31, 2, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(33, 7, step));
+  ZuCheck(M::catalog(31, 7, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ClientAdd clientAdd{.app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::Client{.id = "cli-native", .appID = 42, .version = 0},
@@ -3209,9 +3157,9 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "client-add";
     else return false;
   }));
-  ZuCheck(M::catalog(34, 2, step));
+  ZuCheck(M::catalog(32, 2, step));
   ZuCheck(step.table == "zum.client" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(34, 5, step));
+  ZuCheck(M::catalog(32, 5, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::KeyAdd keyAdd{.before = Zum::SignKey{.id = "key-new", .version = 0},
     .values = Zum::SignKey{.id = "key-new", .issuer = "issuer", .algorithm = "ES256",
@@ -3269,9 +3217,9 @@ static void enrollmentSaga()
 	change.request.idempotencyKey == "key-add";
     else return false;
   }));
-  ZuCheck(M::catalog(35, 1, step));
+  ZuCheck(M::catalog(33, 1, step));
   ZuCheck(step.table == "zum.sign_key" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(35, 2, step));
+  ZuCheck(M::catalog(33, 2, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
 
   Zum::Revoke revoke{.updated = 147,
@@ -3301,9 +3249,9 @@ static void enrollmentSaga()
 	change.updated == 147 && change.request.idempotencyKey == "revoke";
     else return false;
   }));
-  ZuCheck(M::catalog(36, 3, step));
+  ZuCheck(M::catalog(34, 3, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(36, 7, step));
+  ZuCheck(M::catalog(34, 7, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
 
   grant.owner = 0;
@@ -3322,28 +3270,28 @@ static void enrollmentSaga()
 	Zum::SagaImage::load(change.grants[0], before) && before.expires == 146;
     } else return false;
   }));
-  ZuCheck(M::catalog(37, 1, step));
+  ZuCheck(M::catalog(35, 1, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Delete);
-  ZuCheck(M::catalog(37, 2, step));
+  ZuCheck(M::catalog(35, 2, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
 
   Zum::ConsentCode consentCode{
     .beforeGrant = Zum::Grant{.id = Zum::Bytes{ZuBSpan{"consent-code-001"}}},
     .beforeConsent = Zum::Consent{.version = 0},
-    .scopeIDs = {7},
+    .roleIDs = {7},
     .now = 148};
   consentCode.afterGrant = consentCode.beforeGrant;
   consentCode.afterGrant.kind = Zum::GrantKind::Code;
   consentCode.afterGrant.digest = Zum::Bytes{ZuBSpan{"code-digest"}};
   auto consentLogic = consentCode;
   consentLogic.beforeConsent = consentLogic.result();
-  consentLogic.beforeConsent.scopeIDs.push(8);
-  consentLogic.scopeIDs = {8, 9};
+  consentLogic.beforeConsent.roleIDs.push(8);
+  consentLogic.roleIDs = {8, 9};
   auto mergedConsent = consentLogic.result();
-  ZuCheck((mergedConsent.scopeIDs == Zum::IDVec{7, 8, 9} && mergedConsent.version == 2));
+  ZuCheck((mergedConsent.roleIDs == Zum::IDVec{7, 8, 9} && mergedConsent.version == 2));
   consentLogic.beforeConsent.state = Zum::State::Revoked;
   mergedConsent = consentLogic.result();
-  ZuCheck((mergedConsent.scopeIDs == Zum::IDVec{8, 9} &&
+  ZuCheck((mergedConsent.roleIDs == Zum::IDVec{8, 9} &&
     mergedConsent.state == Zum::State::Active && mergedConsent.created == 148));
   saga = new M{};
   saga->init(ZuMv(consentCode));
@@ -3353,22 +3301,22 @@ static void enrollmentSaga()
   ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
     if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ConsentCode>{})
       return change.now == 148 && !change.beforeConsent.version &&
-	change.scopeIDs.length() == 1 && change.scopeIDs[0] == 7 &&
+	change.roleIDs.length() == 1 && change.roleIDs[0] == 7 &&
 	change.result().created == 148 && change.afterGrant.kind == Zum::GrantKind::Code &&
 	change.afterGrant.digest == ZuBSpan{"code-digest"};
     else return false;
   }));
-  ZuCheck(M::catalog(38, 0, step));
+  ZuCheck(M::catalog(36, 0, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(38, 1, step));
+  ZuCheck(M::catalog(36, 1, step));
   ZuCheck(step.table == "zum.consent" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(38, 2, step));
+  ZuCheck(M::catalog(36, 2, step));
   ZuCheck(step.table == "zum.consent" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(38, 3, step));
+  ZuCheck(M::catalog(36, 3, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(38, 4, step));
+  ZuCheck(M::catalog(36, 4, step));
   ZuCheck(step.table == "zum.consent" && step.op == ZdbSagaOp::Update);
-  ZuCheck(!M::catalog(38, 5, step));
+  ZuCheck(!M::catalog(36, 5, step));
 }
 
 struct TestDB : public Zum::DB {
@@ -3556,7 +3504,7 @@ static bool prepareCodeFamily(
 	  wake(false);
 	  return;
 	}
-	Zum::IDVec scopeIDs = row->data().scopeIDs;
+	Zum::IDVec requestedRoleIDs = row->data().requestedRoleIDs;
 	ZtBitmap actions = row->data().actions;
 	if (!Zum::codeMatches(row->data(), codeDigest,
 	    "browser", "https://app/cb",
@@ -3565,7 +3513,7 @@ static bool prepareCodeFamily(
 	  return;
 	}
 	wake(Zum::codeFamilyPrepare(rng, row->data(), codeDigest,
-	  row->data().scope, ZuMv(scopeIDs), ZuMv(actions), 10, 125, 1000,
+	  row->data().scope, ZuMv(requestedRoleIDs), ZuMv(actions), 10, 125, 1000,
 	  family, refreshToken));
       });
     });
@@ -3583,13 +3531,13 @@ static Zum::RefreshRotate::T rotateRefresh(
     context, &rng, familyID = ZuMv(familyID), digest = ZuMv(digest),
     &nextToken, appID
   ](auto wake) mutable {
-    Zum::IDVec scopeIDs;
-    scopeIDs.push(7);
+    Zum::IDVec requestedRoleIDs;
+    requestedRoleIDs.push(7);
     ZtBitmap actions{8U};
     actions.set(3);
     Zum::refreshFinish(context, rng, ZuMv(familyID), ZuMv(digest),
       Zum::String{"issuer"}, appID, Zum::String{"read"},
-      ZuMv(scopeIDs), ZuMv(actions),
+      ZuMv(requestedRoleIDs), ZuMv(actions),
       10, 41, 1, 130, 8, 8,
       [&nextToken, wake = ZuMv(wake)](
 	  Zum::RefreshRotate::T result, Zum::String token) mutable {
@@ -3615,8 +3563,8 @@ static bool refreshState(
       ](ZdbRowRef<Zum::Grant> row) mutable {
 	wake(row && row->data().digest == digest &&
 	  row->data().generation == generation &&
-	  row->data().state == state && row->data().scopeIDs.length() == 1 &&
-	  row->data().scopeIDs[0] == 7 && row->data().actions[3]);
+	  row->data().state == state && row->data().requestedRoleIDs.length() == 1 &&
+	  row->data().requestedRoleIDs[0] == 7 && row->data().actions[3]);
       });
     });
   });
@@ -3923,19 +3871,6 @@ static Zum::Role loadRole(Zum::DBContext *context, Zum::RoleID id)
 	wake = ZuMv(wake)
       ](ZdbRowRef<Zum::Role> row) mutable {
 	wake(row ? Zum::Role{row->data()} : Zum::Role{});
-      });
-    });
-  });
-}
-
-static Zum::Scope loadScope(Zum::DBContext *context, Zum::ScopeID id)
-{
-  return ZmBlock<Zum::Scope>{}([context, id](auto wake) mutable {
-    context->scopes->run(0, [context, id, wake = ZuMv(wake)]() mutable {
-      context->scopes->find<0>(0, ZuFwdTuple(Zum::AppID{0}, id), [
-	wake = ZuMv(wake)
-      ](ZdbRowRef<Zum::Scope> row) mutable {
-	wake(row ? Zum::Scope{row->data()} : Zum::Scope{});
       });
     });
   });
@@ -4566,78 +4501,8 @@ static void enrollmentRuntime()
   }
   ZuCheck(insertRecord(context->roles, Zum::Role{
     .appID = 9001, .id = 5, .name = "shared"}));
-  Zum::Scope expectedScope{.appID = 9003, .id = 550, .audienceID = 555,
-    .name = "scope-edit", .origin = Zum::Origin::Standard,
-    .catalogRevision = 7, .created = 111, .updated = 111, .catalogRoleIDs = {500}};
-  ZuCheck(insertRecord(context->scopes, expectedScope));
-  for (unsigned test = 0; test < 10; ++test) {
-    bool valid = test >= 5 && test != 9;
-    bool assigning = test < 6;
-    Zum::IDVec roles;
-    switch (test) {
-      case 0: roles = {500, 500}; break;
-      case 1: roles = {0}; break;
-      case 2: roles = {501}; break;
-      case 3: roles = {502}; break;
-      case 4: roles = {503}; break;
-      default: roles = {500}; break;
-    }
-    Zum::State::T state = test == 7 || test == 8 ?
-      Zum::State::Disabled : Zum::State::Active;
-    Zum::ActionID op = assigning ? Zum::MgmtOp::scopeRoles : Zum::MgmtOp::scopeState;
-    Zum::String key, etag;
-    key << "scope-edit-" << test;
-    etag << "\"v" << (test == 9 ? 99 : expectedScope.version) << '"';
-    Zum::ScopeEdit change{.app = stateApp, .before = expectedScope,
-      .roleIDs = ZuMv(roles), .ifMatch = ZuMv(etag), .updated = 112,
-      .request = Zum::IdemRequest{.actorID = "admin", .operation = op,
-        .idempotencyKey = key, .expires = 86400, .version = 1,
-        .created = 112, .updated = 112},
-      .kind = int8_t(assigning ? Zum::ScopeEdit::Roles : Zum::ScopeEdit::Status),
-      .state = state};
-    ZuCheck(runSaga(db, ZuMv(change), ZdbSagaID{9600 + test}) == valid);
-    if (valid && (assigning || expectedScope.state != state)) {
-      if (assigning) expectedScope.roleIDs = {500};
-      else expectedScope.state = state;
-      ++expectedScope.version;
-      expectedScope.updated = 112;
-      ++stateApp.version;
-      ++stateApp.authVersion;
-      stateApp.updated = 112;
-    }
-    ZuCheck(actionAddState(2, stateApp.version, stateApp.authVersion, stateApp.updated));
-    auto scope = ZmBlock<Zum::Scope>{}([context = context.ptr()](auto wake) mutable {
-      context->scopes->run(0, [context, wake = ZuMv(wake)]() mutable {
-        context->scopes->find<0>(0, ZuFwdTuple(Zum::AppID{9003}, Zum::ScopeID{550}),
-          [wake = ZuMv(wake)](ZdbRowRef<Zum::Scope> row) mutable {
-            wake(row ? Zum::Scope{row->data()} : Zum::Scope{});
-          });
-      });
-    });
-    ZuCheck(scope.id == 550 && !scope.owner && scope.audienceID == 555 &&
-      scope.name == expectedScope.name && scope.state == expectedScope.state &&
-      scope.roleIDs == expectedScope.roleIDs && scope.version == expectedScope.version &&
-      scope.created == expectedScope.created && scope.updated == expectedScope.updated &&
-      scope.origin == expectedScope.origin && scope.catalogRevision == 7 &&
-      scope.catalogRoleIDs == expectedScope.catalogRoleIDs);
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
-      context->requests->run(0, [context, key, op, valid, wake = ZuMv(wake)]() mutable {
-        context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
-          Zum::String{"admin"}, op, key),
-          [valid, wake = ZuMv(wake)](ZdbRowRef<Zum::IdemRequest> row) mutable {
-            wake(valid ? row && row->data().status == Zum::RequestStatus::Complete &&
-              !row->data().owner && row->data().version == 2 &&
-              !row->data().resultIDs : !row);
-          });
-      });
-    }));
-  }
   ZuCheck(insertRecord(context->roles, Zum::Role{
     .appID = 9002, .id = 5, .name = "shared"}));
-  ZuCheck(insertRecord(context->scopes, Zum::Scope{
-    .appID = 9001, .id = 5, .audienceID = 3, .name = "shared"}));
-  ZuCheck(insertRecord(context->scopes, Zum::Scope{
-    .appID = 9002, .id = 5, .audienceID = 3, .name = "shared"}));
   ZuCheck(missingAssertion(context) == Zum::WebAuthnError::Ceremony);
 
   auto stateAction = loadAction(context, 0, 9003);
@@ -4870,7 +4735,7 @@ static void enrollmentRuntime()
   authorization.audience = "orders";
   authorization.redirectURI = "https://app/cb";
   authorization.scope = "read";
-  authorization.scopeIDs.push(7);
+  authorization.requestedRoleIDs.push(7);
   authorization.challenge = Zum::Bytes{ZuBSpan{"challenge"}};
   authorization.bindingDigest = Zum::Bytes{ZuBSpan{"browser binding"}};
   authorization.pkceChallenge = Zum::Bytes{ZuBSpan{
@@ -5498,7 +5363,7 @@ static void enrollmentRuntime()
   passkeyAuthorization.audience = "orders";
   passkeyAuthorization.redirectURI = "https://app/cb";
   passkeyAuthorization.scope = "read";
-  passkeyAuthorization.scopeIDs.push(7);
+  passkeyAuthorization.requestedRoleIDs.push(7);
   passkeyAuthorization.challenge = Zum::Bytes{ZuBSpan{"challenge"}};
   passkeyAuthorization.bindingDigest =
     Zum::Bytes{ZuBSpan{"passkey binding"}};
@@ -5600,17 +5465,11 @@ static void enrollmentRuntime()
   ZtBitmap oidcRoleActions{1U};
   oidcRoleActions.set(readAction);
   ZuCheck(insertRecord(context->roles, Zum::Role{
-    .appID = 9, .id = 7, .name = "reader",
+    .appID = 9, .id = 7, .name = "read",
     .actions = ZuMv(oidcRoleActions), .state = Zum::State::Active}));
-  Zum::IDVec oidcScopeRoles;
-  oidcScopeRoles.push(7);
   ZuCheck(insertRecord(context->audiences, Zum::Audience{
     .id = 7, .appID = 9, .name = "orders", .uri = "orders",
     .state = Zum::State::Active}));
-  ZuCheck(insertRecord(context->scopes, Zum::Scope{
-    .appID = 9, .id = 7, .audienceID = 7,
-    .name = "read",
-    .roleIDs = ZuMv(oidcScopeRoles), .state = Zum::State::Active}));
   Zum::IDVec appRoles;
   appRoles.push(7);
   ZuCheck(insertRecord(context->memberships, Zum::Membership{
@@ -5623,7 +5482,7 @@ static void enrollmentRuntime()
   for (unsigned i = 0; i < 2; ++i)
     ZuCheck(insertRecord(context->clientAccess, Zum::ClientAccess{
       .clientID = i ? "oidc-browser" : "browser", .appID = 9,
-      .audienceIDs = Zum::IDVec{7}, .scopeIDs = Zum::IDVec{7},
+      .audienceIDs = Zum::IDVec{7}, .roleIDs = Zum::IDVec{7},
       .state = Zum::State::Active}));
   ZuCheck(insertRecord(context->providers, Zum::Provider{
     .id = 8, .name = "upstream", .issuer =
@@ -5711,7 +5570,7 @@ static void enrollmentRuntime()
   oidcCeremony.redirectURI = "https://app/cb";
   oidcCeremony.scope = "openid read";
   oidcCeremony.nonce = "local-nonce";
-  oidcCeremony.scopeIDs.push(7);
+  oidcCeremony.requestedRoleIDs.push(7);
   oidcCeremony.bindingDigest = Zum::Bytes{ZuBSpan{"oidc binding"}};
   oidcCeremony.pkceChallenge = Zum::Bytes{ZuBSpan{
     "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"}};
@@ -6179,7 +6038,7 @@ static void enrollmentRuntime()
   ZuCheck(insertRecord(context->consents, Zum::Consent{
     .userID = oidcUser.id, .clientID = "oidc-browser", .appID = 9,
     .audienceID = 7,
-    .scopeIDs = Zum::IDVec{Zum::ScopeID{7}},
+    .roleIDs = Zum::IDVec{Zum::RoleID{7}},
     .state = Zum::State::Active, .created = 210, .updated = 210}));
 
   Zum::String upstreamSession;
@@ -6319,7 +6178,7 @@ static void enrollmentRuntime()
     requestGrant.redirectURI == "https://app/cb" &&
     requestGrant.audience == "orders" &&
     requestGrant.scope == "read offline_access" &&
-    requestGrant.scopeIDs.length() == 1 && requestGrant.scopeIDs[0] == 7 &&
+    requestGrant.requestedRoleIDs.length() == 1 && requestGrant.requestedRoleIDs[0] == 7 &&
     requestGrant.bindingDigest == ZuBSpan{"browser binding"} &&
     requestGrant.oauthState == "return" && requestGrant.oauthStatePresent &&
     requestGrant.prompt == "consent" && requestGrant.promptPresent &&
@@ -6335,7 +6194,7 @@ static void enrollmentRuntime()
   authorityGrant.credentialID = Zum::Bytes{ZuBSpan{"credential"}};
   authorityGrant.audience = "orders";
   authorityGrant.scope = "read offline_access";
-  authorityGrant.scopeIDs.push(7);
+  authorityGrant.requestedRoleIDs.push(7);
   authorityGrant.roleIDs.push(7);
   authorityGrant.actions.length(2);
   authorityGrant.actions.set(readAction);
@@ -6406,7 +6265,7 @@ static void enrollmentRuntime()
   ZuCheck(insertRecord(context->clientAccess, Zum::ClientAccess{
     .clientID = "workload", .appID = 9,
     .audienceIDs = Zum::IDVec{appRoles},
-    .scopeIDs = Zum::IDVec{appRoles}, .roleIDs = Zum::IDVec{appRoles},
+    .roleIDs = Zum::IDVec{appRoles},
     .state = Zum::State::Active}));
   authority = loadClientAuthority(context, Zum::Client{workload});
   ZuCheck(authority.error == Zum::ScopeError::OK &&
@@ -6428,15 +6287,11 @@ static void enrollmentRuntime()
     .appID = 900, .id = 0, .name = "Zum.operationQuery",
     .state = Zum::State::Active}));
   ZuCheck(insertRecord(context->roles, Zum::Role{
-    .appID = 900, .id = 901, .name = "service",
+    .appID = 900, .id = 901, .name = "read",
     .actions = ZuMv(serviceActions), .state = Zum::State::Active}));
   ZuCheck(insertRecord(context->audiences, Zum::Audience{
     .id = 904, .appID = 900, .name = "management", .uri = "management",
     .state = Zum::State::Active}));
-  ZuCheck(insertRecord(context->scopes, Zum::Scope{
-    .appID = 900, .id = 903, .audienceID = 904,
-    .name = "read",
-    .roleIDs = Zum::IDVec{serviceRoles}, .state = Zum::State::Active}));
   Zum::Client service;
   service.id = "enrolled-service";
   service.appID = 902;
@@ -6447,7 +6302,7 @@ static void enrollmentRuntime()
   Zum::ClientAccess serviceAccess{
     .clientID = "enrolled-service", .appID = 900,
     .audienceIDs = Zum::IDVec{904},
-    .scopeIDs = Zum::IDVec{903}, .roleIDs = Zum::IDVec{901},
+    .roleIDs = Zum::IDVec{901},
     .state = Zum::State::Active};
   ZuCheck(insertRecord(context->clientAccess,
     Zum::ClientAccess{serviceAccess}));
@@ -6464,7 +6319,6 @@ static void enrollmentRuntime()
   // must not authorize a workload through a different audience URI.
   for (unsigned i = 0; i < 4; ++i) {
     Zum::AudienceID audienceID = 920 + i;
-    Zum::ScopeID scopeID = 910 + i;
     Zum::String uri;
     uri << "denied-audience-" << i;
     if (i) ZuCheck(insertRecord(context->audiences, Zum::Audience{
@@ -6472,20 +6326,17 @@ static void enrollmentRuntime()
       .name = uri, .uri = uri,
       .state = Zum::State::T(
 	i == 2 ? Zum::State::Disabled : Zum::State::Active)}));
-    ZuCheck(insertRecord(context->scopes, Zum::Scope{
-      .appID = 900, .id = scopeID, .audienceID = audienceID,
-      .name = "read",
-      .roleIDs = Zum::IDVec{901}, .state = Zum::State::Active}));
     Zum::Client denied{service};
     denied.id = uri;
     ZuCheck(insertRecord(context->clients, Zum::Client{denied}));
     ZuCheck(insertRecord(context->clientAccess, Zum::ClientAccess{
       .clientID = denied.id, .appID = 900,
       .audienceIDs = Zum::IDVec{i == 3 ? Zum::AudienceID{904} : audienceID},
-      .scopeIDs = Zum::IDVec{scopeID}, .roleIDs = Zum::IDVec{901},
+      .roleIDs = Zum::IDVec{901},
       .state = Zum::State::Active}));
     authority = loadClientAuthority(context, ZuMv(denied));
-    ZuCheck(authority.error == Zum::ScopeError::Unavailable);
+    ZuCheck(authority.error == (i == 3 ? Zum::ScopeError::OK :
+      Zum::ScopeError::Unavailable));
   }
 
   Zum::Client noAccess{service};
@@ -6500,7 +6351,7 @@ static void enrollmentRuntime()
   ZuCheck(insertRecord(context->clientAccess, Zum::ClientAccess{
     .clientID = "service-disabled-owner", .appID = 900,
     .audienceIDs = Zum::IDVec{904},
-    .scopeIDs = Zum::IDVec{903}, .roleIDs = Zum::IDVec{901},
+    .roleIDs = Zum::IDVec{901},
     .state = Zum::State::Active}));
   ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
     context->apps->run(0, [context, wake = ZuMv(wake)]() mutable {
@@ -6676,8 +6527,8 @@ static void enrollmentRuntime()
     codeFamily.state == Zum::State::Active &&
     codeFamily.digest == codeRefreshDigest &&
     codeFamily.scope == issued.response.scope &&
-    codeFamily.authVersion == 12 && codeFamily.scopeIDs.length() == 1 &&
-    codeFamily.scopeIDs[0] == 7 && codeFamily.actions[readAction] &&
+    codeFamily.authVersion == 12 && codeFamily.requestedRoleIDs.length() == 1 &&
+    codeFamily.requestedRoleIDs[0] == 7 && codeFamily.actions[readAction] &&
     !codeFamily.actions[writeAction]);
   ZuCheck(!loadGrant(context, codeID).id);
 
@@ -6702,7 +6553,7 @@ static void enrollmentRuntime()
     .clientID = "browser",
     .audience = "orders",
     .authTime = 123,
-    .scopeIDs = ZuMv(refreshScopes),
+    .requestedRoleIDs = ZuMv(refreshScopes),
     .roleIDs = ZuMv(refreshRoles),
     .actions = ZuMv(refreshActions),
     .credentialID = Zum::Bytes{ZuBSpan{"credential"}},
@@ -6731,7 +6582,7 @@ static void enrollmentRuntime()
   ZuCheck(rotated.generation == 1 && rotated.digest == rotatedDigest &&
     rotated.scope == issued.response.scope &&
     rotated.spent.length() == 1 && rotated.spent[0] == refresh.digest &&
-    rotated.scopeIDs.length() == 1 && rotated.scopeIDs[0] == 7 &&
+    rotated.requestedRoleIDs.length() == 1 && rotated.requestedRoleIDs[0] == 7 &&
     rotated.actions[readAction] && !rotated.actions[writeAction]);
   Zum::String reuseForm{"grant_type=refresh_token&refresh_token="};
   reuseForm << refresh.token << "&client_id=browser";
@@ -7167,7 +7018,7 @@ static void enrollmentRuntime()
   ceremony.userID = 40000;
   ceremony.clientID = consentClient.id;
   ceremony.audienceID = 7;
-  ceremony.scopeIDs = {7};
+  ceremony.requestedRoleIDs = {7};
   ceremony.bindingDigest = Zum::Bytes{ZuBSpan{"consent binding"}};
   ceremony.authVersion = 1;
   ceremony.userVersion = 1;
@@ -7181,7 +7032,7 @@ static void enrollmentRuntime()
   consentChange.afterGrant.digest = Zum::Bytes{ZuBSpan{"consent code digest"}};
   consentChange.afterGrant.bindingDigest.null();
   consentChange.beforeConsent.version = 0;
-  consentChange.scopeIDs = {7};
+  consentChange.roleIDs = {7};
   consentChange.now = 101;
   auto readConsent = [context]() {
     return ZmBlock<Zum::Consent>{}([context](auto wake) mutable {
@@ -7198,7 +7049,7 @@ static void enrollmentRuntime()
   ZuCheck(runSaga(db, consentChange, ZdbSagaID{12019}));
   auto consent = readConsent();
   ZuCheck(consent.userID == 40000 && !consent.owner && consent.version == 1 &&
-    consent.scopeIDs == Zum::IDVec{7} && consent.created == 101 && consent.updated == 101);
+    consent.roleIDs == Zum::IDVec{7} && consent.created == 101 && consent.updated == 101);
   auto consentCode = loadGrant(context, ceremony.id);
   ZuCheck(consentCode.kind == Zum::GrantKind::Code && !consentCode.owner &&
     consentCode.digest == consentChange.afterGrant.digest && !consentCode.bindingDigest);
@@ -7207,7 +7058,7 @@ static void enrollmentRuntime()
   consentChange.afterGrant.id = ceremony.id;
   consentChange.beforeConsent = consent;
   consentChange.beforeConsent.version = 2; // stale, row is still version one
-  consentChange.scopeIDs.push(8);
+  consentChange.roleIDs.push(8);
   consentChange.now = 102;
   ZuCheck(insertRecord(context->grants, ceremony));
   ZuCheck(!runSaga(db, consentChange, ZdbSagaID{12020}));
@@ -7218,7 +7069,7 @@ static void enrollmentRuntime()
   consentChange.beforeConsent = consent;
   ZuCheck(runSaga(db, consentChange, ZdbSagaID{12021}));
   consent = readConsent();
-  ZuCheck((!consent.owner && consent.version == 2 && consent.scopeIDs == Zum::IDVec{7, 8} &&
+  ZuCheck((!consent.owner && consent.version == 2 && consent.roleIDs == Zum::IDVec{7, 8} &&
     consent.created == 101 && consent.updated == 102));
   consentCode = loadGrant(context, ceremony.id);
   ZuCheck(!consentCode.owner && consentCode.kind == Zum::GrantKind::Code);

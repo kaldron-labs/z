@@ -42,7 +42,8 @@ Zum-issued bearer tokens. It supplies:
   audience, expiry, actions and token ID checks;
 - an optional introspection fallback for tokens signed by a newly rotated key
   which is not yet available through JWKS;
-- idempotent publication of an application's action, role and scope catalog;
+- idempotent publication of an application's action and role catalog; each
+  role name is also the OAuth scope name requested at runtime;
 - optional Security Event Token (SET) reception for refresh-token-family
   revocation, with replay protection, bounded retention and an application
   refresh-family callback; and
@@ -86,8 +87,9 @@ service keeps tokens and configured secret material in memory and clears them
 when stopped. See [`zumpingd.cc`](example/zumpingd.cc) for the complete
 startup, request, SET callback and shutdown sequence.
 
-`zumpingd` publishes one `ping` action, role and scope, verifies the bearer
-token on `GET /ping`, and returns `{"reply":"pong"}` only when the token
+`zumpingd` publishes one `ping` action and role; the runtime `ping` scope is
+derived from that role. It verifies the bearer token on `GET /ping`, and returns
+`{"reply":"pong"}` only when the token
 contains the `ping` action. It also exposes `/health/ready` and, when SET
 delivery is enabled, `/ssf`. Its listener is deliberately independent of
 Zum's database: readiness and authorization come from the service connection
@@ -112,7 +114,8 @@ Its main features are:
 - WebAuthn/passkey bootstrap, enrollment, login, additional credentials and
   recovery;
 - multi-application RBAC: applications, users, memberships, actions, roles,
-  scopes, audiences, clients and client/admin delegation;
+  audiences, clients and client/admin delegation. OAuth resource scopes are
+  runtime views of roles and are derived from the role catalog;
 - an operation-oriented `/admin` REST API with bearer authorization,
   idempotency keys, ETag preconditions, bounded queries, secret redaction and
   structured ZiLog administration events;

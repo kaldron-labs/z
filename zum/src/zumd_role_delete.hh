@@ -26,14 +26,13 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   using Base::context;
   using Base::saga;
   using Type = ZuStringT<"roleDelete.v2">;
-  enum { NSteps = 15 };
+  enum { NSteps = 13 };
 
   App		app;
   Role		role;
   BytesVec	members;
   BytesVec	clients;
   BytesVec	admins;
-  BytesVec	scopes;
   BytesVec	maps;
   int64_t	updated = 0;
   IdemRequest	request;
@@ -166,12 +165,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     refs<Fwd, false>(context->adminAccess, admins, ZuMv(complete));
     return {};
   }
-  ZdbSagaRepeatStep(6, zum.scope, Update, scopes.length()) {
-    refs<Fwd, false>(context->scopes, scopes, ZuMv(complete));
-    return {};
-  }
-
-  ZdbSagaRepeatStep(7, zum.role_map, Delete, maps.length()) {
+  ZdbSagaRepeatStep(6, zum.role_map, Delete, maps.length()) {
     auto image = &maps[saga->iteration()];
     context->roleMaps->run(0, [this, image, complete = ZuMv(complete)]() mutable {
       RoleMap old;
@@ -204,24 +198,19 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaRepeatStep(8, zum.membership, Update, members.length()) {
+  ZdbSagaRepeatStep(7, zum.membership, Update, members.length()) {
     refs<Fwd, true>(context->memberships, members, ZuMv(complete));
     return {};
   }
-  ZdbSagaRepeatStep(9, zum.client_access, Update, clients.length()) {
+  ZdbSagaRepeatStep(8, zum.client_access, Update, clients.length()) {
     refs<Fwd, true>(context->clientAccess, clients, ZuMv(complete));
     return {};
   }
-  ZdbSagaRepeatStep(10, zum.admin_access, Update, admins.length()) {
+  ZdbSagaRepeatStep(9, zum.admin_access, Update, admins.length()) {
     refs<Fwd, true>(context->adminAccess, admins, ZuMv(complete));
     return {};
   }
-  ZdbSagaRepeatStep(11, zum.scope, Update, scopes.length()) {
-    refs<Fwd, true>(context->scopes, scopes, ZuMv(complete));
-    return {};
-  }
-
-  ZdbSagaStep(12, zum.role, Update) {
+  ZdbSagaStep(10, zum.role, Update) {
     context->roles->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->roles, 0, ZuFwdTuple(app.id, role.id),
 	ZuMv(complete), [this](ZdbRow<Role> *row, auto &&complete) mutable {
@@ -237,7 +226,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaStep(13, zum.app, Update) {
+  ZdbSagaStep(11, zum.app, Update) {
     context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(app.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
@@ -256,7 +245,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
-  ZdbSagaStep(14, zum.request, Update) {
+  ZdbSagaStep(12, zum.request, Update) {
     requestComplete(this, {}, updated, ZuMv(complete));
     return {};
   }
@@ -269,10 +258,9 @@ ZfbStruct(ZumAPI, RoleDelete,
   (((members), (Ctor<2>)), (BytesVec)),
   (((clients), (Ctor<3>)), (BytesVec)),
   (((admins), (Ctor<4>)), (BytesVec)),
-  (((scopes), (Ctor<5>)), (BytesVec)),
-  (((maps), (Ctor<6>)), (BytesVec)),
-  (((updated), (Ctor<7>)), (Int64)),
-  (((request), (Ctor<8>)), (UDT)));
+  (((maps), (Ctor<5>)), (BytesVec)),
+  (((updated), (Ctor<6>)), (Int64)),
+  (((request), (Ctor<7>)), (UDT)));
 
 } // namespace Zum
 

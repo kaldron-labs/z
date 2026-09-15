@@ -251,7 +251,7 @@ private:
     auto now = m_config.now;
     ensure_(m_context->roles, Role{
       .appID = m_issuer.coreAppID, .id = CoreRole::Superuser,
-      .name = "superuser", .label = "Zum superuser",
+      .name = "zum.admin", .label = "Zum superuser",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
       .created = now, .updated = now}, &ServerBootstrap_::seedPublisherRole_);
@@ -266,7 +266,7 @@ private:
     auto now = m_config.now;
     ensure_(m_context->roles, Role{
       .appID = m_issuer.coreAppID, .id = CoreRole::CatalogPublisher,
-      .name = "catalogPublisher", .label = "Zum catalog publisher",
+      .name = "zum.catalog", .label = "Zum catalog publisher",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
       .created = now, .updated = now}, &ServerBootstrap_::seedAudience_);
@@ -284,34 +284,6 @@ private:
       .id = CoreAudience::Admin, .appID = m_issuer.coreAppID,
       .name = "admin", .uri = m_adminURI,
       .state = State::Active, .created = now, .updated = now},
-      &ServerBootstrap_::seedAdminScope_);
-  }
-
-  void seedAdminScope_(bool ok)
-  {
-    if (!ok) { finish_(false); return; }
-    auto now = m_config.now;
-    ensure_(m_context->scopes, Scope{
-      .appID = m_issuer.coreAppID, .id = CoreScope::Admin,
-      .audienceID = CoreAudience::Admin,
-      .name = "zum.admin", .roleIDs = IDVec{CoreRole::Superuser},
-      .state = State::Active, .origin = Origin::Standard,
-      .catalogRevision = 1, .created = now, .updated = now,
-      .catalogRoleIDs = IDVec{CoreRole::Superuser}},
-      &ServerBootstrap_::seedPublisherScope_);
-  }
-
-  void seedPublisherScope_(bool ok)
-  {
-    if (!ok) { finish_(false); return; }
-    auto now = m_config.now;
-    ensure_(m_context->scopes, Scope{
-      .appID = m_issuer.coreAppID, .id = CoreScope::CatalogPublish,
-      .audienceID = CoreAudience::Admin,
-      .name = "zum.catalog", .roleIDs = IDVec{CoreRole::CatalogPublisher},
-      .state = State::Active, .origin = Origin::Standard,
-      .catalogRevision = 1, .created = now, .updated = now,
-      .catalogRoleIDs = IDVec{CoreRole::CatalogPublisher}},
       &ServerBootstrap_::seedClient_);
   }
 
@@ -341,7 +313,8 @@ private:
     ensure_(m_context->clientAccess, ClientAccess{
       .clientID = m_issuer.initialClientID, .appID = m_issuer.coreAppID,
       .audienceIDs = IDVec{CoreAudience::Admin},
-      .scopeIDs = IDVec{CoreScope::Admin}, .state = State::Active,
+      .roleIDs = IDVec{CoreRole::Superuser, CoreRole::CatalogPublisher},
+      .state = State::Active,
       .created = now, .updated = now}, &ServerBootstrap_::seedUser_);
   }
 

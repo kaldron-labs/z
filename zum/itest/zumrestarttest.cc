@@ -1029,12 +1029,11 @@ static bool stageCatalog(Zum::DB *db, Zum::DBContext *context,
     if (cut == 2 * step) return true;
     Zdb_::AnyTable *table;
     unsigned phase = step - 1;
-    if (step == 0 || step == 15) table = context->requests;
+    if (step == 0 || step == 11) table = context->requests;
     else switch (phase) {
-      case 0: case 13: table = context->apps; break;
-      case 1: case 2: case 7: case 8: table = context->actions; break;
-      case 3: case 4: case 9: case 10: table = context->roles; break;
-      default: table = context->scopes; break;
+      case 0: case 9: table = context->apps; break;
+      case 1: case 2: case 5: case 6: table = context->actions; break;
+      default: table = context->roles; break;
     }
     auto un = ZmBlock<Zdb_::UN>{}([table](auto wake) mutable {
       table->run(0, [table, wake = ZuMv(wake)]() mutable {
@@ -1046,7 +1045,7 @@ static bool stageCatalog(Zum::DB *db, Zum::DBContext *context,
 	.step = step, .shard = 0, .un = un})) return false;
     if (cut == 2 * step + 1) return true;
     bool ok;
-    if (step == 0 || step == 15) {
+    if (step == 0 || step == 11) {
       auto request = change.request;
       request.sagaID = id;
       if (!step) {
@@ -1060,19 +1059,16 @@ static bool stageCatalog(Zum::DB *db, Zum::DBContext *context,
         ok = replaceRecord(context->requests, ZuMv(request));
       }
     } else switch (phase) {
-      case 0: case 13: {
+      case 0: case 9: {
 	auto app = phase ? change.after : change.before;
 	app.owner = phase ? ZdbSagaID{0} : id;
 	ok = replaceRecord(context->apps, ZuMv(app));
       } break;
-      case 1: case 2: case 7: case 8:
-	ok = stageCatalogRow(context->actions, change.actions, phase & 1, phase > 6, id);
+      case 1: case 2: case 5: case 6:
+	ok = stageCatalogRow(context->actions, change.actions, phase & 1, phase > 4, id);
 	break;
-      case 3: case 4: case 9: case 10:
-	ok = stageCatalogRow(context->roles, change.roles, phase & 1, phase > 6, id);
-	break;
-      default:
-	ok = stageCatalogRow(context->scopes, change.scopes, phase & 1, phase > 6, id);
+      case 3: case 4: case 7: case 8:
+	ok = stageCatalogRow(context->roles, change.roles, phase & 1, phase > 4, id);
 	break;
     }
     if (!ok) return false;
@@ -1103,14 +1099,9 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
     .state = Zum::State::Suspended, .origin = Zum::Origin::Standard,
     .catalogRevision = 1, .created = 100, .updated = 100};
   role.actions.set(0);
-  Zum::Scope scope{.appID = app.id, .id = 700, .audienceID = 800,
-    .name = "existing", .roleIDs = {601}, .origin = Zum::Origin::Standard,
-    .catalogRevision = 1, .created = 100, .updated = 100,
-    .catalogRoleIDs = {600, 601}};
   ZuCheck(insertRecord(context->apps, app));
   ZuCheck(insertRecord(context->actions, action));
   ZuCheck(insertRecord(context->roles, role));
-  ZuCheck(insertRecord(context->scopes, scope));
   Zum::CatalogPublish change{.before = app, .after = app,
     .request = Zum::IdemRequest{.actorKind = Zum::ActorKind::Client,
       .actorID = "publisher", .operation = Zum::MgmtOp::catalogPublish,
@@ -1137,26 +1128,14 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
   nextRole.catalogRevision = 2;
   ++nextRole.version;
   nextRole.updated = 200;
-  change.roles.change(role, nextRole);
+  auto oldRole = role;
+  if (fail) { ++oldRole.version; ++nextRole.version; }
+  change.roles.change(oldRole, nextRole);
   nextRole.id = 602;
   nextRole.name = "added";
   nextRole.version = 1;
   nextRole.state = Zum::State::Active;
   change.roles.add(nextRole);
-  auto nextScope = scope;
-  nextScope.catalogRoleIDs = {600, 601, 602};
-  nextScope.roleIDs = Zum::catalogScopeRoles(scope, nextScope.catalogRoleIDs);
-  ZuCheck((nextScope.roleIDs == Zum::IDVec{601, 602}));
-  nextScope.catalogRevision = 2;
-  ++nextScope.version;
-  nextScope.updated = 200;
-  auto oldScope = scope;
-  if (fail) { ++oldScope.version; ++nextScope.version; }
-  change.scopes.change(oldScope, nextScope);
-  nextScope.id = 701;
-  nextScope.name = "added";
-  nextScope.version = 1;
-  change.scopes.add(nextScope);
   ZuCheck(stageCatalog(db, context, change, cut));
   ZuCheck(stopDB(db, context));
   db = startDB(cf, mx, context);
@@ -1177,20 +1156,14 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
     published.nextActionID == 1 + !fail);
   auto savedAction = record(context->actions, ZuFwdTuple(app.id, Zum::ActionID{0}));
   auto savedRole = record(context->roles, ZuFwdTuple(app.id, role.id));
-  auto savedScope = record(context->scopes, ZuFwdTuple(app.id, scope.id));
   ZuCheck(!savedAction.owner && savedAction.version == 1 + !fail &&
     savedAction.label == (fail ? "before" : "after"));
   ZuCheck(!savedRole.owner && savedRole.version == 1 + !fail &&
     savedRole.state == Zum::State::Suspended && savedRole.actions.get(1) == !fail);
-  ZuCheck(!savedScope.owner && savedScope.version == 1 + !fail &&
-    savedScope.roleIDs == (fail ? Zum::IDVec{601} : Zum::IDVec{601, 602}) &&
-    savedScope.catalogRoleIDs == (fail ? Zum::IDVec{600, 601} : Zum::IDVec{600, 601, 602}));
   auto addedAction = record(context->actions, ZuFwdTuple(app.id, Zum::ActionID{1}));
   auto addedRole = record(context->roles, ZuFwdTuple(app.id, Zum::RoleID{602}));
-  auto addedScope = record(context->scopes, ZuFwdTuple(app.id, Zum::ScopeID{701}));
   ZuCheck(bool(addedAction.appID) == !fail && !addedAction.owner);
   ZuCheck(bool(addedRole.appID) == !fail && !addedRole.owner);
-  ZuCheck(bool(addedScope.appID) == !fail && !addedScope.owner);
   ZuCheck(sagaEmpty(db));
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
@@ -1260,13 +1233,12 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
       change, step, iteration);
     Zdb_::AnyTable *table;
     switch (phase) {
-      case 0: case 14: table = context->requests; break;
-      case 1: case 13: table = context->apps; break;
-      case 2: case 12: table = context->roles; break;
-      case 3: case 8: table = context->memberships; break;
-      case 4: case 9: table = context->clientAccess; break;
-      case 5: case 10: table = context->adminAccess; break;
-      case 6: case 11: table = context->scopes; break;
+      case 0: case 12: table = context->requests; break;
+      case 1: case 11: table = context->apps; break;
+      case 2: case 10: table = context->roles; break;
+      case 3: case 7: table = context->memberships; break;
+      case 4: case 8: table = context->clientAccess; break;
+      case 5: case 9: table = context->adminAccess; break;
       default: table = context->roleMaps; break;
     }
     auto un = ZmBlock<Zdb_::UN>{}([table](auto wake) mutable {
@@ -1280,7 +1252,7 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
     if (cut == 2 * step + 1) return true;
     bool ok = false;
     switch (phase) {
-      case 0: case 14: {
+      case 0: case 12: {
 	auto request = change.request;
 	request.sagaID = id;
 	if (!phase) {
@@ -1293,7 +1265,7 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
 	  ok = replaceRecord(context->requests, ZuMv(request));
 	}
       } break;
-      case 1: case 13: {
+      case 1: case 11: {
 	auto app = change.app;
 	if (phase == 1)
 	  app.owner = id;
@@ -1304,7 +1276,7 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
 	}
 	ok = replaceRecord(context->apps, ZuMv(app));
       } break;
-      case 2: case 12: {
+      case 2: case 10: {
 	auto role = change.role;
 	role.actions = ZtBitmap{};
 	role.state = Zum::State::Revoked;
@@ -1314,21 +1286,17 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
 	role.owner = phase == 2 ? id : ZdbSagaID{0};
 	ok = replaceRecord(context->roles, ZuMv(role));
       } break;
-      case 3: case 8:
+      case 3: case 7:
 	ok = stageRoleRef(context->memberships, change.members[iteration], id,
+	  change.role.id, change.updated, phase == 7);
+	break;
+      case 4: case 8:
+	ok = stageRoleRef(context->clientAccess, change.clients[iteration], id,
 	  change.role.id, change.updated, phase == 8);
 	break;
-      case 4: case 9:
-	ok = stageRoleRef(context->clientAccess, change.clients[iteration], id,
-	  change.role.id, change.updated, phase == 9);
-	break;
-      case 5: case 10:
+      case 5: case 9:
 	ok = stageRoleRef(context->adminAccess, change.admins[iteration], id,
-	  change.role.id, change.updated, phase == 10);
-	break;
-      case 6: case 11:
-	ok = stageRoleRef(context->scopes, change.scopes[iteration], id,
-	  change.role.id, change.updated, phase == 11);
+	  change.role.id, change.updated, phase == 9);
 	break;
       default: {
 	Zum::RoleMap map;
@@ -1382,16 +1350,13 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
 	.appID = app.id, .userID = 500 + i, .roleIDs = {399, 400, 401},
 	.state = Zum::State::Active, .created = 100, .updated = 100}, change.members));
       ZuCheck(add(context->clientAccess, Zum::ClientAccess{
-	.clientID = value, .appID = app.id, .audienceIDs = {7}, .scopeIDs = {8},
+	.clientID = value, .appID = app.id, .audienceIDs = {7},
 	.roleIDs = {400, 401}, .state = Zum::State::Active,
 	.created = 100, .updated = 100}, change.clients));
       ZuCheck(add(context->adminAccess, Zum::AdminAccess{
 	.actorKind = Zum::ActorKind::User, .actorID = value, .appID = app.id,
 	.operationIDs = {7}, .roleIDs = {400}, .state = Zum::State::Active,
 	.created = 100, .updated = 100}, change.admins));
-      ZuCheck(add(context->scopes, Zum::Scope{
-	.appID = app.id, .id = 600 + i, .audienceID = 7, .name = value,
-	.roleIDs = {400, 401}, .created = 100, .updated = 100}, change.scopes));
       Zum::RoleMap map{.appID = app.id, .providerID = 700 + i,
 	.value = value, .roleID = 400, .state = Zum::State::Active,
 	.created = 100, .updated = 100};
@@ -1442,7 +1407,6 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
       auto client = record(context->clientAccess, ZuFwdTuple(value, app.id));
       auto admin = record(context->adminAccess,
 	ZuFwdTuple(Zum::ActorKind::T(Zum::ActorKind::User), value, app.id));
-      auto scope = record(context->scopes, ZuFwdTuple(app.id, Zum::ScopeID{600 + i}));
       auto map = record(context->roleMaps, ZuFwdTuple(app.id, Zum::ProviderID{700 + i}, value));
       auto check = [fail](const auto &item) {
 	bool found = false;
@@ -1453,9 +1417,8 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
       ZuCheck(check(member) && member.authVersion == 1 + !fail &&
 	member.roleIDs.length() == 2 + fail && member.roleIDs[0] == 399);
       ZuCheck(check(client) && client.authVersion == 1 + !fail &&
-	client.audienceIDs == Zum::IDVec{7} && client.scopeIDs == Zum::IDVec{8});
+	client.audienceIDs == Zum::IDVec{7});
       ZuCheck(check(admin) && admin.operationIDs == Zum::ActionIDVec{7});
-      ZuCheck(check(scope) && scope.audienceID == 7);
       ZuCheck(fail ? map.roleID == 400 && map.version == 1 && !map.owner : !map.appID);
     }
   }
@@ -1469,7 +1432,7 @@ static void roleBoundaries()
 {
   ZuTestScope(roleBoundaries);
   enum {
-    Steps = Zum::RoleDelete::NSteps + 9,
+    Steps = Zum::RoleDelete::NSteps + 7,
     Cuts = 2 * Steps + 1
   };
   Zum::RoleDelete change;
@@ -1477,7 +1440,6 @@ static void roleBoundaries()
     change.members.push(Zum::Bytes{});
     change.clients.push(Zum::Bytes{});
     change.admins.push(Zum::Bytes{});
-    change.scopes.push(Zum::Bytes{});
     change.maps.push(Zum::Bytes{});
   }
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
@@ -1700,7 +1662,7 @@ int main(int argc, char **argv)
   ZuTestCall(roleBoundaries);
   ZuTestCall(catalogRecovery, false);
   ZuTestCall(catalogRecovery, true);
-  ZuTestCall(catalogRecovery, true, 12);
+  ZuTestCall(catalogRecovery, true, 10);
   ZuTestCall(catalogBoundaries);
   return 0;
 }

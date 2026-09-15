@@ -47,11 +47,7 @@ def sign_catalog(contents, revision):
 def catalog_manifest(revision, audience_id=None, empty=False):
     contents = {
         "actions": [{"name": "catalog.probe", "label": "Catalog é probe / \"\\\n\u0001 🎵"}],
-        "roles": [{"name": "catalog.probe", "actions": ["catalog.probe"]}],
-        "scopes": []}
-    if audience_id:
-        contents["scopes"] = [{"name": "catalog.probe", "audienceID": audience_id,
-                               "roles": ["catalog.probe"]}]
+        "roles": [{"name": "catalog.probe", "actions": ["catalog.probe"]}]}
     if empty:
         contents = {key: [] for key in contents}
     return sign_catalog(contents, revision)
@@ -540,8 +536,9 @@ class Fixture:
         catalog, _ = self.request("GET", "/admin/operations?limit=1000", token=token)
         operations = catalog["items"]
         self.operations = operations
-        assert len(operations) == 68 and "nextCursor" not in catalog
-        assert {67, 68}.isdisjoint(item["id"] for item in operations)
+        assert len(operations) == 64 and "nextCursor" not in catalog
+        assert {27, 28, 29, 30, 67, 68}.isdisjoint(
+            item["id"] for item in operations)
         assert len({item["id"] for item in operations}) == len(operations)
         assert len({item["name"] for item in operations}) == len(operations)
         issuer, _ = self.request("GET", "/admin/issuer", token=token)
@@ -687,9 +684,6 @@ class Fixture:
         role_path = prefix + "/roles/" + role["id"]
         edit(role_query, role_path, "PATCH", {"label": "Updated lifecycle"})
         edit(role_query, role_path + "/state", "PUT", {"state": "Disabled"})
-        scope = create(prefix + "/scopes", {"name": "lifecycle", "audienceID": audience["id"]})
-        edit(prefix + "/scopes?id=" + scope["id"],
-             prefix + "/scopes/" + scope["id"] + "/state", "PUT", {"state": "Disabled"})
         client = create("/admin/clients", {
             "appID": app_id, "type": "native", "label": "Lifecycle",
             "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 1})
@@ -820,9 +814,7 @@ class Fixture:
         filters += [("/admin/auth-policies", "appID", {}),
                     (prefix + "/memberships", "userID", {}),
                     (prefix + "/actions", "id", {}),
-                    (prefix + "/roles", "id", {}),
-                    (prefix + "/scopes", "id", {}),
-                    (prefix + "/scopes", "audienceID", {"name": "ping"})]
+                    (prefix + "/roles", "id", {})]
         for path, field, extra in filters:
             for invalid in ("invalid", "1tail", "-1", "18446744073709551615", ""):
                 self.request("GET", path + "?" + urlencode(dict(extra, **{field: invalid})),
@@ -1373,7 +1365,7 @@ class Fixture:
                     finally:
                         connection.close()
                     catalog = {}
-                    for operation in ("actionQuery", "roleQuery", "scopeQuery"):
+                    for operation in ("actionQuery", "roleQuery"):
                         records = self.admin_command(operation, {"appID": app["appID"]})["items"]
                         assert len(records) == 1 and records[0]["name"] == "ping"
                         catalog[operation] = records
@@ -1463,8 +1455,8 @@ class Fixture:
             "$idempotencyKey": secrets.token_hex(16)})["item"]
         self.admin_command("clientAccessSet", {
             "appID": app_id, "clientID": client["id"],
-            "audienceIDs": [audience_id], "scopeIDs": [catalog["scopeQuery"][0]["id"]],
-            "roleIDs": [], "$ifNoneMatch": "*"})
+            "audienceIDs": [audience_id],
+            "roleIDs": [catalog["roleQuery"][0]["id"]], "$ifNoneMatch": "*"})
         config = self.directory / "zumping.cf"
         config.write_text(f'issuerURL: {json.dumps(self.issuer(app_id))}, '
                           f'serviceURL: "http://127.0.0.1:{service_port}", '
@@ -1626,24 +1618,22 @@ class Fixture:
             snapshots.append((path, items))
         return snapshots
 
-    def cross_app_refs(self, token, app_id, user_id, scope_id, client_id):
+    def cross_app_refs(self, token, app_id, user_id, client_id):
         def query(path):
             return self.request("GET", path, token=token)[0]["items"]
 
         core_id = query("/admin/issuer")[0]["coreAppID"]
         prefix = "/admin/apps/" + app_id
         foreign_roles = query("/admin/apps/" + core_id + "/roles?limit=1000")
-        foreign = next(row for row in foreign_roles if row["name"] == "superuser")
+        foreign = next(row for row in foreign_roles if row["name"] == "zum.admin")
         assert all(row["id"] != foreign["id"] for row in query(prefix + "/roles?limit=1000"))
         app_query = "/admin/apps?id=" + app_id
         before_app = query(app_query)
         cases = (
             (prefix + "/memberships?userID=" + user_id,
              prefix + "/memberships/" + user_id + "/roles", None),
-            (prefix + "/scopes?id=" + scope_id,
-             prefix + "/scopes/" + scope_id + "/roles", None),
             (prefix + "/client-access?clientID=" + client_id,
-             prefix + "/client-access/" + client_id, ("audienceIDs", "scopeIDs")))
+             prefix + "/client-access/" + client_id, ("audienceIDs", "roleIDs")))
         for lookup, path, fields in cases:
             before = query(lookup)
             assert len(before) == 1
@@ -1680,9 +1670,6 @@ class Fixture:
         role = create(prefix + "/roles", {"name": "ping", "label": "Ping"})
         self.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
                      {"actionIDs": [action_id]}, token=token, headers={"If-Match": role["etag"]})
-        scope = create(prefix + "/scopes", {"name": "ping", "audienceID": audience_id})
-        self.request("PUT", prefix + "/scopes/" + scope["id"] + "/roles",
-                     {"roleIDs": [role["id"]]}, token=token, headers={"If-Match": scope["etag"]})
         member_body = {"userID": user_id}
         member_headers = {"Idempotency-Key": secrets.token_hex(16)}
         membership = self.admin_command("membershipAdd", dict(member_body, **{
@@ -1711,9 +1698,9 @@ class Fixture:
             "redirectURIs": ["http://127.0.0.1:49152/callback"],
             "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
         self.request("PUT", prefix + "/client-access/" + client["id"], {
-            "audienceIDs": [audience_id], "scopeIDs": [scope["id"]], "roleIDs": []},
+            "audienceIDs": [audience_id], "roleIDs": [role["id"]]},
             token=token, headers={"If-None-Match": "*"}, status=201)
-        self.cross_app_refs(token, app_id, user_id, scope["id"], client["id"])
+        self.cross_app_refs(token, app_id, user_id, client["id"])
         app, _ = self.request("GET", "/admin/apps?id=" + app_id, token=token)
         # The app's earlier mutations made its authority version independent.
         assert int(app["items"][0]["authVersion"]) > 1
@@ -1758,7 +1745,7 @@ class Fixture:
         assert "client_secret" not in registered["items"][0]
         assert "secretDigest" not in registered["items"][0]
         self.request("PUT", prefix + "/client-access/" + web["id"], {
-            "audienceIDs": [audience_id], "scopeIDs": [scope["id"]], "roleIDs": []},
+            "audienceIDs": [audience_id], "roleIDs": [role["id"]]},
             token=token, headers={"If-None-Match": "*"}, status=201)
         collections = self.grouped_queries(token, app_id, role["id"],
                                            {client["id"], web["id"]})
@@ -1815,11 +1802,11 @@ class Fixture:
             result, _ = self.request("GET", path + "?limit=1000", token=token)
             assert result["items"] == items
         self.role_removal(token, app_id, user_id, client["id"],
-                          audience_id, scope["id"], role["id"])
+                          audience_id, role["id"])
         return tokens["access_token"]
 
     def role_removal(self, token, app_id, user_id, client_id,
-                     audience_id, scope_id, retained_role):
+                     audience_id, retained_role):
         prefix = "/admin/apps/" + app_id
 
         def query(path):
@@ -1837,14 +1824,9 @@ class Fixture:
         client_query = prefix + "/client-access?clientID=" + client_id
         access = query(client_query)[0]
         self.request("PUT", prefix + "/client-access/" + client_id,
-                     {"audienceIDs": access["audienceIDs"], "scopeIDs": access["scopeIDs"],
+                     {"audienceIDs": access["audienceIDs"],
                       "roleIDs": [role_id]}, token=token,
                      headers={"If-Match": access["etag"]})
-        scope_query = prefix + "/scopes?id=" + scope_id
-        scope = query(scope_query)[0]
-        self.request("PUT", prefix + "/scopes/" + scope_id + "/roles",
-                     {"roleIDs": [retained_role, role_id]}, token=token,
-                     headers={"If-Match": scope["etag"]})
         access_path = prefix + "/admin-access/user/"
         for invalid_id in ("0", "18446744073709551615", user_id + "junk"):
             self.request("PUT", access_path + invalid_id,
@@ -1871,7 +1853,7 @@ class Fixture:
         self.request("PUT", prefix + "/role-mappings/" + provider_id + "/" +
                      b64(b"catalog-probe"), {"roleID": role_id}, token=token,
                      headers={"If-None-Match": "*"}, status=201)
-        queries = [member_query, client_query, scope_query,
+        queries = [member_query, client_query,
                    prefix + "/admin-access?limit=1000", prefix + "/role-mappings?limit=1000"]
         before = [query(path) for path in queries]
         path = prefix + "/roles/" + role_id
@@ -1949,109 +1931,6 @@ class Fixture:
         publish(path, forged, token=workload, status=400)
         for query, snapshot in zip(paths, snapshots):
             assert self.request("GET", query, token=token)[0] == snapshot
-
-    def catalog_restore(self, token, workload, app_id):
-        prefix = "/admin/apps/" + app_id
-        path = prefix + "/roles?name=catalog.probe"
-        deleted = self.request("GET", path, token=token)[0]["items"][0]
-        assert deleted["tombstone"]
-        paths = [prefix + "/" + collection + "?limit=1000" for collection in
-                 ("memberships", "client-access", "admin-access", "scopes", "role-mappings")]
-        snapshots = [self.request("GET", query, token=token)[0] for query in paths]
-        scope = next(item for item in snapshots[3]["items"] if item["name"] == "catalog.probe")
-        assert scope["roleIDs"] == [] and "catalogRoleIDs" not in scope
-        audience_id = scope["audienceID"]
-
-        def publish(revision, previous=None, empty=False):
-            headers = {"Idempotency-Key": secrets.token_hex(16)}
-            if previous is not None:
-                headers["If-Match"] = f'"catalog-{previous}"'
-            return self.request("PUT", prefix + "/catalog",
-                                catalog_manifest(revision, audience_id, empty),
-                                token=workload, headers=headers)
-
-        publish(1)  # Repair with the same revision, without restoring scope bindings.
-        restored = self.request("GET", path, token=token)[0]["items"][0]
-        assert restored["id"] == deleted["id"] and not restored["tombstone"]
-        assert restored["state"] == "Active" and restored["catalogRevision"] == "1"
-        for query, snapshot in zip(paths, snapshots):
-            assert self.request("GET", query, token=token)[0] == snapshot
-        publish(1)
-        assert self.request("GET", path, token=token)[0]["items"][0] == restored
-        publish(2, 1)  # An unchanged binding in a newer manifest stays removed too.
-        after = [self.request("GET", query, token=token)[0] for query in paths]
-        for index in (0, 1, 2, 4):
-            assert after[index] == snapshots[index]
-        assert all(restored["id"] not in item["roleIDs"] for item in after[3]["items"])
-        snapshots = after
-        restored = self.request("GET", path, token=token)[0]["items"][0]
-        self.stop()
-        self.start()
-        assert self.request("GET", path, token=token)[0]["items"][0] == restored
-        for query, snapshot in zip(paths, snapshots):
-            assert self.request("GET", query, token=token)[0] == snapshot
-        # Fail preparation after discovering a new action: no allocation or row may leak.
-        contents = catalog_manifest(3, audience_id)["catalog"]
-        contents["actions"].append({"name": "catalog.extra"})
-        contents["roles"].append({"name": "ping", "actions": ["catalog.extra"]})
-        app_query = "/admin/apps?id=" + app_id
-        app = self.request("GET", app_query, token=token)[0]
-        self.request("PUT", prefix + "/catalog", sign_catalog(contents, 3), token=workload,
-                     headers={"Idempotency-Key": secrets.token_hex(16),
-                              "If-Match": '"catalog-2"'}, status=409)
-        assert self.request("GET", app_query, token=token)[0] == app
-        assert self.request("GET", prefix + "/actions?name=catalog.extra", token=token)[0]["items"] == []
-        publish(3, 2, empty=True)
-        retired = self.request("GET", path, token=token)[0]["items"][0]
-        assert retired["state"] == "Disabled" and not retired["tombstone"]
-        definition_paths = [prefix + "/" + collection + "?name=catalog.probe"
-                            for collection in ("actions", "roles", "scopes")]
-        definition_paths[2] += "&audienceID=" + audience_id
-        retired_definitions = [self.request("GET", query, token=token)[0]
-                               for query in definition_paths]
-        assert all(result["items"][0]["state"] == "Disabled"
-                   for result in retired_definitions)
-        publish(3, empty=True)
-        assert self.request("GET", path, token=token)[0]["items"][0] == retired
-        for query, snapshot in zip(definition_paths, retired_definitions):
-            assert self.request("GET", query, token=token)[0] == snapshot
-        publish(4, 3)
-        inactive = self.request("GET", path, token=token)[0]["items"][0]
-        assert inactive["id"] == restored["id"] and inactive["state"] == "Disabled"
-        custom = self.request("GET", prefix + "/roles?name=ping", token=token)[0]["items"][0]
-        assert custom["origin"] == "Custom" and custom["state"] == "Active"
-        for query, snapshot in zip(definition_paths, retired_definitions):
-            item = self.request("GET", query, token=token)[0]["items"][0]
-            assert item["id"] == snapshot["items"][0]["id"] and item["state"] == "Disabled"
-        # A genuinely new publisher binding may be added; an unchanged deleted
-        # binding must remain absent, and neither operation assigns a user role.
-        contents = catalog_manifest(5, audience_id)["catalog"]
-        contents["actions"].append({"name": "catalog.extra", "label": ""})
-        contents["roles"].append({"name": "catalog.extra", "actions": ["catalog.extra"]})
-        contents["scopes"][0]["roles"].append("catalog.extra")
-        # Empty optional labels normalize to omission for the content digest.
-        normalized = dict(contents, actions=[{key: value for key, value in item.items()
-                                              if key != "label" or value}
-                                             for item in contents["actions"]])
-        manifest = sign_catalog(normalized, 5)
-        manifest["catalog"]["actions"] = contents["actions"]
-        self.request("PUT", prefix + "/catalog", manifest, token=workload,
-                     headers={"Idempotency-Key": secrets.token_hex(16),
-                              "If-Match": '"catalog-4"'})
-        added_role = self.request("GET", prefix + "/roles?name=catalog.extra",
-                                  token=token)[0]["items"][0]
-        assert added_role["origin"] == "Standard" and added_role["state"] == "Active"
-        updated_scope = self.request("GET", definition_paths[2], token=token)[0]["items"][0]
-        assert updated_scope["roleIDs"] == [added_role["id"]]
-        assert updated_scope["state"] == "Disabled"
-        self.request("PUT", prefix + "/catalog", manifest, token=workload,
-                     headers={"Idempotency-Key": secrets.token_hex(16)})
-        assert self.request("GET", definition_paths[2], token=token)[0]["items"][0] == updated_scope
-        self.stop()
-        self.start()
-        assert self.request("GET", definition_paths[2], token=token)[0]["items"][0] == updated_scope
-        for index in (0, 1, 2, 4):
-            assert self.request("GET", paths[index], token=token)[0] == snapshots[index]
 
     def signing_rotation(self, token):
         path = "/admin/signing-keys"
@@ -2270,7 +2149,7 @@ def main():
             access_row_path = access_path + "/" + app["item"]["client_id"]
             fixture.request("PUT", access_row_path,
                             {field: access[field] for field in
-                             ("audienceIDs", "scopeIDs", "roleIDs")}, token=token,
+                             ("audienceIDs", "roleIDs")}, token=token,
                             headers={"If-Match": access["etag"]})
             workload_token()
             client_query = "/admin/clients?" + urlencode({"id": app["item"]["client_id"]})
@@ -2332,7 +2211,6 @@ def main():
             publisher, _ = workload_token()
             fixture.catalog(token, publisher["access_token"], app_id, core_id)
             foreign_access = fixture.app_login(token, app_id, action_id, app_input["audienceURI"])
-            fixture.catalog_restore(token, publisher["access_token"], app_id)
             fixture.administrative_queries(token, app_id)
             fixture.numeric_filters(token, app_id, action_id)
             fixture.rotate_client(token, app["item"]["client_id"], basic)

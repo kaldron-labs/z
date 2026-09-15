@@ -40,7 +40,7 @@ it is a metadata test, not external OIDC-provider interoperability coverage.
 `roleRemoval` stages the typed role-deletion payload and every intent/effect cut
 across its 24 expanded steps, reopening SQLite for all 49 durable images.
 The repeated reference branches contain two rows in each of membership, client
-access, admin access, scope and role mapping. Separate cases cover empty
+access, admin access and role mapping. Separate cases cover empty
 reference sets and a stale second mapping that forces compensation after the
 first mapping has been deleted. Checks include retained unrelated roles and
 settings, restored before-images on rollback, logical versions, released owners
@@ -48,9 +48,9 @@ and empty journals. The complete boundary matrix passes in the current
 SQLite restart suite.
 Catalog recovery first covers payload-only completion and compensation. The
 expanded fixture additionally stages all 29 intent/effect cuts for its 14 phases
-with one inserted and one replaced row per definition table, plus a stale scope
-after earlier effects have committed. It checks app publication, original IDs,
-scope-binding removals, logical versions, owners and empty journals. The complete
+with one inserted and one replaced row per action and role definition, plus a
+stale role after earlier effects have committed. It checks app publication,
+original IDs, role removals, logical versions, owners and empty journals. The complete
 catalog boundary matrix passes in the current SQLite restart suite.
 Shutdown first closes request admission and waits for its drain. It then waits
 for `Zdb::stop()`, which closes tables, drains the SQLite store queue and
@@ -65,7 +65,7 @@ This is Zdb stop/start recovery, not a process-kill or replicated failover test.
 one shared encryption key and issuer, and native Zdb host/priority configuration.
 Supply `ZDB_MODULE`, `ZDB_CONNECT` and `ZUM_CLUSTER_PEER_CONNECT`.
 Both nodes must expose liveness; neither is ready before admin enrollment.
-The standby must reject all 68 administrative routes with 503. The source-tree
+The standby must reject all 64 active administrative routes with 503. The source-tree
 fixture extracts method/path declarations from ZumMgmt.cc and verifies its
 catalog count, avoiding a second manually maintained endpoint list. Requests
 have no credentials and use minimal bodies: this tests inactive admission,
@@ -176,12 +176,13 @@ requires a successful response,401 and403 for every catalog operation. Service
 delegation suspension/restoration supplies operationQuery's forbidden case.
 Reported400/412/503 counts only identify observed statuses, not complete
 invalid-input, cross-app or inactive-node verification for each route.
-Specific cross-app checks submit the core superuser role ID to a business
-app's membership, scope, client-access and admin-delegation endpoints. Rejection
+Specific cross-app checks submit the core admin role ID to a business
+app's membership, client-access and admin-delegation endpoints. Rejection
 must preserve target records, app authority versions and the core role catalog.
 The source role ID is verified absent in the target app; identical-ID or
 identical-name catalog isolation is also exercised by the independent orders
-application and `zumpingd`, which both define `ping` action/role/scope names;
+application and `zumpingd`, which both define a `ping` action and role whose
+scope is derived at runtime;
 each other's valid resource tokens remain rejected by the service.
 The real ping-service checks additionally present a valid core-admin token and
 another application's valid token carrying an action named ping. Both must
@@ -201,7 +202,7 @@ Application enrollment, local user invitation, membership creation and role
 assignment use the real CLI as well. Secret-bearing operations must print only
 the delivery-file receipt and write their response into an owner-only file;
 subsequent HTTP queries and retries verify the resulting records and request IDs.
-Definition lifecycle cases create an audience, role, scope, client and provider,
+Definition lifecycle cases create an audience, role, client and provider,
 then exercise audience/role/provider updates and each definition's state endpoint.
 They check missing/stale ETags, exactly one version increment on accepted changes,
 and unchanged records after rejected stale updates.
@@ -237,7 +238,8 @@ exactly match, without changing its version marker or authority-row counts.
 
 The ping-service scenario enrolls another application through `zum`, starts
 `zumpingd` with its client secret in the environment (no DB credentials), checks
-unauthenticated `/ping` returns401, and queries its single ping action/role/scope.
+unauthenticated `/ping` returns401, and queries its single ping action and role,
+with the corresponding scope derived from that role.
 A graceful service restart must leave those catalog records unchanged. This
 scenario now also invites `user`, enrolls its virtual passkey, assigns only the
 ping role (no core membership), registers a public native client, and launches
@@ -267,13 +269,13 @@ the catalog's own revision/digest replay rather than only request-cache replay.
 The role-deletion regression supplies all five reference kinds, checks missing
 and stale ETags, removes the role, and verifies cleanup across a drained restart.
 The expanded catalog regression checks same-revision tombstone repair under the
-original ID without recreating deleted references, newer-revision scope binding
+original ID without recreating deleted references, newer-revision role
 preservation, content-digest validation, omission retirement, and preservation
-of disabled/custom definitions. It also exercises normalized empty labels,
-Unicode/control-character digests, and new scope bindings without resurrecting
-old removals. These cases passed after correcting the Unicode formatter and
-including audienceID in the fixture's exact scope-name query.
-The fixture enumerates all 68 live management operations, verifies their seeded
+of disabled/custom definitions. It also exercises normalized empty labels and
+Unicode/control-character digests without a separate scope catalog. These cases
+passed after correcting the Unicode formatter; resource scope names are derived
+from the published role names.
+The fixture enumerates all 64 live management operations, verifies their seeded
 actions, rejects missing/invalid bearer tokens, checks denial of operations
 outside the workload token's authority, and checks unsupported methods and
 their `Allow` headers. This does not replace authorized success and input
@@ -304,11 +306,11 @@ unchanged-state retries preserve the ETag, stale ETags fail, and suspended
 authority prevents fresh workload issuance. Reactivation restores issuance;
 the version changes and usable credentials are checked again after restart.
 The fixture also enrolls a separate public native OIDC client using REST only,
-creates an app-local ping role/scope, assigns the local user to that app, and
+creates an app-local ping role with its derived scope, assigns the local user to that app, and
 approves the client through `client_access`. It requests `openid ping` with
 PKCE and nonce, completes consent, exchanges the code and refreshes, and
 independently verifies ES256 access/ID-token signatures against JWKS plus their
-issuer, audience, client/app, scope/action, and nonce bindings.
+issuer, audience, client/app, role-derived scope/action, and nonce bindings.
 A separate confidential web client uses an exact HTTPS
 redirect, PKCE, and `client_secret_basic` for code exchange and refresh. Missing
 and incorrect secrets fail without consuming the code or refresh token; an

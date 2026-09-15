@@ -17,15 +17,16 @@ the catalog for the protected application identified by `zum.issuerURL`.
 Configure the enrolled stable resource audience URI and audience record ID. The
 latter is catalog metadata, not a second app ID. Start `zumpingd --config
 zumpingd.cf`. Startup idempotently publishes one action, one standard role and
-one scope, all named `ping`, before opening its listener. It never creates user
-assignments.
+the runtime `ping` scope is derived from that role before opening its listener.
+It never creates user assignments. The role name is also the OAuth
+resource-scope name used at runtime.
 
 Enroll separate OAuth clients under that protected service application for
 each caller type. A mobile, browser, desktop, and CLI client share the same
 application issuer and access-token audience, but each has its own `client_id`,
 redirect policy, grants, and token family. For this example, enroll a public
 native CLI client with authorization-code
-and optional refresh grants, the ping audience/scope, and the loopback redirect
+and optional refresh grants, the ping role-derived scope, and the loopback redirect
 `http://127.0.0.1:8081/callback`. Put its issued public client ID in `zumping.cf`.
 Use `zum` to enroll the local user, complete the user's passkey registration,
 and assign app membership with the ping role. Then run:
