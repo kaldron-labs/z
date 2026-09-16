@@ -6,12 +6,8 @@
 
 // authenticated live telemetry hub
 
-#ifndef ZtcHubd_HH
-#define ZtcHubd_HH
-
-#ifndef ZtcLib_HH
-#include <zlib/ZtcLib.hh>
-#endif
+#ifndef ztchub_daemon_HH
+#define ztchub_daemon_HH
 
 #include <stdint.h>
 
@@ -81,7 +77,7 @@ struct ListenerCf {
 	uint32_t	ssfPort = 0;
 };
 
-ZfStruct(ZtcAPI, (ListenerCf, Cf),
+ZfStruct(, (ListenerCf, Cf),
   (((bind),		(Required)),		(String)),
   (((path),		(Required)),		(String)),
   (((cert),		(Required)),		(String)),
@@ -127,7 +123,7 @@ struct HubdCf {
   uint32_t	schedulerTurnWork = 64;
 };
 
-ZfStruct(ZtcAPI, (HubdCf, Cf),
+ZfStruct(, (HubdCf, Cf),
   (((listeners),		(Required)),		(UDT)),
   (((issuer),		(Required)),		(String)),
   (((audience),		(Required)),		(String)),
@@ -156,7 +152,7 @@ ZfStruct(ZtcAPI, (HubdCf, Cf),
   (((fanoutSLOMS),	((Range<1U, 86400000U>))),		(UInt32, 200)),
   (((schedulerTurnWork),	((Range<1U, 1U << 20U>))),	(UInt32, 64)));
 
-class ZtcAPI Hubd {
+class Hubd {
 public:
   Hubd();
   ~Hubd();
@@ -220,4 +216,4 @@ private:
 
 } // Ztc
 
-#endif /* ZtcHubd_HH */
+#endif /* ztchub_daemon_HH */

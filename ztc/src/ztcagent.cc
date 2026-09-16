@@ -17,7 +17,7 @@
 
 #include <zlib/ZvCf.hh>
 
-#include <zlib/ZtcAgent.hh>
+#include <zlib/ztcagent_daemon.hh>
 
 struct Options {
   ZtString<>	config{"ztcagent.conf"};

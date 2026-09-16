@@ -20,17 +20,17 @@ ${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
 	$(top_builddir)/scripts/fbscodegen -b --schema --bfbs-gen-embed --gen-mutable -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs -I $(top_srcdir)/zdb/src/fbs $<
 BUILT_SOURCES = ${FBS_H}
 CLEANFILES = ${FBS_H}
-pkginclude_HEADERS = ZtcLib.hh ZtcRing.hh ZtcHubd.hh \
+pkginclude_HEADERS = ZtcLib.hh ZtcRing.hh \
 	ZtcAppTypes.hh ZtcFB.hh ZtcMsg.hh ZtcApp.hh \
 	${FBS_H}
-noinst_HEADERS = ZtcAlert.hh ZtcFilter.hh ZtcAgentConfig.hh ZtcAgent.hh
-lib_LTLIBRARIES = libZtc.la
-noinst_LTLIBRARIES = libZtcAgent.la
+noinst_HEADERS = ZtcAlert.hh ZtcFilter.hh ztcagent_config.hh \
+	ztcagent_daemon.hh ztchub_daemon.hh
+lib_LTLIBRARIES = libZtc.la libZtcApp.la
 bin_PROGRAMS = ztcagent ztchub
 libZtc_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTC_EXPORTS
 libZtc_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZtc_la_LDFLAGS = @Z_SO_LDFLAGS@
-libZtc_la_SOURCES = ZtcLib.cc ZtcApp.cc ZtcFB.cc ZtcHubd.cc
+libZtc_la_SOURCES = ZtcLib.cc ZtcFB.cc
 libZtc_la_LIBADD = \
 	$(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zdb/src/libZdb.la \
@@ -42,19 +42,18 @@ libZtc_la_LIBADD = \
 	$(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
+libZtcApp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTC_EXPORTS
+libZtcApp_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
+libZtcApp_la_LDFLAGS = @Z_SO_LDFLAGS@
+libZtcApp_la_SOURCES = ZtcApp.cc
+libZtcApp_la_LIBADD = libZtc.la
+
 AGENT_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zws/src
-libZtcAgent_la_CPPFLAGS = $(AGENT_CPPFLAGS)
-libZtcAgent_la_SOURCES = ZtcAgent.cc ZtcAgent.hh ZtcAgentConfig.hh
-libZtcAgent_la_LIBADD = libZtc.la \
-	$(top_builddir)/zws/src/libZws.la \
-	$(top_builddir)/zhttp/src/libZhttp.la \
-	$(top_builddir)/ztls/src/libZtls.la
-
 ztcagent_CPPFLAGS = $(AGENT_CPPFLAGS)
-ztcagent_SOURCES = ztcagent.cc
-ztcagent_LDADD = libZtcAgent.la libZtc.la \
+ztcagent_SOURCES = ztcagent.cc ztcagent_daemon.cc
+ztcagent_LDADD = libZtc.la \
 	$(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
@@ -68,4 +67,4 @@ ztchub_LDADD = libZtc.la \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/ztls/src/libZtls.la
-ztchub_SOURCES = ztchub.cc ../../zum/example/pinghttp.cc
+ztchub_SOURCES = ztchub.cc ztchub_daemon.cc ../../zum/example/pinghttp.cc

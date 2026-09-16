@@ -6,14 +6,14 @@
 
 // OAuth/WSS agent transport
 
-#ifndef ZtcAgent_HH
-#define ZtcAgent_HH
+#ifndef ztcagent_daemon_HH
+#define ztcagent_daemon_HH
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/Zws.hh>
-#include <zlib/ZtcAgentConfig.hh>
+#include <zlib/ztcagent_config.hh>
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZtcRing.hh>
 
@@ -75,4 +75,4 @@ struct Agent::Link :
 
 } // Ztc
 
-#endif /* ZtcAgent_HH */
+#endif /* ztcagent_daemon_HH */

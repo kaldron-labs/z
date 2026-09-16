@@ -13,8 +13,8 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 noinst_PROGRAMS = ztcagenttest ztchubitest ztchubwiretest ztchubloadtest
 ztcagenttest_SOURCES = ztcagenttest.cc
-ztchubitest_SOURCES = ztchubitest.cc
-ztchubwiretest_SOURCES = ztchubwiretest.cc
+ztchubitest_SOURCES = ztchubitest.cc ../src/ztchub_daemon.cc
+ztchubwiretest_SOURCES = ztchubwiretest.cc ../src/ztchub_daemon.cc
 ztchubloadtest_SOURCES = ztchubloadtest.cc
 ztchubloadtest_LDADD = $(ztchubwiretest_LDADD)
 ztchubitest_LDADD = $(top_builddir)/zi/test/libZiTest.la \
@@ -27,7 +27,8 @@ ztchubitest_LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-ztchubwiretest_LDADD = $(top_builddir)/ztc/src/libZtc.la \
+ztchubwiretest_LDADD = $(top_builddir)/ztc/src/libZtcApp.la \
+	$(top_builddir)/ztc/src/libZtc.la \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/ztls/src/libZtls.la \
@@ -40,7 +41,6 @@ ztchubwiretest_LDADD = $(top_builddir)/ztc/src/libZtc.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 ztcagenttest_LDADD = $(top_builddir)/zi/test/libZiTest.la \
-	$(top_builddir)/ztc/src/libZtcAgent.la \
 	$(top_builddir)/ztc/src/libZtc.la \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \

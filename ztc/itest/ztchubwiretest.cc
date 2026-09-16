@@ -28,7 +28,7 @@
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFB.hh>
-#include <zlib/ZtcHubd.hh>
+#include <zlib/ztchub_daemon.hh>
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZumURI.hh>
 #include <zlib/Zws.hh>

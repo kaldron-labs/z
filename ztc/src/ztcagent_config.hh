@@ -6,8 +6,8 @@
 
 // OAuth/WSS agent configuration
 
-#ifndef ZtcAgentConfig_HH
-#define ZtcAgentConfig_HH
+#ifndef ztcagent_config_HH
+#define ztcagent_config_HH
 
 #ifndef ZtcLib_HH
 #include <zlib/ZtcLib.hh>
@@ -23,10 +23,11 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZfStruct.hh>
+#include <zlib/ZfCf.hh>
 
 #include <zlib/ZiFile.hh>
 
-#include <zlib/ZtcApp.hh>
+#include <zlib/ZtcLib.hh>
 
 namespace Ztc {
 
@@ -35,7 +36,7 @@ struct AgentCf {
   // bounded resident-memory and per-turn workload controls.
   enum {
     MaxFrame = 1U<<30,
-    DefltMaxFrame = AppCf::DefltMaxFrame,
+    DefltMaxFrame = 1U<<20,
     DefltTelFrames = 1024,
     DefltTelBytes = 1U<<24,
     DefltReqBytes = 1U<<22,
@@ -91,4 +92,4 @@ ZfStruct(ZtcAPI, (AgentCf, Cf),
 
 } // Ztc
 
-#endif /* ZtcAgentConfig_HH */
+#endif /* ztcagent_config_HH */
