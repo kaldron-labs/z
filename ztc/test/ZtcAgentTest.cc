@@ -6,7 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZtcAgent.hh>
+#include <zlib/ztcagent_daemon.hh>
 
 using namespace ZuTestUtil;
 

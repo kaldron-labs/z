@@ -35,15 +35,16 @@ ZtcMgrTest_SOURCES = ZtcMgrTest.cc
 ZtcSchemaTest_SOURCES = ZtcSchemaTest.cc
 ZtcFilterTest_SOURCES = ZtcFilterTest.cc
 ZtcAppTest_SOURCES = ZtcAppTest.cc
+ZtcAppTest_LDADD = $(top_builddir)/ztc/src/libZtcApp.la $(LDADD)
 ZtcAlertTest_SOURCES = ZtcAlertTest.cc
+ZtcAlertTest_LDADD = $(top_builddir)/ztc/src/libZtcApp.la $(LDADD)
 ZtcAgentTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zws/src
-ZtcAgentTest_SOURCES = ZtcAgentTest.cc
-ZtcHubTest_SOURCES = ZtcHubTest.cc
+ZtcAgentTest_SOURCES = ZtcAgentTest.cc ../src/ztcagent_daemon.cc
+ZtcHubTest_SOURCES = ZtcHubTest.cc ../src/ztchub_daemon.cc
 ZtcHubTest_LDADD = $(LDADD) $(top_builddir)/zum/src/libZum.la
 ZtcAgentTest_LDADD = $(LDADD) \
-	$(top_builddir)/ztc/src/libZtcAgent.la \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/ztls/src/libZtls.la

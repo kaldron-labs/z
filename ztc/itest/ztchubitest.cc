@@ -11,7 +11,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZtcHubd.hh>
+#include <zlib/ztchub_daemon.hh>
 
 using namespace ZuTestUtil;
 

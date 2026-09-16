@@ -12,7 +12,7 @@
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZtcFB.hh>
-#include <zlib/ZtcHubd.hh>
+#include <zlib/ztchub_daemon.hh>
 
 using namespace ZuTestUtil;
 

@@ -6,7 +6,7 @@
 
 // OAuth/WSS agent transport and local publisher routing
 
-#include <zlib/ZtcAgent.hh>
+#include <zlib/ztcagent_daemon.hh>
 
 #include <limits.h>
 #include <string.h>

@@ -29,7 +29,7 @@
 #include <zlib/ZrestServer.hh>
 #include <zlib/Zws.hh>
 
-#include <zlib/ZtcHubd.hh>
+#include <zlib/ztchub_daemon.hh>
 #include <zlib/ZtcDB.hh>
 
 #include "../../zum/example/pinghttp.hh"
