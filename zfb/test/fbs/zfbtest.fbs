@@ -1,7 +1,11 @@
 namespace zfbtest.fbs;
+table Elem {
+  bah:int32;
+}
 table Test {
   foo:int32;
   bar:string;
   baz:[string];
+  elems:[Elem];
 }
 root_type Test;

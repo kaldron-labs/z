@@ -385,10 +385,12 @@ private:
 public:
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
-  auto txStream() { return TxStream_<true>{*this}; }
+  auto txStream() {
+    ZmAssert(!app()->txInvoked());
+    return TxStream_<true>{*this};
+  }
   auto txStream_() { // direct call from within tx thread
-    ZiAssert(app()->txInvoked(), "Ztcp", (),
-      "TCP txStream_ outside Tx thread", return TxStream_<true>{*this});
+    ZmAssert(app()->txInvoked());
     return TxStream_<false>{*this};
   }
 

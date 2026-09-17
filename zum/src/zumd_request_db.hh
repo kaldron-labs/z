@@ -48,7 +48,7 @@ void requestInsert(Def *def, Complete complete)
 	ZuFwdTuple(request.actorKind, request.actorID, request.operation,
 	  request.idempotencyKey), ZuMv(complete),
 	[](ZdbRow<IdemRequest> *row, auto &&complete) mutable {
-	  complete(row && row->commit());
+	  complete(!row || row->commit());
 	});
     }
   });

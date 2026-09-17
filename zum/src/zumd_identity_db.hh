@@ -23,6 +23,7 @@ ZdbTableDerive(IssuerTable, Issuer);
 ZdbTableDerive(UserTable, User);
 ZdbTableDerive(CredTable, Cred);
 ZdbTableDerive(GrantTable, Grant);
+ZdbTableDerive(RefreshTable, Refresh);
 ZdbTableDerive(SessionTable, Session);
 ZdbTableDerive(ConsentTable, Consent);
 

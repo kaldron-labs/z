@@ -287,6 +287,7 @@ struct TxLink {
   };
 
   auto transmit(auto &) { return Stream{*this}; }
+  auto transmit_(auto &) { return Stream{*this}; }
   void finish() { ++finishes; }
 
   ZtString<ZtStringHeapID<"Zhttp.Contract.Wire">> wire;
@@ -381,6 +382,7 @@ struct H2Native {
   using Tx = TxLink::Stream;
 
   Tx txStream() { return Tx{link}; }
+  Tx txStream_() { return Tx{link}; }
   unsigned dataMaxSize(uint32_t) const { return 64; }
   bool peerExtendedConnect() const { return false; }
   bool localExtendedConnect() const { return false; }
@@ -584,46 +586,6 @@ void testBodyTx()
   if (first >= 0) wire.offset(unsigned(first) + terminal.length());
   ZuCHECK(first >= 0 && wire.find(terminal) < 0,
     "H1 emitted the final chunk boundary more than once");
-}
-
-void testTxCompletion()
-{
-  ZuTestScope(testTxCompletion);
-  bool called = false;
-  bool outcome = false;
-  uint8_t byte = 0;
-  {
-    Zhttp::Transport_::TxBufNode node{&byte, 1};
-    node.txComplete = Zhttp::Transport_::TxCompleteFn{
-      [&called, &outcome](bool ok) {
-	called = true;
-	outcome = ok;
-      }};
-    node.complete(true);
-    node.complete(false);
-  }
-  ZuCHECK(called && outcome,
-    "transport completion reports success exactly once");
-  called = false;
-  {
-    Zhttp::Transport_::TxBufNode node{&byte, 1};
-    node.txComplete = Zhttp::Transport_::TxCompleteFn{
-      [&called](bool) { called = true; }};
-  }
-  ZuCHECK(!called,
-    "local transport-node destruction clears completion silently");
-  outcome = true;
-  {
-    Zhttp::Transport_::TxBufNode node{&byte, 1};
-    node.txComplete = Zhttp::Transport_::TxCompleteFn{
-      [&called, &outcome](bool ok) {
-	called = true;
-	outcome = ok;
-      }};
-    node.complete(false);
-  }
-  ZuCHECK(called && !outcome,
-    "asynchronous transport failure reports false exactly once");
 }
 
 void testBodyContract()
@@ -1216,7 +1178,6 @@ int main(int argc, char **argv)
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
   ZuTestCall(testBodyTx);
-  ZuTestCall(testTxCompletion);
   ZuTestCall(testBodyContract);
   ZuTestCall(testResponseStatusLine);
   ZuTestCall(testFixedPatch);

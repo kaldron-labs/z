@@ -13,9 +13,11 @@ include "zum_admin_access.fbs";
 include "zum_role_map.fbs";
 include "zum_auth_policy.fbs";
 include "zum_grant.fbs";
+include "zum_refresh.fbs";
 include "zum_request.fbs";
 include "zum_consent.fbs";
 include "zum_ssf_delivery.fbs";
+include "zum_maintenance.fbs";
 
 namespace Zum.fbs;
 
@@ -25,6 +27,23 @@ table ConsentCode {
   before_consent:Consent;
   role_i_ds:[uint64];
   now:long;
+}
+
+table SessionCleanup {
+  sessions:[SessionDelete];
+  updated:int64;
+}
+
+table RefreshCleanup {
+  refreshes:[RefreshDelete];
+  updated:int64;
+}
+
+table AppCleanup {
+  app_i_d:uint64;
+  evidence:[EvidenceDelete];
+  consents:[ConsentDelete];
+  updated:int64;
 }
 
 table Enrollment {
@@ -110,6 +129,8 @@ table CodeFamily {
   digest:[ubyte];
   auth_version:uint64;
   user_version:uint64 = 1;
+  client_version:uint64;
+  membership_version:uint64;
   auth_time:int64;
   created:int64;
   expires:int64;
@@ -209,6 +230,8 @@ table CatalogPublish {
   after:App;
   actions:CatalogRows;
   roles:CatalogRows;
+  clients:CatalogRows;
+  client_access:CatalogRows;
   request:IdemRequest;
 }
 
@@ -417,9 +440,31 @@ table Revoke {
 }
 
 table GrantCleanup {
+  grants:[GrantDelete];
+  updated:int64;
+  request:IdemRequest;
+}
+
+// Legacy decoders accept interrupted full-image maintenance sagas and fail
+// them normally instead of making recovery reject their type.
+table GrantCleanupV2 {
   grants:[Zfb.Bytes];
   updated:int64;
   request:IdemRequest;
+}
+table SessionCleanupV1 {
+  sessions:[Zfb.Bytes];
+  updated:int64;
+}
+table RefreshCleanupV1 {
+  refreshes:[Zfb.Bytes];
+  updated:int64;
+}
+table AppCleanupV1 {
+  app_i_d:uint64;
+  evidence:[Zfb.Bytes];
+  consents:[Zfb.Bytes];
+  updated:int64;
 }
 
 table KeyBinding {

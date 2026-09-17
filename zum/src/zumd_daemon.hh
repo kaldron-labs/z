@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZmList.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestServer.hh>
@@ -47,8 +48,33 @@ struct DaemonConfig {
   SSFSecretFn	ssfSecret;
   SSFReceiverVec	ssfReceivers;
   uint64_t	requestTimeout = 15;
+  uint64_t	cleanupInterval = 300;
   ServerBootstrapResult bootstrap;
 };
+
+struct MaintenanceResult {
+  unsigned selected = 0;
+  unsigned deleted = 0;
+  unsigned skipped = 0;
+  unsigned conflicted = 0;
+  unsigned failed = 0;
+  unsigned rescheduled = 0;
+  bool ok = false;
+};
+ZuDerive(MaintenanceFn,
+  (ZmFn<void(MaintenanceResult), ZmFnHeapID<"Zum.MaintenanceFn">>));
+ZumExtern void daemonGrantCleanup(
+  DB *, DBContext *, Ztls::Random *, unsigned, MaintenanceFn);
+ZumExtern void daemonRefreshCleanup(
+  DB *, DBContext *, Ztls::Random *, unsigned, MaintenanceFn);
+ZumExtern void daemonSessionCleanup(
+  DB *, DBContext *, Ztls::Random *, unsigned, MaintenanceFn);
+ZumExtern void daemonAppCleanup(
+  DB *, DBContext *, Ztls::Random *, AppID, unsigned, MaintenanceFn);
+// Lower than interactive query admission to keep periodic work within one
+// scheduler turn and prevent cleanup payloads from competing with queries.
+namespace DaemonCleanupLimit { enum { Rows = 512 }; }
+namespace DaemonCleanupState { enum { Idle, Running, Stopping }; }
 
 struct DaemonResponse : public HTTPResponse { String allow; };
 
@@ -352,8 +378,8 @@ public:
   template <typename Link>
   void live(Link *link, const LiveReq &, bool ok)
   {
-    if (ok) send_<HealthOK, LiveReq>(
-      link, httpJSON(HTTPStatusWire{"live"}));
+    if (ok)
+      send_<HealthOK, LiveReq>(link, httpJSON(HTTPStatusWire{"live"}));
   }
 
   template <typename Link>
@@ -541,6 +567,10 @@ private:
   void roleDelete_(AppID, RoleID, String, IdemRequest, AdminDoneFn);
   void authRoute_(AppID, String, AuthRouteDoneFn);
   bool loadKey_();
+  void cleanup_();
+  void cleanupStart_();
+  bool cleanupStop_();
+  void cleanupDone_(MaintenanceResult);
 
   DB			*m_db = nullptr;
   DBContext		*m_context = nullptr;
@@ -554,7 +584,14 @@ private:
   String		m_signKeyID;
   Ztls::Random		m_rng;
   Zhttp::Server<Daemon>	m_http;
+  ZmScheduler::Timer	m_cleanupTimer;
+  ZmRef<ZmPolymorph>	m_cleanupRun;
+  bool			m_started = false;
+  int			m_cleanupState = DaemonCleanupState::Idle;
+  uint64_t		m_cleanupBackoff = 0;
   bool			m_httpInited = false;
+  bool			m_finalized = false;
+  ZmSemaphore		m_cleanupStopped;
 };
 
 template <typename Link>

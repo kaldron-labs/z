@@ -400,7 +400,7 @@ int clientAuthority(
   return ScopeError::OK;
 }
 
-RefreshMatch::T refreshMatch(const Grant &grant, ZuBSpan digest)
+RefreshMatch::T refreshMatch(const Refresh &grant, ZuBSpan digest)
 {
   if (Ztls::ctEqual(grant.digest, digest)) return RefreshMatch::Current;
   for (auto &spent: grant.spent)
@@ -409,7 +409,7 @@ RefreshMatch::T refreshMatch(const Grant &grant, ZuBSpan digest)
 }
 
 RefreshRotate::T refreshRotate(
-    Grant &grant, ZuBSpan presentedDigest, Bytes nextDigest,
+    Refresh &grant, ZuBSpan presentedDigest, Bytes nextDigest,
     int64_t now, unsigned generationLimit, unsigned spentLimit)
 {
   return refreshRotate(grant, refreshMatch(grant, presentedDigest),
@@ -417,12 +417,11 @@ RefreshRotate::T refreshRotate(
 }
 
 RefreshRotate::T refreshRotate(
-    Grant &grant, RefreshMatch::T match, ZuBSpan presentedDigest,
+    Refresh &grant, RefreshMatch::T match, ZuBSpan presentedDigest,
     Bytes nextDigest, int64_t now, unsigned generationLimit,
     unsigned spentLimit)
 {
-  if (grant.kind != GrantKind::Refresh || grant.state != State::Active ||
-      grant.owner ||
+  if (grant.state != State::Active || grant.owner ||
       now <= 0 || grant.expires <= now || !presentedDigest)
     return RefreshRotate::Invalid;
   switch (match) {

@@ -908,7 +908,7 @@ public:
   template <typename Builder>
   bool streaming(Builder &builder, bool optional) {
     auto &link = m_ops->link();
-    auto tx = link.transmit(builder);
+    auto tx = link.transmit_(builder);
     bool emitted = false;
     bool duplicate = false;
     WriteOutcome::T outcome = WriteOutcome::Failed;
@@ -961,7 +961,7 @@ public:
   template <typename Builder>
   bool fixed(Builder &builder, bool optional) {
     auto &link = m_ops->link();
-    auto native = link.transmit(builder);
+    auto native = link.transmit_(builder);
     if constexpr (Message::ID == Version::H2)
       return fixedH2_(builder, native, optional);
     else {

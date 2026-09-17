@@ -62,6 +62,10 @@ test: $(noinst_PROGRAMS)
 	  ZDB_CONNECT="$$ztc_itest_dir/db" \
 	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
 	    python3 "$(srcdir)/ztchubtest.py"; \
+	  ZDB_CONNECT="$$ztc_itest_dir/cluster-db" \
+	  ZTC_CLUSTER=1 \
+	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
+	    python3 "$(srcdir)/ztchubtest.py"; \
 	else \
 	  echo 'ztchubtest.py: SKIP (ZDB_MODULE is not set)'; \
 	fi

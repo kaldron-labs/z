@@ -75,7 +75,10 @@ def wait_line(process, prefix, timeout=None):
                 raise AssertionError("wire fixture output timed out: " + prefix)
             data = os.read(process.stdout.fileno(), 4096)
             if not data:
-                diagnostic = process.stderr.read().decode(errors="replace")
+                diagnostic = getattr(process, "_diagnostic", b"")
+                if process.stderr is not None:
+                    diagnostic += process.stderr.read()
+                diagnostic = diagnostic.decode(errors="replace")
                 raise AssertionError(
                     "wire fixture exited before output: " + prefix +
                     "; stdout: " + repr(seen) +
@@ -287,12 +290,14 @@ def main():
     fixture = Fixture(directory / "zum")
     fixture.directory.mkdir()
     hub = None
+    hubs = []
     agents = []
     fronts = []
     success = False
     shm_names = []
     registries = []
     load = bool(os.environ.get("ZTC_LOAD"))
+    cluster = bool(os.environ.get("ZTC_CLUSTER"))
     counts = {key: int(os.environ.get("ZTC_LOAD_" + key.upper(), default))
               for key, default in (("agents", 2048), ("clients", 32),
                                    ("subs", 32), ("publishers", 256), ("rounds", 3))}
@@ -309,11 +314,14 @@ def main():
         ssf_port = free_port()
         second_ssf_port = free_port()
         audience_uri = "https://127.0.0.1:" + str(front_port)
+        service_audience = fixture.origin + "/admin"
         app = fixture.admin_secret("appEnroll", {
             "name": "ztchub-itest", "integration": "catalogClient",
-            "audience": audience_uri,
+            "audience": service_audience,
             "$idempotencyKey": secrets.token_hex(16)})["item"]
         app_id = app["appID"]
+        stored_app = fixture.admin_command("appQuery", {"id": str(app_id)})["items"]
+        assert len(stored_app) == 1 and stored_app[0]["audience"] == service_audience
         cert = directory / "hub-cert.pem"
         key = directory / "hub-key.pem"
         subprocess.run([
@@ -333,7 +341,7 @@ def main():
             "oidc: {caPath: " + json.dumps(str(cert)) + "},\n" +
             "ssf: {issuer: " + json.dumps(fixture.issuer(app_id)) +
             ", receivers: [{receiverID: \"ztchub\", appID: " + str(app_id) +
-            ", audience: " + json.dumps(audience_uri) +
+            ", audience: " + json.dumps(service_audience) +
             ", deliveryURL: " +
             json.dumps("https://127.0.0.1:" + str(ssf_port) + "/ssf") +
             ", secretRef: \"" + callback_ref + "\", revision: 1}]}\n")
@@ -355,7 +363,7 @@ def main():
             "telemetryBytes: 65536, queueMem: 1073741824, "
             "expectedAgents: 2, publishersPerAgent: 64, activeFrontEnds: 2, "
             "subscriptionsPerFrontEnd: 2, ")
-        config.write_text(
+        config_text = (
             "listeners: [" +
             "{bind: \"127.0.0.1\", path: \"/ztc\", cert: " +
             json.dumps(str(cert)) + ", key: " + json.dumps(str(key)) +
@@ -368,7 +376,7 @@ def main():
             json.dumps(origin2) + "], port: " + str(second_port) +
             ", ssfPort: " + str(second_ssf_port) + "}],\n" +
             "issuer: " + json.dumps(fixture.issuer(app_id)) +
-            ", audience: " + json.dumps(audience_uri) +
+            ", audience: " + json.dumps(service_audience) +
             ", managementIssuer: " + json.dumps(fixture.issuer(fixture.core_app_id)) +
             ", managementURL: " + json.dumps(fixture.origin) +
             ", managementClientID: " + json.dumps(app["client_id"]) +
@@ -378,15 +386,41 @@ def main():
             + capacity + ("idleTimeout: 900, " if load else "") +
             "minRefreshMS: 1000, fanoutSLOMS: 200, "
             "schedulerTurnWork: 64\n")
+        config.write_text(config_text)
         env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"],
                    ZUM_SSF_CALLBACK_AUTH=callback_auth)
         for var in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(var, None)
-        log = (directory / "ztchub.log").open("ab")
+        for var in ("ZTCHUB_HOSTS", "ZTCHUB_HOSTID"):
+            env.pop(var, None)
+        if cluster:
+            standby_port = free_port()
+            standby_ssf_port = free_port()
+            db_port = free_port()
+            standby_db_port = free_port()
+            hosts = json.dumps({
+                "hot": {"priority": 100, "ip": "127.0.0.1", "port": db_port},
+                "warm": {"priority": 50, "ip": "127.0.0.1", "port": standby_db_port}},
+                separators=(",", ":"))
+            env.update(ZTCHUB_HOSTS=hosts, ZTCHUB_HOSTID="hot")
         hub = subprocess.Popen(hub_command(root, config, directory),
             env=env, stdout=subprocess.PIPE,
-            stderr=log)
+            stderr=subprocess.PIPE)
+        hubs.append(hub)
         wait_line(hub, "ztchub ready")
+        if cluster:
+            standby_config = directory / "ztchub-standby.cf"
+            standby_config.write_text(
+                config_text.replace(str(front_port), str(standby_port))
+                .replace(str(second_port), str(standby_port + 1))
+                .replace(str(ssf_port), str(standby_ssf_port))
+                .replace(str(second_ssf_port), str(standby_ssf_port + 1)))
+            standby_env = dict(env, ZTCHUB_HOSTS=hosts, ZTCHUB_HOSTID="warm")
+            standby = subprocess.Popen(
+                hub_command(root, standby_config, directory), env=standby_env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hubs.append(standby)
+            wait_line(standby, "ztchub ready")
 
         prefix = "/admin/apps/" + str(app_id)
         roles = fixture.request("GET", prefix + "/roles?limit=1000",
@@ -421,6 +455,19 @@ def main():
         assert agent1["id"] != agent2["id"]
         token1 = service_token(fixture, app_id, agent1)
         token2 = service_token(fixture, app_id, agent2)
+        if cluster:
+            probe = run_wire(
+                root, "agent", fixture.issuer(app_id), agent1["id"],
+                "wss://127.0.0.1:" + str(standby_port) + "/ztc", cert,
+                token=token1)
+            try:
+                wait_line(standby, "agent accepted " + agent1["id"], timeout=10)
+            except AssertionError:
+                pass
+            else:
+                stop_process(probe)
+                raise AssertionError("standby admitted an agent")
+            stop_process(probe)
         fixture.cookies = SimpleCookie()
         front_tokens = fixture.login(
             front_client["id"], "Client", app_id, return_tokens=True,
@@ -553,7 +600,6 @@ def main():
             "GET", prefix + "/roles?limit=1000", token=admin)[0]["items"]
         stop_process(hub)
         assert hub.returncode == 0, "hub shutdown failed: " + str(hub.returncode)
-        hub = None
         with socket.socket() as listener:
             listener.settimeout(1)
             try:
@@ -561,18 +607,29 @@ def main():
                 raise AssertionError("ztchub accepted after deactivation")
             except OSError:
                 pass
-        log.close()
-        hub_log = (directory / "ztchub-restart.log").open("ab")
-        hub = subprocess.Popen(hub_command(root, config, directory),
-            env=env, stdout=subprocess.PIPE,
-            stderr=hub_log)
-        wait_line(hub, "ztchub ready")
-        restarted_agent = run_wire(
-            root, "agent", fixture.issuer(app_id), agent1["id"], wss1,
-            cert, token=token1, telemetry=1)
-        agents.append(restarted_agent)
-        wait_line(restarted_agent, "agent ready")
-        wait_line(hub, "agent accepted " + agent1["id"])
+        if cluster:
+            hub = hubs[1]
+            front_port = standby_port
+            second_port = standby_port + 1
+            wss1 = "wss://127.0.0.1:" + str(front_port) + "/ztc"
+            wss2 = "wss://127.0.0.1:" + str(second_port) + "/ztc"
+            restarted_agent = run_wire(
+                root, "agent", fixture.issuer(app_id), agent1["id"], wss1,
+                cert, token=token1, telemetry=1)
+            agents.append(restarted_agent)
+            wait_line(restarted_agent, "agent ready")
+            wait_line(hub, "agent accepted " + agent1["id"])
+        else:
+            hub = None
+            hub = subprocess.Popen(hub_command(root, config, directory),
+                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hubs.append(hub)
+            wait_line(hub, "ztchub ready")
+            restarted_agent = run_wire(
+                root, "agent", fixture.issuer(app_id), agent1["id"], wss1,
+                cert, token=token1, telemetry=1)
+            agents.append(restarted_agent)
+            wait_line(restarted_agent, "agent ready")
         restarted_front = run_wire(
             root, "front", fixture.issuer(app_id), agent1["id"], wss1,
             cert, token=front_token, expect=1)
@@ -630,8 +687,13 @@ def main():
             if not success and process._diagnostic:
                 (directory / ("peer-" + str(index) + ".log")).write_bytes(
                     process._diagnostic)
-        stop_process(hub)
-        shutdown_ok = hub is None or hub.returncode == 0
+        for process in hubs:
+            stop_process(process)
+            if process._diagnostic:
+                (directory / ("hub-" + str(hubs.index(process)) + ".log")).write_bytes(
+                    process._diagnostic)
+        shutdown_ok = (not hubs or not success or
+                       all(process.returncode == 0 for process in hubs))
         success = success and shutdown_ok
         for name in shm_names:
             for suffix in (".ctrl", ".data"):
@@ -655,7 +717,8 @@ def main():
         else:
             print("# failed fixture diagnostics retained in " + str(directory),
                   flush=True)
-        assert shutdown_ok, "hub shutdown failed: " + str(hub.returncode)
+        assert shutdown_ok, "hub shutdown failed: " + ", ".join(
+            str(process.returncode) for process in hubs)
 
 
 if __name__ == "__main__":

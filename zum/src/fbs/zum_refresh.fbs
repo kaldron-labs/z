@@ -1,6 +1,6 @@
 include "zfb_types.fbs";
 namespace Zum.fbs;
-table Grant {
+table Refresh {
   id:[ubyte];
   issuer:string;
   app_i_d:uint64;
@@ -8,40 +8,28 @@ table Grant {
   client_i_d:string;
   credential_i_d:[ubyte];
   audience:string;
-  redirect_u_r_i:string;
   actions:Zfb.Bitmap;
   digest:[ubyte];
-  challenge:[ubyte];
-  binding_digest:[ubyte];
-  pkce_challenge:[ubyte];
-  oauth_state:string;
+  spent:[Zfb.Bytes];
   auth_version:uint64;
   auth_time:int64;
   created:int64;
   expires:int64;
-  kind:int8;
-  purpose:int8;
+  generation:uint32;
   state:int8;
   owner:Zfb.UInt128;
-  user_name:string;
-  user_handle:[ubyte];
   requested_role_i_ds:[uint64];
   role_i_ds:[uint64];
-  label:string;
   user_version:uint64 = 1;
   client_version:uint64;
   membership_version:uint64;
   policy_version:uint64;
   evidence_version:uint64;
   authority_source:int8;
-  actor:string;
-  oauth_state_present:bool;
   scope:string;
   nonce:string;
   authority_provider_i_d:uint64;
-  prompt:string;
-  max_age:uint64;
-  prompt_present:bool;
-  max_age_present:bool;
+  version:uint64 = 1;
+  updated:int64;
 }
-root_type Grant;
+root_type Refresh;

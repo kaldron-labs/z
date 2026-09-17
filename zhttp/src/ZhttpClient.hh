@@ -773,7 +773,7 @@ private:
     Builder_<false, false> builder{
       app, m_app->authority(), true,
       m_operationOK, m_requestMethod, m_target};
-    auto tx = m_link->transmitTx_(builder);
+    auto tx = m_link->transmit_(builder);
     if (!builder.begin(tx))
       return failTx_();
     m_commit.headers = true;
@@ -1587,7 +1587,7 @@ public:
     return tx;
   }
   template <typename Builder>
-  auto transmitTx_(Builder &builder) { return transmit(builder); }
+  auto transmit_(Builder &builder) { return transmit(builder); }
   void finish() { }
   bool active() const { return m_native && m_streamID; }
   void disconnect() {
@@ -1708,7 +1708,7 @@ public:
   template <typename Builder>
   auto transmit(Builder &) { return txStream(); }
   template <typename Builder>
-  auto transmitTx_(Builder &) { return m_native->txStream_(); }
+  auto transmit_(Builder &) { return m_native->txStream_(); }
   void finish() { }
   template <typename Done>
   void complete(Done &&done) {
@@ -3647,7 +3647,7 @@ public:
     return transmit_(builder, m_stream->txStream());
   }
   template <typename Builder>
-  auto transmitTx_(Builder &builder) {
+  auto transmit_(Builder &builder) {
     return transmit_(builder, m_stream->txStream_());
   }
   template <typename Builder, typename Tx>
@@ -4348,7 +4348,7 @@ public:
     template <typename Builder>
     auto transmit(Builder &builder) { return m_link->transmit(builder); }
     template <typename Builder>
-    auto transmitTx_(Builder &builder) { return m_link->transmitTx_(builder); }
+    auto transmit_(Builder &builder) { return m_link->transmit_(builder); }
     void finish() { }
     template <typename State> void responseHeadersParsed(State *) { }
     template <typename State> void responseBodyBytes(State *) { }

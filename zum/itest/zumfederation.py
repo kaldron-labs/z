@@ -46,7 +46,7 @@ def exercise(fixture, provider):
         return fixture.request("GET", path, token=admin)[0]["items"]
 
     audience_uri = "https://federation.example/api"
-    app = create("/admin/apps", {"name": "federation", "integration": "catalogClient",
+    app = create("/admin/apps", {"name": "federation",
                                   "audience": audience_uri})
     app_id = app["appID"]
     provider.redirects.add(fixture.issuer(app_id) + "/v1/oidc/callback")
@@ -106,11 +106,15 @@ def exercise(fixture, provider):
     assert not members, "upstream authority must not create local role assignments"
     grants = [grant for grant in query("/admin/grants?limit=1000")
               if grant["userID"] == users[0]["id"] and grant["appID"] == app_id]
-    assert grants and all(grant["roleIDs"] == [role["id"]] for grant in grants)
+    # Completed authorization does not retain a Grant: refresh-family state
+    # lives in the dedicated refresh table and mapped authority is recorded in
+    # evidence below.
+    assert not grants
     def evidence():
-        rows = [row for row in query("/admin/evidence?limit=1000")
+        all_rows = query("/admin/evidence?limit=1000")
+        rows = [row for row in all_rows
                 if row["appID"] == app_id and row["userID"] == users[0]["id"]]
-        assert len(rows) == 1
+        assert len(rows) == 1, f"external evidence mismatch: rows={rows!r} all={all_rows!r}"
         return rows[0]
 
     observed = evidence()
@@ -180,7 +184,7 @@ def exercise(fixture, provider):
     # and subject without inheriting the first provider's mappings or evidence.
     isolated_uri = "https://provider-isolation.example/api"
     isolated_app = create("/admin/apps", {
-        "name": "provider-isolation", "integration": "catalogClient",
+        "name": "provider-isolation",
         "audience": isolated_uri})
     isolated_id = isolated_app["appID"]
     provider.redirects.add(fixture.issuer(isolated_id) + "/v1/oidc/callback")

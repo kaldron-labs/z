@@ -31,6 +31,10 @@
 
 namespace Zum {
 
+namespace DaemonCapacity {
+  enum { RequestAdmission = 64, BootstrapAdmission = 1 };
+}
+
 ZrestCatalogImpl(PublicCatalog)
 ZrestCatalogImpl(HealthCatalog)
 ZrestCatalogImpl(BootstrapCatalog)
@@ -56,6 +60,7 @@ struct Options {
   Zum::String	rpName{"Zum"};
   uint32_t	port = 8080;
   uint32_t	bootstrapTTL = 900;
+  uint32_t	cleanupInterval = 300;
   uint32_t	oidcOrigins = Zum::OIDCHTTP::DefaultOrigins;
   bool		debug = false;
   bool		bootstrapReissue = false;
@@ -78,6 +83,8 @@ ZfStruct(, (Options, CLI),
   (((rpName),	(CLI::Long<"rp-name">)),	(String, "Zum")),
   (((bootstrapTTL), (CLI::Long<"bootstrap-ttl">,
       (Range<1, 86400>))), (UInt32, 900)),
+  (((cleanupInterval), (CLI::Long<"cleanup-interval">,
+      (Range<0, 86400>))), (UInt32, 300)),
   (((oidcOrigins), (CLI::Long<"oidc-origins">)),
       (UInt32, Zum::OIDCHTTP::DefaultOrigins)),
   (((debug),	(CLI::Flag<'d'>, CLI::Long<"debug">)), (Bool)),
@@ -99,6 +106,7 @@ static void usage(int code)
     "  --admin=LOGIN       initial local administrator login\n"
     "  --bootstrap-output=FILE  owner-only enrollment URL output\n"
     "  --bootstrap-ttl=N   enrollment capability seconds (default: 900)\n"
+    "  --cleanup-interval=N  cleanup period seconds, 0 disables (default: 300)\n"
     "  --oidc-origins=N    maximum cached OIDC origins (default: 32)\n"
     "  --addr=IP           HTTP listen address (default: 127.0.0.1)\n"
     "  --port=N            HTTP listen port (default: 8080)\n"
@@ -306,8 +314,10 @@ int main(int argc, char **argv)
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
     db->bootstrapRequests = new Zum::Requests{};
-    if (!db->requests->init(&mx, mx.sid("shard"), 64) ||
-	!db->bootstrapRequests->init(&mx, mx.sid("shard"), 1))
+    if (!db->requests->init(&mx, mx.sid("shard"),
+          Zum::DaemonCapacity::RequestAdmission) ||
+	!db->bootstrapRequests->init(&mx, mx.sid("shard"),
+          Zum::DaemonCapacity::BootstrapAdmission))
       throw ZeEXCEPT(Fatal, "zumd", "request initialization failed");
     db->init(ZdbCf{cf->resolve("zdb")}, &mx,
       ZdbHandler{.upFn = dbUp, .downFn = dbDown});
@@ -366,10 +376,10 @@ int main(int argc, char **argv)
               .rpName = options.rpName, .admin = options.admin,
               .dbKey = dbKey, .oidcHTTP = oidcHTTP.fn(),
               .ssfSecret = ZuMv(ssfSecret),
-              .ssfReceivers = ZuMv(ssfReceivers)});
+              .ssfReceivers = ZuMv(ssfReceivers),
+              .cleanupInterval = options.cleanupInterval});
         if (!daemonInited || !daemon.start())
           throw ZeEXCEPT(Fatal, "zumd", "HTTP server start failed");
-        std::cout << "zumd: listening" << std::endl;
       }
       uint64_t prepared = 0;
       bool reissue = options.bootstrapReissue;

@@ -105,9 +105,9 @@ static bool insertIssuer(Zum::DBContext *context)
 	if (!row) { wake(false); return; }
 	new (row->ptr()) Zum::Issuer{.id = Zum::String{"issuer"}};
 	wake(row->commit());
-      });
-    });
-  });
+	    });
+	  });
+	});
 }
 
 template <typename T>
@@ -180,10 +180,10 @@ static bool stageEnrollment(Zum::DB *db, Zum::DBContext *context)
 	    .data = ZuMv(payload)
 	  };
 	  wake(bool(row->commit()));
+	      });
+	    });
+	  });
 	});
-      });
-    });
-  });
 }
 
 static bool stageAppEnrollment(
@@ -196,7 +196,6 @@ static bool stageAppEnrollment(
     .audience = Zum::String{"https://orders.example/"} << appID,
     .clientID = Zum::String{clientID},
     .secretDigest = Zum::Bytes{ZuBSpan{"verifier"}},
-    .clientType = Zum::ClientType::Confidential, .catalogClient = true,
     .created = 100, .catalogPublishOp = catalogPublishOp,
     .operationQueryOp = operationQueryOp,
     .request = Zum::IdemRequest{.actorID = "recovery-admin",
@@ -392,9 +391,9 @@ static AppRollbackState appRollbackState(Zum::DBContext *context)
 	    wake(AppRollbackState{
 	      app ? Zum::App{app->data()} : Zum::App{},
 	      client ? Zum::Client{client->data()} : Zum::Client{}});
+	    });
 	  });
-      });
-    });
+	});
   });
 }
 
@@ -413,10 +412,10 @@ static bool enrollmentRecovered(Zum::DBContext *context)
 	      !user->data().owner && cred &&
 	      cred->data().state == Zum::State::Active &&
 	      !cred->data().owner && cred->data().userID == 42);
+	      });
+	    });
 	  });
-      });
-    });
-  });
+	});
 }
 
 static bool appEnrollmentRecovered(Zum::DBContext *context)
@@ -429,39 +428,32 @@ static bool appEnrollmentRecovered(Zum::DBContext *context)
 	    context, app = ZuMv(app),
 	    wake = ZuMv(wake)
 	  ](ZdbRowRef<Zum::Client> client) mutable {
-	    context->clientAccess->find<0>(0,
-	      ZuFwdTuple(ZuCSpan{"svc_orders"}, Zum::AppID{1}), [context,
-	      app = ZuMv(app),
-	      client = ZuMv(client), wake = ZuMv(wake)
-	    ](ZdbRowRef<Zum::ClientAccess> clientAccess) mutable {
-	      context->adminAccess->find<0>(0,
+	    context->adminAccess->find<0>(0,
 		ZuFwdTuple(Zum::ActorKind::Client,
 		  ZuCSpan{"svc_orders"}, Zum::AppID{9}), [context,
 		app = ZuMv(app),
-		client = ZuMv(client), clientAccess = ZuMv(clientAccess),
+		client = ZuMv(client),
 		wake = ZuMv(wake)
 	      ](ZdbRowRef<Zum::AdminAccess> adminAccess) mutable {
 		context->authPolicies->find<0>(0, ZuFwdTuple(Zum::AppID{9}), [
 		  app = ZuMv(app),
-		  client = ZuMv(client), clientAccess = ZuMv(clientAccess),
+		  client = ZuMv(client),
 		  adminAccess = ZuMv(adminAccess), wake = ZuMv(wake)
 		](ZdbRowRef<Zum::AuthPolicy> policy) mutable {
 		  wake(app && app->data().state == Zum::State::Active &&
 		    app->data().version == 2 && !app->data().owner &&
 		    app->data().audience == "https://orders.example/9" && client &&
-		    client->data().appID == 1 && !client->data().owner &&
+		    client->data().appID == 9 && !client->data().owner &&
 		    client->data().secretDigest == ZuBSpan{"verifier"} &&
-		    clientAccess && !clientAccess->data().owner &&
-		    clientAccess->data().appID == 1 && adminAccess &&
+		    adminAccess &&
 		    !adminAccess->data().owner && adminAccess->data().appID == 9 &&
 		    policy && !policy->data().owner && policy->data().appID == 9);
 		});
 	      });
 	    });
+	    });
 	  });
-      });
-    });
-  });
+	});
 }
 
 template <typename T>
@@ -1006,6 +998,7 @@ static bool stageCatalog(Zum::DB *db, Zum::DBContext *context,
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
   auto copy = change;
   saga->init(ZuMv(copy));
+  unsigned nSteps = Zum::MSaga::stepCount(saga.ptr());
   Zdb_::SagaPayload payload;
   Zum::MSaga::save(saga, payload);
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
@@ -1013,7 +1006,7 @@ static bool stageCatalog(Zum::DB *db, Zum::DBContext *context,
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
       .type = Zum::CatalogPublish::Type{}(), .id = id,
       .shard = 0, .data = ZuMv(payload)})) return false;
-  for (unsigned step = 0; step < Zum::CatalogPublish::NSteps; ++step) {
+  for (unsigned step = 0; step < nSteps; ++step) {
     if (cut == 2 * step) return true;
     Zdb_::AnyTable *table;
     unsigned phase = step - 1;
@@ -1537,7 +1530,7 @@ static void sagaRecovery()
   ZuCheck(stageAppEnrollment(
     db, 9, "svc_orders", ZdbSagaID{43}, Zum::MgmtOp::catalogPublish, Zum::MgmtOp::operationQuery));
   // Equal operation IDs are a corrupt enrollment payload. It fails after the
-  // app, client, and client-access inserts and must roll them back.
+  // app and client inserts and must roll them back.
   ZuCheck(stageAppEnrollment(
     db, 19, "svc_failed", ZdbSagaID{44}, 1, 1));
   ZuCheck(stopDB(db, context));

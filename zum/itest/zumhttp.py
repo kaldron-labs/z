@@ -563,7 +563,11 @@ class Fixture:
             body = None if method in ("GET", "DELETE") else {}
             self.request(method, path, body, status=401)
             self.request(method, path, body, token="invalid", status=401)
-            if operation["action"] not in workload_actions:
+            # The enrolled service client receives operationQuery through its
+            # AdminAccess row, so this management capability is not emitted
+            # in the resource-catalog actions on its workload token.
+            if (operation["action"] not in workload_actions and
+                    operation["name"] != "operationQuery"):
                 self.request(method, path, body, token=workload, status=403)
         for path, allowed in routes.items():
             method = next(item for item in ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -585,7 +589,8 @@ class Fixture:
         print(f"# administrative operations with observed success: "
               f"{len(observed) - len(missing)}/{len(observed)}")
         print("# administrative operations without success coverage: " + ", ".join(missing))
-        assert not missing, "administrative success coverage is incomplete"
+        assert not missing, "administrative success coverage is incomplete: " + \
+            ", ".join(missing)
         for status in (401, 403, 400, 412, 503):
             absent = sorted(name for name, statuses in observed.items() if status not in statuses)
             print(f"# administrative operations with observed HTTP{status}: "
@@ -841,7 +846,7 @@ class Fixture:
         self.start()
         assert self.request("GET", query, token=token)[0]["items"][0] == current
 
-    def rotate_client(self, token, client_id, original):
+    def rotate_client(self, token, client_id, original, app_id):
         query = "/admin/clients?" + urlencode({"id": client_id})
         path = "/admin/clients/" + client_id + "/rotate-secret"
 
@@ -849,7 +854,7 @@ class Fixture:
             return self.request("GET", query, token=token)[0]["items"][0]
 
         def authenticate(basic, status=200):
-            return self.request("POST", self.oauth(self.core_app_id, "token"), {
+            return self.request("POST", self.oauth(app_id, "token"), {
                 "grant_type": "client_credentials", "scope": "zum.catalog"},
                 form=True, headers={"Authorization": "Basic " + basic}, status=status)
 
@@ -1244,7 +1249,10 @@ class Fixture:
                 self.cli_callback(process, port)
                 output, _ = process.communicate(timeout=30)
                 assert process.returncode == 0, \
-                    "admin CLI login failed: " + output.decode(errors="replace")
+                    "admin CLI login failed rc=" + str(process.returncode) + \
+                    " stdout=" + output.decode(errors="replace") + \
+                    " stderr=" + (self.directory / "admin.log").read_text(
+                        errors="replace")
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -1284,10 +1292,11 @@ class Fixture:
     def ping_service(self, after_login=None, foreign_tokens=()):
         audience = "https://ping.example/api"
         app = self.admin_secret("appEnroll", {
-            "name": "zumpingd", "integration": "catalogClient", "audience": audience,
+            "name": "zumpingd", "audience": audience,
             "$idempotencyKey": secrets.token_hex(16)})["item"]
         stored = self.admin_command("appQuery", {"id": app["appID"]})["items"]
         assert len(stored) == 1 and stored[0]["audience"] == audience
+        assert self.admin_command("clientQuery", {"id": "zumping"})["items"] == []
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
@@ -1339,37 +1348,47 @@ class Fixture:
                             pending = lines.pop()
                             if any(line.startswith(b"zumpingd listening on port ") for line in lines):
                                 break
-                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
-                    try:
-                        connection.request("GET", "/ping")
-                        response = connection.getresponse()
-                        response.read()
-                        assert response.status == 401
-                        for method, path in (("GET", "/authorize"),
-                                             ("POST", "/token"),
-                                             ("POST", "/revoke")):
-                            connection.request(method, path)
+                    def request_service(method, path, headers={}):
+                        connection = http.client.HTTPConnection(
+                            "127.0.0.1", port, timeout=15)
+                        try:
+                            connection.request(method, path, headers=headers)
                             response = connection.getresponse()
                             response.read()
-                            assert response.status == 404, \
-                                "resource server exposes an OAuth facade"
-                        for foreign in foreign_tokens:
-                            claims = self.verify_jwt(foreign)
-                            assert claims["iss"] == self.issuer(claims["zum_app_id"])
-                            assert claims["aud"] != audience
-                            assert claims["iat"] <= time.time() < claims["exp"]
-                            connection.request("GET", "/ping",
-                                               headers={"Authorization": "Bearer " + foreign})
-                            response = connection.getresponse()
-                            response.read()
-                            assert response.status == 401, "ping accepted a different application's token"
-                    finally:
-                        connection.close()
+                            return response.status
+                        finally:
+                            connection.close()
+                    assert request_service("GET", "/ping") == 401
+                    for method, path in (("GET", "/authorize"),
+                                         ("POST", "/token"),
+                                         ("POST", "/revoke")):
+                        assert request_service(method, path) == 404, \
+                            "resource server exposes an OAuth facade"
+                    for foreign in foreign_tokens:
+                        claims = self.verify_jwt(foreign)
+                        assert claims["iss"] == self.issuer(claims["zum_app_id"])
+                        assert claims["aud"] != audience
+                        assert claims["iat"] <= time.time() < claims["exp"]
+                        assert request_service("GET", "/ping", {
+                            "Authorization": "Bearer " + foreign}) == 401, \
+                            "ping accepted a different application's token"
                     catalog = {}
                     for operation in ("actionQuery", "roleQuery"):
                         records = self.admin_command(operation, {"appID": app["appID"]})["items"]
                         assert len(records) == 1 and records[0]["name"] == "ping"
                         catalog[operation] = records
+                    clients = self.admin_command("clientQuery", {"id": "zumping"})["items"]
+                    assert len(clients) == 1 and clients[0]["appID"] == str(app["appID"])
+                    access = self.admin_command("clientAccessQuery", {
+                        "appID": app["appID"], "clientID": "zumping"})["items"]
+                    assert len(access) == 1 and access[0]["roleIDs"] == [
+                        catalog["roleQuery"][0]["id"]]
+                    access_query = "/admin/apps/" + app["appID"] + \
+                        "/client-access?clientID=zumping"
+                    self.state_cycle(access_query,
+                                     "/admin/apps/" + app["appID"] +
+                                     "/client-access/zumping/state",
+                                     self.login(), lambda: None)
                     if previous is not None:
                         assert catalog == previous, "ping restart changed its catalog"
                     else:
@@ -1446,17 +1465,9 @@ class Fixture:
 
     def ping_registration(self, app, catalog, service_port):
         app_id = app["appID"]
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
-        client = self.admin_secret("clientAdd", {
-            "appID": app_id, "label": "zumping", "type": "native",
-            "redirectURIs": [f"http://127.0.0.1:{port}/callback"],
-            "grants": 5, "refreshAllowed": True,
-            "$idempotencyKey": secrets.token_hex(16)})["item"]
-        self.admin_command("clientAccessSet", {
-            "appID": app_id, "clientID": client["id"],
-            "roleIDs": [catalog["roleQuery"][0]["id"]], "$ifNoneMatch": "*"})
+        client = self.admin_command("clientQuery", {"id": "zumping"})["items"][0]
+        port = 8081
+        assert client["redirectURIs"] == [f"http://127.0.0.1:{port}/callback"]
         config = self.directory / "zumping.cf"
         config.write_text(f'issuerURL: {json.dumps(self.issuer(app_id))}, '
                           f'serviceURL: "http://127.0.0.1:{service_port}", '
@@ -2045,7 +2056,7 @@ def main():
             assert len(initial["items"]) == 1
             app_input = {
                 "name": "http-orders", "label": "HTTP Orders",
-                "integration": "catalogClient", "audience": "https://orders.example/api"}
+                "audience": "https://orders.example/api"}
             app_headers = {"Idempotency-Key": secrets.token_hex(16)}
             app = fixture.admin_secret("appEnroll", dict(app_input, **{
                 "$idempotencyKey": app_headers["Idempotency-Key"]}))
@@ -2053,7 +2064,8 @@ def main():
             basic = base64.b64encode((app["item"]["client_id"] + ":" +
                                       app["item"]["client_secret"]).encode()).decode()
             app_id = app["item"]["appID"]
-            workload, _ = fixture.request("POST", fixture.oauth(fixture.core_app_id, "token"), {
+            assert app["item"]["client_id"] == app_input["name"]
+            workload, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
                 "grant_type": "client_credentials", "scope": "zum.catalog"},
                 form=True, headers={"Authorization": "Basic " + basic})
             assert workload["access_token"] and "refresh_token" not in workload
@@ -2111,12 +2123,14 @@ def main():
                     "idempotencyKey": failed_headers["Idempotency-Key"]}), token=token)
                 assert failed["items"] == []
             def workload_token(status=200):
-                return fixture.request("POST", fixture.oauth(fixture.core_app_id, "token"), {
+                return fixture.request("POST", fixture.oauth(app_id, "token"), {
                     "grant_type": "client_credentials", "scope": "zum.catalog"},
                     form=True, headers={"Authorization": "Basic " + basic}, status=status)
 
             def issuer_unavailable():
-                workload_token()
+                # The workload issuer is the enrolled app itself, so its
+                # token endpoint rejects requests while the app is suspended.
+                workload_token(status=400)
                 fixture.request("GET", "/.well-known/"
                                 "oauth-authorization-server/oauth2/" + app_id,
                                 status=500)
@@ -2141,21 +2155,13 @@ def main():
             access_path = "/admin/apps/" + core_id + "/client-access"
             access_query = access_path + "?" + urlencode({"clientID": app["item"]["client_id"]})
             access, _ = fixture.request("GET", access_query, token=token)
-            access = access["items"][0]
-            access_row_path = access_path + "/" + app["item"]["client_id"]
-            fixture.request("PUT", access_row_path,
-                            {field: access[field] for field in
-                             ("roleIDs",)}, token=token,
-                            headers={"If-Match": access["etag"]})
+            assert access["items"] == []
             workload_token()
             client_query = "/admin/clients?" + urlencode({"id": app["item"]["client_id"]})
             client, _ = fixture.request("GET", client_query, token=token)
             fixture.request("PATCH", "/admin/clients/" + app["item"]["client_id"],
                             {"label": "Updated service client"}, token=token,
                             headers={"If-Match": client["items"][0]["etag"]})
-            access_version = fixture.state_cycle(
-                access_query, access_row_path + "/state",
-                token, lambda: workload_token(400))
             workload_token()
             fixture.stop()
             fixture.start()
@@ -2196,7 +2202,7 @@ def main():
             assert current["items"][0]["label"] == update["label"]
             assert current["items"][0]["authVersion"] == app_version
             access, _ = fixture.request("GET", access_query, token=token)
-            assert access["items"][0]["authVersion"] == access_version
+            assert access["items"] == []
             client, _ = fixture.request("GET", client_query, token=token)
             assert client["items"][0]["label"] == "Updated service client"
             workload_token()
@@ -2209,7 +2215,7 @@ def main():
             foreign_access = fixture.app_login(token, app_id, action_id, app_input["audience"])
             fixture.administrative_queries(token, app_id)
             fixture.numeric_filters(token, app_id, action_id)
-            fixture.rotate_client(token, app["item"]["client_id"], basic)
+            fixture.rotate_client(token, app["item"]["client_id"], basic, app_id)
             fixture.signing_rotation(token)
             assert fixture.verify_jwt(foreign_access)["actions"] == ["ping"]
             fixture.ping_service(foreign_tokens=(token, foreign_access))

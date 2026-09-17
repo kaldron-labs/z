@@ -268,11 +268,22 @@ private:
 	self->finish_(AuthorityError::Invalid);
 	return;
       }
+	self->m_data.app = app->data();
       if (!self->m_interactive) {
+	// Every application has one default same-name confidential client. It
+	// authenticates the service itself, so it does not need a resource-role
+	// ClientAccess row merely to publish its own catalog.
+	if (self->m_data.client.id == app->data().name) {
+	  self->m_data.access = ClientAccess{
+	    .clientID = self->m_data.client.id, .appID = app->data().id,
+	    .state = State::Active};
+	  self->m_data.selection.scope = "zum.catalog";
+	  self->scopesDone_();
+	  return;
+	}
 	self->clientAccess_();
 	return;
       }
-      self->m_data.app = app->data();
       self->principal_();
     });
   }
@@ -469,9 +480,13 @@ private:
 	finish_(AuthorityError::Invalid);
 	return;
       }
-      error = selectGrantedScopes(m_data.client, m_data.access,
-        m_data.access.roleIDs,
-	m_requestedPresent, m_requested, m_data.scopes, m_data.selection);
+	if (m_data.client.id == m_data.app.name &&
+	    m_requestedPresent && m_requested == "zum.catalog")
+	  error = ScopeError::OK;
+	else
+	  error = selectGrantedScopes(m_data.client, m_data.access,
+	    m_data.access.roleIDs, m_requestedPresent, m_requested,
+	    m_data.scopes, m_data.selection);
     }
     if (error) { finish_(error); return; }
 
@@ -586,6 +601,36 @@ void loadGrantAuth(
   ZmRef<AuthorityLoad_> load = new AuthorityLoad_{context, ZuMv(grant),
     ZuMv(client), requestedPresent, ZuMv(requested), now, ZuMv(complete)};
   load->start();
+}
+
+void loadGrantAuth(
+    DBContext *context, Refresh refresh, Client client, bool requestedPresent,
+    String requested, int64_t now, AuthorityFn complete)
+{
+  Grant grant{
+    .authVersion = refresh.authVersion,
+    .userVersion = refresh.userVersion,
+    .clientVersion = refresh.clientVersion,
+    .membershipVersion = refresh.membershipVersion,
+    .policyVersion = refresh.policyVersion,
+    .evidenceVersion = refresh.evidenceVersion,
+    .appID = refresh.appID,
+    .userID = refresh.userID,
+    .issuer = refresh.issuer,
+    .clientID = refresh.clientID,
+    .audience = refresh.audience,
+    .authoritySource = refresh.authoritySource,
+    .authTime = refresh.authTime,
+    .requestedRoleIDs = refresh.requestedRoleIDs,
+    .roleIDs = refresh.roleIDs,
+    .actions = refresh.actions,
+    .credentialID = refresh.credentialID,
+    .scope = refresh.scope,
+    .nonce = refresh.nonce,
+    .authorityProviderID = refresh.authorityProviderID
+  };
+  loadGrantAuth(context, ZuMv(grant), ZuMv(client), requestedPresent,
+    ZuMv(requested), now, ZuMv(complete));
 }
 
 void loadClientAuth(

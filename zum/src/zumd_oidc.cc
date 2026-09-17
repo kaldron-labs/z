@@ -720,6 +720,7 @@ public:
 		  self->m_scheduler->del(&request->timer);
 		  auto complete = ZuMv(request->complete);
 		  request->state = nullptr;
+		  self->clearRequest_(*request);
 		  i.del();
 		  if (complete)
 		    complete(false, Bytes{}, User{}, IDVec{}, Evidence{}, 0);
@@ -732,8 +733,10 @@ public:
 
   bool begin(Bytes grantID, OIDCConfig config, OIDCBeginFn complete)
   {
-    if (!m_up || !grantID || !oidcConfigValid(config) || !complete)
+    if (!m_up || !grantID || !oidcConfigValid(config) || !complete) {
+      clearSecret_(config);
       return false;
+    }
     invoke_([self = ZmRef<OIDCState>{this}, grantID = ZuMv(grantID),
         config = ZuMv(config), complete = ZuMv(complete)]() mutable {
       self->beginSelect_(ZuMv(grantID), ZuMv(config), ZuMv(complete));
@@ -819,6 +822,7 @@ private:
     if (!randomText(m_rng, request->stateID) ||
         !randomText(m_rng, request->nonce) ||
         !randomText(m_rng, request->verifier)) {
+      clearSecret_(config);
       complete(false, String{});
       return;
     }
@@ -832,6 +836,7 @@ private:
     challenge.length(ZuBase64URL::enclen(digest.length()));
     challenge.length(ZuBase64URL::encode(challenge.span(), digest));
     if (!challenge || m_pending.find(request->stateID)) {
+      clearSecret_(config);
       complete(false, String{});
       return;
     }
@@ -1073,6 +1078,21 @@ private:
     complete_(request, false, {}, {}, {}, {}, 0);
   }
 
+  static void clearRequest_(OIDCReq &request)
+  {
+    if (request.verifier.mutable_())
+      ZuClear(request.verifier.data(), request.verifier.length());
+    request.verifier.null();
+    if (request.idToken.mutable_())
+      ZuClear(request.idToken.data(), request.idToken.length());
+    request.idToken.null();
+    if (request.accessToken.mutable_())
+      ZuClear(request.accessToken.data(), request.accessToken.length());
+    request.accessToken.null();
+    clearSecret_(request.config);
+    request.config = {};
+  }
+
   void complete_(
       ZmRef<OIDCReq> request, bool ok, Bytes grantID, User user,
       IDVec roleIDs, Evidence evidence, int64_t authTime)
@@ -1080,19 +1100,7 @@ private:
     m_scheduler->del(&request->timer);
     m_pending.del(request->stateID);
     request->state = nullptr;
-    if (request->verifier.mutable_())
-      ZuClear(request->verifier.data(), request->verifier.length());
-    request->verifier.null();
-    if (request->idToken.mutable_())
-      ZuClear(request->idToken.data(), request->idToken.length());
-    request->idToken.null();
-    if (request->accessToken.mutable_())
-      ZuClear(request->accessToken.data(), request->accessToken.length());
-    request->accessToken.null();
-    if (request->config.clientSecret.mutable_())
-      ZuClear(request->config.clientSecret.data(),
-        request->config.clientSecret.length());
-    request->config = {};
+    clearRequest_(*request);
     auto complete = ZuMv(request->complete);
     if (complete)
       complete(ok, ZuMv(grantID), ZuMv(user), ZuMv(roleIDs),

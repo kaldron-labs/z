@@ -467,11 +467,12 @@ public:
     Stream	*m_stream;
   };
 
-  auto txStream() { return TxStream_<true>{*this}; }
-  auto txStream_() { // direct call from within tx thread
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC stream txStream_ outside Tx thread",
-      return TxStream_<true>{*this});
+  auto txStream() {
+    ZmAssert(!txInvoked_());
+    return TxStream_<true>{*this};
+  }
+  TxStream_<false> txStream_() { // direct call from within tx thread
+    ZmAssert(txInvoked_());
     return TxStream_<false>{*this};
   }
 

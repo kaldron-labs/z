@@ -141,21 +141,21 @@ struct Handler_ {
       } else {
 	Offset<void> offsets[NestedFields::N];
 	ZuUnroll::all<NestedFields>(
-	    [&fbb_, &o, offsets = &offsets[0]]<typename Field>() {
-	      using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
-	      offsets[OffsetIndex{}] =
-		Field::template save<Facet, Filter>(fbb_, o);
-	    });
+	  [&fbb_, &o, offsets = &offsets[0]]<typename Field>() {
+	    using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
+	    offsets[OffsetIndex{}] =
+	      Field::template save<Facet, Filter>(fbb_, o);
+	  });
 	ZfbBuilder<O> fbb{fbb_};
 	ZuUnroll::all<Fields>(
-	    [&fbb, &o, offsets = &offsets[0]]<typename Field>() {
-	      if constexpr (IsNested<Field>{}) {
-		using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
-		Field::template save<Facet, Filter>(
-		  fbb, o, offsets[OffsetIndex{}]);
-	      } else
-		Field::template save<Facet, Filter>(fbb, o);
-	    });
+	  [&fbb, &o, offsets = &offsets[0]]<typename Field>() {
+	    if constexpr (IsNested<Field>{}) {
+	      using OffsetIndex = ZuTypeIndex<Field, NestedFields>;
+	      Field::template save<Facet, Filter>(
+		fbb, o, offsets[OffsetIndex{}]);
+	    } else
+	      Field::template save<Facet, Filter>(fbb, o);
+	  });
 	return fbb.Finish();
       }
     }

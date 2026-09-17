@@ -677,8 +677,8 @@ void DB::sagaActivateFail(ZeException e)
 {
   ZmAssert(invoked());
   if (m_sagaState != SagaState::Rebuilding) return;
+  e.severity = Ze::Fatal; // ensure Fatal
   ZiLogEvent(ZuMv(e));
-  ZiLOG(Fatal, "Zdb", "saga activation failed");
   ++m_sagaEpoch;
   m_sagaState = SagaState::Inactive;
   sagaDrain([this]() {

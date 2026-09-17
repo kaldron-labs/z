@@ -980,6 +980,8 @@ bool codeFamilyPrepare(
   next.digest = ZuMv(refresh.digest);
   next.authVersion = authVersion;
   next.userVersion = code.userVersion;
+  next.clientVersion = code.clientVersion;
+  next.membershipVersion = code.membershipVersion;
   next.policyVersion = code.policyVersion;
   next.evidenceVersion = code.evidenceVersion;
   next.authoritySource = code.authoritySource;

@@ -56,13 +56,41 @@ struct CatalogRoleVec : public CatalogRoleArray {
   friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogRoleVec *);
 };
 
+struct CatalogClient {
+  String id;
+  String label;
+  String type;
+  StringVec redirectURIs;
+  uint8_t grants = 0;
+  bool refreshAllowed = false;
+  StringVec identityScopes;
+  StringVec roles;
+};
+ZfStruct(, (CatalogClient, JSON),
+  (((id),		(Required)),	(String)),
+  (((label),		(JSON::Opt)),	(String)),
+  (((type),		(Required)),	(String)),
+  (((redirectURIs),	(JSON::Opt)),	(StringVec)),
+  (((grants),		(JSON::Opt)),	(UInt8)),
+  (((refreshAllowed),	(JSON::Opt)),	(Bool)),
+  (((identityScopes),	(JSON::Opt)),	(StringVec)),
+  (((roles),		(JSON::Opt)),	(StringVec)));
+ZuDerive(CatalogClientArray, (ZtArray<CatalogClient,
+  ZtArrayHeapID<"Zum.Catalog.Clients">>));
+struct CatalogClientVec : public CatalogClientArray {
+  ZuDerive_(CatalogClientVec, CatalogClientArray);
+  friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(CatalogClientVec *);
+};
+
 struct CatalogData {
   CatalogActionVec actions;
   CatalogRoleVec roles;
+  CatalogClientVec clients;
 };
 ZfStruct(, (CatalogData, JSON),
   (((actions),		(Required)),	(UDT)),
-  (((roles),		(Required)),	(UDT)));
+  (((roles),		(Required)),	(UDT)),
+  (((clients),		(JSON::Opt)),	(UDT)));
 
 // One operation per remote management call. These values
 // are the built-in action IDs as well as management request identities.

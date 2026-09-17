@@ -326,6 +326,8 @@ public:
 friend Cxn;
 
 private:
+  using Tx::send;
+
   struct AsyncJob;
   using AsyncJobRef = ZmRef<AsyncJob>;
 
@@ -869,11 +871,10 @@ private:
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_link->impl();
-      auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
-	return link->send(ZuMv(buf), m_gen);
+	return m_link->send(ZuMv(buf), m_gen);
       else
-	return link->send_(ZuMv(buf), m_gen);
+	return m_link->send_(ZuMv(buf), m_gen);
     }
 
   private:
@@ -887,11 +888,11 @@ public:
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
   auto txStream() { // App thread(s)
+    ZmAssert(!app()->txInvoked());
     return TxStream_<true>{*this};
   }
-  auto txStream_() { // direct call from within tx thread
-    ZiAssert(app()->txInvoked(), "Ztls", (),
-      "TLS txStream_ outside Tx thread", return TxStream_<true>{*this});
+  TxStream_<false> txStream_() { // direct call from within tx thread
+    ZmAssert(app()->txInvoked());
     return TxStream_<false>{*this};
   }
 
@@ -918,6 +919,7 @@ public:
   bool send(ZmRef<ZiIOBuf> buf) {
     return send(ZuMv(buf), m_tlsGen.load_());
   }
+private:
   bool send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
     if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_() ||
 	gen != m_tlsGen.load_()))
@@ -938,6 +940,7 @@ protected:
   bool send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     return send_(ZuMv(buf), m_tlsGen.load_());
   }
+private:
   bool send_(ZmRef<ZiIOBuf> buf, uint64_t gen) {
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
@@ -1889,6 +1892,7 @@ private:
       Ztc::Hub::linkDeleted_(link);
     }
   }
+protected:
   void stopping_() { m_stopping = true; }
 
 public:

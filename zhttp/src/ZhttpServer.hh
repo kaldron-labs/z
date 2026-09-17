@@ -589,21 +589,10 @@ public:
       tx.plan(HeaderPlan<HdrCatalog, Sets>::Index);
     return tx;
   }
+  template <typename Builder>
+  auto transmit_(Builder &builder) { return transmit(builder); }
   bool active() const { return m_native && m_streamID; }
-  void txComplete(Transport_::TxCompleteFn fn) {
-    m_txComplete = ZuMv(fn);
-  }
-  void txCancel() { m_txComplete = {}; }
-  bool txFence(Transport_::TxCompleteFn fn) {
-    return m_native && m_native->fenceTx(m_streamID, ZuMv(fn));
-  }
-  void finish() {
-    auto fn = ZuMv(m_txComplete);
-    m_txComplete = {};
-    if (!fn) return;
-    if (!m_native || !m_native->finishTx(m_streamID, ZuMv(fn)))
-      fn(false);
-  }
+  void finish() { }
   void disconnect() {
     if (m_native) m_native->close(impl(), m_streamID);
   }
@@ -626,16 +615,12 @@ public:
 
 private:
   void disconnectedTx_() {
-    auto fn = ZuMv(m_txComplete);
-    m_txComplete = {};
     m_native = nullptr;
     m_streamID = 0;
-    if (fn) fn(false);
   }
 
   App		*m_app = nullptr;
   NativeLink	*m_native = nullptr;
-  Transport_::TxCompleteFn m_txComplete;
   uint32_t	m_streamID = 0;
   Session	m_session;
   ZiIP		m_remoteIP;
@@ -692,20 +677,10 @@ public:
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
   auto transmit(Builder &) { return txStream(); }
+  template <typename Builder>
+  auto transmit_(Builder &) { return m_native->txStream_(); }
   bool active() const { return m_native; }
-  void txComplete(Transport_::TxCompleteFn fn) {
-    if (m_native) m_native->armH1Complete(ZuMv(fn));
-    else fn(false);
-  }
-  void txCancel() {
-    if (m_native) m_native->cancelH1Complete();
-  }
-  bool txFence(Transport_::TxCompleteFn fn) {
-    return m_native && m_native->fenceH1(ZuMv(fn));
-  }
-  void finish() {
-    if (m_native) m_native->finishH1();
-  }
+  void finish() { }
   void disconnect() {
     if (m_native) m_native->disconnectNative();
   }
@@ -733,7 +708,6 @@ public:
 
 private:
   void disconnectedTx_() {
-    m_native->resetH1();
     m_native = nullptr;
   }
 
@@ -893,86 +867,9 @@ public:
     Wire::finalWire();
   }
 
+private:
   using Base::send;
-  bool send(ZmRef<ZiIOBuf> buf) {
-    ZiIOBuf *last = buf.ptr();
-    sendingH1_(last);
-    if (!Base::send(ZuMv(buf))) {
-      failedH1_(last);
-      return false;
-    }
-    return true;
-  }
-  bool send(ZmRef<ZiIOBuf> buf, uint64_t generation) {
-    ZiIOBuf *last = buf.ptr();
-    sendingH1_(last);
-    if (!Base::send(ZuMv(buf), generation)) {
-      failedH1_(last);
-      return false;
-    }
-    return true;
-  }
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
-    ZiIOBuf *sent = buf.ptr();
-    auto fn = ZuMv(Transport_::txBufNode(sent)->txComplete);
-    Transport_::txBufNode(sent)->txComplete = {};
-    if (m_h1TxLast == sent) {
-      m_h1TxLast = nullptr;
-      m_h1TxOK = ok;
-    }
-    if (!ok) {
-      auto i = this->txQueue.iter();
-      while (auto queued = i())
-	Transport_::txBufNode(queued)->complete(false);
-    }
-    Base::sent(ZuMv(buf), ok);
-    if (fn)
-      fn(ok);
-  }
-  void armH1Complete(Transport_::TxCompleteFn fn) {
-    m_h1Complete = ZuMv(fn);
-  }
-  void cancelH1Complete() {
-    m_h1Complete = {};
-    m_h1TxLast = nullptr;
-    m_h1TxReady = false;
-  }
-  void resetH1() {
-    auto fn = ZuMv(m_h1Complete);
-    m_h1Complete = {};
-    m_h1TxLast = nullptr;
-    m_h1TxReady = false;
-    if (fn) fn(false);
-  }
-  void finishH1() {
-    auto fn = ZuMv(m_h1Complete);
-    m_h1Complete = {};
-    if (!fn) return;
-    if (!m_h1TxReady) {
-      fn(false);
-      return;
-    }
-    m_h1TxReady = false;
-    if (!m_h1TxLast) {
-      fn(m_h1TxOK);
-      return;
-    }
-    Transport_::txBufNode(m_h1TxLast)->txComplete = ZuMv(fn);
-    m_h1TxLast = nullptr;
-  }
-  bool fenceH1(Transport_::TxCompleteFn fn) {
-    if (!m_h1TxReady) return false;
-    m_h1TxReady = false;
-    if (!m_h1TxLast) {
-      fn(m_h1TxOK);
-      return true;
-    }
-    auto node = Transport_::txBufNode(m_h1TxLast);
-    if (node->txComplete) return false;
-    node->txComplete = ZuMv(fn);
-    m_h1TxLast = nullptr;
-    return true;
-  }
+public:
 
   void connected(Ztls::Connected info) {
     m_version = TLS_::version(info.alpn, m_policy);
@@ -1118,16 +1015,6 @@ public:
   }
 
 private:
-  void sendingH1_(ZiIOBuf *last) {
-    if (m_version != Version::H1) return;
-    m_h1TxLast = last;
-    m_h1TxReady = true;
-  }
-  void failedH1_(ZiIOBuf *last) {
-    if (m_h1TxLast == last) m_h1TxLast = nullptr;
-    m_h1TxOK = false;
-  }
-
   void closeLater_(uint32_t id, bool peer) {
     auto entry = Wire::h2Stream(id);
     if (!entry || entry->closing) return;
@@ -1176,12 +1063,6 @@ private:
   bool			m_down = false;
   bool			m_stopping = false;
 
-  // Tx thread exclusive
-  alignas(Zm::CacheLineSize)
-  Transport_::TxCompleteFn m_h1Complete;
-  ZiIOBuf		*m_h1TxLast = nullptr;
-  bool			m_h1TxOK = true;
-  bool			m_h1TxReady = false;
 };
 
 } // namespace TLS_
@@ -1280,31 +1161,6 @@ struct ServerStream :
   using Logical = typename App::Link;
   using Base::Base;
 
-  ~ServerStream() {
-    m_txFence = {};
-    m_txComplete = {};
-  }
-
-  void txComplete(Transport_::TxCompleteFn fn) {
-    if (this->txCompleted()) {
-      fn(this->txError() == Zquic::StreamError::None);
-      return;
-    }
-    m_txComplete = ZuMv(fn);
-  }
-  void txCancel() { m_txComplete = {}; }
-  bool txFence(Transport_::TxCompleteFn fn) {
-    if (m_txFence) return false;
-    m_txFence = ZuMv(fn);
-    if (this->txDrained()) completeFence_(true);
-    return true;
-  }
-  void txDrained_() { completeFence_(true); }
-  void txComplete_(bool ok) {
-    if (!ok) completeFence_(false);
-    completeTx_(ok);
-  }
-
   int process(Zquic::RxStream &rx) {
     if (Zquic::StreamID::uni(uint64_t(this->id())))
       return CxnStream::process(*this);
@@ -1331,20 +1187,6 @@ struct ServerStream :
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
 
-private:
-  void completeFence_(bool ok) {
-    auto fn = ZuMv(m_txFence);
-    m_txFence = {};
-    if (fn) fn(ok);
-  }
-  void completeTx_(bool ok) {
-    auto fn = ZuMv(m_txComplete);
-    m_txComplete = {};
-    if (fn) fn(ok);
-  }
-
-  Transport_::TxCompleteFn m_txFence;
-
 public:
 
   ZmRef<Logical>	logical;
@@ -1353,8 +1195,6 @@ public:
   bool		remoteEnd = false;
   bool		closing = false;
 
-private:
-  Transport_::TxCompleteFn m_txComplete;
 };
 
 template <typename App>
@@ -1635,17 +1475,19 @@ public:
       &m_native->h3.params);
     return m_stream->txStream();
   }
+  template <typename Builder>
+  auto transmit_(Builder &builder) {
+    using H3Cxn = ZuDecay<decltype(m_native->h3)>;
+    builder.h3(
+      m_native->qpackTx(), &m_native->h3,
+      [](void *ptr, ZuBSpan span) {
+	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
+      },
+      uint64_t(m_stream->id()), m_native->h3PeerCap(),
+      &m_native->h3.params);
+    return m_stream->txStream_();
+  }
   bool active() const { return m_native && m_stream; }
-  void txComplete(Transport_::TxCompleteFn fn) {
-    if (m_stream) m_stream->txComplete(ZuMv(fn));
-    else fn(false);
-  }
-  void txCancel() {
-    if (m_stream) m_stream->txCancel();
-  }
-  bool txFence(Transport_::TxCompleteFn fn) {
-    return m_stream && m_stream->txFence(ZuMv(fn));
-  }
   void finish() {
     if (m_native && m_stream) m_native->finish(m_stream);
   }
@@ -2100,7 +1942,7 @@ private:
     bool empty(Builder &builder) {
       ResponseTx<Profile, Builder, false, false> empty{
 	server, builder};
-      auto tx = link_->transmit(empty);
+      auto tx = link_->transmit_(empty);
       empty.begin(tx);
       empty.finish(tx);
       link_->finish();
@@ -2116,7 +1958,7 @@ private:
   bool sendEmptyResponse_(Link_ &link, Builder &builder) {
     ResponseTx<Profile, Builder, true, true> response{
       this, builder, true};
-    auto tx = link.transmit(response);
+    auto tx = link.transmit_(response);
     response.begin(tx);
     response.finish(tx);
     link.finish();
@@ -2132,7 +1974,7 @@ private:
     if (!BodyPolicy::hasBody(policy) || !bodyAllowed_(method, status)) {
       ResponseTx<Profile, Builder, false, false> response{
 	this, builder, contentLengthForbidden_(method, status)};
-      auto tx = link.transmit(response);
+	auto tx = link.transmit_(response);
       response.begin(tx);
       response.finish(tx);
       link.finish();
@@ -2244,7 +2086,7 @@ private:
       ZuRef<Self> self{static_cast<Self *>(this)};
       bool beginHeaders;
       if (!Server_::streamEnter(state, beginHeaders)) return false;
-      auto tx = link->transmit(response);
+      auto tx = link->transmit_(response);
       if (beginHeaders) response.begin(tx);
       if (beginHeaders && !response.validHeaders()) {
 	failed_(server->m_stats.responseBuildFailures);
@@ -2281,7 +2123,6 @@ private:
       ZuRef<Self> self{static_cast<Self *>(this)};
       if (!closeProducer_()) return;
       if (task) finishTask_();
-      link->txCancel();
     }
 
     void stopTask_() {
@@ -2295,6 +2136,7 @@ private:
       finishTask_();
       response.finish(tx);
       link->finish();
+      link->responseDone_(appResponse, true);
     }
 
     void abort_() {
@@ -2433,17 +2275,12 @@ private:
       --server->m_stats.queuedResponses;
       m_disconnect = m_response->data().disconnect();
       auto response = m_response;
-      auto link = ZmRef(impl());
-      impl()->txComplete(Transport_::TxCompleteFn{
-	[link = ZuMv(link), response_ = response.ptr()](bool ok) mutable {
-	  link->app()->txRun([
-	    link = ZuMv(link), response_, ok]() mutable {
-	    link->responseDone_(response_, ok);
-	  });
-	}});
       if (server->template startResponse_<Profile>(
-	    ZmRef(impl()), ZuMv(response), m_retainedBytes))
+	    ZmRef(impl()), ZuMv(response), m_retainedBytes)) {
+	if (!BodyPolicy::streaming(m_response->data().bodyPolicy()))
+	  responseDone_(m_response.ptr(), true);
 	return;
+      }
       responseBuildFailed_(m_response.ptr());
     }
 
@@ -2454,6 +2291,8 @@ private:
       responseRelease_(m_retainedBytes);
       m_response = nullptr;
       if (!ok) ++server->m_stats.transportFailures;
+	if (!ok)
+	ZiLOG(Warning, "Zhttp", "HTTP response transport failed");
       if (!ok || m_disconnect) {
 	responseCancelPending_();
 	impl()->disconnect();
@@ -2464,14 +2303,13 @@ private:
 
     void responseBuildFailed_(ResBuilder *response) {
       if (m_response.ptr() != response) return;
-      impl()->txComplete({});
       ++impl()->app()->server->m_stats.responseBuildFailures;
+	ZiLOG(Error, "Zhttp", "HTTP response construction failed");
       responseFailed_(response);
     }
 
     void responseAbort_(ResBuilder *response) {
       if (m_response.ptr() != response) return;
-      impl()->txComplete({});
       responseFailed_(response);
     }
 
@@ -2496,7 +2334,6 @@ private:
       if (fn) fn();
       responseCancelPending_();
       if (m_response) {
-	impl()->txCancel();
 	responseRelease_(m_retainedBytes);
 	m_response = nullptr;
       }
@@ -2563,6 +2400,11 @@ private:
 	++parser_.server->m_stats.bodyFailures;
       else
 	++parser_.server->m_stats.parseFailures;
+	ZiLOG(Warning, "Zhttp", ([error](auto &s) {
+	  s << "HTTP request rejected code=" << int(error.code)
+	    << " scope=" << int(error.scope)
+	    << " responsePossible=" << error.responsePossible;
+	}));
       parser_.notify(false);
       finish_();
       terminal = true;

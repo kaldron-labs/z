@@ -2323,7 +2323,7 @@ inline void Saga::insert(
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
   auto shard = row ? row->shard() : Shard{0};
-  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+  ZiAssert(table && table->invoked(shard), "Zdb", (),
     "saga insert invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
     table->insert(ZuMv(row), ZuMv(call));
@@ -2392,7 +2392,7 @@ inline void Saga::update(
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
   auto shard = row ? row->shard() : Shard{0};
-  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+  ZiAssert(table && table->invoked(shard), "Zdb", (),
     "saga update invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
     table->template update<KeyIDs_>(ZuMv(row), ZuMv(call));
@@ -2451,7 +2451,7 @@ inline void Saga::findUpd(
   using Call = SagaUpdate<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
-  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+  ZiAssert(table && table->invoked(shard), "Zdb", (),
     "saga find-update invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
     table->template findUpd<KeyID, KeyIDs_>(shard, ZuMv(key),
@@ -2494,7 +2494,7 @@ inline void Saga::del(
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
   auto shard = row ? row->shard() : Shard{0};
-  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+  ZiAssert(table && table->invoked(shard), "Zdb", (),
     "saga delete invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
     if (row)
@@ -2559,7 +2559,7 @@ inline void Saga::findDel(
   using Call = SagaDelete<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
-  ZiAssert(table && table->invoked(shard), "Zdb", (shard),
+  ZiAssert(table && table->invoked(shard), "Zdb", (),
     "saga find-delete invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
     table->template findDel<KeyID>(shard, key, ZuMv(call));
@@ -3313,7 +3313,12 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan
     if (ZuUnlikely(row.shard >= nShards() ||
 	!M::stepDef(static_cast<M *>(saga), row.step, tableID, op) ||
 	(row.un == nullUN() && op != SagaOp::Delete))) {
-      sagaActivateFail(ZeEXCEPT(Fatal, "Zdb", "invalid recovered saga step"));
+      sagaActivateFail(ZeEXCEPT(
+	Fatal, "Zdb", ([type = ZeString{row.type}, step = row.step,
+		shard = row.shard, un = row.un](auto &s) {
+	  s << "invalid recovered saga step type=" << type
+	    << " step=" << step << " shard=" << shard << " un=" << un;
+	})));
       return;
     }
     ZmRef<AnyTable> table_ = table(tableID);

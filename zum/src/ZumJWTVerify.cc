@@ -167,6 +167,7 @@ static bool loadClaims(
   Principal next;
   next.tokenID = TokenID{
     .issuer = ZuMv(claims.iss), .jti = ZuMv(claims.jti)};
+  next.audience = ZuMv(claims.aud);
   next.subject = ZuMv(claims.sub);
   next.clientID = ZuMv(claims.clientID);
   next.scope = ZuMv(claims.scope);
