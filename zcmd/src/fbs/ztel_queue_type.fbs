@@ -1,7 +1,0 @@
-namespace Ztel.fbs;
-enum QueueType:int8 {
-  Thread = 0,
-  IPC,
-  Rx,
-  Tx
-}
