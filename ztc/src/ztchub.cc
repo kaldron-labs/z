@@ -346,7 +346,8 @@ static Ztc::HubFrame errorFrame(uint64_t subID, ZuCSpan deviceID,
   Zfb::IOBuilder builder{ZuMv(frame)};
   auto device = builder.CreateString(deviceID.data(), deviceID.length());
   auto error = ZfbStruct::save(builder, Ztc::Error{
-    Ztc::ErrorMessage{message}, ZuID{deviceID}, 0, int(code)});
+    Ztc::ErrorMessage{message}, deviceID ? ZuID{deviceID} : ZuID{"inventory"},
+    0, int(code)});
   builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Error,
     error.Union(), subID, device, agentGeneration));
   return builder.buf();
@@ -632,8 +633,31 @@ struct App {
     }
     if (state.agent) {
       if (msg->body_type() == Ztc::fbs::Body::Request) {
-        link.close(Zws::CloseCode::Protocol);
-        return -1;
+	link.close(Zws::CloseCode::Protocol);
+	return -1;
+      }
+      if (msg->body_type() == Ztc::fbs::Body::Telemetry) {
+	auto telemetry = msg->body_as_Telemetry();
+	if (telemetry && !telemetry->seqNo() && !msg->subId() &&
+	    !msg->deviceId() && !msg->agentGen() &&
+	    telemetry->value_type() == Ztc::fbs::TelemetryBody::Shutdown) {
+	  if (!hub->appRemove(state.sessionID, state.generation,
+		Zfb::Load::str(telemetry->id()))) {
+	    link.close(Zws::CloseCode::Policy);
+	    return -1;
+	  }
+	  return 1;
+	}
+	if (telemetry && !telemetry->seqNo() && !msg->subId() &&
+	    !msg->deviceId() && !msg->agentGen() &&
+	    telemetry->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry) {
+	  if (!hub->app(
+		state.sessionID, state.generation, telemetry)) {
+	    link.close(Zws::CloseCode::Policy);
+	    return -1;
+	  }
+	  return 1;
+	}
       }
       // Agent output is correlated by the forwarded sequence number.  The
       // payload is routed below while this link still owns the receive turn.
@@ -680,13 +704,28 @@ struct App {
               unsubscribeFrame(route));
           });
     } else {
-      if (!Ztc::Hubd::validFrontMessage(msg) ||
+      auto request = msg->body_as_Request();
+      bool appRequest = Ztc::Hubd::validAppRequest(msg);
+      if ((!appRequest && !Ztc::Hubd::validFrontMessage(msg)) ||
           (msg->body_as_Request()->interval() &&
             msg->body_as_Request()->interval() < hub->config().minRefreshMS)) {
-        link.close(Zws::CloseCode::Protocol);
-        return -1;
+	link.close(Zws::CloseCode::Protocol);
+	return -1;
       }
       auto sub = msg;
+      if (appRequest) {
+	if (!request->subscribe()) {
+	  hub->appUnsubscribe(state.sessionID, sub->subId());
+	  return 1;
+	}
+	Ztc::HubError::T error = Ztc::HubError::BadReq;
+	if (!hub->appSubscribe(
+	      state.sessionID, sub->subId(), request->interval(), error))
+	  hub->sendFrontend(state.sessionID, errorFrame(sub->subId(), {}, 0,
+	    error, error == Ztc::HubError::DuplicateSub ?
+	    "duplicate subscription" : "invalid App request"));
+	return 1;
+      }
       if (!sub->body_as_Request()->subscribe()) {
         hub->removeSubscription(state.sessionID,
           sub->subId(), [this](Ztc::RouteInfo route) {
@@ -710,9 +749,9 @@ struct App {
         "Ztc.Hub.Frame">}};
       auto requestData = ZfbStruct::ctor<Ztc::Request>(sub->body_as_Request());
       requestData.seqNo = seqNo;
-      auto request = ZfbStruct::save(builder, requestData);
+      auto request_ = ZfbStruct::save(builder, requestData);
       builder.Finish(Ztc::saveMsg(builder,
-        Ztc::fbs::Body::Request, request.Union()));
+        Ztc::fbs::Body::Request, request_.Union()));
       if (!hub->sendAgent(agent, generation, builder.buf())) {
         hub->removeSubscription(state.sessionID, sub->subId());
         hub->sendFrontend(state.sessionID, errorFrame(sub->subId(),

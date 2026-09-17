@@ -101,7 +101,8 @@ def stop_process(process, timeout=20):
 
 def run_wire(root, mode, issuer, device, wss, ca, token=None, cookie=None,
              origin=None, telemetry=1, expect=1, stall_ms=0, payload=0,
-             control_burst=1):
+             control_burst=1, inventory=False, one_shot=False,
+             wait_eos=False):
     executable = root / "ztc" / "itest" / "ztchubwiretest"
     environment = dict(os.environ)
     if token is None:
@@ -117,6 +118,12 @@ def run_wire(root, mode, issuer, device, wss, ca, token=None, cookie=None,
         args.append("--payload=" + str(payload))
     if control_burst != 1:
         args.append("--control-burst=" + str(control_burst))
+    if inventory:
+        args.append("--inventory")
+    if one_shot:
+        args.append("--one-shot")
+    if wait_eos:
+        args.append("--wait-eos")
     if cookie:
         args.append("--cookie=" + cookie)
     if origin:
@@ -648,6 +655,7 @@ def main():
         agent_cf = directory / "agent.cf"
         agent_cf.write_text("loopbackTest: true, maxFrame: 65536\n")
         real_agents = []
+        real_publishers = []
         for index, device in enumerate((agent1, agent2)):
             ring = "ztc-real-" + secrets.token_hex(6)
             registry = "ztc-pubs-" + secrets.token_hex(6)
@@ -665,6 +673,7 @@ def main():
                 cwd=directory, env=agent_env, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
             agents.append(publisher)
+            real_publishers.append(publisher)
             wait_line(publisher, "publisher ready")
             collector = subprocess.Popen([
                 str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
@@ -680,6 +689,24 @@ def main():
             wait_line(front, "front telemetry 1")
             front.wait(timeout=15)
             assert front.returncode == 0
+        inventory = run_wire(
+            root, "front", fixture.issuer(app_id), "", wss1, cert,
+            token=front_token, expect=len(real_agents), inventory=True,
+            wait_eos=True)
+        fronts.append(inventory)
+        wait_line(inventory, "front telemetry " + str(len(real_agents)))
+        stop_process(real_publishers[0])
+        wait_line(inventory, "front eos")
+        inventory.wait(timeout=15)
+        assert inventory.returncode == 0
+        inventory = run_wire(
+            root, "front", fixture.issuer(app_id), "", wss1, cert,
+            token=front_token, expect=len(real_agents) - 1, inventory=True,
+            one_shot=True)
+        fronts.append(inventory)
+        wait_line(inventory, "front telemetry " + str(len(real_agents) - 1))
+        inventory.wait(timeout=15)
+        assert inventory.returncode == 0
         success = True
     finally:
         for index, process in enumerate(fronts + agents):

@@ -45,7 +45,9 @@ struct AgentCf {
     DefltReconnMax = 60,
     DefltTelSize = 1U<<21,
     DefltTelTimeout = 1,
-    DefltReqTimeout = 1
+    DefltReqTimeout = 1,
+    DefltPubGCInterval = 1,
+    DefltPubGCBatch = 100
   };
   static constexpr double DefltReconnBackoff = 2;
 
@@ -62,6 +64,8 @@ struct AgentCf {
   unsigned	telSpin = 0;
   unsigned	telTimeout = DefltTelTimeout;
   unsigned	reqTimeout = DefltReqTimeout;
+  unsigned	pubGCInterval = DefltPubGCInterval;
+  unsigned	pubGCBatch = DefltPubGCBatch;
 	unsigned	upgradeTimeout = 10;
 	unsigned	closeTimeout = 5;
 	unsigned	pingInterval = 30;
@@ -84,6 +88,8 @@ ZfStruct(ZtcAPI, (AgentCf, Cf),
   (((telSpin),		((Range<0U, unsigned(INT_MAX)>))), (UInt32)),
   (((telTimeout),	((Range<1U, 3600U>))),		(UInt32, 1)),
   (((reqTimeout),	((Range<1U, 3600U>))),		(UInt32, 1)),
+  (((pubGCInterval),	((Range<1U, 3600U>))),		(UInt32, 1)),
+  (((pubGCBatch),	((Range<1U, 65536U>))),		(UInt32, 100)),
   (((upgradeTimeout),	((Range<1U, 3600U>))),		(UInt32, 10)),
   (((closeTimeout),	((Range<1U, 3600U>))),		(UInt32, 10)),
   (((pingInterval),	((Range<0U, 3600U>))),		(UInt32)),

@@ -43,7 +43,7 @@ public:
     { m_sched->invoke(ZuFwd<Args>(args)..., m_sid); }
 
 private:
-  void attach_();	// runs on Gtk thread
+  void attach_();		// runs on Gtk thread
   void detach_(DetachFn);	// ''
 
   void wake();
