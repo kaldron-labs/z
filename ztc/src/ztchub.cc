@@ -454,7 +454,7 @@ struct App {
     } else state.egresses.del(egress->id);
     state.sending = true;
     auto server = hold->app();
-    server->txRun([hold = ZuMv(hold), frame = ZuMv(frame)]() mutable {
+    server->txRun([server, hold = ZuMv(hold), frame = ZuMv(frame)]() mutable {
       hold->txStream_([frame = ZuMv(frame)](auto &tx) mutable {
 	tx << ZuBSpan{frame->data(), frame->length};
 	tx.flush();

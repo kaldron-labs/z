@@ -208,9 +208,9 @@ static void transmit(
 {
   if (!frame || !generation) return;
   auto link = state->link;
-  state->client.txRun([
+  state->client.rxRun([
       state, link = ZuMv(link), frame = ZuMv(frame), generation]() mutable {
-    ZmAssert(state->client.txInvoked());
+    ZmAssert(state->client.rxInvoked());
     if (state->currentGeneration.load_() != generation || !link)
       return;
     link->txStream([frame = ZuMv(frame)](auto &tx) mutable {
