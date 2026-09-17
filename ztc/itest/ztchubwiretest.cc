@@ -51,6 +51,9 @@ struct Options {
   uint32_t stallMS = 0;
   uint32_t payload = 0;
   uint32_t controlBurst = 1;
+  bool inventory = false;
+  bool oneShot = false;
+  bool waitEOS = false;
   bool help = false;
 };
 
@@ -67,6 +70,9 @@ ZfStruct(, (Options, CLI),
   (((stallMS), (CLI::Long<"stall-ms">)), (UInt32, 0)),
   (((payload), (CLI::Long<"payload">)), (UInt32, 0)),
   (((controlBurst), (CLI::Long<"control-burst">)), (UInt32, 1)),
+  (((inventory), (CLI::Long<"inventory">)), (Bool)),
+  (((oneShot), (CLI::Long<"one-shot">)), (Bool)),
+  (((waitEOS), (CLI::Long<"wait-eos">)), (Bool)),
   (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 using Frame = ZtArray<uint8_t,
@@ -89,13 +95,13 @@ static Frame finish(Zfb::Builder &builder)
   return frame;
 }
 
-static Frame subscribe(ZuCSpan deviceID)
+static Frame subscribe(ZuCSpan deviceID, uint32_t interval)
 {
   Zfb::Builder builder;
   auto device = builder.CreateString(deviceID.data(), deviceID.length());
-  auto request = ZfbStruct::save(builder, Ztc::Request{
-    .seqNo = 0, .interval = 1000,
-    .group = uint8_t(Ztc::fbs::Group::App), .subscribe = true});
+  auto filter = builder.CreateString("*");
+  auto request = Ztc::fbs::CreateRequest(builder, 0,
+    Ztc::fbs::Group::App, filter, interval, true);
   builder.Finish(Ztc::saveMsg(
     builder, Ztc::fbs::Body::Request, request.Union(), 1, device));
   return finish(builder);
@@ -130,11 +136,15 @@ static Frame telemetry(uint64_t seqNo, uint32_t payload)
   return finish(builder);
 }
 
-static Frame unsubscribe(ZuCSpan deviceID, uint64_t subID)
+static Frame unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
 {
   Zfb::Builder builder;
   auto device = builder.CreateString(deviceID.data(), deviceID.length());
-  auto value = ZfbStruct::save(builder, Ztc::Request{.seqNo = 0});
+  auto filter = inventory ? builder.CreateString("*") :
+    flatbuffers::Offset<flatbuffers::String>{};
+  auto value = Ztc::fbs::CreateRequest(builder, 0,
+    inventory ? Ztc::fbs::Group::App : Ztc::fbs::Group::Heap,
+    filter, 0, false);
   builder.Finish(Ztc::saveMsg(
     builder, Ztc::fbs::Body::Request, value.Union(), subID, device));
   return finish(builder);
@@ -163,6 +173,7 @@ struct App {
   bool completed = false;
   bool received = false;
   unsigned telemetryCount = 0;
+  ZtArray<ZtString<>> inventoryDevices;
   uint64_t requestSeqNo = 0;
   unsigned requestCount = 0;
 
@@ -181,7 +192,9 @@ struct App {
           &receiveBuffer, sizeof(receiveBuffer));
       }
 #endif
-      sendFrame(link, subscribe(options->deviceID));
+      ZuCSpan deviceID{options->deviceID};
+      if (options->inventory) deviceID = {};
+      sendFrame(link, subscribe(deviceID, options->oneShot ? 0 : 1000));
       subscribed = true;
     }
   }
@@ -269,12 +282,47 @@ struct App {
         std::cout << "front ack\n" << std::flush;
         break;
       case Ztc::fbs::Body::Telemetry:
+        if (options->inventory) {
+          auto telemetry = hubMsg->body_as_Telemetry();
+          if (!hubMsg->deviceId() || !hubMsg->deviceId()->size() ||
+              !hubMsg->agentGen() || !telemetry || !telemetry->id() ||
+              !telemetry->id()->size() || telemetry->seqNo() ||
+              telemetry->value_type() !=
+                Ztc::fbs::TelemetryBody::AppTelemetry) {
+            failed = true;
+            link.close(Zws::CloseCode::Protocol);
+            return -1;
+          }
+          ZuCSpan deviceID = Zfb::Load::str(hubMsg->deviceId());
+          for (auto &id: inventoryDevices)
+            if (id == deviceID) {
+              failed = true;
+              link.close(Zws::CloseCode::Protocol);
+              return -1;
+            }
+          inventoryDevices.push(deviceID);
+        }
         ++telemetryCount;
         std::cout << "front telemetry " << telemetryCount << '\n' <<
           std::flush;
-        if (telemetryCount >= options->expect) completed = true;
+        if (!options->oneShot && !options->waitEOS &&
+            telemetryCount >= options->expect) completed = true;
         break;
       case Ztc::fbs::Body::EOS:
+        if ((options->oneShot || options->waitEOS) &&
+            telemetryCount != options->expect) {
+          failed = true;
+          link.close(Zws::CloseCode::Protocol);
+          return -1;
+        }
+        if (options->waitEOS && (!hubMsg->deviceId() ||
+            !hubMsg->deviceId()->size() || !hubMsg->agentGen() ||
+            !hubMsg->body_as_EOS()->id() ||
+            !hubMsg->body_as_EOS()->id()->size())) {
+          failed = true;
+          link.close(Zws::CloseCode::Protocol);
+          return -1;
+        }
         std::cout << "front eos\n" << std::flush;
         completed = true;
         break;
@@ -289,7 +337,11 @@ struct App {
         return -1;
     }
     if (completed) {
-      if (subscribed) sendFrame(link, unsubscribe(options->deviceID, 1));
+      if (subscribed) {
+        ZuCSpan deviceID{options->deviceID};
+        if (options->inventory) deviceID = {};
+        sendFrame(link, unsubscribe(deviceID, 1, options->inventory));
+      }
       link.close();
     }
     return 1;
@@ -342,7 +394,7 @@ int main(int argc, char **argv)
     std::cout << "Usage: ztchubwiretest --mode=front|agent --issuer=URL "
       "--device-id=ID --wss=URL [--ca=PATH] [--cookie=COOKIE "
       "--origin=ORIGIN] [--telemetry=N] [--expect=N] [--stall-ms=N] "
-      "[--payload=N] [--control-burst=N]\n";
+      "[--payload=N] [--control-burst=N] [--inventory]\n";
     return 0;
   }
   if (options.mode == "publisher") {
@@ -362,8 +414,11 @@ int main(int argc, char **argv)
     signalDone = nullptr;
     return 0;
   }
-  if (argc != 1 || !options.mode || !options.issuer || !options.deviceID ||
-      !options.wssURL || (options.mode != "front" && options.mode != "agent"))
+  if (argc != 1 || !options.mode || !options.issuer || !options.wssURL ||
+      (options.mode != "front" && options.mode != "agent") ||
+      (!options.inventory && !options.deviceID) ||
+      (options.inventory && options.mode != "front") ||
+      ((options.oneShot || options.waitEOS) && !options.inventory))
     return 1;
 
   Zhttp::URL issuer{options.issuer};

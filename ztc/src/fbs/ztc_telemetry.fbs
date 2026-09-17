@@ -14,6 +14,9 @@ table AppTelemetry {
   ztcver:uint32;
 }
 
+table Shutdown {
+}
+
 table AlertTelemetry {
   message:string;
   time:Zfb.Time;
@@ -188,6 +191,7 @@ union TelemetryBody {
   DBHostTelemetry,
   DBTableTelemetry,
   AppTelemetry,
+  Shutdown,
   AlertTelemetry
 }
 

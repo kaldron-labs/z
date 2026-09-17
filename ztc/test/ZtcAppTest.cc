@@ -258,6 +258,15 @@ static void appTest()
   ZuCheck(reset && ZtcTestClient::writeAll(1, reset->cspan()));
 
   ZuCheck(app.stop());
+  auto shutdownFrame = ZtcTestClient::readFrame(1, false);
+  auto shutdownMsg = shutdownFrame ?
+    Ztc::msg(shutdownFrame->ptr<Ztc::Hdr>()) : nullptr;
+  auto shutdown = shutdownMsg &&
+    shutdownMsg->body_type() == Ztc::fbs::Body::Telemetry ?
+    shutdownMsg->body_as_Telemetry() : nullptr;
+  ZuCheck(shutdown && !shutdown->seqNo() &&
+    shutdown->value_type() == Ztc::fbs::TelemetryBody::Shutdown &&
+    shutdown->value_as_Shutdown());
   ZuCheck(!ZiStat{pidPath}.exists());
   env("ZTC_RING", ZiTestResidue::uniqueName("ignored"));
   env("ZTC_DIR", ZiTestResidue::uniqueName("ignored"));

@@ -749,6 +749,17 @@ ZmRef<ZiIOBuf> telemetryFrame(
   return saveHdr(fbb);
 }
 
+ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
+{
+  Zfb::IOBuilder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
+  auto id_ = fbb.CreateString(id.data(), id.length());
+  auto value = fbs::CreateShutdown(fbb);
+  auto telemetry = saveTelemetry(fbb, id_, 0,
+    fbs::TelemetryBody::Shutdown, value.Union());
+  fbb.Finish(saveMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
+  return saveHdr(fbb);
+}
+
 ZmRef<ZiIOBuf> alertFrame(uint64_t seqNo, const ZiIOBuf *canonical)
 {
   ZmRef<ZiIOBuf> frame = new MsgFrame;
@@ -1131,6 +1142,8 @@ bool App::stop()
       return false;
   }
   startDone_(false);
+  if (m_running) publishRaw_(App_::shutdownFrame(m_cf.id),
+    App_::Delivery::Telemetry);
   m_running = false;
   if (m_state->pidFile.is<ZiPIDFile>())
     m_state->pidFile.new_<void>();

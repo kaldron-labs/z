@@ -134,6 +134,7 @@ inline bool validTelemetry(const fbs::Telemetry *telemetry) {
     case fbs::TelemetryBody::DBHostTelemetry:
     case fbs::TelemetryBody::DBTableTelemetry:
     case fbs::TelemetryBody::AppTelemetry:
+    case fbs::TelemetryBody::Shutdown:
     case fbs::TelemetryBody::AlertTelemetry:
       return true;
     default:

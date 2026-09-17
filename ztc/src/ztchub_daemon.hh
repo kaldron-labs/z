@@ -28,6 +28,7 @@
 #include <zlib/ZumService.hh>
 
 #include <zlib/ZtcMsg.hh>
+#include <zlib/ZtcAppTypes.hh>
 
 namespace Ztc {
 
@@ -179,6 +180,7 @@ public:
 
   static bool validAgentMessage(const fbs::Msg *);
   static bool validFrontMessage(const fbs::Msg *);
+  static bool validAppRequest(const fbs::Msg *);
   static bool authorized(const Zum::ServicePrincipal &, ZuCSpan action);
 
   bool addAgent(uint64_t sessionID, ZuCSpan deviceID, uint64_t generation,
@@ -198,6 +200,13 @@ public:
     uint64_t &requestSeqNo, HubError::T &);
   bool removeSubscription(uint64_t frontEndID, uint64_t subID);
   bool removeSubscription(uint64_t frontEndID, uint64_t subID, HubRouteFn);
+  bool app(uint64_t agentSessionID, uint64_t agentGeneration,
+    const fbs::Telemetry *);
+  bool appRemove(uint64_t agentSessionID, uint64_t agentGeneration,
+    ZuCSpan publisherID);
+  bool appSubscribe(uint64_t frontEndID, uint64_t subID,
+    uint32_t interval, HubError::T &);
+  bool appUnsubscribe(uint64_t frontEndID, uint64_t subID);
   bool route(uint64_t agentSessionID, uint64_t agentGeneration,
     uint64_t requestSeqNo, RouteInfo &) const;
   bool completeRoute(uint64_t agentSessionID, uint64_t agentGeneration,

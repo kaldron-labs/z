@@ -18,6 +18,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
+#include <zlib/ZmRBTree.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -73,6 +74,8 @@ ZmHashDerive(LegHash, typename LegList::Node,
 struct Pub_ : public Pub {
   using Pub::Pub;
   LegHash legs;
+  ZmRef<ZiIOBuf> app;
+  uint64_t appSeqNo = 0;
 };
 
 inline const ZuID &Pub_IDAxor(const Pub_ &pub) { return pub.id; }
@@ -81,6 +84,10 @@ ZmHashDerive(Pubs, Pub_,
     ZmHashKey<Pub_IDAxor,
       ZmHashLock<ZmNoLock,
         ZmHashHeapID<"Ztc.Agent.Pub">>>>));
+using PubIdx = ZmRBTreeKV<ZuID, Pub_ *,
+  ZmRBTreeUnique<true,
+    ZmRBTreeLock<ZmNoLock,
+      ZmRBTreeHeapID<"Ztc.Agent.PubIdx">>>>;
 
 struct Req {
   Req(Request request_, uint64_t cxnGen_) :
@@ -122,10 +129,13 @@ struct StateData {
   uint64_t	nextGeneration = 1;
   uint64_t	routeGeneration = 0;
   uint64_t	nextAppSeqNo = 1;
+  ZuID	pubGCID;
   ZmScheduler::Timer	reconnectTimer;
+  ZmScheduler::Timer	pubGCTimer;
   unsigned	reconnectDelay = 1;
   ZtArray<uint8_t, ZtArrayHeapID<"Ztc.Agent.Rx">> rxFrame;
   Pubs	pubs;
+  PubIdx	pubIdx;
   Reqs	reqs;
   bool	started = false;
 };
@@ -220,6 +230,56 @@ static void transmit(
   });
 }
 
+static void inventory(Agent::State *state, Pub_ *pub,
+    ZmRef<ZiIOBuf> frame, uint64_t generation)
+{
+  if (!pub || !frame) return;
+  pub->app = frame;
+  transmit(state, ZuMv(frame), generation);
+}
+
+static bool requestApp(Agent::State *state, Pub_ *pub)
+{
+  auto seqNo = state->nextAppSeqNo++;
+  if (!seqNo || seqNo == ZuCmp<uint64_t>::null()) return false;
+  pub->appSeqNo = seqNo;
+  Request request{
+    .filter = "*",
+    .id = pub->id,
+    .seqNo = seqNo,
+    .group = uint8_t(fbs::Group::App),
+    .subscribe = true};
+  if (!writeRequest(state, pub->ring, requestFrame(request))) {
+    pub->appSeqNo = 0;
+    return false;
+  }
+  return true;
+}
+
+static void inventoryAll(Agent::State *state, uint64_t generation)
+{
+  if (state->routeGeneration != generation) return;
+  auto i = state->pubs.iter();
+  while (auto pub = i())
+    if (pub->val().app)
+      transmit(state, pub->val().app, generation);
+    else
+      (void)requestApp(state, &pub->val());
+}
+
+static void shutdown(Agent::State *state, Pub_ *pub,
+    uint64_t generation)
+{
+  if (!pub) return;
+  Zfb::IOBuilder builder{ZmRef<ZiIOBuf>{new Frame}};
+  auto id = builder.CreateString(pub->id.data(), pub->id.length());
+  auto value = fbs::CreateShutdown(builder);
+  auto telemetry = saveTelemetry(builder, id, 0,
+    fbs::TelemetryBody::Shutdown, value.Union());
+  builder.Finish(saveMsg(builder, fbs::Body::Telemetry, telemetry.Union()));
+  transmit(state, builder.buf(), generation);
+}
+
 static void unlinkLeg(Leg *leg)
 {
   auto req = leg->req;
@@ -265,6 +325,7 @@ static void delPub(Agent::State *state, Pub_ *pub)
     unlinkLeg(leg);
     if (!req->pending.count_() && !req->legs.count_()) delReq(state, req);
   }
+  if (auto prior = state->pubIdx.delVal(pub->id)) ZmAssert(prior == pub);
   state->pubs.delNode(static_cast<Pubs::Node *>(pub));
 }
 
@@ -274,7 +335,8 @@ static bool addPub(Agent::State *state, ZuID id)
   auto pub = new Pubs::Node{ZuMv(id), state->cf};
   if (!pub->val().ready) { delete pub; return false; }
   state->pubs.addNode(pub);
-  return true;
+  state->pubIdx.add(pub->val().id, &pub->val());
+  return requestApp(state, &pub->val());
 }
 
 static bool scanPubs(Agent::State *state)
@@ -401,8 +463,33 @@ static void routeTelemetry(Agent::State *state,
       if (!value) return;
       id = Zfb::Load::str(value->id());
       if (value->value_type() == fbs::TelemetryBody::AppTelemetry && id) {
+	ZuID pubID{id};
+	if (pubID != id) return;
+	if (!addPub(state, ZuMv(pubID))) return;
+	auto pub = state->pubs.findPtr(id);
+	if (!pub) return;
+	seqNo = value->seqNo();
+	if (!seqNo || seqNo == pub->val().appSeqNo) {
+	  if (seqNo) {
+	    if (pub->val().app) {
+	      pub->val().appSeqNo = 0;
+	      return;
+	    }
+	    if (!rewriteSeq(frame->data(), 0)) return;
+	    pub->val().appSeqNo = 0;
+	  }
+	  inventory(state, &pub->val(), ZuMv(frame), generation);
+	  return;
+	}
+      }
+      if (value->value_type() == fbs::TelemetryBody::Shutdown && id &&
+          !value->seqNo()) {
         ZuID pubID{id};
-        if (pubID == id) (void)addPub(state, ZuMv(pubID));
+        auto pub = pubID == id ? state->pubs.findPtr(pubID) : nullptr;
+        if (!pub) return;
+        transmit(state, ZuMv(frame), generation);
+        delPub(state, &pub->val());
+        return;
       }
       seqNo = value->seqNo();
       if (!seqNo) return;
@@ -412,14 +499,34 @@ static void routeTelemetry(Agent::State *state,
       if (!value) return;
       id = Zfb::Load::str(value->id());
       seqNo = value->seqNo();
+	ZuID pubID{id};
+	auto pub = pubID == id ? state->pubs.findPtr(pubID) : nullptr;
+	if (pub && seqNo == pub->val().appSeqNo) {
+	  if (value->status() != fbs::AckStatus::OK)
+	    pub->val().appSeqNo = 0;
+	  return;
+	}
       terminal = value->status() == fbs::AckStatus::Invalid ||
-        value->status() == fbs::AckStatus::Failed;
+	value->status() == fbs::AckStatus::Failed;
     } break;
     case fbs::Body::EOS: {
       auto value = message->body_as_EOS();
       if (!value) return;
       id = Zfb::Load::str(value->id());
       seqNo = value->seqNo();
+	ZuID pubID{id};
+	auto pub = pubID == id ? state->pubs.findPtr(pubID) : nullptr;
+	if (pub && seqNo && seqNo == pub->val().appSeqNo) {
+	  pub->val().appSeqNo = 0;
+	  return;
+	}
+      if (!seqNo) {
+	if (!pub) return;
+	pub->val().app = nullptr;
+	transmit(state, ZuMv(frame), generation);
+	delPub(state, &pub->val());
+	return;
+      }
       terminal = true;
     } break;
     case fbs::Body::Error: {
@@ -509,6 +616,30 @@ static void telemetry(Agent::State *state)
     }
     state->telRing.shift2(recordSize);
   }
+}
+
+static void pubGC(Agent::State *state)
+{
+  unsigned n = 0;
+  while (n++ < state->cf.pubGCBatch && state->pubs.count_()) {
+    auto next = state->pubGCID ?
+      state->pubIdx.citer<ZmRBTreeGreater>(state->pubGCID)() :
+      state->pubIdx.minimum();
+    if (!next) {
+      state->pubGCID.null();
+      break;
+    }
+    Pub_ *pub = next->val();
+    state->pubGCID = pub->id;
+    Zi::Path path{ZiFile::append(ZiFile::tmpDir(), state->env.pidDir)};
+    path << '/' << pub->id << ".pid";
+    if (ZiStat{path}.exists()) continue;
+    shutdown(state, pub, state->routeGeneration);
+    delPub(state, pub);
+  }
+  if (!state->stop.load_()) state->mx->add(&state->pubGCTimer,
+    Zm::now(state->cf.pubGCInterval), ZmScheduler::Update,
+    [state](auto &&arm) { return arm([state]() { pubGC(state); }); }, 1);
 }
 
 static void fence(Agent::State *state, uint64_t generation)
@@ -625,6 +756,7 @@ bool Agent::start()
     m_state->mx->stop();
     return false;
   }
+  m_state->mx->run([state = m_state]() { Agent_::pubGC(state); }, 1);
   ZtString<> authorization{"Bearer "};
   authorization << m_state->env.accessToken;
   m_state->link = new Link{&m_state->client, m_state->uri, authorization};
@@ -642,6 +774,7 @@ bool Agent::stop()
   if (!m_state || !m_state->started) return true;
   m_state->stop = 1;
   m_state->mx->del(&m_state->reconnectTimer);
+  m_state->mx->del(&m_state->pubGCTimer);
   if (m_state->link) m_state->client.rxRun([state = m_state]() {
     if (state->link) state->link->close();
   });
@@ -704,6 +837,7 @@ void Agent::connected(Link &link, const Zhttp::ConnectedInfo &)
   m_state->mx->run([state = m_state, generation]() {
     Agent_::fence(state, 0);
     state->routeGeneration = generation;
+    Agent_::inventoryAll(state, generation);
   }, 1);
   m_state->reconnectDelay = m_state->cf.reconnMin;
   m_state->mx->del(&m_state->reconnectTimer);

@@ -20,6 +20,7 @@
 #include <zlib/Zdb.hh>
 #include <zlib/ZdbMemStore.hh>
 
+#include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
 
 namespace Ztc {
@@ -32,6 +33,7 @@ struct Agent {
   uint64_t	sessionID;
   HubString	deviceID;
   uint64_t	generation;
+  uint32_t	appCount = 0;
 };
 
 template <typename Heap>
@@ -57,6 +59,34 @@ struct AgentSession {
 };
 using AgentSessions = ZmHashKV<uint64_t, AgentSession,
   ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.AgentSess">>>;
+
+struct Inventory {
+  HubString	deviceID;
+  HubString	publisherID;
+  AppTelemetry	app;
+  uint64_t	generation = 0;
+};
+inline auto Inventory_KeyAxor(const Inventory &value) {
+  return ZuFwdTuple(value.deviceID, value.generation, value.publisherID);
+}
+ZmHashDerive(Inventories, Inventory,
+  (ZmHashNode<Inventory,
+    ZmHashKey<Inventory_KeyAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Ztc.Hub.Inventory">>>>));
+
+struct AppSub {
+  uint64_t	frontEndID = 0;
+  uint64_t	subID = 0;
+};
+inline auto AppSub_KeyAxor(const AppSub &value) {
+  return ZuFwdTuple(value.frontEndID, value.subID);
+}
+ZmHashDerive(AppSubs, AppSub,
+  (ZmHashNode<AppSub,
+    ZmHashKey<AppSub_KeyAxor,
+      ZmHashLock<ZmNoLock,
+	ZmHashHeapID<"Ztc.Hub.AppSub">>>>));
 
 struct Route {
   uint64_t	frontEndID;
@@ -113,6 +143,8 @@ struct StateData {
 	HubdCf		cf;
   HubdState::T		state = HubdState::Down;
   Agents		agents;
+  Inventories		inventories;
+  AppSubs	appSubs;
   Subs			subs;
   AgentReqs		agentReqs;
   AgentReqIdx		agentReqIdx;
@@ -151,6 +183,97 @@ static void clearBrowsers(StateData &state)
     while (auto node = i()) state.multiplex->del(&node->val()->expiry);
   }
   state.browserSessions.clean();
+}
+
+using InventoryBuf = ZiIOBufAlloc<1024, 1U << 30, "Ztc.Hub.Inventory">;
+
+static HubFrame inventoryFrame(const Inventory &value, uint64_t subID)
+{
+  HubFrame frame = new InventoryBuf;
+  frame->skip = Zfb::IOBuilder::Align;
+  Zfb::IOBuilder builder{ZuMv(frame)};
+  auto device = builder.CreateString(value.deviceID.data(),
+    value.deviceID.length());
+  auto publisher = builder.CreateString(value.publisherID.data(),
+    value.publisherID.length());
+  auto app = ZfbStruct::save(builder, value.app);
+  auto telemetry = saveTelemetry(builder, publisher, 0,
+    fbs::TelemetryBody::AppTelemetry, app.Union());
+  builder.Finish(saveMsg(builder, fbs::Body::Telemetry, telemetry.Union(),
+    subID, device, value.generation));
+  return builder.buf();
+}
+
+static HubFrame inventoryAck(uint64_t subID, uint32_t interval)
+{
+  HubFrame frame = new InventoryBuf;
+  frame->skip = Zfb::IOBuilder::Align;
+  Zfb::IOBuilder builder{ZuMv(frame)};
+  auto ack = ZfbStruct::save(builder, Ack{
+    .id = "inventory", .seqNo = 0, .interval = interval,
+    .status = uint8_t(fbs::AckStatus::OK)});
+  builder.Finish(saveMsg(builder, fbs::Body::Ack, ack.Union(), subID));
+  return builder.buf();
+}
+
+static HubFrame inventoryEOS(uint64_t subID)
+{
+  HubFrame frame = new InventoryBuf;
+  frame->skip = Zfb::IOBuilder::Align;
+  Zfb::IOBuilder builder{ZuMv(frame)};
+  auto eos = ZfbStruct::save(builder, EOS{ZuID{"inventory"}, 0});
+  builder.Finish(saveMsg(builder, fbs::Body::EOS, eos.Union(), subID));
+  return builder.buf();
+}
+
+static HubFrame inventoryEOS(const Inventory &value, uint64_t subID)
+{
+  HubFrame frame = new InventoryBuf;
+  frame->skip = Zfb::IOBuilder::Align;
+  Zfb::IOBuilder builder{ZuMv(frame)};
+  auto device = builder.CreateString(value.deviceID.data(),
+    value.deviceID.length());
+  auto eos = ZfbStruct::save(builder, EOS{value.publisherID, 0});
+  builder.Finish(saveMsg(builder, fbs::Body::EOS, eos.Union(),
+    subID, device, value.generation));
+  return builder.buf();
+}
+
+static void inventorySend(StateData &state, const Inventory &value)
+{
+  auto i = state.appSubs.iter();
+  while (auto sub = i()) {
+    auto session = state.sessions.findPtr(sub->val().frontEndID);
+    if (session && !session->val().agent && session->val().send)
+      session->val().send(inventoryFrame(value, sub->val().subID));
+  }
+}
+
+static bool inventoryDel(StateData &state, ZuCSpan deviceID,
+    uint64_t generation, ZuCSpan publisherID = {})
+{
+  bool removed = false;
+  auto i = state.inventories.iter();
+  while (auto node = i()) {
+    auto &value = node->val();
+    if (value.deviceID != deviceID || value.generation != generation ||
+        (publisherID && value.publisherID != publisherID)) continue;
+    auto subs = state.appSubs.iter();
+    while (auto sub = subs()) {
+      auto session = state.sessions.findPtr(sub->val().frontEndID);
+      if (session && !session->val().agent && session->val().send)
+	session->val().send(inventoryEOS(value, sub->val().subID));
+    }
+    i.del();
+    removed = true;
+    if (publisherID) break;
+  }
+  if (removed) {
+    auto agent = state.agents.findPtr(deviceID);
+    if (agent && agent->val().generation == generation &&
+        agent->val().appCount) --agent->val().appCount;
+  }
+  return removed;
 }
 
 static bool checkedCapacity(const HubdCf &cf)
@@ -337,6 +460,7 @@ static unsigned disconnectAgent(State &state, uint64_t sessionID,
     else removeAgentReq(state, sessionID, seq);
     ++n;
   }
+  inventoryDel(state, agent->val().deviceID, generation);
   state.agents.del(agent->val().deviceID);
   state.agentSessions.delNode(agent);
   if (state.agentCount) --state.agentCount;
@@ -752,6 +876,17 @@ bool Hubd::validFrontMessage(const fbs::Msg *msg)
     !msg->agentGen();
 }
 
+bool Hubd::validAppRequest(const fbs::Msg *msg)
+{
+  if (!Ztc::validMsg(msg) || msg->body_type() != fbs::Body::Request ||
+      !msg->subId() || msg->agentGen() ||
+      (msg->deviceId() && msg->deviceId()->size())) return false;
+  auto request = msg->body_as_Request();
+  return request && request->group() == fbs::Group::App && !request->id() &&
+    (!request->filter() || request->filter()->string_view() == "*") &&
+    !request->alertDate() && !request->alertSeqNo();
+}
+
 bool Hubd::authorized(
     const Zum::ServicePrincipal &principal, ZuCSpan action)
 {
@@ -871,6 +1006,11 @@ bool Hubd::removeSession(uint64_t sessionID, HubRouteFn routeFn)
   if (!m_state || !sessionID) return false;
   bool removed = bool(m_state->sessions.findPtr(sessionID));
   Hubd_::removeSession(*m_state, sessionID);
+  {
+    auto i = m_state->appSubs.iter();
+    while (auto node = i())
+      if (node->val().frontEndID == sessionID) i.del();
+  }
   for (;;) {
     auto index = m_state->subIdx.findPtr(sessionID);
     if (!index || !index->val().length()) break;
@@ -911,6 +1051,91 @@ bool Hubd::addSubscription(uint64_t frontEndID, uint64_t subID,
   agentSessionID = route->val().agentSessionID;
   agentGeneration = route->val().agentGeneration;
   requestSeqNo = seq;
+  return true;
+}
+
+bool Hubd::app(uint64_t agentSessionID, uint64_t agentGeneration,
+    const fbs::Telemetry *telemetry)
+{
+  if (!m_state || !telemetry || telemetry->seqNo() ||
+      telemetry->value_type() != fbs::TelemetryBody::AppTelemetry) return false;
+  auto session = m_state->agentSessions.findPtr(agentSessionID);
+  if (!session || session->val().generation != agentGeneration) return false;
+  auto agent = m_state->agents.findPtr(session->val().deviceID);
+  if (!agent || agent->val().sessionID != agentSessionID ||
+      agent->val().generation != agentGeneration) return false;
+  auto publisherID = Zfb::Load::str(telemetry->id());
+  auto app_ = telemetry->value_as_AppTelemetry();
+  if (!publisherID || !app_) return false;
+  auto key = ZuFwdTuple(session->val().deviceID, agentGeneration, publisherID);
+  auto node = m_state->inventories.findPtr(key);
+  if (!node) {
+    if (agent->val().appCount >= m_state->cf.publishersPerAgent) return false;
+    node = new Hubd_::Inventories::Node{Hubd_::Inventory{
+      session->val().deviceID, publisherID, ZfbStruct::ctor<AppTelemetry>(app_),
+      agentGeneration}};
+    m_state->inventories.addNode(node);
+    ++agent->val().appCount;
+  } else
+    node->val().app = ZfbStruct::ctor<AppTelemetry>(app_);
+  Hubd_::inventorySend(*m_state, node->val());
+  return true;
+}
+
+bool Hubd::appRemove(uint64_t agentSessionID, uint64_t agentGeneration,
+    ZuCSpan publisherID)
+{
+  if (!m_state || !publisherID) return false;
+  auto session = m_state->agentSessions.findPtr(agentSessionID);
+  if (!session || session->val().generation != agentGeneration) return false;
+  auto agent = m_state->agents.findPtr(session->val().deviceID);
+  if (!agent || agent->val().sessionID != agentSessionID ||
+      agent->val().generation != agentGeneration) return false;
+  (void)Hubd_::inventoryDel(*m_state, session->val().deviceID,
+    agentGeneration, publisherID);
+  return true;
+}
+
+bool Hubd::appSubscribe(uint64_t frontEndID, uint64_t subID,
+    uint32_t interval, HubError::T &error)
+{
+  error = HubError::BadReq;
+  if (!m_state || m_state->state != HubdState::Up || !frontEndID || !subID)
+    return false;
+  auto session = m_state->sessions.findPtr(frontEndID);
+  if (!session || session->val().agent ||
+      m_state->subs.findPtr(Hubd_::RouteKey{frontEndID, subID}) ||
+      m_state->appSubs.findPtr(Hubd_::RouteKey{frontEndID, subID})) {
+    error = HubError::DuplicateSub;
+    return false;
+  }
+  unsigned count = 0;
+  if (auto index = m_state->subIdx.findPtr(frontEndID))
+    count = index->val().length();
+  auto i = m_state->appSubs.iter();
+  while (auto node = i()) if (node->val().frontEndID == frontEndID) ++count;
+  if (count >= m_state->cf.subscriptionsPerFrontEnd) return false;
+  if (interval) {
+    m_state->appSubs.addNode(new Hubd_::AppSubs::Node{
+      Hubd_::AppSub{frontEndID, subID}});
+    session->val().send(Hubd_::inventoryAck(subID, interval));
+  }
+  auto apps = m_state->inventories.iter();
+  while (auto node = apps())
+    session->val().send(Hubd_::inventoryFrame(node->val(), subID));
+  if (!interval) {
+    session->val().send(Hubd_::inventoryAck(subID, interval));
+    session->val().send(Hubd_::inventoryEOS(subID));
+  }
+  return true;
+}
+
+bool Hubd::appUnsubscribe(uint64_t frontEndID, uint64_t subID)
+{
+  if (!m_state || !frontEndID || !subID) return false;
+  auto session = m_state->sessions.findPtr(frontEndID);
+  if (!session || session->val().agent) return false;
+  (void)m_state->appSubs.del(Hubd_::RouteKey{frontEndID, subID});
   return true;
 }
 

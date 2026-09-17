@@ -72,6 +72,37 @@ static void protocol()
   ZuCheck(!check("device-1", 7, 0, true, 3));
   ZuCheck(!Ztc::Hubd::validFrontMessage(nullptr));
   ZuCheck(!Ztc::Hubd::validAgentMessage(nullptr));
+
+  auto app = [](ZuCSpan deviceID, unsigned group, ZuCSpan filter) {
+    Zfb::Builder builder;
+    auto device = deviceID ?
+      builder.CreateString(deviceID.data(), deviceID.length()) :
+      flatbuffers::Offset<flatbuffers::String>{};
+    auto filter_ = filter ?
+      builder.CreateString(filter.data(), filter.length()) :
+      flatbuffers::Offset<flatbuffers::String>{};
+    auto request = Ztc::fbs::CreateRequest(builder, 0,
+      Ztc::fbs::Group(group), filter_, 0, true);
+    builder.Finish(Ztc::saveMsg(builder,
+      Ztc::fbs::Body::Request, request.Union(), 7, device));
+    return Ztc::Hubd::validAppRequest(
+      Ztc::fbs::GetMsg(builder.GetBufferPointer()));
+  };
+  ZuCheck(app({}, unsigned(Ztc::fbs::Group::App), {}));
+  ZuCheck(app("", unsigned(Ztc::fbs::Group::App), "*"));
+  ZuCheck(!app("device-1", unsigned(Ztc::fbs::Group::App), {}));
+  ZuCheck(!app({}, unsigned(Ztc::fbs::Group::Heap), {}));
+  ZuCheck(!app({}, unsigned(Ztc::fbs::Group::App), "app-*"));
+
+  Zfb::Builder inventoryBuilder;
+  auto inventoryDevice = inventoryBuilder.CreateString("", 0);
+  auto inventoryFilter = inventoryBuilder.CreateString("*");
+  auto inventoryRequest = Ztc::fbs::CreateRequest(inventoryBuilder, 0,
+    Ztc::fbs::Group::App, inventoryFilter, 1000, true);
+  inventoryBuilder.Finish(Ztc::saveMsg(inventoryBuilder,
+    Ztc::fbs::Body::Request, inventoryRequest.Union(), 7, inventoryDevice));
+  ZuCheck(Ztc::Hubd::validAppRequest(
+    Ztc::fbs::GetMsg(inventoryBuilder.GetBufferPointer())));
 }
 
 static void messages()
@@ -208,6 +239,108 @@ static void routing()
   ZuCheck(hub.state() == Ztc::HubdState::Down);
 }
 
+static bool app(Ztc::Hubd &hub, uint64_t agent, uint64_t generation,
+    ZuCSpan publisher, ZuCSpan version, uint64_t seqNo = 0)
+{
+  Zfb::Builder builder;
+  auto id = builder.CreateString(publisher.data(), publisher.length());
+  Ztc::AppTelemetry value;
+  value.version = version;
+  auto app_ = ZfbStruct::save(builder, value);
+  auto telemetry = Ztc::saveTelemetry(builder, id, seqNo,
+    Ztc::fbs::TelemetryBody::AppTelemetry, app_.Union());
+  builder.Finish(Ztc::saveMsg(builder,
+    Ztc::fbs::Body::Telemetry, telemetry.Union()));
+  return hub.app(agent, generation,
+    Ztc::fbs::GetMsg(builder.GetBufferPointer())->body_as_Telemetry());
+}
+
+static void appInventoryLimits()
+{
+  ZuTestScope(appInventoryLimits);
+  auto cf = config();
+  cf.publishersPerAgent = 1;
+  Ztc::Hubd hub;
+  ZuCheck(hub.init(cf) && hub.start());
+  auto agentPrincipal = principal("device-1", "Telemetry");
+  Ztc::HubError::T error = Ztc::HubError::BadReq;
+  ZuCheck(hub.addAgent(10, "device-1", 3, agentPrincipal, error));
+  ZuCheck(!app(hub, 10, 3, "publisher-1", "invalid", 1));
+  ZuCheck(!app(hub, 10, 4, "publisher-1", "invalid"));
+  ZuCheck(app(hub, 10, 3, "publisher-1", "v1"));
+  ZuCheck(!app(hub, 10, 3, "publisher-2", "v1"));
+  ZuCheck(hub.removeAgent(10, "device-1", 3));
+  ZuCheck(hub.addAgent(11, "device-1", 4, agentPrincipal, error));
+  ZuCheck(app(hub, 11, 4, "publisher-2", "v2"));
+  ZuCheck(hub.stop());
+}
+
+static void appInventory()
+{
+  ZuTestScope(appInventory);
+  Ztc::Hubd hub;
+  ZuCheck(hub.init(config()) && hub.start());
+  auto agentPrincipal = principal("device-1", "Telemetry");
+  auto browser = principal("user-1", "Request");
+  Ztc::HubError::T error = Ztc::HubError::BadReq;
+  ZuCheck(hub.addAgent(10, "device-1", 3, agentPrincipal, error));
+
+  struct Frames {
+    ZtArray<uint8_t> types;
+    bool attributed = true;
+    bool sourceEOS = false;
+    void operator ()(Ztc::HubFrame frame) {
+      auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
+      if (!msg) { attributed = false; return; }
+      types.push(uint8_t(msg->body_type()));
+      if (msg->body_type() == Ztc::fbs::Body::Telemetry) {
+        auto telemetry = msg->body_as_Telemetry();
+        attributed = attributed && msg->deviceId() &&
+          msg->deviceId()->string_view() == "device-1" &&
+          msg->agentGen() == 3 && telemetry && telemetry->id() &&
+          telemetry->id()->string_view() == "publisher-1" &&
+          !telemetry->seqNo() && telemetry->value_type() ==
+            Ztc::fbs::TelemetryBody::AppTelemetry;
+      } else if (msg->body_type() == Ztc::fbs::Body::EOS &&
+          msg->deviceId()) {
+        auto eos = msg->body_as_EOS();
+        sourceEOS = eos && msg->deviceId()->string_view() == "device-1" &&
+          msg->agentGen() == 3 && eos->id() &&
+          eos->id()->string_view() == "publisher-1" && !eos->seqNo();
+      }
+    }
+  } frames;
+  ZuCheck(hub.addFrontend(20, browser, Ztc::HubSendFn{
+    [&frames](Ztc::HubFrame frame) { frames(ZuMv(frame)); }}));
+  ZuCheck(app(hub, 10, 3, "publisher-1", "v1"));
+  ZuCheck(hub.appSubscribe(20, 7, 0, error));
+  ZuCheck(frames.attributed && frames.types.length() == 3 &&
+    frames.types[0] == uint8_t(Ztc::fbs::Body::Telemetry) &&
+    frames.types[1] == uint8_t(Ztc::fbs::Body::Ack) &&
+    frames.types[2] == uint8_t(Ztc::fbs::Body::EOS));
+
+  frames.types.length(0);
+  ZuCheck(hub.appSubscribe(20, 8, 1000, error));
+  ZuCheck(frames.types.length() == 2 &&
+    frames.types[0] == uint8_t(Ztc::fbs::Body::Ack) &&
+    frames.types[1] == uint8_t(Ztc::fbs::Body::Telemetry));
+  ZuCheck(app(hub, 10, 3, "publisher-1", "v2"));
+  ZuCheck(frames.types.length() == 3 &&
+    frames.types[2] == uint8_t(Ztc::fbs::Body::Telemetry));
+  ZuCheck(hub.appRemove(10, 3, "publisher-1"));
+  ZuCheck(frames.sourceEOS && frames.types.length() == 4 &&
+    frames.types[3] == uint8_t(Ztc::fbs::Body::EOS));
+  ZuCheck(hub.appRemove(10, 3, "publisher-1"));
+  ZuCheck(hub.appUnsubscribe(20, 8));
+  ZuCheck(hub.appUnsubscribe(20, 8));
+  ZuCheck(app(hub, 10, 3, "publisher-1", "v3"));
+  ZuCheck(hub.appSubscribe(20, 9, 1000, error));
+  ZuCheck(hub.removeAgent(10, "device-1", 3));
+  ZuCheck(frames.types.length() == 7 &&
+    frames.types[6] == uint8_t(Ztc::fbs::Body::EOS));
+  ZuCheck(hub.stop());
+}
+
 static void configValidation()
 {
   ZuTestScope(configValidation);
@@ -236,5 +369,7 @@ int main()
   ZuTestCall(ZtcHubTest_::protocol);
   ZuTestCall(ZtcHubTest_::messages);
   ZuTestCall(ZtcHubTest_::routing);
+  ZuTestCall(ZtcHubTest_::appInventory);
+  ZuTestCall(ZtcHubTest_::appInventoryLimits);
   ZuTestCall(ZtcHubTest_::configValidation);
 }

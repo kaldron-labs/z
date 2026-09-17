@@ -38,6 +38,8 @@ static void configValidation()
 {
   ZuTestScope(config_validation);
   auto cf = config();
+  ZuCheck(cf.pubGCInterval == 1);
+  ZuCheck(cf.pubGCBatch == 100);
 
   Ztc::Agent missing;
   auto invalid = env();
