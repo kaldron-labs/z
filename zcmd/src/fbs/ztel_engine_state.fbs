@@ -1,9 +1,0 @@
-namespace Ztel.fbs;
-enum EngineState:int8 {		// == ZmEngineState
-  Stopped = 0,
-  Starting,
-  Running,
-  Stopping,
-  StartPending,
-  StopPending
-}

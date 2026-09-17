@@ -18,15 +18,14 @@ SUBDIRS += zdb_sqlite
 endif
 SUBDIRS += zum
 SUBDIRS += ztc
-# SUBDIRS += zdf
-# SUBDIRS += zdash
-# zcmd and zproxy are reference code only
+SUBDIRS += zdf
 if GTK
-# SUBDIRS += zgtk
+SUBDIRS += zgtk
 endif
+SUBDIRS += zdash
 
 DIST_SUBDIRS = zu zm zt ze zf zi zv zrl ztcp ztls zquic zhttp zws zrest zmcp zfb zdb ztc \
-	zdb_pq zdb_sqlite zdf zum zcmd zproxy zgtk zdash
+	zdb_pq zdb_sqlite zdf zum zgtk zdash
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

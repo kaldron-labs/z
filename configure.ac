@@ -217,7 +217,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zv ztcp ztls zquic zhttp zrest zmcp zws zfb zdb ztc zdb_pq zdb_sqlite zum zdf zrl zcmd zproxy zgtk; do {
+for i in zu zm zt ze zf zi zv ztcp ztls zquic zhttp zrest zmcp zws zfb zdb ztc zdb_pq zdb_sqlite zum zdf zrl zgtk zdash; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -264,8 +264,6 @@ AC_CONFIG_FILES([Makefile \
 	zum/example/Makefile zum/interop/Makefile \
 	zdf/Makefile zdf/src/Makefile zdf/test/Makefile zdf/itest/Makefile \
 	zrl/Makefile zrl/src/Makefile zrl/test/Makefile zrl/example/Makefile \
-	zcmd/Makefile zcmd/src/Makefile zcmd/test/Makefile zcmd/itest/Makefile \
-	zproxy/Makefile zproxy/src/Makefile zproxy/test/Makefile \
 	zgtk/Makefile zgtk/src/Makefile zgtk/test/Makefile \
 	zgtk/example/Makefile zdash/Makefile zdash/src/Makefile \
 	zdash/test/Makefile])
