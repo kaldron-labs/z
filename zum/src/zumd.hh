@@ -760,8 +760,8 @@ struct Refresh {
   String	audience;
   UserSource::T	authoritySource = UserSource::Local;
   int64_t	authTime = 0;
-  IDVec	requestedRoleIDs;
-  IDVec	roleIDs;
+  IDVec		requestedRoleIDs;
+  IDVec		roleIDs;
   ZtBitmap	actions;
   Bytes		credentialID;
   Bytes		digest;
@@ -771,6 +771,7 @@ struct Refresh {
   ProviderID	authorityProviderID = 0;
   uint64_t	version = 1;
   int64_t	updated = 0;
+
   friend ZfStructPrint ZuPrintType(Refresh *);
 };
 ZfbStruct(ZumAPI, (Refresh, JSON),
@@ -851,7 +852,7 @@ struct SSFRx {
 };
 ZfbStruct(ZumAPI, SSFRx,
   (((receiverID), (Ctor<0>, Keys<0>)), (String)),
-	(((appID), (Ctor<1>, Keys<1>, Group<1>)), (UInt64)),
+  (((appID), (Ctor<1>, Keys<1>, Group<1>)), (UInt64)),
   (((audience), (Ctor<2>)), (String)),
   (((deliveryURL), (Ctor<3>)), (String)),
   (((secretRef), (Ctor<4>, Hidden)), (String)),
@@ -871,11 +872,11 @@ struct SSFDelivery {
   uint128_t owner = 0;
 };
 ZfbStruct(ZumAPI, SSFDelivery,
-	(((eventID), (Ctor<0>, (Keys<0, 1>))), (String)),
-	(((receiverID), (Ctor<1>, (Keys<0, 1>))), (String)),
-	(((familyIssuer), (Ctor<2>)), (String)),
-	(((familyID), (Ctor<3>)), (String)),
-	(((familyExpires), (Ctor<4>)), (Int64)),
+  (((eventID), (Ctor<0>, (Keys<0, 1>))), (String)),
+  (((receiverID), (Ctor<1>, (Keys<0, 1>))), (String)),
+  (((familyIssuer), (Ctor<2>)), (String)),
+  (((familyID), (Ctor<3>)), (String)),
+  (((familyExpires), (Ctor<4>)), (Int64)),
   (((set), (Ctor<5>, Mutable)), (Bytes)),
   (((nextDelivery), (Ctor<6>, Mutable)), (Int64)),
   (((owner), (Ctor<7>, Mutable, Hidden)), (UInt128)));
