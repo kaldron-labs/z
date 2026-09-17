@@ -385,8 +385,9 @@ public:
       }
     }
 
-    NodeRef srcSplit;
-    NodeRef dstSplit;
+    using NodeRef_ = typename Queue::NodeRef;
+    NodeRef_ srcSplit;
+    NodeRef_ dstSplit;
     bool copyPayload = false;
     if (boundary) {
       unsigned payloadPart = endOff - startOff;
