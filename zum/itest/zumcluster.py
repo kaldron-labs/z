@@ -1,7 +1,8 @@
-"""SQLite two-node Zum activation/admission fixture, not a failover SLA test."""
+"""SQLite two-node Zum admission and active-service failover fixture."""
 
 import base64
 import http.client
+from http.cookies import SimpleCookie
 import os
 import re
 from pathlib import Path
@@ -14,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+from zumhttp import Authenticator, Fixture
 
 
 def exercise(directory):
@@ -103,6 +106,25 @@ def exercise(directory):
         leader = next(iter(active))
         follower = 1 - leader
 
+        # Use the production WebAuthn driver against the active node.  The
+        # issuer remains on the leader's stable public address when requests
+        # later move to the promoted listener.
+        fixture = Fixture(directory)
+        fixture.port = ports[leader]
+        fixture.origin = issuer
+        fixture.authenticator = Authenticator(issuer)
+        enrollment = directory / "enrollment"
+        shutil.copyfile(directory / ("enrollment" + str(leader)), enrollment)
+        enrollment.chmod(0o600)
+        fixture.enroll()
+        admin = fixture.login(offline=False)
+        enrolled, _ = fixture.request(
+            "GET", "/admin/users?name=cluster-admin&source=Local", token=admin)
+        assert len(enrolled["items"]) == 1
+        credentials, _ = fixture.request(
+            "GET", "/admin/credentials?limit=1000", token=admin)
+        assert len(credentials["items"]) == 1
+
         def bootstrap_ids(index):
             result = subprocess.run(["sqlite3", "-batch", "-noheader",
                 connections[index],
@@ -134,16 +156,22 @@ def exercise(directory):
                 if b"zumd: active" in lines:
                     break
         assert bootstrap_ids(follower) == original_ids, "activation must preserve bootstrap identities"
-        connection = http.client.HTTPConnection("127.0.0.1", ports[follower], timeout=10)
-        connection.request("GET", "/health/live")
-        response = connection.getresponse()
-        assert response.status == 200
-        response.read()
-        connection.request("GET", "/health/ready")
-        response = connection.getresponse()
-        assert response.status == 503, "activation must not bypass initial administrator enrollment"
-        response.read()
-        connection.close()
+        fixture.port = ports[follower]
+        fixture.request("GET", "/health/live")
+        fixture.request("GET", "/health/ready")
+        # A fresh passkey login proves the promoted daemon loaded the
+        # replicated user, credential and signing key rather than merely
+        # opening its listener.  It also executes an authenticated request
+        # with the pre-promotion token.
+        fixture.cookies = SimpleCookie()
+        promoted = fixture.login(offline=False)
+        fixture.verify_jwt(promoted)
+        replicated, _ = fixture.request(
+            "GET", "/admin/users?name=cluster-admin&source=Local", token=admin)
+        assert replicated == enrolled
+        replicated, _ = fixture.request(
+            "GET", "/admin/credentials?limit=1000", token=admin)
+        assert replicated == credentials
     finally:
         original_failure = sys.exc_info()[0] is not None
         for process in processes:

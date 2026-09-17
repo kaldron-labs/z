@@ -71,11 +71,14 @@ catalog count, avoiding a second manually maintained endpoint list. Requests
 have no credentials and use minimal bodies: this tests inactive admission,
 not authenticated authorization or mutation validation on a standby.
 Both must shut down on
-SIGTERM. The expanded scenario stops the leader normally, awaits Zdb activation
-of the survivor, and checks unchanged bootstrap IDs and continued health access.
-It requires `sqlite3` on `PATH` for read-only bootstrap snapshots. This is
-activation/listener lifecycle coverage, not a replication durability or failover
-SLA claim. See the current ledger for the status of the expanded scenario.
+SIGTERM. The expanded scenario enrolls the initial administrator through the
+production WebAuthn flow, then stops the leader normally and awaits Zdb
+activation of the survivor. The promoted daemon must retain bootstrap IDs,
+become ready, accept a fresh passkey login, verify its token from replicated
+signing state, and serve the replicated administrator and credential records
+to the bearer token issued before promotion. It requires `sqlite3` on `PATH`
+for read-only bootstrap snapshots. This proves two-node active-service
+continuity, not a replication durability or failover SLA claim.
 
 `zumoidchttptest` exercises the real OIDC HTTP transport against reserved loopback
 ports, without persistent storage, certificates, or an external IdP. Non-listening sockets
