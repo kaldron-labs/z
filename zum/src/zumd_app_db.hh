@@ -50,7 +50,9 @@ void recordPut(Def *def, Table *table, Complete complete)
 	  });
       } else if constexpr (Insert) {
 	def->saga->template findDel<0>(table, 0, key, ZuMv(complete),
-	  [](ZdbRow<Record> *row, auto &&complete) mutable { complete(row->commit()); });
+	  [](ZdbRow<Record> *row, auto &&complete) mutable {
+	    complete(!row || row->commit());
+	  });
       } else {
 	def->saga->template findUpd<0>(table, 0, ZuMv(key), ZuMv(complete),
 	  [def](ZdbRow<Record> *row, auto &&complete) mutable {
@@ -89,6 +91,7 @@ void recordEdit(Def *def, Table *table, Complete complete)
 	}
 	def->saga->update(table, ZuMv(row), ZuMv(complete),
 	  [def](ZdbRow<typename Table::T> *row, auto &&complete) mutable {
+	    if (!row) { complete(!Fwd); return; }
 	    if constexpr (Fwd) {
 	      if (auto code = def->recordError(row->data())) {
 		def->error = code; complete(false); return;
@@ -123,6 +126,7 @@ void appEditStart(Def *def, Complete complete)
 	}
 	def->saga->update(table, ZuMv(row), ZuMv(complete),
 	  [def](ZdbRow<App> *row, auto &&complete) mutable {
+	    if (!row) { complete(!Fwd); return; }
 	    if constexpr (Fwd) {
 	      if (auto code = def->appError(row->data())) {
 		def->error = code; complete(false); return;
@@ -144,6 +148,7 @@ void appEditRelease(Def *def, Table *table, Complete complete)
     def->saga->template findUpd<0>(table, 0,
       ZuMv(key), ZuMv(complete),
       [def](ZdbRow<typename Table::T> *row, auto &&complete) mutable {
+	if (!row) { complete(!Fwd); return; }
 	row->data().owner = Fwd ? uint128_t{0} : def->saga->id();
 	complete(row->commit());
       });
@@ -158,6 +163,7 @@ void appEditPublish(Def *def, bool authority, Complete complete)
   table->run(0, [def, table, authority, complete = ZuMv(complete)]() mutable {
     def->saga->template findUpd<0>(table, 0, ZuFwdTuple(def->app.id),
       ZuMv(complete), [def, authority](ZdbRow<App> *row, auto &&complete) mutable {
+	if (!row) { complete(!Fwd); return; }
 	row->data().version = def->app.version + Fwd;
 	row->data().authVersion = def->app.authVersion + (Fwd && authority);
 	row->data().updated = Fwd ? def->updated : def->app.updated;

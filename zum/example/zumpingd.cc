@@ -101,7 +101,12 @@ static Zum::ServiceManifest manifest()
 {
   return {Zum::CatalogData{
     .actions = {{.name = "ping"}},
-    .roles = {{.actions = {"ping"}, .name = "ping"}}
+    .roles = {{.actions = {"ping"}, .name = "ping"}},
+    .clients = {{.id = "zumping", .label = "zumping",
+      .type = "native", .redirectURIs = {"http://127.0.0.1:8081/callback"},
+      .grants = 5, .refreshAllowed = true,
+      .identityScopes = {"openid", "profile", "email"},
+      .roles = {"ping"}}}
   }, 1};
 }
 
@@ -328,12 +333,15 @@ int main(int argc, char **argv)
     ZmSemaphore ready;
     app.service.start([&ready, &ok](int error) {
       ok = error == Zum::ServiceError::OK; ready.post();
+	if (!ok) std::cerr << "zumpingd: service start failed error=" << error << '\n';
     });
     ready.wait();
     if (ok) {
       app.service.publish(manifest(), [&ready, &ok](
           Zum::ServiceProtocolResult result) {
-        ok = result.error == Zum::ServiceError::OK; ready.post();
+          ok = result.error == Zum::ServiceError::OK; ready.post();
+	    if (!ok) std::cerr << "zumpingd: catalog publication failed status=" <<
+	      result.status << " error=" << result.error << '\n';
       });
       ready.wait();
     }

@@ -21,7 +21,7 @@ static void clientToken(
   String requested, SignKey, int64_t now, int64_t expires,
   JWTLimits, SignFn, TokenFn);
 static void refreshToken(
-  DBContext *, Ztls::Random &, Grant, Bytes presentedDigest,
+  DBContext *, Ztls::Random &, Refresh, Bytes presentedDigest,
   Client, bool requestedPresent, String requested, SignKey,
   int64_t now, int64_t expires, unsigned generationLimit,
   unsigned spentLimit, JWTLimits, RefreshRevokeFn, SignFn, TokenFn);
@@ -184,7 +184,7 @@ private:
 class RefreshToken_ : public ZumPolymorph {
 public:
   RefreshToken_(
-      DBContext *context, Ztls::Random *rng, Grant family,
+      DBContext *context, Ztls::Random *rng, Refresh family,
       Bytes presentedDigest, Client client, bool requestedPresent,
       String requested, SignKey key, int64_t now, int64_t expires,
       unsigned generationLimit, unsigned spentLimit, JWTLimits limits,
@@ -200,7 +200,6 @@ public:
   void start()
   {
     if (!m_context || !m_rng || !m_presentedDigest || !m_sign ||
-	m_family.kind != GrantKind::Refresh ||
 	m_family.state != State::Active || m_family.expires <= m_now ||
 	m_family.clientID != m_client.id ||
 	m_key.state != State::Active || !m_key.id ||
@@ -253,13 +252,12 @@ private:
 
   void reuse_()
   {
-    auto grants = m_context->grants;
-    grants->run(0, [self = ZmRef<RefreshToken_>{this}, grants]() {
+    auto refresh = m_context->refresh;
+    refresh->run(0, [self = ZmRef<RefreshToken_>{this}, refresh]() {
       Bytes id = self->m_family.id;
-      grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
-	  ZdbRow<Grant> *row) mutable {
+      refresh->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
+	  ZdbRow<Refresh> *row) mutable {
 	if (row && row->data().issuer == self->m_family.issuer &&
-	    row->data().kind == GrantKind::Refresh &&
 	    row->data().state == State::Active &&
 	    row->data().expires > self->m_now &&
 	    refreshMatch(row->data(), self->m_presentedDigest) ==
@@ -400,7 +398,7 @@ private:
 
   DBContext	*m_context = nullptr;
   Ztls::Random	*m_rng = nullptr;
-  Grant		m_family;
+  Refresh		m_family;
   Bytes		m_presentedDigest;
   Client	m_client;
   String	m_requested;
@@ -765,6 +763,12 @@ private:
       finish_(OAuthError::InvalidGrant);
       return;
     }
+    if (m_grant == TokenGrant::RefreshToken) {
+      m_context->refresh->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+        self = ZmRef<TokenRequest_>{this}
+      ](ZdbRowRef<Refresh> row) mutable { self->refresh_(ZuMv(row)); });
+      return;
+    }
     m_context->grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [
       self = ZmRef<TokenRequest_>{this}
     ](ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
@@ -787,6 +791,17 @@ private:
       }
     }
     m_grantRecord = ZuMv(grant);
+    loadKey_();
+  }
+
+  void refresh_(ZdbRowRef<Refresh> row)
+  {
+    if (!row || row->data().issuer != m_config.issuer) {
+      finish_(OAuthError::InvalidGrant); return;
+    }
+    m_refreshRecord = row->data();
+    m_requested = m_params.scope;
+    m_requestedPresent = m_params.has(TokenParams::Scope);
     loadKey_();
   }
 
@@ -818,7 +833,7 @@ private:
 	m_config.accessExpires, m_config.refreshExpires, m_config.jwtLimits,
 	ZuMv(m_sign), ZuMv(complete));
     } else {
-      refreshToken(m_context, *m_rng, ZuMv(m_grantRecord),
+      refreshToken(m_context, *m_rng, ZuMv(m_refreshRecord),
 	ZuMv(m_digest), ZuMv(m_client), m_requestedPresent,
 	ZuMv(m_requested), ZuMv(key), m_config.now, m_config.accessExpires,
 	m_config.generationLimit, m_config.spentLimit, m_config.jwtLimits,
@@ -839,6 +854,7 @@ private:
   BasicAuth	m_basic;
   Client	m_client;
   Grant		m_grantRecord;
+  Refresh	m_refreshRecord;
   String	m_requested;
   Bytes		m_digest;
   int		m_grant = TokenGrant::Invalid;
@@ -860,7 +876,7 @@ static void clientToken(
 }
 
 static void refreshToken(
-    DBContext *context, Ztls::Random &rng, Grant family,
+    DBContext *context, Ztls::Random &rng, Refresh family,
     Bytes presentedDigest, Client client, bool requestedPresent,
     String requested, SignKey key, int64_t now, int64_t expires,
     unsigned generationLimit, unsigned spentLimit, JWTLimits limits,
@@ -1031,11 +1047,19 @@ private:
       access_();
       return;
     }
-    auto grants = m_context->grants;
+    auto refresh = m_context->refresh;
     Bytes id = m_familyID;
-    grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [
+    refresh->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [
       self = ZmRef<RevokeRequest_>{this}
-    ](ZdbRow<Grant> *row) mutable { self->grant_(row); });
+    ](ZdbRow<Refresh> *row) mutable {
+      if (row) { self->grant_(row); return; }
+      // Retain revocation for opaque grant records written by older stores.
+      auto grants = self->m_context->grants;
+      Bytes id = self->m_familyID;
+      grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self](ZdbRow<Grant> *row) mutable {
+        self->grantLegacy_(row);
+      });
+    });
   }
 
   void access_()
@@ -1046,9 +1070,9 @@ private:
     finish_(RevokeIssue::OK);
   }
 
-  void grant_(ZdbRow<Grant> *row)
+  void grant_(ZdbRow<Refresh> *row)
   {
-    if (!row || row->data().kind != GrantKind::Refresh ||
+    if (!row ||
 	row->data().issuer != m_config.issuer ||
 	row->data().clientID != m_client.id || row->data().owner ||
 	refreshMatch(row->data(), m_digest) == RefreshMatch::Unknown) {
@@ -1079,6 +1103,29 @@ private:
       .event = AuditEvent::Revocation,
       .outcome = AuditOutcome::Success,
       .detail = "refresh token"
+    });
+    finish_(RevokeIssue::OK);
+  }
+
+  void grantLegacy_(ZdbRow<Grant> *row)
+  {
+    if (!row || row->data().issuer != m_config.issuer ||
+        row->data().clientID != m_client.id || row->data().owner ||
+        !Ztls::ctEqual(row->data().digest, m_digest) ||
+        row->data().state != State::Active) {
+      finish_(RevokeIssue::OK);
+      return;
+    }
+    row->data().state = State::Revoked;
+    if (!row->commit()) { finish_(OAuthError::ServerError); return; }
+    logEvent(Audit{
+      .time = m_config.now,
+      .issuer = m_config.issuer,
+      .actor = m_client.id,
+      .subject = auditID(m_familyID),
+      .event = AuditEvent::Revocation,
+      .outcome = AuditOutcome::Success,
+      .detail = "opaque grant"
     });
     finish_(RevokeIssue::OK);
   }

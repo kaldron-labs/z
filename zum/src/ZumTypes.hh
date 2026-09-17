@@ -23,7 +23,8 @@ ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Bytes">>));
 struct VecHeapID : public ZuStringT<"Zum.Vec"> { };
 using VecHeap = ZtArrayHeapID_<VecHeapID>;
 ZuDerive(StringVec, (ZtArray<String, VecHeap>));
-ZuDerive(BytesVec, (ZtArray<Bytes, VecHeap>));
+ZuDerive(BytesVec, (ZtArray<Bytes,
+  ZtArrayHeapID<"Zum.Saga.Images">>));
 ZuDerive(IDVec, (ZtArray<uint64_t, VecHeap>));
 ZuDerive(ActionIDVec, (ZtArray<uint32_t, VecHeap>));
 

@@ -119,7 +119,7 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
 		item.kind != beforeGrant.kind || item.userID != beforeGrant.userID ||
 		item.appID != beforeGrant.appID || item.clientID != beforeGrant.clientID ||
 		item.expires != beforeGrant.expires || item.authVersion != beforeGrant.authVersion ||
-		item.generation != beforeGrant.generation || item.authTime != beforeGrant.authTime ||
+		item.authTime != beforeGrant.authTime ||
 		item.requestedRoleIDs != beforeGrant.requestedRoleIDs ||
 		item.userVersion != beforeGrant.userVersion ||
 		item.bindingDigest != beforeGrant.bindingDigest || item.digest != beforeGrant.digest) {
@@ -166,7 +166,7 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
       } else {
 	saga->template findDel<0>(table, 0, consentKey(),
 	  ZuMv(complete), [](ZdbRow<Consent> *row, auto &&complete) mutable {
-	    complete(row && row->commit());
+	    complete(!row || row->commit());
 	  });
       }
     });

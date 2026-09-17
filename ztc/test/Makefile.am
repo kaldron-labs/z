@@ -42,8 +42,10 @@ ZtcAgentTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zws/src
 ZtcAgentTest_SOURCES = ZtcAgentTest.cc ../src/ztcagent_daemon.cc
+ZtcHubTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztls/src
 ZtcHubTest_SOURCES = ZtcHubTest.cc ../src/ztchub_daemon.cc
-ZtcHubTest_LDADD = $(LDADD) $(top_builddir)/zum/src/libZum.la
+ZtcHubTest_LDADD = $(LDADD) $(top_builddir)/zum/src/libZum.la \
+	$(top_builddir)/ztls/src/libZtls.la
 ZtcAgentTest_LDADD = $(LDADD) \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \

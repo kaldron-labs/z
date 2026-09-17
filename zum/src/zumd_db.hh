@@ -31,8 +31,10 @@ ZdbSagaDerive(SagaCatalog,
   AppChange, UserEdit, CredEdit, ProviderEdit, ClientEdit, KeyRetire,
   ClientAccessState, AdminAccessState, RoleMapDelete, RoleMapPut, PolicyPut,
   ClientAccessPut, AdminAccessPut, ProviderAdd, RoleAdd,
-  UserInvite, ClientAdd, KeyAdd, Revoke, GrantCleanup, ConsentCode, KeyBinding,
-  SecretRekey, SSFDeliveryAdd);
+  UserInvite, ClientAdd, KeyAdd, Revoke, GrantCleanup, SessionCleanup,
+  RefreshCleanup, AppCleanup, ConsentCode, KeyBinding, SecretRekey,
+  SSFDeliveryAdd, GrantCleanupV2, SessionCleanupV1, RefreshCleanupV1,
+  AppCleanupV1);
 struct MSaga;
 using MSagaBase = ZdbMSaga<SagaCatalog, MSaga>;
 struct MSaga : public MSagaBase { ZuDerive_(MSaga, MSagaBase) };

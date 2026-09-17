@@ -11,7 +11,6 @@ table Grant {
   redirect_u_r_i:string;
   actions:Zfb.Bitmap;
   digest:[ubyte];
-  spent:[Zfb.Bytes];
   challenge:[ubyte];
   binding_digest:[ubyte];
   pkce_challenge:[ubyte];
@@ -20,7 +19,6 @@ table Grant {
   auth_time:int64;
   created:int64;
   expires:int64;
-  generation:uint32;
   kind:int8;
   purpose:int8;
   state:int8;

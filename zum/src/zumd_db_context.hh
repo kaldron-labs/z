@@ -21,6 +21,7 @@ struct IssuerTable;
 struct UserTable;
 struct CredTable;
 struct GrantTable;
+struct RefreshTable;
 struct SessionTable;
 struct ConsentTable;
 struct AppTable;
@@ -59,6 +60,7 @@ struct DBContext : public ZumPolymorph {
   SessionTable		*sessions = nullptr;
   ConsentTable		*consents = nullptr;
   GrantTable		*grants = nullptr;
+  RefreshTable		*refresh = nullptr;
   SignKeyTable		*signKeys = nullptr;
   IdemRequestTable	*requests = nullptr;
   SSFRxTable		*ssfRx = nullptr;

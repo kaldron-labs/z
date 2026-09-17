@@ -47,6 +47,12 @@ principal. In a client-credentials flow, the service identity and OAuth client
 will commonly be represented by the same deployment, but the roles remain
 distinct.
 
+A **confidential client** is a client that runs in an environment capable of
+protecting credentials, typically through a secrets manager and environment
+variables. A server-side service such as `zumpingd` can therefore authenticate
+with a client secret; a native or browser client generally cannot safely do so
+and is treated as public.
+
 ## Audience and application
 
 In `zumd`, `audience` is an attribute of an application and therefore belongs
@@ -212,6 +218,16 @@ Its main features are:
 - refresh-token-family revocation delivery to enrolled services using signed
   SETs; already-issued access tokens remain self-contained until expiry.
 
+Refresh-token families are persisted separately in `zum.refresh`; `zum.grant`
+contains only short-lived authorization, passkey, and capability protocol
+state. Expired grants, sessions, and refresh families are reclaimed by the
+daemon in bounded maintenance passes. The `--cleanup-interval=N` option
+controls the pass period in seconds (default 300; `0` disables automatic
+passes, leaving the administrative cleanup operation available).
+Setting an application to `Revoked` is permanent logical deletion: the app is
+made inactive first, then bounded saga batches remove its evidence and consent
+rows. `Disabled` remains reversible and does not delete those records.
+
 The Transmitter is enabled by an optional `ssf` node in the daemon's native
 configuration.  It contains the SSF issuer and a receiver array with each
 receiver's application ID, audience, HTTPS callback URL, revision, and a
@@ -325,5 +341,5 @@ Each application represents one service and owns one immutable
 `audience` string, used as the resource access token’s `aud` claim.
 `appEnroll` requires `audience`; `appQuery` returns it on the application.
 Client access grants select application roles. Consent is keyed by user, client
-and application. Schema version 20 removes the separate audience table and IDs;
-existing databases require reprovisioning.
+and application. Schema version 21 adds the refresh-family table; existing
+databases require reprovisioning.

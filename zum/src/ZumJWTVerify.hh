@@ -53,7 +53,8 @@ struct RefreshID {
 
 struct Principal {
   TokenID	tokenID;
-  String	subject;
+	String	audience;
+	String	subject;
   String	clientID;
   String	scope;
   StringVec	actions;

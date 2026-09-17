@@ -17,6 +17,102 @@
 
 namespace Zum {
 
+static MaintenanceResult maintenanceAdd(
+    MaintenanceResult lhs, MaintenanceResult rhs)
+{
+  lhs.selected += rhs.selected;
+  lhs.deleted += rhs.deleted;
+  lhs.skipped += rhs.skipped;
+  lhs.conflicted += rhs.conflicted;
+  lhs.failed += rhs.failed;
+  lhs.rescheduled += rhs.rescheduled;
+  lhs.ok = lhs.ok && rhs.ok;
+  return lhs;
+}
+
+class MaintenanceRun_ : public ZmPolymorph {
+public:
+  MaintenanceRun_(DB *db, DBContext *context, Ztls::Random *rng,
+      ZmScheduler *scheduler, unsigned sid, MaintenanceFn complete) :
+    m_db{db}, m_context{context}, m_rng{rng}, m_scheduler{scheduler},
+    m_sid{sid}, m_complete{ZuMv(complete)} { }
+
+  void start()
+  {
+    ZmAssert(m_scheduler->invoked(m_sid));
+    daemonGrantCleanup(m_db, m_context, m_rng, DaemonCleanupLimit::Rows,
+      [self = ZmRef<MaintenanceRun_>{this}](MaintenanceResult result) mutable {
+	self->post_([self = ZuMv(self), result = ZuMv(result)]() mutable {
+	  self->grant_(ZuMv(result));
+	});
+      });
+  }
+
+  void stop()
+  {
+    ZmAssert(m_scheduler->invoked(m_sid));
+    m_stopping = true;
+  }
+
+private:
+  void post_(ZmFn<void()> fn)
+  {
+    m_scheduler->run([fn = ZuMv(fn)]() mutable { fn(); }, m_sid);
+  }
+
+  void grant_(MaintenanceResult grant)
+  {
+    ZmAssert(m_scheduler->invoked(m_sid));
+    if (m_stopping) { finish_(ZuMv(grant)); return; }
+    daemonRefreshCleanup(m_db, m_context, m_rng, DaemonCleanupLimit::Rows,
+      [self = ZmRef<MaintenanceRun_>{this}, grant = ZuMv(grant)](
+	  MaintenanceResult refresh) mutable {
+	self->post_([self = ZuMv(self), grant = ZuMv(grant),
+	    refresh = ZuMv(refresh)]() mutable {
+	  self->refresh_(ZuMv(grant), ZuMv(refresh));
+	});
+      });
+  }
+
+  void refresh_(MaintenanceResult grant, MaintenanceResult refresh)
+  {
+    ZmAssert(m_scheduler->invoked(m_sid));
+    auto result = maintenanceAdd(ZuMv(grant), ZuMv(refresh));
+    if (m_stopping) { finish_(ZuMv(result)); return; }
+    daemonSessionCleanup(m_db, m_context, m_rng, DaemonCleanupLimit::Rows,
+      [self = ZmRef<MaintenanceRun_>{this}, result = ZuMv(result)](
+	  MaintenanceResult session) mutable {
+	self->post_([self = ZuMv(self), result = ZuMv(result),
+	    session = ZuMv(session)]() mutable {
+	  self->finish_(maintenanceAdd(ZuMv(result), ZuMv(session)));
+	});
+      });
+  }
+
+  void finish_(MaintenanceResult result)
+  {
+    ZmAssert(m_scheduler->invoked(m_sid));
+    if (m_done) return;
+    m_done = true;
+    auto complete = ZuMv(m_complete);
+    complete(ZuMv(result));
+  }
+
+  DB		*m_db = nullptr;
+  DBContext	*m_context = nullptr;
+  Ztls::Random	*m_rng = nullptr;
+  ZmScheduler	*m_scheduler = nullptr;
+  unsigned	m_sid = 0;
+  MaintenanceFn	m_complete;
+  bool		m_stopping = false;
+  bool		m_done = false;
+};
+
+static void maintenanceStop_(ZmPolymorph *run)
+{
+  static_cast<MaintenanceRun_ *>(run)->stop();
+}
+
 // Auth-route discovery has a wider fixed mapping ceiling than token
 // authority resolution; the extra row distinguishes overflow from a full set.
 namespace AuthRouteLimit {
@@ -527,21 +623,130 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
 
 bool Daemon::start()
 {
+  if (m_finalized) return false;
   if (!m_httpInited || !m_http.start()) return false;
+  auto scheduler = m_requests->scheduler();
+  unsigned sid = m_requests->sid();
+  if (scheduler->invoked(sid)) cleanupStart_();
+  else {
+    ZmSemaphore complete;
+    scheduler->invoke([this, &complete]() {
+      cleanupStart_();
+      complete.post();
+    }, sid);
+    complete.wait();
+  }
   if (m_ssf) m_ssf->start();
   return true;
 }
 
 void Daemon::stop()
 {
+  if (m_finalized) return;
+  bool wait = false;
+  if (m_requests && m_requests->scheduler()) {
+    auto scheduler = m_requests->scheduler();
+    unsigned sid = m_requests->sid();
+    if (scheduler->invoked(sid)) {
+      wait = cleanupStop_();
+      ZmAssert(!wait);
+    } else {
+      ZmSemaphore complete;
+      scheduler->invoke([this, &wait, &complete]() {
+        wait = cleanupStop_();
+        complete.post();
+      }, sid);
+      complete.wait();
+    }
+  }
+  if (wait) m_cleanupStopped.wait();
   if (m_ssf) m_ssf->stop();
   if (m_requests) m_requests->deactivate();
   m_provider.stop();
   if (m_httpInited) (void)m_http.stop();
 }
 
+void Daemon::cleanupStart_()
+{
+  ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
+  if (m_started) return;
+  m_started = true;
+  m_cleanupState = DaemonCleanupState::Idle;
+  m_cleanupBackoff = m_config.cleanupInterval;
+  if (!m_config.cleanupInterval) return;
+  m_mx->add(&m_cleanupTimer,
+    Zm::now() + ZuTime{int64_t(m_config.cleanupInterval)},
+    ZmScheduler::Update,
+    [this](auto &&arm) { return arm([this]() { cleanup_(); }); },
+    m_requests->sid());
+}
+
+bool Daemon::cleanupStop_()
+{
+  ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
+  m_started = false;
+  if (m_mx) m_mx->del(&m_cleanupTimer);
+  if (m_cleanupState != DaemonCleanupState::Running) return false;
+  m_cleanupState = DaemonCleanupState::Stopping;
+  ZmAssert(m_cleanupRun);
+  maintenanceStop_(m_cleanupRun.ptr());
+  return true;
+}
+
+void Daemon::cleanup_()
+{
+  ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
+  if (!m_started || m_cleanupState != DaemonCleanupState::Idle ||
+      !m_context || !m_db) return;
+  m_cleanupState = DaemonCleanupState::Running;
+  ZiLOG(Debug, "zumd", "maintenance cleanup started");
+  ZmRef<MaintenanceRun_> run = new MaintenanceRun_{m_db, m_context, &m_rng,
+    m_requests->scheduler(), m_requests->sid(),
+    [this](MaintenanceResult result) mutable { cleanupDone_(ZuMv(result)); }};
+  m_cleanupRun = run;
+  run->start();
+}
+
+void Daemon::cleanupDone_(MaintenanceResult result)
+{
+  ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
+  auto stopping = m_cleanupState == DaemonCleanupState::Stopping;
+  m_cleanupRun = nullptr;
+  m_cleanupState = DaemonCleanupState::Idle;
+  if (result.ok) m_cleanupBackoff = m_config.cleanupInterval;
+  else if (m_cleanupBackoff < uint64_t(m_config.cleanupInterval) * 16)
+    m_cleanupBackoff = m_cleanupBackoff ? m_cleanupBackoff * 2 :
+      m_config.cleanupInterval;
+  bool reschedule = !stopping && m_started && m_config.cleanupInterval;
+  if (reschedule) ++result.rescheduled;
+  if (result.ok) ZiLOG(Debug, "zumd", ([result](auto &s) {
+      s << "maintenance cleanup completed selected=" << result.selected
+        << " deleted=" << result.deleted << " skipped=" << result.skipped
+        << " conflicted=" << result.conflicted << " failed=" << result.failed
+        << " rescheduled=" << result.rescheduled;
+    }));
+  else ZiLOG(Error, "zumd", ([result](auto &s) {
+      s << "maintenance cleanup failed selected=" << result.selected
+        << " deleted=" << result.deleted << " skipped=" << result.skipped
+        << " conflicted=" << result.conflicted << " failed=" << result.failed
+        << " rescheduled=" << result.rescheduled;
+    }));
+  if (stopping) {
+    m_cleanupStopped.post();
+    return;
+  }
+  if (!reschedule) return;
+  m_mx->add(&m_cleanupTimer,
+    Zm::now() + ZuTime{int64_t(m_cleanupBackoff)},
+    ZmScheduler::Update,
+    [this](auto &&arm) { return arm([this]() { cleanup_(); }); },
+    m_requests->sid());
+}
+
 void Daemon::final()
 {
+  if (m_finalized) return;
+  stop();
   if (m_httpInited) {
     m_http.final();
     m_httpInited = false;
@@ -553,9 +758,24 @@ void Daemon::final()
   m_signKeyID.null();
   if (m_config.dbKey && m_config.dbKey.mutable_())
     ZuClear(m_config.dbKey.data(), m_config.dbKey.length());
+  m_finalized = true;
 }
 
-void Daemon::listening(int, unsigned) { }
-void Daemon::listenFailed(int, bool) { }
+void Daemon::listening(int transport, unsigned port)
+{
+  if (transport != Zhttp::Transport::TCP) return;
+  std::cout << "zumd: listening" << std::endl;
+  ZiLOG(Info, "zumd", ([port](auto &s) {
+    s << "HTTP listener ready on port " << port;
+  }));
+}
+
+void Daemon::listenFailed(int transport, bool transient)
+{
+  ZiLOG(Error, "zumd", ([transport, transient](auto &s) {
+    s << "HTTP listener failed transport=" << transport
+      << " transient=" << transient;
+  }));
+}
 
 } // namespace Zum

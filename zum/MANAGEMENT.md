@@ -45,7 +45,7 @@ never assigns roles to users or restores deleted privileges.
 
 The route registry defines the method/path table.
 [Zum terminology](../zum_terminology.md) defines the application, principal,
-role, action and scope vocabulary. Schema version 20 requires reprovisioning
+role, action and scope vocabulary. Schema version 21 requires reprovisioning
 existing databases; its operation catalog removes audience management.
 
 ## HTTP rules
@@ -163,8 +163,9 @@ by discovery, the `zumd` origin as `managementURL`, the `zum-admin`
 client, a loopback callback, and (when applicable) the private test CA, then run
 `zum --config FILE login`. The browser must complete the passkey assertion and
 return to the state-bound loopback callback. Use the authenticated CLI to enroll
-the ping service/client and user as described in the example README, inject only
-`ZUM_CLIENT_SECRET` into `zumpingd`, and run `zumping` without `--no-browser`.
+the ping application and user as described in the example README, inject only
+`ZUM_CLIENT_SECRET` for its same-name default client into `zumpingd`, and run
+`zumping` without `--no-browser`.
 Record the browser/platform authenticator and observed login/pong result in the
 implementation ledger. The virtual authenticator fixtures do not satisfy this
 manual gate.

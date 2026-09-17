@@ -26,7 +26,9 @@ struct SagaImage {
   template <typename T>
   static Bytes save(const T &item)
   {
-    Zfb::IOBuilder fbb{new ZiIOBufAlloc<>()};
+    // The builder is bounded by the caller's maintenance batch limit; use
+    // the dedicated saga-image heap for the retained copy.
+    Zfb::IOBuilder fbb{new ZiIOBufAlloc<ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zum.Saga.Image">{}};
     fbb.Finish(ZfbStruct::save(fbb, item));
     return Bytes{ZuBSpan{fbb.GetBufferPointer(), fbb.GetSize()}};
   }

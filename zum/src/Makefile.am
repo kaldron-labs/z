@@ -26,11 +26,13 @@ FBS = \
 	zum_session.fbs \
 	zum_consent.fbs \
 	zum_grant.fbs \
+	zum_refresh.fbs \
 	zum_saga.fbs \
 	zum_sign_key.fbs \
 	zum_request.fbs \
 	zum_ssf.fbs \
-	zum_ssf_delivery.fbs
+	zum_ssf_delivery.fbs \
+	zum_maintenance.fbs
 FBS_H = ${FBS:%.fbs=%_fbs.h}
 ${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
 	$(top_builddir)/scripts/fbscodegen -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<

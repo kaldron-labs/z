@@ -293,7 +293,13 @@ static String basicAuth(ZuCSpan clientID, ZuBSpan secret)
   String plain;
   ZfURI::PathQuote::quote(plain, clientID);
   plain << ':';
-  ZfURI::PathQuote::quote(plain, secret);
+  bool safe = true;
+  for (auto c: secret)
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+          c == '.' || c == '~')) { safe = false; break; }
+  if (safe) plain << ZuCSpan{secret};
+  else ZfURI::PathQuote::quote(plain, secret);
   String encoded;
   encoded.length(ZuBase64::enclen(plain.length()));
   encoded.length(ZuBase64::encode(encoded.span(), ZuBSpan{plain}));
@@ -396,7 +402,8 @@ struct ServiceState : public ZumObject {
           complete = ZuMv(complete)](bool ok) mutable {
         if (self->state != Starting) { complete(ServiceError::Stopped); return; }
         if (!ok) { self->state = Initial; complete(ServiceError::Unavailable); return; }
-        self->keys_(true, [self = ZuMv(self), complete = ZuMv(complete)](
+	self->keys_(self->workloadManagement,
+	 [self = ZuMv(self), complete = ZuMv(complete)](
             bool ok) mutable {
           if (self->state != Starting) { complete(ServiceError::Stopped); return; }
           if (!ok || !self->verifyWorkload_()) {
@@ -448,12 +455,17 @@ struct ServiceState : public ZumObject {
 
   void authenticate_(ServiceReadyFn complete)
   {
+    authenticateURL_(tokenURL, true, ZuMv(complete));
+  }
+
+  void authenticateURL_(String url, bool management, ServiceReadyFn complete)
+  {
     String form{"grant_type=client_credentials&scope=zum.catalog"};
     send_(ServiceHTTPRequest{.method = ServiceMethod::POST,
-      .url = tokenURL,
+      .url = ZuMv(url),
       .authorization = basicAuth(config.clientID, config.clientSecret),
       .contentType = "application/x-www-form-urlencoded",
-      .body = ZuMv(form)}, [self = ZmRef<ServiceState>{this},
+      .body = ZuMv(form)}, [self = ZmRef<ServiceState>{this}, management,
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token;
       uint64_t expires = 0;
@@ -465,6 +477,12 @@ struct ServiceState : public ZumObject {
           ZuClear(self->accessToken.data(), self->accessToken.length());
         self->accessToken = ZuMv(token);
         self->accessExpires = Zm::now().sec() + int64_t(expires);
+	self->workloadManagement = management;
+      }
+      if (!ok && management && self->resourceTokenURL &&
+	  self->resourceTokenURL != self->tokenURL) {
+	self->authenticateURL_(self->resourceTokenURL, false, ZuMv(complete));
+	return;
       }
       complete(ok);
     });
@@ -487,6 +505,7 @@ struct ServiceState : public ZumObject {
         self->config.issuerURL, token, jwks);
       ok = ok && serviceURL(token, false) && serviceURL(jwks, false);
       if (!ok) { complete(false); return; }
+      self->resourceTokenURL = ZuMv(token);
       self->jwksURL = ZuMv(jwks);
       self->managementDiscovery_(ZuMv(managementURL), [self = ZuMv(self),
           complete = ZuMv(complete)](bool ok) mutable {
@@ -506,8 +525,8 @@ struct ServiceState : public ZumObject {
         self->config.managementIssuerURL, token, jwks);
       ok = ok && serviceURL(token, false) && serviceURL(jwks, false);
       if (ok) {
-        self->tokenURL = ZuMv(token);
-        self->managementJWKSURL = ZuMv(jwks);
+	self->tokenURL = ZuMv(token);
+	self->managementJWKSURL = ZuMv(jwks);
       }
       complete(ok);
     });
@@ -717,15 +736,19 @@ struct ServiceState : public ZumObject {
   {
     JWTHeader header;
     if (!jwtHeader(accessToken, config.jwtLimits, header)) return false;
-    auto key = key_(managementKeys, header.keyID);
+    const auto &keys = workloadManagement ? managementKeys : this->keys;
+    auto key = key_(keys, header.keyID);
     Principal principal;
-    String audience = endpoint(config.managementURL, "/admin");
+    String issuer = workloadManagement ? config.managementIssuerURL :
+      config.issuerURL;
+    String audience = workloadManagement ?
+      endpoint(config.managementURL, "/admin") : config.audience;
     if (!key || !jwtVerify(accessToken, header.keyID,
-        config.managementIssuerURL,
+        issuer,
         audience, key->publicKey, Zm::now().sec(), config.jwtLimits,
         principal) || principal.authMethod ||
         principal.clientID != config.clientID ||
-        principal.appID != managementAppID)
+        principal.appID != (workloadManagement ? managementAppID : appID))
       return false;
     if (accessExpires > principal.expires) accessExpires = principal.expires;
     return true;
@@ -941,7 +964,9 @@ struct ServiceState : public ZumObject {
   String managementJWKSURL;
   String ssfJWKSURL;
   String tokenURL;
+  String resourceTokenURL;
   String accessToken;
+  bool workloadManagement = false;
   AppID appID = 0;
   AppID managementAppID = 0;
   int64_t accessExpires = 0;

@@ -321,15 +321,15 @@ public:
   FrameStream(
     Native &native, uint32_t streamID, HeaderFrames *frames = nullptr) :
     Base(
-      native.txStream().maxSize(),
-      native.txStream().headRoom(),
-      native.txStream().tailRoom()),
+      native.txStream_().maxSize(),
+      native.txStream_().headRoom(),
+      native.txStream_().tailRoom()),
     m_native{&native}, m_frames{frames}, m_streamID{streamID}
   {
   }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    auto tx = m_native->txStream();
+    auto tx = m_native->txStream_();
     return tx.allocBuf_(headRoom);
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
@@ -941,33 +941,6 @@ public:
       });
     }
   }
-  bool finishTx(uint32_t id, Transport_::TxCompleteFn fn) {
-    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
-      "H2 response fence outside Tx thread", return false);
-    auto entry_ = m_txWindows->findPtr(id);
-    if (!entry_) return false;
-    auto buf = entry_->frames.tailPtr();
-    if (!buf) return false;
-    auto frame = static_cast<ZiIOBuf *>(buf)->data();
-    if (!(frame[4] & Flag::EndStream)) return false;
-    auto node = Transport_::txBufNode(buf);
-    if (node->txComplete) return false;
-    node->txComplete = ZuMv(fn);
-    return true;
-  }
-  bool fenceTx(uint32_t id, Transport_::TxCompleteFn fn) {
-    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
-      "H2 response fence outside Tx thread", return false);
-    auto entry_ = m_txWindows->findPtr(id);
-    if (!entry_) return false;
-    auto buf = entry_->frames.tailPtr();
-    if (!buf) return false;
-    auto node = Transport_::txBufNode(buf);
-    if (node->txComplete) return false;
-    node->txComplete = ZuMv(fn);
-    return true;
-  }
-
   unsigned dataMaxSize(uint32_t id) {
     if (impl_()->app()->txInvoked()) return dataMaxSizeTx_(id);
     auto tx = impl_()->txStream();
@@ -1738,11 +1711,9 @@ private:
     if (entry_->scheduled == TxSchedule::None)
       scheduleFrameTx_(entry_);
   }
-  static unsigned clearFrameTx_(
-      TxWindowHash::Node *entry_, bool ok) {
+  static unsigned clearFrameTx_(TxWindowHash::Node *entry_, bool) {
     unsigned n = 0;
-    while (auto buf = entry_->frames.shift()) {
-      Transport_::txBufNode(buf)->complete(ok);
+    while (entry_->frames.shift()) {
       ++n;
     }
     if (entry_->endMarker) {

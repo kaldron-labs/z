@@ -435,26 +435,7 @@ enum {
   H1BufMax = 100<<20		// maximum configured HTTP body/buffer growth
 };
 
-using TxCompleteFn = ZmFn<void(bool),
-  ZmFnHeapID<"Zhttp.TxComplete">>;
-
-// The HTTP transports already retain the final wire buffer until the native
-// socket send completes.  Keep the response fence on that buffer rather than
-// building a parallel per-buffer tracker.
-struct TxBufNode : public ZiTxQueue::Node {
-  using Base = ZiTxQueue::Node;
-  using Base::Base;
-
-  ~TxBufNode() { txComplete = {}; }
-
-  void complete(bool ok) {
-    auto fn = ZuMv(txComplete);
-    txComplete = {};
-    if (fn) fn(ok);
-  }
-
-  TxCompleteFn txComplete;
-};
+using TxBufNode = ZiTxQueue::Node;
 
 inline TxBufNode *txBufNode(ZiIOBuf *buf)
 {
@@ -1142,7 +1123,7 @@ public:
     return this->txStream();
   }
   template <typename Builder>
-  auto transmitTx_(Builder &) {
+  auto transmit_(Builder &) {
     return this->txStream_();
   }
   void finish() { }
@@ -1186,7 +1167,6 @@ class ServerLink :
 
 public:
   enum { TLS = Traits::Secure, Multiplexed = HTTP::Multiplexed };
-  using TxCompleteFn = Transport_::TxCompleteFn;
 
   ServerLink(App *app, const ZiCxnInfo &ci) :
     Base{app}, m_remoteIP{ci.remoteIP}, m_remotePort{ci.remotePort}
@@ -1266,21 +1246,7 @@ public:
     });
   }
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
-    ZiIOBuf *sent = buf.ptr();
-    auto fn = ZuMv(Transport_::txBufNode(sent)->txComplete);
-    Transport_::txBufNode(sent)->txComplete = {};
-    if (m_txLast == sent) {
-      m_txLast = nullptr;
-      m_txOK = ok;
-    }
-    if (!ok) {
-      auto i = this->txQueue.iter();
-      while (auto queued = i())
-        Transport_::txBufNode(queued)->complete(false);
-    }
     Base::sent(ZuMv(buf), ok);
-    if (fn)
-      fn(ok);
     if (!m_streamEnd || (ok && this->txQueue.count_())) return;
     m_streamEnd = false;
     streamTxClose_();
@@ -1306,70 +1272,14 @@ public:
   }
   template <typename Builder>
   auto transmit(Builder &) {
-    return this->txStream();
+    return this->txStream_();
+  }
+  template <typename Builder>
+  auto transmit_(Builder &) {
+    return this->txStream_();
   }
   bool active() const { return !!this->cxn(); }
-  using Base::send;
-  using Base::send_;
-  bool send_(ZmRef<ZiIOBuf> buf, uint64_t generation) {
-    return sendTracked_(ZuMv(buf), [this, generation](auto &&buf) {
-      return Base::send_(ZuFwd<decltype(buf)>(buf), generation);
-    });
-  }
-
-private:
-  template <typename Fn>
-  bool sendTracked_(ZmRef<ZiIOBuf> buf, Fn &&fn) {
-    ZiIOBuf *last = buf.ptr();
-    m_txLast = last;
-    m_txReady = true;
-    bool ok = ZuFwd<Fn>(fn)(ZuMv(buf));
-    if (!ok) {
-      if (m_txLast == last) m_txLast = nullptr;
-      m_txOK = false;
-      return false;
-    }
-    return true;
-  }
-
-public:
-  void txComplete(TxCompleteFn fn) {
-    m_txComplete = ZuMv(fn);
-  }
-  void txCancel() {
-    m_txComplete = {};
-    m_txLast = nullptr;
-    m_txReady = false;
-  }
-  bool txFence(TxCompleteFn fn) {
-    if (!m_txReady) return false;
-    m_txReady = false;
-    if (!m_txLast) {
-      fn(m_txOK);
-      return true;
-    }
-    auto node = Transport_::txBufNode(m_txLast);
-    if (node->txComplete) return false;
-    node->txComplete = ZuMv(fn);
-    m_txLast = nullptr;
-    return true;
-  }
-  void finish() {
-    auto fn = ZuMv(m_txComplete);
-    m_txComplete = {};
-    if (!fn) return;
-    if (!m_txReady) {
-      fn(false);
-      return;
-    }
-    m_txReady = false;
-    if (!m_txLast) {
-      fn(m_txOK);
-      return;
-    }
-    Transport_::txBufNode(m_txLast)->txComplete = ZuMv(fn);
-    m_txLast = nullptr;
-  }
+  void finish() { }
   void touch() {
     if (m_disconnected) return;
     auto timeout = this->app()->idleTimeout();
@@ -1401,10 +1311,6 @@ private:
   StreamBinding		m_stream;
   ZiIP			m_remoteIP;
   uint16_t		m_remotePort = 0;
-  TxCompleteFn		m_txComplete;
-  ZiIOBuf		*m_txLast = nullptr;
-  bool			m_txOK = true;
-  bool			m_txReady = false;
   bool			m_counted = true;
   bool			m_disconnected = false;
   bool			m_streamEnd = false;	// Tx-owned

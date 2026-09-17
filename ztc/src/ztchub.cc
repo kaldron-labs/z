@@ -278,7 +278,7 @@ static flatbuffers::Offset<Ztc::fbs::Telemetry> copyTelemetry(
 {
   if (!source || !source->id()) return {};
   auto id = builder.CreateString(source->id()->data(), source->id()->size());
-#define ZTC_COPY_TEL(Name, Type) \
+#define ZtcSave(Name) \
   case Ztc::fbs::TelemetryBody::Name: { \
     auto copy = ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>( \
       builder, *source->value_as_##Name()); \
@@ -286,23 +286,23 @@ static flatbuffers::Offset<Ztc::fbs::Telemetry> copyTelemetry(
       Ztc::fbs::TelemetryBody::Name, copy.Union()); \
   }
   switch (source->value_type()) {
-    ZTC_COPY_TEL(HeapTelemetry, HeapTelemetry)
-    ZTC_COPY_TEL(HashTelemetry, HashTelemetry)
-    ZTC_COPY_TEL(ThreadTelemetry, ThreadTelemetry)
-    ZTC_COPY_TEL(CxnTelemetry, CxnTelemetry)
-    ZTC_COPY_TEL(MxTelemetry, MxTelemetry)
-    ZTC_COPY_TEL(QueueTelemetry, QueueTelemetry)
-    ZTC_COPY_TEL(HubTelemetry, HubTelemetry)
-    ZTC_COPY_TEL(LinkTelemetry, LinkTelemetry)
-    ZTC_COPY_TEL(PoolTelemetry, PoolTelemetry)
-    ZTC_COPY_TEL(AppTelemetry, AppTelemetry)
-    ZTC_COPY_TEL(AlertTelemetry, AlertTelemetry)
-    ZTC_COPY_TEL(DBTelemetry, DBTelemetry)
-    ZTC_COPY_TEL(DBHostTelemetry, DBHostTelemetry)
-    ZTC_COPY_TEL(DBTableTelemetry, DBTableTelemetry)
+    ZtcSave(HeapTelemetry)
+    ZtcSave(HashTelemetry)
+    ZtcSave(ThreadTelemetry)
+    ZtcSave(CxnTelemetry)
+    ZtcSave(MxTelemetry)
+    ZtcSave(QueueTelemetry)
+    ZtcSave(HubTelemetry)
+    ZtcSave(LinkTelemetry)
+    ZtcSave(PoolTelemetry)
+    ZtcSave(AppTelemetry)
+    ZtcSave(AlertTelemetry)
+    ZtcSave(DBTelemetry)
+    ZtcSave(DBHostTelemetry)
+    ZtcSave(DBTableTelemetry)
     default: return {};
   }
-#undef ZTC_COPY_TEL
+#undef ZtcSave
 }
 
 static Ztc::HubFrame agentFrame(
@@ -428,7 +428,7 @@ struct App {
   }
 
   // Routing queues are Rx-owned. Only one bounded frame per connection is
-  // handed to Tx; its transport fence resumes the Rx pump.
+  // handed to Tx at a time; the Tx queue owns delivery after tx.flush().
   template <typename Link>
   static void pump(ZmRef<Link> hold) {
     auto &state = hold->state();
@@ -456,26 +456,14 @@ struct App {
     auto server = hold->app();
     server->txRun([hold = ZuMv(hold), frame = ZuMv(frame)]() mutable {
       hold->txStream_([frame = ZuMv(frame)](auto &tx) mutable {
-        tx << ZuBSpan{frame->data(), frame->length};
-        tx.flush();
+	tx << ZuBSpan{frame->data(), frame->length};
+	tx.flush();
       }, Zws::Opcode::Binary);
-      auto complete = [hold](bool ok) mutable {
-        auto server = hold->app();
-        server->rxRun([hold = ZuMv(hold), ok]() mutable {
-          auto &state = hold->state();
-          state.sending = false;
-          if (!ok) {
-            if (!state.closed)
-              ZiLOG(Warning, "Ztc.Hub", "WSS transmit completion failed");
-            state.closed = true;
-            hold->close(Zws::CloseCode::Policy);
-            return;
-          }
-          pump(ZuMv(hold));
-        });
-      };
-      if (!hold->txFence(Zhttp::Transport_::TxCompleteFn{complete}))
-        complete(false);
+      server->rxRun([hold = ZuMv(hold)]() mutable {
+	auto &state = hold->state();
+	state.sending = false;
+	pump(ZuMv(hold));
+      });
     });
   }
 
@@ -996,6 +984,7 @@ int main(int argc, char **argv)
     bool ready = false;
     ZmSemaphore started;
     hub.start([&](int error) { ready = error == Zum::ServiceError::OK;
+      if (!ready) std::cerr << "ztchub startup error=" << error << '\n';
       started.post(); });
     started.wait();
     if (!ready) {

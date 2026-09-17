@@ -18,6 +18,7 @@
 
 namespace Zum {
 
+
 ZumExtern String auditID(ZuBSpan);
 ZumExtern void logEvent(Audit);
 ZumExtern Audit managementAuditRecord(

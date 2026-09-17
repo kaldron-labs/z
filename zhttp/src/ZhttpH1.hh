@@ -44,9 +44,13 @@ inline ZmRef<ZiRxQueue::Node> allocRxBuf()
   return new BodyRx::BufAlloc{};
 }
 
-inline ZmRef<ZiRxQueue::Node> allocWireRxBuf()
+template <typename Node>
+inline ZmRef<Node> allocWireRxBuf()
 {
-  return new BodyRx::WireBufAlloc{};
+  using Alloc = Zi::IOBufAlloc<
+    Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zhttp.Wire.Rx.Split">>;
+  return new Alloc{};
 }
 
 ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
@@ -432,7 +436,7 @@ public:
 		  return 0;
 		}
 		return remaining;
-	      }, allocWireRxBuf, allocRxBuf, 0, 0,
+	      }, allocWireRxBuf<typename Stream::QueueT::Node>, allocRxBuf, 0, 0,
 	      [this, &accepted](auto &rx) { accepted = impl()->body(rx); });
 	    if (ZuUnlikely(!accepted))
 	      fail_(RequestErrorCode::BodyRejected,
@@ -492,7 +496,7 @@ public:
 		if (remaining) return 0;
 		if (last != '\r' || prev != '\n') return -1;
 		return n;
-	      }, allocWireRxBuf, allocRxBuf, 0, 2,
+	      }, allocWireRxBuf<typename Stream::QueueT::Node>, allocRxBuf, 0, 2,
 	      [this, &accepted](auto &rx) { accepted = impl()->body(rx); });
 	    if (ZuUnlikely(!accepted))
 	      fail_(RequestErrorCode::BodyRejected,
@@ -608,7 +612,7 @@ private:
 	    return 0;
 	  }
 	  return remaining;
-	}, allocWireRxBuf, allocRxBuf, 0, 0,
+	}, allocWireRxBuf<typename Stream::QueueT::Node>, allocRxBuf, 0, 0,
 	[this, &accepted](auto &rx) { accepted = impl()->body(rx); });
       if (ZuUnlikely(!accepted))
 	fail_(RequestErrorCode::BodyRejected,

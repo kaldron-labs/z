@@ -1,0 +1,42 @@
+include "zfb_types.fbs";
+namespace Zum.fbs;
+
+table GrantDelete {
+  id:[ubyte];
+  digest:[ubyte];
+  expires:int64;
+  state:int8;
+  owner:Zfb.UInt128;
+}
+table SessionDelete {
+  digest:[ubyte];
+  idle_deadline:int64;
+  absolute_deadline:int64;
+  version:uint64;
+  owner:Zfb.UInt128;
+}
+table RefreshDelete {
+  id:[ubyte];
+  expires:int64;
+  state:int8;
+  version:uint64;
+  owner:Zfb.UInt128;
+}
+table EvidenceDelete {
+  app_i_d:uint64;
+  user_i_d:uint64;
+  provider_i_d:uint64;
+  deadline:int64;
+  version:uint64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}
+table ConsentDelete {
+  user_i_d:uint64;
+  client_i_d:string;
+  app_i_d:uint64;
+  state:int8;
+  version:uint64;
+  updated:int64;
+  owner:Zfb.UInt128;
+}

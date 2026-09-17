@@ -4,16 +4,17 @@
 client. `zumping` is a pure REST/OAuth native client with no Zum library linkage.
 Both `zumd` and `zumpingd` must be running for browser login and code redemption.
 
-Enroll a catalog-client application using the administrative `zum` client. Use
-its issued confidential client ID as `zum.clientID` in `zumpingd.cf`. Configure
+Enroll the `zumpingd` application using the administrative `zum` client. Its
+service credential is used only by `zumpingd` to publish its manifest. Configure
 the protected application's exact issuer (`.../oauth2/APP_ID`) as
 `zum.issuerURL`, the core management issuer as `zum.managementIssuerURL`, and
 the independent administrative resource origin as `zum.managementURL`. Inject
-the client secret as `ZUM_CLIENT_SECRET` and the SSF callback Authorization value
+the service secret as `ZUM_CLIENT_SECRET` and the SSF callback Authorization value
 as `ZUM_SSF_CALLBACK_AUTH` using the deployment secret manager;
-never put it in the config file or command line. The catalog publisher is a
-management OAuth client. It authenticates at the management issuer but publishes
-the catalog for the protected application identified by `zum.issuerURL`.
+never put it in the config file or command line. The service publishes the
+catalog for the protected application identified by `zum.issuerURL`; this
+includes the public native `zumping` client and its `ping` role grant. The
+end-user client does not need to exist before `zumpingd` starts.
 Configure the enrolled stable resource audience URI and audience record ID. The
 latter is catalog metadata, not a second app ID. Start `zumpingd --config
 zumpingd.cf`. Startup idempotently publishes one action, one standard role and
@@ -21,13 +22,15 @@ the runtime `ping` scope is derived from that role before opening its listener.
 It never creates user assignments. The role name is also the OAuth
 resource-scope name used at runtime.
 
-Enroll separate OAuth clients under that protected service application for
-each caller type. A mobile, browser, desktop, and CLI client share the same
+The manifest-created `zumping` client is recognized by the application. Enroll
+additional OAuth clients under that protected service application for each
+caller type if needed. A mobile, browser, desktop, and CLI client share the same
 application issuer and access-token audience, but each has its own `client_id`,
 redirect policy, grants, and token family. For this example, enroll a public
 native CLI client with authorization-code
 and optional refresh grants, the ping role-derived scope, and the loopback redirect
-`http://127.0.0.1:8081/callback`. Put its issued public client ID in `zumping.cf`.
+`http://127.0.0.1:8081/callback`. `zumping.cf` already contains the stable
+manifest client ID, `zumping`.
 Use `zum` to enroll the local user, complete the user's passkey registration,
 and assign app membership with the ping role. Then run:
 

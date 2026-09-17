@@ -63,7 +63,7 @@ def main():
         fixture.admin_cli()
         audience_uri = "https://ssf.example/api"
         app = fixture.admin_secret("appEnroll", {
-            "name": "ssf-service", "integration": "catalogClient",
+            "name": "ssf-service",
             "audience": audience_uri,
             "$idempotencyKey": secrets.token_hex(16)})["item"]
         app_id = app["appID"]

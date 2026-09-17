@@ -12,6 +12,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtHexDump.hh>
+#include <zlib/ZtArray.hh>
 
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
@@ -25,10 +26,56 @@ namespace zfbtest {
 
 using namespace Zfb;
 
+struct Elem {
+  int bah = 42;
+
+  friend ZfStructPrint ZuPrintType(Elem *);
+};
+
+ZuDerive(ElemVec, (ZtArray<Elem>));
+
+ZfbStruct(, Elem,
+  (((bah), (Ctor<0>)), (Int32)));
+
+} // zfbtest
+
+namespace ZfbTransform {
+
+struct ElemVec {
+  enum { IsInline = 0 };
+  using Vec = Zfb::Vector<Zfb::Offset<zfbtest::fbs::Elem>>;
+
+  template <
+    typename = void, template <typename> class = ZuAlwaysTrue,
+    typename Builder>
+  static auto save(Builder &fbb, const zfbtest::ElemVec &a) {
+    return Zfb::Save::vectorIter<zfbtest::fbs::Elem>(fbb, a.length(),
+      [&a](Builder &fbb, uint64_t i) mutable {
+	return ZfbStruct::save(fbb, a[i]);
+      });
+  }
+
+  template <typename O = zfbtest::ElemVec>
+  static O load(const Vec *v) {
+    O a;
+    if (!v) return a;
+    for (uint64_t i = 0; i < v->size(); i++)
+      a.push(ZfbStruct::ctor<zfbtest::Elem>(v->Get(i)));
+    return a;
+  }
+};
+
+} // ZfbTransform
+
+namespace zfbtest {
+
+ZfbTransform::ElemVec ZfbTransformer_(ElemVec *);
+
 struct Test {
   int foo = 42;
   ZtString<> bar;
   ZtArray<ZtString<>> baz;
+  ElemVec elems;
   uint8_t *zero;
   unsigned n;
 
@@ -38,9 +85,11 @@ struct Test {
 ZfbStruct(, Test,
   (((foo), (Ctor<0>)), (Int32)),
   (((bar), (Ctor<1>)), (String, "bar")),
-  (((baz), (Ctor<2>)), (StringVec)));
+  (((baz), (Ctor<2>)), (StringVec)),
+  (((elems), (Ctor<3>)), (UDT)));
 
 ZfbRoot(Test);
+ZfbStructImpl(Elem);
 ZfbStructImpl(Test);
 
 } // zfbtest
@@ -61,6 +110,8 @@ void build(IOBuilder &fbb, unsigned n)
   ZmRef<IOBuf> buf;
   {
     zfbtest::Test test{42, "Hello", {"hello", "world", "42"}};
+    test.elems.push(zfbtest::Elem{43});
+    test.elems.push(zfbtest::Elem{44});
     test.zero = reinterpret_cast<uint8_t *>(::malloc(n));
     test.n = n;
     memset(test.zero, 0, test.n);
@@ -105,6 +156,10 @@ void build(IOBuilder &fbb, unsigned n)
       << " len_=" << len_ << " type_=" << type_ << '\n' << std::flush;
     auto test = zfbtest::fbs::GetTest(ptr + 8);
     CHECK(test->foo() == 42);
+    auto value = ZfbStruct::ctor<zfbtest::Test>(test);
+    CHECK(value.elems.length() == 2);
+    CHECK(value.elems[0].bah == 43);
+    CHECK(value.elems[1].bah == 44);
   }
 }
 

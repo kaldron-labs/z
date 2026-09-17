@@ -7,6 +7,7 @@
 #include <zlib/ztchub_daemon.hh>
 
 #include <limits.h>
+#include <stdlib.h>
 
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuCmp.hh>
@@ -109,33 +110,39 @@ using TokenIdx = ZmHashKV<Zum::TokenID, TokenSessions,
   ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.TokenIdx">>>;
 
 struct StateData {
-	HubdCf	cf;
-	HubdState::T	state = HubdState::Down;
-	Agents	agents;
-	Subs	subs;
-	AgentReqs	agentReqs;
-	AgentReqIdx	agentReqIdx;
-	SubIdx	subIdx;
-	AgentSessions	agentSessions;
-	Sessions	sessions;
-	TokenIdx	tokenIdx;
-	BrowserSessions	browserSessions;
-	ZmRef<Zdb>	db;
-	ZuPtr<const ZfCf::AnyNode>	dbSource;
-	uint64_t	nextRequestSeqNo = 1;
-	uint32_t	agentCount = 0;
-	uint32_t	frontEndCount = 0;
-	ZiMultiplex	*multiplex = nullptr;
-	Ztls::Random	random;
-	Zum::Service	service;
-	bool	serviceReady = false;
-	bool	serviceStarted = false;
+	HubdCf		cf;
+  HubdState::T		state = HubdState::Down;
+  Agents		agents;
+  Subs			subs;
+  AgentReqs		agentReqs;
+  AgentReqIdx		agentReqIdx;
+  SubIdx		subIdx;
+  AgentSessions		agentSessions;
+  Sessions		sessions;
+  TokenIdx		tokenIdx;
+  BrowserSessions	browserSessions;
+  ZmRef<Zdb>		db;
+  ZuPtr<const ZfCf::AnyNode>	dbCf;
+  uint64_t		nextRequestSeqNo = 1;
+  uint32_t		agentCount = 0;
+  uint32_t		frontEndCount = 0;
+  ZiMultiplex		*multiplex = nullptr;
+  Ztls::Random		random;
+  Zum::Service		service;
+  bool			serviceReady = false;
+  bool			serviceStarted = false;
 };
 
 template <typename Heap>
 struct State_ : public Heap, public ZmObject, public StateData { };
 using StateHeap = ZmHeap<"Ztc.Hub.State", State_<ZuVoid>>;
 struct State final : public State_<StateHeap> { };
+
+struct HubDB : public Zdb {
+  HubDB(State *state_) : state{state_} { }
+
+  State *state;
+};
 
 static void clearBrowsers(StateData &state)
 {
@@ -340,22 +347,32 @@ static unsigned disconnectAgent(State &state, uint64_t sessionID,
 
 Hubd::Hubd() = default;
 
+static void dbUp(Zdb *, ZdbHost *);
+static void dbDown(Zdb *, bool);
+
 static bool initDB(Hubd_::State &state, ZiMultiplex *mx)
 {
-  auto source = ZfCf::scan(
-    "thread: hubdb, shards: 1, store: {thread: hubstore}, "
-    "hostID: ztchub, hosts: {ztchub: {standalone: true}}, "
-    "tables: {}\n");
+  const char *hosts = ::getenv("ZTCHUB_HOSTS");
+  const char *hostID = ::getenv("ZTCHUB_HOSTID");
+  if (bool(hosts) != bool(hostID) ||
+      (hosts && (!*hosts || !*hostID))) return false;
+  ZtString<> text;
+  text << "thread: hubdb, shards: 1, store: {thread: hubstore}, hostID: "
+    << (hostID ? hostID : "ztchub") << ", hosts: "
+    << (hosts ? hosts : "{ztchub: {standalone: true}}")
+    << ", tables: {}\n";
+  auto source = ZfCf::scan(text);
   if (!source) return false;
-  state.dbSource = ZuMv(source.p<1>());
+  state.dbCf = ZuMv(source.p<1>());
   try {
-    auto config = ZdbCf{state.dbSource};
-    state.db = new Zdb;
-    state.db->init(ZuMv(config), mx, ZdbHandler{},
+    auto config = ZdbCf{state.dbCf};
+    state.db = new Hubd_::HubDB{&state};
+    state.db->init(ZuMv(config), mx,
+      ZdbHandler{.upFn = dbUp, .downFn = dbDown},
       ZmRef<Zdb_::Store>{new ZdbMem::Store});
   } catch (...) {
     state.db = nullptr;
-    state.dbSource = nullptr;
+    state.dbCf = nullptr;
     return false;
   }
   return true;
@@ -364,6 +381,39 @@ static bool initDB(Hubd_::State &state, ZiMultiplex *mx)
 static uint32_t ssfPort(const ListenerCf &listener)
 {
   return listener.ssfPort ? listener.ssfPort : listener.port + 1;
+}
+
+static void dbUp(Zdb *db, ZdbHost *)
+{
+  auto state = static_cast<Hubd_::HubDB *>(db)->state;
+  state->multiplex->rxRun([state = ZmRef<Hubd_::State>{state}]() mutable {
+    if (state->state != HubdState::Publishing &&
+        state->state != HubdState::Down) return;
+    state->state = HubdState::Listening;
+    state->state = HubdState::Up;
+  });
+}
+
+static void dbDown(Zdb *db, bool)
+{
+  auto state = static_cast<Hubd_::HubDB *>(db)->state;
+  state->multiplex->rxRun([state = ZmRef<Hubd_::State>{state}]() mutable {
+    if (state->state == HubdState::Up ||
+        state->state == HubdState::Listening) {
+      state->agents.clean();
+      state->agentReqs.clean();
+      state->agentReqIdx.clean();
+      state->subs.clean();
+      state->subIdx.clean();
+      state->agentSessions.clean();
+      state->sessions.clean();
+      state->tokenIdx.clean();
+      Hubd_::clearBrowsers(*state);
+      state->agentCount = 0;
+      state->frontEndCount = 0;
+      state->state = HubdState::Down;
+    }
+  });
 }
 
 Hubd::~Hubd() { final(); }
@@ -528,23 +578,19 @@ void Hubd::start_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Start">> complete)
           return;
         }
         state->db->start([state = ZuMv(state),
-            complete = ZuMv(complete)](bool active) mutable {
+            complete = ZuMv(complete)](bool ok) mutable {
           state->multiplex->rxRun([state = ZuMv(state),
-              complete = ZuMv(complete), active]() mutable {
-            if (active) {
-              state->state = HubdState::Listening;
-              state->state = HubdState::Up;
-              complete(Zum::ServiceError::OK);
-              return;
-            }
-            state->service.stop([state = ZuMv(state),
-                complete = ZuMv(complete)](int) mutable {
-              state->service.final();
-              state->serviceStarted = false;
-              state->serviceReady = false;
+              complete = ZuMv(complete), ok]() mutable {
+            if (!ok) {
               state->state = HubdState::Down;
               complete(Zum::ServiceError::Unavailable);
-            });
+              return;
+            }
+            // Zdb::start() reports startup completion, not activation.
+            // dbUp() owns the transition to Up; a standby remains Down.
+            if (state->state == HubdState::Publishing)
+              state->state = HubdState::Down;
+            complete(Zum::ServiceError::OK);
           });
         });
       });

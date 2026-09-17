@@ -62,12 +62,14 @@ struct RxFramePos {
   unsigned	length = 0;
 };
 
-template <typename Queue>
+template <typename Queue_>
 class RxStream {
   RxStream(const RxStream &) = delete;
   RxStream &operator =(const RxStream &) = delete;
 
 public:
+  using Queue = Queue_;
+
   RxStream() = default;
   ~RxStream() = default;
 
@@ -345,10 +347,10 @@ public:
   // Atomically consume one complete wire frame and append its decoded payload
   // to dst.  head/tail bytes are framing.  srcAlloc/dstAlloc provision a
   // boundary split for the queue which retains the copied side.
-  template <typename DstQueue, typename Frame,
+  template <typename Frame,
     typename SrcAlloc, typename DstAlloc, typename Transform = RxPass>
   int64_t splice(
-    RxStream<DstQueue> &dst, Frame &&frame,
+    RxStream &dst, Frame &&frame,
     SrcAlloc &&srcAlloc, DstAlloc &&dstAlloc,
     uint64_t headLen = 0, uint64_t tailLen = 0,
     Transform &&transform = {})
@@ -383,10 +385,8 @@ public:
       }
     }
 
-    using SrcNodeRef = typename Queue::NodeRef;
-    using DstNodeRef = typename DstQueue::NodeRef;
-    SrcNodeRef srcSplit;
-    DstNodeRef dstSplit;
+    NodeRef srcSplit;
+    NodeRef dstSplit;
     bool copyPayload = false;
     if (boundary) {
       unsigned payloadPart = endOff - startOff;

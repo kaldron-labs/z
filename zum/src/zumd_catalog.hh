@@ -49,17 +49,26 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
   using Base::context;
   using Base::saga;
   using Type = ZuStringT<"catalogPublish.v3">;
-  enum { NSteps = 12 };
+  enum { NSteps = 20 };
 
   App before;
   App after;
   CatalogRows actions;
   CatalogRows roles;
+  CatalogRows clients;
+  CatalogRows clientAccess;
   IdemRequest request;
 
   template <typename T> bool valid(const T &item) const {
-    return item.appID == before.id && !item.owner &&
-      item.origin == Origin::Standard && item.version;
+    if constexpr (ZuIsSame<T, Client>{})
+      return item.appID == before.id && !item.owner && item.version &&
+        item.state != State::Pending;
+    else if constexpr (ZuIsSame<T, ClientAccess>{})
+      return item.appID == before.id && !item.owner && item.version &&
+        item.state != State::Pending;
+    else
+      return item.appID == before.id && !item.owner &&
+        item.origin == Origin::Standard && item.version;
   }
 
   template <bool Fwd, typename Table, typename Complete>
@@ -84,6 +93,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
 	ZuStructKeyT<T, 0> key{ZuStructKey<0>(item)};
 	saga->template findDel<0>(table, 0, ZuMv(key), ZuMv(complete),
 	  [this](ZdbRow<T> *row, auto &&complete) mutable {
+	    if (!row) { complete(true); return; }
 	    if (row->data().owner != saga->id() || row->data().version != 1) {
 	      complete(false); return;
 	    }
@@ -113,6 +123,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
       saga->template findUpd<0>(table, 0, ZuMv(key), ZuMv(complete),
 	[this, old = ZuMv(old), next = ZuMv(next)](
 	    ZdbRow<T> *row, auto &&complete) mutable {
+	  if (!row) { complete(!Fwd); return; }
 	  auto &item = row->data();
 	  if (item.owner != (Fwd ? uint128_t{0} : saga->id()) ||
 	      item.version != (Fwd ? old.version : next.version)) {
@@ -142,6 +153,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
       ZuStructKeyT<T, 0> key{ZuStructKey<0>(next)};
       saga->template findUpd<0>(table, 0, ZuMv(key), ZuMv(complete),
 	[this, version = next.version](ZdbRow<T> *row, auto &&complete) mutable {
+	  if (!row) { complete(!Fwd); return; }
 	  if (row->data().owner != (Fwd ? saga->id() : uint128_t{0}) ||
 	      row->data().version != version) {
 	    complete(false); return;
@@ -164,6 +176,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
     context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(before.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
+	  if (!row) { complete(!Fwd); return; }
 	  auto &app = row->data();
 	  if (!before.id || before.owner || after.owner || before.id != after.id ||
 	      before.state != State::Active || before.version == UINT64_MAX ||
@@ -194,25 +207,50 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
   ZdbSagaRepeatStep(5, zum.role, Update, roles.changed.length()) {
     change<Fwd>(context->roles, roles.changed, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(6, zum.action, Update, actions.added.length()) {
+  ZdbSagaRepeatStep(6, zum.client, Insert, clients.added.length()) {
+    insert<Fwd>(context->clients, clients.added, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(7, zum.client, Update, clients.changed.length()) {
+    change<Fwd>(context->clients, clients.changed, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(8, zum.client_access, Insert, clientAccess.added.length()) {
+    insert<Fwd>(context->clientAccess, clientAccess.added, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(9, zum.client_access, Update, clientAccess.changed.length()) {
+    change<Fwd>(context->clientAccess, clientAccess.changed, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(10, zum.action, Update, actions.added.length()) {
     release<Fwd, true>(context->actions, actions.added, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(7, zum.action, Update, actions.changed.length()) {
+  ZdbSagaRepeatStep(11, zum.action, Update, actions.changed.length()) {
     release<Fwd, false>(context->actions, actions.changed, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(8, zum.role, Update, roles.added.length()) {
+  ZdbSagaRepeatStep(12, zum.role, Update, roles.added.length()) {
     release<Fwd, true>(context->roles, roles.added, ZuMv(complete)); return {};
   }
-  ZdbSagaRepeatStep(9, zum.role, Update, roles.changed.length()) {
+  ZdbSagaRepeatStep(13, zum.role, Update, roles.changed.length()) {
     release<Fwd, false>(context->roles, roles.changed, ZuMv(complete)); return {};
   }
-  ZdbSagaStep(10, zum.app, Update) {
+  ZdbSagaRepeatStep(14, zum.client, Update, clients.added.length()) {
+    release<Fwd, true>(context->clients, clients.added, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(15, zum.client, Update, clients.changed.length()) {
+    release<Fwd, false>(context->clients, clients.changed, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(16, zum.client_access, Update, clientAccess.added.length()) {
+    release<Fwd, true>(context->clientAccess, clientAccess.added, ZuMv(complete)); return {};
+  }
+  ZdbSagaRepeatStep(17, zum.client_access, Update, clientAccess.changed.length()) {
+    release<Fwd, false>(context->clientAccess, clientAccess.changed, ZuMv(complete)); return {};
+  }
+  ZdbSagaStep(18, zum.app, Update) {
     if (before.version == after.version) {
       saga->skip(ZuMv(complete)); return {};
     }
     context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(before.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
+	  if (!row) { complete(!Fwd); return; }
 	  auto &app = row->data();
 	  const auto &expected = Fwd ? before : after;
 	  if (app.owner != (Fwd ? saga->id() : uint128_t{0}) ||
@@ -225,7 +263,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
-  ZdbSagaStep(11, zum.request, Update) {
+  ZdbSagaStep(19, zum.request, Update) {
     StringVec ids;
     ids.push(String{} << before.id);
     requestComplete(this, ZuMv(ids),
@@ -240,7 +278,9 @@ ZfbStruct(ZumAPI, CatalogPublish,
   (((after), (Ctor<1>)), (UDT)),
   (((actions), (Ctor<2>)), (UDT)),
   (((roles), (Ctor<3>)), (UDT)),
-  (((request), (Ctor<4>)), (UDT)));
+  (((clients), (Ctor<4>)), (UDT)),
+  (((clientAccess), (Ctor<5>)), (UDT)),
+  (((request), (Ctor<6>)), (UDT)));
 
 } // namespace Zum
 

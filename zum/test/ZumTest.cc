@@ -1449,7 +1449,7 @@ static void discovery()
 static void refresh()
 {
   ZuTestScope(refresh);
-  Zum::Grant grant;
+  Zum::Refresh grant;
   grant.digest = Zum::Bytes{ZuBSpan{"current"}};
   grant.spent.push(Zum::Bytes{ZuBSpan{"spent-0"}});
   grant.spent.push(Zum::Bytes{ZuBSpan{"spent-1"}});
@@ -1461,7 +1461,6 @@ static void refresh()
   ZuCheck(Zum::refreshMatch(grant, ZuBSpan{"unknown"}) ==
     Zum::RefreshMatch::Unknown);
 
-  grant.kind = Zum::GrantKind::Refresh;
   grant.state = Zum::State::Active;
   grant.expires = 1000;
   ZuCheck(Zum::refreshRotate(grant, ZuBSpan{"unknown"},
@@ -2220,9 +2219,9 @@ static void enrollmentSaga()
   ZuCheck(M::catalog(4, 0, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
   ZuCheck(M::catalog(4, 2, step));
-  ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
+  ZuCheck(step.table == "zum.refresh" && step.op == ZdbSagaOp::Update);
   ZuCheck(M::catalog(4, 3, step));
-  ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
+  ZuCheck(step.table == "zum.refresh" && step.op == ZdbSagaOp::Update);
   ZuCheck(M::catalog(4, 4, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Delete);
 
@@ -2236,14 +2235,12 @@ static void enrollmentSaga()
       .created = 123, .updated = 123},
     .clientID = "svc_orders",
     .secretDigest = Zum::Bytes{ZuBSpan{"verifier"}},
-    .clientType = Zum::ClientType::Confidential, .catalogClient = true,
     .created = 123, .catalogPublishOp = Zum::MgmtOp::catalogPublish,
     .operationQueryOp = Zum::MgmtOp::operationQuery,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::appEnroll, .idempotencyKey = "enroll-orders",
       .requestDigest = Zum::Bytes{ZuBSpan{"request digest"}},
       .expires = 86400, .created = 120, .updated = 120}};
-  appEnrollment.redirects.push("https://orders.example/callback");
   saga = new M{};
   saga->init(ZuMv(appEnrollment));
   M::save(saga, payload);
@@ -2258,7 +2255,6 @@ static void enrollmentSaga()
 	 enrollment.signKey.id == "app_9_1" &&
 	 enrollment.signKey.issuer == "https://auth.example/oauth2/9" &&
 	 enrollment.secretDigest == ZuBSpan{"verifier"} &&
-	 enrollment.catalogClient &&
          enrollment.request.idempotencyKey == "enroll-orders" &&
          enrollment.request.operation == Zum::MgmtOp::appEnroll &&
          enrollment.request.requestDigest == ZuBSpan{"request digest"};
@@ -3154,7 +3150,7 @@ static void enrollmentSaga()
   grant.owner = 0;
   grant.expires = 146;
   Zum::GrantCleanup cleanup{.updated = 147};
-  cleanup.grants.push(Zum::SagaImage::save(grant));
+  cleanup.grants.push(Zum::grantDelete(grant));
   saga = new M{};
   saga->init(ZuMv(cleanup));
   M::save(saga, payload);
@@ -3162,15 +3158,66 @@ static void enrollmentSaga()
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
     if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::GrantCleanup>{}) {
-      Zum::Grant before;
       return change.updated == 147 && change.grants.length() == 1 &&
-	Zum::SagaImage::load(change.grants[0], before) && before.expires == 146;
+	change.grants[0].expires == 146 && change.grants[0].state == Zum::State::Active;
     } else return false;
   }));
   ZuCheck(M::catalog(33, 1, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Delete);
   ZuCheck(M::catalog(33, 2, step));
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
+
+  Zum::SessionCleanup sessionCleanup{.updated = 147};
+  sessionCleanup.sessions.push(Zum::SessionDelete{
+    .digest = Zum::Bytes{ZuBSpan{"cleanup-session"}},
+    .idleDeadline = 146, .absoluteDeadline = 148, .version = 3});
+  saga = new M{};
+  saga->init(ZuMv(sessionCleanup));
+  M::save(saga, payload);
+  loaded = M::load(Zum::SessionCleanup::Type{}(), payload);
+  ZuCheck(loaded && loaded->u.cdispatch([](auto, const auto &change) {
+    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::SessionCleanup>{})
+      return change.updated == 147 && change.sessions.length() == 1 &&
+	change.sessions[0].digest == ZuBSpan{"cleanup-session"} &&
+	change.sessions[0].version == 3;
+    else return false;
+  }));
+
+  Zum::RefreshCleanup refreshCleanup{.updated = 147};
+  refreshCleanup.refreshes.push(Zum::RefreshDelete{
+    .id = Zum::Bytes{ZuBSpan{"cleanup-refresh"}},
+    .expires = 146, .state = Zum::State::Active, .version = 4});
+  saga = new M{};
+  saga->init(ZuMv(refreshCleanup));
+  M::save(saga, payload);
+  loaded = M::load(Zum::RefreshCleanup::Type{}(), payload);
+  ZuCheck(loaded && loaded->u.cdispatch([](auto, const auto &change) {
+    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::RefreshCleanup>{})
+      return change.updated == 147 && change.refreshes.length() == 1 &&
+	change.refreshes[0].id == ZuBSpan{"cleanup-refresh"} &&
+	change.refreshes[0].version == 4;
+    else return false;
+  }));
+
+  Zum::AppCleanup appCleanup{.appID = 9, .updated = 147};
+  appCleanup.evidence.push(Zum::EvidenceDelete{
+    .appID = 9, .userID = 7, .providerID = 3, .deadline = 146,
+    .version = 5, .updated = 145});
+  appCleanup.consents.push(Zum::ConsentDelete{
+    .userID = 7, .clientID = "cleanup-client", .appID = 9,
+    .state = Zum::State::Active, .version = 6, .updated = 145});
+  saga = new M{};
+  saga->init(ZuMv(appCleanup));
+  M::save(saga, payload);
+  loaded = M::load(Zum::AppCleanup::Type{}(), payload);
+  ZuCheck(loaded && loaded->u.cdispatch([](auto, const auto &change) {
+    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::AppCleanup>{})
+      return change.appID == 9 && change.updated == 147 &&
+	change.evidence.length() == 1 && change.consents.length() == 1 &&
+	change.evidence[0].providerID == 3 &&
+	change.consents[0].clientID == "cleanup-client";
+    else return false;
+  }));
 
   Zum::ConsentCode consentCode{
     .beforeGrant = Zum::Grant{.id = Zum::Bytes{ZuBSpan{"consent-code-001"}}},
@@ -3203,17 +3250,17 @@ static void enrollmentSaga()
 	change.afterGrant.digest == ZuBSpan{"code-digest"};
     else return false;
   }));
-  ZuCheck(M::catalog(34, 0, step));
+  ZuCheck(M::catalog(37, 0, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(34, 1, step));
+  ZuCheck(M::catalog(37, 1, step));
   ZuCheck(step.table == "zum.consent" && step.op == ZdbSagaOp::Insert);
-  ZuCheck(M::catalog(34, 2, step));
+  ZuCheck(M::catalog(37, 2, step));
   ZuCheck(step.table == "zum.consent" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(34, 3, step));
+  ZuCheck(M::catalog(37, 3, step));
   ZuCheck(step.table == "zum.grant" && step.op == ZdbSagaOp::Update);
-  ZuCheck(M::catalog(34, 4, step));
+  ZuCheck(M::catalog(37, 4, step));
   ZuCheck(step.table == "zum.consent" && step.op == ZdbSagaOp::Update);
-  ZuCheck(!M::catalog(34, 5, step));
+  ZuCheck(!M::catalog(37, 5, step));
 }
 
 struct TestDB : public Zum::DB {
@@ -3452,12 +3499,12 @@ static bool refreshState(
   return ZmBlock<bool>{}([
     context, familyID, digest, generation, state
   ](auto wake) mutable {
-    context->grants->run(0, [
+    context->refresh->run(0, [
       context, familyID, digest, generation, state, wake = ZuMv(wake)
     ]() mutable {
-      context->grants->find<0>(0, ZuFwdTuple(familyID), [
+      context->refresh->find<0>(0, ZuFwdTuple(familyID), [
 	digest, generation, state, wake = ZuMv(wake)
-      ](ZdbRowRef<Zum::Grant> row) mutable {
+	](ZdbRowRef<Zum::Refresh> row) mutable {
 	wake(row && row->data().digest == digest &&
 	  row->data().generation == generation &&
 	  row->data().state == state && row->data().requestedRoleIDs.length() == 1 &&
@@ -3728,6 +3775,19 @@ static Zum::Grant loadGrant(Zum::DBContext *context, ZuBSpan id)
   });
 }
 
+static Zum::Refresh loadRefresh(Zum::DBContext *context, ZuBSpan id)
+{
+  return ZmBlock<Zum::Refresh>{}([context, id](auto wake) mutable {
+    context->refresh->run(0, [context, id, wake = ZuMv(wake)]() mutable {
+      context->refresh->find<0>(0, ZuFwdTuple(id), [
+	wake = ZuMv(wake)
+      ](ZdbRowRef<Zum::Refresh> row) mutable {
+	wake(row ? Zum::Refresh{row->data()} : Zum::Refresh{});
+      });
+    });
+  });
+}
+
 static Zum::IdemRequest loadRequest(
     Zum::DBContext *context, Zum::ActorKind::T actorKind,
     ZuCSpan actorID, Zum::ActionID operation, ZuCSpan key)
@@ -3904,12 +3964,11 @@ static bool codeFamilyState(
 	bool ok = complete ? !code : code &&
 	  code->data().kind == Zum::GrantKind::Code &&
 	  code->data().state == Zum::State::Active && !code->data().owner;
-	context->grants->find<0>(0, ZuFwdTuple(familyID), [
+        context->refresh->find<0>(0, ZuFwdTuple(familyID), [
 	  complete, ok, wake = ZuMv(wake)
-	](ZdbRowRef<Zum::Grant> family) mutable {
+      ](ZdbRowRef<Zum::Refresh> family) mutable {
 	  wake(ok && (complete ?
-	    family && family->data().kind == Zum::GrantKind::Refresh &&
-	      family->data().state == Zum::State::Active &&
+	    family && family->data().state == Zum::State::Active &&
 	      !family->data().owner : !family));
 	});
       });
@@ -4687,7 +4746,7 @@ static void enrollmentRuntime()
     .state = Zum::State::Active}));
   ZuCheck(insertRecord(context->grants, Zum::Grant{
     .id = Zum::Bytes{ZuBSpan{"revocable"}},
-    .kind = Zum::GrantKind::Refresh,
+    .kind = Zum::GrantKind::Code,
     .state = Zum::State::Active,
     .issuer = "issuer"}));
   Zum::Grant collisionCeremony{.id = Zum::Bytes{ZuBSpan{"collision-ceremony"}},
@@ -4751,26 +4810,27 @@ static void enrollmentRuntime()
   revokeAgain.grants.push(Zum::SagaImage::save(loadGrant(context, ZuBSpan{"revocable"})));
   ZuCheck(!revokeAgain.count());
   ZuCheck(runSaga(db, ZuMv(revokeAgain), ZdbSagaID{12009}));
-  Zum::GrantCleanup cleanup{.updated = 1};
+  Zum::GrantCleanup cleanup{.updated = 2};
   Zum::GrantCleanup rollback{.updated = 1};
   auto expired = loadGrant(context, ZuBSpan{"revocable"});
-  rollback.grants.push(Zum::SagaImage::save(expired));
+  rollback.grants.push(Zum::grantDelete(expired));
   expired.id = Zum::Bytes{ZuBSpan{"changed-cleanup-grant"}};
   auto changedGrant = expired;
   changedGrant.expires = 2;
   ZuCheck(insertRecord(context->grants, changedGrant));
-  rollback.grants.push(Zum::SagaImage::save(expired));
+  rollback.grants.push(Zum::grantDelete(expired));
   ZuCheck(!runSaga(db, ZuMv(rollback), ZdbSagaID{12006}));
   ZuCheck(Zum::SagaImage::save(loadGrant(context, changedGrant.id)) ==
     Zum::SagaImage::save(changedGrant));
-  expired = loadGrant(context, ZuBSpan{"revocable"});
-  ZuCheck(expired.id && expired.state == Zum::State::Revoked && !expired.owner);
-  cleanup.grants.push(Zum::SagaImage::save(loadGrant(context, ZuBSpan{"revocable"})));
+  // Maintenance deletes are terminal: a later conflict does not resurrect
+  // an already expired row during saga compensation.
+  ZuCheck(!loadGrant(context, ZuBSpan{"revocable"}).id);
+  cleanup.grants.push(Zum::grantDelete(changedGrant));
   // Native deletion of an absent record succeeds without an application guard.
   expired.id = Zum::Bytes{ZuBSpan{"missing-cleanup-grant"}};
-  cleanup.grants.push(Zum::SagaImage::save(expired));
+  cleanup.grants.push(Zum::grantDelete(expired));
   ZuCheck(runSaga(db, ZuMv(cleanup), ZdbSagaID{12005}));
-  ZuCheck(!loadGrant(context, ZuBSpan{"revocable"}).id);
+  ZuCheck(!loadGrant(context, changedGrant.id).id);
   Zum::SSFDelivery ssfDelivery{
     .eventID = "event-1", .receiverID = "receiver-1",
     .familyIssuer = "issuer/oauth2/9", .familyID = "family-1",
@@ -4850,13 +4910,13 @@ static void enrollmentRuntime()
     context, rng, authorizationCode, family, refreshToken));
   auto collisionFamily = family;
   collisionFamily.familyID = Zum::Bytes{ZuBSpan{"family-collision"}};
-  ZuCheck(insertRecord(context->grants, Zum::Grant{.id = collisionFamily.familyID,
-    .expires = 1000, .kind = Zum::GrantKind::Refresh, .state = Zum::State::Active}));
+  ZuCheck(insertRecord(context->refresh, Zum::Refresh{.id = collisionFamily.familyID,
+    .expires = 1000, .state = Zum::State::Active}));
   ZuCheck(!runSaga(db, ZuMv(collisionFamily), ZdbSagaID{12013}));
   auto rolledBackCode = loadGrant(context, family.codeID);
   ZuCheck(rolledBackCode.state == Zum::State::Active && !rolledBackCode.owner &&
     rolledBackCode.digest == family.codeDigest && rolledBackCode.scope == family.beforeGrant.scope);
-  ZuCheck(loadGrant(context, ZuBSpan{"family-collision"}).state == Zum::State::Active);
+  ZuCheck(loadRefresh(context, ZuBSpan{"family-collision"}).state == Zum::State::Active);
   Zum::Bytes familyID = family.familyID;
   Zum::Bytes refreshID, refreshDigest;
   ZuCheck(Zum::opaqueParse(refreshToken, refreshID, refreshDigest) &&
@@ -6385,8 +6445,8 @@ static void enrollmentRuntime()
   Zum::Bytes codeFamilyID, codeRefreshDigest;
   ZuCheck(Zum::opaqueParse(issued.response.refreshToken,
     codeFamilyID, codeRefreshDigest));
-  auto codeFamily = loadGrant(context, codeFamilyID);
-  ZuCheck(codeFamily.kind == Zum::GrantKind::Refresh &&
+  auto codeFamily = loadRefresh(context, codeFamilyID);
+  ZuCheck(
     codeFamily.state == Zum::State::Active &&
     codeFamily.digest == codeRefreshDigest &&
     codeFamily.scope == issued.response.scope &&
@@ -6403,14 +6463,13 @@ static void enrollmentRuntime()
   refreshScopes.push(7);
   Zum::IDVec refreshRoles;
   refreshRoles.push(7);
-  Zum::Grant refreshFamily{
+  Zum::Refresh refreshFamily{
     .id = refresh.id,
     .authVersion = 12,
     .appID = 9,
     .userID = 42,
     .created = 200,
     .expires = 1000,
-    .kind = Zum::GrantKind::Refresh,
     .state = Zum::State::Active,
     .issuer = "issuer/oauth2/9",
     .clientID = "browser",
@@ -6423,7 +6482,7 @@ static void enrollmentRuntime()
     .digest = refresh.digest,
     .scope = "read"
   };
-  ZuCheck(insertRecord(context->grants, Zum::Grant{refreshFamily}));
+  ZuCheck(insertRecord(context->refresh, Zum::Refresh{refreshFamily}));
   Zum::String refreshForm{"grant_type=refresh_token&refresh_token="};
   refreshForm << refresh.token << "&client_id=browser";
   issued = issueTokenRequest(
@@ -6441,7 +6500,7 @@ static void enrollmentRuntime()
   ZuCheck(Zum::opaqueParse(
     issued.response.refreshToken, rotatedID, rotatedDigest) &&
     rotatedID == refresh.id);
-  auto rotated = loadGrant(context, refresh.id);
+  auto rotated = loadRefresh(context, refresh.id);
   ZuCheck(rotated.generation == 1 && rotated.digest == rotatedDigest &&
     rotated.scope == issued.response.scope &&
     rotated.spent.length() == 1 && rotated.spent[0] == refresh.digest &&
@@ -6453,7 +6512,7 @@ static void enrollmentRuntime()
     db->requests, db, context, rng, ZuMv(reuseForm), {}, tokenKey, 330,
     "issuer/oauth2/9");
   ZuCheck(issued.error == Zum::OAuthError::InvalidGrant &&
-    loadGrant(context, refresh.id).state == Zum::State::Revoked);
+    loadRefresh(context, refresh.id).state == Zum::State::Revoked);
   ZuCheck(logged(
     Zum::String{} << " event=" << int(Zum::AuditEvent::RefreshReuse) << " ",
     Zum::String{} << " outcome=" << int(Zum::AuditOutcome::Failure) << " ",
@@ -6472,7 +6531,7 @@ static void enrollmentRuntime()
 
   Zum::String recoveryCapability;
   auto beforeRecovery = loadUser(context, 42);
-  ZuCheck(insertRecord(context->grants, Zum::Grant{
+  ZuCheck(insertRecord(context->refresh, Zum::Refresh{
     .id = Zum::Bytes{ZuBSpan{"recovery-collision"}}, .userID = 45,
     .created = 349, .expires = 410, .state = Zum::State::Active, .issuer = "issuer"}));
   ZuCheck(!runSaga(db, Zum::RecoveryStart{
@@ -6489,7 +6548,7 @@ static void enrollmentRuntime()
     afterRecovery.version == beforeRecovery.version &&
     afterRecovery.authVersion == beforeRecovery.authVersion &&
     afterRecovery.updated == beforeRecovery.updated && !afterRecovery.owner);
-  ZuCheck(loadGrant(context, ZuBSpan{"recovery-collision"}).userID == 45);
+  ZuCheck(loadRefresh(context, ZuBSpan{"recovery-collision"}).userID == 45);
   auto recoveryVersion = loadUser(context, 42).version;
   ZuCheck(!runSaga(db, Zum::RecoveryStart{
     .capabilityID = Zum::Bytes{ZuBSpan{"stale-recovery"}},
@@ -6549,6 +6608,7 @@ static void enrollmentRuntime()
     Zum::String{} << " subject=" << Zum::auditID(passkeyHandle) << " ",
     Zum::String{} << " detail=" << "recovery suspended" << " "));
 
+  Zum::String recoveryCapabilityLog{recoveryCapability};
   Zum::EnrollmentBeginResult recoveryBegin;
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &recoveryCapability, &recoveryBegin
@@ -6807,7 +6867,6 @@ static void enrollmentRuntime()
   ZuCheck(insertRecord(context->grants, Zum::Grant{
     .id = revokeToken.id,
     .expires = 1000,
-    .kind = Zum::GrantKind::Refresh,
     .state = Zum::State::Active,
     .issuer = "issuer",
     .clientID = "browser",
@@ -6957,7 +7016,9 @@ static void enrollmentRuntime()
   store = {};
   ZuCheck(mx.stop());
   ZuCheck(!logged("next workload secret"));
-  ZuCheck(recoveryCapability && !logged(recoveryCapability));
+  ZuCheck(recoveryCapabilityLog && !logged(recoveryCapabilityLog));
+  ZuClear(recoveryCapabilityLog.data(), recoveryCapabilityLog.length());
+  recoveryCapabilityLog.null();
   ZuCheck(browserCode && !logged(browserCode));
   ZiLog::stop();
   ZiLog::sink(ZiLog::debugSink());

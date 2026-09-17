@@ -35,6 +35,7 @@ ZmRef<DBContext> registerSchema(DB *db)
   context->sessions = db->initTable<Session>("zum.session");
   context->consents = db->initTable<Consent>("zum.consent");
   context->grants = db->initTable<Grant>("zum.grant");
+  context->refresh = db->initTable<Refresh>("zum.refresh");
   context->signKeys = db->initTable<SignKey>("zum.sign_key");
   context->requests = db->initTable<IdemRequest>("zum.request");
   context->ssfRx = db->initTable<SSFRx>("zum.ssf_rx");

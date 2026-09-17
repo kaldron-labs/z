@@ -64,6 +64,9 @@ ZumExtern void clientScopes(DBContext *, Client, ClientScopesFn);
 ZumExtern void loadGrantAuth(
   DBContext *, Grant, Client, bool requestedPresent, String requested,
   int64_t now, AuthorityFn);
+ZumExtern void loadGrantAuth(
+  DBContext *, Refresh, Client, bool requestedPresent, String requested,
+  int64_t now, AuthorityFn);
 ZumExtern void loadClientAuth(
   DBContext *, String issuer, Client, bool requestedPresent,
   String requested, AuthorityFn);
@@ -337,9 +340,9 @@ void refreshFinish(
 {
   auto apps = context->apps;
   auto users = context->users;
-  auto grants = context->grants;
+  auto refresh = context->refresh;
   apps->run(0, [
-    apps, users, grants, rng = &rng, familyID = ZuMv(familyID),
+    apps, users, refresh, rng = &rng, familyID = ZuMv(familyID),
     presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
     scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
     actions = ZuMv(actions), appID, authVersion,
@@ -348,7 +351,7 @@ void refreshFinish(
     complete = ZuFwd<Complete>(complete)
   ]() mutable {
     apps->find<0>(0, ZuFwdTuple(appID), [
-      users, grants, rng, familyID = ZuMv(familyID),
+      users, refresh, rng, familyID = ZuMv(familyID),
       presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
       scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
       actions = ZuMv(actions), appID, authVersion,
@@ -361,7 +364,7 @@ void refreshFinish(
 	return;
       }
       users->find<0>(0, ZuFwdTuple(userID), [
-	grants, rng, familyID = ZuMv(familyID),
+        refresh, rng, familyID = ZuMv(familyID),
 	presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
         scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
 	actions = ZuMv(actions), appID, authVersion,
@@ -373,14 +376,14 @@ void refreshFinish(
 	  complete(RefreshRotate::Invalid, String{});
 	  return;
 	}
-	grants->findUpd<0>(0, ZuFwdTuple(familyID), [
+	refresh->findUpd<0>(0, ZuFwdTuple(familyID), [
 	  rng, familyID = ZuMv(familyID),
 	  presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
 	  scope = ZuMv(scope), requestedRoleIDs = ZuMv(requestedRoleIDs),
 	  actions = ZuMv(actions), appID, authVersion,
 	  userID, userVersion, now, generationLimit, spentLimit,
 	  complete = ZuMv(complete)
-	](ZdbRow<Grant> *row) mutable {
+	](ZdbRow<Refresh> *row) mutable {
 	  if (!row || row->data().issuer != issuer ||
 	      row->data().appID != appID) {
 	    complete(RefreshRotate::Invalid, String{});
@@ -462,14 +465,14 @@ void tokenRelease(
 {
   auto apps = context->apps;
   auto users = context->users;
-  auto grants = context->grants;
+  auto refresh = context->refresh;
   apps->run(0, [
-    apps, users, grants, issuer = ZuMv(issuer), familyID = ZuMv(familyID),
+    apps, users, refresh, issuer = ZuMv(issuer), familyID = ZuMv(familyID),
     appID, authVersion, now, response = ZuMv(response),
     complete = ZuFwd<Complete>(complete)
   ]() mutable {
     apps->find<0>(0, ZuFwdTuple(appID), [
-      users, grants, issuer = ZuMv(issuer), familyID = ZuMv(familyID),
+      users, refresh, issuer = ZuMv(issuer), familyID = ZuMv(familyID),
       appID, authVersion, now, response = ZuMv(response), complete = ZuMv(complete)
     ](ZdbRowRef<App> row) mutable {
       if (!appID || !row || row->data().state != State::Active ||
@@ -482,12 +485,12 @@ void tokenRelease(
 	complete(true, ZuMv(response));
 	return;
       }
-      grants->find<0>(0, ZuFwdTuple(familyID), [
+	  refresh->find<0>(0, ZuFwdTuple(familyID), [
 	users, issuer = ZuMv(issuer), appID, authVersion, now,
 	response = ZuMv(response),
 	complete = ZuMv(complete)
-      ](ZdbRowRef<Grant> family) mutable {
-	if (!family || family->data().kind != GrantKind::Refresh ||
+	](ZdbRowRef<Refresh> family) mutable {
+	if (!family ||
 	    family->data().state != State::Active ||
 	    family->data().owner ||
 	    family->data().expires <= now ||
