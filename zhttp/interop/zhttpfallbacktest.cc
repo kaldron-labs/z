@@ -17,8 +17,6 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
-#include <zlib/ZmList.hh>
-
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
@@ -37,7 +35,7 @@ constexpr unsigned FallbackMaxBody = 64<<10;
 using IOBufAlloc =
   ZiIOBufAlloc<FallbackBufSize, FallbackMaxBody, "Zhttp.Fallback.Buf">;
 
-ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
+using RxQueue = ZiRxQueue;
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, FallbackBufSize,
   FallbackMaxBody, ZuStringT<"Zhttp.Fallback.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;
