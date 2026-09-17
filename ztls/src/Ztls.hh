@@ -325,9 +325,10 @@ public:
 
 friend Cxn;
 
-private:
+protected:
   using Tx::send;
 
+private:
   struct AsyncJob;
   using AsyncJobRef = ZmRef<AsyncJob>;
 
@@ -919,7 +920,7 @@ public:
   bool send(ZmRef<ZiIOBuf> buf) {
     return send(ZuMv(buf), m_tlsGen.load_());
   }
-private:
+protected:
   bool send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
     if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_() ||
 	gen != m_tlsGen.load_()))
