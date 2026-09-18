@@ -13,12 +13,13 @@
 
 namespace Zum {
 
-class SessionComplete_ : public ZumObject {
+template <typename Heap>
+class SessionComplete__ : public Heap, public ZmObject  {
 public:
-  SessionComplete_(SessionFn complete) : m_complete{ZuMv(complete)} { }
+  SessionComplete__(SessionFn complete) : m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error, Session session = {}, String token = {}) {
-    m_request->complete([self = ZmRef<SessionComplete_>{this}, error,
+    m_request->complete([self = ZmRef<SessionComplete__>{this}, error,
 	  session = ZuMv(session), token = ZuMv(token)]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(error, ZuMv(session), ZuMv(token));
@@ -32,13 +33,15 @@ private:
   ZmRef<Request>	m_request;
   SessionFn	m_complete;
 };
+using SessionComplete_ = SessionComplete__<ZmHeap<"Zum.zumd.session.SessionComplete", SessionComplete__<ZuVoid>>>;
 
-class SessionDoneComplete_ : public ZumObject {
+template <typename Heap>
+class SessionDoneComplete__ : public Heap, public ZmObject  {
 public:
-  SessionDoneComplete_(SessionDoneFn complete) : m_complete{ZuMv(complete)} { }
+  SessionDoneComplete__(SessionDoneFn complete) : m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error) {
-    m_request->complete([self = ZmRef<SessionDoneComplete_>{this}, error]() {
+    m_request->complete([self = ZmRef<SessionDoneComplete__>{this}, error]() {
       auto complete = ZuMv(self->m_complete);
       complete(error);
     });
@@ -51,6 +54,7 @@ private:
   ZmRef<Request>	m_request;
   SessionDoneFn	m_complete;
 };
+using SessionDoneComplete_ = SessionDoneComplete__<ZmHeap<"Zum.zumd.session.SessionDoneComplete", SessionDoneComplete__<ZuVoid>>>;
 
 static void issue_(DBContext *context, Ztls::Random &rng,
     SessionConfig config, SessionFn complete)

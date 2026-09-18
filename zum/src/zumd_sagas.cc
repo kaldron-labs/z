@@ -786,9 +786,13 @@ void MembershipChange::validate(Zdb_::SagaCompleteFn complete)
 	  return;
 	}
 	if (!assignRoles) { complete(true); return; }
-	roles(0, [this, complete = ZuMv(complete)](bool valid) mutable {
-	  if (!valid) error = 400;
-	  complete(valid);
+	roles(0, [this, complete = ZuMv(complete)](bool ok) mutable {
+	  if (!ok) {
+	    error = 400;
+	    complete(false);
+	    return;
+	  }
+	  complete(true);
 	});
       });
   });

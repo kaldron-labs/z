@@ -56,16 +56,6 @@ namespace ZumNative {
 ZuDerive(String, ZtString<ZtStringHeapID<"Zum.Native.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Native.Bytes">>));
 
-using ObjectHeap = ZmVHeap<
-  "Zum.Native.Object", 0, ZmVHeap_DefltMax, alignof(max_align_t)>;
-class ObjectAlloc {
-public:
-  static void *operator new(size_t size) { return ObjectHeap::valloc(size); }
-  static void operator delete(void *ptr) { ObjectHeap::vfree(ptr); }
-  static void operator delete(void *ptr, size_t) { ObjectHeap::vfree(ptr); }
-};
-class Object : public ObjectAlloc, public ZmObject { };
-
 struct Tokens {
   String	accessToken;
   String	refreshToken;
@@ -205,18 +195,21 @@ static String encode(ZuBSpan data)
   return s;
 }
 
-template <unsigned Status_>
-struct HTTPData : public Object {
+template <unsigned Status_, typename Heap>
+struct HTTPData_ : public Heap, public ZmObject {
   enum { Status = Status_ };
   String data;
-  ~HTTPData() {
+  ~HTTPData_() {
     if (data.mutable_()) ZuClear(data.data(), data.length());
   }
-  HTTPData &operator =(ZuSpan<uint8_t> data_) {
+  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
   }
 };
+template <unsigned Status_>
+using HTTPData = HTTPData_<Status_,
+  ZmHeap<"Zum.Native.HTTPData", HTTPData_<Status_, ZuVoid>>>;
 
 struct Result {
   ZmSemaphore	done;
@@ -227,9 +220,11 @@ struct Result {
   }
 };
 
-class Client;
+template <typename Heap> class Client_;
+using Client = Client_<ZmHeap<"Zum.Native.Client", Client_<ZuVoid>>>;
 
-struct Call : public Object {
+template <typename Heap>
+struct Call_ : public Heap, public ZmObject {
   Client	*client = nullptr;
   Result	*result = nullptr;
   String	target;
@@ -237,7 +232,7 @@ struct Call : public Object {
   String	authorization;
   mutable ZmAtomic<unsigned> done = 0;
 
-  ~Call() {
+  ~Call_() {
     if (body.mutable_()) ZuClear(body.data(), body.length());
     if (authorization.mutable_()) ZuClear(authorization.data(), authorization.length());
   }
@@ -256,6 +251,7 @@ struct Call : public Object {
     finish(0);
   }
 };
+using Call = Call_<ZmHeap<"Zum.Native.Call", Call_<ZuVoid>>>;
 
 using OKData = HTTPData<200>;
 using BadRequestData = HTTPData<400>;
@@ -370,8 +366,10 @@ public:
   using Pool_<PoolHeap>::Pool_;
 };
 
-class Client : public Object, public Zhttp::Client<Client, Pool> {
-  using Base = Zhttp::Client<Client, Pool>;
+template <typename Heap>
+class Client_ : public Heap, public ZmObject,
+    public Zhttp::Client<Client_<Heap>, Pool> {
+  using Base = Zhttp::Client<Client_<Heap>, Pool>;
 public:
   bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     m_origin = Zhttp::Origin{url.origin()};
@@ -465,14 +463,18 @@ private:
   ZtArray<ZmRef<Client>> m_clients;
 };
 
-struct CallbackData : public Object {
+template <typename Heap>
+struct CallbackData_ : public Heap, public ZmObject {
   ZuSpan<uint8_t> data;
-  CallbackData &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
+  CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
+using CallbackData = CallbackData_<ZmHeap<"Zum.Native.CallbackData", CallbackData_<ZuVoid>>>;
 
-struct CallbackBody : public Object {
+template <typename Heap>
+struct CallbackBody_ : public Heap, public ZmObject {
   String data;
 };
+using CallbackBody = CallbackBody_<ZmHeap<"Zum.Native.CallbackBody", CallbackBody_<ZuVoid>>>;
 
 struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
   enum { Body = Zrest::BodyPolicy::Raw };

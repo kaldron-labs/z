@@ -27,24 +27,8 @@
 
 namespace Zum {
 
-struct TokenResponseWire {
-  String accessToken;
-  String tokenType{"Bearer"};
-  uint64_t expiresIn = 0;
-  String scope;
-  String idToken;
-  String refreshToken;
-};
-ZfStruct(, (TokenResponseWire, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)), (String)),
-  (((tokenType),	(JSON::ID<"token_type">, Required)),	(String)),
-  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	(UInt64)),
-  (((scope),		(Required)),	(String)),
-  (((idToken),		(JSON::ID<"id_token">, JSON::Opt)),	(String)),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)), (String)));
-
-struct OAuthErrorWire { String error; };
-ZfStruct(, (OAuthErrorWire, JSON),
+struct OAuthErrorResponse { String error; };
+ZfStruct(, (OAuthErrorResponse, JSON),
   (((error),		(Required)),	(String)));
 
 struct AuthorizeFields {
@@ -473,10 +457,7 @@ bool codeMatches(
 String tokenResponseJSON(const TokenResponse &response)
 {
   String json;
-  ZfJSON::save(json, TokenResponseWire{
-    .accessToken = response.accessToken, .expiresIn = response.expiresIn,
-    .scope = response.scope, .idToken = response.idToken,
-    .refreshToken = response.refreshToken});
+  ZfJSON::save(json, response);
   return json;
 }
 
@@ -504,7 +485,7 @@ static ZuCSpan errorCode(int error)
 String oauthErrorJSON(int error)
 {
   String json;
-  ZfJSON::save(json, OAuthErrorWire{errorCode(error)});
+  ZfJSON::save(json, OAuthErrorResponse{errorCode(error)});
   return json;
 }
 

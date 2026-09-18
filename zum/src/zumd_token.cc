@@ -31,20 +31,23 @@ static void codeToken(
   int64_t now, int64_t accessExpires, int64_t refreshExpires,
   JWTLimits, SignFn, TokenFn);
 
-class TokenResult_ : public ZumObject {
+template <typename Heap>
+class TokenResult__ : public Heap, public ZmObject  {
 public:
-  TokenResult_(int error_, TokenResponse response_) :
+  TokenResult__(int error_, TokenResponse response_) :
     error{error_}, response{ZuMv(response_)} { }
 
-  ~TokenResult_() { tokenClear(response); }
+  ~TokenResult__() { tokenClear(response); }
 
   int			error;
   TokenResponse	response;
 };
+using TokenResult_ = TokenResult__<ZmHeap<"Zum.zumd.token.TokenResult", TokenResult__<ZuVoid>>>;
 
-class TokenComplete_ : public ZumObject {
+template <typename Heap>
+class TokenComplete__ : public Heap, public ZmObject  {
 public:
-  TokenComplete_(TokenFn complete) : m_complete{ZuMv(complete)} { }
+  TokenComplete__(TokenFn complete) : m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
 
@@ -52,7 +55,7 @@ public:
   {
     ZmRef<TokenResult_> delivery = new TokenResult_{error, ZuMv(response)};
     m_request->complete([
-      self = ZmRef<TokenComplete_>{this}, delivery = ZuMv(delivery)
+      self = ZmRef<TokenComplete__>{this}, delivery = ZuMv(delivery)
     ]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(delivery->error, ZuMv(delivery->response));
@@ -69,10 +72,12 @@ private:
   ZmRef<Request>	m_request;
   TokenFn	m_complete;
 };
+using TokenComplete_ = TokenComplete__<ZmHeap<"Zum.zumd.token.TokenComplete", TokenComplete__<ZuVoid>>>;
 
-class ClientToken_ : public ZumPolymorph {
+template <typename Heap>
+class ClientToken__ : public Heap, public ZmPolymorph  {
 public:
-  ClientToken_(
+  ClientToken__(
       DBContext *context, Ztls::Random *rng, String issuer, Client client,
       bool requestedPresent, String requested, SignKey key,
       int64_t now, int64_t expires, JWTLimits limits,
@@ -96,7 +101,7 @@ public:
     }
     loadClientAuth(m_context, m_issuer, m_client,
       m_requestedPresent, m_requested, [
-      self = ZmRef<ClientToken_>{this}
+      self = ZmRef<ClientToken__>{this}
     ](int error, AuthorityData data) mutable {
       self->authority_(error, ZuMv(data));
     });
@@ -134,7 +139,7 @@ private:
     m_scope = ZuMv(data.selection.scope);
     auto sign = ZuMv(m_sign);
     sign(m_key, m_prepared.digest, [
-      self = ZmRef<ClientToken_>{this}
+      self = ZmRef<ClientToken__>{this}
     ](Bytes signature) mutable {
       self->signed_(ZuMv(signature));
     });
@@ -154,7 +159,7 @@ private:
       .expiresIn = uint64_t(m_expires - m_now)
     };
     tokenRelease(m_context, m_issuer, m_appID, {}, m_authVersion, m_now,
-      ZuMv(response), [self = ZmRef<ClientToken_>{this}](
+      ZuMv(response), [self = ZmRef<ClientToken__>{this}](
 	  bool ok, TokenResponse response) mutable {
 	self->finish_(ok ? TokenIssue::OK : OAuthError::InvalidClient,
 	  ZuMv(response));
@@ -180,10 +185,12 @@ private:
   bool		m_signDone = false;
   bool		m_done = false;
 };
+using ClientToken_ = ClientToken__<ZmHeap<"Zum.zumd.token.ClientToken", ClientToken__<ZuVoid>>>;
 
-class RefreshToken_ : public ZumPolymorph {
+template <typename Heap>
+class RefreshToken__ : public Heap, public ZmPolymorph  {
 public:
-  RefreshToken_(
+  RefreshToken__(
       DBContext *context, Ztls::Random *rng, Refresh family,
       Bytes presentedDigest, Client client, bool requestedPresent,
       String requested, SignKey key, int64_t now, int64_t expires,
@@ -222,7 +229,7 @@ public:
     }
     loadGrantAuth(m_context, m_family, m_client,
       m_requestedPresent, m_requested, m_now,
-      [self = ZmRef<RefreshToken_>{this}](
+      [self = ZmRef<RefreshToken__>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -253,7 +260,7 @@ private:
   void reuse_()
   {
     auto refresh = m_context->refresh;
-    refresh->run(0, [self = ZmRef<RefreshToken_>{this}, refresh]() {
+    refresh->run(0, [self = ZmRef<RefreshToken__>{this}, refresh]() {
       Bytes id = self->m_family.id;
       refresh->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
 	  ZdbRow<Refresh> *row) mutable {
@@ -320,7 +327,7 @@ private:
     }
     m_response.scope = ZuMv(data.selection.scope);
     m_sign(m_key, m_prepared.digest, [
-      self = ZmRef<RefreshToken_>{this}
+      self = ZmRef<RefreshToken__>{this}
     ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
   }
 
@@ -336,7 +343,7 @@ private:
     m_response.expiresIn = uint64_t(m_expires - m_now);
     if (m_hasID) {
       m_sign(m_key, m_idPrepared.digest, [
-        self = ZmRef<RefreshToken_>{this}
+        self = ZmRef<RefreshToken__>{this}
       ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
       return;
     }
@@ -362,7 +369,7 @@ private:
       ZuMv(m_requestedRoleIDs), ZuMv(m_actions), m_authVersion,
       m_family.userID, m_family.userVersion, m_now,
       m_generationLimit, m_spentLimit, [
-	self = ZmRef<RefreshToken_>{this}
+	self = ZmRef<RefreshToken__>{this}
       ](RefreshRotate::T result, String refresh) mutable {
 	self->rotated_(result, ZuMv(refresh));
       });
@@ -389,7 +396,7 @@ private:
     m_response.refreshToken = ZuMv(refresh);
     tokenRelease(m_context, m_family.issuer, m_family.appID,
       m_family.id, m_authVersion,
-      m_now, ZuMv(m_response), [self = ZmRef<RefreshToken_>{this}](
+      m_now, ZuMv(m_response), [self = ZmRef<RefreshToken__>{this}](
 	  bool ok, TokenResponse response) mutable {
 	self->finish_(ok ? TokenIssue::OK : OAuthError::InvalidGrant,
 	  ZuMv(response));
@@ -423,10 +430,12 @@ private:
   bool		m_hasID = false;
   bool		m_done = false;
 };
+using RefreshToken_ = RefreshToken__<ZmHeap<"Zum.zumd.token.RefreshToken", RefreshToken__<ZuVoid>>>;
 
-class CodeToken_ : public ZumPolymorph {
+template <typename Heap>
+class CodeToken__ : public Heap, public ZmPolymorph  {
 public:
-  CodeToken_(
+  CodeToken__(
       DB *db, DBContext *context, Ztls::Random *rng, Grant code,
       Bytes codeDigest, Client client, bool requestedPresent,
       String requested, SignKey key, int64_t now, int64_t accessExpires,
@@ -454,7 +463,7 @@ public:
     }
     loadGrantAuth(m_context, m_code, m_client,
       m_requestedPresent, m_requested, m_now,
-      [self = ZmRef<CodeToken_>{this}](
+      [self = ZmRef<CodeToken__>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -517,7 +526,7 @@ private:
     }
     m_response.scope = ZuMv(data.selection.scope);
     m_sign(m_key, m_prepared.digest, [
-      self = ZmRef<CodeToken_>{this}
+      self = ZmRef<CodeToken__>{this}
     ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
   }
 
@@ -533,7 +542,7 @@ private:
     m_response.expiresIn = uint64_t(m_accessExpires - m_now);
     if (m_hasID) {
       m_sign(m_key, m_idPrepared.digest, [
-        self = ZmRef<CodeToken_>{this}
+        self = ZmRef<CodeToken__>{this}
       ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
       return;
     }
@@ -574,8 +583,8 @@ private:
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(family));
     if (!sagaSubmit(m_db, sagaID, ZuMv(saga),
-      SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::sagaSubmit_>{}},
-      SagaFn{ZmRef<CodeToken_>{this}, ZmFnPtr<&CodeToken_::saga_>{}},
+      SagaFn{ZmRef<CodeToken__>{this}, ZmFnPtr<&CodeToken__::sagaSubmit_>{}},
+      SagaFn{ZmRef<CodeToken__>{this}, ZmFnPtr<&CodeToken__::saga_>{}},
       ZuTime{m_refreshExpires}))
       sagaSubmit_(false);
   }
@@ -583,7 +592,7 @@ private:
   void consume_()
   {
     codeConsume(m_context, m_code.id, m_codeDigest, m_now,
-      [self = ZmRef<CodeToken_>{this}](bool ok) mutable {
+      [self = ZmRef<CodeToken__>{this}](bool ok) mutable {
         if (!ok) {
           self->finish_(OAuthError::InvalidGrant, {});
           return;
@@ -607,7 +616,7 @@ private:
   void release_()
   {
     tokenRelease(m_context, m_code.issuer, m_code.appID, m_familyID, m_authVersion,
-      m_now, ZuMv(m_response), [self = ZmRef<CodeToken_>{this}](
+      m_now, ZuMv(m_response), [self = ZmRef<CodeToken__>{this}](
 	  bool ok, TokenResponse response) mutable {
 	self->finish_(ok ? TokenIssue::OK : OAuthError::InvalidGrant,
 	  ZuMv(response));
@@ -641,10 +650,12 @@ private:
   bool		m_hasID = false;
   bool		m_done = false;
 };
+using CodeToken_ = CodeToken__<ZmHeap<"Zum.zumd.token.CodeToken", CodeToken__<ZuVoid>>>;
 
-class TokenRequest_ : public ZumPolymorph {
+template <typename Heap>
+class TokenRequest__ : public Heap, public ZmPolymorph  {
 public:
-  TokenRequest_(
+  TokenRequest__(
       DB *db, DBContext *context, Ztls::Random *rng,
       String form, String authorization, TokenConfig config,
       SignFn sign, TokenFn complete) :
@@ -652,7 +663,7 @@ public:
     m_authorization{ZuMv(authorization)}, m_config{ZuMv(config)},
     m_sign{ZuMv(sign)}, m_complete{ZuMv(complete)} { }
 
-  ~TokenRequest_() { clear_(); }
+  ~TokenRequest__() { clear_(); }
 
   void start()
   {
@@ -687,7 +698,7 @@ public:
     }
     String id{clientID};
     m_context->clients->run(0, [
-      self = ZmRef<TokenRequest_>{this}, id = ZuMv(id)
+      self = ZmRef<TokenRequest__>{this}, id = ZuMv(id)
     ]() mutable {
       self->m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
@@ -765,12 +776,12 @@ private:
     }
     if (m_grant == TokenGrant::RefreshToken) {
       m_context->refresh->find<0>(0, ZuFwdTuple(ZuMv(id)), [
-        self = ZmRef<TokenRequest_>{this}
+        self = ZmRef<TokenRequest__>{this}
       ](ZdbRowRef<Refresh> row) mutable { self->refresh_(ZuMv(row)); });
       return;
     }
     m_context->grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [
-      self = ZmRef<TokenRequest_>{this}
+      self = ZmRef<TokenRequest__>{this}
     ](ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
   }
 
@@ -809,7 +820,7 @@ private:
   {
     signKeyLoad(m_context, m_config.issuer, m_config.now,
       m_config.accessExpires, m_config.maxKeys, [
-      self = ZmRef<TokenRequest_>{this}
+      self = ZmRef<TokenRequest__>{this}
     ](SignKey key) mutable { self->key_(ZuMv(key)); });
   }
 
@@ -862,6 +873,7 @@ private:
   bool		m_hasBasic = false;
   bool		m_done = false;
 };
+using TokenRequest_ = TokenRequest__<ZmHeap<"Zum.zumd.token.TokenRequest", TokenRequest__<ZuVoid>>>;
 
 static void clientToken(
     DBContext *context, Ztls::Random &rng, String issuer, Client client,
@@ -923,16 +935,17 @@ bool tokenRequest(
   }, [state]() mutable { state->cancel(); });
 }
 
-class RevokeComplete_ : public ZumObject {
+template <typename Heap>
+class RevokeComplete__ : public Heap, public ZmObject  {
 public:
-  RevokeComplete_(RevokeFn complete) : m_complete{ZuMv(complete)} { }
+  RevokeComplete__(RevokeFn complete) : m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
 
   void complete(int error)
   {
     m_request->complete([
-      self = ZmRef<RevokeComplete_>{this}, error
+      self = ZmRef<RevokeComplete__>{this}, error
     ]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(error);
@@ -949,17 +962,19 @@ private:
   ZmRef<Request>	m_request;
   RevokeFn	m_complete;
 };
+using RevokeComplete_ = RevokeComplete__<ZmHeap<"Zum.zumd.token.RevokeComplete", RevokeComplete__<ZuVoid>>>;
 
-class RevokeRequest_ : public ZumPolymorph {
+template <typename Heap>
+class RevokeRequest__ : public Heap, public ZmPolymorph  {
 public:
-  RevokeRequest_(
+  RevokeRequest__(
       DBContext *context, String form, String authorization,
       RevokeConfig config, RevokeFn complete) :
     m_context{context}, m_form{ZuMv(form)},
     m_authorization{ZuMv(authorization)}, m_config{ZuMv(config)},
     m_complete{ZuMv(complete)} { }
 
-  ~RevokeRequest_() { clear_(); }
+  ~RevokeRequest__() { clear_(); }
 
   void start()
   {
@@ -992,7 +1007,7 @@ public:
     }
     String clientID{id};
     m_context->clients->run(0, [
-      self = ZmRef<RevokeRequest_>{this}, clientID = ZuMv(clientID)
+      self = ZmRef<RevokeRequest__>{this}, clientID = ZuMv(clientID)
     ]() mutable {
       self->m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [
         self = ZuMv(self)
@@ -1050,7 +1065,7 @@ private:
     auto refresh = m_context->refresh;
     Bytes id = m_familyID;
     refresh->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [
-      self = ZmRef<RevokeRequest_>{this}
+      self = ZmRef<RevokeRequest__>{this}
     ](ZdbRow<Refresh> *row) mutable {
       if (row) { self->grant_(row); return; }
       // Retain revocation for opaque grant records written by older stores.
@@ -1143,6 +1158,7 @@ private:
   bool		m_hasBasic = false;
   bool		m_done = false;
 };
+using RevokeRequest_ = RevokeRequest__<ZmHeap<"Zum.zumd.token.RevokeRequest", RevokeRequest__<ZuVoid>>>;
 
 bool revokeRequest(
     Requests *requests, ZuTime deadline, DBContext *context,

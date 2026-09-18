@@ -30,9 +30,10 @@ static bool authorizationTarget_(
   return grant.issuer == config.issuer && grant.appID == config.appID;
 }
 
-class AuthorizeComplete_ : public ZumObject {
+template <typename Heap>
+class AuthorizeComplete__ : public Heap, public ZmObject  {
 public:
-  AuthorizeComplete_(AuthorizeFn complete) :
+  AuthorizeComplete__(AuthorizeFn complete) :
     m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
@@ -40,7 +41,7 @@ public:
   void complete(int error, AuthorizeResult result)
   {
     m_request->complete([
-      self = ZmRef<AuthorizeComplete_>{this}, error,
+      self = ZmRef<AuthorizeComplete__>{this}, error,
       result = ZuMv(result)
     ]() mutable {
       auto complete = ZuMv(self->m_complete);
@@ -58,13 +59,15 @@ private:
   ZmRef<Request>	m_request;
   AuthorizeFn	m_complete;
 };
+using AuthorizeComplete_ = AuthorizeComplete__<ZmHeap<"Zum.zumd.authorize.AuthorizeComplete", AuthorizeComplete__<ZuVoid>>>;
 
-class AuthorizeCodeResult_ : public ZumObject {
+template <typename Heap>
+class AuthorizeCodeResult__ : public Heap, public ZmObject  {
 public:
-  AuthorizeCodeResult_(int error_, String location_) :
+  AuthorizeCodeResult__(int error_, String location_) :
     error{error_}, location{ZuMv(location_)} { }
 
-  ~AuthorizeCodeResult_()
+  ~AuthorizeCodeResult__()
   {
     if (location && location.mutable_())
       ZuClear(location.data(), location.length());
@@ -73,10 +76,12 @@ public:
   int		error;
   String	location;
 };
+using AuthorizeCodeResult_ = AuthorizeCodeResult__<ZmHeap<"Zum.zumd.authorize.AuthorizeCodeResult", AuthorizeCodeResult__<ZuVoid>>>;
 
-class AuthorizeCodeComplete_ : public ZumObject {
+template <typename Heap>
+class AuthorizeCodeComplete__ : public Heap, public ZmObject  {
 public:
-  AuthorizeCodeComplete_(AuthorizeCodeFn complete) :
+  AuthorizeCodeComplete__(AuthorizeCodeFn complete) :
     m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
@@ -86,7 +91,7 @@ public:
     ZmRef<AuthorizeCodeResult_> delivery =
       new AuthorizeCodeResult_{error, ZuMv(location)};
     m_request->complete([
-      self = ZmRef<AuthorizeCodeComplete_>{this}, delivery = ZuMv(delivery)
+      self = ZmRef<AuthorizeCodeComplete__>{this}, delivery = ZuMv(delivery)
     ]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(delivery->error, ZuMv(delivery->location));
@@ -103,13 +108,15 @@ private:
   ZmRef<Request>	m_request;
   AuthorizeCodeFn m_complete;
 };
+using AuthorizeCodeComplete_ = AuthorizeCodeComplete__<ZmHeap<"Zum.zumd.authorize.AuthorizeCodeComplete", AuthorizeCodeComplete__<ZuVoid>>>;
 
 ZuDerive(ConsentGateFn,
   (ZmFn<void(int), ZmFnHeapID<"Zum.ConsentGateFn">>));
 
-class ConsentGate_ : public ZumPolymorph {
+template <typename Heap>
+class ConsentGate__ : public Heap, public ZmPolymorph  {
 public:
-  ConsentGate_(DBContext *context, Grant grant, Bytes bindingDigest,
+  ConsentGate__(DBContext *context, Grant grant, Bytes bindingDigest,
       UserID userID, Bytes credentialID, IDVec roleIDs, ZtBitmap actions,
       uint64_t authVersion, uint64_t userVersion, int64_t authTime,
       Evidence evidence, ConsentGateFn complete) :
@@ -128,7 +135,7 @@ public:
       return;
     }
     auto policies = m_context->authPolicies;
-    policies->run(0, [self = ZmRef<ConsentGate_>{this}, policies]() {
+    policies->run(0, [self = ZmRef<ConsentGate__>{this}, policies]() {
       policies->find<0>(0, ZuFwdTuple(self->m_grant.appID), [
           self = ZuMv(self)](ZdbRowRef<AuthPolicy> row) mutable {
         if (!row || row->data().state != State::Active || row->data().owner) {
@@ -171,7 +178,7 @@ private:
   void consent_()
   {
     auto consents = m_context->consents;
-    consents->run(0, [self = ZmRef<ConsentGate_>{this}, consents]() {
+    consents->run(0, [self = ZmRef<ConsentGate__>{this}, consents]() {
       consents->find<0>(0, ZuFwdTuple(self->m_userID,
           self->m_grant.clientID, self->m_grant.appID), [self = ZuMv(self)](
           ZdbRowRef<Consent> row) mutable {
@@ -199,7 +206,7 @@ private:
   void stage_()
   {
     auto grants = m_context->grants;
-    grants->run(0, [self = ZmRef<ConsentGate_>{this}, grants]() {
+    grants->run(0, [self = ZmRef<ConsentGate__>{this}, grants]() {
       Bytes id = self->m_grant.id;
       grants->findUpd<0, ZuSeq<1, 2>>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
           ZdbRow<Grant> *row) mutable {
@@ -251,10 +258,12 @@ private:
   ConsentGateFn m_complete;
   bool		m_done = false;
 };
+using ConsentGate_ = ConsentGate__<ZmHeap<"Zum.zumd.authorize.ConsentGate", ConsentGate__<ZuVoid>>>;
 
-class AuthorizeRequest_ : public ZumPolymorph {
+template <typename Heap>
+class AuthorizeRequest__ : public Heap, public ZmPolymorph  {
 public:
-  AuthorizeRequest_(
+  AuthorizeRequest__(
       DBContext *context, Ztls::Random *rng, String query,
       Bytes bindingDigest, AuthorizeConfig config, AuthorizeFn complete) :
     m_context{context}, m_rng{rng}, m_query{ZuMv(query)},
@@ -282,7 +291,7 @@ public:
     }
     String id{m_params.clientID};
     m_context->clients->run(0, [
-      self = ZmRef<AuthorizeRequest_>{this}, id = ZuMv(id)
+      self = ZmRef<AuthorizeRequest__>{this}, id = ZuMv(id)
     ]() mutable {
       self->m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
@@ -338,7 +347,7 @@ private:
     }
 
     clientScopes(m_context, ZuMv(m_client),
-      [self = ZmRef<AuthorizeRequest_>{this}](
+      [self = ZmRef<AuthorizeRequest__>{this}](
 	  int error, App app, Client client, ClientAccess access,
 	  RoleVec scopes) mutable {
 	if (error || app.id != self->m_config.appID ||
@@ -380,7 +389,7 @@ private:
     m_result.redirect = false;
     clear_();
     authorizationInsert(m_context, ZuMv(grant), [
-      self = ZmRef<AuthorizeRequest_>{this}
+      self = ZmRef<AuthorizeRequest__>{this}
     ](bool ok) mutable {
       self->finish_(ok ? AuthorizeIssue::OK : OAuthError::ServerError);
     });
@@ -401,10 +410,12 @@ private:
   int		m_profileError = ProfileError::OK;
   bool		m_done = false;
 };
+using AuthorizeRequest_ = AuthorizeRequest__<ZmHeap<"Zum.zumd.authorize.AuthorizeRequest", AuthorizeRequest__<ZuVoid>>>;
 
-class AuthorizeFinish_ : public ZumPolymorph {
+template <typename Heap>
+class AuthorizeFinish__ : public Heap, public ZmPolymorph  {
 public:
-  AuthorizeFinish_(
+  AuthorizeFinish__(
       DBContext *context, Ztls::Random *rng, Bytes ceremonyID,
       Bytes bindingDigest, AssertionInput input,
       AuthorizeFinishConfig config, PolicyFn policy,
@@ -426,7 +437,7 @@ public:
     assertionVerify(m_context, m_ceremonyID, m_bindingDigest,
       ZuMv(m_input), m_config.issuer, m_config.appID,
       m_config.origin, m_config.rpID, m_config.now,
-      [self = ZmRef<AuthorizeFinish_>{this}](
+      [self = ZmRef<AuthorizeFinish__>{this}](
 	  int error, User user, Cred cred, Grant grant,
 	  AssertionResult result) mutable {
 	self->asserted_(error, ZuMv(user), ZuMv(cred), ZuMv(grant), result);
@@ -483,7 +494,7 @@ private:
     }
     if (grant.appID) {
       auto memberships = m_context->memberships;
-      memberships->run(0, [self = ZmRef<AuthorizeFinish_>{this},
+      memberships->run(0, [self = ZmRef<AuthorizeFinish__>{this},
           memberships, user = ZuMv(user), cred = ZuMv(cred),
           grant = ZuMv(grant)]() mutable {
         auto key = ZuFwdTuple(grant.appID, user.id);
@@ -507,7 +518,7 @@ private:
   void authorityLoad_(User user, Cred cred, Grant grant, IDVec roleIDs)
   {
     loadUserAuth(m_context, ZuMv(grant), ZuMv(user),
-      ZuMv(cred), ZuMv(roleIDs), [self = ZmRef<AuthorizeFinish_>{this}](
+      ZuMv(cred), ZuMv(roleIDs), [self = ZmRef<AuthorizeFinish__>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -523,7 +534,7 @@ private:
     m_authority = ZuMv(data);
     auto policy = ZuMv(m_policy);
     policy(m_authority.user, m_authority.client, m_authority.selection,
-      m_authority.actions, [self = ZmRef<AuthorizeFinish_>{this}](
+      m_authority.actions, [self = ZmRef<AuthorizeFinish__>{this}](
 	bool ok, ZtBitmap actions) mutable {
       self->policy_(ok, ZuMv(actions));
     });
@@ -544,7 +555,7 @@ private:
         m_authority.user.id, Bytes{m_authority.cred.id},
         IDVec{m_authority.principalRoleIDs}, ZtBitmap{actions},
         m_authority.app.authVersion, m_authority.user.authVersion,
-        m_config.now, Evidence{}, [self = ZmRef<AuthorizeFinish_>{this},
+        m_config.now, Evidence{}, [self = ZmRef<AuthorizeFinish__>{this},
           actions = ZuMv(actions)](int result) mutable {
           if (result == AuthorizeIssue::OK) self->issue_(ZuMv(actions));
           else self->finish_(result, {});
@@ -562,7 +573,7 @@ private:
       m_authority.principalRoleIDs, ZuMv(actions),
       m_authority.app.authVersion, m_authority.user.authVersion,
       m_config.now, m_config.codeExpires, Evidence{}, [
-	self = ZmRef<AuthorizeFinish_>{this}
+	self = ZmRef<AuthorizeFinish__>{this}
       ](bool ok, String code) mutable {
 	self->finished_(ok, ZuMv(code));
       });
@@ -592,10 +603,12 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
+using AuthorizeFinish_ = AuthorizeFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeFinish", AuthorizeFinish__<ZuVoid>>>;
 
-class AuthorizeSessionFinish_ : public ZumPolymorph {
+template <typename Heap>
+class AuthorizeSessionFinish__ : public Heap, public ZmPolymorph  {
 public:
-  AuthorizeSessionFinish_(DBContext *context, Ztls::Random *rng,
+  AuthorizeSessionFinish__(DBContext *context, Ztls::Random *rng,
       Bytes ceremonyID, Bytes bindingDigest, Session session,
       AuthorizeFinishConfig config, PolicyFn policy,
       AuthorizeCodeFn complete) :
@@ -617,7 +630,7 @@ public:
       return;
     }
     auto grants = m_context->grants;
-    grants->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this}, grants]() {
+    grants->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this}, grants]() {
       Bytes id = self->m_ceremonyID;
       grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
 	  ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
@@ -646,7 +659,7 @@ private:
     }
     Grant grant{row->data()};
     auto users = m_context->users;
-    users->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this}, users,
+    users->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this}, users,
 	grant = ZuMv(grant)]() mutable {
       users->find<0>(0, ZuFwdTuple(self->m_session.userID), [self = ZuMv(self),
 	  grant = ZuMv(grant)](ZdbRowRef<User> row) mutable {
@@ -680,7 +693,7 @@ private:
       return;
     }
     auto memberships = m_context->memberships;
-    memberships->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this},
+    memberships->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this},
 	memberships, grant = ZuMv(grant)]() mutable {
       memberships->find<0>(0,
 	ZuFwdTuple(grant.appID, self->m_user.id), [self = ZuMv(self),
@@ -697,7 +710,7 @@ private:
   void delegatedPolicy_(Grant grant)
   {
     auto policies = m_context->authPolicies;
-    policies->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this}, policies,
+    policies->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this}, policies,
 	grant = ZuMv(grant)]() mutable {
       policies->find<0>(0, ZuFwdTuple(grant.appID), [self = ZuMv(self),
 	  grant = ZuMv(grant)](ZdbRowRef<AuthPolicy> row) mutable {
@@ -716,7 +729,7 @@ private:
   void delegatedProvider_(Grant grant)
   {
     auto providers = m_context->providers;
-    providers->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this}, providers,
+    providers->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this}, providers,
 	grant = ZuMv(grant)]() mutable {
       providers->find<0>(0, ZuFwdTuple(self->m_session.providerID), [
 	  self = ZuMv(self), grant = ZuMv(grant)](
@@ -735,7 +748,7 @@ private:
   void delegatedEvidence_(Grant grant)
   {
     auto evidence = m_context->evidence;
-    evidence->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this}, evidence,
+    evidence->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this}, evidence,
 	grant = ZuMv(grant)]() mutable {
       evidence->find<0>(0, ZuFwdTuple(grant.appID, self->m_user.id,
 	  self->m_session.providerID), [self = ZuMv(self), grant = ZuMv(grant)](
@@ -758,7 +771,7 @@ private:
     using Table = RoleMapTable;
     using Tuple = Table::Tuple;
     auto maps = m_context->roleMaps;
-    maps->run(0, [self = ZmRef<AuthorizeSessionFinish_>{this}, maps,
+    maps->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this}, maps,
 	grant = ZuMv(grant)]() mutable {
       maps->selectRows<0>(ZuFwdTuple(grant.appID,
 	  self->m_session.providerID), AuthorityScanLimit::RoleMappingsScan,
@@ -793,7 +806,7 @@ private:
   void authorityLoad_(Grant grant, IDVec roleIDs)
   {
     loadUserAuth(m_context, ZuMv(grant), ZuMv(m_user), {}, ZuMv(roleIDs),
-      [self = ZmRef<AuthorizeSessionFinish_>{this}](
+      [self = ZmRef<AuthorizeSessionFinish__>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -809,7 +822,7 @@ private:
     m_authority = ZuMv(data);
     auto policy = ZuMv(m_policy);
     policy(m_authority.user, m_authority.client, m_authority.selection,
-      m_authority.actions, [self = ZmRef<AuthorizeSessionFinish_>{this}](
+      m_authority.actions, [self = ZmRef<AuthorizeSessionFinish__>{this}](
 	  bool ok, ZtBitmap actions) mutable {
 	self->policy_(ok, ZuMv(actions));
       });
@@ -827,7 +840,7 @@ private:
         m_authority.user.id, {}, IDVec{m_authority.principalRoleIDs},
         ZtBitmap{actions}, m_authority.app.authVersion,
         m_authority.user.authVersion, m_session.authTime,
-        Evidence{m_evidence}, [self = ZmRef<AuthorizeSessionFinish_>{this},
+        Evidence{m_evidence}, [self = ZmRef<AuthorizeSessionFinish__>{this},
           actions = ZuMv(actions)](int result) mutable {
           if (result == AuthorizeIssue::OK) self->issue_(ZuMv(actions));
           else self->finish_(result, {});
@@ -848,7 +861,7 @@ private:
       m_authority.app.authVersion, m_authority.user.authVersion,
       m_session.authTime,
       codeExpires, ZuMv(m_evidence),
-      [self = ZmRef<AuthorizeSessionFinish_>{this}](
+      [self = ZmRef<AuthorizeSessionFinish__>{this}](
 	  bool ok, String code) mutable { self->finished_(ok, ZuMv(code)); });
   }
 
@@ -882,10 +895,12 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
+using AuthorizeSessionFinish_ = AuthorizeSessionFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeSessionFinish", AuthorizeSessionFinish__<ZuVoid>>>;
 
-class AuthorizeOIDCFinish_ : public ZumPolymorph {
+template <typename Heap>
+class AuthorizeOIDCFinish__ : public Heap, public ZmPolymorph  {
 public:
-  AuthorizeOIDCFinish_(
+  AuthorizeOIDCFinish__(
       DBContext *context, Ztls::Random *rng, Bytes ceremonyID,
       Bytes bindingDigest, User user, IDVec roleIDs, Evidence evidence,
       int64_t authTime,
@@ -911,7 +926,7 @@ public:
       return;
     }
     auto grants = m_context->grants;
-    grants->run(0, [self = ZmRef<AuthorizeOIDCFinish_>{this}, grants]() {
+    grants->run(0, [self = ZmRef<AuthorizeOIDCFinish__>{this}, grants]() {
       Bytes id = self->m_ceremonyID;
       grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
 	  ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
@@ -944,7 +959,7 @@ private:
       return;
     }
     loadUserAuth(m_context, ZuMv(grant), ZuMv(m_user), {}, ZuMv(m_roleIDs),
-      [self = ZmRef<AuthorizeOIDCFinish_>{this}](
+      [self = ZmRef<AuthorizeOIDCFinish__>{this}](
 	  int error, AuthorityData data) mutable {
 	self->authority_(error, ZuMv(data));
       });
@@ -960,7 +975,7 @@ private:
     m_authority = ZuMv(data);
     auto policy = ZuMv(m_policy);
     policy(m_authority.user, m_authority.client, m_authority.selection,
-      m_authority.actions, [self = ZmRef<AuthorizeOIDCFinish_>{this}](
+      m_authority.actions, [self = ZmRef<AuthorizeOIDCFinish__>{this}](
 	  bool ok, ZtBitmap actions) mutable {
 	self->policy_(ok, ZuMv(actions));
       });
@@ -978,7 +993,7 @@ private:
         m_authority.user.id, {}, IDVec{m_authority.principalRoleIDs},
         ZtBitmap{actions}, m_authority.app.authVersion,
         m_authority.user.authVersion, m_authTime, Evidence{m_evidence},
-        [self = ZmRef<AuthorizeOIDCFinish_>{this},
+        [self = ZmRef<AuthorizeOIDCFinish__>{this},
           actions = ZuMv(actions)](int result) mutable {
           if (result == AuthorizeIssue::OK) self->issue_(ZuMv(actions));
           else self->finish_(result, {});
@@ -997,7 +1012,7 @@ private:
       m_authTime, m_config.codeExpires < m_evidence.deadline ?
         m_config.codeExpires : m_evidence.deadline,
       ZuMv(m_evidence),
-      [self = ZmRef<AuthorizeOIDCFinish_>{this}](
+      [self = ZmRef<AuthorizeOIDCFinish__>{this}](
 	  bool ok, String code) mutable { self->finished_(ok, ZuMv(code)); });
   }
 
@@ -1028,10 +1043,12 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
+using AuthorizeOIDCFinish_ = AuthorizeOIDCFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeOIDCFinish", AuthorizeOIDCFinish__<ZuVoid>>>;
 
-class AuthorizeConsentFinish_ : public ZumPolymorph {
+template <typename Heap>
+class AuthorizeConsentFinish__ : public Heap, public ZmPolymorph  {
 public:
-  AuthorizeConsentFinish_(DB *db, DBContext *context, Ztls::Random *rng,
+  AuthorizeConsentFinish__(DB *db, DBContext *context, Ztls::Random *rng,
       Bytes ceremonyID, Bytes bindingDigest, bool approve,
       AuthorizeFinishConfig config, PolicyFn policy,
       AuthorizeCodeFn complete) :
@@ -1040,7 +1057,7 @@ public:
     m_config{ZuMv(config)}, m_policy{ZuMv(policy)},
     m_complete{ZuMv(complete)} { }
 
-  ~AuthorizeConsentFinish_()
+  ~AuthorizeConsentFinish__()
   {
     if (m_code && m_code.mutable_()) ZuClear(m_code.data(), m_code.length());
   }
@@ -1055,7 +1072,7 @@ public:
       return;
     }
     auto grants = m_context->grants;
-    grants->run(0, [self = ZmRef<AuthorizeConsentFinish_>{this}, grants]() {
+    grants->run(0, [self = ZmRef<AuthorizeConsentFinish__>{this}, grants]() {
       Bytes id = self->m_ceremonyID;
       grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
           ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
@@ -1094,7 +1111,7 @@ private:
     if (!m_approve) { deny_(); return; }
     auto clients = m_context->clients;
     String id = m_grant.clientID;
-    clients->run(0, [self = ZmRef<AuthorizeConsentFinish_>{this}, clients,
+    clients->run(0, [self = ZmRef<AuthorizeConsentFinish__>{this}, clients,
         id = ZuMv(id)]() mutable {
       clients->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
           ZdbRowRef<Client> row) mutable {
@@ -1115,7 +1132,7 @@ private:
   void deny_()
   {
     auto grants = m_context->grants;
-    grants->run(0, [self = ZmRef<AuthorizeConsentFinish_>{this}, grants]() {
+    grants->run(0, [self = ZmRef<AuthorizeConsentFinish__>{this}, grants]() {
       Bytes id = self->m_ceremonyID;
       grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
           ZdbRow<Grant> *row) mutable {
@@ -1146,7 +1163,7 @@ private:
     m_authority = ZuMv(data);
     auto policy = m_policy;
     policy(m_authority.user, m_authority.client, m_authority.selection,
-      m_authority.actions, [self = ZmRef<AuthorizeConsentFinish_>{this}](
+      m_authority.actions, [self = ZmRef<AuthorizeConsentFinish__>{this}](
           bool ok, ZtBitmap actions) mutable {
         if (!ok) { self->finish_(OAuthError::AccessDenied, {}); return; }
         self->m_actions = ZuMv(actions);
@@ -1161,7 +1178,7 @@ private:
     auto consents = m_context->consents;
     auto key = ZuFwdTuple(m_grant.userID, m_grant.clientID,
       m_grant.appID);
-    consents->run(0, [self = ZmRef<AuthorizeConsentFinish_>{this}, consents,
+    consents->run(0, [self = ZmRef<AuthorizeConsentFinish__>{this}, consents,
         key = ZuMv(key)]() mutable {
       consents->find<0>(0, ZuMv(key), [self](ZdbRowRef<Consent> row) mutable {
         Consent before;
@@ -1195,9 +1212,9 @@ private:
     ZmRef<MSaga> saga = new MSaga{};
     saga->init(ZuMv(change));
     if (!sagaSubmit(m_db, id, ZuMv(saga),
-      [self = ZmRef<AuthorizeConsentFinish_>{this}](bool ok) mutable {
+      [self = ZmRef<AuthorizeConsentFinish__>{this}](bool ok) mutable {
 	if (!ok) self->finish_(OAuthError::ServerError, {});
-      }, [self = ZmRef<AuthorizeConsentFinish_>{this}](bool ok) mutable {
+      }, [self = ZmRef<AuthorizeConsentFinish__>{this}](bool ok) mutable {
 	String location;
 	if (ok) location = codeRedirect(self->m_grant, self->m_code);
 	if (self->m_code && self->m_code.mutable_())
@@ -1222,6 +1239,7 @@ private:
   ZtBitmap	m_actions;
   bool		m_done = false;
 };
+using AuthorizeConsentFinish_ = AuthorizeConsentFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeConsentFinish", AuthorizeConsentFinish__<ZuVoid>>>;
 
 static void authorizeRequest_(
     DBContext *context, Ztls::Random &rng, String query,

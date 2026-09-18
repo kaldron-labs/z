@@ -110,7 +110,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.app, Update) {
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(app.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
 	  if (!row || app.owner || app.version == UINT64_MAX ||
@@ -130,7 +130,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.role, Update) {
-    context->roles->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->roles, 0, ZuFwdTuple(app.id, role.id),
 	ZuMv(complete), [this](ZdbRow<Role> *row, auto &&complete) mutable {
 	  if (!row || role.owner || role.tombstone || role.version == UINT64_MAX ||
@@ -167,7 +167,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaRepeatStep(6, zum.role_map, Delete, maps.length()) {
     auto image = &maps[saga->iteration()];
-    context->roleMaps->run(0, [this, image, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, image, complete = ZuMv(complete)]() mutable {
       RoleMap old;
       if (!SagaImage::load(*image, old) || old.appID != app.id ||
 	  old.roleID != role.id || old.owner) {
@@ -211,7 +211,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     return {};
   }
   ZdbSagaStep(10, zum.role, Update) {
-    context->roles->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->roles, 0, ZuFwdTuple(app.id, role.id),
 	ZuMv(complete), [this](ZdbRow<Role> *row, auto &&complete) mutable {
 	  if (!row || row->data().owner != (Fwd ? saga->id() : uint128_t{0}) ||
@@ -227,7 +227,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(11, zum.app, Update) {
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(app.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
 	  if (!row || row->data().owner != (Fwd ? saga->id() : uint128_t{0}) ||

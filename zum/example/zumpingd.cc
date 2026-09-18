@@ -110,11 +110,15 @@ static Zum::ServiceManifest manifest()
   }, 1};
 }
 
-struct RawData : public ZumObject {
+template <typename Heap>
+struct RawData_ : public Heap, public ZmObject  {
   Zum::String data;
-  RawData &operator =(ZuSpan<uint8_t> value) { data = value; return *this; }
+  RawData_ &operator =(ZuSpan<uint8_t> value) { data = value; return *this; }
 };
-struct Reply : public ZumObject { String body; String location; };
+using RawData = RawData_<ZmHeap<"Zum.zumpingd.RawData", RawData_<ZuVoid>>>;
+template <typename Heap>
+struct Reply_ : public Heap, public ZmObject  { String body; String location; };
+using Reply = Reply_<ZmHeap<"Zum.zumpingd.Reply", Reply_<ZuVoid>>>;
 
 template <unsigned Status_>
 struct Response : public Zrest::ResBuilder<Response<Status_>, Reply> {
