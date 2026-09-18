@@ -379,7 +379,7 @@ public:
   void live(Link *link, const LiveReq &, bool ok)
   {
     if (ok)
-      send_<HealthOK, LiveReq>(link, httpJSON(HTTPStatusWire{"live"}));
+      send_<HealthOK, LiveReq>(link, httpJSON(HTTPStatus{"live"}));
   }
 
   template <typename Link>
@@ -387,7 +387,7 @@ public:
   {
     if (!ok || !m_requests->active()) {
       send_<HealthUnavailable, ReadyReq>(
-        link, httpJSON(HTTPStatusWire{"unavailable"}));
+        link, httpJSON(HTTPStatus{"unavailable"}));
       return;
     }
     m_provider.ready([this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
@@ -395,7 +395,7 @@ public:
         send_<HealthOK, ReadyReq>(hold.ptr(), ZuMv(reply.body));
       else
         send_<HealthUnavailable, ReadyReq>(
-          hold.ptr(), httpJSON(HTTPStatusWire{"not-ready"}));
+          hold.ptr(), httpJSON(HTTPStatus{"not-ready"}));
     });
   }
 
@@ -404,7 +404,7 @@ public:
   {
     if (!ok || !request.object->data) {
       send_<HealthUnavailable, BootstrapReq>(
-        link, httpJSON(HTTPStatusWire{"unavailable"}));
+        link, httpJSON(HTTPStatus{"unavailable"}));
       return;
     }
     send_<BootstrapPage, BootstrapReq>(
@@ -416,7 +416,7 @@ public:
   {
     if (!ok || !request.object->data) {
       send_<HealthUnavailable, EnrollReq>(
-	link, httpJSON(HTTPStatusWire{"unavailable"}));
+	link, httpJSON(HTTPStatus{"unavailable"}));
       return;
     }
     send_<BootstrapPage, EnrollReq>(
@@ -427,7 +427,7 @@ public:
   void oauthMetadata(Link *link, const OAuthMetadataReq &request, bool ok)
   {
     if (!ok || !request.object || !request.object->appID) {
-      send_<ServerError, OAuthMetadataReq>(link, httpJSON(HTTPEmptyWire{}));
+      send_<ServerError, OAuthMetadataReq>(link, httpJSON(HTTPEmpty{}));
       return;
     }
     m_provider.metadata(request.object->appID, [this,
@@ -436,7 +436,7 @@ public:
         send_<DiscoveryOK, OAuthMetadataReq>(hold.ptr(), ZuMv(reply.body));
       else
         send_<ServerError, OAuthMetadataReq>(
-          hold.ptr(), httpJSON(HTTPEmptyWire{}));
+          hold.ptr(), httpJSON(HTTPEmpty{}));
     });
   }
 
@@ -572,20 +572,25 @@ private:
   bool cleanupStop_();
   void cleanupDone_(MaintenanceResult);
 
+  using Key = ZmRef<Ztls::PK::SK_EC>;
+  using SSF = ZmRef<SSFTransmitter>;
+  using HTTPServer = Zhttp::Server<Daemon>;
+  using CleanupRun = ZmRef<ZmPolymorph>;
+
   DB			*m_db = nullptr;
   DBContext		*m_context = nullptr;
   Requests		*m_requests = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   DaemonConfig		m_config;
   Server		m_provider;
-  ZmRef<Ztls::PK::SK_EC> m_key;
-  ZmRef<SSFTransmitter> m_ssf;
+  Key			m_key;
+  SSF			m_ssf;
   SignFn		m_sign;
   String		m_signKeyID;
   Ztls::Random		m_rng;
-  Zhttp::Server<Daemon>	m_http;
+  HTTPServer		m_http;
   ZmScheduler::Timer	m_cleanupTimer;
-  ZmRef<ZmPolymorph>	m_cleanupRun;
+  CleanupRun		m_cleanupRun;
   bool			m_started = false;
   int			m_cleanupState = DaemonCleanupState::Idle;
   uint64_t		m_cleanupBackoff = 0;

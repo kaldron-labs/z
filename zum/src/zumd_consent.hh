@@ -76,21 +76,21 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
 	  beforeConsent.appID != beforeGrant.appID))) {
       complete(false); return;
     }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(afterGrant.appID),
 	[this, complete = ZuMv(complete)](ZdbRowRef<App> app) mutable {
 	  if (!app || app->data().owner || app->data().state != State::Active ||
 	      app->data().authVersion != afterGrant.authVersion) {
 	    complete(false); return;
 	  }
-	  context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+	  context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	    context->users->find<0>(0, ZuFwdTuple(afterGrant.userID),
 	      [this, complete = ZuMv(complete)](ZdbRowRef<User> user) mutable {
 		if (!user || user->data().owner || user->data().state != State::Active ||
 		    user->data().authVersion != afterGrant.userVersion) {
 		  complete(false); return;
 		}
-		context->clients->run(0, [this, complete = ZuMv(complete)]() mutable {
+		context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 		  context->clients->find<0>(0, ZuFwdTuple(afterGrant.clientID),
 		    [this, complete = ZuMv(complete)](ZdbRowRef<Client> client) mutable {
 		      complete(client && !client->data().owner &&

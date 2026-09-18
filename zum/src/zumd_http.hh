@@ -21,17 +21,17 @@
 
 namespace Zum {
 
-struct HTTPRedirectWire { String redirectURI; };
-ZfStruct(, (HTTPRedirectWire, JSON),
+struct HTTPRedirect { String redirectURI; };
+ZfStruct(, (HTTPRedirect, JSON),
   (((redirectURI),	(Required)),	(String)));
-struct HTTPStatusWire { String status; };
-ZfStruct(, (HTTPStatusWire, JSON),
+struct HTTPStatus { String status; };
+ZfStruct(, (HTTPStatus, JSON),
   (((status),		(Required)),	(String)));
-struct HTTPErrorWire { String error; };
-ZfStruct(, (HTTPErrorWire, JSON),
+struct HTTPError { String error; };
+ZfStruct(, (HTTPError, JSON),
   (((error),		(Required)),	(String)));
-struct HTTPEmptyWire { String unused; };
-ZfStruct(, (HTTPEmptyWire, JSON),
+struct HTTPEmpty { String unused; };
+ZfStruct(, (HTTPEmpty, JSON),
   (((unused),		(JSON::Opt)),	(String)));
 
 template <typename T>
@@ -48,16 +48,18 @@ inline String httpJSON(T value)
 inline void passkeyReply(ServerReply &reply)
 {
   if (reply.type != ReplyType::Redirect) return;
-  reply.body = httpJSON(HTTPRedirectWire{reply.location});
+  reply.body = httpJSON(HTTPRedirect{reply.location});
   reply.location.null();
   reply.type = ReplyType::OK;
 }
 
-struct HTTPResponse : public ZumObject {
+template <typename Heap>
+struct HTTPResponse_ : public Heap, public ZmObject  {
   String	body;
   String	location;
   String	setCookie;
 };
+using HTTPResponse = HTTPResponse_<ZmHeap<"Zum.zumd.http.HTTPResponse", HTTPResponse_<ZuVoid>>>;
 
 template <typename Impl, unsigned Status_>
 struct NoStoreJSON : public Zrest::ResBuilder<Impl, HTTPResponse> {
@@ -153,16 +155,18 @@ struct RevokeOK : public Zrest::ResBuilder<RevokeOK, HTTPResponse> {
     "content-length");
 };
 
-struct HTTPData : public ZumObject {
+template <typename Heap>
+struct HTTPData_ : public Heap, public ZmObject  {
   // Zhttp parser spans are callback-scoped; completion runs after consume.
   String data;
   AppID appID = 0;
 
-  HTTPData &operator =(ZuSpan<uint8_t> data_) {
+  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
   }
 };
+using HTTPData = HTTPData_<ZmHeap<"Zum.zumd.http.HTTPData", HTTPData_<ZuVoid>>>;
 
 struct HTTPQuery : public HTTPData {
   HTTPQuery &operator =(ZuSpan<uint8_t> data_) {
@@ -585,7 +589,7 @@ public:
   {
     if (!ok) {
       respond_<LoginReq<App>>(ZmRef<Link>{link}, ServerReply{
-        .body = httpJSON(HTTPEmptyWire{}), .type = ReplyType::ServerError});
+        .body = httpJSON(HTTPEmpty{}), .type = ReplyType::ServerError});
       return;
     }
     String cookie{request.cookie};
@@ -690,7 +694,7 @@ public:
   {
     if (!ok) {
       respond_<MetadataReq<App>>(ZmRef<Link>{link}, ServerReply{
-        .body = httpJSON(HTTPEmptyWire{}), .type = ReplyType::ServerError});
+        .body = httpJSON(HTTPEmpty{}), .type = ReplyType::ServerError});
       return;
     }
     m_server->metadata(request.object->appID, [this, hold = ZmRef<Link>{link}](
@@ -704,7 +708,7 @@ public:
   {
     if (!ok) {
       respond_<JWKSReq<App>>(ZmRef<Link>{link}, ServerReply{
-        .body = httpJSON(HTTPEmptyWire{}), .type = ReplyType::ServerError});
+        .body = httpJSON(HTTPEmpty{}), .type = ReplyType::ServerError});
       return;
     }
     m_server->jwks(request.object->appID, [this, hold = ZmRef<Link>{link}](
@@ -718,7 +722,7 @@ public:
   {
     if (!ok) {
       respond_<UserInfoReq<App>>(ZmRef<Link>{link}, ServerReply{
-        .body = httpJSON(HTTPErrorWire{"invalid_token"}),
+        .body = httpJSON(HTTPError{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }
@@ -735,7 +739,7 @@ public:
   {
     if (!ok) {
       respond_<UserInfoPostReq<App>>(ZmRef<Link>{link}, ServerReply{
-        .body = httpJSON(HTTPErrorWire{"invalid_token"}),
+        .body = httpJSON(HTTPError{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }

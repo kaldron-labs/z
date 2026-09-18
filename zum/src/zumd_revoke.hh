@@ -35,49 +35,49 @@ struct DB;
 ZuDerive(SSFSETFn, (ZmFn<void(String),
   ZmFnHeapID<"Zum.SSFSETFn">>));
 
-struct SSFSubjectWire {
+struct SSFSubject {
   String format;
   String issuer;
   String familyID;
   int64_t expires = 0;
 };
-ZfStruct(, (SSFSubjectWire, JSON),
+ZfStruct(, (SSFSubject, JSON),
   (((format), (Required)), (String)),
   (((issuer), (JSON::ID<"iss">, Required)), (String)),
   (((familyID), (JSON::ID<"family_id">, Required)), (String)),
   (((expires), (JSON::ID<"exp">, Required)), (Int64)));
 
-struct SSFEventWire {
-  SSFSubjectWire subject;
+struct SSFEvent {
+  SSFSubject subject;
 };
-ZfStruct(, (SSFEventWire, JSON),
+ZfStruct(, (SSFEvent, JSON),
   (((subject), (Required)), (UDT)));
-struct SSFEventsWire {
-  SSFEventWire revoked;
+struct SSFEvents {
+  SSFEvent revoked;
 };
-ZfStruct(, (SSFEventsWire, JSON),
+ZfStruct(, (SSFEvents, JSON),
   (((revoked), (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required)),
     (UDT)));
-struct SSFClaimsWire {
+struct SSFClaims {
   String issuer;
   String audience;
   String id;
   int64_t issued = 0;
-  SSFEventsWire events;
+  SSFEvents events;
 };
-ZfStruct(, (SSFClaimsWire, JSON),
+ZfStruct(, (SSFClaims, JSON),
   (((issuer), (JSON::ID<"iss">, Required)), (String)),
   (((audience), (JSON::ID<"aud">, Required)), (String)),
   (((id), (JSON::ID<"jti">, Required)), (String)),
   (((issued), (JSON::ID<"iat">, Required)), (Int64)),
   (((events), (Required)), (UDT)));
 
-struct SSFHeaderWire {
+struct SSFHeader {
   String algorithm;
   String type;
   String keyID;
 };
-ZfStruct(, (SSFHeaderWire, JSON),
+ZfStruct(, (SSFHeader, JSON),
   (((algorithm), (JSON::ID<"alg">, Required)), (String)),
   (((type), (JSON::ID<"typ">, Required)), (String)),
   (((keyID), (JSON::ID<"kid">, Required)), (String)));
@@ -95,7 +95,7 @@ inline void makeSSF(
   eventID << ':' << refreshID.familyID;
   eventID << ':' << now;
   String header;
-  ZfJSON::save(header, SSFHeaderWire{"ES256", "secevent+jwt", key.id});
+  ZfJSON::save(header, SSFHeader{"ES256", "secevent+jwt", key.id});
   String header64;
   header64.length(ZuBase64URL::enclen(header.length()));
   if (ZuBase64URL::encode(header64.span(), ZuBSpan{header}) != header64.length()) {
@@ -103,9 +103,9 @@ inline void makeSSF(
     return;
   }
   String claims;
-  ZfJSON::save(claims, SSFClaimsWire{
+  ZfJSON::save(claims, SSFClaims{
     key.issuer, audience, ZuMv(eventID), now,
-    {.revoked = SSFEventWire{SSFSubjectWire{
+    {.revoked = SSFEvent{SSFSubject{
       "opaque", refreshID.issuer, refreshID.familyID, expires}}}});
   String input{header64};
   input << '.';
@@ -172,9 +172,10 @@ struct SSFTransmitterConfig {
   uint32_t		retryMax = 60;
 };
 
-class SSFTransmitter : public ZumObject {
+template <typename Heap>
+class SSFTransmitter_ : public Heap, public ZmObject  {
 public:
-  ~SSFTransmitter() { clear_(); }
+  ~SSFTransmitter_() { clear_(); }
   bool init(SSFTransmitterConfig);
   void start();
   void stop();
@@ -198,6 +199,7 @@ private:
   bool			m_armed = false;
   bool			m_started = false;
 };
+using SSFTransmitter = SSFTransmitter_<ZmHeap<"Zum.zumd.revoke.SSFTransmitter", SSFTransmitter_<ZuVoid>>>;
 
 // Send one already-signed SET. Durable callers retain the SSFDelivery row and
 // invoke this helper again using their retry schedule until acknowledgement.

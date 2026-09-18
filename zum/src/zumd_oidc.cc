@@ -42,7 +42,7 @@
 
 namespace Zum {
 
-struct OIDCIDWire {
+struct OIDCID {
   String issuer;
   String subject;
   ZfJSON::Union<String, StringVec> audience;
@@ -52,7 +52,7 @@ struct OIDCIDWire {
   int64_t expires = 0;
   int64_t authTime = 0;
 };
-ZfStruct(, (OIDCIDWire, JSON),
+ZfStruct(, (OIDCID, JSON),
   (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
   (((subject),		(JSON::ID<"sub">, Required)),	(String)),
   (((audience),		(JSON::ID<"aud">, Required)),	(UDT)),
@@ -62,14 +62,14 @@ ZfStruct(, (OIDCIDWire, JSON),
   (((expires),		(JSON::ID<"exp">, Required)),	(Int64)),
   (((authTime),		(JSON::ID<"auth_time">, Required)), (Int64)));
 
-struct OIDCTokenWire { String idToken; String accessToken; };
-ZfStruct(, (OIDCTokenWire, JSON),
+struct OIDCToken { String idToken; String accessToken; };
+ZfStruct(, (OIDCToken, JSON),
   (((idToken),		(JSON::ID<"id_token">, Required)),	(String)),
   (((accessToken),	(JSON::ID<"access_token">, JSON::Opt)), (String)));
-struct OIDCUserInfoWire { String subject; };
-ZfStruct(, (OIDCUserInfoWire, JSON),
+struct OIDCUserInfo { String subject; };
+ZfStruct(, (OIDCUserInfo, JSON),
   (((subject),		(JSON::ID<"sub">, Required)),	(String)));
-struct OIDCJWKWire {
+struct OIDCJWK {
   String kid;
   String kty;
   String crv;
@@ -78,7 +78,7 @@ struct OIDCJWKWire {
   String x;
   String y;
 };
-ZfStruct(, (OIDCJWKWire, JSON),
+ZfStruct(, (OIDCJWK, JSON),
   (((kid),		(Required)),	(String)),
   (((kty),		(Required)),	(String)),
   (((crv),		(Required)),	(String)),
@@ -86,7 +86,7 @@ ZfStruct(, (OIDCJWKWire, JSON),
   (((alg),		(JSON::Opt)),	(String)),
   (((x),		(Required)),	(String)),
   (((y),		(Required)),	(String)));
-ZuDerive(OIDCJWKWireArray, (ZtArray<OIDCJWKWire,
+ZuDerive(OIDCJWKWireArray, (ZtArray<OIDCJWK,
   ZtArrayHeapID<"Zum.OIDC.JWKs">>));
 struct OIDCJWKWireVec : public OIDCJWKWireArray {
   ZuDerive_(OIDCJWKWireVec, OIDCJWKWireArray);
@@ -95,7 +95,7 @@ struct OIDCJWKWireVec : public OIDCJWKWireArray {
 struct OIDCJWKSResponse { OIDCJWKWireVec keys; };
 ZfStruct(, (OIDCJWKSResponse, JSON),
   (((keys),		(Required)),	(UDT)));
-struct OIDCDiscoveryWire {
+struct OIDCDiscovery {
   String issuer;
   String authorize;
   String token;
@@ -105,7 +105,7 @@ struct OIDCDiscoveryWire {
   StringVec methods;
   String userinfo;
 };
-ZfStruct(, (OIDCDiscoveryWire, JSON),
+ZfStruct(, (OIDCDiscovery, JSON),
   (((issuer),		(Required)),	(String)),
   (((authorize),	(JSON::ID<"authorization_endpoint">, Required)), (String)),
   (((token),		(JSON::ID<"token_endpoint">, Required)), (String)),
@@ -114,14 +114,14 @@ ZfStruct(, (OIDCDiscoveryWire, JSON),
   (((algorithms),	(JSON::ID<"id_token_signing_alg_values_supported">, Required)), (StringVec)),
   (((methods),		(JSON::ID<"token_endpoint_auth_methods_supported">, Required)), (StringVec)),
   (((userinfo),		(JSON::ID<"userinfo_endpoint">, JSON::Opt)), (String)));
-struct OIDCEssentialWire { bool essential = true; };
-ZfStruct(, (OIDCEssentialWire, JSON),
+struct OIDCEssential { bool essential = true; };
+ZfStruct(, (OIDCEssential, JSON),
   (((essential),	(Required)),	(Bool)));
-struct OIDCAuthTimeWire { OIDCEssentialWire authTime; };
-ZfStruct(, (OIDCAuthTimeWire, JSON),
+struct OIDCAuthTime { OIDCEssential authTime; };
+ZfStruct(, (OIDCAuthTime, JSON),
   (((authTime),		(JSON::ID<"auth_time">, Required)), (UDT)));
-struct OIDCClaimsWire { OIDCAuthTimeWire idToken; };
-ZfStruct(, (OIDCClaimsWire, JSON),
+struct OIDCClaims { OIDCAuthTime idToken; };
+ZfStruct(, (OIDCClaims, JSON),
   (((idToken),		(JSON::ID<"id_token">, Required)), (UDT)));
 
 struct OIDCCallbackFields {
@@ -267,7 +267,7 @@ bool oidcVerifyIDToken(
   if (!jwtES256(token, publicKey, limits.jwt, header, json) ||
       (header.type && header.type != "JWT")) return false;
   ZuPtr<ZfJSON::AnyNode> root;
-  OIDCIDWire wire;
+  OIDCID wire;
   if (!jsonLoad(json, root, wire)) return false;
   OIDCClaims next;
   next.issuer = ZuMv(wire.issuer);
@@ -340,9 +340,10 @@ IDVec oidcMapRoles(
   return roles;
 }
 
-class OIDCUserLoad_ : public ZumObject {
+template <typename Heap>
+class OIDCUserLoad__ : public Heap, public ZmObject  {
 public:
-  OIDCUserLoad_(DBContext *context, String subject,
+  OIDCUserLoad__(DBContext *context, String subject,
       const OIDCConfig &config, StringVec roleValues,
       StringVec eligibilityValues, int64_t now, OIDCUserFn complete) :
     m_context{context}, m_subject{ZuMv(subject)}, m_appID{config.appID},
@@ -383,7 +384,7 @@ private:
   void identity_()
   {
     auto identities = m_context->extIdentities;
-    identities->run(0, [self = ZmRef<OIDCUserLoad_>{this},
+    identities->run(0, [self = ZmRef<OIDCUserLoad__>{this},
         identities]() mutable {
       identities->find<0>(0, ZuFwdTuple(self->m_providerID,
           self->m_issuer, self->m_subject), [self = ZuMv(self)](
@@ -422,9 +423,9 @@ private:
     saga->init(ZuMv(projection));
     auto db = static_cast<DB *>(m_context->users->db());
     if (!sagaSubmit(db, sagaID, ZuMv(saga),
-        [self = ZmRef<OIDCUserLoad_>{this}](bool ok) mutable {
+        [self = ZmRef<OIDCUserLoad__>{this}](bool ok) mutable {
           if (!ok) self->finish_(false);
-        }, [self = ZmRef<OIDCUserLoad_>{this}](bool ok) mutable {
+        }, [self = ZmRef<OIDCUserLoad__>{this}](bool ok) mutable {
           if (!ok) { self->finish_(false); return; }
           self->identity_();
         })) finish_(false);
@@ -433,7 +434,7 @@ private:
   void user_(UserID userID)
   {
     auto users = m_context->users;
-    users->run(0, [self = ZmRef<OIDCUserLoad_>{this}, users, userID]() mutable {
+    users->run(0, [self = ZmRef<OIDCUserLoad__>{this}, users, userID]() mutable {
       users->find<0>(0, ZuFwdTuple(userID), [
           self = ZuMv(self)](ZdbRowRef<User> row) mutable {
 	if (!row || row->data().source != UserSource::External ||
@@ -461,7 +462,7 @@ private:
   void evidence_()
   {
     auto evidence = m_context->evidence;
-    evidence->run(0, [self = ZmRef<OIDCUserLoad_>{this}, evidence]() mutable {
+    evidence->run(0, [self = ZmRef<OIDCUserLoad__>{this}, evidence]() mutable {
       auto key = ZuFwdTuple(self->m_appID, self->m_user.id, self->m_providerID);
       evidence->findUpd<0, ZuSeq<1>>(0, ZuMv(key), [self = ZuMv(self), evidence](
           ZdbRow<Evidence> *row) mutable {
@@ -520,6 +521,7 @@ private:
   bool			m_eligible = false;
   bool			m_done = false;
 };
+using OIDCUserLoad_ = OIDCUserLoad__<ZmHeap<"Zum.zumd.oidc.OIDCUserLoad", OIDCUserLoad__<ZuVoid>>>;
 
 void oidcLoadUser(
     DBContext *context, String subject, const OIDCConfig &config,
@@ -541,9 +543,10 @@ ZuDerive(OIDCKeyVec,
 
 class OIDCState;
 
-class OIDCReq : public ZumObject {
+template <typename Heap>
+class OIDCReq_ : public Heap, public ZmObject  {
 public:
-  OIDCReq(OIDCState *state_) : state{state_} { }
+  OIDCReq_(OIDCState *state_) : state{state_} { }
 
   OIDCState		*state = nullptr;
   String		stateID;
@@ -558,6 +561,7 @@ public:
   OIDCFinishFn		complete;
   bool			consumed = false;
 };
+using OIDCReq = OIDCReq_<ZmHeap<"Zum.zumd.oidc.OIDCReq", OIDCReq_<ZuVoid>>>;
 
 static const String &oidcReqID(const ZmRef<OIDCReq> &request)
 {
@@ -591,7 +595,7 @@ static bool tokenResponse(
   if (!json || json.length() > limits.response) return false;
   if (!json.mutable_()) json.length(json.length());
   ZuPtr<ZfJSON::AnyNode> root;
-  OIDCTokenWire wire;
+  OIDCToken wire;
   if (!jsonLoad(json, root, wire) || !wire.idToken ||
       wire.idToken.length() > limits.jwt.token ||
       (needAccessToken && (!wire.accessToken ||
@@ -609,7 +613,7 @@ static bool userinfoResponse(
   if (!json || json.length() > limits.response || !subject) return false;
   if (!json.mutable_()) json.length(json.length());
   ZuPtr<ZfJSON::AnyNode> root;
-  OIDCUserInfoWire wire;
+  OIDCUserInfo wire;
   if (!jsonLoad(json, root, wire)) return false;
   StringVec nextRoles, nextEligibility;
   bool roles = config.roles != OIDCRoles::Mapped ||
@@ -663,7 +667,7 @@ static bool discoveryResponse(
   if (!json || json.length() > limits.response) return false;
   if (!json.mutable_()) json.length(json.length());
   ZuPtr<ZfJSON::AnyNode> root;
-  OIDCDiscoveryWire wire;
+  OIDCDiscovery wire;
   if (!jsonLoad(json, root, wire)) return false;
   auto contains = [](const StringVec &values, ZuCSpan value) {
     for (auto &candidate: values) if (candidate == value) return true;
@@ -686,7 +690,8 @@ static bool discoveryResponse(
   return oidcConfigValid(config);
 }
 
-class OIDCState : public ZumObject {
+template <typename Heap>
+class OIDCState_ : public Heap, public ZmObject  {
 public:
   bool init(
       ZmScheduler *scheduler, unsigned sid, DBContext *context,
@@ -713,7 +718,7 @@ public:
   void final()
   {
     m_up = 0;
-    invoke_([self = ZmRef<OIDCState>{this}]() mutable {
+    invoke_([self = ZmRef<OIDCState_>{this}]() mutable {
       {
 	auto i = self->m_pending.iter();
 		while (auto request = i.val()) {
@@ -737,7 +742,7 @@ public:
       clearSecret_(config);
       return false;
     }
-    invoke_([self = ZmRef<OIDCState>{this}, grantID = ZuMv(grantID),
+    invoke_([self = ZmRef<OIDCState_>{this}, grantID = ZuMv(grantID),
         config = ZuMv(config), complete = ZuMv(complete)]() mutable {
       self->beginSelect_(ZuMv(grantID), ZuMv(config), ZuMv(complete));
     });
@@ -747,7 +752,7 @@ public:
   bool finish(AppID appID, String query, OIDCFinishFn complete)
   {
     if (!m_up || !appID || !query || !complete) return false;
-    invoke_([self = ZmRef<OIDCState>{this}, appID, query = ZuMv(query),
+    invoke_([self = ZmRef<OIDCState_>{this}, appID, query = ZuMv(query),
         complete = ZuMv(complete)]() mutable {
       self->finish_(appID, ZuMv(query), ZuMv(complete));
     });
@@ -786,7 +791,7 @@ private:
     url << "/.well-known/openid-configuration";
     auto send = m_http;
     send(OIDCHTTPRequest{.url = ZuMv(url)}, [
-      self = ZmRef<OIDCState>{this}, grantID = ZuMv(grantID),
+      self = ZmRef<OIDCState_>{this}, grantID = ZuMv(grantID),
       config = ZuMv(config), complete = ZuMv(complete)
     ](unsigned status, String body) mutable {
       self->invoke_([self, grantID = ZuMv(grantID),
@@ -860,7 +865,7 @@ private:
     formField(location, first, "code_challenge", challenge);
     formField(location, first, "code_challenge_method", "S256");
     String claims;
-    ZfJSON::save(claims, OIDCClaimsWire{});
+    ZfJSON::save(claims, OIDCClaims{});
     formField(location, first, "claims", claims);
     if (request->config.prompt)
       formField(location, first, "prompt", request->config.prompt);
@@ -947,7 +952,7 @@ private:
         break;
     }
     auto send = m_http;
-    send(ZuMv(http), [self = ZmRef<OIDCState>{this}, request](
+    send(ZuMv(http), [self = ZmRef<OIDCState_>{this}, request](
         unsigned status, String body) mutable {
       self->invoke_([self, request, status, body = ZuMv(body)]() mutable {
         self->token_(request, status, ZuMv(body));
@@ -975,7 +980,7 @@ private:
     // survives provider removal merely because an earlier login used it.
     auto send = m_http;
     send(OIDCHTTPRequest{.url = request->config.jwksEndpoint},
-      [self = ZmRef<OIDCState>{this}, request](
+      [self = ZmRef<OIDCState_>{this}, request](
           unsigned status, String body) mutable {
         self->invoke_([self, request, status, body = ZuMv(body)]() mutable {
           self->keys_(request, status, ZuMv(body));
@@ -1019,7 +1024,7 @@ private:
       request->accessToken.null();
       auto subject = claims.subject;
       auto send = m_http;
-      send(ZuMv(http), [self = ZmRef<OIDCState>{this}, request,
+      send(ZuMv(http), [self = ZmRef<OIDCState_>{this}, request,
           subject = ZuMv(subject), authTime, now](
           unsigned status, String body) mutable {
         self->invoke_([self, request, subject = ZuMv(subject), authTime, now,
@@ -1053,7 +1058,7 @@ private:
   {
     oidcLoadUser(m_context, ZuMv(subject), request->config,
       ZuMv(roleValues), ZuMv(eligibilityValues), now,
-      [self = ZmRef<OIDCState>{this}, request, authTime](
+      [self = ZmRef<OIDCState_>{this}, request, authTime](
           bool ok, User user, IDVec roleIDs, Evidence evidence) mutable {
         self->invoke_([self, request, ok, user = ZuMv(user),
             roleIDs = ZuMv(roleIDs), evidence = ZuMv(evidence),
@@ -1120,6 +1125,7 @@ private:
   unsigned	m_discovering = 0;
   ZmAtomic<uint32_t> m_up = 0;
 };
+using OIDCState = OIDCState_<ZmHeap<"Zum.zumd.oidc.OIDCState", OIDCState_<ZuVoid>>>;
 
 OIDC::OIDC() = default;
 OIDC::~OIDC() { final(); }
@@ -1164,14 +1170,16 @@ enum {
 };
 
 template <unsigned Status_>
-struct ResponseData : public ZumObject {
+template <typename Heap>
+struct ResponseData_ : public Heap, public ZmObject  {
   enum { Status = Status_ };
   String body;
-  ResponseData &operator =(ZuSpan<uint8_t> data) {
+  ResponseData_ &operator =(ZuSpan<uint8_t> data) {
     body = data;
     return *this;
   }
 };
+using ResponseData = ResponseData_<ZmHeap<"Zum.zumd.oidc.ResponseData", ResponseData_<ZuVoid>>>;
 
 template <unsigned Status_>
 struct Response : public Zrest::ResParser<Response<Status_>,
@@ -1214,7 +1222,8 @@ using Responses = ZuTypeList<Response<200>, Response<201>, Response<204>,
   Response<409>, Response<415>, Response<422>, Response<429>, Response<500>,
   Response<501>, Response<502>, Response<503>, Response<504>>;
 
-struct Call : public ZumObject {
+template <typename Heap>
+struct Call_ : public Heap, public ZmObject  {
   mutable String	contentType;
   mutable String	authorization;
   mutable String	target;
@@ -1241,6 +1250,7 @@ struct Call : public ZumObject {
     finish(0, {});
   }
 };
+using Call = Call_<ZmHeap<"Zum.zumd.oidc.Call", Call_<ZuVoid>>>;
 
 template <typename Impl, Zhttp::Method::T Method_, unsigned Body_>
 struct Request : public Zrest::ReqBuilder<Impl, Call> {
@@ -1328,9 +1338,10 @@ public:
   using Pool_<PoolHeap>::Pool_;
 };
 
-class Client : public ZumObject, public Zhttp::Client<Client, Pool> {
+template <typename Heap>
+class Client_ : public Heap, public ZmObject, public Zhttp::Client<Client, Pool>  {
 public:
-  using Base = Zhttp::Client<Client, Pool>;
+  using Base = Zhttp::Client_<Client_, Pool>;
 
   bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     m_host = url.host;
@@ -1393,6 +1404,7 @@ private:
   uint64_t	m_id = 0;
   bool		m_ipv6Literal = false;
 };
+using Client = Client_<ZmHeap<"Zum.zumd.oidc.Client", Client_<ZuVoid>>>;
 
 struct Entry {
   ZmRef<Client> client;
@@ -1404,7 +1416,8 @@ ZuDerive(Clients,
 
 } // namespace OIDCHTTP_
 
-class OIDCHTTPState : public ZumObject {
+template <typename Heap>
+class OIDCHTTPState_ : public Heap, public ZmObject  {
 public:
   bool init(ZiMultiplex *mx, unsigned sid, unsigned origins, ZuCSpan caPath) {
     if (!mx || m_up || !sid || !origins || sid > mx->params().nThreads() ||
@@ -1567,6 +1580,7 @@ private:
   bool			m_resolverOwned = false;
   bool			m_up = false;
 };
+using OIDCHTTPState = OIDCHTTPState_<ZmHeap<"Zum.zumd.oidc.OIDCHTTPState", OIDCHTTPState_<ZuVoid>>>;
 
 OIDCHTTP::OIDCHTTP() = default;
 OIDCHTTP::~OIDCHTTP() { final(); }

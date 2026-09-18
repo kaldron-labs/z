@@ -22,41 +22,41 @@
 
 namespace Zum {
 
-struct PasskeyStartWire {
+struct PasskeyStart {
   String purpose;
   String capability;
 };
-ZfStruct(, (PasskeyStartWire, JSON),
+ZfStruct(, (PasskeyStart, JSON),
   (((purpose),		(Required)),	(String)),
   (((capability),	(JSON::Opt)),	(String)));
 struct PasskeyStartTypes {
   using Keys = ZuStringTL<"enrollment", "bootstrap", "add", "recovery">;
 };
 
-struct CeremonyWire {
+struct Ceremony {
   String ceremony;
   ZfJSON::Union<> options;
 };
-ZfStruct(, (CeremonyWire, JSON),
+ZfStruct(, (Ceremony, JSON),
   (((ceremony),		(Required)),	(String)),
   (((options),		(Required)),	(UDT)));
 
-struct AuthorizationWire {
+struct Authorization {
   String authorizationURL;
   uint64_t expiresIn = 0;
 };
-ZfStruct(, (AuthorizationWire, JSON),
+ZfStruct(, (Authorization, JSON),
   (((authorizationURL),	(Required)),	(String)),
   (((expiresIn),	(Required)),	(UInt64)));
 
-struct StatusWire { String status; };
-ZfStruct(, (StatusWire, JSON),
+struct Status { String status; };
+ZfStruct(, (Status, JSON),
   (((status),		(Required)),	(String)));
-struct OKWire { bool ok = false; };
-ZfStruct(, (OKWire, JSON),
+struct OK { bool ok = false; };
+ZfStruct(, (OK, JSON),
   (((ok),		(Required)),	(Bool)));
-struct BearerErrorWire { String error; };
-ZfStruct(, (BearerErrorWire, JSON),
+struct BearerError { String error; };
+ZfStruct(, (BearerError, JSON),
   (((error),		(Required)),	(String)));
 
 template <typename T>
@@ -152,9 +152,10 @@ static bool consentForm(String &form, Bytes &id, bool &approve)
   return true;
 }
 
-class ReplyComplete_ : public ZumObject {
+template <typename Heap>
+class ReplyComplete__ : public Heap, public ZmObject  {
 public:
-  ReplyComplete_(ServerFn complete) : m_complete{ZuMv(complete)} { }
+  ReplyComplete__(ServerFn complete) : m_complete{ZuMv(complete)} { }
 
   void finish(ServerReply reply)
   {
@@ -166,6 +167,7 @@ public:
 private:
   ServerFn	m_complete;
 };
+using ReplyComplete_ = ReplyComplete__<ZmHeap<"Zum.zumd.server.ReplyComplete", ReplyComplete__<ZuVoid>>>;
 
 static String encodeID(ZuBSpan id)
 {
@@ -206,7 +208,7 @@ static bool passkeyStart(String &json, PasskeyStart &start)
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
   if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
       !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  auto wire = ZfJSON::handler<PasskeyStartWire>(roots[0]).ctor();
+  auto wire = ZfJSON::handler<PasskeyStart>(roots[0]).ctor();
   if (!wire.purpose) return false;
   PasskeyStart next;
   next.capability = ZuMv(wire.capability);
@@ -237,7 +239,7 @@ static String ceremonyJSON(ZuBSpan id, ZuCSpan options)
       !roots[0]->has<ZfJSON::AnyNode::Object>()) return {};
   auto encoded = encodeID(id);
   String body;
-  ZfJSON::save(body, CeremonyWire{ZuMv(encoded),
+  ZfJSON::save(body, Ceremony{ZuMv(encoded),
     static_cast<const ZfJSON::AnyNode *>(roots[0].ptr())});
   return body;
 }
@@ -987,10 +989,12 @@ void Server::logout_(
       })) done->finish(serverError());
 }
 
-struct ReadyKey_ : public ZumObject {
+template <typename Heap>
+struct ReadyKey__ : public Heap, public ZmObject  {
   SignKey key;
   Bytes digest;
 };
+using ReadyKey_ = ReadyKey__<ZmHeap<"Zum.zumd.server.ReadyKey", ReadyKey__<ZuVoid>>>;
 
 void Server::ready(ServerFn complete)
 {
@@ -1026,7 +1030,7 @@ void Server::ready(ServerFn complete)
                 Bytes signature) mutable {
               bool ok = bool(signature);
               if (signature.mutable_()) ZuClear(signature.data(), signature.length());
-              finish(ok ? ServerReply{.body = serverJSON(StatusWire{"ready"}),
+              finish(ok ? ServerReply{.body = serverJSON(Status{"ready"}),
                 .type = ReplyType::OK} : serverError());
             });
           });
@@ -1094,7 +1098,7 @@ void Server::userInfo(
   app_(appID, [this, authorization = ZuMv(authorization),
       complete = ZuMv(complete)](AppServer app) mutable {
     if (!app) { complete(ServerReply{
-      .body = serverJSON(BearerErrorWire{"invalid_token"}),
+      .body = serverJSON(BearerError{"invalid_token"}),
       .type = ReplyType::BearerError}); return; }
     userInfo_(ZuMv(app), ZuMv(authorization), ZuMv(complete));
   });
@@ -1126,7 +1130,7 @@ void Server::userInfoVerify_(
       !ZuICmp<ZuCSpan>::equals(
         ZuCSpan{authorization.data(), prefix.length()}, prefix)) {
     done->finish(ServerReply{
-      .body = serverJSON(BearerErrorWire{"invalid_token"}),
+      .body = serverJSON(BearerError{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -1135,7 +1139,7 @@ void Server::userInfoVerify_(
   int64_t now = now_();
   if (now <= 0 || !jwtHeader(authorization, m_config.limits.jwt, header)) {
     done->finish(ServerReply{
-      .body = serverJSON(BearerErrorWire{"invalid_token"}),
+      .body = serverJSON(BearerError{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -1147,7 +1151,7 @@ void Server::userInfoVerify_(
 	app.issuer, app.audience, now, m_config.limits.jwt, principal) ||
 	!scopeContains(principal.scope, "openid")) {
       done->finish(ServerReply{
-	.body = serverJSON(BearerErrorWire{"invalid_token"}),
+	.body = serverJSON(BearerError{"invalid_token"}),
 	.type = ReplyType::BearerError});
       return;
     }
@@ -1158,7 +1162,7 @@ void Server::userInfoVerify_(
       if (!client || client->data().appID != appID ||
 	  client->data().state != State::Active || client->data().owner) {
         done->finish(ServerReply{
-	  .body = serverJSON(BearerErrorWire{"invalid_token"}),
+	  .body = serverJSON(BearerError{"invalid_token"}),
 	  .type = ReplyType::BearerError});
 	return;
       }
@@ -1175,7 +1179,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
   Bytes handle;
   if (!decodeID(principal.subject, handle)) {
     done->finish(ServerReply{
-      .body = serverJSON(BearerErrorWire{"invalid_token"}),
+      .body = serverJSON(BearerError{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -1186,7 +1190,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
     if (!client || client->data().state != State::Active ||
         client->data().owner) {
       done->finish(ServerReply{
-        .body = serverJSON(BearerErrorWire{"invalid_token"}),
+        .body = serverJSON(BearerError{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }
@@ -1196,7 +1200,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
       String json;
       if (!user || !userInfoJSON(user->data(), principal, json)) {
         done->finish(ServerReply{
-          .body = serverJSON(BearerErrorWire{"invalid_token"}),
+          .body = serverJSON(BearerError{"invalid_token"}),
           .type = ReplyType::BearerError});
         return;
       }
@@ -1432,7 +1436,7 @@ void Server::finishGrant_(
           return;
         }
         if (purpose != GrantPurpose::Bootstrap) {
-          done->finish(ServerReply{.body = serverJSON(OKWire{true}),
+          done->finish(ServerReply{.body = serverJSON(OK{true}),
             .setCookie = setCookie_({}, true), .type = ReplyType::OK});
           return;
         }
@@ -1451,7 +1455,7 @@ void Server::finishGrant_(
               done->finish(serverError());
               return;
             }
-            done->finish(ServerReply{.body = serverJSON(OKWire{true}),
+            done->finish(ServerReply{.body = serverJSON(OK{true}),
               .setCookie = setCookie_({}, true), .type = ReplyType::OK});
           });
         });

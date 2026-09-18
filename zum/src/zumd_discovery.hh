@@ -19,7 +19,9 @@
 
 namespace Zum {
 
-struct DBContext;
+template <typename Heap> struct DBContext_;
+using DBContext = DBContext_<
+  ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<ZuVoid>>>;
 
 ZumExtern bool appIssuerPath(AppID, String &);
 ZumExtern bool appEndpointPath(AppID, ZuCSpan group, ZuCSpan endpoint,

@@ -41,7 +41,9 @@ struct IdemRequestTable;
 struct SSFRxTable;
 struct SSFDeliveryTable;
 
-struct DBContext : public ZumPolymorph {
+template <typename Heap>
+struct DBContext_ : public Heap, public ZmPolymorph  {
+  DB			*db = nullptr;
   IssuerTable		*issuers = nullptr;
   AppTable		*apps = nullptr;
   UserTable		*users = nullptr;
@@ -66,6 +68,7 @@ struct DBContext : public ZumPolymorph {
   SSFRxTable		*ssfRx = nullptr;
   SSFDeliveryTable	*ssfDeliveries = nullptr;
 };
+using DBContext = DBContext_<ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<ZuVoid>>>;
 
 } // namespace Zum
 

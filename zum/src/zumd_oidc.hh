@@ -25,7 +25,9 @@ class ZiMultiplex;
 
 namespace Zum {
 
-struct DBContext;
+template <typename Heap> struct DBContext_;
+using DBContext = DBContext_<
+  ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<ZuVoid>>>;
 
 // OIDC state, nonce, and PKCE verifier each carry 256 bits of entropy.
 enum { OIDCRandomSize = 32 };

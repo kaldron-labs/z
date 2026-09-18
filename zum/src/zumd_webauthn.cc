@@ -43,42 +43,42 @@ static bool decode(ZuCSpan encoded, unsigned limit, Bytes &decoded)
   return true;
 }
 
-struct AssertionResponseWire {
+struct AssertionResponse {
   String authenticatorData;
   String clientDataJSON;
   String signature;
   String userHandle;
 };
-ZfStruct(, (AssertionResponseWire, JSON),
+ZfStruct(, (AssertionResponse, JSON),
   (((authenticatorData),	(Required)),	(String)),
   (((clientDataJSON),	(Required)),	(String)),
   (((signature),		(Required)),	(String)),
   (((userHandle),	(Required)),	(String)));
 
-struct RegistrationResponseWire {
+struct RegistrationResponse {
   String attestationObject;
   String clientDataJSON;
 };
-ZfStruct(, (RegistrationResponseWire, JSON),
+ZfStruct(, (RegistrationResponse, JSON),
   (((attestationObject),	(Required)),	(String)),
   (((clientDataJSON),	(Required)),	(String)));
 
-struct AssertionCredentialWire {
+struct AssertionCredential {
   String rawID;
-  AssertionResponseWire response;
+  AssertionResponse response;
   String type;
 };
-ZfStruct(, (AssertionCredentialWire, JSON),
+ZfStruct(, (AssertionCredential, JSON),
   (((rawID),	(JSON::ID<"rawId">, Required)),	(String)),
   (((response),	(Required)),	(UDT)),
   (((type),	(Required)),	(String)));
 
-struct RegistrationCredentialWire {
+struct RegistrationCredential {
   String rawID;
-  RegistrationResponseWire response;
+  RegistrationResponse response;
   String type;
 };
-ZfStruct(, (RegistrationCredentialWire, JSON),
+ZfStruct(, (RegistrationCredential, JSON),
   (((rawID),	(JSON::ID<"rawId">, Required)),	(String)),
   (((response),	(Required)),	(UDT)),
   (((type),	(Required)),	(String)));
@@ -98,7 +98,7 @@ static bool jsonLoad(ZuSpan<char> json, T &value)
 int parseAssertion(ZuSpan<char> json,
     const WebAuthnInputLimits &limits, AssertionInput &input)
 {
-  AssertionCredentialWire wire;
+  AssertionCredential wire;
   if (!jsonLoad(json, wire)) return WebAuthnError::JSON;
   AssertionInput next;
   if (wire.type != "public-key" ||
@@ -118,7 +118,7 @@ int parseAssertion(ZuSpan<char> json,
 int parseRegistration(ZuSpan<char> json,
     const WebAuthnInputLimits &limits, RegistrationInput &input)
 {
-  RegistrationCredentialWire wire;
+  RegistrationCredential wire;
   if (!jsonLoad(json, wire)) return WebAuthnError::JSON;
   RegistrationInput next;
   if (wire.type != "public-key" ||

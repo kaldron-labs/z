@@ -59,13 +59,13 @@ struct Tokens {
   String	scope;
 };
 
-struct TokenWire {
+struct Token {
   String accessToken;
   String refreshToken;
   String scope;
   String tokenType;
 };
-ZfStruct(, (TokenWire, JSON),
+ZfStruct(, (Token, JSON),
   (((accessToken),	(JSON::ID<"access_token">, Required)), (String)),
   (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)), (String)),
   (((scope),		(JSON::Opt)),	(String)),
@@ -73,7 +73,7 @@ ZfStruct(, (TokenWire, JSON),
 
 ZuDerive(StringVec, (ZtArray<String,
   ZtArrayHeapID<"zumc.StringVec">>));
-struct MetadataWire {
+struct Metadata {
   String issuer;
   String authorizationEndpoint;
   String tokenEndpoint;
@@ -83,7 +83,7 @@ struct MetadataWire {
   StringVec grantTypesSupported;
   StringVec codeChallengeMethods;
 };
-ZfStruct(, (MetadataWire, JSON),
+ZfStruct(, (Metadata, JSON),
   (((issuer),		(JSON::Opt)),	(String)),
   (((authorizationEndpoint),
     (JSON::ID<"authorization_endpoint">, JSON::Opt)),	(String)),
@@ -100,7 +100,7 @@ ZfStruct(, (MetadataWire, JSON),
     (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),
     (StringVec)));
 
-struct CredentialWire {
+struct Credential {
   String issuerURL;
   String managementURL;
   String clientID;
@@ -108,7 +108,7 @@ struct CredentialWire {
   String refreshToken;
   String scope;
 };
-ZfStruct(, (CredentialWire, JSON),
+ZfStruct(, (Credential, JSON),
   (((issuerURL),	(Required)),	(String)),
   (((managementURL),	(Required)),	(String)),
   (((clientID),		(Required)),	(String)),
@@ -116,8 +116,8 @@ ZfStruct(, (CredentialWire, JSON),
   (((refreshToken),	(Required)),	(String)),
   (((scope),		(JSON::Opt)),	(String)));
 
-struct SecretOutputWire { String secretOutput; };
-ZfStruct(, (SecretOutputWire, JSON),
+struct SecretOutput { String secretOutput; };
+ZfStruct(, (SecretOutput, JSON),
   (((secretOutput),	(Required)),	(String)));
 
 static void clearTokens(Tokens &tokens)
@@ -300,15 +300,18 @@ static bool contains(const StringVec &values, ZuCSpan value)
   return false;
 }
 
-template <unsigned Status_>
-struct HTTPData : public ZumObject {
+template <unsigned Status_, typename Heap>
+struct HTTPData_ : public Heap, public ZmObject  {
   enum { Status = Status_ };
   String data;
-  HTTPData &operator =(ZuSpan<uint8_t> data_) {
+  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
   }
 };
+template <unsigned Status_>
+using HTTPData = HTTPData_<Status_,
+  ZmHeap<"Zum.HTTPData", HTTPData_<Status_, ZuVoid>>>;
 
 struct Result {
   ZmSemaphore	done;
@@ -321,7 +324,8 @@ struct Result {
 
 class Client;
 
-struct Call : public ZumObject {
+template <typename Heap>
+struct Call_ : public Heap, public ZmObject  {
   Client	*client = nullptr;
   Result	*result = nullptr;
   String	query;
@@ -329,7 +333,7 @@ struct Call : public ZumObject {
   String	authorization;
   mutable ZmAtomic<unsigned> done = 0;
 
-  ~Call() {
+  ~Call_() {
     if (body.mutable_()) ZuClear(body.data(), body.length());
     if (authorization.mutable_()) ZuClear(authorization.data(), authorization.length());
   }
@@ -351,6 +355,7 @@ struct Call : public ZumObject {
     finish(0);
   }
 };
+using Call = Call_<ZmHeap<"Zum.zum.Call", Call_<ZuVoid>>>;
 
 using OKData = HTTPData<200>;
 using BadRequestData = HTTPData<400>;
@@ -575,14 +580,18 @@ static bool initClient(Client &client, ZiMultiplex &mx,
   return false;
 }
 
-struct CallbackData : public ZumObject {
+template <typename Heap>
+struct CallbackData_ : public Heap, public ZmObject  {
   ZuSpan<uint8_t> data;
-  CallbackData &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
+  CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
+using CallbackData = CallbackData_<ZmHeap<"Zum.zum.CallbackData", CallbackData_<ZuVoid>>>;
 
-struct CallbackBody : public ZumObject {
+template <typename Heap>
+struct CallbackBody_ : public Heap, public ZmObject  {
   String data;
 };
+using CallbackBody = CallbackBody_<ZmHeap<"Zum.zum.CallbackBody", CallbackBody_<ZuVoid>>>;
 
 struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
   enum { Body = Zrest::BodyPolicy::Raw };
@@ -710,7 +719,7 @@ static bool tokenJSON(String &json, Tokens &tokens)
   if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
       !roots[0]->has<ZfJSON::AnyNode::Object>())
     return false;
-  auto wire = ZfJSON::handler<TokenWire>(roots[0]).ctor();
+  auto wire = ZfJSON::handler<Token>(roots[0]).ctor();
   if (!wire.accessToken ||
       !ZuICmp<ZuCSpan>::equals(wire.tokenType, "Bearer")) return false;
   Tokens next{ZuMv(wire.accessToken), ZuMv(wire.refreshToken),
@@ -720,7 +729,7 @@ static bool tokenJSON(String &json, Tokens &tokens)
   return true;
 }
 
-static bool metadataJSON(String &json, ZuCSpan issuer, MetadataWire &metadata)
+static bool metadataJSON(String &json, ZuCSpan issuer, Metadata &metadata)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
@@ -729,7 +738,7 @@ static bool metadataJSON(String &json, ZuCSpan issuer, MetadataWire &metadata)
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
   if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  metadata = ZfJSON::handler<MetadataWire>(roots[0]).ctor();
+  metadata = ZfJSON::handler<Metadata>(roots[0]).ctor();
   return metadata.issuer == issuer && metadata.authorizationEndpoint &&
     metadata.tokenEndpoint && metadata.jwksURI &&
     metadata.revocationEndpoint &&
@@ -743,7 +752,7 @@ static bool saveTokens(const Config &config, const Tokens &tokens)
 {
   if (!config.credentialFile || !tokens.accessToken || !tokens.refreshToken) return false;
   String json;
-  ZfJSON::save(json, CredentialWire{
+  ZfJSON::save(json, Credential{
     config.issuerURL, config.managementURL, config.clientID, tokens.accessToken,
     tokens.refreshToken, tokens.scope});
   json << '\n';
@@ -792,7 +801,7 @@ static bool loadTokens(const Config &config, Tokens &tokens)
   json.strip();
   auto root = jsonObject(json);
   if (!root) return false;
-  auto wire = ZfJSON::handler<CredentialWire>(root.ptr()).ctor();
+  auto wire = ZfJSON::handler<Credential>(root.ptr()).ctor();
   if (wire.issuerURL != config.issuerURL ||
       wire.managementURL != config.managementURL ||
       wire.clientID != config.clientID) {
@@ -987,7 +996,7 @@ int main(int argc, char **argv)
   Result discovery;
   issuerClient.performAt<MetadataBuilder>(
     discovery, discoveryParsed.url());
-  MetadataWire metadata;
+  Metadata metadata;
   bool discovered = discovery.status == 200 &&
     metadataJSON(discovery.body, config.issuerURL, metadata);
   Zhttp::URL authorizationURL, tokenURL, jwksURL, revocationURL;
@@ -1134,7 +1143,7 @@ int main(int argc, char **argv)
       if (ok && secretOutput) {
 	ok = writeProtected(secretOutput, result.body);
 	if (ok) {
-	  ZfJSON::save(std::cout, SecretOutputWire{secretOutput});
+	  ZfJSON::save(std::cout, SecretOutput{secretOutput});
 	  std::cout << '\n';
 	}
       } else {

@@ -20,18 +20,15 @@ void Request::complete(Fn fn)
 
 void Request::start_(ZuTime deadline)
 {
-  auto node = m_requests->m_requests.push(ZmRef<Request>{this});
-  m_node = node;
-  m_requests->m_scheduler->add(&m_timer, deadline, ZmScheduler::Update,
-    [this](auto &&arm) { return arm([this]() { timeout_(); }); },
-    m_requests->m_sid);
+  node_(m_requests->push_(this));
+  m_requests->arm_(this, &m_timer, deadline);
 }
 
 void Request::finish_(Fn fn)
 {
   if (m_done) return;
   m_done = true;
-  m_requests->m_scheduler->del(&m_timer);
+  m_requests->del_(&m_timer);
   m_requests->remove_(this);
   m_cancel = Fn{};
   if (fn) fn();
@@ -97,11 +94,29 @@ void Requests::admit_(ZmRef<Request> request, ZuTime deadline, StartFn start)
   start(ZuMv(request));
 }
 
+Requests::Node *Requests::push_(Request *request)
+{
+  return m_requests.push(ZmRef<Request>{request});
+}
+
+void Requests::arm_(
+    Request *request, ZmScheduler::Timer *timer, ZuTime deadline)
+{
+  m_scheduler->add(timer, deadline, ZmScheduler::Update,
+    [request](auto &&arm) { return arm([request]() { request->timeout_(); }); },
+    m_sid);
+}
+
+void Requests::del_(ZmScheduler::Timer *timer)
+{
+  m_scheduler->del(timer);
+}
+
 void Requests::remove_(Request *request)
 {
-  if (request->m_node) {
-    m_requests.delNode(request->m_node);
-    request->m_node = nullptr;
+  if (Node *node = request->node_()) {
+    m_requests.delNode(node);
+    request->node_(nullptr);
   }
   --m_count;
 }
@@ -123,7 +138,7 @@ void Requests::deactivate(Fn complete)
 void Requests::deactivate_()
 {
   while (auto request = m_requests.shiftVal()) {
-    request->m_node = nullptr;
+    request->node_(nullptr);
     m_draining.push(request);
     request->cancel_();
   }

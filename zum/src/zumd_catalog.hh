@@ -173,7 +173,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
     if (before.version == after.version) {
       saga->skip(ZuMv(complete)); return {};
     }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(before.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
 	  if (!row) { complete(!Fwd); return; }
@@ -247,7 +247,7 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
     if (before.version == after.version) {
       saga->skip(ZuMv(complete)); return {};
     }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(before.id), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
 	  if (!row) { complete(!Fwd); return; }

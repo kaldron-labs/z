@@ -13,6 +13,7 @@ namespace Zum {
 ZmRef<DBContext> registerSchema(DB *db)
 {
   ZmRef<DBContext> context = new DBContext{};
+  context->db = db;
   context->issuers = db->initTable<Issuer>("zum.issuer");
   context->apps = db->initTable<App>("zum.app");
   context->users = db->initTable<User>("zum.user");

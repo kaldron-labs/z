@@ -74,7 +74,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   User		beforeUser;
 
   ZdbSagaStep(0, zum.grant, Update) {
-    context->grants->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       saga->findUpd<0>(context->grants, 0, ZuFwdTuple(ceremonyID),
@@ -103,7 +103,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
 
   ZdbSagaStep(1, zum.user, Update) {
     if (!precreated) { saga->skip(ZuMv(complete)); return {}; }
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	saga->findUpd<0, ZuSeq<1>>(context->users, 0, ZuFwdTuple(userID),
 	  ZuMv(complete), [this](
 	    ZdbRow<User> *row, auto &&complete) mutable {
@@ -137,7 +137,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     if (precreated) { saga->skip(ZuMv(complete)); return {}; }
     // Duplicate rejection is business validation in the mutation callback;
     // native saga replay can suppress that callback after an applied insert.
-    context->users->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       if constexpr (Fwd) {
@@ -172,7 +172,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.cred, Insert) {
-    context->creds->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       if constexpr (Fwd) {
@@ -212,7 +212,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(4, zum.cred, Update) {
-    context->creds->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
@@ -230,7 +230,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(5, zum.user, Update) {
-    context->users->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
@@ -248,7 +248,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(6, zum.cred, Update) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
 	  ZdbRow<Cred> *row, auto &&complete) mutable {
@@ -266,7 +266,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(7, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
 	  ZdbRow<User> *row, auto &&complete) mutable {
@@ -282,6 +282,7 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
+
   ZdbSagaStep(8, zum.grant, Delete) {
     grantDelete<Fwd>(this, ceremonyID, ZuMv(complete)); return {};
   }
@@ -297,7 +298,7 @@ ZfbStruct(ZumAPI, Enrollment,
   (((signCount),	(Ctor<6>)),	(UInt32)),
   (((created),		(Ctor<7>)),	(Int64)),
   (((backupEligible),	(Ctor<8>)),	(Bool)),
-  (((backedUp),	(Ctor<9>)),	(Bool)),
+  (((backedUp),		(Ctor<9>)),	(Bool)),
   (((label),		(Ctor<10>)),	(String)),
   (((precreated),	(Ctor<11>)),	(Bool, false)),
   (((beforeGrant),	(Ctor<12>)),	(UDT)),
@@ -362,7 +363,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
     if constexpr (!Fwd) {
       consume<Fwd>(ZuMv(complete));
     } else {
-      context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+      context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	context->users->find<0>(0, ZuFwdTuple(userID), [
 	  this, complete = ZuMv(complete)](ZdbRowRef<User> user) mutable {
 	  if (!user || user->data().owner || user->data().state != State::Active ||
@@ -377,7 +378,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.cred, Insert) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	context->creds->find<0>(0, ZuFwdTuple(credentialID),
 	  [this, complete = ZuMv(complete)](ZdbRowRef<Cred> existing) mutable {
@@ -415,7 +416,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.cred, Update) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
 	  ZdbRow<Cred> *row, auto &&complete) mutable {
@@ -432,7 +433,7 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.cred, Update) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
 	  ZdbRow<Cred> *row, auto &&complete) mutable {
@@ -506,7 +507,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
     return {};
   }
   ZdbSagaStep(1, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
 	  ZdbRow<User> *row, auto &&complete) mutable {
@@ -542,11 +543,11 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.grant, Insert) {
-    context->grants->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	context->grants->find<0>(0, ZuFwdTuple(capabilityID),
 	  [this, complete = ZuMv(complete)](ZdbRowRef<Grant> existing) mutable {
-	    context->refresh->run(0, [this, existing = ZuMv(existing),
+	    context->db->run(0, [this, existing = ZuMv(existing),
 		complete = ZuMv(complete)]() mutable {
 	      context->refresh->find<0>(0, ZuFwdTuple(capabilityID),
 		[this, existing = ZuMv(existing), complete = ZuMv(complete)](
@@ -588,7 +589,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
 	  ZdbRow<User> *row, auto &&complete) mutable {
@@ -601,7 +602,7 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(4, zum.grant, Update) {
-    context->grants->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->grants, 0, ZuFwdTuple(capabilityID),
 	ZuMv(complete), [this](
 	  ZdbRow<Grant> *row, auto &&complete) mutable {
@@ -629,9 +630,9 @@ ZfbStruct(ZumAPI, RecoveryStart,
   (((expires),		(Ctor<6>)),	(Int64)),
   (((actor),		(Ctor<7>)),	(String)),
   (((version),		(Ctor<8>)),	(UInt64)),
-  (((oldState), (Ctor<9>, Enum<State::Map>)), (Int8)),
-  (((oldUpdated), (Ctor<10>)), (Int64)),
-  (((request), (Ctor<11>)), (UDT)));
+  (((oldState),		(Ctor<9>, Enum<State::Map>)), (Int8)),
+  (((oldUpdated),	(Ctor<10>)),	(Int64)),
+  (((request),		(Ctor<11>)),	(UDT)));
 
 struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -690,7 +691,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
     if constexpr (!Fwd) {
       consume<Fwd>(ZuMv(complete));
     } else {
-      context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+      context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	context->users->find<0>(0, ZuFwdTuple(userID), [
 	  this, complete = ZuMv(complete)](ZdbRowRef<User> user) mutable {
 	  if (!user || user->data().owner || user->data().state != State::Suspended ||
@@ -705,7 +706,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.cred, Insert) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<Cred> row =
 	  new ZdbRow<Cred>{context->creds, ZdbShard{0}};
@@ -750,7 +751,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.cred, Update) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
 	  ZdbRow<Cred> *row, auto &&complete) mutable {
@@ -767,7 +768,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0, ZuSeq<1>>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
 	  ZdbRow<User> *row, auto &&complete) mutable {
@@ -797,7 +798,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(4, zum.cred, Update) {
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(credentialID),
 	ZuMv(complete), [this](
 	  ZdbRow<Cred> *row, auto &&complete) mutable {
@@ -815,7 +816,7 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(5, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](
 	  ZdbRow<User> *row, auto &&complete) mutable {
@@ -897,7 +898,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
   uint64_t	membershipVersion = 0;
 
   ZdbSagaStep(0, zum.grant, Update) {
-    context->grants->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       saga->findUpd<0>(context->grants, 0, ZuFwdTuple(codeID),
@@ -905,24 +906,21 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 	if (!row) { complete(false); return; }
 	auto &code = row->data();
 	if constexpr (Fwd) {
-	bool valid = beforeGrant.id == codeID && beforeGrant.state == State::Active &&
-	  !beforeGrant.owner && code.kind == GrantKind::Code &&
-	  Ztls::ctEqual(code.digest, codeDigest) && code.issuer == issuer &&
-	  code.userID == userID && code.clientID == clientID &&
-	  code.credentialID == credentialID && code.audience == audience &&
-	  code.scope == beforeGrant.scope &&
-	  code.requestedRoleIDs == beforeGrant.requestedRoleIDs &&
-	  code.actions == beforeGrant.actions &&
-	  code.nonce == nonce &&
-	  code.appID == appID &&
-	  code.authorityProviderID == authorityProviderID &&
-	  code.policyVersion == policyVersion &&
-	  code.evidenceVersion == evidenceVersion &&
-	  code.authoritySource == authoritySource &&
-	  code.roleIDs == roleIDs &&
-	  code.userVersion == userVersion && code.expires > created;
-	valid &= code.state == State::Active && !code.owner;
-	if (!valid) {
+	if (beforeGrant.id != codeID || beforeGrant.state != State::Active ||
+	    beforeGrant.owner || code.kind != GrantKind::Code ||
+	    !Ztls::ctEqual(code.digest, codeDigest) || code.issuer != issuer ||
+	    code.userID != userID || code.clientID != clientID ||
+	    code.credentialID != credentialID || code.audience != audience ||
+	    code.scope != beforeGrant.scope ||
+	    code.requestedRoleIDs != beforeGrant.requestedRoleIDs ||
+	    code.actions != beforeGrant.actions || code.nonce != nonce ||
+	    code.appID != appID ||
+	    code.authorityProviderID != authorityProviderID ||
+	    code.policyVersion != policyVersion ||
+	    code.evidenceVersion != evidenceVersion ||
+	    code.authoritySource != authoritySource || code.roleIDs != roleIDs ||
+	    code.userVersion != userVersion || code.expires <= created ||
+	    code.state != State::Active || code.owner) {
 	  complete(false);
 	  return;
 	}
@@ -936,7 +934,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.refresh, Insert) {
-    context->refresh->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       if constexpr (Fwd) {
@@ -991,7 +989,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.refresh, Update) {
-    context->apps->run(0, [
+    context->db->run(0, [
       this, complete = ZuMv(complete)
     ]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(appID), [
@@ -1003,7 +1001,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 	    complete(false);
 	    return;
 	  }
-	context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+	context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	  context->users->find<0>(0, ZuFwdTuple(userID), [
 	    this, complete = ZuMv(complete)
 	  ](ZdbRowRef<User> user) mutable {
@@ -1013,7 +1011,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 		complete(false);
 		return;
 	      }
-	    context->refresh->run(0, [
+	    context->db->run(0, [
 	      this, complete = ZuMv(complete)
 	    ]() mutable {
 	      saga->findUpd<0>(context->refresh, 0, ZuFwdTuple(familyID),
@@ -1035,9 +1033,9 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-	  ZdbSagaStep(3, zum.refresh, Update) {
-	    context->refresh->run(0, [this, complete = ZuMv(complete)]() mutable {
-	      saga->findUpd<0>(context->refresh, 0, ZuFwdTuple(familyID),
+  ZdbSagaStep(3, zum.refresh, Update) {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
+      saga->findUpd<0>(context->refresh, 0, ZuFwdTuple(familyID),
 	ZuMv(complete), [this](
 	  ZdbRow<Refresh> *row, auto &&complete) mutable {
 	if (!row) { complete(false); return; }
@@ -1052,6 +1050,7 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
+
   ZdbSagaStep(4, zum.grant, Delete) {
     grantDelete<Fwd>(this, codeID, ZuMv(complete)); return {};
   }
@@ -1060,31 +1059,31 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 ZfbStruct(ZumAPI, CodeFamily,
   (((codeID),		(Ctor<0>)),	(Bytes)),
   (((codeDigest),	(Ctor<1>)),	(Bytes)),
-  (((familyID),	(Ctor<2>)),	(Bytes)),
+  (((familyID),		(Ctor<2>)),	(Bytes)),
   (((issuer),		(Ctor<3>)),	(String)),
   (((appID),		(Ctor<4>)),	(UInt64)),
   (((userID),		(Ctor<5>)),	(UInt64)),
-  (((clientID),	(Ctor<6>)),	(String)),
+  (((clientID),		(Ctor<6>)),	(String)),
   (((credentialID),	(Ctor<7>)),	(Bytes)),
-  (((audience),	(Ctor<8>)),	(String)),
-  (((requestedRoleIDs), (Ctor<9>)), (UInt64Vec)),
+  (((audience),		(Ctor<8>)),	(String)),
+  (((requestedRoleIDs), (Ctor<9>)),	(UInt64Vec)),
   (((roleIDs),		(Ctor<10>)),	(UInt64Vec)),
   (((actions),		(Ctor<11>)),	(UDT)),
   (((digest),		(Ctor<12>)),	(Bytes)),
   (((authVersion),	(Ctor<13>)),	(UInt64)),
   (((userVersion),	(Ctor<14>)),	(UInt64, 1)),
-  (((authTime),	(Ctor<15>)),	(Int64)),
+  (((authTime),		(Ctor<15>)),	(Int64)),
   (((created),		(Ctor<16>)),	(Int64)),
   (((expires),		(Ctor<17>)),	(Int64)),
   (((scope),		(Ctor<18>)),	(String)),
   (((nonce),		(Ctor<19>)),	(String)),
-  (((authorityProviderID),(Ctor<20>)),	(UInt64)),
+  (((authorityProviderID), (Ctor<20>)),	(UInt64)),
   (((policyVersion),	(Ctor<21>)),	(UInt64)),
   (((evidenceVersion),	(Ctor<22>)),	(UInt64)),
   (((authoritySource),	(Ctor<23>, Enum<UserSource::Map>)), (Int8)),
-  (((beforeGrant),	(Ctor<24>)), (UDT)),
+  (((beforeGrant),	(Ctor<24>)),	(UDT)),
   (((clientVersion),	(Ctor<25>)),	(UInt64)),
-  (((membershipVersion),	(Ctor<26>)),	(UInt64)));
+  (((membershipVersion), (Ctor<26>)),	(UInt64)));
 
 ZumExtern bool codeFamilyPrepare(
   Ztls::Random &, const Grant &, ZuBSpan codeDigest,
@@ -1117,7 +1116,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.app, Insert) {
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<App> row = new ZdbRow<App>{context->apps, ZdbShard{0}};
 	saga->insert(context->apps, ZuMv(row), ZuMv(complete),
@@ -1142,7 +1141,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 
   ZdbSagaStep(2, zum.sign_key, Insert) {
     if (!signKey.id) { saga->skip(ZuMv(complete)); return {}; }
-    context->signKeys->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<SignKey> row =
 	  new ZdbRow<SignKey>{context->signKeys, ZdbShard{0}};
@@ -1167,7 +1166,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.client, Insert) {
-    context->clients->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<Client> row =
 	  new ZdbRow<Client>{context->clients, ZdbShard{0}};
@@ -1213,7 +1212,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
       complete(false);
       return {};
     }
-    context->adminAccess->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ActionIDVec operations;
 	operations.push(catalogPublishOp);
@@ -1245,7 +1244,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(6, zum.auth_policy, Insert) {
-    context->authPolicies->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<AuthPolicy> row =
 	  new ZdbRow<AuthPolicy>{context->authPolicies, ZdbShard{0}};
@@ -1276,7 +1275,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 #define ZUM_APP_ENROLL_RELEASE(N, member, tableName, keyExpr, optionalExpr) \
   ZdbSagaStep(N, zum.member, Update) { \
     if (optionalExpr) { saga->skip(ZuMv(complete)); return {}; } \
-    context->tableName->run(0, [this, complete = ZuMv(complete)]() mutable { \
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable { \
       saga->findUpd<0>(context->tableName, 0, keyExpr, ZuMv(complete), \
 	[this](auto *row, auto &&complete) mutable { \
 	  if (!row || row->data().owner != \
@@ -1304,7 +1303,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 #undef ZUM_APP_ENROLL_RELEASE
 
   ZdbSagaStep(12, zum.app, Update) {
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(appID),
 	ZuMv(complete), [this](ZdbRow<App> *row,
 	    auto &&complete) mutable {
@@ -1336,14 +1335,14 @@ ZfbStruct(ZumAPI, AppEnrollment,
   (((appID),		(Ctor<1>)),	(UInt64)),
   (((appName),		(Ctor<2>)),	(String)),
   (((appLabel),		(Ctor<3>)),	(String)),
-  (((audience),	(Ctor<4>)),	(String)),
+  (((audience),		(Ctor<4>)),	(String)),
   (((signKey),		(Ctor<5>)),	(UDT)),
   (((clientID),		(Ctor<6>)),	(String)),
   (((secretDigest),	(Ctor<7>)),	(Bytes)),
   (((created),		(Ctor<8>)),	(Int64)),
   (((catalogPublishOp), (Ctor<9>)),	(UInt32)),
   (((operationQueryOp), (Ctor<10>)),	(UInt32)),
-  (((request), (Ctor<11>)), (UDT)));
+  (((request),		(Ctor<11>)),	(UDT)));
 
 struct ExternalProjection : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -1361,7 +1360,7 @@ struct ExternalProjection : public ZdbSagaBase<DBContext> {
   int64_t	created = 0;
 
   ZdbSagaStep(0, zum.ext_identity, Insert) {
-    context->extIdentities->run(0, [this,
+    context->db->run(0, [this,
         complete = ZuMv(complete)]() mutable {
       auto key = ZuFwdTuple(providerID, issuer, subject);
       if constexpr (Fwd) {
@@ -1390,7 +1389,7 @@ struct ExternalProjection : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.user, Insert) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	ZdbRowRef<User> row = new ZdbRow<User>{context->users, ZdbShard{0}};
 	saga->insert(context->users, ZuMv(row), ZuMv(complete),
@@ -1417,7 +1416,7 @@ struct ExternalProjection : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](ZdbRow<User> *row,
 	    auto &&complete) mutable {
@@ -1434,7 +1433,7 @@ struct ExternalProjection : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.user, Update) {
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(userID),
 	ZuMv(complete), [this](ZdbRow<User> *row,
 	    auto &&complete) mutable {
@@ -1451,7 +1450,7 @@ struct ExternalProjection : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(4, zum.ext_identity, Update) {
-    context->extIdentities->run(0, [this,
+    context->db->run(0, [this,
         complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->extIdentities, 0,
 	ZuFwdTuple(providerID, issuer, subject), ZuMv(complete),
@@ -1503,7 +1502,7 @@ struct AppActionAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(1, zum.app, Update) {
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(appID),
 	[this, complete = ZuMv(complete)](ZdbRowRef<App> row) mutable {
 	  if (!row) { complete(!Fwd); return; }
@@ -1549,7 +1548,7 @@ struct AppActionAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(2, zum.action, Insert) {
-    context->actions->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       if constexpr (Fwd) {
 	// Name uniqueness is a business constraint. Apply it only when Zdb
 	// executes the insertion; replay handling belongs to the native wrapper.
@@ -1585,7 +1584,7 @@ struct AppActionAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(3, zum.action, Update) {
-    context->actions->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->actions, 0,
 	ZuFwdTuple(appID, actionID), ZuMv(complete),
 	[this](ZdbRow<Action> *row, auto &&complete) mutable {
@@ -1605,7 +1604,7 @@ struct AppActionAdd : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(4, zum.app, Update) {
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(appID),
 	ZuMv(complete), [this](ZdbRow<App> *row,
 	    auto &&complete) mutable {
@@ -1642,7 +1641,7 @@ ZfbStruct(ZumAPI, AppActionAdd,
   (((oldAppVersion),	(Ctor<5>)),	(UInt64)),
   (((oldAuthVersion),	(Ctor<6>)),	(UInt64)),
   (((oldUpdated),	(Ctor<7>)),	(Int64)),
-  (((request), (Ctor<8>)), (UDT)));
+  (((request),		(Ctor<8>)),	(UDT)));
 
 // Both role and state changes use this transaction so neither can write through
 // the other's membership/application reservation.
@@ -1688,7 +1687,7 @@ struct MembershipChange : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.app, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(appID),
 	[this, complete = ZuMv(complete)](ZdbRowRef<App> row) mutable {
 	  if (!row) { error = 409; complete(!Fwd); return; }
@@ -1715,20 +1714,20 @@ struct MembershipChange : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(2, zum.membership, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    auto apply = [this, complete = ZuMv(complete)](bool valid) mutable {
-      context->memberships->run(0, [this, valid, complete = ZuMv(complete)]() mutable {
+    auto apply = [this, complete = ZuMv(complete)](bool ok) mutable {
+	if (!ok) { complete(false); return; }
+      context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	context->memberships->find<0>(0, ZuFwdTuple(appID, userID),
-	  [this, valid, complete = ZuMv(complete)](ZdbRowRef<Membership> row) mutable {
+	  [this, complete = ZuMv(complete)](ZdbRowRef<Membership> row) mutable {
 	    if (!row) { error = 404; complete(!Fwd); return; }
 	    if (unchanged()) {
-	      if (valid) error = memberError(row->data(), Fwd);
-	      if (!valid || error) complete(false);
+	      error = memberError(row->data(), Fwd);
+	      if (error) complete(false);
 	      else saga->skip(ZuMv(complete));
 	      return;
 	    }
 	    saga->update(context->memberships, ZuMv(row), ZuMv(complete),
-	      [this, valid](ZdbRow<Membership> *row, auto &&complete) mutable {
-		if (!valid) { complete(false); return; }
+	      [this](ZdbRow<Membership> *row, auto &&complete) mutable {
 		if (auto code = memberError(row->data(), Fwd)) {
 		  error = code;
 		  complete(!Fwd);
@@ -1753,7 +1752,7 @@ struct MembershipChange : public ZdbSagaBase<DBContext> {
 
   ZdbSagaStep(3, zum.membership, Update) {
     if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->memberships->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->memberships, 0, ZuFwdTuple(appID, userID),
 	ZuMv(complete), [this](ZdbRow<Membership> *row, auto &&complete) mutable {
 	  if (!row || row->data().owner !=
@@ -1773,7 +1772,7 @@ struct MembershipChange : public ZdbSagaBase<DBContext> {
 
   ZdbSagaStep(4, zum.app, Update) {
     if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(appID), ZuMv(complete),
 	[this](ZdbRow<App> *row, auto &&complete) mutable {
 	  if (!row || row->data().owner != (Fwd ? saga->id() : uint128_t{0}) ||
@@ -1793,6 +1792,7 @@ struct MembershipChange : public ZdbSagaBase<DBContext> {
     });
     return {};
   }
+
   ZdbSagaStep(5, zum.request, Update) {
     requestComplete(this, {}, updated, ZuMv(complete));
     return {};
@@ -1800,22 +1800,22 @@ struct MembershipChange : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, MembershipChange,
-  (((appID), (Ctor<0>)), (UInt64)),
-  (((userID), (Ctor<1>)), (UInt64)),
-  (((oldRoles), (Ctor<2>)), (UInt64Vec)),
-  (((newRoles), (Ctor<3>)), (UInt64Vec)),
-  (((oldState), (Ctor<4>, Enum<State::Map>)), (Int8)),
-  (((newState), (Ctor<5>, Enum<State::Map>)), (Int8)),
-  (((version), (Ctor<6>)), (UInt64)),
-  (((authVersion), (Ctor<7>)), (UInt64)),
-  (((oldUpdated), (Ctor<8>)), (Int64)),
-  (((updated), (Ctor<9>)), (Int64)),
-  (((appVersion), (Ctor<10>)), (UInt64)),
-  (((appAuthVersion), (Ctor<11>)), (UInt64)),
-  (((appUpdated), (Ctor<12>)), (Int64)),
-  (((request), (Ctor<13>)), (UDT)),
-  (((assignRoles), (Ctor<14>)), (Bool)),
-  (((ifMatch), (Ctor<15>)), (String)));
+  (((appID),		(Ctor<0>)),			(UInt64)),
+  (((userID),		(Ctor<1>)),			(UInt64)),
+  (((oldRoles),		(Ctor<2>)),			(UInt64Vec)),
+  (((newRoles),		(Ctor<3>)),			(UInt64Vec)),
+  (((oldState),		(Ctor<4>, Enum<State::Map>)),	(Int8)),
+  (((newState),		(Ctor<5>, Enum<State::Map>)),	(Int8)),
+  (((version),		(Ctor<6>)),			(UInt64)),
+  (((authVersion),	(Ctor<7>)),			(UInt64)),
+  (((oldUpdated),	(Ctor<8>)),			(Int64)),
+  (((updated),		(Ctor<9>)),			(Int64)),
+  (((appVersion),	(Ctor<10>)),			(UInt64)),
+  (((appAuthVersion),	(Ctor<11>)),			(UInt64)),
+  (((appUpdated),	(Ctor<12>)),			(Int64)),
+  (((request),		(Ctor<13>)),			(UDT)),
+  (((assignRoles),	(Ctor<14>)),			(Bool)),
+  (((ifMatch),		(Ctor<15>)),			(String)));
 
 struct MembershipAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -1837,7 +1837,7 @@ struct MembershipAdd : public ZdbSagaBase<DBContext> {
 
   ZdbSagaStep(1, zum.membership, Insert) {
     if constexpr (!Fwd) {
-      context->memberships->run(0, [this, complete = ZuMv(complete)]() mutable {
+      context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	saga->findDel<0>(context->memberships, 0, ZuFwdTuple(appID, userID),
 	  ZuMv(complete), [](ZdbRow<Membership> *row, auto &&complete) mutable {
 	    complete(!row || row->commit());
@@ -1845,45 +1845,43 @@ struct MembershipAdd : public ZdbSagaBase<DBContext> {
       });
       return {};
     }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(appID),
 	[this, complete = ZuMv(complete)](ZdbRowRef<App> app) mutable {
-	  bool valid = app && app->data().state == State::Active && !app->data().owner;
-	  context->users->run(0, [this, valid, complete = ZuMv(complete)]() mutable {
-	    context->users->find<0>(0, ZuFwdTuple(userID),
-	      [this, valid, complete = ZuMv(complete)](ZdbRowRef<User> user) mutable {
-		bool local = user && user->data().source == UserSource::Local &&
-		  user->data().state != State::Revoked && !user->data().owner;
-		context->memberships->run(0, [this, valid = valid && local,
-		    complete = ZuMv(complete)]() mutable {
-		  context->memberships->find<0>(0, ZuFwdTuple(appID, userID),
-		    [this, valid, complete = ZuMv(complete)](
-			ZdbRowRef<Membership> existing) mutable {
+	  if (!app || app->data().state != State::Active || app->data().owner) {
+	    complete(false);
+	    return;
+	  }
+	  context->users->find<0>(0, ZuFwdTuple(userID),
+	    [this, complete = ZuMv(complete)](ZdbRowRef<User> user) mutable {
+		if (!user || user->data().source != UserSource::Local ||
+		    user->data().state == State::Revoked || user->data().owner) {
+		  complete(false);
+		  return;
+		}
+		context->memberships->find<0>(0, ZuFwdTuple(appID, userID),
+		  [this, complete = ZuMv(complete)](
+		      ZdbRowRef<Membership> existing) mutable {
+		      if (existing) { error = 409; complete(false); return; }
 		      ZdbRowRef<Membership> row =
 			new ZdbRow<Membership>{context->memberships, ZdbShard{0}};
 		      saga->insert(context->memberships, ZuMv(row), ZuMv(complete),
-			[this, valid, duplicate = bool(existing)](
+			[this](
 			    ZdbRow<Membership> *row, auto &&complete) mutable {
 			  new (row->ptr()) Membership{.appID = appID, .userID = userID,
 			    .state = State::Active, .version = 1, .created = created,
 			    .updated = created, .owner = saga->id()};
-			  if (!valid || duplicate) {
-			    error = valid ? 409 : 404;
-			    complete(false); return;
-			  }
 			  complete(row->commit());
 			});
-		    });
-		});
-	      });
-	  });
+		  });
+	    });
 	});
     });
     return {};
   }
 
   ZdbSagaStep(2, zum.membership, Update) {
-    context->memberships->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->memberships, 0, ZuFwdTuple(appID, userID),
 	ZuMv(complete), [this](ZdbRow<Membership> *row, auto &&complete) mutable {
 	  if (!row) { complete(!Fwd); return; }
@@ -1945,10 +1943,11 @@ struct RoleEdit : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(2, zum.role, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    auto apply = [this, complete = ZuMv(complete)](bool valid) mutable {
-      context->roles->run(0, [this, valid, complete = ZuMv(complete)]() mutable {
+    auto apply = [this, complete = ZuMv(complete)](bool ok) mutable {
+	if (!ok) { complete(false); return; }
+      context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
 	context->roles->find<0>(0, ZuFwdTuple(app.id, before.id),
-	  [this, valid, complete = ZuMv(complete)](ZdbRowRef<Role> row) mutable {
+	  [this, complete = ZuMv(complete)](ZdbRowRef<Role> row) mutable {
 	    if (!row) { error = 404; complete(!Fwd); return; }
 	    if (unchanged()) {
 	      error = roleError(row->data());
@@ -1957,8 +1956,7 @@ struct RoleEdit : public ZdbSagaBase<DBContext> {
 	      return;
 	    }
 	    saga->update(context->roles, ZuMv(row), ZuMv(complete),
-	      [this, valid](ZdbRow<Role> *row, auto &&complete) mutable {
-		if (Fwd && !valid) { error = 400; complete(false); return; }
+	      [this](ZdbRow<Role> *row, auto &&complete) mutable {
 		if constexpr (Fwd) {
 		  if (auto code = roleError(row->data())) {
 		    error = code; complete(false); return;
@@ -2038,7 +2036,7 @@ struct ActionEdit : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(2, zum.action, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->actions->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->actions->find<0>(0, ZuFwdTuple(app.id, before.id),
 	[this, complete = ZuMv(complete)](ZdbRowRef<Action> row) mutable {
 	  if (!row) { error = 404; complete(!Fwd); return; }
@@ -2112,7 +2110,7 @@ struct AppChange : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.app, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->apps->find<0>(0, ZuFwdTuple(before.id),
 	[this, complete = ZuMv(complete)](ZdbRowRef<App> row) mutable {
 	  if (!row) { error = 404; complete(!Fwd); return; }
@@ -2143,7 +2141,7 @@ struct AppChange : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(2, zum.app, Update) {
     if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->apps->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->apps, 0, ZuFwdTuple(before.id),
 	ZuMv(complete), [this](ZdbRow<App> *row, auto &&complete) mutable {
 	  if (!row) { complete(!Fwd); return; }
@@ -2195,7 +2193,7 @@ struct UserEdit : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.user, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->users->find<0>(0, ZuFwdTuple(before.id),
 	[this, complete = ZuMv(complete)](ZdbRowRef<User> row) mutable {
 	  if (!row) { error = 404; complete(!Fwd); return; }
@@ -2229,7 +2227,7 @@ struct UserEdit : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(2, zum.user, Update) {
     if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->users, 0, ZuFwdTuple(before.id),
 	ZuMv(complete), [this](ZdbRow<User> *row, auto &&complete) mutable {
 	  if (!row) { complete(!Fwd); return; }
@@ -2281,7 +2279,7 @@ struct CredEdit : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.cred, Update) {
     if constexpr (!Fwd)
       if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       context->creds->find<0>(0, ZuFwdTuple(before.id),
 	[this, complete = ZuMv(complete)](ZdbRowRef<Cred> row) mutable {
 	  if (!row) { error = 404; complete(!Fwd); return; }
@@ -2317,7 +2315,7 @@ struct CredEdit : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(2, zum.cred, Update) {
     if (unchanged()) { saga->skip(ZuMv(complete)); return {}; }
-    context->creds->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0>(context->creds, 0, ZuFwdTuple(before.id),
 	ZuMv(complete), [this](ZdbRow<Cred> *row, auto &&complete) mutable {
 	  if (!row) { complete(!Fwd); return; }
@@ -2466,7 +2464,7 @@ struct KeyRetire : public ZdbSagaBase<DBContext> {
     return {};
   }
   ZdbSagaStep(1, zum.sign_key, Update) {
-    context->signKeys->run(0, [this, complete = ZuMv(complete)]() mutable {
+    context->db->run(0, [this, complete = ZuMv(complete)]() mutable {
       saga->findUpd<0, ZuSeq<1, 2>>(context->signKeys, 0, ZuFwdTuple(before.id),
 	ZuMv(complete), [this](ZdbRow<SignKey> *row, auto &&complete) mutable {
 	  if (!row) { error = 404; complete(!Fwd); return; }

@@ -11,6 +11,7 @@
 
 #include <zlib/ZuLib.hh>
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmPolymorph.hh>
 
@@ -32,15 +33,5 @@
 #define ZumExtern extern ZumAPI
 
 #endif
-
-class ZumAPI ZumObjectAlloc {
-public:
-  static void *operator new(size_t);
-  static void operator delete(void *);
-  static void operator delete(void *, size_t);
-};
-
-class ZumObject : public ZumObjectAlloc, public ZmObject { };
-class ZumPolymorph : public ZumObjectAlloc, public ZmPolymorph { };
 
 #endif /* ZumLib_HH */
