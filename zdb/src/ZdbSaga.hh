@@ -53,7 +53,7 @@
 #include <zlib/zdb_saga_type_fbs.h>
 
 #ifndef ZdbSaga_BuiltinSize
-// Initial inline payload allocation, not a payload limit.  256 bytes covers
+// Initial inline payload allocation, not a payload limit. 256 bytes covers
 // ordinary saga state while ZtBuiltin retains its tagged heap fallback.
 #define ZdbSaga_BuiltinSize 256
 #endif
@@ -62,7 +62,7 @@ namespace Zdb_ {
 
 class DB;
 class Saga;
-template <typename, typename> struct SagaStepComplete;
+template <typename, typename> struct SagaStepDriver;
 struct SagaRec;
 struct SagaUNHash;
 class AnyTable;
@@ -84,8 +84,8 @@ ZuDerive(SagaPayload,
 
 ZuDerive(SagaKey, (ZuTuple<ZuCSpan, SagaID>));
 ZuDerive(SagaCursor, (ZuTuple<SagaType, SagaID>));
-ZuDerive(SagaLocs,
-  (ZtArray<Shard, ZtArrayHeapID<"Zdb.Saga.Locs">>));
+ZuDerive(SagaShards,
+  (ZtArray<Shard, ZtArrayHeapID<"Zdb.Saga.Shards">>));
 
 struct SagaData {
   SagaType	type;
@@ -142,11 +142,11 @@ struct SagaTypeStep {
 };
 
 ZfbStruct(ZdbAPI, SagaTypeStep,
-  (((type),	(Ctor<0>, Keys<0>)),	(String)),
-  (((step),	(Ctor<2>, Keys<0>)),	(UInt32)),
-  (((table),	(Ctor<1>)),		(String)),
-  (((op),	(Ctor<3>, Enum<SagaOp::Map>)), (Int8)),
-  (((repeat),	(Ctor<4>)),		(Bool)));
+  (((type),	(Ctor<0>, Keys<0>)),		(String)),
+  (((step),	(Ctor<2>, Keys<0>)),		(UInt32)),
+  (((table),	(Ctor<1>)),			(String)),
+  (((op),	(Ctor<3>, Enum<SagaOp::Map>)),	(Int8)),
+  (((repeat),	(Ctor<4>)),			(Bool)));
 
 ZfbRoot(SagaTypeStep);
 
@@ -154,7 +154,6 @@ ZuDerive(SagaRecoveryFn,
   (ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>));
 ZuDerive(SagaRunFn,
   (ZmFn<void(ZmRef<Saga>), ZmFnHeapID<"Zdb.Saga.RunFn">>));
-
 ZuDerive(SagaCompleteFn,
   (ZmFn<void(bool), ZmFnHeapID<"Zdb.Saga.CompleteFn">>));
 
@@ -184,10 +183,14 @@ namespace SagaState {
   };
 }
 
-class Saga_ : public ZmPolymorph {
+struct SagaRunData {
+  SagaShards	shards;
+};
+
+struct Saga_ : public ZmPolymorph, public SagaRunData {
 friend DB;
 friend Saga;
-template <typename, typename> friend struct SagaStepComplete;
+template <typename, typename> friend struct SagaStepDriver;
 template <typename, typename, typename, typename> friend struct SagaDB;
 template <typename, typename> friend struct MSaga;
 
@@ -211,8 +214,8 @@ private:
       unsigned stepCount, ZuTime deadline) {
     m_db = db;
     m_key = ZuMv(key);
-    m_locs.length(stepCount, false);
-    memset(m_locs.data(), 0xff, stepCount * sizeof(Shard));
+    shards.length(stepCount, false);
+    memset(shards.data(), 0xff, stepCount * sizeof(Shard));
     m_epoch = epoch;
     m_shard = shard;
     m_step = 0;
@@ -220,12 +223,18 @@ private:
     m_deadline = deadline;
     m_fwd = true;
     m_rec = nullptr;
-    m_uns = nullptr;
   }
+
+  void step(uint32_t v) { m_step = v; }
+  void stepInc() { ++m_step; }
+  void stepDec() { --m_step; }
+  bool fwd() const { return m_fwd; }
+  void fwd(bool v) { m_fwd = v; }
+  SagaRec *rec() const { return m_rec; }
+  void rec(SagaRec *v) { m_rec = v; }
 
   DB		*m_db = nullptr;
   SagaKey	m_key;
-  SagaLocs	m_locs;
   uint64_t	m_epoch = 0;
   uint32_t	m_step = 0;
   uint32_t	m_iteration = 0;
@@ -233,7 +242,6 @@ private:
   ZuTime	m_deadline;
   bool		m_fwd = true;
   SagaRec	*m_rec = nullptr;	// staged recovery step
-  SagaUNHash	*m_uns = nullptr;	// staged serial-replay reservations
 };
 
 template <typename T, typename Complete>
@@ -320,6 +328,7 @@ private:
   ZdbAPI bool prepare_(AnyTable *, Shard, SagaOp::T, bool, UN &, bool &);
   ZdbAPI void intent_(Shard, UN);
   ZdbAPI void replay_(OpResult::T, Shard);
+
   template <typename T, typename Impl, typename Call>
   void insert_(Impl *, Shard, ZmRef<Row<T>>, UN, bool, Call);
   template <typename KeyIDs_, typename T, typename Impl, typename Call>
@@ -357,7 +366,7 @@ struct SagaFindDelete {
 };
 
 template <typename M, typename Complete>
-struct SagaStepComplete {
+struct SagaStepDriver {
   ZmRef<M>	saga;
   uint64_t	epoch = 0;
   uint32_t	step = 0;
@@ -371,7 +380,7 @@ private:
 
   void finish(bool);
   static void run_(DB *, ZmRef<M>, Complete);
-  static void delStep_(DB *, ZmRef<M>, Complete, unsigned, bool);
+  static void del_(DB *, ZmRef<M>, Complete, unsigned, bool);
   static void finish_(DB *, ZmRef<M>, Complete, bool);
   static void cleanup_(DB *, ZmRef<M>, Complete, unsigned);
   static void abandon_(DB *, ZmRef<M>);
@@ -396,14 +405,9 @@ inline const SagaKey &SagaKeyAxor(const SagaList::Node &node) {
 ZmHashDerive(SagaHash, SagaList::Node,
   (ZmHashNode<SagaList::Node,
     ZmHashKey<SagaKeyAxor,
-	ZmHashHeapID<"">>>));
+      ZmHashHeapID<"Zdb.Saga.Node">>>));
 
-template <typename Heap>
-struct SagaNode_ : public Heap, public SagaHash::Node {
-  ZuDerive_(SagaNode_, SagaHash::Node)
-};
-using SagaNodeHeap = ZmHeap<"Zdb.Saga.Node", SagaNode_<ZuVoid>>;
-ZuDerive(SagaNode, (SagaNode_<SagaNodeHeap>));
+ZuDerive(SagaNode, SagaHash::Node);
 
 template <typename Sagas>
 using SagaUnion =
@@ -434,9 +438,11 @@ struct SagaHash_ : public Heap, public SagaHash {
 using SagaHashHeap = ZmHeap<"Zdb.Saga.Hash", SagaHash_<ZuVoid>>;
 ZuDerive(SagaHashObj, (SagaHash_<SagaHashHeap>));
 
+using SagaTypeSeen = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">>;
+
 struct SagaCatalog__ {
   StoreTbl	*table = nullptr;
-  ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">> seen;
+  SagaTypeSeen	seen;
   SagaType	type;
   ZeException	error;
   UN		nextUN = 0;
@@ -449,18 +455,17 @@ struct SagaCatalog__ {
   template <typename Catalog> void load(SagaTypeStep);
   template <typename Catalog> void end();
 };
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct SagaCatalog_ : public Heap, public ZmPolymorph, public SagaCatalog__ {
   ZuDerive_(SagaCatalog_, SagaCatalog__)
 };
-using SagaCatalogHeap =
-  ZmHeap<"Zdb.Saga.Type", SagaCatalog_<ZuVoid>>;
+using SagaCatalogHeap = ZmHeap<"Zdb.Saga.Type", SagaCatalog_<>>;
 ZuDerive(SagaCatalog, (SagaCatalog_<SagaCatalogHeap>));
 
 using SagaStepKey = ZuTuple<ZuCSpan, SagaID, uint32_t>;
 using SagaUNKey = ZuTuple<AnyTable *, Shard, UN>;
 
-struct SagaRec__ : public ZmPolymorph {
+struct SagaRec_ : public ZmPolymorph {
   Saga		*saga;
   AnyTable	*table;
   UN		un;
@@ -468,33 +473,28 @@ struct SagaRec__ : public ZmPolymorph {
   Shard		shard;
   SagaOp::T	op;
 
-  SagaRec__(
+  SagaRec_(
       Saga *saga_, AnyTable *table_, UN un_, uint32_t step_,
       Shard shard_, SagaOp::T op_) :
     saga{saga_}, table{table_}, un{un_}, step{step_}, shard{shard_}, op{op_} { }
 };
 
-inline SagaUNKey SagaUNAxor(const SagaRec__ &rec) {
+inline SagaUNKey SagaUNAxor(const SagaRec_ &rec) {
   return {rec.table, rec.shard, rec.un};
 }
-inline SagaStepKey SagaStepAxor(const SagaRec__ &rec) {
+inline SagaStepKey SagaStepAxor(const SagaRec_ &rec) {
   return {rec.saga->type(), rec.saga->id(), rec.step};
 }
 
-ZmHashDerive(SagaUNHash, SagaRec__,
-  (ZmHashNode<SagaRec__,
+ZmHashDerive(SagaUNHash, SagaRec_,
+  (ZmHashNode<SagaRec_,
     ZmHashKey<SagaUNAxor,
 	ZmHashShadow<ZmHashHeapID<"">>>>));
 ZmHashDerive(SagaStepHash, SagaUNHash::Node,
   (ZmHashNode<SagaUNHash::Node,
-    ZmHashKey<SagaStepAxor, ZmHashHeapID<"">>>));
+    ZmHashKey<SagaStepAxor, ZmHashHeapID<"Zdb.Saga.Rec">>>));
 
-template <typename Heap>
-struct SagaRec_ : public Heap, public SagaStepHash::Node {
-  ZuDerive_(SagaRec_, SagaStepHash::Node)
-};
-using SagaRecHeap = ZmHeap<"Zdb.Saga.Rec", SagaRec_<ZuVoid>>;
-ZuDerive(SagaRec, (SagaRec_<SagaRecHeap>));
+ZuDerive(SagaRec, SagaStepHash::Node);
 
 template <typename Heap>
 struct SagaStepHash_ : public Heap, public SagaStepHash {
@@ -718,80 +718,80 @@ private:
   template <typename Context>
   static void runImpl(
       Context *context, ZmRef<M> saga, SagaCompleteFn complete) {
-    saga->u.dispatch([context, saga = ZuMv(saga),
-	complete = ZuMv(complete)](
-	auto, auto &def) mutable {
-	auto ptr = saga.ptr();
-	if (!def.saga) {
-	  def.context = context;
-	  def.saga = ptr;
-	} else {
-	  ZmAssert(def.context == context && def.saga == ptr);
-	}
-	run_(def, ZuMv(saga), ZuMv(complete));
+    saga->u.dispatch([
+      context, saga = ZuMv(saga), complete = ZuMv(complete)
+    ](auto, auto &def) mutable {
+      auto ptr = saga.ptr();
+      if (!def.saga) {
+	def.context = context;
+	def.saga = ptr;
+      } else {
+	ZmAssert(def.context == context && def.saga == ptr);
+      }
+      run_(def, ZuMv(saga), ZuMv(complete));
     });
   }
 
   static void runImpl(ZmRef<M> saga, SagaCompleteFn complete) {
-    saga->u.dispatch([saga = ZuMv(saga), complete = ZuMv(complete)](
-	auto, auto &def) mutable {
-	ZmAssert(def.saga == saga.ptr());
-	run_(def, ZuMv(saga), ZuMv(complete));
+    saga->u.dispatch([
+      saga = ZuMv(saga), complete = ZuMv(complete)
+    ](auto, auto &def) mutable {
+      ZmAssert(def.saga == saga.ptr());
+      run_(def, ZuMv(saga), ZuMv(complete));
     });
   }
 
   template <typename Def>
   static void run_(Def &def, ZmRef<M> saga, SagaCompleteFn complete) {
-	auto ptr = saga.ptr();
-	auto step = ptr->step();
-	if (ZuUnlikely(!ptr->m_fwd && ptr->m_rec &&
-	    (ptr->m_rec->un == nullUN() ||
-	     ZuCmp<UN>::cmp(ptr->m_rec->table->nextUN(ptr->m_rec->shard),
-	       ptr->m_rec->un) <= 0))) {
-	  SagaStepComplete<M, SagaCompleteFn>{
-	    ZuMv(saga), ptr->epoch(), step, false, ZuMv(complete)}(true);
-	  return;
-	}
-	if (ZuLikely(step < ptr->m_locs.length())) {
-	  auto phase = SagaLayout<Def>::phase(def, step, ptr->m_iteration);
-	  if (ZuUnlikely(phase >= Def::NSteps)) {
-	    ptr->result_(OpResult::Invalid, ptr->shard());
-	    return;
-	  }
-	  bool fwd = ptr->m_fwd;
-	  SagaStepComplete<M, SagaCompleteFn> stepComplete{
-	    ZuMv(saga), ptr->epoch(), step, fwd, ZuMv(complete)};
-	  if (fwd) {
-	    ZuSwitch::dispatch<Def::NSteps>(phase,
-		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
-	      (void)def.template operator()<I, true, SagaCompleteFn>(
-		ZuMv(complete));
-	    });
-	  } else if constexpr (Def::NSteps > 1) {
-	    if (ptr->m_locs[step] == Shard(-1)) {
-	      stepComplete(true);
-	      return;
-	    }
-	    ZuSwitch::dispatch<Def::NSteps - 1>(phase,
-		[&def, complete = ZuMv(stepComplete)](auto I) mutable {
-	      (void)def.template operator()<I, false, SagaCompleteFn>(
-		ZuMv(complete));
-	    });
-	  } else
-	    stepComplete(false);
-	  return;
-	}
-	if (ZuLikely(step == ptr->m_locs.length())) {
-	  SagaStepComplete<M, SagaCompleteFn>{
-	    ZuMv(saga), ptr->epoch(), step, ptr->m_fwd, ZuMv(complete)
-	  }.finish(ptr->m_fwd);
-	  return;
-	}
+    auto ptr = saga.ptr();
+    auto step = ptr->step();
+    if (ZuUnlikely(!ptr->fwd() && ptr->rec() &&
+	(ptr->rec()->un == nullUN() ||
+	 ZuCmp<UN>::cmp(ptr->rec()->table->nextUN(ptr->rec()->shard),
+	   ptr->rec()->un) <= 0))) {
+      SagaStepDriver<M, SagaCompleteFn>{
+	ZuMv(saga), ptr->epoch(), step, false, ZuMv(complete)}(true);
+      return;
+    }
+    if (ZuLikely(step < ptr->shards.length())) {
+      auto phase = SagaLayout<Def>::phase(def, step, ptr->iteration());
+      if (ZuUnlikely(phase >= Def::NSteps)) {
 	ptr->result_(OpResult::Invalid, ptr->shard());
+	return;
+      }
+      bool fwd = ptr->fwd();
+      SagaStepDriver<M, SagaCompleteFn> stepComplete{
+	ZuMv(saga), ptr->epoch(), step, fwd, ZuMv(complete)};
+      if (fwd) {
+	ZuSwitch::dispatch<Def::NSteps>(phase,
+	    [&def, complete = ZuMv(stepComplete)](auto I) mutable {
+	  (void)def.template operator()<I, true, SagaCompleteFn>(
+	    ZuMv(complete));
+	});
+      } else if constexpr (Def::NSteps > 1) {
+	if (ptr->shards[step] == Shard(-1)) {
+	  stepComplete(true);
+	  return;
+	}
+	ZuSwitch::dispatch<Def::NSteps - 1>(phase,
+	    [&def, complete = ZuMv(stepComplete)](auto I) mutable {
+	  (void)def.template operator()<I, false, SagaCompleteFn>(
+	    ZuMv(complete));
+	});
+      } else
+	stepComplete(false);
+      return;
+    }
+    if (ZuLikely(step == ptr->shards.length())) {
+      SagaStepDriver<M, SagaCompleteFn>{
+	ZuMv(saga), ptr->epoch(), step, ptr->fwd(), ZuMv(complete)
+	}.finish(ptr->fwd());
+      return;
+    }
+    ptr->result_(OpResult::Invalid, ptr->shard());
   }
 
 public:
-
   static ZuCSpan type(const M *saga) {
     return saga->u.cdispatch([](auto, const auto &def) {
       using Def = ZuDecay<decltype(def)>;
@@ -848,7 +848,6 @@ public:
       return stepDef_<SagaSteps<Def>>(phase, table, op);
     });
   }
-
 };
 
 template <typename Catalog>

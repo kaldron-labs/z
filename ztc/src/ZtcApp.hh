@@ -152,6 +152,7 @@ friend App_::IngressData;
   bool stop();
   void final();
 
+  const AppCf &config() const { return m_cf; }
   void rag(RAG::T);
   void rag(RagFn) const;
   ZmRef<ZiSink> alertSink() const;

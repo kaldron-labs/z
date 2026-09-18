@@ -1722,6 +1722,20 @@ private:
     ZmAtomic<uint64_t> transportFailures = 0;
   };
 
+  const ServerConfig &config() const { return m_config; }
+  App *app() const { return m_app; }
+  const MessageString &altSvc() const { return m_altSvc; }
+  unsigned txThread() const { return m_txThread; }
+  Stats &stats() { return m_stats; }
+  const Stats &stats() const { return m_stats; }
+  template <typename Driver>
+  typename StreamTaskQ::Node *streamTaskAdd_(ZuRef<Driver> driver) {
+    return m_streamTasks.push(StreamTask{ZuMv(driver)});
+  }
+  void streamTaskDel_(typename StreamTaskQ::Node *task) {
+    if (auto node = m_streamTasks.delNode(task)) node->release_();
+  }
+
   template <typename Profile>
   struct Parser :
     public MessageTraits<Profile>::template RequestParser<
@@ -1733,11 +1747,11 @@ private:
     void bind(Server *server_, ProfileLink<Profile> *link_) {
       server = server_;
       link = link_;
-      Base::bodyMax(server->m_config.retainedBodyMax());
+      Base::bodyMax(server->config().retainedBodyMax());
     }
 
     void begin() {
-      appParser.init(*server->m_app);
+      appParser.init(*server->app());
       active = true;
       notified = false;
     }
@@ -1846,7 +1860,7 @@ private:
 	}
 	l(ZuFwd<K>(k), ZuFwd<V>(v));
       });
-      if (server->m_altSvc) l("alt-svc", server->m_altSvc);
+      if (server->altSvc()) l("alt-svc", server->altSvc());
     }
     template <typename Key>
     void headerSpan(ZuSpan<uint8_t> span) {
@@ -1933,8 +1947,8 @@ private:
     uint64_t fixedBodyMax() const { return server->fixedBodyMax_(); }
     uint64_t retainedMax() const {
       uint64_t n = server->retainedAvailable_();
-      if (n > server->m_config.retainedMessageMax())
-	n = server->m_config.retainedMessageMax();
+      if (n > server->config().retainedMessageMax())
+	n = server->config().retainedMessageMax();
       return n;
     }
     void headers() { }
@@ -2042,13 +2056,13 @@ private:
 
     bool start_(ZuRef<Self> self, bool optional) {
       constexpr bool handled = true;
-      if (!Server_::streamTxThread(int(server->m_txThread))) return false;
-      task = server->m_streamTasks.push(StreamTask{ZuMv(self)});
+      if (!Server_::streamTxThread(int(server->txThread()))) return false;
+      task = server->streamTaskAdd_(ZuMv(self));
       link->responseCancel_(StreamCancelFn{static_cast<Self *>(this),
 	[](Self *self_) {
 	self_->stop_();
       }});
-      emit = new Emit{static_cast<Self *>(this), int(server->m_txThread)};
+      emit = new Emit{static_cast<Self *>(this), int(server->txThread())};
       auto emit_ = [control = emit](auto &&write) mutable {
 	return control->emit_(ZuFwd<decltype(write)>(write));
       };
@@ -2062,7 +2076,7 @@ private:
 	    return server->template sendEmptyResponse_<Profile>(
 	      *link, appResponse->data());
 	  }
-	  failed_(server->m_stats.responseBuildFailures);
+	  failed_(server->stats().responseBuildFailures);
 	  if (state == StreamState::InitialTerminal)
 	    appResponse->data().close();
 	  return handled;
@@ -2074,7 +2088,7 @@ private:
 	  return handled;
 	default:
 	  ZiAssert(false, "Zhttp", (), "invalid initial stream state", );
-	  failed_(server->m_stats.responseBuildFailures);
+	  failed_(server->stats().responseBuildFailures);
 	  if (state == StreamState::InitialTerminal)
 	    appResponse->data().close();
 	  return handled;
@@ -2089,7 +2103,7 @@ private:
       auto tx = link->transmit_(response);
       if (beginHeaders) response.begin(tx);
       if (beginHeaders && !response.validHeaders()) {
-	failed_(server->m_stats.responseBuildFailures);
+	failed_(server->stats().responseBuildFailures);
 	return true;
       }
       auto body = response.body(tx);
@@ -2112,9 +2126,9 @@ private:
 	case WriteOutcome::Failed:
 	default:
 	  if (txOK)
-	    failed_(server->m_stats.responseBuildFailures);
+	    failed_(server->stats().responseBuildFailures);
 	  else
-	    failed_(server->m_stats.transportFailures);
+	    failed_(server->stats().transportFailures);
 	  return true;
       }
     }
@@ -2186,8 +2200,7 @@ private:
       if (!task) return;
       auto task_ = task;
       task = nullptr;
-      auto node = server->m_streamTasks.delNode(task_);
-      if (node) node->release_();
+      server->streamTaskDel_(task_);
     }
 
     Server			*server;
@@ -2232,7 +2245,7 @@ private:
       if (!response) return;
       auto link = ZmRef(impl());
       auto server = link->app()->server;
-      ++server->m_stats.queuedResponses;
+      ++server->stats().queuedResponses;
       link->app()->txRun([
 	link = ZuMv(link), response = ZuMv(response)]() mutable {
 	link->responseSend_(ZuMv(response));
@@ -2260,7 +2273,7 @@ private:
       auto server = impl()->app()->server;
       server->assertTx_();
       if (!impl()->active()) {
-	--server->m_stats.queuedResponses;
+	--server->stats().queuedResponses;
 	return;
       }
       m_responses.pushNode(ZuMv(response));
@@ -2272,7 +2285,7 @@ private:
       m_response = m_responses.shift();
       if (!m_response) return;
       auto server = impl()->app()->server;
-      --server->m_stats.queuedResponses;
+      --server->stats().queuedResponses;
       m_disconnect = m_response->data().disconnect();
       auto response = m_response;
       if (server->template startResponse_<Profile>(
@@ -2290,7 +2303,7 @@ private:
       responseCancel_({});
       responseRelease_(m_retainedBytes);
       m_response = nullptr;
-      if (!ok) ++server->m_stats.transportFailures;
+      if (!ok) ++server->stats().transportFailures;
 	if (!ok)
 	ZiLOG(Warning, "Zhttp", "HTTP response transport failed");
       if (!ok || m_disconnect) {
@@ -2303,7 +2316,7 @@ private:
 
     void responseBuildFailed_(ResBuilder *response) {
       if (m_response.ptr() != response) return;
-      ++impl()->app()->server->m_stats.responseBuildFailures;
+      ++impl()->app()->server->stats().responseBuildFailures;
 	ZiLOG(Error, "Zhttp", "HTTP response construction failed");
       responseFailed_(response);
     }
@@ -2325,7 +2338,7 @@ private:
     void responseCancelPending_() {
       auto server = impl()->app()->server;
       while (m_responses.shift())
-	--server->m_stats.queuedResponses;
+	--server->stats().queuedResponses;
     }
 
     void responseCancelAll_() {
@@ -2351,9 +2364,9 @@ private:
       if (!n) return;
       auto server = impl()->app()->server;
       ZmAssert(m_retainedBytes >= n);
-      ZmAssert(server->m_stats.retainedBytes.load_() >= n);
+      ZmAssert(server->stats().retainedBytes.load_() >= n);
       m_retainedBytes -= n;
-      server->m_stats.retainedBytes -= n;
+      server->stats().retainedBytes -= n;
     }
 
     ResBuilderQ		m_responses;
@@ -2397,9 +2410,9 @@ private:
     int error(Link_ &, Parser_ &parser_) {
       const RequestError &error = parser_.error();
       if (error.code == RequestErrorCode::BodyRejected)
-	++parser_.server->m_stats.bodyFailures;
+	++parser_.server->stats().bodyFailures;
       else
-	++parser_.server->m_stats.parseFailures;
+	++parser_.server->stats().parseFailures;
 	ZiLOG(Warning, "Zhttp", ([error](auto &s) {
 	  s << "HTTP request rejected code=" << int(error.code)
 	    << " scope=" << int(error.scope)
@@ -2420,7 +2433,7 @@ private:
   private:
     void finish_() {
       if (!parser.active) return;
-      --parser.server->m_stats.activeRequests;
+      --parser.server->stats().activeRequests;
       parser.finish();
     }
 
@@ -2435,9 +2448,9 @@ private:
     Server *server = nullptr;
 
     Hub(Server *server_) : server{server_} { }
-    ZiIP localIP() const { return server->m_config.localIP(); }
-    unsigned localPort() const { return server->m_config.port(); }
-    unsigned idleTimeout() const { return server->m_config.idleTimeout(); }
+    ZiIP localIP() const { return server->config().localIP(); }
+    unsigned localPort() const { return server->config().port(); }
+    unsigned idleTimeout() const { return server->config().idleTimeout(); }
     template <typename Info>
     bool admit(const Info &) { return server->admit(); }
     template <typename LinkT>
@@ -2445,7 +2458,7 @@ private:
       server->registerTxError_(link);
       if constexpr (!HTTP::Multiplexed)
 	server->connected(&link, HTTP::Transport::ID);
-      server->m_app->connected(HTTP::Transport::ID);
+      server->app()->connected(HTTP::Transport::ID);
     }
     template <typename LinkT>
     void disconnected(LinkT &link, bool) {
@@ -2464,14 +2477,14 @@ private:
     }
     template <typename Info>
     void listening(const Info &info) {
-      server->m_app->listening(HTTP::Transport::ID, info.port);
+      server->app()->listening(HTTP::Transport::ID, info.port);
     }
     void listening() {
-      server->m_app->listening(
-	HTTP::Transport::ID, server->m_config.port());
+      server->app()->listening(
+	HTTP::Transport::ID, server->config().port());
     }
     void listenFailed(bool transient) {
-      server->m_app->listenFailed(HTTP::Transport::ID, transient);
+      server->app()->listenFailed(HTTP::Transport::ID, transient);
       server->failServer_();
     }
   };
@@ -2495,10 +2508,10 @@ private:
     Server *server = nullptr;
 
     TLSHub(Server *server_) : server{server_} { }
-    ZiIP localIP() const { return server->m_config.localIP(); }
-    unsigned localPort() const { return server->m_config.port(); }
+    ZiIP localIP() const { return server->config().localIP(); }
+    unsigned localPort() const { return server->config().port(); }
     unsigned idleTimeout() const {
-      return server->m_config.idleTimeout();
+      return server->config().idleTimeout();
     }
     bool admit(const ZiCxnInfo &) { return server->admit(); }
     const HPackSeedPlans &hpackSeedPlans() const {
@@ -2507,7 +2520,7 @@ private:
     template <typename Link_>
     void connected(Link_ &link, const ConnectedInfo &) {
       server->registerTxError_(link);
-      server->m_app->connected(Transport::TLS);
+      server->app()->connected(Transport::TLS);
     }
     template <typename Link_>
     void disconnected(Link_ &link, bool) {
@@ -2521,10 +2534,10 @@ private:
     }
     void release() { server->release(Transport::TLS); }
     void listening(const ZiListenInfo &info) {
-      server->m_app->listening(Transport::TLS, info.port);
+      server->app()->listening(Transport::TLS, info.port);
     }
     void listenFailed(bool transient) {
-      server->m_app->listenFailed(Transport::TLS, transient);
+      server->app()->listenFailed(Transport::TLS, transient);
       server->failServer_();
     }
   };

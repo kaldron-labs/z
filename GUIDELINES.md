@@ -322,7 +322,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Problem: extra flags can diverge from the value they describe.
   Fix: use sentinel values.
 
-### Type and API friction
+### Bad casting
 - Red Flag: unnecessary casts.
   Problem: casts hide type-system mistakes and make ownership/aliasing harder to audit.
   Fix: rely on existing Z conversions and fix the type boundary.
@@ -335,6 +335,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: casts to CRTP `impl()`/`app()` bases.
   Problem: they obscure name lookup and static dispatch.
   Fix: use `using T::function;` in bases that need constrained function lookup.
+
+### Bad code structure
+- Red Flag: accessing private `m_`-prefixed data members via `->` or `.` (other than `this` and other pointers/references to the same containing type)
+  Problem: violates encapsulation
+  Fix: either provide a narrow accessor member function, or migrate the exposed data members into either a `...Data` base struct or similar
 - Red Flag: unnecessary chained-`if` or `switch` mapping between `enum` values and integers
   Problem: inefficiency
   Fix: use `enum` values directly as integers
@@ -597,8 +602,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Class and struct shape
 - `struct`s are all-public data: members are not prefixed with `m_` and appear at the top before function members.
-- `class`es have all-private data: members are prefixed with `m_` and appear at the bottom before closing `};`.
+- Put directly shared, unprefixed data at the top of its composite type before member functions; required local `using` declarations may precede it.
+- `class`es have all-private data: members are prefixed with `m_` and appear in a trailing `private:` section at the bottom before closing `};`.
 - Do not create hybrid `class` or `struct` types with mixed public/private data members.
+- `m_` marks state owned and encapsulated by its class. Only the owning class's implementation accesses it directly; friendship does not relax this rule. Direct base/derived implementation access is the narrow exception.
+- Model state shared at field granularity as an unprefixed member of a `struct`, not as a friend's view into a class's `m_` state. If a type needs both shared data and encapsulated state, put the former in a `...Data` struct or expose the latter through member functions.
 
 ## I/O sharding
 Every data member involved in I/O rx/tx should have one owning shard:
@@ -740,8 +748,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
   FlatBuffers schemas use their established lowercase/underscore basenames;
   keep the corresponding generation rules and generated-header names aligned.
   Do not apply this exception to ordinary repository-owned C++ files.
-- `m_` is reserved for private data members of classes.
-  - private data members that are intended to be accessed directly by friends should NOT have the `m_` prefix.
+- `m_` is reserved for encapsulated private data members of classes; see the class-shape ownership rule above.
 
 ### Accessors
 - Use overloads for getters/setters; do not invent separate names.
