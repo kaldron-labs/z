@@ -199,6 +199,15 @@ using TxBufAlloc =
   ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
 
 struct StreamLink {
+  using Wire = ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">>;
+
+  Wire		wire;
+  unsigned	handoffs = 0;
+  unsigned	ends = 0;
+  unsigned	resets = 0;
+  bool		localCap = true;
+  bool		peerCap = false;
+
   struct Tx : public ZiTxStream<Tx> {
     using Base = ZiTxStream<Tx>;
 
@@ -231,12 +240,6 @@ struct StreamLink {
   void streamTxEnd() { ++ends; }
   void streamTxReset() { ++resets; }
 
-  ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">> wire;
-  unsigned	handoffs = 0;
-  unsigned	ends = 0;
-  unsigned	resets = 0;
-  bool		localCap = true;
-  bool		peerCap = false;
 };
 
 struct StreamConsumer {
@@ -476,28 +479,15 @@ struct FixedTxBuilder :
     FixedTxBuilder, FixedHeaders, true, false> {
   using HdrCatalog = FixedHeaders;
   using Base = Zhttp::H1::Request<FixedTxBuilder, HdrCatalog, true, false>;
+  using Spans = Zhttp::HeaderSpans<FixedHeaders>;
   using Base::body;
-  template <typename L>
-  void operation(L &&l) {
-    l(Zhttp::Method::PUT, [](auto &&emit) {
-      emit([](auto &tx) { tx << "/fixed-edge"; });
-    });
-  }
-  template <typename L>
-  void host(L &&l) { l("localhost"); }
-  template <typename Key, typename L>
-  void header(L &&l) {
-    app.template header<Key>(ZuFwd<L>(l));
-  }
-  template <typename L> void header(L &&) { }
-  template <typename Key>
-  void headerOffset(uint64_t offset, unsigned length) {
-    spans.template recordOffset<Key>(offset, length);
-  }
-  void headerBase(uint8_t *base) { spans.resolve(base); }
-  void patch() { spans.patch(app); }
 
   struct App {
+    ZuSpan<uint8_t> contentSpan;
+    ZuSpan<uint8_t> bodySpan;
+    uint64_t contentLength = 0;
+    unsigned providers = 0;
+
     template <typename Key, typename L>
     void header(L &&l) {
       ++providers;
@@ -519,14 +509,29 @@ struct FixedTxBuilder :
 	  memcpy(span.data(), "000200", 6);
 	});
     }
-
-    ZuSpan<uint8_t> contentSpan;
-    ZuSpan<uint8_t> bodySpan;
-    uint64_t contentLength = 0;
-    unsigned providers = 0;
   } app;
+  Spans	spans;
 
-  Zhttp::HeaderSpans<FixedHeaders> spans;
+  template <typename L>
+  void operation(L &&l) {
+    l(Zhttp::Method::PUT, [](auto &&emit) {
+      emit([](auto &tx) { tx << "/fixed-edge"; });
+    });
+  }
+  template <typename L>
+  void host(L &&l) { l("localhost"); }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    app.template header<Key>(ZuFwd<L>(l));
+  }
+  template <typename L> void header(L &&) { }
+  template <typename Key>
+  void headerOffset(uint64_t offset, unsigned length) {
+    spans.template recordOffset<Key>(offset, length);
+  }
+  void headerBase(uint8_t *base) { spans.resolve(base); }
+  void patch() { spans.patch(app); }
+
 };
 
 template <typename T, typename = void>

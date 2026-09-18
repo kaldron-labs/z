@@ -246,7 +246,7 @@ ZfbStruct(ZtcAPI, AlertTelemetry,
   (((seqNo),		(Ctor<2>, Keys<0>)),		(UInt64)),
   (((time),		(Ctor<1>)),			(Time)),
   (((tid),		(Ctor<3>)),			(UInt64)),
-  (((severity),	(Ctor<5>)),			(Int8)),
+  (((severity),		(Ctor<5>)),			(Int8)),
   (((message),		(Ctor<0>)),			(String)));
 
 } // Ztc

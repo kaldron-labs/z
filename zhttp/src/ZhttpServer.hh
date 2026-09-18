@@ -1817,6 +1817,14 @@ private:
   struct ResponseOps {
     using HdrCatalog = typename Builder::HdrCatalog;
     using Headers = typename HdrCatalog::List;
+    using Spans = HeaderSpans<HdrCatalog>;
+
+    Server		*server = nullptr;
+    Builder		*builder = nullptr;
+    Spans		spans;
+    uint64_t		produced = 0;
+    bool		rejectContentLength = false;
+    bool		invalidHeader = false;
 
     ResponseOps(
 	Server *server_, Builder &builder_,
@@ -1887,14 +1895,6 @@ private:
       (void)Server_::streamContentLength();
     }
 
-  public:
-
-    Server		*server = nullptr;
-    Builder		*builder = nullptr;
-    HeaderSpans<HdrCatalog> spans;
-    uint64_t		produced = 0;
-    bool		rejectContentLength = false;
-    bool		invalidHeader = false;
   };
 
   template <

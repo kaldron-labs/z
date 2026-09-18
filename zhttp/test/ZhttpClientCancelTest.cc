@@ -275,31 +275,13 @@ ZuAssert((ZuIsSame<
 
 struct App : public Zhttp::Client<App, Pool> {
   using Base = Zhttp::Client<App, Pool>;
+  using Results =
+    ZtArray<Zhttp::Result, ZtArrayHeapID<"Zhttp.Test.Results">>;
+  using Archives =
+    ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.Test.Archives">>;
 
-  void idle() {
-    ++idleCount;
-    idleDone.post();
-  }
-
-  void archived(ReqBuilder *request) {
-    archives.push(request->key());
-    archiveDone.post();
-  }
-
-  ZmRef<ReqBuilder> request() {
-    ZmRef<ReqBuilder> request = new ReqBuilder;
-    request->app = this;
-    request->key_ = m_key++;
-    return request;
-  }
-
-  void requestCompleted(const Zhttp::Result &result) {
-    results.push(result);
-    if (results.length() == expected) done.post();
-  }
-
-  ZtArray<Zhttp::Result, ZtArrayHeapID<"Zhttp.Test.Results">> results;
-  ZtArray<uint64_t, ZtArrayHeapID<"Zhttp.Test.Archives">> archives;
+  Results	results;
+  Archives	archives;
   ZmSemaphore	done;
   ZmSemaphore	archiveDone;
   ZmSemaphore	serverReady;
@@ -327,6 +309,28 @@ struct App : public Zhttp::Client<App, Pool> {
   uint16_t	retryPort = 0;
   int		retryFD = -1;
   Pool		*poolImpl = nullptr;
+
+  void idle() {
+    ++idleCount;
+    idleDone.post();
+  }
+
+  void archived(ReqBuilder *request) {
+    archives.push(request->key());
+    archiveDone.post();
+  }
+
+  ZmRef<ReqBuilder> request() {
+    ZmRef<ReqBuilder> request = new ReqBuilder;
+    request->app = this;
+    request->key_ = m_key++;
+    return request;
+  }
+
+  void requestCompleted(const Zhttp::Result &result) {
+    results.push(result);
+    if (results.length() == expected) done.post();
+  }
 
 private:
   uint64_t	m_key = 0;

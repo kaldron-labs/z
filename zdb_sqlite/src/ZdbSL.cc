@@ -26,8 +26,9 @@ static const char *fieldMapID() { return "ZdbSL.FieldMap"; }
 ZmLHashKVDerive(FieldMap, IDString, unsigned,
   ZmLHashID<fieldMapID, ZmLHashLocal<>>);
 struct FieldMapObj : public ZmObject {
-  FieldMapObj(unsigned n) : map{ZmHashParams(n)} { }
   FieldMap map;
+
+  FieldMapObj(unsigned n) : map{ZmHashParams(n)} { }
 };
 
 struct ExpectedIndex {
@@ -42,8 +43,9 @@ static const char *indexMapID() { return "ZdbSL.IndexMap"; }
 ZmLHashKVDerive(IndexMap, ZuCSpan, unsigned,
   ZmLHashID<indexMapID, ZmLHashLocal<>>);
 struct IndexMapObj : public ZmObject {
-  IndexMapObj(unsigned n) : map{ZmHashParams(n)} { }
   IndexMap map;
+
+  IndexMapObj(unsigned n) : map{ZmHashParams(n)} { }
 };
 
 ZtEnumImplNS(Synchronous);
