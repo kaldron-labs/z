@@ -201,6 +201,12 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - use `GetTempPath`, not `GetTempPathW`
 
 ## Audit flags
+- Audit scope: unless a request explicitly narrows it, every audit against these
+  flags covers all repository-owned C++ source directories in each in-scope
+  module: `src`, `test`, `util`, `itest`, `example`, `bench`, and `interop`
+  where present. Inspect both uses and declarations relevant to each flag; do
+  not treat `src` as the whole module.
+
 ### Code structure
 - Amber Flag: a data-member type is too long to preserve tabular member alignment.
   Problem: the member name and initializer no longer align with adjacent declarations, obscuring the composite layout.
@@ -219,6 +225,18 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Fix: use a local variable to cache the value: `auto c = x[i]; if (c == 'y' || c == 'z') ...`
 
 ### Storage and capacity
+- Red Flag: `operator new` overload outside `ZmHeap`
+  Problem: all fixed-size allocations should be trackable with `ZmHeap`
+  Fix: replace with use of `ZmHeap`
+- Red Flag: a module-local object allocator/base class which hides `ZmHeap` or
+  `ZmVHeap` behind inherited `operator new`.
+  Problem: it erases the concrete allocation size and heap identity, permits a
+  variable-size heap for fixed-size objects, and makes allocation audits miss
+  dependents.
+  Fix: each fixed-size concrete type inherits its own `ZmHeap` specialization
+  (first base), using the established `Type_<Heap>` pattern when its final size
+  is needed. Do not introduce generic `Object`, `ObjectAlloc`, or equivalent
+  allocation bases.
 - Red Flag: hard-coded capacities such as `16`.
   Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.
   Fix: use prominently located, named library-defined compile-time constants with a maintenance comment: RFC/standard mandate, mainstream alignment, or measured scaling/footprint trade-off.
@@ -255,6 +273,10 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
   Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
   Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
+- Audit Flag: a fixed-size object type allocated through `ZmVHeap`.
+  Problem: a variable-size heap loses fixed-size allocation telemetry and tuning.
+  Fix: use a concrete `ZmHeap`; reserve `ZmVHeap` for allocations whose size
+  genuinely varies at run time.
 - Amber Flag: separate allocations for object, refcount, and container nodes.
   Problem: fragmented allocation adds memory overhead and pointer chasing.
   Fix: consolidate with intrusive reference counting and container nodes where practical; see `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated node.
@@ -280,6 +302,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: mistakenly assuming that `ZmScheduler` `invoke` or `run` is blocking
   Problem: reading of results before work has been executed
   Fix: read results and execute followon code in a continuation of the posted function, not after the call to `run`/`invoke`
+- Red Flag: carrying saga-step validity through local variables or continuation captures.
+  Problem: a failed prerequisite can schedule needless work or reach a write path before the step fails.
+  Fix: at the continuation that establishes each prerequisite, call `complete(false)` and return immediately; only schedule the next operation after success.
 - Red Flag: polling, blocking manually
   Problem: inefficient, introduces stochastic delays
   Fix: use `ZmBlock` or (if not a good fit) `ZmSemaphore`
