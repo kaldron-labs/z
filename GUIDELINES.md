@@ -202,6 +202,12 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ## Audit flags
 ### Code structure
+- Amber Flag: a data-member type is too long to preserve tabular member alignment.
+  Problem: the member name and initializer no longer align with adjacent declarations, obscuring the composite layout.
+  Fix: introduce a concise local `using` alias, then declare the member with that alias; place the alias immediately before the exposed data it supports.
+- Red Flag: exposed data members declared after constructors or other member functions.
+  Problem: the composite's layout and dependency-facing state are hidden among behavior, making ownership and storage review unreliable.
+  Fix: move exposed `struct` data to the beginning of the type, after only required local aliases.
 - Red Flag: declarations nested inside templates, that do not depend on template parameters
   Problem: bloats debug info and linker symbol space with template noise
   Fix: move these declarations out of the enclosing template
@@ -598,10 +604,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Keep short, simple functions and statements on one line when surrounding code does; split only when line length or expression shape makes it clearer.
 - Preserve tabular alignment for data members, macro bodies, and compact tables already using tabs to align names, initializers, or comments.
 - Right-align members with hard tabs.
+- Do not let a verbose member type defeat tabular alignment. Give a complex or long member type a short local `using` alias when that keeps the member declaration aligned; place that alias immediately before the data declarations that use it.
 - `*` and `&` go with the member, not the type: `void<TAB>*m_`, not `void *<TAB>m_`.
 
 ### Class and struct shape
-- `struct`s are all-public data: members are not prefixed with `m_` and appear at the top before function members.
+- `struct`s are all-public data: members are not prefixed with `m_` and appear at the top, before constructors and other function members; required local `using` declarations may precede them.
 - Put directly shared, unprefixed data at the top of its composite type before member functions; required local `using` declarations may precede it.
 - `class`es have all-private data: members are prefixed with `m_` and appear in a trailing `private:` section at the bottom before closing `};`.
 - Do not create hybrid `class` or `struct` types with mixed public/private data members.
