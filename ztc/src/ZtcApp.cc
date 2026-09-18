@@ -563,7 +563,7 @@ public:
     ++m_accepted;
     app->serviceMx_()->run([app, event = ZuMv(event)]() mutable {
       app->alert_(ZuMv(event));
-    }, app->m_cf.workerThread);
+    }, app->config().workerThread);
   }
   void done() {
     Guard guard(m_lock);

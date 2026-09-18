@@ -259,7 +259,7 @@ class Endpoint_ {
     }
 
     Cxn_(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
-	ZiConnection(endpoint->m_mx, ci),
+	ZiConnection(endpoint->mx_(), ci),
 	m_endpoint{endpoint},
 	m_generation{generation} { }
 
@@ -282,19 +282,17 @@ class Endpoint_ {
 	ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
 	EcnMark::T ecn = EcnMark::NotECT, bool priority = false) {
       if (m_closing.load_()) {
-	++m_endpoint->m_txDiag.txDropped;
+	m_endpoint->txDropped_();
 	return false;
       }
       if (!buf) {
-	++m_endpoint->m_txDiag.txDropped;
+	m_endpoint->txDropped_();
 	return false;
       }
-      ZiAssert(m_endpoint->m_mx &&
-	  m_endpoint->m_mx->invoked(m_endpoint->m_mx->txThread()),
+	ZiAssert(m_endpoint->endpointTxInvoked_(),
 	"Zquic", (), "QUIC endpoint send outside Tx thread", return false);
       if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr), ecn, priority);
-      ++m_endpoint->m_txDiag.submittedTx;
-      m_endpoint->m_txDiag.submittedBytes += buf->length;
+	m_endpoint->txSubmitted_(buf->length);
       m_txBuf = ZuMv(buf);
       m_txAddr = ZuMv(addr);
       m_txECN = ecn;
@@ -323,9 +321,8 @@ class Endpoint_ {
 	ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn,
 	bool priority = false) {
       if (m_txQueue.count_() >= EndpointTxQueueLimit)
-	++m_endpoint->m_txDiag.txBackPressure;
-      ++m_endpoint->m_txDiag.submittedTx;
-      m_endpoint->m_txDiag.submittedBytes += buf->length;
+	m_endpoint->txBackPressure_();
+      m_endpoint->txSubmitted_(buf->length);
       if (priority)
 	m_txQueue.unshift(new TxNode{ZuMv(buf), ZuMv(addr), ecn});
       else
@@ -343,7 +340,7 @@ class Endpoint_ {
     }
 
     void scheduleTx_() {
-      m_endpoint->m_mx->txRun([cxn = ZmRef(this)]() mutable {
+      m_endpoint->txRun_([cxn = ZmRef(this)]() mutable {
 	if (cxn->m_closing.load_() || !cxn->m_txBuf) return;
 	cxn->send(ZiIOFn{cxn.ptr(), ZmFnPtr<&Cxn_::sendStart_>{}});
       });
@@ -832,6 +829,16 @@ private:
   }
   bool endpointTxInvoked_() const {
     return m_mx && m_mx->invoked(m_mx->txThread());
+  }
+  ZiMultiplex *mx_() const { return m_mx; }
+  void txDropped_() { ++m_txDiag.txDropped; }
+  void txSubmitted_(unsigned bytes) {
+    ++m_txDiag.submittedTx;
+    m_txDiag.submittedBytes += bytes;
+  }
+  void txBackPressure_() { ++m_txDiag.txBackPressure; }
+  template <typename L> void txRun_(L &&l) {
+    m_mx->txRun(ZuFwd<L>(l));
   }
   ZmRef<ZiIOBuf> allocRxPkt_() { return new RxPktAlloc{this}; }
   const Impl *impl() const { return static_cast<const Impl *>(this); }

@@ -92,8 +92,6 @@ struct Stmts {
 class Store;
 
 class ZdbSLAPI StoreTbl : public Zdb_::StoreTbl {
-friend Store;
-
 public:
   StoreTbl(
     Store *, bool, IDString, unsigned,
@@ -104,7 +102,16 @@ public:
   Store *store() const { return m_store; }
   const IDString &id() const { return m_id; }
   bool internal() const { return m_internal; }
+  void stopped() {
+    finalize_();
+    m_openState = OpenState::Closed;
+  }
+  bool openable() const {
+    return m_openState == OpenState::Closed ||
+      m_openState == OpenState::Reopen;
+  }
 
+  void open(OpenFn fn) { open_(ZuMv(fn)); }
   void close(CloseFn);
   void warmup();
   void count(KeyID, ZmRef<IOBuf>, CountFn);

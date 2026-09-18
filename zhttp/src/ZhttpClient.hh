@@ -725,6 +725,22 @@ public:
   }
 
 private:
+  Link &txLink_() { return *m_link; }
+  uint64_t txRetainedMax_() const { return m_app->retainedMessageMax(); }
+  void txHeaders_() { m_commit.headers = true; }
+  template <bool Streaming>
+  void txProduced_(uint64_t n) {
+    m_commit.produced = n;
+    if constexpr (Streaming) m_commit.committed = n;
+  }
+  bool txComplete_(uint64_t n) {
+    m_commit.produced = n;
+    m_commit.committed = n;
+    m_commit.final = true;
+    m_txState = ClientSessionTxState::Complete;
+    return true;
+  }
+
   bool sendApp_(Request &app) {
     auto policy = app.bodyPolicy();
     if (!BodyPolicy::hasBody(policy)) return sendEmpty_(app);
@@ -738,26 +754,21 @@ private:
   struct TxOps {
     ClientSession *owner;
 
-    Link &link() { return *owner->m_link; }
+    Link &link() { return owner->txLink_(); }
     uint64_t fixedBodyMax() const { return owner->fixedBodyMax_(); }
     uint64_t retainedMax() const {
-      return owner->m_app->retainedMessageMax();
+      return owner->txRetainedMax_();
     }
-    void headers() { owner->m_commit.headers = true; }
+    void headers() { owner->txHeaders_(); }
     template <bool Streaming>
     void produced(uint64_t n) {
-      owner->m_commit.produced = n;
-      if constexpr (Streaming) owner->m_commit.committed = n;
+      owner->template txProduced_<Streaming>(n);
     }
     bool empty(Request &app) { return owner->sendEmpty_(app); }
     template <bool Streaming>
     bool fail() { return owner->template failFor_<Streaming>(); }
     bool complete(uint64_t n) {
-      owner->m_commit.produced = n;
-      owner->m_commit.committed = n;
-      owner->m_commit.final = true;
-      owner->m_txState = ClientSessionTxState::Complete;
-      return true;
+      return owner->txComplete_(n);
     }
   };
 
@@ -3840,6 +3851,12 @@ public:
     unsigned id() const { return m_id; }
     unsigned slot() const { return m_slot; }
     void slot(unsigned slot_) { m_slot = slot_; }
+    bool reuseListed() const { return m_reuseListed; }
+    Link_ *reusePrev() const { return m_reusePrev; }
+    Link_ *reuseNext() const { return m_reuseNext; }
+    void reusePrev(Link_ *link) { m_reusePrev = link; }
+    void reuseNext(Link_ *link) { m_reuseNext = link; }
+    void reuseListed(bool listed) { m_reuseListed = listed; }
 
     void assign(LiveReq *request) {
       ++m_generation;
@@ -4182,30 +4199,30 @@ private:
   void reuseAdd_(Link &link) {
     if constexpr (Message::OneMessagePerLink) return;
     unsigned id = link.id();
-    ZmAssert(id < m_reusable.length() && !link.m_reuseListed);
-    link.m_reusePrev = nullptr;
-    link.m_reuseNext = m_reusable[id];
-    if (link.m_reuseNext) link.m_reuseNext->m_reusePrev = &link;
+    ZmAssert(id < m_reusable.length() && !link.reuseListed());
+    link.reusePrev(nullptr);
+    link.reuseNext(m_reusable[id]);
+    if (auto next = link.reuseNext()) next->reusePrev(&link);
     m_reusable[id] = &link;
-    link.m_reuseListed = true;
+    link.reuseListed(true);
   }
 
   void reuseDel_(Link &link) {
     if constexpr (Message::OneMessagePerLink) return;
-    if (!link.m_reuseListed) return;
+    if (!link.reuseListed()) return;
     unsigned id = link.id();
     ZmAssert(id < m_reusable.length());
-    if (link.m_reusePrev)
-      link.m_reusePrev->m_reuseNext = link.m_reuseNext;
+    if (auto prev = link.reusePrev())
+      prev->reuseNext(link.reuseNext());
     else {
       ZmAssert(m_reusable[id] == &link);
-      m_reusable[id] = link.m_reuseNext;
+      m_reusable[id] = link.reuseNext();
     }
-    if (link.m_reuseNext)
-      link.m_reuseNext->m_reusePrev = link.m_reusePrev;
-    link.m_reusePrev = nullptr;
-    link.m_reuseNext = nullptr;
-    link.m_reuseListed = false;
+    if (auto next = link.reuseNext())
+      next->reusePrev(link.reusePrev());
+    link.reusePrev(nullptr);
+    link.reuseNext(nullptr);
+    link.reuseListed(false);
   }
 
   void stopBatch_() {
@@ -4254,8 +4271,18 @@ public:
   using LinkHeap = ZmHeap<"Zhttp.H1.Link", Link_<>>;
   using Link = Link_<LinkHeap>;
 
+  template <typename Heap> class Operation_;
   template <typename Heap>
-  class Operation_ : public Heap, public ZmObject {
+  struct OperationLinkData {
+	Operation_<Heap>	*prev = nullptr;
+	ZmRef<Operation_<Heap>> next;
+    bool	linked = false;
+    bool	counted = false;
+  };
+
+  template <typename Heap>
+  class Operation_ :
+    public Heap, public ZmObject, public OperationLinkData<Heap> {
   public:
     using Protocol = TCP;
     using Session = ClientSession<
@@ -4271,6 +4298,8 @@ public:
 
     LiveReq *request() const { return m_request; }
     bool completed() const { return m_complete; }
+    bool sent() const { return m_sent; }
+    Session &session() { return m_session; }
     Owner *owner() const { return m_link->pool()->owner(); }
     Pool *pool() const { return m_link->pool(); }
     unsigned stableID() const { return m_link->stableID(); }
@@ -4285,7 +4314,7 @@ public:
 	request->poolTransport = Transport::TCP;
 	request->poolSlot = stableID();
       }
-      if (m_counted) m_link->reassigned(*this);
+      if (this->counted) m_link->reassigned(*this);
     }
     void connected(const ConnectedInfo &info) {
       if (!m_request) return;
@@ -4377,16 +4406,10 @@ public:
     // Rx thread exclusive.
     alignas(Zm::CacheLineSize)
     LiveReq	*m_request = nullptr;
-    Operation_	*m_prev = nullptr;
-    ZmRef<Operation_> m_next;
     unsigned	m_generation = 0;
     bool	m_complete = false;
     bool	m_sent = false;
     bool	m_closing = false;
-    bool	m_linked = false;
-    bool	m_counted = false;
-
-    friend Link;
   };
 
   using Operation = Operation_<
@@ -4417,7 +4440,7 @@ public:
       request->poolSlot = m_id;
       pool()->operation(request, op.ptr());
       append_(op);
-      op->m_counted = true;
+      op->counted = true;
       ++m_operationCount;
       if (m_connected && !m_closing) {
 	op->connected(m_info);
@@ -4432,7 +4455,7 @@ public:
 	[this, generation](ZeException &e) {
 	  return pool()->owner()->poolH1TxError(m_id, generation, e);
 	}});
-      if (wasStopped) ++pool()->m_live;
+      if (wasStopped) pool()->liveInc_();
       pool()->owner()->poolConnect(*this, *request);
     }
     void onConnected(const ConnectedInfo &info) {
@@ -4474,8 +4497,8 @@ public:
     int process(Rx &rx) {
       auto op = m_head;
       if (!op || !op->request()) return -1;
-      int rc = op->m_session.process(rx);
-      if (op->completed() && op->m_linked) unlink_(*op);
+      int rc = op->session().process(rx);
+      if (op->completed() && op->linked) unlink_(*op);
       return rc;
     }
     void close() {
@@ -4484,9 +4507,9 @@ public:
       closeBatch_(m_head, m_generation);
     }
     void retire(Operation &operation, bool reuse) {
-      if (operation.m_linked) unlink_(operation);
-      if (operation.m_counted) {
-	operation.m_counted = false;
+      if (operation.linked) unlink_(operation);
+      if (operation.counted) {
+	operation.counted = false;
 	ZmAssert(m_operationCount);
 	--m_operationCount;
       }
@@ -4496,10 +4519,10 @@ public:
 	close();
     }
     void reassigned(Operation &operation) {
-      ZmAssert(operation.m_counted);
-      if (operation.m_linked && m_tail == &operation) return;
+      ZmAssert(operation.counted);
+      if (operation.linked && m_tail == &operation) return;
       OperationRef op = &operation;
-      if (operation.m_linked) unlink_(operation);
+      if (operation.linked) unlink_(operation);
       append_(ZuMv(op));
     }
 
@@ -4508,9 +4531,9 @@ public:
       unsigned n = 0;
       while (operations && n++ < ClientWorkBatch) {
 	auto op = ZuMv(operations);
-	operations = op->m_next;
+	operations = op->next;
 	if (generation != m_generation || !m_connected || m_closing) return;
-	if (op->request() && !op->m_sent) op->connected(m_info);
+	if (op->request() && !op->sent()) op->connected(m_info);
       }
       if (operations)
 	pool()->rxRun([
@@ -4524,7 +4547,7 @@ public:
       unsigned n = 0;
       while (operations && n++ < ClientWorkBatch) {
 	auto op = ZuMv(operations);
-	operations = op->m_next;
+	operations = op->next;
 	op->cancelTx();
       }
       if (operations) {
@@ -4551,9 +4574,9 @@ public:
       unsigned n = 0;
       while (operations && n++ < ClientWorkBatch) {
 	auto op = ZuMv(operations);
-	operations = ZuMv(op->m_next);
-	op->m_prev = nullptr;
-	op->m_linked = false;
+	operations = ZuMv(op->next);
+	op->prev = nullptr;
+	op->linked = false;
 	if (!op->request()) continue;
 	if (connectFailed)
 	  pool()->owner()->poolConnectFailed(*op, op->request(), value);
@@ -4561,11 +4584,11 @@ public:
 	  pool()->owner()->poolDisconnected(*op, op->request(), value);
 	  if (first) {
 	    pool()->owner()->poolCloseDelimited(*op->request());
-	    op->m_session.eof();
+	    op->session().eof();
 	  }
 	}
 	first = false;
-	if (op->request()) op->m_session.fail();
+	if (op->request()) op->session().fail();
       }
       if (operations) {
 	auto link = ZmRef(this);
@@ -4582,37 +4605,36 @@ public:
     }
 
     void append_(OperationRef op) {
-      ZmAssert(op && !op->m_prev && !op->m_next);
-      op->m_prev = m_tail;
+      ZmAssert(op && !op->prev && !op->next);
+      op->prev = m_tail;
       if (m_tail)
-	m_tail->m_next = op;
+	m_tail->next = op;
       else
 	m_head = op;
       m_tail = op.ptr();
-      op->m_linked = true;
+      op->linked = true;
     }
     void unlink_(Operation &operation) {
       OperationRef hold = &operation;
-      auto next = ZuMv(operation.m_next);
-      auto prev = operation.m_prev;
+      auto next = ZuMv(operation.next);
+      auto prev = operation.prev;
       if (prev)
-	prev->m_next = next;
+	prev->next = next;
       else
 	m_head = next;
       if (next)
-	next->m_prev = prev;
+	next->prev = prev;
       else
 	m_tail = prev;
-      operation.m_prev = nullptr;
-      operation.m_next = nullptr;
-      operation.m_linked = false;
+      operation.prev = nullptr;
+      operation.next = nullptr;
+      operation.linked = false;
     }
 
     void notifyStopped_() {
       if (m_stopped) return;
       m_stopped = true;
-      if (pool()->m_live) --pool()->m_live;
-      if (pool()->m_stopping && !pool()->m_live) pool()->Base::stop_();
+      pool()->linkStopped_();
       pool()->owner()->poolStopped(*this);
     }
 
@@ -4708,6 +4730,12 @@ public:
   unsigned reconnFreq() const { return 0; }
 
 private:
+  void liveInc_() { ++m_live; }
+  void linkStopped_() {
+    if (m_live) --m_live;
+    if (m_stopping && !m_live) Base::stop_();
+  }
+
   void stopBatch_() {
     unsigned end = m_stopHead + ClientWorkBatch;
     if (end > m_links.length()) end = m_links.length();

@@ -1860,7 +1860,7 @@ friend Host;
 friend AnyTable;
 friend AnyRow;
 friend Saga;
-template <typename, typename> friend struct SagaStepComplete;
+template <typename, typename> friend struct SagaStepDriver;
 
 private:
   using Lock = ZmLock;
@@ -2040,6 +2040,19 @@ private:
   void down_(bool failed);	// run down command
 
   void sagaRun(ZmRef<Saga>);
+  uint64_t sagaEpoch() const { return m_sagaEpoch; }
+  SagaState::T sagaState() const { return m_sagaState; }
+  bool appActive() const { return m_appActive; }
+  void sagaPending() { ++m_sagaPending; }
+  TableT<SagaData> *sagaTable() const { return m_sagaTable; }
+  TableT<SagaStep> *sagaStepTable() const { return m_sagaStepTable; }
+  void sagaDelRec(SagaRec *rec) {
+    if (rec->un != nullUN())
+      m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
+    m_sagaStepHash->delNode(rec);
+  }
+  void sagaBlocked(Saga *saga) { m_sagaBlocked = saga; }
+  void sagaEnd(Saga *);
   bool sagaPrepare(Saga *, AnyTable *, Shard, SagaOp::T,
     bool, UN &, bool &);
   void sagaResult(ZmRef<Saga>, uint64_t, OpResult::T, Shard);
@@ -2363,7 +2376,7 @@ inline void Saga::insert_(
       OpResult::T r, Row<T> *o, UN) mutable {
     result = r;
     if (r != OpResult::Executed) return;
-    m_locs[m_step] = shard;
+    shards[m_step] = shard;
     call(o);
   });
   if (result == OpResult::Executed) return;
@@ -2431,7 +2444,7 @@ inline void Saga::update_(
   ](OpResult::T r, Row<T> *o, UN) mutable {
     result = r;
     if (r != OpResult::Executed) return;
-    m_locs[m_step] = shard;
+    shards[m_step] = shard;
     call(o);
   });
   if (result == OpResult::Executed) return;
@@ -2516,7 +2529,7 @@ inline void Saga::del_(
     UN un, bool saved, Call call)
 {
   if (saved && un == nullUN()) {
-    m_locs[m_step] = shard;
+    shards[m_step] = shard;
     stepRecovered_(shard);
     return;
   }
@@ -2540,7 +2553,7 @@ inline void Saga::del_(
       OpResult::T r, Row<T> *o, UN) mutable {
     result = r;
     if (r != OpResult::Executed) return;
-    m_locs[m_step] = shard;
+    shards[m_step] = shard;
     call(o);
   });
   if (result == OpResult::Executed) return;
@@ -2625,22 +2638,20 @@ inline void SagaFindDelete<Impl, Call>::operator ()(
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::run_(
+inline void SagaStepDriver<M, Complete>::run_(
     DB *db, ZmRef<M> saga, Complete complete)
 {
-  if (ZuUnlikely(!saga || saga->m_epoch != db->m_sagaEpoch ||
-      db->m_sagaState == SagaState::Inactive ||
-      (db->m_sagaState == SagaState::Active && !db->m_appActive))) return;
-  saga->m_rec = db->m_sagaState == SagaState::Rebuilding ?
-    db->sagaRec(saga, saga->m_step) : nullptr;
-  saga->m_uns = db->m_sagaState == SagaState::Rebuilding ?
-    db->m_sagaUNHash.ptr() : nullptr;
-  ++db->m_sagaPending;
+  if (ZuUnlikely(!saga || saga->epoch() != db->sagaEpoch() ||
+      db->sagaState() == SagaState::Inactive ||
+      (db->sagaState() == SagaState::Active && !db->appActive()))) return;
+  saga->rec(db->sagaState() == SagaState::Rebuilding ?
+    db->sagaRec(saga, saga->step()) : nullptr);
+  db->sagaPending();
   M::run(ZuMv(saga), ZuMv(complete));
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::operator ()(bool ok)
+inline void SagaStepDriver<M, Complete>::operator ()(bool ok)
 {
   auto saga_ = ZuMv(saga);
   if (ZuUnlikely(!saga_)) return;
@@ -2650,10 +2661,10 @@ inline void SagaStepComplete<M, Complete>::operator ()(bool ok)
     epoch = epoch, step = step, fwd = fwd, ok
   ]() mutable {
     db->sagaRetire();
-    if (ZuUnlikely(!saga || epoch != db->m_sagaEpoch ||
-	saga->m_epoch != epoch)) return;
-    if (ZuUnlikely(saga->m_step != step || saga->m_fwd != fwd ||
-	step >= saga->m_locs.length())) {
+    if (ZuUnlikely(!saga || epoch != db->sagaEpoch() ||
+	saga->epoch() != epoch)) return;
+    if (ZuUnlikely(saga->step() != step || saga->fwd() != fwd ||
+	step >= saga->shards.length())) {
       db->sagaFail(ZuMv(saga), epoch,
 	ZeEXCEPT(Fatal, "Zdb", "invalid saga step completion"));
       return;
@@ -2663,27 +2674,23 @@ inline void SagaStepComplete<M, Complete>::operator ()(bool ok)
       return;
     }
     if (fwd && ok) {
-      if (auto rec = db->sagaRec(saga, step)) {
-	if (rec->un != nullUN())
-	  db->m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
-	db->m_sagaStepHash->delNode(rec);
-      }
-      db->m_sagaBlocked = nullptr;
-      ++saga->m_step;
-      if (saga->m_step < saga->m_locs.length()) {
+      if (auto rec = db->sagaRec(saga, step)) db->sagaDelRec(rec);
+      db->sagaBlocked(nullptr);
+      saga->stepInc();
+      if (saga->step() < saga->shards.length()) {
 	run_(db, ZuMv(saga), ZuMv(complete));
 	return;
       }
       finish_(db, ZuMv(saga), ZuMv(complete), true);
       return;
     }
-    if (fwd) saga->m_fwd = false;
-    delStep_(db, ZuMv(saga), ZuMv(complete), step, false);
+    if (fwd) saga->fwd(false);
+    del_(db, ZuMv(saga), ZuMv(complete), step, false);
   });
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::finish(bool success)
+inline void SagaStepDriver<M, Complete>::finish(bool success)
 {
   auto saga_ = ZuMv(saga);
   if (ZuUnlikely(!saga_)) return;
@@ -2693,17 +2700,17 @@ inline void SagaStepComplete<M, Complete>::finish(bool success)
     epoch = epoch, success
   ]() mutable {
     db->sagaRetire();
-    if (ZuUnlikely(!saga || epoch != db->m_sagaEpoch ||
-	saga->m_epoch != epoch)) return;
+    if (ZuUnlikely(!saga || epoch != db->sagaEpoch() ||
+	saga->epoch() != epoch)) return;
     finish_(db, ZuMv(saga), ZuMv(complete), success);
   });
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::delStep_(
+inline void SagaStepDriver<M, Complete>::del_(
     DB *db, ZmRef<M> saga, Complete complete, unsigned step, bool success)
 {
-  auto shard = saga->m_locs[step];
+  auto shard = saga->shards[step];
   if (shard >= db->nShards()) {
     if (success) {
       cleanup_(db, ZuMv(saga), ZuMv(complete), step + 1);
@@ -2713,18 +2720,18 @@ inline void SagaStepComplete<M, Complete>::delStep_(
       finish_(db, ZuMv(saga), ZuMv(complete), false);
       return;
     }
-    --saga->m_step;
+    saga->stepDec();
     run_(db, ZuMv(saga), ZuMv(complete));
     return;
   }
-  auto epoch = saga->m_epoch;
-  ++db->m_sagaPending;
-  db->m_sagaStepTable->run(shard, [
+  auto epoch = saga->epoch();
+  db->sagaPending();
+  db->sagaStepTable()->run(shard, [
     db, saga = ZuMv(saga), complete = ZuMv(complete),
     epoch, step, shard, success
   ]() mutable {
-    const auto &key = saga->m_key;
-    db->m_sagaStepTable->findDel<0>(shard,
+    const auto &key = saga->key();
+    db->sagaStepTable()->findDel<0>(shard,
 	ZuFwdTuple(key.template p<0>(), key.template p<1>(), uint32_t(step)),
 	[db, saga = ZuMv(saga), complete = ZuMv(complete),
 	 epoch, step, success](Row<SagaStep> *row) mutable {
@@ -2733,18 +2740,14 @@ inline void SagaStepComplete<M, Complete>::delStep_(
 	  db->run([db, saga = ZuMv(saga), complete = ZuMv(complete),
 	    epoch, step, success, ok]() mutable {
 	    db->sagaRetire();
-	    if (ZuUnlikely(!saga || epoch != db->m_sagaEpoch ||
-		saga->m_epoch != epoch)) return;
+	    if (ZuUnlikely(!saga || epoch != db->sagaEpoch() ||
+		saga->epoch() != epoch)) return;
 	    if (ZuUnlikely(!ok)) {
 	      db->sagaFail(ZuMv(saga), epoch,
 		ZeEXCEPT(Fatal, "Zdb", "failed to delete saga step intent"));
 	      return;
 	    }
-	    if (auto rec = db->sagaRec(saga, step)) {
-	      if (rec->un != nullUN())
-		db->m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
-	      db->m_sagaStepHash->delNode(rec);
-	    }
+	    if (auto rec = db->sagaRec(saga, step)) db->sagaDelRec(rec);
 	    if (success) {
 	      cleanup_(db, ZuMv(saga), ZuMv(complete), step + 1);
 	      return;
@@ -2753,7 +2756,7 @@ inline void SagaStepComplete<M, Complete>::delStep_(
 	      finish_(db, ZuMv(saga), ZuMv(complete), false);
 	      return;
 	    }
-	    --saga->m_step;
+	    saga->stepDec();
 	    run_(db, ZuMv(saga), ZuMv(complete));
 	  });
 	});
@@ -2761,17 +2764,17 @@ inline void SagaStepComplete<M, Complete>::delStep_(
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::finish_(
+inline void SagaStepDriver<M, Complete>::finish_(
     DB *db, ZmRef<M> saga, Complete complete, bool success)
 {
-  auto epoch = saga->m_epoch;
-  auto shard = saga->m_shard;
-  ++db->m_sagaPending;
-  db->m_sagaTable->run(shard, [
+  auto epoch = saga->epoch();
+  auto shard = saga->shard();
+  db->sagaPending();
+  db->sagaTable()->run(shard, [
     db, saga = ZuMv(saga), complete = ZuMv(complete), epoch, shard, success
   ]() mutable {
-    const auto &key = saga->m_key;
-    db->m_sagaTable->findDel<0>(shard,
+    const auto &key = saga->key();
+    db->sagaTable()->findDel<0>(shard,
 	ZuFwdTuple(key.template p<0>(), key.template p<1>()),
 	[db, saga = ZuMv(saga), complete = ZuMv(complete),
 	 epoch, success](Row<SagaData> *row) mutable {
@@ -2780,8 +2783,8 @@ inline void SagaStepComplete<M, Complete>::finish_(
 	  db->run([db, saga = ZuMv(saga), complete = ZuMv(complete),
 	    epoch, success, ok]() mutable {
 	    db->sagaRetire();
-	    if (ZuUnlikely(!saga || epoch != db->m_sagaEpoch ||
-		saga->m_epoch != epoch)) return;
+	    if (ZuUnlikely(!saga || epoch != db->sagaEpoch() ||
+		saga->epoch() != epoch)) return;
 	    if (ZuUnlikely(!ok)) {
 	      db->sagaFail(ZuMv(saga), epoch,
 		ZeEXCEPT(Fatal, "Zdb", "failed to delete saga intent"));
@@ -2797,60 +2800,42 @@ inline void SagaStepComplete<M, Complete>::finish_(
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::cleanup_(
+inline void SagaStepDriver<M, Complete>::cleanup_(
     DB *db, ZmRef<M> saga, Complete complete, unsigned step)
 {
-  if (step < saga->m_locs.length()) {
-    delStep_(db, ZuMv(saga), ZuMv(complete), step, true);
+  if (step < saga->shards.length()) {
+    del_(db, ZuMv(saga), ZuMv(complete), step, true);
     return;
   }
   terminal_(db, ZuMv(saga), ZuMv(complete), true);
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::abandon_(DB *db, ZmRef<M> saga)
+inline void SagaStepDriver<M, Complete>::abandon_(DB *db, ZmRef<M> saga)
 {
   ZiLOG(Error, "Zdb", ([
-    type = ZeString{saga->type()}, id = saga->id(), step = saga->m_step
+    type = ZeString{saga->type()}, id = saga->id(), step = saga->step()
   ](auto &s) {
     s << "saga rollback abandoned: " << type << '/' << id << '/' << step;
   }));
-  if (db->m_sagaState == SagaState::Rebuilding) {
-    for (unsigned step = 0; step < saga->m_locs.length(); ++step) {
+  if (db->sagaState() == SagaState::Rebuilding) {
+    for (unsigned step = 0; step < saga->shards.length(); ++step) {
       auto rec = db->sagaRec(saga, step);
       if (!rec) continue;
-      if (rec->un != nullUN())
-	db->m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
-      db->m_sagaStepHash->delNode(rec);
+      db->sagaDelRec(rec);
     }
   }
   end_(db, saga);
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::end_(DB *db, Saga *saga)
+inline void SagaStepDriver<M, Complete>::end_(DB *db, Saga *saga)
 {
-  bool rebuilding = db->m_sagaState == SagaState::Rebuilding;
-  if (rebuilding) {
-    ZmAssert(db->m_sagaHash);
-    if (db->m_sagaBlocked == saga) db->m_sagaBlocked = nullptr;
-    auto listNode = db->m_sagaQueue.headPtr();
-    ZmAssert(listNode && static_cast<SagaNode__ *>(listNode)->saga == saga);
-    auto hashNode = static_cast<SagaHash::Node *>(listNode);
-    db->m_sagaQueue.delNode(listNode);
-    db->m_sagaHash->delNode(hashNode);
-  } else {
-    ZmAssert(!db->m_sagaHash && db->m_sagaLive);
-    --db->m_sagaLive;
-  }
-  if (rebuilding)
-    db->sagaReplay();
-  else if (db->Engine::stopping() && !db->m_sagaLive)
-    db->run([db]() { db->stop_0(); });
+  db->sagaEnd(saga);
 }
 
 template <typename M, typename Complete>
-inline void SagaStepComplete<M, Complete>::terminal_(
+inline void SagaStepDriver<M, Complete>::terminal_(
     DB *db, ZmRef<M> saga, Complete complete, bool success)
 {
   end_(db, saga);
@@ -2987,7 +2972,7 @@ inline bool SagaDB<Context, Catalog, Complete, M_>::saga(
 	}
 	++m_sagaLive;
 	submit(true);
-	if (ZuUnlikely(saga->m_epoch != m_sagaEpoch ||
+	if (ZuUnlikely(saga->epoch() != m_sagaEpoch ||
 	    m_sagaState != SagaState::Active || !m_appActive)) return;
 	++m_sagaPending;
 	M::run(m_sagaContext.ptr(), ZuMv(saga), ZuMv(complete));
@@ -3332,7 +3317,7 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan
 	Fatal, "Zdb", "duplicate recovered saga reservation"));
       return;
     }
-    saga->m_locs[row.step] = row.shard;
+    saga->shards[row.step] = row.shard;
     ZmRef<SagaRec> rec = new SagaRec{saga, table_, row.un, row.step, row.shard, op};
     m_sagaStepHash->addNode(rec.ptr());
     if (row.un != nullUN())

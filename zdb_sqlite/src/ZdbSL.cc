@@ -991,10 +991,7 @@ void Store::stop_(StopFn fn)
 void Store::stop_1(StopFn fn)
 {
   StoreTbls::CIter i{*m_storeTbls};
-  while (auto tbl = i()) {
-    tbl->finalize_();
-    tbl->m_openState = OpenState::Closed;
-  }
+  while (auto tbl = i()) tbl->stopped();
   if (m_beginStmt) sqlite3_finalize(m_beginStmt);
   if (m_commitStmt) sqlite3_finalize(m_commitStmt);
   m_beginStmt = m_commitStmt = nullptr;
@@ -1026,14 +1023,13 @@ void Store::open(
     }
     auto tbl = m_storeTbls->find(ZuTuple<bool, ZuCSpan>{internal, id});
     if (tbl) {
-      if (tbl->m_openState != OpenState::Closed &&
-          tbl->m_openState != OpenState::Reopen) {
+      if (!tbl->openable()) {
         openFn(OpenResult{ZeEXCEPT(Error, "ZdbSL", ([id = ZeString{id}](auto &s, const auto &) {
           s << "open(" << id << ") failed - already open";
         }))});
         return;
       }
-      tbl->open_(ZuMv(openFn));
+      tbl->open(ZuMv(openFn));
       return;
     }
     try {
@@ -1041,7 +1037,7 @@ void Store::open(
         this, internal, ZuMv(id), m_nShards,
         ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)};
       m_storeTbls->addNode(tbl_);
-      tbl_->open_(ZuMv(openFn));
+      tbl_->open(ZuMv(openFn));
     } catch (const ZeException &e) {
       openFn(OpenResult{e});
     }

@@ -1851,6 +1851,53 @@ private:
     });
   }
 
+  bool up_() const { return m_up.load_(); }
+  unsigned maxJSONBytes_() const { return m_limits.maxJSONBytes; }
+  bool legacySessions_() const { return m_legacySessions; }
+  bool txInvoked_() const {
+    return m_mx && m_mx->invoked(m_txThread);
+  }
+  bool assertTx_() const {
+    ZiAssert(txInvoked_(), "Zmcp", (),
+      "operation outside owner shard", return false);
+    return true;
+  }
+  Server_::ContextRef openStreamContext_(const Context &context) {
+    return Server_::openContext(m_impl, StreamTag{}, 0, context);
+  }
+  template <typename Req, typename Request, typename Completion>
+  void tool_(Req *req, const Request &request,
+      const Headers &headers, const Context &context, Completion completion) {
+    m_impl->tool(req, request, headers, context, ZuMv(completion));
+  }
+  template <typename Req, typename Token>
+  void cancelled_(Req *req, Token *token, ZuCSpan reason) {
+    m_impl->cancelled(req, token, reason);
+  }
+  template <typename L>
+  bool postSSE_(L &&l) {
+    if (!m_mx || !m_up.load_()) return false;
+    m_mx->run(ZuFwd<L>(l), m_txThread);
+    return true;
+  }
+  void *stdioContext_() const { return m_stdioContext.ptr(); }
+  Era::T stdioEra_() const { return m_stdioPeer.era(); }
+  template <typename Responder_, typename Emit, typename Tool>
+  bool stdioDispatch_(ZuSpan<char> span,
+      Responder_ &responder, Emit &&emit, Tool &&tool) {
+    return m_stdioPeer.dispatchAsync(
+      span, responder, ZuFwd<Emit>(emit), ZuFwd<Tool>(tool));
+  }
+  template <typename WorkT>
+  void stdioPendingAdd_(const ID &id, WorkT *work) {
+    m_stdioPending.add(Server_::PendingEntry{id, work});
+  }
+  void stdioPendingDel_(const ID &id, const void *work) {
+    auto entry = m_stdioPending.findPtr(id);
+    if (entry && entry->object == work)
+      (void)m_stdioPending.delNode(entry);
+  }
+
   template <typename Link, typename Heap>
   class Work_ : public Heap, public ZmObject {
     using Self = Work_<Link, Heap>;
@@ -1880,13 +1927,13 @@ private:
 	return;
       }
       auto span = ZuSpan<char>{m_body->span()};
-      auto parsed = parse<Catalog>(span, m_server->m_limits.maxJSONBytes);
+      auto parsed = parse<Catalog>(span, m_server->maxJSONBytes_());
       if (!parsed) {
 	failed();
 	return;
       }
       Peer<Catalog> *peer = &m_peer;
-      if (m_server->m_legacySessions) {
+      if (m_server->legacySessions_()) {
 	if (m_meta.sessionID) {
 	  m_session = m_server->session_(m_meta.sessionID);
 	  if (!m_session) {
@@ -1915,16 +1962,14 @@ private:
       m_context = Context{
 	m_server->transportContext_(m_link->session()),
 	m_session ? m_session->context.ptr() : nullptr};
-      m_streamContext = Server_::openContext(
-	m_server->m_impl, StreamTag{}, 0, m_context);
+      m_streamContext = m_server->openStreamContext_(m_context);
       m_context = Context{
 	m_context.transport(), m_context.session(), m_streamContext.ptr()};
       auto emit = [this](auto message) {
 	m_responder.emit(ZuMv(message));
       };
       auto tool = [this](auto *req, const auto &request, auto completion) {
-	m_server->m_impl->tool(
-	  req, request, m_headers, m_context, ZuMv(completion));
+	m_server->tool_(req, request, m_headers, m_context, ZuMv(completion));
       };
       m_link->responseCancel(Zhttp::StreamCancelFn{
 	static_cast<Self *>(this), [](Self *self) {
@@ -1946,15 +1991,13 @@ private:
     }
 
     bool postSSE_() {
-      if (!m_server->m_mx || !m_server->m_up.load_()) return false;
-      m_server->m_mx->run([work = ZmRef(this)]() mutable {
+      return m_server->postSSE_([work = ZmRef(this)]() mutable {
 	if (!work->live_()) return;
 	auto builder = work->m_responder.builder();
 	if (!builder) return;
 	auto stream = builder->data().streamPtr();
 	if (stream) stream->resume_();
-      }, m_server->m_txThread);
-      return true;
+      });
     }
 
     bool discardSSE_(Server_::SSEQueue queue) {
@@ -1989,8 +2032,8 @@ private:
     template <typename Token, typename Res>
     bool completion(
         Responder *, Token *token, ToolReply<Res> reply) {
-      if (!m_generation || !m_server->m_up.load_()) return false;
-      if (m_server->m_mx->invoked(m_server->m_txThread))
+      if (!m_generation || !m_server->up_()) return false;
+      if (m_server->txInvoked_())
 	return complete_(token, ZuMv(reply));
       using Action = Server_::CompleteAction<Token, Res>;
       ZmRef<Action> action = new Action{token, ZuMv(reply)};
@@ -2004,8 +2047,8 @@ private:
     bool progression(
         Responder *, Token *token,
         double value, double total, ZuCSpan message) {
-      if (!m_generation || !m_server->m_up.load_()) return false;
-      if (m_server->m_mx->invoked(m_server->m_txThread))
+      if (!m_generation || !m_server->up_()) return false;
+      if (m_server->txInvoked_())
 	return m_responder.progressTx_(token, value, total, message);
       using Action = Server_::ProgressAction<Token>;
       ZmRef<Action> action = new Action{token, value, total, message};
@@ -2022,8 +2065,8 @@ private:
     bool logging(
         Responder *, Token *token,
         ZuCSpan level, ZuCSpan data, ZuCSpan logger) {
-      if (!m_generation || !m_server->m_up.load_()) return false;
-      if (m_server->m_mx->invoked(m_server->m_txThread))
+      if (!m_generation || !m_server->up_()) return false;
+      if (m_server->txInvoked_())
 	return m_responder.logTx_(token, level, data, logger);
       using Action = Server_::LogAction<Token>;
       ZmRef<Action> action = new Action{token, level, data, logger};
@@ -2038,7 +2081,7 @@ private:
 
     template <typename Req, typename Token>
     void cancelled(Req *req, Token *token, ZuCSpan reason) {
-      m_server->m_impl->cancelled(req, token, reason);
+      m_server->cancelled_(req, token, reason);
     }
 
     void failed() {
@@ -2058,8 +2101,7 @@ private:
     }
 
     void responseCancelled_() {
-      ZiAssert(m_server->m_mx->invoked(m_server->m_txThread), "Zmcp", (),
-	"HTTP response cancellation outside owner shard", return);
+      if (!m_server->assertTx_()) return;
       if (m_closed || !m_link) return;
       ZmRef<Self> self{this};
       m_link = nullptr;
@@ -2075,8 +2117,7 @@ private:
     }
 
     void responseClosed_() {
-      ZiAssert(m_server->m_mx->invoked(m_server->m_txThread), "Zmcp", (),
-	"HTTP response close outside owner shard", return);
+      if (!m_server->assertTx_()) return;
       if (m_closed) return;
       ZmRef<Self> self{this};
       if (!m_session) m_responder.cancelAll("stream closed");
@@ -2189,24 +2230,23 @@ private:
 
   private:
     void run__() {
-      m_context = Context{nullptr, m_server->m_stdioContext.ptr()};
-      m_streamContext = Server_::openContext(
-	m_server->m_impl, StreamTag{}, 0, m_context);
+      m_context = Context{nullptr, m_server->stdioContext_()};
+      m_streamContext = m_server->openStreamContext_(m_context);
       m_context = Context{
 	nullptr, m_context.session(), m_streamContext.ptr()};
       auto span = ZuSpan<char>{m_body->span()};
       m_responder.era(
-	m_server->m_stdioPeer.era() == Era::Legacy ?
+	m_server->stdioEra_() == Era::Legacy ?
 	  Era::Legacy : Era::Modern);
       auto emit = [this](auto message) {
 	m_responder.emit(ZuMv(message));
       };
       auto tool = [this](auto *req, const auto &request, auto completion) {
 	Headers headers;
-	m_server->m_impl->tool(
+	m_server->tool_(
 	  req, request, headers, m_context, ZuMv(completion));
       };
-      if (!m_server->m_stdioPeer.dispatchAsync(
+      if (!m_server->stdioDispatch_(
 	  span, m_responder, emit, tool) || m_registrationFailed) {
 	failed();
 	return;
@@ -2229,8 +2269,7 @@ private:
 	return;
       }
       m_requestID = token->id();
-      m_server->m_stdioPending.add(
-        Server_::PendingEntry{m_requestID, this});
+      m_server->stdioPendingAdd_(m_requestID, this);
     }
 
     bool cancel(const ID &id, ZuCSpan reason) {
@@ -2245,7 +2284,7 @@ private:
     bool completion(
 	Responder *, Token *token, ToolReply<Res> reply) {
       if (!live_()) return false;
-      if (m_server->m_mx->invoked(m_server->m_txThread))
+      if (m_server->txInvoked_())
 	return complete_(token, ZuMv(reply));
       using Action = Server_::CompleteAction<Token, Res>;
       ZmRef<Action> action = new Action{token, ZuMv(reply)};
@@ -2260,7 +2299,7 @@ private:
 	Responder *, Token *token,
 	double value, double total, ZuCSpan message) {
       if (!live_()) return false;
-      if (m_server->m_mx->invoked(m_server->m_txThread))
+      if (m_server->txInvoked_())
 	return m_responder.progressTx_(token, value, total, message);
       using Action = Server_::ProgressAction<Token>;
       ZmRef<Action> action = new Action{token, value, total, message};
@@ -2278,7 +2317,7 @@ private:
 	Responder *, Token *token,
 	ZuCSpan level, ZuCSpan data, ZuCSpan logger) {
       if (!live_()) return false;
-      if (m_server->m_mx->invoked(m_server->m_txThread))
+      if (m_server->txInvoked_())
 	return m_responder.logTx_(token, level, data, logger);
       using Action = Server_::LogAction<Token>;
       ZmRef<Action> action = new Action{token, level, data, logger};
@@ -2293,7 +2332,7 @@ private:
 
     template <typename Req, typename Token>
     void cancelled(Req *req, Token *token, ZuCSpan reason) {
-      m_server->m_impl->cancelled(req, token, reason);
+      m_server->cancelled_(req, token, reason);
     }
 
     void failed() {
@@ -2338,9 +2377,7 @@ private:
 
     void pendingDone_() {
       if (m_requestID.absent()) return;
-      auto entry = m_server->m_stdioPending.findPtr(m_requestID);
-      if (entry && entry->object == this)
-	(void)m_server->m_stdioPending.delNode(entry);
+      m_server->stdioPendingDel_(m_requestID, this);
       m_requestID.null();
     }
 
