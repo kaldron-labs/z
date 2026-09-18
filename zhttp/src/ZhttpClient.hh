@@ -53,7 +53,10 @@ struct ClientSessionTxState {
 template <typename Logical, typename Heap = ZuVoid>
 struct ClientH2ClearState_ :
     Heap, ZmObject {
-  ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H2.ClearState">> active;
+  using Active =
+    ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H2.ClearState">>;
+
+  Active	active;
 };
 template <typename Logical>
 using ClientH2ClearStateHeap = ZmHeap<"Zhttp.H2.ClearState",
@@ -488,6 +491,17 @@ public:
 
 private:
   struct ReqOps {
+    using Spans = HeaderSpans<ReqHdrCatalog>;
+
+    Request		*app = nullptr;
+    Spans		spans;
+    ZuBSpan		target;
+    ZuBSpan		authority;
+    uint64_t		produced = 0;
+    Method::T		method = Method::GET;
+    bool		rejectContentLength = false;
+    bool		operationCached = false;
+
     ReqOps(
       Request &app_, ZuBSpan authority_, bool operationCached_ = false,
       Method::T method_ = Method::GET, ZuBSpan target_ = {}) :
@@ -545,14 +559,6 @@ private:
 	app->body(ZuFwd<Emit>(emit));
     }
 
-    Request		*app = nullptr;
-    HeaderSpans<ReqHdrCatalog> spans;
-    ZuBSpan		target;
-    ZuBSpan		authority;
-    uint64_t		produced = 0;
-    Method::T		method = Method::GET;
-    bool		rejectContentLength = false;
-    bool		operationCached = false;
   };
 
   template <bool HasBody, bool Streaming>
@@ -915,7 +921,6 @@ template <typename Link>
 inline auto ClientLogicalID_(const Link *link, long) -> decltype(link->id) {
   return link->id;
 }
-
 
 namespace H2_ {
 
@@ -7333,6 +7338,8 @@ public:
   using DoneFn = Hubs::DoneFn;
   using Pools =
     ZtArray<ZmRef<Pool>, ZtArrayHeapID<"Zhttp.Client.Pools">>;
+  using Idle =
+    ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.Client.Idle">>;
 
 public:
   bool init(
@@ -7530,7 +7537,7 @@ private:
 
   // Tx thread exclusive after start().
   alignas(Zm::CacheLineSize)
-  ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.Client.Idle">> m_idle;
+  Idle		m_idle;
   unsigned	m_idleCount = 0;
 };
 

@@ -401,11 +401,12 @@ struct App {
   };
   using Egresses = ZmHashKV<uint64_t, ZmRef<Egress>,
     ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.EgressIdx">>>;
+  using Ready = ZmQueue<ZmRef<Egress>, ZmQueueHeapID<"Ztc.Hub.Ready">>;
 
   struct LinkState {
     Ztc::HubFrame frame;
     Egresses egresses;
-    ZmQueue<ZmRef<Egress>, ZmQueueHeapID<"Ztc.Hub.Ready">> ready;
+    Ready	ready;
     ZmScheduler::Timer expiry;
     bool sending = false;
     Zws::Opcode::T opcode = Zws::Opcode::Binary;

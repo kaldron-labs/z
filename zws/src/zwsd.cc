@@ -100,7 +100,9 @@ ZiMxParams mxParams()
 
 struct App {
   struct LinkState {
-    ZtArray<uint8_t, ZtArrayHeapID<"zwsd.Message">>	message;
+    using Message = ZtArray<uint8_t, ZtArrayHeapID<"zwsd.Message">>;
+
+    Message					message;
     Zws::Opcode::T					opcode =
       Zws::Opcode::Binary;
   };

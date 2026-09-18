@@ -68,7 +68,10 @@ ZiMxParams mxParams()
 template <typename Profile>
 struct App {
   struct LinkState {
-    ZtArray<uint8_t, ZtArrayHeapID<"Zws.Autobahn.Message">>	message;
+    using Message =
+      ZtArray<uint8_t, ZtArrayHeapID<"Zws.Autobahn.Message">>;
+
+    Message					message;
     Zws::Opcode::T						opcode =
       Zws::Opcode::Binary;
   };

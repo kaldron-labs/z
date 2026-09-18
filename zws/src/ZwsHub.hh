@@ -88,6 +88,7 @@ class ExtendedClientLink :
   using CodecBase =
     Codec<ExtendedClientLink, ExtendedClientLink, false, Ztls::Random>;
   using StateBase = AppLinkState<App>;
+  using Parser = Extended::ClientParser<ExtendedClientLink, Profile>;
 
 public:
   using Rx = typename CodecBase::Rx;
@@ -207,7 +208,7 @@ private:
       *this->app()->app(), *this, Failure::Handshake, 0);
   }
 
-  Extended::ClientParser<ExtendedClientLink, Profile>	m_parser;
+  Parser					m_parser;
   URI							m_uri;
   HandshakeString					m_protocol;
   Zhttp::ConnectedInfo					m_info;
@@ -294,6 +295,7 @@ class ExtendedServerLink :
   using CodecBase =
     Codec<ExtendedServerLink, ExtendedServerLink, true, Ztls::Random>;
   using StateBase = AppLinkState<App>;
+  using Parser = Extended::ServerParser<ExtendedServerLink, Profile>;
 
 public:
   using Rx = typename CodecBase::Rx;
@@ -417,7 +419,7 @@ public:
   void info_(Zhttp::ConnectedInfo info) { m_info = ZuMv(info); }
 
 private:
-  Extended::ServerParser<ExtendedServerLink, Profile>	m_parser;
+  Parser					m_parser;
   HandshakeString					m_protocol;
   Zhttp::ConnectedInfo					m_info;
   bool							m_bound = false;
