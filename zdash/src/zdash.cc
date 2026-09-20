@@ -4,37 +4,34 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
 #include <stdlib.h>
 
 #include <libintl.h>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuArray.hh>
-#include <zlib/ZuPolymorph.hh>
-#include <zlib/ZuByteSwap.hh>
+#include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmScheduler.hh>
-
-#include <zlib/ZiLog.hh>
-
-#include <zlib/ZiMultiplex.hh>
-#include <zlib/ZiRing.hh>
+#include <zlib/ZmRing.hh>
+#include <zlib/ZmHeap.hh>
 
 #include <zlib/ZfCf.hh>
-#include <zlib/ZvRingParams.hh>
-#include <zlib/ZvMxParams.hh>
 #include <zlib/ZfCLI.hh>
-#include <zlib/ZmRing.hh>
+
+#include <zlib/ZiLog.hh>
+#include <zlib/ZiMultiplex.hh>
+
+#include <zlib/ZvRingParams.hh>
+
+#include <zlib/Zws.hh>
+
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcDB.hh>
 #include <zlib/ZtcMsg.hh>
-#include <zlib/Zws.hh>
-
-#include <zlib/ZdfStore.hh>
 
 #include <zlib/ZGtkApp.hh>
 #include <zlib/ZGtkCallback.hh>
@@ -64,54 +61,59 @@ static void usage()
   Zm::exit(1);
 }
 
-void sigint();
+static void sigint();
 
 namespace ZDash {
+
+// Dedicated application shards; the transport uses scheduler threads 1/2.
+enum { RxSID = 3, TxSID = 4, GtkSID = 5 };
+// Amortize clock reads while bounding GTK work; the test burst spans batches.
+enum { RefreshBatch = 16, TestBurst = RefreshBatch * 4 };
 
 struct AppCf {
   ZvRingCf	telRing;
   ZtString<>	gtkGlade = "zdash.glade";
   ZtString<>	gtkStyle;
-  unsigned	gtkRefresh = 1;
-  unsigned	gtkThread = 5;
-  unsigned	queueBytes = QueuedInputMax;
-  unsigned	interval = 1000;
-  unsigned	alertRows = 1000;
   ZtString<>	wssURL;
   ZtString<>	caPath;
   ZtString<>	deviceID;
   ZtString<>	group = "App";
   ZuID		publisherID;
   ZtString<>	filter = "*";
-  bool		test = false; // CLI only; never enabled by a normal config
+  unsigned	gtkRefresh = 1;
+  unsigned	gtkThread = 5;
+  unsigned	queueBytes = QueuedInputMax;
+  unsigned	interval = 1000;
+  unsigned	alertRows = 1000;
   unsigned	testTimeout = 10;
+  bool		test = false; // CLI only; never enabled by a normal config
 };
 
 ZfStruct(, (AppCf, Cf),
-  (((telRing)),						(UDT)),
-  (((gtkGlade)),					(String, "zdash.glade")),
-  (((gtkStyle)),					(String)),
-  (((gtkRefresh), ((Range<1U, 60000U>))),		(UInt32, 1)),
-  (((gtkThread)),					(UInt32, 5)),
+  (((telRing)),					(UDT)),
+  (((gtkGlade)),				(String, "zdash.glade")),
+  (((gtkStyle)),				(String)),
+  (((gtkRefresh), ((Range<1U, 60000U>))),	(UInt32, 1)),
+  (((gtkThread)),				(UInt32, 5)),
   (((queueBytes), ((Range<unsigned(FrameMax), 1U<<28>))),	(UInt32, QueuedInputMax)),
-  (((interval), ((Range<1U, 3600000U>))),		(UInt32, 1000)),
-  (((alertRows), ((Range<1U, 1000000U>))),		(UInt32, 1000)),
+  (((interval), ((Range<1U, 3600000U>))),	(UInt32, 1000)),
+  (((alertRows), ((Range<1U, 1000000U>))),	(UInt32, 1000)),
   (((wssURL)),					(String)),
   (((caPath)),					(String)),
-  (((deviceID)),					(String)),
-  (((group)),						(String, "App")),
-  (((publisherID)),					(String)),
-  (((filter)),						(String, "*")));
+  (((deviceID)),				(String)),
+  (((group)),					(String, "App")),
+  (((publisherID)),				(String)),
+  (((filter)),					(String, "*")));
 
 struct Options {
-  ZtString<> config;
-  ZtString<> wssURL;
-  ZtString<> deviceID;
-  ZtString<> caPath;
-  bool noBrowser = false;
-  bool help = false;
-  bool test = false;
-  unsigned testTimeout = 10;
+  ZtString<>	config;
+  ZtString<>	wssURL;
+  ZtString<>	deviceID;
+  ZtString<>	caPath;
+  unsigned	testTimeout = 10;
+  bool		noBrowser = false;
+  bool		help = false;
+  bool		test = false;
 };
 ZfStruct(, (Options, CLI),
   (((config), (CLI::Long<"config">)), (String)),
@@ -124,849 +126,769 @@ ZfStruct(, (Options, CLI),
   (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 namespace Telemetry {
-  struct Watch {
-    void	*ptr_ = nullptr;
+using TypeList = ZuTypeList<
+  Ztc::HeapTelemetry, Ztc::HashTelemetry, Ztc::ThreadTelemetry,
+  Ztc::MxTelemetry, Ztc::CxnTelemetry, Ztc::QueueTelemetry,
+  Ztc::HubTelemetry, Ztc::LinkTelemetry, Ztc::DBTableTelemetry,
+  Ztc::DBHostTelemetry, Ztc::DBTelemetry, Ztc::AppTelemetry,
+  Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
+using FBTypeList = ZuTypeMap<ZfbType, TypeList>;
 
-    template <typename T> const T *ptr() const {
-      return static_cast<const T *>(ptr_);
-    }
-    template <typename T> T *ptr() {
-      return static_cast<T *>(ptr_);
-    }
-  };
-  static auto Watch_Axor(const Watch &v) { return v.ptr_; }
-  ZmListDeriveT((T), WatchList, T,
-    (ZmListKey<Watch_Axor,
-      ZmListNode<T,
-	ZmListHeapID<"ZDash.Watch", ZmListLock<ZmNoLock>>>>));
+template <typename Data> struct Item__ {
+  static constexpr auto Axor = ZuFieldAxor<Data>();
+  static decltype(auto) telKey(const Data &data) { return Axor(data); }
+  using TelKey = ZuRDecay<decltype(telKey(ZuDeclVal<const Data &>()))>;
+  static int rag(const Data &data) { return data.rag(); }
+};
+template <> struct Item__<Ztc::AppTelemetry> {
+  using TelKey = ZuTuple<ZuCSpan, ZuCSpan, uint64_t>;
+  // Source owns these immutable strings and outlives the item and GTK row.
+  ZuCSpan	publisher_;
+  ZuCSpan	device_;
+  uint64_t	generation_ = 0;
 
-  // display - contains pointer to tree array
-  struct Display_ : public Watch {
-    unsigned		row = 0;
-  };
-  using DispList = WatchList<Display_>;
-  using Display = DispList::Node;
+  void initTelKey(ZuCSpan publisher, ZuCSpan device, uint64_t generation) {
+    publisher_ = publisher;
+    device_ = device;
+    generation_ = generation;
+  }
+  TelKey telKey(const Ztc::AppTelemetry &) const {
+    return {publisher_, device_, generation_};
+  }
+  static int rag(const Ztc::AppTelemetry &data) {
+    return data.rag;
+  }
+};
+template <> struct Item__<Ztc::DBTelemetry> {
+  using TelKey = ZuTuple<const char *>;
+  static TelKey telKey(const Ztc::DBTelemetry &) {
+    return TelKey{"dbenv"};
+  }
+  static int rag(const Ztc::DBTelemetry &) {
+    return Ztc::RAG::Off;
+  }
+};
+template <typename Data_> struct Item_ : public Item__<Data_> {
+  using Base = Item__<Data_>;
+  using Data = Data_;
+  using TelKey = typename Base::TelKey;
 
-  // graph - contains pointer to graph - graph contains field selection
-  struct Graph_ : public Watch { };
-  using GraphList = WatchList<Graph_>;
-  using Graph = GraphList::Node;
+  Data			value;
+  void			*gtkRow_ = nullptr;
 
-  using TypeList = ZuTypeList<
-    Ztc::HeapTelemetry, Ztc::HashTelemetry, Ztc::ThreadTelemetry,
-    Ztc::MxTelemetry, Ztc::CxnTelemetry, Ztc::QueueTelemetry,
-    Ztc::HubTelemetry, Ztc::LinkTelemetry, Ztc::DBTableTelemetry,
-    Ztc::DBHostTelemetry, Ztc::DBTelemetry, Ztc::AppTelemetry,
-    Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
-  using FBTypeList = ZuTypeMap<ZfbType, TypeList>;
+  Item_() = default;
+  template <typename FBType>
+  Item_(FBType *fbo) : value{ZfbStruct::ctor<Data>(fbo)} { }
 
-  template <typename Data> struct Item__ {
-    static constexpr auto Axor = ZuFieldAxor<Data>();
-    static decltype(auto) telKey(const Data &data) { return Axor(data); }
-    using TelKey = ZuRDecay<decltype(telKey(ZuDeclVal<const Data &>()))>;
-    static int rag(const Data &data) { return data.rag(); }
-  };
-  template <> struct Item__<Ztc::AppTelemetry> {
-    using TelKey = ZuTuple<const ZtString<> &, const ZtString<> &, uint64_t>;
-    void initTelKey(ZuCSpan publisher, ZuCSpan device, uint64_t generation) {
-      publisher_ = publisher;
-      device_ = device;
-      generation_ = generation;
-    }
-    TelKey telKey(const Ztc::AppTelemetry &) const {
-      return {publisher_, device_, generation_};
-    }
-    static int rag(const Ztc::AppTelemetry &data) {
-      return data.rag;
-    }
-    ZtString<>	publisher_;
-    ZtString<>	device_;
-    uint64_t	generation_ = 0;
-  };
-  template <> struct Item__<Ztc::DBTelemetry> {
-    using TelKey = ZuTuple<const char *>;
-    static TelKey telKey(const Ztc::DBTelemetry &) {
-      return TelKey{"dbenv"};
-    }
-    static int rag(const Ztc::DBTelemetry &) {
-      return Ztc::RAG::Off;
-    }
-  };
-  template <typename Data_> class Item_ : public Item__<Data_> {
-    using Base = Item__<Data_>;
-
-  public:
-    using Data = Data_;
-    using DataFrame = Zdf::DataFrame<Data, true>;
-    using Writer = typename DataFrame::Writer;
-    using TelKey = typename Base::TelKey;
-
-    Item_(void *link__) : link_{link__} { }
-    template <typename FBType>
-    Item_(void *link__, FBType *fbo) :
-      link_{link__}, value{ZfbStruct::ctor<Data>(fbo)} { }
-
-  private:
-    Item_(const Item_ &) = delete;
-    Item_ &operator =(const Item_ &) = delete;
-    Item_(Item_ &&) = delete;
-    Item_ &operator =(Item_ &&) = delete;
-  public:
-    ~Item_() {
-      if (dataFrame) {
-	ZmBlock<>{}([this](auto wake) {
-	  dataFrame->run([this, wake = ZuMv(wake)]() mutable {
-	    if (dfWriter) dfWriter->stop();
-	    dfWriter = nullptr;
-	    dataFrame->stopWriting(ZuMv(wake));
-	  });
-	});
-      }
-    }
-
-    template <typename Link>
-    Link *link() const { return static_cast<Link *>(link_); }
-
-    template <typename T>
-    T *gtkRow() const { return static_cast<T *>(gtkRow_); }
-    template <typename T>
-    void gtkRow(T *node) { gtkRow_ = node; }
-
-    TelKey telKey() const { return Base::telKey(value); }
-    int rag() const { return Base::rag(value); }
-
-    bool record(ZuCSpan name, Zdf::Store *store, Zdf::Shard shard = 0) {
-      dataFrame = ZmBlock<ZmRef<DataFrame>>{}([store, name, shard](auto wake) {
-	store->template openDF<Data, true, true>(
-	    shard, Zdf::IDString{name}, ZuMv(wake));
-      });
-      if (!dataFrame) return false;
-      dfWriter = ZmBlock<ZmRef<Writer>>{}([this](auto wake) {
-	dataFrame->run([this, wake = ZuMv(wake)]() mutable {
-	  dataFrame->write(ZuMv(wake), []() { });
-	});
-      });
-      return !!dfWriter;
-    }
-
-    void			*link_;
-    Data			value;
-
-    void			*gtkRow_ = nullptr;
-    DispList			dispList;
-    GraphList			graphList;
-
-    ZmRef<DataFrame>		dataFrame;
-    ZmRef<Writer>		dfWriter;
-  };
+  Item_(const Item_ &) = delete;
+  Item_ &operator =(const Item_ &) = delete;
+  Item_(Item_ &&) = delete;
+  Item_ &operator =(Item_ &&) = delete;
 
   template <typename T>
-  static typename T::TelKey itemKey(const T &v) { return v.telKey(); }
-  ZmRBTreeDeriveT((T), ItemTree_, Item_<T>,
-    (ZmRBTreeNode<Item_<T>,
-      ZmRBTreeKey<ZDash::Telemetry::itemKey<Item_<T>>,
-	ZmRBTreeUnique<true,
-	  ZmRBTreeLock<ZmNoLock,
-	    ZmRBTreeHeapID<"ZDash.ItemTree">>>>>));
+  T *gtkRow() const { return static_cast<T *>(gtkRow_); }
   template <typename T>
-  class ItemTree : public ItemTree_<T> {
-  public:
-    using Node = typename ItemTree_<T>::Node;
-    void add(Node *node) { this->addNode(node); }
-    template <typename FBType>
-    Node *lookup(const FBType *fbo) const {
-      return this->findPtr(ZuStructKey(*fbo));
-    }
-  };
-  template <typename T> class ItemSingleton {
-    ItemSingleton(const ItemSingleton &) = delete;
-    ItemSingleton &operator =(const ItemSingleton &) = delete;
-    ItemSingleton(ItemSingleton &&) = delete;
-    ItemSingleton &operator =(ItemSingleton &&) = delete;
-  public:
-    using Node = Item_<T>;
-    ItemSingleton() = default;
-    ~ItemSingleton() { if (m_node) delete m_node; }
-    template <typename FBType>
-    Node *lookup(const FBType *) const { return m_node; }
-    void add(Node *node) { if (m_node) delete m_node; m_node = node; }
-  private:
-    Node	*m_node = nullptr;
-  };
-  class AlertArray {
-    AlertArray(const AlertArray &) = delete;
-    AlertArray &operator =(const AlertArray &) = delete;
-    AlertArray(AlertArray &&) = delete;
-    AlertArray &operator =(AlertArray &&) = delete;
-  public:
-    using T = Ztc::AlertTelemetry;
-    using Node = T;
-    AlertArray() = default;
-    ~AlertArray() = default;
-    ZtArray<T>	data;
-  };
+  void gtkRow(T *node) { gtkRow_ = node; }
 
-  template <typename U> struct Container_ { // default
-    using T = ItemTree<U>;
-  };
-  template <> struct Container_<Ztc::AppTelemetry> {
-    using T = ItemSingleton<Ztc::AppTelemetry>;
-  };
-  template <> struct Container_<Ztc::DBTelemetry> {
-    using T = ItemSingleton<Ztc::DBTelemetry>;
-  };
-  template <> struct Container_<Ztc::AlertTelemetry> {
-    using T = AlertArray;
-  };
-  template <typename U>
-  using Container = typename Container_<U>::T;
+  TelKey telKey() const { return Base::telKey(value); }
+  int rag() const { return Base::rag(value); }
 
-  using ContainerTL = ZuTypeMap<Container, TypeList>;
-  using Containers = ZuTypeApply<ZuTuple, ContainerTL>;
+};
 
-  template <typename T> using Item = typename Container<T>::Node;
-}
+template <typename T, typename Heap = ZuVoid>
+struct SingletonItem_ : public Heap, public Item_<T> {
+  using Item_<T>::Item_;
+};
+template <typename T>
+using SingletonItem_Heap = ZmHeap<"ZDash.Singleton", SingletonItem_<T>>;
+template <typename T>
+ZuDerive(SingletonItem, (SingletonItem_<T, SingletonItem_Heap<T>>));
+
+template <typename T>
+static typename T::TelKey itemKey(const T &v) { return v.telKey(); }
+ZmRBTreeDeriveT((T), ItemTree_, Item_<T>,
+  (ZmRBTreeNode<Item_<T>,
+    ZmRBTreeKey<ZDash::Telemetry::itemKey<Item_<T>>,
+      ZmRBTreeUnique<true,
+	ZmRBTreeLock<ZmNoLock,
+	  ZmRBTreeHeapID<"ZDash.ItemTree">>>>>));
+template <typename T>
+class ItemTree : public ItemTree_<T> {
+public:
+  using Node = typename ItemTree_<T>::Node;
+  void add(Node *node) { this->addNode(node); }
+  template <typename FBType>
+  Node *lookup(const FBType *fbo) const {
+    return this->findPtr(ZuStructKey(*fbo));
+  }
+};
+template <typename T> class ItemSingleton {
+  ItemSingleton(const ItemSingleton &) = delete;
+  ItemSingleton &operator =(const ItemSingleton &) = delete;
+  ItemSingleton(ItemSingleton &&) = delete;
+  ItemSingleton &operator =(ItemSingleton &&) = delete;
+public:
+  using Node = SingletonItem<T>;
+  ItemSingleton() = default;
+  ~ItemSingleton() { if (m_node) delete m_node; }
+  template <typename FBType>
+  Node *lookup(const FBType *) const { return m_node; }
+  Node *get() const { return m_node; }
+  void add(Node *node) { if (m_node) delete m_node; m_node = node; }
+private:
+  Node	*m_node = nullptr;
+};
+struct AlertArray {
+  using T = Ztc::AlertTelemetry;
+  using Node = T;
+  using Data = ZtArray<T, ZtArrayHeapID<"ZDash.Alert">>;
+  Data	data;
+
+  AlertArray(const AlertArray &) = delete;
+  AlertArray &operator =(const AlertArray &) = delete;
+  AlertArray(AlertArray &&) = delete;
+  AlertArray &operator =(AlertArray &&) = delete;
+  AlertArray() = default;
+  ~AlertArray() = default;
+};
+
+template <typename U> struct Container_ { // default
+  using T = ItemTree<U>;
+};
+template <> struct Container_<Ztc::AppTelemetry> {
+  using T = ItemSingleton<Ztc::AppTelemetry>;
+};
+template <> struct Container_<Ztc::DBTelemetry> {
+  using T = ItemSingleton<Ztc::DBTelemetry>;
+};
+template <> struct Container_<Ztc::AlertTelemetry> {
+  using T = AlertArray;
+};
+template <typename U>
+using Container = typename Container_<U>::T;
+
+using ContainerTL = ZuTypeMap<Container, TypeList>;
+using Containers = ZuTypeApply<ZuTuple, ContainerTL>;
+
+template <typename T> using Item = typename Container<T>::Node;
+} // Telemetry
 
 namespace GtkTree {
-  template <typename Impl, typename Item>
-  class Row {
-    auto impl() const { return static_cast<const Impl *>(this); }
-    auto impl() { return static_cast<Impl *>(this); }
+template <typename Impl, typename Item>
+struct Row {
+  Item	*item = nullptr;
 
-  public:
-    Item	*item = nullptr;
+  auto impl() const { return static_cast<const Impl *>(this); }
+  auto impl() { return static_cast<Impl *>(this); }
 
-    Row() = default;
-    Row(Item *item_) : item{item_} { init_(); }
-    void init(Item *item_) { item = item_; init_(); }
-    void init_() { item->gtkRow(impl()); }
+  Row() = default;
+  Row(Item *item_) : item{item_} { init_(); }
+  void init(Item *item_) { item = item_; init_(); }
+  void init_() { item->gtkRow(impl()); }
 
-    using TelKey = typename Item::TelKey;
-    TelKey telKey() const { return item->telKey(); }
-    int rag() const { return item->rag(); }
-    int cmp(const Impl &v) const {
-      return item->telKey().cmp(v.telKey());
-    }
-  };
-
-  template <unsigned Depth, typename Item>
-  struct Leaf :
-      public Row<Leaf<Depth, Item>, Item>,
-      public ZGtk::TreeHierarchy::Leaf<Leaf<Depth, Item>, Depth> {
-    Leaf() = default;
-    Leaf(Item *item) : Row<Leaf, Item>{item} { }
-    using Row<Leaf, Item>::cmp;
-  };
-
-  template <unsigned Depth, typename Item, typename Child>
-  struct Parent :
-      public Row<Parent<Depth, Item, Child>, Item>,
-      public ZGtk::TreeHierarchy::Parent<
-	Parent<Depth, Item, Child>, Depth, Child> {
-    Parent() = default;
-    Parent(Item *item) : Row<Parent, Item>{item} { }
-    using Row<Parent, Item>::cmp;
-    using Base = ZGtk::TreeHierarchy::Parent<Parent, Depth, Child>;
-    using Base::add;
-    using Base::del;
-  };
-
-  template <unsigned Depth, typename Item, typename Tuple>
-  struct Branch :
-      public Row<Branch<Depth, Item, Tuple>, Item>,
-      public ZGtk::TreeHierarchy::Branch<
-	Branch<Depth, Item, Tuple>, Depth, Tuple> {
-    Branch() = default; 
-    Branch(Item *item) : Row<Branch, Item>{item} { }
-    using Row<Branch, Item>::cmp;
-    using Base = ZGtk::TreeHierarchy::Branch<Branch, Depth, Tuple>;
-    using Base::add;
-    using Base::del;
-  };
-  template <typename TelKey_>
-  struct BranchChild {
-    using TelKey = TelKey_;
-    static int rag() { return Ztc::RAG::Off; }
-  };
-
-  template <typename T> using TelItem = Telemetry::Item<T>;
-
-  using Heap = Leaf<3, TelItem<Ztc::HeapTelemetry>>;
-  using HashTbl = Leaf<3, TelItem<Ztc::HashTelemetry>>;
-  using Thread = Leaf<3, TelItem<Ztc::ThreadTelemetry>>;
-  using Socket = Leaf<4, TelItem<Ztc::CxnTelemetry>>;
-  using Mx = Parent<3, TelItem<Ztc::MxTelemetry>, Socket>;
-  using Queue = Leaf<3, TelItem<Ztc::QueueTelemetry>>;
-  using Pool = Leaf<3, TelItem<Ztc::PoolTelemetry>>;
-  using Link = Leaf<4, TelItem<Ztc::LinkTelemetry>>;
-  using Engine = Parent<3, TelItem<Ztc::HubTelemetry>, Link>;
-  using DBHost = Leaf<4, TelItem<Ztc::DBHostTelemetry>>;
-  using DBTable = Leaf<4, TelItem<Ztc::DBTableTelemetry>>;
-
-  // DBTable hosts
-  struct DBHosts : public BranchChild<ZuTuple<const char *>> {
-    static auto telKey() { return TelKey{"hosts"}; }
-  };
-  using DBHostParent = Parent<3, DBHosts, DBHost>;
-  // DBTables
-  struct DBTables : public BranchChild<ZuTuple<const char *>> {
-    static auto telKey() { return TelKey{"tables"}; }
-  };
-  using DBTableParent = Parent<3, DBTables, DBTable>;
-
-  // heaps
-  struct Heaps :
-      public BranchChild<ZuTuple<const char *, const char *, const char *>> {
-    static auto telKey() { return TelKey{"heaps", "partition", "size"}; }
-  };
-  using HeapParent = Parent<2, Heaps, Heap>;
-  // hashTbls
-  struct HashTbls : public BranchChild<ZuTuple<const char *, const char *>> {
-    static auto telKey() { return TelKey{"hashTbls", "addr"}; }
-  };
-  using HashTblParent = Parent<2, HashTbls, HashTbl>;
-  // threads
-  struct Threads : public BranchChild<ZuTuple<const char *>> {
-    static auto telKey() { return TelKey{"threads"}; }
-  };
-  using ThreadParent = Parent<2, Threads, Thread>;
-  // multiplexers
-  struct Mxs : public BranchChild<ZuTuple<const char *>> {
-    static auto telKey() { return TelKey{"multiplexers"}; }
-  };
-  using MxParent = Parent<2, Mxs, Mx>;
-  // queues
-  struct Queues : public BranchChild<ZuTuple<const char *, const char *>> {
-    static auto telKey() { return TelKey{"queues", "type"}; }
-  };
-  using QueueParent = Parent<2, Queues, Queue>;
-  struct Pools : public BranchChild<ZuTuple<const char *>> {
-    static auto telKey() { return TelKey{"pools"}; }
-  };
-  using PoolParent = Parent<2, Pools, Pool>;
-  // engines
-  struct Engines : public BranchChild<ZuTuple<const char *>> {
-    static auto telKey() { return TelKey{"engines"}; }
-  };
-  using EngineParent = Parent<2, Engines, Engine>;
-
-  // db
-  ZuDeclTuple(DBTuple,
-      (DBHostParent, hosts),
-      (DBTableParent, tables));
-  using DB = Branch<2, TelItem<Ztc::DBTelemetry>, DBTuple>;
-  // applications
-  ZuDeclTuple(AppTuple,
-      (HeapParent, heaps),
-      (HashTblParent, hashTbls),
-      (ThreadParent, threads),
-      (MxParent, mxs),
-      (QueueParent, queues),
-      (PoolParent, pools),
-      (EngineParent, engines),
-      (DB, db));
-  using App = Branch<1, TelItem<Ztc::AppTelemetry>, AppTuple>;
-
-  struct Root : public ZGtk::TreeHierarchy::Parent<Root, 0, App> { };
-
-  // map telemetry items to corresponding tree nodes
-  inline Heap *row(TelItem<Ztc::HeapTelemetry> *item) {
-    return item->template gtkRow<Heap>();
+  using TelKey = typename Item::TelKey;
+  TelKey telKey() const { return item->telKey(); }
+  int rag() const { return item->rag(); }
+  int cmp(const Impl &v) const {
+    return item->telKey().cmp(v.telKey());
   }
-  inline HashTbl *row(TelItem<Ztc::HashTelemetry> *item) {
-    return item->template gtkRow<HashTbl>();
-  }
-  inline Thread *row(TelItem<Ztc::ThreadTelemetry> *item) {
-    return item->template gtkRow<Thread>();
-  }
-  inline Mx *row(TelItem<Ztc::MxTelemetry> *item) {
-    return item->template gtkRow<Mx>();
-  }
-  inline Socket *row(TelItem<Ztc::CxnTelemetry> *item) {
-    return item->template gtkRow<Socket>();
-  }
-  inline Queue *row(TelItem<Ztc::QueueTelemetry> *item) {
-    return item->template gtkRow<Queue>();
-  }
-  inline Pool *row(TelItem<Ztc::PoolTelemetry> *item) {
-    return item->template gtkRow<Pool>();
-  }
-  inline Engine *row(TelItem<Ztc::HubTelemetry> *item) {
-    return item->template gtkRow<Engine>();
-  }
-  inline Link *row(TelItem<Ztc::LinkTelemetry> *item) {
-    return item->template gtkRow<Link>();
-  }
-  inline DBTable *row(TelItem<Ztc::DBTableTelemetry> *item) {
-    return item->template gtkRow<DBTable>();
-  }
-  inline DBHost *row(TelItem<Ztc::DBHostTelemetry> *item) {
-    return item->template gtkRow<DBHost>();
-  }
-  inline DB *row(TelItem<Ztc::DBTelemetry> *item) {
-    return item->template gtkRow<DB>();
-  }
-  inline App *row(TelItem<Ztc::AppTelemetry> *item) {
-    return item->template gtkRow<App>();
+};
+
+template <unsigned Depth, typename Item> struct Leaf;
+template <unsigned Depth, typename Item, typename Heap = ZuVoid>
+struct Leaf_ : public Heap,
+    public Row<Leaf<Depth, Item>, Item>,
+    public ZGtk::TreeHierarchy::Leaf<Leaf<Depth, Item>, Depth> {
+  Leaf_() = default;
+  Leaf_(Item *item) : Row<Leaf<Depth, Item>, Item>{item} { }
+  using Row<Leaf<Depth, Item>, Item>::cmp;
+};
+template <unsigned Depth, typename Item>
+using Leaf_Heap = ZmHeap<"ZDash.Leaf", Leaf_<Depth, Item>>;
+template <unsigned Depth, typename Item>
+ZuDerive(Leaf, (Leaf_<Depth, Item, Leaf_Heap<Depth, Item>>));
+
+template <unsigned Depth, typename Item, typename Child> struct Parent;
+template <unsigned Depth, typename Item, typename Child,
+  typename Heap = ZuVoid>
+struct Parent_ : public Heap,
+    public Row<Parent<Depth, Item, Child>, Item>,
+    public ZGtk::TreeHierarchy::Parent<
+      Parent<Depth, Item, Child>, Depth, Child> {
+  Parent_() = default;
+  Parent_(Item *item) : Row<Parent<Depth, Item, Child>, Item>{item} { }
+  using Row<Parent<Depth, Item, Child>, Item>::cmp;
+  using Base = ZGtk::TreeHierarchy::Parent<Parent<Depth, Item, Child>, Depth, Child>;
+  using Base::add;
+  using Base::del;
+};
+template <unsigned Depth, typename Item, typename Child>
+using Parent_Heap = ZmHeap<"ZDash.Parent", Parent_<Depth, Item, Child>>;
+template <unsigned Depth, typename Item, typename Child>
+ZuDerive(Parent, (Parent_<Depth, Item, Child, Parent_Heap<Depth, Item, Child>>));
+
+template <unsigned Depth, typename Item, typename Tuple> struct Branch;
+template <unsigned Depth, typename Item, typename Tuple,
+  typename Heap = ZuVoid>
+struct Branch_ : public Heap,
+    public Row<Branch<Depth, Item, Tuple>, Item>,
+    public ZGtk::TreeHierarchy::Branch<
+      Branch<Depth, Item, Tuple>, Depth, Tuple> {
+  Branch_() = default;
+  Branch_(Item *item) : Row<Branch<Depth, Item, Tuple>, Item>{item} { }
+  using Row<Branch<Depth, Item, Tuple>, Item>::cmp;
+  using Base = ZGtk::TreeHierarchy::Branch<Branch<Depth, Item, Tuple>, Depth, Tuple>;
+  using Base::add;
+  using Base::del;
+};
+template <unsigned Depth, typename Item, typename Tuple>
+using Branch_Heap = ZmHeap<"ZDash.Branch", Branch_<Depth, Item, Tuple>>;
+template <unsigned Depth, typename Item, typename Tuple>
+ZuDerive(Branch, (Branch_<Depth, Item, Tuple, Branch_Heap<Depth, Item, Tuple>>));
+template <typename TelKey_>
+struct BranchChild {
+  using TelKey = TelKey_;
+  static int rag() { return Ztc::RAG::Off; }
+};
+
+template <typename T> using TelItem = Telemetry::Item<T>;
+
+using Heap = Leaf<3, TelItem<Ztc::HeapTelemetry>>;
+using HashTbl = Leaf<3, TelItem<Ztc::HashTelemetry>>;
+using Thread = Leaf<3, TelItem<Ztc::ThreadTelemetry>>;
+using Socket = Leaf<4, TelItem<Ztc::CxnTelemetry>>;
+using Mx = Parent<3, TelItem<Ztc::MxTelemetry>, Socket>;
+using Queue = Leaf<3, TelItem<Ztc::QueueTelemetry>>;
+using Pool = Leaf<3, TelItem<Ztc::PoolTelemetry>>;
+using Link = Leaf<4, TelItem<Ztc::LinkTelemetry>>;
+using Engine = Parent<3, TelItem<Ztc::HubTelemetry>, Link>;
+using DBHost = Leaf<4, TelItem<Ztc::DBHostTelemetry>>;
+using DBTable = Leaf<4, TelItem<Ztc::DBTableTelemetry>>;
+
+// DBTable hosts
+struct DBHosts : public BranchChild<ZuTuple<const char *>> {
+  static auto telKey() { return TelKey{"hosts"}; }
+};
+using DBHostParent = Parent<3, DBHosts, DBHost>;
+// DBTables
+struct DBTables : public BranchChild<ZuTuple<const char *>> {
+  static auto telKey() { return TelKey{"tables"}; }
+};
+using DBTableParent = Parent<3, DBTables, DBTable>;
+
+// heaps
+struct Heaps :
+    public BranchChild<ZuTuple<const char *, const char *, const char *>> {
+  static auto telKey() { return TelKey{"heaps", "partition", "size"}; }
+};
+using HeapParent = Parent<2, Heaps, Heap>;
+// hashTbls
+struct HashTbls : public BranchChild<ZuTuple<const char *, const char *>> {
+  static auto telKey() { return TelKey{"hashTbls", "addr"}; }
+};
+using HashTblParent = Parent<2, HashTbls, HashTbl>;
+// threads
+struct Threads : public BranchChild<ZuTuple<const char *>> {
+  static auto telKey() { return TelKey{"threads"}; }
+};
+using ThreadParent = Parent<2, Threads, Thread>;
+// multiplexers
+struct Mxs : public BranchChild<ZuTuple<const char *>> {
+  static auto telKey() { return TelKey{"multiplexers"}; }
+};
+using MxParent = Parent<2, Mxs, Mx>;
+// queues
+struct Queues : public BranchChild<ZuTuple<const char *, const char *>> {
+  static auto telKey() { return TelKey{"queues", "type"}; }
+};
+using QueueParent = Parent<2, Queues, Queue>;
+struct Pools : public BranchChild<ZuTuple<const char *>> {
+  static auto telKey() { return TelKey{"pools"}; }
+};
+using PoolParent = Parent<2, Pools, Pool>;
+// engines
+struct Engines : public BranchChild<ZuTuple<const char *>> {
+  static auto telKey() { return TelKey{"engines"}; }
+};
+using EngineParent = Parent<2, Engines, Engine>;
+
+// db
+ZuDeclTuple(DBTuple,
+    (DBHostParent, hosts),
+    (DBTableParent, tables));
+using DB = Branch<2, TelItem<Ztc::DBTelemetry>, DBTuple>;
+// applications
+ZuDeclTuple(AppTuple,
+    (HeapParent, heaps),
+    (HashTblParent, hashTbls),
+    (ThreadParent, threads),
+    (MxParent, mxs),
+    (QueueParent, queues),
+    (PoolParent, pools),
+    (EngineParent, engines),
+    (DB, db));
+using App = Branch<1, TelItem<Ztc::AppTelemetry>, AppTuple>;
+
+struct Root : public ZGtk::TreeHierarchy::Parent<Root, 0, App> { };
+
+// map telemetry items to corresponding tree nodes
+using RowTypes = ZuTypeList<
+  Heap, HashTbl, Thread, Mx, Socket, Queue, Engine, Link,
+  DBTable, DBHost, DB, App, void, Pool>;
+ZuAssert(RowTypes::N == Telemetry::TypeList::N);
+template <typename Item>
+auto row(Item *item) {
+  using T = ZuType<
+    ZuTypeIndex<typename Item::Data, Telemetry::TypeList>{}, RowTypes>;
+  return item->template gtkRow<T>();
+}
+
+enum { Depth = 5 };
+
+// (*) - branch
+using Iter = ZuUnion<
+  // Root *,
+  App *,		// [app]
+
+  // app children
+  HeapParent *,	// app->heaps (*)
+  HashTblParent *,	// app->hashTbls (*)
+  ThreadParent *,	// app->threads (*)
+  MxParent *,		// app->mxs (*)
+  QueueParent *,	// app->queues (*)
+  PoolParent *,	// app->pools (*)
+  EngineParent *,	// app->engines (*)
+  DB *,		// app->db (*)
+
+  // app grandchildren
+  Heap *,		// app->heaps->[heap]
+  HashTbl *,		// app->hashTbls->[hashTbl]
+  Thread *,		// app->threads->[thread]
+  Mx *,		// app->mxs->[mx]
+  Queue *,		// app->queues->[queue]
+  Pool *,		// app->pools->[pool]
+  Engine *,		// app->engines->[engine]
+
+  // app great-grandchildren
+  Socket *,		// app->mxs->mx->[socket]
+  Link *,		// app->engines->engine->[link]
+
+  // DB children
+  DBHostParent *,	// app->db->hosts (*)
+  DBTableParent *,	// app->db->tables (*)
+
+  // DB grandchildren
+  DBHost *,		// app->db->hosts->[host]
+  DBTable *>;		// app->db->tables->[table]
+
+class Model : public ZGtk::TreeHierarchy::Model<Model, Iter, Depth> {
+  using Base = ZGtk::TreeHierarchy::Model<Model, Iter, Depth>;
+public:
+  enum { RAGCol = 0, IDCol0, IDCol1, IDCol2, NCols };
+
+  static Model *ctor() {
+    auto model = Base::ctor();
+    // Release GObject's notification data as well as the C++ tree members.
+    G_OBJECT_GET_CLASS(model)->finalize = [](GObject *object) {
+      auto parent = G_OBJECT_CLASS(
+	g_type_class_peek_parent(G_OBJECT_GET_CLASS(object)));
+      reinterpret_cast<Model *>(object)->~Model();
+      parent->finalize(object);
+    };
+    return model;
   }
 
-  enum { Depth = 5 };
+  // root()
+  Root *root() { return &m_root; }
 
-  // (*) - branch
-  using Iter = ZuUnion<
-    // Root *,
-    App *,		// [app]
-
-    // app children
-    HeapParent *,	// app->heaps (*)
-    HashTblParent *,	// app->hashTbls (*)
-    ThreadParent *,	// app->threads (*)
-    MxParent *,		// app->mxs (*)
-    QueueParent *,	// app->queues (*)
-    PoolParent *,	// app->pools (*)
-    EngineParent *,	// app->engines (*)
-    DB *,		// app->db (*)
-
-    // app grandchildren
-    Heap *,		// app->heaps->[heap]
-    HashTbl *,		// app->hashTbls->[hashTbl]
-    Thread *,		// app->threads->[thread]
-    Mx *,		// app->mxs->[mx]
-    Queue *,		// app->queues->[queue]
-    Pool *,		// app->pools->[pool]
-    Engine *,		// app->engines->[engine]
-
-    // app great-grandchildren
-    Socket *,		// app->mxs->mx->[socket]
-    Link *,		// app->engines->engine->[link]
-
-    // DB children
-    DBHostParent *,	// app->db->hosts (*)
-    DBTableParent *,	// app->db->tables (*)
-
-    // DB grandchildren
-    DBHost *,		// app->db->hosts->[host]
-    DBTable *>;		// app->db->tables->[table]
-
-  class Model : public ZGtk::TreeHierarchy::Model<Model, Iter, Depth> {
-    using Base = ZGtk::TreeHierarchy::Model<Model, Iter, Depth>;
-  public:
-    enum { RAGCol = 0, IDCol0, IDCol1, IDCol2, NCols };
-
-    static Model *ctor() {
-      auto model = Base::ctor();
-      // Release GObject's notification data as well as the C++ tree members.
-      G_OBJECT_GET_CLASS(model)->finalize = [](GObject *object) {
-	auto parent = G_OBJECT_CLASS(
-	  g_type_class_peek_parent(G_OBJECT_GET_CLASS(object)));
-	reinterpret_cast<Model *>(object)->~Model();
-	parent->finalize(object);
-      };
-      return model;
-    }
-
-    // root()
-    Root *root() { return &m_root; }
-
-    // Construct current ZuUnion iterators locally; retain ZGtk's tree storage.
-    gboolean get_iter(GtkTreeIter *iter, GtkTreePath *path) {
-      auto depth = gtk_tree_path_get_depth(path);
-      if (depth <= 0 || depth > Depth) return false;
-      return m_root.descend(gtk_tree_path_get_indices(path), depth,
-	[iter](auto ptr) {
-	  using T = ZuDecay<decltype(*ptr)>;
-	  new (iter) Iter{const_cast<T *>(ptr)};
-	});
-    }
-    GtkTreePath *get_path(GtkTreeIter *iter) {
-      gint indices[Depth];
-      unsigned depth = 0;
-      reinterpret_cast<Iter *>(iter)->cdispatch(
-	[&indices, &depth](auto, auto ptr) {
-	  depth = ZuDecay<decltype(*ptr)>::Depth;
-	  ptr->template ascend<Model>(indices);
-	});
-      return gtk_tree_path_new_from_indicesv(indices, depth);
-    }
-    gboolean iter_nth_child(
-	GtkTreeIter *iter, GtkTreeIter *parent, gint i) {
-      auto child = [iter](auto ptr) {
+  // Construct current ZuUnion iterators locally; retain ZGtk's tree storage.
+  gboolean get_iter(GtkTreeIter *iter, GtkTreePath *path) {
+    auto depth = gtk_tree_path_get_depth(path);
+    if (depth <= 0 || depth > Depth) return false;
+    return m_root.descend(gtk_tree_path_get_indices(path), depth,
+      [iter](auto ptr) {
 	using T = ZuDecay<decltype(*ptr)>;
 	new (iter) Iter{const_cast<T *>(ptr)};
-      };
-      if (!parent) return m_root.child(i, child);
-      return reinterpret_cast<Iter *>(parent)->cdispatch(
-	[i, &child](auto, auto ptr) { return ptr->child(i, child); });
-    }
-    gboolean iter_children(GtkTreeIter *iter, GtkTreeIter *parent) {
-      return iter_nth_child(iter, parent, 0);
-    }
-    gboolean iter_parent(GtkTreeIter *iter, GtkTreeIter *child) {
-      return reinterpret_cast<Iter *>(child)->cdispatch(
-	[iter](auto, auto ptr) {
-	  auto parent = ptr->template parent<Model>();
-	  if (!parent) return false;
-	  new (iter) Iter{parent};
-	  return true;
-	});
-    }
-    template <typename Row>
-    void updated(Row *row) {
-      GtkTreeIter iter;
-      new (&iter) Iter{row};
-      auto path = get_path(&iter);
-      gtk_tree_model_row_changed(GTK_TREE_MODEL(this), path, &iter);
-      gtk_tree_path_free(path);
-    }
-    template <typename Row>
-    void del(Row *row) {
-      GtkTreeIter iter;
-      new (&iter) Iter{row};
-      auto path = get_path(&iter);
-      if constexpr (Row::Depth == 1) m_root.del(row);
-      else row->template parent<Model>()->del(row);
-      gtk_tree_model_row_deleted(GTK_TREE_MODEL(this), path);
-      gtk_tree_path_free(path);
-    }
-
-    // parent() - child->parent type map
-    template <typename T>
-    static ZuSame<T, App, Root> *parent(void *ptr) {
-      return static_cast<Root *>(ptr);
-    }
-    template <typename T>
-    static ZuIfT<
-	ZuIsSame<T, HeapParent>{} ||
-	ZuIsSame<T, HashTblParent>{} ||
-	ZuIsSame<T, ThreadParent>{} ||
-	ZuIsSame<T, MxParent>{} ||
-	ZuIsSame<T, QueueParent>{} ||
-	ZuIsSame<T, PoolParent>{} ||
-	ZuIsSame<T, EngineParent>{} ||
-	ZuIsSame<T, DB>{}, App> *parent(void *ptr) {
-      return static_cast<App *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Heap, HeapParent> *parent(void *ptr) {
-      return static_cast<HeapParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, HashTbl, HashTblParent> *parent(void *ptr) {
-      return static_cast<HashTblParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Thread, ThreadParent> *parent(void *ptr) {
-      return static_cast<ThreadParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Mx, MxParent> *parent(void *ptr) {
-      return static_cast<MxParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Queue, QueueParent> *parent(void *ptr) {
-      return static_cast<QueueParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Pool, PoolParent> *parent(void *ptr) {
-      return static_cast<PoolParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Engine, EngineParent> *parent(void *ptr) {
-      return static_cast<EngineParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Socket, Mx> *parent(void *ptr) {
-      return static_cast<Mx *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, Link, Engine> *parent(void *ptr) {
-      return static_cast<Engine *>(ptr);
-    }
-    template <typename T>
-    static ZuIfT<
-	ZuIsSame<T, DBHostParent>{} ||
-	ZuIsSame<T, DBTableParent>{}, DB> *parent(void *ptr) {
-      return static_cast<DB *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, DBHost, DBHostParent> *parent(void *ptr) {
-      return static_cast<DBHostParent *>(ptr);
-    }
-    template <typename T>
-    static ZuSame<T, DBTable, DBTableParent> *parent(void *ptr) {
-      return static_cast<DBTableParent *>(ptr);
-    }
-
-    // key printing
-    template <typename Impl, typename Key>
-    struct KeyPrint_ {
-      auto impl() const { return static_cast<const Impl *>(this); }
-      auto impl() { return static_cast<Impl *>(this); }
-
-      Key key;
-
-      template <typename Key_>
-      KeyPrint_(Key_ &&key_) : key{ZuFwd<Key_>(key_)} { }
-      auto p0() const { return key.template p<0>(); }
-      template <unsigned N = Key::N, ZuIfT<(N <= 1), int> = 0>
-      auto p1() const { return ""; }
-      template <unsigned N = Key::N, ZuIfT<(N > 1), int> = 0>
-      auto p1() const { return key.template p<1>(); }
-      template <unsigned N = Key::N, ZuIfT<(N <= 2), int> = 0>
-      auto p2() const { return ""; }
-      template <unsigned N = Key::N, ZuIfT<(N > 2), int> = 0>
-      auto p2() const { return key.template p<2>(); }
+      });
+  }
+  GtkTreePath *get_path(GtkTreeIter *iter) {
+    gint indices[Depth]; // bounded by the compile-time GTK hierarchy
+    unsigned depth = 0;
+    reinterpret_cast<Iter *>(iter)->cdispatch(
+      [&indices, &depth](auto, auto ptr) {
+	depth = ZuDecay<decltype(*ptr)>::Depth;
+	ptr->template ascend<Model>(indices);
+      });
+    return gtk_tree_path_new_from_indicesv(indices, depth);
+  }
+  gboolean iter_nth_child(
+      GtkTreeIter *iter, GtkTreeIter *parent, gint i) {
+    auto child = [iter](auto ptr) {
+      using T = ZuDecay<decltype(*ptr)>;
+      new (iter) Iter{const_cast<T *>(ptr)};
     };
-    // generic key printing
-    template <typename Key>
-    struct KeyPrint : public KeyPrint_<KeyPrint<Key>, Key> {
-      using KeyPrint_<KeyPrint, Key>::KeyPrint_;
-    };
-    template <typename T, typename Key>
-    static ZuIfT<
-      !ZuIsSame<T, HashTbl>{} &&
-      !ZuIsSame<T, Queue>{},
-      KeyPrint<Key>> keyPrintType();
-    // override addr for hash tables
-    template <typename Key>
-    struct HashTblKeyPrint : public KeyPrint_<HashTblKeyPrint<Key>, Key> {
-      using KeyPrint_<HashTblKeyPrint<Key>, Key>::KeyPrint_;
-      auto p1() { return ZuBoxed(this->key.template p<1>()).hex(); }
-    };
-    template <typename T, typename Key>
-    static ZuIfT<
-      ZuIsSame<T, HashTbl>{}, HashTblKeyPrint<Key>>
-    keyPrintType();
-    // override type for queues
-    template <typename Key>
-    struct QueueKeyPrint : public KeyPrint_<QueueKeyPrint<Key>, Key> {
-      using KeyPrint_<QueueKeyPrint<Key>, Key>::KeyPrint_;
-      auto p2() {
-	return Ztc::QueueType::name(this->key.template p<2>());
-      }
-    };
-    template <typename T, typename Key>
-    static ZuIfT<
-      ZuIsSame<T, Queue>{}, QueueKeyPrint<Key>>
-    keyPrintType();
+    if (!parent) return m_root.child(i, child);
+    return reinterpret_cast<Iter *>(parent)->cdispatch(
+      [i, &child](auto, auto ptr) { return ptr->child(i, child); });
+  }
+  gboolean iter_children(GtkTreeIter *iter, GtkTreeIter *parent) {
+    return iter_nth_child(iter, parent, 0);
+  }
+  gboolean iter_parent(GtkTreeIter *iter, GtkTreeIter *child) {
+    return reinterpret_cast<Iter *>(child)->cdispatch(
+      [iter](auto, auto ptr) {
+	auto parent = ptr->template parent<Model>();
+	if (!parent) return false;
+	new (iter) Iter{parent};
+	return true;
+      });
+  }
+  template <typename Row>
+  void updated(Row *row) {
+    GtkTreeIter iter;
+    new (&iter) Iter{row};
+    auto path = get_path(&iter);
+    gtk_tree_model_row_changed(GTK_TREE_MODEL(this), path, &iter);
+    gtk_tree_path_free(path);
+  }
+  template <typename Row>
+  void del(Row *row) {
+    GtkTreeIter iter;
+    new (&iter) Iter{row};
+    auto path = get_path(&iter);
+    if constexpr (Row::Depth == 1) m_root.del(row);
+    else row->template parent<Model>()->del(row);
+    gtk_tree_model_row_deleted(GTK_TREE_MODEL(this), path);
+    gtk_tree_path_free(path);
+  }
 
-    gint get_n_columns() { return NCols; }
-    GType get_column_type(gint i) {
-      switch (i) {
-	case RAGCol: return G_TYPE_INT;
-	case IDCol0: return G_TYPE_STRING;
-	case IDCol1: return G_TYPE_STRING;
-	case IDCol2: return G_TYPE_STRING;
-	default: return G_TYPE_NONE;
-      }
-    }
-    template <typename T>
-    void value(const T *ptr, gint i, ZGtk::Value *v) {
-      using Key = decltype(ptr->telKey());
-      using KeyPrint = decltype(keyPrintType<T, Key>());
-      KeyPrint print{ptr->telKey()};
-      switch (i) {
-	case RAGCol: 
-	  v->init(G_TYPE_INT);
-	  v->set_int(ptr->rag());
-	  break;
-	case IDCol0:
-	  m_value.length(0);
-	  v->init(G_TYPE_STRING);
-	  m_value << print.p0();
-	  v->set_static_string(m_value);
-	  break;
-	case IDCol1:
-	  m_value.length(0);
-	  v->init(G_TYPE_STRING);
-	  m_value << print.p1();
-	  v->set_static_string(m_value);
-	  break;
-	case IDCol2:
-	  m_value.length(0);
-	  v->init(G_TYPE_STRING);
-	  m_value << print.p2();
-	  v->set_static_string(m_value);
-	  break;
-	default:
-	  v->init(G_TYPE_NONE);
-	  break;
-      }
-    }
+  // parent() - child->parent type map
+  template <typename T>
+  static ZuSame<T, App, Root> *parent(void *ptr) {
+    return static_cast<Root *>(ptr);
+  }
+  template <typename T>
+  static ZuIfT<
+      ZuIsSame<T, HeapParent>{} ||
+      ZuIsSame<T, HashTblParent>{} ||
+      ZuIsSame<T, ThreadParent>{} ||
+      ZuIsSame<T, MxParent>{} ||
+      ZuIsSame<T, QueueParent>{} ||
+      ZuIsSame<T, PoolParent>{} ||
+      ZuIsSame<T, EngineParent>{} ||
+      ZuIsSame<T, DB>{}, App> *parent(void *ptr) {
+    return static_cast<App *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Heap, HeapParent> *parent(void *ptr) {
+    return static_cast<HeapParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, HashTbl, HashTblParent> *parent(void *ptr) {
+    return static_cast<HashTblParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Thread, ThreadParent> *parent(void *ptr) {
+    return static_cast<ThreadParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Mx, MxParent> *parent(void *ptr) {
+    return static_cast<MxParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Queue, QueueParent> *parent(void *ptr) {
+    return static_cast<QueueParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Pool, PoolParent> *parent(void *ptr) {
+    return static_cast<PoolParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Engine, EngineParent> *parent(void *ptr) {
+    return static_cast<EngineParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Socket, Mx> *parent(void *ptr) {
+    return static_cast<Mx *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, Link, Engine> *parent(void *ptr) {
+    return static_cast<Engine *>(ptr);
+  }
+  template <typename T>
+  static ZuIfT<
+      ZuIsSame<T, DBHostParent>{} ||
+      ZuIsSame<T, DBTableParent>{}, DB> *parent(void *ptr) {
+    return static_cast<DB *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, DBHost, DBHostParent> *parent(void *ptr) {
+    return static_cast<DBHostParent *>(ptr);
+  }
+  template <typename T>
+  static ZuSame<T, DBTable, DBTableParent> *parent(void *ptr) {
+    return static_cast<DBTableParent *>(ptr);
+  }
 
-  private:
-    Root	m_root;		// root of tree
-    ZtString<>	m_value;	// re-used string buffer
+  // key printing
+  template <typename Key>
+  struct KeyPrint_ {
+    Key key;
+
+    template <typename Key_>
+    KeyPrint_(Key_ &&key_) : key{ZuFwd<Key_>(key_)} { }
+    auto p0() const { return key.template p<0>(); }
+    template <unsigned N = Key::N, ZuIfT<(N <= 1), int> = 0>
+    auto p1() const { return ""; }
+    template <unsigned N = Key::N, ZuIfT<(N > 1), int> = 0>
+    auto p1() const { return key.template p<1>(); }
+    template <unsigned N = Key::N, ZuIfT<(N <= 2), int> = 0>
+    auto p2() const { return ""; }
+    template <unsigned N = Key::N, ZuIfT<(N > 2), int> = 0>
+    auto p2() const { return key.template p<2>(); }
   };
+  // generic key printing
+  template <typename Key>
+  struct KeyPrint : public KeyPrint_<Key> {
+    using KeyPrint_<Key>::KeyPrint_;
+  };
+  template <typename T, typename Key>
+  static ZuIfT<
+    !ZuIsSame<T, HashTbl>{} &&
+    !ZuIsSame<T, Queue>{},
+    KeyPrint<Key>> keyPrintType();
+  // override addr for hash tables
+  template <typename Key>
+  struct HashTblKeyPrint : public KeyPrint_<Key> {
+    using KeyPrint_<Key>::KeyPrint_;
+    auto p1() { return ZuBoxed(this->key.template p<1>()).hex(); }
+  };
+  template <typename T, typename Key>
+  static ZuIfT<
+    ZuIsSame<T, HashTbl>{}, HashTblKeyPrint<Key>>
+  keyPrintType();
+  // override type for queues
+  template <typename Key>
+  struct QueueKeyPrint : public KeyPrint_<Key> {
+    using KeyPrint_<Key>::KeyPrint_;
+    auto p2() {
+      return Ztc::QueueType::name(this->key.template p<2>());
+    }
+  };
+  template <typename T, typename Key>
+  static ZuIfT<
+    ZuIsSame<T, Queue>{}, QueueKeyPrint<Key>>
+  keyPrintType();
 
-  class View {
-    View(const View &) = delete;
-    View &operator =(const View &) = delete;
-    View(View &&) = delete;
-    View &operator =(View &&) = delete;
-  public:
-    View() = default;
-    ~View() = default;
+  gint get_n_columns() { return NCols; }
+  GType get_column_type(gint i) {
+    switch (i) {
+      case RAGCol: return G_TYPE_INT;
+      case IDCol0: return G_TYPE_STRING;
+      case IDCol1: return G_TYPE_STRING;
+      case IDCol2: return G_TYPE_STRING;
+      default: return G_TYPE_NONE;
+    }
+  }
+  template <typename T>
+  void value(const T *ptr, gint i, ZGtk::Value *v) {
+    switch (i) {
+      case RAGCol:
+	v->init(G_TYPE_INT);
+	v->set_int(ptr->rag());
+	return;
+      case IDCol0: case IDCol1: case IDCol2: break;
+      default: return;
+    }
+    using Key = decltype(ptr->telKey());
+    using KeyPrint = decltype(keyPrintType<T, Key>());
+    KeyPrint print{ptr->telKey()};
+    m_value.length(0);
+    switch (i) {
+      case IDCol0: m_value << print.p0(); break;
+      case IDCol1: m_value << print.p1(); break;
+      case IDCol2: m_value << print.p2(); break;
+    }
+    v->init(G_TYPE_STRING);
+    // GTK owns this result; subsequent column reads reuse m_value.
+    v->set_string(m_value);
+  }
 
-  private:
-    template <unsigned RagCol, unsigned TextCol>
-    void addCol(const char *id) {
-      auto col = gtk_tree_view_column_new();
-      gtk_tree_view_column_set_title(col, gettext(id));
+private:
+  Root	m_root;		// root of tree
+  ZtString<>	m_value;	// re-used string buffer
+};
 
+class View {
+  // GtkCellRenderer properties form a fixed ABI-shaped tuple, not a queue.
+  enum { TextProp, BgProp, FgProp, NProps };
+  View(const View &) = delete;
+  View &operator =(const View &) = delete;
+  View(View &&) = delete;
+  View &operator =(View &&) = delete;
+public:
+  View() = default;
+  ~View() = default;
+
+private:
+  template <unsigned RagCol, unsigned TextCol>
+  void addCol(const char *id) {
+    auto col = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(col, gettext(id));
+
+    auto cell = gtk_cell_renderer_text_new();
+    gtk_tree_view_column_pack_start(col, cell, true);
+
+    gtk_tree_view_column_set_cell_data_func(col, cell, [](
+	  GtkTreeViewColumn *col, GtkCellRenderer *cell,
+	  GtkTreeModel *model, GtkTreeIter *iter, gpointer this_) {
+      reinterpret_cast<View *>(this_)->render<RagCol, TextCol>(
+	  col, cell, model, iter);
+    }, this, nullptr);
+
+    gtk_tree_view_append_column(m_treeView, col);
+
+    // normally would add columns in order of saved column order;
+    // and not add columns unselected by user
+    //
+    // need
+    // - array of available columns (including ID)
+    // - array of selected columns in display order
+  }
+
+  template <unsigned RagCol, unsigned TextCol>
+  void render(
+      GtkTreeViewColumn *col, GtkCellRenderer *cell,
+      GtkTreeModel *model, GtkTreeIter *iter) {
+    m_values[TextProp].unset();
+    gtk_tree_model_get_value(model, iter, TextCol, &m_values[TextProp]);
+
+    gint rag;
+    {
+      ZGtk::Value rag_;
+      gtk_tree_model_get_value(model, iter, RagCol, &rag_);
+      rag = rag_.get_int();
+    }
+    switch (rag) {
+      case Ztc::RAG::Red:
+	m_values[BgProp].set_static_boxed(&m_rag_red_bg);
+	m_values[FgProp].set_static_boxed(&m_rag_red_fg);
+	break;
+      case Ztc::RAG::Amber:
+	m_values[BgProp].set_static_boxed(&m_rag_amber_bg);
+	m_values[FgProp].set_static_boxed(&m_rag_amber_fg);
+	break;
+      case Ztc::RAG::Green:
+	m_values[BgProp].set_static_boxed(&m_rag_green_bg);
+	m_values[FgProp].set_static_boxed(&m_rag_green_fg);
+	break;
+      default:
+	m_values[BgProp].set_static_boxed(&m_rag_off_bg);
+	m_values[FgProp].set_static_boxed(&m_rag_off_fg);
+	break;
+    }
+    g_object_setv(G_OBJECT(cell), NProps, m_props, m_values);
+  }
+
+public:
+  void init(GtkTreeView *view, GtkStyleContext *context) {
+    m_treeView = view;
+
+    if (!context || !gtk_style_context_lookup_color(
+	  context, "rag_red_fg", &m_rag_red_fg))
+      m_rag_red_fg = { 0.0, 0.0, 0.0, 1.0 }; // #000000
+    if (!context || !gtk_style_context_lookup_color(
+	  context, "rag_red_bg", &m_rag_red_bg))
+      m_rag_red_bg = { 1.0, 0.0820, 0.0820, 1.0 }; // #ff1515
+
+    if (!context || !gtk_style_context_lookup_color(
+	  context, "rag_amber_fg", &m_rag_amber_fg))
+      m_rag_amber_fg = { 0.0, 0.0, 0.0, 1.0 }; // #000000
+    if (!context || !gtk_style_context_lookup_color(
+	  context, "rag_amber_bg", &m_rag_amber_bg))
+      m_rag_amber_bg = { 1.0, 0.5976, 0.0, 1.0 }; // #ff9900
+
+    if (!context || !gtk_style_context_lookup_color(
+	  context, "rag_green_fg", &m_rag_green_fg))
+      m_rag_green_fg = { 0.0, 0.0, 0.0, 1.0 }; // #000000
+    if (!context || !gtk_style_context_lookup_color(
+	  context, "rag_green_bg", &m_rag_green_bg))
+      m_rag_green_bg = { 0.1835, 0.8789, 0.2304, 1.0 }; // #2fe13b
+
+    addCol<Model::RAGCol, Model::IDCol0>("ID");
+    addCol<Model::RAGCol, Model::IDCol1>("");
+    addCol<Model::RAGCol, Model::IDCol2>("");
+
+    // GLib takes a mutable array of pointers to immutable property names.
+    static const gchar *props[] = {
+      "text", "background-rgba", "foreground-rgba"
+    };
+    ZuAssert(sizeof(props) / sizeof(*props) == NProps);
+
+    m_props = props;
+    m_values[BgProp].init(GDK_TYPE_RGBA);
+    m_values[FgProp].init(GDK_TYPE_RGBA);
+
+    {
       auto cell = gtk_cell_renderer_text_new();
-      gtk_tree_view_column_pack_start(col, cell, true);
-
-      gtk_tree_view_column_set_cell_data_func(col, cell, [](
-	    GtkTreeViewColumn *col, GtkCellRenderer *cell,
-	    GtkTreeModel *model, GtkTreeIter *iter, gpointer this_) {
-	reinterpret_cast<View *>(this_)->render<RagCol, TextCol>(
-	    col, cell, model, iter);
-      }, reinterpret_cast<gpointer>(this), nullptr);
-
-      gtk_tree_view_append_column(m_treeView, col);
-
-      // normally would add columns in order of saved column order;
-      // and not add columns unselected by user
-      //
-      // need
-      // - array of available columns (including ID)
-      // - array of selected columns in display order
+      g_object_getv(G_OBJECT(cell), 2, &m_props[BgProp], &m_values[BgProp]);
+      if (auto color = static_cast<const GdkRGBA *>(m_values[BgProp].get_boxed()))
+	m_rag_off_bg = *color;
+      if (auto color = static_cast<const GdkRGBA *>(m_values[FgProp].get_boxed()))
+	m_rag_off_fg = *color;
+      g_object_unref(G_OBJECT(cell));
     }
 
-    template <unsigned RagCol, unsigned TextCol>
-    void render(
-	GtkTreeViewColumn *col, GtkCellRenderer *cell,
-	GtkTreeModel *model, GtkTreeIter *iter) {
-      m_values[0].unset();
-      gtk_tree_model_get_value(model, iter, TextCol, &m_values[0]);
+    g_signal_connect(
+	G_OBJECT(m_treeView), "destroy",
+	ZGtk::callback([](GObject *, gpointer this_) {
+	  reinterpret_cast<View *>(this_)->destroyed();
+	}), this);
+  }
 
-      gint rag;
-      {
-	ZGtk::Value rag_;
-	gtk_tree_model_get_value(model, iter, RagCol, &rag_);
-	rag = rag_.get_int();
-      }
-      switch (rag) {
-	case Ztc::RAG::Red:
-	  m_values[1].set_static_boxed(&m_rag_red_bg);
-	  m_values[2].set_static_boxed(&m_rag_red_fg);
-	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
-	  break;
-	case Ztc::RAG::Amber:
-	  m_values[1].set_static_boxed(&m_rag_amber_bg);
-	  m_values[2].set_static_boxed(&m_rag_amber_fg);
-	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
-	  break;
-	case Ztc::RAG::Green:
-	  m_values[1].set_static_boxed(&m_rag_green_bg);
-	  m_values[2].set_static_boxed(&m_rag_green_fg);
-	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
-	  break;
-	default:
-	  m_values[1].set_static_boxed(&m_rag_off_bg);
-	  m_values[2].set_static_boxed(&m_rag_off_fg);
-	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
-	  break;
-      }
-    }
+  void destroyed() {
+    m_treeView = nullptr;
+  }
 
-  public:
-    void init(GtkTreeView *view, GtkStyleContext *context) {
-      m_treeView = view;
+  void final() { m_treeView = nullptr; }
 
-      if (!context || !gtk_style_context_lookup_color(
-	    context, "rag_red_fg", &m_rag_red_fg))
-	m_rag_red_fg = { 0.0, 0.0, 0.0, 1.0 }; // #000000
-      if (!context || !gtk_style_context_lookup_color(
-	    context, "rag_red_bg", &m_rag_red_bg))
-	m_rag_red_bg = { 1.0, 0.0820, 0.0820, 1.0 }; // #ff1515
+  void bind(GtkTreeModel *model) {
+    gtk_tree_view_set_model(m_treeView, model);
+  }
 
-      if (!context || !gtk_style_context_lookup_color(
-	    context, "rag_amber_fg", &m_rag_amber_fg))
-	m_rag_amber_fg = { 0.0, 0.0, 0.0, 1.0 }; // #000000
-      if (!context || !gtk_style_context_lookup_color(
-	    context, "rag_amber_bg", &m_rag_amber_bg))
-	m_rag_amber_bg = { 1.0, 0.5976, 0.0, 1.0 }; // #ff9900
-
-      if (!context || !gtk_style_context_lookup_color(
-	    context, "rag_green_fg", &m_rag_green_fg))
-	m_rag_green_fg = { 0.0, 0.0, 0.0, 1.0 }; // #000000
-      if (!context || !gtk_style_context_lookup_color(
-	    context, "rag_green_bg", &m_rag_green_bg))
-	m_rag_green_bg = { 0.1835, 0.8789, 0.2304, 1.0 }; // #2fe13b
-
-      addCol<Model::RAGCol, Model::IDCol0>("ID");
-      addCol<Model::RAGCol, Model::IDCol1>("");
-      addCol<Model::RAGCol, Model::IDCol2>("");
-
-      static const gchar *props[] = {
-	"text", "background-rgba", "foreground-rgba"
-      };
-
-      m_props = props;
-      m_values[1].init(GDK_TYPE_RGBA);
-      m_values[2].init(GDK_TYPE_RGBA);
-
-      {
-	auto cell = gtk_cell_renderer_text_new();
-	g_object_getv(G_OBJECT(cell), 2, &m_props[1], &m_values[1]);
-	if (auto color = static_cast<const GdkRGBA *>(m_values[1].get_boxed()))
-	  m_rag_off_bg = *color;
-	if (auto color = static_cast<const GdkRGBA *>(m_values[2].get_boxed()))
-	  m_rag_off_fg = *color;
-	g_object_unref(G_OBJECT(cell));
-      }
-
-      g_signal_connect(
-	  G_OBJECT(m_treeView), "destroy",
-	  ZGtk::callback([](GObject *, gpointer this_) {
-	    reinterpret_cast<View *>(this_)->destroyed();
-	  }), reinterpret_cast<gpointer>(this));
-    }
-
-    void destroyed() {
-      m_treeView = nullptr;
-    }
-
-    void final() { m_treeView = nullptr; }
-
-    void bind(GtkTreeModel *model) {
-      gtk_tree_view_set_model(m_treeView, model);
-    }
-
-  private:
-    GtkTreeView	*m_treeView = nullptr;
-    GdkRGBA	m_rag_red_fg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_red_bg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_amber_fg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_amber_bg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_green_fg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_green_bg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_off_fg = { 0.0, 0.0, 0.0, 0.0 };
-    GdkRGBA	m_rag_off_bg = { 0.0, 0.0, 0.0, 0.0 };
-    const gchar	**m_props;
-    ZGtk::Value	m_values[3];
-  };
-}
+private:
+  GtkTreeView	*m_treeView = nullptr;
+  GdkRGBA	m_rag_red_fg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_red_bg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_amber_fg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_amber_bg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_green_fg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_green_bg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_off_fg = { 0.0, 0.0, 0.0, 0.0 };
+  GdkRGBA	m_rag_off_bg = { 0.0, 0.0, 0.0, 0.0 };
+  const gchar	**m_props = nullptr;
+  ZGtk::Value	m_values[NProps];
+};
+} // GtkTree
 
 
 struct Source {
-  ZtString<> device;
-  ZtString<> publisher;
-  uint64_t generation;
-  Telemetry::Containers telemetry;
+  using Containers = Telemetry::Containers;
+  ZtString<>	device;
+  ZtString<>	publisher;
+  uint64_t	generation;
+  Containers	telemetry;
 
   Source(ZuCSpan device_, ZuCSpan publisher_, uint64_t generation_) :
     device{device_}, publisher{publisher_}, generation{generation_} { }
-  auto key() const { return ZuFwdTuple(device, publisher, generation); }
+  auto key() const { return ZuFwdTuple(device, publisher); }
 };
 static auto sourceKey(const Source &source) { return source.key(); }
 ZmRBTreeDerive(Sources, Source,
   ZmRBTreeNode<Source, ZmRBTreeKey<sourceKey, ZmRBTreeUnique<true,
     ZmRBTreeLock<ZmNoLock, ZmRBTreeHeapID<"ZDash.Source">>>>>);
 
-class App : public ZmPolymorph, public ZGtk::App {
+class App : public ZGtk::App {
 public:
   using Client = Zws::Client<App, Zhttp::H1TLS>;
   using Link = Client::Link;
@@ -1012,20 +934,21 @@ public:
       m_refreshRate = m_refreshQuantum + m_refreshQuantum;
     } else
       m_refreshRate = ZuTime{ZuTime::Nano{refreshRate}};
-    if (config.gtkThread <= 4 || config.gtkThread > mx->params().nThreads())
+    if (config.gtkThread <= TxSID ||
+	config.gtkThread > mx->params().nThreads())
       return false;
 
     i18n("zdash", DATADIR);
     attach(mx, config.gtkThread);
     m_attached = true;
     mx->run([this]() {
-      gtkInit();
+      gtkInit_();
       m_executed.post();
     }, config.gtkThread);
     m_executed.wait();
     if (!m_gtkReady) return false;
     if (m_testLocal) {
-      mx->run([this]() { testFeed(1); }, 3);
+      mx->run([this]() { testFeed_(1); }, RxSID);
       return true;
     }
 
@@ -1056,7 +979,7 @@ public:
       ZGtk::App::sched()->run([this]() {
 	m_closing = true;
 	m_executed.post();
-      }, 3);
+      }, RxSID);
       m_executed.wait();
     }
     if (m_clientStarted) {
@@ -1080,10 +1003,18 @@ public:
       m_clientInited = false;
     }
     if (m_attached) {
-      detach({[this]() {
-	gtkFinal();
-	m_executed.post();
-      }});
+      // Rx is drained. Cancel the GTK timer, then drain queued callbacks
+      // before detaching the GLib integration and releasing model state.
+      gtkRun([this]() {
+	m_gtkClosing = true;
+	ZGtk::App::sched()->del(&m_refreshTimer);
+	gtkRun([this]() {
+	  detach({[this]() {
+	    gtkFinal_();
+	    m_executed.post();
+	  }});
+	});
+      });
       m_executed.wait();
       m_attached = false;
     }
@@ -1095,7 +1026,7 @@ public:
     if (!timeout) { m_done.wait(); return true; }
     if (!m_done.timedwait(Zm::now(timeout))) return true;
     m_failed = true;
-    std::cerr << "zdash: test timed out\n";
+    ZiLOG(Error, "zdash", "test timed out");
     return false;
   }
   bool failed() const { return m_failed; }
@@ -1159,18 +1090,18 @@ public:
       case Ztc::fbs::Body::Ack:
 	if (msg->body_as_Ack()->status() != Ztc::fbs::AckStatus::OK)
 	  return reject(link, Zws::CloseCode::Policy);
-	m_interval = msg->body_as_Ack()->interval();
 	break;
       case Ztc::fbs::Body::Error:
-	ZiLOG(Error, "zdash", ([msg](auto &s) {
-	  s << "ztchub: " << Zfb::Load::str(msg->body_as_Error()->message());
+	ZiLOG(Error, "zdash", ([message = ZeString{
+	    Zfb::Load::str(msg->body_as_Error()->message())}](auto &s) {
+	  s << "ztchub: " << message;
 	}));
 	return reject(link, Zws::CloseCode::Policy);
       case Ztc::fbs::Body::EOS:
         // End of snapshot, not end of subscription or publisher lifetime.
         break;
       case Ztc::fbs::Body::Telemetry:
-	if (!processTelemetry(ZuMv(m_frame)))
+	if (!processTelemetry_(ZuMv(m_frame)))
 	  return reject(link, Zws::CloseCode::TooLarge);
 	break;
       default:
@@ -1195,9 +1126,9 @@ public:
     post();
   }
 
-  bool processTelemetry(Frame frame) {
+  bool processTelemetry_(Frame frame) {
     auto length = frame->length;
-    if (length > m_queueBytes - m_telBytes.load_()) return false;
+    if (length + m_telBytes.load_() > m_queueBytes) return false;
     auto slot = m_telRing.tryPush();
     if (!slot) return false;
     new (slot) Frame{ZuMv(frame)};
@@ -1213,11 +1144,7 @@ public:
   void gtkRun(Args &&...args) {
     ZGtk::App::run(ZuFwd<Args>(args)...);
   }
-  template <typename ...Args>
-  void gtkInvoke(Args &&...args) {
-    ZGtk::App::invoke(ZuFwd<Args>(args)...);
-  }
-  void gtkInit() {
+  void gtkInit_() {
     gtk_init(nullptr, nullptr);
 
     auto builder = gtk_builder_new();
@@ -1261,8 +1188,8 @@ public:
     m_mainDestroy = g_signal_connect(
 	G_OBJECT(m_mainWindow), "destroy",
 	ZGtk::callback([](GObject *, gpointer this_) {
-	  reinterpret_cast<App *>(this_)->gtkDestroyed();
-	}), reinterpret_cast<gpointer>(this));
+	  reinterpret_cast<App *>(this_)->gtkDestroyed_();
+	}), this);
 
     if (m_test) {
       // Never map or present the test window, even on an inherited display.
@@ -1270,9 +1197,6 @@ public:
       gtk_window_set_focus_on_map(m_mainWindow, false);
       gtk_widget_set_no_show_all(GTK_WIDGET(m_mainWindow), true);
       gtk_widget_realize(GTK_WIDGET(m_mainWindow));
-      m_testPoll = g_timeout_add(10, [](gpointer p) -> gboolean {
-	return static_cast<App *>(p)->testPoll();
-      }, this);
     } else {
       gtk_widget_show_all(GTK_WIDGET(m_mainWindow));
       gtk_window_present(m_mainWindow);
@@ -1281,21 +1205,19 @@ public:
     m_gtkReady = m_telRing.attach() == Zu::OK;
   }
 
-  void gtkDestroyed() {
+  void gtkDestroyed_() {
     m_mainWindow = nullptr;
     if (m_test) m_testClosed = true;
     post();
   }
 
-  void gtkFinal() {
-    if (m_testPoll) { g_source_remove(m_testPoll); m_testPoll = 0; }
+  void gtkFinal_() {
+    if (m_testEvent) { g_source_remove(m_testEvent); m_testEvent = 0; }
     while (auto slot = m_telRing.tryShift()) {
       slot->~Frame();
       m_telRing.shift2();
     }
     m_telRing.detach();
-
-    ZGtk::App::sched()->del(&m_refreshTimer);
 
     if (m_mainWindow) {
       if (m_mainDestroy)
@@ -1325,7 +1247,8 @@ private:
   };
 
   // Hidden-mode input runs on the same Rx owner as the live WSS callbacks.
-  void testFeed(unsigned phase) {
+  void testFeed_(unsigned phase) {
+    if (m_closing) return;
     struct Wire {
       bool closed = false;
       void close(Zws::CloseCode::T = Zws::CloseCode::Normal) { closed = true; }
@@ -1343,6 +1266,7 @@ private:
       Zfb::IOBuilder builder{Frame{new FrameBuf}};
       auto dev = Zfb::Save::str(builder, device);
       auto id = Zfb::Save::str(builder, "publisher");
+      // Shutdown is an empty protocol marker with no ZfbStruct payload type.
       auto value = shutdown ? Ztc::fbs::CreateShutdown(builder).Union() :
 	ZfbStruct::save(builder, Ztc::AppTelemetry{
 	  .version = "test", .rag = Ztc::RAG::T(rag)}).Union();
@@ -1377,10 +1301,9 @@ private:
 	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS,
 	  eos.Union(), 1, dev, 1));
 	deliver(builder.buf());
-	break;
-      }
+      } break;
       case 3:
-	for (unsigned i = 0; i < 64; ++i)
+	for (unsigned i = 0; i < TestBurst; ++i)
 	  telemetry("test-a", 1, Ztc::RAG::Red);
 	break;
       case 4:
@@ -1388,23 +1311,64 @@ private:
 	telemetry("test-a", 2, Ztc::RAG::Green);
 	telemetry("test-a", 1, Ztc::RAG::Red); // obsolete generation
 	break;
+      case 5:
+	// Exercise every concrete row allocator, placeholder parent and payload.
+	ZuUnroll::all<Telemetry::TypeList>([this]<typename T>() {
+	  if constexpr (!ZuIsSame<T, Ztc::AppTelemetry>{}) {
+	    Zfb::IOBuilder builder{Frame{new FrameBuf}};
+	    auto device = Zfb::Save::str(builder, "test-a");
+	    auto id = Zfb::Save::str(builder, "publisher");
+	    auto value = ZfbStruct::save(builder, T{});
+	    auto tel = Ztc::saveTelemetry(builder, id, 0,
+	      Ztc::fbs::TelemetryBodyTraits<ZfbType<T>>::enum_value,
+	      value.Union());
+	    builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
+	      tel.Union(), 1, device, 2));
+	    auto frame = builder.buf();
+	    // This phase covers GTK rendering beyond the App subscription.
+	    if (!Ztc::msg(ZuBSpan{frame->data(), frame->length}) ||
+		!processTelemetry_(ZuMv(frame))) m_failed = true;
+	  }
+	});
+	break;
+      case 6:
+	telemetry("test-a", 2, Ztc::RAG::Off, true);
+	break;
     }
-    m_testPhase = phase;
+    // Publish completion on GTK after all frames in this phase are queued.
+    gtkRun([this, phase]() {
+      if (m_gtkClosing) return;
+      m_testPhase = phase;
+      testWake_();
+    });
+  }
+
+  void testWake_() {
+    if (!m_test || m_gtkClosing || m_testComplete || m_testEvent) return;
+    m_testEvent = g_idle_add([](gpointer p) -> gboolean {
+      auto app = static_cast<App *>(p);
+      app->m_testEvent = 0;
+      app->testCheck_();
+      return G_SOURCE_REMOVE;
+    }, this);
   }
 
   // A GLib event (not a scheduler job) proves the front end keeps dispatching
   // after each ring drain, including an empty drain and snapshot completion.
-  gboolean testPoll() {
-    if (m_failed) { post(); return G_SOURCE_CONTINUE; }
-    if (m_telCount.load_()) return G_SOURCE_CONTINUE;
+  void testCheck_() {
+    if (m_gtkClosing) return;
+    if (m_failed) { post(); return; }
+    if (m_telCount.load_()) return;
     if (m_testLocal) {
       unsigned phase = m_testPhase;
-      if (!phase || phase == m_testChecked) return G_SOURCE_CONTINUE;
+      if (!phase || phase == m_testChecked) return;
       auto src = m_sources.findPtr(ZuTuple{
-	ZuCSpan{"test-a"}, ZuCSpan{"publisher"}, uint64_t(phase == 4 ? 2 : 1)});
-      bool ok = src && m_sources.count_() == (phase == 4 ? 1 : 2);
-      if (ok) {
-	auto item = appItem(src);
+	ZuCSpan{"test-a"}, ZuCSpan{"publisher"}});
+      bool ok = phase == 6 ? !src && !m_sources.count_() :
+	src && src->generation == (phase >= 4 ? 2 : 1) &&
+	m_sources.count_() == (phase >= 4 ? 1 : 2);
+      if (ok && phase != 6) {
+	auto item = appItem_(src);
 	auto row = GtkTree::row(item);
 	if (phase == 1) m_testRow = row;
 	else if (phase < 4) ok = row == m_testRow;
@@ -1417,36 +1381,61 @@ private:
 	  ok = gtk_tree_path_get_depth(path) == 1 &&
 	    gtk_tree_path_get_indices(path)[0] == row->row();
 	  gtk_tree_path_free(path);
+	  ZGtk::Value publisher, device;
+	  gtk_tree_model_get_value(GTK_TREE_MODEL(m_gtkModel), &iter,
+	    GtkTree::Model::IDCol0, &publisher);
+	  gtk_tree_model_get_value(GTK_TREE_MODEL(m_gtkModel), &iter,
+	    GtkTree::Model::IDCol1, &device);
+	  ok = ok && ZuCSpan{publisher.get_string()} == "publisher" &&
+	    ZuCSpan{device.get_string()} == "test-a";
 	}
+      }
+      if (ok && phase == 6)
+	ok = !gtk_tree_model_iter_n_children(GTK_TREE_MODEL(m_gtkModel), nullptr);
+      if (ok && phase == 5) {
+	unsigned rows = 0;
+	gtk_tree_model_foreach(GTK_TREE_MODEL(m_gtkModel), [](
+	    GtkTreeModel *model, GtkTreePath *, GtkTreeIter *iter,
+	    gpointer data) -> gboolean {
+	  ++*static_cast<unsigned *>(data);
+	  for (unsigned col = 0; col < GtkTree::Model::NCols; ++col) {
+	    ZGtk::Value value;
+	    gtk_tree_model_get_value(model, iter, col, &value);
+	  }
+	  return false;
+	}, &rows);
+	// Every non-alert telemetry kind must have a visible row.
+	ok = rows >= Telemetry::TypeList::N - 1;
       }
       if (!ok) {
 	m_failed = true;
-	std::cerr << "zdash: hidden test phase " << phase << " failed\n";
+	ZiLOG(Error, "zdash", ([phase](auto &s) {
+	  s << "hidden test phase " << phase << " failed";
+	}));
 	post();
-	return G_SOURCE_CONTINUE;
+	return;
       }
       m_testChecked = phase;
-      if (phase < 4) {
-	ZGtk::App::sched()->run([this, phase]() { testFeed(phase + 1); }, 3);
-	return G_SOURCE_CONTINUE;
+      if (phase < 6) {
+	ZGtk::App::sched()->run([this, phase]() { testFeed_(phase + 1); }, RxSID);
+	return;
       }
-    } else if (!m_received) return G_SOURCE_CONTINUE;
+    } else if (!m_sources.count_()) return;
     m_testComplete = true;
-    m_testPoll = 0;
     // Exercise the real GTK close-event path while the window stays unmapped.
     gtk_window_close(m_mainWindow);
-    return G_SOURCE_REMOVE;
   }
 
   void armRefresh(int mode = ZmScheduler::Advance) {
     ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
 	mode,
 	[this](auto &&arm) {
-	  return arm([this]() { gtkRefresh(); });
+	  return arm([this]() { gtkRefresh_(); });
 	}, ZGtk::App::sid());
   }
 
-  void gtkRefresh() {
+  void gtkRefresh_() {
+    if (m_gtkClosing) return;
     auto deadline = Zm::now() + m_refreshQuantum;
     unsigned n = 0;
     while (auto slot = m_telRing.tryShift()) {
@@ -1455,55 +1444,53 @@ private:
       m_telRing.shift2();
       m_telBytes -= frame->length;
       --m_telCount;
-      processTel2(frame);
-      if (!(++n & 0xf) && Zm::now() >= deadline) break;
+      processTel2_(frame);
+      if (!(++n % RefreshBatch) && Zm::now() >= deadline) break;
     }
     if (m_telCount.load_()) armRefresh(ZmScheduler::Defer);
+    else testWake_();
   }
 
-  void removeSource(Sources::Node *source) {
+  void removeSource_(Sources::Node *source) {
     auto &container = source->telemetry.p<
       ZuTypeIndex<Ztc::AppTelemetry, Telemetry::TypeList>{}>();
-    auto item = container.lookup(
-	static_cast<const Ztc::fbs::AppTelemetry *>(nullptr));
+    auto item = container.get();
     if (item) m_gtkModel->del(GtkTree::row(item));
     m_sources.del(source->key());
   }
 
-  Source *source(ZuCSpan device, ZuCSpan publisher, uint64_t generation) {
-    auto key = ZuFwdTuple(device, publisher, generation);
-    if (auto source = m_sources.findPtr(key)) return source;
-    // Discard the old epoch before creating rows for a restarted agent.
-    auto i = m_sources.iter();
-    while (auto old = i()) {
-      if (old->device != device || old->publisher != publisher) continue;
+  Source *source_(ZuCSpan device, ZuCSpan publisher, uint64_t generation) {
+    auto key = ZuFwdTuple(device, publisher);
+    if (auto old = m_sources.findPtr(key)) {
+      if (old->generation == generation) return old;
       if (old->generation > generation) return nullptr;
-      if (old->generation != generation) removeSource(old);
+      // One epoch per publisher: retire it directly, without a tree scan.
+      removeSource_(old);
     }
     auto source = new Sources::Node{device, publisher, generation};
     m_sources.addNode(source);
     return source;
   }
 
-  void processTel2(const Frame &frame) {
+  void processTel2_(const Frame &frame) {
     auto msg = Ztc::fbs::GetMsg(frame->data()); // verified on Rx
     auto device = Zfb::Load::str(msg->deviceId());
     auto generation = msg->agentGen();
     if (msg->body_type() != Ztc::fbs::Body::Telemetry) return;
-    ++m_received;
     auto tel = msg->body_as_Telemetry();
     auto publisher = Zfb::Load::str(tel->id());
     if (tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown) {
       if (auto old = m_sources.findPtr(
-	  ZuFwdTuple(device, publisher, generation))) removeSource(old);
+	  ZuFwdTuple(device, publisher)); old && old->generation == generation)
+	removeSource_(old);
       return;
     }
-    auto src = source(device, publisher, generation);
+    auto src = source_(device, publisher, generation);
     if (!src) return;
     switch (tel->value_type()) {
 #define ZDashLoad(Name) \
       case Ztc::fbs::TelemetryBody::Name: \
-	processTel3(src, tel->value_as_##Name()); break;
+	processTel3_(src, tel->value_as_##Name()); break;
       ZDashLoad(HeapTelemetry)
       ZDashLoad(HashTelemetry)
       ZDashLoad(ThreadTelemetry)
@@ -1525,7 +1512,7 @@ private:
 
   template <typename FBType>
   ZuIsNot<FBType, Ztc::fbs::AlertTelemetry>
-  processTel3(Source *src, const FBType *fbo) {
+  processTel3_(Source *src, const FBType *fbo) {
     ZuTypeIndex<FBType, Telemetry::FBTypeList> I;
     using T = ZuType<I, Telemetry::TypeList>;
     auto &container = src->telemetry.p<I>();
@@ -1534,7 +1521,7 @@ private:
       ZfbStruct::update(item->value, fbo);
       m_gtkModel->updated(GtkTree::row(item));
     } else {
-      item = new Item{src, fbo};
+      item = new Item{fbo};
       container.add(item);
       addGtkRow(src, item);
     }
@@ -1543,58 +1530,56 @@ private:
     item->initTelKey(src->publisher, src->device, src->generation);
     m_gtkModel->add(new GtkTree::App{item}, m_gtkModel->root());
   }
-  AppItem *appItem(Source *src) {
+  AppItem *appItem_(Source *src) {
     ZuTypeIndex<Ztc::AppTelemetry, Telemetry::TypeList> i;
     auto &container = src->telemetry.p<i>();
-    auto item = container.lookup(
-	static_cast<const Ztc::fbs::AppTelemetry *>(nullptr));
+    auto item = container.get();
     if (!item) {
-      item = new TelItem<Ztc::AppTelemetry>{src};
+      item = new TelItem<Ztc::AppTelemetry>;
       container.add(item);
       addGtkRow(src, item);
     }
     return item;
   }
-  DBItem *dbItem(Source *src) {
+  DBItem *dbItem_(Source *src) {
     ZuTypeIndex<Ztc::DBTelemetry, Telemetry::TypeList> i;
     auto &container = src->telemetry.p<i>();
-    auto item = container.lookup(
-	static_cast<const Ztc::fbs::DBTelemetry *>(nullptr));
+    auto item = container.get();
     if (!item) {
-      item = new TelItem<Ztc::DBTelemetry>{src};
+      item = new TelItem<Ztc::DBTelemetry>;
       container.add(item);
       addGtkRow(src, item);
     }
     return item;
   }
-  template <typename Item, typename ParentFn>
-  void addGtkRow_(AppItem *appItem, Item *item, ParentFn parentFn) {
-    auto appGtkRow = GtkTree::row(appItem);
-    auto &parent = parentFn(appGtkRow);
-    if (parent.row() < 0) m_gtkModel->add(&parent, appGtkRow);
+  template <typename ParentItem, typename Item, typename ParentFn>
+  void addGtkRow_(ParentItem *parentItem, Item *item, ParentFn parentFn) {
+    auto parentRow = GtkTree::row(parentItem);
+    auto &parent = parentFn(parentRow);
+    if (parent.row() < 0) m_gtkModel->add(&parent, parentRow);
     using GtkRow = ZuDecay<decltype(*GtkTree::row(item))>;
     m_gtkModel->add(new GtkRow{item}, &parent);
   }
   void addGtkRow(Source *src, TelItem<Ztc::HeapTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::HeapParent & {
 	  return _->heaps();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::HashTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::HashTblParent & {
 	  return _->hashTbls();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::ThreadTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::ThreadParent & {
 	  return _->threads();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::MxTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::MxParent & { return _->mxs(); });
   }
   void addGtkRow(Source *src, TelItem<Ztc::CxnTelemetry> *item) {
@@ -1602,7 +1587,7 @@ private:
     auto &mxContainer = src->telemetry.p<i>();
     auto mxItem = mxContainer.findPtr(ZuFwdTuple(item->value.mxID));
     if (!mxItem) {
-      mxItem = new TelItem<Ztc::MxTelemetry>{src};
+      mxItem = new TelItem<Ztc::MxTelemetry>;
       mxItem->value.id = item->value.mxID;
       mxContainer.add(mxItem);
       addGtkRow(src, mxItem);
@@ -1610,19 +1595,19 @@ private:
     m_gtkModel->add(new GtkTree::Socket{item}, GtkTree::row(mxItem));
   }
   void addGtkRow(Source *src, TelItem<Ztc::QueueTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::QueueParent & {
 	  return _->queues();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::PoolTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *app) -> GtkTree::PoolParent & {
 	  return app->pools();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::HubTelemetry> *item) {
-    addGtkRow_(appItem(src), item,
+    addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::EngineParent & {
 	  return _->engines();
 	});
@@ -1633,7 +1618,7 @@ private:
     auto engItem =
       engContainer.findPtr(ZuFwdTuple(item->value.hubID, item->value.type));
     if (!engItem) {
-      engItem = new TelItem<Ztc::HubTelemetry>{src};
+      engItem = new TelItem<Ztc::HubTelemetry>;
       engItem->value.linkType = item->value.type;
       engItem->value.id = item->value.hubID;
       engContainer.add(engItem);
@@ -1642,34 +1627,26 @@ private:
     m_gtkModel->add(new GtkTree::Link{item}, GtkTree::row(engItem));
   }
   void addGtkRow(Source *src, DBItem *item) {
-    auto appGtkRow = GtkTree::row(appItem(src));
+    auto appGtkRow = GtkTree::row(appItem_(src));
     auto &db = appGtkRow->db();
     db.init(item);
     m_gtkModel->add(&db, appGtkRow);
   }
-  template <typename Item, typename ParentFn>
-  void addGtkRow_(DBItem *dbItem, Item *item, ParentFn parentFn) {
-    auto dbGtkRow = GtkTree::row(dbItem);
-    auto &parent = parentFn(dbGtkRow);
-    if (parent.row() < 0) m_gtkModel->add(&parent, dbGtkRow);
-    using GtkRow = ZuDecay<decltype(*GtkTree::row(item))>;
-    m_gtkModel->add(new GtkRow{item}, &parent);
-  }
   void addGtkRow(Source *src, TelItem<Ztc::DBHostTelemetry> *item) {
-    addGtkRow_(dbItem(src), item,
+    addGtkRow_(dbItem_(src), item,
 	[](GtkTree::DB *_) -> GtkTree::DBHostParent & {
 	  return _->hosts();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::DBTableTelemetry> *item) {
-    addGtkRow_(dbItem(src), item,
+    addGtkRow_(dbItem_(src), item,
 	[](GtkTree::DB *_) -> GtkTree::DBTableParent & {
 	  return _->tables();
 	});
   }
   template <typename FBType>
   ZuIs<FBType, Ztc::fbs::AlertTelemetry>
-  processTel3(Source *src, const FBType *fbo) {
+  processTel3_(Source *src, const FBType *fbo) {
     ZuTypeIndex<FBType, Telemetry::FBTypeList> i;
     using T = ZuType<i, Telemetry::TypeList>;
     auto &container = src->telemetry.p<i>();
@@ -1683,56 +1660,62 @@ private:
 
 
 private:
-  ZmSemaphore		m_done;
-  ZmSemaphore		m_executed;
-  ZmSemaphore		m_down;
+  // Immutable after init; shared read-only by Rx and GTK.
+  Subscription		m_sub;
+  ZtString<>		m_gladePath;
+  ZtString<>		m_stylePath;
+  ZuTime		m_refreshQuantum;
+  ZuTime		m_refreshRate;
+  unsigned		m_queueBytes = QueuedInputMax;
+  unsigned		m_alertRows = 1000;
+  bool			m_test = false;
+  bool			m_testLocal = false;
+
+  // Main-thread lifecycle; callbacks are drained before final releases them.
   Client		m_client{this};
   ZmRef<Link>		m_link;
-  Subscription		m_sub;
-  Frame			m_frame;
-  bool			m_connected = false; // Rx
-  bool			m_subscribed = false; // Rx
-  bool			m_closing = false; // Rx
-  unsigned		m_interval = 0; // Rx, negotiated by Ack
-  ZmAtomic<unsigned>	m_failed = false;
   bool			m_clientInited = false;
   bool			m_clientStarted = false;
   bool			m_attached = false;
-  bool			m_gtkReady = false;
-  bool			m_test = false;
-  bool			m_testLocal = false;
-  bool			m_testComplete = false; // GTK; read after detach
-  bool			m_testClosed = false; // GTK; read after detach
-  ZmAtomic<unsigned>	m_testPhase = 0;
-  unsigned		m_testChecked = 0; // GTK
-  unsigned		m_received = 0; // GTK
-  guint			m_testPoll = 0; // GTK
-  GtkTree::App		*m_testRow = nullptr; // GTK
 
+  // Control and ring accounting require exact cross-thread publication.
+  alignas(Zm::CacheLineSize)
+  ZmSemaphore		m_done;
+  ZmSemaphore		m_executed;
+  ZmSemaphore		m_down;
   TelRing		m_telRing;
-  unsigned		m_queueBytes = QueuedInputMax;
-  unsigned		m_alertRows = 1000;
+  ZmScheduler::Timer	m_refreshTimer;
+  ZmAtomic<unsigned>	m_failed = false;
   ZmAtomic<unsigned>	m_telCount = 0;
   ZmAtomic<unsigned>	m_telBytes = 0;
-  Sources		m_sources; // GTK-owned
 
-  ZtString<>		m_gladePath;
-  ZtString<>		m_stylePath;
-  GtkStyleContext	*m_styleContext = nullptr;
-  GtkWindow		*m_mainWindow = nullptr;
-  gulong		m_mainDestroy = 0;
+  alignas(Zm::CacheLineSize) // Rx-owned
+  Frame			m_frame;
+  bool			m_connected = false;
+  bool			m_subscribed = false;
+  bool			m_closing = false;
 
-  ZuTime		m_refreshQuantum;
-  ZuTime		m_refreshRate;
-  ZmScheduler::Timer	m_refreshTimer;
+  alignas(Zm::CacheLineSize) // GTK-owned; main reads after handoff/drain
+  Sources		m_sources;
   GtkTree::View		m_gtkView;
   GtkTree::Model	*m_gtkModel = nullptr;
+  GtkStyleContext	*m_styleContext = nullptr;
+  GtkWindow		*m_mainWindow = nullptr;
+  GtkTree::App		*m_testRow = nullptr;
+  gulong		m_mainDestroy = 0;
+  unsigned		m_testPhase = 0;
+  unsigned		m_testChecked = 0;
+  guint			m_testEvent = 0; // one-shot completion event
+  bool			m_gtkReady = false;
+  bool			m_testComplete = false;
+  bool			m_testClosed = false;
+  bool			m_gtkClosing = false;
 };
 
 } // namespace ZDash
 
 static ZDash::App *signalApp = nullptr;
-void sigint() { if (signalApp) signalApp->post(); }
+static void sigint() { if (signalApp) signalApp->post(); }
 
 static bool session(
     ZDash::AppCf config, ZuCSpan caPath, ZuCSpan token)
@@ -1740,12 +1723,12 @@ static bool session(
   bool test = config.test;
   unsigned timeout = test ? config.testTimeout : 0;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
-    s.nThreads(5)
+    s.nThreads(ZDash::GtkSID)
       .thread(1, [](auto &t) { t.name("io-rx"); t.isolated(1); })
       .thread(2, [](auto &t) { t.name("io-tx"); t.isolated(1); })
-      .thread(3, [](auto &t) { t.name("rx"); t.isolated(1); })
-      .thread(4, [](auto &t) { t.name("tx"); t.isolated(1); })
-      .thread(5, [](auto &t) { t.name("gtk"); t.isolated(1); });
+      .thread(ZDash::RxSID, [](auto &t) { t.name("rx"); t.isolated(1); })
+      .thread(ZDash::TxSID, [](auto &t) { t.name("tx"); t.isolated(1); })
+      .thread(ZDash::GtkSID, [](auto &t) { t.name("gtk"); t.isolated(1); });
   }).rxThread(1).txThread(2)};
   if (!mx.start()) return false;
   ZDash::App app;
@@ -1803,6 +1786,11 @@ int main(int argc, char **argv)
     if (options.deviceID) config.deviceID = ZuMv(options.deviceID);
     if (options.caPath) config.caPath = ZuMv(options.caPath);
     if (options.test) {
+      ZiLog::init("zdash");
+      ZiLog::level(Ze::Warning);
+      ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+      ZiLog::start();
+      ZuGuard stopLog{[]() { ZiLog::stop(); }};
       config.test = true;
       config.testTimeout = options.testTimeout;
       ZtString<> token{::getenv("ZDASH_TEST_TOKEN")};
