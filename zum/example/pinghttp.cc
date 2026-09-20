@@ -32,7 +32,7 @@ enum {
   DestinationMax = 8
 };
 
-template <unsigned Status_, typename Heap>
+template <unsigned Status_, typename Heap = ZuVoid>
 struct ResponseData_ : public Heap, public ZmObject  {
   enum { Status = Status_ };
   String body;
@@ -45,8 +45,9 @@ struct ResponseData_ : public Heap, public ZmObject  {
   }
 };
 template <unsigned Status_>
-using ResponseData = ResponseData_<Status_,
-  ZmHeap<"Zum.PingHTTP.Response", ResponseData_<Status_, ZuVoid>>>;
+using ResponseDataHeap = ZmHeap<"Zum.PingHTTP.Response", ResponseData_<Status_>>;
+template <unsigned Status_>
+ZuDerive(ResponseData, (ResponseData_<Status_, ResponseDataHeap<Status_>>));
 
 template <unsigned Status_>
 struct Response : public Zrest::ResParser<Response<Status_>,
@@ -89,7 +90,7 @@ using Responses = ZuTypeList<Response<200>, Response<201>, Response<204>,
   Response<409>, Response<412>, Response<428>, Response<415>, Response<422>, Response<429>, Response<500>,
   Response<501>, Response<502>, Response<503>, Response<504>>;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject  {
   mutable String	contentType;
   mutable String	authorization;
@@ -126,7 +127,8 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0, {});
   }
 };
-using Call = Call_<ZmHeap<"Zum.pinghttp.Call", Call_<ZuVoid>>>;
+using CallHeap = ZmHeap<"Zum.pinghttp.Call", Call_<>>;
+ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Impl, Zhttp::Method::T Method_, unsigned Body_>
 struct Request : public Zrest::ReqBuilder<Impl, Call> {
@@ -219,20 +221,19 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Catalog> {
 
 struct ResParser : public Zrest::MResParser<Catalog, ReqBuilder_> { };
 
-class Client;
-class Pool;
-template <typename Heap = ZuVoid> class Pool_;
+class ClientBase;
+struct Pool;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"Zum.PingHTTP.Request">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap>
-class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
-  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
+template <typename Heap = ZuVoid>
+class Pool_ : public Heap, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+  using Base = Zhttp::Pool<ClientBase, TxQ, ResParser>;
 public:
-  Pool_(Client *client) : Base{client} { }
+  Pool_(ClientBase *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) {
@@ -243,16 +244,11 @@ private:
 };
 
 using PoolHeap = ZmHeap<"Zum.PingHTTP.Pool", Pool_<>>;
-class Pool : public Pool_<PoolHeap> {
-public:
-  using Pool_<PoolHeap>::Pool_;
-};
+ZuDerive(Pool, (Pool_<PoolHeap>));
 
-template <typename Heap>
-class Client_ : public Heap, public ZmObject,
-    public Zhttp::Client<Client_<Heap>, Pool> {
+class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
 public:
-  using Base = Zhttp::Client<Client_<Heap>, Pool>;
+  using Base = Zhttp::Client<ClientBase, Pool>;
 
   bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     m_secure = url.scheme == Zhttp::Scheme::https;
@@ -324,13 +320,16 @@ private:
   bool		m_ipv6Literal = false;
   bool m_secure = false;
 };
-using Client = Client_<ZmHeap<"Zum.pinghttp.Client", Client_<ZuVoid>>>;
 
+template <typename Heap = ZuVoid>
+class Client_ : public Heap, public ClientBase { };
+using ClientHeap = ZmHeap<"Zum.PingHTTP.Client", Client_<>>;
+ZuDerive(Client, (Client_<ClientHeap>));
 
 } // namespace PingHTTP_
 
-template <typename Heap>
-class PingHTTPState_ : public Heap, public ZmObject  {
+template <typename Heap = ZuVoid>
+class PingHTTPState_ : public Heap, public ZmObject {
 public:
   bool add_(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     if (!url.host || url.hasFragment ||
@@ -419,7 +418,8 @@ private:
   String m_caPath;
   bool m_resolverOwned = false;
 };
-using PingHTTPState = PingHTTPState_<ZmHeap<"Zum.pinghttp.PingHTTPState", PingHTTPState_<ZuVoid>>>;
+using PingHTTPStateHeap = ZmHeap<"Zum.PingHTTP.State", PingHTTPState_<>>;
+ZuDerive(PingHTTPState, (PingHTTPState_<PingHTTPStateHeap>));
 
 PingHTTP::PingHTTP() = default;
 PingHTTP::~PingHTTP() { final(); }

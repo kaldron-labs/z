@@ -1295,9 +1295,14 @@ public:
       .secure = true
     }));
   }
-  auto logicalTx(uint32_t id) {
+  auto logicalTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return HeaderBlock<CliLink>{
-      *this, Wire_::encoder(), id, Wire_::peerFrameSize()};
+      *this, Wire_::encoder(), id, Wire_::peerFrameSize(), plan};
+  }
+  auto logicalTx_(uint32_t id, unsigned plan = unsigned(-1)) {
+    ZmAssert(this->app()->txInvoked());
+    return HeaderBlock<CliLink, false>{
+      *this, Wire_::encoder(), id, Wire_::template peerFrameSize<false>(), plan};
   }
   const HPackSeedPlans &hpackSeedPlans() const {
     const auto &user = *this->app()->user();
@@ -1588,7 +1593,12 @@ public:
   void connectEndpoint(const Endpoint &endpoint) {
     connect(endpoint.target, endpoint.port);
   }
-  auto txStream() { return m_native->logicalTx(m_streamID); }
+  auto txStream(unsigned plan = unsigned(-1)) {
+    return m_native->logicalTx(m_streamID, plan);
+  }
+  auto txStream_(unsigned plan = unsigned(-1)) {
+    return m_native->logicalTx_(m_streamID, plan);
+  }
   void txErrorFn(ZiTxErrorFn fn) {
     m_txErrorFn = ZuMv(fn);
     if (m_native && m_streamID)
@@ -1596,14 +1606,9 @@ public:
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
+  // HPACK encoding is Tx-owned; construct headers with transmit_() on Tx.
   template <typename Builder>
-  auto transmit(Builder &) {
-    auto tx = txStream();
-    tx.plan(0);
-    return tx;
-  }
-  template <typename Builder>
-  auto transmit_(Builder &builder) { return transmit(builder); }
+  auto transmit_(Builder &) { return txStream_(0); }
   void finish() { }
   bool active() const { return m_native && m_streamID; }
   void disconnect() {
@@ -2229,9 +2234,14 @@ public:
   }
   auto txStream() { return Base::txStream(); }
   auto txStream_() { return Base::txStream_(); }
-  auto logicalTx(uint32_t id) {
+  auto logicalTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return H2_::HeaderBlock<CliLink>{
-      *this, this->encoder(), id, this->peerFrameSize()};
+      *this, this->encoder(), id, this->peerFrameSize(), plan};
+  }
+  auto logicalTx_(uint32_t id, unsigned plan = unsigned(-1)) {
+    ZmAssert(this->app()->txInvoked());
+    return H2_::HeaderBlock<CliLink, false>{
+      *this, this->encoder(), id, this->template peerFrameSize<false>(), plan};
   }
   const HPackSeedPlans &hpackSeedPlans() const {
     const auto &user = *this->app()->user();
@@ -3287,9 +3297,9 @@ struct CliLink :
     if (stream->localEnd) closeLater_(stream, true);
   }
   bool h3PeerCap() const {
-    if (this->app()->txInvoked()) return h3PeerCapTx;
     return h3.peerExtendedConnect;
   }
+  bool h3PeerCap_() const { return h3PeerCapTx; }
   void h3PeerCap(bool value) {
     auto link = this;
     this->app()->txRun([link, value]() {
@@ -3361,7 +3371,10 @@ struct CliLink :
       stream->quicReset(error);
     });
   }
-  H3::QPackTxTable *qpackTx() { return &h3Tx; }
+  H3::QPackTxTable *qpackTx() {
+    ZmAssert(this->app()->txInvoked());
+    return &h3Tx;
+  }
   void qpackSeed(StreamRef encoder) {
     auto link = ZmRef(this);
     this->app()->txRun([link = ZuMv(link), encoder = ZuMv(encoder)]() mutable {
@@ -3370,7 +3383,7 @@ struct CliLink :
 	link->h3Tx, AppHeaderSeeds<ZuDecay<
 	  decltype(*link->app()->user())>>::get(*link->app()->user()),
 	[link, &encoder](ZuBSpan bytes) {
-	  return link->send(encoder, bytes, false);
+	  return link->send_(encoder, bytes, false);
 	});
       if (result != QPackSeedResult::Failed)
 	link->h3SeedStateTx = result == QPackSeedResult::Seeded ?
@@ -3658,25 +3671,19 @@ public:
     (void)rx;
     return parser.process(*m_stream);
   }
-  template <typename Builder>
-  auto transmit(Builder &builder) {
-    return transmit_(builder, m_stream->txStream());
-  }
+  // QPACK encoding is Tx-owned; construct headers with transmit_() on Tx.
   template <typename Builder>
   auto transmit_(Builder &builder) {
-    return transmit_(builder, m_stream->txStream_());
-  }
-  template <typename Builder, typename Tx>
-  auto transmit_(Builder &builder, Tx tx) {
+    ZmAssert(m_native->app()->txInvoked());
     using H3Cxn = ZuDecay<decltype(m_native->h3)>;
     builder.h3(
       m_native->qpackTx(), &m_native->h3,
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
       },
-      uint64_t(m_stream->id()), m_native->h3PeerCap(),
+      uint64_t(m_stream->id()), m_native->h3PeerCap_(),
       &m_native->h3.params);
-    return tx;
+    return m_stream->txStream_();
   }
   void finish() {
     if (m_native && m_stream) m_native->finish(m_stream);
@@ -4285,7 +4292,7 @@ public:
     bool	counted = false;
   };
 
-  template <typename Heap>
+  template <typename Heap = ZuVoid>
   class Operation_ :
     public Heap, public ZmObject, public OperationLinkData<Heap> {
   public:
@@ -4380,8 +4387,6 @@ public:
     template <typename Parser, typename Rx>
     auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
     template <typename Builder>
-    auto transmit(Builder &builder) { return m_link->transmit(builder); }
-    template <typename Builder>
     auto transmit_(Builder &builder) { return m_link->transmit_(builder); }
     void finish() { }
     template <typename State> void responseHeadersParsed(State *) { }
@@ -4417,8 +4422,9 @@ public:
     bool	m_closing = false;
   };
 
-  using Operation = Operation_<
-    ZmHeap<"Zhttp.H1.Operation", Operation_<ZuVoid>>>;
+  using OperationHeap = ZmHeap<"Zhttp.H1.Operation", Operation_<>>;
+  using OperationBase = Operation_<OperationHeap>;
+  ZuDerive(Operation, (Operation_<OperationHeap>));
   using OperationRef = ZmRef<Operation>;
   using OperationSlots =
     ZtArray<Operation *, ZtArrayHeapID<"Zhttp.H1.OperationSlots">>;
@@ -4511,7 +4517,7 @@ public:
       m_closing = true;
       closeBatch_(m_head, m_generation);
     }
-    void retire(Operation &operation, bool reuse) {
+    void retire(OperationBase &operation, bool reuse) {
       if (operation.linked) unlink_(operation);
       if (operation.counted) {
 	operation.counted = false;
@@ -4523,7 +4529,7 @@ public:
       else if (!reuse && (m_connecting || m_connected))
 	close();
     }
-    void reassigned(Operation &operation) {
+    void reassigned(OperationBase &operation) {
       ZmAssert(operation.counted);
       if (operation.linked && m_tail == &operation) return;
       OperationRef op = &operation;
@@ -4619,7 +4625,7 @@ public:
       m_tail = op.ptr();
       op->linked = true;
     }
-    void unlink_(Operation &operation) {
+    void unlink_(OperationBase &operation) {
       OperationRef hold = &operation;
       auto next = ZuMv(operation.next);
       auto prev = operation.prev;
@@ -4649,7 +4655,7 @@ public:
     // Rx thread exclusive.
     alignas(Zm::CacheLineSize)
     OperationRef m_head;
-    Operation	*m_tail = nullptr;
+    OperationBase	*m_tail = nullptr;
     unsigned	m_operationCount = 0;
     unsigned	m_generation = 0;
     ConnectedInfo m_info;
@@ -4695,7 +4701,7 @@ public:
     op->close();
     return true;
   }
-  void detach(Operation &operation, LiveReq *request) {
+  void detach(OperationBase &operation, LiveReq *request) {
     if (!request || request->poolTransport != Transport::TCP ||
 	this->operation(request) != &operation) return;
     this->operation(request, nullptr);
@@ -5291,7 +5297,7 @@ ZtEnumStruct(ZhttpAPI, Persistence, int8_t,
 ZtFlagsStruct(ZhttpAPI, AttemptEvent, int8_t,
   SelectionObserved, FailureObserved);
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ClientRoute_ : public Heap, public ZmObject {
 public:
   ClientRoute_(uint64_t generation, Endpoints endpoints) :
@@ -5304,8 +5310,8 @@ private:
   Endpoints	m_endpoints;
   uint64_t	m_generation = 0;
 };
-using ClientRoute = ClientRoute_<
-  ZmHeap<"Zhttp.Client.Route", ClientRoute_<ZuVoid>>>;
+using ClientRouteHeap = ZmHeap<"Zhttp.Client.Route", ClientRoute_<>>;
+ZuDerive(ClientRoute, (ClientRoute_<ClientRouteHeap>));
 using ClientRouteRef = ZmRef<ClientRoute>;
 
 struct ClientRouteState {
@@ -5350,7 +5356,7 @@ struct ClientAttemptFailureState {
   bool			transient = false;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ClientDiscoveryPost_ : public Heap, public ZmObject {
   ClientDiscoveryPost_(DiscoveryError error_, Endpoints endpoints_) :
     endpoints{ZuMv(endpoints_)}, error{error_} { }
@@ -5358,8 +5364,10 @@ struct ClientDiscoveryPost_ : public Heap, public ZmObject {
   Endpoints		endpoints;
   DiscoveryError	error;
 };
-using ClientDiscoveryPost = ClientDiscoveryPost_<
-  ZmHeap<"Zhttp.Client.Discovery", ClientDiscoveryPost_<ZuVoid>>>;
+using ClientDiscoveryPostHeap =
+  ZmHeap<"Zhttp.Client.Discovery", ClientDiscoveryPost_<>>;
+ZuDerive(ClientDiscoveryPost,
+  (ClientDiscoveryPost_<ClientDiscoveryPostHeap>));
 using ClientDiscoveryPostRef = ZmRef<ClientDiscoveryPost>;
 
 template <
@@ -5406,7 +5414,7 @@ public:
   using AttemptFailureState = ClientAttemptFailureState;
 
 private:
-  template <typename Heap>
+  template <typename Heap = ZuVoid>
   class PoolLink_ : public Heap, public ZmObject {
   public:
     PoolLink_(Self *pool, unsigned slot) :
@@ -5489,8 +5497,8 @@ private:
     bool	m_limited = false;
     bool	m_stopping = false;
   };
-  using PoolLink = PoolLink_<
-    ZmHeap<"Zhttp.Pool.Link", PoolLink_<ZuVoid>>>;
+  using PoolLinkHeap = ZmHeap<"Zhttp.Pool.Link", PoolLink_<>>;
+  ZuDerive(PoolLink, (PoolLink_<PoolLinkHeap>));
   using PoolLinkRef = ZmRef<PoolLink>;
   using PoolLinks =
     ZtArray<PoolLinkRef, ZtArrayHeapID<"Zhttp.Pool.Links">>;
@@ -5531,7 +5539,7 @@ public:
   using QUICPool = ClientPool<
     Self, H3QUIC, LiveReq, ReqBuilder_, ResParser>;
 private:
-  template <typename Heap>
+  template <typename Heap = ZuVoid>
   class RequestSlot_ : public Heap, public ZmObject, public LiveReq {
   public:
     RequestSlot_(Self *pool, unsigned slot) : m_pool{pool} {
@@ -5566,8 +5574,8 @@ private:
     uint64_t		m_generation = 0;
     bool		m_armed = false;
   };
-  using RequestSlot = RequestSlot_<
-    ZmHeap<"Zhttp.Pool.Request", RequestSlot_<ZuVoid>>>;
+  using RequestSlotHeap = ZmHeap<"Zhttp.Pool.Request", RequestSlot_<>>;
+  ZuDerive(RequestSlot, (RequestSlot_<RequestSlotHeap>));
   using RequestSlotRef = ZmRef<RequestSlot>;
   using LiveReqs =
     ZtArray<RequestSlotRef, ZtArrayHeapID<"Zhttp.Pool.Requests">>;

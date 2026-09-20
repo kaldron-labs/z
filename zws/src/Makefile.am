@@ -5,7 +5,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zquic/src -I$(top_srcdir)/zhttp/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
-AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
+AM_LDFLAGS = @Z_LDFLAGS@
+libZws_la_LDFLAGS = $(AM_LDFLAGS) @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZwsLib.hh Zws.hh ZwsProtocol.hh ZwsURI.hh \
 	ZwsHandshake.hh ZwsTx.hh ZwsCodec.hh \
 	ZwsH1.hh ZwsH1Hub.hh ZwsExtended.hh ZwsHub.hh

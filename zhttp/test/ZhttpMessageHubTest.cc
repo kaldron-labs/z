@@ -209,16 +209,18 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
       state->response.post();
       return;
     }
-    auto tx = link.transmit(link.request);
-    link.request.begin(tx);
-    {
-      auto body = link.request.body(tx, 5);
-      body << ZuCSpan{"he"} << ZuCSpan{"llo"};
-      body.flush();
-      if (!body.complete()) ++state->errors;
-    }
-    link.request.finish(tx);
-    link.finish();
+    this->txRun([link = &link, state = state]() {
+      auto tx = link->transmit_(link->request);
+      link->request.begin(tx);
+      {
+	auto body = link->request.body(tx, 5);
+	body << ZuCSpan{"he"} << ZuCSpan{"llo"};
+	body.flush();
+	if (!body.complete()) ++state->errors;
+      }
+      link->request.finish(tx);
+      link->finish();
+    });
   }
   void disconnected(Link &, bool) { }
   void connectFailed(Link &, bool) {
@@ -327,26 +329,28 @@ struct ServerSession {
 	parser.body_ != "hello" || !parser.fixed || !parser.runtimeOne ||
 	!parser.runtimeTwo)
       ++link.app()->state->errors;
-    {
-      InfoBuilder<Profile> info;
-      auto infoTx = link.transmit(info);
-      info.begin(infoTx);
-      if (info.keyedCalls != 1 || info.runtimeCalls != 1)
-	++link.app()->state->errors;
-      info.finish(infoTx);
-    }
-    ResponseBuilder<Profile> response;
-    auto tx = link.transmit(response);
-    response.begin(tx);
-    if (response.keyedCalls != 1 || response.runtimeCalls != 1)
-      ++link.app()->state->errors;
-    {
-      auto body = response.body(tx);
-      body << ZuCSpan{"pong"};
-      body.flush();
-    }
-    response.finish(tx);
-    link.finish();
+    link.app()->txRun([link = &link]() {
+      {
+	InfoBuilder<Profile> info;
+	auto infoTx = link->transmit_(info);
+	info.begin(infoTx);
+	if (info.keyedCalls != 1 || info.runtimeCalls != 1)
+	  ++link->app()->state->errors;
+	info.finish(infoTx);
+      }
+      ResponseBuilder<Profile> response;
+      auto tx = link->transmit_(response);
+      response.begin(tx);
+      if (response.keyedCalls != 1 || response.runtimeCalls != 1)
+	++link->app()->state->errors;
+      {
+	auto body = response.body(tx);
+	body << ZuCSpan{"pong"};
+	body.flush();
+      }
+      response.finish(tx);
+      link->finish();
+    });
     if constexpr (!Message::OneMessagePerLink) parser.reset();
     return 1;
   }

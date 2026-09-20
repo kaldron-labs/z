@@ -201,6 +201,7 @@ public:
   SagaID id() const { return m_key.template p<1>(); }
   Shard shard() const { return m_shard; }
   uint32_t step() const { return m_step; }
+  uint32_t &iteration() { return m_iteration; }
   uint32_t iteration() const { return m_iteration; }
   uint64_t epoch() const { return m_epoch; }
   ZuTime deadline() const { return m_deadline; }
@@ -413,7 +414,7 @@ template <typename Sagas>
 using SagaUnion =
   ZuTypeApply<ZuUnion, typename Sagas::template Unshift<void>>;
 
-template <typename Catalog, typename Heap>
+template <typename Catalog, typename Heap = ZuVoid>
 struct MSaga_ : public Heap, public Saga {
   using Union = SagaUnion<typename Catalog::List>;
 
@@ -427,15 +428,15 @@ struct MSaga_ : public Heap, public Saga {
 };
 
 template <typename Catalog>
-using MSagaHeap = ZmHeap<"Zdb.Saga", MSaga_<Catalog, ZuVoid>>;
+using MSagaHeap = ZmHeap<"Zdb.Saga", MSaga_<Catalog>>;
 
 template <typename Catalog, typename Impl_ = void> struct MSaga;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct SagaHash_ : public Heap, public SagaHash {
   ZuDerive_(SagaHash_, SagaHash)
 };
-using SagaHashHeap = ZmHeap<"Zdb.Saga.Hash", SagaHash_<ZuVoid>>;
+using SagaHashHeap = ZmHeap<"Zdb.Saga.Hash", SagaHash_<>>;
 ZuDerive(SagaHashObj, (SagaHash_<SagaHashHeap>));
 
 using SagaTypeSeen = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">>;
@@ -496,18 +497,18 @@ ZmHashDerive(SagaStepHash, SagaUNHash::Node,
 
 ZuDerive(SagaRec, SagaStepHash::Node);
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct SagaStepHash_ : public Heap, public SagaStepHash {
   ZuDerive_(SagaStepHash_, SagaStepHash)
 };
-using SagaStepHashHeap = ZmHeap<"Zdb.Saga.StepHash", SagaStepHash_<ZuVoid>>;
+using SagaStepHashHeap = ZmHeap<"Zdb.Saga.StepHash", SagaStepHash_<>>;
 ZuDerive(SagaStepHashObj, (SagaStepHash_<SagaStepHashHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct SagaUNHash_ : public Heap, public SagaUNHash {
   ZuDerive_(SagaUNHash_, SagaUNHash)
 };
-using SagaUNHashHeap = ZmHeap<"Zdb.Saga.UNHash", SagaUNHash_<ZuVoid>>;
+using SagaUNHashHeap = ZmHeap<"Zdb.Saga.UNHash", SagaUNHash_<>>;
 ZuDerive(SagaUNHashObj, (SagaUNHash_<SagaUNHashHeap>));
 
 ZuDerive(SagaDataRows,
@@ -525,12 +526,12 @@ struct SagaScan__ {
   unsigned	pending = 0;
   uint32_t	step = 0;
 };
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct SagaScan_ : public Heap, public ZmPolymorph, public SagaScan__ {
   ZuDerive_(SagaScan_, SagaScan__)
 };
 using SagaScanHeap =
-  ZmHeap<"Zdb.Saga.Scan", SagaScan_<ZuVoid>>;
+  ZmHeap<"Zdb.Saga.Scan", SagaScan_<>>;
 ZuDerive(SagaScan, (SagaScan_<SagaScanHeap>));
 
 template <typename S>

@@ -68,10 +68,9 @@ ZfStruct(, (HeaderReq, JSON),
   (((text), (Ctor<0>, MCP::Header<"Text">)), (String)),
   (((nested), (Ctor<1>)), (UDT)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ThrowContext_ : public Heap, public ZmObject { };
-using ThrowContextHeap =
-  ZmHeap<"ZmcpTest.ThrowContext", ThrowContext_<ZuVoid>>;
+using ThrowContextHeap = ZmHeap<"ZmcpTest.ThrowContext", ThrowContext_<>>;
 ZuDerive(ThrowContext, (ThrowContext_<ThrowContextHeap>));
 
 struct ThrowContextApp {
@@ -236,7 +235,7 @@ struct HTTPResponseHarness :
   bool acceptSSE = true;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct PendingCall_ : public Heap, public ZmObject {
   void process(const Zmcp::ToolReply<EchoOK> &reply) {
     value = reply.body.value;
@@ -254,8 +253,7 @@ struct PendingCall_ : public Heap, public ZmObject {
   unsigned errors = 0;
   unsigned failures = 0;
 };
-using PendingCallHeap =
-  ZmHeap<"ZmcpTest.PendingCall", PendingCall_<ZuVoid>>;
+using PendingCallHeap = ZmHeap<"ZmcpTest.PendingCall", PendingCall_<>>;
 ZuDerive(PendingCall, (PendingCall_<PendingCallHeap>));
 
 struct ClientNotifyHarness {

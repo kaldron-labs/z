@@ -25,8 +25,7 @@ ZfStruct(, (RoleDeleteError, JSON),
 
 // The scan is bounded per store request and posts the next page. Before-images
 // are revalidated by the saga's ordinary shard-owned mutation continuations.
-template <typename Table>
-template <typename Heap>
+template <typename Table, typename Heap = ZuVoid>
 class RoleScan__ : public Heap, public ZmObject  {
   using T = typename Table::T;
   using Tuple = typename Table::Tuple;
@@ -103,9 +102,13 @@ private:
   unsigned	m_count = 0;
   bool		m_ok = true;
 };
-using RoleScan_ = RoleScan__<ZmHeap<"Zum.zumd.role.delete.RoleScan", RoleScan__<ZuVoid>>>;
+template <typename Table>
+using RoleScanHeap =
+  ZmHeap<"Zum.zumd.role.delete.RoleScan", RoleScan__<Table>>;
+template <typename Table>
+ZuDerive(RoleScan_, (RoleScan__<Table, RoleScanHeap<Table>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class RoleDelete__ : public Heap, public ZmObject  {
 public:
   RoleDelete__(DB *db, DBContext *context, Ztls::Random *rng,
@@ -247,7 +250,9 @@ private:
   uint64_t	m_version = 0;
   unsigned	m_phase = 0;
 };
-using RoleDelete_ = RoleDelete__<ZmHeap<"Zum.zumd.role.delete.RoleDelete", RoleDelete__<ZuVoid>>>;
+using RoleDeleteHeap =
+  ZmHeap<"Zum.zumd.role.delete.RoleDelete", RoleDelete__<>>;
+ZuDerive(RoleDelete_, (RoleDelete__<RoleDeleteHeap>));
 
 void Daemon::roleDelete_(AppID appID, RoleID roleID,
     String ifMatch, IdemRequest request, AdminDoneFn complete)

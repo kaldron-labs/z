@@ -15,6 +15,7 @@
 
 #include <zlib/ZuSpan.hh>
 
+#include <zlib/ZiPlatform.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmLock.hh>
 

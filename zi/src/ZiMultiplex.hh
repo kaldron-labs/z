@@ -708,12 +708,12 @@ friend ZiConnection;
 #if !ZiMultiplex__AcceptHeap
   class Accept_;
 #else
-  template <typename> class Accept_;
+  template <typename Heap = ZuVoid> class Accept_;
 #endif
 #if ZiMultiplex__ConnectHash
   class Connect_;
 #else
-  template <typename> class Connect_;
+  template <typename Heap = ZuVoid> class Connect_;
 #endif
 
   class Listener_ : public ZuObject {
@@ -787,7 +787,7 @@ template <typename> friend class Accept_;
     alignas(16)
     char		m_buf[(ZiSockAddr::MaxLen + 16) * 2];
   };
-  using Accept_Heap = ZmHeap<"ZiMultiplex.Accept", Accept_<ZuVoid>>;
+  using Accept_Heap = ZmHeap<"ZiMultiplex.Accept", Accept_<>>;
   ZuDerive(Accept, (Accept_<Accept_Heap>)); 
 #endif
 
@@ -795,7 +795,7 @@ template <typename> friend class Accept_;
 #if ZiMultiplex__ConnectHash
   class Connect_ : public ZuObject
 #else
-  template <typename> class Connect_;
+  template <typename Heap> class Connect_;
 template <typename> friend class Connect_;
   template <typename Heap> class Connect_ : public Heap, public ZuObject
 #endif
@@ -852,10 +852,11 @@ template <typename> friend class Connect_;
 	ZmHashHeapID<"ZiMultiplex.Connect">>>));
   using Connect = ConnectHash::Node;
 #else
-  using ConnectHeap = ZmHeap<"ZiMultiplex.Connect", Connect_<ZuVoid>>;
+  using ConnectHeap = ZmHeap<"ZiMultiplex.Connect", Connect_<>>;
   ZuDerive(Connect, (Connect_<ConnectHeap>));
 #endif
 
+  // Connections are shared with protocol owners and cannot own this registry node.
   ZmHashDerive(CxnHash, ZmRef<ZiConnection>,
     (ZmHashKey<ZiConnection::SocketAxor,
 	ZmHashHeapID<"ZiMultiplex.Connection">>));

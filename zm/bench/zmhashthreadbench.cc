@@ -16,6 +16,7 @@
 
 struct Connection : public ZmObject { };
 
+// This benchmark measures concurrent replacement of shared connections.
 ZmHashKVDerive(ConnHash, int, ZmRef<Connection>, (ZmHashLock<ZmPLock>));
 
 struct TestObject {

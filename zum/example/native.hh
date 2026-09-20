@@ -28,7 +28,6 @@
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
-#include <zlib/ZmVHeap.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
@@ -195,7 +194,7 @@ static String encode(ZuBSpan data)
   return s;
 }
 
-template <unsigned Status_, typename Heap>
+template <unsigned Status_, typename Heap = ZuVoid>
 struct HTTPData_ : public Heap, public ZmObject {
   enum { Status = Status_ };
   String data;
@@ -208,8 +207,9 @@ struct HTTPData_ : public Heap, public ZmObject {
   }
 };
 template <unsigned Status_>
-using HTTPData = HTTPData_<Status_,
-  ZmHeap<"Zum.Native.HTTPData", HTTPData_<Status_, ZuVoid>>>;
+using HTTPDataHeap = ZmHeap<"Zum.Native.HTTPData", HTTPData_<Status_>>;
+template <unsigned Status_>
+ZuDerive(HTTPData, (HTTPData_<Status_, HTTPDataHeap<Status_>>));
 
 struct Result {
   ZmSemaphore	done;
@@ -220,12 +220,11 @@ struct Result {
   }
 };
 
-template <typename Heap> class Client_;
-using Client = Client_<ZmHeap<"Zum.Native.Client", Client_<ZuVoid>>>;
+class ClientBase;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject {
-  Client	*client = nullptr;
+  ClientBase	*client = nullptr;
   Result	*result = nullptr;
   String	target;
   String	body;
@@ -251,7 +250,8 @@ struct Call_ : public Heap, public ZmObject {
     finish(0);
   }
 };
-using Call = Call_<ZmHeap<"Zum.Native.Call", Call_<ZuVoid>>>;
+using CallHeap = ZmHeap<"Zum.Native.Call", Call_<>>;
+ZuDerive(Call, (Call_<CallHeap>));
 
 using OKData = HTTPData<200>;
 using BadRequestData = HTTPData<400>;
@@ -340,19 +340,18 @@ struct ReqBuilder_ : public ZmObject,
 
 struct ResParser : public Zrest::MResParser<ClientCatalog, ReqBuilder_> { };
 
-class Pool;
-template <typename Heap = ZuVoid> class Pool_;
+struct Pool;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"zum.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap>
-class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
-  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
+template <typename Heap = ZuVoid>
+class Pool_ : public Heap, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+  using Base = Zhttp::Pool<ClientBase, TxQ, ResParser>;
 public:
-  Pool_(Client *client) : Base{client} { }
+  Pool_(ClientBase *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
@@ -361,16 +360,12 @@ private:
 };
 
 using PoolHeap = ZmHeap<"zum.Pool", Pool_<>>;
-class Pool : public Pool_<PoolHeap> {
-public:
-  using Pool_<PoolHeap>::Pool_;
-};
+ZuDerive(Pool, (Pool_<PoolHeap>));
 
-template <typename Heap>
-class Client_ : public Heap, public ZmObject,
-    public Zhttp::Client<Client_<Heap>, Pool> {
-  using Base = Zhttp::Client<Client_<Heap>, Pool>;
+class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
+  using Base = Zhttp::Client<ClientBase, Pool>;
 public:
+
   bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     m_origin = Zhttp::Origin{url.origin()};
     bool secure = url.scheme == Zhttp::Scheme::https;
@@ -419,6 +414,11 @@ private:
   uint64_t m_id = 0;
 };
 
+template <typename Heap = ZuVoid>
+class Client_ : public Heap, public ClientBase { };
+using ClientHeap = ZmHeap<"Zum.Native.Client", Client_<>>;
+ZuDerive(Client, (Client_<ClientHeap>));
+
 class Clients {
 public:
   bool add(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
@@ -463,18 +463,20 @@ private:
   ZtArray<ZmRef<Client>> m_clients;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CallbackData_ : public Heap, public ZmObject {
   ZuSpan<uint8_t> data;
   CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
-using CallbackData = CallbackData_<ZmHeap<"Zum.Native.CallbackData", CallbackData_<ZuVoid>>>;
+using CallbackDataHeap = ZmHeap<"Zum.Native.CallbackData", CallbackData_<>>;
+ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CallbackBody_ : public Heap, public ZmObject {
   String data;
 };
-using CallbackBody = CallbackBody_<ZmHeap<"Zum.Native.CallbackBody", CallbackBody_<ZuVoid>>>;
+using CallbackBodyHeap = ZmHeap<"Zum.Native.CallbackBody", CallbackBody_<>>;
+ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
 
 struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
   enum { Body = Zrest::BodyPolicy::Raw };
@@ -599,8 +601,10 @@ static bool tokenJSON(String &json, Tokens &tokens)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  TokenWire wire = ZfJSON::handler<TokenWire>(roots[0]).ctor();
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<TokenWire>(roots[0]);
+  if (!handler.valid) return false;
+  TokenWire wire = handler.ctor();
   ZuGuard clear{[&wire]() {
     if (wire.accessToken.mutable_())
       ZuClear(wire.accessToken.data(), wire.accessToken.length());
@@ -661,8 +665,10 @@ static bool metadataJSON(String &json, ZuCSpan issuer, MetadataWire &metadata)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  metadata = ZfJSON::handler<MetadataWire>(roots[0]).ctor();
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<MetadataWire>(roots[0]);
+  if (!handler.valid) return false;
+  metadata = handler.ctor();
   return metadata.issuer == issuer && metadata.authorizationEndpoint &&
     metadata.tokenEndpoint && metadata.jwksURI &&
     metadata.revocationEndpoint &&

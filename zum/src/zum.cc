@@ -300,7 +300,7 @@ static bool contains(const StringVec &values, ZuCSpan value)
   return false;
 }
 
-template <unsigned Status_, typename Heap>
+template <unsigned Status_, typename Heap = ZuVoid>
 struct HTTPData_ : public Heap, public ZmObject  {
   enum { Status = Status_ };
   String data;
@@ -310,8 +310,9 @@ struct HTTPData_ : public Heap, public ZmObject  {
   }
 };
 template <unsigned Status_>
-using HTTPData = HTTPData_<Status_,
-  ZmHeap<"Zum.HTTPData", HTTPData_<Status_, ZuVoid>>>;
+using HTTPDataHeap = ZmHeap<"Zum.HTTPData", HTTPData_<Status_>>;
+template <unsigned Status_>
+ZuDerive(HTTPData, (HTTPData_<Status_, HTTPDataHeap<Status_>>));
 
 struct Result {
   ZmSemaphore	done;
@@ -324,7 +325,7 @@ struct Result {
 
 class Client;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject  {
   Client	*client = nullptr;
   Result	*result = nullptr;
@@ -355,7 +356,8 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0);
   }
 };
-using Call = Call_<ZmHeap<"Zum.zum.Call", Call_<ZuVoid>>>;
+using CallHeap = ZmHeap<"Zum.zum.Call", Call_<>>;
+ZuDerive(Call, (Call_<CallHeap>));
 
 using OKData = HTTPData<200>;
 using BadRequestData = HTTPData<400>;
@@ -476,15 +478,15 @@ struct ReqBuilder_ : public ZmObject,
 
 struct ResParser : public Zrest::MResParser<ClientCatalog, ReqBuilder_> { };
 
-class Pool;
-template <typename Heap = ZuVoid> class Pool_;
+struct Pool;
+template <typename Heap> class Pool_;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"zum.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
   using Base = Zhttp::Pool<Client, TxQ, ResParser>;
 public:
@@ -497,10 +499,7 @@ private:
 };
 
 using PoolHeap = ZmHeap<"zum.Pool", Pool_<>>;
-class Pool : public Pool_<PoolHeap> {
-public:
-  using Pool_<PoolHeap>::Pool_;
-};
+ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class Client : public Zhttp::Client<Client, Pool> {
 public:
@@ -580,18 +579,22 @@ static bool initClient(Client &client, ZiMultiplex &mx,
   return false;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CallbackData_ : public Heap, public ZmObject  {
-  ZuSpan<uint8_t> data;
+  String data;
   CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
-using CallbackData = CallbackData_<ZmHeap<"Zum.zum.CallbackData", CallbackData_<ZuVoid>>>;
+using CallbackDataHeap =
+  ZmHeap<"Zum.zum.CallbackData", CallbackData_<>>;
+ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CallbackBody_ : public Heap, public ZmObject  {
   String data;
 };
-using CallbackBody = CallbackBody_<ZmHeap<"Zum.zum.CallbackBody", CallbackBody_<ZuVoid>>>;
+using CallbackBodyHeap =
+  ZmHeap<"Zum.zum.CallbackBody", CallbackBody_<>>;
+ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
 
 struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
   enum { Body = Zrest::BodyPolicy::Raw };
@@ -643,7 +646,7 @@ public:
   {
     String query;
     if (ok && request.object) {
-      auto span = request.object->data;
+      auto span = request.object->data.span();
       if (span && span[0] == '?') span.offset(1);
       query = span;
     } else ok = false;
@@ -716,10 +719,11 @@ static bool tokenJSON(String &json, Tokens &tokens)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>())
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
     return false;
-  auto wire = ZfJSON::handler<Token>(roots[0]).ctor();
+  auto handler = ZfJSON::handler<Token>(roots[0]);
+  if (!handler.valid) return false;
+  auto wire = handler.ctor();
   if (!wire.accessToken ||
       !ZuICmp<ZuCSpan>::equals(wire.tokenType, "Bearer")) return false;
   Tokens next{ZuMv(wire.accessToken), ZuMv(wire.refreshToken),
@@ -737,8 +741,10 @@ static bool metadataJSON(String &json, ZuCSpan issuer, Metadata &metadata)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  metadata = ZfJSON::handler<Metadata>(roots[0]).ctor();
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<Metadata>(roots[0]);
+  if (!handler.valid) return false;
+  metadata = handler.ctor();
   return metadata.issuer == issuer && metadata.authorizationEndpoint &&
     metadata.tokenEndpoint && metadata.jwksURI &&
     metadata.revocationEndpoint &&
@@ -768,8 +774,8 @@ static ZuPtr<ZfJSON::AnyNode> jsonObject(String &json)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return {};
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return {};
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return {};
   return ZuMv(roots[0]);
 }
 
@@ -801,7 +807,9 @@ static bool loadTokens(const Config &config, Tokens &tokens)
   json.strip();
   auto root = jsonObject(json);
   if (!root) return false;
-  auto wire = ZfJSON::handler<Credential>(root.ptr()).ctor();
+  auto handler = ZfJSON::handler<Credential>(root.ptr());
+  if (!handler.valid) return false;
+  auto wire = handler.ctor();
   if (wire.issuerURL != config.issuerURL ||
       wire.managementURL != config.managementURL ||
       wire.clientID != config.clientID) {

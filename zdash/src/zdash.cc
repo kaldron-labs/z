@@ -13,7 +13,6 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuPolymorph.hh>
 #include <zlib/ZuByteSwap.hh>
-#include <zlib/ZuVersion.hh>
 
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTrap.hh>
@@ -23,26 +22,27 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
-#include <zlib/ZiModule.hh>
 #include <zlib/ZiRing.hh>
 
 #include <zlib/ZfCf.hh>
-#include <zlib/ZvCSV.hh>
 #include <zlib/ZvRingParams.hh>
 #include <zlib/ZvMxParams.hh>
-#include <zlib/ZvUserDB.hh>
-#include <zlib/ZcmdClient.hh>
-#include <zlib/ZcmdServer.hh>
+#include <zlib/ZfCLI.hh>
+#include <zlib/ZmRing.hh>
+#include <zlib/ZtcFB.hh>
+#include <zlib/ZtcDB.hh>
+#include <zlib/ZtcMsg.hh>
+#include <zlib/Zws.hh>
 
-#include <zlib/Zdf.hh>
+#include <zlib/ZdfStore.hh>
 
 #include <zlib/ZGtkApp.hh>
 #include <zlib/ZGtkCallback.hh>
 #include <zlib/ZGtkTreeModel.hh>
 #include <zlib/ZGtkValue.hh>
 
-#include "request_fbs.h"
-#include "reqack_fbs.h"
+#include "zdash_oauth.hh"
+#include "zdash_protocol.hh"
 
 // FIXME - css
 //
@@ -58,7 +58,7 @@
 static void usage()
 {
   static const char *usage =
-    "Usage: zdash\n";
+    "Usage: zdash --config=CONFIG [--wss=URL] [--no-browser]\n";
   std::cerr << usage << std::flush;
   ZiLog::stop();
   Zm::exit(1);
@@ -70,23 +70,50 @@ namespace ZDash {
 
 struct AppCf {
   ZvRingCf	telRing;
-  int		appRole = ZvTelemetry::AppRole::Dev;
-  ZtString<>	gtkGlade;
+  ZtString<>	gtkGlade = "zdash.glade";
   ZtString<>	gtkStyle;
   unsigned	gtkRefresh = 1;
-  unsigned	thread = 0;
-  unsigned	gtkThread = 0;
+  unsigned	gtkThread = 5;
+  unsigned	queueBytes = QueuedInputMax;
+  unsigned	interval = 1000;
+  unsigned	alertRows = 1000;
+  ZtString<>	wssURL;
+  ZtString<>	deviceID;
+  ZtString<>	group = "App";
+  ZuID		publisherID;
+  ZtString<>	filter = "*";
 };
 
 ZfStruct(, (AppCf, Cf),
   (((telRing)),						(UDT)),
-  (((appRole), (Enum<ZvTelemetry::AppRole::Map>)),	(Int32,
-      ZvTelemetry::AppRole::Dev)),
-  (((gtkGlade), (Required)),				(String)),
+  (((gtkGlade)),					(String, "zdash.glade")),
   (((gtkStyle)),					(String)),
   (((gtkRefresh), ((Range<1U, 60000U>))),		(UInt32, 1)),
-  (((thread), (Required)),				(UInt32)),
-  (((gtkThread), (Required)),				(UInt32)));
+  (((gtkThread)),					(UInt32, 5)),
+  (((queueBytes), ((Range<unsigned(FrameMax), 1U<<28>))),	(UInt32, QueuedInputMax)),
+  (((interval), ((Range<1U, 3600000U>))),		(UInt32, 1000)),
+  (((alertRows), ((Range<1U, 1000000U>))),		(UInt32, 1000)),
+  (((wssURL)),					(String)),
+  (((deviceID)),					(String)),
+  (((group)),						(String, "App")),
+  (((publisherID)),					(String)),
+  (((filter)),						(String, "*")));
+
+struct Options {
+  ZtString<> config;
+  ZtString<> wssURL;
+  ZtString<> deviceID;
+  ZtString<> caPath;
+  bool noBrowser = false;
+  bool help = false;
+};
+ZfStruct(, (Options, CLI),
+  (((config), (CLI::Long<"config">)), (String)),
+  (((wssURL), (CLI::Long<"wss">)), (String)),
+  (((deviceID), (CLI::Long<"device-id">)), (String)),
+  (((caPath), (CLI::Long<"ca">)), (String)),
+  (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 namespace Telemetry {
   struct Watch {
@@ -100,13 +127,10 @@ namespace Telemetry {
     }
   };
   static auto Watch_Axor(const Watch &v) { return v.ptr_; }
-  static constexpr const auto &Watch_HeapID() {
-    return "zdash.Telemetry.Watch";
-  }
   ZmListDeriveT((T), WatchList, T,
     (ZmListKey<Watch_Axor,
       ZmListNode<T,
-	ZmListHeapID<Watch_HeapID, ZmListLock<ZmNoLock>>>>));
+	ZmListHeapID<"ZDash.Watch", ZmListLock<ZmNoLock>>>>));
 
   // display - contains pointer to tree array
   struct Display_ : public Watch {
@@ -120,7 +144,12 @@ namespace Telemetry {
   using GraphList = WatchList<Graph_>;
   using Graph = GraphList::Node;
 
-  using TypeList = ZvTelemetry::TypeList;
+  using TypeList = ZuTypeList<
+    Ztc::HeapTelemetry, Ztc::HashTelemetry, Ztc::ThreadTelemetry,
+    Ztc::MxTelemetry, Ztc::CxnTelemetry, Ztc::QueueTelemetry,
+    Ztc::HubTelemetry, Ztc::LinkTelemetry, Ztc::DBTableTelemetry,
+    Ztc::DBHostTelemetry, Ztc::DBTelemetry, Ztc::AppTelemetry,
+    Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
   using FBTypeList = ZuTypeMap<ZfbType, TypeList>;
 
   template <typename Data> struct Item__ {
@@ -129,26 +158,30 @@ namespace Telemetry {
     using TelKey = ZuRDecay<decltype(telKey(ZuDeclVal<const Data &>()))>;
     static int rag(const Data &data) { return data.rag(); }
   };
-  template <> struct Item__<ZvTelemetry::App> {
-    using TelKey = ZuTuple<const ZtString<> &>;
-    void initTelKey(const ZtString<> &server, uint16_t port) {
-      telKey_ << server << ':' << port;
+  template <> struct Item__<Ztc::AppTelemetry> {
+    using TelKey = ZuTuple<const ZtString<> &, const ZtString<> &, uint64_t>;
+    void initTelKey(ZuCSpan publisher, ZuCSpan device, uint64_t generation) {
+      publisher_ = publisher;
+      device_ = device;
+      generation_ = generation;
     }
-    TelKey telKey(const ZvTelemetry::App &) const {
-      return TelKey{telKey_};
+    TelKey telKey(const Ztc::AppTelemetry &) const {
+      return {publisher_, device_, generation_};
     }
-    static int rag(const ZvTelemetry::App &data) {
+    static int rag(const Ztc::AppTelemetry &data) {
       return data.rag;
     }
-    ZtString<>	telKey_;
+    ZtString<>	publisher_;
+    ZtString<>	device_;
+    uint64_t	generation_ = 0;
   };
-  template <> struct Item__<ZvTelemetry::DB> {
+  template <> struct Item__<Ztc::DBTelemetry> {
     using TelKey = ZuTuple<const char *>;
-    static TelKey telKey(const ZvTelemetry::DB &) {
+    static TelKey telKey(const Ztc::DBTelemetry &) {
       return TelKey{"dbenv"};
     }
-    static int rag(const ZvTelemetry::DB &) {
-      return ZvTelemetry::RAG::Off;
+    static int rag(const Ztc::DBTelemetry &) {
+      return Ztc::RAG::Off;
     }
   };
   template <typename Data_> class Item_ : public Item__<Data_> {
@@ -156,12 +189,14 @@ namespace Telemetry {
 
   public:
     using Data = Data_;
+    using DataFrame = Zdf::DataFrame<Data, true>;
+    using Writer = typename DataFrame::Writer;
     using TelKey = typename Base::TelKey;
 
     Item_(void *link__) : link_{link__} { }
     template <typename FBType>
     Item_(void *link__, FBType *fbo) :
-      link_{link__}, data{ZfbStruct::ctor<Data>(fbo)} { }
+      link_{link__}, value{ZfbStruct::ctor<Data>(fbo)} { }
 
   private:
     Item_(const Item_ &) = delete;
@@ -171,16 +206,13 @@ namespace Telemetry {
   public:
     ~Item_() {
       if (dataFrame) {
-	dfWriter.final();
 	ZmBlock<>{}([this](auto wake) {
-	  dataFrame->close(
-	      [wake = ZuMv(wake)](Zdf::CloseResult result) mutable {
-	    if (result.is<Zdf::Event>())
-	      ZiLogEvent(ZuMv(result).p<Zdf::Event>());
-	    wake();
+	  dataFrame->run([this, wake = ZuMv(wake)]() mutable {
+	    if (dfWriter) dfWriter->stop();
+	    dfWriter = nullptr;
+	    dataFrame->stopWriting(ZuMv(wake));
 	  });
 	});
-	dataFrame = nullptr;
       }
     }
 
@@ -192,56 +224,50 @@ namespace Telemetry {
     template <typename T>
     void gtkRow(T *node) { gtkRow_ = node; }
 
-    TelKey telKey() const { return Base::telKey(data); }
-    int rag() const { return Base::rag(data); }
+    TelKey telKey() const { return Base::telKey(value); }
+    int rag() const { return Base::rag(value); }
 
-    bool record(ZuCSpan name, Zdf::Store *store, ZeError *e = nullptr) {
-      dataFrame = new Zdf::DataFrame{Data::fields(), name, true};
-      dataFrame->init(store);
-      if (!ZmBlock<bool>{}([this](auto wake) {
-	dataFrame->open([wake = ZuMv(wake)](Zdf::OpenResult result) mutable {
-	  if (result.is<Zdf::Event>()) {
-	    ZiLogEvent(ZuMv(result).p<Zdf::Event>());
-	    wake(false);
-	  }
-	  wake(true);
+    bool record(ZuCSpan name, Zdf::Store *store, Zdf::Shard shard = 0) {
+      dataFrame = ZmBlock<ZmRef<DataFrame>>{}([store, name, shard](auto wake) {
+	store->template openDF<Data, true, true>(
+	    shard, Zdf::IDString{name}, ZuMv(wake));
+      });
+      if (!dataFrame) return false;
+      dfWriter = ZmBlock<ZmRef<Writer>>{}([this](auto wake) {
+	dataFrame->run([this, wake = ZuMv(wake)]() mutable {
+	  dataFrame->write(ZuMv(wake), []() { });
 	});
-      }));
-      dfWriter = dataFrame->writer();
-      return true;
+      });
+      return !!dfWriter;
     }
 
     void			*link_;
-    Data			data;
+    Data			value;
 
     void			*gtkRow_ = nullptr;
     DispList			dispList;
     GraphList			graphList;
 
-    ZuPtr<Zdf::DataFrame>	dataFrame;
-    Zdf::DataFrame::Writer	dfWriter;
+    ZmRef<DataFrame>		dataFrame;
+    ZmRef<Writer>		dfWriter;
   };
 
-  static constexpr const auto &ItemTree_HeapID() {
-    return "zdash.Telemetry.Tree";
-  }
   template <typename T>
-  static auto KeyAxor(const T &v) { return v.telKey(); }
+  static typename T::TelKey itemKey(const T &v) { return v.telKey(); }
   ZmRBTreeDeriveT((T), ItemTree_, Item_<T>,
     (ZmRBTreeNode<Item_<T>,
-      ZmRBTreeKey<KeyAxor<Item_<T>>,
+      ZmRBTreeKey<ZDash::Telemetry::itemKey<Item_<T>>,
 	ZmRBTreeUnique<true,
 	  ZmRBTreeLock<ZmNoLock,
-	    ZmRBTreeHeapID<ItemTree_HeapID>>>>>));
+	    ZmRBTreeHeapID<"ZDash.ItemTree">>>>>));
   template <typename T>
   class ItemTree : public ItemTree_<T> {
   public:
-    using Node = Item_<T>;
+    using Node = typename ItemTree_<T>::Node;
+    void add(Node *node) { this->addNode(node); }
     template <typename FBType>
     Node *lookup(const FBType *fbo) const {
-      auto node_ = this->find(ZuStructKey(*fbo));
-      if (!node_) return nullptr;
-      return &node_->data();
+      return this->findPtr(ZuStructKey(*fbo));
     }
   };
   template <typename T> class ItemSingleton {
@@ -265,7 +291,7 @@ namespace Telemetry {
     AlertArray(AlertArray &&) = delete;
     AlertArray &operator =(AlertArray &&) = delete;
   public:
-    using T = ZvTelemetry::Alert;
+    using T = Ztc::AlertTelemetry;
     using Node = T;
     AlertArray() = default;
     ~AlertArray() = default;
@@ -275,13 +301,13 @@ namespace Telemetry {
   template <typename U> struct Container_ { // default
     using T = ItemTree<U>;
   };
-  template <> struct Container_<ZvTelemetry::App> {
-    using T = ItemSingleton<ZvTelemetry::App>;
+  template <> struct Container_<Ztc::AppTelemetry> {
+    using T = ItemSingleton<Ztc::AppTelemetry>;
   };
-  template <> struct Container_<ZvTelemetry::DB> {
-    using T = ItemSingleton<ZvTelemetry::DB>;
+  template <> struct Container_<Ztc::DBTelemetry> {
+    using T = ItemSingleton<Ztc::DBTelemetry>;
   };
-  template <> struct Container_<ZvTelemetry::Alert> {
+  template <> struct Container_<Ztc::AlertTelemetry> {
     using T = AlertArray;
   };
   template <typename U>
@@ -352,21 +378,22 @@ namespace GtkTree {
   template <typename TelKey_>
   struct BranchChild {
     using TelKey = TelKey_;
-    static int rag() { return ZvTelemetry::RAG::Off; }
+    static int rag() { return Ztc::RAG::Off; }
   };
 
   template <typename T> using TelItem = Telemetry::Item<T>;
 
-  using Heap = Leaf<3, TelItem<ZvTelemetry::Heap>>;
-  using HashTbl = Leaf<3, TelItem<ZvTelemetry::HashTbl>>;
-  using Thread = Leaf<3, TelItem<ZvTelemetry::Thread>>;
-  using Socket = Leaf<4, TelItem<ZvTelemetry::Socket>>;
-  using Mx = Parent<3, TelItem<ZvTelemetry::Mx>, Socket>;
-  using Queue = Leaf<3, TelItem<ZvTelemetry::Queue>>;
-  using Link = Leaf<4, TelItem<ZvTelemetry::Link>>;
-  using Engine = Parent<3, TelItem<ZvTelemetry::Engine>, Link>;
-  using DBHost = Leaf<4, TelItem<ZvTelemetry::DBHost>>;
-  using DBTable = Leaf<4, TelItem<ZvTelemetry::DBTable>>;
+  using Heap = Leaf<3, TelItem<Ztc::HeapTelemetry>>;
+  using HashTbl = Leaf<3, TelItem<Ztc::HashTelemetry>>;
+  using Thread = Leaf<3, TelItem<Ztc::ThreadTelemetry>>;
+  using Socket = Leaf<4, TelItem<Ztc::CxnTelemetry>>;
+  using Mx = Parent<3, TelItem<Ztc::MxTelemetry>, Socket>;
+  using Queue = Leaf<3, TelItem<Ztc::QueueTelemetry>>;
+  using Pool = Leaf<3, TelItem<Ztc::PoolTelemetry>>;
+  using Link = Leaf<4, TelItem<Ztc::LinkTelemetry>>;
+  using Engine = Parent<3, TelItem<Ztc::HubTelemetry>, Link>;
+  using DBHost = Leaf<4, TelItem<Ztc::DBHostTelemetry>>;
+  using DBTable = Leaf<4, TelItem<Ztc::DBTableTelemetry>>;
 
   // DBTable hosts
   struct DBHosts : public BranchChild<ZuTuple<const char *>> {
@@ -405,6 +432,10 @@ namespace GtkTree {
     static auto telKey() { return TelKey{"queues", "type"}; }
   };
   using QueueParent = Parent<2, Queues, Queue>;
+  struct Pools : public BranchChild<ZuTuple<const char *>> {
+    static auto telKey() { return TelKey{"pools"}; }
+  };
+  using PoolParent = Parent<2, Pools, Pool>;
   // engines
   struct Engines : public BranchChild<ZuTuple<const char *>> {
     static auto telKey() { return TelKey{"engines"}; }
@@ -415,7 +446,7 @@ namespace GtkTree {
   ZuDeclTuple(DBTuple,
       (DBHostParent, hosts),
       (DBTableParent, tables));
-  using DB = Branch<2, TelItem<ZvTelemetry::DB>, DBTuple>;
+  using DB = Branch<2, TelItem<Ztc::DBTelemetry>, DBTuple>;
   // applications
   ZuDeclTuple(AppTuple,
       (HeapParent, heaps),
@@ -423,47 +454,51 @@ namespace GtkTree {
       (ThreadParent, threads),
       (MxParent, mxs),
       (QueueParent, queues),
+      (PoolParent, pools),
       (EngineParent, engines),
       (DB, db));
-  using App = Branch<1, TelItem<ZvTelemetry::App>, AppTuple>;
+  using App = Branch<1, TelItem<Ztc::AppTelemetry>, AppTuple>;
 
   struct Root : public ZGtk::TreeHierarchy::Parent<Root, 0, App> { };
 
   // map telemetry items to corresponding tree nodes
-  inline Heap *row(TelItem<ZvTelemetry::Heap> *item) {
+  inline Heap *row(TelItem<Ztc::HeapTelemetry> *item) {
     return item->template gtkRow<Heap>();
   }
-  inline HashTbl *row(TelItem<ZvTelemetry::HashTbl> *item) {
+  inline HashTbl *row(TelItem<Ztc::HashTelemetry> *item) {
     return item->template gtkRow<HashTbl>();
   }
-  inline Thread *row(TelItem<ZvTelemetry::Thread> *item) {
+  inline Thread *row(TelItem<Ztc::ThreadTelemetry> *item) {
     return item->template gtkRow<Thread>();
   }
-  inline Mx *row(TelItem<ZvTelemetry::Mx> *item) {
+  inline Mx *row(TelItem<Ztc::MxTelemetry> *item) {
     return item->template gtkRow<Mx>();
   }
-  inline Socket *row(TelItem<ZvTelemetry::Socket> *item) {
+  inline Socket *row(TelItem<Ztc::CxnTelemetry> *item) {
     return item->template gtkRow<Socket>();
   }
-  inline Queue *row(TelItem<ZvTelemetry::Queue> *item) {
+  inline Queue *row(TelItem<Ztc::QueueTelemetry> *item) {
     return item->template gtkRow<Queue>();
   }
-  inline Engine *row(TelItem<ZvTelemetry::Engine> *item) {
+  inline Pool *row(TelItem<Ztc::PoolTelemetry> *item) {
+    return item->template gtkRow<Pool>();
+  }
+  inline Engine *row(TelItem<Ztc::HubTelemetry> *item) {
     return item->template gtkRow<Engine>();
   }
-  inline Link *row(TelItem<ZvTelemetry::Link> *item) {
+  inline Link *row(TelItem<Ztc::LinkTelemetry> *item) {
     return item->template gtkRow<Link>();
   }
-  inline DBTable *row(TelItem<ZvTelemetry::DBTable> *item) {
+  inline DBTable *row(TelItem<Ztc::DBTableTelemetry> *item) {
     return item->template gtkRow<DBTable>();
   }
-  inline DBHost *row(TelItem<ZvTelemetry::DBHost> *item) {
+  inline DBHost *row(TelItem<Ztc::DBHostTelemetry> *item) {
     return item->template gtkRow<DBHost>();
   }
-  inline DB *row(TelItem<ZvTelemetry::DB> *item) {
+  inline DB *row(TelItem<Ztc::DBTelemetry> *item) {
     return item->template gtkRow<DB>();
   }
-  inline App *row(TelItem<ZvTelemetry::App> *item) {
+  inline App *row(TelItem<Ztc::AppTelemetry> *item) {
     return item->template gtkRow<App>();
   }
 
@@ -480,6 +515,7 @@ namespace GtkTree {
     ThreadParent *,	// app->threads (*)
     MxParent *,		// app->mxs (*)
     QueueParent *,	// app->queues (*)
+    PoolParent *,	// app->pools (*)
     EngineParent *,	// app->engines (*)
     DB *,		// app->db (*)
 
@@ -489,6 +525,7 @@ namespace GtkTree {
     Thread *,		// app->threads->[thread]
     Mx *,		// app->mxs->[mx]
     Queue *,		// app->queues->[queue]
+    Pool *,		// app->pools->[pool]
     Engine *,		// app->engines->[engine]
 
     // app great-grandchildren
@@ -522,6 +559,7 @@ namespace GtkTree {
 	ZuIsSame<T, ThreadParent>{} ||
 	ZuIsSame<T, MxParent>{} ||
 	ZuIsSame<T, QueueParent>{} ||
+	ZuIsSame<T, PoolParent>{} ||
 	ZuIsSame<T, EngineParent>{} ||
 	ZuIsSame<T, DB>{}, App> *parent(void *ptr) {
       return static_cast<App *>(ptr);
@@ -545,6 +583,10 @@ namespace GtkTree {
     template <typename T>
     static ZuSame<T, Queue, QueueParent> *parent(void *ptr) {
       return static_cast<QueueParent *>(ptr);
+    }
+    template <typename T>
+    static ZuSame<T, Pool, PoolParent> *parent(void *ptr) {
+      return static_cast<PoolParent *>(ptr);
     }
     template <typename T>
     static ZuSame<T, Engine, EngineParent> *parent(void *ptr) {
@@ -617,8 +659,8 @@ namespace GtkTree {
     template <typename Key>
     struct QueueKeyPrint : public KeyPrint_<QueueKeyPrint<Key>, Key> {
       using KeyPrint_<QueueKeyPrint<Key>, Key>::KeyPrint_;
-      auto p1() {
-	return ZvTelemetry::QueueType::name(this->key.template p<1>());
+      auto p2() {
+	return Ztc::QueueType::name(this->key.template p<2>());
       }
     };
     template <typename T, typename Key>
@@ -724,17 +766,17 @@ namespace GtkTree {
 	rag = rag_.get_int();
       }
       switch (rag) {
-	case ZvTelemetry::RAG::Red:
+	case Ztc::RAG::Red:
 	  m_values[1].set_static_boxed(&m_rag_red_bg);
 	  m_values[2].set_static_boxed(&m_rag_red_fg);
 	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
 	  break;
-	case ZvTelemetry::RAG::Amber:
+	case Ztc::RAG::Amber:
 	  m_values[1].set_static_boxed(&m_rag_amber_bg);
 	  m_values[2].set_static_boxed(&m_rag_amber_fg);
 	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
 	  break;
-	case ZvTelemetry::RAG::Green:
+	case Ztc::RAG::Green:
 	  m_values[1].set_static_boxed(&m_rag_green_bg);
 	  m_values[2].set_static_boxed(&m_rag_green_fg);
 	  g_object_setv(G_OBJECT(cell), 3, m_props, m_values);
@@ -787,10 +829,10 @@ namespace GtkTree {
       {
 	auto cell = gtk_cell_renderer_text_new();
 	g_object_getv(G_OBJECT(cell), 2, &m_props[1], &m_values[1]);
-	m_rag_off_bg =
-	  *reinterpret_cast<const GdkRGBA *>(m_values[1].get_boxed());
-	m_rag_off_fg =
-	  *reinterpret_cast<const GdkRGBA *>(m_values[2].get_boxed());
+	if (auto color = static_cast<const GdkRGBA *>(m_values[1].get_boxed()))
+	  m_rag_off_bg = *color;
+	if (auto color = static_cast<const GdkRGBA *>(m_values[2].get_boxed()))
+	  m_rag_off_fg = *color;
 	g_object_unref(G_OBJECT(cell));
       }
 
@@ -805,9 +847,7 @@ namespace GtkTree {
       m_treeView = nullptr;
     }
 
-    void final() {
-      if (m_treeView) g_object_unref(G_OBJECT(m_treeView));
-    }
+    void final() { m_treeView = nullptr; }
 
     void bind(GtkTreeModel *model) {
       gtk_tree_view_set_model(m_treeView, model);
@@ -828,235 +868,250 @@ namespace GtkTree {
   };
 }
 
-class App_Cli;
-class App_Srv;
-class SrvLink;
 
-class CliLink_ : public ZcmdCliLink<App_Cli, CliLink_> {
-public:
-  using Base = ZcmdCliLink<App_Cli, CliLink_>;
-  using ID = unsigned;
-  using Key = ID;
-  Key key() const { return id; }
+struct Source {
+  ZtString<> device;
+  ZtString<> publisher;
+  uint64_t generation;
+  Telemetry::Containers telemetry;
 
-  template <typename Server>
-  CliLink_(App_Cli *, ID, Server &&server, uint16_t port, SrvLink *);
-
-  void loggedIn();
-  void disconnected(bool);
-  void connectFailed(bool transient);
-
-  int processTelemetry(const uint8_t *data, unsigned len);
-  int processDeflt(ZuCSpan id, const uint8_t *data, unsigned len);
-
-  ID			id;
-  ZvSeqNo		seqNo = 0;
-  Telemetry::Containers	telemetry;
-  SrvLink		*srvLink = nullptr;
-  bool			connecting = false; // prevent overlapping connects
+  Source(ZuCSpan device_, ZuCSpan publisher_, uint64_t generation_) :
+    device{device_}, publisher{publisher_}, generation{generation_} { }
+  auto key() const { return ZuFwdTuple(device, publisher, generation); }
 };
-static CliLink_::Key CliLink_KeyAxor(const CliLink_ &link) {
-  return link.key();
-}
-ZmRBTreeDerive(CliLinks, CliLink_,
-  ZmRBTreeNode<CliLink_,
-    ZmRBTreeKey<CliLink_KeyAxor,
-      ZmRBTreeUnique<true,
-	ZmRBTreeLock<ZmPLock,
-	  ZmRBTreeHeapID<"CliLink">>>>>);
-using CliLink = CliLinks::Node;
+static auto sourceKey(const Source &source) { return source.key(); }
+ZmRBTreeDerive(Sources, Source,
+  ZmRBTreeNode<Source, ZmRBTreeKey<sourceKey, ZmRBTreeUnique<true,
+    ZmRBTreeLock<ZmNoLock, ZmRBTreeHeapID<"ZDash.Source">>>>>);
 
-class SrvLink : public ZcmdSrvLink<App_Srv, SrvLink> {
+class App : public ZmPolymorph, public ZGtk::App {
 public:
-  using Base = ZcmdSrvLink<App_Srv, SrvLink>;
-  SrvLink(App_Srv *app);
-
-  int processCmd(const uint8_t *data, unsigned len);
-  int processDeflt(ZuCSpan id, const uint8_t *data, unsigned len);
-
-  CliLink		*cliLink = nullptr;
-};
-
-class App;
-
-class App_Cli : public ZcmdClient<App_Cli, CliLink_> { };
-class App_Srv : public ZcmdServer<App_Srv, SrvLink> {
-public:
-  void telemetry(ZvTelemetry::App &data);
-};
-
-class App :
-    public ZmPolymorph,
-    public App_Cli,
-    public App_Srv,
-    public ZGtk::App {
-public:
-  using Client = ZcmdClient<App_Cli, CliLink_>;
-  using FBB = typename Client::FBB;
-  using Server = ZcmdServer<App_Srv, SrvLink>;
-  using User = Server::User;
-
-#pragma pack(push, 1)
-  struct Hdr {
-    uintptr_t	cliLink;
-    uint16_t	length;
-  };
-#pragma pack(pop)
-  static unsigned SizeAxor(const void *ptr) {
-    return reinterpret_cast<const Hdr *>(ptr)->length + sizeof(Hdr);
-  }
-  class TelRing : public ZiRing<ZmRingSizeAxor<SizeAxor>> {
-    TelRing() = delete;
-    TelRing(const TelRing &) = delete;
-    TelRing &operator =(const TelRing &) = delete;
-    TelRing(TelRing &&) = delete;
-    TelRing &operator =(TelRing &&) = delete;
-  public:
-    using Base = ZiRing<ZmRingSizeAxor<SizeAxor>>;
-    ~TelRing() = default;
-    TelRing(ZiRingParams params) : Base{ZuMv(params)} { }
-    bool push(CliLink_ *cliLink, ZuBSpan msg) {
-      unsigned n = msg.length();
-      if (void *ptr = Base::push(n + sizeof(Hdr))) {
-	new (ptr) Hdr{
-	  .cliLink = reinterpret_cast<uintptr_t>(cliLink),
-	  .length = static_cast<uint16_t>(n)
-	};
-	memcpy(static_cast<uint8_t *>(ptr) + sizeof(Hdr), msg.data(), n);
-	push2(n + sizeof(Hdr));
-	return true;
-      }
-      auto i = writeStatus();
-      if (i < 0)
-	ZiLOG(Error, "zdash", ([i](auto &s) {
-	  s << "ZiRing::push() failed - " << Zi::ioResult(i); }));
-      else
-	ZiLOG(Error, "zdash", ([i](auto &s) {
-	  s << "ZiRing::push() failed - writeStatus=" << i; }));
-      return false;
-    }
-    template <typename L>
-    bool shift(L &&l) {
-      if (const void *ptr = Base::shift()) {
-	auto hdr = reinterpret_cast<const Hdr *>(ptr);
-	CliLink_ *cliLink = reinterpret_cast<CliLink_ *>(hdr->cliLink);
-	unsigned n = hdr->length;
-	ZuFwd<L>(l)(
-	  cliLink,
-	  ZuSpan(static_cast<const uint8_t *>(ptr) + sizeof(Hdr), n));
-	shift2(n + sizeof(Hdr));
-	return true;
-      }
-      return false;
-    }
-  };
-
+  using Client = Zws::Client<App, Zhttp::H1TLS>;
+  using Link = Client::Link;
+  using TelRing = ZmRing<ZmRingT<Frame>>;
   template <typename T> using TelItem = Telemetry::Item<T>;
+  using AppItem = TelItem<Ztc::AppTelemetry>;
+  using DBItem = TelItem<Ztc::DBTelemetry>;
 
-  using AppItem = TelItem<ZvTelemetry::App>;
-  using DBItem = TelItem<ZvTelemetry::DB>;
-
-  void init(ZiMultiplex *mx, const ZfCf::AnyNode *cf) {
-    auto config = ZfCf::handler<AppCf>(cf).ctor();
-    if (auto telRingCf = cf->resolve("telRing"))
-      m_telRingParams.init(telRingCf);
-    else
-      m_telRingParams.name("zdash").size(131072);
-    // 131072 is ~100mics at 1Gbit/s
-    m_telRing = new TelRing{m_telRingParams};
-    {
-      if (m_telRing->open(TelRing::Read | TelRing::Write) != Zu::OK)
-	throw ZeEXCEPT(Error, "zdash",
-	    ([name = m_telRingParams.data().name](auto &s) {
-	      s << name << ": open failed"; }));
-      int r;
-      if ((r = m_telRing->reset()) != Zu::OK)
-	throw ZeEXCEPT(Error, "zdash",
-	    ([name = m_telRingParams.data().name, r](auto &s) {
-	      s << name << ": reset failed - " << Zu::ioResult(r); }));
+  bool init(ZiMultiplex *mx, AppCf config, ZuCSpan caPath, ZuCSpan token) {
+    Zws::URI uri;
+    if (!Zws::URI::parse(uri, config.wssURL).ok() || !uri.secure() ||
+	!uri.host || !uri.port || !uri.target || !token) return false;
+    m_sub.deviceID = ZuMv(config.deviceID);
+    m_sub.publisherID = config.publisherID;
+    m_sub.filter = config.filter;
+    m_sub.interval = config.interval;
+    bool groupOK = false;
+    for (auto group: Ztc::fbs::EnumValuesGroup()) {
+      if (config.group != Ztc::fbs::EnumNameGroup(group)) continue;
+      m_sub.group = group;
+      groupOK = true;
+      break;
     }
+    if (!groupOK || (!m_sub.deviceID &&
+	(m_sub.group != Ztc::fbs::Group::App || m_sub.publisherID ||
+	  m_sub.filter != "*"))) return false;
 
-    m_role = config.appRole;
-
+    m_queueBytes = config.queueBytes;
+    m_alertRows = config.alertRows;
+    m_telRing.init(ZmRingParams{config.telRing.size}
+	.spin(config.telRing.spin).timeout(0));
+    if (m_telRing.open(TelRing::Read | TelRing::Write) != Zu::OK)
+      return false;
     m_gladePath = ZuMv(config.gtkGlade);
     m_stylePath = ZuMv(config.gtkStyle);
+    int64_t refreshRate = int64_t(config.gtkRefresh) * 1000000;
+    m_refreshQuantum = ZuTime{ZuTime::Nano{refreshRate >> 1}};
+    if (m_refreshQuantum < mx->params().quantum())
+      m_refreshQuantum = mx->params().quantum();
+    m_refreshRate = m_refreshQuantum + m_refreshQuantum;
+    if (config.gtkThread <= 4 || config.gtkThread > mx->params().nThreads())
+      return false;
 
-    {
-      int64_t refreshRate = config.gtkRefresh * (int64_t)1000000;
-      m_refreshQuantum = ZuTime{ZuTime::Nano{refreshRate>>1}};
-      if (m_refreshQuantum < mx->params().quantum()) {
-	m_refreshQuantum = mx->params().quantum();
-	m_refreshRate = m_refreshQuantum + m_refreshQuantum;
-      } else
-	m_refreshRate = ZuTime{ZuTime::Nano{refreshRate}};
-    }
-    unsigned gtkTID;
-    {
-      unsigned nThreads = mx->params().nThreads();
-      if (!config.thread || config.thread > nThreads ||
-	  !config.gtkThread || config.gtkThread > nThreads)
-	throw ZeEXCEPT(Error, "zdash", ([
-	  thread = config.thread, gtkThread = config.gtkThread, nThreads
-	](auto &s) {
-	  s << "thread IDs " << thread << ", " << gtkThread <<
-	    " outside [1, " << nThreads << ']';
-	}));
-      m_sid = config.thread;
-      gtkTID = config.gtkThread;
-    }
+    i18n("zdash", DATADIR);
+    attach(mx, config.gtkThread);
+    m_attached = true;
+    mx->run([this]() {
+      gtkInit();
+      m_executed.post();
+    }, config.gtkThread);
+    m_executed.wait();
+    if (!m_gtkReady) return false;
 
-    // both server and client are initialized with the same mx, cf
-    // so that all command and cxn processing on both sides is
-    // handled by the same thread
-
-    // FIXME - need to call Server::dbCf() then Zdb::init(), then Server::init()
-    Server::init(mx, cf);
-    static_cast<Server *>(this)->Dispatcher::map("zdash",
-	[](void *link, const uint8_t *data, unsigned len) {
-	  return static_cast<SrvLink *>(link)->processCmd(data, len);
-	});
-    static_cast<Server *>(this)->Dispatcher::deflt(
-	[](void *link, ZuCSpan id, const uint8_t *data, unsigned len) {
-	  return static_cast<SrvLink *>(link)->processDeflt(id, data, len);
-	});
-
-    for (unsigned i = 0; i < CmdPerm::N; i++)
-      m_cmdPerms[i] = findPerm(
-	  ZtString<>{} << "ZDash." <<
-	  fbs::EnumNamesReqData()[i - CmdPerm::Offset]);
-
-    Client::init(mx, cf);
-    static_cast<Client *>(this)->Dispatcher::deflt(
-	[](void *link, ZuCSpan id, const uint8_t *data, unsigned len) {
-	  return static_cast<CliLink_ *>(link)->processDeflt(id, data, len);
-	});
-
-    ZmTrap::sigintFn(sigint);
-    ZmTrap::trap();
-
-    m_uptime = Zm::now();
-
-    i18n(
-	cf->get("i18n_domain", "zdash"),
-	cf->get("dataDir", DATADIR));
-
-    attach(mx, gtkTID);
-    mx->run([this]() { gtkInit(); }, gtkTID);
+    Zws::Config ws;
+    ws.maxMessage = FrameMax;
+    ws.maxQueuedInput = QueuedInputMax;
+    ws.handshakeTimeout = 10;
+    ws.closeTimeout = 5;
+    ws.pingInterval = 30;
+    ws.pongTimeout = 60;
+    Zhttp::H2Config tls;
+    if (caPath) tls.caPath(caPath);
+    if (!m_client.init(Zhttp::HubConfig{mx, "rx", "tx"}, tls, ws))
+      return false;
+    m_clientInited = true;
+    if (!m_client.start()) return false;
+    m_clientStarted = true;
+    ZtString<> authorization{"Bearer "};
+    authorization << token;
+    m_link = new Link{&m_client, uri, Ztc::Protocol, authorization};
+    ZuClear(authorization.data(), authorization.length());
+    m_link->connect();
+    return true;
   }
 
   void final() {
-    detach(ZmFn<>{this, [](App *this_) {
-      this_->gtkFinal();
-      this_->m_executed.post();
-    }});
-    m_executed.wait();
-
-    m_telRing->close();
-
-    Client::final();
-    Server::final();
+    if (m_clientStarted) {
+      m_client.rxRun([this]() {
+	m_closing = true;
+	if (m_connected) {
+	  if (m_subscribed) send(*m_link, requestFrame(m_sub, false));
+	  m_link->close();
+	} else
+	  m_down.post();
+      });
+      (void)m_down.timedwait(Zm::now(6));
+      ZmSemaphore stopped;
+      m_client.stop([&stopped](bool) { stopped.post(); });
+      stopped.wait();
+      m_clientStarted = false;
+    }
+    m_link = nullptr;
+    if (m_clientInited) {
+      m_client.final();
+      m_clientInited = false;
+    }
+    if (m_attached) {
+      detach({[this]() {
+	gtkFinal();
+	m_executed.post();
+      }});
+      m_executed.wait();
+      m_attached = false;
+    }
+    m_telRing.close();
   }
 
+  void post() { m_done.post(); }
+  void wait() { m_done.wait(); }
+  bool failed() const { return m_failed; }
+
+  template <typename L>
+  static void send(L &link, Frame frame) {
+    link.txStream([frame = ZuMv(frame)](auto &tx) {
+      tx << ZuBSpan{frame->data(), frame->length};
+      tx.flush();
+    }, Zws::Opcode::Binary);
+  }
+
+  template <typename L>
+  void connected(L &link, const Zhttp::ConnectedInfo &) {
+    if (m_closing) { link.close(); return; }
+    m_connected = true;
+    send(link, requestFrame(m_sub, true));
+    m_subscribed = true;
+  }
+
+  template <typename L>
+  int reject(L &link, Zws::CloseCode::T code) {
+    m_failed = true;
+    link.close(code);
+    post();
+    return -1;
+  }
+
+  template <typename L>
+  int messageStart(L &link, Zws::Opcode::T opcode) {
+    if (opcode != Zws::Opcode::Binary)
+      return reject(link, Zws::CloseCode::Unsupported);
+    if (!m_frame) m_frame = new FrameBuf;
+    m_frame->length = 0;
+    return 1;
+  }
+
+  template <typename L, typename Rx>
+  int process(L &link, Rx &rx) {
+    return Zhttp::bodyEach(rx, [this, &link](ZuSpan<uint8_t> span) {
+      if (span.length() > FrameMax - m_frame->length) {
+	reject(link, Zws::CloseCode::TooLarge);
+	return false;
+      }
+      auto length = m_frame->length + span.length();
+      m_frame->append(span);
+      if (m_frame->length == length) return true;
+      reject(link, Zws::CloseCode::TooLarge);
+      return false;
+    }) ? 1 : -1;
+  }
+
+  template <typename L>
+  int messageEnd(L &link) {
+    auto msg = Ztc::msg(ZuBSpan{m_frame->data(), m_frame->length});
+    if (!accepts(m_sub, msg))
+      return reject(link, Zws::CloseCode::InvalidData);
+    if (m_closing) return 1;
+    switch (msg->body_type()) {
+      case Ztc::fbs::Body::Ack:
+	if (msg->body_as_Ack()->status() != Ztc::fbs::AckStatus::OK)
+	  return reject(link, Zws::CloseCode::Policy);
+	m_interval = msg->body_as_Ack()->interval();
+	break;
+      case Ztc::fbs::Body::Error:
+	ZiLOG(Error, "zdash", ([msg](auto &s) {
+	  s << "ztchub: " << Zfb::Load::str(msg->body_as_Error()->message());
+	}));
+	return reject(link, Zws::CloseCode::Policy);
+      case Ztc::fbs::Body::EOS:
+        // End of snapshot, not end of subscription or publisher lifetime.
+        break;
+      case Ztc::fbs::Body::Telemetry:
+	if (!processTelemetry(ZuMv(m_frame)))
+	  return reject(link, Zws::CloseCode::TooLarge);
+	break;
+      default:
+	return reject(link, Zws::CloseCode::Protocol);
+    }
+    return 1;
+  }
+
+  template <typename L>
+  void connectFailed(L &, bool) {
+    m_failed = true;
+    m_down.post();
+    post();
+  }
+
+  template <typename L>
+  void disconnected(L &, bool) {
+    m_connected = false;
+    m_subscribed = false;
+    if (!m_closing) m_failed = true;
+    m_down.post();
+    post();
+  }
+
+  bool processTelemetry(Frame frame) {
+    auto length = frame->length;
+    if (length > m_queueBytes - m_telBytes.load_()) return false;
+    auto slot = m_telRing.tryPush();
+    if (!slot) return false;
+    new (slot) Frame{ZuMv(frame)};
+    m_telBytes += length;
+    // Count before publication so a concurrent GTK drain cannot underflow.
+    auto pending = m_telCount++;
+    m_telRing.push2();
+    if (!pending) armRefresh();
+    return true;
+  }
+
+  template <typename ...Args>
+  void gtkRun(Args &&...args) {
+    ZGtk::App::run(ZuFwd<Args>(args)...);
+  }
+  template <typename ...Args>
+  void gtkInvoke(Args &&...args) {
+    ZGtk::App::invoke(ZuFwd<Args>(args)...);
+  }
   void gtkInit() {
     gtk_init(nullptr, nullptr);
 
@@ -1068,6 +1123,8 @@ public:
 	ZiLOG(Error, "zdash", e->message);
 	g_error_free(e);
       }
+      g_object_unref(G_OBJECT(builder));
+      m_failed = true;
       post();
       return;
     }
@@ -1106,7 +1163,7 @@ public:
 
     gtk_window_present(m_mainWindow);
 
-    m_telRing->attach();
+    m_gtkReady = m_telRing.attach() == Zu::OK;
   }
 
   void gtkDestroyed() {
@@ -1115,356 +1172,154 @@ public:
   }
 
   void gtkFinal() {
-    m_telRing->detach();
+    while (auto slot = m_telRing.tryShift()) {
+      slot->~Frame();
+      m_telRing.shift2();
+    }
+    m_telRing.detach();
 
     ZGtk::App::sched()->del(&m_refreshTimer);
 
     if (m_mainWindow) {
       if (m_mainDestroy)
 	g_signal_handler_disconnect(G_OBJECT(m_mainWindow), m_mainDestroy);
-      gtk_window_close(m_mainWindow);
       gtk_widget_destroy(GTK_WIDGET(m_mainWindow));
       m_mainWindow = nullptr;
     }
     m_gtkView.final();
     if (m_gtkModel) g_object_unref(G_OBJECT(m_gtkModel));
+    m_gtkModel = nullptr;
+    m_sources.clean();
     if (m_styleContext) g_object_unref(G_OBJECT(m_styleContext));
   }
 
-  void post() { m_done.post(); }
-  void wait() { m_done.wait(); }
-
-  void telemetry(ZvTelemetry::App &data) {
-    using namespace ZvTelemetry;
-    data.id = "ZDash";
-    data.version = ZuVerName(); // FIXME
-    data.uptime = m_uptime;
-    data.role = m_role;
-    data.rag = RAG::Green;
-  }
-
-  template <typename ...Args>
-  void gtkRun(Args &&...args) {
-    ZGtk::App::run(ZuFwd<Args>(args)...);
-  }
-  template <typename ...Args>
-  void gtkInvoke(Args &&...args) {
-    ZGtk::App::invoke(ZuFwd<Args>(args)...);
-  }
-
-  void loggedIn(CliLink_ *cliLink) {
-    cliLink->connecting = false;
-  }
-
-  void disconnected(CliLink_ *cliLink) {
-    cliLink->connecting = false;
-    if (auto srvLink = cliLink->srvLink) srvLink->cliLink = nullptr;
-    cliLink->srvLink = nullptr;
-    m_telRing->push(cliLink, ZuBSpan());
-  }
-  void disconnected2(CliLink_ *cliLink) {
-    // FIXME - update App RAG to red (in caller)
-  }
-
-  void connectFailed(CliLink_ *cliLink, bool transient) {
-    cliLink->connecting = false;
-  }
-
-  void disconnected(SrvLink *srvLink) {
-    auto i = m_cliLinks.citer();
-    while (auto cliLink = i())
-      if (cliLink->srvLink == srvLink)
-	cliLink->srvLink = nullptr;
-    srvLink->cliLink = nullptr;
-  }
-
-  int processTelemetry(CliLink_ *cliLink, const uint8_t *data, unsigned len) {
-    using namespace Zfb;
-    {
-      Verifier verifier(data, len);
-      if (!ZvTelemetry::fbs::VerifyTelemetryBuffer(verifier)) return -1;
-    }
-    if (m_telRing->push(cliLink, {data, len}))
-      if (!m_telCount++)
-	ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
-	    ZmScheduler::Advance,
-	    [this](auto &&arm) {
-	      return arm(ZmFn<>{this, [](App *this_) {
-		this_->gtkRefresh();
-	      }});
-	    }, ZGtk::App::sid());
-    return len;
-  }
-
-  int rejectCmd(SrvLink *srvLink, unsigned len, uint64_t seqNo,
-      unsigned code, ZtString<> text) {
-    auto text_ = Zfb::Save::str(m_fbb, text);
-    fbs::ReqAckBuilder fbb_(m_fbb);
-    fbb_.add_seqNo(seqNo);
-    fbb_.add_rejCode(code);
-    fbb_.add_rejText(text_);
-    m_fbb.Finish(fbb_.Finish());
-    srvLink->send_(Zcmd::saveHdr(m_fbb, m_id));
-    return len;
-  }
-
-  int processCmd(SrvLink *srvLink, const uint8_t *data, unsigned len) {
-    using namespace Zfb;
-    using namespace Load;
-
-    {
-      Verifier verifier(data, len);
-      if (!fbs::VerifyRequestBuffer(verifier)) return -1;
-    }
-
-    auto request_ = fbs::GetRequest(data);
-    uint64_t seqNo = request_->seqNo();
-    auto reqType = request_->data_type();
-
-    {
-      auto perm = m_cmdPerms[CmdPerm::Offset + int(reqType)];
-      if (ZuUnlikely(perm < 0)) {
-	ZtString<> permName;
-	permName << "ZDash." << fbs::EnumNamesReqData()[int(reqType)];
-	perm = m_cmdPerms[CmdPerm::Offset + int(reqType)] = findPerm(permName);
-	if (ZuUnlikely(perm < 0)) {
-	  return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-	      "permission denied (\"" << permName << "\" missing)");
-	}
-      }
-      if (ZuUnlikely(!ok(srvLink->user(), srvLink->interactive(), perm))) {
-	ZtString<> text = "permission denied";
-	if (srvLink->user()->flags & ZvUserDB::User::ChPass)
-	  text << " (user must change password)";
-	return rejectCmd(srvLink, len, seqNo, __LINE__, ZuMv(text));
-      }
-    }
-
-    const void *reqData_ = request_->data();
-    fbs::ReqAckData ackType = fbs::ReqAckData::NONE;
-    Offset<void> ackData = 0;
-
-    switch (reqType) {
-      case fbs::ReqData::Version:
-	ackType = fbs::ReqAckData::VersionAck;
-	ackData = fbs::CreateVersion(m_fbb,
-	    Save::str(m_fbb, ZuVerName())).Union(); // FIXME
-	break;
-      case fbs::ReqData::MkLink: {
-	auto reqData = static_cast<const fbs::LinkData *>(reqData_);
-	auto cliLink =
-	  new CliLink{this, m_cliLinkID++,
-	    str(reqData->server()), reqData->port(), srvLink};
-	m_cliLinks.addNode(cliLink);
-	cliLink->srvLink = srvLink;
-	srvLink->cliLink = cliLink;
-	ackType = fbs::ReqAckData::MkLinkAck;
-	ackData = fbs::CreateLink(m_fbb, true, cliLink->id,
-	    fbs::CreateLinkData(m_fbb,
-	      Save::str(m_fbb, cliLink->server()), cliLink->port())).Union();
-      } break;
-      case fbs::ReqData::RmLink: {
-	auto reqData = static_cast<const fbs::LinkID *>(reqData_);
-	auto cliLink = m_cliLinks.del(reqData->id());
-	if (!cliLink)
-	  return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-	      "unknown link " << reqData->id());
-	ackType = fbs::ReqAckData::RmLinkAck;
-	ackData = fbs::CreateLink(m_fbb, false, cliLink->id,
-	    fbs::CreateLinkData(m_fbb,
-	      Save::str(m_fbb, cliLink->server()), cliLink->port())).Union();
-      } break;
-      case fbs::ReqData::Connect: {
-	auto reqData = static_cast<const fbs::Connect *>(reqData_);
-	auto cliLink = m_cliLinks.findPtr(reqData->link()->id());
-	if (!cliLink)
-	  return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-	      "unknown link " << reqData->link()->id());
-	if (cliLink->connecting)
-	  return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-	      "connect in progress " << reqData->link()->id());
-	cliLink->connecting = true;
-	cliLink->srvLink = srvLink;
-	srvLink->cliLink = cliLink;
-	auto loginReq = reqData->loginReq();
-	switch (loginReq->data_type()) {
-	  case ZvUserDB::fbs::LoginReqData::Login: {
-	    auto login =
-	      static_cast<const ZvUserDB::fbs::Login *>(loginReq->data());
-	    cliLink->login(
-		str(login->user()), str(login->passwd()), login->totp());
-	  } break;
-	  case ZvUserDB::fbs::LoginReqData::Access: {
-	    auto access =
-	      static_cast<const ZvUserDB::fbs::Access *>(loginReq->data());
-	    cliLink->access_(
-		str(access->keyID()),
-		bytes(access->token()),
-		access->stamp(),
-		bytes(access->hmac()));
-	  } break;
-	  default:
-	    return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-		"unknown credentials type " << int(loginReq->data_type()));
-	}
-	ackType = fbs::ReqAckData::ConnectAck;
-	ackData = fbs::CreateLink(m_fbb,
-	    cliLink->srvLink == srvLink, cliLink->id,
-	    fbs::CreateLinkData(m_fbb,
-	      Save::str(m_fbb, cliLink->server()), cliLink->port())).Union();
-      } break;
-      case fbs::ReqData::Disconnect: {
-	auto reqData = static_cast<const fbs::LinkID *>(reqData_);
-	auto cliLink = m_cliLinks.findPtr(reqData->id());
-	if (!cliLink)
-	  return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-	      "unknown link " << reqData->id());
-	cliLink->disconnect();
-	ackType = fbs::ReqAckData::ConnectAck;
-	ackData = fbs::CreateLink(m_fbb,
-	    cliLink->srvLink == srvLink, cliLink->id,
-	    fbs::CreateLinkData(m_fbb,
-	      Save::str(m_fbb, cliLink->server()), cliLink->port())).Union();
-      } break;
-      case fbs::ReqData::Links: {
-	ZtArray<Zfb::Offset<fbs::Link>> v;
-	auto i = m_cliLinks.citer();
-	while (auto cliLink = i())
-	  v.push(fbs::CreateLink(m_fbb,
-		cliLink->srvLink == srvLink, cliLink->id,
-		fbs::CreateLinkData(m_fbb,
-		  Save::str(m_fbb, cliLink->server()), cliLink->port())));
-	auto list_ = m_fbb.CreateVector(v.data(), v.length());
-	ackType = fbs::ReqAckData::LinksAck;
-	ackData = fbs::CreateLinkList(m_fbb, list_).Union();
-      } break;
-      case fbs::ReqData::Select: {
-	auto reqData = static_cast<const fbs::LinkID *>(reqData_);
-	auto cliLink = m_cliLinks.findPtr(reqData->id());
-	if (!cliLink)
-	  return rejectCmd(srvLink, len, seqNo, __LINE__, ZtString<>{} <<
-	      "unknown link " << reqData->id());
-	cliLink->srvLink = srvLink;
-	srvLink->cliLink = cliLink;
-	ackType = fbs::ReqAckData::SelectAck;
-	ackData = fbs::CreateLink(m_fbb, true, cliLink->id,
-	    fbs::CreateLinkData(m_fbb,
-	      Save::str(m_fbb, cliLink->server()), cliLink->port())).Union();
-      } break;
-      default:
-	break;
-    }
-
-    {
-      fbs::ReqAckBuilder fbb_(m_fbb);
-      fbb_.add_seqNo(seqNo);
-      fbb_.add_data_type(ackType);
-      fbb_.add_data(ackData);
-      m_fbb.Finish(fbb_.Finish());
-    }
-    srvLink->send_(Zcmd::saveHdr(m_fbb, m_id));
-    return len;
-  }
-
-  // fwd unknown app messages client <-> server using client-selected
-  // server-side link (from zdash perspective, SrvLink selects CliLink)
-  int processDeflt(
-      CliLink_ *cliLink, ZuCSpan, const uint8_t *data, unsigned len) {
-    if (auto srvLink = cliLink->srvLink)
-      srvLink->send_(data - sizeof(Zcmd::Hdr), len + sizeof(Zcmd::Hdr));
-    return len;
-  }
-  int processDeflt(
-      SrvLink *srvLink, ZuCSpan id, const uint8_t *data, unsigned len) {
-    if (auto cliLink = srvLink->cliLink)
-      cliLink->send_(data - sizeof(Zcmd::Hdr), len + sizeof(Zcmd::Hdr));
-    return len;
-  }
 
 private:
-  void gtkRefresh() {
-    // FIXME - freeze, save sort col, unset sort col
-
-    ZuTime deadline = Zm::now() + m_refreshQuantum;
-    unsigned i = 0, n;
-    while (m_telRing->shift([](
-	    CliLink_ *cliLink, const ZuBSpan &msg) {
-      static_cast<App *>(cliLink->app())->processTel2(cliLink, msg);
-    })) {
-      do {
-	if (!(n = m_telCount.load_())) break;
-      } while (m_telCount.cmpXch(n - 1, n) != n);
-      if (!(++i & 0xf) && Zm::now() >= deadline) break;
-    }
-
-    // FIXME - restore sort col, thaw
-
-    if (n)
-      ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
-	  ZmScheduler::Defer,
-	  [this](auto &&arm) {
-	    return arm(ZmFn<>{this, [](App *this_) { this_->gtkRefresh(); }});
-	  }, ZGtk::App::sid());
+  void armRefresh(int mode = ZmScheduler::Advance) {
+    ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
+	mode,
+	[this](auto &&arm) {
+	  return arm([this]() { gtkRefresh(); });
+	}, ZGtk::App::sid());
   }
-  void processTel2(CliLink_ *cliLink, const ZuBSpan &msg_) {
-    if (ZuUnlikely(!msg_)) {
-      disconnected2(cliLink);
+
+  void gtkRefresh() {
+    auto deadline = Zm::now() + m_refreshQuantum;
+    unsigned n = 0;
+    while (auto slot = m_telRing.tryShift()) {
+      Frame frame{ZuMv(*const_cast<Frame *>(slot))};
+      slot->~Frame();
+      m_telRing.shift2();
+      m_telBytes -= frame->length;
+      --m_telCount;
+      processTel2(frame);
+      if (!(++n & 0xf) && Zm::now() >= deadline) break;
+    }
+    if (m_telCount.load_()) armRefresh(ZmScheduler::Defer);
+  }
+
+  void removeSource(Sources::Node *source) {
+    auto &container = source->telemetry.p<
+      ZuTypeIndex<Ztc::AppTelemetry, Telemetry::TypeList>{}>();
+    auto item = container.lookup(
+	static_cast<const Ztc::fbs::AppTelemetry *>(nullptr));
+    if (item) m_gtkModel->del(GtkTree::row(item));
+    m_sources.del(source->key());
+  }
+
+  Source *source(ZuCSpan device, ZuCSpan publisher, uint64_t generation) {
+    auto key = ZuFwdTuple(device, publisher, generation);
+    if (auto source = m_sources.findPtr(key)) return source;
+    // Discard the old epoch before creating rows for a restarted agent.
+    auto i = m_sources.iter();
+    while (auto old = i()) {
+      if (old->device != device || old->publisher != publisher) continue;
+      if (old->generation > generation) return nullptr;
+      if (old->generation != generation) removeSource(old);
+    }
+    auto source = new Sources::Node{device, publisher, generation};
+    m_sources.addNode(source);
+    return source;
+  }
+
+  void processTel2(const Frame &frame) {
+    auto msg = Ztc::fbs::GetMsg(frame->data()); // verified on Rx
+    auto device = Zfb::Load::str(msg->deviceId());
+    auto generation = msg->agentGen();
+    if (msg->body_type() != Ztc::fbs::Body::Telemetry) return;
+    auto tel = msg->body_as_Telemetry();
+    auto publisher = Zfb::Load::str(tel->id());
+    if (tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown) {
+      if (auto old = m_sources.findPtr(
+	  ZuFwdTuple(device, publisher, generation))) removeSource(old);
       return;
     }
-    using namespace ZvTelemetry;
-    auto msg = ZvTelemetry::fbs::GetTelemetry(msg_);
-    int i = int(msg->data_type());
-    if (ZuUnlikely(i < int(TelData::First))) return;
-    if (ZuUnlikely(i > int(TelData::MAX))) return;
-    ZuSwitch::dispatch<TelData::N - TelData::First>(i - int(TelData::First),
-	[this, cliLink, msg](auto i) {
-      using FBType = TelData::Type<i + int(TelData::First)>;
-      auto fbo = static_cast<const FBType *>(msg->data());
-      processTel3(cliLink, fbo);
-    });
-  }
-  template <typename FBType>
-  ZuIsNot<FBType, ZvTelemetry::fbs::Alert>
-  processTel3(CliLink_ *cliLink, const FBType *fbo) {
-    ZuTypeIndex<FBType, Telemetry::FBTypeList> I;
-    using T = ZuType<I, Telemetry::TypeList>;
-    auto &container = cliLink->telemetry.p<I>();
-    using Item = TelItem<T>;
-    Item *item;
-    if (item = container.lookup(fbo)) {
-      ZfbStruct::update(item->data, fbo);
-      m_gtkModel->updated(GtkTree::row(item));
-    } else {
-      item = new Item{cliLink, fbo};
-      container.add(item);
-      addGtkRow(cliLink, item);
+    auto src = source(device, publisher, generation);
+    if (!src) return;
+    switch (tel->value_type()) {
+#define ZDashLoad(Name) \
+      case Ztc::fbs::TelemetryBody::Name: \
+	processTel3(src, tel->value_as_##Name()); break;
+      ZDashLoad(HeapTelemetry)
+      ZDashLoad(HashTelemetry)
+      ZDashLoad(ThreadTelemetry)
+      ZDashLoad(MxTelemetry)
+      ZDashLoad(CxnTelemetry)
+      ZDashLoad(QueueTelemetry)
+      ZDashLoad(HubTelemetry)
+      ZDashLoad(LinkTelemetry)
+      ZDashLoad(PoolTelemetry)
+      ZDashLoad(DBTelemetry)
+      ZDashLoad(DBHostTelemetry)
+      ZDashLoad(DBTableTelemetry)
+      ZDashLoad(AppTelemetry)
+      ZDashLoad(AlertTelemetry)
+#undef ZDashLoad
+      default: break;
     }
   }
-  void addGtkRow(CliLink_ *cliLink, AppItem *item) {
-    item->initTelKey(cliLink->server(), cliLink->port());
+
+  template <typename FBType>
+  ZuIsNot<FBType, Ztc::fbs::AlertTelemetry>
+  processTel3(Source *src, const FBType *fbo) {
+    ZuTypeIndex<FBType, Telemetry::FBTypeList> I;
+    using T = ZuType<I, Telemetry::TypeList>;
+    auto &container = src->telemetry.p<I>();
+    using Item = TelItem<T>;
+    if (auto item = container.lookup(fbo)) {
+      ZfbStruct::update(item->value, fbo);
+      m_gtkModel->updated(GtkTree::row(item));
+    } else {
+      item = new Item{src, fbo};
+      container.add(item);
+      addGtkRow(src, item);
+    }
+  }
+  void addGtkRow(Source *src, AppItem *item) {
+    item->initTelKey(src->publisher, src->device, src->generation);
     m_gtkModel->add(new GtkTree::App{item}, m_gtkModel->root());
   }
-  AppItem *appItem(CliLink_ *cliLink) {
-    ZuTypeIndex<ZvTelemetry::App, ZvTelemetry::TypeList> i;
-    auto &container = cliLink->telemetry.p<i>();
+  AppItem *appItem(Source *src) {
+    ZuTypeIndex<Ztc::AppTelemetry, Telemetry::TypeList> i;
+    auto &container = src->telemetry.p<i>();
     auto item = container.lookup(
-	static_cast<const ZvTelemetry::fbs::App *>(nullptr));
+	static_cast<const Ztc::fbs::AppTelemetry *>(nullptr));
     if (!item) {
-      item = new TelItem<ZvTelemetry::App>{cliLink};
+      item = new TelItem<Ztc::AppTelemetry>{src};
       container.add(item);
-      addGtkRow(cliLink, item);
+      addGtkRow(src, item);
     }
     return item;
   }
-  DBItem *dbItem(CliLink_ *cliLink) {
-    ZuTypeIndex<ZvTelemetry::DB, ZvTelemetry::TypeList> i;
-    auto &container = cliLink->telemetry.p<i>();
+  DBItem *dbItem(Source *src) {
+    ZuTypeIndex<Ztc::DBTelemetry, Telemetry::TypeList> i;
+    auto &container = src->telemetry.p<i>();
     auto item = container.lookup(
-	static_cast<const ZvTelemetry::fbs::DB *>(nullptr));
+	static_cast<const Ztc::fbs::DBTelemetry *>(nullptr));
     if (!item) {
-      item = new TelItem<ZvTelemetry::DB>{cliLink};
+      item = new TelItem<Ztc::DBTelemetry>{src};
       container.add(item);
-      addGtkRow(cliLink, item);
+      addGtkRow(src, item);
     }
     return item;
   }
@@ -1476,67 +1331,74 @@ private:
     using GtkRow = ZuDecay<decltype(*GtkTree::row(item))>;
     m_gtkModel->add(new GtkRow{item}, &parent);
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Heap> *item) {
-    addGtkRow_(appItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::HeapTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
 	[](GtkTree::App *_) -> GtkTree::HeapParent & {
 	  return _->heaps();
 	});
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::HashTbl> *item) {
-    addGtkRow_(appItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::HashTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
 	[](GtkTree::App *_) -> GtkTree::HashTblParent & {
 	  return _->hashTbls();
 	});
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Thread> *item) {
-    addGtkRow_(appItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::ThreadTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
 	[](GtkTree::App *_) -> GtkTree::ThreadParent & {
 	  return _->threads();
 	});
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Mx> *item) {
-    addGtkRow_(appItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::MxTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
 	[](GtkTree::App *_) -> GtkTree::MxParent & { return _->mxs(); });
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Socket> *item) {
-    ZuTypeIndex<ZvTelemetry::Mx, ZvTelemetry::TypeList> i;
-    auto &mxContainer = cliLink->telemetry.p<i>();
-    auto mxItem = mxContainer.find(ZuFwdTuple(item->data.mxID));
+  void addGtkRow(Source *src, TelItem<Ztc::CxnTelemetry> *item) {
+    ZuTypeIndex<Ztc::MxTelemetry, Telemetry::TypeList> i;
+    auto &mxContainer = src->telemetry.p<i>();
+    auto mxItem = mxContainer.findPtr(ZuFwdTuple(item->value.mxID));
     if (!mxItem) {
-      auto mxItem = new TelItem<ZvTelemetry::Mx>{cliLink};
-      mxItem->data.id = item->data.mxID;
+      mxItem = new TelItem<Ztc::MxTelemetry>{src};
+      mxItem->value.id = item->value.mxID;
       mxContainer.add(mxItem);
-      addGtkRow(cliLink, mxItem);
+      addGtkRow(src, mxItem);
     }
     m_gtkModel->add(new GtkTree::Socket{item}, GtkTree::row(mxItem));
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Queue> *item) {
-    addGtkRow_(appItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::QueueTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
 	[](GtkTree::App *_) -> GtkTree::QueueParent & {
 	  return _->queues();
 	});
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Engine> *item) {
-    addGtkRow_(appItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::PoolTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
+	[](GtkTree::App *app) -> GtkTree::PoolParent & {
+	  return app->pools();
+	});
+  }
+  void addGtkRow(Source *src, TelItem<Ztc::HubTelemetry> *item) {
+    addGtkRow_(appItem(src), item,
 	[](GtkTree::App *_) -> GtkTree::EngineParent & {
 	  return _->engines();
 	});
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::Link> *item) {
-    ZuTypeIndex<ZvTelemetry::Engine, ZvTelemetry::TypeList> i;
-    auto &engContainer = cliLink->telemetry.p<i>();
+  void addGtkRow(Source *src, TelItem<Ztc::LinkTelemetry> *item) {
+    ZuTypeIndex<Ztc::HubTelemetry, Telemetry::TypeList> i;
+    auto &engContainer = src->telemetry.p<i>();
     auto engItem =
-      engContainer.find(ZuFwdTuple(item->data.engineID));
+      engContainer.findPtr(ZuFwdTuple(item->value.hubID, item->value.type));
     if (!engItem) {
-      auto engItem = new TelItem<ZvTelemetry::Mx>{cliLink};
-      engItem->data.id = item->data.engineID;
+      engItem = new TelItem<Ztc::HubTelemetry>{src};
+      engItem->value.linkType = item->value.type;
+      engItem->value.id = item->value.hubID;
       engContainer.add(engItem);
-      addGtkRow(cliLink, engItem);
+      addGtkRow(src, engItem);
     }
     m_gtkModel->add(new GtkTree::Link{item}, GtkTree::row(engItem));
   }
-  void addGtkRow(CliLink_ *cliLink, DBItem *item) {
-    auto appGtkRow = GtkTree::row(appItem(cliLink));
+  void addGtkRow(Source *src, DBItem *item) {
+    auto appGtkRow = GtkTree::row(appItem(src));
     auto &db = appGtkRow->db();
     db.init(item);
     m_gtkModel->add(&db, appGtkRow);
@@ -1549,57 +1411,57 @@ private:
     using GtkRow = ZuDecay<decltype(*GtkTree::row(item))>;
     m_gtkModel->add(new GtkRow{item}, &parent);
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::DBHost> *item) {
-    addGtkRow_(dbItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::DBHostTelemetry> *item) {
+    addGtkRow_(dbItem(src), item,
 	[](GtkTree::DB *_) -> GtkTree::DBHostParent & {
 	  return _->hosts();
 	});
   }
-  void addGtkRow(CliLink_ *cliLink, TelItem<ZvTelemetry::DBTable> *item) {
-    addGtkRow_(dbItem(cliLink), item,
+  void addGtkRow(Source *src, TelItem<Ztc::DBTableTelemetry> *item) {
+    addGtkRow_(dbItem(src), item,
 	[](GtkTree::DB *_) -> GtkTree::DBTableParent & {
 	  return _->tables();
 	});
   }
   template <typename FBType>
-  ZuIs<FBType, ZvTelemetry::fbs::Alert>
-  processTel3(CliLink_ *cliLink, const FBType *fbo) {
+  ZuIs<FBType, Ztc::fbs::AlertTelemetry>
+  processTel3(Source *src, const FBType *fbo) {
     ZuTypeIndex<FBType, Telemetry::FBTypeList> i;
     using T = ZuType<i, Telemetry::TypeList>;
-    auto &container = cliLink->telemetry.p<i>();
+    auto &container = src->telemetry.p<i>();
+    if (container.data.length() >= m_alertRows) container.data.splice(0, 1);
     processAlert(new (container.data.push()) T{ZfbStruct::ctor<T>(fbo)});
   }
 
-  void processAlert(const ZvTelemetry::Alert *) {
+  void processAlert(const Ztc::AlertTelemetry *) {
     // FIXME - update alerts in UX
   }
+
 
 private:
   ZmSemaphore		m_done;
   ZmSemaphore		m_executed;
+  ZmSemaphore		m_down;
+  Client		m_client{this};
+  ZmRef<Link>		m_link;
+  Subscription		m_sub;
+  Frame			m_frame;
+  bool			m_connected = false; // Rx
+  bool			m_subscribed = false; // Rx
+  bool			m_closing = false; // Rx
+  unsigned		m_interval = 0; // Rx, negotiated by Ack
+  ZmAtomic<unsigned>	m_failed = false;
+  bool			m_clientInited = false;
+  bool			m_clientStarted = false;
+  bool			m_attached = false;
+  bool			m_gtkReady = false;
 
-  CliLink::ID		m_cliLinkID = 0;
-  CliLinks		m_cliLinks;
-
-  struct CmdPerm {
-    enum {
-      Offset = -(int(fbs::ReqData::NONE) + 1),
-      N = int(fbs::ReqData::MAX) - int(fbs::ReqData::NONE)
-    };
-  };
-  int			m_cmdPerms[CmdPerm::N];
-  ZuID			m_id = "zdash";
-  FBB			m_fbb;
-
-  int			m_role;	// ZvTelemetry::AppRole
-  ZuDateTime		m_uptime;
-  unsigned		m_sid = 0;
-
-  ZvRingParams		m_telRingParams;
-  ZuPtr<TelRing>	m_telRing;
+  TelRing		m_telRing;
+  unsigned		m_queueBytes = QueuedInputMax;
+  unsigned		m_alertRows = 1000;
   ZmAtomic<unsigned>	m_telCount = 0;
-
-  // FIXME - need Zdf in-memory manager (later, file manager)
+  ZmAtomic<unsigned>	m_telBytes = 0;
+  Sources		m_sources; // GTK-owned
 
   ZtString<>		m_gladePath;
   ZtString<>		m_stylePath;
@@ -1610,129 +1472,76 @@ private:
   ZuTime		m_refreshQuantum;
   ZuTime		m_refreshRate;
   ZmScheduler::Timer	m_refreshTimer;
-
   GtkTree::View		m_gtkView;
-  GtkTree::Model	*m_gtkModel;
+  GtkTree::Model	*m_gtkModel = nullptr;
 };
-
-inline void App_Srv::telemetry(ZvTelemetry::App &data)
-{
-  static_cast<ZDash::App *>(this)->telemetry(data);
-}
-
-template <typename Server>
-inline CliLink_::CliLink_(
-    App_Cli *app, ID id_, Server &&server, uint16_t port, SrvLink *srvLink_) :
-    Base{app, ZuFwd<Server>(server), port}, id{id_}, srvLink{srvLink_} { }
-
-inline void CliLink_::loggedIn()
-{
-  static_cast<ZDash::App *>(this->app())->loggedIn(this);
-}
-inline void CliLink_::disconnected(bool peer)
-{
-  static_cast<ZDash::App *>(this->app())->disconnected(this);
-  Base::disconnected(peer);
-}
-inline void CliLink_::connectFailed(bool transient)
-{
-  static_cast<ZDash::App *>(this->app())->connectFailed(this, transient);
-}
-
-inline int CliLink_::processTelemetry(const uint8_t *data, unsigned len)
-{
-  return static_cast<ZDash::App *>(
-      this->app())->processTelemetry(this, data, len);
-}
-inline int CliLink_::processDeflt(
-  ZuCSpan id, const uint8_t *data, unsigned len)
-{
-  return static_cast<ZDash::App *>(
-      this->app())->processDeflt(this, id, data, len);
-}
-
-inline SrvLink::SrvLink(App_Srv *app) : Base{app} { }
-
-inline int SrvLink::processCmd(const uint8_t *data, unsigned len)
-{
-  return static_cast<ZDash::App *>(
-      this->app())->processCmd(this, data, len);
-}
-inline int SrvLink::processDeflt(
-  ZuCSpan id, const uint8_t *data, unsigned len)
-{
-  return static_cast<ZDash::App *>(
-      this->app())->processDeflt(this, id, data, len);
-}
 
 } // namespace ZDash
 
-ZmRef<ZDash::App> app;
+static ZDash::App *signalApp = nullptr;
+void sigint() { if (signalApp) signalApp->post(); }
 
-void sigint() { if (app) app->post(); }
+static bool session(
+    ZDash::AppCf config, ZuCSpan caPath, ZuCSpan token)
+{
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+    s.nThreads(5)
+      .thread(1, [](auto &t) { t.name("io-rx"); t.isolated(1); })
+      .thread(2, [](auto &t) { t.name("io-tx"); t.isolated(1); })
+      .thread(3, [](auto &t) { t.name("rx"); t.isolated(1); })
+      .thread(4, [](auto &t) { t.name("tx"); t.isolated(1); })
+      .thread(5, [](auto &t) { t.name("gtk"); t.isolated(1); });
+  }).rxThread(1).txThread(2)};
+  if (!mx.start()) return false;
+  ZDash::App app;
+  signalApp = &app;
+  ZmTrap::sigintFn(sigint);
+  ZmTrap::trap();
+  bool ok = app.init(&mx, ZuMv(config), caPath, token);
+  if (ok) app.wait();
+  app.final();
+  ok = ok && !app.failed();
+  signalApp = nullptr;
+  ZmTrap::sigintFn(nullptr);
+  mx.stop();
+  return ok;
+}
 
 int main(int argc, char **argv)
 {
-  if (argc != 1) usage();
-
-  ZiLog::init("zcmd");
-  ZiLog::level(0);
-  ZiLog::sink(ZiLog::lambdaSink([](ZeLogBuf &buf, const ZeEventInfo &) {
-    buf << '\n';
-    std::cerr << buf << std::flush;
-  }));
-  ZiLog::start();
-
-  ZiMultiplex *mx = new ZiMultiplex(
-      ZiMxParams{}
-	.scheduler([](auto &s) {
-	  s.nThreads(5)
-	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); })
-	  .thread(4, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
-
-  mx->start();
-
-  app = new ZDash::App{};
-
-  {
-    ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
-    auto caPath = ::getenv("ZCMD_CAPATH");
-    if (caPath && *caPath)
-      defines->add(ZfCf::DefKey{"CAPATH"}, ZfCf::DefVal{caPath});
-    ZtString<> source{
-      "timeout: 1,\n"
-      "thread: 3,\n"
-      "gtkThread: 4,\n"
-      "gtkGlade: zdash.glade,\n"};
-    if (caPath && *caPath) source << "caPath: ${CAPATH},\n";
-    source <<
-      "rxThread: 1,\n"
-      "txThread: 2\n";
-    auto scan = ZfCf::scan(source, {}, ZuMv(defines));
-    auto cf = ZuMv(scan.p<1>());
-    try {
-      app->init(mx, cf);
-    } catch (const ZeException &e) {
-      std::cerr << e << '\n' << std::flush;
-      ::exit(1);
-    } catch (...) {
-      std::cerr << "unknown exception\n" << std::flush;
-      ::exit(1);
+  try {
+    ZDash::Options options;
+    argc = ZfCLI::load(options, argc, argv);
+    if (options.help) {
+      std::cout << "Usage: zdash --config=CONFIG [--wss=URL] "
+	"[--device-id=ID] [--ca=PATH] [--no-browser]\n";
+      return 0;
     }
+    if (argc != 1 || !options.config) usage();
+    ZDashOAuth::Config oauth;
+    if (!ZDashOAuth::loadConfig(options.config, oauth)) return 1;
+
+    ZiFile file;
+    if (file.open(Zi::Path{options.config}, ZiFile::ReadOnly |
+	ZiFile::NoFollow | ZiFile::GC) != Zi::OK) return 1;
+    auto size = file.size();
+    if (size <= 0 || uint64_t(size) > ZDashOAuth::BodyMax) return 1;
+    ZtString<> source;
+    source.length(unsigned(size));
+    if (file.read(source.data(), unsigned(size)) != int(size)) return 1;
+    auto parsed = ZfCf::scan(source.span());
+    if (parsed.p<0>() < 0 || !parsed.p<1>()) return 1;
+    auto config = ZfCf::handler<ZDash::AppCf>(parsed.p<1>()).ctor();
+    if (options.wssURL) config.wssURL = ZuMv(options.wssURL);
+    if (options.deviceID) config.deviceID = ZuMv(options.deviceID);
+    if (options.caPath) oauth.caPath = ZuMv(options.caPath);
+    if (!config.wssURL) return 1;
+    return ZDashOAuth::run(oauth, options.noBrowser,
+      [&config, &oauth](ZiMultiplex &, ZDashOAuth::Clients &, ZuCSpan token) {
+	return session(ZuMv(config), oauth.caPath, token);
+      }) ? 0 : 1;
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n';
+    return 1;
   }
-
-  app->wait();
-
-  app->final();
-
-  mx->stop();
-
-  ZiLog::stop();
-
-  delete mx;
-
-  ZmTrap::sigintFn(nullptr);
 }

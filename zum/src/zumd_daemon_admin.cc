@@ -38,19 +38,20 @@ namespace CatalogLimit {
   };
 }
 
-struct CatalogName : public ZmPolymorph {
+struct CatalogName {
   String name;
   unsigned index = 0;
   CatalogName(String name_, unsigned index_) :
     name{ZuMv(name_)}, index{index_} { }
 };
-static const String &catalogName(const ZmRef<CatalogName> &item)
+static const String &catalogName(const CatalogName &item)
 {
-  return item->name;
+  return item.name;
 }
-ZmHashDerive(CatalogNameHash, ZmRef<CatalogName>,
-  (ZmHashKey<catalogName,
-    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.Catalog.Lookup">>>));
+ZmHashDerive(CatalogNameHash, CatalogName,
+  (ZmHashNode<CatalogName,
+    ZmHashKey<catalogName,
+      ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.Catalog.Lookup">>>>));
 
 // 144 bits yields a compact 24-character public identifier; confidential
 // client secrets use 256 bits.  Enrollment draws both in one RNG call.
@@ -257,7 +258,7 @@ static bool adminJSONParse(
   if (parsed.p<0>() != int(source.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
+  if (roots.length() != 1) return false;
   owner = ZuMv(roots[0]);
   json = static_cast<const ZfJSON::AnyNode *>(owner.ptr());
   return true;
@@ -675,7 +676,9 @@ static bool adminQueryInput(String raw, QueryInput &input)
   encoded << raw;
   auto parsed = ZfURI::scan(encoded.span());
   if (parsed.p<0>() != int(encoded.length()) || !parsed.p<1>()) return false;
-  ZfURI::handler<QueryInput, ZuFacet::URI>(parsed.p<1>()).update(input);
+  auto handler = ZfURI::handler<QueryInput, ZuFacet::URI>(parsed.p<1>());
+  if (!handler.valid) return false;
+  handler.update(input);
   constexpr uint32_t exact = (1U<<QueryInput::Cursor) - 1;
   return input.limit && input.limit <= AdminQueryLimit::Results &&
     (!(input.seen & (1U<<QueryInput::Cursor)) ||
@@ -732,9 +735,11 @@ static bool adminBody(String &body, T &value)
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  value = ZfJSON::handler<T, ZuFacet::JSON>(roots[0].ptr()).ctor();
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
+  auto handler = ZfJSON::handler<T, ZuFacet::JSON>(roots[0].ptr());
+  if (!handler.valid) return false;
+  value = handler.ctor();
   return true;
 }
 
@@ -747,8 +752,8 @@ static bool adminBodyFields(String &body, T &value, uint64_t &seen)
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
   seen = 0;
   constexpr auto matcher = ZuMatcher<Fields>();
   for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
@@ -759,7 +764,9 @@ static bool adminBodyFields(String &body, T &value, uint64_t &seen)
     seen |= uint64_t{1}<<i;
   }
   if (!seen) return false;
-  value = ZfJSON::handler<T, ZuFacet::JSON>(roots[0].ptr()).ctor();
+  auto handler = ZfJSON::handler<T, ZuFacet::JSON>(roots[0].ptr());
+  if (!handler.valid) return false;
+  value = handler.ctor();
   return true;
 }
 
@@ -773,8 +780,8 @@ static bool stringPatchBody(String &body,
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
   for (auto &field: roots[0]->data<ZfJSON::AnyNode::Object>()) {
     auto value = field.p<1>().ptr();
     if (!value->has<ZfJSON::AnyNode::String>()) return false;
@@ -821,8 +828,7 @@ static bool roleCeiling(const AdminPermit &permit, const IDVec &roleIDs)
   return true;
 }
 
-template <typename Edit>
-template <typename Heap>
+template <typename Edit, typename Heap = ZuVoid>
 class AppEdit__ : public Heap, public ZmPolymorph  {
 public:
   enum { AppFirst = ZuIsSame<Edit, RoleEdit>{} ||
@@ -1003,9 +1009,12 @@ private:
   AdminDoneFn m_complete;
   uint64_t m_resultVersion = 0;
 };
-using AppEdit_ = AppEdit__<ZmHeap<"Zum.zumd.daemon.admin.AppEdit", AppEdit__<ZuVoid>>>;
+template <typename Edit>
+using AppEdit_Heap = ZmHeap<"Zum.zumd.daemon.admin.AppEdit", AppEdit__<Edit>>;
+template <typename Edit>
+ZuDerive(AppEdit_, (AppEdit__<Edit, AppEdit_Heap<Edit>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class MembershipAdd__ : public Heap, public ZmPolymorph  {
 public:
   MembershipAdd__(DB *db, Ztls::Random *rng, MembershipAdd add,
@@ -1061,9 +1070,10 @@ private:
   ZmRef<MSaga>	m_saga;
   AdminDoneFn	m_complete;
 };
-using MembershipAdd_ = MembershipAdd__<ZmHeap<"Zum.zumd.daemon.admin.MembershipAdd", MembershipAdd__<ZuVoid>>>;
+using MembershipAdd_Heap = ZmHeap<"Zum.zumd.daemon.admin.MembershipAdd", MembershipAdd__<>>;
+ZuDerive(MembershipAdd_, (MembershipAdd__<MembershipAdd_Heap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class BulkRevoke__ : public Heap, public ZmPolymorph  {
 public:
   enum { Sessions, Consents, Grants, Cleanup };
@@ -1315,7 +1325,8 @@ private:
   unsigned	m_skipped = 0;
   bool		m_done = false;
 };
-using BulkRevoke_ = BulkRevoke__<ZmHeap<"Zum.zumd.daemon.admin.BulkRevoke", BulkRevoke__<ZuVoid>>>;
+using BulkRevoke_Heap = ZmHeap<"Zum.zumd.daemon.admin.BulkRevoke", BulkRevoke__<>>;
+ZuDerive(BulkRevoke_, (BulkRevoke__<BulkRevoke_Heap>));
 
 static String encode(ZuBSpan data)
 {
@@ -1620,7 +1631,7 @@ void daemonAppCleanup(DB *db, DBContext *context, Ztls::Random *rng,
   cleanup->start();
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class MembershipChange__ : public Heap, public ZmPolymorph  {
 public:
   MembershipChange__(DB *db, DBContext *context, Ztls::Random *rng,
@@ -1756,9 +1767,10 @@ private:
   uint64_t	m_resultVersion = 0;
   bool		m_done = false;
 };
-using MembershipChange_ = MembershipChange__<ZmHeap<"Zum.zumd.daemon.admin.MembershipChange", MembershipChange__<ZuVoid>>>;
+using MembershipChange_Heap = ZmHeap<"Zum.zumd.daemon.admin.MembershipChange", MembershipChange__<>>;
+ZuDerive(MembershipChange_, (MembershipChange__<MembershipChange_Heap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ActionAdd__ : public Heap, public ZmPolymorph  {
 public:
   ActionAdd__(DB *db, DBContext *context, Ztls::Random *rng, AppID appID,
@@ -1847,9 +1859,10 @@ private:
   ZdbSagaID	m_sagaID = 0;
   bool		m_done = false;
 };
-using ActionAdd_ = ActionAdd__<ZmHeap<"Zum.zumd.daemon.admin.ActionAdd", ActionAdd__<ZuVoid>>>;
+using ActionAdd_Heap = ZmHeap<"Zum.zumd.daemon.admin.ActionAdd", ActionAdd__<>>;
+ZuDerive(ActionAdd_, (ActionAdd__<ActionAdd_Heap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AppEnroll__ : public Heap, public ZmPolymorph  {
 public:
   AppEnroll__(DB *db, DBContext *context, Ztls::Random *rng, Bytes dbKey,
@@ -1956,10 +1969,10 @@ private:
   Bytes		m_secretDigest;
   bool		m_done = false;
 };
-using AppEnroll_ = AppEnroll__<ZmHeap<"Zum.zumd.daemon.admin.AppEnroll", AppEnroll__<ZuVoid>>>;
+using AppEnroll_Heap = ZmHeap<"Zum.zumd.daemon.admin.AppEnroll", AppEnroll__<>>;
+ZuDerive(AppEnroll_, (AppEnroll__<AppEnroll_Heap>));
 
-template <typename Table, typename Present>
-template <typename Heap>
+template <typename Table, typename Present, typename Heap = ZuVoid>
 class CatalogRetire__ : public Heap, public ZmObject  {
   using T = typename Table::T;
   using Tuple = typename Table::Tuple;
@@ -2021,9 +2034,14 @@ private:
   bool m_ok = true;
   bool m_end = false;
 };
-using CatalogRetire_ = CatalogRetire__<ZmHeap<"Zum.zumd.daemon.admin.CatalogRetire", CatalogRetire__<ZuVoid>>>;
+template <typename Table, typename Present>
+using CatalogRetire_Heap = ZmHeap<"Zum.zumd.daemon.admin.CatalogRetire",
+  CatalogRetire__<Table, Present>>;
+template <typename Table, typename Present>
+ZuDerive(CatalogRetire_, (CatalogRetire__<Table, Present,
+  CatalogRetire_Heap<Table, Present>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class CatalogPublish__ : public Heap, public ZmPolymorph  {
 public:
   CatalogPublish__(DB *db, DBContext *context, Ztls::Random *rng, AppID appID,
@@ -2112,14 +2130,14 @@ private:
     for (unsigned i = 0; i < actionCount; ++i) {
       const auto &action = m_input.catalog.actions[i];
       if (!action.name) return false;
-      if (m_actionNames.findVal(action.name)) return false;
-      m_actionNames.add(new CatalogName{action.name, i});
+      if (m_actionNames.find(action.name)) return false;
+      m_actionNames.add(CatalogName{action.name, i});
     }
     for (unsigned i = 0; i < roleCount; ++i) {
       const auto &role = m_input.catalog.roles[i];
       if (!role.name) return false;
-      if (m_roleNames.findVal(role.name)) return false;
-      m_roleNames.add(new CatalogName{role.name, i});
+      if (m_roleNames.find(role.name)) return false;
+      m_roleNames.add(CatalogName{role.name, i});
       unsigned roleActionCount = role.actions.length();
       if (roleActionCount > CatalogLimit::RoleActions) return false;
       ZtBitmap seen;
@@ -2135,8 +2153,8 @@ private:
     for (const auto &client: m_input.catalog.clients) {
       if (!client.id || client.redirectURIs.length() > CatalogLimit::ClientRedirects ||
           client.roles.length() > CatalogLimit::ClientRoles) return false;
-      if (m_clientNames.findVal(client.id)) return false;
-      m_clientNames.add(new CatalogName{client.id, clientIndex});
+      if (m_clientNames.find(client.id)) return false;
+      m_clientNames.add(CatalogName{client.id, clientIndex});
       ZtBitmap seen;
       seen.length(roleCount);
       for (const auto &name: client.roles) {
@@ -2177,13 +2195,13 @@ private:
 
   int actionIndex_(const String &name) const
   {
-    auto item = m_actionNames.findVal(name);
+    auto item = m_actionNames.find(name);
     return item ? int(item->index) : -1;
   }
 
   int roleIndex_(const String &name) const
   {
-    auto item = m_roleNames.findVal(name);
+    auto item = m_roleNames.find(name);
     return item ? int(item->index) : -1;
   }
 
@@ -2515,7 +2533,8 @@ private:
   bool		m_done = false;
   bool		m_replay = false;
 };
-using CatalogPublish_ = CatalogPublish__<ZmHeap<"Zum.zumd.daemon.admin.CatalogPublish", CatalogPublish__<ZuVoid>>>;
+using CatalogPublish_Heap = ZmHeap<"Zum.zumd.daemon.admin.CatalogPublish", CatalogPublish__<>>;
+ZuDerive(CatalogPublish_, (CatalogPublish__<CatalogPublish_Heap>));
 
 String Daemon::error_(ZuCSpan error, ZuCSpan message)
 {
@@ -2541,7 +2560,9 @@ String Daemon::correlate_(String json, ZuCSpan id)
   AdminJSON parsed;
   if (!adminJSONParse(json, owner, parsed) ||
       !owner->has<ZfJSON::AnyNode::Object>()) return json;
-  auto error = ZfJSON::handler<AdminError>(owner).ctor();
+  auto handler = ZfJSON::handler<AdminError>(owner);
+  if (!handler.valid) return json;
+  auto error = handler.ctor();
   if (!error.error || !error.message || error.correlationID) return json;
   error.correlationID = id;
   return adminJSON(ZuMv(error));
@@ -2701,9 +2722,8 @@ static bool adminCursorDecode(
   return true;
 }
 
-template <typename Table, typename Match, typename Group = ZuTuple<>,
-  unsigned KeyID = 0>
-template <typename Heap>
+template <typename Table, typename Match, typename Group,
+  unsigned KeyID, typename Heap = ZuVoid>
 class AdminQuery__ : public Heap, public ZmObject  {
   using Tuple = typename Table::Tuple;
   using Record = typename Table::T;
@@ -2828,7 +2848,14 @@ private:
   bool		m_more = false;
   bool		m_done = false;
 };
-using AdminQuery_ = AdminQuery__<ZmHeap<"Zum.zumd.daemon.admin.AdminQuery", AdminQuery__<ZuVoid>>>;
+template <typename Table, typename Match, typename Group = ZuTuple<>,
+  unsigned KeyID = 0>
+using AdminQuery_Heap = ZmHeap<"Zum.zumd.daemon.admin.AdminQuery",
+  AdminQuery__<Table, Match, Group, KeyID>>;
+template <typename Table, typename Match, typename Group = ZuTuple<>,
+  unsigned KeyID = 0>
+ZuDerive(AdminQuery_, (AdminQuery__<Table, Match, Group, KeyID,
+  AdminQuery_Heap<Table, Match, Group, KeyID>>));
 
 template <unsigned KeyID = 0, typename Table, typename Match,
   typename Group = ZuTuple<>>
@@ -2891,7 +2918,7 @@ static void adminQueryApp(
 
 bool Daemon::adminTargetApp(ZuCSpan target, AppID &appID)
 {
-  constexpr ZuCSpan prefix{"/admin/apps/"};
+  constexpr auto prefix = "/admin/apps/"_Zu;
   if (target.prefix(prefix) != prefix.length()) return false;
   target.offset(prefix.length());
   auto slash = target.find<"/">();
@@ -2936,9 +2963,11 @@ static bool stateBody(String &body, State::T &state)
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  auto input = ZfJSON::handler<StateInput>(roots[0]).ctor();
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
+  auto handler = ZfJSON::handler<StateInput>(roots[0]);
+  if (!handler.valid) return false;
+  auto input = handler.ctor();
   State::T next = State::lookup(input.state);
   if (!input.state || next < 0 || next >= State::N ||
       next == State::Pending || next == State::Consumed) return false;
@@ -4391,7 +4420,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 
 void Daemon::adminAuth_(String authorization, AdminAuthFn complete)
 {
-  static constexpr ZuCSpan prefix{"Bearer "};
+  static constexpr auto prefix = "Bearer "_Zu;
   if (authorization.length() <= prefix.length() ||
       ZuCSpan{authorization}.prefix(prefix) != prefix.length()) {
     complete(false, Principal{});

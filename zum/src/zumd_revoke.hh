@@ -172,7 +172,7 @@ struct SSFTransmitterConfig {
   uint32_t		retryMax = 60;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class SSFTransmitter_ : public Heap, public ZmObject  {
 public:
   ~SSFTransmitter_() { clear_(); }
@@ -199,7 +199,8 @@ private:
   bool			m_armed = false;
   bool			m_started = false;
 };
-using SSFTransmitter = SSFTransmitter_<ZmHeap<"Zum.zumd.revoke.SSFTransmitter", SSFTransmitter_<ZuVoid>>>;
+using SSFTransmitterHeap = ZmHeap<"Zum.zumd.revoke.SSFTransmitter", SSFTransmitter_<>>;
+ZuDerive(SSFTransmitter, (SSFTransmitter_<SSFTransmitterHeap>));
 
 // Send one already-signed SET. Durable callers retain the SSFDelivery row and
 // invoke this helper again using their retry schedule until acknowledgement.

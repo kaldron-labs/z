@@ -252,7 +252,8 @@ inline auto node(Reader<Decoder> *ptr) {
 }
 
 // Writer main class
-template <typename Decoder, typename Heap, typename PValue_>
+template <typename Decoder, typename Heap = ZuVoid,
+  typename PValue_ = typename Decoder::Value>
 class Writer__ : public Heap, public ZmObject {
 public:
   using Encoder = Zdf::Encoder<Decoder>;
@@ -308,7 +309,8 @@ private:
   bool		m_failed = false;
   bool		m_stopping = false;
 };
-template <typename Decoder, typename Heap, typename PValue = Decoder::Value>
+template <typename Decoder, typename Heap = ZuVoid,
+  typename PValue = typename Decoder::Value>
 class Writer_ : public Writer__<Decoder, Heap, PValue> {
   using Base = Writer__<Decoder, Heap, PValue>;
 
@@ -346,7 +348,7 @@ private:
   NDP		m_ndp;
 };
 template <typename Decoder>
-using Writer_Heap = ZmHeap<"Zdf.Writer", Writer_<Decoder, ZuVoid>>;
+using Writer_Heap = ZmHeap<"Zdf.Writer", Writer_<Decoder>>;
 template <typename Decoder>
 ZuDerive(Writer, (Writer_<Decoder, Writer_Heap<Decoder>>));
 

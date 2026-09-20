@@ -1272,7 +1272,7 @@ public:
   }
   template <typename Builder>
   auto transmit(Builder &) {
-    return this->txStream_();
+    return this->txStream();
   }
   template <typename Builder>
   auto transmit_(Builder &) {

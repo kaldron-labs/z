@@ -317,7 +317,7 @@ void uri()
     ZuCHECK(uri.secure() == test.secure, test.input);
     ZuCHECK(uri.explicitPort == test.explicitPort, test.input);
   }
-  static constexpr ZuCSpan invalid[] = {
+  static constexpr const char *invalid[] = {
     "http://example.com/", "ws:///", "ws://user@example.com/",
     "ws://example.com/#fragment", "ws://example.com:0/",
     "ws://example.com:65536/", "ws://2001:db8::1/",
@@ -485,7 +485,7 @@ void h1()
   ZuCHECK(bad.process(badRx) == Zws::H1::ClientParser::State::Complete);
   ZuCHECK(!bad.valid());
 
-  static constexpr ZuCSpan invalidClient[] = {
+  static constexpr const char *invalidClient[] = {
     "HTTP/1.0 101 Switching Protocols\r\n"
       "Upgrade: websocket\r\nConnection: Upgrade\r\n"
       "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
@@ -524,7 +524,7 @@ void h1()
   for (auto input : invalidClient)
     ZuCHECK(!clientHandshake(input, key));
 
-  static constexpr ZuCSpan invalidServer[] = {
+  static constexpr const char *invalidServer[] = {
     "POST /chat HTTP/1.1\r\nHost: example.com\r\n"
       "Upgrade: websocket\r\nConnection: Upgrade\r\n"
       "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"

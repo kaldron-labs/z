@@ -20,13 +20,12 @@ using namespace ZuTestUtil;
 
 namespace {
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct FixedLazy_ : public Heap {
   uintptr_t value;
 };
-ZuDerive(FixedLazy,
-  (FixedLazy_<ZmHeap<
-    "ZmAllocatorTest.FixedLazy", FixedLazy_<ZuVoid>>>));
+using FixedLazyHeap = ZmHeap<"ZmAllocatorTest.FixedLazy", FixedLazy_<>>;
+ZuDerive(FixedLazy, (FixedLazy_<FixedLazyHeap>));
 using VHeapLazy =
   ZmVHeap<"ZmAllocatorTest.VHeapLazy", 16, 256, alignof(uintptr_t)>;
 

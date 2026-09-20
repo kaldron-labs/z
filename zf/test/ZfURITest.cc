@@ -354,7 +354,9 @@ void roundTrip()
 
   char empty[] = "";
   auto scan = ZfURI::scan(empty);
-  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+  auto fooHandler = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>());
+  ZuCheck(fooHandler.valid);
+  Foo foo = fooHandler.ctor();
   foo.int_ = 42;
   foo.float_ = 42.01;
   foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
@@ -378,7 +380,9 @@ void roundTrip()
   ZuCheck(scan.p<1>());
   if (!scan.p<1>()) return;
 
-  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+  auto barHandler = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>());
+  ZuCheck(barHandler.valid);
+  Foo bar = barHandler.ctor();
   if (verbose) {
     ZuUnroll::all<ZuFields<Foo>>([&bar]<typename T>() mutable {
       std::cerr
@@ -402,8 +406,9 @@ void fieldlessUDT()
   ZfURI::save<ZuFacet::Bah>(uri, value);
   auto scan = ZfURI::scan(uri);
   ZuCheck(scan.p<0>() == int(uri.length()));
-  auto loaded =
-    ZfURI::handler<ScalarArgs, ZuFacet::Bah>(scan.p<1>()).ctor();
+  auto handler = ZfURI::handler<ScalarArgs, ZuFacet::Bah>(scan.p<1>());
+  ZuCheck(handler.valid);
+  auto loaded = handler.ctor();
   ZuCheck(loaded.scalar.value == "hello world");
 }
 
@@ -438,22 +443,30 @@ void integerRange()
 
   char minimum_[] = "?int_ranged=0";
   auto minimumScan = ZfURI::scan(minimum_);
-  auto minimum = ZfURI::handler<Foo, ZuFacet::Bah>(minimumScan.p<1>()).ctor();
+  auto minimumHandler = ZfURI::handler<Foo, ZuFacet::Bah>(minimumScan.p<1>());
+  ZuCheck(minimumHandler.valid);
+  auto minimum = minimumHandler.ctor();
   ZuCheck(minimum.int_ranged == 0);
 
   char maximum_[] = "?int_ranged=100tail";
   auto maximumScan = ZfURI::scan(maximum_);
-  auto maximum = ZfURI::handler<Foo, ZuFacet::Bah>(maximumScan.p<1>()).ctor();
+  auto maximumHandler = ZfURI::handler<Foo, ZuFacet::Bah>(maximumScan.p<1>());
+  ZuCheck(maximumHandler.valid);
+  auto maximum = maximumHandler.ctor();
   ZuCheck(maximum.int_ranged == 100);
 
   char below_[] = "?int_ranged=-1";
   auto belowScan = ZfURI::scan(below_);
-  auto below = ZfURI::handler<Foo, ZuFacet::Bah>(belowScan.p<1>()).ctor();
+  auto belowHandler = ZfURI::handler<Foo, ZuFacet::Bah>(belowScan.p<1>());
+  ZuCheck(belowHandler.valid);
+  auto below = belowHandler.ctor();
   ZuCheck(below.int_ranged == ZuCmp<int>::null());
 
   char above_[] = "?int_ranged=101";
   auto aboveScan = ZfURI::scan(above_);
-  auto above = ZfURI::handler<Foo, ZuFacet::Bah>(aboveScan.p<1>()).ctor();
+  auto aboveHandler = ZfURI::handler<Foo, ZuFacet::Bah>(aboveScan.p<1>());
+  ZuCheck(aboveHandler.valid);
+  auto above = aboveHandler.ctor();
   ZuCheck(above.int_ranged == ZuCmp<int>::null());
 }
 
@@ -463,7 +476,9 @@ void realRange()
 
   char outside_[] = "?float_ranged=1.1&fixed=-0.1&decimal=1.1";
   auto scan = ZfURI::scan(outside_);
-  auto outside = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+  auto outsideHandler = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>());
+  ZuCheck(outsideHandler.valid);
+  auto outside = outsideHandler.ctor();
   ZuCheck(ZuCmp<double>::null(outside.float_ranged));
   ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
   ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
@@ -475,7 +490,9 @@ void reservedCharRoundTrip()
 
   char empty[] = "";
   auto scan = ZfURI::scan(empty);
-  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+  auto fooHandler = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>());
+  ZuCheck(fooHandler.valid);
+  Foo foo = fooHandler.ctor();
 
   foo.string = "a/b?c#d";
   foo.id = "x y%z";
@@ -490,7 +507,9 @@ void reservedCharRoundTrip()
   ZuCheck(scan2.p<1>());
   if (!scan2.p<1>()) return;
 
-  Foo bar = ZfURI::handler<Foo, ZuFacet::Bah>(scan2.p<1>()).ctor();
+  auto barHandler = ZfURI::handler<Foo, ZuFacet::Bah>(scan2.p<1>());
+  ZuCheck(barHandler.valid);
+  Foo bar = barHandler.ctor();
   ZtString<> uri2;
   ZfURI::save<ZuFacet::Bah>(uri2, bar);
   ZuCheck(uri2.length() > 0);
@@ -531,7 +550,9 @@ void percentPolicies()
   {
     char empty[] = "";
     auto scan = ZfURI::scan(empty);
-    Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>()).ctor();
+    auto fooHandler = ZfURI::handler<Foo, ZuFacet::Bah>(scan.p<1>());
+    ZuCheck(fooHandler.valid);
+    Foo foo = fooHandler.ctor();
     foo.string = "a<c";
 
     ZtString<> uri;
@@ -578,7 +599,9 @@ void delimitedLoad()
   auto field = root->data<ZfURI::AnyNode::Object>().find("bytesVec");
   ZuCheck(field && field->val()->has<ZfURI::AnyNode::String>());
 
-  Foo foo = ZfURI::handler<Foo, ZuFacet::Bah>(root).ctor();
+  auto fooHandler = ZfURI::handler<Foo, ZuFacet::Bah>(root);
+  ZuCheck(fooHandler.valid);
+  Foo foo = fooHandler.ctor();
   ZuCheck(field->val()->has<ZfURI::AnyNode::Array>());
   ZuCheck(foo.bytesVec.length() == 3);
   ZuCheck(foo.bytesVec[0] == ZuBSpan{"xxx"});
@@ -593,7 +616,9 @@ void resetUpdate()
   char missing_[] = "/10?kept=11";
   auto missingScan = ZfURI::scan(missing_);
   const auto &missing = missingScan.p<1>();
-  auto missingValue = ZfURI::handler<URIUpdate>(missing).ctor();
+  auto missingHandler = ZfURI::handler<URIUpdate>(missing);
+  ZuCheck(missingHandler.valid);
+  auto missingValue = missingHandler.ctor();
   ZuCheck(ZuNull(missingValue.required));
   ZuCheck(missingValue.pathKept == 10);
   ZuCheck(missingValue.pathReset == 3);
@@ -601,7 +626,7 @@ void resetUpdate()
   ZuCheck(missingValue.reset == 5);
 
   URIUpdate loaded{1, 20, 30, 40, 50};
-  ZfURI::handler<URIUpdate>(missing).load(loaded);
+  missingHandler.load(loaded);
   ZuCheck(ZuNull(loaded.required));
   ZuCheck(loaded.pathKept == 10);
   ZuCheck(loaded.pathReset == 3);
@@ -611,7 +636,9 @@ void resetUpdate()
   loaded = {1, 20, 30, 40, 50};
   char update_[] = "/21?kept=41";
   auto updateScan = ZfURI::scan(update_);
-  ZfURI::handler<URIUpdate>(updateScan.p<1>()).update(loaded);
+  auto updateHandler = ZfURI::handler<URIUpdate>(updateScan.p<1>());
+  ZuCheck(updateHandler.valid);
+  updateHandler.update(loaded);
   ZuCheck(loaded.required == 1);
   ZuCheck(loaded.pathKept == 21);
   ZuCheck(loaded.pathReset == 3);
@@ -620,7 +647,9 @@ void resetUpdate()
 
   char present_[] = "/22/32?required=2&reset=52";
   auto presentScan = ZfURI::scan(present_);
-  ZfURI::handler<URIUpdate>(presentScan.p<1>()).update(loaded);
+  auto presentHandler = ZfURI::handler<URIUpdate>(presentScan.p<1>());
+  ZuCheck(presentHandler.valid);
+  presentHandler.update(loaded);
   ZuCheck(loaded.required == 2);
   ZuCheck(loaded.pathKept == 22);
   ZuCheck(loaded.pathReset == 32);
@@ -636,7 +665,9 @@ void formattedInteger()
   ZfURI::save(uri, value);
   ZuCheck(uri == "?value=00abcdef");
   auto scan = ZfURI::scan(uri.span());
-  auto loaded = ZfURI::handler<URIFormatInt>(scan.p<1>()).ctor();
+  auto handler = ZfURI::handler<URIFormatInt>(scan.p<1>());
+  ZuCheck(handler.valid);
+  auto loaded = handler.ctor();
   ZuCheck(loaded.value == value.value);
 }
 
@@ -646,16 +677,24 @@ void pointers()
 
   char objectInput[] = "?object.value=1";
   auto objectTree = ZfURI::scan(objectInput);
-  auto value = ZfURI::handler<URIPtrHolder>(objectTree.p<1>()).ctor();
+  auto objectHandler = ZfURI::handler<URIPtrHolder>(objectTree.p<1>());
+  ZuCheck(objectHandler.valid);
+  auto value = objectHandler.ctor();
   char arrayInput[] = "?objects[0].value=2";
   auto arrayTree = ZfURI::scan(arrayInput);
-  value.objects = ZfURI::handler<URIPtrHolder>(arrayTree.p<1>()).ctor().objects;
+  auto arrayHandler = ZfURI::handler<URIPtrHolder>(arrayTree.p<1>());
+  ZuCheck(arrayHandler.valid);
+  value.objects = arrayHandler.ctor().objects;
   char textInput[] = "?text=hello";
   auto textTree = ZfURI::scan(textInput);
-  value.text = ZfURI::handler<URIPtrHolder>(textTree.p<1>()).ctor().text;
+  auto textHandler = ZfURI::handler<URIPtrHolder>(textTree.p<1>());
+  ZuCheck(textHandler.valid);
+  value.text = textHandler.ctor().text;
   char jsonInput[] = "?json={%22value%22:8}";
   auto jsonTree = ZfURI::scan(jsonInput);
-  value.json = ZfURI::handler<URIPtrHolder>(jsonTree.p<1>()).ctor().json;
+  auto jsonHandler = ZfURI::handler<URIPtrHolder>(jsonTree.p<1>());
+  ZuCheck(jsonHandler.valid);
+  value.json = jsonHandler.ctor().json;
   ZuCheck(value.object && value.object->value == 1);
   ZuCheck(value.objects && value.objects->length() == 1);
   ZuCheck((*value.objects)[0] && (*value.objects)[0]->value == 2);
@@ -673,20 +712,24 @@ void pointers()
   value.objects->push(ZmRef<URIPtrObj>{});
   char updateInput[] = "?v[0].value=4";
   auto update = ZfURI::scan(updateInput);
-  ZfURI::handler<URIPtrArray>(
-    uriField(update.p<1>(), "v")).update(*value.objects);
+  auto updateHandler = ZfURI::handler<URIPtrArray>(
+    uriField(update.p<1>(), "v"));
+  ZuCheck(updateHandler.valid);
+  updateHandler.update(*value.objects);
   ZuCheck((*value.objects)[0].ptr() == first && first->value == 4);
 
   char allocateInput[] = "?v[1].value=5";
   auto allocate = ZfURI::scan(allocateInput);
-  ZfURI::handler<URIPtrArray>(
-    uriField(allocate.p<1>(), "v")).update(*value.objects);
+  auto allocateHandler = ZfURI::handler<URIPtrArray>(
+    uriField(allocate.p<1>(), "v"));
+  ZuCheck(allocateHandler.valid);
+  allocateHandler.update(*value.objects);
   ZuCheck((*value.objects)[1] && (*value.objects)[1]->value == 5);
 
   char badInput[] = "?v[0]=wrong";
   auto bad = ZfURI::scan(badInput);
-  ZfURI::handler<URIPtrArray>(
-    uriField(bad.p<1>(), "v")).update(*value.objects);
+  auto badHandler = ZfURI::handler<URIPtrArray>(uriField(bad.p<1>(), "v"));
+  ZuCheck(!badHandler.valid);
   ZuCheck(first->value == 4);
 
   saved.null();
@@ -719,8 +762,11 @@ void pointers()
   ZuCheck(!saved);
 
   char mismatchInput[] = "?object=wrong";
-  auto mismatch = ZfURI::handler<URIPtrHolder>(
-    ZfURI::scan(mismatchInput).p<1>()).ctor();
+  auto mismatchTree = ZfURI::scan(mismatchInput);
+  auto mismatchHandler = ZfURI::handler<URIPtrHolder>(
+    mismatchTree.p<1>());
+  ZuCheck(mismatchHandler.valid);
+  auto mismatch = mismatchHandler.ctor();
   ZuCheck(!mismatch.object);
 
   URIPathPtr path;
@@ -733,14 +779,18 @@ void pointers()
   ZuCheck(saved == "/hello%20world");
 
   char rawInput[] = "?value=7";
-  auto raw = ZfURI::handler<URIPtrObj>(
-    ZfURI::scan(rawInput).p<1>()).alloc();
+  auto rawTree = ZfURI::scan(rawInput);
+  auto rawHandler = ZfURI::handler<URIPtrObj>(rawTree.p<1>());
+  ZuCheck(rawHandler.valid);
+  auto raw = rawHandler.alloc();
   ZuCheck(raw && raw->value == 7);
   delete raw;
 
   char bodyInput[] = "value=9";
   auto bodyTree = ZfURI::scan(bodyInput, true);
-  auto body = ZfURI::handler<URIPtrObj>(bodyTree.p<1>()).alloc();
+  auto bodyHandler = ZfURI::handler<URIPtrObj>(bodyTree.p<1>());
+  ZuCheck(bodyHandler.valid);
+  auto body = bodyHandler.alloc();
   ZuCheck(bodyTree.p<0>() == int(sizeof(bodyInput) - 1));
   ZuCheck(body && body->value == 9);
   delete body;
@@ -756,9 +806,13 @@ void unions()
   ZfURI::save(saved, value);
   ZtString<> input = saved;
   auto tree = ZfURI::scan(input.span());
-  auto loaded = ZfURI::handler<URIUnionHolder>(tree.p<1>()).ctor();
+  auto loadedHandler = ZfURI::handler<URIUnionHolder>(tree.p<1>());
+  ZuCheck(loadedHandler.valid);
+  auto loaded = loadedHandler.ctor();
   auto node = loaded.value.p<const ZfURI::AnyNode *>();
-  loaded.value = ZfURI::handler<URIUnionA>(node).ctor();
+  auto nodeHandler = ZfURI::handler<URIUnionA>(node);
+  ZuCheck(nodeHandler.valid);
+  loaded.value = nodeHandler.ctor();
   ZtString<> round;
   ZfURI::save(round, loaded);
   ZuCheck(round == saved);
@@ -770,10 +824,14 @@ void unions()
   ZuCheck(saved == "?value[0]=1&value[1]=2&value[2]=3");
   input = saved;
   auto arrayTree = ZfURI::scan(input.span());
-  auto arrayRaw = ZfURI::handler<URIUnionHolder>(arrayTree.p<1>()).ctor();
+  auto arrayRawHandler = ZfURI::handler<URIUnionHolder>(arrayTree.p<1>());
+  ZuCheck(arrayRawHandler.valid);
+  auto arrayRaw = arrayRawHandler.ctor();
   auto arrayNode = arrayRaw.value.p<const ZfURI::AnyNode *>();
   ZuCheck(arrayNode && arrayNode->has<ZfURI::AnyNode::Array>());
-  arrayRaw.value = ZfURI::handler<URIUnionArray>(arrayNode).ctor();
+  auto arrayNodeHandler = ZfURI::handler<URIUnionArray>(arrayNode);
+  ZuCheck(arrayNodeHandler.valid);
+  arrayRaw.value = arrayNodeHandler.ctor();
   ZuCheck(arrayRaw.value.p<URIUnionArray>().length() == 3);
 
   URIUnionHolder scalar;
@@ -783,10 +841,14 @@ void unions()
   ZuCheck(saved == "?value=text");
   input = saved;
   auto scalarTree = ZfURI::scan(input.span());
-  auto scalarRaw = ZfURI::handler<URIUnionHolder>(scalarTree.p<1>()).ctor();
+  auto scalarRawHandler = ZfURI::handler<URIUnionHolder>(scalarTree.p<1>());
+  ZuCheck(scalarRawHandler.valid);
+  auto scalarRaw = scalarRawHandler.ctor();
   auto scalarNode = scalarRaw.value.p<const ZfURI::AnyNode *>();
   ZuCheck(scalarNode && scalarNode->has<ZfURI::AnyNode::String>());
-  scalarRaw.value = ZfURI::handler<URIUnionText>(scalarNode).ctor();
+  auto scalarNodeHandler = ZfURI::handler<URIUnionText>(scalarNode);
+  ZuCheck(scalarNodeHandler.valid);
+  scalarRaw.value = scalarNodeHandler.ctor();
   ZuCheck(scalarRaw.value.p<URIUnionText>().value == "text");
 
   URIUnionHolder json;
@@ -797,7 +859,7 @@ void unions()
 
   using UnionHandler = typename ZfURI::As<decltype(json.value)>::
     template Handler<decltype(json.value), ZuFacet::URI>;
-  ZuCheck(!UnionHandler::valid(nullptr));
+  ZuCheck(!UnionHandler{nullptr}.valid);
 
   URIUnionHolder empty;
   saved.null();

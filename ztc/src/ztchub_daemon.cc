@@ -36,15 +36,15 @@ struct Agent {
   uint32_t	appCount = 0;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct BrowserSession_ : public Heap, public ZmObject {
   Zum::ServicePrincipal principal;
   HubString cookie;
   ZmScheduler::Timer expiry;
 };
 using BrowserSessionHeap = ZmHeap<"Ztc.Hub.BrowserSession",
-  BrowserSession_<ZuVoid>>;
-struct BrowserSession final : public BrowserSession_<BrowserSessionHeap> { };
+  BrowserSession_<>>;
+ZuDerive(BrowserSession, (BrowserSession_<BrowserSessionHeap>));
 
 inline ZuCSpan Agent_KeyAxor(const Agent &agent) { return agent.deviceID; }
 ZmHashDerive(Agents, Agent,
@@ -165,10 +165,10 @@ struct StateData {
   bool			serviceStarted = false;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct State_ : public Heap, public ZmObject, public StateData { };
-using StateHeap = ZmHeap<"Ztc.Hub.State", State_<ZuVoid>>;
-struct State final : public State_<StateHeap> { };
+using StateHeap = ZmHeap<"Ztc.Hub.State", State_<>>;
+ZuDerive(State, (State_<StateHeap>));
 
 struct HubDB : public Zdb {
   HubDB(State *state_) : state{state_} { }

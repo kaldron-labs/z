@@ -56,20 +56,19 @@ struct ServiceKey {
 ZuDerive(ServiceKeyVec, (ZtArray<ServiceKey,
   ZtArrayHeapID<"Zum.Service.KeyVec">>));
 
-template <typename Heap>
-struct SETSeen_ : public Heap, public ZmObject  {
+struct SETSeen {
   String id;
   int64_t expires = 0;
 };
-using SETSeen = SETSeen_<ZmHeap<"Zum.ZumService.SETSeen", SETSeen_<ZuVoid>>>;
 
-static const String &setSeenID(const ZmRef<SETSeen> &item)
+static const String &setSeenID(const SETSeen &item)
 {
-  return item->id;
+  return item.id;
 }
-ZmHashDerive(SETSeenHash, ZmRef<SETSeen>,
-  (ZmHashKey<setSeenID,
-    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.Service.SETSeen">>>));
+ZmHashDerive(SETSeenHash, SETSeen,
+  (ZmHashNode<SETSeen,
+    ZmHashKey<setSeenID,
+    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.Service.SETSeen">>>>));
 
 struct SETSeenExpiry {
   int64_t expires = 0;
@@ -209,8 +208,10 @@ static bool jsonLoad(String &json, unsigned limit, T &value)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  value = ZfJSON::handler<T>(roots[0]).ctor();
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<T>(roots[0]);
+  if (!handler.valid) return false;
+  value = handler.ctor();
   return true;
 }
 
@@ -229,7 +230,7 @@ static bool tokenResponse(String json, unsigned limit,
     if (json.mutable_()) ZuClear(json.data(), json.length());
   }};
   Token wire;
-  ZuGuard clear{[&wire]() {
+  ZuGuard clearWire{[&wire]() {
     if (wire.accessToken.mutable_())
       ZuClear(wire.accessToken.data(), wire.accessToken.length());
   }};
@@ -358,7 +359,7 @@ static bool serviceIssuer(
   return true;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ServiceState_ : public Heap, public ZmObject  {
   enum { Initial, Starting, Started, Stopping, Stopped };
 
@@ -691,7 +692,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       complete(ServiceError::Unauthorized);
       return;
     }
-    if (seen.findVal(value.id)) {
+    if (seen.find(value.id)) {
       complete(ServiceError::OK);
       return;
     }
@@ -708,8 +709,8 @@ struct ServiceState_ : public Heap, public ZmObject  {
       return;
     }
 
-    seen.add(ZmRef<SETSeen>{new SETSeen{
-      .id = ZuMv(value.id), .expires = subject.expires}});
+    seen.add(SETSeen{
+      .id = ZuMv(value.id), .expires = subject.expires});
     seenExpiries.add(SETSeenExpiry{subject.expires, value.id});
     if (refreshFn) refreshFn(RefreshID{
       .issuer = ZuMv(subject.issuer), .familyID = ZuMv(subject.familyID)},
@@ -981,6 +982,8 @@ struct ServiceState_ : public Heap, public ZmObject  {
   ZmScheduler::Timer expiryTimer;
   bool expiryArmed = false;
 };
+using ServiceStateHeap = ZmHeap<"Zum.ZumService.ServiceState", ServiceState_<>>;
+ZuDerive(ServiceState, (ServiceState_<ServiceStateHeap>));
 Service::Service() = default;
 Service::~Service() { final(); }
 

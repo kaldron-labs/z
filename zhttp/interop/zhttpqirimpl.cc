@@ -25,17 +25,17 @@
 
 namespace Zhttp::QIR {
 
-static constexpr ZuCSpan DefaultWWW{"/www"};
-static constexpr ZuCSpan DefaultDownloads{"/downloads"};
-static constexpr ZuCSpan DefaultCA{"/certs/ca.pem"};
-static constexpr ZuCSpan DefaultCert{"/certs/cert.pem"};
-static constexpr ZuCSpan DefaultKey{"/certs/priv.key"};
-static constexpr ZuCSpan Scheme{"https://"};
-static constexpr ZuCSpan HQGet{"GET "};
-static constexpr ZuCSpan HQALPN{"hq-interop"};
-static constexpr ZuCSpan H3ALPN{"h3"};
-static constexpr ZuCSpan QIRMigrationModeName{"active"};
-static constexpr ZuCSpan QIRMigrationCIDReserveName{"4"};
+static constexpr auto DefaultWWW = "/www"_Zu;
+static constexpr auto DefaultDownloads = "/downloads"_Zu;
+static constexpr auto DefaultCA = "/certs/ca.pem"_Zu;
+static constexpr auto DefaultCert = "/certs/cert.pem"_Zu;
+static constexpr auto DefaultKey = "/certs/priv.key"_Zu;
+static constexpr auto Scheme = "https://"_Zu;
+static constexpr auto HQGet = "GET "_Zu;
+static constexpr auto HQALPN = "hq-interop"_Zu;
+static constexpr auto H3ALPN = "h3"_Zu;
+static constexpr auto QIRMigrationModeName = "active"_Zu;
+static constexpr auto QIRMigrationCIDReserveName = "4"_Zu;
 // Rebind tests emulate transparent NAT remapping; a 1s PING restores path
 // progress before the simulator's 5s rebind cadence can compound stalls.
 static constexpr ZuTime QIRRebindHeartBeat{1};
@@ -297,37 +297,17 @@ struct H3Request :
   uint64_t	streamID_ = 0;
 };
 
-ZuDerive(H3ReqPayload,
-  (ZtBArray<ZtArrayHeapID<"ZhttpQIR.H3ReqPayload">>));
-
-struct H3ReqTx {
-  H3ReqTx(H3ReqPayload &payload_) : payload{&payload_} { }
-
-  H3ReqTx &operator <<(ZuBSpan span) {
-    *payload << span;
-    return *this;
-  }
-  H3ReqTx &operator <<(char c) {
-    payload->push(uint8_t(c));
-    return *this;
-  }
-  void flush() { }
-
-  H3ReqPayload	*payload = nullptr;
-};
-
 template <typename StreamRef>
 static bool sendH3Request_(const Request &request, StreamRef stream)
 {
   using H3Cxn = ZuDecay<decltype(stream->link()->h3)>;
   H3Request<H3Cxn> builder{
     request, stream->link()->h3, uint64_t(stream->id())};
-  H3ReqPayload payload;
-  H3ReqTx tx{payload};
-  builder.begin(tx);
+  auto tx = stream->txStream_();
+  if (!builder.begin(tx)) return false;
   builder.finish(tx);
-  return payload.length() &&
-    stream->link()->send(stream, payload, true);
+  tx.flush();
+  return !tx.failed() && stream->link()->send_(stream, {}, true);
 }
 
 struct HQServerLink;
@@ -659,10 +639,10 @@ struct H3Client::Link :
       app()->fail();
       return;
     }
-    if (!sendH3Request_(app()->requests[i], stream)) {
-      app()->fail();
-      return;
-    }
+    app()->txRun([link = this, stream = ZuMv(stream), i]() mutable {
+      if (!sendH3Request_(link->app()->requests[i], stream))
+	link->app()->rxRun([link]() { link->app()->fail(); });
+    });
   }
   void disconnected(bool) {
     if (app()->doneCount < app()->requests.length()) app()->fail();
@@ -670,7 +650,10 @@ struct H3Client::Link :
   void connectFailed(bool) { app()->fail(); }
   void streamed(ZmRef<Stream>) { }
 
-  Zhttp::H3::QPackTxTable *qpackTx() { return &h3Tx; }
+  Zhttp::H3::QPackTxTable *qpackTx() {
+    ZmAssert(app()->txInvoked());
+    return &h3Tx;
+  }
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)

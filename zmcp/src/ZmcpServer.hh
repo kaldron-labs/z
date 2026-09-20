@@ -258,7 +258,7 @@ struct SSERecord {
   bool terminal = false;
 };
 
-template <typename Token, typename Res, typename Heap>
+template <typename Token, typename Res, typename Heap = ZuVoid>
 class CompleteAction_ : public Heap, public ZmObject {
 public:
   CompleteAction_(Token *token_, ToolReply<Res> reply_) :
@@ -274,17 +274,13 @@ private:
 
 template <typename Token, typename Res>
 using CompleteActionHeap = ZmHeap<"Zmcp.HTTP.Complete",
-  CompleteAction_<Token, Res, ZuVoid>>;
+  CompleteAction_<Token, Res>>;
 
 template <typename Token, typename Res>
-struct CompleteAction : public CompleteAction_<Token, Res,
-    CompleteActionHeap<Token, Res>> {
-  using Base = CompleteAction_<Token, Res,
-    CompleteActionHeap<Token, Res>>;
-  using Base::Base;
-};
+ZuDerive(CompleteAction, (CompleteAction_<Token, Res,
+  CompleteActionHeap<Token, Res>>));
 
-template <typename Token, typename Heap>
+template <typename Token, typename Heap = ZuVoid>
 class ProgressAction_ : public Heap, public ZmObject {
 public:
   ProgressAction_(
@@ -306,16 +302,13 @@ private:
 
 template <typename Token>
 using ProgressActionHeap = ZmHeap<"Zmcp.HTTP.Progress",
-  ProgressAction_<Token, ZuVoid>>;
+  ProgressAction_<Token>>;
 
 template <typename Token>
-struct ProgressAction : public ProgressAction_<Token,
-    ProgressActionHeap<Token>> {
-  using Base = ProgressAction_<Token, ProgressActionHeap<Token>>;
-  using Base::Base;
-};
+ZuDerive(ProgressAction,
+  (ProgressAction_<Token, ProgressActionHeap<Token>>));
 
-template <typename Token, typename Heap>
+template <typename Token, typename Heap = ZuVoid>
 class LogAction_ : public Heap, public ZmObject {
 public:
   LogAction_(
@@ -336,13 +329,10 @@ private:
 
 template <typename Token>
 using LogActionHeap = ZmHeap<"Zmcp.HTTP.Log",
-  LogAction_<Token, ZuVoid>>;
+  LogAction_<Token>>;
 
 template <typename Token>
-struct LogAction : public LogAction_<Token, LogActionHeap<Token>> {
-  using Base = LogAction_<Token, LogActionHeap<Token>>;
-  using Base::Base;
-};
+ZuDerive(LogAction, (LogAction_<Token, LogActionHeap<Token>>));
 
 struct WorkEntry {
   using CloseFn = void (*)(void *);
@@ -506,7 +496,7 @@ ZmHashDerive(PendingHash, PendingEntry,
       ZmHashLock<ZmNoLock,
         ZmHashHeapID<"Zmcp.Server.Pending">>>>));
 
-template <typename Catalog, typename Heap>
+template <typename Catalog, typename Heap = ZuVoid>
 class HTTPSession_ : public Heap, public ZuObject {
 public:
   HTTPSession_(HTTPValue id_, Limits limits, ContextRef context_) :
@@ -547,13 +537,11 @@ public:
 
 template <typename Catalog>
 using HTTPSessionHeap = ZmHeap<"Zmcp.HTTP.Session",
-  HTTPSession_<Catalog, ZuVoid>>;
+  HTTPSession_<Catalog>>;
 
 template <typename Catalog>
-struct HTTPSession : public HTTPSession_<Catalog, HTTPSessionHeap<Catalog>> {
-  using Base = HTTPSession_<Catalog, HTTPSessionHeap<Catalog>>;
-  using Base::Base;
-};
+ZuDerive(HTTPSession,
+  (HTTPSession_<Catalog, HTTPSessionHeap<Catalog>>));
 
 template <typename Catalog>
 inline const HTTPValue &HTTPSession_KeyAxor(
@@ -609,7 +597,7 @@ namespace ServerMode {
   enum { None, HTTP, Stdio };
 }
 
-template <typename Owner, typename Emit, typename Heap>
+template <typename Owner, typename Emit, typename Heap = ZuVoid>
 class SSEProducer_ : public Heap, public ZmPolymorph {
 public:
   SSEProducer_(Owner *owner_, Emit emit_) :
@@ -629,14 +617,11 @@ private:
 
 template <typename Owner, typename Emit>
 using SSEProducerHeap = ZmHeap<"Zmcp.SSE.Producer",
-  SSEProducer_<Owner, Emit, ZuVoid>>;
+  SSEProducer_<Owner, Emit>>;
 
 template <typename Owner, typename Emit>
-struct SSEProducer : public SSEProducer_<Owner, Emit,
-    SSEProducerHeap<Owner, Emit>> {
-  using Base = SSEProducer_<Owner, Emit, SSEProducerHeap<Owner, Emit>>;
-  using Base::Base;
-};
+ZuDerive(SSEProducer, (SSEProducer_<Owner, Emit,
+  SSEProducerHeap<Owner, Emit>>));
 
 } // Server_
 
@@ -1342,21 +1327,18 @@ class Server {
   template <typename Heap> class StdioWork_;
 
   template <typename Link>
-  using WorkHeap = ZmHeap<"Zmcp.HTTP.Work", Work_<Link, ZuVoid>>;
+  using WorkDefault = Work_<Link, ZuVoid>;
+  using StdioWorkDefault = StdioWork_<ZuVoid>;
 
   template <typename Link>
-  struct Work : public Work_<Link, WorkHeap<Link>> {
-    using Base = Work_<Link, WorkHeap<Link>>;
-    using Base::Base;
-  };
+  using WorkHeap = ZmHeap<"Zmcp.HTTP.Work", WorkDefault<Link>>;
 
-  using StdioWorkHeap =
-    ZmHeap<"Zmcp.Stdio.Work", StdioWork_<ZuVoid>>;
+  template <typename Link>
+  ZuDerive(Work, (Work_<Link, WorkHeap<Link>>));
 
-  struct StdioWork : public StdioWork_<StdioWorkHeap> {
-    using Base = StdioWork_<StdioWorkHeap>;
-    using Base::Base;
-  };
+  using StdioWorkHeap = ZmHeap<"Zmcp.Stdio.Work", StdioWorkDefault>;
+
+  ZuDerive(StdioWork, (StdioWork_<StdioWorkHeap>));
 
   using Session = Server_::HTTPSession<Catalog>;
 
@@ -1898,7 +1880,7 @@ private:
       (void)m_stdioPending.delNode(entry);
   }
 
-  template <typename Link, typename Heap>
+  template <typename Link, typename Heap = ZuVoid>
   class Work_ : public Heap, public ZmObject {
     using Self = Work_<Link, Heap>;
     using Responder = HTTPResponder<Catalog, Self>;
@@ -2210,7 +2192,7 @@ private:
     bool			m_closed = false;
   };
 
-  template <typename Heap>
+  template <typename Heap = ZuVoid>
   class StdioWork_ : public Heap, public ZmObject {
     using Self = StdioWork_<Heap>;
     using Responder = StdioResponder<Self>;

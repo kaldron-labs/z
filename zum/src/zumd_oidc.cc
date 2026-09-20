@@ -120,8 +120,8 @@ ZfStruct(, (OIDCEssential, JSON),
 struct OIDCAuthTime { OIDCEssential authTime; };
 ZfStruct(, (OIDCAuthTime, JSON),
   (((authTime),		(JSON::ID<"auth_time">, Required)), (UDT)));
-struct OIDCClaims { OIDCAuthTime idToken; };
-ZfStruct(, (OIDCClaims, JSON),
+struct OIDCAuthorizeClaims { OIDCAuthTime idToken; };
+ZfStruct(, (OIDCAuthorizeClaims, JSON),
   (((idToken),		(JSON::ID<"id_token">, Required)), (UDT)));
 
 struct OIDCCallbackFields {
@@ -138,10 +138,12 @@ static bool jsonLoad(String &json, ZuPtr<ZfJSON::AnyNode> &root, T &value)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
   root = ZuMv(roots[0]);
-  value = ZfJSON::handler<T>(root).ctor();
+  auto handler = ZfJSON::handler<T>(root);
+  if (!handler.valid) return false;
+  value = handler.ctor();
   return true;
 }
 
@@ -340,7 +342,7 @@ IDVec oidcMapRoles(
   return roles;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class OIDCUserLoad__ : public Heap, public ZmObject  {
 public:
   OIDCUserLoad__(DBContext *context, String subject,
@@ -521,7 +523,9 @@ private:
   bool			m_eligible = false;
   bool			m_done = false;
 };
-using OIDCUserLoad_ = OIDCUserLoad__<ZmHeap<"Zum.zumd.oidc.OIDCUserLoad", OIDCUserLoad__<ZuVoid>>>;
+using OIDCUserLoadHeap =
+  ZmHeap<"Zum.zumd.oidc.OIDCUserLoad", OIDCUserLoad__<>>;
+ZuDerive(OIDCUserLoad_, (OIDCUserLoad__<OIDCUserLoadHeap>));
 
 void oidcLoadUser(
     DBContext *context, String subject, const OIDCConfig &config,
@@ -541,12 +545,9 @@ struct OIDCKey {
 ZuDerive(OIDCKeyVec,
   (ZtArray<OIDCKey, ZtArrayHeapID<"Zum.OIDC.KeySet">>));
 
-class OIDCState;
-
-template <typename Heap>
-class OIDCReq_ : public Heap, public ZmObject  {
+class OIDCReqData : public ZmObject {
 public:
-  OIDCReq_(OIDCState *state_) : state{state_} { }
+  OIDCReqData(OIDCState *state_) : state{state_} { }
 
   OIDCState		*state = nullptr;
   String		stateID;
@@ -561,16 +562,17 @@ public:
   OIDCFinishFn		complete;
   bool			consumed = false;
 };
-using OIDCReq = OIDCReq_<ZmHeap<"Zum.zumd.oidc.OIDCReq", OIDCReq_<ZuVoid>>>;
 
-static const String &oidcReqID(const ZmRef<OIDCReq> &request)
+static const String &oidcReqID(const OIDCReqData &request)
 {
-  return request->stateID;
+  return request.stateID;
 }
 
-ZmHashDerive(OIDCReqHash, ZmRef<OIDCReq>,
-  (ZmHashKey<oidcReqID,
-    ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.OIDC.Pending">>>));
+ZmHashDerive(OIDCReqHash, OIDCReqData,
+  (ZmHashNode<OIDCReqData,
+    ZmHashKey<oidcReqID,
+      ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.OIDC.Pending">>>>));
+using OIDCReq = OIDCReqHash::Node;
 static bool randomText(Ztls::Random &rng, String &value)
 {
   ZuBArray<OIDCRandomSize> random(OIDCRandomSize, false);
@@ -690,7 +692,7 @@ static bool discoveryResponse(
   return oidcConfigValid(config);
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class OIDCState_ : public Heap, public ZmObject  {
 public:
   bool init(
@@ -721,7 +723,7 @@ public:
     invoke_([self = ZmRef<OIDCState_>{this}]() mutable {
       {
 	auto i = self->m_pending.iter();
-		while (auto request = i.val()) {
+	while (auto request = i()) {
 		  self->m_scheduler->del(&request->timer);
 		  auto complete = ZuMv(request->complete);
 		  request->state = nullptr;
@@ -865,7 +867,7 @@ private:
     formField(location, first, "code_challenge", challenge);
     formField(location, first, "code_challenge_method", "S256");
     String claims;
-    ZfJSON::save(claims, OIDCClaims{});
+    ZfJSON::save(claims, OIDCAuthorizeClaims{});
     formField(location, first, "claims", claims);
     if (request->config.prompt)
       formField(location, first, "prompt", request->config.prompt);
@@ -874,7 +876,7 @@ private:
       age << request->config.maxAge;
       formField(location, first, "max_age", age);
     }
-    m_pending.add(request);
+    m_pending.addNode(request);
     m_scheduler->add(&request->timer, Zm::now() + ZuTime{double(m_timeout)},
       ZmScheduler::Update, [request](auto &&arm) {
         return arm([request]() { if (request->state) request->state->fail_(request); });
@@ -909,7 +911,8 @@ private:
         seen |= bit;
         *target = value;
       }) && valid;
-    auto request = stateID ? m_pending.findVal(stateID) : ZmRef<OIDCReq>{};
+    ZmRef<OIDCReq> request;
+    if (stateID) request = m_pending.find(stateID);
     if (!valid || !request || request->config.appID != appID ||
 	request->consumed || !(seen & 2U) ||
         bool(code) == bool(error)) {
@@ -1074,7 +1077,7 @@ private:
   bool active_(const ZmRef<OIDCReq> &request)
   {
     return m_up && request && request->state == this &&
-      m_pending.findVal(request->stateID) == request;
+      m_pending.find(request->stateID) == request;
   }
 
   void fail_(ZmRef<OIDCReq> request)
@@ -1125,8 +1128,8 @@ private:
   unsigned	m_discovering = 0;
   ZmAtomic<uint32_t> m_up = 0;
 };
-using OIDCState = OIDCState_<ZmHeap<"Zum.zumd.oidc.OIDCState", OIDCState_<ZuVoid>>>;
-
+using OIDCStateHeap = ZmHeap<"Zum.zumd.oidc.OIDCState", OIDCState_<>>;
+ZuDerive(OIDCState, (OIDCState_<OIDCStateHeap>));
 OIDC::OIDC() = default;
 OIDC::~OIDC() { final(); }
 
@@ -1169,8 +1172,7 @@ enum {
   Concurrency = 32
 };
 
-template <unsigned Status_>
-template <typename Heap>
+template <unsigned Status_, typename Heap = ZuVoid>
 struct ResponseData_ : public Heap, public ZmObject  {
   enum { Status = Status_ };
   String body;
@@ -1179,7 +1181,9 @@ struct ResponseData_ : public Heap, public ZmObject  {
     return *this;
   }
 };
-using ResponseData = ResponseData_<ZmHeap<"Zum.zumd.oidc.ResponseData", ResponseData_<ZuVoid>>>;
+template <unsigned Status_>
+using ResponseData = ResponseData_<Status_,
+  ZmHeap<"Zum.zumd.oidc.ResponseData", ResponseData_<Status_>>>;
 
 template <unsigned Status_>
 struct Response : public Zrest::ResParser<Response<Status_>,
@@ -1222,7 +1226,7 @@ using Responses = ZuTypeList<Response<200>, Response<201>, Response<204>,
   Response<409>, Response<415>, Response<422>, Response<429>, Response<500>,
   Response<501>, Response<502>, Response<503>, Response<504>>;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject  {
   mutable String	contentType;
   mutable String	authorization;
@@ -1250,7 +1254,8 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0, {});
   }
 };
-using Call = Call_<ZmHeap<"Zum.zumd.oidc.Call", Call_<ZuVoid>>>;
+using CallHeap = ZmHeap<"Zum.zumd.oidc.Call", Call_<>>;
+ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Impl, Zhttp::Method::T Method_, unsigned Body_>
 struct Request : public Zrest::ReqBuilder<Impl, Call> {
@@ -1309,20 +1314,20 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Catalog> {
 
 struct ResParser : public Zrest::MResParser<Catalog, ReqBuilder_> { };
 
-class Client;
-class Pool;
-template <typename Heap = ZuVoid> class Pool_;
+class OIDCClient;
+struct Pool;
+template <typename Heap> class Pool_;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"Zum.OIDC.HTTP.Request">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap>
-class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
-  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
+template <typename Heap = ZuVoid>
+class Pool_ : public Heap, public Zhttp::Pool<OIDCClient, TxQ, ResParser> {
+  using Base = Zhttp::Pool<OIDCClient, TxQ, ResParser>;
 public:
-  Pool_(Client *client) : Base{client} { }
+  Pool_(OIDCClient *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) {
@@ -1333,15 +1338,13 @@ private:
 };
 
 using PoolHeap = ZmHeap<"Zum.OIDC.HTTP.Pool", Pool_<>>;
-class Pool : public Pool_<PoolHeap> {
-public:
-  using Pool_<PoolHeap>::Pool_;
-};
+ZuDerive(Pool, (Pool_<PoolHeap>));
 
-template <typename Heap>
-class Client_ : public Heap, public ZmObject, public Zhttp::Client<Client, Pool>  {
+template <typename Heap = ZuVoid>
+class Client_ : public Heap, public ZmObject,
+    public Zhttp::Client<OIDCClient, Pool> {
 public:
-  using Base = Zhttp::Client_<Client_, Pool>;
+  using Base = Zhttp::Client<OIDCClient, Pool>;
 
   bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     m_host = url.host;
@@ -1404,10 +1407,14 @@ private:
   uint64_t	m_id = 0;
   bool		m_ipv6Literal = false;
 };
-using Client = Client_<ZmHeap<"Zum.zumd.oidc.Client", Client_<ZuVoid>>>;
+using ClientHeap = ZmHeap<"Zum.zumd.oidc.Client", Client_<>>;
+class OIDCClient : public Client_<ClientHeap> {
+public:
+  using Client_<ClientHeap>::Client_;
+};
 
 struct Entry {
-  ZmRef<Client> client;
+  ZmRef<OIDCClient> client;
   unsigned pending = 0;
   bool retiring = false;
 };
@@ -1416,7 +1423,7 @@ ZuDerive(Clients,
 
 } // namespace OIDCHTTP_
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class OIDCHTTPState_ : public Heap, public ZmObject  {
 public:
   bool init(ZiMultiplex *mx, unsigned sid, unsigned origins, ZuCSpan caPath) {
@@ -1530,7 +1537,7 @@ private:
       OIDCHTTPDoneFn complete, const Zhttp::URLView &url) {
     auto &entry = m_clients[slot];
     if (!entry.client) {
-      ZmRef<OIDCHTTP_::Client> candidate = new OIDCHTTP_::Client{};
+      ZmRef<OIDCHTTP_::OIDCClient> candidate = new OIDCHTTP_::OIDCClient{};
       if (!candidate->init(m_mx, url, m_caPath)) {
         candidate->final();
         complete(0, String{});
@@ -1580,8 +1587,9 @@ private:
   bool			m_resolverOwned = false;
   bool			m_up = false;
 };
-using OIDCHTTPState = OIDCHTTPState_<ZmHeap<"Zum.zumd.oidc.OIDCHTTPState", OIDCHTTPState_<ZuVoid>>>;
-
+using OIDCHTTPStateHeap =
+  ZmHeap<"Zum.zumd.oidc.OIDCHTTPState", OIDCHTTPState_<>>;
+ZuDerive(OIDCHTTPState, (OIDCHTTPState_<OIDCHTTPStateHeap>));
 OIDCHTTP::OIDCHTTP() = default;
 OIDCHTTP::~OIDCHTTP() { final(); }
 

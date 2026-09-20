@@ -68,7 +68,7 @@ ZfStruct(, (OAuthMetadataPath, URI),
   (((oauth2),    (URI::PathIndex<2>, Required)), (String)),
   (((app),       (URI::PathIndex<3>, Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthAuthorizeReq_ : public Heap, public ZmObject {
   OAuthString responseType;
   OAuthString clientID;
@@ -79,7 +79,7 @@ struct OAuthAuthorizeReq_ : public Heap, public ZmObject {
   OAuthString codeChallengeMethod;
 };
 using OAuthAuthorizeReqHeap =
-  ZmHeap<"zrest.OAuthAuthorizeReq", OAuthAuthorizeReq_<ZuVoid>>;
+  ZmHeap<"zrest.OAuthAuthorizeReq", OAuthAuthorizeReq_<>>;
 ZuDerive(OAuthAuthorizeReq,
   (OAuthAuthorizeReq_<OAuthAuthorizeReqHeap>));
 ZfStruct(, (OAuthAuthorizeReq, URI),
@@ -92,7 +92,7 @@ ZfStruct(, (OAuthAuthorizeReq, URI),
   (((codeChallengeMethod),
     (URI::ID<"code_challenge_method">, Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthCodeTokenReq_ : public Heap, public ZmObject {
   OAuthString grantType;
   OAuthString code;
@@ -101,7 +101,7 @@ struct OAuthCodeTokenReq_ : public Heap, public ZmObject {
   OAuthString codeVerifier;
 };
 using OAuthCodeTokenReqHeap =
-  ZmHeap<"zrest.OAuthCodeTokenReq", OAuthCodeTokenReq_<ZuVoid>>;
+  ZmHeap<"zrest.OAuthCodeTokenReq", OAuthCodeTokenReq_<>>;
 ZuDerive(OAuthCodeTokenReq, (OAuthCodeTokenReq_<OAuthCodeTokenReqHeap>));
 ZfStruct(, (OAuthCodeTokenReq, URI),
   (((grantType), (URI::ID<"grant_type">, Required)), (String)),
@@ -110,7 +110,7 @@ ZfStruct(, (OAuthCodeTokenReq, URI),
   (((clientID), (URI::ID<"client_id">, Required)), (String)),
   (((codeVerifier), (URI::ID<"code_verifier">, Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthRefreshTokenReq_ : public Heap, public ZmObject {
   OAuthString grantType;
   OAuthString refreshToken;
@@ -118,7 +118,7 @@ struct OAuthRefreshTokenReq_ : public Heap, public ZmObject {
   OAuthString clientID;
 };
 using OAuthRefreshTokenReqHeap =
-  ZmHeap<"zrest.OAuthRefreshTokenReq", OAuthRefreshTokenReq_<ZuVoid>>;
+  ZmHeap<"zrest.OAuthRefreshTokenReq", OAuthRefreshTokenReq_<>>;
 ZuDerive(OAuthRefreshTokenReq,
   (OAuthRefreshTokenReq_<OAuthRefreshTokenReqHeap>));
 ZfStruct(, (OAuthRefreshTokenReq, URI),
@@ -127,14 +127,14 @@ ZfStruct(, (OAuthRefreshTokenReq, URI),
   (((scope), (JSON::Opt)), (String)),
   (((clientID), (URI::ID<"client_id">, Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthRevokeReq_ : public Heap, public ZmObject {
   OAuthString token;
   OAuthString tokenTypeHint;
   OAuthString clientID;
 };
 using OAuthRevokeReqHeap =
-  ZmHeap<"zrest.OAuthRevokeReq", OAuthRevokeReq_<ZuVoid>>;
+  ZmHeap<"zrest.OAuthRevokeReq", OAuthRevokeReq_<>>;
 ZuDerive(OAuthRevokeReq, (OAuthRevokeReq_<OAuthRevokeReqHeap>));
 ZfStruct(, (OAuthRevokeReq, URI),
   (((token), (Required)), (String)),
@@ -164,7 +164,7 @@ ZfStruct(, (OAuthAuthorizeErrorRes, URI),
   (((state), (JSON::Opt)), (String)),
   (((issuer), (URI::ID<"iss">, Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthTokenRes_ : public Heap, public ZmObject {
   OAuthString accessToken;
   OAuthString tokenType;
@@ -173,7 +173,7 @@ struct OAuthTokenRes_ : public Heap, public ZmObject {
   OAuthString scope;
 };
 using OAuthTokenResHeap =
-  ZmHeap<"zrest.OAuthTokenRes", OAuthTokenRes_<ZuVoid>>;
+  ZmHeap<"zrest.OAuthTokenRes", OAuthTokenRes_<>>;
 ZuDerive(OAuthTokenRes, (OAuthTokenRes_<OAuthTokenResHeap>));
 ZfStruct(, (OAuthTokenRes, JSON),
   (((accessToken), (JSON::ID<"access_token">, Required)), (String)),
@@ -182,19 +182,19 @@ ZfStruct(, (OAuthTokenRes, JSON),
   (((refreshToken), (JSON::ID<"refresh_token">, JSON::Opt)), (String)),
   (((scope), (Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthError_ : public Heap, public ZmObject {
   OAuthString error;
   OAuthString errorDescription;
 };
-using OAuthErrorHeap = ZmHeap<"zrest.OAuthError", OAuthError_<ZuVoid>>;
+using OAuthErrorHeap = ZmHeap<"zrest.OAuthError", OAuthError_<>>;
 ZuDerive(OAuthError, (OAuthError_<OAuthErrorHeap>));
 ZfStruct(, (OAuthError, JSON),
   (((error), (Required)), (String)),
   (((errorDescription),
     (JSON::ID<"error_description">, JSON::Opt)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthMetadata_ : public Heap, public ZmObject {
   OAuthString issuer;
   OAuthString authorizationEndpoint;
@@ -209,7 +209,7 @@ struct OAuthMetadata_ : public Heap, public ZmObject {
   OAuthStringVec revokeAuthMethods;
 };
 using OAuthMetadataHeap =
-  ZmHeap<"zrest.OAuthMetadata", OAuthMetadata_<ZuVoid>>;
+  ZmHeap<"zrest.OAuthMetadata", OAuthMetadata_<>>;
 ZuDerive(OAuthMetadata, (OAuthMetadata_<OAuthMetadataHeap>));
 ZfStruct(, (OAuthMetadata, JSON),
   (((issuer), (Required)), (String)),
@@ -279,22 +279,22 @@ struct OAuthJWKVec : public OAuthJWKArray {
   ZuDerive_(OAuthJWKVec, OAuthJWKArray);
   friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(OAuthJWKVec *);
 };
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct OAuthJWKS_ : public Heap, public ZmObject { OAuthJWKVec keys; };
-using OAuthJWKSHeap = ZmHeap<"zrest.OAuthJWKS", OAuthJWKS_<ZuVoid>>;
+using OAuthJWKSHeap = ZmHeap<"zrest.OAuthJWKS", OAuthJWKS_<>>;
 ZuDerive(OAuthJWKS, (OAuthJWKS_<OAuthJWKSHeap>));
 ZfStruct(, (OAuthJWKS, JSON), (((keys), (Required)), (UDT)));
 
 using PingPath = ZuStringT<"/api/ping">;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Ping_ : public Heap, public ZmObject { bool ping = false; };
-using PingHeap = ZmHeap<"zrest.Ping", Ping_<ZuVoid>>;
+using PingHeap = ZmHeap<"zrest.Ping", Ping_<>>;
 ZuDerive(Ping, (Ping_<PingHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Pong_ : public Heap, public ZmObject { bool pong = false; };
-using PongHeap = ZmHeap<"zrest.Pong", Pong_<ZuVoid>>;
+using PongHeap = ZmHeap<"zrest.Pong", Pong_<>>;
 ZuDerive(Pong, (Pong_<PongHeap>));
 
 ZfStruct(, (Ping, URI), (((ping), (Required)), (Bool)));

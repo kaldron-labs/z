@@ -20,9 +20,7 @@
 
 namespace Zum {
 
-template <typename Heap> struct DBContext_;
-using DBContext = DBContext_<
-  ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<ZuVoid>>>;
+struct DBContext;
 
 namespace SessionError { enum { OK = -1, Invalid, Expired, Storage }; }
 

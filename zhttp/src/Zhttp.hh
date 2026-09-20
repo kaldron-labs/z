@@ -93,6 +93,10 @@ inline void contentLengthSet(L &&l, uint64_t length)
 // Server links:
 //   connected() -> txStream()/process(initial message) -> disconnected()
 //
+// H2/H3 header encoding owns connection compression state on Tx. Post the
+// builder work to Tx, then use transmit_(builder). Application txStream()
+// remains available for body/transport output without header encoding.
+//
 // The process callback is installed by CRTP composition before connected()
 // returns and before received application bytes are dispatched. TCP and TLS
 // links represent transport connections. An HTTP/3 application link

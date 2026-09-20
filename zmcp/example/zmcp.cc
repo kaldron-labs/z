@@ -100,7 +100,7 @@ struct App {
   }
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject {
   ZmSemaphore done;
   int64_t value = 0;
@@ -117,8 +117,8 @@ struct Call_ : public Heap, public ZmObject {
   void failed(const Zmcp::Error &) { failed_ = true; done.post(); }
   void failed() { failed_ = true; done.post(); }
 };
-using CallHeap = ZmHeap<"ZmcpExample.Call", Call_<ZuVoid>>;
-struct Call : public Call_<CallHeap> { };
+using CallHeap = ZmHeap<"ZmcpExample.Call", Call_<>>;
+ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Client>
 static bool run(Client &client, const Options &options, App &app)

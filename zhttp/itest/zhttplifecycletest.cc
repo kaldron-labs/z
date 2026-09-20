@@ -358,8 +358,10 @@ struct QUICClient::Link :
 	return;
       }
       state.trace.push(LifeEvt::CliConnected);
-      txReady(*stream, state, LifeEvt::CliTxReady);
-      sendMsg(*stream, state, LifeEvt::CliSend, Ping);
+      auto tx = stream->txStream_();
+      state.trace.push(LifeEvt::CliTxReady);
+      state.trace.push(LifeEvt::CliSend);
+      tx << Ping << Zi::flush();
     });
   }
   void disconnected(bool) { }

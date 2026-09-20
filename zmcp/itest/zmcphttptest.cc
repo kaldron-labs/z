@@ -49,29 +49,23 @@ struct EchoStream : public Zmcp::Request {
 };
 using Catalog = ZuTypeList<Echo, EchoStream>;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct TransportContext_ : public Heap, public ZuObject {
   TransportContext_(uintptr_t id_) : id{id_} { }
   uintptr_t id;
 };
-using TransportContextHeap =
-  ZmHeap<"ZmcpITest.Transport", TransportContext_<ZuVoid>>;
-struct TransportContext : public TransportContext_<TransportContextHeap> {
-  using Base = TransportContext_<TransportContextHeap>;
-  using Base::Base;
-};
+using TransportContextHeap = ZmHeap<"ZmcpITest.Transport", TransportContext_<>>;
+ZuDerive(TransportContext, (TransportContext_<TransportContextHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct SessionContext_ : public Heap, public ZuObject { };
-using SessionContextHeap =
-  ZmHeap<"ZmcpITest.Session", SessionContext_<ZuVoid>>;
-struct SessionContext : public SessionContext_<SessionContextHeap> { };
+using SessionContextHeap = ZmHeap<"ZmcpITest.Session", SessionContext_<>>;
+ZuDerive(SessionContext, (SessionContext_<SessionContextHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct StreamContext_ : public Heap, public ZuObject { };
-using StreamContextHeap =
-  ZmHeap<"ZmcpITest.Stream", StreamContext_<ZuVoid>>;
-struct StreamContext : public StreamContext_<StreamContextHeap> { };
+using StreamContextHeap = ZmHeap<"ZmcpITest.Stream", StreamContext_<>>;
+ZuDerive(StreamContext, (StreamContext_<StreamContextHeap>));
 
 struct App {
   using Headers = ZhttpHeaders("authorization");
@@ -243,7 +237,7 @@ struct ClientApp {
   bool terminateOK = false;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ClientCall_ : public Heap, public ZmObject {
   void started(const Zmcp::ID &id_) {
     id = id_;
@@ -274,8 +268,7 @@ struct ClientCall_ : public Heap, public ZmObject {
   unsigned controls = 0;
   unsigned failures = 0;
 };
-using ClientCallHeap =
-  ZmHeap<"ZmcpITest.ClientCall", ClientCall_<ZuVoid>>;
+using ClientCallHeap = ZmHeap<"ZmcpITest.ClientCall", ClientCall_<>>;
 ZuDerive(ClientCall, (ClientCall_<ClientCallHeap>));
 
 class RawHTTP;
@@ -457,7 +450,7 @@ static ZtString<> headerValue(const ZtString<> &response, ZuCSpan name)
 struct LegacyApp {
   using ResBuilderQ = Zmcp::HTTPBuilderQ<Catalog>;
 
-  static constexpr ZuCSpan SessionID{"legacy-session"};
+  static constexpr auto SessionID = "legacy-session"_Zu;
 
   ZmSemaphore listening_;
   Zmcp::Peer<Catalog> peer;

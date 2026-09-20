@@ -177,7 +177,7 @@ template <typename Field>
 using GetNDP = typename GetNDP_<Field>::T;
 
 // data frame writer
-template <typename W, typename Heap>
+template <typename W, typename Heap = ZuVoid>
 class DFWriter_ : public Heap, public ZmObject {
 public:
   using O = typename W::O;
@@ -270,8 +270,9 @@ private:
   bool		m_failed = false;
 };
 template <typename W>
-ZuDerive(DFWriter,
-  (DFWriter_<W, ZmHeap<"Zdb.DFWriter", DFWriter_<W, ZuVoid>>>));
+using DFWriter_Heap = ZmHeap<"Zdb.DFWriter", DFWriter_<W>>;
+template <typename W>
+ZuDerive(DFWriter, (DFWriter_<W, DFWriter_Heap<W>>));
 
 class Store;
 

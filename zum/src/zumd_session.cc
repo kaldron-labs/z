@@ -13,7 +13,7 @@
 
 namespace Zum {
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class SessionComplete__ : public Heap, public ZmObject  {
 public:
   SessionComplete__(SessionFn complete) : m_complete{ZuMv(complete)} { }
@@ -33,9 +33,11 @@ private:
   ZmRef<Request>	m_request;
   SessionFn	m_complete;
 };
-using SessionComplete_ = SessionComplete__<ZmHeap<"Zum.zumd.session.SessionComplete", SessionComplete__<ZuVoid>>>;
+using SessionCompleteHeap =
+  ZmHeap<"Zum.zumd.session.SessionComplete", SessionComplete__<>>;
+ZuDerive(SessionComplete_, (SessionComplete__<SessionCompleteHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class SessionDoneComplete__ : public Heap, public ZmObject  {
 public:
   SessionDoneComplete__(SessionDoneFn complete) : m_complete{ZuMv(complete)} { }
@@ -54,7 +56,10 @@ private:
   ZmRef<Request>	m_request;
   SessionDoneFn	m_complete;
 };
-using SessionDoneComplete_ = SessionDoneComplete__<ZmHeap<"Zum.zumd.session.SessionDoneComplete", SessionDoneComplete__<ZuVoid>>>;
+using SessionDoneCompleteHeap =
+  ZmHeap<"Zum.zumd.session.SessionDoneComplete", SessionDoneComplete__<>>;
+ZuDerive(SessionDoneComplete_,
+  (SessionDoneComplete__<SessionDoneCompleteHeap>));
 
 static void issue_(DBContext *context, Ztls::Random &rng,
     SessionConfig config, SessionFn complete)

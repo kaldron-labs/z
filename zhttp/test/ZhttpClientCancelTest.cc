@@ -118,7 +118,7 @@ struct HoldingResolver {
 
 struct App;
 struct Pool;
-template <typename Heap = ZuVoid> struct Pool_;
+template <typename Heap> struct Pool_;
 struct ReqBuilder_;
 struct ResParser;
 
@@ -252,7 +252,7 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Pool_ : public Heap, public Zhttp::Pool<App, TxQ, ResParser> {
   using Base = Zhttp::Pool<App, TxQ, ResParser>;
 
@@ -266,9 +266,7 @@ private:
   ReqBuilderQ	m_requests;
 };
 using PoolHeap = ZmHeap<"Zhttp.Test.Pool", Pool_<>>;
-struct Pool : public Pool_<PoolHeap> {
-  Pool(App *);
-};
+ZuDerive(Pool, (Pool_<PoolHeap>));
 
 ZuAssert((ZuIsSame<
   decltype(ZuDeclVal<const Pool &>().authority()), ZuBSpan>{}));
@@ -338,7 +336,6 @@ private:
 
 template <typename Heap>
 Pool_<Heap>::Pool_(App *app) : Base{app} { }
-Pool::Pool(App *app) : Pool_<PoolHeap>{app} { app->poolImpl = this; }
 
 template <typename Heap>
 void Pool_<Heap>::archive_(ReqBuilder *request) { client()->archived(request); }
@@ -450,6 +447,7 @@ void attemptState()
 
   App app;
   Pool pool{&app};
+  app.poolImpl = &pool;
   Pool::LiveReq attempt;
   ZmRef<ReqBuilder> request = new ReqBuilder;
   attempt.request = request;
@@ -811,12 +809,12 @@ bool serveOutOfOrder(ServerSockets &sockets, App &app)
   }
   int fd0 = aKey ? b : a;
   int fd1 = aKey ? a : b;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = sendResponse(fd1, response);
   sockets.close(fd1);
   if (ok) ok = app.archiveDone.timedwait(Zm::now(10)) == 0;
@@ -830,12 +828,12 @@ bool serve(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = readRequest(fd) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -846,12 +844,12 @@ bool serve(ServerSockets &sockets, ZuCSpan target, ZuCSpan authority)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = readRequest(fd, target, authority) &&
     sendResponse(fd, response);
   sockets.close(fd);
@@ -863,12 +861,12 @@ bool serveBody(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 5\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "abcde";
+    "abcde"_Zu;
   bool ok = readRequest(fd) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -879,11 +877,11 @@ bool serveRequestBody(ServerSockets &sockets, ZuCSpan body)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n";
+    "\r\n"_Zu;
   bool ok = readRequestBody(fd, body) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -891,12 +889,12 @@ bool serveRequestBody(ServerSockets &sockets, ZuCSpan body)
 
 bool serveTwo(ServerSockets &sockets)
 {
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = true;
   for (unsigned i = 0; i < 2; ++i) {
     int fd = sockets.accept();
@@ -917,17 +915,17 @@ bool serveRedirect(ServerSockets &sockets, bool follow)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan redirect =
+  static constexpr auto redirect =
     "HTTP/1.1 302 Found\r\n"
     "Location: /next\r\n"
     "Content-Length: 0\r\n"
-    "\r\n";
-  static constexpr ZuCSpan response =
+    "\r\n"_Zu;
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = readRequest(fd) && sendResponse(fd, redirect);
   if (ok && follow)
     ok = readRequest(fd) && sendResponse(fd, response);
@@ -940,12 +938,12 @@ bool serveCrossOriginRedirect(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan redirect =
+  static constexpr auto redirect =
     "HTTP/1.1 302 Found\r\n"
     "Location: http://example.com/next\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n";
+    "\r\n"_Zu;
   bool ok = readRequest(fd) && sendResponse(fd, redirect);
   sockets.close(fd);
   return ok;
@@ -956,7 +954,7 @@ bool servePipeline(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan responses =
+  static constexpr auto responses =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
@@ -965,7 +963,7 @@ bool servePipeline(ServerSockets &sockets)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = readRequests(fd, 2) && sendResponse(fd, responses);
   sockets.close(fd);
   return ok;
@@ -990,17 +988,17 @@ bool serveWaves(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
-    "ok";
-  static constexpr ZuCSpan finalResponse =
+    "ok"_Zu;
+  static constexpr auto finalResponse =
     "HTTP/1.1 201 Created\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = readRequest(fd) && sendResponse(fd, response) &&
     readRequest(fd) && sendResponse(fd, finalResponse);
   sockets.close(fd);
@@ -1012,11 +1010,11 @@ bool serveIdleStop(ServerSockets &sockets, ZmSemaphore &idle)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
-    "ok";
+    "ok"_Zu;
   bool ok = readRequest(fd) && sendResponse(fd, response);
   idle.post();
   uint8_t byte;
@@ -1028,12 +1026,12 @@ bool serveIdleStop(ServerSockets &sockets, ZmSemaphore &idle)
 bool serveParallel(
     ServerSockets &sockets, unsigned links, unsigned perLink)
 {
-  static constexpr ZuCSpan response =
+  static auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
     "ok";
-  static constexpr ZuCSpan finalResponse =
+  static auto finalResponse =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
@@ -1076,15 +1074,15 @@ bool serveLimitedCombinations(
   }
   int fd0 = aKey ? b : a;
   int fd1 = aKey ? a : b;
-  static constexpr ZuCSpan response =
+  static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
-    "\r\n";
-  static constexpr ZuCSpan closeResponse =
+    "\r\n"_Zu;
+  static constexpr auto closeResponse =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n";
+    "\r\n"_Zu;
   ready.post();
   bool ok = release0.timedwait(Zm::now(10)) == 0 &&
     sendResponse(fd0, closeResponse);
@@ -2826,7 +2824,7 @@ void poolRetainedMessageOverride()
     return;
   }
 
-  static constexpr ZuCSpan Body = "abcde";
+  static constexpr auto Body = "abcde"_Zu;
   ZmAtomic<unsigned> overrideOK = 0;
   ServerSockets overrideSockets{overrideFD};
   ZmThread overrideServer{[&overrideSockets, &overrideOK]() {

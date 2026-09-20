@@ -243,19 +243,21 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   Client(State *state_) : state{state_} { }
 
   void connected(Link &link, const Zhttp::ConnectedInfo &) {
-    state->connected.post();
     if (state->openRequest) {
-      Builder builder;
-      auto tx = link.transmit(builder);
-      builder.begin(tx);
-      if (state->completeRequest) {
-	auto body = builder.body(tx, 1);
-	body << 'x';
-	body.flush();
-	builder.finish(tx);
-	link.finish();
-      }
+      this->txRun([link = &link, complete = state->completeRequest]() {
+	Builder builder;
+	auto tx = link->transmit_(builder);
+	builder.begin(tx);
+	if (complete) {
+	  auto body = builder.body(tx, 1);
+	  body << 'x';
+	  body.flush();
+	  builder.finish(tx);
+	  link->finish();
+	}
+      });
     }
+    state->connected.post();
   }
   void disconnected(Link &, bool) {
     state->disconnected.post();

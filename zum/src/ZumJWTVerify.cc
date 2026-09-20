@@ -65,9 +65,11 @@ static bool loadJSON(JWTBytes &json, T &value)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  value = ZfJSON::handler<T>(roots[0]).ctor();
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
+  auto handler = ZfJSON::handler<T>(roots[0]);
+  if (!handler.valid) return false;
+  value = handler.ctor();
   return true;
 }
 

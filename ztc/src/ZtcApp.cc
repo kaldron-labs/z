@@ -124,10 +124,10 @@ public:
   bool			appCaptured = false;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class Pending__ : public Heap, public PendingData { };
-using PendingHeap = ZmHeap<"Ztc.App.Pending", Pending__<ZuVoid>>;
-class Pending_ final : public Pending__<PendingHeap> { };
+using PendingHeap = ZmHeap<"Ztc.App.Pending", Pending__<>>;
+ZuDerive(Pending_, (Pending__<PendingHeap>));
 
 using PendingKey = uint64_t;
 using PendingIdx = ZmRBTreeKV<PendingKey, Pending_ *,
@@ -160,6 +160,7 @@ using SubIdx = ZmRBTree<SubDueIdx::Node,
 using Subscription = SubIdx::Node;
 using SubDueSets =
   ZtArray<SubDueIdx, ZtArrayHeapID<"Ztc.App.SubDueIdx">>;
+// Alert frames are pooled I/O buffers shared with the writer; they cannot own a queue node.
 using AlertTail = ZmQueue<ZmRef<ZiIOBuf>,
   ZmQueueHeapID<"Ztc.App.AlertTail">>;
 
@@ -582,16 +583,13 @@ private:
   unsigned	m_accepted = 0;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class Ingress__ : public Heap, public IngressData {
 public:
   using IngressData::IngressData;
 };
-using IngressHeap = ZmHeap<"Ztc.App.Ingress", Ingress__<ZuVoid>>;
-class Ingress final : public Ingress__<IngressHeap> {
-public:
-  using Ingress__<IngressHeap>::Ingress__;
-};
+using IngressHeap = ZmHeap<"Ztc.App.Ingress", Ingress__<>>;
+ZuDerive(Ingress, (Ingress__<IngressHeap>));
 
 template <typename Heap = ZuVoid>
 class AlertSink__ : public Heap, public ZiSink {
@@ -609,10 +607,7 @@ private:
   ZmRef<Ingress>	m_ingress;
 };
 using AlertSinkHeap = ZmHeap<"Ztc.App.AlertSink", AlertSink__<>>;
-class AlertSink final : public AlertSink__<AlertSinkHeap> {
-public:
-  using AlertSink__<AlertSinkHeap>::AlertSink__;
-};
+ZuDerive(AlertSink, (AlertSink__<AlertSinkHeap>));
 
 struct StateData {
   StateData() {
@@ -646,10 +641,10 @@ struct StateData {
   bool			degraded = false;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class State_ : public Heap, public StateData { };
-using StateHeap = ZmHeap<"Ztc.App.State", State_<ZuVoid>>;
-class State final : public State_<StateHeap> { };
+using StateHeap = ZmHeap<"Ztc.App.State", State_<>>;
+ZuDerive(State, (State_<StateHeap>));
 
 Subscription *earliest(State *state)
 {

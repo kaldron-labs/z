@@ -42,6 +42,7 @@ struct ZCmp {
   static const ZmRef<Z> &null() { static const ZmRef<Z> z; return z; }
 };
 
+// This test covers list and hash nodes retaining shared object references.
 ZmListDerive(ZList, ZmRef<Z>, ZmListCmp<ZCmp>);
 ZmHashKVDerive(ZHash, int, ZmRef<Z>, (ZmHash_Defaults));
 

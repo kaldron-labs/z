@@ -15,7 +15,6 @@
 
 namespace Zum {
 
-struct DB;
 struct MSaga;
 struct IssuerTable;
 struct UserTable;
@@ -41,9 +40,9 @@ struct IdemRequestTable;
 struct SSFRxTable;
 struct SSFDeliveryTable;
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct DBContext_ : public Heap, public ZmPolymorph  {
-  DB			*db = nullptr;
+  Zdb			*db = nullptr;
   IssuerTable		*issuers = nullptr;
   AppTable		*apps = nullptr;
   UserTable		*users = nullptr;
@@ -68,7 +67,9 @@ struct DBContext_ : public Heap, public ZmPolymorph  {
   SSFRxTable		*ssfRx = nullptr;
   SSFDeliveryTable	*ssfDeliveries = nullptr;
 };
-using DBContext = DBContext_<ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<ZuVoid>>>;
+using DBContextHeap =
+  ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<>>;
+ZuDerive(DBContext, (DBContext_<DBContextHeap>));
 
 } // namespace Zum
 

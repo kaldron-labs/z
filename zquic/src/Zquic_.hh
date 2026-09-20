@@ -13,7 +13,7 @@
 namespace Zquic_ {
 
 template <typename Link_>
-struct Cxn : public ZuObject {
+struct Cxn {
   Cxn() = default;
   Cxn(
     const CxnID &id_, uint64_t sequence_, Link_ *link_,
@@ -32,11 +32,12 @@ struct Cxn : public ZuObject {
 };
 
 template <typename Link_>
-inline const CxnID &Cxn_IDAxor(const Cxn<Link_> *cxn) { return cxn->id; }
+inline const CxnID &Cxn_IDAxor(const Cxn<Link_> &cxn) { return cxn.id; }
 
-ZmHashDeriveT((Link_), CxnRoutes_, ZmRef<Cxn<Link_>>,
-  (ZmHashKey<Cxn_IDAxor<Link_>,
-	ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>));
+ZmHashDeriveT((Link_), CxnRoutes_, Cxn<Link_>,
+  (ZmHashNode<Cxn<Link_>,
+    ZmHashKey<Cxn_IDAxor<Link_>,
+	ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>>));
 
 template <typename Link_>
 class CxnRouter {
@@ -61,7 +62,7 @@ public:
     const CxnID &id, uint64_t sequence, Link_ *link,
     const ResetToken &resetToken) {
     if (!id || !link) return false;
-    if (auto route = m_routes->findVal(id)) {
+    if (auto route = m_routes->find(id)) {
       if (route->state == CxnState::Tombstone) return false;
       if (route->state != CxnState::Active) addLength_(id.length());
       route->sequence = sequence;
@@ -70,13 +71,13 @@ public:
       route->state = CxnState::Active;
       return true;
     }
-    m_routes->add(new Route{id, sequence, link, resetToken, CxnState::Active});
+    m_routes->add(Route{id, sequence, link, resetToken, CxnState::Active});
     addLength_(id.length());
     return true;
   }
 
   Link_ *find(const CxnID &id) const {
-    auto route = m_routes->findVal(id);
+    auto route = m_routes->find(id);
     if (!route || route->state != CxnState::Active) return nullptr;
     return route->link;
   }
@@ -93,7 +94,7 @@ public:
     return route->link;
   }
   bool resetToken(const CxnID &id, ResetToken &token) const {
-    auto route = m_routes->findVal(id);
+    auto route = m_routes->find(id);
     if (!route || route->state != CxnState::Active ||
 	!route->resetToken.valid())
       return false;
@@ -108,7 +109,7 @@ public:
   }
 
   bool retire(const CxnID &id) {
-    auto route = m_routes->findVal(id);
+    auto route = m_routes->find(id);
     if (!route || route->state != CxnState::Active) return false;
     delLength_(id.length());
     m_routes->del(id);
@@ -117,7 +118,7 @@ public:
 
   bool tombstone(const CxnID &id) {
     if (!id) return false;
-    if (auto route = m_routes->findVal(id)) {
+    if (auto route = m_routes->find(id)) {
       if (route->state == CxnState::Tombstone) return true;
       if (route->state == CxnState::Active) delLength_(id.length());
       route->state = CxnState::Tombstone;
@@ -127,15 +128,14 @@ public:
       trimTombstones_();
       return true;
     }
-    auto route = new Route{id, 0, nullptr, {}, CxnState::Tombstone};
-    m_routes->add(route);
+    m_routes->add(Route{id, 0, nullptr, {}, CxnState::Tombstone});
     m_tombstones.push(id);
     trimTombstones_();
     return true;
   }
 
   CxnState::T state(const CxnID &id) const {
-    auto route = m_routes->findVal(id);
+    auto route = m_routes->find(id);
     return route ? route->state : CxnState::Tombstone;
   }
 
@@ -166,7 +166,7 @@ public:
   void all(L &&l) const {
     auto i = m_routes->citer();
     while (auto node = i()) {
-      const auto &route = *node->val();
+      const auto &route = *node;
       if (route.state == CxnState::Active) l(route);
     }
   }
@@ -198,7 +198,7 @@ private:
 #ifdef ZDEBUG
       ++m_shortProbes;
 #endif
-      if (auto route = m_routes->findVal(id)) {
+      if (auto route = m_routes->find(id)) {
 	if (route->state != CxnState::Tombstone &&
 	    (!activeOnly || route->state == CxnState::Active))
 	  return route;
@@ -219,6 +219,7 @@ private:
 #endif
 };
 
+// Links are owned by their protocol endpoint and can appear in other registries.
 ZmHashDeriveT((Link_), ServerLinks_, ZmRef<Link_>,
   (ZmHashHeapID<"Zquic.Server.LinkHash">));
 
@@ -235,18 +236,19 @@ friend Endpoint_;
 public:
   static constexpr unsigned EndpointTxQueueLimit = 4096;
 
-  struct TxNode : public ZuObject {
-    TxNode() = default;
-    TxNode(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
+  struct TxData {
+    TxData() = default;
+    TxData(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
 	buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
 
     ZmRef<ZiIOBuf>	buf;
     ZiSockAddr		addr;
     EcnMark::T		ecn = EcnMark::NotECT;
   };
-  ZmListDerive(TxQueue, ZmRef<TxNode>,
-    ZmListNode<ZmRef<TxNode>,
+  ZmListDerive(TxQueue, TxData,
+    ZmListNode<TxData,
 	ZmListHeapID<"Zquic.Endpoint.TxQueue">>);
+  using TxNode = TxQueue::Node;
 
   EndpointCxn_(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
 	ZiConnection(endpoint->mx_(), ci),
@@ -314,14 +316,14 @@ private:
 	m_endpoint->txBackPressure_();
     m_endpoint->txSubmitted_(buf->length);
     if (priority)
-	m_txQueue.unshift(new TxNode{ZuMv(buf), ZuMv(addr), ecn});
+	m_txQueue.unshiftNode(new TxNode{ZuMv(buf), ZuMv(addr), ecn});
     else
-	m_txQueue.push(new TxNode{ZuMv(buf), ZuMv(addr), ecn});
+	m_txQueue.pushNode(new TxNode{ZuMv(buf), ZuMv(addr), ecn});
     return true;
   }
 
   bool dequeueTx_() {
-    auto node = m_txQueue.shiftVal();
+    auto node = m_txQueue.shift();
     if (!node) return false;
     m_txBuf = ZuMv(node->buf);
     m_txAddr = ZuMv(node->addr);
@@ -431,6 +433,8 @@ using EndpointCxnHeap_ =
 
 template <typename Impl_>
 class Endpoint_ {
+  template <typename, typename> friend class EndpointCxn_;
+
   using Cxn_ = EndpointCxn_<Endpoint_, EndpointCxnHeap_<Endpoint_>>;
 
 public:

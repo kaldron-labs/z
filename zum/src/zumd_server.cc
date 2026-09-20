@@ -22,11 +22,11 @@
 
 namespace Zum {
 
-struct PasskeyStart {
+struct PasskeyStartReq {
   String purpose;
   String capability;
 };
-ZfStruct(, (PasskeyStart, JSON),
+ZfStruct(, (PasskeyStartReq, JSON),
   (((purpose),		(Required)),	(String)),
   (((capability),	(JSON::Opt)),	(String)));
 struct PasskeyStartTypes {
@@ -152,7 +152,7 @@ static bool consentForm(String &form, Bytes &id, bool &approve)
   return true;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ReplyComplete__ : public Heap, public ZmObject  {
 public:
   ReplyComplete__(ServerFn complete) : m_complete{ZuMv(complete)} { }
@@ -167,7 +167,9 @@ public:
 private:
   ServerFn	m_complete;
 };
-using ReplyComplete_ = ReplyComplete__<ZmHeap<"Zum.zumd.server.ReplyComplete", ReplyComplete__<ZuVoid>>>;
+using ReplyCompleteHeap =
+  ZmHeap<"Zum.zumd.server.ReplyComplete", ReplyComplete__<>>;
+ZuDerive(ReplyComplete_, (ReplyComplete__<ReplyCompleteHeap>));
 
 static String encodeID(ZuBSpan id)
 {
@@ -206,9 +208,11 @@ static bool passkeyStart(String &json, PasskeyStart &start)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-  auto wire = ZfJSON::handler<PasskeyStart>(roots[0]).ctor();
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
+  auto handler = ZfJSON::handler<PasskeyStartReq>(roots[0]);
+  if (!handler.valid) return false;
+  auto wire = handler.ctor();
   if (!wire.purpose) return false;
   PasskeyStart next;
   next.capability = ZuMv(wire.capability);
@@ -235,8 +239,8 @@ static String ceremonyJSON(ZuBSpan id, ZuCSpan options)
   if (parsed.p<0>() != int(source.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return {};
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return {};
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return {};
   auto encoded = encodeID(id);
   String body;
   ZfJSON::save(body, Ceremony{ZuMv(encoded),
@@ -989,12 +993,14 @@ void Server::logout_(
       })) done->finish(serverError());
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ReadyKey__ : public Heap, public ZmObject  {
   SignKey key;
   Bytes digest;
 };
-using ReadyKey_ = ReadyKey__<ZmHeap<"Zum.zumd.server.ReadyKey", ReadyKey__<ZuVoid>>>;
+using ReadyKeyHeap =
+  ZmHeap<"Zum.zumd.server.ReadyKey", ReadyKey__<>>;
+ZuDerive(ReadyKey_, (ReadyKey__<ReadyKeyHeap>));
 
 void Server::ready(ServerFn complete)
 {
@@ -1125,7 +1131,7 @@ void Server::userInfoVerify_(
     AppServer app, String authorization, ServerFn complete)
 {
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
-  static constexpr ZuCSpan prefix{"Bearer "};
+  static constexpr auto prefix = "Bearer "_Zu;
   if (authorization.length() <= prefix.length() ||
       !ZuICmp<ZuCSpan>::equals(
         ZuCSpan{authorization.data(), prefix.length()}, prefix)) {

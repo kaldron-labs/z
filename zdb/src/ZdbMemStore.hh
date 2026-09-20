@@ -1146,6 +1146,7 @@ template <typename T = Tuple> struct TupleCmp {
     return equals_(l, r, ln < rn ? ln : rn);
   }
 };
+// A row belongs to every secondary index; each index retains a shared row reference.
 ZmRBTreeKVDerive(Index, Tuple, ZmRef<const MemRow>,
   ZmRBTreeCmp<TupleCmp,
     ZmRBTreeUnique<false,

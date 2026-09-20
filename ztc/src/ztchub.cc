@@ -134,6 +134,9 @@ ZrestCatalogImpl(Catalog)
 
 struct Parser : public Zrest::MReqParser<Catalog> {
   using Base = Zrest::MReqParser<Catalog>;
+
+  App	*app = nullptr;
+
   void init(App &app_) { app = &app_; }
   bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
     auto saved = target.path;
@@ -150,7 +153,6 @@ struct Parser : public Zrest::MReqParser<Catalog> {
     u.dispatch([this](auto, auto &request) { request.app = app; });
     return true;
   }
-  App *app = nullptr;
 };
 struct Builder : public ZmObject, public Zrest::MResBuilder<Catalog> { };
 ZmListDerive(BuilderQ, Builder,
@@ -380,49 +382,51 @@ static Ztc::HubFrame unsubscribeFrame(const Ztc::RouteInfo &route)
 }
 
 struct App {
-  template <typename Heap>
-  struct Egress_ : public Heap, public ZmObject {
-    Egress_(uint64_t id_) : id{id_} { }
+  Ztc::Hubd		*hub = nullptr;
+  Ztc::ListenerCf	cf;
+  ZmSemaphore		*done = nullptr;
+  bool			failed = false;
 
-    using FrameQ = ZmQueue<ZuTuple<uint64_t, Ztc::HubFrame>,
-      ZmQueueHeapID<"Ztc.Hub.Egress">>;
-    uint64_t id;
-    uint64_t next = 1;
-    FrameQ control;
-    FrameQ telemetry;
-    uint64_t controlBytes = 0;
-    uint64_t telemetryBytes = 0;
-    bool queued = false;
+  struct Egress {
+    using FrameQ =
+      ZmQueue<ZuTuple<uint64_t, Ztc::HubFrame>,
+	ZmQueueHeapID<"Ztc.Hub.Egress">>;
+
+    uint64_t	id;
+    uint64_t	sequence = 1;
+    FrameQ	control;
+    FrameQ	telemetry;
+    uint64_t	controlBytes = 0;
+    uint64_t	telemetryBytes = 0;
+    bool	queued = false;
+
+    Egress(uint64_t id_) : id{id_} { }
   };
-  using EgressHeap = ZmHeap<"Ztc.Hub.Egress", Egress_<ZuVoid>>;
-  struct Egress final : public Egress_<EgressHeap> {
-    using Base = Egress_<EgressHeap>;
-    using Base::Base;
-  };
-  using Egresses = ZmHashKV<uint64_t, ZmRef<Egress>,
-    ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.EgressIdx">>>;
-  using Ready = ZmQueue<ZmRef<Egress>, ZmQueueHeapID<"Ztc.Hub.Ready">>;
+  ZmListDerive(Ready, Egress,
+    ZmListNode<Egress, ZmListHeapID<"Ztc.Hub.Egress">>);
+  static uint64_t egressID(const Ready::Node &egress) {
+    return egress.val().id;
+  }
+  ZmHashDerive(Egresses, typename Ready::Node,
+    (ZmHashNode<typename Ready::Node,
+      ZmHashKey<egressID,
+        ZmHashShadow<ZmHashLock<ZmNoLock>>>>));
 
   struct LinkState {
-    Ztc::HubFrame frame;
-    Egresses egresses;
-    Ready	ready;
-    ZmScheduler::Timer expiry;
-    bool sending = false;
-    Zws::Opcode::T opcode = Zws::Opcode::Binary;
-    bool agent = false;
-    bool authenticated = false;
-    bool pending = false;
-    bool closed = false;
-    uint64_t sessionID = 0;
-    uint64_t generation = 0;
-    Ztc::HubString deviceID;
+    Ztc::HubFrame	frame;
+    Egresses		egresses;
+    Ready		ready;
+    ZmScheduler::Timer	expiry;
+    uint64_t		sessionID = 0;
+    uint64_t		generation = 0;
+    Ztc::HubString	deviceID;
+    bool		sending = false;
+    Zws::Opcode::T	opcode = Zws::Opcode::Binary;
+    bool		agent = false;
+    bool		authenticated = false;
+    bool		pending = false;
+    bool		closed = false;
   };
-
-  Ztc::Hubd *hub;
-  Ztc::ListenerCf cf;
-  bool *failed;
-  ZmSemaphore *done = nullptr;
 
   static uint64_t nextSessionID() {
     static ZmAtomic<uint64_t> next = 1;
@@ -434,11 +438,13 @@ struct App {
   template <typename Link>
   static void pump(ZmRef<Link> hold) {
     auto &state = hold->state();
-    if (state.closed || state.sending || !state.ready.length()) return;
+    if (state.closed || state.sending || !state.ready.count_()) return;
     auto egress = state.ready.shift();
     egress->queued = false;
     if (!egress->control.length() && !egress->telemetry.length()) {
-      state.egresses.del(egress->id);
+      auto node = static_cast<Egresses::Node *>(
+        static_cast<Ready::Node *>(egress));
+      ZmAssert(state.egresses.delNode(node) == node);
       pump(ZuMv(hold));
       return;
     }
@@ -452,8 +458,12 @@ struct App {
     else egress->telemetryBytes -= frame->length;
     if (egress->control.length() || egress->telemetry.length()) {
       egress->queued = true;
-      state.ready.push(egress);
-    } else state.egresses.del(egress->id);
+      state.ready.pushNode(ZuMv(egress).release());
+    } else {
+      auto node = static_cast<Egresses::Node *>(
+        static_cast<Ready::Node *>(egress));
+      ZmAssert(state.egresses.delNode(node) == node);
+    }
     state.sending = true;
     auto server = hold->app();
     server->txRun([server, hold = ZuMv(hold), frame = ZuMv(frame)]() mutable {
@@ -481,15 +491,15 @@ struct App {
       msg->body_type() == Ztc::fbs::Body::Error;
     auto id = msg->subId();
     auto &cf = hold->app()->app()->hub->config();
-    auto egress = state.egresses.findVal(id);
+    auto egress = state.egresses.find(id);
     if (!egress) {
       if (state.egresses.count_() >= cf.subscriptionsPerFrontEnd + 1) {
         state.closed = true;
         hold->close(Zws::CloseCode::Policy);
         return;
       }
-      egress = new Egress{id};
-      state.egresses.add(id, egress);
+      egress = new Egresses::Node{id};
+      state.egresses.addNode(egress);
     }
     auto &queue = telemetry ? egress->telemetry : egress->control;
     auto &bytes = telemetry ? egress->telemetryBytes : egress->controlBytes;
@@ -519,10 +529,10 @@ struct App {
       return;
     }
     bytes += frame->length;
-    queue.push(ZuTuple{egress->next++, ZuMv(frame)});
+    queue.push(ZuTuple{egress->sequence++, ZuMv(frame)});
     if (!egress->queued) {
       egress->queued = true;
-      state.ready.push(egress);
+      state.ready.pushNode(static_cast<Ready::Node *>(egress));
     }
     pump(ZuMv(hold));
   }
@@ -546,12 +556,12 @@ struct App {
   void listening() { ZiLOG(Info, "Ztc.Hub", "listening"); }
   void listenFailed(bool) {
     ZiLOG(Error, "Ztc.Hub", "listener failed");
-    *failed = true;
+    failed = true;
     if (done) done->post();
   }
 
   static bool cookieValue(ZuBSpan cookies, ZtString<> &value) {
-    static constexpr ZuCSpan name{"__Host-ztc_session="};
+    static constexpr auto name = "__Host-ztc_session="_Zu;
     while (cookies) {
       while (cookies && cookies[0] == ' ') cookies.offset(1);
       int end = cookies.find([](char c) { return c == ';'; });
@@ -856,8 +866,8 @@ struct App {
     }));
     state.closed = true;
     link.app()->mx()->del(&state.expiry);
-    state.ready.clean();
     state.egresses.clean();
+    state.ready.clean();
     if (!state.authenticated) return;
     if (state.agent) {
       hub->removeAgent(state.sessionID, state.deviceID, state.generation,
@@ -876,78 +886,83 @@ struct App {
 
 class Listener : public ZmObject {
 public:
-  Listener(Ztc::Hubd *hub_, Ztc::ListenerCf cf_, bool *failed_,
-      ZmSemaphore *done_) :
-    hub{hub_}, cf{ZuMv(cf_)}, failed{failed_}, done{done_},
-    app{hub, cf, failed, done},
-    ssfApp{hub_, cf.browserPath, hub->config().ssfCallbackPath, cf.origins},
-    server{&app, ZiIP{cf.bind}, cf.port} { }
+  Listener(Ztc::Hubd *hub_, Ztc::ListenerCf cf_, ZmSemaphore *done_) :
+    m_hub{hub_}, m_cf{ZuMv(cf_)}, m_done{done_},
+    m_app{m_hub, m_cf, m_done},
+    m_ssfApp{hub_, m_cf.browserPath, m_hub->config().ssfCallbackPath,
+	m_cf.origins},
+    m_server{&m_app, ZiIP{m_cf.bind}, m_cf.port} { }
 
   bool init(ZiMultiplex *mx) {
     Zws::Config ws;
-    ws.maxMessage = hub->config().maxFrame;
-    ws.maxQueuedInput = hub->config().telemetryBytes;
-    ws.handshakeTimeout = hub->config().upgradeTimeout;
-    ws.closeTimeout = hub->config().closeTimeout;
-    ws.pingInterval = hub->config().pingInterval;
-    ws.pongTimeout = hub->config().idleTimeout;
-    auto config = Zhttp::H2Config{}.certPath(cf.cert).keyPath(cf.key);
-    if (!server.init(Zhttp::HubConfig{mx, "1", "2"}, config, ws)) return false;
-    initialized = true;
-    auto ssfConfig = Zhttp::ServerConfig{}.localIP(ZiIP{cf.bind})
-      .port(cf.ssfPort ? cf.ssfPort : uint16_t(cf.port + 1))
-      .idleTimeout(hub->config().idleTimeout).retainedBodyMax(hub->config().maxFrame)
+    ws.maxMessage = m_hub->config().maxFrame;
+    ws.maxQueuedInput = m_hub->config().telemetryBytes;
+    ws.handshakeTimeout = m_hub->config().upgradeTimeout;
+    ws.closeTimeout = m_hub->config().closeTimeout;
+    ws.pingInterval = m_hub->config().pingInterval;
+    ws.pongTimeout = m_hub->config().idleTimeout;
+    auto config = Zhttp::H2Config{}.certPath(m_cf.cert).keyPath(m_cf.key);
+    if (!m_server.init(Zhttp::HubConfig{mx, "1", "2"}, config, ws)) return false;
+    m_initialized = true;
+    auto ssfConfig = Zhttp::ServerConfig{}.localIP(ZiIP{m_cf.bind})
+      .port(m_cf.ssfPort ? m_cf.ssfPort : uint16_t(m_cf.port + 1))
+      .idleTimeout(m_hub->config().idleTimeout)
+      .retainedBodyMax(m_hub->config().maxFrame)
       .tls(Zhttp::H2Config{}.policy(Zhttp::H2Policy::Disable)
-        .certPath(cf.cert).keyPath(cf.key));
-    if (ssf.init(Zhttp::HubConfig{mx, "1", "2"}, ZuMv(ssfConfig), &ssfApp))
+        .certPath(m_cf.cert).keyPath(m_cf.key));
+    if (m_ssf.init(Zhttp::HubConfig{mx, "1", "2"}, ZuMv(ssfConfig),
+	&m_ssfApp))
       return true;
-    server.final();
-    initialized = false;
+    m_server.final();
+    m_initialized = false;
     return false;
   }
   bool start() {
-    if (!server.start()) return false;
-    serverStarted = true;
-    if (ssf.start()) {
-      ssfStarted = true;
+    if (!m_server.start()) return false;
+    m_serverStarted = true;
+    if (m_ssf.start()) {
+      m_ssfStarted = true;
       return true;
     }
     stop();
     return false;
   }
+  bool failed() const { return m_app.failed; }
   bool stop() {
     bool ok = true;
-    if (ssfStarted) {
-      ok = ssf.stop();
-      ssfStarted = false;
+    if (m_ssfStarted) {
+      ok = m_ssf.stop();
+      m_ssfStarted = false;
     }
-    if (serverStarted) {
-      server.stopAccepting();
+    if (m_serverStarted) {
+      m_server.stopAccepting();
       ok = ZmBlock<bool>{}([this](auto wake) {
-        server.stop([wake = ZuMv(wake)](bool value) mutable { wake(value); });
+	m_server.stop([wake = ZuMv(wake)](bool value) mutable { wake(value); });
       }) && ok;
-      serverStarted = false;
+      m_serverStarted = false;
     }
-    if (initialized) {
-      ssf.final();
-      server.final();
-      initialized = false;
+    if (m_initialized) {
+      m_ssf.final();
+      m_server.final();
+      m_initialized = false;
     }
     return ok;
   }
 
 private:
-  Ztc::Hubd *hub;
-  Ztc::ListenerCf cf;
-  bool *failed;
-  ZmSemaphore *done;
-  App app;
-  SSF_::App ssfApp;
-  Zws::Server<App, Zhttp::H1TLS> server;
-  Zhttp::Server<SSF_::App> ssf;
-  bool initialized = false;
-  bool serverStarted = false;
-  bool ssfStarted = false;
+  using Server = Zws::Server<App, Zhttp::H1TLS>;
+  using SSFServer = Zhttp::Server<SSF_::App>;
+
+  Ztc::Hubd			*m_hub;
+  Ztc::ListenerCf		m_cf;
+  ZmSemaphore			*m_done;
+  App				m_app;
+  SSF_::App			m_ssfApp;
+  Server			m_server;
+  SSFServer			m_ssf;
+  bool				m_initialized = false;
+  bool				m_serverStarted = false;
+  bool				m_ssfStarted = false;
 };
 
 } // namespace ZtcHub_
@@ -1039,7 +1054,7 @@ int main(int argc, char **argv)
       ZtArrayHeapID<"Ztc.Hub.Listeners">> listeners;
     for (auto &listenerCf: hub.config().listeners) {
       ZmRef<ZtcHub_::Listener> listener =
-        new ZtcHub_::Listener{&hub, listenerCf, &failed, &done};
+        new ZtcHub_::Listener{&hub, listenerCf, &done};
       if (!listener->init(&mx) || !listener->start()) {
         listener->stop();
         failed = true;
@@ -1060,7 +1075,10 @@ int main(int argc, char **argv)
     ZmTrap::trap();
     done.wait();
     ZmTrap::sigintFn(nullptr);
-    for (auto &listener: listeners) listener->stop();
+    for (auto &listener: listeners) {
+      listener->stop();
+      if (listener->failed()) failed = true;
+    }
     bool ok = hub.stop();
     hub.final();
     transport.final();

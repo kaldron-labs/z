@@ -151,12 +151,12 @@ ZfStruct(, (Options, CLI),
   (((memDiag),    (CLI::Long<"mem-diag">)),                    (UInt32)),
   (((help),       (CLI::Flag<'h'>, CLI::Long<"help">)),        (Bool)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Empty_ : public Heap, public ZmObject { };
-using EmptyHeap = ZmHeap<"zrestd.Empty", Empty_<ZuVoid>>;
+using EmptyHeap = ZmHeap<"zrestd.Empty", Empty_<>>;
 ZuDerive(Empty, (Empty_<EmptyHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Text_ : public Heap, public ZmObject {
   OAuthString value;
   OAuthString cookie;
@@ -165,39 +165,39 @@ struct Text_ : public Heap, public ZmObject {
     return s;
   }
 };
-using TextHeap = ZmHeap<"zrestd.Text", Text_<ZuVoid>>;
+using TextHeap = ZmHeap<"zrestd.Text", Text_<>>;
 ZuDerive(Text, (Text_<TextHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Redirect_ : public Heap, public ZmObject {
   OAuthString location;
   OAuthString cookie;
 };
-using RedirectHeap = ZmHeap<"zrestd.Redirect", Redirect_<ZuVoid>>;
+using RedirectHeap = ZmHeap<"zrestd.Redirect", Redirect_<>>;
 ZuDerive(Redirect, (Redirect_<RedirectHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct BearerFailure_ : public Heap, public ZmObject {
   OAuthString challenge;
 };
 using BearerFailureHeap =
-  ZmHeap<"zrestd.BearerFailure", BearerFailure_<ZuVoid>>;
+  ZmHeap<"zrestd.BearerFailure", BearerFailure_<>>;
 ZuDerive(BearerFailure, (BearerFailure_<BearerFailureHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct LoginForm_ : public Heap, public ZmObject {
   OAuthString username;
   OAuthString password;
   OAuthString decision;
 };
-using LoginFormHeap = ZmHeap<"zrestd.LoginForm", LoginForm_<ZuVoid>>;
+using LoginFormHeap = ZmHeap<"zrestd.LoginForm", LoginForm_<>>;
 ZuDerive(LoginForm, (LoginForm_<LoginFormHeap>));
 ZfStruct(, (LoginForm, URI),
   (((username), (Required)), (String)),
   (((password), (Required)), (String)),
   (((decision), (Required)), (String)));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct TokenForm_ : public Heap, public ZmObject {
   OAuthString grantType;
   OAuthString code;
@@ -207,7 +207,7 @@ struct TokenForm_ : public Heap, public ZmObject {
   OAuthString scope;
   OAuthString clientID;
 };
-using TokenFormHeap = ZmHeap<"zrestd.TokenForm", TokenForm_<ZuVoid>>;
+using TokenFormHeap = ZmHeap<"zrestd.TokenForm", TokenForm_<>>;
 ZuDerive(TokenForm, (TokenForm_<TokenFormHeap>));
 ZfStruct(, (TokenForm, URI),
   (((grantType), (URI::ID<"grant_type">, Required)), (String)),
@@ -732,7 +732,7 @@ static void expireState(Map &map, Index &index, int64_t now)
   }
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Application_ : public Heap, public ZmObject {
   ZmRef<Ztls::PK::SK_EC>	key;
   OAuthString		keyID;
@@ -761,9 +761,11 @@ struct Application_ : public Heap, public ZmObject {
   }
 };
 using ApplicationHeap =
-  ZmHeap<"zrestd.Application", Application_<ZuVoid>>;
+  ZmHeap<"zrestd.Application", Application_<>>;
 ZuDerive(Application, (Application_<ApplicationHeap>));
 
+// Requests retain applications after a registry lookup; the registry shares
+// that lifetime rather than owning an intrusive application node.
 ZmHashKVDerive(Applications, OAuthString, ZmRef<Application>,
   (ZmHashLock<ZmNoLock, ZmHashHeapID<"zrestd.Applications">>));
 
@@ -873,7 +875,7 @@ static bool formContentType(ZuCSpan value)
 
 static bool cookieValue(ZuCSpan cookies, OAuthString &value)
 {
-  static constexpr ZuCSpan name{"__Host-zrest_auth="};
+  static constexpr auto name = "__Host-zrest_auth="_Zu;
   while (cookies) {
     while (cookies && cookies[0] == ' ') cookies.offset(1);
     int end = cookies.find([](char c) { return c == ';'; });
@@ -967,8 +969,12 @@ static bool jwtVerify(Application &application, ZuCSpan token,
     if (headerScan.p<0>() != int(headerData.length()) || !headerScan.p<1>() ||
         claimsScan.p<0>() != int(claimsData.length()) || !claimsScan.p<1>())
       return false;
-    ZfJSON::handler<JWTHeader>((*headerScan.p<1>())[0]).load(header);
-    ZfJSON::handler<OAuthAccessClaims>((*claimsScan.p<1>())[0]).load(claims);
+    auto headerHandler = ZfJSON::handler<JWTHeader>((*headerScan.p<1>())[0]);
+    auto claimsHandler = ZfJSON::handler<OAuthAccessClaims>(
+      (*claimsScan.p<1>())[0]);
+    if (!headerHandler.valid || !claimsHandler.valid) return false;
+    headerHandler.load(header);
+    claimsHandler.load(claims);
   } catch (...) {
     return false;
   }
@@ -1266,7 +1272,7 @@ void App::authorize(
   parser.application->sessionExpiries.add(
     ExpiryKey{transaction.expires, key});
   parser.application->sessions.add(ZuMv(key), ZuMv(transaction));
-  static constexpr ZuCSpan page =
+  static constexpr auto page =
     "<!doctype html><html><head><meta charset=\"utf-8\">"
     "<title>Authorize ping</title></head><body><main>"
     "<h1>Authorize ping</h1><form method=\"post\">"
@@ -1275,7 +1281,7 @@ void App::authorize(
     "type=\"password\" autocomplete=\"current-password\" required></label>"
     "<button name=\"decision\" value=\"approve\" type=\"submit\">"
     "Approve</button><button name=\"decision\" value=\"deny\" "
-    "type=\"submit\">Deny</button></form></main></body></html>";
+    "type=\"submit\">Deny</button></form></main></body></html>"_Zu;
   ZmRef<Text> response = new Text{};
   response->value = page;
   response->cookie << "__Host-zrest_auth=" << session <<

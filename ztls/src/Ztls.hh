@@ -822,13 +822,30 @@ private:
     app->linkDisconnected_();
   }
 
-private:
+public:
+  // Buffer geometry at its origin. App callers reserve worst-case overhead;
+  // AppThread == false requires the Tx shard for negotiated headroom.
+  static constexpr unsigned txMaxSize() { return TxRecordCapacity; }
   template <bool AppThread>
-  unsigned txStreamHeadroom_() const {
+  unsigned txHeadRoom() const {
     if constexpr (AppThread) return TxMaxOverhead;
     else return m_txHeadroom;
   }
+  template <bool AppThread>
+  unsigned txTailRoom() const {
+    return TxMaxOverhead - txHeadRoom<AppThread>();
+  }
+  template <bool AppThread>
+  ZmRef<ZiIOBuf> txAllocBuf(unsigned skip) {
+    if (ZuUnlikely(skip < txHeadRoom<AppThread>() || skip > txMaxSize()))
+      throw TxStreamAllocFailure{};
+    auto buf = allocTxBuf_(skip);
+    if (ZuUnlikely(!buf || skip > buf->size))
+      throw TxStreamAllocFailure{};
+    return buf;
+  }
 
+private:
   ZmRef<ZiIOBuf> allocTxBuf_(unsigned headroom) { // App/Tx threads
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     if (ZuUnlikely(buf->size < TxRecordCapacity))
@@ -845,14 +862,14 @@ private:
 
   public:
     TxStream_(Link &link) :
-      TxStream_(link, link.template txStreamHeadroom_<AppThread>())
+      TxStream_(link, link.template txHeadRoom<AppThread>())
     {
     }
 
   private:
     TxStream_(Link &link, unsigned headroom) :
       Base(
-	unsigned(TxRecordCapacity),
+	link.txMaxSize(),
 	headroom,
 	unsigned(TxMaxOverhead - headroom)),
       m_link{&link},
@@ -863,11 +880,9 @@ private:
 
   public:
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
-      auto buf = m_link->allocTxBuf_(m_headroom);
-      if (ZuUnlikely(!buf || buf->skip > skip || skip > buf->size))
+      if (ZuUnlikely(skip < m_headroom))
 	throw TxStreamAllocFailure{};
-      buf->skip = skip;
-      return buf;
+      return m_link->template txAllocBuf<AppThread>(skip);
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
