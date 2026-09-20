@@ -76,7 +76,16 @@ ZumExtern void daemonAppCleanup(
 namespace DaemonCleanupLimit { enum { Rows = 512 }; }
 namespace DaemonCleanupState { enum { Idle, Running, Stopping }; }
 
-struct DaemonResponse : public HTTPResponse { String allow; };
+template <typename Heap = ZuVoid>
+struct DaemonResponse_ : public Heap, public HTTPResponse {
+  static void *operator new(size_t) { return Heap::operator new(0); }
+  static void operator delete(void *p) noexcept { Heap::operator delete(p); }
+
+  String	allow;
+};
+using DaemonResponseHeap =
+  ZmHeap<"zumd.DaemonResponse", DaemonResponse_<>>;
+ZuDerive(DaemonResponse, (DaemonResponse_<DaemonResponseHeap>));
 
 template <typename Impl, unsigned Status_>
 struct DaemonJSON : public Zrest::ResBuilder<Impl, DaemonResponse> {
@@ -202,13 +211,16 @@ struct OAuthMetadataReq : public Zrest::ReqParser<OAuthMetadataReq, HTTPData> {
   template <typename Link> void complete(Link *link, bool ok);
 };
 
-struct AdminData : public HTTPData {
+template <typename Heap = ZuVoid>
+struct AdminData_ : public Heap, public HTTPDataFields {
   String target;
   String query;
   String body;
   String allow;
   int operation = -1;
 };
+using AdminDataHeap = ZmHeap<"zumd.AdminData", AdminData_<>>;
+ZuDerive(AdminData, (AdminData_<AdminDataHeap>));
 
 struct AdminResult {
   String body;

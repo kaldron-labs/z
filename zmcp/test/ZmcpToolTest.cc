@@ -87,10 +87,12 @@ static void callParamsTest()
   auto &nodes = *scanned.p<1>();
   using Params = Zmcp::ToolsCallParams<Catalog>;
   ZuCheck((ZuIsSame<ZfJSON::As<Params>, ZfJSON::AsDeflt>{}));
-  ZuPtr<Params> allocated = ZfJSON::handler<Params>(nodes[0]).alloc();
+  auto handler = ZfJSON::handler<Params>(nodes[0]);
+  ZuCheck(handler.valid);
+  ZuPtr<Params> allocated = handler.alloc();
   ZuCheck(allocated->name() == "add");
   ZuCheck((allocated->arguments().is<const ZfJSON::AnyNode *>()));
-  auto params = ZfJSON::handler<Params>(nodes[0]).ctor();
+  auto params = handler.ctor();
   ZuCheck(params.name() == "add");
   ZuCheck(params.name().data() >= json &&
       params.name().data() < json + sizeof(json));
@@ -126,8 +128,9 @@ static void customAllocTest()
   {
     char json[] = "request-id";
     auto node = ZfJSON::newNode<ZfJSON::AnyNode::String>(json);
-    ZuPtr<Zmcp::ID> id =
-      ZfJSON::handler<Zmcp::ID>(node.ptr()).alloc();
+    auto handler = ZfJSON::handler<Zmcp::ID>(node.ptr());
+    ZuCheck(handler.valid);
+    ZuPtr<Zmcp::ID> id = handler.alloc();
     ZuCheck(id->string());
     ZuCheck(id->p<Zmcp::IDString>() == "request-id");
   }
@@ -135,8 +138,10 @@ static void customAllocTest()
     char json[] = "{\"lhs\":10,\"rhs\":11}";
     auto scanned = ZfJSON::scan(json);
     ZuCheck(scanned.p<0>() > 0);
-    ZuPtr<Zmcp::ToolArg<Add>> arg =
-      ZfJSON::handler<Zmcp::ToolArg<Add>>((*scanned.p<1>())[0]).alloc();
+    auto handler = ZfJSON::handler<Zmcp::ToolArg<Add>>(
+      (*scanned.p<1>())[0]);
+    ZuCheck(handler.valid);
+    ZuPtr<Zmcp::ToolArg<Add>> arg = handler.alloc();
     ZuCheck(arg->value.lhs == 10);
     ZuCheck(arg->value.rhs == 11);
   }
@@ -149,8 +154,10 @@ static void discriminatorTest()
     "{\"name\":\"anything\",\"arguments\":{}}";
   auto scanned = ZfJSON::scan(emptyJSON);
   ZuCheck(scanned.p<0>() > 0);
-  auto empty = ZfJSON::handler<Zmcp::ToolsCallParams<EmptyCatalog>>(
-    (*scanned.p<1>())[0]).ctor();
+  auto emptyHandler = ZfJSON::handler<Zmcp::ToolsCallParams<EmptyCatalog>>(
+    (*scanned.p<1>())[0]);
+  ZuCheck(emptyHandler.valid);
+  auto empty = emptyHandler.ctor();
   ZuCheck(empty.match() == -1);
   ZuCheck(empty.narrow() == -1);
   ZuCheck(empty.active() == -1);
@@ -159,8 +166,10 @@ static void discriminatorTest()
     "{\"name\":\"add\",\"arguments\":{\"lhs\":6,\"rhs\":7}}";
   scanned = ZfJSON::scan(singleJSON);
   ZuCheck(scanned.p<0>() > 0);
-  auto single = ZfJSON::handler<Zmcp::ToolsCallParams<SingleCatalog>>(
-    (*scanned.p<1>())[0]).ctor();
+  auto singleHandler = ZfJSON::handler<Zmcp::ToolsCallParams<SingleCatalog>>(
+    (*scanned.p<1>())[0]);
+  ZuCheck(singleHandler.valid);
+  auto single = singleHandler.ctor();
   ZuCheck(single.match() == 0);
   ZuCheck(single.narrow() == 0);
   ZuCheck(single.active() == 0);
@@ -170,8 +179,10 @@ static void discriminatorTest()
     "\"arguments\":{\"lhs\":8,\"rhs\":9}}";
   scanned = ZfJSON::scan(reusedJSON);
   ZuCheck(scanned.p<0>() > 0);
-  auto reused = ZfJSON::handler<Zmcp::ToolsCallParams<ReusedCatalog>>(
-    (*scanned.p<1>())[0]).ctor();
+  auto reusedHandler = ZfJSON::handler<Zmcp::ToolsCallParams<ReusedCatalog>>(
+    (*scanned.p<1>())[0]);
+  ZuCheck(reusedHandler.valid);
+  auto reused = reusedHandler.ctor();
   ZuCheck(reused.match() == 1);
   ZuCheck(reused.narrow() == 1);
   ZuCheck(reused.active() == 1);

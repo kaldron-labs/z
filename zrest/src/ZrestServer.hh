@@ -40,6 +40,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
       auto scan = ZfURI::scan(span);
       if (scan.p<0>() < 0 || !scan.p<1>()) return false;
       auto handler = ZfURI::handler<Object, Query_URI_Facet>(scan.p<1>());
+      if (!handler.valid) return false;
       handler.load(impl()->queryObject(object.ptr()));
     } else if constexpr (Impl::Query == QueryPolicy::Raw) {
       using Path = Impl::Path;
@@ -80,6 +81,10 @@ struct ReqParser : public Request, public Zhttp::Parser {
 	    }
 	    auto handler = ZfJSON::handler<Object, Body_JSON_Facet>(
 	      (*scan.p<1>())[0]);
+	    if (!handler.valid) {
+	      object = nullptr;
+	      return;
+	    }
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
 	    using Body_URI_Facet = Impl::Body_URI_Facet;
@@ -89,6 +94,10 @@ struct ReqParser : public Request, public Zhttp::Parser {
 	      return;
 	    }
 	    auto handler = ZfURI::handler<Object, Body_URI_Facet>(scan.p<1>());
+	    if (!handler.valid) {
+	      object = nullptr;
+	      return;
+	    }
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::Raw) {
 	    impl()->bodyObject(object.ptr()) = span;

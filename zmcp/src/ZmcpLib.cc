@@ -37,7 +37,7 @@ static bool stdioSignal()
   return initialized;
 }
 
-uintptr_t stdioThread()
+ZmcpExtern uintptr_t stdioThread()
 {
   if (!stdioSignal()) return 0;
   sigset_t signals;
@@ -47,16 +47,16 @@ uintptr_t stdioThread()
   return uintptr_t(pthread_self());
 }
 
-void interruptStdio(uintptr_t thread)
+ZmcpExtern void interruptStdio(uintptr_t thread)
 {
   if (thread) pthread_kill(pthread_t(thread), SIGURG);
 }
 
-void closeStdioThread(uintptr_t) { }
+ZmcpExtern void closeStdioThread(uintptr_t) { }
 
 #else
 
-uintptr_t stdioThread()
+ZmcpExtern uintptr_t stdioThread()
 {
   HANDLE thread = nullptr;
   if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(),
@@ -65,12 +65,12 @@ uintptr_t stdioThread()
   return uintptr_t(thread);
 }
 
-void interruptStdio(uintptr_t thread)
+ZmcpExtern void interruptStdio(uintptr_t thread)
 {
   if (thread) CancelSynchronousIo(HANDLE(thread));
 }
 
-void closeStdioThread(uintptr_t thread)
+ZmcpExtern void closeStdioThread(uintptr_t thread)
 {
   if (thread) CloseHandle(HANDLE(thread));
 }

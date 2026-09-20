@@ -19,7 +19,7 @@ void out(const Ts &...values) {
 
 static bool detailVerbose = false;
 
-template <typename Heap> struct S_ : public Heap {
+template <typename Heap = ZuVoid> struct S_ : public Heap {
   S_(int i) : m_i(i) { }
   ~S_() { m_i = -1; }
   void doit() {
@@ -28,7 +28,8 @@ template <typename Heap> struct S_ : public Heap {
   }
   int m_i;
 };
-ZuDerive(S, (S_<ZmHeap<"S", S_<ZuVoid>>>));
+using SHeap = ZmHeap<"S", S_<>>;
+ZuDerive(S, (S_<SHeap>));
 
 void usage_()
 {

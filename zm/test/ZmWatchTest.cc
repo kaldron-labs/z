@@ -37,12 +37,12 @@ ZuAssert((ZuIsSame<
   typename Ztc::ThreadMgr::AddFn::HeapID,
   typename Ztc::WatchFnHeapID::HeapID>{}));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct WatchAlloc_ : public Heap {
   uintptr_t value;
 };
-ZuDerive(WatchAlloc,
-  (WatchAlloc_<ZmHeap<"Ztc.Watch.TestHeap", WatchAlloc_<ZuVoid>>>));
+using WatchAllocHeap = ZmHeap<"Ztc.Watch.TestHeap", WatchAlloc_<>>;
+ZuDerive(WatchAlloc, (WatchAlloc_<WatchAllocHeap>));
 
 ZmHashKVDerive(WatchHash, unsigned, unsigned,
   (ZmHashHeapID<"Ztc.Watch.TestHash">));

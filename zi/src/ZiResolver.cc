@@ -123,14 +123,15 @@ static bool dnsName(
   return false;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ZiResolver_TXT_ : public Heap, public ZmObject {
   DNSBuf		buf;
   TxtFn		fn;
 };
 
-using ZiResolver_TXT = ZiResolver_TXT_<
-  ZmHeap<"ZiResolver.TXT", ZiResolver_TXT_<ZuVoid>>>;
+using ZiResolver_TXTHeap =
+  ZmHeap<"ZiResolver.TXT", ZiResolver_TXT_<>>;
+ZuDerive(ZiResolver_TXT, (ZiResolver_TXT_<ZiResolver_TXTHeap>));
 
 static ZiEvent::FailFn defltFailFn()
 {

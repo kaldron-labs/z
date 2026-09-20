@@ -15,7 +15,7 @@ static bool authorityHasID(const IDVec &ids, uint64_t id)
   return false;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ClientScopes__ : public Heap, public ZmPolymorph  {
 public:
   ClientScopes__(DBContext *context, Client client, ClientScopesFn complete) :
@@ -86,7 +86,9 @@ private:
   unsigned m_roleOffset = 0;
   ClientScopesFn m_complete;
 };
-using ClientScopes_ = ClientScopes__<ZmHeap<"Zum.zumd.db.ClientScopes", ClientScopes__<ZuVoid>>>;
+using ClientScopesHeap =
+  ZmHeap<"Zum.zumd.db.ClientScopes", ClientScopes__<>>;
+ZuDerive(ClientScopes_, (ClientScopes__<ClientScopesHeap>));
 
 void clientScopes(DBContext *context, Client client, ClientScopesFn complete)
 {
@@ -95,7 +97,7 @@ void clientScopes(DBContext *context, Client client, ClientScopesFn complete)
   load->start();
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorityLoad__ : public Heap, public ZmPolymorph  {
 public:
   AuthorityLoad__(
@@ -596,7 +598,9 @@ private:
   Evidence	m_evidence;
   AuthorityFn	m_complete;
 };
-using AuthorityLoad_ = AuthorityLoad__<ZmHeap<"Zum.zumd.db.AuthorityLoad", AuthorityLoad__<ZuVoid>>>;
+using AuthorityLoadHeap =
+  ZmHeap<"Zum.zumd.db.AuthorityLoad", AuthorityLoad__<>>;
+ZuDerive(AuthorityLoad_, (AuthorityLoad__<AuthorityLoadHeap>));
 
 void loadGrantAuth(
     DBContext *context, Grant grant, Client client, bool requestedPresent,

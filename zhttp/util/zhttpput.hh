@@ -31,7 +31,9 @@ inline bool load(Record &record, String &json)
 {
   auto scan = ZfJSON::scan(json);
   if (scan.p<0>() < 0) return false;
-  record = ZfJSON::handler<Record>((*scan.p<1>())[0]).ctor();
+  auto handler = ZfJSON::handler<Record>((*scan.p<1>())[0]);
+  if (!handler.valid) return false;
+  record = handler.ctor();
   return true;
 }
 

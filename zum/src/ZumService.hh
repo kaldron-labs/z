@@ -123,9 +123,8 @@ ZuDerive(ServiceRefreshFn, (ZmFn<void(RefreshID, int64_t),
 ZuDerive(ServiceSETDoneFn, (ZmFn<void(int),
   ZmFnHeapID<"Zum.Service.SETDone">>));
 
+struct ServiceState;
 template <typename Heap> struct ServiceState_;
-using ServiceState = ServiceState_<
-  ZmHeap<"Zum.ZumService.ServiceState", ServiceState_<ZuVoid>>>;
 
 class ZumAPI Service {
   Service(const Service &) = delete;

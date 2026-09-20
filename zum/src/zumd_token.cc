@@ -31,7 +31,7 @@ static void codeToken(
   int64_t now, int64_t accessExpires, int64_t refreshExpires,
   JWTLimits, SignFn, TokenFn);
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class TokenResult__ : public Heap, public ZmObject  {
 public:
   TokenResult__(int error_, TokenResponse response_) :
@@ -42,9 +42,10 @@ public:
   int			error;
   TokenResponse	response;
 };
-using TokenResult_ = TokenResult__<ZmHeap<"Zum.zumd.token.TokenResult", TokenResult__<ZuVoid>>>;
+using TokenResultHeap = ZmHeap<"Zum.zumd.token.TokenResult", TokenResult__<>>;
+ZuDerive(TokenResult_, (TokenResult__<TokenResultHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class TokenComplete__ : public Heap, public ZmObject  {
 public:
   TokenComplete__(TokenFn complete) : m_complete{ZuMv(complete)} { }
@@ -72,9 +73,11 @@ private:
   ZmRef<Request>	m_request;
   TokenFn	m_complete;
 };
-using TokenComplete_ = TokenComplete__<ZmHeap<"Zum.zumd.token.TokenComplete", TokenComplete__<ZuVoid>>>;
+using TokenCompleteHeap =
+  ZmHeap<"Zum.zumd.token.TokenComplete", TokenComplete__<>>;
+ZuDerive(TokenComplete_, (TokenComplete__<TokenCompleteHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ClientToken__ : public Heap, public ZmPolymorph  {
 public:
   ClientToken__(
@@ -185,9 +188,11 @@ private:
   bool		m_signDone = false;
   bool		m_done = false;
 };
-using ClientToken_ = ClientToken__<ZmHeap<"Zum.zumd.token.ClientToken", ClientToken__<ZuVoid>>>;
+using ClientTokenHeap =
+  ZmHeap<"Zum.zumd.token.ClientToken", ClientToken__<>>;
+ZuDerive(ClientToken_, (ClientToken__<ClientTokenHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class RefreshToken__ : public Heap, public ZmPolymorph  {
 public:
   RefreshToken__(
@@ -430,9 +435,11 @@ private:
   bool		m_hasID = false;
   bool		m_done = false;
 };
-using RefreshToken_ = RefreshToken__<ZmHeap<"Zum.zumd.token.RefreshToken", RefreshToken__<ZuVoid>>>;
+using RefreshTokenHeap =
+  ZmHeap<"Zum.zumd.token.RefreshToken", RefreshToken__<>>;
+ZuDerive(RefreshToken_, (RefreshToken__<RefreshTokenHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class CodeToken__ : public Heap, public ZmPolymorph  {
 public:
   CodeToken__(
@@ -650,9 +657,11 @@ private:
   bool		m_hasID = false;
   bool		m_done = false;
 };
-using CodeToken_ = CodeToken__<ZmHeap<"Zum.zumd.token.CodeToken", CodeToken__<ZuVoid>>>;
+using CodeTokenHeap =
+  ZmHeap<"Zum.zumd.token.CodeToken", CodeToken__<>>;
+ZuDerive(CodeToken_, (CodeToken__<CodeTokenHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class TokenRequest__ : public Heap, public ZmPolymorph  {
 public:
   TokenRequest__(
@@ -700,7 +709,7 @@ public:
     m_context->clients->run(0, [
       self = ZmRef<TokenRequest__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_context->clients->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Client> row) mutable { self->client_(ZuMv(row)); });
     });
@@ -873,7 +882,9 @@ private:
   bool		m_hasBasic = false;
   bool		m_done = false;
 };
-using TokenRequest_ = TokenRequest__<ZmHeap<"Zum.zumd.token.TokenRequest", TokenRequest__<ZuVoid>>>;
+using TokenRequestHeap =
+  ZmHeap<"Zum.zumd.token.TokenRequest", TokenRequest__<>>;
+ZuDerive(TokenRequest_, (TokenRequest__<TokenRequestHeap>));
 
 static void clientToken(
     DBContext *context, Ztls::Random &rng, String issuer, Client client,
@@ -935,7 +946,7 @@ bool tokenRequest(
   }, [state]() mutable { state->cancel(); });
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class RevokeComplete__ : public Heap, public ZmObject  {
 public:
   RevokeComplete__(RevokeFn complete) : m_complete{ZuMv(complete)} { }
@@ -962,9 +973,11 @@ private:
   ZmRef<Request>	m_request;
   RevokeFn	m_complete;
 };
-using RevokeComplete_ = RevokeComplete__<ZmHeap<"Zum.zumd.token.RevokeComplete", RevokeComplete__<ZuVoid>>>;
+using RevokeCompleteHeap =
+  ZmHeap<"Zum.zumd.token.RevokeComplete", RevokeComplete__<>>;
+ZuDerive(RevokeComplete_, (RevokeComplete__<RevokeCompleteHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class RevokeRequest__ : public Heap, public ZmPolymorph  {
 public:
   RevokeRequest__(
@@ -1009,7 +1022,7 @@ public:
     m_context->clients->run(0, [
       self = ZmRef<RevokeRequest__>{this}, clientID = ZuMv(clientID)
     ]() mutable {
-      self->m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [
+      self->m_context->clients->template find<0>(0, ZuFwdTuple(ZuMv(clientID)), [
         self = ZuMv(self)
       ](ZdbRowRef<Client> row) mutable { self->client_(ZuMv(row)); });
     });
@@ -1071,7 +1084,7 @@ private:
       // Retain revocation for opaque grant records written by older stores.
       auto grants = self->m_context->grants;
       Bytes id = self->m_familyID;
-      grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self](ZdbRow<Grant> *row) mutable {
+      grants->template findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self](ZdbRow<Grant> *row) mutable {
         self->grantLegacy_(row);
       });
     });
@@ -1158,7 +1171,9 @@ private:
   bool		m_hasBasic = false;
   bool		m_done = false;
 };
-using RevokeRequest_ = RevokeRequest__<ZmHeap<"Zum.zumd.token.RevokeRequest", RevokeRequest__<ZuVoid>>>;
+using RevokeRequestHeap =
+  ZmHeap<"Zum.zumd.token.RevokeRequest", RevokeRequest__<>>;
+ZuDerive(RevokeRequest_, (RevokeRequest__<RevokeRequestHeap>));
 
 bool revokeRequest(
     Requests *requests, ZuTime deadline, DBContext *context,

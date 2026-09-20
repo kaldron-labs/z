@@ -12,7 +12,8 @@
 class ZiMultiplex;
 
 namespace Zum {
-class PingHTTPState;
+struct PingHTTPState;
+template <typename Heap> class PingHTTPState_;
 
 // The example owns this transport through Service::stop(), then finalizes it.
 class PingHTTP {

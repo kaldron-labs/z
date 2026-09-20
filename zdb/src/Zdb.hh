@@ -419,7 +419,8 @@ inline UN AnyRow_UNAxor(const ZmRef<AnyRow> &row) {
   return row->un();
 }
 
-// temporarily there may be more than one UN referencing a cached row
+// Temporarily there may be more than one UN referencing a cached row; rows
+// participate in several caches, so this registry retains shared ownership.
 ZmHashKVDerive(CacheUN, UN, ZmRef<AnyRow>,
   (ZmHashLock<ZmPLock,
 	ZmHashHeapID<"Zdb.UpdCache">>));
@@ -814,11 +815,11 @@ struct Count__ {
 
   Fn	fn;
 };
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Count_ : public Heap, public ZmPolymorph, public Count__ {
   ZuDerive_(Count_, Count__)
 };
-using Count_Heap = ZmHeap<"Zdb.Count", Count_<ZuVoid>>;
+using Count_Heap = ZmHeap<"Zdb.Count", Count_<>>;
 ZuDerive(Count, (Count_<Count_Heap>));
 
 // backing data store select() context
@@ -829,12 +830,12 @@ template <typename Tuple> struct Select__ {
   AnyTable	*table;
   Fn	fn;
 };
-template <typename Tuple, typename Heap>
+template <typename Tuple, typename Heap = ZuVoid>
 struct Select_ : public Heap, public ZmPolymorph, public Select__<Tuple> {
   ZuDerive_(Select_, Select__<Tuple>)
 };
 template <typename Tuple>
-using Select_Heap = ZmHeap<"Zdb.Select", Select_<Tuple, ZuVoid>>;
+using Select_Heap = ZmHeap<"Zdb.Select", Select_<Tuple>>;
 template <typename Tuple>
 ZuDerive(Select, (Select_<Tuple, Select_Heap<Tuple>>));
 
@@ -854,7 +855,7 @@ template <typename T, typename Key> struct Find__ {
   Key		key;
   Fn		fn;
 };
-template <typename T, typename Key, typename Heap>
+template <typename T, typename Key, typename Heap = ZuVoid>
 struct Find_ : public Heap, public Find, public Find__<T, Key> {
   template <typename L>
   Find_(AnyTable *table, Shard shard, Key key, L &&l) :
@@ -866,7 +867,7 @@ struct Find_ : public Heap, public Find, public Find__<T, Key> {
   void printKey(ZuVStream &s) const override { s << this->key; }
 };
 template <typename T, typename Key>
-using Find_Heap = ZmHeap<"Zdb.Find", Find_<T, Key, ZuVoid>>;
+using Find_Heap = ZmHeap<"Zdb.Find", Find_<T, Key>>;
 template <typename T, typename Key>
 ZuDerive(FindCtx, (Find_<T, Key, Find_Heap<T, Key>>));
 
@@ -1565,6 +1566,7 @@ ZdbTableDerive(SagaTypeTable, SagaTypeStep);
 
 // --- table container
 
+// Tables are shared with typed table handles and cannot own this DB registry node.
 ZmRBTreeDerive(Tables, ZmRef<AnyTable>,
   ZmRBTreeKey<AnyTable::IDAxor,
     ZmRBTreeUnique<true,
@@ -1920,18 +1922,18 @@ public:
   }
   template <typename ...Args>
   void shardRun(Shard shard, Args &&...args) const {
-    ZmAssert(shard < m_cf.nShards, return);
+    ZmAssert(shard < m_cf.nShards);
     m_mx->run(ZuFwd<Args>(args)...,
       m_cf.sids[shard & (m_cf.sids.length() - 1)]);
   }
   template <typename ...Args>
   void shardInvoke(Shard shard, Args &&...args) const {
-    ZmAssert(shard < m_cf.nShards, return);
+    ZmAssert(shard < m_cf.nShards);
     m_mx->invoke(ZuFwd<Args>(args)...,
       m_cf.sids[shard & (m_cf.sids.length() - 1)]);
   }
   bool shardInvoked(Shard shard) const {
-    ZmAssert(shard < m_cf.nShards, return false);
+    ZmAssert(shard < m_cf.nShards);
     return m_mx->invoked(
       m_cf.sids[shard & (m_cf.sids.length() - 1)]);
   }

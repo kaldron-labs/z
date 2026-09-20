@@ -30,7 +30,7 @@ static bool authorizationTarget_(
   return grant.issuer == config.issuer && grant.appID == config.appID;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeComplete__ : public Heap, public ZmObject  {
 public:
   AuthorizeComplete__(AuthorizeFn complete) :
@@ -59,9 +59,11 @@ private:
   ZmRef<Request>	m_request;
   AuthorizeFn	m_complete;
 };
-using AuthorizeComplete_ = AuthorizeComplete__<ZmHeap<"Zum.zumd.authorize.AuthorizeComplete", AuthorizeComplete__<ZuVoid>>>;
+using AuthorizeCompleteHeap =
+  ZmHeap<"Zum.zumd.authorize.AuthorizeComplete", AuthorizeComplete__<>>;
+ZuDerive(AuthorizeComplete_, (AuthorizeComplete__<AuthorizeCompleteHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeCodeResult__ : public Heap, public ZmObject  {
 public:
   AuthorizeCodeResult__(int error_, String location_) :
@@ -76,9 +78,12 @@ public:
   int		error;
   String	location;
 };
-using AuthorizeCodeResult_ = AuthorizeCodeResult__<ZmHeap<"Zum.zumd.authorize.AuthorizeCodeResult", AuthorizeCodeResult__<ZuVoid>>>;
+using AuthorizeCodeResultHeap = ZmHeap<
+  "Zum.zumd.authorize.AuthorizeCodeResult", AuthorizeCodeResult__<>>;
+ZuDerive(AuthorizeCodeResult_,
+  (AuthorizeCodeResult__<AuthorizeCodeResultHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeCodeComplete__ : public Heap, public ZmObject  {
 public:
   AuthorizeCodeComplete__(AuthorizeCodeFn complete) :
@@ -108,12 +113,15 @@ private:
   ZmRef<Request>	m_request;
   AuthorizeCodeFn m_complete;
 };
-using AuthorizeCodeComplete_ = AuthorizeCodeComplete__<ZmHeap<"Zum.zumd.authorize.AuthorizeCodeComplete", AuthorizeCodeComplete__<ZuVoid>>>;
+using AuthorizeCodeCompleteHeap = ZmHeap<
+  "Zum.zumd.authorize.AuthorizeCodeComplete", AuthorizeCodeComplete__<>>;
+ZuDerive(AuthorizeCodeComplete_,
+  (AuthorizeCodeComplete__<AuthorizeCodeCompleteHeap>));
 
 ZuDerive(ConsentGateFn,
   (ZmFn<void(int), ZmFnHeapID<"Zum.ConsentGateFn">>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ConsentGate__ : public Heap, public ZmPolymorph  {
 public:
   ConsentGate__(DBContext *context, Grant grant, Bytes bindingDigest,
@@ -258,9 +266,11 @@ private:
   ConsentGateFn m_complete;
   bool		m_done = false;
 };
-using ConsentGate_ = ConsentGate__<ZmHeap<"Zum.zumd.authorize.ConsentGate", ConsentGate__<ZuVoid>>>;
+using ConsentGateHeap =
+  ZmHeap<"Zum.zumd.authorize.ConsentGate", ConsentGate__<>>;
+ZuDerive(ConsentGate_, (ConsentGate__<ConsentGateHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeRequest__ : public Heap, public ZmPolymorph  {
 public:
   AuthorizeRequest__(
@@ -293,7 +303,7 @@ public:
     m_context->clients->run(0, [
       self = ZmRef<AuthorizeRequest__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_context->clients->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Client> row) mutable { self->client_(ZuMv(row)); });
     });
@@ -410,9 +420,11 @@ private:
   int		m_profileError = ProfileError::OK;
   bool		m_done = false;
 };
-using AuthorizeRequest_ = AuthorizeRequest__<ZmHeap<"Zum.zumd.authorize.AuthorizeRequest", AuthorizeRequest__<ZuVoid>>>;
+using AuthorizeRequestHeap =
+  ZmHeap<"Zum.zumd.authorize.AuthorizeRequest", AuthorizeRequest__<>>;
+ZuDerive(AuthorizeRequest_, (AuthorizeRequest__<AuthorizeRequestHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeFinish__ : public Heap, public ZmPolymorph  {
 public:
   AuthorizeFinish__(
@@ -603,9 +615,11 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
-using AuthorizeFinish_ = AuthorizeFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeFinish", AuthorizeFinish__<ZuVoid>>>;
+using AuthorizeFinishHeap =
+  ZmHeap<"Zum.zumd.authorize.AuthorizeFinish", AuthorizeFinish__<>>;
+ZuDerive(AuthorizeFinish_, (AuthorizeFinish__<AuthorizeFinishHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeSessionFinish__ : public Heap, public ZmPolymorph  {
 public:
   AuthorizeSessionFinish__(DBContext *context, Ztls::Random *rng,
@@ -895,9 +909,12 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
-using AuthorizeSessionFinish_ = AuthorizeSessionFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeSessionFinish", AuthorizeSessionFinish__<ZuVoid>>>;
+using AuthorizeSessionFinishHeap = ZmHeap<
+  "Zum.zumd.authorize.AuthorizeSessionFinish", AuthorizeSessionFinish__<>>;
+ZuDerive(AuthorizeSessionFinish_,
+  (AuthorizeSessionFinish__<AuthorizeSessionFinishHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeOIDCFinish__ : public Heap, public ZmPolymorph  {
 public:
   AuthorizeOIDCFinish__(
@@ -1043,9 +1060,12 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
-using AuthorizeOIDCFinish_ = AuthorizeOIDCFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeOIDCFinish", AuthorizeOIDCFinish__<ZuVoid>>>;
+using AuthorizeOIDCFinishHeap =
+  ZmHeap<"Zum.zumd.authorize.AuthorizeOIDCFinish", AuthorizeOIDCFinish__<>>;
+ZuDerive(AuthorizeOIDCFinish_,
+  (AuthorizeOIDCFinish__<AuthorizeOIDCFinishHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthorizeConsentFinish__ : public Heap, public ZmPolymorph  {
 public:
   AuthorizeConsentFinish__(DB *db, DBContext *context, Ztls::Random *rng,
@@ -1239,7 +1259,10 @@ private:
   ZtBitmap	m_actions;
   bool		m_done = false;
 };
-using AuthorizeConsentFinish_ = AuthorizeConsentFinish__<ZmHeap<"Zum.zumd.authorize.AuthorizeConsentFinish", AuthorizeConsentFinish__<ZuVoid>>>;
+using AuthorizeConsentFinishHeap = ZmHeap<
+  "Zum.zumd.authorize.AuthorizeConsentFinish", AuthorizeConsentFinish__<>>;
+ZuDerive(AuthorizeConsentFinish_,
+  (AuthorizeConsentFinish__<AuthorizeConsentFinishHeap>));
 
 static void authorizeRequest_(
     DBContext *context, Ztls::Random &rng, String query,

@@ -218,11 +218,13 @@ struct ResParser : public Response, public Zhttp::Parser {
 	    auto scan = ZfJSON::scan(span);
 	    auto handler = ZfJSON::handler<Object, Body_JSON_Facet>(
 	      (*scan.p<1>())[0]);
+	    if (!handler.valid) return;
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::URI) {
 	    using Body_URI_Facet = Impl::Body_URI_Facet;
 	    auto scan = ZfURI::scan(span, true);
 	    auto handler = ZfURI::handler<Object, Body_URI_Facet>(scan.p<1>());
+	    if (!handler.valid) return;
 	    handler.load(impl()->bodyObject(object.ptr()));
 	  } else if constexpr (Impl::Body == BodyPolicy::Raw) {
 	    impl()->bodyObject(object.ptr()) = span;

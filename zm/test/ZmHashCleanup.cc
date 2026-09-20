@@ -23,6 +23,7 @@ inline bool operator ==(const Object &l, const Object &r) {
   return l.m_val == r.m_val;
 }
 
+// This test covers cleanup of a hash retaining shared object references.
 ZmHashDerive(ObjectHash, ZmRef<Object>, (ZmHash_Defaults));
 
 int main(int argc, char *argv[])

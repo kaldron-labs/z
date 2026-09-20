@@ -950,7 +950,7 @@ namespace ClientControl {
   enum { Ping, SetLevel };
 }
 
-template <typename Call, typename Heap>
+template <typename Call, typename Heap = ZuVoid>
 struct ControlAction_ : public Heap, public ZmObject {
   ErrorString	level;
   ZmRef<Call>	call;
@@ -962,13 +962,10 @@ struct ControlAction_ : public Heap, public ZmObject {
 
 template <typename Call>
 using ControlHeap = ZmHeap<"Zmcp.Client.Control",
-  ControlAction_<Call, ZuVoid>>;
+  ControlAction_<Call>>;
 
 template <typename Call>
-struct ControlAction : public ControlAction_<Call, ControlHeap<Call>> {
-  using Base = ControlAction_<Call, ControlHeap<Call>>;
-  using Base::Base;
-};
+ZuDerive(ControlAction, (ControlAction_<Call, ControlHeap<Call>>));
 
 namespace HTTPClient_ {
 
@@ -1230,8 +1227,8 @@ private:
   Request *m_request = nullptr;
 };
 
-template <typename Impl, typename Catalog> class Pool;
-template <typename Impl, typename Catalog, typename Heap = ZuVoid> class Pool_;
+template <typename Impl, typename Catalog> struct Pool;
+template <typename Impl, typename Catalog, typename Heap> class Pool_;
 
 template <typename Impl, typename Catalog>
 using RequestQ = ZmPQueue<Request_<Impl, Catalog>,
@@ -1256,7 +1253,7 @@ template <typename Impl, typename Catalog>
 using TxQ = ZmPQTx<Pool<Impl, Catalog>, RequestQ<Impl, Catalog>,
   ZmPQTxOrdered<false>>;
 
-template <typename Impl, typename Catalog, typename Heap>
+template <typename Impl, typename Catalog, typename Heap = ZuVoid>
 class Pool_ : public Heap, public Zhttp::Pool<
     Client<Impl, Catalog>, TxQ<Impl, Catalog>,
     ResponseParser<Impl, Catalog>> {
@@ -1279,14 +1276,9 @@ private:
 template <typename Impl, typename Catalog>
 using PoolHeap = ZmHeap<"Zmcp.HTTP.Pool", Pool_<Impl, Catalog>>;
 template <typename Impl, typename Catalog>
-class Pool : public Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>> {
-  using Base = Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>>;
+ZuDerive(Pool, (Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>>));
 
-public:
-  using Base::Base;
-};
-
-template <typename Req, typename Call, typename Heap>
+template <typename Req, typename Call, typename Heap = ZuVoid>
 struct CallAction_ : public Heap, public ZmObject {
   using Object = ToolObject<typename Req::Object>;
 
@@ -1303,14 +1295,10 @@ struct CallAction_ : public Heap, public ZmObject {
 
 template <typename Req, typename Call>
 using CallHeap = ZmHeap<"Zmcp.HTTP.Call",
-  CallAction_<Req, Call, ZuVoid>>;
+  CallAction_<Req, Call>>;
 
 template <typename Req, typename Call>
-struct CallAction : public CallAction_<
-    Req, Call, CallHeap<Req, Call>> {
-  using Base = CallAction_<Req, Call, CallHeap<Req, Call>>;
-  using Base::Base;
-};
+ZuDerive(CallAction, (CallAction_<Req, Call, CallHeap<Req, Call>>));
 
 struct ActiveEntry {
   ID		id;
@@ -1328,7 +1316,7 @@ ZmHashDerive(ActiveHash, ActiveEntry,
 	ZmHashLock<ZmNoLock,
 	  ZmHashHeapID<"Zmcp.HTTP.Active">>>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CancelAction_ : public Heap, public ZmObject {
   CancelAction_(ID id_, ZuCSpan reason_) :
     id{ZuMv(id_)}, reason{reason_} { }
@@ -1337,11 +1325,8 @@ struct CancelAction_ : public Heap, public ZmObject {
   ErrorString	reason;
 };
 using CancelActionHeap =
-  ZmHeap<"Zmcp.HTTP.Cancel", CancelAction_<ZuVoid>>;
-struct CancelAction : public CancelAction_<CancelActionHeap> {
-  using Base = CancelAction_<CancelActionHeap>;
-  using Base::Base;
-};
+  ZmHeap<"Zmcp.HTTP.Cancel", CancelAction_<>>;
+ZuDerive(CancelAction, (CancelAction_<CancelActionHeap>));
 
 template <typename Impl, typename Catalog>
 class Client : public Zhttp::Client<
@@ -1996,7 +1981,7 @@ private:
 template <typename Impl, typename Catalog>
 using HTTPClient = HTTPClient_::Client<Impl, Catalog>;
 
-template <typename Req, typename Call, typename Heap>
+template <typename Req, typename Call, typename Heap = ZuVoid>
 struct StdioCallAction_ : public Heap, public ZmObject {
   using Object = ToolObject<typename Req::Object>;
 
@@ -2013,14 +1998,11 @@ struct StdioCallAction_ : public Heap, public ZmObject {
 
 template <typename Req, typename Call>
 using StdioCallHeap = ZmHeap<"Zmcp.Stdio.Call",
-  StdioCallAction_<Req, Call, ZuVoid>>;
+  StdioCallAction_<Req, Call>>;
 
 template <typename Req, typename Call>
-struct StdioCallAction : public StdioCallAction_<
-    Req, Call, StdioCallHeap<Req, Call>> {
-  using Base = StdioCallAction_<Req, Call, StdioCallHeap<Req, Call>>;
-  using Base::Base;
-};
+ZuDerive(StdioCallAction,
+  (StdioCallAction_<Req, Call, StdioCallHeap<Req, Call>>));
 
 template <typename Impl, typename Catalog>
 class Client {

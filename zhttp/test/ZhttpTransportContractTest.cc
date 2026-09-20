@@ -382,29 +382,36 @@ bool assertionFails(L &&l)
 #endif
 
 struct H2Native {
-  using Tx = TxLink::Stream;
-
-  Tx txStream() { return Tx{link}; }
-  Tx txStream_() { return Tx{link}; }
+  H2Native *app() { return this; }
+  bool txInvoked() const { return true; }
+  // No native writer: H2 must obtain geometry/allocation at the origin.
+  static unsigned txMaxSize() { return 64; }
+  template <bool> unsigned txHeadRoom() const { return 0; }
+  template <bool> unsigned txTailRoom() const { return 0; }
+  template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
+    ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
+    buf->skip = headRoom;
+    buf->length = 0;
+    return buf;
+  }
+  template <bool>
   unsigned dataMaxSize(uint32_t) const { return 64; }
+  template <bool>
   bool peerExtendedConnect() const { return false; }
   bool localExtendedConnect() const { return false; }
+  template <bool>
   void sendHeaders(
     uint32_t, Zhttp::H2_::HeaderFrames frames, bool) {
     ++headers;
     headerFrames += frames.length();
   }
-  bool sendFrame(uint32_t, ZmRef<ZiIOBuf>) {
-    ++headerFrames;
-    return true;
-  }
+  template <bool>
   bool sendData(uint32_t, ZmRef<ZiIOBuf>) {
     ++data;
     return true;
   }
-  void endData(uint32_t) { ++ends; }
+  template <bool> void endData(uint32_t) { ++ends; }
 
-  TxLink	link;
   unsigned headers = 0;
   unsigned headerFrames = 0;
   unsigned data = 0;
@@ -762,7 +769,7 @@ void testH2DeferredState()
   uint64_t before = encoder.table().insertCount();
   {
     H2Native native;
-    Zhttp::H2_::HeaderBlock block{native, encoder, 1, 64};
+    Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 1, 64};
     Zhttp::H2::HPackBytes bytes;
     decltype(block)::HeaderSection section{bytes};
     block.defer(1);
@@ -776,7 +783,7 @@ void testH2DeferredState()
     "discarded H2 message mutated HPACK state");
   {
     H2Native native;
-    Zhttp::H2_::HeaderBlock block{native, encoder, 3, 64};
+    Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 3, 64};
     Zhttp::H2::HPackBytes bytes;
     decltype(block)::HeaderSection section{bytes};
     block.defer(4096);

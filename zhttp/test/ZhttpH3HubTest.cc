@@ -252,24 +252,28 @@ void StreamClient::connected(
     return;
   }
   if (link.mode == StreamClientLink::Mode::REST) {
-    RequestBuilder builder;
-    auto tx = link.transmit(builder);
-    if (!builder.begin(tx)) {
-      ++state->errors;
-      state->response.post();
-      return;
-    }
-    link.finish();
+    this->txRun([link = &link, state = state]() {
+      RequestBuilder builder;
+      auto tx = link->transmit_(builder);
+      if (!builder.begin(tx)) {
+	++state->errors;
+	state->response.post();
+	return;
+      }
+      link->finish();
+    });
     return;
   }
   link.parser.streamExpected = true;
   link.parser.requestMethod(Zhttp::Method::CONNECT);
-  StreamRequestBuilder builder;
-  auto tx = link.transmit(builder);
-  if (!builder.begin(tx)) {
-    ++state->errors;
-    state->response.post();
-  }
+  this->txRun([link = &link, state = state]() {
+    StreamRequestBuilder builder;
+    auto tx = link->transmit_(builder);
+    if (!builder.begin(tx)) {
+      ++state->errors;
+      state->response.post();
+    }
+  });
 }
 
 int StreamClient::process(
@@ -414,9 +418,11 @@ struct StreamServerSession {
       case Zhttp::H3::ParserState::RemoteClosed:
 	if (!responseSent) {
 	  responseSent = true;
-	  StreamResponseBuilder builder;
-	  auto tx = link.transmit(builder);
-	  builder.begin(tx);
+	  link.app()->txRun([link = &link]() {
+	    StreamResponseBuilder builder;
+	    auto tx = link->transmit_(builder);
+	    builder.begin(tx);
+	  });
 	}
 	if (parser.streamBody) {
 	  Zhttp::Stream{link}.txStream([this](auto &body) {
@@ -436,13 +442,15 @@ struct StreamServerSession {
       case Zhttp::H3::ParserState::Complete: {
 	if (parser.method != Zhttp::Method::GET || parser.path != "/")
 	  ++link.app()->state->errors;
-	ResponseBuilder builder;
-	auto tx = link.transmit(builder);
-	builder.begin(tx);
-	auto body = builder.body(tx);
-	body << ZuCSpan{"pong"};
-	body.flush();
-	link.finish();
+	link.app()->txRun([link = &link]() {
+	  ResponseBuilder builder;
+	  auto tx = link->transmit_(builder);
+	  builder.begin(tx);
+	  auto body = builder.body(tx);
+	  body << ZuCSpan{"pong"};
+	  body.flush();
+	  link->finish();
+	});
 	return 0;
       }
       case Zhttp::H3::ParserState::Error:

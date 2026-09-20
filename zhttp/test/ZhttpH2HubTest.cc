@@ -94,6 +94,15 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
   FlowWire(FlowApp *app_) : app_{app_} { }
 
   FlowApp *app() const { return app_; }
+  static unsigned txMaxSize() { return BufAlloc::Size; }
+  template <bool> unsigned txHeadRoom() const { return 0; }
+  template <bool> unsigned txTailRoom() const { return 0; }
+  template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
+    ZmRef<ZiIOBuf> buf = new BufAlloc{};
+    buf->skip = headRoom;
+    buf->length = 0;
+    return buf;
+  }
   Tx txStream() { return Tx{this}; }
   Tx txStream_() { return Tx{this}; }
   void h2CapacityTx_(bool value) {
@@ -160,8 +169,20 @@ void runFlowCapacity()
   ZuCHECK(firstStream && secondStream,
     "open two independent H2 streams");
 
+  ZuCHECK(wire.peerInitialWindow(1),
+    "reduce the peer per-stream window to one byte");
+  app.runTx([&wire, id = firstStream->id]() {
+    ZuCHECK(wire.dataMaxSize<false>(id) ==
+        Zhttp::H2::FrameHeaderSize + 1,
+      "direct-Tx DATA geometry respects the stream window");
+  });
   ZuCHECK(wire.peerInitialWindow(0),
     "reduce the peer per-stream window to zero");
+  app.runTx([&wire, id = firstStream->id]() {
+    ZuCHECK(wire.dataMaxSize<false>(id) ==
+        Zhttp::H2::FrameHeaderSize + 1,
+      "direct-Tx DATA geometry permits queued output at zero window");
+  });
   wire.capacityCalls = wire.saturatedCalls = 0;
   wire.capacity = false;
   ZuCHECK(wire.sendData(firstStream->id, flowData(1)) &&
@@ -182,6 +203,11 @@ void runFlowCapacity()
     "connection-level H2 flow control saturates the link (capacity=",
     wire.capacity, ", calls=", wire.capacityCalls,
     ", saturated=", wire.saturatedCalls, ", sends=", wire.sends, ')');
+  app.runTx([&wire, id = secondStream->id]() {
+    ZuCHECK(wire.dataMaxSize<false>(id) ==
+        Zhttp::H2::FrameHeaderSize + 1,
+      "direct-Tx DATA geometry respects the connection window");
+  });
 
   wire.capacityCalls = wire.saturatedCalls = 0;
   wire.h2WindowUpdate(0, 1);
@@ -223,7 +249,7 @@ void runAdmissionErrors()
       return true;
     }});
   app.runTx([&wire, id]() {
-    ZuCHECK(!wire.sendFrame(id, flowData(0)),
+    ZuCHECK(!wire.sendFrame<false>(id, flowData(0)),
       "direct-Tx admission rejects a frame at zero capacity");
   });
   ZuCHECK(handled == 1 && !wire.disconnects,
@@ -237,7 +263,7 @@ void runAdmissionErrors()
       return false;
     }});
   app.runTx([&wire, id]() {
-    wire.sendHeaders(id, flowHeaders(), false);
+    wire.sendHeaders<false>(id, flowHeaders(), false);
   });
   ZuCHECK(replaced == 1 && wire.disconnects == 1 &&
       wire.disconnectShard == FlowApp::Tx,
@@ -245,7 +271,7 @@ void runAdmissionErrors()
 
   wire.logicalTxErrorFn(id, {});
   app.runTx([&wire, id]() {
-    ZuCHECK(!wire.sendFrame(id, flowData(0)),
+    ZuCHECK(!wire.sendFrame<false>(id, flowData(0)),
       "cleared callback leaves direct-Tx rejection unhandled");
   });
   ZuCHECK(replaced == 1 && wire.disconnects == 1,
@@ -458,19 +484,22 @@ void Client::connected(Link &link, Zhttp::ConnectedInfo info)
     return;
   }
   link.parser.bind(link);
-  auto tx = link.txStream();
-  if (link.parser.streamExpected) {
-    StreamRequestBuilder builder;
-    if (!builder.begin(tx)) {
-      ++state->errors;
-      state->response.post();
-      link.disconnect();
+  this->txRun([
+    link = &link, state = state, stream = link.parser.streamExpected]() {
+    auto tx = link->txStream_();
+    if (stream) {
+      StreamRequestBuilder builder;
+      if (!builder.begin(tx)) {
+	++state->errors;
+	state->response.post();
+	link->app()->rxRun([link]() { link->disconnect(); });
+      }
+    } else {
+      RequestBuilder builder;
+      builder.begin(tx);
+      builder.finish(tx);
     }
-  } else {
-    RequestBuilder builder;
-    builder.begin(tx);
-    builder.finish(tx);
-  }
+  });
 }
 
 int Client::process(Link &link, Zhttp::H2_::EventRx &rx)
@@ -631,9 +660,11 @@ struct ServerSession {
 	++link.app()->state->errors;
       if (!streamResponse_) {
 	streamResponse_ = true;
-	auto tx = link.txStream();
-	StreamResponseBuilder builder;
-	builder.begin(tx);
+	link.app()->txRun([link = &link]() {
+	  auto tx = link->txStream_();
+	  StreamResponseBuilder builder;
+	  builder.begin(tx);
+	});
       }
       if (parser.streamData) {
 	Zhttp::Stream{link}.txStream([this](auto &body) {
@@ -647,13 +678,15 @@ struct ServerSession {
     if (state != Zhttp::H2::ParserState::Complete) return 0;
     if (parser.method != Zhttp::Method::GET || parser.path != "/")
       ++link.app()->state->errors;
-    auto tx = link.txStream();
-    ResponseBuilder builder;
-    builder.begin(tx);
-    auto body = builder.body(tx);
-    body << ZuCSpan{"pong"};
-    body.flush();
-    builder.finish(tx);
+    link.app()->txRun([link = &link]() {
+      auto tx = link->txStream_();
+      ResponseBuilder builder;
+      builder.begin(tx);
+      auto body = builder.body(tx);
+      body << ZuCSpan{"pong"};
+      body.flush();
+      builder.finish(tx);
+    });
     return 1;
   }
 
@@ -904,10 +937,12 @@ void SharedClient::connected(
     state->response.post();
     return;
   }
-  auto tx = link.txStream();
-  RequestBuilder builder;
-  builder.begin(tx);
-  builder.finish(tx);
+  this->txRun([link = &link]() {
+    auto tx = link->txStream_();
+    RequestBuilder builder;
+    builder.begin(tx);
+    builder.finish(tx);
+  });
 }
 
 int SharedClient::process(

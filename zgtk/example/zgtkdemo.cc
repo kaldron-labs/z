@@ -163,7 +163,7 @@ void start()
 
   if (!gtk_builder_add_from_file(builder, "zgtkdemo.glade", &e)) {
     if (e) {
-      ZiLOG(Error, e->message);
+      ZiLOG(Error, "zgtkdemo", e->message);
       g_error_free(e);
     }
     done.post();
@@ -182,7 +182,7 @@ void start()
   // by a containing application view object, and unref'd in reverse
   // order in the dtor
 
-  auto addCol = [view, model](bool reverse) {
+  auto addCol = [view](bool reverse) {
     auto col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, "number");
 

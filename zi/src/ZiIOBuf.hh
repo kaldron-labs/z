@@ -316,7 +316,7 @@ public:
 // the Base parameter permits Ztls, Zdb, etc. to inject their own
 // buffer type into the hierarchy
 
-template <typename Base, unsigned Size_, unsigned MaxSize_, typename Heap>
+template <typename Base, unsigned Size_, unsigned MaxSize_, typename Heap = ZuVoid>
 struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
   using Base::data;
 
@@ -342,7 +342,7 @@ struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
 };
 
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
-using IOBuf_Heap = ZmHeap_<HeapID, IOBufAlloc__<Base, Size, MaxSize, ZuVoid>>;
+using IOBuf_Heap = ZmHeap_<HeapID, IOBufAlloc__<Base, Size, MaxSize>>;
  
 template <
   typename Base,

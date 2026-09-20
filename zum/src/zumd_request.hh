@@ -20,72 +20,59 @@
 
 namespace Zum {
 
-class Requests;
-class Request;
-
-ZmListDerive(RequestList, ZmRef<Request>,
-  ZmListHeapID<"Zum.Requests">);
-
-class ZumAPI Request : public ZmObject {
-  Request(const Request &) = delete;
-  Request &operator =(const Request &) = delete;
+template <typename Heap = ZuVoid>
+class Requests_ : public Heap, public ZmObject {
 
 public:
-  ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Request.Fn">>));
-
-  void complete(Fn);
+  Requests_ &operator =(const Requests_ &) = delete;
 
 private:
-friend Requests;
-
-  using Node = RequestList::Node;
-
-  Request(Requests *, Fn);
-  static void *operator new(size_t);
-  static void operator delete(void *);
-
-  void start_(ZuTime);
-  void finish_(Fn);
-  void cancel_();
-  void timeout_();
-  Node *node_() const { return m_node; }
-  void node_(Node *node) { m_node = node; }
-
-  Requests	*m_requests = nullptr;
-  Node		*m_node = nullptr;
-  ZmScheduler::Timer	m_timer;
-  Fn			m_cancel;
-  bool			m_done = false;
-};
-
-using RequestHeap = ZmHeap<"Zum.Request", Request>;
-
-inline void *Request::operator new(size_t size)
-{
-  return RequestHeap::operator new(size);
-}
-
-inline void Request::operator delete(void *ptr)
-{
-  RequestHeap::operator delete(ptr);
-}
-
-class ZumAPI Requests : public ZmObject {
-  Requests(const Requests &) = delete;
-  Requests &operator =(const Requests &) = delete;
+  Requests_(const Requests_ &) = delete;
 
 public:
-  ZuDerive(StartFn, (ZmFn<void(ZmRef<Request>),
+  class RequestData : public ZmObject {
+    RequestData(const RequestData &) = delete;
+    RequestData &operator =(const RequestData &) = delete;
+
+  public:
+    ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Request.Fn">>));
+
+    void complete(Fn);
+
+  private:
+  friend Requests_;
+
+    enum class List : uint8_t { None, Active, Draining };
+
+    RequestData(Requests_ *, Fn);
+
+    void start_(ZuTime);
+    void finish_(Fn);
+    void cancel_();
+    void timeout_();
+
+    Requests_		*m_requests = nullptr;
+    ZmScheduler::Timer	m_timer;
+    Fn			m_cancel;
+    List			m_list = List::None;
+    bool			m_done = false;
+  };
+
+  ZmListDerive(RequestList, RequestData,
+    ZmListNode<RequestData, ZmListHeapID<"Zum.Request">>);
+  using Node = RequestList::Node;
+
+  ZuDerive(StartFn, (ZmFn<void(ZmRef<Node>),
     ZmFnHeapID<"Zum.Requests.StartFn">>));
   ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Requests.Fn">>));
 
-  Requests() = default;
+  Requests_() = default;
 
   bool init(ZmScheduler *, unsigned sid, unsigned limit);
   void activate();
   void deactivate(Fn = {});
 
-  bool run(ZuTime deadline, StartFn, Request::Fn cancel);
+  bool run(ZuTime deadline, StartFn, RequestData::Fn cancel);
 
   bool active() const { return m_up; }
   unsigned count() const { return m_count; }
@@ -94,19 +81,13 @@ public:
   unsigned sid() const { return m_sid; }
 
 private:
-friend Request;
-
-  using Node = RequestList::Node;
-
-  static void *operator new(size_t);
-  static void operator delete(void *);
-
   void invoke_(Fn);
-  void admit_(ZmRef<Request>, ZuTime, StartFn);
-  Node *push_(Request *);
-  void arm_(Request *, ZmScheduler::Timer *, ZuTime);
+  void admit_(ZmRef<Node>, ZuTime, StartFn);
+  void start_(RequestData *, ZuTime);
+  void finish_(RequestData *, RequestData::Fn);
+  void arm_(RequestData *, ZmScheduler::Timer *, ZuTime);
   void del_(ZmScheduler::Timer *);
-  void remove_(Request *);
+  void remove_(RequestData *);
   void deactivate_();
   void deactivated_();
 
@@ -121,17 +102,9 @@ friend Request;
   bool			m_closing = false;
 };
 
-using RequestsHeap = ZmHeap<"Zum.Requests", Requests>;
-
-inline void *Requests::operator new(size_t size)
-{
-  return RequestsHeap::operator new(size);
-}
-
-inline void Requests::operator delete(void *ptr)
-{
-  RequestsHeap::operator delete(ptr);
-}
+using RequestsHeap = ZmHeap<"Zum.Requests", Requests_<>>;
+ZuDerive(Requests, (Requests_<RequestsHeap>));
+using Request = Requests::Node;
 
 } // namespace Zum
 

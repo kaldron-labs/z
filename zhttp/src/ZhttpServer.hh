@@ -438,9 +438,14 @@ public:
   auto txStream() { return Base::txStream(); }
   auto txStream_() { return Base::txStream_(); }
   void disconnectNative() { Base::disconnect(); }
-  auto logicalTx(uint32_t id) {
+  auto logicalTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return HeaderBlock<SrvLink>{
-      *this, Wire_::encoder(), id, Wire_::peerFrameSize()};
+      *this, Wire_::encoder(), id, Wire_::peerFrameSize(), plan};
+  }
+  auto logicalTx_(uint32_t id, unsigned plan = unsigned(-1)) {
+    ZmAssert(this->app()->txInvoked());
+    return HeaderBlock<SrvLink, false>{
+      *this, Wire_::encoder(), id, Wire_::template peerFrameSize<false>(), plan};
   }
   const HPackSeedPlans &hpackSeedPlans() const {
     const auto &user = *this->app()->user();
@@ -573,24 +578,28 @@ public:
     return {uintptr_t(m_native), Transport::TLS};
   }
   Session &rxState() { return m_session; }
-  auto txStream() { return m_native->logicalTx(m_streamID); }
+  auto txStream(unsigned plan = unsigned(-1)) {
+    return m_native->logicalTx(m_streamID, plan);
+  }
+  auto txStream_(unsigned plan = unsigned(-1)) {
+    return m_native->logicalTx_(m_streamID, plan);
+  }
   void txErrorFn(ZiTxErrorFn fn) {
     if (m_native)
       m_native->logicalTxErrorFn(m_streamID, ZuMv(fn));
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
+  // HPACK encoding is Tx-owned; construct headers with transmit_() on Tx.
   template <typename Builder>
-  auto transmit(Builder &) {
-    auto tx = txStream();
+  auto transmit_(Builder &) {
     using HdrCatalog = typename Builder::HdrCatalog;
     using Sets = typename ResponseHeaderSets<App>::T;
     if constexpr (HeaderPlan<HdrCatalog, Sets>::Valid)
-      tx.plan(HeaderPlan<HdrCatalog, Sets>::Index);
-    return tx;
+      return txStream_(HeaderPlan<HdrCatalog, Sets>::Index);
+    else
+      return txStream_();
   }
-  template <typename Builder>
-  auto transmit_(Builder &builder) { return transmit(builder); }
   bool active() const { return m_native && m_streamID; }
   void finish() { }
   void disconnect() {
@@ -931,9 +940,14 @@ public:
   }
   auto txStream() { return Base::txStream(); }
   auto txStream_() { return Base::txStream_(); }
-  auto logicalTx(uint32_t id) {
+  auto logicalTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return H2_::HeaderBlock<SrvLink>{
-      *this, Wire::encoder(), id, Wire::peerFrameSize()};
+      *this, Wire::encoder(), id, Wire::peerFrameSize(), plan};
+  }
+  auto logicalTx_(uint32_t id, unsigned plan = unsigned(-1)) {
+    ZmAssert(this->app()->txInvoked());
+    return H2_::HeaderBlock<SrvLink, false>{
+      *this, Wire::encoder(), id, Wire::template peerFrameSize<false>(), plan};
   }
   const HPackSeedPlans &hpackSeedPlans() const {
     const auto &user = *this->app()->user();
@@ -1328,16 +1342,19 @@ struct SrvLink :
     if (stream->localEnd) closeLater_(stream, true);
   }
   bool h3PeerCap() const {
-    if (this->app()->txInvoked()) return h3PeerCapTx;
     return h3.peerExtendedConnect;
   }
+  bool h3PeerCap_() const { return h3PeerCapTx; }
   void h3PeerCap(bool value) {
     auto link = this;
     this->app()->txRun([link, value]() {
       link->h3PeerCapTx = value;
     });
   }
-  H3::QPackTxTable *qpackTx() { return &h3Tx; }
+  H3::QPackTxTable *qpackTx() {
+    ZmAssert(this->app()->txInvoked());
+    return &h3Tx;
+  }
   void qpackSeed(StreamRef encoder) {
     auto link = ZmRef(this);
     this->app()->txRun([link = ZuMv(link), encoder = ZuMv(encoder)]() mutable {
@@ -1346,7 +1363,7 @@ struct SrvLink :
 	    link->h3Tx, AppHeaderSeeds<ZuDecay<
 	      decltype(*link->app()->user())>>::get(*link->app()->user()),
 	    [link, &encoder](ZuBSpan bytes) {
-	      return link->send(encoder, bytes, false);
+	      return link->send_(encoder, bytes, false);
 	    });
       if (result == QPackSeedResult::Failed) {
 	link->disconnect(H3::QPackEncoderError);
@@ -1463,27 +1480,17 @@ public:
     (void)rx;
     return parser.process(*m_stream);
   }
-  template <typename Builder>
-  auto transmit(Builder &builder) {
-    using H3Cxn = ZuDecay<decltype(m_native->h3)>;
-    builder.h3(
-      m_native->qpackTx(), &m_native->h3,
-      [](void *ptr, ZuBSpan span) {
-	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
-      },
-      uint64_t(m_stream->id()), m_native->h3PeerCap(),
-      &m_native->h3.params);
-    return m_stream->txStream();
-  }
+  // QPACK encoding is Tx-owned; construct headers with transmit_() on Tx.
   template <typename Builder>
   auto transmit_(Builder &builder) {
+    ZmAssert(m_native->app()->txInvoked());
     using H3Cxn = ZuDecay<decltype(m_native->h3)>;
     builder.h3(
       m_native->qpackTx(), &m_native->h3,
       [](void *ptr, ZuBSpan span) {
 	return static_cast<H3Cxn *>(ptr)->qpackEncoderWrite(span);
       },
-      uint64_t(m_stream->id()), m_native->h3PeerCap(),
+      uint64_t(m_stream->id()), m_native->h3PeerCap_(),
       &m_native->h3.params);
     return m_stream->txStream_();
   }
@@ -2003,7 +2010,7 @@ private:
     return tx.fixed(response, BodyPolicy::optional(policy));
   }
 
-  template <typename Driver, typename Heap>
+  template <typename Driver, typename Heap = ZuVoid>
   struct BodyEmit_ : public Heap, public ZmObject {
     BodyEmit_(Driver *driver_, int txThread_) :
       driver{driver_}, txThread{txThread_} { }
@@ -2034,8 +2041,9 @@ private:
   };
 
   template <typename Driver>
-  ZuDerive(BodyEmit, (BodyEmit_<Driver,
-    ZmHeap<"Zhttp.Server.BodyEmit", BodyEmit_<Driver, ZuVoid>>>));
+  using BodyEmitHeap = ZmHeap<"Zhttp.Server.BodyEmit", BodyEmit_<Driver>>;
+  template <typename Driver>
+  ZuDerive(BodyEmit, (BodyEmit_<Driver, BodyEmitHeap<Driver>>));
 
   template <typename Profile, typename Link_> struct StreamBody;
 
@@ -2225,8 +2233,7 @@ private:
   template <typename Profile, typename Link_>
   bool startResponse_(
       ZmRef<Link_> link, ZmRef<ResBuilder> response,
-      uint64_t &retainedBytes) {
-    auto policy = response->data().bodyPolicy();
+      BodyPolicy::T policy, uint64_t &retainedBytes) {
     if (BodyPolicy::streaming(policy)) {
       using State = StreamBody<Profile, Link_>;
       ZuRef<State> state = new State{this, link.ptr(), response.ptr()};
@@ -2288,13 +2295,16 @@ private:
       --server->stats().queuedResponses;
       m_disconnect = m_response->data().disconnect();
       auto response = m_response;
-      if (server->template startResponse_<Profile>(
-	    ZmRef(impl()), ZuMv(response), m_retainedBytes)) {
-	if (!BodyPolicy::streaming(m_response->data().bodyPolicy()))
-	  responseDone_(m_response.ptr(), true);
-	return;
-      }
-      responseBuildFailed_(m_response.ptr());
+      auto ptr = response.ptr();
+      auto policy = response->data().bodyPolicy();
+      bool ok = server->template startResponse_<Profile>(
+	ZmRef(impl()), ZuMv(response), policy, m_retainedBytes);
+      // The initial producer callback may synchronously finish or abort.
+      if (m_response.ptr() != ptr) return;
+      if (!ok)
+	responseBuildFailed_(ptr);
+      else if (!BodyPolicy::streaming(policy))
+	responseDone_(ptr, true);
     }
 
     void responseDone_(ResBuilder *response, bool ok) {

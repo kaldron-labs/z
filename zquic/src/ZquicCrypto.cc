@@ -94,7 +94,7 @@ static bool hkdfExpandLabel_(
   uint8_t *out, unsigned outLen, const uint8_t *secret, unsigned secretLen,
   ZuCSpan label)
 {
-  static constexpr ZuCSpan Prefix{"tls13 "};
+  static constexpr auto Prefix = "tls13 "_Zu;
   ZuBArray<64> info(64, false);
   unsigned o = 0;
   unsigned fullLen = Prefix.length() + label.length();

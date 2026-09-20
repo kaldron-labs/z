@@ -4,10 +4,13 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Shared native example OAuth flow; independent of libZum
+// Native OAuth flow from ztc/example/ztchub_client.cc.
+// One dashboard session per login; revoke the refresh token on exit.
 
-#ifndef ZumNativeExample_HH
-#define ZumNativeExample_HH
+#ifndef ZDashOAuth_HH
+#define ZDashOAuth_HH
+
+#include <stdlib.h>
 
 #include <iostream>
 
@@ -18,13 +21,12 @@
 
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuArray.hh>
-#include <zlib/ZuLib.hh>
 #include <zlib/ZuICmp.hh>
 #include <zlib/ZuPercent.hh>
 
-#include <zlib/ZmList.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
@@ -32,25 +34,37 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZfCLI.hh>
 #include <zlib/ZfCf.hh>
+#include <zlib/ZfCLI.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
 
-#include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiLog.hh>
+#include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZhttpClient.hh>
-#include <zlib/ZhttpServer.hh>
-#include <zlib/ZrestClient.hh>
-#include <zlib/ZrestServer.hh>
+#include <zlib/Zfb.hh>
+#include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 
+#include <zlib/Zws.hh>
+
+#include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpServer.hh>
+#include <zlib/ZhttpURL.hh>
+
+#include <zlib/ZrestClient.hh>
+
 #include <zlib/ZumURI.hh>
 
-namespace ZumNative {
+#include <zlib/ZtcAppTypes.hh>
+#include <zlib/ZtcFB.hh>
+#include <zlib/ZtcMsg.hh>
+
+namespace ZDashOAuth {
 
 ZuDerive(String, ZtString<ZtStringHeapID<"Zum.Native.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Native.Bytes">>));
@@ -340,7 +354,7 @@ struct ReqBuilder_ : public ZmObject,
 
 struct ResParser : public Zrest::MResParser<ClientCatalog, ReqBuilder_> { };
 
-struct Pool;
+class Pool;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"zum.ReqBuilder">>>);
@@ -463,60 +477,68 @@ private:
   ZtArray<ZmRef<Client>> m_clients;
 };
 
-template <typename Heap = ZuVoid>
-struct CallbackData_ : public Heap, public ZmObject {
-  ZuSpan<uint8_t> data;
-  CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
-};
-using CallbackDataHeap = ZmHeap<"Zum.Native.CallbackData", CallbackData_<>>;
-ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
-
-template <typename Heap = ZuVoid>
-struct CallbackBody_ : public Heap, public ZmObject {
-  String data;
-};
-using CallbackBodyHeap = ZmHeap<"Zum.Native.CallbackBody", CallbackBody_<>>;
-ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
-
-struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
-  enum { Body = Zrest::BodyPolicy::Raw };
-  using Headers = ZhttpHeaders(
-    ("content-type", "text/html; charset=utf-8"), "content-length");
-  const String &bodyObject(const CallbackBody *data) const { return data->data; }
-};
-
 class CallbackApp;
 static ZmSemaphore callbackDone;
 
-struct CallbackReq : public Zrest::ReqParser<CallbackReq, CallbackData> {
-  enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
-  static constexpr uint64_t QueryLimit = 16U<<10;
-  using Path = ZuStringT<"/callback">;
-  using Responses = ZuTypeList<CallbackOK>;
-  CallbackApp *app = nullptr;
-  template <typename Link> void complete(Link *, bool);
+using CallbackHeaderList = ZuTypeList<
+  ZuStringT<"content-type">,
+  ZuTypeList<ZuStringT<"text/html; charset=utf-8">>,
+  ZuStringT<"content-length">, ZuTypeList<>>;
+ZhttpHdrCatalogDerive(CallbackHeaders, CallbackHeaderList);
+ZhttpHdrCatalogImpl(CallbackHeaders)
+
+struct CallbackBuilder_ : public ZmObject, public Zhttp::ResBuilder {
+  using HdrCatalog = CallbackHeaders;
+  Zhttp::BodyPolicy::T bodyPolicy() const { return Zhttp::BodyPolicy::Fixed; }
+  Zhttp::Method::T method() const { return Zhttp::Method::GET; }
+  unsigned status() const { return 200; }
+  template <typename Key, typename L> void header(L &&l) const {
+    if constexpr (Key{}() == "content-length")
+      l(ZuBoxed(responseBody.length()));
+  }
+  template <typename L> void header(L &&) const { }
+  bool disconnect() const { return false; }
+  template <typename Emit> void body(Emit &&emit) {
+    emit([this](auto &body) {
+      body << responseBody;
+      return Zhttp::WriteOutcome::End;
+    });
+  }
+
+  String responseBody;
 };
+ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
+  ZmListNode<CallbackBuilder_, ZmListHeapID<"Ztc.Example.CallbackBuilder">>);
+using CallbackBuilder = CallbackBuilderQ::Node;
 
-using CallbackRequests = ZuTypeList<CallbackReq>;
-ZrestCatalogDerive(CallbackCatalog, CallbackRequests);
-ZrestCatalogImpl(CallbackCatalog)
+struct CallbackParser : public Zhttp::Parser {
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
-struct CallbackParser : public Zrest::MReqParser<CallbackCatalog> {
-  using Base = Zrest::MReqParser<CallbackCatalog>;
   void init(CallbackApp &app_) { app = &app_; }
   bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
-    if (!Base::operation(method, target)) return false;
-    u.dispatch([this](auto, auto &request) { request.app = app; });
+    auto path = target.path;
+    int q = path.find([](auto c) { return c == '?'; });
+    auto length = q < 0 ? path.length() : unsigned(q);
+    if (method != Zhttp::Method::GET ||
+        ZuCSpan{path.data(), length} != "/callback") return false;
+    if (q >= 0) {
+      path.offset(unsigned(q) + 1);
+      query = path;
+    }
+    if (query.length() > 16U<<10) return false;
     return true;
   }
-  CallbackApp *app = nullptr;
-};
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
+  template <typename Rx>
+  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
+  template <typename Link> void complete(Link *, bool);
+  void reset() { app = nullptr; query.null(); }
 
-using CallbackBuilder = Zrest::MResBuilder<CallbackCatalog>;
-struct CallbackBuilder_ : public ZmObject, public CallbackBuilder { };
-ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
-  ZmListNode<CallbackBuilder_, ZmListHeapID<"zum.CallbackBuilder">>);
-using CallbackBuilderNode = CallbackBuilderQ::Node;
+  CallbackApp *app = nullptr;
+  String	query;
+};
 
 class CallbackApp {
 public:
@@ -524,19 +546,14 @@ public:
   using ResBuilderQ = CallbackBuilderQ;
 
   template <typename Link>
-  void callback(Link *link, const CallbackReq &request, bool ok)
+  void callback(Link *link, ZuCSpan query, bool ok)
   {
-    String query;
-    if (ok && request.object) {
-      auto span = request.object->data;
-      if (span && span[0] == '?') span.offset(1);
-      query = span;
-    } else ok = false;
-    if (!query.mutable_()) query.length(query.length());
+    String form{query};
+    if (!form.mutable_()) form.length(form.length());
     unsigned seen = 0;
     bool duplicate = false;
     String code_, state_, error_;
-    if (ok) ok = formEach({query.data(), query.length()}, [&seen, &duplicate,
+    if (ok) ok = formEach({form.data(), form.length()}, [&seen, &duplicate,
 	&code_, &state_, &error_](
           ZuCSpan name, ZuCSpan value) {
         if (name == "code") {
@@ -555,12 +572,10 @@ public:
       code = ZuMv(code_); state = ZuMv(state_); error = ZuMv(error_);
       received = true;
     }
-    ZmRef<CallbackBody> object = new CallbackBody{};
-    object->data = ok && code ?
+    ZmRef<CallbackBuilder> response = new CallbackBuilder{};
+    response->responseBody = ok && code ?
       String{"<!doctype html><h1>Authorized</h1><p>You may close this window.</p>"} :
       String{"<!doctype html><h1>Authorization failed</h1>"};
-    ZmRef<CallbackBuilderNode> response = new CallbackBuilderNode{};
-    response->template init<CallbackOK, CallbackReq>(object.ptr());
     link->send(ZuMv(response));
     if (ok) callbackDone.post();
   }
@@ -578,7 +593,9 @@ public:
 };
 
 template <typename Link>
-void CallbackReq::complete(Link *link, bool ok) { app->callback(link, *this, ok); }
+void CallbackParser::complete(Link *link, bool ok) {
+  app->callback(link, query, ok);
+}
 
 static void interrupted() { callbackDone.post(); }
 
@@ -802,29 +819,9 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     if (!ok) std::cerr << "OAuth: code redemption failed\n";
   }
 
+  // The GTK session stays open until the user quits or the hub disconnects.
   if (ok) ok = useToken(mx, clients, ZuCSpan{tokens.accessToken});
-
-  if (ok && tokens.refreshToken) {
-    String form{"grant_type=refresh_token&"};
-    form << formField("refresh_token", tokens.refreshToken) << '&' <<
-      formField("client_id", config.clientID);
-    Result result;
-    ok = clients.perform<TokenBuilder>(result, metadata.tokenEndpoint,
-      ZuMv(form));
-    Tokens rotated;
-    ok = ok && result.status == 200 && tokenJSON(result.body, rotated) &&
-      rotated.refreshToken;
-    if (ok) {
-      clearTokens(tokens);
-      tokens = ZuMv(rotated);
-      std::cout << "refresh token rotated\n";
-    } else {
-      clearTokens(rotated);
-      std::cerr << "OAuth: refresh failed\n";
-    }
-  }
-
-  if (ok) ok = useToken(mx, clients, ZuCSpan{tokens.accessToken});
+  ZmTrap::sigintFn(interrupted);
 
   if (tokens.refreshToken) {
     String form;
@@ -849,6 +846,6 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   return ok;
 }
 
-} // ZumNative
+} // ZDashOAuth
 
-#endif /* ZumNativeExample_HH */
+#endif /* ZDashOAuth_HH */

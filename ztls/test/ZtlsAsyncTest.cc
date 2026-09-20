@@ -80,9 +80,6 @@ void testInitValidation()
   {
     ClientApp::Link link(&client);
     ZuCHECK(link.stream() == &link, "TLS client bidi stream is not link");
-    typename ClientApp::Link::StreamRef stream = link.stream();
-    auto tx = stream->txStream();
-    (void)tx;
   }
   ZuCHECK(!client.init(Ztls::ClientParams(nullptr, "1", "2").hub(
       [&alpn](auto &p) { p.alpn(alpn); })),
@@ -95,9 +92,6 @@ void testInitValidation()
   {
     ServerApp::Link link(&server);
     ZuCHECK(link.stream() == &link, "TLS server bidi stream is not link");
-    typename ServerApp::Link::StreamRef stream = link.stream();
-    auto tx = stream->txStream();
-    (void)tx;
   }
   ZuCHECK(!server.init(Ztls::ServerParams(nullptr, "1", "2").alpn(alpn)),
     "missing server cert/key init unexpectedly succeeded");

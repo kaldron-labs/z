@@ -499,12 +499,16 @@ public:
   using Index = ZuTypeIndex<T, TL>;
 };
 
-template <typename Data, typename Heap>
+template <typename Data, typename Heap = ZuVoid>
 class Node_ : public Heap, public AnyNode {
-  Node_(const Node_ &) = delete;
+
+public:
   Node_ &operator =(const Node_ &) = delete;
-  Node_(Node_ &&) = delete;
   Node_ &operator =(Node_ &&) = delete;
+
+private:
+  Node_(const Node_ &) = delete;
+  Node_(Node_ &&) = delete;
 
 public:
   using AnyNode::TL;
@@ -521,13 +525,9 @@ public:
 };
 
 template <typename Data>
-struct Node : public Node_<Data, ZmHeap_<Node_HeapID, Node_<Data, ZuVoid>>> {
-  using Base = Node_<Data, ZmHeap_<Node_HeapID, Node_<Data, ZuVoid>>>;
-  using Base::Base;
-  template <typename ...Args,
-    decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0>
-  Node(Args &&...args) : Base(ZuFwd<Args>(args)...) { }
-};
+using Node_Heap = ZmHeap_<Node_HeapID, Node_<Data>>;
+template <typename Data>
+ZuDerive(Node, (Node_<Data, Node_Heap<Data>>));
 
 template <typename Data>
 inline bool AnyNode::has() const {
@@ -894,12 +894,12 @@ struct AsObject {
     }
 
     const AnyNode	*node;
+    bool		valid = false;
 
-    static bool valid(const AnyNode *node) {
-      return node && node->has<AnyNode::Object>();
+    Handler(const AnyNode *node_) : node{node_} {
+      if (!node || !node->has<AnyNode::Object>()) return;
+      valid = true;
     }
-
-    Handler(const AnyNode *node_) : node{node_} { }
 
     template <template <typename> class Filter, typename Field, typename L>
     decltype(auto) loadField(L &&l) const;
@@ -930,6 +930,7 @@ struct AsObject {
     };
     template <typename ...Args>
     O ctor(Args &&...args) const {
+      ZmAssert_(valid);
       if constexpr (!InitFields::N) // exploit guaranteed copy elision
 	return ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       else {
@@ -946,6 +947,7 @@ struct AsObject {
     }
     template <typename ...Args>
     O *alloc(Args &&...args) const {
+      ZmAssert_(valid);
       O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
 	*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, o]<typename Field>() {
@@ -959,6 +961,7 @@ struct AsObject {
     }
     template <typename ...Args>
     void new_(void *o_, Args &&...args) const {
+      ZmAssert_(valid);
       ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
@@ -970,6 +973,7 @@ struct AsObject {
     }
 
     void load(O &o) const {
+      ZmAssert_(valid);
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
 	this->loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
 	  if (!Incremental || !deflt)
@@ -978,6 +982,7 @@ struct AsObject {
       });
     }
     void update(O &o) const {
+      ZmAssert_(valid);
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	using Props = typename Field::Props;
 	this->loadField<ZfFieldFilter::Upd, Field>([&o]<typename V>(V &&v, bool deflt) {
@@ -995,7 +1000,8 @@ struct AsObject {
   struct Handler<Union<Ts...>, Facet> {
     using O = Union<Ts...>;
 
-    const AnyNode *node;
+    const AnyNode	*node;
+    bool		valid = false;
 
     template <typename L>
     static bool dispatch_(const O &o, L &&l) {
@@ -1027,15 +1033,15 @@ struct AsObject {
       });
     }
 
-    static bool valid(const AnyNode *node) {
-      return node != nullptr;
+    Handler(const AnyNode *node_) : node{node_} {
+      if (!node) return;
+      valid = true;
     }
-    Handler(const AnyNode *node_) : node{node_} { }
-    O ctor() const { return O(node); }
-    O *alloc() const { return new O(node); }
-    void new_(void *o) const { new (o) O(node); }
-    void load(O &o) const { o = node; }
-    void update(O &o) const { o = node; }
+    O ctor() const { ZmAssert_(valid); return O(node); }
+    O *alloc() const { ZmAssert_(valid); return new O(node); }
+    void new_(void *o) const { ZmAssert_(valid); new (o) O(node); }
+    void load(O &o) const { ZmAssert_(valid); o = node; }
+    void update(O &o) const { ZmAssert_(valid); o = node; }
   };
 };
 
@@ -1129,46 +1135,51 @@ struct AsArray {
       }
     }
 
-    const AnyNode	*node;
-
-    static bool valid(const AnyNode *node) {
-      return node && node->has<AnyNode::Array>();
-    }
-
-    Handler(const AnyNode *node_) : node{node_} { }
-
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using LoadVec_ =
       LoadVec<Facet, ZfFieldFilter::Load, ElemCode, ElemProps, Elem>;
+
+    static bool valid_(const AnyNode *node) {
+      if (!node || !node->has<AnyNode::Array>()) return false;
+      if constexpr (ElemCode == ZfFieldTC::UDT) {
+	using U = ObjType<Elem>;
+	using ElemHandler = typename As<U>::template Handler<U, Facet>;
+	for (const auto &child: node->data<AnyNode::Array>())
+	  if (child && !ElemHandler{child}.valid) return false;
+      }
+      return true;
+    }
+
+    const AnyNode	*node;
+    bool		valid = false;
+
+    Handler(const AnyNode *node_) : node{node_}, valid{valid_(node_)} { }
+
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      if (ZuUnlikely(!valid(node)))
-	return O(ZuFwd<Args>(args)...);
+      ZmAssert_(valid);
       return O(
 	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
     template <typename ...Args>
     O *alloc(Args &&...args) const {
-      if (ZuUnlikely(!valid(node)))
-	return new O(ZuFwd<Args>(args)...);
+      ZmAssert_(valid);
       return new O(
 	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {
-      if (ZuUnlikely(!valid(node)))
-	new (o) O(ZuFwd<Args>(args)...);
-      else
-	new (o) O(
-	  ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
+      ZmAssert_(valid);
+      new (o) O(
+	ZuFwd<Args>(args)..., LoadVec_(node->data<AnyNode::Array>()));
     }
 
     void load(O &o) const {
-      if (ZuLikely(valid(node)))
-	o = LoadVec_(node->data<AnyNode::Array>());
+      ZmAssert_(valid);
+      o = LoadVec_(node->data<AnyNode::Array>());
     }
     void update(O &o) const {
-      if (ZuUnlikely(!valid(node))) return;
+      ZmAssert_(valid);
       const auto &nodes = node->data<AnyNode::Array>();
       unsigned n = ZuTraits<O>::length(o);
       unsigned m = nodes.length();
@@ -1176,16 +1187,18 @@ struct AsArray {
       if constexpr (ElemCode == ZfFieldTC::UDT) {
 	if constexpr (!IsObjPtr<Elem>{}) {
 	  using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
-	  for (unsigned i = 0; i < n; i++)
-	    ElemHandler{nodes[i]}.update(o[i]);
+	  for (unsigned i = 0; i < n; i++) {
+	    auto handler = ElemHandler{nodes[i]};
+	    if (handler.valid) handler.update(o[i]);
+	  }
 	} else {
 	  using U = ZuDecay<decltype(*(ZuDeclVal<const Elem &>()))>;
 	  using ElemHandler = typename As<U>::template Handler<U, Facet>;
 	  for (unsigned i = 0; i < n; i++) {
 	    auto &p = o[i];
 	    auto &child = nodes[i];
-	    if (!ElemHandler::valid(child)) continue;
 	    auto handler = ElemHandler{child};
+	    if (!handler.valid) continue;
 	    if (ZuLikely(p))
 	      handler.update(*p);
 	    else
@@ -1219,15 +1232,15 @@ struct AsString {
     }
  
     const AnyNode	*node;
+    bool		valid = false;
 
-    static bool valid(const AnyNode *node) {
-      return node && node->has<AnyNode::String>();
+    Handler(const AnyNode *node_) : node{node_} {
+      if (!node || !node->has<AnyNode::String>()) return;
+      valid = true;
     }
 
-    Handler(const AnyNode *node_) : node{node_} { }
-
     ZuCSpan span() const {
-      if (!valid(node)) return {};
+      ZmAssert_(valid);
       return node->data<AnyNode::String>();
     }
 
@@ -1256,42 +1269,42 @@ struct AsJSON {
       Quote::quote(s, buf);
     }
 
-    const AnyNode	*node;
+    const AnyNode		*node;
+    ZuPtr<ZfJSON::AnyNode>	json;
+    bool			valid = false;
 
-    static bool valid(const AnyNode *node) {
-      return node && node->has<AnyNode::String>();
+    Handler(const AnyNode *node_) : node{node_} {
+      if (!node || !node->has<AnyNode::String>()) return;
+      auto scan = ZfJSON::scan(node->data<AnyNode::String>());
+      if (scan.template p<0>() <= 0 || !scan.template p<1>() ||
+	  !scan.template p<1>()->has<ZfJSON::AnyNode::Array>() ||
+	  !scan.template p<1>()->data<ZfJSON::AnyNode::Array>().length())
+	return;
+      json = ZuMv(scan.template p<1>());
+      Handler_ handler{(*json)[0]};
+      valid = handler.valid;
     }
 
-    Handler(const AnyNode *node_) : node{node_} { }
-
     // resolve JSON handler
-    ZuTuple<ZuPtr<ZfJSON::AnyNode>, Handler_> handler_() const {
-      ZuSpan<char> span;
-      if (node->has<AnyNode::String>())
-	span = node->data<AnyNode::String>();
-      auto scan = ZfJSON::scan(span);
-      const bool valid = scan.template p<0>() >= 0;
-      if (!valid)
-	scan = ZfJSON::scan({});
-      ZuPtr<ZfJSON::AnyNode> node_ = ZuMv(scan.template p<1>());
-      const ZfJSON::AnyNode *ptr = valid ? (*node_)[0].ptr() : node_.ptr();
-      return {ZuMv(node_), Handler_(ptr)};
+    Handler_ handler_() const {
+      ZmAssert_(valid);
+      return Handler_{(*json)[0]};
     }
 
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      return handler_().template p<1>().ctor(ZuFwd<Args>(args)...);
+      return handler_().ctor(ZuFwd<Args>(args)...);
     }
     template <typename ...Args>
     O *alloc(Args &&...args) const {
-      return handler_().template p<1>().alloc(ZuFwd<Args>(args)...);
+      return handler_().alloc(ZuFwd<Args>(args)...);
     }
     template <typename ...Args>
     void new_(void *o, Args &&...args) const {
-      handler_().template p<1>().new_(o, ZuFwd<Args>(args)...);
+      handler_().new_(o, ZuFwd<Args>(args)...);
     }
-    void load(O &o) const { handler_().template p<1>().load(o); }
-    void update(O &o) const { handler_().template p<1>().update(o); }
+    void load(O &o) const { handler_().load(o); }
+    void update(O &o) const { handler_().update(o); }
   };
 };
 
@@ -1883,13 +1896,15 @@ inline auto loadValue(const AnyNode *node)
       // UDT type - recurse
       if constexpr (!IsObjPtr<T>{}) {
 	using Handler = typename As<T>::template Handler<T, Facet>;
-	if (ZuUnlikely(!Handler::valid(node))) return ZuCmp<T>::null();
-	return Handler{node}.ctor();
+	auto handler = Handler{node};
+	if (ZuUnlikely(!handler.valid)) return ZuCmp<T>::null();
+	return handler.ctor();
       } else {
 	using U = ObjType<T>;
 	using Handler = typename As<U>::template Handler<U, Facet>;
-	if (ZuUnlikely(!Handler::valid(node))) return T{};
-	return T{Handler{node}.alloc()};
+	auto handler = Handler{node};
+	if (ZuUnlikely(!handler.valid)) return T{};
+	return T{handler.alloc()};
       }
     } else {
       ZuSpan<char> span;

@@ -5807,8 +5807,8 @@ static void enrollmentRuntime()
     db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
     Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
     oidcAuthTime);
-  constexpr ZuCSpan oidcCodePrefix{"https://app/cb?code="};
-  constexpr ZuCSpan oidcCodeSuffix{"&state=oidc-return"};
+  constexpr auto oidcCodePrefix = "https://app/cb?code="_Zu;
+  constexpr auto oidcCodeSuffix = "&state=oidc-return"_Zu;
   ZuCheck(oidcAuthorized.error == Zum::AuthorizeIssue::OK &&
     oidcAuthorized.location.length() >
       oidcCodePrefix.length() + oidcCodeSuffix.length() &&
@@ -5962,7 +5962,7 @@ static void enrollmentRuntime()
 	wake(ZuMv(reply));
       });
   });
-  constexpr ZuCSpan consentMarker{"name=id value=\""};
+  constexpr auto consentMarker = "name=id value=\""_Zu;
   int consentOffset = ssoReply.body.find<"name=id value=\"">();
   Zum::String consentID;
   if (consentOffset >= 0) {
@@ -6069,7 +6069,7 @@ static void enrollmentRuntime()
     providerServer.login(9, Zum::String{logoutCookie}, [wake = ZuMv(wake)](
 	Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
-  constexpr ZuCSpan csrfMarker{"name=csrf value=\""};
+  constexpr auto csrfMarker = "name=csrf value=\""_Zu;
   int csrfOffset = loginPage.body.find<"name=csrf value=\"">();
   Zum::String logoutCSRF;
   if (csrfOffset >= 0) {
@@ -6380,8 +6380,8 @@ static void enrollmentRuntime()
   auto finished = finishAuthorization(db->requests, db, context, rng,
     Zum::Bytes{authorized.result.ceremonyID}, ZuMv(requestAssertion),
     readAction, 210, "issuer/oauth2/9", 9, true);
-  constexpr ZuCSpan codePrefix{"https://app/cb?code="};
-  constexpr ZuCSpan codeSuffix{"&state=return"};
+  constexpr auto codePrefix = "https://app/cb?code="_Zu;
+  constexpr auto codeSuffix = "&state=return"_Zu;
   ZuCheck(finished.error == Zum::AuthorizeIssue::OK &&
     finished.location.length() > codePrefix.length() + codeSuffix.length() &&
     (ZuCSpan{finished.location.data(), codePrefix.length()} == codePrefix) &&

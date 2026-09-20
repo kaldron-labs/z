@@ -247,6 +247,7 @@ struct IDFmt {
   template <typename O, typename Facet>
   struct Handler {
     const ZfJSON::AnyNode *node;
+    bool		valid = false;
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &id) {
@@ -263,12 +264,11 @@ struct IDFmt {
       }
     }
 
-    static bool valid(const ZfJSON::AnyNode *node) {
-      return node && (node->template has<ZfJSON::AnyNode::Null>() ||
+    Handler(const ZfJSON::AnyNode *node_) : node{node_} {
+      valid = node && (node->template has<ZfJSON::AnyNode::Null>() ||
 	node->template has<ZfJSON::AnyNode::Number>() ||
 	node->template has<ZfJSON::AnyNode::String>());
     }
-    Handler(const ZfJSON::AnyNode *node_) : node{node_} { }
     O ctor() const {
       if (!node) return {};
       if (node->template has<ZfJSON::AnyNode::String>())
@@ -487,14 +487,18 @@ inline const ZfJSON::AnyNode *member(
 inline Error loadError(const ZfJSON::AnyNode *node)
 {
   if (!node || !node->template has<ZfJSON::AnyNode::Object>()) return {};
-  return ZfJSON::handler<Error>(node).ctor();
+  auto handler = ZfJSON::handler<Error>(node);
+  if (!handler.valid) return {};
+  return handler.ctor();
 }
 
 template <typename O>
 inline O loadObject(const ZfJSON::AnyNode *node)
 {
   if (!node || !node->template has<ZfJSON::AnyNode::Object>()) return {};
-  return ZfJSON::handler<O>(node).ctor();
+  auto handler = ZfJSON::handler<O>(node);
+  if (!handler.valid) return {};
+  return handler.ctor();
 }
 
 template <typename ...Ts>
@@ -862,13 +866,18 @@ inline ReplyUnion<Req> loadToolReply(const ZfJSON::AnyNode *node)
     if constexpr (ZuIsSame<void, typename Res::Body>{})
       out = ToolReply<Res>{};
     else if (data) {
-      using Body = typename Res::Body;
-      if constexpr (ZuIsBase<Body, ZmObject>{}) {
-	ZmRef<Body> body = new Body();
-	ZfJSON::handler<Body>(data).load(*body);
-	out = ToolReply<Res>{ZuMv(body)};
-      } else
-	out = ToolReply<Res>{ZfJSON::handler<Body>(data).ctor()};
+	using Body = typename Res::Body;
+	if constexpr (ZuIsBase<Body, ZmObject>{}) {
+	  ZmRef<Body> body = new Body();
+	  auto handler = ZfJSON::handler<Body>(data);
+	  if (!handler.valid) return;
+	  handler.load(*body);
+	  out = ToolReply<Res>{ZuMv(body)};
+	} else {
+	  auto handler = ZfJSON::handler<Body>(data);
+	  if (!handler.valid) return;
+	  out = ToolReply<Res>{handler.ctor()};
+	}
     }
   });
   return out;
@@ -910,23 +919,25 @@ struct ToolArgFmt {
       typename ZfJSON::As<Object>::template Handler<Object, Facet>;
 
     const ZfJSON::AnyNode *node;
+    bool		valid = false;
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const Arg &arg) {
       ObjectHandler::template save<Filter>(s, arg.object());
     }
 
-    static bool valid(const ZfJSON::AnyNode *node) {
-      return ObjectHandler::valid(node);
+    Handler(const ZfJSON::AnyNode *node_) : node{node_} {
+      valid = ObjectHandler{node}.valid;
     }
-    Handler(const ZfJSON::AnyNode *node_) : node{node_} { }
     Arg ctor() const {
+      ZmAssert_(valid);
+      auto handler = ObjectHandler{node};
       if constexpr (Arg::Ref) {
 	Arg arg;
-	ObjectHandler{node}.load(arg.object());
+	handler.load(arg.object());
 	return arg;
       } else
-	return Arg{ObjectHandler{node}.ctor()};
+	return Arg{handler.ctor()};
     }
     Arg *alloc() const {
       if constexpr (Arg::Ref) {
@@ -1116,7 +1127,9 @@ struct ToolsCallParams :
     if (!v.template is<const ZfJSON::AnyNode *>()) return;
     auto node = v.template p<const ZfJSON::AnyNode *>();
     if (!node) return;
-    auto meta = ZfJSON::handler<ClientMeta>(node).ctor();
+    auto handler = ZfJSON::handler<ClientMeta>(node);
+    if (!handler.valid) return;
+    auto meta = handler.ctor();
     progressToken = ZuMv(meta.progressToken);
     logLevel = Zmcp::logLevel(meta.logLevel);
   }
@@ -1138,10 +1151,12 @@ struct ToolsCallParams :
       if (!arguments_.template is<const ZfJSON::AnyNode *>()) return -2;
       const auto *node = arguments_.template p<const ZfJSON::AnyNode *>();
       if (!node) return -2;
-      ZuSwitch::dispatch<Requests::N>(index, [this, node](auto I) {
+      ZuSwitch::dispatch<Requests::N>(index, [this, node, &index](auto I) {
 	using Req = ZuType<I, Requests>;
 	using Arg = ToolArg<Req>;
-	arguments_ = ZfJSON::handler<Arg>(node).ctor();
+	auto handler = ZfJSON::handler<Arg>(node);
+	if (!handler.valid) { index = -2; return; }
+	arguments_ = handler.ctor();
       });
       return index;
     }
@@ -1265,7 +1280,9 @@ inline Parsed<Reqs> parse(ZuSpan<char> input, unsigned maxBytes)
   const ZfJSON::AnyNode *node = (*out.root)[0];
   if (ZuUnlikely(!node ||
       !node->template has<ZfJSON::AnyNode::Object>())) return out;
-  ZfJSON::handler<Envelope<Reqs>>(node).load(out.envelope);
+  auto handler = ZfJSON::handler<Envelope<Reqs>>(node);
+  if (!handler.valid) return out;
+  handler.load(out.envelope);
   if (out.envelope.method())
     out.envelope.kind = out.envelope.id().absent() ?
 	MessageKind::Notification : MessageKind::Request;
@@ -1925,7 +1942,7 @@ inline void emitToolsList(S &s, int era)
 }
 
 
-template <typename Req, typename Owner, typename Heap>
+template <typename Req, typename Owner, typename Heap = ZuVoid>
 class Completion_ : public Heap, public ZmObject {
 public:
   Completion_(
@@ -1987,14 +2004,11 @@ private:
 
 template <typename Req, typename Owner>
 using CompletionHeap = ZmHeap<"Zmcp.Completion",
-  Completion_<Req, Owner, ZuVoid>>;
+  Completion_<Req, Owner>>;
 
 template <typename Req, typename Owner>
-struct Completion : public Completion_<Req, Owner,
-    CompletionHeap<Req, Owner>> {
-  using Base = Completion_<Req, Owner, CompletionHeap<Req, Owner>>;
-  using Base::Base;
-};
+ZuDerive(Completion, (Completion_<Req, Owner,
+  CompletionHeap<Req, Owner>>));
 
 struct CompletionEntry {
   using InvalidateFn = void (*)(void *);
@@ -2608,7 +2622,12 @@ private:
       return;
     } else {
       using Params = ToolsCallParams<Reqs>;
-      auto params = ZfJSON::handler<Params>(raw(envelope.params())).ctor();
+      auto handler = ZfJSON::handler<Params>(raw(envelope.params()));
+      if (!handler.valid) {
+	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
+	return;
+      }
+      auto params = handler.ctor();
       int index = params.match();
       if (index < 0) {
 	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
@@ -2665,7 +2684,12 @@ private:
       return;
     } else {
       using Params = ToolsCallParams<Reqs>;
-      auto params = ZfJSON::handler<Params>(raw(envelope.params())).ctor();
+      auto handler = ZfJSON::handler<Params>(raw(envelope.params()));
+      if (!handler.valid) {
+	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
+	return;
+      }
+      auto params = handler.ctor();
       int index = params.match();
       if (index < 0) {
 	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
@@ -3993,7 +4017,7 @@ private:
   bool			m_txDrained = false;
 };
 
-template <typename Impl, typename Heap>
+template <typename Impl, typename Heap = ZuVoid>
 class StdioIO_ : public Heap, public StdioIO<Impl> {
   using Base = StdioIO<Impl>;
 
@@ -4003,13 +4027,10 @@ public:
 
 template <typename Impl>
 using StdioIOHeap = ZmHeap<"Zmcp.Stdio.IO",
-  StdioIO_<Impl, ZuVoid>>;
+  StdioIO_<Impl>>;
 
 template <typename Impl>
-struct StdioIOObj : public StdioIO_<Impl, StdioIOHeap<Impl>> {
-  using Base = StdioIO_<Impl, StdioIOHeap<Impl>>;
-  using Base::Base;
-};
+ZuDerive(StdioIOObj, (StdioIO_<Impl, StdioIOHeap<Impl>>));
 
 } // Zmcp
 

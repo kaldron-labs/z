@@ -50,9 +50,11 @@ bool signKeyPublic(const SignKey &key, Bytes &output)
     if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
 	!parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
     auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-    if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-	!roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
-    auto jwk = ZfJSON::handler<SignKeyJWK>(roots[0]).ctor();
+    if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+      return false;
+    auto handler = ZfJSON::handler<SignKeyJWK>(roots[0]);
+    if (!handler.valid) return false;
+    auto jwk = handler.ctor();
     if (jwk.d || jwk.kty != "EC" || jwk.crv != "P-256" ||
         jwk.kid != key.id || !jwk.x || !jwk.y ||
         (jwk.alg && jwk.alg != "ES256") ||

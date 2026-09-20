@@ -90,8 +90,10 @@ static bool jsonLoad(ZuSpan<char> json, T &value)
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  value = ZfJSON::handler<T>(roots[0]).ctor();
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<T>(roots[0]);
+  if (!handler.valid) return false;
+  value = handler.ctor();
   return true;
 }
 
@@ -267,7 +269,7 @@ static int clientData(
     return WebAuthnError::Fields;
   if (client.type != type) return WebAuthnError::Type;
   unsigned length = ZuBase64URL::enclen(challenge.length());
-  auto encoded = ZtScratch(String, length, length);
+  auto encoded = ZtScratch(String, 0, length + 1);
   encoded.length(ZuBase64URL::encode(encoded.span(), challenge));
   if (client.challenge != encoded) return WebAuthnError::Challenge;
   if (client.origin != origin) return WebAuthnError::Origin;

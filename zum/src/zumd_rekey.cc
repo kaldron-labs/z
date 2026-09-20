@@ -12,8 +12,7 @@ namespace Zum {
 
 // One row and one saga in flight: offline traversal has bounded memory and
 // returns to the table scheduler between records. Never retain a scan iterator.
-template <typename Table, typename Apply>
-template <typename Heap>
+template <typename Table, typename Apply, typename Heap = ZuVoid>
 class RekeyScan__ : public Heap, public ZmObject  {
   using Key = typename Table::template Key<0>;
 public:
@@ -61,9 +60,14 @@ private:
   Key m_key;
   bool m_found = false;
 };
-using RekeyScan_ = RekeyScan__<ZmHeap<"Zum.zumd.rekey.RekeyScan", RekeyScan__<ZuVoid>>>;
+template <typename Table, typename Apply>
+using RekeyScanHeap =
+  ZmHeap<"Zum.zumd.rekey.RekeyScan", RekeyScan__<Table, Apply>>;
+template <typename Table, typename Apply>
+ZuDerive(RekeyScan_, (RekeyScan__<Table, Apply,
+  RekeyScanHeap<Table, Apply>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class Rekey__ : public Heap, public ZmObject  {
 public:
   Rekey__(DB *db, DBContext *context, Ztls::Random &rng, String issuer,
@@ -227,7 +231,8 @@ private:
   bool m_verify = false;
   bool m_committed = false;
 };
-using Rekey_ = Rekey__<ZmHeap<"Zum.zumd.rekey.Rekey", Rekey__<ZuVoid>>>;
+using RekeyHeap = ZmHeap<"Zum.zumd.rekey.Rekey", Rekey__<>>;
+ZuDerive(Rekey_, (Rekey__<RekeyHeap>));
 
 void serverRekey(DB *db, DBContext *context, Ztls::Random &rng, String issuer,
     Bytes oldKey, Bytes newKey, RekeyFn complete)

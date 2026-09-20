@@ -148,7 +148,7 @@ private:
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(
   ZuCSpan span, Limits limits = {});
 
-// resolve local OpenAPI $ref objects and flatten schema composition
+// resolve local $ref objects and flatten schema composition
 ZfExtern ZuPtr<AnyNode> resolve(ZuPtr<AnyNode> &&root);
 ZfExtern ZuPtr<AnyNode> flatten(
   ZuPtr<AnyNode> &&root, bool oneOf = false, bool anyOf = false);
@@ -949,9 +949,15 @@ struct AsJSON {
 template <typename O, typename Facet>
 inline auto handler_(const AnyNode *node) {
   using Handler = typename As<O>::template Handler<O, Facet>;
-  if (ZuUnlikely(!Handler::valid(node)))
+  auto handler = Handler{node};
+  bool valid;
+  if constexpr (ZuIsSame<As<O>, AsJSON>{})
+    valid = handler.valid;
+  else
+    valid = Handler::valid(node);
+  if (ZuUnlikely(!valid))
     throw ZfYAML_EXCEPT(badType(node, "UDT"));
-  return Handler{node};
+  return handler;
 }
 
 template <

@@ -118,12 +118,14 @@ public:
     m_parser.bind(*this, m_protocol);
     m_bound = true;
     this->CodecBase::opening_();
-    Extended::Request<Profile> request{m_uri, m_protocol};
-    auto tx = this->transmit(request);
-    if (!request.begin(tx)) {
-      H1_::error(*this->app()->app(), *this, Failure::Handshake, 0);
-      this->disconnect();
-    }
+    this->app()->txRun([this]() {
+      Extended::Request<Profile> request{m_uri, m_protocol};
+      auto tx = this->transmit_(request);
+      if (!request.begin(tx)) this->app()->rxRun([this]() {
+	H1_::error(*this->app()->app(), *this, Failure::Handshake, 0);
+	this->disconnect();
+      });
+    });
   }
 
   template <typename Rx>
@@ -363,9 +365,11 @@ public:
   }
   void respond_(ZuBSpan selected) {
     m_protocol = selected;
-    Extended::Response<Profile> response{m_protocol};
-    auto tx = this->transmit(response);
-    response.begin(tx);
+    this->app()->txRun([this]() {
+      Extended::Response<Profile> response{m_protocol};
+      auto tx = this->transmit_(response);
+      response.begin(tx);
+    });
   }
   void reject_() {
     if (!m_handshakeFailed) {
@@ -373,10 +377,12 @@ public:
       H1_::error(
 	*this->app()->app(), *this, Failure::Handshake, 0);
     }
-    Extended::ErrorResponse<Profile> response;
-    auto tx = this->transmit(response);
-    response.begin(tx);
-    this->finish();
+    this->app()->txRun([this]() {
+      Extended::ErrorResponse<Profile> response;
+      auto tx = this->transmit_(response);
+      response.begin(tx);
+      this->finish();
+    });
   }
   void established_() {
     if (m_up) return;

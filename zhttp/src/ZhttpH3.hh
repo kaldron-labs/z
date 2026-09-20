@@ -1219,8 +1219,9 @@ template <typename Lower>
 auto frameMax(Lower &lower, int) ->
   decltype(lower.frameMax(), unsigned{})
 {
-  uint64_t max = lower.frameMax() >> 1;
-  if (!max) max = lower.frameMax();
+  uint64_t limit = lower.frameMax();
+  uint64_t max = limit >> 1;
+  if (!max) max = limit;
   return max < UINT_MAX ? unsigned(max) : UINT_MAX;
 }
 
@@ -1932,7 +1933,11 @@ struct Cxn {
       return true;
     });
   }
-  bool qpackEncoderWrite(ZuBSpan span) { return writeQPack_(enc, span); }
+  // Encoder instructions are emitted alongside header encoding on Tx.
+  bool qpackEncoderWrite(ZuBSpan span) {
+    if (!link_ || !enc || !span) return false;
+    return link_->send_(enc, span, false);
+  }
   bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
   void error(uint64_t code) {
     if (errorCode) return;

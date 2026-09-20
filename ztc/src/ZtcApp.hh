@@ -49,10 +49,10 @@ namespace Filter_ {
 namespace App_ {
   struct Delivery { enum T { Telemetry, Control }; };
   class AlertEvent;
-  class Ingress;
+  struct Ingress;
   class IngressData;
-  class Pending_;
-  class State;
+  struct Pending_;
+  struct State;
   class Subscription_;
 }
 

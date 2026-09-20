@@ -25,9 +25,7 @@ class ZiMultiplex;
 
 namespace Zum {
 
-template <typename Heap> struct DBContext_;
-using DBContext = DBContext_<
-  ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<ZuVoid>>>;
+struct DBContext;
 
 // OIDC state, nonce, and PKCE verifier each carry 256 bits of entropy.
 enum { OIDCRandomSize = 32 };
@@ -142,7 +140,8 @@ ZuDerive(OIDCFinishFn,
 ZuDerive(OIDCClockFn,
   (ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>));
 
-class OIDCState;
+struct OIDCState;
+template <typename Heap> class OIDCState_;
 
 class ZumAPI OIDC {
   OIDC(const OIDC &) = delete;
@@ -164,7 +163,8 @@ private:
   ZmRef<OIDCState>	m_state;
 };
 
-class OIDCHTTPState;
+struct OIDCHTTPState;
+template <typename Heap> class OIDCHTTPState_;
 
 class OIDCHTTP {
 public:

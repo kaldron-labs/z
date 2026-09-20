@@ -389,19 +389,21 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   Client(State *state_) : state{state_} { }
 
   void connected(Link &link, const Zhttp::ConnectedInfo &) {
-    state->connected.post();
     if (state->openRequest) {
-      Builder builder;
-      auto tx = link.transmit(builder);
-      builder.begin(tx);
-      if (state->completeRequest) {
-	auto body = builder.body(tx, 1);
-	body << 'x';
-	body.flush();
-	builder.finish(tx);
-	link.finish();
-      }
+      this->txRun([link = &link, complete = state->completeRequest]() {
+	Builder builder;
+	auto tx = link->transmit_(builder);
+	builder.begin(tx);
+	if (complete) {
+	  auto body = builder.body(tx, 1);
+	  body << 'x';
+	  body.flush();
+	  builder.finish(tx);
+	  link->finish();
+	}
+      });
     }
+    state->connected.post();
   }
   void disconnected(Link &, bool) {
     state->disconnected.post();
@@ -729,12 +731,14 @@ int main(int argc, char **argv)
   ZuTestCall((activeStop<Zhttp::H2TLS, StreamTurn::Abort>));
   ZuTestCall((activeStop<Zhttp::H3QUIC, StreamTurn::Abort>));
   ZuTestCall((activeStop<Zhttp::H2TLS, StreamTurn::AbortInitial>));
+  ZuTestCall((activeStop<Zhttp::H3QUIC, StreamTurn::AbortInitial>));
   // An idle producer exercises cancellation during server teardown.
   ZuTestCall((activeStop<Zhttp::H1TCP>));
   ZuTestCall((activeStop<Zhttp::H2TLS>));
   ZuTestCall((activeStop<Zhttp::H3QUIC>));
   // Common state-machine behavior only needs one transport instance.
   ZuTestCall((activeStop<Zhttp::H2TLS, StreamTurn::InitialSequence>));
+  ZuTestCall((activeStop<Zhttp::H3QUIC, StreamTurn::InitialSequence>));
   ZuTestCall((activeStop<Zhttp::H2TLS, StreamTurn::ZeroSequence>));
   ZuTestCall((activeStop<Zhttp::H2TLS, StreamTurn::HighTurns>));
   ZuTestCall((activeStop<Zhttp::H1TCP, StreamTurn::OptionalAbsent>));

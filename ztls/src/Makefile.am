@@ -3,7 +3,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
-AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
+AM_LDFLAGS = @Z_LDFLAGS@
+libZtls_la_LDFLAGS = $(AM_LDFLAGS) @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZtlsLib.hh Ztls.hh ZtlsCreds.hh \
 	ZtlsPico.hh \
 	ZtlsBackend.hh \

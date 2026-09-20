@@ -56,6 +56,7 @@ struct ZCmp {
   static constexpr const Z *null() { return nullptr; }
 };
 
+// This benchmark measures contention while many keys share one Z reference.
 ZmHashKVDerive(ZHash, unsigned, ZmRef<Z>, (ZmHashLock<ZmPLock>));
 
 void Y::helloWorld() { out("hello world [Y]"); }
@@ -213,6 +214,7 @@ int main(int argc, char **argv)
     overallEnd.nsec() / 1000000);
 
   {
+    // This benchmark exercises a hash of independently shared J references.
     using H = ZmHash<ZmRef<J>, ZmHashKey<J::IAxor>>;
     ZmRef<H> h_ = new H();
     H &h = *h_;

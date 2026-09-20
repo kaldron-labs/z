@@ -133,8 +133,10 @@ static bool publicJWK(
   if (parsed.p<0>() != int(source.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0]) ||
-      !roots[0]->has<ZfJSON::AnyNode::Object>()) return false;
+  if (roots.length() != 1 || !roots[0]->has<ZfJSON::AnyNode::Object>())
+    return false;
+  auto handler = ZfJSON::handler<PublicJWK>(roots[0]);
+  if (!handler.valid) return false;
   jwk = static_cast<const ZfJSON::AnyNode *>(roots[0]);
   owner = ZuMv(parsed.p<1>());
   return true;
@@ -158,7 +160,7 @@ static bool jwksJSON_(StringVec &sources, String &json, bool strict)
   return true;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class SignKeyLoad__ : public Heap, public ZmObject  {
 public:
   SignKeyLoad__(DBContext *context, String issuer, int64_t now,
@@ -204,7 +206,7 @@ public:
       String id = self->m_id;
       auto table = self->m_context->signKeys;
       table->run(0, [table, id = ZuMv(id), self = ZuMv(self)]() mutable {
-	table->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+	table->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	  self = ZuMv(self)
 	](ZdbRowRef<SignKey> row) mutable {
 	  if (!row || row->data().issuer != self->m_issuer ||
@@ -233,7 +235,9 @@ private:
   int64_t m_start = 0;
   bool m_overflow = false;
 };
-using SignKeyLoad_ = SignKeyLoad__<ZmHeap<"Zum.zumd.discovery.SignKeyLoad", SignKeyLoad__<ZuVoid>>>;
+using SignKeyLoadHeap =
+  ZmHeap<"Zum.zumd.discovery.SignKeyLoad", SignKeyLoad__<>>;
+ZuDerive(SignKeyLoad_, (SignKeyLoad__<SignKeyLoadHeap>));
 
 void signKeyLoad(DBContext *context, String issuer, int64_t now,
     int64_t expires, unsigned maxKeys, SignKeyFn complete)
@@ -243,7 +247,7 @@ void signKeyLoad(DBContext *context, String issuer, int64_t now,
   load->start();
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class DiscoveryComplete__ : public Heap, public ZmObject  {
 public:
   DiscoveryComplete__(DiscoveryFn complete) :
@@ -271,7 +275,10 @@ private:
   ZmRef<Request>	m_request;
   DiscoveryFn	m_complete;
 };
-using DiscoveryComplete_ = DiscoveryComplete__<ZmHeap<"Zum.zumd.discovery.DiscoveryComplete", DiscoveryComplete__<ZuVoid>>>;
+using DiscoveryCompleteHeap =
+  ZmHeap<"Zum.zumd.discovery.DiscoveryComplete", DiscoveryComplete__<>>;
+ZuDerive(DiscoveryComplete_,
+  (DiscoveryComplete__<DiscoveryCompleteHeap>));
 
 static bool endpoints(ZuCSpan authorizationBase, ZuCSpan issuer,
     AppID appID, Metadata &metadata)
@@ -336,7 +343,7 @@ String jwksJSON(const StringVec &publicJwks)
   return json;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class JWKSLoad__ : public Heap, public ZmPolymorph  {
 public:
   JWKSLoad__(
@@ -395,7 +402,9 @@ private:
   bool		m_overflow = false;
   bool		m_done = false;
 };
-using JWKSLoad_ = JWKSLoad__<ZmHeap<"Zum.zumd.discovery.JWKSLoad", JWKSLoad__<ZuVoid>>>;
+using JWKSLoadHeap =
+  ZmHeap<"Zum.zumd.discovery.JWKSLoad", JWKSLoad__<>>;
+ZuDerive(JWKSLoad_, (JWKSLoad__<JWKSLoadHeap>));
 
 bool jwksLoad(
     Requests *requests, ZuTime deadline, DBContext *context,

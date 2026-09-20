@@ -43,6 +43,7 @@ struct ZCmp {
   }
 };
 
+// This test covers tree nodes retaining shared object references.
 ZmRBTreeDerive(Tree, ZmRef<Z>, ZmRBTreeCmp<ZCmp>);
 ZmRBTreeKVDerive(KVTree, int, int, ZmRBTreeUnique<false>);
 

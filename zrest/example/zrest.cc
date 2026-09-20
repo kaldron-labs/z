@@ -157,7 +157,7 @@ static void wipe(OAuthString &value)
   value.null();
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Result_ : public Heap, public ZmObject {
   ZmSemaphore	done;
   OAuthString	body;
@@ -171,10 +171,10 @@ struct Result_ : public Heap, public ZmObject {
 
   ~Result_() { wipe(body); }
 };
-using ResultHeap = ZmHeap<"zrest.Result", Result_<ZuVoid>>;
+using ResultHeap = ZmHeap<"zrest.Result", Result_<>>;
 ZuDerive(Result, (Result_<ResultHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject {
   ZmRef<Result>	result;
   OAuthString	target;
@@ -202,10 +202,10 @@ struct Call_ : public Heap, public ZmObject {
     result->done.post();
   }
 };
-using CallHeap = ZmHeap<"zrest.Call", Call_<ZuVoid>>;
+using CallHeap = ZmHeap<"zrest.Call", Call_<>>;
 ZuDerive(Call, (Call_<CallHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct ResponseData_ : public Heap, public ZmObject {
   OAuthString data;
   OAuthString contentType;
@@ -221,7 +221,7 @@ struct ResponseData_ : public Heap, public ZmObject {
   }
 };
 using ResponseDataHeap =
-  ZmHeap<"zrest.ResponseData", ResponseData_<ZuVoid>>;
+  ZmHeap<"zrest.ResponseData", ResponseData_<>>;
 ZuDerive(ResponseData, (ResponseData_<ResponseDataHeap>));
 
 template <typename Impl, unsigned Status_>
@@ -292,6 +292,7 @@ struct FormBuilder :
 struct PingBuilder : public DynamicBuilder<PingBuilder, Zhttp::Method::GET> {
   using Base = DynamicBuilder<PingBuilder, Zhttp::Method::GET>;
   using Base::header;
+  using Path = PingPath;
   using Headers = ZhttpHeaders("authorization");
 
   template <typename Key, typename L> void header(L &&l) const {
@@ -317,15 +318,15 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Catalog> {
 struct ResParser : public Zrest::MResParser<Catalog, ReqBuilder_> { };
 
 class Client;
-class Pool;
-template <typename Heap = ZuVoid> class Pool_;
+struct Pool;
+template <typename Heap> class Pool_;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"zrest.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
   using Base = Zhttp::Pool<Client, TxQ, ResParser>;
 public:
@@ -337,10 +338,7 @@ private:
   ReqBuilderQ m_requests;
 };
 using PoolHeap = ZmHeap<"zrest.Pool", Pool_<>>;
-class Pool : public Pool_<PoolHeap> {
-public:
-  using Pool_<PoolHeap>::Pool_;
-};
+ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class Client : public Zhttp::Client<Client, Pool> {
 public:
@@ -400,19 +398,19 @@ static bool formEach(ZuCSpan form, Fn &&fn)
   return true;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CallbackData_ : public Heap, public ZmObject {
   OAuthString data;
   CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
 using CallbackDataHeap =
-  ZmHeap<"zrest.CallbackData", CallbackData_<ZuVoid>>;
+  ZmHeap<"zrest.CallbackData", CallbackData_<>>;
 ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct CallbackBody_ : public Heap, public ZmObject { OAuthString data; };
 using CallbackBodyHeap =
-  ZmHeap<"zrest.CallbackBody", CallbackBody_<ZuVoid>>;
+  ZmHeap<"zrest.CallbackBody", CallbackBody_<>>;
 ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
 
 template <typename Impl, unsigned Status_>
@@ -558,8 +556,10 @@ static bool loadJSON(Result &result, Object &object, bool noStore = true)
   if (scan.p<0>() != int(result.body.length()) || !scan.p<1>() ||
       !scan.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = scan.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1 || !ZfJSON::unique(roots[0])) return false;
-  try { ZfJSON::handler<Object>(roots[0]).load(object); }
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<Object>(roots[0]);
+  if (!handler.valid) return false;
+  try { handler.load(object); }
   catch (...) { return false; }
   return true;
 }

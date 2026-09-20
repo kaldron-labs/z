@@ -102,12 +102,16 @@ namespace ValueTC {
   };
 }
 
-template <typename Data, typename Heap>
+template <typename Data, typename Heap = ZuVoid>
 class Node_ : public Heap, public AnyNode {
-  Node_(const Node_ &) = delete;
+
+public:
   Node_ &operator =(const Node_ &) = delete;
-  Node_(Node_ &&) = delete;
   Node_ &operator =(Node_ &&) = delete;
+
+private:
+  Node_(const Node_ &) = delete;
+  Node_(Node_ &&) = delete;
 
 public:
   using AnyNode::TL;
@@ -125,16 +129,10 @@ public:
 };
 
 template <typename Data>
-using Node_Heap = ZmHeap_<Node_HeapID, Node_<Data, ZuVoid>>;
+using Node_Heap = ZmHeap_<Node_HeapID, Node_<Data>>;
 
 template <typename Data>
-struct Node : public Node_<Data, Node_Heap<Data>> {
-  using Base = Node_<Data, Node_Heap<Data>>;
-  using Base::Base;
-  template <typename ...Args,
-    decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0>
-  Node(Args &&...args) : Base(ZuFwd<Args>(args)...) { }
-};
+ZuDerive(Node, (Node_<Data, Node_Heap<Data>>));
 
 template <typename Data>
 inline bool AnyNode::has() const {

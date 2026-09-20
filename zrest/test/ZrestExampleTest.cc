@@ -17,29 +17,27 @@
 using namespace ZuTestUtil;
 
 template <typename T>
-static T loadURIValue(ZuCSpan uri)
-{
-  ZtString<> data{uri};
-  auto scan = ZfURI::scan(data.span());
-  T value;
-  ZfURI::handler<T>(scan.template p<1>()).load(value);
-  return value;
-}
-
-template <typename T>
 static void loadURI(T &value, ZuCSpan uri)
 {
+  ZuTestScope(loadURI);
+
   ZtString<> data{uri};
   auto scan = ZfURI::scan(data.span());
-  ZfURI::handler<T>(scan.template p<1>()).load(value);
+  auto handler = ZfURI::handler<T>(scan.template p<1>());
+  ZuCHECK(handler.valid);
+  handler.load(value);
 }
 
 template <typename T>
 static void loadJSON(T &value, ZuCSpan json)
 {
+  ZuTestScope(loadJSON);
+
   ZtString<> data{json};
   auto scan = ZfJSON::scan(data.span());
-  ZfJSON::handler<T>((*scan.template p<1>())[0]).load(value);
+  auto handler = ZfJSON::handler<T>((*scan.template p<1>())[0]);
+  ZuCHECK(handler.valid);
+  handler.load(value);
 }
 
 static void pathTest()
@@ -60,8 +58,8 @@ static void pathTest()
   ZuCheck(uri ==
     "/.well-known/oauth-authorization-server/oauth2/ping");
 
-  auto loaded = loadURIValue<OAuthEndpointPath>(
-    "/oauth2/ping/v1/authorize");
+  OAuthEndpointPath loaded;
+  ZuTestCall(loadURI, loaded, "/oauth2/ping/v1/authorize");
   ZuCheck(loaded.oauth2 == "oauth2" && loaded.app == "ping" &&
     loaded.version == "v1" && loaded.endpoint == "authorize");
 }
@@ -81,7 +79,7 @@ static void authorizeTest()
   ZtString<> uri;
   ZfURI::save(uri, authorize);
   OAuthAuthorizeReq loaded;
-  loadURI(loaded, uri);
+  ZuTestCall(loadURI, loaded, uri);
   ZuCheck(loaded.responseType == "code" &&
     loaded.clientID == "zrest-native" && loaded.scope == "ping" &&
     loaded.state == "state" && loaded.codeChallenge == "challenge" &&
@@ -93,7 +91,8 @@ static void authorizeTest()
     .issuer = "https://localhost:8443/oauth2/ping"};
   uri.null();
   ZfURI::save(uri, response);
-  auto callback = loadURIValue<OAuthAuthorizeCodeRes>(uri);
+  OAuthAuthorizeCodeRes callback;
+  ZuTestCall(loadURI, callback, uri);
   ZuCheck(callback.code == "code");
   ZuCheck(callback.state == "state");
   ZuCheck(callback.issuer == "https://localhost:8443/oauth2/ping");
@@ -112,7 +111,7 @@ static void formTest()
   ZtString<> uri;
   ZfURI::save(uri, token);
   OAuthCodeTokenReq loaded;
-  loadURI(loaded, uri);
+  ZuTestCall(loadURI, loaded, uri);
   ZuCheck(loaded.grantType == "authorization_code");
   ZuCheck(loaded.code == "code");
   ZuCheck(loaded.clientID == "zrest-native");
@@ -126,7 +125,7 @@ static void formTest()
   uri.null();
   ZfURI::save(uri, refresh);
   OAuthRefreshTokenReq loadedRefresh;
-  loadURI(loadedRefresh, uri);
+  ZuTestCall(loadURI, loadedRefresh, uri);
   ZuCheck(loadedRefresh.grantType == "refresh_token" &&
     loadedRefresh.clientID == "zrest-native" &&
     loadedRefresh.refreshToken == "refresh" &&
@@ -139,7 +138,7 @@ static void formTest()
   uri.null();
   ZfURI::save(uri, revoke);
   OAuthRevokeReq loadedRevoke;
-  loadURI(loadedRevoke, uri);
+  ZuTestCall(loadURI, loadedRevoke, uri);
   ZuCheck(loadedRevoke.token == "refresh" &&
     loadedRevoke.tokenTypeHint == "refresh_token" &&
     loadedRevoke.clientID == "zrest-native");
@@ -162,7 +161,7 @@ static void jsonTest()
     "\"expires_in\":300,\"refresh_token\":\"refresh\","
     "\"scope\":\"ping\"}");
   OAuthTokenRes loaded;
-  loadJSON(loaded, json);
+  ZuTestCall(loadJSON, loaded, json);
   ZuCheck(loaded.accessToken == "access" &&
     loaded.tokenType == "Bearer" && loaded.expiresIn == 300 &&
     loaded.refreshToken == "refresh" && loaded.scope == "ping");
@@ -185,7 +184,7 @@ static void jsonTest()
   json.null();
   ZfJSON::save(json, claims);
   OAuthAccessClaims loadedClaims;
-  loadJSON(loadedClaims, json);
+  ZuTestCall(loadJSON, loadedClaims, json);
   ZuCheck(loadedClaims.issuer == claims.issuer &&
     loadedClaims.audience == claims.audience &&
     loadedClaims.subject == claims.subject &&
@@ -201,10 +200,10 @@ static void pkceTest()
 {
   ZuTestScope(pkce);
 
-  static constexpr ZuCSpan verifier =
-    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-  static constexpr ZuCSpan expected =
-    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+  static constexpr auto verifier =
+    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"_Zu;
+  static constexpr auto expected =
+    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"_Zu;
   ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
   Ztls::MD<> md;
   md.update(ZuBSpan{verifier});

@@ -79,7 +79,7 @@ static bool writeCapability(ZuCSpan path, ZuCSpan issuer, ZuCSpan token)
   return ok;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class ServerBootstrap__ : public Heap, public ZmPolymorph  {
 public:
   ServerBootstrap__(
@@ -517,7 +517,8 @@ private:
   ActionID		m_actionID = 0;
   bool			m_done = false;
 };
-using ServerBootstrap_ = ServerBootstrap__<ZmHeap<"Zum.zumd.bootstrap.ServerBootstrap", ServerBootstrap__<ZuVoid>>>;
+using ServerBootstrap_Heap = ZmHeap<"Zum.zumd.bootstrap.ServerBootstrap", ServerBootstrap__<>>;
+ZuDerive(ServerBootstrap_, (ServerBootstrap__<ServerBootstrap_Heap>));
 
 void serverBootstrap(
     DB *, Requests *requests, DBContext *context, Ztls::Random &rng,

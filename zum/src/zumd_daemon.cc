@@ -231,7 +231,7 @@ String Daemon::enrollPage_(AppID appID)
   return page;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 class AuthRouteLoad__ : public Heap, public ZmObject  {
 public:
   AuthRouteLoad__(DBContext *context, Bytes dbKey, String authorizationBase,
@@ -254,7 +254,7 @@ public:
     }
     auto users = m_context->users;
     users->run(0, [self = ZmRef<AuthRouteLoad__>{this}, users]() mutable {
-      auto key = ZuFwdTuple(UserSource::Local, self->m_login);
+      auto key = ZuMvTuple(UserSource::Local, self->m_login);
       users->find<2>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<User> user) mutable {
         // Presence is authoritative: a disabled or suspended local identity
@@ -430,7 +430,8 @@ private:
   bool			m_overflow = false;
   bool			m_done = false;
 };
-using AuthRouteLoad_ = AuthRouteLoad__<ZmHeap<"Zum.zumd.daemon.AuthRouteLoad", AuthRouteLoad__<ZuVoid>>>;
+using AuthRouteLoad_Heap = ZmHeap<"Zum.zumd.daemon.AuthRouteLoad", AuthRouteLoad__<>>;
+ZuDerive(AuthRouteLoad_, (AuthRouteLoad__<AuthRouteLoad_Heap>));
 
 void Daemon::authRoute_(
     AppID appID, String login, AuthRouteDoneFn complete)

@@ -4,10 +4,11 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// assertions
+// assertions:
 
-// differs from assert() in that an assertion failure hangs the program
-// rather than crashing it, permitting live debugging
+// ZmAssert(x)             - debug assertion - elided in release build
+// ZmAssert_(x)            - release assertion - never elided
+// ZmAssert(x, (fallback)) - debug assertion with release fallback
 
 #ifndef ZmAssert_HH
 #define ZmAssert_HH
@@ -25,10 +26,16 @@ extern "C" {
   ZmExtern void ZmAssert_failed();
 }
 
-#ifdef ZDEBUG
 #include <zlib/ZuFnName.hh>
-#define ZmAssert(x, ...) \
-  ((x) ? void() : ZmAssert_fail(#x, __FILE__, __LINE__, ZuFnName))
+
+#define ZmFail(x) \
+  (ZmAssert_fail(#x, __FILE__, __LINE__, ZuFnName))
+
+// hard assertion, even in release build
+#define ZmAssert_(x) ((x) ? void() : ZmFail(x))
+
+#ifdef ZDEBUG
+#define ZmAssert(x, ...) ZmAssert_(x)
 #else /* ZDEBUG */
 #define ZmAssert_1(x) (void())
 #define ZmAssert_2(x, fallback) \

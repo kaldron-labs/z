@@ -53,13 +53,15 @@ inline void passkeyReply(ServerReply &reply)
   reply.type = ReplyType::OK;
 }
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct HTTPResponse_ : public Heap, public ZmObject  {
   String	body;
   String	location;
   String	setCookie;
 };
-using HTTPResponse = HTTPResponse_<ZmHeap<"Zum.zumd.http.HTTPResponse", HTTPResponse_<ZuVoid>>>;
+using HTTPResponseHeap =
+  ZmHeap<"Zum.zumd.http.HTTPResponse", HTTPResponse_<>>;
+ZuDerive(HTTPResponse, (HTTPResponse_<HTTPResponseHeap>));
 
 template <typename Impl, unsigned Status_>
 struct NoStoreJSON : public Zrest::ResBuilder<Impl, HTTPResponse> {
@@ -155,26 +157,38 @@ struct RevokeOK : public Zrest::ResBuilder<RevokeOK, HTTPResponse> {
     "content-length");
 };
 
-template <typename Heap>
-struct HTTPData_ : public Heap, public ZmObject  {
+struct HTTPDataFields : public ZmObject {
   // Zhttp parser spans are callback-scoped; completion runs after consume.
   String data;
   AppID appID = 0;
 
-  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
+  HTTPDataFields &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
   }
 };
-using HTTPData = HTTPData_<ZmHeap<"Zum.zumd.http.HTTPData", HTTPData_<ZuVoid>>>;
 
-struct HTTPQuery : public HTTPData {
-  HTTPQuery &operator =(ZuSpan<uint8_t> data_) {
+template <typename Heap = ZuVoid>
+struct HTTPData_ : public Heap, public HTTPDataFields {
+  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
+    HTTPDataFields::operator =(data_);
+    return *this;
+  }
+};
+using HTTPDataHeap = ZmHeap<"Zum.zumd.http.HTTPData", HTTPData_<>>;
+ZuDerive(HTTPData, (HTTPData_<HTTPDataHeap>));
+
+template <typename Heap = ZuVoid>
+struct HTTPQuery_ : public Heap, public HTTPDataFields {
+  HTTPQuery_ &operator =(ZuSpan<uint8_t> data_) {
     if (data_ && data_[0] == '?') data_.offset(1);
     data = data_;
     return *this;
   }
 };
+using HTTPQueryHeap =
+  ZmHeap<"Zum.zumd.http.HTTPQuery", HTTPQuery_<>>;
+ZuDerive(HTTPQuery, (HTTPQuery_<HTTPQueryHeap>));
 
 template <typename App> struct AuthorizeReq;
 template <typename App> struct TokenReq;

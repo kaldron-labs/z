@@ -964,7 +964,7 @@ static void compatibility()
     auto message = loadException([&]() {
       ZfCf::handler<CfRequired>(scan.p<1>()).ctor();
     });
-    constexpr ZuCSpan prefix = "\"required\" missing at:\n";
+    constexpr auto prefix = "\"required\" missing at:\n"_Zu;
     ZuCheck(ZuCSpan{message}.prefix(prefix) == prefix.length());
     ZuCheck(message.length() > prefix.length());
   }

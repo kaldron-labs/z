@@ -140,16 +140,15 @@ struct StateData {
   bool	started = false;
 };
 
-template <typename Heap>
+template <typename Heap = ZuVoid>
 struct State_ : public Heap, public ZmObject, public StateData {
   using StateData::StateData;
 };
-using StateHeap = ZmHeap<"Ztc.Agent.State", State_<ZuVoid>>;
+using StateHeap = ZmHeap<"Ztc.Agent.State", State_<>>;
 
 } // Agent_
 
-struct Agent::State final :
-    public Agent_::State_<Agent_::StateHeap> {
+struct Agent::State final : public Agent_::State_<Agent_::StateHeap> {
   using Base = Agent_::State_<Agent_::StateHeap>;
   using Base::Base;
 };

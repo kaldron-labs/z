@@ -153,10 +153,7 @@ public:
   }
 
 protected:
-  using MsgList = ZmList<ZmRef<Msg>, ZmListLock<ZmNoLock>>;
-
   Queue		m_queue;
-  MsgList	m_msgs;
   ZmRef<Msg>	m_resend;
   unsigned	m_dequeues = 0;
   unsigned	m_reRequests = 0;

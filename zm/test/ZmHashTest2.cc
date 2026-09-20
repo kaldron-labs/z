@@ -30,6 +30,7 @@ void dump(Order *o)
 {
   log("order ID: ", o->id);}
 
+// This test covers hashes that retain shared reference-counted values.
 ZmHashDerive(Orders, ZmRef<Order>,
   (ZmHashKey<Order::IDAccessor,
     ZmHashLock<ZmNoLock,

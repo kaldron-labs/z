@@ -1,8 +1,7 @@
 # `ztchub_client`
 
-The native skeleton shares the OAuth example flow in
-[`zum/example/native.hh`](../../zum/example/native.hh) with `zumping`.
-It discovers endpoints from the exact application issuer, completes
+The standalone native client discovers endpoints from the exact application
+issuer, completes
 browser/passkey authorization code with PKCE, then connects to `ztchub` over
 WSS. It receives attributed telemetry, unsubscribes, rotates its refresh token,
 repeats the subscription, and revokes the refresh token on exit. Tokens stay in
@@ -35,7 +34,7 @@ agent's service-account ID are identical. Requests and responses share the
 existing `Ztc.fbs.Msg` contract; there is no separate front-end envelope or
 protocol versioning.
 
-The OAuth adapter and protocol session are separate so future clients can
-replace browser interaction and authentication carriers while reusing the
-supported contract. The process fixture exercises this executable independently
-of its protocol fixture clients.
+The OAuth adapter and protocol session are separate within the example so
+future clients can replace browser interaction and authentication carriers
+while reusing the supported contract. The process fixture exercises this
+executable independently of its protocol fixture clients.

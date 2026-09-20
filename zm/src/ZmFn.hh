@@ -90,9 +90,9 @@
 #include <zlib/ZmHeap.hh>
 
 // heap-allocated reference-counted stateful lambda
-template <typename Heap, typename L, typename ArgList> struct ZmLambda_;
-template <typename Heap, typename L, typename ...Args>
-struct ZmLambda_<Heap, L, ZuTypeList<Args...>> :
+template <typename L, typename ArgList, typename Heap = ZuVoid> struct ZmLambda_;
+template <typename L, typename ...Args, typename Heap>
+struct ZmLambda_<L, ZuTypeList<Args...>, Heap> :
   public Heap, public ZmPolymorph
 {
   L lambda;
@@ -113,9 +113,11 @@ struct ZmLambda_<Heap, L, ZuTypeList<Args...>> :
   ZmLambda_ &operator =(ZmLambda_ &&) = delete;
 };
 template <typename HeapID, bool Sharded, typename L, typename ArgList>
-using ZmLambda = ZmLambda_<
-  ZmHeap_<HeapID, ZmLambda_<ZuVoid, L, ArgList>, Sharded>,
-  L, ArgList>;
+using ZmLambdaHeap =
+  ZmHeap_<HeapID, ZmLambda_<L, ArgList>, Sharded>;
+template <typename HeapID, bool Sharded, typename L, typename ArgList>
+ZuDerive(ZmLambda, (
+  ZmLambda_<L, ArgList, ZmLambdaHeap<HeapID, Sharded, L, ArgList>>));
 
 // stateful immutable lambda
 template <typename R_, typename ...Args_, typename NTP>

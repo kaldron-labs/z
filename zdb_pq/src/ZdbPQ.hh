@@ -2123,11 +2123,11 @@ private:
 private:
   ZuDerive(FieldID, ZtString<ZtStringHeapID<"ZdbPQ.FieldID">>);
   ZmLHashKVDerive(FieldMapHash, FieldID, unsigned, ZmLHashLocal<>);
-  template <typename Heap> struct FieldMap_ : FieldMapHash, Heap {
+  template <typename Heap = ZuVoid> struct FieldMap_ : FieldMapHash, Heap {
     using FieldMapHash::FieldMapHash;
   };
-  ZuDerive(FieldMap,
-    (FieldMap_<ZmHeap<"ZdbPQ.FieldMap", FieldMap_<ZuVoid>>>));
+  using FieldMapHeap = ZmHeap<"ZdbPQ.FieldMap", FieldMap_<>>;
+  ZuDerive(FieldMap, (FieldMap_<FieldMapHeap>));
   struct IndexState : IndexMatch {
     IDString	id;
     KeyID	keyID = 0;
@@ -2135,11 +2135,11 @@ private:
   ZuDerive(IndexStates,
     (ZtArray<IndexState, ZtArrayHeapID<"ZdbPQ.IndexState">>));
   ZmLHashKVDerive(IndexMapHash, ZuCSpan, unsigned, ZmLHashLocal<>);
-  template <typename Heap> struct IndexMap_ : IndexMapHash, Heap {
+  template <typename Heap = ZuVoid> struct IndexMap_ : IndexMapHash, Heap {
     using IndexMapHash::IndexMapHash;
   };
-  ZuDerive(IndexMap,
-    (IndexMap_<ZmHeap<"ZdbPQ.IndexMap", IndexMap_<ZuVoid>>>));
+  using IndexMapHeap = ZmHeap<"ZdbPQ.IndexMap", IndexMap_<>>;
+  ZuDerive(IndexMap, (IndexMap_<IndexMapHeap>));
   ZuDerive(MissingIndices,
     (ZtArray<KeyID, ZtArrayHeapID<"ZdbPQ.MissingIndex">>));
   ZuDerive(MaxUN, (ZtArray<UN, ZtArrayHeapID<"ZdbPQ.MaxUN">>));

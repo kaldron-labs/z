@@ -1,6 +1,6 @@
 METASOURCES = AUTO
-SUBDIRS = src # src test itest bench ext
-DIST_SUBDIRS = src # src test itest bench
+SUBDIRS = src test itest bench ext
+DIST_SUBDIRS = src test itest bench
 
 EXTRA_DIST = ext/Makefile ext/libz--0.sql ext/libz.control ext/libz.so \
 	ext/magic.bc ext/magic.c ext/zbitmap.bc ext/zbitmap.c ext/zbitmap.sql \

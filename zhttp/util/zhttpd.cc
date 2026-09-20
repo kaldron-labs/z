@@ -199,7 +199,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   using ProducerClose = ZmFn<void(),
     ZmFnHeapID<"zhttpd.FileProducerClose">>;
 
-  template <typename Emit, typename Heap>
+  template <typename Emit, typename Heap = ZuVoid>
   struct FileProducer_ : public Heap, public ZmPolymorph {
     using Self = FileProducer_;
     using Emitter = ZuUnion<void, Emit>;
@@ -272,8 +272,9 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   };
 
   template <typename Emit>
-  using FileProducer = FileProducer_<Emit,
-    ZmHeap<"zhttpd.FileProducer", FileProducer_<Emit, ZuVoid>>>;
+  using FileProducerHeap = ZmHeap<"zhttpd.FileProducer", FileProducer_<Emit>>;
+  template <typename Emit>
+  ZuDerive(FileProducer, (FileProducer_<Emit, FileProducerHeap<Emit>>));
 
   Zhttp::BodyPolicy::T bodyPolicy() const {
     if (!plan.sendBody) return Zhttp::BodyPolicy::None;

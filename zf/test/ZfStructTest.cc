@@ -356,7 +356,8 @@ int main(int argc, char **argv)
     ZuCheck(parsed.p<0>() == int(sizeof(source) - 1) && parsed.p<1>() &&
       parsed.p<1>()->has<ZfJSON::AnyNode::Array>());
     auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-    ZuCheck(roots.length() == 1 && ZfJSON::unique(roots[0]));
+    auto valueHandler = ZfJSON::handler<JSONValueReply>(roots[0]);
+    ZuCheck(roots.length() == 1 && valueHandler.valid);
     JSONValueVec values;
     values.push(JSONValue{static_cast<const ZfJSON::AnyNode *>(roots[0].ptr())});
     ZtString encoded;
@@ -380,8 +381,9 @@ int main(int argc, char **argv)
 
     char duplicate[] = "{\"id\":1,\"id\":2}";
     auto duplicateParsed = ZfJSON::scan(duplicate);
-    ZuCheck(duplicateParsed.p<1>() &&
-      !ZfJSON::unique((*duplicateParsed.p<1>())[0]));
+    auto duplicateHandler = ZfJSON::handler<Foo>(
+      (*duplicateParsed.p<1>())[0]);
+    ZuCheck(duplicateParsed.p<1>() && !duplicateHandler.valid);
   }
 
   using Fields = ZuFields<Foo>;
@@ -479,7 +481,9 @@ int main(int argc, char **argv)
     if (scan.p<0>() < 0) return 1;
     using Handler = ZfJSON::As<Foo>::template Handler<Foo, ZuFacet::JSON>;
     ZuCheck((Handler::UpdFields::N));
-    ZfJSON::handler<Foo, ZuFacet::JSON>((*scan.p<1>())[0]).update(foo);
+    auto handler = ZfJSON::handler<Foo, ZuFacet::JSON>((*scan.p<1>())[0]);
+    ZuCheck(handler.valid);
+    handler.update(foo);
 
     foo.bytesVec = { "xxx", "yyyy", "zzzzz" };
 
@@ -507,7 +511,9 @@ int main(int argc, char **argv)
     ZuCheck(scan.p<0>() >= 0);
     if (scan.p<0>() < 0) return 1;
 
-    auto bar = ZfJSON::handler<Foo, ZuFacet::Bah>((*scan.p<1>())[0]).ctor();
+    auto handler = ZfJSON::handler<Foo, ZuFacet::Bah>((*scan.p<1>())[0]);
+    ZuCheck(handler.valid);
+    auto bar = handler.ctor();
 
     ZfJSON::save<ZuFacet::Bah>(json3, bar);
 
@@ -531,8 +537,11 @@ int main(int argc, char **argv)
     auto next = ZfJSON::scan(ZuMv(scan.p<1>()), second);
     ZuCheck(next.p<0>() == int(sizeof(second) - 1));
     ZuCheck(next.p<1>()->data<ZfJSON::NodeArray>().length() == 2);
-    auto one = ZfJSON::handler<Foo>((*next.p<1>())[0]).ctor();
-    auto two = ZfJSON::handler<Foo>((*next.p<1>())[1]).ctor();
+    auto oneHandler = ZfJSON::handler<Foo>((*next.p<1>())[0]);
+    auto twoHandler = ZfJSON::handler<Foo>((*next.p<1>())[1]);
+    ZuCheck(oneHandler.valid && twoHandler.valid);
+    auto one = oneHandler.ctor();
+    auto two = twoHandler.ctor();
     ZuCheck(one.id == "one");
     ZuCheck(two.id == "two");
   }
@@ -541,12 +550,16 @@ int main(int argc, char **argv)
     char wrong_[] = "{\"nested\":42}";
     auto wrongScan = ZfJSON::scan(wrong_);
     ZuCheck(wrongScan.p<0>() >= 0);
-    auto wrong = ZfJSON::handler<Foo>((*wrongScan.p<1>())[0]).ctor();
+    auto wrongHandler = ZfJSON::handler<Foo>((*wrongScan.p<1>())[0]);
+    ZuCheck(wrongHandler.valid);
+    auto wrong = wrongHandler.ctor();
 
     char null_[] = "{\"nested\":null}";
     auto nullScan = ZfJSON::scan(null_);
     ZuCheck(nullScan.p<0>() >= 0);
-    auto null = ZfJSON::handler<Foo>((*nullScan.p<1>())[0]).ctor();
+    auto nullHandler = ZfJSON::handler<Foo>((*nullScan.p<1>())[0]);
+    ZuCheck(nullHandler.valid);
+    auto null = nullHandler.ctor();
 
     ZuCheck(wrong.nested.i1 == null.nested.i1);
     ZuCheck(wrong.nested.i2 == null.nested.i2);
@@ -554,7 +567,9 @@ int main(int argc, char **argv)
     char object_[] = "{\"nested\":{}}";
     auto objectScan = ZfJSON::scan(object_);
     ZuCheck(objectScan.p<0>() >= 0);
-    auto object = ZfJSON::handler<Foo>((*objectScan.p<1>())[0]).ctor();
+    auto objectHandler = ZfJSON::handler<Foo>((*objectScan.p<1>())[0]);
+    ZuCheck(objectHandler.valid);
+    auto object = objectHandler.ctor();
     ZuCheck(object.nested.i1 == ZuCmp<int>::null());
     ZuCheck(object.nested.i2 == ZuCmp<int>::null());
   }
@@ -563,31 +578,41 @@ int main(int argc, char **argv)
     char unknown_[] = "{\"int_ranged-junk\":99}";
     auto unknownScan = ZfJSON::scan(unknown_);
     ZuCheck(unknownScan.p<0>() >= 0);
-    auto unknown = ZfJSON::handler<Foo>((*unknownScan.p<1>())[0]).ctor();
+    auto unknownHandler = ZfJSON::handler<Foo>((*unknownScan.p<1>())[0]);
+    ZuCheck(unknownHandler.valid);
+    auto unknown = unknownHandler.ctor();
     ZuCheck(unknown.int_ranged == 42);
 
     char minimum_[] = "{\"int_ranged\":0}";
     auto minimumScan = ZfJSON::scan(minimum_);
     ZuCheck(minimumScan.p<0>() >= 0);
-    auto minimum = ZfJSON::handler<Foo>((*minimumScan.p<1>())[0]).ctor();
+    auto minimumHandler = ZfJSON::handler<Foo>((*minimumScan.p<1>())[0]);
+    ZuCheck(minimumHandler.valid);
+    auto minimum = minimumHandler.ctor();
     ZuCheck(minimum.int_ranged == 0);
 
     char maximum_[] = "{\"int_ranged\":\"100tail\"}";
     auto maximumScan = ZfJSON::scan(maximum_);
     ZuCheck(maximumScan.p<0>() >= 0);
-    auto maximum = ZfJSON::handler<Foo>((*maximumScan.p<1>())[0]).ctor();
+    auto maximumHandler = ZfJSON::handler<Foo>((*maximumScan.p<1>())[0]);
+    ZuCheck(maximumHandler.valid);
+    auto maximum = maximumHandler.ctor();
     ZuCheck(maximum.int_ranged == 100);
 
     char below_[] = "{\"int_ranged\":-1}";
     auto belowScan = ZfJSON::scan(below_);
     ZuCheck(belowScan.p<0>() >= 0);
-    auto below = ZfJSON::handler<Foo>((*belowScan.p<1>())[0]).ctor();
+    auto belowHandler = ZfJSON::handler<Foo>((*belowScan.p<1>())[0]);
+    ZuCheck(belowHandler.valid);
+    auto below = belowHandler.ctor();
     ZuCheck(below.int_ranged == ZuCmp<int>::null());
 
     char above_[] = "{\"int_ranged\":\"101\"}";
     auto aboveScan = ZfJSON::scan(above_);
     ZuCheck(aboveScan.p<0>() >= 0);
-    auto above = ZfJSON::handler<Foo>((*aboveScan.p<1>())[0]).ctor();
+    auto aboveHandler = ZfJSON::handler<Foo>((*aboveScan.p<1>())[0]);
+    ZuCheck(aboveHandler.valid);
+    auto above = aboveHandler.ctor();
     ZuCheck(above.int_ranged == ZuCmp<int>::null());
   }
 
@@ -596,7 +621,9 @@ int main(int argc, char **argv)
       "{\"float_ranged\":1.1,\"fixed\":\"-0.1\",\"decimal\":1.1}";
     auto scan = ZfJSON::scan(outside_);
     ZuCheck(scan.p<0>() >= 0);
-    auto outside = ZfJSON::handler<Foo>((*scan.p<1>())[0]).ctor();
+    auto outsideHandler = ZfJSON::handler<Foo>((*scan.p<1>())[0]);
+    ZuCheck(outsideHandler.valid);
+    auto outside = outsideHandler.ctor();
     ZuCheck(ZuCmp<double>::null(outside.float_ranged));
     ZuCheck(ZuCmp<ZuFixed>::null(outside.fixed));
     ZuCheck(ZuCmp<ZuDecimal>::null(outside.decimal));
@@ -609,7 +636,9 @@ int main(int argc, char **argv)
     auto scan = ZfJSON::scan(partial);
     ZuCheck(scan.p<0>() >= 0);
     if (scan.p<0>() >= 0) {
-      ZfJSON::handler<Foo, ZuFacet::JSON>((*scan.p<1>())[0]).update(foo);
+      auto handler = ZfJSON::handler<Foo, ZuFacet::JSON>((*scan.p<1>())[0]);
+      ZuCheck(handler.valid);
+      handler.update(foo);
       ZuCheck(foo.int_ == 0);
       ZuCheck(foo.int_ranged == 42);
       ZuCheck(foo.enum_ == Values::Normal);
@@ -620,13 +649,15 @@ int main(int argc, char **argv)
     char missing_[] = "{\"kept\":5}";
     auto missingScan = ZfJSON::scan(missing_);
     const auto &missing = (*missingScan.p<1>())[0];
-    auto missingValue = ZfJSON::handler<JSONUpdate>(missing).ctor();
+    auto missingHandler = ZfJSON::handler<JSONUpdate>(missing);
+    ZuCheck(missingHandler.valid);
+    auto missingValue = missingHandler.ctor();
     ZuCheck(ZuNull(missingValue.required));
     ZuCheck(missingValue.kept == 5);
     ZuCheck(missingValue.reset == 3);
 
     JSONUpdate loaded{1, 2, 8};
-    ZfJSON::handler<JSONUpdate>(missing).load(loaded);
+    missingHandler.load(loaded);
     ZuCheck(ZuNull(loaded.required));
     ZuCheck(loaded.kept == 5);
     ZuCheck(loaded.reset == 3);
@@ -634,14 +665,18 @@ int main(int argc, char **argv)
     loaded.reset = 8;
     char update_[] = "{\"required\":4}";
     auto updateScan = ZfJSON::scan(update_);
-    ZfJSON::handler<JSONUpdate>((*updateScan.p<1>())[0]).update(loaded);
+    auto updateHandler = ZfJSON::handler<JSONUpdate>((*updateScan.p<1>())[0]);
+    ZuCheck(updateHandler.valid);
+    updateHandler.update(loaded);
     ZuCheck(loaded.required == 4);
     ZuCheck(loaded.kept == 5);
     ZuCheck(loaded.reset == 3);
 
     char reset_[] = "{\"reset\":6}";
     auto resetScan = ZfJSON::scan(reset_);
-    ZfJSON::handler<JSONUpdate>((*resetScan.p<1>())[0]).update(loaded);
+    auto resetHandler = ZfJSON::handler<JSONUpdate>((*resetScan.p<1>())[0]);
+    ZuCheck(resetHandler.valid);
+    resetHandler.update(loaded);
     ZuCheck(loaded.required == 4);
     ZuCheck(loaded.kept == 5);
     ZuCheck(loaded.reset == 6);
@@ -657,7 +692,9 @@ int main(int argc, char **argv)
       auto scan = ZfJSON::scan(json);
       ZuCheck(scan.p<0>() >= 0);
       if (scan.p<0>() >= 0) {
-	auto in = ZfJSON::handler<OptFoo>((*scan.p<1>())[0]).ctor();
+	auto handler = ZfJSON::handler<OptFoo>((*scan.p<1>())[0]);
+	ZuCheck(handler.valid);
+	auto in = handler.ctor();
 	ZuCheck(!in.head);
 	ZuCheck(!in.req[0]);
 	ZuCheck(!in.mid);
@@ -694,7 +731,9 @@ int main(int argc, char **argv)
     auto scan = ZfJSON::scan(json);
     ZuCheck(scan.p<0>() >= 0);
     if (scan.p<0>() >= 0) {
-      auto copy = ZfJSON::handler<BoxFoo>((*scan.p<1>())[0]).ctor();
+      auto handler = ZfJSON::handler<BoxFoo>((*scan.p<1>())[0]);
+      ZuCheck(handler.valid);
+      auto copy = handler.ctor();
       ZuCheck(!*copy.value);
       ZuCheck(copy.value.val() == 0);
       ZuCheck(copy.values.length() == 2);
@@ -712,7 +751,9 @@ int main(int argc, char **argv)
       "{\"value\":\"00000000000000000000000000abcdef\"}");
     auto scan = ZfJSON::scan(json);
     FmtInt loaded;
-    ZfJSON::handler<FmtInt>((*scan.p<1>())[0]).load(loaded);
+    auto handler = ZfJSON::handler<FmtInt>((*scan.p<1>())[0]);
+    ZuCheck(handler.valid);
+    handler.load(loaded);
     ZuCheck(loaded.value == value.value);
   }
 
@@ -721,7 +762,9 @@ int main(int argc, char **argv)
     ZuCSpan expected{"{\"q\\\"\\\\\\ud83d\\udc04\":7}"};
     auto scan = ZfJSON::scan(json_);
     ZuCheck(scan.p<0>() >= 0);
-    auto map = ZmRef(ZfJSON::handler<IntTree>((*scan.p<1>())[0]).alloc());
+    auto mapHandler = ZfJSON::handler<IntTree>((*scan.p<1>())[0]);
+    ZuCheck(mapHandler.valid);
+    auto map = ZmRef(mapHandler.alloc());
     ZuCheck(map);
     ZuCheck(map->count_() == 1);
     ZuCheck(map->findVal("q\"\\\xf0\x9f\x90\x84") == 7);
@@ -731,7 +774,7 @@ int main(int argc, char **argv)
     ZuCheck(json == expected);
 
     alignas(IntTree) uint8_t storage[sizeof(IntTree)];
-    ZfJSON::handler<IntTree>((*scan.p<1>())[0]).new_(storage);
+    mapHandler.new_(storage);
     auto placed = reinterpret_cast<IntTree *>(storage);
     ZuCheck(placed);
     ZuCheck(placed->findVal("q\"\\\xf0\x9f\x90\x84") == 7);
@@ -745,7 +788,9 @@ int main(int argc, char **argv)
 
     char load_[] = "{\"loaded\":2}";
     auto loadScan = ZfJSON::scan(load_);
-    ZfJSON::handler<IntTree>((*loadScan.p<1>())[0]).load(*map);
+    auto loadHandler = ZfJSON::handler<IntTree>((*loadScan.p<1>())[0]);
+    ZuCheck(loadHandler.valid);
+    loadHandler.load(*map);
     ZuCheck(map.ptr() == ptr);
     ZuCheck(map->count_() == 1);
     ZuCheck(map->findVal("loaded") == 2);
@@ -754,7 +799,9 @@ int main(int argc, char **argv)
     map->add("kept", 3);
     char update_[] = "{\"loaded\":4,\"added\":5}";
     auto updateScan = ZfJSON::scan(update_);
-    ZfJSON::handler<IntTree>((*updateScan.p<1>())[0]).update(*map);
+    auto updateHandler = ZfJSON::handler<IntTree>((*updateScan.p<1>())[0]);
+    ZuCheck(updateHandler.valid);
+    updateHandler.update(*map);
     ZuCheck(map.ptr() == ptr);
     ZuCheck(map->count_() == 3);
     ZuCheck(map->findVal("loaded") == 4);
@@ -762,29 +809,31 @@ int main(int argc, char **argv)
     ZuCheck(map->findVal("added") == 5);
 
     auto loadedNull = ZmRef(new IntTree());
-    ZfJSON::handler<IntTree>((*loadScan.p<1>())[0]).load(*loadedNull);
+    loadHandler.load(*loadedNull);
     ZuCheck(loadedNull);
     ZuCheck(loadedNull->findVal("loaded") == 2);
     auto updatedNull = ZmRef(new IntTree());
-    ZfJSON::handler<IntTree>((*updateScan.p<1>())[0]).update(*updatedNull);
+    updateHandler.update(*updatedNull);
     ZuCheck(updatedNull);
     ZuCheck(updatedNull->findVal("loaded") == 4);
     ZuCheck(updatedNull->findVal("added") == 5);
 
     char wrong_[] = "[1]";
     auto wrongScan = ZfJSON::scan(wrong_);
-    ZfJSON::handler<IntTree>((*wrongScan.p<1>())[0]).load(*map);
-    ZuCheck(!map->count_());
+    auto wrongHandler = ZfJSON::handler<IntTree>((*wrongScan.p<1>())[0]);
+    ZuCheck(!wrongHandler.valid);
 
     ZtString<> json;
     ZfJSON::save(json, map);
-    ZuCheck(json == "{}");
+    ZuCheck(json == "{\"added\":5,\"kept\":3,\"loaded\":4}");
   }
 
   {
     char hash_[] = "{\"a\":1,\"b\":2}";
     auto hashScan = ZfJSON::scan(hash_);
-    auto hash = ZmRef(ZfJSON::handler<IntHash>((*hashScan.p<1>())[0]).alloc());
+    auto hashHandler = ZfJSON::handler<IntHash>((*hashScan.p<1>())[0]);
+    ZuCheck(hashHandler.valid);
+    auto hash = ZmRef(hashHandler.alloc());
     ZuCheck(hash);
     ZuCheck(hash->count_() == 2);
     ZuCheck(hash->findVal("a") == 1);
@@ -793,7 +842,10 @@ int main(int argc, char **argv)
     auto hashPtr = hash.ptr();
     char hashUpdate_[] = "{\"a\":3,\"c\":4}";
     auto hashUpdateScan = ZfJSON::scan(hashUpdate_);
-    ZfJSON::handler<IntHash>((*hashUpdateScan.p<1>())[0]).update(*hash);
+    auto hashUpdateHandler = ZfJSON::handler<IntHash>(
+      (*hashUpdateScan.p<1>())[0]);
+    ZuCheck(hashUpdateHandler.valid);
+    hashUpdateHandler.update(*hash);
     ZuCheck(hash.ptr() == hashPtr);
     ZuCheck(hash->findVal("a") == 3);
     ZuCheck(hash->findVal("b") == 2);
@@ -801,7 +853,9 @@ int main(int argc, char **argv)
 
     char lhash_[] = "{\"a\":1,\"b\":2}";
     auto lhashScan = ZfJSON::scan(lhash_);
-    auto lhash = ZmRef(ZfJSON::handler<IntLHash>((*lhashScan.p<1>())[0]).alloc());
+    auto lhashHandler = ZfJSON::handler<IntLHash>((*lhashScan.p<1>())[0]);
+    ZuCheck(lhashHandler.valid);
+    auto lhash = ZmRef(lhashHandler.alloc());
     ZuCheck(lhash);
     ZuCheck(lhash->count_() == 2);
     ZuCheck(lhash->findVal("a") == 1);
@@ -810,14 +864,20 @@ int main(int argc, char **argv)
     auto lhashPtr = lhash.ptr();
     char lhashLoad_[] = "{\"c\":4}";
     auto lhashLoadScan = ZfJSON::scan(lhashLoad_);
-    ZfJSON::handler<IntLHash>((*lhashLoadScan.p<1>())[0]).load(*lhash);
+    auto lhashLoadHandler = ZfJSON::handler<IntLHash>(
+      (*lhashLoadScan.p<1>())[0]);
+    ZuCheck(lhashLoadHandler.valid);
+    lhashLoadHandler.load(*lhash);
     ZuCheck(lhash.ptr() == lhashPtr);
     ZuCheck(lhash->count_() == 1);
     ZuCheck(lhash->findVal("c") == 4);
 
     char duplicate_[] = "{\"a\":1,\"a\":2}";
     auto duplicateScan = ZfJSON::scan(duplicate_);
-    auto duplicate = ZmRef(ZfJSON::handler<IntHash>((*duplicateScan.p<1>())[0]).alloc());
+    auto duplicateHandler = ZfJSON::handler<IntHash>(
+      (*duplicateScan.p<1>())[0]);
+    ZuCheck(duplicateHandler.valid);
+    auto duplicate = ZmRef(duplicateHandler.alloc());
     ZuCheck(duplicate->count_() == 2);
   }
 
@@ -846,7 +906,9 @@ int main(int argc, char **argv)
 
     char wrong_[] = "{\"bad\":\"x\"}";
     auto wrongScan = ZfJSON::scan(wrong_);
-    auto wrong = ZmRef(ZfJSON::handler<IntHash>((*wrongScan.p<1>())[0]).alloc());
+    auto wrongHandler = ZfJSON::handler<IntHash>((*wrongScan.p<1>())[0]);
+    ZuCheck(wrongHandler.valid);
+    auto wrong = ZmRef(wrongHandler.alloc());
     ZuCheck(ZuNull(wrong->findVal("bad")));
   }
 
@@ -886,14 +948,18 @@ int main(int argc, char **argv)
     char object_[] =
       "{\"object\":{\"fixed\":3,\"mutable_\":4}}";
     auto objectScan = ZfJSON::scan(object_);
-    auto loadedObjects = ZmRef(ZfJSON::handler<ObjHash>((*objectScan.p<1>())[0]).alloc());
+    auto objectHandler = ZfJSON::handler<ObjHash>((*objectScan.p<1>())[0]);
+    ZuCheck(objectHandler.valid);
+    auto loadedObjects = ZmRef(objectHandler.alloc());
     auto object = loadedObjects->findVal("object");
     ZuCheck(object.fixed == 3);
     ZuCheck(object.mutable_ == 4);
 
     char array_[] = "{\"array\":[3,4]}";
     auto arrayScan = ZfJSON::scan(array_);
-    auto loadedArrays = ZmRef(ZfJSON::handler<ArrayHash>((*arrayScan.p<1>())[0]).alloc());
+    auto arrayHandler = ZfJSON::handler<ArrayHash>((*arrayScan.p<1>())[0]);
+    ZuCheck(arrayHandler.valid);
+    auto loadedArrays = ZmRef(arrayHandler.alloc());
     auto array = loadedArrays->findVal("array");
     ZuCheck(array.length() == 2);
     ZuCheck(array[0] == 3);
@@ -901,12 +967,16 @@ int main(int argc, char **argv)
 
     char string_[] = "{\"string\":\"world\"}";
     auto stringScan = ZfJSON::scan(string_);
-    auto loadedStrings = ZmRef(ZfJSON::handler<TextHash>((*stringScan.p<1>())[0]).alloc());
+    auto stringHandler = ZfJSON::handler<TextHash>((*stringScan.p<1>())[0]);
+    ZuCheck(stringHandler.valid);
+    auto loadedStrings = ZmRef(stringHandler.alloc());
     ZuCheck(loadedStrings->findVal("string").value == "world");
 
     char map_[] = "{\"map\":{\"value\":9}}";
     auto mapScan = ZfJSON::scan(map_);
-    auto loadedMaps = ZmRef(ZfJSON::handler<MapHash>((*mapScan.p<1>())[0]).alloc());
+    auto mapHandler = ZfJSON::handler<MapHash>((*mapScan.p<1>())[0]);
+    ZuCheck(mapHandler.valid);
+    auto loadedMaps = ZmRef(mapHandler.alloc());
     ZuCheck(loadedMaps->findVal("map")->findVal("value") == 9);
   }
 
@@ -920,13 +990,17 @@ int main(int argc, char **argv)
 
     char holder_[] = "{\"map\":{\"value\":8}}";
     auto holderScan = ZfJSON::scan(holder_);
-    auto loaded = ZfJSON::handler<MapHolder>((*holderScan.p<1>())[0]).ctor();
+    auto handler = ZfJSON::handler<MapHolder>((*holderScan.p<1>())[0]);
+    ZuCheck(handler.valid);
+    auto loaded = handler.ctor();
     ZuCheck(loaded.map);
     ZuCheck(loaded.map->findVal("value") == 8);
 
     char null_[] = "{\"map\":null}";
     auto nullScan = ZfJSON::scan(null_);
-    auto null = ZfJSON::handler<MapHolder>((*nullScan.p<1>())[0]).ctor();
+    auto nullHandler = ZfJSON::handler<MapHolder>((*nullScan.p<1>())[0]);
+    ZuCheck(nullHandler.valid);
+    auto null = nullHandler.ctor();
     ZuCheck(!null.map);
   }
 
@@ -937,20 +1011,27 @@ int main(int argc, char **argv)
     ZfJSON::save(json, holder);
     json3 = json;
     auto scan = ZuMv((*(ZfJSON::scan(json3).p<1>()))[0]);
-    auto loaded = ZfJSON::handler<UnionHolder>(scan).ctor();
+    auto handler = ZfJSON::handler<UnionHolder>(scan);
+    ZuCheck(handler.valid);
+    auto loaded = handler.ctor();
     auto node = loaded.u.p<const ZfJSON::AnyNode *>();
-    loaded.u = ZfJSON::handler<UnionA>(node).ctor();
+    auto nodeHandler = ZfJSON::handler<UnionA>(node);
+    ZuCheck(nodeHandler.valid);
+    loaded.u = nodeHandler.ctor();
     ZfJSON::save(json2, loaded);
     ZuCheck(json == json2);
 
     char arrayJSON[] = "{\"u\":[1,2,3]}";
     auto arrayScan = ZfJSON::scan(arrayJSON);
-    auto arrayHolder =
-      ZfJSON::handler<UnionHolder>((*arrayScan.p<1>())[0]).ctor();
+    auto arrayHandler = ZfJSON::handler<UnionHolder>((*arrayScan.p<1>())[0]);
+    ZuCheck(arrayHandler.valid);
+    auto arrayHolder = arrayHandler.ctor();
     ZuCheck((arrayHolder.u.is<const ZfJSON::AnyNode *>()));
     auto arrayNode = arrayHolder.u.p<const ZfJSON::AnyNode *>();
     ZuCheck(arrayNode && arrayNode->has<ZfJSON::AnyNode::Array>());
-    arrayHolder.u = ZfJSON::handler<UnionArray>(arrayNode).ctor();
+    auto arrayNodeHandler = ZfJSON::handler<UnionArray>(arrayNode);
+    ZuCheck(arrayNodeHandler.valid);
+    arrayHolder.u = arrayNodeHandler.ctor();
     ZuCheck(arrayHolder.u.p<UnionArray>().length() == 3);
     ZuCheck(arrayHolder.u.p<UnionArray>()[1] == 2);
     json.length_(0);
@@ -959,12 +1040,16 @@ int main(int argc, char **argv)
 
     char scalarJSON[] = "{\"u\":\"text\"}";
     auto scalarScan = ZfJSON::scan(scalarJSON);
-    auto scalarHolder =
-      ZfJSON::handler<UnionHolder>((*scalarScan.p<1>())[0]).ctor();
+    auto scalarHandler = ZfJSON::handler<UnionHolder>(
+      (*scalarScan.p<1>())[0]);
+    ZuCheck(scalarHandler.valid);
+    auto scalarHolder = scalarHandler.ctor();
     ZuCheck((scalarHolder.u.is<const ZfJSON::AnyNode *>()));
     auto scalarNode = scalarHolder.u.p<const ZfJSON::AnyNode *>();
     ZuCheck(scalarNode && scalarNode->has<ZfJSON::AnyNode::String>());
-    scalarHolder.u = ZfJSON::handler<MapText>(scalarNode).ctor();
+    auto scalarNodeHandler = ZfJSON::handler<MapText>(scalarNode);
+    ZuCheck(scalarNodeHandler.valid);
+    scalarHolder.u = scalarNodeHandler.ctor();
     ZuCheck(scalarHolder.u.p<MapText>().value == "text");
     json.length_(0);
     ZfJSON::save(json, scalarHolder);
@@ -972,25 +1057,29 @@ int main(int argc, char **argv)
 
     char nullJSON[] = "{\"u\":null}";
     auto nullScan = ZfJSON::scan(nullJSON);
-    auto nullHolder =
-      ZfJSON::handler<UnionHolder>((*nullScan.p<1>())[0]).ctor();
+    auto nullHandler = ZfJSON::handler<UnionHolder>((*nullScan.p<1>())[0]);
+    ZuCheck(nullHandler.valid);
+    auto nullHolder = nullHandler.ctor();
     ZuCheck((nullHolder.u.is<const ZfJSON::AnyNode *>()));
     auto nullNode = nullHolder.u.p<const ZfJSON::AnyNode *>();
     ZuCheck(nullNode && nullNode->has<ZfJSON::AnyNode::Null>());
     using UnionHandler = ZfJSON::As<decltype(nullHolder.u)>::
       Handler<decltype(nullHolder.u), ZuFacet::JSON>;
-    ZuCheck(!UnionHandler::valid(nullptr));
+    ZuCheck(!UnionHandler{nullptr}.valid);
 
     char numberJSON[] = "{\"u\":42}";
     auto numberScan = ZfJSON::scan(numberJSON);
-    auto numberHolder =
-      ZfJSON::handler<UnionHolder>((*numberScan.p<1>())[0]).ctor();
+    auto numberHandler = ZfJSON::handler<UnionHolder>(
+      (*numberScan.p<1>())[0]);
+    ZuCheck(numberHandler.valid);
+    auto numberHolder = numberHandler.ctor();
     auto numberNode = numberHolder.u.p<const ZfJSON::AnyNode *>();
     ZuCheck(numberNode && numberNode->has<ZfJSON::AnyNode::Number>());
     char boolJSON[] = "{\"u\":true}";
     auto boolScan = ZfJSON::scan(boolJSON);
-    auto boolHolder =
-      ZfJSON::handler<UnionHolder>((*boolScan.p<1>())[0]).ctor();
+    auto boolHandler = ZfJSON::handler<UnionHolder>((*boolScan.p<1>())[0]);
+    ZuCheck(boolHandler.valid);
+    auto boolHolder = boolHandler.ctor();
     auto boolNode = boolHolder.u.p<const ZfJSON::AnyNode *>();
     ZuCheck(boolNode && boolNode->has<ZfJSON::AnyNode::True>());
 
