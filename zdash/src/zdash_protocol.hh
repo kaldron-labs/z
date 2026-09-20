@@ -31,10 +31,17 @@ inline Frame requestFrame(const Subscription &sub, bool subscribe)
   auto device = sub.deviceID ?
     builder.CreateString(sub.deviceID.data(), sub.deviceID.length()) :
     Zfb::Offset<flatbuffers::String>{};
-  auto request = ZfbStruct::save(builder, Ztc::Request{
-    .filter = sub.filter, .id = sub.publisherID, .seqNo = 0,
-    .interval = subscribe ? sub.interval : 0,
-    .group = uint8_t(sub.group), .subscribe = subscribe});
+  auto filter = Zfb::Save::str(builder, sub.filter);
+  auto publisher = sub.publisherID ? Zfb::Save::str(builder, sub.publisherID) :
+    Zfb::Offset<flatbuffers::String>{};
+  Ztc::fbs::RequestBuilder requestBuilder{builder};
+  requestBuilder.add_seqNo(0);
+  requestBuilder.add_group(sub.group);
+  requestBuilder.add_filter(filter);
+  requestBuilder.add_id(publisher);
+  requestBuilder.add_interval(subscribe ? sub.interval : 0);
+  requestBuilder.add_subscribe(subscribe);
+  auto request = requestBuilder.Finish();
   builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Request,
     request.Union(), sub.id, device));
   return builder.buf();

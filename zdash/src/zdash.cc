@@ -78,10 +78,13 @@ struct AppCf {
   unsigned	interval = 1000;
   unsigned	alertRows = 1000;
   ZtString<>	wssURL;
+  ZtString<>	caPath;
   ZtString<>	deviceID;
   ZtString<>	group = "App";
   ZuID		publisherID;
   ZtString<>	filter = "*";
+  bool		test = false; // CLI only; never enabled by a normal config
+  unsigned	testTimeout = 10;
 };
 
 ZfStruct(, (AppCf, Cf),
@@ -94,6 +97,7 @@ ZfStruct(, (AppCf, Cf),
   (((interval), ((Range<1U, 3600000U>))),		(UInt32, 1000)),
   (((alertRows), ((Range<1U, 1000000U>))),		(UInt32, 1000)),
   (((wssURL)),					(String)),
+  (((caPath)),					(String)),
   (((deviceID)),					(String)),
   (((group)),						(String, "App")),
   (((publisherID)),					(String)),
@@ -106,6 +110,8 @@ struct Options {
   ZtString<> caPath;
   bool noBrowser = false;
   bool help = false;
+  bool test = false;
+  unsigned testTimeout = 10;
 };
 ZfStruct(, (Options, CLI),
   (((config), (CLI::Long<"config">)), (String)),
@@ -113,6 +119,8 @@ ZfStruct(, (Options, CLI),
   (((deviceID), (CLI::Long<"device-id">)), (String)),
   (((caPath), (CLI::Long<"ca">)), (String)),
   (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
+  (((test), (CLI::Long<"test">)), (Bool)),
+  (((testTimeout), (CLI::Long<"test-timeout">)), (UInt32, 10)),
   (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 namespace Telemetry {
@@ -541,11 +549,85 @@ namespace GtkTree {
     DBTable *>;		// app->db->tables->[table]
 
   class Model : public ZGtk::TreeHierarchy::Model<Model, Iter, Depth> {
+    using Base = ZGtk::TreeHierarchy::Model<Model, Iter, Depth>;
   public:
     enum { RAGCol = 0, IDCol0, IDCol1, IDCol2, NCols };
 
+    static Model *ctor() {
+      auto model = Base::ctor();
+      // Release GObject's notification data as well as the C++ tree members.
+      G_OBJECT_GET_CLASS(model)->finalize = [](GObject *object) {
+	auto parent = G_OBJECT_CLASS(
+	  g_type_class_peek_parent(G_OBJECT_GET_CLASS(object)));
+	reinterpret_cast<Model *>(object)->~Model();
+	parent->finalize(object);
+      };
+      return model;
+    }
+
     // root()
     Root *root() { return &m_root; }
+
+    // Construct current ZuUnion iterators locally; retain ZGtk's tree storage.
+    gboolean get_iter(GtkTreeIter *iter, GtkTreePath *path) {
+      auto depth = gtk_tree_path_get_depth(path);
+      if (depth <= 0 || depth > Depth) return false;
+      return m_root.descend(gtk_tree_path_get_indices(path), depth,
+	[iter](auto ptr) {
+	  using T = ZuDecay<decltype(*ptr)>;
+	  new (iter) Iter{const_cast<T *>(ptr)};
+	});
+    }
+    GtkTreePath *get_path(GtkTreeIter *iter) {
+      gint indices[Depth];
+      unsigned depth = 0;
+      reinterpret_cast<Iter *>(iter)->cdispatch(
+	[&indices, &depth](auto, auto ptr) {
+	  depth = ZuDecay<decltype(*ptr)>::Depth;
+	  ptr->template ascend<Model>(indices);
+	});
+      return gtk_tree_path_new_from_indicesv(indices, depth);
+    }
+    gboolean iter_nth_child(
+	GtkTreeIter *iter, GtkTreeIter *parent, gint i) {
+      auto child = [iter](auto ptr) {
+	using T = ZuDecay<decltype(*ptr)>;
+	new (iter) Iter{const_cast<T *>(ptr)};
+      };
+      if (!parent) return m_root.child(i, child);
+      return reinterpret_cast<Iter *>(parent)->cdispatch(
+	[i, &child](auto, auto ptr) { return ptr->child(i, child); });
+    }
+    gboolean iter_children(GtkTreeIter *iter, GtkTreeIter *parent) {
+      return iter_nth_child(iter, parent, 0);
+    }
+    gboolean iter_parent(GtkTreeIter *iter, GtkTreeIter *child) {
+      return reinterpret_cast<Iter *>(child)->cdispatch(
+	[iter](auto, auto ptr) {
+	  auto parent = ptr->template parent<Model>();
+	  if (!parent) return false;
+	  new (iter) Iter{parent};
+	  return true;
+	});
+    }
+    template <typename Row>
+    void updated(Row *row) {
+      GtkTreeIter iter;
+      new (&iter) Iter{row};
+      auto path = get_path(&iter);
+      gtk_tree_model_row_changed(GTK_TREE_MODEL(this), path, &iter);
+      gtk_tree_path_free(path);
+    }
+    template <typename Row>
+    void del(Row *row) {
+      GtkTreeIter iter;
+      new (&iter) Iter{row};
+      auto path = get_path(&iter);
+      if constexpr (Row::Depth == 1) m_root.del(row);
+      else row->template parent<Model>()->del(row);
+      gtk_tree_model_row_deleted(GTK_TREE_MODEL(this), path);
+      gtk_tree_path_free(path);
+    }
 
     // parent() - child->parent type map
     template <typename T>
@@ -894,9 +976,12 @@ public:
   using DBItem = TelItem<Ztc::DBTelemetry>;
 
   bool init(ZiMultiplex *mx, AppCf config, ZuCSpan caPath, ZuCSpan token) {
+    m_test = config.test;
+    m_testLocal = m_test && !config.wssURL;
     Zws::URI uri;
-    if (!Zws::URI::parse(uri, config.wssURL).ok() || !uri.secure() ||
-	!uri.host || !uri.port || !uri.target || !token) return false;
+    if (!m_testLocal && (!Zws::URI::parse(uri, config.wssURL).ok() ||
+	!uri.secure() || !uri.host || !uri.port || !uri.target || !token))
+      return false;
     m_sub.deviceID = ZuMv(config.deviceID);
     m_sub.publisherID = config.publisherID;
     m_sub.filter = config.filter;
@@ -922,9 +1007,11 @@ public:
     m_stylePath = ZuMv(config.gtkStyle);
     int64_t refreshRate = int64_t(config.gtkRefresh) * 1000000;
     m_refreshQuantum = ZuTime{ZuTime::Nano{refreshRate >> 1}};
-    if (m_refreshQuantum < mx->params().quantum())
+    if (m_refreshQuantum < mx->params().quantum()) {
       m_refreshQuantum = mx->params().quantum();
-    m_refreshRate = m_refreshQuantum + m_refreshQuantum;
+      m_refreshRate = m_refreshQuantum + m_refreshQuantum;
+    } else
+      m_refreshRate = ZuTime{ZuTime::Nano{refreshRate}};
     if (config.gtkThread <= 4 || config.gtkThread > mx->params().nThreads())
       return false;
 
@@ -937,6 +1024,10 @@ public:
     }, config.gtkThread);
     m_executed.wait();
     if (!m_gtkReady) return false;
+    if (m_testLocal) {
+      mx->run([this]() { testFeed(1); }, 3);
+      return true;
+    }
 
     Zws::Config ws;
     ws.maxMessage = FrameMax;
@@ -961,6 +1052,13 @@ public:
   }
 
   void final() {
+    if (m_testLocal && m_attached) {
+      ZGtk::App::sched()->run([this]() {
+	m_closing = true;
+	m_executed.post();
+      }, 3);
+      m_executed.wait();
+    }
     if (m_clientStarted) {
       m_client.rxRun([this]() {
 	m_closing = true;
@@ -993,8 +1091,15 @@ public:
   }
 
   void post() { m_done.post(); }
-  void wait() { m_done.wait(); }
+  bool wait(unsigned timeout = 0) {
+    if (!timeout) { m_done.wait(); return true; }
+    if (!m_done.timedwait(Zm::now(timeout))) return true;
+    m_failed = true;
+    std::cerr << "zdash: test timed out\n";
+    return false;
+  }
   bool failed() const { return m_failed; }
+  bool testPassed() const { return m_testComplete && m_testClosed; }
 
   template <typename L>
   static void send(L &link, Frame frame) {
@@ -1159,19 +1264,31 @@ public:
 	  reinterpret_cast<App *>(this_)->gtkDestroyed();
 	}), reinterpret_cast<gpointer>(this));
 
-    gtk_widget_show_all(GTK_WIDGET(m_mainWindow));
-
-    gtk_window_present(m_mainWindow);
+    if (m_test) {
+      // Never map or present the test window, even on an inherited display.
+      gtk_window_set_accept_focus(m_mainWindow, false);
+      gtk_window_set_focus_on_map(m_mainWindow, false);
+      gtk_widget_set_no_show_all(GTK_WIDGET(m_mainWindow), true);
+      gtk_widget_realize(GTK_WIDGET(m_mainWindow));
+      m_testPoll = g_timeout_add(10, [](gpointer p) -> gboolean {
+	return static_cast<App *>(p)->testPoll();
+      }, this);
+    } else {
+      gtk_widget_show_all(GTK_WIDGET(m_mainWindow));
+      gtk_window_present(m_mainWindow);
+    }
 
     m_gtkReady = m_telRing.attach() == Zu::OK;
   }
 
   void gtkDestroyed() {
     m_mainWindow = nullptr;
+    if (m_test) m_testClosed = true;
     post();
   }
 
   void gtkFinal() {
+    if (m_testPoll) { g_source_remove(m_testPoll); m_testPoll = 0; }
     while (auto slot = m_telRing.tryShift()) {
       slot->~Frame();
       m_telRing.shift2();
@@ -1195,6 +1312,132 @@ public:
 
 
 private:
+  struct TestInput {
+    ZuSpan<uint8_t> bytes;
+    explicit operator bool() const { return !!bytes; }
+    template <typename Size, typename Consume>
+    int64_t consume(Size size, Consume consume) {
+      auto n = size(bytes);
+      if (!consume(bytes)) return -1;
+      bytes = {};
+      return n;
+    }
+  };
+
+  // Hidden-mode input runs on the same Rx owner as the live WSS callbacks.
+  void testFeed(unsigned phase) {
+    struct Wire {
+      bool closed = false;
+      void close(Zws::CloseCode::T = Zws::CloseCode::Normal) { closed = true; }
+    } wire;
+    auto deliver = [this, &wire](Frame frame) {
+      unsigned half = frame->length / 2;
+      TestInput first{{frame->data(), half}};
+      TestInput second{{frame->data() + half, frame->length - half}};
+      if (messageStart(wire, Zws::Opcode::Binary) < 0 ||
+	  process(wire, first) < 0 || process(wire, second) < 0 ||
+	  messageEnd(wire) < 0 || wire.closed) m_failed = true;
+    };
+    auto telemetry = [&deliver](ZuCSpan device, uint64_t generation,
+	int rag, bool shutdown = false) {
+      Zfb::IOBuilder builder{Frame{new FrameBuf}};
+      auto dev = Zfb::Save::str(builder, device);
+      auto id = Zfb::Save::str(builder, "publisher");
+      auto value = shutdown ? Ztc::fbs::CreateShutdown(builder).Union() :
+	ZfbStruct::save(builder, Ztc::AppTelemetry{
+	  .version = "test", .rag = Ztc::RAG::T(rag)}).Union();
+      auto tel = Ztc::saveTelemetry(builder, id, 0,
+	shutdown ? Ztc::fbs::TelemetryBody::Shutdown :
+	  Ztc::fbs::TelemetryBody::AppTelemetry, value);
+      builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
+	tel.Union(), 1, dev, generation));
+      deliver(builder.buf());
+    };
+    switch (phase) {
+      case 1:
+	{
+	  auto frame = requestFrame(m_sub, true);
+	  auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
+	  auto req = msg ? msg->body_as_Request() : nullptr;
+	  if (!req || msg->deviceId() || req->id() ||
+	      req->group() != Ztc::fbs::Group::App || !req->subscribe() ||
+	      req->interval() != m_sub.interval) {
+	    m_failed = true;
+	    post();
+	    return;
+	  }
+	}
+	telemetry("test-a", 1, Ztc::RAG::Green);
+	telemetry("test-b", 1, Ztc::RAG::Green);
+	break;
+      case 2: {
+	Zfb::IOBuilder builder{Frame{new FrameBuf}};
+	auto dev = Zfb::Save::str(builder, "test-a");
+	auto eos = ZfbStruct::save(builder, Ztc::EOS{ZuID{"publisher"}, 0});
+	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS,
+	  eos.Union(), 1, dev, 1));
+	deliver(builder.buf());
+	break;
+      }
+      case 3:
+	for (unsigned i = 0; i < 64; ++i)
+	  telemetry("test-a", 1, Ztc::RAG::Red);
+	break;
+      case 4:
+	telemetry("test-b", 1, Ztc::RAG::Off, true);
+	telemetry("test-a", 2, Ztc::RAG::Green);
+	telemetry("test-a", 1, Ztc::RAG::Red); // obsolete generation
+	break;
+    }
+    m_testPhase = phase;
+  }
+
+  // A GLib event (not a scheduler job) proves the front end keeps dispatching
+  // after each ring drain, including an empty drain and snapshot completion.
+  gboolean testPoll() {
+    if (m_failed) { post(); return G_SOURCE_CONTINUE; }
+    if (m_telCount.load_()) return G_SOURCE_CONTINUE;
+    if (m_testLocal) {
+      unsigned phase = m_testPhase;
+      if (!phase || phase == m_testChecked) return G_SOURCE_CONTINUE;
+      auto src = m_sources.findPtr(ZuTuple{
+	ZuCSpan{"test-a"}, ZuCSpan{"publisher"}, uint64_t(phase == 4 ? 2 : 1)});
+      bool ok = src && m_sources.count_() == (phase == 4 ? 1 : 2);
+      if (ok) {
+	auto item = appItem(src);
+	auto row = GtkTree::row(item);
+	if (phase == 1) m_testRow = row;
+	else if (phase < 4) ok = row == m_testRow;
+	ok = ok && item->value.rag ==
+	  (phase == 3 ? Ztc::RAG::Red : Ztc::RAG::Green);
+	GtkTreeIter iter;
+	ok = ok && m_gtkModel->iter_nth_child(&iter, nullptr, row->row());
+	if (ok) {
+	  auto path = m_gtkModel->get_path(&iter);
+	  ok = gtk_tree_path_get_depth(path) == 1 &&
+	    gtk_tree_path_get_indices(path)[0] == row->row();
+	  gtk_tree_path_free(path);
+	}
+      }
+      if (!ok) {
+	m_failed = true;
+	std::cerr << "zdash: hidden test phase " << phase << " failed\n";
+	post();
+	return G_SOURCE_CONTINUE;
+      }
+      m_testChecked = phase;
+      if (phase < 4) {
+	ZGtk::App::sched()->run([this, phase]() { testFeed(phase + 1); }, 3);
+	return G_SOURCE_CONTINUE;
+      }
+    } else if (!m_received) return G_SOURCE_CONTINUE;
+    m_testComplete = true;
+    m_testPoll = 0;
+    // Exercise the real GTK close-event path while the window stays unmapped.
+    gtk_window_close(m_mainWindow);
+    return G_SOURCE_REMOVE;
+  }
+
   void armRefresh(int mode = ZmScheduler::Advance) {
     ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
 	mode,
@@ -1247,6 +1490,7 @@ private:
     auto device = Zfb::Load::str(msg->deviceId());
     auto generation = msg->agentGen();
     if (msg->body_type() != Ztc::fbs::Body::Telemetry) return;
+    ++m_received;
     auto tel = msg->body_as_Telemetry();
     auto publisher = Zfb::Load::str(tel->id());
     if (tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown) {
@@ -1455,6 +1699,15 @@ private:
   bool			m_clientStarted = false;
   bool			m_attached = false;
   bool			m_gtkReady = false;
+  bool			m_test = false;
+  bool			m_testLocal = false;
+  bool			m_testComplete = false; // GTK; read after detach
+  bool			m_testClosed = false; // GTK; read after detach
+  ZmAtomic<unsigned>	m_testPhase = 0;
+  unsigned		m_testChecked = 0; // GTK
+  unsigned		m_received = 0; // GTK
+  guint			m_testPoll = 0; // GTK
+  GtkTree::App		*m_testRow = nullptr; // GTK
 
   TelRing		m_telRing;
   unsigned		m_queueBytes = QueuedInputMax;
@@ -1484,6 +1737,8 @@ void sigint() { if (signalApp) signalApp->post(); }
 static bool session(
     ZDash::AppCf config, ZuCSpan caPath, ZuCSpan token)
 {
+  bool test = config.test;
+  unsigned timeout = test ? config.testTimeout : 0;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.name("io-rx"); t.isolated(1); })
@@ -1498,9 +1753,14 @@ static bool session(
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
   bool ok = app.init(&mx, ZuMv(config), caPath, token);
-  if (ok) app.wait();
+  if (ok) ok = app.wait(timeout);
   app.final();
   ok = ok && !app.failed();
+  if (test) {
+    ok = ok && app.testPassed();
+    std::cout << "zdash hidden test: " << (ok ? "PASS" : "FAIL") <<
+      '\n' << std::flush;
+  }
   signalApp = nullptr;
   ZmTrap::sigintFn(nullptr);
   mx.stop();
@@ -1514,28 +1774,52 @@ int main(int argc, char **argv)
     argc = ZfCLI::load(options, argc, argv);
     if (options.help) {
       std::cout << "Usage: zdash --config=CONFIG [--wss=URL] "
-	"[--device-id=ID] [--ca=PATH] [--no-browser]\n";
+	"[--device-id=ID] [--ca=PATH] [--no-browser]\n"
+	"       zdash --test [--config=CONFIG] [--wss=URL] "
+	"[--test-timeout=SECONDS]\n"
+	"Test mode keeps the Glade window hidden and exits automatically.\n"
+	"Without a WSS URL it exercises synthetic telemetry and GTK events.\n"
+	"With a WSS URL, set ZDASH_TEST_TOKEN to a pre-issued access token;\n"
+	"the normal TLS/WSS client is used without browser login.\n";
       return 0;
     }
-    if (argc != 1 || !options.config) usage();
-    ZDashOAuth::Config oauth;
-    if (!ZDashOAuth::loadConfig(options.config, oauth)) return 1;
-
-    ZiFile file;
-    if (file.open(Zi::Path{options.config}, ZiFile::ReadOnly |
-	ZiFile::NoFollow | ZiFile::GC) != Zi::OK) return 1;
-    auto size = file.size();
-    if (size <= 0 || uint64_t(size) > ZDashOAuth::BodyMax) return 1;
-    ZtString<> source;
-    source.length(unsigned(size));
-    if (file.read(source.data(), unsigned(size)) != int(size)) return 1;
-    auto parsed = ZfCf::scan(source.span());
-    if (parsed.p<0>() < 0 || !parsed.p<1>()) return 1;
-    auto config = ZfCf::handler<ZDash::AppCf>(parsed.p<1>()).ctor();
+    if (argc != 1 || (!options.config && !options.test) ||
+	!options.testTimeout || options.testTimeout > 3600) usage();
+    ZDash::AppCf config;
+    if (options.config) {
+      ZiFile file;
+      if (file.open(Zi::Path{options.config}, ZiFile::ReadOnly |
+	  ZiFile::NoFollow | ZiFile::GC) != Zi::OK) return 1;
+      auto size = file.size();
+      if (size <= 0 || uint64_t(size) > ZDashOAuth::BodyMax) return 1;
+      ZtString<> source;
+      source.length(unsigned(size));
+      if (file.read(source.data(), unsigned(size)) != int(size)) return 1;
+      auto parsed = ZfCf::scan(source.span());
+      if (parsed.p<0>() < 0 || !parsed.p<1>()) return 1;
+      config = ZfCf::handler<ZDash::AppCf>(parsed.p<1>()).ctor();
+    }
     if (options.wssURL) config.wssURL = ZuMv(options.wssURL);
     if (options.deviceID) config.deviceID = ZuMv(options.deviceID);
-    if (options.caPath) oauth.caPath = ZuMv(options.caPath);
+    if (options.caPath) config.caPath = ZuMv(options.caPath);
+    if (options.test) {
+      config.test = true;
+      config.testTimeout = options.testTimeout;
+      ZtString<> token{::getenv("ZDASH_TEST_TOKEN")};
+      ZuGuard clearToken{[&token]() {
+	if (token.mutable_()) ZuClear(token.data(), token.length());
+      }};
+      if (config.wssURL && !token) {
+	std::cerr << "zdash: WSS test requires ZDASH_TEST_TOKEN\n";
+	return 1;
+      }
+      auto caPath = ZuMv(config.caPath);
+      return session(ZuMv(config), caPath, token) ? 0 : 1;
+    }
     if (!config.wssURL) return 1;
+    ZDashOAuth::Config oauth;
+    if (!ZDashOAuth::loadConfig(options.config, oauth)) return 1;
+    oauth.caPath = ZuMv(config.caPath);
     return ZDashOAuth::run(oauth, options.noBrowser,
       [&config, &oauth](ZiMultiplex &, ZDashOAuth::Clients &, ZuCSpan token) {
 	return session(ZuMv(config), oauth.caPath, token);
