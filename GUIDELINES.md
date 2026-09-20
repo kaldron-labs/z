@@ -187,6 +187,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Constant literals
 - when a constant literal is integral or boolean and does not need to be wider than `int`, use `enum { X = 42 };` in favor of `static constexpr T = 42`
+- Declare a compile-time string as `constexpr auto name = "text"_Zu`; do not
+  declare a `constexpr ZuSpan`/`ZuCSpan`. `ZuString` preserves the literal's
+  extent in its type, whereas a span is a non-owning run-time view. For a
+  heterogeneous collection of literals, use a `constexpr` array of C-string
+  pointers and construct a span only at the use boundary.
 
 ## Use of STL and other dependencies
 - minimize use of STL
@@ -223,6 +228,13 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: repeated invariant array operator use, e.g. `if (x[i] == 'y' || x[i] == 'z') ...`
   Problem: inefficient repeated calling of `operator []`, potential memory contention
   Fix: use a local variable to cache the value: `auto c = x[i]; if (c == 'y' || c == 'z') ...`
+- Red Flag: a `constexpr` or `static constexpr` data object declared as
+  `ZuSpan`/`ZuCSpan`.
+  Problem: a span is a non-owning run-time view and discards the literal extent
+  that is available at compile time.
+  Fix: use `constexpr auto name = "text"_Zu` so the object is a `ZuString`.
+  For a heterogeneous literal collection, use a `constexpr` C-string-pointer
+  array and convert each element to a span only at its use boundary.
 
 ### Storage and capacity
 - Red Flag: `operator new` overload outside `ZmHeap`
@@ -234,9 +246,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   variable-size heap for fixed-size objects, and makes allocation audits miss
   dependents.
   Fix: each fixed-size concrete type inherits its own `ZmHeap` specialization
-  (first base), using the established `Type_<Heap>` pattern when its final size
-  is needed. Do not introduce generic `Object`, `ObjectAlloc`, or equivalent
-  allocation bases.
+  (first base), using the established `Type_<Heap = ZuVoid>` pattern when its
+  final size is needed: define `using Type =
+  Type_<ZmHeap<"...", Type_<>>>` after the template. Do not declare
+  `operator new`/`operator delete` merely to forward to a heap, and do not
+  introduce generic `Object`, `ObjectAlloc`, or equivalent allocation bases.
 - Red Flag: hard-coded capacities such as `16`.
   Problem: unexplained limits may impair scaling when too low, bloat stack/heap when too high, or leave mostly unused capacity.
   Fix: use prominently located, named library-defined compile-time constants with a maintenance comment: RFC/standard mandate, mainstream alignment, or measured scaling/footprint trade-off.
@@ -273,13 +287,29 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
   Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
   Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
-- Audit Flag: a fixed-size object type allocated through `ZmVHeap`.
+- Red Flag: a fixed-size object type allocated through `ZmVHeap`.
   Problem: a variable-size heap loses fixed-size allocation telemetry and tuning.
   Fix: use a concrete `ZmHeap`; reserve `ZmVHeap` for allocations whose size
   genuinely varies at run time.
 - Amber Flag: separate allocations for object, refcount, and container nodes.
   Problem: fragmented allocation adds memory overhead and pointer chasing.
-  Fix: consolidate with intrusive reference counting and container nodes where practical; see `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated node.
+  Fix: consolidate with intrusive reference counting and container nodes; see
+  `ZmPolyCache` nesting a hash node, list node, and refcount in one allocated
+  node.
+
+### Containers and intrusion
+- Red Flag: a `ZmList`, `ZmQueue`, `ZmHash`, `ZmRBTree`, `ZmPQueue`, or derive
+  macro whose value is `ZmRef<T>` for an application-owned,
+  reference-counted `T`.
+  Problem: the separate container node adds an allocation, an ownership hop,
+  and pointer chasing even though the application object can carry its links.
+  Fix: make the application object intrusive in every container it owns. For a
+  list owned by `Owner`, expose the allocated node as `using T = Owner::Node`;
+  do not use `ZmList<ZmRef<T>>`. Stack intrusive nodes when an object belongs
+  to more than one container, using a shadow node for every inner container.
+  A `ZmRef<T>` container value is allowed only for genuine shared ownership of
+  an object that cannot own that node; document that exception at the
+  declaration.
 
 ### Data movement and initialization
 - Red Flag: calling `ZiLOG` with a lambda that captures pointers or by reference.
@@ -397,9 +427,17 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Fix: cap the work performed in each turn - batch it and post continuations for the remainder
 
 ## Leveraging Key Z Framework Capabilities
-### Assertions and type mechanics
-- Assertions: use `ZuAssert` at compile time; at run time use plain `assert` below `zm`, `ZmAssert` below `zi`, and `ZiAssert` in `zi` or above.
-- Use `ZiAssert` whenever run-time assertion failure needs graceful handling.
+
+### Assertions
+- Assertions:
+  - compile-time assertions: use `ZuAssert` (NOT `static_assert`)
+  - run-time fatal internal integrity violations that should always abort in both debug and release builds: use `ZmAssert_`
+  - run-time assertions that should abort in debug builds but be elided (skipped) in release builds: use `ZmAssert` (1-arg version)
+  - run-time assertions with graceful fallback behavior for resilience in release builds:
+    - below `zi`: use `ZmAssert` (2-arg version, second arg is fallback code)
+    - at or above `zi`: use `ZiAssert` (logs via `ZiLog` in addition to release build fallback)
+
+### Type mechanics
 - For complex template aliases, prefer `ZuDerive(x, ([complex template instantiation]))` over `using X = ...`; the explicit type ID reduces compiler/linker symbol lengths and eases debugging.
 - Comparisons and sentinels: use `operator *` to detect sentinel null, use `ZuCmp` sentinel logic, and prefer `ZuCmp::cmp` over `operator <=>` because it returns plain `int`.
   - some types have two different sentinel values: zero, and a default-constructed null value
@@ -514,7 +552,6 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use appropriate containers: `ZmHash`, `ZmLHash`, `ZmList`, `ZmRBTree`, `ZmPQueue`, etc.
 - Z iterators are usually optionally mutable and can delete while iterating.
 - `del()`/`delNode()` usually returns a movable reference to the deleted node/value.
-- Prefer intrusive container nodes when application nodes can own them; this reduces key/value copying and, for reference-counted application data, consolidates the application object and container node from two allocations into one.
 - Stack container intrusions when one application node participates in multiple containers, example: `ZmCache` has nodes that participate in both an LRU `ZmList` and `ZmHash`.
 - Use `HeapID<"">` to disable inner-container `ZmHeap` allocation when the full node size is only available at the outermost container.
 
