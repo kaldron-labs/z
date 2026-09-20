@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <libintl.h>
 
@@ -18,6 +19,8 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmRing.hh>
 #include <zlib/ZmHeap.hh>
+
+#include <zlib/ZtString.hh>
 
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
@@ -39,7 +42,8 @@
 #include <zlib/ZGtkValue.hh>
 
 #include "zdash_oauth.hh"
-#include "zdash_protocol.hh"
+#include "zdash_module.hh"
+#include <zlib/ZiModule.hh>
 
 // FIXME - css
 //
@@ -65,28 +69,111 @@ static void sigint();
 
 namespace ZDash {
 
+ZuDerive(String, (ZtString<ZtStringHeapID<"ZDash.String">>));
+
+// Bound network reassembly and queued telemetry independently of ring size.
+enum { FrameMax = 1U << 20, QueuedInputMax = 1U << 22 };
+using Frame = ZmRef<ZiIOBuf>;
+using FrameBuf = ZiIOBufAlloc<1024, FrameMax, "ZDash.Frame">;
+
+struct Subscription {
+  using Filter = Ztc::RequestFilter;
+  using Group = Ztc::fbs::Group;
+  String	deviceID;
+  ZuID		publisherID;
+  Filter	filter{"*"};
+  uint64_t	id = 1;
+  unsigned	interval = 1000;
+  Group		group = Group::App;
+};
+
+static Frame requestFrame(const Subscription &sub, bool subscribe)
+{
+  Zfb::IOBuilder builder{Frame{new FrameBuf}};
+  auto device = sub.deviceID ? Zfb::Save::str(builder, sub.deviceID) :
+    Zfb::Offset<flatbuffers::String>{};
+  auto filter = Zfb::Save::str(builder, sub.filter);
+  auto publisher = sub.publisherID ? Zfb::Save::str(builder, sub.publisherID) :
+    Zfb::Offset<flatbuffers::String>{};
+  // An inventory request must omit id, not encode an empty string. The
+  // generated builder preserves that distinction at this protocol boundary.
+  Ztc::fbs::RequestBuilder requestBuilder{builder};
+  requestBuilder.add_seqNo(0);
+  requestBuilder.add_group(sub.group);
+  requestBuilder.add_filter(filter);
+  requestBuilder.add_id(publisher);
+  requestBuilder.add_interval(subscribe ? sub.interval : 0);
+  requestBuilder.add_subscribe(subscribe);
+  auto request = requestBuilder.Finish();
+  builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Request,
+    request.Union(), sub.id, device));
+  return builder.buf();
+}
+
+static bool accepts(const Subscription &sub, const Ztc::fbs::Msg *msg)
+{
+  if (!Ztc::validMsg(msg) || msg->subId() != sub.id) return false;
+  auto device = Zfb::Load::str(msg->deviceId());
+  if (sub.deviceID && (device != sub.deviceID || !msg->agentGen()))
+    return false;
+  switch (msg->body_type()) {
+    case Ztc::fbs::Body::Ack:
+    case Ztc::fbs::Body::Error:
+      return true;
+    case Ztc::fbs::Body::EOS:
+      // Snapshot completion may be per source or for the entire inventory.
+      return (device && msg->agentGen()) ||
+	(!sub.deviceID && !device && !msg->agentGen() &&
+	  Zfb::Load::str(msg->body_as_EOS()->id()) == "inventory");
+    case Ztc::fbs::Body::Telemetry: {
+      if (!device || !msg->agentGen()) return false;
+      auto tel = msg->body_as_Telemetry();
+      if (sub.publisherID && Zfb::Load::str(tel->id()) != sub.publisherID)
+	return false;
+      using namespace Ztc::fbs;
+      switch (tel->value_type()) {
+	case TelemetryBody::AppTelemetry: return sub.group == Group::App;
+	case TelemetryBody::HeapTelemetry: return sub.group == Group::Heap;
+	case TelemetryBody::HashTelemetry: return sub.group == Group::Hash;
+	case TelemetryBody::ThreadTelemetry: return sub.group == Group::Thread;
+	case TelemetryBody::MxTelemetry:
+	case TelemetryBody::CxnTelemetry: return sub.group == Group::Mx;
+	case TelemetryBody::QueueTelemetry: return sub.group == Group::Queue;
+	case TelemetryBody::HubTelemetry:
+	case TelemetryBody::LinkTelemetry:
+	case TelemetryBody::PoolTelemetry: return sub.group == Group::Hub;
+	case TelemetryBody::DBTelemetry:
+	case TelemetryBody::DBHostTelemetry:
+	case TelemetryBody::DBTableTelemetry: return sub.group == Group::DB;
+	case TelemetryBody::AlertTelemetry: return sub.group == Group::Alert;
+	case TelemetryBody::Shutdown: return true;
+	default: return false;
+      }
+    }
+    default: return false;
+  }
+}
+
 // Dedicated application shards; the transport uses scheduler threads 1/2.
 enum { RxSID = 3, TxSID = 4, GtkSID = 5 };
-// Amortize clock reads while bounding GTK work; the test burst spans batches.
-enum { RefreshBatch = 16, TestBurst = RefreshBatch * 4 };
+// Amortize clock reads while bounding GTK work.
+enum { RefreshBatch = 16 };
 
 struct AppCf {
   ZvRingCf	telRing;
-  ZtString<>	gtkGlade = "zdash.glade";
-  ZtString<>	gtkStyle;
-  ZtString<>	wssURL;
-  ZtString<>	caPath;
-  ZtString<>	deviceID;
-  ZtString<>	group = "App";
+  String	gtkGlade = "zdash.glade";
+  String	gtkStyle;
+  String	wssURL;
+  String	caPath;
+  String	deviceID;
+  String	group = "App";
   ZuID		publisherID;
-  ZtString<>	filter = "*";
+  String	filter = "*";
   unsigned	gtkRefresh = 1;
   unsigned	gtkThread = 5;
   unsigned	queueBytes = QueuedInputMax;
   unsigned	interval = 1000;
   unsigned	alertRows = 1000;
-  unsigned	testTimeout = 10;
-  bool		test = false; // CLI only; never enabled by a normal config
 };
 
 ZfStruct(, (AppCf, Cf),
@@ -106,14 +193,12 @@ ZfStruct(, (AppCf, Cf),
   (((filter)),					(String, "*")));
 
 struct Options {
-  ZtString<>	config;
-  ZtString<>	wssURL;
-  ZtString<>	deviceID;
-  ZtString<>	caPath;
-  unsigned	testTimeout = 10;
+  String	config;
+  String	wssURL;
+  String	deviceID;
+  String	caPath;
   bool		noBrowser = false;
   bool		help = false;
-  bool		test = false;
 };
 ZfStruct(, (Options, CLI),
   (((config), (CLI::Long<"config">)), (String)),
@@ -121,8 +206,6 @@ ZfStruct(, (Options, CLI),
   (((deviceID), (CLI::Long<"device-id">)), (String)),
   (((caPath), (CLI::Long<"ca">)), (String)),
   (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
-  (((test), (CLI::Long<"test">)), (Bool)),
-  (((testTimeout), (CLI::Long<"test-timeout">)), (UInt32, 10)),
   (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 namespace Telemetry {
@@ -716,7 +799,7 @@ public:
 
 private:
   Root	m_root;		// root of tree
-  ZtString<>	m_value;	// re-used string buffer
+  String	m_value;	// re-used string buffer
 };
 
 class View {
@@ -874,8 +957,8 @@ private:
 
 struct Source {
   using Containers = Telemetry::Containers;
-  ZtString<>	device;
-  ZtString<>	publisher;
+  String	device;
+  String	publisher;
   uint64_t	generation;
   Containers	telemetry;
 
@@ -888,20 +971,34 @@ ZmRBTreeDerive(Sources, Source,
   ZmRBTreeNode<Source, ZmRBTreeKey<sourceKey, ZmRBTreeUnique<true,
     ZmRBTreeLock<ZmNoLock, ZmRBTreeHeapID<"ZDash.Source">>>>>);
 
+// Keep the FlatBuffers payload aligned for its widest scalar. The Ztc
+// envelope carries source identity, so no connection pointer crosses threads.
+struct alignas(uint64_t) TelHdr {
+  unsigned	length;
+
+  ZuBSpan data() const {
+    return {reinterpret_cast<const uint8_t *>(this + 1), length};
+  }
+};
+static unsigned telSize(const void *ptr) {
+  return sizeof(TelHdr) + static_cast<const TelHdr *>(ptr)->length;
+}
+ZuDerive(TelRing, (ZmRing<ZmRingSizeAxor<telSize>>));
+
 class App : public ZGtk::App {
 public:
   using Client = Zws::Client<App, Zhttp::H1TLS>;
   using Link = Client::Link;
-  using TelRing = ZmRing<ZmRingT<Frame>>;
   template <typename T> using TelItem = Telemetry::Item<T>;
   using AppItem = TelItem<Ztc::AppTelemetry>;
   using DBItem = TelItem<Ztc::DBTelemetry>;
 
-  bool init(ZiMultiplex *mx, AppCf config, ZuCSpan caPath, ZuCSpan token) {
-    m_test = config.test;
-    m_testLocal = m_test && !config.wssURL;
+  bool init(ZiMultiplex *mx, AppCf config, ZuCSpan caPath, ZuCSpan token,
+      ModuleSession *module) {
+    m_module = module;
+    m_offline = module && module->offline;
     Zws::URI uri;
-    if (!m_testLocal && (!Zws::URI::parse(uri, config.wssURL).ok() ||
+    if (!m_offline && (!Zws::URI::parse(uri, config.wssURL).ok() ||
 	!uri.secure() || !uri.host || !uri.port || !uri.target || !token))
       return false;
     m_sub.deviceID = ZuMv(config.deviceID);
@@ -921,8 +1018,9 @@ public:
 
     m_queueBytes = config.queueBytes;
     m_alertRows = config.alertRows;
-    m_telRing.init(ZmRingParams{config.telRing.size}
-	.spin(config.telRing.spin).timeout(0));
+    auto &ring = config.telRing;
+    m_telRing.init(ZmRingParams{ring.size}
+	.ll(ring.ll).spin(ring.spin).timeout(ring.timeout));
     if (m_telRing.open(TelRing::Read | TelRing::Write) != Zu::OK)
       return false;
     m_gladePath = ZuMv(config.gtkGlade);
@@ -947,10 +1045,7 @@ public:
     }, config.gtkThread);
     m_executed.wait();
     if (!m_gtkReady) return false;
-    if (m_testLocal) {
-      mx->run([this]() { testFeed_(1); }, RxSID);
-      return true;
-    }
+    if (m_offline) return true;
 
     Zws::Config ws;
     ws.maxMessage = FrameMax;
@@ -966,7 +1061,7 @@ public:
     m_clientInited = true;
     if (!m_client.start()) return false;
     m_clientStarted = true;
-    ZtString<> authorization{"Bearer "};
+    String authorization{"Bearer "};
     authorization << token;
     m_link = new Link{&m_client, uri, Ztc::Protocol, authorization};
     ZuClear(authorization.data(), authorization.length());
@@ -975,7 +1070,7 @@ public:
   }
 
   void final() {
-    if (m_testLocal && m_attached) {
+    if (m_offline && m_attached) {
       ZGtk::App::sched()->run([this]() {
 	m_closing = true;
 	m_executed.post();
@@ -1026,11 +1121,10 @@ public:
     if (!timeout) { m_done.wait(); return true; }
     if (!m_done.timedwait(Zm::now(timeout))) return true;
     m_failed = true;
-    ZiLOG(Error, "zdash", "test timed out");
+    ZiLOG(Error, "zdash", "session timed out");
     return false;
   }
   bool failed() const { return m_failed; }
-  bool testPassed() const { return m_testComplete && m_testClosed; }
 
   template <typename L>
   static void send(L &link, Frame frame) {
@@ -1082,32 +1176,37 @@ public:
 
   template <typename L>
   int messageEnd(L &link) {
-    auto msg = Ztc::msg(ZuBSpan{m_frame->data(), m_frame->length});
-    if (!accepts(m_sub, msg))
-      return reject(link, Zws::CloseCode::InvalidData);
-    if (m_closing) return 1;
+    auto code = receive_({m_frame->data(), m_frame->length}, true);
+    return code == Zws::CloseCode::Normal ? 1 : reject(link, code);
+  }
+
+  Zws::CloseCode::T receive_(ZuBSpan data, bool filter) {
+    auto msg = Ztc::msg(data);
+    if (!msg || (filter && !accepts(m_sub, msg)))
+      return Zws::CloseCode::InvalidData;
+    if (m_closing) return Zws::CloseCode::Normal;
     switch (msg->body_type()) {
       case Ztc::fbs::Body::Ack:
 	if (msg->body_as_Ack()->status() != Ztc::fbs::AckStatus::OK)
-	  return reject(link, Zws::CloseCode::Policy);
+	  return Zws::CloseCode::Policy;
 	break;
       case Ztc::fbs::Body::Error:
 	ZiLOG(Error, "zdash", ([message = ZeString{
 	    Zfb::Load::str(msg->body_as_Error()->message())}](auto &s) {
 	  s << "ztchub: " << message;
 	}));
-	return reject(link, Zws::CloseCode::Policy);
+	return Zws::CloseCode::Policy;
       case Ztc::fbs::Body::EOS:
         // End of snapshot, not end of subscription or publisher lifetime.
         break;
       case Ztc::fbs::Body::Telemetry:
-	if (!processTelemetry_(ZuMv(m_frame)))
-	  return reject(link, Zws::CloseCode::TooLarge);
+	if (!processTelemetry_(data))
+	  return Zws::CloseCode::TooLarge;
 	break;
       default:
-	return reject(link, Zws::CloseCode::Protocol);
+	return Zws::CloseCode::Protocol;
     }
-    return 1;
+    return Zws::CloseCode::Normal;
   }
 
   template <typename L>
@@ -1126,16 +1225,20 @@ public:
     post();
   }
 
-  bool processTelemetry_(Frame frame) {
-    auto length = frame->length;
+  bool processTelemetry_(ZuBSpan msg) {
+    if (msg.length() > FrameMax) return false;
+    unsigned length = msg.length();
+    unsigned size = sizeof(TelHdr) + length;
+    if (size > m_telRing.size()) return false;
     if (length + m_telBytes.load_() > m_queueBytes) return false;
-    auto slot = m_telRing.tryPush();
+    auto slot = m_telRing.tryPush(size);
     if (!slot) return false;
-    new (slot) Frame{ZuMv(frame)};
+    auto hdr = new (slot) TelHdr{length};
+    memcpy(hdr + 1, msg.data(), length);
     m_telBytes += length;
     // Count before publication so a concurrent GTK drain cannot underflow.
     auto pending = m_telCount++;
-    m_telRing.push2();
+    m_telRing.push2(size);
     if (!pending) armRefresh();
     return true;
   }
@@ -1191,8 +1294,8 @@ public:
 	  reinterpret_cast<App *>(this_)->gtkDestroyed_();
 	}), this);
 
-    if (m_test) {
-      // Never map or present the test window, even on an inherited display.
+    if (m_module && m_module->hidden) {
+      // Realize without mapping; the module controls presentation.
       gtk_window_set_accept_focus(m_mainWindow, false);
       gtk_window_set_focus_on_map(m_mainWindow, false);
       gtk_widget_set_no_show_all(GTK_WIDGET(m_mainWindow), true);
@@ -1203,19 +1306,58 @@ public:
     }
 
     m_gtkReady = m_telRing.attach() == Zu::OK;
+    if (m_gtkReady && m_module && m_module->ready) {
+      ModuleHost host;
+      host.rxRun = [this](ZmFn<void()> fn) {
+	ZGtk::App::sched()->run([this, fn = ZuMv(fn)]() mutable {
+	  if (!m_closing) fn();
+	}, RxSID);
+      };
+      host.gtkRun = [this](ZmFn<void()> fn) {
+	gtkRun([this, fn = ZuMv(fn)]() mutable {
+	  if (!m_gtkClosing) fn();
+	});
+      };
+      host.request_ = [this]() { return requestFrame(m_sub, true); };
+      host.receive_ = [this](ZuBSpan data, bool filter) {
+	return receive_(data, filter) == Zws::CloseCode::Normal;
+      };
+      host.source_ = [this](ZuCSpan device, ZuCSpan publisher) {
+	SourceView view;
+	view.count = m_sources.count_();
+	if (auto src = m_sources.findPtr(ZuTuple{device, publisher})) {
+	  view.generation = src->generation;
+	  auto &items = src->telemetry.p<
+	    ZuTypeIndex<Ztc::AppTelemetry, Telemetry::TypeList>{}>();
+	  if (auto item = items.get()) {
+	    auto row = GtkTree::row(item);
+	    view.identity = row;
+	    view.row = row->row();
+	    view.rag = item->value.rag;
+	  }
+	}
+	return view;
+      };
+      host.pending_ = [this]() { return m_telCount.load_(); };
+      host.stop = [this]() { post(); };
+      host.model = GTK_TREE_MODEL(m_gtkModel);
+      host.window = m_mainWindow;
+      host.publisherCol = GtkTree::Model::IDCol0;
+      host.deviceCol = GtkTree::Model::IDCol1;
+      m_module->ready(host);
+    }
   }
 
   void gtkDestroyed_() {
     m_mainWindow = nullptr;
-    if (m_test) m_testClosed = true;
+    if (m_module && m_module->closed) m_module->closed();
     post();
   }
 
   void gtkFinal_() {
-    if (m_testEvent) { g_source_remove(m_testEvent); m_testEvent = 0; }
+    if (m_module && m_module->closing) m_module->closing();
     while (auto slot = m_telRing.tryShift()) {
-      slot->~Frame();
-      m_telRing.shift2();
+      m_telRing.shift2(telSize(slot));
     }
     m_telRing.detach();
 
@@ -1234,198 +1376,6 @@ public:
 
 
 private:
-  struct TestInput {
-    ZuSpan<uint8_t> bytes;
-    explicit operator bool() const { return !!bytes; }
-    template <typename Size, typename Consume>
-    int64_t consume(Size size, Consume consume) {
-      auto n = size(bytes);
-      if (!consume(bytes)) return -1;
-      bytes = {};
-      return n;
-    }
-  };
-
-  // Hidden-mode input runs on the same Rx owner as the live WSS callbacks.
-  void testFeed_(unsigned phase) {
-    if (m_closing) return;
-    struct Wire {
-      bool closed = false;
-      void close(Zws::CloseCode::T = Zws::CloseCode::Normal) { closed = true; }
-    } wire;
-    auto deliver = [this, &wire](Frame frame) {
-      unsigned half = frame->length / 2;
-      TestInput first{{frame->data(), half}};
-      TestInput second{{frame->data() + half, frame->length - half}};
-      if (messageStart(wire, Zws::Opcode::Binary) < 0 ||
-	  process(wire, first) < 0 || process(wire, second) < 0 ||
-	  messageEnd(wire) < 0 || wire.closed) m_failed = true;
-    };
-    auto telemetry = [&deliver](ZuCSpan device, uint64_t generation,
-	int rag, bool shutdown = false) {
-      Zfb::IOBuilder builder{Frame{new FrameBuf}};
-      auto dev = Zfb::Save::str(builder, device);
-      auto id = Zfb::Save::str(builder, "publisher");
-      // Shutdown is an empty protocol marker with no ZfbStruct payload type.
-      auto value = shutdown ? Ztc::fbs::CreateShutdown(builder).Union() :
-	ZfbStruct::save(builder, Ztc::AppTelemetry{
-	  .version = "test", .rag = Ztc::RAG::T(rag)}).Union();
-      auto tel = Ztc::saveTelemetry(builder, id, 0,
-	shutdown ? Ztc::fbs::TelemetryBody::Shutdown :
-	  Ztc::fbs::TelemetryBody::AppTelemetry, value);
-      builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
-	tel.Union(), 1, dev, generation));
-      deliver(builder.buf());
-    };
-    switch (phase) {
-      case 1:
-	{
-	  auto frame = requestFrame(m_sub, true);
-	  auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
-	  auto req = msg ? msg->body_as_Request() : nullptr;
-	  if (!req || msg->deviceId() || req->id() ||
-	      req->group() != Ztc::fbs::Group::App || !req->subscribe() ||
-	      req->interval() != m_sub.interval) {
-	    m_failed = true;
-	    post();
-	    return;
-	  }
-	}
-	telemetry("test-a", 1, Ztc::RAG::Green);
-	telemetry("test-b", 1, Ztc::RAG::Green);
-	break;
-      case 2: {
-	Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	auto dev = Zfb::Save::str(builder, "test-a");
-	auto eos = ZfbStruct::save(builder, Ztc::EOS{ZuID{"publisher"}, 0});
-	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS,
-	  eos.Union(), 1, dev, 1));
-	deliver(builder.buf());
-      } break;
-      case 3:
-	for (unsigned i = 0; i < TestBurst; ++i)
-	  telemetry("test-a", 1, Ztc::RAG::Red);
-	break;
-      case 4:
-	telemetry("test-b", 1, Ztc::RAG::Off, true);
-	telemetry("test-a", 2, Ztc::RAG::Green);
-	telemetry("test-a", 1, Ztc::RAG::Red); // obsolete generation
-	break;
-      case 5:
-	// Exercise every concrete row allocator, placeholder parent and payload.
-	ZuUnroll::all<Telemetry::TypeList>([this]<typename T>() {
-	  if constexpr (!ZuIsSame<T, Ztc::AppTelemetry>{}) {
-	    Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	    auto device = Zfb::Save::str(builder, "test-a");
-	    auto id = Zfb::Save::str(builder, "publisher");
-	    auto value = ZfbStruct::save(builder, T{});
-	    auto tel = Ztc::saveTelemetry(builder, id, 0,
-	      Ztc::fbs::TelemetryBodyTraits<ZfbType<T>>::enum_value,
-	      value.Union());
-	    builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
-	      tel.Union(), 1, device, 2));
-	    auto frame = builder.buf();
-	    // This phase covers GTK rendering beyond the App subscription.
-	    if (!Ztc::msg(ZuBSpan{frame->data(), frame->length}) ||
-		!processTelemetry_(ZuMv(frame))) m_failed = true;
-	  }
-	});
-	break;
-      case 6:
-	telemetry("test-a", 2, Ztc::RAG::Off, true);
-	break;
-    }
-    // Publish completion on GTK after all frames in this phase are queued.
-    gtkRun([this, phase]() {
-      if (m_gtkClosing) return;
-      m_testPhase = phase;
-      testWake_();
-    });
-  }
-
-  void testWake_() {
-    if (!m_test || m_gtkClosing || m_testComplete || m_testEvent) return;
-    m_testEvent = g_idle_add([](gpointer p) -> gboolean {
-      auto app = static_cast<App *>(p);
-      app->m_testEvent = 0;
-      app->testCheck_();
-      return G_SOURCE_REMOVE;
-    }, this);
-  }
-
-  // A GLib event (not a scheduler job) proves the front end keeps dispatching
-  // after each ring drain, including an empty drain and snapshot completion.
-  void testCheck_() {
-    if (m_gtkClosing) return;
-    if (m_failed) { post(); return; }
-    if (m_telCount.load_()) return;
-    if (m_testLocal) {
-      unsigned phase = m_testPhase;
-      if (!phase || phase == m_testChecked) return;
-      auto src = m_sources.findPtr(ZuTuple{
-	ZuCSpan{"test-a"}, ZuCSpan{"publisher"}});
-      bool ok = phase == 6 ? !src && !m_sources.count_() :
-	src && src->generation == (phase >= 4 ? 2 : 1) &&
-	m_sources.count_() == (phase >= 4 ? 1 : 2);
-      if (ok && phase != 6) {
-	auto item = appItem_(src);
-	auto row = GtkTree::row(item);
-	if (phase == 1) m_testRow = row;
-	else if (phase < 4) ok = row == m_testRow;
-	ok = ok && item->value.rag ==
-	  (phase == 3 ? Ztc::RAG::Red : Ztc::RAG::Green);
-	GtkTreeIter iter;
-	ok = ok && m_gtkModel->iter_nth_child(&iter, nullptr, row->row());
-	if (ok) {
-	  auto path = m_gtkModel->get_path(&iter);
-	  ok = gtk_tree_path_get_depth(path) == 1 &&
-	    gtk_tree_path_get_indices(path)[0] == row->row();
-	  gtk_tree_path_free(path);
-	  ZGtk::Value publisher, device;
-	  gtk_tree_model_get_value(GTK_TREE_MODEL(m_gtkModel), &iter,
-	    GtkTree::Model::IDCol0, &publisher);
-	  gtk_tree_model_get_value(GTK_TREE_MODEL(m_gtkModel), &iter,
-	    GtkTree::Model::IDCol1, &device);
-	  ok = ok && ZuCSpan{publisher.get_string()} == "publisher" &&
-	    ZuCSpan{device.get_string()} == "test-a";
-	}
-      }
-      if (ok && phase == 6)
-	ok = !gtk_tree_model_iter_n_children(GTK_TREE_MODEL(m_gtkModel), nullptr);
-      if (ok && phase == 5) {
-	unsigned rows = 0;
-	gtk_tree_model_foreach(GTK_TREE_MODEL(m_gtkModel), [](
-	    GtkTreeModel *model, GtkTreePath *, GtkTreeIter *iter,
-	    gpointer data) -> gboolean {
-	  ++*static_cast<unsigned *>(data);
-	  for (unsigned col = 0; col < GtkTree::Model::NCols; ++col) {
-	    ZGtk::Value value;
-	    gtk_tree_model_get_value(model, iter, col, &value);
-	  }
-	  return false;
-	}, &rows);
-	// Every non-alert telemetry kind must have a visible row.
-	ok = rows >= Telemetry::TypeList::N - 1;
-      }
-      if (!ok) {
-	m_failed = true;
-	ZiLOG(Error, "zdash", ([phase](auto &s) {
-	  s << "hidden test phase " << phase << " failed";
-	}));
-	post();
-	return;
-      }
-      m_testChecked = phase;
-      if (phase < 6) {
-	ZGtk::App::sched()->run([this, phase]() { testFeed_(phase + 1); }, RxSID);
-	return;
-      }
-    } else if (!m_sources.count_()) return;
-    m_testComplete = true;
-    // Exercise the real GTK close-event path while the window stays unmapped.
-    gtk_window_close(m_mainWindow);
-  }
-
   void armRefresh(int mode = ZmScheduler::Advance) {
     ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
 	mode,
@@ -1439,16 +1389,22 @@ private:
     auto deadline = Zm::now() + m_refreshQuantum;
     unsigned n = 0;
     while (auto slot = m_telRing.tryShift()) {
-      Frame frame{ZuMv(*const_cast<Frame *>(slot))};
-      slot->~Frame();
-      m_telRing.shift2();
-      m_telBytes -= frame->length;
+      auto hdr = static_cast<const TelHdr *>(slot);
+      auto length = hdr->length;
+      // Decode directly from ring storage before allowing Rx to reuse it.
+      processTel2_(hdr->data());
+      if (m_module && m_module->consumed) {
+	auto offset = static_cast<const uint8_t *>(slot) -
+	  static_cast<const uint8_t *>(m_telRing.data());
+	m_module->consumed(offset + sizeof(TelHdr) + length > m_telRing.size());
+      }
+      m_telRing.shift2(sizeof(TelHdr) + length);
+      m_telBytes -= length;
       --m_telCount;
-      processTel2_(frame);
       if (!(++n % RefreshBatch) && Zm::now() >= deadline) break;
     }
     if (m_telCount.load_()) armRefresh(ZmScheduler::Defer);
-    else testWake_();
+    else if (m_module && m_module->drained) m_module->drained();
   }
 
   void removeSource_(Sources::Node *source) {
@@ -1472,8 +1428,8 @@ private:
     return source;
   }
 
-  void processTel2_(const Frame &frame) {
-    auto msg = Ztc::fbs::GetMsg(frame->data()); // verified on Rx
+  void processTel2_(ZuBSpan data) {
+    auto msg = Ztc::fbs::GetMsg(data.data()); // verified on Rx
     auto device = Zfb::Load::str(msg->deviceId());
     auto generation = msg->agentGen();
     if (msg->body_type() != Ztc::fbs::Body::Telemetry) return;
@@ -1662,14 +1618,15 @@ private:
 private:
   // Immutable after init; shared read-only by Rx and GTK.
   Subscription		m_sub;
-  ZtString<>		m_gladePath;
-  ZtString<>		m_stylePath;
+  String		m_gladePath;
+  String		m_stylePath;
   ZuTime		m_refreshQuantum;
   ZuTime		m_refreshRate;
   unsigned		m_queueBytes = QueuedInputMax;
   unsigned		m_alertRows = 1000;
-  bool			m_test = false;
-  bool			m_testLocal = false;
+
+  ModuleSession		*m_module = nullptr;
+  bool			m_offline = false;
 
   // Main-thread lifecycle; callbacks are drained before final releases them.
   Client		m_client{this};
@@ -1701,14 +1658,8 @@ private:
   GtkTree::Model	*m_gtkModel = nullptr;
   GtkStyleContext	*m_styleContext = nullptr;
   GtkWindow		*m_mainWindow = nullptr;
-  GtkTree::App		*m_testRow = nullptr;
   gulong		m_mainDestroy = 0;
-  unsigned		m_testPhase = 0;
-  unsigned		m_testChecked = 0;
-  guint			m_testEvent = 0; // one-shot completion event
   bool			m_gtkReady = false;
-  bool			m_testComplete = false;
-  bool			m_testClosed = false;
   bool			m_gtkClosing = false;
 };
 
@@ -1718,10 +1669,10 @@ static ZDash::App *signalApp = nullptr;
 static void sigint() { if (signalApp) signalApp->post(); }
 
 static bool session(
-    ZDash::AppCf config, ZuCSpan caPath, ZuCSpan token)
+    ZDash::AppCf config, ZuCSpan caPath, ZuCSpan token,
+    ZDash::ModuleSession *module = nullptr)
 {
-  bool test = config.test;
-  unsigned timeout = test ? config.testTimeout : 0;
+  unsigned timeout = module ? module->timeout : 0;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(ZDash::GtkSID)
       .thread(1, [](auto &t) { t.name("io-rx"); t.isolated(1); })
@@ -1735,15 +1686,10 @@ static bool session(
   signalApp = &app;
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
-  bool ok = app.init(&mx, ZuMv(config), caPath, token);
+  bool ok = app.init(&mx, ZuMv(config), caPath, token, module);
   if (ok) ok = app.wait(timeout);
   app.final();
   ok = ok && !app.failed();
-  if (test) {
-    ok = ok && app.testPassed();
-    std::cout << "zdash hidden test: " << (ok ? "PASS" : "FAIL") <<
-      '\n' << std::flush;
-  }
   signalApp = nullptr;
   ZmTrap::sigintFn(nullptr);
   mx.stop();
@@ -1757,17 +1703,11 @@ int main(int argc, char **argv)
     argc = ZfCLI::load(options, argc, argv);
     if (options.help) {
       std::cout << "Usage: zdash --config=CONFIG [--wss=URL] "
-	"[--device-id=ID] [--ca=PATH] [--no-browser]\n"
-	"       zdash --test [--config=CONFIG] [--wss=URL] "
-	"[--test-timeout=SECONDS]\n"
-	"Test mode keeps the Glade window hidden and exits automatically.\n"
-	"Without a WSS URL it exercises synthetic telemetry and GTK events.\n"
-	"With a WSS URL, set ZDASH_TEST_TOKEN to a pre-issued access token;\n"
-	"the normal TLS/WSS client is used without browser login.\n";
+	"[--device-id=ID] [--ca=PATH] [--no-browser]\n";
       return 0;
     }
-    if (argc != 1 || (!options.config && !options.test) ||
-	!options.testTimeout || options.testTimeout > 3600) usage();
+    auto modulePath = ::getenv("ZDASH_TEST");
+    if (argc != 1 || (!options.config && !modulePath)) usage();
     ZDash::AppCf config;
     if (options.config) {
       ZiFile file;
@@ -1775,7 +1715,7 @@ int main(int argc, char **argv)
 	  ZiFile::NoFollow | ZiFile::GC) != Zi::OK) return 1;
       auto size = file.size();
       if (size <= 0 || uint64_t(size) > ZDashOAuth::BodyMax) return 1;
-      ZtString<> source;
+      ZDash::String source;
       source.length(unsigned(size));
       if (file.read(source.data(), unsigned(size)) != int(size)) return 1;
       auto parsed = ZfCf::scan(source.span());
@@ -1785,24 +1725,30 @@ int main(int argc, char **argv)
     if (options.wssURL) config.wssURL = ZuMv(options.wssURL);
     if (options.deviceID) config.deviceID = ZuMv(options.deviceID);
     if (options.caPath) config.caPath = ZuMv(options.caPath);
-    if (options.test) {
-      ZiLog::init("zdash");
-      ZiLog::level(Ze::Warning);
-      ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
-      ZiLog::start();
-      ZuGuard stopLog{[]() { ZiLog::stop(); }};
-      config.test = true;
-      config.testTimeout = options.testTimeout;
-      ZtString<> token{::getenv("ZDASH_TEST_TOKEN")};
-      ZuGuard clearToken{[&token]() {
-	if (token.mutable_()) ZuClear(token.data(), token.length());
-      }};
-      if (config.wssURL && !token) {
-	std::cerr << "zdash: WSS test requires ZDASH_TEST_TOKEN\n";
+    if (modulePath) {
+      ZiModule library;
+      ZeString error;
+      if (library.load(Zi::Path{modulePath}, 0, &error) < 0) {
+	std::cerr << error << '\n';
 	return 1;
       }
-      auto caPath = ZuMv(config.caPath);
-      return session(ZuMv(config), caPath, token) ? 0 : 1;
+      auto entry = reinterpret_cast<ZDash::ModuleFn>(
+	library.resolve(ZDashModuleFnSym, &error));
+      if (!entry) {
+	library.unload();
+	std::cerr << error << '\n';
+	return 1;
+      }
+      // As with Zdb stores, retain the module through process teardown:
+      // framework TLS/heaps can retain callbacks into dynamically loaded code.
+      ZDash::Module module;
+      module.online = !!config.wssURL;
+      module.session = {&config,
+	[](ZDash::AppCf *cf, ZDash::ModuleSession &run) {
+	  auto caPath = ZuMv(cf->caPath);
+	  return session(ZuMv(*cf), caPath, run.token, &run);
+	}};
+      return entry(module);
     }
     if (!config.wssURL) return 1;
     ZDashOAuth::Config oauth;

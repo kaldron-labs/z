@@ -104,24 +104,24 @@ enum {
 };
 
 struct Config {
-  String issuerURL;
-  String serviceURL;
-  String clientID;
-  String caPath;
-  String scope{"ping"};
-  uint32_t callbackPort = CallbackPort;
-  uint32_t loginTimeout = 180;
-  bool loopbackTest = false;
+  String	issuerURL;
+  String	serviceURL;
+  String	clientID;
+  String	caPath;
+  String	scope{"ping"};
+  uint32_t	callbackPort = CallbackPort;
+  uint32_t	loginTimeout = 180;
+  bool		loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Required)), (String)),
-  (((serviceURL)), (String)),
-  (((clientID), (Required)), (String)),
-  (((caPath)), (String)),
-  (((scope)), (String, "ping")),
-  (((callbackPort), ((Range<1, 65535>))), (UInt32, CallbackPort)),
-  (((loginTimeout), ((Range<1, 3600>))), (UInt32, 180)),
-  (((loopbackTest)), (Bool, false)));
+  (((issuerURL), (Required)),			(String)),
+  (((serviceURL)),				(String)),
+  (((clientID),	 (Required)),			(String)),
+  (((caPath)),					(String)),
+  (((scope)),					(String, "ping")),
+  (((callbackPort), ((Range<1, 65535>))),	(UInt32, CallbackPort)),
+  (((loginTimeout), ((Range<1, 3600>))),	(UInt32, 180)),
+  (((loopbackTest)),				(Bool, false)));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -152,21 +152,20 @@ struct MetadataWire {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (MetadataWire, JSON),
-  (((issuer),		(JSON::Opt)),	(String)),
+  (((issuer), (JSON::Opt)),					(String)),
   (((authorizationEndpoint),
-    (JSON::ID<"authorization_endpoint">, JSON::Opt)),	(String)),
+    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		(String)),
   (((tokenEndpoint),
-    (JSON::ID<"token_endpoint">, JSON::Opt)),	(String)),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	(String)),
+    (JSON::ID<"token_endpoint">, JSON::Opt)),			(String)),
+  (((jwksURI), (JSON::ID<"jwks_uri">, JSON::Opt)),		(String)),
   (((revocationEndpoint),
-    (JSON::ID<"revocation_endpoint">, JSON::Opt)),	(String)),
+    (JSON::ID<"revocation_endpoint">, JSON::Opt)),		(String)),
   (((responseTypesSupported),
-    (JSON::ID<"response_types_supported">, JSON::Opt)),	(StringVec)),
+    (JSON::ID<"response_types_supported">, JSON::Opt)),		(StringVec)),
   (((grantTypesSupported),
-    (JSON::ID<"grant_types_supported">, JSON::Opt)),	(StringVec)),
+    (JSON::ID<"grant_types_supported">, JSON::Opt)),		(StringVec)),
   (((codeChallengeMethods),
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),
-    (StringVec)));
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	(StringVec)));
 
 template <typename Fn>
 static bool formEach(ZuCSpan form, Fn &&fn)

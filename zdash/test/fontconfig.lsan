@@ -1,0 +1,2 @@
+# Fontconfig's process-lifetime cache, initialized by GTK.
+leak:libfontconfig.so

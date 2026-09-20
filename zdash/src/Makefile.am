@@ -30,5 +30,5 @@ zdash_LDADD = $(top_builddir)/zgtk/src/libZGtk.la \
 if MINGW
 zdash_LDFLAGS = ${AM_LDFLAGS} -mwindows
 endif
-zdash_SOURCES = zdash.cc zdash_oauth.hh zdash_protocol.hh
+zdash_SOURCES = zdash.cc zdash_oauth.hh zdash_module.hh
 dist_pkgdata_DATA = zdash.glade
