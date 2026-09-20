@@ -486,6 +486,22 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ### Storage and lifetime
 - Use `ZmHeap` and `ZmVHeap` to adopt a recycling zero-overhead block allocator, with heap identification, telemetry and configurable tuning
   - Use `ZmHeap` for fixed-size concrete types
+    - Always declare the `ZmHeap` type as an alias before using it:
+    ```
+    class X { ... };
+    ```
+    becomes:
+    ```
+    template <typename Heap = ZuVoid>
+    class X_ : public Heap { ... };
+    using X_Heap = ZmHeap<"X", X_<>>;
+    ZuDerive(X, X_<X_Heap>);
+    ```
+    - Key properties of the pattern:
+      - `Heap = ZuVoid` is defaulted
+      - `X_<>` is abbreviated
+      - `X_Heap` is aliased
+      - `X` is `ZuDerive`d to ensure a new type ID and symbol compression
   - Use `ZmVHeap` for variable-sized dynamic allocations (strings, etc.)
 - Use `ZtScratch` for stack scratch with heap fallback; ensure the underlying array has appropriate heap identification.
 - Use `ZtBuiltin` for builtin arrays with heap-allocation fallback.
