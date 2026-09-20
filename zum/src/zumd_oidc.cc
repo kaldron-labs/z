@@ -825,7 +825,7 @@ private:
       complete(false, String{});
       return;
     }
-    ZmRef<OIDCReq> request = new OIDCReq{this};
+    ZmRef<OIDCReq> request = new OIDCReq{static_cast<OIDCState *>(this)};
     if (!randomText(m_rng, request->stateID) ||
         !randomText(m_rng, request->nonce) ||
         !randomText(m_rng, request->verifier)) {
@@ -878,8 +878,10 @@ private:
     }
     m_pending.addNode(request);
     m_scheduler->add(&request->timer, Zm::now() + ZuTime{double(m_timeout)},
-      ZmScheduler::Update, [request](auto &&arm) {
-        return arm([request]() { if (request->state) request->state->fail_(request); });
+      ZmScheduler::Update, [this, request](auto &&arm) {
+        return arm([this, request]() mutable {
+          if (request->state) fail_(ZuMv(request));
+        });
       }, m_sid);
     complete(true, ZuMv(location));
   }
