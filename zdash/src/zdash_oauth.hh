@@ -374,7 +374,10 @@ private:
 };
 
 using PoolHeap = ZmHeap<"zum.Pool", Pool_<>>;
-ZuDerive(Pool, (Pool_<PoolHeap>));
+class Pool : public Pool_<PoolHeap> {
+public:
+  using Pool_<PoolHeap>::Pool_;
+};
 
 class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
   using Base = Zhttp::Client<ClientBase, Pool>;
