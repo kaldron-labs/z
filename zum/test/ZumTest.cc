@@ -4066,7 +4066,7 @@ static void enrollmentRuntime()
   }));
   ZiLog::start();
   auto config = dbConfig();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};

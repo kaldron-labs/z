@@ -121,8 +121,9 @@ public:
       auto msg = Ztc::msg(frame->ptr<Ztc::Hdr>());
       auto tel = msg && msg->body_type() == Ztc::fbs::Body::Telemetry ?
 	msg->body_as_Telemetry() : nullptr;
-      if (skipStartup && tel && tel->seqNo() == 0 &&
-	  tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry)
+      if (skipStartup && tel && !tel->seqNo() &&
+	  (tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry ||
+	   tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown))
 	continue;
       return frame;
     }

@@ -65,7 +65,7 @@ int main()
   auto leaderCf = config(leaderPath, "0");
   auto followerCf = config(followerPath, "1");
 
-  ZiMultiplex mx{ZvMxParams{"mx", leaderCf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", leaderCf->resolve("mx"))};
   ZuCheck(mx.start());
 
   ZmSemaphore leaderUp;

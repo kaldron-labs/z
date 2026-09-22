@@ -139,6 +139,12 @@ public:
   Derived &&cpuset(ZmBitmap b) { Data::cpuset = ZuMv(b); return derived(); }
   Derived &&spin(unsigned n) { Data::spin = n; return derived(); }
   Derived &&timeout(unsigned n) { Data::timeout = n; return derived(); }
+
+  unsigned size() const { return Data::size; }
+  bool ll() const { return Data::ll; }
+  const ZmBitmap &cpuset() const { return Data::cpuset; }
+  unsigned spin() const { return Data::spin; }
+  unsigned timeout() const { return Data::timeout; }
 };
 
 class Params : public Params_<Params> {

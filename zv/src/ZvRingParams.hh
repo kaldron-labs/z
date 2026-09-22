@@ -17,53 +17,24 @@
 
 #include <zlib/ZfCf.hh>
 
-struct ZvRingCf {
-  ZtString<>	name;
-  unsigned	size = 131072;
-  bool		ll = false;
-  int		spin = 1000;
-  int		timeout = 1;	// milliseconds
-  int		killWait = 1;	// seconds
-  bool		coredump = false;
-};
+namespace ZiRing_ {
 
-ZfStruct(ZvAPI, (ZvRingCf, Cf),
-  (((name),		(Required)),			(String)),
-  (((size),		((Range<8192U, 1U<<30U>))),	(UInt32, 131072)),
-  (((ll)),					(Bool, false)),
-  (((spin),		((Range<0, INT_MAX>))),		(Int32, 1000)),
-  (((timeout),		((Range<0, 3600>))),		(Int32, 1)),
-  (((killWait),		((Range<0, 3600>))),		(Int32, 1)),
-  (((coredump)),				(Bool, false)));
+ZfStruct(ZvAPI, (Params, Cf),
+  (((name, Fn),		(Mutable, Required)),			(String)),
+  (((size, Fn),		(Mutable, (Range<8192U, 1U<<30U>))),	(UInt32, 131072)),
+  (((ll, Fn),		(Mutable)),					(Bool, false)),
+  (((spin, Fn),		(Mutable, (Range<0, INT_MAX>))),		(Int32, 1000)),
+  (((timeout, Fn),	(Mutable, (Range<0, 3600>))),			(Int32, 1)),
+  (((killWait, Fn),	(Mutable, (Range<0, 3600>))),			(Int32, 1)),
+  (((coredump, Fn),	(Mutable)),					(Bool, false)));
 
-struct ZvRingParams : public ZiRingParams {
-  ZvRingParams(const ZfCf::AnyNode *cf) { init(cf); }
-  ZvRingParams(const ZfCf::AnyNode *cf, ZiRingParams deflt) :
-      ZiRingParams{ZuMv(deflt)} { init(cf); }
+} // ZiRing_
 
-  void init(const ZfCf::AnyNode *cf) {
-    if (!cf) return;
-    auto patch = ZfCf::handler<ZvRingCf>(cf).ctor();
-    if (cf->resolve("name")) name(patch.name);
-    if (cf->resolve("size")) size(patch.size);
-    if (cf->resolve("ll")) ll(patch.ll);
-    if (cf->resolve("spin")) spin(patch.spin);
-    if (cf->resolve("timeout")) timeout(patch.timeout);
-    if (cf->resolve("killWait")) killWait(patch.killWait);
-    if (cf->resolve("coredump")) coredump(patch.coredump);
-  }
-
-  ZvRingParams() = default;
-  ZvRingParams(const ZiRingParams &p) : ZiRingParams{p} { }
-  ZvRingParams &operator =(const ZiRingParams &p) {
-    ZiRingParams::operator =(p);
-    return *this;
-  }
-  ZvRingParams(ZiRingParams &&p) : ZiRingParams{ZuMv(p)} { }
-  ZvRingParams &operator =(ZiRingParams &&p) {
-    ZiRingParams::operator =(ZuMv(p));
-    return *this;
-  }
-};
+inline ZiRingParams ZvRingParams(
+    const ZfCf::AnyNode *cf, ZiRingParams params = {})
+{
+  if (cf) ZfCf::handler<ZiRingParams>(cf).update(params);
+  return params;
+}
 
 #endif /* ZvRingParams_HH */

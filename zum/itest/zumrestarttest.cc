@@ -639,7 +639,7 @@ static void memberRecovery()
 {
   ZuTestScope(memberRecovery);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -751,7 +751,7 @@ static void rekeyRecovery()
 {
   ZuTestScope(rekeyRecovery);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -913,7 +913,7 @@ static void invitationRecovery()
 {
   ZuTestScope(invitationRecovery);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -1061,7 +1061,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
 {
   ZuTestScope(catalogRecovery);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -1295,7 +1295,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
 {
   ZuTestScope(roleRemoval);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -1438,7 +1438,7 @@ static void restart()
 {
   ZuTestScope(restart);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -1475,7 +1475,7 @@ static void grantUpdate()
 {
   ZuTestScope(grantUpdate);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;
@@ -1519,7 +1519,7 @@ static void sagaRecovery()
 {
   ZuTestScope(sagaRecovery);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheck(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DBContext> context;

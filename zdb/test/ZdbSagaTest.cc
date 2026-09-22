@@ -792,7 +792,7 @@ static void tableIDs()
 {
   ZuTestScopeRT(tableIDs);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<Zdb> db = new Zdb{};
@@ -829,7 +829,7 @@ static void collisions()
   using zdbtest::Order;
 
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   auto init = store->init(config->resolve("zdb.store"), &mx, 1, {});
@@ -926,7 +926,7 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
   ZuTestScope(live);
 
   auto config = cf(separate);
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
@@ -1087,7 +1087,7 @@ static void recovery(
   bool afterDelete = cut == 2 || cut == 3;
   int intentStep = cut == 1 ? 1 : cut == 5 ? 0 : cut == 6 ? 2 : -1;
   auto config = cf(separate);
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
@@ -1321,7 +1321,7 @@ static void recoveryQueue(bool read = false)
 {
   ZuTestScopeRT(recoveryQueue);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1412,7 +1412,7 @@ static void recoveryError(unsigned mode)
 {
   ZuTestScopeRT(recoveryError);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1599,7 +1599,7 @@ static void catalogStartup()
 {
   ZuTestScope(catalogStartup);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1627,7 +1627,7 @@ static void catalogCorrupt(unsigned mode)
 {
   ZuTestScope(catalogCorrupt);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1648,7 +1648,7 @@ static void findFail()
   using DB = ZdbSagaDB<zdbtest::LiveContext, zdbtest::LiveSagas>;
   using M = ZdbMSaga<zdbtest::LiveSagas>;
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1710,7 +1710,7 @@ static void scanError(bool steps)
 {
   ZuTestScopeRT(scanError);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1745,7 +1745,7 @@ static void scanFail(bool steps, bool stopPending)
 {
   ZuTestScopeRT(scanFail);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1816,7 +1816,7 @@ static void admission()
   using DB = ZdbSagaDB<zdbtest::LiveContext, zdbtest::LiveSagas>;
   using M = ZdbMSaga<zdbtest::LiveSagas>;
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
@@ -1894,7 +1894,7 @@ static void payloadAdmission(unsigned size)
   using DB = ZdbSagaDB<zdbtest::PayloadContext, Sagas>;
   using M = ZdbMSaga<Sagas>;
   auto config = cf(true);
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
@@ -1955,7 +1955,7 @@ static void admissionDeactivated(bool read = false)
 {
   ZuTestScope(admissionDeactivated);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2027,7 +2027,7 @@ static void gracefulStop(bool failed)
 {
   ZuTestScope(gracefulStop);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2122,7 +2122,7 @@ static void recoveryCleanup(unsigned cut)
 {
   ZuTestScope(recoveryCleanup);
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2221,7 +2221,7 @@ static void recoveryPages(bool orphan)
   ZuTestScopeRT(recoveryPages);
   enum { N = Zdb_::SagaScanSize + 1 }; // cross both main and step scan pages
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2325,7 +2325,7 @@ static void rollback(
   using DB = ZdbSagaDB<zdbtest::LiveContext, zdbtest::LiveSagas>;
   using M = ZdbMSaga<zdbtest::LiveSagas>;
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
@@ -2414,7 +2414,7 @@ static void abandonRollback()
   using DB = ZdbSagaDB<zdbtest::LiveContext, zdbtest::LiveSagas>;
   using M = ZdbMSaga<zdbtest::LiveSagas>;
   auto config = cf();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();

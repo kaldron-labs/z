@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// join array
+// case transformation
 
 #ifndef ZtCase_HH
 #define ZtCase_HH
@@ -13,14 +13,12 @@
 #include <zlib/ZtLib.hh>
 #endif
 
-#include <zlib/ZmScratch.hh>
-
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 
 namespace ZtCase {
 
-ZuDerive(Buf,
-  (ZtString<ZtStringHeapID<"ZtCase.Buf", ZtStringSharded<true>>>));
+using Buf = ZtArray<char, ZtArrayHeapID<"ZtCase.Buf", ZtArraySharded<true>>>;
 
 inline bool isupper__(char c) { return c >= 'A' && c <= 'Z'; }
 inline char toupper__(char c) {
@@ -48,8 +46,7 @@ inline void snakeCamel(ZuCSpan s, L &&l) {
   }
   unsigned m = n - o;
   unsigned z = m + 1;
-  auto buf = ZmScratch(char, z, Buf::VHeap);
-  buf.length(m);
+  auto buf = ZtScratch(Buf, m, z);
   underscore = false;
   unsigned j = 0;
   for (unsigned i = 0; i < n; i++) {
@@ -85,8 +82,7 @@ inline void camelSnake(ZuCSpan s, L &&l) {
   }
   unsigned m = n + o;
   unsigned z = m + 1;
-  auto buf = ZmScratch(char, z, Buf::VHeap);
-  buf.length(m);
+  auto buf = ZtScratch(Buf, m, z);
   unsigned j = 0;
   for (unsigned i = 0; i < n; i++) {
     auto c = s[i];

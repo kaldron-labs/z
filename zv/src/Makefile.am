@@ -16,7 +16,8 @@ lib_LTLIBRARIES = libZv.la
 libZv_la_CPPFLAGS = $(AM_CPPFLAGS) -DZV_EXPORTS 
 libZv_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZv_la_LDFLAGS = @Z_SO_LDFLAGS@
-libZv_la_SOURCES = ZvLib.cc ZvCf.cc ZvYAML.cc ZvTOML.cc ZvThreadParams.cc
+libZv_la_SOURCES = ZvLib.cc ZvCf.cc ZvYAML.cc ZvTOML.cc \
+	ZvRingParams.cc ZvThreadParams.cc
 libZv_la_LIBADD = \
 	$(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \

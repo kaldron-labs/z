@@ -8,5 +8,5 @@
 
 ZtEnumImplNS(ZmThreadPriority);
 
-ZfStructImpl(ZvThreadCf);
-ZfStructImpl(ZvThreadCf, Cf);
+ZfStructImpl(ZmThreadParams);
+ZfStructImpl(ZmThreadParams, Cf);

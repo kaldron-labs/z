@@ -562,7 +562,7 @@ public:
     if (!app) return;
     event->ingress = this;
     ++m_accepted;
-    app->serviceMx_()->run([app, event = ZuMv(event)]() mutable {
+    app->scheduler_()->run([app, event = ZuMv(event)]() mutable {
       app->alert_(ZuMv(event));
     }, app->config().workerThread);
   }
@@ -880,33 +880,21 @@ bool App::init(const AppCf &cf)
       cf.maxPending > 65536 || cf.maxSubs > 65536 ||
       cf.maxAlertMsg > (1U<<20) || cf.alertTail > (1U<<20) ||
       cf.alertReplay > (1U<<20) || cf.alertRetention > 3660 ||
-      !cf.timerThread || !cf.rxThread || !cf.txThread || !cf.workerThread ||
-      !cf.mx.nThreads || cf.mx.nThreads > 1024 ||
-      (cf.mx.stackSize &&
-	(cf.mx.stackSize < 16384 || cf.mx.stackSize > (2U<<20))) ||
-      (cf.mx.queueSize && cf.mx.queueSize < 8192) ||
-      cf.mx.timeout > 3600 ||
-      cf.timerThread > cf.mx.nThreads ||
-      cf.rxThread > cf.mx.nThreads ||
-      cf.txThread > cf.mx.nThreads ||
-      cf.workerThread > cf.mx.nThreads ||
-      !cf.timerRole || !cf.mx.rxThread || !cf.mx.txThread || !cf.workerRole ||
-      cf.timerRole == cf.mx.rxThread ||
-      cf.timerRole == cf.mx.txThread ||
+      !cf.timerThread || !cf.workerThread ||
+      !cf.scheduler.nThreads || cf.scheduler.nThreads > 1024 ||
+      (cf.scheduler.stackSize &&
+	(cf.scheduler.stackSize < 16384 || cf.scheduler.stackSize > (2U<<20))) ||
+      (cf.scheduler.queueSize && cf.scheduler.queueSize < 8192) ||
+      cf.scheduler.timeout > 3600 ||
+      cf.timerThread > cf.scheduler.nThreads ||
+      cf.workerThread > cf.scheduler.nThreads ||
+      !cf.timerRole || !cf.workerRole ||
       cf.timerRole == cf.workerRole ||
-      cf.mx.rxThread == cf.mx.txThread ||
-      cf.mx.rxThread == cf.workerRole ||
-      cf.mx.txThread == cf.workerRole ||
-      cf.timerThread == cf.rxThread ||
-      cf.timerThread == cf.txThread ||
-      cf.timerThread == cf.workerThread ||
-      cf.rxThread == cf.txThread ||
-      cf.rxThread == cf.workerThread ||
-      cf.txThread == cf.workerThread)
+      cf.timerThread == cf.workerThread)
     return false;
   if (!App_::claim(this)) return false;
 
-  bool mxConstructed = false;
+  bool schedulerConstructed = false;
   try {
     m_cf = cf;
     m_state = new App_::State;
@@ -919,49 +907,31 @@ bool App::init(const AppCf &cf)
     m_state->tail.init(ZmQueueParams{}.initial(cf.alertTail));
     m_state->store.init(
       cf.alertPrefix, cf.id, cf.maxFrame, cf.alertRetention);
-    ZiMxParams params;
-    params.scheduler([
-      id = cf.id, mx = cf.mx,
+    ZmSchedParams params;
+    [
+      id = cf.id, scheduler = cf.scheduler,
       timerRole = cf.timerRole,
       workerRole = cf.workerRole,
       timerThread = cf.timerThread,
-      rxThread = cf.rxThread,
-      txThread = cf.txThread,
       workerThread = cf.workerThread
     ](auto &sched) {
-      sched.id(id).nThreads(mx.nThreads).priority(mx.priority)
-	.partition(mx.partition).ll(mx.ll).spin(mx.spin).timeout(mx.timeout)
+      sched.id(id).nThreads(scheduler.nThreads).priority(scheduler.priority)
+	.partition(scheduler.partition).ll(scheduler.ll).spin(scheduler.spin)
+	.timeout(scheduler.timeout)
 	.thread(timerThread, [timerRole](auto &thread) {
 	  thread.name(timerRole);
-	  thread.isolated(true);
-	})
-	.thread(rxThread, [rxRole = mx.rxThread](auto &thread) {
-	  thread.name(rxRole);
-	  thread.isolated(true);
-	})
-	.thread(txThread, [txRole = mx.txThread](auto &thread) {
-	  thread.name(txRole);
 	  thread.isolated(true);
 	})
 	.thread(workerThread, [workerRole](auto &thread) {
 	  thread.name(workerRole);
 	  thread.isolated(true);
 	});
-      if (mx.stackSize) sched.stackSize(mx.stackSize);
-      if (mx.quantum > 0) sched.quantum(mx.quantum);
-      if (mx.queueSize) sched.queueSize(mx.queueSize);
-    }).rxThread(cf.rxThread).txThread(cf.txThread)
-      .rxBufSize(cf.mx.rcvBufSize).txBufSize(cf.mx.sndBufSize);
-#ifdef ZiMultiplex_EPoll
-    if (cf.mx.epollMaxFDs) params.epollMaxFDs(cf.mx.epollMaxFDs);
-    if (cf.mx.epollQuantum) params.epollQuantum(cf.mx.epollQuantum);
-#endif
-#ifdef ZiMultiplex_DEBUG
-    params.trace(cf.mx.trace).debug(cf.mx.debug).frag(cf.mx.frag)
-      .yield(cf.mx.yield);
-#endif
-    new (m_mx.new_<ZiMultiplex>()) ZiMultiplex{ZuMv(params)};
-    mxConstructed = true;
+      if (scheduler.stackSize) sched.stackSize(scheduler.stackSize);
+      if (scheduler.quantum > 0) sched.quantum(scheduler.quantum);
+      if (scheduler.queueSize) sched.queueSize(scheduler.queueSize);
+    }(params);
+    new (m_scheduler.new_<ZmScheduler>()) ZmScheduler{ZuMv(params)};
+    schedulerConstructed = true;
     App_::warmSamples();
     warmIndices_();
     watch_();
@@ -971,10 +941,10 @@ bool App::init(const AppCf &cf)
   } catch (...) {
     unwatch_();
     clearIndices_();
-    if (mxConstructed)
-      m_mx = {};
+    if (schedulerConstructed)
+      m_scheduler = {};
     else
-      m_mx.new_<void, true>();
+      m_scheduler.new_<void, true>();
     delete m_state;
     m_state = nullptr;
     App_::release(this);
@@ -1005,8 +975,8 @@ void App::start(CtrlFn fn)
     m_startFn = ZuMv(fn);
   }
 
-  ZiMultiplex *mx_ = serviceMx_();
-  if (!mx_ || !mx_->start()) {
+  ZmScheduler *scheduler = scheduler_();
+  if (!scheduler || !scheduler->start()) {
     startDone_(false);
     return;
   }
@@ -1036,7 +1006,7 @@ void App::start(CtrlFn fn)
     m_state->telRing.init(ZiRingParams{m_state->telName, 0});
   }
 
-  auto failed = [this, mx_]() {
+  auto failed = [this, scheduler]() {
     m_running = false;
     if (m_state->pidFile.is<ZiPIDFile>())
       m_state->pidFile.new_<void>();
@@ -1047,7 +1017,7 @@ void App::start(CtrlFn fn)
       m_state->reqRing.close();
     }
     m_state->store.close();
-    mx_->stop();
+    scheduler->stop();
     startDone_(false);
   };
 
@@ -1080,7 +1050,7 @@ void App::start(CtrlFn fn)
     return;
   }
   m_state->ingress->open(this);
-  mx_->run([this]() {
+  scheduler->run([this]() {
     if (!m_running.load_()) return;
     m_state->appPending = true;
     if (publishApp_(0)) m_state->appPending = false;
@@ -1090,14 +1060,11 @@ void App::start(CtrlFn fn)
 
 bool App::start()
 {
-  ZiMultiplex *mx_ = serviceMx_();
-  if (mx_ && mx_->running()) {
+  ZmScheduler *scheduler = scheduler_();
+  if (scheduler && scheduler->running()) {
     auto tid = Zm::getTID();
-    if (mx_->invoked_(tid, m_cf.timerThread) ||
-	mx_->invoked_(tid, m_cf.rxThread) ||
-	mx_->invoked_(tid, m_cf.txThread) ||
-	mx_->invoked_(tid, m_cf.workerThread))
-      return false;
+    for (unsigned sid = 1; sid <= m_cf.scheduler.nThreads; ++sid)
+      if (scheduler->invoked_(tid, sid)) return false;
   }
   bool ok = ZmBlock<bool>{}(
     [this](auto wake) { start(CtrlFn{ZuMv(wake)}); });
@@ -1126,15 +1093,12 @@ void App::stop(CtrlFn fn)
 bool App::stop()
 {
   if (!m_initialized) return true;
-  ZiMultiplex *mx_ = serviceMx_();
-  bool mxRunning = mx_ && mx_->running();
-  if (mxRunning) {
+  ZmScheduler *scheduler = scheduler_();
+  bool schedulerRunning = scheduler && scheduler->running();
+  if (schedulerRunning) {
     auto tid = Zm::getTID();
-    if (mx_->invoked_(tid, m_cf.timerThread) ||
-	mx_->invoked_(tid, m_cf.rxThread) ||
-	mx_->invoked_(tid, m_cf.txThread) ||
-	mx_->invoked_(tid, m_cf.workerThread))
-      return false;
+    for (unsigned sid = 1; sid <= m_cf.scheduler.nThreads; ++sid)
+      if (scheduler->invoked_(tid, sid)) return false;
   }
   startDone_(false);
   if (m_running) publishRaw_(App_::shutdownFrame(m_cf.id),
@@ -1158,26 +1122,26 @@ bool App::stop()
     m_state->reqRing.close();
   }
   m_state->ingress->close(this);
-  if (mxRunning) {
-    ZmBlock<>{}([this, mx_](auto wake) mutable {
-      mx_->run([this, wake = ZuMv(wake)]() mutable {
+  if (schedulerRunning) {
+    ZmBlock<>{}([this, scheduler](auto wake) mutable {
+      scheduler->run([this, wake = ZuMv(wake)]() mutable {
 	clearSubscriptions_();
 	m_state->telRing.close();
 	m_state->appPending = true;
 	wake();
       }, m_cf.workerThread);
     });
-    ZmBlock<>{}([this, mx_](auto wake) mutable {
-      mx_->run([wake = ZuMv(wake)]() mutable { wake(); },
+    ZmBlock<>{}([this, scheduler](auto wake) mutable {
+      scheduler->run([wake = ZuMv(wake)]() mutable { wake(); },
 	m_cf.timerThread);
     });
-    ZmBlock<>{}([this, mx_](auto wake) mutable {
-      mx_->run([wake = ZuMv(wake)]() mutable { wake(); },
+    ZmBlock<>{}([this, scheduler](auto wake) mutable {
+      scheduler->run([wake = ZuMv(wake)]() mutable { wake(); },
 	m_cf.workerThread);
     });
     ZmAssert(m_state->ingress->drained());
   }
-  if (mxRunning) mx_->stop();
+  if (schedulerRunning) scheduler->stop();
   m_state->store.close();
   return true;
 }
@@ -1190,7 +1154,7 @@ void App::final()
     "final() called from an owned scheduler thread", return);
   unwatch_();
   clearIndices_();
-  m_mx = {};
+  m_scheduler = {};
   delete m_state;
   m_state = nullptr;
   m_initialized = false;
@@ -1205,7 +1169,7 @@ void App::rag(RagFn fn) const
     return;
   }
   const App *app = this;
-  serviceMx_()->run([app, fn = ZuMv(fn)]() mutable {
+  scheduler_()->run([app, fn = ZuMv(fn)]() mutable {
     fn(RAG::T(app->m_rag.load_()));
   }, m_cf.workerThread);
 }
@@ -1223,7 +1187,7 @@ void App::rag(RAG::T rag)
     return;
   }
   App *app = this;
-  serviceMx_()->run([app, rag]() { app->rag_(rag); }, m_cf.workerThread);
+  scheduler_()->run([app, rag]() { app->rag_(rag); }, m_cf.workerThread);
 }
 
 void App::rag_(RAG::T rag)
@@ -1366,9 +1330,7 @@ void App::unwatch_()
   if (!m_watching) return;
   DBMgr::unwatch();
   HubMgr::unwatch();
-  MxMgr::all({[this](Ztc::Mx *mx_) {
-    if (mx_ != serviceMx_()) mx_->unwatch();
-  }});
+  MxMgr::all({[](Ztc::Mx *mx_) { mx_->unwatch(); }});
   MxMgr::unwatch();
   m_watching = false;
 }
@@ -1376,20 +1338,18 @@ void App::unwatch_()
 void App::mxAdded_(Ztc::Mx *mx_)
 {
   App_::indexAdd(m_mxIdx, ZuID{mx_->telKey()}, mx_);
-  if (mx_ != serviceMx_()) {
-    mx_->watch(
-      {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }},
-      {[this](Ztc::Connection *cxn) { cxnDeleted_(cxn); }});
-    mx_->allCxns(
-      {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }});
-  }
+  mx_->watch(
+    {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }},
+    {[this](Ztc::Connection *cxn) { cxnDeleted_(cxn); }});
+  mx_->allCxns(
+    {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }});
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueAdded_(queue); }});
 }
 
 void App::mxDeleted_(Ztc::Mx *mx_)
 {
-  if (mx_ != serviceMx_()) mx_->unwatch();
+  mx_->unwatch();
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueDeleted_(queue); }});
   App_::indexDel(m_mxIdx, ZuID{mx_->telKey()}, mx_);
@@ -1567,16 +1527,16 @@ void App::reqRun_()
 	buf = {};
       m_state->reqRing.shift2(size);
 
-      ZiMultiplex *mx_ = serviceMx_();
+      ZmScheduler *scheduler = scheduler_();
       if (!buf || !msg(buf->ptr<Hdr>())) {
-	mx_->run([this]() {
+	scheduler->run([this]() {
 	  if (m_running.load_())
 	    sendError_(ZuCmp<uint64_t>::null(), 1,
 	      "invalid FlatBuffers message");
 	}, m_cf.workerThread);
 	continue;
       }
-      mx_->run([this, buf = ZuMv(buf)]() mutable {
+      scheduler->run([this, buf = ZuMv(buf)]() mutable {
 	if (m_running.load_()) request_(ZuMv(buf));
       }, m_cf.workerThread);
     }
@@ -1900,9 +1860,9 @@ void App::replayBatch_(uint64_t order)
     sub->replaySeqNo = 0;
   }
 
-  auto mx_ = serviceMx_();
-  if (!mx_ || !mx_->running()) return;
-  mx_->run([this, order]() { replayBatch_(order); }, m_cf.workerThread);
+  auto scheduler = scheduler_();
+  if (!scheduler || !scheduler->running()) return;
+  scheduler->run([this, order]() { replayBatch_(order); }, m_cf.workerThread);
 }
 
 void App::finishReplay_(App_::Subscription_ *sub_)
@@ -1943,20 +1903,20 @@ void App::failReplay_(
 
 void App::armTimer_()
 {
-  ZiMultiplex *mx_ = serviceMx_();
-  if (!mx_ || !mx_->running()) return;
+  ZmScheduler *scheduler = scheduler_();
+  if (!scheduler || !scheduler->running()) return;
   uint64_t generation = ++m_state->timerGeneration;
-  mx_->del(&m_state->timer);
+  scheduler->del(&m_state->timer);
   App_::Subscription *sub = App_::earliest(m_state);
   if (!sub) return;
   ZuTime deadline = sub->due;
-  mx_->add(&m_state->timer, deadline, ZmScheduler::Update,
+  scheduler->add(&m_state->timer, deadline, ZmScheduler::Update,
     [this, generation, deadline](auto &&arm) {
       return arm([this, generation, deadline]() {
 	if (!m_running.load_()) return;
-	auto mx__ = serviceMx_();
-	if (!mx__) return;
-	mx__->run([this, generation, deadline]() {
+	auto scheduler = scheduler_();
+	if (!scheduler) return;
+	scheduler->run([this, generation, deadline]() {
 	  timerFired_(generation, deadline);
 	}, m_cf.workerThread);
       });
@@ -1985,9 +1945,9 @@ void App::timerFired_(uint64_t generation, ZuTime)
 
 void App::clearSubscriptions_()
 {
-  ZiMultiplex *mx_ = serviceMx_();
+  ZmScheduler *scheduler = scheduler_();
   ++m_state->timerGeneration;
-  if (mx_) mx_->del(&m_state->timer);
+  if (scheduler) scheduler->del(&m_state->timer);
   while (auto node = m_state->pending.minimum()) {
     App_::Pending_ *pending = node->val();
     if (pending->sub) {
@@ -2266,7 +2226,7 @@ bool App::snapshot_(
     sub_->snapshot = pending;
     sub_->running = true;
   }
-  serviceMx_()->run([this, seqNo]() {
+  scheduler_()->run([this, seqNo]() {
     snapshotBatch_(seqNo);
   }, m_cf.workerThread);
   return true;
@@ -2377,7 +2337,7 @@ void App::snapshotBatch_(uint64_t seqNo)
     snapshotDone_(pending);
     return;
   }
-  serviceMx_()->run([this, seqNo]() {
+  scheduler_()->run([this, seqNo]() {
     snapshotBatch_(seqNo);
   }, m_cf.workerThread);
 }

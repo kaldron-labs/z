@@ -160,7 +160,7 @@ enum { RxSID = 3, TxSID = 4, GtkSID = 5 };
 enum { RefreshBatch = 16 };
 
 struct AppCf {
-  ZvRingCf	telRing;
+  ZiRingParams	telRing;
   String	gtkGlade = "zdash.glade";
   String	gtkStyle;
   String	wssURL;
@@ -201,12 +201,12 @@ struct Options {
   bool		help = false;
 };
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">)), (String)),
-  (((wssURL), (CLI::Long<"wss">)), (String)),
-  (((deviceID), (CLI::Long<"device-id">)), (String)),
-  (((caPath), (CLI::Long<"ca">)), (String)),
-  (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+  (((config), (CLI::Long<"config">)),			(String)),
+  (((wssURL), (CLI::Long<"wss">)),			(String)),
+  (((deviceID), (CLI::Long<"device-id">)),		(String)),
+  (((caPath), (CLI::Long<"ca">)),			(String)),
+  (((noBrowser), (CLI::Long<"no-browser">)),		(Bool)),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	(Bool)));
 
 namespace Telemetry {
 using TypeList = ZuTypeList<
@@ -1019,8 +1019,8 @@ public:
     m_queueBytes = config.queueBytes;
     m_alertRows = config.alertRows;
     auto &ring = config.telRing;
-    m_telRing.init(ZmRingParams{ring.size}
-	.ll(ring.ll).spin(ring.spin).timeout(ring.timeout));
+    m_telRing.init(ZmRingParams{ring.size()}
+	.ll(ring.ll()).spin(ring.spin()).timeout(ring.timeout()));
     if (m_telRing.open(TelRing::Read | TelRing::Write) != Zu::OK)
       return false;
     m_gladePath = ZuMv(config.gtkGlade);
@@ -1732,23 +1732,28 @@ int main(int argc, char **argv)
 	std::cerr << error << '\n';
 	return 1;
       }
-      auto entry = reinterpret_cast<ZDash::ModuleFn>(
-	library.resolve(ZDashModuleFnSym, &error));
-      if (!entry) {
+      // Keep the module resident after its factory has returned an object.
+      // Its vtable and framework callbacks may remain reachable at teardown.
+      auto factory = reinterpret_cast<ZDash::FactoryFn>(
+	library.resolve(ZdashModuleFnSym, &error));
+      if (!factory) {
 	library.unload();
 	std::cerr << error << '\n';
 	return 1;
       }
-      // As with Zdb stores, retain the module through process teardown:
-      // framework TLS/heaps can retain callbacks into dynamically loaded code.
-      ZDash::Module module;
-      module.online = !!config.wssURL;
-      module.session = {&config,
+      ZmRef<ZDash::Module> module{(*factory)()};
+      if (!module) {
+	std::cerr << "null dashboard module\n";
+	return 1;
+      }
+      ZDash::ModuleSession run;
+      run.online = !!config.wssURL;
+      run.session = {&config,
 	[](ZDash::AppCf *cf, ZDash::ModuleSession &run) {
 	  auto caPath = ZuMv(cf->caPath);
 	  return session(ZuMv(*cf), caPath, run.token, &run);
 	}};
-      return entry(module);
+      return module->run(run);
     }
     if (!config.wssURL) return 1;
     ZDashOAuth::Config oauth;

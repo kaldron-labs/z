@@ -268,7 +268,7 @@ static bool transferComplete(
 static int run()
 {
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   if (!mx.start()) return 1;
 
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
