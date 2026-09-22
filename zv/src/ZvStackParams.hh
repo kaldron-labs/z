@@ -18,38 +18,15 @@
 #include <zlib/ZfCf.hh>
 #include <zlib/ZvCSV.hh>
 
-struct ZvStackCf {
-  unsigned	initial = 0;
-  double	maxFrag = 0;
-};
+ZfStruct(ZvAPI, (ZmStackParams, Cf),
+  (((initial, Fn),	(Mutable, (Range<2U, 28U>))),		(UInt32)),
+  (((maxFrag, Fn),	(Mutable, (Range<1.0, 256.0>))),	(Float)));
 
-ZfStruct(ZvAPI, (ZvStackCf, Cf),
-  (((initial),	((Range<2U, 28U>))),	(UInt32)),
-  (((maxFrag),	((Range<1.0, 256.0>))),	(Float)));
-
-struct ZvStackParams : public ZmStackParams {
-  ZvStackParams(const ZmStackParams &p) : ZmStackParams{p} { }
-  ZvStackParams &operator =(const ZmStackParams &p) {
-    ZmStackParams::operator =(p);
-    return *this;
-  }
-  ZvStackParams(ZmStackParams &&p) : ZmStackParams{ZuMv(p)} { }
-  ZvStackParams &operator =(ZmStackParams &&p) {
-    ZmStackParams::operator =(ZuMv(p));
-    return *this;
-  }
-
-  ZvStackParams(const ZfCf::AnyNode *cf) : ZmStackParams() { init(cf); }
-  ZvStackParams(const ZfCf::AnyNode *cf, ZmStackParams deflt) :
-      ZmStackParams{ZuMv(deflt)} { init(cf); }
-
-  void init(const ZfCf::AnyNode *cf) {
-    if (!cf) return;
-    auto patch = ZfCf::handler<ZvStackCf>(cf).ctor();
-    if (cf->resolve("initial")) initial(patch.initial);
-    if (cf->resolve("maxFrag")) maxFrag(patch.maxFrag);
-  }
-
-};
+inline ZmStackParams ZvStackParams(
+    const ZfCf::AnyNode *cf, ZmStackParams params = {})
+{
+  if (cf) ZfCf::handler<ZmStackParams>(cf).update(params);
+  return params;
+}
 
 #endif /* ZvStackParams_HH */

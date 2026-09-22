@@ -310,7 +310,7 @@ int main(int argc, char **argv)
         return value ? Zum::String{value} : Zum::String{};
       }};
     }
-    ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+    ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
     db->bootstrapRequests = new Zum::Requests{};

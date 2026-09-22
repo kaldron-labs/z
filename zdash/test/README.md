@@ -8,9 +8,10 @@ ring exercises byte ownership, wrap-spanning records, bounded GTK updates,
 EOS retention, generation replacement, row rendering and window-close events.
 
 The module exports `ZdashModule`; `zdash` loads it with `ZiModule` only when
-`ZDASH_TEST` names a module. Test state, synthetic telemetry and assertions
-live in the module. The host interface documents Rx/GTK ownership; the module
-remains loaded through process teardown, like Zdb store backends.
+`ZDASH_TEST` names a module, resolves the factory, and invokes the
+returned `ZDash::Module` interface. Test state, synthetic telemetry and
+assertions live in the module. The host interface documents Rx/GTK ownership;
+the module remains loaded through process teardown, like Zdb store backends.
 
 For an authenticated live hub, run the same module with the normal
 `--config`, `--wss`, `--device-id` and `--ca` options, setting

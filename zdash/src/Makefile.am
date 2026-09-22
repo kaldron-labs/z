@@ -10,6 +10,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CFLAGS = @GTK_CFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@ @GTK_CFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
+pkginclude_HEADERS = zdash_module.hh
 bin_PROGRAMS = zdash
 zdash_CPPFLAGS = $(AM_CPPFLAGS) \
 	-DDATADIR='"$(datadir)"'

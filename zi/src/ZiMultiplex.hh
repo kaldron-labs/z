@@ -628,8 +628,16 @@ struct ZiMxParams {
 
   ZiMxParams &&rxThread(unsigned tid)
     { m_rxThread = tid; return ZuMv(*this); }
+  ZiMxParams &&rxThread(ZuCSpan id) {
+    unsigned tid = m_scheduler.sid(id);
+    return rxThread(tid && tid <= m_scheduler.nThreads() ? tid : 0);
+  }
   ZiMxParams &&txThread(unsigned tid)
     { m_txThread = tid; return ZuMv(*this); }
+  ZiMxParams &&txThread(ZuCSpan id) {
+    unsigned tid = m_scheduler.sid(id);
+    return txThread(tid && tid <= m_scheduler.nThreads() ? tid : 0);
+  }
 #ifdef ZiMultiplex_EPoll
   ZiMxParams &&epollMaxFDs(unsigned n)
     { m_epollMaxFDs = n; return ZuMv(*this); }
@@ -663,6 +671,8 @@ struct ZiMxParams {
 
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
+  ZuCSpan rxThreadID() const { return m_scheduler.thread(m_rxThread).name(); }
+  ZuCSpan txThreadID() const { return m_scheduler.thread(m_txThread).name(); }
 #ifdef ZiMultiplex_EPoll
   unsigned epollMaxFDs() const { return m_epollMaxFDs; }
   unsigned epollQuantum() const { return m_epollQuantum; }

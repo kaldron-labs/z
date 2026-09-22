@@ -284,7 +284,7 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
+    mx = new ZiMultiplex{ZvMxParams("mx", cf->resolve("mx"))};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdfseriestest", "multiplexer start failed");
 

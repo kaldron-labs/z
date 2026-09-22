@@ -301,7 +301,7 @@ static void exercise(unsigned mode)
 {
   ZuTestScopeRT(exercise);
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {});
@@ -446,7 +446,7 @@ static void batches(
   ZuTestScopeRT(batches);
   using M = ZdbMSaga<zdbtest::SagaCatalog>;
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheckRT(mx.start());
   auto cuts = recover ? (fail ? 2 : 2 * (2 * count + 1)) : 1;
   for (unsigned cut = 0; cut < cuts; ++cut) {
@@ -643,7 +643,7 @@ static void namespaces(bool maxID)
   if (maxID)
     while (id.length() < IDSize_ - 1) id << 'n';
   auto cf = config();
-  ZiMultiplex mx{ZvMxParams{"mx", cf->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
   ZuCheckRT(mx.start());
   ZmRef<Zdb> db = new Zdb{};
   db->init(ZdbCf{cf}, &mx, {});

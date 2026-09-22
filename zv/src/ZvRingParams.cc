@@ -4,9 +4,11 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZvThreadParams.hh>
+#include <zlib/ZvRingParams.hh>
 
-ZtEnumImplNS(ZmThreadPriority);
+namespace ZiRing_ {
 
-ZfStructImpl(ZmThreadParams);
-ZfStructImpl(ZmThreadParams, Cf);
+ZfStructImpl(Params);
+ZfStructImpl(Params, Cf);
+
+} // ZiRing_

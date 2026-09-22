@@ -173,7 +173,7 @@ void run()
     ZuCheck(!loaded.find("o", ZdbShard{0}));
   }
 
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
 
   {

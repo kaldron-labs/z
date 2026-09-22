@@ -14,6 +14,7 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcMsg.hh>
@@ -137,13 +138,37 @@ static void appTest()
     invalidCf.reqSize = invalidCf.maxFrame;
     ZuCheck(!invalid.init(invalidCf));
   }
+  {
+    Ztc::App invalid;
+    Ztc::AppCf invalidCf = cf;
+    invalidCf.scheduler.nThreads = 1;
+    ZuCheck(!invalid.init(invalidCf));
+  }
+  {
+    Ztc::App invalid;
+    Ztc::AppCf invalidCf = cf;
+    invalidCf.workerThread = invalidCf.timerThread;
+    ZuCheck(!invalid.init(invalidCf));
+  }
 
   Zi::Name telName = ZiTestResidue::uniqueName("telemetry");
   Zi::Name pidDir = ZiTestResidue::uniqueName("registry");
   env("ZTC_RING", telName);
   env("ZTC_DIR", pidDir);
 
+  ZiMxParams params;
+  params.scheduler([](auto &scheduler) {
+    scheduler.id("ztc-app-test").nThreads(2)
+      .thread(1, [](auto &thread) { thread.isolated(true); })
+      .thread(2, [](auto &thread) { thread.isolated(true); });
+  }).rxThread(1).txThread(2);
+  ZiMultiplex mx{ZuMv(params)};
+  ZuCheck(mx.start());
+
   Ztc::App app;
+  cf.scheduler.nThreads = 3;
+  cf.timerThread = 2;
+  cf.workerThread = 3;
   cf.minInterval = 50;
   cf.maxInterval = 1000;
   cf.maxSubs = 1;
@@ -190,7 +215,7 @@ static void appTest()
   auto threads = snapshot(SeqNo + 3, Ztc::fbs::Group::Thread, "*");
   ZuCheck(threads.valid && threads.frames);
   auto mxs = snapshot(SeqNo + 4, Ztc::fbs::Group::Mx, "*");
-  ZuCheck(mxs.valid && mxs.frames);
+  ZuCheck(mxs.valid && mxs.frames == 1);
   auto queues = snapshot(SeqNo + 5, Ztc::fbs::Group::Queue, "*:*:*");
   ZuCheck(queues.valid && queues.frames);
   auto hubs = snapshot(SeqNo + 6, Ztc::fbs::Group::Hub, "*:*");
@@ -277,6 +302,7 @@ static void appTest()
   ZuCheck(restarted.valid && restarted.app);
   ZuCheck(app.stop());
   app.final();
+  ZuCheck(mx.stop());
   ZuCheck(!ZiStat{pidPath}.exists());
   ZuCheck(ZiFile::rmdir(ZiFile::append(ZiFile::tmpDir(), pidDir)) == Zi::OK);
 }

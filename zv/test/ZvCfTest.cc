@@ -343,11 +343,11 @@ int main(int argc, char **argv)
 
   ZuTestMain();
 
-  ZuCheck(ZfVFieldMatcher<ZvThreadCf>()("priority") ==
-	ZfFieldIndex(ZvThreadCf, priority));
-  ZuCheck((ZfVFieldMatcher<ZvThreadCf, ZuFacet::Cf>()("cpuset") ==
-	ZfFieldIndex(ZvThreadCf, cpuset)));
-  ZuCheck(ZfVFieldMatcher<ZvThreadCf>()("missing") < 0);
+  ZuCheck(ZfVFieldMatcher<ZmThreadParams>()("priority") ==
+	ZfFieldIndex(ZmThreadParams, priority));
+  ZuCheck((ZfVFieldMatcher<ZmThreadParams, ZuFacet::Cf>()("cpuset") ==
+	ZfFieldIndex(ZmThreadParams, cpuset)));
+  ZuCheck(ZfVFieldMatcher<ZmThreadParams>()("missing") < 0);
 
   ZuTestCall(files);
   ZuTestCall(emptyAndErrors);

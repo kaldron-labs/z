@@ -8,6 +8,15 @@ credentials and transport state remain in memory.
 At startup the agent attaches the shared telemetry ring. Publishers open that
 ring with size zero and do not create or resize it.
 
+`Ztc::App` publishers use a private `ZmScheduler`, not a network multiplex.
+Their `scheduler` configuration has two isolated destinations by default:
+`timerThread: 1` (`timer`) schedules subscriptions and `workerThread: 2`
+(`worker`) owns subscription state, serialization and shared-ring publication.
+The scheduler accepts `nThreads`, `stackSize`, `priority`, `partition`,
+`quantum`, `queueSize`, `ll`, `spin`, and `timeout`; it has no Rx/Tx, socket,
+epoll, or receive/send-buffer configuration. Publisher IDs must remain unique
+within a shared `ZTC_DIR` registry.
+
 Configuration tuning is loaded from `ztcagent.conf` (or `--config`). Runtime
 identity is supplied separately through the environment:
 

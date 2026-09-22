@@ -104,7 +104,7 @@ static void run()
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
+    mx = new ZiMultiplex{ZvMxParams("mx", cf->resolve("mx"))};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsmoketest", "multiplexer start failed");
 

@@ -11,6 +11,7 @@
 #include <gtk/gtk.h>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmPolymorph.hh>
 #include <zlib/ZiIOBuf.hh>
 
 namespace ZDash {
@@ -30,12 +31,12 @@ struct ModuleHost {
   ZmFn<void(ZmFn<void()>)> rxRun;
   ZmFn<void(ZmFn<void()>)> gtkRun;
   ZmFn<ZmRef<ZiIOBuf>()> request_;		// Rx
-  ZmFn<bool(ZuBSpan, bool)> receive_;	// Rx; bool selects subscription filter
-  ZmFn<SourceView(ZuCSpan, ZuCSpan)> source_; // GTK
-  ZmFn<unsigned()> pending_;		// GTK
-  ZmFn<void()> stop;			// any thread
+  ZmFn<bool(ZuBSpan, bool)> receive_;		// Rx; bool selects subscription filter
+  ZmFn<SourceView(ZuCSpan, ZuCSpan)> source_;	// GTK
+  ZmFn<unsigned()> pending_;			// GTK
+  ZmFn<void()> stop;				// any thread
   GtkTreeModel *model = nullptr;		// GTK
-  GtkWindow *window = nullptr;		// GTK
+  GtkWindow *window = nullptr;			// GTK
   int publisherCol = 0;
   int deviceCol = 0;
 };
@@ -45,6 +46,8 @@ struct ModuleSession {
   unsigned timeout = 0;
   bool hidden = false;
   bool offline = false;
+  bool online = false;
+  ZmFn<bool(ModuleSession &)> session; // main; one shot, returns after drain
   ZmFn<void(const ModuleHost &)> ready;	// GTK
   ZmFn<void(bool)> consumed;		// GTK; record spans mirror boundary
   ZmFn<void()> drained;			// GTK
@@ -52,14 +55,19 @@ struct ModuleSession {
   ZmFn<void()> closed;			// GTK; real window destruction
 };
 
-struct Module {
-  ZmFn<bool(ModuleSession &)> session;	// main; one shot, returns after drain
-  bool online = false;
+// Loadable dashboard test module interface.
+class Module : public ZmPolymorph {
+public:
+  virtual int run(ModuleSession &) = 0;
 };
 
-using ModuleFn = int (*)(const Module &);
-#define ZDashModuleFnSym "ZdashModule"
+typedef Module *(*FactoryFn)();
 
 } // ZDash
+
+extern "C" {
+  typedef ZDash::FactoryFn ZdashModuleFn;
+}
+#define ZdashModuleFnSym "ZdashModule"
 
 #endif

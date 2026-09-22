@@ -383,6 +383,16 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Problem: extra flags can diverge from the value they describe.
   Fix: use sentinel values.
 
+### Dynamic modules
+- Red Flag: a loadable Z component that does not use the canonical `ZiModule`
+  factory/interface pattern.
+  Fix: use the `ZiModule` contract under “Leveraging Key Z Framework
+  Capabilities”.
+- Red Flag: unloading a dynamically loaded Z component after its factory has
+  returned an object or registered callbacks.
+  Fix: leave it resident through process teardown; unload only before invoking
+  the factory.
+
 ### Bad casting
 - Red Flag: unnecessary casts.
   Problem: casts hide type-system mistakes and make ownership/aliasing harder to audit.
@@ -563,6 +573,42 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use `ZiLog` for logging.
 - Use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, and `ZiMultiplex` for network I/O multiplexing.
 - Use `ZiEventLoop` for interoperability with other event loops and handle types.
+
+### Dynamic modules
+- `ZiModule` loadable Z components use the canonical factory/interface pattern;
+  `Zdb_::Store` and `ZdbStore` are the reference implementation.
+- Define the component's abstract interface as a `ZmPolymorph` base in its
+  installed interface header. The base owns the virtual initialization and
+  operational functions that a concrete module implementation fulfills.
+- In the interface namespace, declare the factory type as `typedef Base
+  *(*FactoryFn)()`. In an `extern "C"` block, declare its C-linkage alias, and
+  define a fixed `...FnSym` string for the well-known exported symbol:
+  ```cpp
+  namespace Component_ {
+  class Base : public ZmPolymorph { /* virtual interface */ };
+  typedef Base *(*FactoryFn)();
+  }
+  extern "C" { typedef Component_::FactoryFn ComponentFactoryFn; }
+  #define ComponentFactoryFnSym "ComponentFactory"
+  ```
+- A module declares and exports `ComponentFactory` with `extern "C"`; it
+  returns a concrete `Component_::Base` instance. Do not expose function
+  tables, opaque contexts, host-mutation callbacks, or bespoke callback
+  protocols as a Z component's module interface.
+- The host loads the module with `ZiModule`, resolves `...FnSym`,
+  `reinterpret_cast`s the result to `FactoryFn`, checks both factory and result,
+  then invokes the returned base's virtual initialization and operational
+  interface. Module and host consequently share the same compatible Z headers,
+  compiler, and C++ runtime ABI.
+- Load the module without `ZiModule::GC`. After the factory is invoked, neither
+  unload the module nor permit its code to be unloaded: its returned object,
+  vtable, or framework-owned callbacks can remain reachable. A local
+  `ZiModule` may leave scope because its default finalization drops the handle
+  without unloading it. Explicit unloading is allowed only before invoking the
+  factory, for example when resolution fails.
+- Generic `ZiModule` loader tests that resolve ordinary system-library symbols
+  are infrastructure tests, not loadable Z components, and are outside this
+  component contract.
 
 ### Containers and intrusion
 - Use appropriate containers: `ZmHash`, `ZmLHash`, `ZmList`, `ZmRBTree`, `ZmPQueue`, etc.

@@ -35,12 +35,17 @@ using FrameBuf = ZiIOBufAlloc<1024, 1U << 20, "ZDash.TestFrame">;
 // Several GTK clock-check batches, small enough for the fixture's 16 KiB ring.
 enum { Burst = 64 };
 
-class Driver {
+class Driver : public ZDash::Module {
 public:
-  explicit Driver(bool local) : m_local{local} { }
+  int run(ZDash::ModuleSession &session) override {
+    ZuTestMain();
+    ZiLog::init("zdash-test");
+    ZiLog::level(Ze::Warning);
+    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+    ZiLog::start();
+    ZuGuard stop{[]() { ZiLog::stop(); }};
+    m_local = !session.online;
 
-  bool run(const ZDash::Module &module) {
-    ZDash::ModuleSession session;
     ZtString<ZtStringHeapID<"ZDash.TestToken">> token{
       ::getenv("ZDASH_TEST_TOKEN")};
     ZuGuard clear{[&token]() {
@@ -52,10 +57,10 @@ public:
     session.timeout = 15;
     if (auto value = ::getenv("ZDASH_TEST_TIMEOUT")) {
       auto n = ZuBox<unsigned>{value};
-      if (!n || n > 3600) return false;
+      if (!n || n > 3600) return 1;
       session.timeout = n;
     }
-    if (!m_local && !token) return false;
+    if (!m_local && !token) return 1;
     session.ready = [this](const ZDash::ModuleHost &host) {
       m_host = host;
       if (m_local) m_host.rxRun([this]() { feed_(1); });
@@ -67,8 +72,10 @@ public:
       if (m_event) { g_source_remove(m_event); m_event = 0; }
     };
     session.closed = [this]() { m_closed = true; };
-    bool ok = module.session(session);
-    return ok && !m_failed && m_complete && m_closed;
+    bool ok = session.session(session);
+    ok = ok && !m_failed && m_complete && m_closed;
+    ZuCHECK(ok, "hidden GTK session, telemetry ownership and close event");
+    return ok ? 0 : 1;
   }
 
 private:
@@ -254,8 +261,8 @@ private:
 
 
 private:
-  // Immutable mode; Rx failure is published before each GTK phase handoff.
-  bool m_local;
+  // Rx failure is published before each GTK phase handoff.
+  bool m_local = false;
   ZmAtomic<unsigned> m_failed = false;
   // GTK-owned until session() has drained both owners.
   ZDash::ModuleHost m_host;
@@ -269,16 +276,7 @@ private:
   bool m_closing = false;
 };
 
-extern "C" ZuExport_API int ZdashModule(const ZDash::Module &module)
+extern "C" ZuExport_API ZDash::Module *ZdashModule()
 {
-  ZuTestMain();
-  ZiLog::init("zdash-test");
-  ZiLog::level(Ze::Warning);
-  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
-  ZiLog::start();
-  ZuGuard stop{[]() { ZiLog::stop(); }};
-  Driver driver{!module.online};
-  bool ok = driver.run(module);
-  ZuCHECK(ok, "hidden GTK session, telemetry ownership and close event");
-  return ok ? 0 : 1;
+  return new Driver;
 }

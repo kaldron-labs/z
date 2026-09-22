@@ -80,6 +80,10 @@ public:
   Derived &&name(ZuCSpan s) { Data::name = s; return derived(); }
   Derived &&killWait(unsigned n) { Data::killWait = n; return derived(); }
   Derived &&coredump(bool b) { Data::coredump = b; return derived(); }
+
+  const Zi::Path &name() const { return Data::name; }
+  unsigned killWait() const { return Data::killWait; }
+  bool coredump() const { return Data::coredump; }
 };
 
 class Params : public Params_<Params> {

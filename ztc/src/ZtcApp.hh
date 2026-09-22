@@ -20,6 +20,7 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmRBTree.hh>
+#include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
 
 #include <zlib/ZfStruct.hh>
@@ -27,10 +28,9 @@
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
-#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiProgram.hh>
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZvThreadParams.hh>
 
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcDB.hh>
@@ -55,6 +55,30 @@ namespace App_ {
   struct State;
   class Subscription_;
 }
+
+struct AppSchedCf {
+  unsigned	nThreads = 2;
+  unsigned	stackSize = 0;
+  int		priority = ZmThreadPriority::Normal;
+  unsigned	partition = 0;
+  double	quantum = 0;
+  unsigned	queueSize = 0;
+  bool		ll = false;
+  unsigned	spin = 0;
+  unsigned	timeout = 0;
+};
+
+ZfStruct(ZtcAPI, AppSchedCf,
+  (((nThreads),		((Range<1U, 1024U>))),		(UInt32, 2)),
+  (((stackSize),	((Range<16384U, 2U<<20U>))),	(UInt32)),
+  (((priority),		(Enum<ZmThreadPriority::Map>)),	(Int32,
+      ZmThreadPriority::Normal)),
+  (((partition)),				(UInt32)),
+  (((quantum)),					(Float)),
+  (((queueSize),	((Range<8192U, 1U<<30U>))),	(UInt32)),
+  (((ll)),					(Bool)),
+  (((spin),		((Range<0U, unsigned(INT_MAX)>))), (UInt32)),
+  (((timeout),		((Range<0U, 3600U>))),		(UInt32)));
 
 struct AppCf {
   enum {
@@ -90,17 +114,11 @@ struct AppCf {
   unsigned	alertRetention = DefltAlertRetention;
   Zi::Path	alertPrefix{"alerts"};
 
-  ZvMxCf	mx{
-    .nThreads = 4,
-    .rxThread = "rx",
-    .txThread = "tx"
-  };
+  AppSchedCf	scheduler;
   ZtString<>	timerRole{"timer"};
   ZtString<>	workerRole{"worker"};
   unsigned	timerThread = 1;
-  unsigned	rxThread = 2;
-  unsigned	txThread = 3;
-  unsigned	workerThread = 4;
+  unsigned	workerThread = 2;
 };
 
 ZfStruct(ZtcAPI, AppCf,
@@ -121,13 +139,11 @@ ZfStruct(ZtcAPI, AppCf,
   (((alertReplay),	((Range<1U, 1U<<20U>))),	(UInt32, 1024)),
   (((alertRetention),	((Range<1U, 3660U>))),		(UInt32, 7)),
   (((alertPrefix)),					(String, "alerts")),
-  (((mx)),						(UDT)),
+  (((scheduler)),					(UDT)),
   (((timerRole)),					(String, "timer")),
   (((workerRole)),					(String, "worker")),
   (((timerThread),	((Range<1U, 1024U>))),		(UInt32, 1)),
-  (((rxThread),		((Range<1U, 1024U>))),		(UInt32, 2)),
-  (((txThread),		((Range<1U, 1024U>))),		(UInt32, 3)),
-  (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 4)));
+  (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 2)));
 
 class ZtcAPI App {
 public:
@@ -190,8 +206,8 @@ private:
   using DBTableIdx =
     Index<DBTableKey, DBTable, "Ztc.App.DBTableIdx">;
 
-  ZiMultiplex *serviceMx_() const {
-    return m_mx.is<ZiMultiplex>() ? &m_mx.p<ZiMultiplex>() : nullptr;
+  ZmScheduler *scheduler_() const {
+    return m_scheduler.is<ZmScheduler>() ? &m_scheduler.p<ZmScheduler>() : nullptr;
   }
 
   void reqRun_();
@@ -265,7 +281,7 @@ private:
   DBIdx				m_dbIdx;
   DBHostIdx			m_dbHostIdx;
   DBTableIdx			m_dbTableIdx;
-  mutable ZuUnion<void, ZiMultiplex>	m_mx;
+  mutable ZuUnion<void, ZmScheduler>	m_scheduler;
   int64_t			m_startTime = 0;
   ZmAtomic<unsigned>		m_rag = RAG::Off;
   CtrlLock			m_ctrlLock;

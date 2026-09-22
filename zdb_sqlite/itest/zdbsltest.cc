@@ -478,7 +478,7 @@ int main(int argc_, char **argv)
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams{"mx", cf->resolve("mx")}};
+    mx = new ZiMultiplex{ZvMxParams("mx", cf->resolve("mx"))};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsltest", "multiplexer start failed");
 

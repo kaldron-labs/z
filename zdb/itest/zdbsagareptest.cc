@@ -148,7 +148,7 @@ static void recovery(unsigned mode)
     "  3: {name: zdb, isolated: true},\n"
     "  4: {name: store, isolated: true}\n"
     "}, rxThread: rx, txThread: tx}\n").p<1>();
-  ZiMultiplex mx{ZvMxParams{"mx", config->resolve("mx")}};
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
   ZuCheck(mx.start());
 
   ZmRef<zdbtest::ReplDB> leader = new zdbtest::ReplDB{};
