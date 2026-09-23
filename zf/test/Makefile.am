@@ -9,7 +9,7 @@ LDADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
-	ZfASN1Test ZfCBORTest ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest \
+	ZfASN1Test ZfCBORTest ZfDBUSTest ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest \
 	ZfURITest ZfYAMLTest
 noinst_HEADERS = ZfHeapTest.hh ZfMapTest.hh
 .PHONY: test
@@ -18,6 +18,7 @@ test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZfASN1Test_SOURCES = ZfASN1Test.cc
 ZfCBORTest_SOURCES = ZfCBORTest.cc
+ZfDBUSTest_SOURCES = ZfDBUSTest.cc
 ZfCfTest_SOURCES = ZfCfTest.cc
 ZfCLITest_SOURCES = ZfCLITest.cc
 ZfCSVTest_SOURCES = ZfCSVTest.cc
