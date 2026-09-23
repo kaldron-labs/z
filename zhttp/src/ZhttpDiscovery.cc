@@ -96,7 +96,7 @@ bool name(
     if (out.length()) out << '.';
     unsigned begin = out.length();
     out << ZuBSpan{msg + p, n};
-    lowerASCII({out.data() + begin, n});
+    lower({out.data() + begin, n});
     p += n;
     if (!jumped) next = p;
   }
@@ -222,7 +222,7 @@ DiscoveryError rdata(
     return error(DiscoveryCode::Malformed, off);
   if (record.target == ".") {
     record.target = owner;
-    lowerASCII(record.target.span());
+    lower(record.target.span());
   }
   if (!record.priority && off != end)
     return error(DiscoveryCode::Malformed, off);

@@ -153,7 +153,7 @@ URLParseError authority(
   if (!e.ok()) return e;
   unsigned hostOffset = unsigned(out.host.data() - in.data());
   ZuSpan host{in.data() + hostOffset, out.host.length()};
-  lowerASCII(host);
+  lower(host);
   out.host = host;
   out.normalized = true;
   return {};

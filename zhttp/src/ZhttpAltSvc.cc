@@ -250,7 +250,7 @@ AltSvcValueStorage::AltSvcValueStorage(const AltSvcValue &value) :
     data << value.host;
     host.length = data.length() - host.offset;
     data.ensure(data.length() + 1);
-    lowerASCII({data.data() + host.offset, host.length});
+    lower({data.data() + host.offset, host.length});
   }
 }
 
