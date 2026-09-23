@@ -33,7 +33,7 @@ template <unsigned N_> struct ZuString {
 
   // to be structural, all data members must be public
 
-  char data_[N]{};
+  char data_[N];
 
   constexpr ZuString() noexcept = default;
 
