@@ -13,7 +13,8 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - run-time performance
 - latency is more important than throughput
 - copying and heap memory allocations are minimized
-  - where heap allocations are necessary, they use tunable heaps
+  - where heap allocations are necessary, they use tunable heaps, except for
+    objects managed by `ZmSingleton` or `ZmSpecific`
 - dependent compatibility is a non-goal unless otherwise directed
   - propagate breaking API changes to dependent code
   - do not use shims, forwarders or other such techniques for legacy compatibility purposes
@@ -237,9 +238,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   array and convert each element to a span only at its use boundary.
 
 ### Storage and capacity
-- Red Flag: `operator new` overload outside `ZmHeap`
-  Problem: all fixed-size allocations should be trackable with `ZmHeap`
-  Fix: replace with use of `ZmHeap`
+- Red Flag: `operator new` overload outside `ZmHeap`, except for objects
+  managed by `ZmSingleton` or `ZmSpecific`
+  Problem: fixed-size allocations outside `ZmSingleton` and `ZmSpecific`
+  should be trackable with `ZmHeap`
+  Fix: replace other custom overloads with use of `ZmHeap`
 - Red Flag: a module-local object allocator/base class which hides `ZmHeap` or
   `ZmVHeap` behind inherited `operator new`.
   Problem: it erases the concrete allocation size and heap identity, permits a
@@ -267,9 +270,10 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: cache line contended structs
   Problem: multiple threads contend for data shared in the same cache line
   Fix: begin thread-exclusive groups of data members with `alignas(Zm::CacheLineSize)`
-- Amber Flag: fixed-size arrays, especially with separately maintained lengths.
+- Amber Flag: fixed-size arrays with arbitrary capacities, especially with separately maintained lengths.
   Problem: capacity is easy to desynchronize, hard to tune, and often either caps scaling or wastes stack/heap.
-  Fix: use `ZuArray`, `ZtArray`, `ZtString`, `ZtScratch`, etc.; enforce any required hard upper limit in code.
+  Small primitive arrays are appropriate when the prevailing API, ABI, protocol, or test contract guarantees their upper bound (for example, the two FDs returned by `pipe`); do not replace them solely because they are fixed-size.
+  Fix: otherwise use `ZuArray`, `ZtArray`, `ZtString`, `ZtScratch`, etc.; enforce any required hard upper limit in code.
 - Amber Flag: fixed-size lookup tables.
   Problem: static sizing prevents run-time tuning and often misses required locking/hash-ID integration.
   Fix: use `ZmHash`/`ZmLHash` with appropriate locking and hash IDs.
@@ -284,9 +288,10 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Amber Flag: heap allocation in hot paths or for scratch state.
   Problem: allocator latency and contention directly hurt tail latency and throughput.
   Fix: use stack scratch such as `ZtScratch` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
-- Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`.
+- Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`,
+  except for objects managed by `ZmSingleton` or `ZmSpecific`.
   Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
-  Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`.
+  Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`. Objects managed by `ZmSingleton` or `ZmSpecific` are exempt from heap identification.
 - Red Flag: a fixed-size object type allocated through `ZmVHeap`.
   Problem: a variable-size heap loses fixed-size allocation telemetry and tuning.
   Fix: use a concrete `ZmHeap`; reserve `ZmVHeap` for allocations whose size
@@ -420,8 +425,13 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   Problem: local changes can erode project architecture and review expectations.
   Fix: realign the change or call out the required exception explicitly.
 - Red Flag: dead code or historical compatibility code.
-  Problem: unused code increases audit, test, and maintenance burden.
-  Fix: delete it unless compatibility is explicitly required.
+  Problem: unreachable or obsolete executable paths, unused declarations, and
+  obsolete compatibility branches increase audit, test, and maintenance burden.
+  Fix: delete them unless compatibility is explicitly required. Deliberately
+  commented-out code, especially diagnostic `ZiLOG` probes kept for future
+  troubleshooting, is not dead code merely because it does not compile or run
+  in the current build. Preserve it unless there is specific evidence that it
+  is obsolete or its removal is requested.
 - Red Flag: short-lived objects holding reference counts to longer-lived owners, either directly or indirectly via callback lambda captures
   Problem: causes reference-count churn in the owner and risks ownership cycles
   Fix: short-lived objects should use raw pointers back to longer-lived owners; owners must teardown carefully to ensure that they cannot be outlived by short-lived objects that they own; owners should not attempt to delete owned objects in their destructors, they should instead assert that no such objects remain
@@ -435,6 +445,14 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: potentially long-running loops or container iterations in threads that service mixed workloads, particularly I/O threads
   Problem: under load, pending work in the scheduler queue will be starved by a looping turn that does not return to the scheduler
   Fix: cap the work performed in each turn - batch it and post continuations for the remainder
+
+## Audit repair procedure
+
+- Audit scope is not edit scope. For each repair, identify the explicit requirement or observed failure, the violated invariant, and its owning component. Report unproven concerns; do not edit merely to clear an amber flag.
+- Establish the existing contract before adding validation, references, locks, containers, retries, or public APIs. Respect caller responsibilities and framework guarantees; validate untrusted input at its boundary without rechecking states already guaranteed by types.
+- Choose the smallest change that fixes the demonstrated problem. Judge storage and algorithms by their actual bounds and workload, and account for any added allocations, copies, reference operations, lookups, and hot-path work.
+- Keep unrelated code, tests, diagnostics, standard streams, and platform-normalizing APIs intact. Tests must verify an agreed invariant or reproduced failure, not create a new contract to justify a speculative repair.
+- Review the final diff for necessity, then verify the intended behavior on the relevant platforms using the current build configuration. A passing build does not justify out-of-scope edits. When reverting, remove the named change and its direct dependents without disturbing other work.
 
 ## Leveraging Key Z Framework Capabilities
 
@@ -495,7 +513,8 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Storage and lifetime
 - Use `ZmHeap` and `ZmVHeap` to adopt a recycling zero-overhead block allocator, with heap identification, telemetry and configurable tuning
-  - Use `ZmHeap` for fixed-size concrete types
+  - Use `ZmHeap` for fixed-size concrete types, except objects managed by
+    `ZmSingleton` or `ZmSpecific`, which do not require heap identification
     - Always declare the `ZmHeap` type as an alias before using it:
     ```
     class X { ... };
