@@ -214,12 +214,13 @@ void Loop::wake_()
   char c = 0;
   while (::write(m_wakeFD2, &c, 1) < 0) {
     ZeError e{errno};
-    if (e.errNo() != EINTR && e.errNo() != EAGAIN) {
+    if (e.errNo() == EINTR) continue;
+    if (e.errNo() != EAGAIN) {
       failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e](auto &s) {
 	s << "write() failed: " << e;
       })));
-      break;
     }
+    break;
   }
 
 #else /* !_WIN32 */
@@ -236,6 +237,8 @@ void Loop::wake_()
 bool Loop::addSocket(
   Zi::Socket socket_, SocketSendFn send, SocketRecvFn recv, bool prime)
 {
+  ZiAssert(invoked(), "ZiEventLoop", (),
+    "addSocket off event thread", return false);
   ZmRef<Socket> socket = new Socket{socket_, ZuMv(send), ZuMv(recv)};
 
 #ifndef _WIN32
@@ -247,7 +250,9 @@ bool Loop::addSocket(
   {
     struct epoll_event ev;
     memset(&ev, 0, sizeof(struct epoll_event));
-    ev.events = EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
+    ev.events = EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET;
+    if (socket->recv) ev.events |= EPOLLIN;
+    if (socket->send) ev.events |= EPOLLOUT;
     ev.data.u64 = u64_socket(socket.ptr());
     if (epoll_ctl(m_epollFD, EPOLL_CTL_ADD, socket_, &ev) < 0) {
       failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = ZeLastError](auto &s) {
@@ -266,8 +271,9 @@ bool Loop::addSocket(
     }));
     return false;
   }
-  if (WSAEventSelect(socket, event,
-      FD_READ | FD_WRITE | FD_OOB | FD_CLOSE)) {
+  if (WSAEventSelect(socket_, event,
+      FD_CLOSE | (socket->recv ? FD_READ | FD_OOB : 0) |
+      (socket->send ? FD_WRITE : 0))) {
     ZiLOG(Fatal, "ZiEventLoop", ([e = WSAGetLastError()](auto &s) {
       s << "WSAEventSelect() failed: " << e;
     }));
@@ -282,8 +288,8 @@ bool Loop::addSocket(
   // "prime the pump" to ensure that read- and write-readiness is
   // correctly signalled via epoll / WFMO
   if (prime) {
-    socket->send(socket_);
-    socket->recv(socket_);
+    if (socket->send) socket->send(socket_);
+    if (socket->recv) socket->recv(socket_);
   }
 
   m_sockets.addNode(ZuMv(socket));
@@ -294,6 +300,8 @@ bool Loop::addSocket(
 void Loop::delSocket(Zi::Socket socket_)
 {
   if (Zi::nullSocket(socket_)) return;
+  ZiAssert(invoked(), "ZiEventLoop", (),
+    "delSocket off event thread", return);
 
   ZmRef<Socket> socket = m_sockets.del(socket_);
 
@@ -346,6 +354,8 @@ void Loop::delSocket_(ZmRef<Socket> socket)
 
 bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
 {
+  ZiAssert(invoked(), "ZiEventLoop", (),
+    "addHandle off event thread", return false);
   ZmRef<Handle> handle = new Handle{handle_, ZuMv(write), ZuMv(read)};
 
 #ifndef _WIN32
@@ -384,11 +394,11 @@ bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
   // either callback may complete its work and remove the registration.
   {
     auto handle = m_handles.find(handle_);
-    if (handle) handle->write(handle_);
+    if (handle && handle->write) handle->write(handle_);
   }
   {
     auto handle = m_handles.find(handle_);
-    if (handle) handle->read(handle_);
+    if (handle && handle->read) handle->read(handle_);
   }
 
   return true;
@@ -397,6 +407,8 @@ bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
 void Loop::delHandle(Zi::Handle handle_)
 {
   if (Zi::nullHandle(handle_)) return;
+  ZiAssert(invoked(), "ZiEventLoop", (),
+    "delHandle off event thread", return);
 
   ZmRef<Handle> handle = m_handles.del(handle_);
 
@@ -483,9 +495,8 @@ void Loop::run_()
 
 #ifndef _WIN32
 
-    epoll_event ev[8];
-
     // ZiLOG(Debug, "ZiEventLoop", ([](auto &s) { s << "epoll_wait()..."; }));
+    epoll_event ev[8];
 
 again:
     int r = epoll_wait(m_epollFD, ev, 8, -1); // max events is 8
@@ -500,12 +511,13 @@ again:
       })));
       return;
     }
+    bool woken = false;
     for (unsigned i = 0; i < unsigned(r); i++) {
       uint32_t events = ev[i].events;
       auto u64 = ev[i].data.u64;
 
-      /* ZiLOG(Debug, "ZiEventLoop", ([events, v](auto &s) {
-	s << "epoll_wait() events=" << events << " v=" << v
+      /* ZiLOG(Debug, "ZiEventLoop", ([events, u64](auto &s) {
+	s << "epoll_wait() events=" << events
 	  << " u64=" << ZuBoxPtr(u64).hex()
 	  << " EPOLLIN=" << ZuBoxed(EPOLLIN).hex()
 	  << " EPOLLOUT=" << ZuBoxed(EPOLLOUT).hex();
@@ -514,27 +526,32 @@ again:
       if (u64_is_socket(u64)) {
 	auto socket = u64_ptr<Socket>(u64);
 
-	if (events & EPOLLOUT)
+	if (socket->send && (events & EPOLLOUT ||
+	    (!socket->recv && events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))))
 	  socket->send(socket->socket);
-	if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
+	if ((events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) &&
+	    socket->recv)
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
 	auto handle = u64_ptr<Handle>(u64);
 
-	if (events & EPOLLOUT)
+	if ((events & EPOLLOUT) && handle->write)
 	  handle->write(handle->handle);
-	if (events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR))
+	if ((events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) &&
+	    handle->read)
 	  handle->read(handle->handle);
       } else { // u64_is_wake(u64)
 	char c;
 	int r = ::read(m_wakeFD, &c, 1);
-	if (r >= 1) return;
+	if (r >= 1) { woken = true; continue; }
 	if (r < 0) {
 	  ZeError e{errno};
 	  if (e.errNo() != EINTR && e.errNo() != EAGAIN) return;
 	}
       }
     }
+    // Do not discard later edge-triggered events in the same epoll batch.
+    if (woken) return;
 
 #else /* !_WIN32 */
 
@@ -562,14 +579,18 @@ again:
 	  })));
 	  return;
 	}
-	if ((events.lNetworkEvents & (FD_WRITE|FD_CLOSE)) == FD_WRITE)
+	if (socket->send &&
+	    ((events.lNetworkEvents & FD_WRITE) ||
+	      (!socket->recv && (events.lNetworkEvents & FD_CLOSE))))
 	  socket->send(socket->socket);
-	if (events.lNetworkEvents & (FD_READ|FD_OOB|FD_CLOSE))
+	if ((events.lNetworkEvents & (FD_READ|FD_OOB|FD_CLOSE)) &&
+	    socket->recv)
 	  socket->recv(socket->socket);
       } else if (u64_is_handle(u64)) {
 	auto handle = u64_ptr<Handle>(u64);
-	handle->write(handle->handle);
-	handle->read(handle->handle);
+	if (handle->write) handle->write(handle->handle);
+	if (handle->read)
+	  handle->read(handle->handle);
       } else { // u64_is_wake(u64)
 	// LATER WFMO should have decremented the semaphore, but test this,
 	// we may need to:

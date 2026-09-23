@@ -89,6 +89,7 @@ private:
       if (r == Zi::IOError) { error = ioError(path, file); return false; }
       if (r <= 0) { error = headerError(path); return false; }
       data.length(length + r);
+      // One stack-only view per compile-time schema field; no byte copies.
       ZuSpan<char> header_[Base::AllFields::N];
       Header header(&header_[0], 0, Base::AllFields::N, false);
       auto n = split(ZuSpan<char>(data.data(), data.length()), header);
@@ -214,6 +215,7 @@ private:
       if (r == Zi::IOError) { error = ioError(path, file); return false; }
       if (r <= 0) { error = headerError(path); return false; }
       data.length(length + r);
+      // One stack-only view per compile-time schema field; no byte copies.
       ZuSpan<char> header_[Base::AllFields::N];
       Header header(&header_[0], 0, Base::AllFields::N, false);
       auto n = split(ZuSpan<char>(data.data(), data.length()), header);

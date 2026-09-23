@@ -26,7 +26,7 @@ ZfStruct(, CSVRow,
   (((text), (Ctor<0>)), (String)),
   (((id),   (Ctor<1>)), (Int32)));
 
-namespace {
+namespace ZiCSVTest_ {
 Zi::Path g_csv;
 Zi::Path g_filtered;
 Zi::Path g_overflow;
@@ -201,7 +201,9 @@ void testAppend()
   }
 }
 
-} // namespace
+} // ZiCSVTest_
+
+using namespace ZiCSVTest_;
 
 int main(int argc, char **argv)
 {

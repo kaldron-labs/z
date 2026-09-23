@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -24,12 +25,16 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmTrap.hh>
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmScheduler.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtEnum.hh>
 
 #include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiEventLoop.hh>
 #include <zlib/ZiLog.hh>
 
 #include "ZiTestResidue.hh"
@@ -135,6 +140,58 @@ static Zi::Path capture_(const char *mode)
 }
 
 #ifndef _WIN32
+static int waitChild_(pid_t pid)
+{
+  enum { ChildTimeout = 1 }; // fixture child should exit promptly
+  int fd = int(::syscall(SYS_pidfd_open, pid, 0));
+  if (fd < 0) {
+    ::kill(pid, SIGKILL);
+    int status;
+    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
+    return 255;
+  }
+
+  ZmScheduler sched{ZmSchedParams().id("ZiTestResidue.Child")};
+  ZiEventLoop loop;
+  ZmSemaphore done, stopped;
+  ZmAtomic<int> result = 0;
+  int status = 0;
+  auto finish = [&result, &done](int value) {
+    if (!result.cmpXch(value, 0)) done.post();
+  };
+  sched.start();
+  loop.init(&sched, 1, [&finish](ZeException) { finish(-1); });
+  loop.start([&loop, fd, pid, &status, &finish](ZiEvent::StartResult started) {
+    if (started.is<ZiEvent::Exception>()) {
+      finish(-1);
+      return;
+    }
+    if (!loop.addHandle(fd, {}, [pid, &status, &finish](Zi::Handle) {
+          pid_t child;
+          do child = ::waitpid(pid, &status, WNOHANG);
+          while (child < 0 && errno == EINTR);
+          if (child == pid) finish(1);
+          else if (child < 0) finish(-1);
+        })) finish(-1);
+  });
+  bool exited = done.timedwait(Zm::now(ChildTimeout)) == 0 &&
+    result.load_() == 1;
+  if (!exited) ::kill(pid, SIGKILL);
+  loop.stop([&stopped](ZiEvent::StopResult) { stopped.post(); });
+  bool drained = stopped.timedwait(Zm::now(ChildTimeout)) == 0;
+  sched.stop();
+  loop.final();
+  ::close(fd);
+  if (!exited) {
+    pid_t child;
+    do child = ::waitpid(pid, &status, 0);
+    while (child < 0 && errno == EINTR);
+    return result.load_() < 0 ? 255 : 254;
+  }
+  if (!drained || !WIFEXITED(status)) return 128;
+  return WEXITSTATUS(status);
+}
+
 static int run_(const char *self, const char *mode)
 {
   ZiFile output;
@@ -150,19 +207,7 @@ static int run_(const char *self, const char *mode)
     _exit(127);
   }
 
-  for (unsigned i = 0; i < 100; ++i) {
-    int status = 0;
-    pid_t result = ::waitpid(pid, &status, WNOHANG);
-    if (result == pid) {
-      if (WIFEXITED(status)) return WEXITSTATUS(status);
-      return 128;
-    }
-    if (result < 0) return 255;
-    ::usleep(10000);
-  }
-  ::kill(pid, SIGTERM);
-  ::waitpid(pid, nullptr, 0);
-  return 254;
+  return waitChild_(pid);
 }
 #else
 static int run_(const char *self, const char *mode)

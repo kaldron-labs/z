@@ -43,11 +43,14 @@ int main(int argc, char **argv)
   ZiLOG(Warning, "zilogtest", "test Warning message");
   ZiLOG(Error, "zilogtest", "test Error message");
   ZiLOG(Fatal, "zilogtest", "test Fatal message");
-  ZiLOG(Error, "zilogtest", ZtSprintf<ZeString>("test %s %d", "Error message", 42));
+  ZiLOG(Error, "zilogtest", ([](auto &s) {
+    s << "test " << "Error message" << ' ' << 42;
+  }));
   ZiLOG(Error, "zilogtest", ZeError{TestError});
   ZiLOG(Error, "zilogtest",
-    ZtSprintf<ZeString>("fopen() failed: %s",
-      ZeError{TestError}.message()));
+    ([e = ZeError{TestError}](auto &s) {
+      s << "fopen() failed: " << e.message();
+    }));
 
   ZiLog::stop();
 

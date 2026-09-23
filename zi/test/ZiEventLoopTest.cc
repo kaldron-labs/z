@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuArray.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -18,7 +19,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZiEventLoopTest_ {
 
 constexpr unsigned TimeoutSeconds = 5;
 constexpr char SocketOut[] = "PING";
@@ -44,6 +45,33 @@ int recvSocketBytes(Zi::Socket socket, char *buf, unsigned length)
   return ::recv(socket, buf, int(length), 0);
 #else
   return int(::recv(socket, buf, length, 0));
+#endif
+}
+
+int socketError_()
+{
+#ifdef _WIN32
+  return WSAGetLastError();
+#else
+  return errno;
+#endif
+}
+
+bool socketInterrupted_(int error)
+{
+#ifdef _WIN32
+  return error == WSAEINTR;
+#else
+  return error == EINTR;
+#endif
+}
+
+bool socketWouldBlock_(int error)
+{
+#ifdef _WIN32
+  return error == WSAEWOULDBLOCK;
+#else
+  return error == EAGAIN || error == EWOULDBLOCK;
 #endif
 }
 
@@ -319,6 +347,246 @@ void testSocketSendRecv()
   ZuCHECK(!state.failed.load_(), "socket path hit fail callback");
 }
 
+constexpr auto BudgetPayload = "WXYZ"_Zu;
+constexpr unsigned BudgetLength = BudgetPayload.length();
+
+// One byte of logical output per turn, as a transport using a small Tx budget.
+struct BudgetSender {
+  ZiEventLoop	*loop;
+  ZmSemaphore	*done;
+  ZmAtomic<unsigned> *stage;
+  Zi::Socket	socket;
+  int		sent = 0;
+  unsigned	continuations = 0;
+  bool		posted = false;
+
+  void send_() {
+    if (sent < 0 || unsigned(sent) == BudgetLength || posted) return;
+    char byte = BudgetPayload[unsigned(sent)];
+    int n;
+    int error;
+    do {
+      n = sendSocketBytes(socket, &byte, 1);
+      error = n < 0 ? socketError_() : 0;
+    } while (n < 0 && socketInterrupted_(error));
+    if (n < 0 && socketWouldBlock_(error)) return;
+    if (n != 1) {
+      sent = -1;
+      done->post();
+      return;
+    }
+    if (++sent == int(BudgetLength)) {
+      stage->store_(1);
+      done->post();
+      return;
+    }
+    posted = true;
+    ++continuations;
+    loop->run([this] { posted = false; send_(); });
+  }
+};
+
+void testSocketBackpressure()
+{
+  ZuTestScope(testSocketBackpressure);
+
+  Zi::Socket loopSocket = Zi::nullSocket();
+  Zi::Socket peerSocket = Zi::nullSocket();
+  ZuCHECK(makeSocketPair(loopSocket, peerSocket), "socketpair failed");
+  if (Zi::nullSocket(loopSocket) || Zi::nullSocket(peerSocket)) return;
+  if (!ZiEventLoop::unblock(loopSocket)) {
+    ZuCHECK(false, "unblock socket failed");
+    closeSocket_(loopSocket);
+    closeSocket_(peerSocket);
+    return;
+  }
+
+  // Request a small kernel send buffer so the bounded fill reaches would-block
+  // even on hosts whose default socket buffers are tuned unusually large.
+  int sendCapacity = ZiIOBuf_DefltSize;
+  if (::setsockopt(loopSocket, SOL_SOCKET, SO_SNDBUF,
+      reinterpret_cast<const char *>(&sendCapacity),
+      sizeof(sendCapacity))) {
+    ZuCHECK(false, "set socket send buffer failed");
+    closeSocket_(loopSocket);
+    closeSocket_(peerSocket);
+    return;
+  }
+
+  // Limit the fixture's work even if the host has a large socket send buffer.
+  constexpr unsigned FillLimit = 1U << 20;
+  ZmRef<ZiIOBuf> fill = new ZiIOBufAlloc<>{};
+  memset(fill->data(), 'F', fill->size);
+  unsigned filled = 0;
+  bool blocked = false;
+  while (filled < FillLimit) {
+    unsigned length = FillLimit - filled;
+    if (length > fill->size) length = fill->size;
+    int n = sendSocketBytes(loopSocket,
+      reinterpret_cast<const char *>(fill->data()), length);
+    if (n > 0) {
+      filled += unsigned(n);
+      continue;
+    }
+    int error = n < 0 ? socketError_() : 0;
+    if (n < 0 && socketInterrupted_(error)) continue;
+    blocked = n < 0 && socketWouldBlock_(error);
+    break;
+  }
+  ZuCHECK(blocked && filled, "socket did not reach would-block");
+  if (!blocked || !filled) {
+    closeSocket_(loopSocket);
+    closeSocket_(peerSocket);
+    return;
+  }
+
+  ZmScheduler sched{ZmSchedParams().id("ZiEventLoopBackpressureTest")};
+  ZiEventLoop loop;
+  ZmSemaphore started, writable, closed, stopped;
+  ZmAtomic<unsigned> failed = 0, loopStarted = 0, added = 0, stage = 0;
+  BudgetSender sender{&loop, &writable, &stage, loopSocket};
+  sched.start();
+  loop.init(&sched, 1,
+    [&failed, &started, &writable, &closed, &stopped](ZeException e) {
+      log_("socket backpressure fail: ", e);
+      failed.store_(1);
+      started.post();
+      writable.post();
+      closed.post();
+      stopped.post();
+    });
+  loop.start([&loop, loopSocket, &started, &closed, &failed,
+      &loopStarted, &added, &sender, &stage](
+      ZiEvent::StartResult result) {
+    if (!result.is<ZiEvent::Exception>()) {
+      loopStarted.store_(1);
+      added.store_(loop.addSocket(loopSocket,
+        [&sender](Zi::Socket) { sender.send_(); },
+        [&loop, &closed, &failed, &stage](Zi::Socket socket) {
+          char byte;
+          if (recvSocketBytes(socket, &byte, 1) != 0) failed.store_(1);
+          if (stage.load_() != 1) failed.store_(1);
+          stage.store_(2);
+          loop.delSocket(socket);
+          closed.post();
+        }, false));
+    }
+    started.post();
+  });
+  ZuCHECK(waitFor(started) && added.load_(),
+    "backpressure socket registration failed");
+  while (filled) {
+    unsigned length = filled < fill->size ? filled : fill->size;
+    int n = recvSocketBytes(peerSocket,
+      reinterpret_cast<char *>(fill->data()), length);
+    if (n > 0) {
+      filled -= unsigned(n);
+      continue;
+    }
+    if (n < 0 && socketInterrupted_(socketError_())) continue;
+    failed.store_(1);
+    break;
+  }
+  bool signalled = waitFor(writable);
+  ZuCHECK(signalled && sender.sent == int(BudgetLength),
+    "bounded writable continuation did not finish after would-block");
+  if (signalled && sender.sent == int(BudgetLength)) {
+    ZuArray<char, BudgetLength> received;
+    unsigned n = 0;
+    while (n < BudgetLength) {
+      int r = recvSocketBytes(peerSocket, received.data() + n,
+        BudgetLength - n);
+      if (r <= 0) break;
+      n += unsigned(r);
+    }
+    ZuCHECK(n == BudgetLength &&
+      !memcmp(received.data(), BudgetPayload.data(), BudgetLength),
+      "bounded writable payload mismatch");
+    closeSocket_(peerSocket);
+    ZuCHECK(waitFor(closed), "peer EOF was not dispatched");
+  }
+  if (loopStarted.load_()) {
+    loop.stop([&stopped, &failed, &stage](ZiEvent::StopResult) {
+      if (stage.load_() != 2) failed.store_(1);
+      stage.store_(3);
+      stopped.post();
+    });
+    ZuCHECK(waitFor(stopped), "backpressure loop stop timed out");
+  }
+  sched.stop();
+  loop.final();
+  closeSocket_(loopSocket);
+  closeSocket_(peerSocket);
+  ZuCHECK(sender.sent == int(BudgetLength) &&
+    sender.continuations == BudgetLength - 1,
+    "write budget did not post one continuation per remaining byte");
+  ZuCHECK(stage.load_() == 3, "send, EOF, stop order was violated");
+  ZuCHECK(!failed.load_(), "backpressure path failed");
+}
+
+void testSocketSendOnly()
+{
+  ZuTestScope(testSocketSendOnly);
+
+  Zi::Socket loopSocket = Zi::nullSocket();
+  Zi::Socket peerSocket = Zi::nullSocket();
+  ZuCHECK(makeSocketPair(loopSocket, peerSocket), "socketpair failed");
+  if (Zi::nullSocket(loopSocket) || Zi::nullSocket(peerSocket)) return;
+  ZuCHECK(ZiEventLoop::unblock(loopSocket), "unblock socket failed");
+
+  ZmScheduler sched{ZmSchedParams().id("ZiEventLoopSendOnlyTest")};
+  ZiEventLoop loop;
+  ZmSemaphore started, writable, closed, stopped;
+  ZmAtomic<unsigned> failed = 0, loopStarted = 0, added = 0, events = 0;
+  sched.start();
+  loop.init(&sched, 1,
+    [&failed, &started, &writable, &closed, &stopped](ZeException e) {
+      log_("send-only socket fail: ", e);
+      failed.store_(1);
+      started.post();
+      writable.post();
+      closed.post();
+      stopped.post();
+    });
+  loop.start([&loop, loopSocket, &started, &writable, &closed,
+      &loopStarted, &added, &events](ZiEvent::StartResult result) {
+    if (!result.is<ZiEvent::Exception>()) {
+      loopStarted.store_(1);
+      added.store_(loop.addSocket(loopSocket,
+        [&loop, &writable, &closed, &events](Zi::Socket socket) {
+          unsigned count = events.load_() + 1;
+          events.store_(count);
+          if (count == 1) {
+            writable.post();
+            return;
+          }
+          loop.delSocket(socket);
+          closed.post();
+        }, {}, false));
+    }
+    started.post();
+  });
+
+  ZuCHECK(waitFor(started) && added.load_(),
+    "send-only socket registration failed");
+  ZuCHECK(waitFor(writable) && events.load_() == 1,
+    "initial send-only writable event missing");
+  closeSocket_(peerSocket);
+  ZuCHECK(waitFor(closed) && events.load_() == 2,
+    "send-only hangup event missing");
+  if (loopStarted.load_()) {
+    loop.stop([&failed, &stopped](ZiEvent::StopResult result) {
+      if (result.is<ZiEvent::Exception>()) failed.store_(1);
+      stopped.post();
+    });
+    ZuCHECK(waitFor(stopped), "send-only stop timed out");
+  }
+  ZuCheck(!failed.load_());
+  sched.stop();
+  loop.final();
+  closeSocket_(loopSocket);
+}
+
 void testHandleDispatch()
 {
   ZuTestScope(testHandleDispatch);
@@ -498,7 +766,9 @@ void testHandleWriteReady()
 #endif
 }
 
-} // namespace
+} // ZiEventLoopTest_
+
+using namespace ZiEventLoopTest_;
 
 int main(int argc, char **argv)
 {
@@ -514,6 +784,8 @@ int main(int argc, char **argv)
 
   ZuTestMain();
   ZuTestCall(testSocketSendRecv);
+  ZuTestCall(testSocketBackpressure);
+  ZuTestCall(testSocketSendOnly);
   ZuTestCall(testHandleDispatch);
   ZuTestCall(testHandleWriteReady);
   return 0;
