@@ -16,7 +16,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZiDirTest_ {
 Zi::Path g_root;
 Zi::Path g_file;
 
@@ -106,7 +106,9 @@ void testOpenNondirectoryFails()
   dir.close();
 }
 
-} // namespace
+} // ZiDirTest_
+
+using namespace ZiDirTest_;
 
 int main(int argc, char **argv)
 {

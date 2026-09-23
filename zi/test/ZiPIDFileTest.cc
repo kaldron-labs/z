@@ -186,6 +186,8 @@ static void testPublicationRetry()
   ZuCHECK(::read(ready[0], &byte, 1) == 1, "child readiness failed");
   ::close(ready[0]);
 
+  // The child reports entry before init(); this deliberate hold checks that
+  // an unpublished mode-0 file does not complete until the owner publishes.
   Zm::sleep(3);
   int status = 0;
   ZuCheck(::waitpid(child, &status, WNOHANG) == 0);

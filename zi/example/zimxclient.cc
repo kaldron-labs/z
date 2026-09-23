@@ -6,7 +6,7 @@
 
 #include <zlib/ZuLib.hh>
 
-#include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 
 #include <zlib/ZtRegex.hh>
@@ -250,11 +250,12 @@ int main(int argc, char **argv)
 	try {
 	  ip = argv[i];
 	} catch (const ZeError &e) {
-	  fprintf(stderr, "%s: IP address unresolvable (%s)\n",
-	      argv[i], e.message());
+	  std::cerr << argv[i] <<
+	    ": IP address unresolvable (" << e.message() << ")\n";
 	  Zm::exit(1);
 	} catch (...) {
-	  fprintf(stderr, "%s: IP address unresolvable\n", argv[i]);
+	  std::cerr << argv[i] <<
+	    ": IP address unresolvable\n";
 	  Zm::exit(1);
 	}
 	continue;

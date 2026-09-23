@@ -6,7 +6,7 @@
 
 #include <zlib/ZuLib.hh>
 
-#include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 
 #include <zlib/ZuTime.hh>

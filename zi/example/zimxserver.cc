@@ -6,7 +6,7 @@
 
 #include <zlib/ZuLib.hh>
 
-#include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 
 #include <zlib/ZuTime.hh>
@@ -23,12 +23,14 @@
 
 class Mx;
 
-const char Response[] =
+const char ResponseStart[] =
   "HTTP/1.1 200 OK\r\n"
   "Date: Thu, 01 Jan 1970 09:00:00 PST\r\n"
   "Server: zimxclient\r\n"
   "Content-Type: application/octet-stream\r\n"
-  "Content-Length: %u\r\n"
+  "Content-Length: ";
+const char ResponseEnd[] =
+  "\r\n"
   "Connection: close\r\n"
   "\r\n";
 
@@ -86,8 +88,8 @@ public:
 
   // send HTTP header
   bool sendHeader(ZiIOContext &io) {
-    //fwrite(m_request, 1, len, stdout); fflush(stdout);
-    m_response.sprintf(Response, createContent());
+    m_response.length(0);
+    m_response << ResponseStart << createContent() << ResponseEnd;
     m_sendTime = Zm::now();
     io.init(ZiIOFn{this, ZmFnPtr<&Connection::sendContent>{}},
 	m_response.data(), m_response.length(), 0);
@@ -102,7 +104,6 @@ public:
     return true;
   }
   bool sendComplete(ZiIOContext &io) {
-    //{ printf("Content Length: %d\n", m_content.size()); fflush(stdout); }
     if (io.length >= 0 && (io.offset += io.length) < io.size) return true;
     m_completedTime = Zm::now();
     Global::timeInterval(2).add(m_completedTime - m_sendTime);
@@ -233,11 +234,12 @@ int main(int argc, char **argv)
 	try {
 	  ip = argv[i];
 	} catch (const ZeError &e) {
-	  fprintf(stderr, "%s: IP address unresolvable (%s)\n",
-	      argv[i], e.message());
+	  std::cerr << argv[i] <<
+	    ": IP address unresolvable (" << e.message() << ")\n";
 	  Zm::exit(1);
 	} catch (...) {
-	  fprintf(stderr, "%s: IP address unresolvable\n", argv[i]);
+	  std::cerr << argv[i] <<
+	    ": IP address unresolvable\n";
 	  Zm::exit(1);
 	}
 	continue;

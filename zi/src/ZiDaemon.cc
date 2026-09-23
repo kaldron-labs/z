@@ -36,8 +36,8 @@ int ZiDaemon::init(
     struct passwd *p = getpwnam(username);
 
     if (!p) {
-      ZiLOG(Error, "ZiDaemon", ([username](auto &s) {
-	s << "getpwnam(\"" << username << "\") failed";
+      ZiLOG(Error, "ZiDaemon", ([name = ZeString{username}](auto &s) {
+	s << "getpwnam(\"" << name << "\") failed";
       }));
     } else {
       setregid(p->pw_gid, p->pw_gid);

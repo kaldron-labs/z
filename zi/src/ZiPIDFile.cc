@@ -24,6 +24,11 @@
 
 using PIDText = ZuCArray<sizeof(int) * 3 + 2>;
 
+// Another process can hold the unpublished file at mode 0 while writing it.
+// This blocking filesystem API has no scheduler event for that transition;
+// bound the cross-process retry to seven one-second waits.
+static constexpr unsigned Retries = 8;
+
 static bool dot(const Zi::Path &s)
 {
 #ifndef _WIN32
@@ -161,6 +166,7 @@ int ZiPIDFile::init(const Zi::Path &dir, const Zi::Path &name)
   final();
   if (resolvePath(m_path, m_error, dir, name) != OK) return Error;
 
+  unsigned attempts = 0;
 retry:
   ZiFile file;
   if (file.open(m_path,
@@ -175,6 +181,11 @@ retry:
     }
     file = {};
     if (file.open(m_path, ZiFile::NoFollow | ZiFile::GC) != Zi::OK) {
+
+      if (++attempts == Retries) {
+	m_error = file.error();
+	return Error;
+      }
       Zm::sleep(1);
       goto retry;
     }

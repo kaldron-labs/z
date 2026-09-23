@@ -118,7 +118,8 @@ static void validatePath_(const State &state, const Zi::Path &path)
   ZiAssert(prefix_(path, state.basePath), "ZiTestResidue", (path),
       "path outside test namespace: " << path, ::abort());
   unsigned n = state.basePath.length();
-  for (unsigned i = n; i < path.length(); ++i)
+  unsigned pathLen = path.length();
+  for (unsigned i = n; i < pathLen; ++i)
     ZiAssert(!separator_(path[i]), "ZiTestResidue", (path),
         "nested exact path: " << path, ::abort());
 }

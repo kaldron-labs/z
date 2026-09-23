@@ -16,6 +16,7 @@
 
 #include <iostream>
 
+
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTestUtil.hh>
 
@@ -147,8 +148,9 @@ static void printFile(const char *label, ZuCSpan path)
   auto out = ZiFile::stdOut();
   out << "# " << label << ":\n";
   unsigned offset = 0;
-  while (offset < data.length()) {
-    ZuCSpan tail{data.data() + offset, data.length() - offset};
+  unsigned dataLen = data.length();
+  while (offset < dataLen) {
+    ZuCSpan tail{data.data() + offset, dataLen - offset};
     int eol = tail.find("\n");
     unsigned n = eol < 0 ? tail.length() : unsigned(eol) + 1;
     out << "# " << ZuCSpan{tail.data(), n};

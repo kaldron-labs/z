@@ -15,7 +15,7 @@
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZiRxTest_ {
 
 struct RxBuf : public ZiIOBuf {
   RxBuf(uint8_t *data, unsigned size) :
@@ -231,7 +231,9 @@ void testRecvMemSyncTrailingAndErrors()
   }
 }
 
-} // namespace
+} // ZiRxTest_
+
+using namespace ZiRxTest_;
 
 int main(int argc, char **argv)
 {
