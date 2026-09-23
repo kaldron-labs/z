@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// read-only compile-time structural string literals
+// immutable compile-time structural string literals
 // - intended for use as template parameters
 // - leverages C++20 string literal operator template for disambiguation:
 //   - template <ZuString S> struct X; ... ZuDerive(Y, (X<"foo">));
