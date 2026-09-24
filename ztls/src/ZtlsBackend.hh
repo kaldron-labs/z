@@ -122,6 +122,19 @@ ZtlsAPI bool pkey_ed25519_import_private(PKey *, ZuBSpan key);
 ZtlsAPI bool pkey_ed25519_export_public(const PKey *, ZuSpan<uint8_t> pubKey);
 ZtlsAPI bool pkey_ed25519_export_private(const PKey *, ZuSpan<uint8_t> key);
 
+ZtlsAPI bool pkey_mlkem768_generate(PKey *);
+ZtlsAPI bool pkey_mlkem768_import_seed(PKey *, ZuBSpan seed);
+ZtlsAPI bool pkey_mlkem768_import_private(PKey *, ZuBSpan prvKey);
+ZtlsAPI bool pkey_mlkem768_import_public(PKey *, ZuBSpan pubKey);
+ZtlsAPI bool pkey_mlkem768_export_private(
+  const PKey *, ZuSpan<uint8_t> prvKey, size_t *length);
+ZtlsAPI bool pkey_mlkem768_export_public(
+  const PKey *, ZuSpan<uint8_t> pubKey);
+ZtlsAPI bool pkey_mlkem768_encapsulate(
+  const PKey *, ZuSpan<uint8_t> ciphertext, ZuSpan<uint8_t> secret);
+ZtlsAPI bool pkey_mlkem768_decapsulate(
+  const PKey *, ZuBSpan ciphertext, ZuSpan<uint8_t> secret);
+
 ZtlsAPI bool pkey_sign(const PKey *, MDType md, ZuBSpan data,
   ZuSpan<uint8_t> sig, size_t *siglen);
 ZtlsAPI bool pkey_verify(const PKey *, MDType md, ZuBSpan data, ZuBSpan sig);

@@ -41,6 +41,8 @@
 
 namespace Ztls::PK {
 
+struct AnyKey;
+
 namespace Save_ {
 
 inline auto mwb_error_(int e) {
@@ -56,14 +58,18 @@ inline auto mwb_error_(int e) {
 namespace Load_ {
 
 ZtlsAPI int keyType(ZuCSpan);
+ZtlsAPI ZuUnion<ZmRef<AnyKey>, ZeException> loadMLKEM768PK(ZuBSpan);
+ZtlsAPI ZuUnion<ZmRef<AnyKey>, ZeException> loadMLKEM768SK(ZuBSpan);
 
 inline auto mrb_error_(int e) {
   return [e](auto &s) {
     s << "bignum read failed: " << strerror_(e);
   };
 }
+
 // use a macro to get the right line number in the event
 #define ZtlsPK_mrb_error(e) ZeEXCEPT(Error, "ZtlsPK", mrb_error_(e))
+
 } // Load_
 
 // save RSA public key as X.509
@@ -688,6 +694,10 @@ public:
 	      auto data = ZfASN1::handler<PK_X509_ED25519>(span).ctor();
 	      key = new PK_ED25519(data.pubKey);
 	    } break;
+	    case 3: {
+	      auto data = ZfASN1::handler<PK_X509_MLKEM>(span).ctor();
+	      return Load_::loadMLKEM768PK(data.pubKey);
+	    }
 	  }
 	} break;
 	case Type::PK_PKCS1: {
@@ -769,6 +779,34 @@ public:
 	      auto data = ZfASN1::handler<SK_PKCS8_ED25519>(span).ctor();
 	      key = new SK_ED25519(data.key);
 	    } break;
+	    case 3: {
+	      auto data = ZfASN1::handler<SK_PKCS8_MLKEM>(span).ctor();
+	      auto payload = data.key;
+	      if (!payload.length())
+		return ZeEXCEPT(Error, "ZtlsKEM", "invalid ML-KEM-768 private key");
+	      using namespace ZfASN1;
+	      switch (payload[0]) {
+		case 0x80: {
+		  auto [o, n] = loadTL<tagI(0), OctetString>(payload);
+		  if (o >= 0 && n == 64)
+		    return Load_::loadMLKEM768SK(
+		      {payload.data() + o, unsigned(n)});
+		} break;
+		case OctetString: {
+		  auto [o, n] = loadTL<tagU(), OctetString>(payload);
+		  if (o >= 0 && n == 2400)
+		    return Load_::loadMLKEM768SK(
+		      {payload.data() + o, unsigned(n)});
+		} break;
+		case Sequence: {
+		  auto both = ZfASN1::handler<SK_PKCS8_MLKEM_BOTH>(span).ctor();
+		  if (both.both.seed.length() == 64 &&
+		      both.both.key.length() == 2400)
+		    return Load_::loadMLKEM768SK(both.both.seed);
+		} break;
+	      }
+	      return ZeEXCEPT(Error, "ZtlsKEM", "invalid ML-KEM-768 private key");
+	    }
 	  }
 	} break;
 	case Type::SK_SEC1: {
@@ -834,14 +872,14 @@ ZuUnion<void, ZeException> saveFile(const Path &path, const Key *key) {
   using namespace Data;
 
   ZiFile file;
-  if (file.open(path, ZiFile::Write) != Zi::OK)
+  if (file.open(path, ZiFile::Write, Key::Secret ? 0600 : 0666) != Zi::OK)
     return ZeEXCEPT(Error, "ZtlsPK", ([path, e = file.error()](auto &s) {
       s << "\"" << path << "\" - open failed: " << e;
     }));
   auto buf = ZmScratch(char, BufSize);
   auto r = savePEM(buf, key);
   if (ZuUnlikely(r.template is<ZeException>())) return r;
-  if (file.write(buf.data(), buf.length()) < buf.length())
+  if (file.write(buf.data(), buf.length()) != Zi::OK)
     return ZeEXCEPT(Error, "ZtlsPK", ([path, e = file.error()](auto &s) {
       s << "\"" << path << "\" - write failed: " << e;
     }));

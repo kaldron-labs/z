@@ -33,6 +33,7 @@ namespace OIDs {
   constexpr auto PKCS1_RSA = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"_Zu;
   constexpr auto EC_ALG_UNRESTRICTED = "\x2a\x86\x48\xce\x3d\x02\x01"_Zu;
   constexpr auto ED25519 = "\x2b\x65\x70"_Zu;
+  constexpr auto MLKEM768 = "\x60\x86\x48\x01\x65\x03\x04\x04\x02"_Zu;
   constexpr auto EC_GRP_SECP256R1 = "\x2a\x86\x48\xce\x3d\x03\x01\x07"_Zu;
 } // OIDs
 
@@ -121,6 +122,54 @@ ZfStruct(ZtlsAPI, (SK_PKCS8_ED25519, ASN1),
   (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((key),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),	      (Bytes)));
 
+struct SK_PKCS8_MLKEM_SEED {
+  uint8_t	version;
+  ZuBSpan	id;
+  ZuBSpan	seed;
+};
+ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM_SEED, ASN1),
+  (((version), (Ctor<0>)),					      (UInt8)),
+  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
+  (((seed),    (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0), tagI(0)>))), (Bytes)));
+
+struct SK_PKCS8_MLKEM_EXPANDED {
+  uint8_t	version;
+  ZuBSpan	id;
+  ZuBSpan	key;
+};
+ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM_EXPANDED, ASN1),
+  (((version), (Ctor<0>)),					      (UInt8)),
+  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
+  (((key),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),	      (Bytes)));
+
+struct SK_MLKEM_BOTH {
+  ZuBSpan	seed;
+  ZuBSpan	key;
+};
+ZfStruct(ZtlsAPI, (SK_MLKEM_BOTH, ASN1),
+  (((seed), (Ctor<0>)), (Bytes)),
+  (((key),  (Ctor<1>)), (Bytes)));
+
+struct SK_PKCS8_MLKEM_BOTH {
+  uint8_t	version;
+  ZuBSpan	id;
+  SK_MLKEM_BOTH	both;
+};
+ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM_BOTH, ASN1),
+  (((version), (Ctor<0>)),					      (UInt8)),
+  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
+  (((both),    (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),	      (UDT)));
+
+struct SK_PKCS8_MLKEM {
+  uint8_t	version;
+  ZuBSpan	id;
+  ZuBSpan	key;
+};
+ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM, ASN1),
+  (((version), (Ctor<0>)),					      (UInt8)),
+  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
+  (((key),     (Ctor<2>)),					      (Bytes)));
+
 // RSA PKCS#1 public key
 struct PK_PKCS1 {
   ZuBSpan	modulus;
@@ -171,6 +220,14 @@ struct PK_X509_ED25519 {
 ZfStruct(ZtlsAPI, (PK_X509_ED25519, ASN1),
   (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),		     (Bytes)));
+
+struct PK_X509_MLKEM {
+  ZuBSpan	id;
+  ZuBSpan	pubKey;
+};
+ZfStruct(ZtlsAPI, (PK_X509_MLKEM, ASN1),
+  (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))), (Bytes)),
+  (((pubKey), (Ctor<1>, (ASN1::Type<BitString>))),		     (Bytes)));
 
 namespace Type {
   enum {

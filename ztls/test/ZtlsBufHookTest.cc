@@ -664,8 +664,8 @@ void run_in_process(
 
   Ztls::ClientParams clientParams{&mx, "3", "4"};
   if (clientKey) {
-    clientParams.creds(Ztls::ClientCreds{
-      ZuMv(clientKey), ZuMv(clientCerts)}).caCerts(ZuMv(caCerts));
+    clientParams.key(ZuMv(clientKey)).certs(ZuMv(clientCerts)).
+      caCerts(ZuMv(caCerts));
   } else {
     clientParams.caPath(temp.certPath.data());
   }
@@ -901,7 +901,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
   auto mixedParams = Ztls::ClientParams(nullptr, "3", "4").hub(
     [&temp](auto &p) {
       p.certPath(temp.certPath.data()).keyPath(temp.keyPath.data());
-    }).creds(Ztls::ClientCreds{ZuMv(mixedKey), ZuMv(noCerts)});
+    }).key(ZuMv(mixedKey)).certs(ZuMv(noCerts));
   ZTLS_CHECK_RT(!invalidClient.init(ZuMv(mixedParams)),
     type, " mixed path/in-memory credentials accepted");
 
