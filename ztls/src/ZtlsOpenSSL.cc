@@ -823,6 +823,136 @@ bool pkey_ed25519_export_private(const PKey *key, ZuSpan<uint8_t> privKey)
 #endif
 }
 
+bool pkey_mlkem768_generate(PKey *key)
+{
+  if (!key) return false;
+  auto ctx = EVP_PKEY_CTX_new_from_name(nullptr, "ML-KEM-768", nullptr);
+  if (!ctx) return false;
+  EVP_PKEY *pkey = nullptr;
+  bool ok = EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) {
+    EVP_PKEY_free(pkey);
+    return false;
+  }
+  replace_pkey_(key, pkey);
+  return true;
+}
+
+bool pkey_mlkem768_import_seed(PKey *key, ZuBSpan seed)
+{
+  if (!key || seed.length() != 64) return false;
+  auto ctx = EVP_PKEY_CTX_new_from_name(nullptr, "ML-KEM-768", nullptr);
+  if (!ctx) return false;
+  auto param = OSSL_PARAM_construct_octet_string(
+    OSSL_PKEY_PARAM_ML_KEM_SEED, const_cast<uint8_t *>(seed.data()),
+    seed.length());
+  OSSL_PARAM params[] = {param, OSSL_PARAM_construct_end()};
+  EVP_PKEY *pkey = nullptr;
+  bool ok = EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_CTX_set_params(ctx, params) == 1 &&
+    EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) {
+    EVP_PKEY_free(pkey);
+    return false;
+  }
+  replace_pkey_(key, pkey);
+  return true;
+}
+
+static bool pkey_mlkem768_import_(PKey *key, ZuBSpan bytes,
+  const char *name, int selection)
+{
+  if (!key) return false;
+  auto ctx = EVP_PKEY_CTX_new_from_name(nullptr, "ML-KEM-768", nullptr);
+  if (!ctx) return false;
+  auto param = OSSL_PARAM_construct_octet_string(
+    name, const_cast<uint8_t *>(bytes.data()), bytes.length());
+  OSSL_PARAM params[] = {param, OSSL_PARAM_construct_end()};
+  EVP_PKEY *pkey = nullptr;
+  bool ok = EVP_PKEY_fromdata_init(ctx) == 1 &&
+    EVP_PKEY_fromdata(ctx, &pkey, selection, params) == 1 && pkey;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) {
+    EVP_PKEY_free(pkey);
+    return false;
+  }
+  replace_pkey_(key, pkey);
+  return true;
+}
+
+bool pkey_mlkem768_import_private(PKey *key, ZuBSpan prvKey)
+{
+  return prvKey.length() == 2400 && pkey_mlkem768_import_(
+    key, prvKey, OSSL_PKEY_PARAM_PRIV_KEY, EVP_PKEY_KEYPAIR);
+}
+
+bool pkey_mlkem768_import_public(PKey *key, ZuBSpan pubKey)
+{
+  return pubKey.length() == 1184 && pkey_mlkem768_import_(
+    key, pubKey, OSSL_PKEY_PARAM_PUB_KEY, EVP_PKEY_PUBLIC_KEY);
+}
+
+bool pkey_mlkem768_export_private(
+  const PKey *key, ZuSpan<uint8_t> prvKey, size_t *length)
+{
+  if (!key || !key->pkey || !length || prvKey.length() < 2400)
+    return false;
+  size_t n = 0;
+  if (EVP_PKEY_get_octet_string_param(key->pkey,
+      OSSL_PKEY_PARAM_ML_KEM_SEED, prvKey.data(), 64, &n) == 1 && n == 64) {
+    *length = n;
+    return true;
+  }
+  n = prvKey.length();
+  if (EVP_PKEY_get_octet_string_param(key->pkey,
+      OSSL_PKEY_PARAM_PRIV_KEY, prvKey.data(), n, &n) != 1 || n != 2400)
+    return false;
+  *length = n;
+  return true;
+}
+
+bool pkey_mlkem768_export_public(const PKey *key, ZuSpan<uint8_t> pubKey)
+{
+  if (!key || !key->pkey || pubKey.length() != 1184) return false;
+  size_t n = pubKey.length();
+  return EVP_PKEY_get_octet_string_param(key->pkey,
+    OSSL_PKEY_PARAM_PUB_KEY, pubKey.data(), n, &n) == 1 && n == 1184;
+}
+
+bool pkey_mlkem768_encapsulate(const PKey *key,
+  ZuSpan<uint8_t> ciphertext, ZuSpan<uint8_t> secret)
+{
+  if (!key || !key->pkey || ciphertext.length() != 1088 ||
+      secret.length() != 32) return false;
+  auto ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, key->pkey, nullptr);
+  if (!ctx) return false;
+  size_t ctLen = ciphertext.length(), secretLen = secret.length();
+  bool ok = EVP_PKEY_encapsulate_init(ctx, nullptr) == 1 &&
+    EVP_PKEY_encapsulate(ctx, ciphertext.data(), &ctLen,
+      secret.data(), &secretLen) == 1 &&
+    ctLen == ciphertext.length() && secretLen == secret.length();
+  EVP_PKEY_CTX_free(ctx);
+  return ok;
+}
+
+bool pkey_mlkem768_decapsulate(const PKey *key,
+  ZuBSpan ciphertext, ZuSpan<uint8_t> secret)
+{
+  if (!key || !key->pkey || ciphertext.length() != 1088 ||
+      secret.length() != 32) return false;
+  auto ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, key->pkey, nullptr);
+  if (!ctx) return false;
+  size_t n = secret.length();
+  bool ok = EVP_PKEY_decapsulate_init(ctx, nullptr) == 1 &&
+    EVP_PKEY_decapsulate(ctx, secret.data(), &n,
+      ciphertext.data(), ciphertext.length()) == 1 && n == secret.length();
+  EVP_PKEY_CTX_free(ctx);
+  return ok;
+}
+
 bool pkey_sign(
   const PKey *key, MDType md, ZuBSpan data,
   ZuSpan<uint8_t> sig, size_t *siglen)

@@ -15,7 +15,8 @@ namespace Load_ {
 
 struct KeyTypeIDs {
   using Keys = ZuStringTL<
-    OIDs::PKCS1_RSA, OIDs::EC_ALG_UNRESTRICTED, OIDs::ED25519>;
+    OIDs::PKCS1_RSA, OIDs::EC_ALG_UNRESTRICTED, OIDs::ED25519,
+    OIDs::MLKEM768>;
 };
 
 int keyType(ZuCSpan id)

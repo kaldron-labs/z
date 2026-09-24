@@ -36,7 +36,7 @@
 
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsBackend.hh>
-#include <zlib/ZtlsCreds.hh>
+#include <zlib/ZtlsPK.hh>
 
 #include <stdlib.h>
 #include <string.h>
@@ -88,6 +88,8 @@ using ErrorFn = ZmFn<void(ZeException), ZmFnHeapID<"Ztls.ErrorFn">>;
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Ztls.Param">>);
 ZuDerive(ParamStrings,
   (ZtArray<ParamString, ZtArrayHeapID<"Ztls.ParamStrings">>));
+ZuDerive(Cert, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.Cert">>));
+ZuDerive(Certs, (ZtArray<Cert, ZtArrayHeapID<"Ztls.Certs">>));
 
 inline ErrorFn defaultErrorFn()
 {
@@ -152,18 +154,22 @@ public:
     return ZuMv(*this);
   }
 
-  ClientParams &&creds(ClientCreds v)
-    { m_creds = ZuMv(v); return ZuMv(*this); }
+  ClientParams &&key(ZmRef<PK::AnyPK> v)
+    { m_key = ZuMv(v); return ZuMv(*this); }
+  ClientParams &&certs(Certs v)
+    { m_certs = ZuMv(v); return ZuMv(*this); }
   ClientParams &&caCerts(Certs v)
     { m_caCerts = ZuMv(v); return ZuMv(*this); }
 
-  const ClientCreds &creds() const { return m_creds; }
+  const ZmRef<PK::AnyPK> &key() const { return m_key; }
+  const Certs &certs() const { return m_certs; }
   const Certs &caCerts() const { return m_caCerts; }
 
 private:
   template <typename> friend class Client;
 
-  ClientCreds	m_creds;
+  ZmRef<PK::AnyPK> m_key;
+  Certs		m_certs;
   Certs		m_caCerts;
 };
 
@@ -2307,7 +2313,7 @@ friend Base;
   Client() { }
   ~Client() {
     Backend::sign_cert_free(m_sign);
-    if (!m_creds) Backend::pkey_free(m_key);
+    if (!m_keyRef) Backend::pkey_free(m_key);
   }
 
   // specify certPath and keyPath for mTLS
@@ -2322,7 +2328,7 @@ private:
   // stable after init(); released by the destructor
   Backend::PKey			*m_key = nullptr;
   Backend::SignCert		*m_sign = nullptr;
-  ClientCreds			m_creds;
+  ZmRef<PK::AnyPK>		m_keyRef;
 };
 
 template <typename App>
@@ -2336,7 +2342,7 @@ bool Client<App>::init(ClientParams params)
       "client certPath and keyPath must be configured together"));
     return false;
   }
-  if (params.certPath() && params.creds()) {
+  if (params.certPath() && params.key()) {
     auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
     errorFn(ZeEXCEPT(Error, "Ztls",
       "client path and in-memory credentials are mutually exclusive"));
@@ -2371,29 +2377,28 @@ bool Client<App>::init(ClientParams params)
 	return false;
       }
       ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
-    } else if (params.creds()) {
-      m_creds = ZuMv(params.m_creds);
-      const auto &certs = m_creds.certs();
+    } else if (params.key()) {
+      m_keyRef = ZuMv(params.m_key);
+      const auto &certs = params.certs();
       unsigned n = certs.length();
       using Spans = ZtArray<ZuBSpan, ZtArrayHeapID<"Ztls.CertSpans">>;
       auto spans = ZtScratch(Spans, n);
       for (unsigned i = 0; i < n; ++i) spans.push(certs[i]);
-      m_key = m_creds.pkey_();
+      m_key = m_keyRef->key;
       m_sign = Backend::sign_cert_new(m_key);
       if (!m_sign) {
 	m_key = nullptr;
-	m_creds = {};
+	m_keyRef = {};
 	return false;
       }
       if (!Backend::load_certificates_der(ctx, spans, m_key)) {
 	Backend::sign_cert_free(m_sign);
 	m_sign = nullptr;
 	m_key = nullptr;
-	m_creds = {};
+	m_keyRef = {};
 	return false;
       }
       ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
-      m_creds.clearCerts_();
     }
     return true;
   });
