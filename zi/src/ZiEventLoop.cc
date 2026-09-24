@@ -239,6 +239,7 @@ bool Loop::addSocket(
 {
   ZiAssert(invoked(), "ZiEventLoop", (),
     "addSocket off event thread", return false);
+
   ZmRef<Socket> socket = new Socket{socket_, ZuMv(send), ZuMv(recv)};
 
 #ifndef _WIN32
@@ -272,7 +273,8 @@ bool Loop::addSocket(
     return false;
   }
   if (WSAEventSelect(socket_, event,
-      FD_CLOSE | (socket->recv ? FD_READ | FD_OOB : 0) |
+      FD_CLOSE |
+      (socket->recv ? FD_READ | FD_OOB : 0) |
       (socket->send ? FD_WRITE : 0))) {
     ZiLOG(Fatal, "ZiEventLoop", ([e = WSAGetLastError()](auto &s) {
       s << "WSAEventSelect() failed: " << e;
@@ -300,6 +302,7 @@ bool Loop::addSocket(
 void Loop::delSocket(Zi::Socket socket_)
 {
   if (Zi::nullSocket(socket_)) return;
+
   ZiAssert(invoked(), "ZiEventLoop", (),
     "delSocket off event thread", return);
 
@@ -352,10 +355,12 @@ void Loop::delSocket_(ZmRef<Socket> socket)
 #endif /* !_WIN32 */
 }
 
-bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
+bool Loop::addHandle(
+  Zi::Handle handle_, HandleWriteFn write, HandleReadFn read, bool prime)
 {
   ZiAssert(invoked(), "ZiEventLoop", (),
     "addHandle off event thread", return false);
+
   ZmRef<Handle> handle = new Handle{handle_, ZuMv(write), ZuMv(read)};
 
 #ifndef _WIN32
@@ -387,19 +392,14 @@ bool Loop::addHandle(Zi::Handle handle_, HandleWriteFn write, HandleReadFn read)
 
 #endif /* !_WIN32 */
 
-  m_handles.addNode(ZuMv(handle));
-
   // "prime the pump" to ensure that read- and write-readiness is
-  // correctly signalled via epoll / WFMO.  Publish the handle first because
-  // either callback may complete its work and remove the registration.
-  {
-    auto handle = m_handles.find(handle_);
-    if (handle && handle->write) handle->write(handle_);
+  // correctly signalled via epoll / WFMO.
+  if (prime) {
+    if (handle->write) handle->write(handle_);
+    if (handle->read) handle->read(handle_);
   }
-  {
-    auto handle = m_handles.find(handle_);
-    if (handle && handle->read) handle->read(handle_);
-  }
+
+  m_handles.addNode(ZuMv(handle));
 
   return true;
 }
