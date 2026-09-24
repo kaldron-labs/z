@@ -296,7 +296,7 @@ void testSocketSendRecv()
 	state.recvOK.store_(
 	  n == int(sizeof(SocketIn) - 1) &&
 	  !::memcmp(buf, SocketIn, sizeof(SocketIn) - 1) ? 1U : 0U);
-	loop.delSocket(socket);
+	loop.run([&loop, socket] { loop.delSocket(socket); });
 	state.recvd.post();
       });
 
@@ -467,7 +467,7 @@ void testSocketBackpressure()
           if (recvSocketBytes(socket, &byte, 1) != 0) failed.store_(1);
           if (stage.load_() != 1) failed.store_(1);
           stage.store_(2);
-          loop.delSocket(socket);
+          loop.run([&loop, socket] { loop.delSocket(socket); });
           closed.post();
         }, false));
     }
@@ -560,7 +560,7 @@ void testSocketSendOnly()
             writable.post();
             return;
           }
-          loop.delSocket(socket);
+          loop.run([&loop, socket] { loop.delSocket(socket); });
           closed.post();
         }, {}, false));
     }
@@ -631,7 +631,7 @@ void testHandleDispatch()
 #else
 	state.readOK.store_(1);
 #endif
-	loop.delHandle(handle);
+	loop.run([&loop, handle] { loop.delHandle(handle); });
 	state.read.post();
       });
 
@@ -732,7 +732,7 @@ void testHandleWriteReady()
 	int n = int(::write(handle, &byte, 1));
 	if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
 	if (n != 1) failed.store_(1);
-	loop.delHandle(handle);
+	loop.run([&loop, handle] { loop.delHandle(handle); });
 	written.post();
       }, {});
     if (!added) failed.store_(1);

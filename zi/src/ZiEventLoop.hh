@@ -135,7 +135,7 @@ public:
 
   void disconnect(Zi::Socket); // simulate remote disconnect
 
-  bool addHandle(Zi::Handle, HandleWriteFn, HandleReadFn);
+  bool addHandle(Zi::Handle, HandleWriteFn, HandleReadFn, bool prime = true);
   void delHandle(Zi::Handle);
 
   void close(Zi::Handle handle); // simulate remote close
