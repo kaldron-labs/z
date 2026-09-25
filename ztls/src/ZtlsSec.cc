@@ -8,7 +8,7 @@
 
 #include <zlib/ZtlsSec.hh>
 
-#include <openssl/evp.h>
+#include <zlib/ZtlsBackend.hh>
 #include <zlib/ZtlsRandom.hh>
 
 namespace Ztls {
@@ -28,10 +28,7 @@ static bool secretHash_(ZuBSpan secret, ZuBSpan salt, ZuSpan<uint8_t> digest)
   enum { R = 8, P = 1 };
   constexpr uint64_t N = 1U<<15;
   constexpr uint64_t MaxMem = 64U<<20;
-  return EVP_PBE_scrypt(
-    reinterpret_cast<const char *>(secret.data()), secret.length(),
-    salt.data(), salt.length(), N, R, P, MaxMem,
-    digest.data(), SecretHash::DigestSize) == 1;
+  return Backend::scrypt(secret, salt, N, R, P, MaxMem, digest);
 }
 
 bool secretHash(Random &rng, ZuBSpan secret, ZuSpan<uint8_t> output)

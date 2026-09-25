@@ -33,6 +33,7 @@ namespace OIDs {
   constexpr auto PKCS1_RSA = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"_Zu;
   constexpr auto EC_ALG_UNRESTRICTED = "\x2a\x86\x48\xce\x3d\x02\x01"_Zu;
   constexpr auto ED25519 = "\x2b\x65\x70"_Zu;
+  constexpr auto X25519 = "\x2b\x65\x6e"_Zu;
   constexpr auto MLKEM768 = "\x60\x86\x48\x01\x65\x03\x04\x04\x02"_Zu;
   constexpr auto EC_GRP_SECP256R1 = "\x2a\x86\x48\xce\x3d\x03\x01\x07"_Zu;
 } // OIDs
@@ -111,13 +112,13 @@ ZfStruct(ZtlsAPI, (SK_PKCS8_EC, ASN1),
   (((id2),     (Ctor<2>, (ASN1::Fmt<2, tagU(), seq(1), tagU(OID)>))), (Bytes)),
   (((ec),      (Ctor<3>, (ASN1::Fmt<3, tagU(), str(1, 0)>))),	      (UDT)));
 
-// PKCS#8 private key - ED25519 version (raw key data payload)
-struct SK_PKCS8_ED25519 {
+// PKCS#8 private key - RFC 8410 25519 raw key payload
+struct SK_PKCS8_25519 {
   uint8_t	version;
   ZuBSpan	id;
   ZuBSpan	key;
 };
-ZfStruct(ZtlsAPI, (SK_PKCS8_ED25519, ASN1),
+ZfStruct(ZtlsAPI, (SK_PKCS8_25519, ASN1),
   (((version), (Ctor<0>)),					      (UInt8)),
   (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((key),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),	      (Bytes)));
@@ -212,12 +213,12 @@ ZfStruct(ZtlsAPI, (PK_X509_EC, ASN1),
   (((id2),    (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>))), (Bytes)),
   (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),		     (Bytes)));
 
-// X509 public key - ED25519 version
-struct PK_X509_ED25519 {
+// X509 public key - RFC 8410 25519 raw key payload
+struct PK_X509_25519 {
   ZuBSpan	id;
   ZuBSpan	pubKey;
 };
-ZfStruct(ZtlsAPI, (PK_X509_ED25519, ASN1),
+ZfStruct(ZtlsAPI, (PK_X509_25519, ASN1),
   (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))), (Bytes)),
   (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),		     (Bytes)));
 
