@@ -119,7 +119,7 @@ struct Any {
 };
 
 struct SignatureHeap : public ZuStringT<"ZfDBUS.Signature"> { };
-using Signature = ZtString<ZtStringHeapID_<SignatureHeap>>;
+ZuDerive(Signature, (ZtString<ZtStringHeapID_<SignatureHeap>>));
 
 // Compilation-only sink: D-Bus mandates at most 255 signature bytes.
 struct SigConst {

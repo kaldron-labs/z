@@ -31,7 +31,7 @@ struct YAMLNested { int value = 0; };
 ZfStruct(, (YAMLNested, YAML),
   (((value), (Ctor<0>)), (Int32)));
 
-using YAMLMapKey = ZtString<>;
+ZuDerive(YAMLMapKey, (ZtString<ZtStringHeapID<"ZfTest.YAMLMapKey">>));
 
 using YAMLIntMap =
   ZfMapTest<"ZfTest.YAML.IntMap", ZmLHashKV<YAMLMapKey, int>>;

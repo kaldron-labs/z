@@ -30,6 +30,7 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtPlatform.hh>
 
 #include <zlib/ZfCLI.hh>
 
@@ -117,7 +118,7 @@ static bool noShm_(const Zi::Name &base)
 
 static Zi::Path root_()
 {
-  const char *env = ::getenv("ZI_LOGDIR");
+  auto env = Zt::getpath("ZI_LOGDIR");
   Zi::Path root = env && *env ? Zi::Path{env} : ZiFile::cwd();
   if (!ZiFile::absolute(root)) root = ZiFile::append(ZiFile::cwd(), root);
   return ZiFile::canonical(root);

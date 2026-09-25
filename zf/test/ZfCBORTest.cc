@@ -11,10 +11,10 @@
 using namespace ZuTestUtil;
 using namespace ZuFieldProp;
 
-using OwnedText = ZtString<ZtStringHeapID<"ZfCBORTest.Text">>;
-using OwnedBytes = ZtArray<uint8_t, ZtArrayHeapID<"ZfCBORTest.Bytes">>;
-using TestBuf = ZtString<ZtStringHeapID<"ZfCBORTest.Buf">>;
-using IntValues = ZtArray<int32_t, ZtArrayHeapID<"ZfCBORTest.Values">>;
+ZuDerive(OwnedText, (ZtString<ZtStringHeapID<"ZfCBORTest.Text">>));
+ZuDerive(OwnedBytes, (ZtArray<uint8_t, ZtArrayHeapID<"ZfCBORTest.Bytes">>));
+ZuDerive(TestBuf, (ZtString<ZtStringHeapID<"ZfCBORTest.Buf">>));
+ZuDerive(IntValues, (ZtArray<int32_t, ZtArrayHeapID<"ZfCBORTest.Values">>));
 
 struct Object {
   int32_t	kty;

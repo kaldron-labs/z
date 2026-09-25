@@ -4,8 +4,8 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <cstdlib>
-#include <cstring>
+#include <stdlib.h>
+#include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -23,16 +23,15 @@ void testPutenvSmoke()
 {
   ZuTestScope(testPutenvSmoke);
 
-  static char env1[] = "ZT_PLATFORM_TEST_VAR=one";
-  static char env2[] = "ZT_PLATFORM_TEST_VAR=two";
+  static char env[] = "ZT_PLATFORM_TEST_VAR";
 
-  ZuCheck(Zt::putenv(env1) == 0);
-  const char *v = std::getenv("ZT_PLATFORM_TEST_VAR");
-  ZuCheck(v && !std::strcmp(v, "one"));
+  Zt::setenv(env, "one");
+  const char *v = ::getenv("ZT_PLATFORM_TEST_VAR");
+  ZuCheck(v && !strcmp(v, "one"));
 
-  ZuCheck(Zt::putenv(env2) == 0);
-  v = std::getenv("ZT_PLATFORM_TEST_VAR");
-  ZuCheck(v && !std::strcmp(v, "two"));
+  Zt::setenv(env, "two");
+  v = ::getenv("ZT_PLATFORM_TEST_VAR");
+  ZuCheck(v && !strcmp(v, "two"));
 }
 
 void testLibMacrosCompile()

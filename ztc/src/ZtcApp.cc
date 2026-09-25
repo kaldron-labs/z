@@ -11,6 +11,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZtPlatform.hh>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmBlock.hh>
@@ -999,10 +1000,13 @@ void App::start(CtrlFn fn)
 
   if (!m_state->pidName) {
     const char *telName = ::getenv("ZTC_RING");
-    const char *pidDir = ::getenv("ZTC_DIR");
+    auto pidDir = Zt::getpath("ZTC_DIR");
     m_state->telName = telName ? telName : "ztc";
-    m_state->pidName << (pidDir ? pidDir : "ztc") << '/'
-      << m_cf.id << ".pid";
+    if (pidDir)
+      m_state->pidName << pidDir;
+    else
+      m_state->pidName << "ztc";
+    m_state->pidName << '/' << m_cf.id << ".pid";
     m_state->telRing.init(ZiRingParams{m_state->telName, 0});
   }
 

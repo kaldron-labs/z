@@ -11,6 +11,8 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZfCf.hh>
 
 #include <zlib/ZvMxParams.hh>
@@ -31,8 +33,9 @@ struct TestDB : public Zum::DB {
 static ZuPtr<const ZfCf::AnyNode> config()
 {
   ZmRef<ZfCf::Defines> defines = new ZfCf::Defines{};
-  defines->add(ZfCf::DefKey{"MODULE"},
-    ZfCf::DefVal{::getenv("ZDB_MODULE")});
+  ZfCf::DefVal module;
+  if (auto path = Zt::getpath("ZDB_MODULE")) module = path;
+  defines->add(ZfCf::DefKey{"MODULE"}, ZuMv(module));
   defines->add(ZfCf::DefKey{"CONNECT"},
     ZfCf::DefVal{::getenv("ZDB_CONNECT")});
   Zum::String source{
@@ -1622,7 +1625,7 @@ static void sagaRecovery()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  auto module = ::getenv("ZDB_MODULE");
+  auto module = Zt::getpath("ZDB_MODULE");
   auto connect = ::getenv("ZDB_CONNECT");
   if (!module || !*module || !connect || !*connect) {
     std::cerr << "zumrestarttest: set ZDB_MODULE and ZDB_CONNECT "

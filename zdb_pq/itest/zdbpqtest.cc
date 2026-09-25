@@ -9,6 +9,8 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
 
@@ -38,7 +40,7 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((module),  (CLI::Opt<'m'>)),  (String, getenv("ZDB_MODULE"))),
+  (((module),  (CLI::Opt<'m'>)),  (String)),
   (((connect), (CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
   (((debug),   (CLI::Flag<'d'>)),                        (Bool)),
   (((hashTel), (CLI::Flag<'t'>, CLI::Long<"hash-tel">)), (Bool)),
@@ -165,6 +167,10 @@ int main(int argc_, char **argv)
   }
   if (argc != 1) usage();
   if (options.help) usage();
+  ZtString<> moduleEnv;
+  if (!options.module)
+    if (auto path = Zt::getpath("ZDB_MODULE"))
+      options.module = moduleEnv = path;
   if (!options.module) {
     std::cerr << "set ZDB_MODULE or use --module=MODULE\n" << std::flush;
     Zm::exit(1);

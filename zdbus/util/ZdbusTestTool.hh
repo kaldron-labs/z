@@ -137,6 +137,8 @@ bool line(int fd, Text &text)
 
 // Search PATH, including empty components for the current directory. An
 // existing but non-executable tool is a startup failure, not a TAP skip.
+ZuDerive(Text, (ZtString<ZtStringHeapID<"Zdbus.TestTool">>));
+
 inline bool available(const char *tool)
 {
   const char *path = ::getenv("PATH");
@@ -145,9 +147,7 @@ inline bool available(const char *tool)
   for (;;) {
     const char *end = path;
     while (*end && *end != ':') ++end;
-    using Text = ZtString<ZtStringHeapID<"Zdbus.TestTool">>;
-    auto candidate = ZtScratch(Text,
-      unsigned(end - path) + toolLen + 2);
+    auto candidate = ZtScratch(Text, unsigned(end - path) + toolLen + 2);
     if (end == path) candidate << '.';
     else candidate << ZuCSpan{path, unsigned(end - path)};
     candidate << '/' << tool;

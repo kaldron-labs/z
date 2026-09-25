@@ -11,6 +11,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiLog.hh>
@@ -56,7 +58,8 @@ static Ztc::AgentEnv environment()
   const char *credentialStore = ::getenv("ZTC_CREDENTIAL_STORE");
   const char *wssURL = ::getenv("ZTC_WSS_URL");
   const char *accessToken = ::getenv("ZTC_ACCESS_TOKEN");
-  const char *pidDir = ::getenv("ZTC_DIR");
+  auto pidDir = Zt::getpath("ZTC_DIR");
+  auto caPath = Zt::getpath("ZTC_CA_PATH");
   const char *ring = ::getenv("ZTC_RING");
   return {
     .issuer = issuer ? issuer : "",
@@ -64,10 +67,10 @@ static Ztc::AgentEnv environment()
     .deviceID = ::getenv("ZTC_DEVICE_ID") ?
       ::getenv("ZTC_DEVICE_ID") : "",
     .credentialStore = credentialStore ? credentialStore : "",
-    .caPath = ::getenv("ZTC_CA_PATH") ? ::getenv("ZTC_CA_PATH") : "",
+    .caPath = caPath ? ZtString<>{caPath} : ZtString<>{},
     .wssURL = wssURL ? wssURL : "",
     .accessToken = accessToken ? accessToken : "",
-    .pidDir = pidDir ? pidDir : "ztc",
+    .pidDir = pidDir ? ZtString<>{pidDir} : ZtString<>{"ztc"},
     .ring = ring ? ring : "ztc"
   };
 }

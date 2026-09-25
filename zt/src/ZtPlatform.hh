@@ -15,13 +15,45 @@
 
 #include <stdlib.h>
 
+#ifdef _WIN32
+#include <zlib/ZtString.hh>
+#include <zlib/ZtScratch.hh>
+#endif
+
 namespace Zt {
 
 // environment manipulation
 #ifndef _WIN32
-inline int putenv(const char *s) { return ::putenv(const_cast<char *>(s)); }
+inline void setenv(const char *key, const char *value) {
+  if (!value || !*value)
+    ::unsetenv(key);
+  else
+    ::setenv(key, value, 1);
+}
+inline void unsetenv(const char *key) {
+  ::unsetenv(key);
+}
+inline auto getpath(const char *key) {
+  return ::getenv(key);
+}
 #else
-inline int putenv(const char *s) { return ::_putenv(const_cast<char *>(s)); }
+inline void setenv(const char *key, const char *value) {
+  _putenv_s(key, value ? value : "");
+}
+ZuDerive(EnvWString, (ZtWString<ZtStringHeapID<"Zt.EnvWString">>));
+inline void setenv(ZuCSpan key_, const wchar_t *value) {
+  auto key = ZtScratch(EnvWString, key_.length());
+  key = key_;
+  _wputenv_s(key, value ? value : L"");
+}
+inline void unsetenv(const char *key) {
+  _putenv_s(key, "");
+}
+inline auto getpath(const char *key) {
+  auto key = ZtScratch(EnvWString, key_.length());
+  key = key_;
+  return _wgetenv(key);
+}
 #endif
 
 } // namespace Zt

@@ -11,7 +11,7 @@
 
 using namespace ZuTestUtil;
 
-using Text = ZtString<ZtStringHeapID<"ZdbusMessageTest.Text">>;
+ZuDerive(Text, (ZtString<ZtStringHeapID<"ZdbusMessageTest.Text">>));
 
 struct Args { Text text; uint32_t count; };
 struct Empty { };

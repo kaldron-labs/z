@@ -49,7 +49,7 @@
 namespace Zi {
 
 // Zi::Name is always a char string, while Zi::Path is wchar_t[] on Windows
-using Name = ZtString<ZtStringHeapID<"Zi.Name">>;
+ZuDerive(Name, (ZtString<ZtStringHeapID<"Zi.Name">>));
 
 #ifndef _WIN32
 using Handle = int;
@@ -59,10 +59,10 @@ using Socket = int;
 ZuInline constexpr Socket nullSocket() { return -1; }
 ZuInline constexpr bool nullSocket(Socket i) { return i < 0; }
 inline void closeSocket(Socket s) { ::close(s); }
-using Path = ZtString<ZtStringHeapID<"Zi.Path">>;
+ZuDerive(Path, (ZtString<ZtStringHeapID<"Zi.Path">>));
 using Offset = off_t;
-using Hostname = ZtString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Hostname">>>;
-using Username = ZtString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Username">>>;
+ZuDerive(Hostname, (ZtString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Hostname">>>));
+ZuDerive(Username, (ZtString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Username">>>));
 enum {
   PathMax = PATH_MAX,
   NameMax = NAME_MAX,
@@ -76,7 +76,7 @@ using Socket = SOCKET;
 ZuInline constexpr Socket nullSocket() { return INVALID_SOCKET; }
 ZuInline constexpr bool nullSocket(Socket i) { return i == INVALID_SOCKET; }
 inline void closeSocket(Socket s) { ::closesocket(s); }
-using Path = ZtWString<ZtStringHeapID<"Zi.Path">>;
+ZuDerive(Path, (ZtWString<ZtStringHeapID<"Zi.Path">>));
 using Offset = int64_t;	// 2x DWORD
 using Hostname = ZtWString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Hostname">>>;
 using Username = ZtWString<ZtStringBuiltin<48, ZtStringHeapID<"Zi.Username">>>;

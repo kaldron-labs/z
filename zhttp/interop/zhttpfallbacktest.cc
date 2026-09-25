@@ -39,7 +39,7 @@ using RxQueue = ZiRxQueue;
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, FallbackBufSize,
   FallbackMaxBody, ZuStringT<"Zhttp.Fallback.RxBuf">>;
 using RxStream = ZiRxStream<RxQueue>;
-using BodyData = ZtString<ZtStringHeapID<"Zhttp.Fallback.BodyData">>;
+ZuDerive(BodyData, (ZtString<ZtStringHeapID<"Zhttp.Fallback.BodyData">>));
 
 ZmRef<RxQueue::Node> mkBuf(const uint8_t *data, unsigned len)
 {

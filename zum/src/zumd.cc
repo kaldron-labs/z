@@ -13,6 +13,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZfCf.hh>
 
@@ -241,7 +243,8 @@ int main(int argc, char **argv)
     usage(1);
   }
   if (options.help) usage(0);
-  if (!options.module) options.module = ::getenv("ZDB_MODULE");
+  if (!options.module)
+    if (auto path = Zt::getpath("ZDB_MODULE")) options.module = path;
   if (!options.connect) options.connect = ::getenv("ZDB_CONNECT");
   ZuCSpan encodedDBKey = ::getenv("ZUM_DB_KEY");
   if (!encodedDBKey) usage(1);

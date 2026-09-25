@@ -24,8 +24,8 @@ namespace AuthState { enum { Initial, Waiting, Ready, Failed }; }
 
 class ZdbusAPI Auth {
 public:
-  using Text = ZtString<ZtStringHeapID<"Zdbus.Auth">>;
-  using UIDText = ZtString<ZtStringHeapID<"Zdbus.AuthUID">>;
+  ZuDerive(Text, (ZtString<ZtStringHeapID<"Zdbus.Auth">>));
+  ZuDerive(UIDText, (ZtString<ZtStringHeapID<"Zdbus.AuthUID">>));
 
   // The auth reply is one short ASCII line; its GUID is 16 hex-encoded bytes.
   enum { MaxLine = 4096, GuidChars = 32 };

@@ -35,7 +35,7 @@ struct KeyPolicy : public ZuPercent::NoPlus, public ZuPercent::NoTerm {
 };
 
 using Codec = ZuPercent::Codec<KeyPolicy>;
-using Text = ZtString<ZtStringHeapID<"Ztc.App.Filter">>;
+ZuDerive(Text, (ZtString<ZtStringHeapID<"Ztc.App.Filter">>));
 
 namespace Mode {
   enum { All, Exact, Prefix };

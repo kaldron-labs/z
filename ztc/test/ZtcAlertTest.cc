@@ -595,11 +595,7 @@ int main()
 {
   ZiTestResidue::init("ZtcAlertTest");
   Zi::Name telName = ZiTestResidue::uniqueName("telemetry");
-#ifdef _WIN32
-  _putenv_s("ZTC_RING", telName.data());
-#else
-  setenv("ZTC_RING", telName.data(), 1);
-#endif
+  Zt::setenv("ZTC_RING", telName.data());
   g_residue = ZiTestResidue::dir("alerts");
   ZiLog::init("ZtcAlertTest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));

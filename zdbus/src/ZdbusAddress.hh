@@ -24,7 +24,7 @@ namespace Zdbus_ {
 namespace AddrKind { enum { Invalid, Path, Abstract }; }
 
 struct Address {
-  using Text = ZtString<ZtStringHeapID<"Zdbus.Address">>;
+  ZuDerive(Text, ZtString<ZtStringHeapID<"Zdbus.Address">>);
 
   Text		value;
   uint8_t	kind = AddrKind::Invalid;

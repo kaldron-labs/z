@@ -14,7 +14,13 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest
+noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsVaultTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest
+noinst_LTLIBRARIES = libZtlsVaultFixture.la
+libZtlsVaultFixture_la_SOURCES = ZtlsVaultFixture.cc
+libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_EXPORTS
+libZtlsVaultFixture_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
+libZtlsVaultFixture_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)
+libZtlsVaultFixture_la_LIBADD = $(top_builddir)/ztls/src/libZtls.la
 noinst_HEADERS = ZtlsTestPorts.hh
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
 ZtlsX25519Test_SOURCES = ZtlsX25519Test.cc
@@ -22,6 +28,14 @@ ZtlsKEMTest_SOURCES = ZtlsKEMTest.cc
 ZtlsHybridTest_SOURCES = ZtlsHybridTest.cc
 ZtlsHPKETest_SOURCES = ZtlsHPKETest.cc
 ZtlsAgeTest_SOURCES = ZtlsAgeTest.cc ZtlsAgeVectors.hh ZtlsAgeSSHVectors.hh
+ZtlsVaultTest_SOURCES = ZtlsVaultTest.cc
+if LINUX
+ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_VAULT_FIXTURE_PATH='"$(abs_builddir)/.libs/libZtlsVaultFixture.so"'
+noinst_PROGRAMS += ZtlsVaultSSTest
+ZtlsVaultSSTest_SOURCES = ZtlsVaultSSTest.cc
+else
+ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_VAULT_FIXTURE_PATH='"$(abs_builddir)/.libs/libZtlsVaultFixture.dll"'
+endif
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
 ZtlsSecTest_SOURCES = ZtlsSecTest.cc
@@ -29,5 +43,5 @@ dist_noinst_SCRIPTS = Keygen.sh
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
-test: $(noinst_PROGRAMS)
+test: $(noinst_PROGRAMS) $(noinst_LTLIBRARIES)
 	prove $(noinst_PROGRAMS)

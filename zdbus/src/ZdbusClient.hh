@@ -24,8 +24,8 @@
 namespace Zdbus_ {
 
 using SubKey = ZuTuple<ZuCSpan, ZuCSpan, ZuCSpan, uint64_t>;
-using SubText = ZtString<ZtStringHeapID<"Zdbus.SubText">>;
-using SubKeyText = PathKeyText<"Zdbus.SubKey">;
+ZuDerive(SubText, (ZtString<ZtStringHeapID<"Zdbus.SubText">>));
+ZuDerive(SubKeyText, (PathKeyText<"Zdbus.SubKey">));
 struct Sub_ {
   SubKeyText	parts;
   SignalFn	fn;

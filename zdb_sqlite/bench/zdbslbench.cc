@@ -14,10 +14,10 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 
-using Text = ZtString<ZtStringHeapID<"ZdbSL.BenchText">>;
-using Samples = ZtArray<uint64_t, ZtArrayHeapID<"ZdbSL.BenchSamples">>;
-using PrimVec = ZtArray<uint32_t, ZtArrayHeapID<"ZdbSL.BenchPrimVec">>;
-using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.BenchBytes">>;
+ZuDerive(Text, ZtString<ZtStringHeapID<"ZdbSL.BenchText">>);
+ZuDerive(Samples, (ZtArray<uint64_t, ZtArrayHeapID<"ZdbSL.BenchSamples">>));
+ZuDerive(PrimVec, (ZtArray<uint32_t, ZtArrayHeapID<"ZdbSL.BenchPrimVec">>));
+ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.BenchBytes">>));
 
 enum { RowCount = 20000, PayloadSize = 4096, PrimCount = 4096 };
 

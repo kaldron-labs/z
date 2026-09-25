@@ -18,6 +18,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZtPlatform.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZvMxParams.hh>
@@ -248,7 +249,9 @@ ZfStruct(, (Options, CLI),
 static ZuPtr<const ZfCf::AnyNode> config()
 {
   ZmRef<ZfCf::Defines> defines = new ZfCf::Defines{};
-  defines->add(ZfCf::DefKey{"MODULE"}, ZfCf::DefVal{getenv("ZDB_MODULE")});
+  ZfCf::DefVal module;
+  if (auto path = Zt::getpath("ZDB_MODULE")) module = path;
+  defines->add(ZfCf::DefKey{"MODULE"}, ZuMv(module));
   defines->add(ZfCf::DefKey{"CONNECT"}, ZfCf::DefVal{getenv("ZDB_CONNECT")});
   auto scan = ZfCf::scan(
     "thread: zdb, shards: 4, threads: [saga0, saga1, saga2, saga3],\n"

@@ -23,6 +23,8 @@
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
 
@@ -230,8 +232,8 @@ ZfStruct(, (JWTHeader, JSON),
 
 class App;
 struct Application;
-using OAuthAppString = ZtString<ZtStringBuiltin<OAuthAppIDMax,
-  ZtStringHeapID<"zrestd.AppID">>>;
+ZuDerive(OAuthAppString, (ZtString<
+    ZtStringBuiltin<OAuthAppIDMax, ZtStringHeapID<"zrestd.AppID">>>));
 
 struct AppRequest {
   App			*app = nullptr;
@@ -1809,8 +1811,8 @@ static void interrupted() { done.post(); }
 
 int main(int argc, char **argv)
 {
-  ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
-  ZiHashCSV::init(::getenv("Z_HASHTUNE"));
+  ZiHeapCSV::init(Zt::getpath("Z_HEAPTUNE"));
+  ZiHashCSV::init(Zt::getpath("Z_HASHTUNE"));
 
   Options options;
   try {

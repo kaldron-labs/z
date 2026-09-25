@@ -156,14 +156,14 @@ static double numberValue(ZuCSpan s)
   return ZuBox<double>{s}.val();
 }
 
-using AName = ZtString<ZtStringHeapID<"ZfYAML.AnchorName">>;
+ZuDerive(AName, (ZtString<ZtStringHeapID<"ZfYAML.AnchorName">>));
 
 struct Anchor {
   AnyNode	*node = nullptr;
   unsigned	depth = 0;
 };
 
-using Anchors = ZtArray<Anchor, ZtArrayHeapID<"ZfYAML.Anchors">>;
+ZuDerive(Anchors, (ZtArray<Anchor, ZtArrayHeapID<"ZfYAML.Anchors">>));
 
 static const char *anchorMapID() { return "ZfYAML.AnchorMap"; }
 using AnchorMap = ZmLHashKV<

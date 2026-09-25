@@ -46,8 +46,8 @@ void App::attach_()
 
   if (!initialized) {
 #ifdef _WIN32
-    putenv("GTK_CSD=0");
-    putenv("GTK_THEME=win32");
+    Zt::setenv("GTK_CSD", "0");
+    Zt::setenv("GTK_THEME", "win32");
 #endif
 
     gtk_init(nullptr, nullptr);
