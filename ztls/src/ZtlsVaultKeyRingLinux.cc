@@ -29,7 +29,7 @@ constexpr auto CollectionIF = "org.freedesktop.Secret.Collection"_Zu;
 constexpr auto ItemIF = "org.freedesktop.Secret.Item"_Zu;
 constexpr auto SessionIF = "org.freedesktop.Secret.Session"_Zu;
 constexpr auto PromptIF = "org.freedesktop.Secret.Prompt"_Zu;
-constexpr unsigned TimeoutSeconds = 5;
+enum { TimeoutSeconds = 5 };
 
 template <typename Heap = ZuVoid>
 class KeyRing_ : public Heap, public VaultStore {
@@ -268,18 +268,19 @@ private:
   template <typename Arg, typename Res, typename Fn>
   Ztls::VaultResult call_(ZuCSpan path, ZuCSpan interface,
       ZuCSpan member, const Arg &arg, Fn &&fn) {
-    auto result = ZmBlock<Zdbus_::CallResult>{}([&](auto done) {
-      m_client.call([&](uint32_t serial) {
-        Zdbus_::HeadSpec head;
-        head.type = Zdbus_::MessageType::MethodCall;
-        head.serial = serial;
-        head.path = path;
-        head.interface = interface;
-        head.member = member;
-        head.destination = Destination;
-        return Zdbus_::message(head, arg);
-      }, ZuMv(done), Zm::now(TimeoutSeconds));
-    });
+    auto result = ZmBlock<Zdbus_::CallResult>{}(
+      [this, path, interface, member, &arg](auto done) {
+	m_client.call([path, interface, member, &arg](uint32_t serial) {
+	  Zdbus_::HeadSpec head;
+	  head.type = Zdbus_::MessageType::MethodCall;
+	  head.serial = serial;
+	  head.path = path;
+	  head.interface = interface;
+	  head.member = member;
+	  head.destination = Destination;
+	  return Zdbus_::message(head, arg);
+	}, ZuMv(done), Zm::now(TimeoutSeconds));
+      });
     if (!result)
       return ZeEXCEPT(Error, "ZtlsVault", "Secret Service call failed");
     if (result.info.type == Zdbus_::MessageType::Error)
