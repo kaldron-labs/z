@@ -308,7 +308,7 @@ struct ResponsePlan {
 };
 
 struct MimeMap {
-  using String = ZtString<ZtStringHeapID<"Zhttpd.Mime.String">>;
+  ZuDerive(String, (ZtString<ZtStringHeapID<"Zhttpd.Mime.String">>));
   using Map = ZmHashKV<String, String, ZmHashHeapID<"Zhttpd.Mime">>;
   using Builtins = ZuTypeList<
     ZuTypeList<ZuStringT<"html">, ZuStringT<"text/html">>,

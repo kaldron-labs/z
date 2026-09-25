@@ -50,9 +50,8 @@ namespace HubdState {
     Stopping, Draining };
 }
 
-using HubString = ZtString<ZtStringHeapID<"Ztc.Hub.String">>;
-using HubStrings = ZtArray<HubString,
-  ZtArrayHeapID<"Ztc.Hub.Strings">>;
+ZuDerive(HubString, (ZtString<ZtStringHeapID<"Ztc.Hub.String">>));
+ZuDerive(HubStrings, (ZtArray<HubString, ZtArrayHeapID<"Ztc.Hub.Strings">>));
 using HubFrame = ZmRef<ZiIOBuf>;
 using HubSendFn = ZmFn<void(HubFrame), ZmFnHeapID<"Ztc.Hub.Send">>;
 

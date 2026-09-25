@@ -14,6 +14,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTokenizer.hh>
+#include <zlib/ZtPlatform.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZmBlock.hh>
@@ -106,12 +107,10 @@ static void setString_(ZtString<> &out, ZuCSpan in)
   out << in;
 }
 
-static void setQLogPath_(ZtString<> &out, ZuCSpan dir, Role role)
+static void setQLogPath_(Zi::Path &out, Role role)
 {
-  out.length(0);
-  if (!dir.length()) return;
-  out << dir;
-  if (dir[dir.length() - 1] != '/') out << '/';
+  if (!out.length()) return;
+  if (out[out.length() - 1] != '/') out << '/';
   out << roleName(role) << ".sqlog";
 }
 
@@ -124,6 +123,12 @@ static ZuCSpan env_(const char *(*getenvFn)(const char *), const char *name)
 static const char *getenv_(const char *name)
 {
   return ::getenv(name);
+}
+
+static void getpath_(const char *name, Zi::Path &out)
+{
+  out.length(0);
+  if (auto path = Zt::getpath(name)) out = path;
 }
 
 static bool scanPort_(ZuCSpan s, unsigned &port)
@@ -159,7 +164,8 @@ static bool pathEscape_(ZuCSpan path)
   return false;
 }
 
-static PathStatus appendOutput_(ZuCSpan path, ZuCSpan downloads, ZtString<> &out)
+static PathStatus appendOutput_(ZuCSpan path, const Zi::Path &downloads,
+    Zi::Path &out)
 {
   if (!path.length() || path[0] != '/') return PathEmpty;
   if (path[path.length() - 1] == '/') return PathDir;
@@ -186,10 +192,10 @@ static ZiMxParams mxParams_()
     .rxThread(1).txThread(2);
 }
 
-static bool readFile_(ZuCSpan path, ZtString<> &data)
+static bool readFile_(const Zi::Path &path, ZtString<> &data)
 {
   ZiFile file;
-  if (file.open(Zi::Path{path}, ZiFile::ReadOnly | ZiFile::NoFollow |
+  if (file.open(path, ZiFile::ReadOnly | ZiFile::NoFollow |
       ZiFile::GC) != Zi::OK)
     return false;
   auto stat = file.fstat();
@@ -380,7 +386,7 @@ int HQServerStream::process(Zquic::RxStream &rx)
     this->link()->disconnect();
     return -1;
   }
-  ZtString<> path;
+  Zi::Path path;
   if (mapHQPath(req.path, this->link()->app()->env.www, path) != PathOK) {
     this->link()->app()->errors = 1;
     this->link()->disconnect();
@@ -854,7 +860,8 @@ bool caseHQ(Case testCase)
   return false;
 }
 
-int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *))
+int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
+    GetPathFn getpathFn)
 {
   ZuCSpan testCase = env_(getenvFn, "TESTCASE");
   if (!testCase.length()) return Usage;
@@ -863,19 +870,19 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *))
   env.heartBeat = qirHeartBeat(env.testCase);
 
   setString_(env.requests, env_(getenvFn, "REQUESTS"));
-  setString_(env.keyLog, env_(getenvFn, "SSLKEYLOGFILE"));
-
-  ZuCSpan www = env_(getenvFn, "ZHTTP_QIR_WWW");
-  setString_(env.www, www.length() ? www : DefaultWWW);
-  ZuCSpan downloads = env_(getenvFn, "ZHTTP_QIR_DOWNLOADS");
-  setString_(env.downloads, downloads.length() ? downloads : DefaultDownloads);
-  ZuCSpan ca = env_(getenvFn, "ZHTTP_QIR_CA");
-  setString_(env.ca, ca.length() ? ca : DefaultCA);
-  ZuCSpan cert = env_(getenvFn, "ZHTTP_QIR_CERT");
-  setString_(env.cert, cert.length() ? cert : DefaultCert);
-  ZuCSpan key = env_(getenvFn, "ZHTTP_QIR_KEY");
-  setString_(env.key, key.length() ? key : DefaultKey);
-  setQLogPath_(env.qlogPath, env_(getenvFn, "QLOGDIR"), role);
+  getpathFn("SSLKEYLOGFILE", env.keyLog);
+  getpathFn("ZHTTP_QIR_WWW", env.www);
+  if (!env.www) env.www = DefaultWWW;
+  getpathFn("ZHTTP_QIR_DOWNLOADS", env.downloads);
+  if (!env.downloads) env.downloads = DefaultDownloads;
+  getpathFn("ZHTTP_QIR_CA", env.ca);
+  if (!env.ca) env.ca = DefaultCA;
+  getpathFn("ZHTTP_QIR_CERT", env.cert);
+  if (!env.cert) env.cert = DefaultCert;
+  getpathFn("ZHTTP_QIR_KEY", env.key);
+  if (!env.key) env.key = DefaultKey;
+  getpathFn("QLOGDIR", env.qlogPath);
+  setQLogPath_(env.qlogPath, role);
 
   env.port = DefaultPort;
   ZuCSpan port = env_(getenvFn, "ZHTTP_QIR_PORT");
@@ -885,7 +892,7 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *))
   return OK;
 }
 
-int parseRequests(ZuCSpan requests, ZuCSpan downloads, Requests &out)
+int parseRequests(ZuCSpan requests, const Zi::Path &downloads, Requests &out)
 {
   out.length(0);
   requests.trim();
@@ -900,7 +907,7 @@ int parseRequests(ZuCSpan requests, ZuCSpan downloads, Requests &out)
   return out.length() ? OK : Usage;
 }
 
-PathStatus mapURL(ZuCSpan url, ZuCSpan downloads, Request &request)
+PathStatus mapURL(ZuCSpan url, const Zi::Path &downloads, Request &request)
 {
   if (!url.match(Scheme)) return PathBadScheme;
   setString_(request.url, url);
@@ -943,7 +950,7 @@ PathStatus parseHQRequest(ZuCSpan line, HqRequest &request)
   return PathOK;
 }
 
-PathStatus mapHQPath(ZuCSpan path, ZuCSpan www, ZtString<> &file)
+PathStatus mapHQPath(ZuCSpan path, const Zi::Path &www, Zi::Path &file)
 {
   if (!path.length() || path[0] != '/') return PathEmpty;
   if (path[path.length() - 1] == '/') return PathDir;
@@ -967,9 +974,9 @@ bool buildHQRequestLine(ZuCSpan path, ZtString<> &line)
   return true;
 }
 
-bool ensureParentDirs(ZuCSpan path)
+bool ensureParentDirs(const Zi::Path &path)
 {
-  Zi::Path dir = ZiFile::dirname(Zi::Path{path});
+  Zi::Path dir = ZiFile::dirname(path);
   if (!dir || dir == "." || ZiStat{dir}.isdir()) return true;
 
   ZtArray<Zi::Path> stack;
@@ -1167,7 +1174,7 @@ static int runH3Server_(const Env &env)
 int run(Role role)
 {
   Env env;
-  int status = loadEnv(role, env, getenv_);
+  int status = loadEnv(role, env, getenv_, getpath_);
   if (status != OK) return status;
   if (role == Client) {
     Requests requests;

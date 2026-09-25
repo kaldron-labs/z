@@ -24,6 +24,10 @@
 #pragma warning(disable:4996)
 #endif
 
+#ifndef _WIN32
+ZuDerive(EnvString, (ZtWString<ZtStringHeapID<"ZiDaemon.EnvString">>));
+#endif
+
 int ZiDaemon::init(
   const char *username, const char *password,
   int umask, bool daemonize, const Zi::Path &pidName)
@@ -88,7 +92,7 @@ int ZiDaemon::init(
     }
 
     if (!daemon) {
-      _wputenv(ZtWString<>{L"_ZiDaemon="} << program);
+      _wputenv_s(L"_ZiDaemon", program);
 
       STARTUPINFOW si;
       memset(&si, 0, sizeof(si));

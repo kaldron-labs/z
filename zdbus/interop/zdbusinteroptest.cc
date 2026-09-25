@@ -98,7 +98,8 @@ static bool waitFor(ZmSemaphore &sem)
   return sem.timedwait(Zm::now(TimeoutSeconds)) == 0;
 }
 
-using Text = ZtString<ZtStringHeapID<"ZdbusInterop.Text">>;
+ZuDerive(Text, ZtString<ZtStringHeapID<"ZdbusInterop.Text">>);
+
 struct Empty { };
 ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 struct TextBody { Text text; };

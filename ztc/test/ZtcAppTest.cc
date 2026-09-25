@@ -34,16 +34,6 @@ struct SnapshotResult {
   bool			app = false;
 };
 
-static void env(const char *name, ZuCSpan value)
-{
-  ZtString<> text{value};
-#ifdef _WIN32
-  _putenv_s(name, text.data());
-#else
-  setenv(name, text.data(), 1);
-#endif
-}
-
 static bool sendRequest(
     uint64_t seqNo, Ztc::fbs::Group group, ZuCSpan filter,
     uint32_t interval, bool subscribe,
@@ -153,8 +143,8 @@ static void appTest()
 
   Zi::Name telName = ZiTestResidue::uniqueName("telemetry");
   Zi::Name pidDir = ZiTestResidue::uniqueName("registry");
-  env("ZTC_RING", telName);
-  env("ZTC_DIR", pidDir);
+  Zt::setenv("ZTC_RING", telName);
+  Zt::setenv("ZTC_DIR", pidDir);
 
   ZiMxParams params;
   params.scheduler([](auto &scheduler) {
@@ -293,8 +283,8 @@ static void appTest()
     shutdown->value_type() == Ztc::fbs::TelemetryBody::Shutdown &&
     shutdown->value_as_Shutdown());
   ZuCheck(!ZiStat{pidPath}.exists());
-  env("ZTC_RING", ZiTestResidue::uniqueName("ignored"));
-  env("ZTC_DIR", ZiTestResidue::uniqueName("ignored"));
+  Zt::setenv("ZTC_RING", ZiTestResidue::uniqueName("ignored"));
+  Zt::setenv("ZTC_DIR", ZiTestResidue::uniqueName("ignored"));
   ZuCheck(app.start());
   ZuCheck(ZiStat{pidPath}.exists());
   ZuCheck(ZtcTestClient::client().connect(cf.id));

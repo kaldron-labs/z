@@ -8,7 +8,7 @@
 #include <zlib/ZdbusCatalog.hh>
 
 using namespace ZuTestUtil;
-using Text = ZtString<ZtStringHeapID<"ZdbusAdapterTest.Text">>;
+ZuDerive(Text, (ZtString<ZtStringHeapID<"ZdbusAdapterTest.Text">>));
 
 struct Args { Text name; uint32_t count; };
 ZfStruct(, Args,

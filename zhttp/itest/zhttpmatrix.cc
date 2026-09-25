@@ -87,7 +87,7 @@ struct Case {
   Scenario::T	scenario = Scenario::Default;
 };
 
-using OptString = ZtString<ZtStringHeapID<"ZfCLI.Option">>;
+ZuDerive(OptString, (ZtString<ZtStringHeapID<"ZfCLI.Option">>));
 
 struct Options {
   OptString	caseName;

@@ -21,6 +21,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
 
@@ -801,8 +803,8 @@ void Zhttpd::Application::printQUICDiag()
 #ifndef ZHTTPD_LIBRARY
 int main(int argc, char **argv)
 {
-  ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
-  ZiHashCSV::init(::getenv("Z_HASHTUNE"));
+  ZiHeapCSV::init(Zt::getpath("Z_HEAPTUNE"));
+  ZiHashCSV::init(Zt::getpath("Z_HASHTUNE"));
 
   Options options;
   try {

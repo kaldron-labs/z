@@ -561,8 +561,8 @@ inline void saveText(S &s, ZuCSpan v, ZuCSpan key = {})
   }
 }
 
-using ScalarBuf = ZtString<ZtStringHeapID<"ZfTOML.ScalarBuf">>;
-using PathBuf = ZtString<ZtStringHeapID<"ZfTOML.Path">>;
+ZuDerive(ScalarBuf, (ZtString<ZtStringHeapID<"ZfTOML.ScalarBuf">>));
+ZuDerive(PathBuf, (ZtString<ZtStringHeapID<"ZfTOML.Path">>));
 enum {
   ScalarScratchSize = 128, // covers ordinary formatted scalar spellings
   PathScratchSize = 128    // covers ordinary configuration header paths

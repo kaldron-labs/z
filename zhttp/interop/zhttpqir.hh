@@ -14,6 +14,7 @@
 #include <zlib/ZuTime.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZiPlatform.hh>
 #include <zlib/Zquic.hh>
 
 namespace Zhttp::QIR {
@@ -64,13 +65,13 @@ struct Env {
   Case		testCase = Unsupported;
   ZuTime	heartBeat;
   ZtString<>	requests;
-  ZtString<>	keyLog;
-  ZtString<>	www;
-  ZtString<>	downloads;
-  ZtString<>	ca;
-  ZtString<>	cert;
-  ZtString<>	key;
-  ZtString<>	qlogPath;
+  Zi::Path	keyLog;
+  Zi::Path	www;
+  Zi::Path	downloads;
+  Zi::Path	ca;
+  Zi::Path	cert;
+  Zi::Path	key;
+  Zi::Path	qlogPath;
   unsigned	port = DefaultPort;
 };
 
@@ -78,7 +79,7 @@ struct Request {
   ZtString<>	url;
   ZtString<>	host;
   ZtString<>	path;
-  ZtString<>	output;
+  Zi::Path	output;
   unsigned	port = DefaultPort;
 };
 
@@ -108,13 +109,15 @@ bool caseSupported(Case testCase);
 bool caseH3(Case testCase);
 bool caseHQ(Case testCase);
 
-int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *));
-int parseRequests(ZuCSpan requests, ZuCSpan downloads, Requests &out);
-PathStatus mapURL(ZuCSpan url, ZuCSpan downloads, Request &request);
+using GetPathFn = void (*)(const char *, Zi::Path &);
+int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
+    GetPathFn getpathFn);
+int parseRequests(ZuCSpan requests, const Zi::Path &downloads, Requests &out);
+PathStatus mapURL(ZuCSpan url, const Zi::Path &downloads, Request &request);
 PathStatus parseHQRequest(ZuCSpan line, HqRequest &request);
-PathStatus mapHQPath(ZuCSpan path, ZuCSpan www, ZtString<> &file);
+PathStatus mapHQPath(ZuCSpan path, const Zi::Path &www, Zi::Path &file);
 bool buildHQRequestLine(ZuCSpan path, ZtString<> &line);
-bool ensureParentDirs(ZuCSpan path);
+bool ensureParentDirs(const Zi::Path &path);
 
 int run(Role role);
 void usage();

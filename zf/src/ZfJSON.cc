@@ -64,12 +64,12 @@ slow:
 	    using Fmt = ZuFmt::Hex<1, ZuFmt::Right<4>>;
 	    if (ZuUnlikely(i + 5 >= n)) goto bad;
 	    uint16_t u16[2];
-	    i += ZuBoxed(u16[0]).scan<Fmt>(&span[++i]);
+	    i += ZuBoxed(u16[0]).scan<Fmt>(ZuCSpan{&span[++i], 4});
 	    if (ZuUTF16::in(u16[0]) == 2) {
 	      if (ZuUnlikely(i + 6 >= n)) goto bad;
 	      if (span[i] != '\\') goto bad;
 	      if (span[++i] != 'u') goto bad;
-	      i += ZuBoxed(u16[1]).scan<Fmt>(&span[++i]);
+	      i += ZuBoxed(u16[1]).scan<Fmt>(ZuCSpan{&span[++i], 4});
 	    }
 	    uint32_t u32;
 	    if (!ZuUTF16::in(&u16[0], 2, u32)) goto bad;

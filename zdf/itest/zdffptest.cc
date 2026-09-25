@@ -12,6 +12,8 @@
 
 #include <zlib/ZmTrap.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcHeap.hh>
 
@@ -269,7 +271,7 @@ struct Options {
   bool		help;
 };
 ZfStruct(, Options,
-  (((module),    (Ctor<0>, CLI::Opt<'m'>)),  (String, getenv("ZDB_MODULE"))),
+  (((module),    (Ctor<0>, CLI::Opt<'m'>)),  (String)),
   (((connect),   (Ctor<1>, CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
   (((debug),     (Ctor<2>, CLI::Flag<'d'>)), (Bool)),
   (((hashTel),   (Ctor<3>, CLI::Flag<'t'>)), (Bool)),
@@ -288,6 +290,10 @@ int main(int argc_, char **argv)
     usage();
   }
   if (argc != 1) usage();
+  ZtString<> moduleEnv;
+  if (!options.module)
+    if (auto path = Zt::getpath("ZDB_MODULE"))
+      options.module = moduleEnv = path;
 
   ZuPtr<const ZfCf::AnyNode> cf;
 

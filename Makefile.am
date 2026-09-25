@@ -5,6 +5,9 @@ EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zf zi zv zrl
+if LINUX
+SUBDIRS += zdbus
+endif
 SUBDIRS += ztcp ztls zquic zhttp zws
 SUBDIRS += zrest
 SUBDIRS += zmcp
@@ -24,7 +27,7 @@ SUBDIRS += zgtk
 endif
 # SUBDIRS += zdash
 
-DIST_SUBDIRS = zu zm zt ze zf zi zv zrl ztcp ztls zquic zhttp zws zrest zmcp zfb zdb ztc \
+DIST_SUBDIRS = zu zm zt ze zf zi zv zrl zdbus ztcp ztls zquic zhttp zws zrest zmcp zfb zdb ztc \
 	zdb_pq zdb_sqlite zdf zum zgtk # zdash
 
 .PHONY: test

@@ -206,8 +206,8 @@ namespace ErrorCode {
   };
 }
 
-using IDString = ZtString<ZtStringHeapID<"Zmcp.ID">>;
-using ErrorString = ZtString<ZtStringHeapID<"Zmcp.Error">>;
+ZuDerive(IDString, (ZtString<ZtStringHeapID<"Zmcp.ID">>));
+ZuDerive(ErrorString, (ZtString<ZtStringHeapID<"Zmcp.Error">>));
 
 struct IDFmt;
 
@@ -1294,7 +1294,7 @@ inline Parsed<Reqs> parse(ZuSpan<char> input, unsigned maxBytes)
 }
 
 
-using SchemaString = ZtString<ZtStringHeapID<"Zmcp.Schema">>;
+ZuDerive(SchemaString, (ZtString<ZtStringHeapID<"Zmcp.Schema">>));
 
 namespace Schema_ {
 
@@ -2741,9 +2741,9 @@ private:
 };
 
 
-using SSELine = ZtString<ZtStringHeapID<"Zmcp.SSE.Line">>;
-using SSEData = ZtString<ZtStringHeapID<"Zmcp.SSE.Data">>;
-using SSEID = ZtString<ZtStringHeapID<"Zmcp.SSE.ID">>;
+ZuDerive(SSELine, (ZtString<ZtStringHeapID<"Zmcp.SSE.Line">>));
+ZuDerive(SSEData, (ZtString<ZtStringHeapID<"Zmcp.SSE.Data">>));
+ZuDerive(SSEID, (ZtString<ZtStringHeapID<"Zmcp.SSE.ID">>));
 
 struct SSEEvent {
   ZuCSpan data;
@@ -2870,9 +2870,9 @@ inline void saveSSE(S &s, ZuCSpan id, int64_t retry, ZuCSpan json)
 }
 
 
-using HTTPBodyBuf = ZiIOBufAlloc<ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, "Zmcp.HTTP.Body">;
-using HTTPValue = ZtString<ZtStringHeapID<"Zmcp.HTTP.Value">>;
+ZuDerive(HTTPBodyBuf, (ZiIOBufAlloc<
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zmcp.HTTP.Body">));
+ZuDerive(HTTPValue, (ZtString<ZtStringHeapID<"Zmcp.HTTP.Value">>));
 
 template <typename U, typename = void>
 struct AppHeaders_ { using T = ZuTypeList<>; };

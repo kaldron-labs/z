@@ -38,15 +38,13 @@ struct CfNested {
 ZfStruct(, (CfNested, Cf),
   (((value), (Ctor<0>)), (Int32)));
 
-using CfMapKey = ZtString<>;
+ZuDerive(CfMapKey, (ZtString<ZtStringHeapID<"ZfTest.Cf.CfMapKey">>));
 
-using CfIntMap =
-  ZfMapTest<"ZfTest.Cf.IntMap", ZmHashKV<CfMapKey, int>>;
+using CfIntMap = ZfMapTest<"ZfTest.Cf.IntMap", ZmHashKV<CfMapKey, int>>;
 using CfIntMapRef = ZmRef<CfIntMap>;
 inline ZfCf::AsMap<ZfFieldTC::Int32> ZfCf_Fmt(CfIntMap *);
 
-using CfObjMap =
-  ZfMapTest<"ZfTest.Cf.ObjMap", ZmHashKV<CfMapKey, CfNested>>;
+using CfObjMap = ZfMapTest<"ZfTest.Cf.ObjMap", ZmHashKV<CfMapKey, CfNested>>;
 using CfObjMapRef = ZmRef<CfObjMap>;
 inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(CfObjMap *);
 
@@ -410,11 +408,7 @@ static void expansion() {
   const char *old = ::getenv("x");
   ZtString<> saved;
   if (old) saved = old;
-#ifdef _WIN32
-  _putenv_s("x", "X");
-#else
-  setenv("x", "X", 1);
-#endif
+  Zt::setenv("x", "X");
 
   ZuTestCall(checkToken, "${x}", "X");
   ZuTestCall(checkToken, "a${x}b", "aXb");
@@ -439,14 +433,7 @@ static void expansion() {
     }
   }
 
-#ifdef _WIN32
-  _putenv_s("x", old ? saved.data() : "");
-#else
-  if (old)
-    setenv("x", saved.data(), 1);
-  else
-    unsetenv("x");
-#endif
+  Zt::setenv("x", old ? saved.data() : "");
 }
 
 static void classification() {
@@ -520,11 +507,7 @@ static void percent() {
   const char *old = ::getenv(id);
   ZtString<> saved;
   if (old) saved = old;
-#ifdef _WIN32
-  _putenv_s(id, "environment");
-#else
-  setenv(id, "environment", 1);
-#endif
+  Zt::setenv(id, "environment");
 
   {
     ZmRef<ZfCf::Defines> defines = new ZfCf::Defines();
@@ -640,14 +623,7 @@ static void percent() {
       ZuCheck(syntaxError(input, pctFn));
   }
 
-#ifdef _WIN32
-  _putenv_s(id, old ? saved.data() : "");
-#else
-  if (old)
-    setenv(id, saved.data(), 1);
-  else
-    unsetenv(id);
-#endif
+  Zt::setenv(id, old ? saved.data() : "");
 }
 
 static void duplicates() {

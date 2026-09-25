@@ -589,7 +589,7 @@ void saveText(S &s, ZuCSpan v, unsigned indent_)
   }
 }
 
-using ScalarBuf = ZtString<ZtStringHeapID<"ZfYAML.ScalarBuf">>;
+ZuDerive(ScalarBuf, (ZtString<ZtStringHeapID<"ZfYAML.ScalarBuf">>));
 
 inline ZuSpan<char> scalarSpan(ScalarBuf &buf)
 {

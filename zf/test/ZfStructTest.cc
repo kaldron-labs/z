@@ -217,7 +217,7 @@ using FmtIntFormat = ZuFmt::Hex<false, ZuFmt::Right<32>>;
 ZfStruct(, (FmtInt, JSON),
   (((value), (Ctor<0>, JSON::String<FmtIntFormat>)), (UInt128)));
 
-using MapKey = ZtString<>;
+ZuDerive(MapKey, (ZtString<ZtStringHeapID<"ZfTest.MapKey">>));
 
 using IntHash =
   ZfMapTest<"ZfTest.JSON.IntHash", ZmHashKV<MapKey, int>>;

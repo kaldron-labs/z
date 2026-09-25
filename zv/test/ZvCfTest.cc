@@ -77,11 +77,7 @@ void files()
   auto rootPath = path("root.cf");
   auto childPath = path("child.cf");
   auto grandPath = ZiFile::append(nestedDir, "grand.cf");
-#ifdef _WIN32
-  _putenv_s("ZVCF_NESTED", "nested/grand.cf");
-#else
-  setenv("ZVCF_NESTED", "nested/grand.cf", 1);
-#endif
+  Zt::setenv("ZVCF_NESTED", "nested/grand.cf");
 
   write(grandPath,
     "grandCur: ${CURDIR}, grandTop: ${TOPDIR}, retained: mapped\n");
@@ -119,11 +115,7 @@ void files()
   ZiFile::remove(childPath);
   ZiFile::remove(rootPath);
   ZiFile::rmdir(nestedDir);
-#ifdef _WIN32
-  _putenv_s("ZVCF_NESTED", "");
-#else
-  unsetenv("ZVCF_NESTED");
-#endif
+  Zt::unsetenv("ZVCF_NESTED");
 }
 
 void emptyAndErrors()

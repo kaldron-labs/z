@@ -22,7 +22,7 @@ using RxQueue = ZiRxQueue;
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 2048,
   ZuStringT<"ZhttpParserTest.Buf">>;
 using RxStream = ZiRxStream<RxQueue>;
-using BodyData = ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>;
+ZuDerive(BodyData, (ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>));
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {

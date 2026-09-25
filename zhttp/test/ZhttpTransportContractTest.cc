@@ -199,7 +199,7 @@ using TxBufAlloc =
   ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
 
 struct StreamLink {
-  using Wire = ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">>;
+  ZuDerive(Wire, (ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">>));
 
   Wire		wire;
   unsigned	handoffs = 0;

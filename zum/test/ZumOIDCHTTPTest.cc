@@ -11,6 +11,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmBlock.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiLog.hh>
 
@@ -71,8 +73,10 @@ static void publicOIDC()
   ZiMultiplex mx{mxParams()};
   ZuCheck(mx.start());
   Zum::OIDCHTTP http;
+  Zum::String caPath;
+  if (auto path = Zt::getpath("ZUM_OIDC_TEST_CA")) caPath = path;
   ZuCheck(http.init(&mx, 3, Zum::OIDCHTTP::DefaultOrigins,
-      ZuCSpan{::getenv("ZUM_OIDC_TEST_CA")}));
+      caPath));
   auto send = http.fn();
   ZmSemaphore done;
   Zum::String body;

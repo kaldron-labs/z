@@ -168,6 +168,10 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Write idiomatic, natural, maximally expressive code for veteran C++ engineers.
 - Prefer brevity, common expert idioms, and precise structure over beginner-oriented readability.
 - Do not disdain "Hacker's Delight" style when it is clear, correct, and faster.
+- Use shifts for integer multiplication and division by power-of-two literals:
+  `x<<3` instead of `x*8`, and `x>>3` instead of `x/8`. For signed division,
+  shift only when the value is nonnegative, since rounding otherwise differs.
+- Do not put spaces on either side of `/` in division expressions: write `x/y`.
 - `auto ptr = ...` not `auto *ptr = ...`
 - Strongly prefer `T(u)` to `static_cast<T>(u)` in all cases where they're equivalent
 
@@ -212,6 +216,26 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   module: `src`, `test`, `util`, `itest`, `example`, `bench`, and `interop`
   where present. Inspect both uses and declarations relevant to each flag; do
   not treat `src` as the whole module.
+
+### Repair procedure
+
+- Audit scope is not edit scope. For each repair, identify the requirement or
+  observed failure, violated invariant, and owning component. Report unproven
+  concerns; do not edit merely to clear a flag.
+- Establish the contract before adding validation, references, locks,
+  containers, retries, or APIs. Respect caller responsibilities and framework
+  guarantees; validate untrusted input at its boundary without rechecking
+  states guaranteed by types.
+- Make the smallest demonstrated fix. Judge storage by actual bounds and
+  workload, and account for added allocations, copies, references, lookups,
+  and hot-path work.
+- Preserve unrelated code, tests, diagnostics, standard streams, and
+  platform-normalizing APIs. Test an agreed invariant or reproduced failure,
+  not a speculative new contract.
+- Review every changed line for necessity, then verify the intended behavior
+  on relevant platforms using the current build configuration. A green build
+  does not justify scope expansion. When reverting, remove the named change
+  and its direct dependents without disturbing other work.
 
 ### Code structure
 - Amber Flag: a data-member type is too long to preserve tabular member alignment.
@@ -445,14 +469,6 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: potentially long-running loops or container iterations in threads that service mixed workloads, particularly I/O threads
   Problem: under load, pending work in the scheduler queue will be starved by a looping turn that does not return to the scheduler
   Fix: cap the work performed in each turn - batch it and post continuations for the remainder
-
-## Audit repair procedure
-
-- Audit scope is not edit scope. For each repair, identify the explicit requirement or observed failure, the violated invariant, and its owning component. Report unproven concerns; do not edit merely to clear an amber flag.
-- Establish the existing contract before adding validation, references, locks, containers, retries, or public APIs. Respect caller responsibilities and framework guarantees; validate untrusted input at its boundary without rechecking states already guaranteed by types.
-- Choose the smallest change that fixes the demonstrated problem. Judge storage and algorithms by their actual bounds and workload, and account for any added allocations, copies, reference operations, lookups, and hot-path work.
-- Keep unrelated code, tests, diagnostics, standard streams, and platform-normalizing APIs intact. Tests must verify an agreed invariant or reproduced failure, not create a new contract to justify a speculative repair.
-- Review the final diff for necessity, then verify the intended behavior on the relevant platforms using the current build configuration. A passing build does not justify out-of-scope edits. When reverting, remove the named change and its direct dependents without disturbing other work.
 
 ## Leveraging Key Z Framework Capabilities
 

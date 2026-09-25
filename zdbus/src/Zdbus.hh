@@ -66,7 +66,7 @@ using SubDoneFn = ZmFn<void(uint64_t), ZmFnHeapID<"Zdbus.SubDoneFn">>;
 
 template <ZuString HeapID>
 struct PathKeyText {
-  using Text = ZtString<ZtStringHeapID<HeapID>>;
+  ZuDerive(Text, ZtString<ZtStringHeapID<HeapID>>);
 
   Text		text;
   unsigned	pathLen;

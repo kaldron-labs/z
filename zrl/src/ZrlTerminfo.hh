@@ -17,7 +17,7 @@
 
 // including ncurses.h corrupts the preprocessor and compiler namespace,
 // so here we just import what's needed and assume that none of it is
-// a macro (that isn't the case as of 10/11/2020, and likely won't ever be)
+// a macro (which isn't the case as of 10/11/2020, and likely won't ever be)
 
 extern "C" {
   struct term;

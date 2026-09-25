@@ -31,6 +31,12 @@ static const char *testGetenv_(const char *name)
   return nullptr;
 }
 
+static void testGetpath_(const char *name, Zi::Path &out)
+{
+  out.length(0);
+  if (auto path = testGetenv_(name)) out = path;
+}
+
 static bool eq_(ZuCSpan a, ZuCSpan b)
 {
   return a == b;
@@ -39,6 +45,11 @@ static bool eq_(ZuCSpan a, ZuCSpan b)
 static bool eq_(const ZtString<> &a, ZuCSpan b)
 {
   return a.cspan() == b;
+}
+
+static bool eq_(const Zi::Path &a, ZuCSpan b)
+{
+  return a == Zi::Path{b};
 }
 
 static void testRoleParsing()
@@ -104,7 +115,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_) == OK,
+    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == OK,
       "default client env loads");
     ZuCHECK(out.testCase == HTTP3, "env testcase");
     ZuCHECK(eq_(out.requests, "https://server/file"), "env requests");
@@ -132,7 +143,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_) == OK,
+    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == OK,
       "override client env loads");
     ZuCHECK(out.testCase == Transfer, "override testcase");
     ZuCHECK(eq_(out.keyLog, "/tmp/keylog"), "keylog override");
@@ -153,7 +164,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_) == OK,
+    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == OK,
       "rebind client env loads");
     ZuCHECK(out.heartBeat == qirHeartBeat(RebindPort),
       "rebind heartbeat enabled");
@@ -162,7 +173,7 @@ static void testEnvLoading()
     const TestEnvKV env[] = {{nullptr, nullptr}};
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_) == Usage,
+    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == Usage,
       "missing testcase is usage");
   }
   {
@@ -172,7 +183,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_) == UnsupportedStatus,
+    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == UnsupportedStatus,
       "unsupported testcase exits 127 before server startup");
   }
   {
@@ -183,7 +194,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_) == Usage,
+    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == Usage,
       "invalid port rejected");
   }
   {
@@ -193,9 +204,9 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_) == Usage,
+    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == Usage,
       "client requires requests");
-    ZuCHECK(loadEnv(Server, out, testGetenv_) == OK,
+    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == OK,
       "server permits empty requests");
   }
 }
@@ -270,7 +281,7 @@ static void testParentDirs()
   TempDir temp;
   ZuCHECK(temp.init("ZhttpQIR"), "QIR temp dir created");
   Request request;
-  ZtString<> downloads;
+  Zi::Path downloads;
   downloads << static_cast<const char *>(temp.path) << "/downloads";
   ZuCHECK(mapURL("https://server/a/b/file.bin", downloads, request) ==
       PathOK,
@@ -310,7 +321,7 @@ static void testHQFileMapping()
   ZuTestScope(testHQFileMapping);
   using namespace Zhttp::QIR;
 
-  ZtString<> file;
+  Zi::Path file;
   ZuCHECK(mapHQPath("/a/b/file.bin", "/www", file) == PathOK &&
       eq_(file, "/www/a/b/file.bin"),
     "hq path maps under www");

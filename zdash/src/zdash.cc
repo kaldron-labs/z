@@ -21,6 +21,7 @@
 #include <zlib/ZmHeap.hh>
 
 #include <zlib/ZtString.hh>
+#include <zlib/ZtPlatform.hh>
 
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
@@ -1706,7 +1707,7 @@ int main(int argc, char **argv)
 	"[--device-id=ID] [--ca=PATH] [--no-browser]\n";
       return 0;
     }
-    auto modulePath = ::getenv("ZDASH_TEST");
+    auto modulePath = Zt::getpath("ZDASH_TEST");
     if (argc != 1 || (!options.config && !modulePath)) usage();
     ZDash::AppCf config;
     if (options.config) {

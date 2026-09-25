@@ -19,11 +19,11 @@
 using namespace ZuTestUtil;
 using namespace ZuFieldProp;
 
-using Text = ZtString<ZtStringHeapID<"ZfDBUSTest.Text">>;
-using Buffer = ZtString<ZtStringHeapID<"ZfDBUSTest.Buffer">>;
-using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZfDBUSTest.Bytes">>;
-using Values = ZtArray<uint32_t, ZtArrayHeapID<"ZfDBUSTest.Values">>;
-using TextValues = ZtArray<Text, ZtArrayHeapID<"ZfDBUSTest.TextValues">>;
+ZuDerive(Text, (ZtString<ZtStringHeapID<"ZfDBUSTest.Text">>));
+ZuDerive(Buffer, (ZtString<ZtStringHeapID<"ZfDBUSTest.Buffer">>));
+ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"ZfDBUSTest.Bytes">>));
+ZuDerive(Values, (ZtArray<uint32_t, ZtArrayHeapID<"ZfDBUSTest.Values">>));
+ZuDerive(TextValues, (ZtArray<Text, ZtArrayHeapID<"ZfDBUSTest.TextValues">>));
 
 ZuStructFacet(CustomDBUS);
 

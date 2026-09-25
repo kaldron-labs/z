@@ -17,7 +17,7 @@ SQLITE_EXTENSION_INIT1
 
 namespace ZdbSL {
 
-using Text = ZtString<ZtStringHeapID<"ZdbSL.Inspect">>;
+ZuDerive(Text, ZtString<ZtStringHeapID<"ZdbSL.Inspect">>);
 // Every supported scalar renders within 64 bytes, including sign and
 // fractional precision.  Oversized fallback remains attributed to Text.
 enum { InspectTextSize = 64 };

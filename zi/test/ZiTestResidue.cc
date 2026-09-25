@@ -22,6 +22,8 @@
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmSingleton.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiGlob.hh>
@@ -192,7 +194,7 @@ void init(const char *testName)
   ZiAssert(name != "." && name != "..", "ZiTestResidue", (name),
       "invalid test name: " << name, ::abort());
 
-  const char *env = ::getenv("ZI_LOGDIR");
+  auto env = Zt::getpath("ZI_LOGDIR");
   Zi::Path root = env && *env ? Zi::Path{env} : ZiFile::cwd();
   if (!ZiFile::absolute(root)) root = ZiFile::append(ZiFile::cwd(), root);
   mkdir_(root);

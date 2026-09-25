@@ -1,12 +1,35 @@
 # TODO
 
-## ZfJSON
+## Ztls Vault
 
-- explain `ZfJSON::unique`
+/goal act as a skeptical principal software engineer
+- audit the implementation of `plan.md` against **all** `GUIDELINES.md` flags and guidelines
+- scrutinize all new in-memory containers
+  - can they be replaced by better code algorithms?
+  - can they be made leaner or simpler?
+  - can multiple containers be consolidated into fewer?
+- scrutinize all transforming/parsing/building/formatting/marshalling/unmarshalling
+  - are any of these operations redundantly repeated?
+  - can any operations be elided by retaining and re-using outputs?
+  - can mutations be performed in-place (overwriting) to avoid unnecessary copying?
+  - do these operations make use of the correct Z framework capabilities?
+- scrutinize all copies and heap allocations
+  - can the copy be elided?
+  - should in-place mutation be used?
+  - can the allocation be replaced by on-stack scratch storplan with heap fallback, e.g. `ZtScratch`
+- repair all findings
+- limit scope to `plan.md` work
+
+modify all `zum` confidential clients, including `zumping`, `ztchub_client`, `zdash`:
+- adopt `Ztls::Vault` to store credentials
+
+## zdash
+
+- get running, retest
+- use `Ztls::Vault` for local credential storage
 
 ## Zdb
 
-- sqlite3 driver
 - "startup replays recovered incomplete sagas that are crash residue from a previous run"
 
 ## Zum
@@ -22,7 +45,7 @@
   - enrollment server for `ztcagent`
   - telemetry aggregator for multiple remote `ztcagent` instances
   - server for telemetry front-end clients, e.g. `zdash`
-    - client/server protocol is flatbuffers over websockets
+   - client/server protocol is flatbuffers over websockets
 
 - zcmd effectively goes away?
   - replaced by node.js generic openapi client
@@ -39,22 +62,6 @@
 - codegen tool?
 - REST interfaces (can be codegen) (3x - core/cli/srv)
   - `xxx{,_cli,_srv}.{hh,cc}` - interface files
-
-## Zcmd
-- remove ZcmdClient, ZcmdServer, OutBufAlloc, etc.
-- make zcmd skeleton with no builtins, userDB, telemetry etc. are all
-  plugins
-- zdash can use same plugins (if desired)
-- get rid of Zcmd protocol framework entirely
-  - re-dedicate to userDB
-  - move into userDB plugin
-- use different ports to segregate userDB from telemetry, etc.
-- each command group manages it's own client, server links
-  - facilitates zdash telemetry fan-in / aggregation etc.
-- command groups can be implemented using REST etc.
-
-## zdash
-- get running, retest
 
 ## Build system
 - CI/CD

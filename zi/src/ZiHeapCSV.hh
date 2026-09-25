@@ -49,7 +49,8 @@ public:
   }
 };
 
-inline void init(ZuCSpan file) {
+template <typename Path>
+inline void init(const Path &file) {
   if (file) CSV{}.read(file);
 }
 

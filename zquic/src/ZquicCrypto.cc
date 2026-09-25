@@ -12,6 +12,8 @@
 
 #include <zlib/ZmScratch.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZiFile.hh>
 
 #include <sys/stat.h>
@@ -939,8 +941,8 @@ bool Crypto::init(const CryptoConfig &config)
   m_saveSessionTicketArg = config.saveSessionTicketArg;
   m_saveSessionTicket = config.saveSessionTicket;
   if (!m_keyLogPath)
-    if (auto path = ::getenv("SSLKEYLOGFILE"))
-      m_keyLogPath = ParamString{ZuCSpan{path}};
+    if (auto path = Zt::getpath("SSLKEYLOGFILE"))
+      m_keyLogPath = ParamString{path};
   m_localParams = config.localParams ?
     *config.localParams : TransportParams{};
   m_peerParams = {};

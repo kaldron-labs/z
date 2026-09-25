@@ -24,6 +24,8 @@ static void terminfo() {
 
 #include <zlib/ZuArray.hh>
 
+#include <zlib/ZtPlatform.hh>
+
 #include <zlib/ZrlTerminfo.hh>
 
 #define CHECK(x) ZuCHECK(x, #x)
@@ -51,9 +53,6 @@ template <typename ...Args>
 char *tiparm_(const char *cap, Args &&...args) {
   return ::tiparm(cap, static_cast<int>(ZuFwd<Args>(args))...);
 }
-void putenv_(const char *s) {
-  putenv(const_cast<char *>(s));
-}
 }
 
 static void terminfo()
@@ -66,7 +65,7 @@ static void terminfo()
   }
 
   {
-    putenv_("TERM=hz1500");
+    Zt::setenv("TERM", "hz1500");
     setupterm(nullptr, fd, nullptr);
     CHECK(tigetflag_("hz"));
     CHECK(tigetflag_("am"));
@@ -74,7 +73,7 @@ static void terminfo()
     del_curterm(cur_term);
   }
   {
-    putenv_("TERM=vt100");
+    Zt::setenv("TERM", "vt100");
     setupterm(nullptr, fd, nullptr);
     CHECK(!tigetflag_("hz"));
     CHECK(tigetflag_("am"));

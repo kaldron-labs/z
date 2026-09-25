@@ -114,10 +114,9 @@ struct TOMLNested { int value = 0; };
 ZfStruct(, (TOMLNested, TOML),
   (((value), (Ctor<0>)), (Int32)));
 
-using TOMLMapKey = ZtString<>;
+ZuDerive(TOMLMapKey, (ZtString<ZtStringHeapID<"ZfTest.TOML.MapKey">>));
 
-using TOMLIntMap_ =
-  ZmRBTreeKV<TOMLMapKey, int, ZmRBTreeUnique<true>>;
+using TOMLIntMap_ = ZmRBTreeKV<TOMLMapKey, int, ZmRBTreeUnique<true>>;
 using TOMLIntMap = ZfMapTest<
   "ZfTest.TOML.IntMap", ZfRefMapTest<TOMLIntMap_>>;
 using TOMLIntMapRef = ZmRef<TOMLIntMap>;
@@ -643,8 +642,8 @@ static ZeString error(ZuCSpan input, ZfTOML::Limits limits = {})
   return {};
 }
 
-using TOMLFixture = ZtString<ZtStringHeapID<"ZfTOML.Fixture">>;
-using TOMLFixturePath = ZtString<ZtStringHeapID<"ZfTOML.FixturePath">>;
+ZuDerive(TOMLFixture, (ZtString<ZtStringHeapID<"ZfTOML.Fixture">>));
+ZuDerive(TOMLFixturePath, (ZtString<ZtStringHeapID<"ZfTOML.FixturePath">>));
 
 static bool fixture(TOMLFixture &data, ZuCSpan name)
 {

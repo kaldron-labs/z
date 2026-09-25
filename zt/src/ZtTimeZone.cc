@@ -39,17 +39,8 @@ Zt_TzGuard::Zt_TzGuard(const char *tz) :
   ZmGuard<ZmPLock>{*Zt_TzLock::instance()}
 {
   if (tz) {
-    if (m_oldTz = ::getenv("TZ")) m_oldTz -= 3; // potentially non-portable
-
-    auto size = strlen(tz) + 4;
-retry:
-    if (ZuUnlikely(!(m_tz = static_cast<char *>(::malloc(size))))) { // must be malloc
-      if (ZmHeapFail()) goto retry;
-      ZuUnreachable();
-    }
-    strcpy(m_tz, "TZ=");
-    strcpy(m_tz + 3, tz);
-    Zt::putenv(m_tz);
+    m_oldTz = ::getenv("TZ");
+    Zt::setenv("TZ", tz);
   }
 
   Zt::tzset();
@@ -57,15 +48,12 @@ retry:
 
 Zt_TzGuard::~Zt_TzGuard()
 {
-  if (m_tz) {
-    if (m_oldTz)
-      Zt::putenv(m_oldTz);
-    else
-      Zt::putenv("TZ=");
-    free(m_tz);
+  if (m_oldTz)
+    Zt::setenv("TZ", m_oldTz);
+  else
+    Zt::unsetenv("TZ");
 
-    Zt::tzset();
-  }
+  Zt::tzset();
 }
 
 int Zt::tzOffset(ZuDateTime value, const char *tz)

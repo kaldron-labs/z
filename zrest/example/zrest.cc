@@ -29,6 +29,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtPlatform.hh>
 
 #include <zlib/ZfCLI.hh>
 
@@ -767,8 +768,8 @@ static void interrupt() { interrupted = 1; }
 
 int main(int argc, char **argv)
 {
-  ZiHeapCSV::init(::getenv("Z_HEAPTUNE"));
-  ZiHashCSV::init(::getenv("Z_HASHTUNE"));
+  ZiHeapCSV::init(Zt::getpath("Z_HEAPTUNE"));
+  ZiHashCSV::init(Zt::getpath("Z_HASHTUNE"));
 
   Options options;
   try { argc = ZfCLI::load(options, argc, argv); }
