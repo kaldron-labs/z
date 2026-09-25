@@ -41,14 +41,20 @@
 
 #include <zlib/ZuPP.hh>
 
-// make sure to SFINAE-constrain the constructor args
+// caution: this macro is carefully crafted to navigate multiple obscure pitfalls
 #define ZuDerive_(Derived, Base_) \
   using Base = ZuPP_Strip(Base_); \
   using Base::Base; \
-  using Base::operator =; \
   template <typename ...Args, \
     decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0> \
-  Derived(Args &&...args) : Base(ZuFwd<Args>(args)...) { }
+  Derived(Args &&...args) : Base(ZuFwd<Args>(args)...) { } \
+  template <typename L_ = Base, typename R_, \
+    typename = ZuNotSame<ZuDecay<R_>, Derived>, \
+    typename = decltype(ZuDeclVal<L_ &>().operator =(ZuDeclVal<R_ &&>()))> \
+  Derived &operator =(R_ &&r) { \
+    L_::operator =(ZuFwd<R_>(r)); \
+    return *this; \
+  }
 
 #define ZuDerive(Derived, Base) \
   struct Derived : public ZuPP_Strip(Base) { ZuDerive_(Derived, Base) }

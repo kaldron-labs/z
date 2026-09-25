@@ -30,3 +30,16 @@ libZu_la_SOURCES = \
 	\
 	zu_decimal.cc zu_time.cc zu_bitmap.cc
 libZu_la_LIBADD = @Z_LIBS@
+
+if MINGW
+# link ZuUTF8.o once into each Windows executable that needs UTF-8 CP_ACP
+WINDRES = windres
+zuutf8dir = $(libdir)
+nodist_zuutf8_DATA = ZuUTF8.$(OBJEXT)
+CLEANFILES = ZuUTF8.$(OBJEXT)
+
+ZuUTF8.$(OBJEXT): $(srcdir)/ZuUTF8.manifest
+	printf '1 24 "ZuUTF8.manifest"\n' | $(WINDRES) -i - -I $(srcdir) -O coff -o $@
+endif
+
+EXTRA_DIST = ZuUTF8.manifest
