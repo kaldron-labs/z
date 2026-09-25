@@ -268,6 +268,31 @@ void testRSA(Ztls::Random &rng)
 {
   ZuTestScopeRT(rsa);
   checkKey<Ztls::PK::SK_RSA>(rng, "rsa");
+  Ztls::PK::SK_RSA key{rng, 2048};
+  // OpenSSL requires an RSA-modulus-sized decryption output buffer.
+  uint8_t secret[16], ciphertext[256], recovered[256];
+  ZuGuard clear{[&]() {
+    ZuClear(secret, sizeof(secret));
+    ZuClear(recovered, sizeof(recovered));
+  }};
+  ZuCheckRT(rng.random(secret));
+  auto publicResult = key.mkPK();
+  ZuCheckRT(!publicResult.template is<ZeException>());
+  if (publicResult.template is<ZeException>()) return;
+  auto pub = ZuMv(publicResult).template p<ZmRef<Ztls::PK::PK_RSA>>();
+  constexpr auto label = "age-encryption.org/v1/ssh-rsa"_Zu;
+  auto encrypted = pub->oaepEncrypt(secret, label, ciphertext);
+  ZuCheckRT(!encrypted.template is<ZeException>());
+  if (encrypted.template is<ZeException>()) return;
+  ZuCheckRT(encrypted.template p<size_t>() == sizeof(ciphertext));
+  auto decrypted = key.oaepDecrypt(ciphertext, label, recovered);
+  ZuCheckRT(!decrypted.template is<ZeException>());
+  if (!decrypted.template is<ZeException>()) {
+    ZuCheckRT(decrypted.template p<size_t>() == sizeof(secret));
+    ZuCheckRT(!memcmp(secret, recovered, sizeof(secret)));
+  }
+  ZuCheckRT(key.oaepDecrypt(ciphertext, ZuBSpan{"wrong"}, recovered)
+    .template is<ZeException>());
 }
 
 void testEC(Ztls::Random &rng)
@@ -280,6 +305,24 @@ void testED25519(Ztls::Random &rng)
 {
   ZuTestScopeRT(ed25519);
   checkKey<Ztls::PK::SK_ED25519>(rng, "ed25519");
+  Ztls::PK::SK_ED25519 key{rng};
+  uint8_t seed[32], digest[Ztls::MD<Ztls::SHA512>::Size];
+  uint8_t mapped[32], derived[32];
+  ZuGuard clear{[&]() {
+    ZuClear(seed, sizeof(seed));
+    ZuClear(digest, sizeof(digest));
+  }};
+  ZuCheckRT(!key.exportSK(seed).template is<ZeException>());
+  Ztls::MD<Ztls::SHA512> sha512;
+  sha512.update(seed);
+  sha512.finish(digest);
+  Ztls::PK::SK_X25519 x{ZuBSpan{digest, 32}};
+  ZuCheckRT(!x.exportPK(derived).template is<ZeException>());
+  ZuCheckRT(!key.exportX25519(mapped).template is<ZeException>());
+  ZuCheckRT(!memcmp(mapped, derived, sizeof(mapped)));
+  uint8_t invalid[32];
+  memset(invalid, 0xff, sizeof(invalid));
+  ZuCheckRT(!Ztls::Backend::ed25519_to_x25519(invalid, mapped));
 }
 
 } // namespace

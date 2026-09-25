@@ -185,6 +185,15 @@ public:
     ZmAssert(data.length() == Ztls::MD<MDType>::Size);
     return Backend::pkey_verify(key, MDType, data, signature);
   }
+
+  ZuUnion<size_t, ZeException> oaepEncrypt(
+    ZuBSpan plaintext, ZuBSpan label, ZuSpan<uint8_t> ciphertext) const {
+    size_t n = 0;
+    if (!Backend::pkey_rsa_oaep_encrypt(
+        key, plaintext, label, ciphertext, &n))
+      return ZeEXCEPT(Error, "ZtlsPK", "RSA OAEP encryption failed");
+    return n;
+  }
 };
 using PK_RSA_Heap = ZmHeap<"Ztls.PK_RSA", PK_RSA_<>>;
 ZuDerive(PK_RSA, (PK_RSA_<PK_RSA_Heap>));
@@ -210,6 +219,13 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
 	key, data.modulus, data.pubExp, data.prvExp,
 	data.prime1, data.prime2, data.exp1, data.exp2, data.coeff))
       throw ZeEXCEPT(Error, "ZtlsPK", "RSA private key import failed");
+  }
+
+  SK_RSA_(ZuBSpan modulus, ZuBSpan pubExp, ZuBSpan prvExp,
+    ZuBSpan coeff, ZuBSpan prime1, ZuBSpan prime2) {
+    if (!Backend::pkey_rsa_import_ssh_private(
+        key, modulus, pubExp, prvExp, coeff, prime1, prime2))
+      throw ZeEXCEPT(Error, "ZtlsPK", "SSH RSA private key import failed");
   }
 
   // save private key
@@ -280,6 +296,15 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     } catch (const ZeException &e) {
       return e;
     }
+  }
+
+  ZuUnion<size_t, ZeException> oaepDecrypt(
+    ZuBSpan ciphertext, ZuBSpan label, ZuSpan<uint8_t> plaintext) const {
+    size_t n = 0;
+    if (!Backend::pkey_rsa_oaep_decrypt(
+        key, ciphertext, label, plaintext, &n))
+      return ZeEXCEPT(Error, "ZtlsPK", "RSA OAEP decryption failed");
+    return n;
   }
 
   // sign data
@@ -454,6 +479,20 @@ public:
       throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 public key import failed");
   }
 
+  ZuUnion<void, ZeException> exportPK(ZuSpan<uint8_t> pubKey) const {
+    if (!Backend::pkey_ed25519_export_public(this->key, pubKey))
+      return ZeEXCEPT(Error, "ZtlsPK", "ED25519 public key export failed");
+    return {};
+  }
+
+  ZuUnion<void, ZeException> exportX25519(ZuSpan<uint8_t> pubKey) const {
+    uint8_t edPublic[32];
+    if (!Backend::pkey_ed25519_export_public(this->key, edPublic) ||
+        !Backend::ed25519_to_x25519(edPublic, pubKey))
+      return ZeEXCEPT(Error, "ZtlsPK", "ED25519 conversion failed");
+    return {};
+  }
+
   // save public key
   template <typename S>
   ZuUnion<void, ZeException> save(S &s) const {
@@ -461,7 +500,7 @@ public:
     if (!Backend::pkey_ed25519_export_public(this->key, pubKey))
       return ZeEXCEPT(Error, "ZtlsPK", "ED25519 public key export failed");
 
-    Data::PK_X509_ED25519 data{
+    Data::PK_X509_25519 data{
       .id = OIDs::ED25519,
       .pubKey = ZuBSpan{pubKey, sizeof(pubKey)}
     };
@@ -504,6 +543,12 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
       throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 private key import failed");
   }
 
+  ZuUnion<void, ZeException> exportSK(ZuSpan<uint8_t> seed) const {
+    if (!Backend::pkey_ed25519_export_private(key, seed))
+      return ZeEXCEPT(Error, "ZtlsPK", "ED25519 private key export failed");
+    return {};
+  }
+
   // save private key
   template <typename S>
   ZuUnion<void, ZeException> save(S &s) const {
@@ -511,7 +556,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     if (!Backend::pkey_ed25519_export_private(key, prvKey))
       return ZeEXCEPT(Error, "ZtlsPK", "ED25519 private key export failed");
 
-    Data::SK_PKCS8_ED25519 data{
+    Data::SK_PKCS8_25519 data{
       .version = 0,
       .id = OIDs::ED25519,
       .key = ZuBSpan{prvKey, sizeof(prvKey)}
@@ -536,7 +581,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     auto buf = ZmScratch(char, DERBufSize);
     auto r = savePK(buf);
     if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-    auto data = ZfASN1::handler<PK_X509_ED25519>(buf).ctor();
+    auto data = ZfASN1::handler<PK_X509_25519>(buf).ctor();
     try {
       return ZmRef(new PK{data.pubKey});
     } catch (const ZeException &e) {
@@ -560,6 +605,100 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
 };
 using SK_ED25519_Heap = ZmHeap<"Ztls.SK_ED25519", SK_ED25519_<>>;
 ZuDerive(SK_ED25519, (SK_ED25519_<SK_ED25519_Heap>));
+
+template <typename Heap = ZuVoid>
+struct PK_X25519_ : public Heap, public AnyPK {
+  enum { Secret = 0 };
+
+protected:
+  PK_X25519_() { }
+
+public:
+  PK_X25519_(ZuBSpan pubKey) {
+    if (!Backend::pkey_x25519_import_public(key, pubKey))
+      throw ZeEXCEPT(Error, "ZtlsPK", "X25519 public key import failed");
+  }
+
+  ZuUnion<void, ZeException> exportPK(ZuSpan<uint8_t> pubKey) const {
+    if (!Backend::pkey_x25519_export_public(key, pubKey))
+      return ZeEXCEPT(Error, "ZtlsPK", "X25519 public key export failed");
+    return {};
+  }
+
+  template <typename S>
+  ZuUnion<void, ZeException> save(S &s) const {
+    uint8_t pubKey[X25519KeySize];
+    auto r = exportPK(pubKey);
+    if (r.template is<ZeException>()) return r;
+    Data::PK_X509_25519 data{.id = OIDs::X25519, .pubKey = pubKey};
+    ZfASN1::save(s, data);
+    return {};
+  }
+};
+using PK_X25519_Heap = ZmHeap<"Ztls.PK_X25519", PK_X25519_<>>;
+ZuDerive(PK_X25519, (PK_X25519_<PK_X25519_Heap>));
+
+template <typename Heap = ZuVoid>
+struct SK_X25519_ : public PK_X25519_<Heap> {
+  enum { Secret = 1 };
+  using PK = PK_X25519;
+  using PK_ = PK_X25519_<Heap>;
+  using PK_::key;
+
+  SK_X25519_(Random &rng) {
+    (void)rng;
+    if (!Backend::pkey_x25519_generate(key))
+      throw ZeEXCEPT(Error, "ZtlsPK", "X25519 key generation failed");
+  }
+
+  SK_X25519_(ZuBSpan seed) {
+    if (!Backend::pkey_x25519_import_private(key, seed))
+      throw ZeEXCEPT(Error, "ZtlsPK", "X25519 private key import failed");
+  }
+
+  ZuUnion<void, ZeException> exportSK(ZuSpan<uint8_t> seed) const {
+    if (!Backend::pkey_x25519_export_private(key, seed))
+      return ZeEXCEPT(Error, "ZtlsPK", "X25519 private key export failed");
+    return {};
+  }
+
+  template <typename S>
+  ZuUnion<void, ZeException> save(S &s) const {
+    uint8_t seed[X25519KeySize];
+    ZuGuard clear{[&seed]() { ZuClear(seed, sizeof(seed)); }};
+    auto r = exportSK(seed);
+    if (r.template is<ZeException>()) return r;
+    Data::SK_PKCS8_25519 data{
+      .version = 0, .id = OIDs::X25519, .key = seed
+    };
+    ZfASN1::save(s, data);
+    return {};
+  }
+
+  template <typename S>
+  ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }
+
+  ZuUnion<ZmRef<PK>, ZeException> mkPK() const {
+    uint8_t pubKey[X25519KeySize];
+    auto r = PK_::exportPK(pubKey);
+    if (r.template is<ZeException>())
+      return ZuMv(r).template p<ZeException>();
+    try {
+      return ZmRef(new PK{pubKey});
+    } catch (const ZeException &e) {
+      return e;
+    }
+  }
+
+  ZuUnion<void, ZeException> agree(
+    ZuBSpan peerPublic, ZuSpan<uint8_t> secret) const {
+    if (!Backend::pkey_x25519_agree(key, peerPublic, secret))
+      return ZeEXCEPT(Error, "ZtlsPK", "X25519 agreement failed");
+    return {};
+  }
+};
+using SK_X25519_Heap = ZmHeap<"Ztls.SK_X25519", SK_X25519_<>>;
+ZuDerive(SK_X25519, (SK_X25519_<SK_X25519_Heap>));
 
 template <typename Impl>
 struct Load {
@@ -691,13 +830,17 @@ public:
 	      key = new PK_EC(data.id2, data.pubKey);
 	    } break;
 	    case 2: {
-	      auto data = ZfASN1::handler<PK_X509_ED25519>(span).ctor();
+	      auto data = ZfASN1::handler<PK_X509_25519>(span).ctor();
 	      key = new PK_ED25519(data.pubKey);
 	    } break;
 	    case 3: {
 	      auto data = ZfASN1::handler<PK_X509_MLKEM>(span).ctor();
 	      return Load_::loadMLKEM768PK(data.pubKey);
 	    }
+	    case 4: {
+	      auto data = ZfASN1::handler<PK_X509_25519>(span).ctor();
+	      key = new PK_X25519(data.pubKey);
+	    } break;
 	  }
 	} break;
 	case Type::PK_PKCS1: {
@@ -776,7 +919,7 @@ public:
 	      key = new SK_EC(m_rng, data.id2, data.ec.key);
 	    } break;
 	    case 2: {
-	      auto data = ZfASN1::handler<SK_PKCS8_ED25519>(span).ctor();
+	      auto data = ZfASN1::handler<SK_PKCS8_25519>(span).ctor();
 	      key = new SK_ED25519(data.key);
 	    } break;
 	    case 3: {
@@ -807,6 +950,10 @@ public:
 	      }
 	      return ZeEXCEPT(Error, "ZtlsKEM", "invalid ML-KEM-768 private key");
 	    }
+	    case 4: {
+	      auto data = ZfASN1::handler<SK_PKCS8_25519>(span).ctor();
+	      key = new SK_X25519(data.key);
+	    } break;
 	  }
 	} break;
 	case Type::SK_SEC1: {

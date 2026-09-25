@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 
 #include <zpicotls/openssl.h>
 
@@ -490,6 +491,15 @@ ptls_cipher_suite_t *tls12_ecdhe_rsa_chacha20poly1305sha256()
 #endif
 }
 
+ptls_aead_algorithm_t *chacha20poly1305()
+{
+#if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
+  return &ptls_openssl_chacha20poly1305;
+#else
+  return nullptr;
+#endif
+}
+
 ptls_hash_algorithm_t *hash_algorithm(MDType type)
 {
   switch (type) {
@@ -504,6 +514,46 @@ ptls_hash_algorithm_t *hash_algorithm(MDType type)
 size_t hash_size(MDType type)
 {
   return hash_algorithm(type)->digest_size;
+}
+
+bool scrypt(
+  ZuBSpan password, ZuBSpan salt, uint64_t n,
+  unsigned r, unsigned p, uint64_t maxMem, ZuSpan<uint8_t> output)
+{
+  bool ok = EVP_PBE_scrypt(
+    reinterpret_cast<const char *>(password.data()), password.length(),
+    salt.data(), salt.length(), n, r, p, maxMem,
+    output.data(), output.length()) == 1;
+  if (!ok) ZuClear(output.data(), output.length());
+  return ok;
+}
+
+bool shake256(ZuBSpan input, ZuSpan<uint8_t> output)
+{
+  auto ctx = EVP_MD_CTX_new();
+  if (!ctx) return false;
+  bool ok = EVP_DigestInit_ex(ctx, EVP_shake256(), nullptr) == 1 &&
+    EVP_DigestUpdate(ctx, input.data(), input.length()) == 1 &&
+    EVP_DigestFinalXOF(ctx, output.data(), output.length()) == 1;
+  EVP_MD_CTX_free(ctx);
+  if (!ok) ZuClear(output.data(), output.length());
+  return ok;
+}
+
+bool sha3_256(ZuSpan<const ZuBSpan> input, ZuSpan<uint8_t> output)
+{
+  if (output.length() != 32) return false;
+  auto ctx = EVP_MD_CTX_new();
+  if (!ctx) return false;
+  bool ok = EVP_DigestInit_ex(ctx, EVP_sha3_256(), nullptr) == 1;
+  for (unsigned i = 0, n = input.length(); ok && i < n; i++)
+    ok = EVP_DigestUpdate(ctx, input[i].data(), input[i].length()) == 1;
+  unsigned n = 0;
+  ok = ok && EVP_DigestFinal_ex(ctx, output.data(), &n) == 1 &&
+    n == output.length();
+  EVP_MD_CTX_free(ctx);
+  if (!ok) ZuClear(output.data(), output.length());
+  return ok;
 }
 
 size_t format_error(int err, char *buf, size_t len)
@@ -608,6 +658,36 @@ bool pkey_rsa_import_private(
   return true;
 }
 
+bool pkey_rsa_import_ssh_private(
+  PKey *key, ZuBSpan modulus, ZuBSpan pubExp, ZuBSpan prvExp,
+  ZuBSpan coeff, ZuBSpan prime1, ZuBSpan prime2)
+{
+  if (!key) return false;
+  BIGNUM *n = bn_from_span_(modulus), *e = bn_from_span_(pubExp);
+  BIGNUM *d = bn_from_span_(prvExp), *qi = bn_from_span_(coeff);
+  BIGNUM *p = bn_from_span_(prime1), *q = bn_from_span_(prime2);
+  BIGNUM *dp = BN_new(), *dq = BN_new(), *minusOne = BN_new();
+  BN_CTX *ctx = BN_CTX_new();
+  ZuGuard clear{[&]() {
+    BN_free(n); BN_free(e);
+    BN_clear_free(d); BN_clear_free(qi);
+    BN_clear_free(p); BN_clear_free(q);
+    BN_clear_free(dp); BN_clear_free(dq);
+    BN_clear_free(minusOne);
+    BN_CTX_free(ctx);
+  }};
+  if (!n || !e || !d || !qi || !p || !q ||
+      !dp || !dq || !minusOne || !ctx ||
+      !BN_copy(minusOne, p) || !BN_sub_word(minusOne, 1) ||
+      !BN_mod(dp, d, minusOne, ctx) ||
+      !BN_copy(minusOne, q) || !BN_sub_word(minusOne, 1) ||
+      !BN_mod(dq, d, minusOne, ctx)) return false;
+  EVP_PKEY *pkey = rsa_fromdata_(true, n, e, d, p, q, dp, dq, qi);
+  if (!pkey) return false;
+  replace_pkey_(key, pkey);
+  return true;
+}
+
 bool pkey_rsa_export_public(
   const PKey *key, ZuSpan<uint8_t> modulus, ZuSpan<uint8_t> pubExp)
 {
@@ -632,6 +712,56 @@ bool pkey_rsa_export_private(
     bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1, exp1) &&
     bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2, exp2) &&
     bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1, coeff);
+}
+
+static bool rsa_oaep_init_(EVP_PKEY_CTX *ctx, ZuBSpan label)
+{
+  if (label.length() > INT_MAX ||
+      EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) != 1 ||
+      EVP_PKEY_CTX_set_rsa_oaep_md(ctx, EVP_sha256()) != 1 ||
+      EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, EVP_sha256()) != 1)
+    return false;
+  if (!label.length()) return true;
+  void *copy = OPENSSL_memdup(label.data(), label.length());
+  if (!copy) return false;
+  if (EVP_PKEY_CTX_set0_rsa_oaep_label(
+      ctx, copy, int(label.length())) == 1) return true;
+  OPENSSL_free(copy);
+  return false;
+}
+
+bool pkey_rsa_oaep_encrypt(
+  const PKey *key, ZuBSpan plaintext, ZuBSpan label,
+  ZuSpan<uint8_t> ciphertext, size_t *length)
+{
+  if (!key || !key->pkey || !length) return false;
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(key->pkey, nullptr);
+  if (!ctx) return false;
+  size_t n = ciphertext.length();
+  bool ok = EVP_PKEY_encrypt_init(ctx) == 1 &&
+    rsa_oaep_init_(ctx, label) &&
+    EVP_PKEY_encrypt(ctx, ciphertext.data(), &n,
+      plaintext.data(), plaintext.length()) == 1;
+  EVP_PKEY_CTX_free(ctx);
+  if (ok) *length = n;
+  return ok;
+}
+
+bool pkey_rsa_oaep_decrypt(
+  const PKey *key, ZuBSpan ciphertext, ZuBSpan label,
+  ZuSpan<uint8_t> plaintext, size_t *length)
+{
+  if (!key || !key->pkey || !length) return false;
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(key->pkey, nullptr);
+  if (!ctx) return false;
+  size_t n = plaintext.length();
+  bool ok = EVP_PKEY_decrypt_init(ctx) == 1 &&
+    rsa_oaep_init_(ctx, label) &&
+    EVP_PKEY_decrypt(ctx, plaintext.data(), &n,
+      ciphertext.data(), ciphertext.length()) == 1;
+  EVP_PKEY_CTX_free(ctx);
+  if (ok) *length = n;
+  return ok;
 }
 
 size_t pkey_ec_key_size(const PKey *key)
@@ -766,7 +896,7 @@ bool pkey_ed25519_generate(PKey *key)
 bool pkey_ed25519_import_public(PKey *key, ZuBSpan pubKey)
 {
 #if defined(EVP_PKEY_ED25519)
-  if (!key || pubKey.length() != 32) return false;
+  if (!key || pubKey.length() != X25519KeySize) return false;
   EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key(
     EVP_PKEY_ED25519, nullptr, pubKey.data(), pubKey.length());
   if (!pkey) return false;
@@ -821,6 +951,127 @@ bool pkey_ed25519_export_private(const PKey *key, ZuSpan<uint8_t> privKey)
   (void)privKey;
   return false;
 #endif
+}
+
+bool ed25519_to_x25519(
+  ZuBSpan edPublic, ZuSpan<uint8_t> xPublic)
+{
+  if (edPublic.length() != 32 || xPublic.length() != 32) return false;
+  uint8_t encoded[32];
+  memcpy(encoded, edPublic.data(), sizeof(encoded));
+  bool sign = encoded[31] & 0x80;
+  encoded[31] &= 0x7f;
+  BN_CTX *ctx = BN_CTX_new();
+  if (!ctx) return false;
+  ZuGuard release{[ctx]() { BN_CTX_free(ctx); }};
+  BN_CTX_start(ctx);
+  ZuGuard finish{[ctx]() { BN_CTX_end(ctx); }};
+  BIGNUM *p = BN_CTX_get(ctx), *y = BN_CTX_get(ctx);
+  BIGNUM *y2 = BN_CTX_get(ctx), *d = BN_CTX_get(ctx);
+  BIGNUM *num = BN_CTX_get(ctx), *den = BN_CTX_get(ctx);
+  BIGNUM *inv = BN_CTX_get(ctx), *x2 = BN_CTX_get(ctx);
+  BIGNUM *x = BN_CTX_get(ctx), *one = BN_CTX_get(ctx);
+  BIGNUM *u = BN_CTX_get(ctx), *tmp = BN_CTX_get(ctx);
+  if (!tmp || !BN_one(p) || !BN_lshift(p, p, 255) ||
+      !BN_sub_word(p, 19) ||
+      !BN_lebin2bn(encoded, sizeof(encoded), y) ||
+      BN_cmp(y, p) >= 0 || !BN_one(one) ||
+      !BN_set_word(d, 121665) || !BN_set_word(tmp, 121666) ||
+      !BN_mod_inverse(inv, tmp, p, ctx) ||
+      !BN_mod_mul(d, d, inv, p, ctx) ||
+      !BN_sub(d, p, d) ||
+      !BN_mod_sqr(y2, y, p, ctx) ||
+      !BN_mod_sub(num, y2, one, p, ctx) ||
+      !BN_mod_mul(den, d, y2, p, ctx) ||
+      !BN_mod_add(den, den, one, p, ctx) ||
+      !BN_mod_inverse(inv, den, p, ctx) ||
+      !BN_mod_mul(x2, num, inv, p, ctx) ||
+      !BN_mod_sqrt(x, x2, p, ctx) ||
+      (BN_is_zero(x) && sign) ||
+      !BN_mod_sub(den, one, y, p, ctx) ||
+      !BN_mod_inverse(inv, den, p, ctx) ||
+      !BN_mod_add(num, one, y, p, ctx) ||
+      !BN_mod_mul(u, num, inv, p, ctx)) return false;
+  return BN_bn2lebinpad(u, xPublic.data(), xPublic.length()) == 32;
+}
+
+bool pkey_x25519_generate(PKey *key)
+{
+  if (!key) return false;
+  auto ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, nullptr);
+  if (!ctx) return false;
+  EVP_PKEY *pkey = nullptr;
+  bool ok = EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) {
+    EVP_PKEY_free(pkey);
+    return false;
+  }
+  replace_pkey_(key, pkey);
+  return true;
+}
+
+bool pkey_x25519_import_public(PKey *key, ZuBSpan pubKey)
+{
+  if (!key || pubKey.length() != 32) return false;
+  auto pkey = EVP_PKEY_new_raw_public_key(
+    EVP_PKEY_X25519, nullptr, pubKey.data(), pubKey.length());
+  if (!pkey) return false;
+  replace_pkey_(key, pkey);
+  return true;
+}
+
+bool pkey_x25519_import_private(PKey *key, ZuBSpan prvKey)
+{
+  if (!key || prvKey.length() != X25519KeySize) return false;
+  auto pkey = EVP_PKEY_new_raw_private_key(
+    EVP_PKEY_X25519, nullptr, prvKey.data(), prvKey.length());
+  if (!pkey) return false;
+  replace_pkey_(key, pkey);
+  return true;
+}
+
+bool pkey_x25519_export_public(const PKey *key, ZuSpan<uint8_t> pubKey)
+{
+  if (!key || !key->pkey || pubKey.length() != X25519KeySize) return false;
+  size_t n = pubKey.length();
+  return EVP_PKEY_get_raw_public_key(key->pkey, pubKey.data(), &n) == 1 &&
+    n == pubKey.length();
+}
+
+bool pkey_x25519_export_private(const PKey *key, ZuSpan<uint8_t> prvKey)
+{
+  if (!key || !key->pkey || prvKey.length() != X25519KeySize) return false;
+  size_t n = prvKey.length();
+  bool ok = EVP_PKEY_get_raw_private_key(key->pkey, prvKey.data(), &n) == 1 &&
+    n == prvKey.length();
+  if (!ok) ZuClear(prvKey.data(), prvKey.length());
+  return ok;
+}
+
+bool pkey_x25519_agree(
+  const PKey *key, ZuBSpan peerPublic, ZuSpan<uint8_t> secret)
+{
+  if (!key || !key->pkey || peerPublic.length() != X25519KeySize ||
+      secret.length() != X25519KeySize) return false;
+  auto peer = EVP_PKEY_new_raw_public_key(
+    EVP_PKEY_X25519, nullptr, peerPublic.data(), peerPublic.length());
+  if (!peer) return false;
+  auto ctx = EVP_PKEY_CTX_new(key->pkey, nullptr);
+  size_t n = secret.length();
+  bool ok = ctx && EVP_PKEY_derive_init(ctx) == 1 &&
+    EVP_PKEY_derive_set_peer(ctx, peer) == 1 &&
+    EVP_PKEY_derive(ctx, secret.data(), &n) == 1 && n == secret.length();
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(peer);
+  if (ok) {
+    uint8_t nonzero = 0;
+    for (unsigned i = 0; i < secret.length(); i++) nonzero |= secret[i];
+    ok = nonzero != 0;
+  }
+  if (!ok) ZuClear(secret.data(), secret.length());
+  return ok;
 }
 
 bool pkey_mlkem768_generate(PKey *key)

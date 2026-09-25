@@ -14,10 +14,14 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsPKTest ZtlsKEMTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest
+noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest
 noinst_HEADERS = ZtlsTestPorts.hh
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
+ZtlsX25519Test_SOURCES = ZtlsX25519Test.cc
 ZtlsKEMTest_SOURCES = ZtlsKEMTest.cc
+ZtlsHybridTest_SOURCES = ZtlsHybridTest.cc
+ZtlsHPKETest_SOURCES = ZtlsHPKETest.cc
+ZtlsAgeTest_SOURCES = ZtlsAgeTest.cc ZtlsAgeVectors.hh ZtlsAgeSSHVectors.hh
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
 ZtlsSecTest_SOURCES = ZtlsSecTest.cc

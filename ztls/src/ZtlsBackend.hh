@@ -54,6 +54,8 @@ struct ZuTraits<ptls_iovec_t> : public ZuBaseTraits<ptls_iovec_t> {
 
 namespace Ztls {
 
+enum { X25519KeySize = 32 }; // RFC 7748 raw public and private keys
+
 ZtEnumNS(ZtlsAPI, MDAlg, int8_t,
   SHA1,
   SHA256,
@@ -84,9 +86,16 @@ ZtlsAPI ptls_cipher_suite_t **cipher_suites();
 ZtlsAPI ptls_cipher_suite_t *cipher_suite(uint16_t id);
 ZtlsAPI ptls_cipher_suite_t *tls12_ecdhe_rsa_aes128gcmsha256();
 ZtlsAPI ptls_cipher_suite_t *tls12_ecdhe_rsa_chacha20poly1305sha256();
+ZtlsAPI ptls_aead_algorithm_t *chacha20poly1305();
 
 ZtlsAPI ptls_hash_algorithm_t *hash_algorithm(MDType type);
 ZtlsAPI size_t hash_size(MDType type);
+ZtlsAPI bool shake256(ZuBSpan input, ZuSpan<uint8_t> output);
+ZtlsAPI bool sha3_256(
+  ZuSpan<const ZuBSpan> input, ZuSpan<uint8_t> output);
+ZtlsAPI bool scrypt(
+  ZuBSpan password, ZuBSpan salt, uint64_t n,
+  unsigned r, unsigned p, uint64_t maxMem, ZuSpan<uint8_t> output);
 
 ZtlsAPI size_t format_error(int err, char *buf, size_t len);
 
@@ -99,12 +108,21 @@ ZtlsAPI bool pkey_rsa_import_public(PKey *, ZuBSpan modulus, ZuBSpan pubExp);
 ZtlsAPI bool pkey_rsa_import_private(
   PKey *, ZuBSpan modulus, ZuBSpan pubExp, ZuBSpan prvExp,
   ZuBSpan prime1, ZuBSpan prime2, ZuBSpan exp1, ZuBSpan exp2, ZuBSpan coeff);
+ZtlsAPI bool pkey_rsa_import_ssh_private(
+  PKey *, ZuBSpan modulus, ZuBSpan pubExp, ZuBSpan prvExp,
+  ZuBSpan coeff, ZuBSpan prime1, ZuBSpan prime2);
 ZtlsAPI bool pkey_rsa_export_public(
   const PKey *, ZuSpan<uint8_t> modulus, ZuSpan<uint8_t> pubExp);
 ZtlsAPI bool pkey_rsa_export_private(
   const PKey *, ZuSpan<uint8_t> modulus, ZuSpan<uint8_t> pubExp,
   ZuSpan<uint8_t> prvExp, ZuSpan<uint8_t> prime1, ZuSpan<uint8_t> prime2,
   ZuSpan<uint8_t> exp1, ZuSpan<uint8_t> exp2, ZuSpan<uint8_t> coeff);
+ZtlsAPI bool pkey_rsa_oaep_encrypt(
+  const PKey *, ZuBSpan plaintext, ZuBSpan label,
+  ZuSpan<uint8_t> ciphertext, size_t *length);
+ZtlsAPI bool pkey_rsa_oaep_decrypt(
+  const PKey *, ZuBSpan ciphertext, ZuBSpan label,
+  ZuSpan<uint8_t> plaintext, size_t *length);
 
 ZtlsAPI size_t pkey_ec_key_size(const PKey *);
 ZtlsAPI size_t pkey_ec_public_size(const PKey *);
@@ -121,6 +139,16 @@ ZtlsAPI bool pkey_ed25519_import_public(PKey *, ZuBSpan pubKey);
 ZtlsAPI bool pkey_ed25519_import_private(PKey *, ZuBSpan key);
 ZtlsAPI bool pkey_ed25519_export_public(const PKey *, ZuSpan<uint8_t> pubKey);
 ZtlsAPI bool pkey_ed25519_export_private(const PKey *, ZuSpan<uint8_t> key);
+ZtlsAPI bool ed25519_to_x25519(
+  ZuBSpan edPublic, ZuSpan<uint8_t> xPublic);
+
+ZtlsAPI bool pkey_x25519_generate(PKey *);
+ZtlsAPI bool pkey_x25519_import_public(PKey *, ZuBSpan pubKey);
+ZtlsAPI bool pkey_x25519_import_private(PKey *, ZuBSpan key);
+ZtlsAPI bool pkey_x25519_export_public(const PKey *, ZuSpan<uint8_t> pubKey);
+ZtlsAPI bool pkey_x25519_export_private(const PKey *, ZuSpan<uint8_t> key);
+ZtlsAPI bool pkey_x25519_agree(
+  const PKey *, ZuBSpan peerPublic, ZuSpan<uint8_t> secret);
 
 ZtlsAPI bool pkey_mlkem768_generate(PKey *);
 ZtlsAPI bool pkey_mlkem768_import_seed(PKey *, ZuBSpan seed);
