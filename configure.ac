@@ -31,6 +31,13 @@ done
 LT_INIT([win32-dll shared disable-static])
 LT_LANG([C++])
 
+AS_CASE([$host_os], [linux*], [z_linux=yes], [z_linux=no])
+AM_CONDITIONAL([LINUX], [test "$z_linux" = yes])
+AS_IF([test "$z_linux" = yes], [
+  PKG_CHECK_MODULES([DBUS], [dbus-1], [z_have_dbus=yes], [z_have_dbus=no])
+], [z_have_dbus=no])
+AM_CONDITIONAL([HAVE_DBUS], [test "$z_have_dbus" = yes])
+
 Z_VMAJOR=`echo $Z_VERSION | cut -d. -f1`
 Z_VMINOR=`echo $Z_VERSION | cut -d. -f2`
 Z_VPATCH=`echo $Z_VERSION | cut -d. -f3`
@@ -44,10 +51,6 @@ AC_CHECK_PROG(PERL, "perl", "yes", "no")
 AS_IF([test ".$PERL" = ".no"], [
   AC_MSG_ERROR([perl required])
 ])
-
-# compilers
-AM_CONDITIONAL([MINGW], [test ".$mingw" = ".yes"])
-AM_CONDITIONAL([GXX], [test ".$GXX" = ".yes"])
 
 # concurrency kit
 PKG_CHECK_MODULES([CK], [ck >= 0.6], [], [dnl
@@ -101,7 +104,7 @@ case $build_os in
     Z_LIBS="-lm"
     Z_MT_LIBS="$CK_LIBS $HWLOC_LIBS -latomic"
     Z_ZT_LIBS="$PCRE_LIBS -liconv"
-    Z_IO_LIBS="-lws2_32 -lwsock32 -ldnsapi"
+    Z_IO_LIBS="-lws2_32 -lwsock32 -ldnsapi -ladvapi32"
     Z_TERM_LIBS=""
     ;;
   *)
@@ -119,6 +122,10 @@ case $build_os in
 esac
 
 AC_MSG_RESULT([${Z_MT_LIBS}])
+
+# compilers
+AM_CONDITIONAL([MINGW], [test ".$mingw" = ".yes"])
+AM_CONDITIONAL([GXX], [test ".$GXX" = ".yes"])
 
 # c-ares
 PKG_CHECK_MODULES([CARES], [libcares], [], [dnl
@@ -167,6 +174,35 @@ PKG_CHECK_MODULES([PTLS], [
 ])
 AC_SUBST(PTLS_LIBS)
 AC_SUBST(PTLS_CFLAGS)
+
+PKG_CHECK_MODULES([OPENSSL], [openssl >= 3.5], [], [
+  AC_MSG_ERROR([OpenSSL >= 3.5 with ML-KEM-768 support required])
+])
+AC_SUBST(OPENSSL_LIBS)
+AC_SUBST(OPENSSL_CFLAGS)
+z_save_CPPFLAGS=$CPPFLAGS
+z_save_LIBS=$LIBS
+CPPFLAGS="$OPENSSL_CFLAGS $CPPFLAGS"
+LIBS="$OPENSSL_LIBS $LIBS"
+AC_RUN_IFELSE([AC_LANG_PROGRAM([[#include <openssl/evp.h>
+#include <openssl/core_names.h>]], [[
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(0, "ML-KEM-768", 0);
+  if (!ctx) return 1;
+  EVP_PKEY *key = 0;
+  int ok = EVP_PKEY_keygen_init(ctx) == 1 &&
+    EVP_PKEY_keygen(ctx, &key) == 1 && key;
+  EVP_PKEY_CTX_free(ctx);
+  if (!ok) return 1;
+  ctx = EVP_PKEY_CTX_new_from_pkey(0, key, 0);
+  ok = ctx && EVP_PKEY_encapsulate_init(ctx, 0) == 1 &&
+    OSSL_PKEY_PARAM_ML_KEM_SEED[0] != 0;
+  EVP_PKEY_CTX_free(ctx);
+  EVP_PKEY_free(key);
+  return !ok;
+]])], [], [AC_MSG_ERROR([OpenSSL ML-KEM-768 provider/API unavailable])],
+  [AC_MSG_WARN([cross-compiling: ML-KEM-768 provider must be verified at run time])])
+CPPFLAGS=$z_save_CPPFLAGS
+LIBS=$z_save_LIBS
 
 # flatbuffers
 PKG_CHECK_MODULES([FBS], [flatbuffers >= 24], [], [dnl
@@ -217,7 +253,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zv ztcp ztls zquic zhttp zrest zmcp zws zfb zdb ztc zdb_pq zdb_sqlite zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zv zdbus ztcp ztls zquic zhttp zrest zmcp zws zfb zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -238,8 +274,13 @@ AC_CONFIG_FILES([Makefile \
 	zf/Makefile zf/src/Makefile zf/test/Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
 	zi/example/Makefile \
+	zv/Makefile zv/src/Makefile zv/test/Makefile zv/interop/Makefile \
+	zdbus/Makefile zdbus/src/Makefile zdbus/test/Makefile \
+	zdbus/util/Makefile zdbus/itest/Makefile zdbus/example/Makefile \
+	zdbus/interop/Makefile \
 	ztcp/Makefile ztcp/src/Makefile ztcp/test/Makefile ztcp/example/Makefile \
-	ztls/Makefile ztls/src/Makefile ztls/test/Makefile ztls/example/Makefile \
+	ztls/Makefile ztls/src/Makefile ztls/test/Makefile ztls/itest/Makefile ztls/example/Makefile \
+	ztls/interop/Makefile \
 	zquic/Makefile zquic/src/Makefile zquic/test/Makefile \
 	zquic/example/Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
@@ -251,15 +292,14 @@ AC_CONFIG_FILES([Makefile \
 	zws/Makefile zws/src/Makefile zws/test/Makefile \
 	zws/bench/Makefile zws/interop/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile \
-	zv/Makefile zv/src/Makefile zv/test/Makefile zv/interop/Makefile \
 	zdb/Makefile zdb/src/Makefile zdb/test/Makefile zdb/itest/Makefile \
 	zdb/example/Makefile \
-	ztc/Makefile ztc/src/Makefile ztc/test/Makefile ztc/itest/Makefile \
-	ztc/example/Makefile \
 	zdb_pq/Makefile zdb_pq/src/Makefile zdb_pq/test/Makefile \
 	zdb_pq/itest/Makefile zdb_pq/bench/Makefile \
 	zdb_sqlite/Makefile zdb_sqlite/src/Makefile zdb_sqlite/test/Makefile \
 	zdb_sqlite/itest/Makefile zdb_sqlite/bench/Makefile \
+	ztc/Makefile ztc/src/Makefile ztc/test/Makefile ztc/itest/Makefile \
+	ztc/example/Makefile \
 	zum/Makefile zum/src/Makefile zum/test/Makefile zum/itest/Makefile \
 	zum/example/Makefile zum/interop/Makefile \
 	zdf/Makefile zdf/src/Makefile zdf/test/Makefile zdf/itest/Makefile \
