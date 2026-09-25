@@ -39,10 +39,15 @@ ZuInline static constexpr bool is(char c) {
 
 // both encode and decode return count of bytes written
 
+template <bool Pad = true>
 ZuInline static constexpr uint64_t enclen(uint64_t slen) {
-  return ((slen + 2) / 3)<<2;
+  if constexpr (Pad)
+    return ((slen + 2)/3)<<2;
+  else
+    return ((slen<<2) + 2)/3;
 }
 // does not null-terminate dst
+template <bool Pad = true>
 static inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   static constexpr const char lookup[] = {
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
@@ -70,12 +75,12 @@ static inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
     *d++ = lookup[i>>2];
     if (n == 1) {
       *d++ = lookup[(i & 0x3)<<4];
-      *d++ = '=', *d++ = '=';
+      if constexpr (Pad) *d++ = '=', *d++ = '=';
     } else { // n == 2
       j = *s++;
       *d++ = lookup[((i & 0x3)<<4) | (j>>4)];
       *d++ = lookup[(j & 0xf)<<2];
-      *d++ = '=';
+      if constexpr (Pad) *d++ = '=';
     }
   }
   return d - dst.data();

@@ -56,6 +56,16 @@ void dec(ZuBSpan src, ZuBSpan check, const char *msg)
   ZuCheck(ZuBSpan(dst) == check && n >= l && n <= l + 2, decOut_(msg, dst));
 }
 
+void encRaw(ZuBSpan src, ZuCSpan check)
+{
+  ZuTestScope(encRaw);
+  auto n = ZuBase64::enclen<false>(src.length());
+  char *buf = static_cast<char *>(ZuAlloca(n, 1));
+  auto dst = ZuSpan<uint8_t>(buf, n);
+  dst.trunc(ZuBase64::encode<false>(dst, src));
+  ZuCheck(ZuCSpan(dst) == check && n == dst.length());
+}
+
 void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)
 {
   ZuTestScope(test);
@@ -85,4 +95,10 @@ int main()
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 }), "ESIzRFVm");
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 }), "ESIzRFVmdw==");
   TEST((ZuBSpan{ 0xff, 0xe0 }), "/+A=");
+  ZuTestCall_("raw empty", encRaw, ZuBSpan{}, ZuCSpan{});
+  ZuTestCall_("raw one", encRaw, ZuBSpan{2}, ZuCSpan{"Ag"});
+  ZuTestCall_("raw two", encRaw, ZuBSpan{2, 4}, ZuCSpan{"AgQ"});
+  ZuTestCall_("raw three", encRaw, ZuBSpan{2, 4, 6}, ZuCSpan{"AgQG"});
+  ZuTestCall_("raw four", encRaw,
+    ZuBSpan{0x11, 0x22, 0x33, 0x44}, ZuCSpan{"ESIzRA"});
 }

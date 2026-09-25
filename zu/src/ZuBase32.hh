@@ -37,9 +37,14 @@ ZuInline static constexpr bool is(char c) {
 // both encode and decode return count of bytes written
 
 // does not null-terminate dst
+template <bool Pad = true>
 ZuInline static constexpr uint64_t enclen(uint64_t slen) {
-  return ((slen + 4)/5)<<3;
+  if constexpr (Pad)
+    return ((slen + 4)/5)<<3;
+  else
+    return ((slen<<3) + 4)/5;
 }
+template <bool Pad = true>
 static inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   static constexpr const char lookup[] = {
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
@@ -81,19 +86,21 @@ static inline uint64_t encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
 	  *d++ = lookup[((i & 0xf)<<1) | (j>>7)];
 	  *d++ = lookup[(j & 0x7c)>>2];
 	  *d++ = lookup[(j & 0x3)<<3];
-	  *d++ = '=';
+	  if constexpr (Pad) *d++ = '=';
 	} else {
 	  *d++ = lookup[((i & 0xf)<<1)];
-	  *d++ = '=', *d++ = '=', *d++ = '=';
+	  if constexpr (Pad) *d++ = '=', *d++ = '=', *d++ = '=';
 	}
       } else {
 	*d++ = lookup[(j & 0x1)<<4];
-	*d++ = '=', *d++ = '=', *d++ = '=', *d++ = '=';
+	if constexpr (Pad) *d++ = '=', *d++ = '=', *d++ = '=', *d++ = '=';
       }
     } else {
       *d++ = lookup[(i & 0x7)<<2];
-      memcpy(d, "======", 6);
-      d += 6;
+      if constexpr (Pad) {
+	memcpy(d, "======", 6);
+	d += 6;
+      }
     }
   }
   return d - dst.data();
@@ -109,21 +116,26 @@ static inline uint64_t decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   auto d = dst.data();
   auto n = src.length();
   uint8_t i, j, k;
-  while (n >= 8) {
+  while (n >= 2) {
     i = lookup(*s++); if (i >= 32) break;
     j = lookup(*s++); if (j >= 32) break;
     *d++ = (i<<3) | (j>>2);
+    if ((n -= 2) < 2) break;
     k = lookup(*s++); if (k >= 32) break;
     i = lookup(*s++); if (i >= 32) break;
     *d++ = (j<<6) | (k<<1) | (i>>4);
+    if ((n -= 2) < 1) break;
     j = lookup(*s++); if (j >= 32) break;
     *d++ = (i<<4) | (j>>1);
+    if (!--n) break;
     k = lookup(*s++); if (k >= 32) break;
+    if (!--n) break;
     i = lookup(*s++); if (i >= 32) break;
     *d++ = (j<<7) | (k<<2) | (i>>3);
+    if (!--n) break;
     j = lookup(*s++); if (j >= 32) break;
     *d++ = (i<<5) | j;
-    n -= 8;
+    --n;
   }
   return d - dst.data();
 }
