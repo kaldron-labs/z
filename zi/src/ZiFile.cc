@@ -26,6 +26,7 @@
 #ifdef _WIN32
 
 #include <stdlib.h>
+#include <sddl.h>
 
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmSingleton.hh>
@@ -1485,7 +1486,7 @@ int ZiFile::mode(unsigned mode)
 #else
   {
     Path path(Zi::PathMax + 1);
-    DWORD n = GetFinalPathNameByHandleW(
+    DWORD n = GetFinalPathNameByHandle(
 	m_handle, path.data(), Zi::PathMax + 1, FILE_NAME_NORMALIZED);
     if (!n || n > Zi::PathMax) goto error;
     path.length(n);
@@ -1744,8 +1745,23 @@ int ZiFile::mkdir(const Path &name, unsigned mode, ZeError *e)
 #ifndef _WIN32
   if (::mkdir(name, mode) < 0) goto error;
 #else
-  (void)mode;
-  if (!CreateDirectory(name, 0)) goto error;
+  if (mode == 0700) {
+    // Protected DACL: only the current owner can access this directory or
+    // objects created beneath it (OW = owner rights, OICI = inheritance).
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
+	L"D:P(A;OICI;FA;;;OW)", SDDL_REVISION_1, &descriptor, nullptr))
+      goto error;
+    SECURITY_ATTRIBUTES attrs{sizeof(attrs), descriptor, false};
+    bool created = CreateDirectory(name, &attrs);
+    DWORD lastError = created ? 0 : GetLastError();
+    LocalFree(descriptor);
+    if (!created) {
+      SetLastError(lastError);
+      goto error;
+    }
+  } else
+    if (!CreateDirectory(name, nullptr)) goto error;
 #endif
   return Zi::OK;
 
