@@ -48,7 +48,7 @@ public:
 	return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
       return ZeEXCEPT(Error, "ZtlsVault", "native credential read failed");
     }
-    ZuGuard release{[&]() { CredFree(credential); }};
+    ZuGuard release{[&credential]() { CredFree(credential); }};
     fn(ZuBSpan{credential->CredentialBlob,
       credential->CredentialBlobSize});
     return {};

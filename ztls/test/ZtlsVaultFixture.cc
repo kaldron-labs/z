@@ -6,6 +6,8 @@
 
 // Loadable vault store fixture: one record suffices for Direct and Secrets.
 
+#include <string.h>
+
 #include <zlib/ZmHeap.hh>
 
 #include <zlib/ZtArray.hh>
@@ -32,9 +34,18 @@ public:
     return {};
   }
   Ztls::VaultResult save(ZuCSpan key, ZuBSpan value) override {
-    ZuClear(m_value.data(), m_value.length());
     m_key = key;
-    m_value = Value{value};
+    if (value.length() <= m_value.size()) {
+      if (value.length())
+	::memmove(m_value.data(), value.data(), value.length());
+      if (m_value.length() > value.length())
+	ZuClear(m_value.data() + value.length(), m_value.length() - value.length());
+      m_value.length(value.length());
+    } else {
+      Value replacement{value};
+      ZuClear(m_value.data(), m_value.length());
+      m_value = ZuMv(replacement);
+    }
     return {};
   }
 

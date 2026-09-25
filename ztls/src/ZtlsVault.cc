@@ -76,8 +76,18 @@ public:
 
   VaultResult save(ZuCSpan key, ZuBSpan value) override {
     if (auto entry = m_entries.find(key)) {
-      ZuClear(entry->value.data(), entry->value.length());
-      entry->value = Bytes{value};
+      auto &dst = entry->value;
+      if (value.length() <= dst.size()) {
+	if (value.length())
+	  ::memmove(dst.data(), value.data(), value.length());
+	if (dst.length() > value.length())
+	  ZuClear(dst.data() + value.length(), dst.length() - value.length());
+	dst.length(value.length());
+      } else {
+	Bytes replacement{value};
+	ZuClear(dst.data(), dst.length());
+	dst = ZuMv(replacement);
+      }
     } else
       m_entries.addNode(new Entries::Node{key, value});
     return {};
@@ -128,12 +138,14 @@ ZfStruct(ZtlsAPI, (FileData, JSON),
 
 using FileText = ZtCArray<ZtArrayHeapID<"Ztls.Vault.FileText">>;
 
+enum { TempIDSize = 16, HomeHashBytes = 8 };
+
 template <typename L>
 VaultResult publish(const Zi::Path &dir, const Zi::Path &path,
   ZuCSpan prefix, L &&write)
 {
-  // The random suffix avoids conflicts with an interrupted older write.
-  uint8_t id[16];
+  // A 128-bit random suffix avoids conflicts with interrupted older writes.
+  uint8_t id[TempIDSize];
   Random rng;
   if (!rng.init() || !rng.random(id))
     return ZeEXCEPT(Error, "ZtlsVault", "temporary name failed");
@@ -148,7 +160,7 @@ VaultResult publish(const Zi::Path &dir, const Zi::Path &path,
       ZiFile::Exclusive | ZiFile::NoFollow | ZiFile::GC, 0600) != Zi::OK)
     return ZeEXCEPT(Error, "ZtlsVault", "temporary open failed");
   bool published = false;
-  ZuGuard cleanup{[&]() {
+  ZuGuard cleanup{[&file, &published, &temp]() {
     file.close();
     if (!published) ZiFile::remove(temp);
   }};
@@ -179,10 +191,9 @@ public:
     FileText text;
     ZuGuard clear{[&text]() { ZuClear(text.data(), text.length()); }};
     FileData data;
-    bool exists = false;
-    auto result = read_(data, text, exists);
+    auto result = read_(data, text);
     if (result.template is<ZeException>()) return result;
-    if (!exists)
+    if (!data.accounts)
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
     auto account = data.accounts->find(m_account);
     if (!account)
@@ -198,10 +209,9 @@ public:
     FileText text;
     ZuGuard clear{[&text]() { ZuClear(text.data(), text.length()); }};
     FileData data;
-    bool exists = false;
-    auto result = read_(data, text, exists);
+    auto result = read_(data, text);
     if (result.template is<ZeException>()) return result;
-    if (!exists) {
+    if (!data.accounts) {
       data.version = 1;
       data.accounts = new Accounts;
     }
@@ -221,7 +231,7 @@ public:
   }
 
 private:
-  VaultResult read_(FileData &data, FileText &text, bool &exists) const {
+  VaultResult read_(FileData &data, FileText &text) const {
     ZiFile file;
     if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC)
 	!= Zi::OK) {
@@ -231,7 +241,6 @@ private:
 #endif
       return ZeEXCEPT(Error, "ZtlsVault", "aggregate open failed");
     }
-    exists = true;
     auto size = file.size();
     if (size <= 0 || size > INT_MAX)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
@@ -282,7 +291,8 @@ private:
     FileText text;
     ZfJSON::save(text, data);
     ZuGuard clear{[&text]() { ZuClear(text.data(), text.length()); }};
-    return publish(m_dir, m_path, "secrets.json.tmp.", [&](ZiFile &file) {
+    return publish(m_dir, m_path, "secrets.json.tmp.",
+      [&text](ZiFile &file) {
       if (file.write(text.data(), text.length()) != Zi::OK)
 	return VaultResult{ZeEXCEPT(Error, "ZtlsVault", "aggregate write failed")};
       return VaultResult{};
@@ -382,9 +392,11 @@ ZuDerive(Auto, Auto_<AutoHeap>);
 // Versioned, length-delimited plaintext inside the authenticated age file.
 constexpr uint8_t SecretsMagic[] = {'Z', 'V', 'L', 'T', 1};
 constexpr auto PassphraseKey = "vault/passphrase"_Zu;
-constexpr unsigned PassphraseSize = ZuBase64::enclen(32);
-
-constexpr unsigned RecordSize = sizeof(uint32_t) + sizeof(uint64_t);
+enum {
+  PassphraseBytes = 32,
+  PassphraseSize = ZuBase64::enclen(PassphraseBytes),
+  RecordSize = sizeof(uint32_t) + sizeof(uint64_t)
+};
 
 template <typename Heap = ZuVoid>
 class Secrets_ : public Heap, public Ztls_::VaultStore {
@@ -403,11 +415,13 @@ public:
     auto result = open_(file);
     if (result.template is<ZeException>()) return result;
     uint8_t passphrase[PassphraseSize];
-    ZuGuard clearPassphrase{[&]() { ZuClear(passphrase, sizeof(passphrase)); }};
+    ZuGuard clearPassphrase{[&passphrase]() {
+      ZuClear(passphrase, sizeof(passphrase));
+    }};
     result = passphrase_(passphrase, false);
     if (result.template is<ZeException>()) return result;
     Bytes plain;
-    ZuGuard clearPlain{[&]() { ZuClear(plain.data(), plain.size()); }};
+    ZuGuard clearPlain{[&plain]() { ZuClear(plain.data(), plain.size()); }};
     result = decrypt_(file, passphrase, plain);
     if (result.template is<ZeException>()) return result;
     uint64_t offset = 0, length = 0;
@@ -425,11 +439,8 @@ public:
       return ZeEXCEPT(Error, "ZtlsVault", "aggregate too large");
     uint64_t newSize = RecordSize + key.length() + value.length();
     ZiFile file;
-    bool exists = false;
     if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC)
-	== Zi::OK)
-      exists = true;
-    else if (file.error().errNo() != ZiENOENT
+	!= Zi::OK && file.error().errNo() != ZiENOENT
 #ifdef _WIN32
 	&& file.error().errNo() != ERROR_PATH_NOT_FOUND
 #endif
@@ -437,12 +448,14 @@ public:
       return ZeEXCEPT(Error, "ZtlsVault", "aggregate open failed");
 
     uint8_t passphrase[PassphraseSize];
-    ZuGuard clearPassphrase{[&]() { ZuClear(passphrase, sizeof(passphrase)); }};
-    auto result = passphrase_(passphrase, !exists);
+    ZuGuard clearPassphrase{[&passphrase]() {
+      ZuClear(passphrase, sizeof(passphrase));
+    }};
+    auto result = passphrase_(passphrase, !file);
     if (result.template is<ZeException>()) return result;
     Bytes plain;
-    ZuGuard clearPlain{[&]() { ZuClear(plain.data(), plain.size()); }};
-    if (exists) {
+    ZuGuard clearPlain{[&plain]() { ZuClear(plain.data(), plain.size()); }};
+    if (file) {
       result = decrypt_(file, passphrase, plain, newSize);
       if (result.template is<ZeException>()) return result;
       file.close();
@@ -479,7 +492,8 @@ public:
       return ZeEXCEPT(Error, "ZtlsVault", "encryption unavailable");
     ZtlsAge age;
     ZtlsAge::Recipient recipient{ZtlsAge::ScryptRecipient{passphrase}};
-    return publish(m_dir, m_path, "secrets.age.tmp.", [&](ZiFile &output) {
+    return publish(m_dir, m_path, "secrets.age.tmp.",
+      [&age, &rng, &recipient, &plain](ZiFile &output) {
       return age.encrypt(rng, {&recipient, 1}, plain, output);
     });
   }
@@ -500,7 +514,8 @@ private:
   VaultResult passphrase_(ZuSpan<uint8_t> passphrase, bool create) {
     if (!create) {
       bool loaded = false;
-      auto result = m_store->load(PassphraseKey, [&](ZuBSpan stored) {
+      auto result = m_store->load(PassphraseKey,
+        [passphrase, &loaded](ZuBSpan stored) mutable {
 	if (stored.length() == passphrase.length()) {
 	  ::memcpy(passphrase.data(), stored.data(), stored.length());
 	  loaded = true;
@@ -511,8 +526,8 @@ private:
 	return ZeEXCEPT(Error, "ZtlsVault", "invalid passphrase");
       return {};
     }
-    uint8_t random[32];
-    ZuGuard clearRandom{[&]() { ZuClear(random, sizeof(random)); }};
+    uint8_t random[PassphraseBytes];
+    ZuGuard clearRandom{[&random]() { ZuClear(random, sizeof(random)); }};
     Random rng;
     if (!rng.init() || !rng.random(random))
       return ZeEXCEPT(Error, "ZtlsVault", "passphrase generation failed");
@@ -599,7 +614,7 @@ VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
 void upper(VaultString &s)
 {
   for (unsigned i = 0, n = s.length(); i < n; ++i)
-    if (s[i] >= 'a' && s[i] <= 'z') s[i] -= 'a' - 'A';
+    if (auto &c = s[i]; c >= 'a' && c <= 'z') c -= 'a' - 'A';
 }
 
 VaultResult ensureDir(const Zi::Path &path)
@@ -693,8 +708,8 @@ VaultResult Vault::init(const VaultConfig &config)
     hash.update(home);
     uint8_t digest[MD<SHA256>::Size];
     hash.finish(digest);
-    char hex[16];
-    ZuHex::encode(hex, ZuBSpan{digest, 8});
+    char hex[ZuHex::enclen(Vault_::HomeHashBytes)];
+    ZuHex::encode(hex, ZuBSpan{digest, Vault_::HomeHashBytes});
     ZuClear(digest, sizeof(digest));
     for (char &c : hex) if (c >= 'A' && c <= 'F') c += 'a' - 'A';
     cf.account << "vault|" << ZuCSpan{hex, sizeof(hex)};
@@ -707,8 +722,7 @@ VaultResult Vault::start()
 {
   if (!m_state)
     return ZeEXCEPT(Error, "ZtlsVault", "not initialized");
-  if (m_state->store)
-    return ZeEXCEPT(Error, "ZtlsVault", "already started");
+  if (m_state->store) return {};
 
   auto &cf = m_state->config;
   bool secrets = cf.variant == VaultVariant::Secrets;

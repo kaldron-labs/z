@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 #ifndef _WIN32
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -56,6 +57,7 @@ static void ephemeral()
   Ztls::Vault vault;
   ZuCheck(!vault.init(cf).is<ZeException>());
   ZuCheck(!vault.start().is<ZeException>());
+  ZuCheck(!vault.start().is<ZeException>());
 
   Ztls::Scope global{Ztls::Scopes::Global{}};
   Ztls::Scope env{Ztls::Scopes::Environment{"staging"}};
@@ -72,6 +74,17 @@ static void ephemeral()
   };
   ZuCheck(!vault.load(global, "token", got).is<ZeException>());
   ZuCheck(called == 1);
+  bool replaced = false;
+  ZuCheck(!vault.load(global, "token",
+    [&vault, &global, &replaced](ZuBSpan value) {
+      replaced = !vault.save(global, "token",
+        ZuBSpan{value.data() + 1, value.length() - 1}).is<ZeException>();
+    }).is<ZeException>() && replaced);
+  bool matched = false;
+  ZuCheck(!vault.load(global, "token", [&matched](ZuBSpan value) {
+    const uint8_t expected[] = {0xff, 1};
+    matched = value == ZuBSpan{expected};
+  }).is<ZeException>() && matched);
   auto emptyResult = vault.load(env, "token", [&called](ZuBSpan value) {
     ++called;
     ZuCheck(!value.length());
@@ -142,7 +155,7 @@ static void file()
   ZuHex::encode(hex, id);
   Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
     Zi::Path{} << "ztls-vault-test-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&]() { ZiFile::removeTree(home); }};
+  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
   Zt::setenv("ZTLSVAULTTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -157,16 +170,16 @@ static void file()
   Ztls::Vault first;
   ZuCheckRT(!first.init(cf).is<ZeException>());
   ZuCheckRT(!first.start().is<ZeException>());
-  ZuGuard stopFirst{[&]() { first.stop(); }};
+  ZuGuard stopFirst{[&first]() { first.stop(); }};
 #ifndef _WIN32
   pid_t childPID = ::fork();
-  ZuCheckRT(childPID >= 0);
   if (!childPID) {
     Ztls::Vault child;
     bool rejected = !child.init(cf).is<ZeException>() &&
       child.start().is<ZeException>();
     ::_exit(rejected ? 0 : 1);
   }
+  ZuCheckRT(childPID >= 0);
   int contenderStatus = 0;
   ZuCheckRT(::waitpid(childPID, &contenderStatus, 0) == childPID);
   ZuCheckRT(WIFEXITED(contenderStatus) && !WEXITSTATUS(contenderStatus));
@@ -192,16 +205,16 @@ static void file()
   Ztls::Vault second;
   ZuCheckRT(!second.init(cf).is<ZeException>());
   ZuCheckRT(!second.start().is<ZeException>());
-  ZuGuard stopSecond{[&]() { second.stop(); }};
+  ZuGuard stopSecond{[&second]() { second.stop(); }};
   bool loaded = false;
-  auto result = second.load(global, "token", [&](ZuBSpan value) {
+  auto result = second.load(global, "token", [&loaded, &binary](ZuBSpan value) {
     loaded = true;
     ZuCheckRT(value.length() == sizeof(binary));
     if (value.length() == sizeof(binary))
       ZuCheckRT(!memcmp(value.data(), binary, sizeof(binary)));
   });
   ZuCheckRT(!result.is<ZeException>() && loaded);
-  result = second.load(scoped, "empty", [&](ZuBSpan value) {
+  result = second.load(scoped, "empty", [](ZuBSpan value) {
     ZuCheckRT(!value.length());
   });
   ZuCheckRT(!result.is<ZeException>());
@@ -223,7 +236,7 @@ static void file()
   Ztls::Vault other;
   ZuCheckRT(!other.init(otherCf).is<ZeException>());
   ZuCheckRT(!other.start().is<ZeException>());
-  ZuGuard stopOther{[&]() { other.stop(); }};
+  ZuGuard stopOther{[&other]() { other.stop(); }};
   ZuCheckRT(!other.save(global, "token", binary).is<ZeException>());
   other.stop();
   other.final();
@@ -231,18 +244,18 @@ static void file()
   Ztls::Vault verify;
   ZuCheckRT(!verify.init(cf).is<ZeException>());
   ZuCheckRT(!verify.start().is<ZeException>());
-  ZuGuard stopVerify{[&]() { verify.stop(); }};
-  result = verify.load(global, "token", [&](ZuBSpan value) {
+  ZuGuard stopVerify{[&verify]() { verify.stop(); }};
+  result = verify.load(global, "token", [&replacement](ZuBSpan value) {
     ZuCheckRT(value.length() == sizeof(replacement));
     if (value.length() == sizeof(replacement))
       ZuCheckRT(!memcmp(value.data(), replacement, sizeof(replacement)));
   });
   ZuCheckRT(!result.is<ZeException>());
-  result = verify.load(global, nulName, [&](ZuBSpan value) {
+  result = verify.load(global, nulName, [](ZuBSpan value) {
     ZuCheckRT(value.length() == sizeof(binary));
   });
   ZuCheckRT(!result.is<ZeException>());
-  result = verify.load(global, "caf\xc3\xa9%", [&](ZuBSpan value) {
+  result = verify.load(global, "caf\xc3\xa9%", [](ZuBSpan value) {
     ZuCheckRT(value.length() == sizeof(binary));
   });
   ZuCheckRT(!result.is<ZeException>());
@@ -311,11 +324,11 @@ static void file()
   Ztls::Vault reject;
   ZuCheckRT(!reject.init(cf).is<ZeException>());
   ZuCheckRT(!reject.start().is<ZeException>());
-  ZuGuard stopReject{[&]() { reject.stop(); }};
+  ZuGuard stopReject{[&reject]() { reject.stop(); }};
   ZuCheckRT(reject.save(global, "token", binary)
     .is<ZeException>());
   bool invoked = false;
-  result = reject.load(global, "token", [&](ZuBSpan) { invoked = true; });
+  result = reject.load(global, "token", [&invoked](ZuBSpan) { invoked = true; });
   ZuCheckRT(result.is<ZeException>() && !invoked);
   reject.stop();
   reject.final();
@@ -337,7 +350,7 @@ static void file()
   Ztls::Vault rejectType;
   ZuCheckRT(!rejectType.init(cf).is<ZeException>());
   ZuCheckRT(!rejectType.start().is<ZeException>());
-  ZuGuard stopRejectType{[&]() { rejectType.stop(); }};
+  ZuGuard stopRejectType{[&rejectType]() { rejectType.stop(); }};
   ZuCheckRT(rejectType.save(global, "token", binary)
     .is<ZeException>());
   rejectType.stop();
@@ -355,7 +368,7 @@ static void secrets()
   ZuHex::encode(hex, id);
   Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
     Zi::Path{} << "ztls-vault-secrets-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&]() { ZiFile::removeTree(home); }};
+  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
   Zt::setenv("ZTLSVAULTSECRETSTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -370,19 +383,19 @@ static void secrets()
   Ztls::Vault vault;
   ZuCheckRT(!vault.init(cf).is<ZeException>());
   ZuCheckRT(!vault.start().is<ZeException>());
-  ZuGuard stop{[&]() { vault.stop(); }};
+  ZuGuard stop{[&vault]() { vault.stop(); }};
   bool called = false;
-  ZuCheckRT(vault.load(global, "missing", [&](ZuBSpan) { called = true; })
+  ZuCheckRT(vault.load(global, "missing", [&called](ZuBSpan) { called = true; })
     .is<ZeException>() && !called);
   ZuCheckRT(!vault.save(global, "first", first).is<ZeException>());
   ZuCheckRT(!vault.save(global, "second", second).is<ZeException>());
   ZuCheckRT(!vault.save(global, "first", {}).is<ZeException>());
-  auto result = vault.load(global, "first", [&](ZuBSpan value) {
+  auto result = vault.load(global, "first", [&called](ZuBSpan value) {
     called = true;
     ZuCheckRT(!value.length());
   });
   ZuCheckRT(!result.is<ZeException>() && called);
-  result = vault.load(global, "second", [&](ZuBSpan value) {
+  result = vault.load(global, "second", [&second](ZuBSpan value) {
     ZuCheckRT(value.length() == sizeof(second));
     if (value.length() == sizeof(second))
       ZuCheckRT(!memcmp(value.data(), second, sizeof(second)));
@@ -393,7 +406,7 @@ static void secrets()
   vault.stop();
   ZuCheckRT(!vault.start().is<ZeException>());
   called = false;
-  ZuCheckRT(vault.load(global, "second", [&](ZuBSpan) { called = true; })
+  ZuCheckRT(vault.load(global, "second", [&called](ZuBSpan) { called = true; })
     .is<ZeException>() && !called);
   vault.stop();
   vault.final();
@@ -410,7 +423,7 @@ static void secretsFile()
   ZuHex::encode(hex, id);
   Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
     Zi::Path{} << "ztls-vault-secrets-file-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&]() { ZiFile::removeTree(home); }};
+  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
   Zt::setenv("ZTLSVAULTSECRETSFILETEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -424,16 +437,16 @@ static void secretsFile()
   Ztls::Vault first;
   ZuCheckRT(!first.init(cf).is<ZeException>());
   ZuCheckRT(!first.start().is<ZeException>());
-  ZuGuard stopFirst{[&]() { first.stop(); }};
+  ZuGuard stopFirst{[&first]() { first.stop(); }};
 #ifndef _WIN32
   pid_t contender = ::fork();
-  ZuCheckRT(contender >= 0);
   if (!contender) {
     Ztls::Vault child;
     bool denied = !child.init(cf).is<ZeException>() &&
       child.start().is<ZeException>();
     ::_exit(denied ? 0 : 1);
   }
+  ZuCheckRT(contender >= 0);
   int contenderStatus = 0;
   ZuCheckRT(::waitpid(contender, &contenderStatus, 0) == contender);
   ZuCheckRT(WIFEXITED(contenderStatus) && !WEXITSTATUS(contenderStatus));
@@ -442,7 +455,7 @@ static void secretsFile()
   Zi::Path age = ZiFile::append(dir, "secrets.age");
   Zi::Path json = ZiFile::append(dir, "secrets.json");
   bool called = false;
-  ZuCheckRT(first.load(global, "binary", [&](ZuBSpan) { called = true; })
+  ZuCheckRT(first.load(global, "binary", [&called](ZuBSpan) { called = true; })
     .is<ZeException>() && !called);
   ZuCheckRT(!ZiStat{age}.exists() && !ZiStat{json}.exists());
   ZuCheckRT(!first.save(global, "binary", binary)
@@ -459,7 +472,7 @@ static void secretsFile()
   ZuCheckRT(initialSize > 0);
   ZtCArray<ZtArrayHeapID<"Ztls.Vault.TestInitialJSON">> initialText(
     initialSize, initialSize);
-  ZuGuard clearInitialText{[&]() {
+  ZuGuard clearInitialText{[&initialText]() {
     ZuClear(initialText.data(), initialText.size());
   }};
   ZuCheckRT(initialJSON.read(initialText.data(), initialSize) == initialSize);
@@ -471,7 +484,6 @@ static void secretsFile()
 
 #ifndef _WIN32
   pid_t abandoned = ::fork();
-  ZuCheckRT(abandoned >= 0);
   if (!abandoned) {
     Ztls::Vault child;
     bool started = !child.init(cf).is<ZeException>() &&
@@ -479,6 +491,7 @@ static void secretsFile()
     // Simulate process death without Vault::stop(), leaving a stale PID file.
     ::_exit(started ? 0 : 1);
   }
+  ZuCheckRT(abandoned >= 0);
   int abandonedStatus = 0;
   ZuCheckRT(::waitpid(abandoned, &abandonedStatus, 0) == abandoned);
   ZuCheckRT(WIFEXITED(abandonedStatus) && !WEXITSTATUS(abandonedStatus));
@@ -492,7 +505,7 @@ static void secretsFile()
   auto jsonSize = jsonFile.size();
   ZuCheckRT(jsonSize > 0);
   ZtCArray<ZtArrayHeapID<"Ztls.Vault.TestJSON">> text(jsonSize, jsonSize);
-  ZuGuard clearText{[&]() { ZuClear(text.data(), text.size()); }};
+  ZuGuard clearText{[&text]() { ZuClear(text.data(), text.size()); }};
   ZuCheckRT(jsonFile.read(text.data(), jsonSize) == jsonSize);
   ZuCheckRT(jsonSize == initialSize &&
     !memcmp(text.data(), initialText.data(), initialSize));
@@ -506,7 +519,9 @@ static void secretsFile()
   auto encoded = member(values, "vault/passphrase");
   ZuCheckRT(encoded && encoded->has<ZfJSON::AnyNode::String>());
   uint8_t passphrase[ZuBase64::enclen(32)];
-  ZuGuard clearPassphrase{[&]() { ZuClear(passphrase, sizeof(passphrase)); }};
+  ZuGuard clearPassphrase{[&passphrase]() {
+    ZuClear(passphrase, sizeof(passphrase));
+  }};
   ZuCheckRT(ZuBase64::decode(passphrase,
     encoded->data<ZfJSON::AnyNode::String>()) == sizeof(passphrase));
   ZuCheckRT(passphrase[sizeof(passphrase) - 1] == '=');
@@ -515,7 +530,7 @@ static void secretsFile()
   auto ageSize = ageFile.size();
   ZuCheckRT(ageSize > 0);
   ZtBArray<ZtArrayHeapID<"Ztls.Vault.TestPlain">> plain(ageSize, ageSize);
-  ZuGuard clearPlain{[&]() { ZuClear(plain.data(), plain.size()); }};
+  ZuGuard clearPlain{[&plain]() { ZuClear(plain.data(), plain.size()); }};
   ZtlsAge codec;
   ZtlsAge::Identity identity{ZtlsAge::ScryptIdentity{passphrase}};
   auto decrypted = codec.decrypt(ageFile, {&identity, 1}, plain);
@@ -529,10 +544,10 @@ static void secretsFile()
   uint8_t wrong[sizeof(passphrase)];
   ::memcpy(wrong, passphrase, sizeof(wrong));
   wrong[0] = wrong[0] == 'A' ? 'B' : 'A';
-  ZuGuard clearWrong{[&]() { ZuClear(wrong, sizeof(wrong)); }};
+  ZuGuard clearWrong{[&wrong]() { ZuClear(wrong, sizeof(wrong)); }};
   char originalText[ZuBase64::enclen(sizeof(passphrase))];
   char wrongText[sizeof(originalText)];
-  ZuGuard clearEncoded{[&]() {
+  ZuGuard clearEncoded{[&originalText, &wrongText]() {
     ZuClear(originalText, sizeof(originalText));
     ZuClear(wrongText, sizeof(wrongText));
   }};
@@ -552,7 +567,7 @@ static void secretsFile()
   ZuCheckRT(!wrongKey.init(cf).is<ZeException>());
   ZuCheckRT(!wrongKey.start().is<ZeException>());
   called = false;
-  ZuCheckRT(wrongKey.load(global, "binary", [&](ZuBSpan) { called = true; })
+  ZuCheckRT(wrongKey.load(global, "binary", [&called](ZuBSpan) { called = true; })
     .is<ZeException>() && !called);
   ZuCheckRT(wrongKey.save(global, "binary", binary).is<ZeException>());
   wrongKey.stop();
@@ -572,9 +587,9 @@ static void secretsFile()
   Ztls::Vault second;
   ZuCheckRT(!second.init(cf).is<ZeException>());
   ZuCheckRT(!second.start().is<ZeException>());
-  ZuGuard stopSecond{[&]() { second.stop(); }};
+  ZuGuard stopSecond{[&second]() { second.stop(); }};
   called = false;
-  auto result = second.load(global, "binary", [&](ZuBSpan value) {
+  auto result = second.load(global, "binary", [&called, &binary](ZuBSpan value) {
     called = true;
     ZuCheckRT(value.length() == sizeof(binary));
     if (value.length() == sizeof(binary))
@@ -582,7 +597,7 @@ static void secretsFile()
   });
   ZuCheckRT(!result.is<ZeException>() && called);
   called = false;
-  result = second.load(global, "empty", [&](ZuBSpan value) {
+  result = second.load(global, "empty", [&called](ZuBSpan value) {
     called = true;
     ZuCheckRT(!value.length());
   });
@@ -597,7 +612,7 @@ static void secretsFile()
     .is<ZeException>());
   ZuCheckRT(ZiStat{orphan}.exists());
   called = false;
-  ZuCheckRT(!second.load(global, "binary", [&](ZuBSpan value) {
+  ZuCheckRT(!second.load(global, "binary", [&called, &binary](ZuBSpan value) {
     called = value == ZuBSpan{binary};
   }).is<ZeException>() && called);
 
@@ -613,7 +628,7 @@ static void secretsFile()
   ZuCheckRT(!encrypted.is<ZeException>());
   malformedAge.close();
   called = false;
-  ZuCheckRT(second.load(global, "binary", [&](ZuBSpan) { called = true; })
+  ZuCheckRT(second.load(global, "binary", [&called](ZuBSpan) { called = true; })
     .is<ZeException>() && !called);
   ZuCheckRT(second.save(global, "binary", binary).is<ZeException>());
   ZiFile checkAge{age, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC};
@@ -622,7 +637,9 @@ static void secretsFile()
   ZuCheckRT(checkSize > 0);
   ZtBArray<ZtArrayHeapID<"Ztls.Vault.TestMalformed">> checkPlain(
     checkSize, checkSize);
-  ZuGuard clearCheck{[&]() { ZuClear(checkPlain.data(), checkPlain.size()); }};
+  ZuGuard clearCheck{[&checkPlain]() {
+    ZuClear(checkPlain.data(), checkPlain.size());
+  }};
   auto malformedDecrypted = codec.decrypt(checkAge, {&identity, 1},
     checkPlain);
   ZuCheckRT(!malformedDecrypted.is<ZeException>() &&
@@ -636,7 +653,7 @@ static void secretsFile()
   ZuCheckRT(corrupt.write(&bad, 1) == Zi::OK);
   corrupt.close();
   called = false;
-  ZuCheckRT(second.load(global, "binary", [&](ZuBSpan) { called = true; })
+  ZuCheckRT(second.load(global, "binary", [&called](ZuBSpan) { called = true; })
     .is<ZeException>() && !called);
   ZuCheckRT(second.save(global, "binary", binary)
     .is<ZeException>());
@@ -655,7 +672,7 @@ static void module()
   ZuHex::encode(hex, id);
   Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
     Zi::Path{} << "ztls-vault-module-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&]() { ZiFile::removeTree(home); }};
+  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
   Zt::setenv("ZTLSVAULTMODULETEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -675,10 +692,10 @@ static void module()
   Ztls::Vault direct;
   ZuCheckRT(!direct.init(cf).is<ZeException>());
   ZuCheckRT(!direct.start().is<ZeException>());
-  ZuGuard stopDirect{[&]() { direct.stop(); }};
+  ZuGuard stopDirect{[&direct]() { direct.stop(); }};
   ZuCheckRT(!direct.save(global, "item", value).is<ZeException>());
   bool called = false;
-  auto result = direct.load(global, "item", [&](ZuBSpan loaded) {
+  auto result = direct.load(global, "item", [&called, &value](ZuBSpan loaded) {
     called = true;
     ZuCheckRT(loaded.length() == sizeof(value));
     if (loaded.length() == sizeof(value))
@@ -693,11 +710,11 @@ static void module()
   Ztls::Vault secrets;
   ZuCheckRT(!secrets.init(cf).is<ZeException>());
   ZuCheckRT(!secrets.start().is<ZeException>());
-  ZuGuard stopSecrets{[&]() { secrets.stop(); }};
+  ZuGuard stopSecrets{[&secrets]() { secrets.stop(); }};
   ZuCheckRT(!secrets.save(global, "item", value)
     .is<ZeException>());
   called = false;
-  result = secrets.load(global, "item", [&](ZuBSpan loaded) {
+  result = secrets.load(global, "item", [&called](ZuBSpan loaded) {
     called = true;
     ZuCheckRT(loaded.length() == sizeof(value));
   });
