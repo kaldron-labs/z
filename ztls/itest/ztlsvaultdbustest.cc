@@ -100,8 +100,12 @@ static void method(ZdbusServer &server, PeerState &state,
         return Zdbus_::BuildResult{{}, {}, Zdbus_::BuildError::Body};
       SearchRes reply;
       if (state.key &&
-          arg.attributes.attrs->findVal("key") == state.key)
-        reply.unlocked.push(Text{ItemPath});
+          arg.attributes.attrs->findVal("key") == state.key) {
+        if (state.key == "global/locked")
+          reply.locked.push(Text{ItemPath});
+        else
+          reply.unlocked.push(Text{ItemPath});
+      }
       return Zdbus_::message(head, reply);
     }
     if (info.headers.member == "ReadAlias" &&
@@ -293,6 +297,16 @@ static void native()
   ZuCheckRT(!vault.load(scope, "token", [&called, &value](ZuBSpan got) {
     called = got == ZuBSpan{value};
   }).is<ZeException>() && called);
+  ZuCheckRT(!vault.save(scope, "empty", {}).is<ZeException>());
+  called = false;
+  ZuCheckRT(!vault.load(scope, "empty", [&called](ZuBSpan got) {
+    called = !got.length();
+  }).is<ZeException>() && called);
+  ZuCheckRT(!vault.save(scope, "locked", value).is<ZeException>());
+  called = false;
+  ZuCheckRT(!vault.load(scope, "locked", [&called, &value](ZuBSpan got) {
+    called = got == ZuBSpan{value};
+  }).is<ZeException>() && called);
   ZuCheckRT(!vault.save(scope, "prompted", value)
     .is<ZeException>());
   ZuCheckRT(vault.save(scope, "dismissed", value)
@@ -368,7 +382,7 @@ static void native()
   autoVault.stop();
   autoVault.final();
   ZuCheckRT(state.sessions == 2 && state.collections == 1 &&
-    state.items == 7 && state.secrets == 2 && state.prompts == 4 &&
+    state.items == 9 && state.secrets == 4 && state.prompts == 4 &&
     state.closes == 1);
 }
 
