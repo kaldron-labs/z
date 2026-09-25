@@ -52,6 +52,20 @@ void dec(ZuBSpan src, ZuBSpan check, const char *msg)
   ZuCheck(ZuBSpan(dst) == check, decOut_(msg, dst));
 }
 
+void raw(ZuBSpan src, ZuCSpan check)
+{
+  ZuTestScope(raw);
+  auto n = ZuBase32::enclen<false>(src.length());
+  char *buf = static_cast<char *>(ZuAlloca(n, 1));
+  auto dst = ZuSpan<uint8_t>(buf, n);
+  dst.trunc(ZuBase32::encode<false>(dst, src));
+  ZuCheck(ZuCSpan(dst) == check && dst.length() == n);
+  auto decoded = ZuSpan<uint8_t>(
+    static_cast<uint8_t *>(ZuAlloca(src.length(), 1)), src.length());
+  decoded.trunc(ZuBase32::decode(decoded, dst));
+  ZuCheck(ZuBSpan(decoded) == src);
+}
+
 void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)
 {
   ZuTestScope(test);
@@ -83,4 +97,11 @@ int main()
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55 }), "CERDGRCV");
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 }), "CERDGRCVMY======");
   TEST((ZuBSpan{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 }), "CERDGRCVMZ3Q====");
+  ZuTestCall(raw, ZuBSpan{}, "");
+  ZuTestCall(raw, ZuBSpan{0x11}, "CE");
+  ZuTestCall(raw, (ZuBSpan{0x11, 0x22}), "CERA");
+  ZuTestCall(raw, (ZuBSpan{0x11, 0x22, 0x33}), "CERDG");
+  ZuTestCall(raw, (ZuBSpan{0x11, 0x22, 0x33, 0x44}), "CERDGRA");
+  ZuTestCall(raw, (ZuBSpan{0x11, 0x22, 0x33, 0x44, 0x55}), "CERDGRCV");
+  ZuTestCall(raw, (ZuBSpan{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}), "CERDGRCVMY");
 }
