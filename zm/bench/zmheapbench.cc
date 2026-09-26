@@ -41,7 +41,7 @@ template <typename Heap = ZuVoid> struct S_ : public Heap {
   }
   int m_i;
 };
-using SHeap = ZmHeap<"S", S_<>>;
+ZuDerive(SHeap, (ZmHeap<"S", S_<>>));
 ZuDerive(S, (S_<SHeap>));
 
 static unsigned count = 0;

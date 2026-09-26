@@ -46,11 +46,9 @@ public:
     ZuGuard stop{[]() { ZiLog::stop(); }};
     m_local = !session.online;
 
-    ZtString<ZtStringHeapID<"ZDash.TestToken">> token{
+    ZtString<ZtStringSecret<true,
+      ZtStringHeapID<"ZDash.TestToken">>> token{
       ::getenv("ZDASH_TEST_TOKEN")};
-    ZuGuard clear{[&token]() {
-      if (token.mutable_()) ZuClear(token.data(), token.length());
-    }};
     session.token = token;
     session.hidden = true;
     session.offline = m_local;

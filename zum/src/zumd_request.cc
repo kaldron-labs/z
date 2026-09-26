@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_request.hh>
 
 namespace Zum {
@@ -192,6 +193,6 @@ void Requests_<Heap>::deactivated_()
   if (complete) complete();
 }
 
-template class Requests_<ZmHeap<"Zum.Requests", Requests_<>>>;
+template class Requests_<RequestsHeap>;
 
 } // namespace Zum

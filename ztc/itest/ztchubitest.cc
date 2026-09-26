@@ -20,7 +20,7 @@ static Ztc::HubdCf config()
   Ztc::HubdCf cf;
   cf.listeners.push(Ztc::ListenerCf{
     "127.0.0.1", "/ztc", "server.crt", "server.key", "/session", {}});
-  cf.issuer = "https://zum.example/oauth2/7";
+  cf.issuerURL = "https://zum.example/oauth2/7";
   cf.audience = "https://ztchub.example";
   cf.managementIssuer = "https://zum.example/oauth2/1";
   cf.managementClientID = "ztchub-manager";
@@ -41,7 +41,7 @@ static Ztc::HubString numbered(ZuCSpan prefix, unsigned value)
 static Zum::ServicePrincipal principal(ZuCSpan subject, ZuCSpan action)
 {
   Zum::ServicePrincipal value;
-  value.tokenID.issuer = "https://zum.example/oauth2/7";
+  value.tokenID.issuerURL = "https://zum.example/oauth2/7";
   value.tokenID.jti = subject;
   value.subject = subject;
   value.audience = "https://ztchub.example";

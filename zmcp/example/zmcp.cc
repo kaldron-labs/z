@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <stdlib.h>
 
 #include <zlib/ZmHeap.hh>
@@ -117,7 +118,7 @@ struct Call_ : public Heap, public ZmObject {
   void failed(const Zmcp::Error &) { failed_ = true; done.post(); }
   void failed() { failed_ = true; done.post(); }
 };
-using CallHeap = ZmHeap<"ZmcpExample.Call", Call_<>>;
+ZuDerive(CallHeap, (ZmHeap<"ZmcpExample.Call", Call_<>>));
 ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Client>

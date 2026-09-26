@@ -28,6 +28,7 @@
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestServer.hh>
 #include <zlib/Zws.hh>
+#include <zlib/ZumVaultService.hh>
 
 #include <zlib/ztchub_daemon.hh>
 #include <zlib/ZtcDB.hh>
@@ -50,7 +51,7 @@ struct RawData : public ZmObject {
 struct Reply : public ZmObject { };
 
 struct SessionReply : public Reply {
-  ZtString<> cookie;
+  Ztc::HubString cookie;
 };
 
 template <unsigned Status_>
@@ -92,8 +93,8 @@ struct Request : public Zrest::ReqParser<Impl, RawData> {
   using Headers = ZhttpHeaders("authorization", "content-type");
   using Responses = SSF_::Responses;
   App *app = nullptr;
-  ZtString<> authorization;
-  ZtString<> contentType;
+  Ztc::HubString authorization;
+  Ztc::HubString contentType;
   void init() { Base::init(); authorization.null(); contentType.null(); }
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
@@ -112,8 +113,8 @@ struct Session : public Request<Session> {
   using Headers = ZhttpHeaders("authorization", "cookie", "origin");
   using Responses = SSF_::SessionResponses;
   using Request<Session>::header;
-  ZtString<> cookie;
-  ZtString<> origin;
+  Ztc::HubString cookie;
+  Ztc::HubString origin;
 
   void init() {
     Request<Session>::init();
@@ -193,7 +194,7 @@ struct App {
 
   template <typename Req, typename Link>
   static void sessionReply(ZmRef<Link> link, unsigned status,
-      ZtString<> cookie = {}) {
+      Ztc::HubString cookie = {}) {
     auto object = ZmRef<SessionReply>{new SessionReply};
     object->cookie = ZuMv(cookie);
     ZmRef<BuilderQ::Node> response = new BuilderQ::Node{};
@@ -233,7 +234,7 @@ struct App {
       if (request.origin == origin) { originOK = true; break; }
     if (!originOK)
       return sessionReply<SSF_::Session>(ZmRef<Link>{link}, 401);
-    ZtString<> token;
+    Ztc::HubString token;
     token << ZuCSpan{request.authorization}.offset(7);
     auto hold = ZmRef<Link>{link};
     hub->verify(ZuMv(token), [this, hold = ZuMv(hold)](
@@ -250,7 +251,7 @@ struct App {
           sessionReply<SSF_::Session>(ZuMv(hold), 503);
           return;
         }
-        ZtString<> header;
+        Ztc::HubString header;
         header << "__Host-ztc_session=" << cookie <<
           "; Path=/; Secure; HttpOnly; SameSite=Strict";
         sessionReply<SSF_::Session>(ZuMv(hold), 201, ZuMv(header));
@@ -560,7 +561,7 @@ struct App {
     if (done) done->post();
   }
 
-  static bool cookieValue(ZuBSpan cookies, ZtString<> &value) {
+  static bool cookieValue(ZuBSpan cookies, Ztc::HubString &value) {
     static constexpr auto name = "__Host-ztc_session="_Zu;
     while (cookies) {
       while (cookies && cookies[0] == ' ') cookies.offset(1);
@@ -834,7 +835,7 @@ struct App {
     auto hold = ZmRef<Link>{&link};
     ZuBSpan authorization = link.authorization();
     if (!state.agent && !bearer(authorization)) {
-      ZtString<> cookie;
+      Ztc::HubString cookie;
       Zum::ServicePrincipal principal;
       if (!cookieValue(link.cookie(), cookie) ||
           !hub->browserPrincipal(cookie, principal)) {
@@ -850,7 +851,7 @@ struct App {
       state.closed = true;
       return;
     }
-    ZtString<> token;
+    Ztc::HubString token;
     token << authorization.offset(7);
     hub->verify(ZuMv(token), [this, hold = ZuMv(hold)](
         int error, Zum::ServicePrincipal principal) mutable {
@@ -968,7 +969,7 @@ private:
 } // namespace ZtcHub_
 
 struct Options {
-  ZtString<> config{"ztchub.conf"};
+  Ztc::HubString config{"ztchub.conf"};
   bool help = false;
 };
 
@@ -1004,10 +1005,21 @@ int main(int argc, char **argv)
   try {
     auto loaded = ZvCf::load(options.config);
     auto cf = ZfCf::handler<Ztc::HubdCf>(loaded.p<1>()).ctor();
-    const char *secret = ::getenv("ZUM_CLIENT_SECRET");
-    const char *callbackAuth = ::getenv("ZUM_SSF_CALLBACK_AUTH");
-    if (!secret || !*secret || !callbackAuth || !*callbackAuth) {
-      std::cerr << "ZUM_CLIENT_SECRET and ZUM_SSF_CALLBACK_AUTH are required\n";
+    auto secretEnv = ::getenv("ZUM_CLIENT_SECRET");
+    auto callbackEnv = ::getenv("ZUM_SSF_AUTH");
+    bool provision = secretEnv || callbackEnv;
+    ZumVaultService::Credential credential{cf.issuerURL,
+      cf.managementClientID};
+    if (provision) {
+      if (!secretEnv || !*secretEnv || !callbackEnv || !*callbackEnv) {
+        std::cerr << "both service credentials are required\n";
+        return 1;
+      }
+      credential.clientSecret = secretEnv;
+      credential.callbackAuth = callbackEnv;
+    } else if (ZumVaultService::load(credential)
+        .is<ZeException>()) {
+      std::cerr << "ztchub service credentials unavailable\n";
       return 1;
     }
     ZiMxParams params;
@@ -1022,10 +1034,11 @@ int main(int argc, char **argv)
     if (!mx.start()) return 1;
     Ztc::Hubd hub;
     Zum::PingHTTP transport;
-    if (!transport.init(&mx, cf.issuer, cf.managementIssuer,
+    if (!transport.init(&mx, cf.issuerURL, cf.managementIssuer,
         cf.managementURL, cf.caPath) ||
         !hub.init(ZuMv(cf), &mx, transport.fn(),
-          Zum::Bytes{ZuCSpan{secret}}, callbackAuth)) {
+          Zum::Bytes{ZuCSpan{credential.clientSecret}},
+	  credential.callbackAuth)) {
       std::cerr << "ztchub initialization/startup failed\n";
       hub.final();
       transport.final();
@@ -1044,6 +1057,15 @@ int main(int argc, char **argv)
     started.wait();
     if (!ready) {
       std::cerr << "ztchub Zum service startup/publication failed\n";
+      hub.final();
+      transport.final();
+      mx.stop();
+      return 1;
+    }
+    if (provision && ZumVaultService::save(credential)
+        .is<ZeException>()) {
+      std::cerr << "ztchub credential storage failed\n";
+      hub.stop();
       hub.final();
       transport.final();
       mx.stop();

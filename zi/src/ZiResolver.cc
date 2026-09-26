@@ -8,6 +8,7 @@
 
 #include <ares.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuUTF.hh>
 
 #include <zlib/ZmBlock.hh>
@@ -129,8 +130,7 @@ struct ZiResolver_TXT_ : public Heap, public ZmObject {
   TxtFn		fn;
 };
 
-using ZiResolver_TXTHeap =
-  ZmHeap<"ZiResolver.TXT", ZiResolver_TXT_<>>;
+ZuDerive(ZiResolver_TXTHeap, (ZmHeap<"ZiResolver.TXT", ZiResolver_TXT_<>>));
 ZuDerive(ZiResolver_TXT, (ZiResolver_TXT_<ZiResolver_TXTHeap>));
 
 static ZiEvent::FailFn defltFailFn()

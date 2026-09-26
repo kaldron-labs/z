@@ -10,13 +10,13 @@
 
 #ifndef _WIN32
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuLib.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuICmp.hh>
 #include <zlib/ZuPercent.hh>
 #include <zlib/ZuPtr.hh>
@@ -46,23 +46,20 @@
 
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
+#include <zlib/ZtlsVault.hh>
 
 #include <zlib/ZumMgmt.hh>
 #include <zlib/ZumURI.hh>
 
+#include <zlib/ZumVaultClient.hh>
+
 ZuDerive(String, ZtString<ZtStringHeapID<"zumc.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"zumc.Bytes">>));
 
-struct Tokens {
-  String	accessToken;
-  String	refreshToken;
-  String	scope;
-};
-
 struct Token {
-  String accessToken;
-  String refreshToken;
-  String scope;
+  ZumVaultClient::SecretText accessToken;
+  ZumVaultClient::SecretText refreshToken;
+  ZumVaultClient::Text scope;
   String tokenType;
 };
 ZfStruct(, (Token, JSON),
@@ -74,7 +71,7 @@ ZfStruct(, (Token, JSON),
 ZuDerive(StringVec, (ZtArray<String,
   ZtArrayHeapID<"zumc.StringVec">>));
 struct Metadata {
-  String issuer;
+  String issuerURL;
   String authorizationEndpoint;
   String tokenEndpoint;
   String jwksURI;
@@ -84,7 +81,7 @@ struct Metadata {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (Metadata, JSON),
-  (((issuer),		(JSON::Opt)),	(String)),
+  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	(String)),
   (((authorizationEndpoint),
     (JSON::ID<"authorization_endpoint">, JSON::Opt)),	(String)),
   (((tokenEndpoint),
@@ -100,33 +97,15 @@ ZfStruct(, (Metadata, JSON),
     (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),
     (StringVec)));
 
-struct Credential {
-  String issuerURL;
-  String managementURL;
-  String clientID;
-  String accessToken;
-  String refreshToken;
-  String scope;
-};
-ZfStruct(, (Credential, JSON),
-  (((issuerURL),	(Required)),	(String)),
-  (((managementURL),	(Required)),	(String)),
-  (((clientID),		(Required)),	(String)),
-  (((accessToken),	(Required)),	(String)),
-  (((refreshToken),	(Required)),	(String)),
-  (((scope),		(JSON::Opt)),	(String)));
-
 struct SecretOutput { String secretOutput; };
 ZfStruct(, (SecretOutput, JSON),
   (((secretOutput),	(Required)),	(String)));
 
-static void clearTokens(Tokens &tokens)
+static void clearTokens(ZumVaultClient::Credential &tokens)
 {
-  if (tokens.accessToken && tokens.accessToken.mutable_())
-    ZuClear(tokens.accessToken.data(), tokens.accessToken.length());
-  if (tokens.refreshToken && tokens.refreshToken.mutable_())
-    ZuClear(tokens.refreshToken.data(), tokens.refreshToken.length());
-  tokens = {};
+  tokens.accessToken.null();
+  tokens.refreshToken.null();
+  tokens.scope = ZumVaultClient::Text{};
 }
 
 enum {
@@ -158,7 +137,6 @@ struct Config {
   String	caPath;
   String	clientID{"zum-admin"};
   String	scope{"zum.admin"};
-  String	credentialFile;
   uint32_t	callbackPort = CallbackPort;
   uint32_t	loginTimeout = LoginTimeout;
   bool		loopbackTest = false;
@@ -169,7 +147,6 @@ ZfStruct(, (Config, Cf),
   (((caPath)), (String)),
   (((clientID)), (String, "zum-admin")),
   (((scope)), (String, "zum.admin")),
-  (((credentialFile)), (String)),
   (((callbackPort), ((Range<1, 65535>))), (UInt32, CallbackPort)),
   (((loginTimeout), ((Range<1, 3600>))), (UInt32, LoginTimeout)),
   (((loopbackTest)), (Bool, false)));
@@ -184,19 +161,11 @@ static void usage(int code = 1)
   ::exit(code);
 }
 
-static bool readFile(ZuCSpan path, String &data, unsigned limit = BodyMax,
-    bool protected_ = false)
+static bool readFile(ZuCSpan path, String &data, unsigned limit = BodyMax)
 {
   ZiFile file;
   if (file.open(Zi::Path{path}, ZiFile::ReadOnly | ZiFile::NoFollow |
 	ZiFile::GC) != Zi::OK) return false;
-#ifndef _WIN32
-  if (protected_) {
-    struct stat info;
-    if (::fstat(file.handle(), &info) || !S_ISREG(info.st_mode) ||
-	info.st_uid != ::geteuid() || (info.st_mode & 077)) return false;
-  }
-#endif
   auto size = file.size();
   if (size < 0 || uint64_t(size) > limit) return false;
   data.length(unsigned(size));
@@ -276,10 +245,10 @@ static bool endpointURL(ZuCSpan value, bool loopbackTest, Zhttp::URL &parsed)
       url.host == "::1");
 }
 
-static bool metadataURL(ZuCSpan issuer, bool loopbackTest,
+static bool metadataURL(ZuCSpan issuerURL, bool loopbackTest,
     String &value, Zhttp::URL &parsed)
 {
-  if (!endpointURL(issuer, loopbackTest, parsed)) return false;
+  if (!endpointURL(issuerURL, loopbackTest, parsed)) return false;
   auto url = parsed.url();
   if (url.hasQuery || !url.path) return false;
   // URLView is const; typed URI loading percent-decodes its mutable input.
@@ -310,7 +279,7 @@ struct HTTPData_ : public Heap, public ZmObject  {
   }
 };
 template <unsigned Status_>
-using HTTPDataHeap = ZmHeap<"Zum.HTTPData", HTTPData_<Status_>>;
+ZuDerive(HTTPDataHeap, (ZmHeap<"Zum.HTTPData", HTTPData_<Status_>>));
 template <unsigned Status_>
 ZuDerive(HTTPData, (HTTPData_<Status_, HTTPDataHeap<Status_>>));
 
@@ -319,7 +288,7 @@ struct Result {
   String	body;
   unsigned	status = 0;
   ~Result() {
-    if (body.mutable_()) ZuClear(body.data(), body.length());
+    if (body.mutable_()) ZuClear(body);
   }
 };
 
@@ -335,8 +304,8 @@ struct Call_ : public Heap, public ZmObject  {
   mutable ZmAtomic<unsigned> done = 0;
 
   ~Call_() {
-    if (body.mutable_()) ZuClear(body.data(), body.length());
-    if (authorization.mutable_()) ZuClear(authorization.data(), authorization.length());
+    if (body.mutable_()) ZuClear(body);
+    if (authorization.mutable_()) ZuClear(authorization);
   }
   void finish(unsigned status, ZuCSpan body = {}) const {
     if (done.cmpXch(1, 0)) return;
@@ -356,7 +325,7 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0);
   }
 };
-using CallHeap = ZmHeap<"Zum.zum.Call", Call_<>>;
+ZuDerive(CallHeap, (ZmHeap<"Zum.zum.Call", Call_<>>));
 ZuDerive(Call, (Call_<CallHeap>));
 
 using OKData = HTTPData<200>;
@@ -498,7 +467,7 @@ private:
   ReqBuilderQ m_requests;
 };
 
-using PoolHeap = ZmHeap<"zum.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"zum.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class Client : public Zhttp::Client<Client, Pool> {
@@ -584,16 +553,14 @@ struct CallbackData_ : public Heap, public ZmObject  {
   String data;
   CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
-using CallbackDataHeap =
-  ZmHeap<"Zum.zum.CallbackData", CallbackData_<>>;
+ZuDerive(CallbackDataHeap, (ZmHeap<"Zum.zum.CallbackData", CallbackData_<>>));
 ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
 
 template <typename Heap = ZuVoid>
 struct CallbackBody_ : public Heap, public ZmObject  {
   String data;
 };
-using CallbackBodyHeap =
-  ZmHeap<"Zum.zum.CallbackBody", CallbackBody_<>>;
+ZuDerive(CallbackBodyHeap, (ZmHeap<"Zum.zum.CallbackBody", CallbackBody_<>>));
 ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
 
 struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
@@ -711,7 +678,7 @@ static ZiMxParams mxParams()
   }).rxThread(1).txThread(2);
 }
 
-static bool tokenJSON(String &json, Tokens &tokens)
+static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
@@ -726,14 +693,14 @@ static bool tokenJSON(String &json, Tokens &tokens)
   auto wire = handler.ctor();
   if (!wire.accessToken ||
       !ZuICmp<ZuCSpan>::equals(wire.tokenType, "Bearer")) return false;
-  Tokens next{ZuMv(wire.accessToken), ZuMv(wire.refreshToken),
-    ZuMv(wire.scope)};
   clearTokens(tokens);
-  tokens = ZuMv(next);
+  tokens.accessToken = ZuMv(wire.accessToken);
+  tokens.refreshToken = ZuMv(wire.refreshToken);
+  tokens.scope = ZuMv(wire.scope);
   return true;
 }
 
-static bool metadataJSON(String &json, ZuCSpan issuer, Metadata &metadata)
+static bool metadataJSON(String &json, ZuCSpan issuerURL, Metadata &metadata)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
@@ -745,7 +712,7 @@ static bool metadataJSON(String &json, ZuCSpan issuer, Metadata &metadata)
   auto handler = ZfJSON::handler<Metadata>(roots[0]);
   if (!handler.valid) return false;
   metadata = handler.ctor();
-  return metadata.issuer == issuer && metadata.authorizationEndpoint &&
+  return metadata.issuerURL == issuerURL && metadata.authorizationEndpoint &&
     metadata.tokenEndpoint && metadata.jwksURI &&
     metadata.revocationEndpoint &&
     contains(metadata.responseTypesSupported, "code") &&
@@ -754,17 +721,9 @@ static bool metadataJSON(String &json, ZuCSpan issuer, Metadata &metadata)
     contains(metadata.codeChallengeMethods, "S256");
 }
 
-static bool saveTokens(const Config &config, const Tokens &tokens)
+static bool saveTokens(const ZumVaultClient::Credential &tokens)
 {
-  if (!config.credentialFile || !tokens.accessToken || !tokens.refreshToken) return false;
-  String json;
-  ZfJSON::save(json, Credential{
-    config.issuerURL, config.managementURL, config.clientID, tokens.accessToken,
-    tokens.refreshToken, tokens.scope});
-  json << '\n';
-  bool ok = writeProtected(config.credentialFile, json);
-  ZuClear(json.data(), json.length());
-  return ok;
+  return !ZumVaultClient::save(tokens).is<ZeException>();
 }
 
 static ZuPtr<ZfJSON::AnyNode> jsonObject(String &json)
@@ -799,27 +758,9 @@ static bool scalar(const ZfJSON::AnyNode *node, String &value)
   return true;
 }
 
-static bool loadTokens(const Config &config, Tokens &tokens)
+static bool loadTokens(ZumVaultClient::Credential &tokens)
 {
-  String json;
-  if (!config.credentialFile || !readFile(config.credentialFile, json, 256U<<10, true))
-    return false;
-  json.strip();
-  auto root = jsonObject(json);
-  if (!root) return false;
-  auto handler = ZfJSON::handler<Credential>(root.ptr());
-  if (!handler.valid) return false;
-  auto wire = handler.ctor();
-  if (wire.issuerURL != config.issuerURL ||
-      wire.managementURL != config.managementURL ||
-      wire.clientID != config.clientID) {
-    ZuClear(json.data(), json.length());
-    return false;
-  }
-  tokens = Tokens{ZuMv(wire.accessToken), ZuMv(wire.refreshToken),
-    ZuMv(wire.scope)};
-  ZuClear(json.data(), json.length());
-  return tokens.accessToken && tokens.refreshToken;
+  return !ZumVaultClient::load(tokens).is<ZeException>();
 }
 
 static bool pathParameter(ZuCSpan pattern, ZuCSpan name)
@@ -1035,7 +976,8 @@ int main(int argc, char **argv)
     mx.stop(); ZiLog::stop(); return 1;
   }
 
-  Tokens tokens;
+  ZumVaultClient::Credential tokens{config.issuerURL,
+    config.managementURL, config.clientID};
   auto login = [&config, &mx, &options, &metadata, &authorizationURL,
       &tokenURL, &tokenClient, &tokens]() {
     Ztls::Random rng;
@@ -1100,7 +1042,7 @@ int main(int argc, char **argv)
 	std::cerr << "zum: code redemption failed: " << result.body << '\n';
     }
     if (verifier && verifier.mutable_())
-      ZuClear(verifier.data(), verifier.length());
+      ZuClear(verifier);
     (void)callbackServer.stop();
     callbackServer.final();
     return ok;
@@ -1109,8 +1051,8 @@ int main(int argc, char **argv)
   bool ok = true;
   if (options.operation == "login") {
     ok = login();
-    if (ok && config.credentialFile && tokens.refreshToken)
-      ok = saveTokens(config, tokens);
+    if (ok && tokens.refreshToken)
+      ok = saveTokens(tokens);
     if (ok) std::cout << "authenticated\n";
   } else {
     String source, secretOutput;
@@ -1122,7 +1064,7 @@ int main(int argc, char **argv)
       std::cerr << "zum: operation requires $secretOutput\n";
       ok = false;
     }
-    if (ok && !loadTokens(config, tokens)) ok = login();
+    if (ok && !loadTokens(tokens)) ok = login();
     if (ok) {
       call->authorization = "Bearer ";
       call->authorization << tokens.accessToken;
@@ -1135,10 +1077,12 @@ int main(int argc, char **argv)
 	Result refreshed;
 	tokenClient.performAt<TokenBuilder>(
 	  refreshed, tokenURL.url(), ZuMv(form));
-	Tokens next;
+	ZumVaultClient::Credential next;
 	if (refreshed.status == 200 && tokenJSON(refreshed.body, next)) {
 	  clearTokens(tokens);
-	  tokens = ZuMv(next);
+	  tokens.accessToken = ZuMv(next.accessToken);
+	  tokens.refreshToken = ZuMv(next.refreshToken);
+	  tokens.scope = ZuMv(next.scope);
 	  call->authorization = "Bearer ";
 	  call->authorization << tokens.accessToken;
 	  result.body = String{};
@@ -1146,7 +1090,7 @@ int main(int argc, char **argv)
 	  performAdmin(managementClient, *route, result, call);
 	}
       }
-      bool saved = !config.credentialFile || !tokens.refreshToken || saveTokens(config, tokens);
+      bool saved = !tokens.refreshToken || saveTokens(tokens);
       ok = result.status >= 200 && result.status < 300;
       if (ok && secretOutput) {
 	ok = writeProtected(secretOutput, result.body);

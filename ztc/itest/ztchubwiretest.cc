@@ -40,7 +40,7 @@ static void interrupted() { if (signalDone) signalDone->post(); }
 
 struct Options {
   ZtString<> mode;
-  ZtString<> issuer;
+  ZtString<> issuerURL;
   ZtString<> deviceID;
   ZtString<> wssURL;
   ZtString<> caPath;
@@ -59,7 +59,7 @@ struct Options {
 
 ZfStruct(, (Options, CLI),
   (((mode), (CLI::Long<"mode">)), (String)),
-  (((issuer), (CLI::Long<"issuer">)), (String)),
+  (((issuerURL), (CLI::Long<"issuer">)), (String)),
   (((deviceID), (CLI::Long<"device-id">)), (String)),
   (((wssURL), (CLI::Long<"wss">)), (String)),
   (((caPath), (CLI::Long<"ca">)), (String)),
@@ -414,25 +414,25 @@ int main(int argc, char **argv)
     signalDone = nullptr;
     return 0;
   }
-  if (argc != 1 || !options.mode || !options.issuer || !options.wssURL ||
+  if (argc != 1 || !options.mode || !options.issuerURL || !options.wssURL ||
       (options.mode != "front" && options.mode != "agent") ||
       (!options.inventory && !options.deviceID) ||
       (options.inventory && options.mode != "front") ||
       ((options.oneShot || options.waitEOS) && !options.inventory))
     return 1;
 
-  Zhttp::URL issuer{options.issuer};
+  Zhttp::URL issuerURL{options.issuerURL};
   Zws::URI uri;
   Zum::AppIssuerPath issuerPath;
-  ZtString<> issuerSource{issuer.url().path};
+  ZtString<> issuerSource{issuerURL.url().path};
   ZtString<> authorization;
   bool hasBearer = bearer(authorization);
   if (!hasBearer && !(options.cookie && options.origin)) return 1;
-  if (!issuer.ok() && issuer.url().scheme != Zhttp::Scheme::http &&
-      issuer.url().scheme != Zhttp::Scheme::https) return 1;
-  if (!issuer.ok() ||
-      !issuer.url().host || issuer.url().hasQuery ||
-      issuer.url().hasFragment || !issuer.url().path ||
+  if (!issuerURL.ok() && issuerURL.url().scheme != Zhttp::Scheme::http &&
+      issuerURL.url().scheme != Zhttp::Scheme::https) return 1;
+  if (!issuerURL.ok() ||
+      !issuerURL.url().host || issuerURL.url().hasQuery ||
+      issuerURL.url().hasFragment || !issuerURL.url().path ||
       !ZfURI::loadPath(issuerPath, issuerSource) ||
       issuerPath.oauth2 != "oauth2" || !issuerPath.appID ||
       !Zws::URI::parse(uri, options.wssURL).ok() || !uri.secure() ||

@@ -13,6 +13,7 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuObjectTraits.hh>
 #include <zlib/ZuRef.hh>
@@ -2041,13 +2042,13 @@ private:
   };
 
   template <typename Driver>
-  using BodyEmitHeap = ZmHeap<"Zhttp.Server.BodyEmit", BodyEmit_<Driver>>;
+  ZuDerive(BodyEmitHeap, (ZmHeap<"Zhttp.Server.BodyEmit", BodyEmit_<Driver>>));
   template <typename Driver>
   ZuDerive(BodyEmit, (BodyEmit_<Driver, BodyEmitHeap<Driver>>));
 
   template <typename Profile, typename Link_> struct StreamBody;
 
-  template <typename Profile, typename Link_, typename Heap>
+  template <typename Profile, typename Link_, typename Heap = ZuVoid>
   struct StreamBody_ : public Heap, public ZuObject {
     using Self = StreamBody<Profile, Link_>;
     using Emit = BodyEmit<Self>;
@@ -2221,14 +2222,11 @@ private:
   };
 
   template <typename Profile, typename Link_>
-  struct StreamBody : public StreamBody_<Profile, Link_,
-      ZmHeap<"Zhttp.Server.StreamBody",
-        StreamBody_<Profile, Link_, ZuVoid>>> {
-    using Base = StreamBody_<Profile, Link_,
-      ZmHeap<"Zhttp.Server.StreamBody",
-        StreamBody_<Profile, Link_, ZuVoid>>>;
-    using Base::Base;
-  };
+  ZuDerive(StreamBodyHeap,
+    (ZmHeap<"Zhttp.Server.StreamBody", StreamBody_<Profile, Link_>>));
+  template <typename Profile, typename Link_>
+  ZuDerive(StreamBody,
+    (StreamBody_<Profile, Link_, StreamBodyHeap<Profile, Link_>>));
 
   template <typename Profile, typename Link_>
   bool startResponse_(

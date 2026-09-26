@@ -13,6 +13,7 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuObjectTraits.hh>
 
 #include <zlib/ZmBlock.hh>
@@ -59,8 +60,8 @@ struct ClientH2ClearState_ :
   Active	active;
 };
 template <typename Logical>
-using ClientH2ClearStateHeap = ZmHeap<"Zhttp.H2.ClearState",
-  ClientH2ClearState_<Logical>>;
+ZuDerive(ClientH2ClearStateHeap,
+  (ZmHeap<"Zhttp.H2.ClearState", ClientH2ClearState_<Logical>>));
 template <typename Logical>
 using ClientH2ClearState =
   ClientH2ClearState_<Logical, ClientH2ClearStateHeap<Logical>>;
@@ -927,7 +928,7 @@ namespace H2_ {
 template <typename App> class ClientHub;
 template <typename App, typename Heap = ZuVoid> class CliLink;
 template <typename App>
-using CliLinkHeap = ZmHeap<"Zhttp.H2.Link", CliLink<App>>;
+ZuDerive(CliLinkHeap, (ZmHeap<"Zhttp.H2.Link", CliLink<App>>));
 template <typename App>
 using CliLinkT = CliLink<App, CliLinkHeap<App>>;
 
@@ -1704,8 +1705,8 @@ template <
   typename Heap = ZuVoid>
 class CliLink;
 template <typename App, typename H1Logical, typename H2Logical>
-using CliLinkHeap = ZmHeap<"Zhttp.TLS.Link",
-  CliLink<App, H1Logical, H2Logical>>;
+ZuDerive(CliLinkHeap,
+  (ZmHeap<"Zhttp.TLS.Link", CliLink<App, H1Logical, H2Logical>>));
 template <typename App, typename H1Logical, typename H2Logical>
 using CliLinkT = CliLink<App, H1Logical, H2Logical,
   CliLinkHeap<App, H1Logical, H2Logical>>;
@@ -2645,7 +2646,7 @@ class ClientHub;
 template <typename App, typename Logical, typename Heap = ZuVoid>
 struct CliLink;
 template <typename App, typename Logical>
-using CliLinkHeap = ZmHeap<"Zhttp.H3.Link", CliLink<App, Logical>>;
+ZuDerive(CliLinkHeap, (ZmHeap<"Zhttp.H3.Link", CliLink<App, Logical>>));
 template <typename App, typename Logical>
 using CliLinkT =
   CliLink<App, Logical, CliLinkHeap<App, Logical>>;
@@ -4047,7 +4048,7 @@ public:
     friend Pool;
   };
 
-  using LinkHeap = ZmHeap<"Zhttp.ClientPool.Link", Link_<>>;
+  ZuDerive(LinkHeap, (ZmHeap<"Zhttp.ClientPool.Link", Link_<>>));
   using Link = Link_<LinkHeap>;
   using Links =
     ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.ClientPool.Links">>;
@@ -4279,8 +4280,8 @@ public:
   using Pool = ClientPool;
   using Base = ClientHub<Pool, H1TCP>;
 
-  template <typename Heap = ZuVoid> class Link_;
-  using LinkHeap = ZmHeap<"Zhttp.H1.Link", Link_<>>;
+  template <typename Heap> class Link_;
+  struct LinkHeap;
   using Link = Link_<LinkHeap>;
 
   template <typename Heap> class Operation_;
@@ -4422,13 +4423,13 @@ public:
     bool	m_closing = false;
   };
 
-  using OperationHeap = ZmHeap<"Zhttp.H1.Operation", Operation_<>>;
+  ZuDerive(OperationHeap, (ZmHeap<"Zhttp.H1.Operation", Operation_<>>));
   using OperationBase = Operation_<OperationHeap>;
   ZuDerive(Operation, (Operation_<OperationHeap>));
   using OperationRef = ZmRef<Operation>;
   using OperationSlots =
     ZtArray<Operation *, ZtArrayHeapID<"Zhttp.H1.OperationSlots">>;
-  template <typename Heap>
+  template <typename Heap = ZuVoid>
   class Link_ :
     public Heap,
     public ClientLink<Pool, Link_<Heap>, H1TCP> {
@@ -4665,6 +4666,7 @@ public:
     bool	m_stopped = true;
   };
 
+  ZuDerive(LinkHeap, (ZmHeap<"Zhttp.H1.Link", Link_<>>));
   using Links =
     ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.H1.Links">>;
 
@@ -4969,9 +4971,9 @@ class TLSClientPoolLink;
 template <
   typename Pool, typename Owner, typename LiveReq,
   typename Request, typename ResParser, typename Profile>
-using TLSClientPoolLinkHeap = ZmHeap<"Zhttp.TLS.Logical",
-  TLSClientPoolLink<
-    Pool, Owner, LiveReq, Request, ResParser, Profile>>;
+ZuDerive(TLSClientPoolLinkHeap,
+  (ZmHeap<"Zhttp.TLS.Logical",
+    TLSClientPoolLink<Pool, Owner, LiveReq, Request, ResParser, Profile>>));
 template <
   typename Pool, typename Owner, typename LiveReq,
   typename Request, typename ResParser, typename Profile>
@@ -5310,7 +5312,7 @@ private:
   Endpoints	m_endpoints;
   uint64_t	m_generation = 0;
 };
-using ClientRouteHeap = ZmHeap<"Zhttp.Client.Route", ClientRoute_<>>;
+ZuDerive(ClientRouteHeap, (ZmHeap<"Zhttp.Client.Route", ClientRoute_<>>));
 ZuDerive(ClientRoute, (ClientRoute_<ClientRouteHeap>));
 using ClientRouteRef = ZmRef<ClientRoute>;
 
@@ -5364,8 +5366,8 @@ struct ClientDiscoveryPost_ : public Heap, public ZmObject {
   Endpoints		endpoints;
   DiscoveryError	error;
 };
-using ClientDiscoveryPostHeap =
-  ZmHeap<"Zhttp.Client.Discovery", ClientDiscoveryPost_<>>;
+ZuDerive(ClientDiscoveryPostHeap,
+  (ZmHeap<"Zhttp.Client.Discovery", ClientDiscoveryPost_<>>));
 ZuDerive(ClientDiscoveryPost,
   (ClientDiscoveryPost_<ClientDiscoveryPostHeap>));
 using ClientDiscoveryPostRef = ZmRef<ClientDiscoveryPost>;
@@ -5497,7 +5499,7 @@ private:
     bool	m_limited = false;
     bool	m_stopping = false;
   };
-  using PoolLinkHeap = ZmHeap<"Zhttp.Pool.Link", PoolLink_<>>;
+  ZuDerive(PoolLinkHeap, (ZmHeap<"Zhttp.Pool.Link", PoolLink_<>>));
   ZuDerive(PoolLink, (PoolLink_<PoolLinkHeap>));
   using PoolLinkRef = ZmRef<PoolLink>;
   using PoolLinks =
@@ -5574,7 +5576,7 @@ private:
     uint64_t		m_generation = 0;
     bool		m_armed = false;
   };
-  using RequestSlotHeap = ZmHeap<"Zhttp.Pool.Request", RequestSlot_<>>;
+  ZuDerive(RequestSlotHeap, (ZmHeap<"Zhttp.Pool.Request", RequestSlot_<>>));
   ZuDerive(RequestSlot, (RequestSlot_<RequestSlotHeap>));
   using RequestSlotRef = ZmRef<RequestSlot>;
   using LiveReqs =

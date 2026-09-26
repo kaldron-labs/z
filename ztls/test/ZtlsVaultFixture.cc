@@ -4,8 +4,9 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Loadable vault store fixture: one record suffices for Direct and Secrets.
+// Loadable vault store fixture: one record suffices for Direct and Indirect.
 
+#include <zlib/ZuDerive.hh>
 #include <string.h>
 
 #include <zlib/ZmHeap.hh>
@@ -16,14 +17,14 @@
 
 namespace ZtlsVaultFixture_ {
 
-using Value = ZtBArray<ZtArrayHeapID<"Ztls.Vault.FixtureValue">>;
+using Value = ZtBArray<ZtArraySecret<true,
+  ZtArrayHeapID<"Ztls.Vault.FixtureValue">>>;
 
 template <typename Heap = ZuVoid>
 class Store_ : public Heap, public Ztls_::VaultStore {
 public:
   Ztls::VaultResult init(const Ztls::VaultConfig &) override { return {}; }
   void final() override {
-    ZuClear(m_value.data(), m_value.length());
     m_value.clear();
     m_key.clear();
   }
@@ -35,17 +36,7 @@ public:
   }
   Ztls::VaultResult save(ZuCSpan key, ZuBSpan value) override {
     m_key = key;
-    if (value.length() <= m_value.size()) {
-      if (value.length())
-	::memmove(m_value.data(), value.data(), value.length());
-      if (m_value.length() > value.length())
-	ZuClear(m_value.data() + value.length(), m_value.length() - value.length());
-      m_value.length(value.length());
-    } else {
-      Value replacement{value};
-      ZuClear(m_value.data(), m_value.length());
-      m_value = ZuMv(replacement);
-    }
+    m_value = value;
     return {};
   }
 
@@ -54,7 +45,7 @@ private:
   Value m_value;
 };
 
-using StoreHeap = ZmHeap<"Ztls.Vault.Fixture", Store_<>>;
+ZuDerive(StoreHeap, (ZmHeap<"Ztls.Vault.Fixture", Store_<>>));
 ZuDerive(Store, Store_<StoreHeap>);
 
 } // ZtlsVaultFixture_

@@ -58,8 +58,19 @@ using PublicField = ZuBool<
 
 ZtEnumNS(ZumAPI, State, int8_t,
   Pending, Active, Suspended, Disabled, Revoked, Consumed);
-ZtEnumNS(ZumAPI, ClientType, int8_t, Browser, Native, Confidential);
-ZtEnumNS(ZumAPI, ClientAuthMethod, int8_t, None, ClientSecretBasic);
+// Deployment profile is stored; the OAuth client type is derived from it.
+// Local token storage does not make Browser or Native confidential.
+ZtEnumNS(ZumAPI, ClientProfile, int8_t, Browser, Native, Server);
+ZtEnumNS(ZumAPI, ClientType, int8_t, Public, Confidential);
+inline ClientType::T clientType(ClientProfile::T profile)
+{
+  switch (profile) {
+    case ClientProfile::Browser:
+    case ClientProfile::Native: return ClientType::Public;
+    case ClientProfile::Server: return ClientType::Confidential;
+    default: return ClientType::T(-1);
+  }
+}
 ZtEnumNS(ZumAPI, GrantKind, int8_t,
   Ceremony, Capability, Code);
 ZtEnumNS(ZumAPI, GrantPurpose, int8_t,
@@ -325,8 +336,7 @@ struct Client {
   StringVec	redirects;
   int64_t	created = 0;
   int64_t	updated = 0;
-  ClientType::T	type = ClientType::Browser;
-  ClientAuthMethod::T authMethod = ClientAuthMethod::None;
+  ClientProfile::T	profile = ClientProfile::Browser;
   uint8_t	grants = 0;
   bool		refreshAllowed = false;
   StringVec	identityScopes;
@@ -348,16 +358,15 @@ ZfbStruct(ZumAPI, (Client, JSON),
 							(StringVec)),
   (((created),		(Ctor<6>)),				(Int64)),
   (((updated),		(Ctor<7>, Mutable)),			(Int64)),
-  (((type),		(Ctor<8>, Enum<ClientType::Map>)),	(Int8)),
-  (((authMethod),	(Ctor<9>, Mutable, Enum<ClientAuthMethod::Map>)), (Int8)),
-  (((grants),		(Ctor<10>, Mutable)),			(UInt8, 0)),
-  (((refreshAllowed),	(Ctor<11>, Mutable)),			(Bool, false)),
-  (((identityScopes),	(Ctor<12>, Mutable)),			(StringVec)),
-  (((state),		(Ctor<13>, Mutable, Enum<State::Map>)),	(Int8)),
-  (((version),		(Ctor<14>, Mutable, JSON::String<>)),			(UInt64, 1)),
-  (((owner),		(Ctor<15>, Mutable, Hidden)),		(UInt128)),
-  (((previousSecretDigest), (Ctor<16>, Mutable, Hidden)),	(Bytes)),
-  (((previousSecretExpires),(Ctor<17>, Mutable)),		(Int64)));
+  (((profile),		(Ctor<8>, Enum<ClientProfile::Map>)),	(Int8)),
+  (((grants),		(Ctor<9>, Mutable)),			(UInt8, 0)),
+  (((refreshAllowed),	(Ctor<10>, Mutable)),			(Bool, false)),
+  (((identityScopes),	(Ctor<11>, Mutable)),			(StringVec)),
+  (((state),		(Ctor<12>, Mutable, Enum<State::Map>)),	(Int8)),
+  (((version),		(Ctor<13>, Mutable, JSON::String<>)),			(UInt64, 1)),
+  (((owner),		(Ctor<14>, Mutable, Hidden)),		(UInt128)),
+  (((previousSecretDigest), (Ctor<15>, Mutable, Hidden)),	(Bytes)),
+  (((previousSecretExpires),(Ctor<16>, Mutable)),		(Int64)));
 ZfbRoot(Client);
 
 struct ClientAccess {
@@ -845,7 +854,7 @@ struct SSFRx {
   AppID	appID = 0;
   String	audience;
   String	deliveryURL;
-  String	secretRef;
+  String	secretName;
   uint64_t revision = 1;
   int64_t	updated = 0;
   uint128_t owner = 0;
@@ -855,7 +864,7 @@ ZfbStruct(ZumAPI, SSFRx,
   (((appID), (Ctor<1>, Keys<1>, Group<1>)), (UInt64)),
   (((audience), (Ctor<2>)), (String)),
   (((deliveryURL), (Ctor<3>)), (String)),
-  (((secretRef), (Ctor<4>, Hidden)), (String)),
+  (((secretName), (Ctor<4>, Hidden)), (String)),
   (((revision), (Ctor<5>)), (UInt64, 1)),
   (((updated), (Ctor<6>, Mutable)), (Int64)),
   (((owner), (Ctor<7>, Mutable, Hidden)), (UInt128)));

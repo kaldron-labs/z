@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <zlib/ZuLib.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmTime.hh>
@@ -683,7 +684,7 @@ struct Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
 private:
   ReqBuilderQ	m_requests;
 };
-using PoolHeap = ZmHeap<"zhttp.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"zhttp.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 struct Client : public Zhttp::Client<Client, Pool> {

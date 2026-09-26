@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuRef.hh>
 #include <zlib/ZuTestUtil.hh>
@@ -54,17 +55,18 @@ struct TransportContext_ : public Heap, public ZuObject {
   TransportContext_(uintptr_t id_) : id{id_} { }
   uintptr_t id;
 };
-using TransportContextHeap = ZmHeap<"ZmcpITest.Transport", TransportContext_<>>;
+ZuDerive(TransportContextHeap,
+  (ZmHeap<"ZmcpITest.Transport", TransportContext_<>>));
 ZuDerive(TransportContext, (TransportContext_<TransportContextHeap>));
 
 template <typename Heap = ZuVoid>
 struct SessionContext_ : public Heap, public ZuObject { };
-using SessionContextHeap = ZmHeap<"ZmcpITest.Session", SessionContext_<>>;
+ZuDerive(SessionContextHeap, (ZmHeap<"ZmcpITest.Session", SessionContext_<>>));
 ZuDerive(SessionContext, (SessionContext_<SessionContextHeap>));
 
 template <typename Heap = ZuVoid>
 struct StreamContext_ : public Heap, public ZuObject { };
-using StreamContextHeap = ZmHeap<"ZmcpITest.Stream", StreamContext_<>>;
+ZuDerive(StreamContextHeap, (ZmHeap<"ZmcpITest.Stream", StreamContext_<>>));
 ZuDerive(StreamContext, (StreamContext_<StreamContextHeap>));
 
 struct App {
@@ -268,7 +270,7 @@ struct ClientCall_ : public Heap, public ZmObject {
   unsigned controls = 0;
   unsigned failures = 0;
 };
-using ClientCallHeap = ZmHeap<"ZmcpITest.ClientCall", ClientCall_<>>;
+ZuDerive(ClientCallHeap, (ZmHeap<"ZmcpITest.ClientCall", ClientCall_<>>));
 ZuDerive(ClientCall, (ClientCall_<ClientCallHeap>));
 
 class RawHTTP;

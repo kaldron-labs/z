@@ -9,6 +9,7 @@
 #ifndef ZfMapTest_HH
 #define ZfMapTest_HH
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 
@@ -56,9 +57,10 @@ struct ZfMapTest_ : public Heap, public Base_ {
   CIter citer() const { return CIter{*this}; }
 };
 
-template <ZuString ID, typename Base>
-using ZfMapTest =
-  ZfMapTest_<Base, ZmHeap<ID, ZfMapTest_<Base>>>;
+template <ZuString ID, typename Base_>
+ZuDerive(ZfMapTestHeap, (ZmHeap<ID, ZfMapTest_<Base_>>));
+template <ZuString ID, typename Base_>
+ZuDerive(ZfMapTest, (ZfMapTest_<Base_, ZfMapTestHeap<ID, Base_>>));
 
 template <typename Base_>
 struct ZfRefMapTest : public ZmObject, public Base_ {

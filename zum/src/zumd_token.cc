@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_token.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_db_ops.hh>
@@ -42,7 +43,8 @@ public:
   int			error;
   TokenResponse	response;
 };
-using TokenResultHeap = ZmHeap<"Zum.zumd.token.TokenResult", TokenResult__<>>;
+ZuDerive(TokenResultHeap,
+  (ZmHeap<"Zum.zumd.token.TokenResult", TokenResult__<>>));
 ZuDerive(TokenResult_, (TokenResult__<TokenResultHeap>));
 
 template <typename Heap = ZuVoid>
@@ -73,8 +75,8 @@ private:
   ZmRef<Request>	m_request;
   TokenFn	m_complete;
 };
-using TokenCompleteHeap =
-  ZmHeap<"Zum.zumd.token.TokenComplete", TokenComplete__<>>;
+ZuDerive(TokenCompleteHeap,
+  (ZmHeap<"Zum.zumd.token.TokenComplete", TokenComplete__<>>));
 ZuDerive(TokenComplete_, (TokenComplete__<TokenCompleteHeap>));
 
 template <typename Heap = ZuVoid>
@@ -188,8 +190,8 @@ private:
   bool		m_signDone = false;
   bool		m_done = false;
 };
-using ClientTokenHeap =
-  ZmHeap<"Zum.zumd.token.ClientToken", ClientToken__<>>;
+ZuDerive(ClientTokenHeap,
+  (ZmHeap<"Zum.zumd.token.ClientToken", ClientToken__<>>));
 ZuDerive(ClientToken_, (ClientToken__<ClientTokenHeap>));
 
 template <typename Heap = ZuVoid>
@@ -384,7 +386,7 @@ private:
   {
     if (m_done) {
       if (refresh && refresh.mutable_())
-	ZuClear(refresh.data(), refresh.length());
+	ZuClear(refresh);
       return;
     }
     if (result == RefreshRotate::Reused) {
@@ -435,8 +437,8 @@ private:
   bool		m_hasID = false;
   bool		m_done = false;
 };
-using RefreshTokenHeap =
-  ZmHeap<"Zum.zumd.token.RefreshToken", RefreshToken__<>>;
+ZuDerive(RefreshTokenHeap,
+  (ZmHeap<"Zum.zumd.token.RefreshToken", RefreshToken__<>>));
 ZuDerive(RefreshToken_, (RefreshToken__<RefreshTokenHeap>));
 
 template <typename Heap = ZuVoid>
@@ -657,8 +659,7 @@ private:
   bool		m_hasID = false;
   bool		m_done = false;
 };
-using CodeTokenHeap =
-  ZmHeap<"Zum.zumd.token.CodeToken", CodeToken__<>>;
+ZuDerive(CodeTokenHeap, (ZmHeap<"Zum.zumd.token.CodeToken", CodeToken__<>>));
 ZuDerive(CodeToken_, (CodeToken__<CodeTokenHeap>));
 
 template <typename Heap = ZuVoid>
@@ -719,9 +720,9 @@ private:
   void clear_()
   {
     if (m_form && m_form.mutable_())
-      ZuClear(m_form.data(), m_form.length());
+      ZuClear(m_form);
     if (m_authorization && m_authorization.mutable_())
-      ZuClear(m_authorization.data(), m_authorization.length());
+      ZuClear(m_authorization);
     m_form.null();
     m_authorization.null();
     m_params = {};
@@ -767,7 +768,7 @@ private:
       return;
     }
     if (m_authorization && m_authorization.mutable_())
-      ZuClear(m_authorization.data(), m_authorization.length());
+      ZuClear(m_authorization);
     m_authorization.null();
     m_basic = {};
     if (m_grant == TokenGrant::ClientCredentials) {
@@ -882,8 +883,8 @@ private:
   bool		m_hasBasic = false;
   bool		m_done = false;
 };
-using TokenRequestHeap =
-  ZmHeap<"Zum.zumd.token.TokenRequest", TokenRequest__<>>;
+ZuDerive(TokenRequestHeap,
+  (ZmHeap<"Zum.zumd.token.TokenRequest", TokenRequest__<>>));
 ZuDerive(TokenRequest_, (TokenRequest__<TokenRequestHeap>));
 
 static void clientToken(
@@ -973,8 +974,8 @@ private:
   ZmRef<Request>	m_request;
   RevokeFn	m_complete;
 };
-using RevokeCompleteHeap =
-  ZmHeap<"Zum.zumd.token.RevokeComplete", RevokeComplete__<>>;
+ZuDerive(RevokeCompleteHeap,
+  (ZmHeap<"Zum.zumd.token.RevokeComplete", RevokeComplete__<>>));
 ZuDerive(RevokeComplete_, (RevokeComplete__<RevokeCompleteHeap>));
 
 template <typename Heap = ZuVoid>
@@ -1031,9 +1032,9 @@ public:
 private:
   void clear_()
   {
-    if (m_form && m_form.mutable_()) ZuClear(m_form.data(), m_form.length());
+    if (m_form && m_form.mutable_()) ZuClear(m_form);
     if (m_authorization && m_authorization.mutable_())
-      ZuClear(m_authorization.data(), m_authorization.length());
+      ZuClear(m_authorization);
     m_form.null();
     m_authorization.null();
     m_params = {};
@@ -1057,7 +1058,7 @@ private:
       return;
     }
     m_client = row->data();
-    if (m_client.type == ClientType::Confidential) {
+    if (clientType(m_client.profile) == ClientType::Confidential) {
       bool secret = m_hasBasic &&
 	(Ztls::secretVerify(m_client.secretDigest, m_basic.secret) ||
 	 (m_config.now > 0 && m_client.previousSecretExpires > m_config.now &&
@@ -1171,8 +1172,8 @@ private:
   bool		m_hasBasic = false;
   bool		m_done = false;
 };
-using RevokeRequestHeap =
-  ZmHeap<"Zum.zumd.token.RevokeRequest", RevokeRequest__<>>;
+ZuDerive(RevokeRequestHeap,
+  (ZmHeap<"Zum.zumd.token.RevokeRequest", RevokeRequest__<>>));
 ZuDerive(RevokeRequest_, (RevokeRequest__<RevokeRequestHeap>));
 
 bool revokeRequest(

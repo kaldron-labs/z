@@ -10,6 +10,7 @@
 #define zumd_http_HH
 
 #ifndef ZumLib_HH
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumLib.hh>
 #endif
 
@@ -59,8 +60,8 @@ struct HTTPResponse_ : public Heap, public ZmObject  {
   String	location;
   String	setCookie;
 };
-using HTTPResponseHeap =
-  ZmHeap<"Zum.zumd.http.HTTPResponse", HTTPResponse_<>>;
+ZuDerive(HTTPResponseHeap,
+  (ZmHeap<"Zum.zumd.http.HTTPResponse", HTTPResponse_<>>));
 ZuDerive(HTTPResponse, (HTTPResponse_<HTTPResponseHeap>));
 
 template <typename Impl, unsigned Status_>
@@ -175,7 +176,7 @@ struct HTTPData_ : public Heap, public HTTPDataFields {
     return *this;
   }
 };
-using HTTPDataHeap = ZmHeap<"Zum.zumd.http.HTTPData", HTTPData_<>>;
+ZuDerive(HTTPDataHeap, (ZmHeap<"Zum.zumd.http.HTTPData", HTTPData_<>>));
 ZuDerive(HTTPData, (HTTPData_<HTTPDataHeap>));
 
 template <typename Heap = ZuVoid>
@@ -186,8 +187,7 @@ struct HTTPQuery_ : public Heap, public HTTPDataFields {
     return *this;
   }
 };
-using HTTPQueryHeap =
-  ZmHeap<"Zum.zumd.http.HTTPQuery", HTTPQuery_<>>;
+ZuDerive(HTTPQueryHeap, (ZmHeap<"Zum.zumd.http.HTTPQuery", HTTPQuery_<>>));
 ZuDerive(HTTPQuery, (HTTPQuery_<HTTPQueryHeap>));
 
 template <typename App> struct AuthorizeReq;

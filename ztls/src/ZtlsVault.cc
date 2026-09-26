@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <string.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuByteSwap.hh>
@@ -24,6 +25,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiModule.hh>
 #include <zlib/ZiPIDFile.hh>
+#include <zlib/ZiPlatform.hh>
 
 #include <zlib/ZfJSON.hh>
 
@@ -43,15 +45,14 @@ ZtEnumImplNS(VaultVariant);
 
 namespace Vault_ {
 
-using Bytes = ZtBArray<ZtArrayHeapID<"Ztls.Vault.Value">>;
+using Bytes = ZtBArray<ZtArraySecret<true,
+  ZtArrayHeapID<"Ztls.Vault.Value">>>;
 
 struct Entry_ {
   VaultString key;
   Bytes value;
 
   Entry_(ZuCSpan key_, ZuBSpan value_) : key{key_}, value{value_} { }
-  ~Entry_() { ZuClear(value.data(), value.length()); }
-
   static ZuCSpan KeyAxor(const Entry_ &entry) { return entry.key; }
 };
 
@@ -76,18 +77,7 @@ public:
 
   VaultResult save(ZuCSpan key, ZuBSpan value) override {
     if (auto entry = m_entries.find(key)) {
-      auto &dst = entry->value;
-      if (value.length() <= dst.size()) {
-	if (value.length())
-	  ::memmove(dst.data(), value.data(), value.length());
-	if (dst.length() > value.length())
-	  ZuClear(dst.data() + value.length(), dst.length() - value.length());
-	dst.length(value.length());
-      } else {
-	Bytes replacement{value};
-	ZuClear(dst.data(), dst.length());
-	dst = ZuMv(replacement);
-      }
+      entry->value = value;
     } else
       m_entries.addNode(new Entries::Node{key, value});
     return {};
@@ -97,7 +87,7 @@ private:
   Entries m_entries;
 };
 
-using EphemeralHeap = ZmHeap<"Ztls.Vault.Ephemeral", Ephemeral_<>>;
+ZuDerive(EphemeralHeap, (ZmHeap<"Ztls.Vault.Ephemeral", Ephemeral_<>>));
 ZuDerive(Ephemeral, Ephemeral_<EphemeralHeap>);
 
 template <typename Heap = ZuVoid>
@@ -105,7 +95,7 @@ class Values_ : public Heap,
     public ZmHashKV<ZuCSpan, ZuBSpan,
       ZmHashHeapID<"Ztls.Vault.FileEntry">> {
 };
-using ValuesHeap = ZmHeap<"Ztls.Vault.FileValues", Values_<>>;
+ZuDerive(ValuesHeap, (ZmHeap<"Ztls.Vault.FileValues", Values_<>>));
 ZuDerive(Values, Values_<ValuesHeap>);
 inline ZfJSON::AsMap<ZfFieldTC::Bytes> ZfJSON_Fmt(Values *);
 
@@ -119,7 +109,7 @@ public:
     while (auto node = i()) delete node->val();
   }
 };
-using AccountsHeap = ZmHeap<"Ztls.Vault.FileAccounts", Accounts_<>>;
+ZuDerive(AccountsHeap, (ZmHeap<"Ztls.Vault.FileAccounts", Accounts_<>>));
 ZuDerive(Accounts, Accounts_<AccountsHeap>);
 inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(Accounts *);
 
@@ -136,9 +126,10 @@ ZfStruct(ZtlsAPI, (FileData, JSON),
   (((version), (Mutable)), (UInt32)),
   (((accounts), (Mutable)), (UDT)));
 
-using FileText = ZtCArray<ZtArrayHeapID<"Ztls.Vault.FileText">>;
+using FileText = ZtCArray<ZtArraySecret<true,
+  ZtArrayHeapID<"Ztls.Vault.FileText">>>;
 
-enum { TempIDSize = 16, HomeHashBytes = 8 };
+enum { TempIDSize = 16 };
 
 template <typename L>
 VaultResult publish(const Zi::Path &dir, const Zi::Path &path,
@@ -189,7 +180,6 @@ public:
 
   VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
     FileText text;
-    ZuGuard clear{[&text]() { ZuClear(text.data(), text.length()); }};
     FileData data;
     auto result = read_(data, text);
     if (result.template is<ZeException>()) return result;
@@ -201,13 +191,15 @@ public:
     auto entry = account->val()->find(key);
     if (!entry)
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    fn(entry->val());
+    auto value = entry->val();
+    // JSON decoding keeps byte values as views into the mutable file buffer.
+    fn(ZuSpan<uint8_t>{const_cast<uint8_t *>(value.data()),
+      value.length()});
     return {};
   }
 
   VaultResult save(ZuCSpan key, ZuBSpan value) override {
     FileText text;
-    ZuGuard clear{[&text]() { ZuClear(text.data(), text.length()); }};
     FileData data;
     auto result = read_(data, text);
     if (result.template is<ZeException>()) return result;
@@ -290,7 +282,6 @@ private:
   VaultResult write_(const FileData &data) const {
     FileText text;
     ZfJSON::save(text, data);
-    ZuGuard clear{[&text]() { ZuClear(text.data(), text.length()); }};
     return publish(m_dir, m_path, "secrets.json.tmp.",
       [&text](ZiFile &file) {
       if (file.write(text.data(), text.length()) != Zi::OK)
@@ -303,7 +294,7 @@ private:
   Zi::Path m_path;
   VaultString m_account;
 };
-using FileHeap = ZmHeap<"Ztls.Vault.File", File_<>>;
+ZuDerive(FileHeap, (ZmHeap<"Ztls.Vault.File", File_<>>));
 ZuDerive(File, File_<FileHeap>);
 
 VaultResult ensureDir(const Zi::Path &);
@@ -386,7 +377,7 @@ private:
   ZmRef<Ztls_::VaultStore> m_native;
   ZmRef<Ztls_::VaultStore> m_file;
 };
-using AutoHeap = ZmHeap<"Ztls.Vault.Auto", Auto_<>>;
+ZuDerive(AutoHeap, (ZmHeap<"Ztls.Vault.Auto", Auto_<>>));
 ZuDerive(Auto, Auto_<AutoHeap>);
 
 // Versioned, length-delimited plaintext inside the authenticated age file.
@@ -399,16 +390,24 @@ enum {
 };
 
 template <typename Heap = ZuVoid>
-class Secrets_ : public Heap, public Ztls_::VaultStore {
+class Indirect_ : public Heap, public Ztls_::VaultStore {
 public:
-  Secrets_(ZmRef<Ztls_::VaultStore> store, const Zi::Path &dir) :
-      m_store{ZuMv(store)}, m_dir{dir},
-      m_path{ZiFile::append(dir, "secrets.age")} { }
+  Indirect_(ZmRef<Ztls_::VaultStore> store, const Zi::Path &dir) :
+      m_store{ZuMv(store)}, m_dir{dir} { }
 
   VaultResult init(const VaultConfig &cf) override {
+    MD<SHA256> hash;
+    hash.update(cf.account);
+    uint8_t digest[MD<SHA256>::Size];
+    hash.finish(digest);
+    char hex[ZuHex::enclen(sizeof(digest))];
+    ZuHex::encode(hex, digest);
+    ZuClear(digest, sizeof(digest));
+    m_path = ZiFile::append(m_dir,
+      Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
     return m_store->init(cf);
   }
-  void final() override { m_store->final(); }
+  void final() override { m_store->final(); m_path.null(); }
 
   VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
     ZiFile file;
@@ -421,7 +420,6 @@ public:
     result = passphrase_(passphrase, false);
     if (result.template is<ZeException>()) return result;
     Bytes plain;
-    ZuGuard clearPlain{[&plain]() { ZuClear(plain.data(), plain.size()); }};
     result = decrypt_(file, passphrase, plain);
     if (result.template is<ZeException>()) return result;
     uint64_t offset = 0, length = 0;
@@ -429,7 +427,8 @@ public:
     if (result.template is<ZeException>()) return result;
     if (offset == UINT64_MAX)
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    fn(ZuBSpan{plain.data() + offset + RecordSize + key.length(), length});
+    fn(ZuSpan<uint8_t>{plain.data() + offset + RecordSize + key.length(),
+      length});
     return {};
   }
 
@@ -454,7 +453,6 @@ public:
     auto result = passphrase_(passphrase, !file);
     if (result.template is<ZeException>()) return result;
     Bytes plain;
-    ZuGuard clearPlain{[&plain]() { ZuClear(plain.data(), plain.size()); }};
     if (file) {
       result = decrypt_(file, passphrase, plain, newSize);
       if (result.template is<ZeException>()) return result;
@@ -515,7 +513,7 @@ private:
     if (!create) {
       bool loaded = false;
       auto result = m_store->load(PassphraseKey,
-        [passphrase, &loaded](ZuBSpan stored) mutable {
+        [passphrase, &loaded](ZuSpan<uint8_t> stored) mutable {
 	if (stored.length() == passphrase.length()) {
 	  ::memcpy(passphrase.data(), stored.data(), stored.length());
 	  loaded = true;
@@ -584,8 +582,8 @@ private:
   Zi::Path m_dir;
   Zi::Path m_path;
 };
-using SecretsHeap = ZmHeap<"Ztls.Vault.Secrets", Secrets_<>>;
-ZuDerive(Secrets, Secrets_<SecretsHeap>);
+ZuDerive(IndirectHeap, (ZmHeap<"Ztls.Vault.Indirect", Indirect_<>>));
+ZuDerive(Indirect, Indirect_<IndirectHeap>);
 
 template <typename L>
 VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
@@ -637,7 +635,7 @@ struct State_ : public Heap {
   ZmRef<Ztls_::VaultStore> store;
 };
 
-using StateHeap = ZmHeap<"Ztls.Vault.State", State_<>>;
+ZuDerive(StateHeap, (ZmHeap<"Ztls.Vault.State", State_<>>));
 
 } // Vault_
 
@@ -650,6 +648,7 @@ VaultResult Vault::init(const VaultConfig &config)
 {
   if (m_state)
     return ZeEXCEPT(Error, "ZtlsVault", "already initialized");
+
   if (config.store < VaultStore::Ephemeral || config.store >= VaultStore::N ||
       config.variant < VaultVariant::Default ||
       config.variant >= VaultVariant::N)
@@ -662,7 +661,7 @@ VaultResult Vault::init(const VaultConfig &config)
 #ifdef _WIN32
     cf.variant = cf.store == VaultStore::KeyRing ||
       cf.store == VaultStore::Auto ?
-      VaultVariant::Secrets : VaultVariant::Direct;
+      VaultVariant::Indirect : VaultVariant::Direct;
 #else
     cf.variant = VaultVariant::Direct;
 #endif
@@ -673,13 +672,13 @@ VaultResult Vault::init(const VaultConfig &config)
     return ZeEXCEPT(Error, "ZtlsVault", "native direct mode unsupported");
   }
 #endif
-  if (!cf.service) cf.service = ZiLog::program();
-  if (!cf.service) {
+  if (!cf.program) cf.program = ZiLog::program();
+  if (!cf.program) {
     delete state;
-    return ZeEXCEPT(Error, "ZtlsVault", "service unavailable");
+    return ZeEXCEPT(Error, "ZtlsVault", "program unavailable");
   }
   if (!cf.envPrefix) {
-    cf.envPrefix = cf.service;
+    cf.envPrefix = cf.program;
     Vault_::upper(cf.envPrefix);
   }
 
@@ -689,7 +688,7 @@ VaultResult Vault::init(const VaultConfig &config)
   if (override && *override)
     state->home = override;
   else if (auto base = Zt::getpath("HOME"))
-    state->home = ZiFile::append(Zi::Path{base}, Zi::Path{} << '.' << cf.service);
+    state->home = ZiFile::append(Zi::Path{base}, Zi::Path{} << '.' << cf.program);
   if (!state->home) {
     delete state;
     return ZeEXCEPT(Error, "ZtlsVault", "home unavailable");
@@ -703,30 +702,26 @@ VaultResult Vault::init(const VaultConfig &config)
   }
 
   if (!cf.account) {
-    VaultString home{state->home};
-    MD<SHA256> hash;
-    hash.update(home);
-    uint8_t digest[MD<SHA256>::Size];
-    hash.finish(digest);
-    char hex[ZuHex::enclen(Vault_::HomeHashBytes)];
-    ZuHex::encode(hex, ZuBSpan{digest, Vault_::HomeHashBytes});
-    ZuClear(digest, sizeof(digest));
-    for (char &c : hex) if (c >= 'A' && c <= 'F') c += 'a' - 'A';
-    cf.account << "vault|" << ZuCSpan{hex, sizeof(hex)};
+    cf.account = Zi::username();
+    if (!cf.account) {
+      delete state;
+      return ZeEXCEPT(Error, "ZtlsVault", "username unavailable");
+    }
+    cf.account << "@localhost";
   }
   m_state = state;
   return {};
 }
 
-VaultResult Vault::start()
+VaultResult Vault::open()
 {
   if (!m_state)
     return ZeEXCEPT(Error, "ZtlsVault", "not initialized");
   if (m_state->store) return {};
 
   auto &cf = m_state->config;
-  bool secrets = cf.variant == VaultVariant::Secrets;
-  if (cf.store == VaultStore::File || secrets) {
+  bool indirect = cf.variant == VaultVariant::Indirect;
+  if (cf.store == VaultStore::File || indirect) {
     auto result = Vault_::ensureDir(m_state->home);
     if (result.template is<ZeException>()) return result;
     m_state->dir = ZiFile::append(m_state->home, "vault");
@@ -781,8 +776,8 @@ VaultResult Vault::start()
     m_state->pid.final();
     return ZeEXCEPT(Error, "ZtlsVault", "store not yet implemented");
   }
-  m_state->store = secrets ?
-    ZmRef<Ztls_::VaultStore>{new Vault_::Secrets{ZuMv(selected),
+  m_state->store = indirect ?
+    ZmRef<Ztls_::VaultStore>{new Vault_::Indirect{ZuMv(selected),
       m_state->dir}} :
     ZuMv(selected);
   auto result = m_state->store->init(cf);
@@ -794,7 +789,7 @@ VaultResult Vault::start()
   return result;
 }
 
-void Vault::stop()
+void Vault::close()
 {
   if (!m_state || !m_state->store) return;
   m_state->store->final();

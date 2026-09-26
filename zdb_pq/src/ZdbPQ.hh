@@ -2126,7 +2126,7 @@ private:
   template <typename Heap = ZuVoid> struct FieldMap_ : FieldMapHash, Heap {
     using FieldMapHash::FieldMapHash;
   };
-  using FieldMapHeap = ZmHeap<"ZdbPQ.FieldMap", FieldMap_<>>;
+  ZuDerive(FieldMapHeap, (ZmHeap<"ZdbPQ.FieldMap", FieldMap_<>>));
   ZuDerive(FieldMap, (FieldMap_<FieldMapHeap>));
   struct IndexState : IndexMatch {
     IDString	id;
@@ -2138,7 +2138,7 @@ private:
   template <typename Heap = ZuVoid> struct IndexMap_ : IndexMapHash, Heap {
     using IndexMapHash::IndexMapHash;
   };
-  using IndexMapHeap = ZmHeap<"ZdbPQ.IndexMap", IndexMap_<>>;
+  ZuDerive(IndexMapHeap, (ZmHeap<"ZdbPQ.IndexMap", IndexMap_<>>));
   ZuDerive(IndexMap, (IndexMap_<IndexMapHeap>));
   ZuDerive(MissingIndices,
     (ZtArray<KeyID, ZtArrayHeapID<"ZdbPQ.MissingIndex">>));

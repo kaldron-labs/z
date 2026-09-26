@@ -6,6 +6,7 @@
 
 // OAuth authorization server and ping resource server example
 
+#include <zlib/ZuDerive.hh>
 #include <iostream>
 #include <string.h>
 
@@ -155,7 +156,7 @@ ZfStruct(, (Options, CLI),
 
 template <typename Heap = ZuVoid>
 struct Empty_ : public Heap, public ZmObject { };
-using EmptyHeap = ZmHeap<"zrestd.Empty", Empty_<>>;
+ZuDerive(EmptyHeap, (ZmHeap<"zrestd.Empty", Empty_<>>));
 ZuDerive(Empty, (Empty_<EmptyHeap>));
 
 template <typename Heap = ZuVoid>
@@ -167,7 +168,7 @@ struct Text_ : public Heap, public ZmObject {
     return s;
   }
 };
-using TextHeap = ZmHeap<"zrestd.Text", Text_<>>;
+ZuDerive(TextHeap, (ZmHeap<"zrestd.Text", Text_<>>));
 ZuDerive(Text, (Text_<TextHeap>));
 
 template <typename Heap = ZuVoid>
@@ -175,15 +176,14 @@ struct Redirect_ : public Heap, public ZmObject {
   OAuthString location;
   OAuthString cookie;
 };
-using RedirectHeap = ZmHeap<"zrestd.Redirect", Redirect_<>>;
+ZuDerive(RedirectHeap, (ZmHeap<"zrestd.Redirect", Redirect_<>>));
 ZuDerive(Redirect, (Redirect_<RedirectHeap>));
 
 template <typename Heap = ZuVoid>
 struct BearerFailure_ : public Heap, public ZmObject {
   OAuthString challenge;
 };
-using BearerFailureHeap =
-  ZmHeap<"zrestd.BearerFailure", BearerFailure_<>>;
+ZuDerive(BearerFailureHeap, (ZmHeap<"zrestd.BearerFailure", BearerFailure_<>>));
 ZuDerive(BearerFailure, (BearerFailure_<BearerFailureHeap>));
 
 template <typename Heap = ZuVoid>
@@ -192,7 +192,7 @@ struct LoginForm_ : public Heap, public ZmObject {
   OAuthString password;
   OAuthString decision;
 };
-using LoginFormHeap = ZmHeap<"zrestd.LoginForm", LoginForm_<>>;
+ZuDerive(LoginFormHeap, (ZmHeap<"zrestd.LoginForm", LoginForm_<>>));
 ZuDerive(LoginForm, (LoginForm_<LoginFormHeap>));
 ZfStruct(, (LoginForm, URI),
   (((username), (Required)), (String)),
@@ -209,7 +209,7 @@ struct TokenForm_ : public Heap, public ZmObject {
   OAuthString scope;
   OAuthString clientID;
 };
-using TokenFormHeap = ZmHeap<"zrestd.TokenForm", TokenForm_<>>;
+ZuDerive(TokenFormHeap, (ZmHeap<"zrestd.TokenForm", TokenForm_<>>));
 ZuDerive(TokenForm, (TokenForm_<TokenFormHeap>));
 ZfStruct(, (TokenForm, URI),
   (((grantType), (URI::ID<"grant_type">, Required)), (String)),
@@ -239,7 +239,7 @@ struct AppRequest {
   App			*app = nullptr;
   ZmRef<Application>	application;
   OAuthAppString	appID;
-  OAuthString		issuer;
+  OAuthString		issuerURL;
   OAuthString		audience;
   bool			valid = true;
   bool			admitted = false;
@@ -654,7 +654,7 @@ ZmListDerive(ResBuilderQ, ResBuilder_,
 using ResBuilder = ResBuilderQ::Node;
 
 struct BrowserTxn {
-  OAuthString issuer;
+  OAuthString issuerURL;
   OAuthString clientID;
   OAuthString redirectURI;
   OAuthString scope;
@@ -762,8 +762,7 @@ struct Application_ : public Heap, public ZmObject {
     expireState(access, accessExpiries, now);
   }
 };
-using ApplicationHeap =
-  ZmHeap<"zrestd.Application", Application_<>>;
+ZuDerive(ApplicationHeap, (ZmHeap<"zrestd.Application", Application_<>>));
 ZuDerive(Application, (Application_<ApplicationHeap>));
 
 // Requests retain applications after a registry lookup; the registry shares
@@ -795,7 +794,7 @@ static OAuthString digestText(ZuCSpan value)
   return encoded;
 }
 
-static bool encodePart(OAuthString &out, ZuBSpan data)
+static bool encodePart(OAuthSecret &out, ZuBSpan data)
 {
   unsigned old = out.length();
   unsigned n = ZuBase64URL::enclen(data.length());
@@ -911,15 +910,15 @@ bool Application_<Heap>::init(Ztls::Random &rng)
 }
 
 static bool jwtIssue(Application &application, Ztls::Random &rng,
-    ZuCSpan issuer, ZuCSpan audience, ZuCSpan subject, ZuCSpan clientID,
+    ZuCSpan issuerURL, ZuCSpan audience, ZuCSpan subject, ZuCSpan clientID,
     ZuCSpan scope, int64_t now, int64_t expires,
-    OAuthString &token, OAuthString &tokenID)
+    OAuthSecret &token, OAuthString &tokenID)
 {
   if (!randomText(rng, tokenID)) return false;
   JWTHeader header{.type = "at+jwt", .algorithm = "ES256",
     .keyID = application.keyID};
   OAuthAccessClaims claims{
-    .issuer = issuer, .audience = audience, .subject = subject,
+    .issuerURL = issuerURL, .audience = audience, .subject = subject,
     .clientID = clientID, .scope = scope, .issuedAt = now,
     .notBefore = now, .expiry = expires, .tokenID = tokenID};
   OAuthString headerJSON, claimsJSON;
@@ -946,7 +945,7 @@ static bool jwtIssue(Application &application, Ztls::Random &rng,
 }
 
 static bool jwtVerify(Application &application, ZuCSpan token,
-    ZuCSpan issuer, ZuCSpan audience, int64_t now, OAuthAccessClaims &claims)
+    ZuCSpan issuerURL, ZuCSpan audience, int64_t now, OAuthAccessClaims &claims)
 {
   int first = token.find([](char c) { return c == '.'; });
   if (first <= 0) return false;
@@ -981,7 +980,7 @@ static bool jwtVerify(Application &application, ZuCSpan token,
     return false;
   }
   if (header.type != "at+jwt" || header.algorithm != "ES256" ||
-      header.keyID != application.keyID || claims.issuer != issuer ||
+      header.keyID != application.keyID || claims.issuerURL != issuerURL ||
       claims.audience != audience || !claims.subject || !claims.clientID ||
       !claims.scope || !claims.tokenID || claims.issuedAt <= 0 ||
       claims.notBefore > now || claims.expiry <= now ||
@@ -1044,11 +1043,11 @@ public:
       "invalid metadata route"); return; }
     parser.application->expire(Zm::now().sec());
     ZmRef<OAuthMetadata> value = new OAuthMetadata{};
-    value->issuer = parser.issuer;
-    value->authorizationEndpoint << parser.issuer << "/v1/authorize";
-    value->tokenEndpoint << parser.issuer << "/v1/token";
-    value->revocationEndpoint << parser.issuer << "/v1/revoke";
-    value->jwksURI << parser.issuer << "/v1/keys";
+    value->issuerURL = parser.issuerURL;
+    value->authorizationEndpoint << parser.issuerURL << "/v1/authorize";
+    value->tokenEndpoint << parser.issuerURL << "/v1/token";
+    value->revocationEndpoint << parser.issuerURL << "/v1/revoke";
+    value->jwksURI << parser.issuerURL << "/v1/keys";
     value->responseTypes.push("code");
     value->grantTypes.push("authorization_code");
     value->grantTypes.push("refresh_token");
@@ -1108,7 +1107,7 @@ public:
       return;
     }
     OAuthAccessClaims claims;
-    if (!jwtVerify(*parser.application, token, parser.issuer,
+    if (!jwtVerify(*parser.application, token, parser.issuerURL,
         parser.audience, Zm::now().sec(), claims)) {
       bearer_<PingUnauthorized>(link, parser, "invalid_token");
       return;
@@ -1206,8 +1205,8 @@ bool AppRequest::admit()
 
 void AppRequest::origin(Zhttp::Scheme::T scheme, ZuCSpan authority)
 {
-  issuer.null();
-  issuer << Zhttp::Scheme::name(scheme) << "://" << authority <<
+  issuerURL.null();
+  issuerURL << Zhttp::Scheme::name(scheme) << "://" << authority <<
     "/oauth2/" << appID;
   audience.null();
   audience << Zhttp::Scheme::name(scheme) << "://" << authority <<
@@ -1216,13 +1215,13 @@ void AppRequest::origin(Zhttp::Scheme::T scheme, ZuCSpan authority)
 
 template <typename Link, typename Request>
 void App::redirectError_(Link *link, const Request &request,
-    ZuCSpan redirect, ZuCSpan state, ZuCSpan issuer, ZuCSpan code)
+    ZuCSpan redirect, ZuCSpan state, ZuCSpan issuerURL, ZuCSpan code)
 {
   ZmRef<Redirect> response = new Redirect{};
   response->location = redirect;
   OAuthAuthorizeErrorRes query{
     .error = code, .errorDescription = "invalid authorization request",
-    .state = state, .issuer = issuer};
+    .state = state, .issuerURL = issuerURL};
   ZfURI::save(response->location, query);
   send_<AuthorizeRedirect>(link, request, response.ptr());
 }
@@ -1244,7 +1243,7 @@ void App::authorize(
   if (!valid) {
     if (redirectOK)
       redirectError_(link, parser, request.redirectURI, request.state,
-        parser.issuer, "invalid_request");
+        parser.issuerURL, "invalid_request");
     else
       error_<OAuthBadRequest>(link, parser,
         request.clientID ? "unauthorized_client" : "invalid_request",
@@ -1266,7 +1265,7 @@ void App::authorize(
     return;
   }
   BrowserTxn transaction{
-    .issuer = parser.issuer, .clientID = request.clientID,
+    .issuerURL = parser.issuerURL, .clientID = request.clientID,
     .redirectURI = request.redirectURI, .scope = request.scope,
     .state = request.state, .challenge = request.codeChallenge,
     .expires = now + BrowserLifetime};
@@ -1320,7 +1319,7 @@ void App::authorize(
   response->cookie = "__Host-zrest_auth=; Path=/; Secure; HttpOnly; "
     "SameSite=Lax; Max-Age=0";
   if (transaction.expires <= now ||
-      transaction.issuer != parser.issuer) {
+      transaction.issuerURL != parser.issuerURL) {
     error_<OAuthBadRequest>(link, parser, "invalid_request",
       "authorization session expired");
     return;
@@ -1331,7 +1330,7 @@ void App::authorize(
     response->location = transaction.redirectURI;
     OAuthAuthorizeErrorRes query{
       .error = "access_denied", .errorDescription = "access denied",
-      .state = transaction.state, .issuer = transaction.issuer};
+      .state = transaction.state, .issuerURL = transaction.issuerURL};
     ZfURI::save(response->location, query);
     send_<AuthorizeRedirect>(link, parser, response.ptr());
     return;
@@ -1341,7 +1340,7 @@ void App::authorize(
     OAuthAuthorizeErrorRes query{
       .error = "temporarily_unavailable",
       .errorDescription = "application unavailable",
-      .state = transaction.state, .issuer = transaction.issuer};
+      .state = transaction.state, .issuerURL = transaction.issuerURL};
     ZfURI::save(response->location, query);
     send_<AuthorizeRedirect>(link, parser, response.ptr());
     return;
@@ -1353,7 +1352,7 @@ void App::authorize(
     OAuthAuthorizeErrorRes query{
       .error = "temporarily_unavailable",
       .errorDescription = "authorization busy",
-      .state = transaction.state, .issuer = transaction.issuer};
+      .state = transaction.state, .issuerURL = transaction.issuerURL};
     ZfURI::save(response->location, query);
     send_<AuthorizeRedirect>(link, parser, response.ptr());
     return;
@@ -1363,7 +1362,7 @@ void App::authorize(
     response->location = transaction.redirectURI;
     OAuthAuthorizeErrorRes query{
       .error = "server_error", .errorDescription = "authorization failed",
-      .state = transaction.state, .issuer = transaction.issuer};
+      .state = transaction.state, .issuerURL = transaction.issuerURL};
     ZfURI::save(response->location, query);
     send_<AuthorizeRedirect>(link, parser, response.ptr());
     fail_();
@@ -1378,14 +1377,14 @@ void App::authorize(
   parser.application->codes.add(ZuMv(codeKey), ZuMv(grant));
   response->location = transaction.redirectURI;
   OAuthAuthorizeCodeRes query{
-    .code = code, .state = transaction.state, .issuer = transaction.issuer};
+    .code = code, .state = transaction.state, .issuerURL = transaction.issuerURL};
   ZfURI::save(response->location, query);
   send_<AuthorizeRedirect>(link, parser, response.ptr());
   ++m_authorize;
   event_("authorize");
 }
 
-bool App::issuePair_(Application &application, ZuCSpan issuer,
+bool App::issuePair_(Application &application, ZuCSpan issuerURL,
     ZuCSpan audience, ZuCSpan subject, ZuCSpan clientID, ZuCSpan scope,
     OAuthTokenRes &response, OAuthString family)
 {
@@ -1410,7 +1409,7 @@ bool App::issuePair_(Application &application, ZuCSpan issuer,
       application.access.count_() >= tokenLimit) return false;
   OAuthString refresh, tokenID;
   if (!randomText(m_rng, refresh) ||
-      !jwtIssue(application, m_rng, issuer, audience, subject, clientID,
+      !jwtIssue(application, m_rng, issuerURL, audience, subject, clientID,
         scope, now, now + int64_t(m_options->accessSecs),
         response.accessToken, tokenID)) return false;
   auto refreshKey = digestText(refresh);
@@ -1454,7 +1453,7 @@ void App::token(Link *link, const TokenParser &parser, bool ok)
     auto node = shape ? parser.application->codes.find(key) : nullptr;
     auto verifierChallenge = digestText(request.codeVerifier);
     bool valid = node && node->val().expires > now &&
-      node->val().issuer == parser.issuer &&
+      node->val().issuerURL == parser.issuerURL &&
       node->val().clientID == request.clientID &&
       node->val().redirectURI == request.redirectURI &&
       request.codeVerifier.length() >= 43 &&
@@ -1470,7 +1469,7 @@ void App::token(Link *link, const TokenParser &parser, bool ok)
     parser.application->codes.del(key);
     parser.application->codeExpiries.del(ExpiryKey{grant.expires, key});
     if (!parser.application->active ||
-        !issuePair_(*parser.application, parser.issuer, parser.audience,
+        !issuePair_(*parser.application, parser.issuerURL, parser.audience,
           grant.subject, grant.clientID, grant.scope, *response)) {
       error_<OAuthInternalError>(link, parser, "server_error",
         "token issuance failed");
@@ -1503,7 +1502,7 @@ void App::token(Link *link, const TokenParser &parser, bool ok)
     RefreshGrant grant = node->val();
     node->val().active = false;
     if (!parser.application->active ||
-        !issuePair_(*parser.application, parser.issuer, parser.audience,
+        !issuePair_(*parser.application, parser.issuerURL, parser.audience,
           grant.subject, grant.clientID, scope, *response, grant.family)) {
       error_<OAuthInternalError>(link, parser, "server_error",
         "token issuance failed");
@@ -1543,7 +1542,7 @@ void App::revoke(Link *link, const RevokeParser &parser, bool ok)
       family->val().revoked = true;
   }
   OAuthAccessClaims claims;
-  if (jwtVerify(*parser.application, parser.object->token, parser.issuer,
+  if (jwtVerify(*parser.application, parser.object->token, parser.issuerURL,
       parser.audience, Zm::now().sec(), claims) && claims.clientID == clientID) {
     if (auto access = parser.application->access.find(claims.tokenID))
       access->val().revoked = true;

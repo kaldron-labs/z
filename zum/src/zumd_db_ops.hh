@@ -318,7 +318,7 @@ void authorizationFinish(
 	      row->data().evidenceVersion = evidence.version;
 	    }
 	    if (!row->commit()) {
-	      ZuClear(code.data(), code.length());
+	      ZuClear(code);
 	      complete(false, String{});
 	      return;
 	    }
@@ -412,13 +412,13 @@ void refreshFinish(
 	  if (result != RefreshRotate::Rotated &&
 	      result != RefreshRotate::Reused) {
 	    if (next.token)
-	      ZuClear(next.token.data(), next.token.length());
+	      ZuClear(next.token);
 	    complete(result, String{});
 	    return;
 	  }
 	  if (!row->commit()) {
 	    if (next.token)
-	      ZuClear(next.token.data(), next.token.length());
+	      ZuClear(next.token);
 	    complete(RefreshRotate::Invalid, String{});
 	    return;
 	  }

@@ -88,14 +88,14 @@ static void authorizeTest()
 
   OAuthAuthorizeCodeRes response{
     .code = "code", .state = "state",
-    .issuer = "https://localhost:8443/oauth2/ping"};
+    .issuerURL = "https://localhost:8443/oauth2/ping"};
   uri.null();
   ZfURI::save(uri, response);
   OAuthAuthorizeCodeRes callback;
   ZuTestCall(loadURI, callback, uri);
   ZuCheck(callback.code == "code");
   ZuCheck(callback.state == "state");
-  ZuCheck(callback.issuer == "https://localhost:8443/oauth2/ping");
+  ZuCheck(callback.issuerURL == "https://localhost:8443/oauth2/ping");
 }
 
 static void formTest()
@@ -176,7 +176,7 @@ static void jsonTest()
     "\"authorization code is invalid\"}");
 
   OAuthAccessClaims claims{
-    .issuer = "https://localhost:8443/oauth2/ping",
+    .issuerURL = "https://localhost:8443/oauth2/ping",
     .audience = "https://localhost:8443/api/ping",
     .subject = "test", .clientID = "zrest-native", .scope = "ping",
     .issuedAt = 1700000000, .notBefore = 1700000000,
@@ -185,7 +185,7 @@ static void jsonTest()
   ZfJSON::save(json, claims);
   OAuthAccessClaims loadedClaims;
   ZuTestCall(loadJSON, loadedClaims, json);
-  ZuCheck(loadedClaims.issuer == claims.issuer &&
+  ZuCheck(loadedClaims.issuerURL == claims.issuerURL &&
     loadedClaims.audience == claims.audience &&
     loadedClaims.subject == claims.subject &&
     loadedClaims.clientID == claims.clientID &&

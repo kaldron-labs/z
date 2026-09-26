@@ -9,6 +9,7 @@
 #ifndef ZtlsVaultSS_HH
 #define ZtlsVaultSS_HH
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuPtr.hh>
@@ -32,7 +33,7 @@ ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 template <typename Heap = ZuVoid>
 struct Attrs_ : Heap, ZmHashKV<Text, Text,
     ZmHashHeapID<"Ztls.Vault.SS.Attr">> { };
-using AttrsHeap = ZmHeap<"Ztls.Vault.SS.Attrs", Attrs_<>>;
+ZuDerive(AttrsHeap, (ZmHeap<"Ztls.Vault.SS.Attrs", Attrs_<>>));
 ZuDerive(Attrs, Attrs_<AttrsHeap>);
 inline ZfDBUS::AsMap<> ZfDBUS_Fmt(Attrs *);
 

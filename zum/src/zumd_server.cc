@@ -11,6 +11,7 @@
 
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuICmp.hh>
 #include <zlib/ZuMatcher.hh>
 
@@ -55,8 +56,8 @@ ZfStruct(, (Status, JSON),
 struct OK { bool ok = false; };
 ZfStruct(, (OK, JSON),
   (((ok),		(Required)),	(Bool)));
-struct BearerError { String error; };
-ZfStruct(, (BearerError, JSON),
+struct BearerErrorBody { String error; };
+ZfStruct(, (BearerErrorBody, JSON),
   (((error),		(Required)),	(String)));
 
 template <typename T>
@@ -167,8 +168,8 @@ public:
 private:
   ServerFn	m_complete;
 };
-using ReplyCompleteHeap =
-  ZmHeap<"Zum.zumd.server.ReplyComplete", ReplyComplete__<>>;
+ZuDerive(ReplyCompleteHeap,
+  (ZmHeap<"Zum.zumd.server.ReplyComplete", ReplyComplete__<>>));
 ZuDerive(ReplyComplete_, (ReplyComplete__<ReplyCompleteHeap>));
 
 static String encodeID(ZuBSpan id)
@@ -456,7 +457,7 @@ String Server::csrf_(ZuBSpan key) const
   String encoded;
   encoded.length(ZuBase64URL::enclen(digest.length()));
   encoded.length(ZuBase64URL::encode(encoded.span(), digest));
-  ZuClear(digest.data(), digest.length());
+  ZuClear(digest);
   return encoded;
 }
 
@@ -496,7 +497,7 @@ void Server::authorize_(
   Bytes binding;
   if (!cookie_(cookie, binding)) { done->finish(serverError()); return; }
   String setCookie = setCookie_(cookie);
-  if (cookie.mutable_()) ZuClear(cookie.data(), cookie.length());
+  if (cookie.mutable_()) ZuClear(cookie);
   int64_t now = now_();
   if (now <= 0) {
     done->finish(serverError());
@@ -782,7 +783,7 @@ void Server::login_(AppServer app, String cookie, ServerFn complete)
   Bytes digest;
   String csrf;
   if (binding_(cookie, token, digest)) csrf = csrf_(digest);
-  if (token && token.mutable_()) ZuClear(token.data(), token.length());
+  if (token && token.mutable_()) ZuClear(token);
   String body{
     "<!doctype html><meta charset=utf-8><title>Zum login</title>"
     "<meta name=referrer content=no-referrer><h1>Zum</h1>"};
@@ -971,11 +972,11 @@ void Server::logout_(
   bool matches = expected.length() == submitted.length() &&
     Ztls::ctEqual(ZuBSpan{expected}, ZuBSpan{submitted});
   if (submitted && submitted.mutable_())
-    ZuClear(submitted.data(), submitted.length());
+    ZuClear(submitted);
   if (expected && expected.mutable_())
-    ZuClear(expected.data(), expected.length());
+    ZuClear(expected);
   if (!matches) {
-    if (token && token.mutable_()) ZuClear(token.data(), token.length());
+    if (token && token.mutable_()) ZuClear(token);
     done->finish(jsonReply(OAuthError::InvalidRequest));
     return;
   }
@@ -998,8 +999,7 @@ struct ReadyKey__ : public Heap, public ZmObject  {
   SignKey key;
   Bytes digest;
 };
-using ReadyKeyHeap =
-  ZmHeap<"Zum.zumd.server.ReadyKey", ReadyKey__<>>;
+ZuDerive(ReadyKeyHeap, (ZmHeap<"Zum.zumd.server.ReadyKey", ReadyKey__<>>));
 ZuDerive(ReadyKey_, (ReadyKey__<ReadyKeyHeap>));
 
 void Server::ready(ServerFn complete)
@@ -1035,7 +1035,7 @@ void Server::ready(ServerFn complete)
             m_sign(probe->key, probe->digest, [probe, finish = ZuMv(finish)](
                 Bytes signature) mutable {
               bool ok = bool(signature);
-              if (signature.mutable_()) ZuClear(signature.data(), signature.length());
+              if (signature.mutable_()) ZuClear(signature);
               finish(ok ? ServerReply{.body = serverJSON(Status{"ready"}),
                 .type = ReplyType::OK} : serverError());
             });
@@ -1104,7 +1104,7 @@ void Server::userInfo(
   app_(appID, [this, authorization = ZuMv(authorization),
       complete = ZuMv(complete)](AppServer app) mutable {
     if (!app) { complete(ServerReply{
-      .body = serverJSON(BearerError{"invalid_token"}),
+      .body = serverJSON(BearerErrorBody{"invalid_token"}),
       .type = ReplyType::BearerError}); return; }
     userInfo_(ZuMv(app), ZuMv(authorization), ZuMv(complete));
   });
@@ -1136,7 +1136,7 @@ void Server::userInfoVerify_(
       !ZuICmp<ZuCSpan>::equals(
         ZuCSpan{authorization.data(), prefix.length()}, prefix)) {
     done->finish(ServerReply{
-      .body = serverJSON(BearerError{"invalid_token"}),
+      .body = serverJSON(BearerErrorBody{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -1145,7 +1145,7 @@ void Server::userInfoVerify_(
   int64_t now = now_();
   if (now <= 0 || !jwtHeader(authorization, m_config.limits.jwt, header)) {
     done->finish(ServerReply{
-      .body = serverJSON(BearerError{"invalid_token"}),
+      .body = serverJSON(BearerErrorBody{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -1157,7 +1157,7 @@ void Server::userInfoVerify_(
 	app.issuer, app.audience, now, m_config.limits.jwt, principal) ||
 	!scopeContains(principal.scope, "openid")) {
       done->finish(ServerReply{
-	.body = serverJSON(BearerError{"invalid_token"}),
+	.body = serverJSON(BearerErrorBody{"invalid_token"}),
 	.type = ReplyType::BearerError});
       return;
     }
@@ -1168,7 +1168,7 @@ void Server::userInfoVerify_(
       if (!client || client->data().appID != appID ||
 	  client->data().state != State::Active || client->data().owner) {
         done->finish(ServerReply{
-	  .body = serverJSON(BearerError{"invalid_token"}),
+	  .body = serverJSON(BearerErrorBody{"invalid_token"}),
 	  .type = ReplyType::BearerError});
 	return;
       }
@@ -1185,7 +1185,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
   Bytes handle;
   if (!decodeID(principal.subject, handle)) {
     done->finish(ServerReply{
-      .body = serverJSON(BearerError{"invalid_token"}),
+      .body = serverJSON(BearerErrorBody{"invalid_token"}),
       .type = ReplyType::BearerError});
     return;
   }
@@ -1196,7 +1196,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
     if (!client || client->data().state != State::Active ||
         client->data().owner) {
       done->finish(ServerReply{
-        .body = serverJSON(BearerError{"invalid_token"}),
+        .body = serverJSON(BearerErrorBody{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }
@@ -1206,7 +1206,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
       String json;
       if (!user || !userInfoJSON(user->data(), principal, json)) {
         done->finish(ServerReply{
-          .body = serverJSON(BearerError{"invalid_token"}),
+          .body = serverJSON(BearerErrorBody{"invalid_token"}),
           .type = ReplyType::BearerError});
         return;
       }
@@ -1243,7 +1243,7 @@ void Server::passkeyBegin_(AppServer app, String json, ServerFn complete)
   Bytes binding;
   if (!cookie_(cookie, binding)) { done->finish(serverError()); return; }
   String setCookie = setCookie_(cookie);
-  if (cookie.mutable_()) ZuClear(cookie.data(), cookie.length());
+  if (cookie.mutable_()) ZuClear(cookie);
   auto admit = m_admit;
   admit(start, [this, app = ZuMv(app), start = ZuMv(start), binding = ZuMv(binding),
       setCookie = ZuMv(setCookie), done](

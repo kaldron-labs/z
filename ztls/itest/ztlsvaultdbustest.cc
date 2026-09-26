@@ -279,32 +279,32 @@ static void native()
   Zt::setenv("ZTLSVAULTDBUSTEST_HOME", home);
 
   Ztls::VaultConfig cf;
-  cf.service = "ztls-vault-dbus-test";
+  cf.program = "ztls-vault-dbus-test";
   cf.envPrefix = "ZTLSVAULTDBUSTEST";
   cf.store = Ztls::VaultStore::KeyRing;
   cf.variant = Ztls::VaultVariant::Direct;
   Ztls::Vault vault;
   ZuCheckRT(!vault.init(cf).is<ZeException>());
-  ZuCheckRT(!vault.start().is<ZeException>());
-  ZuGuard stopVault{[&vault]() { vault.stop(); }};
+  ZuCheckRT(!vault.open().is<ZeException>());
+  ZuGuard stopVault{[&vault]() { vault.close(); }};
   Ztls::Scope scope{Ztls::Scopes::Global{}};
   bool called = false;
-  ZuCheckRT(vault.load(scope, "token", [&called](ZuBSpan) {
+  ZuCheckRT(vault.load(scope, "token", [&called](ZuSpan<uint8_t>) {
     called = true;
   }).is<ZeException>() && !called);
   uint8_t value[] = {0, 0xff, 7};
   ZuCheckRT(!vault.save(scope, "token", value).is<ZeException>());
-  ZuCheckRT(!vault.load(scope, "token", [&called, &value](ZuBSpan got) {
+  ZuCheckRT(!vault.load(scope, "token", [&called, &value](ZuSpan<uint8_t> got) {
     called = got == ZuBSpan{value};
   }).is<ZeException>() && called);
   ZuCheckRT(!vault.save(scope, "empty", {}).is<ZeException>());
   called = false;
-  ZuCheckRT(!vault.load(scope, "empty", [&called](ZuBSpan got) {
+  ZuCheckRT(!vault.load(scope, "empty", [&called](ZuSpan<uint8_t> got) {
     called = !got.length();
   }).is<ZeException>() && called);
   ZuCheckRT(!vault.save(scope, "locked", value).is<ZeException>());
   called = false;
-  ZuCheckRT(!vault.load(scope, "locked", [&called, &value](ZuBSpan got) {
+  ZuCheckRT(!vault.load(scope, "locked", [&called, &value](ZuSpan<uint8_t> got) {
     called = got == ZuBSpan{value};
   }).is<ZeException>() && called);
   ZuCheckRT(!vault.save(scope, "prompted", value)
@@ -317,45 +317,45 @@ static void native()
     .is<ZeException>());
   ZuCheckRT(!vault.save(scope, "token", value)
     .is<ZeException>());
-  vault.stop();
+  vault.close();
   vault.final();
 
   Ztls::VaultConfig fileCf = cf;
   fileCf.store = Ztls::VaultStore::File;
   Ztls::Vault file;
   ZuCheckRT(!file.init(fileCf).is<ZeException>());
-  ZuCheckRT(!file.start().is<ZeException>());
-  ZuGuard stopFile{[&file]() { file.stop(); }};
+  ZuCheckRT(!file.open().is<ZeException>());
+  ZuGuard stopFile{[&file]() { file.close(); }};
   uint8_t other[] = {9, 8};
   ZuCheckRT(!file.save(scope, "token", other).is<ZeException>());
   ZuCheckRT(!file.save(scope, "fallback", other)
     .is<ZeException>());
-  file.stop();
+  file.close();
   file.final();
 
   cf.store = Ztls::VaultStore::Auto;
   Ztls::Vault autoVault;
   ZuCheckRT(!autoVault.init(cf).is<ZeException>());
-  ZuCheckRT(!autoVault.start().is<ZeException>());
-  ZuGuard stopAuto{[&autoVault]() { autoVault.stop(); }};
+  ZuCheckRT(!autoVault.open().is<ZeException>());
+  ZuGuard stopAuto{[&autoVault]() { autoVault.close(); }};
   bool nativeValue = false;
-  ZuCheckRT(!autoVault.load(scope, "token", [&nativeValue, &value](ZuBSpan got) {
+  ZuCheckRT(!autoVault.load(scope, "token", [&nativeValue, &value](ZuSpan<uint8_t> got) {
     nativeValue = got == ZuBSpan{value};
   }).is<ZeException>() && nativeValue);
   bool fallbackValue = false;
   ZuCheckRT(!autoVault.load(scope, "fallback",
-    [&fallbackValue, &other](ZuBSpan got) {
+    [&fallbackValue, &other](ZuSpan<uint8_t> got) {
       fallbackValue = got == ZuBSpan{other};
     }).is<ZeException>() && fallbackValue);
   Ztls::Vault contender;
   ZuCheckRT(!contender.init(fileCf).is<ZeException>());
-  ZuCheckRT(contender.start().is<ZeException>());
+  ZuCheckRT(contender.open().is<ZeException>());
   contender.final();
   ZuCheckRT(!autoVault.save(scope, "denied", other)
     .is<ZeException>());
   fallbackValue = false;
   ZuCheckRT(!autoVault.load(scope, "denied",
-    [&fallbackValue, &other](ZuBSpan got) {
+    [&fallbackValue, &other](ZuSpan<uint8_t> got) {
       fallbackValue = got == ZuBSpan{other};
     }).is<ZeException>() && fallbackValue);
   ZuCheckRT(!autoVault.save(scope, "timedout", other)
@@ -369,17 +369,17 @@ static void native()
   ZuCheckRT(busExited);
   fallbackValue = false;
   ZuCheckRT(!autoVault.load(scope, "fallback",
-    [&fallbackValue, &other](ZuBSpan got) {
+    [&fallbackValue, &other](ZuSpan<uint8_t> got) {
       fallbackValue = got == ZuBSpan{other};
     }).is<ZeException>() && fallbackValue);
   fallbackValue = false;
   ZuCheckRT(!autoVault.load(scope, "timedout",
-    [&fallbackValue, &other](ZuBSpan got) {
+    [&fallbackValue, &other](ZuSpan<uint8_t> got) {
       fallbackValue = got == ZuBSpan{other};
     }).is<ZeException>() && fallbackValue);
   ZuCheckRT(!autoVault.save(scope, "after-loss", other)
     .is<ZeException>());
-  autoVault.stop();
+  autoVault.close();
   autoVault.final();
   ZuCheckRT(state.sessions == 2 && state.collections == 1 &&
     state.items == 9 && state.secrets == 4 && state.prompts == 4 &&

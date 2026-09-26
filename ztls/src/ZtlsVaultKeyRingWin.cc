@@ -9,6 +9,7 @@
 #include <string.h>
 #include <wincred.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
 
 #include <zlib/ZmHeap.hh>
@@ -29,12 +30,12 @@ template <typename Heap = ZuVoid>
 class KeyRing_ : public Heap, public VaultStore {
 public:
   Ztls::VaultResult init(const Ztls::VaultConfig &cf) override {
-    m_service = cf.service;
+    m_program = cf.program;
     m_account = cf.account;
     return {};
   }
   void final() override {
-    m_service.clear();
+    m_program.clear();
     m_account.clear();
   }
 
@@ -49,7 +50,7 @@ public:
       return ZeEXCEPT(Error, "ZtlsVault", "native credential read failed");
     }
     ZuGuard release{[&credential]() { CredFree(credential); }};
-    fn(ZuBSpan{credential->CredentialBlob,
+    fn(ZuSpan<uint8_t>{credential->CredentialBlob,
       credential->CredentialBlobSize});
     return {};
   }
@@ -77,11 +78,11 @@ private:
     // Credential Manager compares targets without case. Canonical uppercase
     // hex preserves each UTF-8 byte without case-folding collisions.
     constexpr uint64_t limit = CRED_MAX_GENERIC_TARGET_NAME_LENGTH;
-    if (m_service.length() > limit / 2 ||
+    if (m_program.length() > limit / 2 ||
 	m_account.length() > limit / 2 || key.length() > limit / 2)
       return ZeEXCEPT(Error, "ZtlsVault", "native target too long");
     uint64_t length = TargetPrefix.length() + 2 +
-      ZuHex::enclen(m_service.length()) +
+      ZuHex::enclen(m_program.length()) +
       ZuHex::enclen(m_account.length()) + ZuHex::enclen(key.length());
     if (length > limit)
       return ZeEXCEPT(Error, "ZtlsVault", "native target too long");
@@ -89,7 +90,7 @@ private:
     auto out = text.data();
     uint64_t pos = TargetPrefix.length();
     ::memcpy(out, TargetPrefix.data(), pos);
-    pos += ZuHex::encode({out + pos, length - pos}, m_service);
+    pos += ZuHex::encode({out + pos, length - pos}, m_program);
     out[pos++] = ':';
     pos += ZuHex::encode({out + pos, length - pos}, m_account);
     out[pos++] = ':';
@@ -99,11 +100,11 @@ private:
     return {};
   }
 
-  Ztls::VaultString m_service;
+  Ztls::VaultString m_program;
   Ztls::VaultString m_account;
 };
 
-using KeyRingHeap = ZmHeap<"Ztls.Vault.KeyRing", KeyRing_<>>;
+ZuDerive(KeyRingHeap, (ZmHeap<"Ztls.Vault.KeyRing", KeyRing_<>>));
 ZuDerive(KeyRing, KeyRing_<KeyRingHeap>);
 
 } // VaultKeyRingWin_

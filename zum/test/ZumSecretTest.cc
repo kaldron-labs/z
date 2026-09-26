@@ -14,7 +14,7 @@ static void secrets()
   ZuTestScope(secrets);
   Ztls::Random rng;
   ZuCheck(rng.init());
-  Zum::Bytes oldKey, newKey, wrongKey;
+  Zum::Secret oldKey, newKey, wrongKey;
   oldKey.length(32, false);
   newKey.length(32, false);
   wrongKey.length(32, false);
@@ -30,7 +30,7 @@ static void secrets()
   auto original = envelope;
   ZuCheck(Zum::serverSecretDecrypt(oldKey, "issuer", "zum.provider", "7",
     "clientSecret", envelope, plain) && plain == ZuBSpan{"test-secret"});
-  ZuClear(plain.data(), plain.length());
+  ZuClear(plain);
   plain.null();
   Zum::Bytes second;
   ZuCheck(Zum::serverSecretEncrypt(rng, oldKey, "issuer", "zum.provider", "7",
@@ -58,7 +58,7 @@ static void secrets()
     "clientSecret", envelope, plain) && !plain);
   ZuCheck(Zum::serverSecretDecrypt(newKey, "issuer", "zum.provider", "7",
     "clientSecret", envelope, plain) && plain == ZuBSpan{"test-secret"});
-  ZuClear(plain.data(), plain.length());
+  ZuClear(plain);
   plain.null();
   auto rotated = envelope;
   ZuCheck(Zum::serverSecretRekey(rng, oldKey, newKey, "issuer", "zum.provider",
@@ -71,9 +71,6 @@ static void secrets()
     "7", "clientSecret", envelope));
   ZuCheck(Zum::serverSecretDecrypt(newKey, "issuer", "zum.provider", "7",
     "clientSecret", envelope, plain) && !plain);
-  ZuClear(oldKey.data(), oldKey.length());
-  ZuClear(newKey.data(), newKey.length());
-  ZuClear(wrongKey.data(), wrongKey.length());
 }
 
 int main(int argc, char **argv)

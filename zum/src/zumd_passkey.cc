@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_passkey.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_db_ops.hh>
@@ -45,7 +46,8 @@ private:
   ZmRef<Request>	m_request;
   EnrollmentBeginFn m_complete;
 };
-using PasskeyBeginComplete_Heap = ZmHeap<"Zum.zumd.passkey.PasskeyBeginComplete", PasskeyBeginComplete__<>>;
+ZuDerive(PasskeyBeginComplete_Heap,
+  (ZmHeap<"Zum.zumd.passkey.PasskeyBeginComplete", PasskeyBeginComplete__<>>));
 ZuDerive(PasskeyBeginComplete_, (PasskeyBeginComplete__<PasskeyBeginComplete_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -76,7 +78,9 @@ private:
   ZmRef<Request>	m_request;
   EnrollmentFinishFn m_complete;
 };
-using PasskeyFinishComplete_Heap = ZmHeap<"Zum.zumd.passkey.PasskeyFinishComplete", PasskeyFinishComplete__<>>;
+ZuDerive(PasskeyFinishComplete_Heap,
+  (ZmHeap<"Zum.zumd.passkey.PasskeyFinishComplete",
+    PasskeyFinishComplete__<>>));
 ZuDerive(PasskeyFinishComplete_, (PasskeyFinishComplete__<PasskeyFinishComplete_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -87,13 +91,14 @@ public:
 
   ~CapabilityResult__()
   {
-    if (value && value.mutable_()) ZuClear(value.data(), value.length());
+    if (value && value.mutable_()) ZuClear(value);
   }
 
   bool		ok;
   String	value;
 };
-using CapabilityResult_Heap = ZmHeap<"Zum.zumd.passkey.CapabilityResult", CapabilityResult__<>>;
+ZuDerive(CapabilityResult_Heap,
+  (ZmHeap<"Zum.zumd.passkey.CapabilityResult", CapabilityResult__<>>));
 ZuDerive(CapabilityResult_, (CapabilityResult__<CapabilityResult_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -126,7 +131,8 @@ private:
   ZmRef<Request>	m_request;
   CapabilityFn	m_complete;
 };
-using CapabilityComplete_Heap = ZmHeap<"Zum.zumd.passkey.CapabilityComplete", CapabilityComplete__<>>;
+ZuDerive(CapabilityComplete_Heap,
+  (ZmHeap<"Zum.zumd.passkey.CapabilityComplete", CapabilityComplete__<>>));
 ZuDerive(CapabilityComplete_, (CapabilityComplete__<CapabilityComplete_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -152,7 +158,7 @@ public:
     }
     if (m_capability) {
       bool ok = opaqueParse(m_capability, m_capID, m_capDigest);
-      ZuClear(m_capability.data(), m_capability.length());
+      ZuClear(m_capability);
       m_capability.null();
       if (!ok) {
 	finish_(WebAuthnError::Ceremony, {});
@@ -172,10 +178,10 @@ private:
   void clear_()
   {
     if (m_capability && m_capability.mutable_())
-      ZuClear(m_capability.data(), m_capability.length());
+      ZuClear(m_capability);
     m_capability.null();
     if (m_capDigest && m_capDigest.mutable_())
-      ZuClear(m_capDigest.data(), m_capDigest.length());
+      ZuClear(m_capDigest);
     m_capDigest.null();
   }
 
@@ -231,7 +237,7 @@ private:
     unsigned idSize = create ? IDSize : 0;
     random.length(idSize + ChallengeSize + HandleSize, false);
     if (!m_rng->random(random)) {
-      ZuClear(random.data(), random.length());
+      ZuClear(random);
       finish_(WebAuthnError::Storage, {});
       return;
     }
@@ -264,7 +270,7 @@ private:
 	    Ztls::ctEqual(row->data().digest, self->m_capDigest);
 	  if (ok) {
 	    auto &grant = row->data();
-	    ZuClear(grant.digest.data(), grant.digest.length());
+	    ZuClear(grant.digest);
 	    grant.digest.null();
 	    grant.userID = self->m_config.userID;
 	    grant.challenge = ZuMv(challenge);
@@ -282,7 +288,7 @@ private:
 	    ok ? ZuMv(result) : EnrollmentBeginResult{});
 	});
       });
-      ZuClear(random.data(), random.length());
+      ZuClear(random);
       return;
     }
     Grant grant{
@@ -300,7 +306,7 @@ private:
       .userHandle = Bytes{handle},
       .label = ZuMv(m_config.label)
     };
-    ZuClear(random.data(), random.length());
+    ZuClear(random);
     authorizationInsert(m_context, ZuMv(grant), [
       self = ZmRef<EnrollmentBegin__>{this}, result = ZuMv(result)
     ](bool ok) mutable {
@@ -319,7 +325,8 @@ private:
   EnrollmentBeginFn m_complete;
   bool		m_done = false;
 };
-using EnrollmentBegin_Heap = ZmHeap<"Zum.zumd.passkey.EnrollmentBegin", EnrollmentBegin__<>>;
+ZuDerive(EnrollmentBegin_Heap,
+  (ZmHeap<"Zum.zumd.passkey.EnrollmentBegin", EnrollmentBegin__<>>));
 ZuDerive(EnrollmentBegin_, (EnrollmentBegin__<EnrollmentBegin_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -447,7 +454,8 @@ private:
   ZdbSagaID	m_sagaID = 0;
   bool		m_done = false;
 };
-using EnrollmentFinish_Heap = ZmHeap<"Zum.zumd.passkey.EnrollmentFinish", EnrollmentFinish__<>>;
+ZuDerive(EnrollmentFinish_Heap,
+  (ZmHeap<"Zum.zumd.passkey.EnrollmentFinish", EnrollmentFinish__<>>));
 ZuDerive(EnrollmentFinish_, (EnrollmentFinish__<EnrollmentFinish_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -503,7 +511,7 @@ private:
     Bytes random;
     random.length(IDSize + ChallengeSize, false);
     if (!m_rng->random(random)) {
-      ZuClear(random.data(), random.length());
+      ZuClear(random);
       finish_(WebAuthnError::Storage, {});
       return;
     }
@@ -530,7 +538,7 @@ private:
       .userHandle = user.handle,
       .label = ZuMv(m_config.label)
     };
-    ZuClear(random.data(), random.length());
+    ZuClear(random);
     authorizationInsert(m_context, ZuMv(grant), [
       self = ZmRef<CredentialBegin__>{this}, result = ZuMv(result)
     ](bool ok) mutable {
@@ -546,7 +554,8 @@ private:
   EnrollmentBeginFn m_complete;
   bool		m_done = false;
 };
-using CredentialBegin_Heap = ZmHeap<"Zum.zumd.passkey.CredentialBegin", CredentialBegin__<>>;
+ZuDerive(CredentialBegin_Heap,
+  (ZmHeap<"Zum.zumd.passkey.CredentialBegin", CredentialBegin__<>>));
 ZuDerive(CredentialBegin_, (CredentialBegin__<CredentialBegin_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -647,7 +656,8 @@ private:
   ZdbSagaID	m_sagaID = 0;
   bool		m_done = false;
 };
-using CredentialFinish_Heap = ZmHeap<"Zum.zumd.passkey.CredentialFinish", CredentialFinish__<>>;
+ZuDerive(CredentialFinish_Heap,
+  (ZmHeap<"Zum.zumd.passkey.CredentialFinish", CredentialFinish__<>>));
 ZuDerive(CredentialFinish_, (CredentialFinish__<CredentialFinish_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -674,7 +684,7 @@ private:
     if (m_done) return;
     m_done = true;
     if (!ok && m_token) {
-      ZuClear(m_token.data(), m_token.length());
+      ZuClear(m_token);
       m_token.null();
     }
     auto complete = ZuMv(m_complete);
@@ -763,7 +773,8 @@ private:
   Audit		m_audit;
   bool		m_done = false;
 };
-using RecoveryIssue_Heap = ZmHeap<"Zum.zumd.passkey.RecoveryIssue", RecoveryIssue__<>>;
+ZuDerive(RecoveryIssue_Heap,
+  (ZmHeap<"Zum.zumd.passkey.RecoveryIssue", RecoveryIssue__<>>));
 ZuDerive(RecoveryIssue_, (RecoveryIssue__<RecoveryIssue_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -789,7 +800,7 @@ public:
       finish_(WebAuthnError::Ceremony, {});
       return;
     }
-    ZuClear(m_capability.data(), m_capability.length());
+    ZuClear(m_capability);
     m_capability.null();
     Bytes id = m_capID;
     m_context->grants->run(0, [
@@ -805,10 +816,10 @@ private:
   void clear_()
   {
     if (m_capability && m_capability.mutable_())
-      ZuClear(m_capability.data(), m_capability.length());
+      ZuClear(m_capability);
     m_capability.null();
     if (m_capDigest && m_capDigest.mutable_())
-      ZuClear(m_capDigest.data(), m_capDigest.length());
+      ZuClear(m_capDigest);
     m_capDigest.null();
   }
 
@@ -860,7 +871,7 @@ private:
     Bytes random;
     random.length(ChallengeSize + HandleSize, false);
     if (!m_rng->random(random)) {
-      ZuClear(random.data(), random.length());
+      ZuClear(random);
       finish_(WebAuthnError::Storage, {});
       return;
     }
@@ -872,7 +883,7 @@ private:
 	m_config.rpName, handle, m_userName,
 	m_config.displayName, m_config.timeout)
     };
-    ZuClear(random.data(), random.length());
+    ZuClear(random);
     Bytes id = m_capID;
     m_context->grants->run(0, [
       self = ZmRef<RecoveryBegin__>{this}, id = ZuMv(id),
@@ -892,7 +903,7 @@ private:
 	  Ztls::ctEqual(row->data().digest, self->m_capDigest);
 	if (ok) {
 	  auto &grant = row->data();
-	  ZuClear(grant.digest.data(), grant.digest.length());
+	  ZuClear(grant.digest);
 	  grant.digest.null();
 	  grant.challenge = ZuMv(challenge);
 	  grant.bindingDigest = self->m_bindingDigest;
@@ -924,7 +935,8 @@ private:
   String	m_actor;
   bool		m_done = false;
 };
-using RecoveryBegin_Heap = ZmHeap<"Zum.zumd.passkey.RecoveryBegin", RecoveryBegin__<>>;
+ZuDerive(RecoveryBegin_Heap,
+  (ZmHeap<"Zum.zumd.passkey.RecoveryBegin", RecoveryBegin__<>>));
 ZuDerive(RecoveryBegin_, (RecoveryBegin__<RecoveryBegin_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -1054,7 +1066,8 @@ private:
   ZdbSagaID	m_sagaID = 0;
   bool		m_done = false;
 };
-using RecoveryFinish_Heap = ZmHeap<"Zum.zumd.passkey.RecoveryFinish", RecoveryFinish__<>>;
+ZuDerive(RecoveryFinish_Heap,
+  (ZmHeap<"Zum.zumd.passkey.RecoveryFinish", RecoveryFinish__<>>));
 ZuDerive(RecoveryFinish_, (RecoveryFinish__<RecoveryFinish_Heap>));
 
 static void bootstrapIssue_(
@@ -1100,7 +1113,7 @@ static void bootstrapIssue_(
     complete = ZuMv(complete)
   ](ZdbRowRef<Grant> existing) mutable {
     if (existing) {
-      ZuClear(token.data(), token.length());
+      ZuClear(token);
       complete(false, String{});
       return;
     }
@@ -1108,7 +1121,7 @@ static void bootstrapIssue_(
       token = ZuMv(token), complete = ZuMv(complete)
     ](bool ok) mutable {
       if (!ok) {
-	ZuClear(token.data(), token.length());
+	ZuClear(token);
 	token.null();
       }
       complete(ok, ZuMv(token));

@@ -524,7 +524,7 @@ bool scrypt(
     reinterpret_cast<const char *>(password.data()), password.length(),
     salt.data(), salt.length(), n, r, p, maxMem,
     output.data(), output.length()) == 1;
-  if (!ok) ZuClear(output.data(), output.length());
+  if (!ok) ZuClear(output);
   return ok;
 }
 
@@ -536,7 +536,7 @@ bool shake256(ZuBSpan input, ZuSpan<uint8_t> output)
     EVP_DigestUpdate(ctx, input.data(), input.length()) == 1 &&
     EVP_DigestFinalXOF(ctx, output.data(), output.length()) == 1;
   EVP_MD_CTX_free(ctx);
-  if (!ok) ZuClear(output.data(), output.length());
+  if (!ok) ZuClear(output);
   return ok;
 }
 
@@ -552,7 +552,7 @@ bool sha3_256(ZuSpan<const ZuBSpan> input, ZuSpan<uint8_t> output)
   ok = ok && EVP_DigestFinal_ex(ctx, output.data(), &n) == 1 &&
     n == output.length();
   EVP_MD_CTX_free(ctx);
-  if (!ok) ZuClear(output.data(), output.length());
+  if (!ok) ZuClear(output);
   return ok;
 }
 
@@ -1046,7 +1046,7 @@ bool pkey_x25519_export_private(const PKey *key, ZuSpan<uint8_t> prvKey)
   size_t n = prvKey.length();
   bool ok = EVP_PKEY_get_raw_private_key(key->pkey, prvKey.data(), &n) == 1 &&
     n == prvKey.length();
-  if (!ok) ZuClear(prvKey.data(), prvKey.length());
+  if (!ok) ZuClear(prvKey);
   return ok;
 }
 
@@ -1070,7 +1070,7 @@ bool pkey_x25519_agree(
     for (unsigned i = 0; i < secret.length(); i++) nonzero |= secret[i];
     ok = nonzero != 0;
   }
-  if (!ok) ZuClear(secret.data(), secret.length());
+  if (!ok) ZuClear(secret);
   return ok;
 }
 

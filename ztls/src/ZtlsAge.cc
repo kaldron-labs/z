@@ -385,7 +385,7 @@ ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
   ZuSpan<char> privateKey, ZuSpan<uint8_t> publicKey)
 {
   ZuGuard clear{[&privateKey]() {
-    ZuClear(privateKey.data(), privateKey.length());
+    ZuClear(privateKey);
   }};
   if (privateKey.length() > HeaderMaxSize) return invalidOpenSSH_();
   constexpr auto begin = "-----BEGIN OPENSSH PRIVATE KEY-----"_Zu;

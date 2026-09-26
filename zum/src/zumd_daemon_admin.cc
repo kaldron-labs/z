@@ -386,7 +386,7 @@ struct ClientInput {
   String id;
   AppID appID = 0;
   String label;
-  String type;
+  String profile;
   StringVec redirectURIs;
   uint8_t grants = 0;
   bool refreshAllowed = false;
@@ -396,7 +396,7 @@ ZfStruct(, (ClientInput, JSON),
   (((id),		(JSON::Opt)),	(String)),
   (((appID),		(Required, JSON::String<>)),	(UInt64)),
   (((label),		(JSON::Opt)),	(String)),
-  (((type),		(Required)),	(String)),
+  (((profile),		(Required)),	(String)),
   (((redirectURIs),	(JSON::Opt)),	(StringVec)),
   (((grants),		(JSON::Opt)),	(UInt8)),
   (((refreshAllowed),	(JSON::Opt)),	(Bool, false)),
@@ -621,10 +621,6 @@ ZfStruct(, (QueryInput, URI),
   (((cursor),		(Mutable)),	(String)),
   (((limit),		(Mutable)),	(UInt32, 100)));
 
-struct ClientTypes {
-  using Keys = ZuStringTL<"browser", "native", "confidential">;
-};
-
 // Require a complete framework parse and reject its null sentinel.
 static bool adminUInt(ZuCSpan text, uint64_t &value)
 {
@@ -808,12 +804,12 @@ static bool randomID(Ztls::Random &rng, ID &id)
   return true;
 }
 
-static ClientType::T clientType(ZuCSpan value)
+static ClientProfile::T clientProfile(ZuCSpan value)
 {
-  if (value == "browser") return ClientType::Browser;
-  if (value == "native") return ClientType::Native;
-  if (value == "confidential") return ClientType::Confidential;
-  return ClientType::T(-1);
+  if (value == "browser") return ClientProfile::Browser;
+  if (value == "native") return ClientProfile::Native;
+  if (value == "server") return ClientProfile::Server;
+  return ClientProfile::T(-1);
 }
 
 static bool roleCeiling(const AdminPermit &permit, const IDVec &roleIDs)
@@ -1010,7 +1006,8 @@ private:
   uint64_t m_resultVersion = 0;
 };
 template <typename Edit>
-using AppEdit_Heap = ZmHeap<"Zum.zumd.daemon.admin.AppEdit", AppEdit__<Edit>>;
+ZuDerive(AppEdit_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.AppEdit", AppEdit__<Edit>>));
 template <typename Edit>
 ZuDerive(AppEdit_, (AppEdit__<Edit, AppEdit_Heap<Edit>>));
 
@@ -1070,7 +1067,8 @@ private:
   ZmRef<MSaga>	m_saga;
   AdminDoneFn	m_complete;
 };
-using MembershipAdd_Heap = ZmHeap<"Zum.zumd.daemon.admin.MembershipAdd", MembershipAdd__<>>;
+ZuDerive(MembershipAdd_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.MembershipAdd", MembershipAdd__<>>));
 ZuDerive(MembershipAdd_, (MembershipAdd__<MembershipAdd_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -1325,7 +1323,8 @@ private:
   unsigned	m_skipped = 0;
   bool		m_done = false;
 };
-using BulkRevoke_Heap = ZmHeap<"Zum.zumd.daemon.admin.BulkRevoke", BulkRevoke__<>>;
+ZuDerive(BulkRevoke_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.BulkRevoke", BulkRevoke__<>>));
 ZuDerive(BulkRevoke_, (BulkRevoke__<BulkRevoke_Heap>));
 
 static String encode(ZuBSpan data)
@@ -1767,7 +1766,8 @@ private:
   uint64_t	m_resultVersion = 0;
   bool		m_done = false;
 };
-using MembershipChange_Heap = ZmHeap<"Zum.zumd.daemon.admin.MembershipChange", MembershipChange__<>>;
+ZuDerive(MembershipChange_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.MembershipChange", MembershipChange__<>>));
 ZuDerive(MembershipChange_, (MembershipChange__<MembershipChange_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -1859,7 +1859,8 @@ private:
   ZdbSagaID	m_sagaID = 0;
   bool		m_done = false;
 };
-using ActionAdd_Heap = ZmHeap<"Zum.zumd.daemon.admin.ActionAdd", ActionAdd__<>>;
+ZuDerive(ActionAdd_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.ActionAdd", ActionAdd__<>>));
 ZuDerive(ActionAdd_, (ActionAdd__<ActionAdd_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -1934,7 +1935,7 @@ private:
     auto complete = ZuMv(m_complete);
     if (status != 201) {
       if (m_secret && m_secret.mutable_())
-	ZuClear(m_secret.data(), m_secret.length());
+	ZuClear(m_secret);
       String body = adminJSON(AdminError{
         status == 409 ? "conflict" :
           status == 400 ? "invalid_request" : "unavailable",
@@ -1944,7 +1945,7 @@ private:
     }
     String body = adminJSON(AdminEnrollReply{{m_appID, m_clientID,
       m_secret, m_appIssuer, rowETag(2)}});
-    ZuClear(m_secret.data(), m_secret.length());
+    ZuClear(m_secret);
     m_secret.null();
     StringVec ids;
     String id;
@@ -1969,7 +1970,8 @@ private:
   Bytes		m_secretDigest;
   bool		m_done = false;
 };
-using AppEnroll_Heap = ZmHeap<"Zum.zumd.daemon.admin.AppEnroll", AppEnroll__<>>;
+ZuDerive(AppEnroll_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.AppEnroll", AppEnroll__<>>));
 ZuDerive(AppEnroll_, (AppEnroll__<AppEnroll_Heap>));
 
 template <typename Table, typename Present, typename Heap = ZuVoid>
@@ -2035,8 +2037,9 @@ private:
   bool m_end = false;
 };
 template <typename Table, typename Present>
-using CatalogRetire_Heap = ZmHeap<"Zum.zumd.daemon.admin.CatalogRetire",
-  CatalogRetire__<Table, Present>>;
+ZuDerive(CatalogRetire_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.CatalogRetire",
+    CatalogRetire__<Table, Present>>));
 template <typename Table, typename Present>
 ZuDerive(CatalogRetire_, (CatalogRetire__<Table, Present,
   CatalogRetire_Heap<Table, Present>>));
@@ -2337,9 +2340,9 @@ private:
     }
     unsigned index = m_offset++;
     const auto &input = m_input.catalog.clients[index];
-    ClientType::T type = clientType(input.type);
-    if (!input.id || type < 0 || type == ClientType::Confidential ||
-        !clientConfigValid(type, input.grants, input.refreshAllowed,
+    ClientProfile::T profile = clientProfile(input.profile);
+    if (!input.id || profile < 0 || profile == ClientProfile::Server ||
+        !clientConfigValid(profile, input.grants, input.refreshAllowed,
           input.redirectURIs)) {
       fail_(400, "invalid_request", "invalid catalog client");
       return;
@@ -2347,9 +2350,9 @@ private:
     auto table = m_context->clients;
     String id = input.id;
     table->run(0, [self = ZmRef<CatalogPublish__>{this}, table, index,
-	 id = ZuMv(id), type]() mutable {
+	 id = ZuMv(id), profile]() mutable {
       table->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self), index,
-		 type](ZdbRowRef<Client> row) mutable {
+		 profile](ZdbRowRef<Client> row) mutable {
 	const auto &input = self->m_input.catalog.clients[index];
 	Client next;
 	if (row) {
@@ -2357,8 +2360,8 @@ private:
 	    self->fail_(409, "conflict", "catalog client belongs to another application");
 	    return;
 	  }
-	  if (row->data().type != type) {
-	    self->fail_(409, "conflict", "catalog client type is immutable");
+	  if (row->data().profile != profile) {
+	    self->fail_(409, "conflict", "catalog client profile is immutable");
 	    return;
 	  }
 	  next = row->data();
@@ -2372,8 +2375,7 @@ private:
 	  next.grants = input.grants;
 	  next.refreshAllowed = input.refreshAllowed;
 	  next.identityScopes = input.identityScopes;
-	  next.type = type;
-	  next.authMethod = ClientAuthMethod::None;
+	  next.profile = profile;
 	  next.state = State::Active;
 	  if (next.version == UINT64_MAX) {
 	    self->fail_(409, "conflict", "catalog client version exhausted");
@@ -2385,8 +2387,8 @@ private:
 	  int64_t now = self->m_change.after.updated;
 	  next = Client{.id = input.id, .appID = self->m_appID,
 	    .label = input.label, .redirects = input.redirectURIs,
-	    .created = now, .updated = now, .type = type,
-	    .authMethod = ClientAuthMethod::None, .grants = input.grants,
+	    .created = now, .updated = now, .profile = profile,
+	    .grants = input.grants,
 	    .refreshAllowed = input.refreshAllowed,
 	    .identityScopes = input.identityScopes, .state = State::Active,
 	    .version = 1};
@@ -2533,7 +2535,8 @@ private:
   bool		m_done = false;
   bool		m_replay = false;
 };
-using CatalogPublish_Heap = ZmHeap<"Zum.zumd.daemon.admin.CatalogPublish", CatalogPublish__<>>;
+ZuDerive(CatalogPublish_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.CatalogPublish", CatalogPublish__<>>));
 ZuDerive(CatalogPublish_, (CatalogPublish__<CatalogPublish_Heap>));
 
 String Daemon::error_(ZuCSpan error, ZuCSpan message)
@@ -2549,7 +2552,7 @@ String Daemon::correlation_()
   String id;
   id.length(ZuBase64URL::enclen(random.length()));
   id.length(ZuBase64URL::encode(id.span(), random));
-  ZuClear(random.data(), random.length());
+  ZuClear(random);
   return id;
 }
 
@@ -2606,7 +2609,7 @@ static String adminOperationCursorEncode(
   String encoded;
   encoded.length(ZuBase64URL::enclen(raw.length()));
   encoded.length(ZuBase64URL::encode(encoded.span(), raw));
-  ZuClear(raw.data(), raw.length());
+  ZuClear(raw);
   return encoded;
 }
 
@@ -2629,7 +2632,7 @@ static bool adminOperationCursorDecode(
     raw[2] < MgmtOp::N && Ztls::ctEqual(digest,
       {raw.data() + headerLength, macLength});
   if (valid) first = unsigned(raw[2]) + 1;
-  ZuClear(raw.data(), raw.length());
+  ZuClear(raw);
   return valid;
 }
 
@@ -2676,7 +2679,7 @@ static String adminCursorEncode(
   String encoded;
   encoded.length(ZuBase64URL::enclen(raw.length()));
   encoded.length(ZuBase64URL::encode(encoded.span(), raw));
-  ZuClear(raw.data(), raw.length());
+  ZuClear(raw);
   return encoded;
 }
 
@@ -2707,18 +2710,18 @@ static bool adminCursorDecode(
   hmac.finish(digest);
   if (!Ztls::ctEqual(digest,
       {raw.data() + headerLength + dataLength, macLength})) {
-    ZuClear(raw.data(), raw.length());
+    ZuClear(raw);
     return false;
   }
   using Record = typename Table::T;
   auto fbo = ZfbStruct::verify<Record>(
     {raw.data() + headerLength, dataLength});
   if (!fbo) {
-    ZuClear(raw.data(), raw.length());
+    ZuClear(raw);
     return false;
   }
   key = ZfbStruct::ctor<typename Table::template Key<KeyID>>(fbo);
-  ZuClear(raw.data(), raw.length());
+  ZuClear(raw);
   return true;
 }
 
@@ -2740,7 +2743,7 @@ public:
 
   ~AdminQuery__()
   {
-    if (m_secret.mutable_()) ZuClear(m_secret.data(), m_secret.length());
+    if (m_secret.mutable_()) ZuClear(m_secret);
   }
 
   void start()
@@ -2850,8 +2853,9 @@ private:
 };
 template <typename Table, typename Match, typename Group = ZuTuple<>,
   unsigned KeyID = 0>
-using AdminQuery_Heap = ZmHeap<"Zum.zumd.daemon.admin.AdminQuery",
-  AdminQuery__<Table, Match, Group, KeyID>>;
+ZuDerive(AdminQuery_Heap,
+  (ZmHeap<"Zum.zumd.daemon.admin.AdminQuery",
+    AdminQuery__<Table, Match, Group, KeyID>>));
 template <typename Table, typename Match, typename Group = ZuTuple<>,
   unsigned KeyID = 0>
 ZuDerive(AdminQuery_, (AdminQuery__<Table, Match, Group, KeyID,
@@ -3455,9 +3459,9 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    issuer << "/enroll?capability=" << token;
 	    if (!adminAddItemString(result, "enrollmentURL", issuer))
 	      result = adminErrorResult(503, "unavailable", "response encoding failed");
-	    ZuClear(issuer.data(), issuer.length());
+	    ZuClear(issuer);
 	  }
-	  ZuClear(token.data(), token.length());
+	  ZuClear(token);
 	  complete(ZuMv(result));
 	}};
       invite->start();
@@ -3516,7 +3520,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	      if (url[url.length() - 1] == '/') url.length(url.length() - 1);
 	      url << "/enroll?purpose=recovery&capability=" << capability;
 	      String json = adminJSON(AdminRecoveryReply{{userID, ZuMv(url)}});
-	      ZuClear(capability.data(), capability.length());
+	      ZuClear(capability);
 	      complete(AdminResult{ZuMv(json), 200});
 	    });
 	  if (!started)
@@ -3649,17 +3653,17 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       ZuBArray<ClientSecretEntropySize> random(
 	ClientSecretEntropySize, false);
       if (!m_rng.random(random)) {
-	ZuClear(random.data(), random.length());
+	ZuClear(random);
 	complete(AdminResult{
 	  error_("unavailable", "secret generation failed"), 503});
 	return;
       }
       String secret = encode(random);
-      ZuClear(random.data(), random.length());
+      ZuClear(random);
       Bytes digest;
       digest.length(Ztls::SecretHash::Size, false);
       if (!Ztls::secretHash(m_rng, ZuBSpan{secret}, digest)) {
-	ZuClear(secret.data(), secret.length());
+	ZuClear(secret);
 	complete(AdminResult{
 	  error_("unavailable", "secret generation failed"), 503});
 	return;
@@ -3674,7 +3678,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    if (!adminAddItemString(result, "client_secret", secret))
 	      result = adminErrorResult(503, "unavailable", "response encoding failed");
 	  }
-	  ZuClear(secret.data(), secret.length());
+	  ZuClear(secret);
 	  complete(ZuMv(result));
 	}};
       change->start();
@@ -3687,8 +3691,8 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  "invalid client creation"));
 	return;
       }
-      ClientType::T type = clientType(input.type);
-      if (!clientConfigValid(type, input.grants, input.refreshAllowed,
+      ClientProfile::T profile = clientProfile(input.profile);
+      if (!clientConfigValid(profile, input.grants, input.refreshAllowed,
           input.redirectURIs)) {
 	complete(adminErrorResult(400, "invalid_request",
 	  "invalid client configuration"));
@@ -3697,7 +3701,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       ZuBArray<ClientCredentialEntropySize> random(
 	ClientCredentialEntropySize, false);
       if (!m_rng.random(random)) {
-	ZuClear(random.data(), random.length());
+	ZuClear(random);
 	complete(adminErrorResult(503, "unavailable",
 	  "client credential generation failed"));
 	return;
@@ -3706,13 +3710,13 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       clientID << encode({random.data(), ClientIDEntropySize});
       String secret;
       Bytes digest;
-      if (type == ClientType::Confidential) {
+      if (clientType(profile) == ClientType::Confidential) {
 	secret = encode({random.data() + ClientIDEntropySize,
 	  ClientSecretEntropySize});
 	digest.length(Ztls::SecretHash::Size, false);
 	if (!Ztls::secretHash(m_rng, ZuBSpan{secret}, digest)) {
-	  ZuClear(random.data(), random.length());
-	  ZuClear(secret.data(), secret.length());
+	  ZuClear(random);
+	  ZuClear(secret);
 	  complete(adminErrorResult(503, "unavailable",
 	    "client credential generation failed"));
 	  return;
@@ -3722,13 +3726,11 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       Client client{.id = clientID, .appID = input.appID,
 	.label = ZuMv(input.label), .secretDigest = ZuMv(digest),
 	.secretVersion = 1, .redirects = ZuMv(input.redirectURIs),
-	.created = now, .updated = now, .type = type,
-	.authMethod = ClientAuthMethod::T(type == ClientType::Confidential ?
-	  ClientAuthMethod::ClientSecretBasic : ClientAuthMethod::None),
+	.created = now, .updated = now, .profile = profile,
 	.grants = input.grants, .refreshAllowed = input.refreshAllowed,
 	.identityScopes = ZuMv(input.identityScopes), .state = State::Active,
 	.version = 1};
-      ZuClear(random.data(), random.length());
+      ZuClear(random);
       ZmRef<AppEdit_<ClientAdd>> add = new AppEdit_<ClientAdd>{
 	m_db, m_context, &m_rng, ClientAdd{
 	  .before = Client{.id = client.id, .appID = client.appID},
@@ -3738,7 +3740,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    if (!adminAddItemString(result, "client_secret", secret))
 	      result = adminErrorResult(503, "unavailable", "response encoding failed");
 	  }
-	  if (secret) ZuClear(secret.data(), secret.length());
+	  if (secret) ZuClear(secret);
 	  complete(ZuMv(result));
 	}};
       add->start();
@@ -3920,13 +3922,13 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       if (input.clientSecret && !serverSecretEncrypt(m_rng, m_config.dbKey,
 	  m_config.issuer, "provider", recordID, "clientSecret",
 	  ZuBSpan{input.clientSecret}, protectedSecret)) {
-	ZuClear(input.clientSecret.data(), input.clientSecret.length());
+	ZuClear(input.clientSecret);
 	complete(adminErrorResult(503, "unavailable",
 	  "provider secret encryption failed"));
 	return;
       }
       if (input.clientSecret)
-	ZuClear(input.clientSecret.data(), input.clientSecret.length());
+	ZuClear(input.clientSecret);
       ZmRef<AppEdit_<ProviderAdd>> change = new AppEdit_<ProviderAdd>{
 	m_db, m_context, &m_rng, ProviderAdd{
 	  .before = Provider{.id = id},
@@ -3970,12 +3972,12 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    m_config.issuer, "provider", recordID, "clientSecret",
 	    ZuBSpan{input.clientSecret}, protectedSecret)) {
 	  if (input.clientSecret)
-	    ZuClear(input.clientSecret.data(), input.clientSecret.length());
+	    ZuClear(input.clientSecret);
 	  complete(adminErrorResult(400, "invalid_request",
 	    "invalid provider secret"));
 	  return;
 	}
-	ZuClear(input.clientSecret.data(), input.clientSecret.length());
+	ZuClear(input.clientSecret);
       }
       if (!ifMatch) {
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
@@ -4158,14 +4160,14 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  !serverSecretEncrypt(m_rng,
 	    m_config.dbKey, issuer, "zum.sign_key", input.id,
 	    "privateMaterial", plain, protectedMaterial)) {
-	if (plain) ZuClear(plain.data(), plain.length());
-	ZuClear(input.privateMaterial.data(), input.privateMaterial.length());
+	if (plain) ZuClear(plain);
+	ZuClear(input.privateMaterial);
 	complete(adminErrorResult(400, "invalid_request",
 	  "invalid signing private material"));
 	return;
       }
-      ZuClear(plain.data(), plain.length());
-      ZuClear(input.privateMaterial.data(), input.privateMaterial.length());
+      ZuClear(plain);
+      ZuClear(input.privateMaterial);
       int64_t now = Zm::now().sec();
       SignKey key{.id = ZuMv(input.id), .issuer = ZuMv(issuer),
 	.algorithm = ZuMv(input.algorithm),
@@ -4735,7 +4737,7 @@ Bytes Daemon::idemDigest_(int op,
   Ztls::MD<> md;
   md.update(ZuBSpan{canonical});
   md.finish(digest);
-  ZuClear(canonical.data(), canonical.length());
+  ZuClear(canonical);
   return digest;
 }
 

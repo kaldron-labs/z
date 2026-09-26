@@ -10,6 +10,7 @@
 #define ZtlsKEM_HH
 
 #ifndef ZtlsLib_HH
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZtlsLib.hh>
 #endif
 
@@ -72,7 +73,7 @@ public:
     return {};
   }
 };
-using PK_MLKEM768_Heap = ZmHeap<"Ztls.PK_MLKEM768", PK_MLKEM768_<>>;
+ZuDerive(PK_MLKEM768_Heap, (ZmHeap<"Ztls.PK_MLKEM768", PK_MLKEM768_<>>));
 ZuDerive(PK_MLKEM768, (PK_MLKEM768_<PK_MLKEM768_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -103,7 +104,7 @@ struct SK_MLKEM768_ : public PK_MLKEM768_<Heap> {
     bytes.length(MLKEM768PrivateSize);
     size_t n = 0;
     if (!Backend::pkey_mlkem768_export_private(key, bytes, &n)) {
-      ZuClear(bytes.data(), bytes.length());
+      ZuClear(bytes);
       return ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 private key export failed");
     }
     if (n == MLKEM768SeedSize) {
@@ -147,7 +148,7 @@ struct SK_MLKEM768_ : public PK_MLKEM768_<Heap> {
     return {};
   }
 };
-using SK_MLKEM768_Heap = ZmHeap<"Ztls.SK_MLKEM768", SK_MLKEM768_<>>;
+ZuDerive(SK_MLKEM768_Heap, (ZmHeap<"Ztls.SK_MLKEM768", SK_MLKEM768_<>>));
 ZuDerive(SK_MLKEM768, (SK_MLKEM768_<SK_MLKEM768_Heap>));
 
 enum {
@@ -227,8 +228,8 @@ public:
     }
   }
 };
-using PK_MLKEM768_X25519_Heap =
-  ZmHeap<"Ztls.PK_MLKEM768_X25519", PK_MLKEM768_X25519_<>>;
+ZuDerive(PK_MLKEM768_X25519_Heap,
+  (ZmHeap<"Ztls.PK_MLKEM768_X25519", PK_MLKEM768_X25519_<>>));
 ZuDerive(PK_MLKEM768_X25519,
   (PK_MLKEM768_X25519_<PK_MLKEM768_X25519_Heap>));
 
@@ -286,8 +287,8 @@ struct SK_MLKEM768_X25519_ : public PK_MLKEM768_X25519_<Heap> {
     return {};
   }
 };
-using SK_MLKEM768_X25519_Heap =
-  ZmHeap<"Ztls.SK_MLKEM768_X25519", SK_MLKEM768_X25519_<>>;
+ZuDerive(SK_MLKEM768_X25519_Heap,
+  (ZmHeap<"Ztls.SK_MLKEM768_X25519", SK_MLKEM768_X25519_<>>));
 ZuDerive(SK_MLKEM768_X25519,
   (SK_MLKEM768_X25519_<SK_MLKEM768_X25519_Heap>));
 

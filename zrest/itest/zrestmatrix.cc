@@ -263,12 +263,12 @@ static Command clientCommand(bool go, unsigned port,
     const Zhttp::Test::TempDir &temp, unsigned requests, unsigned jobs,
     ZuCSpan interval, int transport)
 {
-  MatrixString issuer, resource;
-  issuer << "https://localhost:" << port << "/oauth2/ping";
+  MatrixString issuerURL, resource;
+  issuerURL << "https://localhost:" << port << "/oauth2/ping";
   resource << "https://localhost:" << port << "/api/ping";
   Command command;
   if (go) {
-    command.add("../interop/go/client").option("issuer", issuer)
+    command.add("../interop/go/client").option("issuer", issuerURL)
       .option("resource", resource).option("browser", "./zrestua")
       .option("cert", temp.certPath).option("requests", requests)
       .option("interval", interval);
@@ -280,7 +280,7 @@ static Command clientCommand(bool go, unsigned port,
       command.option("http3", "disable").option("http2",
         transport == TestTransport::H2 ? "force" : "disable");
     command.option("ca", temp.certPath)
-      .option("issuer", issuer).option("resource", resource)
+      .option("issuer", issuerURL).option("resource", resource)
       .option("browser", "./zrestua")
       .option("requests", requests).option("jobs", jobs)
       .option("links", jobs).option("link-max", 1)
@@ -356,11 +356,11 @@ static bool runProbe(bool goServer, bool expiry)
     goServer, port, temp, 1000000, "1s", expiry ? "2s" : "1h",
     TestTransport::H1);
   if (expiry) serverCmd.option("state-limit", 1);
-  MatrixString issuer, resource;
-  issuer << "https://localhost:" << port << "/oauth2/ping";
+  MatrixString issuerURL, resource;
+  issuerURL << "https://localhost:" << port << "/oauth2/ping";
   resource << "https://localhost:" << port << "/api/ping";
   Command probeCmd;
-  probeCmd.add("./zrestprobe").option("issuer", issuer)
+  probeCmd.add("./zrestprobe").option("issuer", issuerURL)
     .option("resource", resource).option("cert", temp.certPath)
     .option("browser", "./zrestua");
   if (expiry)

@@ -21,29 +21,29 @@
 namespace Zum {
 
 struct TokenID {
-  String	issuer;
+  String	issuerURL;
   String	jti;
 
   int cmp(const TokenID &token) const {
-    if (int c = issuer.cmp(token.issuer)) return c;
+    if (int c = issuerURL.cmp(token.issuerURL)) return c;
     return jti.cmp(token.jti);
   }
   friend bool operator ==(const TokenID &l, const TokenID &r) {
     return !l.cmp(r);
   }
   uint32_t hash() const {
-    return issuer.hash() ^ jti.hash();
+    return issuerURL.hash() ^ jti.hash();
   }
 };
 
 // Opaque refresh-token family identity.  The family identifier is encoded for
 // event transport; it is never the refresh-token bearer value.
 struct RefreshID {
-  String	issuer;
+  String	issuerURL;
   String	familyID;
 
   int cmp(const RefreshID &value) const {
-    if (int c = issuer.cmp(value.issuer)) return c;
+    if (int c = issuerURL.cmp(value.issuerURL)) return c;
     return familyID.cmp(value.familyID);
   }
   friend bool operator ==(const RefreshID &l, const RefreshID &r) {
@@ -83,10 +83,10 @@ ZumAPI bool jwtES256(
   ZuCSpan token, ZuBSpan publicKey, const JWTLimits &,
   JWTHeader &, String &claims);
 ZumAPI bool jwtVerify(
-  ZuCSpan token, ZuCSpan kid, ZuCSpan issuer, ZuCSpan audience,
+  ZuCSpan token, ZuCSpan kid, ZuCSpan issuerURL, ZuCSpan audience,
   ZuBSpan publicKey, int64_t now, const JWTLimits &, Principal &);
 ZumAPI bool jwtVerifyIssuer(
-  ZuCSpan token, ZuCSpan kid, ZuCSpan issuer,
+  ZuCSpan token, ZuCSpan kid, ZuCSpan issuerURL,
   ZuBSpan publicKey, int64_t now, const JWTLimits &, Principal &);
 
 } // namespace Zum

@@ -5,9 +5,11 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <iostream>
+#include <string.h>
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuTuple.hh>
+#include <zlib/ZtArray.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -20,6 +22,8 @@
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
+
+#include <zlib/ZtlsVault.hh>
 
 #include <zlib/ZvMxParams.hh>
 
@@ -52,6 +56,8 @@ struct Options {
   Zum::String	config;
   Zum::String	module;
   Zum::String	connect;
+  Zum::String	vaultStore;
+  Zum::String	vaultModule;
   Zum::String	log{"&2"};
   Zum::String	issuer;
   Zum::String	ssfIssuer;
@@ -74,6 +80,8 @@ ZfStruct(, (Options, CLI),
   (((config),	(CLI::Long<"config">)),		(String)),
   (((module),	(CLI::Long<"module">)),		(String)),
   (((connect),	(CLI::Long<"connect">)),	(String)),
+  (((vaultStore), (CLI::Long<"vault-store">)), (String)),
+  (((vaultModule), (CLI::Long<"vault-module">)), (String)),
   (((log),	(CLI::Long<"log">)),		(String, "&2")),
   (((issuer),	(CLI::Long<"issuer">)),		(String)),
   (((ssfIssuer),	(CLI::Long<"ssf-issuer">)),	(String)),
@@ -102,6 +110,8 @@ static void usage(int code)
     "  --config=FILE       node configuration containing native zdb/mx sections\n"
     "  --module=PATH       Zdb store module (default: $ZDB_MODULE)\n"
     "  --connect=STRING    Zdb connection (default: $ZDB_CONNECT)\n"
+    "  --vault-store=NAME  keyring or module (file/ephemeral: tests only)\n"
+    "  --vault-module=PATH secure Vault module when store=module\n"
     "  --log=FILE          log destination (default: stderr)\n"
     "  --issuer=URL        public authorization base URL\n"
     "  --ssf-issuer=URL    application-scoped issuer used in SSF SETs\n"
@@ -117,7 +127,7 @@ static void usage(int code)
     "  -d, --debug         enable Zdb debug logging\n"
     "  -o, --once          stop after database activation\n"
     "  --rekey             offline DB-secret rotation; stop all writers first\n"
-    "                      old key: ZUM_DB_KEY; new key: ZUM_DB_NEW_KEY\n"
+    "                      old key: Vault; new key: ZUM_DB_KEY\n"
     "  -h, --help          show help\n" << std::flush;
   ::exit(code);
 }
@@ -128,13 +138,105 @@ struct OIDCConfig {
 ZfStruct(, (OIDCConfig, Cf),
   (((caPath)), (String)));
 
+struct VaultCf {
+  Zum::String store;
+  Zum::String module;
+};
+ZfStruct(, (VaultCf, Cf),
+  (((store), (Required)), (String)),
+  (((module)), (String)));
+
+static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer)
+{
+  Ztls::VaultConfig result;
+  result.program = "zumd";
+  result.account = issuer;
+  result.variant = Ztls::VaultVariant::Direct;
+  if (cf.store == "keyring")
+    result.store = Ztls::VaultStore::KeyRing;
+  else if (cf.store == "module" && cf.module) {
+    result.store = Ztls::VaultStore::Module;
+    result.module = cf.module;
+  } else if (cf.store == "file")
+    result.store = Ztls::VaultStore::File; // isolated integration tests only
+  else if (cf.store == "ephemeral")
+    result.store = Ztls::VaultStore::Ephemeral; // isolated tests only
+  else
+    throw ZeEXCEPT(Fatal, "zumd", "invalid Vault store configuration");
+  return result;
+}
+
+template <typename Fn>
+static Ztls::VaultResult withVault(const Ztls::VaultConfig &cf, Fn &&fn)
+{
+  Ztls::Vault vault;
+  auto result = vault.init(cf);
+  if (result.is<ZeException>()) return result;
+  result = vault.open();
+  if (result.is<ZeException>()) {
+    vault.final();
+    return result;
+  }
+  ZuGuard close{[&vault]() { vault.close(); vault.final(); }};
+  return ZuFwd<Fn>(fn)(vault);
+}
+
+static Ztls::VaultResult loadDBKey(const Ztls::VaultConfig &cf,
+    Zum::Bytes &key)
+{
+  return withVault(cf, [&key](Ztls::Vault &vault) {
+    bool valid = false;
+    auto result = vault.load(Ztls::Scopes::Global{}, "dbKey",
+      [&key, &valid](ZuSpan<uint8_t> value) {
+        if (value.length() != 32) return;
+        key.length(32, false);
+        memcpy(key.data(), value.data(), 32);
+        valid = true;
+      });
+    if (result.is<ZeException>()) return result;
+    if (!valid)
+      return Ztls::VaultResult{ZeEXCEPT(Fatal, "zumd",
+        "invalid stored database key")};
+    return result;
+  });
+}
+
+struct SSFSecret {
+  Zum::String name;
+  Zum::String value;
+  bool provision = false;
+};
+using SSFSecrets = ZtArray<SSFSecret,
+  ZtArrayHeapID<"zumd.SSFSecrets">>;
+
+static Ztls::VaultResult loadSSFSecrets(const Ztls::VaultConfig &cf,
+    SSFSecrets &secrets)
+{
+  return withVault(cf, [&secrets](Ztls::Vault &vault) {
+    for (auto &secret: secrets) {
+      if (secret.provision) continue;
+      bool valid = false;
+      auto result = vault.load(Ztls::Scopes::Environment{"ssf"}, secret.name,
+        [&secret, &valid](ZuSpan<uint8_t> stored) {
+          secret.value = ZuCSpan{stored};
+          valid = bool(secret.value);
+        });
+      if (result.is<ZeException>()) return result;
+      if (!valid)
+        return Ztls::VaultResult{ZeEXCEPT(Fatal, "zumd",
+          "invalid stored SSF secret")};
+    }
+    return Ztls::VaultResult{};
+  });
+}
+
 struct SSFReceiverCf {
   Zum::String receiverID;
   Zum::AppID appID = 0;
   Zum::String audience;
   Zum::String deliveryURL;
   // This is an environment-variable name, not the callback credential.
-  Zum::String secretRef;
+  Zum::String secretName;
   uint64_t revision = 0;
 };
 ZfStruct(, (SSFReceiverCf, Cf),
@@ -142,7 +244,7 @@ ZfStruct(, (SSFReceiverCf, Cf),
   (((appID), (Required)), (UInt64)),
   (((audience), (Required)), (String)),
   (((deliveryURL), (Required)), (String)),
-  (((secretRef), (Required)), (String)),
+  (((secretName), (Required)), (String)),
   (((revision), (Required)), (UInt64)));
 
 struct SSFReceiverVecCf : public ZtArray<SSFReceiverCf> {
@@ -246,12 +348,13 @@ int main(int argc, char **argv)
   if (!options.module)
     if (auto path = Zt::getpath("ZDB_MODULE")) options.module = path;
   if (!options.connect) options.connect = ::getenv("ZDB_CONNECT");
-  ZuCSpan encodedDBKey = ::getenv("ZUM_DB_KEY");
-  if (!encodedDBKey) usage(1);
+  const char *dbKeyEnv = ::getenv("ZUM_DB_KEY");
+  ZuCSpan encodedDBKey{dbKeyEnv};
   if ((!options.config && (!options.module || !options.connect)) ||
       !options.issuer || (!options.rekey &&
         (!options.admin || !options.bootstrapOutput)) ||
-      (options.rekey && (options.once || options.bootstrapReissue))) {
+      (options.rekey && (options.once || options.bootstrapReissue ||
+        !dbKeyEnv))) {
     usage(1);
   }
   if (!options.rekey && !Zum::loginNormalize(options.admin)) {
@@ -259,23 +362,11 @@ int main(int argc, char **argv)
     return 1;
   }
   Zum::Bytes dbKey;
-  dbKey.length(32, false);
-  if (ZuBase64::decode(dbKey, encodedDBKey) != dbKey.length()) {
-    ZuClear(dbKey.data(), dbKey.length());
-    std::cerr << "zumd: ZUM_DB_KEY must be a base64-encoded 256-bit key\n";
-    return 1;
-  }
   Zum::Bytes newDBKey;
-  if (options.rekey) {
-    ZuCSpan encodedNewKey = ::getenv("ZUM_DB_NEW_KEY");
-    newDBKey.length(32, false);
-    if (!encodedNewKey || ZuBase64::decode(newDBKey, encodedNewKey) != 32) {
-      ZuClear(dbKey.data(), dbKey.length());
-      ZuClear(newDBKey.data(), newDBKey.length());
-      std::cerr << "zumd: ZUM_DB_NEW_KEY must be a base64-encoded 256-bit key\n";
-      return 1;
-    }
-  }
+  ZuGuard clearKeys{[&dbKey, &newDBKey]() {
+    if (dbKey && dbKey.mutable_()) ZuClear(dbKey);
+    if (newDBKey && newDBKey.mutable_()) ZuClear(newDBKey);
+  }};
 
   ZiLog::init("zumd");
   ZiLog::level(0);
@@ -290,6 +381,28 @@ int main(int argc, char **argv)
     auto cf = config(options, configSource);
     if (!cf || !cf->resolve("mx") || !cf->resolve("zdb"))
       throw ZeEXCEPT(Fatal, "zumd", "invalid node configuration");
+    VaultCf vaultOptions;
+    if (options.vaultStore) {
+      vaultOptions.store = options.vaultStore;
+      vaultOptions.module = options.vaultModule;
+    } else if (auto node = cf->resolve("vault"))
+      vaultOptions = ZfCf::handler<VaultCf>(node).ctor();
+    else
+      throw ZeEXCEPT(Fatal, "zumd", "Vault configuration missing");
+    auto vaultCf = vaultConfig(vaultOptions, options.issuer);
+    bool provisionDBKey = dbKeyEnv && !options.rekey;
+    if (options.rekey || !dbKeyEnv) {
+      auto result = loadDBKey(vaultCf, dbKey);
+      if (result.is<ZeException>())
+        throw ZuMv(result).p<ZeException>();
+    }
+    if (dbKeyEnv) {
+      auto &target = options.rekey ? newDBKey : dbKey;
+      target.length(32, false);
+      if (ZuBase64::decode(target, encodedDBKey) != 32)
+        throw ZeEXCEPT(Fatal, "zumd",
+          "ZUM_DB_KEY must be a base64-encoded 256-bit key");
+    }
     SSFCf ssfConfig;
     if (auto node = cf->resolve("ssf"))
       ssfConfig = ZfCf::handler<SSFCf>(node).ctor();
@@ -297,20 +410,47 @@ int main(int argc, char **argv)
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
     Zum::SSFReceiverVec ssfReceivers;
-    for (const auto &receiver: ssfConfig.receivers) {
+    SSFSecrets ssfSecrets;
+    ZuGuard clearSecrets{[&ssfSecrets]() {
+      for (auto &secret: ssfSecrets) ZuClear(secret.value);
+    }};
+    if (!options.rekey) for (const auto &receiver: ssfConfig.receivers) {
       if (!receiver.receiverID || !receiver.appID || !receiver.audience ||
-          !receiver.deliveryURL || !receiver.secretRef || !receiver.revision)
+          !receiver.deliveryURL || !receiver.secretName || !receiver.revision ||
+          receiver.secretName.find<"/">() >= 0)
         throw ZeEXCEPT(Fatal, "zumd", "invalid SSF receiver configuration");
       ssfReceivers.push(Zum::SSFRx{
         .receiverID = receiver.receiverID, .appID = receiver.appID,
         .audience = receiver.audience, .deliveryURL = receiver.deliveryURL,
-        .secretRef = receiver.secretRef, .revision = receiver.revision});
+        .secretName = receiver.secretName, .revision = receiver.revision});
+      bool found = false;
+      for (const auto &secret: ssfSecrets)
+        if (secret.name == receiver.secretName) { found = true; break; }
+      if (found) continue;
+      SSFSecret secret;
+      secret.name = receiver.secretName;
+      if (auto value = ::getenv(secret.name)) {
+        secret.value = value;
+        secret.provision = true;
+      }
+      ssfSecrets.push(ZuMv(secret));
     }
+    if (ssfSecrets.find([](const SSFSecret &secret) {
+          return !secret.provision;
+        }) >= 0) {
+      auto loaded = loadSSFSecrets(vaultCf, ssfSecrets);
+      if (loaded.is<ZeException>())
+        throw ZuMv(loaded).p<ZeException>();
+    }
+    for (const auto &secret: ssfSecrets)
+      if (!secret.value)
+        throw ZeEXCEPT(Fatal, "zumd", "SSF secret missing");
     Zum::SSFSecretFn ssfSecret;
     if (ssfReceivers) {
-      ssfSecret = Zum::SSFSecretFn{[](Zum::String secretRef) {
-        auto value = ::getenv(secretRef);
-        return value ? Zum::String{value} : Zum::String{};
+      ssfSecret = Zum::SSFSecretFn{[&ssfSecrets](Zum::String secretName) {
+        for (const auto &secret: ssfSecrets)
+          if (secret.name == secretName) return secret.value;
+        return Zum::String{};
       }};
     }
     ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
@@ -429,6 +569,11 @@ int main(int argc, char **argv)
           stop();
           if (!storeStopped)
             throw ZeEXCEPT(Fatal, "zumd", "offline secret-key rotation store drain failed");
+          auto published = withVault(vaultCf, [&newDBKey](Ztls::Vault &vault) {
+            return vault.save(Ztls::Scopes::Global{}, "dbKey", newDBKey);
+          });
+          if (published.is<ZeException>())
+            throw ZuMv(published).p<ZeException>();
           std::cout << "zumd: secret-key rotation complete" << std::endl;
           break;
         }
@@ -460,16 +605,45 @@ int main(int argc, char **argv)
         });
         if (!current) continue;
         bool ready = bootstrapOK && (!daemonInited || daemon.prepare(ZuMv(bootstrap)));
-        current = ZmBlock<bool>{}([db, generation, ready](auto wake) {
-          db->run([db, generation, ready, wake = ZuMv(wake)]() mutable {
-            bool current = !stopping && db->active() && db->generation == generation;
-            if (current && ready) db->requests->activate();
-            wake(current);
+        current = ZmBlock<bool>{}([db, generation](auto wake) {
+          db->run([db, generation, wake = ZuMv(wake)]() mutable {
+            wake(!stopping && db->active() && db->generation == generation);
           });
         });
         if (!current) continue;
         if (!ready)
           throw ZeEXCEPT(Fatal, "zumd", "bootstrap/signing preparation failed");
+        if (provisionDBKey || ssfSecrets.find([](const SSFSecret &secret) {
+              return secret.provision;
+            }) >= 0) {
+          auto published = withVault(vaultCf,
+            [&dbKey, provisionDBKey, &ssfSecrets](Ztls::Vault &vault) {
+              Ztls::VaultResult result;
+              if (provisionDBKey) {
+                result = vault.save(Ztls::Scopes::Global{}, "dbKey", dbKey);
+                if (result.is<ZeException>()) return result;
+              }
+              for (const auto &secret: ssfSecrets) {
+                if (!secret.provision) continue;
+                result = vault.save(Ztls::Scopes::Environment{"ssf"},
+                  secret.name, ZuBSpan{secret.value});
+                if (result.is<ZeException>()) return result;
+              }
+              return result;
+            });
+          if (published.is<ZeException>())
+            throw ZuMv(published).p<ZeException>();
+          provisionDBKey = false;
+          for (auto &secret: ssfSecrets) secret.provision = false;
+        }
+        current = ZmBlock<bool>{}([db, generation](auto wake) {
+          db->run([db, generation, wake = ZuMv(wake)]() mutable {
+            bool current = !stopping && db->active() && db->generation == generation;
+            if (current) db->requests->activate();
+            wake(current);
+          });
+        });
+        if (!current) continue;
         prepared = generation;
         std::cout << "zumd: active" << std::endl;
         if (options.once) break;
@@ -485,8 +659,6 @@ int main(int argc, char **argv)
   } catch (const ZeError &e) {
     std::cerr << e.message() << '\n';
   }
-  if (dbKey && dbKey.mutable_()) ZuClear(dbKey.data(), dbKey.length());
-  if (newDBKey && newDBKey.mutable_()) ZuClear(newDBKey.data(), newDBKey.length());
   ZiLog::stop();
   return result;
 }

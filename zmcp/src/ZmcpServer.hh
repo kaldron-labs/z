@@ -17,6 +17,7 @@
 
 #include <zlib/Zmcp.hh>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuRef.hh>
@@ -273,8 +274,8 @@ private:
 };
 
 template <typename Token, typename Res>
-using CompleteActionHeap = ZmHeap<"Zmcp.HTTP.Complete",
-  CompleteAction_<Token, Res>>;
+ZuDerive(CompleteActionHeap,
+  (ZmHeap<"Zmcp.HTTP.Complete", CompleteAction_<Token, Res>>));
 
 template <typename Token, typename Res>
 ZuDerive(CompleteAction, (CompleteAction_<Token, Res,
@@ -301,8 +302,8 @@ private:
 };
 
 template <typename Token>
-using ProgressActionHeap = ZmHeap<"Zmcp.HTTP.Progress",
-  ProgressAction_<Token>>;
+ZuDerive(ProgressActionHeap,
+  (ZmHeap<"Zmcp.HTTP.Progress", ProgressAction_<Token>>));
 
 template <typename Token>
 ZuDerive(ProgressAction,
@@ -328,8 +329,7 @@ private:
 };
 
 template <typename Token>
-using LogActionHeap = ZmHeap<"Zmcp.HTTP.Log",
-  LogAction_<Token>>;
+ZuDerive(LogActionHeap, (ZmHeap<"Zmcp.HTTP.Log", LogAction_<Token>>));
 
 template <typename Token>
 ZuDerive(LogAction, (LogAction_<Token, LogActionHeap<Token>>));
@@ -536,8 +536,7 @@ public:
 };
 
 template <typename Catalog>
-using HTTPSessionHeap = ZmHeap<"Zmcp.HTTP.Session",
-  HTTPSession_<Catalog>>;
+ZuDerive(HTTPSessionHeap, (ZmHeap<"Zmcp.HTTP.Session", HTTPSession_<Catalog>>));
 
 template <typename Catalog>
 ZuDerive(HTTPSession,
@@ -616,8 +615,8 @@ private:
 };
 
 template <typename Owner, typename Emit>
-using SSEProducerHeap = ZmHeap<"Zmcp.SSE.Producer",
-  SSEProducer_<Owner, Emit>>;
+ZuDerive(SSEProducerHeap,
+  (ZmHeap<"Zmcp.SSE.Producer", SSEProducer_<Owner, Emit>>));
 
 template <typename Owner, typename Emit>
 ZuDerive(SSEProducer, (SSEProducer_<Owner, Emit,
@@ -1331,12 +1330,12 @@ class Server {
   using StdioWorkDefault = StdioWork_<ZuVoid>;
 
   template <typename Link>
-  using WorkHeap = ZmHeap<"Zmcp.HTTP.Work", WorkDefault<Link>>;
+  ZuDerive(WorkHeap, (ZmHeap<"Zmcp.HTTP.Work", WorkDefault<Link>>));
 
   template <typename Link>
   ZuDerive(Work, (Work_<Link, WorkHeap<Link>>));
 
-  using StdioWorkHeap = ZmHeap<"Zmcp.Stdio.Work", StdioWorkDefault>;
+  ZuDerive(StdioWorkHeap, (ZmHeap<"Zmcp.Stdio.Work", StdioWorkDefault>));
 
   ZuDerive(StdioWork, (StdioWork_<StdioWorkHeap>));
 

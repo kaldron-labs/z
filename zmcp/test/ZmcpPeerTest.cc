@@ -6,6 +6,7 @@
 
 #include <string.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuTestUtil.hh>
 
@@ -70,7 +71,7 @@ ZfStruct(, (HeaderReq, JSON),
 
 template <typename Heap = ZuVoid>
 struct ThrowContext_ : public Heap, public ZmObject { };
-using ThrowContextHeap = ZmHeap<"ZmcpTest.ThrowContext", ThrowContext_<>>;
+ZuDerive(ThrowContextHeap, (ZmHeap<"ZmcpTest.ThrowContext", ThrowContext_<>>));
 ZuDerive(ThrowContext, (ThrowContext_<ThrowContextHeap>));
 
 struct ThrowContextApp {
@@ -253,7 +254,7 @@ struct PendingCall_ : public Heap, public ZmObject {
   unsigned errors = 0;
   unsigned failures = 0;
 };
-using PendingCallHeap = ZmHeap<"ZmcpTest.PendingCall", PendingCall_<>>;
+ZuDerive(PendingCallHeap, (ZmHeap<"ZmcpTest.PendingCall", PendingCall_<>>));
 ZuDerive(PendingCall, (PendingCall_<PendingCallHeap>));
 
 struct ClientNotifyHarness {

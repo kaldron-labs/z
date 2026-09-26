@@ -195,7 +195,7 @@ public:
     return n;
   }
 };
-using PK_RSA_Heap = ZmHeap<"Ztls.PK_RSA", PK_RSA_<>>;
+ZuDerive(PK_RSA_Heap, (ZmHeap<"Ztls.PK_RSA", PK_RSA_<>>));
 ZuDerive(PK_RSA, (PK_RSA_<PK_RSA_Heap>));
 
 // RSA private key
@@ -323,7 +323,7 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     return {};
   }
 };
-using SK_RSA_Heap = ZmHeap<"Ztls.SK_RSA", SK_RSA_<>>;
+ZuDerive(SK_RSA_Heap, (ZmHeap<"Ztls.SK_RSA", SK_RSA_<>>));
 ZuDerive(SK_RSA, (SK_RSA_<SK_RSA_Heap>));
 
 // EC public key
@@ -356,7 +356,7 @@ public:
     return true;
   }
 };
-using PK_EC_Heap = ZmHeap<"Ztls.PK_EC", PK_EC_<>>;
+ZuDerive(PK_EC_Heap, (ZmHeap<"Ztls.PK_EC", PK_EC_<>>));
 ZuDerive(PK_EC, (PK_EC_<PK_EC_Heap>));
 
 // EC private key
@@ -461,7 +461,7 @@ struct SK_EC_ : public PK_EC_<Heap> {
     return {};
   }
 };
-using SK_EC_Heap = ZmHeap<"Ztls.SK_EC", SK_EC_<>>;
+ZuDerive(SK_EC_Heap, (ZmHeap<"Ztls.SK_EC", SK_EC_<>>));
 ZuDerive(SK_EC, (SK_EC_<SK_EC_Heap>));
 
 // ED25519 public key
@@ -519,7 +519,7 @@ public:
     return Backend::pkey_verify(this->key, MDType, data, signature);
   }
 };
-using PK_ED25519_Heap = ZmHeap<"Ztls.PK_ED25519", PK_ED25519_<>>;
+ZuDerive(PK_ED25519_Heap, (ZmHeap<"Ztls.PK_ED25519", PK_ED25519_<>>));
 ZuDerive(PK_ED25519, (PK_ED25519_<PK_ED25519_Heap>));
 
 // ED25519 private key
@@ -603,7 +603,7 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     return {};
   }
 };
-using SK_ED25519_Heap = ZmHeap<"Ztls.SK_ED25519", SK_ED25519_<>>;
+ZuDerive(SK_ED25519_Heap, (ZmHeap<"Ztls.SK_ED25519", SK_ED25519_<>>));
 ZuDerive(SK_ED25519, (SK_ED25519_<SK_ED25519_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -635,7 +635,7 @@ public:
     return {};
   }
 };
-using PK_X25519_Heap = ZmHeap<"Ztls.PK_X25519", PK_X25519_<>>;
+ZuDerive(PK_X25519_Heap, (ZmHeap<"Ztls.PK_X25519", PK_X25519_<>>));
 ZuDerive(PK_X25519, (PK_X25519_<PK_X25519_Heap>));
 
 template <typename Heap = ZuVoid>
@@ -697,7 +697,7 @@ struct SK_X25519_ : public PK_X25519_<Heap> {
     return {};
   }
 };
-using SK_X25519_Heap = ZmHeap<"Ztls.SK_X25519", SK_X25519_<>>;
+ZuDerive(SK_X25519_Heap, (ZmHeap<"Ztls.SK_X25519", SK_X25519_<>>));
 ZuDerive(SK_X25519, (SK_X25519_<SK_X25519_Heap>));
 
 template <typename Impl>

@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZdbusAdapter.hh>
 #include <zlib/ZdbusClient.hh>
 #include <zlib/ZdbusServer.hh>
@@ -16,7 +17,7 @@ template <typename Heap = ZuVoid>
 struct ServerClient_ : Heap {
   Client cli;
 };
-using ServerClientHeap = ZmHeap<"Zdbus.ServerClient", ServerClient_<>>;
+ZuDerive(ServerClientHeap, (ZmHeap<"Zdbus.ServerClient", ServerClient_<>>));
 ZuDerive(ServerClient, (ServerClient_<ServerClientHeap>));
 
 struct NameArgs {

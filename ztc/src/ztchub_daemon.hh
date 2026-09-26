@@ -93,7 +93,7 @@ inline ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(ListenerCfs *);
 
 struct HubdCf {
 	ListenerCfs	listeners;
-	HubString	issuer;
+	HubString	issuerURL;
 	HubString	audience;
 	HubString	managementIssuer;
 	HubString	managementURL;
@@ -125,7 +125,7 @@ struct HubdCf {
 
 ZfStruct(, (HubdCf, Cf),
   (((listeners),		(Required)),		(UDT)),
-  (((issuer),		(Required)),		(String)),
+  (((issuerURL),		(JSON::ID<"issuer">, Required)),	(String)),
   (((audience),		(Required)),		(String)),
   (((managementIssuer),	(Required)),		(String)),
 	(((managementURL),	(Required)),		(String)),

@@ -70,11 +70,11 @@ ZfStruct(, (TokenResponse, JSON),
 
 inline void tokenClear(TokenResponse &response) {
   if (response.accessToken && response.accessToken.mutable_())
-    ZuClear(response.accessToken.data(), response.accessToken.length());
+    ZuClear(response.accessToken);
   if (response.idToken && response.idToken.mutable_())
-    ZuClear(response.idToken.data(), response.idToken.length());
+    ZuClear(response.idToken);
   if (response.refreshToken && response.refreshToken.mutable_())
-    ZuClear(response.refreshToken.data(), response.refreshToken.length());
+    ZuClear(response.refreshToken);
   response = {};
 }
 
@@ -231,7 +231,7 @@ ZumExtern String errorRedirect(
 ZumExtern int authenticateClient(
   const Client &, int grant, const TokenParams &, const BasicAuth *,
   int64_t now = 0);
-ZumExtern bool redirectMatches(ClientType::T, ZuBSpan registered,
+ZumExtern bool redirectMatches(ClientProfile::T, ZuBSpan registered,
   ZuBSpan requested);
 ZumExtern bool pkceVerify(ZuCSpan challenge, ZuCSpan verifier);
 

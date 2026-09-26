@@ -10,22 +10,30 @@
 #include <stdlib.h>
 
 #include <zlib/ZuCmp.hh>
+
 #include <zlib/ZmList.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
+
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZfJSON.hh>
+
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
+
 #include <zlib/ZhttpServer.hh>
+
 #include <zlib/ZrestServer.hh>
+
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumService.hh>
+#include <zlib/ZumVaultService.hh>
 
 #include "pinghttp.hh"
 
 using Zum::String;
-enum { BodyMax = 64U<<10, ServiceSID = 5 };
+enum { BodyMax = 64U<<10, ServiceSID = 3 };
 static ZmSemaphore done;
 static void interrupted() { done.post(); }
 
@@ -103,7 +111,7 @@ static Zum::ServiceManifest manifest()
     .actions = {{.name = "ping"}},
     .roles = {{.actions = {"ping"}, .name = "ping"}},
     .clients = {{.id = "zumping", .label = "zumping",
-      .type = "native", .redirectURIs = {"http://127.0.0.1:8081/callback"},
+      .profile = "native", .redirectURIs = {"http://127.0.0.1:8081/callback"},
       .grants = 5, .refreshAllowed = true,
       .identityScopes = {"openid", "profile", "email"},
       .roles = {"ping"}}}
@@ -115,11 +123,11 @@ struct RawData_ : public Heap, public ZmObject  {
   Zum::String data;
   RawData_ &operator =(ZuSpan<uint8_t> value) { data = value; return *this; }
 };
-using RawDataHeap = ZmHeap<"Zum.zumpingd.RawData", RawData_<>>;
+ZuDerive(RawDataHeap, (ZmHeap<"Zum.zumpingd.RawData", RawData_<>>));
 ZuDerive(RawData, (RawData_<RawDataHeap>));
 template <typename Heap = ZuVoid>
 struct Reply_ : public Heap, public ZmObject  { String body; String location; };
-using ReplyHeap = ZmHeap<"Zum.zumpingd.Reply", Reply_<>>;
+ZuDerive(ReplyHeap, (ZmHeap<"Zum.zumpingd.Reply", Reply_<>>));
 ZuDerive(Reply, (Reply_<ReplyHeap>));
 
 template <unsigned Status_>
@@ -288,10 +296,21 @@ int main(int argc, char **argv)
       std::cerr << "zumpingd: invalid configuration\n"; return 1;
     }
   } catch (const ZeException &e) { std::cerr << e << '\n'; return 1; }
-  auto secret = getenv("ZUM_CLIENT_SECRET");
-  auto callbackAuth = getenv("ZUM_SSF_CALLBACK_AUTH");
-  if (!secret || !*secret || !callbackAuth || !*callbackAuth) {
-    std::cerr << "zumpingd: ZUM_CLIENT_SECRET and ZUM_SSF_CALLBACK_AUTH are required\n";
+  auto secretEnv = getenv("ZUM_CLIENT_SECRET");
+  auto callbackEnv = getenv("ZUM_SSF_AUTH");
+  bool provision = secretEnv || callbackEnv;
+  ZumVaultService::Credential credential{config.zum.issuerURL,
+    config.zum.clientID};
+  if (provision) {
+    if (!secretEnv || !*secretEnv || !callbackEnv || !*callbackEnv) {
+      std::cerr << "zumpingd: both service credentials are required\n";
+      return 1;
+    }
+    credential.clientSecret = secretEnv;
+    credential.callbackAuth = callbackEnv;
+  } else if (ZumVaultService::load(credential)
+      .is<ZeException>()) {
+    std::cerr << "zumpingd: service credentials unavailable\n";
     return 1;
   }
   ZiLog::init("zumpingd");
@@ -304,8 +323,6 @@ int main(int argc, char **argv)
     s.nThreads(ServiceSID)
       .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
-      .thread(3, [](auto &t) { t.name("srv-rx"); t.isolated(1); })
-      .thread(4, [](auto &t) { t.name("srv-tx"); t.isolated(1); })
       .thread(ServiceSID, [](auto &t) { t.name("auth"); t.isolated(1); });
   }).rxThread(1).txThread(2)};
   if (!mx.start()) { ZiLog::stop(); return 1; }
@@ -319,12 +336,12 @@ int main(int argc, char **argv)
     .managementIssuerURL = config.zum.managementIssuerURL,
     .managementURL = config.zum.managementURL,
     .clientID = config.zum.clientID,
-    .clientSecret = Zum::Bytes{ZuCSpan{secret}},
+    .clientSecret = Zum::Bytes{ZuCSpan{credential.clientSecret}},
     .audience = config.audience,
     .ssf = Zum::ServiceSSFConfig{
       .enabled = true, .receiverID = config.zum.clientID,
       .callbackPath = "/ssf",
-      .callbackAuth = callbackAuth,
+      .callbackAuth = credential.callbackAuth,
       .transmitterIssuer = config.zum.issuerURL,
       .audience = config.audience}}, transport.fn());
   ok = initialized;
@@ -351,13 +368,18 @@ int main(int argc, char **argv)
       });
       ready.wait();
     }
+    if (ok && provision && ZumVaultService::save(credential)
+        .is<ZeException>()) {
+      std::cerr << "zumpingd: credential storage failed\n";
+      ok = false;
+    }
   }
   Zhttp::Server<App> server;
   bool listener = false;
   if (ok) {
     auto settings = Zhttp::ServerConfig().localIP(ZiIP(config.addr))
       .port(config.port).idleTimeout(30).retainedBodyMax(BodyMax).tcp();
-    listener = server.init(Zhttp::HubConfig{&mx, "srv-rx", "srv-tx"}, ZuMv(settings), &app);
+    listener = server.init(Zhttp::HubConfig{&mx, "rx", "tx"}, ZuMv(settings), &app);
     ok = listener && server.start();
   }
   if (ok) done.wait();

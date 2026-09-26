@@ -145,13 +145,8 @@ inline auto ZuClear(Span &&span) noexcept ->
 #define ZuLikely(x) __builtin_expect(!!(x), 1)
 #define ZuUnlikely(x) __builtin_expect(!!(x), 0)
 
-#ifdef ZDEBUG
-#define ZuInline inline
-#define ZuNoInline inline
-#else
 #define ZuInline inline __attribute__((always_inline))
 #define ZuNoInline inline __attribute__((noinline))
-#endif
 
 #ifdef ZDEBUG
 #define ZuUnreachable() do { ::abort(); __builtin_unreachable(); } while (0)
@@ -343,16 +338,16 @@ using ZuNotRRef = typename ZuNotRRef_<U, R>::T;
 
 // shorthand constexpr alternative to std::forward
 template <typename T>
-constexpr T &&ZuFwd(ZuDeref<T> &v) noexcept { // fwd lvalue
+ZuInline constexpr T &&ZuFwd(ZuDeref<T> &v) noexcept { // fwd lvalue
   return static_cast<T &&>(v);
 }
 template <typename T>
-constexpr T &&ZuFwd(ZuDeref<T> &&v) noexcept { // fwd rvalue
+ZuInline constexpr T &&ZuFwd(ZuDeref<T> &&v) noexcept { // fwd rvalue
   return static_cast<T &&>(v);
 }
 // shorthand constexpr alternative to std::move
 template <typename T>
-constexpr ZuDeref<T> &&ZuMv(T &&v) noexcept {
+ZuInline constexpr ZuDeref<T> &&ZuMv(T &&v) noexcept {
   return static_cast<ZuDeref<T> &&>(v);
 }
 // ZuMv for types that can be both smart and raw pointers
@@ -368,13 +363,13 @@ template <typename T> struct ZuMvPtr_<T *> {
   }
 };
 template <typename T, typename = ZuMutable<T>>
-constexpr decltype(auto) ZuMvPtr(T &v) noexcept {
+ZuInline constexpr decltype(auto) ZuMvPtr(T &v) noexcept {
   return ZuMvPtr_<T>::mv(v);
 }
 // shorthand std::forward_like, extended for converting the passed parameter
 // - ZuFwdLike<decltype(self)>(self.member)
 template <typename T, typename V>
-constexpr auto &&ZuFwdLike(V &&v) noexcept {
+ZuInline constexpr auto &&ZuFwdLike(V &&v) noexcept {
   using U = ZuDeref<V>;
   constexpr bool Const = ZuIsConst<ZuDeref<T>>{};
   if constexpr (ZuIsLRef<T>{}) {
@@ -391,7 +386,7 @@ constexpr auto &&ZuFwdLike(V &&v) noexcept {
 }
 // - ZuFwdLike<decltype(self), U>(self) // casts self to appropriate U
 template <typename T, typename U, typename V>	// V should be convertible to U
-constexpr auto &&ZuFwdLike(V &&v) noexcept {
+ZuInline constexpr auto &&ZuFwdLike(V &&v) noexcept {
   constexpr bool Const = ZuIsConst<ZuDeref<T>>{};
   if constexpr (ZuIsLRef<T>{}) {
     if constexpr (Const)
@@ -740,18 +735,18 @@ template <typename U>
 using ZuUnder = typename ZuUnder_<ZuDecay<U>>::T;
 
 template <typename U>
-auto ZuUnderlying(U &&v) noexcept { return ZuUnder<U>(ZuFwd<U>(v)); }
+ZuInline auto ZuUnderlying(U &&v) noexcept { return ZuUnder<U>(ZuFwd<U>(v)); }
 
 // generic "void" type for use where plain void cannot be used
 struct ZuVoid { };
 
 // alternative to std::is_constant_evaluated()
-constexpr bool ZuConstEval() noexcept {
+ZuInline constexpr bool ZuConstEval() noexcept {
   return __builtin_is_constant_evaluated();
 }
 
 template <typename T>
-constexpr T *ZuAddr(T &v) noexcept {
+ZuInline constexpr T *ZuAddr(T &v) noexcept {
 #ifdef __GNUC__
   return __builtin_addressof(v);
 #endif
@@ -769,14 +764,14 @@ template <
   typename T, typename ...Args,
   decltype(T(ZuDeclVal<Args &&>()...), int()) = 0,
   bool NoExcept = noexcept(T(ZuDeclVal<Args &&>()...))>
-constexpr auto ZuNew(T *v, Args && ...args) noexcept(NoExcept) {
+ZuInline constexpr auto ZuNew(T *v, Args && ...args) noexcept(NoExcept) {
   return std::construct_at(v, ZuFwd<Args>(args)...); // comment out for C++26
   // return new (v) T(ZuFwd<Args>(args)...); // uncomment for C++26
 }
 
 // alternative to std::bit_cast
 template <typename To, typename From>
-constexpr To ZuCast(const From &from) noexcept {
+ZuInline constexpr To ZuCast(const From &from) noexcept {
 #ifdef __GNUC__
   return __builtin_bit_cast(To, from);
 #endif

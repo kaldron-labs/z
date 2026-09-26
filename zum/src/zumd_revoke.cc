@@ -47,7 +47,7 @@ bool SSFTransmitter_<Heap>::init(SSFTransmitterConfig config)
   for (const auto &receiver: config.receivers)
     if (!receiver.receiverID || !receiver.appID || !receiver.audience ||
         !receiver.deliveryURL || !ssfURL(receiver.deliveryURL) ||
-        !receiver.secretRef || !receiver.revision)
+        !receiver.secretName || !receiver.revision)
       return false;
   m_config = ZuMv(config);
   return true;
@@ -122,7 +122,7 @@ void SSFTransmitter_<Heap>::stop()
 template <typename Heap>
 void SSFTransmitter_<Heap>::revoke(AppID appID, RefreshID refreshID, int64_t expires)
 {
-  if (!m_started || !appID || !refreshID.issuer || !refreshID.familyID ||
+  if (!m_started || !appID || !refreshID.issuerURL || !refreshID.familyID ||
       expires <= 0)
     return;
   auto scheduler = m_config.requests->scheduler();
@@ -151,7 +151,7 @@ void SSFTransmitter_<Heap>::receivers_(AppID appID, RefreshID refreshID, int64_t
     if (configured.appID != appID) continue;
     if (count++ == m_config.receiverMax) break;
     SSFRx receiver = configured;
-    RefreshID id{refreshID.issuer, refreshID.familyID};
+    RefreshID id{refreshID.issuerURL, refreshID.familyID};
     scheduler->run([self = ZmRef<SSFTransmitter>{this},
         receiver = ZuMv(receiver), refreshID = ZuMv(id), expires]() mutable {
       if (self->m_started)
@@ -165,28 +165,28 @@ template <typename Heap>
 void SSFTransmitter_<Heap>::issue_(SSFRx receiver, RefreshID refreshID,
     int64_t expires, int64_t now)
 {
-  String authorization = m_config.secret(ZuMv(receiver.secretRef));
+  String authorization = m_config.secret(ZuMv(receiver.secretName));
   if (!authorization) return;
   auto issue = [self = ZmRef<SSFTransmitter>{this}, receiver = ZuMv(receiver),
       refreshID = ZuMv(refreshID), expires, authorization = ZuMv(authorization),
       now](SignKey key) mutable {
-    key.issuer = refreshID.issuer;
+    key.issuer = refreshID.issuerURL;
     makeSSF(key, receiver.audience, refreshID, expires, now, self->m_config.sign,
       [self = ZuMv(self), receiver = ZuMv(receiver), refreshID = ZuMv(refreshID),
         expires, authorization = ZuMv(authorization), now](String set) mutable {
         if (!set) return;
-        String eventID{refreshID.issuer};
+        String eventID{refreshID.issuerURL};
         eventID << ':' << refreshID.familyID;
         eventID << ':' << now;
         self->persist_(ZuMv(receiver), SSFDelivery{
           .eventID = ZuMv(eventID), .receiverID = receiver.receiverID,
-          .familyIssuer = refreshID.issuer, .familyID = refreshID.familyID,
+          .familyIssuer = refreshID.issuerURL, .familyID = refreshID.familyID,
           .familyExpires = expires, .set = ZuMv(set), .nextDelivery = now},
           ZuMv(authorization));
       });
   };
   if (m_config.keyLoad)
-    m_config.keyLoad(refreshID.issuer, ZuMv(issue));
+    m_config.keyLoad(refreshID.issuerURL, ZuMv(issue));
   else {
     SignKey key = m_config.key;
     issue(ZuMv(key));
@@ -353,7 +353,7 @@ void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
                 delivery = ZuMv(delivery)]() mutable {
               if (!self->m_started) return;
               String authorization =
-                self->m_config.secret(ZuMv(receiver.secretRef));
+                self->m_config.secret(ZuMv(receiver.secretName));
               if (authorization)
                 self->deliver_(ZuMv(receiver), ZuMv(delivery),
                     ZuMv(authorization));

@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuRef.hh>
@@ -43,8 +44,9 @@ struct FileTxBuf_ :
 };
 
 template <unsigned BufSize>
-using FileTxBuf = FileTxBuf_<
-  BufSize, ZmHeap<"ZiFile.TxBuf", FileTxBuf_<BufSize>>>;
+ZuDerive(FileTxBufHeap, (ZmHeap<"ZiFile.TxBuf", FileTxBuf_<BufSize>>));
+template <unsigned BufSize>
+ZuDerive(FileTxBuf, (FileTxBuf_<BufSize, FileTxBufHeap<BufSize>>));
 
 template <typename NTP = ZiFileTxStream_Defaults>
 class FileTxStream {

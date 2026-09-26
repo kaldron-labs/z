@@ -1975,19 +1975,19 @@ struct OutArgv {
 };
 
 template <typename Facet = ZuFacet::CLI, typename O>
-ZuInline OutArgv &saveArgv(OutArgv &out, const O &v) {
+inline OutArgv &saveArgv(OutArgv &out, const O &v) {
   save_<Facet, ZfFieldFilter::Save, RawQuote>(out.argv, v);
   out.finish();
   return out;
 }
 template <typename Facet = ZuFacet::CLI, typename O>
-ZuInline OutArgv &saveArgvUpd(OutArgv &out, const O &v) {
+inline OutArgv &saveArgvUpd(OutArgv &out, const O &v) {
   save_<Facet, ZfFieldFilter::Upd, RawQuote>(out.argv, v);
   out.finish();
   return out;
 }
 template <typename Facet = ZuFacet::CLI, typename O>
-ZuInline OutArgv &saveArgvDel(OutArgv &out, const O &v) {
+inline OutArgv &saveArgvDel(OutArgv &out, const O &v) {
   save_<Facet, ZfFieldFilter::Del, RawQuote>(out.argv, v);
   out.finish();
   return out;

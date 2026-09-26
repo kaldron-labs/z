@@ -797,7 +797,7 @@ template <typename> friend class Accept_;
     alignas(16)
     char		m_buf[(ZiSockAddr::MaxLen + 16) * 2];
   };
-  using Accept_Heap = ZmHeap<"ZiMultiplex.Accept", Accept_<>>;
+  ZuDerive(Accept_Heap, (ZmHeap<"ZiMultiplex.Accept", Accept_<>>));
   ZuDerive(Accept, (Accept_<Accept_Heap>)); 
 #endif
 
@@ -862,7 +862,7 @@ template <typename> friend class Connect_;
 	ZmHashHeapID<"ZiMultiplex.Connect">>>));
   using Connect = ConnectHash::Node;
 #else
-  using ConnectHeap = ZmHeap<"ZiMultiplex.Connect", Connect_<>>;
+  ZuDerive(ConnectHeap, (ZmHeap<"ZiMultiplex.Connect", Connect_<>>));
   ZuDerive(Connect, (Connect_<ConnectHeap>));
 #endif
 

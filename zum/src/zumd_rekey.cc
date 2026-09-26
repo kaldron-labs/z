@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_rekey.hh>
 #include <zlib/ZtlsSec.hh>
@@ -61,8 +62,8 @@ private:
   bool m_found = false;
 };
 template <typename Table, typename Apply>
-using RekeyScanHeap =
-  ZmHeap<"Zum.zumd.rekey.RekeyScan", RekeyScan__<Table, Apply>>;
+ZuDerive(RekeyScanHeap,
+  (ZmHeap<"Zum.zumd.rekey.RekeyScan", RekeyScan__<Table, Apply>>));
 template <typename Table, typename Apply>
 ZuDerive(RekeyScan_, (RekeyScan__<Table, Apply,
   RekeyScanHeap<Table, Apply>>));
@@ -78,8 +79,8 @@ public:
 
   ~Rekey__()
   {
-    if (m_oldKey) ZuClear(m_oldKey.data(), m_oldKey.length());
-    if (m_newKey) ZuClear(m_newKey.data(), m_newKey.length());
+    if (m_oldKey) ZuClear(m_oldKey);
+    if (m_newKey) ZuClear(m_newKey);
   }
 
   void start()
@@ -192,7 +193,7 @@ private:
       Bytes plain;
       bool ok = serverSecretDecrypt(m_newKey, issuer, table, id, field,
 	change.before, plain);
-      if (plain) ZuClear(plain.data(), plain.length());
+      if (plain) ZuClear(plain);
       done(ok);
       return;
     }
@@ -231,7 +232,7 @@ private:
   bool m_verify = false;
   bool m_committed = false;
 };
-using RekeyHeap = ZmHeap<"Zum.zumd.rekey.Rekey", Rekey__<>>;
+ZuDerive(RekeyHeap, (ZmHeap<"Zum.zumd.rekey.Rekey", Rekey__<>>));
 ZuDerive(Rekey_, (Rekey__<RekeyHeap>));
 
 void serverRekey(DB *db, DBContext *context, Ztls::Random &rng, String issuer,

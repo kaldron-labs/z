@@ -297,15 +297,13 @@ static void opaqueFinish(
 bool opaqueIssue(Ztls::Random &rng, OpaqueToken &opaque)
 {
   enum { RawSize = OpaqueIDSize + OpaqueSecretSize };
-  Bytes raw;
+  Secret raw;
   raw.length(RawSize, false);
   if (!rng.random(raw)) {
-    ZuClear(raw.data(), raw.length());
     return false;
   }
   opaqueFinish({raw.data(), OpaqueIDSize},
     {raw.data() + OpaqueIDSize, OpaqueSecretSize}, opaque);
-  ZuClear(raw.data(), raw.length());
   return true;
 }
 
@@ -315,7 +313,7 @@ bool opaqueIssue(Ztls::Random &rng, ZuBSpan id, OpaqueToken &opaque)
   ZuBArray<OpaqueSecretSize> secret(OpaqueSecretSize, false);
   if (!rng.random(secret)) return false;
   opaqueFinish(id, secret, opaque);
-  ZuClear(secret.data(), secret.length());
+  ZuClear(secret);
   return true;
 }
 
@@ -348,11 +346,11 @@ bool authorizeClient(const Client &client, const AuthorizeParams &params)
   if (client.state != State::Active || client.owner ||
       client.id != params.clientID ||
       !(client.grants & ClientGrant::AuthorizationCode) ||
-      (client.type != ClientType::Browser &&
-       client.type != ClientType::Native &&
-       client.type != ClientType::Confidential)) return false;
+      (client.profile != ClientProfile::Browser &&
+       client.profile != ClientProfile::Native &&
+       client.profile != ClientProfile::Server)) return false;
   for (auto &redirect: client.redirects)
-    if (redirectMatches(client.type, redirect, params.redirectURI)) return true;
+    if (redirectMatches(client.profile, redirect, params.redirectURI)) return true;
   return false;
 }
 
@@ -528,6 +526,8 @@ int authenticateClient(
 {
   if (client.state != State::Active || client.owner)
     return ClientAuth::InvalidClient;
+  auto type = clientType(client.profile);
+  if (type < 0) return ClientAuth::InvalidClient;
   unsigned flag;
   switch (grant) {
     case TokenGrant::AuthorizationCode:
@@ -544,10 +544,10 @@ int authenticateClient(
   }
   if (!(client.grants & flag) ||
       (grant == TokenGrant::ClientCredentials &&
-       client.type != ClientType::Confidential))
+       type != ClientType::Confidential))
     return ClientAuth::UnauthorizedGrant;
 
-  if (client.type == ClientType::Confidential) {
+  if (type == ClientType::Confidential) {
     bool secret = basic &&
       (Ztls::secretVerify(client.secretDigest, ZuBSpan{basic->secret}) ||
        (now > 0 && client.previousSecretExpires > now &&
@@ -564,9 +564,9 @@ int authenticateClient(
 }
 
 bool redirectMatches(
-    ClientType::T type, ZuBSpan registered, ZuBSpan requested)
+    ClientProfile::T profile, ZuBSpan registered, ZuBSpan requested)
 {
-  if (type != ClientType::Native) return registered == requested;
+  if (profile != ClientProfile::Native) return registered == requested;
 
   Zhttp::URL registeredURL{registered};
   Zhttp::URL requestedURL{requested};

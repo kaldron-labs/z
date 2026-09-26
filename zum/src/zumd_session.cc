@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_session.hh>
 #include <zlib/zumd_identity_db.hh>
 
@@ -33,8 +34,8 @@ private:
   ZmRef<Request>	m_request;
   SessionFn	m_complete;
 };
-using SessionCompleteHeap =
-  ZmHeap<"Zum.zumd.session.SessionComplete", SessionComplete__<>>;
+ZuDerive(SessionCompleteHeap,
+  (ZmHeap<"Zum.zumd.session.SessionComplete", SessionComplete__<>>));
 ZuDerive(SessionComplete_, (SessionComplete__<SessionCompleteHeap>));
 
 template <typename Heap = ZuVoid>
@@ -56,8 +57,8 @@ private:
   ZmRef<Request>	m_request;
   SessionDoneFn	m_complete;
 };
-using SessionDoneCompleteHeap =
-  ZmHeap<"Zum.zumd.session.SessionDoneComplete", SessionDoneComplete__<>>;
+ZuDerive(SessionDoneCompleteHeap,
+  (ZmHeap<"Zum.zumd.session.SessionDoneComplete", SessionDoneComplete__<>>));
 ZuDerive(SessionDoneComplete_,
   (SessionDoneComplete__<SessionDoneCompleteHeap>));
 
@@ -144,7 +145,7 @@ static void use_(DBContext *context, String token, String issuer,
     complete(SessionError::Invalid, Session{}, String{});
     return;
   }
-  if (token.mutable_()) ZuClear(token.data(), token.length());
+  if (token.mutable_()) ZuClear(token);
   auto sessions = context->sessions;
   sessions->run(0, [sessions, digest = ZuMv(digest), issuer = ZuMv(issuer),
       now, idleLifetime, complete = ZuMv(complete)]() mutable {
@@ -183,7 +184,7 @@ static void revoke_(DBContext *context, String token, String issuer, int64_t now
     complete(SessionError::Invalid);
     return;
   }
-  if (token.mutable_()) ZuClear(token.data(), token.length());
+  if (token.mutable_()) ZuClear(token);
   auto sessions = context->sessions;
   sessions->run(0, [sessions, digest = ZuMv(digest), issuer = ZuMv(issuer), now,
       complete = ZuMv(complete)]() mutable {

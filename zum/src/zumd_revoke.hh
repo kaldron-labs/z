@@ -10,6 +10,7 @@
 #define zumd_revoke_HH
 
 #ifndef ZumLib_HH
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumLib.hh>
 #endif
 
@@ -86,12 +87,12 @@ inline void makeSSF(
     const SignKey &key, ZuCSpan audience, const RefreshID &refreshID,
     int64_t expires, int64_t now, SignFn sign, SSFSETFn complete)
 {
-  if (!key.id || !key.issuer || !audience || !refreshID.issuer ||
+  if (!key.id || !key.issuer || !audience || !refreshID.issuerURL ||
       !refreshID.familyID || expires <= now || now <= 0 || !sign || !complete) {
     if (complete) complete(String{});
     return;
   }
-  String eventID{refreshID.issuer};
+  String eventID{refreshID.issuerURL};
   eventID << ':' << refreshID.familyID;
   eventID << ':' << now;
   String header;
@@ -106,7 +107,7 @@ inline void makeSSF(
   ZfJSON::save(claims, SSFClaims{
     key.issuer, audience, ZuMv(eventID), now,
     {.revoked = SSFEvent{SSFSubject{
-      "opaque", refreshID.issuer, refreshID.familyID, expires}}}});
+      "opaque", refreshID.issuerURL, refreshID.familyID, expires}}}});
   String input{header64};
   input << '.';
   unsigned claimsOffset = input.length();
@@ -199,7 +200,8 @@ private:
   bool			m_armed = false;
   bool			m_started = false;
 };
-using SSFTransmitterHeap = ZmHeap<"Zum.zumd.revoke.SSFTransmitter", SSFTransmitter_<>>;
+ZuDerive(SSFTransmitterHeap,
+  (ZmHeap<"Zum.zumd.revoke.SSFTransmitter", SSFTransmitter_<>>));
 ZuDerive(SSFTransmitter, (SSFTransmitter_<SSFTransmitterHeap>));
 
 // Send one already-signed SET. Durable callers retain the SSFDelivery row and
@@ -219,7 +221,7 @@ inline void sendSSF(
     .body = ZuMv(delivery.set),
     .method = OIDCHTTPMethod::POST},
     [complete = ZuMv(complete)](unsigned status, String body) mutable {
-      if (body.mutable_()) ZuClear(body.data(), body.length());
+      if (body.mutable_()) ZuClear(body);
       // Delivery status is deliberately reduced to terminal/retry classes;
       // callers retain the durable row for the actual retry decision.
       complete(status == 202 ? RevokeIssue::OK :

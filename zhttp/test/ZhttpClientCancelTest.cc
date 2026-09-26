@@ -8,6 +8,7 @@
 
 #include <string.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -265,7 +266,7 @@ struct Pool_ : public Heap, public Zhttp::Pool<App, TxQ, ResParser> {
 private:
   ReqBuilderQ	m_requests;
 };
-using PoolHeap = ZmHeap<"Zhttp.Test.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"Zhttp.Test.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 ZuAssert((ZuIsSame<
