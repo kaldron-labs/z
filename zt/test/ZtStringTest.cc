@@ -18,6 +18,7 @@
 #include <zlib/ZmList.hh>
 
 #include <zlib/ZtString.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtCase.hh>
 
@@ -676,6 +677,114 @@ void testString()
   }
 }
 
+template <auto &ZuTest_scope>
+void testSecretString()
+{
+  using SecretString = ZtString<ZtStringSecret<true,
+    ZtStringHeapID<"ZtStringTest.Secret">>>;
+  SecretString s = "abcdefgh";
+  ZuCheck(!s.mutable_());
+  s.size(32);
+  s.splice([](ZuSpan<char>) { }, 2, 1,
+    [](ZuSpan<char> span) -> uint64_t {
+      span[0] = 'X';
+      return 1;
+  }, 4);
+  ZuCheck(s == "abXdefgh");
+  bool cleared = true;
+  for (unsigned i = 8; i < 11; i++) cleared &= !s.data()[i];
+  ZuCheck(cleared);
+  s.length(4);
+  ZuCheck(s == "abXd");
+  cleared = true;
+  for (unsigned i = 4; i < 8; i++) cleared &= !s.data()[i];
+  ZuCheck(cleared);
+  s.clear();
+  ZuCheck(!s.length() && s.data()[0] == 0);
+
+  SecretString compact = "abcdef";
+  compact.size(7);
+  compact = ZuCSpan{"abcdefghij"};
+  ZuCheck(compact == "abcdefghij" && compact.builtin());
+  compact = ZuCSpan{"abcdefghijklmnop"};
+  ZuCheck(compact == "abcdefghijklmnop" && !compact.builtin());
+  compact = ZuCSpan{"abcdefghijklmnopqrstuvwxyz"};
+  ZuCheck(compact == "abcdefghijklmnopqrstuvwxyz" && !compact.builtin());
+
+  char external[32] = "secret";
+  SecretString owned{external, 6, sizeof(external), false};
+  owned = ZuCSpan{"abcdefghijklmnopqrstuvwxyz0123456789"};
+  ZuCheck(owned == "abcdefghijklmnopqrstuvwxyz0123456789");
+  cleared = true;
+  for (auto c: external) cleared &= !c;
+  ZuCheck(cleared);
+
+  SecretString source{ZuCSpan{"secret"}};
+  SecretString moved{ZuMv(source)};
+  ZuCheck(moved == "secret" && !source.length());
+  ZuCheck(source.data()[0] == 0);
+
+  SecretString grow{ZuCSpan{"abcdefghijklmnop"}};
+  grow.size(17);
+  grow.splice(2, 1, "01234567890123456789");
+  ZuCheck(grow == "ab01234567890123456789defghijklmnop");
+  grow.null();
+  ZuCheck(!grow);
+
+  SecretString shadow{"unchanged"};
+  ZuCheck(!shadow.mutable_());
+  shadow.null();
+
+  auto scratch = ZtScratch(SecretString, 32);
+  scratch = ZuCSpan{"secret"};
+  scratch.clear();
+  ZuCheck(!scratch.length() && !scratch.data()[0]);
+
+  compact = ZuCSpan{"secret"};
+  compact.size(7);
+  compact.data()[2] = 0;
+  compact.calcLength();
+  ZuCheck(compact == "se");
+  cleared = true;
+  for (unsigned i = 2; i < 6; ++i) cleared &= !compact.data()[i];
+  ZuCheck(cleared);
+  compact = ZuCSpan{"secret"};
+  compact.size(4);
+  ZuCheck(compact == "sec" && !compact.data()[4] && !compact.data()[5]);
+
+  compact = ZuCSpan{"abcd"};
+  compact.size(32);
+  compact.splice([](ZuSpan<char>) { }, 6, 0,
+    [](ZuSpan<char> span) -> uint64_t {
+      memset(span.data(), 'X', span.length());
+      return 1;
+    }, 4);
+  ZuCheck(compact == "abcd  X");
+  ZuCheck(!compact.data()[7] && !compact.data()[8] && !compact.data()[9]);
+
+  compact = ZuCSpan{"abcdefghijklmnopqrstuvwx"};
+  compact.size(25);
+  compact.splice([](ZuSpan<char>) { }, 22, 2,
+    [](ZuSpan<char> span) -> uint64_t {
+      memset(span.data(), 'X', span.length());
+      return 1;
+    }, 8);
+  ZuCheck(compact == "abcdefghijklmnopqrstuvX");
+  cleared = true;
+  for (unsigned i = 23; i < 30; ++i) cleared &= !compact.data()[i];
+  ZuCheck(cleared);
+
+  using Wide = ZtWString<ZtStringSecret<true,
+    ZtStringHeapID<"ZtStringTest.Secret">>>;
+  Wide formatted{ZuBox<int>{12}.fmt()};
+  ZuCheck(formatted == L"12");
+  formatted = ZuBox<int>{34};
+  formatted << ZuBox<int>{56};
+  ZuCheck(formatted == L"3456");
+  ZuCheck(formatted + ZuBox<int>{78} == L"345678");
+  ZuCheck(ZtWString<>{L"v="} + ZuBox<int>{12} == L"v=12");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -683,6 +792,7 @@ int main(int argc, char **argv)
 
   testSpliceCoverage<ZuTest_scope>();
   testString<ZuTest_scope>();
+  testSecretString<ZuTest_scope>();
 
   return 0;
 }

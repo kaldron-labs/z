@@ -68,6 +68,7 @@ struct ZtString_Defaults {
   enum { HeapMin = ZtString_Builtin };
   enum { HeapMax = 1024 };
   enum { Sharded = 0 };
+  enum { Secret = 0 };
 };
 
 // ZtStringBuiltin - override built-in size
@@ -101,6 +102,12 @@ struct ZtStringHeapMax : public NTP {
 template <bool Sharded_, typename NTP = ZtString_Defaults>
 struct ZtStringSharded : public NTP {
   enum { Sharded = Sharded_ };
+};
+
+// ZtStringSecret - clear discarded primitive data
+template <bool Secret_, typename NTP = ZtString_Defaults>
+struct ZtStringSecret : public NTP {
+  enum { Secret = Secret_ };
 };
 
 namespace Zt_ {
@@ -138,6 +145,8 @@ public:
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };
   enum { Sharded = NTP::Sharded };
+  enum { Secret = NTP::Secret };
+  ZuAssert((!Secret || ZuTraits<Char>::IsPrimitive));
   using VHeap = ZmVHeap_<HeapID, HeapMin, HeapMax, 1, Sharded>;
 
 private:
@@ -292,7 +301,11 @@ public:
   // intentional and important for heap instrumentation and tuning
   String(String &&s) noexcept {
     if (ZuUnlikely(s.null__())) { null_(); return; }
-    if (ZuLikely(s.builtin())) { copy_(s.data_(), s.length()); return; }
+    if (ZuLikely(s.builtin())) {
+      copy_(s.data_(), s.length());
+      if constexpr (Secret) s.clear();
+      return;
+    }
     if (ZuUnlikely(!s.mutable_())) { shadow_(s.data_(), s.length()); return; }
     own_(s.data_(), s.length(), s.size(), s.vallocd());
     s.mutable_(s.builtin());
@@ -339,8 +352,11 @@ private:
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
       ZuCSpan s{buf};
       o = ZuUTF<Char, AltChar>::len(s);
-      if (!o) { null_(); return; }
-      length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
+      if (o)
+	length_(ZuUTF<Char, AltChar>::cvt({alloc_(o + 1, 0), o}, s));
+      else
+	null_();
+      if constexpr (Secret) ZuClear(buf);
     }
   }
 
@@ -449,8 +465,11 @@ private:
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
       ZuCSpan s{buf};
       o = ZuUTF<Char, AltChar>::len(s);
-      if (!o) { null_(); return; }
-      length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
+      if (o)
+	length_(ZuUTF<Char, AltChar>::cvt({ensure(o + 1), o}, s));
+      else
+	null_();
+      if constexpr (Secret) ZuClear(buf);
     }
   }
 
@@ -528,7 +547,10 @@ public:
   template <typename S> void init_(const S &s) { ctor(s); }
 
   void init(uint64_t length, uint64_t size) {
-    if (!size) { null_(); return; }
+    if (!size) {
+      if constexpr (Secret) free_();
+      null_(); return;
+    }
     uint64_t z = this->size();
     if (z < size) {
       free_();
@@ -565,6 +587,9 @@ private:
 
 public: // useful if the caller is sure that the length is being reduced
   void length_(uint64_t n) {
+    if constexpr (Secret)
+      if (!null__() && mutable_() && n < length())
+	ZuClear(data_() + n, (length() - n) * sizeof(Char));
     null__(0);
     length__(n);
     data_()[n] = 0;
@@ -612,7 +637,10 @@ protected:
   void copy_(const Char *copyData, uint64_t length) {
     if (!length) { null_(); return; }
     if (length < BuiltinSize - 1) {
-      memcpy(data__(), copyData, length * sizeof(Char));
+      if constexpr (Secret)
+	memmove(data__(), copyData, length * sizeof(Char));
+      else
+	memcpy(data__(), copyData, length * sizeof(Char));
       (data__())[length] = 0;
       size_mutable_null(BuiltinSize, 1, 0);
       length_vallocd_builtin(length, 0, 1);
@@ -633,14 +661,33 @@ protected:
       length_(length);
       return;
     }
-    Char *oldData = free_1();
-    copy_(copyData, length);
-    free_2(oldData);
+    if constexpr (Secret) {
+      Char *oldData = mutable_() && !null__() ? data_() : nullptr;
+      uint64_t oldSize = size_();
+      bool oldVallocd = vallocd();
+      copy_(copyData, length);
+      // Shorter assignments were handled in place above.
+      if (oldData && oldData != data_()) {
+	if (oldData == data__())
+	  // copy_() overwrote the built-in prefix with the new heap pointer.
+	  ZuClear(m_data + sizeof(Char *), sizeof(m_data) - sizeof(Char *));
+	else
+	  ZuClear(oldData, oldSize * sizeof(Char));
+      }
+      if (oldVallocd) vfree(oldData);
+    } else {
+      Char *oldData = free_1();
+      copy_(copyData, length);
+      free_2(oldData);
+    }
   }
 
   template <typename S> void convert_(const S &s, ZtIconv *iconv);
 
   void free_() {
+    if constexpr (Secret)
+      if (!null__() && mutable_())
+	ZuClear(data_(), size_() * sizeof(Char));
     if (vallocd())
       if (Char *data = ptr__())
 	vfree(data);
@@ -778,6 +825,7 @@ public:
     if (builtin()) {
       Char *newData = static_cast<Char *>(valloc(BuiltinSize * sizeof(Char)));
       memcpy(newData, m_data, (length() + 1) * sizeof(Char));
+      if constexpr (Secret) null();
       return newData;
     } else {
       mutable_(0);
@@ -812,7 +860,10 @@ public:
     else {
       auto data = data_();
       data[size_() - 1] = 0;
-      length__(Zu::strlen_(data));
+      if constexpr (Secret)
+	length_(Zu::strlen_(data));
+      else
+	length__(Zu::strlen_(data));
     }
   }
 
@@ -838,8 +889,12 @@ public:
     if (n > length()) n = length();
     if (oldData && oldData != newData) {
       memcpy(newData, oldData, (n + 1) * sizeof(Char));
+      if constexpr (Secret)
+	if (mutable_()) ZuClear(oldData, size_() * sizeof(Char));
       if (vallocd()) vfree(oldData);
     }
+    if constexpr (Secret)
+      if (oldData == newData && n < length()) length_(n);
     if (z <= BuiltinSize) {
       size_mutable_null(z, 1, 0);
       length_vallocd_builtin(n, 0, 1);
@@ -1014,10 +1069,17 @@ private:
       auto buf = ZmScratch(char, o);
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
       ZuCSpan s{buf};
-      return add_([s](Char *ptr, uint64_t length) -> uint64_t {
-	if (!length) return 0;
-	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
-      }, ZuUTF<Char, AltChar>::len(s));
+      if constexpr (Secret) {
+	ZuGuard clear{[&buf]() { ZuClear(buf); }};
+	return add_([s](Char *ptr, uint64_t length) -> uint64_t {
+	  if (!length) return 0;
+	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	}, ZuUTF<Char, AltChar>::len(s));
+      } else
+	return add_([s](Char *ptr, uint64_t length) -> uint64_t {
+	  if (!length) return 0;
+	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	}, ZuUTF<Char, AltChar>::len(s));
     }
   }
 
@@ -1050,12 +1112,14 @@ private:
     if (ZuUnlikely(!s.length())) return;
     if constexpr (ZuIsSame<S, String>{})
       if (this == &s) {
-	auto buf = ZmAlloc(Char, s.length());
-	memcpy(&buf[0], s.data_(), s.length() * sizeof(Char));
+	auto copyLength = s.length();
+	auto buf = ZmAlloc(Char, copyLength);
+	memcpy(&buf[0], s.data_(), copyLength * sizeof(Char));
 	append__([data = &buf[0]](Char *ptr, uint64_t rlength) {
 	  memcpy(ptr, data, rlength * sizeof(Char));
 	  return rlength;
-	}, s.length());
+	}, copyLength);
+	if constexpr (Secret) ZuClear(&buf[0], copyLength * sizeof(Char));
 	return;
       }
     append__([data = s.data_()](Char *ptr, uint64_t rlength) {
@@ -1123,6 +1187,7 @@ private:
       append__([s](Char *ptr, uint64_t length) {
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
       }, ZuUTF<Char, AltChar>::len(s));
+      if constexpr (Secret) ZuClear(buf);
     }
   }
 
@@ -1181,9 +1246,10 @@ public:
       } else
 	data = data_();
       Zu::strpad(data + n, offset - n);
-      if (rlength)
-	rlength = replace(ZuSpan(data + offset, rlength));
-      length_(offset + rlength); // rlength may have been reduced
+      auto nrlength = rlength ? replace(ZuSpan(data + offset, rlength)) : 0;
+      if constexpr (Secret)
+	length__(offset + rlength);
+      length_(offset + nrlength);
       return;
     }
 
@@ -1207,14 +1273,20 @@ public:
       }
       if (oldData != newData && offset)
 	memcpy(newData, oldData, offset * sizeof(Char));
-      if (rlength)
-	rlength = replace(ZuSpan(newData + offset, rlength));
-      l = n + rlength - length; // rlength may have been reduced
+      auto nrlength = rlength ? replace(ZuSpan(newData + offset, rlength)) : 0;
+      l = n + nrlength - length;
       if (offset + length < int64_t(n) &&
-	  (oldData != newData || int64_t(rlength) != length))
-	memmove(newData + offset + rlength,
+	  (oldData != newData || int64_t(nrlength) != length))
+	memmove(newData + offset + nrlength,
 		oldData + offset + length,
 		(n - (offset + length)) * sizeof(Char));
+      if constexpr (Secret) {
+	uint64_t end = offset + rlength;
+	if (oldData == newData && end < n) end = n;
+	if (end > uint64_t(l)) ZuClear(newData + l, (end - l) * sizeof(Char));
+	if (oldData != newData && mutable_())
+	  ZuClear(oldData, size_() * sizeof(Char));
+      }
       if (oldData != newData && vallocd()) vfree(oldData);
       newData[l] = 0;
       if (z <= BuiltinSize) {
@@ -1253,6 +1325,9 @@ public:
 		  tail * sizeof(Char));
 	}
       }
+      // Include temporary tail copies in the final length_() wipe.
+      if constexpr (Secret)
+	if (l > int64_t(n)) length__(l);
       l = n + nrlength - length;
     }
     length_(l);
@@ -1291,6 +1366,7 @@ public:
 	    memcpy(span.data(), data, n * sizeof(Char));
 	    return n;
 	  }, n);
+	if constexpr (Secret) ZuClear(&buf[0], n * sizeof(Char));
 	return;
       }
     splice(ZuFwd<Removed>(removed), offset, length,
