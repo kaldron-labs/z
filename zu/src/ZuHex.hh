@@ -17,25 +17,30 @@
 
 struct ZuHex {
 
+static constexpr const char upper_[] = "0123456789ABCDEF";
+static constexpr const char lower_[] = "0123456789abcdef";
+
+template <bool Upper = true>
 ZuInline static constexpr uint8_t lookup(uint8_t c) {
+  constexpr uint8_t alpha = Upper ? 'A' : 'a';
   return 
-    (c >= 'A' && c <= 'F') ? (c - 'A') + 10 :
+    (c >= alpha && c <= alpha + 5) ? (c - alpha) + 10 :
     (c >= '0' && c <= '9') ? c - '0' : 0xff;
 }
 
+template <bool Upper = true>
 ZuInline static constexpr bool is(char c) {
-  return (c >= 'A' && c <= 'F') || (c >= '0' && c <= '9');
+  return lookup<Upper>(c) != 0xff;
 }
 
 // both encode and decode return count of bytes written
 
 // does not null-terminate dst
+template <bool Upper = true>
 ZuInline static constexpr unsigned enclen(unsigned slen) { return slen<<1; }
+template <bool Upper = true>
 static inline unsigned encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
-  static constexpr const char lookup[] = {
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    'A', 'B', 'C', 'D', 'E', 'F'
-  };
+  constexpr auto lookup = Upper ? upper_ : lower_;
   auto s = src.data();
   auto d = dst.data();
   auto n = src.length();
@@ -49,19 +54,21 @@ static inline unsigned encode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   return d - dst.data();
 }
 
+template <bool Upper = true>
 ZuInline static constexpr unsigned declen(unsigned slen) {
   return (slen + 1)>>1;
 }
 // does not null-terminate dst
 // supports in-place-overwrite decoding (dst == src)
+template <bool Upper = true>
 static inline unsigned decode(ZuSpan<uint8_t> dst, ZuBSpan src) {
   auto s = src.data();
   auto d = dst.data();
   auto n = src.length();
   uint8_t i, j;
   while (n >= 2) {
-    i = lookup(*s++); if (i >= 16) break;
-    j = lookup(*s++); if (j >= 16) break;
+    i = lookup<Upper>(*s++); if (i >= 16) break;
+    j = lookup<Upper>(*s++); if (j >= 16) break;
     *d++ = (i<<4) | j;
     n -= 2;
   }

@@ -18,6 +18,7 @@
 #include <zlib/ZuSeq.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuPolymorph.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuStdString.hh>
 #include <zlib/ZuFnName.hh>
 
@@ -119,8 +120,11 @@ void testRuntimeSmokes()
 #endif
 
   uint8_t secret[] = { 1, 2, 3, 4 };
-  ZuClear(secret, sizeof(secret));
+  ZuClear(ZuSpan<uint8_t>{secret, sizeof(secret)});
   ZuCheck(!(secret[0] | secret[1] | secret[2] | secret[3]));
+  uint32_t words[] = { 0xffffffffU, 0xffffffffU };
+  ZuClear(ZuSpan<uint32_t>{words, 2});
+  ZuCheck(!(words[0] | words[1]));
 }
 
 int main(int argc, char **argv)

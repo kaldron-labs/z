@@ -133,6 +133,13 @@ inline void ZuClear(void *ptr, size_t size) noexcept
 #endif
 }
 
+template <typename Span>
+inline auto ZuClear(Span &&span) noexcept ->
+  decltype(ZuClear(span.data(), span.length() * sizeof(*span.data())), void())
+{
+  ZuClear(span.data(), span.length() * sizeof(*span.data()));
+}
+
 #ifdef __GNUC__
 
 #define ZuLikely(x) __builtin_expect(!!(x), 1)

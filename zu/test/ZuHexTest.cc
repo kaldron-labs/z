@@ -69,6 +69,25 @@ void test(ZuBSpan src, ZuBSpan dst, const char *encMsg, const char *decMsg)
     ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(src))), \
     ZuPP_Eval(ZuPP_Defer(ZuPP_Q)(ZuPP_Strip(dst))))
 
+void lower()
+{
+  ZuTestScope(lower);
+  static_assert(ZuHex::enclen<false>(3) == 6);
+  static_assert(ZuHex::declen<false>(6) == 3);
+  static_assert(ZuHex::is<false>('a') && !ZuHex::is<false>('A'));
+  const uint8_t src[] = {0xa1, 0x2b, 0xc3};
+  uint8_t hex[6];
+  ZuCheck(ZuHex::encode<false>(hex, src) == sizeof(hex));
+  ZuCheck(ZuCSpan(hex, sizeof(hex)) == "a12bc3");
+  uint8_t dst[3];
+  ZuCheck(ZuHex::decode<false>(dst, hex) == sizeof(dst));
+  ZuCheck(ZuBSpan(dst) == ZuBSpan(src));
+  ZuCheck(ZuHex::decode(dst, hex) == 0);
+  ZuCheck(ZuHex::decode<false>(dst, "A12BC3") == 0);
+  ZuCheck(ZuHex::decode<false>(hex, hex) == sizeof(dst));
+  ZuCheck(ZuBSpan(hex, sizeof(dst)) == ZuBSpan(src));
+}
+
 int main()
 {
   ZuTestMain();
@@ -86,4 +105,5 @@ int main()
   TEST((ZuBSpan{ 0xa1, 0x2b, 0xc3, 0x4d, 0xe5 }), "A12BC34DE5");
   TEST((ZuBSpan{ 0xa1, 0x2b, 0xc3, 0x4d, 0xe5, 0x6f }), "A12BC34DE56F");
   TEST((ZuBSpan{ 0xa1, 0x2b, 0xc3, 0x4d, 0xe5, 0x6f, 0xaa }), "A12BC34DE56FAA");
+  ZuTestCall(lower);
 }
