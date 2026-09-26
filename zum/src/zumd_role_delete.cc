@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_daemon.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_role_delete.hh>
@@ -103,8 +104,8 @@ private:
   bool		m_ok = true;
 };
 template <typename Table>
-using RoleScanHeap =
-  ZmHeap<"Zum.zumd.role.delete.RoleScan", RoleScan__<Table>>;
+ZuDerive(RoleScanHeap,
+  (ZmHeap<"Zum.zumd.role.delete.RoleScan", RoleScan__<Table>>));
 template <typename Table>
 ZuDerive(RoleScan_, (RoleScan__<Table, RoleScanHeap<Table>>));
 
@@ -250,8 +251,8 @@ private:
   uint64_t	m_version = 0;
   unsigned	m_phase = 0;
 };
-using RoleDeleteHeap =
-  ZmHeap<"Zum.zumd.role.delete.RoleDelete", RoleDelete__<>>;
+ZuDerive(RoleDeleteHeap,
+  (ZmHeap<"Zum.zumd.role.delete.RoleDelete", RoleDelete__<>>));
 ZuDerive(RoleDelete_, (RoleDelete__<RoleDeleteHeap>));
 
 void Daemon::roleDelete_(AppID appID, RoleID roleID,

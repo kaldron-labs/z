@@ -59,7 +59,7 @@ struct CatalogRoleVec : public CatalogRoleArray {
 struct CatalogClient {
   String id;
   String label;
-  String type;
+  String profile;
   StringVec redirectURIs;
   uint8_t grants = 0;
   bool refreshAllowed = false;
@@ -69,7 +69,7 @@ struct CatalogClient {
 ZfStruct(, (CatalogClient, JSON),
   (((id),		(Required)),	(String)),
   (((label),		(JSON::Opt)),	(String)),
-  (((type),		(Required)),	(String)),
+  (((profile),		(Required)),	(String)),
   (((redirectURIs),	(JSON::Opt)),	(StringVec)),
   (((grants),		(JSON::Opt)),	(UInt8)),
   (((refreshAllowed),	(JSON::Opt)),	(Bool)),

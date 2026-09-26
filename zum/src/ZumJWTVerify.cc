@@ -146,13 +146,13 @@ bool jwtES256(
 }
 
 static bool loadClaims(
-    JWTBytes &json, ZuCSpan issuer, ZuCSpan audience, int64_t now,
+    JWTBytes &json, ZuCSpan issuerURL, ZuCSpan audience, int64_t now,
     const JWTLimits &limits, Principal &principal)
 {
   ClaimsJSON claims;
   if (!loadJSON(json, claims)) return false;
   bool interactive = claims.authTime || claims.amr;
-  if (claims.iss != issuer || (audience && claims.aud != audience) ||
+  if (claims.iss != issuerURL || (audience && claims.aud != audience) ||
       !claims.aud || !claims.sub || !claims.clientID || !claims.appID ||
       !claims.jti || !claims.scope ||
       claims.actions.length() > limits.actions || claims.iat <= 0 ||
@@ -168,7 +168,7 @@ static bool loadClaims(
 
   Principal next;
   next.tokenID = TokenID{
-    .issuer = ZuMv(claims.iss), .jti = ZuMv(claims.jti)};
+    .issuerURL = ZuMv(claims.iss), .jti = ZuMv(claims.jti)};
   next.audience = ZuMv(claims.aud);
   next.subject = ZuMv(claims.sub);
   next.clientID = ZuMv(claims.clientID);
@@ -183,31 +183,31 @@ static bool loadClaims(
 }
 
 bool jwtVerify(
-    ZuCSpan token, ZuCSpan kid, ZuCSpan issuer, ZuCSpan audience,
+    ZuCSpan token, ZuCSpan kid, ZuCSpan issuerURL, ZuCSpan audience,
     ZuBSpan publicKey, int64_t now, const JWTLimits &limits,
     Principal &principal)
 {
-  if (!kid || !issuer || !audience || now <= 0) return false;
+  if (!kid || !issuerURL || !audience || now <= 0) return false;
   JWTHeader header;
   String claimsJSON;
   if (!jwtES256(token, publicKey, limits, header, claimsJSON) ||
       header.type != "at+jwt" || header.keyID != kid) return false;
   JWTBytes claims{claimsJSON};
-  return loadClaims(claims, issuer, audience, now, limits, principal);
+  return loadClaims(claims, issuerURL, audience, now, limits, principal);
 }
 
 bool jwtVerifyIssuer(
-    ZuCSpan token, ZuCSpan kid, ZuCSpan issuer,
+    ZuCSpan token, ZuCSpan kid, ZuCSpan issuerURL,
     ZuBSpan publicKey, int64_t now, const JWTLimits &limits,
     Principal &principal)
 {
-  if (!kid || !issuer || now <= 0) return false;
+  if (!kid || !issuerURL || now <= 0) return false;
   JWTHeader header;
   String claimsJSON;
   if (!jwtES256(token, publicKey, limits, header, claimsJSON) ||
       header.type != "at+jwt" || header.keyID != kid) return false;
   JWTBytes claims{claimsJSON};
-  return loadClaims(claims, issuer, {}, now, limits, principal);
+  return loadClaims(claims, issuerURL, {}, now, limits, principal);
 }
 
 } // namespace Zum

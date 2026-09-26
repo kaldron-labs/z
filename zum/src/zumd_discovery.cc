@@ -235,8 +235,8 @@ private:
   int64_t m_start = 0;
   bool m_overflow = false;
 };
-using SignKeyLoadHeap =
-  ZmHeap<"Zum.zumd.discovery.SignKeyLoad", SignKeyLoad__<>>;
+ZuDerive(SignKeyLoadHeap,
+  (ZmHeap<"Zum.zumd.discovery.SignKeyLoad", SignKeyLoad__<>>));
 ZuDerive(SignKeyLoad_, (SignKeyLoad__<SignKeyLoadHeap>));
 
 void signKeyLoad(DBContext *context, String issuer, int64_t now,
@@ -275,8 +275,8 @@ private:
   ZmRef<Request>	m_request;
   DiscoveryFn	m_complete;
 };
-using DiscoveryCompleteHeap =
-  ZmHeap<"Zum.zumd.discovery.DiscoveryComplete", DiscoveryComplete__<>>;
+ZuDerive(DiscoveryCompleteHeap,
+  (ZmHeap<"Zum.zumd.discovery.DiscoveryComplete", DiscoveryComplete__<>>));
 ZuDerive(DiscoveryComplete_,
   (DiscoveryComplete__<DiscoveryCompleteHeap>));
 
@@ -402,8 +402,7 @@ private:
   bool		m_overflow = false;
   bool		m_done = false;
 };
-using JWKSLoadHeap =
-  ZmHeap<"Zum.zumd.discovery.JWKSLoad", JWKSLoad__<>>;
+ZuDerive(JWKSLoadHeap, (ZmHeap<"Zum.zumd.discovery.JWKSLoad", JWKSLoad__<>>));
 ZuDerive(JWKSLoad_, (JWKSLoad__<JWKSLoadHeap>));
 
 bool jwksLoad(

@@ -17,6 +17,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRBTree.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/Zdbus.hh>
@@ -53,7 +54,7 @@ struct SubDrop_ : Heap {
       uint64_t id_)
   : parts{path_, interface_, member_}, id{id_} { }
 };
-using SubDropHeap = ZmHeap<"Zdbus.SubDrop", SubDrop_<>>;
+ZuDerive(SubDropHeap, (ZmHeap<"Zdbus.SubDrop", SubDrop_<>>));
 ZuDerive(SubDrop, (SubDrop_<SubDropHeap>));
 
 struct Pending_ {

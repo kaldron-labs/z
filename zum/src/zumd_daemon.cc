@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include "zumd_daemon.hh"
 #include <zlib/zumd_app_db.hh>
 #include <zlib/zumd_identity_db.hh>
@@ -243,7 +244,7 @@ public:
   ~AuthRouteLoad__()
   {
     if (m_dbKey && m_dbKey.mutable_())
-      ZuClear(m_dbKey.data(), m_dbKey.length());
+      ZuClear(m_dbKey);
   }
 
   void start()
@@ -346,7 +347,7 @@ private:
 	    return;
 	  }
 	  self->m_config.clientSecret = plain;
-	  ZuClear(plain.data(), plain.length());
+	  ZuClear(plain);
 	}
 	self->maps_();
       });
@@ -411,7 +412,7 @@ private:
     m_done = true;
     if (type != AuthRouteType::OIDC && m_config.clientSecret &&
         m_config.clientSecret.mutable_())
-      ZuClear(m_config.clientSecret.data(), m_config.clientSecret.length());
+      ZuClear(m_config.clientSecret);
     auto complete = ZuMv(m_complete);
     complete(AuthRoute{.oidc = type == AuthRouteType::OIDC ?
       ZuMv(m_config) : OIDCConfig{}, .type = type});
@@ -430,7 +431,8 @@ private:
   bool			m_overflow = false;
   bool			m_done = false;
 };
-using AuthRouteLoad_Heap = ZmHeap<"Zum.zumd.daemon.AuthRouteLoad", AuthRouteLoad__<>>;
+ZuDerive(AuthRouteLoad_Heap,
+  (ZmHeap<"Zum.zumd.daemon.AuthRouteLoad", AuthRouteLoad__<>>));
 ZuDerive(AuthRouteLoad_, (AuthRouteLoad__<AuthRouteLoad_Heap>));
 
 void Daemon::authRoute_(
@@ -462,15 +464,15 @@ bool Daemon::loadKey_()
     m_key = new Ztls::PK::SK_EC{m_rng,
       Ztls::PK::OIDs::EC_GRP_SECP256R1, privateKey};
     if (!signKeyMatch(m_rng, key, privateKey)) {
-      ZuClear(privateKey.data(), privateKey.length());
+      ZuClear(privateKey);
       m_key = nullptr;
       return false;
     }
   } catch (...) {
-    ZuClear(privateKey.data(), privateKey.length());
+    ZuClear(privateKey);
     return false;
   }
-  ZuClear(privateKey.data(), privateKey.length());
+  ZuClear(privateKey);
   m_signKeyID = ZuMv(key.id);
   return true;
 }
@@ -541,11 +543,11 @@ bool Daemon::init(
         try {
           Ztls::PK::SK_EC key{m_rng, Ztls::PK::OIDs::EC_GRP_SECP256R1,
             privateKey};
-          ZuClear(privateKey.data(), privateKey.length());
+          ZuClear(privateKey);
           sign(key);
         } catch (...) { signature.null(); }
       }
-      if (privateKey) ZuClear(privateKey.data(), privateKey.length());
+      if (privateKey) ZuClear(privateKey);
     }
     complete(ZuMv(signature));
   }};
@@ -760,7 +762,7 @@ void Daemon::final()
   m_key = nullptr;
   m_signKeyID.null();
   if (m_config.dbKey && m_config.dbKey.mutable_())
-    ZuClear(m_config.dbKey.data(), m_config.dbKey.length());
+    ZuClear(m_config.dbKey);
   m_finalized = true;
 }
 

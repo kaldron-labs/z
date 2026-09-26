@@ -428,7 +428,7 @@ struct MSaga_ : public Heap, public Saga {
 };
 
 template <typename Catalog>
-using MSagaHeap = ZmHeap<"Zdb.Saga", MSaga_<Catalog>>;
+ZuDerive(MSagaHeap, (ZmHeap<"Zdb.Saga", MSaga_<Catalog>>));
 
 template <typename Catalog, typename Impl_ = void> struct MSaga;
 
@@ -436,7 +436,7 @@ template <typename Heap = ZuVoid>
 struct SagaHash_ : public Heap, public SagaHash {
   ZuDerive_(SagaHash_, SagaHash)
 };
-using SagaHashHeap = ZmHeap<"Zdb.Saga.Hash", SagaHash_<>>;
+ZuDerive(SagaHashHeap, (ZmHeap<"Zdb.Saga.Hash", SagaHash_<>>));
 ZuDerive(SagaHashObj, (SagaHash_<SagaHashHeap>));
 
 using SagaTypeSeen = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">>;
@@ -460,7 +460,7 @@ template <typename Heap = ZuVoid>
 struct SagaCatalog_ : public Heap, public ZmPolymorph, public SagaCatalog__ {
   ZuDerive_(SagaCatalog_, SagaCatalog__)
 };
-using SagaCatalogHeap = ZmHeap<"Zdb.Saga.Type", SagaCatalog_<>>;
+ZuDerive(SagaCatalogHeap, (ZmHeap<"Zdb.Saga.Type", SagaCatalog_<>>));
 ZuDerive(SagaCatalog, (SagaCatalog_<SagaCatalogHeap>));
 
 using SagaStepKey = ZuTuple<ZuCSpan, SagaID, uint32_t>;
@@ -501,14 +501,14 @@ template <typename Heap = ZuVoid>
 struct SagaStepHash_ : public Heap, public SagaStepHash {
   ZuDerive_(SagaStepHash_, SagaStepHash)
 };
-using SagaStepHashHeap = ZmHeap<"Zdb.Saga.StepHash", SagaStepHash_<>>;
+ZuDerive(SagaStepHashHeap, (ZmHeap<"Zdb.Saga.StepHash", SagaStepHash_<>>));
 ZuDerive(SagaStepHashObj, (SagaStepHash_<SagaStepHashHeap>));
 
 template <typename Heap = ZuVoid>
 struct SagaUNHash_ : public Heap, public SagaUNHash {
   ZuDerive_(SagaUNHash_, SagaUNHash)
 };
-using SagaUNHashHeap = ZmHeap<"Zdb.Saga.UNHash", SagaUNHash_<>>;
+ZuDerive(SagaUNHashHeap, (ZmHeap<"Zdb.Saga.UNHash", SagaUNHash_<>>));
 ZuDerive(SagaUNHashObj, (SagaUNHash_<SagaUNHashHeap>));
 
 ZuDerive(SagaDataRows,
@@ -530,8 +530,7 @@ template <typename Heap = ZuVoid>
 struct SagaScan_ : public Heap, public ZmPolymorph, public SagaScan__ {
   ZuDerive_(SagaScan_, SagaScan__)
 };
-using SagaScanHeap =
-  ZmHeap<"Zdb.Saga.Scan", SagaScan_<>>;
+ZuDerive(SagaScanHeap, (ZmHeap<"Zdb.Saga.Scan", SagaScan_<>>));
 ZuDerive(SagaScan, (SagaScan_<SagaScanHeap>));
 
 template <typename S>

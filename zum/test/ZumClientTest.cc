@@ -222,7 +222,7 @@ static void serviceToken()
     service.verify(ZuMv(unknown), [&introspectOK, wake = ZuMv(wake)](int error,
         Zum::ServicePrincipal principal) mutable {
       introspectOK = error == Zum::ServiceError::OK &&
-        principal.tokenID.issuer == "https://issuer/oauth2/9" &&
+        principal.tokenID.issuerURL == "https://issuer/oauth2/9" &&
         principal.tokenID.jti == "introspected" && !principal.authMethod;
       wake(error);
     });
@@ -258,7 +258,7 @@ static void serviceToken()
   service.setRefreshRevocationFn([&refreshRevoked](Zum::RefreshID refreshID,
       int64_t expires) {
     ++refreshRevoked;
-    ZuCheck(refreshID.issuer == "https://issuer/oauth2/9" &&
+    ZuCheck(refreshID.issuerURL == "https://issuer/oauth2/9" &&
       refreshID.familyID == "family-1" && expires > Zm::now().sec());
   });
   Zum::SignKey setKey{.id = "service-key", .issuer =
@@ -266,7 +266,7 @@ static void serviceToken()
   Zum::String set;
   int64_t setNow = Zm::now().sec();
   Zum::makeSSF(setKey, "ping", Zum::RefreshID{
-    .issuer = "https://issuer/oauth2/9", .familyID = "family-1"},
+    .issuerURL = "https://issuer/oauth2/9", .familyID = "family-1"},
     setNow + 120, setNow,
     [&key, &rng](const Zum::SignKey &, ZuBSpan digest,
         Zum::SignatureFn complete) {
@@ -296,7 +296,7 @@ static void serviceToken()
   Zum::String wrongIssuer;
   Zum::makeSSF(Zum::SignKey{.id = "service-key",
       .issuer = "https://issuer/oauth2/wrong"}, "ping", Zum::RefreshID{
-      .issuer = "https://issuer/oauth2/9", .familyID = "family-2"},
+      .issuerURL = "https://issuer/oauth2/9", .familyID = "family-2"},
     setNow + 120, setNow,
     [&key, &rng](const Zum::SignKey &, ZuBSpan digest,
         Zum::SignatureFn complete) {
@@ -307,7 +307,7 @@ static void serviceToken()
   ZuCheck(receive(ZuMv(wrongIssuer)) == Zum::ServiceError::Unauthorized);
   Zum::String wrongAudience;
   Zum::makeSSF(setKey, "other", Zum::RefreshID{
-      .issuer = "https://issuer/oauth2/9", .familyID = "family-3"},
+      .issuerURL = "https://issuer/oauth2/9", .familyID = "family-3"},
     setNow + 120, setNow,
     [&key, &rng](const Zum::SignKey &, ZuBSpan digest,
         Zum::SignatureFn complete) {
@@ -318,7 +318,7 @@ static void serviceToken()
   ZuCheck(receive(ZuMv(wrongAudience)) == Zum::ServiceError::Unauthorized);
   Zum::String stale;
   Zum::makeSSF(setKey, "ping", Zum::RefreshID{
-      .issuer = "https://issuer/oauth2/9", .familyID = "family-4"},
+      .issuerURL = "https://issuer/oauth2/9", .familyID = "family-4"},
     setNow + 120, setNow - 100,
     [&key, &rng](const Zum::SignKey &, ZuBSpan digest,
         Zum::SignatureFn complete) {
@@ -465,7 +465,7 @@ static void ssfDelivery()
   ZuTestScope(ssfDelivery);
   Zum::SSFRx receiver{
     .receiverID = "receiver", .appID = 9, .audience = "ping",
-    .deliveryURL = "https://receiver.example/ssf", .secretRef = "secret"};
+    .deliveryURL = "https://receiver.example/ssf", .secretName = "secret"};
   Zum::SSFDelivery delivery{
     .eventID = "event", .receiverID = "receiver",
     .familyIssuer = "https://issuer/oauth2/9", .familyID = "family",
@@ -488,7 +488,7 @@ static void ssfDelivery()
   result = 0;
   Zum::sendSSF(Zum::SSFRx{
       .receiverID = "receiver", .appID = 9, .audience = "ping",
-      .deliveryURL = "https://receiver.example/ssf", .secretRef = "secret"},
+      .deliveryURL = "https://receiver.example/ssf", .secretName = "secret"},
     Zum::SSFDelivery{
       .eventID = "event", .receiverID = "receiver",
       .familyIssuer = "https://issuer/oauth2/9", .familyID = "family",

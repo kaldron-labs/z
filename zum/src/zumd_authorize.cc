@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_authorize.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_db_ops.hh>
@@ -59,8 +60,8 @@ private:
   ZmRef<Request>	m_request;
   AuthorizeFn	m_complete;
 };
-using AuthorizeCompleteHeap =
-  ZmHeap<"Zum.zumd.authorize.AuthorizeComplete", AuthorizeComplete__<>>;
+ZuDerive(AuthorizeCompleteHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeComplete", AuthorizeComplete__<>>));
 ZuDerive(AuthorizeComplete_, (AuthorizeComplete__<AuthorizeCompleteHeap>));
 
 template <typename Heap = ZuVoid>
@@ -72,14 +73,14 @@ public:
   ~AuthorizeCodeResult__()
   {
     if (location && location.mutable_())
-      ZuClear(location.data(), location.length());
+      ZuClear(location);
   }
 
   int		error;
   String	location;
 };
-using AuthorizeCodeResultHeap = ZmHeap<
-  "Zum.zumd.authorize.AuthorizeCodeResult", AuthorizeCodeResult__<>>;
+ZuDerive(AuthorizeCodeResultHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeCodeResult", AuthorizeCodeResult__<>>));
 ZuDerive(AuthorizeCodeResult_,
   (AuthorizeCodeResult__<AuthorizeCodeResultHeap>));
 
@@ -113,8 +114,9 @@ private:
   ZmRef<Request>	m_request;
   AuthorizeCodeFn m_complete;
 };
-using AuthorizeCodeCompleteHeap = ZmHeap<
-  "Zum.zumd.authorize.AuthorizeCodeComplete", AuthorizeCodeComplete__<>>;
+ZuDerive(AuthorizeCodeCompleteHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeCodeComplete",
+    AuthorizeCodeComplete__<>>));
 ZuDerive(AuthorizeCodeComplete_,
   (AuthorizeCodeComplete__<AuthorizeCodeCompleteHeap>));
 
@@ -266,8 +268,8 @@ private:
   ConsentGateFn m_complete;
   bool		m_done = false;
 };
-using ConsentGateHeap =
-  ZmHeap<"Zum.zumd.authorize.ConsentGate", ConsentGate__<>>;
+ZuDerive(ConsentGateHeap,
+  (ZmHeap<"Zum.zumd.authorize.ConsentGate", ConsentGate__<>>));
 ZuDerive(ConsentGate_, (ConsentGate__<ConsentGateHeap>));
 
 template <typename Heap = ZuVoid>
@@ -313,7 +315,7 @@ private:
   void clear_()
   {
     if (m_query && m_query.mutable_())
-      ZuClear(m_query.data(), m_query.length());
+      ZuClear(m_query);
     m_query.null();
     m_params = {};
   }
@@ -420,8 +422,8 @@ private:
   int		m_profileError = ProfileError::OK;
   bool		m_done = false;
 };
-using AuthorizeRequestHeap =
-  ZmHeap<"Zum.zumd.authorize.AuthorizeRequest", AuthorizeRequest__<>>;
+ZuDerive(AuthorizeRequestHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeRequest", AuthorizeRequest__<>>));
 ZuDerive(AuthorizeRequest_, (AuthorizeRequest__<AuthorizeRequestHeap>));
 
 template <typename Heap = ZuVoid>
@@ -461,7 +463,7 @@ private:
   {
     if (m_done) {
       if (location && location.mutable_())
-	ZuClear(location.data(), location.length());
+	ZuClear(location);
       return;
     }
     m_done = true;
@@ -594,12 +596,12 @@ private:
   void finished_(bool ok, String code)
   {
     if (!ok) {
-      if (code && code.mutable_()) ZuClear(code.data(), code.length());
+      if (code && code.mutable_()) ZuClear(code);
       finish_(OAuthError::ServerError, {});
       return;
     }
     String location = codeRedirect(m_authority.grant, code);
-    if (code && code.mutable_()) ZuClear(code.data(), code.length());
+    if (code && code.mutable_()) ZuClear(code);
     finish_(AuthorizeIssue::OK, ZuMv(location));
   }
 
@@ -615,8 +617,8 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
-using AuthorizeFinishHeap =
-  ZmHeap<"Zum.zumd.authorize.AuthorizeFinish", AuthorizeFinish__<>>;
+ZuDerive(AuthorizeFinishHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeFinish", AuthorizeFinish__<>>));
 ZuDerive(AuthorizeFinish_, (AuthorizeFinish__<AuthorizeFinishHeap>));
 
 template <typename Heap = ZuVoid>
@@ -882,12 +884,12 @@ private:
   void finished_(bool ok, String code)
   {
     if (!ok) {
-      if (code && code.mutable_()) ZuClear(code.data(), code.length());
+      if (code && code.mutable_()) ZuClear(code);
       finish_(OAuthError::ServerError, {});
       return;
     }
     String location = codeRedirect(m_authority.grant, code);
-    if (code && code.mutable_()) ZuClear(code.data(), code.length());
+    if (code && code.mutable_()) ZuClear(code);
     finish_(AuthorizeIssue::OK, ZuMv(location));
   }
 
@@ -909,8 +911,9 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
-using AuthorizeSessionFinishHeap = ZmHeap<
-  "Zum.zumd.authorize.AuthorizeSessionFinish", AuthorizeSessionFinish__<>>;
+ZuDerive(AuthorizeSessionFinishHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeSessionFinish",
+    AuthorizeSessionFinish__<>>));
 ZuDerive(AuthorizeSessionFinish_,
   (AuthorizeSessionFinish__<AuthorizeSessionFinishHeap>));
 
@@ -1036,12 +1039,12 @@ private:
   void finished_(bool ok, String code)
   {
     if (!ok) {
-      if (code && code.mutable_()) ZuClear(code.data(), code.length());
+      if (code && code.mutable_()) ZuClear(code);
       finish_(OAuthError::ServerError, {});
       return;
     }
     String location = codeRedirect(m_authority.grant, code);
-    if (code && code.mutable_()) ZuClear(code.data(), code.length());
+    if (code && code.mutable_()) ZuClear(code);
     finish_(AuthorizeIssue::OK, ZuMv(location));
   }
 
@@ -1060,8 +1063,8 @@ private:
   bool		m_policyDone = false;
   bool		m_done = false;
 };
-using AuthorizeOIDCFinishHeap =
-  ZmHeap<"Zum.zumd.authorize.AuthorizeOIDCFinish", AuthorizeOIDCFinish__<>>;
+ZuDerive(AuthorizeOIDCFinishHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeOIDCFinish", AuthorizeOIDCFinish__<>>));
 ZuDerive(AuthorizeOIDCFinish_,
   (AuthorizeOIDCFinish__<AuthorizeOIDCFinishHeap>));
 
@@ -1079,7 +1082,7 @@ public:
 
   ~AuthorizeConsentFinish__()
   {
-    if (m_code && m_code.mutable_()) ZuClear(m_code.data(), m_code.length());
+    if (m_code && m_code.mutable_()) ZuClear(m_code);
   }
 
   void start()
@@ -1104,7 +1107,7 @@ private:
   {
     if (m_done) return;
     m_done = true;
-    if (m_code && m_code.mutable_()) ZuClear(m_code.data(), m_code.length());
+    if (m_code && m_code.mutable_()) ZuClear(m_code);
     m_code.null();
     auto complete = ZuMv(m_complete);
     complete(error, ZuMv(location));
@@ -1238,7 +1241,7 @@ private:
 	String location;
 	if (ok) location = codeRedirect(self->m_grant, self->m_code);
 	if (self->m_code && self->m_code.mutable_())
-	  ZuClear(self->m_code.data(), self->m_code.length());
+	  ZuClear(self->m_code);
 	self->m_code.null();
 	self->finish_(ok ? AuthorizeIssue::OK : OAuthError::ServerError, ZuMv(location));
       }, ZuTime{expires})) finish_(OAuthError::ServerError, {});
@@ -1259,8 +1262,9 @@ private:
   ZtBitmap	m_actions;
   bool		m_done = false;
 };
-using AuthorizeConsentFinishHeap = ZmHeap<
-  "Zum.zumd.authorize.AuthorizeConsentFinish", AuthorizeConsentFinish__<>>;
+ZuDerive(AuthorizeConsentFinishHeap,
+  (ZmHeap<"Zum.zumd.authorize.AuthorizeConsentFinish",
+    AuthorizeConsentFinish__<>>));
 ZuDerive(AuthorizeConsentFinish_,
   (AuthorizeConsentFinish__<AuthorizeConsentFinishHeap>));
 

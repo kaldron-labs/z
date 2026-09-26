@@ -6,6 +6,7 @@
 
 // Linux Secret Service store, transported by the in-tree D-Bus client.
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
@@ -38,7 +39,7 @@ public:
     ZdbusAddress address;
     if (!ZdbusAddress::session(address))
       return ZeEXCEPT(Error, "ZtlsVault", "session bus unavailable");
-    m_service = cf.service;
+    m_program = cf.program;
     m_account = cf.account;
     m_sched.start();
     m_client.init(&m_sched, 1, 2, ZuMv(address), {},
@@ -80,7 +81,7 @@ public:
     m_live = false;
     m_ready.store_(0);
     m_readySem.reset();
-    m_service.clear();
+    m_program.clear();
     m_account.clear();
   }
 
@@ -109,7 +110,9 @@ public:
     return call_<SS::GetSecretArg, SS::GetSecretRes>(
       unlocked[0], ItemIF, "GetSecret", secretArg,
       [&fn](SS::GetSecretRes &reply) -> Ztls::VaultResult {
-        fn(reply.secret.value);
+        // D-Bus decoding retains a view into the mutable receive buffer.
+        fn(ZuSpan<uint8_t>{const_cast<uint8_t *>(reply.secret.value.data()),
+          reply.secret.value.length()});
         return {};
       });
   }
@@ -127,7 +130,7 @@ public:
     if (collection == "/") {
       SS::CreateCollectionArg arg;
       arg.properties.add("org.freedesktop.Secret.Collection.Label",
-        SS::Variant{SS::Text{m_service}});
+        SS::Variant{SS::Text{m_program}});
       arg.alias = "default";
       result = call_<SS::CreateCollectionArg, SS::CreateCollectionRes>(
         ServicePath, ServiceIF, "CreateCollection", arg,
@@ -177,7 +180,7 @@ public:
 
 private:
   void attributes_(SS::Attrs &attrs, ZuCSpan key) const {
-    attrs.add("service", m_service);
+    attrs.add("service", m_program);
     attrs.add("account", m_account);
     attrs.add("key", key);
   }
@@ -302,12 +305,12 @@ private:
   ZmSemaphore m_readySem;
   ZmAtomic<unsigned> m_ready = 0;
   bool m_live = false;
-  SS::Text m_service;
+  SS::Text m_program;
   SS::Text m_account;
   SS::Text m_session;
 };
 
-using KeyRingHeap = ZmHeap<"Ztls.Vault.KeyRing.Linux", KeyRing_<>>;
+ZuDerive(KeyRingHeap, (ZmHeap<"Ztls.Vault.KeyRing.Linux", KeyRing_<>>));
 ZuDerive(KeyRing, KeyRing_<KeyRingHeap>);
 
 } // namespace VaultKeyRingLinux_

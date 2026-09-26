@@ -22,7 +22,7 @@
 #include <zlib/ztcagent_daemon.hh>
 
 struct Options {
-  ZtString<>	config{"ztcagent.conf"};
+  Ztc::AgentString	config{"ztcagent.conf"};
   bool		help = false;
   bool		version = false;
 };
@@ -53,7 +53,7 @@ static void usage(int code)
 
 static Ztc::AgentEnv environment()
 {
-  const char *issuer = ::getenv("ZTC_ISSUER");
+  const char *issuerURL = ::getenv("ZTC_ISSUER");
   const char *clientID = ::getenv("ZTC_CLIENT_ID");
   const char *credentialStore = ::getenv("ZTC_CREDENTIAL_STORE");
   const char *wssURL = ::getenv("ZTC_WSS_URL");
@@ -62,15 +62,15 @@ static Ztc::AgentEnv environment()
   auto caPath = Zt::getpath("ZTC_CA_PATH");
   const char *ring = ::getenv("ZTC_RING");
   return {
-    .issuer = issuer ? issuer : "",
+    .issuerURL = issuerURL ? issuerURL : "",
     .clientID = clientID ? clientID : "",
     .deviceID = ::getenv("ZTC_DEVICE_ID") ?
       ::getenv("ZTC_DEVICE_ID") : "",
     .credentialStore = credentialStore ? credentialStore : "",
-    .caPath = caPath ? ZtString<>{caPath} : ZtString<>{},
+    .caPath = caPath ? caPath : "",
     .wssURL = wssURL ? wssURL : "",
     .accessToken = accessToken ? accessToken : "",
-    .pidDir = pidDir ? ZtString<>{pidDir} : ZtString<>{"ztc"},
+    .pidDir = pidDir ? pidDir : "ztc",
     .ring = ring ? ring : "ztc"
   };
 }
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     auto loaded = ZvCf::load(options.config);
     Ztc::AgentCf cf = ZfCf::handler<Ztc::AgentCf>(loaded.p<1>()).ctor();
     auto env = environment();
-    if (!env.issuer || !env.clientID || !env.deviceID ||
+    if (!env.issuerURL || !env.clientID || !env.deviceID ||
         !env.credentialStore || !env.wssURL || !env.accessToken) {
       std::cerr << "ZTC_ISSUER, ZTC_CLIENT_ID, ZTC_CREDENTIAL_STORE, "
         "ZTC_DEVICE_ID, ZTC_WSS_URL, and ZTC_ACCESS_TOKEN are required\n";

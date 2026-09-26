@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuPercent.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -63,7 +64,7 @@ enum {
 
 struct Options {
   ZuCSpan	ca;
-  ZuCSpan	issuer{"https://localhost:8443/oauth2/ping"};
+  ZuCSpan	issuerURL{"https://localhost:8443/oauth2/ping"};
   ZuCSpan	clientID{"zrest-native"};
   ZuCSpan	scope{"ping"};
   ZuCSpan	resource{"https://localhost:8443/api/ping"};
@@ -102,7 +103,7 @@ struct Options {
 
 ZfStruct(, (Options, CLI),
   (((ca),        (CLI::Opt<'c'>,  CLI::Long<"ca">)),         (String)),
-  (((issuer),    (CLI::Long<"issuer">)),                     (String)),
+  (((issuerURL), (CLI::Long<"issuer">)),                     (String)),
   (((clientID),  (CLI::Long<"client-id">)),                  (String,
 								 "zrest-native")),
   (((scope),     (CLI::Long<"scope">)),                      (String, "ping")),
@@ -152,16 +153,10 @@ ZfStruct(, (Options, CLI),
   (((memDiag),    (CLI::Long<"mem-diag">)),                  (UInt32, 0)),
   (((help),       (CLI::Flag<'h'>, CLI::Long<"help">)),       (Bool, false)));
 
-static void wipe(OAuthString &value)
-{
-  if (value && value.mutable_()) ZuClear(value.data(), value.length());
-  value.null();
-}
-
 template <typename Heap = ZuVoid>
 struct Result_ : public Heap, public ZmObject {
   ZmSemaphore	done;
-  OAuthString	body;
+  OAuthSecret	body;
   OAuthString	contentType;
   OAuthString	cacheControl;
   OAuthString	pragma;
@@ -169,21 +164,17 @@ struct Result_ : public Heap, public ZmObject {
   unsigned	contentTypeCount = 0;
   unsigned	cacheControlCount = 0;
   unsigned	pragmaCount = 0;
-
-  ~Result_() { wipe(body); }
 };
-using ResultHeap = ZmHeap<"zrest.Result", Result_<>>;
+ZuDerive(ResultHeap, (ZmHeap<"zrest.Result", Result_<>>));
 ZuDerive(Result, (Result_<ResultHeap>));
 
 template <typename Heap = ZuVoid>
 struct Call_ : public Heap, public ZmObject {
   ZmRef<Result>	result;
   OAuthString	target;
-  OAuthString	body;
-  OAuthString	authorization;
+  OAuthSecret	body;
+  OAuthSecret	authorization;
   mutable ZmAtomic<unsigned> finished = 0;
-
-  ~Call_() { wipe(body); wipe(authorization); }
 
   template <unsigned Status, typename Response>
   void complete(const Response *response) const {
@@ -203,7 +194,7 @@ struct Call_ : public Heap, public ZmObject {
     result->done.post();
   }
 };
-using CallHeap = ZmHeap<"zrest.Call", Call_<>>;
+ZuDerive(CallHeap, (ZmHeap<"zrest.Call", Call_<>>));
 ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Heap = ZuVoid>
@@ -221,8 +212,7 @@ struct ResponseData_ : public Heap, public ZmObject {
     return *this;
   }
 };
-using ResponseDataHeap =
-  ZmHeap<"zrest.ResponseData", ResponseData_<>>;
+ZuDerive(ResponseDataHeap, (ZmHeap<"zrest.ResponseData", ResponseData_<>>));
 ZuDerive(ResponseData, (ResponseData_<ResponseDataHeap>));
 
 template <typename Impl, unsigned Status_>
@@ -287,7 +277,7 @@ struct FormBuilder :
   using Headers = ZhttpHeaders(
     ("content-type", "application/x-www-form-urlencoded"), "content-length");
   enum { Body = Zrest::BodyPolicy::Raw };
-  const OAuthString &bodyObject(const Call *call) const { return call->body; }
+  const OAuthSecret &bodyObject(const Call *call) const { return call->body; }
 };
 
 struct PingBuilder : public DynamicBuilder<PingBuilder, Zhttp::Method::GET> {
@@ -338,14 +328,14 @@ public:
 private:
   ReqBuilderQ m_requests;
 };
-using PoolHeap = ZmHeap<"zrest.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"zrest.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class Client : public Zhttp::Client<Client, Pool> {
 public:
   template <typename Builder>
   ZmRef<Result> submit(unsigned pool, OAuthString target,
-      OAuthString body = {}, OAuthString authorization = {}) {
+      OAuthSecret body = {}, OAuthSecret authorization = {}) {
     ZmRef<Result> result = new Result{};
     ZmRef<Call> call = new Call{};
     call->result = result;
@@ -363,7 +353,7 @@ public:
 
   template <typename Builder>
   ZmRef<Result> perform(unsigned pool, OAuthString target,
-      OAuthString body = {}, OAuthString authorization = {}) {
+      OAuthSecret body = {}, OAuthSecret authorization = {}) {
     auto result = submit<Builder>(pool, ZuMv(target), ZuMv(body),
       ZuMv(authorization));
     result->done.wait();
@@ -404,14 +394,12 @@ struct CallbackData_ : public Heap, public ZmObject {
   OAuthString data;
   CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
 };
-using CallbackDataHeap =
-  ZmHeap<"zrest.CallbackData", CallbackData_<>>;
+ZuDerive(CallbackDataHeap, (ZmHeap<"zrest.CallbackData", CallbackData_<>>));
 ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
 
 template <typename Heap = ZuVoid>
 struct CallbackBody_ : public Heap, public ZmObject { OAuthString data; };
-using CallbackBodyHeap =
-  ZmHeap<"zrest.CallbackBody", CallbackBody_<>>;
+ZuDerive(CallbackBodyHeap, (ZmHeap<"zrest.CallbackBody", CallbackBody_<>>));
 ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
 
 template <typename Impl, unsigned Status_>
@@ -463,24 +451,23 @@ public:
 
   template <typename Link>
   void callback(Link *link, const CallbackReq &request, bool ok) {
-    OAuthString code_, state_, issuer_, error_;
+    OAuthSecret code_;
+    OAuthString state_, issuerURL_, error_;
     unsigned seen = 0;
     bool duplicate = false;
     if (ok && request.object && !received) {
       auto query = ZuCSpan{request.object->data};
       if (query && query[0] == '?') query.offset(1);
       ok = formEach(query, [&seen, &duplicate, &code_, &state_,
-	  &issuer_, &error_](ZuCSpan name, ZuCSpan value) {
+	  &issuerURL_, &error_](ZuCSpan name, ZuCSpan value) {
         unsigned bit;
-        OAuthString *field;
-        if (name == "code") { bit = 1; field = &code_; }
-        else if (name == "state") { bit = 2; field = &state_; }
-        else if (name == "iss") { bit = 4; field = &issuer_; }
-        else if (name == "error") { bit = 8; field = &error_; }
+        if (name == "code") { bit = 1; code_ = value; }
+        else if (name == "state") { bit = 2; state_ = value; }
+        else if (name == "iss") { bit = 4; issuerURL_ = value; }
+        else if (name == "error") { bit = 8; error_ = value; }
         else return false;
         duplicate |= bool(seen & bit);
         seen |= bit;
-        *field = value;
         return true;
       });
       ok = ok && !duplicate &&
@@ -490,7 +477,7 @@ public:
     if (ok) {
       code = ZuMv(code_);
       state = ZuMv(state_);
-      issuer = ZuMv(issuer_);
+      issuerURL = ZuMv(issuerURL_);
       error = ZuMv(error_);
       received = true;
     }
@@ -516,9 +503,9 @@ public:
 
   ZmSemaphore	ready;
   ZmSemaphore	done;
-  OAuthString	code;
+  OAuthSecret	code;
   OAuthString	state;
-  OAuthString	issuer;
+  OAuthString	issuerURL;
   OAuthString	error;
   unsigned	port = 0;
   bool		received = false;
@@ -530,12 +517,11 @@ void CallbackReq::complete(Link *link, bool ok) {
 }
 
 struct Tokens {
-  OAuthString access;
-  OAuthString refresh;
+  OAuthSecret access;
+  OAuthSecret refresh;
   int64_t deadline = 0;
 
-  void clear() { wipe(access); wipe(refresh); deadline = 0; }
-  ~Tokens() { clear(); }
+  void clear() { access.null(); refresh.null(); deadline = 0; }
 };
 
 static bool jsonHeaders(const Result &result, bool noStore)
@@ -589,14 +575,14 @@ static bool sameOrigin(const Zhttp::URLView &l, const Zhttp::URLView &r)
     l.ipv6Literal == r.ipv6Literal;
 }
 
-static bool endpointTarget(ZuCSpan value, const Zhttp::URLView &issuer,
+static bool endpointTarget(ZuCSpan value, const Zhttp::URLView &issuerURL,
     ZuCSpan expected, ZuCSpan appID, OAuthString &target)
 {
   Zhttp::URL storage;
   if (!storage.assign(value).ok()) return false;
   auto url = storage.url();
-  if (!validURL(url, issuer.scheme == Zhttp::Scheme::http) ||
-      !sameOrigin(url, issuer) || !url.path) return false;
+  if (!validURL(url, issuerURL.scheme == Zhttp::Scheme::http) ||
+      !sameOrigin(url, issuerURL) || !url.path) return false;
   target = url.path;
   OAuthEndpointPath endpoint;
   if (!ZfURI::loadPath(endpoint, target) ||
@@ -606,9 +592,10 @@ static bool endpointTarget(ZuCSpan value, const Zhttp::URLView &issuer,
   return true;
 }
 
-static OAuthString encode(ZuBSpan data)
+template <typename S = OAuthString>
+static S encode(ZuBSpan data)
 {
-  OAuthString value;
+  S value;
   value.length(ZuBase64URL::enclen(data.length()));
   value.length(ZuBase64URL::encode(value.span(), data));
   return value;
@@ -647,9 +634,8 @@ static bool tokenResponse(Result &result, ZuCSpan scope,
       response.refreshToken.length() > OAuthTokenMax) return false;
   int64_t now = Zm::now().sec();
   if (now <= 0 || response.expiresIn > uint64_t(INT64_MAX - now)) return false;
-  OAuthString nextRefresh = response.refreshToken ?
-    ZuMv(response.refreshToken) : OAuthString{tokens.refresh};
-  tokens.clear();
+  OAuthSecret nextRefresh = response.refreshToken ?
+    ZuMv(response.refreshToken) : OAuthSecret{tokens.refresh};
   tokens.access = ZuMv(response.accessToken);
   tokens.refresh = ZuMv(nextRefresh);
   tokens.deadline = now + int64_t(response.expiresIn);
@@ -663,9 +649,9 @@ static bool pong(Result &result)
     response.pong;
 }
 
-static OAuthString bearer(const Tokens &tokens)
+static OAuthSecret bearer(const Tokens &tokens)
 {
-  OAuthString value{"Bearer "};
+  OAuthSecret value{"Bearer "};
   value << tokens.access;
   return value;
 }
@@ -677,7 +663,7 @@ static bool refresh(Client &client, ZuCSpan target, ZuCSpan clientID,
   request.grantType = "refresh_token";
   request.refreshToken = tokens.refresh;
   request.clientID = clientID;
-  OAuthString form;
+  OAuthSecret form;
   ZfURI::saveBody(form, request);
   auto result = client.perform<FormBuilder>(0, OAuthString{target}, ZuMv(form));
   if (!tokenResponse(*result, scope, tokens, true)) return false;
@@ -775,7 +761,7 @@ int main(int argc, char **argv)
   try { argc = ZfCLI::load(options, argc, argv); }
   catch (const ZeException &e) { std::cerr << e << '\n'; usage(); }
   if (options.help) usage(0);
-  if (argc != 1 || !options.issuer || !options.clientID || !options.scope ||
+  if (argc != 1 || !options.issuerURL || !options.clientID || !options.scope ||
       !options.resource || !options.browser || !options.callbackTimeout ||
       !options.requests || !options.concurrency || !options.links ||
       !options.linkMax || !options.timeout || !::isfinite(options.interval) ||
@@ -784,7 +770,7 @@ int main(int argc, char **argv)
       options.http2 >= Http2Mode::N) usage();
 
   Zhttp::URL issuerStorage, resourceStorage;
-  if (!issuerStorage.assign(options.issuer).ok() ||
+  if (!issuerStorage.assign(options.issuerURL).ok() ||
       !resourceStorage.assign(options.resource).ok()) usage();
   auto issuerURL = issuerStorage.url();
   auto resourceURL = resourceStorage.url();
@@ -870,7 +856,7 @@ int main(int argc, char **argv)
     client.perform<MetadataBuilder>(0, OAuthString{metadataTarget});
   OAuthMetadata metadata;
   ok = metadataResult->status == 200 && loadJSON(*metadataResult, metadata) &&
-    metadata.issuer == options.issuer && contains(metadata.responseTypes, "code") &&
+    metadata.issuerURL == options.issuerURL && contains(metadata.responseTypes, "code") &&
     contains(metadata.grantTypes, "authorization_code") &&
     contains(metadata.grantTypes, "refresh_token") &&
     contains(metadata.codeChallengeMethods, "S256") &&
@@ -887,9 +873,10 @@ int main(int argc, char **argv)
 
   Ztls::Random rng;
   ZuBArray<32> random(32, false);
-  OAuthString verifier, challenge, state, redirect;
+  OAuthSecret verifier, state;
+  OAuthString challenge, redirect;
   if (ok) ok = rng.init() && rng.random(random);
-  if (ok) verifier = encode(random);
+  if (ok) verifier = encode<OAuthSecret>(random);
   ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
   if (ok) {
     Ztls::MD<> md;
@@ -898,7 +885,7 @@ int main(int argc, char **argv)
     challenge = encode(digest);
     ok = rng.random(random);
   }
-  if (ok) state = encode(random);
+  if (ok) state = encode<OAuthSecret>(random);
 
   CallbackApp callback;
   Zhttp::Server<CallbackApp> callbackServer;
@@ -938,7 +925,7 @@ int main(int argc, char **argv)
     while (::waitpid(browserPID, &status, 0) < 0 && errno == EINTR) { }
   }
   ok = ok && callback.received && callback.state == state &&
-    callback.issuer == options.issuer && !callback.error && callback.code;
+    callback.issuerURL == options.issuerURL && !callback.error && callback.code;
 
   Tokens tokens;
   if (ok) {
@@ -948,10 +935,10 @@ int main(int argc, char **argv)
     request.redirectURI = redirect;
     request.clientID = options.clientID;
     request.codeVerifier = verifier;
-    OAuthString form;
+    OAuthSecret form;
     ZfURI::saveBody(form, request);
-    wipe(callback.code);
-    wipe(verifier);
+    callback.code.null();
+    verifier.null();
     auto result = client.perform<FormBuilder>(0,
       OAuthString{tokenTarget}, ZuMv(form));
     ok = tokenResponse(*result, options.scope, tokens, false);
@@ -1019,14 +1006,14 @@ int main(int argc, char **argv)
     request.token = tokens.refresh;
     request.tokenTypeHint = "refresh_token";
     request.clientID = options.clientID;
-    OAuthString form;
+    OAuthSecret form;
     ZfURI::saveBody(form, request);
     auto result = client.perform<FormBuilder>(0,
       OAuthString{revokeTarget}, ZuMv(form));
     ok = ok && (result->status == 200 || !result->status);
   }
   tokens.clear();
-  wipe(state);
+  state.null();
 
   client.stop();
   client.final();

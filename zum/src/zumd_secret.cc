@@ -65,7 +65,7 @@ static Bytes encryptSecret(
       out + Header + Nonce + plain.length()) == 1;
   EVP_CIPHER_CTX_free(cipher);
   if (!ok) {
-    ZuClear(envelope.data(), envelope.length());
+    ZuClear(envelope);
     return {};
   }
   return envelope;
@@ -115,7 +115,7 @@ bool serverSecretDecrypt(
   if (ok) offset += n;
   EVP_CIPHER_CTX_free(cipher);
   if (!ok || unsigned(offset) != length) {
-    if (next) ZuClear(next.data(), next.length());
+    if (next) ZuClear(next);
     return false;
   }
   plain = ZuMv(next);
@@ -141,14 +141,14 @@ bool serverSecretRekey(
   Bytes plain;
   if (serverSecretDecrypt(newKey, issuer, recordType, recordID, field,
       envelope, plain)) {
-    if (plain) ZuClear(plain.data(), plain.length());
+    if (plain) ZuClear(plain);
     return true;
   }
   if (!serverSecretDecrypt(oldKey, issuer, recordType, recordID, field,
       envelope, plain)) return false;
   bool ok = serverSecretEncrypt(rng, newKey, issuer, recordType, recordID,
     field, plain, envelope);
-  if (plain) ZuClear(plain.data(), plain.length());
+  if (plain) ZuClear(plain);
   return ok;
 }
 

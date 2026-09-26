@@ -383,7 +383,7 @@ static void oauthForms()
   ZuCheck(rng.init());
   Zum::Client client;
   client.id = "client";
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   client.state = Zum::State::Active;
   client.grants = Zum::ClientGrant::ClientCredentials;
   client.secretDigest.length(Ztls::SecretHash::Size, false);
@@ -410,6 +410,18 @@ static void oauthForms()
   ZuCheck(Zum::authenticateClient(client,
     Zum::TokenGrant::ClientCredentials, tokenParams, &auth, 100) ==
     Zum::ClientAuth::InvalidClient);
+  client.profile = Zum::ClientProfile::Native;
+  ZuCheck(Zum::authenticateClient(client,
+    Zum::TokenGrant::ClientCredentials, tokenParams, &auth) ==
+    Zum::ClientAuth::UnauthorizedGrant);
+  client.grants = Zum::ClientGrant::AuthorizationCode;
+  ZuCheck(Zum::authenticateClient(client,
+    Zum::TokenGrant::AuthorizationCode, tokenParams, &auth) ==
+    Zum::ClientAuth::InvalidClient);
+  tokenParams.clientID = client.id;
+  ZuCheck(Zum::authenticateClient(client,
+    Zum::TokenGrant::AuthorizationCode, tokenParams, nullptr) ==
+    Zum::ClientAuth::OK);
 }
 
 struct HTTPTestApp {
@@ -640,25 +652,25 @@ static void limits()
 static void redirects()
 {
   ZuTestScope(redirects);
-  ZuCheck(Zum::redirectMatches(Zum::ClientType::Browser,
+  ZuCheck(Zum::redirectMatches(Zum::ClientProfile::Browser,
     ZuBSpan{"https://app/cb"}, ZuBSpan{"https://app/cb"}));
-  ZuCheck(!Zum::redirectMatches(Zum::ClientType::Browser,
+  ZuCheck(!Zum::redirectMatches(Zum::ClientProfile::Browser,
     ZuBSpan{"https://app/cb"}, ZuBSpan{"https://app:443/cb"}));
-  ZuCheck(Zum::redirectMatches(Zum::ClientType::Native,
+  ZuCheck(Zum::redirectMatches(Zum::ClientProfile::Native,
     ZuBSpan{"http://127.0.0.1/cb?x=1"},
     ZuBSpan{"http://127.0.0.1:49152/cb?x=1"}));
-  ZuCheck(Zum::redirectMatches(Zum::ClientType::Native,
+  ZuCheck(Zum::redirectMatches(Zum::ClientProfile::Native,
     ZuBSpan{"http://[::1]/cb"}, ZuBSpan{"http://[::1]:49152/cb"}));
-  ZuCheck(!Zum::redirectMatches(Zum::ClientType::Native,
+  ZuCheck(!Zum::redirectMatches(Zum::ClientProfile::Native,
     ZuBSpan{"http://127.0.0.1/cb"},
     ZuBSpan{"http://127.0.0.1:49152/other"}));
-  ZuCheck(!Zum::redirectMatches(Zum::ClientType::Native,
+  ZuCheck(!Zum::redirectMatches(Zum::ClientProfile::Native,
     ZuBSpan{"http://127.0.0.1/cb"},
     ZuBSpan{"http://192.0.2.1:49152/cb"}));
 
   Zum::Client client;
   client.id = "native";
-  client.type = Zum::ClientType::Native;
+  client.profile = Zum::ClientProfile::Native;
   client.grants = Zum::ClientGrant::AuthorizationCode;
   client.state = Zum::State::Active;
   client.redirects.push("http://127.0.0.1/cb");
@@ -672,7 +684,7 @@ static void redirects()
   params.redirectURI = "http://127.0.0.1:49152/cb";
   ZuCheck(!Zum::authorizeClient(client, params));
   client.state = Zum::State::Active;
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   client.redirects.clear();
   client.redirects.push("https://app.example/cb");
   params.redirectURI = "https://app.example/cb";
@@ -1014,13 +1026,23 @@ static void actions()
   Zum::Client client{.id = "browser", .appID = 1};
   client.identityScopes.push("openid");
   client.identityScopes.push("profile");
+  ZuCheck(Zum::clientType(Zum::ClientProfile::Browser) ==
+    Zum::ClientType::Public);
+  ZuCheck(Zum::clientType(Zum::ClientProfile::Native) ==
+    Zum::ClientType::Public);
+  ZuCheck(Zum::clientType(Zum::ClientProfile::Server) ==
+    Zum::ClientType::Confidential);
+  ZuCheck(Zum::clientType(Zum::ClientProfile::T(-1)) < 0);
   Zum::StringVec redirects;
   redirects.push("https://app.example/callback");
-  ZuCheck(!Zum::clientConfigValid(Zum::ClientType::Native,
+  ZuCheck(!Zum::clientConfigValid(Zum::ClientProfile::Native,
     Zum::ClientGrant::AuthorizationCode, true, redirects));
-  ZuCheck(Zum::clientConfigValid(Zum::ClientType::Native,
+  ZuCheck(Zum::clientConfigValid(Zum::ClientProfile::Native,
     Zum::ClientGrant::AuthorizationCode | Zum::ClientGrant::RefreshToken,
     true, redirects));
+  // A native client stays public even when it persists tokens in a vault.
+  ZuCheck(!Zum::clientConfigValid(Zum::ClientProfile::Native,
+    Zum::ClientGrant::ClientCredentials, false, redirects));
   Zum::ClientAccess access{.clientID = "browser", .appID = 1, .roleIDs = {1, 2}};
   Zum::Role scopes[3] = {
     {.appID = 1, .id = 1, .name = "read"},
@@ -1061,7 +1083,7 @@ static void actions()
     granted, "openid read", true,
     "profile", scopes, selection) == Zum::ScopeError::Unavailable);
 
-  client.type = Zum::ClientType::Browser;
+  client.profile = Zum::ClientProfile::Browser;
   client.grants = Zum::ClientGrant::AuthorizationCode |
     Zum::ClientGrant::RefreshToken;
   client.refreshAllowed = true;
@@ -1100,13 +1122,13 @@ static void actions()
   grant.actions.length(8);
   grant.actions.set(1);
   ZtBitmap authority;
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   client.grants = Zum::ClientGrant::ClientCredentials |
     Zum::ClientGrant::RefreshToken;
   ZuCheck(Zum::clientAuthority(client, access, "offline_access", 8,
     scopes, roles, actionRecords, selection, authority) ==
     Zum::ScopeError::Unavailable);
-  client.type = Zum::ClientType::Browser;
+  client.profile = Zum::ClientProfile::Browser;
   client.grants = Zum::ClientGrant::AuthorizationCode |
     Zum::ClientGrant::RefreshToken;
   ZuCheck(Zum::interactiveAuthority(grant, user, cred, client,
@@ -1114,13 +1136,13 @@ static void actions()
     Zum::ScopeError::OK);
   ZuCheck(selection.scope == "read write" && authority[1] &&
     !authority[2] && !authority[3]);
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   ZuCheck(Zum::interactivePrincipal(grant, user, cred, client));
   client.grants = Zum::ClientGrant::ClientCredentials;
   ZuCheck(!Zum::interactivePrincipal(grant, user, cred, client));
   client.grants = Zum::ClientGrant::AuthorizationCode |
     Zum::ClientGrant::RefreshToken;
-  client.type = Zum::ClientType::Browser;
+  client.profile = Zum::ClientProfile::Browser;
   ZuCheck(Zum::interactiveAuthority(grant, user, cred, client,
     true, "write", 8, access, scopes, roles, actionRecords,
     selection, authority) == Zum::ScopeError::OK && !authority);
@@ -1139,7 +1161,7 @@ static void actions()
     false, {}, 8, access, scopes, roles, actionRecords, selection, authority) ==
     Zum::AuthorityError::Invalid);
 
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   client.grants = Zum::ClientGrant::ClientCredentials;
   access.roleIDs = userRoles;
   ZuCheck(Zum::clientAuthority(client, access, "write", 8,
@@ -1494,7 +1516,7 @@ static void jwt()
   Zum::Client client;
   client.id = "browser";
   client.appID = 27;
-  client.type = Zum::ClientType::Browser;
+  client.profile = Zum::ClientProfile::Browser;
   client.grants = Zum::ClientGrant::AuthorizationCode;
   client.state = Zum::State::Active;
   Zum::ScopeSelection selection;
@@ -1512,14 +1534,14 @@ static void jwt()
   ZuCheck(claims.subject != "user-42" && claims.jti &&
     claims.appID == 27 && claims.audience == app.audience &&
     claims.actions.length() == 1 && claims.actions[0] == "orders.read");
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   ZuCheck(Zum::interactiveClaims(rng, "https://issuer", app, user, client,
     selection, authority, actions, "passkey", 100, 100, 160, claims));
   client.grants = Zum::ClientGrant::ClientCredentials;
   ZuCheck(!Zum::interactiveClaims(rng, "https://issuer", app, user, client,
     selection, authority, actions, "passkey", 100, 100, 160, claims));
   client.grants = Zum::ClientGrant::AuthorizationCode;
-  client.type = Zum::ClientType::Browser;
+  client.profile = Zum::ClientProfile::Browser;
   Zum::String subject = claims.subject;
   Zum::JWTLimits limits;
   Zum::PreparedJWT prepared;
@@ -1540,7 +1562,7 @@ static void jwt()
   ZuCheck(Zum::jwtVerify(prepared.token, "key-1", "https://issuer", "orders",
     publicKey, 120, limits, principal));
   ZuCheck(principal.subject == subject &&
-    principal.tokenID.issuer == claims.issuer &&
+    principal.tokenID.issuerURL == claims.issuerURL &&
     principal.tokenID.jti == claims.jti &&
     principal.clientID == "browser" && principal.scope == "orders.read" &&
     principal.appID == 27 &&
@@ -1561,9 +1583,9 @@ static void jwt()
     "\",\"y\":\"" << base64URL({publicKey + 1 + Ztls::COSE::ES256::CoordinateSize,
       Ztls::COSE::ES256::CoordinateSize}) << "\"}";
   auto verifyRecord = [&verifyKey, &prepared, &limits](
-      int64_t now, ZuCSpan issuer, ZuCSpan audience) {
+      int64_t now, ZuCSpan issuerURL, ZuCSpan audience) {
     Zum::Principal principal;
-    return Zum::signKeyVerify(verifyKey, prepared.token, issuer, audience,
+    return Zum::signKeyVerify(verifyKey, prepared.token, issuerURL, audience,
       now, limits, principal);
   };
   ZuCheck(verifyRecord(120, "https://issuer", "orders"));
@@ -1631,7 +1653,7 @@ static void jwt()
     publicKey, 120, limits, principal));
 
   client.id = "workload";
-  client.type = Zum::ClientType::Confidential;
+  client.profile = Zum::ClientProfile::Server;
   client.grants = Zum::ClientGrant::ClientCredentials;
   claims = {};
   ZuCheck(Zum::clientClaims(rng, "https://issuer", app, client, selection,
@@ -1668,7 +1690,7 @@ static void ssfSET()
   Zum::SignKey key{.id = "key-1", .issuer = "https://issuer"};
   Zum::String set;
   Zum::makeSSF(key, "https://receiver", Zum::RefreshID{
-    .issuer = "https://issuer/oauth2/9", .familyID = "family-1"}, 180, 120,
+    .issuerURL = "https://issuer/oauth2/9", .familyID = "family-1"}, 180, 120,
     [&sk, &rng](const Zum::SignKey &, ZuBSpan digest,
         Zum::SignatureFn complete) {
       sk.sign(rng, digest, [complete = ZuMv(complete)](ZuBSpan der) mutable {
@@ -2579,7 +2601,7 @@ static void enrollmentSaga()
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ClientEdit clientEdit{.before = Zum::Client{.id = "native-cli", .appID = 42,
       .label = "Original", .secretDigest = Zum::Bytes{ZuBSpan{"digest"}},
-      .redirects = {"http://127.0.0.1/callback"}, .type = Zum::ClientType::Native,
+      .redirects = {"http://127.0.0.1/callback"}, .profile = Zum::ClientProfile::Native,
       .grants = Zum::ClientGrant::AuthorizationCode, .state = Zum::State::Active},
     .ifMatch = "\"v1\"", .values = Zum::Client{.label = "Updated"},
     .fields = 1, .updated = 134,
@@ -2631,8 +2653,8 @@ static void enrollmentSaga()
   ZuCheck(step.table == "zum.request" && step.op == ZdbSagaOp::Update);
   Zum::ClientEdit rotation{.before = Zum::Client{.id = "service",
       .secretDigest = Zum::Bytes{ZuBSpan{"old-hash"}}, .secretVersion = 7,
-      .type = Zum::ClientType::Confidential,
-      .authMethod = Zum::ClientAuthMethod::ClientSecretBasic, .state = Zum::State::Active},
+      .profile = Zum::ClientProfile::Server,
+      .state = Zum::State::Active},
     .ifMatch = "\"v1\"", .fields = Zum::ClientEdit::Secret, .updated = 200,
     .overlapSeconds = 60};
   rotation.values.secretDigest.length(Ztls::SecretHash::Size, false);
@@ -3021,19 +3043,19 @@ static void enrollmentSaga()
   Zum::ClientAdd clientAdd{.app = Zum::App{.id = 42, .state = Zum::State::Active},
     .before = Zum::Client{.id = "cli-native", .appID = 42, .version = 0},
     .values = Zum::Client{.id = "cli-native", .appID = 42,
-      .redirects = {"http://127.0.0.1/callback"}, .type = Zum::ClientType::Native,
+      .redirects = {"http://127.0.0.1/callback"}, .profile = Zum::ClientProfile::Native,
       .grants = Zum::ClientGrant::AuthorizationCode}, .updated = 145,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::clientAdd, .idempotencyKey = "client-add"}};
   clientAdd.validate([](bool ok) { ZuCheck(ok); });
   auto newClient = clientAdd.result();
   ZuCheck(newClient.id == "cli-native" && newClient.appID == 42 &&
-    !newClient.secretDigest && newClient.authMethod == Zum::ClientAuthMethod::None &&
+    !newClient.secretDigest &&
     newClient.state == Zum::State::Active && newClient.created == 145 && newClient.version == 1);
-  clientAdd.values.type = Zum::ClientType::Confidential;
+  clientAdd.values.profile = Zum::ClientProfile::Server;
   clientAdd.validate([](bool ok) { ZuCheck(!ok); });
   ZuCheck(clientAdd.error == 400);
-  clientAdd.values.type = Zum::ClientType::Native;
+  clientAdd.values.profile = Zum::ClientProfile::Native;
   clientAdd.values.grants = Zum::ClientGrant::ClientCredentials;
   clientAdd.validate([](bool ok) { ZuCheck(!ok); });
   ZuCheck(clientAdd.error == 400);
@@ -5406,7 +5428,7 @@ static void enrollmentRuntime()
   browser.identityScopes.push("openid");
   browser.identityScopes.push("profile");
   browser.identityScopes.push("email");
-  browser.type = Zum::ClientType::Browser;
+  browser.profile = Zum::ClientProfile::Browser;
   browser.grants = Zum::ClientGrant::AuthorizationCode |
     Zum::ClientGrant::RefreshToken;
   browser.refreshAllowed = true;
@@ -6207,7 +6229,7 @@ static void enrollmentRuntime()
   Zum::Client workload;
   workload.id = "workload";
   workload.appID = 9;
-  workload.type = Zum::ClientType::Confidential;
+  workload.profile = Zum::ClientProfile::Server;
   workload.grants = Zum::ClientGrant::ClientCredentials;
   workload.state = Zum::State::Active;
   workload.secretDigest.length(Ztls::SecretHash::Size, false);
@@ -6244,7 +6266,7 @@ static void enrollmentRuntime()
   Zum::Client service;
   service.id = "enrolled-service";
   service.appID = 902;
-  service.type = Zum::ClientType::Confidential;
+  service.profile = Zum::ClientProfile::Server;
   service.grants = Zum::ClientGrant::ClientCredentials;
   service.state = Zum::State::Active;
   ZuCheck(insertRecord(context->clients, Zum::Client{service}));
@@ -6608,7 +6630,7 @@ static void enrollmentRuntime()
     Zum::String{} << " subject=" << Zum::auditID(passkeyHandle) << " ",
     Zum::String{} << " detail=" << "recovery suspended" << " "));
 
-  Zum::String recoveryCapabilityLog{recoveryCapability};
+  Zum::SecretString recoveryCapabilityLog{recoveryCapability};
   Zum::EnrollmentBeginResult recoveryBegin;
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &recoveryCapability, &recoveryBegin
@@ -7017,7 +7039,6 @@ static void enrollmentRuntime()
   ZuCheck(mx.stop());
   ZuCheck(!logged("next workload secret"));
   ZuCheck(recoveryCapabilityLog && !logged(recoveryCapabilityLog));
-  ZuClear(recoveryCapabilityLog.data(), recoveryCapabilityLog.length());
   recoveryCapabilityLog.null();
   ZuCheck(browserCode && !logged(browserCode));
   ZiLog::stop();

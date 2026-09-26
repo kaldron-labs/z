@@ -9,8 +9,8 @@
 
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
-#include <zlib/ZuDerive.hh>
 #include <zlib/ZuLib.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmHash.hh>
@@ -88,13 +88,13 @@ using SETSeenExpiries = ZmRBTree<SETSeenExpiry,
 
 struct SETSubject {
   String format;
-  String issuer;
+  String issuerURL;
   String familyID;
   int64_t expires = 0;
 };
 ZfStruct(, (SETSubject, JSON),
   (((format),		(Required)),	(String)),
-  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((issuerURL),	(JSON::ID<"iss">, Required)),	(String)),
   (((familyID),		(JSON::ID<"family_id">, Required)),	(String)),
   (((expires),		(JSON::ID<"exp">, Required)),	(Int64)));
 
@@ -113,14 +113,14 @@ ZfStruct(, (SETEvents, JSON),
     (UDT)));
 
 struct SETClaims {
-  String issuer;
+  String issuerURL;
   String audience;
   String id;
   int64_t issued = 0;
   SETEvents events;
 };
 ZfStruct(, (SETClaims, JSON),
-  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((issuerURL),	(JSON::ID<"iss">, Required)),	(String)),
   (((audience),		(JSON::ID<"aud">, Required)),	(String)),
   (((id),		(JSON::ID<"jti">, Required)),	(String)),
   (((issued),		(JSON::ID<"iat">, Required)),	(Int64)),
@@ -128,7 +128,7 @@ ZfStruct(, (SETClaims, JSON),
 
 struct Introspection {
   bool active = false;
-  String issuer;
+  String issuerURL;
   String subject;
   String clientID;
   String audience;
@@ -142,7 +142,7 @@ struct Introspection {
 };
 ZfStruct(, (Introspection, JSON),
   (((active),		(Required)),				(Bool)),
-  (((issuer),		(JSON::ID<"iss">, JSON::Opt)),	(String)),
+  (((issuerURL),	(JSON::ID<"iss">, JSON::Opt)),	(String)),
   (((subject),		(JSON::ID<"sub">, JSON::Opt)),	(String)),
   (((clientID),		(JSON::ID<"client_id">, JSON::Opt)), (String)),
   (((audience),		(JSON::ID<"aud">, JSON::Opt)),	(String)),
@@ -163,12 +163,12 @@ ZfStruct(, (Token, JSON),
   (((expiresIn),	(JSON::ID<"expires_in">, Required)),	(UInt64)));
 
 struct Discovery {
-  String issuer;
+  String issuerURL;
   String tokenEndpoint;
   String jwksURI;
 };
 ZfStruct(, (Discovery, JSON),
-  (((issuer),		(Required)),	(String)),
+  (((issuerURL),	(JSON::ID<"issuer">, Required)),	(String)),
   (((tokenEndpoint),	(JSON::ID<"token_endpoint">, Required)),	(String)),
   (((jwksURI),		(JSON::ID<"jwks_uri">, Required)),	(String)));
 
@@ -227,12 +227,12 @@ static bool tokenResponse(String json, unsigned limit,
     String &token, uint64_t &expires)
 {
   ZuGuard clear{[&json]() {
-    if (json.mutable_()) ZuClear(json.data(), json.length());
+    if (json.mutable_()) ZuClear(json);
   }};
   Token wire;
   ZuGuard clearWire{[&wire]() {
     if (wire.accessToken.mutable_())
-      ZuClear(wire.accessToken.data(), wire.accessToken.length());
+      ZuClear(wire.accessToken);
   }};
   if (!jsonLoad(json, limit, wire) || !wire.accessToken || !wire.expiresIn)
     return false;
@@ -245,7 +245,7 @@ static bool discoveryResponse(String json, unsigned limit,
     ZuCSpan expectedIssuer, String &token, String &jwks)
 {
   Discovery wire;
-  if (!jsonLoad(json, limit, wire) || wire.issuer != expectedIssuer ||
+  if (!jsonLoad(json, limit, wire) || wire.issuerURL != expectedIssuer ||
       !wire.tokenEndpoint || !wire.jwksURI) return false;
   token = ZuMv(wire.tokenEndpoint);
   jwks = ZuMv(wire.jwksURI);
@@ -283,9 +283,9 @@ static bool jwksResponse(
   return true;
 }
 
-static String endpoint(ZuCSpan issuer, ZuCSpan path)
+static String endpoint(ZuCSpan issuerURL, ZuCSpan path)
 {
-  String url{issuer};
+  String url{issuerURL};
   if (url && url[url.length() - 1] == '/') url.length(url.length() - 1);
   url << path;
   return url;
@@ -293,7 +293,7 @@ static String endpoint(ZuCSpan issuer, ZuCSpan path)
 
 static String basicAuth(ZuCSpan clientID, ZuBSpan secret)
 {
-  String plain;
+  SecretString plain;
   ZfURI::PathQuote::quote(plain, clientID);
   plain << ':';
   bool safe = true;
@@ -303,13 +303,12 @@ static String basicAuth(ZuCSpan clientID, ZuBSpan secret)
           c == '.' || c == '~')) { safe = false; break; }
   if (safe) plain << ZuCSpan{secret};
   else ZfURI::PathQuote::quote(plain, secret);
-  String encoded;
+  SecretString encoded;
   encoded.length(ZuBase64::enclen(plain.length()));
   encoded.length(ZuBase64::encode(encoded.span(), ZuBSpan{plain}));
-  if (plain.mutable_()) ZuClear(plain.data(), plain.length());
+  plain.null();
   String authorization{"Basic "};
   authorization << encoded;
-  if (encoded.mutable_()) ZuClear(encoded.data(), encoded.length());
   return authorization;
 }
 
@@ -337,10 +336,10 @@ static bool serviceURL(ZuCSpan value, bool originOnly)
 }
 
 static bool serviceIssuer(
-    ZuCSpan issuer, String *metadata = nullptr, AppID *appID = nullptr)
+    ZuCSpan issuerURL, String *metadata = nullptr, AppID *appID = nullptr)
 {
-  if (!serviceURL(issuer, false)) return false;
-  Zhttp::URL parsed{issuer};
+  if (!serviceURL(issuerURL, false)) return false;
+  Zhttp::URL parsed{issuerURL};
   auto url = parsed.url();
   if (url.hasQuery || !url.path) return false;
   // URLView is const; typed URI loading percent-decodes its mutable input.
@@ -478,7 +477,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
         expires <= uint64_t(INT64_MAX - Zm::now().sec());
       if (ok) {
         if (self->accessToken.mutable_())
-          ZuClear(self->accessToken.data(), self->accessToken.length());
+          ZuClear(self->accessToken);
         self->accessToken = ZuMv(token);
         self->accessExpires = Zm::now().sec() + int64_t(expires);
 	self->workloadManagement = management;
@@ -684,7 +683,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       return;
     }
     int64_t now = Zm::now().sec();
-    if (value.issuer != config.ssf.transmitterIssuer ||
+    if (value.issuerURL != config.ssf.transmitterIssuer ||
         value.audience != config.ssf.audience || !value.id ||
         value.issued <= 0 ||
         value.issued > now + int64_t(config.ssf.clockSkew) ||
@@ -702,9 +701,9 @@ struct ServiceState_ : public Heap, public ZmObject  {
     }
 
     auto &subject = value.events.revoked.subject;
-    if (subject.format != "opaque" || !subject.issuer ||
+    if (subject.format != "opaque" || !subject.issuerURL ||
         !subject.familyID || value.id == subject.familyID ||
-        subject.issuer != config.issuerURL || subject.expires <= now) {
+        subject.issuerURL != config.issuerURL || subject.expires <= now) {
       complete(ServiceError::Invalid);
       return;
     }
@@ -713,7 +712,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       .id = ZuMv(value.id), .expires = subject.expires});
     seenExpiries.add(SETSeenExpiry{subject.expires, value.id});
     if (refreshFn) refreshFn(RefreshID{
-      .issuer = ZuMv(subject.issuer), .familyID = ZuMv(subject.familyID)},
+      .issuerURL = ZuMv(subject.issuerURL), .familyID = ZuMv(subject.familyID)},
       subject.expires);
     scheduleExpiry_();
     complete(ServiceError::OK);
@@ -743,12 +742,12 @@ struct ServiceState_ : public Heap, public ZmObject  {
     const auto &keys = workloadManagement ? managementKeys : this->keys;
     auto key = key_(keys, header.keyID);
     Principal principal;
-    String issuer = workloadManagement ? config.managementIssuerURL :
+    String issuerURL = workloadManagement ? config.managementIssuerURL :
       config.issuerURL;
     String audience = workloadManagement ?
       endpoint(config.managementURL, "/admin") : config.audience;
     if (!key || !jwtVerify(accessToken, header.keyID,
-        issuer,
+        issuerURL,
         audience, key->publicKey, Zm::now().sec(), config.jwtLimits,
         principal) || principal.authMethod ||
         principal.clientID != config.clientID ||
@@ -788,7 +787,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
   {
     if (!config.introspectionURL || !config.introspectionClientID ||
         !config.introspectionSecret) {
-      if (token.mutable_()) ZuClear(token.data(), token.length());
+      if (token.mutable_()) ZuClear(token);
       complete(ServiceError::Unauthorized, ServicePrincipal{});
       return;
     }
@@ -806,26 +805,26 @@ struct ServiceState_ : public Heap, public ZmObject  {
       bool parsed = response.status == 200 &&
         jsonLoad(response.body, self->config.responseMax, value);
       int64_t now = Zm::now().sec();
-      bool valid = parsed && value.active && value.issuer == self->config.issuerURL &&
+      bool valid = parsed && value.active && value.issuerURL == self->config.issuerURL &&
         value.audience == self->config.audience && value.jti &&
         value.expires > now && (!value.appID || value.appID == self->appID) &&
         value.subject;
       if (!valid) {
-        if (token.mutable_()) ZuClear(token.data(), token.length());
+        if (token.mutable_()) ZuClear(token);
         int error = parsed ? ServiceError::Unauthorized :
           serviceStatus(response.status);
         if (error == ServiceError::OK) error = ServiceError::Unauthorized;
         complete(error, ServicePrincipal{});
         return;
       }
-      TokenID tokenID{.issuer = ZuMv(value.issuer), .jti = ZuMv(value.jti)};
+      TokenID tokenID{.issuerURL = ZuMv(value.issuerURL), .jti = ZuMv(value.jti)};
       String authMethod;
       if (value.amr.length() == 1 &&
           (value.amr[0] == "passkey" || value.amr[0] == "oidc"))
         authMethod = ZuMv(value.amr[0]);
       else if (!value.amr && value.grantType == "client_credentials")
         authMethod = "client_credentials";
-      if (token.mutable_()) ZuClear(token.data(), token.length());
+      if (token.mutable_()) ZuClear(token);
       complete(ServiceError::OK, ServicePrincipal{
         .tokenID = ZuMv(tokenID), .subject = ZuMv(value.subject),
         .appID = self->appID, .audience = self->config.audience,
@@ -837,14 +836,14 @@ struct ServiceState_ : public Heap, public ZmObject  {
   void verify_(String token, ServiceVerifyFn complete)
   {
     if (state != Started || !token) {
-      if (token.mutable_()) ZuClear(token.data(), token.length());
+      if (token.mutable_()) ZuClear(token);
       complete(state == Started ? ServiceError::Invalid : ServiceError::Stopped,
         ServicePrincipal{});
       return;
     }
     Principal principal;
     if (verify_(token, principal)) {
-      if (token.mutable_()) ZuClear(token.data(), token.length());
+      if (token.mutable_()) ZuClear(token);
       complete(ServiceError::OK, ServicePrincipal{
         .tokenID = ZuMv(principal.tokenID),
         .subject = ZuMv(principal.subject), .appID = principal.appID,
@@ -857,7 +856,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
     JWTHeader header;
     if (!jwtHeader(token, config.jwtLimits, header) ||
         key_(keys, header.keyID)) {
-      if (token.mutable_()) ZuClear(token.data(), token.length());
+      if (token.mutable_()) ZuClear(token);
       complete(ServiceError::Unauthorized, ServicePrincipal{});
       return;
     }
@@ -865,12 +864,12 @@ struct ServiceState_ : public Heap, public ZmObject  {
         complete = ZuMv(complete)](bool ok) mutable {
       Principal principal;
       if (self->state != Started) {
-        if (token.mutable_()) ZuClear(token.data(), token.length());
+        if (token.mutable_()) ZuClear(token);
         complete(ServiceError::Stopped, ServicePrincipal{});
         return;
       }
       if (ok && self->verify_(token, principal)) {
-        if (token.mutable_()) ZuClear(token.data(), token.length());
+        if (token.mutable_()) ZuClear(token);
         complete(ServiceError::OK, ServicePrincipal{
           .tokenID = ZuMv(principal.tokenID),
           .subject = ZuMv(principal.subject), .appID = principal.appID,
@@ -883,7 +882,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       JWTHeader refreshed;
       if (!jwtHeader(token, self->config.jwtLimits, refreshed) ||
           self->key_(self->keys, refreshed.keyID)) {
-        if (token.mutable_()) ZuClear(token.data(), token.length());
+        if (token.mutable_()) ZuClear(token);
         complete(ServiceError::Unauthorized, ServicePrincipal{});
         return;
       }
@@ -943,14 +942,14 @@ struct ServiceState_ : public Heap, public ZmObject  {
       expiryArmed = false;
     }
     if (accessToken.mutable_())
-      ZuClear(accessToken.data(), accessToken.length());
+      ZuClear(accessToken);
     accessToken.null();
     if (config.clientSecret.mutable_())
-      ZuClear(config.clientSecret.data(), config.clientSecret.length());
+      ZuClear(config.clientSecret);
     if (config.introspectionSecret.mutable_())
-      ZuClear(config.introspectionSecret.data(), config.introspectionSecret.length());
+      ZuClear(config.introspectionSecret);
     if (config.ssf.callbackAuth.mutable_())
-      ZuClear(config.ssf.callbackAuth.data(), config.ssf.callbackAuth.length());
+      ZuClear(config.ssf.callbackAuth);
   }
 
   ServiceConfig config;
@@ -982,7 +981,8 @@ struct ServiceState_ : public Heap, public ZmObject  {
   ZmScheduler::Timer expiryTimer;
   bool expiryArmed = false;
 };
-using ServiceStateHeap = ZmHeap<"Zum.ZumService.ServiceState", ServiceState_<>>;
+ZuDerive(ServiceStateHeap,
+  (ZmHeap<"Zum.ZumService.ServiceState", ServiceState_<>>));
 ZuDerive(ServiceState, (ServiceState_<ServiceStateHeap>));
 Service::Service() = default;
 Service::~Service() { final(); }

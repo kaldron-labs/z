@@ -24,7 +24,7 @@ static Ztc::AgentCf config()
 static Ztc::AgentEnv env()
 {
   return {
-    .issuer = "https://zum.example/oauth2/7",
+    .issuerURL = "https://zum.example/oauth2/7",
     .clientID = "device-client",
     .deviceID = "device-1",
     .credentialStore = "/run/secrets/ztcagent",
@@ -47,7 +47,7 @@ static void configValidation()
   ZuCheck(!missing.init(cf, ZuMv(invalid)));
 
   invalid = env();
-  invalid.issuer = "https://zum.example/";
+  invalid.issuerURL = "https://zum.example/";
   ZuCheck(!missing.init(cf, ZuMv(invalid)));
 
   invalid = env();

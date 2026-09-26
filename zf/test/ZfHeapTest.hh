@@ -9,6 +9,7 @@
 #ifndef ZfHeapTest_HH
 #define ZfHeapTest_HH
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuString.hh>
 
 #include <zlib/ZmHeap.hh>
@@ -20,8 +21,9 @@ struct ZfHeapTest_ : public Heap, public Base_ {
   using Base::operator =;
 };
 
-template <ZuString ID, typename Base>
-using ZfHeapTest =
-  ZfHeapTest_<Base, ZmHeap<ID, ZfHeapTest_<Base>>>;
+template <ZuString ID, typename Base_>
+ZuDerive(ZfHeapTestHeap, (ZmHeap<ID, ZfHeapTest_<Base_>>));
+template <ZuString ID, typename Base_>
+ZuDerive(ZfHeapTest, (ZfHeapTest_<Base_, ZfHeapTestHeap<ID, Base_>>));
 
 #endif /* ZfHeapTest_HH */

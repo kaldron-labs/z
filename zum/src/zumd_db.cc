@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/zumd_db_ops.hh>
 #include <zlib/zumd_provider_db.hh>
 
@@ -86,8 +87,8 @@ private:
   unsigned m_roleOffset = 0;
   ClientScopesFn m_complete;
 };
-using ClientScopesHeap =
-  ZmHeap<"Zum.zumd.db.ClientScopes", ClientScopes__<>>;
+ZuDerive(ClientScopesHeap,
+  (ZmHeap<"Zum.zumd.db.ClientScopes", ClientScopes__<>>));
 ZuDerive(ClientScopes_, (ClientScopes__<ClientScopesHeap>));
 
 void clientScopes(DBContext *context, Client client, ClientScopesFn complete)
@@ -598,8 +599,8 @@ private:
   Evidence	m_evidence;
   AuthorityFn	m_complete;
 };
-using AuthorityLoadHeap =
-  ZmHeap<"Zum.zumd.db.AuthorityLoad", AuthorityLoad__<>>;
+ZuDerive(AuthorityLoadHeap,
+  (ZmHeap<"Zum.zumd.db.AuthorityLoad", AuthorityLoad__<>>));
 ZuDerive(AuthorityLoad_, (AuthorityLoad__<AuthorityLoadHeap>));
 
 void loadGrantAuth(

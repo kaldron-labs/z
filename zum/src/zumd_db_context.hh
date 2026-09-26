@@ -10,6 +10,7 @@
 #define zumd_db_context_HH
 
 #ifndef ZumLib_HH
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumLib.hh>
 #endif
 
@@ -67,8 +68,8 @@ struct DBContext_ : public Heap, public ZmPolymorph  {
   SSFRxTable		*ssfRx = nullptr;
   SSFDeliveryTable	*ssfDeliveries = nullptr;
 };
-using DBContextHeap =
-  ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<>>;
+ZuDerive(DBContextHeap,
+  (ZmHeap<"Zum.zumd.db.context.DBContext", DBContext_<>>));
 ZuDerive(DBContext, (DBContext_<DBContextHeap>));
 
 } // namespace Zum

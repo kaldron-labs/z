@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <zlib/ZuCmp.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 
 #include <zlib/ZmHash.hh>
@@ -144,7 +145,7 @@ template <typename Heap = ZuVoid>
 struct State_ : public Heap, public ZmObject, public StateData {
   using StateData::StateData;
 };
-using StateHeap = ZmHeap<"Ztc.Agent.State", State_<>>;
+ZuDerive(StateHeap, (ZmHeap<"Ztc.Agent.State", State_<>>));
 
 } // Agent_
 
@@ -659,23 +660,23 @@ Agent::~Agent() { final(); }
 
 bool Agent::init(const AgentCf &cf, AgentEnv env)
 {
-  if (m_state || !env.issuer || !env.clientID || !env.deviceID ||
+  if (m_state || !env.issuerURL || !env.clientID || !env.deviceID ||
       !env.credentialStore ||
       !env.wssURL || !env.accessToken || !cf.reconnMin ||
       cf.reconnMin > cf.reconnMax || !cf.fanoutBatch ||
       cf.telBytes < cf.maxFrame || cf.reqBytes < cf.maxFrame ||
       !cf.idleTimeout || !cf.pingInterval || !cf.closeTimeout)
     return false;
-  Zhttp::URL issuer{env.issuer};
-  auto issuerURL = issuer.url();
-  bool loopback = cf.loopbackTest && issuerURL.scheme == Zhttp::Scheme::http &&
-    (issuerURL.host == "localhost" || issuerURL.host == "127.0.0.1" ||
-      issuerURL.host == "::1");
-  if (!issuer.ok() || (!loopback && issuerURL.scheme != Zhttp::Scheme::https) ||
-      !issuerURL.host || issuerURL.hasQuery || issuerURL.hasFragment ||
-      !issuerURL.path) return false;
+  Zhttp::URL issuerURL{env.issuerURL};
+  auto issuerView = issuerURL.url();
+  bool loopback = cf.loopbackTest && issuerView.scheme == Zhttp::Scheme::http &&
+    (issuerView.host == "localhost" || issuerView.host == "127.0.0.1" ||
+      issuerView.host == "::1");
+  if (!issuerURL.ok() || (!loopback && issuerView.scheme != Zhttp::Scheme::https) ||
+      !issuerView.host || issuerView.hasQuery || issuerView.hasFragment ||
+      !issuerView.path) return false;
   Zum::AppIssuerPath issuerPath;
-  ZtString<> issuerSource{issuerURL.path};
+  AgentString issuerSource{issuerView.path};
   if (!ZfURI::loadPath(issuerPath, issuerSource) ||
       issuerPath.oauth2 != "oauth2" || !issuerPath.appID) return false;
   auto state = new State{this, cf, ZuMv(env)};
@@ -756,12 +757,9 @@ bool Agent::start()
     return false;
   }
   m_state->mx->run([state = m_state]() { Agent_::pubGC(state); }, 1);
-  ZtString<> authorization{"Bearer "};
+  AgentString authorization{"Bearer "};
   authorization << m_state->env.accessToken;
   m_state->link = new Link{&m_state->client, m_state->uri, authorization};
-  if (m_state->env.accessToken.mutable_())
-    ZuClear(m_state->env.accessToken.data(),
-      m_state->env.accessToken.length());
   m_state->env.accessToken.null();
   m_state->started = true;
   m_state->link->connect();

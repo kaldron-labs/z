@@ -69,7 +69,7 @@ bool signKeyPublic(const SignKey &key, Bytes &output)
       Ztls::COSE::ES256::validPK(output))) return false;
     return true;
   }();
-  ZuClear(json.data(), json.length());
+  ZuClear(json);
   if (!valid) output.null();
   return valid;
 }
@@ -209,14 +209,13 @@ void ClientAdd::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.id || values.id != before.id || !values.appID ||
       values.appID != app.id || values.appID != before.appID ||
-      !clientConfigValid(values.type, values.grants, values.refreshAllowed,
+      !clientConfigValid(values.profile, values.grants, values.refreshAllowed,
         values.redirects)) {
     error = 400; complete(false); return;
   }
-  if (values.type == ClientType::Confidential ?
-      values.authMethod != ClientAuthMethod::ClientSecretBasic ||
-        values.secretDigest.length() != Ztls::SecretHash::Size :
-      values.authMethod != ClientAuthMethod::None || bool(values.secretDigest)) {
+  if (clientType(values.profile) == ClientType::Confidential ?
+      values.secretDigest.length() != Ztls::SecretHash::Size :
+      bool(values.secretDigest)) {
     error = 400; complete(false); return;
   }
   if (before.version) { error = 409; complete(false); return; }
@@ -486,8 +485,7 @@ void AdminAccessPut::validate(Zdb_::SagaCompleteFn complete)
 	table->find<0>(0, ZuFwdTuple(values.actorID),
 	  [this, complete = ZuMv(complete)](ZdbRowRef<Client> row) mutable {
 	    if (!row || row->data().owner || row->data().state != State::Active ||
-		row->data().type != ClientType::Confidential ||
-		row->data().authMethod != ClientAuthMethod::ClientSecretBasic) {
+		clientType(row->data().profile) != ClientType::Confidential) {
 	      error = 400; complete(false); return;
 	    }
 	    accessRefs(this, 0, ZuMv(complete));
@@ -543,16 +541,16 @@ unsigned KeyRetire::recordError(const SignKey &item) const
 }
 
 bool clientConfigValid(
-    ClientType::T type, uint8_t grants, bool refreshAllowed,
+    ClientProfile::T profile, uint8_t grants, bool refreshAllowed,
     const StringVec &redirects)
 {
   constexpr uint8_t all = ClientGrant::AuthorizationCode |
     ClientGrant::ClientCredentials | ClientGrant::RefreshToken;
-  if (type < 0 || type >= ClientType::N || !grants || (grants & ~all))
+  if (profile < 0 || profile >= ClientProfile::N || !grants || (grants & ~all))
     return false;
   if ((grants & ClientGrant::AuthorizationCode) && !redirects) return false;
   if (refreshAllowed && !(grants & ClientGrant::RefreshToken)) return false;
-  if (type != ClientType::Confidential &&
+  if (clientType(profile) != ClientType::Confidential &&
       (grants & ClientGrant::ClientCredentials)) return false;
   return true;
 }
@@ -590,11 +588,10 @@ unsigned ClientEdit::recordError(const Client &item) const
   if (!stateOnly && fields == Secret) {
     if (values.secretDigest.length() != Ztls::SecretHash::Size ||
         updated > INT64_MAX - overlapSeconds) return 400;
-    return item.type != ClientType::Confidential ||
-      item.authMethod != ClientAuthMethod::ClientSecretBasic ||
+    return clientType(item.profile) != ClientType::Confidential ||
       item.secretVersion != before.secretVersion || before.secretVersion == UINT64_MAX ? 409 : 0;
   }
-  if (!stateOnly && !clientConfigValid(item.type,
+  if (!stateOnly && !clientConfigValid(item.profile,
       (fields & 4) ? values.grants : item.grants,
       item.refreshAllowed,
       (fields & 2) ? values.redirects : item.redirects)) return 409;

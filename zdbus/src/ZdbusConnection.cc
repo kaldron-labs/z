@@ -11,6 +11,7 @@
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuRef.hh>
 #include <zlib/ZiAssert.hh>
@@ -38,7 +39,7 @@ struct StopDispatch_ : Heap, ZuObject {
 
   void run_();
 };
-using StopDispatchHeap = ZmHeap<"Zdbus.CxnStopDispatch", StopDispatch_<>>;
+ZuDerive(StopDispatchHeap, (ZmHeap<"Zdbus.CxnStopDispatch", StopDispatch_<>>));
 ZuDerive(StopDispatch, (StopDispatch_<StopDispatchHeap>));
 
 static void drainStops(CxnStopQueue &waits, unsigned budget)

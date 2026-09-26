@@ -646,10 +646,10 @@ struct AsStringDeflt {	// default string formatter
   template <typename O>
   struct Handler {
     template <typename S>
-    ZuInline static void save(S &s, const O &o) {
+    static void save(S &s, const O &o) {
       ZfJSON::AsStringDeflt::Handler<O>::save(s, o);
     }
-    ZuInline static O load(ZuCSpan span) { // string is already unquoted
+    static O load(ZuCSpan span) { // string is already unquoted
       return O(span);
     }
   };

@@ -428,8 +428,8 @@ private:
   TxQueue		m_txQueue;
 };
 template <typename Endpoint_>
-using EndpointCxnHeap_ =
-  ZmHeap<"Zquic.Endpoint.Cxn", EndpointCxn_<Endpoint_>>;
+ZuDerive(EndpointCxnHeap_,
+  (ZmHeap<"Zquic.Endpoint.Cxn", EndpointCxn_<Endpoint_>>));
 
 template <typename Impl_>
 class Endpoint_ {

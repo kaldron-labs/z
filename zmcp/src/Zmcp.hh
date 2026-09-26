@@ -17,6 +17,7 @@
 
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
@@ -2003,8 +2004,7 @@ private:
 };
 
 template <typename Req, typename Owner>
-using CompletionHeap = ZmHeap<"Zmcp.Completion",
-  Completion_<Req, Owner>>;
+ZuDerive(CompletionHeap, (ZmHeap<"Zmcp.Completion", Completion_<Req, Owner>>));
 
 template <typename Req, typename Owner>
 ZuDerive(Completion, (Completion_<Req, Owner,
@@ -4026,8 +4026,7 @@ public:
 };
 
 template <typename Impl>
-using StdioIOHeap = ZmHeap<"Zmcp.Stdio.IO",
-  StdioIO_<Impl>>;
+ZuDerive(StdioIOHeap, (ZmHeap<"Zmcp.Stdio.IO", StdioIO_<Impl>>));
 
 template <typename Impl>
 ZuDerive(StdioIOObj, (StdioIO_<Impl, StdioIOHeap<Impl>>));

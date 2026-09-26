@@ -68,7 +68,7 @@ static int run(int argc, char **argv)
   uint8_t key[Ztls::PK::HybridPublicSize];
   ZuGuard clear{[&key, &keyText]() {
     ZuClear(key, sizeof(key));
-    ZuClear(keyText.data(), keyText.length());
+    ZuClear(keyText);
   }};
   unsigned keySize = x25519 ? 32 :
     encrypt ? Ztls::PK::HybridPublicSize : Ztls::PK::HybridSeedSize;

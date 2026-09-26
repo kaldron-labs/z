@@ -27,10 +27,10 @@
 namespace Ztls {
 
 ZtEnumNS(ZtlsAPI, VaultStore, int8_t, Ephemeral, File, KeyRing, Module, Auto);
-ZtEnumNS(ZtlsAPI, VaultVariant, int8_t, Default, Direct, Secrets);
+ZtEnumNS(ZtlsAPI, VaultVariant, int8_t, Default, Direct, Indirect);
 
 using VaultResult = ZuUnion<void, ZeException>;
-using VaultLoadFn = ZmFn<void(ZuBSpan), ZmFnHeapID<"Ztls.Vault.LoadFn">>;
+using VaultLoadFn = ZmFn<void(ZuSpan<uint8_t>), ZmFnHeapID<"Ztls.Vault.LoadFn">>;
 using VaultString = ZtString<ZtStringHeapID<"Ztls.Vault.Config">>;
 
 namespace Scopes {
@@ -41,7 +41,7 @@ using Union = ZuUnion<Global, Environment>;
 ZuDerive(Scope, Scopes::Union);
 
 struct VaultConfig {
-  VaultString service;
+  VaultString program;
   VaultString account;
   VaultString envPrefix;
   VaultString module;
@@ -58,8 +58,8 @@ public:
   Vault &operator =(const Vault &) = delete;
 
   VaultResult init(const VaultConfig &);
-  VaultResult start();
-  void stop();
+  VaultResult open();
+  void close();
   void final();
 
   VaultResult load(Scope, ZuCSpan name, VaultLoadFn);

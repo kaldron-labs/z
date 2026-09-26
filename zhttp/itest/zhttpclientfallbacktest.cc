@@ -17,6 +17,7 @@
 #endif
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmHeap.hh>
@@ -171,7 +172,7 @@ struct Pool_ : public Heap, public Zhttp::Pool<ClientApp, TxQ, ResParser> {
 private:
   ReqBuilderQ	m_requests;
 };
-using PoolHeap = ZmHeap<"Zhttp.Test.Fallback.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"Zhttp.Test.Fallback.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 struct ClientApp : public Zhttp::Client<ClientApp, Pool> {

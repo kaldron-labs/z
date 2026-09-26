@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include "pinghttp.hh"
 
 #include <zlib/ZuBase64URL.hh>
@@ -37,7 +38,7 @@ struct ResponseData_ : public Heap, public ZmObject  {
   enum { Status = Status_ };
   String body;
   ~ResponseData_() {
-    if (body.mutable_()) ZuClear(body.data(), body.length());
+    if (body.mutable_()) ZuClear(body);
   }
   ResponseData_ &operator =(ZuSpan<uint8_t> data) {
     body = data;
@@ -45,7 +46,8 @@ struct ResponseData_ : public Heap, public ZmObject  {
   }
 };
 template <unsigned Status_>
-using ResponseDataHeap = ZmHeap<"Zum.PingHTTP.Response", ResponseData_<Status_>>;
+ZuDerive(ResponseDataHeap,
+  (ZmHeap<"Zum.PingHTTP.Response", ResponseData_<Status_>>));
 template <unsigned Status_>
 ZuDerive(ResponseData, (ResponseData_<Status_, ResponseDataHeap<Status_>>));
 
@@ -104,16 +106,16 @@ struct Call_ : public Heap, public ZmObject  {
 
   ~Call_() {
     if (authorization.mutable_())
-      ZuClear(authorization.data(), authorization.length());
-    if (body.mutable_()) ZuClear(body.data(), body.length());
+      ZuClear(authorization);
+    if (body.mutable_()) ZuClear(body);
   }
 
   void finish(unsigned status, String value) const {
     if (done.cmpXch(1, 0)) return;
     if (authorization.mutable_())
-      ZuClear(authorization.data(), authorization.length());
+      ZuClear(authorization);
     authorization.null();
-    if (body.mutable_()) ZuClear(body.data(), body.length());
+    if (body.mutable_()) ZuClear(body);
     body.null();
     auto fn = ZuMv(complete);
     if (fn) fn(ServiceHTTPResponse{status, ZuMv(value)});
@@ -127,7 +129,7 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0, {});
   }
 };
-using CallHeap = ZmHeap<"Zum.pinghttp.Call", Call_<>>;
+ZuDerive(CallHeap, (ZmHeap<"Zum.pinghttp.Call", Call_<>>));
 ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Impl, Zhttp::Method::T Method_, unsigned Body_>
@@ -243,7 +245,7 @@ private:
   ReqBuilderQ m_requests;
 };
 
-using PoolHeap = ZmHeap<"Zum.PingHTTP.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"Zum.PingHTTP.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
@@ -323,7 +325,7 @@ private:
 
 template <typename Heap = ZuVoid>
 class Client_ : public Heap, public ClientBase { };
-using ClientHeap = ZmHeap<"Zum.PingHTTP.Client", Client_<>>;
+ZuDerive(ClientHeap, (ZmHeap<"Zum.PingHTTP.Client", Client_<>>));
 ZuDerive(Client, (Client_<ClientHeap>));
 
 } // namespace PingHTTP_
@@ -418,7 +420,7 @@ private:
   String m_caPath;
   bool m_resolverOwned = false;
 };
-using PingHTTPStateHeap = ZmHeap<"Zum.PingHTTP.State", PingHTTPState_<>>;
+ZuDerive(PingHTTPStateHeap, (ZmHeap<"Zum.PingHTTP.State", PingHTTPState_<>>));
 ZuDerive(PingHTTPState, (PingHTTPState_<PingHTTPStateHeap>));
 
 PingHTTP::PingHTTP() = default;

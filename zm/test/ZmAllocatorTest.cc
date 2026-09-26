@@ -7,6 +7,8 @@
 #include <vector>
 #include <list>
 
+#include <zlib/ZuAssert.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAllocator.hh>
@@ -24,8 +26,12 @@ template <typename Heap = ZuVoid>
 struct FixedLazy_ : public Heap {
   uintptr_t value;
 };
-using FixedLazyHeap = ZmHeap<"ZmAllocatorTest.FixedLazy", FixedLazy_<>>;
+ZuDerive(FixedLazyHeap, (ZmHeap<"ZmAllocatorTest.FixedLazy", FixedLazy_<>>));
 ZuDerive(FixedLazy, (FixedLazy_<FixedLazyHeap>));
+ZuAssert(sizeof(FixedLazy) == sizeof(FixedLazy_<>));
+ZuAssert(alignof(FixedLazy) == alignof(FixedLazy_<>));
+ZuAssert((ZuIsSame<ZmHeapID<FixedLazy>,
+  ZuStringT<"ZmAllocatorTest.FixedLazy">>{}));
 using VHeapLazy =
   ZmVHeap<"ZmAllocatorTest.VHeapLazy", 16, 256, alignof(uintptr_t)>;
 

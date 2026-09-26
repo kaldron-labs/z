@@ -44,8 +44,8 @@ bool loginNormalize(String &name)
 }
 
 ZtEnumImplNS(State);
+ZtEnumImplNS(ClientProfile);
 ZtEnumImplNS(ClientType);
-ZtEnumImplNS(ClientAuthMethod);
 ZtEnumImplNS(GrantKind);
 ZtEnumImplNS(GrantPurpose);
 ZtEnumImplNS(AuditOutcome);
@@ -367,16 +367,16 @@ bool interactivePrincipal(
       !grant.owner && grant.userVersion == user.authVersion &&
       client.state == State::Active && !client.owner &&
       client.id == grant.clientID &&
-      (client.type == ClientType::Browser ||
-       client.type == ClientType::Native ||
-       client.type == ClientType::Confidential) &&
+      (client.profile == ClientProfile::Browser ||
+       client.profile == ClientProfile::Native ||
+       client.profile == ClientProfile::Server) &&
       (client.grants & ClientGrant::AuthorizationCode);
 }
 
 bool clientPrincipal(const Client &client)
 {
   return client.state == State::Active && !client.owner &&
-    client.type == ClientType::Confidential &&
+    clientType(client.profile) == ClientType::Confidential &&
     (client.grants & ClientGrant::ClientCredentials);
 }
 

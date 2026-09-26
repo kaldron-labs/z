@@ -10,6 +10,7 @@
 #define zumd_daemon_HH
 
 #ifndef ZumLib_HH
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumLib.hh>
 #endif
 
@@ -83,8 +84,8 @@ struct DaemonResponse_ : public Heap, public HTTPResponse {
 
   String	allow;
 };
-using DaemonResponseHeap =
-  ZmHeap<"zumd.DaemonResponse", DaemonResponse_<>>;
+ZuDerive(DaemonResponseHeap,
+  (ZmHeap<"zumd.DaemonResponse", DaemonResponse_<>>));
 ZuDerive(DaemonResponse, (DaemonResponse_<DaemonResponseHeap>));
 
 template <typename Impl, unsigned Status_>
@@ -219,7 +220,7 @@ struct AdminData_ : public Heap, public HTTPDataFields {
   String allow;
   int operation = -1;
 };
-using AdminDataHeap = ZmHeap<"zumd.AdminData", AdminData_<>>;
+ZuDerive(AdminDataHeap, (ZmHeap<"zumd.AdminData", AdminData_<>>));
 ZuDerive(AdminData, (AdminData_<AdminDataHeap>));
 
 struct AdminResult {

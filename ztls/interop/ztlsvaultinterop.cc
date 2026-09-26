@@ -18,6 +18,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsVault.hh>
 #include <zlib/ZdbusAddress.hh>
@@ -132,7 +133,7 @@ static void native()
   ZuCheckRT(ZdbusTestTool::line(daemonOut[0], daemonReady));
 
   Ztls::VaultConfig cf;
-  cf.service = "ztls-vault-interop-test";
+  cf.program = "ztls-vault-interop-test";
   cf.account = "isolated";
   cf.store = Ztls::VaultStore::KeyRing;
   cf.variant = Ztls::VaultVariant::Direct;
@@ -140,48 +141,55 @@ static void native()
   ZuCheckRT(!vault.init(cf).is<ZeException>());
   bool started = false;
   ZuGuard stopVault{[&vault, &started]() {
-    if (started) vault.stop();
+    if (started) vault.close();
     vault.final();
   }};
-  ZuCheckRT(!vault.start().is<ZeException>());
+  ZuCheckRT(!vault.open().is<ZeException>());
   started = true;
   Ztls::Scope scope{Ztls::Scopes::Global{}};
   bool called = false;
-  ZuCheckRT(vault.load(scope, "missing", [&called](ZuBSpan) {
+  ZuCheckRT(vault.load(scope, "missing", [&called](ZuSpan<uint8_t>) {
     called = true;
   }).is<ZeException>() && !called);
   uint8_t first[] = {0, 0xff, 7};
   uint8_t second[] = {8, 0, 9, 0xff};
   ZuCheckRT(!vault.save(scope, "token", first).is<ZeException>());
   ZuCheckRT(!vault.save(scope, "token", second).is<ZeException>());
-  ZuCheckRT(!vault.load(scope, "token", [&called, &second](ZuBSpan value) {
+  ZuCheckRT(!vault.load(scope, "token", [&called, &second](ZuSpan<uint8_t> value) {
     called = value == ZuBSpan{second};
   }).is<ZeException>() && called);
-  vault.stop();
+  vault.close();
   started = false;
 
-  cf.variant = Ztls::VaultVariant::Secrets;
-  Ztls::Vault secrets;
-  ZuCheckRT(!secrets.init(cf).is<ZeException>());
-  ZuCheckRT(!secrets.start().is<ZeException>());
-  ZuCheckRT(!secrets.save(scope, "private", second).is<ZeException>());
-  secrets.stop();
-  secrets.final();
+  cf.variant = Ztls::VaultVariant::Indirect;
+  Ztls::Vault indirect;
+  ZuCheckRT(!indirect.init(cf).is<ZeException>());
+  ZuCheckRT(!indirect.open().is<ZeException>());
+  ZuCheckRT(!indirect.save(scope, "private", second).is<ZeException>());
+  indirect.close();
+  indirect.final();
+  Ztls::MD<Ztls::SHA256> hash;
+  hash.update(cf.account);
+  uint8_t digest[Ztls::MD<Ztls::SHA256>::Size];
+  hash.finish(digest);
+  char ageName[ZuHex::enclen(sizeof(digest))];
+  ZuHex::encode(ageName, digest);
+  ZuClear(digest, sizeof(digest));
   Zi::Path age = ZiFile::append(
     ZiFile::append(ZiFile::append(home, ".ztls-vault-interop-test"),
-      "vault"), "secrets.age");
+      "vault"), Zi::Path{} << ZuCSpan{ageName, sizeof(ageName)} << ".age");
   ZuCheckRT(ZiStat{age}.exists());
 
   cf.store = Ztls::VaultStore::Auto;
   Ztls::Vault recovered;
   ZuCheckRT(!recovered.init(cf).is<ZeException>());
-  ZuCheckRT(!recovered.start().is<ZeException>());
+  ZuCheckRT(!recovered.open().is<ZeException>());
   called = false;
   ZuCheckRT(!recovered.load(scope, "private",
-    [&called, &second](ZuBSpan value) {
+    [&called, &second](ZuSpan<uint8_t> value) {
       called = value == ZuBSpan{second};
     }).is<ZeException>() && called);
-  recovered.stop();
+  recovered.close();
   recovered.final();
 }
 

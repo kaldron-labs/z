@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuAssert.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmBitmap.hh>
@@ -274,7 +275,8 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   };
 
   template <typename Emit>
-  using FileProducerHeap = ZmHeap<"zhttpd.FileProducer", FileProducer_<Emit>>;
+  ZuDerive(FileProducerHeap,
+    (ZmHeap<"zhttpd.FileProducer", FileProducer_<Emit>>));
   template <typename Emit>
   ZuDerive(FileProducer, (FileProducer_<Emit, FileProducerHeap<Emit>>));
 

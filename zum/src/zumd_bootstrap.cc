@@ -21,6 +21,7 @@
 #include <zlib/ZtlsPK.hh>
 #include <zlib/ZtlsSec.hh>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumMgmt.hh>
 #include <zlib/zumd_discovery.hh>
 #include <zlib/zumd_passkey.hh>
@@ -122,7 +123,7 @@ private:
       m_result.adminClientID = m_issuer.initialClientID;
     }
     if (m_config.dbKey)
-      ZuClear(m_config.dbKey.data(), m_config.dbKey.length());
+      ZuClear(m_config.dbKey);
     auto complete = ZuMv(m_complete);
     complete(ok, ZuMv(m_result));
   }
@@ -285,7 +286,7 @@ private:
     Client client{
       .id = m_issuer.initialClientID, .appID = m_issuer.coreAppID,
       .label = "Zum administrator CLI", .created = now, .updated = now,
-      .type = ClientType::Native, .authMethod = ClientAuthMethod::None,
+      .profile = ClientProfile::Native,
       .grants = uint8_t(ClientGrant::AuthorizationCode |
 	  ClientGrant::RefreshToken), .refreshAllowed = true,
       .state = State::Active};
@@ -425,7 +426,7 @@ private:
   {
     bool written = ok && writeCapability(
       m_config.output, m_config.issuer, token);
-    if (token) ZuClear(token.data(), token.length());
+    if (token) ZuClear(token);
     if (!written) { finish_(false); return; }
     m_result.capabilityWritten = true;
     phase_(BootstrapPhase::Core, BootstrapPhase::AdminPending,
@@ -499,7 +500,7 @@ private:
 	String token = ZuMv(capability.token);
 	bool written = ok && writeCapability(
 	  self->m_config.output, self->m_config.issuer, token);
-	if (token) ZuClear(token.data(), token.length());
+	if (token) ZuClear(token);
 	self->m_result.capabilityWritten = written;
 	self->finish_(written);
       });
@@ -517,7 +518,8 @@ private:
   ActionID		m_actionID = 0;
   bool			m_done = false;
 };
-using ServerBootstrap_Heap = ZmHeap<"Zum.zumd.bootstrap.ServerBootstrap", ServerBootstrap__<>>;
+ZuDerive(ServerBootstrap_Heap,
+  (ZmHeap<"Zum.zumd.bootstrap.ServerBootstrap", ServerBootstrap__<>>));
 ZuDerive(ServerBootstrap_, (ServerBootstrap__<ServerBootstrap_Heap>));
 
 void serverBootstrap(

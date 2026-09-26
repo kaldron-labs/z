@@ -26,7 +26,7 @@ namespace Zum {
 enum { JWTIDSize = 16, JWTDigestSize = 32 };
 
 struct AccessClaims {
-  String	issuer;
+  String	issuerURL;
   String	subject;
   String	audience;
   String	clientID;
@@ -42,7 +42,7 @@ struct AccessClaims {
 };
 
 struct IDClaims {
-  String	issuer;
+  String	issuerURL;
   String	subject;
   String	audience;
   String	nonce;
@@ -63,18 +63,18 @@ struct PreparedJWT {
 };
 
 ZumExtern bool interactiveClaims(
-  Ztls::Random &, ZuCSpan issuer, const App &, const User &, const Client &,
+  Ztls::Random &, ZuCSpan issuerURL, const App &, const User &, const Client &,
   const ScopeSelection &, const ZtBitmap &, ZuSpan<const Action>,
   ZuCSpan authMethod, int64_t authTime, int64_t now, int64_t expires,
   AccessClaims &);
 ZumExtern bool clientClaims(
-  Ztls::Random &, ZuCSpan issuer, const App &, const Client &,
+  Ztls::Random &, ZuCSpan issuerURL, const App &, const Client &,
   const ScopeSelection &, const ZtBitmap &, ZuSpan<const Action>,
   AppID clientAppID, int64_t now, int64_t expires, AccessClaims &);
 ZumExtern bool jwtPrepare(
   const AccessClaims &, ZuCSpan kid, const JWTLimits &, PreparedJWT &);
 ZumExtern bool idClaims(
-  ZuCSpan issuer, const User &, const Client &, const ScopeSelection &,
+  ZuCSpan issuerURL, const User &, const Client &, const ScopeSelection &,
   ZuCSpan nonce,
   ZuCSpan authMethod, int64_t authTime, int64_t now, int64_t expires,
   IDClaims &);
@@ -85,7 +85,7 @@ ZumExtern bool jwtFinish(
   PreparedJWT &, ZuBSpan derSignature, const JWTLimits &);
 ZumExtern bool userInfoJSON(const User &, const Principal &, String &);
 ZumExtern bool signKeyCreate(Ztls::Random &, ZuBSpan dbKey,
-  ZuCSpan issuer, ZuCSpan id, int64_t now, SignKey &);
+  ZuCSpan issuerURL, ZuCSpan id, int64_t now, SignKey &);
 
 } // namespace Zum
 

@@ -6,6 +6,7 @@
 
 #include <string.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuRef.hh>
@@ -119,7 +120,7 @@ using EchoCatalog = ZuTypeList<Echo>;
 
 template <typename Heap = ZuVoid>
 struct PeerContext_ : public Heap, public ZuObject { };
-using PeerContextHeap = ZmHeap<"ZmcpTest.PeerContext", PeerContext_<>>;
+ZuDerive(PeerContextHeap, (ZmHeap<"ZmcpTest.PeerContext", PeerContext_<>>));
 ZuDerive(PeerContext, (PeerContext_<PeerContextHeap>));
 
 template <typename Heap = ZuVoid>
@@ -127,7 +128,8 @@ struct StreamContext_ : public Heap, public ZuObject {
   StreamContext_(unsigned id_) : id{id_} { }
   unsigned id;
 };
-using StreamContextHeap = ZmHeap<"ZmcpTest.StreamContext", StreamContext_<>>;
+ZuDerive(StreamContextHeap,
+  (ZmHeap<"ZmcpTest.StreamContext", StreamContext_<>>));
 ZuDerive(StreamContext, (StreamContext_<StreamContextHeap>));
 
 struct ServerApp {
@@ -269,7 +271,7 @@ struct ClientCall_ : public Heap, public ZmObject {
   unsigned failures = 0;
 };
 
-using ClientCallHeap = ZmHeap<"ZmcpTest.ClientCall", ClientCall_<>>;
+ZuDerive(ClientCallHeap, (ZmHeap<"ZmcpTest.ClientCall", ClientCall_<>>));
 ZuDerive(ClientCall, (ClientCall_<ClientCallHeap>));
 
 static ZiMxParams mxParams()

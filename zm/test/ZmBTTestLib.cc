@@ -12,8 +12,5 @@ ZmBackTrace baz(Fn fn) { return xfoo2(fn); }
 
 ZmBackTrace bar(Fn fn) { return baz(fn); }
 
-extern
-#ifdef _WIN32
-ZuExport_API
-#endif
+extern ZuExport_API
 ZmBackTrace xfoo(Fn fn) { return bar(fn); }

@@ -1177,8 +1177,7 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 	      .label = "default service client",
 	      .secretDigest = secretDigest, .secretVersion = 1,
 	      .created = created, .updated = created,
-	      .type = ClientType::Confidential,
-	      .authMethod = ClientAuthMethod::ClientSecretBasic,
+	      .profile = ClientProfile::Server,
 	      .grants = uint8_t(ClientGrant::ClientCredentials),
 	      .refreshAllowed = false, .state = State::Active,
 	      .version = 1, .owner = saga->id()};
@@ -2387,7 +2386,7 @@ ZfbStruct(ZumAPI, ProviderEdit,
   (((state), (Ctor<7>, Enum<State::Map>)), (Int8)),
   (((fields), (Ctor<3>)), (UInt8)));
 
-ZumAPI bool clientConfigValid(ClientType::T, uint8_t, bool, const StringVec &);
+ZumAPI bool clientConfigValid(ClientProfile::T, uint8_t, bool, const StringVec &);
 
 struct ClientEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;

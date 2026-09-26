@@ -71,6 +71,8 @@ static void sigint();
 namespace ZDash {
 
 ZuDerive(String, (ZtString<ZtStringHeapID<"ZDash.String">>));
+ZuDerive(Secret, (ZtString<ZtStringSecret<true,
+  ZtStringHeapID<"ZDash.String">>>));
 
 // Bound network reassembly and queued telemetry independently of ring size.
 enum { FrameMax = 1U << 20, QueuedInputMax = 1U << 22 };
@@ -284,7 +286,7 @@ struct SingletonItem_ : public Heap, public Item_<T> {
   using Item_<T>::Item_;
 };
 template <typename T>
-using SingletonItem_Heap = ZmHeap<"ZDash.Singleton", SingletonItem_<T>>;
+ZuDerive(SingletonItem_Heap, (ZmHeap<"ZDash.Singleton", SingletonItem_<T>>));
 template <typename T>
 ZuDerive(SingletonItem, (SingletonItem_<T, SingletonItem_Heap<T>>));
 
@@ -388,7 +390,7 @@ struct Leaf_ : public Heap,
   using Row<Leaf<Depth, Item>, Item>::cmp;
 };
 template <unsigned Depth, typename Item>
-using Leaf_Heap = ZmHeap<"ZDash.Leaf", Leaf_<Depth, Item>>;
+ZuDerive(Leaf_Heap, (ZmHeap<"ZDash.Leaf", Leaf_<Depth, Item>>));
 template <unsigned Depth, typename Item>
 ZuDerive(Leaf, (Leaf_<Depth, Item, Leaf_Heap<Depth, Item>>));
 
@@ -407,7 +409,7 @@ struct Parent_ : public Heap,
   using Base::del;
 };
 template <unsigned Depth, typename Item, typename Child>
-using Parent_Heap = ZmHeap<"ZDash.Parent", Parent_<Depth, Item, Child>>;
+ZuDerive(Parent_Heap, (ZmHeap<"ZDash.Parent", Parent_<Depth, Item, Child>>));
 template <unsigned Depth, typename Item, typename Child>
 ZuDerive(Parent, (Parent_<Depth, Item, Child, Parent_Heap<Depth, Item, Child>>));
 
@@ -426,7 +428,7 @@ struct Branch_ : public Heap,
   using Base::del;
 };
 template <unsigned Depth, typename Item, typename Tuple>
-using Branch_Heap = ZmHeap<"ZDash.Branch", Branch_<Depth, Item, Tuple>>;
+ZuDerive(Branch_Heap, (ZmHeap<"ZDash.Branch", Branch_<Depth, Item, Tuple>>));
 template <unsigned Depth, typename Item, typename Tuple>
 ZuDerive(Branch, (Branch_<Depth, Item, Tuple, Branch_Heap<Depth, Item, Tuple>>));
 template <typename TelKey_>
@@ -1062,10 +1064,10 @@ public:
     m_clientInited = true;
     if (!m_client.start()) return false;
     m_clientStarted = true;
-    String authorization{"Bearer "};
+    Secret authorization{"Bearer "};
     authorization << token;
     m_link = new Link{&m_client, uri, Ztc::Protocol, authorization};
-    ZuClear(authorization.data(), authorization.length());
+    authorization.null();
     m_link->connect();
     return true;
   }

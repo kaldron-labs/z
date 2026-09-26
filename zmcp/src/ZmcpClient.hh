@@ -18,6 +18,7 @@
 #include <zlib/Zmcp.hh>
 
 #include <zlib/ZuBase64.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -961,8 +962,7 @@ struct ControlAction_ : public Heap, public ZmObject {
 };
 
 template <typename Call>
-using ControlHeap = ZmHeap<"Zmcp.Client.Control",
-  ControlAction_<Call>>;
+ZuDerive(ControlHeap, (ZmHeap<"Zmcp.Client.Control", ControlAction_<Call>>));
 
 template <typename Call>
 ZuDerive(ControlAction, (ControlAction_<Call, ControlHeap<Call>>));
@@ -1274,7 +1274,7 @@ private:
   RequestQ<Impl, Catalog> m_requests;
 };
 template <typename Impl, typename Catalog>
-using PoolHeap = ZmHeap<"Zmcp.HTTP.Pool", Pool_<Impl, Catalog>>;
+ZuDerive(PoolHeap, (ZmHeap<"Zmcp.HTTP.Pool", Pool_<Impl, Catalog>>));
 template <typename Impl, typename Catalog>
 ZuDerive(Pool, (Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>>));
 
@@ -1294,8 +1294,7 @@ struct CallAction_ : public Heap, public ZmObject {
 };
 
 template <typename Req, typename Call>
-using CallHeap = ZmHeap<"Zmcp.HTTP.Call",
-  CallAction_<Req, Call>>;
+ZuDerive(CallHeap, (ZmHeap<"Zmcp.HTTP.Call", CallAction_<Req, Call>>));
 
 template <typename Req, typename Call>
 ZuDerive(CallAction, (CallAction_<Req, Call, CallHeap<Req, Call>>));
@@ -1324,8 +1323,7 @@ struct CancelAction_ : public Heap, public ZmObject {
   ID		id;
   ErrorString	reason;
 };
-using CancelActionHeap =
-  ZmHeap<"Zmcp.HTTP.Cancel", CancelAction_<>>;
+ZuDerive(CancelActionHeap, (ZmHeap<"Zmcp.HTTP.Cancel", CancelAction_<>>));
 ZuDerive(CancelAction, (CancelAction_<CancelActionHeap>));
 
 template <typename Impl, typename Catalog>
@@ -1997,8 +1995,8 @@ struct StdioCallAction_ : public Heap, public ZmObject {
 };
 
 template <typename Req, typename Call>
-using StdioCallHeap = ZmHeap<"Zmcp.Stdio.Call",
-  StdioCallAction_<Req, Call>>;
+ZuDerive(StdioCallHeap,
+  (ZmHeap<"Zmcp.Stdio.Call", StdioCallAction_<Req, Call>>));
 
 template <typename Req, typename Call>
 ZuDerive(StdioCallAction,

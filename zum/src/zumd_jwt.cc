@@ -45,11 +45,12 @@ static bool keyCoordinate(String &out, ZuBSpan value)
 }
 
 bool signKeyCreate(Ztls::Random &rng, ZuBSpan dbKey,
-    ZuCSpan issuer, ZuCSpan id, int64_t now, SignKey &signer)
+    ZuCSpan issuerURL, ZuCSpan id, int64_t now, SignKey &signer)
 {
-  if (!dbKey || !issuer || !id || now <= 0) return false;
+  if (!dbKey || !issuerURL || !id || now <= 0) return false;
   Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  Bytes privateKey, publicKey;
+  Secret privateKey;
+  Bytes publicKey;
   privateKey.length(Ztls::Backend::pkey_ec_key_size(key.key), false);
   publicKey.length(Ztls::Backend::pkey_ec_public_size(key.key), false);
   if (publicKey.length() != Ztls::COSE::ES256::PublicKeySize ||
@@ -61,19 +62,18 @@ bool signKeyCreate(Ztls::Random &rng, ZuBSpan dbKey,
       !keyCoordinate(y, {publicKey.data() + 1 +
         Ztls::COSE::ES256::CoordinateSize,
         Ztls::COSE::ES256::CoordinateSize})) {
-    ZuClear(privateKey.data(), privateKey.length());
     return false;
   }
   Bytes encrypted;
-  serverSecretEncrypt(rng, dbKey, issuer, "zum.sign_key", id,
+  serverSecretEncrypt(rng, dbKey, issuerURL, "zum.sign_key", id,
     "privateMaterial", privateKey, encrypted);
-  ZuClear(privateKey.data(), privateKey.length());
+  privateKey.null();
   if (!encrypted) return false;
   String jwk;
   ZfJSON::save(jwk, PublicJWK{
     id, "EC", "P-256", "sig", "ES256", ZuMv(x), ZuMv(y)});
   signer = SignKey{
-    .id = id, .issuer = issuer, .algorithm = "ES256",
+    .id = id, .issuer = issuerURL, .algorithm = "ES256",
     .publicJwk = ZuMv(jwk), .privateMaterial = ZuMv(encrypted),
     .notBefore = now, .state = State::Active,
     .version = 1, .created = now, .updated = now};
@@ -91,7 +91,7 @@ ZfStruct(, (JWTHeaderJSON, JSON),
   (((kid),		(Required)),	(String)));
 
 ZfStruct(, (AccessClaims, JSON),
-  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((issuerURL),	(JSON::ID<"iss">, Required)),	(String)),
   (((subject),		(JSON::ID<"sub">, Required)),	(String)),
   (((audience),		(JSON::ID<"aud">, Required)),	(String)),
   (((clientID),		(JSON::ID<"client_id">, Required)), (String)),
@@ -106,7 +106,7 @@ ZfStruct(, (AccessClaims, JSON),
   (((amr),		(JSON::Opt)),	(StringVec)));
 
 ZfStruct(, (IDClaims, JSON),
-  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
+  (((issuerURL),	(JSON::ID<"iss">, Required)),	(String)),
   (((subject),		(JSON::ID<"sub">, Required)),	(String)),
   (((audience),		(JSON::ID<"aud">, Required)),	(String)),
   (((iat),		(Required)),	(Int64)),
@@ -152,7 +152,7 @@ static bool encode(String &out, ZuBSpan data)
 }
 
 static bool accessClaims(
-    Ztls::Random &rng, ZuCSpan issuer, const App &app, ZuCSpan subject,
+    Ztls::Random &rng, ZuCSpan issuerURL, const App &app, ZuCSpan subject,
     const Client &client, const ScopeSelection &selection,
     const ZtBitmap &authority, ZuSpan<const Action> actions, AppID clientAppID,
     int64_t now, int64_t expires, AccessClaims &claims)
@@ -160,7 +160,7 @@ static bool accessClaims(
   ZuBArray<JWTIDSize> random(JWTIDSize, false);
   if (!rng.random(random)) return false;
   AccessClaims next;
-  next.issuer = issuer;
+  next.issuerURL = issuerURL;
   next.subject = subject;
   next.audience = app.audience;
   next.clientID = client.id;
@@ -177,7 +177,7 @@ static bool accessClaims(
 }
 
 bool interactiveClaims(
-    Ztls::Random &rng, ZuCSpan issuer, const App &app, const User &user,
+    Ztls::Random &rng, ZuCSpan issuerURL, const App &app, const User &user,
     const Client &client, const ScopeSelection &selection,
     const ZtBitmap &authority, ZuSpan<const Action> actions,
     ZuCSpan authMethod, int64_t authTime, int64_t now, int64_t expires,
@@ -185,14 +185,14 @@ bool interactiveClaims(
 {
   if (user.state != State::Active || !user.handle ||
       client.state != State::Active ||
-      (client.type != ClientType::Browser &&
-       client.type != ClientType::Native &&
-       client.type != ClientType::Confidential) ||
+      (client.profile != ClientProfile::Browser &&
+       client.profile != ClientProfile::Native &&
+       client.profile != ClientProfile::Server) ||
       !(client.grants & ClientGrant::AuthorizationCode)) return false;
   String subject;
   if (!encode(subject, user.handle)) return false;
   AccessClaims next;
-  if (!accessClaims(rng, issuer, app, subject, client, selection,
+  if (!accessClaims(rng, issuerURL, app, subject, client, selection,
       authority, actions, client.appID, now, expires, next)) return false;
   if (authMethod != "passkey" && authMethod != "oidc") return false;
   next.authTime = authTime;
@@ -202,16 +202,16 @@ bool interactiveClaims(
 }
 
 bool clientClaims(
-    Ztls::Random &rng, ZuCSpan issuer, const App &app, const Client &client,
+    Ztls::Random &rng, ZuCSpan issuerURL, const App &app, const Client &client,
     const ScopeSelection &selection, const ZtBitmap &authority,
     ZuSpan<const Action> actions, AppID clientAppID,
     int64_t now, int64_t expires,
     AccessClaims &claims)
 {
   if (client.state != State::Active ||
-      client.type != ClientType::Confidential ||
+      clientType(client.profile) != ClientType::Confidential ||
       !(client.grants & ClientGrant::ClientCredentials)) return false;
-  return accessClaims(rng, issuer, app, client.id, client, selection,
+  return accessClaims(rng, issuerURL, app, client.id, client, selection,
     authority, actions, clientAppID, now, expires, claims);
 }
 
@@ -228,7 +228,7 @@ static bool claimsJSON(
     String &json, const AccessClaims &claims, const JWTLimits &limits)
 {
   bool interactive = claims.authTime > 0;
-  if (!claims.issuer || !claims.subject || !claims.audience ||
+  if (!claims.issuerURL || !claims.subject || !claims.audience ||
       !claims.clientID || !claims.appID || !claims.jti || !claims.scope ||
       claims.actions.length() > limits.actions || claims.iat <= 0 ||
       claims.nbf <= 0 || claims.exp <= claims.iat || claims.nbf >= claims.exp ||
@@ -266,18 +266,18 @@ bool jwtPrepare(
 }
 
 bool idClaims(
-    ZuCSpan issuer, const User &user, const Client &client,
+    ZuCSpan issuerURL, const User &user, const Client &client,
     const ScopeSelection &selection,
     ZuCSpan nonce, ZuCSpan authMethod, int64_t authTime,
     int64_t now, int64_t expires, IDClaims &claims)
 {
-  if (!issuer || user.state != State::Active || user.owner || !user.handle ||
+  if (!issuerURL || user.state != State::Active || user.owner || !user.handle ||
       client.state != State::Active || client.owner || !client.id ||
       !scopeContains(selection.scope, "openid") ||
       (authMethod != "passkey" && authMethod != "oidc") ||
       authTime <= 0 || now <= 0 || expires <= now) return false;
   IDClaims next;
-  next.issuer = issuer;
+  next.issuerURL = issuerURL;
   if (!encode(next.subject, user.handle)) return false;
   next.audience = client.id;
   next.nonce = nonce;
@@ -298,7 +298,7 @@ bool idTokenPrepare(
     const IDClaims &claims, ZuCSpan kid, const JWTLimits &limits,
     PreparedJWT &prepared)
 {
-  if (!kid || !claims.issuer || !claims.subject || !claims.audience ||
+  if (!kid || !claims.issuerURL || !claims.subject || !claims.audience ||
       claims.amr.length() != 1 || claims.iat <= 0 ||
       claims.exp <= claims.iat || claims.authTime <= 0 ||
       !limits.token || !limits.json) return false;

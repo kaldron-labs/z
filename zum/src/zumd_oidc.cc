@@ -523,8 +523,8 @@ private:
   bool			m_eligible = false;
   bool			m_done = false;
 };
-using OIDCUserLoadHeap =
-  ZmHeap<"Zum.zumd.oidc.OIDCUserLoad", OIDCUserLoad__<>>;
+ZuDerive(OIDCUserLoadHeap,
+  (ZmHeap<"Zum.zumd.oidc.OIDCUserLoad", OIDCUserLoad__<>>));
 ZuDerive(OIDCUserLoad_, (OIDCUserLoad__<OIDCUserLoadHeap>));
 
 void oidcLoadUser(
@@ -770,7 +770,7 @@ private:
   static void clearSecret_(OIDCConfig &config)
   {
     if (config.clientSecret.mutable_())
-      ZuClear(config.clientSecret.data(), config.clientSecret.length());
+      ZuClear(config.clientSecret);
     config.clientSecret.null();
   }
 
@@ -936,16 +936,15 @@ private:
       .body = ZuMv(body), .method = OIDCHTTPMethod::POST};
     switch (request->config.clientAuth) {
       case OIDCClientAuth::Basic: {
-        String plain;
+        SecretString plain;
         ZfURI::PathQuote::quote(plain, request->config.clientID);
         plain << ':';
         ZfURI::PathQuote::quote(plain, request->config.clientSecret);
-        String encoded;
+        SecretString encoded;
         encoded.length(ZuBase64::enclen(plain.length()));
         encoded.length(ZuBase64::encode(encoded.span(), ZuBSpan{plain}));
-        if (plain.mutable_()) ZuClear(plain.data(), plain.length());
+        plain.null();
         http.authorization << "Basic " << encoded;
-        if (encoded.mutable_()) ZuClear(encoded.data(), encoded.length());
       } break;
       case OIDCClientAuth::Post:
         formField(http.body, first, "client_id", request->config.clientID);
@@ -1025,7 +1024,7 @@ private:
         .method = OIDCHTTPMethod::GET};
       http.authorization << "Bearer " << request->accessToken;
       if (request->accessToken.mutable_())
-        ZuClear(request->accessToken.data(), request->accessToken.length());
+        ZuClear(request->accessToken);
       request->accessToken.null();
       auto subject = claims.subject;
       auto send = m_http;
@@ -1091,13 +1090,13 @@ private:
   static void clearRequest_(OIDCReq &request)
   {
     if (request.verifier.mutable_())
-      ZuClear(request.verifier.data(), request.verifier.length());
+      ZuClear(request.verifier);
     request.verifier.null();
     if (request.idToken.mutable_())
-      ZuClear(request.idToken.data(), request.idToken.length());
+      ZuClear(request.idToken);
     request.idToken.null();
     if (request.accessToken.mutable_())
-      ZuClear(request.accessToken.data(), request.accessToken.length());
+      ZuClear(request.accessToken);
     request.accessToken.null();
     clearSecret_(request.config);
     request.config = {};
@@ -1130,7 +1129,7 @@ private:
   unsigned	m_discovering = 0;
   ZmAtomic<uint32_t> m_up = 0;
 };
-using OIDCStateHeap = ZmHeap<"Zum.zumd.oidc.OIDCState", OIDCState_<>>;
+ZuDerive(OIDCStateHeap, (ZmHeap<"Zum.zumd.oidc.OIDCState", OIDCState_<>>));
 ZuDerive(OIDCState, (OIDCState_<OIDCStateHeap>));
 OIDC::OIDC() = default;
 OIDC::~OIDC() { final(); }
@@ -1184,8 +1183,10 @@ struct ResponseData_ : public Heap, public ZmObject  {
   }
 };
 template <unsigned Status_>
-using ResponseData = ResponseData_<Status_,
-  ZmHeap<"Zum.zumd.oidc.ResponseData", ResponseData_<Status_>>>;
+ZuDerive(ResponseDataHeap,
+  (ZmHeap<"Zum.zumd.oidc.ResponseData", ResponseData_<Status_>>));
+template <unsigned Status_>
+ZuDerive(ResponseData, (ResponseData_<Status_, ResponseDataHeap<Status_>>));
 
 template <unsigned Status_>
 struct Response : public Zrest::ResParser<Response<Status_>,
@@ -1240,9 +1241,9 @@ struct Call_ : public Heap, public ZmObject  {
   void finish(unsigned status, String value) const {
     if (done.cmpXch(1, 0)) return;
     if (authorization.mutable_())
-      ZuClear(authorization.data(), authorization.length());
+      ZuClear(authorization);
     authorization.null();
-    if (body.mutable_()) ZuClear(body.data(), body.length());
+    if (body.mutable_()) ZuClear(body);
     body.null();
     auto fn = ZuMv(complete);
     if (fn) fn(status, ZuMv(value));
@@ -1256,7 +1257,7 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0, {});
   }
 };
-using CallHeap = ZmHeap<"Zum.zumd.oidc.Call", Call_<>>;
+ZuDerive(CallHeap, (ZmHeap<"Zum.zumd.oidc.Call", Call_<>>));
 ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Impl, Zhttp::Method::T Method_, unsigned Body_>
@@ -1339,7 +1340,7 @@ private:
   ReqBuilderQ m_requests;
 };
 
-using PoolHeap = ZmHeap<"Zum.OIDC.HTTP.Pool", Pool_<>>;
+ZuDerive(PoolHeap, (ZmHeap<"Zum.OIDC.HTTP.Pool", Pool_<>>));
 ZuDerive(Pool, (Pool_<PoolHeap>));
 
 template <typename Heap = ZuVoid>
@@ -1409,7 +1410,7 @@ private:
   uint64_t	m_id = 0;
   bool		m_ipv6Literal = false;
 };
-using ClientHeap = ZmHeap<"Zum.zumd.oidc.Client", Client_<>>;
+ZuDerive(ClientHeap, (ZmHeap<"Zum.zumd.oidc.Client", Client_<>>));
 class OIDCClient : public Client_<ClientHeap> {
 public:
   using Client_<ClientHeap>::Client_;
@@ -1589,8 +1590,8 @@ private:
   bool			m_resolverOwned = false;
   bool			m_up = false;
 };
-using OIDCHTTPStateHeap =
-  ZmHeap<"Zum.zumd.oidc.OIDCHTTPState", OIDCHTTPState_<>>;
+ZuDerive(OIDCHTTPStateHeap,
+  (ZmHeap<"Zum.zumd.oidc.OIDCHTTPState", OIDCHTTPState_<>>));
 ZuDerive(OIDCHTTPState, (OIDCHTTPState_<OIDCHTTPStateHeap>));
 OIDCHTTP::OIDCHTTP() = default;
 OIDCHTTP::~OIDCHTTP() { final(); }

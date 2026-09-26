@@ -10,6 +10,7 @@
 #define zumd_request_HH
 
 #ifndef ZumLib_HH
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZumLib.hh>
 #endif
 
@@ -102,7 +103,7 @@ private:
   bool			m_closing = false;
 };
 
-using RequestsHeap = ZmHeap<"Zum.Requests", Requests_<>>;
+ZuDerive(RequestsHeap, (ZmHeap<"Zum.Requests", Requests_<>>));
 ZuDerive(Requests, (Requests_<RequestsHeap>));
 using Request = Requests::Node;
 

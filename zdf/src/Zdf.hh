@@ -270,7 +270,7 @@ private:
   bool		m_failed = false;
 };
 template <typename W>
-using DFWriter_Heap = ZmHeap<"Zdb.DFWriter", DFWriter_<W>>;
+ZuDerive(DFWriter_Heap, (ZmHeap<"Zdb.DFWriter", DFWriter_<W>>));
 template <typename W>
 ZuDerive(DFWriter, (DFWriter_<W, DFWriter_Heap<W>>));
 

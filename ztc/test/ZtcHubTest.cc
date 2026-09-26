@@ -23,7 +23,7 @@ static Ztc::HubdCf config()
   Ztc::HubdCf cf;
   cf.listeners.push(Ztc::ListenerCf{
     "127.0.0.1", "/ztc", "server.crt", "server.key", "/session", {}});
-  cf.issuer = "https://zum.example/oauth2/7";
+  cf.issuerURL = "https://zum.example/oauth2/7";
   cf.audience = "https://ztchub.example";
   cf.managementIssuer = "https://zum.example";
   cf.managementClientID = "ztchub-manager";
@@ -40,7 +40,7 @@ static Ztc::HubdCf config()
 static Zum::ServicePrincipal principal(ZuCSpan subject, ZuCSpan action)
 {
   Zum::ServicePrincipal value;
-  value.tokenID.issuer = "https://zum.example/oauth2/7";
+  value.tokenID.issuerURL = "https://zum.example/oauth2/7";
   value.tokenID.jti = subject;
   value.subject = subject;
   value.audience = "https://ztchub.example";
@@ -167,7 +167,7 @@ static void routing()
   auto wrongAudience = agentPrincipal;
   wrongAudience.audience = "https://other.example";
   auto wrongIssuer = agentPrincipal;
-  wrongIssuer.tokenID.issuer = "https://zum.example/oauth2/8";
+  wrongIssuer.tokenID.issuerURL = "https://zum.example/oauth2/8";
   auto wrongDevice = agentPrincipal;
   wrongDevice.subject = "other-device";
   auto expired = agentPrincipal;
@@ -178,7 +178,7 @@ static void routing()
   Zum::ServicePrincipal browserPrincipal;
   ZuCheck(hub.browserPrincipal(cookie, browserPrincipal));
   ZuCheck(browserPrincipal.subject == "user-1" &&
-    browserPrincipal.tokenID.issuer == "https://zum.example/oauth2/7" &&
+    browserPrincipal.tokenID.issuerURL == "https://zum.example/oauth2/7" &&
     browserPrincipal.tokenID.jti == "user-1" &&
     browserPrincipal.actions.length() == 1 &&
     browserPrincipal.actions[0] == "Request");

@@ -4,6 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmHash.hh>
@@ -41,7 +42,7 @@ template <typename Heap = ZuVoid>
 struct WatchAlloc_ : public Heap {
   uintptr_t value;
 };
-using WatchAllocHeap = ZmHeap<"Ztc.Watch.TestHeap", WatchAlloc_<>>;
+ZuDerive(WatchAllocHeap, (ZmHeap<"Ztc.Watch.TestHeap", WatchAlloc_<>>));
 ZuDerive(WatchAlloc, (WatchAlloc_<WatchAllocHeap>));
 
 ZmHashKVDerive(WatchHash, unsigned, unsigned,

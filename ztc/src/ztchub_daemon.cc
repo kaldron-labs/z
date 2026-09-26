@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ztchub_daemon.hh>
 
 #include <limits.h>
@@ -42,8 +43,8 @@ struct BrowserSession_ : public Heap, public ZmObject {
   HubString cookie;
   ZmScheduler::Timer expiry;
 };
-using BrowserSessionHeap = ZmHeap<"Ztc.Hub.BrowserSession",
-  BrowserSession_<>>;
+ZuDerive(BrowserSessionHeap,
+  (ZmHeap<"Ztc.Hub.BrowserSession", BrowserSession_<>>));
 ZuDerive(BrowserSession, (BrowserSession_<BrowserSessionHeap>));
 
 inline ZuCSpan Agent_KeyAxor(const Agent &agent) { return agent.deviceID; }
@@ -167,7 +168,7 @@ struct StateData {
 
 template <typename Heap = ZuVoid>
 struct State_ : public Heap, public ZmObject, public StateData { };
-using StateHeap = ZmHeap<"Ztc.Hub.State", State_<>>;
+ZuDerive(StateHeap, (ZmHeap<"Ztc.Hub.State", State_<>>));
 ZuDerive(State, (State_<StateHeap>));
 
 struct HubDB : public Zdb {
@@ -308,7 +309,7 @@ static bool browserCookie(Ztls::Random &random, HubString &cookie)
 static bool addTokenSession(
     StateData &state, const Zum::TokenID &tokenID, uint64_t sessionID)
 {
-  if (!tokenID.issuer || !tokenID.jti || !sessionID) return false;
+  if (!tokenID.issuerURL || !tokenID.jti || !sessionID) return false;
   auto node = state.tokenIdx.findPtr(tokenID);
   if (!node) {
     TokenSessions sessions;
@@ -325,7 +326,7 @@ static bool addTokenSession(
 static void removeTokenSession(
     StateData &state, const Zum::TokenID &tokenID, uint64_t sessionID)
 {
-  if (!tokenID.issuer || !tokenID.jti || !sessionID) return;
+  if (!tokenID.issuerURL || !tokenID.jti || !sessionID) return;
   auto node = state.tokenIdx.findPtr(tokenID);
   if (!node) return;
   auto &sessions = node->val();
@@ -544,7 +545,7 @@ Hubd::~Hubd() { final(); }
 
 bool Hubd::init(HubdCf cf)
 {
-  if (m_state || !cf.listeners.length() || !cf.issuer || !cf.audience ||
+  if (m_state || !cf.listeners.length() || !cf.issuerURL || !cf.audience ||
       !cf.managementIssuer || !cf.managementClientID ||
       !cf.ssfCallbackPath || cf.ssfCallbackPath[0] != '/' ||
       !cf.schedulerTurnWork ||
@@ -593,7 +594,7 @@ bool Hubd::init(HubdCf cf, ZiMultiplex *scheduler, Zum::ServiceHTTPFn http,
   Zum::ServiceConfig serviceCf{
     .scheduler = scheduler,
     .sid = scheduler->rxThread(),
-    .issuerURL = state.cf.issuer,
+    .issuerURL = state.cf.issuerURL,
     .managementIssuerURL = state.cf.managementIssuer,
     .managementURL = state.cf.managementURL,
     .clientID = state.cf.managementClientID,
@@ -605,7 +606,7 @@ bool Hubd::init(HubdCf cf, ZiMultiplex *scheduler, Zum::ServiceHTTPFn http,
       .receiverID = state.cf.managementClientID,
       .callbackPath = state.cf.ssfCallbackPath,
       .callbackAuth = callbackAuth,
-      .transmitterIssuer = state.cf.issuer,
+      .transmitterIssuer = state.cf.issuerURL,
       .audience = state.cf.audience,
       .maxBytes = state.cf.maxFrame}}
   ;
@@ -911,7 +912,7 @@ bool Hubd::addAgent(
   error = HubError::Unauthorized;
   if (!m_state || m_state->state != HubdState::Up || !sessionID || !deviceID ||
       !generation || principal.subject != deviceID ||
-      principal.tokenID.issuer != m_state->cf.issuer ||
+      principal.tokenID.issuerURL != m_state->cf.issuerURL ||
       principal.audience != m_state->cf.audience ||
       !authorized(principal, "Telemetry")) return false;
   error = HubError::DuplicateSub;
@@ -934,7 +935,7 @@ bool Hubd::addFrontend(uint64_t sessionID,
   if (!m_state || m_state->state != HubdState::Up || !sessionID || !send ||
       m_state->sessions.findPtr(sessionID) ||
       m_state->frontEndCount >= m_state->cf.activeFrontEnds ||
-      principal.tokenID.issuer != m_state->cf.issuer ||
+      principal.tokenID.issuerURL != m_state->cf.issuerURL ||
       principal.audience != m_state->cf.audience ||
       !authorized(principal, "Request") ||
       !Hubd_::addSession(*m_state, sessionID, principal.tokenID, ZuMv(send)))
@@ -948,7 +949,7 @@ bool Hubd::createBrowserSession(
 {
   cookie.null();
   if (!m_state || m_state->state != HubdState::Up || !principal.subject ||
-      principal.tokenID.issuer != m_state->cf.issuer ||
+      principal.tokenID.issuerURL != m_state->cf.issuerURL ||
       principal.audience != m_state->cf.audience ||
       !authorized(principal, "Request") || !principal.tokenID.jti ||
       m_state->browserSessions.count_() >= m_state->cf.activeFrontEnds ||

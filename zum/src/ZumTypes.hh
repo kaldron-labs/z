@@ -20,6 +20,10 @@ namespace Zum {
 
 ZuDerive(String, ZtString<ZtStringHeapID<"Zum.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Bytes">>));
+ZuDerive(SecretString, (ZtString<ZtStringSecret<true,
+  ZtStringHeapID<"Zum.String">>>));
+ZuDerive(Secret, (ZtArray<uint8_t, ZtArraySecret<true,
+  ZtArrayHeapID<"Zum.Bytes">>>));
 struct VecHeapID : public ZuStringT<"Zum.Vec"> { };
 using VecHeap = ZtArrayHeapID_<VecHeapID>;
 ZuDerive(StringVec, (ZtArray<String, VecHeap>));

@@ -4,6 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuDerive.hh>
 #include <string.h>
 #include <stdlib.h>
 
@@ -127,7 +128,7 @@ public:
 
 template <typename Heap = ZuVoid>
 class Pending__ : public Heap, public PendingData { };
-using PendingHeap = ZmHeap<"Ztc.App.Pending", Pending__<>>;
+ZuDerive(PendingHeap, (ZmHeap<"Ztc.App.Pending", Pending__<>>));
 ZuDerive(Pending_, (Pending__<PendingHeap>));
 
 using PendingKey = uint64_t;
@@ -589,7 +590,7 @@ class Ingress__ : public Heap, public IngressData {
 public:
   using IngressData::IngressData;
 };
-using IngressHeap = ZmHeap<"Ztc.App.Ingress", Ingress__<>>;
+ZuDerive(IngressHeap, (ZmHeap<"Ztc.App.Ingress", Ingress__<>>));
 ZuDerive(Ingress, (Ingress__<IngressHeap>));
 
 template <typename Heap = ZuVoid>
@@ -607,7 +608,7 @@ public:
 private:
   ZmRef<Ingress>	m_ingress;
 };
-using AlertSinkHeap = ZmHeap<"Ztc.App.AlertSink", AlertSink__<>>;
+ZuDerive(AlertSinkHeap, (ZmHeap<"Ztc.App.AlertSink", AlertSink__<>>));
 ZuDerive(AlertSink, (AlertSink__<AlertSinkHeap>));
 
 struct StateData {
@@ -644,7 +645,7 @@ struct StateData {
 
 template <typename Heap = ZuVoid>
 class State_ : public Heap, public StateData { };
-using StateHeap = ZmHeap<"Ztc.App.State", State_<>>;
+ZuDerive(StateHeap, (ZmHeap<"Ztc.App.State", State_<>>));
 ZuDerive(State, (State_<StateHeap>));
 
 Subscription *earliest(State *state)

@@ -19,16 +19,20 @@
 
 namespace Ztc {
 
+ZuDerive(AgentString, (ZtString<ZtStringHeapID<"Ztc.Agent.Env">>));
+ZuDerive(AgentSecret, (ZtString<ZtStringSecret<true,
+  ZtStringHeapID<"Ztc.Agent.Secret">>>));
+
 struct AgentEnv {
-  ZtString<>	issuer;
-  ZtString<>	clientID;
-  ZtString<>	deviceID;
-  ZtString<>	credentialStore;
-  ZtString<>	caPath;
-  ZtString<>	wssURL;
-  ZtString<>	accessToken;
-  ZtString<>	pidDir{"ztc"};
-  ZtString<>	ring{"ztc"};
+  AgentString issuerURL;
+  AgentString clientID;
+  AgentString deviceID;
+  AgentString credentialStore;
+  AgentString caPath;
+  AgentString wssURL;
+  AgentSecret accessToken;
+  AgentString pidDir{"ztc"};
+  AgentString ring{"ztc"};
 };
 
 class Agent {
