@@ -58,6 +58,7 @@ struct ZtArray_Defaults {
   enum { HeapMin = 32 };
   enum { HeapMax = 1024 };
   enum { Sharded = 0 };
+  enum { Secret = 0 };
 };
 
 // ZtArrayCmp - the comparator
@@ -92,6 +93,12 @@ struct ZtArraySharded : public NTP {
   enum { Sharded = Sharded_ };
 };
 
+// ZtArraySecret - clear discarded primitive data
+template <bool Secret_, typename NTP = ZtArray_Defaults>
+struct ZtArraySecret : public NTP {
+  enum { Secret = Secret_ };
+};
+
 template <typename T, typename NTP> class ZtArray;
 
 template <typename T> struct ZtArray_ { };
@@ -119,6 +126,8 @@ public:
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };
   enum { Sharded = NTP::Sharded };
+  enum { Secret = NTP::Secret };
+  ZuAssert((!Secret || ZuTraits<T>::IsPrimitive));
   using VHeap = ZmVHeap_<
     HeapID,
     sizeof(T) * HeapMin,
@@ -431,6 +440,7 @@ private:
 	      if (n) moveElems(span.data(), data, n);
 	      return n;
 	    }, n);
+	  if constexpr (Secret) ZuClear(buf);
 	  return;
 	}
       this_->splice(ZuFwd<Removed>(removed), offset, length,
@@ -562,9 +572,12 @@ private:
       buf.length(ZuPrint<P>::print(buf.data(), o, p));
       ZuCSpan s{buf};
       o = ZuUTF<Char, AltChar>::len(s);
-      if (!o) { null_(); return; }
-      alloc_(o, 0);
-      length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+      if (o) {
+	alloc_(o, 0);
+	length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+      } else
+	null_();
+      if constexpr (Secret) ZuClear(buf);
     }
   }
 
@@ -684,9 +697,12 @@ protected:
       buf.length(ZuPrint<P>::print(buf.data(), size, p));
       ZuCSpan s{buf};
       o = ZuUTF<Char, AltChar>::len(s);
-      if (!o) { null_(); return; }
-      ensure(o);
-      length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+      if (o) {
+	ensure(o);
+	length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+      } else
+	null_();
+      if constexpr (Secret) ZuClear(buf);
     }
   }
 
@@ -854,7 +870,7 @@ protected:
     length_vallocd(length, 1);
   }
 
-  T *alloc__(uint64_t length) {
+  static T *alloc__(uint64_t length) {
     auto ptr = static_cast<T *>(valloc(length * sizeof(T)));
     ZmAssert(!(reinterpret_cast<uintptr_t>(ptr) & (alignof(T) - 1)));
     return ptr;
@@ -896,6 +912,12 @@ protected:
     if (!length) { clear(); return; }
     if constexpr (ZuIsSame<ZuStrip<U>, ZuStrip<T>>{})
       if (data == m_data) { this->length(length); return; }
+    if constexpr (Secret && ZuIsSame<ZuStrip<U>, ZuStrip<T>>{})
+      if (mutable_() && length <= size()) {
+	memmove(m_data, data, length * sizeof(T));
+	length_(length);
+	return;
+      }
     if (mutable_() && length <= size() && !overlaps_(data, length)) {
       destroyElems(m_data, this->length());
       copyElems(m_data, data, length);
@@ -929,6 +951,7 @@ protected:
 
   void free_() {
     if (m_data && mutable_()) {
+      if constexpr (Secret) ZuClear(*this);
       destroyElems(m_data, length());
       if (vallocd()) vfree(m_data);
     }
@@ -940,6 +963,8 @@ protected:
   }
   void free_2(T *data, uint64_t length_vallocd) {
     if (data) {
+      if constexpr (Secret)
+	ZuClear(data, (length_vallocd & ~(uint64_t(1)<<63)) * sizeof(T));
       destroyElems(data, length_vallocd & ~(uint64_t(1)<<63));
       if (length_vallocd>>63) vfree(data);
     }
@@ -1026,6 +1051,9 @@ public:
 
 protected:
   void length_(uint64_t v) {
+    if constexpr (Secret)
+      if (m_data && mutable_() && v < length())
+	ZuClear(m_data + v, (length() - v) * sizeof(T));
     m_length_vallocd =
       (m_length_vallocd & (uint64_t(1)<<63)) | uint64_t(v);
   }
@@ -1238,10 +1266,17 @@ private:
       auto buf = ZmScratch(char, size);
       buf.length(ZuPrint<P>::print(buf.data(), size, p));
       ZuCSpan s{buf};
-      return add_([s](Char *ptr, uint64_t length) -> uint64_t {
-	if (!length) return 0;
-	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
-      }, ZuUTF<Char, AltChar>::len(s));
+      if constexpr (Secret) {
+	ZuGuard clear{[&buf]() { ZuClear(buf); }};
+	return add__([s](Char *ptr, uint64_t length) -> uint64_t {
+	  if (!length) return 0;
+	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	}, ZuUTF<Char, AltChar>::len(s));
+      } else
+	return add__([s](Char *ptr, uint64_t length) -> uint64_t {
+	  if (!length) return 0;
+	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	}, ZuUTF<Char, AltChar>::len(s));
     }
   }
 
@@ -1321,6 +1356,7 @@ private:
 	  moveElems(ptr, data, rlength);
 	  return rlength;
 	}, rlength);
+	if constexpr (Secret) ZuClear(buf);
  	return;
       }
     append__([data = s.data()](Char *ptr, uint64_t rlength) {
@@ -1364,6 +1400,7 @@ private:
       append__([s](Char *ptr, uint64_t length) {
 	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
       }, ZuUTF<Char, AltChar>::len(s));
+      if constexpr (Secret) ZuClear(buf);
     }
   }
 
@@ -1524,9 +1561,10 @@ public:
 	size(z);
       }
       initElems(m_data + n, offset - n);
-      if (rlength)
-	rlength = replace(ZuSpan(m_data + offset, rlength));
-      length_(offset + rlength); // rlength may have been reduced
+      auto nrlength = rlength ? replace(ZuSpan(m_data + offset, rlength)) : 0;
+      if constexpr (Secret)
+	length_(offset + rlength);
+      length_(offset + nrlength);
       return;
     }
 
@@ -1544,14 +1582,16 @@ public:
       if (!z) { null(); return; }
       T *newData = alloc__(z);
       this->template moveElems<false>(newData, m_data, offset);
-      if (rlength)
-	rlength = replace(ZuSpan(newData + offset, rlength));
-      l = n + rlength - length; // rlength may have been reduced
+      auto nrlength = rlength ? replace(ZuSpan(newData + offset, rlength)) : 0;
+      l = n + nrlength - length;
       if (offset + length < int64_t(n))
 	this->template moveElems<false>(
-	    newData + offset + rlength,
+	    newData + offset + nrlength,
 	    m_data + offset + length,
 	    n - (offset + length));
+      if constexpr (Secret)
+	if (offset + rlength > uint64_t(l))
+	  ZuClear(newData + l, (offset + rlength - l) * sizeof(T));
       free_();
       m_data = newData;
       size_mutable(z, 1);
@@ -1585,6 +1625,9 @@ public:
 		    tail);
 	}
       }
+      // Include temporary tail copies in the final length_() wipe.
+      if constexpr (Secret)
+	if (l > int64_t(n)) length_(l);
       l = n + nrlength - length;
     }
     length_(l);

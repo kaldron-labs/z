@@ -21,6 +21,7 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtHexDump.hh>
 #include <zlib/ZtCase.hh>
@@ -665,6 +666,97 @@ void testNonStringArrays()
   }
 }
 
+template <auto &ZuTest_scope>
+void testSecretArray()
+{
+  using SecretArray = ZtBArray<ZtArraySecret<true,
+    ZtArrayHeapID<"ZtArrayTest.Secret">>>;
+  SecretArray a;
+  a.size(32);
+  a.length(8);
+  memcpy(a.data(), "abcdefgh", 8);
+  a.splice([](ZuSpan<uint8_t>) { }, 2, 1,
+    [](ZuSpan<uint8_t> span) -> uint64_t {
+      span[0] = 'X';
+      return 1;
+  }, 4);
+  ZuCheck(a.length() == 8 && !memcmp(a.data(), "abXdefgh", 8));
+  bool cleared = true;
+  for (unsigned i = 8; i < 11; i++) cleared &= !a.data()[i];
+  ZuCheck(cleared);
+  a.length(4);
+  cleared = true;
+  for (unsigned i = 4; i < 8; i++) cleared &= !a.data()[i];
+  ZuCheck(cleared);
+  uint8_t replacement[] = {'q', 'r'};
+  a.copy(replacement, 2);
+  ZuCheck(a.length() == 2 && a[0] == 'q' && a[1] == 'r');
+  ZuCheck(a.data()[2] == 0 && a.data()[3] == 0);
+  a.clear();
+  ZuCheck(!a.length() && a.data()[0] == 0 && a.data()[1] == 0);
+
+  a.copy(ZuBSpan{"abcdefgh"});
+  auto oldData = a.data();
+  a.copy(a.data() + 2, 4);
+  ZuCheck(a.data() == oldData && a.length() == 4 &&
+    !memcmp(a.data(), "cdef", 4));
+  a.copy(a.data(), 2);
+  ZuCheck(a.length() == 2 && !memcmp(a.data(), "cd", 2));
+  ZuCheck(a.data()[2] == 0 && a.data()[3] == 0);
+
+  a.copy(ZuBSpan{"abcd"});
+  a.size(4);
+  a.splice(2, 1, ZuBSpan{"0123456789"});
+  ZuCheck(a == ZuBSpan{"ab0123456789d"});
+  a.null();
+  ZuCheck(!a);
+
+  SecretArray owner{ZuBSpan{"abc"}};
+  SecretArray shadow;
+  shadow -= owner;
+  ZuCheck(!shadow.mutable_());
+  shadow.null();
+  ZuCheck(owner == ZuBSpan{"abc"});
+
+  auto scratch = ZtScratch(SecretArray, 16);
+  scratch.copy(ZuBSpan{"secret"});
+  scratch.clear();
+  ZuCheck(!scratch.length() && !scratch.data()[0]);
+
+  a.copy(ZuBSpan{"abcd"});
+  a.size(32);
+  a.splice([](ZuSpan<uint8_t>) { }, 6, 0,
+    [](ZuSpan<uint8_t> span) -> uint64_t {
+      memset(span.data(), 'X', span.length());
+      return 1;
+    }, 4);
+  ZuCheck(a.length() == 7 && a[4] == SecretArray::Cmp::null() &&
+    a[5] == SecretArray::Cmp::null() && a[6] == 'X');
+  ZuCheck(!a.data()[7] && !a.data()[8] && !a.data()[9]);
+
+  a.copy(ZuBSpan{"abcdefghijklmnopqrstuvwx"});
+  a.size(24);
+  a.splice([](ZuSpan<uint8_t>) { }, 22, 2,
+    [](ZuSpan<uint8_t> span) -> uint64_t {
+      memset(span.data(), 'X', span.length());
+      return 1;
+    }, 8);
+  ZuCheck(a == ZuBSpan{"abcdefghijklmnopqrstuvX"});
+  cleared = true;
+  for (unsigned i = 23; i < 30; ++i) cleared &= !a.data()[i];
+  ZuCheck(cleared);
+
+  using Wide = ZtWArray<ZtArraySecret<true,
+    ZtArrayHeapID<"ZtArrayTest.Secret">>>;
+  Wide formatted{ZuBox<int>{12}.fmt()};
+  ZuCheck(formatted == L"12");
+  formatted = ZuBox<int>{34};
+  formatted << ZuBox<int>{56};
+  ZuCheck(formatted == L"3456");
+  ZuCheck(formatted + ZuBox<int>{78} == L"345678");
+  ZuCheck(ZtWArray<>{L"v="} + ZuBox<int>{12} == L"v=12");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -672,6 +764,7 @@ int main(int argc, char **argv)
 
   testStringEquiv<ZuTest_scope>();
   testNonStringArrays<ZuTest_scope>();
+  testSecretArray<ZuTest_scope>();
 
   return 0;
 }
