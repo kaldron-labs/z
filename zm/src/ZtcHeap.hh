@@ -27,31 +27,38 @@ namespace Ztc {
 
 // display sequence:
 //   id, size, alignment, partition, sharded,
-//   cacheSize, cpuset, cacheAllocs, heapAllocs,
-//   frees, crossFrees, allocated (*)
+//   cacheSize, cpuset, cacheAllocs, cacheFrees, crossFrees,
+//   heapAllocs, heapFrees, globalHeapAllocs, globalHeapFrees,
+//   globalHeapMax, allocated (*)
 // derived display fields:
-//   allocated = (heapAllocs + cacheAllocs) - frees
+//   allocated = (heapAllocs + cacheAllocs) - (cacheFrees + heapFrees)
+// globalHeapAllocs, globalHeapFrees and globalHeapMax are per-ID,
+// repeated in each arena row; the other counters are per-arena.
 struct HeapTelemetry {
   ZuID		id;		// primary key
   uint64_t	cacheSize = 0;
   ZmBitmap	cpuset;
   uint64_t	cacheAllocs = 0;// graphable (*)
-  uint64_t	heapAllocs = 0;	// graphable (*)
-  uint64_t	frees = 0;	// graphable
+  uint64_t	cacheFrees = 0;	// cache returns, including crossFrees
   uint64_t	crossFrees = 0;	// graphable
+  uint64_t	heapAllocs = 0;	// graphable (*)
+  uint64_t	heapFrees = 0;	// graphable
+  uint64_t	globalHeapAllocs = 0;
+  uint64_t	globalHeapFrees = 0;
+  uint64_t	globalHeapMax = 0;
   uint32_t	size = 0;	// primary key
   uint16_t	partition = 0;	// primary key
   uint8_t	sharded = 0;	// primary key
   uint8_t	alignment = 0;	// primary key
 
   uint64_t allocated() const {
-    return (cacheAllocs + heapAllocs) - frees;
+    return (cacheAllocs + heapAllocs) - (cacheFrees + heapFrees);
   }
   void allocated(uint64_t) { }
   RAG::T rag() const {
     if (!cacheSize) return RAG::Off;
     if (allocated() > cacheSize) return RAG::Red;
-    if (heapAllocs) return RAG::Amber;
+    if (globalHeapMax > 0) return RAG::Amber;
     return RAG::Green;
   }
   void rag(RAG::T) { }
@@ -83,6 +90,7 @@ public:
   using AddFn = ZmFn<void(Heap *), WatchFnHeapID>;
   using DelFn = ZmFn<void(Heap *), WatchFnHeapID>;
 
+  // Visits arenas in key order, with all arenas of an ID contiguous.
   static unsigned all(AllFn);
   static void capture(MatchFn, CaptureFn);
   template <typename L> static void guard(L &&l) {
@@ -100,13 +108,15 @@ template <class S> struct HeapCSV_ {
   void print() {
     m_stream <<
       "ID,size,partition,sharded,alignment,cacheSize,cpuset,"
-      "cacheAllocs,heapAllocs,frees,crossFrees\n";
+      "cacheAllocs,cacheFrees,crossFrees,heapAllocs,heapFrees,"
+      "globalHeapAllocs,globalHeapFrees,globalHeapMax\n";
     HeapMgr::all({this, ZmFnPtr<&HeapCSV_::print_>{}});
   }
   void print_(Heap *heap) {
     HeapTelemetry data;
     heap->telemetry(data);
-    if (!data.cacheAllocs && !data.heapAllocs) return;
+    if (!data.cacheAllocs && !data.heapAllocs &&
+	!data.cacheFrees && !data.heapFrees) return;
     m_stream <<
       '"' << data.id << "\"," <<	// assume no need to quote embedded "
       ZuBoxed(data.size) << ',' <<
@@ -116,9 +126,13 @@ template <class S> struct HeapCSV_ {
       ZuBoxed(data.cacheSize) << ',' <<
       data.cpuset << ',' <<
       ZuBoxed(data.cacheAllocs) << ',' <<
+      ZuBoxed(data.cacheFrees) << ',' <<
+      ZuBoxed(data.crossFrees) << ',' <<
       ZuBoxed(data.heapAllocs) << ',' <<
-      ZuBoxed(data.frees) << ',' <<
-      ZuBoxed(data.crossFrees) << '\n';
+      ZuBoxed(data.heapFrees) << ',' <<
+      ZuBoxed(data.globalHeapAllocs) << ',' <<
+      ZuBoxed(data.globalHeapFrees) << ',' <<
+      ZuBoxed(data.globalHeapMax) << '\n';
   }
 
 private:

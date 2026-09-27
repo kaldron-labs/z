@@ -342,10 +342,16 @@ void rag()
   heap.cacheSize = 100;
   ZuCheck(heap.rag() == Ztc::RAG::Green);
   heap.heapAllocs = 1;
+  heap.globalHeapMax = 1;
   ZuCheck(heap.rag() == Ztc::RAG::Amber);
   heap.cacheAllocs = 100;
   ZuCheck(heap.rag() == Ztc::RAG::Red);
   ZuCheck(heap.allocated() == 101);
+  heap.heapFrees = 1;
+  ZuCheck(heap.allocated() == 100);
+  ZuCheck(heap.rag() == Ztc::RAG::Amber);
+  heap.cacheFrees = 100;
+  ZuCheck(!heap.allocated());
 
   Ztc::HashTelemetry hash;
   hash.loadFactor = 1.0;
@@ -433,8 +439,12 @@ void telemetryValues()
     data.cpuset[3] = true;
     data.cacheAllocs = UINT64_C(0x200000002);
     data.heapAllocs = UINT64_C(0x300000003);
-    data.frees = UINT64_C(0x100000001);
+    data.cacheFrees = UINT64_C(0x100000001);
+    data.heapFrees = UINT64_C(0x100000002);
     data.crossFrees = UINT64_C(0x400000004);
+    data.globalHeapAllocs = UINT64_C(0x600000006);
+    data.globalHeapFrees = UINT64_C(0x700000007);
+    data.globalHeapMax = UINT64_C(0x500000005);
     data.size = UINT32_C(0x80000001);
     data.partition = UINT16_C(0x8001);
     data.sharded = 3;
@@ -452,7 +462,17 @@ void telemetryValues()
       fbo->alignment() == data.alignment);
     ZuCheck(loaded.id == data.id && loaded.cpuset[3] &&
       loaded.cacheAllocs == data.cacheAllocs &&
-      loaded.heapAllocs == data.heapAllocs && loaded.frees == data.frees);
+      loaded.heapAllocs == data.heapAllocs && loaded.cacheFrees == data.cacheFrees);
+    ZuCheck(fbo && fbo->heapFrees() == data.heapFrees &&
+      fbo->globalHeapMax() == data.globalHeapMax);
+    ZuCheck(loaded.heapFrees == data.heapFrees &&
+      loaded.crossFrees == data.crossFrees && loaded.globalHeapMax == data.globalHeapMax);
+    ZuCheck(fbo && fbo->globalHeapAllocs() == data.globalHeapAllocs &&
+      fbo->globalHeapFrees() == data.globalHeapFrees);
+    ZuCheck(loaded.globalHeapAllocs == data.globalHeapAllocs &&
+      loaded.globalHeapFrees == data.globalHeapFrees);
+    ZuCheck(loaded.size == data.size && loaded.partition == data.partition &&
+      loaded.sharded == data.sharded && loaded.alignment == data.alignment);
     ZuCheck(fbo && fbo->allocated() == data.allocated() &&
       fbo->rag() == Ztc::fbs::RAG::Red);
   }

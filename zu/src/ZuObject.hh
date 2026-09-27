@@ -20,6 +20,7 @@
 #include <stddef.h>
 
 #include <zlib/ZuObjectTraits.hh>
+#include <zlib/ZuRef.hh>
 
 class ZuObject {
 public:
@@ -34,6 +35,15 @@ public:
 
   ZuInline void ref() const { ++m_refCount; }
   ZuInline bool deref() const { return !--m_refCount; }
+
+  template <typename O, typename L>
+  bool withRef(L &&l) {
+    if (m_refCount <= 0) return false;
+    ++m_refCount;
+    ZuFwd<L>(l)(ZuRef<O>::acquire(static_cast<O *>(this)));
+    return true;
+  }
+
   ZuInline int refCount() const { return m_refCount; }
 
   // apps occasionally need to manipulate the refCount directly

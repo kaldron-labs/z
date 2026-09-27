@@ -5,7 +5,8 @@ METASOURCES = AUTO
 	$(CXXCOMPILE) -C -E $< -o $@
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
+	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zi/test \
+	-I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/zquic/src -I$(top_srcdir)/zquic/test \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zhttp/test \
@@ -13,7 +14,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-LDADD = $(top_builddir)/zhttp/util/libzhttputil.la \
+LDADD = $(top_builddir)/zi/test/libZiTest.la \
+	$(top_builddir)/zhttp/util/libzhttputil.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztls/src/libZtls.la \

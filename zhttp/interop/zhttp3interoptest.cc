@@ -1376,6 +1376,7 @@ using namespace Zhttp3InteropTest_;
 int main(int argc, char **argv)
 {
   parseArgs(argc, argv);
+  ZiTestResidue::init("zhttp3interoptest");
   ZuTestMain();
   ZuTestCall(testInteropPrerequisites);
   ZuTestCall(testZhttpClientCaddyHttp);

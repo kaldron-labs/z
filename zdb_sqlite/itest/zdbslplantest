@@ -1,10 +1,18 @@
 #!/bin/sh
 
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$test_dir/../../zi/itest/zi-test-residue.sh"
+zi_residue_init "${0##*/}" || exit 1
+trap 'status=$?; test "$failed" -ne 0 && status=1; zi_residue_finish "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+failed=0
+fail() { failed=1; echo "$*"; }
+
 echo 'TAP version 14'
 echo '1..6'
 
-db=$(mktemp --suffix=.db)
-trap 'rm -f "$db" "$db-wal" "$db-shm"' EXIT
+db="$ZI_RESIDUE_DIR/test.db"
 sqlite3 "$db" <<'SQL'
 CREATE TABLE t(
   k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, k3 INTEGER NOT NULL,
@@ -26,7 +34,7 @@ plan=$(sqlite3 "$db" \
    WHERE (k1,k2,k3)>(1,2,2) ORDER BY k1,k2,k3 LIMIT 2;')
 case "$plan" in
   *SEARCH*'((k1,k2,k3)>'*) echo 'ok 1 - ascending continuation seeks' ;;
-  *) echo "not ok 1 - ascending continuation plan: $plan" ;;
+  *) fail "not ok 1 - ascending continuation plan: $plan" ;;
 esac
 
 plan=$(sqlite3 "$db" \
@@ -34,7 +42,7 @@ plan=$(sqlite3 "$db" \
    WHERE (k1,k2,k3)<(1,3,1) ORDER BY k1 DESC,k2 DESC,k3 DESC LIMIT 2;')
 case "$plan" in
   *SEARCH*kd*) echo 'ok 2 - descending continuation seeks' ;;
-  *) echo "not ok 2 - descending continuation plan: $plan" ;;
+  *) fail "not ok 2 - descending continuation plan: $plan" ;;
 esac
 
 actual=$(sqlite3 "$db" \
@@ -45,7 +53,7 @@ actual=$(sqlite3 "$db" \
 if test "$actual" = 'b,c,d'; then
   echo 'ok 3 - mixed continuation is inclusive and ordered'
 else
-  echo "not ok 3 - mixed continuation result: $actual"
+  fail "not ok 3 - mixed continuation result: $actual"
 fi
 
 plan=$(sqlite3 "$db" \
@@ -54,7 +62,7 @@ plan=$(sqlite3 "$db" \
    ORDER BY k1,k2 DESC,k3 LIMIT 2;')
 case "$plan" in
   *SEARCH*km*) echo 'ok 4 - mixed continuation seeks' ;;
-  *) echo "not ok 4 - mixed continuation plan: $plan" ;;
+  *) fail "not ok 4 - mixed continuation plan: $plan" ;;
 esac
 
 plan=$(sqlite3 "$db" \
@@ -62,11 +70,13 @@ plan=$(sqlite3 "$db" \
    WHERE "_shard"=0 ORDER BY "_un" DESC LIMIT 1;')
 case "$plan" in
   *SEARCH*ku*) echo 'ok 5 - high-water recovery seeks' ;;
-  *) echo "not ok 5 - high-water recovery plan: $plan" ;;
+  *) fail "not ok 5 - high-water recovery plan: $plan" ;;
 esac
 
 if test "$(sqlite3 "$db" 'SELECT "c""d" FROM "a""b";')" = 7; then
   echo 'ok 6 - doubled-quote identifiers'
 else
-  echo 'not ok 6 - doubled-quote identifiers'
+  fail 'not ok 6 - doubled-quote identifiers'
 fi
+
+exit "$failed"

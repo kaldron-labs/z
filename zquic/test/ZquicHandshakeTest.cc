@@ -56,18 +56,16 @@ ZuBSpan bytes_(const uint8_t *data, unsigned len)
 }
 
 struct TempDir {
-  char		path[PATH_MAX]{};
+  Zi::Path	path;
   ZtString<>	certPath;
   ZtString<>	keyPath;
 
-  ~TempDir() { cleanup(); }
-
   bool init()
   {
-    strcpy(path, "/tmp/ZquicHandshakeTest.XXXXXX");
-    if (!mkdtemp(path)) return false;
-    certPath << static_cast<const char *>(path) << "/cert.pem";
-    keyPath << static_cast<const char *>(path) << "/key.pem";
+    path = ZiTestResidue::tmpDir("tls-cert");
+    if (ZiFile::mkdir(path) != Zi::OK) return false;
+    certPath << path << "/cert.pem";
+    keyPath << path << "/key.pem";
 
     ZtString<> cmd;
     cmd <<
@@ -81,29 +79,11 @@ struct TempDir {
     return systemOK(system(cmd.data()));
   }
 
-  ZtString<> pathOf(const char *name) const
-  {
-    ZtString<> s;
-    s << static_cast<const char *>(path) << '/' << name;
-    return s;
-  }
-
   static bool systemOK(int status)
   {
     return status != -1 && WIFEXITED(status) && !WEXITSTATUS(status);
   }
 
-  void cleanup()
-  {
-    if (!path[0]) return;
-    const char *names[] = { "cert.pem", "key.pem", nullptr };
-    for (auto name = names; *name; ++name) {
-      auto p = pathOf(*name);
-      unlink(p.data());
-    }
-    rmdir(path);
-    path[0] = 0;
-  }
 };
 
 struct TLSMessage {

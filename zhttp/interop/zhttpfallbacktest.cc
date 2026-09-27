@@ -456,6 +456,7 @@ void testZhttpClientHttp11Fallback()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zhttpfallbacktest");
   ZuTestMain();
   ZuTestCall(testInteropPrerequisites);
   ZuTestCall(testCurlZhttpHttp11Fallback);

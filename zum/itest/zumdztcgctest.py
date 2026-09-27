@@ -10,6 +10,7 @@ import select
 import signal
 import subprocess
 import uuid
+from zi_test_residue import Residue
 
 
 def output(process):
@@ -23,9 +24,12 @@ def output(process):
 
 def main():
     name = "zumd-gc-" + uuid.uuid4().hex
+    residue = Residue("zumd-ztc-gc")
+    residue.shm(name)
     probe = Path(__file__).with_name("zumdztcprobe")
     env = dict(os.environ, ZTC_RING=name)
     writer = reader = None
+    passed = False
     try:
         writer = subprocess.Popen([probe, name], env=env,
                                   stdin=subprocess.PIPE,
@@ -51,6 +55,7 @@ def main():
         writer.communicate(timeout=5)
         assert writer.returncode == 0
         print("ok 1 - dead reader PID is reclaimed on writer reopen")
+        passed = True
     except Exception as error:
         print("not ok 1 - dead reader PID is reclaimed on writer reopen")
         print("# " + str(error))
@@ -60,8 +65,7 @@ def main():
             if process is not None and process.poll() is None:
                 process.kill()
                 process.communicate()
-        for suffix in (".ctrl", ".data"):
-            Path("/dev/shm", name + suffix).unlink(missing_ok=True)
+        residue.finish(passed)
 
 
 if __name__ == "__main__":

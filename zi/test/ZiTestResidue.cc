@@ -9,12 +9,20 @@
 #include "ZiTestResidue.hh"
 
 #include <stdlib.h>
+#include <errno.h>
 
 #ifndef _WIN32
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/file.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#else
+#include <windows.h>
 #endif
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuSort.hh>
 #include <zlib/ZuTest.hh>
 
 #include <zlib/ZmGuard.hh>
@@ -43,6 +51,8 @@ struct State {
     Zi::Name		  testName;
     Paths		  files;
     Paths		  dirs;
+    Paths		  tmpFiles;
+    Paths		  tmpDirs;
     Names		  shmBases;
     unsigned		  counter = 0;
     int			  phase = Uninit;
@@ -81,6 +91,16 @@ static bool hasDotDot_(ZuCSpan s)
 static void validateName_(ZuCSpan name)
 {
   ZiAssert(name.length(), "ZiTestResidue", (), "empty name", ::abort());
+  auto alnum = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9');
+  };
+  ZiAssert(alnum(name[0]), "ZiTestResidue", (name),
+      "name must start with a letter or digit", ::abort());
+  for (unsigned i = 1; i < name.length(); ++i)
+    ZiAssert(alnum(name[i]) || name[i] == '.' || name[i] == '_' ||
+        name[i] == '-', "ZiTestResidue", (name),
+        "invalid character in name", ::abort());
   ZiAssert(!hasSeparator_(name), "ZiTestResidue", (),
       "path separator in name", ::abort());
   ZiAssert(!hasDotDot_(name), "ZiTestResidue", (),
@@ -179,6 +199,105 @@ static void cleanupShm_(const Zi::Name &base)
 #endif
 }
 
+struct TmpEntry {
+  Zi::Path path;
+  ZuTime mtime;
+  bool dir;
+};
+
+static void ageTmp_(const Zi::Name &testName)
+{
+  Zi::Path base = ZiFile::tmpDir();
+  Zi::Path prefix;
+  prefix << "ZiTest." << testName << '.';
+#ifndef _WIN32
+  int lock = ::open(base, O_RDONLY | O_DIRECTORY);
+  ZiAssert(lock >= 0 && !::flock(lock, LOCK_EX), "ZiTestResidue", (base),
+      "cannot lock temporary directory: " << base, ::abort());
+#else
+  Zi::Path lockPath = ZiFile::append(base, ".ZiTestResidue.lock");
+  HANDLE lock = ::CreateFileW(lockPath.data(), GENERIC_READ | GENERIC_WRITE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL, nullptr);
+  OVERLAPPED overlap{};
+  ZiAssert(lock != INVALID_HANDLE_VALUE &&
+      ::LockFileEx(lock, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlap),
+      "ZiTestResidue", (lockPath), "cannot lock temporary directory", ::abort());
+#endif
+  ZtArray<TmpEntry> failed;
+  ZiGlob glob;
+  ZiAssert(glob.init(ZiFile::append(base, prefix)), "ZiTestResidue", (base),
+      "cannot scan temporary directory: " << base, ::abort());
+  while (auto entry = glob.iterate(true, false)) {
+    const Zi::Path &name = entry->name;
+    unsigned n = prefix.length(), i = n;
+    unsigned pid = 0;
+    while (i < name.length() && name[i] >= '0' && name[i] <= '9') {
+      pid = (pid * 10) + unsigned(name[i++] - '0');
+    }
+    if (i == n || i == name.length() || name[i] != '.') continue;
+    Zi::Path path = ZiFile::append(base, name);
+    ZiStat stat{path};
+    if (stat.islink() || !stat.exists()) continue;
+    bool complete = name.length() >= 7;
+    if (complete) {
+      static const char suffix[] = ".failed";
+      for (unsigned j = 0; j < 7; ++j)
+        if (name[name.length() - 7 + j] != suffix[j]) complete = false;
+    }
+    if (!complete) {
+#ifndef _WIN32
+      if (pid == unsigned(Zm::getPID()) ||
+          (!::kill(pid, 0) || errno == EPERM)) continue;
+      Zi::Path archived;
+      archived << path << ".failed";
+      if (ZiFile::rename(path, archived) != Zi::OK) continue;
+      path = ZuMv(archived);
+      stat = ZiStat{path};
+#else
+      if (pid == unsigned(Zm::getPID())) continue;
+      HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+          FALSE, pid);
+      if (!process && ::GetLastError() == ERROR_ACCESS_DENIED) continue;
+      if (process) {
+        DWORD exitCode = STILL_ACTIVE;
+        bool live = !::GetExitCodeProcess(process, &exitCode) ||
+          exitCode == STILL_ACTIVE;
+        ::CloseHandle(process);
+        if (live) continue;
+      }
+      Zi::Path archived;
+      archived << path << ".failed";
+      if (ZiFile::rename(path, archived) != Zi::OK) continue;
+      path = ZuMv(archived);
+      stat = ZiStat{path};
+#endif
+    }
+    failed.push(TmpEntry{ZuMv(path), stat.mtime(), stat.isdir()});
+  }
+  glob.final();
+  if (failed.length() > Age) {
+    ZuSort(failed.data(), failed.length(),
+      [](const TmpEntry &a, const TmpEntry &b) {
+        if (a.mtime > b.mtime) return -1;
+        if (a.mtime < b.mtime) return 1;
+        return 0;
+      });
+    for (unsigned i = Age; i < failed.length(); ++i) {
+      const auto &entry = failed[i];
+      if (entry.dir) ZiFile::removeTree(entry.path);
+      else ZiFile::remove(entry.path);
+    }
+  }
+#ifndef _WIN32
+  ::flock(lock, LOCK_UN);
+  ::close(lock);
+#else
+  ::UnlockFileEx(lock, 0, 1, 0, &overlap);
+  ::CloseHandle(lock);
+#endif
+}
+
 void init(const char *testName)
 {
   State &state = state_();
@@ -202,6 +321,7 @@ void init(const char *testName)
   ZiAssert(state.rootDir.length(), "ZiTestResidue", (),
       "cannot canonicalize residue root", ::abort());
   state.testName = name;
+  ageTmp_(name);
   Zi::Path leaf;
   leaf << state.testName << '.';
   state.basePath = ZiFile::append(state.rootDir, leaf);
@@ -242,6 +362,43 @@ Zi::Path dir(ZuCSpan name)
   ZiAssert(state.phase == State::Active, "ZiTestResidue", (),
       "residue manager is not active", ::abort());
   registerDir_(state, result);
+  return result;
+}
+
+static Zi::Path tmpPath_(ZuCSpan tag)
+{
+  validateName_(tag);
+  State &state = state_();
+  State::Guard guard(state.lock);
+  ZiAssert(state.phase == State::Active, "ZiTestResidue", (),
+      "residue manager is not active", ::abort());
+  Zi::Path leaf;
+  leaf << "ZiTest." << state.testName << '.' << ZuBoxed(Zm::getPID())
+    << '.' << ZuBox<unsigned>(++state.counter) << '.' << tag;
+  return ZiFile::append(ZiFile::tmpDir(), leaf);
+}
+
+Zi::Path tmpFile(ZuCSpan tag)
+{
+  State &state = state_();
+  ageTmp_(state.testName);
+  Zi::Path result = tmpPath_(tag);
+  State::Guard guard(state.lock);
+  ZiAssert(!ZiStat{result}.exists(), "ZiTestResidue", (result),
+      "temporary file already exists: " << result, ::abort());
+  state.tmpFiles.push(result);
+  return result;
+}
+
+Zi::Path tmpDir(ZuCSpan tag)
+{
+  State &state = state_();
+  ageTmp_(state.testName);
+  Zi::Path result = tmpPath_(tag);
+  State::Guard guard(state.lock);
+  ZiAssert(!ZiStat{result}.exists(), "ZiTestResidue", (result),
+      "temporary directory already exists: " << result, ::abort());
+  state.tmpDirs.push(result);
   return result;
 }
 
@@ -288,6 +445,7 @@ void del(const Zi::Path &dir, ZuCSpan prefix)
 
 Zi::Name uniqueName(const char *tag)
 {
+  if (tag && *tag) validateName_(ZuCSpan{tag});
   State &state = state_();
   State::Guard guard(state.lock);
   ZiAssert(state.phase == State::Active, "ZiTestResidue", (),
@@ -301,6 +459,7 @@ Zi::Name uniqueName(const char *tag)
 
 void addShm(Zi::Name name)
 {
+  validateName_(name);
   State &state = state_();
   State::Guard guard(state.lock);
   ZiAssert(state.phase == State::Active, "ZiTestResidue", (),
@@ -315,25 +474,56 @@ void final(bool passed)
 {
   Paths files;
   Paths dirs;
+  Paths tmpFiles;
+  Paths tmpDirs;
   State::Names shmBases;
+  Zi::Name testName;
   {
     State &state = state_();
     State::Guard guard(state.lock);
     if (state.phase != State::Active) return;
     files = ZuMv(state.files);
     dirs = ZuMv(state.dirs);
+    tmpFiles = ZuMv(state.tmpFiles);
+    tmpDirs = ZuMv(state.tmpDirs);
     shmBases = ZuMv(state.shmBases);
+    testName = state.testName;
     state.phase = State::Final;
   }
 
   for (const auto &base : shmBases) cleanupShm_(base);
-  if (!passed) return;
+  if (!passed) {
+    for (const auto &path : tmpFiles)
+      if (ZiStat{path}.exists()) {
+        Zi::Path archived;
+        archived << path << ".failed";
+        ZiAssert(ZiFile::rename(path, archived) == Zi::OK,
+            "ZiTestResidue", (path), "retain temporary file failed", ::abort());
+      }
+    for (const auto &path : tmpDirs)
+      if (ZiStat{path}.exists()) {
+        Zi::Path archived;
+        archived << path << ".failed";
+        ZiAssert(ZiFile::rename(path, archived) == Zi::OK,
+            "ZiTestResidue", (path), "retain temporary tree failed", ::abort());
+      }
+    ageTmp_(testName);
+    return;
+  }
   for (const auto &path : files)
     ZiAssert(ZiFile::remove(path) == Zi::OK, "ZiTestResidue", (path),
         "remove failed: " << path, ::abort());
   for (const auto &path : dirs)
     ZiAssert(ZiFile::removeTree(path) == Zi::OK, "ZiTestResidue", (path),
         "remove tree failed: " << path, ::abort());
+  for (const auto &path : tmpFiles)
+    if (ZiStat{path}.exists())
+      ZiAssert(ZiFile::remove(path) == Zi::OK, "ZiTestResidue", (path),
+          "remove temporary file failed: " << path, ::abort());
+  for (const auto &path : tmpDirs)
+    if (ZiStat{path}.exists())
+      ZiAssert(ZiFile::removeTree(path) == Zi::OK, "ZiTestResidue", (path),
+          "remove temporary tree failed: " << path, ::abort());
 }
 
 void cleanup()

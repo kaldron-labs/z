@@ -10,7 +10,6 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zquic/test -I$(top_srcdir)/zhttp/src \
 	-I$(top_srcdir)/zhttp/test -I$(top_srcdir)/zhttp/util \
-	-DZ_TEST_RESIDUE \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@

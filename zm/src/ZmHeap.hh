@@ -11,7 +11,7 @@
 // - cache-aware
 // - optional partitions / sharding
 //   - fast partition lookup
-// - TLS free list
+// - shared arena free list
 // - efficient statistics and telemetry (Ztc)
 // - globally configured
 //   - supports profile-guided optimization of heap configuration
@@ -36,12 +36,11 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuString.hh>
 
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmSpecific.hh>
-#include <zlib/ZmPLock.hh>
-#include <zlib/ZmGuard.hh>
 
 #include <zlib/ZtcHeap.hh>
 
@@ -83,16 +82,23 @@ struct ZmHeapInfo {
   ZmHeapConfig	config;
 };
 
+// per-ID heap stats
+struct ZmHeapGlobalStats {
+  ZmAtomic<uint64_t>	heapAllocs;
+  ZmAtomic<uint64_t>	heapFrees;
+  ZmAtomic<uint64_t>	heapMax;
+};
+
+// per-arena stats: ID, partition, size, alignment and sharding
 struct ZmHeapStats {
-  uint64_t	heapAllocs;
-  uint64_t	cacheAllocs;
-  uint64_t	frees;
-  uint64_t	crossFrees;
+  ZmAtomic<uint64_t>	allocs;
+  ZmAtomic<uint64_t>	heapAllocs;
+  ZmAtomic<uint64_t>	frees;
+  ZmAtomic<uint64_t>	crossFrees;
+  ZmAtomic<uint64_t>	heapFrees;
 };
 
 class ZmHeapLookup;
-
-typedef void (*ZmHeapReportFn)();
 
 // cache (LIFO free list) of fixed-size blocks; one per CPU set / NUMA node
 class ZmAPI ZmHeapCache final : public ZmObject, public Ztc::Heap {
@@ -103,13 +109,6 @@ template <typename, unsigned, unsigned, bool> friend class ZmHeapBase;
 template <typename, unsigned, unsigned, bool, unsigned>
 friend class ZmHeapCacheT;
 
-  enum { CacheLineSize = Zm::CacheLineSize };
-
-  using Lock = ZmPLock;
-  using Guard = ZmGuard<Lock>;
-
-  using ReportFn = ZmHeapReportFn;
-
   void *operator new(size_t s);
   void *operator new(size_t s, void *p);
 public:
@@ -119,7 +118,7 @@ private:
   ZmHeapCache(
       ZuCSpan id, unsigned size, unsigned alignment,
       unsigned partition, bool sharded, unsigned vshift,
-      const ZmHeapConfig &, ReportFn, hwloc_topology_t);
+      const ZmHeapConfig &, ZmHeapGlobalStats *, hwloc_topology_t);
 
   void lookup(ZmHeapLookup *l) { m_lookup = l; }
   ZmHeapLookup *lookup() const { return m_lookup; }
@@ -130,6 +129,7 @@ public:
   const ZmHeapInfo &info() const { return m_info; }
   void *begin() const { return m_begin; }
   void *end() const { return m_end; }
+  const ZmHeapGlobalStats &globalStats() const { return *m_globalStats; }
   const ZmHeapStats &stats() const { return m_stats; }
 
   static const auto &IDAxor(const ZmHeapCache *this_) {
@@ -159,7 +159,7 @@ private:
   void final_();
 
   template <unsigned Align>
-  void *alloc(ZmHeapStats &stats) {
+  void *alloc() {
 #ifdef ZmHeap_DEBUG
     {
       TraceFn fn;
@@ -167,20 +167,21 @@ private:
     }
 #endif
     void *ptr;
-    if (ZuLikely(ptr = alloc_())) {
-      ++stats.cacheAllocs;
-      return ptr;
-    }
+    if (ZuLikely(ptr = alloc_())) return ptr;
   retry:
     if (ZuLikely(ptr = Zm::alignedAlloc<Align>(m_info.size))) {
-      ++stats.heapAllocs;
+      ++m_stats.heapAllocs;
+      // intentionally racing and approximate
+      uint64_t allocd = ++m_globalStats->heapAllocs - m_globalStats->heapFrees.load_();
+      if (allocd > m_globalStats->heapMax.load_())
+	m_globalStats->heapMax.store_(allocd);
       return ptr;
     }
     if (ZmHeapFail()) goto retry;
     ZuUnreachable();
   }
 
-  void free(ZmHeapStats &stats, void *p);
+  void free(void *p);
 
   // lock-free MPMC LIFO slist
 
@@ -190,15 +191,18 @@ private:
     p = m_head.load_();
     if (ZuUnlikely(!p)) return nullptr;
     if (ZuLikely(m_info.sharded)) { // sharded - no contention
+      ++m_stats.allocs;
       m_head.store_(*reinterpret_cast<uintptr_t *>(p));
       return reinterpret_cast<void *>(p);
     }
     if (ZuUnlikely(p & 1)) { ZmAtomic_acquire(); goto loop; }
     if (ZuUnlikely(m_head.cmpXch(p | 1, p) != p)) goto loop;
+    ++m_stats.allocs;
     m_head = reinterpret_cast<ZmAtomic<uintptr_t> *>(p)->load_();
     return reinterpret_cast<void *>(p);
   }
   void free_(void *p) {
+    ++m_stats.frees;
     uintptr_t n;
   loop:
     n = m_head.load_();
@@ -207,6 +211,7 @@ private:
     if (m_head.cmpXch(reinterpret_cast<uintptr_t>(p), n) != n) goto loop;
   }
   void free_sharded(void *p) { // sharded - no contention
+    ++m_stats.frees;
     *reinterpret_cast<uintptr_t *>(p) = m_head.load_();
     m_head.store_(reinterpret_cast<uintptr_t>(p));
   }
@@ -215,47 +220,27 @@ private:
     return p >= m_begin && p < m_end;
   }
 
-  void report() const;
-  void report_(const ZmHeapStats &s) { // aggregate statistics from ZmHeapCacheT
-    m_stats.heapAllocs += s.heapAllocs;
-    m_stats.cacheAllocs += s.cacheAllocs;
-    m_stats.frees += s.frees;
-    m_stats.crossFrees += s.crossFrees;
-  }
+  alignas(Zm::CacheLineSize)
+  unsigned			m_vshift;
+  ZmHeapInfo			m_info;
+  ZmHeapGlobalStats		*m_globalStats = nullptr;
 
-  void histStats(const ZmHeapStats &stats) const;
-
-  // cache, end, lookup are guarded by ZmHeapMgr
-
-  enum {
-    Padding = CacheLineSize - sizeof(uintptr_t)
-  };
-  ZmAtomic<uintptr_t>	m_head;		// free list (contended atomic)
-  char			m__pad[Padding];
-
-  unsigned		m_vshift;
-  ZmHeapInfo		m_info;
-  ZmHeapLookup		*m_lookup = nullptr;
-  ReportFn		m_reportFn;	// aggregates stats from TLS
-
-  void			*m_begin = nullptr;	// bound memory region
-  void			*m_end = nullptr;	// end of memory region
-
-  using HistLock = ZmPLock;
-  using HistGuard = ZmGuard<HistLock>;
-  using HistReadGuard = ZmReadGuard<HistLock>;
-
-  mutable HistLock	m_histLock;
-    mutable ZmHeapStats	  m_histStats{};// stats from exited threads
-  mutable ZmHeapStats	m_stats{};	// aggregated on demand
+  // begin, end, lookup are guarded by ZmHeapMgr
+  void				*m_begin = nullptr;	// bound memory region
+  void				*m_end = nullptr;	// end of memory region
+  ZmHeapLookup			*m_lookup = nullptr;
 
 #ifdef ZmHeap_DEBUG
   void traceAllocFn(TraceFn fn) { m_traceAllocFn = fn; }
   void traceFreeFn(TraceFn fn) { m_traceFreeFn = fn; }
 
-  TraceFn		m_traceAllocFn = nullptr;
-  TraceFn		m_traceFreeFn = nullptr;
+  TraceFn			m_traceAllocFn = nullptr;
+  TraceFn			m_traceFreeFn = nullptr;
 #endif
+
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uintptr_t>		m_head;		// free list (contended atomic)
+  mutable ZmHeapStats		m_stats;	// statistics
 };
 
 class ZmAPI ZmHeapMgr {
@@ -273,14 +258,12 @@ public:
 #endif
 
 private:
-  using ReportFn = ZmHeapReportFn;
-
   static ZmHeapCache *cache(
     ZuCSpan id, unsigned size, unsigned alignment, bool sharded,
-    unsigned vshift, ReportFn);
+    unsigned vshift);
 };
 
-// TLS heap cache, specific to ID+size; maintains TLS heap statistics
+// TLS pointer to the shared arena for this partition and heap specialization
 template <
   typename ID_,
   unsigned Size_,
@@ -299,31 +282,18 @@ public:
   static constexpr unsigned VShift = VShift_;
 
   ZmHeapCacheT() :
-    m_cache{ZmHeapMgr::cache(ID{}(), Size, Align, Sharded, VShift, &report)},
-    m_stats{} { }
-  ~ZmHeapCacheT() {
-    m_cache->histStats(m_stats);
-  }
-
-private:
-  ZmHeapStats &stats() { return m_stats; }
-public:
-  const ZmHeapStats &stats() const { return m_stats; }
-
-  // report() uses ZmSpecific::all to iterate over all threads and
-  // collect/aggregate statistics for each TLS instance
-  static void report();
+    m_cache{ZmHeapMgr::cache(ID{}(), Size, Align, Sharded, VShift)} { }
 
   static ZmHeapCacheT *instance() { return TLS::instance(); }
   ZuInline ZmHeapCache *cache() const { return m_cache; }
 
   static void *alloc() {
     ZmHeapCacheT *this_ = instance();
-    return this_->cache()->template alloc<Align>(this_->stats());
+    return this_->cache()->template alloc<Align>();
   }
   static void free(void *p) {
     ZmHeapCacheT *this_ = instance();
-    this_->cache()->free(this_->stats(), p);
+    this_->cache()->free(p);
   }
 
   static void warmup() {
@@ -333,7 +303,6 @@ public:
 
 private:
   ZmHeapCache	*m_cache;
-  ZmHeapStats	m_stats;
 };
 
 // ZmHeapAllocSize evaluates to a size that is:
@@ -410,16 +379,6 @@ template <ZuString ID, typename T, bool Sharded = false>
 ZuDerive(ZmHeap, (ZmHeap_<ZuStringT<ID>, T, Sharded>));
 
 #include <zlib/ZmFn.hh>
-
-template <
-  typename ID, unsigned Size, unsigned Align, bool Sharded, unsigned VShift>
-inline void ZmHeapCacheT<ID, Size, Align, Sharded, VShift>::report()
-{
-  // aggregate heap cache statistics
-  TLS::all([](ZmHeapCacheT *this_) {
-    this_->cache()->report_(this_->stats());
-  });
-}
 
 template <ZuString ID, typename T, bool Sharded>
 auto ZmHeapID_(ZmHeap<ID, T, Sharded> *) -> ZuStringT<ID>;

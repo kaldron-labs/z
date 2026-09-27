@@ -359,7 +359,7 @@ struct PingForbidden : public BearerResponse<PingForbidden, 403> { };
 
 struct MetadataParser :
     public Zrest::ReqParser<MetadataParser, Empty>, public AppRequest {
-  using Path = ZuStringT<"">;
+  using Path = ZuStringT<"/">;
   using Headers = ZhttpHeaders("host");
   using Responses = ZuTypeList<MetadataOK, OAuthBadRequest, NotFound>;
   enum { Exact = 1 };
@@ -558,7 +558,7 @@ struct MetadataReqParser : public RequestParser<MetadataCatalog> {
 	route.metadata != "oauth-authorization-server" ||
 	route.oauth2 != "oauth2") return false;
     auto projected = target;
-    projected.path = {};
+    projected.path = {target.path.data(), 1};
     return Base::operation(method, projected) && selected(route.app);
   }
 };
@@ -625,7 +625,7 @@ struct Parser : public Zrest::MReqParser<RootCatalog,
     if (targetScheme >= 0 && targetScheme != scheme) ok = false;
     if (!hasAuthority) {
       Zhttp::AuthorityView parsed;
-      auto value = host.cspan();
+      ZuSpan<uint8_t> value = host.span();
       auto error = Zhttp::parseAuthority(parsed, value, 0,
         Zhttp::Scheme::defltPort(scheme), false);
       if (error.ok()) authority << parsed;

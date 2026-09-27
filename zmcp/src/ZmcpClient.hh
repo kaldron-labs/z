@@ -1105,6 +1105,7 @@ struct Request_ : public ZmObject,
   using HeaderKeys = ZuTypeConcat<BaseKeys, AppKeys>;
 
   using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;
+  using HdrCatalog = HTTPHdrCatalog<Headers>;
   ZuAssert(ZuTypeUnique<HeaderKeys>::N == HeaderKeys::N,
     "Zmcp application header duplicates a protocol header");
 

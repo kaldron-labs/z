@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -20,6 +23,7 @@
 
 #include <zlib/ZtPlatform.hh>
 
+#include "ZiTestResidue.hh"
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiPlatform.hh>
 
@@ -129,16 +133,16 @@ static void ephemeral()
 static void relativeHome()
 {
   ZuTestScopeRT(relativeHome);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path leaf;
-  leaf << "ztls-vault-relative-" << ZuCSpan{hex, sizeof(hex)};
-  Zi::Path home = ZiFile::append(ZiFile::cwd(), leaf);
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::dir("relative-home");
+  Zi::Path leaf = ZiFile::leafname(home);
+  Zi::Path cwd = ZiFile::cwd();
+#ifdef _WIN32
+  ZuCheckRT(!_wchdir(ZiFile::dirname(home).data()));
+  ZuGuard restore{[&cwd]() { _wchdir(cwd.data()); }};
+#else
+  ZuCheckRT(!::chdir(ZiFile::dirname(home).data()));
+  ZuGuard restore{[&cwd]() { ::chdir(cwd.data()); }};
+#endif
   Zt::setenv("ZTLSVAULTRELATIVETEST_HOME", leaf);
 
   Ztls::VaultConfig cf;
@@ -163,15 +167,7 @@ static void relativeHome()
 static void file()
 {
   ZuTestScopeRT(file);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-test-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-test");
   Zt::setenv("ZTLSVAULTTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -365,15 +361,7 @@ static void file()
 static void indirect()
 {
   ZuTestScopeRT(indirect);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-secrets-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-secrets");
   Zt::setenv("ZTLSVAULTSECRETSTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -423,13 +411,7 @@ static void indirectFile()
   ZuTestScopeRT(indirectFile);
   Ztls::Random rng;
   ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-secrets-file-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-secrets-file");
   Zt::setenv("ZTLSVAULTSECRETSFILETEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -667,15 +649,7 @@ static void indirectFile()
 static void indirectAccounts()
 {
   ZuTestScopeRT(indirectAccounts);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-accounts-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-accounts");
   Zt::setenv("ZTLSVAULTACCOUNTSTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -740,15 +714,7 @@ static void indirectAccounts()
 static void module()
 {
   ZuTestScopeRT(module);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-module-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-module");
   Zt::setenv("ZTLSVAULTMODULETEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -819,15 +785,7 @@ static void autoFallback()
       Zt::unsetenv("DBUS_SESSION_BUS_ADDRESS");
   }};
 
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-auto-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-auto");
   Zt::setenv("ZTLSVAULTAUTOTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -868,6 +826,7 @@ static void autoFallback()
 
 int main()
 {
+  ZiTestResidue::init("ZtlsVaultTest");
   ZuTestMain();
   ZuTestCall_("ephemeral", ephemeral);
   ZuTestCall_("relativeHome", relativeHome);

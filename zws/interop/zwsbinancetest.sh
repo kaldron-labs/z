@@ -8,8 +8,14 @@ if test "${ZWS_BINANCE:-0}" != 1; then
 fi
 
 client=${ZWS_CLIENT:-../src/zws}
-output=$(mktemp)
-trap 'rm -f "$output"' EXIT HUP INT TERM
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$here/../../zi/itest/zi-test-residue.sh"
+zi_residue_init zws-binance
+output=$(zi_residue_path output)
+trap 'status=$?; zi_residue_finish "$status"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 set -- --timeout=25 --messages=2 --ping-interval=1 --pong-timeout=5 \
   --require-pong \

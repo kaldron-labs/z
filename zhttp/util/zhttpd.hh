@@ -1002,7 +1002,7 @@ struct StaticPlanner {
       }
     }
     ZuSort(entries.data(), entries.length(),
-      [](const Entry &a, const Entry &b) {
+      [](const DirEntry &a, const DirEntry &b) {
 	return ZuCmp<HdrString>::cmp(a.name, b.name);
       });
     auto &html = resp.body;

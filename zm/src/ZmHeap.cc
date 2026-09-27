@@ -115,8 +115,9 @@ friend bool ZmHeapFail();
     ZmRBTreeKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(),
       ZmRBTreeUnique<true,
 	ZmRBTreeHeapID<"">>>);
-
-  using ReportFn = ZmHeapReportFn;
+  // id2Stats is used to find global heap stats
+  ZmRBTreeKVDerive(ID2Stats, ZuID, ZmHeapGlobalStats,
+    ZmRBTreeHeapID<"">);
 
 #ifdef ZmHeap_DEBUG
   using TraceFn = ZmHeapMgr::TraceFn;
@@ -130,7 +131,7 @@ public:
     m_key2Cache.clean();
     m_id2Cache.clean([
 #ifdef ZmObject_DEBUG
-      this
+      this // ZmDEREF uses this in debug mode
 #endif
     ](auto node) {
       ZmDEREF(node->val());
@@ -250,34 +251,38 @@ private:
 
   ZmHeapCache *cache(
     ZuCSpan id, unsigned size, unsigned alignment, bool sharded,
-    unsigned vshift, ReportFn reportFn)
+    unsigned vshift)
   {
     unsigned partition = ZmSelf()->partition();
-    ZmHeapCache *c = nullptr;
+    ZmHeapCache *cache = nullptr;
     auto hwloc = ZmTopology::hwloc();
     Guard guard(m_lock);
-    if (c = m_key2Cache.findVal(
+    if (cache = m_key2Cache.findVal(
 	ZuFwdTuple(id, partition, size, alignment, sharded))) {
-      return c;
+      return cache;
     }
+    ID2Stats::Node *statsNode = nullptr;
+    if (!(statsNode = m_stats.find(id)))
+      statsNode = m_stats.add(id, ZmHeapGlobalStats{});
+    ZmHeapGlobalStats *stats = &statsNode->val();
     if (IDPart2Config::NodeRef node =
 	m_configs.find(ZuFwdTuple(id, partition))) {
       ZmHeapConfig config = node->val();
-      c = new ZmHeapCache(
+      cache = new ZmHeapCache(
 	id, size, alignment, partition, sharded, vshift, config,
-	reportFn, hwloc);
+	stats, hwloc);
     } else {
-      c = new ZmHeapCache(
+      cache = new ZmHeapCache(
 	id, size, alignment, partition, sharded, vshift, ZmHeapConfig{
 	  .cacheSize = 0
-	}, reportFn, hwloc);
+	}, stats, hwloc);
     }
-    ZmREF(c);
-    m_id2Cache.add(c);
-    m_key2Cache.add(c);
-    lookupAdd(c);
-    if (m_addFn) m_addFn(c);
-    return c;
+    ZmREF(cache);
+    m_id2Cache.add(cache);
+    m_key2Cache.add(cache);
+    lookupAdd(cache);
+    if (m_addFn) m_addFn(cache);
+    return cache;
   }
 
   bool fail() {
@@ -293,6 +298,7 @@ private:
     ID2Cache		  m_id2Cache;
     Key2Cache		  m_key2Cache;
     IDSize2Lookup	  m_lookups;
+    ID2Stats		  m_stats;
   Ztc::HeapMgr::AddFn	m_addFn;
   Ztc::HeapMgr::DelFn	m_delFn;
 };
@@ -321,11 +327,10 @@ void ZmHeapMgr::trace(ZuCSpan id, TraceFn allocFn, TraceFn freeFn)
 #endif
 
 ZmHeapCache *ZmHeapMgr::cache(
-  ZuCSpan id, unsigned size, unsigned alignment, bool sharded, unsigned shift,
-  ReportFn reportFn)
+  ZuCSpan id, unsigned size, unsigned alignment, bool sharded, unsigned shift)
 {
   return ZmHeapMgr_::instance()->cache(
-    id, size, alignment, sharded, shift, reportFn);
+    id, size, alignment, sharded, shift);
 }
 
 void *ZmHeapCache::operator new(size_t size) {
@@ -347,21 +352,21 @@ void ZmHeapCache::operator delete(void *ptr)
 ZmHeapCache::ZmHeapCache(
   ZuCSpan id, unsigned size, unsigned alignment,
   unsigned partition, bool sharded, unsigned vshift,
-  const ZmHeapConfig &config,
-  ReportFn reportFn,
-  hwloc_topology_t hwloc) :
+  const ZmHeapConfig &config, ZmHeapGlobalStats *globalStats,
+  hwloc_topology_t hwloc)
+  :
   m_vshift{vshift},
   m_info{id, size, alignment, partition, sharded, config},
-  m_reportFn{reportFn}
+  m_globalStats{globalStats}
 {
   init_(hwloc);
 }
 
 ZmHeapCache::~ZmHeapCache()
 {
-  // printf("~ZmHeapCache() 1 %p\n", this); fflush(stdout);
+  // stc::cerr << "~ZmHeapCache() 1 " << ZuBoxPtr(this) << '\n' << std::flush;
   final_();
-  // printf("~ZmHeapCache() 2 %p\n", this); fflush(stdout);
+  // stc::cerr << "~ZmHeapCache() 2 " << ZuBoxPtr(this) << '\n' << std::flush;
 }
 
 void ZmHeapCache::init(const ZmHeapConfig &config, hwloc_topology_t hwloc)
@@ -406,7 +411,7 @@ void ZmHeapCache::final_()
 	m_begin, m_info.config.cacheSize * m_info.size);
 }
 
-void ZmHeapCache::free(ZmHeapStats &stats, void *ptr)
+void ZmHeapCache::free(void *ptr)
 {
   if (ZuUnlikely(!ptr)) return;
 #ifdef ZmHeap_DEBUG
@@ -415,7 +420,6 @@ void ZmHeapCache::free(ZmHeapStats &stats, void *ptr)
     if (ZuUnlikely(fn = m_traceFreeFn)) (*fn)(m_info.id, m_info.size);
   }
 #endif
-  ++stats.frees;
   // sharded - no contention, no need to check other partitions
   if (ZuLikely(m_info.sharded)) {
     if (ZuLikely(owned(ptr))) {
@@ -431,11 +435,13 @@ void ZmHeapCache::free(ZmHeapStats &stats, void *ptr)
   }
   if (auto lookup = this->lookup())
     if (auto other = lookup->find(this, ptr)) {
-      ++stats.crossFrees;
+      ++other->m_stats.crossFrees;
       other->free_(ptr);
       return;
     }
 heapfree:
+  ++m_stats.heapFrees;
+  ++m_globalStats->heapFrees;
   Zm::alignedFree(ptr);
 }
 
@@ -443,27 +449,6 @@ void ZmHeapCache::warmup()
 {
   // no need to actually do anything here; heap configuration will
   // configure and initialize the cache
-}
-
-// report() iterates over the ZmHeapCacheT instances using
-// ZmSpecific::all, compiling aggregate statistics from the
-// thread-specific instance
-void ZmHeapCache::report() const
-{
-  {
-    HistReadGuard guard{m_histLock};
-    m_stats = m_histStats;
-  }
-  m_reportFn(); // calls ZmHeapCacheT::report() { TLS::all(...) }
-}
-
-void ZmHeapCache::histStats(const ZmHeapStats &s) const
-{
-  HistGuard guard{m_histLock};
-  m_histStats.heapAllocs += s.heapAllocs;
-  m_histStats.cacheAllocs += s.cacheAllocs;
-  m_histStats.frees += s.frees;
-  m_histStats.crossFrees += s.crossFrees;
 }
 
 // --- telemetry
@@ -504,14 +489,17 @@ ZmHeapCache::telKey() const
 
 void ZmHeapCache::telemetry(Ztc::HeapTelemetry &data) const
 {
-  report();
   data.id = m_info.id;
   data.cacheSize = m_info.config.cacheSize;
   data.cpuset = m_info.config.cpuset;
-  data.cacheAllocs = m_stats.cacheAllocs;
-  data.heapAllocs = m_stats.heapAllocs;
-  data.frees = m_stats.frees;
-  data.crossFrees = m_stats.crossFrees;
+  data.cacheAllocs = m_stats.allocs.load_();
+  data.heapAllocs = m_stats.heapAllocs.load_();
+  data.cacheFrees = m_stats.frees.load_();
+  data.crossFrees = m_stats.crossFrees.load_();
+  data.heapFrees = m_stats.heapFrees.load_();
+  data.globalHeapAllocs = m_globalStats->heapAllocs.load_();
+  data.globalHeapFrees = m_globalStats->heapFrees.load_();
+  data.globalHeapMax = m_globalStats->heapMax.load_();
   data.size = m_info.size;
   data.partition = m_info.partition;
   data.sharded = m_info.sharded;

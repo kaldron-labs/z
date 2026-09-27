@@ -17,6 +17,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHex.hh>
+#include "ZiTestResidue.hh"
 #include <zlib/ZiFile.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
@@ -32,15 +33,7 @@ namespace VaultInterop_ {
 static void native()
 {
   ZuTestScopeRT(native);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-interop-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-interop");
   Zi::Path runtime = ZiFile::append(home, "runtime");
   Zi::Path data = ZiFile::append(home, "data");
   Zi::Path config = ZiFile::append(home, "config");
@@ -202,6 +195,7 @@ int main()
     std::cout << "1..0 # SKIP dbus-daemon or gnome-keyring-daemon unavailable\n";
     return 0;
   }
+  ZiTestResidue::init("ztlsvaultinterop");
   ZuTestMain();
   ZuTestCall_("native", VaultInterop_::native);
 }

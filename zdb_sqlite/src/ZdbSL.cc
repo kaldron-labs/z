@@ -2220,7 +2220,7 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
     UNData unData;
     SNData snData;
     bool mrd = false;
-    if (!vn) {
+    auto insertRow = [&]() {
       sqlite3_stmt *stmt = m_stmts.insert;
       Reset reset{stmt};
       if (sqlite3_bind_int64(stmt, 1, shard) != SQLITE_OK)
@@ -2234,7 +2234,10 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       bindInput(cxn, stmt, 5, n, m_xFields, fbo,
         parts.cspan(), scratch.span());
       done(cxn, stmt);
-      inserted = sqlite3_changes(cxn) == 1;
+      return sqlite3_changes(cxn) == 1;
+    };
+    if (!vn) {
+      inserted = insertRow();
       mrd = !inserted;
     } else if (vn > 0) {
       sqlite3_stmt *stmt = m_stmts.update;
@@ -2257,8 +2260,12 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       bindInput(cxn, stmt, 4 + nUpdate, nKey, m_xKeyFields[0], fbo,
         keyParts.cspan(), {scratch.data() + updateSize, keySize});
       done(cxn, stmt);
-      if (sqlite3_changes(cxn) != 1)
-        throw ZeEXCEPT(Error, "ZdbSL", "update failed - primary key missing");
+      if (sqlite3_changes(cxn) != 1) {
+	// A new leader can first replicate an already updated record.
+	inserted = insertRow();
+	if (!inserted)
+	  throw ZeEXCEPT(Error, "ZdbSL", "update failed - primary key missing");
+      }
     } else {
       sqlite3_stmt *stmt = m_stmts.del;
       Reset reset{stmt};

@@ -1,7 +1,7 @@
 METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
+	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zi/test -I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zhttp/src \
 	-I$(top_srcdir)/zfb/src -I$(top_srcdir)/zv/src \
 	-I$(top_srcdir)/zdb/src -I$(top_srcdir)/zum/src \
@@ -18,6 +18,7 @@ zumd_test_objects = \
 	$(zumd_objdir)/zumd-zumd_schema.$(OBJEXT) \
 	$(zumd_objdir)/zumd-zumd_webauthn.$(OBJEXT)
 LDADD = $(zumd_test_objects) $(top_builddir)/zum/src/libZum.la \
+	$(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zdb/src/libZdb.la \
@@ -57,6 +58,7 @@ EXTRA_DIST = README.md zumhttp.py zumssf.py zumdvault.py zumdrekey.py \
 test: $(noinst_PROGRAMS)
 	@set -e; \
 	export PYTHONDONTWRITEBYTECODE=1; \
+	export PYTHONPATH="$(abs_top_srcdir)/zi/itest:$${PYTHONPATH:-}"; \
 	prove ./zumdztcgctest.py; \
 	ZDB_MODULE="$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so" \
 	  prove ./zumdztctest.py; \
@@ -64,10 +66,11 @@ test: $(noinst_PROGRAMS)
 	  prove ./zumdztccluster.py; \
 	prove ./zumpingdiscoverytest.py; \
 	prove ./zumvaulttest; \
-	dir=$$(mktemp -d); \
-	trap 'for db in restart http ssf vault rekey federation cluster-a cluster-b; do \
-	  rm -f "$$dir/$$db.db" "$$dir/$$db.db-wal" "$$dir/$$db.db-shm"; \
-	done; rmdir "$$dir"' EXIT; \
+	. "$(abs_top_srcdir)/zi/itest/zi-test-residue.sh"; \
+	zi_residue_init zum-itest-databases; \
+	trap 'status=$$?; zi_residue_finish "$$status"' EXIT; \
+	trap 'exit 130' INT; trap 'exit 143' TERM; \
+	dir=$$ZI_RESIDUE_DIR; \
 	module=$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so; \
 	ZDB_MODULE="$$module" ZDB_CONNECT="$$dir/restart.db" \
 	  prove ./zumrestarttest; \

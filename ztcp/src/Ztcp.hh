@@ -21,6 +21,7 @@
 #include <zlib/ZmPLock.hh>
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -841,14 +842,24 @@ protected:
     }
     return n;
   }
+  template <typename Link>
   unsigned downLinks_() {
-    unsigned n = 0;
-    auto i = m_links.citer();
-    while (Ztc::Link *link = i.key()) {
-      ++n;
-      link->down();
+    using DrainLinks = ZtArray<ZmRef<Link>,
+      ZtArrayHeapID<"Ztcp.Hub.Drain">>;
+    unsigned capacity = m_links.count_();
+    auto links = ZtScratch(DrainLinks, capacity);
+    {
+      auto i = m_links.citer();
+      while (Ztc::Link *base = i.key()) {
+	auto link = static_cast<Link *>(base);
+	// A destructor can wait on the iterator lock after its final deref.
+	link->template withRef<Link>([&links](ZmRef<Link> ref) {
+	  links.push(ZuMv(ref));
+	});
+      }
     }
-    return n;
+    for (auto &link: links) link->down();
+    return links.length();
   }
   unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
 
@@ -1047,7 +1058,7 @@ protected:
       "TCP server stop drain outside Rx thread", return);
     // Link lifetime can extend beyond disconnect completion. Count accepted
     // connections until their completion, not retained telemetry links.
-    this->downLinks_();
+    this->template downLinks_<typename App::Link>();
     this->rxRun([this]() { stop_2(); });
   }
 

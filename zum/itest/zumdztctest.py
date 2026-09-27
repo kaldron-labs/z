@@ -10,13 +10,12 @@ from pathlib import Path
 import base64
 import secrets
 import selectors
-import shutil
 import signal
 import subprocess
-import tempfile
 import time
 
 from zumhttp import Fixture
+from zi_test_residue import Residue
 
 
 HERE = Path(__file__).resolve().parent
@@ -81,12 +80,15 @@ def probe(name, env, group):
 
 def case(label, *, node=False, env_value=None, cli=False, enabled=False,
          collect=False, collect_late=False, malformed_ztc=False):
-    directory = Path(tempfile.mkdtemp(prefix="zumd-ztc-"))
+    residue = Residue("zumdztctest")
+    directory = residue.directory
     registry = "zumd-ztc-" + secrets.token_hex(8)
     ring = registry + "-ring"
     publisher_id = registry + "-pub"
-    regdir = Path(tempfile.gettempdir()) / registry
-    regdir.mkdir()
+    regdir = residue.tmp_dir("registry")
+    registry = regdir.name
+    residue.shm(ring)
+    residue.shm(publisher_id)
     fixture = Fixture(directory)
     fixture.env.update(ZDB_MODULE=os.environ["ZDB_MODULE"],
                        ZDB_CONNECT=str(directory / "zumd.db"),
@@ -167,26 +169,20 @@ def case(label, *, node=False, env_value=None, cli=False, enabled=False,
             setup.stdin.write(b"q\n")
             setup.stdin.flush()
             setup.communicate(timeout=5)
-        for stem in (ring, publisher_id):
-            for suffix in (".ctrl", ".data"):
-                Path("/dev/shm", stem + suffix).unlink(missing_ok=True)
-        shutil.rmtree(regdir)
-        if passed:
-            shutil.rmtree(directory)
-        else:
-            print("# diagnostics retained in " + str(directory), flush=True)
+        residue.finish(passed)
 
 
 def startup_failure(label, publisher_failure):
-    directory = Path(tempfile.mkdtemp(prefix="zumd-ztc-fail-"))
+    residue = Residue("zumdztcstartup")
+    directory = residue.directory
     registry = "zumd-ztc-" + secrets.token_hex(8)
     ring = registry + "-ring"
     publisher_id = registry + "-pub"
-    regdir = Path(tempfile.gettempdir()) / registry
-    if publisher_failure:
-        regdir.touch()
-    else:
-        regdir.mkdir()
+    regdir = (residue.tmp_file("registry") if publisher_failure
+              else residue.tmp_dir("registry"))
+    registry = regdir.name
+    residue.shm(ring)
+    residue.shm(publisher_id)
     fixture = Fixture(directory)
     fixture.env.update(ZDB_MODULE=os.environ["ZDB_MODULE"],
                        ZDB_CONNECT=str(directory / "zumd.db"),
@@ -228,26 +224,19 @@ def startup_failure(label, publisher_failure):
             setup.stdin.write(b"q\n")
             setup.stdin.flush()
             setup.communicate(timeout=5)
-        for stem in (ring, publisher_id):
-            for suffix in (".ctrl", ".data"):
-                Path("/dev/shm", stem + suffix).unlink(missing_ok=True)
-        if regdir.is_dir():
-            shutil.rmtree(regdir)
-        else:
-            regdir.unlink(missing_ok=True)
-        if passed:
-            shutil.rmtree(directory)
-        else:
-            print("# diagnostics retained in " + str(directory), flush=True)
+        residue.finish(passed)
 
 
 def once_case(malformed=False):
-    directory = Path(tempfile.mkdtemp(prefix="zumd-ztc-once-"))
+    residue = Residue("zumdztconce")
+    directory = residue.directory
     registry = "zumd-ztc-" + secrets.token_hex(8)
     ring = registry + "-ring"
     publisher_id = registry + "-pub"
-    regdir = Path(tempfile.gettempdir()) / registry
-    regdir.mkdir()
+    regdir = residue.tmp_dir("registry")
+    registry = regdir.name
+    residue.shm(ring)
+    residue.shm(publisher_id)
     fixture = Fixture(directory)
     fixture.env.update(ZDB_MODULE=os.environ["ZDB_MODULE"],
                        ZDB_CONNECT=str(directory / "zumd.db"),
@@ -290,23 +279,19 @@ def once_case(malformed=False):
             setup.stdin.write(b"q\n")
             setup.stdin.flush()
             setup.communicate(timeout=5)
-        for stem in (ring, publisher_id):
-            for suffix in (".ctrl", ".data"):
-                Path("/dev/shm", stem + suffix).unlink(missing_ok=True)
-        shutil.rmtree(regdir)
-        if passed:
-            shutil.rmtree(directory)
-        else:
-            print("# diagnostics retained in " + str(directory), flush=True)
+        residue.finish(passed)
 
 
 def rekey_case():
-    directory = Path(tempfile.mkdtemp(prefix="zumd-ztc-rekey-"))
+    residue = Residue("zumdztcrekey")
+    directory = residue.directory
     registry = "zumd-ztc-" + secrets.token_hex(8)
     ring = registry + "-ring"
     publisher_id = registry + "-pub"
-    regdir = Path(tempfile.gettempdir()) / registry
-    regdir.mkdir()
+    regdir = residue.tmp_dir("registry")
+    registry = regdir.name
+    residue.shm(ring)
+    residue.shm(publisher_id)
     fixture = Fixture(directory)
     fixture.env.update(ZDB_MODULE=os.environ["ZDB_MODULE"],
                        ZDB_CONNECT=str(directory / "zumd.db"),
@@ -359,19 +344,13 @@ def rekey_case():
             setup.stdin.write(b"q\n")
             setup.stdin.flush()
             setup.communicate(timeout=5)
-        for stem in (ring, publisher_id):
-            for suffix in (".ctrl", ".data"):
-                Path("/dev/shm", stem + suffix).unlink(missing_ok=True)
-        shutil.rmtree(regdir)
-        if passed:
-            shutil.rmtree(directory)
-        else:
-            print("# diagnostics retained in " + str(directory), flush=True)
+        residue.finish(passed)
 
 
 def cli_reject_case(flag):
-    directory = Path(tempfile.mkdtemp(prefix="zumd-ztc-cli-"))
-    ring = "zumd-ztc-" + secrets.token_hex(8)
+    residue = Residue("zumdztccli")
+    directory = residue.directory
+    ring = residue.shm("zumd-ztc-" + secrets.token_hex(8))
     fixture = Fixture(directory)
     fixture.env.update(ZDB_MODULE=os.environ["ZDB_MODULE"],
                        ZDB_CONNECT=str(directory / "zumd.db"),
@@ -394,10 +373,7 @@ def cli_reject_case(flag):
             "invalid invocation initialized telemetry"
         passed = True
     finally:
-        if passed:
-            shutil.rmtree(directory)
-        else:
-            print("# diagnostics retained in " + str(directory), flush=True)
+        residue.finish(passed)
 
 
 def main():

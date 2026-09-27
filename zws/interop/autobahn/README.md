@@ -26,5 +26,7 @@ Then, from the build tree, run:
 ../zwsautobahnclient ws://127.0.0.1:9001
 ```
 
-Reports are written below `reports/server` and `reports/client`.  Override
-`AUTOBAHN_IMAGE` to pin a particular testsuite image.
+Each runner writes reports in an owned residue directory under `ZI_LOGDIR`
+(or the working directory). A passing run removes its reports; a failed run
+prints and retains the directory, with the newest eight failures kept.
+Override `AUTOBAHN_IMAGE` to pin a particular testsuite image.

@@ -138,6 +138,7 @@ void testDarkhttpdCompat()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zhttpdarkhttpdcompattest");
   ZuTestMain();
   ZuTestCall(testDarkhttpdCompat);
 }
