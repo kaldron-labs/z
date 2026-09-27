@@ -74,6 +74,7 @@ struct Options {
   bool		bootstrapReissue = false;
   bool		once = false;
   bool		rekey = false;
+  bool		vaultTestStore = false;
   bool		help = false;
 };
 ZfStruct(, (Options, CLI),
@@ -101,6 +102,7 @@ ZfStruct(, (Options, CLI),
   (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)), (Bool)),
   (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)), (Bool)),
   (((rekey),	(CLI::Long<"rekey">)), (Bool)),
+  (((vaultTestStore), (CLI::Long<"vault-test-store">)), (Bool)),
   (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
 static void usage(int code)
@@ -112,6 +114,7 @@ static void usage(int code)
     "  --connect=STRING    Zdb connection (default: $ZDB_CONNECT)\n"
     "  --vault-store=NAME  keyring or module (file/ephemeral: tests only)\n"
     "  --vault-module=PATH secure Vault module when store=module\n"
+    "  --vault-test-store   allow file/ephemeral with an isolated test home\n"
     "  --log=FILE          log destination (default: stderr)\n"
     "  --issuer=URL        public authorization base URL\n"
     "  --ssf-issuer=URL    application-scoped issuer used in SSF SETs\n"
@@ -146,8 +149,14 @@ ZfStruct(, (VaultCf, Cf),
   (((store), (Required)), (String)),
   (((module)), (String)));
 
-static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer)
+static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer,
+    bool testStore)
 {
+  bool localStore = cf.store == "file" || cf.store == "ephemeral";
+  const char *testHome = ::getenv("ZUMD_HOME");
+  if (localStore && (!testStore || !testHome || !*testHome))
+    throw ZeEXCEPT(Fatal, "zumd",
+      "test Vault store requires --vault-test-store and ZUMD_HOME");
   Ztls::VaultConfig result;
   result.program = "zumd";
   result.account = issuer;
@@ -158,9 +167,9 @@ static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer)
     result.store = Ztls::VaultStore::Module;
     result.module = cf.module;
   } else if (cf.store == "file")
-    result.store = Ztls::VaultStore::File; // isolated integration tests only
+    result.store = Ztls::VaultStore::File;
   else if (cf.store == "ephemeral")
-    result.store = Ztls::VaultStore::Ephemeral; // isolated tests only
+    result.store = Ztls::VaultStore::Ephemeral;
   else
     throw ZeEXCEPT(Fatal, "zumd", "invalid Vault store configuration");
   return result;
@@ -389,7 +398,8 @@ int main(int argc, char **argv)
       vaultOptions = ZfCf::handler<VaultCf>(node).ctor();
     else
       throw ZeEXCEPT(Fatal, "zumd", "Vault configuration missing");
-    auto vaultCf = vaultConfig(vaultOptions, options.issuer);
+    auto vaultCf = vaultConfig(vaultOptions, options.issuer,
+      options.vaultTestStore);
     bool provisionDBKey = dbKeyEnv && !options.rekey;
     if (options.rekey || !dbKeyEnv) {
       auto result = loadDBKey(vaultCf, dbKey);

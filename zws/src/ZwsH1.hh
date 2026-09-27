@@ -266,6 +266,8 @@ public:
     m_uri{&uri}, m_key{key}, m_protocol{protocol},
     m_authorization{authorization}, m_cookie{cookie}, m_origin{origin} { }
 
+  ~Request() { if (m_authorization) ZuClear(m_authorization); }
+
   template <typename L>
   void operation(L &&l) {
     l(Zhttp::Method::GET, [this](auto &&emit) {

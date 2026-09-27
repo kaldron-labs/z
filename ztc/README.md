@@ -22,12 +22,11 @@ identity is supplied separately through the environment:
 
 - `ZTC_ISSUER` is the exact application-scoped Zum issuer.
 - `ZTC_CLIENT_ID` identifies the device service client.
-- `ZTC_CREDENTIAL_STORE` identifies the deployment's secure credential store.
+- `ZTC_CLIENT_SECRET` provisions or replaces the confidential device-client
+  secret. After a successful token exchange, the agent saves it in Vault;
+  later starts can omit this variable.
 - `ZTC_WSS_URL` is the validated `wss` endpoint for `ztchub`.
-- `ZTC_ACCESS_TOKEN` is the short-lived bearer currently supplied by the
-  deployment's credential-store adapter. It is required by the current
-  transport bootstrap; the adapter is responsible for obtaining and renewing
-  it with `client_credentials` through the discovered token endpoint.
+- `ZTCAGENT_HOME` overrides the default Vault home (`$HOME/.ztcagent`).
 - `ZTC_DIR` selects the relative publisher PID registry beneath the system
   temporary directory and defaults to `ztc`.
 - `ZTC_RING` selects the shared ring and defaults to `ztc`.
@@ -35,12 +34,18 @@ identity is supplied separately through the environment:
   equals the verified service token subject; device, principal, and agent
   service account are 1:1.
 
-The deployment adapter discovers the token endpoint from the exact issuer
-metadata and uses Zum’s existing `client_credentials` grant. It supplies the
-resulting bearer to the agent. Devices use confidential client credentials;
-passkeys and refresh tokens belong to the interactive-client flow. The current transport validates the issuer, client, device, and WSS
-inputs and carries that bearer only in the upgrade header. It retains no
-enrollment state.
+The agent discovers the token endpoint from the exact issuer metadata and
+requests a fresh `Agent` scope token with `client_credentials` before each WSS
+connection. A failed token exchange retries with reconnect backoff. Access
+tokens stay in memory and are never stored in Vault. Devices use confidential
+client credentials; passkeys and refresh tokens belong to the interactive
+client flow. Supplying a new `ZTC_CLIENT_SECRET` and restarting rotates it
+after the first successful token exchange.
+
+Select `vaultStore: "keyring"` in agent configuration, or use `"module"` with
+`vaultModule: "PATH"` for a deployment-provided confidential backend. Direct
+mode is required; there is no automatic file fallback. `file` and `ephemeral`
+require `vaultTestStore: true` and an isolated `ZTCAGENT_HOME` for tests.
 
 Interactive front ends establish browser sessions by POSTing their bearer over
 TLS to the configured browser-session path (served by the listener's HTTPS

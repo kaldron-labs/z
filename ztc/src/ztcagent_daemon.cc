@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <zlib/ZuCmp.hh>
+#include <zlib/ZuBase64.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 
@@ -26,17 +27,38 @@
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZfJSON.hh>
 
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZumURI.hh>
 
+#include "../../zum/example/pinghttp.hh"
+
 namespace Ztc {
 namespace Agent_ {
 
 struct Req;
 struct Pub_;
+
+struct Discovery {
+  Zum::String issuerURL;
+  Zum::String tokenEndpoint;
+};
+ZfStruct(, (Discovery, JSON),
+  (((issuerURL), (JSON::ID<"issuer">, Required)), (String)),
+  (((tokenEndpoint), (JSON::ID<"token_endpoint">, Required)), (String)));
+
+struct Token {
+  Zum::String accessToken;
+  Zum::String tokenType;
+  uint64_t expiresIn = 0;
+};
+ZfStruct(, (Token, JSON),
+  (((accessToken), (JSON::ID<"access_token">, Required)), (String)),
+  (((tokenType), (JSON::ID<"token_type">, Required)), (String)),
+  (((expiresIn), (JSON::ID<"expires_in">, Required)), (UInt64)));
 
 struct Pub {
   Pub(ZuID id_, const AgentCf &cf) :
@@ -113,6 +135,10 @@ using Frame = ZiIOBufAlloc<1024, AgentCf::MaxFrame,
 struct StateData {
   StateData(Agent *agent_, const AgentCf &cf_, AgentEnv env_) :
     agent{agent_}, cf{cf_}, env{ZuMv(env_)}, client{agent_} { }
+  ~StateData() {
+    if (env.clientSecret.mutable_()) ZuClear(env.clientSecret);
+    if (token.mutable_()) ZuClear(token);
+  }
 
   Agent	*agent;
   AgentCf	cf;
@@ -120,6 +146,15 @@ struct StateData {
   ZiMultiplex	*mx = nullptr;
   Zws::URI	uri;
   Zws::Client<Agent, Zhttp::H1TLS>	client;
+  Zum::PingHTTP	http;
+  Zum::ServiceHTTPFn httpFn;
+  AgentString metadataURL;
+  AgentString tokenURL;
+  AgentSecret token;
+  int64_t tokenExpires = 0;
+  uint64_t authGeneration = 0;
+  bool tokenPending = false;
+  bool awaitingProvision = false;
   ZmRef<Agent::Link>	link;
   Ring	telRing;
   ZmThread	telThread;
@@ -654,6 +689,162 @@ static void fence(Agent::State *state, uint64_t generation)
   }
 }
 
+static void requestToken(Agent::State *);
+
+template <typename T>
+static bool jsonLoad(Zum::String &json, T &value)
+{
+  if (!json || json.length() > 64U<<10) return false;
+  if (!json.mutable_()) json.length(json.length());
+  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
+      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
+  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+  if (roots.length() != 1) return false;
+  auto handler = ZfJSON::handler<T>(roots[0]);
+  if (!handler.valid) return false;
+  value = handler.ctor();
+  return true;
+}
+
+static bool tokenURL(Agent::State *state, ZuCSpan value)
+{
+  Zhttp::URL parsed{value};
+  if (!parsed.ok()) return false;
+  auto url = parsed.url();
+  Zhttp::URL issuer{state->env.issuerURL};
+  if (url.origin() != issuer.url().origin() || url.hasQuery ||
+      url.hasFragment || !url.path) return false;
+  Zum::AppEndpointPath path;
+  AgentString source{url.path};
+  Zum::AppIssuerPath issuerPath;
+  AgentString issuerSource{issuer.url().path};
+  return ZfURI::loadPath(path, source) &&
+    ZfURI::loadPath(issuerPath, issuerSource) &&
+    path.oauth2 == "oauth2" && path.appID == issuerPath.appID &&
+    path.group == "v1" && path.endpoint == "token";
+}
+
+static Zum::String basicAuth(ZuCSpan clientID, ZuBSpan secret)
+{
+  AgentSecret plain;
+  ZfURI::PathQuote::quote(plain, clientID);
+  plain << ':';
+  ZfURI::PathQuote::quote(plain, secret);
+  AgentSecret encoded;
+  encoded.length(ZuBase64::enclen(plain.length()));
+  encoded.length(ZuBase64::encode(encoded.span(), ZuBSpan{plain}));
+  ZuClear(plain);
+  Zum::String authorization{"Basic "};
+  authorization << encoded;
+  ZuClear(encoded);
+  return authorization;
+}
+
+static void retry(Agent::State *state)
+{
+  if (!state->started || state->stop.load_()) return;
+  auto delay = state->reconnectDelay;
+  auto next = unsigned(double(delay) * state->cf.reconnBackoff);
+  if (next <= delay || next > state->cf.reconnMax) next = state->cf.reconnMax;
+  state->reconnectDelay = next;
+  state->mx->add(&state->reconnectTimer, Zm::now(delay),
+    ZmScheduler::Update, [state](auto &&arm) {
+      return arm([state]() { requestToken(state); });
+    }, 1);
+}
+
+static void connectToken(Agent::State *state)
+{
+  if (state->stop.load_()) return;
+  if (!state->token || state->tokenExpires <=
+      Zm::now().sec() + int64_t(state->cf.upgradeTimeout) + 1) {
+    if (state->token.mutable_()) ZuClear(state->token);
+    state->token.null();
+    retry(state);
+    return;
+  }
+  AgentSecret authorization{"Bearer "};
+  authorization << state->token;
+  state->link = new Agent::Link{&state->client, state->uri,
+    ZuBSpan{authorization}};
+  ZuClear(authorization);
+  ZuClear(state->token);
+  state->token.null();
+  state->link->connect();
+}
+
+static void tokenResult(Agent::State *state, uint64_t generation,
+    Zum::ServiceHTTPResponse response)
+{
+  if (state->stop.load_() || generation != state->authGeneration) {
+    if (response.body.mutable_()) ZuClear(response.body);
+    return;
+  }
+  state->tokenPending = false;
+  Token wire;
+  bool ok = response.status == 200 && jsonLoad(response.body, wire) &&
+    wire.accessToken && wire.tokenType == "Bearer" && wire.expiresIn > 1 &&
+    wire.expiresIn <= uint64_t(INT64_MAX - Zm::now().sec());
+  if (ok) {
+    state->token.length(wire.accessToken.length());
+    memcpy(state->token.data(), wire.accessToken.data(), wire.accessToken.length());
+    state->tokenExpires = Zm::now().sec() + int64_t(wire.expiresIn);
+  }
+  if (wire.accessToken.mutable_()) ZuClear(wire.accessToken);
+  if (response.body.mutable_()) ZuClear(response.body);
+  if (!ok) { retry(state); return; }
+  if (state->env.provision) {
+    state->awaitingProvision = true;
+    state->env.onProvision();
+    return;
+  }
+  connectToken(state);
+}
+
+static void metadataResult(Agent::State *state, uint64_t generation,
+    Zum::ServiceHTTPResponse response)
+{
+  if (state->stop.load_() || generation != state->authGeneration) return;
+  Discovery wire;
+  bool ok = response.status == 200 && jsonLoad(response.body, wire) &&
+    wire.issuerURL == state->env.issuerURL &&
+    tokenURL(state, wire.tokenEndpoint);
+  if (response.body.mutable_()) ZuClear(response.body);
+  if (!ok) {
+    state->tokenPending = false;
+    retry(state);
+    return;
+  }
+  state->tokenURL = ZuMv(wire.tokenEndpoint);
+  state->httpFn(Zum::ServiceHTTPRequest{
+    .method = Zum::ServiceMethod::POST,
+    .url = state->tokenURL,
+    .authorization = basicAuth(state->env.clientID,
+      ZuBSpan{state->env.clientSecret}),
+    .contentType = "application/x-www-form-urlencoded",
+    .body = "grant_type=client_credentials&scope=Agent"},
+    [state, generation](Zum::ServiceHTTPResponse response) mutable {
+      state->mx->run([state, generation, response = ZuMv(response)]() mutable {
+        tokenResult(state, generation, ZuMv(response));
+      }, 1);
+    });
+}
+
+static void requestToken(Agent::State *state)
+{
+  if (state->stop.load_() || !state->started || state->tokenPending ||
+      state->awaitingProvision || state->link) return;
+  state->tokenPending = true;
+  auto generation = ++state->authGeneration;
+  state->httpFn(Zum::ServiceHTTPRequest{.url = state->metadataURL},
+    [state, generation](Zum::ServiceHTTPResponse response) mutable {
+      state->mx->run([state, generation, response = ZuMv(response)]() mutable {
+        metadataResult(state, generation, ZuMv(response));
+      }, 1);
+    });
+}
+
 } // Agent_
 
 Agent::~Agent() { final(); }
@@ -661,8 +852,8 @@ Agent::~Agent() { final(); }
 bool Agent::init(const AgentCf &cf, AgentEnv env)
 {
   if (m_state || !env.issuerURL || !env.clientID || !env.deviceID ||
-      !env.credentialStore ||
-      !env.wssURL || !env.accessToken || !cf.reconnMin ||
+      !env.wssURL || !env.clientSecret ||
+      (env.provision && !env.onProvision) || !cf.reconnMin ||
       cf.reconnMin > cf.reconnMax || !cf.fanoutBatch ||
       cf.telBytes < cf.maxFrame || cf.reqBytes < cf.maxFrame ||
       !cf.idleTimeout || !cf.pingInterval || !cf.closeTimeout)
@@ -680,6 +871,11 @@ bool Agent::init(const AgentCf &cf, AgentEnv env)
   if (!ZfURI::loadPath(issuerPath, issuerSource) ||
       issuerPath.oauth2 != "oauth2" || !issuerPath.appID) return false;
   auto state = new State{this, cf, ZuMv(env)};
+  state->metadataURL << issuerView.origin();
+  ZfURI::savePath(state->metadataURL, Zum::AppOAuthMetadataPath{
+    .wellKnown = ".well-known",
+    .endpoint = "oauth-authorization-server",
+    .oauth2 = "oauth2", .appID = issuerPath.appID});
   if (!Zws::URI::parse(state->uri, state->env.wssURL).ok() ||
       !state->uri.secure() || !state->uri.host || !state->uri.port ||
       !state->uri.target) {
@@ -690,8 +886,8 @@ bool Agent::init(const AgentCf &cf, AgentEnv env)
     state->mx = new ZiMultiplex{
       ZiMxParams{}.scheduler([](auto &s) {
         s.nThreads(2)
-          .thread(1, [](auto &t) { t.isolated(1); })
-          .thread(2, [](auto &t) { t.isolated(1); });
+          .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
+          .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); });
       }).rxThread(1).txThread(2)};
   } catch (...) {
     delete state;
@@ -719,12 +915,21 @@ bool Agent::start()
     m_state->mx->stop();
     return false;
   }
+  if (!m_state->http.init(m_state->mx, m_state->env.issuerURL,
+        m_state->env.issuerURL, m_state->env.issuerURL,
+        m_state->env.caPath)) {
+    m_state->client.final();
+    m_state->mx->stop();
+    return false;
+  }
+  m_state->httpFn = m_state->http.fn();
   m_state->telRing.init(ZiRingParams{m_state->env.ring, m_state->cf.telSize}
     .ll(m_state->cf.telLL).spin(m_state->cf.telSpin)
     .timeout(m_state->cf.telTimeout));
   if (m_state->telRing.open(Ring::Read) != Zu::OK ||
       m_state->telRing.attach() != Zu::OK) {
     m_state->telRing.close();
+    m_state->http.final();
     m_state->client.final();
     m_state->mx->stop();
     return false;
@@ -736,6 +941,7 @@ bool Agent::start()
     }, ZmThreadParams{}.name("ztcTel")) < 0) {
     m_state->telRing.detach();
     m_state->telRing.close();
+    m_state->http.final();
     m_state->client.final();
     m_state->mx->stop();
     return false;
@@ -752,17 +958,16 @@ bool Agent::start()
     m_state->telThread.join();
     m_state->telRing.detach();
     m_state->telRing.close();
+    m_state->http.final();
     m_state->client.final();
     m_state->mx->stop();
     return false;
   }
   m_state->mx->run([state = m_state]() { Agent_::pubGC(state); }, 1);
-  AgentString authorization{"Bearer "};
-  authorization << m_state->env.accessToken;
-  m_state->link = new Link{&m_state->client, m_state->uri, authorization};
-  m_state->env.accessToken.null();
   m_state->started = true;
-  m_state->link->connect();
+  m_state->mx->run([state = m_state]() {
+    Agent_::requestToken(state);
+  }, 1);
   return true;
 }
 
@@ -772,7 +977,7 @@ bool Agent::stop()
   m_state->stop = 1;
   m_state->mx->del(&m_state->reconnectTimer);
   m_state->mx->del(&m_state->pubGCTimer);
-  if (m_state->link) m_state->client.rxRun([state = m_state]() {
+  m_state->client.rxRun([state = m_state]() {
     if (state->link) state->link->close();
   });
   if (m_state->telThread.tid()) m_state->telThread.join();
@@ -790,12 +995,34 @@ bool Agent::stop()
   routeDone.wait();
   if (m_state->telRing.rdrID() >= 0) m_state->telRing.detach();
   m_state->telRing.close();
+  m_state->http.final();
+  m_state->httpFn = {};
   bool ok = m_state->client.stop();
   m_state->link = nullptr;
   m_state->client.final();
   m_state->mx->stop();
   m_state->started = false;
+  if (m_state->token.mutable_()) ZuClear(m_state->token);
+  m_state->token.null();
   return ok;
+}
+
+ZuBSpan Agent::clientSecret() const
+{
+  return m_state && m_state->awaitingProvision ?
+    ZuBSpan{m_state->env.clientSecret} : ZuBSpan{};
+}
+
+void Agent::provisioned(bool ok)
+{
+  if (!m_state) return;
+  m_state->mx->run([state = m_state, ok]() {
+    if (state->stop.load_() || !state->awaitingProvision) return;
+    state->awaitingProvision = false;
+    if (!ok) return;
+    state->env.provision = false;
+    Agent_::connectToken(state);
+  }, 1);
 }
 
 void Agent::final()
@@ -807,27 +1034,10 @@ void Agent::final()
   m_state = nullptr;
 }
 
-static void reconnect(Agent::State *state)
-{
-  if (!state->mx->running() || state->stop.load_() || !state->link) return;
-  auto delay = state->reconnectDelay;
-  auto next = unsigned(double(delay) * state->cf.reconnBackoff);
-  if (next <= delay || next > state->cf.reconnMax) next = state->cf.reconnMax;
-  state->reconnectDelay = next;
-  state->mx->add(&state->reconnectTimer, Zm::now(delay),
-    ZmScheduler::Update, [state](auto &&arm) {
-      return arm([state]() {
-        if (state->stop.load_() || !state->link) return;
-        state->client.rxRun([state]() {
-          if (!state->stop.load_() && state->link) state->link->connect();
-        });
-      });
-    }, 1);
-}
-
 template <typename Link>
 void Agent::connected(Link &link, const Zhttp::ConnectedInfo &)
 {
+  if (&link != m_state->link.ptr() || m_state->stop.load_()) return;
   uint64_t generation = m_state->nextGeneration++;
   if (!generation) generation = m_state->nextGeneration++;
   m_state->currentGeneration = generation;
@@ -843,32 +1053,38 @@ void Agent::connected(Link &link, const Zhttp::ConnectedInfo &)
 template <typename Link>
 void Agent::disconnected(Link &link, bool)
 {
+  if (&link != m_state->link.ptr()) return;
   auto generation = m_state->currentGeneration.load_();
   if (m_state->currentGeneration.load_() == generation)
     m_state->currentGeneration = 0;
   m_state->mx->run([state = m_state, generation]() {
     Agent_::fence(state, generation);
   }, 1);
-  reconnect(m_state);
+  m_state->link = nullptr;
+  Agent_::retry(m_state);
 }
 
 template <typename Link>
 void Agent::connectFailed(Link &link, bool)
 {
-  reconnect(m_state);
+  if (&link != m_state->link.ptr()) return;
+  m_state->link = nullptr;
+  Agent_::retry(m_state);
 }
 
 template <typename Link>
-int Agent::messageStart(Link &, Zws::Opcode::T opcode)
+int Agent::messageStart(Link &link, Zws::Opcode::T opcode)
 {
+  if (&link != m_state->link.ptr()) return -1;
   if (opcode != Zws::Opcode::Binary) return -1;
   m_state->rxFrame.length(0);
   return 1;
 }
 
 template <typename Link_, typename Rx>
-int Agent::process(Link_ &, Rx &rx)
+int Agent::process(Link_ &link, Rx &rx)
 {
+  if (&link != m_state->link.ptr()) return -1;
   return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> span) {
     if (span.length() > m_state->cf.maxFrame -
         m_state->rxFrame.length())
@@ -881,6 +1097,7 @@ int Agent::process(Link_ &, Rx &rx)
 template <typename Link>
 int Agent::messageEnd(Link &link)
 {
+  if (&link != m_state->link.ptr()) return -1;
   auto msg = Ztc::msg(ZuBSpan{
     m_state->rxFrame.data(), m_state->rxFrame.length()});
   if (!msg || msg->body_type() != fbs::Body::Request ||

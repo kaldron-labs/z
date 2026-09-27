@@ -71,6 +71,9 @@ struct AgentCf {
 	unsigned	pingInterval = 30;
 	unsigned	idleTimeout = 60;
   bool		loopbackTest = false;
+  ZtString<ZtStringHeapID<"Ztc.Agent.Vault">> vaultStore;
+  ZtString<ZtStringHeapID<"Ztc.Agent.Vault">> vaultModule;
+  bool		vaultTestStore = false;
 };
 
 ZfStruct(ZtcAPI, (AgentCf, Cf),
@@ -94,7 +97,10 @@ ZfStruct(ZtcAPI, (AgentCf, Cf),
   (((closeTimeout),	((Range<1U, 3600U>))),		(UInt32, 10)),
   (((pingInterval),	((Range<0U, 3600U>))),		(UInt32)),
   (((idleTimeout),	((Range<0U, 3600U>))),		(UInt32)),
-  (((loopbackTest)),					(Bool)));
+  (((loopbackTest)),					(Bool)),
+  (((vaultStore), (Required)), (String)),
+  (((vaultModule)), (String)),
+  (((vaultTestStore)), (Bool)));
 
 } // Ztc
 
