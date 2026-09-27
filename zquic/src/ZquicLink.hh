@@ -8302,15 +8302,10 @@ nextSpace:
     }
     RxAckMeta ack;
     ZiSockAddr ackAddr = d.addr;
-    ZuElem<ZquicLog_::PktEvt> qlog;
+    ZuUnion<void, ZquicLog_::PktEvt> qlog;
     ZquicLog_::PktEvt *qlog_ = nullptr;
-    if (ZquicLogger::enabled()) {
-      new (&qlog.v) ZquicLog_::PktEvt{};
-      qlog_ = &qlog.v;
-    }
-    ZuGuard qlogGuard{[qlog_]() {
-      if (qlog_) qlog_->~PktEvt();
-    }};
+    if (ZquicLogger::enabled())
+      qlog_ = new (qlog.new_<1>()) ZquicLog_::PktEvt{};
     if (!consumeFrames(
 	  level, pn, byteSpan(base + payloadOffset, unsigned(plainLen)),
 	  d.addr, d.buf, ack, qlog_, earlyData))
@@ -8567,15 +8562,10 @@ nextSpace:
     }
     RxAckMeta ack;
     ZiSockAddr ackAddr = d.addr;
-    ZuElem<ZquicLog_::PktEvt> qlog;
+    ZuUnion<void, ZquicLog_::PktEvt> qlog;
     ZquicLog_::PktEvt *qlog_ = nullptr;
-    if (ZquicLogger::enabled()) {
-      new (&qlog.v) ZquicLog_::PktEvt{};
-      qlog_ = &qlog.v;
-    }
-    ZuGuard qlogGuard{[qlog_]() {
-      if (qlog_) qlog_->~PktEvt();
-    }};
+    if (ZquicLogger::enabled())
+      qlog_ = new (qlog.new_<1>()) ZquicLog_::PktEvt{};
     if (!consumeFrames(
 	  PktNumSpace::AppData, pn,
 	  byteSpan(base + payloadOffset, unsigned(plainLen)),

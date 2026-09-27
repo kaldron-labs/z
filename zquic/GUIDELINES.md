@@ -376,9 +376,10 @@ available while parsing frames, but the final packet event is posted after the
 packet is accepted.  `ZquicLogger::enabled()` must be conditionally compiled:
 in `Zquic_DEBUG` builds it performs the qlog runtime-enabled check, and in
 non-debug builds it is a `constexpr false` stub.  In this narrow case,
-construct the accumulator only inside the enabled branch, use uninitialized
-storage such as `ZuElem` so disabled qlog does not default-construct qlog
-state, and keep the accumulated data bounded and payload-free.
+construct the accumulator only inside the enabled branch, use
+`ZuUnion<void, T>` so disabled qlog does not default-construct qlog state and
+the union manages destruction, and keep the accumulated data bounded and
+payload-free.
 
 ## Review checklist
 

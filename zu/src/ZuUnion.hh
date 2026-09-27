@@ -50,6 +50,7 @@
 #include <zlib/ZuLib.hh>
 #endif
 
+#include <zlib/ZuAssert.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuLargest.hh>

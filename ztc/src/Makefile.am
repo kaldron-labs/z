@@ -31,7 +31,6 @@ libZtc_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTC_EXPORTS
 libZtc_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZtc_la_SOURCES = ZtcLib.cc ZtcFB.cc
 libZtc_la_LIBADD = \
-	$(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zv/src/libZv.la \
@@ -45,6 +44,10 @@ libZtcApp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTC_EXPORTS
 libZtcApp_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZtcApp_la_SOURCES = ZtcApp.cc
 libZtcApp_la_LIBADD = libZtc.la
+
+.PHONY: headers-stage lib-stage
+headers-stage: $(FBS_H)
+lib-stage: headers-stage libZtcApp.la
 
 AGENT_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \

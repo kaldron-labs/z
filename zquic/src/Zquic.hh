@@ -21,8 +21,8 @@
 
 #include <zpicotls.h>
 
-#include <zlib/ZuElem.hh>
 #include <zlib/ZuObject.hh>
+#include <zlib/ZuUnion.hh>
 #include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmAtomic.hh>

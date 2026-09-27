@@ -5,6 +5,33 @@ component. It provides `libZum`, an embeddable service-side authentication
 library, and `zumd`, the persistent OAuth 2.0/OIDC server that supplies the
 identity, authorization and management services used by Zum applications.
 
+## Optional `zumd` telemetry
+
+`zumd` can publish local App, multiplex and database telemetry through
+`Ztc::App`. Publishing is off by default. Enable it with `--ztcPublish`,
+`ZUMD_ZTC_PUBLISH=1` (exactly `1`), or `ztcPublish: true` in the node
+configuration. These enable inputs are additive. The CLI flag has no value and
+is case-sensitive. The publisher starts before IAM preparation and continues
+while the database is passive; IAM readiness and collector availability do not
+control its lifetime. `--once` and `--rekey` also accept the enable inputs.
+
+The default publisher ID is `zumd`. Set `ztc.id` when multiple local publishers
+share a registry; each ID must be unique. Optional `ztc` settings use
+`Ztc::AppCf` defaults for omitted fields. For example, append these root fields
+to a node configuration (with a comma after the preceding field):
+
+```text
+ztcPublish: true,
+ztc: {id: "zumd-local", alertPrefix: "/var/lib/zumd/alerts/zumd"}
+```
+
+Choose a writable alert prefix and parent directory. `ZTC_RING` names the
+shared telemetry ring and `ZTC_DIR` names the publisher PID registry beneath
+the system temporary directory; set both to the same values in `zumd` and
+`ztcagent`. The agent may attach later. The publisher ID identifies a local
+telemetry source; the agent's authenticated device ID is separate. See the
+[collector setup](../ztc/README.md).
+
 The canonical end-to-end example is [`zumpingd`](example/zumpingd.cc), a
 small HTTP resource server which links `libZum` but has no database, local
 credential store or OIDC-provider implementation of its own. Its companion

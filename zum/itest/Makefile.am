@@ -28,7 +28,17 @@ LDADD = $(zumd_test_objects) $(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zumrestarttest zumhttptest zumoidchttptest zumfederationtest zumclustertest zumvaulttest
+noinst_PROGRAMS = zumrestarttest zumhttptest zumoidchttptest zumfederationtest zumclustertest zumvaulttest zumdztcprobe
+zumdztcprobe_SOURCES = zumdztcprobe.cc
+zumdztcprobe_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztc/src
+zumdztcprobe_LDADD = $(top_builddir)/ztc/src/libZtcApp.la \
+	$(top_builddir)/ztc/src/libZtc.la \
+	$(top_builddir)/zdb/src/libZdb.la \
+	$(top_builddir)/zfb/src/libZfb.la \
+	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
+	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
+	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
+	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 zumvaulttest_SOURCES = zumvaulttest.cc
 zumrestarttest_SOURCES = zumrestarttest.cc
 zumhttptest_SOURCES = zumhttptest.cc
@@ -39,6 +49,7 @@ zumclustertest_SOURCES = zumclustertest.cc
 zumclustertest_LDADD = $(top_builddir)/zu/src/libZu.la @Z_LIBS@
 zumoidchttptest_SOURCES = zumoidchttptest.cc
 EXTRA_DIST = README.md zumhttp.py zumssf.py zumdvault.py zumdrekey.py \
+	zumdztcgctest.py zumdztctest.py zumdztccluster.py \
 	zumd.cf zumidp.py zumfederation.py \
 	zumcluster.py zumpingdiscoverytest.py
 
@@ -46,6 +57,11 @@ EXTRA_DIST = README.md zumhttp.py zumssf.py zumdvault.py zumdrekey.py \
 test: $(noinst_PROGRAMS)
 	@set -e; \
 	export PYTHONDONTWRITEBYTECODE=1; \
+	prove ./zumdztcgctest.py; \
+	ZDB_MODULE="$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so" \
+	  prove ./zumdztctest.py; \
+	ZDB_MODULE="$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so" \
+	  prove ./zumdztccluster.py; \
 	prove ./zumpingdiscoverytest.py; \
 	prove ./zumvaulttest; \
 	dir=$$(mktemp -d); \

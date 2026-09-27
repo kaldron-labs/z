@@ -54,6 +54,12 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
   -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
   -keyout "$ZLOCAL/hub-key.pem" -out "$ZLOCAL/hub-cert.pem"
 cp zum/itest/zumd.cf "$ZLOCAL/zumd.cf"
+mkdir -p "$ZLOCAL/alerts"
+cat >> "$ZLOCAL/zumd.cf" <<EOF
+,
+ztcPublish: true,
+ztc: {id: "zumd-local", alertPrefix: "$ZLOCAL/alerts/zumd"}
+EOF
 ```
 
 The copied node configuration defines a standalone Zdb host and its isolated
@@ -71,6 +77,7 @@ run:
 export ZUM_DB_KEY="$(cat "$ZLOCAL/db.key")"
 export ZDB_MODULE="$ZROOT/zdb_sqlite/src/.libs/libZdbSL.so"
 export ZDB_CONNECT="$ZLOCAL/iam.db"
+export ZTC_RING=zdash-local ZTC_DIR=zdash-local
 export ZUM_SSF_ZTCHUB_AUTH="Bearer $(cat "$ZLOCAL/ssf.secret")"
 
 "$ZROOT/zum/src/zumd" --config="$ZLOCAL/zumd.cf" \
@@ -352,58 +359,46 @@ zumop clientAccessSet <<EOF
 EOF
 ```
 
-Obtain a short-lived agent token without putting the client secret in a command
-line. This local example uses the application's token endpoint:
+Provision the agent's confidential client secret through its environment.
+The agent discovers the token endpoint and obtains a short-lived `Agent` token
+before each WSS connection:
 
 ```sh
-python3 - "$ZLOCAL/device-client.json" "$APP_ID" > "$ZLOCAL/device-token.json" <<'PY'
-import base64, json, sys, urllib.parse, urllib.request
-client = json.load(open(sys.argv[1]))["item"]
-basic = base64.b64encode((client["id"] + ":" + client["client_secret"]).encode()).decode()
-request = urllib.request.Request(
-    "http://localhost:8090/oauth2/" + sys.argv[2] + "/v1/token",
-    data=urllib.parse.urlencode({"grant_type": "client_credentials", "scope": "Agent"}).encode(),
-    headers={"Authorization": "Basic " + basic})
-with urllib.request.urlopen(request) as response:
-    sys.stdout.write(response.read().decode())
-PY
-
 export ZTC_ISSUER="http://localhost:8090/oauth2/$APP_ID"
 export ZTC_CLIENT_ID="$DEVICE_ID" ZTC_DEVICE_ID="$DEVICE_ID"
-export ZTC_CREDENTIAL_STORE="$ZLOCAL"
+export ZTC_CLIENT_SECRET=$(jget item.client_secret < "$ZLOCAL/device-client.json")
 export ZTC_WSS_URL="wss://localhost:8443/ztc"
 export ZTC_CA_PATH="$ZLOCAL/hub-cert.pem"
-export ZTC_ACCESS_TOKEN=$(jget access_token < "$ZLOCAL/device-token.json")
+export ZTCAGENT_HOME="$ZLOCAL/agent-vault"
 export ZTC_RING=zdash-local ZTC_DIR=zdash-local
-printf 'loopbackTest: true, maxFrame: 65536\n' > "$ZLOCAL/agent.cf"
+printf 'loopbackTest: true, maxFrame: 65536, vaultStore: "file", vaultTestStore: true\n' > "$ZLOCAL/agent.cf"
 
 "$ZROOT/ztc/src/ztcagent" --config="$ZLOCAL/agent.cf" &
 AGENT_PID=$!
-"$ZROOT/ztc/itest/ztchubwiretest" --mode=publisher --device-id=local-publisher &
-PUBLISHER_PID=$!
 ```
 
-The publisher fixture supplies test telemetry through the real shared-ring
-collector path. It is only needed if no telemetry-enabled application is
-running. The hub should report `agent accepted DEVICE_ID`, and the dashboard
-should show publisher inventory. The device ID equals the authenticated
-service client's ID/token subject; `local-publisher` identifies the publisher
-within that device. Both processes must share `ZTC_RING` and `ZTC_DIR`.
+`zumd` now supplies real local App, multiplex and database telemetry through
+the shared ring. It starts publishing before administrator enrollment; the
+agent can attach after `zumd` starts. The hub should report
+`agent accepted DEVICE_ID`, and the dashboard should show publisher
+`zumd-local`. The device ID equals the authenticated service client's ID/token
+subject; `zumd-local` identifies the publisher within that device. `zumd` and
+the agent must share `ZTC_RING` and `ZTC_DIR`.
 
-`ZTC_CREDENTIAL_STORE` names the deployment credential store; the current agent
-bootstrap consumes `ZTC_ACCESS_TOKEN` supplied by its adapter. It does not
-fetch or renew this token itself. For a longer session, obtain a fresh token
-and restart the agent. See the [collector README](../ztc/README.md).
+The disposable local Vault home stores the client secret after the first
+successful exchange. A later agent restart can omit `ZTC_CLIENT_SECRET`.
+Production deployments must select a confidential Vault backend. See the
+[collector README](../ztc/README.md).
 
 ## Shutdown, restart and troubleshooting
 
-Close the dashboard, stop the optional publisher and agent, then stop the hub
+Close the dashboard, stop the agent, then stop the hub
 and `zumd` with Ctrl-C/SIGTERM. For the background processes above:
 
 ```sh
-kill "$PUBLISHER_PID" "$AGENT_PID"
-wait "$PUBLISHER_PID" "$AGENT_PID"
-unset ZTC_ACCESS_TOKEN
+kill "$AGENT_PID"
+wait "$AGENT_PID"
+unset ZTC_CLIENT_SECRET
 ```
 
 Restart in the order `zumd`, `ztchub`, agent/publishers, `zdash`, reloading the
