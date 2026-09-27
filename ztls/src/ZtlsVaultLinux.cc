@@ -21,7 +21,7 @@
 
 namespace Ztls_ {
 
-namespace VaultKeyRingLinux_ {
+namespace VaultLinux_ {
 
 constexpr auto Destination = "org.freedesktop.secrets"_Zu;
 constexpr auto ServicePath = "/org/freedesktop/secrets"_Zu;
@@ -313,8 +313,8 @@ private:
 ZuDerive(KeyRingHeap, (ZmHeap<"Ztls.Vault.KeyRing.Linux", KeyRing_<>>));
 ZuDerive(KeyRing, KeyRing_<KeyRingHeap>);
 
-} // namespace VaultKeyRingLinux_
+} // namespace VaultLinux_
 
-VaultStore *vaultKeyRing() { return new VaultKeyRingLinux_::KeyRing; }
+VaultStore *vaultKeyRing() { return new VaultLinux_::KeyRing; }
 
 } // namespace Ztls_

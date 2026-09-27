@@ -79,7 +79,7 @@ def main():
         callback_auth = "Bearer " + secrets.token_urlsafe(24)
         callback_ref = "ZUM_SSF_SSF_AUTH"
         service_env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"],
-                           ZUM_SSF_CALLBACK_AUTH=callback_auth)
+                           ZUM_SSF_AUTH=callback_auth)
         for key in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             service_env.pop(key, None)
         service, service_log = launch_service(fixture, service_config, service_env)
@@ -110,7 +110,7 @@ def main():
             f'receivers: [{{receiverID: "ssf-service", appID: {app_id}, '
             f'audience: {json.dumps(audience_uri)}, '
             f'deliveryURL: {json.dumps(proxy.origin + "/ssf")}, '
-            f'secretRef: "{callback_ref}", revision: 1}}]}}\n')
+            f'secretName: "{callback_ref}", revision: 1}}]}}\n')
         fixture.stop()
         fixture.start()
         fixture.request("GET", "/health/ready")
@@ -155,6 +155,7 @@ def main():
         fixture.request("GET", "/health/ready")
         service, service_log = launch_service(fixture, service_config, service_env)
         fixture.stop()
+        fixture.env.pop(callback_ref)
         fixture.start()
         fixture.request("GET", "/health/ready")
         proxy.backend_port = service_port

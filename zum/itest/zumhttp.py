@@ -134,7 +134,8 @@ class Fixture:
             self.port = listener.getsockname()[1]
         self.origin = f"http://localhost:{self.port}"
         self.env = dict(os.environ, ZUM_DB_KEY=os.environ.get(
-            "ZUM_HTTP_DB_KEY", base64.b64encode(secrets.token_bytes(32)).decode()))
+            "ZUM_HTTP_DB_KEY", base64.b64encode(secrets.token_bytes(32)).decode()),
+            ZUMD_HOME=str(self.directory / "vault-home"))
         self.cookies = SimpleCookie()
         self.process = None
         self.log = None
@@ -163,6 +164,7 @@ class Fixture:
                        if self.starts or self.node_config else [])
         self.process = subprocess.Popen([
             str(server), "--issuer=" + self.origin, "--admin=http-admin",
+            "--vault-store=file",
             "--bootstrap-output=" + str(self.directory / "enrollment"),
             "--port=" + str(self.port), "--rp-id=localhost", *node_config],
             env=self.env, stdout=subprocess.PIPE, stderr=self.log)
@@ -235,6 +237,7 @@ class Fixture:
         with (self.directory / "wrong-key.log").open("ab") as log:
             process = subprocess.Popen([
                 str(server), "--issuer=" + self.origin, "--admin=http-admin",
+                "--vault-store=file",
                 "--bootstrap-output=" + str(self.directory / "enrollment"),
                 "--port=" + str(self.port), "--rp-id=localhost"],
                 env=dict(self.env, ZUM_DB_KEY=key or base64.b64encode(
@@ -254,7 +257,7 @@ class Fixture:
         server = Path(__file__).resolve().parent.parent / "src" / "zumd"
         old_key = self.env["ZUM_DB_KEY"]
         new_key = base64.b64encode(secrets.token_bytes(32)).decode()
-        env = dict(self.env, ZUM_DB_NEW_KEY=new_key)
+        env = dict(self.env, ZUM_DB_KEY=new_key)
 
         def sql(statement):
             result = subprocess.run([
@@ -272,7 +275,8 @@ class Fixture:
         def rotate(environment, success):
             with (self.directory / "rekey.log").open("ab") as log:
                 result = subprocess.run([
-                    str(server), "--rekey", "--issuer=" + self.origin],
+                    str(server), "--rekey", "--issuer=" + self.origin,
+                    "--vault-store=file"],
                     env=environment, stdout=subprocess.PIPE, stderr=log, timeout=30)
             assert (result.returncode == 0) == success
             assert (b"secret-key rotation complete" in result.stdout) == success
@@ -344,24 +348,26 @@ class Fixture:
             assert any(key != key_id and partial_rows[key.encode()] != value.encode()
                        for key, value in rows)
             self.wrong_key(old_key)
-            other = dict(env, ZUM_DB_NEW_KEY=base64.b64encode(
+            other = dict(env, ZUM_DB_KEY=base64.b64encode(
                 secrets.token_bytes(32)).decode())
             rotate(other, False)
             assert ciphertext() == partial
             assert sql(binding_query) == old_binding
         finally:
             replace(saved)
-        after = None
-        # Repeating the completed command verifies under the new key without
-        # re-encrypting; no new nonce/ciphertext should be persisted on retry.
-        for attempt in range(2):
-            rotate(env, True)
-            current = ciphertext()
-            if attempt == 0:
-                assert current != before
-                after = current
-            else:
-                assert current == after
+        vault_file = Path(self.env["ZUMD_HOME"]) / "vault" / "secrets.json"
+        old_vault = vault_file.read_bytes()
+        rotate(env, True)
+        after = ciphertext()
+        assert after != before
+        # Model interruption after durable DB commit but before Vault publish.
+        # This is a disposable fixture aggregate, never a deployment store.
+        vault_file.write_bytes(old_vault)
+        rotate(env, True)
+        assert ciphertext() == after
+        # After recovery the Vault holds the new key; repeating it fails.
+        rotate(env, False)
+        assert ciphertext() == after
         assert sql('SELECT coalesce(length(pending_key_check), 0) '
                    'FROM "a_zum.issuer"').strip() == b"0"
         assert sql(binding_query) != old_binding
@@ -389,7 +395,8 @@ class Fixture:
         source_env = self.env
         self.env = dict(source_env,
                         ZDB_CONNECT=str(backup_db),
-                        ZUM_DB_KEY=old_key)
+                        ZUM_DB_KEY=old_key,
+                        ZUMD_HOME=str(self.directory / "backup-vault-home"))
         restored = False
         try:
             assert ciphertext() == before
@@ -433,6 +440,7 @@ class Fixture:
         try:
             with log_path.open("ab") as log:
                 process = subprocess.Popen([str(server), "--issuer=" + self.origin,
+                    "--vault-store=file",
                     "--admin=http-admin", "--bootstrap-output=" + str(self.directory / "enrollment"),
                     "--port=" + str(self.port), "--rp-id=localhost"],
                     env=self.env, stdout=subprocess.PIPE, stderr=log)
@@ -681,7 +689,7 @@ class Fixture:
         edit(role_query, role_path, "PATCH", {"label": "Updated lifecycle"})
         edit(role_query, role_path + "/state", "PUT", {"state": "Disabled"})
         client = create("/admin/clients", {
-            "appID": app_id, "type": "native", "label": "Lifecycle",
+            "appID": app_id, "profile": "native", "label": "Lifecycle",
             "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 1})
         edit("/admin/clients?id=" + client["id"],
              "/admin/clients/" + client["id"] + "/state", "PUT", {"state": "Disabled"})
@@ -1230,7 +1238,9 @@ class Fixture:
         self.cookies = SimpleCookie()
         executable = Path(__file__).resolve().parent.parent / "src" / "zum"
         config = self.directory / "admin.cf"
-        credentials = self.directory / "admin.credentials"
+        home = self.directory / "admin-vault"
+        vault_env = {**os.environ, "ZUM_HOME": str(home),
+                     "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"}
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
@@ -1238,13 +1248,13 @@ class Fixture:
                           f'managementURL: {json.dumps(self.origin)}, '
                           f'scope: "zum.admin offline_access", '
                           f'caPath: {json.dumps(str(self.ca_path) if self.ca_path else "")}, '
-                          f'credentialFile: {json.dumps(str(credentials))}, '
                           f'callbackPort: {port}, loginTimeout: 30, '
                           f'loopbackTest: true\n')
         with (self.directory / "admin.log").open("ab") as log:
             process = subprocess.Popen([str(executable), "--config", str(config),
                                         "login", "--no-browser"],
-                                       stdout=subprocess.PIPE, stderr=log)
+                                       stdout=subprocess.PIPE, stderr=log,
+                                       env=vault_env)
             try:
                 self.cli_callback(process, port)
                 output, _ = process.communicate(timeout=30)
@@ -1262,7 +1272,7 @@ class Fixture:
                         process.kill()
                         process.communicate()
                 process.stdout.close()
-            assert credentials.stat().st_mode & 0o777 == 0o600
+            assert (home / "vault" / "secrets.json").stat().st_mode & 0o777 == 0o600
         apps = self.admin_command("appQuery", {})
         assert len(apps["items"]) == 1 and apps["items"][0]["name"] == "zum"
 
@@ -1274,7 +1284,10 @@ class Fixture:
             result = subprocess.run([str(executable), "--config",
                                      str(self.directory / "admin.cf"), operation,
                                      "--json", str(request), "--no-browser"],
-                                    stdout=subprocess.PIPE, stderr=log, timeout=30)
+                                    stdout=subprocess.PIPE, stderr=log, timeout=30,
+                                    env={**os.environ,
+                                         "ZUM_HOME": str(self.directory / "admin-vault"),
+                                         "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"})
         assert result.returncode == 0, "admin CLI " + operation + " failed"
         try:
             return json.loads(result.stdout)
@@ -1309,7 +1322,9 @@ class Fixture:
                           f'audience: {json.dumps(audience)}, '
                           f'port: {port}\n')
         env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"],
-                   ZUM_SSF_CALLBACK_AUTH="Bearer " + secrets.token_urlsafe(24))
+                   ZUM_SSF_AUTH="Bearer " + secrets.token_urlsafe(24),
+                   ZUMPINGD_HOME=str(self.directory / "zumpingd-vault"),
+                   DBUS_SESSION_BUS_ADDRESS="unsupported:address")
         for key in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
         executable = Path(__file__).resolve().parent.parent / "example" / "zumpingd"
@@ -1321,7 +1336,8 @@ class Fixture:
                                      env=missing_env, stdout=subprocess.PIPE,
                                      stderr=log, timeout=10)
             invalid = subprocess.run([str(executable), "--config", str(config)],
-                                     env=dict(env, ZUM_CLIENT_SECRET=invalid_secret),
+                                     env=dict(env, ZUM_CLIENT_SECRET=invalid_secret,
+                                              ZUMPINGD_HOME=str(self.directory / "invalid-zumpingd-vault")),
                                      stdout=subprocess.PIPE, stderr=log, timeout=30)
         assert missing.returncode == 1 and invalid.returncode == 1
         service_log = (self.directory / "zumpingd.log").read_text()
@@ -1329,9 +1345,13 @@ class Fixture:
         previous = None
         user = None
         for restart in range(2):
+            startup_env = dict(env)
+            if restart:
+                startup_env.pop("ZUM_CLIENT_SECRET")
+                startup_env.pop("ZUM_SSF_AUTH")
             with (self.directory / "zumpingd.log").open("ab") as log:
                 process = subprocess.Popen([str(executable), "--config", str(config)],
-                                           env=env, stdout=subprocess.PIPE, stderr=log)
+                                           env=startup_env, stdout=subprocess.PIPE, stderr=log)
                 try:
                     pending = b""
                     deadline = time.monotonic() + 30
@@ -1394,7 +1414,9 @@ class Fixture:
                     else:
                         user = self.ping_user(app, catalog, port)
                     previous = catalog
-                    self.ping_client(port, *user)
+                    vault_home = self.ping_client(port, *user)
+                    self.ping_client(port, *user, vault_home=vault_home,
+                                     cached=True)
                     if after_login:
                         after_login(app, catalog, port, user)
                     if restart:
@@ -1477,18 +1499,23 @@ class Fixture:
         return config, port
 
     def ping_client(self, service_port, config, port, authenticator, app_id, *, before_callback=None,
-                    login="user"):
+                    login="user", vault_home=None, cached=False):
         self.cookies = SimpleCookie()
         executable = Path(__file__).resolve().parent.parent / "example" / "zumping"
         env = dict(os.environ)
         for key in ("ZUM_CLIENT_SECRET", "ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
+        if vault_home is None:
+            vault_home = self.directory / ("zumping-vault-" + secrets.token_hex(8))
+        env["ZUMPING_HOME"] = str(vault_home)
+        env["DBUS_SESSION_BUS_ADDRESS"] = "unsupported:address"
         with (self.directory / "zumping.log").open("ab") as log:
             process = subprocess.Popen([str(executable), "--config", str(config), "--no-browser"],
                                        env=env, stdout=subprocess.PIPE, stderr=log)
             try:
-                self.cli_callback(process, port, login, authenticator,
-                                  app_id, before_callback)
+                if not cached:
+                    self.cli_callback(process, port, login, authenticator,
+                                      app_id, before_callback)
                 output, _ = process.communicate(timeout=30)
                 replies = [json.loads(line) for line in output.splitlines() if line.startswith(b"{")]
                 if before_callback is not None:
@@ -1496,8 +1523,10 @@ class Fixture:
                     assert not replies, "zumping received pong after role removal"
                     return
                 assert process.returncode == 0, "zumping failed"
-                assert replies == [{"reply": "pong"}, {"reply": "pong"}]
-                assert b"refresh token rotated" in output
+                assert replies == ([{"reply": "pong"}] if cached else
+                                   [{"reply": "pong"}, {"reply": "pong"}])
+                if not cached:
+                    assert b"refresh token rotated" in output
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -1507,6 +1536,7 @@ class Fixture:
                         process.kill()
                         process.communicate()
                 process.stdout.close()
+        return vault_home
 
     def ping_unavailable(self, config, server):
         executable = Path(__file__).resolve().parent.parent / "example" / "zumping"
@@ -1518,6 +1548,9 @@ class Fixture:
         env = dict(os.environ)
         for key in ("ZUM_CLIENT_SECRET", "ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(key, None)
+        env["ZUMPING_HOME"] = str(self.directory / ("zumping-unavailable-" +
+                                                   secrets.token_hex(8)))
+        env["DBUS_SESSION_BUS_ADDRESS"] = "unsupported:address"
         with (self.directory / "zumping.log").open("ab") as log:
             result = subprocess.run([str(executable), "--config", str(unavailable),
                                      "--no-browser"], env=env, stdout=subprocess.PIPE,
@@ -1701,7 +1734,7 @@ class Fixture:
             assert failed["items"] == []
         self.membership_roles(token, prefix, user_id, [role["id"]])
         client = create("/admin/clients", {
-            "appID": app_id, "label": "Independent native client", "type": "native",
+            "appID": app_id, "label": "Independent native client", "profile": "native",
             "redirectURIs": ["http://127.0.0.1:49152/callback"],
             "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
         self.request("PUT", prefix + "/client-access/" + client["id"], {
@@ -1744,7 +1777,7 @@ class Fixture:
                                    token=tokens["access_token"])
             assert info == {"sub": identity["sub"]}
         web = create("/admin/clients", {
-            "appID": app_id, "label": "Independent web client", "type": "confidential",
+            "appID": app_id, "label": "Independent web client", "profile": "server",
             "redirectURIs": ["https://orders.example/callback"],
             "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
         registered, _ = self.request("GET", "/admin/clients?id=" + web["id"], token=token)
@@ -2164,7 +2197,9 @@ def main():
                             headers={"If-Match": client["items"][0]["etag"]})
             workload_token()
             fixture.stop()
+            provisioned_key = fixture.env.pop("ZUM_DB_KEY")
             fixture.start()
+            fixture.env["ZUM_DB_KEY"] = provisioned_key
             fixture.request("GET", "/health/ready")
             token = fixture.login()
             persisted, _ = fixture.request("GET", pending_query, token=token)

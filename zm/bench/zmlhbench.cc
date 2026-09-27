@@ -55,13 +55,13 @@ template <int N> struct String {
   bool equals(const S &s) const {
     return ZuCmp<String>::equals(*this, s);
   }
-  template <typename L, typename R>
-  friend inline
-  ZuIfT<ZuIs_<L, String>{} && ZuTraits<R>::IsString, bool>
+  template <typename L, typename R,
+    typename = ZuIfT<ZuIs_<L, String>{} && ZuTraits<R>::IsString>>
+  friend inline bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend inline
-  ZuIfT<ZuIs_<L, String>{} && ZuTraits<R>::IsString, int>
+  template <typename L, typename R,
+    typename = ZuIfT<ZuIs_<L, String>{} && ZuTraits<R>::IsString>>
+  friend inline int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
   uint32_t hash() const { return ZuHash<String>::hash(*this); }

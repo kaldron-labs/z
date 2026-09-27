@@ -130,8 +130,8 @@ public:
   ZuAssert((!Secret || ZuTraits<T>::IsPrimitive));
   using VHeap = ZmVHeap_<
     HeapID,
-    sizeof(T) * HeapMin,
-    sizeof(T) * HeapMax,
+    sizeof(T) *HeapMin,
+    sizeof(T) *HeapMax,
     alignof(T),
     Sharded>;
   using Ops = ZuArrayFn<T, Cmp>;
@@ -181,14 +181,14 @@ public:
   // from some other string with equivalent char (other than a string literal)
   template <typename U, typename V = Char>
   struct IsString : public ZuBool<
-    !IsStrLiteral<U>{} && bool(IsAnyString<U, V>{})> { };
+    !IsStrLiteral<U>{} &&bool(IsAnyString<U, V>{})> { };
   template <typename U, typename R = void>
   using MatchString = ZuIfT<IsString<U>{}, R>;
 
   // from char2 string (requires conversion)
   template <typename U, typename V = AltChar>
   struct IsAltString : public ZuBool<
-    !ZuIsSame<V, void>{} && bool(IsString<U, V>{})> { };
+    !ZuIsSame<V, void>{} &&bool(IsString<U, V>{})> { };
   template <typename U, typename R = void>
   using MatchAltString = ZuIfT<IsAltString<U>{}, R>;
 
@@ -231,7 +231,7 @@ public:
   // from individual char2 (requires conversion)
   template <typename U, typename V = AltChar>
   struct IsAltChar : public ZuBool<
-    !ZuIsSame<V, void>{} && bool(IsElem_<U, V>{})> { };
+    !ZuIsSame<V, void>{} &&bool(IsElem_<U, V>{})> { };
   template <typename U, typename R = void>
   using MatchAltChar = ZuIfT<IsAltChar<U>{}, R>;
 
@@ -516,108 +516,113 @@ private:
     }
   };
 
-  template <typename A>
-  MatchZtArray<A> ctor(A &&a) {
-    Fwd_ZtArray<A &&>::ctor_(this, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchSpan<A> ctor(A &&a) {
-    Fwd_Array<A>::ctor_(this, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchIterable<A> ctor(const A &a) {
-    null_();
-    auto i = a.begin();
-    uint64_t n = a.end() - i;
-    this->size(n);
-    for (uint64_t j = 0; j < n; j++) initElem(push(), *i++);
-  }
-
-  template <typename S> MatchStrLiteral<S> ctor(S &&s_) {
-    ZuSpan<const T> s(s_);
-    shadow_(s.data(), s.length());
-  }
-  template <typename S> MatchString<S> ctor(S &&s_) {
-    ZuSpan<const T> s(s_);
-    copy__(s.data(), s.length());
-  }
-
-  template <typename S> MatchAltString<S> ctor(S &&s_) {
-    ZuSpan<const AltChar> s(s_);
-    uint64_t o = ZuUTF<Char, AltChar>::len(s);
-    if (!o) { null_(); return; }
-    alloc_(o, 0);
-    length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
-  }
-  template <typename C> MatchAltChar<C> ctor(C c) {
-    ZuSpan<const AltChar> s(&c, 1);
-    uint64_t o = ZuUTF<Char, AltChar>::len(s);
-    if (!o) { null_(); return; }
-    alloc_(o, 0);
-    length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
-  }
-
-  template <typename P> MatchCtorPDelegate<P> ctor(const P &p) {
-    null_();
-    ZuPrint<P>::print(*this, p);
-  }
-  template <typename P> MatchCtorPBuffer<P> ctor(const P &p) {
-    unsigned o = ZuPrint<P>::length(p);
-    if (!o) { null_(); return; }
-    if constexpr (ZuEquiv<Char, char>{}) {
-      alloc_(o, 0);
-      length_(ZuPrint<P>::print(reinterpret_cast<char *>(m_data), o, p));
+  template <typename A,
+    typename = ZuIfT<
+      (IsIterable<A>{}) ||
+      (bool(IsPDelegate<A>{}) && !IsCtorSize<A>{}) ||
+      (bool(IsPBuffer<A>{}) && !IsCtorSize<A>{})>>
+  void ctor(const A &a) {
+    if constexpr (IsIterable<A>{}) {
+      null_();
+      auto i = a.begin();
+      uint64_t n = a.end() - i;
+      this->size(n);
+      for (uint64_t j = 0; j < n; j++) initElem(push(), *i++);
+    } else if constexpr (bool(IsPDelegate<A>{}) && !IsCtorSize<A>{}) {
+      null_();
+      ZuPrint<A>::print(*this, a);
     } else {
-      auto buf = ZmScratch(char, o);
-      buf.length(ZuPrint<P>::print(buf.data(), o, p));
-      ZuCSpan s{buf};
-      o = ZuUTF<Char, AltChar>::len(s);
-      if (o) {
+      unsigned o = ZuPrint<A>::length(a);
+      if (!o) { null_(); return; }
+      if constexpr (ZuEquiv<Char, char>{}) {
 	alloc_(o, 0);
-	length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
-      } else
-	null_();
-      if constexpr (Secret) ZuClear(buf);
+	length_(ZuPrint<A>::print(reinterpret_cast<char *>(m_data), o, a));
+      } else {
+	auto buf = ZmScratch(char, o);
+	buf.length(ZuPrint<A>::print(buf.data(), o, a));
+	ZuCSpan s{buf};
+	o = ZuUTF<Char, AltChar>::len(s);
+	if (o) {
+	  alloc_(o, 0);
+	  length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+	} else
+	  null_();
+	if constexpr (Secret) ZuClear(buf);
+      }
     }
   }
 
-  template <typename V> MatchCtorSize<V> ctor(V size) {
-    if (!size) { null_(); return; }
-    alloc_(size, 0);
+  template <typename C, typename = ZuIfT<(IsAltChar<C>{}) || (IsCtorSize<C>{})>> void ctor(C c) {
+    if constexpr (IsAltChar<C>{}) {
+      ZuSpan<const AltChar> s(&c, 1);
+      uint64_t o = ZuUTF<Char, AltChar>::len(s);
+      if (!o) { null_(); return; }
+      alloc_(o, 0);
+      length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+    } else {
+      if (!c) { null_(); return; }
+      alloc_(c, 0);
+    }
   }
 
-  template <typename R> MatchCtorElem<R> ctor(R &&r) {
-    uint64_t z = grow_(0, 1);
-    m_data = alloc__(z);
-    size_mutable(z, 1);
-    length_vallocd(1, 1);
-    initElem(m_data, ZuFwd<R>(r));
+  template <typename A,
+    typename = ZuIfT<
+      (IsZtArray<A>{}) ||
+      (IsSpan<A>{}) ||
+      (IsStrLiteral<A>{}) ||
+      (IsString<A>{}) ||
+      (IsAltString<A>{}) ||
+      (IsCtorElem<A>{})>>
+  void ctor(A &&a) {
+    if constexpr (IsZtArray<A>{}) {
+      Fwd_ZtArray<A &&>::ctor_(this, ZuFwd<A>(a));
+    } else if constexpr (IsSpan<A>{}) {
+      Fwd_Array<A>::ctor_(this, ZuFwd<A>(a));
+    } else if constexpr (IsStrLiteral<A>{}) {
+      ZuSpan<const T> s(a);
+      shadow_(s.data(), s.length());
+    } else if constexpr (IsString<A>{}) {
+      ZuSpan<const T> s(a);
+      copy__(s.data(), s.length());
+    } else if constexpr (IsAltString<A>{}) {
+      ZuSpan<const AltChar> s(a);
+      uint64_t o = ZuUTF<Char, AltChar>::len(s);
+      if (!o) { null_(); return; }
+      alloc_(o, 0);
+      length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+    } else {
+      uint64_t z = grow_(0, 1);
+      m_data = alloc__(z);
+      size_mutable(z, 1);
+      length_vallocd(1, 1);
+      initElem(m_data, ZuFwd<A>(a));
+    }
   }
 
 public:
-  template <typename A> MatchZtArray<A> copy(const A &a) {
-    assign_(a.m_data, a.length());
-  }
-  template <typename A> MatchSpan<A> copy(A &&a_) {
-    ZuSpan<const typename ZuTraits<A>::Elem> a(a_);
-    assign_(a.data(), a.length());
-  }
-  template <typename A> MatchIterable<A> copy(const A &a) {
-    assign(a);
+
+  template <typename A, typename = ZuIfT<(IsZtArray<A>{}) ||
+    (IsIterable<A>{})>> void copy(const A &a) {
+    if constexpr (IsZtArray<A>{}) {
+      assign_(a.m_data, a.length());
+    } else {
+      assign(a);
+    }
   }
 
-  template <typename S> MatchAnyString<S> copy(S &&s) {
-    ZuSpan<const T> span(s);
-    assign_(span.data(), span.length());
-  }
-  template <typename S> MatchAltString<S> copy(S &&s) {
-    assign(ZuFwd<S>(s));
-  }
-  template <typename C> MatchAltChar<C> copy(C c) {
+  template <typename C, typename = MatchAltChar<C>> void copy(C c) {
     assign(c);
   }
-  template <typename R> MatchElem<R> copy(R &&r) {
-    assign(ZuFwd<R>(r));
+  template <typename A,
+    typename = ZuIfT<(IsSpan<A>{}) || (IsAnyString<A>{}) || (IsAltString<A>{}) ||
+      (IsElem<A>{})>> void copy(A &&a_) {
+    if constexpr (IsSpan<A>{}) {
+      ZuSpan<const typename ZuTraits<A>::Elem> a(a_);
+      assign_(a.data(), a.length());
+    } else if constexpr (IsAnyString<A>{}) {
+      ZuSpan<const T> span(a_);
+      assign_(span.data(), span.length());
+    } else assign(ZuFwd<A>(a_));
   }
 
 public:
@@ -640,82 +645,85 @@ public:
   }
 
 protected:
-  template <typename A> MatchZtArray<A> assign(A &&a) {
-    Fwd_ZtArray<A>::assign_(this, ZuFwd<A>(a));
-  }
-  template <typename A> MatchSpan<A> assign(A &&a) {
-    Fwd_Array<A>::assign_(this, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchIterable<A> assign(const A &a) {
-    auto i = a.begin();
-    uint64_t n = a.end() - i;
-    length(0);
-    ensure(n);
-    for (uint64_t j = 0; j < n; j++)
-      initElem(push(), *i++);
-  }
 
-  template <typename S> MatchStrLiteral<S> assign(S &&s_) {
-    ZuSpan<const T> s(s_);
-    free_();
-    shadow_(s.data(), s.length());
-  }
-  template <typename S> MatchString<S> assign(S &&s_) {
-    ZuSpan<const T> s(s_);
-    assign_(s.data(), s.length());
-  }
-
-  template <typename S> MatchAltString<S> assign(S &&s_) {
-    ZuSpan<const AltChar> s(s_);
-    uint64_t o = ZuUTF<Char, AltChar>::len(s);
-    if (!o) { null(); return; }
-    if (!mutable_() || size() < o) size(o);
-    length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
-  }
-  template <typename C> MatchAltChar<C> assign(C c) {
-    ZuSpan<const AltChar> s(&c, 1);
-    uint64_t o = ZuUTF<Char, AltChar>::len(s);
-    if (!o) { null(); return; }
-    if (!mutable_() || size() < o) size(o);
-    length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
-  }
-
-  template <typename P> MatchPDelegate<P> assign(P &&p) {
-    ZuPrint<P>::print(*this, ZuFwd<P>(p));
-  }
-  template <typename P>
-  MatchPBuffer<P> assign(const P &p) {
-    uint64_t o = ZuPrint<P>::length(p);
-    if (!o) { null(); return; }
-    if constexpr (ZuEquiv<Char, char>{}) {
-      ensure(o);
-      length_(ZuPrint<P>::print(reinterpret_cast<char *>(m_data), o, p));
+  template <typename A, typename = ZuIfT<(IsIterable<A>{}) || (IsPBuffer<A>{})>>
+  void assign(const A &a) {
+    if constexpr (IsIterable<A>{}) {
+      auto i = a.begin();
+      uint64_t n = a.end() - i;
+      length(0);
+      ensure(n);
+      for (uint64_t j = 0; j < n; j++)
+	initElem(push(), *i++);
     } else {
-      unsigned size = o;
-      auto buf = ZmScratch(char, size);
-      buf.length(ZuPrint<P>::print(buf.data(), size, p));
-      ZuCSpan s{buf};
-      o = ZuUTF<Char, AltChar>::len(s);
-      if (o) {
+      uint64_t o = ZuPrint<A>::length(a);
+      if (!o) { null(); return; }
+      if constexpr (ZuEquiv<Char, char>{}) {
 	ensure(o);
-	length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
-      } else
-	null_();
-      if constexpr (Secret) ZuClear(buf);
+	length_(ZuPrint<A>::print(reinterpret_cast<char *>(m_data), o, a));
+      } else {
+	unsigned size = o;
+	auto buf = ZmScratch(char, size);
+	buf.length(ZuPrint<A>::print(buf.data(), size, a));
+	ZuCSpan s{buf};
+	o = ZuUTF<Char, AltChar>::len(s);
+	if (o) {
+	  ensure(o);
+	  length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+	} else
+	  null_();
+	if constexpr (Secret) ZuClear(buf);
+      }
     }
   }
 
-  template <typename V> MatchReal<V> assign(V v) {
-    assign(ZuBoxed(v));
-  }
-  template <typename V> MatchPtr<V> assign(V v) {
-    assign(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
+  template <typename C,
+    typename = ZuIfT<(IsAltChar<C>{}) || (IsReal<C>{}) || (IsPtr<C>{})>> void assign(C c) {
+    if constexpr (IsAltChar<C>{}) {
+      ZuSpan<const AltChar> s(&c, 1);
+      uint64_t o = ZuUTF<Char, AltChar>::len(s);
+      if (!o) { null(); return; }
+      if (!mutable_() || size() < o) size(o);
+      length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+    } else if constexpr (IsReal<C>{}) {
+      assign(ZuBoxed(c));
+    } else {
+      assign(ZuBoxPtr(c).hex<false, ZuFmt::Alt<>>());
+    }
   }
 
-  template <typename V> MatchElem<V> assign(V &&v) {
-    free_();
-    ctor(ZuFwd<V>(v));
+  template <typename A,
+    typename = ZuIfT<
+      (IsZtArray<A>{}) ||
+      (IsSpan<A>{}) ||
+      (IsStrLiteral<A>{}) ||
+      (IsString<A>{}) ||
+      (IsAltString<A>{}) ||
+      (IsPDelegate<A>{}) ||
+      (IsElem<A>{})>> void assign(A &&a) {
+    if constexpr (IsZtArray<A>{}) {
+      Fwd_ZtArray<A>::assign_(this, ZuFwd<A>(a));
+    } else if constexpr (IsSpan<A>{}) {
+      Fwd_Array<A>::assign_(this, ZuFwd<A>(a));
+    } else if constexpr (IsStrLiteral<A>{}) {
+      ZuSpan<const T> s(a);
+      free_();
+      shadow_(s.data(), s.length());
+    } else if constexpr (IsString<A>{}) {
+      ZuSpan<const T> s(a);
+      assign_(s.data(), s.length());
+    } else if constexpr (IsAltString<A>{}) {
+      ZuSpan<const AltChar> s(a);
+      uint64_t o = ZuUTF<Char, AltChar>::len(s);
+      if (!o) { null(); return; }
+      if (!mutable_() || size() < o) size(o);
+      length_(ZuUTF<Char, AltChar>::cvt({m_data, o}, s));
+    } else if constexpr (IsPDelegate<A>{}) {
+      ZuPrint<A>::print(*this, ZuFwd<A>(a));
+    } else {
+      free_();
+      ctor(ZuFwd<A>(a));
+    }
   }
 
 public:
@@ -725,13 +733,13 @@ public:
   }
 
 private:
-  template <typename A> MatchZtArray<A> shadow(const A &a) {
+  template <typename A, typename = MatchZtArray<A>> void shadow(const A &a) {
     if constexpr (ZuIsSame<A, ZtArray>{})
       if (this == &a) return;
     free_();
     shadow_(a.m_data, a.length());
   }
-  template <typename A> MatchSameSpan<A> shadow(A &&a_) {
+  template <typename A, typename = MatchSameSpan<A>> void shadow(A &&a_) {
     ZuSpan<const typename ZuTraits<A>::Elem> a(a_);
     free_();
     shadow_(a.data(), a.length());
@@ -1004,12 +1012,12 @@ public:
   auto cspan() const { return ZuSpan<const T>(m_data, length()); }
 
 // iteration - all() is const by default, all<true>() is mutable
-  template <bool Mutable = false, typename L>
-  ZuIfT<!Mutable> all(L &&l) const {
+  template <bool Mutable = false, typename L, typename = ZuIfT<!Mutable>>
+  void all(L &&l) const {
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
-  template <bool Mutable, typename L>
-  ZuIfT<Mutable> all(L &&l) {
+  template <bool Mutable, typename L, typename = ZuIfT<Mutable>>
+  void all(L &&l) {
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
 
@@ -1018,8 +1026,8 @@ public:
   int64_t find(Arg &&arg) const {
     return cspan().find(ZuFwd<Arg>(arg));
   }
-  template <ZuString S, typename V = T>
-  ZuIfT<ZuEquiv<V, char>{}, int64_t>
+  template <ZuString S, typename V = T, typename = ZuIfT<ZuEquiv<V, char>{}>>
+  int64_t
   find() const { return cspan().template find<S>(); }
 
 // reverse find (forwards to ZuSpan)
@@ -1027,8 +1035,8 @@ public:
   int64_t rfind(Arg &&arg) const {
     return cspan().rfind(ZuFwd<Arg>(arg));
   }
-  template <ZuString S, typename V = T>
-  ZuIfT<ZuEquiv<V, char>{}, int64_t>
+  template <ZuString S, typename V = T, typename = ZuIfT<ZuEquiv<V, char>{}>>
+  int64_t
   rfind() const { return cspan().template rfind<S>(); }
 
 // match at start (forwards to ZuSpan)
@@ -1036,8 +1044,8 @@ public:
   auto match(Arg &&arg) const {
     return cspan().match(ZuFwd<Arg>(arg));
   }
-  template <ZuString S, typename V = T>
-  ZuIfT<ZuEquiv<V, char>{}, bool>
+  template <ZuString S, typename V = T, typename = ZuIfT<ZuEquiv<V, char>{}>>
+  bool
   match() const { return cspan().template match<S>(); }
 
 // match at end (forwards to ZuSpan)
@@ -1045,8 +1053,8 @@ public:
   auto rmatch(Arg &&arg) const {
     return cspan().rmatch(ZuFwd<Arg>(arg));
   }
-  template <ZuString S, typename V = T>
-  ZuIfT<ZuEquiv<V, char>{}, bool>
+  template <ZuString S, typename V = T, typename = ZuIfT<ZuEquiv<V, char>{}>>
+  bool
   rmatch() const { return cspan().template rmatch<S>(); }
 
 protected:
@@ -1201,11 +1209,11 @@ public:
     if (same(a)) return 0;
     return cspan().cmp(a);
   }
-  template <typename L, typename R>
-  friend inline ZuIfT<ZuIs_<L, ZtArray>{}, bool>
+  template <typename L, typename R, ZtArray * = nullptr, typename = ZuIfT<ZuIs_<L, ZtArray>{}>>
+  friend inline bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend inline ZuIfT<ZuIs_<L, ZtArray>{}, int>
+  template <typename L, typename R, ZtArray * = nullptr, typename = ZuIfT<ZuIs_<L, ZtArray>{}>>
+  friend inline int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
 // hash()
@@ -1216,78 +1224,76 @@ public:
   ZtArray operator +(const A &a) const { return add(a); }
 
 private:
-  template <typename A>
-  MatchZtArray<A &&, ZtArray> add(A &&a) const {
-    return Fwd_ZtArray<A &&>::add_(this, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchSpan<A &&, ZtArray> add(A &&a) const {
-    return Fwd_Array<A>::add_(this, ZuFwd<A>(a));
-  }
 
-  template <typename S>
-  MatchAnyString<S &&, ZtArray> add(S &&s_) const {
-    ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
-    return add_(s.data(), s.length());
-  }
-  template <typename S>
-  MatchAltString<S &&, ZtArray> add(const S &s_) const {
+  template <typename S, typename = MatchAltString<S &&>>
+  ZtArray add(const S &s_) const {
     ZuSpan<const AltChar> s(s_);
     return add__([s](Char *ptr, uint64_t length) -> uint64_t {
       if (!length) return 0;
       return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
     }, ZuUTF<Char, AltChar>::len(s));
   }
-  template <typename C>
-  MatchAltChar<C, ZtArray> add(C c_) const {
+  template <typename C, typename = MatchAltChar<C>>
+  ZtArray add(C c_) const {
     AltChar c = c_;
     return add__([c](Char *ptr, uint64_t length) {
       return ZuUTF<Char, AltChar>::cvt({ptr, length}, {&c, 1});
     }, ZuUTF<Char, AltChar>::len({&c, 1}));
   }
 
-  template <typename P>
-  MatchPDelegate<P, ZtArray> add(P &&p) const {
-    ZtArray a(*this);
-    a.append_(ZuFwd<P>(p));
-    return a;
-  }
-  template <typename P>
-  MatchPBuffer<P, ZtArray> add(P &&p) const {
-    uint64_t o = ZuPrint<P>::length(p);
-    if (!o) return *this;
-    if constexpr (ZuEquiv<Char, char>{}) {
-      return add__([&p](T *ptr_, uint64_t length) {
-	auto ptr = reinterpret_cast<char *>(ptr_);
-	return ZuPrint<P>::print(ptr, length, p);
-      }, ZuPrint<P>::length(p));
+  template <typename A,
+    typename = ZuIfT<
+      (IsZtArray<A &&>{}) ||
+      (IsSpan<A &&>{}) ||
+      (IsAnyString<A &&>{}) ||
+      (IsPDelegate<A>{}) ||
+      (IsPBuffer<A>{}) ||
+      (IsElem<A>{})>>
+  ZtArray add(A &&s_) const {
+    if constexpr (IsZtArray<A && >{}) {
+      return Fwd_ZtArray<A && >::add_(this, ZuFwd<A>(s_));
+    } else if constexpr (IsSpan<A && >{}) {
+      return Fwd_Array<A>::add_(this, ZuFwd<A>(s_));
+    } else if constexpr (IsAnyString<A && >{}) {
+      ZuSpan<const typename ZuTraits<A>::Elem> s(s_);
+      return add_(s.data(), s.length());
+    } else if constexpr (IsPDelegate<A>{}) {
+      ZtArray a(*this);
+      a.append_(ZuFwd<A>(s_));
+      return a;
+    } else if constexpr (IsPBuffer<A>{}) {
+      uint64_t o = ZuPrint<A>::length(s_);
+      if (!o) return *this;
+      if constexpr (ZuEquiv<Char, char>{}) {
+	return add__([&s_](T *ptr_, uint64_t length) {
+	  auto ptr = reinterpret_cast<char *>(ptr_);
+	  return ZuPrint<A>::print(ptr, length, s_);
+	}, ZuPrint<A>::length(s_));
+      } else {
+	unsigned size = o;
+	auto buf = ZmScratch(char, size);
+	buf.length(ZuPrint<A>::print(buf.data(), size, s_));
+	ZuCSpan s{buf};
+	if constexpr (Secret) {
+	  ZuGuard clear{[&buf]() { ZuClear(buf); }};
+	  return add__([s](Char *ptr, uint64_t length) -> uint64_t {
+	    if (!length) return 0;
+	    return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	  }, ZuUTF<Char, AltChar>::len(s));
+	} else
+	  return add__([s](Char *ptr, uint64_t length) -> uint64_t {
+	    if (!length) return 0;
+	    return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	  }, ZuUTF<Char, AltChar>::len(s));
+      }
     } else {
-      unsigned size = o;
-      auto buf = ZmScratch(char, size);
-      buf.length(ZuPrint<P>::print(buf.data(), size, p));
-      ZuCSpan s{buf};
-      if constexpr (Secret) {
-	ZuGuard clear{[&buf]() { ZuClear(buf); }};
-	return add__([s](Char *ptr, uint64_t length) -> uint64_t {
-	  if (!length) return 0;
-	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
-	}, ZuUTF<Char, AltChar>::len(s));
-      } else
-	return add__([s](Char *ptr, uint64_t length) -> uint64_t {
-	  if (!length) return 0;
-	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
-	}, ZuUTF<Char, AltChar>::len(s));
+      uint64_t n = length();
+      uint64_t z = grow_(n, n + 1);
+      T *newData = alloc__(z);
+      if (n) copyElems(newData, m_data, n);
+      initElem(newData + n, ZuFwd<A>(s_));
+      return ZtArray(newData, n + 1, z, true);
     }
-  }
-
-  template <typename R>
-  MatchElem<R, ZtArray> add(R &&r) const {
-    uint64_t n = length();
-    uint64_t z = grow_(n, n + 1);
-    T *newData = alloc__(z);
-    if (n) copyElems(newData, m_data, n);
-    initElem(newData + n, ZuFwd<R>(r));
-    return ZtArray(newData, n + 1, z, true);
   }
 
   ZtArray add_(const T *data, uint64_t length) const {
@@ -1304,7 +1310,7 @@ private:
   }
 
   template <typename Add>
-  ZuInline ZtArray add__(Add add, uint64_t length) const {
+  inline ZtArray add__(Add add, uint64_t length) const {
     uint64_t n = this->length();
     uint64_t z = n + length;
     if (ZuUnlikely(!z)) return ZtArray{};
@@ -1317,90 +1323,41 @@ private:
 public:
   template <typename U>
   ZtArray &operator +=(U &&v) { return *this << ZuFwd<U>(v); }
-  template <typename U>
-  MatchStreamable<U, ZtArray &>
+  template <typename U, typename = MatchStreamable<U>>
+  ZtArray &
   operator <<(U &&v) {
     append_(ZuFwd<U>(v));
     return *this;
   }
 
 private:
-  template <typename A>
-  MatchZtArray<A> append_(A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this, [](ZuSpan<T>) { }, length(), 0, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchSpan<A> append_(A &&a) {
-    Fwd_Array<A>::splice_(this, [](ZuSpan<T>) { }, length(), 0, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchIterable<A> append_(const A &a) {
-    auto i = a.begin();
-    uint64_t n = a.end() - i;
-    ensure(length() + n);
-    for (uint64_t j = 0; j < n; j++)
-      initElem(push(), *i++);
-  }
 
-  template <typename S>
-  MatchAnyString<S> append_(S &&s_) {
-    ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
-    if (ZuUnlikely(!s.length())) return;
-    if constexpr (ZuIsSame<ZuDecay<S>, ZtArray>{})
-      if (this == &s_) {
-	auto rlength = s.length();
-	unsigned size = rlength;
-	auto buf = ZmScratch(Char, size);
-	buf.append(s);
-	append__([data = buf.data()](Char *ptr, uint64_t rlength) {
-	  moveElems(ptr, data, rlength);
-	  return rlength;
-	}, rlength);
-	if constexpr (Secret) ZuClear(buf);
- 	return;
-      }
-    append__([data = s.data()](Char *ptr, uint64_t rlength) {
-      copyElems(ptr, data, rlength);
-      return rlength;
-    }, s.length());
-  }
-
-  template <typename S>
-  MatchAltString<S> append_(S &&s_) {
-    ZuSpan<const AltChar> s(s_);
-    append__([s](Char *ptr, uint64_t rlength) -> uint64_t {
-      if (!rlength) return 0;
-      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, s);
-    }, ZuUTF<Char, AltChar>::len(s));
-  }
-  template <typename C>
-  MatchAltChar<C> append_(C c_) {
-    AltChar c = c_;
-    append__([c](Char *ptr, uint64_t rlength) {
-      return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, {&c, 1});
-    }, ZuUTF<Char, AltChar>::len({&c, 1}));
-  }
-
-  template <typename P>
-  MatchPDelegate<P> append_(P &&p) { ZuPrint<P>::print(*this, ZuFwd<P>(p)); }
-  template <typename P>
-  MatchPBuffer<P> append_(const P &p) {
-    uint64_t o = ZuPrint<P>::length(p);
-    if (!o) return;
-    if constexpr (ZuEquiv<Char, char>{}) {
-      append__([&p](Char *ptr_, uint64_t length) {
-	auto ptr = reinterpret_cast<char *>(ptr_);
-	return ZuPrint<P>::print(ptr, length, p);
-      }, o);
+  template <typename A, typename = ZuIfT<(IsIterable<A>{}) || (IsPBuffer<A>{})>>
+  void append_(const A &a) {
+    if constexpr (IsIterable<A>{}) {
+      auto i = a.begin();
+      uint64_t n = a.end() - i;
+      ensure(length() + n);
+      for (uint64_t j = 0; j < n; j++)
+	initElem(push(), *i++);
     } else {
-      unsigned size = o;
-      auto buf = ZmScratch(char, size);
-      buf.length(ZuPrint<P>::print(buf.data(), size, p));
-      ZuCSpan s{buf};
-      append__([s](Char *ptr, uint64_t length) {
-	return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
-      }, ZuUTF<Char, AltChar>::len(s));
-      if constexpr (Secret) ZuClear(buf);
+      uint64_t o = ZuPrint<A>::length(a);
+      if (!o) return;
+      if constexpr (ZuEquiv<Char, char>{}) {
+	append__([&a](Char *ptr_, uint64_t length) {
+	  auto ptr = reinterpret_cast<char *>(ptr_);
+	  return ZuPrint<A>::print(ptr, length, a);
+	}, o);
+      } else {
+	unsigned size = o;
+	auto buf = ZmScratch(char, size);
+	buf.length(ZuPrint<A>::print(buf.data(), size, a));
+	ZuCSpan s{buf};
+	append__([s](Char *ptr, uint64_t length) {
+	  return ZuUTF<Char, AltChar>::cvt({ptr, length}, s);
+	}, ZuUTF<Char, AltChar>::len(s));
+	if constexpr (Secret) ZuClear(buf);
+      }
     }
   }
 
@@ -1410,18 +1367,65 @@ private:
     length_(n + append(ensure(n + length) + n, length));
   }
 
-  template <typename V>
-  MatchReal<V> append_(V v) {
-    append_(ZuBoxed(v));
-  }
-  template <typename V>
-  MatchPtr<V> append_(V v) {
-    append_(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
+  template <typename C,
+    typename = ZuIfT<(IsAltChar<C>{}) || (IsReal<C>{}) || (IsPtr<C>{})>>
+  void append_(C c_) {
+    if constexpr (IsAltChar<C>{}) {
+      AltChar c = c_;
+      append__([c](Char *ptr, uint64_t rlength) {
+	return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, {&c, 1});
+      }, ZuUTF<Char, AltChar>::len({&c, 1}));
+    } else if constexpr (IsReal<C>{}) {
+      append_(ZuBoxed(c_));
+    } else {
+      append_(ZuBoxPtr(c_).hex<false, ZuFmt::Alt<>>());
+    }
   }
 
-  template <typename V>
-  MatchElem<V> append_(V &&v) {
-    initElem(push(), ZuFwd<V>(v));
+  template <typename A,
+    typename = ZuIfT<
+      (IsZtArray<A>{}) ||
+      (IsSpan<A>{}) ||
+      (IsAnyString<A>{}) ||
+      (IsAltString<A>{}) ||
+      (IsPDelegate<A>{}) ||
+      (IsElem<A>{})>>
+  void append_(A &&a) {
+    if constexpr (IsZtArray<A>{}) {
+      Fwd_ZtArray<A &&>::splice_(this, [](ZuSpan<T>) { }, length(), 0, ZuFwd<A>(a));
+    } else if constexpr (IsSpan<A>{}) {
+      Fwd_Array<A>::splice_(this, [](ZuSpan<T>) { }, length(), 0, ZuFwd<A>(a));
+    } else if constexpr (IsAnyString<A>{}) {
+      ZuSpan<const typename ZuTraits<A>::Elem> s(a);
+      if (ZuUnlikely(!s.length())) return;
+      if constexpr (ZuIsSame<ZuDecay<A>, ZtArray>{})
+	if (this == &a) {
+	  auto rlength = s.length();
+	  unsigned size = rlength;
+	  auto buf = ZmScratch(Char, size);
+	  buf.append(s);
+	  append__([data = buf.data()](Char *ptr, uint64_t rlength) {
+	    moveElems(ptr, data, rlength);
+	    return rlength;
+	  }, rlength);
+	  if constexpr (Secret) ZuClear(buf);
+	  return;
+	}
+      append__([data = s.data()](Char *ptr, uint64_t rlength) {
+	copyElems(ptr, data, rlength);
+	return rlength;
+      }, s.length());
+    } else if constexpr (IsAltString<A>{}) {
+      ZuSpan<const AltChar> s(a);
+      append__([s](Char *ptr, uint64_t rlength) -> uint64_t {
+	if (!rlength) return 0;
+	return ZuUTF<Char, AltChar>::cvt({ptr, rlength}, s);
+      }, ZuUTF<Char, AltChar>::len(s));
+    } else if constexpr (IsPDelegate<A>{}) {
+      ZuPrint<A>::print(*this, ZuFwd<A>(a));
+    } else {
+      initElem(push(), ZuFwd<A>(a));
+    }
   }
 
 public:
@@ -1493,13 +1497,13 @@ public:
     return v;
   }
 
-  template <typename A>
-  MatchZtArray<A> unshift(A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this, [](ZuSpan<T>) { }, 0, 0, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchSpan<A> unshift(A &&a) {
-    Fwd_Array<A>::splice_(this, [](ZuSpan<T>) { }, 0, 0, ZuFwd<A>(a));
+  template <typename A, typename = ZuIfT<(IsZtArray<A>{}) || (IsSpan<A>{})>>
+  void unshift(A &&a) {
+    if constexpr (IsZtArray<A>{}) {
+      Fwd_ZtArray<A &&>::splice_(this, [](ZuSpan<T>) { }, 0, 0, ZuFwd<A>(a));
+    } else {
+      Fwd_Array<A>::splice_(this, [](ZuSpan<T>) { }, 0, 0, ZuFwd<A>(a));
+    }
   }
 
   T *unshift() {
@@ -1642,68 +1646,41 @@ public:
   void splice(Removed &&removed, int64_t offset, int64_t length) {
     splice(ZuFwd<Removed>(removed), offset, length, [](ZuSpan<T>) { return 0; }, 0);
   }
-  template <typename A>
-  MatchZtArray<A>
-  splice(int64_t offset, int64_t length, A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this,
-      [](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
-  }
-  template <typename Removed, typename A>
-  MatchZtArray<A>
-  splice(Removed &&removed, int64_t offset, int64_t length, A &&a) {
-    Fwd_ZtArray<A &&>::splice_(this,
-      ZuFwd<Removed>(removed), offset, length, ZuFwd<A>(a));
-  }
-  template <typename A>
-  MatchSpan<A>
-  splice(int64_t offset, int64_t length, A &&a) {
-    Fwd_Array<A>::splice_(this,
-      [](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
-  }
-  template <typename Removed, typename A>
-  MatchSpan<A>
-  splice(Removed &&removed, int64_t offset, int64_t length, A &&a) {
-    Fwd_Array<A>::splice_(this,
-      ZuFwd<Removed>(removed), offset, length, ZuFwd<A>(a));
-  }
-  template <typename S>
-  MatchAnyString<S>
+
+  template <typename S,
+    typename = ZuIfT<(IsAnyString<S>{}) || (IsAltString<S>{})>>
+  void
   splice(int64_t offset, int64_t length, const S &s) {
     splice([](ZuSpan<T>) { }, offset, length, s);
   }
-  template <typename Removed, typename S>
-  MatchAnyString<S>
+  template <typename Removed, typename S,
+    typename = ZuIfT<(IsAnyString<S>{}) || (IsAltString<S>{})>>
+  void
   splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
-    ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
-    splice(ZuFwd<Removed>(removed), offset, length,
-      [data = s.data()](ZuSpan<T> span) -> uint64_t {
-	auto n = span.length();
-	if (n) copyElems(span.data(), data, n);
-	return n;
-      }, s.length());
+    if constexpr (IsAnyString<S>{}) {
+      ZuSpan<const typename ZuTraits<S>::Elem> s(s_);
+      splice(ZuFwd<Removed>(removed), offset, length,
+	[data = s.data()](ZuSpan<T> span) -> uint64_t {
+	  auto n = span.length();
+	  if (n) copyElems(span.data(), data, n);
+	  return n;
+	}, s.length());
+    } else {
+      ZuSpan<const AltChar> s(s_);
+      splice(ZuFwd<Removed>(removed), offset, length,
+	[s](ZuSpan<T> span) -> uint64_t {
+	  if (!span.length()) return 0;
+	  return ZuUTF<Char, AltChar>::cvt(span, s);
+	}, ZuUTF<Char, AltChar>::len(s));
+    }
   }
-  template <typename S>
-  MatchAltString<S>
-  splice(int64_t offset, int64_t length, const S &s) {
-    splice([](ZuSpan<T>) { }, offset, length, s);
-  }
-  template <typename Removed, typename S>
-  MatchAltString<S>
-  splice(Removed &&removed, int64_t offset, int64_t length, const S &s_) {
-    ZuSpan<const AltChar> s(s_);
-    splice(ZuFwd<Removed>(removed), offset, length,
-      [s](ZuSpan<T> span) -> uint64_t {
-	if (!span.length()) return 0;
-	return ZuUTF<Char, AltChar>::cvt(span, s);
-      }, ZuUTF<Char, AltChar>::len(s));
-  }
-  template <typename C>
-  MatchAltChar<C>
+  template <typename C, typename = MatchAltChar<C>>
+  void
   splice(int64_t offset, int64_t length, C c) {
     splice([](ZuSpan<T>) { }, offset, length, c);
   }
-  template <typename Removed, typename C>
-  MatchAltChar<C>
+  template <typename Removed, typename C, typename = MatchAltChar<C>>
+  void
   splice(Removed &&removed, int64_t offset, int64_t length, C c_) {
     AltChar c = c_;
     splice(ZuFwd<Removed>(removed), offset, length,
@@ -1712,21 +1689,39 @@ public:
 	return ZuUTF<Char, AltChar>::cvt(span, {&c, 1});
       }, ZuUTF<Char, AltChar>::len({&c, 1}));
   }
-  template <typename R>
-  MatchElem<R>
-  splice(int64_t offset, int64_t length, R &&r) {
-    splice([](ZuSpan<T>) { }, offset, length, ZuFwd<R>(r));
+  template <typename A,
+    typename = ZuIfT<(IsZtArray<A>{}) || (IsSpan<A>{}) || (IsElem<A>{})>>
+  void
+  splice(int64_t offset, int64_t length, A &&a) {
+    if constexpr (IsZtArray<A>{}) {
+      Fwd_ZtArray<A &&>::splice_(this,
+	[](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
+    } else if constexpr (IsSpan<A>{}) {
+      Fwd_Array<A>::splice_(this,
+	[](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
+    } else {
+      splice([](ZuSpan<T>) { }, offset, length, ZuFwd<A>(a));
+    }
   }
-  template <typename Removed, typename R>
-  MatchElem<R>
-  splice(Removed &&removed, int64_t offset, int64_t length, R &&r_) {
-    T r{ZuFwd<R>(r_)};
-    splice(ZuFwd<Removed>(removed), offset, length,
-      [&r](ZuSpan<T> span) -> uint64_t {
-	if (!span.length()) return 0;
-	moveElems(span.data(), &r, 1);
-	return 1;
-      }, 1);
+  template <typename Removed, typename A,
+    typename = ZuIfT<(IsZtArray<A>{}) || (IsSpan<A>{}) || (IsElem<A>{})>>
+  void
+  splice(Removed &&removed, int64_t offset, int64_t length, A &&a) {
+    if constexpr (IsZtArray<A>{}) {
+      Fwd_ZtArray<A &&>::splice_(this,
+	ZuFwd<Removed>(removed), offset, length, ZuFwd<A>(a));
+    } else if constexpr (IsSpan<A>{}) {
+      Fwd_Array<A>::splice_(this,
+	ZuFwd<Removed>(removed), offset, length, ZuFwd<A>(a));
+    } else {
+      T r{ZuFwd<A>(a)};
+      splice(ZuFwd<Removed>(removed), offset, length,
+	[&r](ZuSpan<T> span) -> uint64_t {
+	  if (!span.length()) return 0;
+	  moveElems(span.data(), &r, 1);
+	  return 1;
+	}, 1);
+    }
   }
 
 // iterate

@@ -742,23 +742,23 @@ struct Data {
   void operator ()(ZuSpan<uint8_t>) const;
 };
 struct Tx {
-  template <typename Stream>
-  auto operator ()(Stream &stream) const ->
-    decltype(stream.flush(), void());
+  template <typename Stream,
+    typename = decltype(ZuDeclVal<Stream &>().flush(), void())>
+  void operator ()(Stream &stream) const;
 };
 
-template <typename Consumer, typename Stream>
-auto peerEnd(Consumer &consumer, Stream stream, int) ->
-  decltype(consumer.peerEnd(ZuMv(stream)), void())
+template <typename Consumer, typename Stream,
+  typename = decltype(ZuDeclVal<Consumer &>().peerEnd(ZuMv(ZuDeclVal<Stream &>())), void())>
+void peerEnd(Consumer &consumer, Stream stream, int)
 {
   consumer.peerEnd(ZuMv(stream));
 }
 template <typename Consumer, typename Stream>
 void peerEnd(Consumer &, Stream, ...) { }
 
-template <typename Consumer, typename Stream>
-auto error(Consumer &consumer, Stream stream, int) ->
-  decltype(consumer.error(ZuMv(stream)), void())
+template <typename Consumer, typename Stream,
+  typename = decltype(ZuDeclVal<Consumer &>().error(ZuMv(ZuDeclVal<Stream &>())), void())>
+void error(Consumer &consumer, Stream stream, int)
 {
   consumer.error(ZuMv(stream));
 }
@@ -893,7 +893,6 @@ private:
   Consumer	*m_consumer = nullptr;
 };
 
-
 namespace H1 {
 
 // Rx-owned Upgrade state and application dispatch.  Transport teardown has
@@ -973,30 +972,30 @@ private:
 
 } // namespace H1
 
-
 namespace Link_ {
 
-template <typename Consumer, typename Stream, typename Rx>
-auto process(Consumer &consumer, Stream stream, Rx &rx, int) ->
-    decltype(int(consumer.process(ZuMv(stream), rx)))
+template <typename Consumer, typename Stream, typename Rx,
+  typename = decltype(int(ZuDeclVal<Consumer &>().process(ZuMv(ZuDeclVal<Stream &>()),
+    ZuDeclVal<Rx &>())))>
+int process(Consumer &consumer, Stream stream, Rx &rx, int)
 {
   return int(consumer.process(ZuMv(stream), rx));
 }
 template <typename Consumer, typename Stream, typename Rx>
 int process(Consumer &, Stream, Rx &, ...) { return 0; }
 
-template <typename Consumer, typename Stream>
-auto peerEnd(Consumer &consumer, Stream stream, int) ->
-    decltype(consumer.peerEnd(ZuMv(stream)), void())
+template <typename Consumer, typename Stream,
+  typename = decltype(ZuDeclVal<Consumer &>().peerEnd(ZuMv(ZuDeclVal<Stream &>())), void())>
+void peerEnd(Consumer &consumer, Stream stream, int)
 {
   consumer.peerEnd(ZuMv(stream));
 }
 template <typename Consumer, typename Stream>
 void peerEnd(Consumer &, Stream, ...) { }
 
-template <typename Consumer, typename Stream>
-auto error(Consumer &consumer, Stream stream, int) ->
-    decltype(consumer.error(ZuMv(stream)), void())
+template <typename Consumer, typename Stream,
+  typename = decltype(ZuDeclVal<Consumer &>().error(ZuMv(ZuDeclVal<Stream &>())), void())>
+void error(Consumer &consumer, Stream stream, int)
 {
   consumer.error(ZuMv(stream));
 }
@@ -1316,8 +1315,6 @@ private:
   bool			m_streamEnd = false;	// Tx-owned
 };
 
-
-
 namespace Hubs_ {
 
 template <typename Hub, typename = void>
@@ -1501,7 +1498,6 @@ private:
   bool		m_stopOK = true;
   bool		m_rollback = false;
 };
-
 
 } // namespace Zhttp
 

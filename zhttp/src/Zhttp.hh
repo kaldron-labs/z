@@ -287,9 +287,10 @@ struct Builder {
   template <typename L> void bodyHdrs(L &&l) const { }
 };
 
-template <typename Key, typename Value, typename B, typename L>
-auto builderFixedHeader(B *builder, L &&l, int) -> decltype(
-  builder->template header<Key, Value>(ZuFwd<L>(l)), void()) {
+template <typename Key, typename Value, typename B, typename L,
+  typename = decltype(ZuDeclVal<B * &>()->template header<Key,
+    Value>(ZuFwd<L>(ZuDeclVal<L &>())), void())>
+void builderFixedHeader(B *builder, L &&l, int) {
   builder->template header<Key, Value>(ZuFwd<L>(l));
 }
 template <typename Key, typename Value, typename B, typename L>

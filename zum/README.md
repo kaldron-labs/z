@@ -47,11 +47,24 @@ principal. In a client-credentials flow, the service identity and OAuth client
 will commonly be represented by the same deployment, but the roles remain
 distinct.
 
-A **confidential client** is a client that runs in an environment capable of
-protecting credentials, typically through a secrets manager and environment
-variables. A server-side service such as `zumpingd` can therefore authenticate
-with a client secret; a native or browser client generally cannot safely do so
-and is treated as public.
+A **confidential client** can authenticate to the authorization server while
+keeping its client credential outside the resource owner's reach, typically in
+a restricted server-side deployment. A server-side service such as `zumpingd`
+can authenticate with a client secret. A native or browser client remains public
+even when it uses `Ztls::Vault` to protect its own tokens at rest: a local vault
+does not establish confidentiality of a client credential from that device's
+user. Register those clients with the `Native` or `Browser` profile. The
+`Server` profile is for restricted server-side deployments, including
+interactive web backends and service workloads. OAuth `ClientType` is derived
+from the profile: `Browser` and `Native` are `Public`, while `Server` is
+`Confidential`; neither type nor client authentication method is stored
+independently. Client registration and catalog JSON use `profile` (lowercase
+`browser`, `native`, or `server`), not `type`.
+`ZumVaultClient::{load,save}` stores public-client tokens, whereas
+`ZumVaultService::{load,save}` stores server-side credentials. Both accept
+optional `account` and `service` arguments after the `Credential`; omitted
+values use the vault defaults (`<Zi::username()>@localhost` and
+`ZiLog::program()`). Vault storage never changes the OAuth client type.
 
 ## Audience and application
 
@@ -231,9 +244,10 @@ rows. `Disabled` remains reversible and does not delete those records.
 The Transmitter is enabled by an optional `ssf` node in the daemon's native
 configuration.  It contains the SSF issuer and a receiver array with each
 receiver's application ID, audience, HTTPS callback URL, revision, and a
-`secretRef`.  `secretRef` is an environment-variable name resolved only when
-delivery is attempted; the callback credential itself is never written to the
-configuration or the database.  For example:
+`secretName`. `secretName` is the environment-variable name used to provision
+the callback credential and its name in Vault; the value is never written to
+the configuration or database. The daemon resolves it at startup, and delivery
+uses the in-memory value. For example:
 
 ```text
 ssf: {
@@ -242,14 +256,18 @@ ssf: {
     receiverID: "orders-rx", appID: 42,
     audience: "https://orders.example/api",
     deliveryURL: "https://orders.example/ssf",
-    secretRef: "ZUM_SSF_ORDERS_AUTH", revision: 1
+    secretName: "ZUM_SSF_ORDERS_AUTH", revision: 1
   }]
 }
 ```
 
 Set `ZUM_SSF_ORDERS_AUTH` to the complete callback `Authorization` value (for
-example, `Bearer ...`) through the deployment secret manager.  `--ssf-issuer`
-overrides the configured issuer when needed.
+example, `Bearer ...`) through the deployment secret manager on the first run
+or to replace it. Once startup succeeds, the value is saved under
+`env/ssf/ZUM_SSF_ORDERS_AUTH` and later starts may omit the variable. Each
+distinct receiver secret has its own name. Rotate a secret by restarting the
+daemon with a new environment value; changing the environment of a running
+daemon does not affect delivery. `--ssf-issuer` overrides the configured issuer.
 
 The daemon separates listener availability from database readiness:
 `/health/live` can remain available while a passive or recovering node returns
@@ -281,7 +299,7 @@ application and its dependents. Zum has two complementary OIDC-client paths.
 For the first path, configure `zumpingd` with the exact application issuer,
 the core management issuer, the independent management URL, its enrolled
 confidential client ID and the resource audience. Inject `ZUM_CLIENT_SECRET`
-and `ZUM_SSF_CALLBACK_AUTH` through the deployment secret manager; do not put
+and `ZUM_SSF_AUTH` through the deployment secret manager; do not put
 them in `zumpingd.cf` or on the command line. For the second path, configure
 the provider through the authenticated management API. An optional `oidc`
 section in the `zumd` node configuration can provide a private CA path;
@@ -297,17 +315,28 @@ make -j
 make install
 ```
 
-`zumd` requires a base64-encoded 256-bit `ZUM_DB_KEY`. A normal start also
-requires a public issuer, an initial administrator login and an owner-only
-bootstrap output file:
+On the first start, supply a base64-encoded 256-bit `ZUM_DB_KEY`. A successful
+start saves its raw value as `global/dbKey` in Vault; later starts may omit the
+environment variable. An explicit environment key always wins, and a wrong
+one fails startup without falling back to Vault. The daemon also requires a
+public issuer, an initial administrator login, an owner-only bootstrap output
+file, and an explicitly selected secure Vault store:
 
 ```sh
 export ZUM_DB_KEY='BASE64_256_BIT_KEY'
 zumd --issuer=https://auth.example \
+  --vault-store=keyring \
   --admin=admin@example.test \
   --bootstrap-output=/run/secrets/zum-bootstrap-url \
   --config=/etc/zum/node.cf
 ```
+
+Use `--vault-store=module --vault-module=PATH` for a deployment-provided secure
+store, or put `vault: {store: "keyring"}` (or `module` plus its path) in the
+node configuration. The Vault program is `zumd`, its account is the exact
+issuer URL, and `ZUMD_HOME` overrides its default home. There is no automatic
+fallback to an unencrypted store. `file` and `ephemeral` are for isolated tests
+only. A missing secret or unavailable store prevents startup.
 
 Open the one-time URL written to the bootstrap file in a browser to create
 the administrator passkey. Use the [`zum`](src/zum.cc) administrative client
@@ -319,10 +348,13 @@ zum --config FILE login
 zum --config FILE OPERATION --json FILE
 ```
 
-The daemon also supports `--once` for activation/bootstrap maintenance and
-offline encrypted-database key rotation with `--rekey`, using
-`ZUM_DB_KEY` and `ZUM_DB_NEW_KEY`. Keep both keys available until rotation
-reports durable completion.
+The daemon also supports `--once` for activation/bootstrap maintenance. For
+offline encrypted-database key rotation, stop all writers and run `--rekey`
+with `ZUM_DB_KEY` set to the **new** key. The old key is loaded from Vault;
+after the database change is durable, the new key replaces it there. Completion
+is reported only after both steps succeed. If Vault publication fails after
+the database commit, retain the same new key and retry `--rekey`; do not
+generate another key. Keep the new key available until completion is reported.
 
 ## Further documentation
 

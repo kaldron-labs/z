@@ -1294,7 +1294,6 @@ inline Parsed<Reqs> parse(ZuSpan<char> input, unsigned maxBytes)
   return out;
 }
 
-
 ZuDerive(SchemaString, (ZtString<ZtStringHeapID<"Zmcp.Schema">>));
 
 namespace Schema_ {
@@ -1935,13 +1934,11 @@ inline SchemaString schema()
   return out;
 }
 
-
 template <typename Reqs, typename S>
 inline void emitToolsList(S &s, int era)
 {
   ZfJSON::save(s, SchemaModel_::ToolsResult<Reqs>{era});
 }
-
 
 template <typename Req, typename Owner, typename Heap = ZuVoid>
 class Completion_ : public Heap, public ZmObject {
@@ -2255,7 +2252,6 @@ private:
   unsigned	m_maxPending;
   int		m_state = CompletionState::Open;
 };
-
 
 namespace LegacyState {
   enum { Fresh, Initializing, Ready, Closing, Closed };
@@ -2740,7 +2736,6 @@ private:
   int		m_logLevel = LogLevel::Disabled;
 };
 
-
 ZuDerive(SSELine, (ZtString<ZtStringHeapID<"Zmcp.SSE.Line">>));
 ZuDerive(SSEData, (ZtString<ZtStringHeapID<"Zmcp.SSE.Data">>));
 ZuDerive(SSEID, (ZtString<ZtStringHeapID<"Zmcp.SSE.ID">>));
@@ -2868,7 +2863,6 @@ inline void saveSSE(S &s, ZuCSpan id, int64_t retry, ZuCSpan json)
   if (retry >= 0) s << "retry: " << retry << '\n';
   s << "data: " << json << "\n\n";
 }
-
 
 ZuDerive(HTTPBodyBuf, (ZiIOBufAlloc<
     ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zmcp.HTTP.Body">));
@@ -3205,42 +3199,43 @@ public:
     return *this;
   }
 
-  template <typename C>
-  ZuSame<C, char, HTTPOutput &> operator <<(C value) {
+  template <typename C, typename = ZuSame<C, char>>
+  HTTPOutput & operator <<(C value) {
     return *this << ZuSpan{&value, 1};
   }
 
-  template <typename R>
-  ZuIfT<ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal &&
-      !ZuIsSame<R, char>{}, HTTPOutput &>
+  template <typename R,
+    typename = ZuIfT<
+      (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) ||
+      (ZuPrint<R>::OK && !ZuPrint<R>::String)>>
+  HTTPOutput &
   operator <<(const R &value) {
-    return append_(ZuBoxed(value));
-  }
-
-  template <typename P>
-  ZuIfT<ZuPrint<P>::OK && !ZuPrint<P>::String, HTTPOutput &>
-  operator <<(const P &value) {
-    return append_(value);
+    if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) {
+      return append_(ZuBoxed(value));
+    } else {
+      return append_(value);
+    }
   }
 
 private:
-  template <typename P>
-  ZuIfT<ZuPrint<P>::Delegate, HTTPOutput &> append_(const P &value) {
-    if (!m_overflow) ZuPrint<P>::print(*this, value);
-    return *this;
-  }
 
-  template <typename P>
-  ZuIfT<ZuPrint<P>::Buffer, HTTPOutput &> append_(const P &value) {
-    if (m_overflow) return *this;
-    uint64_t length = ZuPrint<P>::length(value);
-    if (ZuUnlikely(length > m_max - m_produced)) {
-      m_overflow = true;
+  template <typename P,
+    typename = ZuIfT<(ZuPrint<P>::Delegate) || (ZuPrint<P>::Buffer)>>
+  HTTPOutput &append_(const P &value) {
+    if constexpr (ZuPrint<P>::Delegate) {
+      if (!m_overflow) ZuPrint<P>::print(*this, value);
+      return *this;
+    } else {
+      if (m_overflow) return *this;
+      uint64_t length = ZuPrint<P>::length(value);
+      if (ZuUnlikely(length > m_max - m_produced)) {
+	m_overflow = true;
+	return *this;
+      }
+      m_out << value;
+      m_produced += length;
       return *this;
     }
-    m_out << value;
-    m_produced += length;
-    return *this;
   }
 
   Out		&m_out;
@@ -3302,48 +3297,49 @@ public:
     return *this;
   }
 
-  template <typename C>
-  ZuSame<C, char, StdioOutput &> operator <<(C value) {
+  template <typename C, typename = ZuSame<C, char>>
+  StdioOutput & operator <<(C value) {
     return *this << ZuSpan{&value, 1};
   }
 
-  template <typename R>
-  ZuIfT<ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal &&
-      !ZuIsSame<R, char>{}, StdioOutput &>
+  template <typename R,
+    typename = ZuIfT<
+      (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) ||
+      (ZuPrint<R>::OK && !ZuPrint<R>::String)>>
+  StdioOutput &
   operator <<(const R &value) {
-    return append_(ZuBoxed(value));
-  }
-
-  template <typename P>
-  ZuIfT<ZuPrint<P>::OK && !ZuPrint<P>::String, StdioOutput &>
-  operator <<(const P &value) {
-    return append_(value);
+    if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) {
+      return append_(ZuBoxed(value));
+    } else {
+      return append_(value);
+    }
   }
 
 private:
-  template <typename P>
-  ZuIfT<ZuPrint<P>::Delegate, StdioOutput &> append_(const P &value) {
-    if (!m_overflow) ZuPrint<P>::print(*this, value);
-    return *this;
-  }
 
-  template <typename P>
-  ZuIfT<ZuPrint<P>::Buffer, StdioOutput &> append_(const P &value) {
-    if (m_overflow) return *this;
-    unsigned length = ZuPrint<P>::length(value);
-    unsigned offset = m_buf.length;
-    if (ZuUnlikely(offset > m_max || length > m_max - offset)) {
-      m_overflow = true;
+  template <typename P,
+    typename = ZuIfT<(ZuPrint<P>::Delegate) || (ZuPrint<P>::Buffer)>>
+  StdioOutput &append_(const P &value) {
+    if constexpr (ZuPrint<P>::Delegate) {
+      if (!m_overflow) ZuPrint<P>::print(*this, value);
+      return *this;
+    } else {
+      if (m_overflow) return *this;
+      unsigned length = ZuPrint<P>::length(value);
+      unsigned offset = m_buf.length;
+      if (ZuUnlikely(offset > m_max || length > m_max - offset)) {
+	m_overflow = true;
+	return *this;
+      }
+      auto data = m_buf.ensure(offset + length);
+      if (ZuUnlikely(!data)) {
+	m_overflow = true;
+	return *this;
+      }
+      ZuSpan<char> span{data + offset, length};
+      m_buf.length += ZuPrint<P>::print(span.data(), length, value);
       return *this;
     }
-    auto data = m_buf.ensure(offset + length);
-    if (ZuUnlikely(!data)) {
-      m_overflow = true;
-      return *this;
-    }
-    ZuSpan<char> span{data + offset, length};
-    m_buf.length += ZuPrint<P>::print(span.data(), length, value);
-    return *this;
   }
 
   ZiIOBuf	&m_buf;

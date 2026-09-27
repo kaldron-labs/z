@@ -907,17 +907,18 @@ struct ZdbSagaStep_ {
 };
 #define ZdbSagaStep(step_, table, op) \
   template <unsigned Step, bool Fwd = true, \
-    typename Complete = Zdb_::SagaCompleteFn> \
-  ZuIfT<Step == step_, \
-    ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op>> \
+    typename Complete = Zdb_::SagaCompleteFn, \
+    ZuUnsigned<step_> * = nullptr, typename = ZuIfT<Step == step_>> \
+  ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op> \
   operator ()(Complete complete)
 #define ZdbSagaRepeatStep(step_, table, op, count_) \
-  template <unsigned Step> \
-  ZuIfT<Step == step_, uint64_t> repeat() const { return (count_); } \
+  template <unsigned Step, ZuUnsigned<step_> * = nullptr, \
+    typename = ZuIfT<Step == step_>> \
+  uint64_t repeat() const { return (count_); } \
   template <unsigned Step, bool Fwd = true, \
-    typename Complete = Zdb_::SagaCompleteFn> \
-  ZuIfT<Step == step_, \
-    ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op, true>> \
+    typename Complete = Zdb_::SagaCompleteFn, \
+    ZuUnsigned<step_> * = nullptr, typename = ZuIfT<Step == step_>> \
+  ZdbSagaStep_<ZuStringT<ZuPP_Q(table)>, ZdbSagaOp::op, true> \
   operator ()(Complete complete)
 using ZdbSaga = Zdb_::Saga;
 template <typename Context>
@@ -933,7 +934,7 @@ using ZdbMSaga = Zdb_::MSaga<Catalog, Impl_>;
 #define ZdbSagaImpl(Name, ...) \
   int Name::match(ZuCSpan type) { \
     struct IDs { using Keys = Zdb_::SagaTypes<List>; }; \
-    static constexpr auto matcher = ZuMatcher<IDs>(); \
+    static constexpr auto matcher = ZuMatcher<IDs, false>(); \
     return matcher.exact(type); \
   }
 

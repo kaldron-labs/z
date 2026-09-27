@@ -10,9 +10,7 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZdbSLLib.hh ZdbSL.hh
 noinst_HEADERS = ZdbSLCodec.hh
 lib_LTLIBRARIES = libZdbSL.la libZdbSLInspect.la
-libZdbSL_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZdbSL_la_SOURCES = ZdbSLLib.cc ZdbSLCodec.cc ZdbSL.cc
-libZdbSLInspect_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZdbSLInspect_la_SOURCES = ZdbSLCodec.cc ZdbSLInspect.cc
 ZDBSL_BACKEND_LIBS = \
 	$(top_builddir)/zdb/src/libZdb.la \

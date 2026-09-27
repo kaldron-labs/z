@@ -18,7 +18,7 @@
 namespace Zu_ { template <typename T> struct IsTuple; }
 
 namespace ZuDecimalFn {
-  ZuInline constexpr unsigned pow10_32(unsigned i) {
+  inline constexpr unsigned pow10_32(unsigned i) {
     static constexpr unsigned pow10[] = {
       1U,
       10U,
@@ -34,7 +34,7 @@ namespace ZuDecimalFn {
     return pow10[i];
   }
 
-  ZuInline constexpr uint64_t pow10_64(unsigned i) {
+  inline constexpr uint64_t pow10_64(unsigned i) {
     static constexpr uint64_t pow10[] = {
       1ULL,
       10ULL,
@@ -60,24 +60,27 @@ namespace ZuDecimalFn {
     return pow10[i];
   }
 
-  ZuInline constexpr uint128_t pow10_128(unsigned i) {
+  inline constexpr uint128_t pow10_128(unsigned i) {
     uint128_t v;
     if (ZuLikely(i < 20U))
       v = pow10_64(i);
     else
-      v = uint128_t(pow10_64(i - 19U)) * uint128_t(10000000000000000000ULL);
+      v = uint128_t(pow10_64(i - 19U)) *uint128_t(10000000000000000000ULL);
     return v;
   }
 
-  template <unsigned Size>
-  ZuInline ZuIfT<Size <= 4, const uint32_t>
-  pow10(unsigned v) { return pow10_32(v); }
-  template <unsigned Size>
-  ZuInline ZuIfT<Size == 8, const uint64_t>
-  pow10(unsigned v) { return pow10_64(v); }
-  template <unsigned Size>
-  ZuInline ZuIfT<Size == 16, const uint128_t>
-  pow10(unsigned v) { return pow10_128(v); }
+  template <unsigned Size,
+    typename = ZuIfT<(Size <= 4) || (Size == 8) || (Size == 16)>>
+  inline auto
+  pow10(unsigned v) {
+    if constexpr (Size <= 4) {
+      return pow10_32(v);
+    } else if constexpr (Size == 8) {
+      return pow10_64(v);
+    } else {
+      return pow10_128(v);
+    }
+  }
 
   template <unsigned I> struct Pow10 { };
   template <> struct Pow10<0U> : public ZuConstant<unsigned, 1U> { };

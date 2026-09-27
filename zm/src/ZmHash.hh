@@ -58,7 +58,7 @@ template <typename Lock> class ZmHash_LockMgr {
 
   Lock &lock_(unsigned i) const {
     return *reinterpret_cast<Lock *>(
-	reinterpret_cast<uint8_t *>(m_locks) + (i * CacheLineSize));
+	reinterpret_cast<uint8_t *>(m_locks) + (i *CacheLineSize));
   }
 
 public:
@@ -694,7 +694,7 @@ public:
     return double(m_loadFactor) / 16.0;
   }
   unsigned size() const {
-    return double(uint64_t(1)<<m_bits) * loadFactor();
+    return double(uint64_t(1)<<m_bits) *loadFactor();
   }
 
   // intentionally unlocked and non-atomic
@@ -710,10 +710,10 @@ public:
   NodeRef add(P0 &&p0, P1 &&p1) {
     return add(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
-  template <bool _ = !ZuIsSame<NodeRef, Node *>{}>
-  ZuIfT<_> addNode(const NodeRef &node_) { addNode(node_.ptr()); }
-  template <bool _ = !ZuIsSame<NodeRef, Node *>{}>
-  ZuIfT<_> addNode(NodeRef &&node_) {
+  template <bool _ = !ZuIsSame<NodeRef, Node *>{}, typename = ZuIfT<_>>
+  void addNode(const NodeRef &node_) { addNode(node_.ptr()); }
+  template <bool _ = !ZuIsSame<NodeRef, Node *>{}, typename = ZuIfT<_>>
+  void addNode(NodeRef &&node_) {
     Node *node = this->nodeRelease(ZuMv(node_));
     uint32_t code = HashFn::hash(node->Node::key());
     Guard guard(lockCode(code));
@@ -830,64 +830,65 @@ private:
   }
 
 public:
-  template <typename P>
-  MatchKey<P, NodeRef> find(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(lockCode(code));
-    return find_(matchKey(key), code);
-  }
-  template <typename P>
-  MatchData<P, NodeRef> find(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(lockCode(code));
-    return find_(matchData(data), code);
+
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  NodeRef find(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(lockCode(code));
+      return find_(matchKey(key), code);
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(lockCode(code));
+      return find_(matchData(key), code);
+    }
   }
   template <typename P0, typename P1>
   NodeRef find(P0 &&p0, P1 &&p1) {
     return find(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Node *> findPtr(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(lockCode(code));
-    return find_(matchKey(key), code);
-  }
-  template <typename P>
-  MatchData<P, Node *> findPtr(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(lockCode(code));
-    return find_(matchData(data), code);
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Node *findPtr(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(lockCode(code));
+      return find_(matchKey(key), code);
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(lockCode(code));
+      return find_(matchData(key), code);
+    }
   }
 
-  template <typename P>
-  MatchKey<P, Key> findKey(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(lockCode(code));
-    return key(find_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Key> findKey(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(lockCode(code));
-    return key(find_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Key findKey(const P &data) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(data);
+      ReadGuard guard(lockCode(code));
+      return data(find_(matchKey(data), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(data));
+      ReadGuard guard(lockCode(code));
+      return key(find_(matchData(data), code));
+    }
   }
   template <typename P0, typename P1>
   decltype(auto) findKey(P0 &&p0, P1 &&p1) {
     return findKey(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Val> findVal(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(lockCode(code));
-    return val(find_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Val> findVal(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(lockCode(code));
-    return val(find_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Val findVal(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(lockCode(code));
+      return val(find_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(lockCode(code));
+      return val(find_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   Val findVal(P0 &&p0, P1 &&p1) {
@@ -943,17 +944,18 @@ private:
   }
 
 public:
-  template <typename P>
-  MatchKey<P, NodeMvRef> del(const P &key) {
-    uint32_t code = HashFn::hash(key);
-    Guard guard(lockCode(code));
-    return delNode_(matchKey(key), code);
-  }
-  template <typename P>
-  MatchData<P, NodeMvRef> del(const P &data) {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    Guard guard(lockCode(code));
-    return delNode_(matchData(data), code);
+
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  NodeMvRef del(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      Guard guard(lockCode(code));
+      return delNode_(matchKey(key), code);
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      Guard guard(lockCode(code));
+      return delNode_(matchData(key), code);
+    }
   }
   template <typename P0, typename P1>
   NodeMvRef del(P0 &&p0, P1 &&p1) {
@@ -968,17 +970,17 @@ public:
     return delNode_(matchNode(node), code);
   }
 
-  template <typename P>
-  MatchKey<P, Key> delKey(const P &key) {
-    uint32_t code = HashFn::hash(key);
-    Guard guard(lockCode(code));
-    return keyMv(delNode_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Key> delKey(const P &data) {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    Guard guard(lockCode(code));
-    return keyMv(delNode_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Key delKey(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      Guard guard(lockCode(code));
+      return keyMv(delNode_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      Guard guard(lockCode(code));
+      return keyMv(delNode_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   decltype(auto) delKey(P0 &&p0, P1 &&p1) {
@@ -989,17 +991,17 @@ public:
     return keyMv(delNode_(matchNode(node), code));
   }
 
-  template <typename P>
-  MatchKey<P, Val> delVal(const P &key) {
-    uint32_t code = HashFn::hash(key);
-    Guard guard(lockCode(code));
-    return valMv(delNode_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Val> delVal(const P &data) {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    Guard guard(lockCode(code));
-    return valMv(delNode_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Val delVal(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      Guard guard(lockCode(code));
+      return valMv(delNode_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      Guard guard(lockCode(code));
+      return valMv(delNode_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   decltype(auto) delVal(P0 &&p0, P1 &&p1) {
@@ -1286,6 +1288,5 @@ using ZmHashKV =
   ZmHashDeriveT_N(__VA_ARGS__, \
     ZmHashDeriveT_5(__VA_ARGS__), \
     ZmHashDeriveT_4(__VA_ARGS__))
-
 
 #endif /* ZmHash_HH */

@@ -22,7 +22,7 @@
 
 namespace Ztls_ {
 
-namespace VaultKeyRingWin_ {
+namespace VaultWindows_ {
 
 constexpr auto TargetPrefix = "ZtlsVault:"_Zu;
 
@@ -107,8 +107,8 @@ private:
 ZuDerive(KeyRingHeap, (ZmHeap<"Ztls.Vault.KeyRing", KeyRing_<>>));
 ZuDerive(KeyRing, KeyRing_<KeyRingHeap>);
 
-} // VaultKeyRingWin_
+} // VaultWindows_
 
-VaultStore *vaultKeyRing() { return new VaultKeyRingWin_::KeyRing; }
+VaultStore *vaultKeyRing() { return new VaultWindows_::KeyRing; }
 
 } // Ztls_

@@ -252,7 +252,7 @@ public:
   Config overlay(const Config &o) const {
     Config v{*this};
 #define Zhttp_Config_Overlay(bit, member) \
-    if (o.m_set & bit) v.member = o.member
+    if (o.m_set &bit) v.member = o.member
     Zhttp_Config_Overlay(Field::Links, m_links);
     Zhttp_Config_Overlay(Field::Concurrency, m_concurrency);
     Zhttp_Config_Overlay(Field::LinkMax, m_linkMax);
@@ -880,8 +880,6 @@ private:
   int8_t	m_txState = ClientSessionTxState::Idle;
 };
 
-
-
 template <typename App, typename Profile>
 class ClientHub :
   public ProfileTraits<Profile>::Transport::template Client<App> {
@@ -913,13 +911,15 @@ public:
   void connectFailed(Link &, bool) { }
 };
 
-template <typename Link>
-inline auto ClientLogicalID_(const Link *link, int) -> decltype(link->id()) {
+template <typename Link,
+  typename = decltype(ZuDeclVal<const Link * &>()->id())>
+inline decltype(auto) ClientLogicalID_(const Link *link, int) {
   return link->id();
 }
 
-template <typename Link>
-inline auto ClientLogicalID_(const Link *link, long) -> decltype(link->id) {
+template <typename Link,
+  typename = decltype(ZuDeclVal<const Link * &>()->id)>
+inline decltype(auto) ClientLogicalID_(const Link *link, long) {
   return link->id;
 }
 
@@ -1985,39 +1985,43 @@ private:
       });
   }
 
-  template <typename A>
-  static auto tlsCapacity_(
-      A *app, unsigned id, uint64_t generation, bool saturated, int) ->
-    decltype(app->tlsCapacity(id, generation, saturated), void()) {
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->tlsCapacity(ZuDeclVal<unsigned &>(),
+      ZuDeclVal<uint64_t &>(), ZuDeclVal<bool &>()), void())>
+  static void tlsCapacity_(
+      A *app, unsigned id, uint64_t generation, bool saturated, int) {
     app->tlsCapacity(id, generation, saturated);
   }
   static void tlsCapacity_(...) { }
 
-  template <typename A, typename Native>
-  static auto nativeUp_(
+  template <typename A, typename Native,
+    typename = decltype(ZuDeclVal<A * &>()->nativeUp(ZuDeclVal<unsigned &>(),
+      ZuDeclVal<uint64_t &>(), ZuDeclVal<const ZmRef<Native> &>()), void())>
+  static void nativeUp_(
       A *app, unsigned id, uint64_t generation,
-      const ZmRef<Native> &native, int) ->
-    decltype(app->nativeUp(id, generation, native), void()) {
+      const ZmRef<Native> &native, int) {
     app->nativeUp(id, generation, native);
   }
   template <typename A, typename Native>
   static void nativeUp_(
       A *, unsigned, uint64_t, const ZmRef<Native> &, long) { }
 
-  template <typename A>
-  static auto nativeDown_(
-      A *app, unsigned id, uint64_t generation, int) ->
-    decltype(app->nativeDown(id, generation), void()) {
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->nativeDown(ZuDeclVal<unsigned &>(),
+      ZuDeclVal<uint64_t &>()), void())>
+  static void nativeDown_(
+      A *app, unsigned id, uint64_t generation, int) {
     app->nativeDown(id, generation);
   }
   template <typename A>
   static void nativeDown_(A *, unsigned, uint64_t, long) { }
 
-  template <typename A>
-  static auto nativeTxError_(
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->nativeTxError(ZuDeclVal<Transport::T &>(),
+      ZuDeclVal<unsigned &>(), ZuDeclVal<uint64_t &>(), ZuDeclVal<ZeException &>()), bool())>
+  static bool nativeTxError_(
       A *app, Transport::T transport, unsigned id,
-      uint64_t generation, ZeException &e, int) ->
-    decltype(app->nativeTxError(transport, id, generation, e), bool()) {
+      uint64_t generation, ZeException &e, int) {
     return app->nativeTxError(transport, id, generation, e);
   }
   template <typename A>
@@ -2765,39 +2769,43 @@ public:
   }
 
 private:
-  template <typename A>
-  static auto quicCapacity_(
-      A *app, unsigned id, uint64_t generation, bool saturated, int) ->
-    decltype(app->quicCapacity(id, generation, saturated), void()) {
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->quicCapacity(ZuDeclVal<unsigned &>(),
+      ZuDeclVal<uint64_t &>(), ZuDeclVal<bool &>()), void())>
+  static void quicCapacity_(
+      A *app, unsigned id, uint64_t generation, bool saturated, int) {
     app->quicCapacity(id, generation, saturated);
   }
   static void quicCapacity_(...) { }
 
-  template <typename A, typename Native>
-  static auto nativeUp_(
+  template <typename A, typename Native,
+    typename = decltype(ZuDeclVal<A * &>()->nativeUp(ZuDeclVal<unsigned &>(),
+      ZuDeclVal<uint64_t &>(), ZuDeclVal<const ZmRef<Native> &>()), void())>
+  static void nativeUp_(
       A *app, unsigned id, uint64_t generation,
-      const ZmRef<Native> &native, int) ->
-    decltype(app->nativeUp(id, generation, native), void()) {
+      const ZmRef<Native> &native, int) {
     app->nativeUp(id, generation, native);
   }
   template <typename A, typename Native>
   static void nativeUp_(
       A *, unsigned, uint64_t, const ZmRef<Native> &, long) { }
 
-  template <typename A>
-  static auto nativeDown_(
-      A *app, unsigned id, uint64_t generation, int) ->
-    decltype(app->nativeDown(id, generation), void()) {
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->nativeDown(ZuDeclVal<unsigned &>(),
+      ZuDeclVal<uint64_t &>()), void())>
+  static void nativeDown_(
+      A *app, unsigned id, uint64_t generation, int) {
     app->nativeDown(id, generation);
   }
   template <typename A>
   static void nativeDown_(A *, unsigned, uint64_t, long) { }
 
-  template <typename A>
-  static auto nativeTxError_(
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->nativeTxError(ZuDeclVal<Transport::T &>(),
+      ZuDeclVal<unsigned &>(), ZuDeclVal<uint64_t &>(), ZuDeclVal<ZeException &>()), bool())>
+  static bool nativeTxError_(
       A *app, Transport::T transport, unsigned id,
-      uint64_t generation, ZeException &e, int) ->
-    decltype(app->nativeTxError(transport, id, generation, e), bool()) {
+      uint64_t generation, ZeException &e, int) {
     return app->nativeTxError(transport, id, generation, e);
   }
   template <typename A>
@@ -3822,7 +3830,6 @@ private:
   QUICConfig	m_config;
 };
 
-
 // One typed pool of normalized HTTP client links.  The pool owns transport
 // links and message machinery; Owner owns request policy and attempt results.
 template <
@@ -4261,7 +4268,6 @@ private:
   unsigned	m_stopHead = 0;
   bool		m_stopping = false;
 };
-
 
 // Plain H1 keeps one native TCP connection per stable link slot and assigns
 // multiple ordered operations to that connection.  Request bytes are emitted
@@ -4781,8 +4787,6 @@ private:
   bool		m_stopping = false;
 };
 
-
-
 template <
   typename Owner, typename LiveReq,
   typename Request, typename ResParser>
@@ -4914,7 +4918,7 @@ public:
 	this, link = ZuMv(link), commit, generation, ok]() mutable {
 	if (m_generation != generation || !m_request) return;
 	owner()->poolTxCommitted(*m_impl, *m_request, commit);
-	bool reuse = ok && reusable();
+	bool reuse = ok &&reusable();
 	owner()->poolComplete(*m_impl, *m_request, ok, reuse);
       });
     });
@@ -5281,7 +5285,6 @@ private:
   unsigned	m_live = 0;
   bool		m_stopping = false;
 };
-
 
 ZtEnumStruct(ZhttpAPI, AttemptPhase, int8_t,
   Idle, Resolving, Connecting, Sending,
@@ -5738,7 +5741,7 @@ public:
     assertRx_();
     if (link < m_links.length() &&
 	m_links[link]->nativeDown(transport, generation) &&
-	transport == Transport::QUIC && m_routeTransition)
+	transport == Transport::QUIC &&m_routeTransition)
       routeTransitionReady_();
   }
   void capacity_(
@@ -5796,7 +5799,7 @@ public:
 		  stopTx_(Hubs::DoneFn{
 		    [this, done = ZuMv(done), ok](bool txOK) mutable {
 		      rxRun_([done = ZuMv(done), ok, txOK]() mutable {
-			done(ok && txOK);
+			done(ok &&txOK);
 		      });
 		    }});
 		});
@@ -7519,8 +7522,9 @@ public:
   }
 
 private:
-  template <typename A>
-  static auto idle_(A *app, int) -> decltype(app->idle(), void()) {
+  template <typename A,
+    typename = decltype(ZuDeclVal<A * &>()->idle(), void())>
+  static void idle_(A *app, int) {
     app->idle();
   }
   static void idle_(...) { }

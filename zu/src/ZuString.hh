@@ -58,7 +58,7 @@ template <unsigned N_> struct ZuString {
   template <typename A>
   ZuInline constexpr bool same(const A &a) const { return false; }
   template <typename A>
-  ZuInline constexpr bool equals(const A &a) const {
+  inline constexpr bool equals(const A &a) const {
     if (ZuConstEval()) {
       if (same(a)) return true;
       unsigned l = length();
@@ -72,7 +72,7 @@ template <unsigned N_> struct ZuString {
     }
   }
   template <typename A>
-  ZuInline constexpr int cmp(const A &a) const {
+  inline constexpr int cmp(const A &a) const {
     if (ZuConstEval()) {
       if (same(a)) return 0;
       unsigned l = length();
@@ -85,11 +85,11 @@ template <unsigned N_> struct ZuString {
       return cspan().cmp(a);
     }
   }
-  template <typename L, typename R>
-  friend ZuInline constexpr ZuIfT<ZuIs_<L, ZuString>{}, bool>
+  template <typename L, typename R, ZuString * = nullptr, typename = ZuIfT<ZuIs_<L, ZuString>{}>>
+  friend ZuInline constexpr bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend ZuInline constexpr ZuIfT<ZuIs_<L, ZuString>{}, int>
+  template <typename L, typename R, ZuString * = nullptr, typename = ZuIfT<ZuIs_<L, ZuString>{}>>
+  friend ZuInline constexpr int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
   template <typename L>

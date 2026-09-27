@@ -81,8 +81,8 @@ public:
     ZeError e;
     if (resolve(ZuFwd<S>(s), &e) != Zi::OK) throw e;
   }
-  template <typename S>
-  ZuMatchString<S &&, ZiIP &> &operator =(S &&s) {
+  template <typename S, typename = ZuMatchString<S &&>>
+  ZiIP &operator =(S &&s) {
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waddress"
@@ -263,8 +263,8 @@ public:
   // non-blocking numeric parse over a non-NUL-terminated span
   static bool parse(ZiIP &, ZuCSpan);
 
-  template <typename S>
-  ZuMatchString<S &&, int> resolve(S &&s, ZeError *e = 0) {
+  template <typename S, typename = ZuMatchString<S &&>>
+  int resolve(S &&s, ZeError *e = 0) {
     // blocks after numeric parsing; do not call from ZiResolver callbacks
     Zi::Hostname host{ZuFwd<S>(s)};
     return resolve_(ZuMv(host), e);

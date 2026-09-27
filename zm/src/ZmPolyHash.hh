@@ -216,40 +216,41 @@ public:
   }
 
   // update keys lambda - l(node)
-  template <typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuIfT<!KeyIDs_::N>
-  update(Node *node, L l) const { l(node); }
-  template <typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuIfT<KeyIDs_::N && !ZuTypeIn<ZuUnsigned<0>, ZuSeqTL<KeyIDs_>>{}>
+
+  template <typename KeyIDs_ = ZuSeq<>, typename L,
+    typename = decltype(
+      ZuSeqTL<ZuIf<!KeyIDs_::N, ZuSeq<>, KeyIDs_>>{}, void())>
+  void
   update(Node *node, L l) const {
-    using SortedKeyIDs = ZmPolyHash_SortKeyIDs<KeyIDs_>;
-    ZuUnroll::all<SortedKeyIDs>(
-      [this, node]<typename KeyID>() mutable {
-	m_hashes.template p<KeyID{}>()->delNode(node);
-      });
-    l(node);
-    ZuUnroll::all<SortedKeyIDs>(
-      [this, node]<typename KeyID>() mutable {
-	m_hashes.template p<KeyID{}>()->addNode(node);
-      });
-  }
-  template <typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuIfT<KeyIDs_::N && bool(ZuTypeIn<ZuUnsigned<0>, ZuSeqTL<KeyIDs_>>{})>
-  update(Node *node, L l) const {
-    using SortedKeyIDs = ZmPolyHash_SortKeyIDs<KeyIDs_>;
-    if constexpr (SortedKeyIDs::N)
+    if constexpr (!KeyIDs_::N) {
+      l(node);
+    } else if constexpr (KeyIDs_::N && !ZuTypeIn<ZuUnsigned<0>, ZuSeqTL<KeyIDs_>>{}) {
+      using SortedKeyIDs = ZmPolyHash_SortKeyIDs<KeyIDs_>;
       ZuUnroll::all<SortedKeyIDs>(
 	[this, node]<typename KeyID>() mutable {
 	  m_hashes.template p<KeyID{}>()->delNode(node);
 	});
-    NodeMvRef node_ = m_hashes.template p<0>()->delNode(node);
-    l(node);
-    if constexpr (SortedKeyIDs::N)
+      l(node);
       ZuUnroll::all<SortedKeyIDs>(
 	[this, node]<typename KeyID>() mutable {
 	  m_hashes.template p<KeyID{}>()->addNode(node);
 	});
-    m_hashes.template p<0>()->addNode(ZuMv(node_));
+    } else {
+      using SortedKeyIDs = ZmPolyHash_SortKeyIDs<KeyIDs_>;
+      if constexpr (SortedKeyIDs::N)
+	ZuUnroll::all<SortedKeyIDs>(
+	  [this, node]<typename KeyID>() mutable {
+	    m_hashes.template p<KeyID{}>()->delNode(node);
+	  });
+      NodeMvRef node_ = m_hashes.template p<0>()->delNode(node);
+      l(node);
+      if constexpr (SortedKeyIDs::N)
+	ZuUnroll::all<SortedKeyIDs>(
+	  [this, node]<typename KeyID>() mutable {
+	    m_hashes.template p<KeyID{}>()->addNode(node);
+	  });
+      m_hashes.template p<0>()->addNode(ZuMv(node_));
+    }
   }
 
   template <unsigned KeyID, typename Key>

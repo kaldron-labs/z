@@ -89,7 +89,7 @@ namespace RdrState {
 // blkData pin/unpin (block data is pinned in cache while being read/written):
 //
 // pin		loaded
-// unpin	stop | nextBlk | readFail | liveFail 
+// unpin	stop | nextBlk | readFail | liveFail
 //
 // historical / live reader (de-)registration:
 //
@@ -483,7 +483,7 @@ public:
     if (ZuUnlikely(!blk)) return 0;
     ZiAssert(blk->blkData, "Zdf",
       (name = ZeString{name()}),
-      name << " internal error - null blkData", return n * BlkSize);
+      name << " internal error - null blkData", return n *BlkSize);
     return (n - 1) * BlkSize + blk->blkData->data().buf.length();
   }
 
@@ -687,8 +687,8 @@ private:
   }
 
 public:
-  template <typename ...NDP>
-  ZuIfT<sizeof...(NDP) == Fixed, void>
+  template <typename ...NDP, typename = ZuIfT<sizeof...(NDP) == Fixed>>
+  void
   write(WriteFn fn, ErrorFn errorFn, NDP... ndp) {
     ZmAssert(invoked());
 
@@ -762,8 +762,8 @@ public:
   }
 
 private:
-  template <typename ...NDP>
-  ZuIfT<sizeof...(NDP) == Fixed, void>
+  template <typename ...NDP, typename = ZuIfT<sizeof...(NDP) == Fixed>>
+  void
   write_loadedBlk(WriteFn fn, NDP... ndp) {
     m_lastBlk->blkData->pin();
     if (!m_lastBlk->count()) {
@@ -789,8 +789,8 @@ private:
     });
     fn(ZmRef<Writer>{m_writer});
   }
-  template <typename... NDP>
-  ZuIfT<sizeof...(NDP) == Fixed, void>
+  template <typename... NDP, typename = ZuIfT<sizeof...(NDP) == Fixed>>
+  void
   write_newWriter(WriteFn fn, NDP... ndp) {
     if constexpr (Fixed) m_lastBlk->ndp(ndp...);
     m_writer->encoder([this]{ return m_lastBlk->encoder<Decoder>(this); });
@@ -887,8 +887,8 @@ private:
   }
 
   // called from Writer::stop
-  template <typename... NDP>
-  ZuIfT<sizeof...(NDP) == Fixed, void>
+  template <typename... NDP, typename = ZuIfT<sizeof...(NDP) == Fixed>>
+  void
   stop(Encoder &encoder, NDP... ndp) {
     encoder.finish();
     m_lastBlk->sync(encoder, encoder.last(), ndp...);

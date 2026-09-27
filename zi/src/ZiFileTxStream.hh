@@ -93,12 +93,12 @@ private:
   template <typename U, typename R = void>
   using MatchPBuffer = ZuIfT<ZuPrint<U>::Buffer, R>;
 
-  template <typename P>
-  MatchPDelegate<P> append(P &&p) {
+  template <typename P, typename = MatchPDelegate<P>>
+  void append(P &&p) {
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
-  template <typename P>
-  MatchPBuffer<P> append(const P &p) {
+  template <typename P, typename = MatchPBuffer<P>>
+  void append(const P &p) {
     unsigned length = ZuPrint<P>::length(p);
     if (ZuUnlikely(length > maxSize))
       throw ZeEXCEPT(Fatal, "ZiFileTxStream", ([length](auto &s) {
@@ -132,19 +132,23 @@ public:
     append(buf.data(), buf.length());
     return *this;
   }
-  template <typename C>
-  MatchChar<C, FileTxStream &> operator <<(C c) {
+  template <typename C, typename = MatchChar<C>>
+  FileTxStream & operator <<(C c) {
     return *this << ZuSpan{&c, 1};
   }
-  template <typename R>
-  MatchReal<R, FileTxStream &> operator <<(const R &r) {
-    append(ZuBoxed(r));
-    return *this;
-  }
-  template <typename P>
-  MatchPrint<P, FileTxStream &> operator <<(const P &p) {
-    append(p);
-    return *this;
+
+  template <typename R,
+    typename = ZuIfT<
+      (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuEquiv<R, char>{}) ||
+      (ZuPrint<R>::OK && !ZuPrint<R>::String)>>
+  FileTxStream & operator <<(const R &r) {
+    if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuEquiv<R, char>{}) {
+      append(ZuBoxed(r));
+      return *this;
+    } else {
+      append(r);
+      return *this;
+    }
   }
 
   void flush() { if (m_buf && m_buf->length()) flushBuf(); }

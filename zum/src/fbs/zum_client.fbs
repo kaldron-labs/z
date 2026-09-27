@@ -9,8 +9,7 @@ table Client {
   redirects:[string];
   created:int64;
   updated:int64;
-  type:int8;
-  auth_method:int8;
+  profile:int8;
   grants:uint8;
   refresh_allowed:bool;
   identity_scopes:[string];

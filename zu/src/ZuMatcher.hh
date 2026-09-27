@@ -47,39 +47,24 @@
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuUnroll.hh>
 
-// gcc outperforms clang generally on this code (as of clang 18.1 and gcc 14.2)
-// - for gcc, compile-time switching is 2x faster than in-memory LUT
-// - for clang, compile-time switching is 10-15% faster
-#define ZuMatcher_Switch 1
-
-// if ZuMatcher_Switch is 0, by default with -g (which is -g2), the compiler
-// will include debugging information for the built automaton even though
-// this is not used at run-time; the debug information can be large and there
-// is no simple way to prevent the compiler from generating it other
-// than isolating the use of ZuMatcher to a single .cc source file and
-// building that file with -g0 or -g1
-// - this problem exists for all compile-time programming and is
-//   significantly more problematic for complex libraries such as ctre
-
 namespace Zu_::AhoCorasick {
 
 // node index with 0 as null sentinel value
 struct StateNext { uint16_t v = 0; };
-#if !ZuMatcher_Switch
 // key index with 0 as null sentinel value
 struct ByteNext { uint8_t v = 0; };
-#endif
 
 // a node in the automaton (i.e. a state in the FSM)
 // - each node contains a map from a matched character to the
 //   corresponding next node in the automaton
+template <unsigned Begin, unsigned End, unsigned NKeys, bool Switch>
+struct Node;
 template <unsigned Begin, unsigned End, unsigned NKeys>
-struct Node {
+struct Node<Begin, End, NKeys, true> {
 // compile-time switching uses a simpler Node with a flat next_[] array
 // that consumes more memory but only exists as a compile-time temporary;
 // this version also builds the chars[] array that is used to construct the
 // ZuSeq<> compile-time sequence of chars for switching
-#if ZuMatcher_Switch
   static constexpr uint8_t Width = End - Begin;
 
   StateNext next_[Width];
@@ -102,7 +87,12 @@ struct Node {
   }
   // set a root default without adding it to the explicit character list
   consteval void next0(uint8_t c) { next_[c - Begin].v = 1; }
-#else
+
+  struct Traits : public ZuBaseTraits<Node> { enum { IsPOD = 1 }; };
+  friend Traits ZuTraitsType(Node *);
+};
+template <unsigned Begin, unsigned End, unsigned NKeys>
+struct Node<Begin, End, NKeys, false> {
   static constexpr uint8_t Width = End - Begin;
 
   // if the number of keys is fewer than 14, nibbles can be used instead
@@ -162,7 +152,6 @@ struct Node {
     }
     keyNext_[k_ - 2].v = j;
   }
-#endif
 
   struct Traits : public ZuBaseTraits<Node> { enum { IsPOD = 1 }; };
   friend Traits ZuTraitsType(Node *);
@@ -219,37 +208,23 @@ template <typename ...Key> struct MinMax<ZuTypeList<Key...>> {
 };
 
 // compile-time automaton builder
-template <typename, unsigned> struct Automaton;
-template <
-  typename Keys,
-  unsigned N_ =
-// gcc has trouble with compile-time evaluation of Automaton{}.nodes.length();
-// if compile-time switching, there is no run-time benefit in reducing the
-// size of the compile-time temporary
-#if ZuMatcher_Switch || (defined(__GNUC__) && !defined(__llvm__))
-    Total<Keys>::length() + 1
-#else
-// - each automaton is built twice to minimize memory, once as a compile-time
-//   temporary using an upper bound on the number of nodes, then again with
-//   the minimum number of nodes actually needed for the specific keys
-    Automaton<Keys, Total<Keys>::length() + 1>{}.nodes.length()
-#endif
-  >
-struct Automaton {
+template <typename ID, unsigned N_, bool Switch>
+struct Automaton__ {
+  using Keys = typename ID::Keys;
   using MinMax_ = MinMax<Keys>;
   static constexpr unsigned N = N_;
   static constexpr unsigned Begin = MinMax_::min();
   static constexpr unsigned End = MinMax_::max() + 1;
   static constexpr unsigned Width = End - Begin;
 
-  using Node_ = Node<Begin, End, Keys::N>;
+  ZuDerive(Node_, (Node<Begin, End, Keys::N, Switch>));
 
   ZuArray<Node_, N> nodes;
 
 #ifdef __GNUC__
 __attribute__((no_instrument_function))
 #endif
-  consteval Automaton() {
+  consteval Automaton__() {
     nodes.push(Node_());
     ZuUnroll::all<Keys>([this]<typename Key>() {
       constexpr unsigned J = ZuTypeIndex<Key, Keys>{};
@@ -259,11 +234,10 @@ __attribute__((no_instrument_function))
 	uint8_t c = Key{}()[i];
 	if (ZuUnlikely(c < Begin || c >= End)) return;
 	if (!nodes[current].next(c)) {
-#if ZuMatcher_Switch
-	  nodes[current].next(c, nodes.length() + 1);
-#else
-	  nodes[current].next(c, J, nodes.length() + 1);
-#endif
+	  if constexpr (Switch)
+	    nodes[current].next(c, nodes.length() + 1);
+	  else
+	    nodes[current].next(c, J, nodes.length() + 1);
 	  nodes.push(Node_());
 	}
 	current = nodes[current].next(c) - 1;
@@ -301,10 +275,30 @@ __attribute__((no_instrument_function))
       }
     }
   }
-  constexpr ~Automaton() { }
+  constexpr ~Automaton__() { }
 };
+template <typename ID, bool Switch> struct Automaton_;
+template <typename ID>
+struct Automaton_<ID, true> {
+  using Keys = typename ID::Keys;
+  static constexpr unsigned N = Total<Keys>::length() + 1;
+  using T = Automaton__<ID, N, true>;
+};
+template <typename ID>
+struct Automaton_<ID, false> {
+  using Keys = typename ID::Keys;
+// - each automaton is built twice to minimize memory, once as a compile-time
+//   temporary using an upper bound on the number of nodes, then again with
+//   the minimum number of nodes actually needed for the specific keys
+  static constexpr unsigned N_ = Total<Keys>::length() + 1;
+  static constexpr unsigned N =
+    Automaton__<ID, N_, false>{}.nodes.length();
+  using T = Automaton__<ID, N, false>;
+};
+template <typename ID, bool Switch>
+ZuDerive(Automaton, (Automaton_<ID, Switch>::T));
 
-template <typename ID, unsigned N = ID::Keys::N>
+template <typename ID, bool Switch, unsigned N = ID::Keys::N>
 struct Matcher {
   using Keys = typename ID::Keys;
 
@@ -312,7 +306,7 @@ struct Matcher {
   ZuAssert(N >= 2);
   ZuAssert(Keys::N < 256);
 
-  using Automaton_ = Automaton<Keys>;
+  using Automaton_ = Automaton<ID, Switch>;
 
   static constexpr Automaton_ automaton = Automaton_();
 
@@ -327,41 +321,37 @@ struct Matcher {
 
   ZuInline static constexpr uint16_t next_(uint16_t index, uint8_t c) {
     if (ZuUnlikely(c < begin() || c >= end())) return !index;
-#if ZuMatcher_Switch
-    auto next = ZuSwitch::dispatch<length()>(index, [c](auto I) {
-      constexpr uint16_t Index = I;
-      using Chars = ZuArraySeq<automaton.nodes[Index].chars>;
-      return ZuSwitch::dispatch<Chars>(c, [](auto Char) {
-	constexpr uint16_t Next = automaton.nodes[Index].next(Char);
-	return Next;
-      }, uint16_t(!Index));
-    });
-#else
-    auto next = automaton.nodes[index].next(c);
-#endif
-    return next;
+    if constexpr (Switch)
+      return ZuSwitch::dispatch<length()>(index, [c](auto I) {
+	constexpr uint16_t Index = I;
+	using Chars = ZuArraySeq<automaton.nodes[Index].chars>;
+	return ZuSwitch::dispatch<Chars>(c, [](auto Char) {
+	  constexpr uint16_t Next = automaton.nodes[Index].next(Char);
+	  return Next;
+	}, uint16_t(!Index));
+      });
+    else
+      return automaton.nodes[index].next(c);
   }
   ZuInline static constexpr uint8_t output_(uint16_t index) {
-#if ZuMatcher_Switch
-    return ZuSwitch::dispatch<length()>(index, [](auto I) {
-      constexpr uint16_t Index = I;
-      constexpr uint8_t Output = automaton.nodes[Index].output;
-      return Output;
-    });
-#else
-    return automaton.nodes[index].output;
-#endif
+    if constexpr (Switch)
+      return ZuSwitch::dispatch<length()>(index, [](auto I) {
+	constexpr uint16_t Index = I;
+	constexpr uint8_t Output = automaton.nodes[Index].output;
+	return Output;
+      });
+    else
+      return automaton.nodes[index].output;
   }
   ZuInline static constexpr uint16_t fail_(uint16_t index) {
-#if ZuMatcher_Switch
-    return ZuSwitch::dispatch<length()>(index, [](auto I) {
-      constexpr uint16_t Index = I;
-      constexpr uint16_t Fail = automaton.nodes[Index].fail;
-      return Fail;
-    });
-#else
-    return automaton.nodes[index].fail;
-#endif
+    if constexpr (Switch)
+      return ZuSwitch::dispatch<length()>(index, [](auto I) {
+	constexpr uint16_t Index = I;
+	constexpr uint16_t Fail = automaton.nodes[Index].fail;
+	return Fail;
+      });
+    else
+      return automaton.nodes[index].fail;
   }
 
   // prefix match of keys at the beginning of the passed string
@@ -413,8 +403,8 @@ struct Matcher {
   }
 };
 
-template <typename ID>
-struct Matcher<ID, 0> {
+template <typename ID, bool Switch>
+struct Matcher<ID, Switch, 0> {
   using Keys = typename ID::Keys;
 
   ZuAssert(Keys::N == 0);
@@ -425,8 +415,8 @@ struct Matcher<ID, 0> {
   static constexpr ZuTuple<int, int> find(ZuCSpan) { return {-1, -1}; }
 };
 
-template <typename ID>
-struct Matcher<ID, 1> {
+template <typename ID, bool Switch>
+struct Matcher<ID, Switch, 1> {
   using Keys = typename ID::Keys;
   using Key = ZuType<0, Keys>;
 
@@ -453,11 +443,11 @@ struct Matcher<ID, 1> {
 } // Zu_::AhoCorasick
 
 // ZuMatcher<ID>(), where ID::Keys is a ZuTypeList
-template <typename ID>
+template <typename ID, bool Switch = true>
 constexpr auto ZuMatcher() {
   using Keys = typename ID::Keys;
   ZuAssert(Keys::N < 256);
-  return Zu_::AhoCorasick::Matcher<ID>{};
+  return Zu_::AhoCorasick::Matcher<ID, Switch>{};
 }
 
 #endif /* ZuMatcher_HH */

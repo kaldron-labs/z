@@ -187,9 +187,10 @@ public:
   }
 
 private:
-  template <typename Impl, typename Tag, typename Object>
-  static auto close_(Impl *impl, Tag tag, Object *object, int) ->
-      decltype(impl->close(tag, object), void()) {
+  template <typename Impl, typename Tag, typename Object,
+    typename = decltype(ZuDeclVal<Impl * &>()->close(ZuDeclVal<Tag &>(),
+      ZuDeclVal<Object * &>()), void())>
+  static void close_(Impl *impl, Tag tag, Object *object, int) {
     impl->close(tag, object);
   }
   template <typename Impl, typename Tag, typename Object>
@@ -201,10 +202,12 @@ private:
   void	(*m_releaseFn)(void *) = nullptr;
 };
 
-template <typename Impl, typename Tag, typename ...Args>
-auto openContext(Impl *impl, Tag tag, int, Args &&...args) ->
-    decltype(ContextRef{
-      impl, tag, impl->open(tag, ZuFwd<Args>(args)...)} )
+template <typename Impl, typename Tag, typename ...Args,
+  typename = decltype(ContextRef{
+      ZuDeclVal<Impl * &>(), ZuDeclVal<Tag &>(),
+	ZuDeclVal<Impl * &>()->open(ZuDeclVal<Tag &>(),
+	ZuFwd<Args>(ZuDeclVal<Args &>())...)})>
+ContextRef openContext(Impl *impl, Tag tag, int, Args &&...args)
 {
   return ContextRef{
     impl, tag, impl->open(tag, ZuFwd<Args>(args)...)};
@@ -732,10 +735,10 @@ public:
   HTTPSSEBuilder() = default;
   explicit HTTPSSEBuilder(Limits limits_) : m_limits{limits_} { }
 
-  template <typename Owner>
-  auto owner(Owner *owner_, int) ->
-      decltype(owner_->postSSE_(),
-        owner_->discardSSE_(Server_::SSEQueue{}), void()) {
+  template <typename Owner,
+    typename = decltype(ZuDeclVal<Owner * &>()->postSSE_(),
+	ZuDeclVal<Owner * &>()->discardSSE_(Server_::SSEQueue{}), void())>
+  void owner(Owner *owner_, int) {
     m_owner = owner_;
     m_postFn = [](void *owner__) {
       return static_cast<Owner *>(owner__)->postSSE_();
@@ -2491,15 +2494,15 @@ private:
     return i.del();
   }
 
-  template <typename App>
-  static auto closed_(App *app, int) ->
-      decltype(app->closed(), void()) { app->closed(); }
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->closed(), void())>
+  static void closed_(App *app, int) { app->closed(); }
   template <typename App>
   static void closed_(App *, long) { }
 
-  template <typename App>
-  static auto failed_(App *app, int) ->
-      decltype(app->failed(), void()) { app->failed(); }
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->failed(), void())>
+  static void failed_(App *app, int) { app->failed(); }
   template <typename App>
   static void failed_(App *, long) { }
 

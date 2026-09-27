@@ -446,7 +446,7 @@ public:
 
   using Node = ZmLHash_Node<T, KeyAxor, ValAxor>;
   using Ops = ZmLHash_Ops<Node>;
- 
+
 private:
   // CheckHashFn ensures that legacy hash functions returning int
   // trigger a compile-time assertion failure; hash() must return uint32_t
@@ -597,7 +597,7 @@ public:
 
     using Base = Iter_;
     using Base::hash;
- 
+
     void lock(Lock &l) { LockTraits::readlock(l); }
     void unlock(Lock &l) { LockTraits::readunlock(l); }
 
@@ -712,7 +712,7 @@ public:
   ~ZmLHash() { Base::final(); }
 
   unsigned size() const {
-    return double(uint64_t(1)<<bits()) * loadFactor();
+    return double(uint64_t(1)<<bits()) *loadFactor();
   }
 
   template <typename P>
@@ -825,64 +825,65 @@ private:
   }
 
 public:
-  template <typename P>
-  MatchKey<P, bool> exists(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return find_(matchKey(key), code) >= 0;
-  }
-  template <typename P>
-  MatchData<P, bool> exists(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return find_(matchData(data), code) >= 0;
+
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  bool exists(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return find_(matchKey(key), code) >= 0;
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return find_(matchData(key), code) >= 0;
+    }
   }
 
-  template <typename P>
-  MatchKey<P, const T *> find(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return ptr_(find_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, const T *> find(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return ptr_(find_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  const T *find(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return ptr_(find_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return ptr_(find_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   const T *find(P0 &&p0, P1 &&p1) {
     return find(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Key> findKey(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return key_(find_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Key> findKey(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return key_(find_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Key findKey(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return key_(find_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return key_(find_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   Key findKey(P0 &&p0, P1 &&p1) {
     return findKey(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Val> findVal(const P &key) const {
-    uint32_t code = HashFn::hash(key);
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return val_(find_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Val> findVal(const P &data) const {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    ReadGuard guard(const_cast<Lock &>(m_lock));
-    return val_(find_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Val findVal(const P &key) const {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return val_(find_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      ReadGuard guard(const_cast<Lock &>(m_lock));
+      return val_(find_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   Val findVal(P0 &&p0, P1 &&p1) {
@@ -970,17 +971,18 @@ private:
   }
 
 public:
-  template <typename P>
-  MatchKey<P> del(const P &key) {
-    uint32_t code = HashFn::hash(key);
-    Guard guard(m_lock);
-    del_(findPrev_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P> del(const P &data) {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    Guard guard(m_lock);
-    del_(findPrev_(matchData(data), code));
+
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  void del(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      Guard guard(m_lock);
+      del_(findPrev_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      Guard guard(m_lock);
+      del_(findPrev_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   void del(P0 &&p0, P1 &&p1) {
@@ -990,34 +992,34 @@ public:
     del_(findPrev_(matchData(data), code));
   }
 
-  template <typename P>
-  MatchKey<P, Key> delKey(const P &key) {
-    uint32_t code = HashFn::hash(key);
-    Guard guard(m_lock);
-    return delKey_(findPrev_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Key> delKey(const P &data) {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    Guard guard(m_lock);
-    return delKey_(findPrev_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Key delKey(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      Guard guard(m_lock);
+      return delKey_(findPrev_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      Guard guard(m_lock);
+      return delKey_(findPrev_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   Key delKey(P0 &&p0, P1 &&p1) {
     return delKey(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Val> delVal(const P &key) {
-    uint32_t code = HashFn::hash(key);
-    Guard guard(m_lock);
-    return delVal_(findPrev_(matchKey(key), code));
-  }
-  template <typename P>
-  MatchData<P, Val> delVal(const P &data) {
-    uint32_t code = HashFn::hash(KeyAxor(data));
-    Guard guard(m_lock);
-    return delVal_(findPrev_(matchData(data), code));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Val delVal(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      uint32_t code = HashFn::hash(key);
+      Guard guard(m_lock);
+      return delVal_(findPrev_(matchKey(key), code));
+    } else {
+      uint32_t code = HashFn::hash(KeyAxor(key));
+      Guard guard(m_lock);
+      return delVal_(findPrev_(matchData(key), code));
+    }
   }
   template <typename P0, typename P1>
   Val delVal(P0 &&p0, P1 &&p1) {
@@ -1206,7 +1208,7 @@ private:
     int slot = iter.slot;
     if (slot < 0) return;
     bool advanceRegardless =
-      !m_table[slot].tail() && int(m_table[slot].next()) < slot;
+      !m_table[slot].tail() &&int(m_table[slot].next()) < slot;
     del__(m_table[slot].head() ? (-slot - 2) : prev(slot));
     if (!advanceRegardless && !!m_table[slot]) iter.next = slot;
     iter.slot = -1;

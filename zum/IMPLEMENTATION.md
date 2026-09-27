@@ -387,9 +387,10 @@ These are durable-image recovery tests, not process-kill tests. Python syntax
 and diff whitespace checks pass; all new runtime gates remain UNRUN. The build
 has not yet reached itest, so these source edits join the existing build batch.
 
-Offline rotation driver and CLI now written: zumd --rekey takes existing
-ZUM_DB_KEY and environment-only ZUM_DB_NEW_KEY, starts no HTTP/upstream client,
-waits for native activation, and drains shutdown before its completion message.
+Historical rotation driver and CLI (since superseded by Vault) took two
+environment keys, started no HTTP/upstream client, waited for native
+activation, and drained shutdown before its completion message. The current
+interface loads the old key from Vault and takes the new key as `ZUM_DB_KEY`.
 ZumRekey.cc uses one indexed key/row and one native saga in flight, marks the
 target key pending, rewraps provider/evidence/signing-key fields, verifies a
 second pass, then switches the key binding. Completed retries verify without

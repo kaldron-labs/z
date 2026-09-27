@@ -1,32 +1,17 @@
 # TODO
 
-## Ztls Vault
+complete `zumd2.md`
 
-/goal act as a skeptical principal software engineer
-- audit the implementation of `plan.md` against **all** `GUIDELINES.md` flags and guidelines
-- scrutinize all new in-memory containers
-  - can they be replaced by better code algorithms?
-  - can they be made leaner or simpler?
-  - can multiple containers be consolidated into fewer?
-- scrutinize all transforming/parsing/building/formatting/marshalling/unmarshalling
-  - are any of these operations redundantly repeated?
-  - can any operations be elided by retaining and re-using outputs?
-  - can mutations be performed in-place (overwriting) to avoid unnecessary copying?
-  - do these operations make use of the correct Z framework capabilities?
-- scrutinize all copies and heap allocations
-  - can the copy be elided?
-  - should in-place mutation be used?
-  - can the allocation be replaced by on-stack scratch storplan with heap fallback, e.g. `ZtScratch`
-- repair all findings
-- limit scope to `plan.md` work
+complete `ztcagent.md`
 
-modify all `zum` confidential clients, including `zumping`, `ztchub_client`, `zdash`:
-- adopt `Ztls::Vault` to store credentials
+implement `zumd.md` (telemetry publishing)
+
+`ZiFileTxStream::append` throws
+- there are numerous lingering `throw ZeEXCEPT` cases which should probably be `ZuUnion` returns and/or hard aborts
 
 ## zdash
 
 - get running, retest
-- use `Ztls::Vault` for local credential storage
 
 ## Zdb
 

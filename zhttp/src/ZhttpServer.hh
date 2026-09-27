@@ -47,18 +47,18 @@ struct StreamState {
 
 namespace Server_ {
 
-template <typename App>
-auto connected(App *app, Session session, int) ->
-    decltype(app->connected(session), void())
+template <typename App,
+  typename = decltype(ZuDeclVal<App * &>()->connected(ZuDeclVal<Session &>()), void())>
+void connected(App *app, Session session, int)
 {
   app->connected(session);
 }
 template <typename App>
 void connected(App *, Session, ...) { }
 
-template <typename App>
-auto disconnected(App *app, Session session, int) ->
-    decltype(app->disconnected(session), void())
+template <typename App,
+  typename = decltype(ZuDeclVal<App * &>()->disconnected(ZuDeclVal<Session &>()), void())>
+void disconnected(App *app, Session session, int)
 {
   app->disconnected(session);
 }
@@ -67,7 +67,7 @@ void disconnected(App *, Session, ...) { }
 
 inline bool streamTxThread(int txThread)
 {
-  bool valid = ZmSelf() && ZmSelf()->sid() == txThread;
+  bool valid = ZmSelf() &&ZmSelf()->sid() == txThread;
   ZiAssert(valid, "Zhttp", (), "response stream called outside its Tx shard",
     return false);
   return valid;
@@ -200,7 +200,6 @@ struct ServerSession {
   template <typename Link>
   int request(Link &, Parser &) { return 1; }
 };
-
 
 template <typename App, typename Profile>
 class ProtocolServer :

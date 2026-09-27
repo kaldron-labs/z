@@ -16,7 +16,6 @@ noinst_PROGRAMS = ZdashSchemaTest
 ZdashSchemaTest_SOURCES = ZdashSchemaTest.cc
 noinst_LTLIBRARIES = zdash_test.la
 zdash_test_la_SOURCES = ZdashTest.cc ../src/zdash_module.hh
-zdash_test_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 zdash_test_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)
 zdash_test_la_LIBADD = $(top_builddir)/ztc/src/libZtc.la \
 	$(top_builddir)/zdf/src/libZdf.la $(top_builddir)/zdb/src/libZdb.la \

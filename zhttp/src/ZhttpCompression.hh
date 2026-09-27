@@ -86,52 +86,51 @@ public:
     return *this;
   }
 
-  template <typename U>
-  ZuIfT<IsPrintString<U>{}, PrintBytes &> operator <<(const U &v) {
-    auto data = ZuTraits<U>::data(v);
-    auto n = ZuTraits<U>::length(v);
-    if constexpr (HasBuffer<Bytes>{}) {
-      uint64_t offset = m_out.length();
-      auto ptr = m_out.ensure(offset + n) + offset;
-      if (n) memcpy(ptr, data, n);
-      m_out.length(offset + n);
-    }
-    else
-      for (decltype(n) i = 0; i < n; ++i)
-	m_out.push(uint8_t(data[i]));
-    return *this;
-  }
-  template <typename U>
-  ZuIfT<!IsPrintString<U>{} && ZuPrint<U>::Delegate, PrintBytes &>
-  operator <<(const U &v) {
-    ZuPrint<U>::print(*this, v);
-    return *this;
-  }
-  template <typename U>
-  ZuIfT<!IsPrintString<U>{} && ZuPrint<U>::Buffer, PrintBytes &>
-  operator <<(const U &v) {
-    unsigned n = ZuPrint<U>::length(v);
-    if constexpr (HasBuffer<Bytes>{}) {
-      uint64_t offset = m_out.length();
-      auto ptr = reinterpret_cast<char *>(m_out.ensure(offset + n) + offset);
-      n = ZuPrint<U>::print(ptr, n, v);
-      m_out.length(offset + n);
-    } else {
-      auto data = static_cast<char *>(ZuAlloca(n, 1));
-      if (ZuUnlikely(!data && n)) {
-	m_ok = false;
-	return *this;
+  template <typename U,
+    typename = ZuIfT<
+      (IsPrintString<U>{}) ||
+      (!IsPrintString<U>{} && ZuPrint<U>::Delegate) ||
+      (!IsPrintString<U>{} && ZuPrint<U>::Buffer)>>
+  PrintBytes & operator <<(const U &v) {
+    if constexpr (IsPrintString<U>{}) {
+      auto data = ZuTraits<U>::data(v);
+      auto n = ZuTraits<U>::length(v);
+      if constexpr (HasBuffer<Bytes>{}) {
+	uint64_t offset = m_out.length();
+	auto ptr = m_out.ensure(offset + n) + offset;
+	if (n) memcpy(ptr, data, n);
+	m_out.length(offset + n);
       }
-      n = ZuPrint<U>::print(data, n, v);
-      for (unsigned i = 0; i < n; ++i) m_out.push(uint8_t(data[i]));
+      else
+	for (decltype(n) i = 0; i < n; ++i)
+	  m_out.push(uint8_t(data[i]));
+      return *this;
+    } else if constexpr (!IsPrintString<U>{} && ZuPrint<U>::Delegate) {
+      ZuPrint<U>::print(*this, v);
+      return *this;
+    } else {
+      unsigned n = ZuPrint<U>::length(v);
+      if constexpr (HasBuffer<Bytes>{}) {
+	uint64_t offset = m_out.length();
+	auto ptr = reinterpret_cast<char *>(m_out.ensure(offset + n) + offset);
+	n = ZuPrint<U>::print(ptr, n, v);
+	m_out.length(offset + n);
+      } else {
+	auto data = static_cast<char *>(ZuAlloca(n, 1));
+	if (ZuUnlikely(!data && n)) {
+	  m_ok = false;
+	  return *this;
+	}
+	n = ZuPrint<U>::print(data, n, v);
+	for (unsigned i = 0; i < n; ++i) m_out.push(uint8_t(data[i]));
+      }
+      return *this;
     }
-    return *this;
   }
-  template <typename U>
-  ZuIfT<
-    !ZuPrint<U>::OK && ZuTraits<U>::IsReal &&
-      ZuTraits<U>::IsPrimitive && !ZuTraits<U>::IsArray,
-    PrintBytes &>
+  template <typename U,
+    typename = ZuIfT<!ZuPrint<U>::OK && ZuTraits<U>::IsReal &&
+      ZuTraits<U>::IsPrimitive && !ZuTraits<U>::IsArray>>
+  PrintBytes &
   operator <<(U v) {
     return *this << ZuBoxed(v);
   }
@@ -392,7 +391,7 @@ inline int decodeString(
   if (length > size - offset) return -2;
   ZuBSpan raw{&in[offset], unsigned(length)};
   offset += unsigned(length);
-  if (!(first & HuffmanMask)) {
+  if (!(first &HuffmanMask)) {
     out = raw;
     return int(raw.length());
   }

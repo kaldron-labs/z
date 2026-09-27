@@ -217,13 +217,13 @@ private:
     r.evictions = m_evictions;
   }
 public:
-  template <bool Reset = false>
-  ZuIfT<!Reset> stats(Stats &r) const {
+  template <bool Reset = false, typename = ZuIfT<!Reset>>
+  void stats(Stats &r) const {
     ReadGuard guard{m_lock};
     stats_(r);
   }
-  template <bool Reset = false>
-  ZuIfT<Reset> stats(Stats &r) {
+  template <bool Reset = false, typename = ZuIfT<Reset>>
+  void stats(Stats &r) {
     Guard guard{m_lock};
     stats_(r);
     m_loads = m_misses = m_evictions = 0;
@@ -318,20 +318,21 @@ private:
 
 public:
 
-  template <bool Evict_ = Evict>
-  ZuIfT<!Evict_ || !Evict> add(NodeRef node) {
-    Guard guard{m_lock};
-    add_<false>(ZuMv(node));
+  template <bool Evict_ = Evict,
+    typename = void>
+  void add(NodeRef node) {
+    if constexpr (!Evict_ || !Evict) {
+      Guard guard{m_lock};
+      add_<false>(ZuMv(node));
+    } else {
+      Guard guard{m_lock};
+      add_<true>(ZuMv(node), [](Node *) { return true; });
+    }
   }
 
-  template <bool Evict_ = Evict>
-  ZuIfT<Evict_ && Evict> add(NodeRef node) {
-    Guard guard{m_lock};
-    add_<true>(ZuMv(node), [](Node *) { return true; });
-  }
-
-  template <bool Evict_ = Evict, typename EvictFn>
-  ZuIfT<Evict_ && Evict> add(NodeRef node, EvictFn evictFn) {
+  template <bool Evict_ = Evict, typename EvictFn,
+    typename = ZuIfT<Evict_ && Evict>>
+  void add(NodeRef node, EvictFn evictFn) {
     Guard guard{m_lock};
     add_<true>(ZuMv(node), ZuMv(evictFn));
   }
@@ -375,20 +376,21 @@ private:
     return nullptr;
   }
 
-  template <bool Evict_ = Evict>
-  ZuIfT<!Evict_ || !Evict> add_(NodeRef node) {
-    Node *nodePtr = node;
-    m_hash.add(ZuMv(node));
-    if constexpr (Evict) m_lru.pushNode(nodePtr);
+  template <bool Evict_ = Evict,
+    typename = void>
+  void add_(NodeRef node) {
+    if constexpr (!Evict_ || !Evict) {
+      Node *nodePtr = node;
+      m_hash.add(ZuMv(node));
+      if constexpr (Evict) m_lru.pushNode(nodePtr);
+    } else {
+      add_(ZuMv(node), [](Node *) { return true; });
+    }
   }
 
-  template <bool Evict_ = Evict>
-  ZuIfT<Evict_ && Evict> add_(NodeRef node) {
-    add_(ZuMv(node), [](Node *) { return true; });
-  }
-
-  template <bool Evict_ = Evict, typename EvictFn>
-  ZuIfT<Evict_ && Evict> add_(NodeRef node, EvictFn evictFn) {
+  template <bool Evict_ = Evict, typename EvictFn,
+    typename = ZuIfT<Evict_ && Evict>>
+  void add_(NodeRef node, EvictFn evictFn) {
     Node *nodePtr = node;
     if (m_hash.count_() >= m_size) {
       if (NodeMvRef evicted = m_lru.shift()) {
@@ -450,7 +452,7 @@ private:
 
 private:
   unsigned		m_size;
- 
+
   mutable Lock		m_lock;
     PolyHash		  m_hash;
     LRU			  m_lru;

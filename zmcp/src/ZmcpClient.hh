@@ -236,8 +236,7 @@ struct HTTPRequestBuilder : public Zhttp::ReqBuilder {
       if (sessionID) l(sessionID);
     } else if constexpr (ZuIsSame<Key, Method>{}) {
       if (era == Era::Modern) l(message.method());
-    }
-    else if constexpr (ZuIsSame<Key, Name>{}) {
+    } else if constexpr (ZuIsSame<Key, Name>{}) {
       if (era != Era::Modern) return;
       auto name = message.name();
       if (name) headerValue(name, ZuFwd<L>(l));
@@ -270,9 +269,9 @@ struct HTTPRequestBuilder : public Zhttp::ReqBuilder {
     Zhttp::contentLengthSet(l, bodyLength);
   }
 
-  template <typename M>
-  static auto empty_(const M &message_, int) ->
-      decltype(message_.empty(), bool()) {
+  template <typename M,
+    typename = decltype(ZuDeclVal<const M &>().empty(), bool())>
+  static bool empty_(const M &message_, int) {
     return message_.empty();
   }
   template <typename M>
@@ -649,22 +648,24 @@ private:
 
 namespace Client_ {
 
-template <typename App>
-auto progress(
+template <typename App,
+  typename = decltype(ZuDeclVal<App * &>()->progress(ZuDeclVal<const ID &>(),
+    ZuDeclVal<double &>(), ZuDeclVal<double &>(), ZuDeclVal<ZuCSpan &>()), void())>
+void progress(
     App *app, const ID &token, double value, double total,
-    ZuCSpan message, int) ->
-  decltype(app->progress(token, value, total, message), void())
+    ZuCSpan message, int)
 {
   app->progress(token, value, total, message);
 }
 template <typename App>
 void progress(App *, const ID &, double, double, ZuCSpan, long) { }
 
-template <typename App>
-auto logging(
+template <typename App,
+  typename = decltype(ZuDeclVal<App * &>()->logging(ZuDeclVal<ZuCSpan &>(),
+    ZuDeclVal<const ZfJSON::AnyNode * &>(), ZuDeclVal<ZuCSpan &>()), void())>
+void logging(
     App *app, ZuCSpan level, const ZfJSON::AnyNode *data,
-    ZuCSpan logger, int) ->
-  decltype(app->logging(level, data, logger), void())
+    ZuCSpan logger, int)
 {
   app->logging(level, data, logger);
 }
@@ -1214,7 +1215,7 @@ public:
       const HTTPResponseMeta &meta) {
     if (m_request &&
 	!m_request->client->receive(
-	  m_request, status, ZuMv(body), meta) && link)
+	  m_request, status, ZuMv(body), meta) &&link)
       link->disconnect();
   }
 
@@ -1650,9 +1651,9 @@ public:
   }
 
 private:
-  template <typename Key, typename App, typename L>
-  static auto requestHeader_(App *app, L &&l, int) ->
-      decltype(app->template header<Key>(ZuFwd<L>(l)), void()) {
+  template <typename Key, typename App, typename L,
+    typename = decltype(ZuDeclVal<App * &>()->template header<Key>(ZuFwd<L>(ZuDeclVal<L &>())), void())>
+  static void requestHeader_(App *app, L &&l, int) {
     app->template header<Key>(ZuFwd<L>(l));
   }
   template <typename Key, typename App, typename L>
@@ -1740,17 +1741,17 @@ private:
     return ok;
   }
 
-  template <typename App>
-  static auto tools_(App *app, const ZfJSON::AnyNode *catalog, int) ->
-      decltype(app->tools(catalog), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->tools(ZuDeclVal<const ZfJSON::AnyNode * &>()), void())>
+  static void tools_(App *app, const ZfJSON::AnyNode *catalog, int) {
     app->tools(catalog);
   }
   template <typename App>
   static void tools_(App *, const ZfJSON::AnyNode *, long) { }
 
-  template <typename App>
-  static auto toolsFailed_(App *app, int) ->
-      decltype(app->toolsFailed(), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->toolsFailed(), void())>
+  static void toolsFailed_(App *app, int) {
     app->toolsFailed();
   }
   template <typename App>
@@ -1847,25 +1848,26 @@ private:
     return Base::cancel(0, entry->sequence);
   }
 
-  template <typename Call>
-  static auto started_(Call *call, const ID &id, int) ->
-      decltype(call->started(id), void()) {
+  template <typename Call,
+    typename = decltype(ZuDeclVal<Call * &>()->started(ZuDeclVal<const ID &>()), void())>
+  static void started_(Call *call, const ID &id, int) {
     call->started(id);
   }
   template <typename Call>
   static void started_(Call *, const ID &, long) { }
 
-  template <typename App>
-  static auto cancelled_(App *app, const ID &id, bool ok, int) ->
-      decltype(app->cancelled(id, ok), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->cancelled(ZuDeclVal<const ID &>(),
+      ZuDeclVal<bool &>()), void())>
+  static void cancelled_(App *app, const ID &id, bool ok, int) {
     app->cancelled(id, ok);
   }
   template <typename App>
   static void cancelled_(App *, const ID &, bool, long) { }
 
-  template <typename App>
-  static auto terminated_(App *app, bool ok, int) ->
-      decltype(app->terminated(ok), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->terminated(ZuDeclVal<bool &>()), void())>
+  static void terminated_(App *app, bool ok, int) {
     app->terminated(ok);
   }
   template <typename App>
@@ -2339,33 +2341,34 @@ private:
     m_stdio->stop_();
   }
 
-  template <typename Call>
-  static auto started_(Call *call, const ID &id, int) ->
-      decltype(call->started(id), void()) {
+  template <typename Call,
+    typename = decltype(ZuDeclVal<Call * &>()->started(ZuDeclVal<const ID &>()), void())>
+  static void started_(Call *call, const ID &id, int) {
     call->started(id);
   }
   template <typename Call>
   static void started_(Call *, const ID &, long) { }
 
-  template <typename App>
-  static auto tools_(App *app, const ZfJSON::AnyNode *catalog, int) ->
-      decltype(app->tools(catalog), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->tools(ZuDeclVal<const ZfJSON::AnyNode * &>()), void())>
+  static void tools_(App *app, const ZfJSON::AnyNode *catalog, int) {
     app->tools(catalog);
   }
   template <typename App>
   static void tools_(App *, const ZfJSON::AnyNode *, long) { }
 
-  template <typename App>
-  static auto toolsFailed_(App *app, int) ->
-      decltype(app->toolsFailed(), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->toolsFailed(), void())>
+  static void toolsFailed_(App *app, int) {
     app->toolsFailed();
   }
   template <typename App>
   static void toolsFailed_(App *, long) { }
 
-  template <typename App>
-  static auto cancelled_(App *app, const ID &id, bool ok, int) ->
-      decltype(app->cancelled(id, ok), void()) {
+  template <typename App,
+    typename = decltype(ZuDeclVal<App * &>()->cancelled(ZuDeclVal<const ID &>(),
+      ZuDeclVal<bool &>()), void())>
+  static void cancelled_(App *app, const ID &id, bool ok, int) {
     app->cancelled(id, ok);
   }
   template <typename App>

@@ -150,6 +150,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Prefer CRTP, templates, and compile-time dispatch over virtual polymorphism.
 - Use templates and CRTP to factor common code; keep logic DRY without adding weak abstractions.
 - Express constraints with SFINAE and detector traits.
+  - Keep function return types free of SFINAE expressions; put the test in a trailing `typename = ...` template parameter to avoid encoding it in every symbol.
+  - Consolidate overloads that would otherwise become redeclarations with `if constexpr`, preserving their combined participation constraint and result types.
+  - Generic hidden friends from different class specializations need a class-specific template discriminator; defaulted type constraints alone do not distinguish their declarations.
   - Prefer `typename = void` plus `decltype(CODE, void())` specializations to test whether `CODE` is well-formed.
   - Do not replace established `ZuIfT`/detector idioms with concepts.
 - For optional CRTP callbacks, prefer side-effect-safe base defaults and direct calls such as `impl()->callback(...)`.
@@ -539,7 +542,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
     ```
     template <typename Heap = ZuVoid>
     class X_ : public Heap { ... };
-    using X_Heap = ZmHeap<"X", X_<>>;
+    ZuDerive(X_Heap, (ZmHeap<"X", X_<>>));
     ZuDerive(X, X_<X_Heap>);
     ```
     - Key properties of the pattern:

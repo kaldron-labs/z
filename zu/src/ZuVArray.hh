@@ -44,8 +44,8 @@ public:
   template <typename _ = T, ZuNotSame<U, _, int> = 0>
   operator U() const { return get(); }
 
-  template <bool _ = Mutable>
-  ZuIfT<_, Elem &> operator =(T v);
+  template <bool _ = Mutable, typename = ZuIfT<_>>
+  Elem & operator =(T v);
 
   bool equals(const Elem &r) const { return get() == r.get(); }
   int cmp(const Elem &r) const { return ZuCmp<T>::cmp(get(), r.get()); }
@@ -142,12 +142,12 @@ friend Elem;
   Elem operator[](uint64_t i) { return {*this, i}; }
 
 // iteration - all() is const by default, all<true>() is mutable
-  template <bool _ = false, typename L>
-  ZuIfT<!_> all(L &&l) const {
+  template <bool _ = false, typename L, typename = ZuIfT<!_>>
+  void all(L &&l) const {
     for (uint64_t i = 0, n = m_length; i < n; i++) ZuFwd<L>(l)((*this)[i]);
   }
-  template <bool _, typename L>
-  ZuIfT<_> all(L &&l) {
+  template <bool _, typename L, typename = ZuIfT<_>>
+  void all(L &&l) {
     for (uint64_t i = 0, n = m_length; i < n; i++) ZuFwd<L>(l)((*this)[i]);
   }
 
@@ -221,8 +221,8 @@ inline typename Array::R Elem<Array>::get() const {
 }
 
 template <typename Array>
-template <bool Mutable_>
-inline ZuIfT<Mutable_, Elem<Array> &>
+template <bool Mutable_, typename>
+inline Elem<Array> &
 Elem<Array>::operator =(typename Array::T v) {
   (*array.m_setFn)(array.m_ptr, i, ZuMv(v));
   return *this;

@@ -34,7 +34,6 @@
 
 namespace Zhttp {
 
-
 namespace H2 {
 
 class QueueAdmission {
@@ -60,8 +59,9 @@ private:
 
 namespace H2_ {
 
-template <typename Link>
-auto hpackSeedPlans_(Link *link, int) -> decltype(link->hpackSeedPlans()) {
+template <typename Link,
+  typename = decltype(ZuDeclVal<Link * &>()->hpackSeedPlans())>
+decltype(auto) hpackSeedPlans_(Link *link, int) {
   return link->hpackSeedPlans();
 }
 struct EmptyHPackPlan {
@@ -113,7 +113,6 @@ using StreamHash = ZmHash<Stream<Logical>,
 
 } // namespace H2_
 
-
 namespace TLS_ {
 
 inline bool validPolicy(H2Policy::T policy)
@@ -131,7 +130,7 @@ inline bool valid(const H2Config &config)
     config.maxConcurrentStreams() && config.maxPending() &&
     config.maxQueuedFrames() && config.maxStreamID() &&
     config.maxStreamID() <= H2::MaxWindow &&
-    (config.maxStreamID() & 1U) && validPolicy(config.policy());
+    (config.maxStreamID() & 1U) &&validPolicy(config.policy());
 }
 
 template <typename Params>
@@ -455,8 +454,8 @@ public:
 	m_encoder.emitFixed(*m_block, {name, value}, m_reserved) < 0)
       m_valid = false;
   }
-  template <typename P>
-  ZuIfT<!Compression::IsPrintString<P>{}>
+  template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+  void
   fieldFixed(ZuBSpan name, const P &value) {
     if (!m_valid) return;
     auto rendered = ZtScratch(HPackBytes, 256);
@@ -467,18 +466,18 @@ public:
 	  *m_block, {name, rendered}, m_reserved) < 0)
       m_valid = false;
   }
-  template <typename P>
-  ZuIfT<!Compression::IsPrintString<P>{}>
+  template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+  void
   field(ZuBSpan name, const P &value) {
     fieldPrint_(name, value);
   }
-  template <typename P>
-  ZuIfT<!Compression::IsPrintString<P>{}>
+  template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+  void
   fieldName(ZuBSpan name, const P &value) {
     fieldNamePrint_(name, value);
   }
-  template <typename P>
-  ZuIfT<!Compression::IsPrintString<P>{}>
+  template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+  void
   fieldLiteral(ZuBSpan name, const P &value) {
     fieldLiteralPrint_(name, value);
   }

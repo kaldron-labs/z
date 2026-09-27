@@ -84,20 +84,20 @@ template <typename T> ZuPrintPtr(T *) -> ZuPrintPtr<T>;
 
 template <typename Impl, typename S> struct ZuStdStream_ {
   enum { OK = 1 };
-  template <typename P>
-  static ZuIfT<ZuPrint<P>::String> print(S &s, const P &p) {
-    const typename ZuTraits<P>::Elem *ptr = ZuTraits<P>::data(p);
-    if (ZuLikely(ptr)) Impl::append(s, ptr, ZuTraits<P>::length(p));
-  }
-  template <typename P>
-  static ZuIfT<ZuPrint<P>::Delegate> print(S &s, const P &p) {
-    ZuPrint<P>::print(s, p);
-  }
-  template <typename P>
-  static ZuIfT<ZuPrint<P>::Buffer> print(S &s, const P &p) {
-    unsigned len = ZuPrint<P>::length(p);
-    auto buf = static_cast<char *>(ZuAlloca(len, 1));
-    if (ZuLikely(buf)) Impl::append(s, buf, ZuPrint<P>::print(buf, len, p));
+
+  template <typename P,
+    typename = ZuIfT<(ZuPrint<P>::String) || (ZuPrint<P>::Delegate) || (ZuPrint<P>::Buffer)>>
+  static void print(S &s, const P &p) {
+    if constexpr (ZuPrint<P>::String) {
+      const typename ZuTraits<P>::Elem *ptr = ZuTraits<P>::data(p);
+      if (ZuLikely(ptr)) Impl::append(s, ptr, ZuTraits<P>::length(p));
+    } else if constexpr (ZuPrint<P>::Delegate) {
+      ZuPrint<P>::print(s, p);
+    } else {
+      unsigned len = ZuPrint<P>::length(p);
+      auto buf = static_cast<char *>(ZuAlloca(len, 1));
+      if (ZuLikely(buf)) Impl::append(s, buf, ZuPrint<P>::print(buf, len, p));
+    }
   }
 };
 
@@ -131,12 +131,12 @@ struct ZuStdStreamable { enum { OK = 0 }; };
 template <typename S, typename P>
 struct ZuStdStreamable<S, P, true> { enum { OK = ZuPrint<P>::OK }; };
 
-template <typename S, typename P>
-inline ZuIfT<ZuStdStreamable<S, P>::OK, S &>
+template <typename S, typename P, typename = ZuIfT<ZuStdStreamable<S, P>::OK>>
+inline S &
 operator <<(S &s, const P &p) { ZuStdStream<S>::print(s, p); return s; }
 
-template <typename S, typename P>
-inline ZuIfT<ZuStdStreamable<S, P>::OK, S &>
+template <typename S, typename P, typename = ZuIfT<ZuStdStreamable<S, P>::OK>>
+inline S &
 operator +=(S &s, const P &p) { ZuStdStream<S>::print(s, p); return s; }
 
 #endif /* ZuPrint_HH */

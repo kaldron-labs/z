@@ -22,37 +22,40 @@
 namespace Zws {
 namespace H1_ {
 
-template <typename App, typename Link>
-auto connected(
-    App &app, Link &link, Zhttp::ConnectedInfo info, int) ->
-  decltype(app.connected(link, ZuMv(info)), void())
+template <typename App, typename Link,
+  typename = decltype(ZuDeclVal<App &>().connected(ZuDeclVal<Link &>(),
+    ZuMv(ZuDeclVal<Zhttp::ConnectedInfo &>())), void())>
+void connected(
+    App &app, Link &link, Zhttp::ConnectedInfo info, int)
 {
   app.connected(link, ZuMv(info));
 }
 template <typename App, typename Link>
 void connected(App &, Link &, Zhttp::ConnectedInfo, ...) { }
 
-template <typename App, typename Link>
-auto disconnected(App &app, Link &link, bool peer, int) ->
-  decltype(app.disconnected(link, peer), void())
+template <typename App, typename Link,
+  typename = decltype(ZuDeclVal<App &>().disconnected(ZuDeclVal<Link &>(),
+    ZuDeclVal<bool &>()), void())>
+void disconnected(App &app, Link &link, bool peer, int)
 {
   app.disconnected(link, peer);
 }
 template <typename App, typename Link>
 void disconnected(App &, Link &, bool, ...) { }
 
-template <typename App, typename Link>
-auto connectFailed(App &app, Link &link, bool transient, int) ->
-  decltype(app.connectFailed(link, transient), void())
+template <typename App, typename Link,
+  typename = decltype(ZuDeclVal<App &>().connectFailed(ZuDeclVal<Link &>(),
+    ZuDeclVal<bool &>()), void())>
+void connectFailed(App &app, Link &link, bool transient, int)
 {
   app.connectFailed(link, transient);
 }
 template <typename App, typename Link>
 void connectFailed(App &, Link &, bool, ...) { }
 
-template <typename App, typename Link, typename Rx>
-auto process(App &app, Link &link, Rx &rx, int) ->
-  decltype(int(app.process(link, rx)))
+template <typename App, typename Link, typename Rx,
+  typename = decltype(int(ZuDeclVal<App &>().process(ZuDeclVal<Link &>(), ZuDeclVal<Rx &>())))>
+int process(App &app, Link &link, Rx &rx, int)
 {
   return int(app.process(link, rx));
 }
@@ -61,58 +64,63 @@ int process(App &, Link &, Rx &rx, ...) {
   return Zhttp::bodyDrain(rx) ? 1 : -1;
 }
 
-template <typename App, typename Link>
-auto messageStart(
-    App &app, Link &link, Opcode::T opcode, int) ->
-  decltype(int(app.messageStart(link, opcode)))
+template <typename App, typename Link,
+  typename = decltype(int(ZuDeclVal<App &>().messageStart(ZuDeclVal<Link &>(),
+    ZuDeclVal<Opcode::T &>())))>
+int messageStart(
+    App &app, Link &link, Opcode::T opcode, int)
 {
   return int(app.messageStart(link, opcode));
 }
 template <typename App, typename Link>
 int messageStart(App &, Link &, Opcode::T, ...) { return 1; }
 
-template <typename App, typename Link>
-auto messageEnd(App &app, Link &link, int) ->
-  decltype(int(app.messageEnd(link)))
+template <typename App, typename Link,
+  typename = decltype(int(ZuDeclVal<App &>().messageEnd(ZuDeclVal<Link &>())))>
+int messageEnd(App &app, Link &link, int)
 {
   return int(app.messageEnd(link));
 }
 template <typename App, typename Link>
 int messageEnd(App &, Link &, ...) { return 1; }
 
-template <typename App, typename Link>
-auto pong(App &app, Link &link, ZuBSpan payload, int) ->
-  decltype(app.pong(link, payload), void())
+template <typename App, typename Link,
+  typename = decltype(ZuDeclVal<App &>().pong(ZuDeclVal<Link &>(), ZuDeclVal<ZuBSpan &>()), void())>
+void pong(App &app, Link &link, ZuBSpan payload, int)
 {
   app.pong(link, payload);
 }
 template <typename App, typename Link>
 void pong(App &, Link &, ZuBSpan, ...) { }
 
-template <typename App, typename Link>
-auto closed(
-    App &app, Link &link, uint16_t code, ZuBSpan reason, int) ->
-  decltype(app.closed(link, code, reason), void())
+template <typename App, typename Link,
+  typename = decltype(ZuDeclVal<App &>().closed(ZuDeclVal<Link &>(),
+    ZuDeclVal<uint16_t &>(), ZuDeclVal<ZuBSpan &>()), void())>
+void closed(
+    App &app, Link &link, uint16_t code, ZuBSpan reason, int)
 {
   app.closed(link, code, reason);
 }
 template <typename App, typename Link>
 void closed(App &, Link &, uint16_t, ZuBSpan, ...) { }
 
-template <typename App, typename Link>
-auto error(App &app, Link &link, Failure::T failure, int) ->
-  decltype(app.error(link, failure), void())
+template <typename App, typename Link,
+  typename = decltype(ZuDeclVal<App &>().error(ZuDeclVal<Link &>(),
+    ZuDeclVal<Failure::T &>()), void())>
+void error(App &app, Link &link, Failure::T failure, int)
 {
   app.error(link, failure);
 }
 template <typename App, typename Link>
 void error(App &, Link &, Failure::T, ...) { }
 
-template <typename App, typename Link>
-auto accept(
+template <typename App, typename Link,
+  typename = decltype(bool(ZuDeclVal<App &>().accept(ZuDeclVal<Link &>(),
+    ZuDeclVal<ZuBSpan &>(), ZuDeclVal<ZuBSpan &>(), ZuDeclVal<ZuBSpan &>(),
+    ZuDeclVal<HandshakeString &>())))>
+bool accept(
     App &app, Link &link, ZuBSpan host, ZuBSpan target,
-    ZuBSpan offered, HandshakeString &selected, int) ->
-  decltype(bool(app.accept(link, host, target, offered, selected)))
+    ZuBSpan offered, HandshakeString &selected, int)
 {
   return bool(app.accept(link, host, target, offered, selected));
 }
@@ -124,27 +132,27 @@ bool accept(
   return true;
 }
 
-template <typename App>
-auto listening(App &app, const ZiListenInfo &info, int) ->
-  decltype(app.listening(info), void())
+template <typename App,
+  typename = decltype(ZuDeclVal<App &>().listening(ZuDeclVal<const ZiListenInfo &>()), void())>
+void listening(App &app, const ZiListenInfo &info, int)
 {
   app.listening(info);
 }
 template <typename App>
 void listening(App &, const ZiListenInfo &, ...) { }
 
-template <typename App>
-auto listening(App &app, int) ->
-  decltype(app.listening(), void())
+template <typename App,
+  typename = decltype(ZuDeclVal<App &>().listening(), void())>
+void listening(App &app, int)
 {
   app.listening();
 }
 template <typename App>
 void listening(App &, ...) { }
 
-template <typename App>
-auto listenFailed(App &app, bool transient, int) ->
-  decltype(app.listenFailed(transient), void())
+template <typename App,
+  typename = decltype(ZuDeclVal<App &>().listenFailed(ZuDeclVal<bool &>()), void())>
+void listenFailed(App &app, bool transient, int)
 {
   app.listenFailed(transient);
 }

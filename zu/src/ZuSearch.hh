@@ -45,9 +45,10 @@ inline uint64_t ZuSearch(uint64_t n, Cmp cmp) {
 template <
   bool Match = true,
   typename Array,
-  typename T>
-inline auto ZuSearch(const Array &data, uint64_t n, const T &v) ->
-ZuSame<ZuDecay<T>, ZuDecay<decltype(ZuDeclVal<const Array &>()[0])>, uint64_t>
+  typename T,
+  typename = ZuSame<ZuDecay<T>,
+    ZuDecay<decltype(ZuDeclVal<const Array &>()[0])>>>
+inline uint64_t ZuSearch(const Array &data, uint64_t n, const T &v)
 {
   return ZuSearch<Match>(n,
       [&data, &v](uint64_t i) { return ZuCmp<T>::cmp(v, data[i]); });
@@ -113,9 +114,10 @@ inline uint64_t ZuInterSearch(uint64_t n, Cmp cmp) {
 template <
   bool Match = true,
   typename Array,
-  typename T>
-inline auto ZuInterSearch(const Array &data, uint64_t n, const T &v) ->
-ZuSame<ZuDecay<T>, ZuDecay<decltype(ZuDeclVal<const Array &>()[0])>, uint64_t>
+  typename T,
+  typename = ZuSame<ZuDecay<T>,
+    ZuDecay<decltype(ZuDeclVal<const Array &>()[0])>>>
+inline uint64_t ZuInterSearch(const Array &data, uint64_t n, const T &v)
 {
   return ZuInterSearch<Match>(n,
     [&data, v](uint64_t i) {

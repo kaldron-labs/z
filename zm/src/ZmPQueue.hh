@@ -197,8 +197,8 @@ struct ZmPQueueSharded : public NTP {
 template <typename Node, unsigned Levels>
 struct ZmPQueue_NodeExt {
   ZmPQueue_NodeExt() {
-    memset(m_next, 0, sizeof(Node *) * Levels);
-    memset(m_prev, 0, sizeof(Node *) * Levels);
+    memset(m_next, 0, sizeof(Node *) *Levels);
+    memset(m_prev, 0, sizeof(Node *) *Levels);
   }
 
   // access to Node instances is always guarded, so no need to protect
@@ -272,7 +272,7 @@ template <bool Stats> class ZmPQueue_Stats {
 public:
   // retrieve stats
   void stats(
-      uint64_t &inCount, uint64_t &inElems, 
+      uint64_t &inCount, uint64_t &inElems,
       uint64_t &outCount, uint64_t &outElems) const {
     inCount = m_inCount;
     inElems = m_inElems;
@@ -496,12 +496,12 @@ private:
 
 public:
   ZmPQueue() : m_headKey(Key{}), m_tailKey(Key{}) {
-    memset(m_head, 0, sizeof(Node *) * Levels);
-    memset(m_tail, 0, sizeof(Node *) * Levels);
+    memset(m_head, 0, sizeof(Node *) *Levels);
+    memset(m_tail, 0, sizeof(Node *) *Levels);
   }
   ZmPQueue(Key head) : m_headKey(head), m_tailKey(head) {
-    memset(m_head, 0, sizeof(Node *) * Levels);
-    memset(m_tail, 0, sizeof(Node *) * Levels);
+    memset(m_head, 0, sizeof(Node *) *Levels);
+    memset(m_tail, 0, sizeof(Node *) *Levels);
   }
   ZmPQueue(const ZmPQueue &) = delete;
   ZmPQueue &operator =(const ZmPQueue &) = delete;
@@ -529,7 +529,7 @@ private:
   typename ZmPQueue_::Next<Level, Levels>::T
   addTail__(Node *node, unsigned addSeqNo) {
     node->Ext::next(Level, nullptr);
-    if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits * Level)) - 1)))) {
+    if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits *Level)) - 1)))) {
       Node *prev;
       node->Ext::prev(Level, prev = m_tail[Level]);
       m_tail[Level] = node;
@@ -575,7 +575,7 @@ private:
   typename ZmPQueue_::Next<Level, Levels>::T
   addHead__(Node *node, unsigned addSeqNo) {
     node->Ext::prev(Level, nullptr);
-    if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits * Level)) - 1)))) {
+    if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits *Level)) - 1)))) {
       Node *next;
       node->Ext::next(Level, next = m_head[Level]);
       m_head[Level] = node;
@@ -624,7 +624,7 @@ private:
   template <int Level>
   typename ZmPQueue_::Next<Level, Levels>::T addAt_(
       Node *node, Node **next_, unsigned addSeqNo) {
-    if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits * Level)) - 1)))) {
+    if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits *Level)) - 1)))) {
       Node *next = next_[Level];
       Node *prev = next ? next->Ext::prev(Level) : m_tail[Level];
       node->Ext::next(Level, next);
@@ -971,8 +971,8 @@ public:
   }
 
   // bypass queue, just update stats
-  template <typename _ = ZuBool<Stats>>
-  ZuIfT<_{}> bypass(Length length) {
+  template <typename _ = ZuBool<Stats>, typename = ZuIfT<_{}>>
+  void bypass(Length length) {
     Guard guard(m_lock);
     this->inCount(length);
     this->outCount(length);
@@ -1184,50 +1184,50 @@ private:
 #endif
     return {ZmPQResult::Invalid, nullptr};
   }
-  template <bool Dequeue>
-  ZuIfT<Dequeue, AddResult> addTail_(NodeRef node,
+
+  template <bool Dequeue, typename = void>
+  AddResult addTail_(NodeRef node,
       Key end, Length length, unsigned addSeqNo, ZmPQResult::T result) {
-    m_tailKey = end;
-    if constexpr (Stats) this->inCount(length);
-    if (end >= m_headKey && lengthOf_(m_headKey, end) == length) {
-      m_headKey = end;
-      if constexpr (Stats) this->outCount(length);
-      return {result, ZuMv(node)};
+    if constexpr (Dequeue) {
+      m_tailKey = end;
+      if constexpr (Stats) this->inCount(length);
+      if (end >= m_headKey && lengthOf_(m_headKey, end) == length) {
+	m_headKey = end;
+	if constexpr (Stats) this->outCount(length);
+	return {result, ZuMv(node)};
+      } else {
+	addTail__<0>(nodeRelease(ZuMv(node)), addSeqNo);
+	m_length += length;
+	++m_count;
+	return {result, nullptr};
+      }
     } else {
       addTail__<0>(nodeRelease(ZuMv(node)), addSeqNo);
+      m_tailKey = end;
       m_length += length;
       ++m_count;
+      if constexpr (Stats) this->inCount(length);
       return {result, nullptr};
     }
   }
-  template <bool Dequeue>
-  ZuIfT<!Dequeue, AddResult> addTail_(NodeRef node,
-      Key end, Length length, unsigned addSeqNo, ZmPQResult::T result) {
-    addTail__<0>(nodeRelease(ZuMv(node)), addSeqNo);
-    m_tailKey = end;
-    m_length += length;
-    ++m_count;
-    if constexpr (Stats) this->inCount(length);
-    return {result, nullptr};
-  }
-  template <bool Dequeue>
-  ZuIfT<Dequeue, AddResult> addHead_(NodeRef node,
-      Key end, Length length, unsigned, ZmPQResult::T result) {
-    m_headKey = end;
-    if (end > m_tailKey) m_tailKey = end;
-    if constexpr (Stats) this->inCount(length);
-    if constexpr (Stats) this->outCount(length);
-    return {result, ZuMv(node)};
-  }
-  template <bool Dequeue>
-  ZuIfT<!Dequeue, AddResult> addHead_(NodeRef node,
-      Key end, Length length, unsigned addSeqNo, ZmPQResult::T result) {
-    addHead__<0>(nodeRelease(ZuMv(node)), addSeqNo);
-    if (end > m_tailKey) m_tailKey = end;
-    m_length += length;
-    ++m_count;
-    if constexpr (Stats) this->inCount(length);
-    return {result, nullptr};
+
+  template <bool Dequeue, typename = void>
+  AddResult addHead_(NodeRef node, Key end, Length length, unsigned addSeqNo,
+    ZmPQResult::T result) {
+    if constexpr (Dequeue) {
+      m_headKey = end;
+      if (end > m_tailKey) m_tailKey = end;
+      if constexpr (Stats) this->inCount(length);
+      if constexpr (Stats) this->outCount(length);
+      return {result, ZuMv(node)};
+    } else {
+      addHead__<0>(nodeRelease(ZuMv(node)), addSeqNo);
+      if (end > m_tailKey) m_tailKey = end;
+      m_length += length;
+      ++m_count;
+      if constexpr (Stats) this->inCount(length);
+      return {result, nullptr};
+    }
   }
 
   NodeMvRef dequeue_() {
@@ -1866,7 +1866,7 @@ struct Impl : public ZmPQRx<Impl, Queue> {
 
   // access queue
   Queue *rxQueue() const;
- 
+
   // process message
   void process(Msg *msg);
 
@@ -1997,7 +1997,7 @@ public:
       Guard guard(m_lock);
       m_flags &= ~Queuing;
       impl->rxQueue()->head(key);
-      scheduleDequeue = !(m_flags & Dequeuing) && impl->rxQueue()->count_();
+      scheduleDequeue = !(m_flags &Dequeuing) && impl->rxQueue()->count_();
       if (scheduleDequeue) m_flags |= Dequeuing;
     }
     if (scheduleDequeue) impl->scheduleDequeue();
@@ -2008,7 +2008,7 @@ public:
     bool scheduleDequeue;
     {
       Guard guard(m_lock);
-      scheduleDequeue = !(m_flags & Dequeuing) && impl->rxQueue()->count_();
+      scheduleDequeue = !(m_flags &Dequeuing) && impl->rxQueue()->count_();
       if (scheduleDequeue) m_flags |= Dequeuing;
     }
     if (scheduleDequeue) impl->scheduleDequeue();
@@ -2249,18 +2249,18 @@ public:
 #endif
       bool alreadyRunning = m_flags & Running;
       if (!alreadyRunning) m_flags |= Running;
-      if (alreadyRunning && (m_flags & SendFailed))
+      if (alreadyRunning && (m_flags &SendFailed))
 	scheduleSend = true;
-      else if (scheduleSend = !(m_flags & Sending) &&
+      else if (scheduleSend = !(m_flags &Sending) &&
 	  m_sendKey < impl->txQueue()->tail())
 	m_flags |= Sending;
       if constexpr (Ordered)
-	if (scheduleArchive = !(m_flags & Archiving) &&
+	if (scheduleArchive = !(m_flags &Archiving) &&
 	    m_ackdKey > m_archiveKey)
 	  m_flags |= Archiving;
-      if (alreadyRunning && (m_flags & ResendFailed))
+      if (alreadyRunning && (m_flags &ResendFailed))
 	scheduleResend = true;
-      else if (scheduleResend = !(m_flags & Resending) && m_gap.length())
+      else if (scheduleResend = !(m_flags &Resending) && m_gap.length())
 	m_flags |= Resending;
       m_flags &= ~(SendFailed | ResendFailed);
 #if 0
@@ -2297,18 +2297,18 @@ public:
       if (!alreadyRunning) m_flags |= Running;
       m_sendKey = key;
       if constexpr (Ordered) m_ackdKey = key;
-      if (alreadyRunning && (m_flags & SendFailed))
+      if (alreadyRunning && (m_flags &SendFailed))
 	scheduleSend = true;
-      else if (scheduleSend = !(m_flags & Sending) &&
+      else if (scheduleSend = !(m_flags &Sending) &&
 	  key < impl->txQueue()->tail())
 	m_flags |= Sending;
       if constexpr (Ordered)
-	if (scheduleArchive = !(m_flags & Archiving) &&
+	if (scheduleArchive = !(m_flags &Archiving) &&
 	    key > m_archiveKey)
 	  m_flags |= Archiving;
-      if (alreadyRunning && (m_flags & ResendFailed))
+      if (alreadyRunning && (m_flags &ResendFailed))
 	scheduleResend = true;
-      else if (scheduleResend = !(m_flags & Resending) && m_gap.length())
+      else if (scheduleResend = !(m_flags &Resending) && m_gap.length())
 	m_flags |= Resending;
       m_flags &= ~(SendFailed | ResendFailed);
 #if 0
@@ -2331,7 +2331,7 @@ public:
   // stop sending
   void stop() {
     Guard guard(m_lock);
-    if (!(m_flags & Running)) return;
+    if (!(m_flags &Running)) return;
     m_flags &= ~(Running | Sending | Resending);
   }
 
@@ -2411,7 +2411,7 @@ public:
 	}
 	m_ackdKey = key;
 	if (key > m_sendKey) m_sendKey = key;
-	if (scheduleArchive = !(m_flags & Archiving) && key > m_archiveKey)
+	if (scheduleArchive = !(m_flags &Archiving) && key > m_archiveKey)
 	  m_flags |= Archiving;
 #if 0
 	  std::cerr << (ZuCArray<200>()
@@ -2438,20 +2438,20 @@ private:
     bool scheduleResend = false;
     if (!m_gap.length()) {
       m_gap = gap;
-      scheduleResend = !(m_flags & Resending);
+      scheduleResend = !(m_flags &Resending);
     } else {
       if (gap.key() < m_gap.key()) {
 	Length delta = m_gap.key() - gap.key();
 	if (Length(-1) - m_gap.length() < delta) return false;
 	m_gap.length() += delta;
 	m_gap.key() = gap.key();
-	scheduleResend = !(m_flags & Resending);
+	scheduleResend = !(m_flags &Resending);
       }
       Key end;
       if (!Queue::endOf(m_gap.key(), m_gap.length(), end)) return false;
       if (gapEnd > end) {
 	m_gap.length() = gapEnd - m_gap.key();
-	if (!scheduleResend) scheduleResend = !(m_flags & Resending);
+	if (!scheduleResend) scheduleResend = !(m_flags &Resending);
       }
     }
     if (scheduleResend) m_flags |= Resending;
@@ -2484,7 +2484,7 @@ public:
 	  << "send() " << *this << "\n  " << *(impl->txQueue()) << '\n')
 	<< std::flush;
 #endif
-      if (!(m_flags & Running)) { m_flags &= ~Sending; return; }
+      if (!(m_flags &Running)) { m_flags &= ~Sending; return; }
       prevKey = m_sendKey;
       scheduleSend = prevKey < txQueue->tail();
       while (scheduleSend) {
@@ -2543,7 +2543,7 @@ public:
       ZmRef<Msg> msg;
       {
 	Guard guard(m_lock);
-	if (!(m_flags & Running)) { m_flags &= ~Archiving; return; }
+	if (!(m_flags &Running)) { m_flags &= ~Archiving; return; }
 	scheduleArchive = m_archiveKey < m_ackdKey;
 	while (scheduleArchive) {
 	  msg = impl->txQueue()->find(m_archiveKey);
@@ -2594,7 +2594,7 @@ public:
     ZmRef<Msg> msg;
     {
       Guard guard(m_lock);
-      if (!(m_flags & Running)) { m_flags &= ~Resending; return; }
+      if (!(m_flags &Running)) { m_flags &= ~Resending; return; }
       prevGap = m_gap;
       while (m_gap.length()) {
 	Length length;

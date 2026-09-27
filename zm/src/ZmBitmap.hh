@@ -148,14 +148,14 @@ public:
 
   using Range = ZuTuple<unsigned, unsigned>;
 
-  template <typename T>
-  ZuSame<Range, T, Bitmap &> set(const T &v) {
+  template <typename T, typename = ZuSame<Range, T>>
+  Bitmap &set(const T &v) {
     lazy();
     hwloc_bitmap_set_range(m_map, v.p1(), v.p2());
     return *this;
   }
-  template <typename T>
-  ZuSame<Range, T, Bitmap &> clr(const T &v) {
+  template <typename T, typename = ZuSame<Range, T>>
+  Bitmap &clr(const T &v) {
     lazy();
     hwloc_bitmap_clr_range(m_map, v.p1(), v.p2());
     return *this;
@@ -274,8 +274,8 @@ public:
   }
   template <typename S, ZuMatchCharString<S, int> = 0>
   Bitmap(const S &s) : m_map{hwloc_bitmap_alloc()} { scan(s); }
-  template <typename S>
-  ZuMatchCharString<S, Bitmap &> operator =(const S &s) {
+  template <typename S, typename = ZuMatchCharString<S>>
+  Bitmap & operator =(const S &s) {
     if (m_map) hwloc_bitmap_zero(m_map);
     scan(s);
     return *this;

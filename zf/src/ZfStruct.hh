@@ -58,7 +58,7 @@
 // DecimalVec
 // TimeVec
 // DateTimeVec
-// 
+//
 // ZfVField provides run-time introspection via a monomorphic
 // (type-erased) type - virtual polymorphism and RTTI are
 // intentionally avoided:
@@ -84,7 +84,7 @@
 //   Props	- properties type list
 //   Print	- Print<Fmt>{const T &} - compile-time formatted printing
 //   vtype()	- ZfVFieldType * instance
-// 
+//
 // ZfVFieldType provides:
 //   code	- ZfFieldTC
 //   props	- ZfVFieldProp properties bitfield
@@ -176,7 +176,7 @@ ZtEnum(ZfAPI, ZfFieldTC, int8_t,
   Time,		// ZuTime
   DateTime,	// ZuDateTime - Julian date, seconds, nanoseconds
   UDT,		// generic udt type
-  
+
   // XVec - vectors of X
 
   CStringVec,
@@ -276,7 +276,7 @@ namespace ZuFieldProp {
   };
 
   template <int8_t> struct NDP { }; // NDP for printing float/fixed/decimal
- 
+
   // get group key IDs
   template <typename Props>
   using GetGroup = GetSeq<Props, Group>;
@@ -635,93 +635,55 @@ struct VGet {
     DateTimeVec		(*dateTimeVec)(const void *);
   } get_;
 
+  template <unsigned Code, typename = ZuIfT<(Code < ZfFieldTC::N)>>
+  auto get(const void *o) const {
 #define ZfVField_GetFn(code, type, fn) \
-  template <unsigned Code> \
-  ZuIfT<Code == ZfFieldTC::code, type> \
-  get(const void *o) const { return get_.fn(o); }
+    if constexpr (Code == ZfFieldTC::code) return get_.fn(o);
+    ZfVField_GetFn(CString, const char *, cstring)
+    ZfVField_GetFn(String, ZuCSpan, string)
+    ZfVField_GetFn(Bytes, ZuBSpan, bytes)
+    ZfVField_GetFn(Bool, bool, bool_)
+    ZfVField_GetFn(Int8, int8_t, int8)
+    ZfVField_GetFn(UInt8, uint8_t, uint8)
+    ZfVField_GetFn(Int16, int16_t, int16)
+    ZfVField_GetFn(UInt16, uint16_t, uint16)
+    ZfVField_GetFn(Int32, int32_t, int32)
+    ZfVField_GetFn(UInt32, uint32_t, uint32)
+    ZfVField_GetFn(Int64, int64_t, int64)
+    ZfVField_GetFn(UInt64, uint64_t, uint64)
+    ZfVField_GetFn(Int128, int128_t, int128)
+    ZfVField_GetFn(UInt128, uint128_t, uint128)
+    ZfVField_GetFn(Float, double, float_)
+    ZfVField_GetFn(Fixed, ZuFixed, fixed)
+    ZfVField_GetFn(Decimal, ZuDecimal, decimal)
+    ZfVField_GetFn(Time, ZuTime, time)
+    ZfVField_GetFn(DateTime, ZuDateTime, dateTime)
+    ZfVField_GetFn(UDT, const void *, udt)
+    ZfVField_GetFn(CStringVec, CStringVec, cstringVec)
+    ZfVField_GetFn(StringVec, StringVec, stringVec)
+    ZfVField_GetFn(BytesVec, BytesVec, bytesVec)
+    ZfVField_GetFn(Int8Vec, Int8Vec, int8Vec)
+    ZfVField_GetFn(UInt8Vec, UInt8Vec, uint8Vec)
+    ZfVField_GetFn(Int16Vec, Int16Vec, int16Vec)
+    ZfVField_GetFn(UInt16Vec, UInt16Vec, uint16Vec)
+    ZfVField_GetFn(Int32Vec, Int32Vec, int32Vec)
+    ZfVField_GetFn(UInt32Vec, UInt32Vec, uint32Vec)
+    ZfVField_GetFn(Int64Vec, Int64Vec, int64Vec)
+    ZfVField_GetFn(UInt64Vec, UInt64Vec, uint64Vec)
+    ZfVField_GetFn(Int128Vec, Int128Vec, int128Vec)
+    ZfVField_GetFn(UInt128Vec, UInt128Vec, uint128Vec)
+    ZfVField_GetFn(FloatVec, FloatVec, floatVec)
+    ZfVField_GetFn(FixedVec, FixedVec, fixedVec)
+    ZfVField_GetFn(DecimalVec, DecimalVec, decimalVec)
+    ZfVField_GetFn(TimeVec, TimeVec, timeVec)
+    ZfVField_GetFn(DateTimeVec, DateTimeVec, dateTimeVec)
+#undef ZfVField_GetFn
+  }
 
-  ZfVField_GetFn(CString, const char *, cstring)
-  ZfVField_GetFn(String, ZuCSpan, string)
-  ZfVField_GetFn(Bytes, ZuBSpan, bytes)
-  ZfVField_GetFn(Bool, bool, bool_)
-  ZfVField_GetFn(Int8, int8_t, int8)
-  ZfVField_GetFn(UInt8, uint8_t, uint8)
-  ZfVField_GetFn(Int16, int16_t, int16)
-  ZfVField_GetFn(UInt16, uint16_t, uint16)
-  ZfVField_GetFn(Int32, int32_t, int32)
-  ZfVField_GetFn(UInt32, uint32_t, uint32)
-  ZfVField_GetFn(Int64, int64_t, int64)
-  ZfVField_GetFn(UInt64, uint64_t, uint64)
-  ZfVField_GetFn(Int128, int128_t, int128)
-  ZfVField_GetFn(UInt128, uint128_t, uint128)
-  ZfVField_GetFn(Float, double, float_)
-  ZfVField_GetFn(Fixed, ZuFixed, fixed)
-  ZfVField_GetFn(Decimal, ZuDecimal, decimal)
-  ZfVField_GetFn(Time, ZuTime, time)
-  ZfVField_GetFn(DateTime, ZuDateTime, dateTime)
-  ZfVField_GetFn(UDT, const void *, udt)
-  ZfVField_GetFn(CStringVec, CStringVec, cstringVec)
-  ZfVField_GetFn(StringVec, StringVec, stringVec)
-  ZfVField_GetFn(BytesVec, BytesVec, bytesVec)
-  ZfVField_GetFn(Int8Vec, Int8Vec, int8Vec)
-  ZfVField_GetFn(UInt8Vec, UInt8Vec, uint8Vec)
-  ZfVField_GetFn(Int16Vec, Int16Vec, int16Vec)
-  ZfVField_GetFn(UInt16Vec, UInt16Vec, uint16Vec)
-  ZfVField_GetFn(Int32Vec, Int32Vec, int32Vec)
-  ZfVField_GetFn(UInt32Vec, UInt32Vec, uint32Vec)
-  ZfVField_GetFn(Int64Vec, Int64Vec, int64Vec)
-  ZfVField_GetFn(UInt64Vec, UInt64Vec, uint64Vec)
-  ZfVField_GetFn(Int128Vec, Int128Vec, int128Vec)
-  ZfVField_GetFn(UInt128Vec, UInt128Vec, uint128Vec)
-  ZfVField_GetFn(FloatVec, FloatVec, floatVec)
-  ZfVField_GetFn(FixedVec, FixedVec, fixedVec)
-  ZfVField_GetFn(DecimalVec, DecimalVec, decimalVec)
-  ZfVField_GetFn(TimeVec, TimeVec, timeVec)
-  ZfVField_GetFn(DateTimeVec, DateTimeVec, dateTimeVec)
+  template <unsigned Code, typename S,
+    typename = ZuIfT<(Code < ZfFieldTC::N)>>
+  void print(S &, const void *, const ZfVField *, const ZtVFmt &) const;
 
-#define ZfVField_PrintFn(Code_) \
-  template <unsigned Code, typename S> \
-  ZuIfT<Code == ZfFieldTC::Code_> \
-  print(S &, const void *, const ZfVField *, const ZtVFmt &) const;
-
-  ZfVField_PrintFn(CString)
-  ZfVField_PrintFn(String)
-  ZfVField_PrintFn(Bytes)
-  ZfVField_PrintFn(Bool)
-  ZfVField_PrintFn(Int8)
-  ZfVField_PrintFn(UInt8)
-  ZfVField_PrintFn(Int16)
-  ZfVField_PrintFn(UInt16)
-  ZfVField_PrintFn(Int32)
-  ZfVField_PrintFn(UInt32)
-  ZfVField_PrintFn(Int64)
-  ZfVField_PrintFn(UInt64)
-  ZfVField_PrintFn(Int128)
-  ZfVField_PrintFn(UInt128)
-  ZfVField_PrintFn(Float)
-  ZfVField_PrintFn(Fixed)
-  ZfVField_PrintFn(Decimal)
-  ZfVField_PrintFn(Time)
-  ZfVField_PrintFn(DateTime)
-  ZfVField_PrintFn(UDT)
-  ZfVField_PrintFn(CStringVec)
-  ZfVField_PrintFn(StringVec)
-  ZfVField_PrintFn(BytesVec)
-  ZfVField_PrintFn(Int8Vec)
-  ZfVField_PrintFn(UInt8Vec)
-  ZfVField_PrintFn(Int16Vec)
-  ZfVField_PrintFn(UInt16Vec)
-  ZfVField_PrintFn(Int32Vec)
-  ZfVField_PrintFn(UInt32Vec)
-  ZfVField_PrintFn(Int64Vec)
-  ZfVField_PrintFn(UInt64Vec)
-  ZfVField_PrintFn(Int128Vec)
-  ZfVField_PrintFn(UInt128Vec)
-  ZfVField_PrintFn(FloatVec)
-  ZfVField_PrintFn(FixedVec)
-  ZfVField_PrintFn(DecimalVec)
-  ZfVField_PrintFn(TimeVec)
-  ZfVField_PrintFn(DateTimeVec)
 };
 
 // monomorphic field set/scan
@@ -771,9 +733,8 @@ struct VSet {
   } set_;
 
 #define ZfVField_SetFn(code, type, fn) \
-  template <unsigned Code> \
-  ZuIfT<Code == ZfFieldTC::code> \
-  set(void *o, type v) const { set_.fn(o, v); }
+  template <unsigned Code, typename = ZuIfT<Code == ZfFieldTC::code>> \
+  void set(void *o, type v) const { set_.fn(o, v); }
 
   ZfVField_SetFn(CString, const char *, cstring)
   ZfVField_SetFn(String, ZuCSpan, string)
@@ -814,49 +775,10 @@ struct VSet {
   ZfVField_SetFn(TimeVec, TimeVec, timeVec)
   ZfVField_SetFn(DateTimeVec, DateTimeVec, dateTimeVec)
 
-#define ZfVField_ScanFn(code) \
-  template <unsigned Code> \
-  ZuIfT<Code == ZfFieldTC::code> \
-  scan(void *, ZuCSpan, const ZfVField *, const ZtVFmt &) const;
+  template <unsigned Code,
+    typename = ZuIfT<(Code < ZfFieldTC::N)>>
+  void scan(void *, ZuCSpan, const ZfVField *, const ZtVFmt &) const;
 
-  ZfVField_ScanFn(CString)
-  ZfVField_ScanFn(String)
-  ZfVField_ScanFn(Bytes)
-  ZfVField_ScanFn(Bool)
-  ZfVField_ScanFn(Int8)
-  ZfVField_ScanFn(UInt8)
-  ZfVField_ScanFn(Int16)
-  ZfVField_ScanFn(UInt16)
-  ZfVField_ScanFn(Int32)
-  ZfVField_ScanFn(UInt32)
-  ZfVField_ScanFn(Int64)
-  ZfVField_ScanFn(UInt64)
-  ZfVField_ScanFn(Int128)
-  ZfVField_ScanFn(UInt128)
-  ZfVField_ScanFn(Float)
-  ZfVField_ScanFn(Fixed)
-  ZfVField_ScanFn(Decimal)
-  ZfVField_ScanFn(Time)
-  ZfVField_ScanFn(DateTime)
-  ZfVField_ScanFn(UDT)
-  ZfVField_ScanFn(CStringVec)
-  ZfVField_ScanFn(StringVec)
-  ZfVField_ScanFn(BytesVec)
-  ZfVField_ScanFn(Int8Vec)
-  ZfVField_ScanFn(UInt8Vec)
-  ZfVField_ScanFn(Int16Vec)
-  ZfVField_ScanFn(UInt16Vec)
-  ZfVField_ScanFn(Int32Vec)
-  ZfVField_ScanFn(UInt32Vec)
-  ZfVField_ScanFn(Int64Vec)
-  ZfVField_ScanFn(UInt64Vec)
-  ZfVField_ScanFn(Int128Vec)
-  ZfVField_ScanFn(UInt128Vec)
-  ZfVField_ScanFn(FloatVec)
-  ZfVField_ScanFn(FixedVec)
-  ZfVField_ScanFn(DecimalVec)
-  ZfVField_ScanFn(TimeVec)
-  ZfVField_ScanFn(DateTimeVec)
 };
 
 } // ZfStruct_
@@ -925,44 +847,6 @@ struct ZfVField {
 namespace ZfStruct_ {
 
 // VGet print functions
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::CString>
-VGet::print(
-  S &s, const void *o, const ZfVField *field,
-  const ZtVFmt &fmt
-) const {
-  auto v = get_.cstring(o);
-  s << Print::CString{v};
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::String>
-VGet::print(
-  S &s, const void *o, const ZfVField *field,
-  const ZtVFmt &fmt
-) const {
-  auto v = get_.string(o);
-  s << Print::String{v};
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::Bytes>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &
-) const {
-  ZuBSpan v = get_.bytes(o);
-  unsigned n = ZuBase64::enclen(v.length());
-  auto buf = ZmScratch(uint8_t, n);
-  buf.length(n);
-  buf.length(ZuBase64::encode(buf, v));
-  s << ZuCSpan(buf);
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::Bool>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &
-) const {
-  s << (get_.bool_(o) ? '1' : '0');
-}
-
 template <typename S, typename T>
 inline void ZfVField_printInt_(
   S &s, const T &v, const ZfVField *field, const ZtVFmt &fmt)
@@ -983,389 +867,199 @@ inline void ZfVField_printInt_(
   s << v.vfmt(fmt.scalar);
 }
 
-#define ZfVField_printInt(width) \
-template <unsigned Code, typename S> \
-inline ZuIfT<Code == ZfFieldTC::Int##width> \
-VGet::print( \
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt \
-) const { \
-  ZuBox<int##width##_t> v = get_.int##width(o); \
-  ZfVField_printInt_(s, v, field, fmt); \
-} \
-template <unsigned Code, typename S> \
-inline ZuIfT<Code == ZfFieldTC::UInt##width> \
-VGet::print( \
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt \
-) const { \
-  ZuBox<uint##width##_t> v = get_.uint##width(o); \
-  ZfVField_printInt_(s, v, field, fmt); \
-}
-
-ZfVField_printInt(8)
-ZfVField_printInt(16)
-ZfVField_printInt(32)
-ZfVField_printInt(64)
-ZfVField_printInt(128)
-
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::Float>
+template <unsigned Code, typename S, typename>
+inline void
 VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  ZuBox<double> v = get_.float_(o);
-  auto ndp = field->ndp;
-  if (!ZuNull(ndp))
-    s << v.vfmt(fmt.scalar).fp(ndp);
-  else
-    s << v.vfmt(fmt.scalar);
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::Fixed>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  ZuFixed v = get_.fixed(o);
-  auto ndp = field->ndp;
-  if (!ZuNull(ndp))
-    s << v.vfmt(fmt.scalar).fp(ndp);
-  else
-    s << v.vfmt(fmt.scalar);
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::Decimal>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  ZuDecimal v = get_.decimal(o);
-  auto ndp = field->ndp;
-  if (!ZuNull(ndp))
-    s << v.vfmt(fmt.scalar).fp(ndp);
-  else
-    s << v.vfmt(fmt.scalar);
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::Time>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &fmt
-) const {
-  ZuDateTime v{get_.time(o)};
-  s << v.fmt(fmt.datePrint);
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::DateTime>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &fmt
-) const {
-  ZuDateTime v{get_.dateTime(o)};
-  s << v.fmt(fmt.datePrint);
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::UDT>
-VGet::print(
-  S &s_, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  ZuVStream s{s_};
-  field->type->info.udt()->print(get_.udt(o), s, fmt);
-}
-
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::CStringVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  bool first = true;
-  CStringVec vec{get_.cstringVec(o)};
-  vec.all([&s, &first, &fmt](const char *v) {
-    if (!first) s << fmt.vecDelim; else first = false;
-    s << Print::CString{v};
-  });
-  s << fmt.vecSuffix;
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::StringVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  bool first = true;
-  StringVec vec{get_.stringVec(o)};
-  vec.all([&s, &first, &fmt](ZuCSpan v) {
-    if (!first) s << fmt.vecDelim; else first = false;
-    s << Print::String{v};
-  });
-  s << fmt.vecSuffix;
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::BytesVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  bool first = true;
-  BytesVec vec{get_.bytesVec(o)};
-  vec.all([&s, &fmt, &first](ZuBSpan v) {
-    if (!first) s << fmt.vecDelim; else first = false;
-    s << Print::Bytes{v};
-  });
-  s << fmt.vecSuffix;
-}
-
-#define ZfVField_printIntVec(width) \
-template <unsigned Code, typename S> \
-inline ZuIfT<Code == ZfFieldTC::Int##width##Vec> \
-VGet::print( \
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt \
-) const { \
-  s << fmt.vecPrefix; \
-  Int##width##Vec vec{get_.int##width##Vec(o)}; \
-  bool first = true; \
-  vec.all([&s, field, &fmt, &first](ZuBox<int##width##_t> v) { \
-    if (!first) s << fmt.vecDelim; else first = false; \
-    ZfVField_printInt_(s, v, field, fmt); \
-  }); \
-  s << fmt.vecSuffix; \
-} \
-template <unsigned Code, typename S> \
-inline ZuIfT<Code == ZfFieldTC::UInt##width##Vec> \
-VGet::print( \
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt \
-) const { \
-  s << fmt.vecPrefix; \
-  UInt##width##Vec vec{get_.uint##width##Vec(o)}; \
-  bool first = true; \
-  vec.all([&s, field, &fmt, &first](ZuBox<uint##width##_t> v) { \
-    if (!first) s << fmt.vecDelim; else first = false; \
-    ZfVField_printInt_(s, v, field, fmt); \
-  }); \
-  s << fmt.vecSuffix; \
-}
-ZfVField_printIntVec(8)
-ZfVField_printIntVec(16)
-ZfVField_printIntVec(32)
-ZfVField_printIntVec(64)
-ZfVField_printIntVec(128)
-
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::FloatVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  FloatVec vec{get_.floatVec(o)};
-  auto ndp = field->ndp;
-  bool first = true;
-  if (!ZuNull(ndp))
-    vec.all([&s, &fmt, ndp, &first](ZuBox<double> v) {
-      if (!first) s << fmt.vecDelim; else first = false;
-      s << v.vfmt(fmt.scalar).fp(ndp);
-    });
-  else
-    vec.all([&s, &first, &fmt](ZuBox<double> v) {
-      if (!first) s << fmt.vecDelim; else first = false;
-      s << v.vfmt(fmt.scalar);
-    });
-  s << fmt.vecSuffix;
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::FixedVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  bool first = true;
-  FixedVec vec{get_.fixedVec(o)};
-  auto ndp = field->ndp;
-  if (!ZuNull(ndp))
-    vec.all([&s, &fmt, ndp, &first](const ZuFixed &v) {
-      if (!first) s << fmt.vecDelim; else first = false;
-      s << v.vfmt(fmt.scalar).fp(ndp);
-    });
-  else
-    vec.all([&s, &first, &fmt](const ZuFixed &v) {
-      if (!first) s << fmt.vecDelim; else first = false;
-      s << v.vfmt(fmt.scalar);
-    });
-  s << fmt.vecSuffix;
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::DecimalVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  DecimalVec vec{get_.decimalVec(o)};
-  auto ndp = field->ndp;
-  bool first = true;
-  if (!ZuNull(ndp))
-    vec.all([&s, &fmt, ndp, &first](const ZuDecimal &v) {
-      if (!first) s << fmt.vecDelim; else first = false;
-      s << v.vfmt(fmt.scalar).fp(ndp);
-    });
-  else
-    vec.all([&s, &first, &fmt](const ZuDecimal &v) {
-      if (!first) s << fmt.vecDelim; else first = false;
-      s << v.vfmt(fmt.scalar);
-    });
-  s << fmt.vecSuffix;
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::TimeVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  bool first = true;
-  TimeVec vec{get_.timeVec(o)};
-  vec.all([&s, &fmt, &first](const ZuTime &v_) {
-    ZuDateTime v{v_};
-    if (!first) s << fmt.vecDelim; else first = false;
-    s << v.fmt(fmt.datePrint);
-  });
-  s << fmt.vecSuffix;
-}
-template <unsigned Code, typename S>
-inline ZuIfT<Code == ZfFieldTC::DateTimeVec>
-VGet::print(
-  S &s, const void *o, const ZfVField *field, const ZtVFmt &fmt
-) const {
-  s << fmt.vecPrefix;
-  bool first = true;
-  DateTimeVec vec{get_.dateTimeVec(o)};
-  vec.all([&s, &fmt, &first](const ZuDateTime &v) {
-    if (!first) s << fmt.vecDelim; else first = false;
-    s << v.fmt(fmt.datePrint);
-  });
-  s << fmt.vecSuffix;
-}
-
-// VSet scan functions
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::CString>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  if (!s) {
-    set_.cstring(o, nullptr);
-    return;
-  }
-  unsigned n = s.length() + 1;
-  auto buf = ZmScratch(char, n);
-  buf.length(n);
-  buf.length(Scan::string(buf, s));
-  buf.push('\0');
-  set_.cstring(o, buf.data());
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::String>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  if (!s) {
-    set_.string(o, s);
-    return;
-  }
-  unsigned n = s.length();
-  auto buf = ZmScratch(char, n);
-  buf.length(n);
-  buf.length(Scan::string(buf, s));
-  set_.string(o, buf);
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::Bytes>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  unsigned n = ZuBase64::declen(s.length());
-  auto buf = ZmScratch(uint8_t, n);
-  buf.length(n);
-  buf.length(ZuBase64::decode(buf, ZuBSpan{s}));
-  set_.bytes(o, buf);
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::Bool>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  set_.bool_(o, ZtScanBool(s));
-}
-
-template <typename T>
-T ZfVField_scanInt_(ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt)
-{
-  if (ZuUnlikely(field->props & ZfVFieldProp::Enum()))
-    return field->type->info.enum_()->scan(s);
-  if (ZuUnlikely(field->props & ZfVFieldProp::Flags()))
-    return field->type->info.flags()->scan(s, fmt);
-  if (field->props & ZfVFieldProp::Hex())
-    return ZuBox<T>{ZuFmt::Hex<>{}, s};
-  return ZuBox<T>{s};
-}
-
-#define ZfVField_scanInt(width) \
-template <unsigned Code> \
-inline ZuIfT<Code == ZfFieldTC::Int##width> \
-VSet::scan( \
-  void *o, ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt) const \
-{ \
-  set_.int##width(o, ZfVField_scanInt_<int##width##_t>(s, field, fmt)); \
-} \
-template <unsigned Code> \
-inline ZuIfT<Code == ZfFieldTC::UInt##width> \
-VSet::scan( \
-  void *o, ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt) const \
-{ \
-  set_.uint##width(o, ZfVField_scanInt_<uint##width##_t>(s, field, fmt)); \
-}
-
-ZfVField_scanInt(8)
-ZfVField_scanInt(16)
-ZfVField_scanInt(32)
-ZfVField_scanInt(64)
-ZfVField_scanInt(128)
-
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::Float>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  set_.float_(o, ZuBox<double>{s});
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::Fixed>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  set_.fixed(o, ZuFixed{s});
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::Decimal>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &
-) const {
-  set_.decimal(o, ZuDecimal{s});
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::Time>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  set_.time(o, ZuDateTime{fmt.dateScan, s}.as_time());
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::DateTime>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  set_.dateTime(o, ZuDateTime{fmt.dateScan, s});
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::UDT>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *field,
+  S &s, const void *o, const ZfVField *field,
   const ZtVFmt &fmt
 ) const {
-  field->type->info.udt()->scan(field->set.set_.udt, o, s, fmt);
+  if constexpr (Code == ZfFieldTC::CString) {
+    auto v = get_.cstring(o);
+    s << Print::CString{v};
+  } else if constexpr (Code == ZfFieldTC::String) {
+    auto v = get_.string(o);
+    s << Print::String{v};
+  } else if constexpr (Code == ZfFieldTC::Bytes) {
+    ZuBSpan v = get_.bytes(o);
+    unsigned n = ZuBase64::enclen(v.length());
+    auto buf = ZmScratch(uint8_t, n);
+    buf.length(n);
+    buf.length(ZuBase64::encode(buf, v));
+    s << ZuCSpan(buf);
+  } else if constexpr (Code == ZfFieldTC::Bool) {
+    s << (get_.bool_(o) ? '1' : '0');
+  }
+
+#define ZfVField_printInt(width) \
+  else if constexpr (Code == ZfFieldTC::Int##width) {  \
+    ZuBox<int##width##_t> v = get_.int##width(o);  \
+    ZfVField_printInt_(s, v, field, fmt);  \
+  } \
+  else if constexpr (Code == ZfFieldTC::UInt##width) {  \
+    ZuBox<uint##width##_t> v = get_.uint##width(o);  \
+    ZfVField_printInt_(s, v, field, fmt);  \
+  }
+
+  ZfVField_printInt(8)
+  ZfVField_printInt(16)
+  ZfVField_printInt(32)
+  ZfVField_printInt(64)
+  ZfVField_printInt(128)
+
+  else if constexpr (Code == ZfFieldTC::Float) {
+    ZuBox<double> v = get_.float_(o);
+    auto ndp = field->ndp;
+    if (!ZuNull(ndp))
+      s << v.vfmt(fmt.scalar).fp(ndp);
+    else
+      s << v.vfmt(fmt.scalar);
+  } else if constexpr (Code == ZfFieldTC::Fixed) {
+    ZuFixed v = get_.fixed(o);
+    auto ndp = field->ndp;
+    if (!ZuNull(ndp))
+      s << v.vfmt(fmt.scalar).fp(ndp);
+    else
+      s << v.vfmt(fmt.scalar);
+  } else if constexpr (Code == ZfFieldTC::Decimal) {
+    ZuDecimal v = get_.decimal(o);
+    auto ndp = field->ndp;
+    if (!ZuNull(ndp))
+      s << v.vfmt(fmt.scalar).fp(ndp);
+    else
+      s << v.vfmt(fmt.scalar);
+  } else if constexpr (Code == ZfFieldTC::Time) {
+    ZuDateTime v{get_.time(o)};
+    s << v.fmt(fmt.datePrint);
+  } else if constexpr (Code == ZfFieldTC::DateTime) {
+    ZuDateTime v{get_.dateTime(o)};
+    s << v.fmt(fmt.datePrint);
+  } else if constexpr (Code == ZfFieldTC::UDT) {
+    ZuVStream stream{s};
+    field->type->info.udt()->print(get_.udt(o), stream, fmt);
+  } else if constexpr (Code == ZfFieldTC::CStringVec) {
+    s << fmt.vecPrefix;
+    bool first = true;
+    CStringVec vec{get_.cstringVec(o)};
+    vec.all([&s, &first, &fmt](const char *v) {
+      if (!first) s << fmt.vecDelim; else first = false;
+      s << Print::CString{v};
+    });
+    s << fmt.vecSuffix;
+  } else if constexpr (Code == ZfFieldTC::StringVec) {
+    s << fmt.vecPrefix;
+    bool first = true;
+    StringVec vec{get_.stringVec(o)};
+    vec.all([&s, &first, &fmt](ZuCSpan v) {
+      if (!first) s << fmt.vecDelim; else first = false;
+      s << Print::String{v};
+    });
+    s << fmt.vecSuffix;
+  } else if constexpr (Code == ZfFieldTC::BytesVec) {
+    s << fmt.vecPrefix;
+    bool first = true;
+    BytesVec vec{get_.bytesVec(o)};
+    vec.all([&s, &fmt, &first](ZuBSpan v) {
+      if (!first) s << fmt.vecDelim; else first = false;
+      s << Print::Bytes{v};
+    });
+    s << fmt.vecSuffix;
+  }
+
+#define ZfVField_printIntVec(width) \
+  else if constexpr (Code == ZfFieldTC::Int##width##Vec) {  \
+    s << fmt.vecPrefix;  \
+    Int##width##Vec vec{get_.int##width##Vec(o)};  \
+    bool first = true;  \
+    vec.all([&s, field, &fmt, &first](ZuBox<int##width##_t> v) {  \
+      if (!first) s << fmt.vecDelim; else first = false;  \
+      ZfVField_printInt_(s, v, field, fmt);  \
+    });  \
+    s << fmt.vecSuffix;  \
+  } \
+  else if constexpr (Code == ZfFieldTC::UInt##width##Vec) {  \
+    s << fmt.vecPrefix;  \
+    UInt##width##Vec vec{get_.uint##width##Vec(o)};  \
+    bool first = true;  \
+    vec.all([&s, field, &fmt, &first](ZuBox<uint##width##_t> v) {  \
+      if (!first) s << fmt.vecDelim; else first = false;  \
+      ZfVField_printInt_(s, v, field, fmt);  \
+    });  \
+    s << fmt.vecSuffix;  \
+  }
+  ZfVField_printIntVec(8)
+  ZfVField_printIntVec(16)
+  ZfVField_printIntVec(32)
+  ZfVField_printIntVec(64)
+  ZfVField_printIntVec(128)
+
+  else if constexpr (Code == ZfFieldTC::FloatVec) {
+    s << fmt.vecPrefix;
+    FloatVec vec{get_.floatVec(o)};
+    auto ndp = field->ndp;
+    bool first = true;
+    if (!ZuNull(ndp))
+      vec.all([&s, &fmt, ndp, &first](ZuBox<double> v) {
+	if (!first) s << fmt.vecDelim; else first = false;
+	s << v.vfmt(fmt.scalar).fp(ndp);
+      });
+    else
+      vec.all([&s, &first, &fmt](ZuBox<double> v) {
+	if (!first) s << fmt.vecDelim; else first = false;
+	s << v.vfmt(fmt.scalar);
+      });
+    s << fmt.vecSuffix;
+  } else if constexpr (Code == ZfFieldTC::FixedVec) {
+    s << fmt.vecPrefix;
+    bool first = true;
+    FixedVec vec{get_.fixedVec(o)};
+    auto ndp = field->ndp;
+    if (!ZuNull(ndp))
+      vec.all([&s, &fmt, ndp, &first](const ZuFixed &v) {
+	if (!first) s << fmt.vecDelim; else first = false;
+	s << v.vfmt(fmt.scalar).fp(ndp);
+      });
+    else
+      vec.all([&s, &first, &fmt](const ZuFixed &v) {
+	if (!first) s << fmt.vecDelim; else first = false;
+	s << v.vfmt(fmt.scalar);
+      });
+    s << fmt.vecSuffix;
+  } else if constexpr (Code == ZfFieldTC::DecimalVec) {
+    s << fmt.vecPrefix;
+    DecimalVec vec{get_.decimalVec(o)};
+    auto ndp = field->ndp;
+    bool first = true;
+    if (!ZuNull(ndp))
+      vec.all([&s, &fmt, ndp, &first](const ZuDecimal &v) {
+	if (!first) s << fmt.vecDelim; else first = false;
+	s << v.vfmt(fmt.scalar).fp(ndp);
+      });
+    else
+      vec.all([&s, &first, &fmt](const ZuDecimal &v) {
+	if (!first) s << fmt.vecDelim; else first = false;
+	s << v.vfmt(fmt.scalar);
+      });
+    s << fmt.vecSuffix;
+  } else if constexpr (Code == ZfFieldTC::TimeVec) {
+    s << fmt.vecPrefix;
+    bool first = true;
+    TimeVec vec{get_.timeVec(o)};
+    vec.all([&s, &fmt, &first](const ZuTime &v_) {
+      ZuDateTime v{v_};
+      if (!first) s << fmt.vecDelim; else first = false;
+      s << v.fmt(fmt.datePrint);
+    });
+    s << fmt.vecSuffix;
+  } else if constexpr (Code == ZfFieldTC::DateTimeVec) {
+    s << fmt.vecPrefix;
+    bool first = true;
+    DateTimeVec vec{get_.dateTimeVec(o)};
+    vec.all([&s, &fmt, &first](const ZuDateTime &v) {
+      if (!first) s << fmt.vecDelim; else first = false;
+      s << v.fmt(fmt.datePrint);
+    });
+    s << fmt.vecSuffix;
+  }
 }
 
 namespace VecScan {
@@ -1394,8 +1088,8 @@ inline unsigned scan(ZuCSpan &s, const ZtVFmt &fmt, L &&l) {
   while (ZuFwd<L>(l)(s)) {
     skip(s);
     if (!match(s, fmt.vecDelim)) {
-      match(s, fmt.vecSuffix);
-      break;
+	match(s, fmt.vecSuffix);
+	break;
     }
   }
   return &s[0] - begin;
@@ -1403,66 +1097,19 @@ inline unsigned scan(ZuCSpan &s, const ZtVFmt &fmt, L &&l) {
 
 } // VecScan
 
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::CStringVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
-    unsigned m = s.length();
-    auto buf = ZmScratch(char, m + 1);
-    buf.length(m + 1);
-    unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
-    if (n) {
-      buf.length(n);
-      buf.push('\0');
-      set_.cstring(o, buf.data());
-      return true;
-    }
-    return false;
-  });
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::StringVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
-    unsigned m = s.length();
-    auto buf = ZmScratch(char, m);
-    buf.length(m);
-    unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
-    if (n) {
-      buf.length(n);
-      set_.string(o, buf);
-      return true;
-    }
-    return false;
-  });
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::BytesVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
-    unsigned n = 0;
-    auto m = s.length();
-    while (n < m && ZuBase64::is(s[n])) n++;
-    n = ZuBase64::declen(m = n);
-    if (n) {
-      auto buf = ZmScratch(uint8_t, n);
-      buf.length(n);
-      buf.length(ZuBase64::decode(buf, ZuBSpan{s}));
-      set_.bytes(o, ZuBSpan{buf});
-      s.offset(m);
-      return true;
-    }
-    return false;
-  });
+// VSet scan functions
+template <typename T>
+T ZfVField_scanInt_(ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt)
+{
+  if (ZuUnlikely(field->props & ZfVFieldProp::Enum()))
+    return field->type->info.enum_()->scan(s);
+  if (ZuUnlikely(field->props & ZfVFieldProp::Flags()))
+    return field->type->info.flags()->scan(s, fmt);
+  if (field->props & ZfVFieldProp::Hex())
+    return ZuBox<T>{ZuFmt::Hex<>{}, s};
+  return ZuBox<T>{s};
 }
 
-// scan forward until a delimiter, suffix or end of string is encountered
 inline ZuCSpan ZfVField_scanVecElem(ZuCSpan s, const ZtVFmt &fmt)
 {
   unsigned delim = 0, suffix = 0;
@@ -1481,7 +1128,6 @@ inline ZuCSpan ZfVField_scanVecElem(ZuCSpan s, const ZtVFmt &fmt)
   return s;
 }
 
-// scan integer from a vector string
 template <typename T>
 int ZfVField_scanIntVec_(
   T &v, ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt)
@@ -1505,125 +1151,205 @@ int ZfVField_scanIntVec_(
   return v.scan(s);
 }
 
+template <unsigned Code, typename>
+inline void
+VSet::scan(
+  void *o, ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt
+) const {
+  if constexpr (Code == ZfFieldTC::CString) {
+    if (!s) {
+      set_.cstring(o, nullptr);
+      return;
+    }
+    unsigned n = s.length() + 1;
+    auto buf = ZmScratch(char, n);
+    buf.length(n);
+    buf.length(Scan::string(buf, s));
+    buf.push('\0');
+    set_.cstring(o, buf.data());
+  } else if constexpr (Code == ZfFieldTC::String) {
+    if (!s) {
+      set_.string(o, s);
+      return;
+    }
+    unsigned n = s.length();
+    auto buf = ZmScratch(char, n);
+    buf.length(n);
+    buf.length(Scan::string(buf, s));
+    set_.string(o, buf);
+  } else if constexpr (Code == ZfFieldTC::Bytes) {
+    unsigned n = ZuBase64::declen(s.length());
+    auto buf = ZmScratch(uint8_t, n);
+    buf.length(n);
+    buf.length(ZuBase64::decode(buf, ZuBSpan{s}));
+    set_.bytes(o, buf);
+  } else if constexpr (Code == ZfFieldTC::Bool) {
+    set_.bool_(o, ZtScanBool(s));
+  }
+
+#define ZfVField_scanInt(width) \
+  else if constexpr (Code == ZfFieldTC::Int##width) {  \
+    set_.int##width(o, ZfVField_scanInt_<int##width##_t>(s, field, fmt));  \
+  } \
+  else if constexpr (Code == ZfFieldTC::UInt##width) {  \
+    set_.uint##width(o, ZfVField_scanInt_<uint##width##_t>(s, field, fmt));  \
+  }
+
+  ZfVField_scanInt(8)
+  ZfVField_scanInt(16)
+  ZfVField_scanInt(32)
+  ZfVField_scanInt(64)
+  ZfVField_scanInt(128)
+
+  else if constexpr (Code == ZfFieldTC::Float) {
+    set_.float_(o, ZuBox<double>{s});
+  } else if constexpr (Code == ZfFieldTC::Fixed) {
+    set_.fixed(o, ZuFixed{s});
+  } else if constexpr (Code == ZfFieldTC::Decimal) {
+    set_.decimal(o, ZuDecimal{s});
+  } else if constexpr (Code == ZfFieldTC::Time) {
+    set_.time(o, ZuDateTime{fmt.dateScan, s}.as_time());
+  } else if constexpr (Code == ZfFieldTC::DateTime) {
+    set_.dateTime(o, ZuDateTime{fmt.dateScan, s});
+  } else if constexpr (Code == ZfFieldTC::UDT) {
+    field->type->info.udt()->scan(field->set.set_.udt, o, s, fmt);
+  } else if constexpr (Code == ZfFieldTC::CStringVec) {
+    VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
+      unsigned m = s.length();
+      auto buf = ZmScratch(char, m + 1);
+      buf.length(m + 1);
+      unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
+      if (n) {
+	buf.length(n);
+	buf.push('\0');
+	set_.cstring(o, buf.data());
+	return true;
+      }
+      return false;
+    });
+  } else if constexpr (Code == ZfFieldTC::StringVec) {
+    VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
+      unsigned m = s.length();
+      auto buf = ZmScratch(char, m);
+      buf.length(m);
+      unsigned n = Scan::strElem(buf, s, fmt.vecDelim, fmt.vecSuffix);
+      if (n) {
+	buf.length(n);
+	set_.string(o, buf);
+	return true;
+      }
+      return false;
+    });
+  } else if constexpr (Code == ZfFieldTC::BytesVec) {
+    VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
+      unsigned n = 0;
+      auto m = s.length();
+      while (n < m && ZuBase64::is(s[n])) n++;
+      n = ZuBase64::declen(m = n);
+      if (n) {
+	auto buf = ZmScratch(uint8_t, n);
+	buf.length(n);
+	buf.length(ZuBase64::decode(buf, ZuBSpan{s}));
+	set_.bytes(o, ZuBSpan{buf});
+	s.offset(m);
+	return true;
+      }
+      return false;
+    });
+  }
+
+  // scan forward until a delimiter, suffix or end of string is encountered
+
+  // scan integer from a vector string
+
 #define ZfVField_scanIntVec(width) \
-template <unsigned Code> \
-inline ZuIfT<Code == ZfFieldTC::Int##width##Vec> \
-VSet::scan( \
-  void *o, ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt \
-) const { \
-  VecScan::scan(s, fmt, [this, o, field, fmt](ZuCSpan &s) { \
-    ZuBox<int##width##_t> v; \
-    int n = ZfVField_scanIntVec_(v, s, field, fmt); \
-    if (n > 0) { \
-      set_.int##width(o, v); \
-      s.offset(n); \
-      return true; \
-    } \
-    return false; \
-  }); \
-} \
-template <unsigned Code> \
-inline ZuIfT<Code == ZfFieldTC::UInt##width##Vec> \
-VSet::scan( \
-  void *o, ZuCSpan s, const ZfVField *field, const ZtVFmt &fmt \
-) const { \
-  VecScan::scan(s, fmt, [this, o, field, fmt](ZuCSpan &s) { \
-    ZuBox<uint##width##_t> v; \
-    int n = ZfVField_scanIntVec_(v, s, field, fmt); \
-    if (n > 0) { \
-      set_.uint##width(o, v); \
-      s.offset(n); \
-      return true; \
-    } \
-    return false; \
-  }); \
-}
+  else if constexpr (Code == ZfFieldTC::Int##width##Vec) {  \
+    VecScan::scan(s, fmt, [this, o, field, fmt](ZuCSpan &s) {  \
+      ZuBox<int##width##_t> v;  \
+      int n = ZfVField_scanIntVec_(v, s, field, fmt);  \
+      if (n > 0) {  \
+	set_.int##width(o, v);  \
+	s.offset(n);  \
+	return true;  \
+      }  \
+      return false;  \
+    });  \
+  } \
+  else if constexpr (Code == ZfFieldTC::UInt##width##Vec) {  \
+    VecScan::scan(s, fmt, [this, o, field, fmt](ZuCSpan &s) {  \
+      ZuBox<uint##width##_t> v;  \
+      int n = ZfVField_scanIntVec_(v, s, field, fmt);  \
+      if (n > 0) {  \
+	set_.uint##width(o, v);  \
+	s.offset(n);  \
+	return true;  \
+      }  \
+      return false;  \
+    });  \
+  }
 
-ZfVField_scanIntVec(8)
-ZfVField_scanIntVec(16)
-ZfVField_scanIntVec(32)
-ZfVField_scanIntVec(64)
-ZfVField_scanIntVec(128)
+  ZfVField_scanIntVec(8)
+  ZfVField_scanIntVec(16)
+  ZfVField_scanIntVec(32)
+  ZfVField_scanIntVec(64)
+  ZfVField_scanIntVec(128)
 
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::FloatVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
-    ZuBox<double> v;
-    int n = v.scan(s);
-    if (n > 0) {
-      set_.float_(o, v);
-      s.offset(n);
-      return true;
-    }
-    return false;
-  });
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::FixedVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
-    ZuFixed v;
-    int n = v.scan(s);
-    if (n > 0) {
-      set_.fixed(o, v);
-      s.offset(n);
-      return true;
-    }
-    return false;
-  });
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::DecimalVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
-    ZuDecimal v;
-    int n = v.scan(s);
-    if (n > 0) {
-      set_.decimal(o, v);
-      s.offset(n);
-      return true;
-    }
-    return false;
-  });
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::TimeVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
-    ZuDateTime v;
-    int n = v.scan(fmt.dateScan, s);
-    if (n > 0) {
-      set_.time(o, v.as_time());
-      s.offset(n);
-      return true;
-    }
-    return false;
-  });
-}
-template <unsigned Code>
-inline ZuIfT<Code == ZfFieldTC::DateTimeVec>
-VSet::scan(
-  void *o, ZuCSpan s, const ZfVField *, const ZtVFmt &fmt
-) const {
-  VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
-    ZuDateTime v;
-    int n = v.scan(fmt.dateScan, s);
-    if (n > 0) {
-      set_.dateTime(o, ZuMv(v));
-      s.offset(n);
-      return true;
-    }
-    return false;
-  });
+  else if constexpr (Code == ZfFieldTC::FloatVec) {
+    VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
+      ZuBox<double> v;
+      int n = v.scan(s);
+      if (n > 0) {
+	set_.float_(o, v);
+	s.offset(n);
+	return true;
+      }
+      return false;
+    });
+  } else if constexpr (Code == ZfFieldTC::FixedVec) {
+    VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
+      ZuFixed v;
+      int n = v.scan(s);
+      if (n > 0) {
+	set_.fixed(o, v);
+	s.offset(n);
+	return true;
+      }
+      return false;
+    });
+  } else if constexpr (Code == ZfFieldTC::DecimalVec) {
+    VecScan::scan(s, fmt, [this, o](ZuCSpan &s) {
+      ZuDecimal v;
+      int n = v.scan(s);
+      if (n > 0) {
+	set_.decimal(o, v);
+	s.offset(n);
+	return true;
+      }
+      return false;
+    });
+  } else if constexpr (Code == ZfFieldTC::TimeVec) {
+    VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
+      ZuDateTime v;
+      int n = v.scan(fmt.dateScan, s);
+      if (n > 0) {
+	set_.time(o, v.as_time());
+	s.offset(n);
+	return true;
+      }
+      return false;
+    });
+  } else if constexpr (Code == ZfFieldTC::DateTimeVec) {
+    VecScan::scan(s, fmt, [this, o, &fmt](ZuCSpan &s) {
+      ZuDateTime v;
+      int n = v.scan(fmt.dateScan, s);
+      if (n > 0) {
+	set_.dateTime(o, ZuMv(v));
+	s.offset(n);
+	return true;
+      }
+      return false;
+    });
+  }
 }
 
 } // ZfStruct_
@@ -2672,15 +2398,16 @@ struct ZfFieldType_UDT : public ZfFieldType_<Props_> {
   using Props = Props_;
   template <typename Fmt = ZtFmt::Default> struct Print {
     const T &v;
-    template <typename S, typename U = T>
-    friend ZuIfT<ZfFieldType_UDT_HasFmt<U, Fmt>{}, S &>
+
+    template <typename S, typename U = T,
+      typename = decltype(void(bool(ZfFieldType_UDT_HasFmt<U, Fmt>{})))>
+    friend S &
     operator <<(S &s, const Print &print) {
-      return s << print.v.template fmt<Fmt>();
-    }
-    template <typename S, typename U = T>
-    friend ZuIfT<!ZfFieldType_UDT_HasFmt<U, Fmt>{}, S &>
-    operator <<(S &s, const Print &print) {
-      return s << print.v;
+      if constexpr (ZfFieldType_UDT_HasFmt<U, Fmt>{}) {
+	return s << print.v.template fmt<Fmt>();
+      } else {
+	return s << print.v;
+      }
     }
   };
   inline static ZfVFieldType *vtype();

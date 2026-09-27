@@ -20,7 +20,6 @@ pkginclude_HEADERS = ZdbLib.hh \
 #fbsdir = $(datarootdir)/${PACKAGE}/fbs
 #dist_fbs_DATA = fbs/telemetry.fbs
 lib_LTLIBRARIES = libZdb.la libZdbMem.la
-libZdb_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZdb_la_SOURCES = ZdbLib.cc ZdbTypes.cc ZdbSaga.cc Zdb.cc \
 	ZtcDB.cc ZtcDBHost.cc ZtcDBTable.cc
 libZdb_la_LIBADD = \
@@ -31,7 +30,6 @@ libZdb_la_LIBADD = \
 	$(top_builddir)/zu/src/libZu.la \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 libZdbMem_la_SOURCES = ZdbMemStore.cc
-libZdbMem_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZdbMem_la_LIBADD = \
 	$(top_builddir)/zv/src/libZv.la \
 	$(top_builddir)/zfb/src/libZfb.la \

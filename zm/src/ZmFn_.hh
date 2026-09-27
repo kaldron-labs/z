@@ -328,35 +328,38 @@ public:
     return *this;
   }
 
-  template <typename ...Args__, typename R__ = R>
-  ZuSame<void, R__, R> operator ()(Args__ &&... args) const {
-    if (ZmAnyFn::operator !()) return;
-    (*reinterpret_cast<Invoker>(m_invoker))(
-      object_(), ZuFwd<Args__>(args)...);
-  }
-  template <typename ...Args__, typename R__ = R>
-  ZuNotSame<void, R__, R> operator ()(Args__ &&... args) const {
-    if (ZmAnyFn::operator !()) return {};
-    return (*reinterpret_cast<Invoker>(m_invoker))(
-      object_(), ZuFwd<Args__>(args)...);
+  template <typename ...Args__, typename R__ = R,
+    typename = decltype(void(bool(ZuIsSame<void, R__>{})))>
+  R operator ()(Args__ &&... args) const {
+    if constexpr (ZuIsSame<void, R__>{}) {
+      if (ZmAnyFn::operator !()) return;
+      (*reinterpret_cast<Invoker>(m_invoker))(
+	object_(), ZuFwd<Args__>(args)...);
+    } else {
+      if (ZmAnyFn::operator !()) return {};
+      return (*reinterpret_cast<Invoker>(m_invoker))(
+	object_(), ZuFwd<Args__>(args)...);
+    }
   }
 
   // lambda matching
   struct Lambda;
-  template <typename L>
-  static MatchCallable<L, ZmFn> fn(L &&l) {
+  template <typename L, typename = MatchCallable<L>>
+  static ZmFn fn(L &&l) {
     return Lambda::fn(ZuFwd<L>(l));
   }
-  template <typename O, typename L>
-  static MatchBoundCallable<ZuDeref<O>, L, ZmFn> fn(O &&o, L &&l) {
+  template <typename O, typename L,
+    typename = MatchBoundCallable<ZuDeref<O>, L>>
+  static ZmFn fn(O &&o, L &&l) {
     return Lambda::fn(ZuFwd<O>(o), ZuFwd<L>(l));
   }
-  template <typename L>
-  static MatchCallable<L, ZmFn> mvFn(L &&l) {
+  template <typename L, typename = MatchCallable<L>>
+  static ZmFn mvFn(L &&l) {
     return Lambda::mvFn(ZuFwd<L>(l));
   }
-  template <typename O, typename L>
-  static MatchBoundCallable<ZuDeref<O>, L, ZmFn> mvFn(O &&o, L &&l) {
+  template <typename O, typename L,
+    typename = MatchBoundCallable<ZuDeref<O>, L>>
+  static ZmFn mvFn(O &&o, L &&l) {
     return Lambda::mvFn(ZuFwd<O>(o), ZuFwd<L>(l));
   }
 
@@ -396,22 +399,24 @@ private:
 public:
   // lambdas (specifying heap ID)
   struct Lambda {
-    template <typename L>
-    static MatchCallable<L, ZmFn> fn(L &&l) {
+    template <typename L, typename = MatchCallable<L>>
+    static ZmFn fn(L &&l) {
       return LambdaInvoker<L>::fn(ZuFwd<L>(l));
     }
-    template <typename O, typename L>
-    static MatchBoundCallable<O *, L, ZmFn> fn(O *o, L &&l) {
+    template <typename O, typename L, typename = MatchBoundCallable<O *, L>>
+    static ZmFn fn(O *o, L &&l) {
       return LambdaPtrInvoker<O, L>::fn(
 	  o, ZuFwd<L>(l));
     }
-    template <typename O, typename L>
-    static MatchBoundCallable<ZmRef<O>, L, ZmFn> fn(ZmRef<O> o, L &&l) {
+    template <typename O, typename L,
+      typename = MatchBoundCallable<ZmRef<O>, L>>
+    static ZmFn fn(ZmRef<O> o, L &&l) {
       return LambdaRefInvoker<O, L>::fn(
 	  ZuMv(o), ZuFwd<L>(l));
     }
-    template <typename O, typename L>
-    static MatchBoundCallable<ZmRef<O>, L, ZmFn> mvFn(ZmRef<O> o, L &&l) {
+    template <typename O, typename L,
+      typename = MatchBoundCallable<ZmRef<O>, L>>
+    static ZmFn mvFn(ZmRef<O> o, L &&l) {
       return LambdaMvRefInvoker<O, L>::fn(
 	  ZuMv(o), ZuFwd<L>(l));
     }

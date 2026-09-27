@@ -506,7 +506,7 @@ protected:
 
 public:
   template <typename A>
-  ZuInline constexpr bool equals(const A &a) const {
+  inline constexpr bool equals(const A &a) const {
     if (ZuConstEval()) {
       if (same(a)) return true;
       unsigned l = length();
@@ -520,7 +520,7 @@ public:
     }
   }
   template <typename A>
-  ZuInline constexpr int cmp(const A &a) const {
+  inline constexpr int cmp(const A &a) const {
     if (ZuConstEval()) {
       if (same(a)) return 0;
       unsigned l = length();
@@ -533,11 +533,11 @@ public:
       return cspan().cmp(a);
     }
   }
-  template <typename L, typename R>
-  friend ZuInline constexpr ZuIfT<ZuIs_<L, Array>{}, bool>
+  template <typename L, typename R, Array * = nullptr, typename = ZuIfT<ZuIs_<L, Array>{}>>
+  friend ZuInline constexpr bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend ZuInline constexpr ZuIfT<ZuIs_<L, Array>{}, int>
+  template <typename L, typename R, Array * = nullptr, typename = ZuIfT<ZuIs_<L, Array>{}>>
+  friend ZuInline constexpr int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
 // hash
@@ -546,13 +546,13 @@ public:
 
 // iteration
 
-  template <bool Mutable = false, typename L>
-  constexpr ZuIfT<!Mutable> all(L &&l) const {
+  template <bool Mutable = false, typename L, typename = ZuIfT<!Mutable>>
+  constexpr void all(L &&l) const {
     auto data_ = data();
     for (unsigned i = 0, n = length_; i < n; i++) ZuFwd<L>(l)(data_[i]);
   }
-  template <bool Mutable, typename L>
-  constexpr ZuIfT<Mutable> all(L &&l) {
+  template <bool Mutable, typename L, typename = ZuIfT<Mutable>>
+  constexpr void all(L &&l) {
     auto data_ = data();
     for (unsigned i = 0, n = length_; i < n; i++) ZuFwd<L>(l)(data_[i]);
   }
@@ -719,8 +719,8 @@ public:
 
 // append operations
 
-  template <typename U>
-  constexpr MatchStreamable<U &&, Array &> operator <<(U &&v) {
+  template <typename U, typename = MatchStreamable<U &&>>
+  constexpr Array & operator <<(U &&v) {
     this->append(ZuFwd<U>(v));
     return *this;
   }
@@ -730,97 +730,86 @@ public:
     return *this << ZuFwd<U>(v);
   }
 
-  template <typename A>
-  constexpr MatchSpan<A> append(A &&a) {
-    auto length = ZuTraits<A>::length(a);
-    if (length_ + length > N) length = N - length_;
-    if (ZuConstEval())
-      for (unsigned i = 0; i < length; i++)
-	ZuNew<T>(ZuAddr((*this)[i + length_]), ZuFwdLike<A>(a[i]));
-    else if constexpr (ZuIsLRef<A>{})
-      copyElems(data() + length_, &a[0], length);
-    else
-      this->template moveElems<false>(data() + length_, &a[0], length);
-    length_ += length;
-  }
-
-  template <typename A>
-  constexpr MatchIterable<A> append(A &&a_) {
-    auto length = a_.end() - a_.begin();
-    if (length_ + length > N) length = N - length_;
-    auto a = a_.begin();
-    if (ZuConstEval())
-      for (unsigned i = 0; i < length; i++)
-	ZuNew<T>(ZuAddr((*this)[i + length_]), ZuFwdLike<A>(*a++));
-    else
-      for (unsigned i = 0; i < length; i++)
-	new (&(*this)[i + length_]) T(ZuFwdLike<A>(*a++));
-    length_ += length;
-  }
-
-  template <typename S>
-  constexpr MatchString<S> append(const S &s) {
-    auto length = ZuTraits<S>::length(s);
-    if (length_ + length > N) length = N - length_;
-    if (ZuConstEval())
-      for (unsigned i = 0; i < length; i++)
-	ZuNew<T>(ZuAddr((*this)[i + length_]), s[i]);
-    else
-      copyElems(data() + length_, &s[0], length);
-    length_ += length;
-  }
-
-  template <typename E>
-  constexpr MatchElem<E> append(E &&e) {
-    if (length_ >= N) return;
-    if (ZuConstEval())
-      ZuNew<T>(ZuAddr((*this)[length_]), ZuFwd<E>(e));
-    else
-      initElem(data() + length_, ZuFwd<E>(e));
-    ++length_;
-  }
-
-  template <typename S>
-  MatchAltString<S>
-  append(const S &s) {
-    if (length_ >= N) return;
-    length_ += ZuUTF<T, AltChar>::cvt(
-      {data() + length_, N - length_}, s);
-  }
-  template <typename C>
-  MatchAltChar<C> append(C c) {
-    if (length_ >= N) return;
-    length_ += ZuUTF<T, AltChar>::cvt(
-      {data() + length_, N - length_}, {&c, 1});
-  }
-
-  template <typename P>
-  MatchPDelegate<P> append(P &&p) {
-    ZuPrint<P>::print(*this, ZuFwd<P>(p));
-  }
-  template <typename P>
-  MatchPBuffer<P> append(const P &p) {
-    unsigned length = ZuPrint<P>::length(p);
-    if (!length || length_ + length >= N) return;
-    if constexpr (ZuEquiv<T, char>{}) {
-      length_ += ZuPrint<P>::print(
-	reinterpret_cast<char *>(data()) + length_, length, p);
+  template <typename A,
+    typename = ZuIfT<(IsSpan<A>{}) || (IsIterable<A>{}) || (IsElem<A>{}) || (IsPDelegate<A>{})>>
+  constexpr void append(A &&a_) {
+    if constexpr (IsSpan<A>{}) {
+      auto length = ZuTraits<A>::length(a_);
+      if (length_ + length > N) length = N - length_;
+      if (ZuConstEval())
+	for (unsigned i = 0; i < length; i++)
+	  ZuNew<T>(ZuAddr((*this)[i + length_]), ZuFwdLike<A>(a_[i]));
+      else if constexpr (ZuIsLRef<A>{})
+	copyElems(data() + length_, &a_[0], length);
+      else
+	this->template moveElems<false>(data() + length_, &a_[0], length);
+      length_ += length;
+    } else if constexpr (IsIterable<A>{}) {
+      auto length = a_.end() - a_.begin();
+      if (length_ + length > N) length = N - length_;
+      auto a = a_.begin();
+      if (ZuConstEval())
+	for (unsigned i = 0; i < length; i++)
+	  ZuNew<T>(ZuAddr((*this)[i + length_]), ZuFwdLike<A>(*a++));
+      else
+	for (unsigned i = 0; i < length; i++)
+	  new (&(*this)[i + length_]) T(ZuFwdLike<A>(*a++));
+      length_ += length;
+    } else if constexpr (IsElem<A>{}) {
+      if (length_ >= N) return;
+      if (ZuConstEval())
+	ZuNew<T>(ZuAddr((*this)[length_]), ZuFwd<A>(a_));
+      else
+	initElem(data() + length_, ZuFwd<A>(a_));
+      ++length_;
     } else {
-      auto buf = static_cast<char *>(ZuAlloca(length, 1));
-      if (!buf) return;
-      ZuCSpan s(buf, ZuPrint<P>::print(buf, length, p));
+      ZuPrint<A>::print(*this, ZuFwd<A>(a_));
+    }
+  }
+  template <typename S,
+    typename = ZuIfT<(IsString<S>{}) || (IsAltString<S>{}) || (IsPBuffer<S>{})>>
+  constexpr void append(const S &p) {
+    if constexpr (IsString<S>{}) {
+      auto length = ZuTraits<S>::length(p);
+      if (length_ + length > N) length = N - length_;
+      if (ZuConstEval())
+	for (unsigned i = 0; i < length; i++)
+	  ZuNew<T>(ZuAddr((*this)[i + length_]), p[i]);
+      else
+	copyElems(data() + length_, &p[0], length);
+      length_ += length;
+    } else if constexpr (IsAltString<S>{}) {
+      if (length_ >= N) return;
       length_ += ZuUTF<T, AltChar>::cvt(
-	{data() + length_, N - length_}, s);
+	{data() + length_, N - length_}, p);
+    } else {
+      unsigned length = ZuPrint<S>::length(p);
+      if (!length || length_ + length >= N) return;
+      if constexpr (ZuEquiv<T, char>{}) {
+	length_ += ZuPrint<S>::print(
+	  reinterpret_cast<char *>(data()) + length_, length, p);
+      } else {
+	auto buf = static_cast<char *>(ZuAlloca(length, 1));
+	if (!buf) return;
+	ZuCSpan s(buf, ZuPrint<S>::print(buf, length, p));
+	length_ += ZuUTF<T, AltChar>::cvt(
+	  {data() + length_, N - length_}, s);
+      }
     }
   }
 
-  template <typename V>
-  MatchReal<V> append(V v) {
-    append(ZuBoxed(v));
-  }
-  template <typename V>
-  MatchPtr<V> append(V v) {
-    append(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
+  template <typename C,
+    typename = ZuIfT<(IsAltChar<C>{}) || (IsReal<C>{}) || (IsPtr<C>{})>>
+  void append(C c) {
+    if constexpr (IsAltChar<C>{}) {
+      if (length_ >= N) return;
+      length_ += ZuUTF<T, AltChar>::cvt(
+	{data() + length_, N - length_}, {&c, 1});
+    } else if constexpr (IsReal<C>{}) {
+      append(ZuBoxed(c));
+    } else {
+      append(ZuBoxPtr(c).hex<false, ZuFmt::Alt<>>());
+    }
   }
 
 // splice operations

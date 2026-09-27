@@ -77,8 +77,7 @@ Z_CPPFLAGS="-D_REENTRANT -D_GNU_SOURCE"
 case $build_os in
   linux-*) 
     Z_CFLAGS=""
-    Z_CXXFLAGS=""
-    Z_LIB_CXXFLAGS="-fvisibility=hidden"
+    Z_CXXFLAGS="-fvisibility=hidden"
     # Compress final ELF DWARF while reusing uncompressed input objects.
     Z_LDFLAGS="-rdynamic -Wl,--compress-debug-sections=zstd"
     Z_SO_LDFLAGS="-release $Z_VERSION -Wl,--compress-debug-sections=zstd"
@@ -98,7 +97,6 @@ case $build_os in
     Z_CPPFLAGS="-DUNICODE $Z_CPPFLAGS"
     Z_CFLAGS="-mstackrealign -fuse-ld=lld"
     Z_CXXFLAGS="-mstackrealign -fuse-ld=lld"
-    Z_LIB_CXXFLAGS=""
     Z_LDFLAGS="-Wl,--enable-auto-import"
     Z_SO_LDFLAGS="-no-undefined"
     Z_LIBS="-lm"
@@ -109,8 +107,7 @@ case $build_os in
     ;;
   *)
     Z_CFLAGS=""
-    Z_CXXFLAGS=""
-    Z_LIB_CXXFLAGS="-fvisibility=hidden"
+    Z_CXXFLAGS="-fvisibility=hidden"
     Z_LDFLAGS=""
     Z_SO_LDFLAGS=""
     Z_LIBS="-lm"
@@ -155,7 +152,6 @@ AS_CASE([$CC],
 AC_SUBST(Z_CPPFLAGS)
 AC_SUBST(Z_CFLAGS)
 AC_SUBST(Z_CXXFLAGS)
-AC_SUBST(Z_LIB_CXXFLAGS)
 AC_SUBST(Z_LDFLAGS)
 AC_SUBST(Z_SO_LDFLAGS)
 AC_SUBST(Z_LIBS)
@@ -306,5 +302,5 @@ AC_CONFIG_FILES([Makefile \
 	zrl/Makefile zrl/src/Makefile zrl/test/Makefile zrl/example/Makefile \
 	zgtk/Makefile zgtk/src/Makefile zgtk/test/Makefile \
 	zgtk/example/Makefile zdash/Makefile zdash/src/Makefile \
-	zdash/test/Makefile])
+	zdash/test/Makefile zdash/itest/Makefile])
 AC_OUTPUT

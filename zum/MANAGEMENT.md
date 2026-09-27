@@ -108,26 +108,28 @@ zum --config FILE OPERATION --json FILE
 
 Offline database-secret key rotation is a server maintenance operation, not a
 REST administrative action. Stop all writers and run
-`zumd --rekey --issuer=URL` with the normal Zdb connection/configuration.
-Inject the old key as `ZUM_DB_KEY` and the new key as `ZUM_DB_NEW_KEY`; both are
-base64-encoded random 256-bit secrets, never command-line arguments. Maintenance
-does not start an HTTP listener. An incomplete rotation blocks normal readiness;
-resume with the same two keys. Keep both until the command reports completion
-after the store drain, then restart every node with the new `ZUM_DB_KEY`.
-Keep old keys separately for old backups. A completed retry verifies ciphertext
-without rewriting it. This changes encrypted secret fields only, not signing
-keys, OAuth client-secret values, user assignments or ordinary database fields.
+`zumd --rekey --issuer=URL` with the normal Zdb connection/configuration and
+the same secure Vault store and account as the running daemon. The old key is
+loaded from Vault; supply the new base64-encoded random 256-bit key as
+`ZUM_DB_KEY`, never on the command line. Maintenance does not start an HTTP
+listener. An incomplete rotation blocks normal readiness; retry with the same
+new key. Completion means both the database store drain and Vault publication
+succeeded. Retain the new key until completion, and retain old keys separately
+for old backups. Afterward, normal starts can omit `ZUM_DB_KEY`. A completed
+retry verifies ciphertext without rewriting it. This changes encrypted secret
+fields only, not signing keys, OAuth client-secret values, user assignments or
+ordinary database fields.
 See IMPLEMENTATION.md for the current validation status of this operation.
 
 The non-secret configuration contains the exact application `issuerURL`
 (`https://auth.example/oauth2/APP_ID`) and the independent administrative
 `managementURL` origin. It may also contain
 `clientID` (default `zum-admin`), `scope` (default `zum.admin`), `callbackPort`,
-`loginTimeout`, optional `caPath` for a private issuer CA, and an owner-only
-`credentialFile`. Empty `caPath` retains native system trust. Login uses an external
-browser, a loopback redirect, authorization code, and S256 PKCE. Without a
-credential file, operation invocations perform login and retain tokens only in
-memory.
+`loginTimeout`, and optional `caPath` for a private issuer CA. Empty `caPath`
+retains native system trust. Login uses an external browser, a loopback
+redirect, authorization code, and S256 PKCE. The CLI stores credentials through
+`Ztls::Vault` under `$HOME/.zum` (or `ZUM_HOME`) and opens the vault only for
+each load/save. A missing stored credential triggers browser login.
 
 Request JSON supplies normal path/query/body fields. These reserved fields are
 removed from the payload and mapped to transport controls:

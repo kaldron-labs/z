@@ -402,8 +402,8 @@ public:
     if (!*v) return;
     init(v.sec()), m_nsec = v.nsec();
   }
-  template <typename T>
-  constexpr ZuSame<ZuTime, T, ZuDateTime &> operator =(const T &v) noexcept {
+  template <typename T, typename = ZuSame<ZuTime, T>>
+  constexpr ZuDateTime & operator =(const T &v) noexcept {
     if (!*v) { null(); return *this; }
     init(v.sec());
     m_nsec = v.nsec();
@@ -424,8 +424,8 @@ public:
 
   template <typename T, typename = MatchInt<T>>
   constexpr ZuDateTime(T v) noexcept { init(v); m_nsec = 0; }
-  template <typename T>
-  constexpr MatchInt<T, ZuDateTime &> operator =(T v) noexcept {
+  template <typename T, typename = MatchInt<T>>
+  constexpr ZuDateTime & operator =(T v) noexcept {
     init(v);
     m_nsec = 0;
     return *this;
@@ -922,7 +922,7 @@ public:
   //   %a (C90) day of week - short name
   //   %A (C90) day of week - long name
   //   %b (C90) month - short name
-  //   %h (SU) '' 
+  //   %h (SU) ''
   //   %B (C90) month - long name
   //   %c (C90) Unix asctime() / ctime() (%a %b %e %T %Y)
   //   %C (SU) century
@@ -993,8 +993,8 @@ public:
     return ZuTime{sec, int32_t(nsec)};
   }
 
-  template <typename T>
-  ZuSame<ZuTime, T, ZuDateTime> operator +(const T &t) const {
+  template <typename T, typename = ZuSame<ZuTime, T>>
+  ZuDateTime operator +(const T &t) const {
     int64_t julian, sec, nsec;
 
     sec = m_sec;
@@ -1025,8 +1025,8 @@ public:
 
     return ZuDateTime{Julian{int32_t(julian)}, int32_t(sec), int32_t(nsec)};
   }
-  template <typename T>
-  MatchInt<T, ZuDateTime> operator +(T sec_) const {
+  template <typename T, typename = MatchInt<T>>
+  ZuDateTime operator +(T sec_) const {
     int64_t julian, sec = sec_;
 
     if (sec < 0) {
@@ -1053,8 +1053,8 @@ public:
     return ZuDateTime{Julian{int32_t(julian)}, int32_t(sec), m_nsec};
   }
 
-  template <typename T>
-  ZuSame<ZuTime, T, ZuDateTime &> operator +=(const T &t) {
+  template <typename T, typename = ZuSame<ZuTime, T>>
+  ZuDateTime & operator +=(const T &t) {
     int64_t julian, sec, nsec;
 
     sec = m_sec;
@@ -1089,8 +1089,8 @@ public:
 
     return *this;
   }
-  template <typename T>
-  MatchInt<T, ZuDateTime &> operator +=(T sec_) {
+  template <typename T, typename = MatchInt<T>>
+  ZuDateTime & operator +=(T sec_) {
     int64_t julian, sec = sec_;
 
     if (sec < 0) {
@@ -1120,20 +1120,20 @@ public:
     return *this;
   }
 
-  template <typename T>
-  ZuSame<ZuTime, T, ZuDateTime> operator -(const T &t) const {
+  template <typename T, typename = ZuSame<ZuTime, T>>
+  ZuDateTime operator -(const T &t) const {
     return ZuDateTime::operator +(-t);
   }
-  template <typename T>
-  MatchInt<T, ZuDateTime> operator -(T sec_) const {
+  template <typename T, typename = MatchInt<T>>
+  ZuDateTime operator -(T sec_) const {
     return ZuDateTime::operator +(-sec_);
   }
-  template <typename T>
-  ZuSame<ZuTime, T, ZuDateTime &> operator -=(const T &t) {
+  template <typename T, typename = ZuSame<ZuTime, T>>
+  ZuDateTime & operator -=(const T &t) {
     return ZuDateTime::operator +=(-t);
   }
-  template <typename T>
-  MatchInt<T, ZuDateTime &> operator -=(T sec_) {
+  template <typename T, typename = MatchInt<T>>
+  ZuDateTime & operator -=(T sec_) {
     return ZuDateTime::operator +=(-sec_);
   }
 
@@ -1308,7 +1308,7 @@ inline void ZuDateTimePrintASN1_G::print(S &s) const {
   value.asn1_g_print(s, fmt);
 }
 template <typename S>
-inline void ZuDateTimePrintStrftime::print(S &s) const 
+inline void ZuDateTimePrintStrftime::print(S &s) const
 {
   auto format = fmt.format;
 
@@ -1328,7 +1328,7 @@ inline void ZuDateTimePrintStrftime::print(S &s) const
   // (MS) - Microsoft CRT
   // (GNU) - glibc (not all glibc-specific extensions are supported)
   // (TZ) - Arthur Olson's timezone library
- 
+
   ZuVFmt fmt_;
 
   while (char c = *format++) {
@@ -1364,7 +1364,7 @@ fmtchar:
 	s << ZuDateTime::dayLongName(wkDay);
 	break;
       case 'b': // (C90) month - short name
-      case 'h': // (SU) '' 
+      case 'h': // (SU) ''
 	if (!*month) value.ymd(year, month, day);
 	s << ZuDateTime::monthShortName(month);
 	break;

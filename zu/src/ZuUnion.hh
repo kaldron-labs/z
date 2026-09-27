@@ -263,7 +263,7 @@ namespace Union_ { // internal
   template <template <typename> class Fn> struct And {
     template <typename TL> struct Reduce_;
     template <typename ...Ts> struct Reduce_<ZuTypeList<Ts...>> {
-      using T = ZuBool<(...&& bool(Fn<Ts>{}))>;
+      using T = ZuBool<(...&&bool(Fn<Ts>{}))>;
     };
     template <typename TL> using Reduce = typename Reduce_<TL>::T;
   };
@@ -319,7 +319,7 @@ public:
     if constexpr (!IsVoid<T0>{}) Ops<T0>::ctor(ZuAddr(p_<0>(m_u)));
   }
 
-  constexpr ~Union() noexcept((...&& bool(ZuNXDestroy<Ts>{}))) {
+  constexpr ~Union() noexcept((...&&bool(ZuNXDestroy<Ts>{}))) {
     ZuSwitch::dispatch<N>(m_type, [this](auto I) {
       using namespace Union_;
       using T = Type<I>;
@@ -409,7 +409,7 @@ public:
   template <
     typename V,
     typename Vs = ZuTypeList<Ts...>,
-    ZuIfT<bool(ZuIs_<Union, ZuDecay<V>>{}) && bool(typename Union_::And<
+    ZuIfT<bool(ZuIs_<Union, ZuDecay<V>>{}) &&bool(typename Union_::And<
       Union_::Construct<V &&>::template Can>::template Reduce<Vs>{}), int> = 0,
     bool NoExcept = typename Union_::And<
       Union_::NXMove>::template Reduce<Vs>{}>
@@ -425,7 +425,7 @@ public:
   template <
     typename V,
     typename Vs = ZuTypeList<Ts...>,
-    ZuIfT<bool(ZuIs_<Union, ZuDecay<V>>{}) && bool(typename Union_::And<
+    ZuIfT<bool(ZuIs_<Union, ZuDecay<V>>{}) &&bool(typename Union_::And<
       Union_::Assign<V &&>::template Can>::template Reduce<Vs>{}), int> = 0,
     bool NoExcept = typename Union_::And<
       Union_::NXMove>::template Reduce<Vs>{}>
@@ -514,59 +514,62 @@ public:
     m_type = 0;
   }
 
-  template <typename P>
-  constexpr ZuIs<P, Union, bool> equals(const P &p) const {
-    if (this == &p) return true;
-    if (m_type != p.m_type) return false;
-    return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> bool {
-      using namespace Union_;
-      using T = Type<I>;
-      if constexpr (!IsVoid<T>{})
-	return Ops<T>::equals(p_<I>(m_u), p_<I>(p.m_u));
-      else
-	return true;
-    });
+  template <typename P,
+    typename = decltype(void(bool(ZuIs_<P, Union>{})))>
+  constexpr bool equals(const P &p) const {
+    if constexpr (ZuIs_<P, Union>{}) {
+      if (this == &p) return true;
+      if (m_type != p.m_type) return false;
+      return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> bool {
+	using namespace Union_;
+	using T = Type<I>;
+	if constexpr (!IsVoid<T>{})
+	  return Ops<T>::equals(p_<I>(m_u), p_<I>(p.m_u));
+	else
+	  return true;
+      });
+    } else {
+      return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> bool {
+	using namespace Union_;
+	using T = Type<I>;
+	if constexpr (!IsVoid<T>{})
+	  return Ops<T>::equals(p_<I>(m_u), p);
+	else
+	  return false;
+      });
+    }
   }
-  template <typename P>
-  constexpr ZuIsNot<P, Union, bool> equals(const P &p) const {
-    return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> bool {
-      using namespace Union_;
-      using T = Type<I>;
-      if constexpr (!IsVoid<T>{})
-	return Ops<T>::equals(p_<I>(m_u), p);
-      else
-	return false;
-    });
+
+  template <typename P,
+    typename = decltype(void(bool(ZuIs_<P, Union>{})))>
+  constexpr int cmp(const P &p) const {
+    if constexpr (ZuIs_<P, Union>{}) {
+      if (this == &p) return 0;
+      if (int i = ZuCompare(m_type, p.m_type)) return i;
+      return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> int {
+	using namespace Union_;
+	using T = Type<I>;
+	if constexpr (!IsVoid<T>{})
+	  return Ops<T>::cmp(p_<I>(m_u), p_<I>(p.m_u));
+	else
+	  return 0;
+      });
+    } else {
+      return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> int {
+	using namespace Union_;
+	using T = Type<I>;
+	if constexpr (!IsVoid<T>{})
+	  return Ops<T>::cmp(p_<I>(m_u), p);
+	else
+	  return -1;
+      });
+    }
   }
-  template <typename P>
-  constexpr ZuIs<P, Union, int> cmp(const P &p) const {
-    if (this == &p) return 0;
-    if (int i = ZuCompare(m_type, p.m_type)) return i;
-    return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> int {
-      using namespace Union_;
-      using T = Type<I>;
-      if constexpr (!IsVoid<T>{})
-	return Ops<T>::cmp(p_<I>(m_u), p_<I>(p.m_u));
-      else
-	return 0;
-    });
-  }
-  template <typename P>
-  constexpr ZuIsNot<P, Union, int> cmp(const P &p) const {
-    return ZuSwitch::dispatch<N>(m_type, [this, &p](auto I) -> int {
-      using namespace Union_;
-      using T = Type<I>;
-      if constexpr (!IsVoid<T>{})
-	return Ops<T>::cmp(p_<I>(m_u), p);
-      else
-	return -1;
-    });
-  }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<ZuIs_<L, Union>{}, bool>
+  template <typename L, typename R, Union * = nullptr, typename = ZuIfT<ZuIs_<L, Union>{}>>
+  friend constexpr bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<ZuIs_<L, Union>{}, int>
+  template <typename L, typename R, Union * = nullptr, typename = ZuIfT<ZuIs_<L, Union>{}>>
+  friend constexpr int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
   constexpr bool operator *() const {

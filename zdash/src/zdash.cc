@@ -570,6 +570,62 @@ using Iter = ZuUnion<
 class Model : public ZGtk::TreeHierarchy::Model<Model, Iter, Depth> {
   using Base = ZGtk::TreeHierarchy::Model<Model, Iter, Depth>;
 public:
+  // parent() - child->parent type map
+
+  template <typename T,
+    typename = ZuIfT<
+      (ZuIsSame<T, App>{}) ||
+      (ZuIsSame<T, HeapParent>{} || ZuIsSame<T, HashTblParent>{} || ZuIsSame<T,
+	ThreadParent>{} || ZuIsSame<T, MxParent>{} || ZuIsSame<T, QueueParent>{} ||
+	ZuIsSame<T, PoolParent>{} || ZuIsSame<T, EngineParent>{} || ZuIsSame<T, DB>{}) ||
+      (ZuIsSame<T, Heap>{}) ||
+      (ZuIsSame<T, HashTbl>{}) ||
+      (ZuIsSame<T, Thread>{}) ||
+      (ZuIsSame<T, Mx>{}) ||
+      (ZuIsSame<T, Queue>{}) ||
+      (ZuIsSame<T, Pool>{}) ||
+      (ZuIsSame<T, Engine>{}) ||
+      (ZuIsSame<T, Socket>{}) ||
+      (ZuIsSame<T, Link>{}) ||
+      (ZuIsSame<T, DBHostParent>{} || ZuIsSame<T, DBTableParent>{}) ||
+      (ZuIsSame<T, DBHost>{}) ||
+      (ZuIsSame<T, DBTable>{})>>
+  static auto *parent(void *ptr) {
+    if constexpr (ZuIsSame<T, App>{}) {
+      return static_cast<Root *>(ptr);
+    } else if constexpr (ZuIsSame<T, HeapParent>{} || ZuIsSame<T, HashTblParent>{} ||
+      ZuIsSame<T, ThreadParent>{} || ZuIsSame<T, MxParent>{} || ZuIsSame<T,
+      QueueParent>{} || ZuIsSame<T, PoolParent>{} || ZuIsSame<T, EngineParent>{} ||
+      ZuIsSame<T, DB>{}) {
+      return static_cast<App *>(ptr);
+    } else if constexpr (ZuIsSame<T, Heap>{}) {
+      return static_cast<HeapParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, HashTbl>{}) {
+      return static_cast<HashTblParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, Thread>{}) {
+      return static_cast<ThreadParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, Mx>{}) {
+      return static_cast<MxParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, Queue>{}) {
+      return static_cast<QueueParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, Pool>{}) {
+      return static_cast<PoolParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, Engine>{}) {
+      return static_cast<EngineParent *>(ptr);
+    } else if constexpr (ZuIsSame<T, Socket>{}) {
+      return static_cast<Mx *>(ptr);
+    } else if constexpr (ZuIsSame<T, Link>{}) {
+      return static_cast<Engine *>(ptr);
+    } else if constexpr (ZuIsSame<T, DBHostParent>{} || ZuIsSame<T, DBTableParent>{}) {
+      return static_cast<DB *>(ptr);
+    } else if constexpr (ZuIsSame<T, DBHost>{}) {
+      return static_cast<DBHostParent *>(ptr);
+    } else {
+      return static_cast<DBTableParent *>(ptr);
+    }
+  }
+
+
   enum { RAGCol = 0, IDCol0, IDCol1, IDCol2, NCols };
 
   static Model *ctor() {
@@ -648,74 +704,6 @@ public:
     gtk_tree_path_free(path);
   }
 
-  // parent() - child->parent type map
-  template <typename T>
-  static ZuSame<T, App, Root> *parent(void *ptr) {
-    return static_cast<Root *>(ptr);
-  }
-  template <typename T>
-  static ZuIfT<
-      ZuIsSame<T, HeapParent>{} ||
-      ZuIsSame<T, HashTblParent>{} ||
-      ZuIsSame<T, ThreadParent>{} ||
-      ZuIsSame<T, MxParent>{} ||
-      ZuIsSame<T, QueueParent>{} ||
-      ZuIsSame<T, PoolParent>{} ||
-      ZuIsSame<T, EngineParent>{} ||
-      ZuIsSame<T, DB>{}, App> *parent(void *ptr) {
-    return static_cast<App *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Heap, HeapParent> *parent(void *ptr) {
-    return static_cast<HeapParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, HashTbl, HashTblParent> *parent(void *ptr) {
-    return static_cast<HashTblParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Thread, ThreadParent> *parent(void *ptr) {
-    return static_cast<ThreadParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Mx, MxParent> *parent(void *ptr) {
-    return static_cast<MxParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Queue, QueueParent> *parent(void *ptr) {
-    return static_cast<QueueParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Pool, PoolParent> *parent(void *ptr) {
-    return static_cast<PoolParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Engine, EngineParent> *parent(void *ptr) {
-    return static_cast<EngineParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Socket, Mx> *parent(void *ptr) {
-    return static_cast<Mx *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, Link, Engine> *parent(void *ptr) {
-    return static_cast<Engine *>(ptr);
-  }
-  template <typename T>
-  static ZuIfT<
-      ZuIsSame<T, DBHostParent>{} ||
-      ZuIsSame<T, DBTableParent>{}, DB> *parent(void *ptr) {
-    return static_cast<DB *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, DBHost, DBHostParent> *parent(void *ptr) {
-    return static_cast<DBHostParent *>(ptr);
-  }
-  template <typename T>
-  static ZuSame<T, DBTable, DBTableParent> *parent(void *ptr) {
-    return static_cast<DBTableParent *>(ptr);
-  }
-
   // key printing
   template <typename Key>
   struct KeyPrint_ {
@@ -738,21 +726,14 @@ public:
   struct KeyPrint : public KeyPrint_<Key> {
     using KeyPrint_<Key>::KeyPrint_;
   };
-  template <typename T, typename Key>
-  static ZuIfT<
-    !ZuIsSame<T, HashTbl>{} &&
-    !ZuIsSame<T, Queue>{},
-    KeyPrint<Key>> keyPrintType();
+
   // override addr for hash tables
   template <typename Key>
   struct HashTblKeyPrint : public KeyPrint_<Key> {
     using KeyPrint_<Key>::KeyPrint_;
     auto p1() { return ZuBoxed(this->key.template p<1>()).hex(); }
   };
-  template <typename T, typename Key>
-  static ZuIfT<
-    ZuIsSame<T, HashTbl>{}, HashTblKeyPrint<Key>>
-  keyPrintType();
+
   // override type for queues
   template <typename Key>
   struct QueueKeyPrint : public KeyPrint_<Key> {
@@ -762,8 +743,8 @@ public:
     }
   };
   template <typename T, typename Key>
-  static ZuIfT<
-    ZuIsSame<T, Queue>{}, QueueKeyPrint<Key>>
+  static ZuIf<ZuIsSame<T, HashTbl>{}, HashTblKeyPrint<Key>,
+    ZuIf<ZuIsSame<T, Queue>{}, QueueKeyPrint<Key>, KeyPrint<Key>>>
   keyPrintType();
 
   gint get_n_columns() { return NCols; }
@@ -956,7 +937,6 @@ private:
   ZGtk::Value	m_values[NProps];
 };
 } // GtkTree
-
 
 struct Source {
   using Containers = Telemetry::Containers;
@@ -1377,7 +1357,6 @@ public:
     if (m_styleContext) g_object_unref(G_OBJECT(m_styleContext));
   }
 
-
 private:
   void armRefresh(int mode = ZmScheduler::Advance) {
     ZGtk::App::sched()->add(&m_refreshTimer, Zm::now() + m_refreshRate,
@@ -1469,22 +1448,6 @@ private:
     }
   }
 
-  template <typename FBType>
-  ZuIsNot<FBType, Ztc::fbs::AlertTelemetry>
-  processTel3_(Source *src, const FBType *fbo) {
-    ZuTypeIndex<FBType, Telemetry::FBTypeList> I;
-    using T = ZuType<I, Telemetry::TypeList>;
-    auto &container = src->telemetry.p<I>();
-    using Item = TelItem<T>;
-    if (auto item = container.lookup(fbo)) {
-      ZfbStruct::update(item->value, fbo);
-      m_gtkModel->updated(GtkTree::row(item));
-    } else {
-      item = new Item{fbo};
-      container.add(item);
-      addGtkRow(src, item);
-    }
-  }
   void addGtkRow(Source *src, AppItem *item) {
     item->initTelKey(src->publisher, src->device, src->generation);
     m_gtkModel->add(new GtkTree::App{item}, m_gtkModel->root());
@@ -1603,20 +1566,35 @@ private:
 	  return _->tables();
 	});
   }
-  template <typename FBType>
-  ZuIs<FBType, Ztc::fbs::AlertTelemetry>
+  template <typename FBType,
+    typename = decltype(void(bool(ZuIs_<FBType, Ztc::fbs::AlertTelemetry>{})))>
+  void
   processTel3_(Source *src, const FBType *fbo) {
-    ZuTypeIndex<FBType, Telemetry::FBTypeList> i;
-    using T = ZuType<i, Telemetry::TypeList>;
-    auto &container = src->telemetry.p<i>();
-    if (container.data.length() >= m_alertRows) container.data.splice(0, 1);
-    processAlert(new (container.data.push()) T{ZfbStruct::ctor<T>(fbo)});
+    if constexpr (!ZuIs_<FBType, Ztc::fbs::AlertTelemetry>{}) {
+      ZuTypeIndex<FBType, Telemetry::FBTypeList> I;
+      using T = ZuType<I, Telemetry::TypeList>;
+      auto &container = src->telemetry.p<I>();
+      using Item = TelItem<T>;
+      if (auto item = container.lookup(fbo)) {
+	ZfbStruct::update(item->value, fbo);
+	m_gtkModel->updated(GtkTree::row(item));
+      } else {
+	item = new Item{fbo};
+	container.add(item);
+	addGtkRow(src, item);
+      }
+    } else {
+      ZuTypeIndex<FBType, Telemetry::FBTypeList> i;
+      using T = ZuType<i, Telemetry::TypeList>;
+      auto &container = src->telemetry.p<i>();
+      if (container.data.length() >= m_alertRows) container.data.splice(0, 1);
+      processAlert(new (container.data.push()) T{ZfbStruct::ctor<T>(fbo)});
+    }
   }
 
   void processAlert(const Ztc::AlertTelemetry *) {
     // FIXME - update alerts in UX
   }
-
 
 private:
   // Immutable after init; shared read-only by Rx and GTK.

@@ -4,8 +4,11 @@ The standalone native client discovers endpoints from the exact application
 issuer, completes
 browser/passkey authorization code with PKCE, then connects to `ztchub` over
 WSS. It receives attributed telemetry, unsubscribes, rotates its refresh token,
-repeats the subscription, and revokes the refresh token on exit. Tokens stay in
-memory and never appear in URLs. The executable does not link `libZum`.
+and repeats the subscription. It stores current credentials through
+`Ztls::Vault`; a later run refreshes the stored token without browser login.
+Tokens needed for the active session stay in memory and never appear in URLs.
+The default vault home is `$HOME/.ztchub_client`, overridable with
+`ZTCHUB_CLIENT_HOME`. The executable does not link `libZum`.
 
 Create an OAuth configuration:
 

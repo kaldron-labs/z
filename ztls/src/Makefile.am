@@ -14,14 +14,13 @@ pkginclude_HEADERS = ZtlsLib.hh Ztls.hh \
 noinst_HEADERS = ZtlsVaultSS.hh
 lib_LTLIBRARIES = libZtls.la
 libZtls_la_CPPFLAGS = $(AM_CPPFLAGS) $(ZTLS_DBUS_CPPFLAGS) @PTLS_CFLAGS@ @OPENSSL_CFLAGS@ -DZTLS_EXPORTS
-libZtls_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZtls_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
 libZtls_la_SOURCES = ZtlsLib.cc ZtlsBackend.cc ZtlsPico.cc ZtlsOpenSSL.cc ZtlsPK.cc ZtlsKEM.cc ZtlsHPKE.cc ZtlsAge.cc ZtlsCOSE.cc ZtlsTOTP.cc ZtlsSec.cc ZtlsVault.cc
 if !LINUX
-libZtls_la_SOURCES += ZtlsVaultKeyRingWin.cc
+libZtls_la_SOURCES += ZtlsVaultWindows.cc
 endif
 if LINUX
-libZtls_la_SOURCES += ZtlsVaultKeyRingLinux.cc
+libZtls_la_SOURCES += ZtlsVaultLinux.cc
 ZTLS_DBUS_CPPFLAGS = -I$(top_srcdir)/zdbus/src
 ZTLS_DBUS_LIB = $(top_builddir)/zdbus/src/libZdbus.la
 endif

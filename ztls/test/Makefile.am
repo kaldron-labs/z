@@ -18,7 +18,6 @@ noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKET
 noinst_LTLIBRARIES = libZtlsVaultFixture.la
 libZtlsVaultFixture_la_SOURCES = ZtlsVaultFixture.cc
 libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_EXPORTS
-libZtlsVaultFixture_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZtlsVaultFixture_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)
 libZtlsVaultFixture_la_LIBADD = $(top_builddir)/ztls/src/libZtls.la
 noinst_HEADERS = ZtlsTestPorts.hh

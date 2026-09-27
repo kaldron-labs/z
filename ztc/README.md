@@ -66,6 +66,13 @@ secret-manager integration remain deployment concerns.
 ## `ztchub`
 
 `ztchub` is the live resource server for the same Zum service application. It
+accepts `ZUM_CLIENT_SECRET` and `ZUM_SSF_AUTH` together on its first
+successful start and saves them in `Ztls::Vault`. Later starts may omit both
+and load the pair. Supplying both again replaces the stored pair after a
+successful start. Its default Vault home is `$HOME/.ztchub`, overridable with
+`ZTCHUB_HOME`; secrets do not belong in the configuration file.
+
+`ztchub` also
 publishes the `Request` and `Telemetry` actions and the `Client` and `Agent`
 roles; each role name is its corresponding role-derived resource scope. A
 `Client` token from interactive user authentication may open the front-end
@@ -91,7 +98,7 @@ revocation arrives through Zum's signed SSF callback; the hub has no polling
 or custom recovery stream. [`ztchub_client`](example/ztchub_client.cc) is a
 native OAuth example: it discovers Zum endpoints, uses authorization code with
 PKCE and a system browser, subscribes, rotates its refresh token, subscribes
-again, and revokes on exit. It shares the native OAuth example implementation
+again, and stores the rotated refresh credential in `Ztls::Vault`. It shares the native OAuth example implementation
 with `zumping` and does not link `libZum`.
 
 The Zum application owns one immutable `audience` string. Client access grants

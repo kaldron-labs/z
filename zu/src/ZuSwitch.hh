@@ -6,9 +6,12 @@
 
 // compile-time switch
 
-// template <unsigned I> ZuIfT<I == 0> foo() { puts("0"); }
-// template <unsigned I> ZuIfT<I == 1> foo() { puts("1"); }
-// template <unsigned I> ZuIfT<I == 2> foo() { puts("2"); }
+// template <unsigned I, typename = ZuIfT<(I < 3)>>
+// void foo() {
+//   if constexpr (I == 0) puts("0");
+//   else if constexpr (I == 1) puts("1");
+//   else puts("2");
+// }
 
 // unsigned i = ...;
 // ZuSwitch::dispatch<3>(i, [](auto I) { foo<I>(); });

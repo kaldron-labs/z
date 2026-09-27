@@ -1277,7 +1277,7 @@ public:
   // find and update record (with key, without row)
   template <
     unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuInline void findUpd(Shard shard, Key<KeyID> key, L &&l) {
+  inline void findUpd(Shard shard, Key<KeyID> key, L &&l) {
     findUpd_<KeyID>(shard, ZuMv(key),
 	[this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
 	if (ZuUnlikely(!row)) { l(row); return; }
@@ -1288,7 +1288,7 @@ public:
   // - lambda(OpResult::T, ZdbRow<T> *, UN)
   template <
     unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename L>
-  ZuInline void findUpd(Shard shard, Key<KeyID> key, UN un, L &&l) {
+  inline void findUpd(Shard shard, Key<KeyID> key, UN un, L &&l) {
     ZiAssert(invoked(shard), "Zdb", (shard),
       "findUpd called outside shard " << ZuBoxed(shard), return);
 
@@ -1351,7 +1351,7 @@ public:
 
   // find and delete record (with key, without row)
   template <unsigned KeyID, typename L>
-  ZuInline void findDel(Shard shard, const Key<KeyID> &key, L &&l)
+  inline void findDel(Shard shard, const Key<KeyID> &key, L &&l)
   {
     findUpd_<KeyID>(shard, key,
 	[this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
@@ -1363,7 +1363,7 @@ public:
   // find and delete record at an intended UN (with key, without row)
   // - lambda(OpResult::T, ZdbRow<T> *, UN)
   template <unsigned KeyID, typename L>
-  ZuInline void findDel(Shard shard, const Key<KeyID> &key, UN un, L &&l) {
+  inline void findDel(Shard shard, const Key<KeyID> &key, UN un, L &&l) {
     ZiAssert(invoked(shard), "Zdb", (shard),
       "findDel called outside shard " << ZuBoxed(shard), return);
 

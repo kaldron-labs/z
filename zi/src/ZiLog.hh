@@ -362,33 +362,25 @@ inline void ZiLogEvent(ZeEvent<L> e) {
   ZiLog::instance()->log_(ZuMv(e));
 }
 
-template <typename L>
-inline decltype(
-    ZuDeclVal<L &>()(ZuDeclVal<ZeLogBuf &>()),
-    void())
-ZiLogBT(ZeEvent<L> event_) {
+template <typename L,
+  typename = ZuIfT<ZeEventCanPrint<L, false>{} || ZeEventCanPrint<L, true>{}>>
+inline void ZiLogBT(ZeEvent<L> event_) {
   ZmBackTrace bt{1};
-  ZiLogEvent(ZeEvent(
+  if constexpr (ZeEventCanPrint<L, false>{}) {
+    ZiLogEvent(ZeEvent(
       event_.severity, event_.file, event_.line, event_.function, event_.component,
       [bt = ZuMv(bt), l = ZuMv(event_).l](auto &s) mutable {
 	l(s);
 	s << '\n' << ZuMv(bt);
       }));
-}
-template <typename L>
-inline decltype(
-    ZuDeclVal<L &>()(
-      ZuDeclVal<ZeLogBuf &>(),
-      ZuDeclVal<const ZeEventInfo &>()),
-    void())
-ZiLogBT(ZeEvent<L> event_) {
-  ZmBackTrace bt{1};
-  ZiLogEvent(ZeEvent(
+  } else {
+    ZiLogEvent(ZeEvent(
       event_.severity, event_.file, event_.line, event_.function, event_.component,
       [bt = ZuMv(bt), l = ZuMv(event_).l](auto &s, const auto &info) mutable {
 	l(s, info);
 	s << '\n' << ZuMv(bt);
       }));
+  }
 }
 
 #ifndef ZDEBUG

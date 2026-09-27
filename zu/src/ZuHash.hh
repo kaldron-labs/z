@@ -46,12 +46,12 @@ template <typename T, bool = ZuTraits<T>::IsString> struct ZuHash_;
 
 namespace ZuHash_GoldenRatio32 {
 ZuInline constexpr uint32_t ratio() { return 0x61c88647; }
-ZuInline constexpr uint32_t hash(uint32_t i) { return i * ratio(); }
+ZuInline constexpr uint32_t hash(uint32_t i) { return i *ratio(); }
 }
 
 namespace ZuHash_GoldenRatio64 {
 ZuInline constexpr uint64_t ratio() { return 0x61c8864680b583ebULL; }
-ZuInline constexpr uint32_t hash(uint64_t i) { return (i * ratio())>>32; }
+ZuInline constexpr uint32_t hash(uint64_t i) { return (i *ratio())>>32; }
 }
 
 namespace ZuHash_GoldenRatio128 {
@@ -59,7 +59,7 @@ ZuInline constexpr const uint128_t ratio() {
   return (uint128_t(0x61c8864680b583eaULL)<<64) | 0x0c633f9fa31237ccULL;
 }
 ZuInline constexpr const uint32_t hash(uint128_t i) {
-  return (i * ratio())>>96; }
+  return (i *ratio())>>96; }
 }
 
 // Fowler / Noll / Vo (FNV) hash function (type FNV-1a)
@@ -169,7 +169,7 @@ template <typename T> struct ZuHash_Primitive<T, true, false> :
 
 // test for hash()
 template <typename> struct ZuCmp_Can_hash_;
-template <> struct ZuCmp_Can_hash_<uint32_t> { using T = void; }; 
+template <> struct ZuCmp_Can_hash_<uint32_t> { using T = void; };
 template <typename, typename = void>
 struct ZuHash_Can_hash : public ZuFalse { };
 template <typename T>
@@ -179,7 +179,7 @@ struct ZuHash_Can_hash<T, typename ZuCmp_Can_hash_<
 
 // test for hash_code() (STL cruft)
 template <typename> struct ZuCmp_Can_hash_code_;
-template <> struct ZuCmp_Can_hash_code_<std::size_t> { using T = void; }; 
+template <> struct ZuCmp_Can_hash_code_<std::size_t> { using T = void; };
 template <typename, typename = void>
 struct ZuHash_Can_hash_code : public ZuFalse { };
 template <typename T>
@@ -188,12 +188,19 @@ struct ZuHash_Can_hash_code<T, typename ZuCmp_Can_hash_code_<
     public ZuTrue { };
 
 template <typename T> struct ZuHash_NonPrimitive {
-  template <typename U>
-  static ZuIfT<ZuHash_Can_hash_code<U>{}, uint32_t>
-  hash(const U &v) { return v.hash_code(); }
-  template <typename U>
-  static ZuIfT<ZuHash_Can_hash<U>{} && !ZuHash_Can_hash_code<U>{}, uint32_t>
-  hash(const U &v) { return v.hash(); }
+
+  template <typename U,
+    typename = ZuIfT<
+      (ZuHash_Can_hash_code<U>{}) ||
+      (ZuHash_Can_hash<U>{} && !ZuHash_Can_hash_code<U>{})>>
+  static uint32_t
+  hash(const U &v) {
+    if constexpr (ZuHash_Can_hash_code<U>{}) {
+      return v.hash_code();
+    } else {
+      return v.hash();
+    }
+  }
 };
 
 // hashing of pointers
@@ -253,8 +260,8 @@ template <typename T> struct ZuHash_NonString<T, true, true> :
 #endif
 
 struct ZuCharSpanHash {
-  template <typename T>
-  static ZuIfT<ZuEquiv<T, char>{}, uint32_t>
+  template <typename T, typename = ZuIfT<ZuEquiv<T, char>{}>>
+  static uint32_t
   hash(const T *data_, size_t len) {
     auto data = reinterpret_cast<const uint8_t *>(data_);
     uint32_t hash = len;
@@ -316,8 +323,8 @@ struct ZuCharSpanHash {
 };
 template <int WCharSize> struct ZuWSpanHash;
 template <> struct ZuWSpanHash<2> {
-  template <typename T>
-  static ZuIfT<ZuEquiv<T, wchar_t>{}, uint32_t>
+  template <typename T, typename = ZuIfT<ZuEquiv<T, wchar_t>{}>>
+  static uint32_t
   hash(const T *data_, size_t len) {
     auto data = reinterpret_cast<const uint16_t *>(data_);
     uint32_t hash = len;
@@ -352,8 +359,8 @@ template <> struct ZuWSpanHash<2> {
   }
 };
 template <> struct ZuWSpanHash<4> {
-  template <typename T>
-  static ZuIfT<ZuEquiv<T, wchar_t>{}, uint32_t>
+  template <typename T, typename = ZuIfT<ZuEquiv<T, wchar_t>{}>>
+  static uint32_t
   hash(const T *data_, size_t len) {
     auto data = reinterpret_cast<const uint16_t *>(data_);
     uint32_t hash = len;

@@ -116,56 +116,67 @@ private:
   using MatchPBuffer = ZuIfT<ZuPrint<U>::Buffer, R>;
 
 public:
-  template <typename C>
-  MatchChar<C, ZuVStream &> operator <<(C c) {
-    (*m_strFn)(m_ptr, {&c, 1});
-    return *this;
+
+  template <typename C,
+    typename = ZuIfT<(ZuEquiv<C, char>{}) || (ZuIsSame<ZuDecay<C>, wchar_t>{})>>
+  ZuVStream & operator <<(C c) {
+    if constexpr (ZuEquiv<C, char>{}) {
+      (*m_strFn)(m_ptr, {&c, 1});
+      return *this;
+    } else {
+      char buf[8];
+      auto r = ZuUTF<char, wchar_t>::cvt_overflow(
+	{&buf[0], sizeof(buf)}, {&c, 1});
+      if (!r.template p<1>())
+	(*m_strFn)(m_ptr, {&buf[0], r.template p<0>()});
+      return *this;
+    }
   }
-  template <typename C>
-  MatchWChar<C, ZuVStream &> operator <<(C c) {
-    char buf[8];
-    auto r = ZuUTF<char, wchar_t>::cvt_overflow(
-      {&buf[0], sizeof(buf)}, {&c, 1});
-    if (!r.template p<1>())
-      (*m_strFn)(m_ptr, {&buf[0], r.template p<0>()});
-    return *this;
-  }
-  template <typename R>
-  MatchReal<R, ZuVStream &> operator <<(const R &r) {
-    (*m_bufFn)(m_ptr, ZuVStreamBuf{ZuBoxed(r)});
-    return *this;
-  }
+
   ZuVStream &operator <<(ZuCSpan s) {
     (*m_strFn)(m_ptr, s);
     return *this;
   }
-  template <typename S>
-  MatchString<S &&, ZuVStream &> operator <<(S &&s) {
-    (*m_strFn)(m_ptr, ZuCSpan(s));
-    return *this;
+
+  template <typename S,
+    typename = ZuIfT<
+      (ZuTraits<S &&>::IsString && !ZuTraits<S &&>::IsWString && !ZuIs_<S &&, ZuCSpan>{}) ||
+      (ZuTraits<S>::IsString && ZuTraits<S>::IsWString)>>
+  ZuVStream & operator <<(S &&s_) {
+    if constexpr (ZuTraits<S && >::IsString && !ZuTraits<S && >::IsWString && !ZuIs_<S && ,
+      ZuCSpan>{}) {
+      (*m_strFn)(m_ptr, ZuCSpan(s_));
+      return *this;
+    } else {
+      ZuWSpan s(s_);
+      if (!s.length()) return *this;
+      auto n = ZuUTF<char, wchar_t>::len(s);
+      if (!n) return *this;
+      auto buf = static_cast<char *>(ZuAlloca(n, 1));
+      if (!buf) return *this;
+      auto r = ZuUTF<char, wchar_t>::cvt_overflow({buf, n}, s);
+      if (!r.template p<1>())
+	(*m_strFn)(m_ptr, {buf, r.template p<0>()});
+      return *this;
+    }
   }
-  template <typename S>
-  MatchWString<S, ZuVStream &> operator <<(S &&s_) {
-    ZuWSpan s(s_);
-    if (!s.length()) return *this;
-    auto n = ZuUTF<char, wchar_t>::len(s);
-    if (!n) return *this;
-    auto buf = static_cast<char *>(ZuAlloca(n, 1));
-    if (!buf) return *this;
-    auto r = ZuUTF<char, wchar_t>::cvt_overflow({buf, n}, s);
-    if (!r.template p<1>())
-      (*m_strFn)(m_ptr, {buf, r.template p<0>()});
-    return *this;
-  }
-  template <typename P>
-  MatchPDelegate<P, ZuVStream &> operator <<(const P &p) {
-    ZuPrint<P>::print(*this, p);
-    return *this;
-  }
-  template <typename P>
-  MatchPBuffer<P, ZuVStream &> operator <<(const P &p) {
-    (*m_bufFn)(m_ptr, ZuVStreamBuf{p});
-    return *this;
+
+  template <typename R,
+    typename = ZuIfT<
+      (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuEquiv<R, char>{}) ||
+      (ZuPrint<R>::Delegate) ||
+      (ZuPrint<R>::Buffer)>>
+  ZuVStream & operator <<(const R &r) {
+    if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuEquiv<R, char>{}) {
+      (*m_bufFn)(m_ptr, ZuVStreamBuf{ZuBoxed(r)});
+      return *this;
+    } else if constexpr (ZuPrint<R>::Delegate) {
+      ZuPrint<R>::print(*this, r);
+      return *this;
+    } else {
+      (*m_bufFn)(m_ptr, ZuVStreamBuf{r});
+      return *this;
+    }
   }
 
 private:

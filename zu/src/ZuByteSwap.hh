@@ -73,7 +73,7 @@ public:
     return ZuByteSwap__(get<U>() - p);
   }
   template <typename P> ZuByteSwap__ operator *(const P &p) const {
-    return ZuByteSwap__(get<U>() * p);
+    return ZuByteSwap__(get<U>() *p);
   }
   template <typename P> ZuByteSwap__ operator /(const P &p) const {
     return ZuByteSwap__(get<U>() / p);
@@ -85,7 +85,7 @@ public:
     return ZuByteSwap__(get<U>() | p);
   }
   template <typename P> ZuByteSwap__ operator &(const P &p) const {
-    return ZuByteSwap__(get<U>() & p);
+    return ZuByteSwap__(get<U>() &p);
   }
   template <typename P> ZuByteSwap__ operator ^(const P &p) const {
     return ZuByteSwap__(get<U>() ^ p);
@@ -119,7 +119,7 @@ public:
     return *this;
   }
   template <typename P> ZuByteSwap__ &operator *=(const P &p) {
-    set(get<U>() * p);
+    set(get<U>() *p);
     return *this;
   }
   template <typename P> ZuByteSwap__ &operator /=(const P &p) {
@@ -135,7 +135,7 @@ public:
     return *this;
   }
   template <typename P> ZuByteSwap__ &operator &=(const P &p) {
-    set(get<U>() & p);
+    set(get<U>() &p);
     return *this;
   }
   template <typename P> ZuByteSwap__ &operator ^=(const P &p) {
@@ -145,57 +145,46 @@ public:
 
 private:
   // P is exactly ZuByteSwap__<T>
-  template <typename P>
-  ZuSame<P, ZuByteSwap__> set(const P &p) { m_i = p.m_i; }
-  template <typename P>
-  ZuSame<P, ZuByteSwap__, const ZuByteSwap__ &> get() const { return *this; }
 
   // P is exactly U or T
-  template <typename P>
-  ZuIfT<bool(ZuIsSame<P, T>{}) || bool(ZuIsSame<P, U>{})> set(const P &p) {
-    m_i = ZuIntrin::bswap(ZuPun<U, I>(p).out);
-  }
-  template <typename P>
-  ZuIfT<bool(ZuIsSame<P, T>{}) || bool(ZuIsSame<P, U>{}), P> get() const {
-    return ZuPun<I, U>(ZuIntrin::bswap(m_i)).out;
+  template <typename P,
+    typename = ZuIfT<ZuIsSame<P, ZuByteSwap__>{} || ZuIsSame<P, T>{} || ZuIsSame<P, U>{}>>
+  void set(const P &p) {
+    if constexpr (ZuIsSame<P, ZuByteSwap__>{}) {
+      m_i = p.m_i;
+    } else {
+      m_i = ZuIntrin::bswap(ZuPun<U, I>(p).out);
+    }
   }
 
   // P is integral (but not the same)
-  template <typename P>
-  ZuIfT<
-      !ZuIsSame<P, ZuByteSwap__>{} &&
-      !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
-      ZuTraits<P>::IsIntegral>
-  set(P p) {
-    m_i = ZuIntrin::bswap(I(p));
-  }
-  template <typename P>
-  ZuIfT<
-      !ZuIsSame<P, ZuByteSwap__>{} &&
-      !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
-      ZuTraits<P>::IsIntegral>
-  get() const {
-    return ZuIntrin::bswap(m_i);
-  }
 
   // P is non-integral and converts (but is not the same as U)
-  template <typename P>
-  ZuIfT<
-      !ZuIsSame<P, ZuByteSwap__>{} &&
-      !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
-      !ZuTraits<P>::IsIntegral &&
-      ZuIsConvertible<P, U>{}>
+  template <typename P,
+    typename = ZuIfT<!ZuIsSame<P, ZuByteSwap__>{} && !ZuIsSame<P, T>{} && !ZuIsSame<P,
+      U>{} && (ZuTraits<P>::IsIntegral || ZuIsConvertible<P, U>{})>>
+  void
   set(P p) {
-    m_i = ZuIntrin::bswap(ZuPun<U, I>(p).out);
+    if constexpr (!ZuIsSame<P, ZuByteSwap__>{} && !ZuIsSame<P, T>{} && !ZuIsSame<P,
+      U>{} && ZuTraits<P>::IsIntegral) {
+      m_i = ZuIntrin::bswap(I(p));
+    } else {
+      m_i = ZuIntrin::bswap(ZuPun<U, I>(p).out);
+    }
   }
-  template <typename P>
-  ZuIfT<
-      !ZuIsSame<P, ZuByteSwap__>{} &&
-      !ZuIsSame<P, T>{} && !ZuIsSame<P, U>{} &&
-      !ZuTraits<P>::IsIntegral &&
-      ZuIsConvertible<U, P>{}, P>
-  get() const {
-    return ZuPun<I, U>(ZuIntrin::bswap(m_i)).out;
+  template <typename P,
+    typename = ZuIfT<ZuIsSame<P, ZuByteSwap__>{} ||
+      ZuIsSame<P, T>{} || ZuIsSame<P, U>{} ||
+      ZuTraits<P>::IsIntegral || ZuIsConvertible<U, P>{}>>
+  decltype(auto) get() const {
+    if constexpr (ZuIsSame<P, ZuByteSwap__>{})
+      return *this;
+    else if constexpr (ZuIsSame<P, T>{} || ZuIsSame<P, U>{})
+      return static_cast<P>(ZuPun<I, U>(ZuIntrin::bswap(m_i)).out);
+    else if constexpr (ZuTraits<P>::IsIntegral)
+      return static_cast<P>(ZuIntrin::bswap(m_i));
+    else
+      return static_cast<P>(ZuPun<I, U>(ZuIntrin::bswap(m_i)).out);
   }
 
   // traits

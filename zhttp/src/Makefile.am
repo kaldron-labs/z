@@ -17,7 +17,6 @@ pkginclude_HEADERS = ZhttpLib.hh ZhttpCore.hh ZhttpURL.hh ZhttpFields.hh \
 	ZhttpClient.hh ZhttpServer.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
-libZhttp_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZhttp_la_SOURCES = ZhttpLib.cc ZhttpCore.cc ZhttpURL.cc \
 	ZhttpAltSvc.cc ZhttpDiscovery.cc ZhttpTransport.cc \
 	ZhttpCompression.cc ZhttpFields.cc \
