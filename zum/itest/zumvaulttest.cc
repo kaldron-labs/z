@@ -7,6 +7,7 @@
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtPlatform.hh>
+#include "ZiTestResidue.hh"
 #include <zlib/ZiFile.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZumTypes.hh>
@@ -18,15 +19,7 @@ using namespace ZuTestUtil;
 static void vaultCredentials()
 {
   ZuTestScopeRT(vaultCredentials);
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "zum-vault-client-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("zum-vault-client");
   Zt::setenv("ZUMVAULTTEST_HOME", home);
   Zt::setenv("DBUS_SESSION_BUS_ADDRESS", "unsupported:address");
   constexpr auto Issuer = "https://issuer.example/oauth2/9"_Zu;
@@ -100,6 +93,7 @@ static void vaultCredentials()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zumvaulttest");
   ZuTestMain();
   ZuTestCall(vaultCredentials);
   return 0;

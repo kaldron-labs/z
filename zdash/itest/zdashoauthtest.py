@@ -9,9 +9,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 from threading import Thread
 from urllib.parse import parse_qs
+from zi_test_residue import Residue
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -61,7 +61,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     binary = Path(os.environ["ZDASH_OAUTH_BIN"])
-    with tempfile.TemporaryDirectory(prefix="zdash-oauth-") as directory:
+    with Residue("zdash-oauth") as residue:
+        directory = residue.directory
         with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
             server.origin = "http://127.0.0.1:" + str(server.server_port)
             server.seen = []
@@ -84,5 +85,6 @@ def main():
             finally:
                 server.shutdown()
                 thread.join()
+        residue.success()
 if __name__ == "__main__":
     main()

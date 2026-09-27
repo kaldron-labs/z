@@ -9,7 +9,6 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-DZHTTP_TEST_SRCDIR='"$(abs_srcdir)"' \
 	-DZHTTP_UTIL_SRCDIR='"$(abs_top_srcdir)/zhttp/util"' \
 	-DZHTTP_LIB_SRCDIR='"$(abs_top_srcdir)/zhttp/src"' \
-	-DZ_TEST_RESIDUE \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@

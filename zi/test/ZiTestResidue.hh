@@ -31,6 +31,8 @@ void init(const char *testName);
 Zi::Path path(ZuCSpan name);
 Zi::Path file(ZuCSpan name);
 Zi::Path dir(ZuCSpan name);
+Zi::Path tmpFile(ZuCSpan tag);
+Zi::Path tmpDir(ZuCSpan tag);
 void add(const Zi::Path &path);
 Paths glob(const Zi::Path &dir, ZuCSpan prefix);
 void del(const Zi::Path &dir, ZuCSpan prefix);

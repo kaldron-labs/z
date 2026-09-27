@@ -56,19 +56,22 @@ ztcagenttest_LDADD = $(top_builddir)/zi/test/libZiTest.la \
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove ./ztcagenttest ./ztchubitest
-	@if test -n "$$ZDB_MODULE"; then \
-	  ztc_itest_dir=$$(mktemp -d); \
-	  trap 'rm -rf "$$ztc_itest_dir"' EXIT HUP INT TERM; \
+	@set -e; if test -n "$$ZDB_MODULE"; then \
+	  . "$(abs_top_srcdir)/zi/itest/zi-test-residue.sh"; \
+	  zi_residue_init ztc-itest-databases; \
+	  trap 'status=$$?; zi_residue_finish "$$status"' EXIT; \
+	  trap 'exit 130' INT; trap 'exit 143' TERM; \
+	  ztc_itest_dir=$$ZI_RESIDUE_DIR; \
 	  ZDB_CONNECT="$$ztc_itest_dir/db" \
 	  ZTC_AGENT_ONLY=1 \
-	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
+	  PYTHONPATH="$(abs_top_srcdir)/zi/itest:$(abs_top_srcdir)/zum/itest" \
 	    python3 "$(srcdir)/ztchubtest.py" || exit $$?; \
 	  ZDB_CONNECT="$$ztc_itest_dir/full-db" \
-	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
+	  PYTHONPATH="$(abs_top_srcdir)/zi/itest:$(abs_top_srcdir)/zum/itest" \
 	    python3 "$(srcdir)/ztchubtest.py" || exit $$?; \
 	  ZDB_CONNECT="$$ztc_itest_dir/cluster-db" \
 	  ZTC_CLUSTER=1 \
-	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
+	  PYTHONPATH="$(abs_top_srcdir)/zi/itest:$(abs_top_srcdir)/zum/itest" \
 	    python3 "$(srcdir)/ztchubtest.py"; \
 	else \
 	  echo 'ztchubtest.py: SKIP (ZDB_MODULE is not set)'; \

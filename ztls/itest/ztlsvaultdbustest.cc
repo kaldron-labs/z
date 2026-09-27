@@ -17,6 +17,7 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
+#include "ZiTestResidue.hh"
 #include <zlib/ZiFile.hh>
 #include <zlib/ZdbusServer.hh>
 #include <zlib/ZtlsRandom.hh>
@@ -267,15 +268,7 @@ static void native()
   }};
   ZuCheckRT(!ready.timedwait(Zm::now(5)) && !failed.load_());
 
-  Ztls::Random rng;
-  ZuCheckRT(rng.init());
-  uint8_t id[8];
-  ZuCheckRT(rng.random(id));
-  char hex[ZuHex::enclen(sizeof(id))];
-  ZuHex::encode(hex, id);
-  Zi::Path home = ZiFile::append(ZiFile::tmpDir(),
-    Zi::Path{} << "ztls-vault-dbus-" << ZuCSpan{hex, sizeof(hex)});
-  ZuGuard cleanup{[&home]() { ZiFile::removeTree(home); }};
+  Zi::Path home = ZiTestResidue::tmpDir("ztls-vault-dbus");
   Zt::setenv("ZTLSVAULTDBUSTEST_HOME", home);
 
   Ztls::VaultConfig cf;
@@ -390,6 +383,7 @@ static void native()
 
 int main()
 {
+  ZiTestResidue::init("ztlsvaultdbustest");
   ZuTestMain();
   ZuTestCall_("native", VaultDBusTest_::native);
 }

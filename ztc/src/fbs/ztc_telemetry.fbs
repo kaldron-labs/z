@@ -31,9 +31,13 @@ table HeapTelemetry {
   cache_size:uint64;
   cpuset:Zfb.Bitmap;
   cache_allocs:uint64;
-  heap_allocs:uint64;
-  frees:uint64;
+  cache_frees:uint64;
   cross_frees:uint64;
+  heap_allocs:uint64;
+  heap_frees:uint64;
+  global_heap_allocs:uint64;
+  global_heap_frees:uint64;
+  global_heap_max:uint64;
   size:uint32;
   partition:uint16;
   sharded:uint8;

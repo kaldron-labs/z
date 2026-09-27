@@ -253,10 +253,8 @@ static void testDefaultDir()
 {
   ZuTestScope(testDefaultDir);
 
-  ZtString<> name;
-  name << "ZiPIDFileTest-" << ZuBox<int>{int(Zm::getPID())} << ".pid";
-  auto path = ZiFile::append(ZiFile::tmpDir(), name);
-  ZiFile::remove(path);
+  auto path = ZiTestResidue::tmpFile("default.pid");
+  auto name = ZiFile::leafname(path);
   {
     ZiPIDFile file;
     ZuCHECK(file.init(name) == ZiPIDFile::OK,

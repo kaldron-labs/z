@@ -25,4 +25,5 @@ EXTRA_DIST = README.md zdashoauthtest.py
 .PHONY: test
 test: all
 	ZDASH_OAUTH_BIN='$(abs_builddir)/zdashoauthtest' \
+	  PYTHONPATH='$(abs_top_srcdir)/zi/itest' \
 	  prove ./zdashoauthtest

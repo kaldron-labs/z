@@ -3,13 +3,19 @@ set -eu
 
 srcdir=${1:?source directory required}
 builddir=${2:?build directory required}
+. "$srcdir/zi/itest/zi-test-residue.sh"
+zi_residue_init zhttp-qir-script-test
 
-tmp=${TMPDIR:-/tmp}/zhttp-qir-script-test.$$
+tmp=$ZI_RESIDUE_DIR
 cleanup()
 {
-  rm -rf "$tmp"
+  status=$?
+  zi_residue_finish "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "$tmp/runner/logs/a" "$tmp/runner/logs_extra/c" \
   "$tmp/runner/results/b" "$tmp/runner/results_extra/d" "$tmp/out"

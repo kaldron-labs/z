@@ -13,10 +13,10 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 
 from zumhttp import Authenticator, Fixture
+from zi_test_residue import Residue
 
 
 def exercise(directory):
@@ -200,14 +200,15 @@ def exercise(directory):
 
 
 def main():
-    directory = Path(tempfile.mkdtemp(prefix="zum-cluster-"))
+    residue = Residue("zum-cluster")
+    directory = residue.directory
     try:
         exercise(directory)
     except BaseException:
         print("# cluster diagnostics retained in " + str(directory), flush=True)
         raise
     else:
-        shutil.rmtree(directory)
+        residue.finish(True)
 
 
 if __name__ == "__main__":

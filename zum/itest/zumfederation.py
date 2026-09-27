@@ -6,9 +6,7 @@ import http.client
 import os
 import re
 import secrets
-import shutil
 import ssl
-import tempfile
 import time
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -16,6 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from zumhttp import Authenticator, Fixture, b64
 from zumidp import Provider, TLSProxy
+from zi_test_residue import Residue
 
 
 class TLSFixture(Fixture):
@@ -463,9 +462,11 @@ def main():
     for key in ("ZDB_MODULE", "ZDB_CONNECT"):
         if not os.environ.get(key):
             raise AssertionError("set " + key + " for a fresh SQLite federation fixture")
-    directory = tempfile.mkdtemp(prefix="zum-federation-")
+    residue = Residue("zum-federation")
+    directory = str(residue.directory)
     provider = None
     fixture = None
+    passed = False
     try:
         provider = Provider(directory)
         fixture = TLSFixture(directory, provider)
@@ -474,18 +475,20 @@ def main():
         fixture.node_config.write_text(Path(__file__).with_name("zumd.cf").read_text() +
             ",\noidc: {caPath: " + json.dumps(str(provider.ca_path)) + "}\n")
         exercise(fixture, provider)
-    except BaseException:
-        print("# failed federation diagnostics retained in " + directory, flush=True)
-        raise
-    else:
-        shutil.rmtree(directory)
+        passed = True
     finally:
-        if fixture:
-            fixture.proxy.close()
-        if fixture and fixture.process:
-            fixture.stop()
-        if provider:
-            provider.close()
+        try:
+            if fixture:
+                fixture.proxy.close()
+            if fixture and fixture.process:
+                fixture.stop()
+            if provider:
+                provider.close()
+        except BaseException:
+            passed = False
+            raise
+        finally:
+            residue.finish(passed)
 
 
 if __name__ == "__main__":

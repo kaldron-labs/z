@@ -953,6 +953,7 @@ class HTTPBuilder : public ZmObject, public Zhttp::ResBuilder {
 public:
   using Headers = ZuTypeConcat<ZhttpHeaders(
     "content-type", "content-length", "cache-control"), SessionHeader>;
+  using HdrCatalog = HTTPHdrCatalog<Headers>;
   using Fixed = HTTPResponseBuilder<Catalog>;
   using Stream = HTTPSSEBuilder<Catalog>;
   using Builder = ZuUnion<void, Fixed, Stream>;
@@ -1358,6 +1359,7 @@ public:
     using AppKeys = ZuTypeSlice<2, 0, AppHeaderList>;
     using HeaderKeys = ZuTypeConcat<BaseKeys, AppKeys>;
     using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;
+    using HdrCatalog = HTTPHdrCatalog<Headers>;
     ZuAssert(ZuTypeUnique<HeaderKeys>::N == HeaderKeys::N,
       "Zmcp application header duplicates a protocol header");
 

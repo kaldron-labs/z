@@ -35,6 +35,7 @@
 #include <zlib/ZfCLI.hh>
 
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiGlob.hh>
 #include <zlib/ZiEventLoop.hh>
 #include <zlib/ZiLog.hh>
 
@@ -44,7 +45,7 @@ using namespace ZuTestUtil;
 
 ZtEnumNS(, Mode, int8_t, Parent, PassFile, FailFile, Family, FailFamily,
     FailLog, Interrupt, Shm, SecondName, InvalidPath, Duplicate, Overlap,
-    RepeatFinal, Unique);
+    RepeatFinal, Unique, TmpPass, TmpFail);
 ZtEnumImplNS(Mode);
 
 struct Options {
@@ -356,6 +357,17 @@ static int child_(Mode::T mode)
       ZiTestResidue::final(different);
       return different ? 0 : 1;
     }
+    case Mode::TmpPass:
+    case Mode::TmpFail: {
+      ZiTestResidue::init("zitestresidue-tmp");
+      Zi::Path file = ZiTestResidue::tmpFile("output");
+      Zi::Path dir = ZiTestResidue::tmpDir("tree");
+      ZuCheckRT(write_(file, "temporary"));
+      ZuCheckRT(ZiFile::mkdir(dir) == Zi::OK);
+      ZuCheckRT(write_(ZiFile::append(dir, "child"), "temporary"));
+      if (mode == Mode::TmpFail) ZuCheckRT(false);
+      break;
+    }
     default:
       return 2;
   }
@@ -380,6 +392,25 @@ static void removeFile_(const Zi::Path &path)
     archived << path << '.' << ZuBox<unsigned>{i};
     ZiFile::remove(archived);
   }
+}
+
+static unsigned tmpCount_(bool remove)
+{
+  Zi::Path prefix = ZiFile::append(ZiFile::tmpDir(),
+    "ZiTest.zitestresidue-tmp.");
+  ZiGlob glob;
+  if (!glob.init(prefix)) return 0;
+  unsigned count = 0;
+  while (auto entry = glob.iterate(true, false)) {
+    Zi::Path path = ZiFile::append(ZiFile::tmpDir(), entry->name);
+    ++count;
+    if (remove) {
+      if (entry->isdir) ZiFile::removeTree(path);
+      else ZiFile::remove(path);
+    }
+  }
+  glob.final();
+  return count;
 }
 
 static int parent_(const char *self)
@@ -472,6 +503,15 @@ static int parent_(const char *self)
   ZuCheck(run_(self, "Overlap") != 0);
   ZuCheck(run_(self, "RepeatFinal") == 0);
   ZuCheck(run_(self, "Unique") == 0);
+  tmpCount_(true);
+  ZuCheck(run_(self, "TmpPass") == 0);
+  ZuCheck(tmpCount_(false) == 0);
+  bool tmpFailed = true;
+  for (unsigned i = 0; i < ZiTestResidue::Age + 2; ++i)
+    tmpFailed &= run_(self, "TmpFail") != 0;
+  ZuCheck(tmpFailed);
+  ZuCheck(tmpCount_(false) == ZiTestResidue::Age);
+  tmpCount_(true);
 
   removeFile_(fail);
   removeFile_(failLog);

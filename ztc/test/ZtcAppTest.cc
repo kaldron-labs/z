@@ -142,7 +142,8 @@ static void appTest()
   }
 
   Zi::Name telName = ZiTestResidue::uniqueName("telemetry");
-  Zi::Name pidDir = ZiTestResidue::uniqueName("registry");
+  Zi::Path pidRoot = ZiTestResidue::tmpDir("registry");
+  Zi::Path pidDir = ZiFile::leafname(pidRoot);
   Zt::setenv("ZTC_RING", telName);
   Zt::setenv("ZTC_DIR", pidDir);
 
@@ -294,7 +295,6 @@ static void appTest()
   app.final();
   ZuCheck(mx.stop());
   ZuCheck(!ZiStat{pidPath}.exists());
-  ZuCheck(ZiFile::rmdir(ZiFile::append(ZiFile::tmpDir(), pidDir)) == Zi::OK);
 }
 
 int main()

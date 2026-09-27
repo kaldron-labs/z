@@ -7,17 +7,17 @@
 import os
 from pathlib import Path
 import secrets
-import shutil
-import tempfile
 
 from zumhttp import Fixture
+from zi_test_residue import Residue
 
 
 def main():
     for name in ("ZDB_MODULE", "ZDB_CONNECT"):
         if not os.environ.get(name):
             raise AssertionError("set " + name + " for a fresh rekey fixture")
-    directory = Path(tempfile.mkdtemp(prefix="zumd-rekey-"))
+    residue = Residue("zumd-rekey")
+    directory = residue.directory
     fixture = Fixture(directory)
     success = False
     try:
@@ -35,11 +35,7 @@ def main():
         success = True
     finally:
         fixture.stop()
-        if success:
-            shutil.rmtree(directory)
-        else:
-            print("# failed fixture diagnostics retained in " + str(directory),
-                  flush=True)
+        residue.finish(success)
 
 
 if __name__ == "__main__":

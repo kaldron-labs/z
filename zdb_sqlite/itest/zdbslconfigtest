@@ -1,0 +1,38 @@
+#!/bin/sh
+
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$test_dir/../../zi/itest/zi-test-residue.sh"
+zi_residue_init "${0##*/}" || exit 1
+trap 'status=$?; test "$failed" -ne 0 && status=1; zi_residue_finish "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+failed=0
+fail() { failed=1; echo "$*"; }
+
+echo 'TAP version 14'
+echo '1..4'
+
+test_mode()
+{
+  n=$1
+  mode=$2
+  db="$ZI_RESIDUE_DIR/test-$mode.db"
+  if ZDB_SYNCHRONOUS=$mode "$test_dir/zdbsltest" -c "$db" >/dev/null 2>&1; then
+    echo "ok $n - synchronous=$mode"
+  else
+    fail "not ok $n - synchronous=$mode"
+  fi
+}
+
+test_mode 1 NORMAL
+test_mode 2 FULL
+test_mode 3 OFF
+
+db="$ZI_RESIDUE_DIR/test.db"
+if ZDB_SYNCHRONOUS=INVALID "$test_dir/zdbsltest" -c "$db" >/dev/null 2>&1; then
+  fail 'not ok 4 - reject invalid synchronous mode'
+else
+  echo 'ok 4 - reject invalid synchronous mode'
+fi
+
+exit "$failed"

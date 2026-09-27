@@ -21,6 +21,7 @@
 #endif
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmRef.hh>
 #ifdef ZmObject_DEBUG
 #include <zlib/ZmObjectDebug.hh>
 #endif
@@ -69,6 +70,20 @@ public:
     if (ZuUnlikely(this->debugging_())) ZmObject_deref(this, referrer);
 #endif
     return this->deref_();
+  }
+
+  template <typename O, typename L>
+  bool withRef(L &&l) {
+    int count = m_refCount.load_();
+    while (count > 0) {
+      int prev = m_refCount.cmpXch(count + 1, count);
+      if (prev == count) {
+	ZuFwd<L>(l)(ZmRef<O>::acquire(static_cast<O *>(this)));
+	return true;
+      }
+      count = prev;
+    }
+    return false;
   }
 
 #ifdef ZmObject_DEBUG

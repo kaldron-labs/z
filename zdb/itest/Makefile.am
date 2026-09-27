@@ -21,7 +21,7 @@ zdbsmoketest_SOURCES = zdbsmoketest.cc
 zdbreptest_SOURCES = zdbreptest.cc
 zdbreptest2_SOURCES = zdbreptest2.cc
 zdbsagareptest_SOURCES = zdbsagareptest.cc
-dist_noinst_SCRIPTS = 1.sh 2.sh 3.sh clean.sh
+dist_noinst_SCRIPTS = 1.sh 2.sh 3.sh
 dist_noinst_DATA = README.md 3.cf db.cf zdbbtreetest.cf zdbqueuetest.cf zdbreptest.cf
 
 .PHONY: test

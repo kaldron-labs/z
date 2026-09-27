@@ -26,6 +26,7 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiFile.hh>
+#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
@@ -51,7 +52,6 @@ enum {
 };
 
 static ZtString<> matrixDir;
-static unsigned caseID;
 
 static bool systemOK(int status)
 {
@@ -145,15 +145,15 @@ static void printFile(const char *label, ZuCSpan path)
   ZtString<> data;
   data.length(unsigned(length));
   if (length && file.read(data.data(), unsigned(length)) != int(length)) return;
-  auto out = ZiFile::stdOut();
-  out << "# " << label << ":\n";
+  std::cout << "# " << label << ":\n";
   unsigned offset = 0;
   unsigned dataLen = data.length();
   while (offset < dataLen) {
     ZuCSpan tail{data.data() + offset, dataLen - offset};
     int eol = tail.find("\n");
     unsigned n = eol < 0 ? tail.length() : unsigned(eol) + 1;
-    out << "# " << ZuCSpan{tail.data(), n};
+    std::cout << "# ";
+    std::cout.write(tail.data(), n);
     offset += n;
   }
 }
@@ -163,27 +163,16 @@ struct TempDir {
   ZtString<>	script;
   ZtString<>	log;
 
-  ~TempDir() { cleanup(); }
-
   bool init()
   {
-    path << ZiFile::tmpDir() << "/zringmatrix.XXXXXX";
-    if (!::mkdtemp(path.data())) return false;
+    static unsigned counter;
+    Zi::Name name;
+    name << "case-" << ZuBox<unsigned>{++counter};
+    path = ZiTestResidue::dir(name);
     script << path << "/case.sh";
     log << path << "/case.log";
     return true;
   }
-
-  void cleanup()
-  {
-    if (!path) return;
-    ZiFile::remove(script);
-    ZiFile::remove(log);
-    ZiFile::rmdir(path);
-    path.null();
-  }
-
-  void preserve() { path.null(); }
 };
 
 struct CaseScript {
@@ -194,10 +183,8 @@ struct CaseScript {
 
   CaseScript(const TempDir &temp)
   {
-    unsigned pathLen = unsigned(::strlen(temp.path));
-    ZuCSpan nonce{temp.path.data() + pathLen - 6, 6};
-    ring << "ZiRingMatrix." << nonce << '.' << ZuBoxed(Zm::getPID()) << '.' <<
-      ZuBoxed(++caseID);
+    ring = ZiTestResidue::uniqueName("ring");
+    ZiTestResidue::addShm(Zi::Name{ring});
     exe << matrixDir << "/../test/ZiRingTest";
     log = temp.log;
     text <<
@@ -296,7 +283,6 @@ static bool runCase(const char *name, Build build)
     printFile("script", temp.script);
     std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
       '\n';
-    temp.preserve();
   }
   cleanupRing(script.ring);
   ZuTestMgr::check(nullptr, ok, name);
@@ -457,6 +443,7 @@ int main(int argc, char **argv)
   if (argc != 1) return 1;
   matrixDir = executableDir(argv[0]);
   verbose = !::getenv("HARNESS_ACTIVE");
+  ZiTestResidue::init("zringmatrix");
   ZuTestMain();
   ZuTestCall(runMatrix);
   return 0;

@@ -6,18 +6,17 @@
 
 import base64
 import os
-from pathlib import Path
 import secrets
 import selectors
 import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import time
 
 from zumdztctest import HERE, PROBE, SERVER, probe, wait_line
 from zumhttp import Authenticator, Fixture
+from zi_test_residue import Residue
 
 
 def events(processes, required, timeout=30):
@@ -44,13 +43,28 @@ def events(processes, required, timeout=30):
     return seen
 
 
+def wait_probe(name, env, group, process, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            probe(name, env, group)
+            return
+        except AssertionError:
+            if process.poll() is not None or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 def main():
-    directory = Path(tempfile.mkdtemp(prefix="zumd-ztc-cluster-"))
+    residue = Residue("zumdztccluster")
+    directory = residue.directory
     registry = "zumd-ztc-" + secrets.token_hex(8)
     ring = registry + "-ring"
     ids = [registry + "-0", registry + "-1", registry + "-2"]
-    regdir = Path(tempfile.gettempdir()) / registry
-    regdir.mkdir()
+    regdir = residue.tmp_dir("registry")
+    registry = regdir.name
+    for name in (ring, *ids):
+        residue.shm(name)
     reservations = [socket.socket() for _ in range(6)]
     for sock in reservations:
         sock.bind(("127.0.0.1", 0))
@@ -162,7 +176,8 @@ def main():
         stop(2)
         start(2)
         wait_line(processes[2], b"zumd: active")
-        probe(ids[follower], environments[follower], "db-passive")
+        wait_probe(ids[follower], environments[follower],
+                   "db-passive", processes[follower])
         probe(ids[follower], environments[follower], "app")
         assert registration.read_bytes() == original_pid
 
@@ -191,14 +206,7 @@ def main():
             setup.stdin.write(b"q\n")
             setup.stdin.flush()
             setup.communicate(timeout=5)
-        for stem in (ring, *ids):
-            for suffix in (".ctrl", ".data"):
-                Path("/dev/shm", stem + suffix).unlink(missing_ok=True)
-        shutil.rmtree(regdir)
-        if passed:
-            shutil.rmtree(directory)
-        else:
-            print("# diagnostics retained in " + str(directory), flush=True)
+        residue.finish(passed)
 
 
 if __name__ == "__main__":

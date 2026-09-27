@@ -24,13 +24,13 @@ import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from zi_test_residue import Residue
 
 
 def b64(value):
@@ -2075,7 +2075,8 @@ def main():
     for key in ("ZDB_MODULE", "ZDB_CONNECT"):
         if not os.environ.get(key):
             raise AssertionError("set " + key + " for a fresh SQLite HTTP fixture")
-    directory = tempfile.mkdtemp(prefix="zum-http-")
+    residue = Residue("zum-http")
+    directory = str(residue.directory)
     try:
         fixture = Fixture(directory)
         try:
@@ -2271,7 +2272,7 @@ def main():
         print("# failed fixture diagnostics retained in " + directory, flush=True)
         raise
     else:
-        shutil.rmtree(directory)
+        residue.finish(True)
 
 
 if __name__ == "__main__":

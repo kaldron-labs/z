@@ -336,7 +336,9 @@ private:
 };
 
 template <typename Heap>
-Pool_<Heap>::Pool_(App *app) : Base{app} { }
+Pool_<Heap>::Pool_(App *app) : Base{app} {
+  app->poolImpl = static_cast<ZhttpClientCancelTest_::Pool *>(this);
+}
 
 template <typename Heap>
 void Pool_<Heap>::archive_(ReqBuilder *request) { client()->archived(request); }
@@ -448,7 +450,6 @@ void attemptState()
 
   App app;
   Pool pool{&app};
-  app.poolImpl = &pool;
   Pool::LiveReq attempt;
   ZmRef<ReqBuilder> request = new ReqBuilder;
   attempt.request = request;

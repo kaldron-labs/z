@@ -79,7 +79,8 @@ ZiMxParams mxParams()
 struct HeapStats {
   uint64_t heapAllocs = 0;
   uint64_t cacheAllocs = 0;
-  uint64_t frees = 0;
+  uint64_t cacheFrees = 0;
+  uint64_t heapFrees = 0;
 };
 
 HeapStats heapStats()
@@ -88,9 +89,10 @@ HeapStats heapStats()
   Ztc::HeapMgr::all(Ztc::HeapMgr::AllFn{[&stats](Ztc::Heap *heap) {
     Ztc::HeapTelemetry data;
     heap->telemetry(data);
-    stats.heapAllocs += data.heapAllocs;
     stats.cacheAllocs += data.cacheAllocs;
-    stats.frees += data.frees;
+    stats.cacheFrees += data.cacheFrees;
+    stats.heapAllocs += data.heapAllocs;
+    stats.heapFrees += data.heapFrees;
   }});
   return stats;
 }
@@ -298,7 +300,8 @@ void report(const Options &options, State &state, const HeapStats &after)
     " max=" << state.samples[n - 1] << '\n' <<
     "heap-allocs=" << (after.heapAllocs - state.before.heapAllocs) <<
     " cache-allocs=" << (after.cacheAllocs - state.before.cacheAllocs) <<
-    " frees=" << (after.frees - state.before.frees) <<
+    " cache-frees=" << (after.cacheFrees - state.before.cacheFrees) <<
+    " heap-frees=" << (after.heapFrees - state.before.heapFrees) <<
     " rx-bytes=" << state.rxBytes <<
     " application-copy-bytes=" << state.appCopyBytes << '\n';
 }
@@ -408,11 +411,13 @@ int main(int argc, char **argv)
   ZiLog::level(Ze::Warning);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
+  ZiTestResidue::init("zwsbench");
   TempDir temp;
   int rc = !temp.init() ? 1 :
     options.tls ?
       run<Zhttp::H1TLS>(options, temp) :
       run<Zhttp::H1TCP>(options, temp);
   ZiLog::stop();
+  ZiTestResidue::final(!rc);
   return rc;
 }

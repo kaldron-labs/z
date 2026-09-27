@@ -9,14 +9,13 @@ import os
 from pathlib import Path
 import re
 import secrets
-import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 
 from zumhttp import Fixture
 from zumidp import Provider, TLSProxy
+from zi_test_residue import Residue
 
 
 def free_port():
@@ -46,7 +45,8 @@ def main():
     for key in ("ZDB_MODULE", "ZDB_CONNECT"):
         if not os.environ.get(key):
             raise AssertionError("set " + key + " for a fresh SSF fixture")
-    directory = Path(tempfile.mkdtemp(prefix="zum-ssf-"))
+    residue = Residue("zum-ssf")
+    directory = residue.directory
     fixture = Fixture(directory)
     # Fixture.admin_cli launches the real CLI with the process environment;
     # keep it on the same disposable database key as the daemon.
@@ -178,8 +178,7 @@ def main():
             fixture.stop()
         except Exception:
             pass
-        if success and directory.exists():
-            shutil.rmtree(directory)
+        residue.finish(success)
 
 
 if __name__ == "__main__":

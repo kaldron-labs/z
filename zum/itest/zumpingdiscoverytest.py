@@ -10,9 +10,9 @@ import os
 from pathlib import Path
 import socket
 import subprocess
-import tempfile
 import threading
 from urllib.parse import parse_qs, urlsplit
+from zi_test_residue import Residue
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -47,25 +47,26 @@ def main():
     issuer = origin + "/oauth2/42"
     executable = Path(__file__).resolve().parents[1] / "example" / "zumping"
     tests = 0
+    residue = Residue("zumping-discovery")
 
     def run(body, configured_issuer=issuer):
         Handler.body = body if isinstance(body, bytes) else json.dumps(
             body, separators=(",", ":")).encode()
-        with tempfile.TemporaryDirectory(prefix="zumping-discovery-") as directory:
-            config = Path(directory) / "zumping.cf"
-            config.write_text(
-                "issuerURL: " + json.dumps(configured_issuer) + ",\n" +
-                "serviceURL: " + json.dumps(origin) + ",\n" +
-                "clientID: \"zumping-test\",\n"
-                "scope: \"ping\",\n"
-                "callbackPort: " + str(free_port()) + ",\n"
-                "loginTimeout: 1,\n"
-                "loopbackTest: true\n")
-            return subprocess.run(
-                [str(executable), "--config", str(config), "--no-browser"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8,
-                env={**os.environ, "ZUMPING_HOME": str(Path(directory) / "vault"),
-                     "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"})
+        directory = residue.dir("case-" + str(tests))
+        config = directory / "zumping.cf"
+        config.write_text(
+            "issuerURL: " + json.dumps(configured_issuer) + ",\n" +
+            "serviceURL: " + json.dumps(origin) + ",\n" +
+            "clientID: \"zumping-test\",\n"
+            "scope: \"ping\",\n"
+            "callbackPort: " + str(free_port()) + ",\n"
+            "loginTimeout: 1,\n"
+            "loopbackTest: true\n")
+        return subprocess.run(
+            [str(executable), "--config", str(config), "--no-browser"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8,
+            env={**os.environ, "ZUMPING_HOME": str(directory / "vault"),
+                 "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"})
 
     def check(name, test):
         nonlocal tests
@@ -133,6 +134,7 @@ def main():
         server.server_close()
         thread.join()
     print("1.." + str(tests))
+    residue.finish(True)
 
 
 if __name__ == "__main__":

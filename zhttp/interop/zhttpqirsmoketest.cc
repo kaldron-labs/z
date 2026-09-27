@@ -385,6 +385,7 @@ static void testH3MultiFile()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZiTestResidue::init("zhttpqirsmoketest");
   ZuTestMain();
   ZuTestCall(testExecutableContract);
   ZuTestCall(testClientFilesystemPrep);

@@ -14,6 +14,7 @@
 #include <zlib/ZtlsKEM.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsPK.hh>
+#include "ZiTestResidue.hh"
 
 #include "ZtlsAgeVectors.hh"
 #include "ZtlsAgeSSHVectors.hh"
@@ -91,8 +92,7 @@ static void hybridKey()
 static void scryptFile()
 {
   ZuTestScopeRT(scryptFile);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
+  auto path = ZiTestResidue::file("scrypt.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
   ZtlsAge age;
@@ -174,8 +174,7 @@ static void scryptFile()
 static void recipientFiles()
 {
   ZuTestScopeRT(recipientFiles);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
+  auto path = ZiTestResidue::file("recipient.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
   ZtlsAge age;
@@ -255,8 +254,7 @@ static void recipientFiles()
 static void malformedFile()
 {
   ZuTestScopeRT(malformedFile);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
+  auto path = ZiTestResidue::file("malformed.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
   uint8_t seed[Ztls::X25519KeySize], publicKey[sizeof(seed)];
@@ -335,8 +333,7 @@ static void malformedFile()
 static void testkit()
 {
   ZuTestScopeRT(testkit);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
+  auto path = ZiTestResidue::file("testkit.age");
   ZtlsAge age;
   for (auto &vector : ZtlsAgeVectors) {
     ZuBSpan encoded{vector.encoded};
@@ -442,8 +439,7 @@ static bool sshLine(ZuCSpan type, ZuBSpan blob)
 static void sshRSAFile()
 {
   ZuTestScopeRT(sshRSAFile);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
+  auto path = ZiTestResidue::file("ssh-rsa.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
   Ztls::PK::SK_RSA key{rng, 2048};
@@ -488,8 +484,7 @@ static void sshRSAFile()
 static void sshEDFile()
 {
   ZuTestScopeRT(sshEDFile);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
+  auto path = ZiTestResidue::file("ssh-ed.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
   Ztls::PK::SK_ED25519 key{rng};
@@ -556,9 +551,8 @@ static void openSSHKey()
 static void sshReference()
 {
   ZuTestScopeRT(sshReference);
-  constexpr auto path = "ZtlsAgeTest.age"_Zu;
+  auto path = ZiTestResidue::file("ssh-reference.age");
   constexpr auto plain = "Ztls SSH reference fixture\n"_Zu;
-  ZuGuard cleanup{[]() { ZiFile::remove("ZtlsAgeTest.age"); }};
   ZtlsAge age;
   for (auto &vector : ZtlsAgeSSHVectors) {
     Chars privateKey;
@@ -618,6 +612,7 @@ static void sshReference()
 
 int main()
 {
+  ZiTestResidue::init("ZtlsAgeTest");
   ZuTestMain();
   ZuTestCall_("nativeKeys", nativeKeys);
   ZuTestCall_("hybridKey", hybridKey);

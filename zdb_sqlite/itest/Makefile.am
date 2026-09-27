@@ -34,9 +34,12 @@ zdbslrepltest_SOURCES = zdbslrepltest.cc
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
-	@db=$$(mktemp --suffix=.db); \
-	trap 'rm -f "$$db" "$$db-wal" "$$db-shm" \
-	  "$$db.leader"* "$$db.follower"*' EXIT; \
+	@set -e; \
+	. "$(abs_top_srcdir)/zi/itest/zi-test-residue.sh"; \
+	zi_residue_init zdb-sqlite-itest; \
+	trap 'status=$$?; zi_residue_finish "$$status"' EXIT; \
+	trap 'exit 130' INT; trap 'exit 143' TERM; \
+	db=$$ZI_RESIDUE_DIR/sqlite.db; \
 	ZDB_MODULE=$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSL.so \
 	ZDB_CONNECT="$$db" \
 	ZDBSL_INSPECT=$(abs_top_builddir)/zdb_sqlite/src/.libs/libZdbSLInspect.so \

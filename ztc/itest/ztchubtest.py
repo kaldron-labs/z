@@ -23,12 +23,12 @@ import signal
 import socket
 import ssl
 import subprocess
-import tempfile
 import threading
 import time
 from urllib.parse import urlencode
 
 from zumhttp import Fixture
+from zi_test_residue import Residue
 
 
 def free_port():
@@ -295,7 +295,8 @@ def main():
         if not os.environ.get(key):
             raise AssertionError("set " + key + " for a fresh ztchub fixture")
     root = Path(__file__).resolve().parents[2]
-    directory = Path(tempfile.mkdtemp(prefix="ztchub-"))
+    residue = Residue("ztchubtest")
+    directory = residue.directory
     fixture = Fixture(directory / "zum")
     fixture.directory.mkdir()
     hub = None
@@ -303,8 +304,6 @@ def main():
     agents = []
     fronts = []
     success = False
-    shm_names = []
-    registries = []
     load = bool(os.environ.get("ZTC_LOAD"))
     cluster = bool(os.environ.get("ZTC_CLUSTER"))
     counts = {key: int(os.environ.get("ZTC_LOAD_" + key.upper(), default))
@@ -344,13 +343,12 @@ def main():
         fixture.env[callback_ref] = callback_auth
         node_source = (Path(__file__).resolve().parents[2] /
                        "zum" / "itest" / "zumd.cf").read_text()
-        zumd_ring = "ztc-zumd-" + secrets.token_hex(6)
-        zumd_registry = "ztc-zumd-" + secrets.token_hex(6)
-        zumd_publisher = "zumd-" + secrets.token_hex(6)
+        zumd_ring = residue.shm("ztc-zumd-" + secrets.token_hex(6))
+        zumd_regdir = residue.tmp_dir("zumd-registry")
+        zumd_registry = zumd_regdir.name
+        zumd_publisher = residue.shm("zumd-" + secrets.token_hex(6))
         fixture.env.update(ZUMD_ZTC_PUBLISH="1", ZTC_RING=zumd_ring,
                            ZTC_DIR=zumd_registry)
-        shm_names.extend((zumd_ring, zumd_publisher))
-        registries.append(Path(tempfile.gettempdir()) / zumd_registry)
         fixture.node_config = directory / "zumd-ztchub.cf"
         fixture.node_config.write_text(
             node_source.rstrip() + ",\n" +
@@ -486,12 +484,10 @@ def main():
                          ZTC_WSS_URL="wss://127.0.0.1:" + str(front_port) + "/ztc",
                          ZTC_CA_PATH=str(cert),
                          ZTCAGENT_HOME=str(vault_home),
-                         ZTC_RING="ztc-early-" + secrets.token_hex(6),
-                         ZTC_DIR="ztc-early-" + secrets.token_hex(6))
+                         ZTC_RING=residue.shm("ztc-early-" + secrets.token_hex(6)),
+                         ZTC_DIR=residue.tmp_dir("early-registry").name)
         for key in ("ZTC_ACCESS_TOKEN", "ZTC_CREDENTIAL_STORE"):
             agent_env.pop(key, None)
-        shm_names.append(agent_env["ZTC_RING"])
-        registries.append(Path(tempfile.gettempdir()) / agent_env["ZTC_DIR"])
         collector = subprocess.Popen([
             str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
             cwd=directory, env=agent_env, stdout=subprocess.PIPE,
@@ -910,11 +906,9 @@ def main():
         real_agents = []
         real_publishers = []
         for index, device in enumerate((agent1, agent2)):
-            ring = "ztc-real-" + secrets.token_hex(6)
-            registry = "ztc-pubs-" + secrets.token_hex(6)
-            publisher_id = "ztc-pub-" + secrets.token_hex(6)
-            shm_names.extend((ring, publisher_id))
-            registries.append(Path(tempfile.gettempdir()) / registry)
+            ring = residue.shm("ztc-real-" + secrets.token_hex(6))
+            registry = residue.tmp_dir("publisher-registry").name
+            publisher_id = residue.shm("ztc-pub-" + secrets.token_hex(6))
             agent_env = dict(os.environ, ZTC_ISSUER=fixture.issuer(app_id),
                              ZTC_CLIENT_ID=device["id"], ZTC_DEVICE_ID=device["id"],
                              ZTC_CLIENT_SECRET=device["client_secret"], ZTC_WSS_URL=wss1,
@@ -963,8 +957,7 @@ def main():
         for process in agents:
             stop_process(process)
         agents.clear()
-        assert (Path(tempfile.gettempdir()) / zumd_registry /
-                (zumd_publisher + ".pid")).exists()
+        assert (zumd_regdir / (zumd_publisher + ".pid")).exists()
         zumd_agent_env = dict(os.environ, ZTC_ISSUER=fixture.issuer(app_id),
                               ZTC_CLIENT_ID=agent1["id"],
                               ZTC_DEVICE_ID=agent1["id"],
@@ -1000,12 +993,6 @@ def main():
         shutdown_ok = (not hubs or not success or
                        all(process.returncode == 0 for process in hubs))
         success = success and shutdown_ok
-        for name in shm_names:
-            for suffix in (".ctrl", ".data"):
-                (Path("/dev/shm") / (name + suffix)).unlink(missing_ok=True)
-        import shutil
-        for registry in registries:
-            shutil.rmtree(registry, ignore_errors=True)
         try:
             fixture.stop()
         except Exception:
@@ -1013,15 +1000,7 @@ def main():
         if os.environ.get("ZTC_VALGRIND"):
             for diagnostic in sorted(directory.glob("valgrind-*.log")):
                 print(diagnostic.read_text(), flush=True)
-        if success and directory.exists():
-            for child in directory.rglob("*"):
-                if child.is_file():
-                    child.chmod(0o600)
-            import shutil
-            shutil.rmtree(directory)
-        else:
-            print("# failed fixture diagnostics retained in " + str(directory),
-                  flush=True)
+        residue.finish(success)
         assert shutdown_ok, "hub shutdown failed: " + ", ".join(
             str(process.returncode) for process in hubs)
 

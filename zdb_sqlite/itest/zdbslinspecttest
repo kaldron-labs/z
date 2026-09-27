@@ -1,5 +1,14 @@
 #!/bin/sh
 
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$test_dir/../../zi/itest/zi-test-residue.sh"
+zi_residue_init "${0##*/}" || exit 1
+trap 'status=$?; test "$failed" -ne 0 && status=1; zi_residue_finish "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+failed=0
+fail() { failed=1; echo "$*"; }
+
 echo 'TAP version 14'
 echo '1..8'
 
@@ -10,7 +19,7 @@ actual=$(sqlite3 :memory: "$load" \
 if test "$actual" = 1; then
   echo 'ok 1 - format float'
 else
-  echo "not ok 1 - format float: $actual"
+  fail "not ok 1 - format float: $actual"
 fi
 
 actual=$(sqlite3 :memory: "$load" \
@@ -18,7 +27,7 @@ actual=$(sqlite3 :memory: "$load" \
 if test "$actual" = '1970/01/01 00:00:00.0'; then
   echo 'ok 2 - format time'
 else
-  echo "not ok 2 - format time: $actual"
+  fail "not ok 2 - format time: $actual"
 fi
 
 actual=$(sqlite3 :memory: "$load" \
@@ -26,40 +35,39 @@ actual=$(sqlite3 :memory: "$load" \
 if test "$actual" = '0001/01/01 00:00:00'; then
   echo 'ok 3 - format datetime'
 else
-  echo "not ok 3 - format datetime: $actual"
+  fail "not ok 3 - format datetime: $actual"
 fi
 
 if sqlite3 :memory: "$load" \
     "SELECT zdbsl_time(X'00');" >/dev/null 2>&1; then
-  echo 'not ok 4 - reject malformed value'
+  fail 'not ok 4 - reject malformed value'
 else
   echo 'ok 4 - reject malformed value'
 fi
 
 if sqlite3 :memory: "$load" \
     "SELECT zdbsl_datetime(1);" >/dev/null 2>&1; then
-  echo 'not ok 5 - reject non-BLOB datetime'
+  fail 'not ok 5 - reject non-BLOB datetime'
 else
   echo 'ok 5 - reject non-BLOB datetime'
 fi
 
 if sqlite3 :memory: "$load" \
     "SELECT zdbsl_decimal(X'00');" >/dev/null 2>&1; then
-  echo 'not ok 6 - reject malformed decimal'
+  fail 'not ok 6 - reject malformed decimal'
 else
   echo 'ok 6 - reject malformed decimal'
 fi
 
 if sqlite3 :memory: "$load" \
     "SELECT zdbsl_float(X'00');" >/dev/null 2>&1; then
-  echo 'not ok 7 - reject malformed float'
+  fail 'not ok 7 - reject malformed float'
 else
   echo 'ok 7 - reject malformed float'
 fi
 
-db=$(mktemp --suffix=.db)
-copy=$(mktemp --suffix=.db)
-trap 'rm -f "$db" "$db-wal" "$db-shm" "$copy" "$copy-wal" "$copy-shm"' EXIT
+db="$ZI_RESIDUE_DIR/test.db"
+copy="$ZI_RESIDUE_DIR/copy.db"
 sqlite3 "$db" \
   "CREATE TABLE t(v BLOB); INSERT INTO t VALUES(X'800000000000000080000000');"
 sqlite3 "$db" .dump | sqlite3 "$copy"
@@ -67,5 +75,7 @@ actual=$(sqlite3 "$copy" 'SELECT hex(v) FROM t;')
 if test "$actual" = '800000000000000080000000'; then
   echo 'ok 8 - dump and restore encoded blob'
 else
-  echo "not ok 8 - dump and restore encoded blob: $actual"
+  fail "not ok 8 - dump and restore encoded blob: $actual"
 fi
+
+exit "$failed"

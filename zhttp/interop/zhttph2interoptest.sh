@@ -7,14 +7,21 @@ zhttp=${ZHTTP_CLIENT:-./zhttp}
 zhttpd=${ZHTTP_SERVER:-./zhttpd}
 port=${ZHTTP_H2_PORT:-18443}
 nghttpd_port=${ZHTTP_H2_NGHTTPD_PORT:-18444}
-artifact_root=${ZHTTP_H2_ARTIFACTS:-${TMPDIR:-/tmp}}
-work=$(mktemp -d "$artifact_root/zhttp-h2-interop.XXXXXX")
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$here/../../zi/itest/zi-test-residue.sh"
+if test -n "${ZHTTP_H2_ARTIFACTS:-}"; then
+  ZI_LOGDIR=$ZHTTP_H2_ARTIFACTS
+  export ZI_LOGDIR
+fi
+zi_residue_init zhttp-h2-interop
+work=$ZI_RESIDUE_DIR
 failed=0
 server_pid=
 nghttpd_pid=
 
 cleanup()
 {
+  status=$?
   if test -n "$server_pid"; then
     kill -TERM "$server_pid" 2>/dev/null || :
     wait "$server_pid" 2>/dev/null || :
@@ -23,13 +30,13 @@ cleanup()
     kill -TERM "$nghttpd_pid" 2>/dev/null || :
     wait "$nghttpd_pid" 2>/dev/null || :
   fi
-  if test "$failed" -ne 0 || test -n "${ZHTTP_H2_KEEP_ARTIFACTS:-}"; then
-    echo "# artifacts: $work"
-  else
-    rm -rf "$work"
-  fi
+  if test "$failed" -ne 0; then status=$failed; fi
+  zi_residue_finish "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir "$work/www"
 printf 'zhttp-h2-interop\n' >"$work/www/index.html"

@@ -16,6 +16,10 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 noinst_PROGRAMS = zringmatrix zitestresidue
 zringmatrix_SOURCES = zringmatrix.cc
 zitestresidue_SOURCES = zitestresidue.cc
+EXTRA_DIST = README.md zi_test_residue.py zi_test_residue_test.py \
+	zi-test-residue.sh zi-test-residue-test.sh \
+	residue/go.mod residue/residue.go residue/residue_unix.go \
+	residue/residue_windows.go residue/residue_test.go
 
 .PHONY: ZiRingTest
 ZiRingTest:
@@ -25,3 +29,8 @@ ZiRingTest:
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS) ZiRingTest
 	prove -j1 $(noinst_PROGRAMS)
+	PYTHONDONTWRITEBYTECODE=1 python3 $(srcdir)/zi_test_residue_test.py
+	$(SHELL) $(srcdir)/zi-test-residue-test.sh
+if HAVE_GO
+	cd $(srcdir)/residue && GOCACHE=$(abs_top_builddir)/.go-cache $(GO) test ./...
+endif

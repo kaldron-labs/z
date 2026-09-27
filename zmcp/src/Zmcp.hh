@@ -68,6 +68,17 @@ using GetHeader = typename GetHeader_<Props>::T;
 
 namespace Zmcp {
 
+template <typename Headers_>
+struct HTTPHdrCatalog {
+  using List = Headers_;
+  static int nameMatch(ZuBSpan key) {
+    return Zhttp::Fields::nameMatch<HTTPHdrCatalog>(key);
+  }
+  static int valueMatch(unsigned key, ZuBSpan value) {
+    return Zhttp::Fields::valueMatch<HTTPHdrCatalog>(key, value);
+  }
+};
+
 using ModernVersion = ZuStringT<"2026-07-28">;
 using LegacyVersion = ZuStringT<"2025-11-25">;
 using JSONRPCVersion = ZuStringT<"2.0">;
@@ -2929,6 +2940,7 @@ template <typename Impl>
 class HTTPParser : public Zhttp::Parser {
 public:
   using Headers = ZuTypeConcat<ZhttpHeaders("origin"), RoutingHeaders>;
+  using HdrCatalog = HTTPHdrCatalog<Headers>;
   using Origin = ZuStringT<"origin">;
   using Session = SessionID;
   using Version = ProtocolVersion;
@@ -3049,6 +3061,7 @@ public:
   using Headers = ZuTypeConcat<ZhttpHeaders(
     ("content-type", ("application/json", "text/event-stream"))),
     SessionHeaders>;
+  using HdrCatalog = HTTPHdrCatalog<Headers>;
   using ContentType = ZuStringT<"content-type">;
   using JSONContent = ZuStringT<"application/json">;
   using SSEContent = ZuStringT<"text/event-stream">;
