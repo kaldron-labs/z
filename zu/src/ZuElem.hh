@@ -14,12 +14,17 @@
 #include <zlib/ZuLib.hh>
 #endif
 
+// this type ID needs to be as short as possible to minimize
+// debug info and symbol bloat
 template <typename T>
-union alignas(T) ZuElem {
-  ZuInline constexpr ZuElem() noexcept { }
-  ZuInline constexpr ~ZuElem() noexcept { }
+union alignas(T) Z_ {
+  ZuInline constexpr Z_() noexcept { }
+  ZuInline constexpr ~Z_() noexcept { }
   T v;
 };
+
+// intentionally a macro
+#define ZuElem Z_
 
 template <typename> struct ZuIsElem_ : public ZuFalse { };
 template <typename U> struct ZuIsElem_<ZuElem<U>> : public ZuTrue { };

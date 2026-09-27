@@ -14,7 +14,7 @@ Restart/recovery is from backing data store, then from the cluster
 leader (if the local host itself is not elected leader).
 
 Principal features:
-- Statically configured tables (intentional design)
+- Immutable compile-time schema (intentional design)
 - Plug-in backing data stores:
   - Postgres, sqlite3, in-memory
 - In-memory write-through row cache

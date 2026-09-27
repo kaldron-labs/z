@@ -68,7 +68,7 @@ struct AppSchedCf {
   unsigned	timeout = 0;
 };
 
-ZfStruct(ZtcAPI, AppSchedCf,
+ZfStruct(ZtcAPI, (AppSchedCf, Cf),
   (((nThreads),		((Range<1U, 1024U>))),		(UInt32, 2)),
   (((stackSize),	((Range<16384U, 2U<<20U>))),	(UInt32)),
   (((priority),		(Enum<ZmThreadPriority::Map>)),	(Int32,
@@ -121,7 +121,7 @@ struct AppCf {
   unsigned	workerThread = 2;
 };
 
-ZfStruct(ZtcAPI, AppCf,
+ZfStruct(ZtcAPI, (AppCf, Cf),
   (((id)),						(String)),
   (((version)),						(String)),
   (((role)),						(String)),

@@ -344,6 +344,13 @@ def main():
         fixture.env[callback_ref] = callback_auth
         node_source = (Path(__file__).resolve().parents[2] /
                        "zum" / "itest" / "zumd.cf").read_text()
+        zumd_ring = "ztc-zumd-" + secrets.token_hex(6)
+        zumd_registry = "ztc-zumd-" + secrets.token_hex(6)
+        zumd_publisher = "zumd-" + secrets.token_hex(6)
+        fixture.env.update(ZUMD_ZTC_PUBLISH="1", ZTC_RING=zumd_ring,
+                           ZTC_DIR=zumd_registry)
+        shm_names.extend((zumd_ring, zumd_publisher))
+        registries.append(Path(tempfile.gettempdir()) / zumd_registry)
         fixture.node_config = directory / "zumd-ztchub.cf"
         fixture.node_config.write_text(
             node_source.rstrip() + ",\n" +
@@ -353,7 +360,10 @@ def main():
             ", audience: " + json.dumps(service_audience) +
             ", deliveryURL: " +
             json.dumps("https://127.0.0.1:" + str(ssf_port) + "/ssf") +
-            ", secretName: \"" + callback_ref + "\", revision: 1}]}\n")
+            ", secretName: \"" + callback_ref + "\", revision: 1}]},\n" +
+            "ztc: {id: " + json.dumps(zumd_publisher) +
+            ", alertPrefix: " +
+            json.dumps(str(directory / "zumd-alerts")) + "}\n")
         fixture.stop()
         fixture.start()
         fixture.request("GET", "/health/ready")
@@ -950,6 +960,31 @@ def main():
         wait_line(inventory, "front telemetry " + str(len(real_agents) - 1))
         inventory.wait(timeout=15)
         assert inventory.returncode == 0
+        for process in agents:
+            stop_process(process)
+        agents.clear()
+        assert (Path(tempfile.gettempdir()) / zumd_registry /
+                (zumd_publisher + ".pid")).exists()
+        zumd_agent_env = dict(os.environ, ZTC_ISSUER=fixture.issuer(app_id),
+                              ZTC_CLIENT_ID=agent1["id"],
+                              ZTC_DEVICE_ID=agent1["id"],
+                              ZTC_CLIENT_SECRET=agent1["client_secret"],
+                              ZTC_WSS_URL=wss1,
+                              ZTCAGENT_HOME=str(directory / "zumd-agent-vault"),
+                              ZTC_CA_PATH=str(cert), ZTC_RING=zumd_ring,
+                              ZTC_DIR=zumd_registry)
+        collector = subprocess.Popen([
+            str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
+            cwd=directory, env=zumd_agent_env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        agents.append(collector)
+        wait_line(hub, "agent accepted " + agent1["id"])
+        front = run_wire(root, "front", fixture.issuer(app_id), agent1["id"],
+                         wss1, cert, token=front_token, expect=1)
+        fronts.append(front)
+        wait_line(front, "front telemetry 1")
+        front.wait(timeout=15)
+        assert front.returncode == 0
         success = True
     finally:
         for index, process in enumerate(fronts + agents):

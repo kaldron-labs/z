@@ -1,5 +1,29 @@
 # Zum integration tests
 
+`zumdztctest.py` runs disposable SQLite backed `zumd` processes with isolated
+publisher IDs, rings, PID registries and alert paths. It checks the default
+off state, node/environment/CLI enable inputs, App/Mx/DB ring replies before
+administrator enrollment, late collector attachment, subscription shutdown,
+`--once` and `--rekey` cleanup, malformed node boolean rejection, and cleanup
+after publisher and IAM startup failures. `zumdztcgctest.py`
+kills an attached ring reader without detaching it and verifies that ZiRing's
+writer-open PID liveness check reclaims its unread message.
+
+`zumdztccluster.py` starts a persistent standby publisher, promotes it after
+its leader exits, joins a deliberately ahead peer to deactivate it, and
+promotes it again after that peer exits. It checks the same publisher PID
+registration and App/DB request path throughout. The ahead peer is made from a
+disposable SQLite snapshot followed by a real isolated IAM write; Zdb ranks
+database state before active status and host priority.
+
+All three are run by `make test`; a focused run after building
+`zumdztcprobe` is:
+
+```sh
+export ZDB_MODULE=$PWD/../../zdb_sqlite/src/.libs/libZdbSL.so
+prove ./zumdztctest.py ./zumdztccluster.py ./zumdztcgctest.py
+```
+
 `zumvaulttest` exercises OAuth-token and service-secret persistence through
 `Ztls::Vault`, including client identity separation. It uses a disposable
 Vault home and needs no external service.

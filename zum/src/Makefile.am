@@ -73,8 +73,9 @@ zum_LDADD = libZum.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la
 zum_SOURCES = zum.cc
 zumd_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zv/src \
-	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src
-zumd_LDADD = libZum.la \
+	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src \
+	-I$(top_srcdir)/ztc/src
+zumd_LDADD = $(top_builddir)/ztc/src/libZtcApp.la libZum.la \
 	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/ztls/src/libZtls.la \
@@ -86,3 +87,9 @@ zumd_SOURCES = zumd.cc zumd_bootstrap.cc zumd_daemon.cc \
 	zumd_discovery.cc zumd_jwt.cc zumd_oauth.cc zumd_oidc.cc \
 	zumd_passkey.cc zumd_request.cc zumd_server.cc zumd_session.cc zumd_token.cc \
 	zumd_webauthn.cc zumd_revoke.cc
+
+# The top-level traversal reaches Zum before Ztc. Build only the Ztc
+# libraries here; ztc/src builds its Zum-dependent executables later.
+$(top_builddir)/ztc/src/libZtcApp.la: libZum.la
+	$(MAKE) -C $(top_builddir)/ztc/src lib-stage
+zumd-zumd.$(OBJEXT): $(top_builddir)/ztc/src/libZtcApp.la

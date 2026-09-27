@@ -27,6 +27,8 @@
 
 #include <zlib/ZvMxParams.hh>
 
+#include <zlib/ZtcApp.hh>
+
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_request.hh>
 
@@ -74,6 +76,7 @@ struct Options {
   bool		bootstrapReissue = false;
   bool		once = false;
   bool		rekey = false;
+  bool		ztcPublish = false;
   bool		vaultTestStore = false;
   bool		help = false;
 };
@@ -102,6 +105,7 @@ ZfStruct(, (Options, CLI),
   (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)), (Bool)),
   (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)), (Bool)),
   (((rekey),	(CLI::Long<"rekey">)), (Bool)),
+  (((ztcPublish), (CLI::Long<"ztcPublish">)), (Bool)),
   (((vaultTestStore), (CLI::Long<"vault-test-store">)), (Bool)),
   (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
 
@@ -131,6 +135,7 @@ static void usage(int code)
     "  -o, --once          stop after database activation\n"
     "  --rekey             offline DB-secret rotation; stop all writers first\n"
     "                      old key: Vault; new key: ZUM_DB_KEY\n"
+    "  --ztcPublish        publish local telemetry (also ZUMD_ZTC_PUBLISH=1)\n"
     "  -h, --help          show help\n" << std::flush;
   ::exit(code);
 }
@@ -140,6 +145,13 @@ struct OIDCConfig {
 };
 ZfStruct(, (OIDCConfig, Cf),
   (((caPath)), (String)));
+
+static bool nodeZtcPublish(const ZfCf::AnyNode *root)
+{
+  auto node = root->resolve("ztcPublish");
+  return node && ZfCf::loadValue<ZuFacet::Cf, ZfFieldFilter::Save,
+    ZfFieldTC::Bool, ZuTypeList<>, bool>(node);
+}
 
 struct VaultCf {
   Zum::String store;
@@ -385,11 +397,42 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   int result = 1;
+  {
+  Ztc::App publisher;
+  bool publisherStarted = false;
+  bool publisherStopped = true;
+  auto stopPublisher = [&]() {
+    if (publisherStarted) {
+      if (!publisher.stop()) {
+        publisherStopped = false;
+        std::cerr << "zumd: telemetry publisher stop failed\n";
+      }
+      publisherStarted = false;
+    }
+    publisher.final();
+  };
+  ZuGuard publisherCleanup{stopPublisher};
   try {
     Zum::String configSource;
     auto cf = config(options, configSource);
     if (!cf || !cf->resolve("mx") || !cf->resolve("zdb"))
       throw ZeEXCEPT(Fatal, "zumd", "invalid node configuration");
+    const char *publishEnv = ::getenv("ZUMD_ZTC_PUBLISH");
+    bool ztcPublish = nodeZtcPublish(cf) || options.ztcPublish ||
+      (publishEnv && !::strcmp(publishEnv, "1"));
+    if (ztcPublish) {
+      Ztc::AppCf publisherCf;
+      if (auto node = cf->resolve("ztc")) {
+        publisherCf = ZfCf::handler<Ztc::AppCf>(node).ctor();
+        if (!node->resolve("id")) publisherCf.id = "zumd";
+      } else
+        publisherCf.id = "zumd";
+      if (!publisher.init(publisherCf))
+        throw ZeEXCEPT(Fatal, "zumd", "telemetry publisher initialization failed");
+      if (!publisher.start())
+        throw ZeEXCEPT(Fatal, "zumd", "telemetry publisher startup failed");
+      publisherStarted = true;
+    }
     VaultCf vaultOptions;
     if (options.vaultStore) {
       vaultOptions.store = options.vaultStore;
@@ -487,7 +530,7 @@ int main(int argc, char **argv)
     };
     auto stop = [
       &stopped, &mxStarted, db, &daemon, &oidcHTTPInited, &oidcHTTP,
-      &stopDB, &mx, &context
+      &stopDB, &mx, &context, &stopPublisher
     ]() {
       if (stopped) return;
       stopped = true;
@@ -500,6 +543,7 @@ int main(int argc, char **argv)
       }
       daemon.stop();
       if (oidcHTTPInited) oidcHTTP.final();
+      stopPublisher();
       stopDB();
       daemon.final();
       if (mxStarted) mx.stop();
@@ -663,11 +707,12 @@ int main(int argc, char **argv)
       stop();
       throw;
     }
-    result = 0;
+    result = publisherStopped ? 0 : 1;
   } catch (const ZeException &e) {
     std::cerr << e << '\n';
   } catch (const ZeError &e) {
     std::cerr << e.message() << '\n';
+  }
   }
   ZiLog::stop();
   return result;
