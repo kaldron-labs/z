@@ -56,7 +56,10 @@ struct Headers_<Impl, BodyPolicy::URI> {
 template <typename Impl>
 using Headers = typename Headers_<Impl>::T;
 
-ZuDerive(SignBuf, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf">>));
+ZuDerive(SignBufScratch, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf",
+  ZtArraySharded<true>>>));
+ZuDerive(HeaderScratch, (ZtBArray<ZtArrayHeapID<"Zrest.Header.Value",
+  ZtArraySharded<true>>>));
 
 struct DefltHdrs { };
 

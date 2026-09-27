@@ -598,7 +598,7 @@ VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
   } else if (!scope.template is<Scopes::Global>())
     return ZeEXCEPT(Error, "ZtlsVault", "invalid scope");
 
-  auto key = ZtScratch(VaultString,
+  auto key = ZtScratch(VaultScratch,
     (env ? 5 + env.length() : 7) + name.length() + 1);
   if (!key.data())
     return ZeEXCEPT(Error, "ZtlsVault", "key allocation failed");

@@ -68,6 +68,9 @@ using TxBufAlloc =
 
 namespace Ztls {
 
+ZuDerive(CertSpansScratch, (ZtArray<ZuBSpan,
+  ZtArrayHeapID<"Ztls.CertSpans", ZtArraySharded<true>>>));
+
 namespace LinkState {
   using namespace Ztc::LinkState;
 }
@@ -2381,8 +2384,7 @@ bool Client<App>::init(ClientParams params)
       m_keyRef = ZuMv(params.m_key);
       const auto &certs = params.certs();
       unsigned n = certs.length();
-      using Spans = ZtArray<ZuBSpan, ZtArrayHeapID<"Ztls.CertSpans">>;
-      auto spans = ZtScratch(Spans, n);
+      auto spans = ZtScratch(CertSpansScratch, n);
       for (unsigned i = 0; i < n; ++i) spans.push(certs[i]);
       m_key = m_keyRef->key;
       m_sign = Backend::sign_cert_new(m_key);

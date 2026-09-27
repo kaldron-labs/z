@@ -269,7 +269,7 @@ static int clientData(
     return WebAuthnError::Fields;
   if (client.type != type) return WebAuthnError::Type;
   unsigned length = ZuBase64URL::enclen(challenge.length());
-  auto encoded = ZtScratch(String, 0, length + 1);
+  auto encoded = ZtScratch(TextScratch, 0, length + 1);
   encoded.length(ZuBase64URL::encode(encoded.span(), challenge));
   if (client.challenge != encoded) return WebAuthnError::Challenge;
   if (client.origin != origin) return WebAuthnError::Origin;

@@ -86,7 +86,7 @@ private:
       ZuHex::enclen(m_account.length()) + ZuHex::enclen(key.length());
     if (length > limit)
       return ZeEXCEPT(Error, "ZtlsVault", "native target too long");
-    auto text = ZtScratch(Ztls::VaultString, length);
+    auto text = ZtScratch(Ztls::VaultScratch, length);
     auto out = text.data();
     uint64_t pos = TargetPrefix.length();
     ::memcpy(out, TargetPrefix.data(), pos);

@@ -475,10 +475,12 @@ struct VarPart {
   unsigned offset;
   unsigned length;
 };
-ZuDerive(VarParts,
-  (ZtArray<VarPart, ZtArrayHeapID<"ZdbSL.VarParts">>));
-ZuDerive(VarBuf,
-  (ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.VarBuf">>));
+ZuDerive(VarPartsScratch,
+  (ZtArray<VarPart, ZtArrayHeapID<"ZdbSL.VarParts",
+    ZtArraySharded<true>>>));
+ZuDerive(VarBufScratch,
+  (ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.VarBuf",
+    ZtArraySharded<true>>>));
 
 static uint64_t vecSize(uint64_t n, unsigned width)
 {
@@ -1669,8 +1671,9 @@ struct SavedOffset {
   uint8_t	ipType = 0;
   bool		valid = false;
 };
-ZuDerive(SavedOffsets,
-  (ZtArray<SavedOffset, ZtArrayHeapID<"ZdbSL.SavedOffset">>));
+ZuDerive(SavedOffsetsScratch,
+  (ZtArray<SavedOffset, ZtArrayHeapID<"ZdbSL.SavedOffset",
+    ZtArraySharded<true>>>));
 
 static ZuCSpan columnText(sqlite3_stmt *stmt, unsigned col)
 {
@@ -1963,7 +1966,7 @@ static Offset saveTuple(
     unsigned base = 0)
 {
   unsigned n = fields.length();
-  auto offsets = ZtScratch(SavedOffsets, n, n);
+  auto offsets = ZtScratch(SavedOffsetsScratch, n, n);
   for (unsigned i = 0; i < n; ++i)
     offsets[i] = hasOffset(fieldAt(fields, i).field.type) ?
       saveOffset(fbb, stmt, base + i, fieldAt(fields, i).field.type) :
@@ -2035,10 +2038,10 @@ void StoreTbl::count_(KeyID keyID, ZmRef<IOBuf> buf, CountFn fn)
   try {
     unsigned n = m_keyGroup[keyID];
     auto fbo = Zfb::GetAnyRoot(buf->data());
-    auto parts = ZtScratch(VarParts, n, n);
+    auto parts = ZtScratch(VarPartsScratch, n, n);
     auto size = planInput(m_store->conn(), m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
-    auto scratch = ZtScratch(VarBuf, size, size);
+    auto scratch = ZtScratch(VarBufScratch, size, size);
     bindInput(m_store->conn(), stmt, 1,
       n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
     int rc = sqlite3_step(stmt);
@@ -2082,10 +2085,10 @@ void StoreTbl::select_(
   try {
     unsigned n = selectNext ? m_xKeyFields[keyID].length() : m_keyGroup[keyID];
     auto fbo = Zfb::GetAnyRoot(buf->data());
-    auto parts = ZtScratch(VarParts, n, n);
+    auto parts = ZtScratch(VarPartsScratch, n, n);
     auto size = planInput(m_store->conn(), m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
-    auto scratch = ZtScratch(VarBuf, size, size);
+    auto scratch = ZtScratch(VarBufScratch, size, size);
     bindInput(m_store->conn(), stmt, 1,
       n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
     int rc = sqlite3_bind_int64(stmt, n + 1, limit);
@@ -2123,10 +2126,10 @@ void StoreTbl::find_(KeyID keyID, ZmRef<IOBuf> buf, RowFn fn)
   try {
     unsigned n = m_xKeyFields[keyID].length();
     auto fbo = Zfb::GetAnyRoot(buf->data());
-    auto parts = ZtScratch(VarParts, n, n);
+    auto parts = ZtScratch(VarPartsScratch, n, n);
     auto size = planInput(m_store->conn(), m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
-    auto scratch = ZtScratch(VarBuf, size, size);
+    auto scratch = ZtScratch(VarBufScratch, size, size);
     bindInput(m_store->conn(), stmt, 1,
       n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
     int rc = sqlite3_step(stmt);
@@ -2224,10 +2227,10 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
         throw cxnError(cxn, "bind insert shard");
       bindMeta(cxn, stmt, 2, un, sn, vn, unData, snData);
       unsigned n = m_xFields.length();
-      auto parts = ZtScratch(VarParts, n, n);
+      auto parts = ZtScratch(VarPartsScratch, n, n);
       auto size = planInput(
         cxn, m_store->lengthLimit(), n, m_xFields, fbo, parts.span());
-      auto scratch = ZtScratch(VarBuf, size, size);
+      auto scratch = ZtScratch(VarBufScratch, size, size);
       bindInput(cxn, stmt, 5, n, m_xFields, fbo,
         parts.cspan(), scratch.span());
       done(cxn, stmt);
@@ -2239,8 +2242,8 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       bindMeta(cxn, stmt, 1, un, sn, vn, unData, snData);
       unsigned nUpdate = m_xUpdFields.length();
       unsigned nKey = m_xKeyFields[0].length();
-      auto updateParts = ZtScratch(VarParts, nUpdate, nUpdate);
-      auto keyParts = ZtScratch(VarParts, nKey, nKey);
+      auto updateParts = ZtScratch(VarPartsScratch, nUpdate, nUpdate);
+      auto keyParts = ZtScratch(VarPartsScratch, nKey, nKey);
       auto updateSize = planInput(cxn, m_store->lengthLimit(),
         nUpdate, m_xUpdFields, fbo, updateParts.span());
       auto keySize = planInput(cxn, m_store->lengthLimit(),
@@ -2248,7 +2251,7 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       if (keySize > UINT_MAX - updateSize)
         throw cxnError(cxn, "encode SQLite values", SQLITE_TOOBIG);
       unsigned size = updateSize + keySize;
-      auto scratch = ZtScratch(VarBuf, size, size);
+      auto scratch = ZtScratch(VarBufScratch, size, size);
       bindInput(cxn, stmt, 4, nUpdate, m_xUpdFields, fbo,
         updateParts.cspan(), {scratch.data(), updateSize});
       bindInput(cxn, stmt, 4 + nUpdate, nKey, m_xKeyFields[0], fbo,
@@ -2260,10 +2263,10 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
       sqlite3_stmt *stmt = m_stmts.del;
       Reset reset{stmt};
       unsigned n = m_xKeyFields[0].length();
-      auto parts = ZtScratch(VarParts, n, n);
+      auto parts = ZtScratch(VarPartsScratch, n, n);
       auto size = planInput(cxn, m_store->lengthLimit(),
         n, m_xKeyFields[0], fbo, parts.span());
-      auto scratch = ZtScratch(VarBuf, size, size);
+      auto scratch = ZtScratch(VarBufScratch, size, size);
       bindInput(cxn, stmt, 1,
         n, m_xKeyFields[0], fbo, parts.cspan(), scratch.span());
       done(cxn, stmt);

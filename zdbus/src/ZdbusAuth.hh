@@ -22,10 +22,13 @@ namespace Zdbus_ {
 
 namespace AuthState { enum { Initial, Waiting, Ready, Failed }; }
 
+ZuDerive(UIDString, (ZtString<ZtStringHeapID<"Zdbus.AuthUID">>));
+ZuDerive(UIDScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID<"Zdbus.AuthUID">>>));
+
 class ZdbusAPI Auth {
 public:
-  ZuDerive(Text, (ZtString<ZtStringHeapID<"Zdbus.Auth">>));
-  ZuDerive(UIDText, (ZtString<ZtStringHeapID<"Zdbus.AuthUID">>));
+  ZuDerive(String, (ZtString<ZtStringHeapID<"Zdbus.Auth">>));
 
   // The auth reply is one short ASCII line; its GUID is 16 hex-encoded bytes.
   enum { MaxLine = 4096, GuidChars = 32 };
@@ -34,7 +37,7 @@ public:
     m_line.length(0);
     m_state = AuthState::Waiting;
     auto boxed = ZuBoxed(uid);
-    auto decimal = ZtScratch(UIDText, boxed.length());
+    auto decimal = ZtScratch(UIDScratch, boxed.length());
     decimal << boxed;
     sink << char(0) << "AUTH EXTERNAL ";
     constexpr auto digits = "0123456789abcdef"_Zu;
@@ -53,7 +56,7 @@ private:
   bool reply_();
 
 private:
-  Text	m_line;
+  String	m_line;
   int	m_state = AuthState::Initial;
 };
 

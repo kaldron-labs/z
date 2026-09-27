@@ -18,7 +18,8 @@
 
 namespace ZtCase {
 
-using Buf = ZtArray<char, ZtArrayHeapID<"ZtCase.Buf", ZtArraySharded<true>>>;
+ZuDerive(BufScratch, (ZtArray<char,
+  ZtArrayHeapID<"ZtCase.Buf", ZtArraySharded<true>>>));
 
 inline bool isupper__(char c) { return c >= 'A' && c <= 'Z'; }
 inline char toupper__(char c) {
@@ -46,7 +47,7 @@ inline void snakeCamel(ZuCSpan s, L &&l) {
   }
   unsigned m = n - o;
   unsigned z = m + 1;
-  auto buf = ZtScratch(Buf, m, z);
+  auto buf = ZtScratch(BufScratch, m, z);
   underscore = false;
   unsigned j = 0;
   for (unsigned i = 0; i < n; i++) {
@@ -82,7 +83,7 @@ inline void camelSnake(ZuCSpan s, L &&l) {
   }
   unsigned m = n + o;
   unsigned z = m + 1;
-  auto buf = ZtScratch(Buf, m, z);
+  auto buf = ZtScratch(BufScratch, m, z);
   unsigned j = 0;
   for (unsigned i = 0; i < n; i++) {
     auto c = s[i];

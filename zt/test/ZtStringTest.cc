@@ -24,6 +24,9 @@
 
 using namespace ZuTestUtil;
 
+ZuDerive(SecretScratch, (ZtString<ZtStringSharded<true,
+  ZtStringSecret<true, ZtStringHeapID<"ZtStringTest.Secret">>>>));
+
 void foo(const ZtString<> &s, ZtString<> t)
 {
   if (verbose) {
@@ -735,7 +738,7 @@ void testSecretString()
   ZuCheck(!shadow.mutable_());
   shadow.null();
 
-  auto scratch = ZtScratch(SecretString, 32);
+  auto scratch = ZtScratch(SecretScratch, 32);
   scratch = ZuCSpan{"secret"};
   scratch.clear();
   ZuCheck(!scratch.length() && !scratch.data()[0]);

@@ -123,7 +123,8 @@ ZfExtern Result scan(ZuBSpan);
 
 namespace Detail {
 
-using StringScratch = ZtArray<uint8_t, ZtArrayHeapID<"ZfCBOR.String">>;
+ZuDerive(ValueScratch, (ZtArray<uint8_t,
+  ZtArrayHeapID<"ZfCBOR.String", ZtArraySharded<true>>>));
 
 struct Head {
   uint64_t	arg;
@@ -221,7 +222,7 @@ inline T stringValue(ZuBSpan span)
     else return T(ZuCSpan(value));
   } else {
     // Size from chunk headers only, then coalesce once into stack/heap scratch.
-    auto value = ZtScratch(StringScratch, n, n);
+    auto value = ZtScratch(ValueScratch, n, n);
     p = span.begin() + initial.length;
     unsigned o = 0;
     while (*p != 0xff) {
@@ -242,7 +243,8 @@ inline T stringValue(ZuBSpan span)
 inline bool untag(ZuBSpan &span, uint64_t tag);
 
 struct FieldSpanHeap : public ZuStringT<"ZfCBOR.FieldSpan"> { };
-using FieldSpans = ZtArray<ZuBSpan, ZtArrayHeapID_<FieldSpanHeap>>;
+ZuDerive(FieldSpansScratch, (ZtArray<ZuBSpan,
+  ZtArrayHeapID_<FieldSpanHeap, ZtArraySharded<true>>>));
 
 template <typename Field>
 consteval bool validIntID()
@@ -302,7 +304,7 @@ struct LoadContext {
     }
   }
 
-  bool index(FieldSpans &fields) const
+  bool index(FieldSpansScratch &fields) const
   {
     for (unsigned i = 0, n = fields.length(); i < n; ++i) fields[i] = {};
     ZuBSpan input_ = input;
@@ -815,7 +817,7 @@ struct AsObject {
     ZuBSpan	input;
 
     template <typename Field>
-    auto loadField(const FieldSpans &fields) const {
+    auto loadField(const FieldSpansScratch &fields) const {
       enum { I = ZuTypeIndex<Field, AllFields>{} };
       enum { TypeCode = ZuFieldProp::CBOR::GetType<
 	typename Field::Props, Field::Type::Code>{} };
@@ -830,19 +832,19 @@ struct AsObject {
     template <typename ...Field>
     struct Ctor {
       template <typename ...Args>
-      static O ctor(const Handler &handler, const FieldSpans &fields,
+      static O ctor(const Handler &handler, const FieldSpansScratch &fields,
 	  Args &&...args) {
 	return O(ZuFwd<Args>(args)..., handler.template loadField<Field>(fields)...);
       }
       template <typename ...Args>
-      static O *alloc(const Handler &handler, const FieldSpans &fields,
+      static O *alloc(const Handler &handler, const FieldSpansScratch &fields,
 	  Args &&...args) {
 	return new O(ZuFwd<Args>(args)...,
 	  handler.template loadField<Field>(fields)...);
       }
       template <typename ...Args>
       static void new_(void *ptr, const Handler &handler,
-	  const FieldSpans &fields, Args &&...args) {
+	  const FieldSpansScratch &fields, Args &&...args) {
 	new (ptr) O(ZuFwd<Args>(args)...,
 	  handler.template loadField<Field>(fields)...);
       }
@@ -853,7 +855,7 @@ struct AsObject {
 
     template <typename ...Args>
     O ctor(Args &&...args) const {
-      auto index = ZtScratch(FieldSpans, AllFields::N, AllFields::N);
+      auto index = ZtScratch(FieldSpansScratch, AllFields::N, AllFields::N);
       LoadContext<Props, AllFields>{input}.index(index);
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(
 	*this, index, ZuFwd<Args>(args)...);
@@ -864,7 +866,7 @@ struct AsObject {
     }
     template <typename ...Args>
     O *alloc(Args &&...args) const {
-      auto index = ZtScratch(FieldSpans, AllFields::N, AllFields::N);
+      auto index = ZtScratch(FieldSpansScratch, AllFields::N, AllFields::N);
       LoadContext<Props, AllFields>{input}.index(index);
       O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
 	*this, index, ZuFwd<Args>(args)...);
@@ -875,7 +877,7 @@ struct AsObject {
     }
     template <typename ...Args>
     void new_(void *ptr, Args &&...args) const {
-      auto index = ZtScratch(FieldSpans, AllFields::N, AllFields::N);
+      auto index = ZtScratch(FieldSpansScratch, AllFields::N, AllFields::N);
       LoadContext<Props, AllFields>{input}.index(index);
       ZuTypeApply<Ctor, CtorFields>::new_(
 	ptr, *this, index, ZuFwd<Args>(args)...);
@@ -885,7 +887,7 @@ struct AsObject {
       });
     }
     void load(O &o) const {
-      auto index = ZtScratch(FieldSpans, AllFields::N, AllFields::N);
+      auto index = ZtScratch(FieldSpansScratch, AllFields::N, AllFields::N);
       LoadContext<Props, AllFields>{input}.index(index);
       ZuUnroll::all<LoadFields>([this, &index, &o]<typename Field>() {
 	Field::set(o, this->template loadField<Field>(index));

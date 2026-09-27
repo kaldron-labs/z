@@ -28,7 +28,8 @@ namespace Ztls::COSE {
 
 namespace CBOR = ZuFieldProp::CBOR;
 
-using Scratch = ZtBArray<ZtArrayHeapID<"Ztls.COSE.Scratch">>;
+ZuDerive(Scratch, (ZtBArray<ZtArrayHeapID<"Ztls.COSE.Scratch",
+  ZtArraySharded<true>>>));
 
 namespace ES256 {
   enum {
