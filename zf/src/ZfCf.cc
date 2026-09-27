@@ -14,7 +14,8 @@
 
 namespace ZfCf {
 
-using Args = ZtArray<AnyNode::String, ZtArrayHeapID<"ZfCf.Args">>;
+ZuDerive(ArgsScratch, (ZtArray<AnyNode::String,
+  ZtArrayHeapID<"ZfCf.Args", ZtArraySharded<true>>>));
 using ArgSpans = ZtArray<ZuCSpan, ZtArrayHeapID<"ZfCf.ArgSpans">>;
 
 unsigned Scan::position(ZuCSpan at, unsigned offset)
@@ -378,7 +379,7 @@ int Scan::eod(ZuCSpan span, AnyNode *node)
     return -1;
   }
 
-  auto args = ZtScratch(Args, 4);
+  auto args = ZtScratch(ArgsScratch, 4);
   bool afterComma = false;
   for (;;) {
     while (i < n && isspace__(span[i])) ++i;

@@ -28,6 +28,11 @@ namespace Zhttp {
 
 namespace H2 {
 
+template <typename Stream>
+using HeaderScratchBase = typename Stream::HeaderBytes;
+template <typename Stream>
+ZuDerive(HeaderScratch, (HeaderScratchBase<Stream>));
+
 constexpr uint32_t DefltFrameSize = 1U<<14;
 constexpr uint32_t MaxFrameSize = (1U<<24) - 1;
 constexpr uint32_t DefltWindow = (1U<<16) - 1;
@@ -881,8 +886,7 @@ public:
 protected:
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
-    using HeaderBytes = typename Stream::HeaderBytes;
-    auto block = ZtScratch(HeaderBytes, Impl::HdrBufSize);
+    auto block = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
     typename Stream::HeaderSection section{block};
     bool sent = false;
     bool endStream = false;
@@ -925,8 +929,7 @@ protected:
 
   template <typename Stream>
   void beginResponse_(Stream &stream) {
-    using HeaderBytes = typename Stream::HeaderBytes;
-    auto block = ZtScratch(HeaderBytes, Impl::HdrBufSize);
+    auto block = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
     typename Stream::HeaderSection section{block};
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;

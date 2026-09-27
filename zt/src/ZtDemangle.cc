@@ -8,7 +8,7 @@
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZmScratch.hh>
 
-ZuDerive(Buf,
+ZuDerive(BufScratch,
   (ZtArray<char, ZtArrayHeapID<"ZtDemangle.Buf", ZtArraySharded<true>>>));
 
 template <typename S>
@@ -35,7 +35,7 @@ static void transform(void *, ZuSpan<char> &output)
   ZtREGEX("ZuString<(\d+)[uUlL]*>{char \[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(ZtRegex::CaptureSpan c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
-      auto buf = ZtScratch(Buf, n.val() + 8);
+      auto buf = ZtScratch(BufScratch, n.val() + 8);
       buf << '"';
       ZtREGEX("\(char\)(\d+)(?:,\s*)?").mg(
 	c[1], [&buf](ZtRegex::CaptureSpan c) { quote(buf, c[2]); });
@@ -47,7 +47,7 @@ static void transform(void *, ZuSpan<char> &output)
   ZtREGEX("Zu_::Array<char,\s*(\d+)[uUlL]*>{Zu_::Array_<char>{},\s*ZuArrayFn<char,\s*ZuCmp<char>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<char>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(ZtRegex::CaptureSpan c, Splice &&splice) {
       ZuBox<unsigned> n(c[2]);
-      auto buf = ZtScratch(Buf, n.val() + 8);
+      auto buf = ZtScratch(BufScratch, n.val() + 8);
       buf << '"';
       ZtREGEX("ZuElem<char>{\.v=\((?:\([^)]*\))?(-?\d+)\)}(?:,\s*)?").mg(
 	c[1], [&buf](ZtRegex::CaptureSpan c) { quote(buf, c[2]); });
@@ -59,7 +59,7 @@ static void transform(void *, ZuSpan<char> &output)
   ZtREGEX("Zu_::Array<(\w+),\s*(\d+)[uUlL]*>{Zu_::Array_<(?1)>{},\s*ZuArrayFn<(?1),\s*ZuCmp<(?1)>\s*>{},\s*\d+[uUlL]*,\s*ZuElem<(?1)>\s*\[\d+\]({(?:[^{}]++|(?-1))*+})}").sg(
     output, []<typename Splice>(ZtRegex::CaptureSpan c, Splice &&splice) {
       ZuBox<unsigned> n(c[3]);
-      auto buf = ZtScratch(Buf, n.val() * 8 + 32); // estimated buffer size
+      auto buf = ZtScratch(BufScratch, n.val() * 8 + 32); // estimated buffer size
       bool first = true;
       buf << "ZuArray<" << c[2] << ">({";
       ZtREGEX("ZuElem<\w+>{\.v=\((?:\(\w+\))?([^)]+)\)}(?:,\s*)?").mg(

@@ -561,14 +561,16 @@ inline void saveText(S &s, ZuCSpan v, ZuCSpan key = {})
   }
 }
 
-ZuDerive(ScalarBuf, (ZtString<ZtStringHeapID<"ZfTOML.ScalarBuf">>));
-ZuDerive(PathBuf, (ZtString<ZtStringHeapID<"ZfTOML.Path">>));
+ZuDerive(ScalarScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID<"ZfTOML.ScalarBuf">>>));
+ZuDerive(PathScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID<"ZfTOML.Path">>>));
 enum {
   ScalarScratchSize = 128, // covers ordinary formatted scalar spellings
   PathScratchSize = 128    // covers ordinary configuration header paths
 };
 
-inline ZuCSpan unquote(ScalarBuf &buf)
+inline ZuCSpan unquote(ScalarScratch &buf)
 {
   unsigned n = buf.length();
   if (n < 2 || buf[0] != '"' || buf[n - 1] != '"') return buf;
@@ -678,7 +680,7 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
       BasicOut<S> out{s};
       ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(out, v);
     } else {
-      auto buf = ZtScratch(ScalarBuf, ScalarScratchSize);
+      auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
       ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(buf, v);
       saveText<Props>(s, unquote(buf), key);
     }
@@ -710,7 +712,7 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
 	  BasicOut<S> out{s};
 	  ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(out, v);
 	} else {
-	  auto buf = ZtScratch(ScalarBuf, ScalarScratchSize);
+	  auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
 	  ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(buf, v);
 	  saveText<Props>(s, unquote(buf), key);
 	}
@@ -728,7 +730,7 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
 	BasicOut<S> out{s};
 	ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(out, v);
       } else {
-	auto buf = ZtScratch(ScalarBuf, ScalarScratchSize);
+	auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
 	ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(buf, v);
 	saveText<Props>(s, unquote(buf), key);
       }
@@ -901,7 +903,7 @@ void saveValue(S &s, const T &v, SaveCtx &ctx, ZuCSpan key)
 	BasicOut<S> out{s};
 	Handler::template save<Filter>(out, v_);
       } else {
-	auto buf = ZtScratch(ScalarBuf, ScalarScratchSize);
+	auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
 	Handler::template save<Filter>(buf, v_);
 	saveText<Props>(s, unquote(buf), key);
       }
@@ -932,7 +934,7 @@ bool saveEntry(
       if (route == Assignment) return false;
       break;
   }
-  auto path = ZtScratch(PathBuf, PathScratchSize);
+  auto path = ZtScratch(PathScratch, PathScratchSize);
   if (ctx.prefix) path << ctx.prefix << '.';
   saveKey(path, key);
   SaveCtx child{ctx.output, path, ctx.inline_};

@@ -458,7 +458,7 @@ public:
   void
   fieldFixed(ZuBSpan name, const P &value) {
     if (!m_valid) return;
-    auto rendered = ZtScratch(HPackBytes, 256);
+    auto rendered = ZtScratch(HPackScratch, 256);
     Compression::PrintBytes out{rendered};
     out << value;
     if (!out.ok() ||
@@ -600,7 +600,7 @@ private:
   template <typename P>
   void fieldPrint_(ZuBSpan name, const P &value) {
     if (!m_valid) return;
-    auto rendered = ZtScratch(HPackBytes, 256);
+    auto rendered = ZtScratch(HPackScratch, 256);
     Compression::PrintBytes out{rendered};
     out << value;
     if (!out.ok() || m_encoder.emitRuntime(

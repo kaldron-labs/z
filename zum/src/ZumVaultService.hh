@@ -23,6 +23,8 @@ namespace ZumVaultService {
 using Text = ZtString<ZtStringHeapID<"Zum.Vault.Service">>;
 using SecretText = ZtString<ZtStringSecret<true,
   ZtStringHeapID<"Zum.Vault.Service">>>;
+ZuDerive(SecretScratch, (ZtString<ZtStringSharded<true,
+  ZtStringSecret<true, ZtStringHeapID<"Zum.Vault.Service">>>>));
 
 struct Credential {
   Text issuerURL;
@@ -41,7 +43,7 @@ inline Ztls::VaultResult save(
 {
   return ZumVaultUtil::withVault(program, account,
     [&credential](Ztls::Vault &vault) {
-      auto text = ZtScratch(SecretText, 512);
+      auto text = ZtScratch(SecretScratch, 512);
       ZfJSON::save(text, credential);
       return vault.save(Ztls::Scopes::Global{}, "serviceCredentials", text);
     });

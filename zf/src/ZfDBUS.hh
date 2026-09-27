@@ -120,6 +120,8 @@ struct Any {
 
 struct SignatureHeap : public ZuStringT<"ZfDBUS.Signature"> { };
 ZuDerive(Signature, (ZtString<ZtStringHeapID_<SignatureHeap>>));
+ZuDerive(SigScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID_<SignatureHeap>>>));
 
 // Compilation-only sink: D-Bus mandates at most 255 signature bytes.
 struct SigConst {
@@ -138,7 +140,8 @@ struct SigConst {
 };
 
 struct FieldViewHeap : public ZuStringT<"ZfDBUS.FieldView"> { };
-using FieldViews = ZtArray<View, ZtArrayHeapID_<FieldViewHeap>>;
+ZuDerive(FieldViewsScratch, (ZtArray<View,
+  ZtArrayHeapID_<FieldViewHeap, ZtArraySharded<true>>>));
 
 struct Measure {
   Measure &operator <<(char) { return *this; }
@@ -1037,7 +1040,7 @@ typename Field::T loadFieldValue(Reader &reader)
 template <typename Impl>
 Result checkView(const View &view)
 {
-  auto signature = ZtScratch(Signature, Limit::Signature + 1);
+  auto signature = ZtScratch(SigScratch, Limit::Signature + 1);
   Impl::signatureTop(signature);
   if (view.signature != signature || !validSignature(signature))
     return {view.offset, Error::Type};
@@ -1106,7 +1109,7 @@ struct AsObject {
       return checkView<Handler>(view);
     }
 
-    static bool indexFields(Reader &reader, FieldViews &fields) {
+    static bool indexFields(Reader &reader, FieldViewsScratch &fields) {
       ZuUnroll::all<WireFields>([&reader, &fields]<typename Field>() {
 	if (!reader.result) return;
 	auto begin = reader.p;
@@ -1119,7 +1122,7 @@ struct AsObject {
       return bool(reader.result);
     }
     template <typename Field>
-    static typename Field::T value(const FieldViews &fields) {
+    static typename Field::T value(const FieldViewsScratch &fields) {
       constexpr unsigned I = ZuTypeIndex<Field, WireFields>{};
       Reader reader{fields[I]};
       auto value = loadFieldValue<Field>(reader);
@@ -1130,16 +1133,16 @@ struct AsObject {
     template <typename ...Field>
     struct Ctor {
       template <typename ...Args>
-      static O ctor(const FieldViews &fields, Args &&...args) {
+      static O ctor(const FieldViewsScratch &fields, Args &&...args) {
 	return O(ZuFwd<Args>(args)..., value<Field>(fields)...);
       }
       template <typename ...Args>
-      static O *alloc(const FieldViews &fields, Args &&...args) {
+      static O *alloc(const FieldViewsScratch &fields, Args &&...args) {
 	return new O(ZuFwd<Args>(args)...,
 	  value<Field>(fields)...);
       }
       template <typename ...Args>
-      static void new_(void *ptr, const FieldViews &fields, Args &&...args) {
+      static void new_(void *ptr, const FieldViewsScratch &fields, Args &&...args) {
 	new (ptr) O(ZuFwd<Args>(args)...,
 	  value<Field>(fields)...);
       }
@@ -1149,7 +1152,7 @@ struct AsObject {
     O ctor(Args &&...args) const {
       ZmAssert_(status);
       Reader reader{view};
-      auto fields = ZtScratch(FieldViews, WireFields::N);
+      auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
       ZmAssert_(indexFields(reader, fields) && reader.p == reader.end);
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(
 	fields, ZuFwd<Args>(args)...);
@@ -1162,7 +1165,7 @@ struct AsObject {
     O *alloc(Args &&...args) const {
       ZmAssert_(status);
       Reader reader{view};
-      auto fields = ZtScratch(FieldViews, WireFields::N);
+      auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
       ZmAssert_(indexFields(reader, fields) && reader.p == reader.end);
       O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
 	fields, ZuFwd<Args>(args)...);
@@ -1175,7 +1178,7 @@ struct AsObject {
     void new_(void *p, Args &&...args) const {
       ZmAssert_(status);
       Reader reader{view};
-      auto fields = ZtScratch(FieldViews, WireFields::N);
+      auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
       ZmAssert_(indexFields(reader, fields) && reader.p == reader.end);
       ZuTypeApply<Ctor, CtorFields>::new_(
 	p, fields, ZuFwd<Args>(args)...);
@@ -1225,7 +1228,7 @@ struct AsObject {
     }
     static O loadCtor(Reader &reader) {
       ZmAssert_(reader.align(8));
-      auto fields = ZtScratch(FieldViews, WireFields::N);
+      auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
       ZmAssert_(indexFields(reader, fields));
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(fields);
       ZuUnroll::all<InitFields>([&fields, &o]<typename Field>() {
@@ -1684,7 +1687,7 @@ inline Result measure(const O &o, Context context = {})
     return {unsigned(context.offset), Error::Syntax};
   State_ state{context};
   using Handler = typename As<O>::template Handler<O, Facet>;
-  auto signature = ZtScratch(Signature, Limit::Signature + 1);
+  auto signature = ZtScratch(SigScratch, Limit::Signature + 1);
   Handler::signatureTop(signature);
   if (!validSignature(signature))
     return {unsigned(context.offset), Error::Type};

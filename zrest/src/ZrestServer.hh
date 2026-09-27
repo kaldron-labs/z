@@ -155,7 +155,7 @@ struct ResBuilder : public Response, public Zhttp::Builder {
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON) {
       using Body_JSON_Facet = Impl::Body_JSON_Facet;
-      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject(object.ptr());
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
@@ -177,7 +177,7 @@ struct ResBuilder : public Response, public Zhttp::Builder {
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI) {
       using Body_URI_Facet = Impl::Body_URI_Facet;
-      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject(object.ptr());
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
@@ -190,7 +190,7 @@ struct ResBuilder : public Response, public Zhttp::Builder {
 	return Zhttp::WriteOutcome::End;
       });
     } else if constexpr (Impl::Body == BodyPolicy::Raw && Impl::SignBody) {
-      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
       buf << impl()->bodyObject(object.ptr());
@@ -379,16 +379,14 @@ struct MReqParser : public Zhttp::Parser {
 	if constexpr (ZuTypeIn<Value, Values>{})
 	  request.template header<Key, Value>(section);
 	else {
-	  using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	  auto fixed = Value{}();
-	  auto value = ZtScratch(Storage, fixed.length());
+	  auto value = ZtScratch(HeaderScratch, fixed.length());
 	  value = fixed;
 	  request.template header<Key>(section, value.span());
 	}
       } else {
-	using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	auto fixed = Value{}();
-	auto value = ZtScratch(Storage, fixed.length());
+	auto value = ZtScratch(HeaderScratch, fixed.length());
 	value = fixed;
 	request.header(section, Key{}(), value.span());
       }

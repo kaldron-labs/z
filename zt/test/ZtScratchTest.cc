@@ -14,15 +14,17 @@
 
 using namespace ZuTestUtil;
 
-using IntArray = ZtArray<int, ZtArrayHeapID<"ZtScratch.IntArray">>;
+ZuDerive(IntScratch, (ZtArray<int, ZtArrayHeapID<"ZtScratch.IntArray",
+  ZtArraySharded<true>>>));
 using CharArray = ZtArray<char, ZtArrayHeapID<"ZtScratch.CharArray">>;
-using StringArray =
-  ZtArray<ZtString<>, ZtArrayHeapID<"ZtScratch.StringArray">>;
+ZuDerive(StringsScratch, (ZtArray<ZtString<>,
+  ZtArrayHeapID<"ZtScratch.StringArray", ZtArraySharded<true>>>));
+ZuDerive(TextScratch, (ZtString<ZtStringSharded<true>>));
 
-struct NoInitArray : public IntArray {
-  using IntArray::IntArray;
+struct NoInitScratch : public IntScratch {
+  using IntScratch::IntScratch;
 private:
-  using IntArray::initElems;
+  using IntScratch::initElems;
 };
 
 ZuDerive(BuiltinBuf, (ZtBuiltin<CharArray, 8>));
@@ -31,7 +33,7 @@ void testScratch()
 {
   ZuTestScope(testScratch);
 
-  auto ints = ZtScratch(IntArray, 6);
+  auto ints = ZtScratch(IntScratch, 6);
   auto intsData = ints.data();
   ints.push(1);
   ints.push(2);
@@ -51,21 +53,21 @@ void testScratch()
   ZuCheck(ints.data() == intsData);
   ZuCheck(ints.length() == 2 && ints[1] == 7);
 
-  auto ints2 = ZtScratch(IntArray, 3, 6);
+  auto ints2 = ZtScratch(IntScratch, 3, 6);
   ZuCheck(ints2.length() == 3);
   ints2[0] = 7;
   ints2[1] = 8;
   ints2[2] = 9;
   ZuCheck(ints2[2] == 9);
 
-  auto ints3 = ZtScratch(NoInitArray, 3, 6);
+  auto ints3 = ZtScratch(NoInitScratch, 3, 6);
   ZuCheck(ints3.length() == 3);
   ints3[0] = 10;
   ints3[1] = 11;
   ints3[2] = 12;
   ZuCheck(ints3[2] == 12);
 
-  auto s = ZtScratch(ZtString<>, 16);
+  auto s = ZtScratch(TextScratch, 16);
   auto sData = s.data();
   s << "abc";
   ZuCheck(s == "abc");
@@ -85,7 +87,7 @@ void testScratch()
   for (unsigned i = 0; i < 40; i++) s << 'x';
   ZuCheck(s.length() > 16);
 
-  auto strings = ZtScratch(StringArray, 4);
+  auto strings = ZtScratch(StringsScratch, 4);
   auto stringsData = strings.data();
   strings.push(ZtString<>{"old"});
   ZtString<> stringValues[] = { "one", "two" };

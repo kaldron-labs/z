@@ -1396,7 +1396,7 @@ private:
     void
     fieldFixed(ZuBSpan name, const P &value) {
       if (!ok) return;
-      auto rendered = ZtScratch(HdrBytes, 256);
+      auto rendered = ZtScratch(HdrScratch, 256);
       Compression::PrintBytes bytes{rendered};
       bytes << value;
       if (!bytes.ok()) {
@@ -1409,7 +1409,7 @@ private:
     void
     fieldName(ZuBSpan name, const P &value) {
       if (!ok) return;
-      auto rendered = ZtScratch(HdrBytes, 256);
+      auto rendered = ZtScratch(HdrScratch, 256);
       Compression::PrintBytes bytes{rendered};
       bytes << value;
       if (!bytes.ok()) {
@@ -1422,7 +1422,7 @@ private:
     void
     fieldLiteral(ZuBSpan name, const P &value) {
       if (!ok) return;
-      auto rendered = ZtScratch(HdrBytes, 256);
+      auto rendered = ZtScratch(HdrScratch, 256);
       Compression::PrintBytes bytes{rendered};
       bytes << value;
       if (!bytes.ok()) {
@@ -1540,7 +1540,7 @@ private:
   void writeHeaders_(Stream &stream, Encode &&encode) {
     impl()->qpackFailure(QPackBuildFailure::None);
     auto fields = ZtScratch(
-      HdrBytes, HeaderHeadroom, Impl::HdrBufSize);
+      HdrScratch, HeaderHeadroom, Impl::HdrBufSize);
     Compression::FieldSectionBuffer<decltype(fields)> section{fields};
     Build<decltype(fields)> build{fields};
     build.section = &section;

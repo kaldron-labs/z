@@ -32,6 +32,8 @@ ZtEnumNS(ZtlsAPI, VaultVariant, int8_t, Default, Direct, Indirect);
 using VaultResult = ZuUnion<void, ZeException>;
 using VaultLoadFn = ZmFn<void(ZuSpan<uint8_t>), ZmFnHeapID<"Ztls.Vault.LoadFn">>;
 using VaultString = ZtString<ZtStringHeapID<"Ztls.Vault.Config">>;
+ZuDerive(VaultScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID<"Ztls.Vault.Config">>>));
 
 namespace Scopes {
 struct Global { };

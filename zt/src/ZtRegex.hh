@@ -71,7 +71,8 @@ class ZtAPI ZtRegex {
 public:
   using Capture = ZuCSpan;
   using CaptureSpan = ZuSpan<const Capture>;
-  ZuDerive(Captures, (ZtArray<Capture, ZtArrayHeapID<"ZtRegex.Captures">>));
+  ZuDerive(Captures, (ZtArray<Capture, ZtArrayHeapID<"ZtRegex.Captures",
+    ZtArraySharded<true>>>));
   ZuDerive(OVector, (ZtArray<unsigned, ZtArrayHeapID<"ZtRegex.OVector">>));
 
   // pcre_compile() options

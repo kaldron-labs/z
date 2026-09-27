@@ -32,6 +32,9 @@
 
 using namespace ZuTestUtil;
 
+ZuDerive(SecretScratch, (ZtBArray<ZtArraySharded<true,
+  ZtArraySecret<true, ZtArrayHeapID<"ZtArrayTest.Secret">>>>));
+
 template <typename T>
 void out(T &&v) {
   if (verbose)
@@ -718,7 +721,7 @@ void testSecretArray()
   shadow.null();
   ZuCheck(owner == ZuBSpan{"abc"});
 
-  auto scratch = ZtScratch(SecretArray, 16);
+  auto scratch = ZtScratch(SecretScratch, 16);
   scratch.copy(ZuBSpan{"secret"});
   scratch.clear();
   ZuCheck(!scratch.length() && !scratch.data()[0]);
