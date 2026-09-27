@@ -8,6 +8,9 @@ administrator enrollment, late collector attachment, subscription shutdown,
 after publisher and IAM startup failures. `zumdztcgctest.py`
 kills an attached ring reader without detaching it and verifies that ZiRing's
 writer-open PID liveness check reclaims its unread message.
+The `ztc/itest/ztchubtest.py` fixture also starts `zumd` publishing before
+an agent exists, then attaches a real `ztcagent` and confirms its App telemetry
+reaches a WSS front end through the hub.
 
 `zumdztccluster.py` starts a persistent standby publisher, promotes it after
 its leader exits, joins a deliberately ahead peer to deactivate it, and
