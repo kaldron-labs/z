@@ -335,8 +335,9 @@ Use `--vault-store=module --vault-module=PATH` for a deployment-provided secure
 store, or put `vault: {store: "keyring"}` (or `module` plus its path) in the
 node configuration. The Vault program is `zumd`, its account is the exact
 issuer URL, and `ZUMD_HOME` overrides its default home. There is no automatic
-fallback to an unencrypted store. `file` and `ephemeral` are for isolated tests
-only. A missing secret or unavailable store prevents startup.
+fallback to an unencrypted store. `file` and `ephemeral` require the explicit
+`--vault-test-store` flag and an isolated test home. A missing secret or
+unavailable store prevents startup.
 
 Open the one-time URL written to the bootstrap file in a browser to create
 the administrator passkey. Use the [`zum`](src/zum.cc) administrative client

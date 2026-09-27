@@ -164,7 +164,7 @@ class Fixture:
                        if self.starts or self.node_config else [])
         self.process = subprocess.Popen([
             str(server), "--issuer=" + self.origin, "--admin=http-admin",
-            "--vault-store=file",
+            "--vault-store=file", "--vault-test-store",
             "--bootstrap-output=" + str(self.directory / "enrollment"),
             "--port=" + str(self.port), "--rp-id=localhost", *node_config],
             env=self.env, stdout=subprocess.PIPE, stderr=self.log)
@@ -237,7 +237,7 @@ class Fixture:
         with (self.directory / "wrong-key.log").open("ab") as log:
             process = subprocess.Popen([
                 str(server), "--issuer=" + self.origin, "--admin=http-admin",
-                "--vault-store=file",
+                "--vault-store=file", "--vault-test-store",
                 "--bootstrap-output=" + str(self.directory / "enrollment"),
                 "--port=" + str(self.port), "--rp-id=localhost"],
                 env=dict(self.env, ZUM_DB_KEY=key or base64.b64encode(
@@ -276,7 +276,7 @@ class Fixture:
             with (self.directory / "rekey.log").open("ab") as log:
                 result = subprocess.run([
                     str(server), "--rekey", "--issuer=" + self.origin,
-                    "--vault-store=file"],
+                    "--vault-store=file", "--vault-test-store"],
                     env=environment, stdout=subprocess.PIPE, stderr=log, timeout=30)
             assert (result.returncode == 0) == success
             assert (b"secret-key rotation complete" in result.stdout) == success
@@ -440,7 +440,7 @@ class Fixture:
         try:
             with log_path.open("ab") as log:
                 process = subprocess.Popen([str(server), "--issuer=" + self.origin,
-                    "--vault-store=file",
+                    "--vault-store=file", "--vault-test-store",
                     "--admin=http-admin", "--bootstrap-output=" + str(self.directory / "enrollment"),
                     "--port=" + str(self.port), "--rp-id=localhost"],
                     env=self.env, stdout=subprocess.PIPE, stderr=log)

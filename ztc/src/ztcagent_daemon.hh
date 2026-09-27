@@ -11,6 +11,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZtlsVault.hh>
 
 #include <zlib/Zws.hh>
 #include <zlib/ztcagent_config.hh>
@@ -27,10 +28,11 @@ struct AgentEnv {
   AgentString issuerURL;
   AgentString clientID;
   AgentString deviceID;
-  AgentString credentialStore;
   AgentString caPath;
   AgentString wssURL;
-  AgentSecret accessToken;
+  AgentSecret clientSecret;
+  bool provision = false;
+  ZmFn<void(), ZmFnHeapID<"Ztc.Agent.Provision">> onProvision;
   AgentString pidDir{"ztc"};
   AgentString ring{"ztc"};
 };
@@ -48,6 +50,8 @@ public:
   bool start();
   bool stop();
   void final();
+  void provisioned(bool);
+  ZuBSpan clientSecret() const;
 
   template <typename Link_>
   void connected(Link_ &, const Zhttp::ConnectedInfo &);
@@ -75,6 +79,7 @@ struct Agent::Link :
   Link(Zws::Client<Agent, Zhttp::H1TLS> *client,
       const Zws::URI &uri, ZuBSpan authorization) :
     Base{client, uri, Protocol, authorization} { }
+  ~Link() { clearAuthorization(); }
 };
 
 } // Ztc

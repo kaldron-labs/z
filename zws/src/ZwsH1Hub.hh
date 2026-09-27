@@ -241,6 +241,10 @@ public:
     m_uri{uri}, m_protocol{protocol}, m_authorization{authorization},
     m_cookie{cookie}, m_origin{origin} { }
 
+  void clearAuthorization() {
+    if (m_authorization) ZuClear(m_authorization);
+  }
+
   void open_(Zhttp::ConnectedInfo info) {
     this->CodecBase::reopen_(*this);
     m_down = false;

@@ -4,11 +4,11 @@
 `Ztls::Vault`, including client identity separation. It uses a disposable
 Vault home and needs no external service.
 
-The real `zumd` fixtures select `--vault-store=file` only with disposable
-`ZUMD_HOME` directories; deployment must select a secure KeyRing or Module
-store explicitly. The HTTP fixture provisions `global/dbKey` from `ZUM_DB_KEY`,
-then restarts without that variable to exercise Vault loading. It checks that
-an explicitly supplied wrong key fails rather than falling back to the stored
+The real `zumd` fixtures select `--vault-store=file --vault-test-store` only
+with disposable `ZUMD_HOME` directories; deployment must select a secure
+KeyRing or Module store explicitly. The HTTP fixture provisions `global/dbKey`
+from `ZUM_DB_KEY`, then restarts without that variable to exercise Vault loading.
+An explicitly supplied wrong key fails rather than falling back to the stored
 key. The focused `zumdrekey.py` fixture loads the old key from Vault and supplies
 the new key through `ZUM_DB_KEY`; failed rotations retain the old key, and a
 successful rotation persists the new key. It models interruption between

@@ -43,7 +43,7 @@ def main():
         path = directory / "vault-home" / "vault" / "secrets.json"
         return json.loads(path.read_text())["accounts"][fixture.origin]
 
-    def run_once(store=None, success=True):
+    def run_once(store=None, success=True, test_store=True):
         command = [
             str(server), "--config=" + str(config),
             "--issuer=" + fixture.origin, "--admin=http-admin",
@@ -51,6 +51,8 @@ def main():
             "--once"]
         if store:
             command.append("--vault-store=" + store)
+        if test_store:
+            command.append("--vault-test-store")
         result = subprocess.run(command,
             env={**fixture.env, "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
@@ -61,6 +63,7 @@ def main():
     success = False
     try:
         write_config(names)
+        run_once(success=False, test_store=False)
         run_once()
         records = stored()
         assert base64.b64decode(records["global/dbKey"]) == base64.b64decode(

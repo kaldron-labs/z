@@ -50,7 +50,7 @@ def exercise(directory):
             log = (directory / ("node" + str(index) + ".log")).open("ab")
             logs.append(log)
             processes.append(subprocess.Popen([str(server), "--config=" + str(config),
-                "--vault-store=file",
+                "--vault-store=file", "--vault-test-store",
                 "--issuer=" + issuer, "--admin=cluster-admin", "--rp-id=localhost",
                 "--port=" + str(ports[index]),
                 "--bootstrap-output=" + str(directory / ("enrollment" + str(index)))],

@@ -18,11 +18,13 @@ import resource
 import secrets
 from http.cookies import SimpleCookie
 import http.client
+import http.server
 import signal
 import socket
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 from urllib.parse import urlencode
 
@@ -464,6 +466,229 @@ def main():
         assert agent1["id"] != agent2["id"]
         token1 = service_token(fixture, app_id, agent1)
         token2 = service_token(fixture, app_id, agent2)
+        agent_cf = directory / "agent.cf"
+        agent_cf.write_text('loopbackTest: true, maxFrame: 65536, '
+                            'vaultStore: "file", vaultTestStore: true\n')
+        vault_home = directory / "agent-vault"
+        agent_env = dict(os.environ, ZTC_ISSUER=fixture.issuer(app_id),
+                         ZTC_CLIENT_ID=agent1["id"], ZTC_DEVICE_ID=agent1["id"],
+                         ZTC_CLIENT_SECRET=agent1["client_secret"],
+                         ZTC_WSS_URL="wss://127.0.0.1:" + str(front_port) + "/ztc",
+                         ZTC_CA_PATH=str(cert),
+                         ZTCAGENT_HOME=str(vault_home),
+                         ZTC_RING="ztc-early-" + secrets.token_hex(6),
+                         ZTC_DIR="ztc-early-" + secrets.token_hex(6))
+        for key in ("ZTC_ACCESS_TOKEN", "ZTC_CREDENTIAL_STORE"):
+            agent_env.pop(key, None)
+        shm_names.append(agent_env["ZTC_RING"])
+        registries.append(Path(tempfile.gettempdir()) / agent_env["ZTC_DIR"])
+        collector = subprocess.Popen([
+            str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
+            cwd=directory, env=agent_env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        agents.append(collector)
+        wait_line(hub, "agent accepted " + agent1["id"])
+        stop_process(collector)
+        assert collector.returncode == 0
+        agents.remove(collector)
+        agent_env.pop("ZTC_CLIENT_SECRET")
+        collector = subprocess.Popen([
+            str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
+            cwd=directory, env=agent_env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        agents.append(collector)
+        wait_line(hub, "agent accepted " + agent1["id"])
+        stop_process(collector)
+        assert collector.returncode == 0
+        agents.remove(collector)
+        vault_file = vault_home / "vault" / "secrets.json"
+        stored_secret = vault_file.read_bytes()
+        bad_env = dict(agent_env, ZTC_CLIENT_SECRET="invalid-device-secret")
+        bad = subprocess.Popen([
+            str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
+            cwd=directory, env=bad_env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        agents.append(bad)
+        # A rejected exchange leaves the agent in its bounded reconnect path.
+        time.sleep(2)
+        assert bad.poll() is None
+        stop_process(bad)
+        assert bad.returncode == 0 and vault_file.read_bytes() == stored_secret
+        agents.remove(bad)
+        collector = subprocess.Popen([
+            str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
+            cwd=directory, env=agent_env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        agents.append(collector)
+        wait_line(hub, "agent accepted " + agent1["id"])
+        stop_process(collector)
+        assert collector.returncode == 0
+        agents.remove(collector)
+        secure_cf = directory / "agent-secure.cf"
+        secure_cf.write_text('loopbackTest: true, vaultStore: "keyring"\n')
+        failed = subprocess.run([
+            str(root / "ztc" / "src" / "ztcagent"),
+            "--config=" + str(secure_cf)], cwd=directory,
+            env=dict(agent_env,
+                     DBUS_SESSION_BUS_ADDRESS="unsupported:address"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        assert failed.returncode != 0
+        assert vault_file.read_bytes() == stored_secret
+        bad_issuer = subprocess.run([
+            str(root / "ztc" / "src" / "ztcagent"),
+            "--config=" + str(agent_cf)], cwd=directory,
+            env=dict(agent_env,
+                     ZTC_ISSUER="http://example.test/oauth2/7",
+                     ZTC_CLIENT_SECRET="invalid-device-secret"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        assert bad_issuer.returncode != 0
+        assert vault_file.read_bytes() == stored_secret
+        other_cert = directory / "other-cert.pem"
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-days", "1", "-subj", "/CN=127.0.0.1",
+            "-addext", "subjectAltName=IP:127.0.0.1",
+            "-keyout", str(directory / "other-key.pem"),
+            "-out", str(other_cert)], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, check=True)
+        untrusted = subprocess.Popen([
+            str(root / "ztc" / "src" / "ztcagent"),
+            "--config=" + str(agent_cf)], cwd=directory,
+            env=dict(agent_env, ZTC_CA_PATH=str(other_cert)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        agents.append(untrusted)
+        try:
+            wait_line(hub, "agent accepted " + agent1["id"], timeout=5)
+            raise AssertionError("agent accepted an untrusted hub certificate")
+        except AssertionError as error:
+            if "wire fixture output timed out" not in str(error):
+                raise
+        stop_process(untrusted)
+        assert untrusted.returncode == 0
+        agents.remove(untrusted)
+        if os.environ.get("ZTC_AGENT_ONLY"):
+            class OAuthFault(http.server.BaseHTTPRequestHandler):
+                def log_message(self, *_):
+                    pass
+
+                def respond(self, status, value):
+                    body = json.dumps(value).encode()
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    try:
+                        self.wfile.write(body)
+                    except BrokenPipeError:
+                        pass
+
+                def do_GET(self):
+                    self.respond(200, {"issuer": self.server.issuer,
+                        "token_endpoint": self.server.issuer + "/v1/token"})
+
+                def do_POST(self):
+                    self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    if self.server.hang:
+                        self.server.inflight.set()
+                        self.server.release.wait(20)
+                        self.respond(503, {"error": "unavailable"})
+                        return
+                    if self.server.tokens:
+                        self.server.tokenPosts += 1
+                        token = self.server.tokens[min(
+                            self.server.tokenPosts - 1, 1)]
+                        self.respond(200, {"token_type": "Bearer",
+                            "access_token": token, "expires_in": 3})
+                        return
+                    self.server.posts += 1
+                    if self.server.posts == 2:
+                        self.server.retried.set()
+                    if self.server.posts == 3:
+                        self.server.invalidRetried.set()
+                    if self.server.posts == 1:
+                        self.respond(503, {"error": "unavailable"})
+                    else:
+                        self.respond(200, {"token_type": "Bearer",
+                                           "access_token": "invalid"})
+
+            oauth = http.server.HTTPServer(("127.0.0.1", 0), OAuthFault)
+            oauth.issuer = ("http://127.0.0.1:" +
+                            str(oauth.server_address[1]) + "/oauth2/7")
+            oauth.posts = 0
+            oauth.hang = False
+            oauth.tokens = []
+            oauth.tokenPosts = 0
+            oauth.retried = threading.Event()
+            oauth.invalidRetried = threading.Event()
+            oauth.inflight = threading.Event()
+            oauth.release = threading.Event()
+            serving = threading.Thread(target=oauth.serve_forever, daemon=True)
+            serving.start()
+            fault_env = dict(agent_env, ZTC_ISSUER=oauth.issuer,
+                             ZTC_CLIENT_SECRET="fault-test-secret",
+                             ZTCAGENT_HOME=str(directory / "fault-vault"))
+            try:
+                fault = subprocess.Popen([
+                    str(root / "ztc" / "src" / "ztcagent"),
+                    "--config=" + str(agent_cf)], cwd=directory,
+                    env=fault_env, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE)
+                agents.append(fault)
+                assert oauth.retried.wait(15), "token outage was not retried"
+                assert oauth.invalidRetried.wait(15), "invalid token was not retried"
+                stop_process(fault)
+                assert fault.returncode == 0
+                agents.remove(fault)
+                assert not (directory / "fault-vault" / "vault" /
+                            "secrets.json").exists()
+
+                oauth.hang = True
+                inflight = subprocess.Popen([
+                    str(root / "ztc" / "src" / "ztcagent"),
+                    "--config=" + str(agent_cf)], cwd=directory,
+                    env=fault_env, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE)
+                agents.append(inflight)
+                assert oauth.inflight.wait(10), "token request did not start"
+                stop_process(inflight)
+                assert inflight.returncode == 0
+                agents.remove(inflight)
+                oauth.release.set()
+                oauth.hang = False
+                oauth.tokens = [service_token(fixture, app_id, agent1),
+                                service_token(fixture, app_id, agent1)]
+                assert oauth.tokens[0] != oauth.tokens[1]
+                short_cf = directory / "agent-short.cf"
+                short_cf.write_text('loopbackTest: true, maxFrame: 65536, '
+                    'upgradeTimeout: 1, vaultStore: "file", vaultTestStore: true\n')
+                reconnect_env = dict(fault_env,
+                    ZTC_CLIENT_SECRET=agent1["client_secret"])
+                reconnecting = subprocess.Popen([
+                    str(root / "ztc" / "src" / "ztcagent"),
+                    "--config=" + str(short_cf)], cwd=directory,
+                    env=reconnect_env, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE)
+                agents.append(reconnecting)
+                wait_line(hub, "agent accepted " + agent1["id"])
+                time.sleep(4)
+                stop_process(hub)
+                assert hub.returncode == 0
+                hub = subprocess.Popen(hub_command(root, config, directory),
+                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                hubs.append(hub)
+                wait_line(hub, "ztchub ready")
+                wait_line(hub, "agent accepted " + agent1["id"])
+                assert oauth.tokenPosts >= 2
+                stop_process(reconnecting)
+                assert reconnecting.returncode == 0
+                agents.remove(reconnecting)
+            finally:
+                oauth.release.set()
+                oauth.shutdown()
+                oauth.server_close()
+                serving.join()
+            success = True
+            return
         if cluster:
             probe = run_wire(
                 root, "agent", fixture.issuer(app_id), agent1["id"],
@@ -670,7 +895,8 @@ def main():
             stop_process(process)
         agents.clear()
         agent_cf = directory / "agent.cf"
-        agent_cf.write_text("loopbackTest: true, maxFrame: 65536\n")
+        agent_cf.write_text('loopbackTest: true, maxFrame: 65536, '
+                            'vaultStore: "file", vaultTestStore: true\n')
         real_agents = []
         real_publishers = []
         for index, device in enumerate((agent1, agent2)):
@@ -681,8 +907,8 @@ def main():
             registries.append(Path(tempfile.gettempdir()) / registry)
             agent_env = dict(os.environ, ZTC_ISSUER=fixture.issuer(app_id),
                              ZTC_CLIENT_ID=device["id"], ZTC_DEVICE_ID=device["id"],
-                             ZTC_CREDENTIAL_STORE=str(directory), ZTC_WSS_URL=wss1,
-                             ZTC_ACCESS_TOKEN=service_token(fixture, app_id, device),
+                             ZTC_CLIENT_SECRET=device["client_secret"], ZTC_WSS_URL=wss1,
+                             ZTCAGENT_HOME=str(directory / "agent-vault"),
                              ZTC_CA_PATH=str(cert), ZTC_RING=ring, ZTC_DIR=registry)
             publisher = subprocess.Popen([
                 str(root / "ztc" / "itest" / "ztchubwiretest"),
@@ -767,6 +993,8 @@ def main():
 
 if __name__ == "__main__":
     main()
-    label = ("ztchub WSS workload and latency" if os.environ.get("ZTC_LOAD") else
+    label = ("ztcagent Vault provisioning and restart"
+             if os.environ.get("ZTC_AGENT_ONLY") else
+             "ztchub WSS workload and latency" if os.environ.get("ZTC_LOAD") else
              "ztchub OAuth, WSS routing, overflow, and restart")
     print("1..1\nok 1 - " + label)

@@ -50,7 +50,7 @@ AGENT_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zws/src
 ztcagent_CPPFLAGS = $(AGENT_CPPFLAGS)
-ztcagent_SOURCES = ztcagent.cc ztcagent_daemon.cc
+ztcagent_SOURCES = ztcagent.cc ztcagent_daemon.cc ../../zum/example/pinghttp.cc
 ztcagent_LDADD = libZtc.la \
 	$(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zws/src/libZws.la \

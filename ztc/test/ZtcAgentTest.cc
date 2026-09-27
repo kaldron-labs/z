@@ -18,6 +18,7 @@ static Ztc::AgentCf config()
   cf.maxFrame = 1U << 20;
   cf.telBytes = 1U << 24;
   cf.reqBytes = 1U << 22;
+  cf.vaultStore = "keyring";
   return cf;
 }
 
@@ -27,9 +28,8 @@ static Ztc::AgentEnv env()
     .issuerURL = "https://zum.example/oauth2/7",
     .clientID = "device-client",
     .deviceID = "device-1",
-    .credentialStore = "/run/secrets/ztcagent",
     .wssURL = "wss://ztchub.example/ztc",
-    .accessToken = "access-token",
+    .clientSecret = "client-secret",
     .ring = "ztc-agent-test"
   };
 }
@@ -44,6 +44,10 @@ static void configValidation()
   Ztc::Agent missing;
   auto invalid = env();
   invalid.deviceID.null();
+  ZuCheck(!missing.init(cf, ZuMv(invalid)));
+
+  invalid = env();
+  invalid.clientSecret.null();
   ZuCheck(!missing.init(cf, ZuMv(invalid)));
 
   invalid = env();

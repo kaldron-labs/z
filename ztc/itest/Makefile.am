@@ -60,8 +60,12 @@ test: $(noinst_PROGRAMS)
 	  ztc_itest_dir=$$(mktemp -d); \
 	  trap 'rm -rf "$$ztc_itest_dir"' EXIT HUP INT TERM; \
 	  ZDB_CONNECT="$$ztc_itest_dir/db" \
+	  ZTC_AGENT_ONLY=1 \
 	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
-	    python3 "$(srcdir)/ztchubtest.py"; \
+	    python3 "$(srcdir)/ztchubtest.py" || exit $$?; \
+	  ZDB_CONNECT="$$ztc_itest_dir/full-db" \
+	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
+	    python3 "$(srcdir)/ztchubtest.py" || exit $$?; \
 	  ZDB_CONNECT="$$ztc_itest_dir/cluster-db" \
 	  ZTC_CLUSTER=1 \
 	  PYTHONPATH="$(abs_top_srcdir)/zum/itest" \
