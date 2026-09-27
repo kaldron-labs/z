@@ -162,58 +162,60 @@ public:
   template <typename L, typename R = void>
   using MatchNotCallable = ZuIfT<!IsCallable<L>{}, R>;
 
-  template <typename S, typename R>
-  MatchCallable<R, unsigned> s(S &s, R &&r, unsigned offset = 0, int options = 0) const {
-    ZtRegexOVector(ovector, m_captureCount);
-    ZtRegexCaptures(captures, m_captureCount - 1);
-    unsigned i = exec(s, offset, options, ovector);
-    if (i) {
-      capture(s, ovector, captures);
-      ZuFwd<R>(r)(captures.cspan(), [&s, &ovector](ZuCSpan r) {
-	s.splice(ovector[0], ovector[1] - ovector[0], r);
+  template <typename S, typename R,
+    typename = decltype(void(bool(IsCallable<R>{})))>
+  unsigned s(S &s, R &&r, unsigned offset = 0, int options = 0) const {
+    if constexpr (IsCallable<R>{}) {
+      ZtRegexOVector(ovector, m_captureCount);
+      ZtRegexCaptures(captures, m_captureCount - 1);
+      unsigned i = exec(s, offset, options, ovector);
+      if (i) {
+	capture(s, ovector, captures);
+	ZuFwd<R>(r)(captures.cspan(), [&s, &ovector](ZuCSpan r) {
+	  s.splice(ovector[0], ovector[1] - ovector[0], r);
+	});
+      }
+      return i;
+    } else {
+      return this->s(s, [r = ZuCSpan(r)]<typename Splice>(
+	  CaptureSpan, Splice &&splice) {
+	splice(r);
       });
     }
-    return i;
-  }
-  template <typename S, typename R>
-  MatchNotCallable<R, unsigned> s(S &s, R &&r, unsigned offset = 0, int options = 0) const {
-    return this->s(s, [r = ZuCSpan(r)]<typename Splice>(
-	CaptureSpan, Splice &&splice) {
-      splice(r);
-    });
   }
 
-  template <typename S, typename R>
-  MatchCallable<R, unsigned> sg(S &s, R &&r, unsigned offset = 0, int options = 0) const {
-    ZtRegexOVector(ovector, m_captureCount);
-    ZtRegexCaptures(captures, m_captureCount - 1);
-    unsigned n = 0;
-    unsigned slength = s.length(), rlength;
+  template <typename S, typename R,
+    typename = decltype(void(bool(IsCallable<R>{})))>
+  unsigned sg(S &s, R &&r, unsigned offset = 0, int options = 0) const {
+    if constexpr (IsCallable<R>{}) {
+      ZtRegexOVector(ovector, m_captureCount);
+      ZtRegexCaptures(captures, m_captureCount - 1);
+      unsigned n = 0;
+      unsigned slength = s.length(), rlength;
 
-    while (offset < slength && exec(s, offset, options, ovector)) {
-      capture(s, ovector, captures);
-      r(captures.cspan(), [&s, &ovector, &rlength](ZuCSpan r) {
-	rlength = r.length();
-	s.splice(
-	  [](auto span) { }, ovector[0], ovector[1] - ovector[0], [r](auto span) {
-	    memcpy(span.data(), r.data(), span.length());
-	    return span.length();
-	  }, rlength);
+      while (offset < slength && exec(s, offset, options, ovector)) {
+	capture(s, ovector, captures);
+	r(captures.cspan(), [&s, &ovector, &rlength](ZuCSpan r) {
+	  rlength = r.length();
+	  s.splice(
+	    [](auto span) { }, ovector[0], ovector[1] - ovector[0], [r](auto span) {
+	      memcpy(span.data(), r.data(), span.length());
+	      return span.length();
+	    }, rlength);
+	});
+	offset = ovector[0] + rlength;
+	if (!captures[1] && !rlength) ++offset;
+	options |= PCRE_NO_UTF8_CHECK;
+	++n;
+      }
+
+      return n;
+    } else {
+      return sg(s, [r = ZuCSpan(r)]<typename Splice>(
+	  CaptureSpan, Splice &&splice) {
+	splice(r);
       });
-      offset = ovector[0] + rlength;
-      if (!captures[1] && !rlength) ++offset;
-      options |= PCRE_NO_UTF8_CHECK;
-      ++n;
     }
-
-    return n;
-  }
-  template <typename S, typename R>
-  MatchNotCallable<R, unsigned> sg(S &s, R &&r, unsigned offset = 0, int options = 0) const {
-    return sg(s, [r = ZuCSpan(r)]<typename Splice>(
-	CaptureSpan, Splice &&splice) {
-      splice(r);
-    });
   }
 
   template <typename Captures_>

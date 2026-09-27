@@ -63,14 +63,14 @@ struct ZuDecimal {
   constexpr ZuDecimal(Unscaled unscaled) noexcept : value{unscaled.v} { }
 
   template <typename V, ZuMatchIntegral<V, int> = 0>
-  constexpr ZuDecimal(V v) noexcept : value(int128_t(v) * scale()) { }
+  constexpr ZuDecimal(V v) noexcept : value(int128_t(v) *scale()) { }
 
   template <typename V, ZuMatchFloatingPoint<V, int> = 0>
   constexpr ZuDecimal(V v) noexcept {
     if (ZuUnlikely(ZuFP<V>::nan(v) || ZuFP<V>::inf(v) || ZuFP<V>::inf(-v)))
       value = null();
     else
-      value = ldouble(v) * scale_fp();
+      value = ldouble(v) *scale_fp();
   }
 
   template <typename V, ZuMatchIntegral<V, int> = 0>
@@ -135,20 +135,20 @@ struct ZuDecimal {
       uint128_t &h, uint128_t &l) {
     uint128_t u1 = uint64_t(u);
     uint128_t v1 = uint64_t(v);
-    uint128_t t = (u1 * v1);
+    uint128_t t = (u1 *v1);
     uint128_t w3 = uint64_t(t);
     uint128_t k = (t>>64);
 
     u >>= 64;
-    t = (u * v1) + k;
+    t = (u *v1) + k;
     k = uint64_t(t);
     uint128_t w1 = (t>>64);
 
     v >>= 64;
-    t = (u1 * v) + k;
+    t = (u1 *v) + k;
     k = (t>>64);
 
-    h = (u * v) + w1 + k;
+    h = (u *v) + w1 + k;
     l = (t<<64) + w3;
   }
 
@@ -159,7 +159,7 @@ struct ZuDecimal {
       uint128_t &h, uint128_t &l) {
     uint128_t u1 = uint64_t(u);
     const uint128_t v1 = scale();
-    uint128_t t = (u1 * v1);
+    uint128_t t = (u1 *v1);
     uint128_t w3 = uint64_t(t);
     uint128_t k = (t>>64);
 
@@ -218,7 +218,7 @@ struct ZuDecimal {
       }
     }
 
-    un21 = (un128<<64) + (un1 - (q1 * v));
+    un21 = (un128<<64) + (un1 - (q1 *v));
 
     q0 = un21 / vn1;
     rhat = un21 % vn1;
@@ -237,7 +237,7 @@ struct ZuDecimal {
       }
     }
 
-    // r = ((un21<<64) + (un0 - (q0 * v)))>>s;
+    // r = ((un21<<64) + (un0 - (q0 *v)))>>s;
     q = (q1<<64) | q0;
   }
 
@@ -275,7 +275,7 @@ struct ZuDecimal {
       }
     }
 
-    un21 = (un128<<64) + (un1 - (q1 * v));
+    un21 = (un128<<64) + (un1 - (q1 *v));
 
     q0 = un21 / vn1;
     rhat = un21 % vn1;
@@ -294,7 +294,7 @@ struct ZuDecimal {
       }
     }
 
-    // r = ((un21<<64) + (un0 - (q0 * v)))>>s;
+    // r = ((un21<<64) + (un0 - (q0 *v)))>>s;
     return (q1<<64) | q0;
   }
 
@@ -371,7 +371,7 @@ public:
   }
 
   template <typename S, ZuMatchString<S, int> = 0>
-  ZuDecimal(const S &s) { 
+  ZuDecimal(const S &s) {
     scan(s);
   }
 
@@ -418,7 +418,7 @@ public:
 	if (fv && n < 18)
 	  fv *= ZuDecimalFn::pow10_64(18 - n);
       }
-      v.value = uint128_t(iv) * scale() + fv;
+      v.value = uint128_t(iv) *scale() + fv;
       if (ZuUnlikely(negative)) v.value = -v.value;
     }
     return {int(m), v};
@@ -439,37 +439,37 @@ public:
   constexpr int cmp(const ZuDecimal &v) const {
     return (value > v.value) - (value < v.value);
   }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuDecimal>{}) &&
-    bool(ZuIsSame<R, ZuDecimal>{}), bool>
-  operator ==(const L &l, const R &r) { return l.value == r.value; }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuDecimal>{}) &&
-    bool(ZuIsSame<R, ZuDecimal>{}), bool>
-  operator <(const L &l, const R &r) { return l.value < r.value; }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuDecimal>{}) &&
-    bool(ZuIsSame<R, ZuDecimal>{}), int>
-  operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuDecimal>{}) &&
-    !ZuIsSame<R, ZuDecimal>{}, bool>
-  operator ==(const L &l, const R &r) { return l.value == ZuDecimal{r}.value; }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuDecimal>{}) &&
-    !ZuIsSame<R, ZuDecimal>{}, bool>
-  operator <(const L &l, const R &r) { return l.value < ZuDecimal{r}.value; }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuDecimal>{}) &&
-    !ZuIsSame<R, ZuDecimal>{}, int>
-  operator <=>(const L &l, const R &r) { return l.cmp(ZuDecimal{r}); }
+  template <typename L, typename R, ZuDecimal * = nullptr,
+    typename = ZuIfT<ZuIsSame<L, ZuDecimal>{}>>
+  friend constexpr bool
+  operator ==(const L &l, const R &r) {
+    if constexpr (bool(ZuIsSame<L, ZuDecimal>{}) && bool(ZuIsSame<R, ZuDecimal>{})) {
+      return l.value == r.value;
+    } else {
+      return l.value == ZuDecimal{r}.value;
+    }
+  }
+  template <typename L, typename R, ZuDecimal * = nullptr,
+    typename = ZuIfT<ZuIsSame<L, ZuDecimal>{}>>
+  friend constexpr bool
+  operator <(const L &l, const R &r) {
+    if constexpr (bool(ZuIsSame<L, ZuDecimal>{}) && bool(ZuIsSame<R, ZuDecimal>{})) {
+      return l.value < r.value;
+    } else {
+      return l.value < ZuDecimal{r}.value;
+    }
+  }
+  template <typename L, typename R, ZuDecimal * = nullptr,
+    typename = ZuIfT<ZuIsSame<L, ZuDecimal>{}>>
+  friend constexpr int
+  operator <=>(const L &l, const R &r) {
+    if constexpr (bool(ZuIsSame<L, ZuDecimal>{}) && bool(ZuIsSame<R, ZuDecimal>{})) {
+      return l.cmp(r);
+    } else {
+      return l.cmp(ZuDecimal{r});
+    }
+  }
 
   // ! is zero, unary * is !null
   bool operator !() const { return !value; }

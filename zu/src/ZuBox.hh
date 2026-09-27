@@ -429,16 +429,16 @@ public:
   T val() const { return m_val; }
 
 private:
-  template <typename R>
-  ZuBox_MatchReal<R, T> assign(R r) { m_val = r; }
+  template <typename R, typename = ZuBox_MatchReal<R, T>>
+  void assign(R r) { m_val = r; }
 
-  template <typename B>
-  ZuMatchBoxed<B> assign(const B &b) {
+  template <typename B, typename = ZuMatchBoxed<B>>
+  void assign(const B &b) {
     m_val = !*b ? static_cast<T>(Cmp::null()) : static_cast<T>(b.m_val);
   }
 
-  template <typename S>
-  ZuMatchCharString<S> assign(S &&s_) {
+  template <typename S, typename = ZuMatchCharString<S>>
+  void assign(S &&s_) {
     scan(ZuFwd<S>(s_));
   }
 
@@ -446,40 +446,40 @@ public:
   template <typename T>
   ZuBox__ &operator =(T &&t) { assign(ZuFwd<T>(t)); return *this; }
 
-  template <typename T>
-  static constexpr ZuMatchFloatingPoint<T, bool>
+  template <typename T,
+    typename = decltype(void(bool(ZuTraits<T>::IsFloatingPoint)))>
+  static constexpr bool
   equals_(T t1, T t2) {
-    if (Cmp::null(t2)) return Cmp::null(t1);
-    if (Cmp::null(t1)) return false;
-    return t1 == t2;
-  }
-  template <typename T>
-  static constexpr ZuNotFloatingPoint<T, bool>
-  equals_(T t1, T t2) {
-    return t1 == t2;
+    if constexpr (ZuTraits<T>::IsFloatingPoint) {
+      if (Cmp::null(t2)) return Cmp::null(t1);
+      if (Cmp::null(t1)) return false;
+      return t1 == t2;
+    } else {
+      return t1 == t2;
+    }
   }
   constexpr bool equals(const ZuBox__ &b) const {
     return equals_(m_val, b.m_val);
   }
 
-  template <typename Cmp__ = Cmp>
-  constexpr ZuIfT<!ZuIsSame<Cmp__, ZuCmp0<T>>{}, int>
+  template <typename Cmp__ = Cmp,
+    typename = decltype(void(bool(ZuIsSame<Cmp__, ZuCmp0<T>>{})))>
+  constexpr int
   cmp_(const ZuBox__ &b) const {
-    if (Cmp::null(b.m_val)) return Cmp::null(m_val) ? 0 : 1;
-    if (Cmp::null(m_val)) return -1;
-    return Cmp::cmp(m_val, b.m_val);
-  }
-  template <typename Cmp__ = Cmp>
-  constexpr ZuIfT<ZuIsSame<Cmp__, ZuCmp0<T>>{}, int>
-  cmp_(const ZuBox__ &b) const {
-    return Cmp::cmp(m_val, b.m_val);
+    if constexpr (!ZuIsSame<Cmp__, ZuCmp0<T>>{}) {
+      if (Cmp::null(b.m_val)) return Cmp::null(m_val) ? 0 : 1;
+      if (Cmp::null(m_val)) return -1;
+      return Cmp::cmp(m_val, b.m_val);
+    } else {
+      return Cmp::cmp(m_val, b.m_val);
+    }
   }
   constexpr int cmp(const ZuBox__ &b) const { return cmp_(b.m_val); }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<ZuIs_<L, ZuBox__>{}, bool>
+  template <typename L, typename R, ZuBox__ * = nullptr, typename = ZuIfT<ZuIs_<L, ZuBox__>{}>>
+  friend constexpr bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<ZuIs_<L, ZuBox__>{}, int>
+  template <typename L, typename R, ZuBox__ * = nullptr, typename = ZuIfT<ZuIs_<L, ZuBox__>{}>>
+  friend constexpr int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
   constexpr bool operator !() const { return !m_val; }
@@ -515,14 +515,16 @@ public:
     return ZuBoxVFmt<ZuBox__>{*this, ZuFwd<VFmt>(fmt)};
   }
 
-  template <typename Fmt = ZuFmt::Default, typename S>
-  ZuMatchCharString<S, int> scan(S &&s_) {
+  template <typename Fmt = ZuFmt::Default, typename S,
+    typename = ZuMatchCharString<S>>
+  int scan(S &&s_) {
     auto r = eov<Fmt>(ZuFwd<S>(s_));
     *this = r.template p<1>();
     return r.template p<0>();
   }
-  template <typename Fmt = ZuFmt::Default, typename S>
-  static ZuMatchCharString<S, ZuTuple<int, ZuBox__>> eov(S &&s_) {
+  template <typename Fmt = ZuFmt::Default, typename S,
+    typename = ZuMatchCharString<S>>
+  static ZuTuple<int, ZuBox__> eov(S &&s_) {
     ZuCSpan s(s_);
     typename Scan<Fmt>::T val = 0;
     unsigned n = Scan<Fmt>::scan(val, s.data(), s.length());
@@ -531,14 +533,14 @@ public:
     v.m_val = val;
     return {int(n), v};
   }
-  template <typename Fmt = ZuFmt::Default, typename S>
-  ZuBox_MatchCharPtr<S, int> scan(S s, unsigned len) {
+  template <typename Fmt = ZuFmt::Default, typename S, typename = ZuBox_MatchCharPtr<S>>
+  int scan(S s, unsigned len) {
     auto r = eov<Fmt>(s, len);
     *this = r.template p<1>();
     return r.template p<0>();
   }
-  template <typename Fmt = ZuFmt::Default, typename S>
-  static ZuBox_MatchCharPtr<S, ZuTuple<int, ZuBox__>>
+  template <typename Fmt = ZuFmt::Default, typename S, typename = ZuBox_MatchCharPtr<S>>
+  static ZuTuple<int, ZuBox__>
   eov(S s, unsigned len) {
     typename Scan<Fmt>::T val = 0;
     unsigned n = Scan<Fmt>::scan(val, s, len);
@@ -725,16 +727,18 @@ struct ZuCmp<ZuBox__<T_, NTP>> : public ZuCmp<T_> {
 
 // ZuBoxed(v) - convenience function to cast primitives to boxed
 template <typename T>
-ZuInline const ZuMatchBoxed<T, T> &ZuBoxed(const T &v) noexcept { return v; }
-template <typename T>
-ZuInline ZuMatchBoxed<T, T> &ZuBoxed(T &v) noexcept { return v; }
-template <typename T>
-ZuInline const ZuNotBoxed<T, ZuBox<T>> &ZuBoxed(const T &v) noexcept {
-  return *ZuLaunder(reinterpret_cast<const ZuBox<T> *>(&v));
+ZuInline const auto &ZuBoxed(const T &v) noexcept {
+  if constexpr (ZuIsBoxed<T>{})
+    return v;
+  else
+    return *ZuLaunder(reinterpret_cast<const ZuBox<T> *>(&v));
 }
 template <typename T>
-ZuInline ZuNotBoxed<T, ZuBox<T>> &ZuBoxed(T &v) noexcept {
-  return *ZuLaunder(reinterpret_cast<ZuBox<T> *>(&v));
+ZuInline auto &ZuBoxed(T &v) noexcept {
+  if constexpr (ZuIsBoxed<T>{})
+    return v;
+  else
+    return *ZuLaunder(reinterpret_cast<ZuBox<T> *>(&v));
 }
 
 // ZuBoxPtr(x) - convenience function to box pointers as uintptr_t
@@ -750,16 +754,18 @@ using ZuNBox = ZuBox<T, ZuBoxNullString<ZuBox_NullString(), NTP>>;
 
 // ZuNBoxed(v) - ZuNBox equivalent of ZuBoxed
 template <typename T>
-ZuInline const ZuMatchBoxed<T, T> &ZuNBoxed(const T &v) noexcept { return v; }
-template <typename T>
-ZuInline ZuMatchBoxed<T, T> &ZuNBoxed(T &v) noexcept { return v; }
-template <typename T>
-ZuInline const ZuNotBoxed<T, ZuNBox<T>> &ZuNBoxed(const T &v) noexcept {
-  return *ZuLaunder(reinterpret_cast<const ZuNBox<T> *>(&v));
+ZuInline const auto &ZuNBoxed(const T &v) noexcept {
+  if constexpr (ZuIsBoxed<T>{})
+    return v;
+  else
+    return *ZuLaunder(reinterpret_cast<const ZuNBox<T> *>(&v));
 }
 template <typename T>
-ZuInline ZuNotBoxed<T, ZuNBox<T>> &ZuNBoxed(T &v) noexcept {
-  return *ZuLaunder(reinterpret_cast<ZuNBox<T> *>(&v));
+ZuInline auto &ZuNBoxed(T &v) noexcept {
+  if constexpr (ZuIsBoxed<T>{})
+    return v;
+  else
+    return *ZuLaunder(reinterpret_cast<ZuNBox<T> *>(&v));
 }
 
 #ifdef _MSC_VER

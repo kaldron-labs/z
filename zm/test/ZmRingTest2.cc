@@ -235,95 +235,92 @@ public:
     WriteStatus
   };
 
-  template <bool V = Ring::V>
-  ZuIfT<V, void *> push(Ring &ring, unsigned param) {
-    void *ptr = ring.push(param);
-    if (ptr) Msg::push(ptr, param);
-    return ptr;
-  }
-  template <bool V = Ring::V>
-  ZuIfT<!V, void *> push(Ring &ring, unsigned param) {
-    void *ptr;
-    ptr = ring.push();
-    if (ZuUnlikely(!ptr)) return nullptr;
-    Msg::push(ptr, param);
-    while (param >= Ring::MsgSize) {
-      param -= Ring::MsgSize;
-      push2(ring, ptr, 0);
+  template <bool V = Ring::V, typename = void>
+  void *push(Ring &ring, unsigned param) {
+    if constexpr (V) {
+      void *ptr = ring.push(param);
+      if (ptr) Msg::push(ptr, param);
+      return ptr;
+    } else {
+      void *ptr;
       ptr = ring.push();
       if (ZuUnlikely(!ptr)) return nullptr;
       Msg::push(ptr, param);
+      while (param >= Ring::MsgSize) {
+	param -= Ring::MsgSize;
+	push2(ring, ptr, 0);
+	ptr = ring.push();
+	if (ZuUnlikely(!ptr)) return nullptr;
+	Msg::push(ptr, param);
+      }
+      return ptr;
     }
-    return ptr;
   }
 
-  template <bool V = Ring::V>
-  ZuIfT<V, void *> tryPush(Ring &ring, unsigned param) {
-    void *ptr = ring.tryPush(param);
-    if (ptr) Msg::push(ptr, param);
-    return ptr;
-  }
-  template <bool V = Ring::V>
-  ZuIfT<!V, void *> tryPush(Ring &ring, unsigned param) {
-    {
-      auto i = ring.writeStatus();
-      if (i <= 0 || param > static_cast<unsigned>(i)) return nullptr;
+  template <bool V = Ring::V, typename = void>
+  void *tryPush(Ring &ring, unsigned param) {
+    if constexpr (V) {
+      void *ptr = ring.tryPush(param);
+      if (ptr) Msg::push(ptr, param);
+      return ptr;
+    } else {
+      {
+	auto i = ring.writeStatus();
+	if (i <= 0 || param > static_cast<unsigned>(i)) return nullptr;
+      }
+      return push(ring, param);
     }
-    return push(ring, param);
   }
 
-  template <bool MW = Ring::MW, bool V = Ring::V>
-  ZuIfT<!MW && !V> push2(Ring &ring, void *, unsigned) {
-    ring.push2();
-  }
-  template <bool MW = Ring::MW, bool V = Ring::V>
-  ZuIfT<MW && !V> push2(Ring &ring, void *ptr, unsigned) {
-    ring.push2(ptr);
-  }
-  template <bool MW = Ring::MW, bool V = Ring::V>
-  ZuIfT<!MW && V> push2(Ring &ring, void *, unsigned size) {
-    ring.push2(size);
-  }
-  template <bool MW = Ring::MW, bool V = Ring::V>
-  ZuIfT<MW && V> push2(Ring &ring, void *ptr, unsigned size) {
-    ring.push2(ptr, size);
+  template <bool MW = Ring::MW, bool V = Ring::V,
+    typename = void>
+  void push2(Ring &ring, void *ptr, unsigned size) {
+    if constexpr (!MW && !V) {
+      ring.push2();
+    } else if constexpr (MW && !V) {
+      ring.push2(ptr);
+    } else if constexpr (!MW && V) {
+      ring.push2(size);
+    } else {
+      ring.push2(ptr, size);
+    }
   }
 
-  template <bool V = Ring::V>
-  ZuIfT<V, int> shift(Ring &ring) {
-    void *ptr = ring.shift();
-    if (ZuUnlikely(!ptr)) return 0;
-    auto msg = static_cast<const Msg *>(ptr);
-    ensure(msg->verify());
-    return Ring::SizeAxor(ptr);
-  }
-  template <bool V = Ring::V>
-  ZuIfT<!V, int> shift(Ring &ring) {
-    void *ptr = ring.shift();
-    if (ZuUnlikely(!ptr)) return 0;
-    auto msg = static_cast<const Msg *>(ptr);
-    ensure(msg->verify());
-    unsigned n = msg->length();
-    unsigned result = n;
-    while (n >= Ring::MsgSize) {
-      ring.shift2();
-      ptr = ring.shift();
+  template <bool V = Ring::V, typename = void>
+  int shift(Ring &ring) {
+    if constexpr (V) {
+      void *ptr = ring.shift();
       if (ZuUnlikely(!ptr)) return 0;
-      n -= Ring::MsgSize;
       auto msg = static_cast<const Msg *>(ptr);
       ensure(msg->verify());
-      ensure(msg->length() == n);
+      return Ring::SizeAxor(ptr);
+    } else {
+      void *ptr = ring.shift();
+      if (ZuUnlikely(!ptr)) return 0;
+      auto msg = static_cast<const Msg *>(ptr);
+      ensure(msg->verify());
+      unsigned n = msg->length();
+      unsigned result = n;
+      while (n >= Ring::MsgSize) {
+	ring.shift2();
+	ptr = ring.shift();
+	if (ZuUnlikely(!ptr)) return 0;
+	n -= Ring::MsgSize;
+	auto msg = static_cast<const Msg *>(ptr);
+	ensure(msg->verify());
+	ensure(msg->length() == n);
+      }
+      return result;
     }
-    return result;
   }
 
-  template <bool V = Ring::V>
-  ZuIfT<!V> shift2(Ring &ring, unsigned) {
-    ring.shift2();
-  }
-  template <bool V = Ring::V>
-  ZuIfT<V> shift2(Ring &ring, unsigned size) {
-    ring.shift2(size);
+  template <bool V = Ring::V, typename = void>
+  void shift2(Ring &ring, unsigned size) {
+    if constexpr (!V) {
+      ring.shift2();
+    } else {
+      ring.shift2(size);
+    }
   }
 
   Work(Insn insn, unsigned param = 0) : m_insn{insn}, m_param{param} { }
@@ -516,7 +513,6 @@ struct Test {
     log("requested size: ", size,
 	" actual size: ", app()->ring().size(),
 	" size1: ", size1, " size2: ", size2);
-    
 
     // test push with concurrent attach
     if constexpr (MR) ensure(synchronous(0, Attach()) == OK);
@@ -567,7 +563,7 @@ struct Test {
     if constexpr (MR) synchronous(0 + MR, Shift2(size2));
 
     // test push with concurrent detach
-    ensure(synchronous(1 + MR, Push(size1)) > 0); 
+    ensure(synchronous(1 + MR, Push(size1)) > 0);
     asynchronous(0, Detach(), detach3);
     synchronous(1 + MR, Push2(size1));
     if constexpr (MR) {

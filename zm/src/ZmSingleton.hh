@@ -125,19 +125,26 @@ private:
   struct HasFinal<U, decltype(&U::final, void())> :
     public ZuBool<__is_member_function_pointer(decltype(&U::final))> { };
 
-  template <typename U>
-  static ZuIfT<!HasFinal<U>{}> final(U *) { }
-  template <typename U>
-  static ZuIfT<HasFinal<U>{}> final(U *u) { u->final(); }
+  template <typename U, typename = decltype(void(bool(HasFinal<U>{})))>
+  static void final(U *u) {
+    if constexpr (!HasFinal<U>{}) {
 
-  template <bool Construct_ = Construct>
-  ZuIfT<Construct_> ctor() {
-    T *ptr = CtorFn();
-    this->ref(ptr);
-    m_instance = ptr;
+    } else {
+      u->final();
+    }
   }
-  template <bool Construct_ = Construct>
-  ZuIfT<!Construct_> ctor() { }
+
+  template <bool Construct_ = Construct,
+    typename = void>
+  void ctor() {
+    if constexpr (Construct_) {
+      T *ptr = CtorFn();
+      this->ref(ptr);
+      m_instance = ptr;
+    } else {
+
+    }
+  }
 
   ZuInline static ZmSingleton *global() {
     return ZmGlobal::global<ZmSingleton, Cleanup>();

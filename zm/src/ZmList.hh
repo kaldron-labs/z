@@ -405,48 +405,49 @@ private:
   }
 
 public:
-  template <typename P>
-  MatchKey<P, NodeRef> find(const P &key) {
-    return find_(matchKey(key));
-  }
-  template <typename P>
-  MatchData<P, NodeRef> find(const P &data) {
-    return find_(matchData(data));
+
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  NodeRef find(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      return find_(matchKey(key));
+    } else {
+      return find_(matchData(key));
+    }
   }
   template <typename P0, typename P1>
   NodeRef find(P0 &&p0, P1 &&p1) {
     return find(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Node *> findPtr(const P &key) {
-    return find_(matchKey(key));
-  }
-  template <typename P>
-  MatchData<P, Node *> findPtr(const P &data) {
-    return find_(matchData(data));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Node *findPtr(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      return find_(matchKey(key));
+    } else {
+      return find_(matchData(key));
+    }
   }
 
-  template <typename P>
-  MatchKey<P, Key> findKey(const P &key) {
-    return key(find_(matchKey(key)));
-  }
-  template <typename P>
-  MatchData<P, Key> findKey(const P &data) {
-    return key(find_(matchData(data)));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Key findKey(const P &data) {
+    if constexpr (IsKey<P>{}) {
+      return data(find_(matchKey(data)));
+    } else {
+      return key(find_(matchData(data)));
+    }
   }
   template <typename P0, typename P1>
   Key findKey(P0 &&p0, P1 &&p1) {
     return findKey(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
 
-  template <typename P>
-  MatchKey<P, Val> findVal(const P &key) {
-    return val(find_(matchKey(key)));
-  }
-  template <typename P>
-  MatchData<P, Val> findVal(const P &data) {
-    return val(find_(matchData(data)));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Val findVal(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      return val(find_(matchKey(key)));
+    } else {
+      return val(find_(matchData(key)));
+    }
   }
   template <typename P0, typename P1>
   Val findVal(P0 &&p0, P1 &&p1) {
@@ -464,10 +465,15 @@ private:
   }
 
 public:
-  template <typename P>
-  MatchKey<P, NodeRef> del(const P &key) { return del_(matchKey(key)); }
-  template <typename P>
-  MatchData<P, NodeRef> del(const P &data) { return del_(matchData(data)); }
+
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  NodeRef del(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      return del_(matchKey(key));
+    } else {
+      return del_(matchData(key));
+    }
+  }
   template <typename P0, typename P1>
   NodeMvRef del(P0 &&p0, P1 &&p1) {
     return del(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
@@ -479,13 +485,13 @@ public:
     return nodeAcquire(node);
   }
 
-  template <typename P>
-  MatchKey<P, Key> delKey(const P &key) {
-    return keyMv(del_(matchKey(key)));
-  }
-  template <typename P>
-  MatchData<P, Key> delKey(const P &data) {
-    return keyMv(del_(matchData(data)));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Key delKey(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      return keyMv(del_(matchKey(key)));
+    } else {
+      return keyMv(del_(matchData(key)));
+    }
   }
   template <typename P0, typename P1>
   Key delKey(P0 &&p0, P1 &&p1) {
@@ -499,13 +505,13 @@ public:
     return nodeAcquire(node);
   }
 
-  template <typename P>
-  MatchKey<P, Val> delVal(const P &key) {
-    return valMv(del_(matchKey(key)));
-  }
-  template <typename P>
-  MatchData<P, Val> delVal(const P &data) {
-    return valMv(del_(matchData(data)));
+  template <typename P, typename = ZuIfT<(IsKey<P>{}) || (IsData<P>{})>>
+  Val delVal(const P &key) {
+    if constexpr (IsKey<P>{}) {
+      return valMv(del_(matchKey(key)));
+    } else {
+      return valMv(del_(matchData(key)));
+    }
   }
   template <typename P0, typename P1>
   Val delVal(P0 &&p0, P1 &&p1) {
@@ -542,10 +548,10 @@ public:
   NodeRef push(P0 &&p0, P1 &&p1) {
     return push(ZuFwdTuple(ZuFwd<P0>(p0), ZuFwd<P1>(p1)));
   }
-  template <bool _ = !ZuIsSame<NodeRef, Node *>{}>
-  ZuIfT<_> pushNode(const NodeRef &node_) { pushNode(node_.ptr()); }
-  template <bool _ = !ZuIsSame<NodeRef, Node *>{}>
-  ZuIfT<_> pushNode(NodeRef &&node_) {
+  template <bool _ = !ZuIsSame<NodeRef, Node *>{}, typename = ZuIfT<_>>
+  void pushNode(const NodeRef &node_) { pushNode(node_.ptr()); }
+  template <bool _ = !ZuIsSame<NodeRef, Node *>{}, typename = ZuIfT<_>>
+  void pushNode(NodeRef &&node_) {
     Node *node = ZuMv(node_).release();
     Guard guard(m_lock);
     pushNode_(node);
@@ -803,7 +809,7 @@ protected:
       prev(nextNode, prevNode);
 
     --m_count;
-    
+
     next(node, nullptr);
     prev(node, nullptr);
     return true;

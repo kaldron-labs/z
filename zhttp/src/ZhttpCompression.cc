@@ -182,7 +182,7 @@ struct HuffmanDecode_ {
 
 static constexpr HuffmanDecode_ huffmanDecode_;
 
-static ZuInline uint16_t huffmanLongLookup_(
+static inline uint16_t huffmanLongLookup_(
   const uint16_t *table, unsigned tableBits, uint64_t bits, unsigned nBits)
 {
   if (nBits <= HuffmanDecode_::PrimaryBits) return 0;
@@ -195,7 +195,7 @@ static ZuInline uint16_t huffmanLongLookup_(
   return v && huffmanEntryBits_(v) <= nBits ? v : 0;
 }
 
-static ZuInline uint16_t huffmanLookup_(uint64_t bits, unsigned nBits)
+static inline uint16_t huffmanLookup_(uint64_t bits, unsigned nBits)
 {
   if (!nBits) return 0;
 
@@ -212,7 +212,7 @@ static ZuInline uint16_t huffmanLookup_(uint64_t bits, unsigned nBits)
   return 0;
 }
 
-static ZuInline void huffmanRefill_(
+static inline void huffmanRefill_(
   uint64_t &bits, unsigned &nBits, Huffman::BitReader &in, unsigned want)
 {
   if (nBits >= want) return;

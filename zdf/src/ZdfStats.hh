@@ -137,8 +137,8 @@ public:
     auto iter = m_tree.find(v);
     if (iter != end()) del_(iter);
   }
-  template <typename T>
-  ZuIs<Iter, T> del(T iter) {
+  template <typename T, typename = ZuIs<Iter, T>>
+  void del(T iter) {
     if (iter != end()) del_(iter);
   }
 private:
@@ -170,7 +170,7 @@ public:
   }
   // 0 <= n < 1
   auto rankIter(double n) const {
-    return m_tree.find_by_order(n * double(this->count()));
+    return m_tree.find_by_order(n *double(this->count()));
   }
   // 0 <= n < 1
   double rank(double n) const {

@@ -6,6 +6,7 @@
 
 import http.server
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -62,7 +63,9 @@ def main():
                 "loopbackTest: true\n")
             return subprocess.run(
                 [str(executable), "--config", str(config), "--no-browser"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8,
+                env={**os.environ, "ZUMPING_HOME": str(Path(directory) / "vault"),
+                     "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"})
 
     def check(name, test):
         nonlocal tests
@@ -115,7 +118,7 @@ def main():
         check("secure endpoint", lambda: rejected(
             metadata(token_endpoint="http://example.com/token")))
         check("fragment-free endpoint", lambda: rejected(
-            metadata(revocation_endpoint=origin + "/revoke#secret")))
+            metadata(jwks_uri=origin + "/keys#fragment")))
         duplicate = json.dumps(metadata(), separators=(",", ":"))[:-1] + \
             ',"issuer":"' + issuer + '"}'
         check("unique metadata fields", lambda: rejected(duplicate.encode()))

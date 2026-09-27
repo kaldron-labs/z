@@ -10,8 +10,12 @@ the protected application's exact issuer (`.../oauth2/APP_ID`) as
 `zum.issuerURL`, the core management issuer as `zum.managementIssuerURL`, and
 the independent administrative resource origin as `zum.managementURL`. Inject
 the service secret as `ZUM_CLIENT_SECRET` and the SSF callback Authorization value
-as `ZUM_SSF_CALLBACK_AUTH` using the deployment secret manager;
-never put it in the config file or command line. The service publishes the
+as `ZUM_SSF_AUTH` on the first successful start. `zumpingd` saves the
+pair in `Ztls::Vault`; later starts may omit both variables and load it from
+the Vault. Supplying either variable requires both, and a successful start
+replaces the stored pair. The default Vault home is `$HOME/.zumpingd`,
+overridable with `ZUMPINGD_HOME`. Never put secrets in the config file or
+command line. The service publishes the
 catalog for the protected application identified by `zum.issuerURL`; this
 includes the public native `zumping` client and its `ping` role grant. The
 end-user client does not need to exist before `zumpingd` starts.
@@ -43,9 +47,13 @@ authorization endpoint in a browser (`--no-browser` prints the URL), receives
 the state-bound loopback callback, redeems the code with PKCE directly at
 `zumd`, and calls the separate service's GET `/ping` with the access token. The
 expected response is
-`{"reply":"pong"}`. When a refresh token is issued, it also rotates that token
-at `zumd`, repeats the resource request, and revokes the final refresh token.
-Tokens remain in memory and secret values are cleared before exit.
+`{"reply":"pong"}`. When a refresh token is issued, it rotates that token
+at `zumd`, repeats the resource request, and stores the current credentials
+through `Ztls::Vault`. On a later run it refreshes the stored token and calls
+the resource without a browser login. The vault is opened only for each
+load/save; tokens needed for the active run remain in memory and are cleared
+before exit. The default vault home is `$HOME/.zumping`, overridable with
+`ZUMPING_HOME`.
 
 Application endpoint admission is live database state, not router
 configuration. Enrolling an active application enables its issuer immediately;

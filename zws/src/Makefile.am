@@ -12,7 +12,6 @@ pkginclude_HEADERS = ZwsLib.hh Zws.hh ZwsProtocol.hh ZwsURI.hh \
 	ZwsH1.hh ZwsH1Hub.hh ZwsExtended.hh ZwsHub.hh
 lib_LTLIBRARIES = libZws.la
 libZws_la_CPPFLAGS = $(AM_CPPFLAGS) -DZWS_EXPORTS 
-libZws_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZws_la_SOURCES = ZwsLib.cc ZwsProtocol.cc ZwsURI.cc ZwsHandshake.cc
 libZws_la_LIBADD = \
 	$(top_builddir)/zhttp/src/libZhttp.la \

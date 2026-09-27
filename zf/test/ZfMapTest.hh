@@ -25,20 +25,24 @@ struct ZfMapTest_ : public Heap, public Base_ {
     struct CNode {
       NodePtr node = nullptr;
 
-      template <typename P>
-      static auto key_(P node, int) -> decltype(node->key()) {
+      template <typename P,
+	typename = decltype(ZuDeclVal<P &>()->key())>
+      static decltype(auto) key_(P node, int) {
 	return node->key();
       }
-      template <typename P>
-      static auto key_(P node, ...) -> decltype(node->template p<0>()) {
+      template <typename P,
+	typename = decltype(ZuDeclVal<P &>()->template p<0>())>
+      static decltype(auto) key_(P node, ...) {
 	return node->template p<0>();
       }
-      template <typename P>
-      static auto val_(P node, int) -> decltype(node->val()) {
+      template <typename P,
+	typename = decltype(ZuDeclVal<P &>()->val())>
+      static decltype(auto) val_(P node, int) {
 	return node->val();
       }
-      template <typename P>
-      static auto val_(P node, ...) -> decltype(node->template p<1>()) {
+      template <typename P,
+	typename = decltype(ZuDeclVal<P &>()->template p<1>())>
+      static decltype(auto) val_(P node, ...) {
 	return node->template p<1>();
       }
       decltype(auto) key() const { return key_(node, 0); }

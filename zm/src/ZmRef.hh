@@ -45,30 +45,56 @@ template <typename> class ZmRef;
 
 #ifdef ZmObject_DEBUG
 struct ZmRef__ {
-  template <typename O> static ZuIs<O, ZmObjectDebug>
-  ZmREF_(const O *o, const void *p) { o->ref(p); }
-  template <typename O> static ZuIs<O, ZmObjectDebug>
-  ZmREF_(const ZmRef<O> &o, const void *p) { o->ref(p); }
-  template <typename O> static ZuIs<O, ZmObjectDebug>
-  ZmDEREF_(const O *o, const void *p) { if (o->deref(p)) delete o; }
-  template <typename O> static ZuIs<O, ZmObjectDebug>
-  ZmDEREF_(const ZmRef<O> &o, const void *p)
-    { if (o->deref(p)) delete o.ptr(); }
-  template <typename O> static ZuIs<O, ZmObjectDebug>
-  ZmMVREF_(const O *o, const void *p, const void *n) { o->mvref(p, n); }
+
   template <typename O> static void
   ZmMVREF_(const ZmRef<O> &o, const void *p, const void *n) { o->mvref(p, n); }
-  template <typename O> static ZuIsNot<O, ZmObjectDebug>
-  ZmREF_(const O *o, const void *) { o->ref(); }
-  template <typename O> static ZuIsNot<O, ZmObjectDebug>
-  ZmREF_(const ZmRef<O> &o, const void *) { o->ref(); }
-  template <typename O> static ZuIsNot<O, ZmObjectDebug>
-  ZmDEREF_(const O *o, const void *) { if (o->deref()) delete o; }
-  template <typename O> static ZuIsNot<O, ZmObjectDebug>
-  ZmDEREF_(const ZmRef<O> &o, const void *) { if (o->deref()) delete o.ptr(); }
-  template <typename O> static ZuIsNot<O, ZmObjectDebug>
-  ZmMVREF_(const O *, const void *, const void *) { }
-  template <typename O> static ZuIsNot<O, ZmObjectDebug>
+  template <typename O,
+    typename = decltype(void(bool(ZuIs_<O, ZmObjectDebug>{})))> static void
+  ZmREF_(const O *o, const void *p) {
+    if constexpr (ZuIs_<O, ZmObjectDebug>{}) {
+      o->ref(p);
+    } else {
+      o->ref();
+    }
+  }
+  template <typename O,
+    typename = decltype(void(bool(ZuIs_<O, ZmObjectDebug>{})))> static void
+  ZmREF_(const ZmRef<O> &o, const void *p) {
+    if constexpr (ZuIs_<O, ZmObjectDebug>{}) {
+      o->ref(p);
+    } else {
+      o->ref();
+    }
+  }
+  template <typename O,
+    typename = decltype(void(bool(ZuIs_<O, ZmObjectDebug>{})))> static void
+  ZmDEREF_(const O *o, const void *p) {
+    if constexpr (ZuIs_<O, ZmObjectDebug>{}) {
+      if (o->deref(p)) delete o;
+    } else {
+      if (o->deref()) delete o;
+    }
+  }
+  template <typename O,
+    typename = decltype(void(bool(ZuIs_<O, ZmObjectDebug>{})))> static void
+  ZmDEREF_(const ZmRef<O> &o, const void *p)
+    {
+    if constexpr (ZuIs_<O, ZmObjectDebug>{}) {
+      if (o->deref(p)) delete o.ptr();
+    } else {
+      if (o->deref()) delete o.ptr();
+    }
+  }
+  template <typename O,
+    typename = decltype(void(bool(ZuIs_<O, ZmObjectDebug>{})))> static void
+  ZmMVREF_(const O *o, const void *p, const void *n) {
+    if constexpr (ZuIs_<O, ZmObjectDebug>{}) {
+      o->mvref(p, n);
+    } else {
+
+    }
+  }
+  template <typename O, typename = ZuIsNot<O, ZmObjectDebug>> static void
   ZmMVREF_(const ZmRef<O> &, const void *, const void *) { }
 };
 #define ZmREF(o) ZmRef__::ZmREF_((o), this)
@@ -162,7 +188,7 @@ public:
     if (T *o = m_object) ZmDEREF(o);
   }
 
-  template <typename R> MatchRef<R> swap(R &r) noexcept {
+  template <typename R, typename = MatchRef<R>> void swap(R &r) noexcept {
     T *o = m_object;
     m_object = static_cast<T *>(r.m_object);
     r.m_object = static_cast<typename R::T *>(o);
@@ -172,8 +198,8 @@ public:
 #endif
   }
 
-  template <typename R>
-  friend MatchRef<R> swap(ZmRef &r1, R &r2) noexcept {
+  template <typename R, typename = MatchRef<R>>
+  friend void swap(ZmRef &r1, R &r2) noexcept {
     r1.swap(r2);
   }
 
@@ -181,14 +207,14 @@ public:
     swap(r);
     return *this;
   }
-  template <typename R>
-  MatchOtherRef<R, ZmRef &> operator =(R r) noexcept {
+  template <typename R, typename = MatchOtherRef<R>>
+  ZmRef & operator =(R r) noexcept {
     swap(r);
     return *this;
   }
 
-  template <typename O>
-  MatchPtr<O, ZmRef &> operator =(O *n) {
+  template <typename O, typename = MatchPtr<O>>
+  ZmRef & operator =(O *n) {
     if (m_object != n) {
       if (n) ZmREF(n);
       T *o = m_object;
@@ -201,8 +227,8 @@ public:
   ZuInline operator T *() const { return m_object; }
   ZuInline T *operator ->() const { return m_object; }
 
-  template <typename O = T>
-  MatchRef<ZmRef<O>, O *> ptr() const {
+  template <typename O = T, typename = MatchRef<ZmRef<O>>>
+  O * ptr() const {
     return static_cast<O *>(m_object);
   }
   T *ptr_() const { return m_object; }
@@ -210,8 +236,8 @@ public:
   static ZmRef acquire(T *o) {
     return ZmRef{Acquire{o}};
   }
-  template <typename O = T>
-  MatchRef<ZmRef<O>, O *> release() && {
+  template <typename O = T, typename = MatchRef<ZmRef<O>>>
+  O * release() && {
     T *o = m_object;
     m_object = nullptr;
     return static_cast<O *>(o);

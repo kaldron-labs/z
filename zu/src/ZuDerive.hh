@@ -47,11 +47,11 @@
   using Base::Base; \
   template <typename ...Args, \
     decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0> \
-  Derived(Args &&...args) : Base(ZuFwd<Args>(args)...) { } \
+  ZuInline constexpr Derived(Args &&...args) : Base(ZuFwd<Args>(args)...) { } \
   template <typename L_ = Base, typename R_, \
     typename = ZuNotSame<ZuDecay<R_>, Derived>, \
     typename = decltype(ZuDeclVal<L_ &>().operator =(ZuDeclVal<R_ &&>()))> \
-  Derived &operator =(R_ &&r) { \
+  ZuInline constexpr Derived &operator =(R_ &&r) { \
     L_::operator =(ZuFwd<R_>(r)); \
     return *this; \
   }

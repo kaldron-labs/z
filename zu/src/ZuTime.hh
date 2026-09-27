@@ -195,8 +195,8 @@ public:
     return ZuTime{-tv_sec - 1, int32_t(1000000000) - tv_nsec};
   }
 
-  template <typename T>
-  constexpr MatchInt<T, ZuTime> operator +(T v) const {
+  template <typename T, typename = MatchInt<T>>
+  constexpr ZuTime operator +(T v) const {
     return ZuTime::operator +(ZuTime{v, 0});
   }
   constexpr ZuTime operator +(const ZuDecimal &d) const {
@@ -213,8 +213,8 @@ public:
     t.normalize();
     return t;
   }
-  template <typename T>
-  constexpr MatchInt<T, ZuTime &> operator +=(T v) {
+  template <typename T, typename = MatchInt<T>>
+  constexpr ZuTime & operator +=(T v) {
     return ZuTime::operator +=(ZuTime{v, 0});
   }
   constexpr ZuTime &operator +=(const ZuDecimal &d) {
@@ -229,8 +229,8 @@ public:
       normalize();
     return *this;
   }
-  template <typename T>
-  constexpr MatchInt<T, ZuTime> operator -(T v) const {
+  template <typename T, typename = MatchInt<T>>
+  constexpr ZuTime operator -(T v) const {
     return ZuTime::operator -(ZuTime{v, 0});
   }
   constexpr ZuTime operator -(const ZuDecimal &d) const {
@@ -247,8 +247,8 @@ public:
     t.normalize();
     return t;
   }
-  template <typename T>
-  constexpr MatchInt<T, ZuTime &> operator -=(T v) {
+  template <typename T, typename = MatchInt<T>>
+  constexpr ZuTime & operator -=(T v) {
     return ZuTime::operator -=(ZuTime{v, 0});
   }
   constexpr ZuTime &operator -=(const ZuDecimal &d) {
@@ -268,7 +268,7 @@ public:
     return ZuTime{as_decimal() * d};
   }
   constexpr ZuTime &operator *=(const ZuDecimal &d) {
-    return operator =(as_decimal() * d);
+    return operator =(as_decimal() *d);
   }
   constexpr ZuTime operator /(const ZuDecimal &d) {
     return ZuTime{as_decimal() / d};
@@ -285,37 +285,37 @@ public:
     if (int i = ZuCompare(tv_sec, t.tv_sec)) return i;
     return ZuCompare(tv_nsec, t.tv_nsec);
   }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuTime>{}) &&
-    bool(ZuIsSame<R, ZuTime>{}), bool>
-  operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuTime>{}) &&
-    bool(ZuIsSame<R, ZuTime>{}), bool>
-  operator <(const L &l, const R &r) { return l.cmp(r) < 0; }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuTime>{}) &&
-    bool(ZuIsSame<R, ZuTime>{}), int>
-  operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuTime>{}) &&
-    !ZuIsSame<R, ZuTime>{}, bool>
-  operator ==(const L &l, const R &r) { return l.equals(ZuTime{r}); }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuTime>{}) &&
-    !ZuIsSame<R, ZuTime>{}, bool>
-  operator <(const L &l, const R &r) { return l.cmp(ZuTime{r}) < 0; }
-  template <typename L, typename R>
-  friend constexpr ZuIfT<
-    bool(ZuIsSame<L, ZuTime>{}) &&
-    !ZuIsSame<R, ZuTime>{}, int>
-  operator <=>(const L &l, const R &r) { return l.cmp(ZuTime{r}); }
+  template <typename L, typename R, ZuTime * = nullptr,
+    typename = ZuIfT<ZuIsSame<L, ZuTime>{}>>
+  friend constexpr bool
+  operator ==(const L &l, const R &r) {
+    if constexpr (bool(ZuIsSame<L, ZuTime>{}) && bool(ZuIsSame<R, ZuTime>{})) {
+      return l.equals(r);
+    } else {
+      return l.equals(ZuTime{r});
+    }
+  }
+  template <typename L, typename R, ZuTime * = nullptr,
+    typename = ZuIfT<ZuIsSame<L, ZuTime>{}>>
+  friend constexpr bool
+  operator <(const L &l, const R &r) {
+    if constexpr (bool(ZuIsSame<L, ZuTime>{}) && bool(ZuIsSame<R, ZuTime>{})) {
+      return l.cmp(r) < 0;
+    } else {
+      return l.cmp(ZuTime{r}) < 0;
+    }
+  }
+  template <typename L, typename R, ZuTime * = nullptr,
+    typename = ZuIfT<ZuIsSame<L, ZuTime>{}>>
+  friend constexpr int
+  operator <=>(const L &l, const R &r) {
+    if constexpr (bool(ZuIsSame<L, ZuTime>{}) && bool(ZuIsSame<R, ZuTime>{})) {
+      return l.cmp(r);
+    } else {
+      return l.cmp(ZuTime{r});
+    }
+  }
 
   constexpr bool operator *() const { return !ZuNull(tv_sec); }
   constexpr bool operator !() const { return !tv_sec && !tv_nsec; }
@@ -349,9 +349,9 @@ public:
       n = (l<<2) / 146097;
       l = l - ((146097 * n + 3)>>2);
       i = (4000 * (l + 1)) / 1461001;
-      l = l - ((1461 * i)>>2) + 31;
-      j = (80 * l) / 2447;
-      day = l - (2447 * j) / 80;
+      l = l - ((1461 *i)>>2) + 31;
+      j = (80 *l) / 2447;
+      day = l - (2447 *j) / 80;
       l = j / 11;
       month = j + 2 - 12 * l;
       year = (100 * (n - 49) + i + l);

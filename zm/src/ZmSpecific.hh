@@ -31,7 +31,7 @@
 //   infrequent) acquires a global lock and updates a type-specific linked
 //   list (for iteration), and a module-specific linked list (Win32 only)
 
-// ZmSpecific<T>::instance() returns T * pointer, unique per-thread per-T
+// ZmSpecific<T>::instance() returns T *pointer, unique per-thread per-T
 //
 // ZmSpecific<T>::all(ZmFn<void(T *)> fn) calls fn for all instances of T
 //
@@ -39,7 +39,7 @@
 // since T will not be constructed on-demand
 // - use ...::instance(new T(...)) to construct T
 //
-// auto &v = *ZmSpecific<T>::instance();	// 
+// auto &v = *ZmSpecific<T>::instance();	//
 //
 // ... or using ZmTLS, T does not need to be ZmObject derived:
 //
@@ -238,7 +238,7 @@ public:
     auto objects = static_cast<Object **>(
       ZuAlloca(m_count * sizeof(Object *), alignof(Object *)));
     if (ZuUnlikely(!objects)) { ZmSpecific_unlock(); return; }
-    memset(objects, 0, sizeof(Object *) * m_count);
+    memset(objects, 0, sizeof(Object *) *m_count);
     all_3(objects, l);
   }
 
@@ -352,10 +352,14 @@ private:
   struct HasFinal<U, decltype(&U::final, void())> :
     public ZuBool<__is_member_function_pointer(decltype(&U::final))> { };
 
-  template <typename U>
-  static ZuIfT<!HasFinal<U>{}> final(U *) { }
-  template <typename U>
-  static ZuIfT<HasFinal<U>{}> final(U *u) { u->final(); }
+  template <typename U, typename = decltype(void(bool(HasFinal<U>{})))>
+  static void final(U *u) {
+    if constexpr (!HasFinal<U>{}) {
+
+    } else {
+      u->final();
+    }
+  }
 
   using Object = ZmSpecific_Object;
 
@@ -370,7 +374,7 @@ private:
   using ZmSpecific_::get;
 #endif
 
-  ZuInline Object *local_() {
+  inline Object *local_() {
     Object *o = allocator().get();
     if (ZuLikely(o)) return o;
     o = new Object{};
@@ -393,41 +397,42 @@ private:
 
   static void dtor__(Object *o) { global()->dtor_(o); }
 
-  template <bool Construct_ = Construct>
-  ZuIfT<!Construct_, T *> create_(Object *) {
-    return nullptr;
-  }
-  template <bool Construct_ = Construct>
-  ZuIfT<Construct_, T *> create_(Object *o) {
-    T *ptr = nullptr;
-    ZmSpecific_lock();
-    if (o->ptr) {
-      ptr = static_cast<T *>(o->ptr);
+  template <bool Construct_ = Construct,
+    typename = void>
+  T *create_(Object *o) {
+    if constexpr (!Construct_) {
+      return nullptr;
+    } else {
+      T *ptr = nullptr;
+      ZmSpecific_lock();
+      if (o->ptr) {
+	ptr = static_cast<T *>(o->ptr);
+	ZmSpecific_unlock();
+	return ptr;
+      }
+  #ifdef _WIN32
+      o->tid = Zm::getTID();
+  #endif
+      ZmSpecific_unlock();
+      ptr = CtorFn();
+      ZmSpecific_lock();
+    retry:
+      if (!o->ptr) {
+	o->ptr = ptr;
+	o->dtorFn = dtor__;
+	add(o);
+	ZmREF(ptr);
+      } else {
+	dtor_(o); // unlocks
+	ZmSpecific_lock();
+	goto retry;
+      }
+  #ifdef _WIN32
+      set(o->tid, ptr);
+  #endif
       ZmSpecific_unlock();
       return ptr;
     }
-#ifdef _WIN32
-    o->tid = Zm::getTID();
-#endif
-    ZmSpecific_unlock();
-    ptr = CtorFn();
-    ZmSpecific_lock();
-  retry:
-    if (!o->ptr) {
-      o->ptr = ptr;
-      o->dtorFn = dtor__;
-      add(o);
-      ZmREF(ptr);
-    } else {
-      dtor_(o); // unlocks
-      ZmSpecific_lock();
-      goto retry;
-    }
-#ifdef _WIN32
-    set(o->tid, ptr);
-#endif
-    ZmSpecific_unlock();
-    return ptr;
   }
 
   T *instance_() {
@@ -488,7 +493,7 @@ inline auto &ZmTLS(L l) {
   using T = ZuDecay<decltype(ZuDeclVal<ZuLambdaReturn<L>>())>;
   using Object = ZmTLS_<T, &L::operator ()>;
   auto ctor = []() { return new Object{ZuInvokeLambda<L>()}; };
-  using TLS = 
+  using TLS =
     ZmSpecific<Object,
       ZmSpecificCtor<ZuInvokeFn(ctor),
 	ZmSpecificCleanup<Cleanup>>>;

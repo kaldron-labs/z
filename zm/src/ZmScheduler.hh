@@ -445,7 +445,7 @@ public:
   // struct A : public ZmObject {
   //   void foo() { ... }
   //
-  //   void bar(ZmScheduler *sched, unsigned sid) { 
+  //   void bar(ZmScheduler *sched, unsigned sid) {
   //     // need to ensure that this object remains positively ref-counted
   //     // until foo() completes, whether synchronously or asynchronously
   //
@@ -472,8 +472,8 @@ private:
   template <typename O, typename L, typename R = void>
   using IsObjectLambda = ZuIfT<IsObjectLambda_<O, L>{}, R>;
 public:
-  template <typename O, typename L>
-  IsObjectLambda<O, L> invoke(O *o, L &&l, unsigned sid) {
+  template <typename O, typename L, typename = IsObjectLambda<O, L>>
+  void invoke(O *o, L &&l, unsigned sid) {
     ZmAssert(sid && sid <= m_params.nThreads());
     Thread *thread = &m_threads[sid - 1];
     if (ZuLikely(Zm::getTID() == thread->tid)) {

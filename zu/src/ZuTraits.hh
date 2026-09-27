@@ -33,7 +33,7 @@
 // IsWString		wide string (using wchar_t)
 // IsVoid		is void (convenience trait for ZuIsSame<void, T>{})
 // IsBool		is bool (convenience trait for ZuIsSame<bool, T>{})
-// 
+//
 // Array Type Normalization
 // ------------------------
 // Elem				type of element, if IsArray (void if not)
@@ -90,7 +90,7 @@ struct ZuTraits_POD<U, decltype(sizeof(U), void())> :
 #ifdef _MSC_VER
   public ZuBool<__is_pod(U)>
 #else
-  public ZuBool<__is_standard_layout(U) && __is_trivial(U)>
+  public ZuBool<__is_standard_layout(U) &&__is_trivial(U)>
 #endif
 { };
 
@@ -304,8 +304,8 @@ struct ZuTraits_PArray : public ZuBaseTraits<T> {
     IsPOD = ZuTraits<Elem>::IsPOD,
     IsArray = 1, IsSpan = 1
   };
-  template <typename U = T>
-  ZuInline static constexpr ZuMutable<U, Elem *> data(U &a) {
+  template <typename U = T, typename = ZuMutable<U>>
+  ZuInline static constexpr Elem *data(U &a) {
     if (ZuConstEval())
       return ZuAddr(a[0]);
     else
@@ -565,20 +565,20 @@ template <typename Wrapper, typename Under>
 struct ZuWrapTraits : public ZuTraits<Under> {
   enum { IsPrimitive = 0, IsPOD = 0 };
   using Elem = typename ZuTraits<Under>::Elem;
-  template <typename U = Under>
-  ZuInline static ZuIfT<
-    ZuTraits<U>::IsSpan &&
+  template <typename U = Under,
+    typename = ZuIfT<ZuTraits<U>::IsSpan &&
     !ZuIsConst<U>{} &&
-    bool(ZuIsConvertible<Wrapper &, Under &>{}), Elem *>
+    bool(ZuIsConvertible<Wrapper &, Under &>{})>>
+  ZuInline static Elem *
   data(Wrapper &v) {
     return ZuTraits<Under>::data(v);
   }
-  template <typename U = Under>
-  ZuInline static ZuMatchSpan<U, const Elem *> data(const Wrapper &v) {
+  template <typename U = Under, typename = ZuMatchSpan<U>>
+  ZuInline static const Elem *data(const Wrapper &v) {
     return ZuTraits<Under>::data(v);
   }
-  template <typename U = Under>
-  ZuInline static ZuMatchArray<U, unsigned> length(const Wrapper &v) {
+  template <typename U = Under, typename = ZuMatchArray<U>>
+  ZuInline static unsigned length(const Wrapper &v) {
     return ZuTraits<Under>::length(v);
   }
 };
@@ -593,8 +593,8 @@ template <typename T, typename Char>
 struct ZuStdStringTraits_ : public ZuBaseTraits<T> {
   enum { IsString = 1 };
   using Elem = Char;
-  template <typename U = T>
-  static ZuMutable<U, Char *> data(T &s) { return s.data(); }
+  template <typename U = T, typename = ZuMutable<U>>
+  static Char *data(T &s) { return s.data(); }
   static const Char *data(const T &s) { return s.data(); }
   static unsigned length(const T &s) { return s.length(); }
 };
@@ -608,8 +608,8 @@ template <typename T, typename Elem_>
 struct ZuStdArrayTraits_ : public ZuBaseTraits<T> {
   using Elem = Elem_;
   enum { IsArray = 1 };
-  template <typename U = T>
-  static ZuMutable<U, Elem *> data(T &a) { return a.data(); }
+  template <typename U = T, typename = ZuMutable<U>>
+  static Elem *data(T &a) { return a.data(); }
   static const Elem *data(const T &a) { return a.data(); }
   static unsigned length(const T &a) { return a.size(); }
 };

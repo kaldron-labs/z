@@ -140,7 +140,7 @@ public:
     bool(IsChar_<ZuStrip<Elem>>{}) &&
     bool(IsLiteralArray_<U, Elem>{})> { };
   template <typename U, typename R = void>
-  using MatchStrLiteral = ZuIfT<IsStrLiteral<U>{}, R>; 
+  using MatchStrLiteral = ZuIfT<IsStrLiteral<U>{}, R>;
 
 // from array of primitive types
   template <
@@ -152,7 +152,7 @@ public:
     ZuTraits<U>::IsPrimitive &&
     bool(ZuIsSame<Elem, V>{})> { };
   template <typename U, typename R = void>
-  using MatchPrimitiveArray = ZuIfT<IsPrimitiveArray<U>{}, R>; 
+  using MatchPrimitiveArray = ZuIfT<IsPrimitiveArray<U>{}, R>;
 
 // from C string (as a pointer, not a primitive array or literal)
   template <typename U>
@@ -163,7 +163,7 @@ public:
     bool(IsChar_<U>{}) &&
     ZuTraits<U>::IsCString> { };
   template <typename U, typename R = void>
-  using MatchCString = ZuIfT<IsCString<U>{}, R>; 
+  using MatchCString = ZuIfT<IsCString<U>{}, R>;
 
 // from equivalent ZuSpan
   template <
@@ -177,7 +177,7 @@ public:
     bool(ZuEquiv<Elem, V>{}) &&
     (bool(ZuIsConst<V>{}) >= bool(ZuIsConst<Elem>{}))> { };
   template <typename U, typename R = void>
-  using MatchZuSpan = ZuIfT<IsZuSpan<U>{}, R>; 
+  using MatchZuSpan = ZuIfT<IsZuSpan<U>{}, R>;
 
 // from other array
   template <
@@ -208,25 +208,12 @@ public:
     m_data(&a[0]),
     m_length((ZuUnlikely(!(sizeof(a) / sizeof(a[0])) || !a[0])) ? 0U :
       (sizeof(a) / sizeof(a[0])) - 1U) { }
-  template <typename A>
-  constexpr MatchStrLiteral<A &&, ZuSpan &> operator =(A &&a) noexcept {
-    m_data = &a[0];
-    m_length = (ZuUnlikely(!(sizeof(a) / sizeof(a[0])) || !a[0])) ? 0U :
-      (sizeof(a) / sizeof(a[0])) - 1U;
-    return *this;
-  }
 
 // compile-time length from primitive array
   template <typename A, MatchPrimitiveArray<A, int> = 0>
   constexpr ZuSpan(A &&a) noexcept :
     m_data(&a[0]),
     m_length(sizeof(a) / sizeof(a[0])) { }
-  template <typename A>
-  constexpr MatchPrimitiveArray<A &&, ZuSpan &> operator =(A &&a) noexcept {
-    m_data = &a[0];
-    m_length = sizeof(a) / sizeof(a[0]);
-    return *this;
-  }
 
 // length from strlen/wcslen, not constexpr
 #ifdef __GNUC__
@@ -237,23 +224,23 @@ public:
   template <typename A, MatchCString<A, int> = 0>
   ZuSpan(A &&a) noexcept :
     m_data{a}, m_length{!a ? 0 : ZuTraits<A>::length(a)} { }
-  template <typename A>
-  MatchCString<A &&, ZuSpan &> operator =(A &&a) noexcept {
-    m_data = a;
-    m_length = !a ? 0 : ZuTraits<A>::length(a);
-    return *this;
-  }
+
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
 
 private:
-  template <typename U, typename V = T>
-  ZuInline static constexpr ZuIfT<ZuIsConvertible<U *, V *>{}, T*>
-  cast(U *ptr) { return static_cast<T *>(ptr); }
-  template <typename U, typename V = T>
-  ZuInline static ZuIfT<!ZuIsConvertible<U *, V *>{}, T*>
-  cast(U *ptr) { return reinterpret_cast<T *>(ptr); }
+
+  template <typename U, typename V = T,
+    typename = decltype(void(bool(ZuIsConvertible<U *, V *>{})))>
+  ZuInline static constexpr T*
+  cast(U *ptr) {
+    if constexpr (ZuIsConvertible<U *, V *>{}) {
+      return static_cast<T *>(ptr);
+    } else {
+      return reinterpret_cast<T *>(ptr);
+    }
+  }
 
 public:
 // from equivalent ZuSpan
@@ -261,17 +248,11 @@ public:
   constexpr ZuSpan(A &&a) :
       m_data{cast(a.m_data)},
       m_length{a.m_length} { }
-  template <typename A>
-  constexpr MatchZuSpan<A &&, ZuSpan &> operator =(A &&a) noexcept {
-    m_data = cast(a.m_data);
-    m_length = a.m_length;
-    return *this;
-  }
 
 // from some other array
   template <
     typename A, typename V = T,
-    ZuIfT<bool(IsOtherSpan<A>{}) && bool(ZuIsConst<V>{}), int> = 0>
+    ZuIfT<bool(IsOtherSpan<A>{}) &&bool(ZuIsConst<V>{}), int> = 0>
   constexpr ZuSpan(A &&a) noexcept :
     m_data{cast(ZuTraits<A>::data(a))},
     m_length{!m_data ? 0 : ZuTraits<A>::length(a)} { }
@@ -281,14 +262,39 @@ public:
   constexpr ZuSpan(A &&a) noexcept :
     m_data{cast(ZuTraits<A>::data(const_cast<ZuDecay<A> &>(a)))},
     m_length{!m_data ? 0 : ZuTraits<A>::length(a)} { }
-  template <typename A>
-  constexpr MatchOtherSpan<A &&, ZuSpan &> operator =(A &&a) noexcept {
-    if constexpr (ZuIsConst<T>{})
-      m_data = cast(ZuTraits<A>::data(a));
-    else
-      m_data = cast(ZuTraits<A>::data(const_cast<ZuDecay<A> &>(a)));
-    m_length = !m_data ? 0 : ZuTraits<A>::length(a);
-    return *this;
+  template <typename A,
+    typename = ZuIfT<
+      (IsStrLiteral<A &&>{}) ||
+      (IsPrimitiveArray<A &&>{}) ||
+      (IsCString<A &&>{}) ||
+      (IsZuSpan<A &&>{}) ||
+      (IsOtherSpan<A &&>{})>>
+  constexpr ZuSpan & operator =(A &&a) noexcept {
+    if constexpr (IsStrLiteral<A && >{}) {
+      m_data = &a[0];
+      m_length = (ZuUnlikely(!(sizeof(a) / sizeof(a[0])) || !a[0])) ? 0U :
+	(sizeof(a) / sizeof(a[0])) - 1U;
+      return *this;
+    } else if constexpr (IsPrimitiveArray<A && >{}) {
+      m_data = &a[0];
+      m_length = sizeof(a) / sizeof(a[0]);
+      return *this;
+    } else if constexpr (IsCString<A && >{}) {
+      m_data = a;
+      m_length = !a ? 0 : ZuTraits<A>::length(a);
+      return *this;
+    } else if constexpr (IsZuSpan<A && >{}) {
+      m_data = cast(a.m_data);
+      m_length = a.m_length;
+      return *this;
+    } else {
+      if constexpr (ZuIsConst<T>{})
+	m_data = cast(ZuTraits<A>::data(a));
+      else
+	m_data = cast(ZuTraits<A>::data(const_cast<ZuDecay<A> &>(a)));
+      m_length = !m_data ? 0 : ZuTraits<A>::length(a);
+      return *this;
+    }
   }
 
 // from pointer, length
@@ -523,22 +529,20 @@ public:
     return cmp_(v);
   }
 
-  template <typename L, typename R>
-  friend constexpr
-  ZuIfT<
-    ZuIs_<L, ZuSpan>{}() &&
-    ZuIsConstructible<R, ZuSpan<const T>>{}(), bool>
+  template <typename L, typename R, ZuSpan * = nullptr,
+    typename = ZuIfT<ZuIs_<L, ZuSpan>{}() &&
+    ZuIsConstructible<R, ZuSpan<const T>>{}()>>
+  friend constexpr bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend constexpr
-  ZuIfT<
-    ZuIs_<L, ZuSpan>{}() &&
-    ZuIsConstructible<R, ZuSpan<const T>>{}(), int>
+  template <typename L, typename R, ZuSpan * = nullptr,
+    typename = ZuIfT<ZuIs_<L, ZuSpan>{}() &&
+    ZuIsConstructible<R, ZuSpan<const T>>{}()>>
+  friend constexpr int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
 // common prefix
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, uint64_t>
+  template <typename V, typename = ZuIfT<ZuIsConstructible<V, ZuSpan>{}>>
+  constexpr uint64_t
   prefix(const V &v_) const {
     ZuSpan v(v_);
     auto l = length(), n = v.length();
@@ -555,12 +559,12 @@ public:
   uint32_t hash() const { return Ops::hash(data(), length()); }
 
 // iteration - all() is const by default, all<true>() is mutable
-  template <bool Mutable = false, typename L>
-  constexpr ZuIfT<!Mutable> all(L &&l) const {
+  template <bool Mutable = false, typename L, typename = ZuIfT<!Mutable>>
+  constexpr void all(L &&l) const {
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
-  template <bool Mutable, typename L>
-  constexpr ZuIfT<Mutable> all(L &&l) {
+  template <bool Mutable, typename L, typename = ZuIfT<Mutable>>
+  constexpr void all(L &&l) {
     for (uint64_t i = 0, n = length(); i < n; i++) ZuFwd<L>(l)(m_data[i]);
   }
 
@@ -680,8 +684,8 @@ private:
 
 public:
 // find subspan
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, int64_t>
+  template <typename V, typename = ZuIfT<ZuIsConstructible<V, ZuSpan>{}>>
+  constexpr int64_t
   find(const V &v) const { return find_(v); }
 
 // find compile-time string using Boyer-Moore-Horspool
@@ -709,8 +713,8 @@ public:
   }
 
 // find element - lambda should return true on match
-  template <typename L>
-  constexpr ZuIfT<!ZuIsConstructible<L, ZuSpan>{}, int64_t>
+  template <typename L, typename = ZuIfT<!ZuIsConstructible<L, ZuSpan>{}>>
+  constexpr int64_t
   find(L &&l) const {
     for (uint64_t i = 0, n = length(); i < n; i++)
       if (ZuFwd<L>(l)(m_data[i])) return i;
@@ -718,8 +722,8 @@ public:
   }
 
 // reverse find subspan
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, int64_t>
+  template <typename V, typename = ZuIfT<ZuIsConstructible<V, ZuSpan>{}>>
+  constexpr int64_t
   rfind(const V &v) const { return rfind_(v); }
 
 // reverse find compile-time string using Boyer-Moore-Horspool
@@ -745,8 +749,8 @@ public:
   }
 
 // reverse find element - lambda should return true on match
-  template <typename L>
-  constexpr ZuIfT<!ZuIsConstructible<L, ZuSpan>{}, int64_t>
+  template <typename L, typename = ZuIfT<!ZuIsConstructible<L, ZuSpan>{}>>
+  constexpr int64_t
   rfind(L &&l) const {
     for (uint64_t i = length(); i--;)
       if (ZuFwd<L>(l)(m_data[i])) return i;
@@ -754,8 +758,8 @@ public:
   }
 
 // match at start
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
+  template <typename V, typename = ZuIfT<ZuIsConstructible<V, ZuSpan>{}>>
+  constexpr bool
   match(const V &v) const { return match_(v); }
 
 // match compile-time string at start
@@ -771,8 +775,8 @@ public:
   }
 
 // match at end
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
+  template <typename V, typename = ZuIfT<ZuIsConstructible<V, ZuSpan>{}>>
+  constexpr bool
   rmatch(const V &v) const { return rmatch_(v); }
 
 // match compile-time string at end
@@ -790,8 +794,8 @@ public:
   }
 
 // exact match
-  template <typename V>
-  constexpr ZuIfT<ZuIsConstructible<V, ZuSpan>{}, bool>
+  template <typename V, typename = ZuIfT<ZuIsConstructible<V, ZuSpan>{}>>
+  constexpr bool
   exact(const V &v) const {
     ZuSpan span{v};
     return length() == span.length() && match_(span);
@@ -900,10 +904,10 @@ public:
     ZuTraits<A>::IsArray &&
     ZuIsConstructible<typename ZuTraits<A>::Elem, void>{}, int> = 0>
   constexpr ZuSpan(const A &a) { }
-  template <typename A>
-  ZuIfT<
-    ZuTraits<A>::IsArray &&
-    ZuIsConvertible<typename ZuTraits<A>::Elem, void>{}, ZuSpan &>
+  template <typename A,
+    typename = ZuIfT<ZuTraits<A>::IsArray &&
+    ZuIsConvertible<typename ZuTraits<A>::Elem, void>{}>>
+  ZuSpan &
   operator =(const A &a) { return *this; }
 
   constexpr ZuSpan(const void *data, uint64_t length) { }

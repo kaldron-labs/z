@@ -81,12 +81,12 @@ protected:
     size{size_}, length{length_} { }
 
 public:
-  virtual ~IOBuf() { if (ZuUnlikely(data__ & Jumbo)) vfree(data_()); }
+  virtual ~IOBuf() { if (ZuUnlikely(data__ &Jumbo)) vfree(data_()); }
 
   IOBuf(const IOBuf &buf) = delete;
   IOBuf &operator =(const IOBuf &buf) = delete;
   IOBuf(IOBuf &&buf) = delete;
-  IOBuf &operator =(IOBuf &&buf) = delete; 
+  IOBuf &operator =(IOBuf &&buf) = delete;
 
   inline uint8_t *data_() {
     return reinterpret_cast<uint8_t *>(data__ & ~Jumbo);
@@ -109,7 +109,7 @@ public:
     if (ZuLikely(newSize <= size)) return data();
     if (auto jumbo = static_cast<uint8_t *>(valloc(newSize))) {
       size = newSize;
-      if (ZuUnlikely(data__ & Jumbo)) vfree(data_());
+      if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
       data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
       return jumbo;
     }
@@ -118,7 +118,7 @@ public:
   }
 
   void free(uint8_t *ptr) {
-    if (!(data__ & Jumbo) && ptr == data_()) return;
+    if (!(data__ &Jumbo) && ptr == data_()) return;
     if (ptr == data_()) { data__ = 0; length = size = 0; }
     vfree(ptr);
   }
@@ -184,7 +184,7 @@ public:
       size = newSize_;
     } else
       skip = length = size = 0;
-    if (ZuUnlikely(data__ & Jumbo)) vfree(data_());
+    if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return jumbo ? jumbo + skip : nullptr;
   }
@@ -200,7 +200,7 @@ public:
     if (ZuUnlikely(!jumbo)) return nullptr;
     if (length) memcpy(jumbo + skip, old + skip, length);
     size = newSize;
-    if (ZuUnlikely(data__ & Jumbo)) vfree(old);
+    if (ZuUnlikely(data__ &Jumbo)) vfree(old);
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return jumbo + skip;
   }
@@ -231,7 +231,7 @@ public:
     size = newSize;
     skip = newSkip - length_;
     length += length_;
-    if (ZuUnlikely(data__ & Jumbo)) vfree(old);
+    if (ZuUnlikely(data__ &Jumbo)) vfree(old);
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return jumbo + skip;
   }
@@ -251,12 +251,12 @@ private:
   template <typename U, typename R = void>
   using MatchPBuffer = ZuIfT<ZuPrint<U>::Buffer, R>;
 
-  template <typename P>
-  MatchPDelegate<P> append(P &&p) {
+  template <typename P, typename = MatchPDelegate<P>>
+  void append(P &&p) {
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
-  template <typename P>
-  MatchPBuffer<P> append(const P &p) {
+  template <typename P, typename = MatchPBuffer<P>>
+  void append(const P &p) {
     unsigned length_ = ZuPrint<P>::length(p);
     length += ZuPrint<P>::print(
 	reinterpret_cast<char *>(ensure(length + length_) + length),
@@ -282,19 +282,23 @@ public:
     append(buf);
     return *this;
   }
-  template <typename C>
-  MatchChar<C, IOBuf &> operator <<(C c) {
+  template <typename C, typename = MatchChar<C>>
+  IOBuf & operator <<(C c) {
     return *this << ZuSpan{&c, 1};
   }
-  template <typename R>
-  MatchReal<R, IOBuf &> operator <<(const R &r) {
-    append(ZuBoxed(r));
-    return *this;
-  }
-  template <typename P>
-  MatchPrint<P, IOBuf &> operator <<(const P &p) {
-    append(p);
-    return *this;
+
+  template <typename R,
+    typename = ZuIfT<
+      (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) ||
+      (ZuPrint<R>::OK && !ZuPrint<R>::String)>>
+  IOBuf & operator <<(const R &r) {
+    if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) {
+      append(ZuBoxed(r));
+      return *this;
+    } else {
+      append(r);
+      return *this;
+    }
   }
 
   struct Traits : public ZuBaseTraits<IOBuf> {
@@ -343,7 +347,7 @@ struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
 
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 using IOBuf_Heap = ZmHeap_<HeapID, IOBufAlloc__<Base, Size, MaxSize>>;
- 
+
 template <
   typename Base,
   unsigned Size,

@@ -175,7 +175,7 @@ ZuInline constexpr bool islws(uint8_t c) {
 }
 
 // hard-coded Boyer-Moore to find end of header "\r\n\r\n"
-ZuInline int eoh(ZuBSpan data) {
+inline int eoh(ZuBSpan data) {
   unsigned n = data.length();
 
   if (ZuUnlikely(n < 4)) return -1;
@@ -203,14 +203,14 @@ ZuInline int eok(ZuBSpan data) {
 }
 
 // skip leading linear white space to find beginning of header value
-ZuInline int bov(ZuBSpan data) {
+inline int bov(ZuBSpan data) {
   for (unsigned o = 0, n = data.length(); o < n; ++o)
     if (!islws(data[o])) return o;
   return -1;
 }
 
 // remove trailing linear white space to find end of header value
-ZuInline int eov(ZuBSpan data) {
+inline int eov(ZuBSpan data) {
   for (int o = data.length(); --o >= 0; )
     if (!islws(data[o])) return o + 1;
   return -1;

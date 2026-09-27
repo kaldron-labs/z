@@ -50,10 +50,13 @@ def exercise(directory):
             log = (directory / ("node" + str(index) + ".log")).open("ab")
             logs.append(log)
             processes.append(subprocess.Popen([str(server), "--config=" + str(config),
+                "--vault-store=file",
                 "--issuer=" + issuer, "--admin=cluster-admin", "--rp-id=localhost",
                 "--port=" + str(ports[index]),
                 "--bootstrap-output=" + str(directory / ("enrollment" + str(index)))],
-                env=dict(os.environ, ZDB_MODULE=module, ZDB_CONNECT=connection, ZUM_DB_KEY=key),
+                env=dict(os.environ, ZDB_MODULE=module, ZDB_CONNECT=connection,
+                         ZUM_DB_KEY=key,
+                         ZUMD_HOME=str(directory / ("vault-node" + str(index)))),
                 stdout=subprocess.PIPE, stderr=log))
         # Consume startup events, not a timed guess about election completion.
         pending = [b"", b""]

@@ -82,14 +82,14 @@ public:
   ZuPtr(O *o) noexcept : m_object{static_cast<T *>(o)} { }
   ~ZuPtr() noexcept { if (T *o = m_object) delete o; }
 
-  template <typename R> MatchZuPtr<R> swap(R &r) noexcept {
+  template <typename R, typename = MatchZuPtr<R>> void swap(R &r) noexcept {
     T *o = m_object;
     m_object = static_cast<T *>(r.m_object);
     r.m_object = static_cast<typename R::T *>(o);
   }
 
-  template <typename R>
-  friend MatchZuPtr<R> swap(ZuPtr &r1, R &r2) noexcept {
+  template <typename R, typename = MatchZuPtr<R>>
+  friend void swap(ZuPtr &r1, R &r2) noexcept {
     r1.swap(r2);
   }
 
@@ -97,14 +97,14 @@ public:
     swap(r);
     return *this;
   }
-  template <typename R>
-  MatchOtherPtr<R, ZuPtr &> operator =(R r) {
+  template <typename R, typename = MatchOtherPtr<R>>
+  ZuPtr & operator =(R r) {
     swap(r);
     return *this;
   }
 
-  template <typename O>
-  MatchPtr<O, ZuPtr &> operator =(O *n) {
+  template <typename O, typename = MatchPtr<O>>
+  ZuPtr & operator =(O *n) {
     T *o = m_object;
     m_object = n;
     if (o) delete o;
@@ -114,14 +114,14 @@ public:
   ZuInline operator T *() const { return m_object; }
   ZuInline T *operator ->() const { return m_object; }
 
-  template <typename O = T>
-  MatchZuPtr<ZuPtr<O>, O *> ptr() const {
+  template <typename O = T, typename = MatchZuPtr<ZuPtr<O>>>
+  O * ptr() const {
     return static_cast<O *>(m_object);
   }
   T *ptr_() const { return m_object; }
 
-  template <typename O = T>
-  MatchZuPtr<ZuPtr<O>, O *> release() && {
+  template <typename O = T, typename = MatchZuPtr<ZuPtr<O>>>
+  O * release() && {
     auto ptr = static_cast<O *>(m_object);
     m_object = nullptr;
     return ptr;

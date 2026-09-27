@@ -103,7 +103,7 @@ struct ZuArrayFn_Ops : public ZuArrayFn_ElemOps<T, Cmp> {
     typename V = T,
     decltype(V(ZuDeclVal<const S &>()), int()) = 0,
     bool NoExcept = noexcept(V(ZuDeclVal<const S &>()), int())>
-  ZuInline static constexpr void copyElems(
+  inline static constexpr void copyElems(
     T *dst, const S *src, uint64_t length) noexcept(NoExcept)
   {
     if (ZuUnlikely(!length)) return;
@@ -121,7 +121,7 @@ struct ZuArrayFn_Ops : public ZuArrayFn_ElemOps<T, Cmp> {
     typename V = T,
     decltype(V(ZuDeclVal<S &&>()), int()) = 0,
     bool NoExcept = noexcept(V(ZuDeclVal<S &&>()), int())>
-  ZuInline static constexpr void moveElems(
+  inline static constexpr void moveElems(
     T *dst, S *src, uint64_t length) noexcept(NoExcept)
   {
     if (ZuConstEval()) {
@@ -180,7 +180,7 @@ public:
     ZuArrayFn_NotSamePOD<V, S, int> = 0,
     decltype(V(ZuDeclVal<const S &>()), int()) = 0,
     bool NoExcept = noexcept(V(ZuDeclVal<const S &>()), int())>
-  ZuInline static constexpr void copyElems(
+  inline static constexpr void copyElems(
     T *dst, const S *src, uint64_t length) noexcept(NoExcept)
   {
     if (ZuUnlikely(!length)) return;
@@ -198,7 +198,7 @@ public:
     ZuArrayFn_SamePOD<V, S, int> = 0,
     decltype(V(ZuDeclVal<const S &>()), int()) = 0,
     bool NoExcept = noexcept(V(ZuDeclVal<const S &>()), int())>
-  ZuInline static constexpr void copyElems(
+  inline static constexpr void copyElems(
     T *dst, const S *src, uint64_t length) noexcept
   {
     if (ZuUnlikely(!length)) return;
@@ -228,7 +228,7 @@ public:
     ZuArrayFn_NotSamePOD<V, S, int> = 0,
     decltype(V(ZuDeclVal<S &&>()), int()) = 0,
     bool NoExcept = noexcept(V(ZuDeclVal<S &&>()), int())>
-  ZuInline static constexpr void moveElems(
+  inline static constexpr void moveElems(
     T *dst, const S *src, uint64_t length) noexcept(NoExcept)
   {
     if (ZuUnlikely(!length)) return;
@@ -270,7 +270,7 @@ public:
     typename V = T,
     ZuArrayFn_SamePOD<V, S, int> = 0,
     decltype(V(ZuDeclVal<S &&>()), int()) = 0>
-  ZuInline static constexpr void moveElems(
+  inline static constexpr void moveElems(
     T *dst, const S *src, uint64_t length) noexcept
   {
     if (ZuConstEval()) {

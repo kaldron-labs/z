@@ -487,7 +487,7 @@ private:
       }
       case FrameType::Goaway:
 	impl()->h2Goaway(
-	  ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data())) & MaxWindow,
+	  ZuBE(*reinterpret_cast<const uint32_t *>(m_fixed.data())) &MaxWindow,
 	  Error::T(ZuBE(*reinterpret_cast<const uint32_t *>(&m_fixed[4]))));
 	break;
       case FrameType::PushPromise:
@@ -538,7 +538,7 @@ int putGoaway(
       .type = FrameType::Goaway
     }) < 0)
     return -1;
-  putUInt32(out, lastStreamID & MaxWindow);
+  putUInt32(out, lastStreamID &MaxWindow);
   putUInt32(out, uint32_t(error));
   return 17;
 }
@@ -972,9 +972,9 @@ public:
   bool streamResponse() { return false; }
 
 private:
-  template <typename Key, typename I = Impl>
-  static auto headerOffset_(I *impl, uint64_t offset, unsigned length, int) ->
-      decltype(impl->template headerOffset<Key>(offset, length), void()) {
+  template <typename Key, typename I = Impl,
+    typename = decltype(ZuDeclVal<I * &>()->template headerOffset<Key>(ZuDeclVal<uint64_t &>(), ZuDeclVal<unsigned &>()), void())>
+  static void headerOffset_(I *impl, uint64_t offset, unsigned length, int) {
     impl->template headerOffset<Key>(offset, length);
   }
   template <typename Key>
@@ -984,27 +984,30 @@ private:
   static void field_(Stream &stream, ZuBSpan name, V &&value) {
     stream.field(name, ZuFwd<V>(value));
   }
-  template <typename Stream, typename V>
-  static auto nameField_(Stream &stream, ZuBSpan name, V &&value, int) ->
-      decltype(stream.fieldName(name, ZuFwd<V>(value)), void()) {
+  template <typename Stream, typename V,
+    typename = decltype(ZuDeclVal<Stream &>().fieldName(ZuDeclVal<ZuBSpan &>(),
+      ZuFwd<V>(ZuDeclVal<V &>())), void())>
+  static void nameField_(Stream &stream, ZuBSpan name, V &&value, int) {
     stream.fieldName(name, ZuFwd<V>(value));
   }
   template <typename Stream, typename V>
   static void nameField_(Stream &stream, ZuBSpan name, V &&value, ...) {
     stream.field(name, ZuFwd<V>(value));
   }
-  template <typename Stream, typename V>
-  static auto literalField_(Stream &stream, ZuBSpan name, V &&value, int) ->
-      decltype(stream.fieldLiteral(name, ZuFwd<V>(value)), void()) {
+  template <typename Stream, typename V,
+    typename = decltype(ZuDeclVal<Stream &>().fieldLiteral(ZuDeclVal<ZuBSpan &>(),
+      ZuFwd<V>(ZuDeclVal<V &>())), void())>
+  static void literalField_(Stream &stream, ZuBSpan name, V &&value, int) {
     stream.fieldLiteral(name, ZuFwd<V>(value));
   }
   template <typename Stream, typename V>
   static void literalField_(Stream &stream, ZuBSpan name, V &&value, ...) {
     stream.field(name, ZuFwd<V>(value));
   }
-  template <typename Stream, typename V>
-  static auto fixedField_(Stream &stream, ZuBSpan name, V &&value, int) ->
-      decltype(stream.fieldFixed(name, ZuFwd<V>(value)), void()) {
+  template <typename Stream, typename V,
+    typename = decltype(ZuDeclVal<Stream &>().fieldFixed(ZuDeclVal<ZuBSpan &>(),
+      ZuFwd<V>(ZuDeclVal<V &>())), void())>
+  static void fixedField_(Stream &stream, ZuBSpan name, V &&value, int) {
     stream.fieldFixed(name, ZuFwd<V>(value));
   }
   template <typename Stream, typename V>
@@ -1012,9 +1015,10 @@ private:
     stream.field(name, ZuFwd<V>(value));
   }
 
-  template <typename Key, typename Stream, typename V>
-  static auto mutableField_(Impl *impl, Stream &stream, V &&value, int) -> decltype(
-      stream.fieldMutable(Key{}(), ZuFwd<V>(value)), void()) {
+  template <typename Key, typename Stream, typename V,
+    typename = decltype(ZuDeclVal<Stream &>().fieldMutable(Key{}(),
+      ZuFwd<V>(ZuDeclVal<V &>())), void())>
+  static void mutableField_(Impl *impl, Stream &stream, V &&value, int) {
     auto span = stream.fieldMutable(Key{}(), ZuFwd<V>(value));
     headerOffset_<Key>(impl, span.offset, span.length, 0);
   }
@@ -1023,16 +1027,17 @@ private:
     stream.field(Key{}(), ZuFwd<V>(value));
   }
 
-  template <typename Stream, typename I = Impl>
-  auto patchBase_(Stream &stream, int) -> decltype(
-      stream.headerBase(),
-      ZuDeclVal<I &>().headerBase(stream.headerBase()), void()) {
+  template <typename Stream, typename I = Impl,
+    typename = decltype(ZuDeclVal<Stream &>().headerBase(),
+      ZuDeclVal<I &>().headerBase(ZuDeclVal<Stream &>().headerBase()), void())>
+  void patchBase_(Stream &stream, int) {
     impl()->headerBase(stream.headerBase());
   }
   template <typename Stream>
   void patchBase_(Stream &, ...) { }
-  template <typename I = Impl>
-  auto patchImpl_(int) -> decltype(ZuDeclVal<I &>().patch(), void()) {
+  template <typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().patch(), void())>
+  void patchImpl_(int) {
     impl()->patch();
   }
   void patchImpl_(...) { }
@@ -1106,7 +1111,6 @@ public:
   template <typename Stream>
   void begin(Stream &stream) { Base::beginResponse_(stream); }
 };
-
 
 } // namespace H2
 

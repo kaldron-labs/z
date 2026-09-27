@@ -8,7 +8,7 @@
 // - intentionally the path not taken by C++ with `operator <=>`
 // - plain integer three-way comparisons
 //   - consistent with historic C/C++ practice, strcmp, etc.
-// - generic three-way and two-way comparison 
+// - generic three-way and two-way comparison
 // - extensible distinguished sentinel null values
 
 // UDTs must implement the <, == and ! operators
@@ -215,7 +215,7 @@ struct ZuCmp_Can_starship<P1, P2,
 
 // test for cmp()
 template <typename> struct ZuCmp_Can_cmp_;
-template <> struct ZuCmp_Can_cmp_<int> { using T = void; }; 
+template <> struct ZuCmp_Can_cmp_<int> { using T = void; };
 template <typename, typename, typename = void>
 struct ZuCmp_Can_cmp : public ZuFalse { };
 template <typename P1, typename P2>
@@ -237,22 +237,20 @@ struct ZuCmp_NullFn<T, decltype(T(ZuDeclVal<const T &>()), void())> {
 
 template <typename T> struct ZuCmp_NonPrimitive : public ZuCmp_NullFn<T> {
   // prefer cmp() to operator <=>()
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<ZuCmp_Can_cmp<L, R>{}, int>
-  cmp(const L &l, const R &r) { return l.cmp(r); }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-    ZuCmp_Can_starship<L, R>{} &&
-    !ZuCmp_Can_cmp<L, R>{}, int>
+
+  template <typename L, typename R,
+    typename = decltype(void(bool(ZuCmp_Can_cmp<L, R>{})), void(bool(ZuCmp_Can_starship<L, R>{})))>
+  ZuInline static constexpr int
   cmp(const L &l, const R &r) {
-    auto v = l <=> r;
-    return (v > 0) - (v < 0); // bah
+    if constexpr (ZuCmp_Can_cmp<L, R>{}) {
+      return l.cmp(r);
+    } else if constexpr (ZuCmp_Can_starship<L, R>{} && !ZuCmp_Can_cmp<L, R>{}) {
+      auto v = l <=> r;
+      return (v > 0) - (v < 0); // bah
+    } else {
+      return (l > r) - (l < r);
+    }
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-    !ZuCmp_Can_cmp<L, R>{} &&
-    !ZuCmp_Can_starship<L, R>{}, int>
-  cmp(const L &l, const R &r) { return (l > r) - (l < r); }
   template <typename L, typename R>
   ZuInline static constexpr bool less(const L &l, const R &r) { return l < r; }
   template <typename L, typename R>
@@ -317,7 +315,7 @@ struct ZuCmp_StrCmp;
 
 template <typename L, typename R, bool LIsString>
 struct ZuCmp_StrCmp<L, R, 1, LIsString, 0> {
-  ZuInline static constexpr int cmp(const L &l_, const R &r_) {
+  inline static constexpr int cmp(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned i = 0;
@@ -335,7 +333,7 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 0> {
       return strcmp(l, r);
     }
   }
-  ZuInline static constexpr bool less(const L &l_, const R &r_) {
+  inline static constexpr bool less(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned i = 0;
@@ -353,7 +351,7 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 0> {
       return strcmp(l, r) < 0;
     }
   }
-  ZuInline static constexpr bool equals(const L &l_, const R &r_) {
+  inline static constexpr bool equals(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned i = 0;
@@ -374,7 +372,7 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 0> {
 };
 template <typename L, typename R>
 struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
-  ZuInline static constexpr int cmp(const L &l_, const R &r_) {
+  inline static constexpr int cmp(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
@@ -394,7 +392,7 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
       return ln - rn;
     }
   }
-  ZuInline static constexpr bool less(const L &l_, const R &r_) {
+  inline static constexpr bool less(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
@@ -414,7 +412,7 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
       return ln < rn;
     }
   }
-  ZuInline static constexpr bool equals(const L &l_, const R &r_) {
+  inline static constexpr bool equals(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
@@ -438,7 +436,7 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 0> {
 
 template <typename L, typename R, bool LIsString>
 struct ZuCmp_StrCmp<L, R, 1, LIsString, 1> {
-  ZuInline static int cmp(const L &l_, const R &r_) {
+  inline static int cmp(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned i = 0;
@@ -452,7 +450,7 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 1> {
       return wcscmp(l, r);
     }
   }
-  ZuInline static bool less(const L &l_, const R &r_) {
+  inline static bool less(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned i = 0;
@@ -466,7 +464,7 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 1> {
       return wcscmp(l, r) < 0;
     }
   }
-  ZuInline static constexpr bool equals(const L &l_, const R &r_) {
+  inline static constexpr bool equals(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned i = 0;
@@ -483,7 +481,7 @@ struct ZuCmp_StrCmp<L, R, 1, LIsString, 1> {
 };
 template <typename L, typename R>
 struct ZuCmp_StrCmp<L, R, 0, 1, 1> {
-  ZuInline static int cmp(const L &l_, const R &r_) {
+  inline static int cmp(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
@@ -503,7 +501,7 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 1> {
       return ln - rn;
     }
   }
-  ZuInline static bool less(const L &l_, const R &r_) {
+  inline static bool less(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
@@ -523,7 +521,7 @@ struct ZuCmp_StrCmp<L, R, 0, 1, 1> {
       return ln < rn;
     }
   }
-  ZuInline static constexpr bool equals(const L &l_, const R &r_) {
+  inline static constexpr bool equals(const L &l_, const R &r_) {
     if (ZuConstEval()) {
       ZuDecay<decltype(l_[0])> lc, rc;
       unsigned ln = ZuTraits<L>::length(l_), rn = ZuTraits<R>::length(r_);
@@ -550,28 +548,28 @@ struct ZuCmp_String;
 
 template <typename T, bool IsString>
 struct ZuCmp_String<T, 1, IsString, 0> {
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
-      !ZuTraits<R>::IsWString, int> cmp(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
+      !ZuTraits<R>::IsWString>>
+  ZuInline static constexpr int cmp(const L &l, const R &r) {
     return ZuCmp_StrCmp<
       L, R,
       ZuTraits<R>::IsCString,
       ZuTraits<L>::IsString, 0>::cmp(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
-      !ZuTraits<R>::IsWString, bool> less(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
+      !ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool less(const L &l, const R &r) {
     return ZuCmp_StrCmp<
       L, R,
       ZuTraits<R>::IsCString,
       ZuTraits<L>::IsString, 0>::less(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
-      !ZuTraits<R>::IsWString, bool> equals(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
+      !ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool equals(const L &l, const R &r) {
     return ZuCmp_StrCmp<
       L, R,
       ZuTraits<R>::IsCString,
@@ -585,22 +583,22 @@ struct ZuCmp_String<T, 1, IsString, 0> {
 };
 template <typename T>
 struct ZuCmp_String<T, 0, 1, 0> {
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
-      !ZuTraits<R>::IsWString, int> cmp(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
+      !ZuTraits<R>::IsWString>>
+  ZuInline static constexpr int cmp(const L &l, const R &r) {
     return ZuCmp_StrCmp<L, R, 0, 1, 0>::cmp(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
-      !ZuTraits<R>::IsWString, bool> less(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
+      !ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool less(const L &l, const R &r) {
     return ZuCmp_StrCmp<L, R, 0, 1, 0>::less(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
-      !ZuTraits<R>::IsWString, bool> equals(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
+      !ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool equals(const L &l, const R &r) {
     return ZuCmp_StrCmp<L, R, 0, 1, 0>::equals(l, r);
   }
   ZuInline static constexpr bool null(const T &s) { return !s; }
@@ -608,28 +606,28 @@ struct ZuCmp_String<T, 0, 1, 0> {
 };
 template <typename T, bool IsString>
 struct ZuCmp_String<T, 1, IsString, 1> {
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
-      ZuTraits<R>::IsWString, int> cmp(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
+      ZuTraits<R>::IsWString>>
+  ZuInline static constexpr int cmp(const L &l, const R &r) {
     return ZuCmp_StrCmp<
       L, R,
       ZuTraits<R>::IsCString,
       ZuTraits<L>::IsString, 1>::cmp(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
-      ZuTraits<R>::IsWString, bool> less(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
+      ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool less(const L &l, const R &r) {
     return ZuCmp_StrCmp<
       L, R,
       ZuTraits<R>::IsCString,
       ZuTraits<L>::IsString, 1>::less(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
-      ZuTraits<R>::IsWString, bool> equals(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsCString && ZuTraits<R>::IsString &&
+      ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool equals(const L &l, const R &r) {
     return ZuCmp_StrCmp<
       L, R,
       ZuTraits<R>::IsCString,
@@ -644,22 +642,22 @@ struct ZuCmp_String<T, 1, IsString, 1> {
 };
 template <typename T>
 struct ZuCmp_String<T, 0, 1, 1> {
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
-      ZuTraits<R>::IsWString, int> cmp(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
+      ZuTraits<R>::IsWString>>
+  ZuInline static constexpr int cmp(const L &l, const R &r) {
     return ZuCmp_StrCmp<L, R, 0, 1, 1>::cmp(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
-      ZuTraits<R>::IsWString, bool> less(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
+      ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool less(const L &l, const R &r) {
     return ZuCmp_StrCmp<L, R, 0, 1, 1>::less(l, r);
   }
-  template <typename L, typename R>
-  ZuInline static constexpr ZuIfT<
-      ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
-      ZuTraits<R>::IsWString, bool> equals(const L &l, const R &r) {
+  template <typename L, typename R,
+    typename = ZuIfT<ZuTraits<L>::IsString && ZuTraits<R>::IsString &&
+      ZuTraits<R>::IsWString>>
+  ZuInline static constexpr bool equals(const L &l, const R &r) {
     return ZuCmp_StrCmp<L, R, 0, 1, 1>::equals(l, r);
   }
   ZuInline static constexpr bool null(const T &s) { return !s; }

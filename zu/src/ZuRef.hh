@@ -102,14 +102,14 @@ public:
     if (T *o = m_object) if (o->deref()) delete o;
   }
 
-  template <typename R> MatchRef<R> swap(R &r) noexcept {
+  template <typename R, typename = MatchRef<R>> void swap(R &r) noexcept {
     T *o = m_object;
     m_object = static_cast<T *>(r.m_object);
     r.m_object = static_cast<typename R::T *>(o);
   }
 
-  template <typename R>
-  friend MatchRef<R> swap(ZuRef &r1, R &r2) noexcept {
+  template <typename R, typename = MatchRef<R>>
+  friend void swap(ZuRef &r1, R &r2) noexcept {
     r1.swap(r2);
   }
 
@@ -117,14 +117,14 @@ public:
     swap(r);
     return *this;
   }
-  template <typename R>
-  MatchOtherRef<R, ZuRef &> operator =(R r) noexcept {
+  template <typename R, typename = MatchOtherRef<R>>
+  ZuRef & operator =(R r) noexcept {
     swap(r);
     return *this;
   }
 
-  template <typename O>
-  MatchPtr<O, ZuRef &> operator =(O *n) {
+  template <typename O, typename = MatchPtr<O>>
+  ZuRef & operator =(O *n) {
     if (n) n->ref();
     T *o = m_object;
     m_object = n;
@@ -135,8 +135,8 @@ public:
   ZuInline operator T *() const { return m_object; }
   ZuInline T *operator ->() const { return m_object; }
 
-  template <typename O = T>
-  MatchRef<ZuRef<O>, O *> ptr() const {
+  template <typename O = T, typename = MatchRef<ZuRef<O>>>
+  O * ptr() const {
     return static_cast<O *>(m_object);
   }
   T *ptr_() const { return m_object; }
@@ -144,8 +144,8 @@ public:
   static ZuRef acquire(T *o) {
     return ZuRef{Acquire{o}};
   }
-  template <typename O = T>
-  MatchRef<ZuRef<O>, O *> release() && {
+  template <typename O = T, typename = MatchRef<ZuRef<O>>>
+  O * release() && {
     T *o = m_object;
     m_object = nullptr;
     return static_cast<O *>(o);

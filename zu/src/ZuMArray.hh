@@ -48,8 +48,8 @@ public:
   template <typename _ = T, ZuNotSame<U, _, int> = 0>
   operator U() const noexcept(noexcept(get())) { return get(); }
 
-  template <typename _ = Array>
-  ZuMutable<_, Elem &> operator =(T v);
+  template <typename _ = Array, typename = ZuMutable<_>>
+  Elem & operator =(T v);
 
   // traits
   using Traits = ZuWrapTraits<Elem, R>;
@@ -132,19 +132,21 @@ friend Elem;
   ZuInline const Elem operator[](uint64_t i) const {
     return {const_cast<Array &>(*this), i};
   }
-  template <typename _ = Underlying>
-  ZuInline ZuMutable<_, Elem> operator[](uint64_t i) {
+  template <typename _ = Underlying, typename = ZuMutable<_>>
+  ZuInline Elem operator[](uint64_t i) {
     return {*this, i};
   }
 
 // iteration - all() is const by default, all<true>() is mutable
-  template <bool Mutable = false, typename _ = Underlying, typename L>
-  ZuIfT<!Mutable || bool(ZuIsConst<_>{})> all(L &&l) const {
+  template <bool Mutable = false, typename _ = Underlying, typename L,
+    typename = ZuIfT<ZuIsConst<_>{} || !Mutable>>
+  void all(L &&l) const {
     for (uint64_t i = 0, n = impl()->length(); i < n; i++)
       ZuFwd<L>(l)((*this)[i]);
   }
-  template <bool Mutable, typename _ = Underlying, typename L>
-  ZuIfT<Mutable && !ZuIsConst<_>{}> all(L &&l) {
+  template <bool Mutable, typename _ = Underlying, typename L,
+    typename = ZuIfT<Mutable && !ZuIsConst<_>{}>>
+  void all(L &&l) {
     for (uint64_t i = 0, n = impl()->length(); i < n; i++)
       ZuFwd<L>(l)((*this)[i]);
   }
@@ -198,8 +200,8 @@ inline typename Array::R Elem<Array>::get() const noexcept(
 }
 
 template <typename Array>
-template <typename _>
-inline ZuMutable<_, Elem<Array> &>
+template <typename _, typename>
+inline Elem<Array> &
 Elem<Array>::operator =(typename Array::T v) {
   array.impl()->set(i, ZuMv(v));
   return *this;

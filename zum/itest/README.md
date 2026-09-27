@@ -1,5 +1,32 @@
 # Zum integration tests
 
+`zumvaulttest` exercises OAuth-token and service-secret persistence through
+`Ztls::Vault`, including client identity separation. It uses a disposable
+Vault home and needs no external service.
+
+The real `zumd` fixtures select `--vault-store=file` only with disposable
+`ZUMD_HOME` directories; deployment must select a secure KeyRing or Module
+store explicitly. The HTTP fixture provisions `global/dbKey` from `ZUM_DB_KEY`,
+then restarts without that variable to exercise Vault loading. It checks that
+an explicitly supplied wrong key fails rather than falling back to the stored
+key. The focused `zumdrekey.py` fixture loads the old key from Vault and supplies
+the new key through `ZUM_DB_KEY`; failed rotations retain the old key, and a
+successful rotation persists the new key. It models interruption between
+durable database commit and Vault publication by restoring the old disposable
+Vault image, then checks same-key retry without ciphertext changes.
+`zumdvault.py` separately checks
+node-file Vault selection, `--once`, first provision, restart without
+environment values, explicit wrong or malformed key, missing stored key,
+two distinct SSF names, missing SSF
+value without partial publication, replacement after restart, and native
+KeyRing failure with a deliberately unsupported D-Bus address. It also blocks
+Vault publication after bootstrap and checks that the daemon never reports
+successful activation. Source ordering keeps request admission behind publication.
+The SSF delivery fixture provisions its configured `secretName`, then restarts
+without that environment variable to exercise `env/ssf/<secretName>` loading.
+Changes to that value take effect on restart, not during active delivery.
+These fixtures never use a real home or native credential store.
+
 `zumrestarttest` uses SQLite for both the basic restart and saga recovery
 scenarios. There is no in-memory fallback. `make test` creates fresh disposable
 SQLite files and supplies all test-specific variables. For a focused manual run

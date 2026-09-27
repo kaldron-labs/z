@@ -168,7 +168,7 @@ protected:
   }
 private:
   void final() {
-    if (m_flags & GC)
+    if (m_flags &GC)
       close();
     else
       final_();
@@ -267,16 +267,19 @@ private:
   using MatchPBuffer =
     ZuIfT<ZuPrint<U>::Buffer && !ZuTraits<U>::IsString, R>;
 
-  template <typename S> ZuMatchString<S> append_(S &&s_) {
-    ZuCSpan s(s_);
-    if (ZuUnlikely(!s)) return;
-    if (ZuUnlikely(write(s.data(), s.length()) != Zi::OK))
-      throw m_error;
+  template <typename S,
+    typename = ZuIfT<(ZuTraits<S>::IsString) || (ZuPrint<S>::Delegate &&
+      !ZuTraits<S>::IsString)>> void append_(S &&s_) {
+    if constexpr (ZuTraits<S>::IsString) {
+      ZuCSpan s(s_);
+      if (ZuUnlikely(!s)) return;
+      if (ZuUnlikely(write(s.data(), s.length()) != Zi::OK))
+	throw m_error;
+    } else {
+      ZuPrint<S>::print(*this, ZuFwd<S>(s_));
+    }
   }
-  template <typename P> MatchPDelegate<P> append_(P &&p) {
-    ZuPrint<P>::print(*this, ZuFwd<P>(p));
-  }
-  template <typename P> MatchPBuffer<P> append_(const P &p) {
+  template <typename P, typename = MatchPBuffer<P>> void append_(const P &p) {
     unsigned len = ZuPrint<P>::length(p);
     auto buf = ZmScratch(char, len);
     if (!buf) throw ZeError{ZiENOMEM};
@@ -347,7 +350,7 @@ public:
 
 private:
   void final() {
-    if (m_flags & GC)
+    if (m_flags &GC)
       close();
     else {
       ZiFile::final_();

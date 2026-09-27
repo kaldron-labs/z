@@ -240,13 +240,13 @@ private:
     r.evictions = m_evictions;
   }
 public:
-  template <bool Reset = false>
-  ZuIfT<!Reset> stats(Stats &r) const {
+  template <bool Reset = false, typename = ZuIfT<!Reset>>
+  void stats(Stats &r) const {
     ReadGuard guard{m_lock};
     stats_(r);
   }
-  template <bool Reset = false>
-  ZuIfT<Reset> stats(Stats &r) {
+  template <bool Reset = false, typename = ZuIfT<Reset>>
+  void stats(Stats &r) {
     Guard guard{m_lock};
     stats_(r);
     m_loads = m_misses = m_evictions = 0;
@@ -314,20 +314,21 @@ public:
       });
   }
 
-  template <bool Evict_ = Evict>
-  ZuIfT<!Evict_ || !Evict> add(NodeRef node) {
-    Guard guard{m_lock};
-    add_<false>(ZuMv(node));
+  template <bool Evict_ = Evict,
+    typename = void>
+  auto add(NodeRef node) {
+    if constexpr (!Evict_ || !Evict) {
+      Guard guard{m_lock};
+      add_<false>(ZuMv(node));
+    } else {
+      Guard guard{m_lock};
+      return NodeRef{add_<true>(ZuMv(node))};
+    }
   }
 
-  template <bool Evict_ = Evict>
-  ZuIfT<Evict_ && Evict, NodeRef> add(NodeRef node) {
-    Guard guard{m_lock};
-    return add_<true>(ZuMv(node));
-  }
-
-  template <bool Evict_ = Evict, typename EvictFn>
-  ZuIfT<Evict_ && Evict, NodeRef> add(NodeRef node, EvictFn evictFn) {
+  template <bool Evict_ = Evict, typename EvictFn,
+    typename = ZuIfT<Evict_ && Evict>>
+  NodeRef add(NodeRef node, EvictFn evictFn) {
     Guard guard{m_lock};
     if (auto evicted = add_<true>(ZuMv(node)))
       evictFn(ZuMv(evicted));
@@ -359,54 +360,54 @@ private:
     return nullptr;
   }
 
-  template <bool Evict_ = Evict>
-  ZuIfT<!Evict_ || !Evict> add_(NodeRef node) {
-    Node *nodePtr = node;
-    m_hash->addNode(ZuMv(node));
-    if constexpr (Evict) m_lru.pushNode(nodePtr);
-  }
-
-  template <bool Evict_ = Evict>
-  ZuIfT<Evict_ && Evict, NodeMvRef> add_(NodeRef node) {
-    Node *nodePtr = node;
-    NodeMvRef evicted = nullptr;
-    if (m_hash->count_() >= m_size) {
-      auto evicted_ = m_lru.shift();
-      if constexpr (ZuTraits<ZuDecay<decltype(evicted_)>>::IsPrimitive)
-	evicted = static_cast<NodeMvRef>(evicted_);
-      else
-	evicted = NodeMvRef{ZuMv(evicted_)};
-      if (evicted) {
-	++m_evictions;
-	m_hash->delNode(ZuMv(evicted));
+  template <bool Evict_ = Evict,
+    typename = void>
+  auto add_(NodeRef node) {
+    if constexpr (!Evict_ || !Evict) {
+      Node *nodePtr = node;
+      m_hash->addNode(ZuMv(node));
+      if constexpr (Evict) m_lru.pushNode(nodePtr);
+    } else {
+      Node *nodePtr = node;
+      NodeMvRef evicted = nullptr;
+      if (m_hash->count_() >= m_size) {
+	auto evicted_ = m_lru.shift();
+	if constexpr (ZuTraits<ZuDecay<decltype(evicted_)>>::IsPrimitive)
+	  evicted = static_cast<NodeMvRef>(evicted_);
+	else
+	  evicted = NodeMvRef{ZuMv(evicted_)};
+	if (evicted) {
+	  ++m_evictions;
+	  m_hash->delNode(ZuMv(evicted));
+	}
       }
+      m_hash->addNode(ZuMv(node));
+      m_lru.pushNode(nodePtr);
+      return evicted;
     }
-    m_hash->addNode(ZuMv(node));
-    m_lru.pushNode(nodePtr);
-    return evicted;
   }
 
 public:
   // all() is const by default, but all<true>() empties the cache
-  template <bool Delete = false, typename L>
-  ZuIfT<!Delete> all(L &&l) const {
+  template <bool Delete = false, typename L, typename = ZuIfT<!Delete>>
+  void all(L &&l) const {
     m_lock.lock();
     const_cast<Impl *>(this)->all_<Delete, false>(ZuFwd<L>(l));
   }
-  template <bool Delete, typename L>
-  ZuIfT<Delete> all(L &&l) {
+  template <bool Delete, typename L, typename = ZuIfT<Delete>>
+  void all(L &&l) {
     m_lock.lock();
     all_<Delete, false>(ZuFwd<L>(l));
   }
 
   // allSync() synchronously blocks
-  template <bool Delete = false, typename L>
-  ZuIfT<!Delete> allSync(L &&l) const {
+  template <bool Delete = false, typename L, typename = ZuIfT<!Delete>>
+  void allSync(L &&l) const {
     m_lock.lock();
     const_cast<ZmCache *>(this)->all_<Delete, true>(ZuFwd<L>(l));
   }
-  template <bool Delete, typename L>
-  ZuIfT<Delete> allSync(L &&l) {
+  template <bool Delete, typename L, typename = ZuIfT<Delete>>
+  void allSync(L &&l) {
     m_lock.lock();
     all_<Delete, true>(ZuFwd<L>(l));
   }
@@ -437,19 +438,19 @@ private:
 	l(ZuMv(buf[j]));
     return true;
   }
-  template <bool Delete>
-  ZuIfT<Delete, decltype(ZuDeclVal<Hash &>().iter())>
+
+  template <bool Delete, typename = void>
+  auto
   allIter() {
-    return m_hash->iter();
-  }
-  template <bool Delete>
-  ZuIfT<!Delete, decltype(ZuDeclVal<const Hash &>().citer())>
-  allIter() {
-    return m_hash->citer();
+    if constexpr (Delete) {
+      return m_hash->iter();
+    } else {
+      return m_hash->citer();
+    }
   }
 private:
   unsigned		m_size;
- 
+
   mutable Lock		m_lock;
     ZmRef<Hash>		  m_hash;
     LRU			  m_lru;

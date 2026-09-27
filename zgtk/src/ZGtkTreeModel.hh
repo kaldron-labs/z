@@ -212,7 +212,7 @@ private:
       },
       nullptr,
       nullptr
-    }; 
+    };
 
     GType gtype_ = g_type_register_static(
 	G_TYPE_OBJECT, "TreeModel", &gtype_info, (GTypeFlags)0);
@@ -249,7 +249,7 @@ public:
 	  g_return_val_if_fail(!!view, false);
 	  if (event->type != Type ||
 	      event->button != Button ||
-	      (event->state & Mask) != State) return false;
+	      (event->state &Mask) != State) return false;
 	  GtkTreePath *path = nullptr;
 	  GtkTreeViewColumn *column = nullptr;
 	  gint cell_x, cell_y;
@@ -310,7 +310,7 @@ public:
 	  g_return_if_fail(!!dragData);
 	  dragEnd(widget, dragData);
 	}), 0);
- 
+
     g_signal_connect(G_OBJECT(view), "button-press-event",
 	ZGtk::callback([](GtkWidget *widget,
 	    GdkEventButton *event, gpointer) -> gboolean {
@@ -762,16 +762,17 @@ namespace TreeHierarchy {
       l(m_rows[i]);
       return true;
     }
-    template <typename L, unsigned Depth_ = Depth>
-    ZuIfT<(Depth_ > 0), bool>
+
+    template <typename L, unsigned Depth_ = Depth,
+      typename = ZuIfT<((Depth_ > 0)) || (Depth_ == 0)>>
+    bool
     descend(const gint *indices, unsigned n, L &&l) const {
-      if (!n) { l(impl()); return true; }
-      return descend_(indices, n, ZuFwd<L>(l));
-    }
-    template <typename L, unsigned Depth_ = Depth>
-    ZuIfT<Depth_ == 0, bool>
-    descend(const gint *indices, unsigned n, L &&l) const {
-      return descend_(indices, n, ZuFwd<L>(l));
+      if constexpr ((Depth_ > 0)) {
+	if (!n) { l(impl()); return true; }
+	return descend_(indices, n, ZuFwd<L>(l));
+      } else {
+	return descend_(indices, n, ZuFwd<L>(l));
+      }
     }
     template <typename L>
     bool descend_(const gint *indices, unsigned n, L &&l) const {

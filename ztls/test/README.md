@@ -15,13 +15,14 @@ embedded in `ZtlsAgeVectors.hh`, so the TAP suite needs no network or age CLI.
 unencrypted OpenSSH RSA and Ed25519 test identities. The TAP suite checks
 SSH key loading and decryption of those independently produced files.
 `ZtlsVaultTest` is the vault TAP entry point. It covers the application API,
-the in-memory `Ephemeral` store, the JSON `File` aggregate, and `Secrets` with
-both stores. The encrypted-file test independently opens `secrets.age` through
-`ZtlsAge` using the passphrase stored by `File`. `libZtlsVaultFixture` exercises
-`Module` with both `Direct` and `Secrets`. Native Secret Service cases run in
+the in-memory `Ephemeral` store, the JSON `File` aggregate, and `Indirect` with
+both stores. The encrypted-file test independently opens the account-hash
+`.age` file through `ZtlsAge` using the passphrase stored by `File`. It also
+checks separate accounts under one home. `libZtlsVaultFixture` exercises
+`Module` with both `Direct` and `Indirect`. Native Secret Service cases run in
 `ztls/itest` and `ztls/interop`. On Linux, the suite checks the aggregate
 directory/file permissions, forks a contender to check PID-file exclusion,
-and recovers after a holder exits without `stop()`. Run it directly as
+and recovers after a holder exits without `close()`. Run it directly as
 `./ztls/test/ZtlsVaultTest` from the repository root.
 
 To exercise ML-KEM-768 PEM interoperability with the OpenSSL CLI in the

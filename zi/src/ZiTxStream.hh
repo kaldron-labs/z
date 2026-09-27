@@ -144,14 +144,14 @@ private:
   template <typename U, typename R = void>
   using MatchPBuffer = ZuIfT<ZuPrint<U>::Buffer, R>;
 
-  template <typename P>
-  MatchPDelegate<P> append(P &&p) {
+  template <typename P, typename = MatchPDelegate<P>>
+  void append(P &&p) {
     if (ZuUnlikely(m_failed)) return;
     ensureBuf();
     ZuPrint<P>::print(*m_buf, ZuFwd<P>(p));
   }
-  template <typename P>
-  MatchPBuffer<P> append(const P &p) {
+  template <typename P, typename = MatchPBuffer<P>>
+  void append(const P &p) {
     if (ZuUnlikely(m_failed)) return;
     ensureBuf();
     unsigned length_ = ZuPrint<P>::length(p);
@@ -193,19 +193,23 @@ public:
     append(buf.data(), buf.length());
     return *this;
   }
-  template <typename C>
-  MatchChar<C, TxStream &> operator <<(C c) {
+  template <typename C, typename = MatchChar<C>>
+  TxStream & operator <<(C c) {
     return *this << ZuSpan{&c, 1};
   }
-  template <typename R>
-  MatchReal<R, TxStream &> operator <<(const R &r) {
-    append(ZuBoxed(r));
-    return *this;
-  }
-  template <typename P>
-  MatchPrint<P, TxStream &> operator <<(const P &p) {
-    append(p);
-    return *this;
+
+  template <typename R,
+    typename = ZuIfT<
+      (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuEquiv<R, char>{}) ||
+      (ZuPrint<R>::OK && !ZuPrint<R>::String)>>
+  TxStream & operator <<(const R &r) {
+    if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuEquiv<R, char>{}) {
+      append(ZuBoxed(r));
+      return *this;
+    } else {
+      append(r);
+      return *this;
+    }
   }
 
   // flush output

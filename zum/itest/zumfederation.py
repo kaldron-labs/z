@@ -57,7 +57,7 @@ def exercise(fixture, provider):
                     {"actionIDs": [action["id"]]}, token=admin,
                     headers={"If-Match": role["etag"]})
     client = create("/admin/clients", {"appID": app_id, "label": "Independent federation client",
-        "type": "native", "redirectURIs": ["http://127.0.0.1:49152/callback"],
+        "profile": "native", "redirectURIs": ["http://127.0.0.1:49152/callback"],
         "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
     fixture.request("PUT", prefix + "/client-access/" + client["id"], {
         "roleIDs": [role["id"]]},
@@ -195,7 +195,7 @@ def exercise(fixture, provider):
                     {"actionIDs": [isolated_action["id"]]}, token=admin,
                     headers={"If-Match": isolated_role["etag"]})
     isolated_client = create("/admin/clients", {
-        "appID": isolated_id, "label": "Provider isolation client", "type": "native",
+        "appID": isolated_id, "label": "Provider isolation client", "profile": "native",
         "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 5,
         "refreshAllowed": True, "identityScopes": ["openid"]})
     fixture.request("PUT", isolated_prefix + "/client-access/" + isolated_client["id"], {

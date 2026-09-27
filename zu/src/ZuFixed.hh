@@ -130,14 +130,14 @@ struct ZuFixed {
       return (mantissa > v.mantissa) - (mantissa < v.mantissa);
     return decimal().cmp(v.decimal());
   }
-  template <typename L, typename R>
-  friend inline ZuIfT<ZuIs_<L, ZuFixed>{}, bool>
+  template <typename L, typename R, ZuFixed * = nullptr, typename = ZuIfT<ZuIs_<L, ZuFixed>{}>>
+  friend inline bool
   operator ==(const L &l, const R &r) { return l.equals(r); }
-  template <typename L, typename R>
-  friend inline ZuIfT<ZuIs_<L, ZuFixed>{}, bool>
+  template <typename L, typename R, ZuFixed * = nullptr, typename = ZuIfT<ZuIs_<L, ZuFixed>{}>>
+  friend inline bool
   operator <(const L &l, const R &r) { return l.cmp(r) < 0; }
-  template <typename L, typename R>
-  friend inline ZuIfT<ZuIs_<L, ZuFixed>{}, int>
+  template <typename L, typename R, ZuFixed * = nullptr, typename = ZuIfT<ZuIs_<L, ZuFixed>{}>>
+  friend inline int
   operator <=>(const L &l, const R &r) { return l.cmp(r); }
 
   // ! is zero, unary * is !null

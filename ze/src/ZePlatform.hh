@@ -220,6 +220,17 @@ public:
   friend ZuPrintFn ZuPrintType(ZeAnyEvent *);
 };
 
+template <typename L, bool Info, typename S = ZeLogBuf, typename = void>
+struct ZeEventCanPrint : public ZuFalse { };
+template <typename L, typename S>
+struct ZeEventCanPrint<L, false, S,
+  decltype(ZuDeclVal<L &>()(ZuDeclVal<S &>()), void())> : public ZuTrue { };
+template <typename L, typename S>
+struct ZeEventCanPrint<L, true, S,
+  decltype(ZuDeclVal<L &>()(
+    ZuDeclVal<S &>(), ZuDeclVal<const ZeEventInfo &>()), void())> :
+      public ZuTrue { };
+
 // event enriched with lambda message - [...](auto &s) { s << ... }
 template <typename L>
 struct ZeEvent : public ZeAnyEvent {
@@ -234,30 +245,21 @@ struct ZeEvent : public ZeAnyEvent {
     ZeAnyEvent(severity, file, line, function, component),
     l{ZuFwd<L_>(l_)} { }
 
-  template <typename S, typename L_ = L>
-  decltype(
-    ZuDeclVal<L_ &>()(ZuDeclVal<S &>()),
-    ZuDeclVal<S &>(),
-    void())
-  print(S &s) const { l(s); }
-  template <typename S, typename L_ = L>
-  decltype(
-    ZuDeclVal<L_ &>()(ZuDeclVal<S &>(), ZuDeclVal<const ZeEventInfo &>()),
-    ZuDeclVal<S &>(),
-    void())
-  print(S &s) const { l(s, *this); }
-
-  template <typename L_ = L>
-  decltype(ZuDeclVal<L_ &>()(ZuDeclVal<ZeLogBuf &>()), ZeMsgFn())
-  fn_() const {
-    return {[l_ = ZuMv(l)](auto &s, const auto &) mutable { l_(s); }};
+  template <typename S, typename L_ = L,
+    typename = ZuIfT<ZeEventCanPrint<L_, false, S>{} ||
+      ZeEventCanPrint<L_, true, S>{}>>
+  void print(S &s) const {
+    if constexpr (ZeEventCanPrint<L_, false, S>{}) l(s);
+    else l(s, *this);
   }
-  template <typename L_ = L>
-  decltype(ZuDeclVal<L_ &>()(
-      ZuDeclVal<ZeLogBuf &>(), ZuDeclVal<const ZeEventInfo &>()),
-    ZeMsgFn())
-  fn_() const {
-    return {ZuMv(l)};
+
+  template <typename L_ = L,
+    typename = ZuIfT<ZeEventCanPrint<L_, false>{} || ZeEventCanPrint<L_, true>{}>>
+  ZeMsgFn fn_() const {
+    if constexpr (ZeEventCanPrint<L_, false>{})
+      return {[l_ = ZuMv(l)](auto &s, const auto &) mutable { l_(s); }};
+    else
+      return {ZuMv(l)};
   }
   ZeMsgFn fn() const { return fn_(); }
 

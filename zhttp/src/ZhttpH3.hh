@@ -105,7 +105,7 @@ ZuInline uint64_t var_(const void *p) {
   return uint64_t(*static_cast<const ZuBigEndian<T> *>(p)) & Mask;
 }
 
-ZuInline uint64_t var_(const uint8_t *p, unsigned n) {
+inline uint64_t var_(const uint8_t *p, unsigned n) {
   switch (n) {
     case 1: return p[0] & 0x3f;
     case 2: return var_<uint16_t, 0x3fff>(p);
@@ -150,7 +150,7 @@ using SettingsKeySet = ZmHashKV<
     ZmHashHeapID<"Zhttp.H3.SettingsKeys">>>;
 
 // parse a QUIC variable-length integer from a contiguous span
-ZuInline int var(ZuBSpan in, unsigned &o, uint64_t &v) {
+inline int var(ZuBSpan in, unsigned &o, uint64_t &v) {
   unsigned n = in.length();
   if (o >= n) return -1;
   auto p = &in[o];
@@ -1215,9 +1215,9 @@ inline int qpackEncodeDynamicName(
 
 namespace DataStream_ {
 
-template <typename Lower>
-auto frameMax(Lower &lower, int) ->
-  decltype(lower.frameMax(), unsigned{})
+template <typename Lower,
+  typename = decltype(ZuDeclVal<Lower &>().frameMax(), unsigned{})>
+decltype(auto) frameMax(Lower &lower, int)
 {
   uint64_t limit = lower.frameMax();
   uint64_t max = limit >> 1;
@@ -1392,8 +1392,8 @@ private:
             3, name) < 0 || putString(out, 0, 7, value) < 0)
 	ok = false;
     }
-    template <typename P>
-    ZuIfT<!Compression::IsPrintString<P>{}>
+    template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+    void
     fieldFixed(ZuBSpan name, const P &value) {
       if (!ok) return;
       auto rendered = ZtScratch(HdrBytes, 256);
@@ -1405,8 +1405,8 @@ private:
       }
       field(name, rendered);
     }
-    template <typename P>
-    ZuIfT<!Compression::IsPrintString<P>{}>
+    template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+    void
     fieldName(ZuBSpan name, const P &value) {
       if (!ok) return;
       auto rendered = ZtScratch(HdrBytes, 256);
@@ -1418,8 +1418,8 @@ private:
       }
       fieldName(name, rendered);
     }
-    template <typename P>
-    ZuIfT<!Compression::IsPrintString<P>{}>
+    template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+    void
     fieldLiteral(ZuBSpan name, const P &value) {
       if (!ok) return;
       auto rendered = ZtScratch(HdrBytes, 256);
@@ -1431,8 +1431,8 @@ private:
       }
       fieldLiteral(name, rendered);
     }
-    template <typename P>
-    ZuIfT<!Compression::IsPrintString<P>{}>
+    template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
+    void
     field(ZuBSpan name, const P &value) {
 	(void)fieldMutable(name, value);
     }
@@ -1473,23 +1473,24 @@ private:
     }
   };
 
-  template <typename Key, typename I = Impl>
-  auto headerOffset_(uint64_t offset, unsigned length, int) -> decltype(
-      ZuDeclVal<I &>().template headerOffset<Key>(offset, length), void()) {
+  template <typename Key, typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().template headerOffset<Key>(ZuDeclVal<uint64_t &>(), ZuDeclVal<unsigned &>()), void())>
+  void headerOffset_(uint64_t offset, unsigned length, int) {
     impl()->template headerOffset<Key>(offset, length);
   }
   template <typename Key>
   void headerOffset_(uint64_t, unsigned, ...) { }
 
-  template <typename I = Impl>
-  auto headerBase_(uint8_t *base, int) -> decltype(
-      ZuDeclVal<I &>().headerBase(base), void()) {
+  template <typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().headerBase(ZuDeclVal<uint8_t * &>()), void())>
+  void headerBase_(uint8_t *base, int) {
     impl()->headerBase(base);
   }
   void headerBase_(uint8_t *, ...) { }
 
-  template <typename I = Impl>
-  auto patch_(int) -> decltype(ZuDeclVal<I &>().patch(), void()) {
+  template <typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().patch(), void())>
+  void patch_(int) {
     impl()->patch();
   }
   void patch_(...) { }
@@ -2026,7 +2027,6 @@ struct CxnStream : public CxnParser<Impl> {
   }
 };
 
-
 } // namespace H3
 
 namespace H3_ {
@@ -2035,7 +2035,6 @@ struct QueueSlot {
   enum Kind : uint8_t { None, Pending, Waiting };
   enum : uint32_t { Invalid = uint32_t(-1) };
 };
-
 
 template <typename Diag>
 void printDiag(const Diag &diag) {

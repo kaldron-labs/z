@@ -12,7 +12,6 @@ pkginclude_HEADERS = ZdbusLib.hh Zdbus.hh ZdbusAddress.hh ZdbusAuth.hh \
 	ZdbusClient.hh ZdbusServer.hh
 lib_LTLIBRARIES = libZdbus.la
 libZdbus_la_CPPFLAGS = $(AM_CPPFLAGS) -DZDBUS_EXPORTS
-libZdbus_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZdbus_la_SOURCES = ZdbusLib.cc ZdbusAddress.cc ZdbusAuth.cc \
 	ZdbusEnvelope.cc ZdbusMessage.cc ZdbusAdapter.cc \
 	ZdbusConnection.cc \

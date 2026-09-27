@@ -5,7 +5,7 @@ table SSFRx {
   app_i_d:uint64;
   audience:string;
   delivery_u_r_l:string;
-  secret_ref:string;
+  secret_name:string;
   revision:uint64 = 1;
   updated:int64;
   owner:Zfb.UInt128;

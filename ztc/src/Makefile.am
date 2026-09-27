@@ -28,7 +28,6 @@ noinst_HEADERS = ZtcAlert.hh ZtcFilter.hh ztcagent_config.hh \
 lib_LTLIBRARIES = libZtc.la libZtcApp.la
 bin_PROGRAMS = ztcagent ztchub
 libZtc_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTC_EXPORTS
-libZtc_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZtc_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZtc_la_SOURCES = ZtcLib.cc ZtcFB.cc
 libZtc_la_LIBADD = \
@@ -43,7 +42,6 @@ libZtc_la_LIBADD = \
 	@FBS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 libZtcApp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTC_EXPORTS
-libZtcApp_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZtcApp_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZtcApp_la_SOURCES = ZtcApp.cc
 libZtcApp_la_LIBADD = libZtc.la

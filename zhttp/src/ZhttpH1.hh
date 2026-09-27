@@ -80,7 +80,7 @@ struct ChunkHdr {
 };
 
 // hard-coded Boyer-Moore to find CRLF within one contiguous span
-ZuInline int eol(ZuBSpan data) {
+inline int eol(ZuBSpan data) {
   unsigned n = data.length();
   if (ZuUnlikely(n < 2)) return -1;
   n -= 2;
@@ -759,23 +759,24 @@ public:
   enum { Chunked = Chunked_ };
 
 private:
-  template <typename Key, typename I = Impl>
-  auto headerOffset_(uint64_t offset, unsigned length, int) -> decltype(
-      ZuDeclVal<I &>().template headerOffset<Key>(offset, length), void()) {
+  template <typename Key, typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().template headerOffset<Key>(ZuDeclVal<uint64_t &>(), ZuDeclVal<unsigned &>()), void())>
+  void headerOffset_(uint64_t offset, unsigned length, int) {
     impl()->template headerOffset<Key>(offset, length);
   }
   template <typename Key>
   void headerOffset_(uint64_t, unsigned, ...) { }
 
-  template <typename I = Impl>
-  auto headerBase_(uint8_t *base, int) -> decltype(
-      ZuDeclVal<I &>().headerBase(base), void()) {
+  template <typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().headerBase(ZuDeclVal<uint8_t * &>()), void())>
+  void headerBase_(uint8_t *base, int) {
     impl()->headerBase(base);
   }
   void headerBase_(uint8_t *, ...) { }
 
-  template <typename I = Impl>
-  auto patch_(int) -> decltype(ZuDeclVal<I &>().patch(), void()) {
+  template <typename I = Impl,
+    typename = decltype(ZuDeclVal<I &>().patch(), void())>
+  void patch_(int) {
     impl()->patch();
   }
   void patch_(...) { }
@@ -866,21 +867,16 @@ protected:
 
 public:
   // body
-  template <typename Stream, bool _ = HasBody && !Chunked>
-  ZuIfT<_, BodyStream<Stream>>
-  body(Stream &stream) { return bodyStream(stream, uint64_t(uint32_t(-1))); }
-  template <typename Stream, bool _ = HasBody && !Chunked>
-  ZuIfT<_, BodyStream<Stream>>
-  body(Stream &stream, uint64_t remaining) {
-    return bodyStream(stream, remaining);
+  template <typename Stream, bool _ = HasBody, typename = ZuIfT<_>>
+  auto body(Stream &stream) {
+    if constexpr (Chunked) return chunkedStream(stream);
+    else return bodyStream(stream, uint64_t(uint32_t(-1)));
   }
-
-  template <typename Stream, bool _ = HasBody && Chunked>
-  ZuIfT<_, ChunkedStream<Stream>>
-  body(Stream &stream) { return chunkedStream(stream); }
-  template <typename Stream, bool _ = HasBody && Chunked>
-  ZuIfT<_, ChunkedStream<Stream>>
-  body(Stream &stream, uint64_t) { return chunkedStream(stream); }
+  template <typename Stream, bool _ = HasBody, typename = ZuIfT<_>>
+  auto body(Stream &stream, uint64_t remaining) {
+    if constexpr (Chunked) return chunkedStream(stream);
+    else return bodyStream(stream, remaining);
+  }
 
   // finish
   template <typename Stream>

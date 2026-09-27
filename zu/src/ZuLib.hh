@@ -133,13 +133,6 @@ inline void ZuClear(void *ptr, size_t size) noexcept
 #endif
 }
 
-template <typename Span>
-inline auto ZuClear(Span &&span) noexcept ->
-  decltype(ZuClear(span.data(), span.length() * sizeof(*span.data())), void())
-{
-  ZuClear(span.data(), span.length() * sizeof(*span.data()));
-}
-
 #ifdef __GNUC__
 
 #define ZuLikely(x) __builtin_expect(!!(x), 1)
@@ -452,6 +445,14 @@ template <typename U> struct ZuDeclVal__ { using T = U; };
 template <typename T> auto ZuDeclVal_(int) -> typename ZuDeclVal__<T&&>::T;
 template <typename T> auto ZuDeclVal_(...) -> typename ZuDeclVal__<T>::T;
 template <typename U> decltype(ZuDeclVal_<U>(0)) ZuDeclVal() noexcept;
+
+template <typename Span,
+  typename = decltype(ZuClear(ZuDeclVal<Span &>().data(),
+    ZuDeclVal<Span &>().length() * sizeof(*ZuDeclVal<Span &>().data())), void())>
+inline void ZuClear(Span &&span) noexcept
+{
+  ZuClear(span.data(), span.length() * sizeof(*span.data()));
+}
 
 // sizeof(void) and empty-class handling:
 // - ZuSize<T>{} is 0 if T is void or an empty class

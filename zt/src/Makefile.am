@@ -15,7 +15,6 @@ pkginclude_HEADERS = \
 	ZtScanBool.hh ZtCase.hh ZtTimeZone.hh \
 	ZtQuote.hh ZtBytesFmt.hh ZtcRAGMap.hh
 lib_LTLIBRARIES = libZt.la
-libZt_la_CXXFLAGS = $(AM_CXXFLAGS) @Z_LIB_CXXFLAGS@
 libZt_la_SOURCES = \
 	ZtLib.cc ZtRegex.cc ZtString.cc ZtHexDump.cc ZtTimeZone.cc \
 	ZtDemangle.cc ZtcRAGMap.cc

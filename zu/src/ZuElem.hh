@@ -15,10 +15,10 @@
 #endif
 
 template <typename T>
-struct alignas(T) ZuElem {
+union alignas(T) ZuElem {
   ZuInline constexpr ZuElem() noexcept { }
   ZuInline constexpr ~ZuElem() noexcept { }
-  union { T v; };
+  T v;
 };
 
 template <typename> struct ZuIsElem_ : public ZuFalse { };

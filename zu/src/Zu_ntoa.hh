@@ -222,7 +222,7 @@ namespace Zu_ntoa {
 
   // the below code carefully defends against a number of obscure pitfalls
   template <typename T>
-  ZuInline uint64_t frac(T v, uint64_t &iv, unsigned &i, unsigned f) {
+  inline uint64_t frac(T v, uint64_t &iv, unsigned &i, unsigned f) {
     uint64_t fv = 0;
     if (ZuLikely(f)) {
       uint64_t pow10 = ZuDecimalFn::pow10_64(f);
@@ -240,39 +240,33 @@ namespace Zu_ntoa {
   }
 
   // decimal handling for each log10 0..20
-  template <typename T>
-  inline Is64Bit<T> Base10_print(T v_, unsigned n, char *buf) {
-    uint64_t v = v_;
-    while (ZuLikely(n)) { buf[--n] = (v % 10) + '0'; v /= 10; }
-  }
-  template <typename T>
-  inline Is128Bit<T> Base10_print(T v_, unsigned n, char *buf) {
-    uint128_t v = v_;
-    if (ZuLikely(v < 10000000000000000000ULL))
-      Base10_print(uint64_t(v), n, buf);
-    else
+
+  template <typename T,
+    typename = ZuIfT<
+      ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) ||
+      ((sizeof(T) > 8) && ZuTraits<T>::IsIntegral)>>
+  inline void Base10_print(T v_, unsigned n, char *buf) {
+    if constexpr ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) {
+      uint64_t v = v_;
       while (ZuLikely(n)) { buf[--n] = (v % 10) + '0'; v /= 10; }
+    } else {
+      uint128_t v = v_;
+      if (ZuLikely(v < 10000000000000000000ULL))
+	Base10_print(uint64_t(v), n, buf);
+      else
+	while (ZuLikely(n)) { buf[--n] = (v % 10) + '0'; v /= 10; }
+    }
   }
-  template <typename T>
-  inline Is64Bit<T> Base10_print_comma(
+
+  template <typename T,
+    typename = ZuIfT<
+      ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) ||
+      ((sizeof(T) > 8) && ZuTraits<T>::IsIntegral)>>
+  inline void Base10_print_comma(
       T v_, unsigned n, char *buf, char comma) {
-    if (ZuUnlikely(!n)) return;
-    uint64_t v = v_;
-    unsigned c = 3;
-    if (ZuLikely(n))
-      for (;;) {
-	buf[--n] = (v % 10) + '0'; v /= 10;
-	if (ZuUnlikely(!n)) break;
-	if (ZuUnlikely(!--c)) { buf[--n] = comma; c = 3; }
-      }
-  }
-  template <typename T>
-  inline Is128Bit<T> Base10_print_comma(
-      T v_, unsigned n, char *buf, char comma) {
-    uint128_t v = v_;
-    if (ZuLikely(v < 10000000000000000000ULL))
-      Base10_print_comma(uint64_t(v), n, buf, comma);
-    else {
+    if constexpr ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) {
+      if (ZuUnlikely(!n)) return;
+      uint64_t v = v_;
       unsigned c = 3;
       if (ZuLikely(n))
 	for (;;) {
@@ -280,6 +274,19 @@ namespace Zu_ntoa {
 	  if (ZuUnlikely(!n)) break;
 	  if (ZuUnlikely(!--c)) { buf[--n] = comma; c = 3; }
 	}
+    } else {
+      uint128_t v = v_;
+      if (ZuLikely(v < 10000000000000000000ULL))
+	Base10_print_comma(uint64_t(v), n, buf, comma);
+      else {
+	unsigned c = 3;
+	if (ZuLikely(n))
+	  for (;;) {
+	    buf[--n] = (v % 10) + '0'; v /= 10;
+	    if (ZuUnlikely(!n)) break;
+	    if (ZuUnlikely(!--c)) { buf[--n] = comma; c = 3; }
+	  }
+      }
     }
   }
   template <typename T>
@@ -382,45 +389,53 @@ namespace Zu_ntoa {
   template <unsigned Size> struct LogN<1, Size> : public Log16<Size> { };
 
   // hexadecimal handling for each log16 0..16
-  template <bool Upper>
-  ZuInline static ZuIfT<Upper, char> hexDigit(unsigned v) {
-    static constexpr const char digits[] = "0123456789ABCDEF";
-    return digits[v];
-    // return v < 10 ? v + '0' : v - 10 + 'A';
+
+  template <bool Upper, typename = void>
+  ZuInline static char hexDigit(unsigned v) {
+    if constexpr (Upper) {
+      static constexpr const char digits[] = "0123456789ABCDEF";
+      return digits[v];
+      // return v < 10 ? v + '0' : v - 10 + 'A';
+    } else {
+      static constexpr const char digits[] = "0123456789abcdef";
+      return digits[v];
+      // return v < 10 ? v + '0' : v - 10 + 'a';
+    }
   }
-  template <bool Upper>
-  ZuInline static ZuIfT<!Upper, char> hexDigit(unsigned v) {
-    static constexpr const char digits[] = "0123456789abcdef";
-    return digits[v];
-    // return v < 10 ? v + '0' : v - 10 + 'a';
-  }
-  template <typename T>
-  Is64Bit<T> Base16_print(T v_, unsigned n, char *buf) {
-    uint64_t v = v_;
-    while (ZuLikely(n)) { buf[--n] = hexDigit<0>(v & 0xf); v >>= 4U; }
-  }
-  template <typename T>
-  Is128Bit<T> Base16_print(T v_, unsigned n, char *buf) {
-    uint128_t v = v_;
-    if (ZuLikely(!(v>>64U)))
-      Base16_print(uint64_t(v), n, buf);
-    else
+
+  template <typename T,
+    typename = ZuIfT<
+      ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) ||
+      ((sizeof(T) > 8) && ZuTraits<T>::IsIntegral)>>
+  void Base16_print(T v_, unsigned n, char *buf) {
+    if constexpr ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) {
+      uint64_t v = v_;
       while (ZuLikely(n)) { buf[--n] = hexDigit<0>(v & 0xf); v >>= 4U; }
+    } else {
+      uint128_t v = v_;
+      if (ZuLikely(!(v>>64U)))
+	Base16_print(uint64_t(v), n, buf);
+      else
+	while (ZuLikely(n)) { buf[--n] = hexDigit<0>(v & 0xf); v >>= 4U; }
+    }
   }
-  template <typename T>
-  Is64Bit<T> Base16_print_upper(
+
+  template <typename T,
+    typename = ZuIfT<
+      ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) ||
+      ((sizeof(T) > 8) && ZuTraits<T>::IsIntegral)>>
+  void Base16_print_upper(
       T v_, unsigned n, char *buf) {
-    uint64_t v = v_;
-    while (ZuLikely(n)) { buf[--n] = hexDigit<1>(v & 0xf); v >>= 4U; }
-  }
-  template <typename T>
-  Is128Bit<T> Base16_print_upper(
-      T v_, unsigned n, char *buf) {
-    uint128_t v = v_;
-    if (ZuLikely(!(v>>64U)))
-      Base16_print_upper(uint64_t(v), n, buf);
-    else
+    if constexpr ((sizeof(T) <= 8) && ZuTraits<T>::IsIntegral) {
+      uint64_t v = v_;
       while (ZuLikely(n)) { buf[--n] = hexDigit<1>(v & 0xf); v >>= 4U; }
+    } else {
+      uint128_t v = v_;
+      if (ZuLikely(!(v>>64U)))
+	Base16_print_upper(uint64_t(v), n, buf);
+      else
+	while (ZuLikely(n)) { buf[--n] = hexDigit<1>(v & 0xf); v >>= 4U; }
+    }
   }
   template <bool Upper> struct Base16 {
     template <typename T>
@@ -443,7 +458,7 @@ namespace Zu_ntoa {
   template <char Comma, bool Upper>
   struct BaseN<1, Comma, Upper, 1> : public Base16<Upper> {
     template <typename T>
-    ZuInline static void print(T v, unsigned n, char *buf) {
+    inline static void print(T v, unsigned n, char *buf) {
       *buf++ = '0';
       *buf++ = 'x';
       Base16<Upper>::print(v, n - 2, buf);
@@ -494,7 +509,7 @@ namespace Zu_ntoa {
   template <bool Hex, char Comma, bool Upper, bool Alt>
   struct Print_<Hex, Comma, Upper, Alt, 0> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n);
       BaseN<Hex, Comma, Upper, Alt>::print(v, n, buf);
       return n;
@@ -503,7 +518,7 @@ namespace Zu_ntoa {
   template <bool Hex, char Comma, bool Upper, bool Alt>
   struct Print_<Hex, Comma, Upper, Alt, 1> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n);
       *buf++ = '-';
       BaseN<Hex, Comma, Upper, Alt>::print(v, n, buf);
@@ -525,7 +540,7 @@ namespace Zu_ntoa {
     char Pad, unsigned Width>
   struct Print_Left<Hex, Comma, Upper, Alt, Pad, Width, 0> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n);
       if (ZuUnlikely(n > Width)) return 0;
       BaseN<Hex, Comma, Upper, Alt>::print(v, n, buf);
@@ -537,7 +552,7 @@ namespace Zu_ntoa {
     char Pad, unsigned Width>
   struct Print_Left<Hex, Comma, Upper, Alt, Pad, Width, 1> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n) + 1;
       if (ZuUnlikely(n > Width)) return 0;
       *buf++ = '-';
@@ -554,7 +569,7 @@ namespace Zu_ntoa {
     char Pad, unsigned Width>
   struct Print_Right<Hex, Comma, Upper, Alt, Pad, Width, 0> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n);
       if (ZuUnlikely(n > Width)) return 0;
       if (ZuLikely(n < Width)) memset(buf, Pad, Width - n);
@@ -566,7 +581,7 @@ namespace Zu_ntoa {
     char Pad, unsigned Width>
   struct Print_Right<Hex, Comma, Upper, Alt, Pad, Width, 1> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n) + 1;
       if (ZuUnlikely(n > Width)) return 0;
       if (ZuLikely(n < Width)) memset(buf, Pad, Width - n);
@@ -579,7 +594,7 @@ namespace Zu_ntoa {
   template <bool Hex, char Comma, bool Upper, bool Alt, unsigned Width>
   struct Print_Right<Hex, Comma, Upper, Alt, '0', Width, 1> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<Hex, Comma, Alt>::len(n) + 1;
       if (ZuUnlikely(n > Width)) return 0;
       *buf++ = '-';
@@ -592,7 +607,7 @@ namespace Zu_ntoa {
   template <char Comma, bool Upper, unsigned Width>
   struct Print_Right<1, Comma, Upper, 1, '0', Width, 0> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<1, 0, 0>::len(n) + 2;
       if (ZuUnlikely(n > Width)) return 0;
       *buf++ = '0'; *buf++ = 'x';
@@ -604,7 +619,7 @@ namespace Zu_ntoa {
   template <char Comma, bool Upper, unsigned Width>
   struct Print_Right<1, Comma, Upper, 1, '0', Width, 1> {
     template <typename T>
-    ZuInline static unsigned print(T v, unsigned n, char *buf) {
+    inline static unsigned print(T v, unsigned n, char *buf) {
       n = Len<1, 0, 0>::len(n) + 3;
       if (ZuUnlikely(n > Width)) return 0;
       *buf++ = '-'; *buf++ = '0'; *buf++ = 'x';
@@ -688,7 +703,7 @@ namespace Zu_ntoa {
     if (!f) return i + negative;
     buf += i;
     *buf++ = '.';
-    Base10_print(fv, f, buf); 
+    Base10_print(fv, f, buf);
     return i + 1 + f + negative;
   }
 
@@ -728,7 +743,7 @@ namespace Zu_ntoa {
       buf += i;
       *buf++ = '.';
       if constexpr (Fixed) {
-	Base10_print(fv, f, buf); 
+	Base10_print(fv, f, buf);
 	return i + 1 + f + negative;
       }
       if constexpr (!Trim)
@@ -1177,7 +1192,7 @@ struct Zu_vprint {
     buf += i;
     *buf++ = '.';
     if (fixed) {
-      Zu_ntoa::Base10_print(fv, f, buf); 
+      Zu_ntoa::Base10_print(fv, f, buf);
       return i + 1 + f + negative;
     }
     char trim = fmt.trim();

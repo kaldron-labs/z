@@ -175,11 +175,11 @@ def bad_subprotocol(port, token):
         sock.close()
 
 
-def app_client(fixture, admin, app_id, prefix, role_id, label, grants, kind, redirect_port=49152):
+def app_client(fixture, admin, app_id, prefix, role_id, label, grants, profile, redirect_port=49152):
     item = fixture.admin_secret("clientAdd", {
-        "appID": app_id, "label": label, "type": kind,
+        "appID": app_id, "label": label, "profile": profile,
         "redirectURIs": ([f"http://127.0.0.1:{redirect_port}/callback"]
-                          if kind == "native" else []),
+                          if profile == "native" else []),
         "grants": grants, "refreshAllowed": grants >= 5,
         "$idempotencyKey": secrets.token_hex(16)})["item"]
     fixture.request("PUT", prefix + "/client-access/" + item["id"], {
@@ -221,7 +221,7 @@ def run_load(root, fixture, directory, hub, app_id, prefix, role_id,
             renewed = time.monotonic()
         client = fixture.request("POST", "/admin/clients", {
             "appID": app_id, "label": "load device " + str(index),
-            "type": "confidential", "redirectURIs": [], "grants": 2},
+            "profile": "server", "redirectURIs": [], "grants": 2},
             token=admin, headers={"Idempotency-Key": secrets.token_hex(16)},
             status=201)[0]["item"]
         fixture.request("PUT", prefix + "/client-access/" + client["id"],
@@ -351,7 +351,7 @@ def main():
             ", audience: " + json.dumps(service_audience) +
             ", deliveryURL: " +
             json.dumps("https://127.0.0.1:" + str(ssf_port) + "/ssf") +
-            ", secretRef: \"" + callback_ref + "\", revision: 1}]}\n")
+            ", secretName: \"" + callback_ref + "\", revision: 1}]}\n")
         fixture.stop()
         fixture.start()
         fixture.request("GET", "/health/ready")
@@ -395,7 +395,9 @@ def main():
             "schedulerTurnWork: 64\n")
         config.write_text(config_text)
         env = dict(os.environ, ZUM_CLIENT_SECRET=app["client_secret"],
-                   ZUM_SSF_CALLBACK_AUTH=callback_auth)
+                   ZUM_SSF_AUTH=callback_auth,
+                   ZTCHUB_HOME=str(directory / "ztchub-vault"),
+                   DBUS_SESSION_BUS_ADDRESS="unsupported:address")
         for var in ("ZUM_DB_KEY", "ZDB_MODULE", "ZDB_CONNECT"):
             env.pop(var, None)
         for var in ("ZTCHUB_HOSTS", "ZTCHUB_HOSTID"):
@@ -455,10 +457,10 @@ def main():
             "ztchub native front end", 5, "native")
         agent1 = app_client(
             fixture, admin, app_id, prefix, role["Agent"]["id"],
-            "ztchub device one", 2, "confidential")
+            "ztchub device one", 2, "server")
         agent2 = app_client(
             fixture, admin, app_id, prefix, role["Agent"]["id"],
-            "ztchub device two", 2, "confidential")
+            "ztchub device two", 2, "server")
         assert agent1["id"] != agent2["id"]
         token1 = service_token(fixture, app_id, agent1)
         token2 = service_token(fixture, app_id, agent2)
@@ -542,13 +544,16 @@ def main():
             f'clientID: {json.dumps(example_client["id"])}, '
             f'scope: "Client offline_access", callbackPort: {example_port}, '
             'loginTimeout: 30, loopbackTest: true\n')
+        example_env = {**os.environ,
+                       "ZTCHUB_CLIENT_HOME": str(directory / "example-vault"),
+                       "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"}
         with (directory / "example.log").open("ab") as example_log:
             example = subprocess.Popen([
                 str(root / "ztc" / "example" / "ztchub_client"),
                 "--config=" + str(example_cf), "--no-browser",
                 "--device-id=" + agent2["id"], "--wss=" + wss2,
                 "--ca=" + str(cert)], stdout=subprocess.PIPE,
-                stderr=example_log)
+                stderr=example_log, env=example_env)
             fronts.append(example)
             fixture.cookies = SimpleCookie()
             fixture.cli_callback(example, example_port, app_id=app_id)
@@ -556,6 +561,15 @@ def main():
             assert example.returncode == 0, "native example failed"
             assert output.count(b"telemetry device=") == 2, output
             assert b"refresh token rotated" in output, output
+            resumed = subprocess.run([
+                str(root / "ztc" / "example" / "ztchub_client"),
+                "--config=" + str(example_cf), "--no-browser",
+                "--device-id=" + agent2["id"], "--wss=" + wss2,
+                "--ca=" + str(cert)], stdout=subprocess.PIPE,
+                stderr=example_log, env=example_env, timeout=30)
+            assert resumed.returncode == 0, "stored-token example failed"
+            assert resumed.stdout.count(b"telemetry device=") == 1
+            assert b"Open this URL" not in resumed.stdout
 
         control_front = run_wire(
             root, "front", fixture.issuer(app_id), agent1["id"], wss1, cert,
@@ -628,8 +642,11 @@ def main():
             wait_line(hub, "agent accepted " + agent1["id"])
         else:
             hub = None
+            resumed_env = dict(env)
+            resumed_env.pop("ZUM_CLIENT_SECRET")
+            resumed_env.pop("ZUM_SSF_AUTH")
             hub = subprocess.Popen(hub_command(root, config, directory),
-                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                env=resumed_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             hubs.append(hub)
             wait_line(hub, "ztchub ready")
             restarted_agent = run_wire(

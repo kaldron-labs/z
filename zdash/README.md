@@ -74,6 +74,7 @@ export ZDB_CONNECT="$ZLOCAL/iam.db"
 export ZUM_SSF_ZTCHUB_AUTH="Bearer $(cat "$ZLOCAL/ssf.secret")"
 
 "$ZROOT/zum/src/zumd" --config="$ZLOCAL/zumd.cf" \
+  --vault-store=keyring \
   --issuer=http://localhost:8090 --addr=127.0.0.1 --port=8090 \
   --rp-id=localhost --admin=admin@localhost \
   --bootstrap-output="$ZLOCAL/bootstrap-url"
@@ -117,15 +118,16 @@ clientID: "zum-admin",
 scope: "zum.admin offline_access",
 callbackPort: 8081,
 loginTimeout: 180,
-credentialFile: "$ZLOCAL/admin.credentials",
 loopbackTest: true
 EOF
-
 "$ZROOT/zum/src/zum" --config="$ZLOCAL/admin.cf" login
 ```
 
-Complete the browser passkey login and consent. The CLI stores credentials in
-an owner-only file and uses them for subsequent operations. `--no-browser`
+Complete the browser passkey login and consent. The CLI stores credentials
+through `Ztls::Vault` and uses them for subsequent operations. Set `ZUM_HOME`
+to a private directory to select its vault home; the default is `$HOME/.zum`.
+`zdash` uses its own vault home, `$HOME/.zdash` or `ZDASH_HOME`, for refresh
+credentials and can resume a later session without browser login. `--no-browser`
 prints a URL to open manually. Run native login commands sequentially because
 they share callback port 8081.
 
@@ -189,13 +191,16 @@ ssf: {
     receiverID: "$HUB_CLIENT_ID", appID: $APP_ID,
     audience: "http://localhost:8090/admin",
     deliveryURL: "https://localhost:8444/ssf",
-    secretRef: "ZUM_SSF_ZTCHUB_AUTH", revision: 1
+    secretName: "ZUM_SSF_ZTCHUB_AUTH", revision: 1
   }]
 }
 EOF
 ```
 
-Stop `zumd` with Ctrl-C and restart it with the same command and environment.
+Stop `zumd` with Ctrl-C and restart it with the same command. After a successful
+start, `ZUM_DB_KEY` and `ZUM_SSF_ZTCHUB_AUTH` may be unset: their values are in
+the selected secure Vault store. To rotate the callback authorization value,
+restart `zumd` with the replacement variable set.
 The `oidc.caPath` setting also supplies trust for outgoing SSF HTTPS delivery.
 The callback Authorization value must match on both processes, including its
 `Bearer ` prefix. This wires refresh-family revocation delivery to the hub.
@@ -229,7 +234,7 @@ In a second service terminal, with the same `ZROOT` and `ZLOCAL`, start the hub:
 export ZUM_CLIENT_SECRET=$(python3 -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["item"]["client_secret"])' \
   "$ZLOCAL/hub-enrollment.json")
-export ZUM_SSF_CALLBACK_AUTH="Bearer $(cat "$ZLOCAL/ssf.secret")"
+export ZUM_SSF_AUTH="Bearer $(cat "$ZLOCAL/ssf.secret")"
 "$ZROOT/ztc/src/ztchub" --config="$ZLOCAL/ztchub.cf"
 ```
 
@@ -271,7 +276,7 @@ print(json.dumps({"appID": int(sys.argv[2]), "userID": int(sys.argv[3]),
 PY
 
 zumop clientAdd <<EOF
-{"appID":$APP_ID,"label":"Local zdash","type":"native",
+{"appID":$APP_ID,"label":"Local zdash","profile":"native",
  "redirectURIs":["http://127.0.0.1:8081/callback"],
  "grants":5,"refreshAllowed":true,
  "\$idempotencyKey":"$(openssl rand -hex 16)",
@@ -325,17 +330,17 @@ Other subscription groups require a device ID; `publisherID`, `group`, `filter`
 and `interval` can be selected in the configuration.
 
 The current dashboard runs one WSS session per login. It does not renew the
-live connection automatically when its access token expires; restart and log
-in again. On normal exit it revokes any refresh token obtained during login.
+live connection automatically when its access token expires; restart it to
+refresh the credential stored in Vault and open a new session.
 
 ## Optional: supply local telemetry
 
-Create a confidential device client with grant mask `2` (`client_credentials`)
+Create a server-side device client with grant mask `2` (`client_credentials`)
 and allow the `Agent` role:
 
 ```sh
 zumop clientAdd <<EOF
-{"appID":$APP_ID,"label":"Local telemetry device","type":"confidential",
+{"appID":$APP_ID,"label":"Local telemetry device","profile":"server",
  "redirectURIs":[],"grants":2,
  "\$idempotencyKey":"$(openssl rand -hex 16)",
  "\$secretOutput":"$ZLOCAL/device-client.json"}

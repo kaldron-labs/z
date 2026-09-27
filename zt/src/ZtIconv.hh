@@ -63,8 +63,9 @@ public:
   ZtIconv(const ZtIconv &) = delete;
   ZtIconv &operator =(const ZtIconv &) = delete;
 
-  template <class Out, typename In>
-  ZuIfT<ZuTraits<Out>::IsString && ZuTraits<In>::IsString, int>
+  template <class Out, typename In,
+    typename = ZuIfT<ZuTraits<Out>::IsString && ZuTraits<In>::IsString>>
+  int
   convert(Out &out, const In &in) {
     if (ZuUnlikely(m_cd == (iconv_t)-1)) return -1;
     auto inBuf = reinterpret_cast<const char *>(ZuTraits<In>::data(in));
@@ -85,8 +86,8 @@ public:
       if (ZuUnlikely(inLen >= inSize)) inLen = 0;
       double ratio = (double)(outSize - outLen) / (double)(inSize - inLen);
       if (ZuUnlikely(ratio < 1.0)) ratio = 1.0;
-      size_t newOutSize = (size_t)(ratio * factor() * (double)inSize);
-      size_t minOutSize = (size_t)((double)outSize * factor());
+      size_t newOutSize = (size_t)(ratio *factor() * (double)inSize);
+      size_t minOutSize = (size_t)((double)outSize *factor());
       if (ZuUnlikely(newOutSize < minOutSize)) newOutSize = minOutSize;
       newOutSize = ZtIconvFn<Out>::length(out, newOutSize);
       if (ZuUnlikely(newOutSize <= minOutSize)) {

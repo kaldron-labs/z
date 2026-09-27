@@ -129,75 +129,71 @@ public:
   }
 
 protected:
-  template <typename S>
-  MatchString<S> append_(S &&s_) {
-    ZuSpan<const Char> s(s_);
-    append(s.data(), s.length());
-  }
 
-  template <typename C>
-  MatchChar<C> append_(C c) {
-    if (!length()) {
-      m_overflow = true;
-      return;
-    }
-    *(data()) = c;
-    offset(1);
-  }
-
-  template <typename S>
-  MatchAltString<S> append_(S &&s) {
-    if (!length()) {
-      m_overflow = true;
-      return;
-    }
-    auto r = ZuUTF<Char, AltChar>::cvt_overflow(*this, s);
-    m_overflow = r.template p<1>();
-    offset(r.template p<0>());
-  }
-
-  template <typename C>
-  MatchAltChar<C> append_(C c) {
-    if (!length()) return;
-    auto r = ZuUTF<Char, AltChar>::cvt_overflow(*this, {&c, 1});
-    m_overflow = r.template p<1>();
-    offset(r.template p<0>());
-  }
-
-  template <typename P>
-  MatchPDelegate<P> append_(const P &p) {
-    ZuPrint<P>::print(*this, p);
-  }
-  template <typename P>
-  MatchPBuffer<P> append_(const P &p) {
-    auto length_ = ZuPrint<P>::length(p);
-    if (!length_) return;
-    if (length() < length_) { m_overflow = true; return; }
-    if constexpr (ZuEquiv<Char, char>{}) {
-      offset(ZuPrint<P>::print(
-	reinterpret_cast<char *>(data()), length(), p));
+  template <typename S, typename = ZuIfT<(IsString<S>{}) || (IsAltString<S>{})>>
+  void append_(S &&s_) {
+    if constexpr (IsString<S>{}) {
+      ZuSpan<const Char> s(s_);
+      append(s.data(), s.length());
     } else {
-      auto buf = static_cast<char *>(ZuAlloca(length_, 1));
-      if (!buf) { m_overflow = true; return; }
-      ZuCSpan s(buf, ZuPrint<P>::print(buf, length_, p));
-      auto r = ZuUTF<Char, AltChar>::cvt_overflow(*this, s);
+      if (!length()) {
+	m_overflow = true;
+	return;
+      }
+      auto r = ZuUTF<Char, AltChar>::cvt_overflow(*this, s_);
       m_overflow = r.template p<1>();
       offset(r.template p<0>());
     }
   }
 
-  template <typename V>
-  MatchReal<V> append_(V v) {
-    append_(ZuBoxed(v));
+  template <typename P,
+    typename = ZuIfT<(IsPDelegate<P>{}) || (IsPBuffer<P>{})>>
+  void append_(const P &p) {
+    if constexpr (IsPDelegate<P>{}) {
+      ZuPrint<P>::print(*this, p);
+    } else {
+      auto length_ = ZuPrint<P>::length(p);
+      if (!length_) return;
+      if (length() < length_) { m_overflow = true; return; }
+      if constexpr (ZuEquiv<Char, char>{}) {
+	offset(ZuPrint<P>::print(
+	  reinterpret_cast<char *>(data()), length(), p));
+      } else {
+	auto buf = static_cast<char *>(ZuAlloca(length_, 1));
+	if (!buf) { m_overflow = true; return; }
+	ZuCSpan s(buf, ZuPrint<P>::print(buf, length_, p));
+	auto r = ZuUTF<Char, AltChar>::cvt_overflow(*this, s);
+	m_overflow = r.template p<1>();
+	offset(r.template p<0>());
+      }
+    }
   }
-  template <typename V>
-  MatchPtr<V> append_(V v) {
-    append_(ZuBoxPtr(v).hex<false, ZuFmt::Alt<>>());
+
+  template <typename C,
+    typename = ZuIfT<(IsChar<C>{}) || (IsAltChar<C>{}) || (IsReal<C>{}) || (IsPtr<C>{})>>
+  void append_(C c) {
+    if constexpr (IsChar<C>{}) {
+      if (!length()) {
+	m_overflow = true;
+	return;
+      }
+      *(data()) = c;
+      offset(1);
+    } else if constexpr (IsAltChar<C>{}) {
+      if (!length()) return;
+      auto r = ZuUTF<Char, AltChar>::cvt_overflow(*this, {&c, 1});
+      m_overflow = r.template p<1>();
+      offset(r.template p<0>());
+    } else if constexpr (IsReal<C>{}) {
+      append_(ZuBoxed(c));
+    } else {
+      append_(ZuBoxPtr(c).hex<false, ZuFmt::Alt<>>());
+    }
   }
 
 public:
-  template <typename U>
-  MatchStreamable<U, ZuStream_ &>
+  template <typename U, typename = MatchStreamable<U>>
+  ZuStream_ &
   operator <<(U &&v) {
     append_(ZuFwd<U>(v));
     return *this;
