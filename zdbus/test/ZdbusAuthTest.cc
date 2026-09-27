@@ -13,7 +13,7 @@ static void external()
 {
   ZuTestScope(external);
   Zdbus_::Auth auth;
-  Zdbus_::Auth::Text output;
+  Zdbus_::Auth::String output;
   auth.start(output, 1000);
   ZuCheck(ZuBSpan(output).length() == 25);
   ZuCheck(ZuBSpan(output)[0] == 0);
@@ -34,7 +34,7 @@ static void invalid()
 {
   ZuTestScope(invalid);
   Zdbus_::Auth auth;
-  Zdbus_::Auth::Text output;
+  Zdbus_::Auth::String output;
   auth.start(output, 0);
   ZuCheck(auth.feed("REJECTED EXTERNAL\r\n") == 19);
   ZuCheck(auth.state() == Zdbus_::AuthState::Failed);
@@ -57,7 +57,7 @@ static void invalid()
   ZuCheck(auth.state() == Zdbus_::AuthState::Failed);
 
   auth.start(output, 0);
-  Zdbus_::Auth::Text longLine;
+  Zdbus_::Auth::String longLine;
   for (unsigned i = 0; i <= Zdbus_::Auth::MaxLine; ++i)
     longLine << 'x';
   ZuCheck(auth.feed(ZuBSpan{longLine}) == longLine.length());

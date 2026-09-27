@@ -63,7 +63,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
     } else if constexpr (Impl::Query == QueryPolicy::URI) {
       using Path = Impl::Path;
       using Query_URI_Facet = Impl::Query_URI_Facet;
-      auto buf = ZtScratch(SignBuf, Impl::SignQueryBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignQueryBufSize);
       const auto &query = impl()->queryObject(object.ptr());
       buf << Path{}();
       ZfURI::save<Query_URI_Facet>(buf, query);
@@ -95,7 +95,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON) {
       using Body_JSON_Facet = Impl::Body_JSON_Facet;
-      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject(object.ptr());
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
@@ -117,7 +117,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI) {
       using Body_URI_Facet = Impl::Body_URI_Facet;
-      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
       const auto &body = impl()->bodyObject(object.ptr());
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
@@ -130,7 +130,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 	return Zhttp::WriteOutcome::End;
       });
     } else if constexpr (Impl::Body == BodyPolicy::Raw && Impl::SignBody) {
-      auto buf = ZtScratch(SignBuf, Impl::SignBodyBufSize);
+      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
       buf << impl()->bodyObject(object.ptr());
@@ -345,16 +345,14 @@ struct MResParser : public Zhttp::Parser {
 	if constexpr (ZuTypeIn<Value, Values>{})
 	  response.template header<Key, Value>(section);
 	else {
-	  using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	  auto fixed = Value{}();
-	  auto value = ZtScratch(Storage, fixed.length());
+	  auto value = ZtScratch(HeaderScratch, fixed.length());
 	  value = fixed;
 	  response.template header<Key>(section, value.span());
 	}
       } else {
-	using Storage = ZtBArray<ZtArrayHeapID<"Zrest.Header.Value">>;
 	auto fixed = Value{}();
-	auto value = ZtScratch(Storage, fixed.length());
+	auto value = ZtScratch(HeaderScratch, fixed.length());
 	value = fixed;
 	response.header(section, Key{}(), value.span());
       }

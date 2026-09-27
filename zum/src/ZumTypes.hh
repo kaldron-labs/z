@@ -19,6 +19,8 @@
 namespace Zum {
 
 ZuDerive(String, ZtString<ZtStringHeapID<"Zum.String">>);
+ZuDerive(TextScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID<"Zum.String">>>));
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Bytes">>));
 ZuDerive(SecretString, (ZtString<ZtStringSecret<true,
   ZtStringHeapID<"Zum.String">>>));

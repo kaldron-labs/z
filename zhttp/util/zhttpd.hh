@@ -616,6 +616,15 @@ inline void basicAuthValue(S &out, const Options &options) {
   out.length(offset + n);
 }
 
+struct DirEntry {
+  HdrString name;
+  bool dir = false;
+  uint64_t size = 0;
+  time_t mtime = 0;
+};
+ZuDerive(DirEntriesScratch, (ZtArray<DirEntry,
+  ZtArrayHeapID<"zhttpd.DirEntries", ZtArraySharded<true>>>));
+
 struct StaticPlanner {
   StaticPlanner(State *state_) : state{state_} { }
 
@@ -953,15 +962,7 @@ struct StaticPlanner {
   ResponsePlan listing(
     const RequestData &req, const Zi::Path &path,
     ZuCSpan clean, ResponsePlan resp) const {
-    struct Entry {
-      HdrString name;
-      bool dir = false;
-      uint64_t size = 0;
-      time_t mtime = 0;
-    };
-    using Entries = ZtArray<Entry,
-      ZtArrayHeapID<"zhttpd.DirEntries">>;
-    auto entries = ZtScratch(Entries, DirEntriesBuiltin);
+    auto entries = ZtScratch(DirEntriesScratch, DirEntriesBuiltin);
     ZiDir dir;
     Zi::Path name;
     if (dir.open(path) == Zi::OK) {
@@ -969,7 +970,7 @@ struct StaticPlanner {
       if (name == "." || name == "..") continue;
       if (state->options.hideDotfiles && name && name[0] == '.')
 	continue;
-      auto *entry = new (entries.push()) Entry();
+      auto *entry = new (entries.push()) DirEntry();
       entry->name = name;
       auto child = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
 	unsigned(path.length() + name.length()) + 2, Zi::Path::VHeap);

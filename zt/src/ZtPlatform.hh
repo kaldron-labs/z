@@ -40,9 +40,10 @@ inline auto getpath(const char *key) {
 inline void setenv(const char *key, const char *value) {
   _putenv_s(key, value ? value : "");
 }
-ZuDerive(EnvWString, (ZtWString<ZtStringHeapID<"Zt.EnvWString">>));
+ZuDerive(EnvWScratch, (ZtWString<ZtStringSharded<true,
+  ZtStringHeapID<"Zt.EnvWString">>>));
 inline void setenv(ZuCSpan key_, const wchar_t *value) {
-  auto key = ZtScratch(EnvWString, key_.length());
+  auto key = ZtScratch(EnvWScratch, key_.length());
   key = key_;
   _wputenv_s(key, value ? value : L"");
 }
@@ -50,7 +51,7 @@ inline void unsetenv(const char *key) {
   _putenv_s(key, "");
 }
 inline auto getpath(const char *key) {
-  auto key = ZtScratch(EnvWString, key_.length());
+  auto key = ZtScratch(EnvWScratch, key_.length());
   key = key_;
   return _wgetenv(key);
 }

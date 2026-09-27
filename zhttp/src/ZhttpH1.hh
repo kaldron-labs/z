@@ -39,6 +39,9 @@ namespace Zhttp {
 
 namespace H1 {
 
+ZuDerive(HeaderScratch, (ZtBArray<ZtArrayHeapID<"Zhttp.H1.Headers",
+  ZtArraySharded<true>>>));
+
 inline ZmRef<ZiRxQueue::Node> allocRxBuf()
 {
   return new BodyRx::BufAlloc{};
@@ -822,8 +825,7 @@ private:
   }
   template <typename Stream>
   void headers(Stream &stream) {
-    using HeaderBytes = ZtBArray<ZtArrayHeapID<"Zhttp.H1.Headers">>;
-    auto block = ZtScratch(HeaderBytes, HeaderScratchBuiltin);
+    auto block = ZtScratch(HeaderScratch, HeaderScratchBuiltin);
     if constexpr (HasBody && Chunked)
       block << "transfer-encoding: chunked\r\n";
     headers_<HdrCatalog>(block);

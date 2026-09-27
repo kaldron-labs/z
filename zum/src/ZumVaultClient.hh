@@ -24,6 +24,8 @@ namespace ZumVaultClient {
 using Text = ZtString<ZtStringHeapID<"Zum.Vault.Client">>;
 using SecretText = ZtString<ZtStringSecret<true,
   ZtStringHeapID<"Zum.Vault.Client">>>;
+ZuDerive(SecretScratch, (ZtString<ZtStringSharded<true,
+  ZtStringSecret<true, ZtStringHeapID<"Zum.Vault.Client">>>>));
 
 struct Credential {
   Text issuerURL;
@@ -48,7 +50,7 @@ inline Ztls::VaultResult save(
     return ZeEXCEPT(Error, "ZumVaultClient", "missing token");
   return ZumVaultUtil::withVault(program, account,
     [&credential](Ztls::Vault &vault) {
-      auto text = ZtScratch(SecretText, 512);
+      auto text = ZtScratch(SecretScratch, 512);
       ZfJSON::save(text, credential);
       return vault.save(Ztls::Scopes::Global{}, "oauth", text);
     });

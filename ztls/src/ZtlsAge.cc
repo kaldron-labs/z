@@ -268,7 +268,8 @@ static constexpr auto X25519Info = "age-encryption.org/v1/X25519"_Zu;
 static constexpr auto HybridInfo = "age-encryption.org/mlkem768x25519"_Zu;
 static constexpr auto HeaderInfo = "header"_Zu;
 static constexpr auto PayloadInfo = "payload"_Zu;
-using AgeHeader = ZtBArray<ZtArrayHeapID<"Ztls.Age.Header">>;
+ZuDerive(AgeHeaderScratch, (ZtBArray<ZtArrayHeapID<"Ztls.Age.Header",
+  ZtArraySharded<true>>>));
 
 static bool unb64_(ZuCSpan text, ZuSpan<uint8_t> output)
 {
@@ -678,7 +679,7 @@ static ZuUnion<size_t, ZeException> readPayload_(
 }
 
 static ZuUnion<void, ZeException> appendScrypt_(
-  AgeHeader &header, Ztls::Random &rng,
+  AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan passphrase, ZuBSpan fileKey)
 {
   struct {
@@ -704,7 +705,7 @@ static ZuUnion<void, ZeException> appendScrypt_(
 }
 
 static ZuUnion<void, ZeException> appendX25519_(
-  AgeHeader &header, Ztls::Random &rng,
+  AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan recipient, ZuBSpan fileKey)
 {
   if (recipient.length() != X25519KeySize)
@@ -739,7 +740,7 @@ static ZuUnion<void, ZeException> appendX25519_(
 }
 
 static ZuUnion<void, ZeException> appendHybrid_(
-  AgeHeader &header, Ztls::Random &rng,
+  AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan recipient, ZuBSpan fileKey)
 {
   if (recipient.length() != Ztls::PK::HybridPublicSize)
@@ -762,7 +763,7 @@ static ZuUnion<void, ZeException> appendHybrid_(
 }
 
 static ZuUnion<void, ZeException> appendSshRSA_(
-  AgeHeader &header, ZuBSpan publicKey, ZuBSpan fileKey)
+  AgeHeaderScratch &header, ZuBSpan publicKey, ZuBSpan fileKey)
 {
   Ztls::PK::Data::PK_PKCS1 data;
   if (!sshRSA_(publicKey, data))
@@ -799,7 +800,7 @@ static ZuUnion<void, ZeException> appendSshRSA_(
 }
 
 static ZuUnion<void, ZeException> appendSshED_(
-  AgeHeader &header, Ztls::Random &rng,
+  AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan publicKey, ZuBSpan fileKey)
 {
   ZuBSpan edPublic;
@@ -868,7 +869,7 @@ ZuUnion<void, ZeException> Age::encrypt(
   }};
   if (!rng.random(fileKey))
     return ZeEXCEPT(Error, "ZtlsAge", "file key generation failed");
-  auto header = ZtScratch(AgeHeader, HeaderStackSize);
+  auto header = ZtScratch(AgeHeaderScratch, HeaderStackSize);
   if (!header.data())
     return ZeEXCEPT(Error, "ZtlsAge", "header allocation failed");
   header << Version;
@@ -1116,7 +1117,7 @@ ZuUnion<size_t, ZeException> Age::decrypt(
   if (!readBuffer.data())
     return ZeEXCEPT(Error, "ZtlsAge", "reader allocation failed");
   AgeReader reader{file, {readBuffer.data(), ReadBufferSize}};
-  auto header = ZtScratch(AgeHeader, HeaderStackSize);
+  auto header = ZtScratch(AgeHeaderScratch, HeaderStackSize);
   if (!header.data())
     return ZeEXCEPT(Error, "ZtlsAge", "header allocation failed");
   size_t macStart = 0;

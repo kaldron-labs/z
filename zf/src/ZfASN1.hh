@@ -415,9 +415,10 @@ struct SaveValue {
 };
 #pragma pack(pop)
 
-// first pass builds a SaveArray
-ZuDerive(SaveArray, (ZtArray<SaveValue, ZtArrayHeapID<"ZfASN1.SaveArray">>));
-// second pass uses spans contained within the SaveArray
+// first pass builds a SaveScratch
+ZuDerive(SaveScratch, (ZtArray<SaveValue, ZtArrayHeapID<"ZfASN1.SaveArray",
+  ZtArraySharded<true>>>));
+// second pass uses spans contained within the SaveScratch
 using SaveSpan = ZuSpan<const SaveValue>;
 
 // calculate overall DER length given Tag, content length
@@ -1925,7 +1926,7 @@ template <
   typename S, typename O>
 inline S &save(S &s, const O &v)
 {
-  auto stash = ZtScratch(SaveArray, StashSize);
+  auto stash = ZtScratch(SaveScratch, StashSize);
   using Handler = typename As<O>::template Handler<O, Facet>;
   Handler::save1(stash, v);
   Handler::save2(s, v, stash);

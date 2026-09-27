@@ -100,7 +100,9 @@ struct HPackEntry {
 using HPackEntries =
   ZtArray<HPackEntry, ZtArrayHeapID<"Zhttp.H2.HPack.Entries">>;
 using HPackBytes =
-  ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H2.HPack.Bytes">>;
+  ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H2.HPack.Bytes",
+    ZtArraySharded<true>>>;
+ZuDerive(HPackScratch, HPackBytes);
 using HPackNameSet = ZmHashKV<
   HPackString, bool,
   ZmHashLock<ZmNoLock,
@@ -315,7 +317,7 @@ private:
       Compression::Huffman::declen(source.length()) : source.length();
     if (length_ > UINT_MAX) return fail_(HPackFailure::String) >= 0;
     unsigned length = unsigned(length_);
-    auto storage = ZtScratch(HPackBytes, length, length);
+    auto storage = ZtScratch(HPackScratch, length, length);
     if (decoded.huffman) {
       int64_t n = Compression::Huffman::decode(storage.span(), source);
       if (n < 0) return fail_(HPackFailure::String) >= 0;

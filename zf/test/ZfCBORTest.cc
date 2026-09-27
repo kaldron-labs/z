@@ -247,7 +247,7 @@ static void object()
   enum { KtyI = ZuTypeIndex<KtyField, Fields>{} };
   enum { DataI = ZuTypeIndex<DataField, Fields>{} };
   ZuCheck(bool(ZuFieldProp::CBOR::IsIntID<typename KtyField::Props>{}));
-  auto fields = ZtScratch(ZfCBOR::FieldSpans, Fields::N, Fields::N);
+  auto fields = ZtScratch(ZfCBOR::FieldSpansScratch, Fields::N, Fields::N);
   ZfCBOR::LoadContext<ZuTypeList<>, Fields> context(encoded);
   ZuCheck(context.index(fields));
   ZuCheck((fields[KtyI] == ZuBSpan{encoded + 12, 1}));
