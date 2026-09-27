@@ -46,11 +46,13 @@
   using Base = ZuPP_Strip(Base_); \
   using Base::Base; \
   template <typename ...Args, \
+    typename = ZuIfT<(sizeof...(Args) != 1) || \
+      (!ZuIsSame<ZuDecay<Args>, Derived>{} && ...)>, \
     decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0> \
   ZuInline constexpr Derived(Args &&...args) : Base(ZuFwd<Args>(args)...) { } \
   template <typename L_ = Base, typename R_, \
     typename = ZuNotSame<ZuDecay<R_>, Derived>, \
-    typename = decltype(ZuDeclVal<L_ &>().operator =(ZuDeclVal<R_ &&>()))> \
+    decltype(ZuDeclVal<L_ &>().operator =(ZuDeclVal<R_ &&>()), int()) = 0> \
   ZuInline constexpr Derived &operator =(R_ &&r) { \
     L_::operator =(ZuFwd<R_>(r)); \
     return *this; \
