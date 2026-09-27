@@ -49,7 +49,7 @@ static void transform(void *, ZuSpan<char> &output)
       ZuBox<unsigned> n(c[2]);
       auto buf = ZtScratch(Buf, n.val() + 8);
       buf << '"';
-      ZtREGEX("ZuElem<char>{(?:ZuElem<char>::)?{unnamed\s*type#\d+}{\.v=\((?:\([^)]*\))?(-?\d+)\)}}(?:,\s*)?").mg(
+      ZtREGEX("ZuElem<char>{\.v=\((?:\([^)]*\))?(-?\d+)\)}(?:,\s*)?").mg(
 	c[1], [&buf](ZtRegex::CaptureSpan c) { quote(buf, c[2]); });
       buf << '"';
       splice(buf);
@@ -62,7 +62,7 @@ static void transform(void *, ZuSpan<char> &output)
       auto buf = ZtScratch(Buf, n.val() * 8 + 32); // estimated buffer size
       bool first = true;
       buf << "ZuArray<" << c[2] << ">({";
-      ZtREGEX("ZuElem<\w+>{(?:ZuElem<\w+>::)?{unnamed\s*type#\d+}{\.v=\((?:\(\w+\))?([^)]+)\)}}(?:,\s*)?").mg(
+      ZtREGEX("ZuElem<\w+>{\.v=\((?:\(\w+\))?([^)]+)\)}(?:,\s*)?").mg(
 	c[1], [&buf, &first](ZtRegex::CaptureSpan c) {
 	  if (!first) buf << ',';
 	  first = false;
