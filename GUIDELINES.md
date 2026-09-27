@@ -202,7 +202,11 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   pointers and construct a span only at the use boundary.
 
 ## Use of STL and other dependencies
-- minimize use of STL
+- minimize use of STL, BUT
+- use `iostream`, `std::cout`, `std::cerr`, `std::flush`, etc.
+  - do NOT use `std::cerr` for logging errors when `ZiLog` is available
+  - do NOT use `Zi::stdErr()` or `Zi::stdOut()` in preference to `std::cout` or `std::cerr`
+    - they are only to be used for redirection when a `ZiFile` type is required
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
 - maximally leverage the Z framework foundation libraries:
   - `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
