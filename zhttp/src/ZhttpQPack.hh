@@ -33,7 +33,9 @@ namespace Zhttp {
 
 namespace H3 {
 
-using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HdrBytes">>;
+using HdrBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H3.HdrBytes",
+  ZtArraySharded<true>>>;
+ZuDerive(HdrScratch, HdrBytes);
 
 ZtEnumStruct(ZhttpAPI, QPackInsn, int8_t,
   InsertWithNameRef, InsertWithoutNameRef, Duplicate, SetCapacity,
@@ -561,7 +563,7 @@ struct ZhttpAPI QPack {
     uint64_t decodedLength_ = Compression::Huffman::declen(length);
     if (decodedLength_ > UINT_MAX) return -1;
     unsigned decodedLength = unsigned(decodedLength_);
-    auto storage = ZtScratch(HdrBytes, decodedLength, decodedLength);
+    auto storage = ZtScratch(HdrScratch, decodedLength, decodedLength);
     int64_t decoded = Compression::Huffman::decode(storage.span(), raw);
     if (decoded < 0) return -1;
     storage.length(uint64_t(decoded));
@@ -623,7 +625,7 @@ struct ZhttpAPI QPack {
 	    return -1;
 	  flags.dynamicRef = true;
 	}
-	auto value = ZtScratch(HdrBytes, indexed.value.length());
+	auto value = ZtScratch(HdrScratch, indexed.value.length());
 	value = indexed.value;
 	if (!emit(indexed.name, value.span(), flags)) return -1;
       } else if ((first & 0xf0) == 0x10) {
@@ -633,7 +635,7 @@ struct ZhttpAPI QPack {
 	  return -1;
 	flags.dynamicRef = true;
 	flags.postBase = true;
-	auto value = ZtScratch(HdrBytes, indexed.value.length());
+	auto value = ZtScratch(HdrScratch, indexed.value.length());
 	value = indexed.value;
 	if (!emit(indexed.name, value.span(), flags)) return -1;
       } else if ((first & 0xc0) == 0x40) {

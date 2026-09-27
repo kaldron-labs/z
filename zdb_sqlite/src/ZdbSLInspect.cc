@@ -17,9 +17,10 @@ SQLITE_EXTENSION_INIT1
 
 namespace ZdbSL {
 
-ZuDerive(Text, ZtString<ZtStringHeapID<"ZdbSL.Inspect">>);
+ZuDerive(TextScratch, (ZtString<ZtStringSharded<true,
+  ZtStringHeapID<"ZdbSL.Inspect">>>));
 // Every supported scalar renders within 64 bytes, including sign and
-// fractional precision.  Oversized fallback remains attributed to Text.
+// fractional precision.  Oversized fallback remains attributed to TextScratch.
 enum { InspectTextSize = 64 };
 
 template <typename T, bool (*Load)(ZuBSpan, T &)>
@@ -38,7 +39,7 @@ static void inspect(sqlite3_context *cxn, int, sqlite3_value **argv)
     sqlite3_result_error(cxn, "malformed ZdbSL value", -1);
     return;
   }
-  auto text = ZtScratch(Text, InspectTextSize);
+  auto text = ZtScratch(TextScratch, InspectTextSize);
   text << value;
   sqlite3_result_text(cxn, text.data(), text.length(), SQLITE_TRANSIENT);
 }

@@ -70,10 +70,10 @@ struct HeaderPlan {
   unsigned	missing = 0;
 };
 
-using States = ZtArray<
-  TableState, ZtArrayHeapID<"ZfTOML.TableState">>;
-using KeyParts = ZtArray<
-  AnyNode::String, ZtArrayHeapID<"ZfTOML.KeyPath">>;
+ZuDerive(StatesScratch, (ZtArray<TableState,
+  ZtArrayHeapID<"ZfTOML.TableState", ZtArraySharded<true>>>));
+ZuDerive(KeyPartsScratch, (ZtArray<AnyNode::String,
+  ZtArrayHeapID<"ZfTOML.KeyPath", ZtArraySharded<true>>>));
 
 static const char *stateIndexID() { return "ZfTOML.TableStateIndex"; }
 using StateIndex = ZmLHashKV<
@@ -264,7 +264,7 @@ ZuTuple<int, double> TOMLPolicy::floatEOV(ZuCSpan span)
 struct Scan::Impl {
   Scan		&scan;
   ZuCSpan	in;
-  States	&states;
+  StatesScratch	&states;
   StateIndex	stateIndex;
   Limits	limits;
   unsigned	pos = 0;
@@ -274,7 +274,7 @@ struct Scan::Impl {
   AnyNode	*root = nullptr;
   AnyNode	*table = nullptr;
 
-  Impl(Scan &scan_, States &states_) :
+  Impl(Scan &scan_, StatesScratch &states_) :
     scan{scan_}, in{scan_.m_span}, states{states_}, limits{scan_.m_limits} { }
 
   char at(unsigned i) const { return i < in.length() ? in[i] : 0; }
@@ -522,7 +522,7 @@ struct Scan::Impl {
     return true;
   }
 
-  bool keyPath(KeyParts &parts)
+  bool keyPath(KeyPartsScratch &parts)
   {
     for (;;) {
       new (parts.push()) AnyNode::String{};
@@ -608,7 +608,7 @@ struct Scan::Impl {
   }
 
   bool put(
-      AnyNode *object, KeyParts &parts, ZuPtr<AnyNode> value,
+      AnyNode *object, KeyPartsScratch &parts, ZuPtr<AnyNode> value,
       uint8_t kind = ObjState::Dotted, SourcePos source = {})
   {
     unsigned n = parts.length();
@@ -866,7 +866,7 @@ struct Scan::Impl {
     if (at(pos) == '}') { ++pos; return out; }
     for (;;) {
       SourcePos source = sourcePos();
-      auto parts = ZtScratch(KeyParts, KeyScratchMax);
+      auto parts = ZtScratch(KeyPartsScratch, KeyScratchMax);
       if (!keyPath(parts)) return {};
       hws();
       if (at(pos) != '=') { bad(SyntaxErrorCode::Key); return {}; }
@@ -887,7 +887,7 @@ struct Scan::Impl {
   bool pair()
   {
     SourcePos source = sourcePos();
-    auto parts = ZtScratch(KeyParts, KeyScratchMax);
+    auto parts = ZtScratch(KeyPartsScratch, KeyScratchMax);
     if (!keyPath(parts)) return false;
     hws();
     if (at(pos) != '=') return bad(SyntaxErrorCode::Key);
@@ -898,7 +898,7 @@ struct Scan::Impl {
   }
 
   bool checkHeader(
-      KeyParts &parts, bool tables, SourcePos source, HeaderPlan &plan)
+      KeyPartsScratch &parts, bool tables, SourcePos source, HeaderPlan &plan)
   {
     unsigned n = parts.length();
     AnyNode *target = root;
@@ -952,7 +952,7 @@ struct Scan::Impl {
     return true;
   }
 
-  bool commitHeader(KeyParts &parts, bool tables, const HeaderPlan &plan)
+  bool commitHeader(KeyPartsScratch &parts, bool tables, const HeaderPlan &plan)
   {
     unsigned n = parts.length();
     AnyNode *object = plan.target;
@@ -998,7 +998,7 @@ struct Scan::Impl {
     ++pos;
     bool tables = at(pos) == '[';
     if (tables) ++pos;
-    auto parts = ZtScratch(KeyParts, KeyScratchMax);
+    auto parts = ZtScratch(KeyPartsScratch, KeyScratchMax);
     if (!keyPath(parts)) return false;
     hws();
     if (at(pos) != ']' || (tables && at(pos + 1) != ']'))
@@ -1038,7 +1038,7 @@ ZuTuple<int, ZuPtr<const AnyNode>> Scan::scan()
 {
   // 32 metadata records covers ordinary application configuration files;
   // ZtScratch transparently promotes larger table-heavy documents.
-  auto states = ZtScratch(States, StateLinearMax);
+  auto states = ZtScratch(StatesScratch, StateLinearMax);
   return Impl{*this, states}.run();
 }
 

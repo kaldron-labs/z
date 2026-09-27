@@ -41,6 +41,12 @@ namespace Zmcp {
 using HeaderEncodingPrefix = ZuStringT<"=?base64?">;
 using HeaderEncodingSuffix = ZuStringT<"?=">;
 using ParameterHeaderPrefix = ZuStringT<"Mcp-Param-">;
+ZuDerive(HeaderValueScratch, (ZtBArray<ZtArrayHeapID<"Zmcp.Header.Value",
+  ZtArraySharded<true>>>));
+ZuDerive(HeaderNameScratch, (ZtBArray<ZtArrayHeapID<"Zmcp.Header.Name",
+  ZtArraySharded<true>>>));
+ZuDerive(HeaderIntScratch, (ZtBArray<ZtArrayHeapID<"Zmcp.Header.Integer",
+  ZtArraySharded<true>>>));
 
 inline bool plainHeaderValue(ZuCSpan value)
 {
@@ -88,14 +94,13 @@ inline void headerValue(ZuCSpan value, L &&l)
     l(value);
     return;
   }
-  using Buffer = ZtBArray<ZtArrayHeapID<"Zmcp.Header.Value">>;
   auto prefix = HeaderEncodingPrefix{}();
   auto suffix = HeaderEncodingSuffix{}();
   unsigned overhead = prefix.length() + suffix.length();
   uint64_t encoded_ = ZuBase64::enclen(value.length());
   if (encoded_ > UINT_MAX - overhead) return;
   unsigned encoded = encoded_;
-  auto buffer = ZtScratch(Buffer, encoded + overhead);
+  auto buffer = ZtScratch(HeaderValueScratch, encoded + overhead);
   buffer << prefix;
   unsigned offset = buffer.length();
   buffer.length(offset + encoded);
@@ -110,9 +115,8 @@ template <unsigned Code, bool Optional, typename L, typename V>
 inline void parameterHeader(ZuCSpan name, const V &value, L &&l)
 {
   if (!validHeaderName(name)) return;
-  using Name = ZtBArray<ZtArrayHeapID<"Zmcp.Header.Name">>;
   auto prefix = ParameterHeaderPrefix{}();
-  auto header = ZtScratch(Name, name.length() + prefix.length());
+  auto header = ZtScratch(HeaderNameScratch, name.length() + prefix.length());
   header << prefix << name;
   auto emit = [&header, &l](ZuCSpan rendered) {
     headerValue(rendered, [&header, &l](const auto &encoded) {
@@ -134,9 +138,9 @@ inline void parameterHeader(ZuCSpan name, const V &value, L &&l)
     } else {
       if (uint64_t(value) > SafeInteger) return;
     }
-    using Value = ZtBArray<ZtArrayHeapID<"Zmcp.Header.Integer">>;
     auto boxed = ZuBoxed(value);
-    auto rendered = ZtScratch(Value, ZuPrint<decltype(boxed)>::length(boxed));
+    auto rendered = ZtScratch(HeaderIntScratch,
+      ZuPrint<decltype(boxed)>::length(boxed));
     rendered << boxed;
     emit(rendered);
   }
