@@ -17,6 +17,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
+#include <zlib/ZuVStream.hh>
 
 #include <zlib/ZmFn_.hh>
 #include <zlib/ZmGuard.hh>
@@ -28,7 +29,7 @@ namespace Ztc {
 
 // display sequence:
 //   id, addr, linear, bits, cBits, loadFactor, nodeSize,
-//   count, effLoadFactor, resized
+//   count, maxCount, effLoadFactor, resized
 // derived display fields:
 //   slots = 1<<bits
 //   locks = 1<<cBits
@@ -38,6 +39,7 @@ struct HashTelemetry {
   double	loadFactor = 0.0; // (double)N / 16.0
   double	effLoadFactor = 0.0; // graphable (*)
   uint64_t	count = 0;	// graphable (*)
+  uint64_t	maxCount = 0;	// graphable (*)
   uint32_t	nodeSize = 0;
   uint32_t	resized = 0;	// dynamic
   uint8_t	bits = 0;
@@ -90,41 +92,27 @@ public:
 
 // Hash CSV
 
-template <class S> struct HashCSV_ {
-  HashCSV_(S &stream) : m_stream(stream) { }
-  void print() {
-    m_stream <<
-      "id,addr,shadow,linear,bits,cBits,loadFactor,nodeSize,"
-      "count,effLoadFactor,resized\n";
-    HashMgr::all({this, ZmFnPtr<&HashCSV_::print_>{}});
-  }
-  void print_(Hash *hash) {
-    HashTelemetry data;
-    hash->telemetry(data);
-    m_stream
-      << data.id << ','
-      << ZuBoxPtr(data.addr).hex() << ','
-      << unsigned(data.shadow) << ','
-      << unsigned(data.linear) << ','
-      << unsigned(data.bits) << ','
-      << unsigned(data.cBits) << ','
-      << ZuBoxed(data.loadFactor) << ','
-      << data.nodeSize << ','
-      << data.count << ','
-      << ZuBoxed(data.effLoadFactor) << ','
-      << data.resized << '\n';
-  }
-
-private:
-  S	&m_stream;
-};
+ZmExtern void HashCSV_print(ZuVStream);
 struct HashCSV {
-  template <typename S> void print(S &s) const {
-    HashCSV_<S>(s).print();
-  }
+  template <typename S>
+  void print(S &s) const { HashCSV_print(s); }
   friend ZuPrintFn ZuPrintType(HashCSV *);
 };
 static HashCSV hashCSV() { return HashCSV(); }
+
+// Tune only bits: retain grown sizes, otherwise size from maxCount/headroom.
+// Load the resulting configuration with ZiHashTune::init or ZiHashTune::load.
+ZmExtern void HashTuneCSV_print(ZuVStream, double headroom);
+struct HashTuneCSV {
+  double headroom;
+  HashTuneCSV(double headroom_) : headroom{headroom_} { }
+  template <typename S>
+  void print(S &s) const { HashTuneCSV_print(s, headroom); }
+  friend ZuPrintFn ZuPrintType(HashTuneCSV *);
+};
+static HashTuneCSV hashTuneCSV(double headroom = 0.05) {
+  return HashTuneCSV(headroom);
+}
 
 } // Ztc
 

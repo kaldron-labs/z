@@ -15,7 +15,7 @@ message bodies directly through the `ZfDBUS` save/load path.
 Build `zdbus/example` and run `dbus-run-session --
 ./zdbus/example/zdbusgetid` to print a private session bus ID. It also runs
 against an existing `DBUS_SESSION_BUS_ADDRESS`. The example uses the public
-typed request/response API and `ZiFile` for output.
+typed request/response API and standard streams for console output.
 
 ## Four-message example
 

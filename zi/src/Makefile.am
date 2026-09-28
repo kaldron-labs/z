@@ -13,7 +13,7 @@ pkginclude_HEADERS = \
 	ZiMultiplex.hh ZiPlatform.hh ZiProgram.hh ZiRing.hh ZiDaemon.hh ZiPIDFile.hh \
 	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
-	ZiResolver.hh ZiHeapCSV.hh ZiHashCSV.hh \
+	ZiResolver.hh ZiHeapTune.hh ZiHashTune.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \

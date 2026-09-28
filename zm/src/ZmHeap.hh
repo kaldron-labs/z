@@ -75,11 +75,12 @@ struct ZmHeapConfig {
 
 struct ZmHeapInfo {
   ZuCSpan	id;
-  unsigned	size;
-  unsigned	alignment;
-  unsigned	partition;
-  bool		sharded;
   ZmHeapConfig	config;
+  uint32_t	size;
+  uint16_t	partition;
+  uint16_t	alignment;
+  uint8_t	vshift;
+  bool		sharded;
 };
 
 // per-ID heap stats
@@ -116,9 +117,10 @@ public:
 
 private:
   ZmHeapCache(
-      ZuCSpan id, unsigned size, unsigned alignment,
-      unsigned partition, bool sharded, unsigned vshift,
-      const ZmHeapConfig &, ZmHeapGlobalStats *, hwloc_topology_t);
+      ZuCSpan id, uint16_t partition, uint8_t vshift,
+      const ZmHeapConfig &,
+      uint32_t size, uint16_t alignment, bool sharded,
+      ZmHeapGlobalStats *, hwloc_topology_t);
 
   void lookup(ZmHeapLookup *l) { m_lookup = l; }
   ZmHeapLookup *lookup() const { return m_lookup; }
@@ -145,8 +147,7 @@ public:
 
   void warmup();
 
-  ZuTuple<ZuCSpan, uint32_t, uint8_t, uint16_t, uint8_t>
-    telKey() const override;
+  TelKey telKey() const override;
   void telemetry(Ztc::HeapTelemetry &data) const override;
 
 #ifdef ZmHeap_DEBUG
@@ -171,10 +172,8 @@ private:
   retry:
     if (ZuLikely(ptr = Zm::alignedAlloc<Align>(m_info.size))) {
       ++m_stats.heapAllocs;
-      // intentionally racing and approximate
       uint64_t allocd = ++m_globalStats->heapAllocs - m_globalStats->heapFrees.load_();
-      if (allocd > m_globalStats->heapMax.load_())
-	m_globalStats->heapMax.store_(allocd);
+      m_globalStats->heapMax.maximum(allocd);
       return ptr;
     }
     if (ZmHeapFail()) goto retry;
@@ -221,7 +220,6 @@ private:
   }
 
   alignas(Zm::CacheLineSize)
-  unsigned			m_vshift;
   ZmHeapInfo			m_info;
   ZmHeapGlobalStats		*m_globalStats = nullptr;
 
@@ -249,7 +247,9 @@ template <typename, unsigned, unsigned, bool, unsigned>
 friend class ZmHeapCacheT; 
 
 public:
-  static void init(ZuCSpan id, unsigned partition, const ZmHeapConfig &config);
+  static void init(
+    ZuCSpan id, uint16_t partition, uint8_t vshift,
+    const ZmHeapConfig &config);
 
 #ifdef ZmHeap_DEBUG
   using TraceFn = ZmHeapCache::TraceFn;
@@ -259,8 +259,8 @@ public:
 
 private:
   static ZmHeapCache *cache(
-    ZuCSpan id, unsigned size, unsigned alignment, bool sharded,
-    unsigned vshift);
+    ZuCSpan id, uint8_t vshift,
+    uint32_t size, uint16_t alignment, bool sharded);
 };
 
 // TLS pointer to the shared arena for this partition and heap specialization
@@ -282,7 +282,7 @@ public:
   static constexpr unsigned VShift = VShift_;
 
   ZmHeapCacheT() :
-    m_cache{ZmHeapMgr::cache(ID{}(), Size, Align, Sharded, VShift)} { }
+    m_cache{ZmHeapMgr::cache(ID{}(), VShift, Size, Align, Sharded)} { }
 
   static ZmHeapCacheT *instance() { return TLS::instance(); }
   ZuInline ZmHeapCache *cache() const { return m_cache; }

@@ -4,10 +4,10 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// hash table configuration
+// hash table configuration and tuning utilities
 
-#ifndef ZiHashCSV_HH
-#define ZiHashCSV_HH
+#ifndef ZiHashTune_HH
+#define ZiHashTune_HH
 
 #ifndef ZiLib_HH
 #include <zlib/ZiLib.hh>
@@ -15,13 +15,18 @@
 
 #include <zlib/ZuID.hh>
 
-#include <zlib/ZmHash.hh>
+#include <zlib/ZmHashMgr.hh>
+#include <zlib/ZtcHash.hh>
+
+#include <zlib/ZtPlatform.hh>
 
 #include <zlib/ZfStruct.hh>
 
 #include <zlib/ZiCSV.hh>
+#include <zlib/ZiFile.hh>
+#include <zlib/ZiFileTxStream.hh>
 
-namespace ZiHashCSV {
+namespace ZiHashTune {
 
 struct Data {
   ZuID		id;
@@ -55,6 +60,19 @@ inline void init(const Path &file) {
   if (file) CSV{}.read(file);
 }
 
-} // ZiHashCSV
+inline void load() {
+  init(Zt::getpath("Z_HASHTUNE"));
+}
 
-#endif /* ZiHashCSV_HH */
+inline void save(double headroom = 0.05) {
+  ZiFile file{Zt::getpath("Z_HASHTUNE"), ZiFile::Write | ZiFile::GC};
+  if (!file) throw file.error();
+  ZiFileTxStream<> stream{file};
+  stream << Ztc::hashTuneCSV(headroom);
+  stream.flush();
+  if (file.error()) throw file.error();
+}
+
+} // ZiHashTune
+
+#endif /* ZiHashTune_HH */

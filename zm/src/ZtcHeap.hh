@@ -15,6 +15,8 @@
 
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
+#include <zlib/ZuID.hh>
+#include <zlib/ZuVStream.hh>
 
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmFn_.hh>
@@ -46,10 +48,11 @@ struct HeapTelemetry {
   uint64_t	globalHeapAllocs = 0;
   uint64_t	globalHeapFrees = 0;
   uint64_t	globalHeapMax = 0;
-  uint32_t	size = 0;	// primary key
-  uint16_t	partition = 0;	// primary key
-  uint8_t	sharded = 0;	// primary key
-  uint8_t	alignment = 0;	// primary key
+  uint32_t	size = 0;		// primary key
+  uint16_t	partition = 0;		// primary key
+  uint16_t	alignment = 0;		// primary key
+  uint8_t	vshift = 0;
+  bool		sharded = false;	// primary key
 
   uint64_t allocated() const {
     return (cacheAllocs + heapAllocs) - (cacheFrees + heapFrees);
@@ -67,8 +70,9 @@ struct HeapTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Heap {
-  virtual ZuTuple<ZuCSpan, uint32_t, uint8_t, uint16_t, uint8_t>
-    telKey() const = 0;
+  // id, partition, size, alignment, sharded
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, uint16_t, uint32_t, uint16_t, bool>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(HeapTelemetry &data) const = 0;
 };
 
@@ -101,50 +105,32 @@ public:
   static void unwatch();
 };
 
-// Heap CSV
+// heapCSV() dumps heap telemetry for all current heaps
 
-template <class S> struct HeapCSV_ {
-  HeapCSV_(S &stream) : m_stream(stream) { }
-  void print() {
-    m_stream <<
-      "ID,size,partition,sharded,alignment,cacheSize,cpuset,"
-      "cacheAllocs,cacheFrees,crossFrees,heapAllocs,heapFrees,"
-      "globalHeapAllocs,globalHeapFrees,globalHeapMax\n";
-    HeapMgr::all({this, ZmFnPtr<&HeapCSV_::print_>{}});
-  }
-  void print_(Heap *heap) {
-    HeapTelemetry data;
-    heap->telemetry(data);
-    if (!data.cacheAllocs && !data.heapAllocs &&
-	!data.cacheFrees && !data.heapFrees) return;
-    m_stream <<
-      '"' << data.id << "\"," <<	// assume no need to quote embedded "
-      ZuBoxed(data.size) << ',' <<
-      ZuBoxed(data.partition) << ',' <<
-      ZuBoxed(data.sharded) << ',' <<
-      ZuBoxed(data.alignment) << ',' <<
-      ZuBoxed(data.cacheSize) << ',' <<
-      data.cpuset << ',' <<
-      ZuBoxed(data.cacheAllocs) << ',' <<
-      ZuBoxed(data.cacheFrees) << ',' <<
-      ZuBoxed(data.crossFrees) << ',' <<
-      ZuBoxed(data.heapAllocs) << ',' <<
-      ZuBoxed(data.heapFrees) << ',' <<
-      ZuBoxed(data.globalHeapAllocs) << ',' <<
-      ZuBoxed(data.globalHeapFrees) << ',' <<
-      ZuBoxed(data.globalHeapMax) << '\n';
-  }
-
-private:
-  S	&m_stream;
-};
+ZmExtern void HeapCSV_print(ZuVStream);
 struct HeapCSV {
-  template <typename S> void print(S &s) const {
-    HeapCSV_<S>(s).print();
-  }
+  template <typename S>
+  void print(S &s) const { HeapCSV_print(s); }
   friend ZuPrintFn ZuPrintType(HeapCSV *);
 };
 static HeapCSV heapCSV() { return HeapCSV(); }
+
+// heapTuneCSV(headroom) outputs a tuned heap configuration CSV,
+// based on observed peak heap allocations, that can be loaded at
+// startup with ZiHeapTune::init or ZiHeapTune::load
+// - headroom defaults to 0.05, i.e. 5% headroom above the observed peak
+
+ZmExtern void HeapTuneCSV_print(ZuVStream, double headroom);
+struct HeapTuneCSV {
+  double headroom;
+  HeapTuneCSV(double headroom_) : headroom{headroom_} { }
+  template <typename S>
+  void print(S &s) const { HeapTuneCSV_print(s, headroom); }
+  friend ZuPrintFn ZuPrintType(HeapTuneCSV *);
+};
+static HeapTuneCSV heapTuneCSV(double headroom = 0.05) {
+  return HeapTuneCSV(headroom);
+}
 
 } // Ztc
 

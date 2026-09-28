@@ -20,6 +20,7 @@
 
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmAllocator.hh>
+#include <zlib/ZmVHeap.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmFn.hh>
@@ -43,6 +44,10 @@ template <typename Heap = ZuVoid> struct S_ : public Heap {
 };
 ZuDerive(SHeap, (ZmHeap<"S", S_<>>));
 ZuDerive(S, (S_<SHeap>));
+
+using VectorHeap = ZmVHeap<"S_vector",
+  sizeof(S) * ZmAllocator_DefltMin, sizeof(S) * ZmAllocator_DefltMax,
+  alignof(S)>;
 
 static unsigned count = 0;
 
@@ -94,9 +99,11 @@ int main(int argc, char **argv)
   if (argc == 5) detailVerbose = atoi(argv[4]);
   if (!count || !nthr) usage_();
   for (int i = 0; i < nthr; i++) {
-    ZmHeapMgr::init("S", i, ZmHeapConfig{uint64_t(size)});
-    ZmHeapMgr::init("S_vector", i, ZmHeapConfig{uint64_t(size)});
-    ZmHeapMgr::init("S_list", i, ZmHeapConfig{uint64_t(size)});
+    ZmHeapMgr::init("S", i, 0, ZmHeapConfig{uint64_t(size)});
+    // Retain the benchmark's decreasing capacity for larger vector blocks.
+    for (unsigned j = 0; j < VectorHeap::NCaches; ++j)
+      ZmHeapMgr::init("S_vector", i, j, ZmHeapConfig{uint64_t(size)>>j});
+    ZmHeapMgr::init("S_list", i, 0, ZmHeapConfig{uint64_t(size)});
   }
   auto threads = ZmScratch(ZmThread, unsigned(nthr));
   if (nthr && !threads.data()) {

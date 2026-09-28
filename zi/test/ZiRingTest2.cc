@@ -627,7 +627,7 @@ int main(int argc, char **argv)
   ZmTrap::sigintFn(&ZiTestResidue::cleanup);
   ZmTrap::trap();
 
-  verbose = !::getenv("HARNESS_ACTIVE");
+  ZuTestUtil::parse(1, argv);
   for (int i = 1; i < argc; i++)
     if (argv[i][0] == '-') {
       if (argv[i][2]) usage_();

@@ -28,8 +28,8 @@
 #include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZiDaemon.hh>
-#include <zlib/ZiHashCSV.hh>
-#include <zlib/ZiHeapCSV.hh>
+#include <zlib/ZiHashTune.hh>
+#include <zlib/ZiHeapTune.hh>
 
 #include <zlib/ZhttpServer.hh>
 
@@ -805,8 +805,8 @@ void Zhttpd::Application::printQUICDiag()
 #ifndef ZHTTPD_LIBRARY
 int main(int argc, char **argv)
 {
-  ZiHeapCSV::init(Zt::getpath("Z_HEAPTUNE"));
-  ZiHashCSV::init(Zt::getpath("Z_HASHTUNE"));
+  ZiHeapTune::load();
+  ZiHashTune::load();
 
   Options options;
   try {

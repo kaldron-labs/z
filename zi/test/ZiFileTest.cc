@@ -466,6 +466,27 @@ void testModeAndTmpDir()
   ZuCheck(ZiStat{tmp}.isdir());
 }
 
+void testFormattedStream()
+{
+  ZuTestScope(testFormattedStream);
+  cleanupFiles();
+  bool written = false;
+  try {
+    ZiFile file{g_foo, ZiFile::Write | ZiFile::GC};
+    ZiFileTxStream<> stream{file};
+    stream << "value=" << ZuBoxed(uint64_t{105}) << "\n";
+    stream.flush();
+    written = !file.error();
+  } catch (const ZeError &error) {
+    log_("formatted write: ", error);
+  }
+  ZuCheck(written);
+  ZiFile file{g_foo, ZiFile::ReadOnly | ZiFile::GC};
+  ZuCArray<10> data;
+  ZuCheck(file.read(data.data(), data.size()) == int(data.size()));
+  ZuCheck((ZuCSpan{data.data(), data.size()} == "value=105\n"));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -487,5 +508,6 @@ int main(int argc, char **argv)
   ZuTestCall(testTxStream);
   ZuTestCall(testOpenAtNoFollowAndStat);
   ZuTestCall(testModeAndTmpDir);
+  ZuTestCall(testFormattedStream);
   return 0;
 }

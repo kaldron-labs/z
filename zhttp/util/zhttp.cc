@@ -25,8 +25,8 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
-#include <zlib/ZiHashCSV.hh>
-#include <zlib/ZiHeapCSV.hh>
+#include <zlib/ZiHashTune.hh>
+#include <zlib/ZiHeapTune.hh>
 
 #include <zlib/ZhttpClient.hh>
 
@@ -773,8 +773,8 @@ ZiMxParams mxParams(const Options &options)
 
 int main(int argc, char **argv)
 {
-  ZiHeapCSV::init(Zt::getpath("Z_HEAPTUNE"));
-  ZiHashCSV::init(Zt::getpath("Z_HASHTUNE"));
+  ZiHeapTune::load();
+  ZiHashTune::load();
 
   Options options;
   try {

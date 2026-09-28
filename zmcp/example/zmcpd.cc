@@ -6,12 +6,13 @@
 
 #include <stdlib.h>
 
+#include <iostream>
+
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZfCLI.hh>
 
-#include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
@@ -36,12 +37,12 @@ static ZmSemaphore done;
 
 static void usage(int code)
 {
-  ZiFile::stdErr() <<
+  std::cerr <<
     "Usage: zmcpd [OPTION]...\n\n"
     "  --stdio          serve MCP on stdin/stdout instead of HTTP\n"
     "  -p, --port=N     loopback HTTP port, default 8080\n"
     "  --token=TOKEN    require 'Authorization: Bearer TOKEN' for HTTP tools\n"
-    "  -h, --help       show help\n";
+    "  -h, --help       show help\n" << std::flush;
   ::exit(code);
 }
 
@@ -112,7 +113,7 @@ int main(int argc, char **argv)
   try {
     argc = ZfCLI::load(options, argc, argv);
   } catch (const ZeException &e) {
-    ZiFile::stdErr() << e << "\n";
+    std::cerr << e << '\n';
     usage(1);
   }
   if (options.help) usage(0);

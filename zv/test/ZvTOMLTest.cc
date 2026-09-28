@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAlloc.hh>
@@ -2418,7 +2420,8 @@ int main(int argc, char **argv)
 {
   if (argc == 2 && ZuCSpan{argv[1]} == "--interop") {
     auto out = interopText();
-    return ZiFile::stdOut().write(out.data(), out.length()) == Zi::OK ? 0 : 1;
+    std::cout << out << std::flush;
+    return std::cout ? 0 : 1;
   }
   parse(argc, argv);
   ZiTestResidue::init("ZvTOMLTest");

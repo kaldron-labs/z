@@ -483,6 +483,7 @@ void telemetryValues()
     data.loadFactor = 1.25;
     data.effLoadFactor = 0.75;
     data.count = UINT64_C(0x100000005);
+    data.maxCount = UINT64_C(0x200000009);
     data.nodeSize = UINT32_C(0x80000005);
     data.resized = 7;
     data.bits = 17;
@@ -496,6 +497,20 @@ void telemetryValues()
       {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
     ZuCheck(fbo && fbo->addr() == data.addr &&
       fbo->count() == data.count && fbo->nodeSize() == data.nodeSize);
+    ZuCheck(fbo && fbo->maxCount() == data.maxCount);
+    if (fbo) {
+      auto loaded = ZfbStruct::ctor<Ztc::HashTelemetry>(fbo);
+      ZuCheck(loaded.count == data.count && loaded.maxCount == data.maxCount);
+      loaded.count = 0;
+      loaded.effLoadFactor = 0;
+      Zfb::Builder drained;
+      drained.Finish(
+	ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(drained, loaded));
+      auto roundtrip = ZfbStruct::verify<Ztc::HashTelemetry>(
+	{drained.GetBufferPointer(), unsigned(drained.GetSize())});
+      ZuCheck(roundtrip && !roundtrip->count() &&
+	roundtrip->maxCount() == data.maxCount);
+    }
     ZuCheck(fbo && fbo->loadFactor() == data.loadFactor &&
       fbo->effLoadFactor() == data.effLoadFactor &&
       fbo->resized() == data.resized);

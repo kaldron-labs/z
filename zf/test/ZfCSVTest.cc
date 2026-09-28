@@ -49,6 +49,49 @@ struct CSVText {
 ZfStruct(, (CSVText, CSV),
   (((text), (Ctor<0>)), (String)));
 
+struct CSVInit {
+  int value = 0;
+};
+
+ZfStruct(, (CSVInit, CSV),
+  (((value), (Mutable)), (Int32)));
+
+void testReaderConsumptionAndInit()
+{
+  ZuTestScope(testReaderConsumptionAndInit);
+  char csv[] = "value\n17\n23";
+  auto reader = ZfCSV::reader<CSVInit>();
+  unsigned rows = 0;
+  auto emit = [&rows](const auto &scan) {
+    auto value = scan.ctor();
+    ZuCheck(value.value == 17);
+    ZuPtr<CSVInit> allocated = scan.alloc();
+    ZuCheck(allocated->value == 17);
+    CSVInit loaded;
+    scan.load(loaded);
+    ZuCheck(loaded.value == 17);
+    loaded.value = 0;
+    scan.update(loaded);
+    ZuCheck(loaded.value == 17);
+    alignas(CSVInit) unsigned char storage[sizeof(CSVInit)];
+    scan.new_(storage);
+    auto placed = reinterpret_cast<CSVInit *>(storage);
+    ZuCheck(placed->value == 17);
+    placed->~CSVInit();
+    ++rows;
+  };
+  ZuCheck(reader.process({csv, sizeof(csv) - 1}, emit) == 9);
+  ZuCheck(rows == 1);
+  char rest[] = "23\n";
+  auto last = [&rows](const auto &scan) {
+    ZuCheck(scan.ctor().value == 23);
+    ++rows;
+  };
+  // Exhausting a span must return bytes consumed rather than subtracting null.
+  ZuCheck(reader.process({rest, sizeof(rest) - 1}, last) == sizeof(rest) - 1);
+  ZuCheck(rows == 2);
+}
+
 void testHeaderSplitAndUnquote()
 {
   ZuTestScope(testHeaderSplitAndUnquote);
@@ -272,5 +315,6 @@ int main(int argc, char **argv)
   ZuTestCall(testWriterBoundaries);
   ZuTestCall(testIntegerRange);
   ZuTestCall(testRealRange);
+  ZuTestCall(testReaderConsumptionAndInit);
   return 0;
 }

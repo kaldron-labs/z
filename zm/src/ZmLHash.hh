@@ -264,9 +264,11 @@ public:
   static double loadFactor() { return 1.0; }
 
   unsigned count_() const { return m_count.load_(); }
+  unsigned maxCount_() const { return m_maxCount.load_(); }
 
 protected:
   ZmAtomic<unsigned>	m_count = 0;
+  ZmAtomic<unsigned>	m_maxCount = 0;
   Lock			m_lock;
 };
 
@@ -285,6 +287,7 @@ public:
   double loadFactor() const { return double(m_loadFactor) / 16.0; }
 
   unsigned count_() const { return m_count.load_(); }
+  unsigned maxCount_() const { return m_maxCount.load_(); }
 
 protected:
   ZmLHash__(const ZmHashParams &params) {
@@ -296,6 +299,7 @@ protected:
 
   unsigned		m_loadFactor = 0;
   ZmAtomic<unsigned>	m_count = 0;
+  ZmAtomic<unsigned>	m_maxCount = 0;
   Lock			m_lock;
 };
 
@@ -465,6 +469,7 @@ private:
   ZuAssert(CheckHashFn::IsUInt32);
 
   using Base::m_count;
+  using Base::m_maxCount;
   using Base::m_lock;
   using Base::m_table;
 
@@ -762,7 +767,8 @@ private:
 
     if (count >= size) return -1;
 
-    m_count.store_(count + 1);
+    m_count.store_(++count);
+    m_maxCount.maximum(count);
     // std::cout << (ZuCArray<80>{} << ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>() << " ZmLHash::add_() count=" << m_count.load_() << '\n');
 
     return add__(ZuFwd<P>(data), code);
@@ -1240,6 +1246,7 @@ private:
     data.effLoadFactor = double(count) / (1<<bits);
     data.nodeSize = sizeof(Node);
     data.count = count;
+    data.maxCount = m_maxCount.load_();
     data.resized = resized();
     data.bits = bits;
     data.cBits = 0;

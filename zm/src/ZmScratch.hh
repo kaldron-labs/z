@@ -39,7 +39,8 @@ template <> struct ZmScratch_Print<char> {
 
 template <typename T_, typename VHeap_ = ZuVoid>
 class ZmScratch_ :
-  public ZmScratch_Print<ZuStrip<T_>>, public ZuArrayFn<T_> {
+  public ZmScratch_Print<ZuStrip<T_>>, public ZuArrayFn<T_>
+{
   ZmScratch_() = delete;
   ZmScratch_(const ZmScratch_ &) = delete;
   ZmScratch_ &operator =(const ZmScratch_ &) = delete;
@@ -240,7 +241,7 @@ public:
 
 // comparisons
 
-  ZuInline bool operator !() const { return !m_length; }
+  ZuInline bool operator !() const { return !m_data || !m_length; }
   ZuOpBool
 
 protected:

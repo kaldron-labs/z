@@ -121,7 +121,7 @@ int main(int argc, char **argv)
   ZmSchedParams params = ZmSchedParams().id("sched");
   ZmBitmap isolation;
 
-  verbose = !::getenv("HARNESS_ACTIVE");
+  ZuTestUtil::parse(1, argv);
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] != '-') usage_();
     switch (argv[i][1]) {

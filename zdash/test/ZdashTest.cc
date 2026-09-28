@@ -77,6 +77,110 @@ public:
   }
 
 private:
+  template <typename T>
+  static T sample() {
+    T data;
+    if constexpr (ZuIsSame<T, Ztc::HeapTelemetry>{}) {
+      data.id = "heap";
+      data.partition = 7;
+      data.vshift = 4;
+      data.size = 128;
+      data.alignment = 64;
+      data.sharded = true;
+    } else if constexpr (ZuIsSame<T, Ztc::HashTelemetry>{}) {
+      data.id = "hash";
+      data.addr = 0x1234;
+    } else if constexpr (ZuIsSame<T, Ztc::ThreadTelemetry>{}) {
+      data.tid = 123;
+    } else if constexpr (ZuIsSame<T, Ztc::MxTelemetry>{}) {
+      data.id = "mx";
+    } else if constexpr (ZuIsSame<T, Ztc::CxnTelemetry>{}) {
+      data.mxID = "mx";
+      data.remoteIP = "192.0.2.1";
+      data.remotePort = 443;
+      data.localIP = "192.0.2.2";
+      data.localPort = 54321;
+    } else if constexpr (ZuIsSame<T, Ztc::QueueTelemetry>{}) {
+      data.ownerID = "owner";
+      data.id = "queue";
+      data.type = Ztc::QueueType::Tx;
+    } else if constexpr (ZuIsSame<T, Ztc::HubTelemetry>{}) {
+      data.id = "hub";
+      data.linkType = Ztc::LinkType::QUIC;
+    } else if constexpr (ZuIsSame<T, Ztc::LinkTelemetry>{} ||
+	ZuIsSame<T, Ztc::PoolTelemetry>{}) {
+      data.hubID = "hub";
+      data.id = "child";
+      data.type = Ztc::LinkType::QUIC;
+    } else if constexpr (ZuIsSame<T, Ztc::DBTableTelemetry>{} ||
+	ZuIsSame<T, Ztc::DBHostTelemetry>{}) {
+      data.dbID = "db";
+      data.id = "child";
+    } else if constexpr (ZuIsSame<T, Ztc::DBTelemetry>{}) {
+      data.state = Ztc::DBHostState::Active;
+    }
+    return data;
+  }
+
+  bool checkKeys_() {
+    // Literal fixture expectations cover all displayed identities and labels.
+    // The seven entries are a GTK path followed by six heap key columns.
+    static const char *rows[][7] = {
+      {"0", "publisher", "test-a", "2", "", "", ""},
+      {"0:0", "heaps", "partition", "vshift", "size", "alignment", "sharded"},
+      {"0:0:0", "heap", "7", "4", "128", "64", "1"},
+      {"0:1", "hashTbls", "addr", "", "", "", ""},
+      {"0:1:0", "hash", "1234", "", "", "", ""},
+      {"0:2", "threads", "", "", "", "", ""},
+      {"0:2:0", "123", "", "", "", "", ""},
+      {"0:3", "multiplexers", "", "", "", "", ""},
+      {"0:3:0", "mx", "", "", "", "", ""},
+      {"0:3:0:0", "mx", "192.0.2.1", "443", "192.0.2.2", "54321", ""},
+      {"0:4", "queues", "id", "type", "", "", ""},
+      {"0:4:0", "owner", "queue", "Tx", "", "", ""},
+      {"0:5", "pools", "id", "", "", "", ""},
+      {"0:5:0", "hub", "child", "", "", "", ""},
+      {"0:6", "engines", "linkType", "", "", "", ""},
+      {"0:6:0", "hub", "QUIC", "", "", "", ""},
+      {"0:6:0:0", "hub", "child", "", "", "", ""},
+      {"0:7", "dbenv", "", "", "", "", ""},
+      {"0:7:0", "hosts", "id", "", "", "", ""},
+      {"0:7:0:0", "db", "child", "", "", "", ""},
+      {"0:7:1", "tables", "id", "", "", "", ""},
+      {"0:7:1:0", "db", "child", "", "", "", ""}
+    };
+    bool ok = gtk_tree_model_get_n_columns(m_host.model) == 7;
+    for (const auto &row: rows) {
+      GtkTreeIter iter;
+      bool found = gtk_tree_model_get_iter_from_string(
+	m_host.model, &iter, row[0]);
+      if (!found) log(row[0], " not found");
+      ok &= found;
+      if (!found) continue;
+      if (ZuCSpan{row[0]} == "0:7") {
+	ZGtk::Value rag;
+	gtk_tree_model_get_value(m_host.model, &iter, 0, &rag);
+	bool matches = rag.get_int() == Ztc::RAG::Green;
+	if (!matches) log("database RAG differs from telemetry state");
+	ok &= matches;
+      }
+      auto path = gtk_tree_model_get_path(m_host.model, &iter);
+      auto text = gtk_tree_path_to_string(path);
+      ok &= ZuCSpan{text} == row[0];
+      g_free(text);
+      gtk_tree_path_free(path);
+      for (unsigned col = 1; col < 7; ++col) {
+	ZGtk::Value value;
+	gtk_tree_model_get_value(m_host.model, &iter, col, &value);
+	bool matches = ZuCSpan{value.get_string()} == row[col];
+	if (!matches) log(row[0], " column ", col, " expected ",
+	  row[col], " got ", value.get_string());
+	ok &= matches;
+      }
+    }
+    return ok;
+  }
+
   void feed_(unsigned phase) {
     auto deliver = [this](Frame frame) {
       if (!m_host.receive_(ZuBSpan{frame->data(), frame->length}, true))
@@ -141,7 +245,7 @@ private:
 	    Zfb::IOBuilder builder{Frame{new FrameBuf}};
 	    auto device = Zfb::Save::str(builder, "test-a");
 	    auto id = Zfb::Save::str(builder, "publisher");
-	    auto value = ZfbStruct::save(builder, T{});
+	    auto value = ZfbStruct::save(builder, sample<T>());
 	    auto tel = Ztc::saveTelemetry(builder, id, 0,
 	      Ztc::fbs::TelemetryBodyTraits<ZfbType<T>>::enum_value,
 	      value.Union());
@@ -228,7 +332,7 @@ private:
 	  return false;
 	}, &rows);
 	// Every non-alert telemetry kind must have a visible row.
-	ok = rows >= Telemetry::TypeList::N - 1;
+	ok = rows >= Telemetry::TypeList::N - 1 && checkKeys_();
       }
       if (!ok) {
 	m_failed = true;

@@ -28,6 +28,11 @@ table AlertTelemetry {
 
 table HeapTelemetry {
   id:string;
+  partition:uint16;
+  vshift:uint8;
+  size:uint32;
+  alignment:uint16;
+  sharded:bool;
   cache_size:uint64;
   cpuset:Zfb.Bitmap;
   cache_allocs:uint64;
@@ -38,10 +43,6 @@ table HeapTelemetry {
   global_heap_allocs:uint64;
   global_heap_frees:uint64;
   global_heap_max:uint64;
-  size:uint32;
-  partition:uint16;
-  sharded:uint8;
-  alignment:uint8;
   allocated:uint64;
   rag:RAG;
 }
@@ -52,6 +53,7 @@ table HashTelemetry {
   load_factor:double;
   eff_load_factor:double;
   count:uint64;
+  max_count:uint64;
   node_size:uint32;
   resized:uint32;
   bits:uint8;

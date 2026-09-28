@@ -16,6 +16,7 @@
 
 #include <zlib/ZtTimeZone.hh>
 #include <zlib/ZtPlatform.hh>
+#include <zlib/ZtString.hh>
 
 struct Zt_TzLock : public ZmPLock {
   static Zt_TzLock *instance() {
@@ -25,14 +26,15 @@ struct Zt_TzLock : public ZmPLock {
   }
 };
 
+ZuDerive(TzString, (ZtString<ZtStringHeapID<"Zt.TzString", ZtStringSharded<true>>>));
+
 class Zt_TzGuard : public ZmGuard<ZmPLock> {
 public:
   Zt_TzGuard(const char *tz);
   ~Zt_TzGuard();
 
 private:
-  char	*m_tz = nullptr;
-  char	*m_oldTz = nullptr;
+  TzString	m_oldTz;
 };
 
 Zt_TzGuard::Zt_TzGuard(const char *tz) :

@@ -59,7 +59,7 @@ static bool save = false;
 
 void parseArgs(int argc, char **argv)
 {
-  verbose = !::getenv("HARNESS_ACTIVE");
+  ZuTestUtil::parse(1, argv);
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "-q")) {
       verbose = false;

@@ -76,7 +76,7 @@ void testHeapStats()
   ZuTestScope(testHeapStats);
   using Cache = ZmHeapCacheT<ZuStringT<"ZmAllocatorTest.Stats">,
     sizeof(uintptr_t), alignof(uintptr_t), Sharded>;
-  ZmHeapMgr::init("ZmAllocatorTest.Stats", ZmSelf()->partition(), {1});
+  ZmHeapMgr::init("ZmAllocatorTest.Stats", ZmSelf()->partition(), 0, {1});
   auto cache = Cache::instance()->cache();
   const auto &global = cache->globalStats();
   const auto &stats = cache->stats();
@@ -114,7 +114,7 @@ void testSharedStats()
   using Cache = ZmHeapCacheT<ZuStringT<"ZmAllocatorTest.Shared">,
     sizeof(uintptr_t), alignof(uintptr_t), false>;
   auto partition = ZmSelf()->partition();
-  ZmHeapMgr::init("ZmAllocatorTest.Shared", partition, {2});
+  ZmHeapMgr::init("ZmAllocatorTest.Shared", partition, 0, {2});
   auto cache = Cache::instance()->cache();
   ZmSemaphore ready, resume;
   auto work = [cache, &ready, &resume] {
@@ -156,8 +156,8 @@ void testCrossStats()
   using Cache = ZmHeapCacheT<ZuStringT<"ZmAllocatorTest.Cross">,
     sizeof(uintptr_t), alignof(uintptr_t), false>;
   auto partition = ZmSelf()->partition();
-  ZmHeapMgr::init("ZmAllocatorTest.Cross", partition, {1});
-  ZmHeapMgr::init("ZmAllocatorTest.Cross", partition + 1, {1});
+  ZmHeapMgr::init("ZmAllocatorTest.Cross", partition, 0, {1});
+  ZmHeapMgr::init("ZmAllocatorTest.Cross", partition + 1, 0, {1});
   auto cache = Cache::instance()->cache();
   auto cached = Cache::alloc();
   auto first = Cache::alloc();

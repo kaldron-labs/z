@@ -204,6 +204,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ## Use of STL and other dependencies
 - minimize use of STL, BUT
 - use `iostream`, `std::cout`, `std::cerr`, `std::flush`, etc.
+  - `ZuTestUtil` dependents use `log` for test diagnostics
   - do NOT use `std::cerr` for logging errors when `ZiLog` is available
   - do NOT use `Zi::stdErr()` or `Zi::stdOut()` in preference to `std::cout` or `std::cerr`
     - they are only to be used for redirection when a `ZiFile` type is required
@@ -665,7 +666,12 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Combine `ZmFn` with `ZiIOFn` and `ZiIOContext` to optimize I/O processing.
 
 ### Tests
-- Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
+- C++ TAP emitters use `ZuTestUtil`, or underlying `ZuTest` when the utilities
+  are not a fit. Use `log` for diagnostics in `ZuTestUtil` dependents.
+  Initialize verbosity through `ZuTestUtil::parse`, which honors
+  `HARNESS_ACTIVE`; do not duplicate that environment check in callers.
+- Intentional whole-program skips may emit their TAP skip plan manually.
+  Non-C++ test programs may emit TAP manually.
 - Use `ZmBlock` or (if not a good fit) `ZmSemaphore` to block on concurrent work
   - do not rely on polling or time intervals
 

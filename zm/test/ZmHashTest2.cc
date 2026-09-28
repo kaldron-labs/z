@@ -101,7 +101,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(concurrentCount);
 
-  ZmHeapMgr::init("Orders", 0, ZmHeapConfig{100});
+  ZmHeapMgr::init("Orders", 0, 0, ZmHeapConfig{100});
   ZmRef<Orders> orders = new Orders(ZmHashParams().bits(7).loadFactor(1.0));
 
   log("node size: ", sizeof(Orders::Node));

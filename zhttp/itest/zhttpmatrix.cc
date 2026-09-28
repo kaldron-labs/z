@@ -1150,36 +1150,36 @@ bool runCase_(const Case &c, uint64_t &duration)
   duration = 0;
   TempDir temp;
   if (!temp.init("zhttpmatrix")) {
-    std::cout << "# failed to create temporary directory\n";
+    log("failed to create temporary directory");
     return false;
   }
   ZtString<> rootPath;
   if (!writeRoot(temp, c, rootPath)) {
-    std::cout << "# failed to create static root\n";
+    log("failed to create static root");
     return false;
   }
   ZtString<> certPath, keyPath;
   if (!writeLocalhostCert(temp, certPath, keyPath)) {
-    std::cout << "# failed to create TLS certificate\n";
+    log("failed to create TLS certificate");
     return false;
   }
   unsigned port = loopbackPort(ZhttpITestPort::Matrix);
   if (!port) {
-    std::cout << "# failed to allocate loopback port\n";
+    log("failed to allocate loopback port");
     return false;
   }
   auto caddyfile = temp.pathOf("Caddyfile");
   if ((c.pair == Pair::ZhttpCaddy || c.pair == Pair::CurlCaddy) &&
       !writeCaddyfile(caddyfile, c.proto, port, rootPath.cspan(),
 	certPath.cspan(), keyPath.cspan())) {
-    std::cout << "# failed to write Caddyfile\n";
+    log("failed to write Caddyfile");
     return false;
   }
   auto script = temp.pathOf("matrix.sh");
   if (!writeScript(script, c, port, static_cast<const char *>(temp.path),
       rootPath.cspan(), certPath.cspan(), keyPath.cspan(), caddyfile.cspan(),
       matrixDir.cspan())) {
-    std::cout << "# failed to write matrix script\n";
+    log("failed to write matrix script");
     return false;
   }
 
@@ -1193,8 +1193,8 @@ bool runCase_(const Case &c, uint64_t &duration)
     return true;
   }
 
-  std::cout << "# failed case: " << pairName(c.pair) << ' ' <<
-    protoName(c.proto) << " -j" << c.jobs << " -n" << c.requests << '\n';
+  log("failed case: ", pairName(c.pair), ' ', protoName(c.proto),
+    " -j", c.jobs, " -n", c.requests);
   printFile("server stderr", temp.pathOf("server.err"));
   printFile("client stderr", temp.pathOf("client.err"));
   printFile("curl stderr", temp.pathOf("curl.err"));
@@ -1207,19 +1207,19 @@ bool runCase_(const Case &c, uint64_t &duration)
 uint64_t printCaseStart(const Case &c)
 {
   uint64_t t = nowMS();
-  std::cout << "# t=" << (t - startMS()) << "ms interop case: " <<
-    pairName(c.pair) << ' ' << protoName(c.proto) <<
-    " -j" << c.jobs << " -n" << c.requests << '\n';
+  log("t=", t - startMS(), "ms interop case: ",
+    pairName(c.pair), ' ', protoName(c.proto),
+    " -j", c.jobs, " -n", c.requests);
   return t;
 }
 
 void printCaseEnd(const Case &c, bool ok, uint64_t start, uint64_t duration)
 {
   uint64_t t = nowMS();
-  std::cout << "# t=" << (t - startMS()) << "ms duration=" <<
-    (duration ? duration : t - start) << "ms " << (ok ? "ok" : "not ok") << ": " <<
-    pairName(c.pair) << ' ' << protoName(c.proto) <<
-    " -j" << c.jobs << " -n" << c.requests << '\n';
+  log("t=", t - startMS(), "ms duration=", duration ? duration : t - start,
+    "ms ", ok ? "ok" : "not ok", ": ",
+    pairName(c.pair), ' ', protoName(c.proto),
+    " -j", c.jobs, " -n", c.requests);
 }
 
 bool prerequisitesOK()
@@ -1266,13 +1266,14 @@ int main(int argc, char **argv)
     argc = ZfCLI::load(
       options, argc, const_cast<const char *const *>(argv));
   } catch (const ZeException &e) {
-    std::cerr << e << '\n';
+    log(e);
     usage();
   }
   if (options.help) usage(0);
   if (argc != 1) usage();
   if (!validMigrationOptions()) usage();
-  verbose = !options.quiet && !::getenv("HARNESS_ACTIVE");
+  ZuTestUtil::parse(argc, argv);
+  if (options.quiet) verbose = false;
 
   ZiTestResidue::init("zhttpmatrix");
 
