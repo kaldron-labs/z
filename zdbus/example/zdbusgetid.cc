@@ -6,9 +6,10 @@
 
 // Print the current session bus ID through a typed D-Bus method call.
 
+#include <iostream>
+
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
-#include <zlib/ZiFile.hh>
 #include <zlib/ZdbusClient.hh>
 
 namespace ZdbusGetId {
@@ -52,8 +53,7 @@ int main()
 {
   ZdbusAddress address;
   if (!ZdbusAddress::session(address)) {
-    auto err = ZiFile::stdErr();
-    err << "DBUS_SESSION_BUS_ADDRESS is missing or unsupported\n";
+    std::cerr << "DBUS_SESSION_BUS_ADDRESS is missing or unsupported\n";
     return 2;
   }
 
@@ -95,12 +95,9 @@ int main()
   sched.stop();
 
   if (!completed || !returned) {
-    auto err = ZiFile::stdErr();
-    err << "D-Bus GetId failed\n";
+    std::cerr << "D-Bus GetId failed\n";
     return 1;
   }
-  auto out = ZiFile::stdOut();
-  if (out.write(reply.value.data(), reply.value.length()) != Zi::OK ||
-      out.write("\n", 1) != Zi::OK) return 1;
-  return 0;
+  std::cout << reply.value << '\n' << std::flush;
+  return std::cout ? 0 : 1;
 }

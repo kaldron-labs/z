@@ -222,12 +222,6 @@ public:
 
   int truncate(Offset offset);
 
-  // Note: unbuffered!
-  template <typename V> ZiFile &operator <<(V &&v) {
-    append_(ZuFwd<V>(v));
-    return *this;
-  }
-
   static int remove(const Path &name, ZeError *e = nullptr);
   static int rename(
       const Path &oldName, const Path &newName, ZeError *e = nullptr);
@@ -259,34 +253,6 @@ protected:
 
 private:
   void init_(Handle handle, unsigned flags, int blkSize);
-
-  template <typename U, typename R = void>
-  using MatchPDelegate =
-    ZuIfT<ZuPrint<U>::Delegate && !ZuTraits<U>::IsString, R>;
-  template <typename U, typename R = void>
-  using MatchPBuffer =
-    ZuIfT<ZuPrint<U>::Buffer && !ZuTraits<U>::IsString, R>;
-
-  template <typename S,
-    typename = ZuIfT<(ZuTraits<S>::IsString) || (ZuPrint<S>::Delegate &&
-      !ZuTraits<S>::IsString)>> void append_(S &&s_) {
-    if constexpr (ZuTraits<S>::IsString) {
-      ZuCSpan s(s_);
-      if (ZuUnlikely(!s)) return;
-      if (ZuUnlikely(write(s.data(), s.length()) != Zi::OK))
-	throw m_error;
-    } else {
-      ZuPrint<S>::print(*this, ZuFwd<S>(s_));
-    }
-  }
-  template <typename P, typename = MatchPBuffer<P>> void append_(const P &p) {
-    unsigned len = ZuPrint<P>::length(p);
-    auto buf = ZmScratch(char, len);
-    if (!buf) throw ZeError{ZiENOMEM};
-    buf.length(ZuPrint<P>::print(buf.data(), len, p));
-    if (ZuUnlikely(write(buf.data(), buf.length()) != Zi::OK))
-      throw m_error;
-  }
 
 protected:
   Handle	m_handle = Zi::nullHandle();

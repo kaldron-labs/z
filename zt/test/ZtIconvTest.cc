@@ -25,7 +25,7 @@ void usage_()
 }
 
 int main(int argc, char **argv) {
-  verbose = !::getenv("HARNESS_ACTIVE");
+  ZuTestUtil::parse(1, argv);
 
   const char *to = "UTF-8", *from = "SHIFT_JIS";
   unsigned nargs = 0;

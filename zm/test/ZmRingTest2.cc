@@ -623,7 +623,7 @@ int main(int argc, char **argv)
 {
   int size = 8192;
   unsigned nargs = 0;
-  verbose = !::getenv("HARNESS_ACTIVE");
+  ZuTestUtil::parse(1, argv);
   for (int i = 1; i < argc; i++)
     if (argv[i][0] == '-') {
       if (argv[i][2]) usage_();

@@ -838,13 +838,14 @@ struct Reader {
   // - returns the number of bytes consumed
   template <typename L>
   int process(ZuSpan<char> data, L &l) {
-    auto begin = &data[0];
+    unsigned consumed = 0;
     while (data) {
       auto n = process_(data, l);
       if (n <= 0) break;
+      consumed += n;
       data.offset(n);
     }
-    return &data[0] - begin;
+    return consumed;
   }
 
   template <typename Field>
@@ -886,7 +887,7 @@ struct Reader {
     else {
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
+	Field::set(o, this->loadField<Field>());
       });
       return o;
     }
@@ -896,7 +897,7 @@ struct Reader {
     O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
       *this, ZuFwd<Args>(args)...);
     ZuUnroll::all<InitFields>([this, o]<typename Field>() {
-      Field::set(*o, this->loadField<ZfFieldFilter::Load, Field>());
+      Field::set(*o, this->loadField<Field>());
     });
     return o;
   }
@@ -905,18 +906,18 @@ struct Reader {
     ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
     O &o = *static_cast<O *>(o_);
     ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-      Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
+      Field::set(o, this->loadField<Field>());
     });
   }
 
   void load(O &o) const {
     ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-      Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
+      Field::set(o, this->loadField<Field>());
     });
   }
   void update(O &o) const {
     ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-      Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
+      Field::set(o, this->loadField<Field>());
     });
   }
 

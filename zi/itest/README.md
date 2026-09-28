@@ -32,3 +32,81 @@ The QIR runner `scripts/qir-run-local` publishes results below
 Those are explicit results rather than test residue and are retained until
 the caller removes them. Tests do not delete a caller-provided database path,
 QIR output path, or runner-owned `/logs` mount.
+
+## Heap tuning
+
+Build the configured module tree using the job counts in
+[heaptune.md](../../heaptune.md), then run `./zi/itest/zheaptune` or
+`prove -v ./zi/itest/zheaptune`. It also runs from `make -C zi/itest test`
+and `make -C zi test`. The `zheapwork` fixture is built alongside the TAP
+driver and is launched by it; it is not a standalone TAP driver.
+Set `Z_HEAPTUNE_CASE` to a case name (for example `cold`, `selective`, or
+`cpuset`) to run that case alone. Unknown names fail the driver.
+Use separate `ZI_LOGDIR` roots when running multiple copies concurrently;
+residue paths use the test name.
+
+Each case runs the fixture in fresh processes: call `ZiHeapTune::load()` first
+in `main`, run deterministic bursts, overwrite `Z_HEAPTUNE` with
+`ZiHeapTune::save()`, and replay the resulting configuration. Explicit
+headroom uses `save(headroom)`; open/write failures fail the fixture. The late
+case uses `ZiHeapTune::init` for its separate input configuration. The driver
+checks initial and drained telemetry, allocation counts, fallback peaks,
+independent partition/class capacities, sizing arithmetic, unused arenas,
+and file replacement. Size-boundary cases verify the full payload.
+
+The fixture syntax is
+`zheapwork scenario count repeat report [headroom|-] [late-config]`.
+Scenarios are `fixed`, `multi`, `unusedpair`, `variable`, `shift1`,
+`partitions`, `sequential`, `keys`, `late`, `shared`, `unused`, and
+`boundaries`. Omitting headroom or using `-` calls `ZiHeapTune::save()` with
+its default headroom.
+Set `Z_HEAPTUNE` to an owned configuration file when invoking the fixture
+manually: it overwrites that file. The driver supplies a child-only path
+and leaves the caller's environment and configuration file alone.
+
+The default child timeout is 30 seconds. `Z_HEAPTUNE_TIMEOUT` overrides it
+(1 through 3600 seconds); it bounds execution without imposing a performance
+threshold. On failure, the owned `ZiTestResidue` directory retains each
+generation's input/output CSV, structured snapshots, `heapCSV()` output,
+and child TAP log. Successful runs remove the directory.
+
+Use Valgrind only when investigating observed memory corruption or crashes.
+To instrument both the parent and children, for example:
+
+```sh
+Z_HEAPTUNE_TIMEOUT=120 \
+Z_HEAPTUNE_CHILD='libtool exec valgrind --leak-check=full --error-exitcode=99' \
+  libtool exec valgrind --leak-check=full --error-exitcode=99 ./zi/itest/zheaptune
+```
+
+Use the configured build's `libtool` by absolute path if it is not on `PATH`.
+Never launch `.libs` binaries directly.
+## Hash tuning
+
+The `zhashtune` TAP driver launches `zhashwork` in fresh processes, starting
+with an empty or seeded `Z_HASHTUNE` configuration. The fixture loads through
+`ZiHashTune::load()` first in `main` and saves through `ZiHashTune::save()`
+while its workload tables remain registered. Only `bits` changes: a resized
+run exports its final bits; a run without resizing uses the retained peak
+and headroom, allowing shrinkage below the default.
+
+Once rebuilding is resumed, build with Clang/debug, `-j8` through `ztc` and
+`-j4` thereafter, then run `./zi/itest/zhashtune` or
+`prove -v ./zi/itest/zhashtune`. It is also included in `make -C zi/itest test`
+and `make -C zi test`. Set `Z_HASHTUNE_CASE` to a named case such as `grown`,
+`below-default`, `same-id-overlap`, `linear-load`, or `utility` for a focused
+run. Unknown case names fail.
+
+The fixture syntax is
+`zhashwork scenario count repeat report [headroom|-] [late-config]`.
+The driver supplies child-only configuration paths. It retains every input
+and output generation, structured snapshot, diagnostic hash CSV, and child
+TAP log on failure through `ZiTestResidue`, and removes owned residue on
+success. Use separate `ZI_LOGDIR` roots for concurrent driver runs.
+
+`Z_HASHTUNE_TIMEOUT` sets the child timeout (default 30 seconds, valid range
+1–3600). `Z_HASHTUNE_CHILD` supplies an optional instrumentation command
+prefix. The launcher kills and reaps timed-out children using the established
+heap harness process-group/job conventions. Use Valgrind only if needed to
+investigate observed corruption or crashes, through `libtool exec` and normal
+wrapper paths. Do not launch `.libs` binaries directly.

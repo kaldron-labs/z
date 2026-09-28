@@ -53,11 +53,12 @@ template <
 class ZmVHeap_ {
 public:
   ZuAssert(Align > 0);
-  static constexpr unsigned Min = Min_ < 2 ? 2 : Min_;
+  static constexpr unsigned HardMin = ZmHeapAllocSize<1>{};
+  static constexpr unsigned Min = Min_ < HardMin ? HardMin : Min_;
   static constexpr unsigned Max = Max_ <= Min ? Min + 1 : Max_;
 
   static constexpr unsigned MinBits =
-    ((sizeof(Min)<<3) - ZuIntrin::clz(Min - 1)) - 1;
+    ((sizeof(Min)<<3) - ZuIntrin::clz(Min - 1));
   static constexpr unsigned MaxBits_ =
     ((sizeof(Max)<<3) - ZuIntrin::clz(Max - 1));
   static constexpr unsigned MaxBits =
@@ -66,17 +67,16 @@ public:
   static constexpr unsigned NCaches = MaxBits - MinBits;
 
   static constexpr unsigned cacheI(unsigned size) {
-    unsigned i = size <= (Min + 1) ? 0 :
-      (sizeof(size)<<3) - ZuIntrin::clz(size - (Min + 1));
+    unsigned i = (sizeof(size)<<3) - ZuIntrin::clz(size - 1);
     return i < MinBits ? 0 : i - MinBits;
   }
-  static constexpr unsigned cacheSize(unsigned i) {
-    return (uint64_t(1)<<(i + MinBits)) + Min;
+  static constexpr unsigned blockSize(unsigned i) {
+    return (uint64_t(1)<<(i + MinBits));
   }
 
   template <unsigned I>
   using Cache = ZmHeapCacheT<
-    ID, ZmHeapAllocSize<cacheSize(I)>{}, Align, Sharded, I>;
+    ID, ZmHeapAllocSize<blockSize(I)>{}, Align, Sharded, I>;
 
   static void *valloc(size_t size) {
     if (ZuUnlikely(!size)) return nullptr;

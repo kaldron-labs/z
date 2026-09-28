@@ -5,6 +5,10 @@ clients and servers over verified localhost TLS. The Go tool and the pinned Go
 module dependencies are required for the full matrix; without Go the driver
 reports a TAP skip.
 
+The driver emits its twelve cases through `ZuTest` in a matrix subtest.
+Child diagnostics use `ZuTestUtil::log`; `-q` or the test harness suppresses
+them. Intentional whole-program skips emit a manual TAP skip plan.
+
 The example separates the OAuth roles even when one process hosts both server
 roles:
 

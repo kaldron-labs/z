@@ -7,13 +7,14 @@
 #include <zlib/ZuDerive.hh>
 #include <stdlib.h>
 
+#include <iostream>
+
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZfCLI.hh>
 
-#include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
@@ -44,7 +45,7 @@ ZfStruct(, (Options, CLI),
 
 static void usage(int code)
 {
-  ZiFile::stdErr() <<
+  std::cerr <<
     "Usage: zmcp [OPTION]...\n\n"
     "  --stdio          use inherited stdin/stdout instead of HTTP\n"
     "  --host=HOST      HTTP host, default 127.0.0.1\n"
@@ -53,7 +54,7 @@ static void usage(int code)
     "  --lhs=N          left operand, default 20\n"
     "  --rhs=N          right operand, default 22\n"
     "  --stream         call the SSE response alternative\n"
-    "  -h, --help       show help\n";
+    "  -h, --help       show help\n" << std::flush;
   ::exit(code);
 }
 
@@ -148,7 +149,7 @@ int main(int argc, char **argv)
   try {
     argc = ZfCLI::load(options, argc, argv);
   } catch (const ZeException &e) {
-    ZiFile::stdErr() << e << "\n";
+    std::cerr << e << '\n';
     usage(1);
   }
   if (options.help) usage(0);

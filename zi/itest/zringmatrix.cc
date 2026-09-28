@@ -145,16 +145,15 @@ static void printFile(const char *label, ZuCSpan path)
   ZtString<> data;
   data.length(unsigned(length));
   if (length && file.read(data.data(), unsigned(length)) != int(length)) return;
-  std::cout << "# " << label << ":\n";
+  log(label, ':');
   unsigned offset = 0;
   unsigned dataLen = data.length();
   while (offset < dataLen) {
     ZuCSpan tail{data.data() + offset, dataLen - offset};
     int eol = tail.find("\n");
-    unsigned n = eol < 0 ? tail.length() : unsigned(eol) + 1;
-    std::cout << "# ";
-    std::cout.write(tail.data(), n);
-    offset += n;
+    unsigned n = eol < 0 ? tail.length() : unsigned(eol);
+    log(ZuCSpan{tail.data(), n});
+    offset += n + (eol >= 0);
   }
 }
 
@@ -277,12 +276,11 @@ static bool runCase(const char *name, Build build)
     ok = systemOK(::system(command.data()));
   }
   if (!ok) {
-    std::cout << "# failed case: " << name << '\n';
-    if (!written) std::cout << "# failed to write case script\n";
+    log("failed case: ", name);
+    if (!written) log("failed to write case script");
     printFile("child output", temp.log);
     printFile("script", temp.script);
-    std::cout << "# preserved logs: " << static_cast<const char *>(temp.path) <<
-      '\n';
+    log("preserved logs: ", static_cast<const char *>(temp.path));
   }
   cleanupRing(script.ring);
   ZuTestMgr::check(nullptr, ok, name);
@@ -440,9 +438,8 @@ using namespace ZiRingMatrix_;
 
 int main(int argc, char **argv)
 {
-  if (argc != 1) return 1;
+  ZuTestUtil::parse(argc, argv);
   matrixDir = executableDir(argv[0]);
-  verbose = !::getenv("HARNESS_ACTIVE");
   ZiTestResidue::init("zringmatrix");
   ZuTestMain();
   ZuTestCall(runMatrix);

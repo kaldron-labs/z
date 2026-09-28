@@ -699,6 +699,7 @@ public:
 
   // intentionally unlocked and non-atomic
   unsigned count_() const { return m_count.load_(); }
+  unsigned maxCount_() const { return m_maxCount.load_(); }
 
   template <typename P>
   NodeRef add(P &&data) {
@@ -748,9 +749,10 @@ private:
     m_table[slot] = ZuMv(node);
     // Different lock stripes can mutate the shared count concurrently.
     if constexpr (ZuIsSame<Lock, ZmNoLock>{})
-      m_count.store_(count + 1);
+      m_count.store_(++count);
     else
-      ++m_count;
+      count = ++m_count;
+    m_maxCount.maximum(count);
   }
 
 private:
@@ -1204,6 +1206,7 @@ public:
     data.effLoadFactor = double(count) / (1<<bits);
     data.nodeSize = sizeof(Node);
     data.count = count;
+    data.maxCount = m_maxCount.load_();
     data.resized = m_resized.load_();
     data.bits = bits;
     data.cBits = cBits();
@@ -1243,6 +1246,7 @@ private:
   Cmp			m_cmp;
   unsigned		m_loadFactor = 0;
   ZmAtomic<unsigned>	m_count = 0;
+  ZmAtomic<unsigned>	m_maxCount = 0;
   ZmAtomic<unsigned>	m_resized = 0;
   NodePtr		*m_table;
 };

@@ -12,14 +12,15 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <iostream>
+
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmBitmap.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
-
-#include <zlib/ZiFile.hh>
 
 #include "ZhttpTestUtil.hh"
 #include "ZrestITestPorts.hh"
@@ -289,11 +290,23 @@ static Command clientCommand(bool go, unsigned port,
   return command;
 }
 
+static void printOutput(const Child &child)
+{
+  ZuTestUtil::log(child.name, ':');
+  unsigned offset = 0;
+  while (offset < child.output.length()) {
+    ZuCSpan tail{child.output.data() + offset, child.output.length() - offset};
+    int eol = tail.find("\n");
+    unsigned n = eol < 0 ? tail.length() : unsigned(eol);
+    ZuTestUtil::log(ZuCSpan{tail.data(), n});
+    offset += n + (eol >= 0);
+  }
+}
+
 static void failureOutput(const Child &server, const Child &client)
 {
-  auto out = ZiFile::stdOut();
-  out << "# server (" << server.name << "):\n" << server.output <<
-    "# client (" << client.name << "):\n" << client.output;
+  printOutput(server);
+  printOutput(client);
 }
 
 static bool runPair(bool goClient, bool goServer, unsigned requests,
@@ -378,32 +391,12 @@ static bool runProbe(bool goServer, bool expiry)
   return ok;
 }
 
-int main()
+static void runMatrix()
 {
-  auto out = ZiFile::stdOut();
-#ifdef _WIN32
-  out << "1..0 # SKIP process fixture is not available on Windows\n";
-  return 0;
-#else
-  struct sigaction action{};
-  action.sa_handler = interrupt;
-  sigemptyset(&action.sa_mask);
-  sigaction(SIGINT, &action, nullptr);
-  sigaction(SIGTERM, &action, nullptr);
-  if (!exists("../interop/go/client") || !exists("../interop/go/server") ||
-      !exists("./zrestprobe") || !exists("./zrestua")) {
-    out << "1..0 # SKIP Go interoperability fixtures unavailable\n";
-    return 0;
-  }
-  ZiTestResidue::init("zrestmatrix");
-  out << "1..12\n";
-  unsigned test = 0, failed = 0;
+  ZuTestScopeRT(runMatrix);
 #define RUN(name, expression) do { \
     if (interrupted) break; \
-    bool ok = (expression); ++test; if (!ok) ++failed; \
-    MatrixString result; \
-    result << (ok ? "ok " : "not ok ") << test << " - " << name << '\n'; \
-    out << result; \
+    ZuTestMgr::check(nullptr, (expression), name); \
   } while (0)
   RUN("zrest to Go server", runPair(false, true, 2, 1, "2", "3s", true,
     false, TestTransport::H1));
@@ -427,9 +420,31 @@ int main()
   RUN("Go OAuth negative cases", runProbe(true, false));
   RUN("zrestd bounded state expiry", runProbe(false, true));
 #undef RUN
-  bool passed = !interrupted && !failed;
-  ZiTestResidue::final(passed);
+  if (interrupted) ZuCheckRT(!interrupted);
+}
+
+int main(int argc, char **argv)
+{
+  ZuTestUtil::parse(argc, argv);
+#ifdef _WIN32
+  std::cout << "1..0 # SKIP process fixture is not available on Windows\n";
+  return 0;
+#else
+  struct sigaction action{};
+  action.sa_handler = interrupt;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGINT, &action, nullptr);
+  sigaction(SIGTERM, &action, nullptr);
+  if (!exists("../interop/go/client") || !exists("../interop/go/server") ||
+      !exists("./zrestprobe") || !exists("./zrestua")) {
+    std::cout << "1..0 # SKIP Go interoperability fixtures unavailable\n";
+    return 0;
+  }
+  ZiTestResidue::init("zrestmatrix");
+  ZuTestMgr::finalFn(&ZiTestResidue::final);
+  ZuTestMain();
+  ZuTestCall(runMatrix);
   if (interrupted) return 128 + interrupted;
-  return passed ? 0 : 1;
+  return 0;
 #endif
 }

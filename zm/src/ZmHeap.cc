@@ -86,14 +86,14 @@ friend bool ZmHeapFail();
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
-  using IDPart = ZuTuple<ZuID, unsigned>;
+  using CfKey = ZuTuple<ZuID, unsigned, uint8_t>; // id, partition, vshift
   using IDSize = ZuTuple<ZuCSpan, unsigned>;
   using Key = ZmHeapCache::Key;
 
   // these containers use a null heap ID to prevent a circular dependency
 
   // primary key for heap configurations is {ID, partition}
-  ZmRBTreeDerive(IDPart2Config, (ZuTuple<IDPart, ZmHeapConfig>),
+  ZmRBTreeDerive(Configs, (ZuTuple<CfKey, ZmHeapConfig>),
     ZmRBTreeKeyVal<ZuTupleAxor<0>(), ZuTupleAxor<1>(),
       ZmRBTreeUnique<true,
 	ZmRBTreeHeapID<"">>>);
@@ -145,18 +145,23 @@ private:
 	ZmSingletonCleanup<ZmCleanup::HeapMgr>>::instance();
   }
 
-  void init(ZuCSpan id, unsigned partition, const ZmHeapConfig &config) {
+  void init(
+    ZuCSpan id, uint16_t partition, uint8_t vshift,
+    const ZmHeapConfig &config)
+  {
     auto hwloc = ZmTopology::hwloc();
     Guard guard(m_lock);
-    m_configs.del(ZuFwdTuple(id, partition));
-    m_configs.add(ZuFwdTuple(id, partition), config);
+    m_configs.del(ZuFwdTuple(id, partition, vshift));
+    m_configs.add(ZuFwdTuple(id, partition, vshift), config);
     {
       auto i = m_id2Cache.citer<ZmRBTreeEqual>(id);
-      while (ZmHeapCache *c = i.val())
-	if (c->info().partition == partition) {
+      while (ZmHeapCache *c = i.val()) {
+	const auto &info = c->info();
+	if (info.partition == partition && info.vshift == vshift) {
 	  c->init(config, hwloc);
 	  lookupAdd(c);
 	}
+      }
     }
   }
 
@@ -250,10 +255,10 @@ private:
   }
 
   ZmHeapCache *cache(
-    ZuCSpan id, unsigned size, unsigned alignment, bool sharded,
-    unsigned vshift)
+    ZuCSpan id, uint8_t vshift,
+    uint32_t size, uint16_t alignment, bool sharded)
   {
-    unsigned partition = ZmSelf()->partition();
+    uint16_t partition = ZmSelf()->partition();
     ZmHeapCache *cache = nullptr;
     auto hwloc = ZmTopology::hwloc();
     Guard guard(m_lock);
@@ -265,17 +270,19 @@ private:
     if (!(statsNode = m_stats.find(id)))
       statsNode = m_stats.add(id, ZmHeapGlobalStats{});
     ZmHeapGlobalStats *stats = &statsNode->val();
-    if (IDPart2Config::NodeRef node =
-	m_configs.find(ZuFwdTuple(id, partition))) {
+    if (Configs::NodeRef node =
+	m_configs.find(ZuFwdTuple(id, partition, vshift))) {
       ZmHeapConfig config = node->val();
       cache = new ZmHeapCache(
-	id, size, alignment, partition, sharded, vshift, config,
+	id, partition, vshift, config,
+	size, alignment, sharded,
 	stats, hwloc);
     } else {
       cache = new ZmHeapCache(
-	id, size, alignment, partition, sharded, vshift, ZmHeapConfig{
+	id, partition, vshift, ZmHeapConfig{
 	  .cacheSize = 0
-	}, stats, hwloc);
+	}, size, alignment, sharded,
+	stats, hwloc);
     }
     ZmREF(cache);
     m_id2Cache.add(cache);
@@ -294,7 +301,7 @@ private:
 
   ZmHeapFailFn		m_failFn = nullptr;
   ZmPLock		m_lock;
-    IDPart2Config	  m_configs;
+    Configs	 	  m_configs;
     ID2Cache		  m_id2Cache;
     Key2Cache		  m_key2Cache;
     IDSize2Lookup	  m_lookups;
@@ -314,9 +321,9 @@ bool ZmHeapFail()
 }
 
 void ZmHeapMgr::init(
-  ZuCSpan id, unsigned partition, const ZmHeapConfig &config)
+  ZuCSpan id, uint16_t partition, uint8_t vshift, const ZmHeapConfig &config)
 {
-  ZmHeapMgr_::instance()->init(id, partition, config);
+  ZmHeapMgr_::instance()->init(id, partition, vshift, config);
 }
 
 #ifdef ZmHeap_DEBUG
@@ -327,10 +334,10 @@ void ZmHeapMgr::trace(ZuCSpan id, TraceFn allocFn, TraceFn freeFn)
 #endif
 
 ZmHeapCache *ZmHeapMgr::cache(
-  ZuCSpan id, unsigned size, unsigned alignment, bool sharded, unsigned shift)
+  ZuCSpan id, uint8_t vshift, uint32_t size, uint16_t alignment, bool sharded)
 {
   return ZmHeapMgr_::instance()->cache(
-    id, size, alignment, sharded, shift);
+    id, vshift, size, alignment, sharded);
 }
 
 void *ZmHeapCache::operator new(size_t size) {
@@ -350,13 +357,13 @@ void ZmHeapCache::operator delete(void *ptr)
 }
 
 ZmHeapCache::ZmHeapCache(
-  ZuCSpan id, unsigned size, unsigned alignment,
-  unsigned partition, bool sharded, unsigned vshift,
-  const ZmHeapConfig &config, ZmHeapGlobalStats *globalStats,
+  ZuCSpan id, uint16_t partition, uint8_t vshift,
+  const ZmHeapConfig &config,
+  uint32_t size, uint16_t alignment, bool sharded,
+  ZmHeapGlobalStats *globalStats,
   hwloc_topology_t hwloc)
   :
-  m_vshift{vshift},
-  m_info{id, size, alignment, partition, sharded, config},
+  m_info{id, config, size, partition, alignment, vshift, sharded},
   m_globalStats{globalStats}
 {
   init_(hwloc);
@@ -384,7 +391,6 @@ void ZmHeapCache::init_(hwloc_topology_t hwloc)
   ZmHeapConfig &config = m_info.config;
   if (!config.cacheSize) return;
   m_info.size = (m_info.size + m_info.alignment - 1) & ~(m_info.alignment - 1);
-  config.cacheSize >>= m_vshift; // this only occurs once
   uint64_t len = config.cacheSize * m_info.size;
   void *begin;
   if (!config.cpuset)
@@ -478,12 +484,11 @@ void Ztc::HeapMgr::unwatch()
   ZmHeapMgr_::instance()->unwatch();
 }
 
-ZuTuple<ZuCSpan, uint32_t, uint8_t, uint16_t, uint8_t>
-ZmHeapCache::telKey() const
+ZmHeapCache::TelKey ZmHeapCache::telKey() const
 {
   return {
-    m_info.id, m_info.size, m_info.alignment,
-    m_info.partition, m_info.sharded
+    m_info.id, m_info.partition,
+    m_info.size, m_info.alignment, m_info.sharded
   };
 }
 
@@ -504,4 +509,5 @@ void ZmHeapCache::telemetry(Ztc::HeapTelemetry &data) const
   data.partition = m_info.partition;
   data.sharded = m_info.sharded;
   data.alignment = m_info.alignment;
+  data.vshift = m_info.vshift;
 }

@@ -12,6 +12,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuUnroll.hh>
+#include <zlib/ZuSwitch.hh>
 
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTrap.hh>
@@ -220,10 +221,25 @@ using TypeList = ZuTypeList<
   Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
 using FBTypeList = ZuTypeMap<ZfbType, TypeList>;
 
+template <typename Data>
+using KeyFields = typename ZuStructKeyT_<Data, 0>::Fields;
+
 template <typename Data> struct Item__ {
   static constexpr auto Axor = ZuFieldAxor<Data>();
   static decltype(auto) telKey(const Data &data) { return Axor(data); }
   using TelKey = ZuRDecay<decltype(telKey(ZuDeclVal<const Data &>()))>;
+  template <unsigned I, typename S>
+  void printKey(S &s, const Data &data) const {
+    if constexpr (I < TelKey::N) {
+      using Field = ZuType<I, KeyFields<Data>>;
+      if constexpr (Field::Code == ZfFieldTC::String)
+	s << Field::get(data);
+      else {
+	using Print = typename Field::Type::template Print<>;
+	s << Print{Field::get(data)};
+      }
+    }
+  }
   static int rag(const Data &data) { return data.rag(); }
 };
 template <> struct Item__<Ztc::AppTelemetry> {
@@ -241,6 +257,10 @@ template <> struct Item__<Ztc::AppTelemetry> {
   TelKey telKey(const Ztc::AppTelemetry &) const {
     return {publisher_, device_, generation_};
   }
+  template <unsigned I, typename S>
+  void printKey(S &s, const Ztc::AppTelemetry &data) const {
+    if constexpr (I < TelKey::N) s << telKey(data).template p<I>();
+  }
   static int rag(const Ztc::AppTelemetry &data) {
     return data.rag;
   }
@@ -250,8 +270,12 @@ template <> struct Item__<Ztc::DBTelemetry> {
   static TelKey telKey(const Ztc::DBTelemetry &) {
     return TelKey{"dbenv"};
   }
-  static int rag(const Ztc::DBTelemetry &) {
-    return Ztc::RAG::Off;
+  template <unsigned I, typename S>
+  void printKey(S &s, const Ztc::DBTelemetry &data) const {
+    if constexpr (I < TelKey::N) s << telKey(data).template p<I>();
+  }
+  static int rag(const Ztc::DBTelemetry &data) {
+    return data.rag();
   }
 };
 template <typename Data_> struct Item_ : public Item__<Data_> {
@@ -277,6 +301,8 @@ template <typename Data_> struct Item_ : public Item__<Data_> {
   void gtkRow(T *node) { gtkRow_ = node; }
 
   TelKey telKey() const { return Base::telKey(value); }
+  template <unsigned I, typename S>
+  void printKey(S &s) const { Base::template printKey<I>(s, value); }
   int rag() const { return Base::rag(value); }
 
 };
@@ -373,6 +399,8 @@ struct Row {
   void init_() { item->gtkRow(impl()); }
 
   using TelKey = typename Item::TelKey;
+  template <unsigned I, typename S>
+  void printKey(S &s) const { item->template printKey<I>(s); }
   TelKey telKey() const { return item->telKey(); }
   int rag() const { return item->rag(); }
   int cmp(const Impl &v) const {
@@ -431,9 +459,15 @@ template <unsigned Depth, typename Item, typename Tuple>
 ZuDerive(Branch_Heap, (ZmHeap<"ZDash.Branch", Branch_<Depth, Item, Tuple>>));
 template <unsigned Depth, typename Item, typename Tuple>
 ZuDerive(Branch, (Branch_<Depth, Item, Tuple, Branch_Heap<Depth, Item, Tuple>>));
-template <typename TelKey_>
+template <typename Impl>
 struct BranchChild {
-  using TelKey = TelKey_;
+  using TelKey = ZuTuple<const char *>;
+  template <unsigned I, typename S>
+  static void printKey(S &s) {
+    if constexpr (!I) s << Impl::telKey().template p<0>();
+    else if constexpr (I < Impl::Fields::N)
+      s << ZuType<I, typename Impl::Fields>::id();
+  }
   static int rag() { return Ztc::RAG::Off; }
 };
 
@@ -452,48 +486,56 @@ using DBHost = Leaf<4, TelItem<Ztc::DBHostTelemetry>>;
 using DBTable = Leaf<4, TelItem<Ztc::DBTableTelemetry>>;
 
 // DBTable hosts
-struct DBHosts : public BranchChild<ZuTuple<const char *>> {
+struct DBHosts : public BranchChild<DBHosts> {
+  using Fields = Telemetry::KeyFields<Ztc::DBHostTelemetry>;
   static auto telKey() { return TelKey{"hosts"}; }
 };
 using DBHostParent = Parent<3, DBHosts, DBHost>;
 // DBTables
-struct DBTables : public BranchChild<ZuTuple<const char *>> {
+struct DBTables : public BranchChild<DBTables> {
+  using Fields = Telemetry::KeyFields<Ztc::DBTableTelemetry>;
   static auto telKey() { return TelKey{"tables"}; }
 };
 using DBTableParent = Parent<3, DBTables, DBTable>;
 
 // heaps
-struct Heaps :
-    public BranchChild<ZuTuple<const char *, const char *, const char *>> {
-  static auto telKey() { return TelKey{"heaps", "partition", "size"}; }
+struct Heaps : public BranchChild<Heaps> {
+  using Fields = Telemetry::KeyFields<Ztc::HeapTelemetry>;
+  static auto telKey() { return TelKey{"heaps"}; }
 };
 using HeapParent = Parent<2, Heaps, Heap>;
 // hashTbls
-struct HashTbls : public BranchChild<ZuTuple<const char *, const char *>> {
-  static auto telKey() { return TelKey{"hashTbls", "addr"}; }
+struct HashTbls : public BranchChild<HashTbls> {
+  using Fields = Telemetry::KeyFields<Ztc::HashTelemetry>;
+  static auto telKey() { return TelKey{"hashTbls"}; }
 };
 using HashTblParent = Parent<2, HashTbls, HashTbl>;
 // threads
-struct Threads : public BranchChild<ZuTuple<const char *>> {
+struct Threads : public BranchChild<Threads> {
+  using Fields = Telemetry::KeyFields<Ztc::ThreadTelemetry>;
   static auto telKey() { return TelKey{"threads"}; }
 };
 using ThreadParent = Parent<2, Threads, Thread>;
 // multiplexers
-struct Mxs : public BranchChild<ZuTuple<const char *>> {
+struct Mxs : public BranchChild<Mxs> {
+  using Fields = Telemetry::KeyFields<Ztc::MxTelemetry>;
   static auto telKey() { return TelKey{"multiplexers"}; }
 };
 using MxParent = Parent<2, Mxs, Mx>;
 // queues
-struct Queues : public BranchChild<ZuTuple<const char *, const char *>> {
-  static auto telKey() { return TelKey{"queues", "type"}; }
+struct Queues : public BranchChild<Queues> {
+  using Fields = Telemetry::KeyFields<Ztc::QueueTelemetry>;
+  static auto telKey() { return TelKey{"queues"}; }
 };
 using QueueParent = Parent<2, Queues, Queue>;
-struct Pools : public BranchChild<ZuTuple<const char *>> {
+struct Pools : public BranchChild<Pools> {
+  using Fields = Telemetry::KeyFields<Ztc::PoolTelemetry>;
   static auto telKey() { return TelKey{"pools"}; }
 };
 using PoolParent = Parent<2, Pools, Pool>;
 // engines
-struct Engines : public BranchChild<ZuTuple<const char *>> {
+struct Engines : public BranchChild<Engines> {
+  using Fields = Telemetry::KeyFields<Ztc::HubTelemetry>;
   static auto telKey() { return TelKey{"engines"}; }
 };
 using EngineParent = Parent<2, Engines, Engine>;
@@ -626,7 +668,12 @@ public:
   }
 
 
-  enum { RAGCol = 0, IDCol0, IDCol1, IDCol2, NCols };
+  // Include every key component; metadata determines the view's width.
+  enum { NIDCols = ZuUnroll::all<Telemetry::TypeList>(0U,
+    []<typename T>(unsigned n) {
+      unsigned k = Telemetry::Item__<T>::TelKey::N;
+      return n > k ? n : k;
+    }), RAGCol = 0, IDCol0, IDCol1, NCols = IDCol0 + NIDCols };
 
   static Model *ctor() {
     auto model = Base::ctor();
@@ -704,86 +751,32 @@ public:
     gtk_tree_path_free(path);
   }
 
-  // key printing
-  template <typename Key>
-  struct KeyPrint_ {
-    Key key;
-
-    template <typename Key_>
-    KeyPrint_(Key_ &&key_) : key{ZuFwd<Key_>(key_)} { }
-    auto p0() const { return key.template p<0>(); }
-    template <unsigned N = Key::N, ZuIfT<(N <= 1), int> = 0>
-    auto p1() const { return ""; }
-    template <unsigned N = Key::N, ZuIfT<(N > 1), int> = 0>
-    auto p1() const { return key.template p<1>(); }
-    template <unsigned N = Key::N, ZuIfT<(N <= 2), int> = 0>
-    auto p2() const { return ""; }
-    template <unsigned N = Key::N, ZuIfT<(N > 2), int> = 0>
-    auto p2() const { return key.template p<2>(); }
-  };
-  // generic key printing
-  template <typename Key>
-  struct KeyPrint : public KeyPrint_<Key> {
-    using KeyPrint_<Key>::KeyPrint_;
-  };
-
-  // override addr for hash tables
-  template <typename Key>
-  struct HashTblKeyPrint : public KeyPrint_<Key> {
-    using KeyPrint_<Key>::KeyPrint_;
-    auto p1() { return ZuBoxed(this->key.template p<1>()).hex(); }
-  };
-
-  // override type for queues
-  template <typename Key>
-  struct QueueKeyPrint : public KeyPrint_<Key> {
-    using KeyPrint_<Key>::KeyPrint_;
-    auto p2() {
-      return Ztc::QueueType::name(this->key.template p<2>());
-    }
-  };
-  template <typename T, typename Key>
-  static ZuIf<ZuIsSame<T, HashTbl>{}, HashTblKeyPrint<Key>,
-    ZuIf<ZuIsSame<T, Queue>{}, QueueKeyPrint<Key>, KeyPrint<Key>>>
-  keyPrintType();
-
   gint get_n_columns() { return NCols; }
   GType get_column_type(gint i) {
-    switch (i) {
-      case RAGCol: return G_TYPE_INT;
-      case IDCol0: return G_TYPE_STRING;
-      case IDCol1: return G_TYPE_STRING;
-      case IDCol2: return G_TYPE_STRING;
-      default: return G_TYPE_NONE;
-    }
+    if (i == RAGCol) return G_TYPE_INT;
+    if (i >= IDCol0 && i < NCols) return G_TYPE_STRING;
+    return G_TYPE_NONE;
   }
   template <typename T>
   void value(const T *ptr, gint i, ZGtk::Value *v) {
-    switch (i) {
-      case RAGCol:
-	v->init(G_TYPE_INT);
-	v->set_int(ptr->rag());
-	return;
-      case IDCol0: case IDCol1: case IDCol2: break;
-      default: return;
+    if (i == RAGCol) {
+      v->init(G_TYPE_INT);
+      v->set_int(ptr->rag());
+      return;
     }
-    using Key = decltype(ptr->telKey());
-    using KeyPrint = decltype(keyPrintType<T, Key>());
-    KeyPrint print{ptr->telKey()};
+    if (i < IDCol0 || i >= NCols) return;
     m_value.length(0);
-    switch (i) {
-      case IDCol0: m_value << print.p0(); break;
-      case IDCol1: m_value << print.p1(); break;
-      case IDCol2: m_value << print.p2(); break;
-    }
+    ZuSwitch::dispatch<NIDCols>(i - IDCol0, [this, ptr](auto k) {
+      ptr->template printKey<k>(m_value);
+    });
     v->init(G_TYPE_STRING);
     // GTK owns this result; subsequent column reads reuse m_value.
     v->set_string(m_value);
   }
 
 private:
-  Root	m_root;		// root of tree
-  String	m_value;	// re-used string buffer
+  Root		m_root;		// root of tree
+  String::Base	m_value;	// exact stream type for metadata UDT printers
 };
 
 class View {
@@ -882,9 +875,9 @@ public:
 	  context, "rag_green_bg", &m_rag_green_bg))
       m_rag_green_bg = { 0.1835, 0.8789, 0.2304, 1.0 }; // #2fe13b
 
-    addCol<Model::RAGCol, Model::IDCol0>("ID");
-    addCol<Model::RAGCol, Model::IDCol1>("");
-    addCol<Model::RAGCol, Model::IDCol2>("");
+    ZuUnroll::all<Model::NIDCols>([this](auto i) {
+      addCol<Model::RAGCol, Model::IDCol0 + i>(i ? "" : "ID");
+    });
 
     // GLib takes a mutable array of pointers to immutable property names.
     static const gchar *props[] = {

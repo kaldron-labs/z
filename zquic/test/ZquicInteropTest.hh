@@ -25,6 +25,7 @@
 #endif
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtString.hh>
 
@@ -71,20 +72,18 @@ inline void printFile(const char *label, const ZtString<> &path)
   ZtString<> data;
   data.length(unsigned(length));
   if (length && file.read(data.data(), unsigned(length)) != int(length)) return;
-  auto out = ZiFile::stdOut();
-  out << "# " << label << ":";
+  ZuTestUtil::log(label, ':');
   if (!data) {
-    out << " <empty>\n";
+    ZuTestUtil::log("<empty>");
     return;
   }
-  out << "\n";
   unsigned offset = 0;
   while (offset < data.length()) {
     ZuCSpan tail{data.data() + offset, data.length() - offset};
     int eol = tail.find("\n");
-    unsigned n = eol < 0 ? tail.length() : unsigned(eol) + 1;
-    out << "# " << ZuCSpan{tail.data(), n};
-    offset += n;
+    unsigned n = eol < 0 ? tail.length() : unsigned(eol);
+    ZuTestUtil::log(ZuCSpan{tail.data(), n});
+    offset += n + (eol >= 0);
   }
 }
 

@@ -5,7 +5,10 @@ libtool-built `test/.libs/zdash_test.so` module. Both emit TAP, evaluated by
 `prove`. The shell fixture requires `xvfb-run`, forces X11 on a disposable
 display and never maps the dashboard onto the desktop. The small mirrored
 ring exercises byte ownership, wrap-spanning records, bounded GTK updates,
-EOS retention, generation replacement, row rendering and window-close events.
+EOS retention, generation replacement and window-close events. Populated
+telemetry checks every row's key columns and grouping labels, including heap
+identity fields, both socket endpoints, enum names, hexadecimal hash addresses,
+database RAG and GTK path round trips.
 
 The module exports `ZdashModule`; `zdash` loads it with `ZiModule` only when
 `ZDASH_TEST` names a module, resolves the factory, and invokes the

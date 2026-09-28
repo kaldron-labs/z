@@ -4,16 +4,18 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <iostream>
-
 #include <zlib/ZuHex.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZumJWTVerify.hh>
 
 #include <zlib/ZtlsCOSE.hh>
 
-int main(int argc, char **argv)
+using namespace ZuTestUtil;
+
+static void verify(int argc, char **argv)
 {
+  ZuTestScope(verify);
   bool ok = argc == 3;
   uint8_t key[Ztls::COSE::ES256::PublicKeySize];
   if (ok)
@@ -28,7 +30,13 @@ int main(int argc, char **argv)
       principal.clientID == "workload" && principal.scope == "read" &&
       principal.actions.length() == 1 &&
       principal.actions[0] == "orders.read" && !principal.authMethod;
-  std::cout << "1..1\n" << (ok ? "ok" : "not ok") <<
-    " 1 - OpenSSL ES256 access token\n";
-  return ok ? 0 : 1;
+  ZuCHECK(ok, "OpenSSL ES256 access token verification failed");
+}
+
+int main(int argc, char **argv)
+{
+  ZuTestUtil::parse(1, argv);
+  ZuTestMain();
+  ZuTestCall(verify, argc, argv);
+  return 0;
 }

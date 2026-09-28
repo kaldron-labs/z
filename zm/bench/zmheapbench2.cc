@@ -57,7 +57,7 @@ int main(int argc, char **argv)
   if (argc == 5) detailVerbose = atoi(argv[4]);
   if (!count || !nthr) usage_();
   for (int i = 0; i < nthr; i++)
-    ZmHeapMgr::init("S", i, ZmHeapConfig{uint64_t(size)});
+    ZmHeapMgr::init("S", i, 0, ZmHeapConfig{uint64_t(size)});
   ZmSchedParams params;
   params.id("sched").nThreads(nthr);
   for (int i = 0; i < nthr; i++)
