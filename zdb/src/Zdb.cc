@@ -1134,7 +1134,7 @@ void DB::telemetry(Ztc::DBTelemetry &data) const
   data.thread = m_cf.thread;
   data.threads = m_cf.threads;
   data.nShards = m_cf.nShards;
-  data.self = telKey();
+  data.self = telKey().p<0>();
   data.leader = m_leader ? m_leader->id() : ZuCSpan{};
   data.prev = m_prev ? m_prev->id() : ZuCSpan{};
   data.next = m_next ? m_next->id() : ZuCSpan{};
@@ -1152,15 +1152,15 @@ void DB::telemetry(Ztc::DBTelemetry &data) const
   data.replicating = Host::replicating(m_next);
 }
 
-Ztc::DBHostKey Host::telKey() const
+Ztc::DBHost::TelKey Host::telKey() const
 {
-  return {m_db->telKey(), m_cf->id};
+  return {m_db->telKey().p<0>(), m_cf->id};
 }
 
 void Host::telemetry(Ztc::DBHostTelemetry &data) const
 {
   data.ip = m_cf->ip;
-  data.dbID = m_db->telKey();
+  data.dbID = m_db->telKey().p<0>();
   data.id = m_cf->id;
   data.priority = m_cf->priority;
   data.port = m_cf->port;
@@ -2046,14 +2046,14 @@ AnyTable::~AnyTable() noexcept
   // close(); // must be called while running
 }
 
-Ztc::DBTableKey AnyTable::telKey() const
+Ztc::DBTable::TelKey AnyTable::telKey() const
 {
-  return {m_db->telKey(), m_cf->id};
+  return {m_db->telKey().p<0>(), m_cf->id};
 }
 
 void AnyTable::telemetry(Ztc::DBTableTelemetry &data) const
 {
-  data.dbID = m_db->telKey();
+  data.dbID = m_db->telKey().p<0>();
   data.id = m_cf->id;
   data.count = count();
   data.cacheLoads = 0;

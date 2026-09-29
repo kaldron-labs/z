@@ -551,8 +551,7 @@ private:
   using SpawnReadGuard = SpawnGuard;
 
   struct Thread final : public Ztc::Queue {
-    ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
-      telKey() const override;
+    TelKey telKey() const override;
     void telemetry(Ztc::QueueTelemetry &) const override;
 
     ZmScheduler		*owner = nullptr;

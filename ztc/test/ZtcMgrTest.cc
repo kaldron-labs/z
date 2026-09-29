@@ -57,7 +57,7 @@ ZuAssert((ZuIsSame<
   typename Ztc::WatchFnHeapID::HeapID>{}));
 
 struct MockDBHost final : public Ztc::DBHost {
-  Ztc::DBHostKey telKey() const override { return {dbID, id}; }
+  Ztc::DBHost::TelKey telKey() const override { return {dbID, id}; }
   void telemetry(Ztc::DBHostTelemetry &data) const override {
     data.dbID = dbID;
     data.id = id;
@@ -68,7 +68,7 @@ struct MockDBHost final : public Ztc::DBHost {
 };
 
 struct MockDBTable final : public Ztc::DBTable {
-  Ztc::DBTableKey telKey() const override { return {dbID, id}; }
+  Ztc::DBTable::TelKey telKey() const override { return {dbID, id}; }
   void telemetry(Ztc::DBTableTelemetry &data) const override {
     data.dbID = dbID;
     data.id = id;
@@ -79,7 +79,7 @@ struct MockDBTable final : public Ztc::DBTable {
 };
 
 struct MockDB final : public Ztc::DB {
-  Ztc::DBKey telKey() const override { return id; }
+  TelKey telKey() const override { return {id}; }
   void telemetry(Ztc::DBTelemetry &data) const override { data.self = id; }
   bool start() override { return true; }
   bool stop() override { return true; }
@@ -105,8 +105,7 @@ struct MockQueue final : public Ztc::Queue {
   MockQueue(ZuCSpan ownerID_, ZuCSpan id_, Ztc::QueueType::T type_) :
     ownerID{ownerID_}, id{id_}, type{type_} { }
 
-  ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
-    telKey() const override {
+  TelKey telKey() const override {
     return {ownerID, id, type};
   }
   void telemetry(Ztc::QueueTelemetry &data) const override {
@@ -125,7 +124,7 @@ struct MockLink final : public Ztc::Link {
     rx{"hub", "link", Ztc::QueueType::Rx},
     tx{"hub", "link", Ztc::QueueType::Tx} { }
 
-  ZuTuple<const ZuID &, const ZuID &> telKey() const override {
+  TelKey telKey() const override {
     return {hubID, id};
   }
   void telemetry(Ztc::LinkTelemetry &data) const override {
@@ -147,7 +146,7 @@ struct MockLink final : public Ztc::Link {
 };
 
 struct MockPool final : public Ztc::Pool {
-  ZuTuple<const ZuID &, const ZuID &> telKey() const override {
+  TelKey telKey() const override {
     return {hubID, id};
   }
   void telemetry(Ztc::PoolTelemetry &data) const override {
@@ -165,7 +164,7 @@ struct MockPool final : public Ztc::Pool {
 };
 
 struct MockHub final : public Ztc::Hub {
-  ZuTuple<Ztc::LinkType::T, const ZuID &> telKey() const override {
+  TelKey telKey() const override {
     return {Ztc::LinkType::TCP, id};
   }
   void telemetry(Ztc::HubTelemetry &data) const override {

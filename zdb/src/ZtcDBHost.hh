@@ -13,7 +13,9 @@
 #include <zlib/ZdbLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZtEnum.hh>
@@ -38,8 +40,6 @@ ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Active,
   Inactive,
   Stopping);
-
-using DBHostKey = ZuTuple<const ZuID &, const ZuID &>;
 
 struct DBHostTelemetry {
   ZiIP		ip;
@@ -76,7 +76,8 @@ ZfbStruct(ZdbAPI, DBHostTelemetry,
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 struct DBHost {
-  virtual DBHostKey telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(DBHostTelemetry &) const = 0;
 };
 

@@ -547,7 +547,7 @@ public:
   uint64_t txCalls() const { return m_txCalls; }
   uint64_t txBytes() const { return m_txBytes; }
 
-  Ztc::Connection::Key telKey() const override;
+  Ztc::Connection::TelKey telKey() const override;
   void telemetry(Ztc::CxnTelemetry &data) const override;
 
 private:
@@ -960,7 +960,7 @@ public:
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
 
-  const ZuID &telKey() const override { return id(); }
+  TelKey telKey() const override { return {id()}; }
   void telemetry(Ztc::MxTelemetry &data) const override;
 
 private:

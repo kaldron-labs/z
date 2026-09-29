@@ -1171,7 +1171,7 @@ void ZiMultiplex::executedConnect(ZiConnectFn fn, const ZiCxnInfo &ci)
   }));
 }
 
-Ztc::Connection::Key ZiConnection::telKey() const
+Ztc::Connection::TelKey ZiConnection::telKey() const
 {
   return {
     m_mx->id(),

@@ -577,7 +577,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
       if (mx == check->target) check->found = true;
     }});
   result.telemetry =
-    telemetry.nThreads >= 1 && mx.telKey() == telemetry.id && check.found &&
+    telemetry.nThreads >= 1 && mx.telKey().p<0>() == telemetry.id && check.found &&
     allMxs == check.visited;
 
   mx.startLoopback();

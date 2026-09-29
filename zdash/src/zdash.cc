@@ -243,7 +243,7 @@ template <typename Data> struct Item__ {
   static int rag(const Data &data) { return data.rag(); }
 };
 template <> struct Item__<Ztc::AppTelemetry> {
-  using TelKey = ZuTuple<ZuCSpan, ZuCSpan, uint64_t>;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan, uint64_t>));
   // Source owns these immutable strings and outlives the item and GTK row.
   ZuCSpan	publisher_;
   ZuCSpan	device_;
@@ -263,19 +263,6 @@ template <> struct Item__<Ztc::AppTelemetry> {
   }
   static int rag(const Ztc::AppTelemetry &data) {
     return data.rag;
-  }
-};
-template <> struct Item__<Ztc::DBTelemetry> {
-  using TelKey = ZuTuple<const char *>;
-  static TelKey telKey(const Ztc::DBTelemetry &) {
-    return TelKey{"dbenv"};
-  }
-  template <unsigned I, typename S>
-  void printKey(S &s, const Ztc::DBTelemetry &data) const {
-    if constexpr (I < TelKey::N) s << telKey(data).template p<I>();
-  }
-  static int rag(const Ztc::DBTelemetry &data) {
-    return data.rag();
   }
 };
 template <typename Data_> struct Item_ : public Item__<Data_> {
@@ -369,9 +356,6 @@ template <typename U> struct Container_ { // default
 template <> struct Container_<Ztc::AppTelemetry> {
   using T = ItemSingleton<Ztc::AppTelemetry>;
 };
-template <> struct Container_<Ztc::DBTelemetry> {
-  using T = ItemSingleton<Ztc::DBTelemetry>;
-};
 template <> struct Container_<Ztc::AlertTelemetry> {
   using T = AlertArray;
 };
@@ -460,7 +444,7 @@ template <unsigned Depth, typename Item, typename Tuple>
 ZuDerive(Branch, (Branch_<Depth, Item, Tuple, Branch_Heap<Depth, Item, Tuple>>));
 template <typename Impl>
 struct BranchChild {
-  using TelKey = ZuTuple<const char *>;
+  ZuDerive(TelKey, (ZuTuple<const char *>));
   template <unsigned I, typename S>
   static void printKey(S &s) {
     if constexpr (!I) s << Impl::telKey().template p<0>();
@@ -481,21 +465,21 @@ using Queue = Leaf<3, TelItem<Ztc::QueueTelemetry>>;
 using Pool = Leaf<3, TelItem<Ztc::PoolTelemetry>>;
 using Link = Leaf<4, TelItem<Ztc::LinkTelemetry>>;
 using Engine = Parent<3, TelItem<Ztc::HubTelemetry>, Link>;
-using DBHost = Leaf<4, TelItem<Ztc::DBHostTelemetry>>;
-using DBTable = Leaf<4, TelItem<Ztc::DBTableTelemetry>>;
+using DBHost = Leaf<5, TelItem<Ztc::DBHostTelemetry>>;
+using DBTable = Leaf<5, TelItem<Ztc::DBTableTelemetry>>;
 
-// DBTable hosts
+// DB hosts
 struct DBHosts : public BranchChild<DBHosts> {
   using Fields = Telemetry::KeyFields<Ztc::DBHostTelemetry>;
   static auto telKey() { return TelKey{"hosts"}; }
 };
-using DBHostParent = Parent<3, DBHosts, DBHost>;
+using DBHostParent = Parent<4, DBHosts, DBHost>;
 // DBTables
 struct DBTables : public BranchChild<DBTables> {
   using Fields = Telemetry::KeyFields<Ztc::DBTableTelemetry>;
   static auto telKey() { return TelKey{"tables"}; }
 };
-using DBTableParent = Parent<3, DBTables, DBTable>;
+using DBTableParent = Parent<4, DBTables, DBTable>;
 
 // heaps
 struct Heaps : public BranchChild<Heaps> {
@@ -543,7 +527,12 @@ using EngineParent = Parent<2, Engines, Engine>;
 ZuDeclTuple(DBTuple,
     (DBHostParent, hosts),
     (DBTableParent, tables));
-using DB = Branch<2, TelItem<Ztc::DBTelemetry>, DBTuple>;
+using DB = Branch<3, TelItem<Ztc::DBTelemetry>, DBTuple>;
+struct DBs : public BranchChild<DBs> {
+  using Fields = Telemetry::KeyFields<Ztc::DBTelemetry>;
+  static auto telKey() { return TelKey{"databases"}; }
+};
+using DBParent = Parent<2, DBs, DB>;
 // applications
 ZuDeclTuple(AppTuple,
     (HeapParent, heaps),
@@ -553,7 +542,7 @@ ZuDeclTuple(AppTuple,
     (QueueParent, queues),
     (PoolParent, pools),
     (EngineParent, engines),
-    (DB, db));
+    (DBParent, dbs));
 using App = Branch<1, TelItem<Ztc::AppTelemetry>, AppTuple>;
 
 struct Root : public ZGtk::TreeHierarchy::Parent<Root, 0, App> { };
@@ -570,7 +559,7 @@ auto row(Item *item) {
   return item->template gtkRow<T>();
 }
 
-enum { Depth = 5 };
+enum { Depth = 6 };
 
 // (*) - branch
 using Iter = ZuUnion<
@@ -585,7 +574,7 @@ using Iter = ZuUnion<
   QueueParent *,	// app->queues (*)
   PoolParent *,	// app->pools (*)
   EngineParent *,	// app->engines (*)
-  DB *,		// app->db (*)
+  DBParent *,		// app->dbs (*)
 
   // app grandchildren
   Heap *,		// app->heaps->[heap]
@@ -600,13 +589,15 @@ using Iter = ZuUnion<
   Socket *,		// app->mxs->mx->[socket]
   Link *,		// app->engines->engine->[link]
 
+  DB *,		// app->dbs->[db] (*)
+
   // DB children
-  DBHostParent *,	// app->db->hosts (*)
-  DBTableParent *,	// app->db->tables (*)
+  DBHostParent *,	// app->dbs->db->hosts (*)
+  DBTableParent *,	// app->dbs->db->tables (*)
 
   // DB grandchildren
-  DBHost *,		// app->db->hosts->[host]
-  DBTable *>;		// app->db->tables->[table]
+  DBHost *,		// app->dbs->db->hosts->[host]
+  DBTable *>;		// app->dbs->db->tables->[table]
 
 class Model : public ZGtk::TreeHierarchy::Model<Model, Iter, Depth> {
   using Base = ZGtk::TreeHierarchy::Model<Model, Iter, Depth>;
@@ -618,7 +609,8 @@ public:
       (ZuIsSame<T, App>{}) ||
       (ZuIsSame<T, HeapParent>{} || ZuIsSame<T, HashTblParent>{} || ZuIsSame<T,
 	ThreadParent>{} || ZuIsSame<T, MxParent>{} || ZuIsSame<T, QueueParent>{} ||
-	ZuIsSame<T, PoolParent>{} || ZuIsSame<T, EngineParent>{} || ZuIsSame<T, DB>{}) ||
+	ZuIsSame<T, PoolParent>{} || ZuIsSame<T, EngineParent>{} || ZuIsSame<T, DBParent>{}) ||
+      (ZuIsSame<T, DB>{}) ||
       (ZuIsSame<T, Heap>{}) ||
       (ZuIsSame<T, HashTbl>{}) ||
       (ZuIsSame<T, Thread>{}) ||
@@ -637,8 +629,10 @@ public:
     } else if constexpr (ZuIsSame<T, HeapParent>{} || ZuIsSame<T, HashTblParent>{} ||
       ZuIsSame<T, ThreadParent>{} || ZuIsSame<T, MxParent>{} || ZuIsSame<T,
       QueueParent>{} || ZuIsSame<T, PoolParent>{} || ZuIsSame<T, EngineParent>{} ||
-      ZuIsSame<T, DB>{}) {
+      ZuIsSame<T, DBParent>{}) {
       return static_cast<App *>(ptr);
+    } else if constexpr (ZuIsSame<T, DB>{}) {
+      return static_cast<DBParent *>(ptr);
     } else if constexpr (ZuIsSame<T, Heap>{}) {
       return static_cast<HeapParent *>(ptr);
     } else if constexpr (ZuIsSame<T, HashTbl>{}) {
@@ -1455,12 +1449,13 @@ private:
     }
     return item;
   }
-  DBItem *dbItem_(Source *src) {
+  DBItem *dbItem_(Source *src, const ZuID &id) {
     ZuTypeIndex<Ztc::DBTelemetry, Telemetry::TypeList> i;
     auto &container = src->telemetry.p<i>();
-    auto item = container.get();
+    auto item = container.findPtr(ZuFwdTuple(id));
     if (!item) {
       item = new TelItem<Ztc::DBTelemetry>;
+      item->value.self = id;
       container.add(item);
       addGtkRow(src, item);
     }
@@ -1530,7 +1525,7 @@ private:
     ZuTypeIndex<Ztc::HubTelemetry, Telemetry::TypeList> i;
     auto &engContainer = src->telemetry.p<i>();
     auto engItem =
-      engContainer.findPtr(ZuFwdTuple(item->value.hubID, item->value.type));
+      engContainer.findPtr(ZuFwdTuple(item->value.type, item->value.hubID));
     if (!engItem) {
       engItem = new TelItem<Ztc::HubTelemetry>;
       engItem->value.linkType = item->value.type;
@@ -1541,19 +1536,17 @@ private:
     m_gtkModel->add(new GtkTree::Link{item}, GtkTree::row(engItem));
   }
   void addGtkRow(Source *src, DBItem *item) {
-    auto appGtkRow = GtkTree::row(appItem_(src));
-    auto &db = appGtkRow->db();
-    db.init(item);
-    m_gtkModel->add(&db, appGtkRow);
+    addGtkRow_(appItem_(src), item,
+	[](GtkTree::App *_) -> GtkTree::DBParent & { return _->dbs(); });
   }
   void addGtkRow(Source *src, TelItem<Ztc::DBHostTelemetry> *item) {
-    addGtkRow_(dbItem_(src), item,
+    addGtkRow_(dbItem_(src, item->value.dbID), item,
 	[](GtkTree::DB *_) -> GtkTree::DBHostParent & {
 	  return _->hosts();
 	});
   }
   void addGtkRow(Source *src, TelItem<Ztc::DBTableTelemetry> *item) {
-    addGtkRow_(dbItem_(src), item,
+    addGtkRow_(dbItem_(src, item->value.dbID), item,
 	[](GtkTree::DB *_) -> GtkTree::DBTableParent & {
 	  return _->tables();
 	});

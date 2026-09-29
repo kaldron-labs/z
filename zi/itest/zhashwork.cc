@@ -271,7 +271,7 @@ public:
   }
   ~Sample() { ZmHashMgr::del(this); }
   void peak(uint64_t count) { m_data.maxCount = count; }
-  ZuTuple<const ZuID &, uintptr_t> telKey() const override {
+  TelKey telKey() const override {
     return {m_data.id, reinterpret_cast<uintptr_t>(this)};
   }
   void telemetry(Ztc::HashTelemetry &data) const override {

@@ -117,6 +117,7 @@ private:
       data.dbID = "db";
       data.id = "child";
     } else if constexpr (ZuIsSame<T, Ztc::DBTelemetry>{}) {
+      data.self = "db";
       data.state = Ztc::DBHostState::Active;
     }
     return data;
@@ -124,32 +125,38 @@ private:
 
   bool checkKeys_() {
     // Literal fixture expectations cover all displayed identities and labels.
-    // The seven entries are a GTK path followed by six heap key columns.
-    static const char *rows[][7] = {
-      {"0", "publisher", "test-a", "2", "", "", ""},
-      {"0:0", "heaps", "partition", "vshift", "size", "alignment", "sharded"},
-      {"0:0:0", "heap", "7", "4", "128", "64", "1"},
-      {"0:1", "hashTbls", "addr", "", "", "", ""},
-      {"0:1:0", "hash", "1234", "", "", "", ""},
-      {"0:2", "threads", "", "", "", "", ""},
-      {"0:2:0", "123", "", "", "", "", ""},
-      {"0:3", "multiplexers", "", "", "", "", ""},
-      {"0:3:0", "mx", "", "", "", "", ""},
-      {"0:3:0:0", "mx", "192.0.2.1", "443", "192.0.2.2", "54321", ""},
-      {"0:4", "queues", "id", "type", "", "", ""},
-      {"0:4:0", "owner", "queue", "Tx", "", "", ""},
-      {"0:5", "pools", "id", "", "", "", ""},
-      {"0:5:0", "hub", "child", "", "", "", ""},
-      {"0:6", "engines", "linkType", "", "", "", ""},
-      {"0:6:0", "hub", "QUIC", "", "", "", ""},
-      {"0:6:0:0", "hub", "child", "", "", "", ""},
-      {"0:7", "dbenv", "", "", "", "", ""},
-      {"0:7:0", "hosts", "id", "", "", "", ""},
-      {"0:7:0:0", "db", "child", "", "", "", ""},
-      {"0:7:1", "tables", "id", "", "", "", ""},
-      {"0:7:1:0", "db", "child", "", "", "", ""}
+    // A GTK path followed by the five identity columns.
+    static const char *rows[][6] = {
+      {"0", "publisher", "test-a", "2", "", ""},
+      {"0:0", "heaps", "partition", "size", "alignment", "sharded"},
+      {"0:0:0", "heap", "7", "128", "64", "1"},
+      {"0:1", "hashTbls", "addr", "", "", ""},
+      {"0:1:0", "hash", "1234", "", "", ""},
+      {"0:2", "threads", "", "", "", ""},
+      {"0:2:0", "123", "", "", "", ""},
+      {"0:3", "multiplexers", "", "", "", ""},
+      {"0:3:0", "mx", "", "", "", ""},
+      {"0:3:0:0", "mx", "192.0.2.1", "443", "192.0.2.2", "54321"},
+      {"0:4", "queues", "id", "type", "", ""},
+      {"0:4:0", "owner", "queue", "Tx", "", ""},
+      {"0:5", "pools", "id", "", "", ""},
+      {"0:5:0", "hub", "child", "", "", ""},
+      {"0:6", "engines", "id", "", "", ""},
+      {"0:6:0", "QUIC", "hub", "", "", ""},
+      {"0:6:0:0", "hub", "child", "", "", ""},
+      {"0:7", "databases", "", "", "", ""},
+      {"0:7:0", "db", "", "", "", ""},
+      {"0:7:0:0", "hosts", "id", "", "", ""},
+      {"0:7:0:0:0", "db", "child", "", "", ""},
+      {"0:7:0:1", "tables", "id", "", "", ""},
+      {"0:7:0:1:0", "db", "child", "", "", ""},
+      {"0:7:1", "db2", "", "", "", ""},
+      {"0:7:1:0", "hosts", "id", "", "", ""},
+      {"0:7:1:0:0", "db2", "child", "", "", ""},
+      {"0:7:1:1", "tables", "id", "", "", ""},
+      {"0:7:1:1:0", "db2", "child", "", "", ""}
     };
-    bool ok = gtk_tree_model_get_n_columns(m_host.model) == 7;
+    bool ok = gtk_tree_model_get_n_columns(m_host.model) == 6;
     for (const auto &row: rows) {
       GtkTreeIter iter;
       bool found = gtk_tree_model_get_iter_from_string(
@@ -157,10 +164,12 @@ private:
       if (!found) log(row[0], " not found");
       ok &= found;
       if (!found) continue;
-      if (ZuCSpan{row[0]} == "0:7") {
+      if (ZuCSpan{row[0]} == "0:7:0" ||
+	  ZuCSpan{row[0]} == "0:7:1") {
 	ZGtk::Value rag;
 	gtk_tree_model_get_value(m_host.model, &iter, 0, &rag);
-	bool matches = rag.get_int() == Ztc::RAG::Green;
+	bool matches = rag.get_int() == (ZuCSpan{row[0]} == "0:7:0" ?
+	  Ztc::RAG::Green : Ztc::RAG::Red);
 	if (!matches) log("database RAG differs from telemetry state");
 	ok &= matches;
       }
@@ -169,7 +178,7 @@ private:
       ok &= ZuCSpan{text} == row[0];
       g_free(text);
       gtk_tree_path_free(path);
-      for (unsigned col = 1; col < 7; ++col) {
+      for (unsigned col = 1; col < 6; ++col) {
 	ZGtk::Value value;
 	gtk_tree_model_get_value(m_host.model, &iter, col, &value);
 	bool matches = ZuCSpan{value.get_string()} == row[col];
@@ -178,6 +187,26 @@ private:
 	ok &= matches;
       }
     }
+    GtkTreeIter dbs;
+    if (gtk_tree_model_get_iter_from_string(m_host.model, &dbs, "0:7")) {
+      ok &= gtk_tree_model_iter_n_children(m_host.model, &dbs) == 2;
+      for (unsigned i = 0; i < 2; ++i) {
+	GtkTreeIter db;
+	if (!gtk_tree_model_iter_nth_child(m_host.model, &db, &dbs, i)) {
+	  ok = false;
+	  continue;
+	}
+	ok &= gtk_tree_model_iter_n_children(m_host.model, &db) == 2;
+	for (unsigned j = 0; j < 2; ++j) {
+	  GtkTreeIter group;
+	  bool found = gtk_tree_model_iter_nth_child(
+	    m_host.model, &group, &db, j);
+	  ok &= found;
+	  if (found)
+	    ok &= gtk_tree_model_iter_n_children(m_host.model, &group) == 1;
+	}
+      }
+    } else ok = false;
     return ok;
   }
 
@@ -238,27 +267,46 @@ private:
 	telemetry("test-a", 2, Ztc::RAG::Green);
 	telemetry("test-a", 1, Ztc::RAG::Red); // obsolete generation
 	break;
-      case 5:
+      case 5: {
 	// Exercise every concrete row allocator, placeholder parent and payload.
-	ZuUnroll::all<Telemetry::TypeList>([this]<typename T>() {
-	  if constexpr (!ZuIsSame<T, Ztc::AppTelemetry>{}) {
-	    Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	    auto device = Zfb::Save::str(builder, "test-a");
-	    auto id = Zfb::Save::str(builder, "publisher");
-	    auto value = ZfbStruct::save(builder, sample<T>());
-	    auto tel = Ztc::saveTelemetry(builder, id, 0,
-	      Ztc::fbs::TelemetryBodyTraits<ZfbType<T>>::enum_value,
-	      value.Union());
-	    builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
-	      tel.Union(), 1, device, 2));
-	    auto frame = builder.buf();
-	    // This phase covers GTK rendering beyond the App subscription.
-	    if (!Ztc::msg(ZuBSpan{frame->data(), frame->length}) ||
-		!m_host.receive_(ZuBSpan{frame->data(), frame->length}, false))
-	      m_failed = true;
-	  }
+	auto send = [this]<typename T>(const T &data) {
+	  Zfb::IOBuilder builder{Frame{new FrameBuf}};
+	  auto device = Zfb::Save::str(builder, "test-a");
+	  auto id = Zfb::Save::str(builder, "publisher");
+	  auto value = ZfbStruct::save(builder, data);
+	  auto tel = Ztc::saveTelemetry(builder, id, 0,
+	    Ztc::fbs::TelemetryBodyTraits<ZfbType<T>>::enum_value,
+	    value.Union());
+	  builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
+	    tel.Union(), 1, device, 2));
+	  auto frame = builder.buf();
+	  // This phase covers GTK rendering beyond the App subscription.
+	  if (!Ztc::msg(ZuBSpan{frame->data(), frame->length}) ||
+	      !m_host.receive_(ZuBSpan{frame->data(), frame->length}, false))
+	    m_failed = true;
+	};
+	ZuUnroll::all<Telemetry::TypeList>([&send]<typename T>() {
+	  if constexpr (!ZuIsSame<T, Ztc::AppTelemetry>{}) send(sample<T>());
 	});
-	break;
+	// The first DB was created by its children; the second arrives first.
+	// Matching child IDs must remain scoped to their own DB.
+	auto db = sample<Ztc::DBTelemetry>();
+	db.self = "db2";
+	send(db);
+	auto host = sample<Ztc::DBHostTelemetry>();
+	host.dbID = "db2";
+	send(host);
+	auto table = sample<Ztc::DBTableTelemetry>();
+	table.dbID = "db2";
+	send(table);
+	// Update one DB, then the other: each retains its row and children.
+	db.state = Ztc::DBHostState::Stopping;
+	send(db);
+	send(sample<Ztc::DBTelemetry>());
+	// Repeated child updates must also find the original rows.
+	send(host);
+	send(table);
+      } break;
       case 6:
 	telemetry("test-a", 2, Ztc::RAG::Off, true);
 	break;

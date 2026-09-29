@@ -13,7 +13,9 @@
 #include <zlib/ZdbLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZtEnum.hh>
@@ -34,7 +36,6 @@ ZfbEnumNS(ZdbAPI, DBCacheMode, Normal, All);
 
 using DBTableID =
   ZtString<ZtStringHeapID<"Ztc.DBTableID">>;
-using DBTableKey = ZuTuple<const ZuID &, DBTableID>;
 
 struct DBTableTelemetry {
   ZuID			dbID;		// primary key
@@ -69,7 +70,8 @@ ZfbStruct(ZdbAPI, DBTableTelemetry,
     (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
 
 struct DBTable {
-  virtual DBTableKey telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(DBTableTelemetry &) const = 0;
 };
 

@@ -1342,7 +1342,7 @@ void App::unwatch_()
 
 void App::mxAdded_(Ztc::Mx *mx_)
 {
-  App_::indexAdd(m_mxIdx, ZuID{mx_->telKey()}, mx_);
+  App_::indexAdd(m_mxIdx, ZuID{mx_->telKey().p<0>()}, mx_);
   mx_->watch(
     {[this](Ztc::Connection *cxn) { cxnAdded_(cxn); }},
     {[this](Ztc::Connection *cxn) { cxnDeleted_(cxn); }});
@@ -1357,7 +1357,7 @@ void App::mxDeleted_(Ztc::Mx *mx_)
   mx_->unwatch();
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueDeleted_(queue); }});
-  App_::indexDel(m_mxIdx, ZuID{mx_->telKey()}, mx_);
+  App_::indexDel(m_mxIdx, ZuID{mx_->telKey().p<0>()}, mx_);
 }
 
 void App::cxnAdded_(Ztc::Connection *cxn)
@@ -1467,7 +1467,7 @@ void App::hubQueueDeleted_(Ztc::Queue *queue)
 
 void App::dbAdded_(DB *db)
 {
-  App_::indexAdd(m_dbIdx, ZuID{db->telKey()}, db);
+  App_::indexAdd(m_dbIdx, ZuID{db->telKey().p<0>()}, db);
   db->allDBHosts(
     {[this](DBHost *host) { dbHostAdded_(host); }});
   db->allDBTables(
@@ -1476,7 +1476,7 @@ void App::dbAdded_(DB *db)
 
 void App::dbDeleted_(DB *db)
 {
-  App_::indexDel(m_dbIdx, ZuID{db->telKey()}, db);
+  App_::indexDel(m_dbIdx, ZuID{db->telKey().p<0>()}, db);
 }
 
 void App::dbHostAdded_(DBHost *host)
@@ -2031,7 +2031,7 @@ bool App::snapshot_(
       else
 	ThreadMgr::capture(
 	  [&filter](Thread *thread) {
-	    return filter.value0() == thread->telKey();
+	    return filter.value0() == thread->telKey().p<0>();
 	  }, save);
     }
       break;

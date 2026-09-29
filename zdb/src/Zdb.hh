@@ -586,7 +586,7 @@ public:
   static const auto &IDAxor(AnyTable *table) { return table->config().id; }
 
   const auto &id() const { return config().id; }
-  Ztc::DBTableKey telKey() const override;
+  Ztc::DBTable::TelKey telKey() const override;
   void telemetry(Ztc::DBTableTelemetry &) const override;
 
   template <typename ...Args>
@@ -1633,7 +1633,7 @@ public:
   ZiIP ip() const { return m_cf->ip; }
   uint16_t port() const { return m_cf->port; }
 
-  Ztc::DBHostKey telKey() const override;
+  Ztc::DBHost::TelKey telKey() const override;
   void telemetry(Ztc::DBHostTelemetry &) const override;
 
   bool voted() const { return m_voted; }
@@ -1960,7 +1960,7 @@ private:
 public:
   bool active() const { return state() == HostState::Active; }
 
-  Ztc::DBKey telKey() const override { return m_cf.hostID; }
+  Ztc::DB::TelKey telKey() const override { return {m_cf.hostID}; }
   void telemetry(Ztc::DBTelemetry &) const override;
   unsigned allDBHosts(Ztc::DB::AllDBHostsFn) const override;
   unsigned allDBTables(Ztc::DB::AllDBTablesFn) const override;

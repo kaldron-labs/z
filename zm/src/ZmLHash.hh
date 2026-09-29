@@ -315,7 +315,7 @@ protected:
   void init() { ZmHashMgr::add(this); }
   void final() { ZmHashMgr::del(this); }
 
-  ZuTuple<const ZuID &, uintptr_t> telKey() const override {
+  TelKey telKey() const override {
     return {m_id, reinterpret_cast<uintptr_t>(
       static_cast<const Hash_ *>(this))};
   }

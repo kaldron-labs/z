@@ -73,8 +73,7 @@ ZmScheduler::~ZmScheduler()
   delete [] m_threads;
 }
 
-ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
-ZmScheduler::Thread::telKey() const
+ZmScheduler::Thread::TelKey ZmScheduler::Thread::telKey() const
 {
   return {owner->id(), id, Ztc::QueueType::Thread};
 }
