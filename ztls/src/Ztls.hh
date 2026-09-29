@@ -304,8 +304,7 @@ class Link :
     TelQueue(const Link *link, Ztc::QueueType::T type) :
       m_link{link}, m_type{type} { }
 
-    ZuTuple<const ZuID &, const ZuID &, Ztc::QueueType::T>
-      telKey() const override {
+    TelKey telKey() const override {
       auto linkKey = m_link->telKey();
       return {linkKey.template p<0>(), linkKey.template p<1>(), m_type};
     }
@@ -368,7 +367,7 @@ public:
   Cxn *cxn() const { return m_cxn; }
   bool disconnecting() const { return m_disconnecting.load_(); }
   StreamRef stream() { return impl(); }
-  ZuTuple<const ZuID &, const ZuID &> telKey() const override {
+  TelKey telKey() const override {
     return {app()->telKey().template p<1>(), m_id};
   }
   void telemetry(Ztc::LinkTelemetry &data) const override {
@@ -1718,7 +1717,7 @@ public:
   bool start() override { return HubCtl::start(); }
   bool stop() override { return HubCtl::stop(); }
 
-  ZuTuple<Ztc::LinkType::T, const ZuID &> telKey() const override {
+  TelKey telKey() const override {
     return {Ztc::LinkType::TLS, m_id};
   }
   void telemetry(Ztc::HubTelemetry &data) const override {

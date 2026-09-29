@@ -13,6 +13,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
@@ -68,10 +69,9 @@ struct CxnTelemetry {
 };
 
 struct Connection {
-  using Key =
-    ZuTuple<const ZuID &, ZiIP, uint16_t, ZiIP, uint16_t>;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZiIP, uint16_t, ZiIP, uint16_t>));
 
-  virtual Key telKey() const = 0;
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(CxnTelemetry &data) const = 0;
 };
 
@@ -121,7 +121,8 @@ struct Mx {
   using DelCxnFn =
     ZmFn<void(Connection *), WatchFnHeapID>;
 
-  virtual const ZuID &telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(MxTelemetry &data) const = 0;
   virtual unsigned allCxns(AllCxnsFn fn) const = 0;
   virtual unsigned allQueues(QueueMgr::AllFn fn) const = 0;

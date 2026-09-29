@@ -13,7 +13,9 @@
 #include <zlib/ZmLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTuple.hh>
@@ -58,8 +60,8 @@ struct QueueTelemetry {
 };
 
 struct Queue {
-  virtual ZuTuple<const ZuID &, const ZuID &, QueueType::T>
-    telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan, QueueType::T>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(QueueTelemetry &data) const = 0;
 };
 

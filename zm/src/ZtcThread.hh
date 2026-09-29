@@ -14,9 +14,11 @@
 #endif
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmFn_.hh>
@@ -57,7 +59,8 @@ struct ThreadTelemetry {
 // Note: ZtStruct metadata declaration is deferred
 
 struct Thread {
-  virtual uint64_t telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<uint64_t>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(ThreadTelemetry &data) const = 0;
 };
 

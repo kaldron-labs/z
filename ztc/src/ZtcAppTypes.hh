@@ -13,6 +13,7 @@
 #include <zlib/ZtcLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuTime.hh>
@@ -91,7 +92,8 @@ struct AlertTelemetry {
   uint32_t	date = 0;
   int8_t	severity = 0;
 
-  auto telKey() const { return ZuFwdTuple(date, seqNo); }
+  ZuDerive(TelKey, (ZuTuple<uint32_t, uint64_t>));
+  TelKey telKey() const { return {date, seqNo}; }
 
   friend ZfStructPrint ZuPrintType(AlertTelemetry *);
 };

@@ -682,7 +682,7 @@ public:
   bool start() override { return HubCtl::start(); }
   bool stop() override { return HubCtl::stop(); }
 
-  ZuTuple<Ztc::LinkType::T, const ZuID &> telKey() const override {
+  TelKey telKey() const override {
     return {Ztc::LinkType::QUIC, m_id};
   }
   void telemetry(Ztc::HubTelemetry &data) const override {

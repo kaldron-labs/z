@@ -13,7 +13,9 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZtEnum.hh>
@@ -55,8 +57,8 @@ struct PoolTelemetry {
 };
 
 struct Pool {
-  virtual ZuTuple<const ZuID &, const ZuID &>
-    telKey() const = 0;	// { hubID, id }
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));
+  virtual TelKey telKey() const = 0;	// { hubID, id }
   virtual void telemetry(PoolTelemetry &data) const = 0;
   virtual unsigned allQueues(QueueMgr::AllFn fn) const = 0;
 };

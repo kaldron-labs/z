@@ -13,6 +13,7 @@
 #include <zlib/ZdbLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
@@ -36,8 +37,6 @@
 #include <zlib/ztc_db_fbs.h>
 
 namespace Ztc {
-
-using DBKey = const ZuID &;
 
 struct DBMgr;
 
@@ -79,7 +78,7 @@ struct DBTelemetry {
 };
 ZfbStruct(ZdbAPI, DBTelemetry,
     (((thread),		(Ctor<0>)),				(String)),
-    (((threads),		(Ctor<1>)),				(StringVec)),
+    (((threads),	(Ctor<1>)),				(StringVec)),
     (((nShards),	(Ctor<2>)),				(UInt32)),
     (((self),		(Ctor<3>, Keys<0>)),			(String)),
     (((leader),		(Ctor<4>, Mutable)),			(String)),
@@ -103,7 +102,8 @@ struct ZdbAPI DB {
   using AllDBTablesFn = ZmFn<void(DBTable *), AllFnHeapID>;
   using AllDBHostsFn = ZmFn<void(DBHost *), AllFnHeapID>;
 
-  virtual DBKey telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<ZuCSpan>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(DBTelemetry &data) const = 0;
   virtual bool start() = 0;
   virtual bool stop() = 0;

@@ -13,6 +13,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
@@ -78,7 +79,8 @@ struct ZiAPI Hub {
   using AllPoolsFn =
     ZmFn<void(Pool *), AllFnHeapID>;
 
-  virtual ZuTuple<LinkType::T, const ZuID &> telKey() const = 0;
+  ZuDerive(TelKey, (ZuTuple<LinkType::T, ZuCSpan>));
+  virtual TelKey telKey() const = 0;
   virtual void telemetry(HubTelemetry &data) const = 0;
   virtual bool start() = 0;
   virtual bool stop() = 0;
