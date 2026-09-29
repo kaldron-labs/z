@@ -307,7 +307,7 @@ static ZuPtr<const ZfCf::AnyNode> config(
     "zdb: {\n"
     "  thread: zdb, shards: 1, threads: [shard],\n"
     "  store: {thread: store, module: ${MODULE},\n"
-    "    connection: ${CONNECT}},\n"
+    "    connect: ${CONNECT}},\n"
     "  hostID: self, hosts: {self: {standalone: true}},\n"
     "  tables: {}, debug: ${DEBUG}\n"
     "},\n"

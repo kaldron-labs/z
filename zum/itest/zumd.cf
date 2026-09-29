@@ -2,7 +2,7 @@
 # MODULE, CONNECT and DEBUG are supplied by zumd's command-line/environment input.
 zdb: {
   thread: zdb, shards: 1, threads: [shard],
-  store: {thread: store, module: ${MODULE}, connection: ${CONNECT}},
+  store: {thread: store, module: ${MODULE}, connect: ${CONNECT}},
   hostID: self, hosts: {self: {standalone: true}},
   tables: {}, debug: ${DEBUG}
 },

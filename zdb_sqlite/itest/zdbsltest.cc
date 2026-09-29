@@ -458,7 +458,7 @@ int main(int argc_, char **argv)
     "store: {\n"
     "  thread: zdb_sl,\n"
     "  module: ${MODULE},\n"
-    "  connection: ${CONNECT},\n"
+    "  connect: ${CONNECT},\n"
     "  synchronous: ${SYNCHRONOUS}\n"
     "},\n"
     "tables: {order: {warmup: true}, payment: {}, all_types: {}},\n"

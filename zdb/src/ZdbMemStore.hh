@@ -1096,7 +1096,7 @@ ZmHashDeriveT((StoreTbl_), StoreTbls_, StoreTbl_,
 	ZmHashHeapID<"ZdbMem.StoreTbl">>>>));
 
 struct MemStoreCf {
-  ZtString<> thread;
+  String	thread;
 };
 
 ZfStruct(ZdbAPI, (MemStoreCf, Cf),

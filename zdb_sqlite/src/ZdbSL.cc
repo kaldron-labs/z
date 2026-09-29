@@ -831,7 +831,7 @@ InitResult Store::init(
           << tid << '"';
       }));
     m_sid = sid;
-    m_connection = ZuMv(config.connection);
+    m_connection = ZuMv(config.connect);
     m_synchronous = config.synchronous;
   } catch (const ZeException &e) {
     return ZeEXCEPT(Fatal, "ZdbSL", ([e](auto &s) {

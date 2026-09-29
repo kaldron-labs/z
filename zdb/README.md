@@ -685,7 +685,7 @@ The standard environment-variable convention for loadable stores is:
 
 - `ZDB_MODULE`: module path used for `store.module`, for example
   `$PWD/zdb_pq/src/.libs/libZdbPQ.so`.
-- `ZDB_CONNECT`: backend connection string used for `store.connection`, for
+- `ZDB_CONNECT`: backend connection string used for `store.connect`, for
   example `host=/tmp dbname=test` for PostgreSQL.
 
 `Zdb` does not read these variables itself; the application maps them into its
@@ -704,7 +704,7 @@ preserves state across simulated restarts with persistence across process death.
 ### PostgreSQL
 
 `ZdbPQ::Store` lives in [zdb_pq](../zdb_pq/). Its configuration requires `thread`
-and a libpq `connection` string; `replicated` defaults to false. It uses prepared
+and a libpq `connect` string; `replicated` defaults to false. It uses prepared
 statements and binary I/O. Install the PostgreSQL extensions required by the
 types in use, including the project's custom types and `pguint` where applicable;
 the type mapping is documented in [ZdbPQ.hh](../zdb_pq/src/ZdbPQ.hh).
@@ -713,7 +713,7 @@ the type mapping is documented in [ZdbPQ.hh](../zdb_pq/src/ZdbPQ.hh).
 store: {
   module: "/path/to/libZdbPQ.so",
   thread: store,
-  connection: "host=localhost dbname=app user=app",
+  connect: "host=localhost dbname=app user=app",
   replicated: false
 }
 ```
@@ -729,7 +729,7 @@ see [zdbsagatest.cc](../zdb_pq/itest/zdbsagatest.cc).
 
 `ZdbSL::Store` lives in [zdb_sqlite](../zdb_sqlite/). It provides local
 persistent storage in a SQLite WAL database using one configured isolated
-store thread. Its configuration requires `thread` and `connection` (the file
+store thread. Its configuration requires `thread` and `connect` (the file
 path); `synchronous` defaults to `NORMAL` and also accepts `FULL` and `OFF`.
 The backend does not perform replication. It reports that capability to Zdb,
 which performs replication when directed by the application configuration.

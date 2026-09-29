@@ -14,8 +14,12 @@ ZtEnumImplNS(StoreState);
 
 using namespace Zdf;
 
+ZuDerive(StoreThread, (ZtString<ZtStringHeapID<"Zdf.Store.Thread">>));
+ZuDerive(StoreThreads,
+  (ZtArray<StoreThread, ZtArrayHeapID<"Zdf.Store.Threads">>));
+
 struct StoreCf {
-  ZtArray<ZtString<>> threads;
+  StoreThreads threads;
 };
 
 ZfStruct(, (StoreCf, Cf),

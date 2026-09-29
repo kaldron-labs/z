@@ -38,11 +38,17 @@
 
 namespace Ztc {
 
+ZuDerive(DBString, (ZtString<ZtStringHeapID<"Zdb.String">>));
+ZuDerive(DBThreads,
+  (ZtArray<DBString, (ZtArrayHeapID<"Zdb.Threads">>)));
+ZuDerive(DBSIDs,
+  (ZtArray<unsigned, (ZtArrayHeapID<"Zdb.SIDs">>)));
+
 struct DBMgr;
 
 struct DBTelemetry {
   ZuID		thread;
-  ZtArray<ZtString<>> threads;
+  DBThreads	threads;
   uint32_t	nShards = 0;
   ZuID		self;
   ZuID		leader;

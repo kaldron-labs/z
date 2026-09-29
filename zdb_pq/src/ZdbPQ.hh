@@ -1823,14 +1823,14 @@ ZmHashDerive(StoreTbls, StoreTbl,
 	ZmHashHeapID<"ZdbPQ.StoreTbl">>>>));
 
 struct StoreCf {
-  ZtString<>	thread;
-  ZtString<>	connection;
+	Zdb_::String	thread;
+	Zdb_::String	connect;
   bool		replicated = false;
 };
 
 ZfStruct(ZdbPQAPI, (StoreCf, Cf),
   (((thread), (Required)),	(String)),
-  (((connection), (Required)),	(String)),
+  (((connect), (Required)),	(String)),
   (((replicated)),		(Bool)));
 
 class Store : public Zdb_::Store {
@@ -1925,7 +1925,7 @@ private:
   void mkTblMRD_rcvd(PGresult *);
 
 private:
-  ZtString<>		m_connection;
+  Zdb_::String		m_connect;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_sid = 0;
   unsigned		m_nShards = 0;

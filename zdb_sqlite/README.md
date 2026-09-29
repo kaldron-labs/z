@@ -15,13 +15,13 @@ disable the module. PostgreSQL is independent and may be disabled with `-P`.
 store: {
   module: "/path/to/libZdbSL.so",
   thread: zdb_sl,
-  connection: "/var/lib/app/app.db",
+  connect: "/var/lib/app/app.db",
   synchronous: NORMAL
 }
 ```
 
 `thread` must name an isolated scheduler thread other than the multiplex Rx or
-Tx thread. `connection` is a local filesystem path. `synchronous` defaults to
+Tx thread. `connect` is a local filesystem path. `synchronous` defaults to
 `NORMAL`; `FULL` and `OFF` are also accepted. Every connection uses WAL mode
 and SQLite's default automatic checkpoint policy. `FULL` asks SQLite for the
 strongest configured commit durability, `NORMAL` avoids an extra WAL sync in

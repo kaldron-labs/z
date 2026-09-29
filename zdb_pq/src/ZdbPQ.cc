@@ -84,7 +84,7 @@ InitResult Store::init(
 	  << tid << '"';
       }));
     m_sid = sid;
-    m_connection = ZuMv(config.connection);
+    m_connect = ZuMv(config.connect);
     replicated = config.replicated;
   } catch (const ZeException &e) {
     return ZeEXCEPT(Fatal, "ZdbPQ", ([e](auto &s) {
@@ -176,7 +176,7 @@ bool Store::start_()
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
-  m_conn = PQconnectdb(m_connection);
+  m_conn = PQconnectdb(m_connect);
 
   if (!m_conn || PQstatus(m_conn) != CONNECTION_OK) {
     ZiLOG(Fatal, "ZdbPQ", ([e = connError(m_conn)](auto &s) {

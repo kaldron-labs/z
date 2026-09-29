@@ -15,6 +15,9 @@
 
 namespace {
 
+ZuDerive(AppRequest,
+  (ZtString<ZtStringHeapID<"Zquic.Example.Request">>));
+
 ZuCSpan cspan(const ZtString<> &s)
 {
   return ZuCSpan{s.data(), s.length()};
@@ -42,7 +45,7 @@ struct App : public Zquic::Client<App> {
   bool error() const { return m_error.load_(); }
 
   ZmSemaphore		m_done;
-  ZtString<>		m_request;
+  AppRequest	m_request;
   ZmAtomic<unsigned>	m_error{0};
 };
 
