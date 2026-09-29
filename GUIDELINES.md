@@ -617,6 +617,25 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use `ZiFile` for file I/O, `ZiMMapFile` for memory-mapped I/O, and `ZiMultiplex` for network I/O multiplexing.
 - Use `ZiEventLoop` for interoperability with other event loops and handle types.
 
+### Tx streams
+- Expose `failed()` as the stream's failure status. Failure is sticky for the
+  current output operation; subsequent appends must not resume output or clear
+  the failure.
+- Retain the last error for diagnostics, on the stream or its existing owning
+  file/link as appropriate. Keep stream failure independent of later changes
+  to the owner's error state.
+- Report expected capacity, allocation/growth, write, and send/admission
+  failures through state and return values; do not throw framework exceptions.
+  Check nullable allocation/growth results. This does not require catching
+  arbitrary exceptions from application printers or callbacks, or declaring
+  the stream interface `noexcept`.
+- `flush()` returns `bool ok`. An earlier valid prefix may flush once after a
+  rejected printable, but failure remains set and `flush()` returns false.
+  Check explicit flush at the operation's completion boundary; destructor
+  flushing is best effort.
+- Propagate synchronous rejection to the producing stream. Asynchronous
+  transport errors remain with the owning link/request on its owning shard.
+
 ### Dynamic modules
 - `ZiModule` loadable Z components use the canonical factory/interface pattern;
   `Zdb_::Store` and `ZdbStore` are the reference implementation.
