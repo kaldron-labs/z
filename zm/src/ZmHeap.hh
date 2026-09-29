@@ -44,6 +44,10 @@
 
 #include <zlib/ZtcHeap.hh>
 
+#ifdef ZmHeap_TEST
+#include <ZmHeapTest.hh>
+#endif
+
 #if defined(ZDEBUG) && !defined(ZmHeap_DEBUG)
 #define ZmHeap_DEBUG
 #endif
@@ -106,6 +110,9 @@ class ZmAPI ZmHeapCache final : public ZmObject, public Ztc::Heap {
 friend ZmHeapMgr;
 friend ZmHeapMgr_;
 friend ZmHeapLookup;
+#ifdef ZmHeap_TEST
+friend ZmHeapTest;
+#endif
 template <typename, unsigned, unsigned, bool> friend class ZmHeapBase;
 template <typename, unsigned, unsigned, bool, unsigned>
 friend class ZmHeapCacheT;
@@ -155,8 +162,17 @@ public:
 #endif
 
 private:
-  void init(const ZmHeapConfig &, hwloc_topology_t);
-  void init_(hwloc_topology_t);
+  bool init(const ZmHeapConfig &, hwloc_topology_t);
+  bool init_(hwloc_topology_t);
+  void publish_() {
+#ifdef ZmHeap_TEST
+    ZmHeapTest::hook(ZmHeapTest::Registered, this);
+#endif
+    m_head = reinterpret_cast<uintptr_t>(m_begin); // release publication
+#ifdef ZmHeap_TEST
+    ZmHeapTest::hook(ZmHeapTest::Published, this);
+#endif
+  }
   void final_();
 
   template <unsigned Align>
@@ -216,7 +232,11 @@ private:
   }
 
   bool owned(void *p) const {
-    return p >= m_begin && p < m_end;
+    auto begin = m_begin;
+#ifdef ZmHeap_TEST
+    ZmHeapTest::hook(ZmHeapTest::Owned, this, begin);
+#endif
+    return begin && p >= begin && p < m_end;
   }
 
   alignas(Zm::CacheLineSize)

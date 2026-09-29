@@ -76,7 +76,6 @@ void testHeapStats()
   ZuTestScope(testHeapStats);
   using Cache = ZmHeapCacheT<ZuStringT<"ZmAllocatorTest.Stats">,
     sizeof(uintptr_t), alignof(uintptr_t), Sharded>;
-  ZmHeapMgr::init("ZmAllocatorTest.Stats", ZmSelf()->partition(), 0, {1});
   auto cache = Cache::instance()->cache();
   const auto &global = cache->globalStats();
   const auto &stats = cache->stats();
@@ -292,6 +291,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testLazyHeaps);
+  ZmHeapMgr::init("ZmAllocatorTest.Stats", ZmSelf()->partition(), 0, {1});
   ZuTestCall(testHeapStats<false>);
   ZuTestCall(testHeapStats<true>);
   ZuTestCall(testSharedStats);
