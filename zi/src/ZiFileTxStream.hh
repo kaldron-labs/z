@@ -21,8 +21,6 @@
 
 #include <zlib/ZmHeap.hh>
 
-#include <zlib/ZePlatform.hh>
-
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiTxStream.hh>
 
@@ -60,30 +58,33 @@ public:
   FileTxStream(ZiFile &file) : m_file{file} { }
   ~FileTxStream() { flush(); }
 
+  bool failed() const { return m_failed; }
+  bool operator !() const { return m_failed; }
+  ZuOpBool
+
 private:
   ZuRef<Buf> allocBuf_() { return new Buf; }
-  void sendBuf_() { m_file.write(m_buf->data(), m_buf->length()); }
-
-  void ensureBuf() { if (!m_buf) m_buf = allocBuf_(); }
-  void sendBuf() {
-    sendBuf_();
-    m_buf = allocBuf_();
+  void fail() { m_buf = {}; m_failed = true; }
+  bool ensureBuf() {
+    if (!m_buf) m_buf = allocBuf_();
+    if (ZuUnlikely(!m_buf)) { fail(); return false; }
+    return true;
   }
-  void flushBuf() {
-    sendBuf_();
-    m_buf = {};
+  bool sendBuf() {
+    if (ZuUnlikely(!flush())) return false;
+    return ensureBuf();
   }
 
 public:
   void append(const uint8_t *data, unsigned length) {
-    if (!length) return;
+    if (!length || ZuUnlikely(m_failed)) return;
     if (ZuUnlikely(length > maxSize)) {
-      flush();
-      m_file.write(data, length);
+      if (ZuUnlikely(!flush())) return;
+      if (ZuUnlikely(m_file.write(data, length) != Zi::OK)) fail();
       return;
     }
-    ensureBuf();
-    if (length > maxSize - m_buf->length()) sendBuf();
+    if (ZuUnlikely(!ensureBuf())) return;
+    if (length > maxSize - m_buf->length() && ZuUnlikely(!sendBuf())) return;
     m_buf->append(ZuBSpan{data, length});
   }
 
@@ -95,19 +96,21 @@ private:
 
   template <typename P, typename = MatchPDelegate<P>>
   void append(P &&p) {
+    if (ZuUnlikely(m_failed)) return;
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
   template <typename P, typename = MatchPBuffer<P>>
   void append(const P &p) {
+    if (ZuUnlikely(m_failed)) return;
     unsigned length = ZuPrint<P>::length(p);
-    if (ZuUnlikely(length > maxSize))
-      throw ZeEXCEPT(Fatal, "ZiFileTxStream", ([length](auto &s) {
-	s << "output length " << length << " exceeds maximum size " << maxSize;
-      }));
-    ensureBuf();
+    if (ZuUnlikely(length > maxSize)) {
+      m_failed = true; // preceding output may still flush
+      return;
+    }
+    if (!length || ZuUnlikely(!ensureBuf())) return;
     unsigned bufLen = m_buf->length();
     if (length > maxSize - bufLen) {
-      sendBuf();
+      if (ZuUnlikely(!sendBuf())) return;
       bufLen = 0;
     }
     m_buf->length(bufLen + ZuPrint<P>::print(
@@ -151,7 +154,14 @@ public:
     }
   }
 
-  void flush() { if (m_buf && m_buf->length()) flushBuf(); }
+  bool flush() {
+    if (m_buf && m_buf->length()) {
+      if (ZuUnlikely(m_file.write(m_buf->data(), m_buf->length()) != Zi::OK))
+	m_failed = true;
+    }
+    m_buf = {};
+    return !m_failed;
+  }
   FileTxStream &operator <<(Flush) {
     flush();
     return *this;
@@ -160,6 +170,7 @@ public:
 private:
   ZiFile	&m_file;
   ZuRef<Buf>	m_buf;
+  bool		m_failed = false;
 };
 
 } // Zi

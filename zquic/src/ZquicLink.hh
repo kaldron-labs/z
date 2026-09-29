@@ -7279,7 +7279,7 @@ nextSpace:
     ZmRef<ZiIOBuf> initial = ZuMv(m_coalesceInitial);
     ZiSockAddr initialAddr = ZuMv(m_coalesceAddr);
     if (initial->avail() >= buf->length) {
-      initial->append(buf->cspan());
+      if (!initial->append(buf->cspan())) return false;
       return sendPkt(ZuMv(initial), ZuMv(initialAddr));
     }
     if (!sendPkt(ZuMv(initial), ZuMv(initialAddr))) return false;

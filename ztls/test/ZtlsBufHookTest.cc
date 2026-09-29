@@ -96,7 +96,9 @@ struct LogCapture {
   ZmAtomic<unsigned> errors{0};
 
   void reset() {
+    ZiLog::stop(); // drain errors from the preceding negative case
     errors.store_(0);
+    ZiLog::start();
   }
 
   static bool contains(ZuCSpan haystack, ZuCSpan needle) {
@@ -109,8 +111,10 @@ struct LogCapture {
   }
 
   void onLog(ZeLogBuf &buf, const ZeEventInfo &info) {
-    (void)buf;
-    if (info.severity >= Ze::Error) errors.xchAdd(1);
+    if (info.severity >= Ze::Error) {
+      errors.xchAdd(1);
+      log("TLS error: ", ZuCSpan{buf});
+    }
   }
 };
 
@@ -400,7 +404,9 @@ struct ReserveLayer : public ZiTxLayer<ReserveLayer<Lower>, Lower> {
   ReserveLayer(Lower &lower, unsigned headRoom, unsigned tailRoom) :
     Base{lower, headRoom, tailRoom} { }
 
-  void prepareBuf_(ZiIOBuf *, bool) { }
+  ~ReserveLayer() { this->flush(); }
+
+  bool prepareBuf_(ZiIOBuf *, bool) { return true; }
 };
 
 template <typename Link>

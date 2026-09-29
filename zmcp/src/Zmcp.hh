@@ -3193,21 +3193,24 @@ class HTTPOutput {
 public:
   HTTPOutput(Out &out_, uint64_t max_) : m_out{out_}, m_max{max_} { }
 
-  explicit operator bool() const { return !m_overflow; }
+  bool failed() const { return m_overflow || m_out.failed(); }
+  explicit operator bool() const { return !failed(); }
   uint64_t produced() const { return m_produced; }
 
-  void flush() {
-    if (!m_overflow) m_out.flush();
+  bool flush() {
+    if (!m_out.flush()) m_overflow = true;
+    return !failed();
   }
 
   HTTPOutput &operator <<(ZuBSpan value) {
-    if (m_overflow) return *this;
+    if (failed()) return *this;
     unsigned length = value.length();
     if (ZuUnlikely(length > m_max - m_produced)) {
       m_overflow = true;
       return *this;
     }
     m_out << value;
+    if (m_out.failed()) { m_overflow = true; return *this; }
     m_produced += length;
     return *this;
   }
@@ -3236,16 +3239,17 @@ private:
     typename = ZuIfT<(ZuPrint<P>::Delegate) || (ZuPrint<P>::Buffer)>>
   HTTPOutput &append_(const P &value) {
     if constexpr (ZuPrint<P>::Delegate) {
-      if (!m_overflow) ZuPrint<P>::print(*this, value);
+      if (!failed()) ZuPrint<P>::print(*this, value);
       return *this;
     } else {
-      if (m_overflow) return *this;
+      if (failed()) return *this;
       uint64_t length = ZuPrint<P>::length(value);
       if (ZuUnlikely(length > m_max - m_produced)) {
 	m_overflow = true;
 	return *this;
       }
       m_out << value;
+      if (m_out.failed()) { m_overflow = true; return *this; }
       m_produced += length;
       return *this;
     }
@@ -3296,17 +3300,18 @@ class StdioOutput {
 public:
   StdioOutput(ZiIOBuf &buf_, uint64_t max_) : m_buf{buf_}, m_max{max_} { }
 
-  explicit operator bool() const { return !m_overflow; }
+  bool failed() const { return m_overflow || m_buf.failed(); }
+  explicit operator bool() const { return !failed(); }
 
   StdioOutput &operator <<(ZuBSpan value) {
-    if (m_overflow) return *this;
+    if (failed()) return *this;
     unsigned length = value.length();
     unsigned offset = m_buf.length;
     if (ZuUnlikely(offset > m_max || length > m_max - offset)) {
       m_overflow = true;
       return *this;
     }
-    m_buf.append(value);
+    if (!m_buf.append(value)) m_overflow = true;
     return *this;
   }
 
@@ -3334,10 +3339,10 @@ private:
     typename = ZuIfT<(ZuPrint<P>::Delegate) || (ZuPrint<P>::Buffer)>>
   StdioOutput &append_(const P &value) {
     if constexpr (ZuPrint<P>::Delegate) {
-      if (!m_overflow) ZuPrint<P>::print(*this, value);
+      if (!failed()) ZuPrint<P>::print(*this, value);
       return *this;
     } else {
-      if (m_overflow) return *this;
+      if (failed()) return *this;
       unsigned length = ZuPrint<P>::length(value);
       unsigned offset = m_buf.length;
       if (ZuUnlikely(offset > m_max || length > m_max - offset)) {
@@ -3425,6 +3430,7 @@ inline ZmRef<ZiIOBuf> stdioFrame(ZuCSpan message)
 {
   ZmRef<ZiIOBuf> frame = new StdioBuf{};
   *frame << message << '\n';
+  if (frame->failed()) return nullptr;
   return frame;
 }
 
@@ -3659,7 +3665,7 @@ public:
   bool send_(ZmRef<ZiIOBuf> frame) {
     ZiAssert(invoked_(), "Zmcp", (),
 	"stdio send outside owner shard", return false);
-    if (m_state != StdioState::Open || !frame || !frame->length ||
+    if (m_state != StdioState::Open || !frame || frame->failed() || !frame->length ||
 	frame->end()[-1] != '\n' ||
 	frame->length - 1 > m_limits.maxLineBytes)
       return false;

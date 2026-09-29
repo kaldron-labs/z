@@ -30,25 +30,32 @@ struct WireTx : public ZiTxStream<WireTx> {
       unsigned tailRoom = 0) :
     Base{size, headRoom, tailRoom} { }
 
+  ~WireTx() { this->flush(); }
+
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    if (!allocOK) return nullptr;
     ZmRef<ZiIOBuf> buf = new BufAlloc{};
     buf->skip = headRoom;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    if (!buf || !buf->length) return false;
+    ++sends;
+    if (!sendOK || !buf || !buf->length) return false;
     bufs.push(ZuMv(buf));
     finals.push(uint8_t(final));
     return true;
   }
-  void flush() {
+  bool flush() {
     ++flushCalls;
-    Base::flush();
+    return Base::flush();
   }
 
   Bufs					bufs;
   ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Final">> finals;
   unsigned				flushCalls = 0;
+  unsigned sends = 0;
+  bool allocOK = true;
+  bool sendOK = true;
 };
 
 struct FakeMx {
@@ -805,6 +812,24 @@ void tx()
     tx.flush();
     ZuCHECK(!tx.valid());
     ZuCHECK(!lower.bufs.length());
+  }
+  {
+    WireTx lower;
+    lower.allocOK = false;
+    auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
+    tx << "abc";
+    ZuCHECK(tx.failed() && !tx.flush() && !lower.sends);
+  }
+  {
+    WireTx lower;
+    lower.sendOK = false;
+    {
+      auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
+      tx << "abc";
+      ZuCHECK(!tx.flush() && tx.failed() && lower.failed());
+      ZuCHECK(lower.sends == 1 && !tx.flush());
+    }
+    ZuCHECK(lower.sends == 1);
   }
   {
     FailedRandom failed;

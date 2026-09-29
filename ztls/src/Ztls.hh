@@ -846,10 +846,10 @@ public:
   template <bool AppThread>
   ZmRef<ZiIOBuf> txAllocBuf(unsigned skip) {
     if (ZuUnlikely(skip < txHeadRoom<AppThread>() || skip > txMaxSize()))
-      throw TxStreamAllocFailure{};
+      return nullptr;
     auto buf = allocTxBuf_(skip);
     if (ZuUnlikely(!buf || skip > buf->size))
-      throw TxStreamAllocFailure{};
+      return nullptr;
     return buf;
   }
 
@@ -887,9 +887,13 @@ private:
     }
 
   public:
+    ~TxStream_() { this->flush(); }
+    TxStream_(TxStream_ &&) = default;
+    TxStream_ &operator =(TxStream_ &&) = default;
+
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       if (ZuUnlikely(skip < m_headroom))
-	throw TxStreamAllocFailure{};
+	return nullptr;
       return m_link->template txAllocBuf<AppThread>(skip);
     }
 
@@ -937,7 +941,6 @@ protected:
   }
 
 private:
-  struct TxStreamAllocFailure { };
 
 public:
   bool send(ZmRef<ZiIOBuf> buf) {
@@ -945,7 +948,7 @@ public:
   }
 protected:
   bool send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
-    if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_() ||
+    if (ZuUnlikely(!buf || buf->failed() || !buf->length || m_disconnecting.load_() ||
 	gen != m_tlsGen.load_()))
       return reportTxError_(
 	"TLS session is closed for transmission");
@@ -969,7 +972,7 @@ private:
     // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS send_ outside Tx thread", return false);
-    if (ZuUnlikely(!buf || !buf->length || gen != m_tlsGen.load_() ||
+    if (ZuUnlikely(!buf || buf->failed() || !buf->length || gen != m_tlsGen.load_() ||
 	!m_txTLS || m_txTLSGen != gen || m_txClosing))
       return reportTxError_(
 	"TLS session is closed for transmission");

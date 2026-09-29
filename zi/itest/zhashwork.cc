@@ -74,8 +74,10 @@ static void save(const Options &options, const Reports &reports) {
   {
     ZiFileTxStream<> stream{file};
     stream << Ztc::hashCSV();
-    stream.flush();
-    if (file.error()) throw file.error();
+    if (!stream.flush()) {
+      if (file.error()) throw file.error();
+      throw ZeEXCEPT(Error, "zhashwork", "telemetry output failed");
+    }
   }
   if (options.headroom) ZiHashTune::save(strtod(options.headroom, nullptr));
   else ZiHashTune::save();

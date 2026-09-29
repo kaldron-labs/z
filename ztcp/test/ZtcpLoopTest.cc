@@ -141,7 +141,9 @@ struct ReserveLayer : public ZiTxLayer<ReserveLayer<Link>, Link> {
   ReserveLayer(Link &link, unsigned headRoom, unsigned tailRoom) :
     Base{link, headRoom, tailRoom} { }
 
-  void prepareBuf_(ZiIOBuf *, bool) { }
+  ~ReserveLayer() { this->flush(); }
+
+  bool prepareBuf_(ZiIOBuf *, bool) { return true; }
 };
 
 template <typename Link>

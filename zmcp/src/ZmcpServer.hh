@@ -891,7 +891,7 @@ private:
     }
     unsigned jsonLength = buf->length - jsonOffset;
     *buf << "\n\n";
-    if (ZuUnlikely(jsonLength > jsonMax ||
+    if (ZuUnlikely(buf->failed() || jsonLength > jsonMax ||
 	m_queuedBytes > m_limits.maxQueueBytes ||
 	buf->length > m_limits.maxQueueBytes - m_queuedBytes)) {
       abort_();
@@ -1979,7 +1979,7 @@ private:
     bool postSSE_() {
       return m_server->postSSE_([work = ZmRef(this)]() mutable {
 	if (!work->live_()) return;
-	auto builder = work->m_responder.builder();
+	auto builder = ZmRef(work->m_responder.builder());
 	if (!builder) return;
 	auto stream = builder->data().streamPtr();
 	if (stream) stream->resume_();

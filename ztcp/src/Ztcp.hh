@@ -358,10 +358,14 @@ private:
     {
     }
 
+    ~TxStream_() { this->flush(); }
+    TxStream_(TxStream_ &&) = default;
+    TxStream_ &operator =(TxStream_ &&) = default;
+
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       auto buf = m_link->allocTxBuf_();
       if (ZuUnlikely(!buf || skip > buf->size))
-	throw TxStreamAllocFailure{};
+	return nullptr;
       buf->skip = skip;
       return buf;
     }
@@ -380,7 +384,6 @@ private:
     Link	*m_link;
   };
 
-  struct TxStreamAllocFailure { };
 
 public:
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
@@ -395,7 +398,7 @@ public:
   }
 
   bool send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || !buf->length || m_disconnecting.load_()))
+    if (ZuUnlikely(!buf || buf->failed() || !buf->length || m_disconnecting.load_()))
       return tcpTxError_(
 	"TCP connection is closed for transmission");
     buf->owner = impl();
@@ -410,7 +413,7 @@ protected:
   bool send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
       "TCP send_ outside Tx thread", return false);
-    if (ZuUnlikely(!buf || !buf->length ||
+    if (ZuUnlikely(!buf || buf->failed() || !buf->length ||
 	m_disconnecting.load_() || !m_cxn))
       return tcpTxError_(
 	"TCP connection is closed for transmission");

@@ -62,10 +62,13 @@ inline void save(const Zi::Path &path, const O &v) {
       ZvTOMLError::fileError<"open">(path, file.error()));
   ZiFileTxStream<> stream{file};
   ZfTOML::save<Facet, Filter>(stream, v);
-  stream.flush();
-  if (file.error())
+  if (!stream.flush()) {
+    if (file.error())
+      throw ZvTOML_EXCEPT(
+	ZvTOMLError::fileError<"write">(path, file.error()));
     throw ZvTOML_EXCEPT(
-      ZvTOMLError::fileError<"write">(path, file.error()));
+      ([path = Zi::Path{path}](auto &s) { s << '"' << path << "\": output failed"; }));
+  }
 }
 
 template <typename Facet = ZuFacet::TOML, typename O>

@@ -76,6 +76,8 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
 
     Tx(FlowWire *wire_) : Base{65544, 0, 0}, wire{wire_} { }
 
+    ~Tx() { this->flush(); }
+
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
       ZmRef<ZiIOBuf> buf = new BufAlloc{};
       buf->skip = headRoom;

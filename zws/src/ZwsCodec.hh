@@ -121,7 +121,7 @@ public:
       this, opcode, &valid, l = ZuFwd<L>(l)](auto &lower) mutable {
 	auto tx = txLayer<!Server>(lower, opcode, m_random);
 	l(tx);
-	valid = tx.valid();
+	valid = tx.flush() && tx.valid();
       });
     if (valid) return;
     auto app = link->app();
@@ -140,7 +140,7 @@ public:
       this, opcode, &valid, l = ZuFwd<L>(l)](auto &lower) mutable {
 	auto tx = txLayer<!Server>(lower, opcode, m_random);
 	l(tx);
-	valid = tx.valid();
+	valid = tx.flush() && tx.valid();
       });
     if (valid) return;
     auto app = link->app();
@@ -519,8 +519,7 @@ private:
       stream.txStream([this, opcode, payload, &valid](auto &lower) {
 	auto tx = txLayer<!Server>(lower, opcode, m_random);
 	tx << payload;
-	tx.flush();
-	valid = tx.valid();
+	valid = tx.flush() && tx.valid();
       });
     };
     if (m_stream)

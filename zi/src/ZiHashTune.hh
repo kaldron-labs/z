@@ -69,8 +69,10 @@ inline void save(double headroom = 0.05) {
   if (!file) throw file.error();
   ZiFileTxStream<> stream{file};
   stream << Ztc::hashTuneCSV(headroom);
-  stream.flush();
-  if (file.error()) throw file.error();
+  if (!stream.flush()) {
+    if (file.error()) throw file.error();
+    throw ZeEXCEPT(Error, "ZiHashTune", "output failed");
+  }
 }
 
 } // ZiHashTune

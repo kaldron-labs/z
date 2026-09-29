@@ -371,6 +371,56 @@ void testTxStream()
   ZuCheck(output == "12345678A0123456789x7");
 }
 
+struct FileBigPrint;
+struct FileBigPrintFn : ZuPrintBuffer {
+  static unsigned length(const FileBigPrint &) { return 32; }
+  static unsigned print(char *, unsigned, const FileBigPrint &) { ZmAssert(false); return 0; }
+};
+struct FileBigPrint { friend FileBigPrintFn ZuPrintType(FileBigPrint *); };
+
+void testTxFailures()
+{
+  ZuTestScope(testTxFailures);
+  cleanupFiles();
+  ZiFile file;
+  ZuCheck(file.open(g_foo, ZiFile::Write | ZiFile::GC) == Zi::OK);
+  using Stream = ZiFileTxStream<ZiFileTxBufSize<8>>;
+  {
+    Stream stream{file};
+    stream << "prefix" << FileBigPrint{} << "ignored";
+    ZuCheck(stream.failed() && !file.error());
+    ZuCheck(!stream.flush());
+    ZuCheck(file.size() == 6);
+    ZuCheck(!stream.flush());
+    ZuCheck(file.size() == 6);
+  }
+  file.close();
+
+  Stream failed{file};
+  failed << "lost";
+  ZuCheck(!failed.flush() && failed.failed() && file.error());
+  ZuCheck(file.open(g_bar, ZiFile::Write | ZiFile::GC) == Zi::OK);
+  failed << "ignored";
+  ZuCheck(!failed.flush() && file.size() == 0);
+  file.close();
+
+  Stream rollover{file};
+  rollover << "12345678" << 'x';
+  ZuCheck(rollover.failed() && !rollover.flush());
+  Stream direct{file};
+  direct << "prefix" << "0123456789";
+  ZuCheck(direct.failed() && !direct.flush());
+
+#ifndef _WIN32
+  ZiFile full{"/dev/full", ZiFile::Write | ZiFile::GC};
+  if (full) {
+    Stream output{full};
+    output << "0123456789";
+    ZuCheck(output.failed() && !output.flush());
+  }
+#endif
+}
+
 void testOpenAtNoFollowAndStat()
 {
   ZuTestScope(testOpenAtNoFollowAndStat);
@@ -475,8 +525,7 @@ void testFormattedStream()
     ZiFile file{g_foo, ZiFile::Write | ZiFile::GC};
     ZiFileTxStream<> stream{file};
     stream << "value=" << ZuBoxed(uint64_t{105}) << "\n";
-    stream.flush();
-    written = !file.error();
+    written = stream.flush();
   } catch (const ZeError &error) {
     log_("formatted write: ", error);
   }
@@ -506,6 +555,7 @@ int main(int argc, char **argv)
   ZuTestCall(testMetadataAndPathHelpers);
   ZuTestCall(testNegativeOpen);
   ZuTestCall(testTxStream);
+  ZuTestCall(testTxFailures);
   ZuTestCall(testOpenAtNoFollowAndStat);
   ZuTestCall(testModeAndTmpDir);
   ZuTestCall(testFormattedStream);

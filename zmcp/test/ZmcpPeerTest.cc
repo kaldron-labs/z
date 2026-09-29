@@ -121,10 +121,13 @@ struct HTTPBodyOut {
     return *this;
   }
 
-  void flush() { }
+  bool failed() const { return failure; }
+  bool flush() { if (!flushOK) failure = true; return !failure; }
   uint64_t produced() const { return data.length(); }
 
   ZtString<> data;
+  bool failure = false;
+  bool flushOK = true;
 };
 
 struct HTTPHeaderPatch {
@@ -956,6 +959,12 @@ static void stdioTest()
   auto boundedOut = Zmcp::stdioFrame(
     Zmcp::ErrorMessage{Zmcp::ID{int64_t(1)}, "message", -1}, 16);
   ZuCheck(!boundedOut);
+
+  Zmcp::StdioOutput failedOut{*out, 64};
+  ZuCheck(!out->append(reinterpret_cast<const uint8_t *>("x"), UINT_MAX));
+  ZuCheck(failedOut.failed() && !failedOut);
+  failedOut << "ignored";
+  ZuCheck(ZuCSpan{*out} == "{}\n");
 }
 
 static void httpTest()
@@ -1023,6 +1032,10 @@ static void httpTest()
     outcome = write(out);
   });
   ZuCheck(outcome == Zhttp::WriteOutcome::End);
+  HTTPBodyOut rejected;
+  rejected.flushOK = false;
+  response.body([&rejected, &outcome](auto write) { outcome = write(rejected); });
+  ZuCheck(rejected.failed() && outcome == Zhttp::WriteOutcome::Abort);
   auto prefix = ZuCSpan{out.data};
   prefix.trunc(sizeof("{\"jsonrpc\":\"2.0\",\"id\":11,") - 1);
   ZuCheck(prefix == "{\"jsonrpc\":\"2.0\",\"id\":11,");
