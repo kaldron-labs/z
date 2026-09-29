@@ -25,11 +25,7 @@ pkginclude_HEADERS = \
 	\
 	ZtcTypes.hh ZtcHash.hh ZtcHeap.hh ZtcQueue.hh ZtcThread.hh
 lib_LTLIBRARIES = libZm.la
-libZm_la_SOURCES = \
-	ZmAssert.cc ZmBackTrace.cc ZmGlobal.cc ZmHashMgr.cc ZmHeap.cc \
-	ZmLib.cc ZmLock.cc ZmObjectDebug.cc ZmRandom.cc \
-	ZmRing.cc ZmScheduler.cc \
-	ZmSingleton.cc ZmSpecific.cc \
-	ZmTime.cc ZmThread.cc ZmTrap.cc ZtcQueue.cc \
-	ZtcHeap.cc ZtcHash.cc
+zm_srcdir = .
+include $(top_srcdir)/zm/src/Makefile.inc
+libZm_la_SOURCES = ZmHeap.cc $(zm_common_sources)
 libZm_la_LIBADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ -lbfd -liberty @Z_LIBS@

@@ -181,7 +181,7 @@ int main(int argc, char **argv)
     using T = ZuTuple<>;
     T v;
     D d = v; (void)d;
-    D e{v};
+    [[maybe_unused]] D e{v};
     static auto foo = [](D d) { };
     foo(v);
   }

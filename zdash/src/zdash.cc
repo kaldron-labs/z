@@ -304,7 +304,6 @@ template <typename Data_> struct Item_ : public Item__<Data_> {
   template <unsigned I, typename S>
   void printKey(S &s) const { Base::template printKey<I>(s, value); }
   int rag() const { return Base::rag(value); }
-
 };
 
 template <typename T, typename Heap = ZuVoid>

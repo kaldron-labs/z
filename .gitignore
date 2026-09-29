@@ -1,6 +1,7 @@
 *
 !*.*
 !*/
+!zdb_sqlite/itest/zdbslconfigtest
 .*
 !.clang-sanitize-ignorelist
 !.lsan-suppressions
