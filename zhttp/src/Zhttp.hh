@@ -803,6 +803,7 @@ public:
   ~RetainedTx() { this->flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    if (ZuUnlikely(m_lower.failed())) return nullptr;
     return m_lower.allocBuf_(headRoom);
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
@@ -814,17 +815,21 @@ public:
     return true;
   }
 
-  bool seal() {
-    this->flush();
-    return valid();
+  bool seal() { return this->flush() && valid(); }
+  bool valid() const {
+    return !this->failed() && m_valid && m_budget.valid;
   }
-  bool valid() const { return m_valid && m_budget.valid; }
-  void commit() {
-    if (!valid()) return;
-    for (unsigned i = 0, n = m_entries.length(); i < n; ++i)
-      if (!m_lower.sendBuf_(ZuMv(m_entries[i].buf), m_entries[i].final))
-	break;
+  bool commit() {
+    if (!seal()) { m_entries.length(0); return false; }
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
+      if (!m_lower.sendBuf(ZuMv(m_entries[i].buf), m_entries[i].final)) {
+	this->fail();
+	m_entries.length(0);
+	return false;
+      }
+    }
     m_entries.length(0);
+    return true;
   }
 
 private:
@@ -929,10 +934,10 @@ public:
 	m_ops->headers();
 	auto body = builder.body(tx);
 	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-	body.flush();
+	bool ok = body.flush();
 	produced = body.produced();
 	m_ops->template produced<true>(produced);
-	if (!body.valid()) outcome = WriteOutcome::Failed;
+	if (!ok || !body.valid()) outcome = WriteOutcome::Failed;
 	if (outcome == WriteOutcome::End) builder.finish(tx);
       });
       if (!emitted) return m_ops->empty(builder.appBuilder());
@@ -947,16 +952,16 @@ public:
 	emitted = true;
 	auto body = builder.body(tx);
 	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-	body.flush();
+	bool ok = body.flush();
 	produced = body.produced();
 	m_ops->template produced<true>(produced);
-	if (!body.valid()) outcome = WriteOutcome::Failed;
+	if (!ok || !body.valid()) outcome = WriteOutcome::Failed;
       });
       if (emitted && outcome == WriteOutcome::End) builder.finish(tx);
     }
     if (!validCardinality_(optional, emitted, duplicate) ||
 	!writerEnded_(outcome) ||
-	!headersOK)
+	!headersOK || !tx.flush())
       return m_ops->template fail<true>();
     if (!m_ops->complete(produced)) return false;
     link.finish();
@@ -983,13 +988,13 @@ public:
 	emitted = true;
 	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
       });
-      body.flush();
+      bool bodyOK = body.flush();
       if (emitted) {
 	builder.produced = body.produced();
 	m_ops->template produced<false>(builder.produced);
       }
       if (!validCardinality_(optional, emitted, duplicate) ||
-	  (emitted && (!writerEnded_(outcome) || !body.valid())))
+	  (emitted && (!bodyOK || !writerEnded_(outcome) || !body.valid())))
 	return m_ops->template fail<false>();
       if (!emitted) return m_ops->empty(builder.appBuilder());
       if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
@@ -997,8 +1002,8 @@ public:
       builder.finish(bodyTx);
       if (!headerTx.seal() || !bodyTx.seal())
 	return m_ops->template fail<false>();
-      headerTx.commit();
-      bodyTx.commit();
+      if (!headerTx.commit() || !bodyTx.commit())
+	return m_ops->template fail<false>();
       if (!m_ops->complete(builder.produced)) return false;
       link.finish();
       return true;
@@ -1037,7 +1042,7 @@ private:
       builder.begin(tx);
     else if (!builder.begin(tx))
       return false;
-    return true;
+    return tx.flush();
   }
 
   template <typename Builder, typename Tx>
@@ -1053,13 +1058,13 @@ private:
       emitted = true;
       outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
     });
-    body.flush();
+    bool bodyOK = body.flush();
     if (emitted) {
       builder.produced = body.produced();
       m_ops->template produced<false>(builder.produced);
     }
     if (!validCardinality_(optional, emitted, duplicate) ||
-	(emitted && (!writerEnded_(outcome) || !body.valid())))
+	(emitted && (!bodyOK || !writerEnded_(outcome) || !body.valid())))
       return m_ops->template fail<false>();
     if (!emitted) return m_ops->empty(builder.appBuilder());
     if (!begin_(builder, tx))
@@ -1067,7 +1072,7 @@ private:
     m_ops->headers();
     builder.finish(tx);
     if (!tx.valid()) return m_ops->template fail<false>();
-    tx.commit();
+    if (!tx.commit()) return m_ops->template fail<false>();
     if (!m_ops->complete(builder.produced)) return false;
     m_ops->link().finish();
     return true;

@@ -33,15 +33,16 @@ public:
       m_lower{lower}, m_random{random}, m_opcode{opcode}
   {
     if constexpr (Masked)
-      ZiAssert(m_random, "Zws", (), "masked Tx requires RNG", m_valid = false);
+      ZiAssert(m_random, "Zws", (), "masked Tx requires RNG", m_valid = false; this->fail());
   }
 
-  ~TxLayer() = default;
+  ~TxLayer() { flush(); }
 
   template <typename P>
   TxLayer &operator <<(P &&p) {
     if (m_finalized) {
       m_valid = false;
+      this->fail();
       return *this;
     }
     static_cast<Base &>(*this) << ZuFwd<P>(p);
@@ -52,35 +53,36 @@ public:
     return *this;
   }
 
-  void flush() {
-    if (m_finalized) return;
+  bool flush() {
+    if (m_finalized) return valid();
     unsigned emitted = m_emitted;
-    Base::flush();
-    if (m_emitted == emitted) emitEmpty_();
-    m_lower.flush();
+    bool ok = Base::flush();
+    if (ok && m_valid && m_emitted == emitted) ok = emitEmpty_();
+    if (!ok || !m_valid) this->fail();
     m_finalized = true;
+    return valid();
   }
 
-  bool valid() const { return m_valid; }
+  bool valid() const { return m_valid && !this->failed(); }
 
-  void prepareBuf_(ZiIOBuf *buf, bool final) {
+  bool prepareBuf_(ZiIOBuf *buf, bool final) {
     if (!m_valid) {
       buf->length = 0;
-      return;
+      return false;
     }
     uint64_t length = buf->length;
     Opcode::T opcode = m_emitted ? Opcode::Continuation : m_opcode;
     if (control(opcode) && (!final || length > MaxControl)) {
       m_valid = false;
       buf->length = 0;
-      return;
+      return false;
     }
 
     unsigned ext = length < 126 ? 0 : length <= 0xffff ? 2 : 8;
     unsigned hdrLen = 2 + ext + (Masked ? 4 : 0);
     ZiAssert(
       buf->skip >= hdrLen,
-      "Zws", (), "WebSocket Tx headroom error", m_valid = false; return);
+      "Zws", (), "WebSocket Tx headroom error", m_valid = false; return false);
     auto payload = buf->data();
     buf->rewind(hdrLen);
     auto hdr = buf->data();
@@ -102,7 +104,7 @@ public:
       if (ZuUnlikely(!m_random || !m_random->random(key))) {
 	m_valid = false;
 	buf->length = 0;
-	return;
+	return false;
       }
       unsigned keyOffset = 2 + ext;
       for (unsigned i = 0; i < 4; ++i) hdr[keyOffset + i] = key[i];
@@ -112,14 +114,15 @@ public:
       mask({payload, unsigned(length)}, key32);
     }
     ++m_emitted;
+    return true;
   }
 
 private:
-  void emitEmpty_() {
-    auto buf = m_lower.allocBuf_(this->headRoom());
-    if (ZuUnlikely(!buf)) { m_valid = false; return; }
-    prepareBuf_(buf, true);
-    if (!m_lower.sendBuf_(ZuMv(buf), true)) m_valid = false;
+  bool emitEmpty_() {
+    auto buf = this->allocBuf_(this->headRoom());
+    if (ZuUnlikely(!buf || buf->failed() || !prepareBuf_(buf, true)))
+      return false;
+    return m_lower.sendBuf(ZuMv(buf), true);
   }
 
   Lower		&m_lower;

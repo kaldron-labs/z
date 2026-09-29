@@ -444,6 +444,10 @@ public:
 
     uint64_t frameMax() const { return m_stream->txFrameMax(); }
 
+    ~TxStream_() { this->flush(); }
+    TxStream_(TxStream_ &&) = default;
+    TxStream_ &operator =(TxStream_ &&) = default;
+
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       ZiAssert(skip <= BufSize, "Zquic", (skip),
 	"invalid stream headroom " << skip, return nullptr);
@@ -713,7 +717,7 @@ private:
   }
 
   bool send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || !buf->length)) return false;
+    if (ZuUnlikely(!buf || buf->failed() || !buf->length)) return false;
     if (ZuUnlikely(!admitTx_())) return sendError_(
       "QUIC stream transmit queue limit exceeded");
     buf->owner = this;
@@ -742,8 +746,7 @@ private:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send_ outside Tx thread",
       --m_txQueueCount; return false);
-    if (ZuUnlikely(!buf)) return false;
-    if (ZuUnlikely(m_resetSent || !buf->length)) {
+    if (ZuUnlikely(!buf || buf->failed() || m_resetSent || !buf->length)) {
       --m_txQueueCount;
       return sendError_("QUIC stream is closed for transmission");
     }

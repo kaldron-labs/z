@@ -83,10 +83,13 @@ inline void save(const Zi::Path &path, const O &v) {
       ZvCfError::fileError<"open">(path, file.error()));
   ZiFileTxStream<> stream{file};
   ZfCf::save<Facet, Filter>(stream, v);
-  stream.flush();
-  if (file.error())
+  if (!stream.flush()) {
+    if (file.error())
+      throw ZvCf_EXCEPT(
+	ZvCfError::fileError<"write">(path, file.error()));
     throw ZvCf_EXCEPT(
-      ZvCfError::fileError<"write">(path, file.error()));
+      ([path = Zi::Path{path}](auto &s) { s << '"' << path << "\": output failed"; }));
+  }
 }
 template <
   typename Facet = ZuFacet::Cf,

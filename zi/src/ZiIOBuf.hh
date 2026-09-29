@@ -62,6 +62,7 @@ struct IOBuf : private VHeap, public ZmPolymorph {
   uint32_t	size = 0;
   uint32_t	length = 0;
   uint32_t	skip = 0;
+  bool		failed_ = false;
 
   // 64bit pointer-packing - uses bit 63
   ZuAssert(sizeof(uintptr_t) == 8);
@@ -95,6 +96,8 @@ public:
     return const_cast<IOBuf *>(this)->data_();
   }
 
+  // Boolean conversion describes readable bytes; output status is separate.
+  bool failed() const { return failed_; }
   bool operator !() const { return !length; }
 
   uint8_t *data() { return data_() + skip; }
@@ -126,6 +129,7 @@ public:
   void clear() {
     length = 0;
     skip = 0;
+    failed_ = false; // begin a new output operation
   }
 
   template <typename T>
@@ -192,12 +196,18 @@ public:
   // ensure at least newSize bytes in buffer, preserving any existing data
   template <auto Grow = ZmGrow>
   uint8_t *ensure(unsigned newSize) {
+    if (ZuUnlikely(failed_ || newSize > UINT32_MAX - skip)) {
+      failed_ = true;
+      return nullptr;
+    }
     newSize += skip;
     if (ZuLikely(newSize <= size)) return data();
-    newSize = Grow(size, newSize);
+    unsigned grown = Grow(size, newSize);
+    if (ZuUnlikely(grown < newSize)) { failed_ = true; return nullptr; }
+    newSize = grown;
     auto old = data_();
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
-    if (ZuUnlikely(!jumbo)) return nullptr;
+    if (ZuUnlikely(!jumbo)) { failed_ = true; return nullptr; }
     if (length) memcpy(jumbo + skip, old + skip, length);
     size = newSize;
     if (ZuUnlikely(data__ &Jumbo)) vfree(old);
@@ -225,7 +235,7 @@ public:
     }
     newSize = Grow(size, newSize);
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
-    if (ZuUnlikely(!jumbo)) return nullptr;
+    if (ZuUnlikely(!jumbo)) { failed_ = true; return nullptr; }
     auto newSkip = newSize - length;
     if (length) memcpy(jumbo + newSkip, old + skip, length);
     size = newSize;
@@ -236,14 +246,21 @@ public:
     return jumbo + skip;
   }
 
-  void append(const uint8_t *data, unsigned length_) {
+  bool append(const uint8_t *data, unsigned length_) {
+    if (ZuUnlikely(failed_)) return false;
+    if (!length_) return true;
+    if (ZuUnlikely(length_ > UINT32_MAX - length)) {
+      failed_ = true;
+      return false;
+    }
     unsigned total = length + length_;
     auto ptr = ensure(total);
-    if (ZuUnlikely(!ptr)) return;
+    if (ZuUnlikely(!ptr)) return false;
     memcpy(ptr + length, data, length_);
     length = total;
+    return true;
   }
-  void append(ZuBSpan data) { append(data.data(), data.length()); }
+  bool append(ZuBSpan data) { return append(data.data(), data.length()); }
 
 private:
   template <typename U, typename R = void>
@@ -253,14 +270,22 @@ private:
 
   template <typename P, typename = MatchPDelegate<P>>
   void append(P &&p) {
+    if (ZuUnlikely(failed_)) return;
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
   template <typename P, typename = MatchPBuffer<P>>
   void append(const P &p) {
+    if (ZuUnlikely(failed_)) return;
     unsigned length_ = ZuPrint<P>::length(p);
+    if (!length_) return;
+    if (ZuUnlikely(length_ > UINT32_MAX - length)) {
+      failed_ = true;
+      return;
+    }
+    auto ptr = ensure(length + length_);
+    if (ZuUnlikely(!ptr)) return;
     length += ZuPrint<P>::print(
-	reinterpret_cast<char *>(ensure(length + length_) + length),
-	length_, p);
+	reinterpret_cast<char *>(ptr + length), length_, p);
   }
 
   template <typename U, typename R = void>

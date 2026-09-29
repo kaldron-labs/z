@@ -8,6 +8,7 @@
 #include <errno.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
@@ -527,4 +528,5 @@ int main(int argc, char **argv)
   ZuTestCall(testHandshakeStreamsAndClose);
   ZuTestCall(testSplitReorderedStreamFrames);
   ZuTestCall(testRecoveryFlowAndPMTUD);
+  ZiLog::stop();
 }

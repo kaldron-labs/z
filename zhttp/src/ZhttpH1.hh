@@ -683,13 +683,16 @@ public:
   BodyStream(Lower &lower, uint64_t contentLength_) :
     Base(lower, 0, 0), m_contentLength(contentLength_) { }
 
-  void prepareBuf_(ZiIOBuf *buf, bool) {
+  ~BodyStream() { this->flush(); }
+
+  bool prepareBuf_(ZiIOBuf *buf, bool) {
     if (ZuUnlikely(m_contentLength < buf->length)) {
       m_valid = false;
       buf->length = m_contentLength;
     }
     m_contentLength -= buf->length;
     m_produced += buf->length;
+    return true;
   }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid && !Base::operator !(); }
@@ -716,11 +719,13 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
 
   ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize) { }
 
-  void prepareBuf_(ZiIOBuf *buf, bool) {
+  ~ChunkedStream() { this->flush(); }
+
+  bool prepareBuf_(ZiIOBuf *buf, bool) {
     m_produced += buf->length;
     ZuBox<uint32_t> n = buf->length;
     ZiAssert(buf->skip >= HdrSize,
-	"Zhttp", (), "ChunkedStream headroom error", return);
+	"Zhttp", (), "ChunkedStream headroom error", return false);
     // chunk header
     buf->rewind(HdrSize);
     {
@@ -730,6 +735,7 @@ struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
     }
     // chunk trailer
     *buf << "\r\n";
+    return !buf->failed();
   }
 
   uint64_t produced() const { return m_produced; }

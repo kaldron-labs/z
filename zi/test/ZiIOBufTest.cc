@@ -114,6 +114,60 @@ void testSpanOffsetAndLargeEnsure()
   ZuCheck(out == "0123456789");
 }
 
+struct HugePrint;
+struct HugePrintFn : ZuPrintBuffer {
+  static unsigned length(const HugePrint &) { return UINT_MAX; }
+  static unsigned print(char *, unsigned, const HugePrint &) { ZmAssert(false); return 0; }
+};
+struct HugePrint { friend HugePrintFn ZuPrintType(HugePrint *); };
+struct FailingDelegate {
+  unsigned *calls;
+  template <typename S> void print(S &s) const {
+    ++*calls;
+    s << HugePrint{} << "ignored";
+  }
+  friend ZuPrintFn ZuPrintType(FailingDelegate *);
+};
+
+void testOutputFailure()
+{
+  ZuTestScope(testOutputFailure);
+
+  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>{};
+  *buf << "prefix";
+  ZuCheck(!buf->append(reinterpret_cast<const uint8_t *>("x"), UINT_MAX));
+  ZuCheck(buf->failed());
+  *buf << "ignored" << '!' << 42;
+  ZuCheck(buf->cspan() == "prefix");
+  ZuCheck(!buf->ensure(buf->length));
+
+  buf->clear();
+  ZuCheck(!buf->failed());
+  *buf << 'a' << 42;
+  ZuCheck(buf->cspan() == "a42");
+  unsigned calls = 0;
+  *buf << FailingDelegate{&calls};
+  ZuCheck(buf->failed() && calls == 1);
+  *buf << FailingDelegate{&calls};
+  ZuCheck(calls == 1 && buf->cspan() == "a42");
+
+  buf->clear();
+  buf->skip = 1;
+  *buf << HugePrint{};
+  ZuCheck(buf->failed() && !buf->length);
+  buf->clear();
+  *buf << "prefix";
+  auto deniedGrowth = [](unsigned size, unsigned) { return size; };
+  ZuCheck(!buf->ensure<deniedGrowth>(buf->size + 1));
+  ZuCheck(buf->failed() && buf->cspan() == "prefix");
+  *buf << "ignored";
+  ZuCheck(buf->cspan() == "prefix");
+
+  buf->clear();
+  *buf << "ok";
+  ZuCheck(!buf->failed() && buf->cspan() == "ok");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -122,5 +176,6 @@ int main(int argc, char **argv)
   ZuTestCall(testAdvanceRewind);
   ZuTestCall(testPrependAndGrow);
   ZuTestCall(testSpanOffsetAndLargeEnsure);
+  ZuTestCall(testOutputFailure);
   return 0;
 }

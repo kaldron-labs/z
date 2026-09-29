@@ -19,6 +19,10 @@
 //     - send buf (via lower-level protocol)
 //     - final is false for rollover and true for flush/destruction
 //     - return false on failure
+// - failed() is sticky; flush() returns false after failure
+// - oversized printables retain an earlier prefix for one final flush
+// - concrete implementations must flush in their destructor, while their
+//   callback state is alive; this base only releases any remaining buffer
 
 #ifndef ZiTxStream_HH
 #define ZiTxStream_HH
@@ -66,7 +70,7 @@ public:
 
   TxStream(unsigned maxSize, unsigned headRoom, unsigned tailRoom) :
     m_maxSize(maxSize), m_headRoom(headRoom), m_tailRoom(tailRoom) { }
-  ~TxStream() { flush(); }
+  ~TxStream() = default;
 
   TxStream(TxStream &&stream) :
     m_maxSize{stream.m_maxSize},
@@ -79,12 +83,13 @@ public:
   }
   TxStream &operator =(TxStream &&stream) {
     if (this == &stream) return *this;
-    flush();
+    bool ok = flush();
     m_maxSize = stream.m_maxSize;
     m_headRoom = stream.m_headRoom;
     m_tailRoom = stream.m_tailRoom;
     m_buf = ZuMv(stream.m_buf);
-    m_failed = stream.m_failed;
+    m_failed = !ok || stream.m_failed;
+    if (!ok) m_buf = {};
     stream.m_failed = false;
     return *this;
   }
@@ -96,45 +101,55 @@ public:
   bool operator !() const { return m_failed; }
   ZuOpBool
 
-private:
-  void allocBuf() { m_buf = impl()->allocBuf_(m_headRoom); }
-  void ensureBuf() { if (!m_failed && !m_buf) allocBuf(); }
+protected:
   void fail() { m_buf = {}; m_failed = true; }
-  bool sendBuf() {
-    if (ZuUnlikely(m_failed)) return false;
-    if (ZuUnlikely(!impl()->sendBuf_(ZuMv(m_buf), false))) {
+
+private:
+  bool allocBuf() {
+    m_buf = impl()->allocBuf_(m_headRoom);
+    if (ZuUnlikely(!m_buf || m_buf->failed())) {
       fail();
       return false;
     }
-    allocBuf();
     return true;
   }
-  bool flushBuf() {
-    if (ZuUnlikely(m_failed)) return false;
-    if (ZuUnlikely(!impl()->sendBuf_(ZuMv(m_buf), true))) {
+  bool ensureBuf() { return m_buf || allocBuf(); }
+  bool submitBuf(ZmRef<ZiIOBuf> buf, bool final) {
+    if (ZuUnlikely(!buf || buf->failed() ||
+	!impl()->sendBuf_(ZuMv(buf), final))) {
       fail();
       return false;
     }
-    m_buf = {};
     return true;
+  }
+  bool nextBuf() {
+    if (ZuUnlikely(!submitBuf(ZuMv(m_buf), false))) return false;
+    return allocBuf();
+  }
+
+public:
+  // Checked handoff for layers and retained output calling below append().
+  bool sendBuf(ZmRef<ZiIOBuf> buf, bool final) {
+    if (ZuUnlikely(m_failed)) return false;
+    return submitBuf(ZuMv(buf), final);
   }
 
 public:
   void append(const uint8_t *data, unsigned length) {
     if (!length || ZuUnlikely(m_failed)) return;
-    ensureBuf();
+    if (ZuUnlikely(!ensureBuf())) return;
     for (;;) {
       unsigned total = m_buf->length + m_headRoom + m_tailRoom;
       ZmAssert(total <= m_maxSize);
       unsigned avail = m_maxSize - total;
       unsigned length_ = length > avail ? avail : length;
       if (length_) {
-	m_buf->append(data, length_);
+	if (ZuUnlikely(!m_buf->append(data, length_))) { fail(); return; }
 	data += length_;
 	length -= length_;
       }
       if (!length) return;
-      if (ZuUnlikely(!sendBuf())) return;
+      if (ZuUnlikely(!nextBuf())) return;
     }
   }
 
@@ -147,31 +162,28 @@ private:
   template <typename P, typename = MatchPDelegate<P>>
   void append(P &&p) {
     if (ZuUnlikely(m_failed)) return;
-    ensureBuf();
-    ZuPrint<P>::print(*m_buf, ZuFwd<P>(p));
+    ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
   template <typename P, typename = MatchPBuffer<P>>
   void append(const P &p) {
     if (ZuUnlikely(m_failed)) return;
-    ensureBuf();
     unsigned length_ = ZuPrint<P>::length(p);
+    if (ZuUnlikely(length_ > m_maxSize - (m_headRoom + m_tailRoom))) {
+      m_failed = true; // retain any preceding output for final flush
+      return;
+    }
+    if (!length_ || ZuUnlikely(!ensureBuf())) return;
     unsigned bufLen = m_buf->length;
     unsigned total = bufLen + m_headRoom + m_tailRoom;
-    ZmAssert(total <= m_maxSize); // sanity check on current buf
-    unsigned avail = m_maxSize - total;
-    if (avail < length_) {
-      // need new buf, unless the output itself exceeds an empty buffer
-      if (bufLen && ZuUnlikely(!sendBuf())) return;
-      avail = m_maxSize - (m_headRoom + m_tailRoom);
-      if (length_ > avail)
-	throw ZeEXCEPT(Fatal, "ZiTxStream", ([avail, length_](auto &s) {
-	  s << "output length " << length_ << " exceeds maximum size " << avail;
-	}));
+    ZmAssert(total <= m_maxSize);
+    if (length_ > m_maxSize - total) {
+      if (ZuUnlikely(!nextBuf())) return;
       bufLen = 0;
     }
+    auto ptr = m_buf->ensure(bufLen + length_);
+    if (ZuUnlikely(!ptr)) { fail(); return; }
     m_buf->length = bufLen + ZuPrint<P>::print(
-	reinterpret_cast<char *>(m_buf->ensure(bufLen + length_) + bufLen),
-	length_, p);
+	reinterpret_cast<char *>(ptr + bufLen), length_, p);
   }
 
   template <typename U, typename R = void>
@@ -212,10 +224,13 @@ public:
     }
   }
 
-  // flush output
-  void flush() {
+  // A rejected printable may leave a valid prefix; send it once without
+  // clearing failure. Allocation/send failures have already released m_buf.
+  bool flush() {
     if (m_buf && m_buf->length)
-      flushBuf();
+      submitBuf(ZuMv(m_buf), true);
+    m_buf = {};
+    return !m_failed;
   }
   TxStream &operator <<(Flush) {
     flush();
@@ -235,7 +250,7 @@ private:
 struct Impl : public TxLayer<Impl, ...> {
   using Base = TxStream<Impl, ...>;
 
-  void prepareBuf_(ZiIOBuf *, bool final); // prepare for sending
+  bool prepareBuf_(ZiIOBuf *, bool final); // prepare for sending
 };
 #endif
 
@@ -258,20 +273,24 @@ public:
       below.tailRoom() + tailRoom),
     m_below(below)
   {
-    m_below.flush();
+    if (!m_below.flush()) this->fail();
   }
-  ~TxLayer() {
-    this->flush();
-    m_below.flush();
+  ~TxLayer() = default;
+
+  bool flush() {
+    bool ok = Base::flush();
+    if (!m_below.flush()) { this->fail(); return false; }
+    return ok;
   }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+    if (ZuUnlikely(m_below.failed())) return nullptr;
     return m_below.allocBuf_(headRoom);
   }
 
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    impl()->prepareBuf_(buf, final);
-    return m_below.sendBuf_(ZuMv(buf), final);
+    if (ZuUnlikely(!impl()->prepareBuf_(buf, final))) return false;
+    return m_below.sendBuf(ZuMv(buf), final);
   }
 
 private:

@@ -264,8 +264,7 @@ bool execute(const Options &options) {
   {
     ZiFileTxStream<> stream{telemetry};
     stream << Ztc::heapCSV();
-    stream.flush();
-    bool written = !telemetry.error();
+    bool written = stream.flush();
     ZuCheckRT(written);
     ok &= written;
   }

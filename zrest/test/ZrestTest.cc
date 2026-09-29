@@ -33,7 +33,7 @@ struct BodySink {
     data << ZuFwd<T>(value);
     return *this;
   }
-  void flush() { }
+  bool flush() { return true; }
   unsigned produced() const { return data.length(); }
 };
 

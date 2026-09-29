@@ -59,7 +59,8 @@ struct BufTx {
     return *this;
   }
 
-  void flush() { }
+  bool failed() const { return buf->failed(); }
+  bool flush() { return !failed(); }
 };
 
 struct RequestCtx {

@@ -272,7 +272,7 @@ struct CaptureStream {
   }
   CaptureStream &body() { return *this; }
   void end() { endStream = true; ++endCalls; }
-  void flush() { ++flushCalls; }
+  bool flush() { ++flushCalls; return true; }
 
   CapturedFields fields;
   unsigned beginCalls = 0;
@@ -350,7 +350,7 @@ struct ConnectBuild :
 struct StreamResponse;
 
 struct StreamLink {
-  struct Tx { void flush() { } };
+  struct Tx { bool flush() { return true; } };
 
   bool streamLocalCap() const { return true; }
   bool streamPeerCap() const { return true; }

@@ -215,6 +215,8 @@ struct StreamLink {
     Tx(Tx &&) = default;
     Tx &operator =(Tx &&) = default;
 
+    ~Tx() { this->flush(); }
+
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
       ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
       buf->skip = headRoom;
@@ -275,6 +277,8 @@ struct TxLink {
     Stream(Stream &&) = default;
     Stream &operator =(Stream &&) = default;
 
+    ~Stream() { this->flush(); }
+
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
       ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
       buf->skip = headRoom;
@@ -282,6 +286,7 @@ struct TxLink {
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+      if (++link->sends == link->rejectAt) return false;
       link->wire << buf->cspan();
       return true;
     }
@@ -295,6 +300,8 @@ struct TxLink {
 
   ZtString<ZtStringHeapID<"Zhttp.Contract.Wire">> wire;
   unsigned	finishes = 0;
+  unsigned	sends = 0;
+  unsigned	rejectAt = 0;
 };
 
 struct ContractMessage { enum { ID = Zhttp::Version::H1 }; };
@@ -307,7 +314,7 @@ struct ContractBody {
     ++produced_;
     return *this;
   }
-  void flush() { tx->flush(); }
+  bool flush() { return tx->flush(); }
   uint64_t produced() const { return produced_; }
   bool valid() const { return tx->valid(); }
 
@@ -389,6 +396,7 @@ struct H2Native {
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
+    if (!allocOK) return nullptr;
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
     buf->skip = headRoom;
     buf->length = 0;
@@ -400,18 +408,23 @@ struct H2Native {
   bool peerExtendedConnect() const { return false; }
   bool localExtendedConnect() const { return false; }
   template <bool>
-  void sendHeaders(
+  bool sendHeaders(
     uint32_t, Zhttp::H2_::HeaderFrames frames, bool) {
     ++headers;
     headerFrames += frames.length();
+    return headerOK;
   }
   template <bool>
   bool sendData(uint32_t, ZmRef<ZiIOBuf>) {
     ++data;
-    return true;
+    return dataOK;
   }
-  template <bool> void endData(uint32_t) { ++ends; }
+  template <bool> bool endData(uint32_t) { ++ends; return endOK; }
 
+  bool headerOK = true;
+  bool dataOK = true;
+  bool endOK = true;
+  bool allocOK = true;
   unsigned headers = 0;
   unsigned headerFrames = 0;
   unsigned data = 0;
@@ -827,6 +840,67 @@ void testHeaderAndRetainedLimits()
     "retained-message cap exposed a partial header block");
 }
 
+void testCommitFailures()
+{
+  ZuTestScope(testCommitFailures);
+
+  for (unsigned rejectAt : {1U, 2U}) {
+    ContractOps ops;
+    ops.link_.rejectAt = rejectAt;
+    ContractBuilder builder;
+    Zhttp::MessageTx<ContractMessage, ContractOps> tx{ops};
+    ZuCheck(!tx.fixed(builder, false));
+    ZuCheck(ops.failCalls == 1 && !ops.completeCalls);
+    ZuCheck(!ops.link_.finishes && ops.link_.sends == rejectAt);
+  }
+
+  Zhttp::H2::HPackEncoder encoder;
+  ZuCheck(encoder.init(4096));
+  Zhttp::HPackSeedPlans seeds;
+  ZuCheck(encoder.bind(seeds));
+  for (unsigned failure = 0; failure < 4; ++failure) {
+    H2Native native;
+    native.allocOK = failure != 0;
+    native.headerOK = failure != 1;
+    native.dataOK = failure != 2;
+    native.endOK = failure != 3;
+    Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 1, 64};
+    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderSection section{bytes};
+    block.defer(4096);
+    block.beginHeaders(section, false);
+    block.field("x-test", "value");
+    block.endHeaders(false);
+    {
+      auto body = block.body();
+      body << "x";
+      body.flush();
+    }
+    block.end();
+    ZuCheck(!block.commit());
+    ZuCheck(block.failed() && !block.flush());
+    unsigned attempts = native.headers + native.data + native.ends;
+    ZuCheck(!block.commit());
+    ZuCheck(native.headers + native.data + native.ends == attempts);
+    ZuCheck(native.headers == unsigned(failure != 0));
+    ZuCheck(native.data == unsigned(failure >= 2));
+    ZuCheck(native.ends == unsigned(failure == 3));
+  }
+  {
+    H2Native native;
+    Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 1, 64};
+    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderSection section{bytes};
+    block.beginHeaders(section, false);
+    block.field("x-test", "value");
+    ZuCheck(block.endHeaders(false) && native.headers == 1);
+    ZuCheck(block.flush() && block.valid());
+    block.end();
+    ZuCheck(block.flush() && native.ends == 1);
+  }
+  encoder.final();
+}
+
 void testTraits()
 {
   ZuTestScope(testTraits);
@@ -1195,6 +1269,7 @@ int main(int argc, char **argv)
   ZuTestCall(testFixedPatch);
   ZuTestCall(testH2DeferredState);
   ZuTestCall(testHeaderAndRetainedLimits);
+  ZuTestCall(testCommitFailures);
   ZuTestCall(testBodyRx);
   ZuTestCall(testStream);
   return 0;

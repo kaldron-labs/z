@@ -82,7 +82,7 @@ public:
   PrintBytes(Bytes &out) : m_out{out} { }
 
   PrintBytes &operator <<(char v) {
-    m_out.push(uint8_t(v));
+    if (m_ok) m_out.push(uint8_t(v));
     return *this;
   }
 
@@ -92,13 +92,15 @@ public:
       (!IsPrintString<U>{} && ZuPrint<U>::Delegate) ||
       (!IsPrintString<U>{} && ZuPrint<U>::Buffer)>>
   PrintBytes & operator <<(const U &v) {
+    if (!m_ok) return *this;
     if constexpr (IsPrintString<U>{}) {
       auto data = ZuTraits<U>::data(v);
       auto n = ZuTraits<U>::length(v);
       if constexpr (HasBuffer<Bytes>{}) {
 	uint64_t offset = m_out.length();
-	auto ptr = m_out.ensure(offset + n) + offset;
-	if (n) memcpy(ptr, data, n);
+	auto ptr = m_out.ensure(offset + n);
+	if (!ptr && n) { m_ok = false; return *this; }
+	if (n) memcpy(ptr + offset, data, n);
 	m_out.length(offset + n);
       }
       else
@@ -112,8 +114,9 @@ public:
       unsigned n = ZuPrint<U>::length(v);
       if constexpr (HasBuffer<Bytes>{}) {
 	uint64_t offset = m_out.length();
-	auto ptr = reinterpret_cast<char *>(m_out.ensure(offset + n) + offset);
-	n = ZuPrint<U>::print(ptr, n, v);
+	auto ptr = m_out.ensure(offset + n);
+	if (!ptr && n) { m_ok = false; return *this; }
+	if (n) n = ZuPrint<U>::print(reinterpret_cast<char *>(ptr + offset), n, v);
 	m_out.length(offset + n);
       } else {
 	auto data = static_cast<char *>(ZuAlloca(n, 1));
@@ -165,8 +168,10 @@ public:
       unsigned size = ZuPrint<P>::length(value);
       m_bytes.length(start_ + PrefixReserve);
       offset = m_bytes.length();
-      auto ptr = reinterpret_cast<char *>(m_bytes.ensure(offset + size) + offset);
-      length = ZuPrint<P>::print(ptr, size, value);
+      auto ptr = m_bytes.ensure(offset + size);
+      if (!ptr && size) return -1;
+      length = size ? ZuPrint<P>::print(
+	reinterpret_cast<char *>(ptr + offset), size, value) : 0;
       if (length > size) return -1;
       m_bytes.length(offset + length);
 

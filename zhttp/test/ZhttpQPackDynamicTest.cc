@@ -105,6 +105,8 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
 
   CaptureTxStream() : Base(4096, 0, 0) { }
 
+  ~CaptureTxStream() { this->flush(); }
+
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     ZmRef<ZiIOBuf> buf = new StreamAlloc{};
     buf->skip = headRoom;
@@ -113,12 +115,13 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   }
 
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-    if (!buf) return false;
+    if (!sendOK || !buf) return false;
     for (unsigned i = 0; i < buf->length; ++i) bytes.push(buf->data()[i]);
     return true;
   }
 
   Zhttp::H3::HdrBytes	bytes;
+  bool sendOK = true;
 };
 
 struct CaptureEncoder {
@@ -203,7 +206,7 @@ ZhttpHdrCatalogImpl(ParserHeaders)
 struct ParserStream;
 
 struct LogicalLink {
-  struct Tx { void flush() { } };
+  struct Tx { bool flush() { return true; } };
 
   bool streamLocalCap() const { return true; }
   bool streamPeerCap() const { return true; }
@@ -1680,9 +1683,9 @@ void testBoundedStorage()
   uint32_t rxSlots = rx.slots();
   for (unsigned i = 0; i < Entries; ++i) {
     char name[24], value[24];
-    snprintf(name, sizeof(name), "x-rx-bound-%u", i);
-    snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(rx.insert({name, value}),
+    unsigned nameLen = snprintf(name, sizeof(name), "x-rx-bound-%u", i);
+    unsigned valueLen = snprintf(value, sizeof(value), "v%u", i);
+    ZuCHECK(rx.insert({ZuCSpan{name, nameLen}, ZuCSpan{value, valueLen}}),
       "bounded Rx churn insert failed");
   }
   ZuCHECK(rx.slots() == rxSlots,
@@ -1704,9 +1707,10 @@ void testBoundedStorage()
   uint64_t newest = 0;
   for (unsigned i = 0; i < Entries; ++i) {
     char name[24], value[24];
-    snprintf(name, sizeof(name), "x-tx-bound-%u", i);
-    snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(tx.insert({name, value}, &newest),
+    unsigned nameLen = snprintf(name, sizeof(name), "x-tx-bound-%u", i);
+    unsigned valueLen = snprintf(value, sizeof(value), "v%u", i);
+    ZuCHECK(tx.insert(
+	{ZuCSpan{name, nameLen}, ZuCSpan{value, valueLen}}, &newest),
       "bounded Tx churn insert failed");
   }
   ZuCHECK(tx.orderSlots() == orderSlots &&
@@ -2050,6 +2054,16 @@ void testBuilderCommitFailureAtomic()
 {
   ZuTestScope(testBuilderCommitFailureAtomic);
 
+  {
+    BuilderState builder;
+    builder.params.qpackTxCapacity(256);
+    ZuCHECK(builder.tx.init(256, 16) && builder.tx.peerCapacity(256));
+    CaptureTxStream stream;
+    stream.sendOK = false;
+    ZuCHECK(!builder.begin(stream) && stream.failed());
+    ZuCHECK(builder.qpackFailure() ==
+      Zhttp::H3::QPackBuildFailure::HeadersPayloadEmit);
+  }
   {
     BuilderState builder;
     builder.params.qpackTxCapacity(256);

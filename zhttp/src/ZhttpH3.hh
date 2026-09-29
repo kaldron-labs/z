@@ -1165,7 +1165,7 @@ struct TxBytes {
 
   void push(uint8_t c) {
     stream << char(c);
-    ++n;
+    if (!stream.failed()) ++n;
   }
   uint64_t length() const { return n; }
 };
@@ -1175,7 +1175,7 @@ inline int writeFrameHeader(Stream &stream, uint64_t type, uint64_t length) {
   TxBytes out{stream};
   if (putVar(out, type) < 0 || putVar(out, length) < 0)
     return -1;
-  return out.length();
+  return stream.failed() ? -1 : int(out.length());
 }
 
 template <typename Bytes>
@@ -1240,7 +1240,7 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
 
   ~DataStream() { this->flush(); }
 
-  void prepareBuf_(ZiIOBuf *buf, bool) {
+  bool prepareBuf_(ZiIOBuf *buf, bool) {
     if (m_remaining != uint64_t(-1)) {
       if (ZuUnlikely(m_remaining < buf->length)) {
 	m_valid = false;
@@ -1256,11 +1256,12 @@ struct DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
     putVar(count, length);
     unsigned frameHdrLength = unsigned(count.length());
     ZiAssert(buf->skip >= frameHdrLength,
-	"Zhttp", (), "H3 DataStream headroom error", return);
+	"Zhttp", (), "H3 DataStream headroom error", return false);
     buf->rewind(frameHdrLength);
     SpanBytes frameHdr{{buf->data(), frameHdrLength}};
     putVar(frameHdr, 0);
     putVar(frameHdr, length);
+    return true;
   }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid && !Base::operator !(); }
@@ -1330,8 +1331,8 @@ private:
   }
 
   template <typename Stream>
-  static void flush_(Stream &stream) {
-    stream.flush();
+  static bool flush_(Stream &stream) {
+    return stream.flush();
   }
 
   template <typename Bytes>
@@ -1596,7 +1597,10 @@ private:
     section.each(start, [&stream](ZuBSpan span) {
       writeSpan_(stream, span);
     });
-    flush_(stream);
+    if (!flush_(stream)) {
+      impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
+      return;
+    }
     if (tx && build.dynamicRef) {
       bool tracked = tx->registerSection(impl()->streamID());
       ZiAssert(tracked, "Zhttp", (),
@@ -1851,13 +1855,13 @@ struct Cxn {
       auto tx = enc->txStream();
       TxBytes out{tx};
       if (putVar(out, 0x02) < 0) return false;
-      tx.flush();
+      if (!tx.flush()) return false;
     }
     {
       auto tx = dec->txStream();
       TxBytes out{tx};
       if (putVar(out, 0x03) < 0) return false;
-      tx.flush();
+      if (!tx.flush()) return false;
     }
     link_ = &link;
     localOpen = true;
