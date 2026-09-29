@@ -41,7 +41,7 @@ static ZuPtr<const ZfCf::AnyNode> config()
   Zum::String source{
     "zdb: {\n"
     "  thread: zdb, shards: 1, threads: [shard],\n"
-    "  store: {thread: store, module: ${MODULE}, connection: ${CONNECT}},\n"
+    "  store: {thread: store, module: ${MODULE}, connect: ${CONNECT}},\n"
     "  hostID: self, hosts: {self: {standalone: true}}, tables: {}\n"
     "},\n"
     "mx: {\n"

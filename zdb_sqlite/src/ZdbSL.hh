@@ -165,14 +165,14 @@ ZmHashDerive(StoreTbls, StoreTbl,
 	ZmHashHeapID<"ZdbSL.StoreTbl">>>>));
 
 struct StoreCf {
-  ZtString<>	thread;
-  ZtString<>	connection;
+	Zdb_::String	thread;
+	Zdb_::String	connect;
   Synchronous::T synchronous = Synchronous::NORMAL;
 };
 
 ZfStruct(ZdbSLAPI, (StoreCf, Cf),
   (((thread), (Required)),			(String)),
-  (((connection), (Required)),			(String)),
+  (((connect), (Required)),			(String)),
 	(((synchronous), (Enum<Synchronous::Map>)),	(Int8,
 	  Synchronous::NORMAL)));
 
@@ -206,7 +206,7 @@ private:
   void stop_1(StopFn);
   void startup_();
 
-  ZtString<>		m_connection;
+  Zdb_::String		m_connection;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_sid = 0;
   unsigned		m_nShards = 0;

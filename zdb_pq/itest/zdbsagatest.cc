@@ -257,7 +257,7 @@ static ZuPtr<const ZfCf::AnyNode> config()
     "thread: zdb, shards: 4, threads: [saga0, saga1, saga2, saga3],\n"
     "hostID: self, hosts: {self: {standalone: true}},\n"
     "store: {thread: store, replicated: true,\n"
-    "  module: ${MODULE}, connection: ${CONNECT}},\n"
+    "  module: ${MODULE}, connect: ${CONNECT}},\n"
     "tables: {pq_saga_order: {cacheMode: All},\n"
     "  pq_saga_item: {cacheMode: All}},\n"
     "mx: {nThreads: 8, rxThread: rx, txThread: tx, threads: {\n"

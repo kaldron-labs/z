@@ -39,7 +39,7 @@ static ZuPtr<const ZfCf::AnyNode> config(
     "  0: {priority: 100, ip: 127.0.0.1, port: 19945},\n"
     "  1: {priority: 80, ip: 127.0.0.1, port: 19946}\n"
     "},\n"
-    "store: {thread: store, connection: ${CONNECT}},\n"
+    "store: {thread: store, connect: ${CONNECT}},\n"
     "tables: {order: {}},\n"
     "mx: {nThreads: 4, threads: {\n"
     "  1: {name: rx, isolated: true},\n"

@@ -890,8 +890,8 @@ bool App::init(const AppCf &cf)
       cf.scheduler.timeout > 3600 ||
       cf.timerThread > cf.scheduler.nThreads ||
       cf.workerThread > cf.scheduler.nThreads ||
-      !cf.timerRole || !cf.workerRole ||
-      cf.timerRole == cf.workerRole ||
+      !cf.timer || !cf.worker ||
+      cf.timer == cf.worker ||
       cf.timerThread == cf.workerThread)
     return false;
   if (!App_::claim(this)) return false;
@@ -912,20 +912,20 @@ bool App::init(const AppCf &cf)
     ZmSchedParams params;
     [
       id = cf.id, scheduler = cf.scheduler,
-      timerRole = cf.timerRole,
-      workerRole = cf.workerRole,
+      timer = cf.timer,
+      worker = cf.worker,
       timerThread = cf.timerThread,
       workerThread = cf.workerThread
     ](auto &sched) {
       sched.id(id).nThreads(scheduler.nThreads).priority(scheduler.priority)
 	.partition(scheduler.partition).ll(scheduler.ll).spin(scheduler.spin)
 	.timeout(scheduler.timeout)
-	.thread(timerThread, [timerRole](auto &thread) {
-	  thread.name(timerRole);
+	.thread(timerThread, [timer](auto &thread) {
+	  thread.name(timer);
 	  thread.isolated(true);
 	})
-	.thread(workerThread, [workerRole](auto &thread) {
-	  thread.name(workerRole);
+	.thread(workerThread, [worker](auto &thread) {
+	  thread.name(worker);
 	  thread.isolated(true);
 	});
       if (scheduler.stackSize) sched.stackSize(scheduler.stackSize);

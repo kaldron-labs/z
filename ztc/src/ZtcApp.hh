@@ -43,6 +43,9 @@
 
 namespace Ztc {
 
+ZuDerive(AppCfString,
+  (ZtString<ZtStringHeapID<"ZtcApp.CfString">>));
+
 namespace Filter_ {
   class Filter;
 }
@@ -69,16 +72,15 @@ struct AppSchedCf {
 };
 
 ZfStruct(ZtcAPI, (AppSchedCf, Cf),
-  (((nThreads),		((Range<1U, 1024U>))),		(UInt32, 2)),
-  (((stackSize),	((Range<16384U, 2U<<20U>))),	(UInt32)),
-  (((priority),		(Enum<ZmThreadPriority::Map>)),	(Int32,
-      ZmThreadPriority::Normal)),
-  (((partition)),				(UInt32)),
-  (((quantum)),					(Float)),
-  (((queueSize),	((Range<8192U, 1U<<30U>))),	(UInt32)),
-  (((ll)),					(Bool)),
-  (((spin),		((Range<0U, unsigned(INT_MAX)>))), (UInt32)),
-  (((timeout),		((Range<0U, 3600U>))),		(UInt32)));
+  (((nThreads),	((Range<1U, 1024U>))),			(UInt32, 2)),
+  (((stackSize),((Range<16384U, 2U<<20U>))),		(UInt32)),
+  (((priority),	(Enum<ZmThreadPriority::Map>)),		(Int8, ZmThreadPriority::Normal)),
+  (((partition)),					(UInt32)),
+  (((quantum)),						(Float)),
+  (((queueSize),((Range<8192U, 1U<<30U>))),		(UInt32)),
+  (((ll)),						(Bool)),
+  (((spin),	((Range<0U, 1U<<30U>))),		(UInt32)),
+  (((timeout),	((Range<0U, 3600U>))),			(UInt32)));
 
 struct AppCf {
   enum {
@@ -115,8 +117,8 @@ struct AppCf {
   Zi::Path	alertPrefix{"alerts"};
 
   AppSchedCf	scheduler;
-  ZtString<>	timerRole{"timer"};
-  ZtString<>	workerRole{"worker"};
+  AppCfString	timer{"timer"};
+  AppCfString	worker{"worker"};
   unsigned	timerThread = 1;
   unsigned	workerThread = 2;
 };
@@ -140,8 +142,8 @@ ZfStruct(ZtcAPI, (AppCf, Cf),
   (((alertRetention),	((Range<1U, 3660U>))),		(UInt32, 7)),
   (((alertPrefix)),					(String, "alerts")),
   (((scheduler)),					(UDT)),
-  (((timerRole)),					(String, "timer")),
-  (((workerRole)),					(String, "worker")),
+  (((timer)),						(String, "timer")),
+  (((worker)),						(String, "worker")),
   (((timerThread),	((Range<1U, 1024U>))),		(UInt32, 1)),
   (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 2)));
 

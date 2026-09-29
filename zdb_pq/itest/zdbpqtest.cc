@@ -194,7 +194,7 @@ int main(int argc_, char **argv)
     "  thread: zdb_pq,\n"
     "  replicated: true,\n"
     "  module: ${MODULE},\n"
-    "  connection: ${CONNECT}\n"
+    "  connect: ${CONNECT}\n"
     "},\n"
     "tables: {order: {warmup: true}, payment: {}},\n"
     "debug: ${DEBUG},\n"

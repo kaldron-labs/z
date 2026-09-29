@@ -21,6 +21,9 @@
 
 #include "global.hh"
 
+ZuDerive(ServerResponse,
+  (ZtString<ZtStringHeapID<"Zi.MxServer.Response">>));
+
 class Mx;
 
 const char ResponseStart[] =
@@ -114,7 +117,7 @@ public:
 
 private:
   ZtArray<char>		m_request;
-  ZtString<>		m_response;
+  ServerResponse		m_response;
   int			m_headerLen;
   ZtArray<char>		m_content;
   ZuTime		m_acceptTime;

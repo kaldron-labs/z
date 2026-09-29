@@ -129,6 +129,8 @@ using Zdb_EvictHook = typename Zdb_EvictHook_<ZuDecay<U>>::T;
 
 namespace Zdb_ {
 
+using String = Ztc::DBString;
+
 namespace HostState {
   using namespace Ztc::DBHostState;
 }
@@ -1580,13 +1582,13 @@ struct HostCf {
   ZiIP		ip;
   uint16_t	port = 0;
   bool		standalone = false;
-  ZtString<>	up;
-  ZtString<>	down;
+  String	up;
+  String	down;
 
   HostCf(ZuCSpan id_) : id{id_}, standalone{true} { }
   HostCf(
       ZuCSpan id_, int priority_, ZiIP ip_, uint16_t port_,
-      bool standalone_, ZtString<> up_, ZtString<> down_) :
+      bool standalone_, String up_, String down_) :
     id{id_}, priority{priority_}, ip{ip_}, port{port_},
     standalone{standalone_}, up{ZuMv(up_)}, down{ZuMv(down_)}
   {
@@ -1729,18 +1731,16 @@ struct DBHandler {
 // --- DB configuration
 
 struct StoreLoadCf {
-  ZtString<>	module;
+  String	module;
   bool		preload = false;
 };
 
 ZfStruct(ZdbAPI, (StoreLoadCf, Cf),
   (((module), (Required)),	(String)),
-  (((preload)),		(Bool)));
+  (((preload)),			(Bool)));
 
-ZuDerive(DBThreads,
-  (ZtArray<ZtString<>, ZtArrayHeapID<"Zdb.DBCf.Threads">>));
-ZuDerive(DBSIDs,
-  (ZtArray<unsigned, ZtArrayHeapID<"Zdb.DBCf.SIDs">>));
+using DBThreads = Ztc::DBThreads;
+using DBSIDs = Ztc::DBSIDs;
 
 struct DBCf {
   ZuID			thread;

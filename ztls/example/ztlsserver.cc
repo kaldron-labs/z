@@ -33,6 +33,8 @@ const char *Response2 = "\r\n"
   "Accept: */*\r\n"
   "\r\n";
 
+ZuDerive(Payload, (ZtArray<char, ZtArrayHeapID<"Ztls.Example.Payload">>));
+
 struct App : public Ztls::Server<App> {
   struct Link : public Ztls::SrvLink<App, Link> {
     Link(App *app) : Ztls::SrvLink<App, Link>(app) {
@@ -90,13 +92,16 @@ struct App : public Ztls::Server<App> {
     if (payload_len) {
       m_payload.length(payload_len);
       memset(m_payload.data(), 'X', payload_len);
-    } else
-      m_payload = Content;
+    } else {
+      auto length = strlen(Content);
+      m_payload.length(length);
+      memcpy(m_payload.data(), Content, length);
+    }
   }
 
   ZiIP localIP() const { return m_localIP; }
   unsigned localPort() const { return m_localPort; }
-  ZtString<> &payload() { return m_payload; }
+  Payload &payload() { return m_payload; }
 
   void done() { if (++m_done >= m_target) m_sem.post(); }
   void wait() { m_sem.wait(); }
@@ -107,7 +112,7 @@ private:
   ZiIP		m_localIP;
   unsigned	m_localPort;
   unsigned	m_target = 1;
-  ZtString<>	m_payload;
+  Payload m_payload;
 };
 
 void usage()

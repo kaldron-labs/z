@@ -21,9 +21,13 @@
 
 #include <zlib/ZmPLock.hh>
 
+#include <zlib/ZtString.hh>
+
 #include <zlib/ZGtkValue.hh>
 
 namespace ZGtk {
+
+ZuDerive(String, (ZtString<ZtStringHeapID<"ZGtk.String">>));
 
 // CRTP - implementation must conform to the following interface:
 #if 0
@@ -533,11 +537,10 @@ public:
   }
   void get_value(GtkTreeIter *iter, gint col, Value *value) {
     auto fields = Data::fields();
-    // FIXME - use on-stack string buffer
-    static ZtString<> s; // ok - this is single-threaded
+    auto data = impl()->data(*reinterpret_cast<Iter *>(iter));
+    static String s; // ok - this is single-threaded
     s.length(0);
-    fields[col].print(
-	s, impl()->data(*reinterpret_cast<Iter *>(iter)), impl()->fmt(col));
+    fields[col].print(s, data, impl()->fmt(col));
     value->init(G_TYPE_STRING);
     value->set_static_string(s);
   }
