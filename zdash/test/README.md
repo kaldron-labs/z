@@ -8,7 +8,9 @@ ring exercises byte ownership, wrap-spanning records, bounded GTK updates,
 EOS retention, generation replacement and window-close events. Populated
 telemetry checks every row's key columns and grouping labels, including heap
 identity fields, both socket endpoints, enum names, hexadecimal hash addresses,
-database RAG and GTK path round trips.
+database RAG and GTK path round trips. Two databases with matching child IDs
+check separate grouping, child-created placeholders, repeated updates and
+source teardown. Heap identity has five columns; `vshift` is not a key field.
 
 The module exports `ZdashModule`; `zdash` loads it with `ZiModule` only when
 `ZDASH_TEST` names a module, resolves the factory, and invokes the
