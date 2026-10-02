@@ -33,6 +33,15 @@
 
 #include <zlib/ztc_msg_fbs.h>
 
+// SemVer retains the packed uint32 wire representation.
+namespace ZfbTransform {
+  template <> struct Resolve<ZfFieldTC::UDT, ZuSemVer> {
+    template <typename O, typename Base>
+    using Field = Primitive<O, Base>;
+  };
+}
+inline ZuCSpan ZfVFieldTypeID(ZuSemVer *) { return "SemVer"; }
+
 namespace ZmThreadPriority {
   ZfbEnumMatch_(Ztc::fbs::ThreadPriority,
     Unset, RealTime, High, Normal, Low);
@@ -64,140 +73,140 @@ namespace PoolState {
 }
 
 ZfbStruct(ZtcAPI, Request,
-  (((seqNo),		(Ctor<2>)),			(UInt64)),
-  (((group),		(Ctor<6>)),			(UInt8)),
-  (((filter),		(Ctor<0>)),			(String)),
-  (((interval),		(Ctor<4>)),			(UInt32)),
-  (((subscribe),	(Ctor<7>)),			(Bool)),
-  (((alertDate),	(Ctor<5>)),			(UInt32)),
-  (((alertSeqNo),	(Ctor<3>)),			(UInt64)),
-  (((id),		(Ctor<1>)),			(String)));
+  (((seqNo),		(Ctor<2>)),	UInt64),
+  (((group),		(Ctor<6>)),	UInt8),
+  (((filter),		(Ctor<0>)),	String),
+  (((interval),		(Ctor<4>)),	UInt32),
+  (((subscribe),	(Ctor<7>)),	Bool),
+  (((alertDate),	(Ctor<5>)),	UInt32),
+  (((alertSeqNo),	(Ctor<3>)),	UInt64),
+  (((id),		(Ctor<1>)),	String));
 
 ZfbStruct(ZtcAPI, Ack,
-  (((id), (Ctor<0>)), (String)),
-  (((seqNo), (Ctor<1>)), (UInt64)),
-  (((status), (Ctor<3>)), (UInt8)),
-  (((interval), (Ctor<2>)), (UInt32)));
+  (((id), (Ctor<0>)),		String),
+  (((seqNo), (Ctor<1>)),	UInt64),
+  (((status), (Ctor<3>)),	UInt8),
+  (((interval), (Ctor<2>)),	UInt32));
 
 ZfbStruct(ZtcAPI, EOS,
-  (((id), (Ctor<0>)), (String)),
-  (((seqNo), (Ctor<1>)), (UInt64)));
+  (((id), (Ctor<0>)),		String),
+  (((seqNo), (Ctor<1>)),	UInt64));
 
 ZfbStruct(ZtcAPI, Error,
-  (((id),		(Ctor<1>)),			(String)),
-  (((seqNo),		(Ctor<2>)),			(UInt64)),
-  (((code),		(Ctor<3>)),			(Int32)),
-  (((message),		(Ctor<0>)),			(String)));
+  (((id),		(Ctor<1>)),	String),
+  (((seqNo),		(Ctor<2>)),	UInt64),
+  (((code),		(Ctor<3>)),	Int32),
+  (((message),		(Ctor<0>)),	String));
 
 // Compare ordered PK types; FB field adapters expose strings as spans.
 ZfbStruct(ZtcAPI, HeapTelemetry,
-  (((id),		(Ctor<0>, Keys<0>)),			(String)),
-  (((partition),	(Ctor<12>, Keys<0>)),			(UInt16)),
-  (((vshift),		(Ctor<14>)),				(UInt8)),
-  (((size),		(Ctor<11>, Keys<0>)),			(UInt32)),
-  (((alignment),	(Ctor<13>, Keys<0>)),			(UInt16)),
-  (((sharded),		(Ctor<15>, Keys<0>)),			(Bool)),
-  (((cacheSize),	(Ctor<1>)),				(UInt64)),
-  (((cpuset),		(Ctor<2>)),				(UDT)),
-  (((cacheAllocs),	(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
-  (((cacheFrees),	(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
-  (((crossFrees),	(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
-  (((heapAllocs),	(Ctor<6>, Mutable, Series, Delta)),	(UInt64)),
-  (((heapFrees),	(Ctor<7>, Mutable, Series, Delta)),	(UInt64)),
-  (((globalHeapAllocs),	(Ctor<8>, Mutable, Series, Delta)),	(UInt64)),
-  (((globalHeapFrees),	(Ctor<9>, Mutable, Series, Delta)),	(UInt64)),
-  (((globalHeapMax),	(Ctor<10>, Mutable, Series)),		(UInt64)),
-  (((allocated, RdFn),	(Synthetic, Series)),			(UInt64)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((id),		(Ctor<0>, Keys<0>)),			String),
+  (((partition),	(Ctor<12>, Keys<0>)),			UInt16),
+  (((vshift),		(Ctor<14>)),				UInt8),
+  (((size),		(Ctor<11>, Keys<0>)),			UInt32),
+  (((alignment),	(Ctor<13>, Keys<0>)),			UInt16),
+  (((sharded),		(Ctor<15>, Keys<0>)),			Bool),
+  (((cacheSize),	(Ctor<1>)),				UInt64),
+  (((cpuset),		(Ctor<2>)),				UDT),
+  (((cacheAllocs),	(Ctor<3>, Mutable, Series, Delta)),	UInt64),
+  (((cacheFrees),	(Ctor<4>, Mutable, Series, Delta)),	UInt64),
+  (((crossFrees),	(Ctor<5>, Mutable, Series, Delta)),	UInt64),
+  (((heapAllocs),	(Ctor<6>, Mutable, Series, Delta)),	UInt64),
+  (((heapFrees),	(Ctor<7>, Mutable, Series, Delta)),	UInt64),
+  (((globalHeapAllocs),	(Ctor<8>, Mutable, Series, Delta)),	UInt64),
+  (((globalHeapFrees),	(Ctor<9>, Mutable, Series, Delta)),	UInt64),
+  (((globalHeapMax),	(Ctor<10>, Mutable, Series)),		UInt64),
+  (((allocated, RdFn),	(Synthetic, Series)),			UInt64),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::HeapTelemetry>::Types,
   typename decltype(ZuDeclVal<const Heap &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, HashTelemetry,
-  (((id),		(Ctor<0>, Keys<0>)),			(String)),
-  (((addr),		(Ctor<1>, Keys<0>, Hex)),		(UInt64)),
-  (((shadow),		(Ctor<11>)),				(UInt8)),
-  (((linear),		(Ctor<10>)),				(UInt8)),
-  (((bits),		(Ctor<8>)),				(UInt8)),
-  (((cBits),		(Ctor<9>)),				(UInt8)),
-  (((loadFactor),	(Ctor<2>)),				(Float)),
-  (((nodeSize),		(Ctor<6>)),				(UInt32)),
-  (((count),		(Ctor<4>, Mutable, Series)),		(UInt64)),
-  (((maxCount),		(Ctor<5>, Mutable, Series)),		(UInt64)),
-  (((effLoadFactor),	(Ctor<3>, Mutable, Series, NDP<2>)),	(Float)),
-  (((resized),		(Ctor<7>)),				(UInt32)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((id),		(Ctor<0>, Keys<0>)),			String),
+  (((addr),		(Ctor<1>, Keys<0>, Hex)),		UInt64),
+  (((shadow),		(Ctor<11>)),				UInt8),
+  (((linear),		(Ctor<10>)),				UInt8),
+  (((bits),		(Ctor<8>)),				UInt8),
+  (((cBits),		(Ctor<9>)),				UInt8),
+  (((loadFactor),	(Ctor<2>)),				Float),
+  (((nodeSize),		(Ctor<6>)),				UInt32),
+  (((count),		(Ctor<4>, Mutable, Series)),		UInt64),
+  (((maxCount),		(Ctor<5>, Mutable, Series)),		UInt64),
+  (((effLoadFactor),	(Ctor<3>, Mutable, Series, NDP<2>)),	Float),
+  (((resized),		(Ctor<7>)),				UInt32),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::HashTelemetry>::Types,
   typename decltype(ZuDeclVal<const Hash &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, ThreadTelemetry,
-  (((name),		(Ctor<0>)),				(String)),
-  (((tid),		(Ctor<1>, Keys<0>)),			(UInt64)),
-  (((stackSize),	(Ctor<2>)),				(UInt64)),
-  (((cpuset),		(Ctor<3>)),				(UDT)),
-  (((cpuUsage),		(Ctor<4>, Mutable, Series, NDP<2>)),	(Float)),
-  (((allocStack),	(Ctor<5>, Mutable, Series)),		(UInt64)),
-  (((allocHeap),	(Ctor<6>, Mutable, Series)),		(UInt64)),
-  (((sysPriority),	(Ctor<7>)),				(Int32)),
-  (((sid),		(Ctor<8>)),				(UInt16)),
-  (((partition),	(Ctor<9>)),				(UInt16)),
-  (((priority),		(Ctor<10>, Enum<ZmThreadPriority::Map>)),	(Int8)),
-  (((main),		(Ctor<11>)),				(Bool)),
-  (((detached),		(Ctor<12>)),				(Bool)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((name),		(Ctor<0>)),					String),
+  (((tid),		(Ctor<1>, Keys<0>)),				UInt64),
+  (((stackSize),	(Ctor<2>)),					UInt64),
+  (((cpuset),		(Ctor<3>)),					UDT),
+  (((cpuUsage),		(Ctor<4>, Mutable, Series, NDP<2>)),		Float),
+  (((allocStack),	(Ctor<5>, Mutable, Series)),			UInt64),
+  (((allocHeap),	(Ctor<6>, Mutable, Series)),			UInt64),
+  (((sysPriority),	(Ctor<7>)),					Int32),
+  (((sid),		(Ctor<8>)),					UInt16),
+  (((partition),	(Ctor<9>)),					UInt16),
+  (((priority),		(Ctor<10>, Enum<ZmThreadPriority::Map>)),	Int8),
+  (((main),		(Ctor<11>)),					Bool),
+  (((detached),		(Ctor<12>)),					Bool),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::ThreadTelemetry>::Types,
   typename decltype(ZuDeclVal<const Thread &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, CxnTelemetry,
-  (((mxID),		(Ctor<0>, Keys<0>)),			(String)),
-  (((remoteIP),		(Ctor<17>, Keys<0>)),			(UDT)),
-  (((remotePort),	(Ctor<19>, Keys<0>)),			(UInt16)),
-  (((localIP),		(Ctor<16>, Keys<0>)),			(UDT)),
-  (((localPort),	(Ctor<18>, Keys<0>)),			(UInt16)),
-  (((socket),		(Ctor<1>)),				(UInt64)),
-  (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),	(UInt64)),
-  (((rxBytes),		(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
-  (((txCalls),		(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
-  (((txBytes),		(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
-  (((rxBufSize),	(Ctor<6>)),				(UInt32)),
-  (((rxBufLen),		(Ctor<7>, Mutable, Series)),		(UInt32)),
-  (((txBufSize),	(Ctor<8>)),				(UInt32)),
-  (((txBufLen),		(Ctor<9>, Mutable, Series)),		(UInt32)),
-  (((mreqAddr),		(Ctor<10>)),				(UDT)),
-  (((mreqIf),		(Ctor<11>)),				(UDT)),
-  (((mreqIfIndex),	(Ctor<12>)),				(UInt32)),
-  (((mif),		(Ctor<13>)),				(UDT)),
-  (((mifIndex),		(Ctor<14>)),				(UInt32)),
-  (((ttl),		(Ctor<15>)),				(UInt32)),
-  (((flags),		(Ctor<20>, Flags<ZiCxnFlags::Map>)),	(UInt8)),
-  (((type),		(Ctor<21>, Enum<CxnType::Map>)),		(Int8)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((mxID),		(Ctor<0>, Keys<0>)),			String),
+  (((remoteIP),		(Ctor<17>, Keys<0>)),			UDT),
+  (((remotePort),	(Ctor<19>, Keys<0>)),			UInt16),
+  (((localIP),		(Ctor<16>, Keys<0>)),			UDT),
+  (((localPort),	(Ctor<18>, Keys<0>)),			UInt16),
+  (((socket),		(Ctor<1>)),				UInt64),
+  (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),	UInt64),
+  (((rxBytes),		(Ctor<3>, Mutable, Series, Delta)),	UInt64),
+  (((txCalls),		(Ctor<4>, Mutable, Series, Delta)),	UInt64),
+  (((txBytes),		(Ctor<5>, Mutable, Series, Delta)),	UInt64),
+  (((rxBufSize),	(Ctor<6>)),				UInt32),
+  (((rxBufLen),		(Ctor<7>, Mutable, Series)),		UInt32),
+  (((txBufSize),	(Ctor<8>)),				UInt32),
+  (((txBufLen),		(Ctor<9>, Mutable, Series)),		UInt32),
+  (((mreqAddr),		(Ctor<10>)),				UDT),
+  (((mreqIf),		(Ctor<11>)),				UDT),
+  (((mreqIfIndex),	(Ctor<12>)),				UInt32),
+  (((mif),		(Ctor<13>)),				UDT),
+  (((mifIndex),		(Ctor<14>)),				UInt32),
+  (((ttl),		(Ctor<15>)),				UInt32),
+  (((flags),		(Ctor<20>, Flags<ZiCxnFlags::Map>)),	UInt8),
+  (((type),		(Ctor<21>, Enum<CxnType::Map>)),	Int8),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::CxnTelemetry>::Types,
   typename decltype(ZuDeclVal<const Connection &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, MxTelemetry,
-  (((id),		(Ctor<0>, Keys<0>)),			(String)),
-  (((stackSize),	(Ctor<1>)),				(UInt32)),
-  (((queueSize),	(Ctor<2>)),				(UInt32)),
-  (((spin),		(Ctor<3>)),				(UInt32)),
-  (((timeout),		(Ctor<4>)),				(UInt32)),
-  (((rxBufSize),	(Ctor<5>)),				(UInt32)),
-  (((txBufSize),	(Ctor<6>)),				(UInt32)),
-  (((rxThread),		(Ctor<7>)),				(UInt16)),
-  (((txThread),		(Ctor<8>)),				(UInt16)),
-  (((partition),	(Ctor<9>)),				(UInt16)),
-  (((state),		(Ctor<10>, Mutable, Enum<EngineState::Map>)), (Int8)),
-  (((ll),		(Ctor<11>)),				(UInt8)),
-  (((priority),		(Ctor<12>)),				(UInt8)),
-  (((nThreads),		(Ctor<13>)),				(UInt8)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((id),		(Ctor<0>, Keys<0>)),				String),
+  (((stackSize),	(Ctor<1>)),					UInt32),
+  (((queueSize),	(Ctor<2>)),					UInt32),
+  (((spin),		(Ctor<3>)),					UInt32),
+  (((timeout),		(Ctor<4>)),					UInt32),
+  (((rxBufSize),	(Ctor<5>)),					UInt32),
+  (((txBufSize),	(Ctor<6>)),					UInt32),
+  (((rxThread),		(Ctor<7>)),					UInt16),
+  (((txThread),		(Ctor<8>)),					UInt16),
+  (((partition),	(Ctor<9>)),					UInt16),
+  (((state),		(Ctor<10>, Mutable, Enum<EngineState::Map>)),	Int8),
+  (((ll),		(Ctor<11>)),					UInt8),
+  (((priority),		(Ctor<12>)),					UInt8),
+  (((nThreads),		(Ctor<13>)),					UInt8),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::MxTelemetry>::Types,
@@ -208,92 +217,92 @@ namespace QueueType {
 }
 
 ZfbStruct(ZtcAPI, QueueTelemetry,
-  (((ownerID),		(Ctor<0>, Keys<0>)),			(String)),
-  (((id),		(Ctor<1>, Keys<0>)),			(String)),
-  (((type),		(Ctor<9>, Keys<0>, Enum<QueueType::Map>)), (Int8)),
-  (((inBytes),		(Ctor<2>, Mutable, Series, Delta)),	(UInt64)),
-  (((outBytes),		(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
-  (((inCount),		(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
-  (((outCount),		(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
-  (((count),		(Ctor<6>, Mutable, Series)),		(UInt64)),
-  (((size),		(Ctor<7>)),				(UInt32)),
-  (((full),		(Ctor<8>, Mutable, Series, Delta)),	(UInt32)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((ownerID),		(Ctor<0>, Keys<0>)),				String),
+  (((id),		(Ctor<1>, Keys<0>)),				String),
+  (((type),		(Ctor<9>, Keys<0>, Enum<QueueType::Map>)),	Int8),
+  (((inBytes),		(Ctor<2>, Mutable, Series, Delta)),		UInt64),
+  (((outBytes),		(Ctor<3>, Mutable, Series, Delta)),		UInt64),
+  (((inCount),		(Ctor<4>, Mutable, Series, Delta)),		UInt64),
+  (((outCount),		(Ctor<5>, Mutable, Series, Delta)),		UInt64),
+  (((count),		(Ctor<6>, Mutable, Series)),			UInt64),
+  (((size),		(Ctor<7>)),					UInt32),
+  (((full),		(Ctor<8>, Mutable, Series, Delta)),		UInt32),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::QueueTelemetry>::Types,
   typename decltype(ZuDeclVal<const Queue &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, HubTelemetry,
-  (((linkType),		(Ctor<11>, Keys<0>, Enum<LinkType::Map>)), (Int8)),
-  (((id),		(Ctor<0>, Keys<0>)),			(String)),
-  (((mxID),		(Ctor<1>)),				(String)),
-  (((down),		(Ctor<2>, Mutable, Series)),		(UInt16)),
-  (((disabled),		(Ctor<3>, Mutable, Series)),		(UInt16)),
-  (((transient),	(Ctor<4>, Mutable, Series)),		(UInt16)),
-  (((up),		(Ctor<5>, Mutable, Series)),		(UInt16)),
-  (((reconn),		(Ctor<6>, Mutable, Series)),		(UInt16)),
-  (((failed),		(Ctor<7>, Mutable, Series)),		(UInt16)),
-  (((nLinks),		(Ctor<8>)),				(UInt16)),
-  (((rxThread),		(Ctor<9>)),				(UInt8)),
-  (((txThread),		(Ctor<10>)),				(UInt8)),
-  (((state),		(Ctor<12>, Mutable, Enum<EngineState::Map>)), (Int8)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((linkType),		(Ctor<11>, Keys<0>, Enum<LinkType::Map>)),	Int8),
+  (((id),		(Ctor<0>, Keys<0>)),				String),
+  (((mxID),		(Ctor<1>)),					String),
+  (((down),		(Ctor<2>, Mutable, Series)),			UInt16),
+  (((disabled),		(Ctor<3>, Mutable, Series)),			UInt16),
+  (((transient),	(Ctor<4>, Mutable, Series)),			UInt16),
+  (((up),		(Ctor<5>, Mutable, Series)),			UInt16),
+  (((reconn),		(Ctor<6>, Mutable, Series)),			UInt16),
+  (((failed),		(Ctor<7>, Mutable, Series)),			UInt16),
+  (((nLinks),		(Ctor<8>)),					UInt16),
+  (((rxThread),		(Ctor<9>)),					UInt8),
+  (((txThread),		(Ctor<10>)),					UInt8),
+  (((state),		(Ctor<12>, Mutable, Enum<EngineState::Map>)),	Int8),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::HubTelemetry>::Types,
   typename decltype(ZuDeclVal<const Hub &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, LinkTelemetry,
-  (((hubID),		(Ctor<0>, Keys<0>)),			(String)),
-  (((id),		(Ctor<1>, Keys<0>)),			(String)),
-  (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),	(UInt64)),
-  (((txCalls),		(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
-  (((rxBytes),		(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
-  (((txBytes),		(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
-  (((reconnects),	(Ctor<6>, Mutable, Series, Delta)),	(UInt32)),
-  (((type),		(Ctor<7>, Enum<LinkType::Map>)),		(Int8)),
-  (((state),		(Ctor<8>, Mutable, Enum<LinkState::Map>)),	(Int8)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((hubID),		(Ctor<0>, Keys<0>)),				String),
+  (((id),		(Ctor<1>, Keys<0>)),				String),
+  (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),		UInt64),
+  (((txCalls),		(Ctor<3>, Mutable, Series, Delta)),		UInt64),
+  (((rxBytes),		(Ctor<4>, Mutable, Series, Delta)),		UInt64),
+  (((txBytes),		(Ctor<5>, Mutable, Series, Delta)),		UInt64),
+  (((reconnects),	(Ctor<6>, Mutable, Series, Delta)),		UInt32),
+  (((type),		(Ctor<7>, Enum<LinkType::Map>)),		Int8),
+  (((state),		(Ctor<8>, Mutable, Enum<LinkState::Map>)),	Int8),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::LinkTelemetry>::Types,
   typename decltype(ZuDeclVal<const Link &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, PoolTelemetry,
-  (((hubID),		(Ctor<0>, Keys<0>)),			(String)),
-  (((id),		(Ctor<1>, Keys<0>)),			(String)),
-  (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),	(UInt64)),
-  (((rxBytes),		(Ctor<3>, Mutable, Series, Delta)),	(UInt64)),
-  (((txCalls),		(Ctor<4>, Mutable, Series, Delta)),	(UInt64)),
-  (((txBytes),		(Ctor<5>, Mutable, Series, Delta)),	(UInt64)),
-  (((idle),		(Ctor<6>, Mutable, Series)),		(UInt16)),
-  (((busy),		(Ctor<7>, Mutable, Series)),		(UInt16)),
-  (((down),		(Ctor<8>, Mutable, Series)),		(UInt16)),
-  (((type),		(Ctor<9>, Enum<LinkType::Map>)),		(Int8)),
-  (((state),		(Ctor<10>, Mutable, Enum<PoolState::Map>)),	(Int8)),
-  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	(Int8)));
+  (((hubID),		(Ctor<0>, Keys<0>)),				String),
+  (((id),		(Ctor<1>, Keys<0>)),				String),
+  (((rxCalls),		(Ctor<2>, Mutable, Series, Delta)),		UInt64),
+  (((rxBytes),		(Ctor<3>, Mutable, Series, Delta)),		UInt64),
+  (((txCalls),		(Ctor<4>, Mutable, Series, Delta)),		UInt64),
+  (((txBytes),		(Ctor<5>, Mutable, Series, Delta)),		UInt64),
+  (((idle),		(Ctor<6>, Mutable, Series)),			UInt16),
+  (((busy),		(Ctor<7>, Mutable, Series)),			UInt16),
+  (((down),		(Ctor<8>, Mutable, Series)),			UInt16),
+  (((type),		(Ctor<9>, Enum<LinkType::Map>)),		Int8),
+  (((state),		(Ctor<10>, Mutable, Enum<PoolState::Map>)),	Int8),
+  (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::PoolTelemetry>::Types,
   typename decltype(ZuDeclVal<const Pool &>().telKey())::Types>{}));
 
 ZfbStruct(ZtcAPI, AppTelemetry,
-  (((version),		(Ctor<0>)),			(String)),
-  (((role),		(Ctor<1>)),			(String)),
-  (((startTime),	(Ctor<2>)),			(Int64)),
-  (((state),		(Ctor<4>, Mutable, Enum<EngineState::Map>)), (Int8)),
-  (((degraded),		(Ctor<5>, Mutable)),		(Bool)),
-  (((rag),		(Ctor<6>, Mutable, Enum<RAG::Map>)), (Int8)),
-  (((ztcver),		(Ctor<3>)),			(UInt32)));
+  (((version),		(Ctor<0>)),					String),
+  (((role),		(Ctor<1>)),					String),
+  (((startTime),	(Ctor<2>)),					DateTime),
+  (((state),		(Ctor<4>, Mutable, Enum<EngineState::Map>)),	Int8),
+  (((degraded),		(Ctor<5>, Mutable)),				Bool),
+  (((rag),		(Ctor<6>, Mutable, Enum<RAG::Map>)),		Int8),
+  (((ztcver),		(Ctor<3>)),					UDT));
 
 ZfbStruct(ZtcAPI, AlertTelemetry,
-  (((date),		(Ctor<4>, Keys<0>)),		(UInt32)),
-  (((seqNo),		(Ctor<2>, Keys<0>)),		(UInt64)),
-  (((time),		(Ctor<1>)),			(Time)),
-  (((tid),		(Ctor<3>)),			(UInt64)),
-  (((severity),		(Ctor<5>)),			(Int8)),
-  (((message),		(Ctor<0>)),			(String)));
+  (((date),		(Ctor<4>, Keys<0>)),	UInt32),
+  (((seqNo),		(Ctor<2>, Keys<0>)),	UInt64),
+  (((time),		(Ctor<1>)),		Time),
+  (((tid),		(Ctor<3>)),		UInt64),
+  (((severity),		(Ctor<5>)),		Int8),
+  (((message),		(Ctor<0>)),		String));
 
 ZuAssert((ZuIsSame<
   typename ZuStructKeyT<fbs::AlertTelemetry>::Types,

@@ -75,8 +75,8 @@ void app()
   Ztc::AppTelemetry data;
   data.version = "10.0.0";
   data.role = "telemetry";
-  data.startTime = INT64_C(0x123456789abcdef);
-  data.ztcver = UINT32_C(12034056);
+  data.startTime = ZuDateTime{2026, 10, 1, 12, 34, 56, 123456789};
+  data.ztcver = ZuSemVer{UINT32_C(12034056)};
   data.state = ZmEngineState::Running;
   data.degraded = true;
   data.rag = Ztc::RAG::Amber;
@@ -88,8 +88,11 @@ void app()
   ZuCheck(fbo);
   ZuCheck(Zfb::Load::str(fbo->version()) == data.version);
   ZuCheck(Zfb::Load::str(fbo->role()) == data.role);
-  ZuCheck(fbo->startTime() == data.startTime);
-  ZuCheck(fbo->ztcver() == data.ztcver);
+  ZuCheck(fbo->startTime());
+  ZuCheck(fbo->startTime()->julian() == data.startTime.julian());
+  ZuCheck(fbo->startTime()->sec() == data.startTime.sec());
+  ZuCheck(fbo->startTime()->nsec() == data.startTime.nsec());
+  ZuCheck(fbo->ztcver() == data.ztcver.value());
   ZuCheck(fbo->state() == data.state);
   ZuCheck(fbo->degraded() == data.degraded);
   ZuCheck(fbo->rag() == Ztc::fbs::RAG::Amber);

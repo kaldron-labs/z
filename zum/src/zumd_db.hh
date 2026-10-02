@@ -26,8 +26,8 @@ ZuDerive(SagaFn, (ZmFn<void(bool), ZmFnHeapID<"Zum.SagaFn">>));
 
 ZdbSagaDerive(SagaCatalog,
   Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
-  AppEnrollment, ExternalProjection, AppActionAdd, MembershipChange, RoleDelete,
-  CatalogPublish, MembershipAdd, RoleEdit, ActionEdit,
+  AppEnrollment, ExternalProjection, AppActionAdd, AssignmentChange, RoleDelete,
+  CatalogPublish, AssignmentAdd, RoleEdit, ActionEdit,
   AppChange, UserEdit, CredEdit, ProviderEdit, ClientEdit, KeyRetire,
   ClientAccessState, AdminAccessState, RoleMapDelete, RoleMapPut, PolicyPut,
   ClientAccessPut, AdminAccessPut, ProviderAdd, RoleAdd,

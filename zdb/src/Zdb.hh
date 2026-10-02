@@ -129,8 +129,6 @@ using Zdb_EvictHook = typename Zdb_EvictHook_<ZuDecay<U>>::T;
 
 namespace Zdb_ {
 
-using String = Ztc::DBString;
-
 namespace HostState {
   using namespace Ztc::DBHostState;
 }
@@ -546,8 +544,7 @@ struct TableCf {
 };
 
 ZfStruct(ZdbAPI, (TableCf, Cf),
-  (((cacheMode), (Ctor<0>, Enum<CacheMode::Map>)), (Int32,
-      CacheMode::Normal)));
+  (((cacheMode), (Ctor<0>, Enum<CacheMode::Map>, Deflt<CacheMode::Normal>)),	Int32));
 
 
 // --- table configuration
@@ -1603,13 +1600,12 @@ struct HostCf {
 };
 
 ZfStruct(ZdbAPI, (HostCf, Cf),
-  (((priority),	(Ctor<0>, (Range<0, 1<<30>))),	(Int32)),
-  (((ip),	(Ctor<1>)),				(String)),
-  (((port),	(Ctor<2>, (Range<1, 65534>))),
-    (UInt16)),
-  (((standalone), (Ctor<3>)),				(Bool)),
-  (((up),	(Ctor<4>)),				(String)),
-  (((down),	(Ctor<5>)),				(String)));
+  (((priority),	(Ctor<0>, (Range<0, 1<<30>))),	Int32),
+  (((ip),	(Ctor<1>)),			String),
+  (((port),	(Ctor<2>, (Range<1, 65534>))),	UInt16),
+  (((standalone), (Ctor<3>)),			Bool),
+  (((up),	(Ctor<4>)),			String),
+  (((down),	(Ctor<5>)),			String));
 
 
 ZmRBTreeDerive(HostCfs, HostCf,
@@ -1736,8 +1732,8 @@ struct StoreLoadCf {
 };
 
 ZfStruct(ZdbAPI, (StoreLoadCf, Cf),
-  (((module), (Required)),	(String)),
-  (((preload)),			(Bool)));
+  (((module), (Required)),	String),
+  (((preload)),			Bool));
 
 using DBThreads = Ztc::DBThreads;
 using DBSIDs = Ztc::DBSIDs;
@@ -1820,24 +1816,19 @@ struct DBCf {
 };
 
 ZfStruct(ZdbAPI, (DBCf, Cf),
-  (((thread),		(Ctor<0>, Required)),		(String)),
-  (((nShards),		(Ctor<1>, Cf::ID<"shards">, (Range<1U, 64U>))),
-    (UInt32, 1)),
-  (((threads),		(Ctor<2>)),			(StringVec)),
-  (((hostID),		(Ctor<3>)),			(String)),
-  (((nAccepts),		(Ctor<4>, (Range<1U, 1U<<10U>))),
-    (UInt32, 8)),
-  (((heartbeatFreq),	(Ctor<5>, (Range<1U, 3600U>))),
-    (UInt32, 1)),
-  (((heartbeatTimeout),	(Ctor<6>, (Range<1U, 14400U>))),
-    (UInt32, 4)),
-  (((reconnectFreq),	(Ctor<7>, (Range<1U, 3600U>))),
-    (UInt32, 1)),
-  (((electionTimeout),	(Ctor<8>, (Range<1U, 3600U>))),
-    (UInt32, 8))
+  (((thread),		(Ctor<0>, Required)),				String),
+  (((nShards),		(Ctor<1>, Cf::ID<"shards">, (Range<1U, 64U>),
+    Deflt<1>)),								UInt32),
+  (((threads),		(Ctor<2>)),					StringVec),
+  (((hostID),		(Ctor<3>)),					String),
+  (((nAccepts),		(Ctor<4>, (Range<1U, 1U<<10U>), Deflt<8>)),	UInt32),
+  (((heartbeatFreq),	(Ctor<5>, (Range<1U, 3600U>), Deflt<1>)),	UInt32),
+  (((heartbeatTimeout),	(Ctor<6>, (Range<1U, 14400U>), Deflt<4>)),	UInt32),
+  (((reconnectFreq),	(Ctor<7>, (Range<1U, 3600U>), Deflt<1>)),	UInt32),
+  (((electionTimeout),	(Ctor<8>, (Range<1U, 3600U>), Deflt<8>)),	UInt32)
 #if Zdb_DEBUG
   ,
-  (((debug),		(Ctor<9>)),			(Bool))
+  (((debug),		(Ctor<9>)),					Bool)
 #endif
 );
 

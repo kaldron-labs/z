@@ -35,7 +35,7 @@ struct Elem {
 ZuDerive(ElemVec, (ZtArray<Elem>));
 
 ZfbStruct(, Elem,
-  (((bah), (Ctor<0>)), (Int32)));
+  (((bah), (Ctor<0>)),	Int32));
 
 } // zfbtest
 
@@ -83,10 +83,10 @@ struct Test {
 };
 
 ZfbStruct(, Test,
-  (((foo), (Ctor<0>)), (Int32)),
-  (((bar), (Ctor<1>)), (String, "bar")),
-  (((baz), (Ctor<2>)), (StringVec)),
-  (((elems), (Ctor<3>)), (UDT)));
+  (((foo), (Ctor<0>)),			Int32),
+  (((bar), (Ctor<1>, Deflt<"bar"_z>)),	String),
+  (((baz), (Ctor<2>)),			StringVec),
+  (((elems), (Ctor<3>)),		UDT));
 
 ZfbRoot(Test);
 ZfbStructImpl(Elem);
@@ -157,6 +157,12 @@ void build(IOBuilder &fbb, unsigned n)
     auto test = zfbtest::fbs::GetTest(ptr + 8);
     CHECK(test->foo() == 42);
     auto value = ZfbStruct::ctor<zfbtest::Test>(test);
+    CHECK(value.baz.length() == 3);
+    if (value.baz.length() == 3) {
+      CHECK(value.baz[0] == "hello");
+      CHECK(value.baz[1] == "world");
+      CHECK(value.baz[2] == "42");
+    }
     CHECK(value.elems.length() == 2);
     CHECK(value.elems[0].bah == 43);
     CHECK(value.elems[1].bah == 44);
@@ -211,6 +217,9 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  auto constant = zfbtest::ZfField_Test_bar::constantFn();
+  ZuCheck(constant.get<ZfFieldTC::String>(
+      ZfVField::cget(ZfVFieldConstant::Deflt)) == "bar");
   unsigned n = 64;
   IOBuilder fbb(new ZiIOBufAlloc<>());
   CHECK((ZfVFieldMatcher<zfbtest::Test>()("bar") ==

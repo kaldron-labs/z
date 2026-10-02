@@ -25,11 +25,11 @@ namespace ZmThreadPriority {
 }
 
 ZfStruct(ZvAPI, (ZmThreadParams, Cf),
-  (((stackSize, Fn),	(Mutable, (Range<16384U, 2U<<20U>))),	(UInt32)),
-  (((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>))),	(Int32,
-      ZmThreadPriority::Normal)),
-  (((partition, Fn),	(Mutable)),					(UInt32)),
-  (((cpuset, Fn),	(Mutable)),					(String)));
+  (((stackSize, Fn),	(Mutable, (Range<16384U, 2U<<20U>))),	UInt32),
+  (((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>),
+    Deflt<ZmThreadPriority::Normal>)),				Int32),
+  (((partition, Fn),	(Mutable)),				UInt32),
+  (((cpuset, Fn),	(Mutable)),				String));
 
 inline ZmThreadParams ZvThreadParams(
     const ZfCf::AnyNode *cf, ZmThreadParams params = {})

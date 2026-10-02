@@ -61,12 +61,12 @@ struct TokenResponse {
   uint64_t	expiresIn = 0;
 };
 ZfStruct(, (TokenResponse, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)), (String)),
-  (((tokenType),	(JSON::ID<"token_type">, Required)),	(String)),
-  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	(UInt64)),
-  (((scope),		(Required)),	(String)),
-  (((idToken),		(JSON::ID<"id_token">, JSON::Opt)),	(String)),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)), (String)));
+  (((accessToken),	(JSON::ID<"access_token">, Required)),		String),
+  (((tokenType),	(JSON::ID<"token_type">, Required)),		String),
+  (((expiresIn),	(JSON::ID<"expires_in">, Required)),		UInt64),
+  (((scope),		(Required)),					String),
+  (((idToken),		(JSON::ID<"id_token">, JSON::Opt)),		String),
+  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	String));
 
 inline void tokenClear(TokenResponse &response) {
   if (response.accessToken && response.accessToken.mutable_())

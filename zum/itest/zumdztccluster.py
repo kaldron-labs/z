@@ -169,9 +169,9 @@ def main():
         token = fixture.login(offline=False)
         fixture.request("POST", "/admin/providers", {
             "name": "ahead-peer", "issuer": "https://ahead.example",
-            "clientID": "ahead-client", "clientSecret": secrets.token_urlsafe(32),
-            "scopes": ["openid"], "roleClaim": "roles",
-            "claimSource": "IDToken"}, token=token,
+            "client_id": "ahead-client", "client_secret": secrets.token_urlsafe(32),
+            "scopes": ["openid"], "role_claim": "roles",
+            "claim_source": "IDToken"}, token=token,
             headers={"Idempotency-Key": secrets.token_hex(16)}, status=201)
         stop(2)
         start(2)

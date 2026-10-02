@@ -25,7 +25,7 @@ enum {
   ContextSize = 1 + 2 * HashSize
 };
 
-constexpr auto Version = "HPKE-v1"_Zu;
+constexpr auto Version = "HPKE-v1"_z;
 constexpr uint8_t Suite[] = {
   'H', 'P', 'K', 'E', 0x64, 0x7a, 0x00, 0x01, 0x00, 0x03
 };

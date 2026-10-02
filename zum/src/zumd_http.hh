@@ -24,16 +24,16 @@ namespace Zum {
 
 struct HTTPRedirect { String redirectURI; };
 ZfStruct(, (HTTPRedirect, JSON),
-  (((redirectURI),	(Required)),	(String)));
+  (((redirectURI),	(JSON::ID<"redirect_uri">, Required)),	String));
 struct HTTPStatus { String status; };
 ZfStruct(, (HTTPStatus, JSON),
-  (((status),		(Required)),	(String)));
+  (((status),		(Required)),	String));
 struct HTTPError { String error; };
 ZfStruct(, (HTTPError, JSON),
-  (((error),		(Required)),	(String)));
+  (((error),		(Required)),	String));
 struct HTTPEmpty { String unused; };
 ZfStruct(, (HTTPEmpty, JSON),
-  (((unused),		(JSON::Opt)),	(String)));
+  (((unused),		(JSON::Opt)),	String));
 
 template <typename T>
 inline String httpJSON(T value)

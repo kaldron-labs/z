@@ -13,6 +13,7 @@ import base64
 import copy
 import hashlib
 import http.client
+from html import escape, unescape
 from http.cookies import SimpleCookie
 import json
 import os
@@ -156,16 +157,18 @@ class Fixture:
     def oauth(self, app_id, endpoint):
         return "/oauth2/" + str(app_id) + "/v1/" + endpoint
 
-    def start(self):
+    def start(self, bootstrap=True):
         self.cookies = SimpleCookie()
         self.log = (self.directory / "server.log").open("ab")
         server = Path(__file__).resolve().parent.parent / "src" / "zumd"
         node_config = (["--config=" + str(self.node_config or Path(__file__).with_name("zumd.cf"))]
                        if self.starts or self.node_config else [])
+        bootstrap_options = (["--admin=http-admin",
+                              "--bootstrap-output=" + str(self.directory / "enrollment")]
+                             if bootstrap else [])
         self.process = subprocess.Popen([
-            str(server), "--issuer=" + self.origin, "--admin=http-admin",
+            str(server), "--issuer=" + self.origin, *bootstrap_options,
             "--vault-store=file", "--vault-test-store",
-            "--bootstrap-output=" + str(self.directory / "enrollment"),
             "--port=" + str(self.port), "--rp-id=localhost", *node_config],
             env=self.env, stdout=subprocess.PIPE, stderr=self.log)
         self.starts += 1
@@ -508,7 +511,7 @@ class Fixture:
         suspended = suspended["items"][0]
         assert suspended["state"] == "Suspended"
         assert int(suspended["version"]) == int(before["version"]) + 1
-        assert int(suspended["authVersion"]) == int(before["authVersion"]) + 1
+        assert int(suspended["auth_version"]) == int(before["auth_version"]) + 1
         assert changed["item"]["etag"] == suspended["etag"]
         denied()
         unchanged, _ = self.request("PUT", path, {"state": "Suspended"}, token=token,
@@ -522,8 +525,8 @@ class Fixture:
         active = active["items"][0]
         assert active["state"] == "Active"
         assert int(active["version"]) == int(before["version"]) + 2
-        assert int(active["authVersion"]) == int(before["authVersion"]) + 2
-        return active["authVersion"]
+        assert int(active["auth_version"]) == int(before["auth_version"]) + 2
+        return active["auth_version"]
 
     def app_disable(self, token, app_id):
         query = "/admin/apps?id=" + app_id
@@ -544,7 +547,7 @@ class Fixture:
         catalog, _ = self.request("GET", "/admin/operations?limit=1000", token=token)
         operations = catalog["items"]
         self.operations = operations
-        assert len(operations) == 60 and "nextCursor" not in catalog
+        assert len(operations) == 61 and "next_cursor" not in catalog
         assert len({item["id"] for item in operations}) == len(operations)
         assert len({item["name"] for item in operations}) == len(operations)
         issuer, _ = self.request("GET", "/admin/issuer", token=token)
@@ -554,9 +557,9 @@ class Fixture:
                                      headers={"Idempotency-Key": read_key})
             assert replay["items"] == issuer["items"]
         read_request, _ = self.request("GET", "/admin/operations?" + urlencode({
-            "operation": "issuerQuery", "idempotencyKey": read_key}), token=token)
+            "operation": "issuerQuery", "idempotence": read_key}), token=token)
         assert read_request["items"] == []
-        core_id = issuer["items"][0]["coreAppID"]
+        core_id = issuer["items"][0]["core_app_id"]
         actions, _ = self.request("GET", "/admin/apps/" + core_id + "/actions?limit=1000",
                                   token=token)
         by_id = {item["id"]: item for item in actions["items"]}
@@ -609,14 +612,16 @@ class Fixture:
         # cross-app authority, durability or redaction invariants for a route.
 
     def administrative_queries(self, token, app_id):
-        hidden = {"owner", "privateMaterial", "providerRef", "publicKey",
-                  "digest", "spent", "challenge", "bindingDigest", "pkceChallenge",
-                  "oauthState", "refreshToken", "secret", "secretDigest"}
+        hidden = {"owner", "private_material", "provider_ref", "public_key",
+                  "digest", "spent", "challenge", "binding_digest", "pkce_challenge",
+                  "oauth_state", "refresh_token", "secret", "secret_digest"}
         for collection in ("credentials", "auth-policies", "identities", "evidence",
                            "sessions", "consents", "grants", "signing-keys"):
             path = "/admin/" + collection
             all_rows = self.request("GET", path + "?limit=1000", token=token)[0]
-            assert "nextCursor" not in all_rows
+            assert "next_cursor" not in all_rows
+            assert all(re.fullmatch(r"[a-z][a-z0-9_]*", key)
+                       for row in all_rows["items"] for key in row), collection
             if collection in ("identities", "evidence"):
                 assert all_rows["items"] == []  # This fixture uses local identities only.
             else:
@@ -632,13 +637,13 @@ class Fixture:
                 page = self.request("GET", path + "?" + urlencode(query), token=token)[0]
                 pages.extend(page["items"])
                 assert len(pages) <= len(all_rows["items"]), collection
-                cursor = page.get("nextCursor")
+                cursor = page.get("next_cursor")
                 if not cursor:
                     break
             assert pages == all_rows["items"], collection
-        policy = self.request("GET", "/admin/auth-policies?appID=" + app_id, token=token)[0]
-        assert len(policy["items"]) == 1 and policy["items"][0]["appID"] == app_id
-        self.request("GET", "/admin/auth-policies?appID=invalid", token=token, status=400)
+        policy = self.request("GET", "/admin/auth-policies?app_id=" + app_id, token=token)[0]
+        assert len(policy["items"]) == 1 and policy["items"][0]["app_id"] == app_id
+        self.request("GET", "/admin/auth-policies?app_id=invalid", token=token, status=400)
 
     def definition_lifecycle(self, token, app_id):
         def create(path, value):
@@ -663,19 +668,19 @@ class Fixture:
             assert self.request("GET", query, token=token)[0]["items"][0] == after
 
         prefix = "/admin/apps/" + app_id
-        policy_query = "/admin/auth-policies?appID=" + app_id
+        policy_query = "/admin/auth-policies?app_id=" + app_id
         policy = self.request("GET", policy_query, token=token)[0]["items"][0]
-        policy_fields = ("providerID", "localFirst", "eligibilityMode", "eligibilityClaim",
-                         "eligibilityValues", "assignmentMaxAge", "sessionIdle",
-                         "sessionAbsolute", "tokenLifetime", "consentPolicy", "state")
+        policy_fields = ("provider_id", "local_first", "eligibility_mode", "eligibility_claim",
+                         "eligibility_values", "assignment_max_age", "session_idle",
+                         "session_absolute", "token_lifetime", "consent_policy", "state")
         replacement = {field: policy[field] for field in policy_fields}
-        replacement["tokenLifetime"] = policy["tokenLifetime"] - 1
+        replacement["token_lifetime"] = policy["token_lifetime"] - 1
         edit(policy_query, prefix + "/auth-policy", "PUT", replacement)
         mappings_query = prefix + "/role-mappings?limit=1000"
         mappings = self.request("GET", mappings_query, token=token)[0]["items"]
         assert mappings
         mapping = mappings[0]
-        mapping_path = (prefix + "/role-mappings/" + mapping["providerID"] + "/" +
+        mapping_path = (prefix + "/role-mappings/" + mapping["provider_id"] + "/" +
                         b64(mapping["value"].encode()))
         self.request("DELETE", mapping_path, token=token, status=428)
         self.request("DELETE", mapping_path, token=token,
@@ -689,41 +694,41 @@ class Fixture:
         edit(role_query, role_path, "PATCH", {"label": "Updated lifecycle"})
         edit(role_query, role_path + "/state", "PUT", {"state": "Disabled"})
         client = create("/admin/clients", {
-            "appID": app_id, "profile": "native", "label": "Lifecycle",
-            "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 1})
+            "app_id": app_id, "profile": "native", "label": "Lifecycle",
+            "redirect_uris": ["http://127.0.0.1:49152/callback"], "grants": "AuthCode"})
         edit("/admin/clients?id=" + client["id"],
              "/admin/clients/" + client["id"] + "/state", "PUT", {"state": "Disabled"})
         provider_secret = secrets.token_urlsafe(32)
         provider = create("/admin/providers", {
-            "name": "lifecycle", "issuer": "https://lifecycle.example", "clientID": "before",
-            "clientSecret": provider_secret,
-            "scopes": ["openid", "roles"], "roleClaim": "roles", "claimSource": "IDToken"})
+            "name": "lifecycle", "issuer": "https://lifecycle.example", "client_id": "before",
+            "client_secret": provider_secret,
+            "scopes": ["openid", "roles"], "role_claim": "roles", "claim_source": "IDToken"})
         provider_query = "/admin/providers?id=" + provider["id"]
         provider_path = "/admin/providers/" + provider["id"]
         assert provider_secret not in json.dumps(provider)
         assert provider_secret not in json.dumps(self.request(
             "GET", provider_query, token=token)[0])
-        edit(provider_query, provider_path, "PATCH", {"clientID": "after"})
+        edit(provider_query, provider_path, "PATCH", {"client_id": "after"})
         edit(provider_query, provider_path + "/state", "PUT", {"state": "Disabled"})
         invited = create("/admin/users", {"name": "lifecycle-user"})
-        assert invited["enrollmentURL"]
+        assert invited["enrollment_url"]
         user = self.request("GET", "/admin/users?name=user&source=Local", token=token)[0]["items"][0]
         user_query = "/admin/users?id=" + user["id"]
         user_path = "/admin/users/" + user["id"]
         edit(user_query, user_path, "PATCH", {"profile": "Ping user", "email": "user@example.com"})
-        credentials = self.request("GET", "/admin/credentials?userID=" + user["id"], token=token)[0]["items"]
+        credentials = self.request("GET", "/admin/credentials?user_id=" + user["id"], token=token)[0]["items"]
         assert len(credentials) == 1
         credential_id = credentials[0]["id"]
         credential_query = "/admin/credentials?id=" + credential_id
         credential_path = "/admin/credentials/" + credential_id
         assert self.request("GET", credential_query, token=token)[0]["items"] == credentials
         limited = self.request("GET", "/admin/credentials?" + urlencode({
-            "userID": user["id"], "limit": 1}), token=token)[0]
-        assert limited["items"] == credentials and "nextCursor" not in limited
-        for query in ({"userID": "invalid"}, {"id": "!"},
-                      {"id": credential_id, "userID": user["id"]}):
+            "user_id": user["id"], "limit": 1}), token=token)[0]
+        assert limited["items"] == credentials and "next_cursor" not in limited
+        for query in ({"user_id": "invalid"}, {"id": "!"},
+                      {"id": credential_id, "user_id": user["id"]}):
             self.request("GET", "/admin/credentials?" + urlencode(query), token=token, status=400)
-        assert self.request("GET", "/admin/credentials?userID=" + invited["id"], token=token)[0]["items"] == []
+        assert self.request("GET", "/admin/credentials?user_id=" + invited["id"], token=token)[0]["items"] == []
         edit(credential_query, credential_path, "PATCH", {"label": "Updated passkey"})
         edit(credential_query, credential_path + "/state", "PUT", {"state": "Disabled"})
         before = self.request("GET", user_query, token=token)[0]["items"][0]
@@ -735,18 +740,18 @@ class Fixture:
         recovery_headers["If-Match"] = before["etag"]
         recovery, _ = self.request("POST", user_path + "/recover", {}, token=token,
                                     headers=recovery_headers)
-        assert recovery["item"]["id"] == user["id"] and recovery["item"]["recoveryURL"]
+        assert recovery["item"]["id"] == user["id"] and recovery["item"]["recovery_url"]
         after = self.request("GET", user_query, token=token)[0]["items"][0]
         assert after["state"] == "Suspended"
         assert int(after["version"]) == int(before["version"]) + 1
-        assert int(after["authVersion"]) == int(before["authVersion"]) + 1
+        assert int(after["auth_version"]) == int(before["auth_version"]) + 1
         replay, _ = self.request("POST", user_path + "/recover", {}, token=token,
                                  headers=recovery_headers)
-        assert replay["status"] == "complete" and "recoveryURL" not in json.dumps(replay)
+        assert replay["status"] == "complete" and "recovery_url" not in json.dumps(replay)
         assert self.request("GET", user_query, token=token)[0]["items"][0] == after
         grants_query = "/admin/grants?limit=1000"
         grants = self.request("GET", grants_query, token=token)[0]["items"]
-        selected = next(row for row in grants if row["userID"] == user["id"]
+        selected = next(row for row in grants if row["user_id"] == user["id"]
                         and row["state"] == "Active")
         assert b64(unb64(selected["id"])) == selected["id"]
         exact = {"id": selected["id"], "limit": 1}
@@ -762,10 +767,10 @@ class Fixture:
             query = "/admin/" + collection + "?limit=1000"
             path = "/admin/" + collection + "/revoke"
             before = self.request("GET", query, token=token)[0]["items"]
-            unrelated = [row for row in before if row["userID"] != user["id"]]
-            eligible = [row for row in before if row["userID"] == user["id"]
+            unrelated = [row for row in before if row["user_id"] != user["id"]]
+            eligible = [row for row in before if row["user_id"] == user["id"]
                         and row["state"] not in ("Revoked", "Consumed")]
-            body = {"userID": user["id"], "limit": 1}
+            body = {"user_id": user["id"], "limit": 1}
             self.request("POST", path, body, token=token, status=400)
             self.request("POST", path, dict(body, limit=0), token=token,
                          headers={"Idempotency-Key": secrets.token_hex(16)}, status=400)
@@ -782,8 +787,8 @@ class Fixture:
                                      headers={"Idempotency-Key": secrets.token_hex(16)})
             assert result["item"]["revoked"] == 1, collection + " did not revoke one eligible record"
             after = self.request("GET", query, token=token)[0]["items"]
-            assert [row for row in after if row["userID"] != user["id"]] == unrelated
-            remaining = [row for row in after if row["userID"] == user["id"]
+            assert [row for row in after if row["user_id"] != user["id"]] == unrelated
+            remaining = [row for row in after if row["user_id"] == user["id"]
                          and row["state"] not in ("Revoked", "Consumed")]
             assert len(remaining) == len(eligible) - 1
             result, _ = self.request("POST", path, dict(body, limit=1000), token=token,
@@ -815,8 +820,8 @@ class Fixture:
         prefix = "/admin/apps/" + app_id
         filters = [("/admin/" + collection, "id", {})
                    for collection in ("apps", "users", "providers")]
-        filters += [("/admin/auth-policies", "appID", {}),
-                    (prefix + "/memberships", "userID", {}),
+        filters += [("/admin/auth-policies", "app_id", {}),
+                    (prefix + "/assignments", "user_id", {}),
                     (prefix + "/actions", "id", {}),
                     (prefix + "/roles", "id", {})]
         for path, field, extra in filters:
@@ -871,14 +876,14 @@ class Fixture:
             headers = {"Idempotency-Key": secrets.token_hex(16)}
             if etag:
                 headers["If-Match"] = etag
-            self.request("POST", path, {"overlapSeconds": 60},
+            self.request("POST", path, {"overlap_seconds": 60},
                          token=token, headers=headers, status=status)
             assert current() == before
         previous = original
         for overlap in (60, 0):
             headers = {"Idempotency-Key": secrets.token_hex(16),
                        "If-Match": before["etag"]}
-            body = {"overlapSeconds": overlap}
+            body = {"overlap_seconds": overlap}
             result = self.request("POST", path, body, token=token, headers=headers)[0]
             item = result["item"]
             assert item["id"] == client_id and item["client_secret"]
@@ -886,10 +891,10 @@ class Fixture:
                 (client_id + ":" + item["client_secret"]).encode()).decode()
             after = current()
             assert int(after["version"]) == int(before["version"]) + 1
-            assert int(after["secretVersion"]) == int(before["secretVersion"]) + 1
-            assert not {"client_secret", "secretDigest", "previousSecretDigest"} & after.keys()
+            assert int(after["secret_version"]) == int(before["secret_version"]) + 1
+            assert not {"client_secret", "secret_digest", "previous_secret_digest"} & after.keys()
             replay = self.request("POST", path, body, token=token, headers=headers)[0]
-            assert replay["status"] == "complete" and client_id in replay["resultIDs"]
+            assert replay["status"] == "complete" and client_id in replay["result_ids"]
             assert "item" not in replay and "client_secret" not in replay
             assert current() == after
             authenticate(basic)
@@ -905,9 +910,9 @@ class Fixture:
 
     def pending_user(self, token):
         created = self.admin_secret("userInvite", {
-            "name": "pending-state", "$idempotencyKey": secrets.token_hex(16)})
+            "name": "pending-state"})
         user_id = created["item"]["id"]
-        assert created["item"]["enrollmentURL"]
+        assert created["item"]["enrollment_url"]
         query = "/admin/users?id=" + user_id
         path = "/admin/users/" + user_id + "/state"
         result, _ = self.request("GET", query, token=token)
@@ -918,7 +923,7 @@ class Fixture:
                      headers={"If-Match": '"stale"'}, status=412)
         rejected, _ = self.request("PUT", path, {"state": "Active"}, token=token,
                                    headers={"If-Match": current["etag"]}, status=409)
-        failures = [rejected["correlationID"]]
+        failures = [rejected["correlation_id"]]
         for state in ("Suspended", "Disabled"):
             self.request("PUT", path, {"state": state}, token=token,
                          headers={"If-Match": current["etag"]})
@@ -926,20 +931,20 @@ class Fixture:
             changed = result["items"][0]
             assert changed["state"] == state
             assert int(changed["version"]) == int(current["version"]) + 1
-            assert int(changed["authVersion"]) == int(current["authVersion"]) + 1
+            assert int(changed["auth_version"]) == int(current["auth_version"]) + 1
             rejected, _ = self.request("PUT", path, {"state": "Active"}, token=token,
                                        headers={"If-Match": changed["etag"]}, status=409)
-            failures.append(rejected["correlationID"])
+            failures.append(rejected["correlation_id"])
             result, _ = self.request("GET", query, token=token)
             assert result["items"][0] == changed
             current = changed
         self.request("GET", "/admin/audit", token=token, status=404)
         self.request("POST", "/admin/audit/cleanup", {}, token=token, status=404)
-        capability = parse_qs(urlsplit(created["item"]["enrollmentURL"]).query)["capability"][0]
+        capability = parse_qs(urlsplit(created["item"]["enrollment_url"]).query)["capability"][0]
         return query, path, current, {
             "actor": self.verify_jwt(token)["sub"], "path": path,
             "failures": failures, "secrets": [token, capability,
-                                            created["item"]["enrollmentURL"]],
+                                            created["item"]["enrollment_url"]],
         }
 
     def enroll(self):
@@ -1182,6 +1187,19 @@ class Fixture:
         if isinstance(finish, str):
             consent = re.search(r'name=id value="([^"]+)"', finish)
             assert consent, "unexpected passkey completion page"
+            assert "Requested permissions" in finish
+            query = parse_qs(urlsplit(path).query)
+            requested = set(query.get("scope", [""])[0].split())
+            displayed = {unescape(value) for value in
+                         re.findall(r"<li><code>(.*?)</code>", finish)}
+            assert displayed == requested, "consent must show the exact requested scopes"
+            client_id = query["client_id"][0]
+            assert "<code>" + escape(client_id) + "</code>" in finish
+            label = getattr(self, "consent_labels", {}).get(client_id)
+            if label:
+                assert "<strong>" + escape(label) + "</strong>" in finish
+                assert label not in finish, "client labels must be HTML-escaped"
+
             issuer_app = route[1].rsplit("/", 1)[1]
             if self.core_app_id and issuer_app != self.core_app_id:
                 cookies = copy.deepcopy(self.cookies)
@@ -1196,20 +1214,21 @@ class Fixture:
                                       form=True, status=302)
             location = headers["location"]
         else:
-            location = finish["redirectURI"]
+            location = finish["redirect_uri"]
         return location
 
     def cli_callback(self, process, port, login="http-admin", authenticator=None,
-                     app_id=None, before_callback=None):
+                     app_id=None, before_callback=None, stream=None):
+        stream = stream or process.stdout
         pending = b""
         deadline = time.monotonic() + 30
         with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
+            selector.register(stream, selectors.EVENT_READ)
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or not selector.select(remaining):
                     raise AssertionError("CLI authorization URL timed out")
-                data = os.read(process.stdout.fileno(), 4096)
+                data = os.read(stream.fileno(), 4096)
                 assert data, "CLI exited before authorization"
                 pending += data
                 lines = pending.split(b"\n")
@@ -1253,11 +1272,13 @@ class Fixture:
         with (self.directory / "admin.log").open("ab") as log:
             process = subprocess.Popen([str(executable), "--config", str(config),
                                         "login", "--no-browser"],
-                                       stdout=subprocess.PIPE, stderr=log,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        env=vault_env)
             try:
-                self.cli_callback(process, port)
-                output, _ = process.communicate(timeout=30)
+                self.cli_callback(process, port, stream=process.stderr)
+                output, diagnostics = process.communicate(timeout=30)
+                log.write(diagnostics)
+                assert not output, "login diagnostics leaked to stdout"
                 assert process.returncode == 0, \
                     "admin CLI login failed rc=" + str(process.returncode) + \
                     " stdout=" + output.decode(errors="replace") + \
@@ -1272,49 +1293,85 @@ class Fixture:
                         process.kill()
                         process.communicate()
                 process.stdout.close()
+            process.stderr.close()
             assert (home / "vault" / "secrets.json").stat().st_mode & 0o777 == 0o600
         apps = self.admin_command("appQuery", {})
         assert len(apps["items"]) == 1 and apps["items"][0]["name"] == "zum"
 
-    def admin_command(self, operation, value):
+    def admin_command(self, operation, value, *, if_match=None, idempotence=None,
+                      output=None):
         executable = Path(__file__).resolve().parent.parent / "src" / "zum"
-        request = self.directory / "admin-request.json"
-        request.write_bytes(compact(value))
+        required = {
+            "appEnroll": ("name", "audience"),
+            "clientAdd": ("app_id", "profile"),
+            "userInvite": ("name",),
+            "assignmentQuery": ("app_id",),
+            "assignmentAdd": ("app_id", "user_id"),
+            "assignmentRoles": ("app_id", "user_id", "role_ids"),
+            "roleQuery": ("app_id",), "actionQuery": ("app_id",),
+            "clientAccessQuery": ("app_id",),
+        }.get(operation, ())
+        def argument(value):
+            if isinstance(value, list):
+                return ",".join(str(item) for item in value)
+            if isinstance(value, bool):
+                return "true" if value else "false"
+            return str(value)
+        command = re.sub(r"([a-z])([A-Z])", r"\1 \2", operation).lower().split()
+        if command[0] == "assignment":
+            command[0] = "assign"
+        command[-1] = {"query": "list", "enroll": "add", "invite": "add"}.get(
+            command[-1], command[-1])
+        args = [str(executable), *command]
+        args += [argument(value[key]) for key in required]
+        positional = ("name",) if operation == "userQuery" and "name" in value else ()
+        args += [argument(value[key]) for key in positional]
+        for key, item in value.items():
+            if key not in required and key not in positional:
+                option = re.sub(r"([a-z])([A-Z])", r"\1-\2", key).lower()
+                args += ["--" + option.replace("_", "-"), argument(item)]
+        if if_match is not None:
+            args += ["--if-match", if_match]
+        if idempotence is not None:
+            args += ["--idempotence", idempotence]
+        args += ["--no-browser"]
+        # Exercise configuration selection without --config on every request.
         with (self.directory / "admin.log").open("ab") as log:
-            result = subprocess.run([str(executable), "--config",
-                                     str(self.directory / "admin.cf"), operation,
-                                     "--json", str(request), "--no-browser"],
-                                    stdout=subprocess.PIPE, stderr=log, timeout=30,
+            result = subprocess.run(args, stdout=output or subprocess.PIPE,
+                                    stderr=log, timeout=30,
                                     env={**os.environ,
+                                         "ZUM_CONFIG": str(self.directory / "admin.cf"),
                                          "ZUM_HOME": str(self.directory / "admin-vault"),
                                          "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"})
         assert result.returncode == 0, "admin CLI " + operation + " failed"
+        if output is not None:
+            return None
         try:
             return json.loads(result.stdout)
         except ValueError as error:
             raise AssertionError(f"admin CLI {operation} returned invalid JSON: "
                                  f"{result.stdout!r}") from error
 
-    def admin_secret(self, operation, value):
-        output = self.directory / (operation + "-secret.json")
-        receipt = self.admin_command(operation, dict(value, **{"$secretOutput": str(output)}))
-        assert receipt == {"secretOutput": str(output)}
-        assert output.stat().st_mode & 0o777 == 0o600
-        return json.loads(output.read_bytes())
+    def admin_secret(self, operation, value, *, idempotence=None):
+        path = self.directory / (operation + "-secret.json")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as output:
+            self.admin_command(operation, value, idempotence=idempotence, output=output)
+        assert path.stat().st_mode & 0o777 == 0o600
+        return json.loads(path.read_bytes())
 
     def ping_service(self, after_login=None, foreign_tokens=()):
         audience = "https://ping.example/api"
         app = self.admin_secret("appEnroll", {
-            "name": "zumpingd", "audience": audience,
-            "$idempotencyKey": secrets.token_hex(16)})["item"]
-        stored = self.admin_command("appQuery", {"id": app["appID"]})["items"]
+            "name": "zumpingd", "audience": audience})["item"]
+        stored = self.admin_command("appQuery", {"id": app["app_id"]})["items"]
         assert len(stored) == 1 and stored[0]["audience"] == audience
         assert self.admin_command("clientQuery", {"id": "zumping"})["items"] == []
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         config = self.directory / "zumpingd.cf"
-        config.write_text(f'zum: {{issuerURL: {json.dumps(self.issuer(app["appID"]))}, '
+        config.write_text(f'zum: {{issuerURL: {json.dumps(self.issuer(app["app_id"]))}, '
                           f'managementIssuerURL: {json.dumps(self.issuer(self.core_app_id))}, '
                           f'managementURL: {json.dumps(self.origin)}, '
                           f'clientID: {json.dumps(app["client_id"])} }}, '
@@ -1394,19 +1451,19 @@ class Fixture:
                             "ping accepted a different application's token"
                     catalog = {}
                     for operation in ("actionQuery", "roleQuery"):
-                        records = self.admin_command(operation, {"appID": app["appID"]})["items"]
+                        records = self.admin_command(operation, {"app_id": app["app_id"]})["items"]
                         assert len(records) == 1 and records[0]["name"] == "ping"
                         catalog[operation] = records
                     clients = self.admin_command("clientQuery", {"id": "zumping"})["items"]
-                    assert len(clients) == 1 and clients[0]["appID"] == str(app["appID"])
+                    assert len(clients) == 1 and clients[0]["app_id"] == str(app["app_id"])
                     access = self.admin_command("clientAccessQuery", {
-                        "appID": app["appID"], "clientID": "zumping"})["items"]
-                    assert len(access) == 1 and access[0]["roleIDs"] == [
+                        "app_id": app["app_id"], "client_id": "zumping"})["items"]
+                    assert len(access) == 1 and access[0]["role_ids"] == [
                         catalog["roleQuery"][0]["id"]]
-                    access_query = "/admin/apps/" + app["appID"] + \
-                        "/client-access?clientID=zumping"
+                    access_query = "/admin/apps/" + app["app_id"] + \
+                        "/client-access?client_id=zumping"
                     self.state_cycle(access_query,
-                                     "/admin/apps/" + app["appID"] +
+                                     "/admin/apps/" + app["app_id"] +
                                      "/client-access/zumping/state",
                                      self.login(), lambda: None)
                     if previous is not None:
@@ -1423,11 +1480,11 @@ class Fixture:
                         user_id = self.admin_command("userQuery", {
                             "name": "user", "source": "Local"})["items"][0]["id"]
                         def assign(roles):
-                            member = self.admin_command("membershipQuery", {
-                                "appID": app["appID"], "userID": user_id})["items"][0]
-                            self.admin_command("membershipRoles", {
-                                "appID": app["appID"], "userID": user_id,
-                                "roleIDs": roles, "$ifMatch": member["etag"]})
+                            member = self.admin_command("assignmentQuery", {
+                                "app_id": app["app_id"], "user_id": user_id})["items"][0]
+                            self.admin_command("assignmentRoles", {
+                                "app_id": app["app_id"], "user_id": user_id,
+                                "role_ids": roles}, if_match=member["etag"])
                         try:
                             self.ping_client(port, *user,
                                              before_callback=lambda: assign([]))
@@ -1457,39 +1514,38 @@ class Fixture:
                 self.ping_unavailable(user[0], "zumpingd")
 
     def ping_user(self, app, catalog, service_port):
-        app_id = app["appID"]
+        app_id = app["app_id"]
         invited = self.admin_secret("userInvite", {
-            "name": "user", "$idempotencyKey": secrets.token_hex(16)})["item"]
+            "name": "user"})["item"]
         authenticator = Authenticator(self.origin)
         self.cookies = SimpleCookie()
-        capability = parse_qs(urlsplit(invited["enrollmentURL"]).query)["capability"][0]
+        capability = parse_qs(urlsplit(invited["enrollment_url"]).query)["capability"][0]
         begin, _ = self.request("POST", self.oauth(
                                 self.core_app_id, "passkey/begin"),
                                 {"purpose": "bootstrap", "capability": capability})
         registration = authenticator.register(begin["options"]["publicKey"])
         self.request("POST", self.oauth(self.core_app_id, "passkey/finish") +
                      "?id=" + begin["ceremony"], registration)
-        member = self.admin_command("membershipAdd", {
-            "appID": app_id, "userID": invited["id"],
-            "$idempotencyKey": secrets.token_hex(16)})["item"]
-        self.admin_command("membershipRoles", {
-            "appID": app_id, "userID": invited["id"],
-            "roleIDs": [catalog["roleQuery"][0]["id"]], "$ifMatch": member["etag"]})
-        assigned = self.admin_command("membershipQuery", {
-            "appID": app_id, "userID": invited["id"]})["items"]
+        member = self.admin_command("assignmentAdd", {
+            "app_id": app_id, "user_id": invited["id"]})["item"]
+        self.admin_command("assignmentRoles", {
+            "app_id": app_id, "user_id": invited["id"],
+            "role_ids": [catalog["roleQuery"][0]["id"]]}, if_match=member["etag"])
+        assigned = self.admin_command("assignmentQuery", {
+            "app_id": app_id, "user_id": invited["id"]})["items"]
         assert len(assigned) == 1
-        assert assigned[0]["roleIDs"] == [catalog["roleQuery"][0]["id"]]
+        assert assigned[0]["role_ids"] == [catalog["roleQuery"][0]["id"]]
         core = self.admin_command("appQuery", {"name": "zum"})["items"][0]["id"]
-        assert self.admin_command("membershipQuery", {
-            "appID": core, "userID": invited["id"]})["items"] == []
+        assert self.admin_command("assignmentQuery", {
+            "app_id": core, "user_id": invited["id"]})["items"] == []
         config, port = self.ping_registration(app, catalog, service_port)
         return config, port, authenticator, app_id
 
     def ping_registration(self, app, catalog, service_port):
-        app_id = app["appID"]
+        app_id = app["app_id"]
         client = self.admin_command("clientQuery", {"id": "zumping"})["items"][0]
         port = 8081
-        assert client["redirectURIs"] == [f"http://127.0.0.1:{port}/callback"]
+        assert client["redirect_uris"] == [f"http://127.0.0.1:{port}/callback"]
         config = self.directory / "zumping.cf"
         config.write_text(f'issuerURL: {json.dumps(self.issuer(app_id))}, '
                           f'serviceURL: "http://127.0.0.1:{service_port}", '
@@ -1559,15 +1615,15 @@ class Fixture:
         assert not any(line.startswith(b"{") for line in result.stdout.splitlines()), \
             "zumping received pong with unavailable " + server
 
-    def membership_roles(self, token, prefix, user_id, roles):
-        query = prefix + "/memberships?" + urlencode({"userID": user_id})
-        path = prefix + "/memberships/" + user_id + "/roles"
+    def assignment_roles(self, token, prefix, user_id, roles):
+        query = prefix + "/assignments?" + urlencode({"user_id": user_id})
+        path = prefix + "/assignments/" + user_id + "/roles"
         before, _ = self.request("GET", query, token=token)
         before = before["items"][0]
-        app_query = "/admin/apps?" + urlencode({"id": before["appID"]})
+        app_query = "/admin/apps?" + urlencode({"id": before["app_id"]})
         app, _ = self.request("GET", app_query, token=token)
         app = app["items"][0]
-        body = {"roleIDs": roles}
+        body = {"role_ids": roles}
         self.request("PUT", path, body, token=token, status=428)
         self.request("PUT", path, body, token=token,
                      headers={"If-Match": '"stale"'}, status=412)
@@ -1575,25 +1631,24 @@ class Fixture:
         if roles:
             invalid.append([roles[0], roles[0]])
         for ids in invalid:
-            self.request("PUT", path, {"roleIDs": ids}, token=token,
+            self.request("PUT", path, {"role_ids": ids}, token=token,
                          headers={"If-Match": before["etag"]}, status=400)
         unchanged, _ = self.request("GET", query, token=token)
         assert unchanged["items"][0] == before
         unchanged, _ = self.request("GET", app_query, token=token)
         assert unchanged["items"][0] == app
-        changed = self.admin_command("membershipRoles", dict(body, **{
-            "appID": before["appID"], "userID": user_id,
-            "$ifMatch": before["etag"]}))
+        changed = self.admin_command("assignmentRoles", dict(body, **{
+            "app_id": before["app_id"], "user_id": user_id}), if_match=before["etag"])
         after, _ = self.request("GET", query, token=token)
         after = after["items"][0]
-        assert after["roleIDs"] == roles
+        assert after["role_ids"] == roles
         assert after["etag"] == changed["item"]["etag"]
-        delta = int(before["roleIDs"] != roles)
-        for field in ("version", "authVersion"):
+        delta = int(before["role_ids"] != roles)
+        for field in ("version", "auth_version"):
             assert int(after[field]) == int(before[field]) + delta
         app_after, _ = self.request("GET", app_query, token=token)
         app_after = app_after["items"][0]
-        for field in ("version", "authVersion"):
+        for field in ("version", "auth_version"):
             assert int(app_after[field]) == int(app[field]) + delta
         retry, _ = self.request("PUT", path, body, token=token,
                                 headers={"If-Match": after["etag"]})
@@ -1607,37 +1662,37 @@ class Fixture:
     def grouped_queries(self, token, app_id, role_id, clients):
         prefix = "/admin/apps/" + app_id
         issuer, _ = self.request("GET", "/admin/issuer", token=token)
-        core = "/admin/apps/" + issuer["items"][0]["coreAppID"]
+        core = "/admin/apps/" + issuer["items"][0]["core_app_id"]
         roles, _ = self.request("GET", core + "/roles", token=token)
         expected = set()
         for index in range(2):
             provider, _ = self.request("POST", "/admin/providers", {
                 "name": "query-provider-" + str(index),
                 "issuer": "https://query-provider-" + str(index) + ".example",
-                "clientID": "query-client", "scopes": ["openid", "roles"],
-                "roleClaim": "roles", "claimSource": "IDToken"}, token=token,
+                "client_id": "query-client", "scopes": ["openid", "roles"],
+                "role_claim": "roles", "claim_source": "IDToken"}, token=token,
                 headers={"Idempotency-Key": secrets.token_hex(16)}, status=201)
             provider_id = provider["item"]["id"]
             for value in ("reader", "operator"):
                 suffix = "/role-mappings/" + provider_id + "/" + b64(value.encode())
-                self.request("PUT", prefix + suffix, {"roleID": role_id}, token=token,
+                self.request("PUT", prefix + suffix, {"role_id": role_id}, token=token,
                              headers={"If-None-Match": "*"}, status=201)
                 expected.add((provider_id, value))
-                self.request("PUT", core + suffix, {"roleID": roles["items"][0]["id"]},
+                self.request("PUT", core + suffix, {"role_id": roles["items"][0]["id"]},
                              token=token, headers={"If-None-Match": "*"}, status=201)
         snapshots = []
         for collection in ("client-access", "role-mappings"):
             path = prefix + "/" + collection
             result, _ = self.request("GET", path + "?limit=1000", token=token)
             items = result["items"]
-            assert items and all(item["appID"] == app_id for item in items)
+            assert items and all(item["app_id"] == app_id for item in items)
             if collection == "client-access":
-                assert clients <= {item["clientID"] for item in items}
+                assert clients <= {item["client_id"] for item in items}
             else:
-                assert {(item["providerID"], item["value"]) for item in items} == expected
+                assert {(item["provider_id"], item["value"]) for item in items} == expected
             page, _ = self.request("GET", path + "?limit=1", token=token)
             pages = page["items"]
-            cursor = page["nextCursor"]
+            cursor = page["next_cursor"]
             self.request("GET", core + "/" + collection + "?" +
                          urlencode({"cursor": cursor}), token=token, status=400)
             self.request("GET", path + "?" + urlencode({"cursor": cursor + "!"}),
@@ -1654,7 +1709,7 @@ class Fixture:
                                        urlencode({"cursor": cursor, "limit": 1}), token=token)
                 pages.extend(page["items"])
                 assert len(pages) <= len(items)
-                cursor = page.get("nextCursor")
+                cursor = page.get("next_cursor")
             assert pages == items, (
                 collection, len(pages), len(items),
                 [(offset, key) for offset, (left, right) in enumerate(zip(pages, items))
@@ -1666,7 +1721,7 @@ class Fixture:
         def query(path):
             return self.request("GET", path, token=token)[0]["items"]
 
-        core_id = query("/admin/issuer")[0]["coreAppID"]
+        core_id = query("/admin/issuer")[0]["core_app_id"]
         prefix = "/admin/apps/" + app_id
         foreign_roles = query("/admin/apps/" + core_id + "/roles?limit=1000")
         foreign = next(row for row in foreign_roles if row["name"] == "zum.admin")
@@ -1674,24 +1729,24 @@ class Fixture:
         app_query = "/admin/apps?id=" + app_id
         before_app = query(app_query)
         cases = (
-            (prefix + "/memberships?userID=" + user_id,
-             prefix + "/memberships/" + user_id + "/roles", None),
-            (prefix + "/client-access?clientID=" + client_id,
-             prefix + "/client-access/" + client_id, ("roleIDs",)))
+            (prefix + "/assignments?user_id=" + user_id,
+             prefix + "/assignments/" + user_id + "/roles", None),
+            (prefix + "/client-access?client_id=" + client_id,
+             prefix + "/client-access/" + client_id, ("role_ids",)))
         for lookup, path, fields in cases:
             before = query(lookup)
             assert len(before) == 1
             body = {field: before[0][field] for field in fields or ()}
-            body["roleIDs"] = [foreign["id"]]
+            body["role_ids"] = [foreign["id"]]
             self.request("PUT", path, body, token=token,
                          headers={"If-Match": before[0]["etag"]}, status=400)
             assert query(lookup) == before, "cross-app rejection changed target records"
             assert query(app_query) == before_app, "cross-app rejection changed app authority"
         lookup = prefix + "/admin-access?limit=1000"
         before = query(lookup)
-        assert not any(row["actorKind"] == "User" and row["actorID"] == user_id for row in before)
+        assert not any(row["actor_kind"] == "User" and row["actor_id"] == user_id for row in before)
         self.request("PUT", prefix + "/admin-access/user/" + user_id,
-                     {"operationIDs": [], "roleIDs": [foreign["id"]]}, token=token,
+                     {"operation_ids": [], "role_ids": [foreign["id"]]}, token=token,
                      headers={"If-None-Match": "*"}, status=400)
         assert query(lookup) == before and query(app_query) == before_app
         assert query("/admin/apps/" + core_id + "/roles?limit=1000") == foreign_roles
@@ -1709,41 +1764,48 @@ class Fixture:
         user_id = users["items"][0]["id"]
         role = create(prefix + "/roles", {"name": "ping", "label": "Ping"})
         self.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
-                     {"actionIDs": [action_id]}, token=token, headers={"If-Match": role["etag"]})
-        member_body = {"userID": user_id}
+                     {"action_ids": [action_id]}, token=token, headers={"If-Match": role["etag"]})
+        # Required wire fields and query keys use snake_case exclusively.
+        self.request("GET", prefix + "/assignments?userID=" + user_id,
+                     token=token, status=400)
+        self.request("POST", prefix + "/assignments", {"userID": user_id},
+                     token=token, headers={"Idempotency-Key": secrets.token_hex(16)},
+                     status=400)
+        member_body = {"user_id": user_id}
         member_headers = {"Idempotency-Key": secrets.token_hex(16)}
-        membership = self.admin_command("membershipAdd", dict(member_body, **{
-            "appID": app_id, "$idempotencyKey": member_headers["Idempotency-Key"]}))
-        assert membership["item"]["appID"] == app_id
-        assert membership["item"]["userID"] == user_id
+        assignment = self.admin_command("assignmentAdd", dict(member_body, **{
+            "app_id": app_id}), idempotence=member_headers["Idempotency-Key"])
+        assert assignment["item"]["app_id"] == app_id
+        assert assignment["item"]["user_id"] == user_id
         for restart in (False, True):
             if restart:
                 self.stop()
                 self.start()
-            replay, _ = self.request("POST", prefix + "/memberships", member_body,
+            replay, _ = self.request("POST", prefix + "/assignments", member_body,
                                      token=token, headers=member_headers)
             assert replay["status"] == "complete"
-            assert replay["resultIDs"] == [app_id + ":" + user_id]
+            assert replay["result_ids"] == [app_id + ":" + user_id]
         duplicate_headers = {"Idempotency-Key": secrets.token_hex(16)}
         for _ in range(2):
-            self.request("POST", prefix + "/memberships", member_body,
+            self.request("POST", prefix + "/assignments", member_body,
                          token=token, headers=duplicate_headers, status=409)
             failed, _ = self.request("GET", "/admin/operations?" + urlencode({
-                "operation": "membershipAdd",
-                "idempotencyKey": duplicate_headers["Idempotency-Key"]}), token=token)
+                "operation": "assignmentAdd",
+                "idempotence": duplicate_headers["Idempotency-Key"]}), token=token)
             assert failed["items"] == []
-        self.membership_roles(token, prefix, user_id, [role["id"]])
+        self.assignment_roles(token, prefix, user_id, [role["id"]])
         client = create("/admin/clients", {
-            "appID": app_id, "label": "Independent native client", "profile": "native",
-            "redirectURIs": ["http://127.0.0.1:49152/callback"],
-            "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
+            "app_id": app_id, "label": 'Native <script> & "client"', "profile": "native",
+            "redirect_uris": ["http://127.0.0.1:49152/callback"],
+            "grants": "AuthCode,Refresh", "refresh_allowed": True, "identity_scopes": ["openid"]})
         self.request("PUT", prefix + "/client-access/" + client["id"], {
-            "roleIDs": [role["id"]]},
+            "role_ids": [role["id"]]},
             token=token, headers={"If-None-Match": "*"}, status=201)
+        self.consent_labels = {client["id"]: client["label"]}
         self.cross_app_refs(token, app_id, user_id, client["id"])
         app, _ = self.request("GET", "/admin/apps?id=" + app_id, token=token)
         # The app's earlier mutations made its authority version independent.
-        assert int(app["items"][0]["authVersion"]) > 1
+        assert int(app["items"][0]["auth_version"]) > 1
         self.cookies = SimpleCookie()
         tokens = self.login(client["id"], "openid ping", app_id,
                            return_tokens=True, wrong_app_id=self.core_app_id)
@@ -1777,15 +1839,15 @@ class Fixture:
                                    token=tokens["access_token"])
             assert info == {"sub": identity["sub"]}
         web = create("/admin/clients", {
-            "appID": app_id, "label": "Independent web client", "profile": "server",
-            "redirectURIs": ["https://orders.example/callback"],
-            "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
+            "app_id": app_id, "label": "Independent web client", "profile": "server",
+            "redirect_uris": ["https://orders.example/callback"],
+            "grants": "AuthCode,Refresh", "refresh_allowed": True, "identity_scopes": ["openid"]})
         registered, _ = self.request("GET", "/admin/clients?id=" + web["id"], token=token)
         assert len(registered["items"]) == 1
         assert "client_secret" not in registered["items"][0]
-        assert "secretDigest" not in registered["items"][0]
+        assert "secret_digest" not in registered["items"][0]
         self.request("PUT", prefix + "/client-access/" + web["id"], {
-            "roleIDs": [role["id"]]},
+            "role_ids": [role["id"]]},
             token=token, headers={"If-None-Match": "*"}, status=201)
         collections = self.grouped_queries(token, app_id, role["id"],
                                            {client["id"], web["id"]})
@@ -1795,8 +1857,8 @@ class Fixture:
                                 redirect="https://orders.example/callback")
         self.verify_access(web_tokens["access_token"], web["id"], app_id, audience_uri, ["ping"])
         self.session_lifecycle(client["id"], app_id)
-        membership_path = prefix + "/memberships/" + user_id
-        self.membership_roles(token, prefix, user_id, [])
+        assignment_path = prefix + "/assignments/" + user_id
+        self.assignment_roles(token, prefix, user_id, [])
 
         def refresh(current, status=200):
             result, _ = self.request("POST", self.oauth(app_id, "token"), {
@@ -1806,28 +1868,28 @@ class Fixture:
 
         narrowed = refresh(tokens)
         self.verify_access(narrowed["access_token"], client["id"], app_id, audience_uri, [])
-        restored = self.membership_roles(token, prefix, user_id, [role["id"]])
+        restored = self.assignment_roles(token, prefix, user_id, [role["id"]])
         still_narrowed = refresh(narrowed)
         self.verify_access(still_narrowed["access_token"], client["id"], app_id, audience_uri, [])
-        before, _ = self.request("GET", prefix + "/memberships?userID=" + user_id,
+        before, _ = self.request("GET", prefix + "/assignments?user_id=" + user_id,
                                  token=token)
         before = before["items"][0]
         app_before, _ = self.request("GET", "/admin/apps?id=" + app_id, token=token)
-        suspended, _ = self.request("PUT", membership_path + "/state",
+        suspended, _ = self.request("PUT", assignment_path + "/state",
                                     {"state": "Suspended"}, token=token,
                                     headers={"If-Match": restored["item"]["etag"]})
-        self.request("PUT", membership_path + "/roles", {"roleIDs": []},
+        self.request("PUT", assignment_path + "/roles", {"role_ids": []},
                      token=token, headers={"If-Match": before["etag"]}, status=412)
-        retry, _ = self.request("PUT", membership_path + "/state",
+        retry, _ = self.request("PUT", assignment_path + "/state",
                                 {"state": "Suspended"}, token=token,
                                 headers={"If-Match": suspended["item"]["etag"]})
         assert retry == suspended
-        after, _ = self.request("GET", prefix + "/memberships?userID=" + user_id,
+        after, _ = self.request("GET", prefix + "/assignments?user_id=" + user_id,
                                 token=token)
         after = after["items"][0]
-        assert after["state"] == "Suspended" and after["roleIDs"] == before["roleIDs"]
+        assert after["state"] == "Suspended" and after["role_ids"] == before["role_ids"]
         app_after, _ = self.request("GET", "/admin/apps?id=" + app_id, token=token)
-        for field in ("version", "authVersion"):
+        for field in ("version", "auth_version"):
             assert int(after[field]) == int(before[field]) + 1
             assert int(app_after["items"][0][field]) == int(app_before["items"][0][field]) + 1
         denied = refresh(still_narrowed, 400)
@@ -1856,41 +1918,41 @@ class Fixture:
         assert len(roles) == 1
         role = roles[0]
         role_id = role["id"]
-        member_query = prefix + "/memberships?userID=" + user_id
+        member_query = prefix + "/assignments?user_id=" + user_id
         member = query(member_query)[0]
-        self.request("PUT", prefix + "/memberships/" + user_id + "/roles",
-                     {"roleIDs": [retained_role, role_id]}, token=token,
+        self.request("PUT", prefix + "/assignments/" + user_id + "/roles",
+                     {"role_ids": [retained_role, role_id]}, token=token,
                      headers={"If-Match": member["etag"]})
-        client_query = prefix + "/client-access?clientID=" + client_id
+        client_query = prefix + "/client-access?client_id=" + client_id
         access = query(client_query)[0]
         self.request("PUT", prefix + "/client-access/" + client_id,
-                     {"roleIDs": [role_id]}, token=token,
+                     {"role_ids": [role_id]}, token=token,
                      headers={"If-Match": access["etag"]})
         access_path = prefix + "/admin-access/user/"
         for invalid_id in ("0", "18446744073709551615", user_id + "junk"):
             self.request("PUT", access_path + invalid_id,
-                         {"operationIDs": [], "roleIDs": [role_id]}, token=token,
+                         {"operation_ids": [], "role_ids": [role_id]}, token=token,
                          headers={"If-None-Match": "*"}, status=400)
         self.request("PUT", access_path + "00" + user_id,
-                     {"operationIDs": [], "roleIDs": [role_id]}, token=token,
+                     {"operation_ids": [], "role_ids": [role_id]}, token=token,
                      headers={"If-None-Match": "*"}, status=201)
         delegations = query(prefix + "/admin-access?limit=1000")
         delegation = [row for row in delegations
-                      if row["actorKind"] == "User" and row["actorID"] == user_id]
+                      if row["actor_kind"] == "User" and row["actor_id"] == user_id]
         assert len(delegation) == 1
-        assert not any(row["actorID"] == "00" + user_id for row in delegations)
+        assert not any(row["actor_id"] == "00" + user_id for row in delegations)
         self.request("PUT", access_path + "000" + user_id + "/state",
                      {"state": "Suspended"}, token=token,
                      headers={"If-Match": delegation[0]["etag"]})
         delegation = [row for row in query(prefix + "/admin-access?limit=1000")
-                      if row["actorKind"] == "User" and row["actorID"] == user_id][0]
+                      if row["actor_kind"] == "User" and row["actor_id"] == user_id][0]
         assert delegation["state"] == "Suspended"
         self.request("PUT", access_path + user_id + "/state",
                      {"state": "Active"}, token=token,
                      headers={"If-Match": delegation["etag"]})
         provider_id = query("/admin/providers?limit=1000")[0]["id"]
         self.request("PUT", prefix + "/role-mappings/" + provider_id + "/" +
-                     b64(b"catalog-probe"), {"roleID": role_id}, token=token,
+                     b64(b"catalog-probe"), {"role_id": role_id}, token=token,
                      headers={"If-None-Match": "*"}, status=201)
         queries = [member_query, client_query,
                    prefix + "/admin-access?limit=1000", prefix + "/role-mappings?limit=1000"]
@@ -1906,7 +1968,7 @@ class Fixture:
         for response, error in ((missing, "precondition_required"),
                                 (stale, "precondition_failed")):
             assert response["error"] == error and response["message"]
-            assert response["correlationID"]
+            assert response["correlation_id"]
         assert [query(path) for path in queries] == before
         headers = {"If-Match": role["etag"], "Idempotency-Key": secrets.token_hex(16)}
         result, _ = self.request("DELETE", path, token=token,
@@ -1917,13 +1979,13 @@ class Fixture:
         assert int(deleted["version"]) == int(role["version"]) + 1
         after = [query(path) for path in queries]
         for items in after:
-            assert all(role_id not in item.get("roleIDs", []) and
-                       item.get("roleID") != role_id for item in items)
-        assert after[0][0]["roleIDs"] == [retained_role]
-        assert after[1][0]["roleIDs"] == []
+            assert all(role_id not in item.get("role_ids", []) and
+                       item.get("role_id") != role_id for item in items)
+        assert after[0][0]["role_ids"] == [retained_role]
+        assert after[1][0]["role_ids"] == []
         delegation = next(row for row in after[2]
-                          if row["actorKind"] == "User" and row["actorID"] == user_id)
-        assert delegation["roleIDs"] == []
+                          if row["actor_kind"] == "User" and row["actor_id"] == user_id)
+        assert delegation["role_ids"] == []
         self.stop()
         self.start()
         assert [query(path) for path in queries] == after
@@ -1957,7 +2019,7 @@ class Fixture:
         assert all(len(result["items"]) == 1 for result in snapshots)
         for result in snapshots[1:]:
             assert result["items"][0]["origin"] == "Standard"
-            assert result["items"][0]["catalogRevision"] == "1"
+            assert result["items"][0]["catalog_revision"] == "1"
         retry, _ = publish(path, manifest, token=workload)
         assert retry == published
         publish(path, dict(manifest, digest=b64(bytes(32))),
@@ -1983,21 +2045,21 @@ class Fixture:
         jwk = {"kty": "EC", "crv": "P-256", "alg": "ES256", "use": "sig",
                "kid": kid, "x": b64(public.x.to_bytes(32, "big")),
                "y": b64(public.y.to_bytes(32, "big"))}
-        value = {"appID": self.core_app_id, "id": kid,
-                 "algorithm": "ES256", "publicJwk": compact(jwk).decode(),
-                 "privateMaterial": material, "notBefore": int(time.time())}
+        value = {"app_id": self.core_app_id, "id": kid,
+                 "algorithm": "ES256", "public_jwk": compact(jwk).decode(),
+                 "private_material": material, "not_before": int(time.time())}
         before, _ = self.request("GET", path, token=token)
         self.request("POST", path,
             {key: item for key, item in dict(value,
-                providerRef="test-provider").items() if key != "privateMaterial"},
+                provider_ref="test-provider").items() if key != "private_material"},
             token=token, headers={"Idempotency-Key": secrets.token_hex(16)}, status=400)
         assert self.request("GET", path, token=token)[0] == before
         wrong = ec.generate_private_key(ec.SECP256R1())
-        self.request("POST", path, dict(value, privateMaterial=private_material(wrong)),
+        self.request("POST", path, dict(value, private_material=private_material(wrong)),
             token=token, headers={"Idempotency-Key": secrets.token_hex(16)}, status=400)
         assert self.request("GET", path, token=token)[0] == before
         self.request("POST", path,
-            dict(value, appID="18446744073709551614"), token=token,
+            dict(value, app_id="18446744073709551614"), token=token,
             headers={"Idempotency-Key": secrets.token_hex(16)}, status=404)
         assert self.request("GET", path, token=token)[0] == before
         added, _ = self.request("POST", path, value, token=token,
@@ -2006,7 +2068,7 @@ class Fixture:
         assert len(listed["items"]) == len(before["items"]) + 1
         for result in (added, listed):
             assert material not in json.dumps(result)
-            assert "privateMaterial" not in json.dumps(result)
+            assert "private_material" not in json.dumps(result)
         for restarted in (False, True):
             if restarted:
                 self.stop()
@@ -2022,7 +2084,7 @@ class Fixture:
         old = next(item for item in self.request("GET", path, token=token)[0]["items"]
                    if item["id"] == old_kid)
         retire_path = path + "/" + old_kid + "/retire"
-        retirement = {"retireAfter": int(time.time()) + 86400}
+        retirement = {"retire_after": int(time.time()) + 86400}
         self.request("POST", retire_path, retirement, token=token, status=400)
         self.request("POST", retire_path, retirement, token=token,
                      headers={"Idempotency-Key": secrets.token_hex(16)}, status=428)
@@ -2035,7 +2097,7 @@ class Fixture:
         retired = next(item for item in self.request("GET", path, token=token)[0]["items"]
                        if item["id"] == old_kid)
         assert retired["state"] == "Suspended"
-        assert retired["retireAfter"] == retirement["retireAfter"]
+        assert retired["retire_after"] == retirement["retire_after"]
         assert int(retired["version"]) == int(old["version"]) + 1
         self.verify_jwt(token)
         self.request("POST", retire_path, retirement, token=token,
@@ -2088,28 +2150,30 @@ def main():
             fixture.request("GET", "/admin/apps", status=401)
             initial, _ = fixture.request("GET", "/admin/apps", token=token)
             assert len(initial["items"]) == 1
+            # Replay must match the CLI's field order and ID encoding:
+            # idempotency compares the exact request bytes.
             app_input = {
-                "name": "http-orders", "label": "HTTP Orders",
-                "audience": "https://orders.example/api"}
+                "name": "http-orders", "audience": "https://orders.example/api",
+                "label": "HTTP Orders"}
             app_headers = {"Idempotency-Key": secrets.token_hex(16)}
-            app = fixture.admin_secret("appEnroll", dict(app_input, **{
-                "$idempotencyKey": app_headers["Idempotency-Key"]}))
+            app = fixture.admin_secret("appEnroll", app_input,
+                                       idempotence=app_headers["Idempotency-Key"])
             assert app["item"]["client_secret"] and app["item"]["client_id"]
             basic = base64.b64encode((app["item"]["client_id"] + ":" +
                                       app["item"]["client_secret"]).encode()).decode()
-            app_id = app["item"]["appID"]
+            app_id = app["item"]["app_id"]
             assert app["item"]["client_id"] == app_input["name"]
             workload, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
                 "grant_type": "client_credentials", "scope": "zum.catalog"},
                 form=True, headers={"Authorization": "Basic " + basic})
             assert workload["access_token"] and "refresh_token" not in workload
             fixture.management_matrix(token, workload["access_token"])
-            delegation_path = "/admin/apps/" + app["item"]["appID"] + "/admin-access"
+            delegation_path = "/admin/apps/" + app["item"]["app_id"] + "/admin-access"
             delegations, _ = fixture.request("GET", delegation_path, token=token)
             delegation = next(row for row in delegations["items"]
-                              if row["actorKind"] == "Client" and
-                              row["actorID"] == app["item"]["client_id"])
-            state_path = delegation_path + "/client/" + delegation["actorID"] + "/state"
+                              if row["actor_kind"] == "Client" and
+                              row["actor_id"] == app["item"]["client_id"])
+            state_path = delegation_path + "/client/" + delegation["actor_id"] + "/state"
             suspended, _ = fixture.request("PUT", state_path, {"state": "Suspended"},
                                             token=token, headers={"If-Match": delegation["etag"]})
             fixture.request("GET", "/admin/operations", token=workload["access_token"], status=403)
@@ -2119,7 +2183,7 @@ def main():
             fixture.request("GET", "/admin/apps", token=workload["access_token"], status=403)
             replay, _ = fixture.request("POST", "/admin/apps", app_input,
                                         token=token, headers=app_headers)
-            assert replay["status"] == "complete" and app_id in replay["resultIDs"]
+            assert replay["status"] == "complete" and app_id in replay["result_ids"]
             assert "client_secret" not in replay and "item" not in replay
             fixture.request("POST", "/admin/apps", dict(app_input, label="Changed"),
                             token=token, headers=app_headers, status=409)
@@ -2147,14 +2211,14 @@ def main():
             assert type(action_id) is int and actions["items"][0]["id"] == action_id
             replay, _ = fixture.request("POST", path, action_body,
                                         token=token, headers=action_headers)
-            assert replay["status"] == "complete" and replay["resultIDs"] == [str(action_id)]
+            assert replay["status"] == "complete" and replay["result_ids"] == [str(action_id)]
             failed_headers = {"Idempotency-Key": secrets.token_hex(16)}
             for _ in range(2):
                 fixture.request("POST", path, action_body, token=token,
                                 headers=failed_headers, status=409)
                 failed, _ = fixture.request("GET", "/admin/operations?" + urlencode({
                     "operation": "actionAdd",
-                    "idempotencyKey": failed_headers["Idempotency-Key"]}), token=token)
+                    "idempotence": failed_headers["Idempotency-Key"]}), token=token)
                 assert failed["items"] == []
             def workload_token(status=200):
                 return fixture.request("POST", fixture.oauth(app_id, "token"), {
@@ -2183,11 +2247,11 @@ def main():
                                       headers={"If-Match": disabled["etag"]})[0]["item"]
             active = fixture.request("GET", app_query, token=token)[0]["items"][0]
             assert active["etag"] == changed["etag"] and active["state"] == "Active"
-            app_version = active["authVersion"]
+            app_version = active["auth_version"]
             workload_token()
             core_id = initial["items"][0]["id"]
             access_path = "/admin/apps/" + core_id + "/client-access"
-            access_query = access_path + "?" + urlencode({"clientID": app["item"]["client_id"]})
+            access_query = access_path + "?" + urlencode({"client_id": app["item"]["client_id"]})
             access, _ = fixture.request("GET", access_query, token=token)
             assert access["items"] == []
             workload_token()
@@ -2208,7 +2272,7 @@ def main():
             enrollment_replay, _ = fixture.request("POST", "/admin/apps", app_input,
                                                    token=token, headers=app_headers)
             assert enrollment_replay["status"] == "complete"
-            assert app_id in enrollment_replay["resultIDs"]
+            assert app_id in enrollment_replay["result_ids"]
             assert "client_secret" not in enrollment_replay and "item" not in enrollment_replay
             assert app["item"]["client_secret"] not in json.dumps(enrollment_replay)
             # The preceding graceful stop drained ZiLog. Check those events,
@@ -2231,12 +2295,12 @@ def main():
             assert len(actions["items"]) == 1 and actions["items"][0]["id"] == action_id
             replay, _ = fixture.request("POST", path, action_body,
                                         token=token, headers=action_headers)
-            assert replay["status"] == "complete" and replay["resultIDs"] == [str(action_id)]
+            assert replay["status"] == "complete" and replay["result_ids"] == [str(action_id)]
             apps, _ = fixture.request("GET", "/admin/apps", token=token)
             assert len(apps["items"]) == 2
             current, _ = fixture.request("GET", "/admin/apps?id=" + app_id, token=token)
             assert current["items"][0]["label"] == update["label"]
-            assert current["items"][0]["authVersion"] == app_version
+            assert current["items"][0]["auth_version"] == app_version
             access, _ = fixture.request("GET", access_query, token=token)
             assert access["items"] == []
             client, _ = fixture.request("GET", client_query, token=token)
@@ -2244,9 +2308,22 @@ def main():
             workload_token()
             replay, _ = fixture.request("POST", "/admin/apps", app_input,
                                         token=token, headers=app_headers)
-            assert replay["status"] == "complete" and app_id in replay["resultIDs"]
+            assert replay["status"] == "complete" and app_id in replay["result_ids"]
             assert "client_secret" not in replay and "item" not in replay
             publisher, _ = workload_token()
+            # Registration is client-owned; the administrative token cannot
+            # substitute for the application's catalog publisher token.
+            ssf_path = "/admin/apps/" + app_id + "/ssf"
+            ssf_input = {"receiver_id": "http-fixture",
+                         "delivery_url": fixture.origin + "/ssf",
+                         "callback_auth": "Bearer " + secrets.token_urlsafe(24),
+                         "expires_in": 2}
+            fixture.request("POST", ssf_path, ssf_input, token=token, status=403)
+            fixture.request("POST", ssf_path, dict(ssf_input, expires_in=1),
+                            token=publisher["access_token"], status=400)
+            lease, _ = fixture.request("POST", ssf_path, ssf_input,
+                                       token=publisher["access_token"])
+            assert lease["expires_in"] == 2 and lease["expires"] > time.time()
             fixture.catalog(token, publisher["access_token"], app_id, core_id)
             foreign_access = fixture.app_login(token, app_id, action_id, app_input["audience"])
             fixture.administrative_queries(token, app_id)

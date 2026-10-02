@@ -42,8 +42,8 @@ struct Nested {
 };
 
 #define Nested_Fields(macro, ...) macro( \
-  (((i1), (Ctor<0>)), (Int32)), \
-  (((i2), (Ctor<1>)), (Int32)) __VA_OPT__(, __VA_ARGS__))
+  (((i1), (Ctor<0>)),	Int32), \
+  (((i2), (Ctor<1>)),	Int32) __VA_OPT__(, __VA_ARGS__))
 
 #define Nested_Struct(...) ZfStruct(, (Nested, JSON, Bah) __VA_OPT__(, __VA_ARGS__))
 
@@ -70,29 +70,24 @@ struct Foo {
 };
 
 #define FooFloatFields \
-  (((float_),		(Ctor<8>)),	(Float)), \
-  (((float_ranged),	(Ctor<9>, (Range<0.0, 1>))),	(Float, 0.42))
+  (((float_),		(Ctor<8>)),						Float), \
+  (((float_ranged),	(Ctor<9>, (Range<0.0, 1>), Deflt<0.42>)),		Float)
 
 ZfStruct(, (Foo, JSON),
-  (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
-  (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
-  (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
-  (((int_),		(Ctor<3>)),	(Int32)),
-  (((int_ranged),	(Ctor<4>, (Range<0, 100>))),	(Int32, 42)),
-  (((hex),		(Ctor<5>, Hex)),
-    					(UInt32, 0xdeadbeef)),
-  (((enum_),		(Ctor<6>, Enum<Values::Map>)),
-    					(Int32, Values::Normal)),
-  (((daFlags),		(Ctor<7>, Flags<Flags::Map>)),
-    					(UInt128, Flags::Bit1())),
+  (((string, Rd),	(Ctor<0>, Deflt<"hello \"world\""_z>)),			CString),
+  (((bytes),		(Ctor<1>, Deflt<"bytes"_z>)),				Bytes),
+  (((id),		(Ctor<2>, Mutable, Deflt<"goodbye"_z>)),		String),
+  (((int_),		(Ctor<3>)),						Int32),
+  (((int_ranged),	(Ctor<4>, (Range<0, 100>), Deflt<42>)),			Int32),
+  (((hex),		(Ctor<5>, Hex, Deflt<0xdeadbeef>)),			UInt32),
+  (((enum_),		(Ctor<6>, Enum<Values::Map>, Deflt<Values::Normal>)),	Int32),
+  (((daFlags),		(Ctor<7>, Flags<Flags::Map>, Deflt<Flags::Bit1()>)),	UInt128),
   FooFloatFields,
-  (((fixed),		(Ctor<10>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))),		(Fixed)),
-  (((decimal),		(Ctor<11>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))),	(Decimal)),
-  (((time_),		(Ctor<12>)),	(Time)),
-  (((nested),		(Ctor<13>)),	(UDT)),
-  (((bytesVec),		(Ctor<14>)),	(BytesVec)));
+  (((fixed),		(Ctor<10>, (Range<ZuDecimal{0}, ZuDecimal{1}>))),	Fixed),
+  (((decimal),		(Ctor<11>, (Range<ZuDecimal{0}, ZuDecimal{1}>))),	Decimal),
+  (((time_),		(Ctor<12>)),						Time),
+  (((nested),		(Ctor<13>)),						UDT),
+  (((bytesVec),		(Ctor<14>)),						BytesVec));
 
 ZfStructRender(, Foo, Bah,
   string,
@@ -139,8 +134,8 @@ struct BoxFoo {
 };
 
 ZfStruct(, (BoxFoo, JSON),
-  (((value),	(Ctor<0>, JSON::String<>)),	(Int32)),
-  (((values),	(Ctor<1>, JSON::String<>)),	(Int32Vec)));
+  (((value),	(Ctor<0>, JSON::String<>)),	Int32),
+  (((values),	(Ctor<1>, JSON::String<>)),	Int32Vec));
 
 template <typename T, typename = void>
 struct MinMax {
@@ -185,8 +180,8 @@ struct Bazz {
   BazArray bazArray;
 };
 ZfStruct(, Bazz,
-  (((baz), (Ctor<0>)), (UDT)),
-  (((bazArray), (Ctor<1>)), (UDT)));
+  (((baz), (Ctor<0>)),		UDT),
+  (((bazArray), (Ctor<1>)),	UDT));
 
 struct OptFoo {
   const char *head = nullptr;
@@ -195,10 +190,10 @@ struct OptFoo {
   const char *tail = "tail";
 };
 ZfStruct(, (OptFoo, JSON),
-  (((head),	(Ctor<0>, JSON::Opt)),	(CString)),
-  (((req),	(Ctor<1>)),		(CString)),
-  (((mid),	(Ctor<2>, JSON::Opt)),	(CString)),
-  (((tail),	(Ctor<3>)),		(CString)));
+  (((head),	(Ctor<0>, JSON::Opt)),	CString),
+  (((req),	(Ctor<1>)),		CString),
+  (((mid),	(Ctor<2>, JSON::Opt)),	CString),
+  (((tail),	(Ctor<3>)),		CString));
 
 struct JSONUpdate {
   int required;
@@ -206,16 +201,16 @@ struct JSONUpdate {
   int reset;
 };
 ZfStruct(, (JSONUpdate, JSON),
-  (((required), (Ctor<0>, Mutable, Required)), (Int32)),
-  (((kept),     (Ctor<1>, Mutable)),           (Int32, 2)),
-  (((reset),    (Ctor<2>, Mutable, Reset)),    (Int32, 3)));
+  (((required), (Ctor<0>, Mutable, Required)),		Int32),
+  (((kept),     (Ctor<1>, Mutable, Deflt<2>)),		Int32),
+  (((reset),    (Ctor<2>, Mutable, Reset, Deflt<3>)),	Int32));
 
 struct FmtInt {
   uint128_t value = 0;
 };
 using FmtIntFormat = ZuFmt::Hex<false, ZuFmt::Right<32>>;
 ZfStruct(, (FmtInt, JSON),
-  (((value), (Ctor<0>, JSON::String<FmtIntFormat>)), (UInt128)));
+  (((value), (Ctor<0>, JSON::String<FmtIntFormat>)),	UInt128));
 
 ZuDerive(MapKey, (ZtString<ZtStringHeapID<"ZfTest.MapKey">>));
 
@@ -241,8 +236,8 @@ struct MapObj {
   int mutable_ = 0;
 };
 ZfStruct(, (MapObj, JSON, Bah),
-  (((fixed),	(Ctor<0>)),		(Int32)),
-  (((mutable_),	(Ctor<1>, Mutable)),	(Int32)));
+  (((fixed),	(Ctor<0>)),		Int32),
+  (((mutable_),	(Ctor<1>, Mutable)),	Int32));
 
 using ObjHash =
   ZfMapTest<"ZfTest.JSON.ObjHash", ZmHashKV<MapKey, MapObj>>;
@@ -306,7 +301,7 @@ struct MapHolder {
   IntTreeRef map;
 };
 ZfStruct(, (MapHolder, JSON),
-  (((map), (Ctor<0>, Mutable)), (UDT)));
+  (((map), (Ctor<0>, Mutable)),	UDT));
 
 ZuAssert((ZuIsSame<IntHash::Key, MapKey>{}));
 ZuAssert((ZuIsSame<IntHash::Val, int>{}));
@@ -316,8 +311,8 @@ ZuAssert((ZuIsSame<
 
 struct UnionA { int foo; };
 struct UnionB { int bar; };
-ZfStruct(, (UnionA, JSON), (((foo), (Ctor<0>, Mutable)), (Int32)));
-ZfStruct(, (UnionB, JSON), (((bar), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct(, (UnionA, JSON), (((foo), (Ctor<0>, Mutable)), Int32));
+ZfStruct(, (UnionB, JSON), (((bar), (Ctor<0>, Mutable)), Int32));
 struct UnionArray : public ZtArray<int> {
   ZuDerive_(UnionArray, ZtArray<int>)
   friend ZfJSON::AsArray<ZfFieldTC::Int32> ZfJSON_Fmt(UnionArray *);
@@ -325,7 +320,7 @@ struct UnionArray : public ZtArray<int> {
 struct UnionHolder {
   ZfJSON::Union<UnionA, UnionB, UnionArray, MapText>	u;
 };
-ZfStruct(, (UnionHolder, JSON), (((u), (Ctor<0>, Mutable)), (UDT)));
+ZfStruct(, (UnionHolder, JSON), (((u), (Ctor<0>, Mutable)), UDT));
 
 using JSONValue = ZfJSON::Union<>;
 struct JSONValueVec : public ZtArray<JSONValue> {
@@ -333,7 +328,7 @@ struct JSONValueVec : public ZtArray<JSONValue> {
   friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(JSONValueVec *);
 };
 struct JSONValueReply { JSONValueVec items; };
-ZfStruct(, (JSONValueReply, JSON), (((items), (Required)), (UDT)));
+ZfStruct(, (JSONValueReply, JSON), (((items), (Required)), UDT));
 
 int main(int argc, char **argv)
 {
@@ -658,7 +653,7 @@ int main(int argc, char **argv)
 
     JSONUpdate loaded{1, 2, 8};
     missingHandler.load(loaded);
-    ZuCheck(ZuNull(loaded.required));
+    ZuCheck(loaded.required == 1);
     ZuCheck(loaded.kept == 5);
     ZuCheck(loaded.reset == 3);
 

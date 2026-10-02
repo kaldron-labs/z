@@ -93,24 +93,23 @@ struct SETSubject {
   int64_t expires = 0;
 };
 ZfStruct(, (SETSubject, JSON),
-  (((format),		(Required)),	(String)),
-  (((issuerURL),	(JSON::ID<"iss">, Required)),	(String)),
-  (((familyID),		(JSON::ID<"family_id">, Required)),	(String)),
-  (((expires),		(JSON::ID<"exp">, Required)),	(Int64)));
+  (((format),		(Required)),				String),
+  (((issuerURL),	(JSON::ID<"iss">, Required)),		String),
+  (((familyID),		(JSON::ID<"family_id">, Required)),	String),
+  (((expires),		(JSON::ID<"exp">, Required)),		Int64));
 
 struct SETEvent {
   SETSubject subject;
 };
 ZfStruct(, (SETEvent, JSON),
-  (((subject),		(Required)),	(UDT)));
+  (((subject),		(Required)),	UDT));
 
 struct SETEvents {
   SETEvent revoked;
 };
 ZfStruct(, (SETEvents, JSON),
   (((revoked),
-    (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required)),
-    (UDT)));
+    (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required)),	UDT));
 
 struct SETClaims {
   String issuerURL;
@@ -120,11 +119,11 @@ struct SETClaims {
   SETEvents events;
 };
 ZfStruct(, (SETClaims, JSON),
-  (((issuerURL),	(JSON::ID<"iss">, Required)),	(String)),
-  (((audience),		(JSON::ID<"aud">, Required)),	(String)),
-  (((id),		(JSON::ID<"jti">, Required)),	(String)),
-  (((issued),		(JSON::ID<"iat">, Required)),	(Int64)),
-  (((events),		(Required)),	(UDT)));
+  (((issuerURL),	(JSON::ID<"iss">, Required)),	String),
+  (((audience),		(JSON::ID<"aud">, Required)),	String),
+  (((id),		(JSON::ID<"jti">, Required)),	String),
+  (((issued),		(JSON::ID<"iat">, Required)),	Int64),
+  (((events),		(Required)),			UDT));
 
 struct Introspection {
   bool active = false;
@@ -141,26 +140,26 @@ struct Introspection {
   String grantType;
 };
 ZfStruct(, (Introspection, JSON),
-  (((active),		(Required)),				(Bool)),
-  (((issuerURL),	(JSON::ID<"iss">, JSON::Opt)),	(String)),
-  (((subject),		(JSON::ID<"sub">, JSON::Opt)),	(String)),
-  (((clientID),		(JSON::ID<"client_id">, JSON::Opt)), (String)),
-  (((audience),		(JSON::ID<"aud">, JSON::Opt)),	(String)),
-  (((jti),		(JSON::Opt)),				(String)),
-  (((scope),		(JSON::Opt)),				(String)),
-  (((actions),		(JSON::Opt)),				(StringVec)),
-  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, JSON::Opt)), (UInt64)),
-  (((expires),		(JSON::ID<"exp">, JSON::Opt)),	(Int64)),
-  (((amr),		(JSON::Opt)),			(StringVec)),
-  (((grantType),		(JSON::ID<"grant_type">, JSON::Opt)), (String)));
+  (((active),		(Required)),						Bool),
+  (((issuerURL),	(JSON::ID<"iss">, JSON::Opt)),				String),
+  (((subject),		(JSON::ID<"sub">, JSON::Opt)),				String),
+  (((clientID),		(JSON::ID<"client_id">, JSON::Opt)),			String),
+  (((audience),		(JSON::ID<"aud">, JSON::Opt)),				String),
+  (((jti),		(JSON::Opt)),						String),
+  (((scope),		(JSON::Opt)),						String),
+  (((actions),		(JSON::Opt)),						StringVec),
+  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, JSON::Opt)),	UInt64),
+  (((expires),		(JSON::ID<"exp">, JSON::Opt)),				Int64),
+  (((amr),		(JSON::Opt)),						StringVec),
+  (((grantType),		(JSON::ID<"grant_type">, JSON::Opt)),		String));
 
 struct Token {
   String accessToken;
   uint64_t expiresIn = 0;
 };
 ZfStruct(, (Token, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)),	(String)),
-  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	(UInt64)));
+  (((accessToken),	(JSON::ID<"access_token">, Required)),	String),
+  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	UInt64));
 
 struct Discovery {
   String issuerURL;
@@ -168,9 +167,9 @@ struct Discovery {
   String jwksURI;
 };
 ZfStruct(, (Discovery, JSON),
-  (((issuerURL),	(JSON::ID<"issuer">, Required)),	(String)),
-  (((tokenEndpoint),	(JSON::ID<"token_endpoint">, Required)),	(String)),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, Required)),	(String)));
+  (((issuerURL),	(JSON::ID<"issuer">, Required)),		String),
+  (((tokenEndpoint),	(JSON::ID<"token_endpoint">, Required)),	String),
+  (((jwksURI),		(JSON::ID<"jwks_uri">, Required)),		String));
 
 struct JWK {
   String alg;
@@ -182,13 +181,13 @@ struct JWK {
   String y;
 };
 ZfStruct(, (JWK, JSON),
-  (((alg),		(JSON::Opt)),	(String)),
-  (((crv),		(Required)),	(String)),
-  (((kid),		(Required)),	(String)),
-  (((kty),		(Required)),	(String)),
-  (((use),		(JSON::Opt)),	(String)),
-  (((x),		(Required)),	(String)),
-  (((y),		(Required)),	(String)));
+  (((alg),		(JSON::Opt)),	String),
+  (((crv),		(Required)),	String),
+  (((kid),		(Required)),	String),
+  (((kty),		(Required)),	String),
+  (((use),		(JSON::Opt)),	String),
+  (((x),		(Required)),	String),
+  (((y),		(Required)),	String));
 ZuDerive(JWKWireArray,
   (ZtArray<JWK, ZtArrayHeapID<"Zum.Service.JWKs">>));
 struct JWKWireVec : public JWKWireArray {
@@ -197,7 +196,7 @@ struct JWKWireVec : public JWKWireArray {
 };
 struct JWKSResponse { JWKWireVec keys; };
 ZfStruct(, (JWKSResponse, JSON),
-  (((keys),		(Required)),	(UDT)));
+  (((keys),		(Required)),	UDT));
 
 template <typename T>
 static bool jsonLoad(String &json, unsigned limit, T &value)
@@ -432,8 +431,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
             if (!self->config.ssf.enabled ||
                 self->config.ssf.transmitterIssuer ==
                   self->config.managementIssuerURL) {
-              self->state = Started;
-              complete(ServiceError::OK);
+              self->started_(ZuMv(complete));
               return;
             }
             self->ssfKeys_([self = ZuMv(self), complete = ZuMv(complete)](
@@ -447,13 +445,69 @@ struct ServiceState_ : public Heap, public ZmObject  {
                 complete(ServiceError::Unauthorized);
                 return;
               }
-              self->state = Started;
-              complete(ServiceError::OK);
+              self->started_(ZuMv(complete));
             });
           });
         });
       });
     });
+  }
+
+  void started_(ServiceDoneFn complete)
+  {
+    state = Started;
+    if (!config.ssf.enabled) { complete(ServiceError::OK); return; }
+    register_([self = ZmRef<ServiceState_>{this},
+        complete = ZuMv(complete)](bool ok) mutable {
+      if (self->state != Started) { complete(ServiceError::Stopped); return; }
+      if (!ok) self->state = Initial;
+      complete(ok ? ServiceError::OK : ServiceError::Unavailable);
+    });
+  }
+
+  void register_(ServiceReadyFn complete)
+  {
+    token_([self = ZmRef<ServiceState_>{this}, complete = ZuMv(complete)](
+        bool ok) mutable {
+      if (!ok || self->state != Started) { complete(false); return; }
+      String url = endpoint(self->config.managementURL, "/admin/apps/");
+      url << self->appID << "/ssf";
+      String body;
+      ZfJSON::save(body, SSFRegistration{
+        .receiverID = self->config.ssf.receiverID,
+        .deliveryURL = self->config.ssf.deliveryURL,
+        .callbackAuth = self->config.ssf.callbackAuth,
+        .expiresIn = self->config.ssf.lease});
+      self->send_(ServiceHTTPRequest{.method = ServiceMethod::POST,
+        .url = ZuMv(url),
+        .authorization = String{"Bearer "} << self->accessToken,
+        .contentType = "application/json", .body = ZuMv(body)},
+        [self = ZuMv(self), complete = ZuMv(complete)](
+            ServiceHTTPResponse response) mutable {
+          SSFLease lease;
+          bool ok = self->state == Started && response.status == 200 &&
+            jsonLoad(response.body, self->config.responseMax, lease) &&
+            lease.expiresIn >= 2 && lease.expires > Zm::now().sec();
+          if (ok) self->registerArm_(lease.expiresIn>>1);
+          complete(ok);
+        });
+    });
+  }
+
+  void registerArm_(uint32_t delay)
+  {
+    if (state != Started) return;
+    if (registerArmed) config.scheduler->del(&registerTimer);
+    registerArmed = true;
+    config.scheduler->add(&registerTimer, Zm::now() + ZuTime{double(delay)},
+      ZmScheduler::Update, [this](auto &&arm) {
+        return arm([this]() {
+          registerArmed = false;
+          register_([self = ZmRef<ServiceState_>{this}](bool ok) mutable {
+            if (!ok) self->registerArm_(1);
+          });
+        });
+      }, config.sid);
   }
 
   void authenticate_(ServiceReadyFn complete)
@@ -910,7 +964,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
         .url = ZuMv(url),
         .authorization = String{"Bearer "} << self->accessToken,
         .contentType = "application/json", .ifMatch = ZuMv(etag),
-        .idempotencyKey = ZuMv(idem), .manifest = ZuMv(manifest)},
+        .idempotence = ZuMv(idem), .manifest = ZuMv(manifest)},
         [complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
           complete(ServiceProtocolResult{.body = ZuMv(response.body),
             .status = response.status, .error = serviceStatus(response.status)});
@@ -923,6 +977,10 @@ struct ServiceState_ : public Heap, public ZmObject  {
     if (state == Stopped) { complete(ServiceError::OK); return; }
     if (state == Stopping) { stopWaiters.push(ZuMv(complete)); return; }
     state = Stopping;
+    if (registerArmed) {
+      config.scheduler->del(&registerTimer);
+      registerArmed = false;
+    }
     stopWaiters.push(ZuMv(complete));
     stopped_();
   }
@@ -937,6 +995,10 @@ struct ServiceState_ : public Heap, public ZmObject  {
 
   void clear_()
   {
+    if (registerArmed) {
+      config.scheduler->del(&registerTimer);
+      registerArmed = false;
+    }
     if (expiryArmed) {
       config.scheduler->del(&expiryTimer);
       expiryArmed = false;
@@ -978,6 +1040,8 @@ struct ServiceState_ : public Heap, public ZmObject  {
   int8_t state = Initial;
   bool renewing = false;
   bool keysRefreshing = false;
+  ZmScheduler::Timer registerTimer;
+  bool registerArmed = false;
   ZmScheduler::Timer expiryTimer;
   bool expiryArmed = false;
 };
@@ -1002,7 +1066,8 @@ bool Service::init(ServiceConfig config, ServiceHTTPFn http)
       (config.introspectionURL && (!serviceURL(config.introspectionURL, false) ||
         !config.introspectionClientID || !config.introspectionSecret)) ||
       (config.ssf.enabled && (!config.ssf.receiverID ||
-        !config.ssf.callbackPath || !config.ssf.callbackAuth ||
+        !serviceURL(config.ssf.deliveryURL, false) ||
+        !config.ssf.callbackAuth || config.ssf.lease < 2 ||
         !config.ssf.transmitterIssuer ||
         !serviceIssuer(config.ssf.transmitterIssuer) ||
         !config.ssf.audience ||

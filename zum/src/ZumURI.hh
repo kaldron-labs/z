@@ -23,15 +23,15 @@ struct AppIDPath {
   AppID appID = 0;
 };
 ZfStruct(, (AppIDPath, URI),
-  (((appID), (URI::PathIndex<0>, Required)), (UInt64)));
+  (((appID), (URI::PathIndex<0>, Required)),	UInt64));
 
 struct AppIssuerPath {
   ZuCSpan oauth2;
   AppID appID = 0;
 };
 ZfStruct(, (AppIssuerPath, URI),
-  (((oauth2),	(URI::PathIndex<0>, Required)),	(String)),
-  (((appID),	(URI::PathIndex<1>, Required)),	(UInt64)));
+  (((oauth2),	(URI::PathIndex<0>, Required)),	String),
+  (((appID),	(URI::PathIndex<1>, Required)),	UInt64));
 
 struct AppEndpointPath {
   ZuCSpan oauth2;
@@ -40,10 +40,10 @@ struct AppEndpointPath {
   ZuCSpan endpoint;
 };
 ZfStruct(, (AppEndpointPath, URI),
-  (((oauth2),	(URI::PathIndex<0>, Required)),	(String)),
-  (((appID),	(URI::PathIndex<1>, Required)),	(UInt64)),
-  (((group),	(URI::PathIndex<2>, Required)),	(String)),
-  (((endpoint),	(URI::PathIndex<3>, Required)),	(String)));
+  (((oauth2),	(URI::PathIndex<0>, Required)),	String),
+  (((appID),	(URI::PathIndex<1>, Required)),	UInt64),
+  (((group),	(URI::PathIndex<2>, Required)),	String),
+  (((endpoint),	(URI::PathIndex<3>, Required)),	String));
 
 struct AppNestedEndpointPath {
   ZuCSpan oauth2;
@@ -53,11 +53,11 @@ struct AppNestedEndpointPath {
   ZuCSpan endpoint;
 };
 ZfStruct(, (AppNestedEndpointPath, URI),
-  (((oauth2),	(URI::PathIndex<0>, Required)),	(String)),
-  (((appID),	(URI::PathIndex<1>, Required)),	(UInt64)),
-  (((group),	(URI::PathIndex<2>, Required)),	(String)),
-  (((section),	(URI::PathIndex<3>, Required)),	(String)),
-  (((endpoint),	(URI::PathIndex<4>, Required)),	(String)));
+  (((oauth2),	(URI::PathIndex<0>, Required)),	String),
+  (((appID),	(URI::PathIndex<1>, Required)),	UInt64),
+  (((group),	(URI::PathIndex<2>, Required)),	String),
+  (((section),	(URI::PathIndex<3>, Required)),	String),
+  (((endpoint),	(URI::PathIndex<4>, Required)),	String));
 
 struct AppOIDCMetadataPath {
   ZuCSpan oauth2;
@@ -66,10 +66,10 @@ struct AppOIDCMetadataPath {
   ZuCSpan endpoint;
 };
 ZfStruct(, (AppOIDCMetadataPath, URI),
-  (((oauth2),	(URI::PathIndex<0>, Required)),	(String)),
-  (((appID),	(URI::PathIndex<1>, Required)),	(UInt64)),
-  (((wellKnown),	(URI::PathIndex<2>, Required)),	(String)),
-  (((endpoint),	(URI::PathIndex<3>, Required)),	(String)));
+  (((oauth2),	(URI::PathIndex<0>, Required)),		String),
+  (((appID),	(URI::PathIndex<1>, Required)),		UInt64),
+  (((wellKnown),	(URI::PathIndex<2>, Required)),	String),
+  (((endpoint),	(URI::PathIndex<3>, Required)),		String));
 
 struct AppOAuthMetadataPath {
   ZuCSpan wellKnown;
@@ -78,10 +78,10 @@ struct AppOAuthMetadataPath {
   AppID appID = 0;
 };
 ZfStruct(, (AppOAuthMetadataPath, URI),
-  (((wellKnown),	(URI::PathIndex<0>, Required)),	(String)),
-  (((endpoint),	(URI::PathIndex<1>, Required)),	(String)),
-  (((oauth2),	(URI::PathIndex<2>, Required)),	(String)),
-  (((appID),	(URI::PathIndex<3>, Required)),	(UInt64)));
+  (((wellKnown),	(URI::PathIndex<0>, Required)),	String),
+  (((endpoint),	(URI::PathIndex<1>, Required)),		String),
+  (((oauth2),	(URI::PathIndex<2>, Required)),		String),
+  (((appID),	(URI::PathIndex<3>, Required)),		UInt64));
 
 } // namespace Zum
 

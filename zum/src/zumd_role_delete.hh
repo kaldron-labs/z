@@ -40,7 +40,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   template <typename T>
   static auto authVersion(const T &item)
   {
-    if constexpr (ZuIsSame<T, Membership>{} || ZuIsSame<T, ClientAccess>{})
+    if constexpr (ZuIsSame<T, Assignment>{} || ZuIsSame<T, ClientAccess>{})
       return item.authVersion;
     else
       return uint64_t{0};
@@ -49,7 +49,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
   template <typename T>
   static void authVersion(T &item, uint64_t value)
   {
-    if constexpr (ZuIsSame<T, Membership>{} || ZuIsSame<T, ClientAccess>{})
+    if constexpr (ZuIsSame<T, Assignment>{} || ZuIsSame<T, ClientAccess>{})
       item.authVersion = value;
   }
 
@@ -84,7 +84,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
 	  const auto owner = (Release ? Fwd : !Fwd) ? saga->id() : uint128_t{0};
 	  if (item.owner != owner || item.version != old.version + changed ||
 	      authVersion(item) != authVersion(old) +
-		(changed && (ZuIsSame<T, Membership>{} || ZuIsSame<T, ClientAccess>{})) ||
+		(changed && (ZuIsSame<T, Assignment>{} || ZuIsSame<T, ClientAccess>{})) ||
 	      item.updated != (changed ? updated : old.updated) ||
 	      item.roleIDs != (changed ? next : old.roleIDs)) {
 	    complete(!Fwd);
@@ -153,8 +153,8 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaRepeatStep(3, zum.membership, Update, members.length()) {
-    refs<Fwd, false>(context->memberships, members, ZuMv(complete));
+  ZdbSagaRepeatStep(3, zum.assignment, Update, members.length()) {
+    refs<Fwd, false>(context->assignments, members, ZuMv(complete));
     return {};
   }
   ZdbSagaRepeatStep(4, zum.client_access, Update, clients.length()) {
@@ -198,8 +198,8 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
     return {};
   }
 
-  ZdbSagaRepeatStep(7, zum.membership, Update, members.length()) {
-    refs<Fwd, true>(context->memberships, members, ZuMv(complete));
+  ZdbSagaRepeatStep(7, zum.assignment, Update, members.length()) {
+    refs<Fwd, true>(context->assignments, members, ZuMv(complete));
     return {};
   }
   ZdbSagaRepeatStep(8, zum.client_access, Update, clients.length()) {
@@ -253,14 +253,14 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, RoleDelete,
-  (((app), (Ctor<0>)), (UDT)),
-  (((role), (Ctor<1>)), (UDT)),
-  (((members), (Ctor<2>)), (BytesVec)),
-  (((clients), (Ctor<3>)), (BytesVec)),
-  (((admins), (Ctor<4>)), (BytesVec)),
-  (((maps), (Ctor<5>)), (BytesVec)),
-  (((updated), (Ctor<6>)), (Int64)),
-  (((request), (Ctor<7>)), (UDT)));
+  (((app), (Ctor<0>)),		UDT),
+  (((role), (Ctor<1>)),		UDT),
+  (((members), (Ctor<2>)),	BytesVec),
+  (((clients), (Ctor<3>)),	BytesVec),
+  (((admins), (Ctor<4>)),	BytesVec),
+  (((maps), (Ctor<5>)),		BytesVec),
+  (((updated), (Ctor<6>)),	Int64),
+  (((request), (Ctor<7>)),	UDT));
 
 } // namespace Zum
 

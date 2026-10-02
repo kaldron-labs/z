@@ -7,6 +7,7 @@
 // Production-wire fixture for the ztchub multi-process test.
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #ifdef __linux__
 #include <sys/socket.h>
@@ -17,6 +18,8 @@
 #include <zlib/Zfb.hh>
 #include <zlib/ZfbStruct.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmThread.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
@@ -30,10 +33,17 @@
 #include <zlib/ZtcFB.hh>
 #include <zlib/ztchub_daemon.hh>
 #include <zlib/ZtcMsg.hh>
+#include <zlib/ZtcRing.hh>
 #include <zlib/ZumURI.hh>
 #include <zlib/Zws.hh>
 
+#include "ZtcControlled.hh"
+
 namespace ZtcHubWireTest_ {
+
+struct Object { unsigned value = 0; };
+struct BaseObject : public ZmHeap<"ZDash.BaseHeap", Object>, public Object { };
+struct LateObject : public ZmHeap<"ZDash.LiveHeap", Object>, public Object { };
 
 static ZmSemaphore *signalDone = nullptr;
 static void interrupted() { if (signalDone) signalDone->post(); }
@@ -46,34 +56,47 @@ struct Options {
   ZtString<> caPath;
   ZtString<> cookie;
   ZtString<> origin;
+  ZtString<> group = "App";
+  Ztc::fbs::Group groupID = Ztc::fbs::Group::App;
   uint32_t telemetry = 1;
   uint32_t expect = 1;
   uint32_t stallMS = 0;
   uint32_t payload = 0;
   uint32_t controlBurst = 1;
+  uint32_t snapshots = 1;
+  uint32_t expectPublishers = 0;
   bool inventory = false;
   bool oneShot = false;
-  bool waitEOS = false;
+  bool waitShutdown = false;
+  bool controlled = false;
+  bool changes = false;
+  bool sourceErrors = false;
   bool help = false;
 };
 
 ZfStruct(, (Options, CLI),
-  (((mode), (CLI::Long<"mode">)), (String)),
-  (((issuerURL), (CLI::Long<"issuer">)), (String)),
-  (((deviceID), (CLI::Long<"device-id">)), (String)),
-  (((wssURL), (CLI::Long<"wss">)), (String)),
-  (((caPath), (CLI::Long<"ca">)), (String)),
-  (((cookie), (CLI::Long<"cookie">)), (String)),
-  (((origin), (CLI::Long<"origin">)), (String)),
-  (((telemetry), (CLI::Long<"telemetry">)), (UInt32, 1)),
-  (((expect), (CLI::Long<"expect">)), (UInt32, 1)),
-  (((stallMS), (CLI::Long<"stall-ms">)), (UInt32, 0)),
-  (((payload), (CLI::Long<"payload">)), (UInt32, 0)),
-  (((controlBurst), (CLI::Long<"control-burst">)), (UInt32, 1)),
-  (((inventory), (CLI::Long<"inventory">)), (Bool)),
-  (((oneShot), (CLI::Long<"one-shot">)), (Bool)),
-  (((waitEOS), (CLI::Long<"wait-eos">)), (Bool)),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+  (((mode), (CLI::Long<"mode">)),					String),
+  (((issuerURL), (CLI::Long<"issuer">)),				String),
+  (((deviceID), (CLI::Long<"device-id">)),				String),
+  (((wssURL), (CLI::Long<"wss">)),					String),
+  (((caPath), (CLI::Long<"ca">)),					String),
+  (((cookie), (CLI::Long<"cookie">)),					String),
+  (((origin), (CLI::Long<"origin">)),					String),
+  (((group), (CLI::Long<"group">, Deflt<"App"_z>)),			String),
+  (((telemetry), (CLI::Long<"telemetry">, Deflt<1>)),			UInt32),
+  (((expect), (CLI::Long<"expect">, Deflt<1>)),				UInt32),
+  (((stallMS), (CLI::Long<"stall-ms">, Deflt<0>)),			UInt32),
+  (((payload), (CLI::Long<"payload">, Deflt<0>)),			UInt32),
+  (((controlBurst), (CLI::Long<"control-burst">, Deflt<1>)),		UInt32),
+  (((snapshots), (CLI::Long<"snapshots">, Deflt<1>)),			UInt32),
+  (((expectPublishers), (CLI::Long<"expect-publishers">, Deflt<0>)),	UInt32),
+  (((inventory), (CLI::Long<"inventory">)),				Bool),
+  (((oneShot), (CLI::Long<"one-shot">)),				Bool),
+  (((waitShutdown), (CLI::Long<"wait-shutdown">)),			Bool),
+  (((controlled), (CLI::Long<"controlled">)),				Bool),
+  (((changes), (CLI::Long<"changes">)),					Bool),
+  (((sourceErrors), (CLI::Long<"source-errors">)),			Bool),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),			Bool));
 
 using Frame = ZtArray<uint8_t,
   ZtArrayHeapID<"Ztc.Hub.Wire.Frame">>;
@@ -95,13 +118,14 @@ static Frame finish(Zfb::Builder &builder)
   return frame;
 }
 
-static Frame subscribe(ZuCSpan deviceID, uint32_t interval)
+static Frame subscribe(ZuCSpan deviceID, uint32_t interval,
+    Ztc::fbs::Group group)
 {
   Zfb::Builder builder;
   auto device = builder.CreateString(deviceID.data(), deviceID.length());
   auto filter = builder.CreateString("*");
   auto request = Ztc::fbs::CreateRequest(builder, 0,
-    Ztc::fbs::Group::App, filter, interval, true);
+    group, filter, interval, true);
   builder.Finish(Ztc::saveMsg(
     builder, Ztc::fbs::Body::Request, request.Union(), 1, device));
   return finish(builder);
@@ -134,6 +158,28 @@ static Frame telemetry(uint64_t seqNo, uint32_t payload)
   builder.Finish(Ztc::saveMsg(
     builder, Ztc::fbs::Body::Telemetry, tel.Union()));
   return finish(builder);
+}
+
+// Inject an empty unsolicited snapshot completion on the public telemetry ring.
+static bool emptySnapshot(const Ztc::AppCf &cf)
+{
+  using MsgFrame = ZiIOBufAlloc<1024, 1U<<20, "Ztc.Wire.Snapshot">;
+  Zfb::IOBuilder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
+  auto eos = ZfbStruct::save(builder, Ztc::EOS{cf.id, 0});
+  builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS, eos.Union()));
+  auto frame = Ztc::saveHdr(builder);
+  Ztc::Ring ring;
+  auto name = ::getenv("ZTC_RING");
+  ring.init(ZiRingParams{name ? name : "ztc", 0}.initial(cf.telRingSize).timeout(1));
+  if (ring.open(Ztc::Ring::Write) != Zu::OK) return false;
+  auto slot = ring.push(frame->length);
+  bool ok = bool(slot);
+  if (slot) {
+    memcpy(slot, frame->data(), frame->length);
+    ring.push2(slot, frame->length);
+  }
+  ring.close();
+  return ok;
 }
 
 static Frame unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
@@ -173,7 +219,13 @@ struct App {
   bool completed = false;
   bool received = false;
   unsigned telemetryCount = 0;
+  unsigned snapshotCount = 0;
+  uint64_t baseAllocs = 0;
+  bool baseSeen = false;
+  bool baseUpdated = false;
+  bool lateSeen = false;
   ZtArray<ZtString<>> inventoryDevices;
+  ZtArray<ZuID, ZtArrayHeapID<"Ztc.Wire.Publishers">> publishers;
   uint64_t requestSeqNo = 0;
   unsigned requestCount = 0;
 
@@ -194,7 +246,8 @@ struct App {
 #endif
       ZuCSpan deviceID{options->deviceID};
       if (options->inventory) deviceID = {};
-      sendFrame(link, subscribe(deviceID, options->oneShot ? 0 : 1000));
+      sendFrame(link, subscribe(deviceID, options->oneShot ? 0 : 1000,
+	options->groupID));
       subscribed = true;
     }
   }
@@ -271,7 +324,7 @@ struct App {
       return 1;
     }
     auto hubMsg = Ztc::fbs::GetMsg(frame.data());
-    if (!hubMsg || !hubMsg->body()) {
+    if (!hubMsg || !hubMsg->body() || hubMsg->subId() != 1) {
       failed = true;
       link.close(Zws::CloseCode::Protocol);
       return -1;
@@ -282,6 +335,48 @@ struct App {
         std::cout << "front ack\n" << std::flush;
         break;
       case Ztc::fbs::Body::Telemetry:
+        if (hubMsg->body_as_Telemetry()->value_type() ==
+            Ztc::fbs::TelemetryBody::Shutdown) {
+          if (!options->waitShutdown || !hubMsg->deviceId() ||
+              !hubMsg->agentGen() || !hubMsg->body_as_Telemetry()->id()) {
+            failed = true;
+            link.close(Zws::CloseCode::Protocol);
+            return -1;
+          }
+          std::cout << "front shutdown\n" << std::flush;
+          completed = true;
+          break;
+        }
+        if (options->expectPublishers) {
+	  ZuID id{Zfb::Load::str(hubMsg->body_as_Telemetry()->id())};
+	  bool found = false;
+	  for (const auto &prior: publishers)
+	    if (prior == id) { found = true; break; }
+	  if (!found) publishers.push(id);
+	}
+        if (options->groupID == Ztc::fbs::Group::Heap &&
+	    hubMsg->body_as_Telemetry()->value_type() !=
+	      Ztc::fbs::TelemetryBody::HeapTelemetry) {
+	  failed = true;
+	  link.close(Zws::CloseCode::Protocol);
+	  return -1;
+	}
+	if (options->changes) {
+	  auto data = hubMsg->body_as_Telemetry()->value_as_HeapTelemetry();
+	  auto id = Zfb::Load::str(data->id());
+	  if (id == "ZDash.BaseHeap") {
+	    uint64_t n = data->cacheAllocs() + data->heapAllocs();
+	    if (!baseSeen) { baseSeen = true; baseAllocs = n; }
+	    else if (n > baseAllocs) baseUpdated = true;
+	  } else if (id == "ZDash.LiveHeap") {
+	    if (!snapshotCount) {
+	      failed = true;
+	      link.close(Zws::CloseCode::Protocol);
+	      return -1;
+	    }
+	    lateSeen = true;
+	  }
+	}
         if (options->inventory) {
           auto telemetry = hubMsg->body_as_Telemetry();
           if (!hubMsg->deviceId() || !hubMsg->deviceId()->size() ||
@@ -305,31 +400,41 @@ struct App {
         ++telemetryCount;
         std::cout << "front telemetry " << telemetryCount << '\n' <<
           std::flush;
-        if (!options->oneShot && !options->waitEOS &&
+        if (!options->oneShot && !options->waitShutdown && options->snapshots == 1 &&
             telemetryCount >= options->expect) completed = true;
         break;
       case Ztc::fbs::Body::EOS:
-        if ((options->oneShot || options->waitEOS) &&
-            telemetryCount != options->expect) {
-          failed = true;
-          link.close(Zws::CloseCode::Protocol);
-          return -1;
-        }
-        if (options->waitEOS && (!hubMsg->deviceId() ||
-            !hubMsg->deviceId()->size() || !hubMsg->agentGen() ||
-            !hubMsg->body_as_EOS()->id() ||
-            !hubMsg->body_as_EOS()->id()->size())) {
+        if (options->expectPublishers &&
+	    publishers.length() != options->expectPublishers) {
+	  failed = true;
+	  link.close(Zws::CloseCode::Protocol);
+	  return -1;
+	}
+        if (options->oneShot &&
+            (options->inventory ? telemetryCount != options->expect :
+	      telemetryCount < options->expect)) {
           failed = true;
           link.close(Zws::CloseCode::Protocol);
           return -1;
         }
         std::cout << "front eos\n" << std::flush;
-        completed = true;
+        ++snapshotCount;
+        std::cout << "front snapshot " << snapshotCount << '\n' << std::flush;
+        completed = !options->waitShutdown &&
+          (options->oneShot || snapshotCount >= options->snapshots);
+	if (completed && options->changes &&
+	    (!baseSeen || !baseUpdated || !lateSeen)) {
+	  failed = true;
+	  link.close(Zws::CloseCode::Protocol);
+	  return -1;
+	}
+	if (completed && options->changes)
+	  std::cout << "front new heap and updated heap\n" << std::flush;
         break;
       case Ztc::fbs::Body::Error:
         std::cout << "front error " <<
           hubMsg->body_as_Error()->code() << '\n' << std::flush;
-        completed = true;
+        completed = !options->sourceErrors;
         break;
       default:
         failed = true;
@@ -405,10 +510,33 @@ int main(int argc, char **argv)
     Ztc::AppCf cf;
     cf.id = options.deviceID;
     cf.alertPrefix = options.deviceID;
+    ZtcControlled::Sources sources{options.controlled};
     Ztc::App app;
     if (!app.init(cf) || !app.start()) return 1;
+    if (options.controlled)
+      ZmHeapMgr::init("ZDash.BaseHeap", ZmSelf()->partition(), 0,
+	ZmHeapConfig{.cacheSize = 1});
+    BaseObject *base = options.controlled ? new BaseObject : nullptr;
+    BaseObject *extra = nullptr;
+    LateObject *late = nullptr;
     std::cout << "publisher ready\n" << std::flush;
-    done.wait();
+    if (options.controlled) {
+      int c;
+      while ((c = ::getchar()) != EOF && c != 'q') {
+	if (c == 'e') {
+	  if (!emptySnapshot(cf)) return 1;
+	  std::cout << "publisher snapshot boundary\n" << std::flush;
+	  continue;
+	}
+	if (c != 'u' || late) continue;
+	extra = new BaseObject;
+	late = new LateObject;
+	std::cout << "publisher changed\n" << std::flush;
+      }
+    } else done.wait();
+    delete late;
+    delete extra;
+    delete base;
     app.stop();
     app.final();
     signalDone = nullptr;
@@ -418,7 +546,18 @@ int main(int argc, char **argv)
       (options.mode != "front" && options.mode != "agent") ||
       (!options.inventory && !options.deviceID) ||
       (options.inventory && options.mode != "front") ||
-      ((options.oneShot || options.waitEOS) && !options.inventory))
+      (options.inventory && options.group != "App"))
+    return 1;
+  bool groupOK = false;
+  for (auto group: Ztc::fbs::EnumValuesGroup()) {
+    if (options.group != Ztc::fbs::EnumNameGroup(group)) continue;
+    options.groupID = group;
+    groupOK = true;
+    break;
+  }
+  if (!groupOK || !options.snapshots ||
+      (options.expectPublishers && !options.oneShot) || (options.changes &&
+      (options.groupID != Ztc::fbs::Group::Heap || options.snapshots < 2)))
     return 1;
 
   Zhttp::URL issuerURL{options.issuerURL};

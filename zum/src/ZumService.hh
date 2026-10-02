@@ -40,7 +40,7 @@ struct ServiceHTTPRequest {
   String authorization;
   String contentType;
   String ifMatch;
-  String idempotencyKey;
+  String idempotence;
   String body;
   ServiceManifest manifest;
   uint64_t timeout = 0;
@@ -59,10 +59,11 @@ ZuDerive(ServiceHTTPFn, (ZmFn<void(ServiceHTTPRequest, ServiceHTTPDoneFn),
 struct ServiceSSFConfig {
   bool		enabled = false;
 	String	receiverID;
-	String	callbackPath;
+	String	deliveryURL;
 	String	callbackAuth;
 	String	transmitterIssuer;
 	String	audience;
+  uint32_t	lease = 300;
   unsigned	maxBytes = 64U<<10;
   uint32_t	clockSkew = 30;
   unsigned	dedupMax = 1024;

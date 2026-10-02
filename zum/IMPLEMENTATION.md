@@ -16,11 +16,94 @@ verification are superseded and retained only as a record of earlier work.
 Zum integration persistence tests now select SQLite solely through
 `ZDB_MODULE` and `ZDB_CONNECT`; there is no Zum-visible SQLite interface.
 
-The current schema is 20. Audience is an immutable attribute of `App`; there
+The current schema is 24. Audience is an immutable attribute of `App`; there
 is no audience table, ID, management operation, or scope wrapper. Access tokens
 use `App.audience`. Application enrollment requires `audience`, client access
 selects role IDs, and consent is keyed by user/client/application. Management
-has 60 contiguous operations; obsolete numeric slots are removed.
+has 61 contiguous operations; obsolete numeric slots are removed.
+
+User application access is an `Assignment`, stored in `zum.assignment` and
+managed through `/admin/apps/{app_id}/assignments` and the
+`assignmentQuery`, `assignmentAdd`, `assignmentRoles`, `assignmentState`
+operations. The CLI group remains `assign`. Schema 24 renames the former
+membership table, saga identities and authority-version fields; existing
+databases require reprovisioning. Historical entries retain their original
+terminology and validation results.
+
+Management REST JSON and query fields use snake_case through `JSON::ID` and
+`URI::ID` metadata; C++ members, storage fields, and native configuration retain
+Z naming. OAuth/OIDC and WebAuthn protocol fields retain their standard names.
+The CLI keeps kebab-case options and emits the corresponding snake_case JSON.
+Client grant flags use `ZtFlags`: `AuthCode`, `ClientCredentials`, and `Refresh`,
+with comma-delimited CLI and JSON input/output. The numeric storage masks remain
+1, 2, and 4 respectively; the wire metadata change does not change schema 24.
+
+Snake-case/grant-flag validation on 2026-09-30 in the Linux x86-64 Clang debug
+tree: top-level `make -j8` passed. After adding required-field presence checks
+at the management JSON boundary, the focused `zum/src` rebuild and
+`make -C zum/test test` passed (5 binaries, 35 TAP cases). CLI tests cover comma
+flag parsing/canonical printing and reject numeric, pipe-delimited, obsolete,
+and malformed grant names. JSON tests cover snake-case IDs and named flags.
+Fresh isolated SQLite stores passed `zumhttp.py` (61/61 successful management
+operations), `zumssf.py`, `zumfederation.py`, and `zumrestarttest -q` (14 cases).
+The HTTP fixture rejects old camel-case query keys and missing snake-case
+required body fields with HTTP400. Python fixture syntax, documented shell
+command syntax, and `git diff --check` passed.
+
+Administrator bootstrap reissue now works after the initial enrollment reaches
+Ready. It mints an expiring AddCredential capability for the persisted initial
+administrator, preserving the WebAuthn user handle, credentials, assignments,
+and readiness. It recreates a cleaned-up grant or replaces the prior capability
+or ceremony under the deterministic bootstrap key; stale links/challenges remain
+invalid. Credential addition uses the existing CredentialAdd saga. The pending
+bootstrap path still supports reissue, and missing output is rejected before
+mutation. No schema or REST operation changes are needed.
+
+Validation on 2026-09-30 (Linux x86-64 Clang debug): top-level `make -j8` and
+all 5 Zum unit binaries / 35 TAP cases passed. The expanded `zumdvault.py` fixture
+passed pending and enrolled reissue, missing-output rejection without grant
+mutation, user/assignment preservation, stale-link and interrupted-ceremony
+rejection, capability expiry, repeated completed registrations, and independent
+login with old and added passkeys. The full `zumhttp.py` fixture passed with
+61/61 successful management operations. Both used isolated disposable SQLite
+stores. README shell syntax, fixture Python syntax, and diff checks passed.
+
+Consent pages now identify the requesting client by label and ID, name the
+application receiving access, and list the exact scopes from the pending
+server-side authorization grant. Standard identity, administrative and offline
+scopes have plain-language descriptions. Dynamic labels and scope names are
+HTML-escaped. Passkey, provider SSO and upstream OIDC consent paths share this
+page. The SSO callback now retains its ceremony ID before transferring the
+request to authorization processing.
+
+Validation on 2026-09-30 in the Clang debug tree: top-level `make -j8`, all
+5 Zum unit binaries / 35 TAP cases, `zumfederation.py`, and `zumhttp.py` passed.
+The HTTP fixture checks the exact scope set and client ID on each consent page,
+plus HTML escaping of a client label containing markup. Independent fixtures
+must run sequentially when they share native callback port 8081.
+
+Manual `zdash/README.md` acceptance on 2026-09-30 used the real desktop Firefox
+passkey/consent flow, KeyRing Vault and a fresh SQLite IAM database. Core CLI
+login, hub enrollment/catalog publication, dashboard assignment/client access,
+native dashboard login and device-client provisioning succeeded. The agent was
+accepted and GTK accessibility exposed a `zumd-local` dashboard row. The README
+was corrected to include the required `telRing.name`. A graceful shutdown in
+dashboard/agent/hub/daemon order and restart in daemon/hub/agent/dashboard order
+succeeded. Restart omitted the daemon DB-key and agent-secret environment inputs;
+the dashboard resumed its saved refresh credential without a browser callback,
+and the same publisher row reappeared. All four local processes were left running.
+
+Schema-24 assignment/CLI validation on 2026-09-30 in the existing Linux
+x86-64 Clang debug tree: top-level `make -j8` passed, as did
+`make -C zum/test test` (5 binaries, 35 TAP cases) and `zumrestarttest -q`
+(14 SQLite restart/recovery cases). Fresh disposable SQLite stores also passed
+`zumhttp.py` and `zumssf.py`, with `PYTHONPATH=zi/itest`, `ZDB_MODULE` pointing
+to the built SQLite adapter, and a separate `ZDB_CONNECT` for each fixture.
+The HTTP fixture observed success for all 61 management operations and completed
+schema rejection and rekey checks. The SSF fixture checked lease expiry and
+durable refresh-family delivery across restart. CLI tests include hierarchical
+commands, positional user-name filters, full-width string-encoded UInt64 IDs,
+and rejection of overflow and malformed arguments.
 
 Schema-20 validation on 2026-09-15 (Linux x86-64, Clang 22.1.8, `-O3 -g`):
 `make -C zum -j2 test` passed all 5 unit binaries (34 TAP cases), all 7

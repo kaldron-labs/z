@@ -23,13 +23,13 @@ namespace Ztls_ {
 
 namespace VaultLinux_ {
 
-constexpr auto Destination = "org.freedesktop.secrets"_Zu;
-constexpr auto ServicePath = "/org/freedesktop/secrets"_Zu;
-constexpr auto ServiceIF = "org.freedesktop.Secret.Service"_Zu;
-constexpr auto CollectionIF = "org.freedesktop.Secret.Collection"_Zu;
-constexpr auto ItemIF = "org.freedesktop.Secret.Item"_Zu;
-constexpr auto SessionIF = "org.freedesktop.Secret.Session"_Zu;
-constexpr auto PromptIF = "org.freedesktop.Secret.Prompt"_Zu;
+constexpr auto Destination = "org.freedesktop.secrets"_z;
+constexpr auto ServicePath = "/org/freedesktop/secrets"_z;
+constexpr auto ServiceIF = "org.freedesktop.Secret.Service"_z;
+constexpr auto CollectionIF = "org.freedesktop.Secret.Collection"_z;
+constexpr auto ItemIF = "org.freedesktop.Secret.Item"_z;
+constexpr auto SessionIF = "org.freedesktop.Secret.Session"_z;
+constexpr auto PromptIF = "org.freedesktop.Secret.Prompt"_z;
 enum { TimeoutSeconds = 5 };
 
 template <typename Heap = ZuVoid>

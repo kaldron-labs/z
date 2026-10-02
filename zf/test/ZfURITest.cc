@@ -65,15 +65,15 @@ struct ScalarArgs {
 };
 
 ZfStruct(, (ScalarArgs, Bah),
-  (((scalar), (Ctor<0>)), (UDT)));
+  (((scalar), (Ctor<0>)),	UDT));
 
 ZfStruct(, (Nested, Bah),
-  (((i1), (Ctor<0>)), (Int32)),
-  (((i2), (Ctor<1>)), (Int32)));
+  (((i1), (Ctor<0>)),	Int32),
+  (((i2), (Ctor<1>)),	Int32));
 
 ZfStruct(, (NestedJSON, Bah),
-  (((i1), (Ctor<0>)), (Int32)),
-  (((i2), (Ctor<1>)), (Int32)));
+  (((i1), (Ctor<0>)),	Int32),
+  (((i2), (Ctor<1>)),	Int32));
 
 struct Blur : public ZtArray<ZtArray<uint8_t>> {
   ZuDerive_(Blur, ZtArray<ZtArray<uint8_t>>)
@@ -94,7 +94,7 @@ struct ArrayOpt {
 };
 
 ZfStruct(, (ArrayOpt, URI),
-  (((values), (Ctor<0>)), (UDT)));
+  (((values), (Ctor<0>)),	UDT));
 
 struct URIPtrObj_ : public ZmObject {
   int value = 0;
@@ -102,7 +102,7 @@ struct URIPtrObj_ : public ZmObject {
 };
 using URIPtrObj = ZfHeapTest<"ZfTest.URI.PtrObj", URIPtrObj_>;
 ZfStruct(, (URIPtrObj, URI),
-  (((value), (Ctor<0>, Mutable)), (Int32)));
+  (((value), (Ctor<0>, Mutable)),	Int32));
 
 struct URIFmtOpt : public ZmObject { };
 inline ZfURI::AsString ZfURI_Fmt(ZmRef<URIFmtOpt> *);
@@ -127,7 +127,7 @@ struct URIPtrJSON_ : public ZmObject {
 using URIPtrJSON = ZfHeapTest<"ZfTest.URI.PtrJSON", URIPtrJSON_>;
 inline ZfURI::AsJSON ZfURI_Fmt(URIPtrJSON *);
 ZfStruct(, (URIPtrJSON, URI),
-  (((value), (Ctor<0>, Mutable)), (Int32)));
+  (((value), (Ctor<0>, Mutable)),	Int32));
 
 struct URIPtrArray_ : public ZmObject, public ZtArray<ZmRef<URIPtrObj>> {
   using Base = ZtArray<ZmRef<URIPtrObj>>;
@@ -144,19 +144,19 @@ struct URIPtrHolder {
   ZmRef<URIPtrJSON> json;
 };
 ZfStruct(, (URIPtrHolder, URI),
-  (((object), (Mutable)), (UDT)),
-  (((objects), (Mutable)), (UDT)),
-  (((text), (Mutable)), (UDT)),
-  (((json), (Mutable)), (UDT)));
+  (((object), (Mutable)),	UDT),
+  (((objects), (Mutable)),	UDT),
+  (((text), (Mutable)),		UDT),
+  (((json), (Mutable)),		UDT));
 
 struct URIPathPtr { ZmRef<URIPtrText> value; };
 ZfStruct(, (URIPathPtr, URI),
-  (((value), (Mutable, URI::PathIndex<0>)), (UDT)));
+  (((value), (Mutable, URI::PathIndex<0>)),	UDT));
 
 struct URIUnionA { int foo = 0; };
 struct URIUnionB { int bar = 0; };
-ZfStruct(, (URIUnionA, URI), (((foo), (Ctor<0>, Mutable)), (Int32)));
-ZfStruct(, (URIUnionB, URI), (((bar), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct(, (URIUnionA, URI), (((foo), (Ctor<0>, Mutable)), Int32));
+ZfStruct(, (URIUnionB, URI), (((bar), (Ctor<0>, Mutable)), Int32));
 struct URIUnionArray : public ZtArray<int> {
   using ZtArray<int>::ZtArray;
   friend ZfURI::AsArray<ZfFieldTC::Int32> ZfURI_Fmt(URIUnionArray *);
@@ -187,7 +187,7 @@ struct URIUnionHolder {
     URIUnionArray, URIUnionText, URIUnionJSON> value;
 };
 ZfStruct(, (URIUnionHolder, URI),
-  (((value), (Ctor<0>, Mutable)), (UDT)));
+  (((value), (Ctor<0>, Mutable)),	UDT));
 
 ZuAssert((ZuIsSame<
   ZmHeapID<URIPtrObj>, ZuStringT<"ZfTest.URI.PtrObj">>{}));
@@ -203,7 +203,7 @@ struct URIFormatInt {
 };
 using URIIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
 ZfStruct(, (URIFormatInt, URI),
-  (((value), (Ctor<0>, URI::Number<URIIntFormat>)), (UInt32)));
+  (((value), (Ctor<0>, URI::Number<URIIntFormat>)),	UInt32));
 
 struct URIUpdate {
   int required;
@@ -213,11 +213,11 @@ struct URIUpdate {
   int reset;
 };
 ZfStruct(, URIUpdate,
-  (((required), (Ctor<0>, Mutable, Required)), (Int32)),
-  (((pathKept), (Ctor<1>, Mutable)),           (Int32, 2)),
-  (((pathReset), (Ctor<2>, Mutable, Reset)),   (Int32, 3)),
-  (((kept),     (Ctor<3>, Mutable)),           (Int32, 4)),
-  (((reset),    (Ctor<4>, Mutable, Reset)),    (Int32, 5)));
+  (((required), (Ctor<0>, Mutable, Required)),		Int32),
+  (((pathKept), (Ctor<1>, Mutable, Deflt<2>)),		Int32),
+  (((pathReset), (Ctor<2>, Mutable, Reset, Deflt<3>)),	Int32),
+  (((kept),     (Ctor<3>, Mutable, Deflt<4>)),		Int32),
+  (((reset),    (Ctor<4>, Mutable, Reset, Deflt<5>)),	Int32));
 ZfStructRender(, URIUpdate, URI,
   required,
   (pathKept, URI::PathIndex<0>),
@@ -247,27 +247,24 @@ struct Foo {
 };
 
 ZfStruct(, Foo,
-  (((string, Rd),	(Ctor<0>)),	(CString, "hello \"world\"")),
-  (((bytes),		(Ctor<1>)),	(Bytes, ZuBSpan{"bytes"})),
-  (((id),		(Ctor<2>, Mutable)),	(String, "goodbye")),
-  (((int_),		(Ctor<3>)),	(Int32)),
-  (((int_ranged),	(Ctor<4>, (Range<0, 100>))),	(Int32, 42)),
-  (((hex),		(Ctor<5>, Hex)),
-					(UInt32, 0xdeadbeef)),
-  (((enum_),		(Ctor<6>, Enum<Values::Map>)),
-					(Int32, Values::Normal)),
-  (((flags),		(Ctor<7>, Flags<Flags::Map>)),
-					(UInt128, Flags::Bit1())),
-  (((float_),		(Ctor<8>)),	(Float)),
-  (((float_ranged),	(Ctor<9>, (Range<0.0, 1>))), (Float, 0.42)),
+  (((string, Rd),	(Ctor<0>, Deflt<"hello \"world\""_z>)),			CString),
+  (((bytes),		(Ctor<1>, Deflt<"bytes"_z>)),				Bytes),
+  (((id),		(Ctor<2>, Mutable, Deflt<"goodbye"_z>)),		String),
+  (((int_),		(Ctor<3>)),						Int32),
+  (((int_ranged),	(Ctor<4>, (Range<0, 100>), Deflt<42>)),			Int32),
+  (((hex),		(Ctor<5>, Hex, Deflt<0xdeadbeef>)),			UInt32),
+  (((enum_),		(Ctor<6>, Enum<Values::Map>, Deflt<Values::Normal>)),	Int32),
+  (((flags),		(Ctor<7>, Flags<Flags::Map>, Deflt<Flags::Bit1()>)),	UInt128),
+  (((float_),		(Ctor<8>)),						Float),
+  (((float_ranged),	(Ctor<9>, (Range<0.0, 1>), Deflt<0.42>)),		Float),
   (((fixed),		(Ctor<10>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))),		(Fixed)),
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),					Fixed),
   (((decimal),		(Ctor<11>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))),	(Decimal)),
-  (((time_),		(Ctor<12>)),	(Time)),
-  (((nested),		(Ctor<13>)),	(UDT)),
-  (((nestedJSON),	(Ctor<14>)),	(UDT)),
-  (((bytesVec),		(Ctor<15>)),	(BytesVec)));
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),					Decimal),
+  (((time_),		(Ctor<12>)),						Time),
+  (((nested),		(Ctor<13>)),						UDT),
+  (((nestedJSON),	(Ctor<14>)),						UDT),
+  (((bytesVec),		(Ctor<15>)),						BytesVec));
 
 ZfStructRender(, Foo, Bah,
   (enum_,	URI::ID<"enum-BAH">),
@@ -285,17 +282,17 @@ struct DirectPath {
   ZuCSpan endpoint;
 };
 ZfStruct(, (DirectPath, URI),
-  (((prefix),	(URI::PathIndex<0>, Required)),	(String)),
-  (((id),	(URI::PathIndex<1>, Required)),	(UInt64)),
-  (((endpoint),	(URI::PathIndex<2>, Required)),	(String)));
+  (((prefix),	(URI::PathIndex<0>, Required)),	String),
+  (((id),	(URI::PathIndex<1>, Required)),	UInt64),
+  (((endpoint),	(URI::PathIndex<2>, Required)),	String));
 
 struct DirectPrefix {
   ZuCSpan prefix;
   uint64_t id = 0;
 };
 ZfStruct(, (DirectPrefix, URI),
-  (((prefix),	(URI::PathIndex<0>, Required)),	(String)),
-  (((id),	(URI::PathIndex<1>, Required)),	(UInt64)));
+  (((prefix),	(URI::PathIndex<0>, Required)),	String),
+  (((id),	(URI::PathIndex<1>, Required)),	UInt64));
 
 static void directPath()
 {
@@ -627,7 +624,7 @@ void resetUpdate()
 
   URIUpdate loaded{1, 20, 30, 40, 50};
   missingHandler.load(loaded);
-  ZuCheck(ZuNull(loaded.required));
+  ZuCheck(loaded.required == 1);
   ZuCheck(loaded.pathKept == 10);
   ZuCheck(loaded.pathReset == 3);
   ZuCheck(loaded.kept == 11);

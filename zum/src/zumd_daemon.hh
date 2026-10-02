@@ -42,12 +42,12 @@ struct DaemonConfig {
   String	ssfIssuer;
   String	rpID;
   String	rpName{"Zum"};
-  String	admin;
   Bytes		dbKey;
   OIDCHTTPFn	oidcHTTP;
 	RefreshRevokeFn	refreshRevoke;
-  SSFSecretFn	ssfSecret;
-  SSFReceiverVec	ssfReceivers;
+  unsigned	ssfReceiverMax = 1024;
+  uint32_t	ssfLeaseMax = 300;
+  unsigned	ssfErrorMax = 5;
   uint64_t	requestTimeout = 15;
   uint64_t	cleanupInterval = 300;
   ServerBootstrapResult bootstrap;
@@ -269,14 +269,14 @@ struct AdminReq : public Zrest::ReqParser<Impl, AdminData> {
   String authorization;
   String ifMatch;
   String ifNoneMatch;
-  String idempotencyKey;
+  String idempotence;
 
   void init() {
     Base::init();
     authorization.null();
     ifMatch.null();
     ifNoneMatch.null();
-    idempotencyKey.null();
+    idempotence.null();
   }
   auto &queryObject(AdminData *object) { return object->query; }
   auto &bodyObject(AdminData *object) { return object->body; }
@@ -305,7 +305,7 @@ struct AdminReq : public Zrest::ReqParser<Impl, AdminData> {
     if constexpr (Key{}() == "authorization") authorization = value;
     else if constexpr (Key{}() == "if-match") ifMatch = value;
     else if constexpr (Key{}() == "if-none-match") ifNoneMatch = value;
-    else if constexpr (Key{}() == "idempotency-key") idempotencyKey = value;
+    else if constexpr (Key{}() == "idempotency-key") idempotence = value;
   }
   template <typename Link> void complete(Link *link, bool ok);
 };
@@ -487,7 +487,7 @@ public:
     String body = request.object->body;
     String ifMatch = request.ifMatch;
     String ifNoneMatch = request.ifNoneMatch;
-    String idempotencyKey = request.idempotencyKey;
+    String idempotence = request.idempotence;
     AdminDoneFn reply{[this, correlationID, hold = ZmRef<Link>{link}](
         AdminResult result) mutable {
       if (result.status >= 400)
@@ -501,12 +501,12 @@ public:
         [this, op, authorization = ZuMv(authorization),
           target = ZuMv(target), query = ZuMv(query), body = ZuMv(body),
           ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
-          idempotencyKey = ZuMv(idempotencyKey),
+          idempotence = ZuMv(idempotence),
           correlationID = ZuMv(correlationID), reply](
             ZmRef<Zum::Request> pending) mutable {
       adminRequest_(op, ZuMv(authorization), ZuMv(target), ZuMv(query),
         ZuMv(body), ZuMv(ifMatch), ZuMv(ifNoneMatch),
-        ZuMv(idempotencyKey), ZuMv(correlationID),
+        ZuMv(idempotence), ZuMv(correlationID),
         [pending = ZuMv(pending), reply = ZuMv(reply)](AdminResult result) mutable {
           pending->complete([reply = ZuMv(reply), result = ZuMv(result)]() mutable {
             reply(ZuMv(result));

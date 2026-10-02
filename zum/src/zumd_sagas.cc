@@ -31,14 +31,14 @@ struct SignKeyJWK {
   String d;
 };
 ZfStruct(, (SignKeyJWK, JSON),
-  (((kty),		(Required)),	(String)),
-  (((crv),		(Required)),	(String)),
-  (((kid),		(Required)),	(String)),
-  (((x),		(Required)),	(String)),
-  (((y),		(Required)),	(String)),
-  (((alg),		(JSON::Opt)),	(String)),
-  (((use),		(JSON::Opt)),	(String)),
-  (((d),		(JSON::Opt)),	(String)));
+  (((kty),		(Required)),	String),
+  (((crv),		(Required)),	String),
+  (((kid),		(Required)),	String),
+  (((x),		(Required)),	String),
+  (((y),		(Required)),	String),
+  (((alg),		(JSON::Opt)),	String),
+  (((use),		(JSON::Opt)),	String),
+  (((d),		(JSON::Opt)),	String));
 
 bool signKeyPublic(const SignKey &key, Bytes &output)
 {
@@ -544,14 +544,14 @@ bool clientConfigValid(
     ClientProfile::T profile, uint8_t grants, bool refreshAllowed,
     const StringVec &redirects)
 {
-  constexpr uint8_t all = ClientGrant::AuthorizationCode |
-    ClientGrant::ClientCredentials | ClientGrant::RefreshToken;
+  constexpr uint8_t all = ClientGrant::AuthCode() |
+    ClientGrant::ClientCredentials() | ClientGrant::Refresh();
   if (profile < 0 || profile >= ClientProfile::N || !grants || (grants & ~all))
     return false;
-  if ((grants & ClientGrant::AuthorizationCode) && !redirects) return false;
-  if (refreshAllowed && !(grants & ClientGrant::RefreshToken)) return false;
+  if ((grants & ClientGrant::AuthCode()) && !redirects) return false;
+  if (refreshAllowed && !(grants & ClientGrant::Refresh())) return false;
   if (clientType(profile) != ClientType::Confidential &&
-      (grants & ClientGrant::ClientCredentials)) return false;
+      (grants & ClientGrant::ClientCredentials())) return false;
   return true;
 }
 
@@ -746,7 +746,7 @@ void RoleEdit::validate(unsigned offset, Zdb_::SagaCompleteFn complete)
   });
 }
 
-bool MembershipChange::appValid(const App &item, bool fwd) const
+bool AssignmentChange::appValid(const App &item, bool fwd) const
 {
   return item.state == State::Active && item.version == appVersion &&
     item.authVersion == appAuthVersion && item.updated == appUpdated &&
@@ -754,7 +754,7 @@ bool MembershipChange::appValid(const App &item, bool fwd) const
     appVersion != UINT64_MAX && appAuthVersion != UINT64_MAX;
 }
 
-unsigned MembershipChange::memberError(const Membership &item, bool fwd) const
+unsigned AssignmentChange::memberError(const Assignment &item, bool fwd) const
 {
   if (fwd) {
     if (ifMatch) {
@@ -774,7 +774,7 @@ unsigned MembershipChange::memberError(const Membership &item, bool fwd) const
     item.roleIDs != (fwd ? oldRoles : newRoles) ? 409 : 0;
 }
 
-void MembershipChange::validate(Zdb_::SagaCompleteFn complete)
+void AssignmentChange::validate(Zdb_::SagaCompleteFn complete)
 {
   context->users->run(0, [this, complete = ZuMv(complete)]() mutable {
     context->users->find<0>(0, ZuFwdTuple(userID),
@@ -797,7 +797,7 @@ void MembershipChange::validate(Zdb_::SagaCompleteFn complete)
   });
 }
 
-void MembershipChange::roles(unsigned offset, Zdb_::SagaCompleteFn complete)
+void AssignmentChange::roles(unsigned offset, Zdb_::SagaCompleteFn complete)
 {
   if (offset == newRoles.length()) { complete(true); return; }
   auto id = newRoles[offset];
@@ -984,7 +984,7 @@ bool codeFamilyPrepare(
   next.authVersion = authVersion;
   next.userVersion = code.userVersion;
   next.clientVersion = code.clientVersion;
-  next.membershipVersion = code.membershipVersion;
+  next.assignmentVersion = code.assignmentVersion;
   next.policyVersion = code.policyVersion;
   next.evidenceVersion = code.evidenceVersion;
   next.authoritySource = code.authoritySource;

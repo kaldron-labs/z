@@ -31,12 +31,15 @@ struct ModuleHost {
   ZmFn<void(ZmFn<void()>)> rxRun;
   ZmFn<void(ZmFn<void()>)> gtkRun;
   ZmFn<ZmRef<ZiIOBuf>()> request_;		// Rx
+  ZmFn<uint64_t(ZuCSpan, ZuCSpan, unsigned)> subscription_;	// Rx
   ZmFn<bool(ZuBSpan, bool)> receive_;		// Rx; bool selects subscription filter
   ZmFn<SourceView(ZuCSpan, ZuCSpan)> source_;	// GTK
   ZmFn<unsigned()> pending_;			// GTK
   ZmFn<void()> stop;				// any thread
   GtkTreeModel *model = nullptr;		// GTK
   GtkWindow *window = nullptr;			// GTK
+  GtkTreeView *treeView = nullptr;		// GTK
+  GtkTreeView *details = nullptr;		// GTK
   int publisherCol = 0;
   int deviceCol = 0;
 };
@@ -49,7 +52,9 @@ struct ModuleSession {
   bool online = false;
   ZmFn<bool(ModuleSession &)> session; // main; one shot, returns after drain
   ZmFn<void(const ModuleHost &)> ready;	// GTK
+  ZmFn<void(ZuBSpan)> requested;		// Rx; borrowed outgoing frame
   ZmFn<void(bool)> consumed;		// GTK; record spans mirror boundary
+  ZmFn<void(unsigned)> refreshed;		// GTK; records pending after quantum
   ZmFn<void()> drained;			// GTK
   ZmFn<void()> closing;			// GTK
   ZmFn<void()> closed;			// GTK; real window destruction

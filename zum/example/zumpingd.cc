@@ -43,9 +43,9 @@ struct Message {
   String status;
 };
 ZfStruct(, (Message, JSON),
-  (((error),		(JSON::Opt)),	(String)),
-  (((reply),		(JSON::Opt)),	(String)),
-  (((status),		(JSON::Opt)),	(String)));
+  (((error),		(JSON::Opt)),	String),
+  (((reply),		(JSON::Opt)),	String),
+  (((status),		(JSON::Opt)),	String));
 
 static String json(Message message)
 {
@@ -56,8 +56,8 @@ static String json(Message message)
 
 struct Options { String config; bool help = false; };
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">)), (String)),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+  (((config), (CLI::Long<"config">)),			String),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
 
 struct ZumConfig {
   String issuerURL;
@@ -66,24 +66,28 @@ struct ZumConfig {
   String clientID;
 };
 ZfStruct(, (ZumConfig, Cf),
-  (((issuerURL), (Required)), (String)),
-  (((managementIssuerURL), (Required)), (String)),
-  (((managementURL), (Required)), (String)),
-  (((clientID), (Required)), (String)));
+  (((issuerURL), (Required)),		String),
+  (((managementIssuerURL), (Required)),	String),
+  (((managementURL), (Required)),	String),
+  (((clientID), (Required)),		String));
 
 struct Config {
   ZumConfig zum;
   String caPath;
   String audience;
   String addr{"127.0.0.1"};
+  String ssfDeliveryURL;
+  uint32_t ssfLease = 300;
   uint32_t port = 8080;
 };
 ZfStruct(, (Config, Cf),
-  (((zum), (Required)), (UDT)),
-  (((caPath)), (String)),
-  (((audience), (Required)), (String)),
-  (((addr)), (String, "127.0.0.1")),
-  (((port), ((Range<1, 65535>))), (UInt32, 8080)));
+  (((zum), (Required)),					UDT),
+  (((caPath)),						String),
+  (((audience), (Required)),				String),
+  (((addr), (Deflt<"127.0.0.1"_z>)),			String),
+  (((ssfDeliveryURL)),					String),
+  (((ssfLease), ((Range<2U, 86400U>), Deflt<300>)),	UInt32),
+  (((port), ((Range<1, 65535>), Deflt<8080>)),		UInt32));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -331,6 +335,8 @@ int main(int argc, char **argv)
   bool ok = transport.init(&mx, config.zum.issuerURL,
     config.zum.managementIssuerURL, config.zum.managementURL,
     config.caPath);
+  Zum::String ssfURL = config.ssfDeliveryURL;
+  if (!ssfURL) ssfURL << "http://127.0.0.1:" << config.port << "/ssf";
   bool initialized = ok && app.service.init(Zum::ServiceConfig{
     .scheduler = &mx, .sid = ServiceSID, .issuerURL = config.zum.issuerURL,
     .managementIssuerURL = config.zum.managementIssuerURL,
@@ -339,11 +345,11 @@ int main(int argc, char **argv)
     .clientSecret = Zum::Bytes{ZuCSpan{credential.clientSecret}},
     .audience = config.audience,
     .ssf = Zum::ServiceSSFConfig{
-      .enabled = true, .receiverID = config.zum.clientID,
-      .callbackPath = "/ssf",
+      .enabled = true, .receiverID = ssfURL,
+      .deliveryURL = ZuMv(ssfURL),
       .callbackAuth = credential.callbackAuth,
       .transmitterIssuer = config.zum.issuerURL,
-      .audience = config.audience}}, transport.fn());
+      .audience = config.audience, .lease = config.ssfLease}}, transport.fn());
   ok = initialized;
   if (ok) {
     // Ping has no long-lived sessions; the callback still installs the

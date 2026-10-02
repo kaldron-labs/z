@@ -201,9 +201,9 @@ static void pkceTest()
   ZuTestScope(pkce);
 
   static constexpr auto verifier =
-    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"_Zu;
+    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"_z;
   static constexpr auto expected =
-    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"_Zu;
+    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"_z;
   ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
   Ztls::MD<> md;
   md.update(ZuBSpan{verifier});

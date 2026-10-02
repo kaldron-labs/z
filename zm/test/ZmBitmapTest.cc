@@ -34,4 +34,14 @@ int main(int argc, char **argv)
   test(ZmBitmap, "3-");
   test(ZmBitmap, "3-5,7");
   test(ZmBitmap, "3-5,7,9-");
+
+  ZmBitmap moved{"3-5"};
+  ZmBitmap target{"7"};
+  target = ZuMv(moved);
+  ZuCheck(!moved && target == ZmBitmap{"3-5"});
+  auto &self = target;
+  target = ZuMv(self);
+  ZuCheck(target == ZmBitmap{"3-5"});
+  target = ZmBitmap{};
+  ZuCheck(!target);
 }

@@ -18,7 +18,7 @@ noinst_PROGRAMS = \
 	ZuBase64Test ZuBase64URLTest ZuBase32Test ZuHexTest ZuPercentTest \
 	ZuInvokeSwitchTest ZuMArrayIterTest ZuMatchTest ZuLibTest \
 	ZuNumConvTest ZuNXTest ZuFPTest ZuIntrinTest ZuPreprocTest \
-	ZuTimeCTest ZuTokenizerTest ZuTest ZuDemangleTest
+	ZuTimeCTest ZuTokenizerTest ZuTest ZuDemangleTest ZuSemVerTest
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
@@ -67,3 +67,5 @@ ZuTimeCTest_SOURCES = ZuTimeCTest.cc
 ZuTokenizerTest_SOURCES = ZuTokenizerTest.cc
 ZuTest_SOURCES = ZuTest.cc
 ZuDemangleTest_SOURCES = ZuDemangleTest.cc
+
+ZuSemVerTest_SOURCES = ZuSemVerTest.cc

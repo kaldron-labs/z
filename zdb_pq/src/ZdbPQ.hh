@@ -1823,15 +1823,15 @@ ZmHashDerive(StoreTbls, StoreTbl,
 	ZmHashHeapID<"ZdbPQ.StoreTbl">>>>));
 
 struct StoreCf {
-	Zdb_::String	thread;
-	Zdb_::String	connect;
+  String	thread;
+  String	connect;
   bool		replicated = false;
 };
 
 ZfStruct(ZdbPQAPI, (StoreCf, Cf),
-  (((thread), (Required)),	(String)),
-  (((connect), (Required)),	(String)),
-  (((replicated)),		(Bool)));
+  (((thread), (Required)),	String),
+  (((connect), (Required)),	String),
+  (((replicated)),		Bool));
 
 class Store : public Zdb_::Store {
 public:

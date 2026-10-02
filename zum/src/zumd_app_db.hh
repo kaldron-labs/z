@@ -20,7 +20,7 @@
 namespace Zum {
 
 ZdbTableDerive(AppTable, App);
-ZdbTableDerive(MembershipTable, Membership);
+ZdbTableDerive(AssignmentTable, Assignment);
 ZdbTableDerive(ActionTable, Action);
 ZdbTableDerive(RoleTable, Role);
 ZdbTableDerive(ClientTable, Client);

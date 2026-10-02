@@ -1,0 +1,13 @@
+{
+   fontconfig_process_cache
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:FcPatternObjectInsertElt
+   fun:FcPatternObjectAddWithBinding
+   ...
+   fun:FcEndElement
+   ...
+   fun:FcInit
+   ...
+}

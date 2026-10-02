@@ -38,6 +38,7 @@ struct ServerBootstrapConfig {
   int64_t	now = 0;
   uint32_t	ttl = 900;
   bool		reissue = false;
+  bool		repairAdmin = false;
 };
 
 struct ServerBootstrapResult {

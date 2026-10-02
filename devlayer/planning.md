@@ -1,24 +1,25 @@
-`plan.md`: iterate and append numbered open questions and/or ambiguities to clarify requirements
+`plan.md`: iterate and append numbered open questions and/or ambiguities to clarify requirements; question numbering is final - no renumbering when the document is further edited and questions are subsequently resolved
 
 >> resolve open questions
 
 `plan.md`: update to prescribe implementation
 
-`plan.md`: iterate and append numbered open questions and/or ambiguities to clarify implementation
+`plan.md`: iterate and append numbered open questions and/or ambiguities to clarify implementation; question numbering is final - no renumbering when the document is further edited and questions are subsequently resolved
 
 >> resolve open questions
 
-`plan.md`: act as a skeptical principal software engineer; scrutinize the intended implementation against the original `goal.md`:
-- align each implementation element with `GUIDELINES.md`
+`plan.md`: act as a skeptical principal software engineer; scrutinize the intended implementation against the original `goal.md`; your goal is to simplify and delete redundant functionality, data structures, modules, algorithms and validations:
+1. pressure test the need for every element
+  - delete unnecessary elements
+  - simplify the design as much as possible
+  - do not overengineer
+  - do not redundantly over-validate
+2. align each implementation element with `GUIDELINES.md`
   - align all names to naming rules
   - check intended implementation against all audit flags
   - add references to specific guidelines that apply in each case
-- pressure test the need for every element
-  - delete unnecessary elements
-  - simplify the design as much as possible
-- do not overengineer
-- do not redundantly re-validate
-- do not hand-code or reimplement Z framework capabilities, particularly:
+  - prescribe correct use of Z framework, e.g. `ZtScratch`
+3. do not hand-code or reimplement Z framework capabilities, particularly:
   - do not hand-code formatting or parsing (e.g. JSON, numbers)
   - do not redundantly cast between convertible types
   - do not heap-allocate unnecessarily (use stack-allocated heap-fallback scratch capabilities)
@@ -52,16 +53,22 @@ work unrestricted and autonomously
 ---
 
 act as a skeptical principal software engineer
-- audit the implementation against all `GUIDELINES.md` flags and guidelines
+- audit the implementation of `plan.md` against **all** `GUIDELINES.md` flags and guidelines
 - scrutinize all new in-memory containers
   - can they be replaced by better code algorithms?
   - can they be made leaner or simpler?
   - can multiple containers be consolidated into fewer?
+- scrutinize all transforming/parsing/building/formatting/marshalling/unmarshalling
+  - are any of these operations redundantly repeated?
+  - can any operations be elided by retaining and re-using outputs?
+  - can mutations be performed in-place (overwriting) to avoid unnecessary copying?
+  - do these operations make use of the correct Z framework capabilities?
 - scrutinize all copies and heap allocations
   - can the copy be elided?
   - should in-place mutation be used?
   - can the allocation be replaced by on-stack scratch storage with heap fallback, e.g. `ZtScratch`
 - repair all findings
+- limit scope to `plan.md` work
 
 find performance impairments
   - unnecessary copying

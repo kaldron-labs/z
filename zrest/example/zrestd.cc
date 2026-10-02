@@ -108,51 +108,51 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((addr),       (CLI::Long<"addr">)),                       (String, "0.0.0.0")),
-  (((port),       (CLI::Long<"port">)),                       (UInt32, 8080)),
-  (((cert),       (CLI::Long<"cert">)),                        (String)),
-  (((key),        (CLI::Long<"key">)),                         (String)),
-  (((keyLog),     (CLI::Long<"key-log">)),                     (String)),
-  (((logPath),    (CLI::Long<"log">)),                         (String, "-")),
-  (((pidfile),    (CLI::Long<"pidfile">)),                     (String)),
-  (((eventFD),    (CLI::Long<"event-fd">)),                    (Int32, -1)),
-  (((user),       (CLI::Long<"user">)),                        (String, "test")),
-  (((pass),       (CLI::Long<"pass">)),                        (String, "test123")),
+  (((addr),       (CLI::Long<"addr">, Deflt<"0.0.0.0"_z>)),		String),
+  (((port),       (CLI::Long<"port">, Deflt<8080>)),			UInt32),
+  (((cert),       (CLI::Long<"cert">)),					String),
+  (((key),        (CLI::Long<"key">)),					String),
+  (((keyLog),     (CLI::Long<"key-log">)),				String),
+  (((logPath),    (CLI::Long<"log">, Deflt<"-"_z>)),			String),
+  (((pidfile),    (CLI::Long<"pidfile">)),				String),
+  (((eventFD),    (CLI::Long<"event-fd">, Deflt<-1>)),			Int32),
+  (((user),       (CLI::Long<"user">, Deflt<"test"_z>)),		String),
+  (((pass),       (CLI::Long<"pass">, Deflt<"test123"_z>)),		String),
   (((accessTokenLifetime),
-    (CLI::Long<"access-token-lifetime">)),                     (String, "5m")),
+    (CLI::Long<"access-token-lifetime">, Deflt<"5m"_z>)),		String),
   (((refreshTokenLifetime),
-    (CLI::Long<"refresh-token-lifetime">)),                    (String, "24h")),
-  (((requests),   (CLI::Opt<'n'>, CLI::Long<"requests">)),     (UInt32, 1)),
-  (((maxconn),    (CLI::Long<"maxconn">)),                     (UInt32)),
-  (((stateLimit), (CLI::Long<"state-limit">)),                 (UInt32)),
-  (((timeout),    (CLI::Long<"timeout">)),                     (UInt32, 30)),
-  (((ipv6),       (CLI::Long<"ipv6">)),                        (Bool)),
-  (((daemon),     (CLI::Long<"daemon">)),                      (Bool)),
-  (((syslog),     (CLI::Long<"syslog">)),                      (Bool)),
-  (((noKeepalive), (CLI::Long<"no-keepalive">)),               (Bool)),
-  (((noServerID),  (CLI::Long<"no-server-id">)),               (Bool)),
-  (((http),       (CLI::Long<"http">)),                        (Bool, true)),
-  (((https),      (CLI::Long<"https">)),                       (Bool)),
-  (((http3),      (CLI::Long<"http3">)),                       (Bool)),
-  (((verbose),    (CLI::Flag<'v'>, CLI::Long<"verbose">)),     (Bool)),
-  (((http2),      (Enum<Http2Mode::Map>, CLI::Long<"http2">)),
-								  (Int8, Http2Mode::prefer)),
+    (CLI::Long<"refresh-token-lifetime">, Deflt<"24h"_z>)),		String),
+  (((requests),   (CLI::Opt<'n'>, CLI::Long<"requests">, Deflt<1>)),	UInt32),
+  (((maxconn),    (CLI::Long<"maxconn">)),				UInt32),
+  (((stateLimit), (CLI::Long<"state-limit">)),				UInt32),
+  (((timeout),    (CLI::Long<"timeout">, Deflt<30>)),			UInt32),
+  (((ipv6),       (CLI::Long<"ipv6">)),					Bool),
+  (((daemon),     (CLI::Long<"daemon">)),				Bool),
+  (((syslog),     (CLI::Long<"syslog">)),				Bool),
+  (((noKeepalive), (CLI::Long<"no-keepalive">)),			Bool),
+  (((noServerID),  (CLI::Long<"no-server-id">)),			Bool),
+  (((http),       (CLI::Long<"http">, Deflt<true>)),			Bool),
+  (((https),      (CLI::Long<"https">)),				Bool),
+  (((http3),      (CLI::Long<"http3">)),				Bool),
+  (((verbose),    (CLI::Flag<'v'>, CLI::Long<"verbose">)),		Bool),
+  (((http2),      (Enum<Http2Mode::Map>, CLI::Long<"http2">,
+    Deflt<Http2Mode::prefer>)),						Int8),
   (((quicHeartbeat),
-    (CLI::Long<"quic-heartbeat">)),                            (UInt32)),
+    (CLI::Long<"quic-heartbeat">)),					UInt32),
 #ifdef ZiMultiplex_DEBUG
-  (((debug),      (CLI::Long<"debug">)),                       (Bool)),
-  (((frag),       (CLI::Long<"frag">)),                        (Bool)),
-  (((yield),      (CLI::Long<"yield">)),                       (Bool)),
+  (((debug),      (CLI::Long<"debug">)),				Bool),
+  (((frag),       (CLI::Long<"frag">)),					Bool),
+  (((yield),      (CLI::Long<"yield">)),				Bool),
 #endif
 #ifdef ZiMultiplex_FILTER
-  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),                (String)),
-  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),                (String)),
+  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),				String),
+  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),				String),
 #endif
 #ifdef Zquic_DEBUG
-  (((quicDiag),   (CLI::Long<"quic-diag">)),                   (UInt32)),
+  (((quicDiag),   (CLI::Long<"quic-diag">)),				UInt32),
 #endif
-  (((memDiag),    (CLI::Long<"mem-diag">)),                    (UInt32)),
-  (((help),       (CLI::Flag<'h'>, CLI::Long<"help">)),        (Bool)));
+  (((memDiag),    (CLI::Long<"mem-diag">)),				UInt32),
+  (((help),       (CLI::Flag<'h'>, CLI::Long<"help">)),			Bool));
 
 template <typename Heap = ZuVoid>
 struct Empty_ : public Heap, public ZmObject { };
@@ -195,9 +195,9 @@ struct LoginForm_ : public Heap, public ZmObject {
 ZuDerive(LoginFormHeap, (ZmHeap<"zrestd.LoginForm", LoginForm_<>>));
 ZuDerive(LoginForm, (LoginForm_<LoginFormHeap>));
 ZfStruct(, (LoginForm, URI),
-  (((username), (Required)), (String)),
-  (((password), (Required)), (String)),
-  (((decision), (Required)), (String)));
+  (((username), (Required)),	String),
+  (((password), (Required)),	String),
+  (((decision), (Required)),	String));
 
 template <typename Heap = ZuVoid>
 struct TokenForm_ : public Heap, public ZmObject {
@@ -212,13 +212,13 @@ struct TokenForm_ : public Heap, public ZmObject {
 ZuDerive(TokenFormHeap, (ZmHeap<"zrestd.TokenForm", TokenForm_<>>));
 ZuDerive(TokenForm, (TokenForm_<TokenFormHeap>));
 ZfStruct(, (TokenForm, URI),
-  (((grantType), (URI::ID<"grant_type">, Required)), (String)),
-  (((code), (JSON::Opt)), (String)),
-  (((redirectURI), (URI::ID<"redirect_uri">, JSON::Opt)), (String)),
-  (((codeVerifier), (URI::ID<"code_verifier">, JSON::Opt)), (String)),
-  (((refreshToken), (URI::ID<"refresh_token">, JSON::Opt)), (String)),
-  (((scope), (JSON::Opt)), (String)),
-  (((clientID), (URI::ID<"client_id">, Required)), (String)));
+  (((grantType), (URI::ID<"grant_type">, Required)),		String),
+  (((code), (JSON::Opt)),					String),
+  (((redirectURI), (URI::ID<"redirect_uri">, JSON::Opt)),	String),
+  (((codeVerifier), (URI::ID<"code_verifier">, JSON::Opt)),	String),
+  (((refreshToken), (URI::ID<"refresh_token">, JSON::Opt)),	String),
+  (((scope), (JSON::Opt)),					String),
+  (((clientID), (URI::ID<"client_id">, Required)),		String));
 
 struct JWTHeader {
   OAuthString type;
@@ -226,9 +226,9 @@ struct JWTHeader {
   OAuthString keyID;
 };
 ZfStruct(, (JWTHeader, JSON),
-  (((type), (JSON::ID<"typ">, Required)), (String)),
-  (((algorithm), (JSON::ID<"alg">, Required)), (String)),
-  (((keyID), (JSON::ID<"kid">, Required)), (String)));
+  (((type), (JSON::ID<"typ">, Required)),	String),
+  (((algorithm), (JSON::ID<"alg">, Required)),	String),
+  (((keyID), (JSON::ID<"kid">, Required)),	String));
 
 class App;
 struct Application;
@@ -524,7 +524,7 @@ struct RequestParser : public Zrest::MReqParser<Catalog_> {
 
 struct AppPrefix { ZuCSpan app; };
 ZfStruct(, (AppPrefix, URI),
-  (((app), (URI::PathIndex<0>, Required)), (String)));
+  (((app), (URI::PathIndex<0>, Required)),	String));
 
 struct MetadataSuffix {
   ZuCSpan metadata;
@@ -532,9 +532,9 @@ struct MetadataSuffix {
   ZuCSpan app;
 };
 ZfStruct(, (MetadataSuffix, URI),
-  (((metadata), (URI::PathIndex<0>, Required)), (String)),
-  (((oauth2),   (URI::PathIndex<1>, Required)), (String)),
-  (((app),      (URI::PathIndex<2>, Required)), (String)));
+  (((metadata), (URI::PathIndex<0>, Required)),	String),
+  (((oauth2),   (URI::PathIndex<1>, Required)),	String),
+  (((app),      (URI::PathIndex<2>, Required)),	String));
 
 struct EndpointParser : public RequestParser<EndpointCatalog> {
   using Base = RequestParser<EndpointCatalog>;
@@ -876,7 +876,7 @@ static bool formContentType(ZuCSpan value)
 
 static bool cookieValue(ZuCSpan cookies, OAuthString &value)
 {
-  static constexpr auto name = "__Host-zrest_auth="_Zu;
+  static constexpr auto name = "__Host-zrest_auth="_z;
   while (cookies) {
     while (cookies && cookies[0] == ' ') cookies.offset(1);
     int end = cookies.find([](char c) { return c == ';'; });
@@ -1282,7 +1282,7 @@ void App::authorize(
     "type=\"password\" autocomplete=\"current-password\" required></label>"
     "<button name=\"decision\" value=\"approve\" type=\"submit\">"
     "Approve</button><button name=\"decision\" value=\"deny\" "
-    "type=\"submit\">Deny</button></form></main></body></html>"_Zu;
+    "type=\"submit\">Deny</button></form></main></body></html>"_z;
   ZmRef<Text> response = new Text{};
   response->value = page;
   response->cookie << "__Host-zrest_auth=" << session <<

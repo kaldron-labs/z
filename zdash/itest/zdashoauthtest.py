@@ -2,7 +2,7 @@
 # (c) Copyright 2026 Huw Rogers
 # This code is licensed by the MIT license (see LICENSE for details)
 
-"""Exercise dashboard refresh-token reuse without GTK or a browser."""
+"""Exercise renewal, rotation, failure and Vault reuse without a browser."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -51,11 +51,14 @@ class Handler(BaseHTTPRequestHandler):
                 form.get("client_id") != ["client"] or
                 form.get("refresh_token") != [expected]):
             return self.reply(400, {"error": "invalid_grant"})
+        if len(self.server.seen) == 6 and not self.server.rejected:
+            self.server.rejected = True
+            return self.reply(400, {"error": "invalid_grant"})
         self.server.seen.append(expected)
         number = len(self.server.seen)
         self.reply(200, {"access_token": "access-" + str(number),
                          "refresh_token": "refresh-" + str(number),
-                         "token_type": "Bearer",
+                         "token_type": "Bearer", "expires_in": 2,
                          "scope": "Client offline_access"})
 
 
@@ -66,6 +69,7 @@ def main():
         with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
             server.origin = "http://127.0.0.1:" + str(server.server_port)
             server.seen = []
+            server.rejected = False
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -73,14 +77,20 @@ def main():
                 home = Path(directory) / "vault-home"
                 env = dict(os.environ, ZDASH_HOME=str(home),
                            DBUS_SESSION_BUS_ADDRESS="unsupported:address")
-                for args in (("seed", issuer), ("run", issuer, "access-1"),
-                             ("run", issuer, "access-2")):
+                for args in (("seed", issuer),
+                             ("run", issuer, "access-1", "2"),
+                             ("run", issuer, "access-4", "1"),
+                             ("run", issuer, "access-6", "-1"),
+                             ("run", issuer, "access-7", "0")):
                     result = subprocess.run([str(binary), *args], env=env,
                                             stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE, timeout=30)
                     assert result.returncode == 0, "dashboard OAuth fixture failed"
                     assert b"Open this URL" not in result.stdout
-                assert server.seen == ["refresh-0", "refresh-1"]
+                    if args[-1] == "-1":
+                        assert b"credential renewal failed" in result.stderr
+                assert server.seen == ["refresh-" + str(i) for i in range(7)]
+                assert server.rejected
                 assert (home / "vault" / "secrets.json").stat().st_mode & 0o777 == 0o600
             finally:
                 server.shutdown()

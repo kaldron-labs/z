@@ -27,9 +27,9 @@ static void nativeKeys()
 {
   ZuTestScope(nativeKeys);
   constexpr auto identity =
-    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEX"_Zu;
+    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEX"_z;
   constexpr auto recipient =
-    "age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj"_Zu;
+    "age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj"_z;
   uint8_t secret[32], pub[32];
   char text[sizeof("AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEX") - 1];
   auto sk = ZtlsAge::decodeIdentity(ZtlsAgeKeyType::X25519, identity, secret);
@@ -58,11 +58,11 @@ static void nativeKeys()
   ZuCheck(ZtlsAge::decodeRecipient(ZtlsAgeKeyType::X25519, bad, pub)
     .template is<ZeException>());
   ZuCheck(ZtlsAge::decodeIdentity(ZtlsAgeKeyType::X25519,
-    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEx"_Zu,
+    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEx"_z,
     secret).template is<ZeException>());
   // The checksum is valid, but the last data symbol has nonzero pad bits.
   ZuCheck(ZtlsAge::decodeIdentity(ZtlsAgeKeyType::X25519,
-    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPPG0UGY5"_Zu,
+    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPPG0UGY5"_z,
     secret).template is<ZeException>());
   ZuClear(secret, sizeof(secret));
 }
@@ -71,7 +71,7 @@ static void hybridKey()
 {
   ZuTestScope(hybridKey);
   constexpr auto identity =
-    "AGE-SECRET-KEY-PQ-1XX76JRALNLXDMEW0CRK45QMCCH4X06SE84UN3VPM33W6HWDX0H3SK3ZQFR"_Zu;
+    "AGE-SECRET-KEY-PQ-1XX76JRALNLXDMEW0CRK45QMCCH4X06SE84UN3VPM33W6HWDX0H3SK3ZQFR"_z;
   uint8_t seed[Ztls::PK::HybridSeedSize];
   auto decoded = ZtlsAge::decodeIdentity(
     ZtlsAgeKeyType::Hybrid, identity, seed);
@@ -416,13 +416,13 @@ static bool sshLine(ZuCSpan type, ZuBSpan blob)
   auto result = ZtlsAge::decodeSSHRecipient(line, decoded);
   if (result.template is<ZeException>()) return false;
   auto recipient = ZuMv(result).template p<ZtlsAge::Recipient>();
-  ZuBSpan parsed = type == "ssh-rsa"_Zu ?
+  ZuBSpan parsed = type == "ssh-rsa"_z ?
     recipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
     recipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;
   if (parsed != blob) return false;
   if (unsigned tail = blob.length() % 3) {
     constexpr auto alphabet =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"_Zu;
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"_z;
     unsigned pos = type.length() + 1 + encoded.length() - (4 - tail);
     char c = line[pos];
     line[pos] = alphabet[ZuBase64::lookup(c) + 1];
@@ -450,13 +450,13 @@ static void sshRSAFile()
   sshString(blob, ZuBSpan{"ssh-rsa"});
   sshString(blob, exponent, true);
   sshString(blob, modulus, true);
-  ZuCheckRT(sshLine("ssh-rsa"_Zu, blob));
+  ZuCheckRT(sshLine("ssh-rsa"_z, blob));
   Bytes shortBlob;
   uint8_t smallExponent = 3, smallModulus[2] = {1, 1};
   sshString(shortBlob, ZuBSpan{"ssh-rsa"});
   sshString(shortBlob, {&smallExponent, 1});
   sshString(shortBlob, smallModulus);
-  ZuCheckRT(sshLine("ssh-rsa"_Zu, shortBlob));
+  ZuCheckRT(sshLine("ssh-rsa"_z, shortBlob));
   ZtlsAge::Recipient recipient = ZtlsAge::SshRSARecipient{blob};
   ZtlsAge::Identity identity = ZtlsAge::SshRSAIdentity{blob, &key};
   uint8_t plain[37], recovered[sizeof(plain)];
@@ -493,7 +493,7 @@ static void sshEDFile()
   Bytes blob;
   sshString(blob, ZuBSpan{"ssh-ed25519"});
   sshString(blob, publicKey);
-  ZuCheckRT(sshLine("ssh-ed25519"_Zu, blob));
+  ZuCheckRT(sshLine("ssh-ed25519"_z, blob));
   ZtlsAge::Recipient recipient = ZtlsAge::SshED25519Recipient{blob};
   ZtlsAge::Identity identity = ZtlsAge::SshED25519Identity{blob, &key};
   uint8_t plain[37], recovered[sizeof(plain)];
@@ -530,7 +530,7 @@ static void openSSHKey()
     "9+zUpsUHz8p1l5Un2CFGAAAADmNvdW50MEBiYXJvcXVlAQIDBAUGBw==\n"
     "-----END OPENSSH PRIVATE KEY-----\n";
   constexpr auto pub =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJScLrsgPCdk0VZkiNHMZsYU9+zUpsUHz8p1l5Un2CFG"_Zu;
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJScLrsgPCdk0VZkiNHMZsYU9+zUpsUHz8p1l5Un2CFG"_z;
   uint8_t publicKey[128], expected[128];
   auto loaded = ZtlsAge::loadOpenSSH(
     {pem, sizeof(pem) - 1}, publicKey);
@@ -552,7 +552,7 @@ static void sshReference()
 {
   ZuTestScopeRT(sshReference);
   auto path = ZiTestResidue::file("ssh-reference.age");
-  constexpr auto plain = "Ztls SSH reference fixture\n"_Zu;
+  constexpr auto plain = "Ztls SSH reference fixture\n"_z;
   ZtlsAge age;
   for (auto &vector : ZtlsAgeSSHVectors) {
     Chars privateKey;

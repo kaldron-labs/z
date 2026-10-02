@@ -58,15 +58,15 @@ struct ScalarArgs {
 };
 
 ZfStruct(, (ScalarArgs, Bah),
-  (((scalar), (Ctor<0>)), (UDT)));
+  (((scalar), (Ctor<0>)),	UDT));
 
 ZfStruct(, (Nested, Bah),
-  (((i1), (Ctor<0>)), (Int32)),
-  (((i2), (Ctor<1>)), (Int32)));
+  (((i1), (Ctor<0>)),	Int32),
+  (((i2), (Ctor<1>)),	Int32));
 
 ZfStruct(, (NestedJSON, Bah),
-  (((i1), (Ctor<0>)), (Int32)),
-  (((i2), (Ctor<1>)), (Int32)));
+  (((i1), (Ctor<0>)),	Int32),
+  (((i2), (Ctor<1>)),	Int32));
 
 struct UBool : public ZuUnion<void, bool> {
   ZuDerive_(UBool, (ZuUnion<void, bool>))
@@ -97,29 +97,29 @@ struct Foo {
 };
 
 ZfStruct(, (Foo, Bah),
-  (((string, Rd), (Ctor<0>)), (CString, "hello \"world\"")),
-  (((bytes), (Ctor<1>, CLI::Escaped, CLI::Arg<1>)), (Bytes, ZuBSpan{"bytes"})),
-  (((id), (Ctor<2>, Mutable)), (String, "goodbye")),
-  (((int_), (Ctor<3>, CLI::ID<"int">, CLI::Number<ZuFmt::Right<9>>)), (Int32)),
-  (((int_ranged), (Ctor<4>, CLI::ID<"int-ranged">, (Range<0, 100>))),
-    (Int32, 42)),
-  (((hex), (Ctor<5>, Hex)), (UInt32, 0xdeadbeef)),
-  (((enum_), (Ctor<6>, Enum<Values::Map>, CLI::ID<"enum">, CLI::Opt<'e'>)),
-    (Int32, Values::Normal)),
-  (((flags), (Ctor<7>, Flags<Flags::Map>)), (UInt128, Flags::Bit1())),
-  (((float_), (Ctor<8>, CLI::ID<"float">, CLI::Number<ZuFmt::FP<4>>)), (Float)),
-  (((float_ranged), (Ctor<9>, CLI::ID<"float-ranged">, (Range<0.0, 1>))),
-    (Float, 0.42)),
+  (((string, Rd), (Ctor<0>, Deflt<"hello \"world\""_z>)),			CString),
+  (((bytes), (Ctor<1>, CLI::Escaped, CLI::Arg<1>, Deflt<"bytes"_z>)),		Bytes),
+  (((id), (Ctor<2>, Mutable, Deflt<"goodbye"_z>)),				String),
+  (((int_), (Ctor<3>, CLI::ID<"int">, CLI::Number<ZuFmt::Right<9>>)),		Int32),
+  (((int_ranged), (Ctor<4>, CLI::ID<"int-ranged">, (Range<0, 100>),
+    Deflt<42>)),								Int32),
+  (((hex), (Ctor<5>, Hex, Deflt<0xdeadbeef>)),					UInt32),
+  (((enum_), (Ctor<6>, Enum<Values::Map>, CLI::ID<"enum">, CLI::Opt<'e'>,
+    Deflt<Values::Normal>)),							Int32),
+  (((flags), (Ctor<7>, Flags<Flags::Map>, Deflt<Flags::Bit1()>)),		UInt128),
+  (((float_), (Ctor<8>, CLI::ID<"float">, CLI::Number<ZuFmt::FP<4>>)),		Float),
+  (((float_ranged), (Ctor<9>, CLI::ID<"float-ranged">, (Range<0.0, 1>),
+    Deflt<0.42>)),								Float),
   (((fixed), (Ctor<10>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Fixed)),
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),					Fixed),
   (((decimal), (Ctor<11>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))), (Decimal)),
-  (((time_), (Ctor<12>, CLI::ID<"time">)), (Time)),
-  (((nested), (Ctor<13>)), (UDT)),
-  (((nestedJSON), (Ctor<14>)), (UDT)),
-  (((bytesVec), (Ctor<15>, CLI::Args<3>)), (BytesVec)),
-  (((bool_), (Ctor<16>, CLI::ID<"bool">, CLI::Flag<'b'>)), (Bool)) /*,
-  (((ubool), (Ctor<17>)), (Bool)) */);
+      (Range<ZuDecimal{0}, ZuDecimal{1}>))),					Decimal),
+  (((time_), (Ctor<12>, CLI::ID<"time">)),					Time),
+  (((nested), (Ctor<13>)),							UDT),
+  (((nestedJSON), (Ctor<14>)),							UDT),
+  (((bytesVec), (Ctor<15>, CLI::Args<3>)),					BytesVec),
+  (((bool_), (Ctor<16>, CLI::ID<"bool">, CLI::Flag<'b'>)),			Bool) /*,
+  (((ubool), (Ctor<17>)),							Bool) */);
 
 ZfCLIConfig(Bah, (ZfCLI_ArrayFmt<ZfCLI::Delimited>));
 
@@ -129,8 +129,8 @@ struct LongOnly {
 };
 
 ZfStruct(, (LongOnly, CLI),
-  (((port),    (CLI::Long<"port">)),    (UInt32)),
-  (((verbose), (CLI::Long<"verbose">)), (Bool)));
+  (((port),    (CLI::Long<"port">)),	UInt32),
+  (((verbose), (CLI::Long<"verbose">)),	Bool));
 
 struct DelimitedArgs {
   ZtArray<ZuCSpan> values;
@@ -140,7 +140,7 @@ struct DelimitedArgs {
 };
 
 ZfStruct(, (DelimitedArgs, Bah),
-  (((values), (Ctor<0>, CLI::Long<"values">)), (StringVec)));
+  (((values), (Ctor<0>, CLI::Long<"values">)),	StringVec));
 
 struct IntArray : public ZtArray<int> {
   ZuDerive_(IntArray, ZtArray<int>);
@@ -152,28 +152,28 @@ struct ArrayOpt {
 };
 
 ZfStruct(, (ArrayOpt, Bah),
-  (((values), (Ctor<0>)), (UDT)));
+  (((values), (Ctor<0>)),	UDT));
 
 struct BareArrayOpt {
   IntArray values;
 };
 
 ZfStruct(, (BareArrayOpt, CLI),
-  (((values), (Ctor<0>)), (UDT)));
+  (((values), (Ctor<0>)),	UDT));
 
 struct Positional {
   int value = 0;
 };
 
 ZfStruct(, (Positional, CLI),
-  (((value), (Ctor<0>, CLI::Arg<1>, (Range<0, 10>))), (Int32)));
+  (((value), (Ctor<0>, CLI::Arg<1>, (Range<0, 10>))),	Int32));
 
 struct RequiredOpt {
   int value = ZuCmp<int>::null();
 };
 
 ZfStruct(, (RequiredOpt, CLI),
-  (((value), (Ctor<0>, Mutable, Required)), (Int32)));
+  (((value), (Ctor<0>, Mutable, Required)),	Int32));
 
 struct CLIFormatInt {
   unsigned value = 0;
@@ -181,7 +181,7 @@ struct CLIFormatInt {
 using CLIIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
 ZfStruct(, (CLIFormatInt, CLI),
   (((value), (Ctor<0>, CLI::Long<"value">,
-    CLI::Number<CLIIntFormat>)), (UInt32)));
+    CLI::Number<CLIIntFormat>)),	UInt32));
 
 template <typename L>
 static ZeString cliError(L l)

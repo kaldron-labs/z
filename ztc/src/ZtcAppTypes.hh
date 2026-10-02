@@ -15,8 +15,10 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
+#include <zlib/ZuSemVer.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuTime.hh>
+#include <zlib/ZuDateTime.hh>
 #include <zlib/ZuTuple.hh>
 
 #include <zlib/ZmEngine.hh>
@@ -72,8 +74,8 @@ struct Error {
 struct AppTelemetry {
   ZuID			version;
   ZuID			role;
-  int64_t		startTime = 0;
-  uint32_t		ztcver = Z_VERSION;
+  ZuDateTime		startTime;
+  ZuSemVer		ztcver{Z_VERSION};
   ZmEngineState::T	state = ZmEngineState::Stopped;
   bool			degraded = false;
   RAG::T		rag = RAG::Off;

@@ -22,7 +22,7 @@
 
 namespace ZvTOMLError {
 
-constexpr auto Component = "ZvTOML"_Zu;
+constexpr auto Component = "ZvTOML"_z;
 
 template <ZuString Op>
 inline auto fileError(const Zi::Path &path, ZeError error) {

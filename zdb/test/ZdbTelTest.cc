@@ -373,7 +373,7 @@ void run()
       *ok &= result == ZdbOpResult::Invalid && !row && next == 1;
     });
 
-    orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(1)),
+    orders->find<0>(0, ZuFwdTuple("IBM", uint64_t(1)),
 	[orders, ok, callbacks](ZdbRowRef<Order> row) {
       *ok &= bool(row);
       orders->insert(1, row, [ok, callbacks](

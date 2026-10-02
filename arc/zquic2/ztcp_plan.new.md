@@ -602,9 +602,9 @@ struct Options {
 };
 
 ZtStruct((Options, CLI),
-  (((ca),     (CLI::Opt<'c'>, CLI::Long<"ca">)),     (String)),
-  (((output), (CLI::Opt<'o'>, CLI::Long<"output">)), (String, "index.html")),
-  (((help),   (CLI::Flag<'h'>)),                     (Bool)));
+  (((ca),     (CLI::Opt<'c'>, CLI::Long<"ca">)),				String),
+  (((output), (CLI::Opt<'o'>, CLI::Long<"output">, Deflt<"index.html"_z>)),	String),
+  (((help),   (CLI::Flag<'h'>)),						Bool));
 ```
 
 CLI:

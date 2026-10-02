@@ -25,10 +25,10 @@ struct SharedResult : public ZmObject {
 };
 
 ZfStruct(, (SharedReq, JSON),
-  (((lhs), (Mutable)), (Int32)),
-  (((rhs), (Mutable)), (Int32)));
+  (((lhs), (Mutable)),	Int32),
+  (((rhs), (Mutable)),	Int32));
 ZfStruct(, (SharedResult, JSON),
-  (((value), (Mutable)), (Int32)));
+  (((value), (Mutable)),	Int32));
 
 template <int Status_>
 struct SharedResponse : public Zmcp::Response {

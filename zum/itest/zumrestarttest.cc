@@ -203,7 +203,7 @@ static bool stageAppEnrollment(
     .operationQueryOp = operationQueryOp,
     .request = Zum::IdemRequest{.actorID = "recovery-admin",
       .operation = Zum::MgmtOp::appEnroll,
-      .idempotencyKey = Zum::String{clientID},
+      .idempotence = Zum::String{clientID},
       .requestDigest = Zum::Bytes{ZuBSpan{"enrollment request"}},
       .expires = 86400, .created = 90, .updated = 90}};
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
@@ -267,7 +267,7 @@ static Zum::IdemRequest actionRequest(ZdbSagaID id)
 {
   return Zum::IdemRequest{.actorKind = Zum::ActorKind::User,
     .actorID = "recovery-admin", .operation = Zum::MgmtOp::actionAdd,
-    .idempotencyKey = Zum::String{} << id,
+    .idempotence = Zum::String{} << id,
     .requestDigest = Zum::Bytes{ZuBSpan{"action request"}},
     .status = Zum::RequestStatus::Pending, .expires = 86400,
     .version = 1, .created = 190, .updated = 190};
@@ -319,7 +319,7 @@ static bool stageActionAdd(
         requests->run(0, [requests, sagaID, actionID, wake = ZuMv(wake)]() mutable {
           auto request = actionRequest(sagaID);
           requests->findUpd<0>(0, ZuFwdTuple(request.actorKind,
-            request.actorID, request.operation, request.idempotencyKey),
+            request.actorID, request.operation, request.idempotence),
             [actionID, wake = ZuMv(wake)](ZdbRow<Zum::IdemRequest> *row) mutable {
               if (!row) { wake(false); return; }
               row->data().status = Zum::RequestStatus::Complete;
@@ -496,7 +496,7 @@ static bool createAction(
     .request = Zum::IdemRequest{
 	.actorKind = Zum::ActorKind::User, .actorID = "restart-admin",
 	.operation = Zum::MgmtOp::actionAdd,
-	.idempotencyKey = Zum::String{name},
+	.idempotence = Zum::String{name},
 	.requestDigest = Zum::Bytes{ZuBSpan{name}}, .expires = 86400,
 	.created = 100, .updated = 100}}, ZdbSagaID{1000 + id});
 }
@@ -533,15 +533,15 @@ static State loadState(Zum::DBContext *context, Zum::ActionID id)
 
 static bool stageMemberChange(
     Zum::DB *db, Zum::DBContext *context, const Zum::App &app,
-    const Zum::Membership &member, ZdbSagaID sagaID, unsigned cut,
+    const Zum::Assignment &member, ZdbSagaID sagaID, unsigned cut,
     bool stale = false)
 {
   Zum::IdemRequest request{.actorID = "member-admin",
-    .operation = Zum::MgmtOp::membershipRoles,
-    .idempotencyKey = Zum::String{} << sagaID,
-    .requestDigest = Zum::Bytes{ZuBSpan{"membership change"}}, .expires = 86400,
+    .operation = Zum::MgmtOp::assignmentRoles,
+    .idempotence = Zum::String{} << sagaID,
+    .requestDigest = Zum::Bytes{ZuBSpan{"assignment change"}}, .expires = 86400,
     .version = 1, .created = 300, .updated = 300};
-  Zum::MembershipChange change{.appID = app.id, .userID = member.userID,
+  Zum::AssignmentChange change{.appID = app.id, .userID = member.userID,
     .oldRoles = member.roleIDs, .newRoles = {member.roleIDs[0] + 1},
     .oldState = member.state,
     .newState = Zum::State::T(member.state == Zum::State::Active ?
@@ -557,15 +557,15 @@ static bool stageMemberChange(
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
-      .type = Zum::MembershipChange::Type{}(), .id = sagaID,
+      .type = Zum::AssignmentChange::Type{}(), .id = sagaID,
       .shard = 0, .data = ZuMv(payload)})) return false;
-  for (unsigned step = 0; step < Zum::MembershipChange::NSteps; ++step) {
+  for (unsigned step = 0; step < Zum::AssignmentChange::NSteps; ++step) {
     if (cut == 2 * step) return true;
     Zdb_::AnyTable *table;
     switch (step) {
       case 0: case 5: table = context->requests; break;
       case 1: case 4: table = context->apps; break;
-      default: table = context->memberships; break;
+      default: table = context->assignments; break;
     }
     auto un = ZmBlock<Zdb_::UN>{}([table](auto wake) mutable {
       table->run(0, [table, wake = ZuMv(wake)]() mutable {
@@ -573,7 +573,7 @@ static bool stageMemberChange(
       });
     });
     if (!insertRecord(steps.ptr(), Zdb_::SagaStep{
-	.type = Zum::MembershipChange::Type{}(), .id = sagaID,
+	.type = Zum::AssignmentChange::Type{}(), .id = sagaID,
 	.step = step, .shard = 0, .un = un})) return false;
     if (cut == 2 * step + 1) return true;
     if (step == 0) {
@@ -584,7 +584,7 @@ static bool stageMemberChange(
       if (!ZmBlock<bool>{}([context, &request](auto wake) mutable {
         context->requests->run(0, [context, &request, wake = ZuMv(wake)]() mutable {
           context->requests->findUpd<0>(0, ZuFwdTuple(request.actorKind,
-            request.actorID, request.operation, request.idempotencyKey),
+            request.actorID, request.operation, request.idempotence),
             [wake = ZuMv(wake)](ZdbRow<Zum::IdemRequest> *row) mutable {
               if (!row) { wake(false); return; }
               row->data().status = Zum::RequestStatus::Complete;
@@ -614,11 +614,11 @@ static bool stageMemberChange(
       })) return false;
     } else {
       if (!ZmBlock<bool>{}([context, &member, sagaID, step](auto wake) mutable {
-	context->memberships->run(0, [context, &member, sagaID, step,
+	context->assignments->run(0, [context, &member, sagaID, step,
 	    wake = ZuMv(wake)]() mutable {
-	  context->memberships->findUpd<0>(0, ZuFwdTuple(member.appID, member.userID),
+	  context->assignments->findUpd<0>(0, ZuFwdTuple(member.appID, member.userID),
 	    [&member, sagaID, step, wake = ZuMv(wake)](
-		ZdbRow<Zum::Membership> *row) mutable {
+		ZdbRow<Zum::Assignment> *row) mutable {
 	      if (!row) { wake(false); return; }
 	      if (step == 2) {
 		row->data().roleIDs = {member.roleIDs[0] + 1};
@@ -654,13 +654,13 @@ static void memberRecovery()
   ZuCheck(insertRecord(context->users, Zum::User{.id = 31,
     .name = "member-recovery", .handle = Zum::Bytes{ZuBSpan{"member-recovery"}},
     .state = Zum::State::Active}));
-  ZuCheck(insertRecord(context->memberships, Zum::Membership{
+  ZuCheck(insertRecord(context->assignments, Zum::Assignment{
     .appID = 30, .userID = 31, .roleIDs = {101}, .state = Zum::State::Active,
     .created = 100, .updated = 100}));
-  for (unsigned cut = 0; cut <= 2 * Zum::MembershipChange::NSteps; ++cut) {
-    ZuTestRepeat(memberRecovery, 2 * Zum::MembershipChange::NSteps + 1);
+  for (unsigned cut = 0; cut <= 2 * Zum::AssignmentChange::NSteps; ++cut) {
+    ZuTestRepeat(memberRecovery, 2 * Zum::AssignmentChange::NSteps + 1);
     auto app = record(context->apps, ZuFwdTuple(Zum::AppID{30}));
-    auto member = record(context->memberships,
+    auto member = record(context->assignments,
       ZuFwdTuple(Zum::AppID{30}, Zum::UserID{31}));
     ZuCheck(stageMemberChange(db, context, app, member, ZdbSagaID{300 + cut}, cut));
     ZuCheck(stopDB(db, context));
@@ -668,7 +668,7 @@ static void memberRecovery()
     ZuCheck(bool(db));
     if (!db) return;
     auto nextApp = record(context->apps, ZuFwdTuple(app.id));
-    auto next = record(context->memberships, ZuFwdTuple(app.id, member.userID));
+    auto next = record(context->assignments, ZuFwdTuple(app.id, member.userID));
     ZuCheck(!nextApp.owner && nextApp.version == app.version + 1 &&
       nextApp.authVersion == app.authVersion + 1 && nextApp.updated == 300);
     ZuCheck(!next.owner && next.version == member.version + 1 &&
@@ -676,7 +676,7 @@ static void memberRecovery()
       next.roleIDs.length() == 1 && next.roleIDs[0] == member.roleIDs[0] + 1 &&
       next.state != member.state);
     auto request = record(context->requests, ZuFwdTuple(Zum::ActorKind::User,
-      Zum::String{"member-admin"}, Zum::ActionID(Zum::MgmtOp::membershipRoles),
+      Zum::String{"member-admin"}, Zum::ActionID(Zum::MgmtOp::assignmentRoles),
       Zum::String{} << ZdbSagaID{300 + cut}));
     ZuCheck(request.status == Zum::RequestStatus::Complete &&
       request.version == 2 && !request.owner && !request.resultIDs &&
@@ -684,7 +684,7 @@ static void memberRecovery()
     ZuCheck(sagaEmpty(db));
   }
   auto app = record(context->apps, ZuFwdTuple(Zum::AppID{30}));
-  auto member = record(context->memberships,
+  auto member = record(context->assignments,
     ZuFwdTuple(Zum::AppID{30}, Zum::UserID{31}));
   ZuCheck(stageMemberChange(db, context, app, member, ZdbSagaID{400}, 4, true));
   ZuCheck(stopDB(db, context));
@@ -692,16 +692,16 @@ static void memberRecovery()
   ZuCheck(bool(db));
   if (!db) return;
   auto nextApp = record(context->apps, ZuFwdTuple(app.id));
-  auto next = record(context->memberships, ZuFwdTuple(app.id, member.userID));
+  auto next = record(context->assignments, ZuFwdTuple(app.id, member.userID));
   ZuCheck(!nextApp.owner && nextApp.version == app.version &&
     nextApp.authVersion == app.authVersion && nextApp.updated == app.updated);
   ZuCheck(!next.owner && next.version == member.version &&
     next.authVersion == member.authVersion && next.updated == member.updated &&
     next.roleIDs == member.roleIDs && next.state == member.state);
   auto failed = record(context->requests, ZuFwdTuple(Zum::ActorKind::User,
-    Zum::String{"member-admin"}, Zum::ActionID(Zum::MgmtOp::membershipRoles),
+    Zum::String{"member-admin"}, Zum::ActionID(Zum::MgmtOp::assignmentRoles),
     Zum::String{} << ZdbSagaID{400}));
-  ZuCheck(!failed.idempotencyKey);
+  ZuCheck(!failed.idempotence);
   ZuCheck(sagaEmpty(db));
   ZuCheck(stopDB(db, context));
   ZuCheck(mx.stop());
@@ -942,7 +942,7 @@ static void invitationRecovery()
 	.digest = Zum::Bytes{ZuBSpan{external.name}},
 	.userName = external.name, .actor = "precreated"},
       .updated = 200, .request = Zum::IdemRequest{.actorID = "invite-admin",
-	.operation = Zum::MgmtOp::userInvite, .idempotencyKey = external.name,
+	.operation = Zum::MgmtOp::userInvite, .idempotence = external.name,
 	.requestDigest = Zum::Bytes{ZuBSpan{"invite"}}, .expires = 86400,
 	.created = 200, .updated = 200}, .external = external};
     if (stale) --change.external.version;
@@ -958,9 +958,9 @@ static void invitationRecovery()
     auto local = record(context->users, ZuFwdTuple(change.values.id));
     auto grant = record(context->grants, ZuFwdTuple(change.grant.id));
     auto request = record(context->requests, ZuFwdTuple(change.request.actorKind,
-      change.request.actorID, change.request.operation, change.request.idempotencyKey));
+      change.request.actorID, change.request.operation, change.request.idempotence));
     if (stale) {
-      ZuCheck(!local.id && !grant.id && !request.idempotencyKey);
+      ZuCheck(!local.id && !grant.id && !request.idempotence);
     } else {
       ZuCheck(local.id == change.values.id && !local.owner &&
 	local.source == Zum::UserSource::Local && local.state == Zum::State::Pending);
@@ -1090,7 +1090,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
   Zum::CatalogPublish change{.before = app, .after = app,
     .request = Zum::IdemRequest{.actorKind = Zum::ActorKind::Client,
       .actorID = "publisher", .operation = Zum::MgmtOp::catalogPublish,
-      .idempotencyKey = app.name,
+      .idempotence = app.name,
       .requestDigest = Zum::Bytes{ZuBSpan{"manifest request"}},
       .expires = 86400, .created = 190, .updated = 190}};
   change.after.catalogRevision = 2;
@@ -1130,7 +1130,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
   auto request = record(context->requests, ZuFwdTuple(Zum::ActorKind::Client,
     Zum::String{"publisher"}, Zum::ActionID(Zum::MgmtOp::catalogPublish), app.name));
   if (fail) {
-    ZuCheck(!request.idempotencyKey);
+    ZuCheck(!request.idempotence);
   } else {
     ZuCheck(request.status == Zum::RequestStatus::Complete && !request.owner &&
       request.sagaID == ZdbSagaID{app.id} && request.resultIDs.length() == 1 &&
@@ -1221,7 +1221,7 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
       case 0: case 12: table = context->requests; break;
       case 1: case 11: table = context->apps; break;
       case 2: case 10: table = context->roles; break;
-      case 3: case 7: table = context->memberships; break;
+      case 3: case 7: table = context->assignments; break;
       case 4: case 8: table = context->clientAccess; break;
       case 5: case 9: table = context->adminAccess; break;
       default: table = context->roleMaps; break;
@@ -1272,7 +1272,7 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
 	ok = replaceRecord(context->roles, ZuMv(role));
       } break;
       case 3: case 7:
-	ok = stageRoleRef(context->memberships, change.members[iteration], id,
+	ok = stageRoleRef(context->assignments, change.members[iteration], id,
 	  change.role.id, change.updated, phase == 7);
 	break;
       case 4: case 8:
@@ -1320,7 +1320,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   ZuCheck(insertRecord(context->roles, role));
   Zum::RoleDelete change{.app = app, .role = role, .updated = 200,
     .request = Zum::IdemRequest{.actorID = "recovery-admin",
-      .operation = Zum::MgmtOp::roleDelete, .idempotencyKey = app.name,
+      .operation = Zum::MgmtOp::roleDelete, .idempotence = app.name,
       .requestDigest = Zum::Bytes{ZuBSpan{"role removal"}},
       .expires = 86400, .created = 190, .updated = 190}};
   auto add = [](auto table, auto item, auto &images) {
@@ -1332,7 +1332,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
     for (unsigned i = 0; i < 2; ++i) {
       Zum::String value;
       value << i;
-      ZuCheck(add(context->memberships, Zum::Membership{
+      ZuCheck(add(context->assignments, Zum::Assignment{
 	.appID = app.id, .userID = 500 + i, .roleIDs = {399, 400, 401},
 	.state = Zum::State::Active, .created = 100, .updated = 100}, change.members));
       ZuCheck(add(context->clientAccess, Zum::ClientAccess{
@@ -1372,9 +1372,9 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   auto request = record(context->requests, ZuFwdTuple(Zum::ActorKind::User,
     Zum::String{"recovery-admin"}, Zum::ActionID(Zum::MgmtOp::roleDelete), app.name));
   if (fail) {
-    ZuCheck(!request.idempotencyKey);
+    ZuCheck(!request.idempotence);
   } else {
-    ZuCheck(request.idempotencyKey == app.name && !request.owner &&
+    ZuCheck(request.idempotence == app.name && !request.owner &&
       request.status == Zum::RequestStatus::Complete && request.version == 2 &&
       request.updated == 200 && !request.resultIDs &&
       request.sagaID == ZdbSagaID{app.id});
@@ -1389,7 +1389,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
     for (unsigned i = 0; i < 2; ++i) {
       Zum::String value;
       value << i;
-      auto member = record(context->memberships, ZuFwdTuple(app.id, Zum::UserID{500 + i}));
+      auto member = record(context->assignments, ZuFwdTuple(app.id, Zum::UserID{500 + i}));
       auto client = record(context->clientAccess, ZuFwdTuple(value, app.id));
       auto admin = record(context->adminAccess,
 	ZuFwdTuple(Zum::ActorKind::T(Zum::ActorKind::User), value, app.id));
@@ -1485,7 +1485,7 @@ static void grantUpdate()
   auto db = startDB(cf, mx, context);
   ZuCheck(bool(db));
   if (!db) return;
-  constexpr auto id = "grant-update-001"_Zu;
+  constexpr auto id = "grant-update-001"_z;
   ZuCheck(insertRecord(context->grants, Zum::Grant{
     .id = Zum::Bytes{ZuBSpan{id}}, .roleIDs = Zum::IDVec{1},
     .scope = "before"}));
@@ -1555,7 +1555,7 @@ static void sagaRecovery()
   auto failedRequest = record(context->requests,
     ZuFwdTuple(Zum::ActorKind::User, Zum::String{"recovery-admin"},
       Zum::ActionID(Zum::MgmtOp::appEnroll), Zum::String{"svc_failed"}));
-  ZuCheck(!failedRequest.idempotencyKey);
+  ZuCheck(!failedRequest.idempotence);
   auto rollback = appRollbackState(context);
   ZuCheck(!rollback.app.id);
   ZuCheck(!rollback.client.id);
@@ -1586,7 +1586,7 @@ static void sagaRecovery()
       !action.owner && action.version == 1 && !action.tombstone);
     auto key = actionRequest(ZdbSagaID{100 + cut});
     auto request = record(context->requests, ZuFwdTuple(key.actorKind,
-      key.actorID, key.operation, key.idempotencyKey));
+      key.actorID, key.operation, key.idempotence));
     ZuCheck(request.status == Zum::RequestStatus::Complete && !request.owner &&
       request.sagaID == ZdbSagaID{100 + cut} && request.version == 2 &&
       request.resultIDs.length() == 1 &&
@@ -1608,8 +1608,8 @@ static void sagaRecovery()
   auto absent = record(context->actions, ZuFwdTuple(app.id, app.nextActionID));
   auto requestKey = actionRequest(ZdbSagaID{200});
   auto absentRequest = record(context->requests, ZuFwdTuple(requestKey.actorKind,
-    requestKey.actorID, requestKey.operation, requestKey.idempotencyKey));
-  ZuCheck(!absentRequest.idempotencyKey);
+    requestKey.actorID, requestKey.operation, requestKey.idempotence));
+  ZuCheck(!absentRequest.idempotence);
   ZuCheck(!next.owner && next.nextActionID == app.nextActionID &&
     next.version == app.version && next.authVersion == app.authVersion &&
     next.updated == app.updated);

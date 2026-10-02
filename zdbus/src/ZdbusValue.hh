@@ -22,15 +22,15 @@ struct TextValue { ZuCSpan value; };
 struct SigValue { ZuCSpan value; };
 struct UIntValue { uint32_t value; };
 
-ZfStruct(, PathValue, (((value), (Mutable)), (String)));
+ZfStruct(, PathValue, (((value), (Mutable)), String));
 ZfStructRender(, PathValue, DBUS,
   (value, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
-ZfStruct(, TextValue, (((value), (Mutable)), (String)));
+ZfStruct(, TextValue, (((value), (Mutable)), String));
 ZfStructRender(, TextValue, DBUS, value);
-ZfStruct(, SigValue, (((value), (Mutable)), (String)));
+ZfStruct(, SigValue, (((value), (Mutable)), String));
 ZfStructRender(, SigValue, DBUS,
   (value, (DBUS::Type<ZfDBUS::Type::Signature>)));
-ZfStruct(, UIntValue, (((value), (Mutable)), (UInt32)));
+ZfStruct(, UIntValue, (((value), (Mutable)), UInt32));
 ZfStructRender(, UIntValue, DBUS, value);
 
 } // Zdbus_

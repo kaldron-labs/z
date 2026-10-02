@@ -157,8 +157,17 @@ private:
 
   void providers_() { scan_(m_context->providers, &Rekey__::evidence_); }
   void evidence_() { scan_(m_context->evidence, &Rekey__::signers_); }
-  void signers_() { scan_(m_context->signKeys, &Rekey__::scanned_); }
+  void signers_() { scan_(m_context->signKeys, &Rekey__::receivers_); }
 
+  void receivers_() { scan_(m_context->ssfRx, &Rekey__::scanned_); }
+
+  void record_(const SSFRx &value, RekeyFn done)
+  {
+    if (value.owner) { done(false); return; }
+    change_(SecretRekey{.field = SecretRekey::SSFField,
+      .keyID = value.receiverID, .before = value.callbackAuth},
+      m_issuer, "zum.ssf_rx", value.receiverID, "callbackAuth", ZuMv(done));
+  }
   void record_(const Provider &value, RekeyFn done)
   {
     if (value.owner) { done(false); return; }

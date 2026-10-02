@@ -14,25 +14,25 @@
 
 namespace HashTest {
 
-inline constexpr auto header = "id,bits,loadFactor,cBits\n"_Zu;
+inline constexpr auto header = "id,bits,loadFactor,cBits\n"_z;
 
 struct Report : public Ztc::HashTelemetry {
   uint8_t phase = 0;
 };
 ZfStruct(, Report,
-  (((phase)), (UInt8)),
-  (((id)), (String)),
-  (((addr), (Hex)), (UInt64)),
-  (((loadFactor)), (Float)),
-  (((effLoadFactor)), (Float)),
-  (((count)), (UInt64)),
-  (((maxCount)), (UInt64)),
-  (((nodeSize)), (UInt32)),
-  (((resized)), (UInt32)),
-  (((bits)), (UInt8)),
-  (((cBits)), (UInt8)),
-  (((linear)), (UInt8)),
-  (((shadow)), (UInt8)));
+  (((phase)),		UInt8),
+  (((id)),		String),
+  (((addr), (Hex)),	UInt64),
+  (((loadFactor)),	Float),
+  (((effLoadFactor)),	Float),
+  (((count)),		UInt64),
+  (((maxCount)),	UInt64),
+  (((nodeSize)),	UInt32),
+  (((resized)),		UInt32),
+  (((bits)),		UInt8),
+  (((cBits)),		UInt8),
+  (((linear)),		UInt8),
+  (((shadow)),		UInt8));
 
 using Reports = ZtArray<Report, ZtArrayHeapID<"HashTest.Reports">>;
 

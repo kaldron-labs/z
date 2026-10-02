@@ -41,6 +41,17 @@ int main(int argc, char **argv)
 
   ZuArray<int, 10> foo{1, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
   ZuArray<int, 10> bar{1, 1, 1, 1, 1, 1, 1, 1, 1, 9 };
+  // Ten entries take the interpolation branch. Searching for 2 gives
+  // endpoint distances 2 and -39, which previously chose pivot zero.
+  ZuArray<int, 10> skew{0, 41, 41, 41, 41, 41, 41, 41, 41, 41};
+
+  ZuTestCall(search, skew, 2, 1, 3);
+  auto pos = ZuInterSearch(skew, skew.length(), 2);
+  ZuCHECK(!ZuSearchFound(pos));
+  ZuCHECK(ZuSearchPos(pos) == 1);
+  pos = ZuInterSearch(skew, skew.length(), 41);
+  ZuCHECK(ZuSearchFound(pos));
+  ZuCHECK(skew[ZuSearchPos(pos)] == 41);
 
   ZuTestCall(search, foo, 0, 0, 2);
   ZuTestCall(search, bar, 0, 0, 2);

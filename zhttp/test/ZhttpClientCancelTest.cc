@@ -816,7 +816,7 @@ bool serveOutOfOrder(ServerSockets &sockets, App &app)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = sendResponse(fd1, response);
   sockets.close(fd1);
   if (ok) ok = app.archiveDone.timedwait(Zm::now(10)) == 0;
@@ -835,7 +835,7 @@ bool serve(ServerSockets &sockets)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = readRequest(fd) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -851,7 +851,7 @@ bool serve(ServerSockets &sockets, ZuCSpan target, ZuCSpan authority)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = readRequest(fd, target, authority) &&
     sendResponse(fd, response);
   sockets.close(fd);
@@ -868,7 +868,7 @@ bool serveBody(ServerSockets &sockets)
     "Content-Length: 5\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "abcde"_Zu;
+    "abcde"_z;
   bool ok = readRequest(fd) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -883,7 +883,7 @@ bool serveRequestBody(ServerSockets &sockets, ZuCSpan body)
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n"_Zu;
+    "\r\n"_z;
   bool ok = readRequestBody(fd, body) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -896,7 +896,7 @@ bool serveTwo(ServerSockets &sockets)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = true;
   for (unsigned i = 0; i < 2; ++i) {
     int fd = sockets.accept();
@@ -921,13 +921,13 @@ bool serveRedirect(ServerSockets &sockets, bool follow)
     "HTTP/1.1 302 Found\r\n"
     "Location: /next\r\n"
     "Content-Length: 0\r\n"
-    "\r\n"_Zu;
+    "\r\n"_z;
   static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = readRequest(fd) && sendResponse(fd, redirect);
   if (ok && follow)
     ok = readRequest(fd) && sendResponse(fd, response);
@@ -945,7 +945,7 @@ bool serveCrossOriginRedirect(ServerSockets &sockets)
     "Location: http://example.com/next\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n"_Zu;
+    "\r\n"_z;
   bool ok = readRequest(fd) && sendResponse(fd, redirect);
   sockets.close(fd);
   return ok;
@@ -965,7 +965,7 @@ bool servePipeline(ServerSockets &sockets)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = readRequests(fd, 2) && sendResponse(fd, responses);
   sockets.close(fd);
   return ok;
@@ -994,13 +994,13 @@ bool serveWaves(ServerSockets &sockets)
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   static constexpr auto finalResponse =
     "HTTP/1.1 201 Created\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = readRequest(fd) && sendResponse(fd, response) &&
     readRequest(fd) && sendResponse(fd, finalResponse);
   sockets.close(fd);
@@ -1016,7 +1016,7 @@ bool serveIdleStop(ServerSockets &sockets, ZmSemaphore &idle)
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
-    "ok"_Zu;
+    "ok"_z;
   bool ok = readRequest(fd) && sendResponse(fd, response);
   idle.post();
   uint8_t byte;
@@ -1079,12 +1079,12 @@ bool serveLimitedCombinations(
   static constexpr auto response =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
-    "\r\n"_Zu;
+    "\r\n"_z;
   static constexpr auto closeResponse =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n"_Zu;
+    "\r\n"_z;
   ready.post();
   bool ok = release0.timedwait(Zm::now(10)) == 0 &&
     sendResponse(fd0, closeResponse);
@@ -2826,7 +2826,7 @@ void poolRetainedMessageOverride()
     return;
   }
 
-  static constexpr auto Body = "abcde"_Zu;
+  static constexpr auto Body = "abcde"_z;
   ZmAtomic<unsigned> overrideOK = 0;
   ServerSockets overrideSockets{overrideFD};
   ZmThread overrideServer{[&overrideSockets, &overrideOK]() {

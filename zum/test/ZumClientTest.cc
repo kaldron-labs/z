@@ -14,9 +14,120 @@
 #include <zlib/ZtlsRandom.hh>
 
 #include <zlib/ZumService.hh>
+#include <zlib/zum_cli.hh>
 #include <zlib/zumd_revoke.hh>
 
 using namespace ZuTestUtil;
+
+static bool cliRequest(const char *const *argv, unsigned argc,
+    ZumCLI::String &json)
+{
+  ZfCLI::InArgv<false> input(argc, argv);
+  ZfCLI::Parser<ZumCLI::Options> parser;
+  try {
+    parser.scanArgv(input.argv);
+    ZumCLI::Options options;
+    ZfCLI::handler<ZumCLI::Options>(parser.root).load(options);
+  }
+  catch (const ZeException &) { return false; }
+  auto &object = parser.root->data<ZfCLI::AnyNode::Object>();
+  auto node = ZumCLI::field(object, "command");
+  if (!node) return false;
+  auto op = ZumCLI::operation(parser);
+  ZumCLI::String error;
+  return Zum::managementRoute(op) && ZumCLI::request(parser, op, json, error);
+}
+
+static void cliArgs()
+{
+  ZuTestScope(cliArgs);
+  ZumCLI::String json;
+  const char *enroll[] = {"zum", "app", "add", "ztchub-local",
+    "http://localhost:8090/admin", "--label", "Hub \"local\""};
+  ZuCheck(cliRequest(enroll, ZuArray{enroll}.length(), json));
+  ZuCheck(json == "{\"name\":\"ztchub-local\","
+    "\"audience\":\"http://localhost:8090/admin\","
+    "\"label\":\"Hub \\\"local\\\"\"}");
+  const char *roles[] = {"zum", "assign", "roles", "18446744073709551614",
+    "42", "9,18446744073709551614", "--if-match", "\"v1\""};
+  ZuCheck(cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"18446744073709551614\",\"user_id\":\"42\","
+    "\"role_ids\":[\"9\",\"18446744073709551614\"]}");
+  roles[5] = "";
+  ZuCheck(cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"18446744073709551614\",\"user_id\":\"42\",\"role_ids\":[]}");
+  roles[3] = "18446744073709551615";
+  roles[4] = "18446744073709551615";
+  ZuCheck(cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"18446744073709551615\","
+    "\"user_id\":\"18446744073709551615\",\"role_ids\":[]}");
+  roles[3] = "-1";
+  ZuCheck(!cliRequest(roles, ZuArray{roles}.length(), json));
+  roles[3] = "18446744073709551616";
+  ZuCheck(!cliRequest(roles, ZuArray{roles}.length(), json));
+  roles[3] = "1oops";
+  ZuCheck(!cliRequest(roles, ZuArray{roles}.length(), json));
+  const char *client[] = {"zum", "client", "add", "9", "native", "--grants", "AuthCode,Refresh",
+    "--refresh-allowed", "false", "--redirect-uris", "http://localhost/cb"};
+  ZuCheck(cliRequest(client, ZuArray{client}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"9\",\"profile\":\"native\","
+    "\"redirect_uris\":[\"http://localhost/cb\"],\"grants\":\"AuthCode,Refresh\",\"refresh_allowed\":false}");
+  client[6] = "Refresh,AuthCode";
+  ZuCheck(cliRequest(client, ZuArray{client}.length(), json));
+  ZuCheck(json.find<"\"grants\":\"AuthCode,Refresh\"">() >= 0);
+  for (auto grants: {"5", "AuthCode|Refresh", "AuthCode,RefreshToken",
+      "AuthCode,", "Unknown"}) {
+    client[6] = grants;
+    ZuCheck(!cliRequest(client, ZuArray{client}.length(), json));
+  }
+  client[6] = "AuthCode,Refresh";
+  client[8] = "yes";
+  ZuCheck(!cliRequest(client, ZuArray{client}.length(), json));
+  const char *missing[] = {"zum", "app", "add", "hub"};
+  ZuCheck(!cliRequest(missing, ZuArray{missing}.length(), json));
+  const char *extra[] = {"zum", "app", "add", "hub", "aud", "extra"};
+  ZuCheck(!cliRequest(extra, ZuArray{extra}.length(), json));
+  const char *wrong[] = {"zum", "app", "add", "hub", "aud", "--grants", "AuthCode,Refresh"};
+  ZuCheck(!cliRequest(wrong, ZuArray{wrong}.length(), json));
+  const char *legacy[] = {"zum", "app", "add", "hub", "aud", "--json", "request.json"};
+  ZuCheck(!cliRequest(legacy, ZuArray{legacy}.length(), json));
+  const char *catalog[] = {"zum", "catalog", "publish", "9", "{\"actions\":[]}", "1", "digest"};
+  ZuCheck(cliRequest(catalog, ZuArray{catalog}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"9\",\"catalog\":{\"actions\":[]},"
+    "\"revision\":1,\"digest\":\"digest\"}");
+  const char *users[] = {"zum", "user", "list", "admin@localhost",
+    "--source", "Local"};
+  ZuCheck(cliRequest(users, ZuArray{users}.length(), json));
+  ZuCheck(json == "{\"name\":\"admin@localhost\",\"source\":\"Local\"}");
+  ZuCheck(cliRequest(users, 3, json));
+  ZuCheck(json == "{}");
+  const char *userID[] = {"zum", "user", "list", "--id", "42"};
+  ZuCheck(cliRequest(userID, ZuArray{userID}.length(), json));
+  ZuCheck(json == "{\"id\":\"42\"}");
+  const char *namedUser[] = {"zum", "user", "list", "--name", "admin"};
+  ZuCheck(!cliRequest(namedUser, ZuArray{namedUser}.length(), json));
+  const char *invite[] = {"zum", "user", "add", "user@example.test"};
+  ZuCheck(cliRequest(invite, ZuArray{invite}.length(), json));
+  ZuCheck(json == "{\"name\":\"user@example.test\"}");
+  const char *access[] = {"zum", "client", "access", "set", "9", "cli", "1,2"};
+  ZuCheck(cliRequest(access, ZuArray{access}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"9\",\"client_id\":\"cli\",\"role_ids\":[\"1\",\"2\"]}");
+  const char *policy[] = {"zum", "auth", "policy", "set", "9", "true", "Any",
+    "300", "600", "3600", "900", "Always"};
+  ZuCheck(cliRequest(policy, ZuArray{policy}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"9\",\"local_first\":true,\"eligibility_mode\":\"Any\","
+    "\"assignment_max_age\":300,\"session_idle\":600,\"session_absolute\":3600,"
+    "\"token_lifetime\":900,\"consent_policy\":\"Always\"}");
+  const char *assignments[] = {"zum", "assign", "list", "9", "--user-id", "42"};
+  ZuCheck(cliRequest(assignments, ZuArray{assignments}.length(), json));
+  ZuCheck(json == "{\"app_id\":\"9\",\"user_id\":\"42\"}");
+  const char *flat[] = {"zum", "userQuery"};
+  ZuCheck(!cliRequest(flat, ZuArray{flat}.length(), json));
+  const char *group[] = {"zum", "client", "access"};
+  ZuCheck(!cliRequest(group, ZuArray{group}.length(), json));
+  const char *verb[] = {"zum", "user", "unknown"};
+  ZuCheck(!cliRequest(verb, ZuArray{verb}.length(), json));
+}
 
 static void publicAPI()
 {
@@ -119,12 +230,12 @@ static void serviceToken()
   params.thread(1).isolated(true);
   ZmScheduler scheduler{ZuMv(params)};
   ZuCheck(scheduler.start());
-  unsigned tokens = 0, calls = 0, introspections = 0;
+  unsigned tokens = 0, calls = 0, introspections = 0, registrations = 0;
   bool introspectionAuth = false;
   Zum::String introspectionContext;
   bool holdRenewal = false;
   Zum::ServiceHTTPDoneFn renewal;
-  ZmSemaphore renewalHeld, operationDone;
+  ZmSemaphore renewalHeld, operationDone, registrationDone;
   Zum::Service service;
   Zum::ServiceConfig config{.scheduler = &scheduler, .sid = 1,
     .issuerURL = "https://issuer/oauth2/9",
@@ -136,11 +247,11 @@ static void serviceToken()
     .introspectionClientID = "introspector",
     .introspectionSecret = Zum::Bytes{ZuBSpan{"introspect-secret"}},
     .ssf = Zum::ServiceSSFConfig{
-      .enabled = true, .receiverID = "service", .callbackPath = "/ssf",
+      .enabled = true, .receiverID = "service", .deliveryURL = "https://service/ssf",
       .callbackAuth = "Bearer callback",
       .transmitterIssuer = "https://issuer/oauth2/8", .audience = "ping"}};
   Zum::ServiceHTTPFn http{[&token, &jwks, &tokens, &calls, &introspections,
-      &introspectionAuth, &introspectionContext,
+      &introspectionAuth, &introspectionContext, &registrations, &registrationDone,
       &holdRenewal, &renewal, &renewalHeld](
       Zum::ServiceHTTPRequest request, Zum::ServiceHTTPDoneFn complete) {
     if (request.url == "https://issuer/oauth2/7/v1/token") {
@@ -190,6 +301,17 @@ static void serviceToken()
         "\"actions\":[\"ping\"],\"exp\":"};
       body << (Zm::now().sec() + 300) << introspectionContext << '}';
       complete(Zum::ServiceHTTPResponse{200, ZuMv(body)});
+    } else if (request.url == "https://issuer/admin/apps/9/ssf") {
+      ++registrations;
+      ZuCheck(request.method == Zum::ServiceMethod::POST &&
+        request.authorization == Zum::String{"Bearer "} << token &&
+        request.contentType == "application/json" &&
+        request.body.find<"https://service/ssf">() >= 0 &&
+        request.body.find<"Bearer callback">() >= 0);
+      complete(Zum::ServiceHTTPResponse{200, Zum::String{
+        "{\"expires_in\":"} << (registrations == 1 ? 2 : 300) <<
+          ",\"expires\":" << (Zm::now().sec() + 300) << '}'});
+      if (registrations == 2) registrationDone.post();
     } else if (request.url == "https://issuer/admin/apps/9/catalog") {
       ++calls;
       complete(Zum::ServiceHTTPResponse{
@@ -205,7 +327,9 @@ static void serviceToken()
   ZuCheck(ZmBlock<int>{}([&service](auto wake) mutable {
     service.start([wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::ServiceError::OK);
-  ZuCheck(tokens == 1);
+  ZuCheck(tokens == 2 && registrations == 1);
+  registrationDone.wait();
+  ZuCheck(tokens == 3 && registrations == 2);
   ZuCheck(ZmBlock<int>{}([&service](auto wake) mutable {
     service.publish(Zum::ServiceManifest{.revision = 1},
       [wake = ZuMv(wake)](Zum::ServiceProtocolResult result) mutable {
@@ -213,7 +337,7 @@ static void serviceToken()
       });
   }) == Zum::ServiceError::OK);
   // The signed expiry is inside renewSkew even though expires_in is not.
-  ZuCheck(tokens == 2 && calls == 1);
+  ZuCheck(tokens == 4 && calls == 1);
   Zum::String unknown = encode(ZuBSpan{
     "{\"alg\":\"ES256\",\"typ\":\"at+jwt\",\"kid\":\"unknown\"}"});
   unknown << '.' << encode(ZuBSpan{"{}"}) << ".invalid";
@@ -464,8 +588,8 @@ static void ssfDelivery()
 {
   ZuTestScope(ssfDelivery);
   Zum::SSFRx receiver{
-    .receiverID = "receiver", .appID = 9, .audience = "ping",
-    .deliveryURL = "https://receiver.example/ssf", .secretName = "secret"};
+    .appID = 9, .receiverID = "receiver", .audience = "ping",
+    .deliveryURL = "https://receiver.example/ssf", .callbackAuth = Zum::Bytes{ZuBSpan{"secret"}}};
   Zum::SSFDelivery delivery{
     .eventID = "event", .receiverID = "receiver",
     .familyIssuer = "https://issuer/oauth2/9", .familyID = "family",
@@ -487,8 +611,8 @@ static void ssfDelivery()
   ZuCheck(calls == 1 && result == Zum::OAuthError::TemporarilyUnavailable);
   result = 0;
   Zum::sendSSF(Zum::SSFRx{
-      .receiverID = "receiver", .appID = 9, .audience = "ping",
-      .deliveryURL = "https://receiver.example/ssf", .secretName = "secret"},
+      .appID = 9, .receiverID = "receiver", .audience = "ping",
+      .deliveryURL = "https://receiver.example/ssf", .callbackAuth = Zum::Bytes{ZuBSpan{"secret"}}},
     Zum::SSFDelivery{
       .eventID = "event", .receiverID = "receiver",
       .familyIssuer = "https://issuer/oauth2/9", .familyID = "family",
@@ -506,6 +630,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(cliArgs);
   ZuTestCall(publicAPI);
   ZuTestCall(responseLifetime);
   ZuTestCall(serviceToken);

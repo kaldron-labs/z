@@ -11,8 +11,8 @@ extern "C" {
 
 gboolean dispatch(GSource *source, GSourceFunc, gpointer)
 {
-  gtk_main_quit();
   g_source_set_ready_time(source, -1);
+  gtk_main_quit();
   return G_SOURCE_CONTINUE;
 }
 
@@ -98,7 +98,6 @@ void App::detach_(DetachFn fn)
 
 void App::wake()
 {
-  m_sched->push([]{ run_(); }, m_sid);
   wake_();
 }
 
@@ -110,7 +109,11 @@ void App::wake_()
 
 void App::run_()
 {
+  if (!m_source) return;
   gtk_main();
+  // One GTK loop continuation follows the queued scheduler work. Posting a
+  // loop for every wake can block that work behind another idle GTK loop.
+  if (m_source) m_sched->push([this]() { run_(); }, m_sid);
 }
 
 }

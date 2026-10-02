@@ -22,7 +22,7 @@ ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 struct IDReply {
   ZtString<ZtStringHeapID<"ZdbusGetId.Value">> value;
 };
-ZfStruct(, IDReply, (((value), (Mutable)), (String)));
+ZfStruct(, IDReply, (((value), (Mutable)), String));
 ZfStructRender(, IDReply, DBUS, value);
 
 using GetIdHeaders = ZuTypeList<

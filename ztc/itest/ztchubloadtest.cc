@@ -32,7 +32,7 @@ struct Device {
   ZtString<> id;
 };
 ZfStruct(, (Device, Cf),
-  (((id), (Required)), (String)));
+  (((id), (Required)),	String));
 using Devices = ZtArray<Device, ZtArrayHeapID<"Ztc.Load.Devices">>;
 inline ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(Devices *);
 
@@ -50,31 +50,27 @@ struct Config {
   unsigned sloMS = 200;
 };
 ZfStruct(, (Config, Cf),
-  (((devices), (Required)), (UDT)),
-  (((tokenFile), (Required)), (String)),
-  (((token), (Required)), (String)),
-  (((wss), (Required)), (String)),
-  (((ca), (Required)), (String)),
-  (((clients)), (UInt32, 32)),
-  (((subs)), (UInt32, 32)),
-  (((publishers)), (UInt32, 256)),
-  (((rounds)), (UInt32, 3)),
-  (((turn)), (UInt32, 64)),
-  (((sloMS)), (UInt32, 200)));
+  (((devices), (Required)),		UDT),
+  (((tokenFile), (Required)),		String),
+  (((token), (Required)),		String),
+  (((wss), (Required)),			String),
+  (((ca), (Required)),			String),
+  (((clients), (Deflt<32>)),		UInt32),
+  (((subs), (Deflt<32>)),		UInt32),
+  (((publishers), (Deflt<256>)),	UInt32),
+  (((rounds), (Deflt<3>)),		UInt32),
+  (((turn), (Deflt<64>)),		UInt32),
+  (((sloMS), (Deflt<200>)),		UInt32));
 
 using Frame = ZmRef<ZiIOBuf>;
 using Buf = ZiIOBufAlloc<1024, 1U << 16, "Ztc.Load.Frame">;
 
 static void send(auto &link, Frame frame)
 {
-  using Link = ZuDecay<decltype(link)>;
-  auto hold = ZmRef<Link>{&link};
-  link.app()->txRun([hold = ZuMv(hold), frame = ZuMv(frame)]() mutable {
-    hold->txStream([&frame](auto &tx) {
-      tx << ZuBSpan{frame->data(), frame->length};
-      tx.flush();
-    }, Zws::Opcode::Binary);
-  });
+  link.txStream([frame = ZuMv(frame)](auto &tx) {
+    tx << ZuBSpan{frame->data(), frame->length};
+    tx.flush();
+  }, Zws::Opcode::Binary);
 }
 
 static Frame request(ZuCSpan device, uint64_t sub, bool subscribe)
@@ -128,6 +124,7 @@ struct App {
   ZtArray<Route, ZtArrayHeapID<"Ztc.Load.Routes">> routes;
   ZmSemaphore ready;
   ZmSemaphore done;
+  ZmSemaphore down;
   ZmScheduler::Timer timer;
   int64_t start = 0;
   int64_t maxNS = 0;
@@ -178,8 +175,8 @@ struct App {
       auto id = builder.CreateString(name.data(), name.length());
       auto value = ZfbStruct::save(builder, Ztc::AppTelemetry{
         .version = ZuID{"load"}, .role = ZuID{"publisher"},
-        .startTime = start + int64_t(sent * 1000000000 / rate()),
-        .ztcver = publisher});
+        .startTime = ZuTime{ZuTime::Nano{start + int64_t(sent * 1000000000 / rate())}},
+        .ztcver = ZuSemVer{publisher}});
       auto body = Ztc::saveTelemetry(builder, id, route.seq,
         Ztc::fbs::TelemetryBody::AppTelemetry, value.Union());
       builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry, body.Union()));
@@ -286,23 +283,24 @@ struct App {
     auto publisher = count % cf->publishers;
     ZtString<> name{"publisher-"};
     name << publisher;
-    if (value.ztcver != publisher || Zfb::Load::str(body->id()) != name) {
+    if (value.ztcver.value() != publisher || Zfb::Load::str(body->id()) != name) {
       std::cerr << "telemetry value expected=" << publisher
                 << " actual=" << value.ztcver << " sub=" << sub
                 << " index=" << state.index << '\n';
       fail("telemetry value"); return -1;
     }
     ++count;
-    auto elapsed = int64_t(Zm::now().nanosecs()) - value.startTime;
+    auto elapsed = int64_t(Zm::now().nanosecs()) - int64_t(value.startTime.as_time().nanosecs());
     if (elapsed > maxNS) maxNS = elapsed;
     if (++received == rate() * cf->rounds) done.post();
     return 1;
   }
   template <typename L> void disconnected(L &link, bool clean) {
-    if (!failed)
+    if (!failed && !stopping)
       std::cerr << "load disconnected agent=" << link.state().agent
                 << " index=" << link.state().index << " clean=" << clean << '\n';
     fail("disconnected");
+    down.post();
   }
   template <typename L> void connectFailed(L &link, bool) {
     if (!failed)
@@ -378,25 +376,33 @@ static bool run(const char *path)
     // are established.  The data-plane SLO remains independently enforced.
     completed = app.done.timedwait(Zm::now(300)) == 0;
   }
-  ZmBlock<bool>{}([&client, &app, completed](auto wake) {
+  bool delivered = ZmBlock<bool>{}([&client, &app, completed](auto wake) {
     client.rxRun([&client, &app, completed, wake = ZuMv(wake)]() mutable {
       if (!completed) app.failed = true;
       app.stopping = true;
       client.mx()->del(&app.timer);
-      wake(true);
+      wake(completed && !app.failed);
     });
   });
+  bool drained = true;
+  if (delivered) {
+    for (const auto &link: links)
+      client.rxRun([link]() mutable { link->close(); });
+    auto deadline = Zm::now(ws.closeTimeout);
+    for (unsigned i = 0; i < links.length(); ++i)
+      if (app.down.timedwait(deadline) != 0) { drained = false; break; }
+  }
   bool stopped = ZmBlock<bool>{}([&client](auto wake) {
     client.stop([wake = ZuMv(wake)](bool ok) mutable { wake(ok); });
   });
+  links.null();
   client.final();
   mx.stop();
-  links.null();
   std::cout << "# load agents=" << cf.devices.length() << " clients=" << cf.clients <<
     " subscriptions=" << uint64_t(cf.clients) * cf.subs << " publishers=" << cf.publishers <<
     " samples=" << app.received << " max_latency_us=" << app.maxNS / 1000 <<
     " fanout_us=" << uint64_t(fanoutNS / 1000) << '\n';
-  return stopped && fanoutOK && !app.failed && app.received == app.rate() * cf.rounds &&
+  return drained && stopped && fanoutOK && !app.failed && app.received == app.rate() * cf.rounds &&
     app.maxNS <= int64_t(cf.sloMS) * 1000000;
 }
 

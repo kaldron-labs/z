@@ -42,8 +42,8 @@ static ZuCSpan keyLine(const Bytes &bytes, bool recipient)
     unsigned end = cursor;
     if (end > start && bytes[end - 1] == '\r') --end;
     ZuCSpan line{bytes.data() + start, end - start};
-    if (recipient ? line.prefix("age1"_Zu) == 4 :
-        line.prefix("AGE-SECRET-KEY-"_Zu) == 15) return line;
+    if (recipient ? line.prefix("age1"_z) == 4 :
+        line.prefix("AGE-SECRET-KEY-"_z) == 15) return line;
     if (cursor < n) ++cursor;
   }
   return {};

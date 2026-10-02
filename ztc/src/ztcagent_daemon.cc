@@ -47,8 +47,8 @@ struct Discovery {
   Zum::String tokenEndpoint;
 };
 ZfStruct(, (Discovery, JSON),
-  (((issuerURL), (JSON::ID<"issuer">, Required)), (String)),
-  (((tokenEndpoint), (JSON::ID<"token_endpoint">, Required)), (String)));
+  (((issuerURL), (JSON::ID<"issuer">, Required)),		String),
+  (((tokenEndpoint), (JSON::ID<"token_endpoint">, Required)),	String));
 
 struct Token {
   Zum::String accessToken;
@@ -56,9 +56,9 @@ struct Token {
   uint64_t expiresIn = 0;
 };
 ZfStruct(, (Token, JSON),
-  (((accessToken), (JSON::ID<"access_token">, Required)), (String)),
-  (((tokenType), (JSON::ID<"token_type">, Required)), (String)),
-  (((expiresIn), (JSON::ID<"expires_in">, Required)), (UInt64)));
+  (((accessToken), (JSON::ID<"access_token">, Required)),	String),
+  (((tokenType), (JSON::ID<"token_type">, Required)),		String),
+  (((expiresIn), (JSON::ID<"expires_in">, Required)),		UInt64));
 
 struct Pub {
   Pub(ZuID id_, const AgentCf &cf) :
@@ -120,6 +120,7 @@ struct Req {
   LegList	pending;
   LegList	legs;
   uint64_t	cxnGen;
+  bool	failed = false;
 };
 
 inline uint64_t Req_SeqAxor(const Req &req) { return req.request.seqNo; }
@@ -252,10 +253,9 @@ static void transmit(
     Agent::State *state, ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (!frame || !generation) return;
-  auto link = state->link;
-  state->client.rxRun([
-      state, link = ZuMv(link), frame = ZuMv(frame), generation]() mutable {
+  state->client.rxRun([state, frame = ZuMv(frame), generation]() mutable {
     ZmAssert(state->client.rxInvoked());
+    auto link = state->link;
     if (state->currentGeneration.load_() != generation || !link)
       return;
     link->txStream([frame = ZuMv(frame)](auto &tx) mutable {
@@ -349,6 +349,26 @@ static void delReq(Agent::State *state, Req *req)
   state->reqs.delNode(static_cast<Reqs::Node *>(req));
 }
 
+static void finishReq(Agent::State *state, Req *req)
+{
+  if (req->pending.count_() || req->legs.count_()) return;
+  // A continuing wildcard request also owns future publishers.
+  if (req->request.interval && !req->request.id) return;
+  if (!req->request.interval && !req->request.id) {
+    if (req->failed)
+      transmit(state, hubErrorFrame({}, req->request.seqNo,
+	HubError::SnapshotFailed, "snapshot incomplete"), req->cxnGen);
+    else {
+      Zfb::IOBuilder builder{ZmRef<ZiIOBuf>{new Frame}};
+      auto eos = ZfbStruct::save(builder,
+	  EOS{ZuID{"ztcagent"}, req->request.seqNo});
+      builder.Finish(saveMsg(builder, fbs::Body::EOS, eos.Union()));
+      transmit(state, builder.buf(), req->cxnGen);
+    }
+  }
+  delReq(state, req);
+}
+
 static void delPub(Agent::State *state, Pub_ *pub)
 {
   while (pub->legs.count_()) {
@@ -357,20 +377,40 @@ static void delPub(Agent::State *state, Pub_ *pub)
     if (!node) break;
     auto leg = &node->val();
     auto req = leg->req;
+    req->failed = true;
+    transmit(state, hubErrorFrame(pub->id, req->request.seqNo,
+	1, "publisher retired"), req->cxnGen);
     unlinkLeg(leg);
-    if (!req->pending.count_() && !req->legs.count_()) delReq(state, req);
+    finishReq(state, req);
   }
   if (auto prior = state->pubIdx.delVal(pub->id)) ZmAssert(prior == pub);
   state->pubs.delNode(static_cast<Pubs::Node *>(pub));
 }
+
+static bool addLeg(Agent::State *, Req *, Pub_ *);
+static void drainReq(Agent::State *, uint64_t, uint64_t);
 
 static bool addPub(Agent::State *state, ZuID id)
 {
   if (!id || state->pubs.findPtr(id)) return true;
   auto pub = new Pubs::Node{ZuMv(id), state->cf};
   if (!pub->val().ready) { delete pub; return false; }
+  // A restarted collector begins a new request sequence. Reset the previous
+  // collector's subscriptions and sequence fence before requesting inventory.
+  if (!writeRequest(state, pub->val().ring, requestFrame(Request{
+      .id = pub->val().id, .seqNo = ZuCmp<uint64_t>::null()}))) {
+    delete pub;
+    return false;
+  }
   state->pubs.addNode(pub);
   state->pubIdx.add(pub->val().id, &pub->val());
+  auto i = state->reqs.iter();
+  while (auto req = i()) {
+    auto &value = req->val();
+    if (value.request.interval && !value.request.id &&
+	addLeg(state, &value, &pub->val()))
+      drainReq(state, value.request.seqNo, value.cxnGen);
+  }
   return requestApp(state, &pub->val());
 }
 
@@ -428,6 +468,7 @@ static void drainReq(Agent::State *state,
       leg->active = true;
     } else {
       leg->active = false;
+      req->failed = true;
       auto frame = hubErrorFrame(leg->pub->id, req->request.seqNo,
         1, "publisher request failed");
       unlinkLeg(leg);
@@ -439,9 +480,7 @@ static void drainReq(Agent::State *state,
     state->mx->run([state, hubSeqNo, generation]() {
       drainReq(state, hubSeqNo, generation);
     }, 1);
-  } else if (!req->legs.count_()) {
-    delReq(state, req);
-  }
+  } else finishReq(state, req);
 }
 
 static void admitRequest(Agent::State *state,
@@ -474,7 +513,11 @@ static void admitRequest(Agent::State *state,
   }
   if (!req->val().pending.count_() && !req->val().legs.count_()) {
     transmit(state, hubErrorFrame(req->val().request.id,
-      req->val().request.seqNo, 1, "publisher not running"), generation);
+      req->val().request.seqNo,
+      !req->val().request.interval && !req->val().request.id ?
+	HubError::SnapshotFailed : HubError::NoAgent,
+      "publisher not running"), generation);
+    if (req->val().request.interval && !req->val().request.id) return;
     delReq(state, &req->val());
     return;
   }
@@ -541,8 +584,7 @@ static void routeTelemetry(Agent::State *state,
 	    pub->val().appSeqNo = 0;
 	  return;
 	}
-      terminal = value->status() == fbs::AckStatus::Invalid ||
-	value->status() == fbs::AckStatus::Failed;
+      terminal = value->status() != fbs::AckStatus::OK;
     } break;
     case fbs::Body::EOS: {
       auto value = message->body_as_EOS();
@@ -555,13 +597,9 @@ static void routeTelemetry(Agent::State *state,
 	  pub->val().appSeqNo = 0;
 	  return;
 	}
-      if (!seqNo) {
-	if (!pub) return;
-	pub->val().app = nullptr;
-	transmit(state, ZuMv(frame), generation);
-	delPub(state, &pub->val());
-	return;
-      }
+      // An unsolicited snapshot has no routed request. EOS never removes
+      // its publisher or invalidates the cached App inventory.
+      if (!seqNo) return;
       terminal = true;
     } break;
     case fbs::Body::Error: {
@@ -579,13 +617,16 @@ static void routeTelemetry(Agent::State *state,
   auto leg = pub ? pub->val().legs.findPtr(seqNo) : nullptr;
   if (!leg || leg->val().req->cxnGen != generation) return;
   auto req = leg->val().req;
-  if (!req->request.interval && message->body_type() == fbs::Body::Ack)
-    terminal = true;
+  bool eos = message->body_type() == fbs::Body::EOS;
+  if (eos) terminal = !req->request.interval;
   if (!rewriteSeq(frame->data(), req->request.seqNo)) return;
-  transmit(state, ZuMv(frame), generation);
+  // A one-shot fan-out has one aggregate EOS, emitted by finishReq().
+  if (!(eos && !req->request.interval && !req->request.id))
+    transmit(state, ZuMv(frame), generation);
   if (terminal) {
+    if (!eos) req->failed = true;
     unlinkLeg(&leg->val());
-    if (!req->pending.count_() && !req->legs.count_()) delReq(state, req);
+    finishReq(state, req);
   }
 }
 

@@ -28,8 +28,11 @@ ztc: {id: "zumd-local", alertPrefix: "/var/lib/zumd/alerts/zumd"}
 Choose a writable alert prefix and parent directory. `ZTC_RING` names the
 shared telemetry ring and `ZTC_DIR` names the publisher PID registry beneath
 the system temporary directory; set both to the same values in `zumd` and
-`ztcagent`. The agent may attach later. The publisher ID identifies a local
-telemetry source; the agent's authenticated device ID is separate. See the
+`ztcagent`. `ztc.telRingSize` supplies the initial capacity when the publisher
+creates the ring and defaults to 2 MiB, matching the agent's default `telSize`.
+An existing ring retains its capacity. The agent may attach later. The publisher
+ID identifies a local telemetry source; the agent's authenticated device ID is
+separate. See the
 [collector setup](../ztc/README.md).
 
 The canonical end-to-end example is [`zumpingd`](example/zumpingd.cc), a
@@ -100,7 +103,7 @@ as a column on the application table:
 
 ```text
 Application
-  appID
+  app_id
   issuer
   audience
   ...
@@ -246,7 +249,7 @@ Its main features are:
   consent and refresh-token-family handling;
 - WebAuthn/passkey bootstrap, enrollment, login, additional credentials and
   recovery;
-- multi-application RBAC: applications, users, memberships, actions, roles,
+- multi-application RBAC: applications, users, assignments, actions, roles,
   clients and client/admin delegation. OAuth resource scopes are
   runtime views of roles and are derived from the role catalog;
 - an operation-oriented `/admin` REST API with bearer authorization,
@@ -268,33 +271,44 @@ Setting an application to `Revoked` is permanent logical deletion: the app is
 made inactive first, then bounded saga batches remove its evidence and consent
 rows. `Disabled` remains reversible and does not delete those records.
 
-The Transmitter is enabled by an optional `ssf` node in the daemon's native
-configuration.  It contains the SSF issuer and a receiver array with each
-receiver's application ID, audience, HTTPS callback URL, revision, and a
-`secretName`. `secretName` is the environment-variable name used to provision
-the callback credential and its name in Vault; the value is never written to
-the configuration or database. The daemon resolves it at startup, and delivery
-uses the in-memory value. For example:
+SSF sends refresh-family revocations to clients that register a callback.
+There are no statically configured receivers. A service authenticates with its
+workload bearer token and calls `POST /admin/apps/{app_id}/ssf` using its existing
+application catalog publication authority:
 
-```text
-ssf: {
-  issuer: "https://auth.example/ssf",
-  receivers: [{
-    receiverID: "orders-rx", appID: 42,
-    audience: "https://orders.example/api",
-    deliveryURL: "https://orders.example/ssf",
-    secretName: "ZUM_SSF_ORDERS_AUTH", revision: 1
-  }]
-}
+```json
+{"receiver_id":"orders-rx","delivery_url":"https://orders.example/ssf",
+ "callback_auth":"Bearer ...","expires_in":300}
 ```
 
-Set `ZUM_SSF_ORDERS_AUTH` to the complete callback `Authorization` value (for
-example, `Bearer ...`) through the deployment secret manager on the first run
-or to replace it. Once startup succeeds, the value is saved under
-`env/ssf/ZUM_SSF_ORDERS_AUTH` and later starts may omit the variable. Each
-distinct receiver secret has its own name. Rotate a secret by restarting the
-daemon with a new environment value; changing the environment of a running
-daemon does not affect delivery. `--ssf-issuer` overrides the configured issuer.
+The response is `200` with `expires_in` (the granted lease in seconds) and
+`expires` (Unix expiry time). The receiver ID is scoped to the authenticated
+client and application. Re-registering the same ID renews its lease and updates
+its callback; the notification audience comes from the application record.
+Callbacks use HTTPS, with HTTP permitted for loopback development. Callback
+authorization is encrypted with the database key and included in offline key
+rotation; it is never written into the notification outbox.
+
+`Zum::Service` registers on startup and renews on a timer at half the granted
+lease, refreshing its workload token as needed. Failed renewals retry after one
+second; stopping the service cancels its timer. Configure `ssf.deliveryURL` and
+`ssf.lease` on the client. The hub exposes these as `ssfDeliveryURL` and
+`ssfLease`. The callback URL must be reachable from `zumd`.
+
+The daemon's optional `ssf` configuration controls bounds, not destinations:
+
+```text
+ssf: {receiverMax: 1024, leaseMax: 300, errorMax: 5}
+```
+
+`receiverMax` bounds live registrations globally. `leaseMax` caps each requested
+lease. Receivers expire at their lease deadline, including across daemon
+restarts. An expiry-ordered index drives deadline cleanup without periodic
+receiver scans. `errorMax` removes a receiver on that many consecutive failed
+deliveries across its notifications; successful delivery clears the counter.
+Renewing an unchanged callback preserves the counter. Removed or replaced
+registrations invalidate queued delivery attempts. Notification retries are
+bounded by refresh-family expiry and use exponential backoff.
 
 The daemon separates listener availability from database readiness:
 `/health/live` can remain available while a passive or recovering node returns
@@ -345,9 +359,9 @@ make install
 On the first start, supply a base64-encoded 256-bit `ZUM_DB_KEY`. A successful
 start saves its raw value as `global/dbKey` in Vault; later starts may omit the
 environment variable. An explicit environment key always wins, and a wrong
-one fails startup without falling back to Vault. The daemon also requires a
-public issuer, an initial administrator login, an owner-only bootstrap output
-file, and an explicitly selected secure Vault store:
+one fails startup without falling back to Vault. The daemon requires a public
+issuer and an explicitly selected secure Vault store. Initial bootstrap also
+requires an administrator login and an owner-only enrollment URL output file:
 
 ```sh
 export ZUM_DB_KEY='BASE64_256_BIT_KEY'
@@ -367,17 +381,31 @@ fallback to an unencrypted store. `file` and `ephemeral` require the explicit
 unavailable store prevents startup.
 
 Open the one-time URL written to the bootstrap file in a browser to create
-the administrator passkey. Use the [`zum`](src/zum.cc) administrative client
-to enroll applications, users, clients, memberships and catalogs. Its basic
+the administrator passkey. Normal restarts can omit `--admin` and
+`--bootstrap-output`. `--bootstrap-reissue` requires `--bootstrap-output` and uses the persisted
+administrator identity. Before initial enrollment, it replaces the pending
+capability. After enrollment, it issues a capability to add another passkey,
+preserving the user's handle, existing credentials and assignments. Reissue
+invalidates the previous capability or unfinished ceremony; the new capability
+expires and can be used only once. It does not reset IAM or suspend the user.
+Use the [`zum`](src/zum.cc) administrative client
+to enroll applications, users, clients, assignments and catalogs. Its basic
 interface is documented in [`MANAGEMENT.md`](MANAGEMENT.md):
 
 ```sh
 zum --config FILE login
-zum --config FILE OPERATION --json FILE
+zum --config FILE app add NAME AUDIENCE > enrollment.json
+zum --config FILE RESOURCE [SUBRESOURCE] VERB REQUIRED_ARGS... [OPTIONS]
 ```
 
-The daemon also supports `--once` for activation/bootstrap maintenance. For
-offline encrypted-database key rotation, stop all writers and run `--rekey`
+The daemon also supports `--once` for activation/bootstrap maintenance.
+For databases affected by dropped administrator client string vectors, stop the
+daemon and add `--once --repair-admin-client` to its normal startup command
+(without `--bootstrap-reissue`). This restores missing seeded native callback
+redirects and `openid`, `profile`, `email` identity scopes through Zdb, preserving
+enrolled credentials and populated client settings. Restart normally afterward.
+
+For offline encrypted-database key rotation, stop all writers and run `--rekey`
 with `ZUM_DB_KEY` set to the **new** key. The old key is loaded from Vault;
 after the database change is durable, the new key replaces it there. Completion
 is reported only after both steps succeed. If Vault publication fails after
@@ -401,5 +429,5 @@ Each application represents one service and owns one immutable
 `audience` string, used as the resource access token’s `aud` claim.
 `appEnroll` requires `audience`; `appQuery` returns it on the application.
 Client access grants select application roles. Consent is keyed by user, client
-and application. Schema version 21 adds the refresh-family table; existing
-databases require reprovisioning.
+and application. Schema version 24 uses assignment terminology throughout the
+database and management API; existing databases require reprovisioning.

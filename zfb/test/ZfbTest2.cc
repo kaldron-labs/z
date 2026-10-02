@@ -40,14 +40,14 @@ struct Test {
 };
 
 ZfbStruct(, Object,
-  (((id), (Ctor<0>)), (String)),
-  (((price), (Ctor<1>)), (Int32)),
-  (((flags), (Ctor<2>)), (UDT, ZuBitmap<100>{"42"})));
+  (((id), (Ctor<0>)),			String),
+  (((price), (Ctor<1>)),		Int32),
+  (((flags), (Ctor<2>, Deflt<"42"_z>)),	UDT));
 
 ZfbStruct(, Test,
-  (((foo), (Ctor<0>)), (Int32)),
-  (((bar), (Ctor<1>)), (String)),
-  (((baz), (Ctor<2>)), (UDT)));
+  (((foo), (Ctor<0>)),	Int32),
+  (((bar), (Ctor<1>)),	String),
+  (((baz), (Ctor<2>)),	UDT));
 
 ZfbRoot(Test);
 
@@ -106,6 +106,12 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  auto fields = ZfVFields<zfbtest2::Object>();
+  auto flags = static_cast<const ZuBitmap<100> *>(
+    fields[ZuTypeIndex<zfbtest2::ZfField_Object_flags,
+      ZuFields<zfbtest2::Object>>{}]->constant.get<ZfFieldTC::UDT>(
+      ZfVField::cget(ZfVFieldConstant::Deflt)));
+  ZuCheck(flags && flags->get(42) && !flags->get(41));
   unsigned n = 64;
   IOBuilder fbb(new ZiIOBufAlloc<>());
   build<false>(fbb, n);

@@ -33,10 +33,10 @@ struct Credential {
   SecretText callbackAuth;
 };
 ZfStruct(, (Credential, JSON),
-  (((issuerURL), (Required)), (String)),
-  (((clientID), (Required)), (String)),
-  (((clientSecret), (Required)), (String)),
-  (((callbackAuth), (Required)), (String)));
+  (((issuerURL), (Required)),		String),
+  (((clientID), (Required)),		String),
+  (((clientSecret), (Required)),	String),
+  (((callbackAuth), (Required)),	String));
 
 inline Ztls::VaultResult save(
     const Credential &credential, ZuCSpan account = {}, ZuCSpan program = {})

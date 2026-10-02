@@ -185,7 +185,7 @@ static bool sequence(ZuCSpan log)
 
 static bool pongIDs(ZuCSpan log, unsigned expected)
 {
-  static constexpr auto prefix = "event=pong id="_Zu;
+  static constexpr auto prefix = "event=pong id="_z;
   ZmBitmap seen;
   unsigned offset = 0, count = 0, l = log.length();
   while (offset < l) {
@@ -206,7 +206,7 @@ static bool pongIDs(ZuCSpan log, unsigned expected)
 static bool pacedWaves(
     ZuCSpan log, unsigned expected, unsigned count, uint64_t &lastNS)
 {
-  static constexpr auto prefix = "event=ping-wave tick="_Zu;
+  static constexpr auto prefix = "event=ping-wave tick="_z;
   unsigned offset = 0;
   for (unsigned i = 1; i <= expected; ++i) {
     int found = findAfter(log, prefix, offset);

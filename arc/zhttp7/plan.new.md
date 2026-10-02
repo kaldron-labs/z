@@ -136,8 +136,8 @@ struct Options {
 Use `ZtCLI` `UInt32` fields for numeric option parsing:
 
 ```c++
-(((requests),    (CLI::Opt<'n'>, CLI::Long<"requests">)), (UInt32, 1)),
-(((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">)),     (UInt32, 1)),
+(((requests),    (CLI::Opt<'n'>, CLI::Long<"requests">, Deflt<1>)),	UInt32),
+(((concurrency), (CLI::Opt<'j'>, CLI::Long<"jobs">, Deflt<1>)),		UInt32),
 ```
 
 `ZtCLI::load()` returns `-1` on syntax/parse errors and returns the positional

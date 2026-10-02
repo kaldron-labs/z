@@ -74,6 +74,7 @@ struct Options {
   uint32_t	oidcOrigins = Zum::OIDCHTTP::DefaultOrigins;
   bool		debug = false;
   bool		bootstrapReissue = false;
+  bool		repairAdminClient = false;
   bool		once = false;
   bool		rekey = false;
   bool		ztcPublish = false;
@@ -81,33 +82,34 @@ struct Options {
   bool		help = false;
 };
 ZfStruct(, (Options, CLI),
-  (((config),	(CLI::Long<"config">)),		(String)),
-  (((module),	(CLI::Long<"module">)),		(String)),
-  (((connect),	(CLI::Long<"connect">)),	(String)),
-  (((vaultStore), (CLI::Long<"vault-store">)), (String)),
-  (((vaultModule), (CLI::Long<"vault-module">)), (String)),
-  (((log),	(CLI::Long<"log">)),		(String, "&2")),
-  (((issuer),	(CLI::Long<"issuer">)),		(String)),
-  (((ssfIssuer),	(CLI::Long<"ssf-issuer">)),	(String)),
-  (((admin),	(CLI::Long<"admin">)),		(String)),
-  (((bootstrapOutput), (CLI::Long<"bootstrap-output">)), (String)),
-  (((addr),	(CLI::Long<"addr">)),		(String, "127.0.0.1")),
-  (((port),	(CLI::Long<"port">, (Range<1, 65535>))), (UInt32, 8080)),
-  (((rpID),	(CLI::Long<"rp-id">)),		(String, "localhost")),
-  (((rpName),	(CLI::Long<"rp-name">)),	(String, "Zum")),
+  (((config),	(CLI::Long<"config">)),					String),
+  (((module),	(CLI::Long<"module">)),					String),
+  (((connect),	(CLI::Long<"connect">)),				String),
+  (((vaultStore), (CLI::Long<"vault-store">)),				String),
+  (((vaultModule), (CLI::Long<"vault-module">)),			String),
+  (((log),	(CLI::Long<"log">, Deflt<"&2"_z>)),			String),
+  (((issuer),	(CLI::Long<"issuer">)),					String),
+  (((ssfIssuer),	(CLI::Long<"ssf-issuer">)),			String),
+  (((admin),	(CLI::Long<"admin">)),					String),
+  (((bootstrapOutput), (CLI::Long<"bootstrap-output">)),		String),
+  (((addr),	(CLI::Long<"addr">, Deflt<"127.0.0.1"_z>)),		String),
+  (((port),	(CLI::Long<"port">, (Range<1, 65535>), Deflt<8080>)),	UInt32),
+  (((rpID),	(CLI::Long<"rp-id">, Deflt<"localhost"_z>)),		String),
+  (((rpName),	(CLI::Long<"rp-name">, Deflt<"Zum"_z>)),		String),
   (((bootstrapTTL), (CLI::Long<"bootstrap-ttl">,
-      (Range<1, 86400>))), (UInt32, 900)),
+      (Range<1, 86400>), Deflt<900>)),					UInt32),
   (((cleanupInterval), (CLI::Long<"cleanup-interval">,
-      (Range<0, 86400>))), (UInt32, 300)),
-  (((oidcOrigins), (CLI::Long<"oidc-origins">)),
-      (UInt32, Zum::OIDCHTTP::DefaultOrigins)),
-  (((debug),	(CLI::Flag<'d'>, CLI::Long<"debug">)), (Bool)),
-  (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)), (Bool)),
-  (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)), (Bool)),
-  (((rekey),	(CLI::Long<"rekey">)), (Bool)),
-  (((ztcPublish), (CLI::Long<"ztcPublish">)), (Bool)),
-  (((vaultTestStore), (CLI::Long<"vault-test-store">)), (Bool)),
-  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+      (Range<0, 86400>), Deflt<300>)),					UInt32),
+  (((oidcOrigins), (CLI::Long<"oidc-origins">,
+    Deflt<Zum::OIDCHTTP::DefaultOrigins>)),				UInt32),
+  (((debug),	(CLI::Flag<'d'>, CLI::Long<"debug">)),			Bool),
+  (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)),		Bool),
+  (((repairAdminClient), (CLI::Long<"repair-admin-client">)),		Bool),
+  (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)),			Bool),
+  (((rekey),	(CLI::Long<"rekey">)),					Bool),
+  (((ztcPublish), (CLI::Long<"ztcPublish">)),				Bool),
+  (((vaultTestStore), (CLI::Long<"vault-test-store">)),			Bool),
+  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),			Bool));
 
 static void usage(int code)
 {
@@ -122,9 +124,11 @@ static void usage(int code)
     "  --log=FILE          log destination (default: stderr)\n"
     "  --issuer=URL        public authorization base URL\n"
     "  --ssf-issuer=URL    application-scoped issuer used in SSF SETs\n"
-    "  --admin=LOGIN       initial local administrator login\n"
-    "  --bootstrap-output=FILE  owner-only enrollment URL output\n"
+    "  --admin=LOGIN       administrator login for initial bootstrap\n"
+    "  --bootstrap-output=FILE  enrollment URL output for bootstrap/reissue\n"
+    "  --bootstrap-reissue renew enrollment or add an administrator passkey\n"
     "  --bootstrap-ttl=N   enrollment capability seconds (default: 900)\n"
+    "  --repair-admin-client  restore missing seeded redirect/scopes (--once)\n"
     "  --cleanup-interval=N  cleanup period seconds, 0 disables (default: 300)\n"
     "  --oidc-origins=N    maximum cached OIDC origins (default: 32)\n"
     "  --addr=IP           HTTP listen address (default: 127.0.0.1)\n"
@@ -144,7 +148,7 @@ struct OIDCConfig {
   Zum::String caPath;
 };
 ZfStruct(, (OIDCConfig, Cf),
-  (((caPath)), (String)));
+  (((caPath)),	String));
 
 static bool nodeZtcPublish(const ZfCf::AnyNode *root)
 {
@@ -158,8 +162,8 @@ struct VaultCf {
   Zum::String module;
 };
 ZfStruct(, (VaultCf, Cf),
-  (((store), (Required)), (String)),
-  (((module)), (String)));
+  (((store), (Required)),	String),
+  (((module)),			String));
 
 static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer,
     bool testStore)
@@ -222,66 +226,17 @@ static Ztls::VaultResult loadDBKey(const Ztls::VaultConfig &cf,
   });
 }
 
-struct SSFSecret {
-  Zum::String name;
-  Zum::String value;
-  bool provision = false;
-};
-using SSFSecrets = ZtArray<SSFSecret,
-  ZtArrayHeapID<"zumd.SSFSecrets">>;
-
-static Ztls::VaultResult loadSSFSecrets(const Ztls::VaultConfig &cf,
-    SSFSecrets &secrets)
-{
-  return withVault(cf, [&secrets](Ztls::Vault &vault) {
-    for (auto &secret: secrets) {
-      if (secret.provision) continue;
-      bool valid = false;
-      auto result = vault.load(Ztls::Scopes::Environment{"ssf"}, secret.name,
-        [&secret, &valid](ZuSpan<uint8_t> stored) {
-          secret.value = ZuCSpan{stored};
-          valid = bool(secret.value);
-        });
-      if (result.is<ZeException>()) return result;
-      if (!valid)
-        return Ztls::VaultResult{ZeEXCEPT(Fatal, "zumd",
-          "invalid stored SSF secret")};
-    }
-    return Ztls::VaultResult{};
-  });
-}
-
-struct SSFReceiverCf {
-  Zum::String receiverID;
-  Zum::AppID appID = 0;
-  Zum::String audience;
-  Zum::String deliveryURL;
-  // This is an environment-variable name, not the callback credential.
-  Zum::String secretName;
-  uint64_t revision = 0;
-};
-ZfStruct(, (SSFReceiverCf, Cf),
-  (((receiverID), (Required)), (String)),
-  (((appID), (Required)), (UInt64)),
-  (((audience), (Required)), (String)),
-  (((deliveryURL), (Required)), (String)),
-  (((secretName), (Required)), (String)),
-  (((revision), (Required)), (UInt64)));
-
-struct SSFReceiverVecCf : public ZtArray<SSFReceiverCf> {
-  using Base = ZtArray<SSFReceiverCf>;
-  using Base::Base;
-  using Base::operator =;
-  friend ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(SSFReceiverVecCf *);
-};
-
 struct SSFCf {
   Zum::String issuer;
-  SSFReceiverVecCf receivers;
+  unsigned receiverMax = 1024;
+  uint32_t leaseMax = 300;
+  unsigned errorMax = 5;
 };
 ZfStruct(, (SSFCf, Cf),
-  (((issuer)), (String)),
-  (((receivers)), (UDT)));
+  (((issuer)),								String),
+  (((receiverMax), ((Range<1U, unsigned(INT_MAX)>), Deflt<1024>)),	UInt32),
+  (((leaseMax), ((Range<2U, 86400U>), Deflt<300>)),			UInt32),
+  (((errorMax), ((Range<1U, unsigned(INT_MAX)>), Deflt<5>)),		UInt32));
 
 static ZuPtr<const ZfCf::AnyNode> config(
     const Options &options, Zum::String &source)
@@ -372,13 +327,13 @@ int main(int argc, char **argv)
   const char *dbKeyEnv = ::getenv("ZUM_DB_KEY");
   ZuCSpan encodedDBKey{dbKeyEnv};
   if ((!options.config && (!options.module || !options.connect)) ||
-      !options.issuer || (!options.rekey &&
-        (!options.admin || !options.bootstrapOutput)) ||
+      !options.issuer ||
       (options.rekey && (options.once || options.bootstrapReissue ||
-        !dbKeyEnv))) {
+        !dbKeyEnv)) || (options.repairAdminClient &&
+        (!options.once || options.rekey || options.bootstrapReissue))) {
     usage(1);
   }
-  if (!options.rekey && !Zum::loginNormalize(options.admin)) {
+  if (!options.rekey && options.admin && !Zum::loginNormalize(options.admin)) {
     std::cerr << "zumd: invalid administrator login\n";
     return 1;
   }
@@ -462,50 +417,6 @@ int main(int argc, char **argv)
     Zum::String ssfIssuer = options.ssfIssuer;
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
-    Zum::SSFReceiverVec ssfReceivers;
-    SSFSecrets ssfSecrets;
-    ZuGuard clearSecrets{[&ssfSecrets]() {
-      for (auto &secret: ssfSecrets) ZuClear(secret.value);
-    }};
-    if (!options.rekey) for (const auto &receiver: ssfConfig.receivers) {
-      if (!receiver.receiverID || !receiver.appID || !receiver.audience ||
-          !receiver.deliveryURL || !receiver.secretName || !receiver.revision ||
-          receiver.secretName.find<"/">() >= 0)
-        throw ZeEXCEPT(Fatal, "zumd", "invalid SSF receiver configuration");
-      ssfReceivers.push(Zum::SSFRx{
-        .receiverID = receiver.receiverID, .appID = receiver.appID,
-        .audience = receiver.audience, .deliveryURL = receiver.deliveryURL,
-        .secretName = receiver.secretName, .revision = receiver.revision});
-      bool found = false;
-      for (const auto &secret: ssfSecrets)
-        if (secret.name == receiver.secretName) { found = true; break; }
-      if (found) continue;
-      SSFSecret secret;
-      secret.name = receiver.secretName;
-      if (auto value = ::getenv(secret.name)) {
-        secret.value = value;
-        secret.provision = true;
-      }
-      ssfSecrets.push(ZuMv(secret));
-    }
-    if (ssfSecrets.find([](const SSFSecret &secret) {
-          return !secret.provision;
-        }) >= 0) {
-      auto loaded = loadSSFSecrets(vaultCf, ssfSecrets);
-      if (loaded.is<ZeException>())
-        throw ZuMv(loaded).p<ZeException>();
-    }
-    for (const auto &secret: ssfSecrets)
-      if (!secret.value)
-        throw ZeEXCEPT(Fatal, "zumd", "SSF secret missing");
-    Zum::SSFSecretFn ssfSecret;
-    if (ssfReceivers) {
-      ssfSecret = Zum::SSFSecretFn{[&ssfSecrets](Zum::String secretName) {
-        for (const auto &secret: ssfSecrets)
-          if (secret.name == secretName) return secret.value;
-        return Zum::String{};
-      }};
-    }
     ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
@@ -570,10 +481,11 @@ int main(int argc, char **argv)
               .addr = options.addr, .port = uint16_t(options.port),
               .issuer = options.issuer, .ssfIssuer = ZuMv(ssfIssuer),
               .rpID = options.rpID,
-              .rpName = options.rpName, .admin = options.admin,
+              .rpName = options.rpName,
               .dbKey = dbKey, .oidcHTTP = oidcHTTP.fn(),
-              .ssfSecret = ZuMv(ssfSecret),
-              .ssfReceivers = ZuMv(ssfReceivers),
+              .ssfReceiverMax = ssfConfig.receiverMax,
+              .ssfLeaseMax = ssfConfig.leaseMax,
+              .ssfErrorMax = ssfConfig.errorMax,
               .cleanupInterval = options.cleanupInterval});
         if (!daemonInited || !daemon.start())
           throw ZeEXCEPT(Fatal, "zumd", "HTTP server start failed");
@@ -642,7 +554,8 @@ int main(int argc, char **argv)
             .dbKey = dbKey,
             .now = Zm::now().sec(),
             .ttl = options.bootstrapTTL,
-            .reissue = reissue},
+            .reissue = reissue,
+            .repairAdmin = options.repairAdminClient},
           [&bootstrap, &bootstrapOK, &bootstrapDone](
               bool ok, Zum::ServerBootstrapResult result) mutable {
             bootstrapOK = ok;
@@ -667,28 +580,13 @@ int main(int argc, char **argv)
         if (!current) continue;
         if (!ready)
           throw ZeEXCEPT(Fatal, "zumd", "bootstrap/signing preparation failed");
-        if (provisionDBKey || ssfSecrets.find([](const SSFSecret &secret) {
-              return secret.provision;
-            }) >= 0) {
-          auto published = withVault(vaultCf,
-            [&dbKey, provisionDBKey, &ssfSecrets](Ztls::Vault &vault) {
-              Ztls::VaultResult result;
-              if (provisionDBKey) {
-                result = vault.save(Ztls::Scopes::Global{}, "dbKey", dbKey);
-                if (result.is<ZeException>()) return result;
-              }
-              for (const auto &secret: ssfSecrets) {
-                if (!secret.provision) continue;
-                result = vault.save(Ztls::Scopes::Environment{"ssf"},
-                  secret.name, ZuBSpan{secret.value});
-                if (result.is<ZeException>()) return result;
-              }
-              return result;
-            });
+        if (provisionDBKey) {
+          auto published = withVault(vaultCf, [&dbKey](Ztls::Vault &vault) {
+            return vault.save(Ztls::Scopes::Global{}, "dbKey", dbKey);
+          });
           if (published.is<ZeException>())
             throw ZuMv(published).p<ZeException>();
           provisionDBKey = false;
-          for (auto &secret: ssfSecrets) secret.provision = false;
         }
         current = ZmBlock<bool>{}([db, generation](auto wake) {
           db->run([db, generation, wake = ZuMv(wake)]() mutable {
@@ -703,15 +601,17 @@ int main(int argc, char **argv)
         if (options.once) break;
       }
       stop();
+      if (options.repairAdminClient && !storeStopped)
+        throw ZeEXCEPT(Fatal, "zumd", "administrator client repair store drain failed");
     } catch (...) {
       stop();
       throw;
     }
     result = publisherStopped ? 0 : 1;
-  } catch (const ZeException &e) {
-    std::cerr << e << '\n';
+  } catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e));
   } catch (const ZeError &e) {
-    std::cerr << e.message() << '\n';
+    ZiLOG(Fatal, "zumd", e);
   }
   }
   ZiLog::stop();

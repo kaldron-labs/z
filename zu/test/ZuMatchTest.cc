@@ -109,9 +109,9 @@ int main(int argc, char **argv)
   {
     constexpr ZuString L("l");
     // constexpr ZuString R("r");
-    using LR = ZuFieldProp::JSON::ID<L + "r"_Zu>;
+    using LR = ZuFieldProp::JSON::ID<L + "r"_z>;
     (void)sizeof(LR);
-    ZuCHECK(((L + "r"_Zu) == "lr"));
+    ZuCHECK(((L + "r"_z) == "lr"));
   }
   // std::cerr << ZuDemangle<decltype(names)>{} << '\n';
   {

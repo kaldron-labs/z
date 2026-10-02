@@ -202,10 +202,10 @@ using ZeMsgFn = ZmFn<
 
 - `zm/src/ZmCache.hh`
   - `FindFn`: use the cache hash heap and sharding:
-    `ZmFn<void(Node *), ZmFnHeapID<HeapID{}() + ".FindFn"_Zu, ZmFnSharded<Sharded>>>`.
+    `ZmFn<void(Node *), ZmFnHeapID<HeapID{}() + ".FindFn"_z, ZmFnSharded<Sharded>>>`.
 - `zm/src/ZmPolyCache.hh`
   - `FindFn`: use the poly-cache heap:
-    `ZmFn<void(Node *), ZmFnHeapID<HeapID{}() + ".FindFn"_Zu>>`.
+    `ZmFn<void(Node *), ZmFnHeapID<HeapID{}() + ".FindFn"_z>>`.
   - If `PolyHash` also exposes `Sharded`, add the same
     `ZmFnSharded<Sharded>` propagation used by `ZmCache`.
 - `zm/src/ZmHeap.hh`

@@ -70,14 +70,10 @@ struct Tick {
 };
 
 ZfStruct(Tick,
-  (((seqNo), (Ctor<0>, Series, Index, Delta)),
-    (UInt64)),
-  (((time),   (Ctor<1>, Series, Index, Delta, NDP<9>)),
-    (Time, "2020/01/01")),
-  (((price),  (Ctor<2>, Series)),
-    (Float)),
-  (((size),   (Ctor<3>, Series, Delta)),
-    (Int64)));
+  (((seqNo), (Ctor<0>, Series, Index, Delta)),					UInt64),
+  (((time),   (Ctor<1>, Series, Index, Delta, NDP<9>, Deflt<"2020/01/01"_z>)),	Time),
+  (((price),  (Ctor<2>, Series)),						Float),
+  (((size),   (Ctor<3>, Series, Delta)),					Int64));
 
 using TickDF = Zdf::DataFrame<Tick, false>;
 ```

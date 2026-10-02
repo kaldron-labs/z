@@ -52,6 +52,8 @@
 #include <zlib/ZumURI.hh>
 
 #include <zlib/ZumVaultClient.hh>
+#include <zlib/zum_cli.hh>
+#include <zlib/ZtPlatform.hh>
 
 ZuDerive(String, ZtString<ZtStringHeapID<"zumc.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"zumc.Bytes">>));
@@ -63,10 +65,10 @@ struct Token {
   String tokenType;
 };
 ZfStruct(, (Token, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)), (String)),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)), (String)),
-  (((scope),		(JSON::Opt)),	(String)),
-  (((tokenType),	(JSON::ID<"token_type">, Required)), (String)));
+  (((accessToken),	(JSON::ID<"access_token">, Required)),		String),
+  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	String),
+  (((scope),		(JSON::Opt)),					String),
+  (((tokenType),	(JSON::ID<"token_type">, Required)),		String));
 
 ZuDerive(StringVec, (ZtArray<String,
   ZtArrayHeapID<"zumc.StringVec">>));
@@ -81,25 +83,20 @@ struct Metadata {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (Metadata, JSON),
-  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	(String)),
+  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	String),
   (((authorizationEndpoint),
-    (JSON::ID<"authorization_endpoint">, JSON::Opt)),	(String)),
+    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		String),
   (((tokenEndpoint),
-    (JSON::ID<"token_endpoint">, JSON::Opt)),	(String)),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	(String)),
+    (JSON::ID<"token_endpoint">, JSON::Opt)),			String),
+  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	String),
   (((revocationEndpoint),
-    (JSON::ID<"revocation_endpoint">, JSON::Opt)),	(String)),
+    (JSON::ID<"revocation_endpoint">, JSON::Opt)),		String),
   (((responseTypesSupported),
-    (JSON::ID<"response_types_supported">, JSON::Opt)),	(StringVec)),
+    (JSON::ID<"response_types_supported">, JSON::Opt)),		StringVec),
   (((grantTypesSupported),
-    (JSON::ID<"grant_types_supported">, JSON::Opt)),	(StringVec)),
+    (JSON::ID<"grant_types_supported">, JSON::Opt)),		StringVec),
   (((codeChallengeMethods),
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),
-    (StringVec)));
-
-struct SecretOutput { String secretOutput; };
-ZfStruct(, (SecretOutput, JSON),
-  (((secretOutput),	(Required)),	(String)));
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	StringVec));
 
 static void clearTokens(ZumVaultClient::Credential &tokens)
 {
@@ -115,21 +112,7 @@ enum {
   CallbackPort = 8081
 };
 
-struct Options {
-
-  String	config;
-  String	json;
-  String	operation;
-  bool		noBrowser = false;
-  bool		help = false;
-};
-
-ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">)), (String)),
-  (((json), (CLI::Long<"json">)), (String)),
-  (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
-  (((operation), (CLI::Arg<1>)), (String)),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+using Options = ZumCLI::Options;
 
 struct Config {
   String	issuerURL;
@@ -142,22 +125,57 @@ struct Config {
   bool		loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Required)), (String)),
-  (((managementURL), (Required)), (String)),
-  (((caPath)), (String)),
-  (((clientID)), (String, "zum-admin")),
-  (((scope)), (String, "zum.admin")),
-  (((callbackPort), ((Range<1, 65535>))), (UInt32, CallbackPort)),
-  (((loginTimeout), ((Range<1, 3600>))), (UInt32, LoginTimeout)),
-  (((loopbackTest)), (Bool, false)));
+  (((issuerURL), (Required)),					String),
+  (((managementURL), (Required)),				String),
+  (((caPath)),							String),
+  (((clientID), (Deflt<"zum-admin"_z>)),			String),
+  (((scope), (Deflt<"zum.admin"_z>)),				String),
+  (((callbackPort), ((Range<1, 65535>), Deflt<CallbackPort>)),	UInt32),
+  (((loginTimeout), ((Range<1, 3600>), Deflt<LoginTimeout>)),	UInt32),
+  (((loopbackTest), (Deflt<false>)),				Bool));
 
-static void usage(int code = 1)
+static void usage(int code = 1, const ZfCLI::Parser<Options> *parser = nullptr)
 {
   std::cerr <<
-    "Usage: zum --config FILE login [--no-browser]\n"
-    "       zum --config FILE OPERATION --json FILE [--no-browser]\n\n"
-    "Request JSON supplies path/query/body fields and optional $ifMatch,\n"
-    "$ifNoneMatch, $idempotencyKey, and $secretOutput controls.\n";
+    "Usage: zum [--config FILE] login [--no-browser]\n"
+    "       zum [--config FILE] app add NAME AUDIENCE [OPTIONS]\n"
+    "       zum [--config FILE] RESOURCE [SUBRESOURCE] VERB ARGS... [OPTIONS]\n\n"
+    "Required fields are positional; optional fields use --kebab-case names.\n"
+    "Lists are comma-separated; use an empty argument for an empty list.\n"
+    "JSON responses go to stdout. Idempotency keys are generated automatically.\n"
+    "Controls: --if-match ETAG, --if-none-match '*', --idempotence KEY.\n"
+    "Configuration: --config FILE, ZUM_CONFIG, or $ZUM_HOME/zum.cf\n"
+    "($HOME/.zum/zum.cf when ZUM_HOME is unset).\n\n";
+  for (int op = 0; op < Zum::MgmtOp::N; ++op) {
+    if (parser && !ZumCLI::matches(
+	*parser, ZumCLI::command(op), parser->argc - 1)) continue;
+    auto args = ZumCLI::spec(op);
+    std::cerr << "  zum " << ZumCLI::command(op);
+    auto argument = [](ZuCSpan entry) {
+      auto key = ZumCLI::option(ZumCLI::name(entry));
+      for (unsigned i = 0, n = key.length(); i < n; ++i) {
+	char c = key[i];
+	std::cerr << char(c == '-' ? '_' :
+	  c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c);
+      }
+    };
+    for (auto fields = args.required; fields;) {
+      std::cerr << ' ';
+      argument(ZumCLI::word(fields));
+    }
+    for (auto fields = args.positional; fields;) {
+      std::cerr << " [";
+      argument(ZumCLI::word(fields));
+      std::cerr << ']';
+    }
+    for (auto fields = args.optional; fields;) {
+      auto entry = ZumCLI::word(fields);
+      std::cerr << " [--" << ZumCLI::option(ZumCLI::name(entry)) << ' ';
+      argument(entry);
+      std::cerr << ']';
+    }
+    std::cerr << '\n';
+  }
   ::exit(code);
 }
 
@@ -170,15 +188,6 @@ static bool readFile(ZuCSpan path, String &data, unsigned limit = BodyMax)
   if (size < 0 || uint64_t(size) > limit) return false;
   data.length(unsigned(size));
   return !size || file.read(data.data(), unsigned(size)) == int(size);
-}
-
-static bool writeProtected(ZuCSpan path, ZuCSpan data)
-{
-  ZiFile file;
-  if (file.open(Zi::Path{path}, ZiFile::Write | ZiFile::NoFollow |
-	ZiFile::GC, 0600) != Zi::OK || file.mode(0600) != Zi::OK) return false;
-  return file.write(data.data(), data.length()) == Zi::OK &&
-    file.sync() == Zi::OK;
 }
 
 static bool loadConfig(ZuCSpan path, Config &config)
@@ -315,7 +324,7 @@ struct Call_ : public Heap, public ZmObject  {
   }
   String	ifMatch;
   String	ifNoneMatch;
-  String	idempotencyKey;
+  String	idempotence;
 
   template <typename Link, typename Response>
   void process(Link *, const Response *response) const {
@@ -415,7 +424,7 @@ struct AdminBuilder : public Zrest::ReqBuilder<Impl, Call> {
     else if constexpr (Key{}() == "if-match") l(this->object->ifMatch);
     else if constexpr (Key{}() == "if-none-match") l(this->object->ifNoneMatch);
     else if constexpr (Key{}() == "idempotency-key")
-      l(this->object->idempotencyKey);
+      l(this->object->idempotence);
     else if constexpr (Key{}() == "content-type") l("application/json");
     else Base::template header<Key>(ZuFwd<L>(l));
   }
@@ -481,7 +490,7 @@ public:
     call->authorization = input->authorization;
     call->ifMatch = input->ifMatch;
     call->ifNoneMatch = input->ifNoneMatch;
-    call->idempotencyKey = input->idempotencyKey;
+    call->idempotence = input->idempotence;
     call->client = this;
     call->result = &result;
     send_<Builder>(ZuMv(call));
@@ -771,7 +780,7 @@ static bool pathParameter(ZuCSpan pattern, ZuCSpan name)
 }
 
 static bool prepareRequest(const Zum::MgmtRoute &route, String &source,
-    ZmRef<Call> &call, String &secretOutput)
+    ZmRef<Call> &call, const Options &options)
 {
   auto root = jsonObject(source);
   if (!root) return false;
@@ -793,22 +802,22 @@ static bool prepareRequest(const Zum::MgmtRoute &route, String &source,
   }
   call = new Call{};
   call->query = path.cspan().offset(sizeof("/admin") - 1);
-  auto ctl = [object](ZuCSpan name, String &value) {
-    auto node = field(*object, name);
-    return !node || scalar(node, value);
-  };
-  if (!ctl("$ifMatch", call->ifMatch) ||
-      !ctl("$ifNoneMatch", call->ifNoneMatch) ||
-      !ctl("$idempotencyKey", call->idempotencyKey) ||
-      !ctl("$secretOutput", secretOutput) ||
-      (Zum::managementNeedsIdempotency(route.op) && !call->idempotencyKey))
-    return false;
+  call->ifMatch = options.ifMatch;
+  call->ifNoneMatch = options.ifNoneMatch;
+  call->idempotence = options.idempotence;
+  if (Zum::managementNeedsIdempotency(route.op) && !call->idempotence) {
+    Ztls::Random rng;
+    Bytes random;
+    // 128 random bits per invocation; the same Call survives token refresh.
+    random.length(16, false);
+    if (!rng.init() || !rng.random(random)) return false;
+    call->idempotence = encode(random);
+  }
 
   if (route.method == Zhttp::Method::GET) {
     bool first = true;
     for (auto &item: *object) {
-      if ((item.p<0>() && item.p<0>()[0] == '$') ||
-	  pathParameter(route.path, item.p<0>())) continue;
+      if (pathParameter(route.path, item.p<0>())) continue;
       auto emit = [&call, &first, &item](const ZfJSON::AnyNode *node) {
 	String value;
 	if (!scalar(node, value))
@@ -829,8 +838,7 @@ static bool prepareRequest(const Zum::MgmtRoute &route, String &source,
       new ZfJSON::Node<ZfJSON::AnyNode::Object>{};
     auto &fields = body->data<ZfJSON::AnyNode::Object>();
     for (auto &item: *object) {
-      if ((item.p<0>() && item.p<0>()[0] == '$') ||
-	  pathParameter(route.path, item.p<0>())) continue;
+      if (pathParameter(route.path, item.p<0>())) continue;
       fields.push(ZfJSON::AnyNode::Field{
 	item.p<0>(), ZuMv(item.p<1>())});
     }
@@ -838,13 +846,6 @@ static bool prepareRequest(const Zum::MgmtRoute &route, String &source,
       static_cast<const ZfJSON::AnyNode *>(body.ptr())});
   }
   return true;
-}
-
-static bool secretOperation(int op)
-{
-  return op == Zum::MgmtOp::appEnroll || op == Zum::MgmtOp::clientAdd ||
-    op == Zum::MgmtOp::clientSecretRotate || op == Zum::MgmtOp::userInvite ||
-    op == Zum::MgmtOp::userRecover;
 }
 
 static void performAdmin(Client &client, const Zum::MgmtRoute &route,
@@ -867,7 +868,7 @@ static void performAdmin(Client &client, const Zum::MgmtRoute &route,
 
 static void openBrowser(ZuCSpan url, bool noBrowser)
 {
-  std::cout << "Open this URL in a browser:\n" << url << "\n\n" << std::flush;
+  std::cerr << "Open this URL in a browser:\n" << url << "\n\n" << std::flush;
   if (noBrowser) return;
 #ifndef _WIN32
   pid_t pid = ::fork();
@@ -882,12 +883,35 @@ static void openBrowser(ZuCSpan url, bool noBrowser)
 int main(int argc, char **argv)
 {
   Options options;
-  try { ZfCLI::load(options, argc, argv); }
-  catch (const ZeException &e) { std::cerr << e << '\n'; usage(); }
-  if (options.help) usage(0);
-  if (!options.config || !options.operation ||
-      (options.operation != "login" && !options.json) ||
-      (options.operation == "login" && options.json)) usage();
+  ZfCLI::Parser<Options> parser;
+  try {
+    ZfCLI::InArgv<> input(argc, argv);
+    parser.scanArgv(input.argv);
+    ZfCLI::handler<Options>(parser.root).load(options);
+  } catch (const ZeException &e) {
+    std::cerr << e << '\n'; usage();
+  }
+  if (options.help) usage(0, &parser);
+  if (!options.command) usage();
+  bool loggingIn = options.command == "login";
+  int op = loggingIn ? -1 : ZumCLI::operation(parser);
+  const auto *route = Zum::managementRoute(op);
+  ZumCLI::String request, error;
+  if (!loggingIn && (!route || !ZumCLI::request(parser, op, request, error))) {
+    std::cerr << "zum: " << (route ? error.cspan() :
+      ZuCSpan{"unknown command"}) << '\n';
+    usage();
+  }
+  if (loggingIn && parser.argc != 2) usage();
+  if (!options.config) options.config = Zt::getpath("ZUM_CONFIG");
+  if (!options.config) {
+    auto home = Zt::getpath("ZUM_HOME");
+    if (home && *home) options.config = home;
+    else if (auto base = Zt::getpath("HOME"))
+      options.config << base << "/.zum";
+    if (!options.config) usage();
+    options.config << "/zum.cf";
+  }
 
   Config config;
   try {
@@ -911,18 +935,6 @@ int main(int argc, char **argv)
       (managementURL.url().path && managementURL.url().path != "/")) {
     std::cerr << "zum: managementURL must be an HTTP(S) origin\n";
     return 1;
-  }
-
-  int op = -1;
-  const Zum::MgmtRoute *route = nullptr;
-  if (options.operation != "login") {
-    op = Zum::MgmtOp::lookup(options.operation);
-    route = Zum::managementRoute(op);
-    if (!route) {
-      std::cerr << "zum: unknown management operation: " <<
-	options.operation << '\n';
-      return 1;
-    }
   }
 
   ZiLog::init("zum");
@@ -1049,21 +1061,16 @@ int main(int argc, char **argv)
   };
 
   bool ok = true;
-  if (options.operation == "login") {
+  if (loggingIn) {
     ok = login();
     if (ok && tokens.refreshToken)
       ok = saveTokens(tokens);
-    if (ok) std::cout << "authenticated\n";
+    if (ok) std::cerr << "authenticated\n";
   } else {
-    String source, secretOutput;
+    String source{ZuMv(request)};
     ZmRef<Call> call;
-    ok = readFile(options.json, source) &&
-      prepareRequest(*route, source, call, secretOutput);
-    if (!ok) std::cerr << "zum: invalid request JSON\n";
-    if (ok && secretOperation(op) && !secretOutput) {
-      std::cerr << "zum: operation requires $secretOutput\n";
-      ok = false;
-    }
+    ok = prepareRequest(*route, source, call, options);
+    if (!ok) std::cerr << "zum: could not prepare request\n";
     if (ok && !loadTokens(tokens)) ok = login();
     if (ok) {
       call->authorization = "Bearer ";
@@ -1092,18 +1099,15 @@ int main(int argc, char **argv)
       }
       bool saved = !tokens.refreshToken || saveTokens(tokens);
       ok = result.status >= 200 && result.status < 300;
-      if (ok && secretOutput) {
-	ok = writeProtected(secretOutput, result.body);
-	if (ok) {
-	  ZfJSON::save(std::cout, SecretOutput{secretOutput});
-	  std::cout << '\n';
-	}
-      } else {
-	std::cout << result.body;
-	if (!result.body || result.body[result.body.length() - 1] != '\n')
-	  std::cout << '\n';
+      std::cout << result.body;
+      if (!result.body || result.body[result.body.length() - 1] != '\n')
+	std::cout << '\n';
+      if (!ok) {
+	std::cerr << "zum: HTTP " << result.status << '\n';
+	if (call->idempotence)
+	  std::cerr << "zum: retry key: --idempotence " <<
+	    call->idempotence << '\n';
       }
-      if (!ok) std::cerr << "zum: HTTP " << result.status << '\n';
       if (!saved) {
 	std::cerr << "zum: could not persist credentials\n";
 	ok = false;

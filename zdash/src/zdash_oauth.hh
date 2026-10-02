@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Native OAuth flow from ztc/example/ztchub_client.cc.
-// One dashboard session per login; retain the refresh credential in Vault.
+// Renew dashboard credentials in place; retain the refresh credential in Vault.
 
 #ifndef ZDashOAuth_HH
 #define ZDashOAuth_HH
@@ -26,6 +26,7 @@
 #include <zlib/ZuPercent.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmPQueue.hh>
@@ -76,12 +77,14 @@ struct TokenWire {
   ZumVaultClient::SecretText refreshToken;
   ZumVaultClient::Text scope;
   String tokenType;
+  uint32_t expiresIn = 0;
 };
 ZfStruct(, (TokenWire, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)),	(String)),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	(String)),
-  (((scope),		(JSON::Opt)),	(String)),
-  (((tokenType),	(JSON::ID<"token_type">, Required)),	(String)));
+  (((accessToken),	(JSON::ID<"access_token">, Required)),		String),
+  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	String),
+  (((scope),		(JSON::Opt)),					String),
+  (((tokenType),	(JSON::ID<"token_type">, Required)),		String),
+  (((expiresIn),	(JSON::ID<"expires_in">, Required)),		UInt32));
 
 static void clearTokens(ZumVaultClient::Credential &tokens)
 {
@@ -108,14 +111,14 @@ struct Config {
   bool		loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Required)),			(String)),
-  (((serviceURL)),				(String)),
-  (((clientID),	 (Required)),			(String)),
-  (((caPath)),					(String)),
-  (((scope)),					(String, "ping")),
-  (((callbackPort), ((Range<1, 65535>))),	(UInt32, CallbackPort)),
-  (((loginTimeout), ((Range<1, 3600>))),	(UInt32, 180)),
-  (((loopbackTest)),				(Bool, false)));
+  (((issuerURL), (Required)),					String),
+  (((serviceURL)),						String),
+  (((clientID),	 (Required)),					String),
+  (((caPath)),							String),
+  (((scope), (Deflt<"ping"_z>)),				String),
+  (((callbackPort), ((Range<1, 65535>), Deflt<CallbackPort>)),	UInt32),
+  (((loginTimeout), ((Range<1, 3600>), Deflt<180>)),		UInt32),
+  (((loopbackTest), (Deflt<false>)),				Bool));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -145,18 +148,18 @@ struct MetadataWire {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (MetadataWire, JSON),
-  (((issuerURL), (JSON::ID<"issuer">, JSON::Opt)),		(String)),
+  (((issuerURL), (JSON::ID<"issuer">, JSON::Opt)),		String),
   (((authorizationEndpoint),
-    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		(String)),
+    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		String),
   (((tokenEndpoint),
-    (JSON::ID<"token_endpoint">, JSON::Opt)),			(String)),
-  (((jwksURI), (JSON::ID<"jwks_uri">, JSON::Opt)),		(String)),
+    (JSON::ID<"token_endpoint">, JSON::Opt)),			String),
+  (((jwksURI), (JSON::ID<"jwks_uri">, JSON::Opt)),		String),
   (((responseTypesSupported),
-    (JSON::ID<"response_types_supported">, JSON::Opt)),		(StringVec)),
+    (JSON::ID<"response_types_supported">, JSON::Opt)),		StringVec),
   (((grantTypesSupported),
-    (JSON::ID<"grant_types_supported">, JSON::Opt)),		(StringVec)),
+    (JSON::ID<"grant_types_supported">, JSON::Opt)),		StringVec),
   (((codeChallengeMethods),
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	(StringVec)));
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	StringVec));
 
 template <typename Fn>
 static bool formEach(ZuCSpan form, Fn &&fn)
@@ -600,7 +603,15 @@ static ZiMxParams mxParams()
   }).rxThread(1).txThread(2);
 }
 
-static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
+// Main-thread lease; token borrows the Vault credential until the next refresh.
+struct Lease {
+  ZuCSpan token;
+  ZuTime renewAt;
+  ZmFn<bool(Lease &)> refresh;
+};
+
+static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens,
+    ZuTime &renewAt)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
@@ -612,8 +623,11 @@ static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
   auto handler = ZfJSON::handler<TokenWire>(roots[0]);
   if (!handler.valid) return false;
   TokenWire wire = handler.ctor();
-  if (!wire.accessToken ||
+  if (!wire.accessToken || !wire.expiresIn ||
       !ZuICmp<ZuCSpan>::equals(wire.tokenType, "Bearer")) return false;
+  // Renew at 80% of the lifetime, leaving time for HTTP and WSS handshakes.
+  renewAt = Zm::now() + ZuTime{ZuTime::Nano{
+    int64_t(wire.expiresIn) * 800000000}};
   clearTokens(tokens);
   tokens.accessToken = ZuMv(wire.accessToken);
   tokens.refreshToken = ZuMv(wire.refreshToken);
@@ -735,10 +749,11 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
 
   ZumVaultClient::Credential tokens{config.issuerURL,
     config.issuerURL, config.clientID};
+  ZuTime renewAt;
   auto persist = [&tokens]() {
-    return !ZumVaultClient::save(tokens).is<ZeException>();
+    return !ZumVaultClient::save(tokens, {}, "zdash").is<ZeException>();
   };
-  auto refresh = [&clients, &metadata, &config, &tokens, &persist]() {
+  auto refresh = [&clients, &metadata, &config, &tokens, &renewAt, &persist]() {
     if (!tokens.refreshToken) return false;
     String form{"grant_type=refresh_token&"};
     form << formField("refresh_token", tokens.refreshToken) << '&' <<
@@ -747,7 +762,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     ZumVaultClient::Credential rotated;
     bool refreshed = clients.perform<TokenBuilder>(result,
       metadata.tokenEndpoint, ZuMv(form)) && result.status == 200 &&
-      tokenJSON(result.body, rotated) && rotated.refreshToken;
+      tokenJSON(result.body, rotated, renewAt) && rotated.refreshToken;
     if (!refreshed) {
       clearTokens(rotated);
       return false;
@@ -758,7 +773,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     tokens.scope = ZuMv(rotated.scope);
     return persist();
   };
-  bool reused = !ZumVaultClient::load(tokens).is<ZeException>();
+  bool reused = !ZumVaultClient::load(tokens, {}, "zdash").is<ZeException>();
   if (reused && !refresh()) {
     clearTokens(tokens);
     reused = false;
@@ -827,7 +842,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
         formField("redirect_uri", redirect) << '&' << formField("code_verifier", verifier);
       Result result;
       ok = clients.perform<TokenBuilder>(result, metadata.tokenEndpoint,
-        ZuMv(form)) && result.status == 200 && tokenJSON(result.body, tokens);
+        ZuMv(form)) && result.status == 200 && tokenJSON(result.body, tokens, renewAt);
       if (!ok) std::cerr << "OAuth: code redemption failed\n";
     }
     if (ok && tokens.refreshToken && !persist()) {
@@ -838,8 +853,19 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     callbackServer.final();
   }
 
-  // The GTK session stays open until the user quits or the hub disconnects.
-  if (ok) ok = useToken(mx, clients, ZuCSpan{tokens.accessToken});
+  if (ok) {
+    Lease lease{ZuCSpan{tokens.accessToken}, renewAt,
+      [&refresh, &tokens, &renewAt](Lease &lease) {
+	if (!refresh()) {
+	  std::cerr << "OAuth: credential renewal failed\n";
+	  return false;
+	}
+	lease.token = tokens.accessToken;
+	lease.renewAt = renewAt;
+	return true;
+      }};
+    ok = useToken(mx, clients, lease);
+  }
   ZmTrap::sigintFn(interrupted);
 
   clearTokens(tokens);

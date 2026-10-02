@@ -18,7 +18,7 @@ ZmRef<DBContext> registerSchema(DB *db)
   context->apps = db->initTable<App>("zum.app");
   context->users = db->initTable<User>("zum.user");
   context->creds = db->initTable<Cred>("zum.cred");
-  context->memberships = db->initTable<Membership>("zum.membership");
+  context->assignments = db->initTable<Assignment>("zum.assignment");
   context->actions = db->initTable<Action>("zum.action");
   context->roles = db->initTable<Role>("zum.role");
   context->clients = db->initTable<Client>("zum.client");

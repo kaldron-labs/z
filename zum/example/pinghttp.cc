@@ -97,7 +97,7 @@ struct Call_ : public Heap, public ZmObject  {
   mutable String	contentType;
   mutable String	authorization;
   String ifMatch;
-  String idempotencyKey;
+  String idempotence;
   mutable String	target;
   mutable String	body;
   ServiceManifest	manifest;
@@ -151,7 +151,7 @@ struct Request : public Zrest::ReqBuilder<Impl, Call> {
     else if constexpr (Key{}() == "authorization")
       l(this->object->authorization);
     else if constexpr (Key{}() == "if-match") l(this->object->ifMatch);
-    else if constexpr (Key{}() == "idempotency-key") l(this->object->idempotencyKey);
+    else if constexpr (Key{}() == "idempotency-key") l(this->object->idempotence);
     else Base::template header<Key>(ZuFwd<L>(l));
   }
 };
@@ -288,7 +288,7 @@ public:
     call->body = ZuMv(request.body);
     call->manifest = ZuMv(request.manifest);
     call->ifMatch = ZuMv(request.ifMatch);
-    call->idempotencyKey = ZuMv(request.idempotencyKey);
+    call->idempotence = ZuMv(request.idempotence);
     call->complete = ZuMv(complete);
     if (url.path) {
       auto path = url.path;

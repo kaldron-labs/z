@@ -96,10 +96,10 @@ ZmHashDeriveT((Node_, NTP_), (T_, LRU_), ZmCache_Hash, Node_,
 
 template <typename Node_, typename HeapID_, bool Sharded_>
 struct ZmCache_FindFn : public ZmFn<void(Node_ *),
-    ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>> {
+    ZmFnHeapID<HeapID_{}() + ".FindFn"_z, ZmFnSharded<Sharded_>>> {
   ZuDerive_(ZmCache_FindFn,
     (ZmFn<void(Node_ *),
-      ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>>) )
+      ZmFnHeapID<HeapID_{}() + ".FindFn"_z, ZmFnSharded<Sharded_>>>) )
 };
 template <typename FindFn_>
 struct ZmCache_FindFnList_NTP : public ZmList_Defaults {

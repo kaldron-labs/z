@@ -14,12 +14,12 @@ struct AddRequest {
   int64_t rhs = 0;
 };
 ZfStruct(, (AddRequest, JSON),
-  (((lhs), (Ctor<0>, Required)), (Int64)),
-  (((rhs), (Ctor<1>, Required)), (Int64)));
+  (((lhs), (Ctor<0>, Required)),	Int64),
+  (((rhs), (Ctor<1>, Required)),	Int64));
 
 struct AddResult { int64_t value = 0; };
 ZfStruct(, (AddResult, JSON),
-  (((value), (Ctor<0>, Required)), (Int64)));
+  (((value), (Ctor<0>, Required)),	Int64));
 
 struct AddOK : public Zmcp::Response {
   using Body = AddResult;

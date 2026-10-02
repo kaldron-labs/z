@@ -162,7 +162,7 @@ static void appTest()
   cf.workerThread = 3;
   cf.minInterval = 50;
   cf.maxInterval = 1000;
-  cf.maxSubs = 1;
+  cf.maxSubs = 2;
   ZuCheck(app.init(cf));
   ZuCheck(app.start());
   ZuCheck(app.start());
@@ -260,14 +260,69 @@ static void appTest()
   auto subAck = ack(SeqNo + 12);
   auto subSnapshot = receive(SeqNo + 12);
   ZuCheck(subAck.valid && subAck.interval == 500 && subSnapshot.valid);
+  // Distinct consumers of the same group/filter own distinct subscriptions.
+  ZuCheck(sendRequest(SeqNo + 13, Ztc::fbs::Group::App, "*", 500, true));
+  auto secondAck = ack(SeqNo + 13);
+  auto secondSnapshot = receive(SeqNo + 13);
+  ZuCheck(secondAck.valid && secondAck.status == Ztc::fbs::AckStatus::OK &&
+    secondSnapshot.valid);
+  app.rag(Ztc::RAG::Red);
+  // Ring waits are milliseconds; allow several 500 ms sampling intervals.
+  unsigned liveAttempts = cf.maxInterval * 4;
+  bool firstUpdated = false, secondUpdated = false;
+  for (unsigned n = 0; n < 12 && !(firstUpdated && secondUpdated); ++n) {
+    auto frame = ZtcTestClient::readFrame(1, true, liveAttempts);
+    auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : nullptr;
+    if (!msg) break;
+    if (msg->body_type() != Ztc::fbs::Body::Telemetry) continue;
+    auto tel = msg->body_as_Telemetry();
+    auto data = tel->value_as_AppTelemetry();
+    if (!data || data->rag() != Ztc::fbs::RAG::Red) continue;
+    if (tel->seqNo() == SeqNo + 12) firstUpdated = true;
+    if (tel->seqNo() == SeqNo + 13) secondUpdated = true;
+  }
+  ZuCheck(firstUpdated && secondUpdated);
+  // Cancel only the second consumer, then check another update on the first.
+  ZuCheck(sendRequest(SeqNo + 13, Ztc::fbs::Group::App, "*", 0, false));
+  bool cancelled = false;
+  for (unsigned n = 0; n < 8 && !cancelled; ++n) {
+    auto frame = ZtcTestClient::readFrame(1);
+    auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : nullptr;
+    if (!msg) break;
+    auto value = msg->body_as_Ack();
+    cancelled = value && value->seqNo() == SeqNo + 13 &&
+	value->status() == Ztc::fbs::AckStatus::OK;
+  }
+  ZuCheck(cancelled);
+  app.rag(Ztc::RAG::Green);
+  bool survivorUpdated = false;
+  for (unsigned n = 0; n < 8 && !survivorUpdated; ++n) {
+    auto frame = ZtcTestClient::readFrame(1, true, liveAttempts);
+    auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : nullptr;
+    if (!msg) break;
+    auto tel = msg->body_as_Telemetry();
+    auto value = tel ? tel->value_as_AppTelemetry() : nullptr;
+    survivorUpdated = value && tel->seqNo() == SeqNo + 12 &&
+	value->rag() == Ztc::fbs::RAG::Green;
+  }
+  ZuCheck(survivorUpdated);
+  bool survivorEOS = false;
+  for (unsigned n = 0; n < 8 && !survivorEOS; ++n) {
+    auto frame = ZtcTestClient::readFrame(1, true, liveAttempts);
+    auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : nullptr;
+    if (!msg) break;
+    auto value = msg->body_as_EOS();
+    survivorEOS = value && value->seqNo() == SeqNo + 12;
+  }
+  ZuCheck(survivorEOS);
   auto reset = ZtcTestClient::request(
     ZuCmp<uint64_t>::null(), Ztc::fbs::Group::App, {}, 0, false);
   ZuCheck(reset && ZtcTestClient::writeAll(1, reset->cspan()));
   ZuCheck(sendRequest(
-    SeqNo + 13, Ztc::fbs::Group::App, "other", 500, true));
-  auto resetAck = ack(SeqNo + 13);
+    SeqNo + 14, Ztc::fbs::Group::App, "other", 500, true));
+  auto resetAck = ack(SeqNo + 14);
   ZuCheck(resetAck.valid && resetAck.status == Ztc::fbs::AckStatus::OK);
-  auto resetSnapshot = receive(SeqNo + 13);
+  auto resetSnapshot = receive(SeqNo + 14);
   ZuCheck(resetSnapshot.valid && !resetSnapshot.frames);
   reset = ZtcTestClient::request(
     ZuCmp<uint64_t>::null(), Ztc::fbs::Group::App, {}, 0, false);
@@ -289,7 +344,7 @@ static void appTest()
   ZuCheck(app.start());
   ZuCheck(ZiStat{pidPath}.exists());
   ZuCheck(ZtcTestClient::client().connect(cf.id));
-  auto restarted = snapshot(SeqNo + 14, Ztc::fbs::Group::App, "*");
+  auto restarted = snapshot(SeqNo + 15, Ztc::fbs::Group::App, "*");
   ZuCheck(restarted.valid && restarted.app);
   ZuCheck(app.stop());
   app.final();

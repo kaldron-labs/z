@@ -50,18 +50,18 @@ struct AssertionResponse {
   String userHandle;
 };
 ZfStruct(, (AssertionResponse, JSON),
-  (((authenticatorData),	(Required)),	(String)),
-  (((clientDataJSON),	(Required)),	(String)),
-  (((signature),		(Required)),	(String)),
-  (((userHandle),	(Required)),	(String)));
+  (((authenticatorData),	(Required)),	String),
+  (((clientDataJSON),	(Required)),		String),
+  (((signature),		(Required)),	String),
+  (((userHandle),	(Required)),		String));
 
 struct RegistrationResponse {
   String attestationObject;
   String clientDataJSON;
 };
 ZfStruct(, (RegistrationResponse, JSON),
-  (((attestationObject),	(Required)),	(String)),
-  (((clientDataJSON),	(Required)),	(String)));
+  (((attestationObject),	(Required)),	String),
+  (((clientDataJSON),	(Required)),		String));
 
 struct AssertionCredential {
   String rawID;
@@ -69,9 +69,9 @@ struct AssertionCredential {
   String type;
 };
 ZfStruct(, (AssertionCredential, JSON),
-  (((rawID),	(JSON::ID<"rawId">, Required)),	(String)),
-  (((response),	(Required)),	(UDT)),
-  (((type),	(Required)),	(String)));
+  (((rawID),	(JSON::ID<"rawId">, Required)),	String),
+  (((response),	(Required)),			UDT),
+  (((type),	(Required)),			String));
 
 struct RegistrationCredential {
   String rawID;
@@ -79,9 +79,9 @@ struct RegistrationCredential {
   String type;
 };
 ZfStruct(, (RegistrationCredential, JSON),
-  (((rawID),	(JSON::ID<"rawId">, Required)),	(String)),
-  (((response),	(Required)),	(UDT)),
-  (((type),	(Required)),	(String)));
+  (((rawID),	(JSON::ID<"rawId">, Required)),	String),
+  (((response),	(Required)),			UDT),
+  (((type),	(Required)),			String));
 
 template <typename T>
 static bool jsonLoad(ZuSpan<char> json, T &value)
@@ -158,30 +158,30 @@ struct AssertionPublicKey {
   String userVerification;
 };
 ZfStruct(, (AssertionPublicKey, JSON),
-  (((challenge),		(Required)),	(String)),
-  (((rpID),		(JSON::ID<"rpId">, Required)),	(String)),
-  (((timeout),		(Required)),	(UInt64)),
-  (((userVerification),	(Required)),	(String)));
+  (((challenge),		(Required)),		String),
+  (((rpID),		(JSON::ID<"rpId">, Required)),	String),
+  (((timeout),		(Required)),			UInt64),
+  (((userVerification),	(Required)),			String));
 
 struct AssertionOptions { AssertionPublicKey publicKey; };
 ZfStruct(, (AssertionOptions, JSON),
-  (((publicKey),	(Required)),	(UDT)));
+  (((publicKey),	(Required)),	UDT));
 
 struct RelyingParty { String id; String name; };
 ZfStruct(, (RelyingParty, JSON),
-  (((id),		(Required)),	(String)),
-  (((name),		(Required)),	(String)));
+  (((id),		(Required)),	String),
+  (((name),		(Required)),	String));
 
 struct RegistrationUser { String id; String name; String displayName; };
 ZfStruct(, (RegistrationUser, JSON),
-  (((id),		(Required)),	(String)),
-  (((name),		(Required)),	(String)),
-  (((displayName),	(Required)),	(String)));
+  (((id),		(Required)),	String),
+  (((name),		(Required)),	String),
+  (((displayName),	(Required)),	String));
 
 struct CredentialParam { String type; int32_t alg = 0; };
 ZfStruct(, (CredentialParam, JSON),
-  (((type),		(Required)),	(String)),
-  (((alg),		(Required)),	(Int32)));
+  (((type),		(Required)),	String),
+  (((alg),		(Required)),	Int32));
 ZuDerive(CredentialParamArray, (ZtArray<CredentialParam,
   ZtArrayHeapID<"Zum.WebAuthn.Params">>));
 struct CredentialParamVec : public CredentialParamArray {
@@ -195,9 +195,9 @@ struct AuthenticatorSelection {
   String userVerification;
 };
 ZfStruct(, (AuthenticatorSelection, JSON),
-  (((residentKey),	(Required)),	(String)),
-  (((requireResidentKey),(Required)),	(Bool)),
-  (((userVerification),	(Required)),	(String)));
+  (((residentKey),	(Required)),	String),
+  (((requireResidentKey),(Required)),	Bool),
+  (((userVerification),	(Required)),	String));
 
 struct RegistrationPublicKey {
   String challenge;
@@ -209,17 +209,17 @@ struct RegistrationPublicKey {
   String attestation;
 };
 ZfStruct(, (RegistrationPublicKey, JSON),
-  (((challenge),		(Required)),	(String)),
-  (((rp),		(Required)),	(UDT)),
-  (((user),		(Required)),	(UDT)),
-  (((pubKeyCredParams),	(Required)),	(UDT)),
-  (((timeout),		(Required)),	(UInt64)),
-  (((authenticatorSelection),(Required)),	(UDT)),
-  (((attestation),	(Required)),	(String)));
+  (((challenge),		(Required)),	String),
+  (((rp),		(Required)),		UDT),
+  (((user),		(Required)),		UDT),
+  (((pubKeyCredParams),	(Required)),		UDT),
+  (((timeout),		(Required)),		UInt64),
+  (((authenticatorSelection),(Required)),	UDT),
+  (((attestation),	(Required)),		String));
 
 struct RegistrationOptions { RegistrationPublicKey publicKey; };
 ZfStruct(, (RegistrationOptions, JSON),
-  (((publicKey),	(Required)),	(UDT)));
+  (((publicKey),	(Required)),	UDT));
 
 String assertionOptions(
     ZuBSpan challenge, ZuCSpan rpID, uint64_t timeoutMS)
@@ -254,10 +254,10 @@ struct ClientData {
   bool		crossOrigin = false;
 };
 ZfStruct(, (ClientData, JSON),
-  (((type),		(Required)),	(String)),
-  (((challenge),	(Required)),	(String)),
-  (((origin),		(Required)),	(String)),
-  (((crossOrigin),	(JSON::Opt)),	(Bool, false)));
+  (((type),		(Required)),			String),
+  (((challenge),	(Required)),			String),
+  (((origin),		(Required)),			String),
+  (((crossOrigin),	(JSON::Opt, Deflt<false>)),	Bool));
 
 static int clientData(
     ZuSpan<char> json, ZuCSpan type, ZuBSpan challenge,
@@ -348,8 +348,8 @@ struct Attestation {
 };
 
 ZfStruct(, Attestation,
-  (((fmt), (Mutable)), (String)),
-  (((authData), (Mutable)), (Bytes)));
+  (((fmt), (Mutable)),		String),
+  (((authData), (Mutable)),	Bytes));
 
 ZfStructRender(, Attestation, CBOR, fmt, authData);
 

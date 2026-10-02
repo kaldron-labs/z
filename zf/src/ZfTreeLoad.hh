@@ -210,8 +210,12 @@ struct Object {
     else {
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	Field::set(o,
-	  this->template loadField<ZfFieldFilter::Load, Field>());
+	using Props = typename Field::Props;
+	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+	    ZuFieldProp::HasDeflt<Props>{}() ||
+	    hasField<Field>())
+	  Field::set(o,
+	    this->template loadField<ZfFieldFilter::Load, Field>());
       });
       return o;
     }
@@ -224,7 +228,11 @@ struct Object {
     O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
       *this, ZuFwd<Args>(args)...);
     ZuUnroll::all<InitFields>([this, o]<typename Field>() {
-      Field::set(*o, this->template loadField<ZfFieldFilter::Load, Field>());
+      using Props = typename Field::Props;
+      if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+	  ZuFieldProp::HasDeflt<Props>{}() ||
+	  hasField<Field>())
+	Field::set(*o, this->template loadField<ZfFieldFilter::Load, Field>());
     });
     return o;
   }
@@ -236,7 +244,11 @@ struct Object {
     ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
     O &o = *static_cast<O *>(o_);
     ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-      Field::set(o, this->template loadField<ZfFieldFilter::Load, Field>());
+      using Props = typename Field::Props;
+      if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+	  ZuFieldProp::HasDeflt<Props>{}() ||
+	  hasField<Field>())
+	Field::set(o, this->template loadField<ZfFieldFilter::Load, Field>());
     });
   }
 
@@ -244,7 +256,11 @@ struct Object {
   {
     checkRequired<ReqFields>();
     ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-      Field::set(o, this->template loadField<ZfFieldFilter::Load, Field>());
+      using Props = typename Field::Props;
+      if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+	  ZuFieldProp::HasDeflt<Props>{}() ||
+	  hasField<Field>())
+	Field::set(o, this->template loadField<ZfFieldFilter::Load, Field>());
     });
   }
 

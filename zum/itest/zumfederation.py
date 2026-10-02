@@ -47,32 +47,32 @@ def exercise(fixture, provider):
     audience_uri = "https://federation.example/api"
     app = create("/admin/apps", {"name": "federation",
                                   "audience": audience_uri})
-    app_id = app["appID"]
+    app_id = app["app_id"]
     provider.redirects.add(fixture.issuer(app_id) + "/v1/oidc/callback")
     prefix = "/admin/apps/" + app_id
     action = create(prefix + "/actions", {"name": "ping", "label": "Ping"})
     role = create(prefix + "/roles", {"name": "ping", "label": "Ping"})
     fixture.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
-                    {"actionIDs": [action["id"]]}, token=admin,
+                    {"action_ids": [action["id"]]}, token=admin,
                     headers={"If-Match": role["etag"]})
-    client = create("/admin/clients", {"appID": app_id, "label": "Independent federation client",
-        "profile": "native", "redirectURIs": ["http://127.0.0.1:49152/callback"],
-        "grants": 5, "refreshAllowed": True, "identityScopes": ["openid"]})
+    client = create("/admin/clients", {"app_id": app_id, "label": "Independent federation client",
+        "profile": "native", "redirect_uris": ["http://127.0.0.1:49152/callback"],
+        "grants": "AuthCode,Refresh", "refresh_allowed": True, "identity_scopes": ["openid"]})
     fixture.request("PUT", prefix + "/client-access/" + client["id"], {
-        "roleIDs": [role["id"]]},
+        "role_ids": [role["id"]]},
         token=admin, headers={"If-None-Match": "*"}, status=201)
     upstream = create("/admin/providers", {"name": "independent-fixture",
-        "issuer": provider.issuer, "clientID": provider.client_id,
-        "clientSecret": provider.client_secret, "scopes": ["openid", "roles"],
-        "roleClaim": "roles", "claimSource": "IDToken"})
-    assert "clientSecret" not in upstream
+        "issuer": provider.issuer, "client_id": provider.client_id,
+        "client_secret": provider.client_secret, "scopes": ["openid", "roles"],
+        "role_claim": "roles", "claim_source": "IDToken"})
+    assert "client_secret" not in upstream
     def delegate(target_app, target_role, provider_id=None):
         if provider_id is None:
             provider_id = upstream["id"]
         target = "/admin/apps/" + target_app
         for value in ("operators", "readers"):
             fixture.request("PUT", target + "/role-mappings/" + provider_id + "/" + b64(value.encode()),
-                {"roleID": target_role}, token=admin, headers={"If-None-Match": "*"}, status=201)
+                {"role_id": target_role}, token=admin, headers={"If-None-Match": "*"}, status=201)
         set_policy(target_app, provider_id=provider_id)
 
     def set_policy(target_app, assignment_max_age=300,
@@ -81,15 +81,15 @@ def exercise(fixture, provider):
         if provider_id is None:
             provider_id = upstream["id"]
         target = "/admin/apps/" + target_app
-        policy = query("/admin/auth-policies?appID=" + target_app)[0]
+        policy = query("/admin/auth-policies?app_id=" + target_app)[0]
         replacement = {
-            "providerID": provider_id, "localFirst": True, "eligibilityMode": "MappedRole",
-            "assignmentMaxAge": assignment_max_age, "sessionIdle": 1800, "sessionAbsolute": 43200,
-            "tokenLifetime": 300, "consentPolicy": "Explicit", "state": "Active"}
-        replacement["eligibilityMode"] = eligibility_mode
+            "provider_id": provider_id, "local_first": True, "eligibility_mode": "MappedRole",
+            "assignment_max_age": assignment_max_age, "session_idle": 1800, "session_absolute": 43200,
+            "token_lifetime": 300, "consent_policy": "Explicit", "state": "Active"}
+        replacement["eligibility_mode"] = eligibility_mode
         if eligibility_mode == "ClaimValues":
-            replacement["eligibilityClaim"] = "roles"
-            replacement["eligibilityValues"] = list(eligibility_values)
+            replacement["eligibility_claim"] = "roles"
+            replacement["eligibility_values"] = list(eligibility_values)
         fixture.request("PUT", target + "/auth-policy", replacement,
             token=admin, headers={"If-Match": policy["etag"]})
 
@@ -101,10 +101,10 @@ def exercise(fixture, provider):
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     users = [user for user in query("/admin/users?limit=1000") if user["source"] == "External"]
     assert len(users) == 1
-    members = query(prefix + "/memberships?userID=" + users[0]["id"])
+    members = query(prefix + "/assignments?user_id=" + users[0]["id"])
     assert not members, "upstream authority must not create local role assignments"
     grants = [grant for grant in query("/admin/grants?limit=1000")
-              if grant["userID"] == users[0]["id"] and grant["appID"] == app_id]
+              if grant["user_id"] == users[0]["id"] and grant["app_id"] == app_id]
     # Completed authorization does not retain a Grant: refresh-family state
     # lives in the dedicated refresh table and mapped authority is recorded in
     # evidence below.
@@ -112,12 +112,12 @@ def exercise(fixture, provider):
     def evidence():
         all_rows = query("/admin/evidence?limit=1000")
         rows = [row for row in all_rows
-                if row["appID"] == app_id and row["userID"] == users[0]["id"]]
+                if row["app_id"] == app_id and row["user_id"] == users[0]["id"]]
         assert len(rows) == 1, f"external evidence mismatch: rows={rows!r} all={all_rows!r}"
         return rows[0]
 
     observed = evidence()
-    assert observed["eligible"] and observed["roleValues"] == provider.roles
+    assert observed["eligible"] and observed["role_values"] == provider.roles
     assert fixture.verify_jwt(tokens["access_token"])["exp"] <= observed["deadline"]
     assert all(provider.calls.get(path, 0) for path in
                ("/.well-known/openid-configuration", "/authorize", "/token", "/jwks"))
@@ -144,12 +144,12 @@ def exercise(fixture, provider):
                 if user["source"] == "External"]) == 1
 
     def ping_sso(app, catalog, service_port, user):
-        provider.redirects.add(fixture.issuer(app["appID"]) +
+        provider.redirects.add(fixture.issuer(app["app_id"]) +
                                "/v1/oidc/callback")
-        policy = query("/admin/auth-policies?appID=" + app["appID"])[0]
-        if policy["providerID"] != upstream["id"]:
-            delegate(app["appID"], catalog["roleQuery"][0]["id"])
-        assert not query("/admin/apps/" + app["appID"] + "/memberships?userID=" + users[0]["id"])
+        policy = query("/admin/auth-policies?app_id=" + app["app_id"])[0]
+        if policy["provider_id"] != upstream["id"]:
+            delegate(app["app_id"], catalog["roleQuery"][0]["id"])
+        assert not query("/admin/apps/" + app["app_id"] + "/assignments?user_id=" + users[0]["id"])
         fixture.ping_client(service_port, *user, login="external-user")
 
     fixture.ping_service(after_login=ping_sso)
@@ -185,35 +185,35 @@ def exercise(fixture, provider):
     isolated_app = create("/admin/apps", {
         "name": "provider-isolation",
         "audience": isolated_uri})
-    isolated_id = isolated_app["appID"]
+    isolated_id = isolated_app["app_id"]
     provider.redirects.add(fixture.issuer(isolated_id) + "/v1/oidc/callback")
     isolated_prefix = "/admin/apps/" + isolated_id
     isolated_action = create(isolated_prefix + "/actions", {"name": "ping"})
     isolated_role = create(isolated_prefix + "/roles", {"name": "ping"})
     fixture.request("PUT", isolated_prefix + "/roles/" + isolated_role["id"] + "/actions",
-                    {"actionIDs": [isolated_action["id"]]}, token=admin,
+                    {"action_ids": [isolated_action["id"]]}, token=admin,
                     headers={"If-Match": isolated_role["etag"]})
     isolated_client = create("/admin/clients", {
-        "appID": isolated_id, "label": "Provider isolation client", "profile": "native",
-        "redirectURIs": ["http://127.0.0.1:49152/callback"], "grants": 5,
-        "refreshAllowed": True, "identityScopes": ["openid"]})
+        "app_id": isolated_id, "label": "Provider isolation client", "profile": "native",
+        "redirect_uris": ["http://127.0.0.1:49152/callback"], "grants": "AuthCode,Refresh",
+        "refresh_allowed": True, "identity_scopes": ["openid"]})
     fixture.request("PUT", isolated_prefix + "/client-access/" + isolated_client["id"], {
-        "roleIDs": [isolated_role["id"]]},
+        "role_ids": [isolated_role["id"]]},
         token=admin, headers={"If-None-Match": "*"}, status=201)
     isolated_provider = create("/admin/providers", {
         "name": "second-fixture", "issuer": provider.issuer,
-        "clientID": provider.client_id, "clientSecret": provider.client_secret,
-        "scopes": ["openid", "roles"], "roleClaim": "roles",
-        "claimSource": "IDToken"})
+        "client_id": provider.client_id, "client_secret": provider.client_secret,
+        "scopes": ["openid", "roles"], "role_claim": "roles",
+        "claim_source": "IDToken"})
     fixture.request("PUT", isolated_prefix + "/role-mappings/" +
                     isolated_provider["id"] + "/" + b64(b"outsiders"),
-                    {"roleID": isolated_role["id"]}, token=admin,
+                    {"role_id": isolated_role["id"]}, token=admin,
                     headers={"If-None-Match": "*"}, status=201)
     set_policy(isolated_id, provider_id=isolated_provider["id"])
     assert denied_login(isolated_client, isolated_id)["error"] == "access_denied"
     isolated_maps = query(isolated_prefix + "/role-mappings?limit=1000")
     assert len(isolated_maps) == 1
-    assert isolated_maps[0]["providerID"] == isolated_provider["id"]
+    assert isolated_maps[0]["provider_id"] == isolated_provider["id"]
     delegate(isolated_id, isolated_role["id"], isolated_provider["id"])
     fixture.cookies = SimpleCookie()
     isolated_tokens = fixture.login(isolated_client["id"], "openid ping", isolated_id,
@@ -232,16 +232,16 @@ def exercise(fixture, provider):
     assert {key["kid"] for key in primary_keys}.isdisjoint(
         key["kid"] for key in isolated_keys)
     isolated_evidence = [row for row in query("/admin/evidence?limit=1000")
-                         if row["appID"] == isolated_id]
+                         if row["app_id"] == isolated_id]
     assert len(isolated_evidence) == 1
-    assert isolated_evidence[0]["providerID"] == isolated_provider["id"]
-    assert isolated_evidence[0]["userID"] != users[0]["id"]
-    assert not query(isolated_prefix + "/memberships?userID=" +
-                     isolated_evidence[0]["userID"])
+    assert isolated_evidence[0]["provider_id"] == isolated_provider["id"]
+    assert isolated_evidence[0]["user_id"] != users[0]["id"]
+    assert not query(isolated_prefix + "/assignments?user_id=" +
+                     isolated_evidence[0]["user_id"])
     assert not [row for row in query("/admin/evidence?limit=1000")
-                if row["appID"] == isolated_id and row["providerID"] == upstream["id"]]
+                if row["app_id"] == isolated_id and row["provider_id"] == upstream["id"]]
     assert not [row for row in query(isolated_prefix + "/role-mappings?limit=1000")
-                if row["providerID"] == upstream["id"]]
+                if row["provider_id"] == upstream["id"]]
 
     # ClaimValues eligibility is independent from role mapping. Accept either a
     # scalar or array claim, but reject unknown values and non-string claim types.
@@ -270,7 +270,7 @@ def exercise(fixture, provider):
     current_provider = next(row for row in query("/admin/providers?limit=1000")
                             if row["id"] == upstream["id"])
     fixture.request("PATCH", "/admin/providers/" + upstream["id"],
-                    {"claimSource": "UserInfo"}, token=admin,
+                    {"claim_source": "UserInfo"}, token=admin,
                     headers={"If-Match": current_provider["etag"]})
     before_userinfo = provider.calls.get("/userinfo", 0)
     before_evidence = evidence()
@@ -281,8 +281,8 @@ def exercise(fixture, provider):
     fixture.verify_access(tokens["access_token"], client["id"], app_id, audience_uri, ["ping"])
     assert provider.calls.get("/userinfo", 0) == before_userinfo + 1
     assert int(evidence()["version"]) == int(before_evidence["version"]) + 1
-    assert evidence()["roleValues"] == ["readers"], "UserInfo roles must replace ID-token roles"
-    assert not query(prefix + "/memberships?userID=" + users[0]["id"])
+    assert evidence()["role_values"] == ["readers"], "UserInfo roles must replace ID-token roles"
+    assert not query(prefix + "/assignments?user_id=" + users[0]["id"])
 
     # UserInfo cannot substitute a different subject for the signed ID token.
     before_evidence = evidence()
@@ -314,9 +314,9 @@ def exercise(fixture, provider):
     deadline = int(short_evidence["deadline"])
     assert fixture.verify_jwt(expiring["access_token"])["exp"] <= deadline
     sessions = [row for row in query("/admin/sessions?limit=1000")
-                if row["userID"] == users[0]["id"]]
-    assert any(int(row["idleDeadline"]) > deadline and
-               int(row["absoluteDeadline"]) > deadline for row in sessions)
+                if row["user_id"] == users[0]["id"]]
+    assert any(int(row["idle_deadline"]) > deadline and
+               int(row["absolute_deadline"]) > deadline for row in sessions)
     remaining = deadline + 1 - time.time()
     assert remaining < 10
     if remaining > 0:
@@ -341,7 +341,7 @@ def exercise(fixture, provider):
     mappings = query(prefix + "/role-mappings?limit=1000")
     assert len(mappings) == 2
     for mapping in mappings:
-        fixture.request("DELETE", prefix + "/role-mappings/" + mapping["providerID"] +
+        fixture.request("DELETE", prefix + "/role-mappings/" + mapping["provider_id"] +
                         "/" + b64(mapping["value"].encode()), token=admin,
                         headers={"If-Match": mapping["etag"]})
     before_calls = dict(provider.calls)
@@ -351,9 +351,9 @@ def exercise(fixture, provider):
     fixture.verify_access(narrowed["access_token"], client["id"], app_id, audience_uri, [])
     assert evidence() == mapped_evidence and provider.calls == before_calls
     for mapping in mappings:
-        fixture.request("PUT", prefix + "/role-mappings/" + mapping["providerID"] +
+        fixture.request("PUT", prefix + "/role-mappings/" + mapping["provider_id"] +
                         "/" + b64(mapping["value"].encode()),
-                        {"roleID": mapping["roleID"]}, token=admin,
+                        {"role_id": mapping["role_id"]}, token=admin,
                         headers={"If-None-Match": "*"}, status=201)
     still_narrowed, _ = fixture.request("POST", fixture.oauth(app_id, "token"), {
         "grant_type": "refresh_token", "client_id": client["id"],
@@ -412,14 +412,14 @@ def exercise(fixture, provider):
     before_external = query(external_query)[0]
     local = create("/admin/users", {"name": projected_name})
     after_external = query(external_query)[0]
-    assert int(after_external["authVersion"]) == int(before_external["authVersion"]) + 1
+    assert int(after_external["auth_version"]) == int(before_external["auth_version"]) + 1
     assert int(after_external["version"]) == int(before_external["version"]) + 1
     assert after_external["name"] == before_external["name"]
     assert after_external["source"] == "External"
     local_query = "/admin/users?" + urlencode({"name": projected_name, "source": "Local"})
     local_rows = query(local_query)
     assert len(local_rows) == 1 and local_rows[0]["id"] != users[0]["id"]
-    assert not query(prefix + "/memberships?userID=" + local_rows[0]["id"])
+    assert not query(prefix + "/assignments?user_id=" + local_rows[0]["id"])
     before_calls = dict(provider.calls)
     fixture.cookies = SimpleCookie()
     page, _ = fixture.request("GET", fixture.oauth(app_id, "authorize") +
@@ -452,7 +452,7 @@ def exercise(fixture, provider):
     assert result.get("error") == ["login_required"] and "code" not in result
     assert result["state"] == ["conflict-check"] and provider.calls == before_calls
     assert query(local_query) == local_rows
-    assert local["enrollmentURL"]
+    assert local["enrollment_url"]
     fixture.proxy.close()
     fixture.stop()
     assert provider.client_secret not in (fixture.directory / "server.log").read_text()

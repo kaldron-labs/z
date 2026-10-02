@@ -80,7 +80,7 @@ int main(int argc, char **argv)
     (s = {}) << ZuDemangle<B<[]{ return "foobar"; }>>{};
     log(s);
     ZuCheck(ZuMatcher<MainIDs>().find(s).p<1>() == 0);
-    (s = {}) << ZuDemangle<B<"foobar"_Zu>>{};
+    (s = {}) << ZuDemangle<B<"foobar"_z>>{};
     log(s);
     ZuCheck(s == "B<\"foobar\">");
     (s = {}) << ZuDemangle<D<"foobar">>{};

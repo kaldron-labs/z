@@ -24,7 +24,7 @@ namespace Ztls_ {
 
 namespace VaultWindows_ {
 
-constexpr auto TargetPrefix = "ZtlsVault:"_Zu;
+constexpr auto TargetPrefix = "ZtlsVault:"_z;
 
 template <typename Heap = ZuVoid>
 class KeyRing_ : public Heap, public VaultStore {

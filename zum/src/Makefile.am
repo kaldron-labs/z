@@ -12,7 +12,7 @@ FBS = \
 	zum_app.fbs \
 	zum_user.fbs \
 	zum_cred.fbs \
-	zum_membership.fbs \
+	zum_assignment.fbs \
 	zum_action.fbs \
 	zum_role.fbs \
 	zum_client.fbs \
@@ -39,7 +39,7 @@ ${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
 BUILT_SOURCES = ${FBS_H}
 CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZumLib.hh ZumTypes.hh ZumURI.hh ZumJWTVerify.hh ZumService.hh ZumMgmt.hh
-noinst_HEADERS = ZumVaultClient.hh ZumVaultService.hh ZumVaultUtil.hh \
+noinst_HEADERS = zum_cli.hh ZumVaultClient.hh ZumVaultService.hh ZumVaultUtil.hh \
 	zumd.hh zumd_admin.hh zumd_authorize.hh zumd_db.hh zumd_discovery.hh zumd_secret.hh \
 	zumd_db_context.hh zumd_identity_db.hh zumd_app_db.hh zumd_provider_db.hh \
 	zumd_key_db.hh zumd_request_db.hh zumd_db_ops.hh zumd_sagas.hh zumd_role_delete.hh zumd_rekey.hh \

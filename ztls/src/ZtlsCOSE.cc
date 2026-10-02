@@ -92,9 +92,9 @@ bool validPK(ZuBSpan publicKey)
 
 bool jwk(ZuBSpan key, ZuSpan<char> out, unsigned &length)
 {
-  static constexpr auto prefix = "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\""_Zu;
-  static constexpr auto middle = "\",\"y\":\""_Zu;
-  static constexpr auto suffix = "\"}"_Zu;
+  static constexpr auto prefix = "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\""_z;
+  static constexpr auto middle = "\",\"y\":\""_z;
+  static constexpr auto suffix = "\"}"_z;
   length = 0;
   if (key.length() != PublicKeySize || key[0] != 4 || out.length() < JWKSize)
     return false;

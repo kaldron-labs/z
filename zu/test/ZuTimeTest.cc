@@ -61,7 +61,7 @@ void testIncrementalScan()
 {
   ZuTestScope(testIncrementalScan);
 
-  constexpr auto s = "1970/01/01 00:00:01junk"_Zu;
+  constexpr auto s = "1970/01/01 00:00:01junk"_z;
   auto t = ZuTime::eov(s);
   ZuCheck(t.p<0>() == 19);
   ZuCheck(t.p<1>() == ZuTime{1});

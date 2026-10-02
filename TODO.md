@@ -1,39 +1,26 @@
 # TODO
 
-complete `zumd2.md`
+`ZfStruct.hh`
+- `Range<...>` shouldn't need consistent types for min and max
+  - delete unnecessary casts and conversions such as `unsigned(...)`
+- audit for unnecessary `Ctor<>` and `Deflt<>`
+  - no CLI, Cf, TOML, YAML structs should have these
+- think about implications of `HasDeflt` for `ZfJSON` and `ZfURI`
+  - compare with `load`/`update` from `ZfTreeLoad`
 
-complete `ztcagent.md`
+- codex resume 01a0f99e-9fa6-75d3-a30c-9a85c51a9949
 
-implement `zumd.md` (telemetry publishing)
-
-`ZiFileTxStream::append` throws
-- there are numerous lingering `throw ZeEXCEPT` cases which should probably be `ZuUnion` returns and/or hard aborts
+- codex resume 01a0f208-2f41-7850-a741-6eae1b4cb2cd
 
 ## zdash
 
 - get running, retest
-
-## Zdb
-
-- "startup replays recovered incomplete sagas that are crash residue from a previous run"
 
 ## Zum
 
 - check implementation
   - need administration of all tables for built-in use
   - need to prove OIDC integration
-
-## Ztc
-
-- `ztchub`
-  - depends on `zumd`
-  - enrollment server for `ztcagent`
-  - telemetry aggregator for multiple remote `ztcagent` instances
-  - server for telemetry front-end clients, e.g. `zdash`
-   - client/server protocol is flatbuffers over websockets
-
-- zcmd effectively goes away?
-  - replaced by node.js generic openapi client
 
 ## Zdf
 - permit app to specify dataframe and/or series epoch, so
@@ -42,6 +29,14 @@ implement `zumd.md` (telemetry publishing)
 - need single call to load cudf table from zdf dataframe
 - cudf, dlpack integration (in that priority order)
 - TA_Lib (https://ta-lib.org/) integration
+
+## MxMD
+
+- reimplement mxmd on zdf
+
+## Zdb
+
+- "startup replays recovered incomplete sagas that are crash residue from a previous run"
 
 ## Zrest
 - codegen tool?
@@ -65,7 +60,6 @@ implement `zumd.md` (telemetry publishing)
 - register at rds-postgres-extensions-request@amazon.com
 
 ## Mx Work
-- reimplement mxmd on zdf
 - Binance feed handler
   - https / websockets - https://libwebsockets.org/ - steal
   - json / REST - steal from libws

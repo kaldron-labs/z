@@ -28,9 +28,9 @@ using namespace ZuTestUtil;
 struct EchoReq { int value = 0; };
 struct EchoResult { int value = 0; };
 ZfStruct(, (EchoReq, JSON),
-  (((value), (Ctor<0>, Required)), (Int32)));
+  (((value), (Ctor<0>, Required)),	Int32));
 ZfStruct(, (EchoResult, JSON),
-  (((value), (Ctor<0>, Required)), (Int32)));
+  (((value), (Ctor<0>, Required)),	Int32));
 
 struct EchoOK : public Zmcp::Response {
   using Body = EchoResult;
@@ -452,7 +452,7 @@ static ZtString<> headerValue(const ZtString<> &response, ZuCSpan name)
 struct LegacyApp {
   using ResBuilderQ = Zmcp::HTTPBuilderQ<Catalog>;
 
-  static constexpr auto SessionID = "legacy-session"_Zu;
+  static constexpr auto SessionID = "legacy-session"_z;
 
   ZmSemaphore listening_;
   Zmcp::Peer<Catalog> peer;

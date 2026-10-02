@@ -507,14 +507,14 @@ private:
       return;
     }
     if (grant.appID) {
-      auto memberships = m_context->memberships;
-      memberships->run(0, [self = ZmRef<AuthorizeFinish__>{this},
-          memberships, user = ZuMv(user), cred = ZuMv(cred),
+      auto assignments = m_context->assignments;
+      assignments->run(0, [self = ZmRef<AuthorizeFinish__>{this},
+          assignments, user = ZuMv(user), cred = ZuMv(cred),
           grant = ZuMv(grant)]() mutable {
         auto key = ZuFwdTuple(grant.appID, user.id);
-        memberships->find<0>(0, ZuMv(key), [self = ZuMv(self),
+        assignments->find<0>(0, ZuMv(key), [self = ZuMv(self),
             user = ZuMv(user), cred = ZuMv(cred),
-            grant = ZuMv(grant)](ZdbRowRef<Membership> row) mutable {
+            grant = ZuMv(grant)](ZdbRowRef<Assignment> row) mutable {
           if (!row || row->data().state != State::Active ||
               row->data().owner) {
             self->finish_(OAuthError::AccessDenied, {});
@@ -708,12 +708,12 @@ private:
       finish_(OAuthError::AccessDenied, {});
       return;
     }
-    auto memberships = m_context->memberships;
-    memberships->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this},
-	memberships, grant = ZuMv(grant)]() mutable {
-      memberships->find<0>(0,
+    auto assignments = m_context->assignments;
+    assignments->run(0, [self = ZmRef<AuthorizeSessionFinish__>{this},
+	assignments, grant = ZuMv(grant)]() mutable {
+      assignments->find<0>(0,
 	ZuFwdTuple(grant.appID, self->m_user.id), [self = ZuMv(self),
-	  grant = ZuMv(grant)](ZdbRowRef<Membership> row) mutable {
+	  grant = ZuMv(grant)](ZdbRowRef<Assignment> row) mutable {
 	if (!row || row->data().state != State::Active || row->data().owner) {
 	  self->finish_(OAuthError::AccessDenied, {});
 	  return;

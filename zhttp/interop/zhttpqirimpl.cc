@@ -26,17 +26,17 @@
 
 namespace Zhttp::QIR {
 
-static constexpr auto DefaultWWW = "/www"_Zu;
-static constexpr auto DefaultDownloads = "/downloads"_Zu;
-static constexpr auto DefaultCA = "/certs/ca.pem"_Zu;
-static constexpr auto DefaultCert = "/certs/cert.pem"_Zu;
-static constexpr auto DefaultKey = "/certs/priv.key"_Zu;
-static constexpr auto Scheme = "https://"_Zu;
-static constexpr auto HQGet = "GET "_Zu;
-static constexpr auto HQALPN = "hq-interop"_Zu;
-static constexpr auto H3ALPN = "h3"_Zu;
-static constexpr auto QIRMigrationModeName = "active"_Zu;
-static constexpr auto QIRMigrationCIDReserveName = "4"_Zu;
+static constexpr auto DefaultWWW = "/www"_z;
+static constexpr auto DefaultDownloads = "/downloads"_z;
+static constexpr auto DefaultCA = "/certs/ca.pem"_z;
+static constexpr auto DefaultCert = "/certs/cert.pem"_z;
+static constexpr auto DefaultKey = "/certs/priv.key"_z;
+static constexpr auto Scheme = "https://"_z;
+static constexpr auto HQGet = "GET "_z;
+static constexpr auto HQALPN = "hq-interop"_z;
+static constexpr auto H3ALPN = "h3"_z;
+static constexpr auto QIRMigrationModeName = "active"_z;
+static constexpr auto QIRMigrationCIDReserveName = "4"_z;
 // Rebind tests emulate transparent NAT remapping; a 1s PING restores path
 // progress before the simulator's 5s rebind cadence can compound stalls.
 static constexpr ZuTime QIRRebindHeartBeat{1};

@@ -21,7 +21,9 @@
 
 namespace ZtFmt {
 
-using namespace ZuFmt;
+using ZuFmt::MaxWidth;
+using ZuFmt::MaxNDP;
+using ZuFmt::Just;
 
 struct Default : public ZuFmt::Default {
   static ZuDateTimeScan::Any &DateScan_() {
@@ -37,6 +39,26 @@ struct Default : public ZuFmt::Default {
   static constexpr ZuCSpan VecDelim() { return ","; }
   static constexpr ZuCSpan VecSuffix() { return "]"; }
 };
+
+// Scalar directives retain the extended defaults unless a base is supplied.
+template <unsigned Width, char Pad = '\0', typename NTP = Default>
+using Left = ZuFmt::Left<Width, Pad, NTP>;
+template <unsigned Width, char Pad = '0', typename NTP = Default>
+using Right = ZuFmt::Right<Width, Pad, NTP>;
+template <unsigned Width, unsigned NDP, char Trim = '\0', typename NTP = Default>
+using Frac = ZuFmt::Frac<Width, NDP, Trim, NTP>;
+template <bool Upper = false, typename NTP = Default>
+using Hex = ZuFmt::Hex<Upper, NTP>;
+template <bool Enable, bool Upper = false, typename NTP = Default>
+using HexEnable = ZuFmt::HexEnable<Enable, Upper, NTP>;
+template <char Char = ',', typename NTP = Default>
+using Comma = ZuFmt::Comma<Char, NTP>;
+template <typename NTP = Default>
+using Alt = ZuFmt::Alt<NTP>;
+template <bool Enable = true, typename NTP = Default>
+using AltEnable = ZuFmt::AltEnable<Enable, NTP>;
+template <int NDP = -MaxNDP, char Trim = '\0', typename NTP = Default>
+using FP = ZuFmt::FP<NDP, Trim, NTP>;
 
 // NTP - date/time scan format
 template <auto Scan, typename NTP = Default>

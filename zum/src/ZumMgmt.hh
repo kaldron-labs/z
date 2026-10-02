@@ -31,8 +31,8 @@ struct CatalogAction {
   String name;
 };
 ZfStruct(, (CatalogAction, JSON),
-  (((label),		(JSON::Opt)),	(String)),
-  (((name),		(Required)),	(String)));
+  (((label),		(JSON::Opt)),	String),
+  (((name),		(Required)),	String));
 ZuDerive(CatalogActionArray, (ZtArray<CatalogAction,
   ZtArrayHeapID<"Zum.Catalog.Actions">>));
 struct CatalogActionVec : public CatalogActionArray {
@@ -46,9 +46,9 @@ struct CatalogRole {
   String name;
 };
 ZfStruct(, (CatalogRole, JSON),
-  (((actions),		(Required)),	(StringVec)),
-  (((label),		(JSON::Opt)),	(String)),
-  (((name),		(Required)),	(String)));
+  (((actions),		(Required)),	StringVec),
+  (((label),		(JSON::Opt)),	String),
+  (((name),		(Required)),	String));
 ZuDerive(CatalogRoleArray, (ZtArray<CatalogRole,
   ZtArrayHeapID<"Zum.Catalog.Roles">>));
 struct CatalogRoleVec : public CatalogRoleArray {
@@ -67,14 +67,15 @@ struct CatalogClient {
   StringVec roles;
 };
 ZfStruct(, (CatalogClient, JSON),
-  (((id),		(Required)),	(String)),
-  (((label),		(JSON::Opt)),	(String)),
-  (((profile),		(Required)),	(String)),
-  (((redirectURIs),	(JSON::Opt)),	(StringVec)),
-  (((grants),		(JSON::Opt)),	(UInt8)),
-  (((refreshAllowed),	(JSON::Opt)),	(Bool)),
-  (((identityScopes),	(JSON::Opt)),	(StringVec)),
-  (((roles),		(JSON::Opt)),	(StringVec)));
+  (((id),		(Required)),					String),
+  (((label),		(JSON::Opt)),					String),
+  (((profile),		(Required)),					String),
+  (((redirectURIs),	(JSON::ID<"redirect_uris">, JSON::Opt)),	StringVec),
+  (((grants),		(Flags<ClientGrant::Map>,
+    JSON::String<ClientGrant::Fmt>, JSON::Opt)),			UInt8),
+  (((refreshAllowed),	(JSON::ID<"refresh_allowed">, JSON::Opt)),	Bool),
+  (((identityScopes),	(JSON::ID<"identity_scopes">, JSON::Opt)),	StringVec),
+  (((roles),		(JSON::Opt)),					StringVec));
 ZuDerive(CatalogClientArray, (ZtArray<CatalogClient,
   ZtArrayHeapID<"Zum.Catalog.Clients">>));
 struct CatalogClientVec : public CatalogClientArray {
@@ -88,9 +89,28 @@ struct CatalogData {
   CatalogClientVec clients;
 };
 ZfStruct(, (CatalogData, JSON),
-  (((actions),		(Required)),	(UDT)),
-  (((roles),		(Required)),	(UDT)),
-  (((clients),		(JSON::Opt)),	(UDT)));
+  (((actions),		(Required)),	UDT),
+  (((roles),		(Required)),	UDT),
+  (((clients),		(JSON::Opt)),	UDT));
+
+struct SSFRegistration {
+  String receiverID;
+  String deliveryURL;
+  String callbackAuth;
+  uint32_t expiresIn = 300;
+};
+ZfStruct(, (SSFRegistration, JSON),
+  (((receiverID), (JSON::ID<"receiver_id">, Required)),		String),
+  (((deliveryURL), (JSON::ID<"delivery_url">, Required)),	String),
+  (((callbackAuth), (JSON::ID<"callback_auth">, Required)),	String),
+  (((expiresIn), (JSON::ID<"expires_in">, Deflt<300>)),		UInt32));
+struct SSFLease {
+  uint32_t expiresIn = 0;
+  int64_t expires = 0;
+};
+ZfStruct(, (SSFLease, JSON),
+  (((expiresIn), (JSON::ID<"expires_in">)),	UInt32),
+  (((expires)),					Int64));
 
 // One operation per remote management call. These values
 // are the built-in action IDs as well as management request identities.
@@ -101,7 +121,7 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   appQuery, appEnroll, appUpdate, appState,
   userQuery, userInvite, userUpdate, userState, userRecover,
   credentialQuery, credentialUpdate, credentialState,
-  membershipQuery, membershipAdd, membershipRoles, membershipState,
+  assignmentQuery, assignmentAdd, assignmentRoles, assignmentState,
   actionQuery, actionAdd, actionState,
   roleQuery, roleAdd, roleUpdate, roleActions, roleState, roleDelete,
   clientQuery, clientAdd, clientUpdate, clientState, clientSecretRotate,
@@ -115,7 +135,7 @@ ZtEnumNS(ZumAPI, MgmtOp, int16_t,
   consentQuery, consentRevoke,
   grantQuery, grantRevoke, grantCleanup,
   signKeyQuery, signKeyAdd, signKeyRetire,
-  catalogPublish);
+  catalogPublish, ssfRegister);
 
 // Invalid request IDs must not resolve to a usable permission name.
 inline MgmtString managementAction(int op)

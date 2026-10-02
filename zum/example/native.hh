@@ -64,10 +64,10 @@ struct TokenWire {
   String tokenType;
 };
 ZfStruct(, (TokenWire, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)),	(String)),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	(String)),
-  (((scope),		(JSON::Opt)),	(String)),
-  (((tokenType),	(JSON::ID<"token_type">, Required)),	(String)));
+  (((accessToken),	(JSON::ID<"access_token">, Required)),		String),
+  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	String),
+  (((scope),		(JSON::Opt)),					String),
+  (((tokenType),	(JSON::ID<"token_type">, Required)),		String));
 
 static void clearTokens(ZumVaultClient::Credential &tokens)
 {
@@ -94,14 +94,14 @@ struct Config {
   bool loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Required)), (String)),
-  (((serviceURL)), (String)),
-  (((clientID), (Required)), (String)),
-  (((caPath)), (String)),
-  (((scope)), (String, "ping")),
-  (((callbackPort), ((Range<1, 65535>))), (UInt32, CallbackPort)),
-  (((loginTimeout), ((Range<1, 3600>))), (UInt32, 180)),
-  (((loopbackTest)), (Bool, false)));
+  (((issuerURL), (Required)),					String),
+  (((serviceURL)),						String),
+  (((clientID), (Required)),					String),
+  (((caPath)),							String),
+  (((scope), (Deflt<"ping"_z>)),				String),
+  (((callbackPort), ((Range<1, 65535>), Deflt<CallbackPort>)),	UInt32),
+  (((loginTimeout), ((Range<1, 3600>), Deflt<180>)),		UInt32),
+  (((loopbackTest), (Deflt<false>)),				Bool));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -131,19 +131,18 @@ struct MetadataWire {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (MetadataWire, JSON),
-  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	(String)),
+  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	String),
   (((authorizationEndpoint),
-    (JSON::ID<"authorization_endpoint">, JSON::Opt)),	(String)),
+    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		String),
   (((tokenEndpoint),
-    (JSON::ID<"token_endpoint">, JSON::Opt)),	(String)),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	(String)),
+    (JSON::ID<"token_endpoint">, JSON::Opt)),			String),
+  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	String),
   (((responseTypesSupported),
-    (JSON::ID<"response_types_supported">, JSON::Opt)),	(StringVec)),
+    (JSON::ID<"response_types_supported">, JSON::Opt)),		StringVec),
   (((grantTypesSupported),
-    (JSON::ID<"grant_types_supported">, JSON::Opt)),	(StringVec)),
+    (JSON::ID<"grant_types_supported">, JSON::Opt)),		StringVec),
   (((codeChallengeMethods),
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),
-    (StringVec)));
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	StringVec));
 
 template <typename Fn>
 static bool formEach(ZuCSpan form, Fn &&fn)

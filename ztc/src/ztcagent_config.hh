@@ -31,6 +31,8 @@
 
 namespace Ztc {
 
+ZuDerive(String, (ZtString<ZtStringHeapID<"Ztc.Agent.Vault">>));
+
 struct AgentCf {
   // Protocol frames are below INT_MAX; queue counts/bytes are independently
   // bounded resident-memory and per-turn workload controls.
@@ -54,8 +56,8 @@ struct AgentCf {
   unsigned	maxFrame = DefltMaxFrame;
   unsigned	telFrames = DefltTelFrames;
   uint64_t	telBytes = DefltTelBytes;
-	uint64_t	reqBytes = DefltReqBytes;
-	unsigned	fanoutBatch = DefltFanoutBatch;
+  uint64_t	reqBytes = DefltReqBytes;
+  unsigned	fanoutBatch = DefltFanoutBatch;
   unsigned	reconnMin = DefltReconnMin;
   unsigned	reconnMax = DefltReconnMax;
   double	reconnBackoff = DefltReconnBackoff;
@@ -66,41 +68,48 @@ struct AgentCf {
   unsigned	reqTimeout = DefltReqTimeout;
   unsigned	pubGCInterval = DefltPubGCInterval;
   unsigned	pubGCBatch = DefltPubGCBatch;
-	unsigned	upgradeTimeout = 10;
-	unsigned	closeTimeout = 5;
-	unsigned	pingInterval = 30;
-	unsigned	idleTimeout = 60;
+  unsigned	upgradeTimeout = 10;
+  unsigned	closeTimeout = 5;
+  unsigned	pingInterval = 30;
+  unsigned	idleTimeout = 60;
   bool		loopbackTest = false;
-  ZtString<ZtStringHeapID<"Ztc.Agent.Vault">> vaultStore;
-  ZtString<ZtStringHeapID<"Ztc.Agent.Vault">> vaultModule;
+  String	vaultStore;
+  String	vaultModule;
   bool		vaultTestStore = false;
 };
 
 ZfStruct(ZtcAPI, (AgentCf, Cf),
-  (((maxFrame),		((Range<64U, unsigned(AgentCf::MaxFrame)>))),
-						(UInt32, 1U<<20U)),
-  (((telFrames),	((Range<1U, 1U<<30U>))), (UInt32, 1024)),
-  (((telBytes),		((Range<64ULL, 1ULL<<40U>))),	(UInt64, 1U<<24U)),
-  (((reqBytes),		((Range<64ULL, 1ULL<<40U>))),	(UInt64, 1U<<22U)),
-  (((fanoutBatch),	((Range<1U, 65536U>))),	(UInt32, 64)),
-  (((reconnMin),	((Range<1U, 3600U>))),		(UInt32, 1)),
-  (((reconnMax),	((Range<1U, 86400U>))),	(UInt32, 60)),
-  (((reconnBackoff),	((Range<1.0, 16.0>))),		(Float, 2)),
-  (((telSize),		((Range<64U, 1U<<30U>))),	(UInt32, 1U<<21U)),
-  (((telLL)),					(Bool)),
-  (((telSpin),		((Range<0U, 1U<<30U>))), (UInt32)),
-  (((telTimeout),	((Range<1U, 3600U>))),		(UInt32, 1)),
-  (((reqTimeout),	((Range<1U, 3600U>))),		(UInt32, 1)),
-  (((pubGCInterval),	((Range<1U, 3600U>))),		(UInt32, 1)),
-  (((pubGCBatch),	((Range<1U, 65536U>))),		(UInt32, 100)),
-  (((upgradeTimeout),	((Range<1U, 3600U>))),		(UInt32, 10)),
-  (((closeTimeout),	((Range<1U, 3600U>))),		(UInt32, 10)),
-  (((pingInterval),	((Range<0U, 3600U>))),		(UInt32)),
-  (((idleTimeout),	((Range<0U, 3600U>))),		(UInt32)),
-  (((loopbackTest)),					(Bool)),
-  (((vaultStore), (Required)), (String)),
-  (((vaultModule)), (String)),
-  (((vaultTestStore)), (Bool)));
+  (((maxFrame),		((Range<64U, unsigned(AgentCf::MaxFrame)>),
+    Deflt<AgentCf::DefltMaxFrame>)),						UInt32),
+  (((telFrames),	((Range<1U, 1U<<30U>),
+    Deflt<AgentCf::DefltTelFrames>)),						UInt32),
+  (((telBytes),		((Range<64ULL, 1ULL<<40U>),
+    Deflt<AgentCf::DefltTelBytes>)),						UInt64),
+  (((reqBytes),		((Range<64ULL, 1ULL<<40U>),
+    Deflt<AgentCf::DefltReqBytes>)),						UInt64),
+  (((fanoutBatch),	((Range<1U, 65536U>),
+    Deflt<AgentCf::DefltFanoutBatch>)),						UInt32),
+  (((reconnMin),	((Range<1U, 3600U>), Deflt<AgentCf::DefltReconnMin>)),	UInt32),
+  (((reconnMax),	((Range<1U, 86400U>), Deflt<AgentCf::DefltReconnMax>)),	UInt32),
+  (((reconnBackoff),	((Range<1.0, 16.0>),
+    Deflt<AgentCf::DefltReconnBackoff>)),					Float),
+  (((telSize),		((Range<64U, 1U<<30U>), Deflt<AgentCf::DefltTelSize>)),	UInt32),
+  (((telLL)),									Bool),
+  (((telSpin),		((Range<0U, 1U<<30U>), Deflt<0>)),			UInt32),
+  (((telTimeout),	((Range<1U, 3600U>), Deflt<AgentCf::DefltTelTimeout>)),	UInt32),
+  (((reqTimeout),	((Range<1U, 3600U>), Deflt<AgentCf::DefltReqTimeout>)),	UInt32),
+  (((pubGCInterval),	((Range<1U, 3600U>),
+    Deflt<AgentCf::DefltPubGCInterval>)),					UInt32),
+  (((pubGCBatch),	((Range<1U, 65536U>),
+    Deflt<AgentCf::DefltPubGCBatch>)),						UInt32),
+  (((upgradeTimeout),	((Range<1U, 3600U>), Deflt<10>)),			UInt32),
+  (((closeTimeout),	((Range<1U, 3600U>), Deflt<5>)),			UInt32),
+  (((pingInterval),	((Range<0U, 3600U>), Deflt<30>)),			UInt32),
+  (((idleTimeout),	((Range<0U, 3600U>), Deflt<60>)),			UInt32),
+  (((loopbackTest)),								Bool),
+  (((vaultStore),	(Required)),						String),
+  (((vaultModule)),								String),
+  (((vaultTestStore)),								Bool));
 
 } // Ztc
 

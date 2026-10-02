@@ -4,8 +4,11 @@
   <requires lib="gtk+" version="3.20"/>
   <object class="GtkWindow" id="window">
     <property name="can-focus">False</property>
+    <property name="default-width">1600</property>
+    <property name="default-height">900</property>
     <child>
-      <object class="GtkPaned">
+      <object class="GtkPaned" id="panes">
+        <property name="position">1000</property>
         <property name="visible">True</property>
         <property name="can-focus">True</property>
         <child>
@@ -28,16 +31,26 @@
             </child>
           </object>
           <packing>
-            <property name="resize">False</property>
+            <property name="resize">True</property>
             <property name="shrink">True</property>
           </packing>
         </child>
         <child>
-          <object class="GtkTreeView" id="watchlist">
+          <object class="GtkScrolledWindow">
             <property name="visible">True</property>
             <property name="can-focus">True</property>
-            <child internal-child="selection">
-              <object class="GtkTreeSelection"/>
+            <property name="shadow-type">in</property>
+            <child>
+              <object class="GtkTreeView" id="details">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="enable-search">False</property>
+                <child internal-child="selection">
+                  <object class="GtkTreeSelection">
+                    <property name="mode">none</property>
+                  </object>
+                </child>
+              </object>
             </child>
           </object>
           <packing>

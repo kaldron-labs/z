@@ -25,8 +25,8 @@ struct CatalogEdit {
   Bytes after;
 };
 ZfbStruct(ZumAPI, CatalogEdit,
-  (((before), (Ctor<0>)), (Bytes)),
-  (((after), (Ctor<1>)), (Bytes)));
+  (((before), (Ctor<0>)),	Bytes),
+  (((after), (Ctor<1>)),	Bytes));
 
 struct CatalogRows {
   BytesVec added;
@@ -41,8 +41,8 @@ struct CatalogRows {
   }
 };
 ZfbStruct(ZumAPI, CatalogRows,
-  (((added), (Ctor<0>)), (BytesVec)),
-  (((changed), (Ctor<1>)), (BytesVec)));
+  (((added), (Ctor<0>)),	BytesVec),
+  (((changed), (Ctor<1>)),	BytesVec));
 
 struct CatalogPublish : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -274,13 +274,13 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
 
 };
 ZfbStruct(ZumAPI, CatalogPublish,
-  (((before), (Ctor<0>)), (UDT)),
-  (((after), (Ctor<1>)), (UDT)),
-  (((actions), (Ctor<2>)), (UDT)),
-  (((roles), (Ctor<3>)), (UDT)),
-  (((clients), (Ctor<4>)), (UDT)),
-  (((clientAccess), (Ctor<5>)), (UDT)),
-  (((request), (Ctor<6>)), (UDT)));
+  (((before), (Ctor<0>)),	UDT),
+  (((after), (Ctor<1>)),	UDT),
+  (((actions), (Ctor<2>)),	UDT),
+  (((roles), (Ctor<3>)),	UDT),
+  (((clients), (Ctor<4>)),	UDT),
+  (((clientAccess), (Ctor<5>)),	UDT),
+  (((request), (Ctor<6>)),	UDT));
 
 } // namespace Zum
 

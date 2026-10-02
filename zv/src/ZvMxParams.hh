@@ -20,45 +20,47 @@
 
 ZfStruct(ZvAPI, (ZiCxnOptions, Cf),
   (((options, AliasFn, flags, flags),
-    (Mutable, (Flags<ZiCxnFlags::Map>))),		(UInt32)),
-  (((ttl, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	(UInt32)));
+    (Mutable, (Flags<ZiCxnFlags::Map>))),		UInt32),
+  (((ttl, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	UInt32));
 
 ZfStruct(ZvAPI, (ZmSchedTParams, Cf),
-  (((isolated, Fn),	(Mutable)),				(Bool)),
-  (((name, Fn),	(Mutable)),					(String)),
-  (((stackSize, Fn),	(Mutable, (Range<0U, 1U<<30U>))), (UInt32)),
-  (((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>))), (Int32, ZmThreadPriority::Normal)),
-  (((partition, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	 (UInt32)),
-  (((cpuset, Fn),	(Mutable)),				(String)),
-  (((detached, Fn),	(Mutable)),				(Bool)));
+  (((isolated, Fn),	(Mutable)),				Bool),
+  (((name, Fn),	(Mutable)),					String),
+  (((stackSize, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	UInt32),
+  (((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>),
+    Deflt<ZmThreadPriority::Normal>)),				Int32),
+  (((partition, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	UInt32),
+  (((cpuset, Fn),	(Mutable)),				String),
+  (((detached, Fn),	(Mutable)),				Bool));
 
 ZfStruct(ZvAPI, (ZmSchedParams, Cf),
-  (((nThreads, Fn),	(Mutable, (Range<1U, 1024U>))),		(UInt32, 3)),
-  (((stackSize, Fn),	(Mutable, (Range<16384U, 2U<<20U>))),	(UInt32)),
-  (((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>))), (Int32, ZmThreadPriority::Normal)),
-  (((partition, Fn),	(Mutable)),				(UInt32)),
-  (((quantum, Fn),	(Mutable)),				(Time)),
-  (((queueSize, Fn),	(Mutable, (Range<8192U, 1U<<30U>))),	(UInt32)),
-  (((ll, Fn),		(Mutable)),				(Bool)),
-  (((spin, Fn),		(Mutable, (Range<0U, 1U<<30U>))),	(UInt32)),
-  (((timeout, Fn),	(Mutable, (Range<0U, 3600U>))),		(UInt32)),
+  (((nThreads, Fn),	(Mutable, (Range<1U, 1024U>), Deflt<3>)),	UInt32),
+  (((stackSize, Fn),	(Mutable, (Range<16384U, 2U<<20U>))),		UInt32),
+  (((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>),
+    Deflt<ZmThreadPriority::Normal>)),					Int32),
+  (((partition, Fn),	(Mutable)),					UInt32),
+  (((quantum, Fn),	(Mutable)),					Time),
+  (((queueSize, Fn),	(Mutable, (Range<8192U, 1U<<30U>))),		UInt32),
+  (((ll, Fn),		(Mutable)),					Bool),
+  (((spin, Fn),		(Mutable, (Range<0U, 1U<<30U>))),		UInt32),
+  (((timeout, Fn),	(Mutable, (Range<0U, 3600U>))),			UInt32),
 );
 
 ZfStruct(ZvAPI, (ZiMxParams, Cf),
-  (((rxThread, AliasFn, rxThreadID, rxThread), (Mutable)),	(String)),
-  (((txThread, AliasFn, txThreadID, txThread), (Mutable)),	(String)),
+  (((rxThread, AliasFn, rxThreadID, rxThread), (Mutable)),	String),
+  (((txThread, AliasFn, txThreadID, txThread), (Mutable)),	String),
 #ifdef ZiMultiplex_EPoll
-  (((epollMaxFDs, Fn),	(Mutable, (Range<1U, 100000U>))),	(UInt32)),
-  (((epollQuantum, Fn),	(Mutable, (Range<1U, 1024U>))),		(UInt32)),
+  (((epollMaxFDs, Fn),	(Mutable, (Range<1U, 100000U>))),	UInt32),
+  (((epollQuantum, Fn),	(Mutable, (Range<1U, 1024U>))),		UInt32),
 #endif
-  (((rxBufSize, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	(UInt32)),
-  (((txBufSize, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	(UInt32))
+  (((rxBufSize, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	UInt32),
+  (((txBufSize, Fn),	(Mutable, (Range<0U, 1U<<30U>))),	UInt32)
 #ifdef ZiMultiplex_DEBUG
   ,
-  (((trace, Fn),	(Mutable)),				(Bool)),
-  (((debug, Fn),	(Mutable)),				(Bool)),
-  (((frag, Fn),		(Mutable)),				(Bool)),
-  (((yield, Fn),	(Mutable)),				(Bool))
+  (((trace, Fn),	(Mutable)),				Bool),
+  (((debug, Fn),	(Mutable)),				Bool),
+  (((frag, Fn),		(Mutable)),				Bool),
+  (((yield, Fn),	(Mutable)),				Bool)
 #endif
 );
 

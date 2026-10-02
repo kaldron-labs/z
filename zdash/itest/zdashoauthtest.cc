@@ -27,12 +27,22 @@ int main(int argc, char **argv)
   if (!strcmp(argv[1], "seed")) {
     ZumVaultClient::Credential tokens{cf.issuerURL, cf.issuerURL,
       cf.clientID, "stale", "refresh-0", "Client offline_access"};
-    return ZumVaultClient::save(tokens).is<ZeException>() ? 1 : 0;
+    return ZumVaultClient::save(tokens, {}, "zdash").is<ZeException>() ? 1 : 0;
   }
-  if (strcmp(argv[1], "run") || argc != 4) return 1;
+  if (strcmp(argv[1], "run") || argc != 5) return 1;
   ZuCSpan expected{argv[3]};
+  int renewals = atoi(argv[4]);
   return ZDashOAuth::run(cf, true,
-    [expected](ZiMultiplex &, ZDashOAuth::Clients &, ZuCSpan token) {
-      return token == expected;
+    [expected, renewals](ZiMultiplex &, ZDashOAuth::Clients &,
+	ZDashOAuth::Lease &lease) {
+      if (lease.token != expected || lease.renewAt <= Zm::now()) return false;
+      ZmSemaphore wait;
+      for (int i = 0; i < renewals; ++i) {
+	auto previous = lease.renewAt;
+	ZumVaultClient::SecretText token{lease.token};
+	if (!wait.timedwait(previous) || !lease.refresh(lease) ||
+	    lease.renewAt <= previous || lease.token == token) return false;
+      }
+      return renewals >= 0 || !lease.refresh(lease);
     }) ? 0 : 1;
 }

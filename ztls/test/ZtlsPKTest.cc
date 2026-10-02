@@ -280,7 +280,7 @@ void testRSA(Ztls::Random &rng)
   ZuCheckRT(!publicResult.template is<ZeException>());
   if (publicResult.template is<ZeException>()) return;
   auto pub = ZuMv(publicResult).template p<ZmRef<Ztls::PK::PK_RSA>>();
-  constexpr auto label = "age-encryption.org/v1/ssh-rsa"_Zu;
+  constexpr auto label = "age-encryption.org/v1/ssh-rsa"_z;
   auto encrypted = pub->oaepEncrypt(secret, label, ciphertext);
   ZuCheckRT(!encrypted.template is<ZeException>());
   if (encrypted.template is<ZeException>()) return;
