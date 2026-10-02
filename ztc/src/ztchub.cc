@@ -983,8 +983,8 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Opt<'c'>, CLI::Long<"config">, Deflt<"ztchub.conf"_z>)),	String),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),				Bool));
+  (((config), (CLI::Opt<'c'>, CLI::Long<"config">)),	String),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
 
 static ZmSemaphore done;
 static void trapped() { done.post(); }
@@ -1012,7 +1012,8 @@ int main(int argc, char **argv)
 
   try {
     auto loaded = ZvCf::load(options.config);
-    auto cf = ZfCf::handler<Ztc::HubdCf>(loaded.p<1>()).ctor();
+    Ztc::HubdCf cf;
+    ZfCf::handler<Ztc::HubdCf>(loaded.p<1>()).update(cf);
     auto secretEnv = ::getenv("ZUM_CLIENT_SECRET");
     auto callbackEnv = ::getenv("ZUM_SSF_AUTH");
     bool provision = secretEnv || callbackEnv;

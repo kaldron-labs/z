@@ -39,24 +39,24 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((ca),        (CLI::Opt<'c'>, CLI::Long<"ca">)),				String),
-  (((message),   (CLI::Opt<'m'>, CLI::Long<"message">, Deflt<"ping"_z>)),	String),
-  (((protocol),  (CLI::Opt<'p'>, CLI::Long<"protocol">)),			String),
-  (((messages),  (CLI::Opt<'n'>, CLI::Long<"messages">, Deflt<1>)),		UInt32),
-  (((timeout),   (CLI::Opt<'t'>, CLI::Long<"timeout">, Deflt<15>)),		UInt32),
+  (((ca),        (CLI::Opt<'c'>, CLI::Long<"ca">)),		String),
+  (((message),   (CLI::Opt<'m'>, CLI::Long<"message">)),	String),
+  (((protocol),  (CLI::Opt<'p'>, CLI::Long<"protocol">)),	String),
+  (((messages),  (CLI::Opt<'n'>, CLI::Long<"messages">)),	UInt32),
+  (((timeout),   (CLI::Opt<'t'>, CLI::Long<"timeout">)),	UInt32),
   (((handshakeTimeout),
-    (CLI::Long<"handshake-timeout">, Deflt<10>)),				UInt32),
+    (CLI::Long<"handshake-timeout">)),				UInt32),
   (((closeTimeout),
-    (CLI::Long<"close-timeout">, Deflt<5>)),					UInt32),
+    (CLI::Long<"close-timeout">)),				UInt32),
   (((pingInterval),
-    (CLI::Long<"ping-interval">, Deflt<0>)),					UInt32),
+    (CLI::Long<"ping-interval">)),				UInt32),
   (((pongTimeout),
-    (CLI::Long<"pong-timeout">, Deflt<5>)),					UInt32),
+    (CLI::Long<"pong-timeout">)),				UInt32),
   (((requirePong),
-    (CLI::Long<"require-pong">, Deflt<false>)),					Bool),
-  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">, Deflt<false>)),		Bool),
-  (((uri),       (CLI::Arg<1>)),						String),
-  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">, Deflt<false>)),		Bool));
+    (CLI::Long<"require-pong">)),				Bool),
+  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),	Bool),
+  (((uri),       (CLI::Arg<1>)),				String),
+  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),		Bool));
 
 void usage(int code = 1)
 {

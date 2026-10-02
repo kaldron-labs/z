@@ -790,6 +790,7 @@ public:
     memset(static_cast<void *>(ctrl()), 0, sizeof(Ctrl));
     memset(data(), 0, m_size);
     m_full = 0;
+    openSize_(m_size); // restore shared capacity cleared with the control block
     return Zu::OK;
   }
 

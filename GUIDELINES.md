@@ -580,6 +580,15 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Metadata
 - Use `ZuStruct`, `ZfStruct`, and `ZfbStruct` for compile-time extract/transform metadata.
+- For CLI and configuration (`ZfCLI`, `ZfCf`, `ZfTOML`, `ZfYAML`), keep
+  defaults in C++ constructors/member initializers. Apply configuration with
+  `update()` to fields marked `Mutable`, preserving omitted values. Do not
+  duplicate these defaults with `Deflt<>` or add `Ctor<>` unless a consumer
+  actually constructs the object from field arguments.
+- `Range<Min, Max>` bounds may have different types; do not cast bounds merely
+  to make their types match. Use representation limits such as `INT_MAX`
+  rather than arbitrary powers of two for maxima unless a protocol or
+  implementation imposes a smaller bound.
 - Use metadata integrations instead of ad hoc parsing: JSON `ZfJSON`, ASN.1 `ZfASN1`, CLI `ZfCLI`, CSV `ZfCSV`, URI query `ZfURI`, and FlatBuffers `ZfbStruct`.
 - Strongly discourage direct use of the FlatBuffers C/C++ APIs in application and library code.
   - Use `ZfbStruct::save`, `ZfbStruct::ctor`, `ZfbStruct::alloc`, `ZfbStruct::new_`, `ZfbStruct::load`, and `ZfbStruct::update` instead.

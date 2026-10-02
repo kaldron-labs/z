@@ -13,6 +13,8 @@
 #include <zlib/ZvLib.hh>
 #endif
 
+#include <limits.h>
+
 #include <zlib/ZiRing.hh>
 
 #include <zlib/ZfCf.hh>
@@ -20,13 +22,13 @@
 namespace ZiRing_ {
 
 ZfStruct(ZvAPI, (Params, Cf),
-  (((name, Fn),		(Mutable, Required)),					String),
-  (((size, Fn),		(Mutable, (Range<8192U, 1U<<30U>), Deflt<131072>)),	UInt32),
-  (((ll, Fn),		(Mutable, Deflt<false>)),				Bool),
-  (((spin, Fn),		(Mutable, (Range<0, INT_MAX>), Deflt<1000>)),		Int32),
-  (((timeout, Fn),	(Mutable, (Range<0, 3600>), Deflt<1>)),			Int32),
-  (((killWait, Fn),	(Mutable, (Range<0, 3600>), Deflt<1>)),			Int32),
-  (((coredump, Fn),	(Mutable, Deflt<false>)),				Bool));
+  (((name, Fn),		(Mutable, Required)),			String),
+  (((size, Fn),		(Mutable, (Range<8192U, INT_MAX>))),	UInt32),
+  (((ll, Fn),		(Mutable)),				Bool),
+  (((spin, Fn),		(Mutable, (Range<0, INT_MAX>))),	Int32),
+  (((timeout, Fn),	(Mutable, (Range<0, 3600>))),		Int32),
+  (((killWait, Fn),	(Mutable, (Range<0, 3600>))),		Int32),
+  (((coredump, Fn),	(Mutable)),				Bool));
 
 } // ZiRing_
 

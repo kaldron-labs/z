@@ -9,6 +9,7 @@
 #ifndef ztchub_daemon_HH
 #define ztchub_daemon_HH
 
+#include <limits.h>
 #include <stdint.h>
 
 #include <zlib/ZuDerive.hh>
@@ -69,14 +70,14 @@ struct ListenerCf {
 };
 
 ZfStruct(, (ListenerCf, Cf),
-  (((bind),		(Required)),				String),
-  (((path),		(Required)),				String),
-  (((cert),		(Required)),				String),
-  (((key),		(Required)),				String),
-  (((browserPath),		(Required)),			String),
-  (((origins)),							StringVec),
-  (((port),		((Range<1U, 65535U>), Deflt<443>)),	UInt32),
-  (((ssfPort),		((Range<0U, 65535U>), Deflt<0>)),	UInt32));
+  (((bind),		(Mutable, Required)),			String),
+  (((path),		(Mutable, Required)),			String),
+  (((cert),		(Mutable, Required)),			String),
+  (((key),		(Mutable, Required)),			String),
+  (((browserPath),		(Mutable, Required)),		String),
+  (((origins), (Mutable)),					StringVec),
+  (((port),		(Mutable, (Range<1U, 65535U>))),	UInt32),
+  (((ssfPort),		(Mutable, (Range<0U, 65535U>))),	UInt32));
 
 using ListenerCfs = ZtArray<ListenerCf,
   ZtArrayHeapID<"Ztc.Hub.Listeners">>;
@@ -117,35 +118,35 @@ struct HubdCf {
 };
 
 ZfStruct(, (HubdCf, Cf),
-  (((listeners),		(Required)),					UDT),
-  (((issuerURL),		(JSON::ID<"issuer">, Required)),		String),
-  (((audience),		(Required)),						String),
-  (((managementIssuer),	(Required)),						String),
-	(((managementURL),	(Required)),					String),
-  (((managementClientID),	(Required)),					String),
-  (((caPath)),									String),
-  (((ssfDeliveryURL), (Required)),						String),
-  (((ssfLease), ((Range<2U, 86400U>), Deflt<300>)),				UInt32),
-  (((ssfCallbackPath), (Deflt<"/ssf"_z>)),					String),
-  (((actions)),									StringVec),
-  (((roles)),									StringVec),
-  (((maxFrame),		((Range<64U, 1U << 30U>), Deflt<1U << 16>)),		UInt32),
-  (((controlFrames),	((Range<1U, 1U << 20U>), Deflt<256>)),			UInt32),
-  (((telemetryFrames),	((Range<1U, 1U << 20U>), Deflt<1024>)),			UInt32),
-  (((controlBytes),	((Range<64ULL, 1ULL << 40U>), Deflt<1ULL << 20>)),	UInt64),
-  (((telemetryBytes),	((Range<64ULL, 1ULL << 40U>), Deflt<1ULL << 20>)),	UInt64),
-  (((queueMem),	((Range<64ULL, 1ULL << 46U>), Deflt<1ULL << 32>)),		UInt64),
-  (((upgradeTimeout),	((Range<1U, 86400U>), Deflt<10>)),			UInt32),
-  (((idleTimeout),	((Range<1U, 86400U>), Deflt<60>)),			UInt32),
-  (((pingInterval),	((Range<1U, 86400U>), Deflt<30>)),			UInt32),
-  (((closeTimeout),	((Range<1U, 86400U>), Deflt<5>)),			UInt32),
-  (((expectedAgents),	((Range<1U, 1U << 20U>), Deflt<2048>)),			UInt32),
-  (((publishersPerAgent),	((Range<1U, 1U << 20U>), Deflt<256>)),		UInt32),
-  (((activeFrontEnds),	((Range<1U, 1U << 20U>), Deflt<32>)),			UInt32),
-  (((subscriptionsPerFrontEnd),	((Range<1U, 1U << 20U>), Deflt<32>)),		UInt32),
-  (((minRefreshMS),	((Range<1000U, 86400000U>), Deflt<1000>)),		UInt32),
-  (((fanoutSLOMS),	((Range<1U, 86400000U>), Deflt<200>)),			UInt32),
-  (((schedulerTurnWork),	((Range<1U, 1U << 20U>), Deflt<64>)),		UInt32));
+  (((listeners),		(Mutable, Required)),				UDT),
+  (((issuerURL),		(Mutable, JSON::ID<"issuer">, Required)),	String),
+  (((audience),		(Mutable, Required)),					String),
+  (((managementIssuer),	(Mutable, Required)),					String),
+	(((managementURL),	(Mutable, Required)),				String),
+  (((managementClientID),	(Mutable, Required)),				String),
+  (((caPath), (Mutable)),							String),
+  (((ssfDeliveryURL), (Mutable, Required)),					String),
+  (((ssfLease), (Mutable, (Range<2U, 86400U>))),				UInt32),
+  (((ssfCallbackPath), (Mutable)),						String),
+  (((actions), (Mutable)),							StringVec),
+  (((roles), (Mutable)),							StringVec),
+  (((maxFrame),		(Mutable, (Range<64U, INT_MAX>))),			UInt32),
+  (((controlFrames),	(Mutable, (Range<1U, INT_MAX>))),			UInt32),
+  (((telemetryFrames),	(Mutable, (Range<1U, INT_MAX>))),			UInt32),
+  (((controlBytes),	(Mutable, (Range<64ULL, UINT64_MAX>))),			UInt64),
+  (((telemetryBytes),	(Mutable, (Range<64ULL, UINT64_MAX>))),			UInt64),
+  (((queueMem),	(Mutable, (Range<64ULL, UINT64_MAX>))),				UInt64),
+  (((upgradeTimeout),	(Mutable, (Range<1U, 86400U>))),			UInt32),
+  (((idleTimeout),	(Mutable, (Range<1U, 86400U>))),			UInt32),
+  (((pingInterval),	(Mutable, (Range<1U, 86400U>))),			UInt32),
+  (((closeTimeout),	(Mutable, (Range<1U, 86400U>))),			UInt32),
+  (((expectedAgents),	(Mutable, (Range<1U, INT_MAX>))),			UInt32),
+  (((publishersPerAgent),	(Mutable, (Range<1U, INT_MAX>))),		UInt32),
+  (((activeFrontEnds),	(Mutable, (Range<1U, INT_MAX>))),			UInt32),
+  (((subscriptionsPerFrontEnd),	(Mutable, (Range<1U, INT_MAX>))),		UInt32),
+  (((minRefreshMS),	(Mutable, (Range<1000U, 86400000U>))),			UInt32),
+  (((fanoutSLOMS),	(Mutable, (Range<1U, 86400000U>))),			UInt32),
+  (((schedulerTurnWork),	(Mutable, (Range<1U, INT_MAX>))),		UInt32));
 
 class Hubd {
 public:

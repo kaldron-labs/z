@@ -226,9 +226,9 @@ inline auto badBool(const AnyNode *node, ZuCSpan key, ZuCSpan value) {
   };
 }
 
-template <typename T, typename V>
+template <typename Min, typename Max, typename V>
 inline auto badRange(
-    const AnyNode *node, ZuCSpan key, T minimum, T maximum, V value) {
+    const AnyNode *node, ZuCSpan key, Min minimum, Max maximum, V value) {
   return [
     key = ZeString{fullKey(node, key)}, minimum, maximum, value
   ](auto &s) {
@@ -403,9 +403,9 @@ struct CfPolicy {
       const AnyNode *node, ZuCSpan expected) {
     throw ZfCf_EXCEPT(ZfCfError::badType(node, expected));
   }
-  template <typename T, typename V>
+  template <typename Min, typename Max, typename V>
   [[noreturn]] static void badRange(
-      const AnyNode *node, ZuCSpan key, T minimum, T maximum, V value) {
+      const AnyNode *node, ZuCSpan key, Min minimum, Max maximum, V value) {
     throw ZfCf_EXCEPT(
       ZfCfError::badRange(node, key, minimum, maximum, value));
   }

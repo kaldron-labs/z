@@ -1,17 +1,5 @@
 # TODO
 
-`ZfStruct.hh`
-- `Range<...>` shouldn't need consistent types for min and max
-  - delete unnecessary casts and conversions such as `unsigned(...)`
-- audit for unnecessary `Ctor<>` and `Deflt<>`
-  - no CLI, Cf, TOML, YAML structs should have these
-- think about implications of `HasDeflt` for `ZfJSON` and `ZfURI`
-  - compare with `load`/`update` from `ZfTreeLoad`
-
-- codex resume 01a0f99e-9fa6-75d3-a30c-9a85c51a9949
-
-- codex resume 01a0f208-2f41-7850-a741-6eae1b4cb2cd
-
 ## zdash
 
 - get running, retest

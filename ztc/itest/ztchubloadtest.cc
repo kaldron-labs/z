@@ -32,7 +32,7 @@ struct Device {
   ZtString<> id;
 };
 ZfStruct(, (Device, Cf),
-  (((id), (Required)),	String));
+  (((id), (Mutable, Required)),	String));
 using Devices = ZtArray<Device, ZtArrayHeapID<"Ztc.Load.Devices">>;
 inline ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(Devices *);
 
@@ -50,17 +50,17 @@ struct Config {
   unsigned sloMS = 200;
 };
 ZfStruct(, (Config, Cf),
-  (((devices), (Required)),		UDT),
-  (((tokenFile), (Required)),		String),
-  (((token), (Required)),		String),
-  (((wss), (Required)),			String),
-  (((ca), (Required)),			String),
-  (((clients), (Deflt<32>)),		UInt32),
-  (((subs), (Deflt<32>)),		UInt32),
-  (((publishers), (Deflt<256>)),	UInt32),
-  (((rounds), (Deflt<3>)),		UInt32),
-  (((turn), (Deflt<64>)),		UInt32),
-  (((sloMS), (Deflt<200>)),		UInt32));
+  (((devices), (Mutable, Required)),	UDT),
+  (((tokenFile), (Mutable, Required)),	String),
+  (((token), (Mutable, Required)),	String),
+  (((wss), (Mutable, Required)),	String),
+  (((ca), (Mutable, Required)),		String),
+  (((clients), (Mutable)),		UInt32),
+  (((subs), (Mutable)),			UInt32),
+  (((publishers), (Mutable)),		UInt32),
+  (((rounds), (Mutable)),		UInt32),
+  (((turn), (Mutable)),			UInt32),
+  (((sloMS), (Mutable)),		UInt32));
 
 using Frame = ZmRef<ZiIOBuf>;
 using Buf = ZiIOBufAlloc<1024, 1U << 16, "Ztc.Load.Frame">;
@@ -313,7 +313,8 @@ struct App {
 static bool run(const char *path)
 {
   auto source = ZvCf::load(path);
-  auto cf = ZfCf::handler<Config>(source.p<1>()).ctor();
+  Config cf;
+  ZfCf::handler<Config>(source.p<1>()).update(cf);
   if (!cf.devices || !cf.clients || !cf.subs || !cf.publishers ||
       !cf.rounds || !cf.turn || !cf.sloMS) return false;
   Zws::URI uri;

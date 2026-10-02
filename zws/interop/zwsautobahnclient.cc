@@ -32,12 +32,12 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((ca),       (CLI::Opt<'c'>, CLI::Long<"ca">)),			String),
-  (((agent),    (CLI::Opt<'a'>, CLI::Long<"agent">, Deflt<"Zws"_z>)),	String),
-  (((timeout),  (CLI::Opt<'t'>, CLI::Long<"timeout">, Deflt<600>)),	UInt32),
-  (((verbose),  (CLI::Flag<'v'>, CLI::Long<"verbose">, Deflt<false>)),	Bool),
-  (((server),   (CLI::Arg<1>, Deflt<"ws://127.0.0.1:9001"_z>)),		String),
-  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">, Deflt<false>)),	Bool));
+  (((ca),       (CLI::Opt<'c'>, CLI::Long<"ca">)),		String),
+  (((agent),    (CLI::Opt<'a'>, CLI::Long<"agent">)),		String),
+  (((timeout),  (CLI::Opt<'t'>, CLI::Long<"timeout">)),		UInt32),
+  (((verbose),  (CLI::Flag<'v'>, CLI::Long<"verbose">)),	Bool),
+  (((server),   (CLI::Arg<1>)),					String),
+  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),		Bool));
 
 void usage(int code = 1)
 {

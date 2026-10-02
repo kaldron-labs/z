@@ -43,8 +43,11 @@ static void configValidation()
   ZuCheck(cf.pubGCBatch == 100);
 
   auto parsed = ZfCf::scan("vaultStore: keyring");
-  auto loaded = ZfCf::handler<Ztc::AgentCf>(parsed.p<1>()).ctor();
+  Ztc::AgentCf loaded;
+  loaded.maxFrame = 65536;
+  ZfCf::handler<Ztc::AgentCf>(parsed.p<1>()).update(loaded);
   ZuCheck(loaded.telSpin == cf.telSpin);
+  ZuCheck(loaded.maxFrame == 65536);
   ZuCheck(loaded.telLL == cf.telLL);
   ZuCheck(loaded.telTimeout == cf.telTimeout);
   ZuCheck(loaded.closeTimeout == cf.closeTimeout);

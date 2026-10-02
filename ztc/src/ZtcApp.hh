@@ -13,6 +13,8 @@
 #include <zlib/ZtcLib.hh>
 #endif
 
+#include <limits.h>
+
 #include <zlib/ZuID.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuUnion.hh>
@@ -72,16 +74,15 @@ struct AppSchedCf {
 };
 
 ZfStruct(ZtcAPI, (AppSchedCf, Cf),
-  (((nThreads),	((Range<1U, 1024U>), Deflt<2>)),	UInt32),
-  (((stackSize),((Range<16384U, 2U<<20U>))),		UInt32),
-  (((priority),	(Enum<ZmThreadPriority::Map>,
-    Deflt<ZmThreadPriority::Normal>)),			Int8),
-  (((partition)),					UInt32),
-  (((quantum)),						Float),
-  (((queueSize),((Range<8192U, 1U<<30U>))),		UInt32),
-  (((ll)),						Bool),
-  (((spin),	((Range<0U, 1U<<30U>))),		UInt32),
-  (((timeout),	((Range<0U, 3600U>))),			UInt32));
+  (((nThreads),	(Mutable, (Range<1U, 1024U>))),			UInt32),
+  (((stackSize),(Mutable, (Range<16384U, INT_MAX>))),		UInt32),
+  (((priority),	(Mutable, Enum<ZmThreadPriority::Map>)),	Int8),
+  (((partition), (Mutable)),					UInt32),
+  (((quantum), (Mutable)),					Float),
+  (((queueSize),(Mutable, (Range<8192U, INT_MAX>))),		UInt32),
+  (((ll), (Mutable)),						Bool),
+  (((spin),	(Mutable, (Range<0U, INT_MAX>))),		UInt32),
+  (((timeout),	(Mutable, (Range<0U, 3600U>))),			UInt32));
 
 struct AppCf {
   enum {
@@ -127,35 +128,29 @@ struct AppCf {
 };
 
 ZfStruct(ZtcAPI, (AppCf, Cf),
-  (((id)),									String),
-  (((version)),									String),
-  (((role)),									String),
-  (((reqSize),		((Range<64U, 1U<<30U>), Deflt<AppCf::DefltReqSize>)),	UInt32),
-  (((reqTimeout),	((Range<1U, 3600U>), Deflt<AppCf::DefltReqTimeout>)),	UInt32),
-  (((telRingSize),	((Range<64U, 1U<<30U>),
-    Deflt<AppCf::DefltTelRingSize>)),						UInt32),
-  (((reqLL)),									Bool),
-  (((maxFrame),		((Range<64U, 1U<<30U>), Deflt<AppCf::DefltMaxFrame>)),	UInt32),
-  (((maxFilter),	((Range<1U, 1U<<20U>), Deflt<AppCf::DefltMaxFilter>)),	UInt32),
-  (((minInterval),	((Range<1U, 3600000U>),
-    Deflt<AppCf::DefltMinInterval>)),						UInt32),
-  (((maxInterval),	((Range<1U, 3600000U>),
-    Deflt<AppCf::DefltMaxInterval>)),						UInt32),
-  (((maxPending),	((Range<1U, 65536U>), Deflt<AppCf::DefltMaxPending>)),	UInt32),
-  (((maxSubs),		((Range<1U, 65536U>), Deflt<AppCf::DefltMaxSubs>)),	UInt32),
-  (((maxAlertMsg),	((Range<1U, 1U<<20U>),
-    Deflt<AppCf::DefltMaxAlertMsg>)),						UInt32),
-  (((alertTail),	((Range<1U, 1U<<20U>), Deflt<AppCf::DefltAlertTail>)),	UInt32),
-  (((alertReplay),	((Range<1U, 1U<<20U>),
-    Deflt<AppCf::DefltAlertReplay>)),						UInt32),
-  (((alertRetention),	((Range<1U, 3660U>),
-    Deflt<AppCf::DefltAlertRetention>)),					UInt32),
-  (((alertPrefix), (Deflt<"alerts"_z>)),					String),
-  (((scheduler)),								UDT),
-  (((timer), (Deflt<"timer"_z>)),						String),
-  (((worker), (Deflt<"worker"_z>)),						String),
-  (((timerThread),	((Range<1U, 1024U>), Deflt<1>)),			UInt32),
-  (((workerThread),	((Range<1U, 1024U>), Deflt<2>)),			UInt32));
+  (((id), (Mutable)),							String),
+  (((version), (Mutable)),						String),
+  (((role), (Mutable)),							String),
+  (((reqSize),		(Mutable, (Range<64U, INT_MAX>))),		UInt32),
+  (((reqTimeout),	(Mutable, (Range<1U, 3600U>))),			UInt32),
+  (((telRingSize),	(Mutable, (Range<64U, INT_MAX>))),		UInt32),
+  (((reqLL), (Mutable)),						Bool),
+  (((maxFrame),		(Mutable, (Range<64U, AppCf::DefltMaxFrame>))),	UInt32),
+  (((maxFilter),	(Mutable, (Range<1U, AppCf::DefltMaxFrame>))),	UInt32),
+  (((minInterval),	(Mutable, (Range<1U, 3600000U>))),		UInt32),
+  (((maxInterval),	(Mutable, (Range<1U, 3600000U>))),		UInt32),
+  (((maxPending),	(Mutable, (Range<1U, 65536U>))),		UInt32),
+  (((maxSubs),		(Mutable, (Range<1U, 65536U>))),		UInt32),
+  (((maxAlertMsg),	(Mutable, (Range<1U, AppCf::DefltMaxFrame>))),	UInt32),
+  (((alertTail),	(Mutable, (Range<1U, INT_MAX>))),		UInt32),
+  (((alertReplay),	(Mutable, (Range<1U, INT_MAX>))),		UInt32),
+  (((alertRetention),	(Mutable, (Range<1U, 3660U>))),			UInt32),
+  (((alertPrefix), (Mutable)),						String),
+  (((scheduler), (Mutable)),						UDT),
+  (((timer), (Mutable)),						String),
+  (((worker), (Mutable)),						String),
+  (((timerThread),	(Mutable, (Range<1U, 1024U>))),			UInt32),
+  (((workerThread),	(Mutable, (Range<1U, 1024U>))),			UInt32));
 
 class ZtcAPI App {
 public:

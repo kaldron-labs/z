@@ -821,7 +821,8 @@ InitResult Store::init(
   m_nShards = nShards;
   m_failFn = ZuMv(failFn);
   try {
-    auto config = ZfCf::handler<StoreCf>(cf).ctor();
+    StoreCf config;
+    ZfCf::handler<StoreCf>(cf).update(config);
     const auto &tid = config.thread;
     auto sid = m_mx->sid(tid);
     if (!sid || sid > m_mx->params().nThreads() ||

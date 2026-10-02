@@ -180,9 +180,9 @@ inline auto badBool(const AnyNode *node, ZuCSpan key, ZuCSpan value) {
   };
 }
 
-template <typename T, typename V>
+template <typename Min, typename Max, typename V>
 inline auto badRange(
-    const AnyNode *node, ZuCSpan key, T minimum, T maximum, V value) {
+    const AnyNode *node, ZuCSpan key, Min minimum, Max maximum, V value) {
   return [key = ZeString{fullKey(node, key)}, minimum, maximum, value](auto &s) {
     s << '"' << key << "\" out of range min(" << minimum << ") <= " <<
       value << " <= max(" << maximum << ')';
@@ -422,9 +422,9 @@ struct ZfAPI TOMLPolicy {
   [[noreturn]] static void badType(const AnyNode *node, ZuCSpan expected) {
     throw ZfTOML_EXCEPT(ZfTOMLError::badType(node, expected));
   }
-  template <typename T, typename V>
+  template <typename Min, typename Max, typename V>
   [[noreturn]] static void badRange(
-      const AnyNode *node, ZuCSpan key, T minimum, T maximum, V value) {
+      const AnyNode *node, ZuCSpan key, Min minimum, Max maximum, V value) {
     throw ZfTOML_EXCEPT(
       ZfTOMLError::badRange(node, key, minimum, maximum, value));
   }

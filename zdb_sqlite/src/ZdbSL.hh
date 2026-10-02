@@ -171,9 +171,9 @@ struct StoreCf {
 };
 
 ZfStruct(ZdbSLAPI, (StoreCf, Cf),
-  (((thread), (Required)),							String),
-  (((connect), (Required)),							String),
-	(((synchronous), (Enum<Synchronous::Map>, Deflt<Synchronous::NORMAL>)),	Int8));
+  (((thread), (Mutable, Required)),				String),
+  (((connect), (Mutable, Required)),				String),
+	(((synchronous), (Mutable, Enum<Synchronous::Map>)),	Int8));
 
 class ZdbSLAPI Store : public Zdb_::Store {
 public:

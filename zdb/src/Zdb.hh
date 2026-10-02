@@ -36,6 +36,8 @@
 #include <zlib/ZdbLib.hh>
 #endif
 
+#include <limits.h>
+
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTL.hh>
@@ -544,7 +546,7 @@ struct TableCf {
 };
 
 ZfStruct(ZdbAPI, (TableCf, Cf),
-  (((cacheMode), (Ctor<0>, Enum<CacheMode::Map>, Deflt<CacheMode::Normal>)),	Int32));
+  (((cacheMode), (Mutable, Enum<CacheMode::Map>)),	Int32));
 
 
 // --- table configuration
@@ -1600,12 +1602,12 @@ struct HostCf {
 };
 
 ZfStruct(ZdbAPI, (HostCf, Cf),
-  (((priority),	(Ctor<0>, (Range<0, 1<<30>))),	Int32),
-  (((ip),	(Ctor<1>)),			String),
-  (((port),	(Ctor<2>, (Range<1, 65534>))),	UInt16),
-  (((standalone), (Ctor<3>)),			Bool),
-  (((up),	(Ctor<4>)),			String),
-  (((down),	(Ctor<5>)),			String));
+  (((priority),	(Mutable, (Range<0, INT_MAX>))),	Int32),
+  (((ip), (Mutable)),					String),
+  (((port),	(Mutable, (Range<1, 65534>))),		UInt16),
+  (((standalone), (Mutable)),				Bool),
+  (((up), (Mutable)),					String),
+  (((down), (Mutable)),					String));
 
 
 ZmRBTreeDerive(HostCfs, HostCf,
@@ -1732,8 +1734,8 @@ struct StoreLoadCf {
 };
 
 ZfStruct(ZdbAPI, (StoreLoadCf, Cf),
-  (((module), (Required)),	String),
-  (((preload)),			Bool));
+  (((module), (Mutable, Required)),	String),
+  (((preload), (Mutable)),		Bool));
 
 using DBThreads = Ztc::DBThreads;
 using DBSIDs = Ztc::DBSIDs;
@@ -1748,11 +1750,11 @@ struct DBCf {
   TableCfs		tableCfs;
   HostCfs		hostCfs;
   ZuID			hostID;
-  unsigned		nAccepts = 0;
-  unsigned		heartbeatFreq = 0;
-  unsigned		heartbeatTimeout = 0;
-  unsigned		reconnectFreq = 0;
-  unsigned		electionTimeout = 0;
+  unsigned		nAccepts = 8;
+  unsigned		heartbeatFreq = 1;
+  unsigned		heartbeatTimeout = 4;
+  unsigned		reconnectFreq = 1;
+  unsigned		electionTimeout = 8;
   ZmHashParams		cxnHash;
 #if Zdb_DEBUG
   bool			debug = 0;
@@ -1776,6 +1778,9 @@ struct DBCf {
     , debug{debug_}
 #endif
   {
+    validate();
+  }
+  void validate() const {
     if (!nShards || nShards > 64 || (nShards & (nShards - 1)))
       throw ZeEXCEPT(Error, "Zdb", ([nShards = nShards](auto &s) {
 	s << "\"shards\" invalid value " << nShards
@@ -1816,19 +1821,18 @@ struct DBCf {
 };
 
 ZfStruct(ZdbAPI, (DBCf, Cf),
-  (((thread),		(Ctor<0>, Required)),				String),
-  (((nShards),		(Ctor<1>, Cf::ID<"shards">, (Range<1U, 64U>),
-    Deflt<1>)),								UInt32),
-  (((threads),		(Ctor<2>)),					StringVec),
-  (((hostID),		(Ctor<3>)),					String),
-  (((nAccepts),		(Ctor<4>, (Range<1U, 1U<<10U>), Deflt<8>)),	UInt32),
-  (((heartbeatFreq),	(Ctor<5>, (Range<1U, 3600U>), Deflt<1>)),	UInt32),
-  (((heartbeatTimeout),	(Ctor<6>, (Range<1U, 14400U>), Deflt<4>)),	UInt32),
-  (((reconnectFreq),	(Ctor<7>, (Range<1U, 3600U>), Deflt<1>)),	UInt32),
-  (((electionTimeout),	(Ctor<8>, (Range<1U, 3600U>), Deflt<8>)),	UInt32)
+  (((thread),		(Mutable, Required)),				String),
+  (((nShards),		(Mutable, Cf::ID<"shards">, (Range<1U, 64U>))),	UInt32),
+  (((threads), (Mutable)),						StringVec),
+  (((hostID), (Mutable)),						String),
+  (((nAccepts),		(Mutable, (Range<1U, INT_MAX>))),		UInt32),
+  (((heartbeatFreq),	(Mutable, (Range<1U, 3600U>))),			UInt32),
+  (((heartbeatTimeout),	(Mutable, (Range<1U, 14400U>))),		UInt32),
+  (((reconnectFreq),	(Mutable, (Range<1U, 3600U>))),			UInt32),
+  (((electionTimeout),	(Mutable, (Range<1U, 3600U>))),			UInt32)
 #if Zdb_DEBUG
   ,
-  (((debug),		(Ctor<9>)),					Bool)
+  (((debug), (Mutable)),						Bool)
 #endif
 );
 

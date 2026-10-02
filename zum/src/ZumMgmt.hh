@@ -103,7 +103,7 @@ ZfStruct(, (SSFRegistration, JSON),
   (((receiverID), (JSON::ID<"receiver_id">, Required)),		String),
   (((deliveryURL), (JSON::ID<"delivery_url">, Required)),	String),
   (((callbackAuth), (JSON::ID<"callback_auth">, Required)),	String),
-  (((expiresIn), (JSON::ID<"expires_in">, Deflt<300>)),		UInt32));
+  (((expiresIn), (JSON::ID<"expires_in">)),		UInt32));
 struct SSFLease {
   uint32_t expiresIn = 0;
   int64_t expires = 0;

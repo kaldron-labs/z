@@ -271,12 +271,12 @@ struct Options {
   bool		help;
 };
 ZfStruct(, Options,
-  (((module),    (Ctor<0>, CLI::Opt<'m'>)),	String),
-  (((connect),   (Ctor<1>, CLI::Opt<'c'>)),	String),
-  (((debug),     (Ctor<2>, CLI::Flag<'d'>)),	Bool),
-  (((hashTel),   (Ctor<3>, CLI::Flag<'t'>)),	Bool),
-  (((heapTel),   (Ctor<4>, CLI::Flag<'T'>)),	Bool),
-  (((help),      (Ctor<5>, CLI::Flag<'h'>)),	Bool));
+  (((module),    (CLI::Opt<'m'>)),	String),
+  (((connect),   (CLI::Opt<'c'>)),	String),
+  (((debug),     (CLI::Flag<'d'>)),	Bool),
+  (((hashTel),   (CLI::Flag<'t'>)),	Bool),
+  (((heapTel),   (CLI::Flag<'T'>)),	Bool),
+  (((help),      (CLI::Flag<'h'>)),	Bool));
 
 int main(int argc_, char **argv)
 {

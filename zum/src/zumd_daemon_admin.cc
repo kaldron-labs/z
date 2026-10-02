@@ -380,7 +380,7 @@ struct RotateInput {
   uint32_t overlapSeconds = 0;
 };
 ZfStruct(, (RotateInput, JSON),
-  (((overlapSeconds),	(JSON::ID<"overlap_seconds">, JSON::Opt, Deflt<0>)),	UInt32));
+  (((overlapSeconds),	(JSON::ID<"overlap_seconds">, JSON::Opt)),	UInt32));
 
 struct ClientInput {
   String id;
@@ -400,8 +400,7 @@ ZfStruct(, (ClientInput, JSON),
   (((redirectURIs),	(JSON::ID<"redirect_uris">, JSON::Opt)),		StringVec),
   (((grants),		(Flags<ClientGrant::Map>,
     JSON::String<ClientGrant::Fmt>, JSON::Opt)),				UInt8),
-  (((refreshAllowed),	(JSON::ID<"refresh_allowed">, JSON::Opt,
-    Deflt<false>)),								Bool),
+  (((refreshAllowed),	(JSON::ID<"refresh_allowed">, JSON::Opt)),								Bool),
   (((identityScopes),	(JSON::ID<"identity_scopes">, JSON::Opt)),		StringVec));
 
 struct ClientUpdateInput {
@@ -486,9 +485,8 @@ struct AuthPolicyInput {
   String state;
 };
 ZfStruct(, (AuthPolicyInput, JSON),
-  (((providerID),	(JSON::ID<"provider_id">, JSON::Opt, JSON::String<>,
-    Deflt<0>)),									UInt64),
-  (((localFirst),	(JSON::ID<"local_first">, Required, Deflt<true>)),	Bool),
+  (((providerID),	(JSON::ID<"provider_id">, JSON::Opt, JSON::String<>)),									UInt64),
+  (((localFirst),	(JSON::ID<"local_first">, Required)),	Bool),
   (((eligibilityMode),	(JSON::ID<"eligibility_mode">, Required)),		String),
   (((eligibilityClaim),	(JSON::ID<"eligibility_claim">, JSON::Opt)),		String),
   (((eligibilityValues),(JSON::ID<"eligibility_values">, JSON::Opt)),		StringVec),
@@ -520,8 +518,7 @@ struct ConsentSelector {
 ZfStruct(, (ConsentSelector, JSON),
   (((userID),		(JSON::ID<"user_id">, Required, JSON::String<>)),	UInt64),
   (((clientID),		(JSON::ID<"client_id">, JSON::Opt)),			String),
-  (((appID),		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>,
-    Deflt<0>)),									UInt64),
+  (((appID),		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>)),									UInt64),
   (((limit),		(Required)),						UInt32));
 
 struct GrantSelector {
@@ -532,10 +529,8 @@ struct GrantSelector {
 };
 ZfStruct(, (GrantSelector, JSON),
   (((id),		(JSON::Opt)),	String),
-  (((userID),		(JSON::ID<"user_id">, JSON::Opt, JSON::String<>,
-    Deflt<0>)),				UInt64),
-  (((appID),		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>,
-    Deflt<0>)),				UInt64),
+  (((userID),		(JSON::ID<"user_id">, JSON::Opt, JSON::String<>)),				UInt64),
+  (((appID),		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>)),				UInt64),
   (((limit),		(Required)),	UInt32));
 
 struct CleanupInput {
@@ -543,7 +538,7 @@ struct CleanupInput {
   uint32_t limit = 0;
 };
 ZfStruct(, (CleanupInput, JSON),
-  (((before),		(JSON::Opt, Deflt<0>)),	Int64),
+  (((before),		(JSON::Opt)),	Int64),
   (((limit),		(Required)),		UInt32));
 
 struct SignKeyInput {
@@ -626,7 +621,7 @@ ZfStruct(, (QueryInput, URI),
   (((operation),	(Mutable)),				String),
   (((idempotence),	(Mutable)),				String),
   (((cursor),		(Mutable)),				String),
-  (((limit),		(Mutable, Deflt<100>)),			UInt32));
+  (((limit),		(Mutable)),			UInt32));
 
 // Require a complete framework parse and reject its null sentinel.
 static bool adminUInt(ZuCSpan text, uint64_t &value)

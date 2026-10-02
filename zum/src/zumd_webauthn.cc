@@ -257,7 +257,7 @@ ZfStruct(, (ClientData, JSON),
   (((type),		(Required)),			String),
   (((challenge),	(Required)),			String),
   (((origin),		(Required)),			String),
-  (((crossOrigin),	(JSON::Opt, Deflt<false>)),	Bool));
+  (((crossOrigin),	(JSON::Opt)),	Bool));
 
 static int clientData(
     ZuSpan<char> json, ZuCSpan type, ZuBSpan challenge,

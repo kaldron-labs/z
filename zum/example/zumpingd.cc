@@ -66,10 +66,10 @@ struct ZumConfig {
   String clientID;
 };
 ZfStruct(, (ZumConfig, Cf),
-  (((issuerURL), (Required)),		String),
-  (((managementIssuerURL), (Required)),	String),
-  (((managementURL), (Required)),	String),
-  (((clientID), (Required)),		String));
+  (((issuerURL), (Mutable, Required)),			String),
+  (((managementIssuerURL), (Mutable, Required)),	String),
+  (((managementURL), (Mutable, Required)),		String),
+  (((clientID), (Mutable, Required)),			String));
 
 struct Config {
   ZumConfig zum;
@@ -81,13 +81,13 @@ struct Config {
   uint32_t port = 8080;
 };
 ZfStruct(, (Config, Cf),
-  (((zum), (Required)),					UDT),
-  (((caPath)),						String),
-  (((audience), (Required)),				String),
-  (((addr), (Deflt<"127.0.0.1"_z>)),			String),
-  (((ssfDeliveryURL)),					String),
-  (((ssfLease), ((Range<2U, 86400U>), Deflt<300>)),	UInt32),
-  (((port), ((Range<1, 65535>), Deflt<8080>)),		UInt32));
+  (((zum), (Mutable, Required)),			UDT),
+  (((caPath), (Mutable)),				String),
+  (((audience), (Mutable, Required)),			String),
+  (((addr), (Mutable)),					String),
+  (((ssfDeliveryURL), (Mutable)),			String),
+  (((ssfLease), (Mutable, (Range<2U, 86400U>))),	UInt32),
+  (((port), (Mutable, (Range<1, 65535>))),		UInt32));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -101,7 +101,7 @@ static bool loadConfig(ZuCSpan path, Config &config)
   if (file.read(source.data(), unsigned(size)) != int(size)) return false;
   auto parsed = ZfCf::scan(source.span());
   if (parsed.p<0>() < 0 || !parsed.p<1>()) return false;
-  config = ZfCf::handler<Config>(parsed.p<1>()).ctor();
+  ZfCf::handler<Config>(parsed.p<1>()).update(config);
   // TLS terminates at a deployment reverse proxy; this listener is loopback only.
   return config.zum.issuerURL && config.zum.managementIssuerURL &&
     config.zum.managementURL &&

@@ -82,34 +82,33 @@ struct Options {
   bool		help = false;
 };
 ZfStruct(, (Options, CLI),
-  (((config),	(CLI::Long<"config">)),					String),
-  (((module),	(CLI::Long<"module">)),					String),
-  (((connect),	(CLI::Long<"connect">)),				String),
-  (((vaultStore), (CLI::Long<"vault-store">)),				String),
-  (((vaultModule), (CLI::Long<"vault-module">)),			String),
-  (((log),	(CLI::Long<"log">, Deflt<"&2"_z>)),			String),
-  (((issuer),	(CLI::Long<"issuer">)),					String),
-  (((ssfIssuer),	(CLI::Long<"ssf-issuer">)),			String),
-  (((admin),	(CLI::Long<"admin">)),					String),
-  (((bootstrapOutput), (CLI::Long<"bootstrap-output">)),		String),
-  (((addr),	(CLI::Long<"addr">, Deflt<"127.0.0.1"_z>)),		String),
-  (((port),	(CLI::Long<"port">, (Range<1, 65535>), Deflt<8080>)),	UInt32),
-  (((rpID),	(CLI::Long<"rp-id">, Deflt<"localhost"_z>)),		String),
-  (((rpName),	(CLI::Long<"rp-name">, Deflt<"Zum"_z>)),		String),
+  (((config),	(CLI::Long<"config">)),				String),
+  (((module),	(CLI::Long<"module">)),				String),
+  (((connect),	(CLI::Long<"connect">)),			String),
+  (((vaultStore), (CLI::Long<"vault-store">)),			String),
+  (((vaultModule), (CLI::Long<"vault-module">)),		String),
+  (((log),	(CLI::Long<"log">)),				String),
+  (((issuer),	(CLI::Long<"issuer">)),				String),
+  (((ssfIssuer),	(CLI::Long<"ssf-issuer">)),		String),
+  (((admin),	(CLI::Long<"admin">)),				String),
+  (((bootstrapOutput), (CLI::Long<"bootstrap-output">)),	String),
+  (((addr),	(CLI::Long<"addr">)),				String),
+  (((port),	(CLI::Long<"port">, (Range<1, 65535>))),	UInt32),
+  (((rpID),	(CLI::Long<"rp-id">)),				String),
+  (((rpName),	(CLI::Long<"rp-name">)),			String),
   (((bootstrapTTL), (CLI::Long<"bootstrap-ttl">,
-      (Range<1, 86400>), Deflt<900>)),					UInt32),
+      (Range<1, 86400>))),					UInt32),
   (((cleanupInterval), (CLI::Long<"cleanup-interval">,
-      (Range<0, 86400>), Deflt<300>)),					UInt32),
-  (((oidcOrigins), (CLI::Long<"oidc-origins">,
-    Deflt<Zum::OIDCHTTP::DefaultOrigins>)),				UInt32),
-  (((debug),	(CLI::Flag<'d'>, CLI::Long<"debug">)),			Bool),
-  (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)),		Bool),
-  (((repairAdminClient), (CLI::Long<"repair-admin-client">)),		Bool),
-  (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)),			Bool),
-  (((rekey),	(CLI::Long<"rekey">)),					Bool),
-  (((ztcPublish), (CLI::Long<"ztcPublish">)),				Bool),
-  (((vaultTestStore), (CLI::Long<"vault-test-store">)),			Bool),
-  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),			Bool));
+      (Range<0, 86400>))),					UInt32),
+  (((oidcOrigins), (CLI::Long<"oidc-origins">)),		UInt32),
+  (((debug),	(CLI::Flag<'d'>, CLI::Long<"debug">)),		Bool),
+  (((bootstrapReissue), (CLI::Long<"bootstrap-reissue">)),	Bool),
+  (((repairAdminClient), (CLI::Long<"repair-admin-client">)),	Bool),
+  (((once),	(CLI::Flag<'o'>, CLI::Long<"once">)),		Bool),
+  (((rekey),	(CLI::Long<"rekey">)),				Bool),
+  (((ztcPublish), (CLI::Long<"ztcPublish">)),			Bool),
+  (((vaultTestStore), (CLI::Long<"vault-test-store">)),		Bool),
+  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),		Bool));
 
 static void usage(int code)
 {
@@ -148,7 +147,7 @@ struct OIDCConfig {
   Zum::String caPath;
 };
 ZfStruct(, (OIDCConfig, Cf),
-  (((caPath)),	String));
+  (((caPath), (Mutable)),	String));
 
 static bool nodeZtcPublish(const ZfCf::AnyNode *root)
 {
@@ -162,8 +161,8 @@ struct VaultCf {
   Zum::String module;
 };
 ZfStruct(, (VaultCf, Cf),
-  (((store), (Required)),	String),
-  (((module)),			String));
+  (((store), (Mutable, Required)),	String),
+  (((module), (Mutable)),		String));
 
 static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer,
     bool testStore)
@@ -233,10 +232,10 @@ struct SSFCf {
   unsigned errorMax = 5;
 };
 ZfStruct(, (SSFCf, Cf),
-  (((issuer)),								String),
-  (((receiverMax), ((Range<1U, unsigned(INT_MAX)>), Deflt<1024>)),	UInt32),
-  (((leaseMax), ((Range<2U, 86400U>), Deflt<300>)),			UInt32),
-  (((errorMax), ((Range<1U, unsigned(INT_MAX)>), Deflt<5>)),		UInt32));
+  (((issuer), (Mutable)),				String),
+  (((receiverMax), (Mutable, (Range<1U, INT_MAX>))),	UInt32),
+  (((leaseMax), (Mutable, (Range<2U, 86400U>))),	UInt32),
+  (((errorMax), (Mutable, (Range<1U, INT_MAX>))),	UInt32));
 
 static ZuPtr<const ZfCf::AnyNode> config(
     const Options &options, Zum::String &source)
@@ -378,7 +377,7 @@ int main(int argc, char **argv)
     if (ztcPublish) {
       Ztc::AppCf publisherCf;
       if (auto node = cf->resolve("ztc")) {
-        publisherCf = ZfCf::handler<Ztc::AppCf>(node).ctor();
+        ZfCf::handler<Ztc::AppCf>(node).update(publisherCf);
         if (!node->resolve("id")) publisherCf.id = "zumd";
       } else
         publisherCf.id = "zumd";
@@ -393,7 +392,7 @@ int main(int argc, char **argv)
       vaultOptions.store = options.vaultStore;
       vaultOptions.module = options.vaultModule;
     } else if (auto node = cf->resolve("vault"))
-      vaultOptions = ZfCf::handler<VaultCf>(node).ctor();
+      ZfCf::handler<VaultCf>(node).update(vaultOptions);
     else
       throw ZeEXCEPT(Fatal, "zumd", "Vault configuration missing");
     auto vaultCf = vaultConfig(vaultOptions, options.issuer,
@@ -413,7 +412,7 @@ int main(int argc, char **argv)
     }
     SSFCf ssfConfig;
     if (auto node = cf->resolve("ssf"))
-      ssfConfig = ZfCf::handler<SSFCf>(node).ctor();
+      ZfCf::handler<SSFCf>(node).update(ssfConfig);
     Zum::String ssfIssuer = options.ssfIssuer;
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
@@ -471,7 +470,7 @@ int main(int argc, char **argv)
       if (!options.once && !options.rekey) {
         OIDCConfig oidcConfig;
         if (auto node = cf->resolve("oidc"))
-          oidcConfig = ZfCf::handler<OIDCConfig>(node).ctor();
+          ZfCf::handler<OIDCConfig>(node).update(oidcConfig);
         oidcHTTPInited = oidcHTTP.init(&mx, db->requests->sid(),
           options.oidcOrigins, oidcConfig.caPath);
         if (!oidcHTTPInited)

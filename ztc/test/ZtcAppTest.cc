@@ -17,6 +17,7 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZtcApp.hh>
+#include <zlib/ZfCf.hh>
 #include <zlib/ZtcMsg.hh>
 
 #include "ZiTestResidue.hh"
@@ -110,6 +111,13 @@ static void appTest()
 
   Ztc::AppCf cf;
   ZuCheck(cf.id == ZiProgram::name());
+  auto parsed = ZfCf::scan("id: test-publisher");
+  Ztc::AppCf loadedCf;
+  ZfCf::handler<Ztc::AppCf>(parsed.p<1>()).update(loadedCf);
+  ZuCheck(loadedCf.id == "test-publisher");
+  ZuCheck(loadedCf.version == "10.0.0");
+  ZuCheck(loadedCf.role == "server");
+  ZuCheck(loadedCf.reqSize == Ztc::AppCf::DefltReqSize);
   {
     Ztc::App invalid;
     Ztc::AppCf invalidCf = cf;

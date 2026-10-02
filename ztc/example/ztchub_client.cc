@@ -106,14 +106,14 @@ struct Config {
   bool loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Required)),					String),
-  (((serviceURL)),						String),
-  (((clientID), (Required)),					String),
-  (((caPath)),							String),
-  (((scope), (Deflt<"ping"_z>)),				String),
-  (((callbackPort), ((Range<1, 65535>), Deflt<CallbackPort>)),	UInt32),
-  (((loginTimeout), ((Range<1, 3600>), Deflt<180>)),		UInt32),
-  (((loopbackTest), (Deflt<false>)),				Bool));
+  (((issuerURL), (Mutable, Required)),			String),
+  (((serviceURL), (Mutable)),				String),
+  (((clientID), (Mutable, Required)),			String),
+  (((caPath), (Mutable)),				String),
+  (((scope), (Mutable)),				String),
+  (((callbackPort), (Mutable, (Range<1, 65535>))),	UInt32),
+  (((loginTimeout), (Mutable, (Range<1, 3600>))),	UInt32),
+  (((loopbackTest), (Mutable)),				Bool));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -127,7 +127,7 @@ static bool loadConfig(ZuCSpan path, Config &config)
   if (file.read(source.data(), unsigned(size)) != int(size)) return false;
   auto parsed = ZfCf::scan(source.span());
   if (parsed.p<0>() < 0 || !parsed.p<1>()) return false;
-  config = ZfCf::handler<Config>(parsed.p<1>()).ctor();
+  ZfCf::handler<Config>(parsed.p<1>()).update(config);
   return config.issuerURL && config.clientID;
 }
 

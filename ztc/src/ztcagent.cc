@@ -29,8 +29,7 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config),	(CLI::Opt<'c'>, CLI::Long<"config">,
-    Deflt<"ztcagent.conf"_z>)),					String),
+  (((config),	(CLI::Opt<'c'>, CLI::Long<"config">)),		String),
   (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),		Bool),
   (((version),	(CLI::Flag<'V'>, CLI::Long<"version">)),	Bool));
 
@@ -128,7 +127,8 @@ int main(int argc, char **argv)
     }
 
     auto loaded = ZvCf::load(options.config);
-    Ztc::AgentCf cf = ZfCf::handler<Ztc::AgentCf>(loaded.p<1>()).ctor();
+    Ztc::AgentCf cf;
+    ZfCf::handler<Ztc::AgentCf>(loaded.p<1>()).update(cf);
     auto env = environment();
     if (!env.issuerURL || !env.clientID || !env.deviceID ||
         !env.wssURL) {
