@@ -126,11 +126,12 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - anonymous namespaces in `.cc` files (use file-scope `static`)
   - non-specific capture packs `[&]` or `[=]`
   - `enum class` or `enum T`
+  - constant macros like `UINT64_C(x)` (use `uint64_t(x)` instead)
 - Use advanced C++ where it is expressive and efficient
   - Where C and C++ offer the same facility, prefer the C form:
-      - Example: `#include <string.h>`, not `<cstring>`.
-      - Where C99 conflicts with C++, use the GNU C++2b form.
-- Where possible, do not define forwarding functions to bases, use `using` declarations
+    - Example: `#include <string.h>`, not `<cstring>`.
+    - Where C99 conflicts with C++, use the GNU C++2b form.
+- Where possible, do not define forwarding functions to bases, use `using` declarations to hoist the base definition into the derived class
 - Use `ZuLib.hh` functions in preference to STL, in particular:
   `ZuAssert`, `ZuMv`, `ZuFwd`, `ZuDecay`, `ZuDeref`, `ZuStrip`, `ZuIfT`, `ZuIsConvertible`, `ZuIsConstructible`, `ZuLaunder`, `ZuPun`, `ZuCanOverlap`
 
@@ -155,6 +156,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - Generic hidden friends from different class specializations need a class-specific template discriminator; defaulted type constraints alone do not distinguish their declarations.
   - Prefer `typename = void` plus `decltype(CODE, void())` specializations to test whether `CODE` is well-formed.
   - Do not replace established `ZuIfT`/detector idioms with concepts.
+  - Prefer SFINAE in function template parameters to return types, because templated return types bloat the symbol table and debug information
 - For optional CRTP callbacks, prefer side-effect-safe base defaults and direct calls such as `impl()->callback(...)`.
   - Defaults should be harmless: `return true`, `return nullptr`, or no-op.
   - Use `if constexpr` traits only when a safe base default cannot express the behavior.
@@ -169,7 +171,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Style
 - Write idiomatic, natural, maximally expressive code for veteran C++ engineers.
-- Prefer brevity, common expert idioms, and precise structure over beginner-oriented readability.
+- Prefer brevity, expert idioms, and precise structure over readability for novices.
 - Do not disdain "Hacker's Delight" style when it is clear, correct, and faster.
 - Use shifts for integer multiplication and division by power-of-two literals:
   `x<<3` instead of `x*8`, and `x>>3` instead of `x/8`. For signed division,
@@ -195,7 +197,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 
 ### Constant literals
 - when a constant literal is integral or boolean and does not need to be wider than `int`, use `enum { X = 42 };` in favor of `static constexpr T = 42`
-- Declare a compile-time string as `constexpr auto name = "text"_Zu`; do not
+- Declare a compile-time string as `constexpr auto name = "text"_z`; do not
   declare a `constexpr ZuSpan`/`ZuCSpan`. `ZuString` preserves the literal's
   extent in its type, whereas a span is a non-owning run-time view. For a
   heterogeneous collection of literals, use a `constexpr` array of C-string
@@ -207,7 +209,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - `ZuTestUtil` dependents use `log` for test diagnostics
   - do NOT use `std::cerr` for logging errors when `ZiLog` is available
   - do NOT use `Zi::stdErr()` or `Zi::stdOut()` in preference to `std::cout` or `std::cerr`
-    - they are only to be used for redirection when a `ZiFile` type is required
+    - `Zi::std...` are only to be used for redirection when a `ZiFile` type is required
 - use `Zu` alternatives to STL: example: `ZuIfT` instead of `enable_if`
 - maximally leverage the Z framework foundation libraries:
   - `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
@@ -265,7 +267,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   `ZuSpan`/`ZuCSpan`.
   Problem: a span is a non-owning run-time view and discards the literal extent
   that is available at compile time.
-  Fix: use `constexpr auto name = "text"_Zu` so the object is a `ZuString`.
+  Fix: use `constexpr auto name = "text"_z` so the object is a `ZuString`.
   For a heterogeneous literal collection, use a `constexpr` C-string-pointer
   array and convert each element to a span only at its use boundary.
 
@@ -754,6 +756,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - For a braced `case`/`default` body, place its terminating `break` after the closing brace on the same line (`} break;`), not inside the braces on a separate line.
 
 ### Multiline layout
+- Wrap source code at 98 columns, counting hard tabs at tab stops of 8.
 - Prefer existing visual alignment over mechanical fixed-width continuation indents.
 - Split long template parameter lists, inheritance lists, base constructor calls, and function argument lists after natural delimiters.
 - Continue nested template/base/member-initializer expressions one logical level deeper than their containing line.
@@ -794,6 +797,8 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ### Compact layout and alignment
 - Keep short, simple functions and statements on one line when surrounding code does; split only when line length or expression shape makes it clearer.
 - Preserve tabular alignment for data members, macro bodies, and compact tables already using tabs to align names, initializers, or comments.
+- Vertically align `ZfStruct` and `ZfbStruct` field typecodes with hard tabs;
+  wrap long properties at natural delimiters to keep declarations within 98 columns.
 - Right-align members with hard tabs.
 - Do not let a verbose member type defeat tabular alignment. Give a complex or long member type a short local `using` alias when that keeps the member declaration aligned; place that alias immediately before the data declarations that use it.
 - `*` and `&` go with the member, not the type: `void<TAB>*m_`, not `void *<TAB>m_`.
@@ -917,7 +922,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - use "nak and "nakd", not "nack", "nackd" or "nacked"; example: `packetNakd`
 - do not prefix or namespace file-scoped `static` functions in `.cc` files:
   - use short meaningful names, e.g. in `ZiIP.cc`: `pton4` not `ZiIP_pton4`
-- do not use ambiguous abbreviations:
+- do not use ambiguous or obfuscated abbreviations:
   - bad: `bytesInFlight` -> `bif`: `if` is typically read as `interface`
   - bad: `congestionBytes` -> `congBytes`: `cong` is a non-standard and counter-intuitive abbreviation
 - elide redundant words in names:
@@ -989,6 +994,7 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
 - `final()` - finalizes an object pre-destructor
 - `start()` - start running (should be idempotent)
 - `stop()` - stop running (should be idempotent)
+- `operator *()` - test for "null" sentinel (used with non-pointer types)
 
 ## Acceptance
 - test suites must pass
