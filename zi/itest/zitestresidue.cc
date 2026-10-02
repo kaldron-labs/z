@@ -53,8 +53,8 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((mode), (Ctor<0>, Enum<Mode::Map>, CLI::Long<"mode">)),
-    (Int8, Mode::Parent)));
+  (((mode), (Ctor<0>, Enum<Mode::Map>, CLI::Long<"mode">,
+    Deflt<Mode::Parent>)),							Int8));
 
 static int load_(Options &options, int argc, const char *const *argv)
 {

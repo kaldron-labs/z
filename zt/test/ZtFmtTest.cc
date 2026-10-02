@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtFmt.hh>
+#include <zlib/ZtString.hh>
 
 using namespace ZuTestUtil;
 
@@ -49,11 +50,49 @@ void testCustomFmtProjection()
   ZuCheck(v.vecSuffix == ">");
 }
 
+template <typename Fmt> void checkScalarDefaults()
+{
+  ZuTestScope(checkScalarDefaults);
+  ZtVFmt v{Fmt{}};
+  ZuCheck(v.flagsDelim == "|");
+  ZuCheck(v.vecPrefix == "[" && v.vecDelim == "," && v.vecSuffix == "]");
+  ZtString<> text;
+  text << ZuDateTime{2026, 10, 1, 12, 34, 56, 123456789}.fmt(Fmt::DatePrint_());
+  ZuCheck(text == "2026/10/01 12:34:56.123456789");
+}
+
+void testScalarDefaults()
+{
+  ZuTestScope(testScalarDefaults);
+  ZuTestCall((checkScalarDefaults<ZtFmt::Left<20>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::Right<20>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::Frac<20, 3>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::Hex<>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::HexEnable<false>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::Comma<>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::Alt<>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::AltEnable<false>>));
+  ZuTestCall((checkScalarDefaults<ZtFmt::FP<3>>));
+
+  const ZtVFmt custom{ZtFmt::Right<20, ' ', ZtFmt::Comma<';', CustomFmt>>{}};
+  ZuCheck(custom.scalar.width() == 20 && custom.scalar.pad() == ' ' &&
+    custom.scalar.comma() == ';');
+  ZuCheck(custom.flagsDelim == "/" && custom.vecPrefix == "<" &&
+    custom.vecDelim == ";" && custom.vecSuffix == ">");
+  ZtString<> text;
+  text << ZuBox<int64_t>{1234567}.fmt<ZtFmt::Comma<>>();
+  ZuCheck(text == "1,234,567");
+  text.length(0);
+  text << ZuBox<int64_t>{1234567}.fmt<ZtFmt::Comma<'_'>>();
+  ZuCheck(text == "1_234_567");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRuntimeDefaults);
   ZuTestCall(testCustomFmtProjection);
+  ZuTestCall(testScalarDefaults);
   return 0;
 }

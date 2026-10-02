@@ -23,8 +23,8 @@ struct CSVRow {
 };
 
 ZfStruct(, CSVRow,
-  (((text), (Ctor<0>)), (String)),
-  (((id),   (Ctor<1>)), (Int32)));
+  (((text), (Ctor<0>)),	String),
+  (((id),   (Ctor<1>)),	Int32));
 
 namespace ZiCSVTest_ {
 Zi::Path g_csv;

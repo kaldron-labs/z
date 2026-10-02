@@ -40,15 +40,10 @@ template <typename Heap>
 bool SSFTransmitter_<Heap>::init(SSFTransmitterConfig config)
 {
   if (m_started || !config.db || !config.context || !config.requests || !config.issuer ||
-      !config.key.id || !config.key.issuer || !config.sign || !config.http ||
-      !config.secret || !config.receiverMax || !config.retryBase ||
-      !config.retryMax || config.receivers.length() > config.receiverMax)
+      !config.secretIssuer || !config.dbKey || !config.rng || !config.key.id || !config.key.issuer || !config.sign || !config.http ||
+      !config.receiverMax || !config.leaseMax || !config.errorMax ||
+      !config.retryBase || !config.retryMax)
     return false;
-  for (const auto &receiver: config.receivers)
-    if (!receiver.receiverID || !receiver.appID || !receiver.audience ||
-        !receiver.deliveryURL || !ssfURL(receiver.deliveryURL) ||
-        !receiver.secretName || !receiver.revision)
-      return false;
   m_config = ZuMv(config);
   return true;
 }
@@ -60,51 +55,178 @@ void SSFTransmitter_<Heap>::start()
   m_started = true;
   auto scheduler = m_config.requests->scheduler();
   scheduler->run([self = ZmRef<SSFTransmitter>{this}]() mutable {
-    self->configure_(0);
+    self->gc_();
+    self->retry_();
   }, m_config.requests->sid());
 }
 
 template <typename Heap>
-void SSFTransmitter_<Heap>::configure_(unsigned index)
+void SSFTransmitter_<Heap>::add(AppID appID, String clientID,
+    SSFRegistration input, SSFRegisterFn complete)
 {
-  auto table = m_config.context->ssfRx;
-  if (!table || index >= m_config.receivers.length()) {
-    auto scheduler = m_config.requests->scheduler();
-    scheduler->run([self = ZmRef<SSFTransmitter>{this}]() mutable {
-      if (self->m_started) self->retry_();
-    }, m_config.requests->sid());
+  if (!appID || !clientID || !input.receiverID ||
+      !ssfURL(input.deliveryURL) || !input.callbackAuth ||
+      input.callbackAuth.find<"\r">() >= 0 ||
+      input.callbackAuth.find<"\n">() >= 0 || input.expiresIn < 2) {
+    complete(400, SSFLease{});
     return;
   }
-  SSFRx receiver = ZuMv(m_config.receivers[index]);
-  String receiverID = receiver.receiverID;
-  table->run(0, [self = ZmRef<SSFTransmitter>{this}, table,
-      receiver = ZuMv(receiver), receiverID = ZuMv(receiverID), index]() mutable {
-    table->findUpd<0>(0, ZuFwdTuple(ZuMv(receiverID)),
-          [self = ZuMv(self), table, receiver = ZuMv(receiver), index](
+  auto apps = m_config.context->apps;
+  apps->run(0, [self = ZmRef<SSFTransmitter>{this}, apps, appID,
+      clientID = ZuMv(clientID), input = ZuMv(input),
+      complete = ZuMv(complete)]() mutable {
+    apps->find<0>(0, ZuFwdTuple(appID), [self = ZuMv(self), appID,
+        clientID = ZuMv(clientID), input = ZuMv(input),
+        complete = ZuMv(complete)](ZdbRowRef<App> app) mutable {
+      if (!app || app->data().owner || app->data().state != State::Active) {
+        complete(403, SSFLease{});
+        return;
+      }
+      auto ttl = input.expiresIn;
+      if (ttl > self->m_config.leaseMax) ttl = self->m_config.leaseMax;
+      int64_t now = Zm::now().sec();
+      String id;
+      id << appID << ':' << clientID.length() << ':' << clientID << input.receiverID;
+      Bytes envelope;
+      bool protected_ = serverSecretEncrypt(*self->m_config.rng,
+        self->m_config.dbKey, self->m_config.secretIssuer, "zum.ssf_rx",
+        id, "callbackAuth", ZuBSpan{input.callbackAuth}, envelope);
+      if (input.callbackAuth.mutable_()) ZuClear(input.callbackAuth);
+      uint64_t revision = 0;
+      if (!protected_ || !self->m_config.rng->random({
+          reinterpret_cast<uint8_t *>(&revision), sizeof(revision)}) || !revision) {
+        complete(503, SSFLease{});
+        return;
+      }
+      SSFRx receiver{.expires = now + ttl, .appID = appID, .receiverID = id, .audience = app->data().audience,
+        .deliveryURL = ZuMv(input.deliveryURL),
+        .callbackAuth = ZuMv(envelope), .revision = revision, .updated = now};
+      auto table = self->m_config.context->ssfRx;
+      table->run(0, [self = ZuMv(self), table, id = ZuMv(id),
+          receiver = ZuMv(receiver), ttl, complete = ZuMv(complete)]() mutable {
+        table->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self), table,
+            receiver = ZuMv(receiver), ttl, complete = ZuMv(complete)](
               ZdbRow<SSFRx> *row) mutable {
-        if (row) {
-          row->data() = ZuMv(receiver);
-          if (!row->commit()) {
-            self->configure_(index + 1);
+          SSFLease lease{ttl, receiver.expires};
+          if (row) {
+            // A renewal of the same destination retains queued SETs. A
+            // replacement destination invalidates in-flight completions.
+            String before = self->authorization_(row->data());
+            String after = self->authorization_(receiver);
+            if (before && before == after &&
+                receiver.deliveryURL == row->data().deliveryURL &&
+                row->data().expires > Zm::now().sec())
+              receiver.revision = row->data().revision;
+            if (receiver.revision == row->data().revision)
+              receiver.errors = row->data().errors;
+            if (before.mutable_()) ZuClear(before);
+            if (after.mutable_()) ZuClear(after);
+            row->data() = ZuMv(receiver);
+            bool ok = row->commit();
+            if (ok) self->gc_();
+            complete(ok ? 200 : 503, ok ? lease : SSFLease{});
             return;
           }
-          self->configure_(index + 1);
-          return;
-        }
-        ZdbRowRef<SSFRx> insert =
-          new ZdbRow<SSFRx>{table, ZdbShard{0}};
-        table->insert(ZuMv(insert),
-          [self = ZuMv(self), receiver = ZuMv(receiver), index](
-              ZdbRow<SSFRx> *row) mutable {
-            if (!row) { self->configure_(index + 1); return; }
+          if (table->count() >= self->m_config.receiverMax) {
+            self->gc_();
+            complete(429, SSFLease{});
+            return;
+          }
+          ZdbRowRef<SSFRx> insert = new ZdbRow<SSFRx>{table, ZdbShard{0}};
+          table->insert(ZuMv(insert), [self = ZuMv(self),
+              receiver = ZuMv(receiver), lease, complete = ZuMv(complete)](
+                ZdbRow<SSFRx> *row) mutable {
+            if (!row) { complete(503, SSFLease{}); return; }
             new (row->ptr()) SSFRx{ZuMv(receiver)};
-            if (!row->commit()) {
-              self->configure_(index + 1);
-              return;
-            }
-            self->configure_(index + 1);
+            bool ok = row->commit();
+            if (ok) self->gc_();
+            complete(ok ? 200 : 503, ok ? lease : SSFLease{});
           });
+        });
       });
+    });
+  });
+}
+
+// Read only the earliest lease. Wake at its deadline, rather than scanning
+// receivers periodically; the persisted expiry index also restores GC.
+template <typename Heap>
+void SSFTransmitter_<Heap>::gc_()
+{
+  auto table = m_config.context->ssfRx;
+  table->run(0, [self = ZmRef<SSFTransmitter>{this}, table]() mutable {
+    table->selectRows<2>({}, 1, [self, table](
+        ZuUnion<void, SSFRxTable::Tuple> result, unsigned count) mutable {
+      if (!result.template is<SSFRxTable::Tuple>()) {
+        if (!count) self->gcArm_(0);
+        return;
+      }
+      auto tuple = ZuMv(result).template p<SSFRxTable::Tuple>();
+      int64_t expires = tuple.template p<0>();
+      if (expires > Zm::now().sec()) { self->gcArm_(expires); return; }
+      String id = ZuMv(tuple.template p<2>());
+      table->run(0, [self, table, id = ZuMv(id)]() mutable {
+        table->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self, table](
+            ZdbRow<SSFRx> *row) mutable {
+          if (!row) { self->gc_(); return; }
+          if (row->data().expires > Zm::now().sec()) {
+            row->abort();
+            self->gc_();
+            return;
+          }
+          ZdbRowRef<SSFRx> hold{row};
+          row->abort();
+          table->del(ZuMv(hold), [self](ZdbRow<SSFRx> *row) mutable {
+            if (row && row->commit()) { self->retry_(); self->gc_(); }
+          });
+        });
+      });
+    });
+  });
+}
+
+template <typename Heap>
+void SSFTransmitter_<Heap>::gcArm_(int64_t expires)
+{
+  auto scheduler = m_config.requests->scheduler();
+  scheduler->run([self = ZmRef<SSFTransmitter>{this}, expires]() mutable {
+    if (!self->m_started) return;
+    auto scheduler = self->m_config.requests->scheduler();
+    if (self->m_gcArmed) scheduler->del(&self->m_gcTimer);
+    self->m_gcArmed = bool(expires);
+    if (!expires) return;
+    scheduler->add(&self->m_gcTimer, ZuTime{double(expires)},
+      ZmScheduler::Update, [self](auto &&arm) mutable {
+        return arm([self]() mutable { self->m_gcArmed = false; self->gc_(); });
+      }, self->m_config.requests->sid());
+  }, m_config.requests->sid());
+}
+
+// Error accounting belongs to the receiver, across all its notifications.
+template <typename Heap>
+void SSFTransmitter_<Heap>::result_(String id, uint64_t revision, int status)
+{
+  auto table = m_config.context->ssfRx;
+  table->run(0, [self = ZmRef<SSFTransmitter>{this}, table,
+      id = ZuMv(id), revision, status]() mutable {
+    table->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self, table, revision, status](
+        ZdbRow<SSFRx> *row) mutable {
+      if (!row) return;
+      auto &receiver = row->data();
+      if (receiver.revision != revision) { row->abort(); return; }
+      if (status == RevokeIssue::OK) receiver.errors = 0;
+      else ++receiver.errors;
+      if (receiver.expires <= Zm::now().sec() ||
+          receiver.errors >= self->m_config.errorMax) {
+        ZdbRowRef<SSFRx> hold{row};
+        row->abort();
+        table->del(ZuMv(hold), [self](ZdbRow<SSFRx> *row) mutable {
+          if (row && row->commit()) { self->retry_(); self->gc_(); }
+        });
+        return;
+      }
+      row->commit();
+    });
   });
 }
 
@@ -113,6 +235,11 @@ void SSFTransmitter_<Heap>::stop()
 {
   if (!m_started) return;
   m_started = false;
+  m_nextDelivery = 0;
+  if (m_gcArmed && m_config.requests) {
+    m_config.requests->scheduler()->del(&m_gcTimer);
+    m_gcArmed = false;
+  }
   if (m_armed && m_config.requests) {
     m_config.requests->scheduler()->del(&m_timer);
     m_armed = false;
@@ -141,31 +268,36 @@ void SSFTransmitter_<Heap>::revoke_(AppID appID, RefreshID refreshID, int64_t ex
 template <typename Heap>
 void SSFTransmitter_<Heap>::receivers_(AppID appID, RefreshID refreshID, int64_t expires)
 {
-  // Configuration is already validated and owned by this transmitter.  Use
-  // it for the live fan-out so a revoke arriving while SSFRx rows are being
-  // restored cannot be lost; the rows remain the durable retry source.
-  auto scheduler = m_config.requests->scheduler();
-  auto sid = m_config.requests->sid();
-  unsigned count = 0;
-  for (const auto &configured: m_config.receivers) {
-    if (configured.appID != appID) continue;
-    if (count++ == m_config.receiverMax) break;
-    SSFRx receiver = configured;
-    RefreshID id{refreshID.issuerURL, refreshID.familyID};
-    scheduler->run([self = ZmRef<SSFTransmitter>{this},
-        receiver = ZuMv(receiver), refreshID = ZuMv(id), expires]() mutable {
-      if (self->m_started)
-        self->issue_(ZuMv(receiver), ZuMv(refreshID), expires,
-            Zm::now().sec());
-    }, sid);
-  }
+  auto table = m_config.context->ssfRx;
+  table->run(0, [self = ZmRef<SSFTransmitter>{this}, table, appID,
+      refreshID = ZuMv(refreshID), expires]() mutable {
+    table->selectRows<1>(ZuFwdTuple(appID), self->m_config.receiverMax,
+      [self, refreshID = ZuMv(refreshID), expires](
+          ZuUnion<void, SSFRxTable::Tuple> result, unsigned) mutable {
+        if (!result.template is<SSFRxTable::Tuple>()) return;
+        auto tuple = ZuMv(result).template p<SSFRxTable::Tuple>();
+        ZuTupleCall(ZuMv(tuple), [self, &refreshID, expires](auto &&...args) {
+          SSFRx receiver{ZuFwd<decltype(args)>(args)...};
+          if (receiver.expires <= Zm::now().sec()) { self->gc_(); return; }
+          RefreshID id{refreshID.issuerURL, refreshID.familyID};
+          auto scheduler = self->m_config.requests->scheduler();
+          auto sid = self->m_config.requests->sid();
+          scheduler->run([self, receiver = ZuMv(receiver),
+              refreshID = ZuMv(id), expires]() mutable {
+            if (self->m_started)
+              self->issue_(ZuMv(receiver), ZuMv(refreshID), expires,
+                Zm::now().sec());
+          }, sid);
+        });
+      });
+  });
 }
 
 template <typename Heap>
 void SSFTransmitter_<Heap>::issue_(SSFRx receiver, RefreshID refreshID,
     int64_t expires, int64_t now)
 {
-  String authorization = m_config.secret(ZuMv(receiver.secretName));
+  String authorization = authorization_(receiver);
   if (!authorization) return;
   auto issue = [self = ZmRef<SSFTransmitter>{this}, receiver = ZuMv(receiver),
       refreshID = ZuMv(refreshID), expires, authorization = ZuMv(authorization),
@@ -178,10 +310,13 @@ void SSFTransmitter_<Heap>::issue_(SSFRx receiver, RefreshID refreshID,
         String eventID{refreshID.issuerURL};
         eventID << ':' << refreshID.familyID;
         eventID << ':' << now;
+        String receiverID = receiver.receiverID;
+        uint64_t revision = receiver.revision;
         self->persist_(ZuMv(receiver), SSFDelivery{
-          .eventID = ZuMv(eventID), .receiverID = receiver.receiverID,
+          .eventID = ZuMv(eventID), .receiverID = ZuMv(receiverID),
           .familyIssuer = refreshID.issuerURL, .familyID = refreshID.familyID,
-          .familyExpires = expires, .set = ZuMv(set), .nextDelivery = now},
+          .familyExpires = expires, .set = ZuMv(set), .nextDelivery = now,
+          .receiverRevision = revision},
           ZuMv(authorization));
       });
   };
@@ -238,28 +373,80 @@ void SSFTransmitter_<Heap>::persist_(SSFRx receiver, SSFDelivery delivery,
 }
 
 template <typename Heap>
+String SSFTransmitter_<Heap>::authorization_(const SSFRx &receiver)
+{
+  Bytes plain;
+  if (!serverSecretDecrypt(m_config.dbKey, m_config.secretIssuer,
+      "zum.ssf_rx", receiver.receiverID, "callbackAuth", receiver.callbackAuth,
+      plain)) return {};
+  String authorization{ZuCSpan{plain}};
+  ZuClear(plain);
+  return authorization;
+}
+
+template <typename Heap>
 void SSFTransmitter_<Heap>::deliver_(SSFRx receiver, SSFDelivery delivery,
     String authorization)
 {
+  // Recheck the live registration after signing/persistence. Removed or
+  // replaced receivers must not be revived by queued deliveries.
+  auto table = m_config.context->ssfRx;
+  table->run(0, [self = ZmRef<SSFTransmitter>{this}, table,
+      id = receiver.receiverID, delivery = ZuMv(delivery),
+      authorization = ZuMv(authorization)]() mutable {
+    table->find<0>(0, ZuFwdTuple(ZuMv(id)), [self, delivery = ZuMv(delivery),
+        authorization = ZuMv(authorization)](ZdbRowRef<SSFRx> row) mutable {
+      if (!row || row->data().revision != delivery.receiverRevision ||
+          row->data().expires <= Zm::now().sec()) {
+        auto table = self->m_config.context->ssfDeliveries;
+        table->run(0, [table, delivery = ZuMv(delivery)]() mutable {
+          table->findDel<0>(0, ZuFwdTuple(ZuMv(delivery.eventID),
+              ZuMv(delivery.receiverID)), [](ZdbRow<SSFDelivery> *row) { if (row) row->commit(); });
+        });
+        if (authorization.mutable_()) ZuClear(authorization);
+        return;
+      }
+      SSFRx receiver = row->data();
+      auto scheduler = self->m_config.requests->scheduler();
+      auto sid = self->m_config.requests->sid();
+      scheduler->run([self, receiver = ZuMv(receiver), delivery = ZuMv(delivery),
+          authorization = ZuMv(authorization)]() mutable {
+        if (self->m_started)
+          self->send_(ZuMv(receiver), ZuMv(delivery), ZuMv(authorization));
+      }, sid);
+    });
+  });
+}
+
+template <typename Heap>
+void SSFTransmitter_<Heap>::send_(SSFRx receiver, SSFDelivery delivery,
+    String authorization)
+{
+  if (receiver.expires <= Zm::now().sec()) { gc_(); retry_(); return; }
+  uint64_t revision = receiver.revision;
+  unsigned errors = receiver.errors < 31 ? receiver.errors : 31;
+  uint64_t delay = uint64_t(m_config.retryBase)<<errors;
+  if (delay > m_config.retryMax) delay = m_config.retryMax;
   String eventID = delivery.eventID;
   String receiverID = delivery.receiverID;
   sendSSF(ZuMv(receiver), ZuMv(delivery), ZuMv(authorization), m_config.http,
     [self = ZmRef<SSFTransmitter>{this}, eventID = ZuMv(eventID),
-        receiverID = ZuMv(receiverID)](int status) mutable {
+        receiverID = ZuMv(receiverID), revision, delay](int status) mutable {
+      self->result_(receiverID, revision, status);
       auto table = self->m_config.context->ssfDeliveries;
       if (!table) return;
       table->run(0, [self = ZuMv(self), table, eventID = ZuMv(eventID),
-          receiverID = ZuMv(receiverID), status]() mutable {
+          receiverID = ZuMv(receiverID), status, delay]() mutable {
         if (status == RevokeIssue::OK) {
           // A successful RFC 8935 response is the terminal outbox
           // transition.  The insert saga has already completed; never keep a
           // database saga open across this network operation.
           table->findDel<0>(0, ZuFwdTuple(ZuMv(eventID), ZuMv(receiverID)),
-            [](ZdbRowRef<SSFDelivery>) { });
+            [](ZdbRow<SSFDelivery> *row) { if (row) row->commit(); });
           return;
         }
         table->findUpd<0>(0, ZuFwdTuple(ZuMv(eventID), ZuMv(receiverID)),
-          [self = ZuMv(self), table](ZdbRow<SSFDelivery> *row) mutable {
+          [self = ZuMv(self), table, delay](ZdbRow<SSFDelivery> *row) mutable {
             if (!row) return;
             auto &item = row->data();
             int64_t now = Zm::now().sec();
@@ -268,12 +455,9 @@ void SSFTransmitter_<Heap>::deliver_(SSFRx receiver, SSFDelivery delivery,
               String expiredReceiver = item.receiverID;
               row->abort();
               table->findDel<0>(0, ZuFwdTuple(ZuMv(expiredEvent),
-                  ZuMv(expiredReceiver)), [](ZdbRowRef<SSFDelivery>) { });
+                  ZuMv(expiredReceiver)), [](ZdbRow<SSFDelivery> *row) { if (row) row->commit(); });
               return;
             }
-            uint64_t delay = item.nextDelivery > now ?
-              uint64_t(item.nextDelivery - now) * 2 : self->m_config.retryBase;
-            if (delay > self->m_config.retryMax) delay = self->m_config.retryMax;
             item.nextDelivery = now + int64_t(delay);
             row->commit();
             self->arm_(item.nextDelivery);
@@ -319,7 +503,7 @@ void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
         table->run(0, [table, eventID = ZuMv(eventID),
             receiverID = ZuMv(receiverID)]() mutable {
           table->findDel<0>(0, ZuFwdTuple(ZuMv(eventID), ZuMv(receiverID)),
-            [](ZdbRowRef<SSFDelivery>) { });
+            [](ZdbRow<SSFDelivery> *row) { if (row) row->commit(); });
         });
         return;
       }
@@ -334,8 +518,13 @@ void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
           tuple = ZuMv(tuple)]() mutable {
         rx->find<0>(0, ZuFwdTuple(ZuMv(receiverID)),
           [self, tuple = ZuMv(tuple)](ZdbRowRef<SSFRx> row) mutable {
-            if (!row) {
-              self->arm_(Zm::now().sec() + self->m_config.retryBase);
+            if (!row || row->data().expires <= Zm::now().sec()) {
+              auto table = self->m_config.context->ssfDeliveries;
+              table->run(0, [table, tuple = ZuMv(tuple)]() mutable {
+                table->findDel<0>(0, ZuFwdTuple(ZuMv(tuple.template p<0>()),
+                    ZuMv(tuple.template p<1>())), [](ZdbRow<SSFDelivery> *row) { if (row) row->commit(); });
+              });
+              self->gc_();
               return;
             }
             SSFDelivery delivery{
@@ -345,7 +534,8 @@ void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
               .familyID = ZuMv(tuple.template p<3>()),
               .familyExpires = tuple.template p<4>(),
               .set = ZuMv(tuple.template p<5>()),
-              .nextDelivery = tuple.template p<6>()};
+              .nextDelivery = tuple.template p<6>(),
+              .receiverRevision = tuple.template p<7>()};
             SSFRx receiver = row->data();
             auto scheduler = self->m_config.requests->scheduler();
             auto sid = self->m_config.requests->sid();
@@ -353,7 +543,7 @@ void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
                 delivery = ZuMv(delivery)]() mutable {
               if (!self->m_started) return;
               String authorization =
-                self->m_config.secret(ZuMv(receiver.secretName));
+                self->authorization_(receiver);
               if (authorization)
                 self->deliver_(ZuMv(receiver), ZuMv(delivery),
                     ZuMv(authorization));
@@ -386,12 +576,14 @@ void SSFTransmitter_<Heap>::armOn_(int64_t when)
 {
   if (!m_started || !when) return;
   auto scheduler = m_config.requests->scheduler();
+  if (m_armed && m_nextDelivery <= when) return;
   if (m_armed) scheduler->del(&m_timer);
+  m_nextDelivery = when;
   m_armed = true;
   int64_t now = Zm::now().sec();
-    scheduler->add(&m_timer, Zm::now() + ZuTime{double(when > now ? when - now : 0)},
+  scheduler->add(&m_timer, Zm::now() + ZuTime{double(when > now ? when - now : 0)},
     ZmScheduler::Update, [this](auto &&arm) {
-      return arm([this]() { m_armed = false; retry_(); });
+      return arm([this]() { m_armed = false; m_nextDelivery = 0; retry_(); });
     }, m_config.requests->sid());
 }
 

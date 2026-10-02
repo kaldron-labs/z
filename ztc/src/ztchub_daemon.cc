@@ -96,6 +96,8 @@ struct Route {
   uint64_t	agentGeneration;
 	uint64_t	requestSeqNo;
 	HubString	deviceID;
+  bool		continuing;
+  bool		fanout;
 };
 
 using RouteKey = ZuTuple<uint64_t, uint64_t>;
@@ -227,15 +229,32 @@ static HubFrame inventoryEOS(uint64_t subID)
   return builder.buf();
 }
 
-static HubFrame inventoryEOS(const Inventory &value, uint64_t subID)
+static HubFrame inventoryGone(const Inventory &value, uint64_t subID)
 {
   HubFrame frame = new InventoryBuf;
   frame->skip = Zfb::IOBuilder::Align;
   Zfb::IOBuilder builder{ZuMv(frame)};
-  auto device = builder.CreateString(value.deviceID.data(),
-    value.deviceID.length());
-  auto eos = ZfbStruct::save(builder, EOS{value.publisherID, 0});
-  builder.Finish(saveMsg(builder, fbs::Body::EOS, eos.Union(),
+  auto device = Zfb::Save::str(builder, value.deviceID);
+  auto error = ZfbStruct::save(builder, Error{
+    ErrorMessage{"agent disconnected"}, ZuID{value.publisherID},
+    0, int(HubError::AgentGone)});
+  builder.Finish(saveMsg(builder, fbs::Body::Error, error.Union(),
+    subID, device, value.generation));
+  return builder.buf();
+}
+
+// A confirmed publisher removal is Shutdown, never snapshot completion.
+static HubFrame inventoryShutdown(const Inventory &value, uint64_t subID)
+{
+  HubFrame frame = new InventoryBuf;
+  frame->skip = Zfb::IOBuilder::Align;
+  Zfb::IOBuilder builder{ZuMv(frame)};
+  auto device = Zfb::Save::str(builder, value.deviceID);
+  auto publisher = Zfb::Save::str(builder, value.publisherID);
+  auto shutdown = fbs::CreateShutdown(builder);
+  auto telemetry = saveTelemetry(builder, publisher, 0,
+    fbs::TelemetryBody::Shutdown, shutdown.Union());
+  builder.Finish(saveMsg(builder, fbs::Body::Telemetry, telemetry.Union(),
     subID, device, value.generation));
   return builder.buf();
 }
@@ -263,7 +282,9 @@ static bool inventoryDel(StateData &state, ZuCSpan deviceID,
     while (auto sub = subs()) {
       auto session = state.sessions.findPtr(sub->val().frontEndID);
       if (session && !session->val().agent && session->val().send)
-	session->val().send(inventoryEOS(value, sub->val().subID));
+	session->val().send(publisherID ?
+	  inventoryShutdown(value, sub->val().subID) :
+	  inventoryGone(value, sub->val().subID));
     }
     i.del();
     removed = true;
@@ -419,7 +440,8 @@ static void removeSubIndex(StateData &shard, uint64_t sessionID,
 static RouteInfo routeInfo(const Route &route)
 {
   return {route.frontEndID, route.subID, route.agentSessionID,
-    route.agentGeneration, route.requestSeqNo, route.deviceID};
+    route.agentGeneration, route.requestSeqNo, route.deviceID,
+    route.continuing, route.fanout};
 }
 
 static bool delRoute(StateData &state, RouteKey key, HubRouteFn routeFn = {})
@@ -603,11 +625,12 @@ bool Hubd::init(HubdCf cf, ZiMultiplex *scheduler, Zum::ServiceHTTPFn http,
     .responseMax = state.cf.maxFrame,
     .ssf = Zum::ServiceSSFConfig{
       .enabled = true,
-      .receiverID = state.cf.managementClientID,
-      .callbackPath = state.cf.ssfCallbackPath,
+      .receiverID = state.cf.ssfDeliveryURL,
+      .deliveryURL = state.cf.ssfDeliveryURL,
       .callbackAuth = callbackAuth,
       .transmitterIssuer = state.cf.issuerURL,
       .audience = state.cf.audience,
+      .lease = state.cf.ssfLease,
       .maxBytes = state.cf.maxFrame}}
   ;
   if (!state.service.init(ZuMv(serviceCf), ZuMv(http))) {
@@ -1022,7 +1045,8 @@ bool Hubd::removeSession(uint64_t sessionID, HubRouteFn routeFn)
 }
 
 bool Hubd::addSubscription(uint64_t frontEndID, uint64_t subID,
-    ZuCSpan deviceID, uint64_t &agentSessionID, uint64_t &agentGeneration,
+    ZuCSpan deviceID, const Request &request,
+    uint64_t &agentSessionID, uint64_t &agentGeneration,
     uint64_t &requestSeqNo, HubError::T &error)
 {
   error = HubError::BadReq;
@@ -1043,7 +1067,8 @@ bool Hubd::addSubscription(uint64_t frontEndID, uint64_t subID,
   auto seq = m_state->nextRequestSeqNo++;
   if (!seq || seq == UINT64_MAX) return false;
   auto route = new Hubd_::Subs::Node{frontEndID, subID,
-    agent->val().sessionID, agent->val().generation, seq, deviceID};
+    agent->val().sessionID, agent->val().generation, seq, deviceID,
+    bool(request.interval), !request.id};
   m_state->subs.addNode(route);
   m_state->agentReqs.add(Hubd_::RouteKey{route->val().agentSessionID, seq},
     &route->val());
@@ -1124,10 +1149,9 @@ bool Hubd::appSubscribe(uint64_t frontEndID, uint64_t subID,
   auto apps = m_state->inventories.iter();
   while (auto node = apps())
     session->val().send(Hubd_::inventoryFrame(node->val(), subID));
-  if (!interval) {
-    session->val().send(Hubd_::inventoryAck(subID, interval));
-    session->val().send(Hubd_::inventoryEOS(subID));
-  }
+  if (!interval) session->val().send(Hubd_::inventoryAck(subID, interval));
+  // Every initial inventory snapshot completes, even a continuing stream.
+  session->val().send(Hubd_::inventoryEOS(subID));
   return true;
 }
 
@@ -1160,14 +1184,6 @@ bool Hubd::route(uint64_t sessionID, uint64_t generation, uint64_t seq,
   if (!route || route->agentGeneration != generation) return false;
   info = Hubd_::routeInfo(*route);
   return true;
-}
-
-bool Hubd::completeRoute(uint64_t sessionID, uint64_t generation, uint64_t seq)
-{
-  if (!m_state) return false;
-  auto route = m_state->agentReqs.findVal(Hubd_::RouteKey{sessionID, seq});
-  return route && route->agentGeneration == generation &&
-    Hubd_::delRoute(*m_state, Hubd_::Route_SubKeyAxor(*route));
 }
 
 bool Hubd::sendAgent(uint64_t sessionID, uint64_t generation, HubFrame frame)

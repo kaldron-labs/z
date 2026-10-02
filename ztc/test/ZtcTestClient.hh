@@ -65,7 +65,8 @@ public:
       const char *name = ::getenv("ZTC_RING");
       m_telName = name ? name : "ztc";
       ZiTestResidue::addShm(m_telName);
-      m_telRing.init(ZiRingParams{m_telName, TelSize}.timeout(1));
+      // Publishers may create the shared ring before this client attaches.
+      m_telRing.init(ZiRingParams{m_telName, 0}.initial(TelSize).timeout(1));
       if (m_telRing.open(Ring::Write) != Zu::OK ||
 	  m_telRing.reset() != Zu::OK)
 	return false;
@@ -101,9 +102,9 @@ public:
     return sendRaw(data);
   }
 
-  ZmRef<ZiIOBuf> read(bool skipStartup = true)
+  ZmRef<ZiIOBuf> read(bool skipStartup = true, unsigned attempts = ReadAttempts)
   {
-    for (unsigned attempt = 0; attempt < ReadAttempts; ++attempt) {
+    for (unsigned attempt = 0; attempt < attempts; ++attempt) {
       const void *ptr = m_telRing.shift();
       if (!ptr) {
 	if (m_telRing.readStatus() < 0) return {};
@@ -177,9 +178,10 @@ inline bool writeAll(int, ZuBSpan data)
   return client().send(data);
 }
 
-inline ZmRef<ZiIOBuf> readFrame(int, bool skipStartup = true)
+inline ZmRef<ZiIOBuf> readFrame(int, bool skipStartup = true,
+    unsigned attempts = Client::ReadAttempts)
 {
-  return client().read(skipStartup);
+  return client().read(skipStartup, attempts);
 }
 
 inline int connect(const Ztc::App &, bool = false)

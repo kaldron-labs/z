@@ -29,7 +29,7 @@ namespace Zum {
 
 struct OAuthErrorResponse { String error; };
 ZfStruct(, (OAuthErrorResponse, JSON),
-  (((error),		(Required)),	(String)));
+  (((error),		(Required)),	String));
 
 struct AuthorizeFields {
   using Keys = ZuStringTL<"response_type", "client_id", "redirect_uri",
@@ -345,7 +345,7 @@ bool authorizeClient(const Client &client, const AuthorizeParams &params)
 {
   if (client.state != State::Active || client.owner ||
       client.id != params.clientID ||
-      !(client.grants & ClientGrant::AuthorizationCode) ||
+      !(client.grants & ClientGrant::AuthCode()) ||
       (client.profile != ClientProfile::Browser &&
        client.profile != ClientProfile::Native &&
        client.profile != ClientProfile::Server)) return false;
@@ -531,13 +531,13 @@ int authenticateClient(
   unsigned flag;
   switch (grant) {
     case TokenGrant::AuthorizationCode:
-      flag = ClientGrant::AuthorizationCode;
+      flag = ClientGrant::AuthCode();
       break;
     case TokenGrant::RefreshToken:
-      flag = ClientGrant::RefreshToken;
+      flag = ClientGrant::Refresh();
       break;
     case TokenGrant::ClientCredentials:
-      flag = ClientGrant::ClientCredentials;
+      flag = ClientGrant::ClientCredentials();
       break;
     default:
       return ClientAuth::UnauthorizedGrant;

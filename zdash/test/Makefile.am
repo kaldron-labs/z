@@ -21,7 +21,7 @@ zdash_test_la_LIBADD = $(top_builddir)/ztc/src/libZtc.la \
 	$(top_builddir)/zdf/src/libZdf.la $(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zv/src/libZv.la \
 	$(top_builddir)/zf/src/libZf.la $(LDADD) @GTK_LIBS@ @FBS_LIBS@
-EXTRA_DIST = ZdashTest.sh fontconfig.lsan README.md
+EXTRA_DIST = ZdashTest.sh fontconfig.lsan fontconfig.valgrind README.md
 
 .PHONY: test
 test: all

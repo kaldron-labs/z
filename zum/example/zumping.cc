@@ -17,9 +17,9 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">)), (String)),
-  (((noBrowser), (CLI::Long<"no-browser">)), (Bool)),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+  (((config), (CLI::Long<"config">)),			String),
+  (((noBrowser), (CLI::Long<"no-browser">)),		Bool),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
 
 static void usage(int code = 1)
 {

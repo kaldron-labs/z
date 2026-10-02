@@ -117,11 +117,11 @@ static bool roleRefsValid(
   return true;
 }
 
-bool membershipValid(
-    const App &app, const Membership &membership, ZuSpan<const Role> roles)
+bool assignmentValid(
+    const App &app, const Assignment &assignment, ZuSpan<const Role> roles)
 {
-  return app.id && membership.appID == app.id && membership.userID &&
-    !membership.owner && roleRefsValid(app.id, membership.roleIDs, roles);
+  return app.id && assignment.appID == app.id && assignment.userID &&
+    !assignment.owner && roleRefsValid(app.id, assignment.roleIDs, roles);
 }
 
 bool scopeValid(
@@ -134,19 +134,19 @@ bool scopeValid(
 }
 
 ZtBitmap appEffectiveActions(
-    const App &app, const Membership &membership, const Role &scope,
+    const App &app, const Assignment &assignment, const Role &scope,
     ZuSpan<const Role> roles,
     ZuSpan<const Action> actions)
 {
   if (app.state != State::Active || app.owner ||
-      membership.state != State::Active ||
+      assignment.state != State::Active ||
       scope.state != State::Active ||
-      !membershipValid(app, membership, roles) ||
+      !assignmentValid(app, assignment, roles) ||
       !scopeValid(app, scope, roles)) return {};
 
   ZtBitmap principal{app.nextActionID};
   ZtBitmap delegated{app.nextActionID};
-  for (auto id: membership.roleIDs) {
+  for (auto id: assignment.roleIDs) {
     auto role = findRole(app.id, id, roles);
     if (role->state == State::Active && !role->owner)
       principal |= role->actions;
@@ -211,7 +211,7 @@ static bool addIdentityScope(
   if (name == "offline_access") {
     if (client.state != State::Active || client.owner ||
 	!client.refreshAllowed ||
-	!(client.grants & ClientGrant::RefreshToken)) return false;
+	!(client.grants & ClientGrant::Refresh())) return false;
   } else if (!hasString(client.identityScopes, name)) return false;
   addScopeName(selection, name);
   selection.identity = true;
@@ -370,14 +370,14 @@ bool interactivePrincipal(
       (client.profile == ClientProfile::Browser ||
        client.profile == ClientProfile::Native ||
        client.profile == ClientProfile::Server) &&
-      (client.grants & ClientGrant::AuthorizationCode);
+      (client.grants & ClientGrant::AuthCode());
 }
 
 bool clientPrincipal(const Client &client)
 {
   return client.state == State::Active && !client.owner &&
     clientType(client.profile) == ClientType::Confidential &&
-    (client.grants & ClientGrant::ClientCredentials);
+    (client.grants & ClientGrant::ClientCredentials());
 }
 
 int clientAuthority(

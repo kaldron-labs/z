@@ -22,32 +22,32 @@
 // that are injected into the ZuFieldProp namespace
 //
 // a Field is of the form:
-// (((Accessor)[, (Props...)]), (Type[, Args...]))
+// (((Accessor)[, (Props...)]), Type)
 //
-// Example: (((id, Rd), (Keys<0>, Ctor<0>)), (String, "default"))
+// Example: (((id, Rd), (Keys<0>, Ctor<0>, Deflt<"default"_z>)),	String)
 // Meaning: Read-only string field named "id" with a default
 //   value of "default" that is also the containing object's zeroth
 //   constructor parameter
 //
-// ZfField Type  C/C++ Type      ZfField Args
-// ------------  ----------      ------------
-// CString       char *          [, default]
-// String        <String>        [, default]
-// Bytes         <uint8_t[]>     [, default]
-// Bool          <Integral>      [, default]
-// Int<Size>     <Integral>      [, default]
-// UInt<Size>    <Integral>      [, default]
-// Float         <FloatingPoint> [, default]
-// Fixed         ZuFixed         [, default]
-// Decimal       ZuDecimal       [, default]
-// Time          ZuTime          [, default]
-// DateTime      ZuDateTime      [, default]
-// UDT           <UDT>           [, default]
+// ZfField Type  C/C++ Type
+// ------------  ----------
+// CString       char *
+// String        <String>
+// Bytes         <uint8_t[]>
+// Bool          <Integral>
+// Int<Size>     <Integral>
+// UInt<Size>    <Integral>
+// Float         <FloatingPoint>
+// Fixed         ZuFixed
+// Decimal       ZuDecimal
+// Time          ZuTime
+// DateTime      ZuDateTime
+// UDT           <UDT>
 //
 // Range<Minimum, Maximum> is a field property specifying inclusive bounds
 // for Int, UInt, Float, Fixed and Decimal fields
 //
-// *Vec          ZuSpan<T>       [, default]
+// *Vec          ZuSpan<T>
 // CStringVec
 // StringVec
 // BytesVec
@@ -270,9 +270,13 @@ namespace ZuFieldProp {
   template <typename Map> struct Enum { using T = Map; };	// enum
   template <typename Map> struct Flags { using T = Map; };	// flags
 
+  template <auto Def> struct Deflt {
+    static constexpr decltype(auto) deflt() { return (Def); }
+  };
+
   template <auto Min, auto Max> struct Range {
-    static constexpr auto minimum() { return Min; }
-    static constexpr auto maximum() { return Max; }
+    static constexpr decltype(auto) minimum() { return (Min); }
+    static constexpr decltype(auto) maximum() { return (Max); }
   };
 
   template <int8_t> struct NDP { }; // NDP for printing float/fixed/decimal
@@ -300,6 +304,16 @@ namespace ZuFieldProp {
 
   template <typename Props> using HasFlags = HasType<Props, Flags>;
   template <typename Props> using GetFlags = GetType<Props, Flags>;
+
+  template <typename> struct IsDeflt : public ZuFalse { };
+  template <auto Def>
+  struct IsDeflt<Deflt<Def>> : public ZuTrue { };
+  template <typename Props>
+  using Deflts = ZuTypeGrep<IsDeflt, Props>;
+  template <typename Props>
+  using HasDeflt = ZuBool<Deflts<Props>::N>;
+  template <typename Props>
+  using GetDeflt = ZuType<Deflts<Props>::N - 1, Deflts<Props>>;
 
   template <typename> struct IsRange : public ZuFalse { };
   template <auto Min, auto Max>
@@ -363,6 +377,7 @@ namespace ZfVFieldProp {
     Enum,
     Flags,
     Range,
+    Deflt,
     NDP);
 
   using V = T;
@@ -393,6 +408,8 @@ namespace ZfVFieldProp {
   struct Value_<_::Enum<Map>>             { using T = Constant<Enum()>; };
   template <typename Map>
   struct Value_<_::Flags<Map>>            { using T = Constant<Flags()>; };
+  template <auto Def>
+  struct Value_<_::Deflt<Def>>            { using T = Constant<Deflt()>; };
   template <auto Min, auto Max>
   struct Value_<_::Range<Min, Max>>       { using T = Constant<Range()>; };
   template <auto I>
@@ -1400,11 +1417,22 @@ ZfVFieldType *ZfFieldType_CString<char *, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_CString<char *, Props>>::instance();
 }
 
-inline const char *ZfField_CString_Def() { return nullptr; }
-template <
-  typename Base,
-  auto Def = ZfField_CString_Def,
-  bool = Base::ReadOnly>
+template <auto Def, typename = void>
+struct ZfFieldDefltFn : public ZuFalse { };
+template <auto Def>
+struct ZfFieldDefltFn<Def, decltype(Def(), void())> : public ZuTrue { };
+
+template <typename Props, auto Def>
+static constexpr decltype(auto) ZfFieldDeflt() {
+  if constexpr (ZuFieldProp::HasDeflt<Props>{})
+    return ZuFieldProp::GetDeflt<Props>::deflt();
+  else if constexpr (ZfFieldDefltFn<Def>{})
+    return Def();
+  else
+    return (Def);
+};
+
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_CString : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_CString<Override<Base>>;
@@ -1422,20 +1450,22 @@ struct ZfField_CString : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.cstring = [](void *, const char *) { }}};
   }
-  static const char *deflt() { return Def(); }
+  static const char *deflt() {
+    return ZfFieldDeflt<Props, static_cast<const char *>(nullptr)>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.cstring = [](const void *o) -> const char * {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt: return Def();
+	case Deflt: return deflt();
 	default:    return nullptr;
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_CString<Base, Def, false> :
-    public ZfField_CString<Base, Def, true> {
+template <typename Base>
+struct ZfField_CString<Base, false> :
+    public ZfField_CString<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.cstring = [](void *o_, unsigned, const char *s) {
@@ -1475,7 +1505,6 @@ ZfVFieldType *ZfFieldType_String<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_String<T, Props>>::instance();
 }
 
-inline ZuCSpan ZfField_String_Def() { return {}; }
 template <typename Base, typename = void>
 struct ZfField_String_Get {
   static ZfVFieldGet getFn() {
@@ -1513,10 +1542,8 @@ struct ZfField_String_Get<Base,
     }}};
   }
 };
-template <
-  typename Base,
-  auto Def = ZfField_String_Def,
-  bool = Base::ReadOnly>
+
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_String :
     public ZfField_<Base>,
     public ZfField_String_Get<Base> {
@@ -1530,20 +1557,22 @@ struct ZfField_String :
   static ZfVFieldSet setFn() {
     return {.set_ = {.string = [](void *, ZuCSpan) { }}};
   }
-  static ZuCSpan deflt() { return Def(); }
+  static constexpr ZuCSpan deflt() {
+    return ZfFieldDeflt<Props, [] { return ZuCSpan{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.string = [](const void *o) -> ZuCSpan {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt: return Def();
+	case Deflt: return deflt();
 	default:    return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_String<Base, Def, false> :
-    public ZfField_String<Base, Def, true> {
+template <typename Base>
+struct ZfField_String<Base, false> :
+    public ZfField_String<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.string = [](void *o, ZuCSpan s) {
@@ -1580,7 +1609,6 @@ ZfVFieldType *ZfFieldType_Bytes<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_Bytes<T, Props>>::instance();
 }
 
-inline ZuBSpan ZfField_Bytes_Def() { return {}; }
 template <typename Base, typename = void>
 struct ZfField_Bytes_Get {
   static ZfVFieldGet getFn() {
@@ -1604,10 +1632,7 @@ struct ZfField_Bytes_Get<Base,
     }}};
   }
 };
-template <
-  typename Base,
-  auto Def = ZfField_Bytes_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_Bytes :
     public ZfField_<Base>,
     public ZfField_Bytes_Get<Base> {
@@ -1621,20 +1646,22 @@ struct ZfField_Bytes :
   static ZfVFieldSet setFn() {
     return {.set_ = {.bytes = [](void *, ZuBSpan) { }}};
   }
-  static ZuBSpan deflt() { return Def(); }
+  static constexpr ZuBSpan deflt() {
+    return ZfFieldDeflt<Props, [] { return ZuBSpan{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.bytes = [](const void *o) -> ZuBSpan {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt: return Def();
+	case Deflt: return deflt();
 	default:    return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_Bytes<Base, Def, false> :
-    public ZfField_Bytes<Base, Def, true> {
+template <typename Base>
+struct ZfField_Bytes<Base, false> :
+    public ZfField_Bytes<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.bytes = [](void *o, ZuBSpan v) {
@@ -1676,11 +1703,7 @@ ZfVFieldType *ZfFieldType_Bool<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_Bool<T, Props>>::instance();
 }
 
-constexpr bool ZfField_Bool_Def() { return false; }
-template <
-  typename Base,
-  auto Def = ZfField_Bool_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_Bool : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Bool<Override<Base>>;
@@ -1697,12 +1720,14 @@ struct ZfField_Bool : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.bool_ = [](void *, bool) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr bool deflt() {
+    return ZfFieldDeflt<Props, false>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.bool_ = [](const void *o) -> bool {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	case Minimum: return false;
 	case Maximum: return true;
 	default:      return false;
@@ -1710,9 +1735,9 @@ struct ZfField_Bool : public ZfField_<Base> {
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_Bool<Base, Def, false> :
-    public ZfField_Bool<Base, Def, true> {
+template <typename Base>
+struct ZfField_Bool<Base, false> :
+    public ZfField_Bool<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.bool_ = [](void *o, bool v) {
@@ -1885,14 +1910,10 @@ ZfVFieldType *ZfFieldType_##Code_<T, Props>::vtype() { \
  \
 template <typename T> \
 struct ZfFieldType_##Code_##_Def { \
-  static constexpr auto deflt() { return ZuCmp<T>::null(); } \
   static constexpr auto minimum() { return ZuCmp<T>::minimum(); } \
   static constexpr auto maximum() { return ZuCmp<T>::maximum(); } \
 }; \
-template < \
-  typename Base, \
-  auto Def = ZfFieldType_##Code_##_Def<typename Base::T>::deflt, \
-  bool = Base::ReadOnly> \
+template <typename Base, bool = Base::ReadOnly> \
 struct ZfField_##Code_ : public ZfField_<Base> { \
   template <template <typename> class Override> \
   using Adapt = ZfField_##Code_<Override<Base>>; \
@@ -1912,14 +1933,16 @@ struct ZfField_##Code_ : public ZfField_<Base> { \
   static ZfVFieldSet setFn() { \
     return {.set_ = {.Type_= [](void *, Type_##_t) { }}}; \
   } \
-  static constexpr auto deflt() { return Def(); } \
+  static constexpr auto deflt() { \
+    return ZfFieldDeflt<Props, [] { return ZuCmp<T>::null(); }>(); \
+  } \
   static constexpr auto minimum() { return Range::minimum(); } \
   static constexpr auto maximum() { return Range::maximum(); } \
   static ZfVFieldGet constantFn() { \
     using namespace ZfVFieldConstant; \
     return {.get_ = {.Type_= [](const void *o) -> Type_##_t { \
       switch (int(reinterpret_cast<uintptr_t>(o))) { \
-	case Deflt:   return Def(); \
+	case Deflt:   return deflt(); \
 	case Minimum: return minimum(); \
 	case Maximum: return maximum(); \
 	default:      return ZuCmp<Type_##_t>::null(); \
@@ -1927,9 +1950,9 @@ struct ZfField_##Code_ : public ZfField_<Base> { \
     }}}; \
   } \
 }; \
-template <typename Base, auto Def> \
-struct ZfField_##Code_<Base, Def, false> : \
-    public ZfField_##Code_<Base, Def, true> { \
+template <typename Base> \
+struct ZfField_##Code_<Base, false> : \
+    public ZfField_##Code_<Base, true> { \
   using O = typename Base::O; \
   using T = typename Base::T; \
   static ZfVFieldSet setFn() { \
@@ -1989,14 +2012,10 @@ ZfVFieldType *ZfFieldType_Float<T, Props>::vtype() {
 
 template <typename T>
 struct ZfField_Float_Def {
-  static constexpr auto deflt() { return ZuCmp<T>::null(); }
   static constexpr auto minimum() { return T{-ZuFP<ZuUnder<T>>::inf()}; }
   static constexpr auto maximum() { return T{ZuFP<ZuUnder<T>>::inf()}; }
 };
-template <
-  typename Base,
-  auto Def = ZfField_Float_Def<typename Base::T>::deflt,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_Float : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Float<Override<Base>>;
@@ -2015,14 +2034,16 @@ struct ZfField_Float : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.float_ = [](void *, double) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr auto deflt() {
+    return ZfFieldDeflt<Props, [] { return ZuCmp<T>::null(); }>();
+  }
   static constexpr auto minimum() { return Range::minimum(); }
   static constexpr auto maximum() { return Range::maximum(); }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.float_ = [](const void *o) -> double {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	case Minimum: return minimum();
 	case Maximum: return maximum();
 	default:      return ZuCmp<double>::null();
@@ -2030,9 +2051,9 @@ struct ZfField_Float : public ZfField_<Base> {
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_Float<Base, Def, false> :
-    public ZfField_Float<Base, Def, true> {
+template <typename Base>
+struct ZfField_Float<Base, false> :
+    public ZfField_Float<Base, true> {
   using O = typename Base::O;
   using T = typename Base::T;
   static ZfVFieldSet setFn() {
@@ -2080,14 +2101,10 @@ ZfVFieldType *ZfFieldType_Fixed<T, Props>::vtype() {
 }
 
 struct ZfField_Fixed_Def {
-  static constexpr ZuFixed deflt() { return {}; }
   static constexpr ZuFixed minimum() { return {ZuFixedMin, 0}; }
   static constexpr ZuFixed maximum() { return {ZuFixedMax, 0}; }
 };
-template <
-  typename Base,
-  auto Def = ZfField_Fixed_Def::deflt,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_Fixed : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Fixed<Override<Base>>;
@@ -2106,14 +2123,16 @@ struct ZfField_Fixed : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.fixed = [](void *, ZuFixed) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr auto deflt() {
+    return ZfFieldDeflt<Props, ZuFixed{}>();
+  }
   static constexpr auto minimum() { return Range::minimum(); }
   static constexpr auto maximum() { return Range::maximum(); }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.fixed = [](const void *o) -> ZuFixed {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	case Minimum: return minimum();
 	case Maximum: return maximum();
 	default:      return {};
@@ -2121,9 +2140,9 @@ struct ZfField_Fixed : public ZfField_<Base> {
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_Fixed<Base, Def, false> :
-    public ZfField_Fixed<Base, Def, true> {
+template <typename Base>
+struct ZfField_Fixed<Base, false> :
+    public ZfField_Fixed<Base, true> {
   using O = typename Base::O;
   using T = typename Base::T;
   static ZfVFieldSet setFn() {
@@ -2171,9 +2190,6 @@ ZfVFieldType *ZfFieldType_Decimal<T, Props>::vtype() {
 }
 
 struct ZfField_Decimal_Def {
-  static constexpr ZuDecimal deflt() {
-    return ZuCmp<ZuDecimal>::null();
-  }
   static constexpr ZuDecimal minimum() {
     return {ZuDecimal::Unscaled{ZuDecimal::minimum()}};
   }
@@ -2181,10 +2197,7 @@ struct ZfField_Decimal_Def {
     return {ZuDecimal::Unscaled{ZuDecimal::maximum()}};
   }
 };
-template <
-  typename Base,
-  auto Def = ZfField_Decimal_Def::deflt,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_Decimal : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Decimal<Override<Base>>;
@@ -2203,14 +2216,16 @@ struct ZfField_Decimal : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.decimal = [](void *, ZuDecimal) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr auto deflt() {
+    return ZfFieldDeflt<Props, ZuCmp<ZuDecimal>::null()>();
+  }
   static constexpr auto minimum() { return Range::minimum(); }
   static constexpr auto maximum() { return Range::maximum(); }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.decimal = [](const void *o) -> ZuDecimal {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	case Minimum: return minimum();
 	case Maximum: return maximum();
 	default:      return {};
@@ -2218,9 +2233,9 @@ struct ZfField_Decimal : public ZfField_<Base> {
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_Decimal<Base, Def, false> :
-    public ZfField_Decimal<Base, Def, true> {
+template <typename Base>
+struct ZfField_Decimal<Base, false> :
+    public ZfField_Decimal<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.decimal = [](void *o, ZuDecimal v) {
@@ -2263,11 +2278,7 @@ ZfVFieldType *ZfFieldType_Time<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_Time<T, Props>>::instance();
 }
 
-constexpr ZuTime ZfField_Time_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_Time_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_Time : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Time<Override<Base>>;
@@ -2284,20 +2295,22 @@ struct ZfField_Time : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.time = [](void *, ZuTime) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr auto deflt() {
+    return ZfFieldDeflt<Props, [] { return ZuTime{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.time = [](const void *o) -> ZuTime {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_Time<Base, Def, false> :
-    public ZfField_Time<Base, Def, true> {
+template <typename Base>
+struct ZfField_Time<Base, false> :
+    public ZfField_Time<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.time = [](void *o, ZuTime v) {
@@ -2339,11 +2352,7 @@ ZfVFieldType *ZfFieldType_DateTime<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_DateTime<T, Props>>::instance();
 }
 
-constexpr ZuDateTime ZfField_DateTime_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_DateTime_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_DateTime : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DateTime<Override<Base>>;
@@ -2360,20 +2369,22 @@ struct ZfField_DateTime : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.dateTime = [](void *, ZuDateTime) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr auto deflt() {
+    return ZfFieldDeflt<Props, [] { return ZuDateTime{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.dateTime = [](const void *o) -> ZuDateTime {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_DateTime<Base, Def, false> :
-    public ZfField_DateTime<Base, Def, true> {
+template <typename Base>
+struct ZfField_DateTime<Base, false> :
+    public ZfField_DateTime<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.dateTime = [](void *o, ZuDateTime v) {
@@ -2404,10 +2415,11 @@ struct ZfFieldType_UDT : public ZfFieldType_<Props_> {
     friend S &
     operator <<(S &s, const Print &print) {
       if constexpr (ZfFieldType_UDT_HasFmt<U, Fmt>{}) {
-	return s << print.v.template fmt<Fmt>();
+	s << print.v.template fmt<Fmt>();
       } else {
-	return s << print.v;
+	s << print.v;
       }
+      return s;
     }
   };
   inline static ZfVFieldType *vtype();
@@ -2475,14 +2487,6 @@ ZfVFieldType *ZfFieldType_UDT<T, Props>::vtype() {
 }
 
 template <typename T, typename = void>
-struct ZfField_UDT_Def {
-  static constexpr void value() { }
-};
-template <typename T>
-struct ZfField_UDT_Def<T, decltype(T{}, void())> {
-  static constexpr T value() { return {}; }
-};
-template <typename T, typename = void>
 struct ZfField_UDT_Null {
   static const void *value() { return nullptr; }
 };
@@ -2491,30 +2495,6 @@ struct ZfField_UDT_Null<T, decltype(T{}, void())> {
   static const void *value() {
     static T null_;
     return static_cast<const void *>(&null_);
-  }
-};
-template <typename, auto, typename = void>
-struct ZfField_UDT_Constant {
-  static ZfVFieldGet constantFn() {
-    using namespace ZfVFieldConstant;
-    return {.get_ = {.udt = [](const void *o) -> const void * {
-      return nullptr;
-    }}};
-  }
-};
-template <typename Base, auto Def>
-struct ZfField_UDT_Constant<Base, Def,
-    decltype(typename Base::T{Def()}, void())> {
-  static ZfVFieldGet constantFn() {
-    using T = typename Base::T;
-    using namespace ZfVFieldConstant;
-    return {.get_ = {.udt = [](const void *o) -> const void * {
-      static T deflt_{Def()};
-      switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt: return static_cast<const void *>(&deflt_);
-	default:    return ZfField_UDT_Null<T>::value();
-      }
-    }}};
   }
 };
 template <typename Base, typename = void>
@@ -2541,13 +2521,9 @@ struct ZfField_UDT_Get<Base,
     }}};
   }
 };
-template <
-  typename Base,
-  auto Def = ZfField_UDT_Def<typename Base::T>::value,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_UDT :
     public ZfField_<Base>,
-    public ZfField_UDT_Constant<Base, Def>,
     public ZfField_UDT_Get<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_UDT<Override<Base>>;
@@ -2559,11 +2535,32 @@ struct ZfField_UDT :
   static ZfVFieldSet setFn() {
     return {.set_ = {.udt = [](void *, const void *) { }}};
   }
-  static auto deflt() { return Def(); }
+  static constexpr decltype(auto) deflt() {
+    return ZfFieldDeflt<Props, [] {
+      if constexpr (__is_constructible(T)) return T{};
+    }>();
+  }
+  static ZfVFieldGet constantFn() {
+    using namespace ZfVFieldConstant;
+    return {.get_ = {.udt = [](const void *o) -> const void * {
+      if constexpr (ZuIsSame<decltype(deflt()), T>{} ||
+	  ZuIsConstructible<decltype(deflt()), T>{}) {
+	switch (int(reinterpret_cast<uintptr_t>(o))) {
+	  case Deflt: {
+	    static T deflt_{deflt()};
+	    return static_cast<const void *>(&deflt_);
+	  }
+	  default: return ZfField_UDT_Null<T>::value();
+	}
+      } else {
+	return nullptr;
+      }
+    }}};
+  }
 };
-template <typename Base, auto Def>
-struct ZfField_UDT<Base, Def, false> :
-    public ZfField_UDT<Base, Def, true> {
+template <typename Base>
+struct ZfField_UDT<Base, false> :
+    public ZfField_UDT<Base, true> {
   using O = typename Base::O;
   using T = typename Base::T;
   static ZfVFieldSet setFn() {
@@ -2612,11 +2609,7 @@ ZfVFieldType *ZfFieldType_CStringVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_CStringVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::CStringVec ZfField_CStringVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_CStringVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_CStringVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_CStringVec<Override<Base>>;
@@ -2635,20 +2628,22 @@ struct ZfField_CStringVec : public ZfField_<Base> {
   static ZfVFieldSet setFn() {
     return {.set_ = {.cstringVec = [](void *, CStringVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr CStringVec deflt() {
+    return ZfFieldDeflt<Props, [] { return CStringVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.cstringVec = [](const void *o) -> CStringVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_CStringVec<Base, Def, false> :
-    public ZfField_CStringVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_CStringVec<Base, false> :
+    public ZfField_CStringVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -2697,11 +2692,7 @@ ZfVFieldType *ZfFieldType_StringVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_StringVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::StringVec ZfField_StringVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_StringVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_StringVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_StringVec<Override<Base>>;
@@ -2720,20 +2711,22 @@ struct ZfField_StringVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.stringVec = [](void *, StringVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr StringVec deflt() {
+    return ZfFieldDeflt<Props, [] { return StringVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.stringVec = [](const void *o) -> StringVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_StringVec<Base, Def, false> :
-    public ZfField_StringVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_StringVec<Base, false> :
+    public ZfField_StringVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -2782,11 +2775,7 @@ ZfVFieldType *ZfFieldType_BytesVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_BytesVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::BytesVec ZfField_BytesVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_BytesVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_BytesVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_BytesVec<Override<Base>>;
@@ -2805,20 +2794,22 @@ struct ZfField_BytesVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.bytesVec = [](void *, BytesVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr BytesVec deflt() {
+    return ZfFieldDeflt<Props, [] { return BytesVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.bytesVec = [](const void *o) -> BytesVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_BytesVec<Base, Def, false> :
-    public ZfField_BytesVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_BytesVec<Base, false> :
+    public ZfField_BytesVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -2901,11 +2892,7 @@ ZfVFieldType *ZfFieldType_##Code_##Vec<T, Props>::vtype() { \
   return ZmSingleton<ZfVFieldType_##Code_##Vec<T, Props>>::instance(); \
 } \
  \
-inline ZfStruct_::Code_##Vec ZfFieldType_##Code_##Vec_Def() { return {}; } \
-template < \
-  typename Base, \
-  auto Def = ZfFieldType_##Code_##Vec_Def, \
-  bool = Base::ReadOnly> \
+template <typename Base, bool = Base::ReadOnly> \
 struct ZfField_##Code_##Vec : public ZfField_<Base> { \
   template <template <typename> class Override> \
   using Adapt = ZfField_##Code_##Vec<Override<Base>>; \
@@ -2925,20 +2912,22 @@ struct ZfField_##Code_##Vec : public ZfField_<Base> { \
     using namespace ZfStruct_; \
     return {.set_ = {.Type_##Vec = [](void *, Code_##Vec) { }}}; \
   } \
-  static constexpr auto deflt() { return Def(); } \
+  static constexpr Code_##Vec deflt() { \
+    return ZfFieldDeflt<Props, [] { return Code_##Vec{}; }>(); \
+  } \
   static ZfVFieldGet constantFn() { \
     using namespace ZfVFieldConstant; \
     return {.get_ = {.Type_##Vec = [](const void *o) -> Code_##Vec { \
       switch (int(reinterpret_cast<uintptr_t>(o))) { \
-	case Deflt:   return Def(); \
+	case Deflt:   return deflt(); \
 	default:      return {}; \
       } \
     }}}; \
   } \
 }; \
-template <typename Base, auto Def> \
-struct ZfField_##Code_##Vec<Base, Def, false> : \
-    public ZfField_##Code_##Vec<Base, Def, true> { \
+template <typename Base> \
+struct ZfField_##Code_##Vec<Base, false> : \
+    public ZfField_##Code_##Vec<Base, true> { \
   using O = typename Base::O; \
   static ZfVFieldSet setFn() { \
     using namespace ZfStruct_; \
@@ -3003,11 +2992,7 @@ ZfVFieldType *ZfFieldType_FloatVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_FloatVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::FloatVec ZfField_FloatVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_FloatVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_FloatVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_FloatVec<Override<Base>>;
@@ -3026,20 +3011,22 @@ struct ZfField_FloatVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.floatVec = [](void *, FloatVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr FloatVec deflt() {
+    return ZfFieldDeflt<Props, [] { return FloatVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.floatVec = [](const void *o) -> FloatVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_FloatVec<Base, Def, false> :
-    public ZfField_FloatVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_FloatVec<Base, false> :
+    public ZfField_FloatVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -3088,11 +3075,7 @@ ZfVFieldType *ZfFieldType_FixedVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_FixedVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::FixedVec ZfField_FixedVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_FixedVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_FixedVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_FixedVec<Override<Base>>;
@@ -3111,20 +3094,22 @@ struct ZfField_FixedVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.fixedVec = [](void *, FixedVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr FixedVec deflt() {
+    return ZfFieldDeflt<Props, [] { return FixedVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.fixedVec = [](const void *o) -> FixedVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_FixedVec<Base, Def, false> :
-    public ZfField_FixedVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_FixedVec<Base, false> :
+    public ZfField_FixedVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -3173,11 +3158,7 @@ ZfVFieldType *ZfFieldType_DecimalVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_DecimalVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::DecimalVec ZfField_DecimalVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_DecimalVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_DecimalVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DecimalVec<Override<Base>>;
@@ -3196,20 +3177,22 @@ struct ZfField_DecimalVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.decimalVec = [](void *, DecimalVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr DecimalVec deflt() {
+    return ZfFieldDeflt<Props, [] { return DecimalVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.decimalVec = [](const void *o) -> DecimalVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_DecimalVec<Base, Def, false> :
-    public ZfField_DecimalVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_DecimalVec<Base, false> :
+    public ZfField_DecimalVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -3259,11 +3242,7 @@ ZfVFieldType *ZfFieldType_TimeVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_TimeVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::TimeVec ZfField_TimeVec_Def() { return {}; }
-template <
-  typename Base,
-  auto Def = ZfField_TimeVec_Def,
-  bool = Base::ReadOnly>
+template <typename Base, bool = Base::ReadOnly>
 struct ZfField_TimeVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_TimeVec<Override<Base>>;
@@ -3282,20 +3261,22 @@ struct ZfField_TimeVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.timeVec = [](void *, TimeVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr TimeVec deflt() {
+    return ZfFieldDeflt<Props, [] { return TimeVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.timeVec = [](const void *o) -> TimeVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_TimeVec<Base, Def, false> :
-    public ZfField_TimeVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_TimeVec<Base, false> :
+    public ZfField_TimeVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -3345,10 +3326,8 @@ ZfVFieldType *ZfFieldType_DateTimeVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_DateTimeVec<T, Props>>::instance();
 }
 
-inline ZfStruct_::DateTimeVec ZfField_DateTimeVec_Def() { return {}; }
 template <
   typename Base,
-  auto Def = ZfField_DateTimeVec_Def,
   bool = Base::ReadOnly>
 struct ZfField_DateTimeVec : public ZfField_<Base> {
   template <template <typename> class Override>
@@ -3368,20 +3347,22 @@ struct ZfField_DateTimeVec : public ZfField_<Base> {
     using namespace ZfStruct_;
     return {.set_ = {.dateTimeVec = [](void *, DateTimeVec) { }}};
   }
-  static constexpr auto deflt() { return Def(); }
+  static constexpr DateTimeVec deflt() {
+    return ZfFieldDeflt<Props, [] { return DateTimeVec{}; }>();
+  }
   static ZfVFieldGet constantFn() {
     using namespace ZfVFieldConstant;
     return {.get_ = {.dateTimeVec = [](const void *o) -> DateTimeVec {
       switch (int(reinterpret_cast<uintptr_t>(o))) {
-	case Deflt:   return Def();
+	case Deflt:   return deflt();
 	default:      return {};
       }
     }}};
   }
 };
-template <typename Base, auto Def>
-struct ZfField_DateTimeVec<Base, Def, false> :
-    public ZfField_DateTimeVec<Base, Def, true> {
+template <typename Base>
+struct ZfField_DateTimeVec<Base, false> :
+    public ZfField_DateTimeVec<Base, true> {
   using O = typename Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
@@ -3395,107 +3376,18 @@ struct ZfField_DateTimeVec<Base, Def, false> :
 #define ZfField_BaseID_(Axor, ...) ZuPP_Defer(ZfField_BaseID__)Axor
 #define ZfField_BaseID(Base) ZuPP_Defer(ZfField_BaseID_)Base
 
-#define ZfField_TypeName_(Name, ...) Name
-#define ZfField_TypeName(Type) ZuPP_Defer(ZfField_TypeName_)Type
-
-#define ZfField_LambdaArg(Arg) []{ return Arg; }
-
-#define ZfField_TypeArgs_CString(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_String(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Bytes(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Bool(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int8(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt8(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int16(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt16(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int32(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt32(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int64(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt64(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int128(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt128(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Float(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Fixed(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Decimal(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Time(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_DateTime(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UDT(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-
-#define ZfField_TypeArgs_CStringVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_StringVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_BytesVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int8Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt8Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int16Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt16Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int32Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt32Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int64Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt64Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_Int128Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_UInt128Vec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_FloatVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_FixedVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_DecimalVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_TimeVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-#define ZfField_TypeArgs_DateTimeVec(...) \
-  ZuPP_MapComma(ZfField_LambdaArg, __VA_ARGS__)
-
-#define ZfField_TypeArgs_(Name, ...) \
-  __VA_OPT__(, ZfField_TypeArgs_##Name(__VA_ARGS__))
-#define ZfField_TypeArgs(Type) ZuPP_Defer(ZfField_TypeArgs_)Type
-
 #define ZfField(O, ID) ZfField_##O##_##ID
 
 // get field index within fields
 #define ZfFieldIndex(O, ID) (ZuTypeIndex<ZfField(O, ID), ZuFields<O>>{})
 
 // main structure declaration macros ZfStruct()
-#define ZfField_Decl__(O, ID, Base, TypeName, Type) \
+#define ZfField_Decl__(O, ID, Base, Type) \
   ZuField_Decl(O, Base) \
-  using ZfField(O, ID) = \
-    ZfField_##TypeName<ZuField(O, ID) ZfField_TypeArgs(Type)>;
+  using ZfField(O, ID) = ZfField_##Type<ZuField(O, ID)>;
 #define ZfField_Decl_(O, Base, Type) \
   ZuPP_Defer(ZfField_Decl__)(O, \
-      ZuPP_Eval_(ZfField_BaseID(Base)), Base, \
-      ZuPP_Eval_(ZfField_TypeName(Type)), Type)
+      ZuPP_Eval_(ZfField_BaseID(Base)), Base, Type)
 #define ZfField_Decl(O, Args) ZuPP_Defer(ZfField_Decl_)(O, ZuPP_Strip(Args))
 
 #define ZfField_Type_(O, Base, ...) \

@@ -65,7 +65,7 @@ using DBSamples = Samples<DBTelemetry, "Ztc.App.DBSamples">;
 using DBHostSamples = Samples<DBHostTelemetry, "Ztc.App.DBHostSamples">;
 using DBTableSamples = Samples<DBTableTelemetry, "Ztc.App.DBTableSamples">;
 
-using SubKey = ZuTuple<uint8_t, ZuCSpan>;
+using SubKey = uint64_t;
 using DueKey = ZuTuple<ZuTime, uint64_t>;
 
 struct PendingAlert {
@@ -139,7 +139,7 @@ using PendingIdx = ZmRBTreeKV<PendingKey, Pending_ *,
 
 static SubKey subKey(const Subscription_ &sub)
 {
-  return {uint8_t(sub.group), sub.filter.key()};
+  return sub.seqNo;
 }
 
 static DueKey dueKey(const Subscription_ &sub)
@@ -937,7 +937,7 @@ bool App::init(const AppCf &cf)
     App_::warmSamples();
     warmIndices_();
     watch_();
-    m_startTime = Zm::now().sec();
+    m_startTime = Zm::now();
     m_initialized = true;
     return true;
   } catch (...) {
@@ -1008,7 +1008,8 @@ void App::start(CtrlFn fn)
     else
       m_state->pidName << "ztc";
     m_state->pidName << '/' << m_cf.id << ".pid";
-    m_state->telRing.init(ZiRingParams{m_state->telName, 0});
+    m_state->telRing.init(
+      ZiRingParams{m_state->telName, 0}.initial(m_cf.telRingSize));
   }
 
   auto failed = [this, scheduler]() {
@@ -1595,7 +1596,7 @@ void App::appTelemetry_(AppTelemetry &data)
   data.version = m_cf.version;
   data.role = m_cf.role;
   data.startTime = m_startTime;
-  data.ztcver = Z_VERSION;
+  data.ztcver = ZuSemVer{Z_VERSION};
   data.state = ZmEngineState::Running;
   data.degraded = m_state->degraded;
   data.rag = RAG::T(m_rag.load_());
@@ -1697,8 +1698,7 @@ void App::subscribe_(
     Filter_::Filter filter, uint32_t interval,
     uint32_t alertDate, uint64_t alertSeqNo)
 {
-  App_::SubKey key{uint8_t(group), filter.key()};
-  App_::Subscription *sub = m_state->subs.findPtr(key);
+  App_::Subscription *sub = m_state->subs.findPtr(seqNo);
   App_::Pending_ *sameSeq = m_state->pending.findVal(seqNo);
   if (group != fbs::Group::Alert &&
       (((!sub || !sub->running) &&
@@ -1712,7 +1712,6 @@ void App::subscribe_(
       m_state->due[unsigned(sub->group)].delNode(sub);
       sub->due.null();
     }
-    sub->seqNo = seqNo;
     sub->interval = interval;
     sub->dirty = true;
   } else {
@@ -1746,8 +1745,8 @@ void App::unsubscribe_(
     uint64_t seqNo, fbs::Group group,
     const Filter_::Filter &filter)
 {
-  App_::SubKey key{uint8_t(group), filter.key()};
-  if (App_::Subscription *sub = m_state->subs.findPtr(key)) {
+  if (App_::Subscription *sub = m_state->subs.findPtr(seqNo);
+      sub && sub->group == group && sub->filter.key() == filter.key()) {
     if (*sub->due) {
       m_state->due[unsigned(sub->group)].delNode(sub);
       sub->due.null();

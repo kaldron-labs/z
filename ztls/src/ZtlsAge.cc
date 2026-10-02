@@ -34,11 +34,11 @@ ZtEnumImplStruct(AgeKeyType);
 
 enum { X25519KeySize = 32, ChecksumSize = 6 };
 
-static constexpr auto PubX25519 = "age"_Zu;
-static constexpr auto PubHybrid = "age1pq"_Zu;
-static constexpr auto SecX25519 = "age-secret-key-"_Zu;
-static constexpr auto SecHybrid = "age-secret-key-pq-"_Zu;
-static constexpr auto Alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"_Zu;
+static constexpr auto PubX25519 = "age"_z;
+static constexpr auto PubHybrid = "age1pq"_z;
+static constexpr auto SecX25519 = "age-secret-key-"_z;
+static constexpr auto SecHybrid = "age-secret-key-pq-"_z;
+static constexpr auto Alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"_z;
 
 static uint32_t step_(uint32_t sum, unsigned value)
 {
@@ -255,19 +255,19 @@ enum {
   ScryptMaxLogN = 18,
   ScryptMaxMemory = 512 << 20
 };
-static constexpr auto Version = "age-encryption.org/v1\n"_Zu;
-static constexpr auto ScryptLabel = "age-encryption.org/v1/scrypt"_Zu;
-static constexpr auto ScryptArg = "-> scrypt "_Zu;
-static constexpr auto X25519Arg = "-> X25519 "_Zu;
-static constexpr auto HybridArg = "-> mlkem768x25519 "_Zu;
-static constexpr auto SshRSAArg = "-> ssh-rsa "_Zu;
-static constexpr auto SshRSALabel = "age-encryption.org/v1/ssh-rsa"_Zu;
-static constexpr auto SshEDArg = "-> ssh-ed25519 "_Zu;
-static constexpr auto SshEDLabel = "age-encryption.org/v1/ssh-ed25519"_Zu;
-static constexpr auto X25519Info = "age-encryption.org/v1/X25519"_Zu;
-static constexpr auto HybridInfo = "age-encryption.org/mlkem768x25519"_Zu;
-static constexpr auto HeaderInfo = "header"_Zu;
-static constexpr auto PayloadInfo = "payload"_Zu;
+static constexpr auto Version = "age-encryption.org/v1\n"_z;
+static constexpr auto ScryptLabel = "age-encryption.org/v1/scrypt"_z;
+static constexpr auto ScryptArg = "-> scrypt "_z;
+static constexpr auto X25519Arg = "-> X25519 "_z;
+static constexpr auto HybridArg = "-> mlkem768x25519 "_z;
+static constexpr auto SshRSAArg = "-> ssh-rsa "_z;
+static constexpr auto SshRSALabel = "age-encryption.org/v1/ssh-rsa"_z;
+static constexpr auto SshEDArg = "-> ssh-ed25519 "_z;
+static constexpr auto SshEDLabel = "age-encryption.org/v1/ssh-ed25519"_z;
+static constexpr auto X25519Info = "age-encryption.org/v1/X25519"_z;
+static constexpr auto HybridInfo = "age-encryption.org/mlkem768x25519"_z;
+static constexpr auto HeaderInfo = "header"_z;
+static constexpr auto PayloadInfo = "payload"_z;
 ZuDerive(AgeHeaderScratch, (ZtBArray<ZtArrayHeapID<"Ztls.Age.Header",
   ZtArraySharded<true>>>));
 
@@ -344,8 +344,8 @@ ZuUnion<Age::Recipient, ZeException> Age::decodeSSHRecipient(
     size_t start = cursor;
     while (cursor < n && authorizedKey[cursor] > ' ') ++cursor;
     ZuCSpan type{authorizedKey.data() + start, cursor - start};
-    bool rsa = type == "ssh-rsa"_Zu;
-    bool ed = type == "ssh-ed25519"_Zu;
+    bool rsa = type == "ssh-rsa"_z;
+    bool ed = type == "ssh-ed25519"_z;
     if (!rsa && !ed) continue;
     while (cursor < n && authorizedKey[cursor] <= ' ') ++cursor;
     start = cursor;
@@ -389,8 +389,8 @@ ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
     ZuClear(privateKey);
   }};
   if (privateKey.length() > HeaderMaxSize) return invalidOpenSSH_();
-  constexpr auto begin = "-----BEGIN OPENSSH PRIVATE KEY-----"_Zu;
-  constexpr auto end = "-----END OPENSSH PRIVATE KEY-----"_Zu;
+  constexpr auto begin = "-----BEGIN OPENSSH PRIVATE KEY-----"_z;
+  constexpr auto end = "-----END OPENSSH PRIVATE KEY-----"_z;
   size_t start = 0, finish = 0, n = privateKey.length();
   while (start + begin.length() <= n &&
       memcmp(privateKey.data() + start, begin.data(), begin.length()))

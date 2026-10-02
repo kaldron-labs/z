@@ -42,16 +42,24 @@ successful rotation persists the new key. It models interruption between
 durable database commit and Vault publication by restoring the old disposable
 Vault image, then checks same-key retry without ciphertext changes.
 `zumdvault.py` separately checks
-node-file Vault selection, `--once`, first provision, restart without
-environment values, explicit wrong or malformed key, missing stored key,
-two distinct SSF names, missing SSF
-value without partial publication, replacement after restart, and native
-KeyRing failure with a deliberately unsupported D-Bus address. It also blocks
+node-file Vault selection, `--once`, first provision, bootstrap reissue over an
+existing output file with owner-only permissions and truncation, reissue after
+administrator enrollment without changing the identity or assignments, old-link
+and interrupted-ceremony rejection, login with both old and added passkeys,
+capability expiry, symlink rejection,
+file-operation and startup errors routed to the configured log, restart without
+environment values and administrator login across a persisted restart,
+startup without bootstrap CLI options before and after enrollment, rejection of
+missing initial bootstrap options without seeding the issuer, and reissue using
+the persisted administrator without invalidating the grant on missing output,
+explicit repair of dropped administrator string vectors followed by OIDC login,
+explicit wrong or malformed key, missing stored key,
+native KeyRing failure with a deliberately unsupported D-Bus address. It also blocks
 Vault publication after bootstrap and checks that the daemon never reports
 successful activation. Source ordering keeps request admission behind publication.
-The SSF delivery fixture provisions its configured `secretName`, then restarts
-without that environment variable to exercise `env/ssf/<secretName>` loading.
-Changes to that value take effect on restart, not during active delivery.
+The SSF delivery fixture uses client REST registration and timer renewal. It
+checks callback credential encryption, lease expiry, unreachable receiver
+removal, and durable notification delivery across daemon restart.
 These fixtures never use a real home or native credential store.
 
 `zumrestarttest` uses SQLite for both the basic restart and saga recovery
@@ -84,16 +92,16 @@ See the ledger for execution status; written cases are not evidence of a pass.
 This invitation case and the complete 14-scenario SQLite restart suite pass
 against the current schema; detailed commands/results are in the ledger.
 The `memberRecovery` case stages all nine intent/effect boundaries of the
-four-step membership change saga. Recovery must publish the membership's role
-and state replacement together with exactly one membership/app version advance,
-release both owners, and empty the journals. A stale membership snapshot after
+four-step assignment change saga. Recovery must publish the assignment's role
+and state replacement together with exactly one assignment/app version advance,
+release both owners, and empty the journals. A stale assignment snapshot after
 the application reservation must compensate without changing either record.
 The `grantUpdate` case separately verifies persistence of changed role IDs,
 scope, authority source, and provider ID across a drained SQLite reopen;
 it is a metadata test, not external OIDC-provider interoperability coverage.
 `roleRemoval` stages the typed role-deletion payload and every intent/effect cut
 across its 24 expanded steps, reopening SQLite for all 49 durable images.
-The repeated reference branches contain two rows in each of membership, client
+The repeated reference branches contain two rows in each of assignment, client
 access, admin access and role mapping. Separate cases cover empty
 reference sets and a stale second mapping that forces compensation after the
 first mapping has been deleted. Checks include retained unrelated roles and
@@ -234,7 +242,7 @@ delegation suspension/restoration supplies operationQuery's forbidden case.
 Reported400/412/503 counts only identify observed statuses, not complete
 invalid-input, cross-app or inactive-node verification for each route.
 Specific cross-app checks submit the core admin role ID to a business
-app's membership, client-access and admin-delegation endpoints. Rejection
+app's assignment, client-access and admin-delegation endpoints. Rejection
 must preserve target records, app authority versions and the core role catalog.
 The source role ID is verified absent in the target app; identical-ID or
 identical-name catalog isolation is also exercised by the independent orders
@@ -252,10 +260,10 @@ openid all fail with401 invalid_token.
 Suspending the client through REST also makes both UserInfo methods reject its
 otherwise valid token. Restoring that client permits the same unexpired token
 again, without changing the subject or extending its lifetime.
-A second `zum appQuery` process
+A second `zum app list` process
 uses that file to query the core application. This exercises the real CLI's
 PKCE/token/callback and REST wiring, not an actual browser or platform authenticator.
-Application enrollment, local user invitation, membership creation and role
+Application enrollment, local user invitation, assignment creation and role
 assignment use the real CLI as well. Secret-bearing operations must print only
 the delivery-file receipt and write their response into an owner-only file;
 subsequent HTTP queries and retries verify the resulting records and request IDs.
@@ -299,7 +307,7 @@ unauthenticated `/ping` returns401, and queries its single ping action and role,
 with the corresponding scope derived from that role.
 A graceful service restart must leave those catalog records unchanged. This
 scenario now also invites `user`, enrolls its virtual passkey, assigns only the
-ping role (no core membership), registers a public native client, and launches
+ping role (no core assignment), registers a public native client, and launches
 `zumping`. The fixture drives its browser redirect and loopback callback; the
 client must redeem directly through `zumd`, receive pong from `zumpingd`, rotate its refresh token,
 and receive pong again. Repeat login after service restart. This extended user
@@ -375,11 +383,11 @@ incorrect verifier fails even with the correct secret. Its access and ID tokens
 are independently verified, and ordinary client queries must redact credentials.
 Role removal
 narrows refreshed access; restoring the role does not expand that narrowed
-family. Role and state replacements check both membership and application
+family. Role and state replacements check both assignment and application
 versions, missing/stale ETags, and identical PUT retries with unchanged records.
 Zero, unknown and duplicate role references are rejected without changing either
-the membership or application.
-Membership suspension rejects refresh before and after another drained
+the assignment or application.
+Assignment suspension rejects refresh before and after another drained
 SQLite-backed server restart. This is not third-party OIDC conformance or
 external OIDC-provider interoperability coverage.
 This is a virtual-authenticator protocol fixture, not a real-browser,

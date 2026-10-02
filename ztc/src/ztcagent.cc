@@ -29,10 +29,10 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config),	(CLI::Opt<'c'>, CLI::Long<"config">)),	(String,
-	"ztcagent.conf")),
-  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),	(Bool)),
-  (((version),	(CLI::Flag<'V'>, CLI::Long<"version">)),	(Bool)));
+  (((config),	(CLI::Opt<'c'>, CLI::Long<"config">,
+    Deflt<"ztcagent.conf"_z>)),					String),
+  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),		Bool),
+  (((version),	(CLI::Flag<'V'>, CLI::Long<"version">)),	Bool));
 
 static ZmSemaphore done;
 static ZmAtomic<unsigned> interrupted = 0;

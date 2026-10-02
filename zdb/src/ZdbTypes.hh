@@ -66,6 +66,10 @@ ZtEnumNS(ZdbAPI, OpResult, int8_t,
   NotReady,
   Missing);
 
+ZuDerive(String, (ZtString<ZtStringHeapID<"Zdb.String">>));
+ZuDerive(Threads, (ZtArray<String, ZtArrayHeapID<"Zdb.Threads">>));
+ZuDerive(SIDs, (ZtArray<unsigned, ZtArrayHeapID<"Zdb.SIDs">>));
+
 } // Zdb_
 
 using ZdbShard = Zdb_::Shard;

@@ -5,8 +5,11 @@ a deployment-owned image. It uses a Zum service identity and sends an OAuth
 access token only in the WSS upgrade `Authorization` header. Runtime
 credentials and transport state remain in memory.
 
-At startup the agent attaches the shared telemetry ring. Publishers open that
-ring with size zero and do not create or resize it.
+At startup the agent attaches the shared telemetry ring. `Ztc::App` publishers
+can create the ring before the agent starts. Their `telRingSize` setting
+defaults to 2 MiB and supplies its initial capacity; existing rings retain
+their capacity. When a publisher creates the ring, the agent's `telSize`
+setting must match that capacity.
 
 `Ztc::App` publishers use a private `ZmScheduler`, not a network multiplex.
 Their `scheduler` configuration has two isolated destinations by default:
@@ -96,6 +99,15 @@ the authenticated principal and restores the front-end subscription ID on
 subscriptions, and a slow subscription receives one bounded Overflow error
 while other subscriptions continue.
 
+EOS completes a snapshot. It does not remove a publisher, clear cached
+telemetry or end a continuing subscription. Receivers may use it to apply
+snapshot records together or synchronize concurrent updates. The hub preserves
+enqueue order within each subscription, including its snapshot records and EOS.
+A successful one-shot wildcard snapshot ends with one aggregate EOS after all
+publisher snapshots complete; a failed snapshot reports `SnapshotFailed`.
+Agent disconnection reports `AgentGone`; confirmed publisher removal publishes
+`Shutdown`. Neither event is represented by EOS.
+
 Native clients use the bearer directly in the WSS upgrade. Browsers first
 POST the bearer over TLS to the configured session path and then use the
 returned host-only, Secure, HttpOnly, SameSite cookie for WSS. Refresh-family
@@ -146,3 +158,11 @@ union-composition calls for already serialized body offsets, which do not have
 a built-in `ZfbStruct` field representation. In-place sequence mutation remains
 at the agent routing boundary to avoid rebuilding telemetry. These are the
 low-level exceptions; ordinary payload loading and saving use metadata.
+
+`ztchub` requires `ssfDeliveryURL`, the public HTTPS URL of its SSF listener
+(e.g. `https://hub.example:8444/ssf`). It registers that receiver with `zumd`
+using its application workload credentials. Its callback URL identifies the
+receiver, so separate hub instances register independently. It renews on a timer at half the
+granted lease. `ssfLease` requests a lease in seconds (default 300); `zumd`
+caps it with `ssf.leaseMax`. Configure only receiver bounds and callback TLS
+trust on `zumd`; destinations and callback credentials come from registration.

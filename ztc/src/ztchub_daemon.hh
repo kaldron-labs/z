@@ -34,17 +34,6 @@ namespace Ztc {
 
 namespace Hubd_ { struct State; }
 
-namespace HubError {
-  enum T : int8_t {
-    NoAgent = 1,
-    DuplicateSub,
-    BadReq,
-    AgentGone,
-    Overflow,
-    Unauthorized
-  };
-}
-
 namespace HubdState {
   enum T : int8_t { Down, Starting, Publishing, Listening, Up,
     Stopping, Draining };
@@ -62,6 +51,8 @@ struct RouteInfo {
   uint64_t agentGeneration = 0;
   uint64_t requestSeqNo = 0;
   HubString deviceID;
+  bool continuing = false;
+  bool fanout = false;
 };
 
 using HubRouteFn = ZmFn<void(RouteInfo), ZmFnHeapID<"Ztc.Hub.Route">>;
@@ -78,14 +69,14 @@ struct ListenerCf {
 };
 
 ZfStruct(, (ListenerCf, Cf),
-  (((bind),		(Required)),		(String)),
-  (((path),		(Required)),		(String)),
-  (((cert),		(Required)),		(String)),
-  (((key),		(Required)),		(String)),
-  (((browserPath),		(Required)),		(String)),
-  (((origins)),					(StringVec)),
-  (((port),		((Range<1U, 65535U>))),	(UInt32, 443)),
-  (((ssfPort),		((Range<0U, 65535U>))),	(UInt32, 0)));
+  (((bind),		(Required)),				String),
+  (((path),		(Required)),				String),
+  (((cert),		(Required)),				String),
+  (((key),		(Required)),				String),
+  (((browserPath),		(Required)),			String),
+  (((origins)),							StringVec),
+  (((port),		((Range<1U, 65535U>), Deflt<443>)),	UInt32),
+  (((ssfPort),		((Range<0U, 65535U>), Deflt<0>)),	UInt32));
 
 using ListenerCfs = ZtArray<ListenerCf,
   ZtArrayHeapID<"Ztc.Hub.Listeners">>;
@@ -100,6 +91,8 @@ struct HubdCf {
 	HubString	managementClientID;
 	HubString	caPath;
 	HubString	ssfCallbackPath{"/ssf"};
+	HubString	ssfDeliveryURL;
+  uint32_t	ssfLease = 300;
   HubStrings	actions;
   HubStrings	roles;
   // Default workload: 2048 agents, 256 publishers, 32 clients x 32 streams.
@@ -124,33 +117,35 @@ struct HubdCf {
 };
 
 ZfStruct(, (HubdCf, Cf),
-  (((listeners),		(Required)),		(UDT)),
-  (((issuerURL),		(JSON::ID<"issuer">, Required)),	(String)),
-  (((audience),		(Required)),		(String)),
-  (((managementIssuer),	(Required)),		(String)),
-	(((managementURL),	(Required)),		(String)),
-  (((managementClientID),	(Required)),	(String)),
-  (((caPath)),					(String)),
-  (((ssfCallbackPath)),				(String, "/ssf")),
-  (((actions)),					(StringVec)),
-  (((roles)),					(StringVec)),
-  (((maxFrame),		((Range<64U, 1U << 30U>))),	(UInt32, 1U << 16)),
-  (((controlFrames),	((Range<1U, 1U << 20U>))),	(UInt32, 256)),
-  (((telemetryFrames),	((Range<1U, 1U << 20U>))),	(UInt32, 1024)),
-  (((controlBytes),	((Range<64ULL, 1ULL << 40U>))),	(UInt64, 1ULL << 20)),
-  (((telemetryBytes),	((Range<64ULL, 1ULL << 40U>))),	(UInt64, 1ULL << 20)),
-  (((queueMem),	((Range<64ULL, 1ULL << 46U>))),	(UInt64, 1ULL << 32)),
-  (((upgradeTimeout),	((Range<1U, 86400U>))),		(UInt32, 10)),
-  (((idleTimeout),	((Range<1U, 86400U>))),		(UInt32, 60)),
-  (((pingInterval),	((Range<1U, 86400U>))),		(UInt32, 30)),
-  (((closeTimeout),	((Range<1U, 86400U>))),		(UInt32, 5)),
-  (((expectedAgents),	((Range<1U, 1U << 20U>))),		(UInt32, 2048)),
-  (((publishersPerAgent),	((Range<1U, 1U << 20U>))),	(UInt32, 256)),
-  (((activeFrontEnds),	((Range<1U, 1U << 20U>))),		(UInt32, 32)),
-  (((subscriptionsPerFrontEnd),	((Range<1U, 1U << 20U>))),	(UInt32, 32)),
-  (((minRefreshMS),	((Range<1000U, 86400000U>))),	(UInt32, 1000)),
-  (((fanoutSLOMS),	((Range<1U, 86400000U>))),		(UInt32, 200)),
-  (((schedulerTurnWork),	((Range<1U, 1U << 20U>))),	(UInt32, 64)));
+  (((listeners),		(Required)),					UDT),
+  (((issuerURL),		(JSON::ID<"issuer">, Required)),		String),
+  (((audience),		(Required)),						String),
+  (((managementIssuer),	(Required)),						String),
+	(((managementURL),	(Required)),					String),
+  (((managementClientID),	(Required)),					String),
+  (((caPath)),									String),
+  (((ssfDeliveryURL), (Required)),						String),
+  (((ssfLease), ((Range<2U, 86400U>), Deflt<300>)),				UInt32),
+  (((ssfCallbackPath), (Deflt<"/ssf"_z>)),					String),
+  (((actions)),									StringVec),
+  (((roles)),									StringVec),
+  (((maxFrame),		((Range<64U, 1U << 30U>), Deflt<1U << 16>)),		UInt32),
+  (((controlFrames),	((Range<1U, 1U << 20U>), Deflt<256>)),			UInt32),
+  (((telemetryFrames),	((Range<1U, 1U << 20U>), Deflt<1024>)),			UInt32),
+  (((controlBytes),	((Range<64ULL, 1ULL << 40U>), Deflt<1ULL << 20>)),	UInt64),
+  (((telemetryBytes),	((Range<64ULL, 1ULL << 40U>), Deflt<1ULL << 20>)),	UInt64),
+  (((queueMem),	((Range<64ULL, 1ULL << 46U>), Deflt<1ULL << 32>)),		UInt64),
+  (((upgradeTimeout),	((Range<1U, 86400U>), Deflt<10>)),			UInt32),
+  (((idleTimeout),	((Range<1U, 86400U>), Deflt<60>)),			UInt32),
+  (((pingInterval),	((Range<1U, 86400U>), Deflt<30>)),			UInt32),
+  (((closeTimeout),	((Range<1U, 86400U>), Deflt<5>)),			UInt32),
+  (((expectedAgents),	((Range<1U, 1U << 20U>), Deflt<2048>)),			UInt32),
+  (((publishersPerAgent),	((Range<1U, 1U << 20U>), Deflt<256>)),		UInt32),
+  (((activeFrontEnds),	((Range<1U, 1U << 20U>), Deflt<32>)),			UInt32),
+  (((subscriptionsPerFrontEnd),	((Range<1U, 1U << 20U>), Deflt<32>)),		UInt32),
+  (((minRefreshMS),	((Range<1000U, 86400000U>), Deflt<1000>)),		UInt32),
+  (((fanoutSLOMS),	((Range<1U, 86400000U>), Deflt<200>)),			UInt32),
+  (((schedulerTurnWork),	((Range<1U, 1U << 20U>), Deflt<64>)),		UInt32));
 
 class Hubd {
 public:
@@ -195,7 +190,8 @@ public:
   bool removeSession(uint64_t sessionID);
   bool removeSession(uint64_t sessionID, HubRouteFn);
   bool addSubscription(uint64_t frontEndID, uint64_t subID,
-    ZuCSpan deviceID, uint64_t &agentSessionID, uint64_t &agentGeneration,
+    ZuCSpan deviceID, const Request &request,
+    uint64_t &agentSessionID, uint64_t &agentGeneration,
     uint64_t &requestSeqNo, HubError::T &);
   bool removeSubscription(uint64_t frontEndID, uint64_t subID);
   bool removeSubscription(uint64_t frontEndID, uint64_t subID, HubRouteFn);
@@ -208,8 +204,6 @@ public:
   bool appUnsubscribe(uint64_t frontEndID, uint64_t subID);
   bool route(uint64_t agentSessionID, uint64_t agentGeneration,
     uint64_t requestSeqNo, RouteInfo &) const;
-  bool completeRoute(uint64_t agentSessionID, uint64_t agentGeneration,
-    uint64_t requestSeqNo);
   bool sendAgent(uint64_t sessionID, uint64_t generation, HubFrame);
   bool sendFrontend(uint64_t sessionID, HubFrame);
   unsigned disconnectAgent(uint64_t sessionID, uint64_t generation);

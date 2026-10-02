@@ -150,7 +150,7 @@ void DB::init(
       config.sids.push(config.sid);
     else {
       config.sids.size(config.threads.length());
-      config.threads.all([mx, &config](const CfString &thread) {
+      config.threads.all([mx, &config](const String &thread) {
 	auto sid = mx->sid(thread);
 	if (invalidSID(mx, sid))
 	  throw ZeEXCEPT(Fatal, "Zdb",

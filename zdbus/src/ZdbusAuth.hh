@@ -40,7 +40,7 @@ public:
     auto decimal = ZtScratch(UIDScratch, boxed.length());
     decimal << boxed;
     sink << char(0) << "AUTH EXTERNAL ";
-    constexpr auto digits = "0123456789abcdef"_Zu;
+    constexpr auto digits = "0123456789abcdef"_z;
     for (unsigned i = 0, n = decimal.length(); i < n; ++i) {
       uint8_t c = decimal[i];
       sink << digits[c >> 4] << digits[c & 15];

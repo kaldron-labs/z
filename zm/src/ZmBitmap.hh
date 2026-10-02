@@ -95,6 +95,8 @@ public:
     return *this;
   }
   Bitmap &operator =(Bitmap &&b) noexcept {
+    if (this == &b) return *this;
+    if (m_map) hwloc_bitmap_free(m_map);
     m_map = b.m_map;
     b.m_map = 0;
     return *this;

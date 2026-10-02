@@ -27,7 +27,7 @@ ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 struct IDReply {
   ZtString<ZtStringHeapID<"ZdbusTest.ID">> value;
 };
-ZfStruct(, IDReply, (((value), (Mutable)), (String)));
+ZfStruct(, IDReply, (((value), (Mutable)), String));
 ZfStructRender(, IDReply, DBUS, value);
 
 struct ErrorBody {
@@ -35,8 +35,8 @@ struct ErrorBody {
   uint32_t code;
 };
 ZfStruct(, ErrorBody,
-  (((message), (Mutable)), (String)),
-  (((code), (Mutable)), (UInt32)));
+  (((message), (Mutable)),	String),
+  (((code), (Mutable)),		UInt32));
 ZfStructRender(, ErrorBody, DBUS, code, message);
 
 using GetIdHeaders = ZuTypeList<
@@ -521,7 +521,7 @@ static void client()
         "signal subscriptions were not registered");
 
       constexpr auto matchRule =
-        "type='signal',interface='org.example.ZdbusTest'"_Zu;
+        "type='signal',interface='org.example.ZdbusTest'"_z;
       cli.addMatch(matchRule, [&matched](Zdbus_::CallResult result) {
         if (result && result.info.type ==
             Zdbus_::MessageType::MethodReturn &&

@@ -45,8 +45,8 @@ struct Account {
 };
 
 ZfbStruct(, Account,
-  (((id),	(Ctor<0>, Keys<0>)),	(UInt64)),
-  (((balance),	(Ctor<1>, Mutable)),	(Int64)));
+  (((id),	(Ctor<0>, Keys<0>)),	UInt64),
+  (((balance),	(Ctor<1>, Mutable)),	Int64));
 
 ZfbRoot(Account);
 
@@ -66,11 +66,11 @@ struct Transfer {
 };
 
 ZfbStruct(, Transfer,
-  (((id),	(Ctor<0>, Keys<0>)),	(UInt64)),
-  (((fromID),	(Ctor<1>)),		(UInt64)),
-  (((toID),	(Ctor<2>)),		(UInt64)),
-  (((amount),	(Ctor<3>)),		(Int64)),
-  (((status),	(Ctor<4>, Enum<TransferStatus::Map>, Mutable)), (Int8)));
+  (((id),	(Ctor<0>, Keys<0>)),				UInt64),
+  (((fromID),	(Ctor<1>)),					UInt64),
+  (((toID),	(Ctor<2>)),					UInt64),
+  (((amount),	(Ctor<3>)),					Int64),
+  (((status),	(Ctor<4>, Enum<TransferStatus::Map>, Mutable)),	Int8));
 
 ZfbRoot(Transfer);
 
@@ -181,10 +181,10 @@ using BalanceSteps = ZuTypeList<
 ZuAssert((ZuIsSame<Zdb_::SagaSteps<BalanceTransfer>, BalanceSteps>{}));
 
 ZfbStruct(, BalanceTransfer,
-  (((transferID),	(Ctor<0>)),	(UInt64)),
-  (((fromID),		(Ctor<1>)),	(UInt64)),
-  (((toID),		(Ctor<2>)),	(UInt64)),
-  (((amount),		(Ctor<3>)),	(Int64)));
+  (((transferID),	(Ctor<0>)),	UInt64),
+  (((fromID),		(Ctor<1>)),	UInt64),
+  (((toID),		(Ctor<2>)),	UInt64),
+  (((amount),		(Ctor<3>)),	Int64));
 
 ZdbSagaDerive(SagaCatalog, BalanceTransfer);
 ZdbSagaImpl(SagaCatalog, BalanceTransfer)

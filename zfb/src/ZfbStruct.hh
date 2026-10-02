@@ -9,9 +9,9 @@
 
 // Syntax
 // ------
-// (((Accessor)[, (Props...)]), (Type[, Args...]))
+// (((Accessor)[, (Props...)]), Type)
 // 
-// Example: (((id, Rd), (Ctor<0>, Keys<0>)), (String))
+// Example: (((id, Rd), (Ctor<0>, Keys<0>, Deflt<"default"_z>)),	String)
 
 // macro DSL syntax is identical to that for ZfStruct, with the Type
 // extended to specify an extensible flatbuffers <-> C++ mapping
@@ -1092,10 +1092,10 @@ namespace ZtBitmap_ {
 ZfbTransform::IP ZfbTransformer_(ZiIP *);
 inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
 
-#define ZfbField_Decl__(O_, ID, Base_, TypeName, Type) \
+#define ZfbField_Decl__(O_, ID, Base_, Type) \
   ZuField_Decl(O_, Base_) \
   using ZfField(O_, ID##__) = \
-    ZfField_##TypeName<ZuField(O_, ID) ZfField_TypeArgs(Type)>; \
+    ZfField_##Type<ZuField(O_, ID)>; \
   template < \
     typename O = O_, typename Base = ZfField(O_, ID##__), typename Under = O, \
     typename _ = void> \
@@ -1135,8 +1135,7 @@ inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
   using ZfField(O_, ID) = ZfbFieldT<O_, ZfField(O_, ID##_)<>>;
 #define ZfbField_Decl_(O, Base, Type) \
   ZuPP_Defer(ZfbField_Decl__)(O, \
-      ZuPP_Eval__(ZfField_BaseID(Base)), Base, \
-      ZuPP_Eval__(ZfField_TypeName(Type)), Type)
+      ZuPP_Eval__(ZfField_BaseID(Base)), Base, Type)
 #define ZfbField_Decl(O, Args) ZuPP_Defer(ZfbField_Decl_)(O, ZuPP_Strip(Args))
 
 // ZfbStruct preamble

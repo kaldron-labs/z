@@ -219,7 +219,7 @@ private:
     };
 
     GType gtype_ = g_type_register_static(
-	G_TYPE_OBJECT, "TreeModel", &gtype_info, (GTypeFlags)0);
+	G_TYPE_OBJECT, typeName(), &gtype_info, (GTypeFlags)0);
     g_type_add_interface_static(gtype_,
 	GTK_TYPE_TREE_MODEL, &tree_model_info);
     g_type_add_interface_static(gtype_,
@@ -736,7 +736,8 @@ namespace TreeHierarchy {
     template <typename L>
     bool child(gint, L &&l) const { return false; }
     template <typename L>
-    bool descend(const gint *, unsigned, L &&l) const {
+    bool descend(const gint *, unsigned n, L &&l) const {
+      if (n) return false;
       l(impl());
       return true;
     }
@@ -891,25 +892,25 @@ namespace TreeHierarchy {
     }
     gboolean get_iter(GtkTreeIter *iter_, GtkTreePath *path) {
       gint depth = gtk_tree_path_get_depth(path);
-      if (!depth) return false;
+      if (depth <= 0 || depth > Depth) return false;
       gint *indices = gtk_tree_path_get_indices(path);
       return impl()->root()->descend(indices, depth, [iter_](auto ptr) {
 	using T = ZuDecay<decltype(*ptr)>;
 	if (!ptr) return false;
-	*Iter::template new_<T *>(iter_) = const_cast<T *>(ptr);
+	new (iter_) Iter{const_cast<T *>(ptr)};
 	return true;
       });
     }
     GtkTreePath *get_path(GtkTreeIter *iter_) {
       auto iter = reinterpret_cast<Iter *>(iter_);
-      gint depth;
-      gint indices[Depth] = { 0 };
-      iter->cdispatch([&depth, indices](auto, auto ptr) mutable {
+      gint depth = 0;
+      gint indices[Depth];
+      iter->cdispatch([&depth, &indices](auto, auto ptr) {
 	using T = ZuDecay<decltype(*ptr)>;
 	depth = T::Depth;
 	if (ZuLikely(ptr)) ptr->template ascend<Impl>(indices);
       });
-      return gtk_tree_path_new_from_indicesv(indices, depth + 1);
+      return gtk_tree_path_new_from_indicesv(indices, depth);
     }
     void get_value(GtkTreeIter *iter_, gint i, ZGtk::Value *value) {
       auto iter = reinterpret_cast<Iter *>(iter_);
@@ -924,7 +925,7 @@ namespace TreeHierarchy {
 	return ptr->template next<Impl>([iter](auto ptr) {
 	  using T = ZuDecay<decltype(*ptr)>;
 	  if (!ptr) return false;
-	  *iter = const_cast<T *>(ptr);
+	  new (iter) Iter{const_cast<T *>(ptr)};
 	  return true;
 	});
       });
@@ -934,7 +935,7 @@ namespace TreeHierarchy {
 	return impl()->root()->child(0, [iter_](auto ptr) {
 	  using T = ZuDecay<decltype(*ptr)>;
 	  if (!ptr) return false;
-	  *Iter::template new_<T *>(iter_) = const_cast<T *>(ptr);
+	  new (iter_) Iter{const_cast<T *>(ptr)};
 	  return true;
 	});
       auto parent = reinterpret_cast<Iter *>(parent_);
@@ -943,17 +944,17 @@ namespace TreeHierarchy {
 	return ptr->child(0, [iter_](auto ptr) {
 	  using T = ZuDecay<decltype(*ptr)>;
 	  if (!ptr) return false;
-	  *Iter::template new_<T *>(iter_) = const_cast<T *>(ptr);
+	  new (iter_) Iter{const_cast<T *>(ptr)};
 	  return true;
 	});
       });
     }
     gboolean iter_has_child(GtkTreeIter *iter_) {
-      if (!iter_) return true;
+      if (!iter_) return impl()->root()->nChildren() != 0;
       auto iter = reinterpret_cast<Iter *>(iter_);
       return iter->cdispatch([](auto, auto ptr) {
 	if (!ptr) return false;
-	return ptr->hasChild();
+	return ptr->nChildren() != 0;
       });
     }
     gint iter_n_children(GtkTreeIter *iter_) {
@@ -969,16 +970,16 @@ namespace TreeHierarchy {
 	return impl()->root()->child(i, [iter_](auto ptr) {
 	  using T = ZuDecay<decltype(*ptr)>;
 	  if (!ptr) return false;
-	  *Iter::template new_<T *>(iter_) = const_cast<T *>(ptr);
+	  new (iter_) Iter{const_cast<T *>(ptr)};
 	  return true;
 	});
       auto parent = reinterpret_cast<Iter *>(parent_);
-      return parent->cdispatch([iter_](auto I, auto ptr) {
+      return parent->cdispatch([iter_, i](auto, auto ptr) {
 	if (!ptr) return false;
-	return ptr->child(I, [iter_](auto ptr) {
+	return ptr->child(i, [iter_](auto ptr) {
 	  using T = ZuDecay<decltype(*ptr)>;
 	  if (!ptr) return false;
-	  *Iter::template new_<T *>(iter_) = const_cast<T *>(ptr);
+	  new (iter_) Iter{const_cast<T *>(ptr)};
 	  return true;
 	});
       });
@@ -990,7 +991,7 @@ namespace TreeHierarchy {
 	auto parent = ptr->template parent<Impl>();
 	using T = ZuDecay<decltype(*parent)>;
 	if (!parent) return false;
-	*Iter::template new_<T *>(iter_) = const_cast<T *>(parent);
+	new (iter_) Iter{const_cast<T *>(parent)};
 	return true;
       });
     }
@@ -1010,13 +1011,23 @@ namespace TreeHierarchy {
       // emit #GtkTreeModel::row-inserted
       gtk_tree_model_row_inserted(GTK_TREE_MODEL(this), path, &iter_);
       gtk_tree_path_free(path);
+      if constexpr (Parent::Depth > 0) {
+	if (parent->nChildren() == 1) {
+	  GtkTreeIter parentIter;
+	  new (&parentIter) Iter{parent};
+	  auto parentPath = impl()->get_path(&parentIter);
+	  gtk_tree_model_row_has_child_toggled(
+	      GTK_TREE_MODEL(this), parentPath, &parentIter);
+	  gtk_tree_path_free(parentPath);
+	}
+      }
     }
 
     template <typename Ptr>
     void updated(Ptr *ptr) {
       gint indices[Depth];
       ptr->template ascend<Impl>(indices);
-      auto path = gtk_tree_path_new_from_indicesv(indices, Ptr::Depth + 1);
+      auto path = gtk_tree_path_new_from_indicesv(indices, Ptr::Depth);
       GtkTreeIter iter_;
       new (&iter_) Iter{ptr};
       // emit #GtkTreeModel::row-changed
@@ -1026,13 +1037,34 @@ namespace TreeHierarchy {
 
     template <typename Ptr>
     void del(Ptr *ptr) {
+      // Retire descendants first so views release each expanded subtree.
+      if constexpr (Ptr::hasChild())
+	while (ptr->nChildren())
+	  ptr->child(ptr->nChildren() - 1, [this](auto child) {
+	    using T = ZuDecay<decltype(*child)>;
+	    this->del(const_cast<T *>(child));
+	  });
       gint indices[Depth];
       ptr->template ascend<Impl>(indices);
-      auto path = gtk_tree_path_new_from_indicesv(indices, Ptr::Depth + 1);
-      // emit #GtkTreeModel::row-deleted - invalidates iterators
+      auto path = gtk_tree_path_new_from_indicesv(indices, Ptr::Depth);
+      auto parent = [&]() {
+	if constexpr (Ptr::Depth == 1) return impl()->root();
+	else return ptr->template parent<Impl>();
+      }();
+      parent->del(ptr);
+      // Emit only after storage and sibling paths reflect the deletion.
       gtk_tree_model_row_deleted(GTK_TREE_MODEL(this), path);
       gtk_tree_path_free(path);
-      ptr->template parent<Impl>()->del(ptr);
+      if constexpr (Ptr::Depth > 1) {
+	if (!parent->nChildren()) {
+	  GtkTreeIter parentIter;
+	  new (&parentIter) Iter{parent};
+	  auto parentPath = impl()->get_path(&parentIter);
+	  gtk_tree_model_row_has_child_toggled(
+	      GTK_TREE_MODEL(this), parentPath, &parentIter);
+	  gtk_tree_path_free(parentPath);
+	}
+      }
     }
   };
 } // TreeHierarchy

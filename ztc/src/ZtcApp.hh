@@ -72,19 +72,21 @@ struct AppSchedCf {
 };
 
 ZfStruct(ZtcAPI, (AppSchedCf, Cf),
-  (((nThreads),	((Range<1U, 1024U>))),			(UInt32, 2)),
-  (((stackSize),((Range<16384U, 2U<<20U>))),		(UInt32)),
-  (((priority),	(Enum<ZmThreadPriority::Map>)),		(Int8, ZmThreadPriority::Normal)),
-  (((partition)),					(UInt32)),
-  (((quantum)),						(Float)),
-  (((queueSize),((Range<8192U, 1U<<30U>))),		(UInt32)),
-  (((ll)),						(Bool)),
-  (((spin),	((Range<0U, 1U<<30U>))),		(UInt32)),
-  (((timeout),	((Range<0U, 3600U>))),			(UInt32)));
+  (((nThreads),	((Range<1U, 1024U>), Deflt<2>)),	UInt32),
+  (((stackSize),((Range<16384U, 2U<<20U>))),		UInt32),
+  (((priority),	(Enum<ZmThreadPriority::Map>,
+    Deflt<ZmThreadPriority::Normal>)),			Int8),
+  (((partition)),					UInt32),
+  (((quantum)),						Float),
+  (((queueSize),((Range<8192U, 1U<<30U>))),		UInt32),
+  (((ll)),						Bool),
+  (((spin),	((Range<0U, 1U<<30U>))),		UInt32),
+  (((timeout),	((Range<0U, 3600U>))),			UInt32));
 
 struct AppCf {
   enum {
     DefltReqSize = 1U<<21, // margin over the 1 MiB maximum frame
+    DefltTelRingSize = 1U<<21, // same default capacity as the collector ring
     DefltReqTimeout = 1,
     DefltMaxFrame = 1U<<20,
     DefltMaxFilter = 1024,
@@ -102,6 +104,7 @@ struct AppCf {
   ZuID		version{"10.0.0"};
   ZuID		role{"server"};
   unsigned	reqSize = DefltReqSize;
+  unsigned	telRingSize = DefltTelRingSize;
   unsigned	reqTimeout = DefltReqTimeout;
   bool		reqLL = false;
   unsigned	maxFrame = DefltMaxFrame;
@@ -124,28 +127,35 @@ struct AppCf {
 };
 
 ZfStruct(ZtcAPI, (AppCf, Cf),
-  (((id)),						(String)),
-  (((version)),						(String)),
-  (((role)),						(String)),
-  (((reqSize),		((Range<64U, 1U<<30U>))),	(UInt32, 1U<<21U)),
-  (((reqTimeout),	((Range<1U, 3600U>))),		(UInt32, 1)),
-  (((reqLL)),						(Bool)),
-  (((maxFrame),		((Range<64U, 1U<<30U>))),	(UInt32, 1U<<20U)),
-  (((maxFilter),	((Range<1U, 1U<<20U>))),	(UInt32, 1024)),
-  (((minInterval),	((Range<1U, 3600000U>))),	(UInt32, 100)),
-  (((maxInterval),	((Range<1U, 3600000U>))),	(UInt32, 3600000)),
-  (((maxPending),	((Range<1U, 65536U>))),		(UInt32, 64)),
-  (((maxSubs),		((Range<1U, 65536U>))),		(UInt32, 64)),
-  (((maxAlertMsg),	((Range<1U, 1U<<20U>))),	(UInt32, 65536)),
-  (((alertTail),	((Range<1U, 1U<<20U>))),	(UInt32, 4096)),
-  (((alertReplay),	((Range<1U, 1U<<20U>))),	(UInt32, 1024)),
-  (((alertRetention),	((Range<1U, 3660U>))),		(UInt32, 7)),
-  (((alertPrefix)),					(String, "alerts")),
-  (((scheduler)),					(UDT)),
-  (((timer)),						(String, "timer")),
-  (((worker)),						(String, "worker")),
-  (((timerThread),	((Range<1U, 1024U>))),		(UInt32, 1)),
-  (((workerThread),	((Range<1U, 1024U>))),		(UInt32, 2)));
+  (((id)),									String),
+  (((version)),									String),
+  (((role)),									String),
+  (((reqSize),		((Range<64U, 1U<<30U>), Deflt<AppCf::DefltReqSize>)),	UInt32),
+  (((reqTimeout),	((Range<1U, 3600U>), Deflt<AppCf::DefltReqTimeout>)),	UInt32),
+  (((telRingSize),	((Range<64U, 1U<<30U>),
+    Deflt<AppCf::DefltTelRingSize>)),						UInt32),
+  (((reqLL)),									Bool),
+  (((maxFrame),		((Range<64U, 1U<<30U>), Deflt<AppCf::DefltMaxFrame>)),	UInt32),
+  (((maxFilter),	((Range<1U, 1U<<20U>), Deflt<AppCf::DefltMaxFilter>)),	UInt32),
+  (((minInterval),	((Range<1U, 3600000U>),
+    Deflt<AppCf::DefltMinInterval>)),						UInt32),
+  (((maxInterval),	((Range<1U, 3600000U>),
+    Deflt<AppCf::DefltMaxInterval>)),						UInt32),
+  (((maxPending),	((Range<1U, 65536U>), Deflt<AppCf::DefltMaxPending>)),	UInt32),
+  (((maxSubs),		((Range<1U, 65536U>), Deflt<AppCf::DefltMaxSubs>)),	UInt32),
+  (((maxAlertMsg),	((Range<1U, 1U<<20U>),
+    Deflt<AppCf::DefltMaxAlertMsg>)),						UInt32),
+  (((alertTail),	((Range<1U, 1U<<20U>), Deflt<AppCf::DefltAlertTail>)),	UInt32),
+  (((alertReplay),	((Range<1U, 1U<<20U>),
+    Deflt<AppCf::DefltAlertReplay>)),						UInt32),
+  (((alertRetention),	((Range<1U, 3660U>),
+    Deflt<AppCf::DefltAlertRetention>)),					UInt32),
+  (((alertPrefix), (Deflt<"alerts"_z>)),					String),
+  (((scheduler)),								UDT),
+  (((timer), (Deflt<"timer"_z>)),						String),
+  (((worker), (Deflt<"worker"_z>)),						String),
+  (((timerThread),	((Range<1U, 1024U>), Deflt<1>)),			UInt32),
+  (((workerThread),	((Range<1U, 1024U>), Deflt<2>)),			UInt32));
 
 class ZtcAPI App {
 public:
@@ -284,7 +294,7 @@ private:
   DBHostIdx			m_dbHostIdx;
   DBTableIdx			m_dbTableIdx;
   mutable ZuUnion<void, ZmScheduler>	m_scheduler;
-  int64_t			m_startTime = 0;
+  ZuDateTime		m_startTime;
   ZmAtomic<unsigned>		m_rag = RAG::Off;
   CtrlLock			m_ctrlLock;
   CtrlFn			m_startFn;

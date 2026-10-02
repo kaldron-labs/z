@@ -25,7 +25,7 @@ struct RefreshTable;
 struct SessionTable;
 struct ConsentTable;
 struct AppTable;
-struct MembershipTable;
+struct AssignmentTable;
 struct ActionTable;
 struct RoleTable;
 struct ClientTable;
@@ -48,7 +48,7 @@ struct DBContext_ : public Heap, public ZmPolymorph  {
   AppTable		*apps = nullptr;
   UserTable		*users = nullptr;
   CredTable		*creds = nullptr;
-  MembershipTable	*memberships = nullptr;
+  AssignmentTable	*assignments = nullptr;
   ActionTable		*actions = nullptr;
   RoleTable		*roles = nullptr;
   ClientTable		*clients = nullptr;

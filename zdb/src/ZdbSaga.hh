@@ -99,11 +99,11 @@ struct SagaData {
 };
 
 ZfbStruct(ZdbAPI, SagaData,
-  (((type),	(Ctor<0>, Keys<0>)),	(String)),
-  (((id),	(Ctor<1>, Keys<0>)),	(UInt128)),
-  (((shard),	(Ctor<2>)),		(UInt8)),
-  (((data),	(Ctor<3>)),		(Bytes)),
-  (((deadline),	(Ctor<4>)),		(Time)));
+  (((type),	(Ctor<0>, Keys<0>)),	String),
+  (((id),	(Ctor<1>, Keys<0>)),	UInt128),
+  (((shard),	(Ctor<2>)),		UInt8),
+  (((data),	(Ctor<3>)),		Bytes),
+  (((deadline),	(Ctor<4>)),		Time));
 
 ZfbRoot(SagaData);
 
@@ -119,11 +119,11 @@ struct SagaStep {
 };
 
 ZfbStruct(ZdbAPI, SagaStep,
-  (((type),	(Ctor<0>, Keys<0>)),	(String)),
-  (((id),	(Ctor<1>, Keys<0>)),	(UInt128)),
-  (((step),	(Ctor<2>, Keys<0>)),	(UInt32)),
-  (((shard),	(Ctor<3>)),		(UInt8)),
-  (((un),	(Ctor<4>)),		(UInt64)));
+  (((type),	(Ctor<0>, Keys<0>)),	String),
+  (((id),	(Ctor<1>, Keys<0>)),	UInt128),
+  (((step),	(Ctor<2>, Keys<0>)),	UInt32),
+  (((shard),	(Ctor<3>)),		UInt8),
+  (((un),	(Ctor<4>)),		UInt64));
 
 ZfbRoot(SagaStep);
 
@@ -142,11 +142,11 @@ struct SagaTypeStep {
 };
 
 ZfbStruct(ZdbAPI, SagaTypeStep,
-  (((type),	(Ctor<0>, Keys<0>)),		(String)),
-  (((step),	(Ctor<2>, Keys<0>)),		(UInt32)),
-  (((table),	(Ctor<1>)),			(String)),
-  (((op),	(Ctor<3>, Enum<SagaOp::Map>)),	(Int8)),
-  (((repeat),	(Ctor<4>)),			(Bool)));
+  (((type),	(Ctor<0>, Keys<0>)),		String),
+  (((step),	(Ctor<2>, Keys<0>)),		UInt32),
+  (((table),	(Ctor<1>)),			String),
+  (((op),	(Ctor<3>, Enum<SagaOp::Map>)),	Int8),
+  (((repeat),	(Ctor<4>)),			Bool));
 
 ZfbRoot(SagaTypeStep);
 

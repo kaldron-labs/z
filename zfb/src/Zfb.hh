@@ -196,7 +196,7 @@ namespace Save {
   inline Offset<Vector<Offset<T>>> vector(Builder &fbb, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmScratch(Offset<T>, n);
-    if (!buf) return {};
+    if (!buf.data()) return {};
     push_(buf.data(), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
     auto r = fbb.CreateVector(buf.data(), n);
     return r;
@@ -206,7 +206,7 @@ namespace Save {
   inline Offset<Vector<Offset<T>>> lvector(Builder &fbb, L &&l, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmScratch(Offset<T>, n);
-    if (!buf) return {};
+    if (!buf.data()) return {};
     lpush_(buf.data(), ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
     auto r = fbb.CreateVector(buf.data(), n);
     return r;
@@ -215,7 +215,7 @@ namespace Save {
   template <typename T, typename Builder, typename L>
   inline Offset<Vector<Offset<T>>> vectorIter(Builder &fbb, unsigned n, L &&l) {
     auto buf = ZmScratch(Offset<T>, n);
-    if (!buf) return {};
+    if (!buf.data()) return {};
     for (unsigned i = 0; i < n; i++) buf[i] = ZuFwd<L>(l)(fbb, i);
     auto r = fbb.CreateVector(buf.data(), n);
     return r;
@@ -236,7 +236,7 @@ namespace Save {
   inline Offset<Vector<Offset<T>>> keyVec(Builder &fbb, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmScratch(Offset<T>, n);
-    if (!buf) return {};
+    if (!buf.data()) return {};
     push_(buf.data(), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
     auto r = fbb.CreateVectorOfSortedTables(buf.data(), n);
     return r;
@@ -246,7 +246,7 @@ namespace Save {
   inline Offset<Vector<Offset<T>>> lkeyVec(Builder &fbb, L &&l, Args &&...args) {
     auto n = ZuUnsigned<sizeof...(Args)>{};
     auto buf = ZmScratch(Offset<T>, n);
-    if (!buf) return {};
+    if (!buf.data()) return {};
     lpush_(buf.data(), ZuFwd<L>(l), ZuUnsigned<0>{}, ZuFwd<Args>(args)...);
     auto r = fbb.CreateVectorOfSortedTables(buf.data(), n);
     return r;
@@ -255,7 +255,7 @@ namespace Save {
   template <typename T, typename Builder, typename L>
   inline Offset<Vector<Offset<T>>> keyVecIter(Builder &fbb, unsigned n, L &&l) {
     auto buf = ZmScratch(Offset<T>, n);
-    if (!buf) return {};
+    if (!buf.data()) return {};
     for (unsigned i = 0; i < n; i++) buf[i] = ZuFwd<L>(l)(fbb, i);
     auto r = fbb.CreateVectorOfSortedTables(buf.data(), n);
     return r;

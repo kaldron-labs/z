@@ -29,7 +29,7 @@ namespace ZuFieldProp::YAML {
 
 struct YAMLNested { int value = 0; };
 ZfStruct(, (YAMLNested, YAML),
-  (((value), (Ctor<0>)), (Int32)));
+  (((value), (Ctor<0>)),	Int32));
 
 ZuDerive(YAMLMapKey, (ZtString<ZtStringHeapID<"ZfTest.YAMLMapKey">>));
 
@@ -45,12 +45,12 @@ inline ZfYAML::AsMap<ZfFieldTC::UDT> ZfYAML_Fmt(YAMLObjMap *);
 
 struct YAMLMapHolder { YAMLIntMapRef map; };
 ZfStruct(, (YAMLMapHolder, YAML),
-  (((map), (Ctor<0>, Mutable)), (UDT)));
+  (((map), (Ctor<0>, Mutable)),	UDT));
 
 struct YAMLUnionA { int foo = 0; };
 struct YAMLUnionB { int bar = 0; };
-ZfStruct(, (YAMLUnionA, YAML), (((foo), (Ctor<0>, Mutable)), (Int32)));
-ZfStruct(, (YAMLUnionB, YAML), (((bar), (Ctor<0>, Mutable)), (Int32)));
+ZfStruct(, (YAMLUnionA, YAML), (((foo), (Ctor<0>, Mutable)), Int32));
+ZfStruct(, (YAMLUnionB, YAML), (((bar), (Ctor<0>, Mutable)), Int32));
 struct YAMLUnionArray : public ZtArray<int> {
   using ZtArray<int>::ZtArray;
   friend ZfYAML::AsArray<ZfFieldTC::Int32> ZfYAML_Fmt(YAMLUnionArray *);
@@ -70,7 +70,7 @@ struct YAMLUnionHolder {
     YAMLIntMapRef, YAMLUnionArray, YAMLUnionText> value;
 };
 ZfStruct(, (YAMLUnionHolder, YAML),
-  (((value), (Ctor<0>, Mutable)), (UDT)));
+  (((value), (Ctor<0>, Mutable)),	UDT));
 
 struct YAMLPtrObj_ : public ZmObject {
   int value = 0;
@@ -78,7 +78,7 @@ struct YAMLPtrObj_ : public ZmObject {
 };
 using YAMLPtrObj = ZfHeapTest<"ZfTest.YAML.PtrObj", YAMLPtrObj_>;
 ZfStruct(, (YAMLPtrObj, YAML),
-  (((value), (Ctor<0>, Mutable)), (Int32)));
+  (((value), (Ctor<0>, Mutable)),	Int32));
 
 struct YAMLFmtOpt : public ZmObject { };
 inline ZfYAML::AsString ZfYAML_Fmt(ZmRef<YAMLFmtOpt> *);
@@ -114,9 +114,9 @@ struct YAMLPtrHolder {
   ZmRef<YAMLPtrText> text;
 };
 ZfStruct(, (YAMLPtrHolder, YAML),
-  (((object), (Mutable)), (UDT)),
-  (((objects), (Mutable)), (UDT)),
-  (((text), (Mutable)), (UDT)));
+  (((object), (Mutable)),	UDT),
+  (((objects), (Mutable)),	UDT),
+  (((text), (Mutable)),		UDT));
 
 ZuAssert((ZuIsSame<
   ZmHeapID<YAMLIntMap>, ZuStringT<"ZfTest.YAML.IntMap">>{}));
@@ -132,7 +132,7 @@ struct YAMLJSON {
   friend ZfYAML::AsJSON ZfYAML_Fmt(YAMLJSON *);
 };
 ZfStruct(, (YAMLJSON, YAML),
-  (((value), (Ctor<0>)), (Int32)));
+  (((value), (Ctor<0>)),	Int32));
 
 struct YAMLText {
   ZtString<> value;
@@ -144,7 +144,7 @@ struct YAMLText {
 
 struct YAMLTextData { YAMLText text; };
 ZfStruct(, (YAMLTextData, YAML),
-  (((text), (Ctor<0>)), (UDT)));
+  (((text), (Ctor<0>)),	UDT));
 
 struct YAMLData {
   const char *cstr = nullptr;
@@ -156,13 +156,13 @@ struct YAMLData {
   YAMLNested nested;
 };
 ZfStruct(, (YAMLData, YAML),
-  (((cstr), (Ctor<0>)), (CString)),
-  (((string), (Ctor<1>)), (String)),
-  (((number), (Ctor<2>)), (Int32)),
-  (((bool_), (Ctor<3>)), (Bool)),
-  (((bytes), (Ctor<4>)), (Bytes)),
-  (((strings), (Ctor<5>)), (StringVec)),
-  (((nested), (Ctor<6>)), (UDT)));
+  (((cstr), (Ctor<0>)),		CString),
+  (((string), (Ctor<1>)),	String),
+  (((number), (Ctor<2>)),	Int32),
+  (((bool_), (Ctor<3>)),	Bool),
+  (((bytes), (Ctor<4>)),	Bytes),
+  (((strings), (Ctor<5>)),	StringVec),
+  (((nested), (Ctor<6>)),	UDT));
 
 struct YAMLNumbers {
   int i = 0;
@@ -176,17 +176,17 @@ struct YAMLNumbers {
   ZtArray<int> ints;
 };
 ZfStruct(, (YAMLNumbers, YAML),
-  (((i), (Ctor<0>, Mutable)), (Int32)),
-  (((hex), (Ctor<1>, Hex)), (UInt32)),
-  (((enum_), (Ctor<2>, Enum<YAMLValues::Map>)), (Int32)),
-  (((flags), (Ctor<3>, Flags<YAMLFlags::Map>)), (UInt128)),
-  (((float_), (Ctor<4>, (Range<-1000.0, 1000.0>))), (Float)),
+  (((i), (Ctor<0>, Mutable)),				Int32),
+  (((hex), (Ctor<1>, Hex)),				UInt32),
+  (((enum_), (Ctor<2>, Enum<YAMLValues::Map>)),		Int32),
+  (((flags), (Ctor<3>, Flags<YAMLFlags::Map>)),		UInt128),
+  (((float_), (Ctor<4>, (Range<-1000.0, 1000.0>))),	Float),
   (((fixed), (Ctor<5>,
-    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))), (Fixed)),
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	Fixed),
   (((decimal), (Ctor<6>,
-    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))), (Decimal)),
-  (((time), (Ctor<7>, YAML::Unix9)), (Time)),
-  (((ints), (Ctor<8>)), (Int32Vec)));
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	Decimal),
+  (((time), (Ctor<7>, YAML::Unix9)),			Time),
+  (((ints), (Ctor<8>)),					Int32Vec));
 
 struct YAMLBytes {
   ZtArray<uint8_t> base64;
@@ -196,16 +196,16 @@ struct YAMLBytes {
   ZtArray<uint8_t> raw;
 };
 ZfStruct(, (YAMLBytes, YAML),
-  (((base64), (Ctor<0>, YAML::Base64)), (Bytes)),
-  (((base64URL), (Ctor<1>, YAML::Base64URL)), (Bytes)),
-  (((base32), (Ctor<2>, YAML::Base32)), (Bytes)),
-  (((hex), (Ctor<3>, YAML::Hex)), (Bytes)),
-  (((raw), (Ctor<4>, YAML::Raw)), (Bytes)));
+  (((base64), (Ctor<0>, YAML::Base64)),		Bytes),
+  (((base64URL), (Ctor<1>, YAML::Base64URL)),	Bytes),
+  (((base32), (Ctor<2>, YAML::Base32)),		Bytes),
+  (((hex), (Ctor<3>, YAML::Hex)),		Bytes),
+  (((raw), (Ctor<4>, YAML::Raw)),		Bytes));
 
 struct YAMLRequired { int required; int optional; };
 ZfStruct(, (YAMLRequired, YAML),
-  (((required), (Ctor<0>, Required)), (Int32)),
-  (((optional), (Ctor<1>)), (Int32)));
+  (((required), (Ctor<0>, Required)),	Int32),
+  (((optional), (Ctor<1>)),		Int32));
 
 struct YAMLScalars {
   ZtString<> plain;
@@ -217,17 +217,17 @@ struct YAMLScalars {
   int quotedInt = 0;
 };
 ZfStruct(, (YAMLScalars, YAML),
-  (((plain), (Ctor<0>, YAML::Plain)), (String)),
-  (((single), (Ctor<1>, YAML::SingleQuoted)), (String)),
-  (((double_), (Ctor<2>, YAML::DoubleQuoted)), (String)),
-  (((literal), (Ctor<3>, YAML::BlockLiteral)), (String)),
-  (((folded), (Ctor<4>, YAML::BlockFolded)), (String)),
-  (((quotedBool), (Ctor<5>, YAML::SingleQuoted)), (Bool)),
-  (((quotedInt), (Ctor<6>, YAML::DoubleQuoted)), (Int32)));
+  (((plain), (Ctor<0>, YAML::Plain)),			String),
+  (((single), (Ctor<1>, YAML::SingleQuoted)),		String),
+  (((double_), (Ctor<2>, YAML::DoubleQuoted)),		String),
+  (((literal), (Ctor<3>, YAML::BlockLiteral)),		String),
+  (((folded), (Ctor<4>, YAML::BlockFolded)),		String),
+  (((quotedBool), (Ctor<5>, YAML::SingleQuoted)),	Bool),
+  (((quotedInt), (Ctor<6>, YAML::DoubleQuoted)),	Int32));
 
 struct YAMLFacet { int value = 0; };
 ZfStruct(, YAMLFacet,
-  (((value), (Ctor<0>)), (Int32)));
+  (((value), (Ctor<0>)),	Int32));
 ZfStructRender(, YAMLFacet, JSON,
   (value, JSON::ID<"json-value">));
 ZfStructRender(, YAMLFacet, YAML,

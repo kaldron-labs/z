@@ -22,8 +22,8 @@ static void vaultCredentials()
   Zi::Path home = ZiTestResidue::tmpDir("zum-vault-client");
   Zt::setenv("ZUMVAULTTEST_HOME", home);
   Zt::setenv("DBUS_SESSION_BUS_ADDRESS", "unsupported:address");
-  constexpr auto Issuer = "https://issuer.example/oauth2/9"_Zu;
-  constexpr auto Audience = "https://resource.example"_Zu;
+  constexpr auto Issuer = "https://issuer.example/oauth2/9"_z;
+  constexpr auto Audience = "https://resource.example"_z;
   ZumVaultClient::Credential input{Issuer, Audience, "client",
     "access-token", "refresh-token", "read offline_access"};
   ZuCheckRT(!ZumVaultClient::save(input).is<ZeException>());

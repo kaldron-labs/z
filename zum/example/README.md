@@ -36,7 +36,7 @@ and optional refresh grants, the ping role-derived scope, and the loopback redir
 `http://127.0.0.1:8081/callback`. `zumping.cf` already contains the stable
 manifest client ID, `zumping`.
 Use `zum` to enroll the local user, complete the user's passkey registration,
-and assign app membership with the ping role. Then run:
+and assign app assignment with the ping role. Then run:
 
 ```sh
 ./zumping --config zumping.cf

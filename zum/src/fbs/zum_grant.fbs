@@ -30,7 +30,7 @@ table Grant {
   label:string;
   user_version:uint64 = 1;
   client_version:uint64;
-  membership_version:uint64;
+  assignment_version:uint64;
   policy_version:uint64;
   evidence_version:uint64;
   authority_source:int8;

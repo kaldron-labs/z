@@ -123,8 +123,8 @@ struct FileData {
   ~FileData() { delete accounts; }
 };
 ZfStruct(ZtlsAPI, (FileData, JSON),
-  (((version), (Mutable)), (UInt32)),
-  (((accounts), (Mutable)), (UDT)));
+  (((version), (Mutable)),	UInt32),
+  (((accounts), (Mutable)),	UDT));
 
 using FileText = ZtCArray<ZtArraySecret<true,
   ZtArrayHeapID<"Ztls.Vault.FileText">>>;
@@ -382,7 +382,7 @@ ZuDerive(Auto, Auto_<AutoHeap>);
 
 // Versioned, length-delimited plaintext inside the authenticated age file.
 constexpr uint8_t SecretsMagic[] = {'Z', 'V', 'L', 'T', 1};
-constexpr auto PassphraseKey = "vault/passphrase"_Zu;
+constexpr auto PassphraseKey = "vault/passphrase"_z;
 enum {
   PassphraseBytes = 32,
   PassphraseSize = ZuBase64::enclen(PassphraseBytes),

@@ -21,6 +21,7 @@ import http.client
 import http.server
 import signal
 import socket
+import sqlite3
 import ssl
 import subprocess
 import threading
@@ -74,7 +75,8 @@ def wait_line(process, prefix, timeout=None):
                     return line.decode(errors="replace")
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not selector.select(remaining):
-                raise AssertionError("wire fixture output timed out: " + prefix)
+                raise AssertionError("wire fixture output timed out: " + prefix +
+                                     "; stdout: " + repr(seen))
             data = os.read(process.stdout.fileno(), 4096)
             if not data:
                 diagnostic = getattr(process, "_diagnostic", b"")
@@ -88,15 +90,30 @@ def wait_line(process, prefix, timeout=None):
             pending += data
 
 
+def wait_agents(process, devices):
+    pending = set(devices)
+    deadline = time.monotonic() + 30
+    while pending:
+        line = wait_line(process, "agent accepted ",
+                         timeout=max(0.1, deadline - time.monotonic()))
+        pending.discard(line.removeprefix("agent accepted "))
+
+
 def stop_process(process, timeout=20):
     if process is None:
         return
     if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
+        if getattr(process, "_process_group", False):
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.send_signal(signal.SIGTERM)
     try:
         _, diagnostic = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
+        if getattr(process, "_process_group", False):
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
         _, diagnostic = process.communicate()
     process._diagnostic = diagnostic
 
@@ -104,7 +121,8 @@ def stop_process(process, timeout=20):
 def run_wire(root, mode, issuer, device, wss, ca, token=None, cookie=None,
              origin=None, telemetry=1, expect=1, stall_ms=0, payload=0,
              control_burst=1, inventory=False, one_shot=False,
-             wait_eos=False):
+             wait_shutdown=False, group="App", snapshots=1, changes=False,
+             expect_publishers=0, source_errors=False):
     executable = root / "ztc" / "itest" / "ztchubwiretest"
     environment = dict(os.environ)
     if token is None:
@@ -113,7 +131,8 @@ def run_wire(root, mode, issuer, device, wss, ca, token=None, cookie=None,
         environment["ZTC_ACCESS_TOKEN"] = token
     args = [str(executable), "--mode=" + mode, "--issuer=" + issuer,
             "--device-id=" + device, "--wss=" + wss, "--ca=" + str(ca),
-            "--telemetry=" + str(telemetry), "--expect=" + str(expect)]
+            "--telemetry=" + str(telemetry), "--expect=" + str(expect),
+            "--group=" + group, "--snapshots=" + str(snapshots)]
     if stall_ms:
         args.append("--stall-ms=" + str(stall_ms))
     if payload:
@@ -124,8 +143,14 @@ def run_wire(root, mode, issuer, device, wss, ca, token=None, cookie=None,
         args.append("--inventory")
     if one_shot:
         args.append("--one-shot")
-    if wait_eos:
-        args.append("--wait-eos")
+    if wait_shutdown:
+        args.append("--wait-shutdown")
+    if changes:
+        args.append("--changes")
+    if expect_publishers:
+        args.append("--expect-publishers=" + str(expect_publishers))
+    if source_errors:
+        args.append("--source-errors")
     if cookie:
         args.append("--cookie=" + cookie)
     if origin:
@@ -179,13 +204,13 @@ def bad_subprotocol(port, token):
 
 def app_client(fixture, admin, app_id, prefix, role_id, label, grants, profile, redirect_port=49152):
     item = fixture.admin_secret("clientAdd", {
-        "appID": app_id, "label": label, "profile": profile,
-        "redirectURIs": ([f"http://127.0.0.1:{redirect_port}/callback"]
+        "app_id": app_id, "label": label, "profile": profile,
+        "redirect_uris": ([f"http://127.0.0.1:{redirect_port}/callback"]
                           if profile == "native" else []),
-        "grants": grants, "refreshAllowed": grants >= 5,
-        "$idempotencyKey": secrets.token_hex(16)})["item"]
+        "grants": ",".join(name for bit, name in (
+            (1, "AuthCode"), (2, "ClientCredentials"), (4, "Refresh")) if grants & bit), "refresh_allowed": grants >= 5}, idempotence=secrets.token_hex(16))["item"]
     fixture.request("PUT", prefix + "/client-access/" + item["id"], {
-        "roleIDs": [role_id]},
+        "role_ids": [role_id]},
         token=admin, headers={"If-None-Match": "*"}, status=201)
     return item
 
@@ -222,12 +247,12 @@ def run_load(root, fixture, directory, hub, app_id, prefix, role_id,
             admin = fixture.login(offline=False)
             renewed = time.monotonic()
         client = fixture.request("POST", "/admin/clients", {
-            "appID": app_id, "label": "load device " + str(index),
-            "profile": "server", "redirectURIs": [], "grants": 2},
+            "app_id": app_id, "label": "load device " + str(index),
+            "profile": "server", "redirect_uris": [], "grants": "ClientCredentials"},
             token=admin, headers={"Idempotency-Key": secrets.token_hex(16)},
             status=201)[0]["item"]
         fixture.request("PUT", prefix + "/client-access/" + client["id"],
-                        {"roleIDs": [role_id]}, token=admin,
+                        {"role_ids": [role_id]}, token=admin,
                         headers={"If-None-Match": "*"}, status=201)
         devices.append(client)
     values = []
@@ -324,10 +349,9 @@ def main():
         audience_uri = "https://127.0.0.1:" + str(front_port)
         service_audience = fixture.origin + "/admin"
         app = fixture.admin_secret("appEnroll", {
-            "name": "ztchub-itest", "integration": "catalogClient",
-            "audience": service_audience,
-            "$idempotencyKey": secrets.token_hex(16)})["item"]
-        app_id = app["appID"]
+            "name": "ztchub-itest",
+            "audience": service_audience}, idempotence=secrets.token_hex(16))["item"]
+        app_id = app["app_id"]
         stored_app = fixture.admin_command("appQuery", {"id": str(app_id)})["items"]
         assert len(stored_app) == 1 and stored_app[0]["audience"] == service_audience
         cert = directory / "hub-cert.pem"
@@ -339,8 +363,6 @@ def main():
             "-keyout", str(key), "-out", str(cert)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         callback_auth = "Bearer " + secrets.token_urlsafe(24)
-        callback_ref = "ZUM_SSF_ZTCHUB_AUTH"
-        fixture.env[callback_ref] = callback_auth
         node_source = (Path(__file__).resolve().parents[2] /
                        "zum" / "itest" / "zumd.cf").read_text()
         zumd_ring = residue.shm("ztc-zumd-" + secrets.token_hex(6))
@@ -353,12 +375,6 @@ def main():
         fixture.node_config.write_text(
             node_source.rstrip() + ",\n" +
             "oidc: {caPath: " + json.dumps(str(cert)) + "},\n" +
-            "ssf: {issuer: " + json.dumps(fixture.issuer(app_id)) +
-            ", receivers: [{receiverID: \"ztchub\", appID: " + str(app_id) +
-            ", audience: " + json.dumps(service_audience) +
-            ", deliveryURL: " +
-            json.dumps("https://127.0.0.1:" + str(ssf_port) + "/ssf") +
-            ", secretName: \"" + callback_ref + "\", revision: 1}]},\n" +
             "ztc: {id: " + json.dumps(zumd_publisher) +
             ", alertPrefix: " +
             json.dumps(str(directory / "zumd-alerts")) + "}\n")
@@ -398,7 +414,8 @@ def main():
             ", managementURL: " + json.dumps(fixture.origin) +
             ", managementClientID: " + json.dumps(app["client_id"]) +
             ", caPath: \"\", ssfCallbackPath: \"/ssf\", "
-            "actions: [\"Request\", \"Telemetry\"], "
+            "ssfDeliveryURL: " + json.dumps("https://127.0.0.1:" + str(ssf_port) + "/ssf") + ", "
+            "ssfLease: 8, actions: [\"Request\", \"Telemetry\"], "
             "roles: [\"Client\", \"Agent\"], maxFrame: 65536, "
             + capacity + ("idleTimeout: 900, " if load else "") +
             "minRefreshMS: 1000, fanoutSLOMS: 200, "
@@ -427,6 +444,21 @@ def main():
             stderr=subprocess.PIPE)
         hubs.append(hub)
         wait_line(hub, "ztchub ready")
+        # Observe the hub's own registration and its timer-driven renewal.
+        def ssf_expiry():
+            with sqlite3.connect(fixture.env["ZDB_CONNECT"]) as db:
+                rows = db.execute('SELECT receiver_i_d, expires FROM "a_zum.ssf_rx"')
+                for receiver_id, expiry in rows:
+                    if receiver_id.endswith("https://127.0.0.1:" + str(ssf_port) + "/ssf"):
+                        return int.from_bytes(expiry, "big") if isinstance(expiry, bytes) else expiry
+            return 0
+
+        initial_expiry = ssf_expiry()
+        assert initial_expiry, "hub did not register its SSF receiver"
+        deadline = time.monotonic() + 15
+        while ssf_expiry() <= initial_expiry:
+            assert time.monotonic() < deadline, "hub did not renew its SSF receiver"
+            time.sleep(0.02)
         if cluster:
             standby_config = directory / "ztchub-standby.cf"
             standby_config.write_text(
@@ -456,11 +488,11 @@ def main():
         user = fixture.request(
             "GET", "/admin/users?name=http-admin&source=Local", token=admin)[0]["items"][0]
         member = fixture.request(
-            "POST", prefix + "/memberships", {"userID": user["id"]},
+            "POST", prefix + "/assignments", {"user_id": user["id"]},
             token=admin, headers={"Idempotency-Key": secrets.token_hex(16)},
             status=201)[0]["item"]
-        fixture.request("PUT", prefix + "/memberships/" + user["id"] + "/roles",
-                        {"roleIDs": [role["Client"]["id"]]}, token=admin,
+        fixture.request("PUT", prefix + "/assignments/" + user["id"] + "/roles",
+                        {"role_ids": [role["Client"]["id"]]}, token=admin,
                         headers={"If-Match": member["etag"]})
         front_client = app_client(
             fixture, admin, app_id, prefix, role["Client"]["id"],
@@ -495,7 +527,9 @@ def main():
         agents.append(collector)
         wait_line(hub, "agent accepted " + agent1["id"])
         stop_process(collector)
-        assert collector.returncode == 0
+        assert collector.returncode == 0, (
+            "collector shutdown returned " + str(collector.returncode) + ": " +
+            (getattr(collector, "_diagnostic", b"") or b"").decode(errors="replace"))
         agents.remove(collector)
         agent_env.pop("ZTC_CLIENT_SECRET")
         collector = subprocess.Popen([
@@ -827,7 +861,7 @@ def main():
         fronts.append(eos_front)
         wait_line(eos_front, "front telemetry 1")
         agent_process1.terminate()
-        wait_line(eos_front, "front eos", timeout=15)
+        wait_line(eos_front, "front error", timeout=15)
         agent_process1.wait(timeout=10)
         eos_front.wait(timeout=15)
         assert eos_front.returncode == 0
@@ -873,6 +907,14 @@ def main():
             wait_line(hub, "agent accepted " + agent1["id"])
         else:
             hub = None
+            # The earlier overflow phase deliberately uses four-frame queues.
+            # Size the restarted hub for complete real heap snapshots.
+            config.write_text(config_text.replace(capacity,
+                "controlFrames: 64, telemetryFrames: 1024, "
+                "controlBytes: 1048576, telemetryBytes: 4194304, "
+                "queueMem: 1073741824, expectedAgents: 2, "
+                "publishersPerAgent: 64, activeFrontEnds: 2, "
+                "subscriptionsPerFrontEnd: 16, "))
             resumed_env = dict(env)
             resumed_env.pop("ZUM_CLIENT_SECRET")
             resumed_env.pop("ZUM_SSF_AUTH")
@@ -905,6 +947,9 @@ def main():
                             'vaultStore: "file", vaultTestStore: true\n')
         real_agents = []
         real_publishers = []
+        real_collectors = []
+        real_envs = []
+        real_pub_ids = []
         for index, device in enumerate((agent1, agent2)):
             ring = residue.shm("ztc-real-" + secrets.token_hex(6))
             registry = residue.tmp_dir("publisher-registry").name
@@ -916,34 +961,221 @@ def main():
                              ZTC_CA_PATH=str(cert), ZTC_RING=ring, ZTC_DIR=registry)
             publisher = subprocess.Popen([
                 str(root / "ztc" / "itest" / "ztchubwiretest"),
-                "--mode=publisher", "--device-id=" + publisher_id],
-                cwd=directory, env=agent_env, stdout=subprocess.PIPE,
+                "--mode=publisher", "--device-id=" + publisher_id,
+                "--controlled"],
+                cwd=directory, env=agent_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
             agents.append(publisher)
             real_publishers.append(publisher)
+            real_envs.append(agent_env)
+            real_pub_ids.append(publisher_id)
             wait_line(publisher, "publisher ready")
             collector = subprocess.Popen([
                 str(root / "ztc" / "src" / "ztcagent"), "--config=" + str(agent_cf)],
                 cwd=directory, env=agent_env, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
             agents.append(collector)
+            real_collectors.append(collector)
             real_agents.append(device["id"])
             wait_line(hub, "agent accepted " + device["id"])
-        for device_id in real_agents:
+        live_dashboard = bool(os.environ.get("ZDASH_LIVE_TEST"))
+        if live_dashboard:
+            dashboard_cf = directory / "dashboard.cf"
+            dashboard_cf.write_text(
+                "wssURL: " + json.dumps(wss1) + ", caPath: " + json.dumps(str(cert)) +
+                ", gtkGlade: " + json.dumps(str(root / "zdash/src/zdash.glade")) +
+                ", deviceID: " + json.dumps(real_agents[0]) +
+                ', interval: 1000, maxSubscriptions: 16, '
+                'telRing: {name: "zdash-live-test", size: 1048576}\n')
+            dashboard_env = dict(os.environ,
+                ZDASH_TEST=str(root / "zdash/test/.libs/zdash_test.so"),
+                ZDASH_TEST_TOKEN=front_token, ZDASH_TEST_LIVE="1",
+                ZDASH_TEST_DEVICE=real_agents[0], ZDASH_TEST_PUBLISHER=real_pub_ids[0],
+                ZDASH_TEST_TIMEOUT="120", G_DEBUG="fatal-warnings", GDK_BACKEND="x11",
+                NO_AT_BRIDGE="1")
+            dashboard_env.pop("WAYLAND_DISPLAY", None)
+            dashboard_env.pop("DBUS_SESSION_BUS_ADDRESS", None)
+            dashboard = subprocess.Popen([
+                "xvfb-run", "-a", str(root / "zdash/src/zdash"),
+                "--config=" + str(dashboard_cf)], env=dashboard_env,
+                start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            dashboard._process_group = True
+            fronts.append(dashboard)
+            wait_line(dashboard, "# dashboard initial", timeout=30)
+            real_publishers[0].stdin.write(b"e\n")
+            real_publishers[0].stdin.flush()
+            wait_line(real_publishers[0], "publisher snapshot boundary")
+            real_publishers[0].stdin.write(b"u\n")
+            real_publishers[0].stdin.flush()
+            wait_line(dashboard, "# dashboard live update", timeout=30)
+            late_id = residue.shm("ztc-late-" + secrets.token_hex(6))
+            late = subprocess.Popen([
+                str(root / "ztc/itest/ztchubwiretest"), "--mode=publisher",
+                "--device-id=" + late_id, "--controlled"],
+                cwd=directory, env=real_envs[0], stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            agents.append(late)
+            wait_line(late, "publisher ready")
+            wait_line(dashboard, "# dashboard late publisher", timeout=30)
+            stop_process(real_collectors[0])
+            agents.remove(real_collectors[0])
+            collector = subprocess.Popen([
+                str(root / "ztc/src/ztcagent"), "--config=" + str(agent_cf)],
+                cwd=directory, env=real_envs[0], stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE)
+            agents.append(collector)
+            real_collectors[0] = collector
+            wait_line(hub, "agent accepted " + real_agents[0])
+            wait_line(dashboard, "# dashboard transport reconnection", timeout=30)
+            # One aggregate snapshot EOS must follow both real publishers.
+            fanout = run_wire(root, "front", fixture.issuer(app_id),
+                real_agents[0], wss1, cert, token=front_token, group="Heap",
+                one_shot=True, expect_publishers=2)
+            fronts.append(fanout)
+            wait_line(fanout, "front eos", timeout=30)
+            fanout.wait(timeout=15)
+            assert fanout.returncode == 0
+            # Retiring one wildcard leg reports the failure while the other
+            # publisher keeps delivering snapshots under the same request.
+            survivor = run_wire(root, "front", fixture.issuer(app_id),
+                real_agents[0], wss1, cert, token=front_token, group="Heap",
+                snapshots=5, source_errors=True)
+            fronts.append(survivor)
+            wait_line(survivor, "front snapshot 2", timeout=30)
+            late.stdin.write(b"q\n")
+            late.stdin.flush()
+            late.wait(timeout=15)
+            assert late.returncode == 0
+            wait_line(survivor, "front error", timeout=30)
+            wait_line(survivor, "front snapshot 5", timeout=30)
+            survivor.wait(timeout=15)
+            assert survivor.returncode == 0
+            agents.remove(late)
+            # Confirmed publisher shutdown removes its rows; transport EOS did not.
+            publisher = real_publishers[0]
+            publisher.stdin.write(b"q\n")
+            publisher.stdin.flush()
+            publisher.wait(timeout=15)
+            assert publisher.returncode == 0
+            agents.remove(publisher)
+            wait_line(dashboard, "# dashboard publisher shutdown", timeout=30)
+            _, dashboard._diagnostic = dashboard.communicate(timeout=15)
+            assert dashboard.returncode == 0, dashboard._diagnostic.decode(
+                errors="replace")
+            # With no publishers, a requested snapshot fails instead of emitting EOS.
+            empty = run_wire(root, "front", fixture.issuer(app_id),
+                real_agents[0], wss1, cert, token=front_token, group="Heap",
+                one_shot=True, expect=0)
+            fronts.append(empty)
+            assert wait_line(empty, "front error", timeout=30) == "front error 7"
+            empty.wait(timeout=15)
+            assert empty.returncode == 0
+            # Restore this producer for the remaining independent wire checks.
+            publisher = subprocess.Popen([
+                str(root / "ztc/itest/ztchubwiretest"), "--mode=publisher",
+                "--device-id=" + real_pub_ids[0], "--controlled"],
+                cwd=directory, env=real_envs[0], stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            agents.append(publisher)
+            real_publishers[0] = publisher
+            wait_line(publisher, "publisher ready")
+            publisher.stdin.write(b"u\n")
+            publisher.stdin.flush()
+            wait_line(publisher, "publisher changed")
+        for index, (device_id, publisher) in enumerate(zip(real_agents, real_publishers)):
             front = run_wire(root, "front", fixture.issuer(app_id), device_id,
                              wss1, cert, token=front_token, expect=1)
             fronts.append(front)
             wait_line(front, "front telemetry 1")
             front.wait(timeout=15)
             assert front.returncode == 0
+            # Successful snapshot ACK must retain the agent route until EOS:
+            # the real publisher queues its heap capture asynchronously.
+            snapshot = run_wire(
+                root, "front", fixture.issuer(app_id), device_id, wss1, cert,
+                token=front_token, expect=1, one_shot=True, group="Heap")
+            fronts.append(snapshot)
+            wait_line(snapshot, "front telemetry 1")
+            wait_line(snapshot, "front eos")
+            snapshot.wait(timeout=15)
+            assert snapshot.returncode == 0
+            continuing = run_wire(
+                root, "front", fixture.issuer(app_id), device_id, wss1, cert,
+                token=front_token, expect=1, group="Heap", snapshots=3,
+                changes=not live_dashboard or index > 0)
+            fronts.append(continuing)
+            if not live_dashboard or index > 0:
+                wait_line(continuing, "front snapshot 1")
+                publisher.stdin.write(b"u\n")
+                publisher.stdin.flush()
+                wait_line(publisher, "publisher changed")
+            wait_line(continuing, "front snapshot 3")
+            if not live_dashboard or index > 0:
+                wait_line(continuing, "front new heap and updated heap")
+            continuing.wait(timeout=15)
+            assert continuing.returncode == 0
+        # Independent consumers of the same group/filter must retain replies
+        # after another consumer finishes and unsubscribes.
+        short = run_wire(root, "front", fixture.issuer(app_id), real_agents[0],
+                         wss1, cert, token=front_token, snapshots=2)
+        long = run_wire(root, "front", fixture.issuer(app_id), real_agents[0],
+                        wss1, cert, token=front_token, snapshots=4)
+        fronts.extend((short, long))
+        wait_line(short, "front snapshot 2")
+        short.wait(timeout=15)
+        assert short.returncode == 0
+        wait_line(long, "front snapshot 4")
+        long.wait(timeout=15)
+        assert long.returncode == 0
+        if live_dashboard:
+            # Inventory owns a separate registry from ordinary routes. A
+            # one-frame queue overflows while its two cached publishers are
+            # enumerated, without cancelling another frontend's App stream.
+            normal_config = config.read_text()
+            small_config = normal_config.replace("telemetryFrames: 1024",
+                                                  "telemetryFrames: 1")
+            assert small_config != normal_config
+            stop_process(hub)
+            assert hub.returncode == 0
+            config.write_text(small_config)
+            hub = subprocess.Popen(hub_command(root, config, directory),
+                env=resumed_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hubs.append(hub)
+            wait_line(hub, "ztchub ready")
+            wait_agents(hub, real_agents)
+            # Collector discovery samples every second. Allow two sampling
+            # periods plus a scheduling margin to refill both cached sources.
+            time.sleep(3)
+            survivor = run_wire(root, "front", fixture.issuer(app_id),
+                real_agents[0], wss1, cert, token=front_token, snapshots=4)
+            fronts.append(survivor)
+            wait_line(survivor, "front snapshot 1", timeout=30)
+            overflow_inventory = run_wire(root, "front", fixture.issuer(app_id),
+                "", wss1, cert, token=front_token, inventory=True, expect=100)
+            fronts.append(overflow_inventory)
+            error = wait_line(overflow_inventory, "front error", timeout=30)
+            assert error.endswith(" 5")
+            overflow_inventory.wait(timeout=15)
+            assert overflow_inventory.returncode == 0
+            wait_line(survivor, "front snapshot 4", timeout=30)
+            survivor.wait(timeout=15)
+            assert survivor.returncode == 0
+            stop_process(hub)
+            assert hub.returncode == 0
+            config.write_text(normal_config)
+            hub = subprocess.Popen(hub_command(root, config, directory),
+                env=resumed_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hubs.append(hub)
+            wait_line(hub, "ztchub ready")
+            wait_agents(hub, real_agents)
         inventory = run_wire(
             root, "front", fixture.issuer(app_id), "", wss1, cert,
             token=front_token, expect=len(real_agents), inventory=True,
-            wait_eos=True)
+            wait_shutdown=True)
         fronts.append(inventory)
         wait_line(inventory, "front telemetry " + str(len(real_agents)))
         stop_process(real_publishers[0])
-        wait_line(inventory, "front eos")
+        wait_line(inventory, "front shutdown")
         inventory.wait(timeout=15)
         assert inventory.returncode == 0
         inventory = run_wire(

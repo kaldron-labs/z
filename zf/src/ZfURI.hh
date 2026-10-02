@@ -209,7 +209,7 @@ using Config = decltype(ZfURI_Config(ZuDeclVal<Facet *>()));
 
 namespace ZfURIError {
 
-  constexpr auto Component = "ZfURI"_Zu;
+  constexpr auto Component = "ZfURI"_z;
 
   inline auto nullPath() {
     return [](auto &s) { s << "null URI path component"; };
@@ -936,9 +936,15 @@ struct AsObject {
       else {
 	O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
 	ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
+	  // explicit this needed due to a clang bug
 	  this->template loadField<ZfFieldFilter::Load, Field>(
-	      [&o]<typename V>(V &&v, bool deflt) {
-	    if (!Incremental || !deflt)
+	    [&o]<typename V>(V &&v, bool deflt)
+	  {
+	    using Props = typename Field::Props;
+	    if ((!Incremental && (
+		  ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+		  ZuFieldProp::HasDeflt<Props>{}())) ||
+		!deflt)
 	      Field::set(o, ZuFwd<V>(v));
 	  });
 	});
@@ -951,9 +957,15 @@ struct AsObject {
       O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
 	*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, o]<typename Field>() {
+	// explicit this needed due to a clang bug
 	this->template loadField<ZfFieldFilter::Load, Field>(
-	    [o]<typename V>(V &&v, bool deflt) {
-	  if (!Incremental || !deflt)
+	  [o]<typename V>(V &&v, bool deflt)
+	{
+	  using Props = typename Field::Props;
+	  if ((!Incremental && (
+		ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+		ZuFieldProp::HasDeflt<Props>{}())) ||
+	      !deflt)
 	    Field::set(*o, ZuFwd<V>(v));
 	});
       });
@@ -966,7 +978,11 @@ struct AsObject {
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  if (!Incremental || !deflt)
+	  using Props = typename Field::Props;
+	  if ((!Incremental && (
+		ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+		ZuFieldProp::HasDeflt<Props>{}())) ||
+	      !deflt)
 	    Field::set(o, ZuFwd<V>(v));
 	});
       });
@@ -976,7 +992,11 @@ struct AsObject {
       ZmAssert_(valid);
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
 	this->loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  if (!Incremental || !deflt)
+	  using Props = typename Field::Props;
+	  if ((!Incremental && (
+		ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
+		ZuFieldProp::HasDeflt<Props>{}())) ||
+	      !deflt)
 	    Field::set(o, ZuFwd<V>(v));
 	});
       });
@@ -984,8 +1004,8 @@ struct AsObject {
     void update(O &o) const {
       ZmAssert_(valid);
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	using Props = typename Field::Props;
 	this->loadField<ZfFieldFilter::Upd, Field>([&o]<typename V>(V &&v, bool deflt) {
+	  using Props = typename Field::Props;
 	  if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
 	    Field::set(o, ZuFwd<V>(v));
 	});

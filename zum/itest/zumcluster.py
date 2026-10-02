@@ -95,7 +95,7 @@ def exercise(directory):
             response.read()
             if index not in active:
                 for name, method, path in routes:
-                    path = path.replace("{actorKind}", "user").replace("{valueKey}", "eA")
+                    path = path.replace("{actor_kind}", "user").replace("{value_key}", "eA")
                     path = re.sub(r"\{[^}]+\}", "1", path)
                     body = None if method in ("GET", "DELETE") else "{}"
                     connection.request(method, path, body=body,

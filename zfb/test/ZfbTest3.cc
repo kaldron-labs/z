@@ -49,18 +49,18 @@ struct Order {
 };
 
 ZfbStruct(, (Order, JSON),
-  (((symbol), (Keys<0>, Ctor<0>)), (String)),
-  (((orderID), (Keys<0>, Ctor<1>)), (UInt64)),
-  (((link), ((Keys<1, 2>), Group<2>, Descend<2>, Ctor<2>)), (String)),
-  (((clOrdID), (Keys<1>, Ctor<3>)), (String)),
-  (((seqNo), (Keys<2>, Descend<2>, Ctor<4>)), (UInt64)),
-  (((side), (Ctor<5>, Enum<Side::Map>)), (Int32)),
-  (((price), (Ctor<6>)), (Int32)),
-  (((quantity), (Ctor<7>)), (Int32)),
+  (((symbol), (Keys<0>, Ctor<0>)),				String),
+  (((orderID), (Keys<0>, Ctor<1>)),				UInt64),
+  (((link), ((Keys<1, 2>), Group<2>, Descend<2>, Ctor<2>)),	String),
+  (((clOrdID), (Keys<1>, Ctor<3>)),				String),
+  (((seqNo), (Keys<2>, Descend<2>, Ctor<4>)),			UInt64),
+  (((side), (Ctor<5>, Enum<Side::Map>)),			Int32),
+  (((price), (Ctor<6>)),					Int32),
+  (((quantity), (Ctor<7>)),					Int32),
 
-  (((bitmap), (Ctor<8>)), (UDT)),
-  (((id), (Ctor<9>)), (String)),
-  (((ip), (Ctor<10>)), (UDT)));
+  (((bitmap), (Ctor<8>)),					UDT),
+  (((id), (Ctor<9>)),						String),
+  (((ip), (Ctor<10>)),						UDT));
 
 } // zfbtest3
 

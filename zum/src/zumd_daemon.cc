@@ -163,8 +163,8 @@ String Daemon::page_(AppID appID, Bytes ceremonyID, String options)
     "body:JSON.stringify(wire(c)),redirect:'error'});if(!r.ok)throw Error(await r.text());"
     "if((r.headers.get('content-type')||'').startsWith('text/html')){"
     "const html=await r.text();document.open();document.write(html);document.close();return}"
-    "const j=await r.json();if(!j.redirectURI)throw Error('missing redirect');"
-    "location.assign(j.redirectURI)}"
+    "const j=await r.json();if(!j.redirect_uri)throw Error('missing redirect');"
+    "location.assign(j.redirect_uri)}"
     "catch(x){out.textContent=x}}</script>";
   return page;
 }
@@ -512,7 +512,7 @@ bool Daemon::init(
         m_config.refreshRevoke(appID, ZuMv(refreshID), expires);
     }}};
   if (!m_db || !m_context || !m_requests || !m_mx || !m_config.issuer ||
-      !m_config.rpID || !m_config.admin || !m_config.requestTimeout ||
+      !m_config.rpID || !m_config.requestTimeout ||
       !m_rng.init())
     return false;
   OIDCHTTPFn oidcHTTP = m_config.oidcHTTP;
@@ -571,8 +571,6 @@ bool Daemon::init(
           admission.recovery.label = "Recovered Zum passkey";
         } else if (start.type == PasskeyStartType::Bootstrap) {
           admission.allowed = true;
-          admission.enrollment.name = m_config.admin;
-          admission.enrollment.displayName = m_config.admin;
           admission.enrollment.label = "Zum administrator passkey";
           admission.enrollment.userID = m_config.bootstrap.adminUserID;
         }
@@ -601,12 +599,13 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
     m_ssf->stop();
     m_ssf = nullptr;
   }
-  if (m_config.ssfSecret) {
-    if (!m_config.ssfIssuer) return false;
+  if (m_config.oidcHTTP) {
+    if (!m_config.ssfIssuer) m_config.ssfIssuer = m_config.issuer;
     m_ssf = new SSFTransmitter{};
     if (!m_ssf->init(SSFTransmitterConfig{
         .db = m_db, .context = m_context, .requests = m_requests,
         .issuer = m_config.ssfIssuer,
+        .secretIssuer = m_config.issuer, .dbKey = m_config.dbKey, .rng = &m_rng,
         .key = SignKey{.id = m_signKeyID,
           .issuer = m_config.ssfIssuer},
         .keyLoad = SSFKeyFn{[this](String issuer, SignKeyFn complete) mutable {
@@ -616,8 +615,9 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
               ZuMv(complete));
         }},
         .sign = m_sign, .http = m_config.oidcHTTP,
-        .secret = m_config.ssfSecret,
-        .receivers = ZuMv(m_config.ssfReceivers)})) {
+        .receiverMax = m_config.ssfReceiverMax,
+        .leaseMax = m_config.ssfLeaseMax,
+        .errorMax = m_config.ssfErrorMax})) {
       m_ssf = nullptr;
       return false;
     }

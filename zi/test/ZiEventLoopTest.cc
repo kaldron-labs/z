@@ -347,7 +347,7 @@ void testSocketSendRecv()
   ZuCHECK(!state.failed.load_(), "socket path hit fail callback");
 }
 
-constexpr auto BudgetPayload = "WXYZ"_Zu;
+constexpr auto BudgetPayload = "WXYZ"_z;
 constexpr unsigned BudgetLength = BudgetPayload.length();
 
 // One byte of logical output per turn, as a transport using a small Tx budget.

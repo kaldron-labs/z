@@ -45,14 +45,13 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((module),  (CLI::Opt<'m'>)),  (String)),
-  (((connect), (CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
-  (((synchronous), (CLI::Opt<'s'>)), (String,
-    getenv("ZDB_SYNCHRONOUS") ? getenv("ZDB_SYNCHRONOUS") : "NORMAL")),
-  (((debug),   (CLI::Flag<'d'>)),                        (Bool)),
-  (((hashTel), (CLI::Flag<'t'>, CLI::Long<"hash-tel">)), (Bool)),
-  (((heapTel), (CLI::Flag<'T'>, CLI::Long<"heap-tel">)), (Bool)),
-  (((help),    (CLI::Flag<'h'>)),                        (Bool)));
+  (((module),  (CLI::Opt<'m'>)),				String),
+  (((connect), (CLI::Opt<'c'>)),				String),
+  (((synchronous), (CLI::Opt<'s'>)),				String),
+  (((debug),   (CLI::Flag<'d'>)),				Bool),
+  (((hashTel), (CLI::Flag<'t'>, CLI::Long<"hash-tel">)),	Bool),
+  (((heapTel), (CLI::Flag<'T'>, CLI::Long<"heap-tel">)),	Bool),
+  (((help),    (CLI::Flag<'h'>)),				Bool));
 
 void usage()
 {
@@ -430,6 +429,11 @@ int main(int argc_, char **argv)
   }
   if (argc != 1) usage();
   if (options.help) usage();
+  if (!options.connect.data()) options.connect = getenv("ZDB_CONNECT");
+  if (!options.synchronous.data()) {
+    auto mode = getenv("ZDB_SYNCHRONOUS");
+    options.synchronous = mode ? mode : "NORMAL";
+  }
   ZtString<> moduleEnv;
   if (!options.module)
     if (auto path = Zt::getpath("ZDB_MODULE"))

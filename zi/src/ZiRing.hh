@@ -38,6 +38,7 @@ using namespace ZmRing_;
 
 struct ParamData : public ZmRing_::ParamData {
   Zi::Path	name;
+  unsigned	initial = 0; // creation default when size is zero
   unsigned	killWait = 1;
   bool		coredump = false;
 
@@ -78,10 +79,12 @@ public:
   Params_ &operator =(Params_ &&) = default;
 
   Derived &&name(ZuCSpan s) { Data::name = s; return derived(); }
+  Derived &&initial(unsigned n) { Data::initial = n; return derived(); }
   Derived &&killWait(unsigned n) { Data::killWait = n; return derived(); }
   Derived &&coredump(bool b) { Data::coredump = b; return derived(); }
 
   const Zi::Path &name() const { return Data::name; }
+  unsigned initial() const { return Data::initial; }
   unsigned killWait() const { return Data::killWait; }
   bool coredump() const { return Data::coredump; }
 };
@@ -323,7 +326,13 @@ inline uint32_t RingExt<Ring, MW, MR>::openSize_(uint32_t reqSize)
       if (openSize != reqSize) return 0;
   } else {
     uint32_t openSize = ring()->openSize();
-    if (!openSize) return 0;
+    if (!openSize) {
+      reqSize = ring()->params().initial;
+      if (!reqSize) return 0;
+      reqSize = ring()->alignSize(reqSize);
+      openSize = ring()->openSize().cmpXch(reqSize, 0);
+      if (!openSize) openSize = reqSize;
+    }
     reqSize = openSize;
   }
   return reqSize;

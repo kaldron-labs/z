@@ -90,10 +90,10 @@ ZmPolyHashDeriveT((NTP_, LRU_), (T_), ZmPolyCache_Hash,
 
 template <typename Node_, typename HeapID_, bool Sharded_>
 struct ZmPolyCache_FindFn : public ZmFn<void(Node_ *),
-    ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>> {
+    ZmFnHeapID<HeapID_{}() + ".FindFn"_z, ZmFnSharded<Sharded_>>> {
   ZuDerive_(ZmPolyCache_FindFn,
     (ZmFn<void(Node_ *),
-      ZmFnHeapID<HeapID_{}() + ".FindFn"_Zu, ZmFnSharded<Sharded_>>>) )
+      ZmFnHeapID<HeapID_{}() + ".FindFn"_z, ZmFnSharded<Sharded_>>>) )
 };
 template <typename FindFn_, typename HeapID_>
 struct ZmPolyCache_FindFnList_NTP : public ZmHashHeapID_<HeapID_> {

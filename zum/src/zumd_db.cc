@@ -426,18 +426,18 @@ private:
       self->m_data.user = row->data();
       if (self->m_data.grant.appID &&
 	  self->m_data.grant.authoritySource == UserSource::Local)
-	self->membership_();
+	self->assignment_();
       else self->userDone_();
     });
   }
 
-  void membership_()
+  void assignment_()
   {
-    auto memberships = m_context->memberships;
-    memberships->run(0, [self = ZmRef<AuthorityLoad__>{this}, memberships]() {
-      memberships->find<0>(0, ZuFwdTuple(self->m_data.grant.appID,
+    auto assignments = m_context->assignments;
+    assignments->run(0, [self = ZmRef<AuthorityLoad__>{this}, assignments]() {
+      assignments->find<0>(0, ZuFwdTuple(self->m_data.grant.appID,
 	  self->m_data.grant.userID), [self = ZuMv(self)](
-	    ZdbRowRef<Membership> row) mutable {
+	    ZdbRowRef<Assignment> row) mutable {
 	if (!row || row->data().state != State::Active || row->data().owner) {
 	  self->finish_(AuthorityError::Invalid);
 	  return;
@@ -620,7 +620,7 @@ void loadGrantAuth(
     .authVersion = refresh.authVersion,
     .userVersion = refresh.userVersion,
     .clientVersion = refresh.clientVersion,
-    .membershipVersion = refresh.membershipVersion,
+    .assignmentVersion = refresh.assignmentVersion,
     .policyVersion = refresh.policyVersion,
     .evidenceVersion = refresh.evidenceVersion,
     .appID = refresh.appID,

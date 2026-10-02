@@ -17,6 +17,7 @@
 #include <zlib/zumd_identity_db.hh>
 #include <zlib/zumd_provider_db.hh>
 #include <zlib/zumd_key_db.hh>
+#include <zlib/zumd_ssf_db.hh>
 #include <zlib/zumd_secret.hh>
 #include <zlib/zum_saga_fbs.h>
 
@@ -64,19 +65,19 @@ struct KeyBinding : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, KeyBinding,
-  (((issuer), (Ctor<0>)), (String)),
-  (((beforeCheck), (Ctor<1>)), (Bytes)),
-  (((afterCheck), (Ctor<2>)), (Bytes)),
-  (((beforePending), (Ctor<3>)), (Bytes)),
-  (((afterPending), (Ctor<4>)), (Bytes)));
+  (((issuer), (Ctor<0>)),		String),
+  (((beforeCheck), (Ctor<1>)),		Bytes),
+  (((afterCheck), (Ctor<2>)),		Bytes),
+  (((beforePending), (Ctor<3>)),	Bytes),
+  (((afterPending), (Ctor<4>)),		Bytes));
 
 struct SecretRekey : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
   using Base::context;
   using Base::saga;
-  using Type = ZuStringT<"secretRekey.v1">;
-  enum { NSteps = 3 };
-  enum { ProviderField, EvidenceField, SignKeyField };
+  using Type = ZuStringT<"secretRekey.v2">;
+  enum { NSteps = 4 };
+  enum { ProviderField, EvidenceField, SignKeyField, SSFField };
 
   unsigned field = ProviderField;
   ProviderID providerID = 0;
@@ -108,7 +109,7 @@ struct SecretRekey : public ZdbSagaBase<DBContext> {
   }
 
   ZdbSagaStep(0, zum.provider, Update) {
-    if (field > SignKeyField) { complete(false); return {}; }
+    if (field > SSFField) { complete(false); return {}; }
     if (field != ProviderField) { saga->skip(ZuMv(complete)); return {}; }
     replace<Fwd, &Provider::clientSecret>(context->providers,
       ZuTuple{providerID}, ZuMv(complete));
@@ -120,6 +121,12 @@ struct SecretRekey : public ZdbSagaBase<DBContext> {
       ZuTuple{appID, userID, providerID}, ZuMv(complete));
     return {};
   }
+  ZdbSagaStep(3, zum.ssf_rx, Update) {
+    if (field != SSFField) { saga->skip(ZuMv(complete)); return {}; }
+    replace<Fwd, &SSFRx::callbackAuth>(context->ssfRx,
+      ZuTuple{keyID}, ZuMv(complete));
+    return {};
+  }
   ZdbSagaStep(2, zum.sign_key, Update) {
     if (field != SignKeyField) { saga->skip(ZuMv(complete)); return {}; }
     replace<Fwd, &SignKey::privateMaterial>(context->signKeys,
@@ -128,13 +135,13 @@ struct SecretRekey : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, SecretRekey,
-  (((field), (Ctor<0>)), (UInt32, SecretRekey::ProviderField)),
-  (((providerID), (Ctor<1>)), (UInt64)),
-  (((appID), (Ctor<2>)), (UInt64)),
-  (((userID), (Ctor<3>)), (UInt64)),
-  (((keyID), (Ctor<4>)), (String)),
-  (((before), (Ctor<5>)), (Bytes)),
-  (((after), (Ctor<6>)), (Bytes)));
+  (((field), (Ctor<0>, Deflt<SecretRekey::ProviderField>)),	UInt32),
+  (((providerID), (Ctor<1>)),					UInt64),
+  (((appID), (Ctor<2>)),					UInt64),
+  (((userID), (Ctor<3>)),					UInt64),
+  (((keyID), (Ctor<4>)),					String),
+  (((before), (Ctor<5>)),					Bytes),
+  (((after), (Ctor<6>)),					Bytes));
 
 } // namespace Zum
 

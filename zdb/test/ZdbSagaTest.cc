@@ -26,8 +26,8 @@ struct KeyOrder {
   unsigned group;
 };
 ZfStruct(, KeyOrder,
-  (((member), (Ctor<0>, (Keys<0, 1>), Group<0>)), (UInt32)),
-  (((group), (Ctor<1>, (Keys<0, 1>), Group<1>)), (UInt32)));
+  (((member),	(Ctor<0>, (Keys<0, 1>), Group<0>)),	UInt32),
+  (((group),	(Ctor<1>, (Keys<0, 1>), Group<1>)),	UInt32));
 
 struct Context : public ZmPolymorph { };
 struct OtherContext : public ZmPolymorph { };
@@ -50,7 +50,7 @@ struct SagaA : public ZdbSagaBase<Context> {
 };
 
 ZfbStruct(, SagaA,
-  (((value), (Ctor<0>)), (UInt64)));
+  (((value), (Ctor<0>)),	UInt64));
 
 struct SagaB : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -65,7 +65,7 @@ struct SagaB : public ZdbSagaBase<Context> {
 };
 
 ZfbStruct(, SagaB,
-  (((value), (Ctor<0>)), (UInt32)));
+  (((value), (Ctor<0>)),	UInt32));
 
 ZdbSagaDerive(Sagas, SagaA, SagaB);
 ZdbSagaImpl(Sagas, SagaA, SagaB)
@@ -83,8 +83,8 @@ struct RepeatSaga : public ZdbSagaBase<Context> {
   ZdbSagaStep(3, payment, Update) { return {}; }
 };
 ZfbStruct(, RepeatSaga,
-  (((first), (Ctor<0>)), (UInt64)),
-  (((second), (Ctor<1>)), (UInt64)));
+  (((first), (Ctor<0>)),	UInt64),
+  (((second), (Ctor<1>)),	UInt64));
 ZdbSagaDerive(RepeatSagas, RepeatSaga);
 ZdbSagaImpl(RepeatSagas, RepeatSaga)
 
@@ -346,7 +346,7 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 };
 
 ZfbStruct(, LiveSaga,
-  (((orderID), (Ctor<0>)), (UInt64)));
+  (((orderID), (Ctor<0>)),	UInt64));
 
 ZdbSagaDerive(LiveSagas, LiveSaga);
 ZdbSagaImpl(LiveSagas, LiveSaga)
@@ -359,7 +359,7 @@ struct ShortSaga : public ZdbSagaBase<LiveContext> {
   ZdbSagaStep(0, o, Insert) { return {}; }
 };
 ZfbStruct(, ShortSaga,
-  (((orderID), (Ctor<0>)), (UInt64)));
+  (((orderID), (Ctor<0>)),	UInt64));
 
 struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   using Base = ZdbSagaBase<LiveContext>;
@@ -371,7 +371,7 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   ZdbSagaStep(2, o, Delete) { return {}; }
 };
 ZfbStruct(, ChangedSaga,
-  (((orderID), (Ctor<0>)), (UInt64)));
+  (((orderID), (Ctor<0>)),	UInt64));
 
 ZdbSagaDerive(ShortCatalog, ShortSaga);
 ZdbSagaImpl(ShortCatalog, ShortSaga)
@@ -401,7 +401,7 @@ struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
   }
 };
 ZfbStruct(, PayloadSaga,
-  (((data), (Ctor<0>)), (Bytes)));
+  (((data), (Ctor<0>)),	Bytes));
 
 ZdbSagaDerive(PayloadCatalog, PayloadSaga);
 ZdbSagaImpl(PayloadCatalog, PayloadSaga)

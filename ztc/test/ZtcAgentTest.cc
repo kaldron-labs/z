@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZfCf.hh>
 
 #include <zlib/ztcagent_daemon.hh>
 
@@ -40,6 +41,15 @@ static void configValidation()
   auto cf = config();
   ZuCheck(cf.pubGCInterval == 1);
   ZuCheck(cf.pubGCBatch == 100);
+
+  auto parsed = ZfCf::scan("vaultStore: keyring");
+  auto loaded = ZfCf::handler<Ztc::AgentCf>(parsed.p<1>()).ctor();
+  ZuCheck(loaded.telSpin == cf.telSpin);
+  ZuCheck(loaded.telLL == cf.telLL);
+  ZuCheck(loaded.telTimeout == cf.telTimeout);
+  ZuCheck(loaded.closeTimeout == cf.closeTimeout);
+  ZuCheck(loaded.pingInterval == cf.pingInterval);
+  ZuCheck(loaded.idleTimeout == cf.idleTimeout);
 
   Ztc::Agent missing;
   auto invalid = env();

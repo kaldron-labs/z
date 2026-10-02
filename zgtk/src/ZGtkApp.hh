@@ -49,7 +49,7 @@ private:
 
   void wake();
   void wake_();		// ''
-  static void run_();	// ''
+  void run_();		// ''
 
 private:
   GSource		*m_source = nullptr;

@@ -26,7 +26,7 @@ ZdbTableDerive(IdemRequestTable, IdemRequest);
 template <bool Fwd, typename Def, typename Complete>
 void requestInsert(Def *def, Complete complete)
 {
-  if (!def->request.idempotencyKey) {
+  if (!def->request.idempotence) {
     def->saga->skip(ZuMv(complete));
     return;
   }
@@ -46,7 +46,7 @@ void requestInsert(Def *def, Complete complete)
       const auto &request = def->request;
       def->saga->template findDel<0>(table, 0,
 	ZuFwdTuple(request.actorKind, request.actorID, request.operation,
-	  request.idempotencyKey), ZuMv(complete),
+	  request.idempotence), ZuMv(complete),
 	[](ZdbRow<IdemRequest> *row, auto &&complete) mutable {
 	  complete(!row || row->commit());
 	});
@@ -57,7 +57,7 @@ void requestInsert(Def *def, Complete complete)
 template <typename Def, typename Complete>
 void requestComplete(Def *def, StringVec ids, int64_t updated, Complete complete)
 {
-  if (!def->request.idempotencyKey) {
+  if (!def->request.idempotence) {
     def->saga->skip(ZuMv(complete));
     return;
   }
@@ -67,7 +67,7 @@ void requestComplete(Def *def, StringVec ids, int64_t updated, Complete complete
     const auto &request = def->request;
     def->saga->template findUpd<0>(table, 0,
       ZuFwdTuple(request.actorKind, request.actorID, request.operation,
-	request.idempotencyKey), ZuMv(complete),
+	request.idempotence), ZuMv(complete),
       [def, ids = ZuMv(ids), updated](ZdbRow<IdemRequest> *row,
 	  auto &&complete) mutable {
 	if (!row || row->data().owner != def->saga->id()) {

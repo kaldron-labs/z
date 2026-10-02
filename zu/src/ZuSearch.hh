@@ -91,6 +91,8 @@ inline uint64_t ZuInterSearch(uint64_t n, Cmp cmp) {
     else {
       double d = l - r; // "distance" of left-to-right value span
       p = (l * (n - 3) + (d / 2)) / d; // left/right interpolated pivot
+      // A zero pivot leaves the positive left endpoint unchanged forever.
+      if (!p) p = 1;
     }
     double m = cmp(o + p);
     // std::cout << "l=" << l << " r=" << r << " p=" << p << " o=" << o << " n=" << n << " cmp(" << (o + p) << ")=" << m << "\n";

@@ -8,7 +8,7 @@
 // - intended for use as template parameters
 // - leverages C++20 string literal operator template for disambiguation:
 //   - template <ZuString S> struct X; ... ZuDerive(Y, (X<"foo">));
-//   - template <auto     S> struct X; ... ZuDerive(Y, (X<"foo"_Zu>));
+//   - template <auto     S> struct X; ... ZuDerive(Y, (X<"foo"_z>));
 
 #ifndef ZuString_HH
 #define ZuString_HH
@@ -51,6 +51,8 @@ template <unsigned N_> struct ZuString {
 
   ZuInline constexpr auto span() { return ZuSpan(data(), length()); }
   ZuInline constexpr auto cspan() const { return ZuSpan(data(), length()); }
+
+  ZuInline constexpr operator const char *() const { return data(); }
 
   ZuInline constexpr bool operator !() const { return !N; }
 
@@ -167,7 +169,7 @@ constexpr auto operator +(const ZuString<L> &l, const ZuString<R> &r)
 }
 
 template <ZuString S>
-constexpr auto operator""_Zu() { return S; }
+constexpr auto operator ""_z() { return S; }
 
 // constant-evaluated strings
 template <ZuString A> using ZuStringT = ZuConstant<decltype(A), A>;

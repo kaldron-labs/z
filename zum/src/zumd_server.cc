@@ -28,8 +28,8 @@ struct PasskeyStartReq {
   String capability;
 };
 ZfStruct(, (PasskeyStartReq, JSON),
-  (((purpose),		(Required)),	(String)),
-  (((capability),	(JSON::Opt)),	(String)));
+  (((purpose),		(Required)),	String),
+  (((capability),	(JSON::Opt)),	String));
 struct PasskeyStartTypes {
   using Keys = ZuStringTL<"enrollment", "bootstrap", "add", "recovery">;
 };
@@ -39,26 +39,26 @@ struct Ceremony {
   ZfJSON::Union<> options;
 };
 ZfStruct(, (Ceremony, JSON),
-  (((ceremony),		(Required)),	(String)),
-  (((options),		(Required)),	(UDT)));
+  (((ceremony),		(Required)),	String),
+  (((options),		(Required)),	UDT));
 
 struct Authorization {
   String authorizationURL;
   uint64_t expiresIn = 0;
 };
 ZfStruct(, (Authorization, JSON),
-  (((authorizationURL),	(Required)),	(String)),
-  (((expiresIn),	(Required)),	(UInt64)));
+  (((authorizationURL),	(Required)),	String),
+  (((expiresIn),	(Required)),	UInt64));
 
 struct Status { String status; };
 ZfStruct(, (Status, JSON),
-  (((status),		(Required)),	(String)));
+  (((status),		(Required)),	String));
 struct OK { bool ok = false; };
 ZfStruct(, (OK, JSON),
-  (((ok),		(Required)),	(Bool)));
+  (((ok),		(Required)),	Bool));
 struct BearerErrorBody { String error; };
 ZfStruct(, (BearerErrorBody, JSON),
-  (((error),		(Required)),	(String)));
+  (((error),		(Required)),	String));
 
 template <typename T>
 static String serverJSON(T value)
@@ -249,19 +249,122 @@ static String ceremonyJSON(ZuBSpan id, ZuCSpan options)
   return body;
 }
 
-static String consentPage(AppID appID, ZuBSpan id)
+static void htmlEsc(String &out, ZuCSpan text)
+{
+  for (char c: text) switch (c) {
+    case '&': out << "&amp;"; break;
+    case '<': out << "&lt;"; break;
+    case '>': out << "&gt;"; break;
+    case '"': out << "&quot;"; break;
+    case '\'': out << "&#39;"; break;
+    default: out << c; break;
+  }
+}
+
+struct ConsentView {
+  Bytes id;
+  AppID appID = 0;
+  String clientID;
+  String scope;
+};
+
+static String consentPage(const ConsentView &grant, ZuCSpan client, ZuCSpan app)
 {
   String action;
-  if (!appEndpointPath(appID, "v1", "consent", action)) return {};
+  if (!appEndpointPath(grant.appID, "v1", "consent", action)) return {};
   String page{
     "<!doctype html><meta charset=utf-8><title>Zum consent</title>"
     "<meta name=referrer content=no-referrer><h1>Authorize application</h1>"
-    "<p>The application requests the scopes shown in the authorization "
-    "request.</p><form method=post action=\""};
-  page << action << "\"><input type=hidden name=id value=\"";
-  page << encodeID(id) << "\"><button name=decision value=approve>Approve"
-    "</button><button name=decision value=deny>Deny</button></form>";
+    "<p><strong>"};
+  htmlEsc(page, client);
+  page << "</strong> (<code>";
+  htmlEsc(page, grant.clientID);
+  page << "</code>) requests access to <strong>";
+  htmlEsc(page, app);
+  page << "</strong>.</p><h2>Requested permissions</h2><ul>";
+  ZuCSpan scopes{grant.scope};
+  while (scopes) {
+    unsigned n = 0;
+    while (n < scopes.length() && scopes[n] != ' ') ++n;
+    ZuCSpan scope{scopes.data(), n};
+    if (scope) {
+      page << "<li><code>";
+      htmlEsc(page, scope);
+      page << "</code>";
+      if (scope == "openid") page << " &mdash; Verify your identity.";
+      else if (scope == "profile") page << " &mdash; Read your basic profile.";
+      else if (scope == "email") page << " &mdash; Read your email address.";
+      else if (scope == "offline_access")
+	page << " &mdash; Keep access when you are not signed in.";
+      else if (scope == "zum.admin")
+	page << " &mdash; Manage applications, users and access permissions.";
+      else page << " &mdash; Access this application role.";
+      page << "</li>";
+    }
+    scopes.offset(n < scopes.length() ? n + 1 : n);
+  }
+  page << "</ul><form method=post action=\"" << action <<
+    "\"><input type=hidden name=id value=\"" << encodeID(grant.id) <<
+    "\"><button name=decision value=approve>Approve</button>"
+    "<button name=decision value=deny>Deny</button></form>";
   return page;
+}
+
+static void consentReply(
+    DBContext *context, AppID appID, Bytes id, int64_t now,
+    String setCookie, ServerFn complete)
+{
+  auto grants = context->grants;
+  grants->run(0, [context, grants, appID, id = ZuMv(id), now,
+      setCookie = ZuMv(setCookie), complete = ZuMv(complete)]() mutable {
+    grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [context, appID, now,
+	setCookie = ZuMv(setCookie), complete = ZuMv(complete)](
+	ZdbRowRef<Grant> row) mutable {
+      if (!row || row->data().appID != appID ||
+	  row->data().kind != GrantKind::Ceremony ||
+	  row->data().purpose != GrantPurpose::Authorization ||
+	  row->data().state != State::Pending || row->data().owner ||
+	  row->data().expires <= now) {
+	complete(serverError());
+	return;
+      }
+      auto &data = row->data();
+      ConsentView grant{data.id, appID, data.clientID, data.scope};
+      auto clients = context->clients;
+      String clientID{grant.clientID};
+      clients->run(0, [context, clients, clientID = ZuMv(clientID),
+	  grant = ZuMv(grant), setCookie = ZuMv(setCookie),
+	  complete = ZuMv(complete)]() mutable {
+	clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [context,
+	    grant = ZuMv(grant), setCookie = ZuMv(setCookie),
+	    complete = ZuMv(complete)](ZdbRowRef<Client> row) mutable {
+	  if (!row || row->data().state != State::Active || row->data().owner) {
+	    complete(serverError());
+	    return;
+	  }
+	  String client{row->data().label ? row->data().label : row->data().id};
+	  auto apps = context->apps;
+	  AppID appID = grant.appID;
+	  apps->run(0, [apps, appID, client = ZuMv(client),
+	      grant = ZuMv(grant), setCookie = ZuMv(setCookie),
+	      complete = ZuMv(complete)]() mutable {
+	    apps->find<0>(0, ZuFwdTuple(appID), [client = ZuMv(client),
+		grant = ZuMv(grant), setCookie = ZuMv(setCookie),
+		complete = ZuMv(complete)](ZdbRowRef<App> row) mutable {
+	      if (!row || row->data().state != State::Active || row->data().owner) {
+		complete(serverError());
+		return;
+	      }
+	      auto &app = row->data();
+	      complete(ServerReply{.body = consentPage(grant, client,
+		app.label ? app.label : app.name),
+		.setCookie = ZuMv(setCookie), .type = ReplyType::Page});
+	    });
+	  });
+	});
+      });
+    });
+  });
 }
 
 bool Server::init(
@@ -572,13 +675,15 @@ void Server::sessionAuthorize_(AuthorizeResult result, Bytes binding,
 	    [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
 	  return;
 	}
+	Bytes consentID{result.ceremonyID};
 	if (!authorizeSessionFinish(m_requests, deadline_(), m_context, m_rng,
 	    ZuMv(result.ceremonyID), ZuMv(binding), ZuMv(session),
 	    AuthorizeFinishConfig{.issuer = result.issuer,
 	      .appID = result.appID, .origin = result.issuer, .now = now,
 	      .codeExpires = now + m_config.codeLifetime, .consent = true},
 	    m_policy,
-	    [this, result = ZuMv(result), setCookie = ZuMv(setCookie),
+	    [this, result = ZuMv(result), id = ZuMv(consentID),
+	        setCookie = ZuMv(setCookie),
 	        none, done](
 		int error, String location) mutable {
 	      if (error == AuthorizeIssue::OK) {
@@ -587,9 +692,9 @@ void Server::sessionAuthorize_(AuthorizeResult result, Bytes binding,
 		return;
 	      }
 	      if (error == AuthorizeIssue::Consent) {
-		done->finish(ServerReply{
-          .body = consentPage(result.appID, result.ceremonyID),
-		  .setCookie = ZuMv(setCookie), .type = ReplyType::Page});
+		consentReply(m_context, result.appID, ZuMv(id),
+		  now_(), ZuMv(setCookie),
+		  [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
 		return;
 	      }
 	      done->finish(ServerReply{
@@ -1131,7 +1236,7 @@ void Server::userInfoVerify_(
     AppServer app, String authorization, ServerFn complete)
 {
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
-  static constexpr auto prefix = "Bearer "_Zu;
+  static constexpr auto prefix = "Bearer "_z;
   if (authorization.length() <= prefix.length() ||
       !ZuICmp<ZuCSpan>::equals(
         ZuCSpan{authorization.data(), prefix.length()}, prefix)) {
@@ -1408,8 +1513,8 @@ void Server::finishGrant_(
                   });
               }
               else if (error == AuthorizeIssue::Consent) {
-                done->finish(ServerReply{.body = consentPage(appID, id),
-                  .type = ReplyType::Page});
+                consentReply(m_context, appID, ZuMv(id), now_(), {},
+                  [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
               }
               else {
                 auto reply = jsonReply(error);
@@ -1563,8 +1668,8 @@ void Server::oidcCallback_(
                 done->finish(ZuMv(reply));
               });
           else if (error == AuthorizeIssue::Consent)
-            done->finish(ServerReply{.body = consentPage(appID, id),
-              .type = ReplyType::Page});
+            consentReply(m_context, appID, ZuMv(id), now_(), {},
+              [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
           else {
             auto reply = jsonReply(error);
             reply.setCookie = setCookie_({}, true);

@@ -1,8 +1,11 @@
 # Management operations
 
 [ZumMgmt.hh](src/ZumMgmt.hh) is the shared wire catalog for Zum
-administration. Its 60 `MgmtOp` values each identify exactly one remote
-call and one core action named `Zum.<operation>`. The route registry in
+administration. Request and response JSON fields and management query
+parameters use snake_case (`app_id`, `client_id`, `role_ids`, etc.).
+C++ fields and native configuration retain their existing names. Its 61
+`MgmtOp` values each identify exactly one remote call and one core action named
+`Zum.<operation>`. The route registry in
 [ZumMgmt.cc](src/ZumMgmt.cc) is the sole method/path mapping used by `zumd`,
 the `zum` client, and registry tests.
 
@@ -21,7 +24,7 @@ Bootstrap seeds the catalog in the core Zum application. The core
 publication. Enrolled catalog publishers never receive `zum.admin` implicitly.
 
 A bearer token must carry the exact operation action. Current database state
-must additionally prove either the active core superuser membership or an
+must additionally prove either the active core superuser assignment or an
 active `admin_access` delegation for the authenticated user/client and target
 application. The service which owns an application may publish that
 application's available action/standard-role catalog. Each role name is also
@@ -35,7 +38,7 @@ never assigns roles to users or restores deleted privileges.
 | Issuer/catalog | `issuerQuery`, `operationQuery`, `catalogPublish` |
 | Applications | `appQuery`, `appEnroll`, `appUpdate`, `appState` |
 | Users/credentials | `userQuery`, `userInvite`, `userUpdate`, `userState`, `userRecover`; `credentialQuery`, `credentialUpdate`, `credentialState` |
-| Memberships | `membershipQuery`, `membershipAdd`, `membershipRoles`, `membershipState` |
+| Assignments | `assignmentQuery`, `assignmentAdd`, `assignmentRoles`, `assignmentState` |
 | Actions/roles | `actionQuery`, `actionAdd`, `actionState`; `roleQuery`, `roleAdd`, `roleUpdate`, `roleActions`, `roleState`, `roleDelete` |
 | Clients | `clientQuery`, `clientAdd`, `clientUpdate`, `clientState`, `clientSecretRotate` |
 | Delegation | `clientAccessQuery`, `clientAccessSet`, `clientAccessState`; `adminAccessQuery`, `adminAccessSet`, `adminAccessState` |
@@ -45,18 +48,19 @@ never assigns roles to users or restores deleted privileges.
 
 The route registry defines the method/path table.
 [Zum terminology](../zum_terminology.md) defines the application, principal,
-role, action and scope vocabulary. Schema version 21 requires reprovisioning
-existing databases; its operation catalog removes audience management.
+role, action and scope vocabulary. Schema version 24 requires reprovisioning existing databases. It renames
+the assignment table, saga identities, authority-version fields and management
+operations; previous schemas and REST names are unsupported.
 
 ## HTTP rules
 
 External identities remain bound to provider/issuer/subject. Their projected
-names are synthetic `oidc:<provider>:<userID>` identifiers; a browser login hint
+names are synthetic `oidc:<provider>:<user_id>` identifiers; a browser login hint
 does not rename or link that identity. Inviting a local user with the same
 stored projected name invalidates the external user's existing session/grant
 authority versions within the invitation saga. A local account's presence also
 blocks new external issuance for that name, including when the local account is
-pending or suspended. No identity, membership or role assignment is transferred.
+pending or suspended. No identity, assignment or role assignment is transferred.
 Issued access tokens retain their documented expiry boundary. The current
 UserInvite definition and physical schema are covered by the SQLite staged
 recovery suite. Prior schemas and saga definitions are unsupported; backward
@@ -99,11 +103,12 @@ and secret redaction.
 
 ## Administrative client
 
-The initial interface is:
+The administrative interface is:
 
 ```sh
 zum --config FILE login
-zum --config FILE OPERATION --json FILE
+zum --config FILE app add NAME AUDIENCE > enrollment.json
+zum --config FILE RESOURCE [SUBRESOURCE] VERB REQUIRED_ARGS... [OPTIONS]
 ```
 
 Offline database-secret key rotation is a server maintenance operation, not a
@@ -131,19 +136,61 @@ redirect, authorization code, and S256 PKCE. The CLI stores credentials through
 `Ztls::Vault` under `$HOME/.zum` (or `ZUM_HOME`) and opens the vault only for
 each load/save. A missing stored credential triggers browser login.
 
-Request JSON supplies normal path/query/body fields. These reserved fields are
-removed from the payload and mapped to transport controls:
+Required request fields are positional, in the order shown by `zum --help`.
+Commands form a hierarchy, such as `zum user add`, `zum user list`, and
+`zum client access set`. Use `zum user --help` or `zum client access --help`
+to show a command group's syntax. The `assign` commands call the
+`assignmentQuery`, `assignmentAdd`, `assignmentRoles` and `assignmentState`
+operations under `/admin/apps/{app_id}/assignments`.
+Optional fields use named options (`--label`, `--redirect-uris`,
+`--refresh-allowed`, etc.). Lists are comma-separated; an empty argument denotes
+an empty list. Boolean values are `true` or `false`. `--grants` takes named
+flags separated by commas: `AuthCode`, `ClientCredentials`, and `Refresh`.
+For example, `--grants AuthCode,Refresh` selects authorization code and refresh.
+The REST `grants` field uses the same comma-separated names. The nested catalog
+supplied to `catalog publish` is an individual JSON object argument. `zum` constructs the
+request JSON, quotes strings, and encodes IDs without floating-point conversion.
+`app add` enrolls an application (`appEnroll` is its wire operation).
+`user add NAME` invites a user to enroll a passkey. `user list [NAME]` accepts
+an optional positional name filter; omit it to list users or filter by `--id`.
+The `assign` group manages a user's application assignment: `assign add APP_ID
+USER_ID` creates it, `assign roles APP_ID USER_ID ROLE_IDS` replaces its roles,
+and `assign state APP_ID USER_ID STATE` changes its lifecycle state.
 
-| Field | Meaning |
+Configuration is selected by `--config FILE`, then `ZUM_CONFIG`, then
+`$ZUM_HOME/zum.cf` (default `$HOME/.zum/zum.cf`). Browser-login prompts and
+diagnostics go to stderr; HTTP response JSON goes to stdout, including
+secret-bearing enrollment, invitation, recovery and client responses. Use
+`umask 077` before redirecting those responses to a new file.
+
+Transport controls are command-line options:
+
+| Option | Meaning |
 | --- | --- |
-| `$ifMatch` | `If-Match` header |
-| `$ifNoneMatch` | `If-None-Match` header |
-| `$idempotencyKey` | `Idempotency-Key` header |
-| `$secretOutput` | Explicit owner-only file for a secret-bearing response |
+| `--if-match ETAG` | `If-Match` header; preserve the ETag's embedded quotes |
+| `--if-none-match '*'` | `If-None-Match` header for creation |
+| `--idempotence KEY` | Optional explicit `Idempotency-Key` for retrying a request |
 
-Potentially secret-producing application enrollment, client creation, and
-client-secret rotation require `$secretOutput`; their response is never
-printed to the terminal.
+For operations which need idempotency, `zum` generates a random 128-bit key once
+per invocation and retains it through token refresh and request replay. A failed
+HTTP request reports that key on stderr for an explicit retry. A new invocation
+without `--idempotence` is a new operation; retain successful responses and do
+not blindly rerun creates. Use `zum operation list --operation appEnroll
+--idempotence KEY` to look up an enrollment's status with its key.
+
+For example:
+
+```sh
+export ZUM_CONFIG=/path/to/admin.cf
+umask 077
+zum app add ztchub-local http://localhost:8090/admin > hub-enrollment.json
+zum role list APP_ID --name Client
+zum assign add APP_ID USER_ID > assignment.json
+zum assign roles APP_ID USER_ID ROLE_ID --if-match '"ETAG"'
+zum client add APP_ID native --label "Local zdash" \
+  --redirect-uris http://127.0.0.1:8081/callback \
+  --grants AuthCode,Refresh --refresh-allowed true > dashboard-client.json
+```
 
 ### Manual browser/passkey acceptance
 
@@ -185,13 +232,13 @@ surface:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/.well-known/oauth-authorization-server/oauth2/{appID}` | OAuth authorization-server metadata. |
-| GET | `/oauth2/{appID}/.well-known/openid-configuration` | OpenID Provider metadata. |
-| GET | `/oauth2/{appID}/v1/authorize` | Authorization-code initiation with S256 PKCE. |
-| POST | `/oauth2/{appID}/v1/token` | Authorization-code, refresh-token, and client-credentials exchange. |
-| POST | `/oauth2/{appID}/v1/revoke` | Token revocation. |
-| GET | `/oauth2/{appID}/v1/keys` | Active public signing keys for that issuer. |
-| GET/POST | `/oauth2/{appID}/v1/userinfo` | Claims selected by an access token carrying `openid`. |
+| GET | `/.well-known/oauth-authorization-server/oauth2/{app_id}` | OAuth authorization-server metadata. |
+| GET | `/oauth2/{app_id}/.well-known/openid-configuration` | OpenID Provider metadata. |
+| GET | `/oauth2/{app_id}/v1/authorize` | Authorization-code initiation with S256 PKCE. |
+| POST | `/oauth2/{app_id}/v1/token` | Authorization-code, refresh-token, and client-credentials exchange. |
+| POST | `/oauth2/{app_id}/v1/revoke` | Token revocation. |
+| GET | `/oauth2/{app_id}/v1/keys` | Active public signing keys for that issuer. |
+| GET/POST | `/oauth2/{app_id}/v1/userinfo` | Claims selected by an access token carrying `openid`. |
 
 An interactive request may combine a role-derived resource scope with the enrolled client's
 `openid`, `profile`, `email`, and (when refresh tokens are enabled)
@@ -208,5 +255,15 @@ Identity scopes are not accepted for client-credentials grants.
 
 `appEnroll` requires `audience`, the immutable token audience of the
 application/service. `appQuery` returns this field. Application state controls
-its availability. `clientAccessSet` accepts `roleIDs`; the URL identifies the
+its availability. `clientAccessSet` accepts `role_ids`; the URL identifies the
 target application. `consentRevoke` can filter by user, client and application.
+
+`ssfRegister` (`POST /admin/apps/{app_id}/ssf`) registers or renews a client's
+SSF receiver. It uses the application's existing `catalogPublish` delegation
+and requires a workload token. The JSON fields are `receiver_id`, `delivery_url`,
+`callback_auth`, and `expires_in` (default 300 seconds). The response supplies the
+server-capped `expires_in` and Unix `expires`. No idempotency key is required:
+each successful call extends the lease. Receiver IDs are scoped by application
+and authenticated client; the notification audience is the application's
+immutable audience. Clients must renew before expiry. `Zum::Service` handles
+registration and timer renewal automatically.

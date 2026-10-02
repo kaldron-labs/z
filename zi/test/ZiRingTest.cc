@@ -144,8 +144,24 @@ void testOpenExisting()
   ZuCheck(size >= 8192);
   ZuCheck(opener.open(Ring::Write) == Zu::OK);
   ZuCheck(opener.size() == size);
+  Ring initial{ZiRingParams{name, 0}.initial(4096)};
+  ZuCheck(initial.open(Ring::Write) == Zu::OK);
+  ZuCheck(initial.size() == size);
+  initial.close();
   opener.close();
   creator.close();
+
+  name = ZiTestResidue::uniqueName("initial");
+  ZiTestResidue::addShm(name);
+  initial.init(ZiRingParams{name, 0}.initial(6000));
+  ZuCheck(initial.open(Ring::Write) == Zu::OK);
+  size = initial.size();
+  ZuCheck(size >= 6000);
+  opener.init(ZiRingParams{name, 0});
+  ZuCheck(opener.open(Ring::Read) == Zu::OK);
+  ZuCheck(opener.size() == size);
+  opener.close();
+  initial.close();
 }
 
 int main(int argc, char **argv)

@@ -72,9 +72,9 @@ struct Frame {
   double	price;
 };
 ZfStruct(, Frame,
-  (((seqNo),	(Ctor<0>, Series, Index, Delta)),	(UInt64)),
-  (((time),	(Ctor<1>, Series, Index, Delta)),	(Time, "2020/01/01")),
-  (((price),	(Ctor<2>, Series, NDP<9>)),		(Float)));
+  (((seqNo),	(Ctor<0>, Series, Index, Delta)),				UInt64),
+  (((time),	(Ctor<1>, Series, Index, Delta, Deflt<"2020/01/01"_z>)),	Time),
+  (((price),	(Ctor<2>, Series, NDP<9>)),					Float));
 
 void usage()
 {
@@ -271,12 +271,12 @@ struct Options {
   bool		help;
 };
 ZfStruct(, Options,
-  (((module),    (Ctor<0>, CLI::Opt<'m'>)),  (String)),
-  (((connect),   (Ctor<1>, CLI::Opt<'c'>)),  (String, getenv("ZDB_CONNECT"))),
-  (((debug),     (Ctor<2>, CLI::Flag<'d'>)), (Bool)),
-  (((hashTel),   (Ctor<3>, CLI::Flag<'t'>)), (Bool)),
-  (((heapTel),   (Ctor<4>, CLI::Flag<'T'>)), (Bool)),
-  (((help),      (Ctor<5>, CLI::Flag<'h'>)), (Bool)));
+  (((module),    (Ctor<0>, CLI::Opt<'m'>)),	String),
+  (((connect),   (Ctor<1>, CLI::Opt<'c'>)),	String),
+  (((debug),     (Ctor<2>, CLI::Flag<'d'>)),	Bool),
+  (((hashTel),   (Ctor<3>, CLI::Flag<'t'>)),	Bool),
+  (((heapTel),   (Ctor<4>, CLI::Flag<'T'>)),	Bool),
+  (((help),      (Ctor<5>, CLI::Flag<'h'>)),	Bool));
 
 int main(int argc_, char **argv)
 {
@@ -290,6 +290,7 @@ int main(int argc_, char **argv)
     usage();
   }
   if (argc != 1) usage();
+  if (!options.connect.data()) options.connect = getenv("ZDB_CONNECT");
   ZtString<> moduleEnv;
   if (!options.module)
     if (auto path = Zt::getpath("ZDB_MODULE"))

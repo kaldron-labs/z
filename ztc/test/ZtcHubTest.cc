@@ -205,22 +205,26 @@ static void routing()
   ZuCheck(error == Ztc::HubError::DuplicateSub);
 
   uint64_t agent = 0, generation = 0, seq = 0;
-  ZuCheck(hub.addSubscription(20, 7, "device-1", agent, generation, seq,
+  Ztc::Request snapshot;
+  Ztc::Request continuing{.id = "publisher-1", .interval = 1000};
+  ZuCheck(hub.addSubscription(20, 7, "device-1", snapshot, agent, generation, seq,
     error));
   ZuCheck(agent == 10 && generation == 3 && seq != 0);
   uint64_t unusedAgent = 0, unusedGeneration = 0, unusedSeq = 0;
-  ZuCheck(!hub.addSubscription(20, 7, "device-2", unusedAgent,
+  ZuCheck(!hub.addSubscription(20, 7, "device-2", snapshot, unusedAgent,
     unusedGeneration, unusedSeq, error));
   ZuCheck(error == Ztc::HubError::DuplicateSub);
   Ztc::RouteInfo route;
   ZuCheck(hub.route(10, 3, seq, route));
+  ZuCheck(!route.continuing && route.fanout);
   ZuCheck(!hub.route(10, 4, seq, route));
   uint64_t agent2 = 0, generation2 = 0, seq2 = 0;
-  ZuCheck(hub.addSubscription(22, 8, "device-1", agent2, generation2, seq2,
+  ZuCheck(hub.addSubscription(22, 8, "device-1", continuing, agent2, generation2, seq2,
     error));
   ZuCheck(agent2 == 10 && generation2 == 3 && seq2 != seq &&
     hub.route(10, 3, seq2, route));
-  ZuCheck(!hub.addSubscription(20, 7, "device-1", agent, generation, seq,
+  ZuCheck(route.continuing && !route.fanout);
+  ZuCheck(!hub.addSubscription(20, 7, "device-1", snapshot, agent, generation, seq,
     error));
   ZuCheck(error == Ztc::HubError::DuplicateSub);
   ZuCheck(hub.removeSession(20));
@@ -229,8 +233,7 @@ static void routing()
   bool completed = false;
   ZuCheck(hub.removeAgent(10, "device-1", 3,
     [&hub, &completed](Ztc::RouteInfo route) {
-      completed = hub.completeRoute(route.agentSessionID,
-        route.agentGeneration, route.requestSeqNo);
+      completed = hub.removeSubscription(route.frontEndID, route.subID);
     }));
   ZuCheck(completed);
   ZuCheck(!hub.route(10, 3, 1, route));
@@ -288,7 +291,8 @@ static void appInventory()
   struct Frames {
     ZtArray<uint8_t> types;
     bool attributed = true;
-    bool sourceEOS = false;
+    bool sourceGone = false;
+    bool sourceShutdown = false;
     void operator ()(Ztc::HubFrame frame) {
       auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
       if (!msg) { attributed = false; return; }
@@ -299,14 +303,21 @@ static void appInventory()
           msg->deviceId()->string_view() == "device-1" &&
           msg->agentGen() == 3 && telemetry && telemetry->id() &&
           telemetry->id()->string_view() == "publisher-1" &&
-          !telemetry->seqNo() && telemetry->value_type() ==
-            Ztc::fbs::TelemetryBody::AppTelemetry;
-      } else if (msg->body_type() == Ztc::fbs::Body::EOS &&
-          msg->deviceId()) {
-        auto eos = msg->body_as_EOS();
-        sourceEOS = eos && msg->deviceId()->string_view() == "device-1" &&
-          msg->agentGen() == 3 && eos->id() &&
-          eos->id()->string_view() == "publisher-1" && !eos->seqNo();
+          !telemetry->seqNo() &&
+          (telemetry->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry ||
+           telemetry->value_type() == Ztc::fbs::TelemetryBody::Shutdown);
+        sourceShutdown |= telemetry && telemetry->value_type() ==
+          Ztc::fbs::TelemetryBody::Shutdown;
+      } else if (msg->body_type() == Ztc::fbs::Body::Error) {
+        auto error = msg->body_as_Error();
+        sourceGone = error && msg->deviceId() &&
+          msg->deviceId()->string_view() == "device-1" &&
+          msg->agentGen() == 3 && error->id() &&
+          error->id()->string_view() == "publisher-1" &&
+          error->code() == Ztc::HubError::AgentGone;
+      } else if (msg->body_type() == Ztc::fbs::Body::EOS) {
+        attributed &= !msg->deviceId() && !msg->agentGen() &&
+          msg->body_as_EOS()->id()->string_view() == "inventory";
       }
     }
   } frames;
@@ -321,23 +332,25 @@ static void appInventory()
 
   frames.types.length(0);
   ZuCheck(hub.appSubscribe(20, 8, 1000, error));
-  ZuCheck(frames.types.length() == 2 &&
-    frames.types[0] == uint8_t(Ztc::fbs::Body::Ack) &&
-    frames.types[1] == uint8_t(Ztc::fbs::Body::Telemetry));
-  ZuCheck(app(hub, 10, 3, "publisher-1", "v2"));
   ZuCheck(frames.types.length() == 3 &&
-    frames.types[2] == uint8_t(Ztc::fbs::Body::Telemetry));
+    frames.types[0] == uint8_t(Ztc::fbs::Body::Ack) &&
+    frames.types[1] == uint8_t(Ztc::fbs::Body::Telemetry) &&
+    frames.types[2] == uint8_t(Ztc::fbs::Body::EOS));
+  ZuCheck(app(hub, 10, 3, "publisher-1", "v2"));
+  ZuCheck(frames.types.length() == 4 &&
+    frames.types[3] == uint8_t(Ztc::fbs::Body::Telemetry));
   ZuCheck(hub.appRemove(10, 3, "publisher-1"));
-  ZuCheck(frames.sourceEOS && frames.types.length() == 4 &&
-    frames.types[3] == uint8_t(Ztc::fbs::Body::EOS));
+  ZuCheck(frames.sourceShutdown && !frames.sourceGone && frames.attributed &&
+    frames.types.length() == 5 &&
+    frames.types[4] == uint8_t(Ztc::fbs::Body::Telemetry));
   ZuCheck(hub.appRemove(10, 3, "publisher-1"));
   ZuCheck(hub.appUnsubscribe(20, 8));
   ZuCheck(hub.appUnsubscribe(20, 8));
   ZuCheck(app(hub, 10, 3, "publisher-1", "v3"));
   ZuCheck(hub.appSubscribe(20, 9, 1000, error));
   ZuCheck(hub.removeAgent(10, "device-1", 3));
-  ZuCheck(frames.types.length() == 7 &&
-    frames.types[6] == uint8_t(Ztc::fbs::Body::EOS));
+  ZuCheck(frames.sourceGone && frames.attributed && frames.types.length() == 9 &&
+    frames.types[8] == uint8_t(Ztc::fbs::Body::Error));
   ZuCheck(hub.stop());
 }
 

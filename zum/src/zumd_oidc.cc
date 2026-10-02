@@ -53,22 +53,22 @@ struct OIDCID {
   int64_t authTime = 0;
 };
 ZfStruct(, (OIDCID, JSON),
-  (((issuer),		(JSON::ID<"iss">, Required)),	(String)),
-  (((subject),		(JSON::ID<"sub">, Required)),	(String)),
-  (((audience),		(JSON::ID<"aud">, Required)),	(UDT)),
-  (((authorizedParty), (JSON::ID<"azp">, JSON::Opt)),	(String)),
-  (((nonce),		(Required)),	(String)),
-  (((iat),		(Required)),	(Int64)),
-  (((expires),		(JSON::ID<"exp">, Required)),	(Int64)),
-  (((authTime),		(JSON::ID<"auth_time">, Required)), (Int64)));
+  (((issuer),		(JSON::ID<"iss">, Required)),		String),
+  (((subject),		(JSON::ID<"sub">, Required)),		String),
+  (((audience),		(JSON::ID<"aud">, Required)),		UDT),
+  (((authorizedParty), (JSON::ID<"azp">, JSON::Opt)),		String),
+  (((nonce),		(Required)),				String),
+  (((iat),		(Required)),				Int64),
+  (((expires),		(JSON::ID<"exp">, Required)),		Int64),
+  (((authTime),		(JSON::ID<"auth_time">, Required)),	Int64));
 
 struct OIDCToken { String idToken; String accessToken; };
 ZfStruct(, (OIDCToken, JSON),
-  (((idToken),		(JSON::ID<"id_token">, Required)),	(String)),
-  (((accessToken),	(JSON::ID<"access_token">, JSON::Opt)), (String)));
+  (((idToken),		(JSON::ID<"id_token">, Required)),	String),
+  (((accessToken),	(JSON::ID<"access_token">, JSON::Opt)),	String));
 struct OIDCUserInfo { String subject; };
 ZfStruct(, (OIDCUserInfo, JSON),
-  (((subject),		(JSON::ID<"sub">, Required)),	(String)));
+  (((subject),		(JSON::ID<"sub">, Required)),	String));
 struct OIDCJWK {
   String kid;
   String kty;
@@ -79,13 +79,13 @@ struct OIDCJWK {
   String y;
 };
 ZfStruct(, (OIDCJWK, JSON),
-  (((kid),		(Required)),	(String)),
-  (((kty),		(Required)),	(String)),
-  (((crv),		(Required)),	(String)),
-  (((use),		(JSON::Opt)),	(String)),
-  (((alg),		(JSON::Opt)),	(String)),
-  (((x),		(Required)),	(String)),
-  (((y),		(Required)),	(String)));
+  (((kid),		(Required)),	String),
+  (((kty),		(Required)),	String),
+  (((crv),		(Required)),	String),
+  (((use),		(JSON::Opt)),	String),
+  (((alg),		(JSON::Opt)),	String),
+  (((x),		(Required)),	String),
+  (((y),		(Required)),	String));
 ZuDerive(OIDCJWKWireArray, (ZtArray<OIDCJWK,
   ZtArrayHeapID<"Zum.OIDC.JWKs">>));
 struct OIDCJWKWireVec : public OIDCJWKWireArray {
@@ -94,7 +94,7 @@ struct OIDCJWKWireVec : public OIDCJWKWireArray {
 };
 struct OIDCJWKSResponse { OIDCJWKWireVec keys; };
 ZfStruct(, (OIDCJWKSResponse, JSON),
-  (((keys),		(Required)),	(UDT)));
+  (((keys),		(Required)),	UDT));
 struct OIDCDiscovery {
   String issuer;
   String authorize;
@@ -106,23 +106,25 @@ struct OIDCDiscovery {
   String userinfo;
 };
 ZfStruct(, (OIDCDiscovery, JSON),
-  (((issuer),		(Required)),	(String)),
-  (((authorize),	(JSON::ID<"authorization_endpoint">, Required)), (String)),
-  (((token),		(JSON::ID<"token_endpoint">, Required)), (String)),
-  (((jwks),		(JSON::ID<"jwks_uri">, Required)), (String)),
-  (((responses),	(JSON::ID<"response_types_supported">, Required)), (StringVec)),
-  (((algorithms),	(JSON::ID<"id_token_signing_alg_values_supported">, Required)), (StringVec)),
-  (((methods),		(JSON::ID<"token_endpoint_auth_methods_supported">, Required)), (StringVec)),
-  (((userinfo),		(JSON::ID<"userinfo_endpoint">, JSON::Opt)), (String)));
+  (((issuer),		(Required)),						String),
+  (((authorize),	(JSON::ID<"authorization_endpoint">, Required)),	String),
+  (((token),		(JSON::ID<"token_endpoint">, Required)),		String),
+  (((jwks),		(JSON::ID<"jwks_uri">, Required)),			String),
+  (((responses),	(JSON::ID<"response_types_supported">, Required)),	StringVec),
+  (((algorithms),	(JSON::ID<"id_token_signing_alg_values_supported">,
+    Required)),									StringVec),
+  (((methods),		(JSON::ID<"token_endpoint_auth_methods_supported">,
+    Required)),									StringVec),
+  (((userinfo),		(JSON::ID<"userinfo_endpoint">, JSON::Opt)),		String));
 struct OIDCEssential { bool essential = true; };
 ZfStruct(, (OIDCEssential, JSON),
-  (((essential),	(Required)),	(Bool)));
+  (((essential),	(Required)),	Bool));
 struct OIDCAuthTime { OIDCEssential authTime; };
 ZfStruct(, (OIDCAuthTime, JSON),
-  (((authTime),		(JSON::ID<"auth_time">, Required)), (UDT)));
+  (((authTime),		(JSON::ID<"auth_time">, Required)),	UDT));
 struct OIDCAuthorizeClaims { OIDCAuthTime idToken; };
 ZfStruct(, (OIDCAuthorizeClaims, JSON),
-  (((idToken),		(JSON::ID<"id_token">, Required)), (UDT)));
+  (((idToken),		(JSON::ID<"id_token">, Required)),	UDT));
 
 struct OIDCCallbackFields {
   using Keys = ZuStringTL<"code", "state", "error">;

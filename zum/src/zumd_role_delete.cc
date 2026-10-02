@@ -14,15 +14,15 @@ namespace Zum {
 
 struct RoleDeleteItem { String etag; };
 ZfStruct(, (RoleDeleteItem, JSON),
-  (((etag),		(Required)),	(String)));
+  (((etag),		(Required)),	String));
 struct RoleDeleteReply { RoleDeleteItem item; };
 ZfStruct(, (RoleDeleteReply, JSON),
-  (((item),		(Required)),	(UDT)));
+  (((item),		(Required)),	UDT));
 struct RoleDeleteError { String error; String message; String correlationID; };
 ZfStruct(, (RoleDeleteError, JSON),
-  (((error),		(Required)),	(String)),
-  (((message),		(Required)),	(String)),
-  (((correlationID),	(Required)),	(String)));
+  (((error),		(Required)),	String),
+  (((message),		(Required)),	String),
+  (((correlationID),	(Required)),	String));
 
 // The scan is bounded per store request and posts the next page. Before-images
 // are revalidated by the saga's ordinary shard-owned mutation continuations.
@@ -178,7 +178,7 @@ private:
   void scan_()
   {
     switch (m_phase) {
-      case 0: scan_(m_context->memberships, m_change.members); break;
+      case 0: scan_(m_context->assignments, m_change.members); break;
       case 1: scan_(m_context->clientAccess, m_change.clients); break;
       case 2: scan_(m_context->adminAccess, m_change.admins); break;
       case 3: scan_(m_context->roleMaps, m_change.maps); break;

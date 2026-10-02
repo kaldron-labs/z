@@ -180,7 +180,7 @@ ZfCLI::AsStringDeflt ZfCLI_StringFmt(...);
 
 namespace ZfCLIError {
 
-constexpr auto Component = "ZfCLI"_Zu;
+constexpr auto Component = "ZfCLI"_z;
 
 inline auto unrecognizedOption(ZuCSpan option) {
   return [option = ZeString{option}](auto &s) {

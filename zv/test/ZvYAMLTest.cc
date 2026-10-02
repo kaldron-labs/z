@@ -24,8 +24,8 @@ struct FileYAML {
 };
 
 ZfStruct(, (FileYAML, YAML),
-  (((value),	(Ctor<0>)),	(String)),
-  (((number),	(Ctor<1>)),	(Int32)));
+  (((value),	(Ctor<0>)),	String),
+  (((number),	(Ctor<1>)),	Int32));
 
 static Zi::Path g_dir;
 

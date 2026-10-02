@@ -29,6 +29,18 @@
 
 namespace Ztc {
 
+namespace HubError {
+  enum T : int8_t {
+    NoAgent = 1,
+    DuplicateSub,
+    BadReq,
+    AgentGone,
+    Overflow,
+    Unauthorized,
+    SnapshotFailed
+  };
+}
+
 namespace fbs { Msg ZfbType_(Msg *); }
 
 inline constexpr ZuCSpan Protocol{"ztc"};

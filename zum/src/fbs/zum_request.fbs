@@ -4,7 +4,7 @@ table IdemRequest {
   actor_kind:int8;
   actor_i_d:string;
   operation:uint32;
-  idempotency_key:string;
+  idempotence:string;
   request_digest:[ubyte];
   saga_i_d:Zfb.UInt128;
   status:int8;

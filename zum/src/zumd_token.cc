@@ -573,7 +573,7 @@ private:
   void tokens_()
   {
     if (!m_client.refreshAllowed ||
-	!(m_client.grants & ClientGrant::RefreshToken) ||
+	!(m_client.grants & ClientGrant::Refresh()) ||
 	!scopeContains(m_response.scope, "offline_access")) {
       consume_();
       return;

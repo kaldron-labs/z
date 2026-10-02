@@ -356,20 +356,6 @@ static Ztc::HubFrame errorFrame(uint64_t subID, ZuCSpan deviceID,
   return builder.buf();
 }
 
-static Ztc::HubFrame eosFrame(const Ztc::RouteInfo &route)
-{
-  Ztc::HubFrame frame = new HubBuf;
-  frame->skip = Zfb::IOBuilder::Align;
-  Zfb::IOBuilder builder{ZuMv(frame)};
-  auto device = builder.CreateString(route.deviceID.data(),
-    route.deviceID.length());
-  auto eos = ZfbStruct::save(builder,
-    Ztc::EOS{ZuID{route.deviceID}, route.requestSeqNo});
-  builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS,
-    eos.Union(), route.subID, device, route.agentGeneration));
-  return builder.buf();
-}
-
 static Ztc::HubFrame unsubscribeFrame(const Ztc::RouteInfo &route)
 {
   Ztc::HubFrame frame = new HubBuf;
@@ -400,6 +386,7 @@ struct App {
     uint64_t	controlBytes = 0;
     uint64_t	telemetryBytes = 0;
     bool	queued = false;
+    bool	failed = false;
 
     Egress(uint64_t id_) : id{id_} { }
   };
@@ -488,7 +475,7 @@ struct App {
     if (state.closed) return;
     auto msg = Ztc::fbs::GetMsg(frame->data());
     bool telemetry = msg->body_type() == Ztc::fbs::Body::Telemetry;
-    bool terminal = msg->body_type() == Ztc::fbs::Body::EOS ||
+    bool completion = msg->body_type() == Ztc::fbs::Body::EOS ||
       msg->body_type() == Ztc::fbs::Body::Error;
     auto id = msg->subId();
     auto &cf = hold->app()->app()->hub->config();
@@ -502,20 +489,25 @@ struct App {
       egress = new Egresses::Node{id};
       state.egresses.addNode(egress);
     }
+    if (telemetry && egress->failed) return;
     auto &queue = telemetry ? egress->telemetry : egress->control;
     auto &bytes = telemetry ? egress->telemetryBytes : egress->controlBytes;
     auto maxFrames = telemetry ? cf.telemetryFrames : cf.controlFrames;
     auto maxBytes = telemetry ? cf.telemetryBytes : cf.controlBytes;
-    // Reserve one maximum-sized control frame for terminal delivery.
-    if (!telemetry && !terminal) { --maxFrames; maxBytes -= cf.maxFrame; }
+    // Reserve control capacity for completion/failure, including sample EOS
+    // on continuing routes. Route retirement is decided by its lifetime.
+    if (!telemetry && !completion) { --maxFrames; maxBytes -= cf.maxFrame; }
     if (queue.length() >= maxFrames || frame->length > maxBytes ||
         bytes > maxBytes - frame->length) {
       if (telemetry && id) {
+	egress->failed = true;
         queue.clean();
         bytes = 0;
         auto app = hold->app()->app();
+	bool removed = false;
         app->hub->removeSubscription(state.sessionID, id,
-          [hold](Ztc::RouteInfo route) mutable {
+          [hold, &removed](Ztc::RouteInfo route) mutable {
+	    removed = true;
             auto app = hold->app()->app();
             app->hub->sendAgent(route.agentSessionID,
               route.agentGeneration, unsubscribeFrame(route));
@@ -523,6 +515,17 @@ struct App {
               route.agentGeneration, Ztc::HubError::Overflow,
               "telemetry queue overflow"));
           });
+	if (!removed) {
+	  // Inventory has its own registry. Stop its stream and report the
+	  // overflow even when no ordinary route owns this subscription ID.
+	  // The inventory sender may be iterating that registry. Retire it
+	  // on the next Rx turn; failed egress rejects the remaining records.
+	  hold->app()->rxRun([hold, id]() {
+	    hold->app()->app()->hub->appUnsubscribe(hold->state().sessionID, id);
+	  });
+	  enqueue(hold, errorFrame(id, {}, 0, Ztc::HubError::Overflow,
+	    "inventory queue overflow"));
+	}
         return;
       }
       state.closed = true;
@@ -562,7 +565,7 @@ struct App {
   }
 
   static bool cookieValue(ZuBSpan cookies, Ztc::HubString &value) {
-    static constexpr auto name = "__Host-ztc_session="_Zu;
+    static constexpr auto name = "__Host-ztc_session="_z;
     while (cookies) {
       while (cookies && cookies[0] == ' ') cookies.offset(1);
       int end = cookies.find([](char c) { return c == ';'; });
@@ -705,10 +708,15 @@ struct App {
         link.close(Zws::CloseCode::TooLarge);
         return -1;
       }
-      bool terminal = msg->body_type() == Ztc::fbs::Body::EOS ||
-        msg->body_type() == Ztc::fbs::Body::Error ||
-        (msg->body_type() == Ztc::fbs::Body::Ack &&
-          msg->body_as_Ack()->status() != Ztc::fbs::AckStatus::OK);
+      // The agent completes a fan-out snapshot only after every source leg.
+      // Source-specific failures must leave the other legs routable.
+      bool terminal =
+	(msg->body_type() == Ztc::fbs::Body::EOS && !route.continuing) ||
+	(msg->body_type() == Ztc::fbs::Body::Error &&
+	  (!route.fanout || msg->body_as_Error()->code() ==
+	    Ztc::HubError::SnapshotFailed)) ||
+	(!route.fanout && msg->body_type() == Ztc::fbs::Body::Ack &&
+	  msg->body_as_Ack()->status() != Ztc::fbs::AckStatus::OK);
       if (!hub->sendFrontend(route.frontEndID, ZuMv(output)) || terminal)
         hub->removeSubscription(route.frontEndID, route.subID,
           [this](Ztc::RouteInfo route) {
@@ -748,8 +756,10 @@ struct App {
       }
       uint64_t agent = 0, generation = 0, seqNo = 0;
       Ztc::HubError::T error = Ztc::HubError::BadReq;
+      auto requestData = ZfbStruct::ctor<Ztc::Request>(request);
       if (!hub->addSubscription(state.sessionID, sub->subId(),
-          sub->deviceId()->string_view(), agent, generation, seqNo, error)) {
+          sub->deviceId()->string_view(), requestData,
+	  agent, generation, seqNo, error)) {
         auto message = error == Ztc::HubError::NoAgent ? "no agent" :
           error == Ztc::HubError::DuplicateSub ? "duplicate subscription" :
           "invalid subscription";
@@ -759,7 +769,6 @@ struct App {
       }
       Zfb::IOBuilder builder{ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024, 1U<<30,
         "Ztc.Hub.Frame">}};
-      auto requestData = ZfbStruct::ctor<Ztc::Request>(sub->body_as_Request());
       requestData.seqNo = seqNo;
       auto request_ = ZfbStruct::save(builder, requestData);
       builder.Finish(Ztc::saveMsg(builder,
@@ -873,9 +882,9 @@ struct App {
     if (state.agent) {
       hub->removeAgent(state.sessionID, state.deviceID, state.generation,
         [this](Ztc::RouteInfo route) {
-          if (hub->sendFrontend(route.frontEndID, eosFrame(route)))
-            hub->completeRoute(route.agentSessionID, route.agentGeneration,
-              route.requestSeqNo);
+          hub->sendFrontend(route.frontEndID, errorFrame(route.subID,
+            route.deviceID, route.agentGeneration, Ztc::HubError::AgentGone,
+            "agent disconnected"));
         });
     } else
       hub->removeSession(state.sessionID, [this](Ztc::RouteInfo route) {
@@ -974,9 +983,8 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Opt<'c'>, CLI::Long<"config">)),
-    (String, "ztchub.conf")),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)), (Bool)));
+  (((config), (CLI::Opt<'c'>, CLI::Long<"config">, Deflt<"ztchub.conf"_z>)),	String),
+  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),				Bool));
 
 static ZmSemaphore done;
 static void trapped() { done.post(); }

@@ -36,12 +36,12 @@ struct Credential {
   Text scope;
 };
 ZfStruct(, (Credential, JSON),
-  (((issuerURL), (JSON::ID<"issuer">, Required)), (String)),
-  (((audience), (Required)), (String)),
-  (((clientID), (Required)), (String)),
-  (((accessToken), (Required)), (String)),
-  (((refreshToken), (Required)), (String)),
-  (((scope), (JSON::Opt)), (String)));
+  (((issuerURL), (JSON::ID<"issuer">, Required)),	String),
+  (((audience), (Required)),				String),
+  (((clientID), (Required)),				String),
+  (((accessToken), (Required)),				String),
+  (((refreshToken), (Required)),			String),
+  (((scope), (JSON::Opt)),				String));
 
 inline Ztls::VaultResult save(
     const Credential &credential, ZuCSpan account = {}, ZuCSpan program = {})

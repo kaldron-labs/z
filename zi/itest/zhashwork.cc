@@ -224,7 +224,7 @@ static void utility(const Options &options) {
   heapPath << options.report << ".heap-tuning";
   Zi::Path originalHeap = Zt::getpath("Z_HEAPTUNE");
   Zt::setenv("Z_HEAPTUNE", heapPath.data());
-  constexpr auto marker = "owned heap configuration sentinel\n"_Zu;
+  constexpr auto marker = "owned heap configuration sentinel\n"_z;
   {
     ZiFile heap{heapPath, ZiFile::Write | ZiFile::GC};
     ZuCheckRT(heap && heap.write(marker.data(), marker.length()) == Zi::OK);

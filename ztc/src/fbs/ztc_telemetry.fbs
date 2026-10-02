@@ -7,7 +7,7 @@ namespace Ztc.fbs;
 table AppTelemetry {
   version:string;
   role:string;
-  start_time:int64;
+  start_time:Zfb.DateTime;
   state:int8;
   degraded:bool;
   rag:RAG;

@@ -118,80 +118,80 @@ struct NestedConstructed {
 struct Reused { Text text; uint32_t value; };
 
 ZfStruct(, Body,
-  (((text),	(Mutable)),	(String)),
-  (((value),	(Mutable)),	(UInt32)),
-  (((flag),	(Mutable)),	(Bool)),
-  (((bytes),	(Mutable)),	(Bytes)));
+  (((text),	(Mutable)),	String),
+  (((value),	(Mutable)),	UInt32),
+  (((flag),	(Mutable)),	Bool),
+  (((bytes),	(Mutable)),	Bytes));
 
 ZfStructRender(, Body, DBUS, text, value, flag, bytes);
 
-ZfStruct(, Inner, (((value), (Mutable)), (UInt16)));
+ZfStruct(, Inner, (((value), (Mutable)), UInt16));
 ZfStructRender(, Inner, DBUS, value);
 ZfStruct(, Outer,
-  (((tag), (Mutable)), (UInt8)),
-  (((inner), (Mutable)), (UDT)));
+  (((tag), (Mutable)),		UInt8),
+  (((inner), (Mutable)),	UDT));
 ZfStructRender(, Outer, DBUS, tag, inner);
-ZfStruct(, ArrayBody, (((values), (Mutable)), (UInt32Vec)));
+ZfStruct(, ArrayBody, (((values), (Mutable)), UInt32Vec));
 ZfStructRender(, ArrayBody, DBUS, values);
-ZfStruct(, PathArrayBody, (((paths), (Mutable)), (StringVec)));
+ZfStruct(, PathArrayBody, (((paths), (Mutable)), StringVec));
 ZfStructRender(, PathArrayBody, DBUS,
   (paths, (DBUS::ElemType<ZfDBUS::Type::ObjectPath>)));
 ZfStruct(, Names,
-  (((path), (Mutable)), (String)),
-  (((signature), (Mutable)), (String)),
-  (((code), (Mutable)), (Int8)));
+  (((path), (Mutable)),		String),
+  (((signature), (Mutable)),	String),
+  (((code), (Mutable)),		Int8));
 ZfStructRender(, Names, DBUS,
   (path, (DBUS::Type<ZfDBUS::Type::ObjectPath>)),
   (signature, (DBUS::Type<ZfDBUS::Type::Signature>)),
   code);
 ZfStruct(, Scalars,
-  (((boolean), (Mutable)), (Bool)),
-  (((u8), (Mutable)), (UInt8)),
-  (((i16), (Mutable)), (Int16)),
-  (((u16), (Mutable)), (UInt16)),
-  (((i32), (Mutable)), (Int32)),
-  (((u32), (Mutable)), (UInt32)),
-  (((i64), (Mutable)), (Int64)),
-  (((u64), (Mutable)), (UInt64)),
-  (((floating), (Mutable)), (Float)));
+  (((boolean), (Mutable)),	Bool),
+  (((u8), (Mutable)),		UInt8),
+  (((i16), (Mutable)),		Int16),
+  (((u16), (Mutable)),		UInt16),
+  (((i32), (Mutable)),		Int32),
+  (((u32), (Mutable)),		UInt32),
+  (((i64), (Mutable)),		Int64),
+  (((u64), (Mutable)),		UInt64),
+  (((floating), (Mutable)),	Float));
 ZfStructRender(, Scalars, DBUS,
   boolean, u8, i16, u16, i32, u32, i64, u64, floating);
 ZfStruct(, Borrowed,
-  (((text), (Mutable)), (CString)),
-  (((bytes), (Mutable)), (Bytes)));
+  (((text), (Mutable)),		CString),
+  (((bytes), (Mutable)),	Bytes));
 ZfStructRender(, Borrowed, DBUS, text, bytes);
-ZfStruct(, SpanText, (((text), (Mutable)), (String)));
+ZfStruct(, SpanText, (((text), (Mutable)), String));
 ZfStructRender(, SpanText, DBUS, text);
-ZfStruct(, SpanArray, (((values), (Mutable)), (UInt32Vec)));
+ZfStruct(, SpanArray, (((values), (Mutable)), UInt32Vec));
 ZfStructRender(, SpanArray, DBUS, values);
-ZfStruct(, BoolOnly, (((value), (Mutable)), (Bool)));
+ZfStruct(, BoolOnly, (((value), (Mutable)), Bool));
 ZfStructRender(, BoolOnly, DBUS, value);
-ZfStruct(, TextOnly, (((value), (Mutable)), (String)));
+ZfStruct(, TextOnly, (((value), (Mutable)), String));
 ZfStructRender(, TextOnly, DBUS, value);
 ZfStruct(, Access,
-  (((readOnly, Rd), (Mutable)), (UInt32)),
-  (((value, Fn), (Mutable)), (UInt32)));
+  (((readOnly, Rd), (Mutable)),	UInt32),
+  (((value, Fn), (Mutable)),	UInt32));
 ZfStructRender(, Access, DBUS, readOnly, value);
 ZfStruct(, Containers,
-  (((array), (Mutable)), (UDT)),
-  (((dict), (Mutable)), (UDT)),
-  (((variant), (Mutable)), (UDT)));
+  (((array), (Mutable)),	UDT),
+  (((dict), (Mutable)),		UDT),
+  (((variant), (Mutable)),	UDT));
 ZfStructRender(, Containers, DBUS, array, dict, variant);
 ZfStruct(, MapBody,
-  (((dict), (Mutable)), (UDT)),
-  (((tail), (Mutable)), (UInt32)));
+  (((dict), (Mutable)),	UDT),
+  (((tail), (Mutable)),	UInt32));
 ZfStructRender(, MapBody, DBUS, dict, tail);
 ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 ZfStruct(, Constructed,
-  (((first), (Ctor<1>)), (UInt16)),
-  (((second), (Ctor<0>)), (UInt32)));
+  (((first), (Ctor<1>)),	UInt16),
+  (((second), (Ctor<0>)),	UInt32));
 ZfStructRender(, Constructed, DBUS, first, second);
 ZfStruct(, NestedConstructed,
-  (((inner), (Ctor<0>)), (UDT)));
+  (((inner), (Ctor<0>)),	UDT));
 ZfStructRender(, NestedConstructed, DBUS, inner);
 ZfStruct(, Reused,
-  (((text), (Mutable)), (String)),
-  (((value), (Mutable)), (UInt32)));
+  (((text), (Mutable)),		String),
+  (((value), (Mutable)),	UInt32));
 ZfStructRender(, Reused, JSON, text, value);
 ZfStructRender(, Reused, CBOR, text, value);
 ZfStructRender(, Reused, DBUS, text, value);

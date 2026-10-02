@@ -130,7 +130,7 @@ table CodeFamily {
   auth_version:uint64;
   user_version:uint64 = 1;
   client_version:uint64;
-  membership_version:uint64;
+  assignment_version:uint64;
   auth_time:int64;
   created:int64;
   expires:int64;
@@ -183,7 +183,7 @@ table AppActionAdd {
   request:IdemRequest;
 }
 
-table MembershipChange {
+table AssignmentChange {
   app_i_d:uint64;
   user_i_d:uint64;
   old_roles:[uint64];
@@ -235,7 +235,7 @@ table CatalogPublish {
   request:IdemRequest;
 }
 
-table MembershipAdd {
+table AssignmentAdd {
   app_i_d:uint64;
   user_i_d:uint64;
   created:int64;

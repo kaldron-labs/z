@@ -129,7 +129,7 @@ static void routingScale()
     for (unsigned j = 0; j < cf.subscriptionsPerFrontEnd; ++j) {
       uint64_t agent = 0, generation = 0, seqNo = 0;
       auto device = numbered("device-", (i * 32) + j);
-      if (!hub.addSubscription(10000 + i, j + 1, device, agent,
+      if (!hub.addSubscription(10000 + i, j + 1, device, {}, agent,
           generation, seqNo, error)) {
         routesOK = false;
         break;
@@ -150,7 +150,7 @@ static void routingScale()
     for (unsigned j = 0; j < cf.subscriptionsPerFrontEnd && telemetryOK; ++j) {
       uint64_t agent = 0, generation = 0, seqNo = 0;
       auto device = numbered("device-", (i * cf.subscriptionsPerFrontEnd) + j);
-      if (!hub.addSubscription(10000 + i, 100000 + j, device, agent,
+      if (!hub.addSubscription(10000 + i, 100000 + j, device, {}, agent,
           generation, seqNo, error)) {
         telemetryOK = false;
         break;

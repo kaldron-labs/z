@@ -32,23 +32,23 @@ struct ClaimsJSON {
   AppID		appID = 0;
 };
 ZfStruct(, (JWTHeader, JSON),
-  (((type),		(JSON::ID<"typ">, JSON::Opt)),	(String)),
-  (((algorithm),	(JSON::ID<"alg">, Required)),	(String)),
-  (((keyID),		(JSON::ID<"kid">, Required)),	(String)));
+  (((type),		(JSON::ID<"typ">, JSON::Opt)),	String),
+  (((algorithm),	(JSON::ID<"alg">, Required)),	String),
+  (((keyID),		(JSON::ID<"kid">, Required)),	String));
 ZfStruct(, (ClaimsJSON, JSON),
-  (((iss),		(Required)),	(String)),
-  (((sub),		(Required)),	(String)),
-  (((aud),		(Required)),	(String)),
-  (((clientID),		(JSON::ID<"client_id">, Required)), (String)),
-  (((jti),		(Required)),	(String)),
-  (((scope),		(Required)),	(String)),
-  (((actions),		(Required)),	(StringVec)),
-  (((iat),		(Required)),	(Int64)),
-  (((nbf),		(Required)),	(Int64)),
-  (((exp),		(Required)),	(Int64)),
-  (((authTime),		(JSON::ID<"auth_time">, JSON::Opt)), (Int64, 0)),
-  (((amr),		(JSON::Opt)),	(StringVec)),
-  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, Required)), (UInt64)));
+  (((iss),		(Required)),						String),
+  (((sub),		(Required)),						String),
+  (((aud),		(Required)),						String),
+  (((clientID),		(JSON::ID<"client_id">, Required)),			String),
+  (((jti),		(Required)),						String),
+  (((scope),		(Required)),						String),
+  (((actions),		(Required)),						StringVec),
+  (((iat),		(Required)),						Int64),
+  (((nbf),		(Required)),						Int64),
+  (((exp),		(Required)),						Int64),
+  (((authTime),		(JSON::ID<"auth_time">, JSON::Opt, Deflt<0>)),		Int64),
+  (((amr),		(JSON::Opt)),						StringVec),
+  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, Required)),	UInt64));
 
 static bool decodePart(ZuCSpan encoded, unsigned limit, JWTBytes &decoded)
 {

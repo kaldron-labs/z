@@ -40,28 +40,26 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((address),   (CLI::Opt<'a'>, CLI::Long<"address">)),    (String, "0.0.0.0")),
-  (((cert),      (CLI::Opt<'c'>, CLI::Long<"cert">)),       (String)),
-  (((key),       (CLI::Opt<'k'>, CLI::Long<"key">)),        (String)),
-  (((protocol),  (CLI::Long<"protocol">)),                  (String)),
-  (((target),    (CLI::Long<"target">)),                    (String, "/")),
-  (((port),      (CLI::Opt<'p'>, CLI::Long<"port">)),       (UInt32, 9001)),
+  (((address),   (CLI::Opt<'a'>, CLI::Long<"address">, Deflt<"0.0.0.0"_z>)),	String),
+  (((cert),      (CLI::Opt<'c'>, CLI::Long<"cert">)),				String),
+  (((key),       (CLI::Opt<'k'>, CLI::Long<"key">)),				String),
+  (((protocol),  (CLI::Long<"protocol">)),					String),
+  (((target),    (CLI::Long<"target">, Deflt<"/"_z>)),				String),
+  (((port),      (CLI::Opt<'p'>, CLI::Long<"port">, Deflt<9001>)),		UInt32),
   (((maxMessage),
-    (CLI::Long<"max-message">)),                             (UInt64,
-							 uint64_t(1)<<30)),
+    (CLI::Long<"max-message">, Deflt<uint64_t(1)<<30>)),			UInt64),
   (((maxQueuedInput),
-    (CLI::Long<"max-queued-input">)),                        (UInt64,
-							 uint64_t(1)<<30)),
+    (CLI::Long<"max-queued-input">, Deflt<uint64_t(1)<<30>)),			UInt64),
   (((handshakeTimeout),
-    (CLI::Long<"handshake-timeout">)),                       (UInt32, 10)),
+    (CLI::Long<"handshake-timeout">, Deflt<10>)),				UInt32),
   (((closeTimeout),
-    (CLI::Long<"close-timeout">)),                           (UInt32, 5)),
+    (CLI::Long<"close-timeout">, Deflt<5>)),					UInt32),
   (((pingInterval),
-    (CLI::Long<"ping-interval">)),                           (UInt32, 0)),
+    (CLI::Long<"ping-interval">, Deflt<0>)),					UInt32),
   (((pongTimeout),
-    (CLI::Long<"pong-timeout">)),                            (UInt32, 5)),
-  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">)),   (Bool, false)),
-  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">)),      (Bool, false)));
+    (CLI::Long<"pong-timeout">, Deflt<5>)),					UInt32),
+  (((verbose),   (CLI::Flag<'v'>, CLI::Long<"verbose">, Deflt<false>)),		Bool),
+  (((help),      (CLI::Flag<'h'>, CLI::Long<"help">, Deflt<false>)),		Bool));
 
 void usage(int code = 1)
 {

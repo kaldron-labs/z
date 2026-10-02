@@ -14,9 +14,17 @@
 #endif
 
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
+#include <zlib/ZtFmt.hh>
 #include <zlib/ZtString.hh>
 
 namespace Zum {
+
+ZtFlagsNS(ZumAPI, ClientGrant, uint8_t, AuthCode, ClientCredentials, Refresh);
+namespace ClientGrant {
+  constexpr ZuCSpan delim() { return ","; }
+  using Fmt = ZtFmt::Flags<delim>;
+}
 
 ZuDerive(String, ZtString<ZtStringHeapID<"Zum.String">>);
 ZuDerive(TextScratch, (ZtString<ZtStringSharded<true,

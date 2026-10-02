@@ -20,7 +20,7 @@ struct Nested {
   bool enabled = false;
 };
 ZfStruct(, (Nested, JSON),
-  (((enabled), (Ctor<0>, Required)), (Bool)));
+  (((enabled), (Ctor<0>, Required)),	Bool));
 
 struct SchemaReq {
   int count = 2;
@@ -28,9 +28,9 @@ struct SchemaReq {
   Nested nested;
 };
 ZfStruct(, (SchemaReq, JSON),
-  (((count), (Ctor<0>, (Range<1, 8>))), (Int32, 2)),
-  (((label), (Ctor<1>, Required, MCP::Header<"Label">)), (String)),
-  (((nested), (Ctor<2>, Required)), (UDT)));
+  (((count), (Ctor<0>, (Range<1, 8>), Deflt<2>)),		Int32),
+  (((label), (Ctor<1>, Required, MCP::Header<"Label">)),	String),
+  (((nested), (Ctor<2>, Required)),				UDT));
 
 struct SchemaCreated : public Zmcp::Response { using Body = Nested; };
 struct SchemaNoBody : public Zmcp::Response { enum { Status = 204 }; };
@@ -83,11 +83,10 @@ struct SchemaAdvanced {
   SchemaMap values;
 };
 ZfStruct(, (SchemaAdvanced, JSON),
-  (((name), (Ctor<0>)), (String, "fallback")),
-  (((mode), (Ctor<1>, (Enum<SchemaMode::Map>))),
-    (Int32, SchemaMode::Safe)),
-  (((objects), (Ctor<2>, Required)), (UDT)),
-  (((values), (Ctor<3>, Required)), (UDT)));
+  (((name), (Ctor<0>, Deflt<"fallback"_z>)),					String),
+  (((mode), (Ctor<1>, (Enum<SchemaMode::Map>), Deflt<SchemaMode::Safe>)),	Int32),
+  (((objects), (Ctor<2>, Required)),						UDT),
+  (((values), (Ctor<3>, Required)),						UDT));
 
 static void responseTest()
 {

@@ -205,7 +205,8 @@ private:
       ](ZdbRowRef<Grant> row) mutable {
 	if (!row || row->data().kind != GrantKind::Capability ||
 	    (row->data().purpose != GrantPurpose::Bootstrap &&
-	     row->data().purpose != GrantPurpose::Enrollment) ||
+	     row->data().purpose != GrantPurpose::Enrollment &&
+	     row->data().purpose != GrantPurpose::AddCredential) ||
 	    row->data().state != State::Active || row->data().owner ||
 	    row->data().issuer != self->m_config.issuer ||
 	    row->data().expires <= self->m_config.now ||
@@ -220,6 +221,13 @@ private:
 	  self->m_config.displayName = grant.userName;
 	}
 	if (grant.label) self->m_config.label = grant.label;
+	if (grant.purpose == GrantPurpose::AddCredential) {
+	  if (!grant.userHandle || !grant.userVersion) {
+	    self->finish_(WebAuthnError::Ceremony, {});
+	    return;
+	  }
+	  self->m_userHandle = grant.userHandle;
+	}
 	if (!self->m_config.name || !self->m_config.displayName ||
 	    !self->m_config.userID) {
 	  self->finish_(WebAuthnError::Ceremony, {});
@@ -235,15 +243,15 @@ private:
     enum { IDSize = 16, ChallengeSize = 32, HandleSize = 32 };
     Bytes random;
     unsigned idSize = create ? IDSize : 0;
-    random.length(idSize + ChallengeSize + HandleSize, false);
+    random.length(idSize + ChallengeSize + (m_userHandle ? 0 : HandleSize), false);
     if (!m_rng->random(random)) {
       ZuClear(random);
       finish_(WebAuthnError::Storage, {});
       return;
     }
     ZuBSpan challenge{random.data() + idSize, ChallengeSize};
-    ZuBSpan handle{
-      random.data() + idSize + ChallengeSize, HandleSize};
+    ZuBSpan handle{m_userHandle};
+    if (!handle) handle = {random.data() + idSize + ChallengeSize, HandleSize};
     Bytes id = create ? Bytes{ZuBSpan{random.data(), IDSize}} : m_capID;
     EnrollmentBeginResult result{
       .ceremonyID = id,
@@ -263,7 +271,8 @@ private:
 	    result = ZuMv(result)](ZdbRow<Grant> *row) mutable {
 	  bool ok = row && row->data().kind == GrantKind::Capability &&
 	    (row->data().purpose == GrantPurpose::Bootstrap ||
-	     row->data().purpose == GrantPurpose::Enrollment) &&
+	     row->data().purpose == GrantPurpose::Enrollment ||
+	     row->data().purpose == GrantPurpose::AddCredential) &&
 	    row->data().state == State::Active && !row->data().owner &&
 	    row->data().issuer == self->m_config.issuer &&
 	    row->data().expires > self->m_config.now &&
@@ -320,6 +329,7 @@ private:
   String	m_capability;
   Bytes		m_capID;
   Bytes		m_capDigest;
+  Bytes		m_userHandle;
   Bytes		m_bindingDigest;
   EnrollmentBeginConfig m_config;
   EnrollmentBeginFn m_complete;
