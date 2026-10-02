@@ -645,16 +645,16 @@ int main(int argc, char **argv)
 	      if (size <= 0) usage_();
 	    }
 
-  g_ringName = ZiTestResidue::uniqueName("ring");
-  ZiTestResidue::addShm(g_ringName);
-
   ZiLog::init("ZiRingTest2");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
 
   bool ok = ZuUnroll::all<4>(true, [size](auto i, bool b) {
-    return b ? (b && Test<(i>>1) & 1, i & 1>::run(size)) : false;
+    if (!b) return false;
+    g_ringName = ZiTestResidue::uniqueName("ring");
+    ZiTestResidue::addShm(g_ringName);
+    return Test<(i>>1) & 1, i & 1>::run(size);
   });
   ZuCheck(ok);
 

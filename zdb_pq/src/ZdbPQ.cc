@@ -72,7 +72,8 @@ InitResult Store::init(
   bool replicated;
 
   try {
-    auto config = ZfCf::handler<StoreCf>(cf).ctor();
+    StoreCf config;
+    ZfCf::handler<StoreCf>(cf).update(config);
     const auto &tid = config.thread;
     auto sid = m_mx->sid(tid);
     if (!sid ||

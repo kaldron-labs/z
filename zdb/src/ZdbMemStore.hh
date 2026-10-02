@@ -1100,7 +1100,7 @@ struct MemStoreCf {
 };
 
 ZfStruct(ZdbAPI, (MemStoreCf, Cf),
-  (((thread), (Required)),	String));
+  (((thread), (Mutable, Required)),	String));
 
 template <typename StoreTbl_>
 class Store_ : public Zdb_::Store, public Store__ {
@@ -1124,7 +1124,8 @@ public:
       }));
     m_failFn = ZuMv(failFn);
     try {
-      auto config = ZfCf::handler<MemStoreCf>(cf).ctor();
+      MemStoreCf config;
+      ZfCf::handler<MemStoreCf>(cf).update(config);
       const auto &tid = config.thread;
       auto sid = mx->sid(tid);
       if (!sid ||

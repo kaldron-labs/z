@@ -34,14 +34,14 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((stdio), (CLI::Long<"stdio">, Deflt<false>)),		Bool),
-  (((host), (CLI::Long<"host">, Deflt<"127.0.0.1"_z>)),		String),
-  (((port), (CLI::Opt<'p'>, CLI::Long<"port">, Deflt<8080>)),	UInt32),
+  (((stdio), (CLI::Long<"stdio">)),		Bool),
+  (((host), (CLI::Long<"host">)),		String),
+  (((port), (CLI::Opt<'p'>, CLI::Long<"port">)),	UInt32),
   (((token), (CLI::Long<"token">)),				String),
-  (((lhs), (CLI::Long<"lhs">, Deflt<20>)),			Int64),
-  (((rhs), (CLI::Long<"rhs">, Deflt<22>)),			Int64),
-  (((stream), (CLI::Long<"stream">, Deflt<false>)),		Bool),
-  (((help), (CLI::Opt<'h'>, CLI::Long<"help">, Deflt<false>)),	Bool));
+  (((lhs), (CLI::Long<"lhs">)),			Int64),
+  (((rhs), (CLI::Long<"rhs">)),			Int64),
+  (((stream), (CLI::Long<"stream">)),		Bool),
+  (((help), (CLI::Opt<'h'>, CLI::Long<"help">)),	Bool));
 
 static void usage(int code)
 {

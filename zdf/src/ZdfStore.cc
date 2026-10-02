@@ -23,11 +23,12 @@ struct StoreCf {
 };
 
 ZfStruct(, (StoreCf, Cf),
-  (((threads)),	StringVec));
+  (((threads), (Mutable)),	StringVec));
 
 void Store::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
 {
-  auto config = ZfCf::handler<StoreCf>(cf).ctor();
+  StoreCf config;
+  ZfCf::handler<StoreCf>(cf).update(config);
 
   static ZtArray<ZuCSpan> tables{
     "zdf.series_fixed",

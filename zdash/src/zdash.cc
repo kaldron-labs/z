@@ -4,6 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -207,22 +208,21 @@ struct AppCf {
 };
 
 ZfStruct(, (AppCf, Cf),
-  (((telRing)),									UDT),
-  (((gtkGlade), (Deflt<"zdash.glade"_z>)),					String),
-  (((gtkStyle)),								String),
-  (((gtkRefresh), ((Range<1U, 60000U>), Deflt<1>)),				UInt32),
-  (((gtkThread), (Deflt<5>)),							UInt32),
-  (((queueBytes), ((Range<unsigned(FrameMax), 1U<<28>),
-    Deflt<QueuedInputMax>)),							UInt32),
-  (((interval), ((Range<1U, 3600000U>), Deflt<1000>)),				UInt32),
-  (((alertRows), ((Range<1U, 1000000U>), Deflt<1000>)),				UInt32),
-  (((wssURL)),									String),
-  (((caPath)),									String),
-  (((deviceID)),								String),
-  (((groups)),									StringVec),
-  (((maxSubscriptions), ((Range<1U, 1000000U>), Deflt<32>)),			UInt32),
-  (((publisherID)),								String),
-  (((filter), (Deflt<"*"_z>)),							String));
+  (((telRing), (Mutable)),					UDT),
+  (((gtkGlade), (Mutable)),					String),
+  (((gtkStyle), (Mutable)),					String),
+  (((gtkRefresh), (Mutable, (Range<1U, 60000U>))),		UInt32),
+  (((gtkThread), (Mutable)),					UInt32),
+  (((queueBytes), (Mutable, (Range<FrameMax, INT_MAX>))),	UInt32),
+  (((interval), (Mutable, (Range<1U, 3600000U>))),		UInt32),
+  (((alertRows), (Mutable, (Range<1U, 1000000U>))),		UInt32),
+  (((wssURL), (Mutable)),					String),
+  (((caPath), (Mutable)),					String),
+  (((deviceID), (Mutable)),					String),
+  (((groups), (Mutable)),					StringVec),
+  (((maxSubscriptions), (Mutable, (Range<1U, 1000000U>))),	UInt32),
+  (((publisherID), (Mutable)),					String),
+  (((filter), (Mutable)),					String));
 
 struct Options {
   String	config;
@@ -2132,7 +2132,7 @@ int main(int argc, char **argv)
       if (file.read(source.data(), unsigned(size)) != int(size)) return 1;
       auto parsed = ZfCf::scan(source.span());
       if (parsed.p<0>() < 0 || !parsed.p<1>()) return 1;
-      config = ZfCf::handler<ZDash::AppCf>(parsed.p<1>()).ctor();
+      ZfCf::handler<ZDash::AppCf>(parsed.p<1>()).update(config);
     }
     if (options.wssURL) config.wssURL = ZuMv(options.wssURL);
     if (options.deviceID) config.deviceID = ZuMv(options.deviceID);

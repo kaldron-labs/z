@@ -38,15 +38,15 @@ struct Options {
 };
 
 ZfStruct(, Options,
-  (((quiet),		(Ctor<0>, CLI::Flag<'q'>)),	Bool),
-  (((child),		(Ctor<1>, CLI::Flag<'c'>)),	Bool),
-  (((daemonize),	(Ctor<2>, CLI::Flag<'d'>)),	Bool),
-  (((pidFile),		(Ctor<3>, CLI::Opt<'p'>)),	String),
-  (((marker),		(Ctor<4>, CLI::ID<"marker">,
+  (((quiet),		(CLI::Flag<'q'>)),	Bool),
+  (((child),		(CLI::Flag<'c'>)),	Bool),
+  (((daemonize),	(CLI::Flag<'d'>)),	Bool),
+  (((pidFile),		(CLI::Opt<'p'>)),	String),
+  (((marker),		(CLI::ID<"marker">,
 			  CLI::Opt<'m'>)),		String),
-  (((logPath),		(Ctor<5>, CLI::ID<"log-path">,
+  (((logPath),		(CLI::ID<"log-path">,
 			  CLI::Opt<'l'>)),		String),
-  (((help),		(Ctor<6>, CLI::Flag<'h'>)),	Bool));
+  (((help),		(CLI::Flag<'h'>)),	Bool));
 
 namespace {
 
@@ -130,7 +130,7 @@ int loadOptions(Options &options, const Argv &argv)
 {
   ZfCLI::Parser<Options, ZuFacet::Core> parser;
   parser.scanArgv(argv);
-  options = ZfCLI::handler<Options, ZuFacet::Core>(parser.root).ctor();
+  ZfCLI::handler<Options, ZuFacet::Core>(parser.root).load(options);
   return parser.argc;
 }
 

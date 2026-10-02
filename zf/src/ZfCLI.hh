@@ -1064,13 +1064,17 @@ struct AsObject {
     void load(O &o) const {
       checkRequired<ReqFields>();
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
+	using Props = typename Field::Props;
+	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
+	  Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
     }
     void update(O &o) const {
       checkRequired<UpdReqFields>();
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
+	using Props = typename Field::Props;
+	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
+	  Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
     }
 

@@ -55,7 +55,7 @@ static int probe(ZuCSpan id, Ztc::fbs::Group group, bool hold,
 {
   const char *name = ::getenv("ZTC_RING");
   if (!name || !*name) { std::cerr << "missing ring\n"; return 1; }
-  Ztc::Ring telemetry{ZiRingParams{name, 1U<<22}.timeout(1000)};
+  Ztc::Ring telemetry{ZiRingParams{name, 0}.timeout(1000)};
   if (telemetry.open(Ztc::Ring::Read) != Zu::OK) {
     std::cerr << "telemetry open failed\n";
     return 1;
@@ -139,7 +139,7 @@ int main(int argc, char **argv)
   if (argc == 3 && ZuCSpan{argv[2]} == "stale-read") {
     const char *name = ::getenv("ZTC_RING");
     if (!name || !*name) return 1;
-    Ztc::Ring telemetry{ZiRingParams{name, 1U<<22}.timeout(1000)};
+    Ztc::Ring telemetry{ZiRingParams{name, 0}.timeout(1000)};
     if (telemetry.open(Ztc::Ring::Read) != Zu::OK ||
 	telemetry.attach() != Zu::OK) return 1;
     std::cout << "ready" << std::endl;
@@ -150,7 +150,8 @@ int main(int argc, char **argv)
   if (argc == 2) {
     const char *name = ::getenv("ZTC_RING");
     if (!name || !*name) return 1;
-    Ztc::Ring telemetry{ZiRingParams{name, 1U<<22}.timeout(1000)};
+    Ztc::Ring telemetry{ZiRingParams{name, 0}.
+      initial(Ztc::AppCf::DefltTelRingSize).timeout(1000)};
     if (telemetry.open(Ztc::Ring::Write) != Zu::OK ||
         telemetry.reset() != Zu::OK) return 1;
     std::cout << "ready" << std::endl;

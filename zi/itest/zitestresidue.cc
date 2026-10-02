@@ -53,15 +53,14 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((mode), (Ctor<0>, Enum<Mode::Map>, CLI::Long<"mode">,
-    Deflt<Mode::Parent>)),							Int8));
+  (((mode), (Enum<Mode::Map>, CLI::Long<"mode">)),	Int8));
 
 static int load_(Options &options, int argc, const char *const *argv)
 {
   ZfCLI::InArgv<> in(argc, argv);
   ZfCLI::Parser<Options> parser;
   parser.scanArgv(in.argv);
-  options = ZfCLI::handler<Options>(parser.root).ctor();
+  ZfCLI::handler<Options>(parser.root).load(options);
   return parser.argc;
 }
 

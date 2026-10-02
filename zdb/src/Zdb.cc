@@ -49,8 +49,9 @@
 namespace Zdb_ {
 
 TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
-  TableCf{ZfCf::handler<TableCf>(cf).ctor(id_)}
+  TableCf{id_}
 {
+  ZfCf::handler<TableCf>(cf).update(*this);
   for (auto key: {ZuCSpan{"shards"}, ZuCSpan{"threads"}})
     if (cf->resolve(key))
       throw ZeEXCEPT(Error, "Zdb", ([
@@ -61,9 +62,14 @@ TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
 }
 
 HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
-  HostCf{ZfCf::handler<HostCf>(cf).ctor(id_)}
+  id{id_}
 {
+  ZfCf::handler<HostCf>(cf).update(*this);
   if (!standalone) {
+    if (!ip || !port)
+      throw ZeEXCEPT(Error, "Zdb", ([id = id](auto &s) {
+	s << '"' << id << "\": non-standalone host requires ip and port";
+      }));
     if (!cf->resolve("priority"))
       throw ZfCf_EXCEPT(ZfCfError::required(cf, "priority"));
     if (!cf->resolve("ip"))
@@ -73,9 +79,10 @@ HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
   }
 }
 
-DBCf::DBCf(const ZfCf::AnyNode *cf) :
-  DBCf{ZfCf::handler<DBCf>(cf).ctor()}
+DBCf::DBCf(const ZfCf::AnyNode *cf)
 {
+  ZfCf::handler<DBCf>(cf).update(*this);
+  validate();
   storeCf = cf->resolve("store");
   auto tables = cf->resolve("tables");
   if (!tables)
@@ -170,7 +177,8 @@ void DB::init(
       if (store)
 	m_store = ZuMv(store);
       else {
-	auto storeCf = ZfCf::handler<StoreLoadCf>(m_cf.storeCf).ctor();
+	StoreLoadCf storeCf;
+	ZfCf::handler<StoreLoadCf>(m_cf.storeCf).update(storeCf);
 	ZiModule module_;
 	auto &path = storeCf.module;
 	ZeString e; // dlerror() returns a string

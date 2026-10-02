@@ -28,10 +28,10 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((stdio), (CLI::Long<"stdio">, Deflt<false>)),		Bool),
-  (((port), (CLI::Opt<'p'>, CLI::Long<"port">, Deflt<8080>)),	UInt32),
+  (((stdio), (CLI::Long<"stdio">)),		Bool),
+  (((port), (CLI::Opt<'p'>, CLI::Long<"port">)),	UInt32),
   (((token), (CLI::Long<"token">)),				String),
-  (((help), (CLI::Opt<'h'>, CLI::Long<"help">, Deflt<false>)),	Bool));
+  (((help), (CLI::Opt<'h'>, CLI::Long<"help">)),	Bool));
 
 static ZmSemaphore done;
 

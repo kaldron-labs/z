@@ -142,6 +142,7 @@ void testOpenExisting()
   ZuCheck(creator.open(Ring::Write) == Zu::OK);
   unsigned size = creator.size();
   ZuCheck(size >= 8192);
+  ZuCheck(creator.reset() == Zu::OK);
   ZuCheck(opener.open(Ring::Write) == Zu::OK);
   ZuCheck(opener.size() == size);
   Ring initial{ZiRingParams{name, 0}.initial(4096)};
@@ -157,6 +158,7 @@ void testOpenExisting()
   ZuCheck(initial.open(Ring::Write) == Zu::OK);
   size = initial.size();
   ZuCheck(size >= 6000);
+  ZuCheck(initial.reset() == Zu::OK);
   opener.init(ZiRingParams{name, 0});
   ZuCheck(opener.open(Ring::Read) == Zu::OK);
   ZuCheck(opener.size() == size);

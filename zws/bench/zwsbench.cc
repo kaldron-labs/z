@@ -39,14 +39,14 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((count),    (CLI::Opt<'n'>, CLI::Long<"count">, Deflt<10000>)),	UInt32),
-  (((size),     (CLI::Opt<'s'>, CLI::Long<"size">, Deflt<32>)),		UInt32),
-  (((warmup),   (CLI::Opt<'w'>, CLI::Long<"warmup">, Deflt<1000>)),	UInt32),
-  (((binary),   (CLI::Long<"binary">, Deflt<false>)),			Bool),
-  (((control),  (CLI::Long<"control">, Deflt<false>)),			Bool),
-  (((tls),      (CLI::Long<"tls">, Deflt<false>)),			Bool),
-  (((txOwner),  (CLI::Long<"tx-owner">, Deflt<false>)),			Bool),
-  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">, Deflt<false>)),	Bool));
+  (((count),    (CLI::Opt<'n'>, CLI::Long<"count">)),	UInt32),
+  (((size),     (CLI::Opt<'s'>, CLI::Long<"size">)),	UInt32),
+  (((warmup),   (CLI::Opt<'w'>, CLI::Long<"warmup">)),	UInt32),
+  (((binary),   (CLI::Long<"binary">)),			Bool),
+  (((control),  (CLI::Long<"control">)),		Bool),
+  (((tls),      (CLI::Long<"tls">)),			Bool),
+  (((txOwner),  (CLI::Long<"tx-owner">)),		Bool),
+  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
 
 void usage(int code = 1)
 {

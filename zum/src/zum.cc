@@ -125,14 +125,14 @@ struct Config {
   bool		loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Required)),					String),
-  (((managementURL), (Required)),				String),
-  (((caPath)),							String),
-  (((clientID), (Deflt<"zum-admin"_z>)),			String),
-  (((scope), (Deflt<"zum.admin"_z>)),				String),
-  (((callbackPort), ((Range<1, 65535>), Deflt<CallbackPort>)),	UInt32),
-  (((loginTimeout), ((Range<1, 3600>), Deflt<LoginTimeout>)),	UInt32),
-  (((loopbackTest), (Deflt<false>)),				Bool));
+  (((issuerURL), (Mutable, Required)),			String),
+  (((managementURL), (Mutable, Required)),		String),
+  (((caPath), (Mutable)),				String),
+  (((clientID), (Mutable)),				String),
+  (((scope), (Mutable)),				String),
+  (((callbackPort), (Mutable, (Range<1, 65535>))),	UInt32),
+  (((loginTimeout), (Mutable, (Range<1, 3600>))),	UInt32),
+  (((loopbackTest), (Mutable)),				Bool));
 
 static void usage(int code = 1, const ZfCLI::Parser<Options> *parser = nullptr)
 {
@@ -197,7 +197,7 @@ static bool loadConfig(ZuCSpan path, Config &config)
   if (!source.mutable_()) source.length(source.length());
   auto scan = ZfCf::scan({source.data(), source.length()});
   if (scan.p<0>() < 0 || !scan.p<1>()) return false;
-  config = ZfCf::handler<Config>(scan.p<1>()).ctor();
+  ZfCf::handler<Config>(scan.p<1>()).update(config);
   return true;
 }
 

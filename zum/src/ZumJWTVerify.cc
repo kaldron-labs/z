@@ -46,7 +46,7 @@ ZfStruct(, (ClaimsJSON, JSON),
   (((iat),		(Required)),						Int64),
   (((nbf),		(Required)),						Int64),
   (((exp),		(Required)),						Int64),
-  (((authTime),		(JSON::ID<"auth_time">, JSON::Opt, Deflt<0>)),		Int64),
+  (((authTime),		(JSON::ID<"auth_time">, JSON::Opt)),		Int64),
   (((amr),		(JSON::Opt)),						StringVec),
   (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, Required)),	UInt64));
 
