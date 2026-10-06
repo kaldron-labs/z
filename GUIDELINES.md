@@ -131,7 +131,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - Where C and C++ offer the same facility, prefer the C form:
     - Example: `#include <string.h>`, not `<cstring>`.
     - Where C99 conflicts with C++, use the GNU C++2b form.
-- Where possible, do not define forwarding functions to bases, use `using` declarations to hoist the base definition into the derived class
+- Do not define pure forwarding functions to bases that do not add any logic, use `using` declarations to hoist the base definition into the derived class
 - Use `ZuLib.hh` functions in preference to STL, in particular:
   `ZuAssert`, `ZuMv`, `ZuFwd`, `ZuDecay`, `ZuDeref`, `ZuStrip`, `ZuIfT`, `ZuIsConvertible`, `ZuIsConstructible`, `ZuLaunder`, `ZuPun`, `ZuCanOverlap`
 
