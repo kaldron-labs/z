@@ -108,50 +108,50 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((addr),       (CLI::Long<"addr">)),				String),
-  (((port),       (CLI::Long<"port">)),				UInt32),
-  (((cert),       (CLI::Long<"cert">)),				String),
-  (((key),        (CLI::Long<"key">)),				String),
-  (((keyLog),     (CLI::Long<"key-log">)),			String),
-  (((logPath),    (CLI::Long<"log">)),				String),
-  (((pidfile),    (CLI::Long<"pidfile">)),			String),
-  (((eventFD),    (CLI::Long<"event-fd">)),			Int32),
-  (((user),       (CLI::Long<"user">)),				String),
-  (((pass),       (CLI::Long<"pass">)),				String),
-  (((accessTokenLifetime),
-    (CLI::Long<"access-token-lifetime">)),			String),
-  (((refreshTokenLifetime),
-    (CLI::Long<"refresh-token-lifetime">)),			String),
-  (((requests),   (CLI::Opt<'n'>, CLI::Long<"requests">)),	UInt32),
-  (((maxconn),    (CLI::Long<"maxconn">)),			UInt32),
-  (((stateLimit), (CLI::Long<"state-limit">)),			UInt32),
-  (((timeout),    (CLI::Long<"timeout">)),			UInt32),
-  (((ipv6),       (CLI::Long<"ipv6">)),				Bool),
-  (((daemon),     (CLI::Long<"daemon">)),			Bool),
-  (((syslog),     (CLI::Long<"syslog">)),			Bool),
-  (((noKeepalive), (CLI::Long<"no-keepalive">)),		Bool),
-  (((noServerID),  (CLI::Long<"no-server-id">)),		Bool),
-  (((http),       (CLI::Long<"http">)),				Bool),
-  (((https),      (CLI::Long<"https">)),			Bool),
-  (((http3),      (CLI::Long<"http3">)),			Bool),
-  (((verbose),    (CLI::Flag<'v'>, CLI::Long<"verbose">)),	Bool),
-  (((http2),      (Enum<Http2Mode::Map>, CLI::Long<"http2">)),	Int8),
-  (((quicHeartbeat),
-    (CLI::Long<"quic-heartbeat">)),				UInt32),
+  (addr,       (CLI::Long<"addr">),				String),
+  (port,       (CLI::Long<"port">),				UInt32),
+  (cert,       (CLI::Long<"cert">),				String),
+  (key,        (CLI::Long<"key">),				String),
+  (keyLog,     (CLI::Long<"key-log">),				String),
+  (logPath,    (CLI::Long<"log">),				String),
+  (pidfile,    (CLI::Long<"pidfile">),				String),
+  (eventFD,    (CLI::Long<"event-fd">),				Int32),
+  (user,       (CLI::Long<"user">),				String),
+  (pass,       (CLI::Long<"pass">),				String),
+  (accessTokenLifetime,
+    (CLI::Long<"access-token-lifetime">),			String),
+  (refreshTokenLifetime,
+    (CLI::Long<"refresh-token-lifetime">),			String),
+  (requests,   (CLI::Opt<'n'>, CLI::Long<"requests">),		UInt32),
+  (maxconn,    (CLI::Long<"maxconn">),				UInt32),
+  (stateLimit, (CLI::Long<"state-limit">),			UInt32),
+  (timeout,    (CLI::Long<"timeout">),				UInt32),
+  (ipv6,       (CLI::Long<"ipv6">),				Bool),
+  (daemon,     (CLI::Long<"daemon">),				Bool),
+  (syslog,     (CLI::Long<"syslog">),				Bool),
+  (noKeepalive, (CLI::Long<"no-keepalive">),			Bool),
+  (noServerID,  (CLI::Long<"no-server-id">),			Bool),
+  (http,       (CLI::Long<"http">),				Bool),
+  (https,      (CLI::Long<"https">),				Bool),
+  (http3,      (CLI::Long<"http3">),				Bool),
+  (verbose,    (CLI::Flag<'v'>, CLI::Long<"verbose">),		Bool),
+  (http2,      (Enum<Http2Mode::Map>, CLI::Long<"http2">),	Int8),
+  (quicHeartbeat,
+    (CLI::Long<"quic-heartbeat">),				UInt32),
 #ifdef ZiMultiplex_DEBUG
-  (((debug),      (CLI::Long<"debug">)),			Bool),
-  (((frag),       (CLI::Long<"frag">)),				Bool),
-  (((yield),      (CLI::Long<"yield">)),			Bool),
+  (debug,      (CLI::Long<"debug">),				Bool),
+  (frag,       (CLI::Long<"frag">),				Bool),
+  (yield,      (CLI::Long<"yield">),				Bool),
 #endif
 #ifdef ZiMultiplex_FILTER
-  (((quicRxDrop), (CLI::Long<"quic-rx-drop">)),			String),
-  (((quicTxDrop), (CLI::Long<"quic-tx-drop">)),			String),
+  (quicRxDrop, (CLI::Long<"quic-rx-drop">),			String),
+  (quicTxDrop, (CLI::Long<"quic-tx-drop">),			String),
 #endif
 #ifdef Zquic_DEBUG
-  (((quicDiag),   (CLI::Long<"quic-diag">)),			UInt32),
+  (quicDiag,   (CLI::Long<"quic-diag">),			UInt32),
 #endif
-  (((memDiag),    (CLI::Long<"mem-diag">)),			UInt32),
-  (((help),       (CLI::Flag<'h'>, CLI::Long<"help">)),		Bool));
+  (memDiag,    (CLI::Long<"mem-diag">),				UInt32),
+  (help,       (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
 template <typename Heap = ZuVoid>
 struct Empty_ : public Heap, public ZmObject { };
@@ -194,9 +194,9 @@ struct LoginForm_ : public Heap, public ZmObject {
 ZuDerive(LoginFormHeap, (ZmHeap<"zrestd.LoginForm", LoginForm_<>>));
 ZuDerive(LoginForm, (LoginForm_<LoginFormHeap>));
 ZfStruct(, (LoginForm, URI),
-  (((username), (Required)),	String),
-  (((password), (Required)),	String),
-  (((decision), (Required)),	String));
+  (username, (Required),	String),
+  (password, (Required),	String),
+  (decision, (Required),	String));
 
 template <typename Heap = ZuVoid>
 struct TokenForm_ : public Heap, public ZmObject {
@@ -211,13 +211,13 @@ struct TokenForm_ : public Heap, public ZmObject {
 ZuDerive(TokenFormHeap, (ZmHeap<"zrestd.TokenForm", TokenForm_<>>));
 ZuDerive(TokenForm, (TokenForm_<TokenFormHeap>));
 ZfStruct(, (TokenForm, URI),
-  (((grantType), (URI::ID<"grant_type">, Required)),		String),
-  (((code), (JSON::Opt)),					String),
-  (((redirectURI), (URI::ID<"redirect_uri">, JSON::Opt)),	String),
-  (((codeVerifier), (URI::ID<"code_verifier">, JSON::Opt)),	String),
-  (((refreshToken), (URI::ID<"refresh_token">, JSON::Opt)),	String),
-  (((scope), (JSON::Opt)),					String),
-  (((clientID), (URI::ID<"client_id">, Required)),		String));
+  (grantType, (URI::ID<"grant_type">, Required),		String),
+  (code, (JSON::Opt),						String),
+  (redirectURI, (URI::ID<"redirect_uri">, JSON::Opt),		String),
+  (codeVerifier, (URI::ID<"code_verifier">, JSON::Opt),		String),
+  (refreshToken, (URI::ID<"refresh_token">, JSON::Opt),		String),
+  (scope, (JSON::Opt),						String),
+  (clientID, (URI::ID<"client_id">, Required),			String));
 
 struct JWTHeader {
   OAuthString type;
@@ -225,9 +225,9 @@ struct JWTHeader {
   OAuthString keyID;
 };
 ZfStruct(, (JWTHeader, JSON),
-  (((type), (JSON::ID<"typ">, Required)),	String),
-  (((algorithm), (JSON::ID<"alg">, Required)),	String),
-  (((keyID), (JSON::ID<"kid">, Required)),	String));
+  (type, (JSON::ID<"typ">, Required),		String),
+  (algorithm, (JSON::ID<"alg">, Required),	String),
+  (keyID, (JSON::ID<"kid">, Required),		String));
 
 class App;
 struct Application;
@@ -523,7 +523,7 @@ struct RequestParser : public Zrest::MReqParser<Catalog_> {
 
 struct AppPrefix { ZuCSpan app; };
 ZfStruct(, (AppPrefix, URI),
-  (((app), (URI::PathIndex<0>, Required)),	String));
+  (app, (URI::PathIndex<0>, Required),		String));
 
 struct MetadataSuffix {
   ZuCSpan metadata;
@@ -531,9 +531,9 @@ struct MetadataSuffix {
   ZuCSpan app;
 };
 ZfStruct(, (MetadataSuffix, URI),
-  (((metadata), (URI::PathIndex<0>, Required)),	String),
-  (((oauth2),   (URI::PathIndex<1>, Required)),	String),
-  (((app),      (URI::PathIndex<2>, Required)),	String));
+  (metadata, (URI::PathIndex<0>, Required),	String),
+  (oauth2,   (URI::PathIndex<1>, Required),	String),
+  (app,      (URI::PathIndex<2>, Required),	String));
 
 struct EndpointParser : public RequestParser<EndpointCatalog> {
   using Base = RequestParser<EndpointCatalog>;

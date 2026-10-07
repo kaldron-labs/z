@@ -546,7 +546,7 @@ struct TableCf {
 };
 
 ZfStruct(ZdbAPI, (TableCf, Cf),
-  (((cacheMode), (Mutable, Enum<CacheMode::Map>)),	Int32));
+  (cacheMode, (Mutable, Enum<CacheMode::Map>),		Int32));
 
 
 // --- table configuration
@@ -1602,12 +1602,12 @@ struct HostCf {
 };
 
 ZfStruct(ZdbAPI, (HostCf, Cf),
-  (((priority),	(Mutable, (Range<0, INT_MAX>))),	Int32),
-  (((ip), (Mutable)),					String),
-  (((port),	(Mutable, (Range<1, 65534>))),		UInt16),
-  (((standalone), (Mutable)),				Bool),
-  (((up), (Mutable)),					String),
-  (((down), (Mutable)),					String));
+  (priority,	(Mutable, (Range<0, INT_MAX>)),		Int32),
+  (ip, (Mutable),					String),
+  (port,	(Mutable, (Range<1, 65534>)),		UInt16),
+  (standalone, (Mutable),				Bool),
+  (up, (Mutable),					String),
+  (down, (Mutable),					String));
 
 
 ZmRBTreeDerive(HostCfs, HostCf,
@@ -1734,8 +1734,8 @@ struct StoreLoadCf {
 };
 
 ZfStruct(ZdbAPI, (StoreLoadCf, Cf),
-  (((module), (Mutable, Required)),	String),
-  (((preload), (Mutable)),		Bool));
+  (module, (Mutable, Required),		String),
+  (preload, (Mutable),			Bool));
 
 using DBThreads = Ztc::DBThreads;
 using DBSIDs = Ztc::DBSIDs;
@@ -1821,18 +1821,18 @@ struct DBCf {
 };
 
 ZfStruct(ZdbAPI, (DBCf, Cf),
-  (((thread),		(Mutable, Required)),				String),
-  (((nShards),		(Mutable, Cf::ID<"shards">, (Range<1U, 64U>))),	UInt32),
-  (((threads), (Mutable)),						StringVec),
-  (((hostID), (Mutable)),						String),
-  (((nAccepts),		(Mutable, (Range<1U, INT_MAX>))),		UInt32),
-  (((heartbeatFreq),	(Mutable, (Range<1U, 3600U>))),			UInt32),
-  (((heartbeatTimeout),	(Mutable, (Range<1U, 14400U>))),		UInt32),
-  (((reconnectFreq),	(Mutable, (Range<1U, 3600U>))),			UInt32),
-  (((electionTimeout),	(Mutable, (Range<1U, 3600U>))),			UInt32)
+  (thread,		(Mutable, Required),				String),
+  (nShards,		(Mutable, Cf::ID<"shards">, (Range<1U, 64U>)),	UInt32),
+  (threads,		(Mutable),					StringVec),
+  (hostID,		(Mutable),					String),
+  (nAccepts,		(Mutable, (Range<1U, INT_MAX>)),		UInt32),
+  (heartbeatFreq,	(Mutable, (Range<1U, 3600U>)),			UInt32),
+  (heartbeatTimeout,	(Mutable, (Range<1U, 14400U>)),			UInt32),
+  (reconnectFreq,	(Mutable, (Range<1U, 3600U>)),			UInt32),
+  (electionTimeout,	(Mutable, (Range<1U, 3600U>)),			UInt32)
 #if Zdb_DEBUG
   ,
-  (((debug), (Mutable)),						Bool)
+  (debug, (Mutable),							Bool)
 #endif
 );
 

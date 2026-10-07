@@ -42,10 +42,10 @@ struct Config {
   uint8_t cBits = 3;
 };
 ZfStruct(, Config,
-  (((id)),		String),
-  (((bits)),		UInt8),
-  (((loadFactor)),	Float),
-  (((cBits)),		UInt8));
+  (id,,			String),
+  (bits,,		UInt8),
+  (loadFactor,,		Float),
+  (cBits,,		UInt8));
 using Configs = ZtArray<Config, ZtArrayHeapID<"HashTest.Configs">>;
 
 static bool write(const Zi::Path &path, ZuCSpan data) {

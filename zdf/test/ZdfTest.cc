@@ -70,8 +70,8 @@ struct Frame {
   void v2(ZuFixed v) { v2_ = v.adjust(9); }
 };
 ZfStruct(, Frame,
-  (((v1),	(Ctor<0>, Series, Index, Delta)),	UInt64),
-  (((v2, Fn),	(Series, Delta, NDP<9>)),		Fixed));
+  (v1,	(Ctor<0>, Series, Index, Delta),		UInt64),
+  ((v2, Fn),	(Series, Delta, NDP<9>),		Fixed));
 
 void usage() {
   std::cerr << "Usage: zdftest\n" << std::flush;

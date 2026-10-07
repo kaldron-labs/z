@@ -25,7 +25,7 @@ struct RawObject : public ZmObject {
 };
 struct SignedObject : public ZmObject { TestString value; };
 ZfStruct(, (SignedObject, JSON),
-  (((value), (Required)),	String));
+  (value, (Required),		String));
 
 struct BodySink {
   TestString data;
@@ -325,7 +325,7 @@ struct RootServer { };
 
 struct AppPath { uint64_t appID = 0; };
 ZfStruct(, (AppPath, URI),
-  (((appID), (URI::PathIndex<0>, Required)),	UInt64));
+  (appID, (URI::PathIndex<0>, Required),	UInt64));
 
 struct AppParser : public Zrest::MReqParser<PrefixCatalog> {
   using Base = Zrest::MReqParser<PrefixCatalog>;

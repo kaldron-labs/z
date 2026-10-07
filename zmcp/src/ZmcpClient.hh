@@ -572,7 +572,7 @@ public:
 
   template <typename Req, typename Call>
   bool add(ID id, ZmRef<Call> call) {
-    if (m_state != Open || id.absent() || !call ||
+    if (m_state != Open || id.is<void>() || !call ||
 	m_hash.count_() >= m_maxPending ||
 	m_hash.findPtr(id)) return false;
     m_hash.add(PendingEntry{
@@ -582,7 +582,7 @@ public:
 
   template <typename Call>
   bool add(ID id, ZmRef<Call> call) {
-    if (m_state != Open || id.absent() || !call ||
+    if (m_state != Open || id.is<void>() || !call ||
 	m_hash.count_() >= m_maxPending ||
 	m_hash.findPtr(id)) return false;
     m_hash.add(PendingEntry{ZuMv(id), ZuMv(call)});
@@ -750,7 +750,7 @@ public:
     if (m_state != ClientState::Ready || m_era != Era::Legacy) return false;
     discardCatalog();
     m_initializeID = next_();
-    if (m_initializeID.absent()) return false;
+    if (m_initializeID.is<void>()) return false;
     m_state = ClientState::Initializing;
     emit(InitializeRequestMessage{m_initializeID});
     return true;
@@ -760,7 +760,7 @@ public:
   bool probe(Emit &&emit) {
     if (m_state != ClientState::Fresh) return false;
     m_probeID = next_();
-    if (m_probeID.absent()) return false;
+    if (m_probeID.is<void>()) return false;
     m_state = ClientState::Discovering;
     emit(DiscoverRequestMessage{m_probeID});
     return true;
@@ -799,9 +799,9 @@ public:
   ID tools(Emit &&emit) {
     if (!ready()) return {};
     if (m_cache) return {};
-    if (!m_toolsID.absent()) return m_toolsID;
+    if (!m_toolsID.is<void>()) return m_toolsID;
     m_toolsID = next_();
-    if (!m_toolsID.absent())
+    if (!m_toolsID.is<void>())
       emit(ToolsListRequestMessage{m_toolsID, m_era});
     return m_toolsID;
   }
@@ -841,7 +841,7 @@ public:
   ID ping(Emit &&emit) {
     if (!ready()) return {};
     ID id = next_();
-    if (!id.absent()) emit(PingRequestMessage{id, m_era});
+    if (!id.is<void>()) emit(PingRequestMessage{id, m_era});
     return id;
   }
 
@@ -849,7 +849,7 @@ public:
   ID setLevel(ZuCSpan level, Emit &&emit) {
     if (!ready() || m_era != Era::Legacy) return {};
     ID id = next_();
-    if (!id.absent())
+    if (!id.is<void>())
       emit(SetLevelRequestMessage{id, ErrorString{level}});
     return id;
   }
@@ -863,7 +863,7 @@ private:
     ZuAssert((ZuTypeIn<Req, Reqs>{}));
     if (!ready()) return {};
     ID id = next_();
-    if (id.absent()) return id;
+    if (id.is<void>()) return id;
     ToolsCallParams<Reqs> params;
     params.arguments() = ToolArg<Req>{ZuMv(object)};
     params.progressToken = ZuMv(progressToken);
@@ -906,7 +906,7 @@ private:
       emit(InitializedMessage{});
       return true;
     }
-    if (!m_toolsID.absent() && envelope.id() == m_toolsID &&
+    if (!m_toolsID.is<void>() && envelope.id() == m_toolsID &&
 	(envelope.kind == MessageKind::Result ||
 	  envelope.kind == MessageKind::Error)) {
       if (envelope.kind == MessageKind::Result && owner) {
@@ -928,7 +928,7 @@ private:
   template <typename Emit>
   bool initialize_(Emit &&emit) {
     m_initializeID = next_();
-    if (m_initializeID.absent()) return false;
+    if (m_initializeID.is<void>()) return false;
     m_state = ClientState::Initializing;
     emit(InitializeRequestMessage{m_initializeID});
     return true;
@@ -971,6 +971,35 @@ ZuDerive(ControlHeap, (ZmHeap<"Zmcp.Client.Control", ControlAction_<Call>>));
 
 template <typename Call>
 ZuDerive(ControlAction, (ControlAction_<Call, ControlHeap<Call>>));
+
+template <typename Derived, typename Impl, typename Catalog>
+class Client {
+protected:
+  template <typename L>
+  void app_(L &&l) {
+    try {
+      l();
+    } catch (...) {
+      static_cast<Derived *>(this)->fail_();
+    }
+  }
+
+  bool initPeer_(Limits limits) {
+    m_limits = limits;
+    m_peer = ClientPeer<Catalog>{limits};
+    return m_pending.init(limits.maxPending);
+  }
+
+  Impl			*m_impl = nullptr;
+  ZiMultiplex		*m_mx = nullptr;
+  PendingCalls		m_pending;
+  ClientPeer<Catalog>	m_peer;
+  Limits		m_limits;
+  unsigned		m_ownerThread = 0;
+  ZmAtomic<unsigned>	m_up = 0;
+  ZmAtomic<unsigned>	m_done = 0;
+  ZmAtomic<unsigned>	m_ingress = 0;
+};
 
 namespace HTTPClient_ {
 
@@ -1017,8 +1046,8 @@ public:
 
   const ID *id() const {
     const ID *out = nullptr;
-    m_data.cdispatch([&out](auto, const auto &message) {
-      using M = ZuDecay<decltype(message)>;
+    m_data.cdispatch([&out](auto I, const auto &message) {
+      using M = typename Data::template Type<I>;
       if constexpr (!ZuIsSame<M, InitializedMessage>{} &&
 	  !ZuIsSame<M, CancelledRequestMessage>{} &&
 	  !ZuIsSame<M, DeleteRequestMessage>{})
@@ -1047,8 +1076,8 @@ public:
 
   bool streaming() const {
     bool out = false;
-    m_data.cdispatch([&out](auto, const auto &message) {
-      using M = ZuDecay<decltype(message)>;
+    m_data.cdispatch([&out](auto I, const auto &message) {
+      using M = typename Data::template Type<I>;
       if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
 	out = message.streaming();
     });
@@ -1081,8 +1110,8 @@ public:
 
   template <typename L>
   void header(L &&l) const {
-    m_data.cdispatch([&l](auto, const auto &message) {
-      using M = ZuDecay<decltype(message)>;
+    m_data.cdispatch([&l](auto I, const auto &message) {
+      using M = typename Data::template Type<I>;
       if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
 	message.header(l);
     });
@@ -1334,8 +1363,21 @@ ZuDerive(CancelAction, (CancelAction_<CancelActionHeap>));
 
 template <typename Impl, typename Catalog>
 class Client : public Zhttp::Client<
-    Client<Impl, Catalog>, Pool<Impl, Catalog>> {
+    Client<Impl, Catalog>, Pool<Impl, Catalog>>,
+    public Zmcp::Client<Client<Impl, Catalog>, Impl, Catalog> {
   using Base = Zhttp::Client<Client, Pool<Impl, Catalog>>;
+  using Common = Zmcp::Client<Client, Impl, Catalog>;
+  friend Common;
+  using Common::m_impl;
+  using Common::m_mx;
+  using Common::m_pending;
+  using Common::m_peer;
+  using Common::m_limits;
+  using Common::m_ownerThread;
+  using Common::m_up;
+  using Common::m_done;
+  using Common::m_ingress;
+  using Common::app_;
   using Req = Request<Impl, Catalog>;
   using ReqBase = Request_<Impl, Catalog>;
 
@@ -1358,8 +1400,7 @@ public:
     m_legacySessions = config.legacySessions();
     if (!m_ownerThread || !valid(m_limits))
       goto invalid;
-    m_peer = ClientPeer<Catalog>{m_limits};
-    if (!m_pending.init(m_limits.maxPending)) goto invalid;
+    if (!Common::initPeer_(m_limits)) goto invalid;
     {
       Zhttp::Config http = config;
       http.retainedBodyMax(m_limits.maxJSONBytes)
@@ -1444,7 +1485,7 @@ public:
       ID id = m_peer.tools([self = this, &sent](auto message) {
 	sent = self->send_(ZuMv(message));
       });
-      if ((id.absent() && !m_peer.toolCatalog()) || !sent)
+      if ((id.is<void>() && !m_peer.toolCatalog()) || !sent)
 	app_([this]() { toolsFailed_(m_impl, 0); });
     });
     return true;
@@ -1529,7 +1570,7 @@ public:
   }
 
   bool cancel(ID id, ZuCSpan reason = {}) {
-    if (!m_mx || !m_up.load_() || m_terminating.load_() || id.absent())
+    if (!m_mx || !m_up.load_() || m_terminating.load_() || id.is<void>())
       return false;
     if (++m_ingress > m_limits.maxPending) {
       --m_ingress;
@@ -1687,15 +1728,6 @@ private:
     else m_mx->run(ZuFwd<L>(l), m_ownerThread);
   }
 
-  template <typename L>
-  void app_(L &&l) {
-    try {
-      l();
-    } catch (...) {
-      fail_();
-    }
-  }
-
   void terminate_() {
     if (m_peer.ready() && m_peer.era() == Era::Legacy &&
       !m_legacySessions) {
@@ -1790,7 +1822,7 @@ private:
       m_active.add(ActiveEntry{id, sequence, request});
       app_([call, id]() { started_(call.ptr(), id, 0); });
     };
-    if (progress.absent() && logLevel == LogLevel::Disabled)
+    if (progress.is<void>() && logLevel == LogLevel::Disabled)
       (void)m_peer.template call<R>(ZuMv(object), emit);
     else if (logLevel == LogLevel::Disabled)
       (void)m_peer.template callProgress<R>(
@@ -1954,19 +1986,13 @@ private:
     return i.del();
   }
 
-  Impl			*m_impl = nullptr;
-  ZiMultiplex		*m_mx = nullptr;
-  PendingCalls		m_pending;
   ActiveHash		m_active;
-  ClientPeer<Catalog>	m_peer;
   SerialQ<Impl, Catalog> m_serial;
   ZmFn<void(bool)>	m_stopFn;
   HTTPValue		m_endpoint;
   HTTPValue		m_sessionID;
-  Limits		m_limits;
   uint64_t		m_sequence = 1;
   uint64_t		m_current = 0;
-  unsigned		m_ownerThread = 0;
   int			m_stopPhase = 0;
   bool			m_legacySessions = true;
   bool			m_started = false;
@@ -1974,11 +2000,7 @@ private:
   bool			m_ready = false;
   bool			m_failure = false;
 
-  ZmAtomic<unsigned>	m_up = 0;
   ZmAtomic<unsigned>	m_terminating = 0;
-  ZmAtomic<unsigned>	m_done = 0;
-
-  ZmAtomic<unsigned>	m_ingress = 0;
 };
 
 } // HTTPClient_
@@ -2010,10 +2032,22 @@ ZuDerive(StdioCallAction,
   (StdioCallAction_<Req, Call, StdioCallHeap<Req, Call>>));
 
 template <typename Impl, typename Catalog>
-class Client {
+class IOClient : public Zmcp::Client<IOClient<Impl, Catalog>, Impl, Catalog> {
+  using Common = Zmcp::Client<IOClient, Impl, Catalog>;
+  friend Common;
+  using Common::m_impl;
+  using Common::m_mx;
+  using Common::m_pending;
+  using Common::m_peer;
+  using Common::m_limits;
+  using Common::m_ownerThread;
+  using Common::m_up;
+  using Common::m_done;
+  using Common::m_ingress;
+  using Common::app_;
 public:
-  Client() = default;
-  ~Client() { final(); }
+  IOClient() = default;
+  ~IOClient() { final(); }
 
   bool init(ZiMultiplex *mx, StdioConfig config, Impl *impl) {
     if (m_mx || !mx || !impl || !mx->txThread()) return false;
@@ -2022,9 +2056,8 @@ public:
     m_ownerThread = mx->txThread();
     m_limits = config.limits();
     if (!m_limits.maxPending || !m_limits.workBatch) goto invalid;
-    m_peer = ClientPeer<Catalog>{m_limits};
-    if (!m_pending.init(m_limits.maxPending)) goto invalid;
-    m_stdio = new StdioIOObj<Client>{
+    if (!Common::initPeer_(m_limits)) goto invalid;
+    m_stdio = new IOLink<IOClient>{
       this, m_mx, m_ownerThread, ZuMv(config)};
     m_up = true;
     return true;
@@ -2103,7 +2136,7 @@ public:
       ID id = m_peer.tools([this, &sent](const auto &message) {
 	if (sent) sent = m_stdio->send_(message);
       });
-      if ((id.absent() && !m_peer.toolCatalog()) || !sent)
+      if ((id.is<void>() && !m_peer.toolCatalog()) || !sent)
 	app_([this]() { toolsFailed_(m_impl, 0); });
     });
     if (!posted) --m_ingress;
@@ -2121,7 +2154,7 @@ public:
   }
 
   bool cancel(ID id, ZuCSpan reason = {}) {
-    if (!m_mx || !m_up.load_() || id.absent()) return false;
+    if (!m_mx || !m_up.load_() || id.is<void>()) return false;
     if (++m_ingress > m_limits.maxPending) {
       --m_ingress;
       return false;
@@ -2260,15 +2293,6 @@ private:
     return m_mx && m_mx->invoked(m_ownerThread);
   }
 
-  template <typename L>
-  void app_(L &&l) {
-    try {
-      l();
-    } catch (...) {
-      fail_();
-    }
-  }
-
   template <typename Req, typename Call>
   void call_(
       ToolObject<typename Req::Object> object,
@@ -2293,7 +2317,7 @@ private:
 	started_(call.ptr(), id, 0);
       });
     };
-    if (progress.absent() && logLevel == LogLevel::Disabled)
+    if (progress.is<void>() && logLevel == LogLevel::Disabled)
       (void)m_peer.template call<Req>(ZuMv(object), emit);
     else if (logLevel == LogLevel::Disabled)
       (void)m_peer.template callProgress<Req>(
@@ -2405,21 +2429,11 @@ private:
     if (stopFn) stopFn(!m_failure);
   }
 
-  Impl			*m_impl = nullptr;
-  ZiMultiplex		*m_mx = nullptr;
-  ZuPtr<StdioIOObj<Client>> m_stdio;
-  PendingCalls		m_pending;
-  ClientPeer<Catalog>	m_peer;
+  ZuPtr<IOLink<IOClient>> m_stdio;
   ZmFn<void(bool)>	m_stopFn;
-  Limits		m_limits;
-  unsigned		m_ownerThread = 0;
   bool			m_started = false;
   bool			m_failure = false;
 
-  ZmAtomic<unsigned>	m_up = 0;
-  ZmAtomic<unsigned>	m_done = 0;
-
-  ZmAtomic<unsigned>	m_ingress = 0;
 };
 
 } // Zmcp

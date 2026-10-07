@@ -131,7 +131,7 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 };
 
 ZfbStruct(, LiveSaga,
-  (((orderID), (Ctor<0>)),	UInt64));
+  (orderID, (Ctor<0>),		UInt64));
 
 struct BatchSaga : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -218,8 +218,8 @@ struct BatchSaga : public ZdbSagaBase<Context> {
   }
 };
 ZfbStruct(, BatchSaga,
-  (((ids), (Ctor<0>)),		UInt64Vec),
-  (((failAt), (Ctor<1>)),	UInt32));
+  (ids, (Ctor<0>),		UInt64Vec),
+  (failAt, (Ctor<1>),		UInt32));
 
 struct SagaCatalog {
   using List = ZuTypeList<LiveSaga, BatchSaga>;
@@ -243,8 +243,8 @@ struct Options {
   bool uncommitted = false;
 };
 ZfStruct(, (Options, CLI),
-  (((crash), (CLI::Flag<'c'>, CLI::Long<"crash">)),		Bool),
-  (((uncommitted), (CLI::Flag<'u'>, CLI::Long<"uncommitted">)),	Bool));
+  (crash, (CLI::Flag<'c'>, CLI::Long<"crash">),			Bool),
+  (uncommitted, (CLI::Flag<'u'>, CLI::Long<"uncommitted">),	Bool));
 
 static ZuPtr<const ZfCf::AnyNode> config()
 {

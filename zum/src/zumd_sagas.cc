@@ -31,14 +31,14 @@ struct SignKeyJWK {
   String d;
 };
 ZfStruct(, (SignKeyJWK, JSON),
-  (((kty),		(Required)),	String),
-  (((crv),		(Required)),	String),
-  (((kid),		(Required)),	String),
-  (((x),		(Required)),	String),
-  (((y),		(Required)),	String),
-  (((alg),		(JSON::Opt)),	String),
-  (((use),		(JSON::Opt)),	String),
-  (((d),		(JSON::Opt)),	String));
+  (kty,		(Required),		String),
+  (crv,		(Required),		String),
+  (kid,		(Required),		String),
+  (x,		(Required),		String),
+  (y,		(Required),		String),
+  (alg,		(JSON::Opt),		String),
+  (use,		(JSON::Opt),		String),
+  (d,		(JSON::Opt),		String));
 
 bool signKeyPublic(const SignKey &key, Bytes &output)
 {

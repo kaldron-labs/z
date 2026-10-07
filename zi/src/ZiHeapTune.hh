@@ -38,11 +38,11 @@ struct Data {
 };
 
 ZfStruct(ZiAPI, Data,
-    (((id),		(Ctor<0>, Keys<0>, Group<0>)),	String),
-    (((partition),	(Ctor<2>, Keys<0>)),		UInt16),
-    (((vshift),		(Ctor<3>, Keys<0>)),		UInt8),
-    (((cacheSize),	(Ctor<1>)),			UInt64),
-    (((cpuset),		(Ctor<4>)),			String));
+    (id,		(Ctor<0>, Keys<0>, Group<0>),	String),
+    (partition,	(Ctor<2>, Keys<0>),			UInt16),
+    (vshift,		(Ctor<3>, Keys<0>),		UInt8),
+    (cacheSize,	(Ctor<1>),				UInt64),
+    (cpuset,		(Ctor<4>),			String));
 
 class CSV : public ZiCSV::Reader<Data> {
 public:

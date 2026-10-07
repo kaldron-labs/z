@@ -28,9 +28,9 @@ using namespace ZuTestUtil;
 struct EchoReq { int value = 0; };
 struct EchoResult { int value = 0; };
 ZfStruct(, (EchoReq, JSON),
-  (((value), (Ctor<0>, Required)),	Int32));
+  (value, (Ctor<0>, Required),		Int32));
 ZfStruct(, (EchoResult, JSON),
-  (((value), (Ctor<0>, Required)),	Int32));
+  (value, (Ctor<0>, Required),		Int32));
 
 struct EchoOK : public Zmcp::Response {
   using Body = EchoResult;
@@ -584,7 +584,7 @@ static void httpTest()
   ZuCheck(mx.start());
 
   App app;
-  Zmcp::Server<App, Catalog> server;
+  Zmcp::HTTPServer<App, Catalog> server;
   Zmcp::ServerConfig config;
   config.localIP(ZiIP{"127.0.0.1"}).port(port).tcp();
   config.absentOrigin(true).legacyLifetime(1);
@@ -942,7 +942,7 @@ static void httpTest()
     Zquic::Test::loopbackPort(ZmcpITestPort::Stateless);
   ZuCheck(statelessPort);
   App statelessApp;
-  Zmcp::Server<App, Catalog> statelessServer;
+  Zmcp::HTTPServer<App, Catalog> statelessServer;
   Zmcp::ServerConfig statelessConfig;
   statelessConfig.localIP(ZiIP{"127.0.0.1"}).port(statelessPort).tcp();
   statelessConfig.absentOrigin(true).legacySessions(false);
@@ -1031,7 +1031,7 @@ static void secureTest()
     bool h3 = transport == Secure::H3;
     bool multiplexed = transport != Secure::H1;
     App app;
-    Zmcp::Server<App, Catalog> server;
+    Zmcp::HTTPServer<App, Catalog> server;
     Zmcp::ServerConfig config;
     config.localIP(ZiIP{"127.0.0.1"}).port(port);
     config.absentOrigin(true);

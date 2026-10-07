@@ -533,8 +533,8 @@ static void httpRoutes()
   target.path = query;
   ZuCheck(parser.operation(Zhttp::Method::GET, target));
   auto &child = parser.u.template p<HTTPTestChild>();
-  ZuCheck(child.u.cdispatch([](auto, const auto &request) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(request)>,
+  ZuCheck(child.u.cdispatch([](auto I, const auto &request) {
+    if constexpr (ZuIsSame<typename decltype(child.u)::template Type<I>,
         Zum::AuthorizeReq<HTTPTestApp>>{})
       return request.object->appID == 42 &&
         request.object->data == "client_id=x";
@@ -2063,8 +2063,8 @@ static void enrollmentSaga()
     M::save(saga, payload);
     auto loaded = M::load(Zum::KeyBinding::Type{}(), payload);
     ZuCheck(bool(loaded));
-    ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-      if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::KeyBinding>{})
+    ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+      if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::KeyBinding>{})
 	return change.issuer == "issuer" &&
 	  change.beforeCheck == ZuBSpan{"old-check"} &&
 	  change.afterCheck == change.beforeCheck && !change.beforePending &&
@@ -2084,8 +2084,8 @@ static void enrollmentSaga()
     M::save(saga, payload);
     auto loaded = M::load(Zum::SecretRekey::Type{}(), payload);
     ZuCheck(bool(loaded));
-    ZuCheck(loaded->u.cdispatch([field](auto, const auto &change) {
-      if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::SecretRekey>{})
+    ZuCheck(loaded->u.cdispatch([field](auto I, const auto &change) {
+      if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::SecretRekey>{})
 	return change.field == field && change.providerID == 7 &&
 	  change.appID == 8 && change.userID == 9 && change.keyID == "signer" &&
 	  change.before == ZuBSpan{"old-envelope"} &&
@@ -2110,9 +2110,9 @@ static void enrollmentSaga()
   M::save(saga, payload);
   auto loaded = M::load(Zum::Enrollment::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &enrollment) {
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &enrollment) {
     if constexpr (ZuIsSame<
-        ZuDecay<decltype(enrollment)>, Zum::Enrollment>{})
+        typename M::Union::template Type<I>, Zum::Enrollment>{})
       return enrollment.userID == 42 && enrollment.name == "first user" &&
 	enrollment.publicKey == ZuBSpan{"cose-key"} &&
 	enrollment.beforeGrant.id == enrollment.ceremonyID;
@@ -2149,8 +2149,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::CredentialAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &add) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(add)>, Zum::CredentialAdd>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &add) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::CredentialAdd>{})
       return add.issuer == "issuer" && add.userID == 42 &&
 	add.credentialID == ZuBSpan{"credential-2"} &&
 	add.beforeGrant.id == add.ceremonyID && add.beforeGrant.expires == 200;
@@ -2183,8 +2183,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::RecoveryStart::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &recovery) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(recovery)>, Zum::RecoveryStart>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &recovery) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RecoveryStart>{})
       return recovery.issuer == "issuer" && recovery.userID == 42 &&
 	recovery.userVersion == 2 && recovery.actor == "administrator" &&
 	recovery.version == 7 && recovery.oldState == Zum::State::Suspended &&
@@ -2221,9 +2221,9 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::RecoveryEnroll::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &recovery) {
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &recovery) {
     if constexpr (ZuIsSame<
-	ZuDecay<decltype(recovery)>, Zum::RecoveryEnroll>{})
+	typename M::Union::template Type<I>, Zum::RecoveryEnroll>{})
       return recovery.actor == "administrator" && recovery.userID == 42 &&
 	recovery.userVersion == 2 && recovery.newHandle == ZuBSpan{"new handle"} &&
 	recovery.beforeGrant.expires == 200 && recovery.beforeUser.version == 7 &&
@@ -2261,8 +2261,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::CodeFamily::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &family) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(family)>, Zum::CodeFamily>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &family) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::CodeFamily>{})
       return family.userID == 42 && family.authVersion == 7 &&
         family.actions[2] &&
 	family.beforeGrant.id == family.codeID && family.beforeGrant.expires == 200;
@@ -2299,8 +2299,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::AppEnrollment::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &enrollment) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(enrollment)>,
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &enrollment) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>,
         Zum::AppEnrollment>{})
       return enrollment.coreAppID == 1 && enrollment.appID == 9 &&
 	 enrollment.appName == "orders" && enrollment.clientID == "svc_orders" &&
@@ -2336,8 +2336,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ExternalProjection::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &projection) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(projection)>,
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &projection) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>,
         Zum::ExternalProjection>{})
       return projection.providerID == 8 && projection.subject == "00u1" &&
         projection.userID == 44 && projection.handle == ZuBSpan{"handle"};
@@ -2365,8 +2365,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::AppActionAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &action) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(action)>, Zum::AppActionAdd>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &action) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::AppActionAdd>{})
       return action.appID == 9 && action.actionID == 3 &&
 	 action.name == "orders.ship" && action.label == "Ship orders" &&
 	 action.created == 124 && action.oldAppVersion == 7 &&
@@ -2400,8 +2400,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::AssignmentAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &add) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(add)>, Zum::AssignmentAdd>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &add) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::AssignmentAdd>{})
       return add.appID == 9 && add.userID == 42 && add.created == 125 &&
 	add.request.actorID == "admin" &&
 	add.request.operation == Zum::MgmtOp::assignmentAdd &&
@@ -2429,8 +2429,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::AssignmentChange::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::AssignmentChange>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::AssignmentChange>{})
       return change.appID == 9 && change.userID == 42 &&
 	change.oldRoles == Zum::IDVec{1} && change.newRoles == Zum::IDVec{2} &&
 	!change.unchanged() && change.version == 3 && change.authVersion == 4 &&
@@ -2458,8 +2458,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::RoleEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::RoleEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RoleEdit>{})
       return change.app.id == 9 && change.app.nextActionID == 2 &&
 	change.before.id == 4 && change.before.name == "operator" &&
 	change.actionIDs == Zum::ActionIDVec{0, 1} && change.ifMatch == "\"v1\"" &&
@@ -2487,8 +2487,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ActionEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ActionEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ActionEdit>{})
       return change.app.id == 9 && change.before.appID == 9 && !change.before.id &&
 	change.before.name == "ping" && change.ifMatch == "\"v1\"" &&
 	change.request.idempotence == "action-state" &&
@@ -2512,8 +2512,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::AppChange::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::AppChange>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::AppChange>{})
       return change.before.id == 9 && change.before.name == "orders" &&
 	change.before.label == "Original" && change.before.authVersion == 4 &&
 	change.before.version == 3 && change.label == "Updated" &&
@@ -2539,8 +2539,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::UserEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::UserEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::UserEdit>{})
       return change.before.id == 42 && change.before.profile == "Original" &&
 	change.before.email == "original@example.test" && change.profile == "Updated" &&
 	change.email == "updated@example.test" && change.fields == 3 &&
@@ -2566,8 +2566,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::CredEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::CredEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::CredEdit>{})
       return change.before.id == ZuBSpan{"credential"} && change.before.userID == 42 &&
 	change.before.signCount == 7 && change.before.backedUp &&
 	change.before.label == "Original" && change.label == "Updated" &&
@@ -2614,8 +2614,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ProviderEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ProviderEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ProviderEdit>{})
       return change.before.id == 44 && change.before.roleClaim == "roles" &&
 	change.before.clientSecret == ZuBSpan{"ciphertext"} &&
 	change.values.roleClaim == "groups" && change.fields == 16 &&
@@ -2666,8 +2666,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ClientEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ClientEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ClientEdit>{})
       return change.before.id == "native-cli" && change.before.appID == 42 &&
 	change.before.secretDigest == ZuBSpan{"digest"} &&
 	change.values.label == "Updated" && change.fields == 1 &&
@@ -2708,8 +2708,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ClientEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ClientEdit>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ClientEdit>{})
       return change.fields == Zum::ClientEdit::Secret && change.overlapSeconds == 60 &&
 	change.before.secretVersion == 7 && change.values.secretDigest.length() == Ztls::SecretHash::Size;
     else return false;
@@ -2738,8 +2738,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::KeyRetire::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::KeyRetire>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::KeyRetire>{})
       return change.before.id == "key-1" && change.before.algorithm == "ES256" &&
 	change.before.privateMaterial == ZuBSpan{"ciphertext"} &&
 	change.retireAfter == 200 && change.updated == 135 && !change.error &&
@@ -2783,8 +2783,8 @@ static void enrollmentSaga()
     M::save(saved, bytes);
     auto restored = M::load(typename Edit::Type{}(), bytes);
     ZuCheck(bool(restored));
-    ZuCheck(restored->u.cdispatch([](auto, const auto &value) {
-      if constexpr (ZuIsSame<ZuDecay<decltype(value)>, Edit>{})
+    ZuCheck(restored->u.cdispatch([](auto I, const auto &value) {
+      if constexpr (ZuIsSame<typename M::Union::template Type<I>, Edit>{})
         return value.before.appID == 42 && value.state == Zum::State::Disabled &&
           !value.error && value.request.idempotence == "access-state";
       else return false;
@@ -2827,8 +2827,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::RoleMapDelete::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::RoleMapDelete>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RoleMapDelete>{})
       return change.app.id == 42 && change.before.providerID == 43 &&
 	change.before.value == "upstream-role" && change.before.roleID == 44 &&
 	change.request.idempotence == "delete-map" && !change.error;
@@ -2858,8 +2858,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::RoleMapPut::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::RoleMapPut>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RoleMapPut>{})
       return change.app.id == 42 && change.before.providerID == 43 &&
 	change.before.value == "upstream-role" && change.before.roleID == 44 &&
 	change.roleID == 45 && change.request.idempotence == "replace-map" && !change.error;
@@ -2893,8 +2893,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::PolicyPut::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::PolicyPut>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::PolicyPut>{})
       return change.app.id == 42 && change.before.created == 100 &&
 	change.values.sessionIdle == 300 && change.values.sessionAbsolute == 3600 &&
 	change.request.idempotence == "policy" && !change.error;
@@ -2926,8 +2926,8 @@ static void enrollmentSaga()
     M::save(saved, bytes);
     auto restored = M::load(typename Edit::Type{}(), bytes);
     ZuCheck(bool(restored));
-    ZuCheck(restored->u.cdispatch([](auto, const auto &value) {
-      if constexpr (ZuIsSame<ZuDecay<decltype(value)>, Edit>{})
+    ZuCheck(restored->u.cdispatch([](auto I, const auto &value) {
+      if constexpr (ZuIsSame<typename M::Union::template Type<I>, Edit>{})
         return value.app.id == 42 && value.before.created == 100 &&
           value.values.roleIDs.length() == 1 && value.values.roleIDs[0] == 45 &&
           !value.error && value.request.idempotence == "access-put";
@@ -2984,8 +2984,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ProviderAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ProviderAdd>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ProviderAdd>{})
       return change.values.id == 46 && !change.before.version &&
 	change.values.clientSecret == ZuBSpan{"ciphertext"} && !change.error &&
 	change.request.idempotence == "provider-add";
@@ -3019,8 +3019,8 @@ static void enrollmentSaga()
     M::save(saved, bytes);
     auto restored = M::load(Zum::RoleAdd::Type{}(), bytes);
     ZuCheck(bool(restored));
-    ZuCheck(restored->u.cdispatch([](auto, const auto &value) {
-      if constexpr (ZuIsSame<ZuDecay<decltype(value)>, Zum::RoleAdd>{})
+    ZuCheck(restored->u.cdispatch([](auto I, const auto &value) {
+      if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RoleAdd>{})
         return value.app.id == 42 && value.values.id == 48 && !value.before.version &&
           !value.error && value.request.idempotence == "catalog-add";
       else return false;
@@ -3056,8 +3056,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::UserInvite::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::UserInvite>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::UserInvite>{})
       return change.values.id == 49 && !change.before.version && !change.error &&
 	change.updated == 144 && change.grant.expires == 200 &&
 	change.grant.digest == ZuBSpan{"digest"} && change.grant.userID == 49 &&
@@ -3096,8 +3096,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ClientAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ClientAdd>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ClientAdd>{})
       return change.app.id == 42 && change.values.id == "cli-native" &&
 	!change.before.version && !change.error && !change.values.secretDigest &&
 	change.request.idempotence == "client-add";
@@ -3156,8 +3156,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::KeyAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::KeyAdd>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::KeyAdd>{})
       return change.values.id == "key-new" && !change.before.version &&
 	change.values.privateMaterial == ZuBSpan{"ciphertext"} &&
 	change.request.idempotence == "key-add";
@@ -3189,8 +3189,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::Revoke::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::Revoke>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::Revoke>{})
       return change.grants.length() == 4 && change.count() == 1 &&
 	change.updated == 147 && change.request.idempotence == "revoke";
     else return false;
@@ -3209,8 +3209,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::GrantCleanup::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::GrantCleanup>{}) {
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::GrantCleanup>{}) {
       return change.updated == 147 && change.grants.length() == 1 &&
 	change.grants[0].expires == 146 && change.grants[0].state == Zum::State::Active;
     } else return false;
@@ -3228,8 +3228,8 @@ static void enrollmentSaga()
   saga->init(ZuMv(sessionCleanup));
   M::save(saga, payload);
   loaded = M::load(Zum::SessionCleanup::Type{}(), payload);
-  ZuCheck(loaded && loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::SessionCleanup>{})
+  ZuCheck(loaded && loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::SessionCleanup>{})
       return change.updated == 147 && change.sessions.length() == 1 &&
 	change.sessions[0].digest == ZuBSpan{"cleanup-session"} &&
 	change.sessions[0].version == 3;
@@ -3244,8 +3244,8 @@ static void enrollmentSaga()
   saga->init(ZuMv(refreshCleanup));
   M::save(saga, payload);
   loaded = M::load(Zum::RefreshCleanup::Type{}(), payload);
-  ZuCheck(loaded && loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::RefreshCleanup>{})
+  ZuCheck(loaded && loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RefreshCleanup>{})
       return change.updated == 147 && change.refreshes.length() == 1 &&
 	change.refreshes[0].id == ZuBSpan{"cleanup-refresh"} &&
 	change.refreshes[0].version == 4;
@@ -3263,8 +3263,8 @@ static void enrollmentSaga()
   saga->init(ZuMv(appCleanup));
   M::save(saga, payload);
   loaded = M::load(Zum::AppCleanup::Type{}(), payload);
-  ZuCheck(loaded && loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::AppCleanup>{})
+  ZuCheck(loaded && loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::AppCleanup>{})
       return change.appID == 9 && change.updated == 147 &&
 	change.evidence.length() == 1 && change.consents.length() == 1 &&
 	change.evidence[0].providerID == 3 &&
@@ -3295,8 +3295,8 @@ static void enrollmentSaga()
   M::save(saga, payload);
   loaded = M::load(Zum::ConsentCode::Type{}(), payload);
   ZuCheck(bool(loaded));
-  ZuCheck(loaded->u.cdispatch([](auto, const auto &change) {
-    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Zum::ConsentCode>{})
+  ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
+    if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::ConsentCode>{})
       return change.now == 148 && !change.beforeConsent.version &&
 	change.roleIDs.length() == 1 && change.roleIDs[0] == 7 &&
 	change.result().created == 148 && change.afterGrant.kind == Zum::GrantKind::Code &&

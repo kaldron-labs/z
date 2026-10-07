@@ -27,7 +27,7 @@ ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 struct IDReply {
   ZtString<ZtStringHeapID<"ZdbusTest.ID">> value;
 };
-ZfStruct(, IDReply, (((value), (Mutable)), String));
+ZfStruct(, IDReply, (value, (Mutable), String));
 ZfStructRender(, IDReply, DBUS, value);
 
 struct ErrorBody {
@@ -35,8 +35,8 @@ struct ErrorBody {
   uint32_t code;
 };
 ZfStruct(, ErrorBody,
-  (((message), (Mutable)),	String),
-  (((code), (Mutable)),		UInt32));
+  (message, (Mutable),		String),
+  (code, (Mutable),		UInt32));
 ZfStructRender(, ErrorBody, DBUS, code, message);
 
 using GetIdHeaders = ZuTypeList<

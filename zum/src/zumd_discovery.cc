@@ -97,26 +97,26 @@ struct Metadata {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (Metadata, JSON),
-  (((issuer),		(Required)),						String),
-  (((authorizationEndpoint), (JSON::ID<"authorization_endpoint">, Required)),	String),
-  (((tokenEndpoint),	(JSON::ID<"token_endpoint">, Required)),		String),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, Required)),			String),
-  (((revocationEndpoint), (JSON::ID<"revocation_endpoint">, Required)),		String),
-  (((userinfoEndpoint), (JSON::ID<"userinfo_endpoint">, Required)),		String),
-  (((responseTypesSupported), (JSON::ID<"response_types_supported">,
-    Required)),									StringVec),
-  (((grantTypesSupported), (JSON::ID<"grant_types_supported">, Required)),	StringVec),
-  (((tokenAuthMethods), (JSON::ID<"token_endpoint_auth_methods_supported">,
-    Required)),									StringVec),
-  (((revokeAuthMethods), (JSON::ID<"revocation_endpoint_auth_methods_supported">,
-    Required)),									StringVec),
-  (((subjectTypesSupported), (JSON::ID<"subject_types_supported">, Required)),	StringVec),
-  (((idTokenAlgs), (JSON::ID<"id_token_signing_alg_values_supported">,
-    Required)),									StringVec),
-  (((scopesSupported), (JSON::ID<"scopes_supported">, Required)),		StringVec),
-  (((claimsSupported), (JSON::ID<"claims_supported">, Required)),		StringVec),
-  (((codeChallengeMethods), (JSON::ID<"code_challenge_methods_supported">,
-    Required)),									StringVec));
+  (issuer,		(Required),						String),
+  (authorizationEndpoint, (JSON::ID<"authorization_endpoint">, Required),	String),
+  (tokenEndpoint,	(JSON::ID<"token_endpoint">, Required),			String),
+  (jwksURI,		(JSON::ID<"jwks_uri">, Required),			String),
+  (revocationEndpoint, (JSON::ID<"revocation_endpoint">, Required),		String),
+  (userinfoEndpoint, (JSON::ID<"userinfo_endpoint">, Required),			String),
+  (responseTypesSupported, (JSON::ID<"response_types_supported">,
+    Required),									StringVec),
+  (grantTypesSupported, (JSON::ID<"grant_types_supported">, Required),		StringVec),
+  (tokenAuthMethods, (JSON::ID<"token_endpoint_auth_methods_supported">,
+    Required),									StringVec),
+  (revokeAuthMethods, (JSON::ID<"revocation_endpoint_auth_methods_supported">,
+    Required),									StringVec),
+  (subjectTypesSupported, (JSON::ID<"subject_types_supported">, Required),	StringVec),
+  (idTokenAlgs, (JSON::ID<"id_token_signing_alg_values_supported">,
+    Required),									StringVec),
+  (scopesSupported, (JSON::ID<"scopes_supported">, Required),			StringVec),
+  (claimsSupported, (JSON::ID<"claims_supported">, Required),			StringVec),
+  (codeChallengeMethods, (JSON::ID<"code_challenge_methods_supported">,
+    Required),									StringVec));
 
 using PublicJWK = ZfJSON::Union<>;
 ZuDerive(PublicJWKArray, (ZtArray<PublicJWK,
@@ -127,7 +127,7 @@ struct PublicJWKVec : public PublicJWKArray {
 };
 struct JWKSReply { PublicJWKVec keys; };
 ZfStruct(, (JWKSReply, JSON),
-  (((keys),		(Required)),	UDT));
+  (keys,		(Required),	UDT));
 ZuDerive(PublicJWKRootArray, (ZtArray<ZuPtr<ZfJSON::AnyNode>,
   ZtArrayHeapID<"Zum.Discovery.JWKRoots">>));
 

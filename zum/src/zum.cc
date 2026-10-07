@@ -65,10 +65,10 @@ struct Token {
   String tokenType;
 };
 ZfStruct(, (Token, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)),		String),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	String),
-  (((scope),		(JSON::Opt)),					String),
-  (((tokenType),	(JSON::ID<"token_type">, Required)),		String));
+  (accessToken,	(JSON::ID<"access_token">, Required),			String),
+  (refreshToken,	(JSON::ID<"refresh_token">, JSON::Opt),		String),
+  (scope,		(JSON::Opt),					String),
+  (tokenType,	(JSON::ID<"token_type">, Required),			String));
 
 ZuDerive(StringVec, (ZtArray<String,
   ZtArrayHeapID<"zumc.StringVec">>));
@@ -83,20 +83,20 @@ struct Metadata {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (Metadata, JSON),
-  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	String),
-  (((authorizationEndpoint),
-    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		String),
-  (((tokenEndpoint),
-    (JSON::ID<"token_endpoint">, JSON::Opt)),			String),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	String),
-  (((revocationEndpoint),
-    (JSON::ID<"revocation_endpoint">, JSON::Opt)),		String),
-  (((responseTypesSupported),
-    (JSON::ID<"response_types_supported">, JSON::Opt)),		StringVec),
-  (((grantTypesSupported),
-    (JSON::ID<"grant_types_supported">, JSON::Opt)),		StringVec),
-  (((codeChallengeMethods),
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	StringVec));
+  (issuerURL,	(JSON::ID<"issuer">, JSON::Opt),		String),
+  (authorizationEndpoint,
+    (JSON::ID<"authorization_endpoint">, JSON::Opt),		String),
+  (tokenEndpoint,
+    (JSON::ID<"token_endpoint">, JSON::Opt),			String),
+  (jwksURI,		(JSON::ID<"jwks_uri">, JSON::Opt),	String),
+  (revocationEndpoint,
+    (JSON::ID<"revocation_endpoint">, JSON::Opt),		String),
+  (responseTypesSupported,
+    (JSON::ID<"response_types_supported">, JSON::Opt),		StringVec),
+  (grantTypesSupported,
+    (JSON::ID<"grant_types_supported">, JSON::Opt),		StringVec),
+  (codeChallengeMethods,
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt),	StringVec));
 
 static void clearTokens(ZumVaultClient::Credential &tokens)
 {
@@ -125,14 +125,14 @@ struct Config {
   bool		loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Mutable, Required)),			String),
-  (((managementURL), (Mutable, Required)),		String),
-  (((caPath), (Mutable)),				String),
-  (((clientID), (Mutable)),				String),
-  (((scope), (Mutable)),				String),
-  (((callbackPort), (Mutable, (Range<1, 65535>))),	UInt32),
-  (((loginTimeout), (Mutable, (Range<1, 3600>))),	UInt32),
-  (((loopbackTest), (Mutable)),				Bool));
+  (issuerURL, (Mutable, Required),			String),
+  (managementURL, (Mutable, Required),			String),
+  (caPath, (Mutable),					String),
+  (clientID, (Mutable),					String),
+  (scope, (Mutable),					String),
+  (callbackPort, (Mutable, (Range<1, 65535>)),		UInt32),
+  (loginTimeout, (Mutable, (Range<1, 3600>)),		UInt32),
+  (loopbackTest, (Mutable),				Bool));
 
 static void usage(int code = 1, const ZfCLI::Parser<Options> *parser = nullptr)
 {

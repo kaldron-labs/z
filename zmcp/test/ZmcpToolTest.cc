@@ -14,11 +14,11 @@ using namespace ZuTestUtil;
 
 struct AddReq { int lhs = 0; int rhs = 0; };
 ZfStruct(, (AddReq, JSON),
-  (((lhs), (Ctor<0>, Required)),	Int32),
-  (((rhs), (Ctor<1>, Required)),	Int32));
+  (lhs, (Ctor<0>, Required),		Int32),
+  (rhs, (Ctor<1>, Required),		Int32));
 struct AddResult { int value = 0; };
 ZfStruct(, (AddResult, JSON),
-  (((value), (Ctor<0>, Required)),	Int32));
+  (value, (Ctor<0>, Required),		Int32));
 struct AddOK : public Zmcp::Response {
   using Body = AddResult;
 };
@@ -35,8 +35,8 @@ struct Add : public Zmcp::Request {
 
 struct MulReq { int lhs = 0; int rhs = 0; };
 ZfStruct(, (MulReq, JSON),
-  (((lhs), (Ctor<0>, Required)),	Int32),
-  (((rhs), (Ctor<1>, Required)),	Int32));
+  (lhs, (Ctor<0>, Required),		Int32),
+  (rhs, (Ctor<1>, Required),		Int32));
 struct Mul : public Zmcp::Request {
   using Object = MulReq;
   using OperationID = ZuStringT<"multiplyNumbers">;
@@ -131,7 +131,7 @@ static void customAllocTest()
     auto handler = ZfJSON::handler<Zmcp::ID>(node.ptr());
     ZuCheck(handler.valid);
     ZuPtr<Zmcp::ID> id = handler.alloc();
-    ZuCheck(id->string());
+    ZuCheck(id->is<Zmcp::IDString>());
     ZuCheck(id->p<Zmcp::IDString>() == "request-id");
   }
   {

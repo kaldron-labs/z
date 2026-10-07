@@ -99,11 +99,11 @@ struct SagaData {
 };
 
 ZfbStruct(ZdbAPI, SagaData,
-  (((type),	(Ctor<0>, Keys<0>)),	String),
-  (((id),	(Ctor<1>, Keys<0>)),	UInt128),
-  (((shard),	(Ctor<2>)),		UInt8),
-  (((data),	(Ctor<3>)),		Bytes),
-  (((deadline),	(Ctor<4>)),		Time));
+  (type,	(Ctor<0>, Keys<0>),	String),
+  (id,	(Ctor<1>, Keys<0>),		UInt128),
+  (shard,	(Ctor<2>),		UInt8),
+  (data,	(Ctor<3>),		Bytes),
+  (deadline,	(Ctor<4>),		Time));
 
 ZfbRoot(SagaData);
 
@@ -119,11 +119,11 @@ struct SagaStep {
 };
 
 ZfbStruct(ZdbAPI, SagaStep,
-  (((type),	(Ctor<0>, Keys<0>)),	String),
-  (((id),	(Ctor<1>, Keys<0>)),	UInt128),
-  (((step),	(Ctor<2>, Keys<0>)),	UInt32),
-  (((shard),	(Ctor<3>)),		UInt8),
-  (((un),	(Ctor<4>)),		UInt64));
+  (type,	(Ctor<0>, Keys<0>),	String),
+  (id,	(Ctor<1>, Keys<0>),		UInt128),
+  (step,	(Ctor<2>, Keys<0>),	UInt32),
+  (shard,	(Ctor<3>),		UInt8),
+  (un,	(Ctor<4>),			UInt64));
 
 ZfbRoot(SagaStep);
 
@@ -142,11 +142,11 @@ struct SagaTypeStep {
 };
 
 ZfbStruct(ZdbAPI, SagaTypeStep,
-  (((type),	(Ctor<0>, Keys<0>)),		String),
-  (((step),	(Ctor<2>, Keys<0>)),		UInt32),
-  (((table),	(Ctor<1>)),			String),
-  (((op),	(Ctor<3>, Enum<SagaOp::Map>)),	Int8),
-  (((repeat),	(Ctor<4>)),			Bool));
+  (type,	(Ctor<0>, Keys<0>),		String),
+  (step,	(Ctor<2>, Keys<0>),		UInt32),
+  (table,	(Ctor<1>),			String),
+  (op,	(Ctor<3>, Enum<SagaOp::Map>),		Int8),
+  (repeat,	(Ctor<4>),			Bool));
 
 ZfbRoot(SagaTypeStep);
 
@@ -793,8 +793,8 @@ private:
 
 public:
   static ZuCSpan type(const M *saga) {
-    return saga->u.cdispatch([](auto, const auto &def) {
-      using Def = ZuDecay<decltype(def)>;
+    return saga->u.cdispatch([](auto I, const auto &) {
+      using Def = typename M::Union::template Type<I>;
       return ZuCSpan{typename Def::Type{}()};
     });
   }
@@ -809,8 +809,9 @@ public:
   }
 
   static unsigned stepCount(const M *saga) {
-    return saga->u.cdispatch([](auto, const auto &def) {
-      return SagaLayout<ZuDecay<decltype(def)>>::size(def);
+    return saga->u.cdispatch([](auto I, const auto &def) {
+      using Def = typename M::Union::template Type<I>;
+      return SagaLayout<Def>::size(def);
     });
   }
 
@@ -841,8 +842,8 @@ public:
 
   static bool stepDef(
       const M *saga, unsigned step, ZuCSpan &table, SagaOp::T &op) {
-    return saga->u.cdispatch([step, &table, &op](auto, const auto &def) {
-      using Def = ZuDecay<decltype(def)>;
+    return saga->u.cdispatch([step, &table, &op](auto I, const auto &def) {
+      using Def = typename M::Union::template Type<I>;
       unsigned iteration;
       auto phase = SagaLayout<Def>::phase(def, step, iteration);
       return stepDef_<SagaSteps<Def>>(phase, table, op);

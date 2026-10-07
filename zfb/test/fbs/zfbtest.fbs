@@ -1,4 +1,8 @@
 namespace zfbtest.fbs;
+
+table PlainElem {
+  bah:int32;
+}
 table Elem {
   bah:int32;
 }

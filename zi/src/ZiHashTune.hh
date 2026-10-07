@@ -36,10 +36,10 @@ struct Data {
 };
 
 ZfStruct(ZiAPI, Data,
-    (((id),		(Ctor<0>, Keys<0>)),	String),
-    (((bits),		(Ctor<2>)),		UInt8),
-    (((loadFactor),	(Ctor<1>)),		Float),
-    (((cBits),		(Ctor<3>)),		UInt8));
+    (id,		(Ctor<0>, Keys<0>),	String),
+    (bits,		(Ctor<2>),		UInt8),
+    (loadFactor,	(Ctor<1>),		Float),
+    (cBits,		(Ctor<3>),		UInt8));
 
 class CSV : public ZiCSV::Reader<Data> {
 public:

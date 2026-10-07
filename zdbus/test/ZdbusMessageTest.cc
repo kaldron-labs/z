@@ -17,8 +17,8 @@ struct Args { Text text; uint32_t count; };
 struct Empty { };
 
 ZfStruct(, Args,
-  (((text), (Mutable)),		String),
-  (((count), (Mutable)),	UInt32));
+  (text, (Mutable),		String),
+  (count, (Mutable),		UInt32));
 ZfStructRender(, Args, DBUS, text, count);
 ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 

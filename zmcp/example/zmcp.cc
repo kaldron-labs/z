@@ -34,14 +34,14 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((stdio), (CLI::Long<"stdio">)),		Bool),
-  (((host), (CLI::Long<"host">)),		String),
-  (((port), (CLI::Opt<'p'>, CLI::Long<"port">)),	UInt32),
-  (((token), (CLI::Long<"token">)),				String),
-  (((lhs), (CLI::Long<"lhs">)),			Int64),
-  (((rhs), (CLI::Long<"rhs">)),			Int64),
-  (((stream), (CLI::Long<"stream">)),		Bool),
-  (((help), (CLI::Opt<'h'>, CLI::Long<"help">)),	Bool));
+  (stdio, (CLI::Long<"stdio">),			Bool),
+  (host, (CLI::Long<"host">),			String),
+  (port, (CLI::Opt<'p'>, CLI::Long<"port">),		UInt32),
+  (token, (CLI::Long<"token">),					String),
+  (lhs, (CLI::Long<"lhs">),			Int64),
+  (rhs, (CLI::Long<"rhs">),			Int64),
+  (stream, (CLI::Long<"stream">),		Bool),
+  (help, (CLI::Opt<'h'>, CLI::Long<"help">),		Bool));
 
 static void usage(int code)
 {
@@ -165,7 +165,7 @@ int main(int argc, char **argv)
   App app{&options};
   bool ok = false;
   if (options.stdio) {
-    Zmcp::Client<App, ExampleCatalog> client;
+    Zmcp::IOClient<App, ExampleCatalog> client;
     auto config = Zmcp::StdioConfig{}
       .rxThread("stdioRx").txThread("stdioTx");
     if (client.init(&mx, ZuMv(config), &app))

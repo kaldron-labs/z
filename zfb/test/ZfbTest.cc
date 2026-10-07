@@ -29,13 +29,24 @@ using namespace Zfb;
 struct Elem {
   int bah = 42;
 
+  int value() const { return bah; }
+  void value(int v) { bah = v; }
+
   friend ZfStructPrint ZuPrintType(Elem *);
 };
 
 ZuDerive(ElemVec, (ZtArray<Elem>));
 
 ZfbStruct(, Elem,
-  (((bah), (Ctor<0>)),	Int32));
+  ((bah, AliasFn, value, value), (Ctor<0>),	Int32));
+
+struct PlainElem {
+  int bah = 0;
+};
+
+ZfbStruct(, PlainElem,
+  (bah,,	Int32));
+ZfbStructImpl(PlainElem);
 
 } // zfbtest
 
@@ -83,10 +94,10 @@ struct Test {
 };
 
 ZfbStruct(, Test,
-  (((foo), (Ctor<0>)),			Int32),
-  (((bar), (Ctor<1>, Deflt<"bar"_z>)),	String),
-  (((baz), (Ctor<2>)),			StringVec),
-  (((elems), (Ctor<3>)),		UDT));
+  (foo, (Ctor<0>),			Int32),
+  (bar, (Ctor<1>, Deflt<"bar"_z>),	String),
+  (baz, (Ctor<2>),			StringVec),
+  (elems, (Ctor<3>),			UDT));
 
 ZfbRoot(Test);
 ZfbStructImpl(Elem);
@@ -217,6 +228,16 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  {
+    IOBuilder fbb(new ZiIOBufAlloc<>());
+    fbb.Finish(ZfbStruct::save(fbb, zfbtest::PlainElem{73}));
+    auto elem = flatbuffers::GetRoot<zfbtest::fbs::PlainElem>(fbb.GetBufferPointer());
+    ZuCheck(elem->bah() == 73);
+    zfbtest::PlainElem plain;
+    ZfbStruct::load(plain, elem);
+    ZuCheck(plain.bah == 73);
+    ZuCheck(zfbtest::ZfField_PlainElem_bah::Props::N == 0);
+  }
   auto constant = zfbtest::ZfField_Test_bar::constantFn();
   ZuCheck(constant.get<ZfFieldTC::String>(
       ZfVField::cget(ZfVFieldConstant::Deflt)) == "bar");

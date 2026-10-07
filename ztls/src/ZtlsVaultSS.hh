@@ -94,81 +94,81 @@ struct PromptPath { Text path; };
 struct PromptPaths { Paths paths; };
 
 ZfStruct(, OpenSessionArg,
-  (((algorithm), (Mutable)),	String),
-  (((input), (Mutable)),	UDT));
+  (algorithm, (Mutable),	String),
+  (input, (Mutable),		UDT));
 ZfStructRender(, OpenSessionArg, DBUS, algorithm, input);
 ZfStruct(, OpenSessionRes,
-  (((output), (Mutable)),	UDT),
-  (((session), (Mutable)),	String));
+  (output, (Mutable),		UDT),
+  (session, (Mutable),		String));
 ZfStructRender(, OpenSessionRes, DBUS,
   output, (session, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
-ZfStruct(, SearchArg, (((attributes), (Mutable)), UDT));
+ZfStruct(, SearchArg, (attributes, (Mutable), UDT));
 ZfStructRender(, SearchArg, DBUS, attributes);
 ZfStruct(, SearchRes,
-  (((unlocked), (Mutable)),	StringVec),
-  (((locked), (Mutable)),	StringVec));
+  (unlocked, (Mutable),		StringVec),
+  (locked, (Mutable),		StringVec));
 ZfStructRender(, SearchRes, DBUS,
   (unlocked, (DBUS::ElemType<ZfDBUS::Type::ObjectPath>)),
   (locked, (DBUS::ElemType<ZfDBUS::Type::ObjectPath>)));
 ZfStruct(, UnlockArg,
-  (((objects), (Mutable)),	StringVec));
+  (objects, (Mutable),		StringVec));
 ZfStructRender(, UnlockArg, DBUS,
   (objects, (DBUS::ElemType<ZfDBUS::Type::ObjectPath>)));
 ZfStruct(, UnlockRes,
-  (((unlocked), (Mutable)),	StringVec),
-  (((prompt), (Mutable)),	String));
+  (unlocked, (Mutable),		StringVec),
+  (prompt, (Mutable),		String));
 ZfStructRender(, UnlockRes, DBUS,
   (unlocked, (DBUS::ElemType<ZfDBUS::Type::ObjectPath>)),
   (prompt, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
-ZfStruct(, ReadAliasArg, (((name), (Mutable)), String));
+ZfStruct(, ReadAliasArg, (name, (Mutable), String));
 ZfStructRender(, ReadAliasArg, DBUS, name);
-ZfStruct(, ReadAliasRes, (((collection), (Mutable)), String));
+ZfStruct(, ReadAliasRes, (collection, (Mutable), String));
 ZfStructRender(, ReadAliasRes, DBUS,
   (collection, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
 ZfStruct(, Secret,
-  (((session), (Mutable)),	String),
-  (((parameters), (Mutable)),	Bytes),
-  (((value), (Mutable)),	Bytes),
-  (((contentType), (Mutable)),	String));
+  (session, (Mutable),		String),
+  (parameters, (Mutable),	Bytes),
+  (value, (Mutable),		Bytes),
+  (contentType, (Mutable),	String));
 ZfStructRender(, Secret, DBUS,
   (session, (DBUS::Type<ZfDBUS::Type::ObjectPath>)),
   parameters, value, contentType);
-ZfStruct(, GetSecretArg, (((session), (Mutable)), String));
+ZfStruct(, GetSecretArg, (session, (Mutable), String));
 ZfStructRender(, GetSecretArg, DBUS,
   (session, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
-ZfStruct(, GetSecretRes, (((secret), (Mutable)), UDT));
+ZfStruct(, GetSecretRes, (secret, (Mutable), UDT));
 ZfStructRender(, GetSecretRes, DBUS, secret);
 ZfStruct(, CreateCollectionArg,
-  (((properties), (Mutable)),	UDT),
-  (((alias), (Mutable)),	String));
+  (properties, (Mutable),	UDT),
+  (alias, (Mutable),		String));
 ZfStructRender(, CreateCollectionArg, DBUS, properties, alias);
 ZfStruct(, CreateCollectionRes,
-  (((collection), (Mutable)),	String),
-  (((prompt), (Mutable)),	String));
+  (collection, (Mutable),	String),
+  (prompt, (Mutable),		String));
 ZfStructRender(, CreateCollectionRes, DBUS,
   (collection, (DBUS::Type<ZfDBUS::Type::ObjectPath>)),
   (prompt, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
 ZfStruct(, CreateItemArg,
-  (((properties), (Mutable)),	UDT),
-  (((secret), (Mutable)),	UDT),
-  (((replace), (Mutable)),	Bool));
+  (properties, (Mutable),	UDT),
+  (secret, (Mutable),		UDT),
+  (replace, (Mutable),		Bool));
 ZfStructRender(, CreateItemArg, DBUS, properties, secret, replace);
 ZfStruct(, CreateItemRes,
-  (((item), (Mutable)),		String),
-  (((prompt), (Mutable)),	String));
+  (item, (Mutable),		String),
+  (prompt, (Mutable),		String));
 ZfStructRender(, CreateItemRes, DBUS,
   (item, (DBUS::Type<ZfDBUS::Type::ObjectPath>)),
   (prompt, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
-ZfStruct(, PromptArg, (((window), (Mutable)), String));
+ZfStruct(, PromptArg, (window, (Mutable), String));
 ZfStructRender(, PromptArg, DBUS, window);
 ZfStruct(, PromptCompleted,
-  (((dismissed), (Mutable)),	Bool),
-  (((result), (Mutable)),	UDT));
+  (dismissed, (Mutable),	Bool),
+  (result, (Mutable),		UDT));
 ZfStructRender(, PromptCompleted, DBUS, dismissed, result);
-ZfStruct(, PromptPath, (((path), (Mutable)), String));
+ZfStruct(, PromptPath, (path, (Mutable), String));
 ZfStructRender(, PromptPath, DBUS,
   (path, (DBUS::Type<ZfDBUS::Type::ObjectPath>)));
-ZfStruct(, PromptPaths, (((paths), (Mutable)), StringVec));
+ZfStruct(, PromptPaths, (paths, (Mutable), StringVec));
 ZfStructRender(, PromptPaths, DBUS,
   (paths, (DBUS::ElemType<ZfDBUS::Type::ObjectPath>)));
 

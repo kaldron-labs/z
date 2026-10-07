@@ -66,14 +66,14 @@ struct DBHostTelemetry {
   friend ZfStructPrint ZuPrintType(DBHostTelemetry *);
 };
 ZfbStruct(ZdbAPI, DBHostTelemetry,
-    (((ip),		(Ctor<0>)),					UDT),
-    (((dbID),		(Ctor<1>, Keys<0>)),				String),
-    (((id),		(Ctor<2>, Keys<0>)),				String),
-    (((priority),	(Ctor<3>)),					UInt32),
-    (((state),		(Ctor<5>, Mutable, Enum<DBHostState::Map>)),	Int8),
-    (((voted),		(Ctor<6>, Mutable, Series)),			Bool),
-    (((port),		(Ctor<4>)),					UInt16),
-    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),		Int8));
+    (ip,		(Ctor<0>),					UDT),
+    (dbID,		(Ctor<1>, Keys<0>),				String),
+    (id,		(Ctor<2>, Keys<0>),				String),
+    (priority,	(Ctor<3>),						UInt32),
+    (state,		(Ctor<5>, Mutable, Enum<DBHostState::Map>),	Int8),
+    (voted,		(Ctor<6>, Mutable, Series),			Bool),
+    (port,		(Ctor<4>),					UInt16),
+    ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
 
 struct DBHost {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

@@ -31,15 +31,15 @@ struct Foo {
 };
 
 ZfStruct(, Foo,
-  (((string, Rd),	(Ctor<0>, Deflt<"hello \"world\""_z>)),	String),
-  (((bytesVec),		(Ctor<1>)),				BytesVec),
-  (((t),		(Ctor<2>, NDP<3>)),			DateTime),
-  (((iv, Lambda,
+  ((string, Rd),	(Ctor<0>, Deflt<"hello \"world\""_z>),	String),
+  (bytesVec,		(Ctor<1>),				BytesVec),
+  (t,		(Ctor<2>, NDP<3>),				DateTime),
+  ((iv, Lambda,
     ([](const auto &_) { return ZuSpan(_.iv); }),
     ([](auto &_, auto v) {
       unsigned n = sizeof(_.iv) / sizeof(_.iv[0]);
       for (unsigned i = 0; i < n; i++) _.iv[i] = v[i];
-    }))),							Int32Vec)
+    })),,							Int32Vec)
   );
 
 using namespace ZfASN1::Encoding;

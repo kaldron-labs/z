@@ -31,12 +31,12 @@ struct HelloReq : ReqBuilder<HelloReq, HelloBody, HelloHeaders> { };
 struct HelloReply {
   ZtString<ZtStringHeapID<"Zdbus.HelloReply">> name;
 };
-ZfStruct(, HelloReply, (((name), (Mutable)), String));
+ZfStruct(, HelloReply, (name, (Mutable), String));
 ZfStructRender(, HelloReply, DBUS, name);
 struct HelloRes : ResParser<HelloRes, HelloReply> { };
 
 struct MatchArgs { ZuCSpan rule; };
-ZfStruct(, MatchArgs, (((rule), (Mutable)), String));
+ZfStruct(, MatchArgs, (rule, (Mutable), String));
 ZfStructRender(, MatchArgs, DBUS, rule);
 using AddMatchHeaders = ZuTypeList<
   HeaderEntry<Header::Path, ZuStringT<"/org/freedesktop/DBus">>,

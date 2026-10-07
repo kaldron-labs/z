@@ -74,15 +74,15 @@ struct AppSchedCf {
 };
 
 ZfStruct(ZtcAPI, (AppSchedCf, Cf),
-  (((nThreads),	(Mutable, (Range<1U, 1024U>))),			UInt32),
-  (((stackSize),(Mutable, (Range<16384U, INT_MAX>))),		UInt32),
-  (((priority),	(Mutable, Enum<ZmThreadPriority::Map>)),	Int8),
-  (((partition), (Mutable)),					UInt32),
-  (((quantum), (Mutable)),					Float),
-  (((queueSize),(Mutable, (Range<8192U, INT_MAX>))),		UInt32),
-  (((ll), (Mutable)),						Bool),
-  (((spin),	(Mutable, (Range<0U, INT_MAX>))),		UInt32),
-  (((timeout),	(Mutable, (Range<0U, 3600U>))),			UInt32));
+  (nThreads,	(Mutable, (Range<1U, 1024U>)),			UInt32),
+  (stackSize,(Mutable, (Range<16384U, INT_MAX>)),		UInt32),
+  (priority,	(Mutable, Enum<ZmThreadPriority::Map>),		Int8),
+  (partition, (Mutable),					UInt32),
+  (quantum, (Mutable),						Float),
+  (queueSize,(Mutable, (Range<8192U, INT_MAX>)),		UInt32),
+  (ll, (Mutable),						Bool),
+  (spin,	(Mutable, (Range<0U, INT_MAX>)),		UInt32),
+  (timeout,	(Mutable, (Range<0U, 3600U>)),			UInt32));
 
 struct AppCf {
   enum {
@@ -128,29 +128,29 @@ struct AppCf {
 };
 
 ZfStruct(ZtcAPI, (AppCf, Cf),
-  (((id), (Mutable)),							String),
-  (((version), (Mutable)),						String),
-  (((role), (Mutable)),							String),
-  (((reqSize),		(Mutable, (Range<64U, INT_MAX>))),		UInt32),
-  (((reqTimeout),	(Mutable, (Range<1U, 3600U>))),			UInt32),
-  (((telRingSize),	(Mutable, (Range<64U, INT_MAX>))),		UInt32),
-  (((reqLL), (Mutable)),						Bool),
-  (((maxFrame),		(Mutable, (Range<64U, AppCf::DefltMaxFrame>))),	UInt32),
-  (((maxFilter),	(Mutable, (Range<1U, AppCf::DefltMaxFrame>))),	UInt32),
-  (((minInterval),	(Mutable, (Range<1U, 3600000U>))),		UInt32),
-  (((maxInterval),	(Mutable, (Range<1U, 3600000U>))),		UInt32),
-  (((maxPending),	(Mutable, (Range<1U, 65536U>))),		UInt32),
-  (((maxSubs),		(Mutable, (Range<1U, 65536U>))),		UInt32),
-  (((maxAlertMsg),	(Mutable, (Range<1U, AppCf::DefltMaxFrame>))),	UInt32),
-  (((alertTail),	(Mutable, (Range<1U, INT_MAX>))),		UInt32),
-  (((alertReplay),	(Mutable, (Range<1U, INT_MAX>))),		UInt32),
-  (((alertRetention),	(Mutable, (Range<1U, 3660U>))),			UInt32),
-  (((alertPrefix), (Mutable)),						String),
-  (((scheduler), (Mutable)),						UDT),
-  (((timer), (Mutable)),						String),
-  (((worker), (Mutable)),						String),
-  (((timerThread),	(Mutable, (Range<1U, 1024U>))),			UInt32),
-  (((workerThread),	(Mutable, (Range<1U, 1024U>))),			UInt32));
+  (id, (Mutable),							String),
+  (version, (Mutable),							String),
+  (role, (Mutable),							String),
+  (reqSize,		(Mutable, (Range<64U, INT_MAX>)),		UInt32),
+  (reqTimeout,	(Mutable, (Range<1U, 3600U>)),				UInt32),
+  (telRingSize,	(Mutable, (Range<64U, INT_MAX>)),			UInt32),
+  (reqLL, (Mutable),							Bool),
+  (maxFrame,		(Mutable, (Range<64U, AppCf::DefltMaxFrame>)),	UInt32),
+  (maxFilter,	(Mutable, (Range<1U, AppCf::DefltMaxFrame>)),		UInt32),
+  (minInterval,	(Mutable, (Range<1U, 3600000U>)),			UInt32),
+  (maxInterval,	(Mutable, (Range<1U, 3600000U>)),			UInt32),
+  (maxPending,	(Mutable, (Range<1U, 65536U>)),				UInt32),
+  (maxSubs,		(Mutable, (Range<1U, 65536U>)),			UInt32),
+  (maxAlertMsg,	(Mutable, (Range<1U, AppCf::DefltMaxFrame>)),		UInt32),
+  (alertTail,	(Mutable, (Range<1U, INT_MAX>)),			UInt32),
+  (alertReplay,	(Mutable, (Range<1U, INT_MAX>)),			UInt32),
+  (alertRetention,	(Mutable, (Range<1U, 3660U>)),			UInt32),
+  (alertPrefix, (Mutable),						String),
+  (scheduler, (Mutable),						UDT),
+  (timer, (Mutable),							String),
+  (worker, (Mutable),							String),
+  (timerThread,	(Mutable, (Range<1U, 1024U>)),				UInt32),
+  (workerThread,	(Mutable, (Range<1U, 1024U>)),			UInt32));
 
 class ZtcAPI App {
 public:

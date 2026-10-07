@@ -123,8 +123,8 @@ struct FileData {
   ~FileData() { delete accounts; }
 };
 ZfStruct(ZtlsAPI, (FileData, JSON),
-  (((version), (Mutable)),	UInt32),
-  (((accounts), (Mutable)),	UDT));
+  (version, (Mutable),		UInt32),
+  (accounts, (Mutable),		UDT));
 
 using FileText = ZtCArray<ZtArraySecret<true,
   ZtArrayHeapID<"Ztls.Vault.FileText">>>;

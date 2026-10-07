@@ -72,9 +72,9 @@ struct Frame {
   double	price;
 };
 ZfStruct(, Frame,
-  (((seqNo),	(Ctor<0>, Series, Index, Delta)),				UInt64),
-  (((time),	(Ctor<1>, Series, Index, Delta, Deflt<"2020/01/01"_z>)),	Time),
-  (((price),	(Ctor<2>, Series, NDP<9>)),					Float));
+  (seqNo,	(Ctor<0>, Series, Index, Delta),				UInt64),
+  (time,	(Ctor<1>, Series, Index, Delta, Deflt<"2020/01/01"_z>),		Time),
+  (price,	(Ctor<2>, Series, NDP<9>),					Float));
 
 void usage()
 {
@@ -271,12 +271,12 @@ struct Options {
   bool		help;
 };
 ZfStruct(, Options,
-  (((module),    (CLI::Opt<'m'>)),	String),
-  (((connect),   (CLI::Opt<'c'>)),	String),
-  (((debug),     (CLI::Flag<'d'>)),	Bool),
-  (((hashTel),   (CLI::Flag<'t'>)),	Bool),
-  (((heapTel),   (CLI::Flag<'T'>)),	Bool),
-  (((help),      (CLI::Flag<'h'>)),	Bool));
+  (module,    (CLI::Opt<'m'>),		String),
+  (connect,   (CLI::Opt<'c'>),		String),
+  (debug,     (CLI::Flag<'d'>),		Bool),
+  (hashTel,   (CLI::Flag<'t'>),		Bool),
+  (heapTel,   (CLI::Flag<'T'>),		Bool),
+  (help,      (CLI::Flag<'h'>),		Bool));
 
 int main(int argc_, char **argv)
 {

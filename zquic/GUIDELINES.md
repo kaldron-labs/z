@@ -232,7 +232,7 @@ the logger thread, during `ZfJSON` serialization:
 ZtEnum(TheEnum, int8_t, Value0, Value1);
 ZtEnumMap(TheEnum, JSON, "value_0", "value_1");
 ZfStruct(, (TheStruct, JSON),
-  (((enum_), (Ctor<...>, Enum<TheEnum::JSON>)),	Int8));
+  (enum_, (Ctor<...>, Enum<TheEnum::JSON>),	Int8));
 ```
 
 Do not translate enums to strings in helper functions just to feed those

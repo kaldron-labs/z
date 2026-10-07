@@ -253,14 +253,14 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, RoleDelete,
-  (((app), (Ctor<0>)),		UDT),
-  (((role), (Ctor<1>)),		UDT),
-  (((members), (Ctor<2>)),	BytesVec),
-  (((clients), (Ctor<3>)),	BytesVec),
-  (((admins), (Ctor<4>)),	BytesVec),
-  (((maps), (Ctor<5>)),		BytesVec),
-  (((updated), (Ctor<6>)),	Int64),
-  (((request), (Ctor<7>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (role, (Ctor<1>),		UDT),
+  (members, (Ctor<2>),		BytesVec),
+  (clients, (Ctor<3>),		BytesVec),
+  (admins, (Ctor<4>),		BytesVec),
+  (maps, (Ctor<5>),		BytesVec),
+  (updated, (Ctor<6>),		Int64),
+  (request, (Ctor<7>),		UDT));
 
 } // namespace Zum
 

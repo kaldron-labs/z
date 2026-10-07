@@ -40,14 +40,14 @@ struct Test {
 };
 
 ZfbStruct(, Object,
-  (((id), (Ctor<0>)),			String),
-  (((price), (Ctor<1>)),		Int32),
-  (((flags), (Ctor<2>, Deflt<"42"_z>)),	UDT));
+  (id, (Ctor<0>),			String),
+  (price, (Ctor<1>),			Int32),
+  (flags, (Ctor<2>, Deflt<"42"_z>),	UDT));
 
 ZfbStruct(, Test,
-  (((foo), (Ctor<0>)),	Int32),
-  (((bar), (Ctor<1>)),	String),
-  (((baz), (Ctor<2>)),	UDT));
+  (foo, (Ctor<0>),	Int32),
+  (bar, (Ctor<1>),	String),
+  (baz, (Ctor<2>),	UDT));
 
 ZfbRoot(Test);
 

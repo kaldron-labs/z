@@ -22,13 +22,13 @@
 namespace ZiRing_ {
 
 ZfStruct(ZvAPI, (Params, Cf),
-  (((name, Fn),		(Mutable, Required)),			String),
-  (((size, Fn),		(Mutable, (Range<8192U, INT_MAX>))),	UInt32),
-  (((ll, Fn),		(Mutable)),				Bool),
-  (((spin, Fn),		(Mutable, (Range<0, INT_MAX>))),	Int32),
-  (((timeout, Fn),	(Mutable, (Range<0, 3600>))),		Int32),
-  (((killWait, Fn),	(Mutable, (Range<0, 3600>))),		Int32),
-  (((coredump, Fn),	(Mutable)),				Bool));
+  ((name, Fn),		(Mutable, Required),			String),
+  ((size, Fn),		(Mutable, (Range<8192U, INT_MAX>)),	UInt32),
+  ((ll, Fn),		(Mutable),				Bool),
+  ((spin, Fn),		(Mutable, (Range<0, INT_MAX>)),		Int32),
+  ((timeout, Fn),	(Mutable, (Range<0, 3600>)),		Int32),
+  ((killWait, Fn),	(Mutable, (Range<0, 3600>)),		Int32),
+  ((coredump, Fn),	(Mutable),				Bool));
 
 } // ZiRing_
 

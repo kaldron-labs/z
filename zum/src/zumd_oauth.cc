@@ -29,7 +29,7 @@ namespace Zum {
 
 struct OAuthErrorResponse { String error; };
 ZfStruct(, (OAuthErrorResponse, JSON),
-  (((error),		(Required)),	String));
+  (error,		(Required),	String));
 
 struct AuthorizeFields {
   using Keys = ZuStringTL<"response_type", "client_id", "redirect_uri",

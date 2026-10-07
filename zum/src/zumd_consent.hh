@@ -208,11 +208,11 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ConsentCode,
-  (((beforeGrant), (Ctor<0>)),		UDT),
-  (((afterGrant), (Ctor<1>)),		UDT),
-  (((beforeConsent), (Ctor<2>)),	UDT),
-  (((roleIDs), (Ctor<3>)),		UInt64Vec),
-  (((now), (Ctor<4>)),			Int64));
+  (beforeGrant, (Ctor<0>),		UDT),
+  (afterGrant, (Ctor<1>),		UDT),
+  (beforeConsent, (Ctor<2>),		UDT),
+  (roleIDs, (Ctor<3>),			UInt64Vec),
+  (now, (Ctor<4>),			Int64));
 
 } // namespace Zum
 

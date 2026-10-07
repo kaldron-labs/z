@@ -35,9 +35,9 @@ static uint64_t zmcpAllocated()
 struct EchoReq { int value = 0; };
 struct EchoResult { int value = 0; };
 ZfStruct(, (EchoReq, JSON),
-  (((value), (Ctor<0>, Required, MCP::Header<"Value">)),	Int32));
+  (value, (Ctor<0>, Required, MCP::Header<"Value">),		Int32));
 ZfStruct(, (EchoResult, JSON),
-  (((value), (Ctor<0>, Required)),	Int32));
+  (value, (Ctor<0>, Required),		Int32));
 struct EchoOK : public Zmcp::Response {
   using Body = EchoResult;
 };
@@ -60,14 +60,14 @@ using EchoSSECatalog = ZuTypeList<EchoSSE>;
 
 struct HeaderNested { bool enabled = false; };
 ZfStruct(, (HeaderNested, JSON),
-  (((enabled), (Ctor<0>, MCP::Header<"Enabled">)),	Bool));
+  (enabled, (Ctor<0>, MCP::Header<"Enabled">),		Bool));
 struct HeaderReq {
   ZtString<> text;
   HeaderNested nested;
 };
 ZfStruct(, (HeaderReq, JSON),
-  (((text), (Ctor<0>, MCP::Header<"Text">)),	String),
-  (((nested), (Ctor<1>)),			UDT));
+  (text, (Ctor<0>, MCP::Header<"Text">),	String),
+  (nested, (Ctor<1>),				UDT));
 
 template <typename Heap = ZuVoid>
 struct ThrowContext_ : public Heap, public ZmObject { };
@@ -411,7 +411,7 @@ struct HTTPServerImpl {
   template <typename Req, typename Completion>
   void cancelled(Req *, Completion *, ZuCSpan) { }
 };
-using HTTPServerContract = Zmcp::Server<HTTPServerImpl, EchoCatalog>;
+using HTTPServerContract = Zmcp::HTTPServer<HTTPServerImpl, EchoCatalog>;
 ZuAssert(sizeof(HTTPServerContract) > 0);
 
 struct HTTPServerLink : public ZmObject {
@@ -562,7 +562,7 @@ static void emptyTest()
     "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{"
     "\"supportedVersions\":[\"2026-07-28\"]}}";
   ZuCheck(client.receive(discovered, emit));
-  ZuCheck(client.tools(emit).integer());
+  ZuCheck(client.tools(emit).is<int64_t>());
   ZmRef<ZiIOBuf> listed = new Zmcp::StdioBuf{};
   *listed << "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{"
     "\"tools\":[]}}";
@@ -630,7 +630,7 @@ static void clientTest()
   ZuCheck(client.era() == Zmcp::Era::Modern);
   auto id = client.template callLog<Echo>(
     EchoReq{9}, Zmcp::LogLevel::Notice, emit);
-  ZuCheck(id.integer() && id.template p<int64_t>() == 2);
+  ZuCheck(id.is<int64_t>() && id.template p<int64_t>() == 2);
   ZuCheck(method == "tools/call");
   ZuCheck(name == "echo");
   ZtString<> expected;
@@ -645,17 +645,17 @@ static void clientTest()
     << "\"},\"io.modelcontextprotocol/logLevel\":\"notice\"}}}";
   ZuCheck(out == expected);
   auto toolsID = client.tools(emit);
-  ZuCheck(toolsID.integer() && toolsID.template p<int64_t>() == 3);
+  ZuCheck(toolsID.is<int64_t>() && toolsID.template p<int64_t>() == 3);
   ZmRef<ZiIOBuf> catalog = new Zmcp::StdioBuf{};
   *catalog << "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{"
     "\"tools\":[{\"name\":\"echo\"}]}}";
   ZuCheck(client.receive(ZuMv(catalog), emit));
   ZuCheck(Zmcp::member(client.toolCatalog(), "tools"));
   unsigned cachedEmits = emits;
-  ZuCheck(client.tools(emit).absent());
+  ZuCheck(client.tools(emit).is<void>());
   ZuCheck(emits == cachedEmits);
   client.discardCatalog();
-  ZuCheck(client.tools(emit).integer());
+  ZuCheck(client.tools(emit).is<int64_t>());
   ZuCheck(emits == cachedEmits + 1);
 
   Zmcp::ClientPeer<EchoCatalog> legacy;
@@ -722,7 +722,7 @@ static void pendingTest()
   ZuCheck(parsed && Zmcp::Client_::receive(
     &notifications, pending, parsed.envelope));
   ZuCheck(notifications.progresses == 1 &&
-    notifications.token == Zmcp::IDString{"progress-x"} &&
+    notifications.token == Zmcp::ID{Zmcp::IDString{"progress-x"}} &&
     notifications.value == .5 && notifications.total == 1 &&
     notifications.message == "half");
 

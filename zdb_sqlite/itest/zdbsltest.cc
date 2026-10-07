@@ -45,13 +45,13 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((module),  (CLI::Opt<'m'>)),				String),
-  (((connect), (CLI::Opt<'c'>)),				String),
-  (((synchronous), (CLI::Opt<'s'>)),				String),
-  (((debug),   (CLI::Flag<'d'>)),				Bool),
-  (((hashTel), (CLI::Flag<'t'>, CLI::Long<"hash-tel">)),	Bool),
-  (((heapTel), (CLI::Flag<'T'>, CLI::Long<"heap-tel">)),	Bool),
-  (((help),    (CLI::Flag<'h'>)),				Bool));
+  (module,  (CLI::Opt<'m'>),					String),
+  (connect, (CLI::Opt<'c'>),					String),
+  (synchronous, (CLI::Opt<'s'>),				String),
+  (debug,   (CLI::Flag<'d'>),					Bool),
+  (hashTel, (CLI::Flag<'t'>, CLI::Long<"hash-tel">),		Bool),
+  (heapTel, (CLI::Flag<'T'>, CLI::Long<"heap-tel">),		Bool),
+  (help,    (CLI::Flag<'h'>),					Bool));
 
 void usage()
 {

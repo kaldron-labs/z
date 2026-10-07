@@ -24,6 +24,45 @@ struct Empty { };
 ZfStruct(, Empty);
 ZfStructImpl(Empty);
 
+struct Accessors {
+  int plain = 1;
+  int required = 2;
+  int value = 3;
+
+  int fn() const { return value; }
+  void fn(int v) { value = v; }
+  int read() const { return value; }
+  int readProps() const { return value; }
+};
+
+ZfStruct(, (Accessors, JSON),
+  (plain,,							Int32),
+  (required, (Ctor<0>, Required, (Keys<0, 1>)),			Int32),
+  ((fn, Fn),,							Int32),
+  ((read, RdFn),,						Int32),
+  ((readProps, RdFn), (Ctor<1>, JSON::ID<"readFn">),		Int32),
+  ((alias, Alias, value),,					Int32),
+  ((aliasRd, AliasRd, value),,					Int32),
+  ((aliasFn, AliasFn, fn, fn),,					Int32),
+  ((aliasRdFn, AliasRdFn, fn),,					Int32),
+  ((lambda, Lambda,
+    ([](const Accessors &o) { return o.value; }),
+    ([](Accessors &o, int v) { o.value = v; })),,		Int32),
+  ((lambdaRd, LambdaRd,
+    ([](const Accessors &o) { return o.value; })),,		Int32));
+
+ZfStructImpl(Accessors);
+ZfStructImpl(Accessors, JSON);
+
+ZuAssert((ZuIsSame<ZfField(Accessors, plain)::Props, ZuTypeList<>>{}));
+ZuAssert((ZuIsSame<ZfField(Accessors, read)::Props, ZuTypeList<>>{}));
+ZuAssert(ZfFieldIndex(Accessors, required) == 1);
+ZuAssert(ZfFieldIndex(Accessors, lambdaRd) == 10);
+ZuAssert(ZuFieldProp::GetCtor<ZfField(Accessors, required)::Props>{} == 0);
+ZuAssert((ZuTypeIn<ZuFieldProp::Required, ZfField(Accessors, required)::Props>{}));
+ZuAssert((ZuFieldProp::Key<ZfField(Accessors, required)::Props, 0>{}));
+ZuAssert((ZuFieldProp::Key<ZfField(Accessors, required)::Props, 1>{}));
+
 ZtEnumNS(, Values, int8_t, High, Low, Normal);
 
 namespace Flags {
@@ -42,8 +81,8 @@ struct Nested {
 };
 
 #define Nested_Fields(macro, ...) macro( \
-  (((i1), (Ctor<0>)),	Int32), \
-  (((i2), (Ctor<1>)),	Int32) __VA_OPT__(, __VA_ARGS__))
+  (i1, (Ctor<0>),	Int32), \
+  (i2, (Ctor<1>),	Int32) __VA_OPT__(, __VA_ARGS__))
 
 #define Nested_Struct(...) ZfStruct(, (Nested, JSON, Bah) __VA_OPT__(, __VA_ARGS__))
 
@@ -70,24 +109,24 @@ struct Foo {
 };
 
 #define FooFloatFields \
-  (((float_),		(Ctor<8>)),						Float), \
-  (((float_ranged),	(Ctor<9>, (Range<0.0, 1>), Deflt<0.42>)),		Float)
+  (float_,		(Ctor<8>),						Float), \
+  (float_ranged,	(Ctor<9>, (Range<0.0, 1>), Deflt<0.42>),		Float)
 
 ZfStruct(, (Foo, JSON),
-  (((string, Rd),	(Ctor<0>, Deflt<"hello \"world\""_z>)),			CString),
-  (((bytes),		(Ctor<1>, Deflt<"bytes"_z>)),				Bytes),
-  (((id),		(Ctor<2>, Mutable, Deflt<"goodbye"_z>)),		String),
-  (((int_),		(Ctor<3>)),						Int32),
-  (((int_ranged),	(Ctor<4>, (Range<0, 100>), Deflt<42>)),			Int32),
-  (((hex),		(Ctor<5>, Hex, Deflt<0xdeadbeef>)),			UInt32),
-  (((enum_),		(Ctor<6>, Enum<Values::Map>, Deflt<Values::Normal>)),	Int32),
-  (((daFlags),		(Ctor<7>, Flags<Flags::Map>, Deflt<Flags::Bit1()>)),	UInt128),
+  ((string, Rd),	(Ctor<0>, Deflt<"hello \"world\""_z>),			CString),
+  (bytes,		(Ctor<1>, Deflt<"bytes"_z>),				Bytes),
+  (id,		(Ctor<2>, Mutable, Deflt<"goodbye"_z>),				String),
+  (int_,		(Ctor<3>),						Int32),
+  (int_ranged,	(Ctor<4>, (Range<0, 100>), Deflt<42>),				Int32),
+  (hex,		(Ctor<5>, Hex, Deflt<0xdeadbeef>),				UInt32),
+  (enum_,		(Ctor<6>, Enum<Values::Map>, Deflt<Values::Normal>),	Int32),
+  (daFlags,		(Ctor<7>, Flags<Flags::Map>, Deflt<Flags::Bit1()>),	UInt128),
   FooFloatFields,
-  (((fixed),		(Ctor<10>, (Range<ZuDecimal{0}, ZuDecimal{1}>))),	Fixed),
-  (((decimal),		(Ctor<11>, (Range<ZuDecimal{0}, ZuDecimal{1}>))),	Decimal),
-  (((time_),		(Ctor<12>)),						Time),
-  (((nested),		(Ctor<13>)),						UDT),
-  (((bytesVec),		(Ctor<14>)),						BytesVec));
+  (fixed,		(Ctor<10>, (Range<ZuDecimal{0}, ZuDecimal{1}>)),	Fixed),
+  (decimal,		(Ctor<11>, (Range<ZuDecimal{0}, ZuDecimal{1}>)),	Decimal),
+  (time_,		(Ctor<12>),						Time),
+  (nested,		(Ctor<13>),						UDT),
+  (bytesVec,		(Ctor<14>),						BytesVec));
 
 ZfStructRender(, Foo, Bah,
   string,
@@ -134,8 +173,8 @@ struct BoxFoo {
 };
 
 ZfStruct(, (BoxFoo, JSON),
-  (((value),	(Ctor<0>, JSON::String<>)),	Int32),
-  (((values),	(Ctor<1>, JSON::String<>)),	Int32Vec));
+  (value,	(Ctor<0>, JSON::String<>),	Int32),
+  (values,	(Ctor<1>, JSON::String<>),	Int32Vec));
 
 template <typename T, typename = void>
 struct MinMax {
@@ -180,8 +219,8 @@ struct Bazz {
   BazArray bazArray;
 };
 ZfStruct(, Bazz,
-  (((baz), (Ctor<0>)),		UDT),
-  (((bazArray), (Ctor<1>)),	UDT));
+  (baz, (Ctor<0>),		UDT),
+  (bazArray, (Ctor<1>),		UDT));
 
 struct OptFoo {
   const char *head = nullptr;
@@ -190,10 +229,10 @@ struct OptFoo {
   const char *tail = "tail";
 };
 ZfStruct(, (OptFoo, JSON),
-  (((head),	(Ctor<0>, JSON::Opt)),	CString),
-  (((req),	(Ctor<1>)),		CString),
-  (((mid),	(Ctor<2>, JSON::Opt)),	CString),
-  (((tail),	(Ctor<3>)),		CString));
+  (head,	(Ctor<0>, JSON::Opt),	CString),
+  (req,	(Ctor<1>),			CString),
+  (mid,	(Ctor<2>, JSON::Opt),		CString),
+  (tail,	(Ctor<3>),		CString));
 
 struct JSONUpdate {
   int required;
@@ -201,16 +240,16 @@ struct JSONUpdate {
   int reset;
 };
 ZfStruct(, (JSONUpdate, JSON),
-  (((required), (Ctor<0>, Mutable, Required)),		Int32),
-  (((kept),     (Ctor<1>, Mutable, Deflt<2>)),		Int32),
-  (((reset),    (Ctor<2>, Mutable, Reset, Deflt<3>)),	Int32));
+  (required, (Ctor<0>, Mutable, Required),		Int32),
+  (kept,     (Ctor<1>, Mutable, Deflt<2>),		Int32),
+  (reset,    (Ctor<2>, Mutable, Reset, Deflt<3>),	Int32));
 
 struct FmtInt {
   uint128_t value = 0;
 };
 using FmtIntFormat = ZuFmt::Hex<false, ZuFmt::Right<32>>;
 ZfStruct(, (FmtInt, JSON),
-  (((value), (Ctor<0>, JSON::String<FmtIntFormat>)),	UInt128));
+  (value, (Ctor<0>, JSON::String<FmtIntFormat>),	UInt128));
 
 ZuDerive(MapKey, (ZtString<ZtStringHeapID<"ZfTest.MapKey">>));
 
@@ -236,8 +275,8 @@ struct MapObj {
   int mutable_ = 0;
 };
 ZfStruct(, (MapObj, JSON, Bah),
-  (((fixed),	(Ctor<0>)),		Int32),
-  (((mutable_),	(Ctor<1>, Mutable)),	Int32));
+  (fixed,	(Ctor<0>),		Int32),
+  (mutable_,	(Ctor<1>, Mutable),	Int32));
 
 using ObjHash =
   ZfMapTest<"ZfTest.JSON.ObjHash", ZmHashKV<MapKey, MapObj>>;
@@ -301,7 +340,7 @@ struct MapHolder {
   IntTreeRef map;
 };
 ZfStruct(, (MapHolder, JSON),
-  (((map), (Ctor<0>, Mutable)),	UDT));
+  (map, (Ctor<0>, Mutable),	UDT));
 
 ZuAssert((ZuIsSame<IntHash::Key, MapKey>{}));
 ZuAssert((ZuIsSame<IntHash::Val, int>{}));
@@ -311,8 +350,8 @@ ZuAssert((ZuIsSame<
 
 struct UnionA { int foo; };
 struct UnionB { int bar; };
-ZfStruct(, (UnionA, JSON), (((foo), (Ctor<0>, Mutable)), Int32));
-ZfStruct(, (UnionB, JSON), (((bar), (Ctor<0>, Mutable)), Int32));
+ZfStruct(, (UnionA, JSON), (foo, (Ctor<0>, Mutable), Int32));
+ZfStruct(, (UnionB, JSON), (bar, (Ctor<0>, Mutable), Int32));
 struct UnionArray : public ZtArray<int> {
   ZuDerive_(UnionArray, ZtArray<int>)
   friend ZfJSON::AsArray<ZfFieldTC::Int32> ZfJSON_Fmt(UnionArray *);
@@ -320,7 +359,7 @@ struct UnionArray : public ZtArray<int> {
 struct UnionHolder {
   ZfJSON::Union<UnionA, UnionB, UnionArray, MapText>	u;
 };
-ZfStruct(, (UnionHolder, JSON), (((u), (Ctor<0>, Mutable)), UDT));
+ZfStruct(, (UnionHolder, JSON), (u, (Ctor<0>, Mutable), UDT));
 
 using JSONValue = ZfJSON::Union<>;
 struct JSONValueVec : public ZtArray<JSONValue> {
@@ -328,12 +367,38 @@ struct JSONValueVec : public ZtArray<JSONValue> {
   friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(JSONValueVec *);
 };
 struct JSONValueReply { JSONValueVec items; };
-ZfStruct(, (JSONValueReply, JSON), (((items), (Required)), UDT));
+ZfStruct(, (JSONValueReply, JSON), (items, (Required), UDT));
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+
+  {
+    Accessors o;
+    auto fields = ZfVFields<Accessors>();
+    ZuCheck(fields.length() == 11);
+    ZuCheck(ZuCSpan{fields[0]->id} == "plain");
+    ZuCheck(ZuCSpan{fields[10]->id} == "lambdaRd");
+    ZuCheck(!fields[0]->props);
+    ZuCheck(fields[1]->props & ZfVFieldProp::Required());
+    ZuCheck(ZfField(Accessors, read)::get(o) == 3);
+    ZuCheck(ZfField(Accessors, readProps)::get(o) == 3);
+    ZfField(Accessors, fn)::set(o, 4);
+    ZuCheck(o.value == 4);
+    ZfField(Accessors, alias)::set(o, 5);
+    ZuCheck(ZfField(Accessors, aliasRd)::get(o) == 5);
+    ZfField(Accessors, aliasFn)::set(o, 6);
+    ZuCheck(ZfField(Accessors, aliasRdFn)::get(o) == 6);
+    ZfField(Accessors, lambda)::set(o, 7);
+    ZuCheck(ZfField(Accessors, lambdaRd)::get(o) == 7);
+    ZtString json;
+    ZfJSON::save(json, o);
+    log("accessors JSON: ", json);
+    ZuCheck(json ==
+      "{\"plain\":1,\"required\":2,\"fn\":7,\"readFn\":7,"
+      "\"alias\":7,\"aliasFn\":7,\"lambda\":7}");
+  }
 
   {
     ZuCSpan value{"éX中Y🎵Z\n\1\"\\/"};

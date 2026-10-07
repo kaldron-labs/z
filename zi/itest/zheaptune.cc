@@ -43,11 +43,11 @@ struct Config {
 };
 
 ZfStruct(, Config,
-  (((id)),		String),
-  (((partition)),	UInt16),
-  (((vshift)),		UInt8),
-  (((cacheSize)),	UInt64),
-  (((cpuset)),		UDT));
+  (id,,			String),
+  (partition,,		UInt16),
+  (vshift,,		UInt8),
+  (cacheSize,,		UInt64),
+  (cpuset,,		UDT));
 
 using Configs = ZtArray<Config, ZtArrayHeapID<"HeapTest.Configs">>;
 

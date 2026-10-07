@@ -21,23 +21,23 @@ struct Report : public Ztc::HeapTelemetry {
 };
 
 ZfStruct(, Report,
-  (((phase)),			UInt8),
-  (((id)),			String),
-  (((size)),			UInt32),
-  (((partition)),		UInt16),
-  (((sharded)),			Bool),
-  (((alignment)),		UInt16),
-  (((vshift)),			UInt8),
-  (((cacheSize)),		UInt64),
-  (((cpuset)),			UDT),
-  (((cacheAllocs)),		UInt64),
-  (((cacheFrees)),		UInt64),
-  (((crossFrees)),		UInt64),
-  (((heapAllocs)),		UInt64),
-  (((heapFrees)),		UInt64),
-  (((globalHeapAllocs)),	UInt64),
-  (((globalHeapFrees)),		UInt64),
-  (((globalHeapMax)),		UInt64));
+  (phase,,			UInt8),
+  (id,,				String),
+  (size,,			UInt32),
+  (partition,,			UInt16),
+  (sharded,,			Bool),
+  (alignment,,			UInt16),
+  (vshift,,			UInt8),
+  (cacheSize,,			UInt64),
+  (cpuset,,			UDT),
+  (cacheAllocs,,		UInt64),
+  (cacheFrees,,			UInt64),
+  (crossFrees,,			UInt64),
+  (heapAllocs,,			UInt64),
+  (heapFrees,,			UInt64),
+  (globalHeapAllocs,,		UInt64),
+  (globalHeapFrees,,		UInt64),
+  (globalHeapMax,,		UInt64));
 
 using Reports = ZtArray<Report, ZtArrayHeapID<"HeapTest.Reports">>;
 

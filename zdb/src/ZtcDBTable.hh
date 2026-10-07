@@ -59,15 +59,15 @@ struct DBTableTelemetry {
   friend ZfStructPrint ZuPrintType(DBTableTelemetry *);
 };
 ZfbStruct(ZdbAPI, DBTableTelemetry,
-    (((dbID),		(Ctor<0>, Keys<0>)),			String),
-    (((id),		(Ctor<1>, Keys<0>)),			String),
-    (((cacheMode),	(Ctor<7>, Enum<DBCacheMode::Map>)),	Int8),
-    (((cacheSize),	(Ctor<6>)),				UInt32),
-    (((count),		(Ctor<2>, Mutable, Series, Delta)),	UInt64),
-    (((cacheLoads),	(Ctor<3>, Mutable, Series, Delta)),	UInt64),
-    (((cacheMisses),	(Ctor<4>, Mutable, Series, Delta)),	UInt64),
-    (((cacheEvictions),	(Ctor<5>, Mutable, Series, Delta)),	UInt64),
-    (((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>)),	Int8));
+    (dbID,		(Ctor<0>, Keys<0>),			String),
+    (id,		(Ctor<1>, Keys<0>),			String),
+    (cacheMode,	(Ctor<7>, Enum<DBCacheMode::Map>),		Int8),
+    (cacheSize,	(Ctor<6>),					UInt32),
+    (count,		(Ctor<2>, Mutable, Series, Delta),	UInt64),
+    (cacheLoads,	(Ctor<3>, Mutable, Series, Delta),	UInt64),
+    (cacheMisses,	(Ctor<4>, Mutable, Series, Delta),	UInt64),
+    (cacheEvictions,	(Ctor<5>, Mutable, Series, Delta),	UInt64),
+    ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),	Int8));
 
 struct DBTable {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

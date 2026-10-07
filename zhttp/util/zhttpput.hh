@@ -19,8 +19,8 @@ struct Record {
 };
 
 ZfStruct(, (Record, JSON),
-  (((id)),	UInt64),
-  (((text)),	String));
+  (id,,		UInt64),
+  (text,,	String));
 
 inline bool equals(const Record &a, const Record &b)
 {
