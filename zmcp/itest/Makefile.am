@@ -3,11 +3,13 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zi/test \
 	-I$(top_srcdir)/ztcp/src \
-	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src \
-	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zmcp/src @Z_CPPFLAGS@
+	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zquic/src -I$(top_srcdir)/zquic/test \
+	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zmcp/src -I$(top_srcdir)/zjrpc/src -I$(top_srcdir)/zws/src @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zmcp/src/libZmcp.la \
+	$(top_builddir)/zjrpc/src/libZjrpc.la \
+	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zquic/src/libZquic.la \
@@ -19,10 +21,11 @@ LDADD = $(top_builddir)/zmcp/src/libZmcp.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
-noinst_PROGRAMS = zmcphttptest zmcpstdiotest
+noinst_PROGRAMS = zmcphttptest zmcpstdiotest zmcpwstest
 zmcphttptest_SOURCES = zmcphttptest.cc
 zmcpstdiotest_SOURCES = zmcpstdiotest.cc
-noinst_HEADERS = ZmcpITestPorts.hh
+zmcpwstest_SOURCES = zmcpwstest.cc
+noinst_HEADERS = ZmcpITestPorts.hh zmcpitestbatch.hh
 
 EXTRA_DIST = README.md
 

@@ -24,11 +24,13 @@ struct Options {
   ZuCSpan token;
   unsigned port = 8080;
   bool stdio = false;
+  bool ws = false;
   bool help = false;
 };
 
 ZfStruct(, (Options, CLI),
   (stdio, (CLI::Long<"stdio">),			Bool),
+  (ws, (CLI::Long<"ws">),				Bool),
   (port, (CLI::Opt<'p'>, CLI::Long<"port">),		UInt32),
   (token, (CLI::Long<"token">),					String),
   (help, (CLI::Opt<'h'>, CLI::Long<"help">),		Bool));
@@ -40,7 +42,8 @@ static void usage(int code)
   std::cerr <<
     "Usage: zmcpd [OPTION]...\n\n"
     "  --stdio          serve MCP on stdin/stdout instead of HTTP\n"
-    "  -p, --port=N     loopback HTTP port, default 8080\n"
+    "  --ws             serve MCP over WebSockets on /mcp\n"
+    "  -p, --port=N     loopback network port, default 8080\n"
     "  --token=TOKEN    require 'Authorization: Bearer TOKEN' for HTTP tools\n"
     "  -h, --help       show help\n" << std::flush;
   ::exit(code);
@@ -79,6 +82,15 @@ struct App {
     ZiLOG(Info, "zmcpd", ([port](auto &s) { s << "listening port=" << port; }));
   }
   void listenFailed(int, bool) { done.post(); }
+  void listening() { listening(0, options->port); }
+  void listening(const ZiListenInfo &) { listening(); }
+  void listenFailed(bool) { done.post(); }
+  bool accept(auto &, ZuBSpan, ZuBSpan target, ZuBSpan protocols,
+      Zws::HandshakeString &selected) {
+    if (target != "/mcp" || !Zws::token(protocols, "mcp")) return false;
+    selected = "mcp";
+    return true;
+  }
   void connected(int) { }
   void disconnected(int) { }
   void closed() { done.post(); }
@@ -90,15 +102,16 @@ struct App {
       const Zmcp::Context &context, Completion completion) {
     if (context.transport() && options->token) {
       auto authorization = headers.template get<Authorization>();
-      ZtString<> expected;
+      auto expected = ZtScratch(TextScratch,
+	options->token.length() + ZuStringT<"Bearer ">{}().length());
       expected << "Bearer " << options->token;
       if (authorization.count != 1 || authorization.value != expected) {
-	completion->complete(Zmcp::ToolReply<AddUnauthorized>{});
+	completion->complete(Zjrpc::Reply<AddUnauthorized>{});
 	return;
       }
     }
     completion->complete(
-      Zmcp::ToolReply<AddOK>{AddResult{request.lhs + request.rhs}});
+      Zjrpc::Reply<AddOK>{AddResult{request.lhs + request.rhs}});
   }
 
   template <typename Req, typename Completion>
@@ -135,7 +148,8 @@ int main(int argc, char **argv)
     usage(1);
   }
   if (options.help) usage(0);
-  if (argc != 1 || !options.port || options.port > UINT16_MAX) usage(1);
+  if (argc != 1 || (options.stdio && options.ws) ||
+      !options.port || options.port > UINT16_MAX) usage(1);
 
   ZiLog::init("zmcpd");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
@@ -149,9 +163,13 @@ int main(int argc, char **argv)
   App app{&options};
   if (options.stdio) {
     Zmcp::IOServer<App, ExampleCatalog> server;
-    auto config = Zmcp::StdioConfig{}
+    auto config = Zjrpc::StdioConfig{}
       .rxThread("stdioRx").txThread("stdioTx");
     return run(server, server.init(&mx, ZuMv(config), &app), mx);
+  } else if (options.ws) {
+    Zmcp::WSServer<App, ExampleCatalog> server;
+    return run(server, server.init(Zhttp::HubConfig{&mx}, ZiIP{"127.0.0.1"},
+	options.port, Zhttp::TCPConfig{}, Zjrpc::WSConfig{}, &app), mx);
   } else {
     Zmcp::HTTPServer<App, ExampleCatalog> server;
     Zmcp::ServerConfig config;

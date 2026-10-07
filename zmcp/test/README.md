@@ -2,7 +2,8 @@
 
 The programs in this directory are isolated TAP tests:
 
-- `ZmcpJSONTest` exercises owned JSON-RPC identifiers and codecs.
+- `ZmcpJSONTest` exercises MCP tool replies and logging payloads.
+  Generic JSON-RPC identifiers and codecs are covered in `zjrpc/test`.
 - `ZmcpPeerTest` exercises transport-neutral peer defaults and lifecycle.
 - `ZmcpSchemaTest` exercises generated JSON Schema.
 - `ZmcpToolTest` exercises static tool catalogs and dispatch.

@@ -2040,11 +2040,9 @@ public:
     return tx.localExtendedConnect();
   }
   template <typename L>
-  void streamTx(L &&l) {
-    auto tx = streamImpl_()->txStream();
-    auto body = tx.body();
-    ZuFwd<L>(l)(body);
-  }
+  void streamTx(L &&l) { write_<false>(ZuFwd<L>(l)); }
+  template <typename L>
+  void streamTx_(L &&l) { write_<true>(ZuFwd<L>(l)); }
   void streamTxEnd() {
     auto tx = streamImpl_()->txStream();
     tx.end();
@@ -2052,6 +2050,16 @@ public:
   void streamTxReset() { streamImpl_()->disconnect(); }
 
 private:
+  template <bool OnOwner, typename L>
+  void write_(L &&l) {
+    auto impl = streamImpl_();
+    auto tx = [impl]() {
+      if constexpr (OnOwner) return impl->txStream_();
+      else return impl->txStream();
+    }();
+    auto body = tx.body();
+    ZuFwd<L>(l)(body);
+  }
   Impl *streamImpl_() { return static_cast<Impl *>(this); }
 };
 

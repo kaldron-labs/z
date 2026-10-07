@@ -93,6 +93,8 @@ class ExtendedClientLink :
 public:
   using Rx = typename CodecBase::Rx;
   using CodecBase::txStream;
+  using CodecBase::txStream_;
+  using HTTPBase::txStream_;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
   unsigned id() const { return 0; }
@@ -103,7 +105,7 @@ public:
     CodecBase{*this, hub->random(), hub->wsConfig()},
     m_uri{uri}, m_protocol{protocol} { }
 
-  auto txStream() { return HTTPBase::txStream(); }
+  using HTTPBase::txStream;
 
   void open_(Zhttp::ConnectedInfo info) {
     this->CodecBase::reopen_(*this);
@@ -302,6 +304,8 @@ class ExtendedServerLink :
 public:
   using Rx = typename CodecBase::Rx;
   using CodecBase::txStream;
+  using CodecBase::txStream_;
+  using HTTPBase::txStream_;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 
@@ -310,7 +314,7 @@ public:
     HTTPBase{hub, ZuFwd<Args>(args)...},
     CodecBase{*this, hub->random(), hub->wsConfig()} { }
 
-  auto txStream() { return HTTPBase::txStream(); }
+  using HTTPBase::txStream;
 
   void open_() {
     this->CodecBase::reopen_(*this);

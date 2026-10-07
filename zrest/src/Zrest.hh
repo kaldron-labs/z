@@ -155,35 +155,10 @@ using GetUniqueHdrKeys = ZuTypeUnique<GetAllHdrKeys<List>>;
 template <typename List>
 using GetAllHdrs = ZuTypeApply<ZuTypeConcat, ZuTypeMap<GetHdrs, List>>;
 
-template <typename K, typename ...Ts> struct GetKValues_;
-template <typename K>
-struct GetKValues_<K> { using T = ZuTypeList<>; };
-template <typename K, typename K0, typename V0, typename ...Ts>
-struct GetKValues_<K, K0, V0, Ts...> {
-  using Tail = typename GetKValues_<K, Ts...>::T;
-  using T = ZuTypeUnique<ZuIf<ZuIsSame<K, K0>{},
-    typename V0::template Push<Tail>, Tail>>;
-};
-template <typename K, typename ...Ts>
-struct GetKValues_<K, ZuTypeList<Ts...>> : public GetKValues_<K, Ts...> { };
-template <typename K, typename List>
-using GetKValues = typename GetKValues_<K, List>::T;
-
-template <typename Hdrs, typename ...Keys> struct MergeHdrs__;
-template <typename Hdrs>
-struct MergeHdrs__<Hdrs> { using T = ZuTypeList<>; };
-template <typename Hdrs, typename K0, typename ...Keys>
-struct MergeHdrs__<Hdrs, K0, Keys...> {
-  using T = typename ZuTypeList<K0, GetKValues<K0, Hdrs>>::template Push<
-    typename MergeHdrs__<Hdrs, Keys...>::T>;
-};
-template <typename Hdrs, typename ...Keys>
-struct MergeHdrs__<Hdrs, ZuTypeList<Keys...>> :
-  public MergeHdrs__<Hdrs, Keys...> { };
 template <typename List>
 struct MergeHdrs_ {
   using Hdrs = GetAllHdrs<List>;
-  using T = typename MergeHdrs__<Hdrs, GetUniqueHdrKeys<List>>::T;
+  using T = Zhttp::MergeHeaders<Hdrs>;
 };
 template <typename List>
 using MergeHdrs = typename MergeHdrs_<List>::T;
@@ -372,8 +347,7 @@ template <typename Parsers>
 struct MergeParserHdrs_ {
   using Hdrs = ZuTypeApply<ZuTypeConcat,
     ZuTypeMap<GetParserHdrs, Parsers>>;
-  using Keys = ZuTypeUnique<GetHdrKeys<Hdrs>>;
-  using T = typename MergeHdrs__<Hdrs, Keys>::T;
+  using T = Zhttp::MergeHeaders<Hdrs>;
 };
 template <typename Parsers>
 using MergeParserHdrs = typename MergeParserHdrs_<Parsers>::T;

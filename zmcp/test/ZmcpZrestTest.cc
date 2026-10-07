@@ -102,7 +102,7 @@ struct RESTAdd : public Zrest::ReqParser<RESTAdd, SharedReq> {
   void header(Zhttp::FieldSection::T, ZuBSpan, ZuSpan<uint8_t>) { }
 
   template <typename Key>
-  Zmcp::HTTPHeader get() const {
+  Zjrpc::HTTPHeader get() const {
     if constexpr (ZuIsSame<Key, Authorization>{})
       return {m_authorization, m_authorizationCount};
     else
@@ -158,7 +158,7 @@ static SharedOutcome mcpCall(ZuCSpan authorization)
   auto noop = [](auto *, const auto &, auto) { };
   if (!peer.receive(discover, ignored, noop)) return {};
 
-  Zmcp::HTTPHeaders<AppHeaders> headers;
+  Zjrpc::HTTPHeaders<AppHeaders> headers;
   headers.template put<Authorization>(authorization);
   SharedOutcome outcome;
   auto handler = [&headers, &outcome](auto *, const SharedReq &request,
@@ -168,10 +168,10 @@ static SharedOutcome mcpCall(ZuCSpan authorization)
     result->value = outcome.value;
     switch (outcome.code) {
       case SharedOK::Status:
-	complete(Zmcp::ToolReply<SharedOK>{ZuMv(result)});
+	complete(Zjrpc::Reply<SharedOK>{ZuMv(result)});
 	break;
       default:
-	complete(Zmcp::ToolReply<SharedDenied>{ZuMv(result)});
+	complete(Zjrpc::Reply<SharedDenied>{ZuMv(result)});
 	break;
     }
   };

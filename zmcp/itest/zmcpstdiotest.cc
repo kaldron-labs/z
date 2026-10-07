@@ -26,13 +26,15 @@
 #include <zlib/ZmcpClient.hh>
 #include <zlib/ZmcpServer.hh>
 
+#include "zmcpitestbatch.hh"
+
 using namespace ZuTestUtil;
 
 static void testFramer()
 {
   ZuTestScope(testFramer);
 
-  Zmcp::StdioFramer framer{12};
+  Zjrpc::StdioFramer framer{12};
   ZtString<> first;
   ZtString<> second;
   unsigned frames = 0;
@@ -47,13 +49,13 @@ static void testFramer()
   ZuCheck(second == "{\"two\":2}");
   ZuCheck(framer.eof());
 
-  Zmcp::StdioFramer incomplete{12};
+  Zjrpc::StdioFramer incomplete{12};
   ZuCheck(incomplete.feed("{\"one\":1}", receive));
   ZuCheck(!incomplete.eof());
 
-  Zmcp::StdioFramer bounded{4};
+  Zjrpc::StdioFramer bounded{4};
   ZuCheck(!bounded.feed("12345", receive));
-  ZuCheck(bounded.state() == Zmcp::StdioFramer::Closed);
+  ZuCheck(bounded.state() == Zjrpc::StdioFramer::Closed);
 }
 
 struct Pipe {
@@ -154,11 +156,11 @@ struct ServerApp {
     ++calls;
     if (async) {
       complete = [completion = ZuMv(completion), request]() mutable {
-	completion->complete(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	completion->complete(Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
       };
       return;
     }
-    completion->complete(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+    completion->complete(Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
   }
 
   template <typename Req, typename Completion>
@@ -199,7 +201,7 @@ struct ClientApp {
     closed_.post();
   }
   void progress(
-      const Zmcp::ID &token_, double value_, double total_, ZuCSpan message_) {
+      const Zjrpc::ID &token_, double value_, double total_, ZuCSpan message_) {
     token = token_;
     value = value_;
     total = total_;
@@ -214,7 +216,7 @@ struct ClientApp {
       data = data_->template data<ZfJSON::AnyNode::String>();
     logged_.post();
   }
-  void cancelled(const Zmcp::ID &id_, bool ok) {
+  void cancelled(const Zjrpc::ID &id_, bool ok) {
     cancelledID = id_;
     cancelOK = ok;
     cancelled_.post();
@@ -225,8 +227,8 @@ struct ClientApp {
   ZmSemaphore progressed_;
   ZmSemaphore logged_;
   ZmSemaphore cancelled_;
-  Zmcp::ID token;
-  Zmcp::ID cancelledID;
+  Zjrpc::ID token;
+  Zjrpc::ID cancelledID;
   ZtString<> message;
   ZtString<> level;
   ZtString<> logger;
@@ -241,7 +243,7 @@ struct ClientApp {
 
 template <typename Heap = ZuVoid>
 struct ClientCall_ : public Heap, public ZmObject {
-  void started(const Zmcp::ID &id_) {
+  void started(const Zjrpc::ID &id_) {
     id = id_;
     started_.post();
   }
@@ -254,7 +256,7 @@ struct ClientCall_ : public Heap, public ZmObject {
     value = reply.body.value;
     done.post();
   }
-  void failed(const Zmcp::Error &) {
+  void failed(const Zjrpc::Error &) {
     ++failures;
     done.post();
   }
@@ -265,7 +267,7 @@ struct ClientCall_ : public Heap, public ZmObject {
 
   ZmSemaphore done;
   ZmSemaphore started_;
-  Zmcp::ID id;
+  Zjrpc::ID id;
   int value = 0;
   unsigned controls = 0;
   unsigned failures = 0;
@@ -305,15 +307,15 @@ static void testPipe()
   ZuCHECK(mx.start(), "multiplexer start failed");
 
   Harness harness;
-  Zmcp::Limits limits;
+  Zjrpc::Limits limits;
   limits.workBatch = 1;
-  auto config = Zmcp::StdioConfig{}
+  auto config = Zjrpc::StdioConfig{}
     .limits(limits)
     .rxThread("stdioRx")
     .txThread("stdioTx")
     .input(input.read)
     .output(output.write);
-  Zmcp::StdioIO<Harness> io{
+  Zjrpc::IOLink<Harness> io{
     &harness, &mx, mx.sid("owner"), ZuMv(config)};
 
   ZmSemaphore started;
@@ -410,18 +412,18 @@ static void testFailure()
   ZuCHECK(mx.start(), "multiplexer start failed");
 
   enum { TestFrameBytes = 128U << 10 };
-  Zmcp::Limits limits;
+  Zjrpc::Limits limits;
   limits.maxLineBytes = TestFrameBytes;
   limits.maxQueue = 1;
   limits.maxQueueBytes = TestFrameBytes;
-  auto config = Zmcp::StdioConfig{}
+  auto config = Zjrpc::StdioConfig{}
     .limits(limits)
     .rxThread("stdioRx")
     .txThread("stdioTx")
     .input(input.read)
     .output(output.write);
   Harness harness;
-  Zmcp::StdioIO<Harness> io{
+  Zjrpc::IOLink<Harness> io{
     &harness, &mx, mx.sid("owner"), ZuMv(config)};
 
   ZmSemaphore started;
@@ -433,8 +435,8 @@ static void testFailure()
   started.wait();
   ZuCheck(startOK);
 
-  ZmRef<ZiIOBuf> first = new Zmcp::StdioBuf{};
-  ZmRef<ZiIOBuf> second = new Zmcp::StdioBuf{};
+  ZmRef<ZiIOBuf> first = new Zjrpc::StdioBuf{};
+  ZmRef<ZiIOBuf> second = new Zjrpc::StdioBuf{};
   ZuCHECK(first->alloc(TestFrameBytes) && second->alloc(TestFrameBytes),
     "test frame allocation failed");
   memset(first->data(), 'x', TestFrameBytes);
@@ -463,7 +465,7 @@ static ZtString<> readLine(ZiFile &file)
 {
   ZtString<> line;
   for (;;) {
-    ZmRef<ZiIOBuf> buf = new Zmcp::StdioBuf{};
+    ZmRef<ZiIOBuf> buf = new Zjrpc::StdioBuf{};
     int length = file.read(buf->data(), buf->size, false);
     if (length <= 0) return {};
     buf->length = unsigned(length);
@@ -495,7 +497,7 @@ static void testServer()
 
   ServerApp app;
   Zmcp::IOServer<ServerApp, EchoCatalog> server;
-  auto config = Zmcp::StdioConfig{}
+  auto config = Zjrpc::StdioConfig{}
     .rxThread("stdioRx")
     .txThread("stdioTx")
     .input(input.read)
@@ -573,11 +575,14 @@ static void testClient()
 
   ClientApp app;
   Zmcp::IOClient<ClientApp, EchoCatalog> client;
-  auto config = Zmcp::StdioConfig{}
+  auto config = Zjrpc::StdioConfig{}
     .rxThread("stdioRx")
     .txThread("stdioTx")
     .input(responses.read)
     .output(requests.write);
+  Zjrpc::Limits limits;
+  limits.workBatch = 1;
+  config.limits(limits);
   ZuCheck(client.init(&mx, ZuMv(config), &app));
   ZuCheck(client.start());
 
@@ -623,9 +628,26 @@ static void testClient()
   ZuCheck(call->value == 11);
   ZuCheck(!call->failures);
 
+  Zmcp::Batch<EchoCatalog> batch;
+  ZuCheck(batch.request<Echo>(int64_t{1001}, EchoReq{21}));
+  ZuCheck(batch.request<Echo>(int64_t{1002}, EchoReq{22}));
+  ZmRef<ZmcpITest::BatchCall> aggregate = new ZmcpITest::BatchCall{};
+  ZuCheck(client.callBatch(ZuMv(batch), aggregate));
+  request = readLine(requestRead);
+  auto batchRequest = Zjrpc::parse(request.span(), request.length());
+  ZuCheck(batchRequest.batch());
+  ZuCSpan batchResponse{
+    "[{\"jsonrpc\":\"2.0\",\"id\":1002,\"result\":{}},"
+    "{\"jsonrpc\":\"2.0\",\"id\":1001,\"result\":{}}]\n"};
+  ZuCHECK(responseWrite.write(batchResponse.data(), batchResponse.length()) == Zi::OK,
+    "batch response write failed: ", responseWrite.error());
+  aggregate->done.wait();
+  ZuCheck(aggregate->completions == 1 && !aggregate->failures);
+  ZuCheck(aggregate->ids(1001, 1002));
+
   ZmRef<ClientCall> reported = new ClientCall{};
   ZuCheck(client.callProgressLog<Echo>(
-    EchoReq{12}, Zmcp::IDString{"progress-12"},
+    EchoReq{12}, Zjrpc::IDString{"progress-12"},
     Zmcp::LogLevel::Info, reported));
   request = readLine(requestRead);
   ZuCheck(request.find("\"id\":4") >= 0);
@@ -654,8 +676,8 @@ static void testClient()
   app.progressed_.wait();
   app.logged_.wait();
   reported->done.wait();
-  ZuCheck(app.token.is<Zmcp::IDString>() &&
-    app.token.p<Zmcp::IDString>() == Zmcp::IDString{"progress-12"} &&
+  ZuCheck(app.token.is<Zjrpc::IDString>() &&
+    app.token.p<Zjrpc::IDString>() == Zjrpc::IDString{"progress-12"} &&
     app.value == .5 && app.total == 1 && app.message == "half");
   ZuCheck(app.level == "info" && app.logger == "echo" &&
     app.data == "working");

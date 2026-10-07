@@ -3657,6 +3657,7 @@ public:
     connect(endpoint.tlsName, endpoint.port, endpoint.ip);
   }
   auto txStream() { return m_stream->txStream(); }
+  auto txStream_() { return m_stream->txStream_(); }
   void txErrorFn(ZiTxErrorFn fn) {
     m_txErrorFn = ZuMv(fn);
     if (m_stream) m_stream->txErrorFn(m_txErrorFn);

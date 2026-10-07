@@ -150,6 +150,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ### Static polymorphism and constraints
 - Prefer CRTP, templates, and compile-time dispatch over virtual polymorphism.
 - Use templates and CRTP to factor common code; keep logic DRY without adding weak abstractions.
+- Prefer deduced `auto` return types for functions that merely return a cast, especially CRTP accessors: `auto impl() { return static_cast<Impl *>(this); }` rather than spelling `Impl *`.
 - Express constraints with SFINAE and detector traits.
   - Keep function return types free of SFINAE expressions; put the test in a trailing `typename = ...` template parameter to avoid encoding it in every symbol.
   - Consolidate overloads that would otherwise become redeclarations with `if constexpr`, preserving their combined participation constraint and result types.

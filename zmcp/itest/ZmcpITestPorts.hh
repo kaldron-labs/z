@@ -14,7 +14,11 @@ namespace ZmcpITestPort {
     Stateless = 21002,
     SecureH1 = 21010,
     SecureH2 = 21011,
-    SecureH3 = 21012
+    SecureH3 = 21012,
+    WS = 21020,
+    WSS = 21021,
+    WSH2 = 21022,
+    WSH3 = 21023
   };
 }
 

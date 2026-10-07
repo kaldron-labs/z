@@ -1453,6 +1453,7 @@ public:
   }
   Session &rxState() { return m_session; }
   auto txStream() { return m_stream->txStream(); }
+  auto txStream_() { return m_stream->txStream_(); }
   void txErrorFn(ZiTxErrorFn fn) {
     if (m_native) m_native->h3.txErrorFn(fn);
     if (m_stream) m_stream->txErrorFn(ZuMv(fn));

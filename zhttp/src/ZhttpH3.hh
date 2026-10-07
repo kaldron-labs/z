@@ -2121,13 +2121,9 @@ public:
     return native && native->h3.localExtendedConnect;
   }
   template <typename L>
-  void streamTx(L &&l) {
-    auto stream = streamImpl_()->h3Stream_();
-    if (!stream) return;
-    auto tx = stream->txStream();
-    auto body = H3::dataStream(tx);
-    ZuFwd<L>(l)(body);
-  }
+  void streamTx(L &&l) { write_<false>(ZuFwd<L>(l)); }
+  template <typename L>
+  void streamTx_(L &&l) { write_<true>(ZuFwd<L>(l)); }
   void streamTxEnd() {
     auto impl = streamImpl_();
     auto native = impl->h3Native_();
@@ -2145,6 +2141,17 @@ public:
   }
 
 private:
+  template <bool OnOwner, typename L>
+  void write_(L &&l) {
+    auto stream = streamImpl_()->h3Stream_();
+    if (!stream) return;
+    auto tx = [stream]() {
+      if constexpr (OnOwner) return stream->txStream_();
+      else return stream->txStream();
+    }();
+    auto body = H3::dataStream(tx);
+    ZuFwd<L>(l)(body);
+  }
   const Impl *streamImpl_() const {
     return static_cast<const Impl *>(this);
   }

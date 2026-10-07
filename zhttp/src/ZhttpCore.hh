@@ -158,6 +158,36 @@ struct HeaderList {
   using Values = ZuTypeSlice<2, 1, Headers>;
 };
 
+// Compile-time field aggregation shared by application bindings.
+template <typename K, typename ...Ts> struct HeaderValues_;
+template <typename K>
+struct HeaderValues_<K> { using T = ZuTypeList<>; };
+template <typename K, typename K0, typename V0, typename ...Ts>
+struct HeaderValues_<K, K0, V0, Ts...> {
+  using Tail = typename HeaderValues_<K, Ts...>::T;
+  using T = ZuTypeUnique<ZuIf<ZuIsSame<K, K0>{},
+    typename V0::template Push<Tail>, Tail>>;
+};
+template <typename K, typename ...Ts>
+struct HeaderValues_<K, ZuTypeList<Ts...>> : public HeaderValues_<K, Ts...> { };
+template <typename K, typename List>
+using HeaderValues = typename HeaderValues_<K, List>::T;
+
+template <typename Hdrs, typename ...Keys> struct MergeHeaders_;
+template <typename Hdrs>
+struct MergeHeaders_<Hdrs> { using T = ZuTypeList<>; };
+template <typename Hdrs, typename K0, typename ...Keys>
+struct MergeHeaders_<Hdrs, K0, Keys...> {
+  using T = typename ZuTypeList<K0, HeaderValues<K0, Hdrs>>::template Push<
+    typename MergeHeaders_<Hdrs, Keys...>::T>;
+};
+template <typename Hdrs, typename ...Keys>
+struct MergeHeaders_<Hdrs, ZuTypeList<Keys...>> :
+  public MergeHeaders_<Hdrs, Keys...> { };
+template <typename Headers>
+using MergeHeaders = typename MergeHeaders_<Headers,
+  ZuTypeUnique<ZuTypeSlice<2, 0, Headers>>>::T;
+
 template <typename Values>
 struct HeaderValue_ {
   ZuAssert(Values::N == 1,

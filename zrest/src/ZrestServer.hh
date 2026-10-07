@@ -375,7 +375,7 @@ struct MReqParser : public Zhttp::Parser {
 	typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
       if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
-	using Values = GetKValues<Key, ReqHdrs>;
+	using Values = Zhttp::HeaderValues<Key, ReqHdrs>;
 	if constexpr (ZuTypeIn<Value, Values>{})
 	  request.template header<Key, Value>(section);
 	else {
@@ -483,7 +483,7 @@ struct MResBuilder : public Zhttp::ResBuilder {
       using ResHdrs = GetHdrs<typename Union::template Type<I>>;
       using ResHdrKeys = GetHdrKeys<ResHdrs>;
       if constexpr (ZuTypeIn<Key, ResHdrKeys>{}) {
-	using Values = GetKValues<Key, ResHdrs>;
+	using Values = Zhttp::HeaderValues<Key, ResHdrs>;
 	if constexpr (ZuTypeIn<Value, Values>{})
 	  response.template header<Key, Value>(ZuFwd<L>(l));
       }
