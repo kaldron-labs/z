@@ -38,15 +38,15 @@ struct Options {
 };
 
 ZfStruct(, Options,
-  (((quiet),		(CLI::Flag<'q'>)),	Bool),
-  (((child),		(CLI::Flag<'c'>)),	Bool),
-  (((daemonize),	(CLI::Flag<'d'>)),	Bool),
-  (((pidFile),		(CLI::Opt<'p'>)),	String),
-  (((marker),		(CLI::ID<"marker">,
-			  CLI::Opt<'m'>)),		String),
-  (((logPath),		(CLI::ID<"log-path">,
-			  CLI::Opt<'l'>)),		String),
-  (((help),		(CLI::Flag<'h'>)),	Bool));
+  (quiet,		(CLI::Flag<'q'>),	Bool),
+  (child,		(CLI::Flag<'c'>),	Bool),
+  (daemonize,	(CLI::Flag<'d'>),		Bool),
+  (pidFile,		(CLI::Opt<'p'>),	String),
+  (marker,		(CLI::ID<"marker">,
+			  CLI::Opt<'m'>),		String),
+  (logPath,		(CLI::ID<"log-path">,
+			  CLI::Opt<'l'>),		String),
+  (help,		(CLI::Flag<'h'>),	Bool));
 
 namespace {
 

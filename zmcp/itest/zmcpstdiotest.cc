@@ -104,9 +104,9 @@ struct Harness {
 struct EchoReq { int value = 0; };
 struct EchoResult { int value = 0; };
 ZfStruct(, (EchoReq, JSON),
-  (((value), (Ctor<0>, Required)),	Int32));
+  (value, (Ctor<0>, Required),		Int32));
 ZfStruct(, (EchoResult, JSON),
-  (((value), (Ctor<0>, Required)),	Int32));
+  (value, (Ctor<0>, Required),		Int32));
 struct EchoOK : public Zmcp::Response {
   using Body = EchoResult;
 };
@@ -494,7 +494,7 @@ static void testServer()
   ZuCHECK(mx.start(), "multiplexer start failed");
 
   ServerApp app;
-  Zmcp::Server<ServerApp, EchoCatalog> server;
+  Zmcp::IOServer<ServerApp, EchoCatalog> server;
   auto config = Zmcp::StdioConfig{}
     .rxThread("stdioRx")
     .txThread("stdioTx")
@@ -572,7 +572,7 @@ static void testClient()
   ZuCHECK(mx.start(), "multiplexer start failed");
 
   ClientApp app;
-  Zmcp::Client<ClientApp, EchoCatalog> client;
+  Zmcp::IOClient<ClientApp, EchoCatalog> client;
   auto config = Zmcp::StdioConfig{}
     .rxThread("stdioRx")
     .txThread("stdioTx")
@@ -654,7 +654,8 @@ static void testClient()
   app.progressed_.wait();
   app.logged_.wait();
   reported->done.wait();
-  ZuCheck(app.token == Zmcp::IDString{"progress-12"} &&
+  ZuCheck(app.token.is<Zmcp::IDString>() &&
+    app.token.p<Zmcp::IDString>() == Zmcp::IDString{"progress-12"} &&
     app.value == .5 && app.total == 1 && app.message == "half");
   ZuCheck(app.level == "info" && app.logger == "echo" &&
     app.data == "working");

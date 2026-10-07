@@ -139,7 +139,6 @@ struct Value : public Value_ {
   void
   print_(S &s) const {
     if constexpr (I == Value_::Index<void>{}) {
-
     } else if constexpr (I == Value_::Index<String>{}) {
       s << ZfStruct_::Print::String{p<I>()};
     } else if constexpr (I == Value_::Index<Bytes>{}) {
@@ -1100,7 +1099,7 @@ struct MemStoreCf {
 };
 
 ZfStruct(ZdbAPI, (MemStoreCf, Cf),
-  (((thread), (Mutable, Required)),	String));
+  (thread, (Mutable, Required),		String));
 
 template <typename StoreTbl_>
 class Store_ : public Zdb_::Store, public Store__ {

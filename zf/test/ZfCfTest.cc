@@ -36,7 +36,7 @@ struct CfNested {
 };
 
 ZfStruct(, (CfNested, Cf),
-  (((value), (Ctor<0>)),	Int32));
+  (value, (Ctor<0>),		Int32));
 
 ZuDerive(CfMapKey, (ZtString<ZtStringHeapID<"ZfTest.Cf.CfMapKey">>));
 
@@ -52,12 +52,12 @@ struct CfMapHolder {
   CfIntMapRef map;
 };
 ZfStruct(, (CfMapHolder, Cf),
-  (((map), (Ctor<0>, Mutable)),	UDT));
+  (map, (Ctor<0>, Mutable),	UDT));
 
 struct CfUnionA { int foo = 0; };
 struct CfUnionB { int bar = 0; };
-ZfStruct(, (CfUnionA, Cf), (((foo), (Ctor<0>, Mutable)), Int32));
-ZfStruct(, (CfUnionB, Cf), (((bar), (Ctor<0>, Mutable)), Int32));
+ZfStruct(, (CfUnionA, Cf), (foo, (Ctor<0>, Mutable), Int32));
+ZfStruct(, (CfUnionB, Cf), (bar, (Ctor<0>, Mutable), Int32));
 struct CfUnionArray : public ZtArray<int> {
   using ZtArray<int>::ZtArray;
   friend ZfCf::AsArray<ZfFieldTC::Int32> ZfCf_Fmt(CfUnionArray *);
@@ -76,7 +76,7 @@ struct CfUnionHolder {
   ZfCf::Union<CfUnionA, CfUnionB, CfIntMapRef, CfUnionArray, CfUnionText> value;
 };
 ZfStruct(, (CfUnionHolder, Cf),
-  (((value), (Ctor<0>, Mutable)),	UDT));
+  (value, (Ctor<0>, Mutable),		UDT));
 
 struct CfPtrObj_ : public ZmObject {
   int value = 0;
@@ -84,7 +84,7 @@ struct CfPtrObj_ : public ZmObject {
 };
 using CfPtrObj = ZfHeapTest<"ZfTest.Cf.PtrObj", CfPtrObj_>;
 ZfStruct(, (CfPtrObj, Cf),
-  (((value), (Ctor<0>, Mutable)),	Int32));
+  (value, (Ctor<0>, Mutable),		Int32));
 
 struct CfFmtOpt : public ZmObject { };
 inline ZfCf::AsString ZfCf_Fmt(ZmRef<CfFmtOpt> *);
@@ -120,9 +120,9 @@ struct CfPtrHolder {
   ZmRef<CfPtrText> text;
 };
 ZfStruct(, (CfPtrHolder, Cf),
-  (((object), (Mutable)),	UDT),
-  (((objects), (Mutable)),	UDT),
-  (((text), (Mutable)),		UDT));
+  (object, (Mutable),		UDT),
+  (objects, (Mutable),		UDT),
+  (text, (Mutable),		UDT));
 
 ZuAssert((ZuIsSame<CfIntMap::Key, CfMapKey>{}));
 ZuAssert((ZuIsSame<CfIntMap::Val, int>{}));
@@ -149,7 +149,7 @@ struct CfTextData {
 };
 
 ZfStruct(, (CfTextData, Cf),
-  (((text), (Ctor<0>)),	UDT));
+  (text, (Ctor<0>),	UDT));
 
 struct CfData {
   const char *cstr = nullptr;
@@ -162,13 +162,13 @@ struct CfData {
 };
 
 ZfStruct(, (CfData, Cf),
-  (((cstr), (Ctor<0>)),		CString),
-  (((string), (Ctor<1>)),	String),
-  (((number), (Ctor<2>)),	Int32),
-  (((bool_), (Ctor<3>)),	Bool),
-  (((bytes), (Ctor<4>)),	Bytes),
-  (((strings), (Ctor<5>)),	StringVec),
-  (((nested), (Ctor<6>)),	UDT));
+  (cstr, (Ctor<0>),		CString),
+  (string, (Ctor<1>),		String),
+  (number, (Ctor<2>),		Int32),
+  (bool_, (Ctor<3>),		Bool),
+  (bytes, (Ctor<4>),		Bytes),
+  (strings, (Ctor<5>),		StringVec),
+  (nested, (Ctor<6>),		UDT));
 
 struct CfBytes {
   ZtArray<uint8_t> base64;
@@ -180,12 +180,12 @@ struct CfBytes {
 };
 
 ZfStruct(, (CfBytes, Cf),
-  (((base64),		(Ctor<0>, Cf::Base64)),		Bytes),
-  (((base64URL),	(Ctor<1>, Cf::Base64URL)),	Bytes),
-  (((base32),		(Ctor<2>, Cf::Base32)),		Bytes),
-  (((hex),		(Ctor<3>, Cf::Hex)),		Bytes),
-  (((raw),		(Ctor<4>, Cf::Raw)),		Bytes),
-  (((vec),		(Ctor<5>)),			BytesVec));
+  (base64,		(Ctor<0>, Cf::Base64),		Bytes),
+  (base64URL,	(Ctor<1>, Cf::Base64URL),		Bytes),
+  (base32,		(Ctor<2>, Cf::Base32),		Bytes),
+  (hex,		(Ctor<3>, Cf::Hex),			Bytes),
+  (raw,		(Ctor<4>, Cf::Raw),			Bytes),
+  (vec,		(Ctor<5>),				BytesVec));
 
 struct CfNumbers {
   int i = 0;
@@ -200,17 +200,17 @@ struct CfNumbers {
 };
 
 ZfStruct(, (CfNumbers, Cf),
-  (((i),		(Ctor<0>, Mutable)),			Int32),
-  (((hex),		(Ctor<1>, Hex)),			UInt32),
-  (((enum_),		(Ctor<2>, Enum<CfValues::Map>)),	Int32),
-  (((flags),		(Ctor<3>, Flags<CfFlags::Map>)),	UInt128),
-  (((float_),		(Ctor<4>, (Range<-1000.0, 1000.0>))),	Float),
-  (((fixed),		(Ctor<5>,
-    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),		Fixed),
-  (((decimal),		(Ctor<6>,
-    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),		Decimal),
-  (((time),		(Ctor<7>, Cf::Unix9)),			Time),
-  (((ints),		(Ctor<8>)),				Int32Vec));
+  (i,		(Ctor<0>, Mutable),				Int32),
+  (hex,		(Ctor<1>, Hex),					UInt32),
+  (enum_,		(Ctor<2>, Enum<CfValues::Map>),		Int32),
+  (flags,		(Ctor<3>, Flags<CfFlags::Map>),		UInt128),
+  (float_,		(Ctor<4>, (Range<-1000.0, 1000.0>)),	Float),
+  (fixed,		(Ctor<5>,
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>)),		Fixed),
+  (decimal,		(Ctor<6>,
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>)),		Decimal),
+  (time,		(Ctor<7>, Cf::Unix9),			Time),
+  (ints,		(Ctor<8>),				Int32Vec));
 
 struct CfOptional {
   const char *head = nullptr;
@@ -219,16 +219,16 @@ struct CfOptional {
 };
 
 ZfStruct(, (CfOptional, Cf),
-  (((head), (Ctor<0>, Cf::Opt)),	CString),
-  (((req),  (Ctor<1>)),			CString),
-  (((tail), (Ctor<2>)),			CString));
+  (head, (Ctor<0>, Cf::Opt),		CString),
+  (req,  (Ctor<1>),			CString),
+  (tail, (Ctor<2>),			CString));
 
 struct CfRange {
   int value = 42;
 };
 
 ZfStruct(, (CfRange, Cf),
-  (((value), (Ctor<0>, (Range<0, 100>), Deflt<42>)),	Int32));
+  (value, (Ctor<0>, (Range<0, 100>), Deflt<42>),	Int32));
 
 struct CfRequired {
   int required;
@@ -236,15 +236,15 @@ struct CfRequired {
 };
 
 ZfStruct(, (CfRequired, Cf),
-  (((required), (Ctor<0>, Required)),	Int32),
-  (((optional), (Ctor<1>)),		Int32));
+  (required, (Ctor<0>, Required),	Int32),
+  (optional, (Ctor<1>),			Int32));
 
 struct CfFormatInt {
   unsigned value = 0;
 };
 using CfIntFormat = ZuFmt::Hex<false, ZuFmt::Right<8>>;
 ZfStruct(, (CfFormatInt, Cf),
-  (((value), (Ctor<0>, Cf::Number<CfIntFormat>)),	UInt32));
+  (value, (Ctor<0>, Cf::Number<CfIntFormat>),		UInt32));
 
 static const ZfCf::AnyNode *field(
     const ZfCf::AnyNode *node, ZuCSpan id) {

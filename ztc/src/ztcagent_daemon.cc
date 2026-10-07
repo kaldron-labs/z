@@ -47,8 +47,8 @@ struct Discovery {
   Zum::String tokenEndpoint;
 };
 ZfStruct(, (Discovery, JSON),
-  (((issuerURL), (JSON::ID<"issuer">, Required)),		String),
-  (((tokenEndpoint), (JSON::ID<"token_endpoint">, Required)),	String));
+  (issuerURL, (JSON::ID<"issuer">, Required),			String),
+  (tokenEndpoint, (JSON::ID<"token_endpoint">, Required),	String));
 
 struct Token {
   Zum::String accessToken;
@@ -56,9 +56,9 @@ struct Token {
   uint64_t expiresIn = 0;
 };
 ZfStruct(, (Token, JSON),
-  (((accessToken), (JSON::ID<"access_token">, Required)),	String),
-  (((tokenType), (JSON::ID<"token_type">, Required)),		String),
-  (((expiresIn), (JSON::ID<"expires_in">, Required)),		UInt64));
+  (accessToken, (JSON::ID<"access_token">, Required),		String),
+  (tokenType, (JSON::ID<"token_type">, Required),		String),
+  (expiresIn, (JSON::ID<"expires_in">, Required),		UInt64));
 
 struct Pub {
   Pub(ZuID id_, const AgentCf &cf) :

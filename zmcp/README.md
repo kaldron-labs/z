@@ -48,13 +48,13 @@ possible response types:
 
 ```cpp
 struct AddRequest { int64_t lhs = 0; int64_t rhs = 0; };
-ZfStruct((AddRequest, JSON),
-  (((lhs), (Ctor<0>, Required)),	Int64),
-  (((rhs), (Ctor<1>, Required)),	Int64));
+ZfStruct(, (AddRequest, JSON),
+  (lhs, (Ctor<0>, Required),		Int64),
+  (rhs, (Ctor<1>, Required),		Int64));
 
 struct AddResult { int64_t value = 0; };
-ZfStruct((AddResult, JSON),
-  (((value), (Ctor<0>, Required)),	Int64));
+ZfStruct(, (AddResult, JSON),
+  (value, (Ctor<0>, Required),		Int64));
 
 struct AddOK : public Zmcp::Response { using Body = AddResult; };
 
@@ -122,13 +122,15 @@ authorization remain application-owned.  A client emits declared headers via
 
 ## Transport configuration
 
-`Zmcp::Server<Impl, Requests>` has mutually exclusive `init` overloads:
+The common `Zmcp::Server` and `Zmcp::Client` templates are CRTP bases. Instantiate
+`Zmcp::HTTPServer<Impl, Requests>` or `Zmcp::IOServer<Impl, Requests>` for
+streaming HTTP or stdio respectively. Their transport-specific initialization is:
 
-- HTTP: `init(Zhttp::HubConfig, Zmcp::ServerConfig, Impl *)`;
-- stdio: `init(ZiMultiplex *, Zmcp::StdioConfig, Impl *)`.
+- HTTP server: `init(Zhttp::HubConfig, Zmcp::ServerConfig, Impl *)`;
+- stdio server: `init(ZiMultiplex *, Zmcp::StdioConfig, Impl *)`.
 
-The client types are `Zmcp::HTTPClient<Impl, Requests>` and
-`Zmcp::Client<Impl, Requests>` for stdio.  HTTP configuration inherits the
+The concrete client types are `Zmcp::HTTPClient<Impl, Requests>` and
+`Zmcp::IOClient<Impl, Requests>`. HTTP configuration inherits the
 normal `zhttp` TCP/TLS/H2/QUIC, timeout and pooling controls.  `endpoint()`
 defaults to `/mcp`; `legacySessions(true)` is the default.  A nonzero
 `legacyLifetime()` enables automatic legacy-session expiry.  Setting
@@ -141,8 +143,8 @@ stdin/stdout; callers retaining an original handle must pass a duplicate.  Set
 `rxThread()` and `txThread()` to two distinct named isolated scheduler slots,
 also distinct from the multiplex network Rx/Tx slots.  Those workers perform
 portable blocking `ZiFile` reads/writes, so Windows console, pipe and file
-handles require no overlapped-I/O or `ZiEventLoop` adapter.  Stdio and HTTP
-serving cannot be enabled simultaneously on one server.
+handles require no overlapped-I/O or `ZiEventLoop` adapter. Each server
+instance serves one transport.
 
 Rx teardown closes the owned input and interrupts only that blocking worker:
 `zmcp` uses a non-restarting signal on POSIX and `CancelSynchronousIo()` on

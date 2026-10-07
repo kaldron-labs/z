@@ -43,9 +43,9 @@ struct Message {
   String status;
 };
 ZfStruct(, (Message, JSON),
-  (((error),		(JSON::Opt)),	String),
-  (((reply),		(JSON::Opt)),	String),
-  (((status),		(JSON::Opt)),	String));
+  (error,		(JSON::Opt),	String),
+  (reply,		(JSON::Opt),	String),
+  (status,		(JSON::Opt),	String));
 
 static String json(Message message)
 {
@@ -56,8 +56,8 @@ static String json(Message message)
 
 struct Options { String config; bool help = false; };
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">)),			String),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
+  (config, (CLI::Long<"config">),			String),
+  (help, (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
 struct ZumConfig {
   String issuerURL;
@@ -66,10 +66,10 @@ struct ZumConfig {
   String clientID;
 };
 ZfStruct(, (ZumConfig, Cf),
-  (((issuerURL), (Mutable, Required)),			String),
-  (((managementIssuerURL), (Mutable, Required)),	String),
-  (((managementURL), (Mutable, Required)),		String),
-  (((clientID), (Mutable, Required)),			String));
+  (issuerURL, (Mutable, Required),			String),
+  (managementIssuerURL, (Mutable, Required),		String),
+  (managementURL, (Mutable, Required),			String),
+  (clientID, (Mutable, Required),			String));
 
 struct Config {
   ZumConfig zum;
@@ -81,13 +81,13 @@ struct Config {
   uint32_t port = 8080;
 };
 ZfStruct(, (Config, Cf),
-  (((zum), (Mutable, Required)),			UDT),
-  (((caPath), (Mutable)),				String),
-  (((audience), (Mutable, Required)),			String),
-  (((addr), (Mutable)),					String),
-  (((ssfDeliveryURL), (Mutable)),			String),
-  (((ssfLease), (Mutable, (Range<2U, 86400U>))),	UInt32),
-  (((port), (Mutable, (Range<1, 65535>))),		UInt32));
+  (zum, (Mutable, Required),				UDT),
+  (caPath, (Mutable),					String),
+  (audience, (Mutable, Required),			String),
+  (addr, (Mutable),					String),
+  (ssfDeliveryURL, (Mutable),				String),
+  (ssfLease, (Mutable, (Range<2U, 86400U>)),		UInt32),
+  (port, (Mutable, (Range<1, 65535>)),			UInt32));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {

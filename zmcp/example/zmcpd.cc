@@ -28,10 +28,10 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((stdio), (CLI::Long<"stdio">)),		Bool),
-  (((port), (CLI::Opt<'p'>, CLI::Long<"port">)),	UInt32),
-  (((token), (CLI::Long<"token">)),				String),
-  (((help), (CLI::Opt<'h'>, CLI::Long<"help">)),	Bool));
+  (stdio, (CLI::Long<"stdio">),			Bool),
+  (port, (CLI::Opt<'p'>, CLI::Long<"port">),		UInt32),
+  (token, (CLI::Long<"token">),					String),
+  (help, (CLI::Opt<'h'>, CLI::Long<"help">),		Bool));
 
 static ZmSemaphore done;
 
@@ -107,6 +107,24 @@ struct App {
 
 static void interrupted() { done.post(); }
 
+template <typename Server>
+static int run(Server &server, bool initialized, ZiMultiplex &mx)
+{
+  bool started = initialized && server.start();
+  if (!started) {
+    server.final();
+    mx.stop();
+    ZiLog::stop();
+    return 1;
+  }
+  done.wait();
+  bool stopped = server.stop();
+  server.final();
+  mx.stop();
+  ZiLog::stop();
+  return stopped ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
   Options options;
@@ -129,31 +147,17 @@ int main(int argc, char **argv)
   if (!mx.start()) return 1;
 
   App app{&options};
-  Zmcp::Server<App, ExampleCatalog> server;
-  bool initialized;
   if (options.stdio) {
+    Zmcp::IOServer<App, ExampleCatalog> server;
     auto config = Zmcp::StdioConfig{}
       .rxThread("stdioRx").txThread("stdioTx");
-    initialized = server.init(&mx, ZuMv(config), &app);
+    return run(server, server.init(&mx, ZuMv(config), &app), mx);
   } else {
+    Zmcp::HTTPServer<App, ExampleCatalog> server;
     Zmcp::ServerConfig config;
     config.localIP(ZiIP{"127.0.0.1"}).port(options.port).tcp();
     config.absentOrigin(true);
-    initialized = server.init(
-      Zhttp::HubConfig{&mx}, ZuMv(config), &app);
+    return run(server, server.init(
+      Zhttp::HubConfig{&mx}, ZuMv(config), &app), mx);
   }
-  bool started = initialized && server.start();
-  if (!started) {
-    server.final();
-    mx.stop();
-    ZiLog::stop();
-    return 1;
-  }
-
-  done.wait();
-  bool stopped = server.stop();
-  server.final();
-  mx.stop();
-  ZiLog::stop();
-  return stopped ? 0 : 1;
 }

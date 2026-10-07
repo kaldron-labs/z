@@ -65,11 +65,11 @@ struct KeyBinding : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, KeyBinding,
-  (((issuer), (Ctor<0>)),		String),
-  (((beforeCheck), (Ctor<1>)),		Bytes),
-  (((afterCheck), (Ctor<2>)),		Bytes),
-  (((beforePending), (Ctor<3>)),	Bytes),
-  (((afterPending), (Ctor<4>)),		Bytes));
+  (issuer, (Ctor<0>),			String),
+  (beforeCheck, (Ctor<1>),		Bytes),
+  (afterCheck, (Ctor<2>),		Bytes),
+  (beforePending, (Ctor<3>),		Bytes),
+  (afterPending, (Ctor<4>),		Bytes));
 
 struct SecretRekey : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -135,13 +135,13 @@ struct SecretRekey : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, SecretRekey,
-  (((field), (Ctor<0>, Deflt<SecretRekey::ProviderField>)),	UInt32),
-  (((providerID), (Ctor<1>)),					UInt64),
-  (((appID), (Ctor<2>)),					UInt64),
-  (((userID), (Ctor<3>)),					UInt64),
-  (((keyID), (Ctor<4>)),					String),
-  (((before), (Ctor<5>)),					Bytes),
-  (((after), (Ctor<6>)),					Bytes));
+  (field, (Ctor<0>, Deflt<SecretRekey::ProviderField>),		UInt32),
+  (providerID, (Ctor<1>),					UInt64),
+  (appID, (Ctor<2>),						UInt64),
+  (userID, (Ctor<3>),						UInt64),
+  (keyID, (Ctor<4>),						String),
+  (before, (Ctor<5>),						Bytes),
+  (after, (Ctor<6>),						Bytes));
 
 } // namespace Zum
 

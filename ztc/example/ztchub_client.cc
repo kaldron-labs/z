@@ -76,10 +76,10 @@ struct TokenWire {
   String tokenType;
 };
 ZfStruct(, (TokenWire, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)),		String),
-  (((refreshToken),	(JSON::ID<"refresh_token">, JSON::Opt)),	String),
-  (((scope),		(JSON::Opt)),					String),
-  (((tokenType),	(JSON::ID<"token_type">, Required)),		String));
+  (accessToken,	(JSON::ID<"access_token">, Required),			String),
+  (refreshToken,	(JSON::ID<"refresh_token">, JSON::Opt),		String),
+  (scope,		(JSON::Opt),					String),
+  (tokenType,	(JSON::ID<"token_type">, Required),			String));
 
 static void clearTokens(ZumVaultClient::Credential &tokens)
 {
@@ -106,14 +106,14 @@ struct Config {
   bool loopbackTest = false;
 };
 ZfStruct(, (Config, Cf),
-  (((issuerURL), (Mutable, Required)),			String),
-  (((serviceURL), (Mutable)),				String),
-  (((clientID), (Mutable, Required)),			String),
-  (((caPath), (Mutable)),				String),
-  (((scope), (Mutable)),				String),
-  (((callbackPort), (Mutable, (Range<1, 65535>))),	UInt32),
-  (((loginTimeout), (Mutable, (Range<1, 3600>))),	UInt32),
-  (((loopbackTest), (Mutable)),				Bool));
+  (issuerURL, (Mutable, Required),			String),
+  (serviceURL, (Mutable),				String),
+  (clientID, (Mutable, Required),			String),
+  (caPath, (Mutable),					String),
+  (scope, (Mutable),					String),
+  (callbackPort, (Mutable, (Range<1, 65535>)),		UInt32),
+  (loginTimeout, (Mutable, (Range<1, 3600>)),		UInt32),
+  (loopbackTest, (Mutable),				Bool));
 
 static bool loadConfig(ZuCSpan path, Config &config)
 {
@@ -143,18 +143,18 @@ struct MetadataWire {
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (MetadataWire, JSON),
-  (((issuerURL),	(JSON::ID<"issuer">, JSON::Opt)),	String),
-  (((authorizationEndpoint),
-    (JSON::ID<"authorization_endpoint">, JSON::Opt)),		String),
-  (((tokenEndpoint),
-    (JSON::ID<"token_endpoint">, JSON::Opt)),			String),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, JSON::Opt)),	String),
-  (((responseTypesSupported),
-    (JSON::ID<"response_types_supported">, JSON::Opt)),		StringVec),
-  (((grantTypesSupported),
-    (JSON::ID<"grant_types_supported">, JSON::Opt)),		StringVec),
-  (((codeChallengeMethods),
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt)),	StringVec));
+  (issuerURL,	(JSON::ID<"issuer">, JSON::Opt),		String),
+  (authorizationEndpoint,
+    (JSON::ID<"authorization_endpoint">, JSON::Opt),		String),
+  (tokenEndpoint,
+    (JSON::ID<"token_endpoint">, JSON::Opt),			String),
+  (jwksURI,		(JSON::ID<"jwks_uri">, JSON::Opt),	String),
+  (responseTypesSupported,
+    (JSON::ID<"response_types_supported">, JSON::Opt),		StringVec),
+  (grantTypesSupported,
+    (JSON::ID<"grant_types_supported">, JSON::Opt),		StringVec),
+  (codeChallengeMethods,
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt),	StringVec));
 
 template <typename Fn>
 static bool formEach(ZuCSpan form, Fn &&fn)
@@ -873,12 +873,12 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">, Required)),		String),
-  (((noBrowser), (CLI::Long<"no-browser">)),		Bool),
-  (((deviceID), (CLI::Long<"device-id">)),		String),
-  (((wssURL), (CLI::Long<"wss">)),			String),
-  (((caPath), (CLI::Long<"ca">)),			String),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
+  (config, (CLI::Long<"config">, Required),		String),
+  (noBrowser, (CLI::Long<"no-browser">),		Bool),
+  (deviceID, (CLI::Long<"device-id">),			String),
+  (wssURL, (CLI::Long<"wss">),				String),
+  (caPath, (CLI::Long<"ca">),				String),
+  (help, (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
 using Frame = ZmRef<ZiIOBuf>;
 using FrameBuf = ZiIOBufAlloc<1024, 1U << 20, "Ztc.Example.Frame">;

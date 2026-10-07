@@ -94,7 +94,7 @@ struct LiveSaga : public ZdbSagaBase<Context> {
   }
 };
 ZfbStruct(, LiveSaga,
-  (((orderID), (Ctor<0>)),	UInt64));
+  (orderID, (Ctor<0>),		UInt64));
 
 ZdbSagaDerive(SagaCatalog, LiveSaga);
 ZdbSagaImpl(SagaCatalog, LiveSaga)

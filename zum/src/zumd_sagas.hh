@@ -289,20 +289,20 @@ struct Enrollment : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, Enrollment,
-  (((ceremonyID),	(Ctor<0>)),			Bytes),
-  (((userID),		(Ctor<1>)),			UInt64),
-  (((name),		(Ctor<2>)),			String),
-  (((handle),		(Ctor<3>)),			Bytes),
-  (((credentialID),	(Ctor<4>)),			Bytes),
-  (((publicKey),	(Ctor<5>)),			Bytes),
-  (((signCount),	(Ctor<6>)),			UInt32),
-  (((created),		(Ctor<7>)),			Int64),
-  (((backupEligible),	(Ctor<8>)),			Bool),
-  (((backedUp),		(Ctor<9>)),			Bool),
-  (((label),		(Ctor<10>)),			String),
-  (((precreated),	(Ctor<11>, Deflt<false>)),	Bool),
-  (((beforeGrant),	(Ctor<12>)),			UDT),
-  (((beforeUser),	(Ctor<13>)),			UDT));
+  (ceremonyID,	(Ctor<0>),				Bytes),
+  (userID,		(Ctor<1>),			UInt64),
+  (name,		(Ctor<2>),			String),
+  (handle,		(Ctor<3>),			Bytes),
+  (credentialID,	(Ctor<4>),			Bytes),
+  (publicKey,	(Ctor<5>),				Bytes),
+  (signCount,	(Ctor<6>),				UInt32),
+  (created,		(Ctor<7>),			Int64),
+  (backupEligible,	(Ctor<8>),			Bool),
+  (backedUp,		(Ctor<9>),			Bool),
+  (label,		(Ctor<10>),			String),
+  (precreated,	(Ctor<11>, Deflt<false>),		Bool),
+  (beforeGrant,	(Ctor<12>),				UDT),
+  (beforeUser,	(Ctor<13>),				UDT));
 
 ZumExtern int enrollmentPrepare(
   const Grant &, ZuBSpan bindingDigest, RegistrationInput &,
@@ -455,19 +455,19 @@ struct CredentialAdd : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, CredentialAdd,
-  (((ceremonyID),	(Ctor<0>)),		Bytes),
-  (((issuer),		(Ctor<1>)),		String),
-  (((userID),		(Ctor<2>)),		UInt64),
-  (((userHandle),	(Ctor<3>)),		Bytes),
-  (((credentialID),	(Ctor<4>)),		Bytes),
-  (((publicKey),	(Ctor<5>)),		Bytes),
-  (((signCount),	(Ctor<6>)),		UInt32),
-  (((created),		(Ctor<7>)),		Int64),
-  (((backupEligible),	(Ctor<8>)),		Bool),
-  (((backedUp),		(Ctor<9>)),		Bool),
-  (((label),		(Ctor<10>)),		String),
-  (((userVersion),	(Ctor<11>, Deflt<1>)),	UInt64),
-  (((beforeGrant),	(Ctor<12>)),		UDT));
+  (ceremonyID,	(Ctor<0>),			Bytes),
+  (issuer,		(Ctor<1>),		String),
+  (userID,		(Ctor<2>),		UInt64),
+  (userHandle,	(Ctor<3>),			Bytes),
+  (credentialID,	(Ctor<4>),		Bytes),
+  (publicKey,	(Ctor<5>),			Bytes),
+  (signCount,	(Ctor<6>),			UInt32),
+  (created,		(Ctor<7>),		Int64),
+  (backupEligible,	(Ctor<8>),		Bool),
+  (backedUp,		(Ctor<9>),		Bool),
+  (label,		(Ctor<10>),		String),
+  (userVersion,	(Ctor<11>, Deflt<1>),		UInt64),
+  (beforeGrant,	(Ctor<12>),			UDT));
 
 ZumExtern int credentialPrepare(
   const Grant &, ZuBSpan bindingDigest, RegistrationInput &,
@@ -621,18 +621,18 @@ struct RecoveryStart : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, RecoveryStart,
-  (((capabilityID),	(Ctor<0>)),			Bytes),
-  (((digest),		(Ctor<1>)),			Bytes),
-  (((issuer),		(Ctor<2>)),			String),
-  (((userID),		(Ctor<3>)),			UInt64),
-  (((userVersion),	(Ctor<4>)),			UInt64),
-  (((created),		(Ctor<5>)),			Int64),
-  (((expires),		(Ctor<6>)),			Int64),
-  (((actor),		(Ctor<7>)),			String),
-  (((version),		(Ctor<8>)),			UInt64),
-  (((oldState),		(Ctor<9>, Enum<State::Map>)),	Int8),
-  (((oldUpdated),	(Ctor<10>)),			Int64),
-  (((request),		(Ctor<11>)),			UDT));
+  (capabilityID,	(Ctor<0>),			Bytes),
+  (digest,		(Ctor<1>),			Bytes),
+  (issuer,		(Ctor<2>),			String),
+  (userID,		(Ctor<3>),			UInt64),
+  (userVersion,	(Ctor<4>),				UInt64),
+  (created,		(Ctor<5>),			Int64),
+  (expires,		(Ctor<6>),			Int64),
+  (actor,		(Ctor<7>),			String),
+  (version,		(Ctor<8>),			UInt64),
+  (oldState,		(Ctor<9>, Enum<State::Map>),	Int8),
+  (oldUpdated,	(Ctor<10>),				Int64),
+  (request,		(Ctor<11>),			UDT));
 
 struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -838,22 +838,22 @@ struct RecoveryEnroll : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, RecoveryEnroll,
-  (((ceremonyID),	(Ctor<0>)),	Bytes),
-  (((issuer),		(Ctor<1>)),	String),
-  (((actor),		(Ctor<2>)),	String),
-  (((userID),		(Ctor<3>)),	UInt64),
-  (((userVersion),	(Ctor<4>)),	UInt64),
-  (((oldHandle),	(Ctor<5>)),	Bytes),
-  (((newHandle),	(Ctor<6>)),	Bytes),
-  (((credentialID),	(Ctor<7>)),	Bytes),
-  (((publicKey),	(Ctor<8>)),	Bytes),
-  (((signCount),	(Ctor<9>)),	UInt32),
-  (((created),		(Ctor<10>)),	Int64),
-  (((backupEligible),	(Ctor<11>)),	Bool),
-  (((backedUp),		(Ctor<12>)),	Bool),
-  (((label),		(Ctor<13>)),	String),
-  (((beforeGrant),	(Ctor<14>)),	UDT),
-  (((beforeUser),	(Ctor<15>)),	UDT));
+  (ceremonyID,	(Ctor<0>),		Bytes),
+  (issuer,		(Ctor<1>),	String),
+  (actor,		(Ctor<2>),	String),
+  (userID,		(Ctor<3>),	UInt64),
+  (userVersion,	(Ctor<4>),		UInt64),
+  (oldHandle,	(Ctor<5>),		Bytes),
+  (newHandle,	(Ctor<6>),		Bytes),
+  (credentialID,	(Ctor<7>),	Bytes),
+  (publicKey,	(Ctor<8>),		Bytes),
+  (signCount,	(Ctor<9>),		UInt32),
+  (created,		(Ctor<10>),	Int64),
+  (backupEligible,	(Ctor<11>),	Bool),
+  (backedUp,		(Ctor<12>),	Bool),
+  (label,		(Ctor<13>),	String),
+  (beforeGrant,	(Ctor<14>),		UDT),
+  (beforeUser,	(Ctor<15>),		UDT));
 
 ZumExtern int recoveryPrepare(
   const Grant &, const User &, ZuBSpan bindingDigest, RegistrationInput &,
@@ -1057,33 +1057,33 @@ struct CodeFamily : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, CodeFamily,
-  (((codeID),		(Ctor<0>)),				Bytes),
-  (((codeDigest),	(Ctor<1>)),				Bytes),
-  (((familyID),		(Ctor<2>)),				Bytes),
-  (((issuer),		(Ctor<3>)),				String),
-  (((appID),		(Ctor<4>)),				UInt64),
-  (((userID),		(Ctor<5>)),				UInt64),
-  (((clientID),		(Ctor<6>)),				String),
-  (((credentialID),	(Ctor<7>)),				Bytes),
-  (((audience),		(Ctor<8>)),				String),
-  (((requestedRoleIDs), (Ctor<9>)),				UInt64Vec),
-  (((roleIDs),		(Ctor<10>)),				UInt64Vec),
-  (((actions),		(Ctor<11>)),				UDT),
-  (((digest),		(Ctor<12>)),				Bytes),
-  (((authVersion),	(Ctor<13>)),				UInt64),
-  (((userVersion),	(Ctor<14>, Deflt<1>)),			UInt64),
-  (((authTime),		(Ctor<15>)),				Int64),
-  (((created),		(Ctor<16>)),				Int64),
-  (((expires),		(Ctor<17>)),				Int64),
-  (((scope),		(Ctor<18>)),				String),
-  (((nonce),		(Ctor<19>)),				String),
-  (((authorityProviderID), (Ctor<20>)),				UInt64),
-  (((policyVersion),	(Ctor<21>)),				UInt64),
-  (((evidenceVersion),	(Ctor<22>)),				UInt64),
-  (((authoritySource),	(Ctor<23>, Enum<UserSource::Map>)),	Int8),
-  (((beforeGrant),	(Ctor<24>)),				UDT),
-  (((clientVersion),	(Ctor<25>)),				UInt64),
-  (((assignmentVersion), (Ctor<26>)),				UInt64));
+  (codeID,		(Ctor<0>),				Bytes),
+  (codeDigest,	(Ctor<1>),					Bytes),
+  (familyID,		(Ctor<2>),				Bytes),
+  (issuer,		(Ctor<3>),				String),
+  (appID,		(Ctor<4>),				UInt64),
+  (userID,		(Ctor<5>),				UInt64),
+  (clientID,		(Ctor<6>),				String),
+  (credentialID,	(Ctor<7>),				Bytes),
+  (audience,		(Ctor<8>),				String),
+  (requestedRoleIDs, (Ctor<9>),					UInt64Vec),
+  (roleIDs,		(Ctor<10>),				UInt64Vec),
+  (actions,		(Ctor<11>),				UDT),
+  (digest,		(Ctor<12>),				Bytes),
+  (authVersion,	(Ctor<13>),					UInt64),
+  (userVersion,	(Ctor<14>, Deflt<1>),				UInt64),
+  (authTime,		(Ctor<15>),				Int64),
+  (created,		(Ctor<16>),				Int64),
+  (expires,		(Ctor<17>),				Int64),
+  (scope,		(Ctor<18>),				String),
+  (nonce,		(Ctor<19>),				String),
+  (authorityProviderID, (Ctor<20>),				UInt64),
+  (policyVersion,	(Ctor<21>),				UInt64),
+  (evidenceVersion,	(Ctor<22>),				UInt64),
+  (authoritySource,	(Ctor<23>, Enum<UserSource::Map>),	Int8),
+  (beforeGrant,	(Ctor<24>),					UDT),
+  (clientVersion,	(Ctor<25>),				UInt64),
+  (assignmentVersion, (Ctor<26>),				UInt64));
 
 ZumExtern bool codeFamilyPrepare(
   Ztls::Random &, const Grant &, ZuBSpan codeDigest,
@@ -1330,18 +1330,18 @@ struct AppEnrollment : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, AppEnrollment,
-  (((coreAppID),	(Ctor<0>)),	UInt64),
-  (((appID),		(Ctor<1>)),	UInt64),
-  (((appName),		(Ctor<2>)),	String),
-  (((appLabel),		(Ctor<3>)),	String),
-  (((audience),		(Ctor<4>)),	String),
-  (((signKey),		(Ctor<5>)),	UDT),
-  (((clientID),		(Ctor<6>)),	String),
-  (((secretDigest),	(Ctor<7>)),	Bytes),
-  (((created),		(Ctor<8>)),	Int64),
-  (((catalogPublishOp), (Ctor<9>)),	UInt32),
-  (((operationQueryOp), (Ctor<10>)),	UInt32),
-  (((request),		(Ctor<11>)),	UDT));
+  (coreAppID,	(Ctor<0>),		UInt64),
+  (appID,		(Ctor<1>),	UInt64),
+  (appName,		(Ctor<2>),	String),
+  (appLabel,		(Ctor<3>),	String),
+  (audience,		(Ctor<4>),	String),
+  (signKey,		(Ctor<5>),	UDT),
+  (clientID,		(Ctor<6>),	String),
+  (secretDigest,	(Ctor<7>),	Bytes),
+  (created,		(Ctor<8>),	Int64),
+  (catalogPublishOp, (Ctor<9>),		UInt32),
+  (operationQueryOp, (Ctor<10>),	UInt32),
+  (request,		(Ctor<11>),	UDT));
 
 struct ExternalProjection : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -1468,13 +1468,13 @@ struct ExternalProjection : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, ExternalProjection,
-  (((providerID),	(Ctor<0>)),	UInt64),
-  (((issuer),		(Ctor<1>)),	String),
-  (((subject),		(Ctor<2>)),	String),
-  (((userID),		(Ctor<3>)),	UInt64),
-  (((name),		(Ctor<4>)),	String),
-  (((handle),		(Ctor<5>)),	Bytes),
-  (((created),		(Ctor<6>)),	Int64));
+  (providerID,	(Ctor<0>),		UInt64),
+  (issuer,		(Ctor<1>),	String),
+  (subject,		(Ctor<2>),	String),
+  (userID,		(Ctor<3>),	UInt64),
+  (name,		(Ctor<4>),	String),
+  (handle,		(Ctor<5>),	Bytes),
+  (created,		(Ctor<6>),	Int64));
 
 // Keep the app reserved through action publication: failed creation restores
 // its allocation/version snapshot before the app becomes available again.
@@ -1632,15 +1632,15 @@ struct AppActionAdd : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, AppActionAdd,
-  (((appID),		(Ctor<0>)),	UInt64),
-  (((actionID),		(Ctor<1>)),	UInt32),
-  (((name),		(Ctor<2>)),	String),
-  (((label),		(Ctor<3>)),	String),
-  (((created),		(Ctor<4>)),	Int64),
-  (((oldAppVersion),	(Ctor<5>)),	UInt64),
-  (((oldAuthVersion),	(Ctor<6>)),	UInt64),
-  (((oldUpdated),	(Ctor<7>)),	Int64),
-  (((request),		(Ctor<8>)),	UDT));
+  (appID,		(Ctor<0>),	UInt64),
+  (actionID,		(Ctor<1>),	UInt32),
+  (name,		(Ctor<2>),	String),
+  (label,		(Ctor<3>),	String),
+  (created,		(Ctor<4>),	Int64),
+  (oldAppVersion,	(Ctor<5>),	UInt64),
+  (oldAuthVersion,	(Ctor<6>),	UInt64),
+  (oldUpdated,	(Ctor<7>),		Int64),
+  (request,		(Ctor<8>),	UDT));
 
 // Both role and state changes use this transaction so neither can write through
 // the other's assignment/application reservation.
@@ -1799,22 +1799,22 @@ struct AssignmentChange : public ZdbSagaBase<DBContext> {
 };
 
 ZfbStruct(ZumAPI, AssignmentChange,
-  (((appID),		(Ctor<0>)),			UInt64),
-  (((userID),		(Ctor<1>)),			UInt64),
-  (((oldRoles),		(Ctor<2>)),			UInt64Vec),
-  (((newRoles),		(Ctor<3>)),			UInt64Vec),
-  (((oldState),		(Ctor<4>, Enum<State::Map>)),	Int8),
-  (((newState),		(Ctor<5>, Enum<State::Map>)),	Int8),
-  (((version),		(Ctor<6>)),			UInt64),
-  (((authVersion),	(Ctor<7>)),			UInt64),
-  (((oldUpdated),	(Ctor<8>)),			Int64),
-  (((updated),		(Ctor<9>)),			Int64),
-  (((appVersion),	(Ctor<10>)),			UInt64),
-  (((appAuthVersion),	(Ctor<11>)),			UInt64),
-  (((appUpdated),	(Ctor<12>)),			Int64),
-  (((request),		(Ctor<13>)),			UDT),
-  (((assignRoles),	(Ctor<14>)),			Bool),
-  (((ifMatch),		(Ctor<15>)),			String));
+  (appID,		(Ctor<0>),			UInt64),
+  (userID,		(Ctor<1>),			UInt64),
+  (oldRoles,		(Ctor<2>),			UInt64Vec),
+  (newRoles,		(Ctor<3>),			UInt64Vec),
+  (oldState,		(Ctor<4>, Enum<State::Map>),	Int8),
+  (newState,		(Ctor<5>, Enum<State::Map>),	Int8),
+  (version,		(Ctor<6>),			UInt64),
+  (authVersion,	(Ctor<7>),				UInt64),
+  (oldUpdated,	(Ctor<8>),				Int64),
+  (updated,		(Ctor<9>),			Int64),
+  (appVersion,	(Ctor<10>),				UInt64),
+  (appAuthVersion,	(Ctor<11>),			UInt64),
+  (appUpdated,	(Ctor<12>),				Int64),
+  (request,		(Ctor<13>),			UDT),
+  (assignRoles,	(Ctor<14>),				Bool),
+  (ifMatch,		(Ctor<15>),			String));
 
 struct AssignmentAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -1899,10 +1899,10 @@ struct AssignmentAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, AssignmentAdd,
-  (((appID), (Ctor<0>)),	UInt64),
-  (((userID), (Ctor<1>)),	UInt64),
-  (((created), (Ctor<2>)),	Int64),
-  (((request), (Ctor<3>)),	UDT));
+  (appID, (Ctor<0>),		UInt64),
+  (userID, (Ctor<1>),		UInt64),
+  (created, (Ctor<2>),		Int64),
+  (request, (Ctor<3>),		UDT));
 
 struct RoleEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -1995,15 +1995,15 @@ struct RoleEdit : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, RoleEdit,
-  (((app), (Ctor<0>)),				UDT),
-  (((before), (Ctor<1>)),			UDT),
-  (((actionIDs), (Ctor<2>)),			UInt32Vec),
-  (((ifMatch), (Ctor<3>)),			String),
-  (((updated), (Ctor<4>)),			Int64),
-  (((request), (Ctor<5>)),			UDT),
-  (((kind), (Ctor<6>)),				Int8),
-  (((label), (Ctor<7>)),			String),
-  (((state), (Ctor<8>, Enum<State::Map>)),	Int8));
+  (app, (Ctor<0>),				UDT),
+  (before, (Ctor<1>),				UDT),
+  (actionIDs, (Ctor<2>),			UInt32Vec),
+  (ifMatch, (Ctor<3>),				String),
+  (updated, (Ctor<4>),				Int64),
+  (request, (Ctor<5>),				UDT),
+  (kind, (Ctor<6>),				Int8),
+  (label, (Ctor<7>),				String),
+  (state, (Ctor<8>, Enum<State::Map>),		Int8));
 
 struct ActionEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2076,12 +2076,12 @@ struct ActionEdit : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ActionEdit,
-  (((app), (Ctor<0>)),				UDT),
-  (((before), (Ctor<1>)),			UDT),
-  (((ifMatch), (Ctor<2>)),			String),
-  (((updated), (Ctor<3>)),			Int64),
-  (((request), (Ctor<4>)),			UDT),
-  (((state), (Ctor<5>, Enum<State::Map>)),	Int8));
+  (app, (Ctor<0>),				UDT),
+  (before, (Ctor<1>),				UDT),
+  (ifMatch, (Ctor<2>),				String),
+  (updated, (Ctor<3>),				Int64),
+  (request, (Ctor<4>),				UDT),
+  (state, (Ctor<5>, Enum<State::Map>),		Int8));
 
 struct AppChange : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2156,13 +2156,13 @@ struct AppChange : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, AppChange,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((label), (Ctor<2>)),			String),
-  (((updated), (Ctor<3>)),			Int64),
-  (((request), (Ctor<4>)),			UDT),
-  (((stateOnly), (Ctor<5>)),			Bool),
-  (((state), (Ctor<6>, Enum<State::Map>)),	Int8));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (label, (Ctor<2>),				String),
+  (updated, (Ctor<3>),				Int64),
+  (request, (Ctor<4>),				UDT),
+  (stateOnly, (Ctor<5>),			Bool),
+  (state, (Ctor<6>, Enum<State::Map>),		Int8));
 
 struct UserEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2242,15 +2242,15 @@ struct UserEdit : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, UserEdit,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((profile), (Ctor<2>)),			String),
-  (((updated), (Ctor<3>)),			Int64),
-  (((request), (Ctor<4>)),			UDT),
-  (((stateOnly), (Ctor<5>)),			Bool),
-  (((state), (Ctor<6>, Enum<State::Map>)),	Int8),
-  (((email), (Ctor<7>)),			String),
-  (((fields), (Ctor<8>)),			UInt8));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (profile, (Ctor<2>),				String),
+  (updated, (Ctor<3>),				Int64),
+  (request, (Ctor<4>),				UDT),
+  (stateOnly, (Ctor<5>),			Bool),
+  (state, (Ctor<6>, Enum<State::Map>),		Int8),
+  (email, (Ctor<7>),				String),
+  (fields, (Ctor<8>),				UInt8));
 
 struct CredEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2330,13 +2330,13 @@ struct CredEdit : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, CredEdit,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((label), (Ctor<2>)),			String),
-  (((updated), (Ctor<3>)),			Int64),
-  (((request), (Ctor<4>)),			UDT),
-  (((stateOnly), (Ctor<5>)),			Bool),
-  (((state), (Ctor<6>, Enum<State::Map>)),	Int8));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (label, (Ctor<2>),				String),
+  (updated, (Ctor<3>),				Int64),
+  (request, (Ctor<4>),				UDT),
+  (stateOnly, (Ctor<5>),			Bool),
+  (state, (Ctor<6>, Enum<State::Map>),		Int8));
 
 struct ProviderEdit : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2377,14 +2377,14 @@ struct ProviderEdit : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ProviderEdit,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((values), (Ctor<2>)),			UDT),
-  (((updated), (Ctor<4>)),			Int64),
-  (((request), (Ctor<5>)),			UDT),
-  (((stateOnly), (Ctor<6>)),			Bool),
-  (((state), (Ctor<7>, Enum<State::Map>)),	Int8),
-  (((fields), (Ctor<3>)),			UInt8));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (values, (Ctor<2>),				UDT),
+  (updated, (Ctor<4>),				Int64),
+  (request, (Ctor<5>),				UDT),
+  (stateOnly, (Ctor<6>),			Bool),
+  (state, (Ctor<7>, Enum<State::Map>),		Int8),
+  (fields, (Ctor<3>),				UInt8));
 
 ZumAPI bool clientConfigValid(ClientProfile::T, uint8_t, bool, const StringVec &);
 
@@ -2431,15 +2431,15 @@ struct ClientEdit : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ClientEdit,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((values), (Ctor<2>)),			UDT),
-  (((updated), (Ctor<4>)),			Int64),
-  (((request), (Ctor<5>)),			UDT),
-  (((stateOnly), (Ctor<6>)),			Bool),
-  (((state), (Ctor<7>, Enum<State::Map>)),	Int8),
-  (((fields), (Ctor<3>)),			UInt8),
-  (((overlapSeconds), (Ctor<8>)),		UInt32));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (values, (Ctor<2>),				UDT),
+  (updated, (Ctor<4>),				Int64),
+  (request, (Ctor<5>),				UDT),
+  (stateOnly, (Ctor<6>),			Bool),
+  (state, (Ctor<7>, Enum<State::Map>),		Int8),
+  (fields, (Ctor<3>),				UInt8),
+  (overlapSeconds, (Ctor<8>),			UInt32));
 
 struct KeyRetire : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2492,11 +2492,11 @@ struct KeyRetire : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, KeyRetire,
-  (((before), (Ctor<0>)),	UDT),
-  (((ifMatch), (Ctor<1>)),	String),
-  (((retireAfter), (Ctor<2>)),	Int64),
-  (((updated), (Ctor<3>)),	Int64),
-  (((request), (Ctor<4>)),	UDT));
+  (before, (Ctor<0>),		UDT),
+  (ifMatch, (Ctor<1>),		String),
+  (retireAfter, (Ctor<2>),	Int64),
+  (updated, (Ctor<3>),		Int64),
+  (request, (Ctor<4>),		UDT));
 
 struct ClientAccessState : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2538,11 +2538,11 @@ struct ClientAccessState : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ClientAccessState,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((updated), (Ctor<2>)),			Int64),
-  (((request), (Ctor<3>)),			UDT),
-  (((state), (Ctor<4>, Enum<State::Map>)),	Int8));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (updated, (Ctor<2>),				Int64),
+  (request, (Ctor<3>),				UDT),
+  (state, (Ctor<4>, Enum<State::Map>),		Int8));
 
 struct AdminAccessState : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2583,11 +2583,11 @@ struct AdminAccessState : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, AdminAccessState,
-  (((before), (Ctor<0>)),			UDT),
-  (((ifMatch), (Ctor<1>)),			String),
-  (((updated), (Ctor<2>)),			Int64),
-  (((request), (Ctor<3>)),			UDT),
-  (((state), (Ctor<4>, Enum<State::Map>)),	Int8));
+  (before, (Ctor<0>),				UDT),
+  (ifMatch, (Ctor<1>),				String),
+  (updated, (Ctor<2>),				Int64),
+  (request, (Ctor<3>),				UDT),
+  (state, (Ctor<4>, Enum<State::Map>),		Int8));
 
 struct RoleMapDelete : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2649,11 +2649,11 @@ struct RoleMapDelete : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, RoleMapDelete,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((ifMatch), (Ctor<2>)),	String),
-  (((updated), (Ctor<3>)),	Int64),
-  (((request), (Ctor<4>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (ifMatch, (Ctor<2>),		String),
+  (updated, (Ctor<3>),		Int64),
+  (request, (Ctor<4>),		UDT));
 
 struct RoleMapPut : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2707,13 +2707,13 @@ struct RoleMapPut : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, RoleMapPut,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((roleID), (Ctor<2>)),	UInt64),
-  (((ifMatch), (Ctor<3>)),	String),
-  (((ifNoneMatch), (Ctor<4>)),	String),
-  (((updated), (Ctor<5>)),	Int64),
-  (((request), (Ctor<6>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (roleID, (Ctor<2>),		UInt64),
+  (ifMatch, (Ctor<3>),		String),
+  (ifNoneMatch, (Ctor<4>),	String),
+  (updated, (Ctor<5>),		Int64),
+  (request, (Ctor<6>),		UDT));
 
 struct PolicyPut : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2767,13 +2767,13 @@ struct PolicyPut : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, PolicyPut,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((values), (Ctor<2>)),	UDT),
-  (((ifMatch), (Ctor<3>)),	String),
-  (((ifNoneMatch), (Ctor<4>)),	String),
-  (((updated), (Ctor<5>)),	Int64),
-  (((request), (Ctor<6>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (values, (Ctor<2>),		UDT),
+  (ifMatch, (Ctor<3>),		String),
+  (ifNoneMatch, (Ctor<4>),	String),
+  (updated, (Ctor<5>),		Int64),
+  (request, (Ctor<6>),		UDT));
 
 struct ClientAccessPut : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2827,13 +2827,13 @@ struct ClientAccessPut : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ClientAccessPut,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((values), (Ctor<2>)),	UDT),
-  (((ifMatch), (Ctor<3>)),	String),
-  (((ifNoneMatch), (Ctor<4>)),	String),
-  (((updated), (Ctor<5>)),	Int64),
-  (((request), (Ctor<6>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (values, (Ctor<2>),		UDT),
+  (ifMatch, (Ctor<3>),		String),
+  (ifNoneMatch, (Ctor<4>),	String),
+  (updated, (Ctor<5>),		Int64),
+  (request, (Ctor<6>),		UDT));
 
 struct AdminAccessPut : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2887,13 +2887,13 @@ struct AdminAccessPut : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, AdminAccessPut,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((values), (Ctor<2>)),	UDT),
-  (((ifMatch), (Ctor<3>)),	String),
-  (((ifNoneMatch), (Ctor<4>)),	String),
-  (((updated), (Ctor<5>)),	Int64),
-  (((request), (Ctor<6>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (values, (Ctor<2>),		UDT),
+  (ifMatch, (Ctor<3>),		String),
+  (ifNoneMatch, (Ctor<4>),	String),
+  (updated, (Ctor<5>),		Int64),
+  (request, (Ctor<6>),		UDT));
 
 struct ProviderAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2932,10 +2932,10 @@ struct ProviderAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ProviderAdd,
-  (((before), (Ctor<0>)),	UDT),
-  (((values), (Ctor<1>)),	UDT),
-  (((updated), (Ctor<2>)),	Int64),
-  (((request), (Ctor<3>)),	UDT));
+  (before, (Ctor<0>),		UDT),
+  (values, (Ctor<1>),		UDT),
+  (updated, (Ctor<2>),		Int64),
+  (request, (Ctor<3>),		UDT));
 
 struct RoleAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -2984,11 +2984,11 @@ struct RoleAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, RoleAdd,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((values), (Ctor<2>)),	UDT),
-  (((updated), (Ctor<3>)),	Int64),
-  (((request), (Ctor<4>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (values, (Ctor<2>),		UDT),
+  (updated, (Ctor<3>),		Int64),
+  (request, (Ctor<4>),		UDT));
 
 struct UserInvite : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -3102,12 +3102,12 @@ struct UserInvite : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, UserInvite,
-  (((before), (Ctor<0>)),	UDT),
-  (((values), (Ctor<1>)),	UDT),
-  (((updated), (Ctor<3>)),	Int64),
-  (((request), (Ctor<4>)),	UDT),
-  (((grant), (Ctor<2>)),	UDT),
-  (((external), (Ctor<5>)),	UDT));
+  (before, (Ctor<0>),		UDT),
+  (values, (Ctor<1>),		UDT),
+  (updated, (Ctor<3>),		Int64),
+  (request, (Ctor<4>),		UDT),
+  (grant, (Ctor<2>),		UDT),
+  (external, (Ctor<5>),		UDT));
 
 struct ClientAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -3156,11 +3156,11 @@ struct ClientAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, ClientAdd,
-  (((app), (Ctor<0>)),		UDT),
-  (((before), (Ctor<1>)),	UDT),
-  (((values), (Ctor<2>)),	UDT),
-  (((updated), (Ctor<3>)),	Int64),
-  (((request), (Ctor<4>)),	UDT));
+  (app, (Ctor<0>),		UDT),
+  (before, (Ctor<1>),		UDT),
+  (values, (Ctor<2>),		UDT),
+  (updated, (Ctor<3>),		Int64),
+  (request, (Ctor<4>),		UDT));
 
 struct KeyAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -3212,10 +3212,10 @@ struct KeyAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, KeyAdd,
-  (((before), (Ctor<0>)),	UDT),
-  (((values), (Ctor<1>)),	UDT),
-  (((updated), (Ctor<2>)),	Int64),
-  (((request), (Ctor<3>)),	UDT));
+  (before, (Ctor<0>),		UDT),
+  (values, (Ctor<1>),		UDT),
+  (updated, (Ctor<2>),		Int64),
+  (request, (Ctor<3>),		UDT));
 
 } // namespace Zum
 

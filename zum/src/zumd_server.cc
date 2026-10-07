@@ -28,8 +28,8 @@ struct PasskeyStartReq {
   String capability;
 };
 ZfStruct(, (PasskeyStartReq, JSON),
-  (((purpose),		(Required)),	String),
-  (((capability),	(JSON::Opt)),	String));
+  (purpose,		(Required),	String),
+  (capability,	(JSON::Opt),		String));
 struct PasskeyStartTypes {
   using Keys = ZuStringTL<"enrollment", "bootstrap", "add", "recovery">;
 };
@@ -39,26 +39,26 @@ struct Ceremony {
   ZfJSON::Union<> options;
 };
 ZfStruct(, (Ceremony, JSON),
-  (((ceremony),		(Required)),	String),
-  (((options),		(Required)),	UDT));
+  (ceremony,		(Required),	String),
+  (options,		(Required),	UDT));
 
 struct Authorization {
   String authorizationURL;
   uint64_t expiresIn = 0;
 };
 ZfStruct(, (Authorization, JSON),
-  (((authorizationURL),	(Required)),	String),
-  (((expiresIn),	(Required)),	UInt64));
+  (authorizationURL,	(Required),	String),
+  (expiresIn,	(Required),		UInt64));
 
 struct Status { String status; };
 ZfStruct(, (Status, JSON),
-  (((status),		(Required)),	String));
+  (status,		(Required),	String));
 struct OK { bool ok = false; };
 ZfStruct(, (OK, JSON),
-  (((ok),		(Required)),	Bool));
+  (ok,		(Required),		Bool));
 struct BearerErrorBody { String error; };
 ZfStruct(, (BearerErrorBody, JSON),
-  (((error),		(Required)),	String));
+  (error,		(Required),	String));
 
 template <typename T>
 static String serverJSON(T value)

@@ -1829,9 +1829,9 @@ struct StoreCf {
 };
 
 ZfStruct(ZdbPQAPI, (StoreCf, Cf),
-  (((thread), (Mutable, Required)),	String),
-  (((connect), (Mutable, Required)),	String),
-  (((replicated), (Mutable)),		Bool));
+  (thread, (Mutable, Required),		String),
+  (connect, (Mutable, Required),	String),
+  (replicated, (Mutable),		Bool));
 
 class Store : public Zdb_::Store {
 public:

@@ -22,9 +22,12 @@
 // that are injected into the ZuFieldProp namespace
 //
 // a Field is of the form:
-// (((Accessor)[, (Props...)]), Type)
+// (Accessor, Props, Type)
 //
-// Example: (((id, Rd), (Keys<0>, Ctor<0>, Deflt<"default"_z>)),	String)
+// a simple Accessor is a bare field ID; compound accessors are parenthesized
+// Props is a parenthesized property list, or empty; its position is required
+//
+// Example: ((id, Rd), (Keys<0>, Ctor<0>, Deflt<"default"_z>),	String)
 // Meaning: Read-only string field named "id" with a default
 //   value of "default" that is also the containing object's zeroth
 //   constructor parameter
@@ -1779,7 +1782,8 @@ inline bool ZfFieldLimit(T &v) {
   } else {
     if (ZuCmp<T>::null(v)) return true;
     using Range = ZuFieldProp::GetRange<Props>;
-    if (v < Range::minimum() || v > Range::maximum()) {
+    if ((!ZuCmp<T>::null(Range::minimum()) && v < Range::minimum()) ||
+	(!ZuCmp<T>::null(Range::maximum()) && v > Range::maximum())) {
       v = ZuCmp<T>::null();
       return false;
     }
@@ -3372,9 +3376,9 @@ struct ZfField_DateTimeVec<Base, false> :
   }
 };
 
-#define ZfField_BaseID__(ID, ...) ID
-#define ZfField_BaseID_(Axor, ...) ZuPP_Defer(ZfField_BaseID__)Axor
-#define ZfField_BaseID(Base) ZuPP_Defer(ZfField_BaseID_)Base
+#define ZfField_AxorID_(ID, ...) ID
+#define ZfField_AxorID(Axor) \
+  ZuPP_Defer(ZfField_AxorID_)(ZuPP_Strip(Axor))
 
 #define ZfField(O, ID) ZfField_##O##_##ID
 
@@ -3385,13 +3389,13 @@ struct ZfField_DateTimeVec<Base, false> :
 #define ZfField_Decl__(O, ID, Base, Type) \
   ZuField_Decl(O, Base) \
   using ZfField(O, ID) = ZfField_##Type<ZuField(O, ID)>;
-#define ZfField_Decl_(O, Base, Type) \
+#define ZfField_Decl_(O, Axor, Props, Type) \
   ZuPP_Defer(ZfField_Decl__)(O, \
-      ZuPP_Eval_(ZfField_BaseID(Base)), Base, Type)
+      ZuPP_Eval_(ZfField_AxorID(Axor)), (Axor, Props), Type)
 #define ZfField_Decl(O, Args) ZuPP_Defer(ZfField_Decl_)(O, ZuPP_Strip(Args))
 
-#define ZfField_Type_(O, Base, ...) \
-  ZuPP_Defer(ZfField)(O, ZuPP_Eval_(ZfField_BaseID(Base)))
+#define ZfField_Type_(O, Axor, Props, Type) \
+  ZuPP_Defer(ZfField)(O, ZuPP_Eval_(ZfField_AxorID(Axor)))
 #define ZfField_Type(O, Args) ZuPP_Defer(ZfField_Type_)(O, ZuPP_Strip(Args))
 
 #define ZfStruct_Render__(API, O, Facet) \

@@ -70,15 +70,15 @@ namespace Curve {
 namespace Data {
 
 struct Header { uint8_t kty; };
-ZfStruct(ZtlsAPI, Header, (((kty), (Mutable)), UInt8));
+ZfStruct(ZtlsAPI, Header, (kty, (Mutable), UInt8));
 ZfStructRender(ZtlsAPI, Header, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)));
 
 struct EC2PK { uint8_t kty, crv; ZuBSpan x, y; };
 ZfStruct(ZtlsAPI, EC2PK,
-  (((kty), (Mutable)),	UInt8),
-  (((crv), (Mutable)),	UInt8),
-  (((x), (Mutable)),	Bytes),
-  (((y), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (crv, (Mutable),	UInt8),
+  (x, (Mutable),	Bytes),
+  (y, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, EC2PK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (crv, (CBOR::ID<"-1">, CBOR::IntID)),
@@ -87,11 +87,11 @@ ZfStructRender(ZtlsAPI, EC2PK, CBOR,
 
 struct ES256PK { uint8_t kty; int8_t alg; uint8_t crv; ZuBSpan x, y; };
 ZfStruct(ZtlsAPI, ES256PK,
-  (((kty), (Mutable)),	UInt8),
-  (((alg), (Mutable)),	Int8),
-  (((crv), (Mutable)),	UInt8),
-  (((x), (Mutable)),	Bytes),
-  (((y), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (alg, (Mutable),	Int8),
+  (crv, (Mutable),	UInt8),
+  (x, (Mutable),	Bytes),
+  (y, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, ES256PK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (alg, (CBOR::ID<"3">, CBOR::IntID)),
@@ -101,11 +101,11 @@ ZfStructRender(ZtlsAPI, ES256PK, CBOR,
 
 struct EC2SK { uint8_t kty, crv; ZuBSpan x, y, d; };
 ZfStruct(ZtlsAPI, EC2SK,
-  (((kty), (Mutable)),	UInt8),
-  (((crv), (Mutable)),	UInt8),
-  (((x), (Mutable)),	Bytes),
-  (((y), (Mutable)),	Bytes),
-  (((d), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (crv, (Mutable),	UInt8),
+  (x, (Mutable),	Bytes),
+  (y, (Mutable),	Bytes),
+  (d, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, EC2SK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (crv, (CBOR::ID<"-1">, CBOR::IntID)),
@@ -115,9 +115,9 @@ ZfStructRender(ZtlsAPI, EC2SK, CBOR,
 
 struct OKPPK { uint8_t kty, crv; ZuBSpan x; };
 ZfStruct(ZtlsAPI, OKPPK,
-  (((kty), (Mutable)),	UInt8),
-  (((crv), (Mutable)),	UInt8),
-  (((x), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (crv, (Mutable),	UInt8),
+  (x, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, OKPPK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (crv, (CBOR::ID<"-1">, CBOR::IntID)),
@@ -125,10 +125,10 @@ ZfStructRender(ZtlsAPI, OKPPK, CBOR,
 
 struct OKPSK { uint8_t kty, crv; ZuBSpan x, d; };
 ZfStruct(ZtlsAPI, OKPSK,
-  (((kty), (Mutable)),	UInt8),
-  (((crv), (Mutable)),	UInt8),
-  (((x), (Mutable)),	Bytes),
-  (((d), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (crv, (Mutable),	UInt8),
+  (x, (Mutable),	Bytes),
+  (d, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, OKPSK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (crv, (CBOR::ID<"-1">, CBOR::IntID)),
@@ -137,9 +137,9 @@ ZfStructRender(ZtlsAPI, OKPSK, CBOR,
 
 struct RSAPK { uint8_t kty; ZuBSpan n, e; };
 ZfStruct(ZtlsAPI, RSAPK,
-  (((kty), (Mutable)),	UInt8),
-  (((n), (Mutable)),	Bytes),
-  (((e), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (n, (Mutable),	Bytes),
+  (e, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, RSAPK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (n, (CBOR::ID<"-1">, CBOR::IntID)),
@@ -147,15 +147,15 @@ ZfStructRender(ZtlsAPI, RSAPK, CBOR,
 
 struct RSASK { uint8_t kty; ZuBSpan n, e, d, p, q, dp, dq, qi; };
 ZfStruct(ZtlsAPI, RSASK,
-  (((kty), (Mutable)),	UInt8),
-  (((n), (Mutable)),	Bytes),
-  (((e), (Mutable)),	Bytes),
-  (((d), (Mutable)),	Bytes),
-  (((p), (Mutable)),	Bytes),
-  (((q), (Mutable)),	Bytes),
-  (((dp), (Mutable)),	Bytes),
-  (((dq), (Mutable)),	Bytes),
-  (((qi), (Mutable)),	Bytes));
+  (kty, (Mutable),	UInt8),
+  (n, (Mutable),	Bytes),
+  (e, (Mutable),	Bytes),
+  (d, (Mutable),	Bytes),
+  (p, (Mutable),	Bytes),
+  (q, (Mutable),	Bytes),
+  (dp, (Mutable),	Bytes),
+  (dq, (Mutable),	Bytes),
+  (qi, (Mutable),	Bytes));
 ZfStructRender(ZtlsAPI, RSASK, CBOR,
   (kty, (CBOR::ID<"1">, CBOR::IntID)),
   (n, (CBOR::ID<"-1">, CBOR::IntID)),

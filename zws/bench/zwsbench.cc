@@ -39,14 +39,14 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((count),    (CLI::Opt<'n'>, CLI::Long<"count">)),	UInt32),
-  (((size),     (CLI::Opt<'s'>, CLI::Long<"size">)),	UInt32),
-  (((warmup),   (CLI::Opt<'w'>, CLI::Long<"warmup">)),	UInt32),
-  (((binary),   (CLI::Long<"binary">)),			Bool),
-  (((control),  (CLI::Long<"control">)),		Bool),
-  (((tls),      (CLI::Long<"tls">)),			Bool),
-  (((txOwner),  (CLI::Long<"tx-owner">)),		Bool),
-  (((help),     (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
+  (count,    (CLI::Opt<'n'>, CLI::Long<"count">),	UInt32),
+  (size,     (CLI::Opt<'s'>, CLI::Long<"size">),	UInt32),
+  (warmup,   (CLI::Opt<'w'>, CLI::Long<"warmup">),	UInt32),
+  (binary,   (CLI::Long<"binary">),			Bool),
+  (control,  (CLI::Long<"control">),			Bool),
+  (tls,      (CLI::Long<"tls">),			Bool),
+  (txOwner,  (CLI::Long<"tx-owner">),			Bool),
+  (help,     (CLI::Flag<'h'>, CLI::Long<"help">),	Bool));
 
 void usage(int code = 1)
 {

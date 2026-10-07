@@ -86,46 +86,46 @@ struct AdminError {
   String correlationID;
 };
 ZfStruct(, (AdminError, JSON),
-  (((error),		(Required)),					String),
-  (((message),		(Required)),					String),
-  (((correlationID),	(JSON::ID<"correlation_id">, Required)),	String));
+  (error,		(Required),					String),
+  (message,		(Required),					String),
+  (correlationID,	(JSON::ID<"correlation_id">, Required),		String));
 struct AdminETagItem { String etag; };
 ZfStruct(, (AdminETagItem, JSON),
-  (((etag),		(Required)),	String));
+  (etag,		(Required),	String));
 struct AdminETagReply { AdminETagItem item; };
 ZfStruct(, (AdminETagReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminAssignmentItem {
   AppID appID = 0;
   UserID userID = 0;
   String etag;
 };
 ZfStruct(, (AdminAssignmentItem, JSON),
-  (((appID),		(JSON::ID<"app_id">, JSON::String<>, Required)),	UInt64),
-  (((userID),		(JSON::ID<"user_id">, JSON::String<>, Required)),	UInt64),
-  (((etag),		(Required)),						String));
+  (appID,		(JSON::ID<"app_id">, JSON::String<>, Required),		UInt64),
+  (userID,		(JSON::ID<"user_id">, JSON::String<>, Required),	UInt64),
+  (etag,		(Required),						String));
 struct AdminAssignmentReply { AdminAssignmentItem item; };
 ZfStruct(, (AdminAssignmentReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminRemovedItem { uint32_t removed = 0; };
 ZfStruct(, (AdminRemovedItem, JSON),
-  (((removed),		(Required)),	UInt32));
+  (removed,		(Required),	UInt32));
 struct AdminRevokedItem { uint32_t revoked = 0; };
 ZfStruct(, (AdminRevokedItem, JSON),
-  (((revoked),		(Required)),	UInt32));
+  (revoked,		(Required),	UInt32));
 struct AdminRemovedReply { AdminRemovedItem item; };
 ZfStruct(, (AdminRemovedReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminRevokedReply { AdminRevokedItem item; };
 ZfStruct(, (AdminRevokedReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminActionItem { ActionID id = 0; String etag; };
 ZfStruct(, (AdminActionItem, JSON),
-  (((id),		(Required)),	UInt32),
-  (((etag),		(Required)),	String));
+  (id,		(Required),		UInt32),
+  (etag,		(Required),	String));
 struct AdminActionReply { AdminActionItem item; };
 ZfStruct(, (AdminActionReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminEnrollItem {
   AppID appID = 0;
   String clientID;
@@ -134,18 +134,18 @@ struct AdminEnrollItem {
   String etag;
 };
 ZfStruct(, (AdminEnrollItem, JSON),
-  (((appID),		(JSON::ID<"app_id">, JSON::String<>, Required)),	UInt64),
-  (((clientID),		(JSON::ID<"client_id">, Required)),			String),
-  (((clientSecret),	(JSON::ID<"client_secret">, JSON::Opt)),		String),
-  (((issuer),		(Required)),						String),
-  (((etag),		(Required)),						String));
+  (appID,		(JSON::ID<"app_id">, JSON::String<>, Required),		UInt64),
+  (clientID,		(JSON::ID<"client_id">, Required),			String),
+  (clientSecret,	(JSON::ID<"client_secret">, JSON::Opt),			String),
+  (issuer,		(Required),						String),
+  (etag,		(Required),						String));
 struct AdminEnrollReply { AdminEnrollItem item; };
 ZfStruct(, (AdminEnrollReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 using AdminJSON = ZfJSON::Union<>;
 struct AdminNullReply { AdminJSON item; };
 ZfStruct(, (AdminNullReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 ZuDerive(AdminJSONArray,
   (ZtArray<AdminJSON, ZtArrayHeapID<"Zum.Admin.JSON">>));
 struct AdminJSONVec : public AdminJSONArray {
@@ -157,16 +157,16 @@ struct AdminItemsReply {
   String nextCursor;
 };
 ZfStruct(, (AdminItemsReply, JSON),
-  (((items),		(Required)),				UDT),
-  (((nextCursor),	(JSON::ID<"next_cursor">, JSON::Opt)),	String));
+  (items,		(Required),				UDT),
+  (nextCursor,	(JSON::ID<"next_cursor">, JSON::Opt),		String));
 struct AdminCatalogItem { AppID appID = 0; uint64_t revision = 0; String etag; };
 ZfStruct(, (AdminCatalogItem, JSON),
-  (((appID),		(JSON::ID<"app_id">, JSON::String<>, Required)),	UInt64),
-  (((revision),		(JSON::String<>, Required)),				UInt64),
-  (((etag),		(Required)),						String));
+  (appID,		(JSON::ID<"app_id">, JSON::String<>, Required),		UInt64),
+  (revision,		(JSON::String<>, Required),				UInt64),
+  (etag,		(Required),						String));
 struct AdminCatalogReply { AdminCatalogItem item; };
 ZfStruct(, (AdminCatalogReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminIssuerItem {
   String id;
   uint32_t schemaVersion = 0;
@@ -174,10 +174,10 @@ struct AdminIssuerItem {
   String bootstrapPhase;
 };
 ZfStruct(, (AdminIssuerItem, JSON),
-  (((id),		(Required)),						String),
-  (((schemaVersion),	(JSON::ID<"schema_version">, Required)),		UInt32),
-  (((coreAppID),	(JSON::ID<"core_app_id">, JSON::String<>, Required)),	UInt64),
-  (((bootstrapPhase),	(JSON::ID<"bootstrap_phase">, Required)),		String));
+  (id,		(Required),							String),
+  (schemaVersion,	(JSON::ID<"schema_version">, Required),			UInt32),
+  (coreAppID,	(JSON::ID<"core_app_id">, JSON::String<>, Required),		UInt64),
+  (bootstrapPhase,	(JSON::ID<"bootstrap_phase">, Required),		String));
 ZuDerive(AdminIssuerArray, (ZtArray<AdminIssuerItem,
   ZtArrayHeapID<"Zum.Admin.Issuers">>));
 struct AdminIssuerVec : public AdminIssuerArray {
@@ -186,7 +186,7 @@ struct AdminIssuerVec : public AdminIssuerArray {
 };
 struct AdminIssuerReply { AdminIssuerVec items; };
 ZfStruct(, (AdminIssuerReply, JSON),
-  (((items),		(Required)),	UDT));
+  (items,		(Required),	UDT));
 struct AdminOperationItem {
   unsigned id = 0;
   String name;
@@ -195,11 +195,11 @@ struct AdminOperationItem {
   String path;
 };
 ZfStruct(, (AdminOperationItem, JSON),
-  (((id),		(Required)),	UInt32),
-  (((name),		(Required)),	String),
-  (((action),		(Required)),	String),
-  (((method),		(Required)),	String),
-  (((path),		(Required)),	String));
+  (id,		(Required),		UInt32),
+  (name,		(Required),	String),
+  (action,		(Required),	String),
+  (method,		(Required),	String),
+  (path,		(Required),	String));
 ZuDerive(AdminOperationArray, (ZtArray<AdminOperationItem,
   ZtArrayHeapID<"Zum.Admin.Operations">>));
 struct AdminOperationVec : public AdminOperationArray {
@@ -211,27 +211,27 @@ struct AdminOperationsReply {
   String nextCursor;
 };
 ZfStruct(, (AdminOperationsReply, JSON),
-  (((items),		(Required)),				UDT),
-  (((nextCursor),	(JSON::ID<"next_cursor">, JSON::Opt)),	String));
+  (items,		(Required),				UDT),
+  (nextCursor,	(JSON::ID<"next_cursor">, JSON::Opt),		String));
 struct AdminRecoveryItem { UserID id = 0; String recoveryURL; };
 ZfStruct(, (AdminRecoveryItem, JSON),
-  (((id),		(JSON::String<>, Required)),		UInt64),
-  (((recoveryURL),	(JSON::ID<"recovery_url">, Required)),	String));
+  (id,		(JSON::String<>, Required),			UInt64),
+  (recoveryURL,	(JSON::ID<"recovery_url">, Required),		String));
 struct AdminRecoveryReply { AdminRecoveryItem item; };
 ZfStruct(, (AdminRecoveryReply, JSON),
-  (((item),		(Required)),	UDT));
+  (item,		(Required),	UDT));
 struct AdminIdem {
   String operationID;
   String status;
   StringVec resultIDs;
 };
 ZfStruct(, (AdminIdem, JSON),
-  (((operationID),	(JSON::ID<"operation_id">, Required)),	String),
-  (((status),		(Required)),				String),
-  (((resultIDs),	(JSON::ID<"result_ids">, JSON::Opt)),	StringVec));
+  (operationID,	(JSON::ID<"operation_id">, Required),		String),
+  (status,		(Required),				String),
+  (resultIDs,	(JSON::ID<"result_ids">, JSON::Opt),		StringVec));
 struct StateInput { String state; };
 ZfStruct(, (StateInput, JSON),
-  (((state),		(Required)),	String));
+  (state,		(Required),	String));
 
 template <typename T>
 static String adminJSON(T value)
@@ -329,8 +329,8 @@ struct NameInput {
   String label;
 };
 ZfStruct(, (NameInput, JSON),
-  (((name),	(Required)),	String),
-  (((label),	(JSON::Opt)),	String));
+  (name,	(Required),	String),
+  (label,	(JSON::Opt),	String));
 
 struct UserInput {
   String name;
@@ -338,9 +338,9 @@ struct UserInput {
   String email;
 };
 ZfStruct(, (UserInput, JSON),
-  (((name),	(Required)),	String),
-  (((profile),	(JSON::Opt)),	String),
-  (((email),	(JSON::Opt)),	String));
+  (name,	(Required),	String),
+  (profile,	(JSON::Opt),	String),
+  (email,	(JSON::Opt),	String));
 
 struct AppInput {
   String name;
@@ -350,37 +350,37 @@ struct AppInput {
   String audience;
 };
 ZfStruct(, (AppInput, JSON),
-  (((name),		(Required)),					String),
-  (((label),		(JSON::Opt)),					String),
-  (((clientType),	(JSON::ID<"client_type">, JSON::Opt)),		String),
-  (((redirectURIs),	(JSON::ID<"redirect_uris">, JSON::Opt)),	StringVec),
-  (((audience),	(JSON::Opt)),						String));
+  (name,		(Required),					String),
+  (label,		(JSON::Opt),					String),
+  (clientType,	(JSON::ID<"client_type">, JSON::Opt),			String),
+  (redirectURIs,	(JSON::ID<"redirect_uris">, JSON::Opt),		StringVec),
+  (audience,	(JSON::Opt),						String));
 
 struct AssignmentInput {
   UserID userID = 0;
   IDVec roleIDs;
 };
 ZfStruct(, (AssignmentInput, JSON),
-  (((userID),	(JSON::ID<"user_id">, Required, JSON::String<>)),	UInt64),
-  (((roleIDs),	(JSON::ID<"role_ids">, JSON::Opt, JSON::String<>)),	UInt64Vec));
+  (userID,	(JSON::ID<"user_id">, Required, JSON::String<>),	UInt64),
+  (roleIDs,	(JSON::ID<"role_ids">, JSON::Opt, JSON::String<>),	UInt64Vec));
 
 struct RolesInput {
   IDVec roleIDs;
 };
 ZfStruct(, (RolesInput, JSON),
-  (((roleIDs),	(JSON::ID<"role_ids">, Required, JSON::String<>)),	UInt64Vec));
+  (roleIDs,	(JSON::ID<"role_ids">, Required, JSON::String<>),	UInt64Vec));
 
 struct ActionsInput {
   ActionIDVec actionIDs;
 };
 ZfStruct(, (ActionsInput, JSON),
-  (((actionIDs),	(JSON::ID<"action_ids">, Required)),	UInt32Vec));
+  (actionIDs,	(JSON::ID<"action_ids">, Required),		UInt32Vec));
 
 struct RotateInput {
   uint32_t overlapSeconds = 0;
 };
 ZfStruct(, (RotateInput, JSON),
-  (((overlapSeconds),	(JSON::ID<"overlap_seconds">, JSON::Opt)),	UInt32));
+  (overlapSeconds,	(JSON::ID<"overlap_seconds">, JSON::Opt),	UInt32));
 
 struct ClientInput {
   String id;
@@ -393,15 +393,15 @@ struct ClientInput {
   StringVec identityScopes;
 };
 ZfStruct(, (ClientInput, JSON),
-  (((id),		(JSON::Opt)),						String),
-  (((appID),		(JSON::ID<"app_id">, Required, JSON::String<>)),	UInt64),
-  (((label),		(JSON::Opt)),						String),
-  (((profile),		(Required)),						String),
-  (((redirectURIs),	(JSON::ID<"redirect_uris">, JSON::Opt)),		StringVec),
-  (((grants),		(Flags<ClientGrant::Map>,
-    JSON::String<ClientGrant::Fmt>, JSON::Opt)),				UInt8),
-  (((refreshAllowed),	(JSON::ID<"refresh_allowed">, JSON::Opt)),								Bool),
-  (((identityScopes),	(JSON::ID<"identity_scopes">, JSON::Opt)),		StringVec));
+  (id,		(JSON::Opt),							String),
+  (appID,		(JSON::ID<"app_id">, Required, JSON::String<>),		UInt64),
+  (label,		(JSON::Opt),						String),
+  (profile,		(Required),						String),
+  (redirectURIs,	(JSON::ID<"redirect_uris">, JSON::Opt),			StringVec),
+  (grants,		(Flags<ClientGrant::Map>,
+    JSON::String<ClientGrant::Fmt>, JSON::Opt),				UInt8),
+  (refreshAllowed,	(JSON::ID<"refresh_allowed">, JSON::Opt),	Bool),
+  (identityScopes,	(JSON::ID<"identity_scopes">, JSON::Opt),		StringVec));
 
 struct ClientUpdateInput {
   String label;
@@ -413,25 +413,25 @@ struct ClientUpdateFields {
   using Keys = ZuStringTL<"label", "redirect_uris", "grants", "identity_scopes">;
 };
 ZfStruct(, (ClientUpdateInput, JSON),
-  (((label),		(JSON::Opt)),					String),
-  (((redirectURIs),	(JSON::ID<"redirect_uris">, JSON::Opt)),	StringVec),
-  (((grants),		(Flags<ClientGrant::Map>,
-    JSON::String<ClientGrant::Fmt>, JSON::Opt)),			UInt8),
-  (((identityScopes),	(JSON::ID<"identity_scopes">, JSON::Opt)),	StringVec));
+  (label,		(JSON::Opt),					String),
+  (redirectURIs,	(JSON::ID<"redirect_uris">, JSON::Opt),		StringVec),
+  (grants,		(Flags<ClientGrant::Map>,
+    JSON::String<ClientGrant::Fmt>, JSON::Opt),			UInt8),
+  (identityScopes,	(JSON::ID<"identity_scopes">, JSON::Opt),	StringVec));
 
 struct ClientAccessInput {
   IDVec roleIDs;
 };
 ZfStruct(, (ClientAccessInput, JSON),
-  (((roleIDs),		(JSON::ID<"role_ids">, Required, JSON::String<>)),	UInt64Vec));
+  (roleIDs,		(JSON::ID<"role_ids">, Required, JSON::String<>),	UInt64Vec));
 
 struct AdminAccessInput {
   ActionIDVec operationIDs;
   IDVec roleIDs;
 };
 ZfStruct(, (AdminAccessInput, JSON),
-  (((operationIDs),	(JSON::ID<"operation_ids">, Required)),			UInt32Vec),
-  (((roleIDs),		(JSON::ID<"role_ids">, Required, JSON::String<>)),	UInt64Vec));
+  (operationIDs,	(JSON::ID<"operation_ids">, Required),			UInt32Vec),
+  (roleIDs,		(JSON::ID<"role_ids">, Required, JSON::String<>),	UInt64Vec));
 
 struct ProviderInput {
   String name;
@@ -443,13 +443,13 @@ struct ProviderInput {
   String claimSource;
 };
 ZfStruct(, (ProviderInput, JSON),
-  (((name),		(Required)),					String),
-  (((issuer),		(Required)),					String),
-  (((clientID),		(JSON::ID<"client_id">, Required)),		String),
-  (((clientSecret),	(JSON::ID<"client_secret">, JSON::Opt)),	String),
-  (((scopes),		(Required)),					StringVec),
-  (((roleClaim),	(JSON::ID<"role_claim">, Required)),		String),
-  (((claimSource),	(JSON::ID<"claim_source">, Required)),		String));
+  (name,		(Required),					String),
+  (issuer,		(Required),					String),
+  (clientID,		(JSON::ID<"client_id">, Required),		String),
+  (clientSecret,	(JSON::ID<"client_secret">, JSON::Opt),		String),
+  (scopes,		(Required),					StringVec),
+  (roleClaim,	(JSON::ID<"role_claim">, Required),			String),
+  (claimSource,	(JSON::ID<"claim_source">, Required),			String));
 
 struct ProviderUpdateInput {
   String issuer;
@@ -464,12 +464,12 @@ struct ProviderUpdateFields {
     "role_claim", "claim_source">;
 };
 ZfStruct(, (ProviderUpdateInput, JSON),
-  (((issuer),		(JSON::Opt)),					String),
-  (((clientID),		(JSON::ID<"client_id">, JSON::Opt)),		String),
-  (((clientSecret),	(JSON::ID<"client_secret">, JSON::Opt)),	String),
-  (((scopes),		(JSON::Opt)),					StringVec),
-  (((roleClaim),	(JSON::ID<"role_claim">, JSON::Opt)),		String),
-  (((claimSource),	(JSON::ID<"claim_source">, JSON::Opt)),		String));
+  (issuer,		(JSON::Opt),					String),
+  (clientID,		(JSON::ID<"client_id">, JSON::Opt),		String),
+  (clientSecret,	(JSON::ID<"client_secret">, JSON::Opt),		String),
+  (scopes,		(JSON::Opt),					StringVec),
+  (roleClaim,	(JSON::ID<"role_claim">, JSON::Opt),			String),
+  (claimSource,	(JSON::ID<"claim_source">, JSON::Opt),			String));
 
 struct AuthPolicyInput {
   ProviderID providerID = 0;
@@ -485,29 +485,29 @@ struct AuthPolicyInput {
   String state;
 };
 ZfStruct(, (AuthPolicyInput, JSON),
-  (((providerID),	(JSON::ID<"provider_id">, JSON::Opt, JSON::String<>)),									UInt64),
-  (((localFirst),	(JSON::ID<"local_first">, Required)),	Bool),
-  (((eligibilityMode),	(JSON::ID<"eligibility_mode">, Required)),		String),
-  (((eligibilityClaim),	(JSON::ID<"eligibility_claim">, JSON::Opt)),		String),
-  (((eligibilityValues),(JSON::ID<"eligibility_values">, JSON::Opt)),		StringVec),
-  (((assignmentMaxAge),(JSON::ID<"assignment_max_age">, Required)),		UInt32),
-  (((sessionIdle),	(JSON::ID<"session_idle">, Required)),			UInt32),
-  (((sessionAbsolute),	(JSON::ID<"session_absolute">, Required)),		UInt32),
-  (((tokenLifetime),	(JSON::ID<"token_lifetime">, Required)),		UInt32),
-  (((consentPolicy),	(JSON::ID<"consent_policy">, Required)),		String),
-  (((state),		(JSON::Opt)),						String));
+  (providerID,	(JSON::ID<"provider_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (localFirst,	(JSON::ID<"local_first">, Required),		Bool),
+  (eligibilityMode,	(JSON::ID<"eligibility_mode">, Required),		String),
+  (eligibilityClaim,	(JSON::ID<"eligibility_claim">, JSON::Opt),		String),
+  (eligibilityValues,(JSON::ID<"eligibility_values">, JSON::Opt),		StringVec),
+  (assignmentMaxAge,(JSON::ID<"assignment_max_age">, Required),			UInt32),
+  (sessionIdle,	(JSON::ID<"session_idle">, Required),				UInt32),
+  (sessionAbsolute,	(JSON::ID<"session_absolute">, Required),		UInt32),
+  (tokenLifetime,	(JSON::ID<"token_lifetime">, Required),			UInt32),
+  (consentPolicy,	(JSON::ID<"consent_policy">, Required),			String),
+  (state,		(JSON::Opt),						String));
 
 struct RoleMapInput { RoleID roleID = 0; };
 ZfStruct(, (RoleMapInput, JSON),
-  (((roleID),		(JSON::ID<"role_id">, Required, JSON::String<>)),	UInt64));
+  (roleID,		(JSON::ID<"role_id">, Required, JSON::String<>),	UInt64));
 
 struct SessionSelector {
   UserID userID = 0;
   uint32_t limit = 0;
 };
 ZfStruct(, (SessionSelector, JSON),
-  (((userID),		(JSON::ID<"user_id">, Required, JSON::String<>)),	UInt64),
-  (((limit),		(Required)),						UInt32));
+  (userID,		(JSON::ID<"user_id">, Required, JSON::String<>),	UInt64),
+  (limit,		(Required),						UInt32));
 
 struct ConsentSelector {
   UserID userID = 0;
@@ -516,10 +516,10 @@ struct ConsentSelector {
   uint32_t limit = 0;
 };
 ZfStruct(, (ConsentSelector, JSON),
-  (((userID),		(JSON::ID<"user_id">, Required, JSON::String<>)),	UInt64),
-  (((clientID),		(JSON::ID<"client_id">, JSON::Opt)),			String),
-  (((appID),		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>)),									UInt64),
-  (((limit),		(Required)),						UInt32));
+  (userID,		(JSON::ID<"user_id">, Required, JSON::String<>),	UInt64),
+  (clientID,		(JSON::ID<"client_id">, JSON::Opt),			String),
+  (appID,		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (limit,		(Required),						UInt32));
 
 struct GrantSelector {
   String id;
@@ -528,18 +528,18 @@ struct GrantSelector {
   uint32_t limit = 0;
 };
 ZfStruct(, (GrantSelector, JSON),
-  (((id),		(JSON::Opt)),	String),
-  (((userID),		(JSON::ID<"user_id">, JSON::Opt, JSON::String<>)),				UInt64),
-  (((appID),		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>)),				UInt64),
-  (((limit),		(Required)),	UInt32));
+  (id,		(JSON::Opt),		String),
+  (userID,		(JSON::ID<"user_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (appID,		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (limit,		(Required),	UInt32));
 
 struct CleanupInput {
   int64_t before = 0;
   uint32_t limit = 0;
 };
 ZfStruct(, (CleanupInput, JSON),
-  (((before),		(JSON::Opt)),	Int64),
-  (((limit),		(Required)),		UInt32));
+  (before,		(JSON::Opt),	Int64),
+  (limit,		(Required),		UInt32));
 
 struct SignKeyInput {
   AppID appID = 0;
@@ -551,17 +551,17 @@ struct SignKeyInput {
   int64_t notBefore = 0;
 };
 ZfStruct(, (SignKeyInput, JSON),
-  (((appID),		(JSON::ID<"app_id">, JSON::String<>, Required)),	UInt64),
-  (((id),		(Required)),						String),
-  (((algorithm),	(Required)),						String),
-  (((providerRef),	(JSON::ID<"provider_ref">, JSON::Opt)),			String),
-  (((publicJwk),	(JSON::ID<"public_jwk">, Required)),			String),
-  (((privateMaterial),	(JSON::ID<"private_material">, JSON::Opt)),		String),
-  (((notBefore),	(JSON::ID<"not_before">, Required)),			Int64));
+  (appID,		(JSON::ID<"app_id">, JSON::String<>, Required),		UInt64),
+  (id,		(Required),							String),
+  (algorithm,	(Required),							String),
+  (providerRef,	(JSON::ID<"provider_ref">, JSON::Opt),				String),
+  (publicJwk,	(JSON::ID<"public_jwk">, Required),				String),
+  (privateMaterial,	(JSON::ID<"private_material">, JSON::Opt),		String),
+  (notBefore,	(JSON::ID<"not_before">, Required),				Int64));
 
 struct RetireInput { int64_t retireAfter = 0; };
 ZfStruct(, (RetireInput, JSON),
-  (((retireAfter),	(JSON::ID<"retire_after">, Required)),	Int64));
+  (retireAfter,	(JSON::ID<"retire_after">, Required),		Int64));
 
 struct CatalogInput {
   CatalogData catalog;
@@ -569,9 +569,9 @@ struct CatalogInput {
   String digest;
 };
 ZfStruct(, (CatalogInput, JSON),
-  (((catalog),		(Required)),			UDT),
-  (((revision),		(Required, JSON::String<>)),	UInt64),
-  (((digest),		(Required)),			String));
+  (catalog,		(Required),			UDT),
+  (revision,		(Required, JSON::String<>),	UInt64),
+  (digest,		(Required),			String));
 
 struct QueryInput {
   enum {
@@ -605,23 +605,23 @@ struct QueryFields {
     "cursor", "limit">;
 };
 ZfStruct(, (QueryInput, URI),
-  (((id),		(Mutable)),				String),
-  (((name),		(Mutable)),				String),
-  (((source),		(Mutable)),				String),
-  (((appID),		(URI::ID<"app_id">, Mutable)),		String),
-  (((userID),		(URI::ID<"user_id">, Mutable)),		String),
-  (((clientID),		(URI::ID<"client_id">, Mutable)),	String),
-  (((providerID),	(URI::ID<"provider_id">, Mutable)),	String),
-  (((actorKind),	(URI::ID<"actor_kind">, Mutable)),	String),
-  (((actorID),		(URI::ID<"actor_id">, Mutable)),	String),
-  (((value),		(Mutable)),				String),
-  (((keyID),		(URI::ID<"key_id">, Mutable)),		String),
-  (((issuer),		(Mutable)),				String),
-  (((subject),		(Mutable)),				String),
-  (((operation),	(Mutable)),				String),
-  (((idempotence),	(Mutable)),				String),
-  (((cursor),		(Mutable)),				String),
-  (((limit),		(Mutable)),			UInt32));
+  (id,		(Mutable),					String),
+  (name,		(Mutable),				String),
+  (source,		(Mutable),				String),
+  (appID,		(URI::ID<"app_id">, Mutable),		String),
+  (userID,		(URI::ID<"user_id">, Mutable),		String),
+  (clientID,		(URI::ID<"client_id">, Mutable),	String),
+  (providerID,	(URI::ID<"provider_id">, Mutable),		String),
+  (actorKind,	(URI::ID<"actor_kind">, Mutable),		String),
+  (actorID,		(URI::ID<"actor_id">, Mutable),		String),
+  (value,		(Mutable),				String),
+  (keyID,		(URI::ID<"key_id">, Mutable),		String),
+  (issuer,		(Mutable),				String),
+  (subject,		(Mutable),				String),
+  (operation,	(Mutable),					String),
+  (idempotence,	(Mutable),					String),
+  (cursor,		(Mutable),				String),
+  (limit,		(Mutable),			UInt32));
 
 // Require a complete framework parse and reject its null sentinel.
 static bool adminUInt(ZuCSpan text, uint64_t &value)
@@ -955,8 +955,8 @@ private:
 	}, [self = ZmRef<AppEdit__>{this}](bool ok) mutable {
 	  if (!self->m_complete) return;
 	  unsigned status = ok ? 200 : self->m_saga->u.cdispatch(
-	    [](auto, const auto &change) -> unsigned {
-	      if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Edit>{})
+	    [](auto I, const auto &change) -> unsigned {
+	      if constexpr (ZuIsSame<typename MSaga::Union::template Type<I>, Edit>{})
 		return change.error ? change.error : 503;
 	      else return 503;
 	    });
@@ -972,8 +972,8 @@ private:
 	ZuIsSame<Edit, ClientAccessPut>{} || ZuIsSame<Edit, AdminAccessPut>{} ||
 	Creation || ZuIsSame<Edit, ClientEdit>{}) {
       if (status == 200) {
-	auto result = m_saga->u.cdispatch([](auto, const auto &change) -> AdminResult {
-	  if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Edit>{}) {
+	auto result = m_saga->u.cdispatch([](auto I, const auto &change) -> AdminResult {
+	  if constexpr (ZuIsSame<typename MSaga::Union::template Type<I>, Edit>{}) {
 	    StringVec ids;
 	    if constexpr (Creation)
 	      ids.push(String{} << change.values.id);
@@ -1039,8 +1039,8 @@ public:
 	}, [self = ZmRef<AssignmentAdd__>{this}](bool ok) mutable {
 	  if (!self->m_complete) return;
 	  unsigned status = ok ? 201 : self->m_saga->u.cdispatch(
-	    [](auto, const auto &add) -> unsigned {
-	      if constexpr (ZuIsSame<ZuDecay<decltype(add)>, AssignmentAdd>{})
+	    [](auto I, const auto &add) -> unsigned {
+	      if constexpr (ZuIsSame<typename MSaga::Union::template Type<I>, AssignmentAdd>{})
 		return add.error;
 	      else return 503;
 	    });
@@ -1296,9 +1296,9 @@ private:
 	}, [self = ZmRef<BulkRevoke__>{this}](bool ok) mutable {
 	  if (self->m_done) return;
 	  if (ok) { self->success_(); return; }
-	  unsigned status = self->m_saga->u.cdispatch([](auto, const auto &change) -> unsigned {
-	    if constexpr (ZuIsSame<ZuDecay<decltype(change)>, Revoke>{} ||
-		ZuIsSame<ZuDecay<decltype(change)>, GrantCleanup>{})
+	  unsigned status = self->m_saga->u.cdispatch([](auto I, const auto &change) -> unsigned {
+	    if constexpr (ZuIsSame<typename MSaga::Union::template Type<I>, Revoke>{} ||
+		ZuIsSame<typename MSaga::Union::template Type<I>, GrantCleanup>{})
 	      return change.error ? change.error : 503;
 	    else return 503;
 	  });
@@ -1739,8 +1739,8 @@ private:
       finish_(200);
       return;
     }
-    unsigned error = m_saga->u.cdispatch([](auto, const auto &change) -> unsigned {
-      if constexpr (ZuIsSame<ZuDecay<decltype(change)>, AssignmentChange>{})
+    unsigned error = m_saga->u.cdispatch([](auto I, const auto &change) -> unsigned {
+      if constexpr (ZuIsSame<typename MSaga::Union::template Type<I>, AssignmentChange>{})
 	return change.error;
       else return 0;
     });

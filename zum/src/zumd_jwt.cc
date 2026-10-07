@@ -29,13 +29,13 @@ struct PublicJWK {
   String y;
 };
 ZfStruct(, (PublicJWK, JSON),
-  (((kid),		(Required)),	String),
-  (((kty),		(Required)),	String),
-  (((crv),		(Required)),	String),
-  (((use),		(Required)),	String),
-  (((alg),		(Required)),	String),
-  (((x),		(Required)),	String),
-  (((y),		(Required)),	String));
+  (kid,		(Required),		String),
+  (kty,		(Required),		String),
+  (crv,		(Required),		String),
+  (use,		(Required),		String),
+  (alg,		(Required),		String),
+  (x,		(Required),		String),
+  (y,		(Required),		String));
 
 static bool keyCoordinate(String &out, ZuBSpan value)
 {
@@ -86,37 +86,37 @@ struct JWTHeaderJSON {
   String kid;
 };
 ZfStruct(, (JWTHeaderJSON, JSON),
-  (((typ),		(Required)),	String),
-  (((alg),		(Required)),	String),
-  (((kid),		(Required)),	String));
+  (typ,		(Required),		String),
+  (alg,		(Required),		String),
+  (kid,		(Required),		String));
 
 ZfStruct(, (AccessClaims, JSON),
-  (((issuerURL),	(JSON::ID<"iss">, Required)),				String),
-  (((subject),		(JSON::ID<"sub">, Required)),				String),
-  (((audience),		(JSON::ID<"aud">, Required)),				String),
-  (((clientID),		(JSON::ID<"client_id">, Required)),			String),
-  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, Required)),	UInt64),
-  (((iat),		(Required)),						Int64),
-  (((nbf),		(Required)),						Int64),
-  (((exp),		(Required)),						Int64),
-  (((jti),		(Required)),						String),
-  (((scope),		(Required)),						String),
-  (((actions),		(Required)),						StringVec),
-  (((authTime),		(JSON::ID<"auth_time">, JSON::Opt)),			Int64),
-  (((amr),		(JSON::Opt)),						StringVec));
+  (issuerURL,	(JSON::ID<"iss">, Required),					String),
+  (subject,		(JSON::ID<"sub">, Required),				String),
+  (audience,		(JSON::ID<"aud">, Required),				String),
+  (clientID,		(JSON::ID<"client_id">, Required),			String),
+  (appID,		(JSON::ID<"zum_app_id">, JSON::String<>, Required),	UInt64),
+  (iat,		(Required),							Int64),
+  (nbf,		(Required),							Int64),
+  (exp,		(Required),							Int64),
+  (jti,		(Required),							String),
+  (scope,		(Required),						String),
+  (actions,		(Required),						StringVec),
+  (authTime,		(JSON::ID<"auth_time">, JSON::Opt),			Int64),
+  (amr,		(JSON::Opt),							StringVec));
 
 ZfStruct(, (IDClaims, JSON),
-  (((issuerURL),	(JSON::ID<"iss">, Required)),			String),
-  (((subject),		(JSON::ID<"sub">, Required)),			String),
-  (((audience),		(JSON::ID<"aud">, Required)),			String),
-  (((iat),		(Required)),					Int64),
-  (((exp),		(Required)),					Int64),
-  (((authTime),		(JSON::ID<"auth_time">, Required)),		Int64),
-  (((amr),		(Required)),					StringVec),
-  (((nonce),		(JSON::Opt)),					String),
-  (((name),		(JSON::Opt)),					String),
-  (((preferredUserName), (JSON::ID<"preferred_username">, JSON::Opt)),	String),
-  (((email),		(JSON::Opt)),					String));
+  (issuerURL,	(JSON::ID<"iss">, Required),				String),
+  (subject,		(JSON::ID<"sub">, Required),			String),
+  (audience,		(JSON::ID<"aud">, Required),			String),
+  (iat,		(Required),						Int64),
+  (exp,		(Required),						Int64),
+  (authTime,		(JSON::ID<"auth_time">, Required),		Int64),
+  (amr,		(Required),						StringVec),
+  (nonce,		(JSON::Opt),					String),
+  (name,		(JSON::Opt),					String),
+  (preferredUserName, (JSON::ID<"preferred_username">, JSON::Opt),	String),
+  (email,		(JSON::Opt),					String));
 
 struct UserInfo {
   String subject;
@@ -125,10 +125,10 @@ struct UserInfo {
   String email;
 };
 ZfStruct(, (UserInfo, JSON),
-  (((subject),		(JSON::ID<"sub">, Required)),			String),
-  (((name),		(JSON::Opt)),					String),
-  (((preferredUserName), (JSON::ID<"preferred_username">, JSON::Opt)),	String),
-  (((email),		(JSON::Opt)),					String));
+  (subject,		(JSON::ID<"sub">, Required),			String),
+  (name,		(JSON::Opt),					String),
+  (preferredUserName, (JSON::ID<"preferred_username">, JSON::Opt),	String),
+  (email,		(JSON::Opt),					String));
 
 bool scopeContains(ZuCSpan scopes, ZuCSpan name)
 {

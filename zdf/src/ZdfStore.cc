@@ -23,7 +23,7 @@ struct StoreCf {
 };
 
 ZfStruct(, (StoreCf, Cf),
-  (((threads), (Mutable)),	StringVec));
+  (threads, (Mutable),		StringVec));
 
 void Store::dbCf(const ZfCf::AnyNode *cf, ZdbCf &dbCf)
 {

@@ -29,9 +29,9 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config),	(CLI::Opt<'c'>, CLI::Long<"config">)),		String),
-  (((help),	(CLI::Flag<'h'>, CLI::Long<"help">)),		Bool),
-  (((version),	(CLI::Flag<'V'>, CLI::Long<"version">)),	Bool));
+  (config,	(CLI::Opt<'c'>, CLI::Long<"config">),		String),
+  (help,	(CLI::Flag<'h'>, CLI::Long<"help">),		Bool),
+  (version,	(CLI::Flag<'V'>, CLI::Long<"version">),		Bool));
 
 static ZmSemaphore done;
 static ZmAtomic<unsigned> interrupted = 0;

@@ -1,5 +1,9 @@
 # TODO
 
+- `zjrpc.md`
+- SBE (simple binary encoding)
+- FIX
+
 ## zdash
 
 - get running, retest

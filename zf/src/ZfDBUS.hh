@@ -1549,8 +1549,8 @@ struct AsVariant {
       SaveDepth_ nesting{context};
       if (!nesting) return false;
       bool ok = false;
-      o.cdispatch([&s, &context, &ok](auto, const auto &value) {
-	using V = ZuDecay<decltype(value)>;
+      o.cdispatch([&s, &context, &ok](auto I, const auto &value) {
+	using V = typename O::template Type<I>;
 	if constexpr (IsAny<V>{}) {
 	  writeText(s, context, Type::Signature, ZuBSpan(value.signature));
 	  ok = saveAny(s, context, value);

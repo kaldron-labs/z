@@ -19,8 +19,8 @@
 #include <zlib/ZvCSV.hh>
 
 ZfStruct(ZvAPI, (ZmStackParams, Cf),
-  (((initial, Fn),	(Mutable, (Range<2U, 28U>))),		UInt32),
-  (((maxFrag, Fn),	(Mutable, (Range<1.0, 256.0>))),	Float));
+  ((initial, Fn),	(Mutable, (Range<2U, 28U>)),		UInt32),
+  ((maxFrag, Fn),	(Mutable, (Range<1.0, 256.0>)),		Float));
 
 inline ZmStackParams ZvStackParams(
     const ZfCf::AnyNode *cf, ZmStackParams params = {})

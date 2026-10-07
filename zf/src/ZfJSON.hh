@@ -1264,7 +1264,8 @@ inline T loadValue_(AnyNode *node)
 {
   auto type = node->type;
 
-  if (type == ValueTC::Null && !IsUnion<T>{}) return ZuCmp<T>::null();
+  if (type == ValueTC::Null && TypeCode != ZfFieldTC::UDT &&
+      !IsUnion<T>{}) return ZuCmp<T>::null();
 
   if constexpr (TypeCode == ZfFieldTC::CString) {
     if (ZuUnlikely(type != ValueTC::String)) return nullptr;

@@ -73,7 +73,7 @@ struct QLogVantage {
 };
 
 ZfStruct(, (QLogVantage, JSON),
-  (((type), (Enum<Zquic::Vantage::JSON>)),	Int8));
+  (type, (Enum<Zquic::Vantage::JSON>),		Int8));
 
 struct QLogImplementation {
   ZuCSpan	name;
@@ -81,8 +81,8 @@ struct QLogImplementation {
 };
 
 ZfStruct(, (QLogImplementation, JSON),
-  (((name)),	String),
-  (((version)),	String));
+  (name,,	String),
+  (version,,	String));
 
 struct QLogReferenceTime {
   ZuCSpan	clockType;
@@ -90,8 +90,8 @@ struct QLogReferenceTime {
 };
 
 ZfStruct(, (QLogReferenceTime, JSON),
-  (((clockType), (JSON::ID<"clock_type">)),	String),
-  (((epoch)),					String));
+  (clockType, (JSON::ID<"clock_type">),		String),
+  (epoch,,					String));
 
 struct QLogCommonFields {
   ZuBSpan	origDCID;
@@ -137,10 +137,10 @@ inline QLogCommonFieldsJSON ZfJSON_Fmt(QLogCommonFields *);
 
 namespace Zquic {
 ZfStruct(, (LinkInfo, JSON),
-  (((origDCID), (JSON::ID<"ODCID">, JSON::Hex, JSON::Opt)),	Bytes),
-  (((groupID), (JSON::ID<"group_id">, JSON::Hex, JSON::Opt)),	Bytes),
-  (((dcid), (JSON::ID<"DCID">, JSON::Hex, JSON::Opt)),		Bytes),
-  (((scid), (JSON::ID<"SCID">, JSON::Hex, JSON::Opt)),		Bytes));
+  (origDCID, (JSON::ID<"ODCID">, JSON::Hex, JSON::Opt),		Bytes),
+  (groupID, (JSON::ID<"group_id">, JSON::Hex, JSON::Opt),	Bytes),
+  (dcid, (JSON::ID<"DCID">, JSON::Hex, JSON::Opt),		Bytes),
+  (scid, (JSON::ID<"SCID">, JSON::Hex, JSON::Opt),		Bytes));
 }
 
 template <typename Event>
@@ -182,9 +182,9 @@ struct QLogTrace {
 };
 
 ZfStruct(, (QLogTrace, JSON),
-  (((vantage), (JSON::ID<"vantage_point">)),		UDT),
-  (((commonFields), (JSON::ID<"common_fields">)),	UDT),
-  (((eventSchemas), (JSON::ID<"event_schemas">)),	UDT));
+  (vantage, (JSON::ID<"vantage_point">),		UDT),
+  (commonFields, (JSON::ID<"common_fields">),		UDT),
+  (eventSchemas, (JSON::ID<"event_schemas">),		UDT));
 
 struct QLogHeader {
   ZuCSpan	fileSchema;
@@ -195,11 +195,11 @@ struct QLogHeader {
 };
 
 ZfStruct(, (QLogHeader, JSON),
-  (((fileSchema), (JSON::ID<"file_schema">)),			String),
-  (((serializationFormat), (JSON::ID<"serialization_format">)),	String),
-  (((title)),							String),
-  (((implementation)),						UDT),
-  (((trace)),							UDT));
+  (fileSchema, (JSON::ID<"file_schema">),			String),
+  (serializationFormat, (JSON::ID<"serialization_format">),	String),
+  (title,,							String),
+  (implementation,,						UDT),
+  (trace,,							UDT));
 
 struct QLogEndpointInfo {
   bool		present = false;
@@ -211,8 +211,8 @@ struct QLogEndpointInfo {
 };
 
 ZfStruct(, (QLogEndpointInfo, JSON),
-  (((ip), (JSON::ID<"ip_v4">)),		UDT),
-  (((port), (JSON::ID<"port_v4">)),	UInt16));
+  (ip, (JSON::ID<"ip_v4">),		UDT),
+  (port, (JSON::ID<"port_v4">),		UInt16));
 
 struct QLogCxnStartedData {
   QLogEndpointInfo local;
@@ -237,10 +237,10 @@ struct QLogCxnStateData {
 };
 
 ZfStruct(, (QLogCxnStateData, JSON),
-  (((oldState), (JSON::ID<"old">,
-    Enum<Zquic::LinkState::JSON>)),	Int8),
-  (((newState), (JSON::ID<"new">,
-    Enum<Zquic::LinkState::JSON>)),	Int8));
+  (oldState, (JSON::ID<"old">,
+    Enum<Zquic::LinkState::JSON>),	Int8),
+  (newState, (JSON::ID<"new">,
+    Enum<Zquic::LinkState::JSON>),	Int8));
 
 struct QLogCxnStateEvt {
   uint64_t	time = 0;
@@ -257,8 +257,8 @@ struct QLogRawInfo {
 };
 
 ZfStruct(, (QLogRawInfo, JSON),
-  (((length)),						UInt64),
-  (((payloadLength), (JSON::ID<"payload_length">)),	UInt64));
+  (length,,						UInt64),
+  (payloadLength, (JSON::ID<"payload_length">),		UInt64));
 
 ZuDerive(QLogRawInfoArray,
   (ZuArray<QLogRawInfo, 1>));
@@ -286,9 +286,9 @@ struct QLogDatagramData {
 };
 
 ZfStruct(, (QLogDatagramData, JSON),
-  (((count)),	UInt16),
-  (((raw)),	UDT),
-  (((ecn)),	UDT));
+  (count,,	UInt16),
+  (raw,,	UDT),
+  (ecn,,	UDT));
 
 struct QLogDatagramEvt {
   uint64_t	time = 0;
@@ -340,8 +340,8 @@ struct QLogPacketHeader {
 };
 
 ZfStruct(, (QLogPacketHeader, JSON),
-  (((packetType), (JSON::ID<"packet_type">, Enum<Zquic::PktType::JSON>)),	Int8),
-  (((packetNumber), (JSON::ID<"packet_number">)),				UInt64));
+  (packetType, (JSON::ID<"packet_type">, Enum<Zquic::PktType::JSON>),		Int8),
+  (packetNumber, (JSON::ID<"packet_number">),					UInt64));
 
 struct PktTrigger {
   ZtEnum(ZquicAPI, PktTrigger, int8_t,
@@ -390,9 +390,9 @@ struct QLogAckData {
 };
 
 ZfStruct(, (QLogAckData, JSON),
-  (((packetSpace), (JSON::ID<"packet_number_space">,
-    Enum<Zquic::PktNumSpace::JSON>)),			Int8),
-  (((packetNumbers), (JSON::ID<"packet_numbers">)),	UDT));
+  (packetSpace, (JSON::ID<"packet_number_space">,
+    Enum<Zquic::PktNumSpace::JSON>),			Int8),
+  (packetNumbers, (JSON::ID<"packet_numbers">),		UDT));
 
 struct QLogAckEvt {
   uint64_t	time = 0;
@@ -417,8 +417,8 @@ struct QLogPktLostData {
 };
 
 ZfStruct(, (QLogPktLostData, JSON),
-  (((header)),					UDT),
-  (((trigger), (Enum<PktLostTrigger::JSON>)),	Int8));
+  (header,,					UDT),
+  (trigger, (Enum<PktLostTrigger::JSON>),	Int8));
 
 struct QLogPktLostEvt {
   uint64_t	time = 0;
@@ -434,7 +434,7 @@ struct QLogMarkRetransData {
 };
 
 ZfStruct(, (QLogMarkRetransData, JSON),
-  (((frames)),	UDT));
+  (frames,,	UDT));
 
 struct QLogMarkRetransEvt {
   uint64_t	time = 0;
@@ -456,13 +456,13 @@ struct QLogRecMetricsData {
 };
 
 ZfStruct(, (QLogRecMetricsData, JSON),
-  (((latestRTT), (JSON::ID<"latest_rtt">)),			Float),
-  (((smoothedRTT), (JSON::ID<"smoothed_rtt">)),			Float),
-  (((rttVariance), (JSON::ID<"rtt_variance">)),			Float),
-  (((minRTT), (JSON::ID<"min_rtt">)),				Float),
-  (((congestionWindow), (JSON::ID<"congestion_window">)),	UInt64),
-  (((ssthresh)),						UInt64),
-  (((bytesInFlight), (JSON::ID<"bytes_in_flight">)),		UInt64));
+  (latestRTT, (JSON::ID<"latest_rtt">),				Float),
+  (smoothedRTT, (JSON::ID<"smoothed_rtt">),			Float),
+  (rttVariance, (JSON::ID<"rtt_variance">),			Float),
+  (minRTT, (JSON::ID<"min_rtt">),				Float),
+  (congestionWindow, (JSON::ID<"congestion_window">),		UInt64),
+  (ssthresh,,							UInt64),
+  (bytesInFlight, (JSON::ID<"bytes_in_flight">),		UInt64));
 
 struct QLogRecMetricsEvt {
   uint64_t	time = 0;
@@ -495,9 +495,9 @@ struct QLogCongStateData {
 };
 
 ZfStruct(, (QLogCongStateData, JSON),
-  (((newState), (JSON::ID<"new">,
-    Enum<CongState::JSON>)),			Int8),
-  (((trigger), (Enum<CongTrigger::JSON>)),	Int8));
+  (newState, (JSON::ID<"new">,
+    Enum<CongState::JSON>),			Int8),
+  (trigger, (Enum<CongTrigger::JSON>),		Int8));
 
 struct QLogCongStateEvt {
   uint64_t	time = 0;
@@ -543,13 +543,13 @@ struct QLogTimerData {
 };
 
 ZfStruct(, (QLogTimerData, JSON),
-  (((timerType), (JSON::ID<"timer_type">,
-    Enum<TimerType::JSON>)),		Int8),
-  (((packetSpace), (JSON::ID<"packet_number_space">,
-    Enum<Zquic::PktNumSpace::JSON>)),	Int8),
-  (((eventType), (JSON::ID<"event_type">,
-    Enum<TimerEvt::JSON>)),		Int8),
-  (((delta)),				Float));
+  (timerType, (JSON::ID<"timer_type">,
+    Enum<TimerType::JSON>),		Int8),
+  (packetSpace, (JSON::ID<"packet_number_space">,
+    Enum<Zquic::PktNumSpace::JSON>),	Int8),
+  (eventType, (JSON::ID<"event_type">,
+    Enum<TimerEvt::JSON>),		Int8),
+  (delta,,				Float));
 
 struct QLogTimerEvt {
   uint64_t	time = 0;
@@ -566,8 +566,8 @@ struct QLogECNData {
 };
 
 ZfStruct(, (QLogECNData, JSON),
-  (((oldState), (JSON::ID<"old">, Enum<ECNState::JSON>)),	Int8),
-  (((newState), (JSON::ID<"new">, Enum<ECNState::JSON>)),	Int8));
+  (oldState, (JSON::ID<"old">, Enum<ECNState::JSON>),		Int8),
+  (newState, (JSON::ID<"new">, Enum<ECNState::JSON>),		Int8));
 
 struct QLogECNEvt {
   uint64_t	time = 0;
@@ -590,15 +590,15 @@ struct QLogSecData {
 };
 
 ZfStruct(, (QLogSecData, JSON),
-  (((kind), (Enum<SecKind::JSON>)),						Int8),
-  (((packetSpace), (JSON::ID<"packet_number_space">,
-    Enum<Zquic::PktNumSpace::JSON>)),						Int8),
-  (((keyType), (JSON::ID<"key_type">, JSON::Opt, Enum<SecKeyType::JSON>)),	Int8),
-  (((trigger), (JSON::Opt, Enum<SecTrigger::JSON>)),				Int8),
-  (((alpn), (JSON::Opt)),							String),
-  (((reason), (JSON::Opt, Enum<SecReason::JSON>)),				Int8),
-  (((value)),									UInt64),
-  (((success)),									Bool));
+  (kind, (Enum<SecKind::JSON>),							Int8),
+  (packetSpace, (JSON::ID<"packet_number_space">,
+    Enum<Zquic::PktNumSpace::JSON>),						Int8),
+  (keyType, (JSON::ID<"key_type">, JSON::Opt, Enum<SecKeyType::JSON>),		Int8),
+  (trigger, (JSON::Opt, Enum<SecTrigger::JSON>),				Int8),
+  (alpn, (JSON::Opt),								String),
+  (reason, (JSON::Opt, Enum<SecReason::JSON>),					Int8),
+  (value,,									UInt64),
+  (success,,									Bool));
 
 struct QLogSecEvt {
   uint64_t	time = 0;
@@ -666,14 +666,14 @@ struct QLogALPNID {
 };
 
 ZfStruct(, (QLogALPNID, JSON),
-  (((stringValue), (JSON::ID<"string_value">)),	String));
+  (stringValue, (JSON::ID<"string_value">),	String));
 
 struct QLogALPNData {
   QLogALPNID chosenALPN;
 };
 
 ZfStruct(, (QLogALPNData, JSON),
-  (((chosenALPN), (JSON::ID<"chosen_alpn">)),	UDT));
+  (chosenALPN, (JSON::ID<"chosen_alpn">),	UDT));
 
 struct QLogALPNEvt {
   uint64_t	time = 0;
@@ -727,9 +727,9 @@ struct QLogMTUData {
 };
 
 ZfStruct(, (QLogMTUData, JSON),
-  (((newMTU), (JSON::ID<"new">)),			UInt32),
-  (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)),	UInt64),
-  (((done)),						Bool));
+  (newMTU, (JSON::ID<"new">),				UInt32),
+  (attemptID, (JSON::ID<"attempt_id">, JSON::Opt),	UInt64),
+  (done,,						Bool));
 
 struct QLogMTUEvt {
   uint64_t	time = 0;
@@ -747,10 +747,10 @@ struct QLogPathValidData {
 };
 
 ZfStruct(, (QLogPathValidData, JSON),
-  (((success)),						Bool),
-  (((attemptID), (JSON::ID<"attempt_id">, JSON::Opt)),	UInt64),
-  (((vantage), (JSON::ID<"vantage">,
-    Enum<Zquic::Vantage::JSON>)),			Int8));
+  (success,,						Bool),
+  (attemptID, (JSON::ID<"attempt_id">, JSON::Opt),	UInt64),
+  (vantage, (JSON::ID<"vantage">,
+    Enum<Zquic::Vantage::JSON>),			Int8));
 
 struct QLogPathValidatedEvt {
   uint64_t	time = 0;
@@ -799,22 +799,22 @@ struct QLogMigrationData {
 };
 
 ZfStruct(, (QLogMigrationData, JSON),
-  (((activeLocal), (JSON::ID<"active_local">)),		UDT),
-  (((activeRemote), (JSON::ID<"active_remote">)),	UDT),
-  (((candidateLocal), (JSON::ID<"candidate_local">)),	UDT),
-  (((candidateRemote), (JSON::ID<"candidate_remote">)),	UDT),
-  (((attemptID), (JSON::ID<"attempt_id">)),		UInt64),
-  (((peerCIDSeq), (JSON::ID<"peer_cid_sequence">)),	UInt64),
-  (((deadlineUS), (JSON::ID<"deadline_us">)),		UInt64),
-  (((mtu)),						UInt32),
-  (((action), (Enum<MigrationAction::JSON>)),		Int8),
-  (((reason), (Enum<Zquic::MigrationReason::JSON>)),	Int8),
-  (((state), (Enum<Zquic::MigrationState::JSON>)),	Int8),
-  (((pathRole), (JSON::ID<"path_role">,
-    Enum<Zquic::PathRole::JSON>)),			Int8),
-  (((localRebind), (JSON::ID<"local_rebind">)),		Bool),
-  (((validated)),					Bool),
-  (((closeOnFailure), (JSON::ID<"close_on_failure">)),	Bool));
+  (activeLocal, (JSON::ID<"active_local">),		UDT),
+  (activeRemote, (JSON::ID<"active_remote">),		UDT),
+  (candidateLocal, (JSON::ID<"candidate_local">),	UDT),
+  (candidateRemote, (JSON::ID<"candidate_remote">),	UDT),
+  (attemptID, (JSON::ID<"attempt_id">),			UInt64),
+  (peerCIDSeq, (JSON::ID<"peer_cid_sequence">),		UInt64),
+  (deadlineUS, (JSON::ID<"deadline_us">),		UInt64),
+  (mtu,,						UInt32),
+  (action, (Enum<MigrationAction::JSON>),		Int8),
+  (reason, (Enum<Zquic::MigrationReason::JSON>),	Int8),
+  (state, (Enum<Zquic::MigrationState::JSON>),		Int8),
+  (pathRole, (JSON::ID<"path_role">,
+    Enum<Zquic::PathRole::JSON>),			Int8),
+  (localRebind, (JSON::ID<"local_rebind">),		Bool),
+  (validated,,						Bool),
+  (closeOnFailure, (JSON::ID<"close_on_failure">),	Bool));
 
 struct QLogMigrationEvt {
   uint64_t	time = 0;
@@ -839,20 +839,20 @@ struct QLogStreamData {
 };
 
 ZfStruct(, (QLogStreamData, JSON),
-  (((streamType), (JSON::ID<"stream_type">,
-    Enum<ZquicLog_::StreamType::JSON>)),		Int8),
-  (((oldState), (JSON::ID<"old">,
-    Enum<StreamState::JSON>)),				Int8),
-  (((newState), (JSON::ID<"new">,
-    Enum<StreamState::JSON>)),				Int8),
-  (((streamSide), (JSON::ID<"stream_side">,
-    Enum<StreamSide::JSON>)),				Int8),
-  (((reason), (JSON::Opt, Enum<StreamReason::JSON>)),	Int8),
-  (((streamID), (JSON::ID<"stream_id">)),		UInt64),
-  (((offset)),						UInt64),
-  (((length)),						UInt64),
-  (((errorCode), (JSON::ID<"error_code">)),		UInt64),
-  (((fin)),						Bool));
+  (streamType, (JSON::ID<"stream_type">,
+    Enum<ZquicLog_::StreamType::JSON>),		Int8),
+  (oldState, (JSON::ID<"old">,
+    Enum<StreamState::JSON>),				Int8),
+  (newState, (JSON::ID<"new">,
+    Enum<StreamState::JSON>),				Int8),
+  (streamSide, (JSON::ID<"stream_side">,
+    Enum<StreamSide::JSON>),				Int8),
+  (reason, (JSON::Opt, Enum<StreamReason::JSON>),	Int8),
+  (streamID, (JSON::ID<"stream_id">),			UInt64),
+  (offset,,						UInt64),
+  (length,,						UInt64),
+  (errorCode, (JSON::ID<"error_code">),			UInt64),
+  (fin,,						Bool));
 
 struct QLogStreamEvt {
   uint64_t	time = 0;
@@ -873,13 +873,13 @@ struct QLogStreamMovedData {
 };
 
 ZfStruct(, (QLogStreamMovedData, JSON),
-  (((streamID), (JSON::ID<"stream_id">)),	UInt64),
-  (((offset)),					UInt64),
-  (((from), (Enum<StreamDataLoc::JSON>)),	Int8),
-  (((to), (Enum<StreamDataLoc::JSON>)),		Int8),
-  (((additionalInfo), (JSON::ID<"additional_info">,
-    JSON::Opt, Enum<StreamDataInfo::JSON>)),	Int8),
-  (((raw)),					UDT));
+  (streamID, (JSON::ID<"stream_id">),		UInt64),
+  (offset,,					UInt64),
+  (from, (Enum<StreamDataLoc::JSON>),		Int8),
+  (to, (Enum<StreamDataLoc::JSON>),		Int8),
+  (additionalInfo, (JSON::ID<"additional_info">,
+    JSON::Opt, Enum<StreamDataInfo::JSON>),	Int8),
+  (raw,,					UDT));
 
 struct QLogStreamMovedEvt {
   uint64_t	time = 0;
@@ -898,9 +898,9 @@ struct QLogCxnBlockedData {
 };
 
 ZfStruct(, (QLogCxnBlockedData, JSON),
-  (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)),	Int8),
-  (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)),	Int8),
-  (((reason), (Enum<BlockedReason::JSON>)),			Int8));
+  (oldState, (JSON::ID<"old">, Enum<BlockedState::JSON>),	Int8),
+  (newState, (JSON::ID<"new">, Enum<BlockedState::JSON>),	Int8),
+  (reason, (Enum<BlockedReason::JSON>),				Int8));
 
 struct QLogCxnBlockedEvt {
   uint64_t	time = 0;
@@ -920,10 +920,10 @@ struct QLogStreamBlockedData {
 };
 
 ZfStruct(, (QLogStreamBlockedData, JSON),
-  (((oldState), (JSON::ID<"old">, Enum<BlockedState::JSON>)),	Int8),
-  (((newState), (JSON::ID<"new">, Enum<BlockedState::JSON>)),	Int8),
-  (((streamID), (JSON::ID<"stream_id">)),			UInt64),
-  (((reason), (Enum<BlockedReason::JSON>)),			Int8));
+  (oldState, (JSON::ID<"old">, Enum<BlockedState::JSON>),	Int8),
+  (newState, (JSON::ID<"new">, Enum<BlockedState::JSON>),	Int8),
+  (streamID, (JSON::ID<"stream_id">),				UInt64),
+  (reason, (Enum<BlockedReason::JSON>),				Int8));
 
 struct QLogStreamBlockedEvt {
   uint64_t	time = 0;

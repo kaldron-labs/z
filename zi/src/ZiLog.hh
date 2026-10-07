@@ -136,14 +136,14 @@ struct ZiSinkEvent {
 };
 
 ZfStruct(ZiAPI, ZiSinkEvent,
-  (((time,      AliasRd, info.time)),		Time),
-  (((tid,       AliasRd, info.tid)),		UInt32),
-  (((severity,  AliasRd, info.severity)),	Int8),
-  (((file,      AliasRd, info.file)),		String),
-  (((line,      AliasRd, info.line)),		Int32),
-  (((function,  AliasRd, info.function)),	String),
-  (((component, AliasRd, info.component)),	String),
-  (((msg,       Rd)),				String));
+  ((time,      AliasRd, info.time),,		Time),
+  ((tid,       AliasRd, info.tid),,		UInt32),
+  ((severity,  AliasRd, info.severity),,	Int8),
+  ((file,      AliasRd, info.file),,		String),
+  ((line,      AliasRd, info.line),,		Int32),
+  ((function,  AliasRd, info.function),,	String),
+  ((component, AliasRd, info.component),,	String),
+  ((msg,       Rd),,				String));
 
 class ZeAPI ZiCSVSink : public ZiSink {
   using Lock = ZmPLock;

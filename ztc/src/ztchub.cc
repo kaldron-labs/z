@@ -983,8 +983,8 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Opt<'c'>, CLI::Long<"config">)),	String),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
+  (config, (CLI::Opt<'c'>, CLI::Long<"config">),	String),
+  (help, (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
 static ZmSemaphore done;
 static void trapped() { done.post(); }

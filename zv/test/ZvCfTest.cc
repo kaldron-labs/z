@@ -25,8 +25,8 @@ struct FileCf {
 };
 
 ZfStruct(, (FileCf, Cf),
-  (((value),	(Ctor<0>)),	String),
-  (((number),	(Ctor<1>)),	Int32));
+  (value,	(Ctor<0>),	String),
+  (number,	(Ctor<1>),	Int32));
 
 namespace {
 

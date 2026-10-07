@@ -42,30 +42,30 @@ struct LongKeyObject {
 };
 
 ZfStruct(, ArrayObject,
-  (((values),	(Mutable)),	Int32Vec));
+  (values,	(Mutable),	Int32Vec));
 
 ZfStructRender(, ArrayObject, CBOR, values);
 
 ZfStruct(, IntKeyObject,
-  (((value),	(Mutable)),	Int32));
+  (value,	(Mutable),	Int32));
 
 ZfStructRender(, IntKeyObject, CBOR,
   (value, (CBOR::ID<"4294967296">, CBOR::IntID)));
 
 ZfStruct(, MinIntKeyObject,
-  (((value),	(Mutable)),	Int32));
+  (value,	(Mutable),	Int32));
 
 ZfStructRender(, MinIntKeyObject, CBOR,
   (value, (CBOR::ID<"-18446744073709551616">, CBOR::IntID)));
 
 ZfStruct(, TextObject,
-  (((value),	(Mutable)),	String));
+  (value,	(Mutable),	String));
 
 ZfStructRender(, TextObject, CBOR, value);
 
 ZfStruct(, LongKeyObject,
-  (((value),		(Mutable)),	Int32),
-  (((shortValue),	(Mutable)),	Int32));
+  (value,		(Mutable),	Int32),
+  (shortValue,	(Mutable),		Int32));
 
 ZfStructRender(, LongKeyObject, CBOR,
   (value, (CBOR::ID<"abcdefghijklmnopqrstuvwxyz0123456789">)),
@@ -77,8 +77,8 @@ struct IntArray : public IntValues {
 };
 
 ZfStruct(, Object,
-  (((kty),	(Mutable)),	Int32),
-  (((data),	(Mutable)),	Bytes));
+  (kty,	(Mutable),		Int32),
+  (data,	(Mutable),	Bytes));
 
 ZfStructRender(, Object, CBOR,
   (kty,	(CBOR::ID<"1">, CBOR::IntID)),

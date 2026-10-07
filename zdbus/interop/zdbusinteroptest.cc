@@ -103,15 +103,15 @@ ZuDerive(Text, ZtString<ZtStringHeapID<"ZdbusInterop.Text">>);
 struct Empty { };
 ZuTypeList<> ZuFields_(Empty *, ZuFacet::DBUS *);
 struct TextBody { Text text; };
-ZfStruct(, TextBody, (((text), (Mutable)), String));
+ZfStruct(, TextBody, (text, (Mutable), String));
 ZfStructRender(, TextBody, DBUS, text);
 struct ErrorBody { uint32_t code; Text text; };
 ZfStruct(, ErrorBody,
-  (((code), (Mutable)),	UInt32),
-  (((text), (Mutable)),	String));
+  (code, (Mutable),	UInt32),
+  (text, (Mutable),	String));
 ZfStructRender(, ErrorBody, DBUS, code, text);
 struct UIntBody { uint32_t value; };
-ZfStruct(, UIntBody, (((value), (Mutable)), UInt32));
+ZfStruct(, UIntBody, (value, (Mutable), UInt32));
 ZfStructRender(, UIntBody, DBUS, value);
 struct Inner { uint16_t small; uint32_t count; };
 using Values = ZtArray<uint32_t,
@@ -131,14 +131,14 @@ struct ComplexBody {
   Variant choice;
 };
 ZfStruct(, Inner,
-  (((small), (Mutable)),	UInt16),
-  (((count), (Mutable)),	UInt32));
+  (small, (Mutable),		UInt16),
+  (count, (Mutable),		UInt32));
 ZfStructRender(, Inner, DBUS, small, count);
 ZfStruct(, ComplexBody,
-  (((inner), (Mutable)),	UDT),
-  (((values), (Mutable)),	UInt32Vec),
-  (((dict), (Mutable)),		UDT),
-  (((choice), (Mutable)),	UDT));
+  (inner, (Mutable),		UDT),
+  (values, (Mutable),		UInt32Vec),
+  (dict, (Mutable),		UDT),
+  (choice, (Mutable),		UDT));
 ZfStructRender(, ComplexBody, DBUS, inner, values, dict, choice);
 
 static void initComplex(ComplexBody &body)

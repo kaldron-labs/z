@@ -40,12 +40,12 @@ struct SeriesFixed {
 };
 
 ZfbStruct(ZdfAPI, SeriesFixed,
-  (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	UInt32),
-  (((name),	(Ctor<1>, Keys<1>)),			String),
-  (((first),	(Ctor<2>, Mutable)),			Int64),
-  (((ndp),	(Ctor<5>, Mutable)),			UInt8),
-  (((epoch),	(Ctor<3>)),				DateTime),
-  (((blkOffset),(Ctor<4>, Mutable)),			UInt64));
+  (id,	(Ctor<0>, Keys<0>, Descend<0>),			UInt32),
+  (name,	(Ctor<1>, Keys<1>),			String),
+  (first,	(Ctor<2>, Mutable),			Int64),
+  (ndp,	(Ctor<5>, Mutable),				UInt8),
+  (epoch,	(Ctor<3>),				DateTime),
+  (blkOffset,(Ctor<4>, Mutable),			UInt64));
 
 ZfbRoot(SeriesFixed);
 
@@ -60,11 +60,11 @@ struct SeriesFloat {
 };
 
 ZfbStruct(ZdfAPI, SeriesFloat,
-  (((id),	(Ctor<0>, Keys<0>, Descend<0>)),	UInt32),
-  (((name),	(Ctor<1>, Keys<1>)),			String),
-  (((first),	(Ctor<2>, Mutable)),			Float),
-  (((epoch),	(Ctor<3>)),				DateTime),
-  (((blkOffset),(Ctor<4>, Mutable)),			UInt64));
+  (id,	(Ctor<0>, Keys<0>, Descend<0>),			UInt32),
+  (name,	(Ctor<1>, Keys<1>),			String),
+  (first,	(Ctor<2>, Mutable),			Float),
+  (epoch,	(Ctor<3>),				DateTime),
+  (blkOffset,(Ctor<4>, Mutable),			UInt64));
 
 ZfbRoot(SeriesFloat);
 
@@ -80,12 +80,12 @@ struct BlkFixed {
 };
 
 ZfbStruct(ZdfAPI, BlkFixed,
-  (((seriesID),	(Ctor<3>, Keys<0>, Group<0>)),	UInt32),
-  (((blkOffset),(Ctor<0>, Keys<0>)),		UInt64),
-  (((offset),	(Ctor<1>, Mutable)),		UInt64),
-  (((last),	(Ctor<2>, Mutable)),		Int64),
-  (((count),	(Ctor<4>, Mutable)),		UInt16),
-  (((ndp),	(Ctor<5>, Mutable)),		UInt8));
+  (seriesID,	(Ctor<3>, Keys<0>, Group<0>),	UInt32),
+  (blkOffset,(Ctor<0>, Keys<0>),		UInt64),
+  (offset,	(Ctor<1>, Mutable),		UInt64),
+  (last,	(Ctor<2>, Mutable),		Int64),
+  (count,	(Ctor<4>, Mutable),		UInt16),
+  (ndp,	(Ctor<5>, Mutable),			UInt8));
 
 ZfbRoot(BlkFixed);
 
@@ -100,11 +100,11 @@ struct BlkFloat {
 };
 
 ZfbStruct(ZdfAPI, BlkFloat,
-  (((seriesID),	(Ctor<3>, Keys<0>, Group<0>)),	UInt32),
-  (((blkOffset),(Ctor<0>, Keys<0>)),		UInt64),
-  (((offset),	(Ctor<1>, Mutable)),		UInt64),
-  (((last),	(Ctor<2>, Mutable)),		Float),
-  (((count),	(Ctor<4>, Mutable)),		UInt16));
+  (seriesID,	(Ctor<3>, Keys<0>, Group<0>),	UInt32),
+  (blkOffset,(Ctor<0>, Keys<0>),		UInt64),
+  (offset,	(Ctor<1>, Mutable),		UInt64),
+  (last,	(Ctor<2>, Mutable),		Float),
+  (count,	(Ctor<4>, Mutable),		UInt16));
 
 ZfbRoot(BlkFloat);
 
@@ -125,9 +125,9 @@ struct BlkData {
 };
 
 ZfbStruct(ZdfAPI, BlkData,
-  (((seriesID),	(Ctor<1>, Keys<0>, Group<0>, Descend<0>)),	UInt32),
-  (((blkOffset),(Ctor<0>, Keys<0>, Descend<0>)),		UInt64),
-  (((buf),	(Mutable)),					Bytes));
+  (seriesID,	(Ctor<1>, Keys<0>, Group<0>, Descend<0>),	UInt32),
+  (blkOffset,(Ctor<0>, Keys<0>, Descend<0>),			UInt64),
+  (buf,	(Mutable),						Bytes));
 
 ZfbRoot(BlkData);
 

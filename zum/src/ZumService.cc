@@ -93,23 +93,23 @@ struct SETSubject {
   int64_t expires = 0;
 };
 ZfStruct(, (SETSubject, JSON),
-  (((format),		(Required)),				String),
-  (((issuerURL),	(JSON::ID<"iss">, Required)),		String),
-  (((familyID),		(JSON::ID<"family_id">, Required)),	String),
-  (((expires),		(JSON::ID<"exp">, Required)),		Int64));
+  (format,		(Required),				String),
+  (issuerURL,	(JSON::ID<"iss">, Required),			String),
+  (familyID,		(JSON::ID<"family_id">, Required),	String),
+  (expires,		(JSON::ID<"exp">, Required),		Int64));
 
 struct SETEvent {
   SETSubject subject;
 };
 ZfStruct(, (SETEvent, JSON),
-  (((subject),		(Required)),	UDT));
+  (subject,		(Required),	UDT));
 
 struct SETEvents {
   SETEvent revoked;
 };
 ZfStruct(, (SETEvents, JSON),
-  (((revoked),
-    (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required)),	UDT));
+  (revoked,
+    (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required),	UDT));
 
 struct SETClaims {
   String issuerURL;
@@ -119,11 +119,11 @@ struct SETClaims {
   SETEvents events;
 };
 ZfStruct(, (SETClaims, JSON),
-  (((issuerURL),	(JSON::ID<"iss">, Required)),	String),
-  (((audience),		(JSON::ID<"aud">, Required)),	String),
-  (((id),		(JSON::ID<"jti">, Required)),	String),
-  (((issued),		(JSON::ID<"iat">, Required)),	Int64),
-  (((events),		(Required)),			UDT));
+  (issuerURL,	(JSON::ID<"iss">, Required),		String),
+  (audience,		(JSON::ID<"aud">, Required),	String),
+  (id,		(JSON::ID<"jti">, Required),		String),
+  (issued,		(JSON::ID<"iat">, Required),	Int64),
+  (events,		(Required),			UDT));
 
 struct Introspection {
   bool active = false;
@@ -140,26 +140,26 @@ struct Introspection {
   String grantType;
 };
 ZfStruct(, (Introspection, JSON),
-  (((active),		(Required)),						Bool),
-  (((issuerURL),	(JSON::ID<"iss">, JSON::Opt)),				String),
-  (((subject),		(JSON::ID<"sub">, JSON::Opt)),				String),
-  (((clientID),		(JSON::ID<"client_id">, JSON::Opt)),			String),
-  (((audience),		(JSON::ID<"aud">, JSON::Opt)),				String),
-  (((jti),		(JSON::Opt)),						String),
-  (((scope),		(JSON::Opt)),						String),
-  (((actions),		(JSON::Opt)),						StringVec),
-  (((appID),		(JSON::ID<"zum_app_id">, JSON::String<>, JSON::Opt)),	UInt64),
-  (((expires),		(JSON::ID<"exp">, JSON::Opt)),				Int64),
-  (((amr),		(JSON::Opt)),						StringVec),
-  (((grantType),		(JSON::ID<"grant_type">, JSON::Opt)),		String));
+  (active,		(Required),						Bool),
+  (issuerURL,	(JSON::ID<"iss">, JSON::Opt),					String),
+  (subject,		(JSON::ID<"sub">, JSON::Opt),				String),
+  (clientID,		(JSON::ID<"client_id">, JSON::Opt),			String),
+  (audience,		(JSON::ID<"aud">, JSON::Opt),				String),
+  (jti,		(JSON::Opt),							String),
+  (scope,		(JSON::Opt),						String),
+  (actions,		(JSON::Opt),						StringVec),
+  (appID,		(JSON::ID<"zum_app_id">, JSON::String<>, JSON::Opt),	UInt64),
+  (expires,		(JSON::ID<"exp">, JSON::Opt),				Int64),
+  (amr,		(JSON::Opt),							StringVec),
+  (grantType,		(JSON::ID<"grant_type">, JSON::Opt),			String));
 
 struct Token {
   String accessToken;
   uint64_t expiresIn = 0;
 };
 ZfStruct(, (Token, JSON),
-  (((accessToken),	(JSON::ID<"access_token">, Required)),	String),
-  (((expiresIn),	(JSON::ID<"expires_in">, Required)),	UInt64));
+  (accessToken,	(JSON::ID<"access_token">, Required),		String),
+  (expiresIn,	(JSON::ID<"expires_in">, Required),		UInt64));
 
 struct Discovery {
   String issuerURL;
@@ -167,9 +167,9 @@ struct Discovery {
   String jwksURI;
 };
 ZfStruct(, (Discovery, JSON),
-  (((issuerURL),	(JSON::ID<"issuer">, Required)),		String),
-  (((tokenEndpoint),	(JSON::ID<"token_endpoint">, Required)),	String),
-  (((jwksURI),		(JSON::ID<"jwks_uri">, Required)),		String));
+  (issuerURL,	(JSON::ID<"issuer">, Required),				String),
+  (tokenEndpoint,	(JSON::ID<"token_endpoint">, Required),		String),
+  (jwksURI,		(JSON::ID<"jwks_uri">, Required),		String));
 
 struct JWK {
   String alg;
@@ -181,13 +181,13 @@ struct JWK {
   String y;
 };
 ZfStruct(, (JWK, JSON),
-  (((alg),		(JSON::Opt)),	String),
-  (((crv),		(Required)),	String),
-  (((kid),		(Required)),	String),
-  (((kty),		(Required)),	String),
-  (((use),		(JSON::Opt)),	String),
-  (((x),		(Required)),	String),
-  (((y),		(Required)),	String));
+  (alg,		(JSON::Opt),		String),
+  (crv,		(Required),		String),
+  (kid,		(Required),		String),
+  (kty,		(Required),		String),
+  (use,		(JSON::Opt),		String),
+  (x,		(Required),		String),
+  (y,		(Required),		String));
 ZuDerive(JWKWireArray,
   (ZtArray<JWK, ZtArrayHeapID<"Zum.Service.JWKs">>));
 struct JWKWireVec : public JWKWireArray {
@@ -196,7 +196,7 @@ struct JWKWireVec : public JWKWireArray {
 };
 struct JWKSResponse { JWKWireVec keys; };
 ZfStruct(, (JWKSResponse, JSON),
-  (((keys),		(Required)),	UDT));
+  (keys,		(Required),	UDT));
 
 template <typename T>
 static bool jsonLoad(String &json, unsigned limit, T &value)

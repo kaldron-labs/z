@@ -9,9 +9,10 @@
 
 // Syntax
 // ------
-// (((Accessor)[, (Props...)]), Type)
+// (Accessor, Props, Type)
+// Props is a parenthesized property list, or empty; its position is required
 // 
-// Example: (((id, Rd), (Ctor<0>, Keys<0>, Deflt<"default"_z>)),	String)
+// Example: ((id, Rd), (Ctor<0>, Keys<0>, Deflt<"default"_z>),		String)
 
 // macro DSL syntax is identical to that for ZfStruct, with the Type
 // extended to specify an extensible flatbuffers <-> C++ mapping
@@ -1133,9 +1134,9 @@ inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
     } \
   }; \
   using ZfField(O_, ID) = ZfbFieldT<O_, ZfField(O_, ID##_)<>>;
-#define ZfbField_Decl_(O, Base, Type) \
+#define ZfbField_Decl_(O, Axor, Props, Type) \
   ZuPP_Defer(ZfbField_Decl__)(O, \
-      ZuPP_Eval__(ZfField_BaseID(Base)), Base, Type)
+      ZuPP_Eval__(ZfField_AxorID(Axor)), (Axor, Props), Type)
 #define ZfbField_Decl(O, Args) ZuPP_Defer(ZfbField_Decl_)(O, ZuPP_Strip(Args))
 
 // ZfbStruct preamble

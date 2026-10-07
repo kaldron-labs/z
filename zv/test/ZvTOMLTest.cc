@@ -114,7 +114,7 @@ ZuAssert((ZfTOML::ScalarFmtValid<ZfFieldTC::DateTime,
 
 struct TOMLNested { int value = 0; };
 ZfStruct(, (TOMLNested, TOML),
-  (((value), (Ctor<0>)),	Int32));
+  (value, (Ctor<0>),		Int32));
 
 ZuDerive(TOMLMapKey, (ZtString<ZtStringHeapID<"ZfTest.TOML.MapKey">>));
 
@@ -137,17 +137,17 @@ struct TOMLMapHolder {
   TOMLObjMapRef objects;
 };
 ZfStruct(, (TOMLMapHolder, TOML),
-  (((inline_), (Ctor<0>, TOML::Inline)),	UDT),
-  (((table), (Ctor<1>)),			UDT),
-  (((objects), (Ctor<2>, TOML::Inline)),	UDT));
+  (inline_, (Ctor<0>, TOML::Inline),		UDT),
+  (table, (Ctor<1>),				UDT),
+  (objects, (Ctor<2>, TOML::Inline),		UDT));
 
 struct TOMLUnionA { int foo = 0; };
 struct TOMLUnionB { int bar = 0; };
-ZfStruct(, (TOMLUnionA, TOML), (((foo), (Ctor<0>, Mutable)), Int32));
-ZfStruct(, (TOMLUnionB, TOML), (((bar), (Ctor<0>, Mutable)), Int32));
+ZfStruct(, (TOMLUnionA, TOML), (foo, (Ctor<0>, Mutable), Int32));
+ZfStruct(, (TOMLUnionB, TOML), (bar, (Ctor<0>, Mutable), Int32));
 struct TOMLUnionHolder { ZfTOML::Union<TOMLUnionA, TOMLUnionB> value; };
 ZfStruct(, (TOMLUnionHolder, TOML),
-  (((value), (Ctor<0>, Mutable)),	UDT));
+  (value, (Ctor<0>, Mutable),		UDT));
 
 struct TOMLUnionArray : public ZtArray<int> {
   using ZtArray<int>::ZtArray;
@@ -167,17 +167,17 @@ using TOMLMixedUnion = ZfTOML::Union<
   TOMLUnionA, TOMLIntMap, TOMLUnionArray, TOMLUnionText>;
 struct TOMLMixedHolder { TOMLMixedUnion value; };
 ZfStruct(, (TOMLMixedHolder, TOML),
-  (((value), (Ctor<0>, Mutable)),	UDT));
+  (value, (Ctor<0>, Mutable),		UDT));
 struct TOMLMixedInlineHolder { TOMLMixedUnion value; };
 ZfStruct(, (TOMLMixedInlineHolder, TOML),
-  (((value), (Ctor<0>, Mutable, TOML::Inline)),	UDT));
+  (value, (Ctor<0>, Mutable, TOML::Inline),	UDT));
 struct TOMLMixedElements : public ZtArray<TOMLMixedUnion> {
   using ZtArray<TOMLMixedUnion>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLMixedElements *);
 };
 struct TOMLMixedElementsHolder { TOMLMixedElements values; };
 ZfStruct(, (TOMLMixedElementsHolder, TOML),
-  (((values), (Ctor<0>, Mutable)),	UDT));
+  (values, (Ctor<0>, Mutable),		UDT));
 using TOMLObjectUnion = ZfTOML::Union<TOMLUnionA, TOMLUnionB>;
 struct TOMLObjectUnionElements : public ZtArray<TOMLObjectUnion> {
   using ZtArray<TOMLObjectUnion>::ZtArray;
@@ -186,16 +186,16 @@ struct TOMLObjectUnionElements : public ZtArray<TOMLObjectUnion> {
 };
 struct TOMLObjectUnionElementsHolder { TOMLObjectUnionElements values; };
 ZfStruct(, (TOMLObjectUnionElementsHolder, TOML),
-  (((values), (Ctor<0>, Mutable)),	UDT));
+  (values, (Ctor<0>, Mutable),		UDT));
 struct TOMLObjectUnionInlineHolder { TOMLObjectUnionElements values; };
 ZfStruct(, (TOMLObjectUnionInlineHolder, TOML),
-  (((values), (Ctor<0>, Mutable, TOML::Inline)),	UDT));
+  (values, (Ctor<0>, Mutable, TOML::Inline),		UDT));
 
 struct TOMLTableUnionHolder {
   ZfTOML::Union<TOMLUnionA, TOMLMapHolder> value;
 };
 ZfStruct(, (TOMLTableUnionHolder, TOML),
-  (((value), (Ctor<0>, Mutable)),	UDT));
+  (value, (Ctor<0>, Mutable),		UDT));
 
 struct TOMLPtrObj_ : public ZmObject {
   int value = 0;
@@ -203,7 +203,7 @@ struct TOMLPtrObj_ : public ZmObject {
 };
 using TOMLPtrObj = ZfHeapTest<"ZfTest.TOML.PtrObj", TOMLPtrObj_>;
 ZfStruct(, (TOMLPtrObj, TOML),
-  (((value), (Ctor<0>, Mutable)),	Int32));
+  (value, (Ctor<0>, Mutable),		Int32));
 
 struct TOMLFmtOpt : public ZmObject { };
 inline ZfTOML::AsString ZfTOML_Fmt(ZmRef<TOMLFmtOpt> *);
@@ -241,17 +241,17 @@ struct TOMLPtrHolder {
   ZmRef<TOMLPtrText> text;
 };
 ZfStruct(, (TOMLPtrHolder, TOML),
-  (((object), (Mutable)),		UDT),
-  (((objects), (Mutable)),		UDT),
-  (((text), (Mutable, TOML::Opt)),	UDT));
+  (object, (Mutable),			UDT),
+  (objects, (Mutable),			UDT),
+  (text, (Mutable, TOML::Opt),		UDT));
 
 struct TOMLPtrInlineHolder { TOMLPtrHolder value; };
 ZfStruct(, (TOMLPtrInlineHolder, TOML),
-  (((value), (Mutable, TOML::Inline)),	UDT));
+  (value, (Mutable, TOML::Inline),	UDT));
 
 struct TOMLPtrTables { ZmRef<TOMLPtrArray> values; };
 ZfStruct(, (TOMLPtrTables, TOML),
-  (((values), (Mutable)),	UDT));
+  (values, (Mutable),		UDT));
 ZuAssert((ZuIsSame<
   ZmHeapID<TOMLIntMap>, ZuStringT<"ZfTest.TOML.IntMap">>{}));
 ZuAssert((ZuIsSame<
@@ -269,11 +269,11 @@ struct TOMLData {
   TOMLNested nested;
 };
 ZfStruct(, (TOMLData, TOML),
-  (((name), (Ctor<0>)),		String),
-  (((number), (Ctor<1>)),	Int32),
-  (((enabled), (Ctor<2>)),	Bool),
-  (((values), (Ctor<3>)),	StringVec),
-  (((nested), (Ctor<4>)),	UDT));
+  (name, (Ctor<0>),		String),
+  (number, (Ctor<1>),		Int32),
+  (enabled, (Ctor<2>),		Bool),
+  (values, (Ctor<3>),		StringVec),
+  (nested, (Ctor<4>),		UDT));
 
 struct TOMLScalars {
   ZtString<> native;
@@ -283,11 +283,11 @@ struct TOMLScalars {
   ZtString<> multiLiteral;
 };
 ZfStruct(, (TOMLScalars, TOML),
-  (((native), (Ctor<0>, Keys<0>, TOML::Native)),			String),
-  (((basic), (Ctor<1>, Mutable, TOML::Basic)),				String),
-  (((literal), (Ctor<2>, Mutable, TOML::Literal)),			String),
-  (((multiBasic), (Ctor<3>, Mutable, TOML::MultilineBasic)),		String),
-  (((multiLiteral), (Ctor<4>, Mutable, TOML::MultilineLiteral)),	String));
+  (native, (Ctor<0>, Keys<0>, TOML::Native),				String),
+  (basic, (Ctor<1>, Mutable, TOML::Basic),				String),
+  (literal, (Ctor<2>, Mutable, TOML::Literal),				String),
+  (multiBasic, (Ctor<3>, Mutable, TOML::MultilineBasic),		String),
+  (multiLiteral, (Ctor<4>, Mutable, TOML::MultilineLiteral),		String));
 
 struct TOMLScalarArrays {
   ZtArray<ZtString<>> native;
@@ -297,15 +297,15 @@ struct TOMLScalarArrays {
   ZtArray<ZtString<>> multiLiteral;
 };
 ZfStruct(, (TOMLScalarArrays, TOML),
-  (((native), (Ctor<0>, TOML::Native)),			StringVec),
-  (((basic), (Ctor<1>, TOML::Basic)),			StringVec),
-  (((literal), (Ctor<2>, TOML::Literal)),		StringVec),
-  (((multiBasic), (Ctor<3>, TOML::MultilineBasic)),	StringVec),
-  (((multiLiteral), (Ctor<4>, TOML::MultilineLiteral)),	StringVec));
+  (native, (Ctor<0>, TOML::Native),			StringVec),
+  (basic, (Ctor<1>, TOML::Basic),			StringVec),
+  (literal, (Ctor<2>, TOML::Literal),			StringVec),
+  (multiBasic, (Ctor<3>, TOML::MultilineBasic),		StringVec),
+  (multiLiteral, (Ctor<4>, TOML::MultilineLiteral),	StringVec));
 
 struct TOMLScalarInline { TOMLScalars values; };
 ZfStruct(, (TOMLScalarInline, TOML),
-  (((values), (Ctor<0>, TOML::Inline)),	UDT));
+  (values, (Ctor<0>, TOML::Inline),	UDT));
 
 struct TOMLScalarRows : public ZtArray<TOMLScalars> {
   using ZtArray<TOMLScalars>::ZtArray;
@@ -313,12 +313,12 @@ struct TOMLScalarRows : public ZtArray<TOMLScalars> {
 };
 struct TOMLScalarTableArray { TOMLScalarRows rows; };
 ZfStruct(, (TOMLScalarTableArray, TOML),
-  (((rows), (Ctor<0>)),	UDT));
+  (rows, (Ctor<0>),	UDT));
 
 struct TOMLProduct { ZtString<> name; int count = 0; };
 ZfStruct(, (TOMLProduct, TOML),
-  (((name), (Ctor<0>, Keys<0>)),	String),
-  (((count), (Ctor<1>, Mutable)),	Int32));
+  (name, (Ctor<0>, Keys<0>),		String),
+  (count, (Ctor<1>, Mutable),		Int32));
 
 struct TOMLProducts : public ZtArray<TOMLProduct> {
   using ZtArray<TOMLProduct>::ZtArray;
@@ -331,12 +331,12 @@ struct TOMLStrings : public ZtArray<ZtString<>> {
 
 struct TOMLCatalog { ZtString<> title; TOMLProducts products; };
 ZfStruct(, (TOMLCatalog, TOML),
-  (((title), (Ctor<0>, Keys<0>)),	String),
-  (((products), (Ctor<1>, Mutable)),	UDT));
+  (title, (Ctor<0>, Keys<0>),		String),
+  (products, (Ctor<1>, Mutable),	UDT));
 struct TOMLCatalogInline { ZtString<> title; TOMLProducts products; };
 ZfStruct(, (TOMLCatalogInline, TOML),
-  (((title), (Ctor<0>)),			String),
-  (((products), (Ctor<1>, TOML::Inline)),	UDT));
+  (title, (Ctor<0>),				String),
+  (products, (Ctor<1>, TOML::Inline),		UDT));
 
 struct TOMLSaveContext {
   TOMLCatalog catalog;
@@ -345,16 +345,16 @@ struct TOMLSaveContext {
   TOMLObjectUnionElements unions;
 };
 ZfStruct(, (TOMLSaveContext, TOML),
-  (((catalog), (Ctor<0>, Mutable)),	UDT),
-  (((objects), (Ctor<1>, Mutable)),	UDT),
-  (((mixed), (Ctor<2>, Mutable)),	UDT),
-  (((unions), (Ctor<3>, Mutable)),	UDT));
+  (catalog, (Ctor<0>, Mutable),		UDT),
+  (objects, (Ctor<1>, Mutable),		UDT),
+  (mixed, (Ctor<2>, Mutable),		UDT),
+  (unions, (Ctor<3>, Mutable),		UDT));
 struct TOMLSaveContextTable { TOMLSaveContext value; };
 ZfStruct(, (TOMLSaveContextTable, TOML),
-  (((value), (Ctor<0>, Mutable)),	UDT));
+  (value, (Ctor<0>, Mutable),		UDT));
 struct TOMLSaveContextInline { TOMLSaveContext value; };
 ZfStruct(, (TOMLSaveContextInline, TOML),
-  (((value), (Ctor<0>, Mutable, TOML::Inline)),	UDT));
+  (value, (Ctor<0>, Mutable, TOML::Inline),	UDT));
 
 struct TOMLInterop {
   ZtString<> title;
@@ -367,28 +367,28 @@ struct TOMLInterop {
   TOMLProducts products;
 };
 ZfStruct(, (TOMLInterop, TOML),
-  (((title), (Ctor<0>)),			String),
-  (((enabled), (Ctor<1>)),			Bool),
-  (((values), (Ctor<2>)),			StringVec),
-  (((nested), (Ctor<3>)),			UDT),
-  (((when), (Ctor<4>)),				DateTime),
-  (((inlineMap), (Ctor<5>, TOML::Inline)),	UDT),
-  (((tableMap), (Ctor<6>)),			UDT),
-  (((products), (Ctor<7>)),			UDT));
+  (title, (Ctor<0>),				String),
+  (enabled, (Ctor<1>),				Bool),
+  (values, (Ctor<2>),				StringVec),
+  (nested, (Ctor<3>),				UDT),
+  (when, (Ctor<4>),				DateTime),
+  (inlineMap, (Ctor<5>, TOML::Inline),		UDT),
+  (tableMap, (Ctor<6>),				UDT),
+  (products, (Ctor<7>),				UDT));
 struct TOMLSiblingTables { TOMLProducts tools; TOMLProducts supplies; };
 ZfStruct(, (TOMLSiblingTables, TOML),
-  (((tools), (Ctor<0>)),	UDT),
-  (((supplies), (Ctor<1>)),	UDT));
+  (tools, (Ctor<0>),		UDT),
+  (supplies, (Ctor<1>),		UDT));
 
 using TOMLHex8 = ZuFmt::Hex<false, ZuFmt::Right<8>>;
 struct TOMLFormats { unsigned hex = 0; const char *optional = nullptr; };
 ZfStruct(, (TOMLFormats, TOML),
-  (((hex), (Ctor<0>, Hex, TOML::Number<TOMLHex8>)),	UInt32),
-  (((optional), (Ctor<1>, TOML::Opt)),			CString));
+  (hex, (Ctor<0>, Hex, TOML::Number<TOMLHex8>),		UInt32),
+  (optional, (Ctor<1>, TOML::Opt),			CString));
 
 struct TOMLFacet { unsigned value = 0; };
 ZfStruct(, TOMLFacet,
-  (((value), (Ctor<0>)),	UInt32));
+  (value, (Ctor<0>),		UInt32));
 ZfStructRender(, TOMLFacet, JSON,
   (value, JSON::ID<"json-value">));
 ZfStructRender(, TOMLFacet, TOML,
@@ -408,15 +408,15 @@ ZuAssert((ZuIs_<ZuFieldProp::TOML::GetID<TOMLDataField>,
 
 struct TOMLChild { ZtString<> name; };
 ZfStruct(, (TOMLChild, TOML),
-  (((name), (Ctor<0>)),	String));
+  (name, (Ctor<0>),	String));
 struct TOMLChildren : public ZtArray<TOMLChild> {
   using ZtArray<TOMLChild>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLChildren *);
 };
 struct TOMLParent { ZtString<> name; TOMLChildren children; };
 ZfStruct(, (TOMLParent, TOML),
-  (((name), (Ctor<0>)),		String),
-  (((children), (Ctor<1>)),	UDT));
+  (name, (Ctor<0>),		String),
+  (children, (Ctor<1>),		UDT));
 struct TOMLParents : public ZtArray<TOMLParent> {
   using ZtArray<TOMLParent>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(TOMLParents *);
@@ -443,17 +443,17 @@ struct TOMLMapArray : public ZtArray<TOMLParentMapRef> {
 
 struct TOMLParentMapHolder { TOMLParentMapRef parents; };
 ZfStruct(, (TOMLParentMapHolder, TOML),
-  (((parents), (Ctor<0>)),	UDT));
+  (parents, (Ctor<0>),		UDT));
 struct TOMLNestedTables { TOMLParents parents; };
 ZfStruct(, (TOMLNestedTables, TOML),
-  (((parents), (Ctor<0>)),	UDT));
+  (parents, (Ctor<0>),		UDT));
 struct TOMLTableGroup { ZtString<> id; TOMLParents parents; };
 ZfStruct(, (TOMLTableGroup, TOML),
-  (((id), (Ctor<0>)),					String),
-  (((parents), (Ctor<1>, TOML::ID<"child group">)),	UDT));
+  (id, (Ctor<0>),					String),
+  (parents, (Ctor<1>, TOML::ID<"child group">),		UDT));
 struct TOMLGroupedTables { TOMLTableGroup group; };
 ZfStruct(, (TOMLGroupedTables, TOML),
-  (((group), (Ctor<0>, TOML::ID<"unsafe.group">)),	UDT));
+  (group, (Ctor<0>, TOML::ID<"unsafe.group">),		UDT));
 
 struct TOMLScalarTable {
   ZtString<> native;
@@ -464,15 +464,15 @@ struct TOMLScalarTable {
   TOMLProducts products;
 };
 ZfStruct(, (TOMLScalarTable, TOML),
-  (((native), (Ctor<0>, TOML::Native)),			String),
-  (((basic), (Ctor<1>, TOML::Basic)),			String),
-  (((literal), (Ctor<2>, TOML::Literal)),		String),
-  (((multiBasic), (Ctor<3>, TOML::MultilineBasic)),	String),
-  (((multiLiteral), (Ctor<4>, TOML::MultilineLiteral)),	String),
-  (((products), (Ctor<5>)),				UDT));
+  (native, (Ctor<0>, TOML::Native),			String),
+  (basic, (Ctor<1>, TOML::Basic),			String),
+  (literal, (Ctor<2>, TOML::Literal),			String),
+  (multiBasic, (Ctor<3>, TOML::MultilineBasic),		String),
+  (multiLiteral, (Ctor<4>, TOML::MultilineLiteral),	String),
+  (products, (Ctor<5>),					UDT));
 struct TOMLScalarNestedTable { TOMLScalarTable nested; };
 ZfStruct(, (TOMLScalarNestedTable, TOML),
-  (((nested), (Ctor<0>)),	UDT));
+  (nested, (Ctor<0>),		UDT));
 
 struct TOMLBytes {
   ZtArray<uint8_t> base64;
@@ -483,12 +483,12 @@ struct TOMLBytes {
   ZtArray<ZtArray<uint8_t>> vec;
 };
 ZfStruct(, (TOMLBytes, TOML),
-  (((base64), (Ctor<0>, TOML::Base64, TOML::Native)),		Bytes),
-  (((base64URL), (Ctor<1>, TOML::Base64URL, TOML::Basic)),	Bytes),
-  (((base32), (Ctor<2>, TOML::Base32, TOML::Literal)),		Bytes),
-  (((hex), (Ctor<3>, TOML::Hex, TOML::MultilineBasic)),		Bytes),
-  (((raw), (Ctor<4>, TOML::Raw, TOML::MultilineLiteral)),	Bytes),
-  (((vec), (Ctor<5>)),						BytesVec));
+  (base64, (Ctor<0>, TOML::Base64, TOML::Native),		Bytes),
+  (base64URL, (Ctor<1>, TOML::Base64URL, TOML::Basic),		Bytes),
+  (base32, (Ctor<2>, TOML::Base32, TOML::Literal),		Bytes),
+  (hex, (Ctor<3>, TOML::Hex, TOML::MultilineBasic),		Bytes),
+  (raw, (Ctor<4>, TOML::Raw, TOML::MultilineLiteral),		Bytes),
+  (vec, (Ctor<5>),						BytesVec));
 
 struct TOMLStringNumbers {
   int native = 0;
@@ -498,13 +498,13 @@ struct TOMLStringNumbers {
   int multiLiteral = 0;
 };
 ZfStruct(, (TOMLStringNumbers, TOML),
-  (((native), (Ctor<0>, TOML::String<>, TOML::Native)),		Int32),
-  (((basic), (Ctor<1>, TOML::String<>, TOML::Basic)),		Int32),
-  (((literal), (Ctor<2>, TOML::String<>, TOML::Literal)),	Int32),
-  (((multiBasic),
-    (Ctor<3>, TOML::String<>, TOML::MultilineBasic)),		Int32),
-  (((multiLiteral),
-    (Ctor<4>, TOML::String<>, TOML::MultilineLiteral)),		Int32));
+  (native, (Ctor<0>, TOML::String<>, TOML::Native),		Int32),
+  (basic, (Ctor<1>, TOML::String<>, TOML::Basic),		Int32),
+  (literal, (Ctor<2>, TOML::String<>, TOML::Literal),		Int32),
+  (multiBasic,
+    (Ctor<3>, TOML::String<>, TOML::MultilineBasic),		Int32),
+  (multiLiteral,
+    (Ctor<4>, TOML::String<>, TOML::MultilineLiteral),		Int32));
 
 struct TOMLText {
   TOMLText() = default;
@@ -516,17 +516,17 @@ struct TOMLText {
 };
 struct TOMLTextData { TOMLText text; };
 ZfStruct(, (TOMLTextData, TOML),
-  (((text), (Ctor<0>)),	UDT));
+  (text, (Ctor<0>),	UDT));
 
 struct TOMLTextStyles {
   TOMLText native, basic, literal, multiBasic, multiLiteral;
 };
 ZfStruct(, (TOMLTextStyles, TOML),
-  (((native), (Ctor<0>, TOML::Native)),			UDT),
-  (((basic), (Ctor<1>, TOML::Basic)),			UDT),
-  (((literal), (Ctor<2>, TOML::Literal)),		UDT),
-  (((multiBasic), (Ctor<3>, TOML::MultilineBasic)),	UDT),
-  (((multiLiteral), (Ctor<4>, TOML::MultilineLiteral)),	UDT));
+  (native, (Ctor<0>, TOML::Native),			UDT),
+  (basic, (Ctor<1>, TOML::Basic),			UDT),
+  (literal, (Ctor<2>, TOML::Literal),			UDT),
+  (multiBasic, (Ctor<3>, TOML::MultilineBasic),		UDT),
+  (multiLiteral, (Ctor<4>, TOML::MultilineLiteral),	UDT));
 
 struct TOMLNumbers {
   int i = 0;
@@ -540,17 +540,17 @@ struct TOMLNumbers {
   ZtArray<int> ints;
 };
 ZfStruct(, (TOMLNumbers, TOML),
-  (((i), (Ctor<0>, Mutable)),				Int32),
-  (((hex), (Ctor<1>, Hex)),				UInt32),
-  (((enum_), (Ctor<2>, Enum<TOMLValues::Map>)),		Int32),
-  (((flags), (Ctor<3>, Flags<TOMLFlags::Map>)),		UInt128),
-  (((float_), (Ctor<4>, (Range<-1000.0, 1000.0>))),	Float),
-  (((fixed), (Ctor<5>,
-    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	Fixed),
-  (((decimal), (Ctor<6>,
-    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>))),	Decimal),
-  (((time), (Ctor<7>, TOML::Unix9)),			Time),
-  (((ints), (Ctor<8>)),					Int32Vec));
+  (i, (Ctor<0>, Mutable),				Int32),
+  (hex, (Ctor<1>, Hex),					UInt32),
+  (enum_, (Ctor<2>, Enum<TOMLValues::Map>),		Int32),
+  (flags, (Ctor<3>, Flags<TOMLFlags::Map>),		UInt128),
+  (float_, (Ctor<4>, (Range<-1000.0, 1000.0>)),		Float),
+  (fixed, (Ctor<5>,
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>)),	Fixed),
+  (decimal, (Ctor<6>,
+    (Range<ZuDecimal{-1000}, ZuDecimal{1000}>)),	Decimal),
+  (time, (Ctor<7>, TOML::Unix9),			Time),
+  (ints, (Ctor<8>),					Int32Vec));
 
 struct TOMLOptional {
   const char *head = nullptr;
@@ -558,18 +558,18 @@ struct TOMLOptional {
   const char *tail = "tail";
 };
 ZfStruct(, (TOMLOptional, TOML),
-  (((head), (Ctor<0>, TOML::Opt)),	CString),
-  (((req), (Ctor<1>)),			CString),
-  (((tail), (Ctor<2>)),			CString));
+  (head, (Ctor<0>, TOML::Opt),		CString),
+  (req, (Ctor<1>),			CString),
+  (tail, (Ctor<2>),			CString));
 
 struct TOMLRange { int value = 42; };
 ZfStruct(, (TOMLRange, TOML),
-  (((value), (Ctor<0>, (Range<0, 100>), Deflt<42>)),	Int32));
+  (value, (Ctor<0>, (Range<0, 100>), Deflt<42>),	Int32));
 
 struct TOMLRequired { int required; int optional; };
 ZfStruct(, (TOMLRequired, TOML),
-  (((required), (Ctor<0>, Required)),	Int32),
-  (((optional), (Ctor<1>)),		Int32));
+  (required, (Ctor<0>, Required),	Int32),
+  (optional, (Ctor<1>),			Int32));
 
 struct TOMLDates {
   ZuDateTime offset;
@@ -578,32 +578,32 @@ struct TOMLDates {
   ZuDateTime time;
 };
 ZfStruct(, (TOMLDates, TOML),
-  (((offset), (Ctor<0>)),	DateTime),
-  (((local), (Ctor<1>)),	DateTime),
-  (((date), (Ctor<2>)),		DateTime),
-  (((time), (Ctor<3>)),		DateTime));
+  (offset, (Ctor<0>),		DateTime),
+  (local, (Ctor<1>),		DateTime),
+  (date, (Ctor<2>),		DateTime),
+  (time, (Ctor<3>),		DateTime));
 
 struct TOMLStringDates {
   ZuDateTime native, basic, literal, multiBasic, multiLiteral;
 };
 ZfStruct(, (TOMLStringDates, TOML),
-  (((native), (Ctor<0>, TOML::CSV9, TOML::Native)),	DateTime),
-  (((basic), (Ctor<1>, TOML::CSV9, TOML::Basic)),	DateTime),
-  (((literal), (Ctor<2>, TOML::CSV9, TOML::Literal)),	DateTime),
-  (((multiBasic),
-    (Ctor<3>, TOML::CSV9, TOML::MultilineBasic)),	DateTime),
-  (((multiLiteral),
-    (Ctor<4>, TOML::CSV9, TOML::MultilineLiteral)),	DateTime));
+  (native, (Ctor<0>, TOML::CSV9, TOML::Native),		DateTime),
+  (basic, (Ctor<1>, TOML::CSV9, TOML::Basic),		DateTime),
+  (literal, (Ctor<2>, TOML::CSV9, TOML::Literal),	DateTime),
+  (multiBasic,
+    (Ctor<3>, TOML::CSV9, TOML::MultilineBasic),	DateTime),
+  (multiLiteral,
+    (Ctor<4>, TOML::CSV9, TOML::MultilineLiteral),	DateTime));
 
 struct TOMLFloats { double finite = 0; double inf = 0; double nan = 0; };
 ZfStruct(, (TOMLFloats, TOML),
-  (((finite), (Ctor<0>)),	Float),
-  (((inf), (Ctor<1>)),		Float),
-  (((nan), (Ctor<2>)),		Float));
+  (finite, (Ctor<0>),		Float),
+  (inf, (Ctor<1>),		Float),
+  (nan, (Ctor<2>),		Float));
 struct TOMLWideNumbers { ZuFixed fixed; ZuDecimal decimal; };
 ZfStruct(, (TOMLWideNumbers, TOML),
-  (((fixed), (Ctor<0>)),	Fixed),
-  (((decimal), (Ctor<1>)),	Decimal));
+  (fixed, (Ctor<0>),		Fixed),
+  (decimal, (Ctor<1>),		Decimal));
 
 struct TOMLKeys {
   int safe = 0;
@@ -614,12 +614,12 @@ struct TOMLKeys {
   int unicode = 0;
 };
 ZfStruct(, (TOMLKeys, TOML),
-  (((safe), (Ctor<0>, TOML::ID<"AZaz-09_">)),		Int32),
-  (((numeric), (Ctor<1>, TOML::ID<"123">)),		Int32),
-  (((dot), (Ctor<2>, TOML::ID<"a.b">)),			Int32),
-  (((space), (Ctor<3>, TOML::ID<"space key">)),		Int32),
-  (((control), (Ctor<4>, TOML::ID<"\x01">)),		Int32),
-  (((unicode), (Ctor<5>, TOML::ID<"\xe2\x98\xba">)),	Int32));
+  (safe, (Ctor<0>, TOML::ID<"AZaz-09_">),		Int32),
+  (numeric, (Ctor<1>, TOML::ID<"123">),			Int32),
+  (dot, (Ctor<2>, TOML::ID<"a.b">),			Int32),
+  (space, (Ctor<3>, TOML::ID<"space key">),		Int32),
+  (control, (Ctor<4>, TOML::ID<"\x01">),		Int32),
+  (unicode, (Ctor<5>, TOML::ID<"\xe2\x98\xba">),	Int32));
 
 static const ZfTOML::AnyNode *field(
     const ZfTOML::AnyNode *node, ZuCSpan id)
@@ -2267,27 +2267,27 @@ static void pointers()
 
 struct FileTOML { ZtString<> value; int number = 0; };
 ZfStruct(, (FileTOML, TOML),
-  (((value), (Ctor<0>, Keys<0>)),	String),
-  (((number), (Ctor<1>, Mutable)),	Int32));
+  (value, (Ctor<0>, Keys<0>),		String),
+  (number, (Ctor<1>, Mutable),		Int32));
 
 struct FileItem { ZtString<> name; };
 ZfStruct(, (FileItem, TOML),
-  (((name), (Ctor<0>)),	String));
+  (name, (Ctor<0>),	String));
 struct FileItems : public ZtArray<FileItem> {
   using ZtArray<FileItem>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(FileItems *);
 };
 struct FileGroup { ZtString<> name; FileItems items; };
 ZfStruct(, (FileGroup, TOML),
-  (((name), (Ctor<0>)),		String),
-  (((items), (Ctor<1>)),	UDT));
+  (name, (Ctor<0>),		String),
+  (items, (Ctor<1>),		UDT));
 struct FileGroups : public ZtArray<FileGroup> {
   using ZtArray<FileGroup>::ZtArray;
   friend ZfTOML::AsArray<ZfFieldTC::UDT> ZfTOML_Fmt(FileGroups *);
 };
 struct FileCatalog { FileGroups groups; };
 ZfStruct(, (FileCatalog, TOML),
-  (((groups), (Ctor<0>)),	UDT));
+  (groups, (Ctor<0>),		UDT));
 
 static Zi::Path g_dir;
 

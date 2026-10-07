@@ -20,9 +20,9 @@ struct Config {
 };
 
 ZfStruct(, Config,
-  (((value), (Mutable, CLI::Long<"value">, (Range<0U, Config::Max>))), UInt32),
-  (((spin), (Mutable, CLI::Long<"spin">)), UInt32),
-  (((role), (Mutable, CLI::Long<"role">)), String));
+  (value, (Mutable, CLI::Long<"value">, (Range<0U, Config::Max>)), UInt32),
+  (spin, (Mutable, CLI::Long<"spin">), UInt32),
+  (role, (Mutable, CLI::Long<"role">), String));
 
 template <typename Scan, typename Handler>
 static void config(Scan scan, Handler handler, ZuCSpan valid, ZuCSpan invalid)

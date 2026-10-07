@@ -208,21 +208,21 @@ struct AppCf {
 };
 
 ZfStruct(, (AppCf, Cf),
-  (((telRing), (Mutable)),					UDT),
-  (((gtkGlade), (Mutable)),					String),
-  (((gtkStyle), (Mutable)),					String),
-  (((gtkRefresh), (Mutable, (Range<1U, 60000U>))),		UInt32),
-  (((gtkThread), (Mutable)),					UInt32),
-  (((queueBytes), (Mutable, (Range<FrameMax, INT_MAX>))),	UInt32),
-  (((interval), (Mutable, (Range<1U, 3600000U>))),		UInt32),
-  (((alertRows), (Mutable, (Range<1U, 1000000U>))),		UInt32),
-  (((wssURL), (Mutable)),					String),
-  (((caPath), (Mutable)),					String),
-  (((deviceID), (Mutable)),					String),
-  (((groups), (Mutable)),					StringVec),
-  (((maxSubscriptions), (Mutable, (Range<1U, 1000000U>))),	UInt32),
-  (((publisherID), (Mutable)),					String),
-  (((filter), (Mutable)),					String));
+  (telRing, (Mutable),						UDT),
+  (gtkGlade, (Mutable),						String),
+  (gtkStyle, (Mutable),						String),
+  (gtkRefresh, (Mutable, (Range<1U, 60000U>)),			UInt32),
+  (gtkThread, (Mutable),					UInt32),
+  (queueBytes, (Mutable, (Range<FrameMax, INT_MAX>)),		UInt32),
+  (interval, (Mutable, (Range<1U, 3600000U>)),			UInt32),
+  (alertRows, (Mutable, (Range<1U, 1000000U>)),			UInt32),
+  (wssURL, (Mutable),						String),
+  (caPath, (Mutable),						String),
+  (deviceID, (Mutable),						String),
+  (groups, (Mutable),						StringVec),
+  (maxSubscriptions, (Mutable, (Range<1U, 1000000U>)),		UInt32),
+  (publisherID, (Mutable),					String),
+  (filter, (Mutable),						String));
 
 struct Options {
   String	config;
@@ -233,12 +233,12 @@ struct Options {
   bool		help = false;
 };
 ZfStruct(, (Options, CLI),
-  (((config), (CLI::Long<"config">)),			String),
-  (((wssURL), (CLI::Long<"wss">)),			String),
-  (((deviceID), (CLI::Long<"device-id">)),		String),
-  (((caPath), (CLI::Long<"ca">)),			String),
-  (((noBrowser), (CLI::Long<"no-browser">)),		Bool),
-  (((help), (CLI::Flag<'h'>, CLI::Long<"help">)),	Bool));
+  (config, (CLI::Long<"config">),			String),
+  (wssURL, (CLI::Long<"wss">),				String),
+  (deviceID, (CLI::Long<"device-id">),			String),
+  (caPath, (CLI::Long<"ca">),				String),
+  (noBrowser, (CLI::Long<"no-browser">),		Bool),
+  (help, (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
 namespace Telemetry {
 using TypeList = ZuTypeList<
@@ -679,9 +679,9 @@ struct SourceInfo {
   uint64_t generation;
 };
 ZfStruct(, (SourceInfo),
-  (((publisher)),	String),
-  (((device)),		String),
-  (((generation)),	UInt64));
+  (publisher,,		String),
+  (device,,		String),
+  (generation,,		UInt64));
 
 class Model : public ZGtk::TreeHierarchy::Model<Model, Iter, Depth> {
   using Base = ZGtk::TreeHierarchy::Model<Model, Iter, Depth>;

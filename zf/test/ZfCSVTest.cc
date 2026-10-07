@@ -27,7 +27,7 @@ struct RangeData {
 };
 
 ZfStruct(, (RangeData, CSV),
-  (((value), (Ctor<0>, (Range<0, 100>), Deflt<42>)),	Int32));
+  (value, (Ctor<0>, (Range<0, 100>), Deflt<42>),	Int32));
 
 struct RealRangeData {
   double float_ = 0.5;
@@ -36,25 +36,25 @@ struct RealRangeData {
 };
 
 ZfStruct(, (RealRangeData, CSV),
-  (((float_), (Ctor<0>, (Range<0.0, 1.0>), Deflt<0.5>)),	Float),
-  (((fixed), (Ctor<1>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))),			Fixed),
-  (((decimal), (Ctor<2>,
-      (Range<ZuDecimal{0}, ZuDecimal{1}>))),			Decimal));
+  (float_, (Ctor<0>, (Range<0.0, 1.0>), Deflt<0.5>),		Float),
+  (fixed, (Ctor<1>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>)),			Fixed),
+  (decimal, (Ctor<2>,
+      (Range<ZuDecimal{0}, ZuDecimal{1}>)),			Decimal));
 
 struct CSVText {
   ZuCArray<8> text;
 };
 
 ZfStruct(, (CSVText, CSV),
-  (((text), (Ctor<0>)),	String));
+  (text, (Ctor<0>),	String));
 
 struct CSVInit {
   int value = 0;
 };
 
 ZfStruct(, (CSVInit, CSV),
-  (((value), (Mutable)),	Int32));
+  (value, (Mutable),		Int32));
 
 void testReaderConsumptionAndInit()
 {

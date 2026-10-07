@@ -595,10 +595,6 @@ namespace SSEState {
   enum { Open, TerminalQueued, Failed, Closed };
 }
 
-namespace ServerMode {
-  enum { None, HTTP, Stdio };
-}
-
 template <typename Owner, typename Emit, typename Heap = ZuVoid>
 class SSEProducer_ : public Heap, public ZmPolymorph {
 public:
@@ -1324,8 +1320,13 @@ private:
   bool		m_sent = false;
 };
 
-template <typename Impl, typename Catalog>
+template <typename Derived, typename Impl, typename Catalog>
 class Server {
+  friend Derived;
+  Derived *derived() { return static_cast<Derived *>(this); }
+  const Derived *derived() const {
+    return static_cast<const Derived *>(this);
+  }
   template <typename Link, typename Heap> class Work_;
   template <typename Heap> class StdioWork_;
 
@@ -1417,26 +1418,23 @@ public:
     HTTPHeaders<AppHeaderList> m_headers;
   };
 
+protected:
   Server() = default;
-  ~Server() { final(); }
 
   bool init(
       const Zhttp::HubConfig &hub, ServerConfig config, Impl *impl) {
-    if (m_mode != Server_::ServerMode::None || !impl || !hub.mx() ||
-	!config.endpoint())
-      return false;
     m_impl = impl;
     m_mx = hub.mx();
     m_txThread = hub.txThread() ?
       m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_limits = config.limits();
-    m_endpoint = config.endpoint();
-    m_absentOrigin = config.absentOrigin();
-    m_legacySessions = config.legacySessions();
-    m_legacyLifetime = config.legacyLifetime();
-    m_httpDone = false;
+    derived()->m_endpoint = config.endpoint();
+    derived()->m_absentOrigin = config.absentOrigin();
+    derived()->m_legacySessions = config.legacySessions();
+    derived()->m_legacyLifetime = config.legacyLifetime();
+    derived()->m_httpDone = false;
     if (!valid(m_limits)) return false;
-    if (m_legacySessions && !m_rng.init()) return false;
+    if (derived()->m_legacySessions && !derived()->m_rng.init()) return false;
     {
       uint64_t messageMax = uint64_t(m_limits.maxSSEEventBytes) +
 	Default::SSEFrameOverhead;
@@ -1446,8 +1444,7 @@ public:
 	.retainedMessageMax(messageMax);
     }
     m_up = true;
-    if (m_http.init(hub, ZuMv(config), this)) {
-      m_mode = Server_::ServerMode::HTTP;
+    if (derived()->m_http.init(hub, ZuMv(config), this)) {
       return true;
     }
     m_up = false;
@@ -1458,21 +1455,18 @@ public:
 
   bool init(
       ZiMultiplex *mx, StdioConfig config, Impl *impl) {
-    if (m_mode != Server_::ServerMode::None || !impl || !mx ||
-	!mx->txThread()) return false;
     m_impl = impl;
     m_mx = mx;
     m_txThread = mx->txThread();
     m_limits = config.limits();
     if (!valid(m_limits)) goto invalid;
-    m_stdio = new StdioIOObj<Server>{
+    derived()->m_stdio = new IOLink<Server>{
       this, m_mx, m_txThread, ZuMv(config)};
-    m_stdioPeer = Peer<Catalog>{m_limits};
-    m_mode = Server_::ServerMode::Stdio;
-    m_stdioStarted = false;
-    m_stdioClosing = false;
-    m_stdioDone = false;
-    m_stdioFailure = false;
+    derived()->m_stdioPeer = Peer<Catalog>{m_limits};
+    derived()->m_stdioStarted = false;
+    derived()->m_stdioClosing = false;
+    derived()->m_stdioDone = false;
+    derived()->m_stdioFailure = false;
     m_up = true;
     return true;
 
@@ -1483,72 +1477,12 @@ public:
     return false;
   }
 
-  bool start() {
-    if (m_mode == Server_::ServerMode::HTTP) return m_http.start();
-    if (m_mode != Server_::ServerMode::Stdio || !m_stdio || !m_up.load_() ||
-	m_stdioStarted || m_stdioDone.load_()) return false;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	bool ok = false;
-	try {
-	  m_stdioContext = Server_::openContext(
-	    m_impl, SessionTag{}, 0, true, ZuCSpan{});
-	  ok = m_stdio->start_();
-	} catch (...) {
-	}
-	m_stdioStarted = ok;
-	if (!ok) {
-	  m_stdioContext.close();
-	  m_up = false;
-	  m_stdioDone = true;
-	}
-	wake(ok);
-      }, m_txThread);
-    });
-  }
-  bool stop() {
-    if (m_mode == Server_::ServerMode::Stdio) return stopStdio_();
-    if (m_httpDone) return true;
-    m_up = false;
-    bool ok = m_http.stop();
-    closeHTTP_();
-    m_httpDone = true;
-    return ok;
-  }
-
-  void final() {
-    if (!m_mx) return;
-    if (m_mode == Server_::ServerMode::Stdio) {
-      (void)stopStdio_();
-      m_stdio = nullptr;
-      m_stdioPeer.close();
-      m_impl = nullptr;
-      m_mx = nullptr;
-      m_txThread = 0;
-      m_mode = Server_::ServerMode::None;
-      return;
-    }
-    m_up = false;
-    if (!m_httpDone) {
-      (void)m_http.stop();
-      closeHTTP_();
-      m_httpDone = true;
-    }
-    m_http.final();
-    m_impl = nullptr;
-    m_mx = nullptr;
-    m_txThread = 0;
-    m_endpoint.null();
-    m_mode = Server_::ServerMode::None;
-  }
-
-  HTTP &http() { return m_http; }
-  const HTTP &http() const { return m_http; }
-  ZuCSpan endpoint() const { return m_endpoint; }
+public:
+  ZuCSpan endpoint() const { return derived()->m_endpoint; }
   const Limits &limits() const { return m_limits; }
 
   bool origin(ZuCSpan origin_) const {
-    if (!origin_) return m_absentOrigin;
+    if (!origin_) return derived()->m_absentOrigin;
     try {
       return m_impl->origin(origin_);
     } catch (...) {
@@ -1573,7 +1507,7 @@ public:
     txRun([this, link = ZmRef(link),
 	sessionID = ZuMv(sessionID)]() mutable {
       if (sessionID) {
-	auto node = m_sessions.del(sessionID);
+	auto node = derived()->m_sessions.del(sessionID);
 	if (node) {
 	  ZuRef<Session> session = ZuMv(node->data());
 	  closeSession_(ZuMv(session), []() { });
@@ -1602,12 +1536,12 @@ public:
   }
 
   bool expireSession(ZuCSpan id) {
-    if (m_mode != Server_::ServerMode::HTTP || !id) return false;
+    if (!m_mx || !id) return false;
     HTTPValue owned{id};
     return txRun([this, owned = ZuMv(owned)]() mutable {
-      auto entry = m_sessions.findPtr(owned);
+      auto entry = derived()->m_sessions.findPtr(owned);
       if (!entry) return;
-      auto node = m_sessions.delNode(entry);
+      auto node = derived()->m_sessions.delNode(entry);
       ZuRef<Session> session = ZuMv(node->data());
       closeSession_(ZuMv(session), []() { });
     });
@@ -1629,9 +1563,9 @@ public:
   void connected(Zhttp::Session session) {
     if (!m_mx || !session) return;
     m_mx->run([this, session]() {
-      if (m_transportContexts.findPtr(session.id)) return;
+      if (derived()->m_transportContexts.findPtr(session.id)) return;
       try {
-	m_transportContexts.add(Server_::TransportContextEntry{
+	derived()->m_transportContexts.add(Server_::TransportContextEntry{
 	  session.id, Server_::openContext(
 	    m_impl, TransportTag{}, 0, session)});
       } catch (...) {
@@ -1642,7 +1576,7 @@ public:
   void disconnected(Zhttp::Session session) {
     if (!m_mx || !session) return;
     m_mx->run([this, session]() {
-      (void)m_transportContexts.del(session.id);
+      (void)derived()->m_transportContexts.del(session.id);
     }, m_txThread);
   }
 
@@ -1681,26 +1615,26 @@ public:
 
 private:
   Session *session_(ZuCSpan id) {
-    auto node = m_sessions.findPtr(id);
+    auto node = derived()->m_sessions.findPtr(id);
     return node ? node->data().ptr() : nullptr;
   }
 
   Session *newSession_() {
-    if (m_sessions.count_() >= m_limits.maxSessions) return nullptr;
+    if (derived()->m_sessions.count_() >= m_limits.maxSessions) return nullptr;
     Server_::SessionEntropy entropy;
     entropy.length(Default::SessionIDBytes, false);
-    if (!m_rng.random(entropy)) return nullptr;
+    if (!derived()->m_rng.random(entropy)) return nullptr;
     HTTPValue id;
     id << ZtQuote::Hex{entropy};
-    if (m_sessions.findPtr(id)) return nullptr;
+    if (derived()->m_sessions.findPtr(id)) return nullptr;
     auto context = Server_::openContext(
       m_impl, SessionTag{}, 0, false, ZuCSpan{id});
     ZuRef<Session> session = new Session{
       ZuMv(id), m_limits, ZuMv(context)};
     auto ptr = session.ptr();
-    m_sessions.add(ZuMv(session));
-    if (m_legacyLifetime)
-      m_mx->add(&ptr->timer, Zm::now(int(m_legacyLifetime)),
+    derived()->m_sessions.add(ZuMv(session));
+    if (derived()->m_legacyLifetime)
+      m_mx->add(&ptr->timer, Zm::now(int(derived()->m_legacyLifetime)),
 	ZmScheduler::Update,
 	[this, session = ptr](auto &&arm) {
 	  return arm([this, session]() {
@@ -1711,9 +1645,9 @@ private:
   }
 
   void expireSession_(Session *session) {
-    auto entry = m_sessions.findPtr(session->id);
+    auto entry = derived()->m_sessions.findPtr(session->id);
     if (!entry || entry->data().ptr() != session) return;
-    auto node = m_sessions.delNode(entry);
+    auto node = derived()->m_sessions.delNode(entry);
     ZuRef<Session> owned = ZuMv(node->data());
     closeSession_(ZuMv(owned), []() { });
   }
@@ -1775,21 +1709,21 @@ private:
   }
 
   typename Server_::HTTPSessionHash<Catalog>::NodeMvRef takeSession_() {
-    auto i = m_sessions.iter();
+    auto i = derived()->m_sessions.iter();
     if (!i()) return decltype(i.del()){};
     return i.del();
   }
 
   bool stopStdio_() {
-    if (!m_mx || m_mode != Server_::ServerMode::Stdio) return false;
-    if (m_stdioDone.load_()) return !m_stdioFailure;
+    if (!m_mx) return false;
+    if (derived()->m_stdioDone.load_()) return !derived()->m_stdioFailure;
     return ZmBlock<bool>{}([this](auto wake) mutable {
       m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	m_stdioStopFn = ZuMv(wake);
+	derived()->m_stdioStopFn = ZuMv(wake);
 	m_up = false;
-	m_stdioClosing = true;
-	if (m_stdioStarted)
-	  m_stdio->stop_();
+	derived()->m_stdioClosing = true;
+	if (derived()->m_stdioStarted)
+	  derived()->m_stdio->stop_();
 	else
 	  stdioDone_(false);
       }, m_txThread);
@@ -1800,46 +1734,47 @@ private:
   bool sendStdio_(M message) {
     ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
 	"stdio send outside owner shard", return false);
-    return m_up.load_() && m_stdio && m_stdio->send_(message);
+    return m_up.load_() && derived()->m_stdio &&
+      derived()->m_stdio->send_(message);
   }
 
   void failStdio_() {
     ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
 	"stdio failure outside owner shard", return);
-    if (m_stdioDone.load_() || m_stdioClosing) return;
-    m_stdioFailure = true;
-    m_stdioClosing = true;
+    if (derived()->m_stdioDone.load_() || derived()->m_stdioClosing) return;
+    derived()->m_stdioFailure = true;
+    derived()->m_stdioClosing = true;
     m_up = false;
-    m_stdio->stop_();
+    derived()->m_stdio->stop_();
   }
 
   void stdioDone_(bool failed) {
     ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
 	"stdio completion outside owner shard", return);
-    if (m_stdioDone.load_()) return;
-    m_stdioFailure |= failed;
-    m_stdioClosing = true;
+    if (derived()->m_stdioDone.load_()) return;
+    derived()->m_stdioFailure |= failed;
+    derived()->m_stdioClosing = true;
     m_up = false;
-    m_stdioPeer.close();
+    derived()->m_stdioPeer.close();
     closeWorks_([this]() mutable {
-      m_stdioContext.close();
-      m_stdioDone = true;
+      derived()->m_stdioContext.close();
+      derived()->m_stdioDone = true;
       try {
-	if (m_stdioFailure)
+	if (derived()->m_stdioFailure)
 	  failed_(m_impl, 0);
 	else
 	  closed_(m_impl, 0);
       } catch (...) {
       }
-      auto stopFn = ZuMv(m_stdioStopFn);
-      m_stdioStopFn = {};
-      if (stopFn) stopFn(!m_stdioFailure);
+      auto stopFn = ZuMv(derived()->m_stdioStopFn);
+      derived()->m_stdioStopFn = {};
+      if (stopFn) stopFn(!derived()->m_stdioFailure);
     });
   }
 
   bool up_() const { return m_up.load_(); }
   unsigned maxJSONBytes_() const { return m_limits.maxJSONBytes; }
-  bool legacySessions_() const { return m_legacySessions; }
+  bool legacySessions_() const { return derived()->m_legacySessions; }
   bool txInvoked_() const {
     return m_mx && m_mx->invoked(m_txThread);
   }
@@ -1866,22 +1801,22 @@ private:
     m_mx->run(ZuFwd<L>(l), m_txThread);
     return true;
   }
-  void *stdioContext_() const { return m_stdioContext.ptr(); }
-  Era::T stdioEra_() const { return m_stdioPeer.era(); }
+  void *stdioContext_() const { return derived()->m_stdioContext.ptr(); }
+  Era::T stdioEra_() const { return derived()->m_stdioPeer.era(); }
   template <typename Responder_, typename Emit, typename Tool>
   bool stdioDispatch_(ZuSpan<char> span,
       Responder_ &responder, Emit &&emit, Tool &&tool) {
-    return m_stdioPeer.dispatchAsync(
+    return derived()->m_stdioPeer.dispatchAsync(
       span, responder, ZuFwd<Emit>(emit), ZuFwd<Tool>(tool));
   }
   template <typename WorkT>
   void stdioPendingAdd_(const ID &id, WorkT *work) {
-    m_stdioPending.add(Server_::PendingEntry{id, work});
+    derived()->m_stdioPending.add(Server_::PendingEntry{id, work});
   }
   void stdioPendingDel_(const ID &id, const void *work) {
-    auto entry = m_stdioPending.findPtr(id);
+    auto entry = derived()->m_stdioPending.findPtr(id);
     if (entry && entry->object == work)
-      (void)m_stdioPending.delNode(entry);
+      (void)derived()->m_stdioPending.delNode(entry);
   }
 
   template <typename Link, typename Heap = ZuVoid>
@@ -2174,7 +2109,7 @@ private:
     }
 
     void pendingDone_() {
-      if (!m_session || m_requestID.absent()) return;
+      if (!m_session || m_requestID.is<void>()) return;
       auto entry = m_session->pending.findPtr(m_requestID);
       if (entry && entry->object == this)
 	(void)m_session->pending.delNode(entry);
@@ -2362,7 +2297,7 @@ private:
     }
 
     void pendingDone_() {
-      if (m_requestID.absent()) return;
+      if (m_requestID.is<void>()) return;
       m_server->stdioPendingDel_(m_requestID, this);
       m_requestID.null();
     }
@@ -2405,49 +2340,49 @@ private:
     ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
 	"SSE discard outside owner shard", return);
     if (!queue.count_()) return;
-    m_sseGarbage += ZuMv(queue);
+    derived()->m_sseGarbage += ZuMv(queue);
     postSSEDrain_();
   }
 
   void postSSEDrain_() {
-    if (m_ssePosted || !m_mx) return;
-    m_ssePosted = true;
+    if (derived()->m_ssePosted || !m_mx) return;
+    derived()->m_ssePosted = true;
     m_mx->run([this]() { drainSSE_(); }, m_txThread);
   }
 
   void drainSSE_() {
-    m_ssePosted = false;
+    derived()->m_ssePosted = false;
     unsigned visited = 0;
-    while (visited < m_limits.workBatch && m_sseGarbage.shift())
+    while (visited < m_limits.workBatch && derived()->m_sseGarbage.shift())
       ++visited;
-    if (m_sseGarbage.count_()) {
+    if (derived()->m_sseGarbage.count_()) {
       postSSEDrain_();
       return;
     }
-    auto closeFn = ZuMv(m_sseCloseFn);
-    m_sseCloseFn = {};
+    auto closeFn = ZuMv(derived()->m_sseCloseFn);
+    derived()->m_sseCloseFn = {};
     if (closeFn) closeFn();
   }
 
   template <typename Done>
   void closeSSE_(Done done) {
-    ZiAssert(!m_sseCloseFn, "Zmcp", (),
+    ZiAssert(!derived()->m_sseCloseFn, "Zmcp", (),
 	"duplicate SSE close continuation", return);
-    if (!m_sseGarbage.count_() && !m_ssePosted) {
+    if (!derived()->m_sseGarbage.count_() && !derived()->m_ssePosted) {
       done();
       return;
     }
-    m_sseCloseFn = Server_::SSECloseFn{ZuMv(done)};
+    derived()->m_sseCloseFn = Server_::SSECloseFn{ZuMv(done)};
     postSSEDrain_();
   }
 
   bool cancelStdio_(const ID &id, ZuCSpan reason) {
-    auto entry = m_stdioPending.findPtr(id);
+    auto entry = derived()->m_stdioPending.findPtr(id);
     return entry && entry->cancel(reason);
   }
 
   void *transportContext_(Zhttp::Session session) {
-    auto entry = m_transportContexts.findPtr(session.id);
+    auto entry = derived()->m_transportContexts.findPtr(session.id);
     return entry ? entry->context.ptr() : nullptr;
   }
 
@@ -2468,7 +2403,7 @@ private:
   }
 
   Server_::TransportContextHash::NodeMvRef takeTransportContext_() {
-    auto i = m_transportContexts.iter();
+    auto i = derived()->m_transportContexts.iter();
     if (!i()) return decltype(i.del()){};
     return i.del();
   }
@@ -2508,36 +2443,130 @@ private:
   template <typename App>
   static void failed_(App *, long) { }
 
-  HTTP			m_http;
-  ZuPtr<StdioIOObj<Server>> m_stdio;
   Impl			*m_impl = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   Server_::WorkHash	m_works;
-  Server_::TransportContextHash m_transportContexts;
-  Server_::HTTPSessionHash<Catalog> m_sessions;
+  Limits		m_limits;
+  uint64_t		m_generation = 1;
+  unsigned		m_txThread = 0;
+
+  ZmAtomic<unsigned>	m_up = 0;
+};
+
+template <typename Impl, typename Catalog>
+class IOServer : public Server<IOServer<Impl, Catalog>, Impl, Catalog> {
+  using Base = Server<IOServer, Impl, Catalog>;
+  friend Base;
+public:
+  ~IOServer() { this->final(); }
+
+  bool init(ZiMultiplex *mx, StdioConfig config, Impl *impl) {
+    if (this->m_mx || !impl || !mx || !mx->txThread()) return false;
+    return Base::init(mx, ZuMv(config), impl);
+  }
+
+  bool start() {
+    if (!this->m_stdio || !this->m_up.load_() ||
+	this->m_stdioStarted || this->m_stdioDone.load_()) return false;
+    return ZmBlock<bool>{}([this](auto wake) mutable {
+      this->m_mx->run([this, wake = ZuMv(wake)]() mutable {
+	bool ok = false;
+	try {
+	  this->m_stdioContext = Server_::openContext(
+	    this->m_impl, SessionTag{}, 0, true, ZuCSpan{});
+	  ok = this->m_stdio->start_();
+	} catch (...) {
+	}
+	this->m_stdioStarted = ok;
+	if (!ok) {
+	  this->m_stdioContext.close();
+	  this->m_up = false;
+	  this->m_stdioDone = true;
+	}
+	wake(ok);
+      }, this->m_txThread);
+    });
+  }
+
+  bool stop() { return this->stopStdio_(); }
+
+  void final() {
+    if (!this->m_mx) return;
+    (void)this->stopStdio_();
+    this->m_stdio = nullptr;
+    this->m_stdioPeer.close();
+    this->m_impl = nullptr;
+    this->m_mx = nullptr;
+    this->m_txThread = 0;
+  }
+
+private:
   Server_::PendingHash	m_stdioPending;
-  Server_::SSEQueue	m_sseGarbage;
-  Server_::SSECloseFn	m_sseCloseFn;
   Peer<Catalog>	m_stdioPeer;
   Server_::ContextRef	m_stdioContext;
   ZmFn<void(bool)>	m_stdioStopFn;
-  Limits		m_limits;
+  bool			m_stdioStarted = false;
+  bool			m_stdioClosing = false;
+  bool			m_stdioFailure = false;
+  ZmAtomic<unsigned>	m_stdioDone = 0;
+  ZuPtr<IOLink<Base>> m_stdio;
+};
+
+template <typename Impl, typename Catalog>
+class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog> {
+  using Base = Server<HTTPServer, Impl, Catalog>;
+  friend Base;
+public:
+  ~HTTPServer() { this->final(); }
+
+  bool init(const Zhttp::HubConfig &hub, ServerConfig config, Impl *impl) {
+    if (this->m_mx || !impl || !hub.mx() || !config.endpoint())
+      return false;
+    return Base::init(hub, ZuMv(config), impl);
+  }
+
+  typename Base::HTTP &http() { return m_http; }
+  const typename Base::HTTP &http() const { return m_http; }
+
+  bool start() { return this->m_http.start(); }
+
+  bool stop() {
+    if (this->m_httpDone) return true;
+    this->m_up = false;
+    bool ok = this->m_http.stop();
+    this->closeHTTP_();
+    this->m_httpDone = true;
+    return ok;
+  }
+
+  void final() {
+    if (!this->m_mx) return;
+    this->m_up = false;
+    if (!this->m_httpDone) {
+      (void)this->m_http.stop();
+      this->closeHTTP_();
+      this->m_httpDone = true;
+    }
+    this->m_http.final();
+    this->m_impl = nullptr;
+    this->m_mx = nullptr;
+    this->m_txThread = 0;
+    this->m_endpoint.null();
+  }
+
+private:
+  Server_::TransportContextHash m_transportContexts;
+  Server_::HTTPSessionHash<Catalog> m_sessions;
+  Server_::SSEQueue	m_sseGarbage;
+  Server_::SSECloseFn	m_sseCloseFn;
   Ztls::Random		m_rng;
   HTTPValue		m_endpoint;
-  uint64_t		m_generation = 1;
-  unsigned		m_txThread = 0;
-  int			m_mode = Server_::ServerMode::None;
   unsigned		m_legacyLifetime = 0;
   bool			m_absentOrigin = false;
   bool			m_legacySessions = true;
   bool			m_httpDone = false;
-  bool			m_stdioStarted = false;
-  bool			m_stdioClosing = false;
-  bool			m_stdioFailure = false;
   bool			m_ssePosted = false;
-
-  ZmAtomic<unsigned>	m_up = 0;
-  ZmAtomic<unsigned>	m_stdioDone = 0;
+  typename Base::HTTP m_http;
 };
 
 } // Zmcp

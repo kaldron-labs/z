@@ -53,15 +53,15 @@ struct SK_PKCS1 {
   ZuBSpan	coeff;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS1, ASN1),
-  (((version),	(Ctor<0>)),				UInt8),
-  (((modulus),	(Ctor<1>, ASN1::Type<Integer>)),	Bytes),
-  (((pubExp),	(Ctor<2>, ASN1::Type<Integer>)),	Bytes),
-  (((prvExp),	(Ctor<3>, ASN1::Type<Integer>)),	Bytes),
-  (((prime1),	(Ctor<4>, ASN1::Type<Integer>)),	Bytes),
-  (((prime2),	(Ctor<5>, ASN1::Type<Integer>)),	Bytes),
-  (((exp1),	(Ctor<6>, ASN1::Type<Integer>)),	Bytes),
-  (((exp2),	(Ctor<7>, ASN1::Type<Integer>)),	Bytes),
-  (((coeff),	(Ctor<8>, ASN1::Type<Integer>)),	Bytes));
+  (version,	(Ctor<0>),				UInt8),
+  (modulus,	(Ctor<1>, ASN1::Type<Integer>),		Bytes),
+  (pubExp,	(Ctor<2>, ASN1::Type<Integer>),		Bytes),
+  (prvExp,	(Ctor<3>, ASN1::Type<Integer>),		Bytes),
+  (prime1,	(Ctor<4>, ASN1::Type<Integer>),		Bytes),
+  (prime2,	(Ctor<5>, ASN1::Type<Integer>),		Bytes),
+  (exp1,	(Ctor<6>, ASN1::Type<Integer>),		Bytes),
+  (exp2,	(Ctor<7>, ASN1::Type<Integer>),		Bytes),
+  (coeff,	(Ctor<8>, ASN1::Type<Integer>),		Bytes));
 
 // EC SEC1 private key
 struct SK_SEC1 {
@@ -71,11 +71,11 @@ struct SK_SEC1 {
   ZuBSpan	pubKey;		// optional
 };
 ZfStruct(ZtlsAPI, (SK_SEC1, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((key),     (Ctor<1>)),						Bytes),
-  (((id),      (Ctor<2>, (ASN1::Fmt<2, tag(0, OID)>), ASN1::Opt)),	Bytes),
-  (((pubKey),  (Ctor<3>, (ASN1::Fmt<3, tag(1)>),
-	        ASN1::Type<BitString>, ASN1::Opt)),			Bytes));
+  (version, (Ctor<0>),							UInt8),
+  (key,     (Ctor<1>),							Bytes),
+  (id,      (Ctor<2>, (ASN1::Fmt<2, tag(0, OID)>), ASN1::Opt),		Bytes),
+  (pubKey,  (Ctor<3>, (ASN1::Fmt<3, tag(1)>),
+	        ASN1::Type<BitString>, ASN1::Opt),			Bytes));
 
 // PKCS#8 private key - header
 struct SK_PKCS8_HDR {
@@ -85,8 +85,8 @@ struct SK_PKCS8_HDR {
 				//      1.3.101.112 for ED25519
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_HDR, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes));
 
 // PKCS#8 private key - RSA version (PKCS#1 payload)
 struct SK_PKCS8_RSA {
@@ -95,9 +95,9 @@ struct SK_PKCS8_RSA {
   SK_PKCS1	rsa;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_RSA, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((rsa),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),		UDT));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (rsa,     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>)),		UDT));
 
 // PKCS#8 private key - EC version (SEC1 payload)
 struct SK_PKCS8_EC {
@@ -107,10 +107,10 @@ struct SK_PKCS8_EC {
   SK_SEC1	ec;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_EC, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((id2),     (Ctor<2>, (ASN1::Fmt<2, tagU(), seq(1), tagU(OID)>))),	Bytes),
-  (((ec),      (Ctor<3>, (ASN1::Fmt<3, tagU(), str(1, 0)>))),		UDT));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (id2,     (Ctor<2>, (ASN1::Fmt<2, tagU(), seq(1), tagU(OID)>)),	Bytes),
+  (ec,      (Ctor<3>, (ASN1::Fmt<3, tagU(), str(1, 0)>)),		UDT));
 
 // PKCS#8 private key - RFC 8410 25519 raw key payload
 struct SK_PKCS8_25519 {
@@ -119,9 +119,9 @@ struct SK_PKCS8_25519 {
   ZuBSpan	key;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_25519, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((key),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),		Bytes));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (key,     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>)),		Bytes));
 
 struct SK_PKCS8_MLKEM_SEED {
   uint8_t	version;
@@ -129,9 +129,9 @@ struct SK_PKCS8_MLKEM_SEED {
   ZuBSpan	seed;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM_SEED, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((seed),    (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0), tagI(0)>))),	Bytes));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (seed,    (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0), tagI(0)>)),	Bytes));
 
 struct SK_PKCS8_MLKEM_EXPANDED {
   uint8_t	version;
@@ -139,17 +139,17 @@ struct SK_PKCS8_MLKEM_EXPANDED {
   ZuBSpan	key;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM_EXPANDED, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((key),     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),		Bytes));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (key,     (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>)),		Bytes));
 
 struct SK_MLKEM_BOTH {
   ZuBSpan	seed;
   ZuBSpan	key;
 };
 ZfStruct(ZtlsAPI, (SK_MLKEM_BOTH, ASN1),
-  (((seed), (Ctor<0>)),	Bytes),
-  (((key),  (Ctor<1>)),	Bytes));
+  (seed, (Ctor<0>),	Bytes),
+  (key,  (Ctor<1>),	Bytes));
 
 struct SK_PKCS8_MLKEM_BOTH {
   uint8_t	version;
@@ -157,9 +157,9 @@ struct SK_PKCS8_MLKEM_BOTH {
   SK_MLKEM_BOTH	both;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM_BOTH, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((both),    (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>))),		UDT));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (both,    (Ctor<2>, (ASN1::Fmt<2, tagU(), str(1, 0)>)),		UDT));
 
 struct SK_PKCS8_MLKEM {
   uint8_t	version;
@@ -167,9 +167,9 @@ struct SK_PKCS8_MLKEM {
   ZuBSpan	key;
 };
 ZfStruct(ZtlsAPI, (SK_PKCS8_MLKEM, ASN1),
-  (((version), (Ctor<0>)),						UInt8),
-  (((id),      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((key),     (Ctor<2>)),						Bytes));
+  (version, (Ctor<0>),							UInt8),
+  (id,      (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (key,     (Ctor<2>),							Bytes));
 
 // RSA PKCS#1 public key
 struct PK_PKCS1 {
@@ -177,8 +177,8 @@ struct PK_PKCS1 {
   ZuBSpan	pubExp;
 };
 ZfStruct(ZtlsAPI, (PK_PKCS1, ASN1),
-  (((modulus),	(Ctor<0>, ASN1::Type<Integer>)),	Bytes),
-  (((pubExp),	(Ctor<1>, ASN1::Type<Integer>)),	Bytes));
+  (modulus,	(Ctor<0>, ASN1::Type<Integer>),		Bytes),
+  (pubExp,	(Ctor<1>, ASN1::Type<Integer>),		Bytes));
 
 // X509 public key - header (counterpart to both SEC1 and PKCS#8)
 struct PK_X509_HDR {
@@ -189,8 +189,8 @@ struct PK_X509_HDR {
 				//      null for RSA and ED25519
 };
 ZfStruct(ZtlsAPI, (PK_X509_HDR, ASN1),
-  (((id),  (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))),		Bytes),
-  (((id2), (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>), ASN1::Opt)),	Bytes));
+  (id,  (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>)),			Bytes),
+  (id2, (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>), ASN1::Opt),	Bytes));
 
 // X509 public key - RSA version
 struct PK_X509_RSA {
@@ -198,8 +198,8 @@ struct PK_X509_RSA {
   PK_PKCS1	rsa;
 };
 ZfStruct(ZtlsAPI, (PK_X509_RSA, ASN1),
-  (((id),  (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((rsa), (Ctor<3>, (ASN1::Fmt<3, tagU(), bstr(1, 0)>))),		UDT));
+  (id,  (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>)),		Bytes),
+  (rsa, (Ctor<3>, (ASN1::Fmt<3, tagU(), bstr(1, 0)>)),			UDT));
 
 // X509 public key - EC version
 struct PK_X509_EC {
@@ -208,9 +208,9 @@ struct PK_X509_EC {
   ZuBSpan	pubKey;
 };
 ZfStruct(ZtlsAPI, (PK_X509_EC, ASN1),
-  (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((id2),    (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>))),	Bytes),
-  (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),			Bytes));
+  (id,     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (id2,    (Ctor<1>, (ASN1::Fmt<1, tagU(), seq(1), tagU(OID)>)),	Bytes),
+  (pubKey, (Ctor<2>, (ASN1::Type<BitString>)),				Bytes));
 
 // X509 public key - RFC 8410 25519 raw key payload
 struct PK_X509_25519 {
@@ -218,16 +218,16 @@ struct PK_X509_25519 {
   ZuBSpan	pubKey;
 };
 ZfStruct(ZtlsAPI, (PK_X509_25519, ASN1),
-  (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((pubKey), (Ctor<2>, (ASN1::Type<BitString>))),			Bytes));
+  (id,     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (pubKey, (Ctor<2>, (ASN1::Type<BitString>)),				Bytes));
 
 struct PK_X509_MLKEM {
   ZuBSpan	id;
   ZuBSpan	pubKey;
 };
 ZfStruct(ZtlsAPI, (PK_X509_MLKEM, ASN1),
-  (((id),     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>))),	Bytes),
-  (((pubKey), (Ctor<1>, (ASN1::Type<BitString>))),			Bytes));
+  (id,     (Ctor<0>, (ASN1::Fmt<0, tagU(), seq(0), tagU(OID)>)),	Bytes),
+  (pubKey, (Ctor<1>, (ASN1::Type<BitString>)),				Bytes));
 
 namespace Type {
   enum {

@@ -205,7 +205,7 @@ namespace Union_ { // internal
 
 // recursive decay
   struct RDecayer {
-    template <typename> struct Decay;
+    template <typename T_> struct Decay { using T = T_; };
     template <typename ...Ts>
     struct Decay<Union<Ts...>> {
       using T = ZuTypeApply<Union, ZuTypeMap<ZuRDecay, Ts...>>;

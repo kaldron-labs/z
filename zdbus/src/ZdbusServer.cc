@@ -32,10 +32,10 @@ namespace NameReplyCode {
 }
 
 ZfStruct(, NameArgs,
-  (((name), (Mutable)),		String),
-  (((flags), (Mutable)),	UInt32));
+  (name, (Mutable),		String),
+  (flags, (Mutable),		UInt32));
 ZfStructRender(, NameArgs, DBUS, name, flags);
-ZfStruct(, NameReply, (((code), (Mutable)), UInt32));
+ZfStruct(, NameReply, (code, (Mutable), UInt32));
 ZfStructRender(, NameReply, DBUS, code);
 
 using NameHeaders = ZuTypeList<

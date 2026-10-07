@@ -45,21 +45,21 @@ struct SSFSubject {
   int64_t expires = 0;
 };
 ZfStruct(, (SSFSubject, JSON),
-  (((format), (Required)),				String),
-  (((issuer), (JSON::ID<"iss">, Required)),		String),
-  (((familyID), (JSON::ID<"family_id">, Required)),	String),
-  (((expires), (JSON::ID<"exp">, Required)),		Int64));
+  (format, (Required),					String),
+  (issuer, (JSON::ID<"iss">, Required),			String),
+  (familyID, (JSON::ID<"family_id">, Required),		String),
+  (expires, (JSON::ID<"exp">, Required),		Int64));
 
 struct SSFEvent {
   SSFSubject subject;
 };
 ZfStruct(, (SSFEvent, JSON),
-  (((subject), (Required)),	UDT));
+  (subject, (Required),		UDT));
 struct SSFEvents {
   SSFEvent revoked;
 };
 ZfStruct(, (SSFEvents, JSON),
-  (((revoked), (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required)),	UDT));
+  (revoked, (JSON::ID<"urn:zum:events:refresh-token-revoked">, Required),	UDT));
 struct SSFClaims {
   String issuer;
   String audience;
@@ -68,11 +68,11 @@ struct SSFClaims {
   SSFEvents events;
 };
 ZfStruct(, (SSFClaims, JSON),
-  (((issuer), (JSON::ID<"iss">, Required)),	String),
-  (((audience), (JSON::ID<"aud">, Required)),	String),
-  (((id), (JSON::ID<"jti">, Required)),		String),
-  (((issued), (JSON::ID<"iat">, Required)),	Int64),
-  (((events), (Required)),			UDT));
+  (issuer, (JSON::ID<"iss">, Required),		String),
+  (audience, (JSON::ID<"aud">, Required),	String),
+  (id, (JSON::ID<"jti">, Required),		String),
+  (issued, (JSON::ID<"iat">, Required),		Int64),
+  (events, (Required),				UDT));
 
 struct SSFHeader {
   String algorithm;
@@ -80,9 +80,9 @@ struct SSFHeader {
   String keyID;
 };
 ZfStruct(, (SSFHeader, JSON),
-  (((algorithm), (JSON::ID<"alg">, Required)),	String),
-  (((type), (JSON::ID<"typ">, Required)),	String),
-  (((keyID), (JSON::ID<"kid">, Required)),	String));
+  (algorithm, (JSON::ID<"alg">, Required),	String),
+  (type, (JSON::ID<"typ">, Required),		String),
+  (keyID, (JSON::ID<"kid">, Required),		String));
 
 inline void makeSSF(
     const SignKey &key, ZuCSpan audience, const RefreshID &refreshID,
@@ -336,11 +336,11 @@ struct Revoke : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, Revoke,
-  (((sessions), (Ctor<0>)),	BytesVec),
-  (((consents), (Ctor<1>)),	BytesVec),
-  (((grants), (Ctor<2>)),	BytesVec),
-  (((updated), (Ctor<3>)),	Int64),
-  (((request), (Ctor<4>)),	UDT));
+  (sessions, (Ctor<0>),		BytesVec),
+  (consents, (Ctor<1>),		BytesVec),
+  (grants, (Ctor<2>),		BytesVec),
+  (updated, (Ctor<3>),		Int64),
+  (request, (Ctor<4>),		UDT));
 
 struct SSFDeliveryAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -401,7 +401,7 @@ struct SSFDeliveryAdd : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, SSFDeliveryAdd,
-  (((delivery), (Ctor<0>)),	UDT));
+  (delivery, (Ctor<0>),		UDT));
 
 // Maintenance deletes are terminal: their reverse saga steps are idempotent
 // no-ops.  These images retain only the key and fields used to reject a row
@@ -414,11 +414,11 @@ struct GrantDelete {
   uint128_t	owner = 0;
 };
 ZfbStruct(ZumAPI, GrantDelete,
-  (((id), (Ctor<0>)),				Bytes),
-  (((digest), (Ctor<1>)),			Bytes),
-  (((expires), (Ctor<2>)),			Int64),
-  (((state), (Ctor<3>, Enum<State::Map>)),	Int8),
-  (((owner), (Ctor<4>)),			UInt128));
+  (id, (Ctor<0>),				Bytes),
+  (digest, (Ctor<1>),				Bytes),
+  (expires, (Ctor<2>),				Int64),
+  (state, (Ctor<3>, Enum<State::Map>),		Int8),
+  (owner, (Ctor<4>),				UInt128));
 ZuDerive(GrantDeleteVec, (ZtArray<GrantDelete,
   ZtArrayHeapID<"Zum.Maintenance.Grant">>));
 inline GrantDelete grantDelete(const Grant &item) {
@@ -442,11 +442,11 @@ struct SessionDelete {
   uint128_t	owner = 0;
 };
 ZfbStruct(ZumAPI, SessionDelete,
-  (((digest), (Ctor<0>)),		Bytes),
-  (((idleDeadline), (Ctor<1>)),		Int64),
-  (((absoluteDeadline), (Ctor<2>)),	Int64),
-  (((version), (Ctor<3>)),		UInt64),
-  (((owner), (Ctor<4>)),		UInt128));
+  (digest, (Ctor<0>),			Bytes),
+  (idleDeadline, (Ctor<1>),		Int64),
+  (absoluteDeadline, (Ctor<2>),		Int64),
+  (version, (Ctor<3>),			UInt64),
+  (owner, (Ctor<4>),			UInt128));
 ZuDerive(SessionDeleteVec, (ZtArray<SessionDelete,
   ZtArrayHeapID<"Zum.Maintenance.Session">>));
 template <typename Tuple> inline SessionDelete sessionDelete(const Tuple &item) {
@@ -467,11 +467,11 @@ struct RefreshDelete {
   uint128_t	owner = 0;
 };
 ZfbStruct(ZumAPI, RefreshDelete,
-  (((id), (Ctor<0>)),				Bytes),
-  (((expires), (Ctor<1>)),			Int64),
-  (((state), (Ctor<2>, Enum<State::Map>)),	Int8),
-  (((version), (Ctor<3>)),			UInt64),
-  (((owner), (Ctor<4>)),			UInt128));
+  (id, (Ctor<0>),				Bytes),
+  (expires, (Ctor<1>),				Int64),
+  (state, (Ctor<2>, Enum<State::Map>),		Int8),
+  (version, (Ctor<3>),				UInt64),
+  (owner, (Ctor<4>),				UInt128));
 ZuDerive(RefreshDeleteVec, (ZtArray<RefreshDelete,
   ZtArrayHeapID<"Zum.Maintenance.Refresh">>));
 template <typename Tuple> inline RefreshDelete refreshDelete(const Tuple &item) {
@@ -494,13 +494,13 @@ struct EvidenceDelete {
   uint128_t	owner = 0;
 };
 ZfbStruct(ZumAPI, EvidenceDelete,
-  (((appID), (Ctor<0>)),	UInt64),
-  (((userID), (Ctor<1>)),	UInt64),
-  (((providerID), (Ctor<2>)),	UInt64),
-  (((deadline), (Ctor<3>)),	Int64),
-  (((version), (Ctor<4>)),	UInt64),
-  (((updated), (Ctor<5>)),	Int64),
-  (((owner), (Ctor<6>)),	UInt128));
+  (appID, (Ctor<0>),		UInt64),
+  (userID, (Ctor<1>),		UInt64),
+  (providerID, (Ctor<2>),	UInt64),
+  (deadline, (Ctor<3>),		Int64),
+  (version, (Ctor<4>),		UInt64),
+  (updated, (Ctor<5>),		Int64),
+  (owner, (Ctor<6>),		UInt128));
 ZuDerive(EvidenceDeleteVec, (ZtArray<EvidenceDelete,
   ZtArrayHeapID<"Zum.Maintenance.Evidence">>));
 template <typename Tuple> inline EvidenceDelete evidenceDelete(const Tuple &item) {
@@ -526,13 +526,13 @@ struct ConsentDelete {
   uint128_t	owner = 0;
 };
 ZfbStruct(ZumAPI, ConsentDelete,
-  (((userID), (Ctor<0>)),			UInt64),
-  (((clientID), (Ctor<1>)),			String),
-  (((appID), (Ctor<2>)),			UInt64),
-  (((state), (Ctor<3>, Enum<State::Map>)),	Int8),
-  (((version), (Ctor<4>)),			UInt64),
-  (((updated), (Ctor<5>)),			Int64),
-  (((owner), (Ctor<6>)),			UInt128));
+  (userID, (Ctor<0>),				UInt64),
+  (clientID, (Ctor<1>),				String),
+  (appID, (Ctor<2>),				UInt64),
+  (state, (Ctor<3>, Enum<State::Map>),		Int8),
+  (version, (Ctor<4>),				UInt64),
+  (updated, (Ctor<5>),				Int64),
+  (owner, (Ctor<6>),				UInt128));
 ZuDerive(ConsentDeleteVec, (ZtArray<ConsentDelete,
   ZtArrayHeapID<"Zum.Maintenance.Consent">>));
 
@@ -636,9 +636,9 @@ struct GrantCleanup : public ZdbSagaBase<DBContext> {
   }
 };
 ZfbStruct(ZumAPI, GrantCleanup,
-  (((grants), (Ctor<0>)),	UDT),
-  (((updated), (Ctor<1>)),	Int64),
-  (((request), (Ctor<2>)),	UDT));
+  (grants, (Ctor<0>),		UDT),
+  (updated, (Ctor<1>),		Int64),
+  (request, (Ctor<2>),		UDT));
 
 struct SessionCleanup : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -679,8 +679,8 @@ struct SessionCleanup : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.session, Update) { complete(true); return {}; }
 };
 ZfbStruct(ZumAPI, SessionCleanup,
-  (((sessions), (Ctor<0>)),	UDT),
-  (((updated), (Ctor<1>)),	Int64));
+  (sessions, (Ctor<0>),		UDT),
+  (updated, (Ctor<1>),		Int64));
 
 struct RefreshCleanup : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -718,8 +718,8 @@ struct RefreshCleanup : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.refresh, Update) { complete(true); return {}; }
 };
 ZfbStruct(ZumAPI, RefreshCleanup,
-  (((refreshes), (Ctor<0>)),	UDT),
-  (((updated), (Ctor<1>)),	Int64));
+  (refreshes, (Ctor<0>),	UDT),
+  (updated, (Ctor<1>),		Int64));
 
 struct AppCleanup : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -785,10 +785,10 @@ struct AppCleanup : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(2, zum.app, Update) { complete(true); return {}; }
 };
 ZfbStruct(ZumAPI, AppCleanup,
-  (((appID), (Ctor<0>)),	UInt64),
-  (((evidence), (Ctor<1>)),	UDT),
-  (((consents), (Ctor<2>)),	UDT),
-  (((updated), (Ctor<3>)),	Int64));
+  (appID, (Ctor<0>),		UInt64),
+  (evidence, (Ctor<1>),		UDT),
+  (consents, (Ctor<2>),		UDT),
+  (updated, (Ctor<3>),		Int64));
 
 
 // The compact payloads above deliberately use new saga type identifiers.
@@ -808,9 +808,9 @@ struct GrantCleanupV2 : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(2, zum.request, Update) { complete(false); return {}; }
 };
 ZfbStruct(ZumAPI, GrantCleanupV2,
-  (((grants), (Ctor<0>)),	BytesVec),
-  (((updated), (Ctor<1>)),	Int64),
-  (((request), (Ctor<2>)),	UDT));
+  (grants, (Ctor<0>),		BytesVec),
+  (updated, (Ctor<1>),		Int64),
+  (request, (Ctor<2>),		UDT));
 
 struct SessionCleanupV1 : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -824,8 +824,8 @@ struct SessionCleanupV1 : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.session, Update) { complete(false); return {}; }
 };
 ZfbStruct(ZumAPI, SessionCleanupV1,
-  (((sessions), (Ctor<0>)),	BytesVec),
-  (((updated), (Ctor<1>)),	Int64));
+  (sessions, (Ctor<0>),		BytesVec),
+  (updated, (Ctor<1>),		Int64));
 
 struct RefreshCleanupV1 : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -839,8 +839,8 @@ struct RefreshCleanupV1 : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(1, zum.refresh, Update) { complete(false); return {}; }
 };
 ZfbStruct(ZumAPI, RefreshCleanupV1,
-  (((refreshes), (Ctor<0>)),	BytesVec),
-  (((updated), (Ctor<1>)),	Int64));
+  (refreshes, (Ctor<0>),	BytesVec),
+  (updated, (Ctor<1>),		Int64));
 
 struct AppCleanupV1 : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -859,10 +859,10 @@ struct AppCleanupV1 : public ZdbSagaBase<DBContext> {
   ZdbSagaStep(2, zum.app, Update) { complete(false); return {}; }
 };
 ZfbStruct(ZumAPI, AppCleanupV1,
-  (((appID), (Ctor<0>)),	UInt64),
-  (((evidence), (Ctor<1>)),	BytesVec),
-  (((consents), (Ctor<2>)),	BytesVec),
-  (((updated), (Ctor<3>)),	Int64));
+  (appID, (Ctor<0>),		UInt64),
+  (evidence, (Ctor<1>),		BytesVec),
+  (consents, (Ctor<2>),		BytesVec),
+  (updated, (Ctor<3>),		Int64));
 
 } // namespace Zum
 

@@ -12,8 +12,8 @@ ZuDerive(Text, (ZtString<ZtStringHeapID<"ZdbusAdapterTest.Text">>));
 
 struct Args { Text name; uint32_t count; };
 ZfStruct(, Args,
-  (((name), (Mutable)),		String),
-  (((count), (Mutable)),	UInt32));
+  (name, (Mutable),		String),
+  (count, (Mutable),		UInt32));
 ZfStructRender(, Args, DBUS, name, count);
 
 struct Call {

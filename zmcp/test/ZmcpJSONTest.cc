@@ -11,7 +11,7 @@
 using namespace ZuTestUtil;
 
 struct Params { int value = 0; };
-ZfStruct(, (Params, JSON), (((value), (Ctor<0>)), Int32));
+ZfStruct(, (Params, JSON), (value, (Ctor<0>), Int32));
 struct JSONOK : public Zmcp::Response {
   using Body = Params;
 };
@@ -43,12 +43,16 @@ static void idTest()
 {
   ZuTestScope(id);
   Zmcp::ID id;
-  ZuCheck(id.absent());
+  ZuCheck(id.is<void>());
+  id = Zmcp::Null{};
+  ZuCheck(id.is<Zmcp::Null>());
+  ZuCheck(id == Zmcp::ID{Zmcp::Null{}});
+  ZuCheck(id.hash() == Zmcp::ID{Zmcp::Null{}}.hash());
   id = int64_t{42};
-  ZuCheck(id.integer());
+  ZuCheck(id.is<int64_t>());
   ZuCheck(id.p<int64_t>() == 42);
   id = Zmcp::IDString{"call-42"};
-  ZuCheck(id.string());
+  ZuCheck(id.is<Zmcp::IDString>());
   ZuCheck(id.p<Zmcp::IDString>() == "call-42");
 }
 
@@ -62,7 +66,7 @@ static void envelopeTest()
   ZuCheck(bool(parsed));
   ZuCheck(!parsed.close());
   ZuCheck(parsed.envelope.kind == Zmcp::MessageKind::Request);
-  ZuCheck(parsed.envelope.id().integer());
+  ZuCheck(parsed.envelope.id().is<int64_t>());
   ZuCheck(parsed.envelope.id().p<int64_t>() == 42);
   ZuCheck(parsed.envelope.method() == "tools/list");
   ZuCheck(Zmcp::raw(parsed.envelope.params()));
@@ -72,6 +76,12 @@ static void envelopeTest()
   auto notified = Zmcp::parse<ZuTypeList<>>(
     notification, sizeof(notification));
   ZuCheck(notified.envelope.kind == Zmcp::MessageKind::Notification);
+
+  char nullID[] =
+    "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}";
+  auto nullRequest = Zmcp::parse<ZuTypeList<>>(nullID, sizeof(nullID));
+  ZuCheck(nullRequest.envelope.kind == Zmcp::MessageKind::Request);
+  ZuCheck(nullRequest.envelope.id().is<Zmcp::Null>());
 
   char corrupt[] = "{\"jsonrpc\":";
   auto rejected = Zmcp::parse<ZuTypeList<>>(corrupt, sizeof(corrupt));
@@ -93,6 +103,12 @@ static void saveTest()
     Zmcp::ErrorCode::MethodNotFound, "Method not found");
   ZuCheck(out ==
     "{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"error\":{"
+    "\"code\":-32601,\"message\":\"Method not found\"}}");
+  out.length_(0);
+  Zmcp::saveError(out, Zmcp::ID{Zmcp::Null{}},
+    Zmcp::ErrorCode::MethodNotFound, "Method not found");
+  ZuCheck(out ==
+    "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{"
     "\"code\":-32601,\"message\":\"Method not found\"}}");
 }
 

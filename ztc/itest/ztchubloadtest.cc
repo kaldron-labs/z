@@ -32,7 +32,7 @@ struct Device {
   ZtString<> id;
 };
 ZfStruct(, (Device, Cf),
-  (((id), (Mutable, Required)),	String));
+  (id, (Mutable, Required),	String));
 using Devices = ZtArray<Device, ZtArrayHeapID<"Ztc.Load.Devices">>;
 inline ZfCf::AsArray<ZfFieldTC::UDT> ZfCf_Fmt(Devices *);
 
@@ -50,17 +50,17 @@ struct Config {
   unsigned sloMS = 200;
 };
 ZfStruct(, (Config, Cf),
-  (((devices), (Mutable, Required)),	UDT),
-  (((tokenFile), (Mutable, Required)),	String),
-  (((token), (Mutable, Required)),	String),
-  (((wss), (Mutable, Required)),	String),
-  (((ca), (Mutable, Required)),		String),
-  (((clients), (Mutable)),		UInt32),
-  (((subs), (Mutable)),			UInt32),
-  (((publishers), (Mutable)),		UInt32),
-  (((rounds), (Mutable)),		UInt32),
-  (((turn), (Mutable)),			UInt32),
-  (((sloMS), (Mutable)),		UInt32));
+  (devices, (Mutable, Required),	UDT),
+  (tokenFile, (Mutable, Required),	String),
+  (token, (Mutable, Required),		String),
+  (wss, (Mutable, Required),		String),
+  (ca, (Mutable, Required),		String),
+  (clients, (Mutable),			UInt32),
+  (subs, (Mutable),			UInt32),
+  (publishers, (Mutable),		UInt32),
+  (rounds, (Mutable),			UInt32),
+  (turn, (Mutable),			UInt32),
+  (sloMS, (Mutable),			UInt32));
 
 using Frame = ZmRef<ZiIOBuf>;
 using Buf = ZiIOBufAlloc<1024, 1U << 16, "Ztc.Load.Frame">;
