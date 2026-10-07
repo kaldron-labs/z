@@ -10,7 +10,7 @@ SUBDIRS += zdbus
 endif
 SUBDIRS += ztcp ztls zquic zhttp zws
 SUBDIRS += zrest
-SUBDIRS += zmcp
+SUBDIRS += zjrpc zmcp
 SUBDIRS += zfb
 SUBDIRS += zdb
 if LIBPQ
@@ -27,7 +27,7 @@ SUBDIRS += zgtk
 endif
 # SUBDIRS += zdash
 
-DIST_SUBDIRS = zu zm zt ze zf zi zv zrl zdbus ztcp ztls zquic zhttp zws zrest zmcp zfb zdb ztc \
+DIST_SUBDIRS = zu zm zt ze zf zi zv zrl zdbus ztcp ztls zquic zhttp zws zrest zjrpc zmcp zfb zdb ztc \
 	zdb_pq zdb_sqlite zdf zum zgtk # zdash
 
 .PHONY: test

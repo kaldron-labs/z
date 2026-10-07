@@ -226,10 +226,7 @@ public:
   using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
-  template <typename L>
-  void txStream_(L &&l, Opcode::T opcode = Opcode::Binary) {
-    CodecBase::txStream_(ZuFwd<L>(l), opcode);
-  }
+  using CodecBase::txStream_;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 
@@ -438,10 +435,7 @@ public:
   using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
-  template <typename L>
-  void txStream_(L &&l, Opcode::T opcode = Opcode::Binary) {
-    CodecBase::txStream_(ZuFwd<L>(l), opcode);
-  }
+  using CodecBase::txStream_;
   StateBase &state() { return *this; }
   const StateBase &state() const { return *this; }
 

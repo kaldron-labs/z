@@ -23,6 +23,8 @@
 
 #include "ZmcpITestPorts.hh"
 
+#include "zmcpitestbatch.hh"
+
 using namespace ZuTestUtil;
 
 struct EchoReq { int value = 0; };
@@ -46,7 +48,7 @@ struct EchoStream : public Zmcp::Request {
   using OperationID = ZuStringT<"echoStreamValue">;
   using ToolID = ZuStringT<"echo_stream">;
   using Responses = ZuTypeList<EchoOK>;
-  enum { ResponseBody = Zmcp::BodyPolicy::SSE };
+  enum { ResponseBody = Zjrpc::BodyPolicy::SSE };
 };
 using Catalog = ZuTypeList<Echo, EchoStream>;
 
@@ -138,7 +140,7 @@ struct App {
       (void)completion->log("debug", "hidden", "echo");
       (void)completion->log("warning", "visible", "echo");
       completion->complete(
-	Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
       return;
     }
     ZmFn<bool()> complete;
@@ -151,12 +153,12 @@ struct App {
       case 74:
 	complete = [completion = ZuMv(completion), request]() mutable {
 	  return completion->complete(
-	    Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	    Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
 	};
 	break;
       default:
 	completion->complete(
-	  Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	  Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
 	return;
     }
     switch (request.value) {
@@ -195,14 +197,14 @@ struct ClientApp {
     closed_.post();
   }
   void tools(const ZfJSON::AnyNode *catalog) {
-    if (Zmcp::member(catalog, "tools")) ++catalogs;
+    if (Zjrpc::member(catalog, "tools")) ++catalogs;
     tools_.post();
   }
   void toolsFailed() {
     ++toolFailures;
     tools_.post();
   }
-  void cancelled(const Zmcp::ID &, bool ok) {
+  void cancelled(const Zjrpc::ID &, bool ok) {
     cancelOK = ok;
     cancelled_.post();
   }
@@ -241,7 +243,7 @@ struct ClientApp {
 
 template <typename Heap = ZuVoid>
 struct ClientCall_ : public Heap, public ZmObject {
-  void started(const Zmcp::ID &id_) {
+  void started(const Zjrpc::ID &id_) {
     id = id_;
     started_.post();
   }
@@ -254,7 +256,7 @@ struct ClientCall_ : public Heap, public ZmObject {
     value = reply.body.value;
     done.post();
   }
-  void failed(const Zmcp::Error &) {
+  void failed(const Zjrpc::Error &) {
     ++failures;
     done.post();
   }
@@ -265,7 +267,7 @@ struct ClientCall_ : public Heap, public ZmObject {
 
   ZmSemaphore done;
   ZmSemaphore started_;
-  Zmcp::ID id;
+  Zjrpc::ID id;
   int value = 0;
   unsigned controls = 0;
   unsigned failures = 0;
@@ -324,7 +326,7 @@ public:
   bool received(ZuCSpan data) {
     m_response << data;
     if (m_response.length() >
-	Zmcp::Default::MaxJSONBytes + Zmcp::Default::MaxLineBytes)
+	Zjrpc::Default::MaxJSONBytes + Zjrpc::Default::MaxLineBytes)
       return true;
     int64_t headerEnd = m_response.find("\r\n\r\n");
     if (headerEnd < 0) return false;
@@ -375,7 +377,7 @@ private:
 RawHTTPCxn::RawHTTPCxn(
     RawHTTP *owner, ZiMultiplex *mx, const ZiCxnInfo &ci) :
     ZiConnection{mx, ci}, m_owner{owner},
-    m_rxBuf{new Zmcp::HTTPBodyBuf{}}
+    m_rxBuf{new Zjrpc::InputBuf{}}
 {
 }
 
@@ -456,7 +458,7 @@ struct LegacyApp {
 
   ZmSemaphore listening_;
   Zmcp::Peer<Catalog> peer;
-  Zmcp::Limits limits;
+  Zjrpc::Limits limits;
   unsigned connections = 0;
   unsigned failures = 0;
   unsigned initializes = 0;
@@ -471,7 +473,7 @@ struct LegacyApp {
   public:
     void init(LegacyApp &app) { m_app = &app; }
     ZuCSpan endpoint() const { return "/mcp"; }
-    const Zmcp::Limits &limits() const { return m_app->limits; }
+    const Zjrpc::Limits &limits() const { return m_app->limits; }
     bool origin(ZuCSpan) const { return true; }
 
     template <typename Link>
@@ -517,8 +519,8 @@ struct LegacyApp {
       link->send(ZuMv(response));
       return;
     }
-    auto parsed = Zmcp::parse<Catalog>(
-      ZuSpan<char>{body->span()}, limits.maxJSONBytes);
+    auto parsed = Zjrpc::parse(
+      body->span(), limits.maxJSONBytes);
     if (!parsed) {
       link->disconnect();
       return;
@@ -534,12 +536,12 @@ struct LegacyApp {
     };
     if (parsed.envelope.method() == "server/discover")
       emit(Zmcp::ErrorMessage{parsed.envelope.id(),
-	"Method not found", Zmcp::ErrorCode::MethodNotFound});
+	"Method not found", Zjrpc::ErrorCode::MethodNotFound});
     else {
       if (parsed.envelope.method() == "initialize") ++initializes;
       auto tool = [this](auto *, const EchoReq &request, auto complete) {
 	++toolCalls;
-	complete(Zmcp::ToolReply<EchoOK>{EchoResult{request.value}});
+	complete(Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
       };
       if (!peer.dispatch(parsed.envelope, emit, tool)) {
 	link->disconnect();
@@ -736,6 +738,9 @@ static void httpTest()
   ClientApp clientApp;
   Zmcp::HTTPClient<ClientApp, Catalog> client;
   Zmcp::ClientConfig clientConfig;
+  Zjrpc::Limits clientLimits;
+  clientLimits.workBatch = 1;
+  clientConfig.limits(clientLimits);
   clientConfig.endpoint("/mcp");
   clientConfig.secure(false).tcp(true).tls(false).quic(false)
     .protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -774,6 +779,30 @@ static void httpTest()
   clientApp.tools_.wait();
   ZuCheck(clientApp.catalogs == 3 && !clientApp.toolFailures);
 
+  Zmcp::Batch<Catalog> batch;
+  ZuCheck(batch.request<Echo>(int64_t{1001}, EchoReq{66}));
+  ZuCheck(batch.request<Echo>(int64_t{1002}, EchoReq{82}));
+  ZmRef<ZmcpITest::BatchCall> aggregate = new ZmcpITest::BatchCall{};
+  ZuCheck(client.callBatch(ZuMv(batch), aggregate));
+  app.called_.wait();
+  auto completeBatch = ZuMv(app.complete_);
+  ZuCheck(completeBatch && completeBatch());
+  aggregate->done.wait();
+  ZuCheck(aggregate->completions == 1 && !aggregate->failures);
+  ZuCheck(aggregate->ids(1001, 1002));
+
+  Zmcp::Batch<Catalog> mixed;
+  ZuCheck(mixed.request<Echo>(int64_t{1101}, EchoReq{73}));
+  ZuCheck(mixed.request<EchoStream>(int64_t{1102}, EchoReq{82}));
+  ZmRef<ZmcpITest::BatchCall> mixedReply = new ZmcpITest::BatchCall{};
+  ZuCheck(client.callBatch(ZuMv(mixed), mixedReply));
+  app.called_.wait();
+  auto completeMixed = ZuMv(app.complete1_);
+  ZuCheck(completeMixed && completeMixed());
+  mixedReply->done.wait();
+  ZuCheck(mixedReply->completions == 1 && !mixedReply->failures);
+  ZuCheck(mixedReply->ids(1101, 1102));
+
   ZmRef<ClientCall> fixedCall = new ClientCall{};
   ZuCheck(client.call<Echo>(EchoReq{61}, fixedCall));
   fixedCall->done.wait();
@@ -811,7 +840,7 @@ static void httpTest()
   ZuCheck(clientApp.cancelOK && cancelCall->failures == 1);
   ZuCheck(app.cancellations == 3);
   ZuCheck(bool(app.complete_) && !app.complete_());
-  ZuCheck(app.authorizedCalls == 5);
+  ZuCheck(app.authorizedCalls == 9);
 
   if (clientInited) ZuCheck(client.stop());
   ZuCheck(clientApp.closes == 1 && !clientApp.failures);
@@ -989,7 +1018,7 @@ static void httpTest()
   ZuCheck(app.sessionOpens == 1);
   ZuCheck(app.sessionCloses == 1);
   ZuCheck(app.streamOpens == app.streamCloses);
-  ZuCheck(app.modernContexts == 8);
+  ZuCheck(app.modernContexts == 12);
   ZuCheck(app.legacyContexts == 3);
   server.final();
   mx.stop();

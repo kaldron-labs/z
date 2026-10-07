@@ -8,6 +8,9 @@
 #define zmcpexample_HH
 
 #include <zlib/Zmcp.hh>
+#include <zlib/ZtScratch.hh>
+
+using TextScratch = ZtBArray<ZtArrayHeapID<"ZmcpExample.Text">>;
 
 struct AddRequest {
   int64_t lhs = 0;
@@ -45,7 +48,7 @@ struct AddStream : public Zmcp::Request {
   using Title = ZuStringT<"Add numbers over SSE">;
   using Description = ZuStringT<"Add two signed integers using SSE">;
   using Responses = ZuTypeList<AddOK, AddUnauthorized>;
-  enum { ResponseBody = Zmcp::BodyPolicy::SSE };
+  enum { ResponseBody = Zjrpc::BodyPolicy::SSE };
 };
 
 using ExampleCatalog = ZuTypeList<Add, AddStream>;

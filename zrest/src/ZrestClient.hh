@@ -274,7 +274,7 @@ struct MReqBuilder : public Zhttp::ReqBuilder {
       using ReqHdrs = GetHdrs<typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
       if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
-	using Values = GetKValues<Key, ReqHdrs>;
+	using Values = Zhttp::HeaderValues<Key, ReqHdrs>;
 	if constexpr (ZuTypeIn<Value, Values>{})
 	  request.template header<Key, Value>(ZuFwd<L>(l));
       }

@@ -64,6 +64,7 @@ public:
   }
 
   bool valid() const { return m_valid && !this->failed(); }
+  using Base::fail;
 
   bool prepareBuf_(ZiIOBuf *buf, bool final) {
     if (!m_valid) {

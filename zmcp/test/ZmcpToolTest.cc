@@ -128,11 +128,11 @@ static void customAllocTest()
   {
     char json[] = "request-id";
     auto node = ZfJSON::newNode<ZfJSON::AnyNode::String>(json);
-    auto handler = ZfJSON::handler<Zmcp::ID>(node.ptr());
+    auto handler = ZfJSON::handler<Zjrpc::ID>(node.ptr());
     ZuCheck(handler.valid);
-    ZuPtr<Zmcp::ID> id = handler.alloc();
-    ZuCheck(id->is<Zmcp::IDString>());
-    ZuCheck(id->p<Zmcp::IDString>() == "request-id");
+    ZuPtr<Zjrpc::ID> id = handler.alloc();
+    ZuCheck(id->is<Zjrpc::IDString>());
+    ZuCheck(id->p<Zjrpc::IDString>() == "request-id");
   }
   {
     char json[] = "{\"lhs\":10,\"rhs\":11}";

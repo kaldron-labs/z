@@ -177,7 +177,7 @@ ZuAssert((ZuIsSame<Zrest::GetAllResponses<TwoRequests>,
 ZuAssert((ZuIsSame<Zrest::GetAllResponses<
   ZuTypeList<RequestA, RequestB, RequestC>>,
   ZuTypeList<ReplyA, ReplyB>>{}));
-ZuAssert((ZuIsSame<Zrest::GetKValues<ContentType, MultiHeaders>,
+ZuAssert((ZuIsSame<Zhttp::HeaderValues<ContentType, MultiHeaders>,
   ContentTypes>{}));
 
 static void zeroBodyTest()

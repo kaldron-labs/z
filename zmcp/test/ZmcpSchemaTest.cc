@@ -50,7 +50,7 @@ using EmptyCatalog = ZuTypeList<>;
 
 struct NoArgResponse : public Zmcp::Response { };
 struct NoArgTool : public Zmcp::Request {
-  using Object = Zmcp::EmptyObject;
+  using Object = Zjrpc::EmptyObject;
   using OperationID = ZuStringT<"noArguments">;
   using ToolID = ZuStringT<"no_arguments">;
   using Responses = ZuTypeList<NoArgResponse>;

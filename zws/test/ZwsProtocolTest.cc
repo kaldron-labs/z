@@ -841,6 +841,17 @@ void tx()
     ZuCHECK(!tx.valid());
     ZuCHECK(!lower.bufs.length());
   }
+  {
+    WireTx lower;
+    {
+      auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
+      tx << "discard";
+      tx.fail();
+      ZuCHECK(!tx.valid() && !tx.flush());
+    }
+    ZuCHECK(!lower.sends && !lower.bufs.length(),
+      "aborting an application write must not flush a partial message");
+  }
 }
 
 void codec()

@@ -35,82 +35,9 @@ struct JSONEmptyReq {
 };
 
 ZuAssert((ZuIsSame<
-  Zmcp::ReplyBodies<JSONReq>, ZuTypeList<Params>>{}));
+  Zjrpc::ReplyBodies<JSONReq>, ZuTypeList<Params>>{}));
 ZuAssert((ZuIsSame<
-  Zmcp::ReplyBodies<JSONEmptyReq>, ZuTypeList<>>{}));
-
-static void idTest()
-{
-  ZuTestScope(id);
-  Zmcp::ID id;
-  ZuCheck(id.is<void>());
-  id = Zmcp::Null{};
-  ZuCheck(id.is<Zmcp::Null>());
-  ZuCheck(id == Zmcp::ID{Zmcp::Null{}});
-  ZuCheck(id.hash() == Zmcp::ID{Zmcp::Null{}}.hash());
-  id = int64_t{42};
-  ZuCheck(id.is<int64_t>());
-  ZuCheck(id.p<int64_t>() == 42);
-  id = Zmcp::IDString{"call-42"};
-  ZuCheck(id.is<Zmcp::IDString>());
-  ZuCheck(id.p<Zmcp::IDString>() == "call-42");
-}
-
-static void envelopeTest()
-{
-  ZuTestScope(envelope);
-  char request[] =
-    "{\"extra\":true,\"jsonrpc\":\"2.0\",\"id\":42,"
-    "\"method\":\"tools/list\",\"params\":{}}";
-  auto parsed = Zmcp::parse<ZuTypeList<>>(request, sizeof(request));
-  ZuCheck(bool(parsed));
-  ZuCheck(!parsed.close());
-  ZuCheck(parsed.envelope.kind == Zmcp::MessageKind::Request);
-  ZuCheck(parsed.envelope.id().is<int64_t>());
-  ZuCheck(parsed.envelope.id().p<int64_t>() == 42);
-  ZuCheck(parsed.envelope.method() == "tools/list");
-  ZuCheck(Zmcp::raw(parsed.envelope.params()));
-
-  char notification[] =
-    "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\"}";
-  auto notified = Zmcp::parse<ZuTypeList<>>(
-    notification, sizeof(notification));
-  ZuCheck(notified.envelope.kind == Zmcp::MessageKind::Notification);
-
-  char nullID[] =
-    "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}";
-  auto nullRequest = Zmcp::parse<ZuTypeList<>>(nullID, sizeof(nullID));
-  ZuCheck(nullRequest.envelope.kind == Zmcp::MessageKind::Request);
-  ZuCheck(nullRequest.envelope.id().is<Zmcp::Null>());
-
-  char corrupt[] = "{\"jsonrpc\":";
-  auto rejected = Zmcp::parse<ZuTypeList<>>(corrupt, sizeof(corrupt));
-  ZuCheck(!rejected);
-  ZuCheck(rejected.close());
-  ZuCheck(!rejected.root);
-}
-
-static void saveTest()
-{
-  ZuTestScope(save);
-  ZtString<> out;
-  Zmcp::saveRequest(out, Zmcp::ID{int64_t{7}}, "echo", Params{3});
-  ZuCheck(out ==
-    "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"echo\","
-    "\"params\":{\"value\":3}}");
-  out.length_(0);
-  Zmcp::saveError(out, Zmcp::ID{Zmcp::IDString{"x"}},
-    Zmcp::ErrorCode::MethodNotFound, "Method not found");
-  ZuCheck(out ==
-    "{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"error\":{"
-    "\"code\":-32601,\"message\":\"Method not found\"}}");
-  out.length_(0);
-  Zmcp::saveError(out, Zmcp::ID{Zmcp::Null{}},
-    Zmcp::ErrorCode::MethodNotFound, "Method not found");
-  ZuCheck(out ==
-    "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{"
-    "\"code\":-32601,\"message\":\"Method not found\"}}");
-}
+  Zjrpc::ReplyBodies<JSONEmptyReq>, ZuTypeList<>>{}));
 
 static void replyTest()
 {
@@ -119,34 +46,34 @@ static void replyTest()
     "{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{\"content\":[],"
     "\"structuredContent\":{\"code\":200,\"data\":{\"value\":11}},"
     "\"isError\":false}}";
-  auto parsed = Zmcp::parse<ZuTypeList<>>(input, sizeof(input));
-  ZuCheck(parsed.envelope.kind == Zmcp::MessageKind::Result);
+  auto parsed = Zjrpc::parse(input, sizeof(input));
+  ZuCheck(parsed.envelope.kind == Zjrpc::MessageKind::Result);
   auto reply = Zmcp::loadToolReply<JSONReq>(
-    Zmcp::raw(parsed.envelope.result()));
-  ZuCheck((reply.is<Zmcp::ToolReply<JSONOK>>()));
-  ZuCheck(reply.p<Zmcp::ToolReply<JSONOK>>().body.value == 11);
+    Zjrpc::raw(parsed.envelope.result()));
+  ZuCheck((reply.is<Zjrpc::Reply<JSONOK>>()));
+  ZuCheck(reply.p<Zjrpc::Reply<JSONOK>>().body.value == 11);
 
   char arrayInput[] =
     "{\"jsonrpc\":\"2.0\",\"id\":10,\"result\":{\"content\":[],"
     "\"structuredContent\":{\"code\":201,\"data\":[3,5,8]},"
     "\"isError\":false}}";
-  auto arrayParsed = Zmcp::parse<ZuTypeList<>>(
+  auto arrayParsed = Zjrpc::parse(
     arrayInput, sizeof(arrayInput));
   auto arrayReply = Zmcp::loadToolReply<JSONArrayReq>(
-    Zmcp::raw(arrayParsed.envelope.result()));
-  ZuCheck((arrayReply.is<Zmcp::ToolReply<JSONArrayOK>>()));
-  const auto &body = arrayReply.p<Zmcp::ToolReply<JSONArrayOK>>().body;
+    Zjrpc::raw(arrayParsed.envelope.result()));
+  ZuCheck((arrayReply.is<Zjrpc::Reply<JSONArrayOK>>()));
+  const auto &body = arrayReply.p<Zjrpc::Reply<JSONArrayOK>>().body;
   ZuCheck(body.length() == 3);
   ZuCheck(body[0] == 3 && body[1] == 5 && body[2] == 8);
 
   char emptyInput[] =
     "{\"jsonrpc\":\"2.0\",\"id\":11,\"result\":{\"content\":[],"
     "\"structuredContent\":{\"code\":204},\"isError\":false}}";
-  auto emptyParsed = Zmcp::parse<ZuTypeList<>>(
+  auto emptyParsed = Zjrpc::parse(
     emptyInput, sizeof(emptyInput));
   auto emptyReply = Zmcp::loadToolReply<JSONEmptyReq>(
-    Zmcp::raw(emptyParsed.envelope.result()));
-  ZuCheck((emptyReply.is<Zmcp::ToolReply<JSONEmpty>>()));
+    Zjrpc::raw(emptyParsed.envelope.result()));
+  ZuCheck((emptyReply.is<Zjrpc::Reply<JSONEmpty>>()));
 }
 
 static void loggingDataTest()
@@ -156,36 +83,36 @@ static void loggingDataTest()
   char input[] =
     "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\","
     "\"params\":{\"level\":\"info\",\"data\":[1,{\"x\":2}]}}";
-  auto parsed = Zmcp::parse<ZuTypeList<>>(input, sizeof(input));
-  auto params = Zmcp::raw(parsed.envelope.params());
-  auto data = Zmcp::member(params, "data");
+  auto parsed = Zjrpc::parse(input, sizeof(input));
+  auto params = Zjrpc::raw(parsed.envelope.params());
+  auto data = Zjrpc::member(params, "data");
   ZuCheck(data && data->has<ZfJSON::AnyNode::Array>());
 
   char objectInput[] =
     "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\","
     "\"params\":{\"level\":\"info\",\"data\":{\"x\":2}}}";
-  auto objectParsed = Zmcp::parse<ZuTypeList<>>(
+  auto objectParsed = Zjrpc::parse(
     objectInput, sizeof(objectInput));
-  params = Zmcp::raw(objectParsed.envelope.params());
-  data = Zmcp::member(params, "data");
+  params = Zjrpc::raw(objectParsed.envelope.params());
+  data = Zjrpc::member(params, "data");
   ZuCheck(data && data->has<ZfJSON::AnyNode::Object>());
 
   char scalarInput[] =
     "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\","
     "\"params\":{\"level\":\"info\",\"data\":42}}";
-  auto scalarParsed = Zmcp::parse<ZuTypeList<>>(
+  auto scalarParsed = Zjrpc::parse(
     scalarInput, sizeof(scalarInput));
-  params = Zmcp::raw(scalarParsed.envelope.params());
-  data = Zmcp::member(params, "data");
+  params = Zjrpc::raw(scalarParsed.envelope.params());
+  data = Zjrpc::member(params, "data");
   ZuCheck(data && data->has<ZfJSON::AnyNode::Number>());
 
   char nullInput[] =
     "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\","
     "\"params\":{\"level\":\"info\",\"data\":null}}";
-  auto nullParsed = Zmcp::parse<ZuTypeList<>>(
+  auto nullParsed = Zjrpc::parse(
     nullInput, sizeof(nullInput));
-  params = Zmcp::raw(nullParsed.envelope.params());
-  data = Zmcp::member(params, "data");
+  params = Zjrpc::raw(nullParsed.envelope.params());
+  data = Zjrpc::member(params, "data");
   ZuCheck(data && data->has<ZfJSON::AnyNode::Null>());
 }
 
@@ -193,9 +120,6 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(idTest);
-  ZuTestCall(envelopeTest);
-  ZuTestCall(saveTest);
   ZuTestCall(replyTest);
   ZuTestCall(loggingDataTest);
   return 0;

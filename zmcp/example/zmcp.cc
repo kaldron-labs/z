@@ -29,12 +29,14 @@ struct Options {
   int64_t rhs = 22;
   unsigned port = 8080;
   bool stdio = false;
+  bool ws = false;
   bool stream = false;
   bool help = false;
 };
 
 ZfStruct(, (Options, CLI),
   (stdio, (CLI::Long<"stdio">),			Bool),
+  (ws, (CLI::Long<"ws">),				Bool),
   (host, (CLI::Long<"host">),			String),
   (port, (CLI::Opt<'p'>, CLI::Long<"port">),		UInt32),
   (token, (CLI::Long<"token">),					String),
@@ -48,8 +50,9 @@ static void usage(int code)
   std::cerr <<
     "Usage: zmcp [OPTION]...\n\n"
     "  --stdio          use inherited stdin/stdout instead of HTTP\n"
-    "  --host=HOST      HTTP host, default 127.0.0.1\n"
-    "  -p, --port=N     HTTP port, default 8080\n"
+    "  --ws             use WebSockets on /mcp instead of HTTP POST\n"
+    "  --host=HOST      network host, default 127.0.0.1\n"
+    "  -p, --port=N     network port, default 8080\n"
     "  --token=TOKEN    send 'Authorization: Bearer TOKEN'\n"
     "  --lhs=N          left operand, default 20\n"
     "  --rhs=N          right operand, default 22\n"
@@ -79,7 +82,6 @@ struct App {
 
   const Options *options = nullptr;
   ZmSemaphore ready_;
-  ZmSemaphore closed_;
   int era = Zmcp::Era::Unknown;
   bool failed_ = false;
 
@@ -87,18 +89,18 @@ struct App {
   void header(L &&l) const {
     if constexpr (Key{}() == "authorization") {
       if (!options->token) return;
-      ZtString<> value;
+      auto value = ZtScratch(TextScratch,
+	options->token.length() + ZuStringT<"Bearer ">{}().length());
       value << "Bearer " << options->token;
       l(value);
     }
   }
 
   void ready(int era_) { era = era_; ready_.post(); }
-  void closed() { closed_.post(); }
+  void closed() { }
   void failed() {
     failed_ = true;
     ready_.post();
-    closed_.post();
   }
 };
 
@@ -116,7 +118,7 @@ struct Call_ : public Heap, public ZmObject {
       failed_ = true;
     done.post();
   }
-  void failed(const Zmcp::Error &) { failed_ = true; done.post(); }
+  void failed(const Zjrpc::Error &) { failed_ = true; done.post(); }
   void failed() { failed_ = true; done.post(); }
 };
 ZuDerive(CallHeap, (ZmHeap<"ZmcpExample.Call", Call_<>>));
@@ -125,7 +127,6 @@ ZuDerive(Call, (Call_<CallHeap>));
 template <typename Client>
 static bool run(Client &client, const Options &options, App &app)
 {
-  if (!client.start()) return false;
   app.ready_.wait();
   if (app.failed_) return false;
   ZmRef<Call> call = new Call{};
@@ -153,7 +154,7 @@ int main(int argc, char **argv)
     usage(1);
   }
   if (options.help) usage(0);
-  if (argc != 1 || !options.host || !options.port ||
+  if (argc != 1 || (options.stdio && options.ws) || !options.host || !options.port ||
       options.port > UINT16_MAX) usage(1);
 
   ZiLog::init("zmcp");
@@ -166,9 +167,20 @@ int main(int argc, char **argv)
   bool ok = false;
   if (options.stdio) {
     Zmcp::IOClient<App, ExampleCatalog> client;
-    auto config = Zmcp::StdioConfig{}
+    auto config = Zjrpc::StdioConfig{}
       .rxThread("stdioRx").txThread("stdioTx");
-    if (client.init(&mx, ZuMv(config), &app))
+    if (client.init(&mx, ZuMv(config), &app) && client.start())
+      ok = run(client, options, app);
+    client.final();
+  } else if (options.ws) {
+    Zmcp::WSClient<App, ExampleCatalog> client;
+    Zws::URI uri;
+    auto text = ZtScratch(TextScratch, options.host.length() +
+	ZuBox<unsigned>{options.port}.length() + ZuStringT<"ws://:/mcp">{}().length());
+    text << "ws://" << options.host << ':' << options.port << "/mcp";
+    if (Zws::URI::parse(uri, text).ok() && client.init(
+	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{}, Zjrpc::WSConfig{}, &app) &&
+	client.start() && client.connect(uri, "mcp"))
       ok = run(client, options, app);
     client.final();
   } else {
@@ -178,7 +190,7 @@ int main(int argc, char **argv)
     if (client.init(
         Zhttp::HubConfig{&mx},
         Zhttp::Destination{options.host, uint16_t(options.port)},
-        ZuMv(config), &app))
+        ZuMv(config), &app) && client.start())
       ok = run(client, options, app);
     client.final();
   }
