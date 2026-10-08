@@ -13,7 +13,7 @@ libZiTest_la_SOURCES = ZiTestResidue.cc
 noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
-	ZiIOBufTest ZiEventLoopTest \
+	ZiIOBufTest ZiFBTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
 	ZiDaemonTest ZiPIDFileTest ZiResolverTest
@@ -23,6 +23,7 @@ test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZiFileTest_SOURCES = ZiFileTest.cc
+ZiFBTest_SOURCES = ZiFBTest.cc
 ZiFileAgeTest_SOURCES = ZiFileAgeTest.cc
 ZiGlobTest_SOURCES = ZiGlobTest.cc
 ZiRingTest_SOURCES = ZiRingTest.cc

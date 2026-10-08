@@ -11,13 +11,13 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiProgram.hh ZiRing.hh ZiDaemon.hh ZiPIDFile.hh \
-	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
+	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh ZiFB.hh \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
 	ZiResolver.hh ZiHeapTune.hh ZiHashTune.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
-	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
+	ZiDir.cc ZiFB.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
 	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc ZiProgram.cc \
 	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiPIDFile.cc \
 	ZiResolver.cc ZtcHub.cc \

@@ -316,6 +316,7 @@ ZiMultiplex_WSExt::~ZiMultiplex_WSExt()
 
 #include <sys/resource.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <linux/unistd.h>
@@ -462,7 +463,7 @@ void ZiPutTOS(struct msghdr &msg, void *control, unsigned controlLen, ZiTOS tos,
   cmsg->cmsg_type = type;
   cmsg->cmsg_len = CMSG_LEN(sizeof(int));
   *reinterpret_cast<int *>(CMSG_DATA(cmsg)) = tos.template p<uint8_t>();
-  msg.msg_controllen = CMSG_SPACE(sizeof(int));
+  msg.msg_controllen = cmsg->cmsg_len;
 }
 #else
 bool ZiSetRecvTOS(Zi::Socket s, ZiIPType::T type)
@@ -2730,18 +2731,11 @@ bool ZiMultiplex::start__()
     Error("epoll_create", Zi::IOError, ZeLastError);
     return false;
   }
-  if (pipe(&m_wakeFD) < 0) {
+  // Preserve one wake per queued rx() callback without a pipe's byte limit.
+  if ((m_wakeFD = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE)) < 0) {
     ZeError e{errno};
     ::close(m_epollFD); m_epollFD = -1;
-    Error("pipe", Zi::IOError, e);
-    return false;
-  }
-  if (fcntl(m_wakeFD, F_SETFL, O_NONBLOCK) < 0) {
-    ZeError e{errno};
-    ::close(m_epollFD); m_epollFD = -1;
-    ::close(m_wakeFD); m_wakeFD = -1;
-    ::close(m_wakeFD2); m_wakeFD2 = -1;
-    Error("fcntl(F_SETFL, O_NONBLOCK)", Zi::IOError, e);
+    Error("eventfd", Zi::IOError, e);
     return false;
   }
   {
@@ -2753,7 +2747,6 @@ bool ZiMultiplex::start__()
       ZeError e{errno};
       ::close(m_epollFD); m_epollFD = -1;
       ::close(m_wakeFD); m_wakeFD = -1;
-      ::close(m_wakeFD2); m_wakeFD2 = -1;
       Error("epoll_ctl(EPOLL_CTL_ADD)", Zi::IOError, e);
       return false;
     }
@@ -2854,7 +2847,6 @@ void ZiMultiplex::stop_2()
 
 #ifdef ZiMultiplex_EPoll
   if (m_wakeFD >= 0) { ::close(m_wakeFD); m_wakeFD = -1; }
-  if (m_wakeFD2 >= 0) { ::close(m_wakeFD2); m_wakeFD2 = -1; }
   if (m_epollFD >= 0) { ::close(m_epollFD); m_epollFD = -1; }
 #endif
 }
@@ -2923,7 +2915,6 @@ void ZiMultiplex::rx()
       nConnections = m_cxns->count_(),
       epollFD = m_epollFD,
       wakeFD = m_wakeFD,
-      wakeFD2 = m_wakeFD2,
       nListeners = m_listeners->count_()
     ](auto &s) {
       s << "wait() nThreads: " << ZuBoxed(nThreads).fmt<ZuFmt::Right<2>>()
@@ -2931,7 +2922,6 @@ void ZiMultiplex::rx()
 	  ZuBoxed(nConnections).fmt<ZuFmt::Right<4>>()
 	<< " epollFD: " << ZuBoxed(epollFD).fmt<ZuFmt::Right<3>>()
 	<< " wakeFD: " << ZuBoxed(wakeFD).fmt<ZuFmt::Right<3>>()
-	<< " wakeFD2: " << ZuBoxed(wakeFD2).fmt<ZuFmt::Right<3>>()
 	<< " nListeners: " << ZuBoxed(nListeners).fmt<ZuFmt::Right<3>>();
     }));
 
@@ -3051,20 +3041,20 @@ bool ZiMultiplex::readWake()
     s << "FD: " << ZuBoxed(wakeFD).fmt<ZuFmt::Right<3>>() << " readWake";
   }));
 
-  char c;
-  return ::read(m_wakeFD, &c, 1) >= 1;
+  uint64_t count;
+  return ::read(m_wakeFD, &count, sizeof(count)) == sizeof(count);
 }
 
 void ZiMultiplex::writeWake()
 {
-  ZiDEBUG(this, ([wakeFD = m_wakeFD2](auto &s) {
+  ZiDEBUG(this, ([wakeFD = m_wakeFD](auto &s) {
     s << "FD: " << ZuBoxed(wakeFD).fmt<ZuFmt::Right<3>>() << " writeWake";
   }));
 
-  char c = 0;
-  while (::write(m_wakeFD2, &c, 1) < 0) {
+  uint64_t count = 1;
+  while (::write(m_wakeFD, &count, sizeof(count)) < 0) {
     ZeError e{errno};
-    if (e.errNo() != EINTR && e.errNo() != EAGAIN) {
+    if (e.errNo() != EINTR) {
       Error("write", Zi::IOError, e);
       break;
     }

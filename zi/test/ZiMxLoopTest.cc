@@ -692,6 +692,24 @@ void testMxWatch()
   ZuCheck(state.rootDels == 1);
 }
 
+void testWakeBurst()
+{
+  ZuTestScope(testWakeBurst);
+  ZiMultiplex mx;
+  ZmSemaphore done;
+  unsigned completed = 0;
+  // Exceed the usual 64 KiB wake pipe while its Rx reader is posting work.
+  constexpr unsigned count = 128 * 1024;
+  ZuCheck(mx.start());
+  mx.rxRun([&]() {
+    for (unsigned i = 0; i < count; ++i)
+      mx.rxRun([&]() { if (++completed == count) done.post(); });
+  });
+  ZuCheck(done.timedwait(Zm::now(30)) == 0);
+  ZuCheck(mx.stop());
+  ZuCheck(completed == count);
+}
+
 #undef CheckTcpLoopback
 
 } // namespace
@@ -705,5 +723,6 @@ int main(int argc, char **argv)
   ZuTestCall(testTcpLoopbackIPv6);
   ZuTestCall(testUdpTOSIPv4);
   ZuTestCall(testMxWatch);
+  ZuTestCall(testWakeBurst);
   return 0;
 }

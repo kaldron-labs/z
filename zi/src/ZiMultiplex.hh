@@ -1053,7 +1053,6 @@ private:
   alignas(Zm::CacheLineSize)
   int			m_epollFD = -1;
   int			m_wakeFD = -1;
-  int			m_wakeFD2 = -1;	// wake pipe
 #endif
   ZmRef<ListenerHash>	m_listeners;
 #if ZiMultiplex__ConnectHash
