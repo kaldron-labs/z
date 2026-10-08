@@ -722,7 +722,7 @@ struct ZuCmp<ZuBox__<T_, NTP>> : public ZuCmp<T_> {
   static bool less(const T &t1, const T &t2) { return t1 < t2; }
   static bool equals(const T &t1, const T &t2) { return t1 == t2; }
   static bool null(const T &t) { return !*t; }
-  static const T &null() { static const T v; return v; }
+  static constexpr const T &null() { static constexpr T v; return v; }
 };
 
 // ZuBoxed(v) - convenience function to cast primitives to boxed

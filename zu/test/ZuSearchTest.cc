@@ -17,6 +17,24 @@
 
 using namespace ZuTestUtil;
 
+static void binary()
+{
+  ZuTestScopeRT(binary);
+  // Exercise every pivot and insertion gap through several power-of-two
+  // boundaries. No stored array is needed for the sequence 0, 2, 4, ... .
+  for (unsigned n = 0; n <= 65; ++n) {
+    for (int value = -1; value <= int(n * 2); ++value) {
+      auto cmp = [value](unsigned i) { return value - int(i * 2); };
+      auto found = ZuSearch(n, cmp);
+      unsigned pos = value < 0 ? 0 : (value + 1) / 2;
+      bool match = value >= 0 && value < int(n * 2) && !(value & 1);
+      ZuCheckRT(ZuSearchPos(found) == pos && ZuSearchFound(found) == match);
+      auto insert = ZuSearch<false>(n, cmp);
+      ZuCheckRT(ZuSearchPos(insert) == pos && !ZuSearchFound(insert));
+    }
+  }
+}
+
 void search(ZuSpan<int> data, int value, unsigned pos_, unsigned nc_)
 {
   ZuTestScope(search);
@@ -38,6 +56,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
 
   ZuTestMain();
+  ZuTestCall(binary);
 
   ZuArray<int, 10> foo{1, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
   ZuArray<int, 10> bar{1, 1, 1, 1, 1, 1, 1, 1, 1, 9 };
