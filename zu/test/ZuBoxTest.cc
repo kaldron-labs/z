@@ -23,6 +23,13 @@
 
 using namespace ZuTestUtil;
 
+constexpr int64_t boxedZero = ZuCmp<ZuBox0(int64_t)>::null();
+constexpr double boxedFloatZero = ZuCmp<ZuBox0(double)>::null();
+constexpr unsigned boxedNull = ZuCmp<ZuBox<unsigned>>::null();
+ZuAssert(boxedZero == 0);
+ZuAssert(boxedFloatZero == 0);
+ZuAssert(boxedNull == ZuCmp<unsigned>::null());
+
 template <class Fmt, class Boxed>
 struct VFmt_ {
   static void _(ZuVFmt &fmt) {

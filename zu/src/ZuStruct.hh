@@ -13,7 +13,7 @@
 // - compile-time reflection and access to individual fields
 // - ZfStruct extends ZuStruct for type-erased run-time introspection,
 //   type codes, printing/scanning, ...
-// - ZfbStruct further extends ZfStruct for flatbuffers serialization
+// - ZfFB serializes ZfStruct metadata as FlatBuffers
 // - Zdb provides relational data store
 //
 // each structure has 1 or more "facets"
@@ -49,6 +49,7 @@
 // ID, AliasRdFn, Get		read-only ''
 // ID, Lambda, Get, Set		lambda accessor
 // ID, LambdaRd, Get		read-only lambda accessor
+// ID, Skip, T			metadata only; no member or get/set
 //
 // if specified, Props is a parenthesized list of extensible properties.
 //
@@ -76,6 +77,7 @@
 //   T			- type of field
 //   Props		- compile-time properties
 //   ReadOnly		- true if read-only
+//   Skip			- true on metadata-only fields (absent otherwise)
 //   id()		- identifier (unique name) of field
 //   get(const O &)	- get function
 //   set(O &, auto &&v)	- set function
@@ -125,7 +127,7 @@ namespace ZuStructKeyID {
 // - a typelist of individual properties:
 // - each type is declared in the ZuFieldProp namespace
 // - additional properties can be injected into the ZuFieldProp namespace
-//   by higher layers (ZfStruct, ZfbStruct, etc.)
+//   by higher layers (ZfStruct, etc.)
 namespace ZuFieldProp {
   // extract a value property
   // - property can be declared with a specific type T:
@@ -294,6 +296,14 @@ namespace ZuFieldProp {
   using Orig = ZuField(O, ID); \
   template <template <typename> class Override> \
   using Adapt = Override<Orig>
+
+#define ZuField_Skip(O, ID, Type, Args) \
+  struct ZuField(O, ID) { \
+    ZuField_Adapt(O, ID); \
+    enum { Skip = 1 }; \
+    using T = ZuPP_Strip(Type); \
+    ZuField_Pre(O, ID, Args) \
+  };
 
 #define ZuField_AliasRd_(O, Member) \
   using T = ZuDecay<decltype(ZuDeclVal<const O &>().Member)>; \
@@ -466,6 +476,16 @@ struct ZuFields__<Meta, decltype(typename Meta::Fields(), void())> {
 template <typename O, typename Facet = ZuFacet::Core>
 using ZuFields = typename ZuFields__<ZuFieldMeta<O, Facet>>::T;
 
+// Schema metadata retains skipped fields; object operations exclude them
+// before instantiating accessors, tuples, or matchers.
+template <typename Field, typename = void>
+struct ZuFieldActive : public ZuTrue { };
+template <typename Field>
+struct ZuFieldActive<Field, decltype(Field::Skip, void())> :
+  public ZuBool<!Field::Skip> { };
+template <typename O, typename Facet = ZuFacet::Core>
+using ZuActiveFields = ZuTypeGrep<ZuFieldActive, ZuFields<O, Facet>>;
+
 // obtain a consteval typelist of field IDs suitable for use with ZuMatcher_<>
 template <typename> struct ZuFieldIDs_;
 template <typename ...Field>
@@ -473,7 +493,7 @@ struct ZuFieldIDs_<ZuTypeList<Field...>> {
   using T = ZuStringTL<Field::id()...>;
 };
 template <typename O>
-struct ZuFieldIDs_ : public ZuFieldIDs_<ZuFields<O>> { };
+struct ZuFieldIDs_ : public ZuFieldIDs_<ZuActiveFields<O>> { };
 template <typename U>
 using ZuFieldIDs = typename ZuFieldIDs_<U>::T;
 
@@ -486,7 +506,7 @@ template <typename Field>
 using ZuOrigField = typename Field::Orig;
 
 // get field index within fields
-#define ZuFieldIndex(O, ID) (ZuTypeIndex<ZuField(O, ID), ZuFields<O>>{})
+#define ZuFieldIndex(O, ID) (ZuTypeIndex<ZuField(O, ID), ZuActiveFields<O>>{})
 
 // generic tuple from field list
 template <typename O, typename Tuple, template <typename> class Filter>
@@ -505,7 +525,7 @@ struct ZuStructTuple_ : public Tuple {
   ZuDerive_(ZuStructTuple_, Tuple)
 
   using O = O_;
-  using Fields_ = ZuTypeGrep<Filter, ZuFields<O>>;
+  using Fields_ = ZuTypeGrep<Filter, ZuActiveFields<O>>;
 
   // adapt original fields, overriding get/set
   template <typename Base>
@@ -535,7 +555,7 @@ struct ZuStructTuple_ : public Tuple {
   using Map = typename Field::template Adapt<Adapter>;
   // render fields
   template <typename Facet>
-  using Fields = ZuTypeMap<Map, ZuTypeGrep<Filter, ZuFields<O, Facet>>>;
+  using Fields = ZuTypeMap<Map, ZuTypeGrep<Filter, ZuActiveFields<O, Facet>>>;
   template <typename Facet>
   friend Fields<Facet> ZuFields_(ZuStructTuple_ *, Facet *);
 
@@ -592,7 +612,7 @@ template <
   template <typename> class Filter>
 using ZuStructTupleT = typename ZuStructTupleT_<
   ZuDecay<O>, ObjectMap, ValueMap, Filter, 
-  ZuTypeGrep<Filter, ZuFields<O>>>::T;
+  ZuTypeGrep<Filter, ZuActiveFields<O>>>::T;
 
 // value tuple - i.e. a tuple of decayed (copied) values
 
@@ -623,7 +643,7 @@ struct ZuStructTuple_Render<O, Filter, ZuTypeList<Fields...>> :
 template <template <typename> class Filter, typename O_>
 inline decltype(auto) ZuStructExtract(O_ &&o) {
   using O = ZuStructured<O_>;
-  using Fields = ZuTypeGrep<Filter, ZuFields<O>>;
+  using Fields = ZuTypeGrep<Filter, ZuActiveFields<O>>;
   ZuAssert(Fields::N > 0);
   return ZuStructTuple_Render<O, Filter, Fields>::get(ZuFwd<O_>(o));
 }
@@ -633,7 +653,8 @@ inline decltype(auto) ZuStructExtract(O_ &&o) {
 template <int KeyID>
 struct ZuStructKeyFilter {
   template <typename Field>
-  using Filter = ZuFieldProp::Key<typename Field::Props, KeyID>;
+  using Filter = ZuBool<ZuFieldActive<Field>{} &&
+    ZuFieldProp::Key<typename Field::Props, KeyID>{}>;
 };
 
 // generic key extraction
@@ -651,7 +672,7 @@ constexpr auto ZuFieldAxor() {
   using O = ZuStructured<O_>;
   using KeyFilter = ZuStructKeyFilter<KeyID>;
   // fields in the key
-  using Fields = ZuTypeGrep<KeyFilter::template Filter, ZuFields<O>>;
+  using Fields = ZuTypeGrep<KeyFilter::template Filter, ZuActiveFields<O>>;
   // check that the key comprises at least one field
   ZuAssert(Fields::N > 0);
   // return the accessor
@@ -669,7 +690,7 @@ struct ZuStructKeyT_ {
   template <typename Field>
   using Filter = ZuStructKeyFilter<KeyID>::template Filter<Field>;
   // core fields that comprise key
-  using Fields = ZuTypeGrep<Filter, ZuFields<O>>;
+  using Fields = ZuTypeGrep<Filter, ZuActiveFields<O>>;
   // check that the key comprises at least one field
   ZuAssert(Fields::N > 0);
   // the key value is a tuple
@@ -691,7 +712,7 @@ template <typename ...Fields>
 struct ZuStructKeyIDs_<ZuTypeList<Fields...>> :
   public ZuStructKeyIDs_<Fields...> { };
 template <typename O>
-using ZuStructKeyIDs = typename ZuStructKeyIDs_<ZuFields<O>>::T;
+using ZuStructKeyIDs = typename ZuStructKeyIDs_<ZuActiveFields<O>>::T;
 
 // all keys for a type, as a typelist
 
@@ -739,7 +760,7 @@ struct ZuStructShim {
   using Map = typename Field::template Adapt<Adapter>;
   // render fields
   template <typename Facet>
-  using Fields = ZuTypeMap<Map, ZuFields<O, Facet>>;
+  using Fields = ZuTypeMap<Map, ZuActiveFields<O, Facet>>;
   template <typename Facet>
   friend Fields<Facet> ZuFields_(ZuStructShim *, Facet *);
 

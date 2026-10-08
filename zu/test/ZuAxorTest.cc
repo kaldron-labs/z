@@ -74,6 +74,7 @@ int main(int argc, char **argv)
   ZuCHECK(constructed_ == 4 && moved_ == 3 && copied_ == 1 && destroyed_ == 7,
     "constructed=", constructed_, " moved=", moved_,
     " copied=", copied_, " destroyed=", destroyed_);
+  ZuCheck(move_assigned_ == 0 && copy_assigned_ == 0);
 }
 
 inline A &&bar(A &&a) { return static_cast<A &&>(a); }

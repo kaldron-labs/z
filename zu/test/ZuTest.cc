@@ -5,7 +5,6 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdlib.h>
-#include <assert.h>
 
 #include <zlib/ZuTestUtil.hh>
 
@@ -13,13 +12,13 @@ static bool finalized;
 
 static void final_(bool passed)
 {
-  assert(passed);
+  if (!passed) ::abort();
   finalized = true;
 }
 
 static void verify_()
 {
-  assert(finalized);
+  if (!finalized) ::abort();
 }
 
 // static nested sub-test in a function
@@ -47,7 +46,7 @@ void bar(unsigned n) {
 
 int main()
 {
-  assert(!::atexit(&verify_));
+  if (::atexit(&verify_)) ::abort();
   ZuTestMgr::finalFn(&final_);
   ZuTestMain();
 

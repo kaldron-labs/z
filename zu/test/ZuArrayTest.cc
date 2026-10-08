@@ -182,6 +182,11 @@ constexpr bool findMatchConsteval()
   ZuArray<int, 3> mismatch;
   mismatch << 1 << 3;
   constexpr ZuString s{"abcdef"};
+  ZuAssert(s < ZuString{"abcdeg"});
+  ZuAssert(s > ZuString{"abcdee"});
+  ZuAssert(s == ZuString{"abcdef"});
+  ZuAssert(s > ZuString{"abcde"});
+  ZuAssert(s < ZuString{"abcdefg"});
   ZuCSpan span{"abcdef"};
   return
     a.find([](int v) { return v == 3; }) == 2 &&

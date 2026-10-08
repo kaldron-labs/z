@@ -80,7 +80,7 @@ template <unsigned N_> struct ZuString {
       unsigned l = length();
       unsigned n = ZuTraits<A>::length(a);
       for (unsigned i = 0, m = l < n ? l : n; i < m; i++)
-	if (int i = Cmp::cmp(data_[i], a[i])) return i;
+	if (int c = Cmp::cmp(data_[i], a[i])) return c;
       return ZuCompare(l, n);
     } else {
       if (same(a)) return 0;

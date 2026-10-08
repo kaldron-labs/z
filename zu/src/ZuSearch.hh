@@ -26,6 +26,7 @@ inline uint64_t ZuSearch(uint64_t n, Cmp cmp) {
   uint64_t p = n>>1;
   int l = cmp(p);
   while (n > 2) {
+    if constexpr (Match) if (!l) return ((o + p)<<1) | 1;
     n -= p;
     if (l > 0) o += p;
     l = cmp(o + (p = n>>1));
