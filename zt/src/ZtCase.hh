@@ -13,6 +13,8 @@
 #include <zlib/ZtLib.hh>
 #endif
 
+#include <zlib/ZuString.hh>
+
 #include <zlib/ZtScratch.hh>
 #include <zlib/ZtString.hh>
 
@@ -21,12 +23,12 @@ namespace ZtCase {
 ZuDerive(BufScratch, (ZtArray<char,
   ZtArrayHeapID<"ZtCase.Buf", ZtArraySharded<true>>>));
 
-inline bool isupper__(char c) { return c >= 'A' && c <= 'Z'; }
-inline char toupper__(char c) {
+constexpr bool isupper__(char c) { return c >= 'A' && c <= 'Z'; }
+constexpr char toupper__(char c) {
   return c + (static_cast<int>('A') - static_cast<int>('a'));
 }
-inline bool islower__(char c) { return c >= 'a' && c <= 'z'; }
-inline char tolower__(char c) {
+constexpr bool islower__(char c) { return c >= 'a' && c <= 'z'; }
+constexpr char tolower__(char c) {
   return c + (static_cast<int>('a') - static_cast<int>('A'));
 }
 
@@ -70,6 +72,29 @@ inline void snakeCamel(ZuCSpan s, L &&l) {
   if (underscore) buf[j++] = '_';
   ZmAssert(j == m);
   ZuFwd<L>(l)(buf);
+}
+
+// Compile-time names use the same transform as runtime store field names.
+template <ZuString S>
+consteval auto camelSnake() {
+  constexpr unsigned N = [] {
+    unsigned n = S.length();
+    for (unsigned i = 0; i < S.length(); ++i)
+      if (isupper__(S[i])) ++n;
+    return n;
+  }();
+  ZuString<N + 1> buf;
+  unsigned j = 0;
+  for (unsigned i = 0; i < S.length(); ++i) {
+    auto c = S[i];
+    if (isupper__(c)) {
+      buf[j++] = '_';
+      buf[j++] = tolower__(c);
+    } else
+      buf[j++] = c;
+  }
+  buf[N] = '\0';
+  return buf;
 }
 
 // lambda(const ZuCSpan &s)
