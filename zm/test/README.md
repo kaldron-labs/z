@@ -1,5 +1,9 @@
 # Zm tests
 
+`ZmCacheTest` and `ZmPolyCacheTest` cover empty synchronous and asynchronous
+iteration followed by cache access, including the deleting `ZmCache` variants.
+These regressions ensure empty scratch storage does not leave the cache locked.
+
 Build the library before the test programs:
 
 ```sh

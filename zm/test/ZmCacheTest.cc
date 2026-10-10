@@ -135,6 +135,32 @@ void testLoadDedupForConcurrentMissStyle()
   ZuCheck(found && found->val()->id == 42);
 }
 
+void testEmptyIteration()
+{
+  ZuTestScope(testEmptyIteration);
+
+  Cache cache{ZmHashParams{}.bits(2).loadFactor(1.0)};
+  unsigned calls = 0;
+  auto visit = [&calls](auto) { ++calls; };
+  auto visitSync = [&calls](auto, auto wake) { ++calls; wake(); };
+
+  cache.all(visit);
+  ZuCheck(!cache.find(1U)); // acquire the lock again after empty iteration
+  cache.allSync(visitSync);
+  ZuCheck(!cache.find(1U));
+  cache.all<true>(visit);
+  ZuCheck(!cache.find(1U));
+  cache.allSync<true>(visitSync);
+  ZuCheck(!cache.find(1U));
+  ZuCheck(!calls);
+
+  cache.add(mkNode<Cache>(1));
+  cache.all(visit);
+  cache.allSync(visitSync);
+  ZuCheck(calls == 2);
+  ZuCheck(cache.find(1U));
+}
+
 void testContextSmoke()
 {
   ZuTestScope(testContextSmoke);
@@ -157,6 +183,7 @@ int main(int argc, char **argv)
   ZuTestCall(testLoadMissAndStatsReset);
   ZuTestCall(testNoEvictMode);
   ZuTestCall(testLoadDedupForConcurrentMissStyle);
+  ZuTestCall(testEmptyIteration);
   ZuTestCall(testContextSmoke);
   return 0;
 }

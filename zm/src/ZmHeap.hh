@@ -59,6 +59,18 @@ ZmExtern void ZmHeapOnFail(ZmHeapFailFn);
 
 ZmExtern bool ZmHeapFail(); // should only return true, or ::abort()
 
+// Raw heap fallback for scratch storage and sanitizer-visible allocations.
+// Free with Zm::alignedFree; nonzero allocation failure follows ZmHeapFail.
+template <unsigned Align>
+inline void *ZmHeapAlloc(unsigned size) {
+  if (ZuUnlikely(!size)) return nullptr;
+  void *ptr;
+retry:
+  if (ZuLikely(ptr = Zm::alignedAlloc<Align>(size))) return ptr;
+  if (ZmHeapFail()) goto retry;
+  ZuUnreachable();
+}
+
 class ZmHeapMgr;
 class ZmHeapMgr_;
 class ZmHeapCache;

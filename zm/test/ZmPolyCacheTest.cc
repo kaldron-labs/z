@@ -31,10 +31,33 @@ ZuStruct(Foo_,
 ZmPolyCacheDerive(Cache, Foo_, ZmPolyCache_Defaults);
 using Foo = Cache::Node;
 
+void testEmptyIteration()
+{
+  ZuTestScope(testEmptyIteration);
+
+  Cache cache("empty");
+  unsigned calls = 0;
+  auto visit = [&calls](auto) { ++calls; };
+  auto visitSync = [&calls](auto, auto wake) { ++calls; wake(); };
+
+  cache.all(visit);
+  ZuCheck(!cache.find<0>(ZuFwdTuple(1, 3)));
+  cache.allSync(visitSync);
+  ZuCheck(!cache.find<0>(ZuFwdTuple(1, 3)));
+  ZuCheck(!calls);
+
+  cache.add(new Foo{1, 2, 3, 4});
+  cache.all(visit);
+  cache.allSync(visitSync);
+  ZuCheck(calls == 2);
+  ZuCheck(cache.find<0>(ZuFwdTuple(1, 3)));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testEmptyIteration);
   Cache cache("test");
   cache.add(new Foo{1,2,3,4});
   cache.add(new Foo{2,3,4,5});

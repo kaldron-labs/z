@@ -30,6 +30,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuAlt.hh>
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmStackAvail.hh>
 
 template <typename> struct ZmScratch_Print { };
@@ -576,7 +577,7 @@ private:
 #define ZmScratch_1(T, n) \
   ZmScratch_<T>{static_cast<T *>(!(n) ? nullptr : \
     (((ZmStackAvail()>>1) < ((n) * sizeof(T) + alignof(T))) ? \
-      Zm::alignedAlloc<alignof(T)>((n) * sizeof(T)) : \
+      ZmHeapAlloc<alignof(T)>((n) * sizeof(T)) : \
 	ZuAlloca((n) * sizeof(T), alignof(T)))), n}
 // ZuDecay enables the caller to pass VHeap as `typename T::VHeap`
 #define ZmScratch_2(T, n, VHeap) \

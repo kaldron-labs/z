@@ -392,7 +392,7 @@ public:
   template <bool Delete = false, typename L, typename = ZuIfT<!Delete>>
   void all(L &&l) const {
     m_lock.lock();
-    const_cast<Impl *>(this)->all_<Delete, false>(ZuFwd<L>(l));
+    const_cast<Impl *>(this)->template all_<Delete, false>(ZuFwd<L>(l));
   }
   template <bool Delete, typename L, typename = ZuIfT<Delete>>
   void all(L &&l) {
@@ -414,10 +414,9 @@ public:
 
 private:
   template <bool Delete, bool Sync, typename L>
-  bool all_(L &&l) {
+  void all_(L &&l) {
     unsigned n = m_hash->count_();
     auto buf = ZmScratch(NodeRef, n);
-    if (!buf.data()) return false;
     {
       auto i = allIter<Delete>();
       for (unsigned j = 0; j < n; j++) {
@@ -436,7 +435,6 @@ private:
     else
       for (unsigned j = 0; j < n; j++)
 	l(ZuMv(buf[j]));
-    return true;
   }
 
   template <bool Delete, typename = void>

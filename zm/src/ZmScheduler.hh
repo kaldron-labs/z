@@ -530,8 +530,20 @@ private:
   void stop_();
   template <typename L>
   bool spawn(L &&l) {
-    m_thread = ZmThread{ZuFwd<L>(l), m_params.thread(0).detached(true), 0};
-    return !!m_thread;
+    SpawnGuard guard(m_spawnLock);
+    auto previous = ZuMv(m_thread);
+    // A stop callback may start its successor before returning. Let that
+    // successor run, but retain and join its predecessor before it exits.
+    m_thread = ZmThread{
+      [l = ZuFwd<L>(l), previous]() mutable {
+	l();
+	if (previous) previous.join();
+      }, m_params.thread(0).detached(false), 0};
+    if (!m_thread) {
+      m_thread = ZuMv(previous);
+      return false;
+    }
+    return true;
   }
   void wake();
 

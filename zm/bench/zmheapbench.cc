@@ -106,10 +106,6 @@ int main(int argc, char **argv)
     ZmHeapMgr::init("S_list", i, 0, ZmHeapConfig{uint64_t(size)});
   }
   auto threads = ZmScratch(ZmThread, unsigned(nthr));
-  if (nthr && !threads.data()) {
-    std::cout << "ZmScratch() failed" << '\n';
-    Zm::exit(1);
-  }
   ZuTime start = Zm::now();
   for (int i = 0; i < nthr; i++)
     new (threads.push()) ZmThread{doit, ZmThreadParams{}.partition(i), i};
