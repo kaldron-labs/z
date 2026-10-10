@@ -24,6 +24,7 @@
 #include <zlib/ZmLib.hh>
 #endif
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmStackAvail.hh>
 
 template <typename T, typename VHeap = ZuVoid>
@@ -61,7 +62,7 @@ struct ZmAlloc_ {
 #define ZmAlloc_1(T, n) \
   ZmAlloc_<T>{static_cast<T *>(!(n) ? nullptr : \
     (((ZmStackAvail()>>1) < ((n) * sizeof(T) + alignof(T))) ? \
-      Zm::alignedAlloc<alignof(T)>((n) * sizeof(T)) : \
+      ZmHeapAlloc<alignof(T)>((n) * sizeof(T)) : \
 	ZuAlloca((n) * sizeof(T), alignof(T))))}
 // ZuDecay enables the caller to pass VHeap as `typename T::VHeap`
 #define ZmAlloc_2(T, n, VHeap) \

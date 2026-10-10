@@ -55,12 +55,25 @@ ZmScheduler::ZmScheduler(ZmSchedParams params) : m_params{ZuMv(params)}
 
 ZmScheduler::~ZmScheduler()
 {
+  // Do not use ZmSelf(): TLS may already be in teardown.
+  auto self = Zm::getTID();
+  bool own = m_thread && m_thread.tid() == self;
+  for (unsigned i = 0, n = m_params.nThreads(); i < n; i++)
+    if (m_threads[i].thread && m_threads[i].thread.tid() == self) own = true;
+  if (m_thread) {
+    if (own) {
+      // Preserve nonblocking self-destruction from a scheduler thread.
+      m_thread.detach();
+    } else {
+      if (state() != ZmEngineState::Stopped) stop();
+      m_thread.join();
+    }
+  }
   for (unsigned i = 0, n = m_params.nThreads(); i < n; i++) {
     auto &ring = m_threads[i].ring;
     auto &thread = m_threads[i].thread;
     // protect against blocking on self-destruction, do NOT use ZmSelf()
     // - ZmSelf() depends on TLS and should not be called during exit
-    auto self = Zm::getTID();
     if (!ring.closed()) {
       if (thread) {
 	ring.eof(true);
@@ -162,7 +175,6 @@ bool ZmScheduler::stop__()
       }
     }
   }
-  m_thread = {};
   return true;
 }
 bool ZmScheduler::reset()
@@ -307,6 +319,8 @@ bool ZmScheduler::push_(Thread *thread, Fn &fn)
 
 bool ZmScheduler::tryPush_(Thread *thread, Fn &fn)
 {
+  // New work must not overtake callbacks waiting for ring space.
+  if (ZuUnlikely(thread->queueCount.load_())) return false;
   {
     unsigned size = fn.pushSize();
     void *ptr;

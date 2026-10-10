@@ -12,6 +12,7 @@
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmScheduler.hh>
+#include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmSpecific.hh>
 #include <zlib/ZmBackoff.hh>
 #include <zlib/ZmTimeout.hh>
@@ -116,6 +117,140 @@ void usage_()
   Zm::exit(1);
 }
 
+// Leave room for a small callback after a larger one has overflowed.
+// Both must retain their submission order across the ring/queue boundary.
+static void overflowOrder()
+{
+  ZuTestScopeRT(overflowOrder);
+  ZmScheduler s{ZmSchedParams{}.id("overflow").queueSize(4096)};
+  ZmSemaphore entered, release, done;
+  bool ran = false, ordered = false;
+  struct Large {
+    ZmSemaphore *done;
+    bool *ran;
+    // Deliberately exceed the remaining ring space while a small lambda fits.
+    char padding[512];
+    void operator()() { *ran = true; done->post(); }
+  };
+  bool started = s.start();
+  ZuCheckRT(started);
+  if (!started) return;
+  s.run([&entered, &release]() { entered.post(); release.wait(); }, 1);
+  entered.wait();
+  while (s.ring(1).size() - s.ring(1).count_() >=
+      sizeof(Large) + sizeof(void *))
+    s.run([]() { }, 1);
+  s.run(Large{&done, &ran, {}}, 1);
+  ZuCheckRT(s.queue(1).count_() == 1);
+  s.run([&ran, &ordered, &done]() { ordered = ran; done.post(); }, 1);
+  release.post();
+  done.wait();
+  done.wait();
+  bool stopped = s.stop();
+  ZuCheckRT(stopped);
+  ZuCheckRT(ordered);
+}
+
+struct ControlGate {
+  ZmSemaphore entered, release, finished, destroying, destroyed;
+};
+
+struct ControlTLS : public ZmObject {
+  ControlGate *gate = nullptr;
+
+  ~ControlTLS() {
+    if (!gate) return;
+    gate->entered.post();
+    gate->release.wait();
+    gate->finished.post();
+  }
+};
+
+class ControlSched : public ZmScheduler {
+public:
+  ControlSched(ControlGate &gate) : m_gate{gate} { }
+  ~ControlSched() { m_gate.destroying.post(); }
+
+protected:
+  bool start__() override {
+    if (!m_starts++) ZmSpecific<ControlTLS>::instance()->gate = &m_gate;
+    return ZmScheduler::start__();
+  }
+
+private:
+  ControlGate &m_gate;
+  unsigned m_starts = 0;
+};
+
+// Hold the first control thread in TLS cleanup. Destruction must join it,
+// including when a stop callback synchronously starts its successor.
+static void controlLifetime(bool restart, bool implicitStop = false)
+{
+  ZuTestScopeRT(controlLifetime);
+  ControlGate gate;
+  ControlSched *s = nullptr;
+  ZmSemaphore ready, destroy;
+  ZmThread owner{[&s, &gate, &ready, &destroy]() {
+    {
+      ControlSched scheduler{gate};
+      s = &scheduler;
+      ready.post();
+      destroy.wait();
+    }
+    gate.destroyed.post();
+  }};
+  ready.wait();
+  bool started = s->start();
+  ZuCheckRT(started);
+  if (!started) {
+    destroy.post();
+    owner.join();
+    return;
+  }
+  if (restart) {
+    ZmSemaphore restarted;
+    bool ok = false;
+    static_cast<ZmEngine<ZmScheduler> &>(*s).stop(
+      [s, &ok, &restarted](bool stopped) {
+	ok = stopped && s->start();
+	restarted.post();
+      });
+    restarted.wait();
+    ZuCheckRT(ok);
+  }
+  if (!implicitStop) {
+    ZuCheckRT(s->stop());
+    gate.entered.wait();
+  }
+  destroy.post();
+  gate.destroying.wait();
+  if (implicitStop) gate.entered.wait();
+  // No timing controls production shutdown: the timeout only detects an
+  // early destructor return while the control thread is explicitly held.
+  bool early = !gate.destroyed.timedwait(Zm::now() + ZuTime{0.1});
+  gate.release.post();
+  if (!early) gate.destroyed.wait();
+  owner.join();
+  gate.finished.wait();
+  ZuCheckRT(!early);
+}
+
+static void selfStop()
+{
+  ZuTestScope(selfStop);
+  ZmScheduler s;
+  ZuCheck(s.start());
+  ZmSemaphore done;
+  bool stopped = false;
+  s.run([&s, &stopped, &done]() {
+    stopped = s.stop();
+    done.post();
+  }, 1);
+  done.wait();
+  ZuCheck(stopped);
+  ZuCheck(s.stop());
+}
+
 int main(int argc, char **argv)
 {
   ZmSchedParams params = ZmSchedParams().id("sched");
@@ -151,6 +286,12 @@ int main(int argc, char **argv)
   }
 
   ZuTestMain();
+
+  ZuTestCall(overflowOrder);
+  ZuTestCall(controlLifetime, false);
+  ZuTestCall(controlLifetime, true);
+  ZuTestCall(controlLifetime, false, true);
+  ZuTestCall(selfStop);
 
   signal(SIGSEGV, segv);
 

@@ -392,6 +392,7 @@ public:
   void *result() const { return m_result; }
 
   bool detached() const { return m_detached; }
+  int detach();
 
   TelKey telKey() const override { return {tid()}; }
   void telemetry(Ztc::ThreadTelemetry &data) const override;
@@ -469,6 +470,7 @@ private:
 
 public:
   int join(void **status = 0);
+  int detach();
 
   ZmRef<Context> context() { return m_context; }
 

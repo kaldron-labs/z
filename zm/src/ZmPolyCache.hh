@@ -426,10 +426,9 @@ public:
 
 private:
   template <bool Sync, typename L>
-  bool all_(L l) {
+  void all_(L l) {
     unsigned n = m_hash.count_();
     auto buf = ZmScratch(NodeRef, n);
-    if (!buf.data()) return false;
     {
       auto i = m_hash.iter();
       for (unsigned j = 0; j < n; j++) {
@@ -447,7 +446,6 @@ private:
     else
       for (unsigned j = 0; j < n; j++)
 	l(ZuMv(buf[j]));
-    return true;
   }
 
 private:

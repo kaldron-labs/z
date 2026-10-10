@@ -463,6 +463,26 @@ int ZmThread::join(void **status)
 #endif
 }
 
+int ZmThreadContext::detach()
+{
+  if (m_detached) return 0;
+#ifndef _WIN32
+  return pthread_detach(m_pthread);
+#else
+  int r = CloseHandle(m_handle) ? 0 : -1;
+  m_handle = 0;
+  return r;
+#endif
+}
+
+int ZmThread::detach()
+{
+  if (!m_context) return -1;
+  int r = m_context->detach();
+  m_context = nullptr;
+  return r;
+}
+
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
