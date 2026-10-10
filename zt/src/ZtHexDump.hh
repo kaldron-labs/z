@@ -118,14 +118,10 @@ public:
 
 private:
   void init_(const uint8_t *data_) {
-    uint8_t *data;
-    if (ZuLikely(data = static_cast<uint8_t *>(valloc(m_length)))) {
-      memcpy(data, data_, m_length);
-      m_data = data;
-    } else {
-      m_data = nullptr;
-      m_length = 0;
-    }
+    if (ZuUnlikely(!m_length)) { m_data = nullptr; return; }
+    auto data = static_cast<uint8_t *>(valloc(m_length));
+    memcpy(data, data_, m_length);
+    m_data = data;
   }
 
 public:
