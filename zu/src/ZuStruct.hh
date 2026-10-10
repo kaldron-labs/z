@@ -463,18 +463,10 @@ struct Core { }; // core facet
     ZuPP_Eval_(ZuStruct_Facets(O_Facets)) \
     __VA_OPT__(, __VA_ARGS__)))
 
-// obtain the field metadata and fields of a ZuStruct
+// obtain the fields of a ZuStruct
 template <typename O, typename Facet = ZuFacet::Core>
-using ZuFieldMeta =
+using ZuFields =
   decltype(ZuFields_(ZuDeclVal<O *>(), ZuDeclVal<Facet *>()));
-template <typename Meta, typename = void>
-struct ZuFields__ { using T = Meta; };
-template <typename Meta>
-struct ZuFields__<Meta, decltype(typename Meta::Fields(), void())> {
-  using T = typename Meta::Fields;
-};
-template <typename O, typename Facet = ZuFacet::Core>
-using ZuFields = typename ZuFields__<ZuFieldMeta<O, Facet>>::T;
 
 // Schema metadata retains skipped fields; object operations exclude them
 // before instantiating accessors, tuples, or matchers.

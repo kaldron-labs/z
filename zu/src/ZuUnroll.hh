@@ -140,21 +140,21 @@ template <typename ...Ts, typename L> struct Deduce<ZuTypeList<Ts...>, L> {
 };
 
 template <typename List, typename L>
-constexpr decltype(auto) all(L &&l) {
+ZuInline constexpr decltype(auto) all(L &&l) {
   return All<typename Deduce<List, L>::R, List>::fn(ZuFwd<L>(l));
 }
 template <unsigned N, typename L>
-constexpr decltype(auto) all(L &&l) {
+ZuInline constexpr decltype(auto) all(L &&l) {
   return all<ZuMkSeq<N>>(ZuFwd<L>(l));
 }
 
 // map/reduce all() - caller supplies initial value of accumulator
 template <typename List, typename R, typename L>
-constexpr decltype(auto) all(R r, L &&l) {
+ZuInline constexpr decltype(auto) all(R r, L &&l) {
   return All<R, List>::fn(ZuMv(r), ZuFwd<L>(l));
 }
 template <unsigned N, typename R, typename L>
-constexpr decltype(auto) all(R r, L &&l) {
+ZuInline constexpr decltype(auto) all(R r, L &&l) {
   return all<ZuMkSeq<N>>(ZuMv(r), ZuFwd<L>(l));
 }
 
